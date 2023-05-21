@@ -3,26 +3,10 @@
 #include "Menu.h"
 #include "ShaderCache.h"
 #include "State.h"
-#include <fmt/xchar.h>
 
 #include "ENB/ENBSeriesAPI.h"
 
-extern "C" DLLEXPORT const char* NAME = "Skyrim Community Shaders";
-extern "C" DLLEXPORT const char* DESCRIPTION = "";
-
-HMODULE m_hModule;
-
-BOOL APIENTRY DllMain(HMODULE hModule, DWORD dwReason, LPVOID)
-{
-	if (dwReason == DLL_PROCESS_ATTACH)
-		m_hModule = hModule;
-	return TRUE;
-}
-
-void DrawOverlayCallback(reshade::api::effect_runtime*)
-{
-	Menu::GetSingleton()->DrawOverlay();
-}
+std::list<std::string> errors;
 
 void MessageHandler(SKSE::MessagingInterface::Message* message)
 {
@@ -30,19 +14,20 @@ void MessageHandler(SKSE::MessagingInterface::Message* message)
 	case SKSE::MessagingInterface::kPostPostLoad:
 		{
 			const std::array dlls = {
-				L"ShaderTools",
-				L"ENBHelperSE",
-				L"ENBHelperVR",
-				L"ENBHelperPlus"
+				L"ShaderTools.dll",
+				L"SSEShaderTools.dll"
 			};
-			auto incompatible = false;
+
 			for (const auto dll : dlls) {
 				if (GetModuleHandle(dll)) {
-					logger::info(fmt::runtime("Incompatible DLL {} detected, will disable all hooks and features"), stl::utf16_to_utf8(dll).value_or("<unicode conversion error>"s));
-					incompatible = true;
+					auto errorMessage = std::format("Incompatible DLL {} detected", stl::utf16_to_utf8(dll).value_or("<unicode conversion error>"s));
+					logger::error("{}", errorMessage);
+
+					errors.push_back(errorMessage);
 				}
 			}
-			if (!incompatible) {
+
+			if (errors.empty()) {
 				Hooks::Install();
 
 				auto& shaderCache = SIE::ShaderCache::Instance();
@@ -54,17 +39,18 @@ void MessageHandler(SKSE::MessagingInterface::Message* message)
 				State::GetSingleton()->Load();
 
 				shaderCache.ValidateDiskCache();
-
-				if (reshade::register_addon(m_hModule)) {
-					logger::info("ReShade: Registered add-on");
-					reshade::register_event<reshade::addon_event::reshade_overlay>(DrawOverlayCallback);
-				} else {
-					logger::info("ReShade: Could not register add-on");
-				}
-				break;
 			}
-		case SKSE::MessagingInterface::kDataLoaded:
-			{
+
+			break;
+		}
+	case SKSE::MessagingInterface::kDataLoaded:
+		{
+			for (auto it = errors.begin(); it != errors.end(); ++it) {
+				auto& errorMessage = *it;
+				RE::DebugMessageBox(std::format("Community Shaders\n{}, will disable all hooks and features", errorMessage).c_str());
+			}
+
+			if (errors.empty()) {
 				RE::BSInputDeviceManager::GetSingleton()->AddEventSink(Menu::GetSingleton());
 
 				auto& shaderCache = SIE::ShaderCache::Instance();
@@ -76,21 +62,22 @@ void MessageHandler(SKSE::MessagingInterface::Message* message)
 				if (shaderCache.IsDiskCache()) {
 					shaderCache.WriteDiskCacheInfo();
 				}
-
-				break;
 			}
+
+			break;
 		}
 	}
+}
 
-	bool Load()
-	{
-		if (ENB_API::RequestENBAPI()) {
-			logger::info("ENB detected, disabling all hooks and features");
-			return true;
-		}
-
-		auto messaging = SKSE::GetMessagingInterface();
-		messaging->RegisterListener("SKSE", MessageHandler);
-
+bool Load()
+{
+	if (ENB_API::RequestENBAPI()) {
+		logger::info("ENB detected, disabling all hooks and features");
 		return true;
 	}
+
+	auto messaging = SKSE::GetMessagingInterface();
+	messaging->RegisterListener("SKSE", MessageHandler);
+
+	return true;
+}
