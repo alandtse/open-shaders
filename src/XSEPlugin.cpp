@@ -5,6 +5,7 @@
 #include "State.h"
 
 #include "ENB/ENBSeriesAPI.h"
+#include "Features/ExtendedMaterials.h"
 #define DLLEXPORT __declspec(dllexport)
 
 std::list<std::string> errors;
