@@ -93,7 +93,6 @@ void MessageHandler(SKSE::MessagingInterface::Message* message)
 				ParticleLights::GetSingleton()->GetConfigs();
 
 				Hooks::Install();
-				LightLimitFix::InstallHooks();
 
 				auto& shaderCache = SIE::ShaderCache::Instance();
 
@@ -105,6 +104,9 @@ void MessageHandler(SKSE::MessagingInterface::Message* message)
 				State::GetSingleton()->Load();
 
 				shaderCache.ValidateDiskCache();
+
+				if (LightLimitFix::GetSingleton()->loaded)
+					LightLimitFix::InstallHooks();
 			}
 
 			break;
@@ -128,6 +130,9 @@ void MessageHandler(SKSE::MessagingInterface::Message* message)
 				if (shaderCache.IsDiskCache()) {
 					shaderCache.WriteDiskCacheInfo();
 				}
+
+				if (LightLimitFix::GetSingleton()->loaded)
+					LightLimitFix::GetSingleton()->DataLoaded();
 			}
 
 			break;
