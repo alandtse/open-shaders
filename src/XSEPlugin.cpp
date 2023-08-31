@@ -152,7 +152,8 @@ bool Load()
 
 	auto state = State::GetSingleton();
 	state->Load();
-	InitializeLog(state->GetLogLevel());
+	auto log = spdlog::default_logger();
+	log->set_level(state->GetLogLevel());
 
 	return true;
 }
