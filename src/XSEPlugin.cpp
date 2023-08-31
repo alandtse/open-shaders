@@ -48,7 +48,7 @@ extern "C" DLLEXPORT bool SKSEAPI SKSEPlugin_Load(const SKSE::LoadInterface* a_s
 	while (!WinAPI::IsDebuggerPresent()) {};
 #endif
 	InitializeLog();
-	logger::info("Loaded plugin");
+	logger::info("Loaded {} {}", Plugin::NAME, Plugin::VERSION.string());
 	SKSE::Init(a_skse);
 	return Load();
 }
@@ -152,7 +152,8 @@ bool Load()
 
 	auto state = State::GetSingleton();
 	state->Load();
-	InitializeLog(state->GetLogLevel());
+	auto log = spdlog::default_logger();
+	log->set_level(state->GetLogLevel());
 
 	return true;
 }
