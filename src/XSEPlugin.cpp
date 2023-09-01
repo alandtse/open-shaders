@@ -90,8 +90,6 @@ void MessageHandler(SKSE::MessagingInterface::Message* message)
 			}
 
 			if (errors.empty()) {
-				ParticleLights::GetSingleton()->GetConfigs();
-
 				Hooks::Install();
 
 				auto& shaderCache = SIE::ShaderCache::Instance();
@@ -105,8 +103,10 @@ void MessageHandler(SKSE::MessagingInterface::Message* message)
 
 				shaderCache.ValidateDiskCache();
 
-				if (LightLimitFix::GetSingleton()->loaded)
+				if (LightLimitFix::GetSingleton()->loaded) {
+					ParticleLights::GetSingleton()->GetConfigs();
 					LightLimitFix::InstallHooks();
+				}
 			}
 
 			break;
