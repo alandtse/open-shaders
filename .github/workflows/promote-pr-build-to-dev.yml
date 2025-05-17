@@ -1,0 +1,43 @@
+name: Promote PR build to Dev Release on Merge
+
+on:
+  pull_request:
+    types:
+      - closed
+
+permissions:
+  contents: write
+
+jobs:
+  promote:
+    if: github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+    steps:
+      - name: Find PR release tag
+        id: find_release
+        env:
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          TAG=""
+          for tag in $(gh release list --repo "$REPO" --json tagName -q '.[].tagName'); do
+            if [[ "$tag" == *"-pr.${PR_NUMBER}+"* ]]; then
+              TAG="$tag"
+              break
+            fi
+          done
+          if [[ -z "$TAG" ]]; then
+            echo "No release found for PR #$PR_NUMBER"
+            exit 0
+          fi
+          echo "tag=$TAG" >> $GITHUB_OUTPUT
+
+      - name: Edit PR release to promote as dev build
+        if: steps.find_release.outputs.tag != ''
+        run: |
+          gh release edit ${{ steps.find_release.outputs.tag }} \
+            --title "Community Shaders Dev Build (from PR #${{ github.event.pull_request.number }})" \
+            --notes "Promoted to dev build from PR #${{ github.event.pull_request.number }} commit ${{ github.event.pull_request.merge_commit_sha }}" \
+            --prerelease
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
