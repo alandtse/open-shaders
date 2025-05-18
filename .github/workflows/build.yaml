@@ -16,6 +16,23 @@ permissions:
   pull-requests: write
 
 jobs:
+  semantic:
+    runs-on: ubuntu-latest
+    outputs:
+      new_release_version: ${{ steps.semantic.outputs.new_release_version }}
+      new_release_notes: ${{ steps.semantic.outputs.new_release_notes }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Run semantic-release dry run
+        id: semantic
+        uses: cycjimmy/semantic-release-action@v4
+        with:
+          dry_run: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
   build:
     name: build plugin and addons
     runs-on: windows-latest
@@ -61,7 +78,7 @@ jobs:
             path: dist/
 
   prerelease:
-    needs: build
+    needs: [build, semantic]
     if: github.event_name == 'pull_request_target'
     runs-on: windows-latest
     steps:
@@ -78,7 +95,7 @@ jobs:
           tag: v${{ needs.build.outputs.version }}-pr${{ github.event.pull_request.number }}
           prerelease: true
           artifacts: "${{ github.workspace }}/dist/CommunityShaders_AIO-*.7z"
-          generateReleaseNotes: true
+          body: ${{ needs.semantic.outputs.new_release_notes }}
           allowUpdates: true
           replacesArtifacts: true
           removeArtifacts: true
@@ -93,7 +110,7 @@ jobs:
             [Download](https://github.com/${{ github.repository }}/releases/tag/v${{ needs.build.outputs.version }}-pr${{ github.event.pull_request.number }})
 
   release:
-    needs: build
+    needs: [build, semantic]
     if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v')
     runs-on: windows-latest
     steps:
@@ -107,9 +124,10 @@ jobs:
         uses: ncipollo/release-action@v1
         with:
           name: "Community Shaders ${{ github.ref_name }}"
-          draft: true
           tag: ${{ github.ref_name }}
+          draft: true
           artifacts: "${{ github.workspace }}/dist/*.7z"
-          generateReleaseNotes: true
+          body: ${{ needs.semantic.outputs.new_release_notes }}
+          generateReleaseNotes: false
           replacesArtifacts: true
           removeArtifacts: true
