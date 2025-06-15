@@ -153,11 +153,18 @@ jobs:
         outputs:
             version: ${{ needs.setup-cmake.outputs.version }}
         steps:
+            - name: Checkout code
+              uses: actions/checkout@v4
+              with:
+                  ref: ${{ github.event.pull_request.head.ref || github.ref }}
+                  repository: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
+                  submodules: recursive
+
             - name: Download configured workspace
               uses: actions/download-artifact@v4
               with:
                   name: cmake-workspace
-                  path: .
+                  path: build/ALL/
 
             - uses: ilammy/msvc-dev-cmd@v1.10.0
 
@@ -200,7 +207,7 @@ jobs:
               uses: actions/download-artifact@v4
               with:
                   name: cmake-workspace
-                  path: .
+                  path: build/ALL/
 
             - uses: ilammy/msvc-dev-cmd@v1.10.0
 
