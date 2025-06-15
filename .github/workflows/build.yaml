@@ -10,12 +10,12 @@ on:
                 description: "Optional suffix to invalidate the build cache"
                 required: false
             build-cpp:
-                description: "Build C++ build for manual dispatch"
+                description: "Build C++ plugin and addons for manual dispatch"
                 type: boolean
                 required: false
                 default: true
             validate-shaders:
-                description: "Run shader validation even for manual builds"
+                description: "Run HLSL shader validation for manual dispatch"
                 type: boolean
                 required: false
                 default: true
