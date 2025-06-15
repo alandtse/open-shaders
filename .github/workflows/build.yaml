@@ -87,12 +87,13 @@ jobs:
     cpp-build:
         needs: [check-changes]
         if: >
-            always() &&
+            always() && !cancelled() &&
             ((github.event_name == 'workflow_dispatch' &&
               github.event.inputs.build-cpp == 'true') ||
-            (!github.event.pull_request.draft &&
-              (needs.check-changes.result != 'skipped' &&
-              (needs.check-changes.outputs.should-build == 'true'))))
+            (github.event_name == 'pull_request_target' &&
+             !github.event.pull_request.draft &&
+             needs.check-changes.result == 'success' &&
+             needs.check-changes.outputs.should-build == 'true'))
         name: Build plugin and addons
         runs-on: windows-latest
         permissions:
@@ -147,11 +148,11 @@ jobs:
     shader-validation:
         needs: [check-changes]
         if: >
-            always() &&
-            (((github.event_name == 'pull_request_target' || github.event_name == 'pull_request') &&
-              needs.check-changes.result != 'skipped' &&
-              needs.check-changes.outputs.hlsl-should-build == 'true' &&
-              !github.event.pull_request.draft) ||
+            always() && !cancelled() &&
+            ((github.event_name == 'pull_request_target' &&
+              !github.event.pull_request.draft &&
+              needs.check-changes.result == 'success' &&
+              needs.check-changes.outputs.hlsl-should-build == 'true') ||
              (github.event_name == 'workflow_dispatch' &&
               github.event.inputs.validate-shaders == 'true'))
         name: Validate shader compilation
