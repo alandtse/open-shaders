@@ -182,13 +182,11 @@ if ($LogFile) {
     }
 
     $outputPath = Join-Path $OutputDir $OutputName
-
     try {
         Write-Host "Generating $OutputName..." -ForegroundColor Blue
-        $cmd = "hlslkit-generate --log `"$LogFile`" --output `"$outputPath`""
-        Write-Host "Command: $cmd" -ForegroundColor Gray
+        Write-Host "Running: hlslkit-generate --log `"$LogFile`" --output `"$outputPath`"" -ForegroundColor Gray
 
-        Invoke-Expression $cmd
+        & hlslkit-generate --log $LogFile --output $outputPath
 
         if ($LASTEXITCODE -eq 0) {
             Write-Host "Successfully generated $OutputName" -ForegroundColor Green
@@ -225,17 +223,15 @@ foreach ($skyrim in $skyrimPaths) {
 
     if (-not (Test-LogFile -LogPath $skyrim.LogPath -GameName $skyrim.Name)) {
         Write-Host "Skipping $($skyrim.Name) due to invalid/missing log file." -ForegroundColor Red
-        continue
-    }
+        continue    }
 
     $outputPath = Join-Path $OutputDir $skyrim.ConfigName
 
     try {
         Write-Host "Generating $($skyrim.ConfigName)..." -ForegroundColor Blue
-        $cmd = "hlslkit-generate --log `"$($skyrim.LogPath)`" --output `"$outputPath`""
-        Write-Host "Command: $cmd" -ForegroundColor Gray
+        Write-Host "Running: hlslkit-generate --log `"$($skyrim.LogPath)`" --output `"$outputPath`"" -ForegroundColor Gray
 
-        Invoke-Expression $cmd
+        & hlslkit-generate --log $skyrim.LogPath --output $outputPath
 
         if ($LASTEXITCODE -eq 0) {
             Write-Host "Successfully generated $($skyrim.ConfigName)" -ForegroundColor Green
