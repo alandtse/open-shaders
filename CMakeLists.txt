@@ -167,7 +167,7 @@ endif()
 
 # Add target to generate shader validation configuration files
 # This requires hlslkit and valid Skyrim installations with recent log files
-find_program(POWERSHELL_PATH powershell)
+find_program(POWERSHELL_PATH pwsh powershell)
 if(POWERSHELL_PATH)
 	add_custom_target(generate_shader_configs
 		COMMAND ${POWERSHELL_PATH} -ExecutionPolicy Bypass -File "${CMAKE_SOURCE_DIR}/.github/configs/generate-shader-configs.ps1" -OutputDir "${CMAKE_SOURCE_DIR}/.github/configs"
