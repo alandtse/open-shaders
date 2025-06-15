@@ -162,6 +162,21 @@ if(CLANG_FORMAT_PATH)
 endif()
 
 # #######################################################################################################################
+# # Shader validation config generation
+# #######################################################################################################################
+
+# Add target to generate shader validation configuration files
+# This requires hlslkit and valid Skyrim installations with recent log files
+find_program(POWERSHELL_PATH powershell)
+if(POWERSHELL_PATH)
+	add_custom_target(generate_shader_configs
+		COMMAND ${POWERSHELL_PATH} -ExecutionPolicy Bypass -File "${CMAKE_SOURCE_DIR}/.github/configs/generate-shader-configs.ps1" -OutputDir "${CMAKE_SOURCE_DIR}/.github/configs"
+		WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+		COMMENT "Generating shader validation configuration files from Skyrim log files"
+	)
+endif()
+
+# #######################################################################################################################
 # # Automatic deployment
 # #######################################################################################################################
 file(GLOB FEATURE_PATHS LIST_DIRECTORIES true ${CMAKE_SOURCE_DIR}/features/*)
