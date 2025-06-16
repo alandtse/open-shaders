@@ -160,16 +160,20 @@ jobs:
 
             - name: Extract version from CMake
               id: get_version
-              shell: bash
+              shell: pwsh
               run: |
-                  if [ "${{ steps.check-cpp.outputs.skip }}" == "true" ]; then
+                  if ("${{ steps.check-cpp.outputs.skip }}" -eq "true") {
                     # When skipping build, extract version from CMakeLists.txt
-                    VERSION=$(grep 'project(.*VERSION' CMakeLists.txt | sed -E 's/.*VERSION ([0-9]+\.[0-9]+\.[0-9]+).*/\1/')
-                  else
+                    $content = Get-Content CMakeLists.txt
+                    $versionLine = $content | Select-String -Pattern 'project\(.*VERSION'
+                    $version = $versionLine -replace '.*VERSION ([0-9]+\.[0-9]+\.[0-9]+).*', '$1'
+                  } else {
                     # When building, extract version from CMakeCache.txt
-                    VERSION=$(grep 'CMAKE_PROJECT_VERSION:STATIC' build/ALL/CMakeCache.txt | cut -d= -f2)
-                  fi
-                  echo "version=$VERSION" >> $GITHUB_OUTPUT
+                    $content = Get-Content build/ALL/CMakeCache.txt
+                    $versionLine = $content | Select-String -Pattern 'CMAKE_PROJECT_VERSION:STATIC'
+                    $version = $versionLine -replace '.*=([0-9]+\.[0-9]+\.[0-9]+).*', '$1'
+                  }
+                  echo "version=$version" >> $env:GITHUB_OUTPUT
 
             - name: Upload dist artifacts
               if: success() && steps.check-cpp.outputs.skip != 'true'
