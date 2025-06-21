@@ -148,6 +148,7 @@ jobs:
               with:
                   configurePreset: ALL
                   buildPreset: ALL
+
             - name: Extract version from CMake
               id: get_version
               shell: pwsh
