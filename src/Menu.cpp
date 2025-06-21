@@ -22,6 +22,7 @@
 #include "Utils/UI.h"
 
 #include "Features/LightLimitFix/ParticleLights.h"
+#include "Features/WeatherPicker.h"
 #include "Utils/UI.h"
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
@@ -68,6 +69,12 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	Position,
 	PositionSet,
 	OverlayToggleKey)
+
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
+	Menu::Settings::WeatherDetailsWindowSettings,
+	Enabled,
+	Position,
+	PositionSet)
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	ImGuiStyle,
@@ -315,15 +322,15 @@ void Menu::DrawSettings()
 								uiIcons.clearCache.texture ||
 								uiIcons.clearDiskCache.texture);
 
-		// Debug logging for icon availability
-		if (settings.Theme.ShowActionIcons) {
-			logger::debug("Icon status - Save: {}, Load: {}, Cache: {}, Disk: {}, Logo: {}",
-				uiIcons.saveSettings.texture ? "OK" : "NULL",
-				uiIcons.loadSettings.texture ? "OK" : "NULL",
-				uiIcons.clearCache.texture ? "OK" : "NULL",
-				uiIcons.clearDiskCache.texture ? "OK" : "NULL",
-				uiIcons.logo.texture ? "OK" : "NULL");
-		}
+		// // Debug logging for icon availability
+		// if (settings.Theme.ShowActionIcons) {
+		// 	logger::debug("Icon status - Save: {}, Load: {}, Cache: {}, Disk: {}, Logo: {}",
+		// 		uiIcons.saveSettings.texture ? "OK" : "NULL",
+		// 		uiIcons.loadSettings.texture ? "OK" : "NULL",
+		// 		uiIcons.clearCache.texture ? "OK" : "NULL",
+		// 		uiIcons.clearDiskCache.texture ? "OK" : "NULL",
+		// 		uiIcons.logo.texture ? "OK" : "NULL");
+		// }
 
 		// Always show logo if available, regardless of action icons setting
 		bool showLogo = uiIcons.logo.texture != nullptr;
@@ -1467,6 +1474,9 @@ void Menu::DrawOverlay()
 	if (settings.PerfOverlay.Enabled)
 		DrawPerfOverlay();
 
+	// Draw weather details window independently of main menu
+	DrawWeatherDetailsWindow();
+
 	if (inTestMode) {  // In test mode
 		float seconds = (float)duration_cast<std::chrono::milliseconds>(high_resolution_clock::now() - lastTestSwitch).count() / 1000.0f;
 		auto remaining = (float)testInterval - seconds;
@@ -2556,4 +2566,18 @@ void Menu::SelectFeatureMenu(const std::string& featureName)
 {
 	pendingFeatureSelection = featureName;
 	logger::info("Queued navigation to {} feature menu", featureName);
+}
+
+void Menu::DrawWeatherDetailsWindow()
+{
+	if (!settings.WeatherDetailsWindow.Enabled) {
+		return;
+	}
+
+	// Use Weather core feature for all window management and rendering
+	auto weather = globals::features::weatherPicker;
+	if (weather) {
+		bool* p_open = &settings.WeatherDetailsWindow.Enabled;
+		weather->RenderWeatherDetailsWindow(p_open);
+	}
 }

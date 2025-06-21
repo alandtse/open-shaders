@@ -398,38 +398,136 @@ namespace Util
 		return clicked;
 	}
 
-	void DrawSectionHeader(const char* sectionName, bool useWhiteText)
+	bool DrawSectionHeader(const char* sectionName, bool useWhiteText, bool isCollapsible, bool* isExpanded)
 	{
-		// Draw custom styled header similar to CategoryHeader but non-collapsible
-		ImDrawList* drawList = ImGui::GetWindowDrawList();
-		ImVec2 pos = ImGui::GetCursorScreenPos();
-		float availableWidth = ImGui::GetContentRegionAvail().x;
-		ImVec2 textSize = ImGui::CalcTextSize(sectionName);
+		bool stateChanged = false;
 
-		// Calculate line positions
-		float lineY = pos.y + textSize.y * 0.5f;
-		float lineLength = (availableWidth - textSize.x - 20.0f) * 0.5f;  // 20px for padding
-		// Use Menu theme colors for consistent styling
-		auto& theme = Menu::GetSingleton()->GetTheme().FeatureHeading;
-		ImU32 lineColor = theme.LineColorDefault;
-		ImU32 textColor = useWhiteText ? theme.TextColorWhite : theme.TextColorDefault;
+		if (isCollapsible && isExpanded) {
+			// Use collapsible header similar to DrawCategoryHeader
+			ImGui::PushID(sectionName);
 
-		// Left line
-		if (lineLength > 0) {
-			drawList->AddLine(ImVec2(pos.x, lineY), ImVec2(pos.x + lineLength, lineY), lineColor, 1.0f);
+			const ImVec4 headerColor = useWhiteText ? ImVec4(1.0f, 1.0f, 1.0f, 1.0f) : ImVec4(0.8f, 0.8f, 0.8f, 1.0f);
+			ImGui::PushStyleColor(ImGuiCol_Text, headerColor);
+
+			if (ImGui::CollapsingHeader(sectionName, ImGuiTreeNodeFlags_DefaultOpen)) {
+				if (!*isExpanded) {
+					stateChanged = true;
+				}
+				*isExpanded = true;
+			} else {
+				if (*isExpanded) {
+					stateChanged = true;
+				}
+				*isExpanded = false;
+			}
+
+			ImGui::PopStyleColor();
+			ImGui::PopID();
+		} else {
+			// Non-collapsible header - use custom styled header similar to CategoryHeader
+			ImDrawList* drawList = ImGui::GetWindowDrawList();
+			ImVec2 pos = ImGui::GetCursorScreenPos();
+			float availableWidth = ImGui::GetContentRegionAvail().x;
+			ImVec2 textSize = ImGui::CalcTextSize(sectionName);
+
+			// Calculate line positions
+			float lineY = pos.y + textSize.y * 0.5f;
+			float lineLength = (availableWidth - textSize.x - 20.0f) * 0.5f;  // 20px for padding
+
+			// Use Menu theme colors for consistent styling
+			auto& theme = Menu::GetSingleton()->GetTheme().FeatureHeading;
+			ImU32 lineColor = theme.LineColorDefault;
+			ImU32 textColor = useWhiteText ? theme.TextColorWhite : theme.TextColorDefault;
+
+			// Left line
+			if (lineLength > 0) {
+				drawList->AddLine(ImVec2(pos.x, lineY), ImVec2(pos.x + lineLength, lineY), lineColor, 1.0f);
+			}
+
+			// Right line
+			float rightLineStart = pos.x + lineLength + 10.0f + textSize.x + 10.0f;
+			if (rightLineStart < pos.x + availableWidth) {
+				drawList->AddLine(ImVec2(rightLineStart, lineY), ImVec2(pos.x + availableWidth, lineY), lineColor, 1.0f);
+			}
+
+			// Center text
+			ImVec2 textPos = ImVec2(pos.x + lineLength + 10.0f, pos.y + 2.0f);
+			drawList->AddText(textPos, textColor, sectionName);
+
+			// Move cursor to next line
+			ImGui::SetCursorScreenPos(ImVec2(pos.x, pos.y + textSize.y + 8.0f));
 		}
 
-		// Right line
-		float rightLineStart = pos.x + lineLength + 10.0f + textSize.x + 10.0f;
-		if (rightLineStart < pos.x + availableWidth) {
-			drawList->AddLine(ImVec2(rightLineStart, lineY), ImVec2(pos.x + availableWidth, lineY), lineColor, 1.0f);
-		}
-
-		// Center text
-		ImVec2 textPos = ImVec2(pos.x + lineLength + 10.0f, pos.y + 2.0f);
-		drawList->AddText(textPos, textColor, sectionName);
-
-		// Move cursor to next line
-		ImGui::SetCursorScreenPos(ImVec2(pos.x, pos.y + textSize.y + 8.0f));
+		return stateChanged;
 	}
+
+	// ColorCodedValueConfig static helper implementations
+	ColorCodedValueConfig ColorCodedValueConfig::HighIsBad(float low, float med, float high)
+	{
+		ColorCodedValueConfig config;
+		const auto& theme = Menu::GetSingleton()->GetTheme().StatusPalette;
+		config.thresholds = {
+			{ low, theme.Disable },    // Very low - gray
+			{ med, theme.InfoColor },  // Low - blue
+			{ high, theme.Warning },   // Medium - orange
+			{ FLT_MAX, theme.Error }   // High - red (bad)
+		};
+		return config;
+	}
+
+	ColorCodedValueConfig ColorCodedValueConfig::HighIsGood(float low, float med, float high)
+	{
+		ColorCodedValueConfig config;
+		const auto& theme = Menu::GetSingleton()->GetTheme().StatusPalette;
+		config.thresholds = {
+			{ low, theme.Disable },          // Very low - gray
+			{ med, theme.InfoColor },        // Low - blue
+			{ high, theme.Warning },         // Medium - orange
+			{ FLT_MAX, theme.SuccessColor }  // High - green (good)
+		};
+		return config;
+	}
+
+	void DrawColorCodedValue(const char* label, float value, const ColorCodedValueConfig& config)
+	{
+		// Display label
+		ImGui::BulletText("%s", label);
+		if (config.sameLine) {
+			ImGui::SameLine();
+		}
+
+		// Determine color based on thresholds
+		ImVec4 valueColor = ImVec4(1.0f, 1.0f, 1.0f, 1.0f);  // Default white
+
+		for (const auto& tc : config.thresholds) {
+			if (value < tc.threshold) {
+				valueColor = tc.color;
+				break;
+			}
+		}
+
+		// Display colored value
+		ImGui::TextColored(valueColor, config.format, value);
+
+		// Add tooltip if provided
+		if (config.tooltipText) {
+			if (auto _tt = Util::HoverTooltipWrapper()) {
+				ImGui::Text("%s", config.tooltipText);
+			}
+		}
+	}
+
+	void DrawMultiLineTooltip(const std::vector<const char*>& lines, const std::vector<ImVec4>& colors)
+	{
+		for (size_t i = 0; i < lines.size(); ++i) {
+			if (!colors.empty() && i < colors.size()) {
+				// Use provided color for this line
+				ImGui::TextColored(colors[i], "%s", lines[i]);
+			} else {
+				// Use default color
+				ImGui::Text("%s", lines[i]);
+			}
+		}
+	}
+
 }  // namespace Util

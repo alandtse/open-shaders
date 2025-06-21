@@ -25,6 +25,7 @@
 #include "Features/VR.h"
 #include "Features/VolumetricLighting.h"
 #include "Features/WaterEffects.h"
+#include "Features/WeatherPicker.h"
 #include "Features/WetnessEffects.h"
 
 #include "State.h"
@@ -208,6 +209,7 @@ const std::vector<Feature*>& Feature::GetFeatureList()
 		globals::features::dynamicCubemaps,
 		globals::features::cloudShadows,
 		globals::features::waterEffects,
+		globals::features::weatherPicker,
 		globals::features::subsurfaceScattering,
 		globals::features::terrainShadows,
 		globals::features::screenSpaceGI,

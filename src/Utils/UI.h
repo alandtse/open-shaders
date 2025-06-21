@@ -139,11 +139,49 @@ namespace Util
 	bool DrawCategoryHeader(const char* categoryName, bool& isExpanded);
 
 	/**
-	 * Draws a custom styled section header (non-collapsible) with lines extending from both sides
+	 * Draws a custom styled section header with lines extending from both sides
 	 * @param sectionName The name of the section to display
 	 * @param useWhiteText Whether to use white text (for differentiation)
+	 * @param isCollapsible Whether the header should be collapsible
+	 * @param isExpanded Reference to the expansion state (only used if collapsible)
+	 * @return true if the expansion state was toggled (only relevant if collapsible)
 	 */
-	void DrawSectionHeader(const char* sectionName, bool useWhiteText = false);
+	bool DrawSectionHeader(const char* sectionName, bool useWhiteText = false, bool isCollapsible = true, bool* isExpanded = nullptr);
+
+	/**
+	 * Configuration for color-coded value display with flexible thresholds and colors.
+	 * Supports variable number of thresholds and corresponding colors.
+	 */
+	struct ColorCodedValueConfig
+	{
+		struct ThresholdColor
+		{
+			float threshold;
+			ImVec4 color;
+
+			ThresholdColor(float t, const ImVec4& c) :
+				threshold(t), color(c) {}
+		};
+
+		std::vector<ThresholdColor> thresholds;  // Thresholds in ascending order with their colors
+		const char* format = "%.1f%%";           // Printf-style format string for the value
+		const char* tooltipText = nullptr;       // Optional tooltip text
+		bool sameLine = true;                    // Whether to put value on same line as label
+												 // Helper methods for common patterns (implemented in UI.cpp to avoid header dependencies)
+		// Use when higher values indicate problems/danger (intensity, errors, warnings)
+		static ColorCodedValueConfig HighIsBad(float low, float med, float high);
+		// Use when higher values indicate good things (performance, quality, progress)
+		static ColorCodedValueConfig HighIsGood(float low, float med, float high);
+	};
+	/**
+	 * Color-codes a value based on flexible thresholds and displays it with optional tooltip.
+	 * Common pattern for showing status values (percentages, intensities, etc.) with color feedback.
+	 *
+	 * @param label The label text to display before the value
+	 * @param value The numeric value to display and color-code
+	 * @param config Configuration struct containing thresholds, colors, format, and tooltip
+	 */
+	void DrawColorCodedValue(const char* label, float value, const ColorCodedValueConfig& config);
 
 	class PerformanceOverlay
 	{
@@ -159,4 +197,11 @@ namespace Util
 		}
 	};
 	extern PerformanceOverlay performanceOverlay;
+
+	/**
+	 * Helper function for drawing multi-line tooltips with better code readability.
+	 * @param lines Vector of strings, each will be displayed on its own line
+	 * @param colors Optional vector of colors for each line (if empty, uses default color)
+	 */
+	void DrawMultiLineTooltip(const std::vector<const char*>& lines, const std::vector<ImVec4>& colors = {});
 }  // namespace Util

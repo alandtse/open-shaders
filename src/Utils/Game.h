@@ -43,6 +43,76 @@ namespace Util
 
 	float2 ConvertToDynamic(float2 a_size);
 
+	// Game unit conversions
+	namespace Units
+	{
+		// Conversion constants
+		constexpr float GAME_UNIT_TO_CM = 1.428f;
+		constexpr float GAME_UNIT_TO_M = GAME_UNIT_TO_CM / 100.0f;
+		constexpr float GAME_UNIT_TO_FEET = GAME_UNIT_TO_CM / 30.48f;
+		constexpr float GAME_UNIT_TO_INCHES = GAME_UNIT_TO_CM / 2.54f;
+
+		// Wind speed conversions
+		constexpr float WIND_RAW_TO_NORMALIZED = 1.0f / 255.0f;  // Raw to 0-1 scale
+		constexpr float WIND_RAW_TO_PERCENT = 100.0f / 255.0f;   // Raw to percentage
+
+		// Direction conversions
+		constexpr float DIR_RAW_TO_DEGREES = 360.0f / 256.0f;    // Raw 0-256 to 0-360 degrees
+		constexpr float DIR_RANGE_TO_DEGREES = 180.0f / 256.0f;  // Range 0-256 to 0-180 degrees
+		constexpr float RADIANS_TO_DEGREES = 180.0f / 3.14159f;
+
+		// Distance conversions
+		inline float GameUnitsToMeters(float gameUnits) { return gameUnits * GAME_UNIT_TO_M; }
+		inline float GameUnitsToCm(float gameUnits) { return gameUnits * GAME_UNIT_TO_CM; }
+		inline float GameUnitsToFeet(float gameUnits) { return gameUnits * GAME_UNIT_TO_FEET; }
+		inline float GameUnitsToInches(float gameUnits) { return gameUnits * GAME_UNIT_TO_INCHES; }
+
+		// Wind speed conversions
+		inline float WindRawToNormalized(uint8_t rawWind) { return rawWind * WIND_RAW_TO_NORMALIZED; }
+		inline float WindRawToPercent(uint8_t rawWind) { return rawWind * WIND_RAW_TO_PERCENT; }
+
+		// Direction conversions
+		inline float DirectionRawToDegrees(uint8_t rawDirection) { return rawDirection * DIR_RAW_TO_DEGREES; }
+		inline float DirectionRangeToDegrees(uint8_t rawRange) { return rawRange * DIR_RANGE_TO_DEGREES; }
+		inline float RadiansToDegrees(float radians) { return radians * RADIANS_TO_DEGREES; }
+
+		// Angle normalization helpers
+		inline float NormalizeDegrees0To360(float degrees)
+		{
+			while (degrees < 0.0f) degrees += 360.0f;
+			while (degrees >= 360.0f) degrees -= 360.0f;
+			return degrees;
+		}
+
+		inline float NormalizeDegreesToSignedRange(float degrees)
+		{
+			while (degrees > 180.0f) degrees -= 360.0f;
+			while (degrees < -180.0f) degrees += 360.0f;
+			return degrees;
+		}
+
+		// Formatted string helpers for tooltips
+		inline const char* FormatDistance(float gameUnits, char* buffer, size_t bufferSize)
+		{
+			snprintf(buffer, bufferSize, "%.1f units (%.2f m, %.1f ft)",
+				gameUnits, GameUnitsToMeters(gameUnits), GameUnitsToFeet(gameUnits));
+			return buffer;
+		}
+		inline const char* FormatWindSpeed(uint8_t rawWind, char* buffer, size_t bufferSize)
+		{
+			snprintf(buffer, bufferSize, "%.1f%% (raw %d, %.2f normalized)",
+				WindRawToPercent(rawWind), rawWind, WindRawToNormalized(rawWind));
+			return buffer;
+		}
+
+		inline const char* FormatDirection(uint8_t rawDirection, char* buffer, size_t bufferSize)
+		{
+			snprintf(buffer, bufferSize, "%.1f° (raw %d)",
+				DirectionRawToDegrees(rawDirection), rawDirection);
+			return buffer;
+		}
+	}
+
 	struct DispatchCount
 	{
 		uint x;
@@ -92,4 +162,9 @@ namespace Util
      *         textureSet is nullptr.
      */
 	[[nodiscard]] RE::BGSTextureSet* GetSeasonalSwap(RE::BGSTextureSet* textureSet);
+
+	// TESForm formatting helpers
+	std::string FormatTESForm(const RE::TESForm* form);
+	std::string FormatWeather(const RE::TESWeather* weather);
+
 }  // namespace Util
