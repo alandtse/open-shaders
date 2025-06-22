@@ -124,10 +124,19 @@ jobs:
               uses: ilammy/msvc-dev-cmd@v1
               with:
                   arch: x64
-    
-            - name: Check cl.exe version
-              run: cl.exe /Bv 2>&1 || exit 0
-              shell: cmd
+
+            - name: Get MSVC version
+              id: msvc_version
+              shell: pwsh
+              run: |
+                  $output = & cl.exe /Bv 2>&1
+                  if ($output -match 'Compiler Version ([0-9\\.]+)') {
+                    $version = $Matches[1]
+                    Write-Host "MSVC version: $version"
+                    echo "version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+                  } else {
+                    throw "MSVC version not found"
+                  }
 
             - name: Setup vcpkg
               uses: lukka/run-vcpkg@v11.5
@@ -138,28 +147,29 @@ jobs:
               uses: actions/cache@v4
               with:
                   path: build/ALL
-                  key: ${{ runner.os }}-cmake-${{ github.event.inputs.cache-key-suffix || 'default' }}-${{ hashFiles('.gitmodules', 'extern/**', 'CMakePresets.json', 'vcpkg.json', 'vcpkg-configuration.json') }}
+                  key: ${{ runner.os }}-cmake-msvc-${{ steps.msvc_version.outputs.version }}-${{ github.event.inputs.cache-key-suffix || 'default' }}-${{ hashFiles('.gitmodules', 'extern/**', 'CMakePresets.json', 'vcpkg.json', 'vcpkg-configuration.json') }}
                   restore-keys: |
-                      ${{ runner.os }}-cmake-${{ github.event.inputs.cache-key-suffix || 'default' }}-
+                      ${{ runner.os }}-cmake-msvc-${{ steps.msvc_version.outputs.version }}-${{ github.event.inputs.cache-key-suffix || 'default' }}-
+                      ${{ runner.os }}-cmake-msvc-${{ steps.msvc_version.outputs.version }}-
                       ${{ runner.os }}-cmake-
 
             - name: Remove stale CMake cache if drive letter changed
               shell: pwsh
               run: |
-                $cacheFile = "build/ALL/CMakeCache.txt"
-                if (Test-Path $cacheFile) {
-                  $expected = (Resolve-Path .).Path.Substring(0,1)  # C or D
-                  $content = Get-Content $cacheFile -Raw
-                  if ($content -match 'CMAKE_HOME_DIRECTORY:INTERNAL=([A-Z]):') {
-                    $actual = $Matches[1]
-                    if ($actual -ne $expected) {
-                      Write-Host "❌ Cache drive mismatch. Removing stale build/ALL directory."
-                      Remove-Item -Recurse -Force "build/ALL"
-                    } else {
-                      Write-Host "✅ Cache path matches. Keeping build/ALL."
+                  $cacheFile = "build/ALL/CMakeCache.txt"
+                  if (Test-Path $cacheFile) {
+                    $expected = (Resolve-Path .).Path.Substring(0,1)  # C or D
+                    $content = Get-Content $cacheFile -Raw
+                    if ($content -match 'CMAKE_HOME_DIRECTORY:INTERNAL=([A-Z]):') {
+                      $actual = $Matches[1]
+                      if ($actual -ne $expected) {
+                        Write-Host "❌ Cache drive mismatch. Removing stale build/ALL directory."
+                        Remove-Item -Recurse -Force "build/ALL"
+                      } else {
+                        Write-Host "✅ Cache path matches. Keeping build/ALL."
+                      }
                     }
                   }
-                }
 
             - name: Build using run-cmake
               uses: lukka/run-cmake@v10
@@ -235,6 +245,20 @@ jobs:
             - uses: ilammy/msvc-dev-cmd@v1
               if: steps.check-hlsl.outputs.skip != 'true'
 
+            - name: Get MSVC version
+              if: steps.check-hlsl.outputs.skip != 'true'
+              id: msvc_version
+              shell: pwsh
+              run: |
+                  $output = & cl.exe /Bv 2>&1
+                  if ($output -match 'Compiler Version ([0-9\\.]+)') {
+                    $version = $Matches[1]
+                    Write-Host "MSVC version: $version"
+                    echo "version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+                  } else {
+                    throw "MSVC version not found"
+                  }
+
             - name: Setup vcpkg
               if: steps.check-hlsl.outputs.skip != 'true'
               uses: lukka/run-vcpkg@v11.5
@@ -246,30 +270,31 @@ jobs:
               uses: actions/cache@v4
               with:
                   path: build/ALL
-                  key: ${{ runner.os }}-cmake-${{ matrix.config.name }}-${{ github.event.inputs.cache-key-suffix || 'default' }}-${{ hashFiles('.gitmodules', 'extern/**', 'CMakePresets.json', 'vcpkg.json', 'vcpkg-configuration.json') }}
+                  key: ${{ runner.os }}-cmake-msvc-${{ steps.msvc_version.outputs.version }}-${{ matrix.config.name }}-${{ github.event.inputs.cache-key-suffix || 'default' }}-${{ hashFiles('.gitmodules', 'extern/**', 'CMakePresets.json', 'vcpkg.json', 'vcpkg-configuration.json') }}
                   restore-keys: |
-                      ${{ runner.os }}-cmake-${{ matrix.config.name }}-${{ github.event.inputs.cache-key-suffix || 'default' }}-
-                      ${{ runner.os }}-cmake-${{ matrix.config.name }}-
+                      ${{ runner.os }}-cmake-msvc-${{ steps.msvc_version.outputs.version }}-${{ matrix.config.name }}-${{ github.event.inputs.cache-key-suffix || 'default' }}-
+                      ${{ runner.os }}-cmake-msvc-${{ steps.msvc_version.outputs.version }}-${{ matrix.config.name }}-
+                      ${{ runner.os }}-cmake-msvc-${{ steps.msvc_version.outputs.version }}-
                       ${{ runner.os }}-cmake-
 
             - name: Remove stale CMake cache if drive letter changed
               if: steps.check-hlsl.outputs.skip != 'true'
               shell: pwsh
               run: |
-                $cacheFile = "build/ALL/CMakeCache.txt"
-                if (Test-Path $cacheFile) {
-                  $expected = (Resolve-Path .).Path.Substring(0,1)  # C or D
-                  $content = Get-Content $cacheFile -Raw
-                  if ($content -match 'CMAKE_HOME_DIRECTORY:INTERNAL=([A-Z]):') {
-                    $actual = $Matches[1]
-                    if ($actual -ne $expected) {
-                      Write-Host "❌ Cache drive mismatch. Removing stale build/ALL directory."
-                      Remove-Item -Recurse -Force "build/ALL"
-                    } else {
-                      Write-Host "✅ Cache path matches. Keeping build/ALL."
+                  $cacheFile = "build/ALL/CMakeCache.txt"
+                  if (Test-Path $cacheFile) {
+                    $expected = (Resolve-Path .).Path.Substring(0,1)  # C or D
+                    $content = Get-Content $cacheFile -Raw
+                    if ($content -match 'CMAKE_HOME_DIRECTORY:INTERNAL=([A-Z]):') {
+                      $actual = $Matches[1]
+                      if ($actual -ne $expected) {
+                        Write-Host "❌ Cache drive mismatch. Removing stale build/ALL directory."
+                        Remove-Item -Recurse -Force "build/ALL"
+                      } else {
+                        Write-Host "✅ Cache path matches. Keeping build/ALL."
+                      }
                     }
                   }
-                }
 
             - name: Prepare shaders for validation
               if: steps.check-hlsl.outputs.skip != 'true'
