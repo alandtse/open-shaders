@@ -136,30 +136,40 @@ jobs:
                   Write-Host "Raw cl.exe output:"
                   Write-Host $output
 
-                  # Try multiple patterns to extract version
+                  # More robust version extraction
                   $version = $null
 
-                  Write-Host "Attempting to match patterns..."
+                  # Split output into lines and search for version patterns
+                  $lines = $output -split "`n|`r"
+                  Write-Host "Number of lines: $($lines.Count)"
 
-                  # Pattern 1: Simple "Version X.Y.Z" (most reliable)
-                  if ($output -match 'Version ([0-9]+\.[0-9]+\.[0-9]+)') {
-                      $version = $Matches[1]
-                      Write-Host "Found version using pattern 1: $version"
+                  foreach ($line in $lines) {
+                      Write-Host "Processing line: '$line'"
+
+                      # Try different patterns on each line
+                      if ($line -match 'Version ([0-9]+\.[0-9]+\.[0-9]+)') {
+                          $version = $Matches[1]
+                          Write-Host "Found version in line: $version"
+                          break
+                      }
+                      elseif ($line -match '([0-9]+\.[0-9]+\.[0-9]+)') {
+                          $version = $Matches[1]
+                          Write-Host "Found generic version in line: $version"
+                          break
+                      }
                   }
-                  # Pattern 2: "Microsoft (R) C/C++ Optimizing Compiler Version X.Y.Z"
-                  elseif ($output -match 'Microsoft \(R\) C/C\+\+ Optimizing Compiler Version ([0-9]+\.[0-9]+\.[0-9]+)') {
-                      $version = $Matches[1]
-                      Write-Host "Found version using pattern 2: $version"
-                  }
-                  # Pattern 3: "Compiler Version X.Y.Z"
-                  elseif ($output -match 'Compiler Version ([0-9]+\.[0-9]+\.[0-9]+)') {
-                      $version = $Matches[1]
-                      Write-Host "Found version using pattern 3: $version"
-                  }
-                  # Pattern 4: "X.Y.Z" (any version-like string)
-                  elseif ($output -match '([0-9]+\.[0-9]+\.[0-9]+)') {
-                      $version = $Matches[1]
-                      Write-Host "Found version using pattern 4: $version"
+
+                  # If still no version, try the whole output as a single string
+                  if (-not $version) {
+                      Write-Host "Trying whole output as single string..."
+                      if ($output -match 'Version ([0-9]+\.[0-9]+\.[0-9]+)') {
+                          $version = $Matches[1]
+                          Write-Host "Found version in whole output: $version"
+                      }
+                      elseif ($output -match '([0-9]+\.[0-9]+\.[0-9]+)') {
+                          $version = $Matches[1]
+                          Write-Host "Found generic version in whole output: $version"
+                      }
                   }
 
                   Write-Host "Final version result: $version"
@@ -296,30 +306,40 @@ jobs:
                   Write-Host "Raw cl.exe output:"
                   Write-Host $output
 
-                  # Try multiple patterns to extract version
+                  # More robust version extraction
                   $version = $null
 
-                  Write-Host "Attempting to match patterns..."
+                  # Split output into lines and search for version patterns
+                  $lines = $output -split "`n|`r"
+                  Write-Host "Number of lines: $($lines.Count)"
 
-                  # Pattern 1: Simple "Version X.Y.Z" (most reliable)
-                  if ($output -match 'Version ([0-9]+\.[0-9]+\.[0-9]+)') {
-                      $version = $Matches[1]
-                      Write-Host "Found version using pattern 1: $version"
+                  foreach ($line in $lines) {
+                      Write-Host "Processing line: '$line'"
+
+                      # Try different patterns on each line
+                      if ($line -match 'Version ([0-9]+\.[0-9]+\.[0-9]+)') {
+                          $version = $Matches[1]
+                          Write-Host "Found version in line: $version"
+                          break
+                      }
+                      elseif ($line -match '([0-9]+\.[0-9]+\.[0-9]+)') {
+                          $version = $Matches[1]
+                          Write-Host "Found generic version in line: $version"
+                          break
+                      }
                   }
-                  # Pattern 2: "Microsoft (R) C/C++ Optimizing Compiler Version X.Y.Z"
-                  elseif ($output -match 'Microsoft \(R\) C/C\+\+ Optimizing Compiler Version ([0-9]+\.[0-9]+\.[0-9]+)') {
-                      $version = $Matches[1]
-                      Write-Host "Found version using pattern 2: $version"
-                  }
-                  # Pattern 3: "Compiler Version X.Y.Z"
-                  elseif ($output -match 'Compiler Version ([0-9]+\.[0-9]+\.[0-9]+)') {
-                      $version = $Matches[1]
-                      Write-Host "Found version using pattern 3: $version"
-                  }
-                  # Pattern 4: "X.Y.Z" (any version-like string)
-                  elseif ($output -match '([0-9]+\.[0-9]+\.[0-9]+)') {
-                      $version = $Matches[1]
-                      Write-Host "Found version using pattern 4: $version"
+
+                  # If still no version, try the whole output as a single string
+                  if (-not $version) {
+                      Write-Host "Trying whole output as single string..."
+                      if ($output -match 'Version ([0-9]+\.[0-9]+\.[0-9]+)') {
+                          $version = $Matches[1]
+                          Write-Host "Found version in whole output: $version"
+                      }
+                      elseif ($output -match '([0-9]+\.[0-9]+\.[0-9]+)') {
+                          $version = $Matches[1]
+                          Write-Host "Found generic version in whole output: $version"
+                      }
                   }
 
                   Write-Host "Final version result: $version"
