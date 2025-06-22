@@ -59,7 +59,7 @@ namespace Util
 		// Direction conversions
 		constexpr float DIR_RAW_TO_DEGREES = 360.0f / 256.0f;    // Raw 0-256 to 0-360 degrees
 		constexpr float DIR_RANGE_TO_DEGREES = 180.0f / 256.0f;  // Range 0-256 to 0-180 degrees
-		constexpr float RADIANS_TO_DEGREES = 180.0f / 3.14159f;
+		constexpr float RADIANS_TO_DEGREES = 180.0f / DirectX::XM_PI;
 
 		// Distance conversions
 		inline float GameUnitsToMeters(float gameUnits) { return gameUnits * GAME_UNIT_TO_M; }
