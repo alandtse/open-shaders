@@ -43,7 +43,6 @@ public:
 	void DrawOverlay();
 	void DrawPerfOverlay();
 	void DrawWeatherDetailsWindow();
-	void DrawCoreWeatherDetails(bool isPopupWindow);  // Core weather functionality that features can extend
 
 	void ProcessInputEvents(RE::InputEvent* const* a_events);
 	bool ShouldSwallowInput();
