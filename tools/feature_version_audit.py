@@ -425,8 +425,8 @@ def format_feature_table(feature_analysis):
     lines.append("| Feature | Prior Ver | Proposed Ver | Needs Bump | Change Types | Note | Commit |")
     lines.append("|---------|-----------|--------------|------------|--------------|------|--------|")
     for fa in feature_analysis:
-        def bold(val):
-            return f"**{val}**" if fa['is_attention'] and val != '' and val != '-' else val
+        def bold(val, is_attention=fa['is_attention']):
+            return f"**{val}**" if is_attention and val != '' and val != '-' else val
         lines.append(f"| {bold(fa['name'])} | {bold(fa['prior_ver_str'])} | {bold(fa['proposed_ver_str'])} | {bold(str(fa['needs_bump']))} | {bold(fa['change_types'])} | {bold(fa['note'])} | {fa['commit_link']} |")
     return lines
 
@@ -446,7 +446,7 @@ def format_new_features_table(new_features, feature_meta_map, get_commit_author,
             missing = False
             if not meta or (not meta['mod_link'] and not (meta and meta['is_core'])) or not meta['description'] or not meta['key_features']:
                 missing = True
-            def boldmeta(val):
+            def boldmeta(val, missing=missing):
                 return f"**{val}**" if missing and val != '' and val != '-' else val
             nexus_link = f"[Nexus]({meta['mod_link']})" if meta and meta['mod_link'] else ("**Missing metadata**" if not meta else "")
             author = get_commit_author(commit) if commit else None
@@ -473,7 +473,7 @@ def format_metadata_summary(feature_metadata):
         if not info['key_features']:
             missing = True
             missing_fields.append('key features')
-        def boldmeta(val):
+        def boldmeta(val, missing=missing):
             return f"**{val}**" if missing else val
         link = f"[Nexus]({info['mod_link']})" if info['mod_link'] else ""
         desc = info['description'][:80] + ("..." if len(info['description']) > 80 else "")
@@ -595,8 +595,7 @@ def main():
         base_date_iso = subprocess.check_output([
             "git", "log", "-1", "--format=%cI", base_ref
         ], stderr=subprocess.DEVNULL).decode("utf-8").strip()
-        import datetime as _dt
-        base_date_human = _dt.datetime.fromisoformat(base_date_iso.replace('Z', '+00:00')).strftime('%A, %B %d, %Y %I:%M %p')
+        base_date_human = datetime.datetime.fromisoformat(base_date_iso.replace('Z', '+00:00')).strftime('%A, %B %d, %Y %I:%M %p')
     except Exception:
         base_date_iso = None
         base_date_human = None
