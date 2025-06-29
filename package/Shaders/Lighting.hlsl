@@ -10,8 +10,6 @@
 #include "Common/Skinned.hlsli"
 
 #define LANDSCAPE_BLEND_WEIGHT_THRESHOLD 0.01f             // Minimum landscape blend weight to process layer
-#define LANDSCAPE_DISTANCE_OPTIMIZATION_THRESHOLD 2048.0f  // Switch to cheap sampling for distant terrain ~29m / 96ft
-#define TERRAIN_DISTANT_MIP_LEVEL 6                        // Mip level for distant terrain textures
 #define LIGHTING
 
 #if defined(FACEGEN) || defined(FACEGEN_RGB_TINT)
@@ -753,18 +751,17 @@ float3 GetLightSpecularInput(PS_INPUT input, float3 L, float3 V, float3 N, float
 #	endif
 
 #	if defined(SPARKLE) && !defined(SNOW)
-		float3 sparkleUvScale = exp2(float3(1.3, 1.6, 1.9) * log2(abs(SparkleParams.x)).xxx);
+	float3 sparkleUvScale = exp2(float3(1.3, 1.6, 1.9) * log2(abs(SparkleParams.x)).xxx);
 
-		float sparkleColor1 = TexProjDetail.Sample(SampProjDetailSampler, uv * sparkleUvScale.xx).z;
-		float sparkleColor2 = TexProjDetail.Sample(SampProjDetailSampler, uv * sparkleUvScale.yy).z;
-		float sparkleColor3 = TexProjDetail.Sample(SampProjDetailSampler, uv * sparkleUvScale.zz).z;
-		float sparkleColor = ProcessSparkleColor(sparkleColor1) + ProcessSparkleColor(sparkleColor2) + ProcessSparkleColor(sparkleColor3);
-		float VdotN = dot(V, N);
-		V += N * -(2 * VdotN);
-		float sparkleMultiplier = exp2(SparkleParams.w * log2(saturate(dot(V, -L)))) * (SparkleParams.z * sparkleColor);
-		sparkleMultiplier = sparkleMultiplier >= 0.5 ? 1 : 0;
-		lightColorMultiplier += sparkleMultiplier * HdotN;
-
+	float sparkleColor1 = TexProjDetail.Sample(SampProjDetailSampler, uv * sparkleUvScale.xx).z;
+	float sparkleColor2 = TexProjDetail.Sample(SampProjDetailSampler, uv * sparkleUvScale.yy).z;
+	float sparkleColor3 = TexProjDetail.Sample(SampProjDetailSampler, uv * sparkleUvScale.zz).z;
+	float sparkleColor = ProcessSparkleColor(sparkleColor1) + ProcessSparkleColor(sparkleColor2) + ProcessSparkleColor(sparkleColor3);
+	float VdotN = dot(V, N);
+	V += N * -(2 * VdotN);
+	float sparkleMultiplier = exp2(SparkleParams.w * log2(saturate(dot(V, -L)))) * (SparkleParams.z * sparkleColor);
+	sparkleMultiplier = sparkleMultiplier >= 0.5 ? 1 : 0;
+	lightColorMultiplier += sparkleMultiplier * HdotN;
 #	endif
 	return lightColor * lightColorMultiplier;
 }
@@ -1072,16 +1069,12 @@ inline void SampleLandscapeLayer(
 #		if defined(TERRAIN_VARIATION)
 	float4 diffuse = StochasticEffect(screenNoise, mipLevel, texColor, sampColor, uv, sharedOffset, dx, dy, viewDistance);
 #		else
-	// Non-TERRAIN_VARIATION path - gradual mip level increase based on distance
 	float distanceFactor = smoothstep(0.0, 2048.0, viewDistance);
-	float aggressiveMipFactor = 6.0f;
 	float4 diffuse = lerp(
 		texColor.SampleBias(sampColor, uv, SharedData::MipBias),
-		texColor.SampleLevel(sampColor, uv, distanceFactor * aggressiveMipFactor),
+		texColor.SampleLevel(sampColor, uv, distanceFactor * 3.0),
 		distanceFactor);
 #		endif
-
-	// Post-process diffuse sample for PBR compatibility
 	float3 diffuseRGB = diffuse.rgb;
 #		if defined(TRUE_PBR)
 	// Check if this texture is not PBR (pbrParams.x == 0 means non-PBR texture)
@@ -1091,41 +1084,32 @@ inline void SampleLandscapeLayer(
 #		endif
 	float alpha = diffuse.a;
 
-	// Sample normal - same distance-based optimization as diffuse
+	// Sample normal
 #		if defined(TERRAIN_VARIATION)
 	float4 normal = StochasticEffect(screenNoise, mipLevel, texNormal, sampNormal, uv, sharedOffset, dx, dy, viewDistance);
 #		else
 	float4 normal = lerp(
 		texNormal.SampleBias(sampNormal, uv, SharedData::MipBias),
-		texNormal.SampleLevel(sampNormal, uv, distanceFactor * aggressiveMipFactor),
+		texNormal.SampleLevel(sampNormal, uv, distanceFactor * 3.0),
 		distanceFactor);
 #		endif
 	float3 normalRGB = normal.rgb;
 	float normalAlpha = normal.a;
-	float4 rmaos = 0.0.xxxx;
 
-// Sample PBR material properties (RMAOS) - most expensive, so most aggressive optimization
 #		if defined(TRUE_PBR)
 	// Sample RMAOS
 #			if defined(TERRAIN_VARIATION)
-	rmaos = StochasticEffect(screenNoise, mipLevel, texRMAOS, sampRMAOS, uv, sharedOffset, dx, dy, viewDistance);
+	float4 rmaos = StochasticEffect(screenNoise, mipLevel, texRMAOS, sampRMAOS, uv, sharedOffset, dx, dy, viewDistance);
 #			else
-	if (viewDistance <= LANDSCAPE_DISTANCE_OPTIMIZATION_THRESHOLD) {
-		rmaos = lerp(
-			texRMAOS.SampleBias(sampRMAOS, uv, SharedData::MipBias),
-			texRMAOS.SampleLevel(sampRMAOS, uv, distanceFactor * aggressiveMipFactor),
-			distanceFactor);
-	} else {
-		// DISTANT TERRAIN: Skip PBR entirely
-		// PBR details are not visible at distance anyway
-		rmaos = texRMAOS.SampleLevel(sampRMAOS, uv, TERRAIN_DISTANT_MIP_LEVEL);
-	}
+	float4 rmaos = lerp(
+		texRMAOS.SampleBias(sampRMAOS, uv, SharedData::MipBias),
+		texRMAOS.SampleLevel(sampRMAOS, uv, distanceFactor * 3.0),
+		distanceFactor);
 #			endif
 	rmaos *= float4(pbrParams.x, 1, 1, pbrParams.z);
 	blendedRMAOS += rmaos * weight;
 #		endif
 
-	// Accumulate all samples into final blended result
 	blendedRGB += diffuseRGB * weight;
 	blendedAlpha += alpha * weight;
 	blendedNormalRGB += normalRGB * weight;
@@ -1452,7 +1436,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 #		endif  // EMAT
 	// Initialize mip levels for non-EMAT case
 	mipLevels[0] = mipLevels[1] = mipLevels[2] = mipLevels[3] = mipLevels[4] = mipLevels[5] = 0.0;
-#	endif  // LANDSCAPE
+#	endif      // LANDSCAPE
 
 #	if defined(SPARKLE)
 	diffuseUv = ProjectedUVParams2.yy * (input.TexCoord0.zw + (uv - uvOriginal));
@@ -1479,7 +1463,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 
 #	if defined(LANDSCAPE)
 	// Layer 1 (LandBlendWeights1.x)
-	if (input.LandBlendWeights1.x > 0.01) {
+	if (input.LandBlendWeights1.x > LANDSCAPE_BLEND_WEIGHT_THRESHOLD) {
 		float weight = input.LandBlendWeights1.x * invwsum;
 		SampleLandscapeLayer(
 			uv, viewDistance, screenNoise, mipLevels[0], weight,
@@ -1505,7 +1489,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	}
 
 	// Layer 2 (LandBlendWeights1.y)
-	if (input.LandBlendWeights1.y > 0.01) {
+	if (input.LandBlendWeights1.y > LANDSCAPE_BLEND_WEIGHT_THRESHOLD) {
 		float weight = input.LandBlendWeights1.y * invwsum;
 		SampleLandscapeLayer(
 			uv, viewDistance, screenNoise, mipLevels[1], weight,
@@ -1533,7 +1517,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	}
 
 	// Layer 3 (LandBlendWeights1.z)
-	if (input.LandBlendWeights1.z > 0.01) {
+	if (input.LandBlendWeights1.z > LANDSCAPE_BLEND_WEIGHT_THRESHOLD) {
 		float weight = input.LandBlendWeights1.z * invwsum;
 		SampleLandscapeLayer(
 			uv, viewDistance, screenNoise, mipLevels[2], weight,
@@ -1561,7 +1545,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	}
 
 	// Layer 4 (LandBlendWeights1.w)
-	if (input.LandBlendWeights1.w > 0.01) {
+	if (input.LandBlendWeights1.w > LANDSCAPE_BLEND_WEIGHT_THRESHOLD) {
 		float weight = input.LandBlendWeights1.w * invwsum;
 		SampleLandscapeLayer(
 			uv, viewDistance, screenNoise, mipLevels[3], weight,
@@ -1588,7 +1572,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	}
 
 	// Layer 5 (LandBlendWeights2.x)
-	if (input.LandBlendWeights2.x > 0.01) {
+	if (input.LandBlendWeights2.x > LANDSCAPE_BLEND_WEIGHT_THRESHOLD) {
 		float weight = input.LandBlendWeights2.x * invwsum;
 		SampleLandscapeLayer(
 			uv, viewDistance, screenNoise, mipLevels[4], weight,
@@ -1615,7 +1599,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	}
 
 	// Layer 6 (LandBlendWeights2.y)
-	if (input.LandBlendWeights2.y > 0.01) {
+	if (input.LandBlendWeights2.y > LANDSCAPE_BLEND_WEIGHT_THRESHOLD) {
 		float weight = input.LandBlendWeights2.y * invwsum;
 		SampleLandscapeLayer(
 			uv, viewDistance, screenNoise, mipLevels[5], weight,
@@ -1717,7 +1701,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 #		endif  // SNOW
 
 	// Layer 1 (LandBlendWeights1.x)
-	if (input.LandBlendWeights1.x > LANDSCAPE_BLEND_WEIGHT_THRESHOLD) {
+	if (input.LandBlendWeights1.x > 0.01) {
 #		if defined(SNOW) && !defined(TRUE_PBR)
 		float landSnowMask1 = GetLandSnowMaskValue(baseColor.w);
 		landSnowMask += LandscapeTexture1to4IsSnow.x * input.LandBlendWeights1.x * landSnowMask1;
@@ -1731,7 +1715,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	}
 
 	// Layer 2 (LandBlendWeights1.y)
-	if (input.LandBlendWeights1.y > LANDSCAPE_BLEND_WEIGHT_THRESHOLD) {
+	if (input.LandBlendWeights1.y > 0.01) {
 #		if defined(SNOW) && !defined(TRUE_PBR)
 		float landSnowMask2 = GetLandSnowMaskValue(baseColor.w);
 		landSnowMask += LandscapeTexture1to4IsSnow.y * input.LandBlendWeights1.y * landSnowMask2;
@@ -1745,7 +1729,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	}
 
 	// Layer 3 (LandBlendWeights1.z)
-	if (input.LandBlendWeights1.z > LANDSCAPE_BLEND_WEIGHT_THRESHOLD) {
+	if (input.LandBlendWeights1.z > 0.01) {
 #		if defined(SNOW) && !defined(TRUE_PBR)
 		float landSnowMask3 = GetLandSnowMaskValue(baseColor.w);
 		landSnowMask += LandscapeTexture1to4IsSnow.z * input.LandBlendWeights1.z * landSnowMask3;
@@ -1759,7 +1743,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	}
 
 	// Layer 4 (LandBlendWeights1.w)
-	if (input.LandBlendWeights1.w > LANDSCAPE_BLEND_WEIGHT_THRESHOLD) {
+	if (input.LandBlendWeights1.w > 0.01) {
 #		if defined(SNOW) && !defined(TRUE_PBR)
 		float landSnowMask4 = GetLandSnowMaskValue(baseColor.w);
 		landSnowMask += LandscapeTexture1to4IsSnow.w * input.LandBlendWeights1.w * landSnowMask4;
@@ -1773,7 +1757,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	}
 
 	// Layer 5 (LandBlendWeights2.x)
-	if (input.LandBlendWeights2.x > LANDSCAPE_BLEND_WEIGHT_THRESHOLD) {
+	if (input.LandBlendWeights2.x > 0.01) {
 #		if defined(SNOW) && !defined(TRUE_PBR)
 		float landSnowMask5 = GetLandSnowMaskValue(baseColor.w);
 		landSnowMask += LandscapeTexture5to6IsSnow.x * input.LandBlendWeights2.x * landSnowMask5;
@@ -1787,7 +1771,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	}
 
 	// Layer 6 (LandBlendWeights2.y)
-	if (input.LandBlendWeights2.y > LANDSCAPE_BLEND_WEIGHT_THRESHOLD) {
+	if (input.LandBlendWeights2.y > 0.01) {
 #		if defined(SNOW) && !defined(TRUE_PBR)
 		float landSnowMask6 = GetLandSnowMaskValue(baseColor.w);
 		landSnowMask += LandscapeTexture5to6IsSnow.y * input.LandBlendWeights2.y * landSnowMask6;
@@ -2506,7 +2490,6 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 #			endif
 
 		float3 lightColor = Color::Light(light.color.xyz) * intensityMultiplier;
-
 		float lightShadow = 1.0;
 
 		float shadowComponent = 1.0;
