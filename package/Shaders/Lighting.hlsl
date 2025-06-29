@@ -1037,7 +1037,7 @@ float GetSnowParameterY(float texProjTmp, float alpha)
 #		include "IBL/IBL.hlsli"
 #	endif
 
-#if defined(LANDSCAPE)
+#	if defined(LANDSCAPE)
 inline void SampleLandscapeLayer(
 	float2 uv,
 	float viewDistance,
@@ -2284,13 +2284,24 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 
 #	if defined(TRUE_PBR)
 	{
-		PBR::LightProperties lightProperties = PBR::InitLightProperties(dirLightColor, dirLightColorMultiplier * dirDetailShadow, parallaxShadow);
-		float3 dirDiffuseColor, coatDirDiffuseColor, dirTransmissionColor, dirSpecularColor;
-		PBR::GetDirectLightInput(dirDiffuseColor, coatDirDiffuseColor, dirTransmissionColor, dirSpecularColor, modelNormal.xyz, coatModelNormal, refractedViewDirection, viewDirection, refractedDirLightDirection, DirLightDirection, lightProperties, pbrSurfaceProperties, tbnTr, uvOriginal);
-		lightsDiffuseColor += dirDiffuseColor;
-		coatLightsDiffuseColor += coatDirDiffuseColor;
-		transmissionColor += dirTransmissionColor;
-		specularColorPBR += dirSpecularColor * !SharedData::InInterior;
+		PBR::LightProperties lightProperties = PBR::ProcessPBRDirectLight(
+			dirLightColor,
+			dirLightColorMultiplier * dirDetailShadow,
+			parallaxShadow,
+			modelNormal.xyz,
+			coatModelNormal,
+			refractedViewDirection,
+			viewDirection,
+			refractedDirLightDirection,
+			DirLightDirection,
+			pbrSurfaceProperties,
+			tbnTr,
+			uvOriginal,
+			lightsDiffuseColor,
+			coatLightsDiffuseColor,
+			transmissionColor,
+			specularColorPBR);
+
 #		if defined(LOD_LAND_BLEND)
 		lodLandDiffuseColor += dirLightColor / Math::PI * saturate(dirLightAngle) * dirLightColorMultiplier * dirDetailShadow * parallaxShadow;
 #		endif
@@ -2376,12 +2387,23 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 					refractedLightDirection = -refract(-normalizedLightDirection, coatModelNormal, eta);
 			}
 #				endif
-			PBR::LightProperties lightProperties = PBR::InitLightProperties(lightColor, lightShadow, 1);
-			PBR::GetDirectLightInput(pointDiffuseColor, coatPointDiffuseColor, pointTransmissionColor, pointSpecularColor, modelNormal.xyz, coatModelNormal, refractedViewDirection, viewDirection, refractedLightDirection, normalizedLightDirection, lightProperties, pbrSurfaceProperties, tbnTr, uvOriginal);
-			lightsDiffuseColor += pointDiffuseColor;
-			coatLightsDiffuseColor += coatPointDiffuseColor;
-			transmissionColor += pointTransmissionColor;
-			specularColorPBR += pointSpecularColor;
+			PBR::ProcessPBRDirectLight(
+				lightColor,
+				lightShadow,
+				1,
+				modelNormal.xyz,
+				coatModelNormal,
+				refractedViewDirection,
+				viewDirection,
+				refractedLightDirection,
+				normalizedLightDirection,
+				pbrSurfaceProperties,
+				tbnTr,
+				uvOriginal,
+				lightsDiffuseColor,
+				coatLightsDiffuseColor,
+				transmissionColor,
+				specularColorPBR);
 		}
 #			else
 		lightColor *= lightShadow;
@@ -2484,11 +2506,11 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 			SharedData::lightLimitFixSettings.EnableContactShadows &&
 			!(light.lightFlags & LightLimitFix::LightFlags::Simple) &&
 			shadowComponent != 0.0 &&
-#				if defined(HAIR) && defined(CS_HAIR)
+#			if defined(HAIR) && defined(CS_HAIR)
 			true
-#				else
+#			else
 			lightAngle > 0.0
-#				endif
+#			endif
 		)
 		{
 			float3 normalizedLightDirectionVS = normalize(light.positionVS[eyeIndex].xyz - viewPosition.xyz);
@@ -2537,13 +2559,23 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 
 #			if defined(TRUE_PBR)
 		{
-			PBR::LightProperties lightProperties = PBR::InitLightProperties(lightColor, lightShadow * contactShadow, parallaxShadow);
-			float3 pointDiffuseColor, coatPointDiffuseColor, pointTransmissionColor, pointSpecularColor;
-			PBR::GetDirectLightInput(pointDiffuseColor, coatPointDiffuseColor, pointTransmissionColor, pointSpecularColor, worldSpaceNormal.xyz, coatWorldNormal, refractedViewDirectionWS, worldSpaceViewDirection, refractedLightDirection, normalizedLightDirection, lightProperties, pbrSurfaceProperties, tbnTr, uvOriginal);
-			lightsDiffuseColor += pointDiffuseColor;
-			coatLightsDiffuseColor += coatPointDiffuseColor;
-			transmissionColor += pointTransmissionColor;
-			specularColorPBR += pointSpecularColor;
+			PBR::LightProperties lightProperties = PBR::ProcessPBRDirectLight(
+				lightColor,
+				lightShadow * contactShadow,
+				parallaxShadow,
+				worldSpaceNormal.xyz,
+				coatWorldNormal,
+				refractedViewDirectionWS,
+				worldSpaceViewDirection,
+				refractedLightDirection,
+				normalizedLightDirection,
+				pbrSurfaceProperties,
+				tbnTr,
+				uvOriginal,
+				lightsDiffuseColor,
+				coatLightsDiffuseColor,
+				transmissionColor,
+				specularColorPBR);
 #				if defined(WETNESS_EFFECTS)
 			if (waterRoughnessSpecular < 1.0)
 				specularColorPBR += PBR::GetWetnessDirectLightSpecularInput(wetnessNormal, worldSpaceViewDirection, normalizedLightDirection, lightProperties.CoatLightColor, waterRoughnessSpecular) * wetnessGlossinessSpecular;
