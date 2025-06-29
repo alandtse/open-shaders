@@ -581,7 +581,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 #			if defined(TRUE_PBR)
 	{
 		PBR::LightProperties lightProperties = PBR::ProcessPBRDirectLight(
-			SharedData::DirLightColor.xyz,
+			DirLightColor.xyz,
 			dirLightColorMultiplier * dirShadow,
 			1.0f,  // no parallax shadow - grass doesn't use POM
 			normal,
