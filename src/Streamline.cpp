@@ -490,7 +490,9 @@ void Streamline::Upscale(Texture2D* a_upscaleTexture, Texture2D* a_alphaMask, sl
 		sl::Resource alpha = { sl::ResourceType::eTex2d, needsMask ? a_alphaMask->resource.get() : nullptr, 0 };
 		sl::ResourceTag alphaTag = sl::ResourceTag{ &alpha, sl::kBufferTypeBiasCurrentColorHint, sl::ResourceLifecycle::eValidUntilPresent, &fullExtent };
 
-		sl::ResourceTag resourceTags[] = { colorInTag, colorOutTag, depthTag, mvecTag, alphaTag };
+		sl::ResourceTag reactiveTag = sl::ResourceTag{ &alpha, sl::kBufferTypeReactiveMaskHint, sl::ResourceLifecycle::eValidUntilPresent, &fullExtent };
+
+		sl::ResourceTag resourceTags[] = { colorInTag, colorOutTag, depthTag, mvecTag, alphaTag, reactiveTag };
 		this->slSetTagForFrame(*frameToken, viewport, resourceTags, _countof(resourceTags), globals::d3d::context);
 	}
 
