@@ -208,26 +208,6 @@ public:
 	void SelectFeatureMenu(const std::string& featureName);
 	static std::unordered_map<std::string, int> categoryCounts;  // Number of features in each feature category
 
-	// Static utility functions
-	static const char* KeyIdToString(uint32_t key);
-
-private:
-	Settings settings;
-
-	// Menu navigation
-	std::string pendingFeatureSelection;  // Feature to select on next frame
-
-	uint32_t priorShaderKey = VK_PRIOR;  // used for blocking shaders in debugging
-	uint32_t nextShaderKey = VK_NEXT;    // used for blocking shaders in debugging
-
-	bool settingToggleKey = false;
-	bool settingSkipCompilationKey = false;
-	bool settingsEffectsToggle = false;
-	bool settingOverlayToggleKey = false;
-	uint32_t testInterval = 0;     // Seconds to wait before toggling user/test settings
-	bool inTestMode = false;       // Whether we're in test mode
-	bool usingTestConfig = false;  // Whether we're using the test config
-
 	class PerfOverlayState
 	{
 	public:
@@ -267,7 +247,28 @@ private:
 		void DrawDrawCalls();
 		void DrawFPS(Settings::PerfOverlaySettings& settings);
 		void DrawVRAM(winrt::com_ptr<IDXGIAdapter3> dxgiAdapter3);
-	} perfOverlayState;
+	};
+	bool usingTestConfig = false;
+	PerfOverlayState perfOverlayState;
+
+	// Static utility functions
+	static const char* KeyIdToString(uint32_t key);
+
+private:
+	Settings settings;
+
+	// Menu navigation
+	std::string pendingFeatureSelection;  // Feature to select on next frame
+
+	uint32_t priorShaderKey = VK_PRIOR;  // used for blocking shaders in debugging
+	uint32_t nextShaderKey = VK_NEXT;    // used for blocking shaders in debugging
+
+	bool settingToggleKey = false;
+	bool settingSkipCompilationKey = false;
+	bool settingsEffectsToggle = false;
+	bool settingOverlayToggleKey = false;
+	uint32_t testInterval = 0;  // Seconds to wait before toggling user/test settings
+	bool inTestMode = false;    // Whether we're in test mode
 
 	std::chrono::steady_clock::time_point lastTestSwitch = std::chrono::steady_clock::now();  // Time of last test switch
 
