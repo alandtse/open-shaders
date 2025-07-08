@@ -2093,7 +2093,19 @@ void Menu::PerfOverlayState::DrawFPS(Settings::PerfOverlaySettings& settings)
 
 	// Show Post-FG frametime graph if enabled
 	if (settings.ShowPostFGFrameTimeGraph && isFrameGenerationActive) {
-		DrawPostFGFrameTimeGraph(settings);
+		// Check if FSR frame generation is active (FSR doesn't provide timing data)
+		bool isFSRFrameGen = globals::fidelityFX && globals::fidelityFX->isFrameGenActive;
+
+		if (isFSRFrameGen) {
+			// Show note that post-FG timing isn't available with FSR
+			ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.0f, 1.0f), "Post-FG timing not available with FSR3 Framegen");
+			if (auto _tt = Util::HoverTooltipWrapper()) {
+				ImGui::Text("AMD FSR Frame Generation doesn't provide internal timing data.\nPost-FG performance metrics are only available with NVIDIA DLSS Frame Generation.");
+			}
+		} else {
+			// Show post-FG graph for DLSS
+			DrawPostFGFrameTimeGraph(settings);
+		}
 	}
 }
 
@@ -2292,7 +2304,20 @@ void Menu::DrawPerformanceOverlaySettings()
 				if (isFrameGenerationActive) {
 					// Pre-Frame Generation FPS
 					ImGui::Checkbox("Show Pre-FG Frametime Graph", &settings.PerfOverlay.ShowPreFGFrameTimeGraph);
-					ImGui::Checkbox("Show Post-FG Frametime Graph", &settings.PerfOverlay.ShowPostFGFrameTimeGraph);
+					// Check if FSR frame generation is active
+					bool isFSRFrameGen = globals::fidelityFX && globals::fidelityFX->isFrameGenActive;
+					if (isFSRFrameGen) {
+						// Disable post-FG option for FSR and show note
+						ImGui::BeginDisabled();
+						ImGui::Checkbox("Show Post-FG Frametime Graph", &settings.PerfOverlay.ShowPostFGFrameTimeGraph);
+						ImGui::EndDisabled();
+						if (auto _tt = Util::HoverTooltipWrapper()) {
+							ImGui::Text("Post-FG timing not available with AMD FSR Frame Generation.\nThis option is only available with NVIDIA DLSS Frame Generation.");
+						}
+					} else {
+						// Enable post-FG option for DLSS
+						ImGui::Checkbox("Show Post-FG Frametime Graph", &settings.PerfOverlay.ShowPostFGFrameTimeGraph);
+					}
 				} else {
 					// Regular FPS options when frame generation is not active
 					ImGui::Checkbox("Show Frametime Graph", &settings.PerfOverlay.ShowPreFGFrameTimeGraph);
