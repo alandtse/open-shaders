@@ -2066,13 +2066,14 @@ void Menu::PerfOverlayState::DrawFPS(Settings::PerfOverlaySettings& settings)
 		ImGui::PushStyleColor(ImGuiCol_PlotLines, ImVec4(0.0f, 1.0f, 0.0f, 1.0f));  // Green line
 
 		// Draw the graph
+		float graphWidth = ImGui::GetWindowWidth() * 0.9f;
 		ImGui::PlotLines("##frametime",
 			frameTimeHistory.data(),
 			settings.FrameHistorySize,
 			frameTimeHistoryIndex,
 			overlay_text,
 			smoothedMinFrameTime, smoothedMaxFrameTime,
-			ImVec2(-FLT_MIN, 50.0f * textScale));
+			ImVec2(graphWidth, 50.0f * textScale));
 
 		ImGui::PopStyleColor();
 
@@ -2129,13 +2130,14 @@ void Menu::PerfOverlayState::DrawPostFGFrameTimeGraph(Settings::PerfOverlaySetti
 	ImGui::PushStyleColor(ImGuiCol_PlotLines, ImVec4(0.0f, 0.5f, 1.0f, 1.0f));  // Blue line
 
 	// Draw the graph
+	float graphWidth = ImGui::GetWindowWidth() * 0.9f;
 	ImGui::PlotLines("##postfgframetime",
 		postFGFrameTimeHistory.data(),
 		settings.FrameHistorySize,
 		postFGFrameTimeHistoryIndex,
 		overlay_text,
 		smoothedMinFrameTime, smoothedMaxFrameTime,
-		ImVec2(ImGui::GetWindowWidth() * 0.9f, 50.0f * textScale));
+		ImVec2(graphWidth, 50.0f * textScale));
 
 	ImGui::PopStyleColor();
 
