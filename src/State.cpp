@@ -18,6 +18,7 @@
 
 void State::Draw()
 {
+	auto lock = Lock();
 	auto shaderCache = globals::shaderCache;
 	auto deferred = globals::deferred;
 	auto terrainBlending = globals::features::terrainBlending;

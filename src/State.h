@@ -13,11 +13,22 @@ using json = nlohmann::json;
 
 #include "reshade/reshade_api.hpp"
 #include <Hooks.h>
+#include <mutex>
 #include <reshade/reshade.hpp>
 
 class State
 {
 public:
+	State()
+	{
+		std::lock_guard<std::mutex> lock(statsMutex);
+		for (auto& v : smoothDrawCalls) v = 0.0;
+		for (auto& v : drawCalls) v = 0;
+		for (auto& v : frameTimePerType) v = 0.0f;
+		for (auto& v : smoothFrameTimePerType) v = 0.0f;
+	}
+	std::lock_guard<std::mutex> Lock() { return std::lock_guard<std::mutex>(statsMutex); }
+
 	static State* GetSingleton()
 	{
 		static State singleton;
@@ -235,4 +246,5 @@ public:
 private:
 	std::shared_ptr<REX::W32::ID3DUserDefinedAnnotation> pPerf;
 	bool initialized = false;
+	std::mutex statsMutex;
 };
