@@ -1738,6 +1738,7 @@ void Menu::DrawOverlay()
 			ImGui::End();
 			return;
 		}
+		remaining = std::max(0.0f, remaining);
 		ImGui::Text(fmt::format("{} : {:.1f} seconds left", Menu::GetSingleton()->usingTestConfig ? "Variant B (TEST)" : "Variant A (USER)", remaining).c_str());
 		ImGui::End();
 	}
