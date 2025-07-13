@@ -15,7 +15,7 @@ void ABTestAggregator::OnABSwitch(ABVariant variant)
 	}
 
 	// Start a new interval
-	currentInterval = new ABInterval{ variant, {}, now, now };
+	currentInterval = std::make_unique<ABInterval>(variant, std::vector<std::vector<DrawCallRow>>{}, now, now);
 
 	// Record test start time on first switch
 	if (intervals.empty()) {
@@ -39,7 +39,6 @@ void ABTestAggregator::OnFrame(const std::vector<DrawCallRow>& rows)
 
 	// Outlier detection: exclude frames that are more than 3x the median or > 100ms
 	// This catches shader compilation spikes, JSON loading, and other anomalies
-	static std::vector<float> recentFrameTimes;
 	recentFrameTimes.push_back(totalFrameTime);
 	if (recentFrameTimes.size() > kFrameHistoryBaseline) {  // Keep last 30 frames for baseline
 		recentFrameTimes.erase(recentFrameTimes.begin());
@@ -73,17 +72,15 @@ void ABTestAggregator::OnTestEnd()
 	if (currentInterval) {
 		currentInterval->endTime = now;
 		intervals.push_back(std::move(*currentInterval));
-		currentInterval = nullptr;
+		currentInterval.reset();
 	}
 }
 
 void ABTestAggregator::Clear()
 {
 	intervals.clear();
-	if (currentInterval) {
-		delete currentInterval;
-		currentInterval = nullptr;
-	}
+	currentInterval.reset();
+	recentFrameTimes.clear();
 	hasSettingsA = false;
 	hasSettingsB = false;
 	settingsA.clear();

@@ -1705,7 +1705,7 @@ void Menu::DrawOverlay()
 
 	// Always update test data during TEST phase, regardless of overlay visibility
 	if (abTestingManager->IsEnabled()) {
-		PerformanceOverlay::UpdateAllShaderTestData();
+		PerformanceOverlay::GetSingleton()->UpdateAllShaderTestData();
 
 		// Add A/B test aggregator data collection here
 		if (auto* overlay = PerformanceOverlay::GetSingleton()) {

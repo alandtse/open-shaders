@@ -1,5 +1,6 @@
 #pragma once
 #include <chrono>
+#include <memory>
 #include <nlohmann/json.hpp>
 #include <vector>
 
@@ -76,7 +77,7 @@ public:
 
 private:
 	std::vector<ABInterval> intervals;
-	ABInterval* currentInterval = nullptr;
+	std::unique_ptr<ABInterval> currentInterval;
 
 	// Settings snapshots
 	nlohmann::json settingsA;
@@ -87,4 +88,7 @@ private:
 	// Test timing
 	std::chrono::steady_clock::time_point testStartTime;
 	std::chrono::steady_clock::time_point testEndTime;
+
+	// Frame history for outlier detection
+	std::vector<float> recentFrameTimes;
 };

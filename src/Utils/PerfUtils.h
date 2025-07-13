@@ -24,6 +24,8 @@ namespace Util
      */
 	inline float CalcFPS(float frameTimeMs)
 	{
+		if (frameTimeMs <= 0.0f)
+			return 0.0f;
 		return 1000.0f / frameTimeMs;
 	}
 
@@ -42,13 +44,27 @@ namespace Util
 	/**
      * @brief Calculates the median of a vector of floats.
      * @param v Vector of floats.
-     * @return Median value.
+     * @return Median value. For even-sized vectors, returns the average of the two middle elements.
      */
 	inline float Median(std::vector<float> v)
 	{
 		if (v.empty())
 			return 0.0f;
-		std::nth_element(v.begin(), v.begin() + v.size() / 2, v.end());
-		return v[v.size() / 2];
+
+		size_t n = v.size();
+		size_t mid = n / 2;
+
+		if (n % 2 == 1) {
+			// Odd-sized vector: return the middle element
+			std::nth_element(v.begin(), v.begin() + mid, v.end());
+			return v[mid];
+		} else {
+			// Even-sized vector: return average of two middle elements
+			std::nth_element(v.begin(), v.begin() + mid - 1, v.end());
+			float lower = v[mid - 1];
+			std::nth_element(v.begin() + mid, v.begin() + mid, v.end());
+			float upper = v[mid];
+			return (lower + upper) / 2.0f;
+		}
 	}
 }
