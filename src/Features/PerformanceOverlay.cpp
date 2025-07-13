@@ -460,7 +460,7 @@ void PerformanceOverlay::DrawABTestResultsTable()
 					}
 				}
 			} },
-		{ "A Median",
+		{ "A Median (ms)",
 			[theme, aMedianLegend](const DrawCallRow& row, int) {
 				float value = row.costPerCall;
 				// Color A median relative to B median (stored in testCostPerCall for now)
@@ -496,7 +496,7 @@ void PerformanceOverlay::DrawABTestResultsTable()
 					}
 				}
 			} },
-		{ "B Median",
+		{ "B Median (ms)",
 			[theme, bMedianLegend](const DrawCallRow& row, int) {
 				if (!row.testCostPerCall.has_value()) {
 					ImGui::TextDisabled("-");
@@ -538,7 +538,7 @@ void PerformanceOverlay::DrawABTestResultsTable()
 					}
 				}
 			} },
-		{ "Median Delta",
+		{ "Median Delta (ms)",
 			[theme, medianDeltaLegend](const DrawCallRow& row, int) {
 				if (!row.testCostPerCall.has_value()) {
 					ImGui::TextDisabled("-");
