@@ -112,8 +112,10 @@ void State::Draw()
 			frameStartTime = currentTime;
 		}
 
-		if (currentShader)
+		if (currentShader) {
 			drawCalls[magic_enum::enum_integer(currentShader->shaderType.get())]++;
+			drawCalls[magic_enum::enum_integer(RE::BSShader::Type::Total)]++;
+		}
 
 		if (currentShader && updateShader) {
 			auto type = magic_enum::enum_integer(currentShader->shaderType.get());

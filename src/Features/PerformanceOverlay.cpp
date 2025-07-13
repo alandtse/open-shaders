@@ -278,7 +278,8 @@ void PerformanceOverlay::DrawOverlay()
 			this->settings.BackgroundOpacity));
 
 	// Set text size based on user preference
-	this->perfOverlayState.SetTextScale(this->perfOverlayState.SetTextScale());
+	float scale = this->perfOverlayState.CalculateTextScale();
+	this->perfOverlayState.SetTextScale(scale);
 
 	ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, this->settings.ShowBorder ? 1.0f : 0.0f);
 
@@ -704,10 +705,16 @@ void PerformanceOverlay::ConvertABTestResultsToRows(const std::vector<Aggregated
 				row.tooltip = "Draw calls for this shader type.";
 			}
 		} else {
-			if (row.shaderType == static_cast<int>(SpecialShaderType::Total)) {
-				row.tooltip = "Total frame time.";
-			} else if (row.shaderType == static_cast<int>(SpecialShaderType::Other)) {
-				row.tooltip = "Frame time not attributed to any measured shader type. This includes UI, post-processing, engine work, and any GPU activity not directly measured by the overlay.";
+			auto maybeSpecialType = magic_enum::enum_cast<SpecialShaderType>(row.shaderType);
+			if (maybeSpecialType.has_value()) {
+				switch (*maybeSpecialType) {
+				case SpecialShaderType::Total:
+					row.tooltip = "Total frame time.";
+					break;
+				case SpecialShaderType::Other:
+					row.tooltip = "Frame time not attributed to any measured shader type. This includes UI, post-processing, engine work, and any GPU activity not directly measured by the overlay.";
+					break;
+				}
 			}
 		}
 		if (row.shaderType < 0) {
@@ -1204,7 +1211,8 @@ void PerformanceOverlay::DrawABTestSection(const std::vector<DrawCallRow>& allRo
 						bool variantBBetter = false;
 						auto results = aggregator.GetAggregatedResults();
 						for (const auto& stat : results) {
-							if (stat.shaderType == static_cast<int>(SpecialShaderType::Total)) {  // Total row
+							auto maybeSpecialType = magic_enum::enum_cast<SpecialShaderType>(stat.shaderType);
+							if (maybeSpecialType.has_value() && *maybeSpecialType == SpecialShaderType::Total) {  // Total row
 								if (stat.meanA < stat.meanB) {
 									variantABetter = true;  // A has lower frame time (better)
 								} else if (stat.meanB < stat.meanA) {
@@ -1423,10 +1431,18 @@ std::vector<ColumnConfig> PerformanceOverlay::BuildDrawCallTableColumns(const Me
 			} },
 		{ legends.drawCalls.header,
 			[](const DrawCallRow& row, int) {
-				ImGui::Text("%d", row.drawCalls);
+				if (row.drawCalls == kDrawCallsNotApplicable) {
+					ImGui::TextDisabled("-");
+				} else {
+					ImGui::Text("%d", row.drawCalls);
+				}
 				if (ImGui::IsItemHovered()) {
 					if (auto _tt = Util::HoverTooltipWrapper()) {
-						ImGui::TextUnformatted("Draw Calls: Number of draw calls for this shader type in the current frame.");
+						if (row.drawCalls == kDrawCallsNotApplicable) {
+							ImGui::TextUnformatted("Draw Calls: Not applicable for unmeasured GPU time.");
+						} else {
+							ImGui::TextUnformatted("Draw Calls: Number of draw calls for this shader type in the current frame.");
+						}
 					}
 				}
 			},
@@ -1526,18 +1542,18 @@ std::pair<std::vector<DrawCallRow>, std::vector<DrawCallRow>> PerformanceOverlay
 	if (std::abs(otherFrameTime) < 1e-4f)
 		otherFrameTime = 0.0f;
 	std::optional<float> otherTestFrameTime, otherTestCostPerCall, totalTestFrameTime, totalTestCostPerCall;
-	auto itOther = this->testData.find(static_cast<int>(SpecialShaderType::Other));
+	auto itOther = this->testData.find(magic_enum::enum_integer(SpecialShaderType::Other));
 	if (itOther != this->testData.end()) {
 		otherTestFrameTime = itOther->second.frameTime;
 		otherTestCostPerCall = itOther->second.costPerCall;
 	}
-	auto itTotal = this->testData.find(static_cast<int>(SpecialShaderType::Total));
+	auto itTotal = this->testData.find(magic_enum::enum_integer(SpecialShaderType::Total));
 	if (itTotal != this->testData.end()) {
 		totalTestFrameTime = itTotal->second.frameTime;
 		totalTestCostPerCall = itTotal->second.costPerCall;
 	}
 	DrawCallRow otherRow = {
-		"Other:", static_cast<int>(SpecialShaderType::Other), 0, otherFrameTime, otherPercent,
+		"Other:", magic_enum::enum_integer(SpecialShaderType::Other), kDrawCallsNotApplicable, otherFrameTime, otherPercent,
 		0.0f,
 		std::string("Frame time not attributed to any measured shader type. This includes UI, post-processing, engine work, and any GPU activity not directly measured by the overlay."),
 		true, otherTestFrameTime, otherTestCostPerCall
@@ -1547,7 +1563,7 @@ std::pair<std::vector<DrawCallRow>, std::vector<DrawCallRow>> PerformanceOverlay
 	float totalPercent = 100.0f;  // Total is always 100% of total
 
 	DrawCallRow totalRow = {
-		"Total:", static_cast<int>(SpecialShaderType::Total), static_cast<int>(globals::state->GetTotalSmoothedDrawCalls()), totalFrameTime, totalPercent,
+		"Total:", magic_enum::enum_integer(SpecialShaderType::Total), static_cast<int>(globals::state->GetTotalSmoothedDrawCalls()), totalFrameTime, totalPercent,
 		totalCostPerCall,
 		std::string("Total frame time."),
 		true, totalTestFrameTime, totalTestCostPerCall
@@ -1649,8 +1665,8 @@ void PerformanceOverlay::HandleShaderToggle(const DrawCallRow& row, bool wasEnab
 		// Save the last live value before disabling
 		this->UpdateShaderTestData(row.shaderType, prevFrameTime, prevCostPerCall);
 		// Save Total and Other test data as well
-		this->testData[static_cast<int>(SpecialShaderType::Total)] = { smoothedFrameTime, totalCostPerCall, 100.0f };
-		this->testData[static_cast<int>(SpecialShaderType::Other)] = { otherFrameTime, 0.0f, otherPercent };
+		this->testData[magic_enum::enum_integer(SpecialShaderType::Total)] = { smoothedFrameTime, totalCostPerCall, 100.0f };
+		this->testData[magic_enum::enum_integer(SpecialShaderType::Other)] = { otherFrameTime, 0.0f, otherPercent };
 		this->testDataSource = TestDataSource::ManualShaderToggle;
 		this->testDataLastUpdated = std::chrono::steady_clock::now();
 	}
@@ -1688,8 +1704,8 @@ void PerformanceOverlay::HandleTotalRowToggle()
 			measuredSum += frameTime;
 		});
 		auto [otherFrameTime, otherPercent, totalCostPerCall] = CalculateSummaryData(smoothedFrameTime, measuredSum);
-		this->testData[static_cast<int>(SpecialShaderType::Total)] = { smoothedFrameTime, totalCostPerCall, 100.0f };
-		this->testData[static_cast<int>(SpecialShaderType::Other)] = { otherFrameTime, 0.0f, otherPercent };
+		this->testData[magic_enum::enum_integer(SpecialShaderType::Total)] = { smoothedFrameTime, totalCostPerCall, 100.0f };
+		this->testData[magic_enum::enum_integer(SpecialShaderType::Other)] = { otherFrameTime, 0.0f, otherPercent };
 		this->testDataSource = TestDataSource::ManualShaderToggle;
 		this->testDataLastUpdated = std::chrono::steady_clock::now();
 	}
@@ -1853,8 +1869,8 @@ void PerformanceOverlay::UpdateShaderTestDataEntry(int shaderType, float frameTi
 
 void PerformanceOverlay::UpdateSummaryTestData(float smoothedFrameTime, float otherFrameTime, float otherPercent, float totalCostPerCall)
 {
-	testData[static_cast<int>(SpecialShaderType::Other)] = { otherFrameTime, 0.0f, otherPercent };
-	testData[static_cast<int>(SpecialShaderType::Total)] = { smoothedFrameTime, totalCostPerCall, 100.0f };
+	testData[magic_enum::enum_integer(SpecialShaderType::Other)] = { otherFrameTime, 0.0f, otherPercent };
+	testData[magic_enum::enum_integer(SpecialShaderType::Total)] = { smoothedFrameTime, totalCostPerCall, 100.0f };
 }
 // ============================================================================
 // PERFORMANCE OVERLAY STATE MANAGEMENT
@@ -1933,7 +1949,7 @@ void PerformanceOverlay::PerfOverlayState::UpdateMaxFrameTime()
 	overlay->perfOverlayState.SetMaxFrameTime(*std::max_element(overlay->perfOverlayState.GetFrameTimeHistory().begin(), overlay->perfOverlayState.GetFrameTimeHistory().end()));
 }
 
-float PerformanceOverlay::PerfOverlayState::SetTextScale()
+float PerformanceOverlay::PerfOverlayState::CalculateTextScale()
 {
 	auto* overlay = GetSingleton();
 	switch (overlay->settings.Size) {

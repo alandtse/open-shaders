@@ -20,6 +20,9 @@ enum class SpecialShaderType
 	Other = -2
 };
 
+// Constants for special draw call values
+static constexpr int kDrawCallsNotApplicable = -1;  // Special value to indicate draw calls are not applicable
+
 struct DrawCallRow
 {
 	std::string label;
@@ -279,7 +282,7 @@ struct PerformanceOverlay : OverlayFeature
 		void ResizePostFGFrameTimeHistory(size_t size, float defaultValue = 0.0f) { postFGFrameTimeHistory.resize(size, defaultValue); }
 
 		// Methods that modify state
-		float SetTextScale();
+		float CalculateTextScale();
 		/**
 		* @brief Updates all runtime state related to the performance overlay graph.
 		*

@@ -371,7 +371,7 @@ namespace Util
 	inline void ShowSortedStringTable(
 		const char* table_id,
 		const std::vector<std::string>& headers,
-		std::vector<std::vector<std::string>> rows,
+		const std::vector<std::vector<std::string>>& rows,
 		size_t sortColumn = 0,
 		bool ascending = true,
 		const std::vector<TableSortFunc>& customSorts = {},
@@ -401,14 +401,36 @@ namespace Util
 					cellRender(row, col, value[col]);
 			};
 		}
-		ShowSortedStringTable<std::vector<std::string>>(
-			table_id,
-			headers,
-			rows,
-			sortColumn,
-			ascending,
-			adaptedSorts,
-			adaptedCellRender);
+
+		// Check if sorting is needed by looking at ImGui table sort specs
+		bool needsSorting = false;
+		if (const ImGuiTableSortSpecs* sortSpecs = ImGui::TableGetSortSpecs()) {
+			needsSorting = (sortSpecs->SpecsCount > 0);
+		}
+
+		// Only make a copy if we need to sort, otherwise use the original data
+		if (needsSorting) {
+			std::vector<std::vector<std::string>> rowsCopy = rows;
+			ShowSortedStringTable<std::vector<std::string>>(
+				table_id,
+				headers,
+				rowsCopy,
+				sortColumn,
+				ascending,
+				adaptedSorts,
+				adaptedCellRender);
+		} else {
+			// For non-sorting case, we can use the original data directly
+			// We need to const_cast because the template expects non-const, but we know it won't be modified
+			ShowSortedStringTable<std::vector<std::string>>(
+				table_id,
+				headers,
+				const_cast<std::vector<std::vector<std::string>>&>(rows),
+				sortColumn,
+				ascending,
+				adaptedSorts,
+				adaptedCellRender);
+		}
 	}
 
 	/**
