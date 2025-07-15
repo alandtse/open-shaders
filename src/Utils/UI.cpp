@@ -693,4 +693,61 @@ namespace Util
 		ImGui::PopStyleColor(5);
 		ImGui::PopID();
 	}
+
+	void ShowSortedStringTableStrings(
+		const char* table_id,
+		const std::vector<std::string>& headers,
+		const std::vector<std::vector<std::string>>& rows,
+		size_t sortColumn,
+		bool ascending,
+		const std::vector<TableSortFunc>& customSorts,
+		TableCellRenderFunc cellRender)
+	{
+		ImGuiTableFlags flags = ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_Sortable;
+		if (ImGui::BeginTable(table_id, static_cast<int>(headers.size()), flags)) {
+			for (const auto& header : headers)
+				ImGui::TableSetupColumn(header.c_str());
+			ImGui::TableHeadersRow();
+
+			// Determine sorting
+			int sortCol = static_cast<int>(sortColumn);
+			bool sortAsc = ascending;
+			if (const ImGuiTableSortSpecs* sortSpecs = ImGui::TableGetSortSpecs()) {
+				if (sortSpecs->SpecsCount > 0) {
+					sortCol = sortSpecs->Specs->ColumnIndex;
+					sortAsc = sortSpecs->Specs->SortDirection == ImGuiSortDirection_Ascending;
+				}
+			}
+
+			// Make a copy if sorting is needed
+			std::vector<std::vector<std::string>> sortedRows = rows;
+			if (sortCol >= 0 && static_cast<size_t>(sortCol) < headers.size()) {
+				if (sortCol < static_cast<int>(customSorts.size()) && customSorts[sortCol]) {
+					auto cmp = customSorts[sortCol];
+					std::sort(sortedRows.begin(), sortedRows.end(), [sortCol, sortAsc, &cmp](const std::vector<std::string>& a, const std::vector<std::string>& b) {
+						const std::string& aVal = (sortCol < a.size()) ? a[sortCol] : std::string();
+						const std::string& bVal = (sortCol < b.size()) ? b[sortCol] : std::string();
+						return cmp(aVal, bVal, sortAsc);
+					});
+				}
+			}
+
+			// Render rows
+			for (size_t rowIdx = 0; rowIdx < sortedRows.size(); ++rowIdx) {
+				const auto& row = sortedRows[rowIdx];
+				ImGui::TableNextRow();
+				for (size_t col = 0; col < headers.size(); ++col) {
+					ImGui::TableSetColumnIndex(static_cast<int>(col));
+					if (cellRender) {
+						const std::string& value = (col < row.size()) ? row[col] : std::string();
+						cellRender(static_cast<int>(rowIdx), static_cast<int>(col), value);
+					} else {
+						if (col < row.size())
+							ImGui::TextUnformatted(row[col].c_str());
+					}
+				}
+			}
+			ImGui::EndTable();
+		}
+	}
 }  // namespace Util
