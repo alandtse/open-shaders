@@ -602,9 +602,15 @@ namespace Util
 		return false;
 	}
 
-	const TableSortFunc VersionSortComparator = [](const std::string& a, const std::string& b, bool asc) {
+	bool VersionSortComparator(const std::string& a, const std::string& b, bool asc)
+	{
 		return VersionStringLess(a, b, asc);
-	};
+	}
+
+	bool StringSortComparator(const std::string& a, const std::string& b, bool ascending)
+	{
+		return ascending ? (a < b) : (b < a);
+	}
 
 	ImVec4 GetThresholdColor(float value, float good, float warn, ImVec4 goodColor, ImVec4 warnColor, ImVec4 badColor)
 	{
@@ -722,14 +728,13 @@ namespace Util
 			// Make a copy if sorting is needed
 			std::vector<std::vector<std::string>> sortedRows = rows;
 			if (sortCol >= 0 && static_cast<size_t>(sortCol) < headers.size()) {
-				if (sortCol < static_cast<int>(customSorts.size()) && customSorts[sortCol]) {
-					auto cmp = customSorts[sortCol];
-					std::sort(sortedRows.begin(), sortedRows.end(), [sortCol, sortAsc, &cmp](const std::vector<std::string>& a, const std::vector<std::string>& b) {
-						const std::string& aVal = (sortCol < a.size()) ? a[sortCol] : std::string();
-						const std::string& bVal = (sortCol < b.size()) ? b[sortCol] : std::string();
-						return cmp(aVal, bVal, sortAsc);
-					});
-				}
+				// Fallback to default string sort if no custom sort is provided
+				auto cmp = (sortCol < static_cast<int>(customSorts.size()) && customSorts[sortCol]) ? customSorts[sortCol] : StringSortComparator;
+				std::sort(sortedRows.begin(), sortedRows.end(), [sortCol, sortAsc, &cmp](const std::vector<std::string>& a, const std::vector<std::string>& b) {
+					const std::string& aVal = (sortCol < a.size()) ? a[sortCol] : std::string();
+					const std::string& bVal = (sortCol < b.size()) ? b[sortCol] : std::string();
+					return cmp(aVal, bVal, sortAsc);
+				});
 			}
 
 			// Render rows

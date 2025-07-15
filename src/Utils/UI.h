@@ -362,7 +362,10 @@ namespace Util
 	/**
 	 * @brief TableSortFunc for version strings, using VersionStringLess.
 	 */
-	extern const TableSortFunc VersionSortComparator;
+	bool VersionSortComparator(const std::string& a, const std::string& b, bool ascending);
+
+	// A standard string comparator for use with ShowSortedStringTable
+	bool StringSortComparator(const std::string& a, const std::string& b, bool ascending);
 
 	// Performance overlay formatting and color helpers
 	ImVec4 GetThresholdColor(float value, float good, float warn, ImVec4 goodColor, ImVec4 warnColor, ImVec4 badColor);
