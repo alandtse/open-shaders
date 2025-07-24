@@ -980,7 +980,8 @@ void VR::UpdateVROverlayPosition()
 		if (settings.VRMenuPositioningMethod == 0) {
 			// HMD Relative positioning
 			vr::TrackedDevicePose_t hmdPose;
-			ctx.system->GetDeviceToAbsoluteTrackingPose(vr::TrackingUniverseStanding, 0, &hmdPose, 1);
+			if (!Util::GetDeviceToAbsoluteTrackingPoseCompatible(vr::TrackingUniverseStanding, 0, &hmdPose, 1))
+				return;
 
 			if (hmdPose.bPoseIsValid) {
 				// Calculate position in front of HMD using offsets directly
@@ -1809,7 +1810,8 @@ void VR::UpdateActiveDrag()
 
 				if (attachedControllerIndex != vr::k_unTrackedDeviceIndexInvalid) {
 					vr::TrackedDevicePose_t controllerPose;
-					system->GetDeviceToAbsoluteTrackingPose(vr::TrackingUniverseStanding, 0, &controllerPose, 1);
+					if (!Util::GetDeviceToAbsoluteTrackingPoseCompatible(vr::TrackingUniverseStanding, 0, &controllerPose, 1))
+						break;
 					if (controllerPose.bPoseIsValid) {
 						Matrix attachedControllerMatrix = Util::HmdMatrix34ToMatrix(controllerPose.mDeviceToAbsoluteTracking);
 
@@ -1841,7 +1843,8 @@ void VR::UpdateActiveDrag()
 			{
 				// Get current HMD transform to convert world deltas to local space
 				vr::TrackedDevicePose_t hmdPose;
-				system->GetDeviceToAbsoluteTrackingPose(vr::TrackingUniverseStanding, 0, &hmdPose, 1);
+				if (!Util::GetDeviceToAbsoluteTrackingPoseCompatible(vr::TrackingUniverseStanding, 0, &hmdPose, 1))
+					break;
 				if (hmdPose.bPoseIsValid) {
 					Matrix hmdMatrix = Util::HmdMatrix34ToMatrix(hmdPose.mDeviceToAbsoluteTracking);
 
