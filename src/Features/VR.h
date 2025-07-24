@@ -3,6 +3,7 @@
 #include "OverlayFeature.h"
 #include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <d3d11.h>
 #include <imgui_impl_dx11.h>
 #include <magic_enum.hpp>
@@ -431,6 +432,16 @@ public:
 	void RecreateOverlayTexturesIfNeeded();
 	void SubmitOverlayFrame();
 
+	// Virtual keyboard functionality for VR text input
+	bool ShowVRKeyboard(const char* description, const std::string& existingText, size_t maxLength = 256, bool useMinimalMode = false);
+	bool IsVRKeyboardVisible() const;
+	void HideVRKeyboard();
+	std::string GetVRKeyboardText() const;
+	void ClearVRKeyboardText();
+	void ProcessVRKeyboardEvents();
+	bool WasVRKeyboardClosedRecently() const;  // Check if keyboard was closed within last 200ms
+	void ForceTabActivation();                 // Force Tab/Shift+Tab to reactivate field
+
 	/**
 	 * @brief Context for rendering VR overlays with render target management
 	 */
@@ -488,6 +499,7 @@ public:
 	// OpenVR overlay handles and DirectX 11 rendering resources
 	vr::VROverlayHandle_t menuOverlayHandle = vr::k_ulOverlayHandleInvalid;
 	vr::VROverlayHandle_t menuControllerOverlayHandle = vr::k_ulOverlayHandleInvalid;
+	vr::VROverlayHandle_t keyboardOverlayHandle = vr::k_ulOverlayHandleInvalid;  // Dedicated keyboard overlay
 	ID3D11Texture2D* menuTexture = nullptr;
 	ID3D11RenderTargetView* menuRTV = nullptr;
 	ID3D11Texture2D* menuControllerTexture = nullptr;
@@ -573,6 +585,16 @@ public:
 
 	// Button controller recording state for UI settings
 	std::unordered_map<uint32_t, ControllerDevice> recordingButtonControllers;
+
+	// VR Keyboard state
+	bool isKeyboardVisible = false;
+	std::string keyboardBuffer;
+	uint64_t keyboardUserValue = 0;
+	bool keyboardJustOpened = false;                          // Track if keyboard was just opened to prevent immediate closure
+	bool keyboardFinished = false;                            // Track if keyboard just finished to allow final sync
+	int keyboardOpenFrames = 0;                               // Count frames since keyboard opened
+	std::chrono::steady_clock::time_point keyboardOpenTime;   // Track when keyboard was opened
+	std::chrono::steady_clock::time_point keyboardCloseTime;  // Track when keyboard was closed
 
 private:
 	//=============================================================================

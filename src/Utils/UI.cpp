@@ -8,6 +8,7 @@
 #include "../Feature.h"
 #include "../Globals.h"
 #include "../Menu.h"
+#include "../VRImGui.h"
 
 #define STB_IMAGE_IMPLEMENTATION
 #include <algorithm>
@@ -665,8 +666,9 @@ namespace Util
 		strncpy_s(buffer, searchString.c_str(), sizeof(buffer) - 1);
 		buffer[sizeof(buffer) - 1] = '\0';
 
-		if (ImGui::InputTextWithHint("##feature_search", "Search Features...", buffer, sizeof(buffer))) {
+		if (ImGui_InputTextWithHint("##feature_search", "Search Features...", buffer, sizeof(buffer))) {
 			searchString = buffer;
+			logger::debug("UI Search: Text changed to '{}'", searchString);
 		}
 
 		// Draw a simple search icon (magnifying glass shape)

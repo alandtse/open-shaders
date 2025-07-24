@@ -9,8 +9,10 @@
 #include "Utils/PerfUtils.h"
 #include "Utils/UI.h"
 #include "Utils/VRUtils.h"
+#include "VRImGui.h"
 #include <DirectXMath.h>
 #include <SimpleMath.h>
+#include <chrono>
 #include <cmath>
 #include <d3d11.h>
 #include <imgui_impl_dx11.h>
@@ -1226,10 +1228,13 @@ void VR::DestroyOverlay()
 {
 	RE::BSOpenVR* openvr = RE::BSOpenVR::GetSingleton();
 	auto* overlay = openvr ? RE::BSOpenVR::GetIVROverlayFromContext(&openvr->vrContext) : nullptr;
+	auto* cleanOverlay = RE::BSOpenVR::GetCleanIVROverlay();
+
 	if (!overlay) {
 		logger::error("DestroyOverlay: IVROverlay is nullptr");
 		return;
 	}
+
 	if (menuOverlayHandle != vr::k_ulOverlayHandleInvalid) {
 		overlay->DestroyOverlay(menuOverlayHandle);
 		menuOverlayHandle = vr::k_ulOverlayHandleInvalid;
@@ -1238,6 +1243,13 @@ void VR::DestroyOverlay()
 		overlay->DestroyOverlay(menuControllerOverlayHandle);
 		menuControllerOverlayHandle = vr::k_ulOverlayHandleInvalid;
 	}
+
+	// CRITICAL FIX: Use clean overlay for keyboard overlay destruction
+	if (keyboardOverlayHandle != vr::k_ulOverlayHandleInvalid && cleanOverlay) {
+		cleanOverlay->DestroyOverlay(keyboardOverlayHandle);
+		keyboardOverlayHandle = vr::k_ulOverlayHandleInvalid;
+	}
+
 	CleanupOverlayTextures();
 }
 
@@ -1465,6 +1477,9 @@ void VR::UpdateOverlayMenuStateFromInput()
 
 void VR::ProcessVREvents(std::vector<Menu::KeyEvent>& vrEvents)
 {
+	// Process VR keyboard events first
+	ProcessVRKeyboardEvents();
+
 	// Check for handedness changes and reset controller states if needed
 	bool currentLeftHandedMode = RE::BSOpenVRControllerDevice::IsLeftHandedMode();
 	static bool firstCall = true;
@@ -2085,4 +2100,555 @@ void VR::SetFixedOverlayToCurrentHMD()
 		settings.VRMenuOffsetY,
 		settings.VRMenuOffsetZ);
 	fixedWorldOverlayPosition.m = Util::HmdMatrix34ToMatrix(transform);
+}
+
+//=============================================================================
+// VR KEYBOARD FUNCTIONALITY
+//=============================================================================
+
+bool VR::ShowVRKeyboard(const char* description, const std::string& existingText, size_t maxLength, bool useMinimalMode)
+{
+	logger::debug("ShowVRKeyboard called with description: '{}', existingText: '{}'", description ? description : "null", existingText);
+	logger::debug("ShowVRKeyboard: Current state - isKeyboardVisible={}, keyboardFinished={}, keyboardOverlayHandle=0x{:X}",
+		isKeyboardVisible, keyboardFinished, keyboardOverlayHandle);
+
+	// CRITICAL FIX: Use clean overlay context for keyboard operations (like menu overlays)
+	RE::BSOpenVR* openvr = RE::BSOpenVR::GetSingleton();
+	auto* cleanOverlay = RE::BSOpenVR::GetCleanIVROverlay();
+	auto* system = openvr ? openvr->vrSystem : nullptr;
+
+	if (!cleanOverlay) {
+		logger::error("ShowVRKeyboard: No clean overlay context available");
+		return false;
+	}
+
+	if (!system) {
+		logger::error("ShowVRKeyboard: No VR system available");
+		return false;
+	}
+
+	if (isKeyboardVisible) {
+		// Check if keyboard is actually still visible in SteamVR
+		if (cleanOverlay && keyboardOverlayHandle != vr::k_ulOverlayHandleInvalid) {
+			bool actuallyVisible = cleanOverlay->IsOverlayVisible(keyboardOverlayHandle);
+			if (!actuallyVisible) {
+				logger::debug("ShowVRKeyboard: State out of sync, keyboard was actually closed. Resetting state.");
+				isKeyboardVisible = false;
+				keyboardFinished = true;
+			} else {
+				logger::warn("ShowVRKeyboard: Keyboard is already visible");
+				return false;
+			}
+		} else {
+			logger::warn("ShowVRKeyboard: Keyboard is already visible (no way to verify)");
+			return false;
+		}
+	}
+
+	// Reset finished flag when starting a new keyboard session
+	if (keyboardFinished) {
+		logger::debug("ShowVRKeyboard: Resetting finished flag from previous session");
+		keyboardFinished = false;
+	}
+
+	// Store the existing text in our buffer
+	keyboardBuffer = existingText;
+	keyboardUserValue = reinterpret_cast<uint64_t>(this);  // Use 'this' pointer as unique identifier
+
+	logger::debug("ShowVRKeyboard: Attempting to show keyboard with clean overlay context");
+
+	if (keyboardOverlayHandle != vr::k_ulOverlayHandleInvalid) {
+		logger::debug("ShowVRKeyboard: Cleaning up existing keyboard overlay");
+		cleanOverlay->DestroyOverlay(keyboardOverlayHandle);
+		keyboardOverlayHandle = vr::k_ulOverlayHandleInvalid;
+	}
+
+	std::string keyboardKey = "CommunityShaders_VRKeyboard";
+	std::string keyboardName = "Community Shaders VR Keyboard";
+
+	vr::EVROverlayError overlayErr = cleanOverlay->CreateOverlay(keyboardKey.c_str(), keyboardName.c_str(), &keyboardOverlayHandle);
+	if (overlayErr != vr::VROverlayError_None) {
+		logger::error("ShowVRKeyboard: Failed to create keyboard overlay - {} ({})",
+			static_cast<int>(overlayErr), magic_enum::enum_name(overlayErr));
+		return false;
+	}
+	logger::debug("ShowVRKeyboard: Created keyboard overlay with handle: 0x{:X}", keyboardOverlayHandle);
+
+	if (keyboardOverlayHandle == vr::k_ulOverlayHandleInvalid) {
+		logger::error("ShowVRKeyboard: Keyboard overlay handle is invalid after creation");
+		return false;
+	}
+
+	vr::EVROverlayError err = cleanOverlay->ShowKeyboardForOverlay(
+		keyboardOverlayHandle,                                     // Use dedicated keyboard overlay
+		vr::k_EGamepadTextInputModeNormal,                         // Normal text input mode
+		vr::k_EGamepadTextInputLineModeSingleLine,                 // Single line input
+		description ? description : "Enter text:",                 // Description shown to user
+		static_cast<uint32_t>(std::min(maxLength, size_t(1024))),  // Max characters (capped at 1024)
+		existingText.c_str(),                                      // Pre-filled text
+		useMinimalMode,                                            // Minimal keyboard mode
+		keyboardUserValue                                          // User value for event tracking
+	);
+
+	if (err != vr::VROverlayError_None) {
+		logger::error("ShowVRKeyboard: Failed to show keyboard - {} ({})",
+			static_cast<int>(err), magic_enum::enum_name(err));
+		// Clean up the overlay if ShowKeyboardForOverlay failed
+		cleanOverlay->DestroyOverlay(keyboardOverlayHandle);
+		keyboardOverlayHandle = vr::k_ulOverlayHandleInvalid;
+		return false;
+	}
+
+	// Set keyboard overlay properties to prevent conflicts
+	cleanOverlay->SetOverlayWidthInMeters(keyboardOverlayHandle, 1.0f);
+	cleanOverlay->SetOverlayInputMethod(keyboardOverlayHandle, vr::VROverlayInputMethod_Mouse);
+	logger::debug("ShowVRKeyboard: Set keyboard overlay properties");
+
+	if (system) {
+		vr::TrackedDevicePose_t hmdPose;
+		system->GetDeviceToAbsoluteTrackingPose(vr::TrackingUniverseStanding, 0, &hmdPose, 1);
+		if (hmdPose.bPoseIsValid) {
+			// Create transform matrix for keyboard positioned in front of HMD
+			vr::HmdMatrix34_t keyboardTransform;
+
+			// Copy HMD rotation but position keyboard further away to avoid conflicts
+			for (int i = 0; i < 3; i++) {
+				for (int j = 0; j < 3; j++) {
+					keyboardTransform.m[i][j] = hmdPose.mDeviceToAbsoluteTracking.m[i][j];
+				}
+			}
+
+			// Position 2 meters forward (negative Z in OpenVR space) and 0.5m down - away from menu overlay
+			keyboardTransform.m[0][3] = hmdPose.mDeviceToAbsoluteTracking.m[0][3] +
+			                            hmdPose.mDeviceToAbsoluteTracking.m[0][2] * -2.0f;
+			keyboardTransform.m[1][3] = hmdPose.mDeviceToAbsoluteTracking.m[1][3] +
+			                            hmdPose.mDeviceToAbsoluteTracking.m[1][2] * -2.0f - 0.5f;
+			keyboardTransform.m[2][3] = hmdPose.mDeviceToAbsoluteTracking.m[2][3] +
+			                            hmdPose.mDeviceToAbsoluteTracking.m[2][2] * -2.0f;
+
+			cleanOverlay->SetKeyboardTransformAbsolute(vr::TrackingUniverseStanding, &keyboardTransform);
+			logger::debug("ShowVRKeyboard: Positioned keyboard 2m in front of HMD to avoid overlay conflicts");
+		} else {
+			logger::warn("ShowVRKeyboard: HMD pose invalid, using default keyboard position");
+		}
+	} else {
+		logger::warn("ShowVRKeyboard: No VR system available for positioning");
+	}
+
+	isKeyboardVisible = true;
+	keyboardJustOpened = true;                            // Set flag to prevent immediate closure
+	keyboardOpenFrames = 0;                               // Reset frame counter
+	keyboardOpenTime = std::chrono::steady_clock::now();  // Record when keyboard was opened
+	logger::debug("ShowVRKeyboard: Successfully displayed VR keyboard with overlay handle 0x{:X}", keyboardOverlayHandle);
+	return true;
+}
+
+bool VR::IsVRKeyboardVisible() const
+{
+	return isKeyboardVisible;
+}
+
+void VR::HideVRKeyboard()
+{
+	if (!isKeyboardVisible) {
+		return;
+	}
+
+	// CRITICAL FIX: Use clean overlay context for keyboard operations (like menu overlays)
+	auto* cleanOverlay = RE::BSOpenVR::GetCleanIVROverlay();
+	if (cleanOverlay) {
+		cleanOverlay->HideKeyboard();
+
+		// CRITICAL FIX: Also destroy the dedicated keyboard overlay
+		if (keyboardOverlayHandle != vr::k_ulOverlayHandleInvalid) {
+			cleanOverlay->DestroyOverlay(keyboardOverlayHandle);
+			keyboardOverlayHandle = vr::k_ulOverlayHandleInvalid;
+			logger::debug("HideVRKeyboard: Destroyed keyboard overlay");
+		}
+
+		logger::debug("HideVRKeyboard: Keyboard hidden");
+	}
+
+	isKeyboardVisible = false;
+	keyboardUserValue = 0;
+	keyboardJustOpened = false;  // Reset the just-opened flag
+	keyboardOpenFrames = 0;      // Reset frame counter
+	keyboardBuffer.clear();
+}
+
+std::string VR::GetVRKeyboardText() const
+{
+	return keyboardBuffer;
+}
+
+void VR::ClearVRKeyboardText()
+{
+	keyboardBuffer.clear();
+}
+
+bool VR::WasVRKeyboardClosedRecently() const
+{
+	if (isKeyboardVisible) {
+		return false;  // Keyboard is still open
+	}
+
+	// Check if keyboard was closed within the last 200ms
+	auto timeSinceClose = std::chrono::duration_cast<std::chrono::milliseconds>(
+		std::chrono::steady_clock::now() - keyboardCloseTime)
+	                          .count();
+
+	return timeSinceClose <= 200;
+}
+
+void VR::ForceTabActivation()
+{
+	// Simulate Tab to change focus, then Shift+Tab to return
+	// This works because Tab navigation properly triggers IsItemActivated()
+	logger::debug("VR: Forcing Tab activation sequence to recover keyboard focus");
+
+	// Send Tab key
+	ImGuiIO& io = ::ImGui::GetIO();
+	io.AddKeyEvent(ImGuiKey_Tab, true);
+	io.AddKeyEvent(ImGuiKey_Tab, false);
+
+	// Brief delay (in next frame) then Shift+Tab to return to original field
+	io.AddKeyEvent(ImGuiKey_ModShift, true);
+	io.AddKeyEvent(ImGuiKey_Tab, true);
+	io.AddKeyEvent(ImGuiKey_Tab, false);
+	io.AddKeyEvent(ImGuiKey_ModShift, false);
+}
+
+void VR::ProcessVRKeyboardEvents()
+{
+	if (!isKeyboardVisible) {
+		return;
+	}
+
+	// CRITICAL FIX: Use clean overlay context for keyboard operations (like menu overlays)
+	auto* cleanOverlay = RE::BSOpenVR::GetCleanIVROverlay();
+	if (!cleanOverlay) {
+		return;
+	}
+
+	// CRITICAL FIX: Use overlay-specific polling like the working VR_Keyboard implementation
+	if (keyboardOverlayHandle == vr::k_ulOverlayHandleInvalid) {
+		logger::warn("ProcessVRKeyboardEvents: No keyboard overlay handle available");
+		return;
+	}
+
+	// Reset just opened flag after first frame
+	if (keyboardJustOpened) {
+		keyboardJustOpened = false;
+		logger::debug("VR Keyboard: Just opened flag cleared, processing events normally");
+	}
+
+	// Poll for VR events using overlay-specific polling with clean overlay (like working implementation)
+	vr::VREvent_t event;
+	while (cleanOverlay->PollNextOverlayEvent(keyboardOverlayHandle, &event, sizeof(event))) {
+		// Only process events for our keyboard session
+		if (event.data.keyboard.uUserValue != keyboardUserValue) {
+			continue;
+		}
+
+		logger::debug("VR Keyboard Event: type={} ({})", static_cast<int>(event.eventType),
+			event.eventType == vr::VREvent_KeyboardCharInput ? "CharInput" :
+			event.eventType == vr::VREvent_KeyboardDone      ? "Done" :
+			event.eventType == vr::VREvent_KeyboardClosed    ? "Closed" :
+			event.eventType == 1203                          ? "KeyboardShown" :
+			event.eventType == 1204                          ? "KeyboardHidden" :
+															   "Unknown");
+
+		switch (event.eventType) {
+		case vr::VREvent_KeyboardCharInput:
+			{
+				// IMPROVEMENT: Handle individual character input like Unity sample
+				// Extract character data from keyboard event
+				auto& keyboard = event.data.keyboard;
+				uint8_t inputBytes[8] = {
+					static_cast<uint8_t>(keyboard.cNewInput[0]), static_cast<uint8_t>(keyboard.cNewInput[1]),
+					static_cast<uint8_t>(keyboard.cNewInput[2]), static_cast<uint8_t>(keyboard.cNewInput[3]),
+					static_cast<uint8_t>(keyboard.cNewInput[4]), static_cast<uint8_t>(keyboard.cNewInput[5]),
+					static_cast<uint8_t>(keyboard.cNewInput[6]), static_cast<uint8_t>(keyboard.cNewInput[7])
+				};
+
+				// Find string length
+				int len = 0;
+				for (; len < 8 && inputBytes[len] != 0; len++);
+
+				if (len > 0) {
+					std::string input(reinterpret_cast<char*>(inputBytes), len);
+
+					// Handle special characters like Unity sample
+					if (input == "\b") {
+						// Backspace - remove last character
+						if (!keyboardBuffer.empty()) {
+							keyboardBuffer.pop_back();
+							logger::debug("VR Keyboard: Backspace, text now: '{}'", keyboardBuffer);
+						}
+					} else if (input == "\x1b") {
+						// Escape - cancel keyboard
+						logger::debug("VR Keyboard: Escape pressed, cancelling");
+						HideVRKeyboard();
+						return;
+					} else {
+						// Regular character input
+						keyboardBuffer += input;
+						logger::debug("VR Keyboard: Added '{}', text now: '{}'", input, keyboardBuffer);
+					}
+				}
+
+				// Also get the full text as fallback (non-minimal mode behavior)
+				char buffer[1024];
+				uint32_t len_full = cleanOverlay->GetKeyboardText(buffer, sizeof(buffer));
+				logger::debug("VR Keyboard: GetKeyboardText returned length={}, content='{}'", len_full, len_full > 0 ? std::string(buffer) : "<empty>");
+
+				if (len_full > 0) {
+					std::string fullText(buffer);  // Buffer is already null-terminated
+					// Always use the full text from GetKeyboardText as the authoritative source
+					// This handles both character input AND deletions/backspaces
+					if (fullText != keyboardBuffer) {
+						logger::debug("VR Keyboard: Text changed from '{}' to '{}' (via GetKeyboardText)", keyboardBuffer, fullText);
+						keyboardBuffer = fullText;
+					}
+				} else {
+					// If GetKeyboardText returns 0, the keyboard is empty - clear our buffer too
+					if (!keyboardBuffer.empty()) {
+						logger::debug("VR Keyboard: Keyboard cleared via GetKeyboardText, buffer now empty");
+						keyboardBuffer.clear();
+					}
+				}
+			}
+			break;
+
+		case vr::VREvent_KeyboardDone:
+			{
+				// User pressed Done/Enter - finalize the text
+				char buffer[1024];
+				uint32_t len = cleanOverlay->GetKeyboardText(buffer, sizeof(buffer));
+				if (len > 0) {
+					// GetKeyboardText includes null terminator in length, buffer is already null-terminated
+					keyboardBuffer = std::string(buffer);
+				} else {
+					// Empty keyboard - set empty string
+					keyboardBuffer.clear();
+				}
+				// Clear visibility immediately since Done means user is finished
+				isKeyboardVisible = false;
+				keyboardFinished = true;
+				keyboardCloseTime = std::chrono::steady_clock::now();  // Track close time
+				logger::debug("VR Keyboard finished with text: '{}', state cleared", keyboardBuffer);
+			}
+			break;
+
+		case vr::VREvent_KeyboardClosed:
+			{
+				// Check if this is a spurious close event shortly after opening
+				auto timeSinceOpen = std::chrono::duration_cast<std::chrono::milliseconds>(
+					std::chrono::steady_clock::now() - keyboardOpenTime)
+				                         .count();
+
+				if (timeSinceOpen < 500) {  // Ignore close events within 500ms of opening
+					logger::debug("VR Keyboard: Ignoring spurious close event {}ms after opening", timeSinceOpen);
+
+					// Even though we're ignoring the event, check if SteamVR actually closed the keyboard
+					// If so, we need to sync our state to match reality
+					if (cleanOverlay && keyboardOverlayHandle != vr::k_ulOverlayHandleInvalid) {
+						bool actuallyVisible = cleanOverlay->IsOverlayVisible(keyboardOverlayHandle);
+						if (!actuallyVisible) {
+							logger::debug("VR Keyboard: SteamVR closed keyboard despite ignoring event, syncing state");
+							isKeyboardVisible = false;
+							keyboardFinished = true;
+							keyboardCloseTime = std::chrono::steady_clock::now();  // Track close time
+						}
+					}
+					break;
+				}
+
+				// User cancelled or keyboard was closed
+				char buffer[1024];
+				uint32_t len = cleanOverlay->GetKeyboardText(buffer, sizeof(buffer));
+				if (len > 0) {
+					// GetKeyboardText includes null terminator in length, buffer is already null-terminated
+					keyboardBuffer = std::string(buffer);
+				} else {
+					// Empty keyboard - set empty string
+					keyboardBuffer.clear();
+				}
+
+				// Immediately clear keyboard state when it actually closes
+				isKeyboardVisible = false;
+				keyboardFinished = true;
+				keyboardCloseTime = std::chrono::steady_clock::now();  // Track close time
+				logger::debug("VR Keyboard was closed with text: '{}', state cleared", keyboardBuffer);
+			}
+			break;
+		}
+	}
+}
+
+//=============================================================================
+// VR IMGUI HELPER FUNCTIONS
+//=============================================================================
+
+namespace VRImGui::Internal
+{
+	bool ShowVRKeyboard(const char* description, const std::string& existingText, size_t maxLength, bool useMinimalMode)
+	{
+		VR* vr = VR::GetSingleton();
+		return vr->ShowVRKeyboard(description, existingText, maxLength, useMinimalMode);
+	}
+
+	bool IsVRKeyboardVisible()
+	{
+		VR* vr = VR::GetSingleton();
+		return vr->IsVRKeyboardVisible();
+	}
+
+	std::string GetVRKeyboardText()
+	{
+		VR* vr = VR::GetSingleton();
+		return vr->GetVRKeyboardText();
+	}
+
+	void ClearVRKeyboardText()
+	{
+		VR* vr = VR::GetSingleton();
+		vr->ClearVRKeyboardText();
+	}
+
+	void ProcessVRKeyboardEvents()
+	{
+		VR* vr = VR::GetSingleton();
+		vr->ProcessVRKeyboardEvents();
+	}
+
+	bool IsVREnabled()
+	{
+		bool isVR = REL::Module::IsVR();
+		return isVR;
+	}
+
+	bool IsVRKeyboardFinished()
+	{
+		VR* vr = VR::GetSingleton();
+		return vr->keyboardFinished;
+	}
+
+	void ClearVRKeyboardFinished()
+	{
+		VR* vr = VR::GetSingleton();
+		vr->keyboardFinished = false;
+		// Only clear visibility if it's still marked as visible (defensive)
+		if (vr->isKeyboardVisible) {
+			vr->isKeyboardVisible = false;
+			logger::debug("VR keyboard finished flag cleared, keyboard hidden");
+		} else {
+			logger::debug("VR keyboard finished flag cleared (keyboard already hidden)");
+		}
+	}
+
+	bool WasVRKeyboardClosedTooFast()
+	{
+		VR* vr = VR::GetSingleton();
+		auto now = std::chrono::steady_clock::now();
+		auto closeElapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - vr->keyboardCloseTime).count();
+
+		// Check if keyboard was closed recently (within 100ms) and was only open briefly
+		if (closeElapsed < 100) {
+			auto openDuration = std::chrono::duration_cast<std::chrono::milliseconds>(vr->keyboardCloseTime - vr->keyboardOpenTime).count();
+			if (openDuration < 100) {
+				logger::debug("VR keyboard was closed too fast: open for {}ms, closed {}ms ago", openDuration, closeElapsed);
+				return true;
+			}
+		}
+		return false;
+	}
+
+	void ForceTabActivation()
+	{
+		logger::debug("VR keyboard: Forcing Tab activation to recover from fast close");
+
+		// Simulate Tab key press to force activation
+		ImGuiIO& io = ::ImGui::GetIO();
+		io.AddKeyEvent(ImGuiKey_Tab, true);
+		io.AddKeyEvent(ImGuiKey_Tab, false);
+
+		// Then Shift+Tab to go back to the original field
+		io.AddKeyEvent(ImGuiKey_ModShift, true);
+		io.AddKeyEvent(ImGuiKey_Tab, true);
+		io.AddKeyEvent(ImGuiKey_Tab, false);
+		io.AddKeyEvent(ImGuiKey_ModShift, false);
+	}
+}
+
+namespace
+{
+	/**
+	 * @brief VR-enhanced ImGui::InputText that automatically shows virtual keyboard when clicked
+	 * @param label The ImGui label for the input field
+	 * @param buffer Character buffer for the text
+	 * @param bufferSize Size of the buffer
+	 * @param flags ImGui input text flags
+	 * @param description Optional description shown on the VR keyboard
+	 * @return true if the text was modified, false otherwise
+	 * @deprecated Use VRImGui transparent wrappers instead
+	 */
+	bool VRInputText(const char* label, char* buffer, size_t bufferSize, ImGuiInputTextFlags flags = 0, const char* description = nullptr)
+	{
+		bool textChanged = false;
+		VR* vr = VR::GetSingleton();
+
+		// Standard ImGui input text
+		bool isActive = ImGui::InputText(label, buffer, bufferSize, flags);
+		textChanged = isActive;
+
+		// If the input field was just activated (clicked), show VR keyboard
+		if (ImGui::IsItemActivated()) {
+			std::string currentText(buffer);
+			const char* keyboardDesc = description ? description : label;
+
+			if (vr->ShowVRKeyboard(keyboardDesc, currentText, bufferSize - 1)) {
+				logger::debug("VRInputText: Opened VR keyboard for field '{}'", label);
+			}
+		}
+
+		// If VR keyboard is visible and has updated text, apply it to the buffer
+		if (vr->IsVRKeyboardVisible()) {
+			std::string newText = vr->GetVRKeyboardText();
+			if (newText != std::string(buffer)) {
+				size_t copyLen = std::min(newText.length(), bufferSize - 1);
+				std::memcpy(buffer, newText.c_str(), copyLen);
+				buffer[copyLen] = '\0';
+				textChanged = true;
+			}
+		}
+
+		return textChanged;
+	}
+
+	/**
+	 * @brief VR-enhanced ImGui::InputText for std::string that automatically shows virtual keyboard
+	 * @param label The ImGui label for the input field
+	 * @param str Reference to std::string to edit
+	 * @param flags ImGui input text flags
+	 * @param description Optional description shown on the VR keyboard
+	 * @return true if the text was modified, false otherwise
+	 * @deprecated Use VRImGui transparent wrappers instead
+	 */
+	bool VRInputText(const char* label, std::string& str, ImGuiInputTextFlags flags = 0, const char* description = nullptr)
+	{
+		// Use a buffer large enough for most text inputs
+		char buffer[1024];
+		size_t copyLen = std::min(str.length(), sizeof(buffer) - 1);
+		std::memcpy(buffer, str.c_str(), copyLen);
+		buffer[copyLen] = '\0';
+
+		bool changed = VRInputText(label, buffer, sizeof(buffer), flags, description);
+
+		if (changed) {
+			str = buffer;
+		}
+
+		return changed;
+	}
 }

@@ -21,6 +21,7 @@
 #include "Upscaling.h"
 #include "Util.h"
 #include "Utils/UI.h"
+#include "VRImGui.h"
 
 #include "Features/LightLimitFix/ParticleLights.h"
 #include "Features/PerformanceOverlay.h"
@@ -302,6 +303,11 @@ void Menu::Init()
 
 void Menu::DrawSettings()
 {
+	// Process VR keyboard events before drawing ImGui to ensure text updates are reflected
+	if (REL::Module::IsVR()) {
+		globals::features::vr->ProcessVRKeyboardEvents();
+	}
+
 	if (focusChanged) {
 		OnFocusChanged();
 		focusChanged = false;
@@ -1424,7 +1430,7 @@ void Menu::DrawAdvancedSettings()
 		}
 
 		auto& shaderDefines = globals::state->shaderDefinesString;
-		if (ImGui::InputText("Shader Defines", &shaderDefines)) {
+		if (ImGui_InputText("Shader Defines", shaderDefines)) {
 			globals::state->SetDefines(shaderDefines);
 		}
 		if (ImGui::IsItemDeactivatedAfterEdit() || (ImGui::IsItemActive() &&
