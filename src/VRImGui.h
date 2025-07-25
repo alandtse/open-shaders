@@ -33,6 +33,194 @@ namespace VRImGui
 		void ClearVRKeyboardFinished();
 		bool WasVRKeyboardClosedTooFast();
 		void ForceTabActivation();
+
+		// Helper function to handle VR keyboard logic for text inputs
+		inline bool HandleVRKeyboardForTextInput(const char* label, char* buf, size_t buf_size, bool useAdvancedActivation = false, const char* hint = nullptr)
+		{
+			bool changed = false;
+
+			if (!IsVREnabled()) {
+				return false;
+			}
+
+			// Static map to track previous VR text state per item
+			static std::map<ImGuiID, std::string> previousVRText;
+			// Static map to track initial text when keyboard was activated
+			static std::map<ImGuiID, std::string> initialVRText;
+
+			// Handle keyboard activation
+			bool shouldActivateKeyboard = false;
+			if (::ImGui::IsItemActivated()) {
+				shouldActivateKeyboard = true;
+				if (useAdvancedActivation) {
+					logger::debug("VRImGui: Item activated");
+				}
+			} else if (useAdvancedActivation && ::ImGui::IsItemFocused() && (::ImGui::IsItemClicked() || ::ImGui::IsItemFocused())) {
+				// Advanced activation logic for InputTextWithHint
+				static ImGuiID lastFocusedItem = 0;
+				ImGuiID currentItem = ::ImGui::GetCurrentContext()->LastItemData.ID;
+				if (lastFocusedItem != currentItem) {
+					shouldActivateKeyboard = true;
+					lastFocusedItem = currentItem;
+					if (useAdvancedActivation) {
+						logger::debug("VRImGui: Item gained focus (subsequent time)");
+					}
+				}
+			}
+
+			if (shouldActivateKeyboard && !IsVRKeyboardVisible()) {
+				std::string currentText(buf);
+				const char* description = (hint && strlen(hint) > 0) ? hint : label;
+				if (useAdvancedActivation) {
+					logger::debug("VRImGui: Activating VR keyboard for '{}' with existing text '{}'", description, currentText);
+				}
+				ShowVRKeyboard(description, currentText, buf_size - 1);
+
+				// Initialize previous VR text tracking and capture initial text
+				ImGuiID currentItem = ::ImGui::GetCurrentContext()->LastItemData.ID;
+				previousVRText[currentItem] = currentText;
+				initialVRText[currentItem] = currentText;
+			}
+
+			// Check for involuntary keyboard close (only for advanced mode)
+			if (useAdvancedActivation && !IsVRKeyboardVisible() && WasVRKeyboardClosedTooFast()) {
+				logger::debug("VRImGui: Detected fast keyboard close (<100ms), forcing Tab recovery");
+				ForceTabActivation();
+			}
+
+			// Handle visible keyboard text updates - inject real-time events
+			if (IsVRKeyboardVisible()) {
+				std::string newText = GetVRKeyboardText();
+				std::string currentText(buf);
+				ImGuiID currentItem = ::ImGui::GetCurrentContext()->LastItemData.ID;
+
+				if (useAdvancedActivation) {
+					logger::debug("VRImGui: VR text='{}', ImGui text='{}'", newText, currentText);
+				}
+
+				// Get previous VR text for this item
+				std::string prevVRText = previousVRText.count(currentItem) ? previousVRText[currentItem] : std::string(buf);
+
+				// Inject real-time text events if VR text changed and item is focused
+				if (newText != prevVRText && ::ImGui::IsItemFocused()) {
+					if (useAdvancedActivation) {
+						logger::debug("VRImGui: VR text changed from '{}' to '{}', injecting events", prevVRText, newText);
+					}
+
+					// Calculate the difference and inject appropriate events
+					if (newText.length() < prevVRText.length()) {
+						// Text was shortened - inject backspace events
+						size_t deleteCount = prevVRText.length() - newText.length();
+						for (size_t i = 0; i < deleteCount; i++) {
+							::ImGui::GetIO().AddKeyEvent(ImGuiKey_Backspace, true);
+							::ImGui::GetIO().AddKeyEvent(ImGuiKey_Backspace, false);
+						}
+						if (useAdvancedActivation) {
+							logger::debug("VRImGui: Injected {} backspace events", deleteCount);
+						}
+					} else if (newText.length() > prevVRText.length()) {
+						// Text was extended - inject new characters
+						std::string addedText = newText.substr(prevVRText.length());
+						for (char c : addedText) {
+							if (c != '\0') {
+								::ImGui::GetIO().AddInputCharacter(static_cast<unsigned int>(c));
+							}
+						}
+						if (useAdvancedActivation) {
+							logger::debug("VRImGui: Injected {} new characters: '{}'", addedText.length(), addedText);
+						}
+					} else if (newText != prevVRText) {
+						// Same length but different content - replace by selecting all and retyping
+						::ImGui::GetIO().AddKeyEvent(ImGuiKey_ModCtrl, true);
+						::ImGui::GetIO().AddKeyEvent(ImGuiKey_A, true);
+						::ImGui::GetIO().AddKeyEvent(ImGuiKey_A, false);
+						::ImGui::GetIO().AddKeyEvent(ImGuiKey_ModCtrl, false);
+
+						for (char c : newText) {
+							if (c != '\0') {
+								::ImGui::GetIO().AddInputCharacter(static_cast<unsigned int>(c));
+							}
+						}
+						if (useAdvancedActivation) {
+							logger::debug("VRImGui: Replaced text content via select-all + retype");
+						}
+					}
+
+					// Update previous VR text
+					previousVRText[currentItem] = newText;
+					changed = true;
+				}
+				// Remove unfocused item updates - VR keyboard should only affect focused items
+			}
+
+			// Handle finished keyboard - use definitive text for final correction
+			if (IsVRKeyboardFinished()) {
+				std::string finalText = GetVRKeyboardText();
+				std::string currentText(buf);
+				ImGuiID currentItem = ::ImGui::GetCurrentContext()->LastItemData.ID;
+
+				// Bug fix: If VR keyboard finished with a single character AND we started with longer text,
+				// assume it's an incomplete deletion that should be treated as a clear event (empty string)
+				std::string startingText = initialVRText.count(currentItem) ? initialVRText[currentItem] : "";
+				if (finalText.length() == 1 && startingText.length() > 1) {
+					finalText = "";
+					if (useAdvancedActivation) {
+						logger::debug("VRImGui: Final VR text is single character but started with '{}' (length {}), treating as incomplete deletion", startingText, startingText.length());
+					}
+				}
+
+				if (useAdvancedActivation) {
+					logger::debug("VRImGui: Keyboard finished - final VR text='{}', ImGui text='{}'", finalText, currentText);
+				}
+
+				// Use definitive VR text for final correction if there's a mismatch
+				if (finalText != currentText) {
+					if (::ImGui::IsItemFocused()) {
+						if (useAdvancedActivation) {
+							logger::debug("VRImGui: Final correction - syncing ImGui to definitive VR text '{}'", finalText);
+						}
+
+						// If final text is empty and we have text to clear, just inject one backspace
+						if (finalText.empty() && !currentText.empty()) {
+							// Simple backspace to clear the remaining character
+							::ImGui::GetIO().AddKeyEvent(ImGuiKey_Backspace, true);
+							::ImGui::GetIO().AddKeyEvent(ImGuiKey_Backspace, false);
+							if (useAdvancedActivation) {
+								logger::debug("VRImGui: Cleared remaining text with single backspace");
+							}
+						} else {
+							// For other cases, use select-all + retype
+							::ImGui::GetIO().AddKeyEvent(ImGuiKey_ModCtrl, true);
+							::ImGui::GetIO().AddKeyEvent(ImGuiKey_A, true);
+							::ImGui::GetIO().AddKeyEvent(ImGuiKey_A, false);
+							::ImGui::GetIO().AddKeyEvent(ImGuiKey_ModCtrl, false);
+
+							// Inject final definitive text character by character (or leave empty if finalText is empty)
+							if (!finalText.empty()) {
+								for (char c : finalText) {
+									if (c != '\0') {
+										::ImGui::GetIO().AddInputCharacter(static_cast<unsigned int>(c));
+									}
+								}
+							}
+							if (useAdvancedActivation) {
+								logger::debug("VRImGui: Final definitive text '{}' injected via select-all + retype", finalText);
+							}
+						}
+						changed = true;
+					}
+					// Remove unfocused item updates - VR keyboard should only affect focused items
+				}
+
+				// Update tracking and clear finished flag
+				previousVRText[currentItem] = finalText;
+				// Clear initial text tracking since keyboard session is done
+				initialVRText.erase(currentItem);
+				ClearVRKeyboardFinished();
+			}
+
+			return changed;
+		}
 	}
 
 	/**
@@ -48,24 +236,8 @@ namespace VRImGui
 
 		// VR keyboard support (only in VR mode)
 		if (Internal::IsVREnabled()) {
-			// If the input field was just activated (clicked), show VR keyboard
-			if (::ImGui::IsItemActivated()) {
-				std::string currentText(buf);
-				if (Internal::ShowVRKeyboard(label, currentText, buf_size - 1)) {
-					// Keyboard shown successfully
-				}
-			}
-
-			// If VR keyboard is visible and has updated text, apply it to the buffer
-			if (Internal::IsVRKeyboardVisible()) {
-				std::string newText = Internal::GetVRKeyboardText();
-				if (newText != std::string(buf)) {
-					size_t copyLen = std::min(newText.length(), buf_size - 1);
-					std::memcpy(buf, newText.c_str(), copyLen);
-					buf[copyLen] = '\0';
-					changed = true;
-				}
-			}
+			bool vrChanged = Internal::HandleVRKeyboardForTextInput(label, buf, buf_size, false, nullptr);
+			changed = changed || vrChanged;
 		}
 
 		return changed;
@@ -84,101 +256,8 @@ namespace VRImGui
 
 		// VR keyboard support (only in VR mode)
 		if (Internal::IsVREnabled()) {
-			// Check for VR keyboard activation - detect focus changes instead of just clicks
-			bool shouldActivateKeyboard = false;
-			if (::ImGui::IsItemActivated()) {
-				// Initial activation (first time or via Tab/Shift+Tab)
-				shouldActivateKeyboard = true;
-				logger::debug("VRImGui InputTextWithHint: Item activated");
-			} else if (::ImGui::IsItemFocused() && (::ImGui::IsItemClicked() || ::ImGui::IsItemFocused())) {
-				// If item is focused and was clicked, OR if it just gained focus
-				static ImGuiID lastFocusedItem = 0;
-				ImGuiID currentItem = ::ImGui::GetCurrentContext()->LastItemData.ID;
-				if (lastFocusedItem != currentItem) {
-					// This item just gained focus
-					shouldActivateKeyboard = true;
-					lastFocusedItem = currentItem;
-					logger::debug("VRImGui InputTextWithHint: Item gained focus (subsequent time)");
-				}
-			}
-
-			if (shouldActivateKeyboard && !Internal::IsVRKeyboardVisible()) {
-				std::string currentText(buf);
-				// Use hint as description if available, otherwise use label
-				const char* description = hint && strlen(hint) > 0 ? hint : label;
-				logger::debug("VRImGui InputTextWithHint: Activating VR keyboard for '{}' with existing text '{}'", description, currentText);
-				Internal::ShowVRKeyboard(description, currentText, buf_size - 1);
-			}
-
-			// Check for involuntary keyboard close (under 100ms) and recover with Tab activation
-			if (!Internal::IsVRKeyboardVisible() && Internal::WasVRKeyboardClosedTooFast()) {
-				logger::debug("VRImGui InputTextWithHint: Detected fast keyboard close (<100ms), forcing Tab recovery");
-				Internal::ForceTabActivation();
-			}
-
-			// If VR keyboard is visible and has updated text, apply it to the buffer
-			if (Internal::IsVRKeyboardVisible()) {
-				std::string newText = Internal::GetVRKeyboardText();
-				std::string currentText(buf);
-
-				logger::debug("VRImGui InputTextWithHint: Comparing VR text='{}' with ImGui text='{}'", newText, currentText);
-
-				// Simple logic: if VR keyboard text differs from ImGui buffer, inject it
-				if (newText != currentText) {
-					logger::debug("VRImGui InputTextWithHint: VR text differs from ImGui, manually injecting complete text '{}'", newText);
-
-					if (::ImGui::IsItemFocused()) {
-						// Clear existing content first with Ctrl+A and then inject new text
-						::ImGui::GetIO().AddKeyEvent(ImGuiKey_ModCtrl, true);
-						::ImGui::GetIO().AddKeyEvent(ImGuiKey_A, true);
-						::ImGui::GetIO().AddKeyEvent(ImGuiKey_A, false);
-						::ImGui::GetIO().AddKeyEvent(ImGuiKey_ModCtrl, false);
-
-						// Inject the complete new text character by character
-						for (char c : newText) {
-							if (c != '\0') {
-								::ImGui::GetIO().AddInputCharacter(static_cast<unsigned int>(c));
-							}
-						}
-						changed = true;
-
-						logger::debug("VRImGui InputTextWithHint: Complete text manually injected via key events");
-					}
-				}
-			}
-
-			// Handle finished keyboard - do final sync and cleanup
-			if (Internal::IsVRKeyboardFinished()) {
-				std::string finalText = Internal::GetVRKeyboardText();
-				std::string currentText(buf);
-
-				if (finalText != currentText) {
-					logger::debug("VRImGui InputTextWithHint: Final VR text injection '{}'", finalText);
-
-					// Use complete manual injection for final text as well
-					if (::ImGui::IsItemFocused()) {
-						// Clear existing content first with Ctrl+A
-						::ImGui::GetIO().AddKeyEvent(ImGuiKey_ModCtrl, true);
-						::ImGui::GetIO().AddKeyEvent(ImGuiKey_A, true);
-						::ImGui::GetIO().AddKeyEvent(ImGuiKey_A, false);
-						::ImGui::GetIO().AddKeyEvent(ImGuiKey_ModCtrl, false);
-
-						// Inject final text character by character (or leave empty if finalText is empty)
-						if (!finalText.empty()) {
-							for (char c : finalText) {
-								if (c != '\0') {
-									::ImGui::GetIO().AddInputCharacter(static_cast<unsigned int>(c));
-								}
-							}
-						}
-						changed = true;
-
-						logger::debug("VRImGui InputTextWithHint: Final text completely injected via key events");
-					}
-				}
-				// Clear the finished flag after processing
-				Internal::ClearVRKeyboardFinished();
-			}
+			bool vrChanged = Internal::HandleVRKeyboardForTextInput(label, buf, buf_size, true, hint);
+			changed = changed || vrChanged;
 		}
 
 		return changed;
@@ -197,24 +276,8 @@ namespace VRImGui
 
 		// VR keyboard support (only in VR mode)
 		if (Internal::IsVREnabled()) {
-			// If the input field was just activated (clicked), show VR keyboard
-			if (::ImGui::IsItemActivated()) {
-				std::string currentText(buf);
-				if (Internal::ShowVRKeyboard(label, currentText, buf_size - 1)) {
-					// Keyboard shown successfully
-				}
-			}
-
-			// If VR keyboard is visible and has updated text, apply it to the buffer
-			if (Internal::IsVRKeyboardVisible()) {
-				std::string newText = Internal::GetVRKeyboardText();
-				if (newText != std::string(buf)) {
-					size_t copyLen = std::min(newText.length(), buf_size - 1);
-					std::memcpy(buf, newText.c_str(), copyLen);
-					buf[copyLen] = '\0';
-					changed = true;
-				}
-			}
+			bool vrChanged = Internal::HandleVRKeyboardForTextInput(label, buf, buf_size, false, nullptr);
+			changed = changed || vrChanged;
 		}
 
 		return changed;
