@@ -327,7 +327,7 @@ public:
 
 		// VR Menu Overlay positioning settings
 		float VRMenuScale = Config::kDefaultMenuScale;  ///< Scale factor for overlay UI (0.5-2.0)
-		int VRMenuPositioningMethod = 0;                ///< 0 = HMD relative, 1 = Fixed world position
+		int VRMenuPositioningMethod = 1;                ///< 0 = HMD relative, 1 = Fixed world position
 
 		/**
 		 * @brief Defines how overlays are attached and positioned in VR space
