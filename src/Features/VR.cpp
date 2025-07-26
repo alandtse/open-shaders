@@ -17,6 +17,8 @@
 #include <magic_enum.hpp>
 #include <unordered_map>
 #include <windows.h>
+#include <winver.h>
+#pragma comment(lib, "version.lib")
 
 using AttachMode = VR::Settings::OverlayAttachMode;
 
@@ -69,6 +71,29 @@ void VR::RestoreDefaultSettings()
 	settings = {};
 }
 
+void VR::SetupResources()
+{
+	// Detect OpenVR version and compatibility early to avoid CTDs
+	DetectOpenVRInfo();
+
+	// Log OpenVR information
+	if (openVRInfo.isAvailable) {
+		logger::info("OpenVR DLL detected:");
+		logger::info("  Path: {}", openVRInfo.dllPath);
+		logger::info("  Version: {}", openVRInfo.version);
+		logger::info("  Size: {} bytes", openVRInfo.fileSize);
+		logger::info("  Modified: {}", openVRInfo.modificationTime);
+		logger::info("  Compatible: {}", openVRInfo.isCompatible ? "Yes" : "No");
+
+		if (!openVRInfo.isCompatible) {
+			logger::info("OpenVR version is incompatible.");
+			logger::info("Community Shaders VR menus will be disabled for stability");
+		}
+	} else {
+		logger::info("OpenVR DLL not available in current process");
+	}
+}
+
 void VR::PostPostLoad()
 {
 	gDepthBufferCulling = reinterpret_cast<bool*>(REL::Offset(0x1EC6B88).address());
@@ -92,6 +117,8 @@ void VR::DataLoaded()
 
 void VR::DrawOverlay()
 {
+	if (!VR::GetSingleton()->openVRInfo.isCompatible)
+		return;
 	static LARGE_INTEGER overlayShowStart = { 0 };
 	static LARGE_INTEGER freq = { 0 };
 
@@ -173,14 +200,15 @@ void VR::DrawSettings()
 		}
 
 		// Key Bindings Tab
-		if (ImGui::BeginTabItem("Bindings")) {
-			if (ImGui::BeginChild("##VRBindingsFrame", { 0, 0 }, true)) {
-				DrawKeyBindings(this);
+		if (openVRInfo.isCompatible) {
+			if (ImGui::BeginTabItem("Bindings")) {
+				if (ImGui::BeginChild("##VRBindingsFrame", { 0, 0 }, true)) {
+					DrawKeyBindings(this);
+				}
+				ImGui::EndChild();
+				ImGui::EndTabItem();
 			}
-			ImGui::EndChild();
-			ImGui::EndTabItem();
 		}
-
 		// Debug Tab (existing debug functionality)
 		if (ImGui::BeginTabItem("Debug")) {
 			if (ImGui::BeginChild("##VRDebugFrame", { 0, 0 }, true)) {
@@ -394,6 +422,8 @@ namespace
 	void DrawControllerInputInstructions()
 	{
 		auto vr = VR::GetSingleton();
+		if (!VR::GetSingleton()->openVRInfo.isCompatible)
+			return;
 		VR::Settings& settings = vr->settings;
 		if (ImGui::CollapsingHeader("Controller Input Instructions", ImGuiTreeNodeFlags_DefaultOpen)) {
 			ImGui::SliderInt("Auto-hide overlay timeout (seconds)", &settings.kAutoHideSeconds, 0, VR::Config::kMaxAutoHideSeconds,
@@ -454,6 +484,8 @@ namespace
 
 	void DrawMenuSettings()
 	{
+		if (!VR::GetSingleton()->openVRInfo.isCompatible)
+			return;
 		auto vr = VR::GetSingleton();
 		VR::Settings& settings = vr->settings;
 		if (ImGui::CollapsingHeader("Menu Settings", ImGuiTreeNodeFlags_DefaultOpen)) {
@@ -496,6 +528,8 @@ namespace
 
 	void DrawMouseSettings()
 	{
+		if (!VR::GetSingleton()->openVRInfo.isCompatible)
+			return;
 		auto vr = VR::GetSingleton();
 		VR::Settings& settings = vr->settings;
 		if (ImGui::CollapsingHeader("Mouse Settings", ImGuiTreeNodeFlags_DefaultOpen)) {
@@ -506,6 +540,8 @@ namespace
 
 	void DrawDragSettings()
 	{
+		if (!VR::GetSingleton()->openVRInfo.isCompatible)
+			return;
 		auto vr = VR::GetSingleton();
 		VR::Settings& settings = vr->settings;
 		if (ImGui::CollapsingHeader("Drag Settings", ImGuiTreeNodeFlags_DefaultOpen)) {
@@ -657,6 +693,25 @@ namespace
 	{
 		VR::Settings& settings = vr->settings;
 		auto menu = globals::menu;
+
+		// OpenVR Version Information
+		if (ImGui::CollapsingHeader("OpenVR Information", ImGuiTreeNodeFlags_DefaultOpen)) {
+			auto& info = vr->openVRInfo;
+			if (info.isAvailable) {
+				ImGui::Text("OpenVR System: %s", info.isCompatible ? "Active & Compatible" : "Active but INCOMPATIBLE");
+				if (!info.isCompatible) {
+					std::string reason = std::format("{} {}", "OpenVR version is incompatible.", "VR menus disabled.");
+					ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.5f, 1.0f), "Reason: %s", reason.c_str());
+				}
+				ImGui::Text("DLL Path: %s", info.dllPath.c_str());
+				ImGui::Text("DLL Version: %s", info.version.c_str());
+				ImGui::Text("DLL Size: %llu bytes", info.fileSize);
+				ImGui::Text("Modified: %s", info.modificationTime.c_str());
+			} else {
+				ImGui::Text("OpenVR system not available");
+			}
+		}
+
 		// Controller Diagnostics Section
 		if (ImGui::CollapsingHeader("Controller Diagnostics", ImGuiTreeNodeFlags_DefaultOpen)) {
 			if (ImGui::Checkbox("Test Mode: Disable controller menu input (except scroll controller and triggers)", &settings.VRMenuControllerDiagnosticsTestMode)) {
@@ -1143,6 +1198,12 @@ void VR::UpdateVROverlayControllerPosition()
 // Add overlay management methods for VR menu overlays
 void VR::EnsureOverlayInitialized()
 {
+	// Check OpenVR compatibility first
+	if (!openVRInfo.isCompatible) {
+		logger::warn("OpenVR version is incompatible.");
+		return;
+	}
+
 	RE::BSOpenVR* openvr = RE::BSOpenVR::GetSingleton();
 	logger::info("BSOpenVR: 0x{:X}", reinterpret_cast<uintptr_t>(openvr));
 	if (!openvr) {
@@ -1244,6 +1305,11 @@ void VR::RecreateOverlayTexturesIfNeeded()
 
 void VR::SubmitOverlayFrame()
 {
+	// Skip overlay operations if OpenVR is incompatible
+	if (!openVRInfo.isCompatible) {
+		return;
+	}
+
 	RE::BSOpenVR* openvr = RE::BSOpenVR::GetSingleton();
 	auto* gameOverlay = openvr ? RE::BSOpenVR::GetIVROverlayFromContext(&openvr->vrContext) : nullptr;
 	auto* cleanOverlay = RE::BSOpenVR::GetCleanIVROverlay();
@@ -2081,4 +2147,101 @@ void VR::SetFixedOverlayToCurrentHMD()
 		settings.VRMenuOffsetY,
 		settings.VRMenuOffsetZ);
 	fixedWorldOverlayPosition.m = Util::HmdMatrix34ToMatrix(transform);
+}
+
+//=============================================================================
+// OPENVR VERSION DETECTION AND COMPATIBILITY
+//=============================================================================
+
+void VR::DetectOpenVRInfo()
+{
+	// Reset info
+	openVRInfo = {};
+
+	// Find the OpenVR DLL module
+	HMODULE hModule = GetModuleHandleA("openvr_api.dll");
+	if (!hModule) {
+		openVRInfo.isAvailable = false;
+		return;
+	}
+
+	openVRInfo.isAvailable = true;
+
+	// Get the full path to the DLL
+	char dllPath[MAX_PATH];
+	if (GetModuleFileNameA(hModule, dllPath, MAX_PATH) == 0) {
+		openVRInfo.isCompatible = false;
+		return;
+	}
+
+	openVRInfo.dllPath = dllPath;
+
+	// Get file version information
+	DWORD dwSize = GetFileVersionInfoSizeA(dllPath, nullptr);
+	if (dwSize > 0) {
+		std::vector<BYTE> buffer(dwSize);
+		if (GetFileVersionInfoA(dllPath, 0, dwSize, buffer.data())) {
+			VS_FIXEDFILEINFO* pFileInfo = nullptr;
+			UINT len = 0;
+			if (VerQueryValueA(buffer.data(), "\\", (LPVOID*)&pFileInfo, &len)) {
+				DWORD major = HIWORD(pFileInfo->dwFileVersionMS);
+				DWORD minor = LOWORD(pFileInfo->dwFileVersionMS);
+				DWORD build = HIWORD(pFileInfo->dwFileVersionLS);
+				DWORD revision = LOWORD(pFileInfo->dwFileVersionLS);
+				openVRInfo.version = std::format("{}.{}.{}.{}", major, minor, build, revision);
+			}
+		}
+	}
+
+	if (openVRInfo.version.empty()) {
+		openVRInfo.version = "Unknown";
+	}
+
+	// Get file size and timestamp
+	WIN32_FIND_DATAA findData;
+	HANDLE hFind = FindFirstFileA(dllPath, &findData);
+	if (hFind != INVALID_HANDLE_VALUE) {
+		FindClose(hFind);
+		ULARGE_INTEGER fileSize;
+		fileSize.LowPart = findData.nFileSizeLow;
+		fileSize.HighPart = findData.nFileSizeHigh;
+		openVRInfo.fileSize = fileSize.QuadPart;
+
+		// Convert file time to readable format
+		SYSTEMTIME st;
+		FileTimeToSystemTime(&findData.ftLastWriteTime, &st);
+		openVRInfo.modificationTime = std::format("{:04d}-{:02d}-{:02d} {:02d}:{:02d}:{:02d}",
+			st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute, st.wSecond);
+	}
+
+	// Check compatibility
+	openVRInfo.isCompatible = IsOpenVRCompatible();
+}
+
+bool VR::IsOpenVRCompatible() const
+{
+	if (!openVRInfo.isAvailable) {
+		return false;
+	}
+
+	// Whitelist: Only allow explicitly known compatible versions
+	struct WhitelistedVersion
+	{
+		std::string version;
+		uint64_t fileSize;
+		std::string modificationTime;
+	};
+
+	static const std::vector<WhitelistedVersion> whitelist = {
+		{ "1.0.10.0", 598816, "2022-04-18 00:47:59" },
+		// Add more known compatible versions here
+	};
+
+	for (const auto& entry : whitelist) {
+		if (openVRInfo.version == entry.version) {
+			return true;
+		}
+	}
+
+	return false;  // Not compatible unless explicitly whitelisted
 }

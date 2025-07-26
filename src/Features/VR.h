@@ -288,6 +288,7 @@ public:
 		};
 	}
 
+	virtual void SetupResources() override;
 	virtual bool SupportsVR() override { return true; }
 	virtual bool IsCore() const override { return true; }
 
@@ -307,7 +308,7 @@ public:
 	//=============================================================================
 
 	virtual void DrawOverlay() override;
-	virtual bool IsOverlayVisible() const override { return settings.kAutoHideSeconds > 0 && !globals::menu->IsEnabled; }
+	virtual bool IsOverlayVisible() const override { return openVRInfo.isCompatible && settings.kAutoHideSeconds > 0 && !globals::menu->IsEnabled; }
 
 	//=============================================================================
 	// SETTINGS STRUCTURE
@@ -579,10 +580,23 @@ public:
 	// Button controller recording state for UI settings
 	std::unordered_map<uint32_t, ControllerDevice> recordingButtonControllers;
 
-private:
+	// OpenVR version and compatibility information
+	struct OpenVRInfo
+	{
+		bool isAvailable = false;
+		bool isCompatible = true;
+		std::string dllPath;
+		std::string version;
+		uint64_t fileSize = 0;
+		std::string modificationTime;
+	} openVRInfo;
+
+public:
 	//=============================================================================
 	// PRIVATE IMPLEMENTATION
 	//=============================================================================
 
 	void CleanupOverlayTextures();
+	void DetectOpenVRInfo();
+	bool IsOpenVRCompatible() const;
 };
