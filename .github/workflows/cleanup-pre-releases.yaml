@@ -31,7 +31,7 @@ jobs:
                   GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
               run: |
                   # Set dry run mode
-                  DRY_RUN="${{ github.event.inputs.dry_run || 'false' }}"
+                  DRY_RUN="${{ inputs.dry_run || 'false' }}"
 
                   if [[ "$DRY_RUN" == "true" ]]; then
                     echo "🔍 DRY RUN MODE: Will show what would be deleted without actually deleting"
@@ -57,7 +57,7 @@ jobs:
 
                   # Get all git tags that look like pre-releases but may not have GitHub releases
                   git fetch --tags
-                  orphaned_tags=$(git tag -l | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+-(pr[0-9]+|rc[0-9]+|alpha|beta|dev)' || true)
+                  orphaned_tags=$(git tag -l | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+-(pr[0-9]+|rc[0-9]+|alpha[0-9]*|beta[0-9]*|dev[0-9]*)' || true)
 
                   # Combine both lists and remove duplicates
                   all_prerelease_tags=$(echo -e "$releases\n$orphaned_tags" | sort | uniq | grep -v '^$' || true)
