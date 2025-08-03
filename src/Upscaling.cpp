@@ -5,6 +5,7 @@
 #include "State.h"
 #include <Windows.h>
 #include <reshade/reshade.hpp>
+#include "Deferred.h"
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	Upscaling::Settings,
@@ -316,6 +317,16 @@ ID3D11ComputeShader* Upscaling::GetRCASCS()
 	return rcasCS;
 }
 
+ID3D11PixelShader* Upscaling::GetDepthUpscalePS()
+{
+	if (!depthUpscalePS) {
+		logger::debug("Compiling DepthUpscalePS.hlsl");
+		depthUpscalePS = (ID3D11PixelShader*)Util::CompileShader(L"Data/Shaders/Upscaling/DepthUpscalePS.hlsl", {}, "ps_5_0");
+	}
+
+	return depthUpscalePS;
+}
+
 void Upscaling::ConfigureUpscaling(RE::BSGraphics::State* a_viewport)
 {
 	auto upscaleMethod = GetUpscaleMethod();
@@ -341,8 +352,6 @@ void Upscaling::ConfigureUpscaling(RE::BSGraphics::State* a_viewport)
 
 		auto screenHeight = static_cast<int>(screenSize.y);
 		auto renderHeight = static_cast<int>(screenHeight * resolutionScale);
-
-		resolutionScale = static_cast<float>(renderWidth) / static_cast<float>(screenWidth);
 
 		auto phaseCount = ffxFsr3GetJitterPhaseCount(renderWidth, screenWidth);
 
@@ -402,6 +411,15 @@ void Upscaling::CreateUpscalingResources()
 
 	if (d3d12Interop)
 		CreateFrameGenerationResources();
+
+	resolutionScaleCB = new ConstantBuffer(ConstantBufferDesc<ResolutionScaleCB>());
+
+	D3D11_DEPTH_STENCIL_DESC depthStencilDesc = {};
+	depthStencilDesc.DepthEnable = true;							// Enable depth testing
+	depthStencilDesc.DepthWriteMask = D3D11_DEPTH_WRITE_MASK_ALL;	// Write to all depth bits
+	depthStencilDesc.DepthFunc = D3D11_COMPARISON_ALWAYS;			// Always pass depth test (write all depths)
+	depthStencilDesc.StencilEnable = false;							// Disable stencil testing
+	DX::ThrowIfFailed(globals::d3d::device->CreateDepthStencilState(&depthStencilDesc, &depthUpscaleState));
 }
 
 void Upscaling::DestroyUpscalingResources()
@@ -814,8 +832,6 @@ void UpdateCameraData();
 
 void Upscaling::PerformUpscaling()
 {
-	globals::state->BeginPerfEvent("EARLKY UPSCALE");
-
 	Upscale();
 
 	auto& runtimeData = globals::game::graphicsState->GetRuntimeData();
@@ -838,6 +854,40 @@ void Upscaling::PerformUpscaling()
 	}
 
 	allowUpscaling = true;
+}
+
+void Upscaling::UpscaleDepth()
+{
+	if (resolutionScale != 1.0f) {
+		globals::state->BeginPerfEvent("Depth Upscaling");
+
+		auto& renderer = globals::game::renderer;
+		auto& depth = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kMAIN];
+		auto& depthCopy = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kMAIN_COPY];
+
+		auto context = globals::d3d::context;
+
+		context->CopyResource(depthCopy.texture, depth.texture);
+
+		ResolutionScaleCB updateData{};
+		updateData.ResolutionScale.x = resolutionScale;
+		resolutionScaleCB->Update(updateData);
+
+		auto constantBuffer = resolutionScaleCB->CB();
+		context->PSSetConstantBuffers(0, 1, &constantBuffer);
+
+		context->PSSetShaderResources(0, 1, &depthCopy.depthSRV);
+		context->OMSetRenderTargets(0, nullptr, depth.views[0]);
+		context->OMSetDepthStencilState(depthUpscaleState, 0);
+
+		context->PSSetSamplers(0, 1, &globals::deferred->linearSampler);
+
+		context->PSSetShader(GetDepthUpscalePS(), nullptr, 0);
+
+		context->DrawIndexed(6, 0, 0);
+
+		globals::state->EndPerfEvent();
+	}
 }
 
 /**

@@ -77,6 +77,18 @@ public:
 	ID3D11ComputeShader* rcasCS;
 	ID3D11ComputeShader* GetRCASCS();
 
+	ID3D11PixelShader* depthUpscalePS;
+	ID3D11PixelShader* GetDepthUpscalePS();
+
+	struct ResolutionScaleCB
+	{
+		float4 ResolutionScale;
+	};
+
+	ConstantBuffer* resolutionScaleCB;
+
+	ID3D11DepthStencilState* depthUpscaleState;
+
 	void ConfigureUpscaling(RE::BSGraphics::State* a_state);
 	void Upscale();
 
@@ -102,6 +114,7 @@ public:
 	void CopyBuffersToSharedResources();
 	void PostDisplay();
 	void PerformUpscaling();
+	void UpscaleDepth();
 
 	static void TimerSleepQPC(int64_t targetQPC);
 
@@ -151,6 +164,17 @@ public:
 		static inline REL::Relocation<decltype(thunk)> func;
 	};
 
+	struct Main_HDRTonemapBlendCinematic_Render
+	{
+		static void thunk(RE::ImageSpaceManager* a1, RE::ImageSpaceEffect* a2, uint32_t a3, uint32_t a4, RE::ImageSpaceShaderParam* a5)
+		{
+			func(a1, a2, a3, a4, a5);
+			globals::upscaling->UpscaleDepth();
+		}
+
+		static inline REL::Relocation<decltype(thunk)> func;
+	};
+
 	static void InstallHooks()
 	{
 		if (!globals::state->upscalerLoaded) {
@@ -166,6 +190,10 @@ public:
 			
 			// Performs upscaling inbetween volumetric lighting and post processing
 			stl::write_thunk_call<Main_PostProcessing>(REL::RelocationID(100430, 100430).address() + REL::Relocate(0x1F0, 0x1C5));
+			
+			// Performs depth upscaling after the final main post processing pass
+			stl::write_thunk_call<Main_HDRTonemapBlendCinematic_Render>(REL::RelocationID(99023, 99023).address() + REL::Relocate(0x1EA, 0x1C5));
+			stl::write_thunk_call<Main_HDRTonemapBlendCinematic_Render>(REL::RelocationID(99023, 99023).address() + REL::Relocate(0x230, 0x1C5));
 
 			logger::info("[Upscaling] Installed hooks");
 		} else {
