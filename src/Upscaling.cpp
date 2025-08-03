@@ -72,16 +72,16 @@ void Upscaling::DrawSettings()
 	// Check the current upscale method
 	auto upscaleMethod = GetUpscaleMethod();
 
-	// Display sharpness slider if applicable
-	if (upscaleMethod != UpscaleMethod::kNONE) {
-		ImGui::SliderFloat("Sharpness", &settings.sharpness, 0.0f, 1.0f, "%.1f");
-		settings.sharpness = std::clamp(settings.sharpness, 0.0f, 1.0f);
-	}
-
 	// Display upscaling preset if applicable
 	if (upscaleMethod != UpscaleMethod::kNONE) {
 		const char* upscalePresets[] = { "Performance", "Balanced", "Quality", "Native AA" };
 		ImGui::SliderInt("Upscale Preset", (int*)&settings.upscalePreset, 0, 3, std::format("{}", upscalePresets[3 - settings.upscalePreset]).c_str());
+	}
+
+	// Display sharpness slider if applicable
+	if (upscaleMethod != UpscaleMethod::kNONE) {
+		ImGui::SliderFloat("Sharpness", &settings.sharpness, 0.0f, 1.0f, "%.1f");
+		settings.sharpness = std::clamp(settings.sharpness, 0.0f, 1.0f);
 	}
 
 	// Display DLSS preset slider if using DLSS
