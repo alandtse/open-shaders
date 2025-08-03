@@ -344,23 +344,24 @@ void Upscaling::Upscale()
 	ID3D11ShaderResourceView* inputTextureSRV;
 	context->PSGetShaderResources(0, 1, &inputTextureSRV);
 
-	inputTextureSRV->Release();
-
 	ID3D11RenderTargetView* outputTextureRTV;
 	ID3D11DepthStencilView* dsv;
 	context->OMGetRenderTargets(1, &outputTextureRTV, &dsv);
 	context->OMSetRenderTargets(0, nullptr, nullptr);
 
-	outputTextureRTV->Release();
-
-	if (dsv)
-		dsv->Release();
-
+	// Get resources before releasing the views
 	ID3D11Resource* inputTextureResource;
 	inputTextureSRV->GetResource(&inputTextureResource);
 
 	ID3D11Resource* outputTextureResource;
 	outputTextureRTV->GetResource(&outputTextureResource);
+
+	// Now release the views after getting resources
+	inputTextureSRV->Release();
+	outputTextureRTV->Release();
+
+	if (dsv)
+		dsv->Release();
 
 	auto dispatchCount = Util::GetScreenDispatchCount(false);
 
@@ -453,23 +454,24 @@ void Upscaling::SharpenTAA()
 	ID3D11ShaderResourceView* inputTextureSRV;
 	context->PSGetShaderResources(0, 1, &inputTextureSRV);
 
-	inputTextureSRV->Release();
-
 	ID3D11RenderTargetView* outputTextureRTV;
 	ID3D11DepthStencilView* dsv;
 	context->OMGetRenderTargets(1, &outputTextureRTV, &dsv);
 	context->OMSetRenderTargets(0, nullptr, nullptr);
 
-	outputTextureRTV->Release();
-
-	if (dsv)
-		dsv->Release();
-
+	// Get resources before releasing the views
 	ID3D11Resource* inputTextureResource;
 	inputTextureSRV->GetResource(&inputTextureResource);
 
 	ID3D11Resource* outputTextureResource;
 	outputTextureRTV->GetResource(&outputTextureResource);
+
+	// Now release the views after getting resources
+	inputTextureSRV->Release();
+	outputTextureRTV->Release();
+
+	if (dsv)
+		dsv->Release();
 
 	auto dispatchCount = Util::GetScreenDispatchCount(false);
 
