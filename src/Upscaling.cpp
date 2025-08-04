@@ -313,10 +313,10 @@ void Upscaling::ConfigureUpscaling(RE::BSGraphics::State* a_viewport)
 {
 	auto upscaleMethod = GetUpscaleMethod();
 
-	static bool* enableAutoDynamicResolution = (bool*)REL::RelocationID(508794, 411484).address();
+	static bool* enableAutoDynamicResolution = (bool*)REL::RelocationID(508794, 380760).address();
 	*enableAutoDynamicResolution = false;
 
-	static float* clampOffset = (float*)REL::RelocationID(512203, 411484).address();
+	static float* clampOffset = (float*)REL::RelocationID(512203, 389038).address();
 	*clampOffset = 0;
 
 	if (upscaleMethod != UpscaleMethod::kNONE) {		
@@ -825,7 +825,7 @@ void Upscaling::PerformUpscaling()
 
 	{
 		using func_t = decltype(&UpdateCameraData);
-		static REL::Relocation<func_t> func{ RELOCATION_ID(75472, 75472) };
+		static REL::Relocation<func_t> func{ RELOCATION_ID(75472, 77258) };
 		func();
 	}
 
