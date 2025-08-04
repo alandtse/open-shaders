@@ -214,18 +214,19 @@ public:
 			REL::safe_write(REL::RelocationID(35556, 36555).address() + REL::Relocate(0x2D, 0x2D, 0x25), nop5, sizeof(nop5));
 			
 			// Performs upscaling inbetween volumetric lighting and post processing
-			stl::write_thunk_call<Main_PostProcessing>(REL::RelocationID(100430, 100430).address() + REL::Relocate(0x1F0, 0x1C5));
+			stl::write_thunk_call<Main_PostProcessing>(REL::RelocationID(100430, 107148).address() + REL::Relocate(0x1F0, 0x1E7));
 			
 			// Performs depth upscaling after the final main post processing pass
-			stl::write_thunk_call<Main_HDRTonemapBlendCinematic_Render>(REL::RelocationID(99023, 99023).address() + REL::Relocate(0x1EA, 0x1C5));
-			stl::write_thunk_call<Main_HDRTonemapBlendCinematic_Render>(REL::RelocationID(99023, 99023).address() + REL::Relocate(0x230, 0x1C5));
+			stl::write_thunk_call<Main_HDRTonemapBlendCinematic_Render>(REL::RelocationID(99023, 105674).address() + REL::Relocate(0x1EA, 0x178));
+			if (REL::Module::IsSE())
+				stl::write_thunk_call<Main_HDRTonemapBlendCinematic_Render>(REL::RelocationID(99023, 105674).address() + REL::Relocate(0x230, 0x178));
 
 			// Patches RSSetScissorRect calls to use dynamic resolution
 			// This is a PC-specific function hence it was missing
-			stl::detour_thunk<SetScissorRect>(REL::RelocationID(75564, 75564));
+			stl::detour_thunk<SetScissorRect>(REL::RelocationID(75564, 77365));
 
-			// Fix precipitation camera using dynamic resolution when it shouldn't
-			stl::write_thunk_call<Main_RenderPrecipitation>(REL::RelocationID(35560, 35560).address() + REL::Relocate(0x3A1, 0x3A1));
+			// Fixes precipitation camera using dynamic resolution when it shouldn't
+			stl::write_thunk_call<Main_RenderPrecipitation>(REL::RelocationID(35560, 36559).address() + REL::Relocate(0x3A1, 0x3A1, 0x2FA));
 
 			logger::info("[Upscaling] Installed hooks");
 		} else {
