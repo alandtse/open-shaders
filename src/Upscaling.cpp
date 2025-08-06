@@ -12,8 +12,7 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	Upscaling::Settings,
 	upscaleMethod,
 	upscaleMethodNoDLSS,
-	upscaleMethodNoFSR,
-	upscaleMethodNoXeSS,
+	upscaleMethodNothing,
 	sharpness,
 	frameLimitMode,
 	frameGenerationMode,
@@ -38,27 +37,19 @@ void Upscaling::DrawSettings()
 
 	// Determine available modes
 	bool featureDLSS = streamline->featureDLSS;
-	bool featureXeSS = globals::xess->featureXeSS;
+
 	uint* currentUpscaleMode = &settings.upscaleMethod;
-	
-	// Fallback based on available features
-	if (!featureDLSS && !featureXeSS) {
-		currentUpscaleMode = &settings.upscaleMethodNoFSR;
-	} else if (!featureDLSS) {
+	uint availableModes = 4;
+
+	if (featureDLSS) {
+	} else if (state->featureLevel == D3D_FEATURE_LEVEL_11_1) {
 		currentUpscaleMode = &settings.upscaleMethodNoDLSS;
-	} else if (!featureXeSS) {
-		currentUpscaleMode = &settings.upscaleMethodNoXeSS;
+		availableModes = 3;
+	} else {
+		currentUpscaleMode = &settings.upscaleMethodNothing;
+		availableModes = 2;
 	}
 	
-	uint availableModes = 4; // All methods available for non-VR
-	//if (globals::game::isVR) {
-	//	if (featureDLSS || featureXeSS) availableModes = 2;
-	//	else availableModes = 1;
-	//}
-
-	if (state->featureLevel != D3D_FEATURE_LEVEL_11_1)
-		availableModes = 1;
-
 	// Slider for method selection
 	ImGui::SliderInt("Method", (int*)currentUpscaleMode, 0, availableModes, std::format("{}", upscaleModes[(uint)*currentUpscaleMode]).c_str());
 	if (auto _tt = Util::HoverTooltipWrapper()) {
@@ -72,11 +63,11 @@ void Upscaling::DrawSettings()
 			"AMD FSR 3.1:\n"
 			"AMD FSR 3.1 is an open-source upscaling algorithm compatible with all GPUs.\n"
 			"\n"
-			"NVIDIA DLSS:\n"
-			"NVIDIA's Deep Learning Super Sampling is an upscaling algorithm using AI. Requires an NVIDIA RTX GPU.\n"
-			"\n"
 			"Intel XeSS:\n"
-			"Intel's Xe Super Sampling uses machine learning to upscale rendered frames. Compatible with DirectX 11/12 GPUs supporting Shader Model 6.4.");
+			"Intel's Xe Super Sampling uses machine learning to upscale rendered frames. Compatible with DirectX 11/12 GPUs supporting Shader Model 6.4."
+			"\n"
+			"NVIDIA DLSS:\n"
+			"NVIDIA's Deep Learning Super Sampling is an upscaling algorithm using AI. Requires an NVIDIA RTX GPU.\n");
 	}
 
 	*currentUpscaleMode = std::min(availableModes, (uint)*currentUpscaleMode);
@@ -243,20 +234,11 @@ void Upscaling::RestoreDefaultSettings()
 
 Upscaling::UpscaleMethod Upscaling::GetUpscaleMethod()
 {
-	if (globals::state->featureLevel != D3D_FEATURE_LEVEL_11_1)
-		return (Upscaling::UpscaleMethod)settings.upscaleMethodNoFSR;
-
-	bool featureDLSS = globals::streamline->featureDLSS;
-	bool featureXeSS = globals::xess->featureXeSS;
-
-	if (featureDLSS && featureXeSS)
+	if (globals::streamline->featureDLSS)
 		return (Upscaling::UpscaleMethod)settings.upscaleMethod;
-	else if (featureDLSS)
-		return (Upscaling::UpscaleMethod)settings.upscaleMethodNoXeSS;
-	else if (featureXeSS)
+	else if (globals::state->featureLevel == D3D_FEATURE_LEVEL_11_1)
 		return (Upscaling::UpscaleMethod)settings.upscaleMethodNoDLSS;
-	else
-		return (Upscaling::UpscaleMethod)settings.upscaleMethodNoFSR;
+	return (Upscaling::UpscaleMethod)settings.upscaleMethodNothing;
 }
 
 void Upscaling::CheckResources()

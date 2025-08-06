@@ -205,7 +205,7 @@ void FidelityFX::CreateFSRResources()
 	createUpscaling.maxRenderSize.height = (uint)state->screenSize.y;
 	createUpscaling.maxUpscaleSize.width = (uint)state->screenSize.x;
 	createUpscaling.maxUpscaleSize.height = (uint)state->screenSize.y;
-	createUpscaling.flags = FFX_UPSCALE_ENABLE_HIGH_DYNAMIC_RANGE | FFX_UPSCALE_ENABLE_AUTO_EXPOSURE | FFX_UPSCALE_ENABLE_NON_LINEAR_COLORSPACE;
+	createUpscaling.flags = FFX_UPSCALE_ENABLE_AUTO_EXPOSURE;
 
 	ffx::CreateBackendDX12Desc backendDesc{};
 	backendDesc.device = upscaling->sharedD3D12Device.get();
@@ -268,7 +268,7 @@ void FidelityFX::Upscale(
 
 	dispatchUpscale.viewSpaceToMetersFactor = 0.01428222656f;
 
-	dispatchUpscale.flags = FFX_UPSCALE_FLAG_NON_LINEAR_COLOR_SRGB;
+	dispatchUpscale.flags = 0;
 	
 	if (ffx::Dispatch(upscalingContext, dispatchUpscale) != ffx::ReturnCode::Ok)
 		logger::critical("[FidelityFX] Failed to upscale");

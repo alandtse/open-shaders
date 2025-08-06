@@ -37,10 +37,9 @@ public:
 
 	struct Settings
 	{
-		uint upscaleMethod = (uint)UpscaleMethod::kTAA;
-		uint upscaleMethodNoDLSS = (uint)UpscaleMethod::kTAA;
-		uint upscaleMethodNoFSR = (uint)UpscaleMethod::kTAA;
-		uint upscaleMethodNoXeSS = (uint)UpscaleMethod::kTAA;
+		uint upscaleMethod = (uint)UpscaleMethod::kDLSS;
+		uint upscaleMethodNoDLSS = (uint)UpscaleMethod::kXESS;
+		uint upscaleMethodNothing = (uint)UpscaleMethod::kTAA;
 		uint upscalePreset = (uint)FfxFsr3QualityMode::FFX_FSR3_QUALITY_MODE_QUALITY;
 		float sharpness = 0.0f;
 		uint frameLimitMode = 1;
