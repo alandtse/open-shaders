@@ -75,13 +75,16 @@ public:
 
 	void CheckResources();
 
-	ID3D11ComputeShader* encodeTexturesCS;
+	ID3D11ComputeShader* encodeTexturesCS = nullptr;
 	ID3D11ComputeShader* GetEncodeTexturesCS();
+	
+	ID3D11ComputeShader* encodeTexturesTransparencyCS = nullptr;
+	ID3D11ComputeShader* GetEncodeTexturesTransparencyCS();
 
-	ID3D11ComputeShader* rcasCS;
+	ID3D11ComputeShader* rcasCS = nullptr;
 	ID3D11ComputeShader* GetRCASCS();
 
-	ID3D11PixelShader* depthUpscalePS;
+	ID3D11PixelShader* depthUpscalePS = nullptr;
 	ID3D11PixelShader* GetDepthUpscalePS();
 
 	ID3D11VertexShader* depthUpscaleVS = nullptr;

@@ -405,7 +405,7 @@ void Deferred::DeferredPasses()
 
 	auto main = renderer->GetRuntimeData().renderTargets[forwardRenderTargets[0]];
 	auto normals = renderer->GetRuntimeData().renderTargets[forwardRenderTargets[2]];
-	auto depth = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kPOST_ZPREPASS_COPY];
+	auto depth = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kMAIN];
 	auto reflectance = renderer->GetRuntimeData().renderTargets[REFLECTANCE];
 
 	auto motionVectors = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMOTION_VECTOR];
@@ -427,7 +427,7 @@ void Deferred::DeferredPasses()
 
 	auto& ibl = globals::features::ibl;
 
-	auto dispatchCount = Util::GetScreenDispatchCount();
+	auto dispatchCount = Util::GetScreenDispatchCount(true);
 
 	if (ssgi.loaded) {
 		// Ambient Composite
@@ -863,6 +863,15 @@ void Deferred::Hooks::Main_RenderWorld_BlendedDecals::thunk(RE::BSShaderAccumula
 	func(This, RenderFlags);
 
 	deferred->EndDeferred();
+
+	// Copy depth from before water
+	auto renderer = globals::game::renderer;
+	auto context = globals::d3d::context;
+
+	auto depth = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kMAIN];
+	auto depthCopy = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kPOST_ZPREPASS_COPY];
+
+	context->CopyResource(depthCopy.texture, depth.texture);
 
 	// After this point, water starts rendering
 };

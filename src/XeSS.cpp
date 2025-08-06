@@ -60,21 +60,10 @@ void XeSS::CreateXeSSResources()
 		return;
 	}
 
-	// Map upscale preset to XeSS quality settings
-	// 0=Performance, 1=Balanced, 2=Quality, 3=Native AA
-	xess_quality_settings_t xessQuality;
-	switch (upscaling->settings.upscalePreset) {
-		case 0: xessQuality = XESS_QUALITY_SETTING_PERFORMANCE; break;
-		case 1: xessQuality = XESS_QUALITY_SETTING_BALANCED; break;
-		case 2: xessQuality = XESS_QUALITY_SETTING_QUALITY; break;
-		case 3: xessQuality = XESS_QUALITY_SETTING_AA; break;
-		default: xessQuality = XESS_QUALITY_SETTING_QUALITY; break;
-	}
-
 	xess_d3d12_init_params_t initParams{};
 	initParams.outputResolution.x = (uint32_t)state->screenSize.x;
 	initParams.outputResolution.y = (uint32_t)state->screenSize.y;
-	initParams.qualitySetting = xessQuality;
+	initParams.qualitySetting = XESS_QUALITY_SETTING_AA;
 	initParams.initFlags = XESS_INIT_FLAG_RESPONSIVE_PIXEL_MASK | XESS_INIT_FLAG_ENABLE_AUTOEXPOSURE;
 
 	initParams.creationNodeMask = 1;

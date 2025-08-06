@@ -293,6 +293,15 @@ ID3D11ComputeShader* Upscaling::GetEncodeTexturesCS()
 	return encodeTexturesCS;
 }
 
+ID3D11ComputeShader* Upscaling::GetEncodeTexturesTransparencyCS()
+{
+	if (!encodeTexturesTransparencyCS) {
+		logger::debug("Compiling EncodeTexturesCS.hlsl TRANSPARENCY_MASK");
+		encodeTexturesTransparencyCS = (ID3D11ComputeShader*)Util::CompileShader(L"Data/Shaders/Upscaling/EncodeTexturesCS.hlsl", { { "TRANSPARENCY_MASK", "" } }, "cs_5_0");
+	}
+	return encodeTexturesTransparencyCS;
+}
+
 ID3D11ComputeShader* Upscaling::GetRCASCS()
 {
 	float sharpnessRemapped = (-2.0f * settings.sharpness) + 2.0f;
@@ -810,7 +819,7 @@ void Upscaling::Upscale()
 
 	auto& main = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMAIN];
 
-	auto dispatchCount = Util::GetScreenDispatchCount(false);
+	auto dispatchCount = Util::GetScreenDispatchCount(true);
 
 	{
 		state->BeginPerfEvent("Alpha Mask");
@@ -820,21 +829,23 @@ void Upscaling::Upscale()
 		auto& depthPostWater = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kMAIN];
 
 		{
+			bool useTransparencyMask = upscaleMethod != UpscaleMethod::kXESS;
+
 			ID3D11ShaderResourceView* views[3] = { temporalAAMask.SRV, depthPreWater.depthSRV, depthPostWater.depthSRV };
 			context->CSSetShaderResources(0, ARRAYSIZE(views), views);
 
-			ID3D11UnorderedAccessView* uavs[2] = { reactiveMaskTexture->uav.get(), transparencyCompositionMaskTexture->uav.get() };
+			ID3D11UnorderedAccessView* uavs[2] = { reactiveMaskTexture->uav.get(), useTransparencyMask ? transparencyCompositionMaskTexture->uav.get() : nullptr };
 			context->CSSetUnorderedAccessViews(0, ARRAYSIZE(uavs), uavs, nullptr);
 
-			context->CSSetShader(GetEncodeTexturesCS(), nullptr, 0);
+			context->CSSetShader(useTransparencyMask ? GetEncodeTexturesTransparencyCS() : GetEncodeTexturesCS(), nullptr, 0);
 
 			context->Dispatch(dispatchCount.x, dispatchCount.y, 1);
 		}
 
-		ID3D11ShaderResourceView* views[1] = { nullptr };
+		ID3D11ShaderResourceView* views[3] = { nullptr, nullptr, nullptr };
 		context->CSSetShaderResources(0, ARRAYSIZE(views), views);
 
-		ID3D11UnorderedAccessView* uavs[1] = { nullptr };
+		ID3D11UnorderedAccessView* uavs[2] = { nullptr, nullptr };
 		context->CSSetUnorderedAccessViews(0, ARRAYSIZE(uavs), uavs, nullptr);
 
 		ID3D11ComputeShader* shader = nullptr;
