@@ -67,7 +67,7 @@ ID3D11ComputeShader* ScreenSpaceShadows::GetComputeRaymarch()
 		float currentArea = renderSize.x * renderSize.y;
 		float areaScale = std::sqrt(currentArea / referenceArea);
 		uint scaledSampleCount = static_cast<uint>(std::round(sampleCount * 120 * areaScale));
-		
+
 		raymarchCS = (ID3D11ComputeShader*)Util::CompileShader(L"Data\\Shaders\\ScreenSpaceShadows\\RaymarchCS.hlsl", { { "SAMPLE_COUNT", std::format("{}", scaledSampleCount).c_str() } }, "cs_5_0");
 	}
 	return raymarchCS;
@@ -79,7 +79,7 @@ ID3D11ComputeShader* ScreenSpaceShadows::GetComputeRaymarchRight()
 	static float2 lastRenderSize = { 0, 0 };
 
 	float2 renderSize = Util::ConvertToDynamic(globals::state->screenSize);
-	
+
 	if (sampleCount != bendSettings.SampleCount || lastRenderSize.x != renderSize.x || lastRenderSize.y != renderSize.y) {
 		sampleCount = bendSettings.SampleCount;
 		lastRenderSize = renderSize;
@@ -96,7 +96,7 @@ ID3D11ComputeShader* ScreenSpaceShadows::GetComputeRaymarchRight()
 		float currentArea = renderSize.x * renderSize.y;
 		float areaScale = std::sqrt(currentArea / referenceArea);
 		uint scaledSampleCount = static_cast<uint>(std::round(sampleCount * 120 * areaScale));
-		
+
 		raymarchRightCS = (ID3D11ComputeShader*)Util::CompileShader(L"Data\\Shaders\\ScreenSpaceShadows\\RaymarchCS.hlsl", { { "SAMPLE_COUNT", std::format("{}", scaledSampleCount).c_str() }, { "RIGHT", "" } }, "cs_5_0");
 	}
 	return raymarchRightCS;
@@ -119,22 +119,27 @@ void ScreenSpaceShadows::DrawShadows()
 	light.Normalize();
 	float4 lightProjection = float4(-light.x, -light.y, -light.z, 0.0f);
 
-	auto viewProjMat = globals::game::frameBufferCached.GetCameraViewProj().Transpose();
+	// Helper lambda to calculate light projection for a given eye
+	auto CalculateLightProjection = [&](uint32_t eyeIndex = 0) -> std::array<float, 4> {
+		auto viewProjMat = globals::game::frameBufferCached.GetCameraViewProj(eyeIndex).Transpose();
+		auto projectedLight = DirectX::SimpleMath::Vector4::Transform(lightProjection, viewProjMat);
+		return { projectedLight.x, projectedLight.y, projectedLight.z, projectedLight.w };
+	};
 
-	lightProjection = DirectX::SimpleMath::Vector4::Transform(lightProjection, viewProjMat);
-	float lightProjectionF[4] = { lightProjection.x, lightProjection.y, lightProjection.z, lightProjection.w };
+	auto lightProjectionF = CalculateLightProjection(0);
 
 	auto screenSize = state->screenSize;
 	float2 renderSize = Util::ConvertToDynamic(screenSize);
 
 	int viewportSize[2] = { (int)renderSize.x, (int)renderSize.y };
-
+	// For VR, adjust viewport size for light coordinate calculation
 	if (globals::game::isVR)
-		renderSize.x /= 2;
+		viewportSize[0] /= 2;
 
 	int minRenderBounds[2] = { 0, 0 };
 	int maxRenderBounds[2] = { (int)renderSize.x, (int)renderSize.y };
 
+	// Setup common render state
 	auto depth = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kPOST_ZPREPASS_COPY];
 	context->CSSetShaderResources(0, 1, &depth.depthSRV);
 
@@ -146,57 +151,30 @@ void ScreenSpaceShadows::DrawShadows()
 	auto buffer = raymarchCB->CB();
 	context->CSSetConstantBuffers(1, 1, &buffer);
 
-	context->CSSetShader(GetComputeRaymarch(), nullptr, 0);
-
-	auto dispatchList = Bend::BuildDispatchList(lightProjectionF, viewportSize, minRenderBounds, maxRenderBounds);
-
 	auto viewport = globals::game::graphicsState;
 
 	float2 dynamicRes = { viewport->GetRuntimeData().dynamicResolutionWidthRatio, viewport->GetRuntimeData().dynamicResolutionHeightRatio };
-	for (int i = 0; i < dispatchList.DispatchCount; i++) {
-		TracyD3D11Zone(globals::state->tracyCtx, "SSS - Ray March");
 
-		auto dispatchData = dispatchList.Dispatch[i];
+	// Shared dispatch logic for both VR and non-VR
+	auto DispatchEye = [&](const char* eyeName, ID3D11ComputeShader* shader, const float* lightProj,
+						   float invTexSizeX, float invTexSizeY) {
+		std::string eventName;
+		const char* tracyName = "SSS - Ray March";
 
-		RaymarchCB data{};
-		data.LightCoordinate[0] = dispatchList.LightCoordinate_Shader[0];
-		data.LightCoordinate[1] = dispatchList.LightCoordinate_Shader[1];
-		data.LightCoordinate[2] = dispatchList.LightCoordinate_Shader[2];
-		data.LightCoordinate[3] = dispatchList.LightCoordinate_Shader[3];
+		if (globals::state->frameAnnotations && eyeName) {
+			eventName = std::format("SSS - Ray March ({})", eyeName);
+			tracyName = eventName.c_str();
+			globals::state->BeginPerfEvent(eventName);
+		} else if (globals::state->frameAnnotations) {
+			globals::state->BeginPerfEvent("SSS - Ray March");
+		}
 
-		data.WaveOffset[0] = dispatchData.WaveOffset_Shader[0];
-		data.WaveOffset[1] = dispatchData.WaveOffset_Shader[1];
+		context->CSSetShader(shader, nullptr, 0);
 
-		data.FarDepthValue = 1.0f;
-		data.NearDepthValue = 0.0f;
-
-		data.DynamicRes = dynamicRes;
-
-		data.InvDepthTextureSize[0] = 1.0f / (float)screenSize.x;
-		data.InvDepthTextureSize[1] = 1.0f / (float)screenSize.y;
-
-		data.settings = bendSettings;
-
-		raymarchCB->Update(data);
-
-		context->Dispatch(dispatchData.WaveCount[0], dispatchData.WaveCount[1], dispatchData.WaveCount[2]);
-	}
-
-	if (globals::game::isVR) {
-		lightProjection = float4(-light.x, -light.y, -light.z, 0.0f);
-
-		viewProjMat = globals::game::frameBufferCached.GetCameraViewProj(1).Transpose();
-
-		lightProjection = DirectX::SimpleMath::Vector4::Transform(lightProjection, viewProjMat);
-
-		float lightProjectionRightF[4] = { lightProjection.x, lightProjection.y, lightProjection.z, lightProjection.w };
-
-		context->CSSetShader(GetComputeRaymarchRight(), nullptr, 0);
-
-		dispatchList = Bend::BuildDispatchList(lightProjectionRightF, viewportSize, minRenderBounds, maxRenderBounds);
+		auto dispatchList = Bend::BuildDispatchList(const_cast<float*>(lightProj), viewportSize, minRenderBounds, maxRenderBounds);
 
 		for (int i = 0; i < dispatchList.DispatchCount; i++) {
-			TracyD3D11Zone(globals::state->tracyCtx, "SSS - Ray March (VR Right Eye)");
+			TracyD3D11Zone(globals::state->tracyCtx, tracyName);
 
 			auto dispatchData = dispatchList.Dispatch[i];
 
@@ -214,8 +192,8 @@ void ScreenSpaceShadows::DrawShadows()
 
 			data.DynamicRes = dynamicRes;
 
-			data.InvDepthTextureSize[0] = 1.0f / (float)screenSize.x;
-			data.InvDepthTextureSize[1] = 1.0f / (float)screenSize.y;
+			data.InvDepthTextureSize[0] = invTexSizeX;
+			data.InvDepthTextureSize[1] = invTexSizeY;
 
 			data.settings = bendSettings;
 
@@ -223,6 +201,29 @@ void ScreenSpaceShadows::DrawShadows()
 
 			context->Dispatch(dispatchData.WaveCount[0], dispatchData.WaveCount[1], dispatchData.WaveCount[2]);
 		}
+
+		if (globals::state->frameAnnotations) {
+			globals::state->EndPerfEvent();
+		}
+	};
+
+	if (globals::game::isVR) {
+		// VR: Process both eyes with per-eye texture coordinates
+		float vrInvTexSizeX = 1.0f / (float)viewportSize[0];
+		float vrInvTexSizeY = 1.0f / (float)viewportSize[1];
+
+		DispatchEye("Left Eye", GetComputeRaymarch(), lightProjectionF.data(), vrInvTexSizeX, vrInvTexSizeY);
+
+		// Calculate light projection for right eye
+		auto lightProjectionRightF = CalculateLightProjection(1);
+
+		DispatchEye("Right Eye", GetComputeRaymarchRight(), lightProjectionRightF.data(), vrInvTexSizeX, vrInvTexSizeY);
+	} else {
+		// Non-VR: Single eye processing with full screen texture coordinates
+		float InvTexSizeX = 1.0f / (float)screenSize.x;
+		float InvTexSizeY = 1.0f / (float)screenSize.y;
+
+		DispatchEye(nullptr, GetComputeRaymarch(), lightProjectionF.data(), InvTexSizeX, InvTexSizeY);
 	}
 
 	ID3D11ShaderResourceView* views[1]{ nullptr };
