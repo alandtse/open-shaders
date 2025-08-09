@@ -915,8 +915,7 @@ void Upscaling::Upscale()
 					sharedD3D12CommandList.get(),
 					(uint32_t)renderSize.x,
 					(uint32_t)renderSize.y,
-					jitter,
-					0.0f);
+					jitter);
 			} else {
 				globals::xess->Upscale(
 					inputColorBufferShared12->resource.get(),

@@ -57,6 +57,5 @@ public:
 		ID3D12GraphicsCommandList* a_commandList,
 		uint32_t a_renderWidth,
 		uint32_t a_renderHeight,
-		float2 a_jitter,
-		float a_sharpness);
+		float2 a_jitter);
 };

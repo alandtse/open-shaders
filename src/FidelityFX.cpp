@@ -194,6 +194,8 @@ void FidelityFX::Present(bool a_useFrameGeneration)
 	// Set isFrameGenActive based on whether FSR3 frame generation is enabled
 	isFrameGenActive = a_useFrameGeneration;
 }
+
+
 void FidelityFX::CreateFSRResources()
 {
 	auto state = globals::state;
@@ -204,7 +206,17 @@ void FidelityFX::CreateFSRResources()
 	createUpscaling.maxRenderSize.height = (uint)state->screenSize.y;
 	createUpscaling.maxUpscaleSize.width = (uint)state->screenSize.x;
 	createUpscaling.maxUpscaleSize.height = (uint)state->screenSize.y;
-	createUpscaling.flags = FFX_UPSCALE_ENABLE_AUTO_EXPOSURE;
+	createUpscaling.flags = FFX_UPSCALE_ENABLE_NON_LINEAR_COLORSPACE | FFX_UPSCALE_ENABLE_AUTO_EXPOSURE | FFX_UPSCALE_ENABLE_DYNAMIC_RESOLUTION;
+
+	createUpscaling.fpMessage = [](uint32_t type, const wchar_t* wideMessage) {
+		auto message = stl::utf16_to_utf8(wideMessage);
+		if (message.has_value()) {
+			if (type == FFX_API_MESSAGE_TYPE_ERROR)
+				logger::error("[FidelityFX] {}", message.value());
+			else
+				logger::warn("[FidelityFX] {}", message.value());
+		}
+	};
 
 	ffx::CreateBackendDX12Desc backendDesc{};
 	backendDesc.device = upscaling->sharedD3D12Device.get();
@@ -228,8 +240,7 @@ void FidelityFX::Upscale(
 	ID3D12GraphicsCommandList* a_commandList,
 	uint32_t a_renderWidth,
 	uint32_t a_renderHeight,
-	float2 a_jitter,
-	float a_sharpness)
+	float2 a_jitter)
 {
 	auto state = globals::state;
 
@@ -250,7 +261,7 @@ void FidelityFX::Upscale(
 	dispatchUpscale.motionVectorScale.y = (float)a_renderHeight;
 	dispatchUpscale.reset = false;
 	dispatchUpscale.enableSharpening = true;
-	dispatchUpscale.sharpness = a_sharpness;
+	dispatchUpscale.sharpness = 0.0f;
 
 	dispatchUpscale.frameTimeDelta = static_cast<float>(*globals::game::deltaTime * 1000.f);
 
@@ -267,8 +278,8 @@ void FidelityFX::Upscale(
 
 	dispatchUpscale.viewSpaceToMetersFactor = 0.01428222656f;
 
-	dispatchUpscale.flags = 0;
+	dispatchUpscale.flags = FFX_UPSCALE_FLAG_NON_LINEAR_COLOR_SRGB;
 
 	if (ffx::Dispatch(upscalingContext, dispatchUpscale) != ffx::ReturnCode::Ok)
-		logger::critical("[FidelityFX] Failed to upscale");
+		logger::critical("[FidelityFX] Failed to upscale");	
 }
