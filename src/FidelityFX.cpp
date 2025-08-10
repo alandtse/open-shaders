@@ -113,6 +113,10 @@ void FidelityFX::Present(bool a_useFrameGeneration)
 	configParameters.allowAsyncWorkloads = true;
 	configParameters.flags = 0;
 
+	auto state = globals::state;
+	auto screenSize = state->screenSize;
+	auto renderSize = Util::ConvertToDynamic(state->screenSize, true);
+
 	configParameters.generationRect.left = (swapChain->swapChainDesc.Width - swapChain->swapChainDesc.Width) / 2;
 	configParameters.generationRect.top = (swapChain->swapChainDesc.Height - swapChain->swapChainDesc.Height) / 2;
 	configParameters.generationRect.width = swapChain->swapChainDesc.Width;
@@ -127,21 +131,21 @@ void FidelityFX::Present(bool a_useFrameGeneration)
 
 		dispatchParameters.commandList = commandList;
 
-		dispatchParameters.motionVectorScale.x = (float)swapChain->swapChainDesc.Width;
-		dispatchParameters.motionVectorScale.y = (float)swapChain->swapChainDesc.Height;
-		dispatchParameters.renderSize.width = swapChain->swapChainDesc.Width;
-		dispatchParameters.renderSize.height = swapChain->swapChainDesc.Height;
+		dispatchParameters.motionVectorScale.x = renderSize.x;
+		dispatchParameters.motionVectorScale.y = renderSize.y;
+		dispatchParameters.renderSize.width = static_cast<uint32_t>(renderSize.x);
+		dispatchParameters.renderSize.height = static_cast<uint32_t>(renderSize.y);
 
 		auto gameViewport = globals::game::graphicsState;
 
 		float2 jitter;
 
 		if (globals::game::isVR)
-			jitter.x = -gameViewport->projectionPosScaleX * float(swapChain->swapChainDesc.Width);
+			jitter.x = -gameViewport->projectionPosScaleX * renderSize.x;
 		else
-			jitter.x = -gameViewport->projectionPosScaleX * float(swapChain->swapChainDesc.Width) / 2.0f;
+			jitter.x = -gameViewport->projectionPosScaleX * renderSize.x / 2.0f;
 
-		jitter.y = gameViewport->projectionPosScaleY * (float)swapChain->swapChainDesc.Height / 2.0f;
+		jitter.y = gameViewport->projectionPosScaleY * renderSize.y / 2.0f;
 
 		dispatchParameters.jitterOffset.x = -jitter.x;
 		dispatchParameters.jitterOffset.y = -jitter.y;

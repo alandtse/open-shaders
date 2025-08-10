@@ -636,31 +636,45 @@ void Upscaling::CreateFrameGenerationResources()
 	copyDepthToSharedBufferCS = (ID3D11ComputeShader*)Util::CompileShader(L"Data\\Shaders\\FrameGeneration\\CopyDepthToSharedBufferCS.hlsl", {}, "cs_5_0");
 }
 
+void Upscaling::CopyHUDLessBuffer()
+{
+	if (!d3d12Interop || !settings.frameGenerationMode)
+		return;
+
+	if (!HUDLessBufferFrameChecker.IsNewFrame())
+		return;
+
+	auto renderer = globals::game::renderer;
+	auto context = globals::d3d::context;
+
+	auto& swapChain = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGET::kFRAMEBUFFER];
+	ID3D11Resource* swapChainResource;
+	swapChain.SRV->GetResource(&swapChainResource);
+
+	context->CopyResource(HUDLessBufferShared12->resource11, swapChainResource);
+}
+
 void Upscaling::CopyFrameGenerationResources()
 {
 	if (!d3d12Interop || !settings.frameGenerationMode)
 		return;
 
-	CopySharedD3D12Resources();
-
-	auto renderer = globals::game::renderer;
-	auto context = globals::d3d::context;
-
-	if (!useHUDLess) {
-		auto& swapChain = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGET::kFRAMEBUFFER];
-		ID3D11Resource* swapChainResource;
-		swapChain.SRV->GetResource(&swapChainResource);
-		context->CopyResource(HUDLessBufferShared12->resource11, swapChainResource);
-	}
-
-	useHUDLess = false;
+	CopySharedD3D12Resources(false);
+	CopyHUDLessBuffer();
 }
 
-void Upscaling::CopySharedD3D12Resources()
+void Upscaling::CopySharedD3D12Resources(bool a_upscale)
 {
+	if (!a_upscale) {
+		if (!d3d12Interop || !settings.frameGenerationMode)
+			return;
+	}
+
 	// Only copy once per frame for all upscaling systems (XeSS, Frame Generation, etc.)
 	if (!sharedResourcesFrameChecker.IsNewFrame())
 		return;
+
+	globals::state->BeginPerfEvent("Copy Shared D3D12 Resources");
 
 	auto renderer = globals::game::renderer;
 	auto context = globals::d3d::context;
@@ -707,6 +721,8 @@ void Upscaling::CopySharedD3D12Resources()
 		ID3D11ComputeShader* shader = nullptr;
 		context->CSSetShader(shader, nullptr, 0);
 	}
+
+	globals::state->EndPerfEvent();
 }
 
 void UpdateCameraData()
@@ -725,18 +741,7 @@ void Upscaling::PostDisplay()
 
 	globals::state->RenderReShade();
 
-	if (!d3d12Interop || !settings.frameGenerationMode)
-		return;
-
-	auto renderer = globals::game::renderer;
-	auto context = globals::d3d::context;
-
-	auto& swapChain = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGET::kFRAMEBUFFER];
-	ID3D11Resource* swapChainResource;
-	swapChain.SRV->GetResource(&swapChainResource);
-	context->CopyResource(HUDLessBufferShared12->resource11, swapChainResource);
-
-	useHUDLess = true;
+	CopyHUDLessBuffer();
 }
 
 void Upscaling::TimerSleepQPC(int64_t targetQPC)
@@ -912,8 +917,6 @@ void Upscaling::Upscale()
 		if (upscaleMethod == UpscaleMethod::kDLSS)
 			globals::streamline->Upscale(main.texture, reactiveMaskTexture->resource.get(), transparencyCompositionMaskTexture->resource.get(), sl::DLSSPreset::ePresetK);
 		else {
-			CopySharedD3D12Resources();
-
 			// Copy input color texture to shared D3D12 resource (only dynamic resolution area)
 			auto renderSize = Util::ConvertToDynamic(globals::state->screenSize);
 			D3D11_BOX srcBox = {};

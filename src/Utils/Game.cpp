@@ -149,12 +149,12 @@ namespace Util
 		return vFOV;
 	}
 
-	float2 ConvertToDynamic(float2 a_size)
+	float2 ConvertToDynamic(float2 a_size, bool a_ignoreLock)
 	{
 		auto viewport = globals::game::graphicsState;
 		auto& runtimeData = viewport->GetRuntimeData();
 
-		if (runtimeData.dynamicResolutionLock)
+		if (runtimeData.dynamicResolutionLock && !a_ignoreLock)
 			return a_size;
 
 		return float2(

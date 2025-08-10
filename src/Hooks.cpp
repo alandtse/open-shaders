@@ -329,9 +329,6 @@ HRESULT WINAPI hk_D3D11CreateDeviceAndSwapChain(
 	pAdapter->GetDesc(&adapterDesc);
 	globals::state->SetAdapterDescription(adapterDesc.Description);
 
-	if (!REL::Module::IsVR())
-		pSwapChainDesc->SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD;
-
 	auto streamline = globals::streamline;
 	auto fidelityFX = globals::fidelityFX;
 	auto upscaling = globals::upscaling;
@@ -363,8 +360,6 @@ HRESULT WINAPI hk_D3D11CreateDeviceAndSwapChain(
 			shouldProxy = false;
 	}
 
-	shouldProxy = false;  // Currently broken with upscaling
-
 	upscaling->lowRefreshRate = refreshRate < 119;
 	upscaling->isWindowed = pSwapChainDesc->Windowed;
 
@@ -376,21 +371,6 @@ HRESULT WINAPI hk_D3D11CreateDeviceAndSwapChain(
 		logger::info("[Frame Generation] Frame Generation enabled, using D3D12 proxy");
 
 		if (fidelityFX->module) {
-			IDXGIFactory5* dxgiFactory;
-			DX::ThrowIfFailed(pAdapter->GetParent(IID_PPV_ARGS(&dxgiFactory)));
-
-			BOOL allowTearing = FALSE;
-			DX::ThrowIfFailed(dxgiFactory->CheckFeatureSupport(
-				DXGI_FEATURE_PRESENT_ALLOW_TEARING,
-				&allowTearing,
-				sizeof(allowTearing)));
-
-			if (allowTearing) {
-				pSwapChainDesc->Flags |= DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING;
-			} else {
-				pSwapChainDesc->Flags &= ~DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING;
-			}
-
 			D3D11CreateDevice(
 				pAdapter,
 				DriverType,

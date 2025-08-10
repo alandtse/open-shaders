@@ -122,16 +122,16 @@ public:
 
 	// Frame tracking to ensure shared resources are only copied once per frame
 	Util::FrameChecker sharedResourcesFrameChecker;
+	Util::FrameChecker HUDLessBufferFrameChecker;
 
 	ID3D11ComputeShader* copyDepthToSharedBufferCS;
 
-	bool useHUDLess = false;
-
 	void CreateFrameGenerationResources();
+	void CopyHUDLessBuffer();
 	void CreateSharedD3D12Device(IDXGIAdapter* a_dxgiAdapter);
 	void CreateSharedD3D12Resources();
 	void CopyFrameGenerationResources();
-	void CopySharedD3D12Resources();
+	void CopySharedD3D12Resources(bool a_upscale);
 	void PostDisplay();
 	void PerformUpscaling();
 	void UpscaleDepth();
@@ -168,6 +168,8 @@ public:
 		{
 			auto upscaling = globals::upscaling;
 			auto upscaleMethod = upscaling->GetUpscaleMethod();
+			
+			upscaling->CopySharedD3D12Resources(upscaleMethod == UpscaleMethod::kFSR || upscaleMethod == UpscaleMethod::kXESS);
 
 			if (upscaleMethod != UpscaleMethod::kNONE && upscaleMethod != UpscaleMethod::kTAA)
 				upscaling->PerformUpscaling();
