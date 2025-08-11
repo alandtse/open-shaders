@@ -316,6 +316,8 @@ HRESULT WINAPI hk_D3D11CreateDeviceAndSwapChain(
 	pAdapter->GetDesc(&adapterDesc);
 	globals::state->SetAdapterDescription(adapterDesc.Description);
 
+	pSwapChainDesc->SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD;
+
 	auto streamline = globals::streamline;
 	auto fidelityFX = globals::fidelityFX;
 	auto upscaling = globals::upscaling;
