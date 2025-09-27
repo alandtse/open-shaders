@@ -90,6 +90,7 @@ public:
 	// FG FPS Measurement for Overlay
 	bool IsFrameGenerationActive() const;
 	float GetFrameGenerationFrameTime() const;
+	bool IsUpscalingActive();
 
 	// Feature interface overrides
 	virtual void DrawSettings() override;

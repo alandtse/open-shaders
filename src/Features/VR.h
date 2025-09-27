@@ -282,6 +282,8 @@ public:
 	virtual void DataLoaded() override;
 	virtual void EarlyPrepass() override;
 
+	void UpdateDepthBufferCulling(bool desired);
+
 	virtual void LoadSettings(json& o_json) override;
 	virtual void SaveSettings(json& o_json) override;
 	virtual void RestoreDefaultSettings() override;
