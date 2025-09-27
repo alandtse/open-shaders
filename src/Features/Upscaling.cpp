@@ -404,7 +404,8 @@ void Upscaling::PostPostLoad()
 
 	// Patches RSSetScissorRect calls to use dynamic resolution
 	// This is a PC-specific function hence it was missing
-	stl::detour_thunk<SetScissorRect>(REL::RelocationID(75564, 77365));
+	if (!globals::game::isVR)
+		stl::detour_thunk<SetScissorRect>(REL::RelocationID(75564, 77365));
 
 	// Patches facegen texture generation to not use dynamic resolution
 	stl::detour_thunk<BSFaceGenManager_UpdatePendingCustomizationTextures>(REL::RelocationID(26455, 27041));
