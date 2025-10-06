@@ -4,7 +4,7 @@
 #include <algorithm>
 #include <d3d11.h>
 #include <imgui_impl_dx11.h>
-#include <magic_enum.hpp>
+#include <magic_enum/magic_enum.hpp>
 #include <openvr.h>
 #include <string>
 #include <unordered_map>

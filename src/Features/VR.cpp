@@ -16,7 +16,6 @@
 #include <cmath>
 #include <d3d11.h>
 #include <imgui_impl_dx11.h>
-#include <magic_enum.hpp>
 #include <unordered_map>
 #include <windows.h>
 #include <winver.h>
