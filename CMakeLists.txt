@@ -255,8 +255,6 @@ if(AUTO_PLUGIN_DEPLOYMENT OR AIO_ZIP_TO_DIST)
         DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/prepare_aio.stamp
     )
 
-    # Only copy shaders when HLSL files change; this avoids recreating the
-    # whole AIO on every shader edit.
     # Only copy shaders when HLSL files change; copy individually so unchanged
     # files do not get their timestamps updated.
     file(GLOB_RECURSE _package_shaders LIST_DIRECTORIES FALSE "${CMAKE_SOURCE_DIR}/package/Shaders/*")
@@ -315,6 +313,8 @@ if(AUTO_PLUGIN_DEPLOYMENT)
             COMMAND ${CMAKE_COMMAND} -E make_directory "${DEPLOY_TARGET}"
         )
 
+        string(MD5 DEPLOY_TARGET_HASH ${DEPLOY_TARGET})
+
         # Incremental copy (non-shaders) - produce a stamp so the COPY_SHADERS
         # target can depend on both shader and non-shader deploy steps.
         add_custom_command(
@@ -325,8 +325,6 @@ if(AUTO_PLUGIN_DEPLOYMENT)
             DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/prepare_aio.stamp
             COMMENT "Incremental deploy (excluding Shaders) to ${DEPLOY_TARGET} (robocopy-wrapper)"
         )
-
-        string(MD5 DEPLOY_TARGET_HASH ${DEPLOY_TARGET})
 
         # Ensure plugin DLL/PDB are copied directly to the target SKSE/Plugins
         # folder in case robocopy rules do not copy them as expected.
