@@ -1,6 +1,6 @@
 # Community Shaders Unit Tests
 
-**812 assertions across 66 test cases** testing actual production code with proper mocks.
+Comprehensive unit testing framework testing actual production code with proper mocks.
 
 ## Quick Start
 
@@ -13,7 +13,7 @@ cmake --build build/ALL --target CommunityShaders_Tests --config Release
 cd build/ALL/tests/Release
 ./CommunityShaders_Tests.exe
 
-# Expected output: "All tests passed (766 assertions in 56 test cases)"
+# Expected output: "All tests passed"
 ```
 
 **That's it!** See [QUICKSTART.md](QUICKSTART.md) for 5-minute setup guide.
@@ -160,7 +160,8 @@ Tests run automatically via:
 ```bash
 # From project root
 cmake --build build/ALL --target CommunityShaders_Tests --config Release
-cd build/ALL/tests/Release && ./CommunityShaders_Tests.exe
+cd build/ALL/tests/Release
+./CommunityShaders_Tests.exe
 ```
 
 ---

@@ -88,7 +88,12 @@ namespace ConfigValidation
 			return result;  // key is all whitespace → invalid
 		}
 		auto keyLast = result.key.find_last_not_of(" \t");
-		result.key = result.key.substr(keyFirst, keyLast - keyFirst + 1);
+		if (keyLast != std::string::npos) {
+			result.key = result.key.substr(keyFirst, keyLast - keyFirst + 1);
+		} else {
+			result.key.clear();
+			return result;
+		}
 
 		// Trim value (allow empty after trimming)
 		auto valFirst = result.value.find_first_not_of(" \t");
@@ -96,7 +101,11 @@ namespace ConfigValidation
 			result.value.clear();
 		} else {
 			auto valLast = result.value.find_last_not_of(" \t");
-			result.value = result.value.substr(valFirst, valLast - valFirst + 1);
+			if (valLast != std::string::npos) {
+				result.value = result.value.substr(valFirst, valLast - valFirst + 1);
+			} else {
+				result.value.clear();
+			}
 		}
 
 		result.valid = !result.key.empty();

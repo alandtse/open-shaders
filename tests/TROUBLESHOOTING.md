@@ -101,8 +101,8 @@ llvm-cov --version
 **Solution:** The scripts now use absolute paths. If you still have issues:
 
 ```powershell
-# Always run from project root
-cd E:\Documents\source\repos\skyrim-community-shaders
+# Always run from project root (wherever you cloned the repo)
+cd path\to\skyrim-community-shaders
 .\tests\run_tests.ps1
 ```
 
