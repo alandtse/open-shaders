@@ -1,7 +1,5 @@
 #pragma once
 
-#include "Buffer.h"
-
 class MenuOpenCloseEventHandler : public RE::BSTEventSink<RE::MenuOpenCloseEvent>
 {
 public:
@@ -23,7 +21,6 @@ public:
 		float roughness;
 		float pad[3];
 	};
-	STATIC_ASSERT_ALIGNAS_16(SpecularMapFilterSettingsCB);
 
 	ID3D11ComputeShader* specularIrradianceCS = nullptr;
 	ConstantBuffer* spmapCB = nullptr;
@@ -39,7 +36,6 @@ public:
 		float3 CameraPreviousPosAdjust;
 		uint pad0;
 	};
-	STATIC_ASSERT_ALIGNAS_16(UpdateCubemapCB);
 
 	ID3D11ComputeShader* updateCubemapCS = nullptr;
 	ID3D11ComputeShader* updateCubemapReflectionsCS = nullptr;

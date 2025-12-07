@@ -201,7 +201,7 @@ void ScreenSpaceGI::DrawSettings()
 					"A larger radius produces wider IL.",
 					Util::Units::FormatDistance(settings.GIRadius)
 				};
-				Util::DrawMultiLineTooltip(tooltipLines);
+			Util::DrawMultiLineTooltip(tooltipLines);
 			}
 		}
 
@@ -387,9 +387,9 @@ void ScreenSpaceGI::SetupResources()
 		{
 			texRadiance = eastl::make_unique<Texture2D>(texDesc);
 			texRadiance->CreateSRV(srvDesc);
-			texRadiance->CreateUAV(uavDesc);  // Create default UAV for mip 0
+			texRadiance->CreateUAV(uavDesc);  // mip 0
 
-			// Create individual UAVs for each mip level for prefiltering
+			// UAVs for each mip (prefiltering)
 			for (uint i = 0; i < 5; ++i) {
 				D3D11_UNORDERED_ACCESS_VIEW_DESC mipUavDesc = {
 					.Format = DXGI_FORMAT_R11G11B10_FLOAT,
@@ -399,7 +399,7 @@ void ScreenSpaceGI::SetupResources()
 				DX::ThrowIfFailed(device->CreateUnorderedAccessView(texRadiance->resource.get(), &mipUavDesc, uavRadiance[i].put()));
 			}
 
-			// Create temporary texture for prefiltering (single mip level, used as SRV input)
+			// Temporary texture for prefilter input
 			D3D11_TEXTURE2D_DESC tempTexDesc = texDesc;
 			tempTexDesc.MipLevels = 1;
 			tempTexDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_RENDER_TARGET;
@@ -564,12 +564,12 @@ void ScreenSpaceGI::CompileComputeShaders()
 
 	std::vector<ShaderCompileInfo>
 		shaderInfos = {
-			{ &prefilterDepthsCompute, "prefilterDepths.cs.hlsl", { { "LINEAR_FILTER", "" } } },
-			{ &prefilterRadianceCompute, "prefilterRadiance.cs.hlsl", {} },
-			{ &radianceDisoccCompute, "radianceDisocc.cs.hlsl", {} },
-			{ &giCompute, "gi.cs.hlsl", {} },
-			{ &blurCompute, "blur.cs.hlsl", {} },
-			{ &upsampleCompute, "upsample.cs.hlsl", {} },
+			{ &prefilterDepthsCompute,   "prefilterDepths.cs.hlsl",  { { "LINEAR_FILTER", "" } } },
+			{ &prefilterRadianceCompute, "prefilterRadiance.cs.hlsl",{} },
+			{ &radianceDisoccCompute,    "radianceDisocc.cs.hlsl",   {} },
+			{ &giCompute,                "gi.cs.hlsl",               {} },
+			{ &blurCompute,              "blur.cs.hlsl",             {} },
+			{ &upsampleCompute,          "upsample.cs.hlsl",         {} },
 		};
 	for (auto& info : shaderInfos) {
 		if (REL::Module::IsVR())
@@ -597,7 +597,13 @@ void ScreenSpaceGI::CompileComputeShaders()
 
 bool ScreenSpaceGI::ShadersOK()
 {
-	return texNoise && prefilterDepthsCompute && prefilterRadianceCompute && radianceDisoccCompute && giCompute && blurCompute && upsampleCompute;
+	return texNoise
+		&& prefilterDepthsCompute
+		&& prefilterRadianceCompute
+		&& radianceDisoccCompute
+		&& giCompute
+		&& blurCompute
+		&& upsampleCompute;
 }
 
 void ScreenSpaceGI::UpdateSB()
@@ -765,22 +771,21 @@ void ScreenSpaceGI::DrawSSGI()
 		context->CSSetShader(radianceDisoccCompute.get(), nullptr, 0);
 		context->Dispatch((internalRes[0] + 7u) >> 3, (internalRes[1] + 7u) >> 3, 1);
 
-		// Prefilter radiance texture instead of using GenerateMips for proper dynamic resolution handling
+		// Prefilter radiance (dynamic-res aware)
 		{
 			TracyD3D11Zone(globals::state->tracyCtx, "SSGI - Prefilter Radiance");
 
-			// First copy mip 0 from radiance to temporary texture to avoid read/write conflict
 			context->CopySubresourceRegion(
 				texRadianceTemp->resource.get(), 0, 0, 0, 0,
 				texRadiance->resource.get(), 0, nullptr);
 
 			resetViews();
-			srvs.at(0) = texRadianceTemp->srv.get();  // Use temporary texture as input
-			uavs.at(0) = uavRadiance[0].get();        // Mip 0
-			uavs.at(1) = uavRadiance[1].get();        // Mip 1
-			uavs.at(2) = uavRadiance[2].get();        // Mip 2
-			uavs.at(3) = uavRadiance[3].get();        // Mip 3
-			uavs.at(4) = uavRadiance[4].get();        // Mip 4
+			srvs.at(0) = texRadianceTemp->srv.get();
+			uavs.at(0) = uavRadiance[0].get();
+			uavs.at(1) = uavRadiance[1].get();
+			uavs.at(2) = uavRadiance[2].get();
+			uavs.at(3) = uavRadiance[3].get();
+			uavs.at(4) = uavRadiance[4].get();
 
 			context->CSSetShaderResources(0, 1, srvs.data());
 			context->CSSetUnorderedAccessViews(0, 5, uavs.data(), nullptr);
@@ -885,4 +890,27 @@ void ScreenSpaceGI::DrawSSGI()
 	context->CSSetConstantBuffers(1, 1, &cb);
 	context->CSSetSamplers(0, (uint)samplers.size(), samplers.data());
 	context->CSSetShader(nullptr, nullptr, 0);
+}
+
+/**
+ * NEW: publish SSGI results for the lighting pass.
+ * Binds AO / IL(Y) / IL(CoCg) / Specular-GI to t46..t49.
+ * Make sure the lighting HLSL (including VR path) samples these under SCREEN_SPACE_GI.
+ */
+void ScreenSpaceGI::Prepass()
+{
+	// Run the pipeline for this frame (fills texAo/texIl*/texGiSpecular)
+	DrawSSGI();
+
+	// Bind to free PS slots (avoid t45 used by SSS).
+	// Keep these indices in sync with the lighting HLSL registers!
+	ID3D11ShaderResourceView* srvs[4] = {
+		texAo[outputAoIdx]       ? texAo[outputAoIdx]->srv.get()        : nullptr, // t46
+		texIlY[outputIlIdx]      ? texIlY[outputIlIdx]->srv.get()       : nullptr, // t47
+		texIlCoCg[outputIlIdx]   ? texIlCoCg[outputIlIdx]->srv.get()    : nullptr, // t48
+		texGiSpecular[outputAoIdx]? texGiSpecular[outputAoIdx]->srv.get(): nullptr  // t49
+	};
+
+	auto ctx = globals::d3d::context;
+	ctx->PSSetShaderResources(46, 4, srvs);
 }

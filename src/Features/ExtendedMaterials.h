@@ -1,7 +1,5 @@
 #pragma once
 
-#include "Buffer.h"
-
 struct ExtendedMaterials : Feature
 {
 	virtual inline std::string GetName() override { return "Extended Materials"; }
@@ -38,7 +36,6 @@ struct ExtendedMaterials : Feature
 
 		float pad[1];
 	};
-	STATIC_ASSERT_ALIGNAS_16(Settings);
 
 	Settings settings;
 

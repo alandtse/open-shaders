@@ -1,7 +1,6 @@
 #pragma once
 
 #include <functional>
-#include <string>
 
 // Forward declaration
 class Menu;
@@ -14,9 +13,8 @@ public:
 		const std::function<void()>& drawDisableAtBootSettings);
 
 private:
-	static void RenderLoggingSection();
+	static void RenderAdvancedSection();
+	static void RenderShaderReplacementSection();
 	static void RenderShaderDebugSection();
-	static void RenderPBRSection(const std::function<void()>& drawTruePBRSettings);
-	static void RenderDisableAtBootSection(const std::function<void()>& drawDisableAtBootSettings);
 	static void RenderDeveloperSection();
 };

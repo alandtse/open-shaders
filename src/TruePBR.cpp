@@ -7,7 +7,6 @@
 #include "Hooks.h"
 #include "ShaderCache.h"
 #include "State.h"
-#include "Util.h"
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	GlintParameters,
@@ -108,8 +107,14 @@ void TruePBR::DrawSettings()
 {
 	if (ImGui::CollapsingHeader("PBR", ImGuiTreeNodeFlags_DefaultOpen | ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_OpenOnDoubleClick)) {
 		if (ImGui::TreeNodeEx("Texture Set Settings", ImGuiTreeNodeFlags_DefaultOpen)) {
-			if (Util::SearchableCombo("Texture Set", selectedPbrTextureSetName, pbrTextureSets)) {
-				selectedPbrTextureSet = &pbrTextureSets[selectedPbrTextureSetName];
+			if (ImGui::BeginCombo("Texture Set", selectedPbrTextureSetName.c_str())) {
+				for (auto& [textureSetName, textureSet] : pbrTextureSets) {
+					if (ImGui::Selectable(textureSetName.c_str(), textureSetName == selectedPbrTextureSetName)) {
+						selectedPbrTextureSetName = textureSetName;
+						selectedPbrTextureSet = &textureSet;
+					}
+				}
+				ImGui::EndCombo();
 			}
 
 			if (selectedPbrTextureSet != nullptr) {
@@ -195,8 +200,14 @@ void TruePBR::DrawSettings()
 		}
 
 		if (ImGui::TreeNodeEx("Material Object Settings", ImGuiTreeNodeFlags_DefaultOpen)) {
-			if (Util::SearchableCombo("Material Object", selectedPbrMaterialObjectName, pbrMaterialObjects)) {
-				selectedPbrMaterialObject = &pbrMaterialObjects[selectedPbrMaterialObjectName];
+			if (ImGui::BeginCombo("Material Object", selectedPbrMaterialObjectName.c_str())) {
+				for (auto& [materialObjectName, materialObject] : pbrMaterialObjects) {
+					if (ImGui::Selectable(materialObjectName.c_str(), materialObjectName == selectedPbrMaterialObjectName)) {
+						selectedPbrMaterialObjectName = materialObjectName;
+						selectedPbrMaterialObject = &materialObject;
+					}
+				}
+				ImGui::EndCombo();
 			}
 
 			if (selectedPbrMaterialObject != nullptr) {

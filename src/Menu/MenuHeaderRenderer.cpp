@@ -3,6 +3,7 @@
 #include <imgui.h>
 #include <imgui_internal.h>
 
+#include "Features/LightLimitFix/ParticleLights.h"
 #include "Globals.h"
 #include "Plugin.h"
 #include "ShaderCache.h"
@@ -57,7 +58,7 @@ void MenuHeaderRenderer::RenderHeader(bool isDocked, bool showLogo, bool canShow
 		return;
 	}
 
-	auto title = std::format("Community Shaders {}", Util::GetFormattedVersion(Plugin::VERSION));
+	auto title = std::format("Unofficial Community Shaders {} Particle Light Fork", Util::GetFormattedVersion(Plugin::VERSION));
 	auto actionIcons = BuildActionIcons(canShowIcons, uiIcons);
 
 	if (isDocked) {
@@ -153,6 +154,7 @@ void MenuHeaderRenderer::RenderHeader(bool isDocked, bool showLogo, bool canShow
 			ImGui::TableNextColumn();
 			if (ImGui::Button("Restore Saved Settings", { -1, 0 })) {
 				globals::state->Load();
+				globals::features::llf::particleLights.GetConfigs();
 			}
 
 			// Clear Shader Cache Button
@@ -239,6 +241,7 @@ std::vector<MenuHeaderRenderer::ActionIcon> MenuHeaderRenderer::BuildActionIcons
 			"Restore Saved Settings",
 			[]() {
 				globals::state->Load();
+				globals::features::llf::particleLights.GetConfigs();
 			} });
 	}
 	if (uiIcons.clearCache.texture) {
@@ -400,6 +403,6 @@ void MenuHeaderRenderer::RenderWatermarkLogo(const Menu::UIIcons& uiIcons)
 	ImVec2 logoMax(logoX + watermarkWidth, logoY + watermarkHeight);
 
 	// Use very low alpha for subtle watermark effect
-	ImU32 watermarkColor = IM_COL32(255, 255, 255, 45);
+	ImU32 watermarkColor = IM_COL32(255, 255, 255, 180);
 	drawList->AddImage(uiIcons.logo.texture, logoMin, logoMax, ImVec2(0, 0), ImVec2(1, 1), watermarkColor);
 }

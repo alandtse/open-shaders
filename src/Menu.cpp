@@ -37,6 +37,7 @@
 #include "Util.h"
 #include "Utils/UI.h"
 
+#include "Features/LightLimitFix/ParticleLights.h"
 #include "Features/PerformanceOverlay.h"
 #include "Features/PerformanceOverlay/ABTesting/ABTestAggregator.h"
 #include "Features/PerformanceOverlay/ABTesting/ABTesting.h"
@@ -141,9 +142,6 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	SkipCompilationKey,
 	EffectToggleKey,
 	OverlayToggleKey,
-	ShaderBlockPrevKey,
-	ShaderBlockNextKey,
-	EnableShaderBlocking,
 	FirstTimeSetupCompleted,
 	Theme,
 	SelectedThemePreset)
@@ -411,7 +409,7 @@ void Menu::DrawSettings()
 
 	ImGui::SetNextWindowPos(Util::GetNativeViewportSizeScaled(0.5f), ImGuiCond_FirstUseEver, ImVec2(0.5f, 0.5f));
 	ImGui::SetNextWindowSize(Util::GetNativeViewportSizeScaled(0.8f), ImGuiCond_FirstUseEver);
-	auto title = std::format("Community Shaders {}", Util::GetFormattedVersion(Plugin::VERSION));
+	auto title = std::format("Community Shaders {} Particle Lights (Unofficial Fork)", Util::GetFormattedVersion(Plugin::VERSION));
 
 	// Determine window flags based on docking state
 	ImGuiWindowFlags windowFlags = ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoScrollbar;
@@ -490,9 +488,7 @@ void Menu::DrawGeneralSettings()
 		.settingToggleKey = settingToggleKey,
 		.settingsEffectsToggle = settingsEffectsToggle,
 		.settingSkipCompilationKey = settingSkipCompilationKey,
-		.settingOverlayToggleKey = settingOverlayToggleKey,
-		.settingShaderBlockPrevKey = settingShaderBlockPrevKey,
-		.settingShaderBlockNextKey = settingShaderBlockNextKey
+		.settingOverlayToggleKey = settingOverlayToggleKey
 	};
 
 	// Render settings using extracted component
@@ -512,7 +508,7 @@ void Menu::DrawAdvancedSettings()
 {
 	// Render advanced settings using extracted component
 	AdvancedSettingsRenderer::RenderAdvancedSettings(
-		[this]() { globals::truePBR->DrawSettings(); },
+		[]() { globals::truePBR->DrawSettings(); },
 		[this]() { DrawDisableAtBootSettings(); });
 }
 
@@ -521,49 +517,49 @@ void Menu::DrawDisableAtBootSettings()
 	auto state = globals::state;
 	auto& disabledFeatures = state->GetDisabledFeatures();
 
-	ImGui::Text(
-		"Select features to disable at boot. "
-		"This is the same as deleting a feature.ini file. "
-		"Restart will be required to reenable.");
+	if (ImGui::CollapsingHeader("Disable at Boot", ImGuiTreeNodeFlags_DefaultOpen | ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_OpenOnDoubleClick)) {
+		ImGui::Text(
+			"Select features to disable at boot. "
+			"This is the same as deleting a feature.ini file. "
+			"Restart will be required to reenable.");
 
-	ImGui::Spacing();
+		if (ImGui::CollapsingHeader("Special Features")) {
+			// Prepare a sorted list of special feature names
+			std::vector<std::string> specialFeatureNames;
+			for (const auto& [featureName, _] : state->specialFeatures) {
+				specialFeatureNames.push_back(featureName);
+			}
+			std::sort(specialFeatureNames.begin(), specialFeatureNames.end());
 
-	if (ImGui::CollapsingHeader("Special Features", ImGuiTreeNodeFlags_DefaultOpen)) {
-		// Prepare a sorted list of special feature names
-		std::vector<std::string> specialFeatureNames;
-		for (const auto& [featureName, _] : state->specialFeatures) {
-			specialFeatureNames.push_back(featureName);
-		}
-		std::sort(specialFeatureNames.begin(), specialFeatureNames.end());
+			// Display sorted special features
+			for (const auto& featureName : specialFeatureNames) {
+				// Check if the feature is currently disabled
+				bool isDisabled = disabledFeatures.contains(featureName) && disabledFeatures[featureName];
 
-		// Display sorted special features
-		for (const auto& featureName : specialFeatureNames) {
-			// Check if the feature is currently disabled
-			bool isDisabled = disabledFeatures.contains(featureName) && disabledFeatures[featureName];
-
-			// Create a checkbox for each feature
-			if (ImGui::Checkbox(featureName.c_str(), &isDisabled)) {
-				// Update the disabledFeatures map based on user interaction
-				disabledFeatures[featureName] = isDisabled;
+				// Create a checkbox for each feature
+				if (ImGui::Checkbox(featureName.c_str(), &isDisabled)) {
+					// Update the disabledFeatures map based on user interaction
+					disabledFeatures[featureName] = isDisabled;
+				}
 			}
 		}
-	}
 
-	if (ImGui::CollapsingHeader("Features", ImGuiTreeNodeFlags_DefaultOpen)) {
-		// Prepare a sorted list of feature pointers
-		auto featureList = Feature::GetFeatureList();
-		std::sort(featureList.begin(), featureList.end(), [](Feature* a, Feature* b) {
-			return a->GetShortName() < b->GetShortName();
-		});
+		if (ImGui::CollapsingHeader("Features")) {
+			// Prepare a sorted list of feature pointers
+			auto featureList = Feature::GetFeatureList();
+			std::sort(featureList.begin(), featureList.end(), [](Feature* a, Feature* b) {
+				return a->GetShortName() < b->GetShortName();
+			});
 
-		// Display sorted features
-		for (auto* feature : featureList) {
-			const std::string featureName = feature->GetShortName();
-			bool isDisabled = disabledFeatures.contains(featureName) && disabledFeatures[featureName];
+			// Display sorted features
+			for (auto* feature : featureList) {
+				const std::string featureName = feature->GetShortName();
+				bool isDisabled = disabledFeatures.contains(featureName) && disabledFeatures[featureName];
 
-			if (ImGui::Checkbox(featureName.c_str(), &isDisabled)) {
-				// Update the disabledFeatures map based on user interaction
-				disabledFeatures[featureName] = isDisabled;
+				if (ImGui::Checkbox(featureName.c_str(), &isDisabled)) {
+					// Update the disabledFeatures map based on user interaction
+					disabledFeatures[featureName] = isDisabled;
+				}
 			}
 		}
 	}
@@ -678,24 +674,16 @@ void Menu::ProcessInputEventQueue()
 					std::function<void(uint32_t)> action;
 				};
 				auto shaderCache = globals::shaderCache;
+				auto devMode = globals::state->IsDeveloperMode();
 				HotkeyAction hotkeyActions[] = {
 					{ &settings.ToggleKey, &settingToggleKey, [this](uint32_t key) { settings.ToggleKey = key; settingToggleKey = false; } },
 					{ &settings.SkipCompilationKey, &settingSkipCompilationKey, [this](uint32_t key) { settings.SkipCompilationKey = key; settingSkipCompilationKey = false; } },
 					{ &settings.EffectToggleKey, &settingsEffectsToggle, [this](uint32_t key) { settings.EffectToggleKey = key; settingsEffectsToggle = false; } },
 					{ &settings.OverlayToggleKey, &settingOverlayToggleKey, [this](uint32_t key) { settings.OverlayToggleKey = key; settingOverlayToggleKey = false; } },
-					{ &settings.ShaderBlockPrevKey, &settingShaderBlockPrevKey, [this](uint32_t key) { settings.ShaderBlockPrevKey = key; settingShaderBlockPrevKey = false; } },
-					{ &settings.ShaderBlockNextKey, &settingShaderBlockNextKey, [this](uint32_t key) { settings.ShaderBlockNextKey = key; settingShaderBlockNextKey = false; } },
 				};
 				bool handled = false;
 				for (auto& h : hotkeyActions) {
 					if (*(h.settingFlag)) {
-						// During first-time setup, don't capture Enter or Escape as hotkeys
-						// These keys are reserved for closing the dialog
-						if (HomePageRenderer::ShouldShowFirstTimeSetup() && (key == VK_RETURN || key == VK_ESCAPE)) {
-							*(h.settingFlag) = false;  // Cancel hotkey capture mode
-							handled = true;
-							break;
-						}
 						h.action(key);
 						handled = true;
 						break;
@@ -711,8 +699,8 @@ void Menu::ProcessInputEventQueue()
 						{ settings.ToggleKey, [this]() { IsEnabled = !IsEnabled; } },
 						{ settings.SkipCompilationKey, [shaderCache]() { shaderCache->backgroundCompilation = true; } },
 						{ settings.EffectToggleKey, [shaderCache]() { shaderCache->SetEnabled(!shaderCache->IsEnabled()); } },
-						{ settings.ShaderBlockPrevKey, [this, shaderCache]() { if (settings.EnableShaderBlocking) shaderCache->IterateShaderBlock(); } },
-						{ settings.ShaderBlockNextKey, [this, shaderCache]() { if (settings.EnableShaderBlocking) shaderCache->IterateShaderBlock(false); } },
+						{ priorShaderKey, [shaderCache, devMode]() { if (devMode) shaderCache->IterateShaderBlock(); } },
+						{ nextShaderKey, [shaderCache, devMode]() { if (devMode) shaderCache->IterateShaderBlock(false); } },
 						{ settings.OverlayToggleKey, []() {
 							 Menu::GetSingleton()->overlayVisible = !Menu::GetSingleton()->overlayVisible;
 						 } },

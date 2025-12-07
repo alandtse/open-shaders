@@ -289,8 +289,7 @@ VS_OUTPUT main(VS_INPUT input)
 	vsout.LandBlendWeights2.w = 1 - saturate(0.000375600968 * (9625.59961 - length(gridOffset)));
 	vsout.LandBlendWeights2.xyz = input.LandBlendWeights2.xyz;
 #	elif defined(PROJECTED_UV) && !defined(SKINNED)
-	float3x3 texProjWorld3x3 = float3x3(World[eyeIndex][0].xyz, World[eyeIndex][1].xyz, World[eyeIndex][2].xyz);
-	vsout.TexProj = mul(texProjWorld3x3, TextureProj[eyeIndex][2].xyz);
+	vsout.TexProj = TextureProj[eyeIndex][2].xyz;
 #	endif
 
 #	if defined(EYE)
@@ -1830,7 +1829,9 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 
 #	if defined(LOD_BLENDING)
 #		if defined(LODOBJECTS) || defined(LODOBJECTSHD)
-	baseColor.xyz = pow(abs(baseColor.xyz), SharedData::lodBlendingSettings.LODObjectGamma) * SharedData::lodBlendingSettings.LODObjectBrightness;
+	baseColor.xyz = pow(abs(baseColor.xyz),
+SharedData::lodBlendingSettings.LODObjectGamma) * 
+SharedData::lodBlendingSettings.LODObjectBrightness;
 #		elif defined(LODLANDSCAPE)
 	// First apply terrain variation if enabled
 	#			if defined(TERRAIN_VARIATION)
@@ -1844,7 +1845,9 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 			baseColor.xyz = Color::Diffuse(lodStochasticColor.rgb);
 		}
 #			endif
-	baseColor.xyz = pow(abs(baseColor.xyz), SharedData::lodBlendingSettings.LODTerrainGamma) * SharedData::lodBlendingSettings.LODTerrainBrightness;
+	baseColor.xyz = pow(abs(baseColor.xyz),
+SharedData::lodBlendingSettings.LODTerrainGamma) * 
+SharedData::lodBlendingSettings.LODTerrainBrightness;
 #		endif
 #	endif  // LOD_BLENDING
 
@@ -1946,7 +1949,9 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 #		endif
 
 #		if defined(LOD_BLENDING)
-	lodLandColor.xyz = pow(abs(lodLandColor.xyz), SharedData::lodBlendingSettings.LODTerrainGamma) * SharedData::lodBlendingSettings.LODTerrainBrightness;
+	lodLandColor.xyz = pow(abs(lodLandColor.xyz), 
+SharedData::lodBlendingSettings.LODTerrainGamma) * 
+SharedData::lodBlendingSettings.LODTerrainBrightness;
 #		endif  // LOD_BLENDING
 	float lodBlendParameter = GetLodLandBlendParameter(lodLandColor.xyz);
 	float lodBlendMask = TexLandLodBlend2Sampler.Sample(SampLandLodBlend2Sampler, 3.0.xx * input.TexCoord0.zw).x;
@@ -2043,7 +2048,9 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 		}
 		glintParameters = lerp(glintParameters, projectedGlintParameters, projectedMaterialWeight);
 #			elif defined(LOD_BLENDING) && (defined(LODOBJECTS) || defined(LODOBJECTSHD))
-		projBaseColor.xyz = pow(abs(projBaseColor.xyz), SharedData::lodBlendingSettings.LODObjectSnowGamma) * SharedData::lodBlendingSettings.LODObjectSnowBrightness;
+		projBaseColor.xyz = pow(abs(projBaseColor.xyz), 
+	SharedData::lodBlendingSettings.LODObjectSnowGamma) * 
+	SharedData::lodBlendingSettings.LODObjectSnowBrightness;
 #			endif  // TRUE_PBR
 		normal.xyz = lerp(normal.xyz, finalProjNormal, projectedMaterialWeight);
 		baseColor.xyz = lerp(baseColor.xyz, projBaseColor, projectedMaterialWeight);
@@ -2099,11 +2106,9 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 #		endif
 	hairT = Hair::ReorientTangent(hairT, worldNormal);
 
-	if (SharedData::hairSpecularSettings.Enabled) {
-		if (SharedData::hairSpecularSettings.EnableTangentShift && SharedData::hairSpecularSettings.HairMode != 1) {
-			float3 shiftedNormal = Hair::ShiftWorldNormal(hairT, worldNormal, 0, uv);
-			screenSpaceNormal = normalize(FrameBuffer::WorldToView(shiftedNormal, false, eyeIndex));
-		}
+	if (SharedData::hairSpecularSettings.Enabled && SharedData::hairSpecularSettings.EnableTangentShift) {
+		float3 shiftedNormal = Hair::ShiftWorldNormal(hairT, worldNormal, 0, uv);
+		screenSpaceNormal = normalize(FrameBuffer::WorldToView(shiftedNormal, false, eyeIndex));
 	}
 
 	float3 transmissionColor = 0;
@@ -2724,7 +2729,6 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 #	if defined(HAIR) && defined(CS_HAIR)
 	if (SharedData::hairSpecularSettings.Enabled && SharedData::hairSpecularSettings.HairMode == 1)
 		ambientNormal = normalize(viewDirection - hairT * dot(viewDirection, hairT));
-		screenSpaceNormal = normalize(FrameBuffer::WorldToView(ambientNormal, false, eyeIndex));
 #	endif
 
 	float3 directionalAmbientColor = max(0, mul(DirectionalAmbient, float4(ambientNormal, 1.0)));

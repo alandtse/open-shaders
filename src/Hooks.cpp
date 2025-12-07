@@ -705,6 +705,68 @@ namespace Hooks
 		};
 		static inline REL::Relocation<decltype(thunk)> func;
 	};
+	// This is from 1.4.0 but absent in 1.4.6
+	void BSBatchRenderer_RenderPassImmediately1::thunk(
+		RE::BSRenderPass* a_pass,
+		uint32_t a_technique,
+		bool a_alphaTest,
+		uint32_t a_renderFlags)
+	{
+		// This is for Particle Lights
+		if (globals::features::lightLimitFix.loaded &&
+			!globals::features::lightLimitFix.CheckParticleLights(a_pass, a_technique)) {
+			return;
+		}
+
+		// Original call from 1.4.0
+		func(a_pass, a_technique, a_alphaTest, a_renderFlags);
+	}
+
+	struct BSBatchRenderer_RenderPassImmediately2  // This is from 1.4.0 but absent in 1.4.6
+	{
+		static void thunk(RE::BSRenderPass* a_pass,
+			uint32_t a_technique,
+			bool a_alphaTest,
+			uint32_t a_renderFlags)
+		{
+			// This is for Particle Lights
+			if (globals::features::lightLimitFix.loaded &&
+				!globals::features::lightLimitFix.CheckParticleLights(a_pass, a_technique)) {
+				return;
+			}
+
+			// This is from 1.4.0 but absent in 1.4.6
+			if (globals::features::interiorSun.loaded) {
+				globals::features::interiorSun.UpdateRasterStateCullMode(a_pass, a_technique);
+			}
+
+			// Original call
+			func(a_pass, a_technique, a_alphaTest, a_renderFlags);
+		}
+
+		// This is from 1.4.0 but absent in 1.4.6
+		static inline REL::Relocation<decltype(thunk)> func;
+	};
+
+	struct BSBatchRenderer_RenderPassImmediately3  // This is from 1.4.0 but absent in 1.4.6
+	{
+		static void thunk(RE::BSRenderPass* a_pass,
+			uint32_t a_technique,
+			bool a_alphaTest,
+			uint32_t a_renderFlags)
+		{
+			// This is for Particle Lights
+			if (globals::features::lightLimitFix.loaded &&
+				!globals::features::lightLimitFix.CheckParticleLights(a_pass, a_technique)) {
+				return;
+			}
+
+			// Original call
+			func(a_pass, a_technique, a_alphaTest, a_renderFlags);
+		}
+
+		static inline REL::Relocation<decltype(thunk)> func;  // This is from 1.4.0 but absent in 1.4.6
+	};
 
 #ifdef TRACY_ENABLE
 	struct Main_Update
@@ -915,6 +977,14 @@ namespace Hooks
 
 		logger::info("Hooking BSLightingShader");
 		stl::write_vfunc<0x4, BSLightingShader_SetupMaterial>(RE::VTABLE_BSLightingShader[0]);
+
+		    logger::info("Hooking BSBatchRenderer::RenderPassImmediately");
+		stl::write_thunk_call<BSBatchRenderer_RenderPassImmediately1>(
+			REL::RelocationID(100877, 107673).address() + REL::Relocate(0x1E5, 0x1EE));
+		stl::write_thunk_call<BSBatchRenderer_RenderPassImmediately2>(
+			REL::RelocationID(100852, 107642).address() + REL::Relocate(0x29E, 0x28F));
+		stl::write_thunk_call<BSBatchRenderer_RenderPassImmediately3>(
+			REL::RelocationID(100871, 107667).address() + REL::Relocate(0xEE, 0xED));
 
 		// Patch render space in BSLightingShader::SetupGeometry to always use world space
 		// The variable updateEyePosition is set to 1 when not skinned. By patching to be 0 it will always use world space
