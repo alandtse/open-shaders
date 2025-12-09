@@ -65,7 +65,7 @@ void HomePageRenderer::RenderWelcomeSection()
 
 	// Intro text - centered
 	const char* introText =
-		"This is an unofficial fork of Community Shaders by Doodlum & contributors bringing back Particle Lights.\n"
+		"This is an unofficial fork of Community Shaders restoring Particle Lights.\n"
 		"               Not affiliated with or endorsed by the Community Shaders team\n"
 		"      - Visit their Discord to get the Original and support their outstanding efforts -";
 	ImVec2 introSize = ImGui::CalcTextSize(introText);
@@ -75,7 +75,7 @@ void HomePageRenderer::RenderWelcomeSection()
 	ImGui::Spacing();
 
 	// Extra vertical padding - move banner down by 40.0f (pixels)
-	ImGui::Dummy(ImVec2(0.0f, 40.0f));
+	ImGui::Dummy(ImVec2(0.0f, 50.0f));
 
 	// Discord banner - centered with proper error checking
 	auto menu = Menu::GetSingleton();
