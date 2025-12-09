@@ -51,7 +51,7 @@ Install them manually only if you want them in everywhere.
 To clone the repository with all submodules, run the following command in your terminal:
 
 ```bash
-git clone https://github.com/doodlum/skyrim-community-shaders.git --recursive
+git clone https://github.com/ParticleTroned/skyrim-community-shaders.git --recursive
 cd skyrim-community-shaders
 ```
 
