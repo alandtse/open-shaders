@@ -1,6 +1,6 @@
 #include "LightLimitFix.h"
+#include "Globals.h"
 #include "InverseSquareLighting.h"
-#include "Globals.h" 
 
 #include "Shadercache.h"
 #include "State.h"
@@ -19,6 +19,9 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	ParticleRadius,
 	BillboardBrightness,
 	BillboardRadius,
+	ParticleClusterThreshold,  // NEW
+	MaxParticlesPerEmitter,    // NEW
+	MaxParticleDistance,       // NEW
 	EnableContactShadows,
 	EnableLightsVisualisation,
 	LightsVisualisationMode)
@@ -44,6 +47,32 @@ void LightLimitFix::DrawSettings()
 		ImGui::Checkbox("Enable Optimization", &settings.EnableParticleLightsOptimization);
 		if (auto _tt = Util::HoverTooltipWrapper()) {
 			ImGui::Text("Merges vertices which are close enough to each other to improve performance.");
+		}
+
+		// NEW: clustering controls
+		ImGui::SliderFloat("Cluster Threshold", &settings.ParticleClusterThreshold, 8.0f, 128.0f, "%.1f");
+		if (auto _tt = Util::HoverTooltipWrapper()) {
+			ImGui::Text(
+				"Distance+radius similarity threshold for merging particles into one light.\n"
+				"Higher = more merging, better performance, blurrier lights.\n"
+				"Lower = less merging, more precise, more expensive.");
+		}
+
+		ImGui::SliderInt("Max Particles per Emitter", &settings.MaxParticlesPerEmitter, 32, 2048);
+		if (auto _tt = Util::HoverTooltipWrapper()) {
+			ImGui::Text(
+				"Maximum number of particles sampled per emitter per frame.\n"
+				"Higher = closer to the real particle system but more CPU work.\n"
+				"Lower = faster, especially for very dense effects.");
+		}
+
+		// NEW: distance cutoff for particle lights
+		ImGui::SliderFloat("Max Particle Distance", &settings.MaxParticleDistance, 1000.0f, 20000.0f, "%.0f");
+		if (auto _tt = Util::HoverTooltipWrapper()) {
+			ImGui::Text(
+				"Particle lights beyond this distance from the camera are skipped entirely.\n"
+				"Lower = better performance, but distant effects won't contribute light.\n"
+				"Higher = more distant particle lighting, but more cost.");
 		}
 
 		ImGui::Spacing();
@@ -685,6 +714,20 @@ void LightLimitFix::AddCachedParticleLights(eastl::vector<LightData>& lightsData
 	static float& lightFadeStart = *reinterpret_cast<float*>(REL::RelocationID(527668, 414582).address());
 	static float& lightFadeEnd = *reinterpret_cast<float*>(REL::RelocationID(527669, 414583).address());
 
+	// NEW: hard distance cutoff for particle lights
+	if (settings.MaxParticleDistance > 0.0f) {
+		float maxDist = settings.MaxParticleDistance;
+		float maxDistSq = maxDist * maxDist;
+
+		const auto& pos = light.positionWS[0].data;  // camera-relative
+		float distSq = (pos.x * pos.x) + (pos.y * pos.y) + (pos.z * pos.z);
+
+		if (distSq > maxDistSq) {
+			// Too far away: don't add this particle light at all
+			return;
+		}
+	}
+
 	float distance = CalculateLightDistance(light.positionWS[0].data, light.radius);
 
 	float dimmer = 0.0f;
@@ -835,8 +878,17 @@ void LightLimitFix::UpdateLights()
 					auto& particleSystemRuntimeData = particleSystem->GetParticleSystemRuntimeData();
 					auto& particleRuntimeData = particleData->GetParticlesRuntimeData();
 
-					auto numVertices = particleData->GetActiveVertexCount();
+					// Use explicit 32-bit type to avoid narrowing warnings
+					std::uint32_t numVertices = static_cast<std::uint32_t>(particleData->GetActiveVertexCount());
+
+					// NEW: clamp by MaxParticlesPerEmitter (also 32-bit)
+					std::uint32_t maxPerEmitter = static_cast<std::uint32_t>(std::max(1, settings.MaxParticlesPerEmitter));
+					if (numVertices > maxPerEmitter) {
+						numVertices = maxPerEmitter;
+					}
+
 					for (std::uint32_t p = 0; p < numVertices; p++) {
+
 						float radius = particleRuntimeData.radii[p] * particleRuntimeData.sizes[p];
 
 						auto initialPosition = particleRuntimeData.positions[p];
@@ -857,7 +909,9 @@ void LightLimitFix::UpdateLights()
 							auto averagePosition = clusteredLight.positionWS[0].data / (float)clusteredLights;
 							float positionDiff = positionWS.GetDistance({ averagePosition.x, averagePosition.y, averagePosition.z });
 
-							if ((radiusDiff + positionDiff) > 32.0f || !settings.EnableParticleLightsOptimization) {
+							// NEW: use configurable cluster threshold
+							if ((radiusDiff + positionDiff) > settings.ParticleClusterThreshold ||
+								!settings.EnableParticleLightsOptimization) {
 								clusteredLight.radius /= (float)clusteredLights;
 								clusteredLight.positionWS[0].data /= (float)clusteredLights;
 								clusteredLight.positionWS[1].data = clusteredLight.positionWS[0].data;
@@ -1052,12 +1106,12 @@ void LightLimitFix::Hooks::BSWaterShader_SetupGeometry::thunk(RE::BSShader* This
 };
 
 float LightLimitFix::Hooks::AIProcess_CalculateLightValue_GetLuminance::thunk(
-	RE::ShadowSceneNode* shadowSceneNode, 
+	RE::ShadowSceneNode* shadowSceneNode,
 	RE::NiPoint3& targetPosition,
 	int& numHits,
 	float& sunLightLevel,
-	float& lightLevel, 
-	RE::NiLight& refLight, 
+	float& lightLevel,
+	RE::NiLight& refLight,
 	int32_t shadowBitMask)
 {
 	auto ret = func(shadowSceneNode, targetPosition, numHits, sunLightLevel, lightLevel, refLight, shadowBitMask);
