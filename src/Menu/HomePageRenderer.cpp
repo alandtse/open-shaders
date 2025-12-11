@@ -19,10 +19,10 @@ void HomePageRenderer::RenderHomePage()
 	RenderWelcomeSection();
 	ImGui::Spacing();
 
-	RenderQuickLinksSection();
-	ImGui::Spacing();
+	// RenderQuickLinksSection();
+	// ImGui::Spacing();
 
-	RenderFAQSection();
+	// RenderFAQSection();
 
 	ImGui::EndChild();
 }
@@ -48,11 +48,7 @@ void HomePageRenderer::RenderWelcomeSection()
 		ImGui::PushFont(titleFont);
 	}
 
-	ImVec2 windowSize = ImGui::GetWindowSize();
-	std::string titleWithVersion = "Welcome to Community Shaders " + Util::GetFormattedVersion(Plugin::VERSION);
-	ImVec2 titleSize = ImGui::CalcTextSize(titleWithVersion.c_str());
-	ImGui::SetCursorPosX((windowSize.x - titleSize.x) * 0.5f);
-	ImGui::Text("%s", titleWithVersion.c_str());
+	// (If you want a big title text, insert it here before PopFont)
 
 	// Only pop font if we pushed one
 	if (titleFont) {
@@ -64,16 +60,22 @@ void HomePageRenderer::RenderWelcomeSection()
 
 	ImGui::Spacing();
 
+	// We use windowSize below, so define it here
+	ImVec2 windowSize = ImGui::GetWindowSize();
+
 	// Intro text - centered
 	const char* introText =
-		"Community Shaders provides advanced graphics enhancements for Skyrim.\n"
-		"This comprehensive collection of features brings modern rendering techniques\n"
-		"to enhance your visual experience.";
+		"This is an unofficial fork of Community Shaders restoring Particle Lights.\n"
+		"               Not affiliated with or endorsed by the Community Shaders team\n"
+		"      - Visit their Discord to get the Original and support their outstanding efforts -";
 	ImVec2 introSize = ImGui::CalcTextSize(introText);
 	ImGui::SetCursorPosX((windowSize.x - introSize.x) * 0.5f);
 	ImGui::TextWrapped("%s", introText);
 
 	ImGui::Spacing();
+
+	// Extra vertical padding - move banner down by 40.0f (pixels)
+	ImGui::Dummy(ImVec2(0.0f, 50.0f));
 
 	// Discord banner - centered with proper error checking
 	auto menu = Menu::GetSingleton();
@@ -100,151 +102,19 @@ void HomePageRenderer::RenderWelcomeSection()
 		ImVec2 iconSize = ImVec2(targetWidth, targetWidth * aspectRatio);
 		ImGui::SetCursorPosX((windowSize.x - iconSize.x) * 0.5f);
 
-		// Push style to remove border
-		ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 0.0f);
-		ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0, 0, 0, 0));                     // Transparent background
-		ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.1f, 0.1f, 0.1f, 0.3f));  // Subtle hover
-		ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.2f, 0.2f, 0.2f, 0.5f));   // Subtle click
-
-		if (ImGui::ImageButton("##DiscordButton", menu->uiIcons.discord.texture, iconSize)) {
-			ShellExecuteA(NULL, "open", DISCORD_URL, NULL, NULL, SW_SHOWNORMAL);
-		}
-
-		// Pop the style changes
-		ImGui::PopStyleColor(3);
-		ImGui::PopStyleVar();
-
-		if (ImGui::IsItemHovered()) {
-			ImGui::SetTooltip("Join Community Shaders Discord Server");
-		}
+		// Purely decorative: draw the banner image only (no button, no click, no tooltip)
+		ImGui::Image(menu->uiIcons.discord.texture, iconSize);
 	} else {
-		// Fallback centered button when Discord icon is not available
-		float buttonWidth = 200.0f;
-		ImGui::SetCursorPosX((windowSize.x - buttonWidth) * 0.5f);
-		if (ImGui::Button("Join Discord Server", ImVec2(buttonWidth, 0))) {
-			ShellExecuteA(NULL, "open", DISCORD_URL, NULL, NULL, SW_SHOWNORMAL);
-		}
-		if (ImGui::IsItemHovered()) {
-			ImGui::SetTooltip("Join Community Shaders Discord Server - Icon not found, using fallback button");
-		}
+		// No Discord icon available: keep layout roughly consistent with a dummy spacer,
+		// but do not show a clickable button or link.
+		float dummyWidth = 200.0f;
+		ImGui::SetCursorPosX((windowSize.x - dummyWidth) * 0.5f);
+		ImGui::Dummy(ImVec2(dummyWidth, 0.0f));
 	}
 
+	// Pop the style var we pushed at the start
 	ImGui::PopStyleVar();
-}
-
-void HomePageRenderer::RenderQuickLinksSection()
-{
-	// Quick Links title - centered
-	ImVec2 windowSize = ImGui::GetWindowSize();
-	ImVec2 titleSize = ImGui::CalcTextSize("Quick Links");
-	ImGui::SetCursorPosX((windowSize.x - titleSize.x) * 0.5f);
-	ImGui::Text("Quick Links");
-
-	// Center the button layout
-	float buttonWidth = QUICK_LINKS_BUTTON_WIDTH;
-	float totalWidth = buttonWidth * 3 + ImGui::GetStyle().ItemSpacing.x * 2;  // 3 buttons with spacing
-	ImGui::SetCursorPosX((windowSize.x - totalWidth) * 0.5f);
-
-	// External links in a row
-	if (ImGui::Button("Nexus Mods", ImVec2(buttonWidth, 0))) {
-		ShellExecuteA(NULL, "open", "https://www.nexusmods.com/skyrimspecialedition/mods/86492", NULL, NULL, SW_SHOWNORMAL);
-	}
-
-	ImGui::SameLine();
-	if (ImGui::Button("GitHub Repository", ImVec2(buttonWidth, 0))) {
-		ShellExecuteA(NULL, "open", "https://github.com/doodlum/skyrim-community-shaders", NULL, NULL, SW_SHOWNORMAL);
-	}
-
-	ImGui::SameLine();
-	if (ImGui::Button("GitHub Wiki", ImVec2(buttonWidth, 0))) {
-		ShellExecuteA(NULL, "open", "https://github.com/doodlum/skyrim-community-shaders/wiki", NULL, NULL, SW_SHOWNORMAL);
-	}
-}
-
-void HomePageRenderer::RenderFAQSection()
-{
-	// FAQ title - centered
-	ImVec2 windowSize = ImGui::GetWindowSize();
-	ImVec2 titleSize = ImGui::CalcTextSize("Frequently Asked Questions");
-	ImGui::SetCursorPosX((windowSize.x - titleSize.x) * 0.5f);
-	ImGui::Text("Frequently Asked Questions");
-	ImGui::Separator();
-
-	// FAQ items with collapsible headers
-	if (ImGui::CollapsingHeader("What is Community Shaders?")) {
-		ImGui::TextWrapped(
-			"Community Shaders is a comprehensive graphics enhancement framework for Skyrim that "
-			"provides advanced lighting, materials, and visual effects. It's designed to be modular, "
-			"allowing you to enable only the features you want while maintaining good performance.");
-	}
-
-	if (ImGui::CollapsingHeader("How do I configure features?")) {
-		ImGui::TextWrapped(
-			"Each feature can be found in the left sidebar menu. Click on any feature to access its "
-			"settings. Most features include presets and detailed tooltips to help you understand "
-			"what each setting does.");
-	}
-
-	if (ImGui::CollapsingHeader("Why are some features not loading?")) {
-		ImGui::TextWrapped(
-			"Features may fail to load due to hardware incompatibility, missing dependencies, or "
-			"conflicts with other mods. Check the 'Feature Issues' tab for detailed information "
-			"about any problematic features.");
-	}
-
-	if (ImGui::CollapsingHeader("I have \"Failed Shaders\" when compiling?")) {
-		ImGui::TextWrapped(
-			"Failed shaders are usually caused by mixed file versions. Ensure all features are up to date "
-			"and avoid mixing files from test builds or outdated versions.");
-		ImGui::Spacing();
-		ImGui::Text("Remove these outdated pre-1.0 CS features:");
-		ImGui::BulletText("Vanilla HDR");
-		ImGui::BulletText("Tree LOD Lighting");
-		ImGui::BulletText("Complex Parallax Materials");
-		ImGui::BulletText("Water Blending");
-		ImGui::BulletText("Water Caustics");
-		ImGui::BulletText("Water Parallax");
-		ImGui::BulletText("Dynamic Cubemaps");
-		ImGui::Spacing();
-		ImGui::TextWrapped("Note: All of these features are now included in the base Community Shaders install.");
-	}
-
-	if (ImGui::CollapsingHeader("How do I improve performance?")) {
-		ImGui::TextWrapped(
-			"Start by enabling the Performance Overlay to monitor your FPS. Consider disabling "
-			"expensive features like Screen Space GI or reducing quality settings. The 'Display' "
-			"tab also includes upscaling options that can improve performance.");
-	}
-
-	if (ImGui::CollapsingHeader("Is Community Shaders compatible with ENB?")) {
-		ImGui::TextWrapped(
-			"No, Community Shaders is not compatible with ENB. Community Shaders will automatically "
-			"disable itself if ENB is detected.");
-	}
-
-	if (ImGui::CollapsingHeader("The menu hotkey isn't working!")) {
-		ImGui::TextWrapped(
-			"By default, Community Shaders uses the END key to open this menu. If your keyboard "
-			"doesn't have an END key or it's not working, you can change it in the General > Keybindings tab. "
-			"You can also edit the hotkey in the JSON configuration files.");
-	}
-
-	if (ImGui::CollapsingHeader("I would like to help develop Community Shaders.")) {
-		ImGui::TextWrapped(
-			"We're always looking for talented developers to join the team! Check out our GitHub wiki "
-			"for contribution guidelines and join our Discord server to connect with the development team. "
-			"Whether you're interested in shader programming, C++ development, or documentation, there's "
-			"always something to contribute.");
-	}
-
-	if (ImGui::CollapsingHeader("Is Community Shaders open source?")) {
-		ImGui::TextWrapped(
-			"Yes! Community Shaders is completely open source and available on GitHub. You can view "
-			"the source code, report issues, suggest features, and contribute to the project. "
-			"The project is licensed under GPL, ensuring it remains free and open for everyone."
-			" Branding materials and assets (icons, nexus branding, typography, etc) are not covered by the GPL Licence."
-			" Any included assets may not be used without explicit permission.");
-	}
+	// Close RenderWelcomeSection()
 }
 
 void HomePageRenderer::RenderFirstTimeSetupDialog()
@@ -310,7 +180,8 @@ void HomePageRenderer::RenderFirstTimeSetupDialog()
 			watermarkColor = IM_COL32(255, 255, 255, 60);
 		}
 
-		// Render as subtle watermark background
+		// Render as subtle watermark background (alpha = 180 for stronger logo)
+		ImU32 watermarkColor = IM_COL32(255, 255, 255, 180);
 		ImGui::GetWindowDrawList()->AddImage(menu->uiIcons.logo.texture, logoMin, logoMax,
 			ImVec2(0, 0), ImVec2(1, 1), watermarkColor);
 	}
@@ -319,7 +190,7 @@ void HomePageRenderer::RenderFirstTimeSetupDialog()
 	float windowWidth = ImGui::GetWindowWidth();
 
 	// Welcome title - centered
-	const char* welcomeTitle = "Welcome to Community Shaders!";
+	const char* welcomeTitle = "Welcome to Community Shaders - Particle Lights (Unofficial Fork)!";
 	float welcomeTitleWidth = ImGui::CalcTextSize(welcomeTitle).x;
 	ImGui::SetCursorPosX((windowWidth - welcomeTitleWidth) * 0.5f);
 	ImGui::Text("%s", welcomeTitle);
