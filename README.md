@@ -1,33 +1,37 @@
-[![Latest Release](https://img.shields.io/github/v/release/doodlum/skyrim-community-shaders)](https://github.com/doodlum/skyrim-community-shaders/releases)
-[![License](https://img.shields.io/github/license/doodlum/skyrim-community-shaders)](./LICENSE)
-[![Last Commit](https://img.shields.io/github/last-commit/doodlum/skyrim-community-shaders)](https://github.com/doodlum/skyrim-community-shaders/commits)
-[![Build Status](https://img.shields.io/github/actions/workflow/status/doodlum/skyrim-community-shaders/build.yaml?branch=dev)](https://github.com/doodlum/skyrim-community-shaders/actions)
-[![Discord](https://img.shields.io/discord/1080142797870485606?label=discord&logo=discord&color=5865F2)](https://discord.com/invite/nkrQybAsyy)
-[![Open Issues](https://img.shields.io/github/issues/doodlum/skyrim-community-shaders)](https://github.com/doodlum/skyrim-community-shaders/issues)
-[![Contributors](https://img.shields.io/github/contributors/doodlum/skyrim-community-shaders)](https://github.com/doodlum/skyrim-community-shaders/graphs/contributors)
-[![Stars](https://img.shields.io/github/stars/doodlum/skyrim-community-shaders?style=social)](https://github.com/doodlum/skyrim-community-shaders/stargazers)
+> **Unofficial fork notice**
+> This is an unofficial fork of [Skyrim Community Shaders](https://github.com/doodlum/skyrim-community-shaders)
+> by Doodlum & contributors. It is not affiliated with or endorsed by the Community Shaders team.
 
-[![Pre-commit CI](https://results.pre-commit.ci/badge/github/doodlum/skyrim-community-shaders/dev.svg)](https://results.pre-commit.ci/latest/github/doodlum/skyrim-community-shaders/dev)
-![CodeRabbit Pull Request Reviews](https://img.shields.io/coderabbit/prs/github/doodlum/skyrim-community-shaders?utm_source=oss&utm_medium=github&utm_campaign=doodlum%2Fskyrim-community-shaders&labelColor=171717&color=FF570A&link=https%3A%2F%2Fcoderabbit.ai&label=CodeRabbit+Reviews)
-
-[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/doodlum/skyrim-community-shaders)
-
-# Skyrim Community Shaders
+# Skyrim Community Shaders – Unofficial Fork
 
 SKSE core plugin for community-driven advanced graphics modifications.
 
-[Nexus](https://www.nexusmods.com/skyrimspecialedition/mods/86492)
+This fork restores Particle Lights and Screen Space Shadows (SSS) in Community Shaders, which were removed after CS 1.3.6. It focuses on Skyrim VR but remains compatible with SE and AE. While SSS is not perfect in VR, especially when using upscaling, the visual benefits outweigh the potential bugs for me. Using SSS version 1.2.1 is recommended.
+
+This fork inherits the original GPL-3.0-or-later license with the Modding Exception and Linking Exception (see below).
 
 ## Requirements
 
 -   Any terminal of your choice (e.g., PowerShell)
 -   [Visual Studio Community 2022](https://visualstudio.microsoft.com/)
     -   Desktop development with C++
--   [CMake](https://cmake.org/)
-    -   Edit the `PATH` environment variable and add the cmake.exe install path as a new value
-    -   Instructions for finding and editing the `PATH` environment variable can be found [here](https://www.java.com/en/download/help/path.html)
+    -   CMake Tools for Windows
+    -   HLSL Tools
 -   [Git](https://git-scm.com/downloads)
     -   Edit the `PATH` environment variable and add the Git.exe install path as a new value
+
+## Optional Requirements
+
+```
+CMake & Vcpkg comes with Visual Studio in Developer Command Prompts already.
+Install them manually only if you want them in everywhere.
+```
+
+-   [CMake](https://cmake.org/)
+    -   No need to install manually if you have Visual Studio CMake Tools installed
+    -   CMake 4.0+ is **not** supported right now
+    -   Edit the `PATH` environment variable and add the cmake.exe install path as a new value
+    -   Instructions for finding and editing the `PATH` environment variable can be found [here](https://www.java.com/en/download/help/path.html)
 -   [Vcpkg](https://github.com/microsoft/vcpkg)
     -   Install vcpkg using the directions in vcpkg's [Quick Start Guide](https://github.com/microsoft/vcpkg#quick-start-windows)
     -   After install, add a new environment variable named `VCPKG_ROOT` with the value as the path to the folder containing vcpkg
@@ -40,29 +44,74 @@ SKSE core plugin for community-driven advanced graphics modifications.
 -   [VR Address Library for SKSEVR](https://www.nexusmods.com/skyrimspecialedition/mods/58101)
     -   Needed for VR
 
-## Register Visual Studio as a Generator
+## Build Instructions
 
--   Open `x64 Native Tools Command Prompt`
--   Run `cmake`
--   Close the cmd window
+### Clone the Repository with submodules
 
-Or, in powershell run:
+To clone the repository with all submodules, run the following command in your terminal:
+
+```bash
+git clone https://github.com/ParticleTroned/skyrim-community-shaders.git --recursive
+cd skyrim-community-shaders
+```
+
+### Visual Studio build
+
+To build the project, just open `./skyrim-community-shaders` with Visual Studio's "Open Folder" feature. (Ensure you have `CMake Tools for Windows` selected when installing VS)
+
+Follow the prompts to `Configure` and `Build` the project.
+It should generate the AIO package in the `./build/ALL/aio` folder by default.
+
+#### Zip package & Optional targets
+
+If you change the `Solution Explorer` into `CMake Targets View`, you can find optional targets to create zip packages for each feature.
+Right click on the target and select `Build` to create the zip package in `./dist/`.
+
+### Advanced build with CMake in command line
+
+Open the "Developer PowerShell for VS 2022" or the "x64 Native Tools Command Prompt" (these set up the Visual Studio toolchain for you).
+
+Then from the repository root run:
 
 ```pwsh
-& "C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Auxiliary\Build\vcvarsall.bat" amd64
+# Generate the build files (uses the ALL preset)
+cmake --preset ALL
+
+# Build using the preset
+cmake --build --preset ALL
+
+# Install an AIO package somewhere, e.g. $MOD_FOLDER
+cmake --install --preset ALL -- --prefix $MOD_FOLDER
 ```
 
-## Clone and Build
+# Notes
 
-Open terminal (e.g., PowerShell) and run the following commands:
+-   If you prefer to run the VC environment manually, launch Developer PowerShell or the x64 Native Tools prompt instead of calling vcvarsall.bat directly from PowerShell.
+-   The convenience wrapper `BuildRelease.bat` also captures these steps.
 
+#### Build a zip package
+
+You can build zip packages for optional cmake targets.
+Currently support `AIO_ZIP_PACKAGE`, `Package-AIO-Manual`, `Package-Core`, and `Package-<Feature>`:
+
+```pwsh
+# Create a AIO package in ./dist/
+# Automated AIO zip (requires AIO_ZIP_TO_DIST=ON)
+cmake --build ./build/ALL --config Release --target AIO_ZIP_PACKAGE
+
+# Manual AIO package (install + tar)
+cmake --build ./build/ALL --config Release --target Package-AIO-Manual
+
+# Create a CommunityShaders core package in ./dist/
+cmake --build ./build/ALL --config Release --target Package-Core
+
+# Create a feature package in ./dist/ (example: GrassLighting)
+cmake --build ./build/ALL --config Release --target Package-GrassLighting
 ```
-git clone https://github.com/doodlum/skyrim-community-shaders.git --recursive
-cd skyrim-community-shaders
-.\BuildRelease.bat
-```
 
-### CMAKE Options (optional)
+For more details about packaging targets, options, and the difference between automated and manual packaging, see the "Manual packaging targets (detailed)" section in `.claude/CLAUDE.md`.
+
+#### CMAKE Options (optional)
 
 If you want an example CMakeUserPreset to start off with you can copy the `CMakeUserPresets.json.template` -> `CMakeUserPresets.json`
 
@@ -71,19 +120,6 @@ If you want an example CMakeUserPreset to start off with you can copy the `CMake
 -   This option is default `"OFF"`
 -   Make sure `"AUTO_PLUGIN_DEPLOYMENT"` is set to `"ON"` in `CMakeUserPresets.json`
 -   Change the `"CommunityShadersOutputDir"` value to match your desired outputs, if you want multiple folders you can separate them by `;` is shown in the template example
-
-#### AIO_ZIP_TO_DIST
-
--   This option is default `"ON"`
--   Make sure `"AIO_ZIP_TO_DIST"` is set to `"ON"` in `CMakeUserPresets.json`
--   This will create a `CommunityShaders_AIO.7z` archive in /dist containing all features and base mod
-
-#### ZIP_TO_DIST
-
--   This option is default `"ON"`
--   Make sure `"ZIP_TO_DIST"` is set to `"ON"` in `CMakeUserPresets.json`
--   This will create a zip for each feature and one for the base Community shaders in /dist
--   If having a file with name `CORE` in the root of the features folder it will instead be merged into the core zip
 
 #### TRACY_SUPPORT
 
@@ -124,6 +160,31 @@ If you run into `Access violation` build errors during step 3, you can try addin
 docker run -it --rm --isolation=process -v .:C:/skyrim-community-shaders skyrim-community-shaders:latest
 ```
 
+## Debugging
+
+### Launching MO2-SKSE-Skyrim from commandline
+
+1. Open Steam
+2. Close ModOrganizer GUI
+3. Add `ModOrganizer.exe` (MO2 Folder) to your PATH, or use the path of it
+4. Run the commands:
+
+```pwsh
+# Change Working Directory
+cd "C:/Program Files (x86)/Steam/steamapps/common/Skyrim Special Edition"
+# Launch SKSE with MO2
+ModOrganizer.exe --log run "C:\Program Files (x86)\Steam\steamapps\common\Skyrim Special Edition\skse64_loader.exe"
+```
+
+### Capture with RenderDoc
+
+In Launch Application Menu, use the following settings:
+
+-   Executable Path: `PATH/TO/ModOrganizer.exe`
+-   Working Directory: `C:/Program Files (x86)/Steam/steamapps/common/Skyrim Special Edition`
+-   Command-line Arguments: `--log run "C:\Program Files (x86)\Steam\steamapps\common\Skyrim Special Edition\skse64_loader.exe"`
+-   [x] **Capture Child Process**
+
 ## License
 
 ### Default
@@ -132,7 +193,7 @@ docker run -it --rm --isolation=process -v .:C:/skyrim-community-shaders skyrim-
 Specifically, the Modded Code includes:
 
 -   Skyrim (and its variants)
--   Hardware drivers to enable additional functionality provided via proprietary SDKs, such as [Nvidia DLSS](https://developer.nvidia.com/rtx/dlss/get-started), [AMD FidelityFX FSR3](https://gpuopen.com/fidelityfx-super-resolution-3/), and [Intel XeSS](https://github.com/intel/xess)
+-   Hardware drivers to enable additional functionality provided via proprietary SDKs, such as [Nvidia DLSS](https://developer.nvidia.com/rtx/dlss/get-started) and [AMD FidelityFX FSR3](https://gpuopen.com/fidelityfx-super-resolution-3/)
 
 The Modding Libraries include:
 
@@ -148,4 +209,8 @@ See LICENSE within each directory; if none, it's [Default](#default)
 
 ### Icons
 
--   [Community Shaders Logo](package/Interface/CommunityShaders/Icons/Community%20Shaders%20Logo/) is not covered by the GPL-3.0 license. It is provided solely for personal use (e.g., building from source) and may only be used in unmodified form. There is no license for any other purpose or to distribute the logo. No trademark license is granted for the logo. Any use not expressly permitted is prohibited without the express written consent of the Community Shaders team.
+
+This fork does not include or distribute the original Community Shaders logo files. For compatibility, the original Community Shaders logo and combined Discord logo have been replaced with new, custom artwork while keeping the original file names.
+
+For information about the original Community Shaders logo and its license, please refer to the upstream project:
+https://github.com/doodlum/skyrim-community-shaders
