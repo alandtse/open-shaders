@@ -1,23 +1,14 @@
-[![Latest Release](https://img.shields.io/github/v/release/doodlum/skyrim-community-shaders)](https://github.com/doodlum/skyrim-community-shaders/releases)
-[![License](https://img.shields.io/github/license/doodlum/skyrim-community-shaders)](./LICENSE)
-[![Last Commit](https://img.shields.io/github/last-commit/doodlum/skyrim-community-shaders)](https://github.com/doodlum/skyrim-community-shaders/commits)
-[![Build Status](https://img.shields.io/github/actions/workflow/status/doodlum/skyrim-community-shaders/build.yaml?branch=dev)](https://github.com/doodlum/skyrim-community-shaders/actions)
-[![Discord](https://img.shields.io/discord/1080142797870485606?label=discord&logo=discord&color=5865F2)](https://discord.com/invite/nkrQybAsyy)
-[![Open Issues](https://img.shields.io/github/issues/doodlum/skyrim-community-shaders)](https://github.com/doodlum/skyrim-community-shaders/issues)
-[![Contributors](https://img.shields.io/github/contributors/doodlum/skyrim-community-shaders)](https://github.com/doodlum/skyrim-community-shaders/graphs/contributors)
-[![Stars](https://img.shields.io/github/stars/doodlum/skyrim-community-shaders?style=social)](https://github.com/doodlum/skyrim-community-shaders/stargazers)
+> **Unofficial fork notice**
+> This is an unofficial fork of [Skyrim Community Shaders](https://github.com/doodlum/skyrim-community-shaders)
+> by Doodlum & contributors. It is not affiliated with or endorsed by the Community Shaders team.
 
-[![Pre-commit CI](https://results.pre-commit.ci/badge/github/doodlum/skyrim-community-shaders/dev.svg)](https://results.pre-commit.ci/latest/github/doodlum/skyrim-community-shaders/dev)
-![CodeRabbit Pull Request Reviews](https://img.shields.io/coderabbit/prs/github/doodlum/skyrim-community-shaders?utm_source=oss&utm_medium=github&utm_campaign=doodlum%2Fskyrim-community-shaders&labelColor=171717&color=FF570A&link=https%3A%2F%2Fcoderabbit.ai&label=CodeRabbit+Reviews)
-
-[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/doodlum/skyrim-community-shaders)
-
-# Skyrim Community Shaders
+# Skyrim Community Shaders – Unofficial Fork
 
 SKSE core plugin for community-driven advanced graphics modifications.
 
-[Nexus](https://www.nexusmods.com/skyrimspecialedition/mods/86492)
-[User Wiki](https://modding.wiki/en/skyrim/developers/community-shaders)
+This fork restores Particle Lights and Screen Space Shadows (SSS) in Community Shaders, which were removed after CS 1.3.6. It focuses on Skyrim VR but remains compatible with SE and AE. While SSS is not perfect in VR, especially when using upscaling, the visual benefits outweigh the potential bugs for me. Using SSS version 1.2.1 is recommended.
+
+This fork inherits the original GPL-3.0-or-later license with the Modding Exception and Linking Exception (see below).
 
 ## Requirements
 
@@ -60,7 +51,7 @@ Install them manually only if you want them in everywhere.
 To clone the repository with all submodules, run the following command in your terminal:
 
 ```bash
-git clone https://github.com/doodlum/skyrim-community-shaders.git --recursive
+git clone https://github.com/ParticleTroned/skyrim-community-shaders.git --recursive
 cd skyrim-community-shaders
 ```
 
@@ -218,4 +209,8 @@ See LICENSE within each directory; if none, it's [Default](#default)
 
 ### Icons
 
--   [Community Shaders Logo](package/Interface/CommunityShaders/Icons/Community%20Shaders%20Logo/) is not covered by the GPL-3.0 license. It is provided solely for personal use (e.g., building from source) and may only be used in unmodified form. There is no license for any other purpose or to distribute the logo. No trademark license is granted for the logo. Any use not expressly permitted is prohibited without the express written consent of the Community Shaders team.
+
+This fork does not include or distribute the original Community Shaders logo files. For compatibility, the original Community Shaders logo and combined Discord logo have been replaced with new, custom artwork while keeping the original file names.
+
+For information about the original Community Shaders logo and its license, please refer to the upstream project:
+https://github.com/doodlum/skyrim-community-shaders
