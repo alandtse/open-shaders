@@ -54,6 +54,7 @@ public:
 	std::vector<std::pair<std::string, std::string>> shaderDefines{};  // data structure to parse string into; needed to avoid dangling pointers
 
 	float timer = 0;
+	float refractionScale = 1.0f;  // 1.0 = current behavior, <1.0 = weaker heat warp
 	double smoothDrawCalls[RE::BSShader::Type::Total + 1];
 	int drawCalls[RE::BSShader::Type::Total + 1];
 
@@ -208,10 +209,9 @@ public:
 		uint InMapMenu;
 		uint HideSky;
 		float MipBias;
-		float pad0;
-	};
-	STATIC_ASSERT_ALIGNAS_16(SharedDataCB);
-
+		float RefractionScale;  //matches HLSL SharedData::RefractionScale
+		};
+		STATIC_ASSERT_ALIGNAS_16(SharedDataCB);
 	ConstantBuffer* sharedDataCB = nullptr;
 	ConstantBuffer* featureDataCB = nullptr;
 
