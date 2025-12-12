@@ -281,6 +281,9 @@ void State::Load(ConfigMode a_configMode, bool a_allowReload)
 				shaderCache->SetFileWatcher(advanced["Use FileWatcher"]);
 			if (advanced["Frame Annotations"].is_boolean())
 				frameAnnotations = advanced["Frame Annotations"];
+			// NEW: load refraction / heat-warp strength (uniform) from config
+			if (advanced["Refraction Scale"].is_number())
+				refractionScale = std::clamp(advanced["Refraction Scale"].get<float>(), 0.0f, 2.0f);
 		}
 
 		if (settings["General"].is_object()) {
@@ -423,6 +426,7 @@ void State::Save(ConfigMode a_configMode)
 	advanced["Background Compiler Threads"] = shaderCache->backgroundCompilationThreadCount;
 	advanced["Use FileWatcher"] = shaderCache->UseFileWatcher();
 	advanced["Frame Annotations"] = frameAnnotations;
+	advanced["Refraction Scale"] = refractionScale;
 	settings["Advanced"] = advanced;
 
 	json general;
@@ -774,7 +778,8 @@ void State::UpdateSharedData([[maybe_unused]] bool a_inWorld, [[maybe_unused]] b
 		} else {
 			data.MipBias = 0;
 		}
-
+		// New: push the global refraction scale into the shared CB
+		data.RefractionScale = refractionScale;
 		sharedDataCB->Update(data);
 	}
 
