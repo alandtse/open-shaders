@@ -6,7 +6,8 @@
 
 SKSE core plugin for community-driven advanced graphics modifications.
 
-This fork restores (and extents) Particle Lights functionality in Community Shaders, which was removed after CS 1.3.6. It also enables using and Screen Space Shadows (SSS) in VR again, while remaining compatible with SE and AE. While SSS is not perfect in VR, especially when using upscaling, the visual benefits outweigh the potential bugs for me. Using SSS version 1.2.1 is recommended.
+This fork restores (and extents) Particle Lights functionality in Community Shaders, which was removed after CS 1.3.6. It also enables using and Screen Space Shadows (SSS) in VR again, while remaining compatible with SE and AE. While SSS is not perfect in VR, especially when using upscaling, the visual benefits may outweigh the potential bugs. Using SSS version 1.2.1 is recommended.
+The goal is to build on current CS introducing changes and customization options directed towards VR users.
 
 This fork inherits the original GPL-3.0-or-later license with the Modding Exception and Linking Exception (see below).
 
