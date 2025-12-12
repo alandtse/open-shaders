@@ -114,20 +114,41 @@ void AdvancedSettingsRenderer::RenderLoggingSection()
 
 	ImGui::Spacing();
 
-	// Compiler Thread controls
-	ImGui::SliderInt("Compiler Threads", &shaderCache->compilationThreadCount, 1, static_cast<int32_t>(std::thread::hardware_concurrency()));
-	if (auto _tt = Util::HoverTooltipWrapper()) {
-		ImGui::Text(
-			"Number of threads to use to compile shaders. "
-			"The more threads the faster compilation will finish but may make the system unresponsive. ");
-	}
-	ImGui::SliderInt("Background Compiler Threads", &shaderCache->backgroundCompilationThreadCount, 1, static_cast<int32_t>(std::thread::hardware_concurrency()));
-	if (auto _tt = Util::HoverTooltipWrapper()) {
-		ImGui::Text(
-			"Number of threads to use to compile shaders while playing game. "
-			"This is activated if the startup compilation is skipped. "
-			"The more threads the faster compilation will finish but may make the system unresponsive. ");
-	}
+		// Heat warp / refraction strength slider
+		ImGui::Separator();
+		ImGui::Text("ImageSpace Refraction");
+
+		ImGui::SliderFloat(
+			"Heat Warp Strength",
+			&globals::state->refractionScale,
+			0.0f,
+			2.0f,
+			"%.2f");
+
+		if (auto _tt = Util::HoverTooltipWrapper()) {
+			ImGui::Text(
+				"Scales ImageSpace refraction (heat shimmer around fire/heat sources).\n"
+				"1.00 = default Community Shaders behavior.\n"
+				"Lower values reduce warping; 0 disables it.");
+		}
+
+		ImGui::Spacing();
+		ImGui::Separator();  
+		ImGui::Spacing();
+		// Compiler Thread controls
+		ImGui::SliderInt("Compiler Threads", &shaderCache->compilationThreadCount, 1, static_cast<int32_t>(std::thread::hardware_concurrency()));
+		if (auto _tt = Util::HoverTooltipWrapper()) {
+			ImGui::Text(
+				"Number of threads to use to compile shaders. "
+				"The more threads the faster compilation will finish but may make the system unresponsive. ");
+		}
+		ImGui::SliderInt("Background Compiler Threads", &shaderCache->backgroundCompilationThreadCount, 1, static_cast<int32_t>(std::thread::hardware_concurrency()));
+		if (auto _tt = Util::HoverTooltipWrapper()) {
+			ImGui::Text(
+				"Number of threads to use to compile shaders while playing game. "
+				"This is activated if the startup compilation is skipped. "
+				"The more threads the faster compilation will finish but may make the system unresponsive. ");
+		}
 
 	// A/B Testing settings
 	auto* abTestingManager = ABTestingManager::GetSingleton();
