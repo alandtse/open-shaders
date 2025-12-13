@@ -187,7 +187,7 @@ VS_OUTPUT main(VS_INPUT input)
 	);
 #	if defined(LODLANDNOISE) || defined(LODLANDSCAPE)
 	inputPosition = LodLandscape::AdjustLodLandscapeVertexPositionMS(inputPosition, float4x4(World[eyeIndex], float4(0, 0, 0, 1)), HighDetailRange[eyeIndex]);
-#	endif  // defined(LODLANDNOISE) || defined(LODLANDSCAPE)                                                                   \
+#	endif  // defined(LODLANDNOISE) || defined(LODLANDSCAPE)                                                                 
 
 	precise float4 previousInputPosition = inputPosition;
 
@@ -1630,7 +1630,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 #			else
 			landRMAOS4 = TexLandRMAOS4Sampler.SampleBias(SampLandRMAOS4Sampler, uv, SharedData::MipBias) * float4(LandscapeTexture4PBRParams.x, 1, 1, LandscapeTexture4PBRParams.z);
 #			endif
-			if ((PBRFlags & PBR::TerrainFlags::LandTile3HasGlint) != 0) {\
+			if ((PBRFlags & PBR::TerrainFlags::LandTile3HasGlint) != 0) {
 				glintParameters += weight * LandscapeTexture4GlintParameters;
 			}
 		}
@@ -3214,9 +3214,21 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	}
 	alpha = saturate(1.05 * alpha);
 #			endif  // DEPTH_WRITE_DECALS
-	if (alpha - AlphaTestRefRS < 0) {
-		discard;
-	}
+#if defined(TREE_ANIM)
+// VRS Fix: For TREE_ANIM (full tree models), use a fixed low alpha threshold
+// instead of the variable AlphaTestRefRS.
+//
+// This fixes white outline artifacts caused by VRS coarse shading at alpha edges.
+// A low threshold (0.1) reduces the "gradient zone" where VRS can misclassify pixels.
+const float vrsFixedAlphaThreshold = 0.1;
+if (alpha - vrsFixedAlphaThreshold < 0) {
+    discard;
+}
+#else
+if (alpha - AlphaTestRefRS < 0) {
+    discard;
+}
+#endif  // TREE_ANIM
 #		endif      // DO_ALPHA_TEST
 
 #		if defined(ANISOTROPIC_ALPHA)
