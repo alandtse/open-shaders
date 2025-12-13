@@ -56,6 +56,9 @@ public:
 	float refractionScale = 1.0f;  // 1.0 = current behavior, <1.0 = weaker heat warp
 	float sssHumanIntensity = 1.0f;   // 1.0 = current look
 	float sssHumanSaturation = 1.0f;  // 1.0 = unchanged; 0 = grayscale; >1 = more saturated
+	float sssHumanBrightness = 1.0f;	// 1.0 = unchanged; < 1 = darker
+	float sssHumanBaseSaturation = 1.0f; // 1.0 = unchanged; >1 = more saturated
+
 	double smoothDrawCalls[RE::BSShader::Type::Total + 1];
 	int drawCalls[RE::BSShader::Type::Total + 1];
 
@@ -208,8 +211,8 @@ public:
 		float RefractionScale;  // new: matches HLSL SharedData::RefractionScale
 		float SSSHumanIntensity;   // new: matches HLSL SharedData::SSSHumanIntensity
 		float SSSHumanSaturation;  // new: matches HLSL SharedData::SSSHumanSaturation
-		float _Pad0;
-		float _Pad1;
+		float SSSHumanBrightness;
+		float SSSHumanBaseSaturation;
 	};
 	static_assert(sizeof(SharedDataCB) % 16 == 0, "SharedDataCB must be 16-byte aligned sized for HLSL constant buffer");
 	ConstantBuffer* sharedDataCB = nullptr;

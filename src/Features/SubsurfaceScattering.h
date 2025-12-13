@@ -28,7 +28,8 @@ public:
 		float4 MeanFreePathHuman = { 1.0f, 0.37f, 0.3f, 2.67f };
 		float HumanSSSIntensity = 1.0f;
 		float HumanSSSSaturation = 1.0f;
-
+		float HumanSSSBrightness = 1.0f;
+		float HumanSSSBaseSaturation = 1.0f;
 	};
 
 	Settings settings;

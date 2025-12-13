@@ -136,17 +136,32 @@ float4 BurleyNormalizedSS(uint2 DTid, float2 texCoord, uint eyeIndex, float sssA
     float3 color = Color::LinearToGamma(colorSum) * AlbedoTexture[DTid.xy].xyz;
     color = lerp(centerColor.xyz, color, saturate(sssAmount));
 
-    // --- NEW: human skin controls (real-time uniforms) ---
+// --- human skin controls (real-time uniforms) ---
     if (humanProfile)
     {
-        // 1) “Brightness/strength” of SSS: scale only the SSS contribution (delta)
-        float3 baseColor = centerColor.xyz;
-        float3 delta = color - baseColor;
-        color = baseColor + delta * SharedData::SSSHumanIntensity;
+        float3 base0 = centerColor.xyz;
 
-        // 2) Saturation control on the final output (in gamma space; simple + effective)
-        float luma = dot(color, float3(0.2126, 0.7152, 0.0722));
-        color = lerp(luma.xxx, color, SharedData::SSSHumanSaturation);
+    // Clamp user controls to sane ranges (boost allowed for intensity)
+        float intensity = clamp(SharedData::SSSHumanIntensity, 0.0f, 2.0f);
+        float brightness = clamp(SharedData::SSSHumanBrightness, 0.0f, 2.0f);
+        float baseSat = clamp(SharedData::SSSHumanBaseSaturation, 0.0f, 2.0f);
+        float finalSat = clamp(SharedData::SSSHumanSaturation, 0.0f, 2.0f);
+
+    // Base “skin texture” brightness + saturation
+        float3 base = base0 * brightness;
+        float baseLuma = dot(base, float3(0.2126f, 0.7152f, 0.0722f));
+        base = lerp(baseLuma.xxx, base, baseSat);
+
+    // Scale only the SSS contribution (delta computed vs original base0)
+        float3 delta = color - base0;
+        color = base + delta * intensity;
+
+    // Final saturation control on the output
+        float luma = dot(color, float3(0.2126f, 0.7152f, 0.0722f));
+        color = lerp(luma.xxx, color, finalSat);
+
+    // Prevent negative values (avoids odd artifacts in later passes)
+        color = max(color, 0.0f.xxx);
     }
 
     float4 outColor = float4(color, ColorTexture[DTid.xy].w);

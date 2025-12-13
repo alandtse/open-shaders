@@ -4,6 +4,8 @@
 #include "Features/TerrainBlending.h"
 #include "ShaderCache.h"
 #include "State.h"
+#include <cfloat>  // for FLT_MIN
+
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(SubsurfaceScattering::DiffusionProfile,
 	BlurRadius, Thickness, Strength, Falloff)
@@ -19,7 +21,9 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	MeanFreePathBase,
 	MeanFreePathHuman,
 	HumanSSSIntensity,
-	HumanSSSSaturation)
+	HumanSSSSaturation,
+	HumanSSSBrightness,
+	HumanSSSBaseSaturation)
 
 void SubsurfaceScattering::DrawSettings()
 {
@@ -72,6 +76,7 @@ void SubsurfaceScattering::DrawSettings()
 			}
 		} else if (settings.SSMode == 1) {
 			ImGui::SliderInt("Burley Samples", (int*)&settings.BurleySamples, 1, 64, "%d", ImGuiSliderFlags_AlwaysClamp);
+
 			if (ImGui::TreeNodeEx("Base Profile", ImGuiTreeNodeFlags_DefaultOpen)) {
 				ImGui::ColorEdit3("Mean Free Path Color", (float*)&settings.MeanFreePathBase);
 				if (auto _tt = Util::HoverTooltipWrapper()) {
@@ -84,40 +89,68 @@ void SubsurfaceScattering::DrawSettings()
 				ImGui::TreePop();
 			}
 
+			// Burley Human controls: keep everything inside this tree so it collapses together
 			if (ImGui::TreeNodeEx("Human Profile", ImGuiTreeNodeFlags_DefaultOpen)) {
 				ImGui::ColorEdit3("Mean Free Path Color", (float*)&settings.MeanFreePathHuman);
 				if (auto _tt = Util::HoverTooltipWrapper()) {
 					ImGui::Text("Controls how far light goes into the subsurface in the red, green, and blue channel. It is scaled by the Mean Free Path Distance.");
 				}
-				ImGui::SliderFloat("Mean Free Path Distance", &settings.MeanFreePathHuman.w, 0.01f, 10.0f, "%.2f");
-				if (auto _tt = Util::HoverTooltipWrapper()) {
-					ImGui::Text("Controls the distance that Mean Free Path Color goes into subsurface.");
+
+				// --- aligned sliders (value column + label column) ---
+				if (ImGui::BeginTable("##HumanProfileSliders", 2, ImGuiTableFlags_SizingFixedFit)) {
+					ImGui::TableSetupColumn("##value", ImGuiTableColumnFlags_WidthStretch);
+					ImGui::TableSetupColumn("##label", ImGuiTableColumnFlags_WidthFixed);
+
+					auto RowSliderFloat = [&](const char* id, float* v, float vmin, float vmax, const char* fmt,
+											  const char* label, const char* tooltip) {
+						ImGui::TableNextRow();
+
+						ImGui::TableSetColumnIndex(0);
+						ImGui::SetNextItemWidth(-FLT_MIN);  // fill the whole value column
+						ImGui::SliderFloat(id, v, vmin, vmax, fmt);
+						if (tooltip) {
+							if (auto _tt = Util::HoverTooltipWrapper()) {
+								ImGui::TextUnformatted(tooltip);
+							}
+						}
+
+						ImGui::TableSetColumnIndex(1);
+						ImGui::TextUnformatted(label);
+					};
+
+					RowSliderFloat("##HumanMFPDistance", &settings.MeanFreePathHuman.w, 0.01f, 10.0f, "%.2f",
+						"Mean Free Path Distance",
+						"Controls the distance that Mean Free Path Color goes into subsurface.");
+
+					RowSliderFloat("##HumanSSSIntensity", &settings.HumanSSSIntensity, 0.0f, 2.0f, "%.2f",
+						"SSS Intensity",
+						"Scales the Burley SSS contribution for pixels flagged as Human Profile. 1.0 = default.");
+
+					RowSliderFloat("##HumanSSSSaturation", &settings.HumanSSSSaturation, 0.0f, 2.0f, "%.2f",
+						"SSS Saturation",
+						"Adjusts saturation of the final human-profile SSS result. 1.0 = unchanged.");
+
+					RowSliderFloat("##HumanSSSBrightness", &settings.HumanSSSBrightness, 0.0f, 2.0f, "%.2f",
+						"Skin Brightness",
+						"Multiplies the base skin color for Human Profile pixels. 1.0 = unchanged.");
+
+					RowSliderFloat("##HumanSSSBaseSaturation", &settings.HumanSSSBaseSaturation, 0.0f, 2.0f, "%.2f",
+						"Skin Saturation",
+						"Adjusts saturation of the base skin color for Human Profile pixels. 1.0 = unchanged.");
+
+					ImGui::EndTable();
 				}
+
+				ImGui::Spacing();
+				ImGui::Separator();
+				ImGui::Spacing();
+
 				ImGui::TreePop();
 			}
-
-			ImGui::SliderFloat("SSS Intensity", &settings.HumanSSSIntensity, 0.0f, 2.0f, "%.2f");
-			if (auto _tt = Util::HoverTooltipWrapper()) {
-				ImGui::Text("Scales the Burley SSS contribution for pixels flagged as Human Profile. 1.0 = default.");
-			}
-
-			ImGui::SliderFloat("SSS Saturation", &settings.HumanSSSSaturation, 0.0f, 2.0f, "%.2f");
-			if (auto _tt = Util::HoverTooltipWrapper()) {
-				ImGui::Text("Adjusts saturation of the final human-profile SSS result. 1.0 = unchanged.");
-			}
-
-			ImGui::Spacing();
-			ImGui::Separator();
-			ImGui::Spacing();
-
 		}
-
-		ImGui::Spacing();
-		ImGui::Spacing();
-
-		ImGui::TreePop();
 	}
 }
+
 
 float3 SubsurfaceScattering::Gaussian(DiffusionProfile& a_profile, float variance, float r)
 {
@@ -358,6 +391,8 @@ void SubsurfaceScattering::Reset()
 	if (auto state = globals::state) {
 		state->sssHumanIntensity = std::clamp(settings.HumanSSSIntensity, 0.0f, 2.0f);
 		state->sssHumanSaturation = std::clamp(settings.HumanSSSSaturation, 0.0f, 2.0f);
+		state->sssHumanBrightness = std::clamp(settings.HumanSSSBrightness, 0.0f, 2.0f);
+		state->sssHumanBaseSaturation = std::clamp(settings.HumanSSSBaseSaturation, 0.0f, 2.0f);
 	}
 	auto shaderManager = globals::game::smState;
 	auto shaderCache = globals::shaderCache;

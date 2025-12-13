@@ -785,6 +785,8 @@ void State::UpdateSharedData([[maybe_unused]] bool a_inWorld, [[maybe_unused]] b
 		data.RefractionScale = refractionScale;
 		data.SSSHumanIntensity = sssHumanIntensity;
 		data.SSSHumanSaturation = sssHumanSaturation;
+		data.SSSHumanBrightness = sssHumanBrightness;
+		data.SSSHumanBaseSaturation = sssHumanBaseSaturation;
 		sharedDataCB->Update(data);
 	}
 

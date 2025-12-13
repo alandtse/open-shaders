@@ -26,8 +26,8 @@ namespace SharedData
 		float RefractionScale; // Global scale for ImageSpace refraction heat warp (1.0 = vanilla CS)
 		float SSSHumanIntensity;      // NEW: scales the SSS contribution for human profile
 		float SSSHumanSaturation;     // NEW: saturation of final skin result (human profile)
-		float _Pad0;
-		float _Pad1;     
+		float SSSHumanBrightness;      // NEW: multiplies base skin color (1.0 = unchanged)
+		float SSSHumanBaseSaturation;  // NEW: saturation of base skin color (1.0 = unchanged)   
 	};
 
 	struct GrassLightingSettings
