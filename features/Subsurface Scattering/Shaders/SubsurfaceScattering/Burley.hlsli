@@ -130,11 +130,25 @@ float4 BurleyNormalizedSS(uint2 DTid, float2 texCoord, uint eyeIndex, float sssA
 		weightSum += sampleWeight;
 	}
 
-	colorSum *= any(weightSum == 0.0f) ? 0.0f : (1.0f / weightSum);
-	colorSum = lerp(colorSum, originalColor, saturate(centerWeight));
-	float3 color = Color::LinearToGamma(colorSum) * AlbedoTexture[DTid.xy].xyz;
-	color = lerp(centerColor.xyz, color, saturate(sssAmount));
+    colorSum *= any(weightSum == 0.0f) ? 0.0f : (1.0f / weightSum);
+    colorSum = lerp(colorSum, originalColor, saturate(centerWeight));
 
-	float4 outColor = float4(color, ColorTexture[DTid.xy].w);
-	return outColor;
+    float3 color = Color::LinearToGamma(colorSum) * AlbedoTexture[DTid.xy].xyz;
+    color = lerp(centerColor.xyz, color, saturate(sssAmount));
+
+    // --- NEW: human skin controls (real-time uniforms) ---
+    if (humanProfile)
+    {
+        // 1) “Brightness/strength” of SSS: scale only the SSS contribution (delta)
+        float3 baseColor = centerColor.xyz;
+        float3 delta = color - baseColor;
+        color = baseColor + delta * SharedData::SSSHumanIntensity;
+
+        // 2) Saturation control on the final output (in gamma space; simple + effective)
+        float luma = dot(color, float3(0.2126, 0.7152, 0.0722));
+        color = lerp(luma.xxx, color, SharedData::SSSHumanSaturation);
+    }
+
+    float4 outColor = float4(color, ColorTexture[DTid.xy].w);
+    return outColor;
 }

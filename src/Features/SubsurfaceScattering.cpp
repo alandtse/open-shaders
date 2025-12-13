@@ -17,7 +17,9 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	HumanProfile,
 	BurleySamples,
 	MeanFreePathBase,
-	MeanFreePathHuman)
+	MeanFreePathHuman,
+	HumanSSSIntensity,
+	HumanSSSSaturation)
 
 void SubsurfaceScattering::DrawSettings()
 {
@@ -93,6 +95,21 @@ void SubsurfaceScattering::DrawSettings()
 				}
 				ImGui::TreePop();
 			}
+
+			ImGui::SliderFloat("SSS Intensity", &settings.HumanSSSIntensity, 0.0f, 2.0f, "%.2f");
+			if (auto _tt = Util::HoverTooltipWrapper()) {
+				ImGui::Text("Scales the Burley SSS contribution for pixels flagged as Human Profile. 1.0 = default.");
+			}
+
+			ImGui::SliderFloat("SSS Saturation", &settings.HumanSSSSaturation, 0.0f, 2.0f, "%.2f");
+			if (auto _tt = Util::HoverTooltipWrapper()) {
+				ImGui::Text("Adjusts saturation of the final human-profile SSS result. 1.0 = unchanged.");
+			}
+
+			ImGui::Spacing();
+			ImGui::Separator();
+			ImGui::Spacing();
+
 		}
 
 		ImGui::Spacing();
@@ -338,6 +355,10 @@ void SubsurfaceScattering::SetupResources()
 
 void SubsurfaceScattering::Reset()
 {
+	if (auto state = globals::state) {
+		state->sssHumanIntensity = std::clamp(settings.HumanSSSIntensity, 0.0f, 2.0f);
+		state->sssHumanSaturation = std::clamp(settings.HumanSSSSaturation, 0.0f, 2.0f);
+	}
 	auto shaderManager = globals::game::smState;
 	auto shaderCache = globals::shaderCache;
 	shaderManager->characterLightEnabled = shaderCache->IsEnabled() ? settings.EnableCharacterLighting : true;

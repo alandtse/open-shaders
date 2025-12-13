@@ -26,6 +26,9 @@ public:
 		uint BurleySamples = 16;
 		float4 MeanFreePathBase = { 0.56f, 0.56f, 0.56f, 2.67f };
 		float4 MeanFreePathHuman = { 1.0f, 0.37f, 0.3f, 2.67f };
+		float HumanSSSIntensity = 1.0f;
+		float HumanSSSSaturation = 1.0f;
+
 	};
 
 	Settings settings;
