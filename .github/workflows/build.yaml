@@ -335,15 +335,14 @@ jobs:
               with:
                   cache-key-suffix: "tests"
 
-            - name: Configure CMake with shader tests
-              if: steps.check-hlsl.outputs.skip != 'true'
-              run: |
-                  cmake --preset ALL -DBUILD_SHADER_TESTS=ON
-
             - name: Build shader tests
               if: steps.check-hlsl.outputs.skip != 'true'
-              run: |
-                  cmake --build build/ALL --target shader_tests --config Release
+              uses: lukka/run-cmake@v10
+              with:
+                  configurePreset: ALL
+                  configurePresetAdditionalArgs: "['-DBUILD_SHADER_TESTS=ON']"
+                  buildPreset: ALL
+                  buildPresetAdditionalArgs: "['--target shader_tests']"
 
             - name: Run shader unit tests
               if: steps.check-hlsl.outputs.skip != 'true'
