@@ -205,6 +205,9 @@ jobs:
                       file: ".github/configs/shader-validation-vr.yaml"
             fail-fast: false # Let both configs run to completion for full output
         steps:
+            - name: Checkout code
+              uses: actions/checkout@v4
+
             - name: Check for HLSL Changes
               id: check-hlsl
               uses: ./.github/actions/check-hlsl-changes
@@ -302,6 +305,9 @@ jobs:
         permissions:
             contents: read
         steps:
+            - name: Checkout code
+              uses: actions/checkout@v4
+
             - name: Check for HLSL Changes
               id: check-hlsl
               uses: ./.github/actions/check-hlsl-changes
