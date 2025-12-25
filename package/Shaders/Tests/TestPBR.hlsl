@@ -1,13 +1,11 @@
-// HLSL Unit Tests for Common/PBR.hlsli
-// Note: Only testing standalone utility functions to avoid constant buffer dependencies
+// HLSL Unit Tests for PBR utility functions
 
-// Include dependencies manually to avoid SharedData.hlsli
 #include "/Shaders/Common/Math.hlsli"
 #include "/Shaders/Common/BRDF.hlsli"
 #include "/Shaders/Common/Color.hlsli"
 #include "/Test/STF/ShaderTestFramework.hlsli"
 
-// Manually include the testable PBR functions (without full PBR.hlsli)
+// PBR constants and flags (can't be in BRDF.hlsli as they're PBR-specific, not general BRDF)
 namespace PBR
 {
 	namespace Constants

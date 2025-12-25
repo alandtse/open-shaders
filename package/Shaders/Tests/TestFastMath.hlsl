@@ -5,6 +5,8 @@
 // Helper to calculate relative error
 float RelativeError(float approx, float exact)
 {
+    if (abs(exact) < 1e-10f)
+        return abs(approx - exact);  // Absolute error for near-zero exact values
     return abs((approx - exact) / exact);
 }
 
