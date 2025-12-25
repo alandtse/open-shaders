@@ -347,7 +347,7 @@ jobs:
             - name: Run shader unit tests
               if: steps.check-hlsl.outputs.skip != 'true'
               run: |
-                  ctest --test-dir build/ALL -C Release --output-on-failure -R ShaderTests
+                  ctest --test-dir build/ALL -C Release --output-on-failure -R ShaderTests --timeout 300
 
             - name: Upload test results on failure
               if: failure() && steps.check-hlsl.outputs.skip != 'true'

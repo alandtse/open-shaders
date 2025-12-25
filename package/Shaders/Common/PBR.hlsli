@@ -113,7 +113,9 @@ namespace PBR
 
 	inline float HairGaussian(float B, float Theta)
 	{
-		return exp(-0.5 * Theta * Theta / (B * B)) / (sqrt(Math::TAU) * B);
+		// Guard against division by zero: clamp B to a minimum value
+		float B_safe = max(B, 1e-6);
+		return exp(-0.5 * Theta * Theta / (B_safe * B_safe)) / (sqrt(Math::TAU) * B_safe);
 	}
 
 	float3 GetHairDiffuseColorMarschner(float3 N, float3 V, float3 L, float NdotL, float NdotV, float VdotL, float backlit, float area, MaterialProperties material)

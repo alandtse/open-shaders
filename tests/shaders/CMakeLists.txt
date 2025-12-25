@@ -77,10 +77,11 @@ target_add_asset_directory(shader_tests ${SHADER_SOURCE_DIR} "/${SHADER_SOURCE_R
 # Optional: Make shader tests depend on HLSL test files for automatic rebuild triggers
 # This ensures that changing HLSL test files triggers a relink (to update copied assets)
 file(GLOB_RECURSE HLSL_TEST_FILES "${SHADER_SOURCE_DIR}/Tests/Test*.hlsl")
+list(LENGTH HLSL_TEST_FILES HLSL_TEST_COUNT)
 target_sources(shader_tests PRIVATE ${HLSL_TEST_FILES})
 set_source_files_properties(${HLSL_TEST_FILES} PROPERTIES HEADER_FILE_ONLY TRUE)
 
-message(STATUS "Found ${CMAKE_MATCH_COUNT} HLSL test files:")
+message(STATUS "Found ${HLSL_TEST_COUNT} HLSL test files:")
 foreach(TEST_FILE ${HLSL_TEST_FILES})
     get_filename_component(TEST_NAME ${TEST_FILE} NAME)
     message(STATUS "  - ${TEST_NAME}")

@@ -94,7 +94,9 @@ namespace PBR
 
 	inline float HairGaussian(float B, float Theta)
 	{
-		return exp(-0.5 * Theta * Theta / (B * B)) / (sqrt(Math::TAU) * B);
+		// Guard against division by zero: clamp B to a minimum value
+		float B_safe = max(B, 1e-6);
+		return exp(-0.5 * Theta * Theta / (B_safe * B_safe)) / (sqrt(Math::TAU) * B_safe);
 	}
 }
 
@@ -494,9 +496,9 @@ void TestHairGaussianEdgeCases()
     ASSERT(IsTrue, farFromPeak < 0.001f); // Should be very small
 
     // Test with B = 0 (degenerate case - delta function)
-    // Note: This will divide by zero but should clamp to valid range
+    // HairGaussian guards against division by zero by clamping B to minimum value
     float deltaFunc = PBR::HairGaussian(0.0f, 0.0f);
-    ASSERT(IsTrue, !isnan(deltaFunc) || !isinf(deltaFunc));
+    ASSERT(IsTrue, !isnan(deltaFunc) && !isinf(deltaFunc));
 }
 
 /// @tags pbr, specular, edge-cases
