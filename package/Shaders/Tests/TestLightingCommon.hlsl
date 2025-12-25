@@ -50,3 +50,62 @@ void TestShininessToRoughness()
     float actual = ShininessToRoughness(shininess);
     ASSERT(IsTrue, abs(actual - expected) < 0.0001f);
 }
+
+/// @tags lighting, material, edge-cases
+[numthreads(1, 1, 1)]
+void TestShininessToRoughnessEdgeCases()
+{
+    // Test near-zero shininess
+    float roughness_zero = ShininessToRoughness(0.0f);
+    ASSERT(IsTrue, !isnan(roughness_zero));
+    ASSERT(IsTrue, !isinf(roughness_zero));
+    ASSERT(IsTrue, roughness_zero >= 0.0f && roughness_zero <= 1.0f);
+
+    // Zero shininess: (2/2)^0.25 = 1.0
+    ASSERT(IsTrue, abs(roughness_zero - 1.0f) < 0.01f);
+
+    // Test very small shininess
+    float roughness_small = ShininessToRoughness(0.1f);
+    ASSERT(IsTrue, !isnan(roughness_small));
+    ASSERT(IsTrue, roughness_small > 0.9f); // Should be very rough
+
+    // Test very large shininess
+    float roughness_large = ShininessToRoughness(100000.0f);
+    ASSERT(IsTrue, !isnan(roughness_large));
+    ASSERT(IsTrue, roughness_large < 0.4f); // Should be very smooth
+
+    // Test negative shininess (using abs in formula)
+    float roughness_neg = ShininessToRoughness(-10.0f);
+    ASSERT(IsTrue, !isnan(roughness_neg));
+    ASSERT(IsTrue, !isinf(roughness_neg));
+}
+
+/// @tags lighting, material, properties
+[numthreads(1, 1, 1)]
+void TestShininessToRoughnessProperties()
+{
+    // Property: Continuous and smooth
+    float prev = ShininessToRoughness(1.0f);
+
+    for (float s = 2.0f; s < 100.0f; s += 10.0f)
+    {
+        float curr = ShininessToRoughness(s);
+
+        // Should be monotonically decreasing
+        ASSERT(IsTrue, curr < prev);
+
+        // Should not have huge jumps (smoothness)
+        float diff = abs(curr - prev);
+        ASSERT(IsTrue, diff < 0.5f);
+
+        prev = curr;
+    }
+
+    // Property: Bounded output
+    for (float s = 0.1f; s < 1000.0f; s *= 2.0f)
+    {
+        float r = ShininessToRoughness(s);
+        ASSERT(IsTrue, r >= 0.0f);
+        ASSERT(IsTrue, r <= 1.0f);
+    }
+}

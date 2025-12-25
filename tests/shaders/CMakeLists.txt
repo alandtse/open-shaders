@@ -80,6 +80,12 @@ file(GLOB_RECURSE HLSL_TEST_FILES "${SHADER_SOURCE_DIR}/Tests/Test*.hlsl")
 target_sources(shader_tests PRIVATE ${HLSL_TEST_FILES})
 set_source_files_properties(${HLSL_TEST_FILES} PROPERTIES HEADER_FILE_ONLY TRUE)
 
+message(STATUS "Found ${CMAKE_MATCH_COUNT} HLSL test files:")
+foreach(TEST_FILE ${HLSL_TEST_FILES})
+    get_filename_component(TEST_NAME ${TEST_FILE} NAME)
+    message(STATUS "  - ${TEST_NAME}")
+endforeach()
+
 # Link ShaderTestFramework BEFORE copying assets (so dependencies are resolved)
 target_link_libraries(shader_tests PRIVATE ShaderTestFramework)
 

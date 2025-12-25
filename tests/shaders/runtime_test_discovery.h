@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <filesystem>
 #include <fstream>
+#include <iostream>
 #include <regex>
 #include <set>
 #include <sstream>
@@ -198,12 +199,21 @@ namespace HLSLTestDiscovery
 				.ThreadGroupCount{ 1, 1, 1 } });
 
 			if (!result) {
-				errorMsg = "Test failed";
+				// Extract detailed error information from the result
+				// This includes line numbers, thread IDs, and actual/expected values
+				std::ostringstream oss;
+				oss << result;
+				errorMsg = oss.str();
+
+				// Also print to stdout for immediate visibility during test runs
+				std::cout << "\n"
+						  << errorMsg << "\n";
 				return false;
 			}
 			return true;
 		} catch (const std::exception& e) {
 			errorMsg = e.what();
+			std::cout << "\nException: " << errorMsg << "\n";
 			return false;
 		}
 	}
