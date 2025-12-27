@@ -1,104 +1,9 @@
 // HLSL Unit Tests for PBR utility functions
 
-#include "/Shaders/Common/Math.hlsli"
-#include "/Shaders/Common/BRDF.hlsli"
-#include "/Shaders/Common/Color.hlsli"
+// Include production PBR math code (constants, flags, and pure math functions)
+// PBRMath.hlsli contains only pure functions with no game-specific dependencies
+#include "/Shaders/Common/PBRMath.hlsli"
 #include "/Test/STF/ShaderTestFramework.hlsli"
-
-// PBR constants and flags (can't be in BRDF.hlsli as they're PBR-specific, not general BRDF)
-namespace PBR
-{
-	namespace Constants
-	{
-		static const float MinRoughness = 0.04f;
-		static const float MaxRoughness = 1.0f;
-		static const float MinGlintDensity = 1.0f;
-		static const float MaxGlintDensity = 40.0f;
-		static const float MinGlintRoughness = 0.005f;
-		static const float MaxGlintRoughness = 0.3f;
-		static const float MinGlintDensityRandomization = 0.0f;
-		static const float MaxGlintDensityRandomization = 5.0f;
-	}
-
-	namespace Flags
-	{
-		static const uint HasEmissive = (1 << 0);
-		static const uint HasDisplacement = (1 << 1);
-		static const uint HasFeatureTexture0 = (1 << 2);
-		static const uint HasFeatureTexture1 = (1 << 3);
-		static const uint Subsurface = (1 << 4);
-		static const uint TwoLayer = (1 << 5);
-		static const uint ColoredCoat = (1 << 6);
-		static const uint InterlayerParallax = (1 << 7);
-		static const uint CoatNormal = (1 << 8);
-		static const uint Fuzz = (1 << 9);
-		static const uint HairMarschner = (1 << 10);
-		static const uint Glint = (1 << 11);
-		static const uint ProjectedGlint = (1 << 12);
-	}
-
-	namespace TerrainFlags
-	{
-		static const uint LandTile0PBR = (1 << 0);
-		static const uint LandTile1PBR = (1 << 1);
-		static const uint LandTile2PBR = (1 << 2);
-		static const uint LandTile3PBR = (1 << 3);
-		static const uint LandTile4PBR = (1 << 4);
-		static const uint LandTile5PBR = (1 << 5);
-		static const uint LandTile0HasDisplacement = (1 << 6);
-		static const uint LandTile1HasDisplacement = (1 << 7);
-		static const uint LandTile2HasDisplacement = (1 << 8);
-		static const uint LandTile3HasDisplacement = (1 << 9);
-		static const uint LandTile4HasDisplacement = (1 << 10);
-		static const uint LandTile5HasDisplacement = (1 << 11);
-		static const uint LandTile0HasGlint = (1 << 12);
-		static const uint LandTile1HasGlint = (1 << 13);
-		static const uint LandTile2HasGlint = (1 << 14);
-		static const uint LandTile3HasGlint = (1 << 15);
-		static const uint LandTile4HasGlint = (1 << 16);
-		static const uint LandTile5HasGlint = (1 << 17);
-	}
-
-	float3 GetSpecularDirectLightMultiplierMicrofacet(float roughness, float3 specularColor, float NdotL, float NdotV, float NdotH, float VdotH, out float3 F)
-	{
-		float D = BRDF::D_GGX(roughness, NdotH);
-		float G = BRDF::Vis_SmithJointApprox(roughness, NdotV, NdotL);
-		F = BRDF::F_Schlick(specularColor, VdotH);
-
-		return D * G * F;
-	}
-
-	float3 GetSpecularDirectLightMultiplierMicroflakes(float roughness, float3 specularColor, float NdotL, float NdotV, float NdotH, float VdotH)
-	{
-		float D = BRDF::D_Charlie(roughness, NdotH);
-		float G = BRDF::Vis_Neubelt(NdotV, NdotL);
-		float3 F = BRDF::F_Schlick(specularColor, VdotH);
-
-		return D * G * F;
-	}
-
-	float HairIOR()
-	{
-		const float n = 1.55;
-		const float a = 1;
-
-		float ior1 = 2 * (n - 1) * (a * a) - n + 2;
-		float ior2 = 2 * (n - 1) / (a * a) - n + 2;
-		return 0.5f * ((ior1 + ior2) + 0.5f * (ior1 - ior2));  //assume cos2PhiH = 0.5f
-	}
-
-	float IORToF0(float IOF)
-	{
-		return pow((1 - IOF) / (1 + IOF), 2);
-	}
-
-	inline float HairGaussian(float B, float Theta)
-	{
-		// Guard against division by zero: clamp B to a minimum value
-		float B_safe = max(B, 1e-6);
-		return exp(-0.5 * Theta * Theta / (B_safe * B_safe)) / (sqrt(Math::TAU) * B_safe);
-	}
-}
 
 /// @tags pbr, ior, material
 [numthreads(1, 1, 1)]
@@ -543,4 +448,137 @@ void TestSpecularMicroflakesEdgeCases()
         0.3f, float3(0.1, 0.1, 0.1), 0.1f, 0.1f, 0.1f, 0.05f);
     ASSERT(IsTrue, all(!isnan(result_grazing)));
     ASSERT(IsTrue, all(result_grazing >= 0.0f));
+}
+
+/// @tags pbr, wetness, direct-lighting
+[numthreads(1, 1, 1)]
+void TestWetnessDirectLight()
+{
+    float3 N = float3(0, 0, 1);
+    float3 V = float3(0.577, 0.577, 0.577);
+    float3 L = float3(-0.707, 0, 0.707);
+    float3 lightColor = float3(1.0, 1.0, 1.0);
+    float roughness = 0.5f;
+
+    // Basic calculation
+    float3 result = PBR::GetWetnessDirectLightSpecularInput(N, V, L, lightColor, roughness);
+    ASSERT(IsTrue, all(!isnan(result)));
+    ASSERT(IsTrue, all(!isinf(result)));
+    ASSERT(IsTrue, all(result >= 0.0f));
+
+    // Different roughness values
+    float3 result_smooth = PBR::GetWetnessDirectLightSpecularInput(N, V, L, lightColor, 0.1f);
+    float3 result_rough = PBR::GetWetnessDirectLightSpecularInput(N, V, L, lightColor, 0.9f);
+    ASSERT(IsTrue, all(result_smooth >= 0.0f));
+    ASSERT(IsTrue, all(result_rough >= 0.0f));
+
+    // Light color preservation
+    float3 red_light = float3(1.0, 0.0, 0.0);
+    float3 result_red = PBR::GetWetnessDirectLightSpecularInput(N, V, L, red_light, roughness);
+    ASSERT(IsTrue, result_red.r >= result_red.g);
+    ASSERT(IsTrue, result_red.r >= result_red.b);
+
+    // No light = no specular
+    float3 result_black = PBR::GetWetnessDirectLightSpecularInput(N, V, L, float3(0, 0, 0), roughness);
+    ASSERT(IsTrue, all(abs(result_black) < 0.001f));
+}
+
+/// @tags pbr, wetness, indirect-lighting
+[numthreads(1, 1, 1)]
+void TestWetnessIndirectLight()
+{
+    float3 N = float3(0, 0, 1);
+    float3 V = float3(0.577, 0.577, 0.577);
+    float3 VN = N;
+    float roughness = 0.5f;
+
+    // Basic calculation
+    float3 lobeWeight = PBR::GetWetnessIndirectSpecularLobeWeight(N, V, VN, roughness);
+    ASSERT(IsTrue, all(!isnan(lobeWeight)));
+    ASSERT(IsTrue, all(!isinf(lobeWeight)));
+    ASSERT(IsTrue, all(lobeWeight >= 0.0f));
+    ASSERT(IsTrue, all(lobeWeight <= 2.0f));
+
+    // Different roughness values
+    float3 lobe_smooth = PBR::GetWetnessIndirectSpecularLobeWeight(N, V, VN, 0.1f);
+    float3 lobe_rough = PBR::GetWetnessIndirectSpecularLobeWeight(N, V, VN, 0.9f);
+    ASSERT(IsTrue, all(lobe_smooth >= 0.0f));
+    ASSERT(IsTrue, all(lobe_rough >= 0.0f));
+
+    // Horizon occlusion - bent vertex normal should reduce weight
+    float3 VN_bent = float3(0.447, -0.447, 0.775);  // normalized(0.5, -0.5, 1)
+    float3 lobe_bent = PBR::GetWetnessIndirectSpecularLobeWeight(N, V, VN_bent, roughness);
+    ASSERT(IsTrue, all(lobe_bent >= 0.0f));
+    ASSERT(IsTrue, lobe_bent.x <= lobeWeight.x + 0.001f);
+
+    // Grazing angle increases Fresnel
+    float3 V_grazing = float3(0.9999, 0, 0.01);
+    float3 lobe_grazing = PBR::GetWetnessIndirectSpecularLobeWeight(N, V_grazing, VN, roughness);
+    ASSERT(IsTrue, all(lobe_grazing >= 0.0f));
+    ASSERT(IsTrue, lobe_grazing.x >= lobeWeight.x);
+}
+
+/// @tags pbr, wetness, edge-cases
+[numthreads(1, 1, 1)]
+void TestWetnessEdgeCases()
+{
+    float3 N = float3(0, 0, 1);
+    float3 V = float3(0.577, 0.577, 0.577);
+    float3 L = float3(-0.707, 0, 0.707);
+    float3 lightColor = float3(1.0, 1.0, 1.0);
+
+    // Very smooth roughness
+    float3 result_min = PBR::GetWetnessDirectLightSpecularInput(N, V, L, lightColor, 0.04f);
+    ASSERT(IsTrue, all(!isnan(result_min)));
+    ASSERT(IsTrue, all(result_min >= 0.0f));
+
+    // Maximum roughness
+    float3 result_max = PBR::GetWetnessDirectLightSpecularInput(N, V, L, lightColor, 1.0f);
+    ASSERT(IsTrue, all(!isnan(result_max)));
+    ASSERT(IsTrue, all(result_max >= 0.0f));
+
+    // HDR light values
+    float3 hdr_light = float3(10.0, 5.0, 2.0);
+    float3 result_hdr = PBR::GetWetnessDirectLightSpecularInput(N, V, L, hdr_light, 0.5f);
+    ASSERT(IsTrue, all(!isnan(result_hdr)));
+    ASSERT(IsTrue, all(result_hdr >= 0.0f));
+
+    // Indirect with extreme roughness
+    float3 VN = N;
+    float3 lobe_min = PBR::GetWetnessIndirectSpecularLobeWeight(N, V, VN, 0.04f);
+    float3 lobe_max = PBR::GetWetnessIndirectSpecularLobeWeight(N, V, VN, 1.0f);
+    ASSERT(IsTrue, all(!isnan(lobe_min)));
+    ASSERT(IsTrue, all(!isinf(lobe_min)));
+    ASSERT(IsTrue, all(!isnan(lobe_max)));
+    ASSERT(IsTrue, all(!isinf(lobe_max)));
+}
+
+/// @tags pbr, wetness, properties
+[numthreads(1, 1, 1)]
+void TestWetnessProperties()
+{
+    float3 N = float3(0, 0, 1);
+    float3 V = float3(0.577, 0.577, 0.577);
+    float3 L = float3(-0.707, 0, 0.707);
+
+    // Wetness should be relatively subtle
+    float3 wetness_rough = PBR::GetWetnessDirectLightSpecularInput(N, V, L, float3(1, 1, 1), 0.8f);
+    ASSERT(IsTrue, all(wetness_rough < 1.0f));
+
+    // Smooth surfaces have valid results
+    float3 wetness_smooth = PBR::GetWetnessDirectLightSpecularInput(N, V, L, float3(1, 1, 1), 0.1f);
+    ASSERT(IsTrue, all(wetness_smooth >= 0.0f));
+
+    // Horizon occlusion reduces specular
+    float3 VN_aligned = N;
+    float3 VN_bent = float3(0.447, 0, 0.895);  // normalized(0.5, 0, 1)
+    float3 lobe_aligned = PBR::GetWetnessIndirectSpecularLobeWeight(N, V, VN_aligned, 0.5f);
+    float3 lobe_bent = PBR::GetWetnessIndirectSpecularLobeWeight(N, V, VN_bent, 0.5f);
+    ASSERT(IsTrue, lobe_bent.x <= lobe_aligned.x + 0.01f);
+
+    // Color preservation
+    float3 blue_light = float3(0.0, 0.0, 1.0);
+    float3 wetness_blue = PBR::GetWetnessDirectLightSpecularInput(N, V, L, blue_light, 0.5f);
+    ASSERT(IsTrue, wetness_blue.b >= wetness_blue.r);
+    ASSERT(IsTrue, wetness_blue.b >= wetness_blue.g);
 }
