@@ -233,8 +233,6 @@ jobs:
             - name: Prepare shaders
               if: steps.check-hlsl.outputs.skip != 'true'
               uses: ./.github/actions/prepare-shaders
-              with:
-                  cache-key-suffix: ${{ matrix.config.name }}-${{ github.event.inputs.cache-key-suffix || 'default' }}
             - name: Locate fxc.exe
               if: steps.check-hlsl.outputs.skip != 'true'
               id: find_fxc
@@ -265,17 +263,6 @@ jobs:
                       Add-Content -Path $env:GITHUB_OUTPUT -Value "fxc_path="
                     }
                   }
-
-            - name: Setup Python
-              if: steps.check-hlsl.outputs.skip != 'true'
-              uses: actions/setup-python@v5
-              with:
-                  python-version: "3.11"
-
-            - name: Install hlslkit
-              if: steps.check-hlsl.outputs.skip != 'true'
-              run: pip install git+https://github.com/alandtse/hlslkit.git
-              shell: bash
 
             - name: Validate shader compilation (${{ matrix.config.name }})
               if: steps.check-hlsl.outputs.skip != 'true'
