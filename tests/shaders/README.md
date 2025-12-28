@@ -29,10 +29,10 @@ Tests focus on pure math functions (no DX12-specific features), so compiler diff
 
 Tests are automatically discovered at runtime by scanning HLSL files in `package/Shaders/Tests/Test*.hlsl`.
 
-**Create a test file** (`Tests/TestMyModule.hlsl`):
+**Create a test file** (`package/Shaders/Tests/TestMyModule.hlsl`):
 
 ```hlsl
-#include "Common/MyShader.hlsli"
+#include "/Shaders/Common/MyShader.hlsli"
 #include "/Test/STF/ShaderTestFramework.hlsli"
 
 /// @tags math, utility
@@ -61,7 +61,7 @@ Use doxygen-style `@tag` or `@tags` comments before test functions to organize t
 [numthreads(1, 1, 1)]
 void TestFresnelSchlick() { ... }
 
-/// @tag color, @tag gamma
+/// @tags color, gamma
 [numthreads(1, 1, 1)]
 void TestGammaConversion() { ... }
 ```
@@ -94,37 +94,24 @@ shader_tests.exe --list-tags
 
 ## Test Coverage
 
-Tests are automatically discovered from HLSL files in `package/Shaders/Tests/`. Run `shader_tests.exe` to see the current test count and results.
-
-**Test modules currently available:**
-
--   `TestMath.hlsl` - Mathematical constants, matrices, and operations
--   `TestColor.hlsl` - Color space conversions and operations
--   `TestBRDF.hlsl` - BRDF functions (diffuse, specular, Fresnel, GGX, etc.)
--   `TestRandom.hlsl` - Random number generators and noise functions
--   `TestFastMath.hlsl` - Fast approximations for math operations
--   `TestDisplayMapping.hlsl` - HDR/PQ encoding and color space transforms
--   `TestLightingCommon.hlsl` - Lighting utility functions
--   `TestGBuffer.hlsl` - GBuffer encoding/decoding
-
-**To see detailed test information:**
+Tests are automatically discovered from HLSL files in `package/Shaders/Tests/`. To see the current test modules, tags, and results:
 
 ```bash
+# Show test count and run all tests
+shader_tests.exe
+
 # List all test cases with their tags
 shader_tests.exe --list-tests
 
 # List all available tags
 shader_tests.exe --list-tags
-
-# Show test count and run results
-shader_tests.exe
 ```
 
 ### Adding New Test Coverage
 
 To add tests for a new shader module:
 
-1. Create `Tests/TestYourModule.hlsl`
+1. Create `package/Shaders/Tests/TestYourModule.hlsl`
 2. Add test functions with `[numthreads(1,1,1)]` attribute
 3. Use `/// @tags` comments to organize tests
 4. Tests are automatically discovered and run
@@ -139,10 +126,11 @@ To add tests for a new shader module:
 
 These tests run automatically in GitHub Actions on:
 
--   Pull requests that modify `.hlsl` or `.hlsli` files
--   Pushes to `main` and `dev` branches
+-   Pull requests that modify `.hlsl`, `.hlsli`, or test-related files
+-   Pushes to tags starting with `v`
+-   Manual workflow dispatches
 
-See `.github/workflows/_reusable-shader-unit-tests.yaml` for the reusable workflow and `.github/workflows/build.yaml` for CI integration.
+See the `shader-unit-tests` job in `.github/workflows/build.yaml` for CI integration.
 
 ## Troubleshooting
 
