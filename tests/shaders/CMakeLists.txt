@@ -2,7 +2,7 @@
 cmake_minimum_required(VERSION 3.21)
 
 # Option to enable/disable shader tests
-option(BUILD_SHADER_TESTS "Build shader unit tests" ON)
+option(BUILD_SHADER_TESTS "Build shader unit tests (runs automatically before packaging)" ON)
 
 if(NOT BUILD_SHADER_TESTS)
     message(STATUS "Shader tests disabled")
@@ -123,8 +123,4 @@ set_tests_properties(ShaderTests PROPERTIES
 )
 
 message(STATUS "Shader tests configured successfully")
-message(STATUS "To run shader tests:")
-message(STATUS "  cd build/<preset>/tests/shaders/<config>")
-message(STATUS "  ./shader_tests.exe")
-message(STATUS "Or via CTest:")
-message(STATUS "  ctest --test-dir build/<preset> -R ShaderTests")
+message(STATUS "  Tests will run automatically before packaging and deployment")

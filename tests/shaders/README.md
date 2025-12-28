@@ -5,13 +5,18 @@ GPU-executed unit tests for HLSL shader code using [ShaderTestFramework](https:/
 ## Quick Start
 
 ```bash
-# Build tests
+# Configure with shader tests enabled (ON by default)
 cmake --preset ALL -DBUILD_SHADER_TESTS=ON
-cmake --build build/ALL --target shader_tests --config Release
 
-# Run tests
+# Build and run tests
+cmake --build build/ALL --config Release --target run_shader_tests
+
+# Or build then run separately
+cmake --build build/ALL --target shader_tests --config Release
 ctest --test-dir build/ALL -C Release -R ShaderTests --output-on-failure
 ```
+
+**Note**: Tests run automatically when building Package targets (e.g., `Package-AIO-Manual`, `Package-Core`).
 
 ## ⚠️ Note: DX11 vs DX12
 
