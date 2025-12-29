@@ -21,6 +21,8 @@ namespace HLSLTestDiscovery
 		std::string displayName;
 		std::string filePath;
 		std::vector<std::string> tags;
+		std::vector<std::string> fixtures;  // Fixture requirements
+		std::vector<std::string> defines;   // Preprocessor defines (e.g., PSHADER, VR)
 	};
 
 	// Convert camelCase/PascalCase to space-separated words
@@ -107,6 +109,44 @@ namespace HLSLTestDiscovery
 		return tags;
 	}
 
+	// Parse fixture requirements from doxygen-style comments
+	// Supports: /// @fixture(t0) GradientTexture2D
+	//           /// @fixture(b0) CommonCBuffer
+	inline std::vector<std::string> parseDoxygenFixtures(const std::vector<std::string>& commentLines)
+	{
+		std::vector<std::string> fixtures;
+		std::regex fixturePattern(R"(@fixture\(([tbus])(\d+)\)\s+(\w+))");
+
+		for (const auto& line : commentLines) {
+			std::smatch match;
+			if (std::regex_search(line, match, fixturePattern)) {
+				// Store as "registerType:slot:fixtureName" (e.g., "t:0:GradientTexture2D")
+				std::string fixtureSpec = match[1].str() + ":" + match[2].str() + ":" + match[3].str();
+				fixtures.push_back(fixtureSpec);
+			}
+		}
+
+		return fixtures;
+	}
+
+	// Parse preprocessor defines from doxygen-style comments
+	// Supports: /// @define PSHADER
+	//           /// @define VR
+	inline std::vector<std::string> parseDoxygenDefines(const std::vector<std::string>& commentLines)
+	{
+		std::vector<std::string> defines;
+		std::regex definePattern(R"(@define\s+(\w+))");
+
+		for (const auto& line : commentLines) {
+			std::smatch match;
+			if (std::regex_search(line, match, definePattern)) {
+				defines.push_back(match[1].str());
+			}
+		}
+
+		return defines;
+	}
+
 	// Scan HLSL file for test functions
 	inline std::vector<TestFunction> scanHLSLFile(const std::filesystem::path& filePath)
 	{
@@ -142,8 +182,10 @@ namespace HLSLTestDiscovery
 						test.filePath = "/Shaders/Tests/" + filePath.filename().string();
 						test.displayName = generateDisplayName(test.name, moduleName);
 
-						// Parse tags from doxygen comments
+						// Parse tags, fixtures, and defines from doxygen comments
 						test.tags = parseDoxygenTags(precedingComments);
+						test.fixtures = parseDoxygenFixtures(precedingComments);
+						test.defines = parseDoxygenDefines(precedingComments);
 
 						tests.push_back(test);
 					}
@@ -192,9 +234,18 @@ namespace HLSLTestDiscovery
 			stf::ShaderTestFixture fixture(ShaderTest::GetFixtureDesc());
 			auto shaderDir = (ShaderTest::GetExecutableDirectory() / "Shaders").wstring();
 
+			// Build compilation flags: include path + defines
+			std::vector<std::wstring> compilationFlags = { L"-I", shaderDir };
+
+			// Add preprocessor defines from @define annotations
+			for (const auto& define : test.defines) {
+				compilationFlags.push_back(L"-D");
+				compilationFlags.push_back(std::wstring(define.begin(), define.end()));
+			}
+
 			auto result = fixture.RunTest(stf::ShaderTestFixture::RuntimeTestDesc{
 				.CompilationEnv{ .Source = std::filesystem::path(test.filePath),
-					.CompilationFlags = { L"-I", shaderDir } },
+					.CompilationFlags = compilationFlags },
 				.TestName = test.name,
 				.ThreadGroupCount{ 1, 1, 1 } });
 

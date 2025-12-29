@@ -1,206 +1,307 @@
-# Shader Unit Tests
+# HLSL Shader Tests
 
-GPU-executed unit tests for HLSL shader code using [ShaderTestFramework](https://github.com/KStocky/ShaderTestFramework).
+Comprehensive unit tests for Skyrim Community Shaders using [ShaderTestFramework](https://github.com/KStocky/ShaderTestFramework).
 
-## Quick Start
+## Quick Start (Windows)
 
-```bash
-# Configure with shader tests enabled (ON by default)
-cmake --preset ALL -DBUILD_SHADER_TESTS=ON
+### Build and Run Tests
 
-# Build and run tests
-cmake --build build/ALL --config Release --target run_shader_tests
+```powershell
+# Configure project (includes tests)
+cmake --preset ALL
 
-# Or build then run separately
-cmake --build build/ALL --target shader_tests --config Release
-ctest --test-dir build/ALL -C Release -R ShaderTests --output-on-failure
+# Build shader tests
+cmake --build --preset Dev --target shader_tests
+
+# Run all tests
+ctest -R ShaderTests --output-on-failure
+
+# Or run the test executable directly
+.\build\ALL\tests\shaders\shader_tests.exe
 ```
 
-**Note**: Tests run automatically when building Package targets (e.g., `Package-AIO-Manual`, `Package-Core`).
+### Run Specific Tests
 
-## ⚠️ Note: DX11 vs DX12
+```powershell
+# Run tests by tag
+.\build\ALL\tests\shaders\shader_tests.exe "[framebuffer]"
+.\build\ALL\tests\shaders\shader_tests.exe "[vr]"
+.\build\ALL\tests\shaders\shader_tests.exe "[non-vr]"
 
-**Production**: FXC/DX11 (Shader Model 5.0)  
-**Tests**: DXC/D3D12 (Shader Model 6.0+)
+# Run specific test
+.\build\ALL\tests\shaders\shader_tests.exe "TestIsOutsideFrameBasic"
+```
 
-Tests focus on pure math functions (no DX12-specific features), so compiler differences have minimal impact.
+## Test Structure
 
-## Writing New Tests
+### Runtime Discovery
 
-Tests are automatically discovered at runtime by scanning HLSL files in `package/Shaders/Tests/Test*.hlsl`.
+Tests are automatically discovered at runtime by scanning `package/Shaders/Tests/Test*.hlsl` files for functions marked with `[numthreads(1,1,1)]`.
 
-**Create a test file** (`package/Shaders/Tests/TestMyModule.hlsl`):
+No build-time code generation needed!
+
+### Test Files
+
+| File                              | Coverage                                | Tests          | Dependencies |
+| --------------------------------- | --------------------------------------- | -------------- | ------------ |
+| `TestMath.hlsl`                   | Math constants, epsilon values          | 3 tests        | None         |
+| `TestBRDF.hlsl`                   | BRDF functions                          | Multiple tests | None         |
+| `TestGBuffer.hlsl`                | GBuffer encoding/decoding               | 5 tests        | None         |
+| `TestFrameBuffer.hlsl`            | FrameBuffer transforms, VR/non-VR       | 18 tests       | None         |
+| `TestColorWithFixtures.hlsl`      | Color conversions, luminance, AO, gamma | 20 tests       | None         |
+| `TestTextureOpsWithFixtures.hlsl` | Texture sampling, UAVs, processing      | 13 tests       | ✅ Fixtures  |
+| `TestDefines.hlsl`                | Preprocessor define support             | 5 tests        | None         |
+| _...more to come_                 |                                         |                |              |
+
+### Current Coverage
+
+-   ✅ **Math utilities** - Constants, epsilon values, matrices (6 tests)
+-   ✅ **GBuffer** - Normal encoding/decoding, octahedral wrapping (5 tests)
+-   ✅ **FrameBuffer** - Coordinate transforms, dynamic resolution, VR/non-VR variants (18 tests)
+-   ✅ **Color** - Luminance, color spaces, saturation, AO, gamma (20 tests)
+-   ✅ **Texture operations** - Sampling, UAVs, input/output (13 tests with fixtures)
+-   ✅ **Preprocessor defines** - Conditional compilation support (5 tests)
+-   ⏳ **Skylighting** - Probe sampling (needs advanced fixtures)
+-   ⏳ **TerrainBlending** - Depth blending (needs advanced fixtures)
+-   ⏳ **More features...**
+
+**Total: ~67 tests across multiple production code modules**
+
+## Writing Tests
+
+### Basic Test (No Dependencies)
 
 ```hlsl
-#include "/Shaders/Common/MyShader.hlsli"
+// TestMath.hlsl
+#include "/Shaders/Common/Math.hlsli"
 #include "/Test/STF/ShaderTestFramework.hlsli"
 
-/// @tags math, utility
-/// Test description (optional)
+/// @tags math, constants
 [numthreads(1, 1, 1)]
-void TestMyFunction()
+void TestPIConstant()
 {
-    ASSERT(IsTrue, MyFunction(1.0f) > 0.0f);
-}
-
-/// @tag performance
-[numthreads(1, 1, 1)]
-void TestMyFunctionPerformance()
-{
-    // Performance test
-    ASSERT(IsTrue, MyFunction(100.0f) > 0.0f);
+    ASSERT(AreEqual, Math::PI, 3.14159265359f);
+    ASSERT(IsTrue, Math::PI > 3.0);
 }
 ```
 
-### Organizing Tests with Tags
-
-Use doxygen-style `@tag` or `@tags` comments before test functions to organize them:
+### Test with Preprocessor Defines
 
 ```hlsl
-/// @tags brdf, specular
+// TestFrameBuffer.hlsl
+#include "/Shaders/Common/FrameBuffer.hlsli"
+#include "/Test/STF/ShaderTestFramework.hlsli"
+
+/// @tags framebuffer, vr
+/// @define VR  // Enables VR-specific code paths
 [numthreads(1, 1, 1)]
-void TestFresnelSchlick() { ... }
-
-/// @tags color, gamma
-[numthreads(1, 1, 1)]
-void TestGammaConversion() { ... }
+void TestVRDynamicResolution()
+{
+    // VR-specific code is now available!
+#if defined(VR)
+    // Test VR stereo clamping
+    float2 rightEye = FrameBuffer::GetDynamicResolutionAdjustedScreenPosition(
+        float2(0.75, 0.5),
+        1  // stereo = 1
+    );
+    ASSERT(IsTrue, rightEye.x >= 0.5);
+#endif
+}
 ```
 
-**Tag format:**
+### Test with Resource Bindings (Future - YAML Fixtures)
 
--   `/// @tag tagname` - Single tag
--   `/// @tags tag1, tag2, tag3` - Multiple tags (comma-separated)
--   Multiple comment lines are combined
--   Tags are optional; tests without tags will have no tag filtering available
+```hlsl
+/// @tags skylighting, pixel-shader
+/// @define PSHADER
+/// @fixture(t50) SkylightingProbe3D
+/// @fixture(t51) BlueNoise2DArray
 
-### Running Specific Tests
+#include "/Shaders/Skylighting/Skylighting.hlsli"
 
-```bash
-# Run all tests
-shader_tests.exe
-
-# Run tests with specific tag
-shader_tests.exe "[brdf]"
-
-# Run multiple tags
-shader_tests.exe "[math][color]"
-
-# Run a specific test by name
-shader_tests.exe "BRDF - Fresnel Schlick"
-
-# List all available tags
-shader_tests.exe --list-tags
+[numthreads(1,1,1)]
+void TestSkylightingSample() {
+    // Production code works with mocked resources!
+    sh2 result = Skylighting::sample(...);
+    ASSERT(IsTrue, isfinite(result.x));
+}
 ```
 
-## Test Coverage
+## Annotations Reference
 
-Tests are automatically discovered from HLSL files in `package/Shaders/Tests/`. To see the current test modules, tags, and results:
+### `@tags`
 
-```bash
-# Show test count and run all tests
-shader_tests.exe
+Categorize tests for filtering:
 
-# List all test cases with their tags
-shader_tests.exe --list-tests
-
-# List all available tags
-shader_tests.exe --list-tags
+```hlsl
+/// @tags math, constants
+/// @tags framebuffer, vr, dynamic-resolution
 ```
 
-### Adding New Test Coverage
+Run specific tags:
 
-To add tests for a new shader module:
+```powershell
+.\shader_tests.exe "[vr]"
+.\shader_tests.exe "[math]"
+```
 
-1. Create `package/Shaders/Tests/TestYourModule.hlsl`
-2. Add test functions with `[numthreads(1,1,1)]` attribute
-3. Use `/// @tags` comments to organize tests
-4. Tests are automatically discovered and run
+### `@define`
 
-## Dependencies
+Set preprocessor defines for conditional compilation:
 
--   **ShaderTestFramework**: Fetched automatically via CMake FetchContent
--   **Catch2 v3**: Fetched automatically via CMake FetchContent
--   **D3D12**: Required for shader execution (Windows only)
+```hlsl
+/// @define PSHADER     // Pixel shader variant
+/// @define VR          // VR variant
+/// @define LIGHTING    // Lighting enabled
+```
+
+Allows testing different shader variants:
+
+-   Pixel shader vs compute shader paths
+-   VR vs non-VR code
+-   Feature flags (lighting, shadows, etc.)
+
+### `@fixture` (Coming Soon)
+
+Reference YAML-defined mock resources:
+
+```hlsl
+/// @fixture(t0) GradientTexture8x8
+/// @fixture(b0) CommonCBuffer
+/// @fixture(s0) LinearClampSampler
+```
+
+## Assertions
+
+STF provides several assertion macros:
+
+```hlsl
+// Equality
+ASSERT(AreEqual, actual, expected);
+ASSERT(AreNotEqual, value1, value2);
+
+// Boolean
+ASSERT(IsTrue, condition);
+ASSERT(IsFalse, condition);
+
+// Floating point (with tolerance)
+ASSERT(AreEqualWithTolerance, actual, expected, tolerance);
+
+// Scenarios (BDD-style, optional)
+SCENARIO("Description of test scenario")
+{
+    SECTION("Given some condition")
+    {
+        // Setup
+        SECTION("When something happens")
+        {
+            // Action
+            SECTION("Then expect result")
+            {
+                ASSERT(IsTrue, result);
+            }
+        }
+    }
+}
+```
+
+## Test Organization
+
+```
+tests/shaders/
+├── CMakeLists.txt              # Test build configuration
+├── minimal_test.cpp            # Test entry point (main)
+├── runtime_discovered_tests.cpp # Runtime test discovery
+├── runtime_test_discovery.h    # HLSL scanning logic
+├── test_common.h               # Common test utilities
+├── test_helpers_unified.h      # Helper macros
+└── fixtures/                   # YAML fixture library (future)
+    ├── README.md
+    ├── common_fixtures.yaml
+    └── ...
+
+package/Shaders/Tests/          # HLSL test files
+├── TestMath.hlsl
+├── TestGBuffer.hlsl
+├── TestFrameBuffer.hlsl
+├── TestDefines.hlsl
+└── ...
+```
 
 ## CI Integration
 
-These tests run automatically in GitHub Actions on:
+Tests run automatically before packaging:
 
--   Pull requests that modify `.hlsl`, `.hlsli`, or test-related files
--   Pushes to tags starting with `v`
--   Manual workflow dispatches
+```yaml
+# .github/workflows/build.yml
+- name: Run Shader Tests
+  run: ctest -R ShaderTests --output-on-failure
+```
 
-See the `shader-unit-tests` job in `.github/workflows/build.yaml` for CI integration.
+## Debugging Tests
 
-## Troubleshooting
-
-### Graphics Tools Required
-
-**D3D12 shader tests require Windows Graphics Tools to be installed.**
-
-CMake will automatically detect if Graphics Tools are missing and display installation instructions.
-
-**Quick Install:**
+### View Detailed Test Output
 
 ```powershell
-# Option 1: Direct PowerShell command (requires admin)
-Enable-WindowsOptionalFeature -Online -FeatureName GraphicsTools -All
+# Run with verbose output
+.\shader_tests.exe -s
 
-# Option 2: Manual via Settings
-# Windows Settings → Apps → Optional Features → Add "Graphics Tools"
+# Run specific test with full details
+.\shader_tests.exe "TestFrameBuffer - Dynamic Resolution" -s
 ```
 
-**Automatic detection during CMake:**
+### Common Issues
 
-```bash
-# CMake will warn if Graphics Tools are missing
-cmake --preset ALL -DBUILD_SHADER_TESTS=ON
+**Issue**: Test not discovered
 
-# To automatically open Windows Optional Features dialog:
-cmake --preset ALL -DBUILD_SHADER_TESTS=ON -DAUTO_OPEN_OPTIONAL_FEATURES=ON
-```
+-   Check filename starts with `Test*.hlsl`
+-   Check function has `[numthreads(1,1,1)]` attribute
+-   Check function signature is `void FunctionName()`
 
-**Common error without Graphics Tools:**
+**Issue**: Compilation errors
 
-```
-DXGI_ERROR_SDK_COMPONENT_MISSING (0x887A002D)
-```
+-   Verify includes use `/Shaders/` prefix
+-   Check that required defines are set with `@define`
+-   Ensure included HLSL is compatible with compute shader context
 
-This means `d3d12SDKLayers.dll` is missing. Install Graphics Tools and reboot to fix.
+**Issue**: cbuffer/texture not available
 
-### Build Errors
+-   For now, cbuffer tests require mock data in the test itself
+-   Full fixture support coming soon (YAML-based)
 
-**FetchContent fails:**
+## Examples
 
-```bash
-# Clear CMake cache and rebuild
-rm -rf build/ALL
-cmake --preset ALL
-```
+### Testing Math Utilities
 
-**Linker errors:**
+See `TestMath.hlsl` for examples of testing pure functions with no dependencies.
 
--   Ensure you're building on Windows with D3D12 support
--   Verify Visual Studio 2022 is installed with C++ development tools
+### Testing Conditional Compilation
 
-**CMake 4.0 Compatibility:**
+See `TestFrameBuffer.hlsl` for VR/non-VR variants using `@define`.
 
-If you encounter `unresolved external symbol main` errors, this is due to a known incompatibility between CMake 4.0 and Catch2's `Catch2WithMain` target. The build has been updated to work around this by providing an explicit `main()` function.
+### Testing Define Support
 
-### Test Failures
+See `TestDefines.hlsl` for comprehensive `@define` annotation examples.
 
-**Shader compilation errors:**
+## Roadmap
 
--   Check that shader include paths are correct
--   Verify shader code compiles with fxc/dxc separately
-
-**Runtime errors:**
-
--   Ensure D3D12-capable GPU is available
--   Verify Graphics Tools are installed (see above)
+-   [x] Runtime test discovery
+-   [x] Preprocessor define support (`@define`)
+-   [x] Tag-based test filtering
+-   [x] Basic assertion framework
+-   [x] Tests for Math, GBuffer, FrameBuffer, Color
+-   [x] C++ fixture system (textures, UAVs, samplers)
+-   [x] Fixture-based texture operation tests
+-   [x] YAML fixture parser (simple implementation)
+-   [ ] Advanced YAML fixtures (cbuffers, 3D textures)
+-   [ ] Fixture integration with runtime discovery
+-   [ ] Tests for Skylighting, TerrainBlending with fixtures
+-   [ ] Performance benchmarking
+-   [ ] Contribute enhancements to STF upstream
 
 ## References
 
--   [ShaderTestFramework Documentation](https://github.com/KStocky/ShaderTestFramework/blob/main/docs/Tutorial.md)
+-   [ShaderTestFramework](https://github.com/KStocky/ShaderTestFramework)
+-   [STF Tutorial](https://github.com/KStocky/ShaderTestFramework/blob/main/docs/Tutorial.md)
 -   [Catch2 Documentation](https://github.com/catchorg/Catch2/tree/devel/docs)
--   [D3D12 Documentation](https://learn.microsoft.com/en-us/windows/win32/direct3d12/directx-12-programming-guide)
+-   [LLVM YAML Pipeline Format](https://github.com/llvm/offload-test-suite) (basis for fixtures)
