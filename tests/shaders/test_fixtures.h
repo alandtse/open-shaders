@@ -204,14 +204,19 @@ namespace ShaderTest
 	private:
 		FixtureFactory()
 		{
-			// Register built-in fixtures
+			// Register built-in C++ fixtures
 			Register("GradientTexture2D", []() { return std::make_unique<GradientTexture2D>(); });
 			Register("ConstantTexture2D", []() { return std::make_unique<ConstantTexture2D>(); });
 			Register("OutputTexture2D", []() { return std::make_unique<OutputTexture2D>(); });
 			Register("CommonCBuffer", []() { return std::make_unique<CommonCBuffer>(); });
 			Register("LinearClampSampler", []() { return std::make_unique<LinearClampSampler>(); });
 			Register("PointClampSampler", []() { return std::make_unique<PointClampSampler>(); });
+
+			// Load YAML-based fixtures
+			LoadYAMLFixtures();
 		}
+
+		void LoadYAMLFixtures();
 
 		std::unordered_map<std::string, FactoryFunc> m_factories;
 	};
@@ -262,6 +267,69 @@ namespace ShaderTest
 			if (fixture) {
 				fixture->Apply(builder, annotation.registerSlot);
 			}
+		}
+	}
+
+	// ============================================================================
+	// YAML FIXTURE INTEGRATION
+	// ============================================================================
+
+	/// YAML-backed fixture that creates resources from YAML data
+	class YAMLFixture : public BindingFixture
+	{
+		std::string m_name;
+		std::vector<float> m_data;
+		uint32_t m_width;
+		uint32_t m_height;
+		DXGI_FORMAT m_format;
+
+	public:
+		YAMLFixture(const std::string& name, const std::vector<float>& data,
+			uint32_t width, uint32_t height = 1,
+			DXGI_FORMAT format = DXGI_FORMAT_R32_FLOAT) :
+			m_name(name), m_data(data), m_width(width), m_height(height), m_format(format)
+		{
+		}
+
+		const char* GetName() const override { return m_name.c_str(); }
+
+		void Apply(stf::DescriptorTableBuilder& builder, uint32_t bindingSlot) override
+		{
+			if (m_height == 1) {
+				// Buffer/1D texture
+				builder.AddSRV(bindingSlot, stf::Tex2D(m_width, 1, m_format, m_data.data()));
+			} else {
+				// 2D texture
+				builder.AddSRV(bindingSlot, stf::Tex2D(m_width, m_height, m_format, m_data.data()));
+			}
+		}
+	};
+
+	/// Load YAML fixtures from common_fixtures.yaml
+	inline void FixtureFactory::LoadYAMLFixtures()
+	{
+		auto fixturesPath = GetExecutableDirectory() / "Shaders" / "Tests" / "fixtures" / "common_fixtures.yaml";
+		if (!std::filesystem::exists(fixturesPath)) {
+			return;  // YAML fixtures are optional
+		}
+
+		auto yamlFixtures = ParseYAMLFixtures(fixturesPath);
+		for (const auto& yamlFix : yamlFixtures) {
+			if (yamlFix.data.empty() && yamlFix.zeroInitSize == 0) {
+				continue;  // Skip invalid fixtures
+			}
+
+			// Determine dimensions (assume square for now, or 1D buffer)
+			uint32_t width = static_cast<uint32_t>(yamlFix.data.size());
+			uint32_t height = 1;
+
+			// Create factory lambda that captures the YAML data
+			auto data = yamlFix.data;  // Copy for lambda
+			auto name = yamlFix.name;
+
+			Register(name, [data, width, height, name]() {
+				return std::make_unique<YAMLFixture>(name, data, width, height);
+			});
 		}
 	}
 

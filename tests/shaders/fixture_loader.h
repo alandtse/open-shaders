@@ -28,7 +28,8 @@ namespace ShaderTest
 		std::string format;
 		uint32_t stride = 0;
 		std::vector<float> data;
-		uint32_t zeroInitSize = 0;
+		uint32_t fillSize = 0;
+		float fillValue = 0.0f;
 		std::string dataFile;  // Path to external binary file
 	};
 
@@ -41,277 +42,282 @@ namespace ShaderTest
 		}
 
 		YAMLFixtureData currentFixture;
-		bool inDocument = false;
+		std::string currentFixtureName;
 		bool inBuffers = false;
 		bool inData = false;
+		std::string dataAccumulator;
 
 		std::string line;
+		int indent = 0;
+
 		while (std::getline(file, line)) {
-			// Trim whitespace
-			line.erase(0, line.find_first_not_of(" \t\r\n"));
-			line.erase(line.find_last_not_of(" \t\r\n") + 1);
-
-			// Document separator
-			if (line == "---") {
-				if (inDocument && !currentFixture.name.empty()) {
-					fixtures.push_back(currentFixture);
-				}
-				currentFixture = YAMLFixtureData{};
-				inDocument = true;
-				inBuffers = false;
-				inData = false;
-				continue;
-			}
-
-			if (line == "...") {
-				if (!currentFixture.name.empty()) {
-					fixtures.push_back(currentFixture);
-				}
-				currentFixture = YAMLFixtureData{};
-				inDocument = false;
-				inBuffers = false;
-				inData = false;
-				continue;
-			}
-
 			// Skip comments and empty lines
-			if (line.empty() || line[0] == '#') {
+			if (line.empty() || line.find_first_not_of(" \t\r\n") == std::string::npos || line.find('#') == 0) {
 				continue;
 			}
+
+			// Count indentation
+			size_t lineIndent = line.find_first_not_of(" \t");
+			std::string trimmed = line.substr(lineIndent);
 
 			// Parse key-value pairs
-			size_t colonPos = line.find(':');
+			size_t colonPos = trimmed.find(':');
 			if (colonPos != std::string::npos) {
-				std::string key = line.substr(0, colonPos);
-				std::string value = line.substr(colonPos + 1);
+				std::string key = trimmed.substr(0, colonPos);
+				std::string value = trimmed.substr(colonPos + 1);
 
 				// Trim key and value
-				key.erase(0, key.find_first_not_of(" \t"));
 				key.erase(key.find_last_not_of(" \t") + 1);
 				value.erase(0, value.find_first_not_of(" \t"));
 				value.erase(value.find_last_not_of(" \t") + 1);
 
-				if (key == "Name") {
-					currentFixture.name = value;
+				// Top-level fixture name (e.g., "GradientTexture8x8:")
+				if (lineIndent == 0 && !key.empty() && key != "Buffers") {
+					// Save previous fixture
+					if (!currentFixture.name.empty()) {
+						fixtures.push_back(currentFixture);
+					}
+					currentFixture = YAMLFixtureData{};
+					currentFixture.name = key;
+					currentFixtureName = key;
+					inBuffers = false;
+					inData = false;
 				} else if (key == "Buffers") {
 					inBuffers = true;
-				} else if (inBuffers) {
-					if (key == "- Name") {
-						value.erase(0, value.find_first_not_of(" \t"));
-						currentFixture.bufferName = value;
-					} else if (key == "Format") {
-						currentFixture.format = value;
-					} else if (key == "Stride") {
-						currentFixture.stride = static_cast<uint32_t>(std::stoi(value));
-					} else if (key == "ZeroInitSize") {
-						currentFixture.zeroInitSize = static_cast<uint32_t>(std::stoi(value));
-					} else if (key == "DataFile") {
-						currentFixture.dataFile = value;
-					} else if (key == "Data") {
-						inData = true;
-						// Check if data is inline on same line
-						if (value.find('[') != std::string::npos) {
-							// Parse inline array
-							size_t startBracket = value.find('[');
-							size_t endBracket = value.find(']');
-							if (endBracket != std::string::npos) {
-								std::string dataStr = value.substr(startBracket + 1, endBracket - startBracket - 1);
-								std::istringstream ss(dataStr);
-								std::string token;
-								while (std::getline(ss, token, ',')) {
-									token.erase(0, token.find_first_not_of(" \t"));
-									token.erase(token.find_last_not_of(" \t") + 1);
-									if (!token.empty() && token != "#") {  // Skip comments
-										currentFixture.data.push_back(std::stof(token));
-									}
-								}
-								inData = false;
+				} else if (inBuffers && key == "- Name") {
+					currentFixture.bufferName = value;
+				} else if (inBuffers && key == "Name") {
+					currentFixture.bufferName = value;
+				} else if (key == "Format") {
+					currentFixture.format = value;
+				} else if (key == "Stride") {
+					currentFixture.stride = static_cast<uint32_t>(std::stoi(value));
+				} else if (key == "FillSize") {
+					currentFixture.fillSize = static_cast<uint32_t>(std::stoi(value));
+				} else if (key == "FillValue") {
+					currentFixture.fillValue = std::stof(value);
+				} else if (key == "DataFile") {
+					currentFixture.dataFile = value;
+				} else if (key == "Data") {
+					inData = true;
+					dataAccumulator = value;  // Might start inline: "Data: [1, 2, 3]"
+				}
+				currentFixture.bufferName = value;
+			} else if (key == "Format") {
+				currentFixture.format = value;
+			} else if (key == "Stride") {
+				currentFixture.stride = static_cast<uint32_t>(std::stoi(value));
+			} else if (key == "ZeroInitSize") {
+				currentFixture.zeroInitSize = static_cast<uint32_t>(std::stoi(value));
+			} else if (key == "DataFile") {
+				currentFixture.dataFile = value;
+			} else if (key == "Data") {
+				inData = true;
+				// Check if data is inline on same line
+				if (value.find('[') != std::string::npos) {
+					// Parse inline array
+					size_t startBracket = value.find('[');
+					size_t endBracket = value.find(']');
+					if (endBracket != std::string::npos) {
+						std::string dataStr = value.substr(startBracket + 1, endBracket - startBracket - 1);
+						std::istringstream ss(dataStr);
+						std::string token;
+						while (std::getline(ss, token, ',')) {
+							token.erase(0, token.find_first_not_of(" \t"));
+							token.erase(token.find_last_not_of(" \t") + 1);
+							if (!token.empty() && token != "#") {  // Skip comments
+								currentFixture.data.push_back(std::stof(token));
 							}
 						}
-					}
-				}
-			} else if (inData) {
-				// Multi-line data array
-				if (line.find('[') != std::string::npos || line.find(']') != std::string::npos) {
-					// Remove brackets
-					line.erase(std::remove(line.begin(), line.end(), '['), line.end());
-					line.erase(std::remove(line.begin(), line.end(), ']'), line.end());
-				}
-
-				// Parse comma-separated values
-				std::istringstream ss(line);
-				std::string token;
-				while (std::getline(ss, token, ',')) {
-					token.erase(0, token.find_first_not_of(" \t"));
-					token.erase(token.find_last_not_of(" \t") + 1);
-
-					// Stop at comments
-					size_t commentPos = token.find('#');
-					if (commentPos != std::string::npos) {
-						token = token.substr(0, commentPos);
-						token.erase(token.find_last_not_of(" \t") + 1);
-					}
-
-					if (!token.empty()) {
-						try {
-							currentFixture.data.push_back(std::stof(token));
-						} catch (...) {
-							// Skip invalid numbers
-						}
+						inData = false;
 					}
 				}
 			}
 		}
-
-		// Add last fixture if any
-		if (!currentFixture.name.empty()) {
-			fixtures.push_back(currentFixture);
-		}
-
-		return fixtures;
 	}
-
-	// ============================================================================
-	// FIXTURE FACTORY FROM YAML
-	// ============================================================================
-
-	// Load binary data from file
-	inline std::vector<uint8_t> LoadBinaryFile(const std::filesystem::path& filePath)
+	else if (inData)
 	{
-		std::ifstream file(filePath, std::ios::binary | std::ios::ate);
-		if (!file.is_open()) {
-			throw std::runtime_error("Failed to open binary file: " + filePath.string());
+		// Multi-line data array
+		if (line.find('[') != std::string::npos || line.find(']') != std::string::npos) {
+			// Remove brackets
+			line.erase(std::remove(line.begin(), line.end(), '['), line.end());
+			line.erase(std::remove(line.begin(), line.end(), ']'), line.end());
 		}
 
-		std::streamsize size = file.tellg();
-		file.seekg(0, std::ios::beg);
+		// Parse comma-separated values
+		std::istringstream ss(line);
+		std::string token;
+		while (std::getline(ss, token, ',')) {
+			token.erase(0, token.find_first_not_of(" \t"));
+			token.erase(token.find_last_not_of(" \t") + 1);
 
-		std::vector<uint8_t> buffer(size);
-		if (!file.read(reinterpret_cast<char*>(buffer.data()), size)) {
-			throw std::runtime_error("Failed to read binary file: " + filePath.string());
-		}
+			// Stop at comments
+			size_t commentPos = token.find('#');
+			if (commentPos != std::string::npos) {
+				token = token.substr(0, commentPos);
+				token.erase(token.find_last_not_of(" \t") + 1);
+			}
 
-		return buffer;
-	}
-
-	inline std::unique_ptr<BindingFixture> CreateFixtureFromYAML(const YAMLFixtureData& yamlData)
-	{
-		// Handle external binary file
-		if (!yamlData.dataFile.empty()) {
-			class YAMLBinaryFileFixture : public BindingFixture
-			{
-				std::string m_name;
-				std::string m_filePath;
-
-			public:
-				YAMLBinaryFileFixture(const std::string& name, const std::string& filePath) :
-					m_name(name), m_filePath(filePath) {}
-
-				const char* GetName() const override { return m_name.c_str(); }
-
-				void Apply(stf::DescriptorTableBuilder& builder, uint32_t bindingSlot) override
-				{
-					auto data = LoadBinaryFile(m_filePath);
-					builder.AddSRV(bindingSlot, stf::Buffer(data.data(), data.size()));
-				}
-			};
-
-			return std::make_unique<YAMLBinaryFileFixture>(yamlData.name, yamlData.dataFile);
-		}
-
-		// Handle inline data
-		if (!yamlData.data.empty()) {
-			// Create a custom fixture with the YAML data
-			class YAMLDataFixture : public BindingFixture
-			{
-				std::string m_name;
-				std::vector<float> m_data;
-				uint32_t m_stride;
-
-			public:
-				YAMLDataFixture(const std::string& name, const std::vector<float>& data, uint32_t stride) :
-					m_name(name), m_data(data), m_stride(stride) {}
-
-				const char* GetName() const override { return m_name.c_str(); }
-
-				void Apply(stf::DescriptorTableBuilder& builder, uint32_t bindingSlot) override
-				{
-					// Determine if this is a texture or buffer based on stride
-					// For simplicity, treat as SRV buffer for now
-					builder.AddSRV(bindingSlot, stf::Buffer(m_data.data(), m_data.size() * sizeof(float)));
-				}
-			};
-
-			return std::make_unique<YAMLDataFixture>(yamlData.name, yamlData.data, yamlData.stride);
-		}
-
-		// Zero-initialized buffer
-		if (yamlData.zeroInitSize > 0) {
-			class YAMLZeroFixture : public BindingFixture
-			{
-				std::string m_name;
-				uint32_t m_size;
-
-			public:
-				YAMLZeroFixture(const std::string& name, uint32_t size) :
-					m_name(name), m_size(size) {}
-
-				const char* GetName() const override { return m_name.c_str(); }
-
-				void Apply(stf::DescriptorTableBuilder& builder, uint32_t bindingSlot) override
-				{
-					std::vector<uint8_t> zeroData(m_size, 0);
-					builder.AddSRV(bindingSlot, stf::Buffer(zeroData.data(), m_size));
-				}
-			};
-
-			return std::make_unique<YAMLZeroFixture>(yamlData.name, yamlData.zeroInitSize);
-		}
-
-		return nullptr;
-	}
-
-	// ============================================================================
-	// FIXTURE REGISTRY WITH YAML SUPPORT
-	// ============================================================================
-
-	class FixtureRegistry
-	{
-		std::unordered_map<std::string, std::unique_ptr<BindingFixture>> m_fixtures;
-
-	public:
-		static FixtureRegistry& Instance()
-		{
-			static FixtureRegistry instance;
-			return instance;
-		}
-
-		void LoadFromYAML(const std::filesystem::path& yamlPath)
-		{
-			auto yamlFixtures = ParseYAMLFixtures(yamlPath);
-			for (const auto& yamlData : yamlFixtures) {
-				auto fixture = CreateFixtureFromYAML(yamlData);
-				if (fixture) {
-					m_fixtures[yamlData.name] = std::move(fixture);
+			if (!token.empty()) {
+				try {
+					currentFixture.data.push_back(std::stof(token));
+				} catch (...) {
+					// Skip invalid numbers
 				}
 			}
 		}
+	}
+}
 
-		void RegisterBuiltIn()
-		{
-			// Register built-in C++ fixtures
-			m_fixtures["GradientTexture8x8"] = std::make_unique<GradientTexture2D>();
-			m_fixtures["ConstantTexture8x8"] = std::make_unique<ConstantTexture2D>();
-			m_fixtures["OutputTexture8x8"] = std::make_unique<OutputTexture2D>();
-			m_fixtures["CommonCBuffer"] = std::make_unique<CommonCBuffer>();
-			m_fixtures["LinearClampSampler"] = std::make_unique<LinearClampSampler>();
-			m_fixtures["PointClampSampler"] = std::make_unique<PointClampSampler>();
-		}
+// Add last fixture if any
+if (!currentFixture.name.empty()) {
+	fixtures.push_back(currentFixture);
+}
 
-		BindingFixture* Get(const std::string& name)
+return fixtures;
+}
+
+// ============================================================================
+// FIXTURE FACTORY FROM YAML
+// ============================================================================
+
+// Load binary data from file
+inline std::vector<uint8_t> LoadBinaryFile(const std::filesystem::path& filePath)
+{
+	std::ifstream file(filePath, std::ios::binary | std::ios::ate);
+	if (!file.is_open()) {
+		throw std::runtime_error("Failed to open binary file: " + filePath.string());
+	}
+
+	std::streamsize size = file.tellg();
+	file.seekg(0, std::ios::beg);
+
+	std::vector<uint8_t> buffer(size);
+	if (!file.read(reinterpret_cast<char*>(buffer.data()), size)) {
+		throw std::runtime_error("Failed to read binary file: " + filePath.string());
+	}
+
+	return buffer;
+}
+
+inline std::unique_ptr<BindingFixture> CreateFixtureFromYAML(const YAMLFixtureData& yamlData)
+{
+	// Handle external binary file
+	if (!yamlData.dataFile.empty()) {
+		class YAMLBinaryFileFixture : public BindingFixture
 		{
-			auto it = m_fixtures.find(name);
-			return (it != m_fixtures.end()) ? it->second.get() : nullptr;
+			std::string m_name;
+			std::string m_filePath;
+
+		public:
+			YAMLBinaryFileFixture(const std::string& name, const std::string& filePath) :
+				m_name(name), m_filePath(filePath) {}
+
+			const char* GetName() const override { return m_name.c_str(); }
+
+			void Apply(stf::DescriptorTableBuilder& builder, uint32_t bindingSlot) override
+			{
+				auto data = LoadBinaryFile(m_filePath);
+				builder.AddSRV(bindingSlot, stf::Buffer(data.data(), data.size()));
+			}
+		};
+
+		return std::make_unique<YAMLBinaryFileFixture>(yamlData.name, yamlData.dataFile);
+	}
+
+	// Handle inline data
+	if (!yamlData.data.empty()) {
+		// Create a custom fixture with the YAML data
+		class YAMLDataFixture : public BindingFixture
+		{
+			std::string m_name;
+			std::vector<float> m_data;
+			uint32_t m_stride;
+
+		public:
+			YAMLDataFixture(const std::string& name, const std::vector<float>& data, uint32_t stride) :
+				m_name(name), m_data(data), m_stride(stride) {}
+
+			const char* GetName() const override { return m_name.c_str(); }
+
+			void Apply(stf::DescriptorTableBuilder& builder, uint32_t bindingSlot) override
+			{
+				// Determine if this is a texture or buffer based on stride
+				// For simplicity, treat as SRV buffer for now
+				builder.AddSRV(bindingSlot, stf::Buffer(m_data.data(), m_data.size() * sizeof(float)));
+			}
+		};
+
+		return std::make_unique<YAMLDataFixture>(yamlData.name, yamlData.data, yamlData.stride);
+	}
+
+	// Zero-initialized buffer
+	if (yamlData.zeroInitSize > 0) {
+		class YAMLZeroFixture : public BindingFixture
+		{
+			std::string m_name;
+			uint32_t m_size;
+
+		public:
+			YAMLZeroFixture(const std::string& name, uint32_t size) :
+				m_name(name), m_size(size) {}
+
+			const char* GetName() const override { return m_name.c_str(); }
+
+			void Apply(stf::DescriptorTableBuilder& builder, uint32_t bindingSlot) override
+			{
+				std::vector<uint8_t> zeroData(m_size, 0);
+				builder.AddSRV(bindingSlot, stf::Buffer(zeroData.data(), m_size));
+			}
+		};
+
+		return std::make_unique<YAMLZeroFixture>(yamlData.name, yamlData.zeroInitSize);
+	}
+
+	return nullptr;
+}
+
+// ============================================================================
+// FIXTURE REGISTRY WITH YAML SUPPORT
+// ============================================================================
+
+class FixtureRegistry
+{
+	std::unordered_map<std::string, std::unique_ptr<BindingFixture>> m_fixtures;
+
+public:
+	static FixtureRegistry& Instance()
+	{
+		static FixtureRegistry instance;
+		return instance;
+	}
+
+	void LoadFromYAML(const std::filesystem::path& yamlPath)
+	{
+		auto yamlFixtures = ParseYAMLFixtures(yamlPath);
+		for (const auto& yamlData : yamlFixtures) {
+			auto fixture = CreateFixtureFromYAML(yamlData);
+			if (fixture) {
+				m_fixtures[yamlData.name] = std::move(fixture);
+			}
 		}
-	};
+	}
+
+	void RegisterBuiltIn()
+	{
+		// Register built-in C++ fixtures
+		m_fixtures["GradientTexture8x8"] = std::make_unique<GradientTexture2D>();
+		m_fixtures["ConstantTexture8x8"] = std::make_unique<ConstantTexture2D>();
+		m_fixtures["OutputTexture8x8"] = std::make_unique<OutputTexture2D>();
+		m_fixtures["CommonCBuffer"] = std::make_unique<CommonCBuffer>();
+		m_fixtures["LinearClampSampler"] = std::make_unique<LinearClampSampler>();
+		m_fixtures["PointClampSampler"] = std::make_unique<PointClampSampler>();
+	}
+
+	BindingFixture* Get(const std::string& name)
+	{
+		auto it = m_fixtures.find(name);
+		return (it != m_fixtures.end()) ? it->second.get() : nullptr;
+	}
+};
 }

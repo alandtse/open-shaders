@@ -1,0 +1,41 @@
+# Test Fixtures from Real Game Captures (RenderDoc/PIX)
+# Based on LLVM YAML Pipeline Format with DataFile extension
+
+# Example: Small inline data (LLVM standard - preferred)
+SmallTestData:
+    Buffers:
+        - Name: TestData
+          Format: Float32
+          Stride: 4
+          Data: [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8]
+
+# Example: RenderDoc capture from Whiterun exterior
+# Frame 12847, Draw call #1523 (terrain rendering)
+WhiterunCapture:
+    Buffers:
+        - Name: CapturedMainDepth
+          Format: Float32
+          Stride: 4
+          DataFile: data/renderdoc/whiterun_depth_1920x1080.bin
+          # 1920x1080 depth buffer = 8.3 MB
+
+        - Name: CapturedTerrainNormals
+          Format: Float32
+          Stride: 8
+          DataFile: data/renderdoc/whiterun_normals_1920x1080.bin
+          # Octahedral encoded normals = 16.6 MB
+
+        - Name: ExpectedTerrainBlendOutput
+          Format: Float32
+          Stride: 16
+          DataFile: data/renderdoc/whiterun_blended_expected_1920x1080.bin
+          # Expected RGBA output = 33 MB
+
+# Example: Zero-initialized buffer (LLVM standard)
+ZeroDepthBuffer:
+    Buffers:
+        - Name: DepthData
+          Format: Float32
+          Stride: 4
+          FillSize: 262144
+          FillValue: 0.0

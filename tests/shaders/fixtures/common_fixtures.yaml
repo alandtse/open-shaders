@@ -1,0 +1,112 @@
+# Common Test Fixtures for Skyrim Community Shaders
+# Based on LLVM YAML Pipeline Format: https://github.com/llvm/offload-test-suite
+# Extension: DataFile field for RenderDoc/PIX captures (not in LLVM standard)
+
+# Simple gradient texture (8x8)
+GradientTexture8x8:
+    Buffers:
+        - Name: GradientData
+          Format: Float32
+          Stride: 4
+          Data:
+              [
+                  0.0,
+                  0.125,
+                  0.25,
+                  0.375,
+                  0.5,
+                  0.625,
+                  0.75,
+                  0.875,
+                  0.125,
+                  0.25,
+                  0.375,
+                  0.5,
+                  0.625,
+                  0.75,
+                  0.875,
+                  1.0,
+                  0.25,
+                  0.375,
+                  0.5,
+                  0.625,
+                  0.75,
+                  0.875,
+                  1.0,
+                  1.0,
+                  0.375,
+                  0.5,
+                  0.625,
+                  0.75,
+                  0.875,
+                  1.0,
+                  1.0,
+                  1.0,
+                  0.5,
+                  0.625,
+                  0.75,
+                  0.875,
+                  1.0,
+                  1.0,
+                  1.0,
+                  1.0,
+                  0.625,
+                  0.75,
+                  0.875,
+                  1.0,
+                  1.0,
+                  1.0,
+                  1.0,
+                  1.0,
+                  0.75,
+                  0.875,
+                  1.0,
+                  1.0,
+                  1.0,
+                  1.0,
+                  1.0,
+                  1.0,
+                  0.875,
+                  1.0,
+                  1.0,
+                  1.0,
+                  1.0,
+                  1.0,
+                  1.0,
+                  1.0,
+              ]
+
+# Solid white texture (8x8 RGBA, 256 floats)
+WhiteTexture8x8:
+    Buffers:
+        - Name: WhiteData
+          Format: Float32
+          Stride: 16
+          FillSize: 1024
+          FillValue: 1.0
+
+# Common constant buffer with frame data
+CommonCBuffer:
+    Buffers:
+        - Name: FrameData
+          Format: Float32
+          Stride: 16
+          Data: [0.0, 0.016, 0.0, 0.0]
+
+# Large depth buffer (256x256)
+DepthBuffer256:
+    Buffers:
+        - Name: DepthData
+          Format: Float32
+          Stride: 4
+          FillSize: 262144
+          FillValue: 1.0
+
+# Flat normal map (8x8 RGB, all pointing up)
+NormalMap8x8:
+    Buffers:
+        - Name: NormalData
+          Format: Float32
+          Stride: 12
+          FillSize: 768
+          FillValue: 0.5
