@@ -1,0 +1,46 @@
+name: Update Buffers Wiki
+
+on:
+    push:
+        branches:
+            - dev
+        paths:
+            - "features/**/*.hlsl"
+            - "features/**/*.hlsli"
+            - "package/Shaders/**/*.hlsl"
+            - "package/Shaders/**/*.hlsli"
+    workflow_dispatch:
+
+permissions:
+    contents: write
+
+jobs:
+    update-wiki:
+        name: Update Buffer Documentation
+        runs-on: windows-2022
+        steps:
+            - name: Checkout code
+              uses: actions/checkout@v4
+              with:
+                  submodules: recursive
+
+            - name: Prepare shaders
+              uses: ./.github/actions/prepare-shaders
+              with:
+                  cache-key-suffix: wiki
+
+            - name: Create wiki content directory
+              run: mkdir -p wiki-content
+              shell: bash
+
+            - name: Scan buffer usage
+              run: |
+                  cd build/ALL/aio/Shaders
+                  hlslkit-buffer-scan > ../../../../wiki-content/Buffers.md
+              shell: bash
+
+            - name: Upload to Wiki
+              uses: Andrew-Chen-Wang/github-wiki-action@v4
+              with:
+                  path: wiki-content/
+                  token: ${{ secrets.GITHUB_TOKEN }}
