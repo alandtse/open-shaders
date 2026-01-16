@@ -83,7 +83,8 @@
             "cacheVariables": {
                 "ENABLE_SKYRIM_AE": "ON",
                 "ENABLE_SKYRIM_SE": "ON",
-                "ENABLE_SKYRIM_VR": "ON"
+                "ENABLE_SKYRIM_VR": "ON",
+                "AUTO_PLUGIN_DEPLOYMENT": "ON"
             },
             "inherits": "skyrim"
         },
@@ -118,6 +119,35 @@
             "name": "ALL",
             "configurePreset": "ALL",
             "configuration": "Release"
+        },
+        {
+            "name": "Dev",
+            "configurePreset": "ALL",
+            "configuration": "Release",
+            "targets": ["PREPARE_AIO"]
+        },
+        {
+            "name": "CSmain",
+            "configurePreset": "ALL",
+            "configuration": "Release",
+            "targets": ["CommunityShaders"]
+        },
+        {
+            "name": "Package",
+            "configurePreset": "ALL",
+            "configuration": "Release",
+            "targets": ["AIO_ZIP_PACKAGE"]
+        },
+        {
+            "name": "Shaders",
+            "configurePreset": "ALL",
+            "configuration": "Release",
+            "targets": ["prepare_shaders"]
+        },
+        {
+            "name": "Debug",
+            "configurePreset": "ALL",
+            "configuration": "Debug"
         }
     ]
 }
