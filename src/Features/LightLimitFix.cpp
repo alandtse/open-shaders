@@ -19,9 +19,9 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	ParticleRadius,
 	BillboardBrightness,
 	BillboardRadius,
-	ParticleClusterThreshold,  // NEW
-	MaxParticlesPerEmitter,    // NEW
-	MaxParticleDistance,       // NEW
+	ParticleClusterThreshold,
+	MaxParticlesPerEmitter,
+	MaxParticleDistance,
 	EnableContactShadows,
 	EnableLightsVisualisation,
 	LightsVisualisationMode)
@@ -49,7 +49,6 @@ void LightLimitFix::DrawSettings()
 			ImGui::Text("Merges vertices which are close enough to each other to improve performance.");
 		}
 
-		// NEW: clustering controls
 		ImGui::SliderFloat("Cluster Threshold", &settings.ParticleClusterThreshold, 8.0f, 128.0f, "%.1f");
 		if (auto _tt = Util::HoverTooltipWrapper()) {
 			ImGui::Text(
@@ -66,7 +65,6 @@ void LightLimitFix::DrawSettings()
 				"Lower = faster, especially for very dense effects.");
 		}
 
-		// NEW: distance cutoff for particle lights
 		ImGui::SliderFloat("Max Particle Distance", &settings.MaxParticleDistance, 1000.0f, 20000.0f, "%.0f");
 		if (auto _tt = Util::HoverTooltipWrapper()) {
 			ImGui::Text(
@@ -714,7 +712,6 @@ void LightLimitFix::AddCachedParticleLights(eastl::vector<LightData>& lightsData
 	static float& lightFadeStart = *reinterpret_cast<float*>(REL::RelocationID(527668, 414582).address());
 	static float& lightFadeEnd = *reinterpret_cast<float*>(REL::RelocationID(527669, 414583).address());
 
-	// NEW: hard distance cutoff for particle lights
 	if (settings.MaxParticleDistance > 0.0f) {
 		float maxDist = settings.MaxParticleDistance;
 		float maxDistSq = maxDist * maxDist;
@@ -723,7 +720,6 @@ void LightLimitFix::AddCachedParticleLights(eastl::vector<LightData>& lightsData
 		float distSq = (pos.x * pos.x) + (pos.y * pos.y) + (pos.z * pos.z);
 
 		if (distSq > maxDistSq) {
-			// Too far away: don't add this particle light at all
 			return;
 		}
 	}
@@ -881,7 +877,6 @@ void LightLimitFix::UpdateLights()
 					// Use explicit 32-bit type to avoid narrowing warnings
 					std::uint32_t numVertices = static_cast<std::uint32_t>(particleData->GetActiveVertexCount());
 
-					// NEW: clamp by MaxParticlesPerEmitter (also 32-bit)
 					std::uint32_t maxPerEmitter = static_cast<std::uint32_t>(std::max(1, settings.MaxParticlesPerEmitter));
 					if (numVertices > maxPerEmitter) {
 						numVertices = maxPerEmitter;
@@ -909,7 +904,6 @@ void LightLimitFix::UpdateLights()
 							auto averagePosition = clusteredLight.positionWS[0].data / (float)clusteredLights;
 							float positionDiff = positionWS.GetDistance({ averagePosition.x, averagePosition.y, averagePosition.z });
 
-							// NEW: use configurable cluster threshold
 							if ((radiusDiff + positionDiff) > settings.ParticleClusterThreshold ||
 								!settings.EnableParticleLightsOptimization) {
 								clusteredLight.radius /= (float)clusteredLights;

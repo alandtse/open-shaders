@@ -209,9 +209,9 @@ struct ParticleLightInfo
 		float ParticleRadius = 1.0f;
 		float BillboardBrightness = 1.0f;
 		float BillboardRadius = 1.0f;
-		float ParticleClusterThreshold = 32.0f;  // default = previous hardcoded value
-		int MaxParticlesPerEmitter = 256;        // max default						
-		float MaxParticleDistance = 6000.0f;  // distance cutoff for particle lights (in game units)
+		float ParticleClusterThreshold = 32.0f;
+		int MaxParticlesPerEmitter = 256;
+		float MaxParticleDistance = 6000.0f;  // game units
 		bool EnableParticleLightsOptimization = true;
 	};
 

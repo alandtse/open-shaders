@@ -462,7 +462,6 @@ void TerrainBlending::Hooks::Main_RenderDepth::thunk(bool a1, bool a2)
 {
 	auto& singleton = globals::features::terrainBlending;
 	auto shaderCache = globals::shaderCache;
-	auto state = globals::state;
 	auto renderer = globals::game::renderer;
 
 	auto& mainDepth = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kMAIN];
@@ -567,7 +566,6 @@ void TerrainBlending::Hooks::BSBatchRenderer__RenderPassImmediately::thunk(RE::B
 		}
 
 		if (singleton.renderDepth) {
-			// Entering or exiting terrain depth section
 			bool inTerrain = a_pass->shaderProperty && a_pass->shaderProperty->flags.all(RE::BSShaderProperty::EShaderPropertyFlag::kMultiTextureLandscape);
 
 			if (inTerrain) {
@@ -586,8 +584,10 @@ void TerrainBlending::Hooks::BSBatchRenderer__RenderPassImmediately::thunk(RE::B
 				singleton.renderTerrainDepth = inTerrain;
 			}
 
-			if (inTerrain)
-				func(a_pass, a_technique, a_alphaTest, a_renderFlags);  // Run terrain twice
+			if (inTerrain) {
+				// Render terrain depth now; normal pass still runs after this hook.
+				func(a_pass, a_technique, a_alphaTest, a_renderFlags);
+			}
 		} else if (globals::state->inWorld) {
 			if (auto shaderProperty = a_pass->shaderProperty) {
 				if (a_pass->shader->shaderType.get() == RE::BSShader::Type::Lighting) {
@@ -597,7 +597,7 @@ void TerrainBlending::Hooks::BSBatchRenderer__RenderPassImmediately::thunk(RE::B
 						return;
 					}
 
-					// Detect meshes which should not get terrain blending using an unused flag (kNoTransparencyMultiSample)
+					// Use kNoTransparencyMultiSample as a TB opt-out flag.
 					if (shaderProperty->flags.any(RE::BSShaderProperty::EShaderPropertyFlag::kNoTransparencyMultiSample)) {
 						RenderPass call{ a_pass, a_technique, a_alphaTest, a_renderFlags };
 						singleton.renderPasses.push_back(call);
@@ -617,7 +617,7 @@ void TerrainBlending::RenderTerrainBlendingPasses()
 	auto shadowState = globals::game::shadowState;
 	auto stateUpdateFlags = globals::game::stateUpdateFlags;
 
-	// Used to get the distance of the surface to the lowest depth
+	// Bind terrain depth mask for blending.
 	auto view = terrainDepth.depthSRV;
 	context->PSSetShaderResources(55, 1, &view);
 
@@ -626,22 +626,19 @@ void TerrainBlending::RenderTerrainBlendingPasses()
 		GET_INSTANCE_MEMBER(alphaBlendWriteMode, shadowState)
 		GET_INSTANCE_MEMBER(depthStencilDepthMode, shadowState)
 
-		// Reset alpha write and enable alpha blending
+		// TB pass: enable alpha blending and depth override, then restore for queued passes.
 		alphaBlendWriteMode = 1;
 		alphaBlendMode = 1;
 		stateUpdateFlags->set(RE::BSGraphics::ShaderFlags::DIRTY_ALPHA_BLEND);
 
-		// Enable rendering for depth below the surface
 		context->OMSetDepthStencilState(terrainDepthStencilState, 0xFF);
 
 		for (auto& renderPass : terrainRenderPasses)
 			Hooks::BSBatchRenderer__RenderPassImmediately::func(renderPass.a_pass, renderPass.a_technique, renderPass.a_alphaTest, renderPass.a_renderFlags);
 
-		// Reset alpha blending
 		alphaBlendMode = 0;
 		stateUpdateFlags->set(RE::BSGraphics::ShaderFlags::DIRTY_ALPHA_BLEND);
 
-		// Reset depth testing
 		depthStencilDepthMode = RE::BSGraphics::DepthStencilDepthMode::kTestEqual;
 		stateUpdateFlags->set(RE::BSGraphics::ShaderFlags::DIRTY_DEPTH_MODE);
 

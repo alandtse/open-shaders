@@ -101,10 +101,9 @@ public:
 
 		static void Install()
 		{
-			// To know when we are rendering z-prepass depth vs shadows depth
+			// Hooks identify the main depth prepass and intercept render passes for TB.
 			stl::write_thunk_call<Main_RenderDepth>(REL::RelocationID(35560, 36559).address() + REL::Relocate(0x395, 0x395, 0x2EE));
 
-			// To manipulate the depth buffer write, depth testing, alpha blending
 			stl::write_thunk_call<BSBatchRenderer__RenderPassImmediately>(REL::RelocationID(100852, 107642).address() + REL::Relocate(0x29E, 0x28F));
 
 			logger::info("[Terrain Blending] Installed hooks");

@@ -3215,11 +3215,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	alpha = saturate(1.05 * alpha);
 #			endif  // DEPTH_WRITE_DECALS
 #if defined(TREE_ANIM)
-// VRS Fix: For TREE_ANIM (full tree models), use a fixed low alpha threshold
-// instead of the variable AlphaTestRefRS.
-//
-// This fixes white outline artifacts caused by VRS coarse shading at alpha edges.
-// A low threshold (0.1) reduces the "gradient zone" where VRS can misclassify pixels.
+// VRS: use a fixed low alpha threshold for TREE_ANIM to avoid edge artifacts.
 const float vrsFixedAlphaThreshold = 0.1;
 if (alpha - vrsFixedAlphaThreshold < 0) {
     discard;
