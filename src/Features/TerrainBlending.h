@@ -3,6 +3,15 @@
 struct TerrainBlending : Feature
 {
 public:
+	struct Settings
+	{
+		bool LockSignatureAfterFrames = true;
+		int SignatureLockFrames = 60;
+		float TerrainCullDistance = 2048.0f;
+	};
+
+	Settings settings;
+
 	virtual inline std::string GetName() override { return "Terrain Blending"; }
 	virtual inline std::string GetShortName() override { return "TerrainBlending"; }
 	virtual inline std::string_view GetShaderDefineName() override { return "TERRAIN_BLENDING"; }
@@ -21,6 +30,10 @@ public:
 	virtual inline bool HasShaderDefine(RE::BSShader::Type) override { return true; }
 
 	virtual void SetupResources() override;
+	virtual void DrawSettings() override;
+	virtual void LoadSettings(json& o_json) override;
+	virtual void SaveSettings(json& o_json) override;
+	virtual void RestoreDefaultSettings() override;
 
 	ID3D11VertexShader* GetTerrainVertexShader();
 	ID3D11VertexShader* GetTerrainOffsetVertexShader();

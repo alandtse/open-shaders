@@ -4,6 +4,12 @@
 #include "ShaderCache.h"
 #include "State.h"
 
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
+	TerrainBlending::Settings,
+	LockSignatureAfterFrames,
+	SignatureLockFrames,
+	TerrainCullDistance)
+
 namespace
 {
 	struct PrepassSignature
@@ -35,6 +41,8 @@ namespace
 	uint32_t g_lastFrame = 0;
 	bool g_inMainDepthGroup = false;
 	bool g_signatureMatchedInGroup = false;
+	uint32_t g_signatureFrameCount = 0;
+	bool g_signatureLocked = false;
 
 	constexpr uint32_t kRenderFlagsSignatureMask = ~0x00000010u;
 	constexpr uint32_t kUtilityRenderDepthFlag = static_cast<uint32_t>(SIE::ShaderCache::UtilityShaderFlags::RenderDepth);
@@ -137,6 +145,13 @@ namespace
 
 	void UpdateMainPrepassSignature(uint32_t frame, bool logUpdates)
 	{
+		auto& settings = globals::features::terrainBlending.settings;
+		const bool lockEnabled = settings.LockSignatureAfterFrames && settings.SignatureLockFrames > 0;
+		if (!lockEnabled) {
+			g_signatureLocked = false;
+			g_signatureFrameCount = 0;
+		}
+
 		if (!g_hasFrame) {
 			g_lastFrame = frame;
 			g_hasFrame = true;
@@ -146,6 +161,14 @@ namespace
 		if (frame == g_lastFrame) {
 			return;
 		}
+
+		g_lastFrame = frame;
+
+		if (g_signatureLocked) {
+			return;
+		}
+
+		++g_signatureFrameCount;
 
 		const SignatureCount* best = nullptr;
 		for (const auto& entry : g_depthOnlySignatures) {
@@ -168,8 +191,12 @@ namespace
 			}
 		}
 
+		if (lockEnabled && g_mainPrepassSignature.valid &&
+			g_signatureFrameCount >= static_cast<uint32_t>(settings.SignatureLockFrames)) {
+			g_signatureLocked = true;
+		}
+
 		g_depthOnlySignatures.clear();
-		g_lastFrame = frame;
 	}
 
 	bool IsDepthOnlyPass(ID3D11DeviceContext* context)
@@ -301,6 +328,44 @@ void TerrainBlending::DataLoaded()
 	bEnableLandFade->data.b = false;
 }
 
+void TerrainBlending::DrawSettings()
+{
+	if (ImGui::TreeNodeEx("Performance Options", ImGuiTreeNodeFlags_DefaultOpen)) {
+		ImGui::Checkbox("Lock Prepass Signature", &settings.LockSignatureAfterFrames);
+		if (auto _tt = Util::HoverTooltipWrapper()) {
+			ImGui::Text("Stops per-pass signature tracking after the signature stabilizes.");
+		}
+
+		ImGui::BeginDisabled(!settings.LockSignatureAfterFrames);
+		ImGui::SliderInt("Signature Lock Frames", &settings.SignatureLockFrames, 1, 240, "%d");
+		if (auto _tt = Util::HoverTooltipWrapper()) {
+			ImGui::Text("Number of frames to observe before locking the prepass signature.");
+		}
+		ImGui::EndDisabled();
+
+		ImGui::SliderFloat("Terrain Depth Culling Distance", &settings.TerrainCullDistance, 0.0f, 8192.0f, "%.0f units");
+		if (auto _tt = Util::HoverTooltipWrapper()) {
+			ImGui::Text("Terrain farther than this distance skips TB depth rendering. Set to 0 to disable culling.");
+		}
+		ImGui::TreePop();
+	}
+}
+
+void TerrainBlending::LoadSettings(json& o_json)
+{
+	settings = o_json;
+}
+
+void TerrainBlending::SaveSettings(json& o_json)
+{
+	o_json = settings;
+}
+
+void TerrainBlending::RestoreDefaultSettings()
+{
+	settings = {};
+}
+
 void TerrainBlending::TerrainShaderHacks()
 {
 	if (renderTerrainDepth) {
@@ -406,9 +471,6 @@ void TerrainBlending::Hooks::Main_RenderDepth::thunk(bool a1, bool a2)
 	singleton.averageEyePosition = Util::GetAverageEyePosition();
 
 	if (globals::game::isVR && shaderCache->IsEnabled()) {
-		if (state->IsDeveloperMode()) {
-			logger::info("[TB] Main_RenderDepth hook bypassed in VR");
-		}
 		g_inMainDepthGroup = true;
 		g_signatureMatchedInGroup = false;
 		func(a1, a2);
@@ -423,9 +485,6 @@ void TerrainBlending::Hooks::Main_RenderDepth::thunk(bool a1, bool a2)
 			}
 
 			singleton.BlendPrepassDepths();
-			if (state->IsDeveloperMode()) {
-				logger::info("[TB] prepass end");
-			}
 		}
 		g_signaturePrepassActive = false;
 		return;
@@ -467,7 +526,7 @@ void TerrainBlending::Hooks::BSBatchRenderer__RenderPassImmediately::thunk(RE::B
 			UpdateMainPrepassSignature(state->frameCount, state->IsDeveloperMode());
 
 			const bool depthOnly = IsDepthOnlyPass(globals::d3d::context);
-			if (depthOnly) {
+			if (depthOnly && !g_signatureLocked) {
 				TrackDepthOnlySignature(a_pass, a_technique, a_renderFlags);
 				if (state->IsDeveloperMode()) {
 					LogDepthOnlySignatureOnce(a_pass, a_technique, a_renderFlags);
@@ -503,12 +562,6 @@ void TerrainBlending::Hooks::BSBatchRenderer__RenderPassImmediately::thunk(RE::B
 
 				singleton.renderDepth = true;
 				singleton.ResetDepth();
-				if (state->IsDeveloperMode()) {
-					logger::info("[TB] prepass start (tech=0x{:X} flags=0x{:X} shader={})",
-						g_mainPrepassSignature.technique,
-						g_mainPrepassSignature.renderFlags,
-						static_cast<uint32_t>(g_mainPrepassSignature.shaderType));
-				}
 				g_signaturePrepassActive = true;
 			}
 		}
@@ -518,8 +571,11 @@ void TerrainBlending::Hooks::BSBatchRenderer__RenderPassImmediately::thunk(RE::B
 			bool inTerrain = a_pass->shaderProperty && a_pass->shaderProperty->flags.all(RE::BSShaderProperty::EShaderPropertyFlag::kMultiTextureLandscape);
 
 			if (inTerrain) {
-				if ((a_pass->geometry->worldBound.center.GetDistance(singleton.averageEyePosition) - a_pass->geometry->worldBound.radius) > 2048.0f) {
-					inTerrain = false;
+				const float cullDistance = singleton.settings.TerrainCullDistance;
+				if (cullDistance > 0.0f) {
+					if ((a_pass->geometry->worldBound.center.GetDistance(singleton.averageEyePosition) - a_pass->geometry->worldBound.radius) > cullDistance) {
+						inTerrain = false;
+					}
 				}
 			}
 
@@ -528,9 +584,6 @@ void TerrainBlending::Hooks::BSBatchRenderer__RenderPassImmediately::thunk(RE::B
 					singleton.ResetTerrainDepth();
 				}
 				singleton.renderTerrainDepth = inTerrain;
-				if (state->IsDeveloperMode()) {
-					logger::info("[TB] terrain depth {}", inTerrain ? "enter" : "exit");
-				}
 			}
 
 			if (inTerrain)
