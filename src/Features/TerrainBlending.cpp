@@ -10,48 +10,120 @@ namespace
 	{
 		uint32_t technique = 0;
 		uint32_t renderFlags = 0;
+		RE::BSShader::Type shaderType = RE::BSShader::Type::None;
 		bool valid = false;
 	};
 
 	struct SignatureCount
 	{
 		uint64_t key = 0;
+		RE::BSShader::Type shaderType = RE::BSShader::Type::None;
 		uint32_t count = 0;
+	};
+
+	struct LoggedSignature
+	{
+		uint64_t key = 0;
+		RE::BSShader::Type shaderType = RE::BSShader::Type::None;
 	};
 
 	PrepassSignature g_mainPrepassSignature{};
 	std::vector<SignatureCount> g_depthOnlySignatures;
-	std::vector<uint64_t> g_loggedDepthOnlySignatures;
+	std::vector<LoggedSignature> g_loggedDepthOnlySignatures;
 	bool g_signaturePrepassActive = false;
 	bool g_hasFrame = false;
 	uint32_t g_lastFrame = 0;
+	bool g_inMainDepthGroup = false;
+	bool g_signatureMatchedInGroup = false;
+
+	constexpr uint32_t kRenderFlagsSignatureMask = ~0x00000010u;
+	constexpr uint32_t kUtilityRenderDepthFlag = static_cast<uint32_t>(SIE::ShaderCache::UtilityShaderFlags::RenderDepth);
+	constexpr uint32_t kUtilityShadowFlags =
+		static_cast<uint32_t>(SIE::ShaderCache::UtilityShaderFlags::RenderShadowmap) |
+		static_cast<uint32_t>(SIE::ShaderCache::UtilityShaderFlags::RenderShadowmapClamped) |
+		static_cast<uint32_t>(SIE::ShaderCache::UtilityShaderFlags::RenderShadowmapPb) |
+		static_cast<uint32_t>(SIE::ShaderCache::UtilityShaderFlags::RenderShadowmask) |
+		static_cast<uint32_t>(SIE::ShaderCache::UtilityShaderFlags::RenderShadowmaskSpot) |
+		static_cast<uint32_t>(SIE::ShaderCache::UtilityShaderFlags::RenderShadowmaskPb);
+
+	uint32_t NormalizeRenderFlags(uint32_t renderFlags)
+	{
+		return renderFlags & kRenderFlagsSignatureMask;
+	}
 
 	uint64_t MakeSignatureKey(uint32_t technique, uint32_t renderFlags)
 	{
 		return (static_cast<uint64_t>(technique) << 32) | renderFlags;
 	}
 
-	void TrackDepthOnlySignature(uint32_t technique, uint32_t renderFlags)
+	uint32_t NormalizeLightingTechnique(uint32_t technique)
 	{
-		const uint64_t key = MakeSignatureKey(technique, renderFlags);
+		const uint32_t techniqueType = (technique >> 24) & 0x3F;
+		return techniqueType << 24;
+	}
+
+	bool GetNormalizedSignature(const RE::BSRenderPass* pass, uint32_t technique, uint32_t renderFlags, uint32_t& outTechnique, uint32_t& outFlags, RE::BSShader::Type& outShaderType)
+	{
+		if (!pass || !pass->shader) {
+			return false;
+		}
+
+		const auto shaderType = pass->shader->shaderType.get();
+		if (shaderType == RE::BSShader::Type::Utility) {
+			if ((technique & kUtilityRenderDepthFlag) == 0 || (technique & kUtilityShadowFlags) != 0) {
+				return false;
+			}
+			outTechnique = kUtilityRenderDepthFlag;
+			outFlags = NormalizeRenderFlags(renderFlags);
+			outShaderType = RE::BSShader::Type::Utility;
+			return true;
+		}
+
+		if (shaderType == RE::BSShader::Type::Lighting) {
+			outTechnique = NormalizeLightingTechnique(technique);
+			outFlags = NormalizeRenderFlags(renderFlags);
+			outShaderType = RE::BSShader::Type::Lighting;
+			return true;
+		}
+
+		return false;
+	}
+
+	void TrackDepthOnlySignature(const RE::BSRenderPass* pass, uint32_t technique, uint32_t renderFlags)
+	{
+		uint32_t normalizedTechnique = 0;
+		uint32_t normalizedFlags = 0;
+		RE::BSShader::Type normalizedShaderType = RE::BSShader::Type::None;
+		if (!GetNormalizedSignature(pass, technique, renderFlags, normalizedTechnique, normalizedFlags, normalizedShaderType)) {
+			return;
+		}
+
+		const uint64_t key = MakeSignatureKey(normalizedTechnique, normalizedFlags);
 		for (auto& entry : g_depthOnlySignatures) {
-			if (entry.key == key) {
+			if (entry.key == key && entry.shaderType == normalizedShaderType) {
 				entry.count++;
 				return;
 			}
 		}
-		g_depthOnlySignatures.push_back({ key, 1 });
+		g_depthOnlySignatures.push_back({ key, normalizedShaderType, 1 });
 	}
 
 	void LogDepthOnlySignatureOnce(const RE::BSRenderPass* pass, uint32_t technique, uint32_t renderFlags)
 	{
-		const uint64_t key = MakeSignatureKey(technique, renderFlags);
-		for (const auto logged : g_loggedDepthOnlySignatures) {
-			if (logged == key) {
+		uint32_t normalizedTechnique = 0;
+		uint32_t normalizedFlags = 0;
+		RE::BSShader::Type normalizedShaderType = RE::BSShader::Type::None;
+		if (!GetNormalizedSignature(pass, technique, renderFlags, normalizedTechnique, normalizedFlags, normalizedShaderType)) {
+			return;
+		}
+
+		const uint64_t key = MakeSignatureKey(normalizedTechnique, normalizedFlags);
+		for (const auto& logged : g_loggedDepthOnlySignatures) {
+			if (logged.key == key && logged.shaderType == normalizedShaderType) {
 				return;
 			}
 		}
-		g_loggedDepthOnlySignatures.push_back(key);
+		g_loggedDepthOnlySignatures.push_back({ key, normalizedShaderType });
 
 		const auto shaderType = pass && pass->shader ? pass->shader->shaderType.get() : RE::BSShader::Type::Total;
 		const uint32_t shaderTypeValue = static_cast<uint32_t>(shaderType);
@@ -59,8 +131,8 @@ namespace
 		const uint32_t hint = pass ? pass->accumulationHint : 0;
 		const uint32_t lights = pass ? pass->numLights : 0;
 		const uint32_t shadowLights = pass ? pass->numShadowLights : 0;
-		logger::debug("[TB][SIG] depth-only signature tech=0x{:X} flags=0x{:X} shader={} pass={} hint={} lights={} shadowLights={}",
-			technique, renderFlags, shaderTypeValue, passEnum, hint, lights, shadowLights);
+		logger::debug("[TB][SIG] depth-only signature tech=0x{:X} flags=0x{:X} (norm tech=0x{:X} flags=0x{:X}) shader={} pass={} hint={} lights={} shadowLights={}",
+			technique, renderFlags, normalizedTechnique, normalizedFlags, shaderTypeValue, passEnum, hint, lights, shadowLights);
 	}
 
 	void UpdateMainPrepassSignature(uint32_t frame, bool logUpdates)
@@ -87,11 +159,12 @@ namespace
 			const uint32_t renderFlags = static_cast<uint32_t>(best->key);
 			const bool changed = !g_mainPrepassSignature.valid ||
 			                     g_mainPrepassSignature.technique != technique ||
-			                     g_mainPrepassSignature.renderFlags != renderFlags;
-			g_mainPrepassSignature = { technique, renderFlags, true };
+			                     g_mainPrepassSignature.renderFlags != renderFlags ||
+			                     g_mainPrepassSignature.shaderType != best->shaderType;
+			g_mainPrepassSignature = { technique, renderFlags, best->shaderType, true };
 			if (changed && logUpdates) {
-				logger::info("[TB] main prepass signature tech=0x{:X} flags=0x{:X} (depth-only count={})",
-					technique, renderFlags, best->count);
+				logger::info("[TB] main prepass signature tech=0x{:X} flags=0x{:X} shader={} (depth-only count={})",
+					technique, renderFlags, static_cast<uint32_t>(g_mainPrepassSignature.shaderType), best->count);
 			}
 		}
 
@@ -324,12 +397,39 @@ void TerrainBlending::Hooks::Main_RenderDepth::thunk(bool a1, bool a2)
 {
 	auto& singleton = globals::features::terrainBlending;
 	auto shaderCache = globals::shaderCache;
+	auto state = globals::state;
 	auto renderer = globals::game::renderer;
 
 	auto& mainDepth = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kMAIN];
 	auto& zPrepassCopy = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kPOST_ZPREPASS_COPY];
 
 	singleton.averageEyePosition = Util::GetAverageEyePosition();
+
+	if (globals::game::isVR && shaderCache->IsEnabled()) {
+		if (state->IsDeveloperMode()) {
+			logger::info("[TB] Main_RenderDepth hook bypassed in VR");
+		}
+		g_inMainDepthGroup = true;
+		g_signatureMatchedInGroup = false;
+		func(a1, a2);
+		g_inMainDepthGroup = false;
+
+		if (g_signatureMatchedInGroup) {
+			singleton.renderDepth = false;
+
+			if (singleton.renderTerrainDepth) {
+				singleton.renderTerrainDepth = false;
+				singleton.ResetTerrainDepth();
+			}
+
+			singleton.BlendPrepassDepths();
+			if (state->IsDeveloperMode()) {
+				logger::info("[TB] prepass end");
+			}
+		}
+		g_signaturePrepassActive = false;
+		return;
+	}
 
 	if (shaderCache->IsEnabled()) {
 		mainDepth.depthSRV = singleton.blendedDepthTexture->srv.get();
@@ -363,21 +463,35 @@ void TerrainBlending::Hooks::BSBatchRenderer__RenderPassImmediately::thunk(RE::B
 	auto state = globals::state;
 
 	if (shaderCache->IsEnabled()) {
-		if (state->inWorld) {
+		if (g_inMainDepthGroup) {
 			UpdateMainPrepassSignature(state->frameCount, state->IsDeveloperMode());
 
-			if (IsDepthOnlyPass(globals::d3d::context)) {
-				TrackDepthOnlySignature(a_technique, a_renderFlags);
+			const bool depthOnly = IsDepthOnlyPass(globals::d3d::context);
+			if (depthOnly) {
+				TrackDepthOnlySignature(a_pass, a_technique, a_renderFlags);
 				if (state->IsDeveloperMode()) {
 					LogDepthOnlySignatureOnce(a_pass, a_technique, a_renderFlags);
 				}
 			}
 
-			const bool signatureMatch = g_mainPrepassSignature.valid &&
-			                            a_technique == g_mainPrepassSignature.technique &&
-			                            a_renderFlags == g_mainPrepassSignature.renderFlags;
+			bool signatureMatch = false;
+			if (g_mainPrepassSignature.valid) {
+				uint32_t normalizedTechnique = 0;
+				uint32_t normalizedFlags = 0;
+				RE::BSShader::Type normalizedShaderType = RE::BSShader::Type::None;
+				if (GetNormalizedSignature(a_pass, a_technique, a_renderFlags, normalizedTechnique, normalizedFlags, normalizedShaderType)) {
+					signatureMatch =
+						normalizedShaderType == g_mainPrepassSignature.shaderType &&
+						normalizedTechnique == g_mainPrepassSignature.technique &&
+						normalizedFlags == g_mainPrepassSignature.renderFlags;
+				}
+			}
 
-			if (!singleton.renderDepth && signatureMatch) {
+			if (depthOnly && signatureMatch) {
+				g_signatureMatchedInGroup = true;
+			}
+
+			if (!singleton.renderDepth && depthOnly && signatureMatch) {
 				auto renderer = globals::game::renderer;
 				auto& mainDepth = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kMAIN];
 				auto& zPrepassCopy = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kPOST_ZPREPASS_COPY];
@@ -389,17 +503,13 @@ void TerrainBlending::Hooks::BSBatchRenderer__RenderPassImmediately::thunk(RE::B
 
 				singleton.renderDepth = true;
 				singleton.ResetDepth();
-				g_signaturePrepassActive = true;
-			} else if (g_signaturePrepassActive && !signatureMatch) {
-				singleton.renderDepth = false;
-
-				if (singleton.renderTerrainDepth) {
-					singleton.renderTerrainDepth = false;
-					singleton.ResetTerrainDepth();
+				if (state->IsDeveloperMode()) {
+					logger::info("[TB] prepass start (tech=0x{:X} flags=0x{:X} shader={})",
+						g_mainPrepassSignature.technique,
+						g_mainPrepassSignature.renderFlags,
+						static_cast<uint32_t>(g_mainPrepassSignature.shaderType));
 				}
-
-				singleton.BlendPrepassDepths();
-				g_signaturePrepassActive = false;
+				g_signaturePrepassActive = true;
 			}
 		}
 
@@ -414,9 +524,13 @@ void TerrainBlending::Hooks::BSBatchRenderer__RenderPassImmediately::thunk(RE::B
 			}
 
 			if (singleton.renderTerrainDepth != inTerrain) {
-				if (!inTerrain)
+				if (!inTerrain) {
 					singleton.ResetTerrainDepth();
+				}
 				singleton.renderTerrainDepth = inTerrain;
+				if (state->IsDeveloperMode()) {
+					logger::info("[TB] terrain depth {}", inTerrain ? "enter" : "exit");
+				}
 			}
 
 			if (inTerrain)
