@@ -6,6 +6,7 @@
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	TerrainBlending::Settings,
+	Enable,
 	LockSignatureAfterFrames,
 	SignatureLockFrames,
 	TerrainCullDistance)
@@ -330,6 +331,9 @@ void TerrainBlending::DataLoaded()
 
 void TerrainBlending::DrawSettings()
 {
+	ImGui::Checkbox("Enable Terrain Blending", &settings.Enable);
+	ImGui::Spacing();
+
 	if (ImGui::TreeNodeEx("Performance Options", ImGuiTreeNodeFlags_DefaultOpen)) {
 		ImGui::Checkbox("Lock Prepass Signature", &settings.LockSignatureAfterFrames);
 		if (auto _tt = Util::HoverTooltipWrapper()) {
@@ -467,6 +471,16 @@ void TerrainBlending::Hooks::Main_RenderDepth::thunk(bool a1, bool a2)
 	auto& mainDepth = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kMAIN];
 	auto& zPrepassCopy = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kPOST_ZPREPASS_COPY];
 
+	if (!singleton.settings.Enable) {
+		singleton.renderDepth = false;
+		singleton.renderTerrainDepth = false;
+		singleton.renderAltTerrain = false;
+		mainDepth.depthSRV = singleton.depthSRVBackup;
+		zPrepassCopy.depthSRV = singleton.prepassSRVBackup;
+		func(a1, a2);
+		return;
+	}
+
 	singleton.averageEyePosition = Util::GetAverageEyePosition();
 
 	if (globals::game::isVR && shaderCache->IsEnabled()) {
@@ -519,6 +533,11 @@ void TerrainBlending::Hooks::BSBatchRenderer__RenderPassImmediately::thunk(RE::B
 	auto& singleton = globals::features::terrainBlending;
 	auto shaderCache = globals::shaderCache;
 	auto state = globals::state;
+
+	if (!singleton.settings.Enable) {
+		func(a_pass, a_technique, a_alphaTest, a_renderFlags);
+		return;
+	}
 
 	if (shaderCache->IsEnabled()) {
 		if (g_inMainDepthGroup) {
@@ -612,6 +631,20 @@ void TerrainBlending::Hooks::BSBatchRenderer__RenderPassImmediately::thunk(RE::B
 
 void TerrainBlending::RenderTerrainBlendingPasses()
 {
+	if (!settings.Enable) {
+		renderDepth = false;
+		renderTerrainDepth = false;
+		renderAltTerrain = false;
+		terrainRenderPasses.clear();
+		renderPasses.clear();
+		auto renderer = globals::game::renderer;
+		auto& mainDepth = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kMAIN];
+		auto& zPrepassCopy = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kPOST_ZPREPASS_COPY];
+		mainDepth.depthSRV = depthSRVBackup;
+		zPrepassCopy.depthSRV = prepassSRVBackup;
+		return;
+	}
+
 	auto renderer = globals::game::renderer;
 	auto context = globals::d3d::context;
 	auto shadowState = globals::game::shadowState;
