@@ -333,7 +333,7 @@ void TerrainBlending::DataLoaded()
 void TerrainBlending::DrawSettings()
 {
 	ImGui::Checkbox("Enable Terrain Blending", &settings.Enable);
-	ImGui::SliderFloat("Blend Strength", &settings.BlendStrength, 0.0f, 2.0f, "%.2f");
+	ImGui::SliderFloat("Blend Strength", &settings.BlendStrength, 0.75f, 3.0f, "%.2f");
 	if (auto _tt = Util::HoverTooltipWrapper()) {
 		ImGui::Text("Scales the depth-based blend factor. 1.00 matches the current behavior.");
 	}
