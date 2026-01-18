@@ -5,6 +5,7 @@ struct TerrainBlending : Feature
 public:
 	struct Settings
 	{
+		bool Enable = true;
 		bool LockSignatureAfterFrames = true;
 		int SignatureLockFrames = 60;
 		float TerrainCullDistance = 2048.0f;
@@ -19,12 +20,13 @@ public:
 	virtual std::pair<std::string, std::vector<std::string>> GetFeatureSummary() override
 	{
 		return {
-			"Provides seamless blending between terrain and objects, eliminating harsh transitions where objects meet the ground for more natural-looking landscapes.",
+			"Provides seamless blending between terrain and objects, eliminating harsh transitions where objects meet the ground for more natural-looking landscapes. In VR, TB detects the main depth prepass signature to trigger reliably.",
 			{ "Seamless terrain-to-object blending transitions",
 				"Advanced depth buffer manipulation for smooth integration",
 				"Support for alternative terrain rendering modes",
 				"Multi-pass rendering optimization for complex scenes",
-				"Enhanced visual continuity in landscape interactions" }
+				"Enhanced visual continuity in landscape interactions",
+				"VR: signature-based main prepass detection" }
 		};
 	}
 	virtual inline bool HasShaderDefine(RE::BSShader::Type) override { return true; }
