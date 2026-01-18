@@ -1,6 +1,5 @@
 #pragma once
 // This file overrides any generated copy in the build tree.
-// Make sure your CMake includes ${CMAKE_SOURCE_DIR}/include before ${CMAKE_BINARY_DIR}.
 
 #include <map>
 #include <string_view>
@@ -14,7 +13,7 @@ namespace FeatureVersions
         {"DynamicCubemaps"sv,      {2,2,2}},
         {"ExtendedMaterials"sv,    {1,1,0}},
         {"ExtendedTranslucency"sv, {1,0,0}},
-        {"GrassCollision"sv,       {2,0,0}}, // ←  lower minimum needed for SSS 1.2.1
+        {"GrassCollision"sv,       {2,0,0}}, // lowered minimal
         {"GrassLighting"sv,        {2,0,0}},
         {"HairSpecular"sv,         {1,0,1}},
         {"ImageBasedLighting"sv,   {1,0,1}},
@@ -24,8 +23,8 @@ namespace FeatureVersions
         {"LightLimitFix"sv,        {3,0,0}},
         {"PerformanceOverlay"sv,   {1,0,0}},
         {"RenderDoc"sv,            {1,0,0}},
-        {"ScreenSpaceGI"sv,        {3,0,0}}, // ←  lower minimum to use older versions in VR
-        {"ScreenSpaceShadows"sv,   {1,2,1}}, // ← lower minimum for best SSS in VR 
+        {"ScreenSpaceGI"sv,        {3,0,0}}, 
+        {"ScreenSpaceShadows"sv,   {1,2,1}}, // lower minimal for best SSS in VR 
         {"SkySync"sv,              {1,0,0}},
         {"Skylighting"sv,          {1,2,2}}, 
         {"SubsurfaceScattering"sv, {3,0,0}},

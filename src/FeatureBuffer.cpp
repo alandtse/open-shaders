@@ -11,6 +11,7 @@
 #include "Features/LightLimitFix.h"
 #include "Features/Skylighting.h"
 #include "Features/TerrainShadows.h"
+#include "Features/TerrainBlending.h"
 #include "Features/TerrainVariation.h"
 #include "Features/WetnessEffects.h"
 
@@ -47,5 +48,6 @@ std::pair<unsigned char*, size_t> GetFeatureBufferData(bool a_inWorld)
 		globals::features::hairSpecular.settings,
 		globals::features::terrainVariation.settings,
 		globals::features::ibl.settings,
-		globals::features::extendedTranslucency.GetCommonBufferData());
+		globals::features::extendedTranslucency.GetCommonBufferData(),
+		globals::features::terrainBlending.GetCommonBufferData());
 }
