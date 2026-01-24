@@ -52,6 +52,33 @@
             "inherits": ["common", "vcpkg", "win64", "msvc"]
         },
         {
+            "name": "AE",
+            "cacheVariables": {
+                "ENABLE_SKYRIM_AE": "ON",
+                "ENABLE_SKYRIM_SE": "OFF",
+                "ENABLE_SKYRIM_VR": "OFF"
+            },
+            "inherits": "skyrim"
+        },
+        {
+            "name": "SE",
+            "cacheVariables": {
+                "ENABLE_SKYRIM_AE": "OFF",
+                "ENABLE_SKYRIM_SE": "ON",
+                "ENABLE_SKYRIM_VR": "OFF"
+            },
+            "inherits": "skyrim"
+        },
+        {
+            "name": "VR",
+            "cacheVariables": {
+                "ENABLE_SKYRIM_AE": "OFF",
+                "ENABLE_SKYRIM_SE": "OFF",
+                "ENABLE_SKYRIM_VR": "ON"
+            },
+            "inherits": "skyrim"
+        },
+        {
             "name": "ALL",
             "cacheVariables": {
                 "ENABLE_SKYRIM_AE": "ON",
@@ -60,6 +87,31 @@
                 "AUTO_PLUGIN_DEPLOYMENT": "OFF"
             },
             "inherits": "skyrim"
+        },
+        {
+            "name": "PRE-AE",
+            "cacheVariables": {
+                "ENABLE_SKYRIM_AE": "OFF",
+                "ENABLE_SKYRIM_SE": "ON",
+                "ENABLE_SKYRIM_VR": "ON"
+            },
+            "inherits": "skyrim"
+        },
+        {
+            "name": "FLATRIM",
+            "cacheVariables": {
+                "ENABLE_SKYRIM_AE": "ON",
+                "ENABLE_SKYRIM_SE": "ON",
+                "ENABLE_SKYRIM_VR": "OFF"
+            },
+            "inherits": "skyrim"
+        },
+        {
+            "name": "ALL-TRACY",
+            "cacheVariables": {
+                "TRACY_SUPPORT": "ON"
+            },
+            "inherits": "ALL"
         }
     ],
     "buildPresets": [
@@ -69,6 +121,13 @@
             "configurePreset": "ALL",
             "configuration": "Release",
             "targets": ["CommunityShaders", "AIO"]
+        },
+        {
+            "name": "CSmain",
+            "description": "Build CommunityShaders only (no AIO/package)",
+            "configurePreset": "ALL",
+            "configuration": "Release",
+            "targets": ["CommunityShaders"]
         },
         {
             "name": "ALL",
