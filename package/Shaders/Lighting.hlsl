@@ -1001,8 +1001,6 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 
 		if (input.Position.z == depthSampled)
 			blendFactorTerrain = 1;
-
-		blendFactorTerrain = saturate(blendFactorTerrain);
 	}
 #	endif
 

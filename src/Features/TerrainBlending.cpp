@@ -16,6 +16,16 @@ void TerrainBlending::DrawSettings()
 	}
 }
 
+void TerrainBlending::LoadSettings(json& o_json)
+{
+	settings = o_json;
+}
+
+void TerrainBlending::SaveSettings(json& o_json)
+{
+	o_json = settings;
+}
+
 ID3D11VertexShader* TerrainBlending::GetTerrainVertexShader()
 {
 	if (!terrainVertexShader) {
