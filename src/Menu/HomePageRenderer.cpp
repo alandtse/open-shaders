@@ -180,8 +180,7 @@ void HomePageRenderer::RenderFirstTimeSetupDialog()
 			watermarkColor = IM_COL32(255, 255, 255, 60);
 		}
 
-		// Render as subtle watermark background (alpha = 180 for stronger logo)
-		ImU32 watermarkColor = IM_COL32(255, 255, 255, 180);
+		// Render as subtle watermark background
 		ImGui::GetWindowDrawList()->AddImage(menu->uiIcons.logo.texture, logoMin, logoMax,
 			ImVec2(0, 0), ImVec2(1, 1), watermarkColor);
 	}
