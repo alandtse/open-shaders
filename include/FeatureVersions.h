@@ -14,9 +14,9 @@ namespace FeatureVersions
         {"DynamicCubemaps"sv,      {2,2,2}},
         {"ExtendedMaterials"sv,    {1,1,0}},
         {"ExtendedTranslucency"sv, {1,0,0}},
-        {"GrassCollision"sv,       {3,0,0}}, 
+        {"GrassCollision"sv,       {3,0,2}}, // ←  CS 1.4.7 requires
         {"GrassLighting"sv,        {2,0,0}},
-        {"HairSpecular"sv,         {1,0,3}},
+        {"HairSpecular"sv,         {1,0,3}},  // ←  CS 1.4.7 requires 
         {"ImageBasedLighting"sv,   {1,0,1}},
         {"InteriorSun"sv,          {1,0,0}},
         {"InverseSquareLighting"sv,{1,1,0}},
