@@ -28,6 +28,24 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 
 void LightLimitFix::DrawSettings()
 {
+	// Heat warp / refraction strength (moved from Advanced Settings)
+	ImGui::Text("ImageSpace Refraction");
+	ImGui::SliderFloat(
+		"Heat Warp Strength",
+		&globals::state->refractionScale,
+		0.0f,
+		2.0f,
+		"%.2f");
+	if (auto _tt = Util::HoverTooltipWrapper()) {
+		ImGui::Text(
+			"Scales ImageSpace refraction (heat shimmer around fire/heat sources).\n"
+			"1.00 = default Community Shaders behavior.\n"
+			"Lower values reduce warping; 0 disables it.");
+	}
+
+	ImGui::Separator();
+	ImGui::Spacing();
+
 	if (ImGui::TreeNodeEx("Particle Lights", ImGuiTreeNodeFlags_DefaultOpen)) {
 		ImGui::Checkbox("Enable Particle Lights", &settings.EnableParticleLights);
 		if (auto _tt = Util::HoverTooltipWrapper()) {
