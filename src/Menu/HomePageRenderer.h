@@ -6,6 +6,7 @@ public:
 	// Font scales
 	static constexpr float TITLE_FONT_SCALE = 2.0f;
 	static constexpr float SETUP_DIALOG_FONT_SCALE = 0.75f;
+	static constexpr float HOTKEY_TEXT_SCALE_MULTIPLIER = 1.2f;
 
 	// Logo watermark height (in pixels)
 	static constexpr float LOGO_WATERMARK_HEIGHT = 260.0f;

@@ -14,17 +14,18 @@ namespace FeatureVersions
         {"DynamicCubemaps"sv,      {2,2,2}},
         {"ExtendedMaterials"sv,    {1,1,0}},
         {"ExtendedTranslucency"sv, {1,0,0}},
-        {"GrassCollision"sv,       {2,0,0}}, // ←  lower minimum needed for SSS 1.2.1
+        {"GrassCollision"sv,       {3,0,0}}, 
         {"GrassLighting"sv,        {2,0,0}},
-        {"HairSpecular"sv,         {1,0,1}},
+        {"HairSpecular"sv,         {1,0,3}},
         {"ImageBasedLighting"sv,   {1,0,1}},
         {"InteriorSun"sv,          {1,0,0}},
         {"InverseSquareLighting"sv,{1,1,0}},
         {"LODBlending"sv,          {1,0,0}},
         {"LightLimitFix"sv,        {3,0,0}},
+        {"LinearLighting"sv,       {1,0,0}},  // ←  CS 1.4.7
         {"PerformanceOverlay"sv,   {1,0,0}},
         {"RenderDoc"sv,            {1,0,0}},
-        {"ScreenSpaceGI"sv,        {3,0,0}}, // ←  lower minimum to use older versions in VR
+        {"ScreenSpaceGI"sv,        {4,0,0}}, 
         {"ScreenSpaceShadows"sv,   {1,2,1}}, // ← lower minimum for best SSS in VR 
         {"SkySync"sv,              {1,0,0}},
         {"Skylighting"sv,          {1,2,2}}, 
@@ -38,6 +39,7 @@ namespace FeatureVersions
         {"VolumetricLighting"sv,   {1,0,0}},
         {"WaterEffects"sv,         {1,0,1}},
         {"WeatherPicker"sv,        {1,0,0}},
+        {"WeatherEditor"sv,        {1,0,0}},  // ←  CS 1.4.7
         {"WetnessEffects"sv,       {3,0,0}},
     };
 }

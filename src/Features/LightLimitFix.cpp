@@ -95,6 +95,7 @@ void LightLimitFix::DrawSettings()
 
 	if (ImGui::TreeNodeEx("Statistics", ImGuiTreeNodeFlags_DefaultOpen)) {
 		ImGui::Text(std::format("Clustered Light Count : {}", lightCount).c_str());
+		ImGui::Text(std::format("Particle Lights Count : {}", currentParticleLights.size()).c_str());
 
 		ImGui::TreePop();
 	}
