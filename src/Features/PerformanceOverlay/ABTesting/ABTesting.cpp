@@ -9,53 +9,6 @@
 #include <fstream>
 #include <imgui.h>
 
-namespace
-{
-	std::vector<SettingsDiffEntry> DiffSnapshots(const nlohmann::json& userJson, const nlohmann::json& testJson, float epsilon)
-	{
-		std::vector<SettingsDiffEntry> diffEntries;
-
-		try {
-			auto diff = nlohmann::json::diff(userJson, testJson);
-
-			for (const auto& change : diff) {
-				std::string op = change.value("op", "");
-				std::string path = change.value("path", "");
-				std::string aVal, bVal;
-
-				if (op == "replace") {
-					auto aJson = userJson.at(nlohmann::json::json_pointer(path));
-					auto bJson = testJson.at(nlohmann::json::json_pointer(path));
-
-					// If both values are numbers, check if difference is within epsilon
-					if (aJson.is_number() && bJson.is_number()) {
-						double aDouble = aJson.get<double>();
-						double bDouble = bJson.get<double>();
-						if (std::abs(aDouble - bDouble) < static_cast<double>(epsilon)) {
-							continue;  // Skip insignificant numeric differences
-						}
-					}
-
-					aVal = aJson.dump();
-					bVal = bJson.dump();
-				} else if (op == "add") {
-					aVal = "(none)";
-					bVal = testJson.at(nlohmann::json::json_pointer(path)).dump();
-				} else if (op == "remove") {
-					aVal = userJson.at(nlohmann::json::json_pointer(path)).dump();
-					bVal = "(none)";
-				}
-
-				diffEntries.push_back({ path, aVal, bVal });
-			}
-		} catch (...) {
-			// Swallow and return what we have (likely empty)
-		}
-
-		return diffEntries;
-	}
-}
-
 ABTestingManager* ABTestingManager::GetSingleton()
 {
 	static ABTestingManager singleton;
@@ -214,7 +167,7 @@ std::vector<std::string> ABTestingManager::GetConfigDifferencesForDisplay() cons
 	if (!hasTestSnapshot || !hasUserSnapshot)
 		return differences;
 
-	auto diffEntries = DiffSnapshots(userConfigSnapshot, testConfigSnapshot, 0.0001f);
+	auto diffEntries = Util::FileSystem::DiffJson(userConfigSnapshot, testConfigSnapshot, 0.0001f);
 
 	// Format diff entries for display
 	for (const auto& entry : diffEntries) {
@@ -251,7 +204,7 @@ std::vector<SettingsDiffEntry> ABTestingManager::GetConfigDiffEntries(float epsi
 	if (!hasTestSnapshot || !hasUserSnapshot)
 		return {};
 
-	return DiffSnapshots(userConfigSnapshot, testConfigSnapshot, epsilon);
+	return Util::FileSystem::DiffJson(userConfigSnapshot, testConfigSnapshot, epsilon);
 }
 
 void ABTestingManager::ClearCachedSnapshots()
