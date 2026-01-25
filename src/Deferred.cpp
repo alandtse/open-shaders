@@ -245,11 +245,9 @@ void Deferred::ReflectionsPrepasses()
 
 	globals::game::stateUpdateFlags->set(RE::BSGraphics::ShaderFlags::DIRTY_RENDERTARGET);  // Run OMSetRenderTargets again
 
-	for (auto* feature : Feature::GetFeatureList()) {
-		if (feature->loaded) {
-			feature->ReflectionsPrepass();
-		}
-	}
+	Feature::ForEachLoadedFeature("ReflectionsPrepass", [](Feature* feature) {
+		feature->ReflectionsPrepass();
+	});
 }
 
 void Deferred::EarlyPrepasses()
@@ -269,11 +267,9 @@ void Deferred::EarlyPrepasses()
 
 	globals::game::stateUpdateFlags->set(RE::BSGraphics::ShaderFlags::DIRTY_RENDERTARGET);  // Run OMSetRenderTargets again
 
-	for (auto* feature : Feature::GetFeatureList()) {
-		if (feature->loaded) {
-			feature->EarlyPrepass();
-		}
-	}
+	Feature::ForEachLoadedFeature("EarlyPrepass", [](Feature* feature) {
+		feature->EarlyPrepass();
+	});
 }
 
 void Deferred::PrepassPasses()
@@ -290,11 +286,9 @@ void Deferred::PrepassPasses()
 	context->OMSetRenderTargets(0, nullptr, nullptr);  // Unbind all bound render targets
 
 	globals::truePBR->PrePass();
-	for (auto* feature : Feature::GetFeatureList()) {
-		if (feature->loaded) {
-			feature->Prepass();
-		}
-	}
+	Feature::ForEachLoadedFeature("Prepass", [](Feature* feature) {
+		feature->Prepass();
+	});
 }
 
 void Deferred::StartDeferred()
