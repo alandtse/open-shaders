@@ -206,7 +206,7 @@ namespace Util
 	}
 }
 
-std::vector<SettingsDiffEntry> Util::FileSystem::LoadJsonDiff(const std::filesystem::path& userPath, const std::filesystem::path& testPath)
+std::vector<SettingsDiffEntry> Util::FileSystem::LoadJsonDiff(const std::filesystem::path& userPath, const std::filesystem::path& testPath, float epsilon)
 {
 	std::vector<SettingsDiffEntry> diffEntries;
 
@@ -234,8 +234,20 @@ std::vector<SettingsDiffEntry> Util::FileSystem::LoadJsonDiff(const std::filesys
 			std::string aVal, bVal;
 
 			if (op == "replace") {
-				aVal = userJson.at(nlohmann::json::json_pointer(path)).dump();
-				bVal = testJson.at(nlohmann::json::json_pointer(path)).dump();
+				auto aJson = userJson.at(nlohmann::json::json_pointer(path));
+				auto bJson = testJson.at(nlohmann::json::json_pointer(path));
+
+				// If both values are numbers, check if difference is within epsilon
+				if (aJson.is_number() && bJson.is_number()) {
+					float aFloat = aJson.get<float>();
+					float bFloat = bJson.get<float>();
+					if (std::abs(aFloat - bFloat) < epsilon) {
+						continue;  // Skip insignificant float differences
+					}
+				}
+
+				aVal = aJson.dump();
+				bVal = bJson.dump();
 			} else if (op == "add") {
 				aVal = "(none)";
 				bVal = testJson.at(nlohmann::json::json_pointer(path)).dump();

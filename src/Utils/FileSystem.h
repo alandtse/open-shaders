@@ -228,6 +228,6 @@ namespace Util
 
 	namespace FileSystem
 	{
-		std::vector<SettingsDiffEntry> LoadJsonDiff(const std::filesystem::path& userPath, const std::filesystem::path& testPath);
+		std::vector<SettingsDiffEntry> LoadJsonDiff(const std::filesystem::path& userPath, const std::filesystem::path& testPath, float epsilon = 0.0001f);
 	}
 }
