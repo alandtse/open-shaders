@@ -6,10 +6,8 @@ public:
 	struct Settings
 	{
 		bool Enable = true;
-		bool LockSignatureAfterFrames = true;
-		int SignatureLockFrames = 60;
-		float TerrainCullDistance = 2048.0f;
-		float BlendStrength = 1.0f;
+		float TerrainCullDistance = 1024.0f;
+		float BlendStrength = 2.0f;
 	};
 
 	Settings settings;
@@ -126,4 +124,5 @@ public:
 		}
 	};
 	virtual bool SupportsVR() override { return true; };
+	virtual bool IsCore() const override { return true; };
 };
