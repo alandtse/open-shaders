@@ -29,9 +29,9 @@ public:
 
 	struct BendSettings
 	{
-		float SurfaceThickness = 0.010f;
+		float SurfaceThickness = 0.02f;
 		float BilinearThreshold = 0.02f;
-		float ShadowContrast = 4.0f;
+		float ShadowContrast = 1.0f;
 		uint Enable = 1;
 		uint SampleCount = 1;
 		uint pad0[3];
@@ -85,4 +85,5 @@ public:
 	virtual void RestoreDefaultSettings() override;
 
 	virtual bool SupportsVR() override { return true; };
+	virtual bool IsCore() const override { return true; };
 };

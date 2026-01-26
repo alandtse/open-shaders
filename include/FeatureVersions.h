@@ -13,7 +13,7 @@ namespace FeatureVersions
         {"DynamicCubemaps"sv,      {2,2,2}},
         {"ExtendedMaterials"sv,    {1,1,0}},
         {"ExtendedTranslucency"sv, {1,0,0}},
-        {"GrassCollision"sv,       {2,0,0}}, // lowered minimal
+        {"GrassCollision"sv,       {3,0,0}}, 
         {"GrassLighting"sv,        {2,0,0}},
         {"HairSpecular"sv,         {1,0,1}},
         {"ImageBasedLighting"sv,   {1,0,1}},
