@@ -304,8 +304,9 @@ PS_OUTPUT main(PS_INPUT input)
 
 	float3 propertyColor = 0.0;
 
-	float3 dirLightColor = SharedData::DirLightColor.xyz * 0.5;
-	float3 ambientColor = max(0, mul(SharedData::DirectionalAmbient, float4(0, 0, 1, 1)).xyz);
+	float llDirLightMult = (SharedData::linearLightingSettings.enableLinearLighting && !SharedData::linearLightingSettings.isDirLightLinear) ? SharedData::linearLightingSettings.dirLightMult : 1.0f;
+	float3 dirLightColor = Color::DirectionalLight(SharedData::DirLightColor.xyz / max(llDirLightMult, 1e-5), SharedData::linearLightingSettings.isDirLightLinear) * llDirLightMult * 0.5;
+	float3 ambientColor = Color::Ambient(max(0, mul(SharedData::DirectionalAmbient, float4(0, 0, 1, 1)).xyz));
 
 	propertyColor += dirLightColor;
 	propertyColor += ambientColor;
@@ -339,7 +340,8 @@ PS_OUTPUT main(PS_INPUT input)
 				float intensityMultiplier = 1 - intensityFactor * intensityFactor;
 #			endif
 
-				float3 lightColor = light.color.xyz * intensityMultiplier * 0.5;
+				const bool isPointLightLinear = light.lightFlags & LightLimitFix::LightFlags::Linear;
+				float3 lightColor = Color::PointLight(light.color.xyz, isPointLightLinear) * intensityMultiplier * light.fade * 0.5;
 				propertyColor += lightColor;
 			}
 		}
