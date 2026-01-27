@@ -1,7 +1,9 @@
-﻿#include "InteriorSun.h"
+#include "InteriorSun.h"
 #include "State.h"
 
 #include <numbers>
+
+#include "RE/B/BSMultiBoundRoom.h"
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	InteriorSun::Settings,
@@ -199,8 +201,9 @@ void InteriorSun::InitialiseOnNewCell(const RE::NiPointer<RE::BSPortalGraph>& po
 	currentCellRoomsAndPortals.clear();
 
 	if (const auto portalSharedNode = portalGraph->portalSharedNode) {
-		for (const auto room : portalGraph->rooms)
-			currentCellRoomsAndPortals.push_back(room);
+		for (const auto room : portalGraph->rooms) {
+			currentCellRoomsAndPortals.push_back(RE::NiPointer<RE::NiAVObject>(static_cast<RE::NiAVObject*>(room.get())));
+		}
 
 		for (auto child : portalGraph->portalSharedNode->GetChildren())
 			currentCellRoomsAndPortals.push_back(child);
@@ -222,3 +225,6 @@ void InteriorSun::SetShadowDistance(bool inInterior)
 	static REL::Relocation<func_t> func{ REL::RelocationID(98978, 105631).address() };
 	func(inInterior);
 }
+
+
+
