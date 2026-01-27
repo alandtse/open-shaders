@@ -6,6 +6,8 @@
 #include "Shadercache.h"
 #include "State.h"
 
+#include "RE/B/BSMultiBoundRoom.h"
+
 static constexpr uint CLUSTER_MAX_LIGHTS = 256;
 static constexpr uint MAX_LIGHTS = 1024;
 
@@ -285,7 +287,7 @@ void LightLimitFix::Reset()
 	for (auto& particleLight : currentParticleLights) {
 		if (!particleLight.billboard) {
 			if (const auto particleSystem = static_cast<RE::NiParticleSystem*>(particleLight.node)) {
-				if (auto particleData = particleSystem->GetParticleRuntimeData().particleData.get()) {
+				if (auto particleData = particleSystem->GetParticlesRuntimeData().particleData.get()) {
 					particleData->DecRefCount();
 				}
 			}
@@ -676,7 +678,7 @@ bool LightLimitFix::AddParticleLight(RE::BSRenderPass* a_pass, ParticleLightRefe
 
 	if (!a_reference.billboard) {
 		if (auto particleSystem = static_cast<RE::NiParticleSystem*>(a_pass->geometry)) {
-			if (auto particleData = particleSystem->GetParticleRuntimeData().particleData.get()) {
+			if (auto particleData = particleSystem->GetParticlesRuntimeData().particleData.get()) {
 				particleData->IncRefCount();
 			}
 		}
@@ -803,11 +805,6 @@ float3 LightLimitFix::Saturation(float3 color, float saturation)
 	return color;
 }
 
-namespace RE
-{
-	class BSMultiBoundRoom : public NiNode
-	{};
-}
 void LightLimitFix::UpdateLights()
 {
 	auto smState = globals::game::smState;
@@ -863,11 +860,11 @@ void LightLimitFix::UpdateLights()
 					if (!IsGlobalLight(bsLight)) {
 						// List of BSMultiBoundRooms affected by a light
 						for (const auto& roomPtr : bsLight->rooms) {
-							addRoom(roomPtr, light);
+							addRoom(static_cast<RE::NiNode*>(roomPtr), light);
 						}
 						// List of BSPortals affected by a light
 						for (const auto& portalPtr : bsLight->portals) {
-							addRoom(portalPtr->portalSharedNode.get(), light);
+							addRoom(static_cast<RE::NiNode*>(portalPtr->portalSharedNode.get()), light);
 						}
 						light.lightFlags.set(LightFlags::PortalStrict);
 					}
@@ -911,9 +908,9 @@ void LightLimitFix::UpdateLights()
 		for (const auto& particleLight : currentParticleLights) {
 			if (!particleLight.billboard) {
 				auto particleSystem = static_cast<RE::NiParticleSystem*>(particleLight.node);
-				if (particleSystem && particleSystem->GetParticleRuntimeData().particleData.get()) {
+				if (particleSystem && particleSystem->GetParticlesRuntimeData().particleData.get()) {
 					// Process BSGeometry
-					auto particleData = particleSystem->GetParticleRuntimeData().particleData.get();
+					auto particleData = particleSystem->GetParticlesRuntimeData().particleData.get();
 					auto& particleSystemRuntimeData = particleSystem->GetParticleSystemRuntimeData();
 					auto& particleRuntimeData = particleData->GetParticlesRuntimeData();
 
@@ -933,13 +930,20 @@ void LightLimitFix::UpdateLights()
 						auto initialPosition = particleRuntimeData.positions[p];
 						if (!particleSystemRuntimeData.isWorldspace) {
 							// Detect first-person meshes
-							if ((particleLight.node->GetModelData().modelBound.radius * particleLight.node->world.scale) != particleLight.node->worldBound.radius)
-								initialPosition += particleLight.node->worldBound.center;
-							else
-								initialPosition += particleLight.node->world.translate;
+							if ((particleLight.node->GetModelData().modelBound.radius * particleLight.node->world.scale) != particleLight.node->worldBound.radius) {
+								const auto& center = particleLight.node->worldBound.center;
+								initialPosition = { initialPosition.x + center.x, initialPosition.y + center.y, initialPosition.z + center.z };
+							} else {
+								const auto& translate = particleLight.node->world.translate;
+								initialPosition = { initialPosition.x + translate.x, initialPosition.y + translate.y, initialPosition.z + translate.z };
+							}
 						}
 
-						RE::NiPoint3 positionWS = initialPosition - eyePositionCached[0];
+						RE::NiPoint3 positionWS{
+							initialPosition.x - eyePositionCached[0].x,
+							initialPosition.y - eyePositionCached[0].y,
+							initialPosition.z - eyePositionCached[0].z
+						};
 
 						if (clusteredLights) {
 							auto averageRadius = clusteredLight.radius / (float)clusteredLights;
