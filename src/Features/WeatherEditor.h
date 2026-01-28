@@ -34,4 +34,6 @@ public:
 
 private:
 	void DrawWeatherStatusPanel();
+
+	virtual bool SupportsVR() override { return true; };
 };
