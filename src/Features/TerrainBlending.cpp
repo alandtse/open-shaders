@@ -1,4 +1,4 @@
-#include "TerrainBlending.h"
+﻿#include "TerrainBlending.h"
 
 #include "Deferred.h"
 #include "ShaderCache.h"
@@ -45,14 +45,17 @@ namespace
 	bool g_signatureLocked = false;
 
 	constexpr uint32_t kRenderFlagsSignatureMask = ~0x00000010u;
-	constexpr uint32_t kUtilityRenderDepthFlag = static_cast<uint32_t>(SIE::ShaderCache::UtilityShaderFlags::RenderDepth);
-	constexpr uint32_t kUtilityShadowFlags =
-		static_cast<uint32_t>(SIE::ShaderCache::UtilityShaderFlags::RenderShadowmap) |
-		static_cast<uint32_t>(SIE::ShaderCache::UtilityShaderFlags::RenderShadowmapClamped) |
-		static_cast<uint32_t>(SIE::ShaderCache::UtilityShaderFlags::RenderShadowmapPb) |
-		static_cast<uint32_t>(SIE::ShaderCache::UtilityShaderFlags::RenderShadowmask) |
-		static_cast<uint32_t>(SIE::ShaderCache::UtilityShaderFlags::RenderShadowmaskSpot) |
-		static_cast<uint32_t>(SIE::ShaderCache::UtilityShaderFlags::RenderShadowmaskPb);
+	constexpr uint64_t kUtilityRenderDepthFlag = static_cast<uint64_t>(SIE::ShaderCache::UtilityShaderFlags::RenderDepth);
+	constexpr uint64_t kUtilityShadowmapFlags =
+		static_cast<uint64_t>(SIE::ShaderCache::UtilityShaderFlags::RenderShadowmap) |
+		static_cast<uint64_t>(SIE::ShaderCache::UtilityShaderFlags::RenderShadowmapClamped) |
+		static_cast<uint64_t>(SIE::ShaderCache::UtilityShaderFlags::RenderShadowmapPb);
+	constexpr uint64_t kUtilityShadowmaskFlags =
+		static_cast<uint64_t>(SIE::ShaderCache::UtilityShaderFlags::RenderShadowmask) |
+		static_cast<uint64_t>(SIE::ShaderCache::UtilityShaderFlags::RenderShadowmaskSpot) |
+		static_cast<uint64_t>(SIE::ShaderCache::UtilityShaderFlags::RenderShadowmaskPb) |
+		static_cast<uint64_t>(SIE::ShaderCache::UtilityShaderFlags::RenderShadowmaskDpb);
+	constexpr uint64_t kUtilityShadowFlags = kUtilityShadowmapFlags | kUtilityShadowmaskFlags;
 
 	uint32_t NormalizeRenderFlags(uint32_t renderFlags)
 	{
@@ -78,10 +81,11 @@ namespace
 
 		const auto shaderType = pass->shader->shaderType.get();
 		if (shaderType == RE::BSShader::Type::Utility) {
-			if ((technique & kUtilityRenderDepthFlag) == 0 || (technique & kUtilityShadowFlags) != 0) {
+			const uint64_t tech = static_cast<uint64_t>(technique);
+			if ((tech & kUtilityRenderDepthFlag) == 0 || (tech & kUtilityShadowFlags) != 0) {
 				return false;
 			}
-			outTechnique = kUtilityRenderDepthFlag;
+			outTechnique = static_cast<uint32_t>(kUtilityRenderDepthFlag);
 			outFlags = NormalizeRenderFlags(renderFlags);
 			outShaderType = RE::BSShader::Type::Utility;
 			return true;
@@ -218,6 +222,7 @@ namespace
 
 		return !hasRTV;
 	}
+
 }
 
 ID3D11VertexShader* TerrainBlending::GetTerrainVertexShader()
@@ -266,6 +271,7 @@ void TerrainBlending::SetupResources()
 		D3D11_DEPTH_STENCIL_VIEW_DESC dsvDesc;
 		mainDepth.views[0]->GetDesc(&dsvDesc);
 		DX::ThrowIfFailed(device->CreateDepthStencilView(terrainDepth.texture, &dsvDesc, &terrainDepth.views[0]));
+
 	}
 
 	{
@@ -303,6 +309,7 @@ void TerrainBlending::SetupResources()
 		prepassSRVBackup = zPrepassCopy.depthSRV;
 	}
 
+
 	{
 		D3D11_DEPTH_STENCIL_DESC depthStencilDesc{};
 		depthStencilDesc.DepthEnable = true;
@@ -311,6 +318,7 @@ void TerrainBlending::SetupResources()
 		depthStencilDesc.StencilEnable = false;
 		DX::ThrowIfFailed(device->CreateDepthStencilState(&depthStencilDesc, &terrainDepthStencilState));
 	}
+
 }
 
 void TerrainBlending::PostPostLoad()
@@ -333,7 +341,7 @@ void TerrainBlending::DrawSettings()
 	}
 	ImGui::Spacing();
 
-	if (ImGui::TreeNodeEx("Performance Options", ImGuiTreeNodeFlags_DefaultOpen)) {
+	if (ImGui::TreeNodeEx("Performance Options")) {
 		ImGui::SliderFloat("Terrain Depth Culling Distance", &settings.TerrainCullDistance, 0.0f, 8192.0f, "%.0f units");
 		if (auto _tt = Util::HoverTooltipWrapper()) {
 			ImGui::Text("Terrain farther than this distance skips TB depth rendering. Set to 0 to disable culling.");

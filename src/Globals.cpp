@@ -36,7 +36,6 @@
 #include "TruePBR.h"
 #include "Utils/Game.h"
 #include "Features/LightLimitFix/ParticleLights.h"
-
 namespace globals
 {
 	namespace d3d
