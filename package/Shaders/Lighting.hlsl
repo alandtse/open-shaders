@@ -1027,8 +1027,8 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	float depthSampledLinear = SharedData::GetScreenDepth(depthSampled);
 	float depthPixelLinear = SharedData::GetScreenDepth(input.Position.z);
 
-	float blendFactorTerrain = (depthSampledLinear - depthPixelLinear) / 10.0;
-	blendFactorTerrain *= SharedData::terrainBlendingSettings.BlendStrength;
+	float blendScale = max(SharedData::terrainBlendingSettings.BlendStrength, 0.001);
+	float blendFactorTerrain = (depthSampledLinear - depthPixelLinear) / (10.0 * blendScale);
 	blendFactorTerrain = saturate(blendFactorTerrain);
 
 	if (input.Position.z == depthSampled) {

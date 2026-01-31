@@ -10,6 +10,7 @@
 #include "Features/LODBlending.h"
 #include "Features/LightLimitFix.h"
 #include "Features/Skylighting.h"
+#include "Features/TerrainBlending.h"
 #include "Features/TerrainShadows.h"
 #include "Features/TerrainBlending.h"
 #include "Features/TerrainVariation.h"

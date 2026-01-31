@@ -7,7 +7,7 @@ public:
 	{
 		bool Enable = true;
 		float TerrainCullDistance = 1024.0f;
-		float BlendStrength = 2.0f;
+		float BlendStrength = 1.0f;
 	};
 
 	Settings settings;

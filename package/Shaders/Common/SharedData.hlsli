@@ -201,6 +201,12 @@ namespace SharedData
 		float3 pad0;
 	};
 
+	struct TerrainBlendingSettings
+	{
+		float BlendStrength;
+		float3 pad0;
+	};
+
 	cbuffer FeatureData : register(b6)
 	{
 		GrassLightingSettings grassLightingSettings;
