@@ -7,14 +7,14 @@ public:
 	{
 		bool Enable = true;
 		float TerrainCullDistance = 1024.0f;
-		float BlendStrength = 1.0f;
+		float BlendStrength = 0.5f;
 	};
 
 	Settings settings;
 
 	struct alignas(16) PerFrame
 	{
-		float BlendStrength = 1.0f;
+		float BlendStrength = 0.5f;
 		float pad0[3]{};
 	};
 
