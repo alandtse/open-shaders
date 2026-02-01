@@ -363,7 +363,7 @@ float2 Streamline::GetInputResolutionScale(uint32_t outputWidth, uint32_t output
 	sl::Result result = slDLSSGetOptimalSettings(dlssOptions, optimalSettings);
 	if (result != sl::Result::eOk) {
 		if (outputWidth > MAX_RESOLUTION || outputHeight > MAX_RESOLUTION) {
-			logger::critical("[Streamline] Requested resolution {} x {} is higher than Max allowed resolution {} x {}, lower your resolution to enable Streamline.", outputWidth, outputHeight, MAX_RESOLUTION, MAX_RESOLUTION);
+			logger::critical("[Streamline] Requested resolution {} x {} exceeds the maximum allowed resolution of {} x {}. Lower your resolution to enable Streamline.", outputWidth, outputHeight, MAX_RESOLUTION, MAX_RESOLUTION);
 		}
 		logger::critical("[Streamline] Failed to get DLSS optimal settings, error code: {}({})", magic_enum::enum_name(result), (int)result);
 		return { 1.0f, 1.0f };
