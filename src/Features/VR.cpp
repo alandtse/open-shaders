@@ -5,6 +5,7 @@
 #include "RE/N/NiPoint3.h"
 #include "RE/P/PlayerCharacter.h"
 #include "Upscaling.h"
+#include "TerrainBlending.h"
 #include <openvr.h>
 
 #include "State.h"
@@ -596,14 +597,15 @@ namespace
 			// prevent header/type collisions in this translation unit.
 			// Query the Upscaling feature for an authoritative state flag.
 			bool upscalingActive = globals::features::upscaling.IsUpscalingActive();
+			bool tbActive = globals::features::terrainBlending.loaded && globals::features::terrainBlending.settings.Enable;
 
 			// Exteriors
-			if (upscalingActive)
+			if (upscalingActive || tbActive)
 				ImGui::BeginDisabled();
 			ImGui::Checkbox("Enable Depth Buffer Culling in Exteriors", &settings.EnableDepthBufferCullingExterior);
-			if (upscalingActive) {
+			if (upscalingActive || tbActive) {
 				if (auto _tt = Util::HoverTooltipWrapper()) {
-					ImGui::Text("Disabled while an external upscaler is active (FSR/XeSS/DLSS) because upscalers may modify depth.\nThis prevents incorrect occlusion in VR.");
+					ImGui::Text("Disabled while an external upscaler is active (FSR/XeSS/DLSS) or Terrain Blending is enabled because depth may be modified.\nThis prevents incorrect occlusion in VR.");
 				}
 				ImGui::EndDisabled();
 			} else {
@@ -613,12 +615,12 @@ namespace
 			}
 
 			// Interiors
-			if (upscalingActive)
+			if (upscalingActive || tbActive)
 				ImGui::BeginDisabled();
 			ImGui::Checkbox("Enable Depth Buffer Culling in Interiors", &settings.EnableDepthBufferCullingInterior);
-			if (upscalingActive) {
+			if (upscalingActive || tbActive) {
 				if (auto _tt = Util::HoverTooltipWrapper()) {
-					ImGui::Text("Disabled while an external upscaler is active (FSR/XeSS/DLSS) because upscalers may modify depth.\nThis prevents incorrect occlusion in VR.");
+					ImGui::Text("Disabled while an external upscaler is active (FSR/XeSS/DLSS) or Terrain Blending is enabled because depth may be modified.\nThis prevents incorrect occlusion in VR.");
 				}
 				ImGui::EndDisabled();
 			} else {
@@ -1596,9 +1598,11 @@ void VR::SubmitOverlayFrame()
 // Helper to centralize VR depth buffer culling logic, reducing duplication between DataLoaded and EarlyPrepass.
 void VR::UpdateDepthBufferCulling(bool desired)
 {
-	if (globals::features::upscaling.IsUpscalingActive()) {
+	const bool upscalingActive = globals::features::upscaling.IsUpscalingActive();
+	const bool tbActive = globals::features::terrainBlending.loaded && globals::features::terrainBlending.settings.Enable;
+	if (upscalingActive || tbActive) {
 		if (gDepthBufferCulling && *gDepthBufferCulling) {
-			logger::info("Upscaling detected, disabling incompatible depth buffer culling.");
+			logger::info("VR: disabling depth buffer culling due to {}", upscalingActive ? "upscaling" : "terrain blending");
 			*gDepthBufferCulling = false;
 		}
 	} else {
