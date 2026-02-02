@@ -239,41 +239,29 @@ void SettingsTabRenderer::RenderKeybindingsTab(
 	if (BeginTabItemWithFont("Keybindings", Menu::FontRole::Heading)) {
 		auto& settings = globals::menu->GetSettings();
 
-		// Toggle Key
-		if (Util::InputComboWidget(
-				"Toggle Key:",
-				settings.ToggleKey,
-				state.settingToggleKey,  // Note: fixed argument mismatch if needed, based on UI.h signature
-				"Change##toggle")) {
-			// Optional: Trigger any necessary updates
-		}
+		Util::InputComboWidget(
+			"Toggle Key:",
+			settings.ToggleKey,
+			state.settingToggleKey,
+			"Change##toggle");
 
-		// Effects Toggle Key
-		if (Util::InputComboWidget(
-				"Effect Toggle Key:",
-				settings.EffectToggleKey,
-				state.settingsEffectsToggle,  // UI.h expects bool&, state has bool&
-				"Change##EffectToggle")) {
-			// Optional: Trigger any necessary updates
-		}
+		Util::InputComboWidget(
+			"Effect Toggle Key:",
+			settings.EffectToggleKey,
+			state.settingsEffectsToggle,
+			"Change##EffectToggle");
 
-		// Skip Compilation Key
-		if (Util::InputComboWidget(
-				"Skip Compilation Key:",
-				settings.SkipCompilationKey,
-				state.settingSkipCompilationKey,
-				"Change##skip")) {
-			// Optional: Trigger any necessary updates
-		}
+		Util::InputComboWidget(
+			"Skip Compilation Key:",
+			settings.SkipCompilationKey,
+			state.settingSkipCompilationKey,
+			"Change##skip");
 
-		// Overlay Toggle Key
-		if (Util::InputComboWidget(
-				"Overlay Toggle Key:",
-				settings.OverlayToggleKey,
-				state.settingOverlayToggleKey,
-				"Change##OverlayToggle")) {
-			// Optional: Trigger any necessary updates
-		}
+		Util::InputComboWidget(
+			"Overlay Toggle Key:",
+			settings.OverlayToggleKey,
+			state.settingOverlayToggleKey,
+			"Change##OverlayToggle");
 
 		ImGui::EndTabItem();
 	}

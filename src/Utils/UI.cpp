@@ -1770,16 +1770,11 @@ namespace Util
 				ImGui::SetTooltip("Press any key combination.\nModifiers (Ctrl, Shift, Alt) are supported.\nPress Escape to cancel.");
 			}
 		} else {
-			// Display current binding
+			// Display current binding with unique button ID
 			std::string keyString = Util::Input::KeyIdToString(combo);
-
-			// Button ID must be unique
-			std::string btnId = std::string(recordingLabel) + "##" + label;
-			if (ImGui::Button(keyString.c_str(), ImVec2(240, 0))) {
+			std::string btnLabel = keyString + "##" + recordingLabel;
+			if (ImGui::Button(btnLabel.c_str(), ImVec2(240, 0))) {
 				isRecording = true;
-				// Clear current combo to start fresh recording?
-				// Or keep it until new input arrives?
-				// Standard practice is to wait for input before clearing.
 			}
 
 			// Context menu for clearing

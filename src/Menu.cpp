@@ -249,7 +249,9 @@ void Menu::Load(json& o_json)
 		if (j.contains(keyName) && j[keyName].is_number_integer()) {
 			uint32_t legacyKey = j[keyName].get<uint32_t>();
 			target.clear();
-			target.push_back(InputCombo::Keyboard(legacyKey));
+			if (legacyKey != 0) {
+				target.push_back(InputCombo::Keyboard(legacyKey));
+			}
 		}
 	};
 
@@ -937,21 +939,7 @@ void Menu::ProcessInputEventQueue()
 		globals::features::vr.UpdateOverlayMenuStateFromInput();
 	}
 
-	// Helper to check if a combo matches currently pressed keys
-	auto isComboPressed = [](const std::vector<InputCombo>& combo) {
-		if (combo.empty())
-			return false;
-		for (const auto& input : combo) {
-			if (input.GetDevice() != InputDeviceType::Keyboard)
-				continue;
-			// Check if key is physically down (async state)
-			if (!(GetAsyncKeyState(input.GetKey()) & Constants::KEY_PRESSED_MASK))
-				return false;
-		}
-		return true;
-	};
-
-	// Process non-VR events in Menu (original logic here)
+	// Process non-VR events in Menu
 	for (auto& event : nonVREvents) {
 		if (event.eventType == RE::INPUT_EVENT_TYPE::kChar) {
 			io.AddInputCharacter(event.keyCode);
