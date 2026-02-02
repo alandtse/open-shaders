@@ -244,6 +244,36 @@ void Menu::Load(json& o_json)
 	// Restore Theme - don't load it from config, only from theme preset files
 	settings.Theme = currentTheme;
 
+	// Migration: Convert legacy uint32_t keys to InputCombo vectors if needed
+	auto migrateKey = [](json& j, const char* keyName, std::vector<InputCombo>& target) {
+		if (j.contains(keyName) && j[keyName].is_number_integer()) {
+			uint32_t legacyKey = j[keyName].get<uint32_t>();
+			target.clear();
+			target.push_back(InputCombo::Keyboard(legacyKey));
+		}
+	};
+
+	migrateKey(o_json, "ToggleKey", settings.ToggleKey);
+	migrateKey(o_json, "SkipCompilationKey", settings.SkipCompilationKey);
+	migrateKey(o_json, "EffectToggleKey", settings.EffectToggleKey);
+	migrateKey(o_json, "OverlayToggleKey", settings.OverlayToggleKey);
+	migrateKey(o_json, "ShaderBlockPrevKey", settings.ShaderBlockPrevKey);
+	migrateKey(o_json, "ShaderBlockNextKey", settings.ShaderBlockNextKey);
+
+	// Helper for new smart serialization
+	auto loadComboList = [](const json& j, const char* keyName, std::vector<InputCombo>& target) {
+		if (j.contains(keyName) && j[keyName].is_array()) {
+			InputCombo::ComboList::from_json(j[keyName], target);
+		}
+	};
+
+	loadComboList(o_json, "ToggleKey", settings.ToggleKey);
+	loadComboList(o_json, "SkipCompilationKey", settings.SkipCompilationKey);
+	loadComboList(o_json, "EffectToggleKey", settings.EffectToggleKey);
+	loadComboList(o_json, "OverlayToggleKey", settings.OverlayToggleKey);
+	loadComboList(o_json, "ShaderBlockPrevKey", settings.ShaderBlockPrevKey);
+	loadComboList(o_json, "ShaderBlockNextKey", settings.ShaderBlockNextKey);
+
 	// Legacy support: If old config has Theme data and no SelectedThemePreset, load it
 	if (o_json.contains("Theme") && o_json["Theme"].is_object() && settings.SelectedThemePreset.empty()) {
 		bool hasFontRoles = o_json["Theme"].contains("FontRoles");
@@ -297,6 +327,14 @@ void Menu::Save(json& o_json)
 
 	// Remove Theme object from config, only keep SelectedThemePreset
 	o_json.erase("Theme");
+
+	// Manually save input combos using the smart serializer
+	InputCombo::ComboList::to_json(o_json["ToggleKey"], settings.ToggleKey);
+	InputCombo::ComboList::to_json(o_json["SkipCompilationKey"], settings.SkipCompilationKey);
+	InputCombo::ComboList::to_json(o_json["EffectToggleKey"], settings.EffectToggleKey);
+	InputCombo::ComboList::to_json(o_json["OverlayToggleKey"], settings.OverlayToggleKey);
+	InputCombo::ComboList::to_json(o_json["ShaderBlockPrevKey"], settings.ShaderBlockPrevKey);
+	InputCombo::ComboList::to_json(o_json["ShaderBlockNextKey"], settings.ShaderBlockNextKey);
 }
 
 void Menu::LoadTheme(json& o_json)
@@ -731,9 +769,7 @@ void Menu::DrawGeneralSettings()
 	};
 
 	// Render settings using extracted component
-	SettingsTabRenderer::RenderGeneralSettings(
-		state,
-		[](uint32_t key) { return Util::Input::KeyIdToString(key); });
+	SettingsTabRenderer::RenderGeneralSettings(state);
 }
 
 /**
@@ -855,7 +891,11 @@ void Menu::DrawOverlay()
 		*this,
 		[this]() { ProcessInputEventQueue(); },
 		[this]() { DrawSettings(); },
-		[](uint32_t key) { return Util::Input::KeyIdToString(key); },
+		[](std::vector<InputCombo> keys) -> const char* {
+			static std::string result_cache;
+			result_cache = Util::Input::KeyIdToString(keys);
+			return result_cache.c_str();
+		},
 		cachedFontSize,
 		ThemeManager::ResolveFontSize(*this));
 }
@@ -896,6 +936,21 @@ void Menu::ProcessInputEventQueue()
 		globals::features::vr.ProcessVREvents(vrEvents);
 		globals::features::vr.UpdateOverlayMenuStateFromInput();
 	}
+
+	// Helper to check if a combo matches currently pressed keys
+	auto isComboPressed = [](const std::vector<InputCombo>& combo) {
+		if (combo.empty())
+			return false;
+		for (const auto& input : combo) {
+			if (input.GetDevice() != InputDeviceType::Keyboard)
+				continue;
+			// Check if key is physically down (async state)
+			if (!(GetAsyncKeyState(input.GetKey()) & Constants::KEY_PRESSED_MASK))
+				return false;
+		}
+		return true;
+	};
+
 	// Process non-VR events in Menu (original logic here)
 	for (auto& event : nonVREvents) {
 		if (event.eventType == RE::INPUT_EVENT_TYPE::kChar) {
@@ -921,30 +976,59 @@ void Menu::ProcessInputEventQueue()
 			if (!event.IsPressed()) {
 				struct HotkeyAction
 				{
-					uint32_t* settingKey;
+					std::vector<InputCombo>* settingKey;
 					bool* settingFlag;
-					std::function<void(uint32_t)> action;
+					std::function<void(std::vector<InputCombo>)> action;
 				};
 				auto shaderCache = globals::shaderCache;
 				HotkeyAction hotkeyActions[] = {
-					{ &settings.ToggleKey, &settingToggleKey, [this](uint32_t key) { settings.ToggleKey = key; settingToggleKey = false; } },
-					{ &settings.SkipCompilationKey, &settingSkipCompilationKey, [this](uint32_t key) { settings.SkipCompilationKey = key; settingSkipCompilationKey = false; } },
-					{ &settings.EffectToggleKey, &settingsEffectsToggle, [this](uint32_t key) { settings.EffectToggleKey = key; settingsEffectsToggle = false; } },
-					{ &settings.OverlayToggleKey, &settingOverlayToggleKey, [this](uint32_t key) { settings.OverlayToggleKey = key; settingOverlayToggleKey = false; } },
-					{ &settings.ShaderBlockPrevKey, &settingShaderBlockPrevKey, [this](uint32_t key) { settings.ShaderBlockPrevKey = key; settingShaderBlockPrevKey = false; } },
-					{ &settings.ShaderBlockNextKey, &settingShaderBlockNextKey, [this](uint32_t key) { settings.ShaderBlockNextKey = key; settingShaderBlockNextKey = false; } },
+					{ &settings.ToggleKey, &settingToggleKey, [this](std::vector<InputCombo> keys) { settings.ToggleKey = keys; settingToggleKey = false; } },
+					{ &settings.SkipCompilationKey, &settingSkipCompilationKey, [this](std::vector<InputCombo> keys) { settings.SkipCompilationKey = keys; settingSkipCompilationKey = false; } },
+					{ &settings.EffectToggleKey, &settingsEffectsToggle, [this](std::vector<InputCombo> keys) { settings.EffectToggleKey = keys; settingsEffectsToggle = false; } },
+					{ &settings.OverlayToggleKey, &settingOverlayToggleKey, [this](std::vector<InputCombo> keys) { settings.OverlayToggleKey = keys; settingOverlayToggleKey = false; } },
+					{ &settings.ShaderBlockPrevKey, &settingShaderBlockPrevKey, [this](std::vector<InputCombo> keys) { settings.ShaderBlockPrevKey = keys; settingShaderBlockPrevKey = false; } },
+					{ &settings.ShaderBlockNextKey, &settingShaderBlockNextKey, [this](std::vector<InputCombo> keys) { settings.ShaderBlockNextKey = keys; settingShaderBlockNextKey = false; } },
 				};
 				bool handled = false;
 				for (auto& h : hotkeyActions) {
 					if (*(h.settingFlag)) {
 						// During first-time setup, don't capture Enter or Escape as hotkeys
-						// These keys are reserved for closing the dialog
+						// These keys are reserved for closing the dialog, unless we are recording a modifier
 						if (HomePageRenderer::ShouldShowFirstTimeSetup() && (key == VK_RETURN || key == VK_ESCAPE)) {
+							// Do not stop capture here, just let it pass through to the UI
+							// The UI code in HomePageRenderer checks for Enter/Escape and completes setup
 							*(h.settingFlag) = false;  // Cancel hotkey capture mode
 							handled = true;
 							break;
 						}
-						h.action(key);
+
+						// Ignore modifier-only key releases during recording
+						bool isModifier = (key == VK_CONTROL || key == VK_LCONTROL || key == VK_RCONTROL ||
+										   key == VK_SHIFT || key == VK_LSHIFT || key == VK_RSHIFT ||
+										   key == VK_MENU || key == VK_LMENU || key == VK_RMENU);
+
+						if (isModifier) {
+							handled = true;
+							break;
+						}
+
+						// Capture modifiers + key
+						std::vector<InputCombo> combo;
+
+						// Add active modifiers to combo
+						if ((GetAsyncKeyState(VK_CONTROL) & Constants::KEY_PRESSED_MASK) &&
+							key != VK_CONTROL && key != VK_LCONTROL && key != VK_RCONTROL)
+							combo.push_back(InputCombo::Keyboard(VK_CONTROL));
+						if ((GetAsyncKeyState(VK_SHIFT) & Constants::KEY_PRESSED_MASK) &&
+							key != VK_SHIFT && key != VK_LSHIFT && key != VK_RSHIFT)
+							combo.push_back(InputCombo::Keyboard(VK_SHIFT));
+						if ((GetAsyncKeyState(VK_MENU) & Constants::KEY_PRESSED_MASK) &&
+							key != VK_MENU && key != VK_LMENU && key != VK_RMENU)
+							combo.push_back(InputCombo::Keyboard(VK_MENU));
+
+						combo.push_back(InputCombo::Keyboard(key));
+
+						h.action(combo);
 						handled = true;
 						break;
 					}
@@ -952,7 +1036,7 @@ void Menu::ProcessInputEventQueue()
 				if (!handled) {
 					struct KeyAction
 					{
-						uint32_t settingKey;
+						std::vector<InputCombo>& settingKey;
 						std::function<void()> action;
 					};
 					KeyAction keyActions[] = {
@@ -966,18 +1050,30 @@ void Menu::ProcessInputEventQueue()
 						 } },
 					};
 					for (const auto& ka : keyActions) {
-						if (key == ka.settingKey) {
-							ka.action();
-							break;
+						// Check if key matches last key in combo and all modifiers are held
+						if (!ka.settingKey.empty() &&
+							ka.settingKey.back().GetKey() == key &&
+							ka.settingKey.back().GetDevice() == InputDeviceType::Keyboard) {
+							bool allModifiersHeld = true;
+							for (size_t i = 0; i < ka.settingKey.size() - 1; ++i) {
+								if (!(GetAsyncKeyState(ka.settingKey[i].GetKey()) & Constants::KEY_PRESSED_MASK)) {
+									allModifiersHeld = false;
+									break;
+								}
+							}
+
+							if (allModifiersHeld) {
+								ka.action();
+								break;
+							}
 						}
 					}
 				}
-				// Guard against a null EditorWindow singleton before accessing `open`.
-				{
-					auto* editorWindow = EditorWindow::GetSingleton();
-					if (key == VK_ESCAPE && IsEnabled && editorWindow && !editorWindow->open) {
-						IsEnabled = false;
-					}
+
+				// Close menu with ESC if no editor window is open
+				auto* editorWindow = EditorWindow::GetSingleton();
+				if (key == VK_ESCAPE && IsEnabled && editorWindow && !editorWindow->open) {
+					IsEnabled = false;
 				}
 			}
 
