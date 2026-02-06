@@ -8,9 +8,11 @@ cbuffer Params : register(b0)
 	float2 CenterLeft;      // Center of left eye in pixels
 	float2 CenterRight;     // Center of right eye in pixels
 	float InnerRadiusSq;    // Squared radius for full quality zone
+	float MiddleRadiusSq;   // Squared radius for half quality zone
 	float OuterRadiusSq;    // Squared radius for reduced quality zone
 	float HalfWidth;        // Half of total texture width (boundary between eyes)
-	float Pad;
+	float HeightScale;      // Scale Y distance (squash vertically)
+	float3 Pad;
 }
 
 [numthreads(8, 8, 1)]
@@ -23,14 +25,19 @@ void main(uint3 DTid : SV_DispatchThreadID)
 	float2 center = (pos.x < HalfWidth) ? CenterLeft : CenterRight;
 
 	float2 delta = pos - center;
+
+	// Apply elliptical scaling
+	delta.y *= HeightScale;
+
 	float distSq = dot(delta, delta);
 
-	uint value = 0; // Keep (full quality)
+	uint value = 0; // Zone 0: Inner (1x1)
 	if (distSq > OuterRadiusSq) {
-		value = 1; // Discard (lowest quality)
+		value = 3; // Zone 3: Outer (4x4 / Cull)
+	} else if (distSq > MiddleRadiusSq) {
+		value = 2; // Zone 2: Middle (2x2)
 	} else if (distSq > InnerRadiusSq) {
-		// Intermediate zone - checkerboard pattern for half resolution
-		if ((DTid.x + DTid.y) % 2 == 0) value = 1;
+		value = 1; // Zone 1: Intermediate (1x2)
 	}
 
 	OutputTexture[DTid.xy] = value;

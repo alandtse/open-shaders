@@ -41,13 +41,17 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	EnableDepthBufferCullingExterior,
 	MinOccludeeBoxExtent,
 	EnableFFR,
-	EnableHardwareVRS,
-	EnableSoftwareFFR,
+	FFRMethod,
 	FFRInnerRadius,
 	FFRMiddleRadius,
 	FFROuterRadius,
 	FFRFavorHorizontal,
 	FFRDebugOverlay,
+	FFRAutoCenter,
+	FFRCenterX_Left,
+	FFRCenterY_Left,
+	FFRCenterX_Right,
+	FFRCenterY_Right,
 	VRMenuScale,
 	VRMenuPositioningMethod,
 	attachMode,
@@ -159,11 +163,20 @@ void VR::DataLoaded()
 		vrs->settings.innerRadius = settings.FFRInnerRadius;
 		vrs->settings.middleRadius = settings.FFRMiddleRadius;
 		vrs->settings.outerRadius = settings.FFROuterRadius;
+		vrs->settings.favorHorizontal = settings.FFRFavorHorizontal;
+
 		rdm->settings.innerRadius = settings.FFRInnerRadius;
 		rdm->settings.outerRadius = settings.FFROuterRadius;
+		rdm->settings.favorHorizontal = settings.FFRFavorHorizontal;
+
+		// Apply centers if manual (otherwise Prepass will override)
+		if (!settings.FFRAutoCenter) {
+			vrs->SetEyeCenters(settings.FFRCenterX_Left, settings.FFRCenterY_Left, settings.FFRCenterX_Right, settings.FFRCenterY_Right);
+			rdm->SetEyeCenters(settings.FFRCenterX_Left, settings.FFRCenterY_Left, settings.FFRCenterX_Right, settings.FFRCenterY_Right);
+		}
 
 		bool vrsAvailable = false;
-		if (settings.EnableHardwareVRS) {
+		if (settings.FFRMethod == 0 || settings.FFRMethod == 1) {  // Auto or Hardware
 			vrsAvailable = vrs->Initialize();
 			if (vrsAvailable) {
 				vrs->SetEnabled(true);
@@ -171,13 +184,13 @@ void VR::DataLoaded()
 			}
 		}
 
-		if (!vrsAvailable && settings.EnableSoftwareFFR) {
+		if (!vrsAvailable && (settings.FFRMethod == 0 || settings.FFRMethod == 2)) {  // Auto (fallback) or Software
 			rdm->SetEnabled(true);
 			logger::info("VR FFR: Enabled Software Radial Density Mask (Fallback)");
 		}
 
-		if (!vrsAvailable && !settings.EnableSoftwareFFR) {
-			logger::info("VR FFR: No FFR method available or enabled");
+		if (!vrsAvailable && settings.FFRMethod == 1) {
+			logger::warn("VR FFR: Hardware VRS requested but initialization failed");
 		}
 	}
 }
@@ -192,6 +205,70 @@ void VR::EarlyPrepass()
 
 void VR::Prepass()
 {
+	// Calculate eye centers from OpenVR if Auto-Center is enabled
+	if (settings.FFRAutoCenter) {
+		Util::OpenVRContext vrContext;
+		if (vrContext.system) {
+			float l, r, t, b;
+
+			// Left Eye
+			vrContext.system->GetProjectionRaw(vr::Eye_Left, &l, &r, &t, &b);
+			float widthL = r - l;
+			float heightL = t - b;
+			float centerX_L = -l / widthL;
+			float centerY_L = t / heightL;
+
+			// Right Eye
+			vrContext.system->GetProjectionRaw(vr::Eye_Right, &l, &r, &t, &b);
+			float widthR = r - l;
+			float heightR = t - b;
+			float centerX_R = -l / widthR;
+			float centerY_R = t / heightR;
+
+			// Skyrim VR Layout: Left [0, 0.5], Right [0.5, 1.0]
+			float finalCenterX_L = centerX_L * 0.5f;
+			float finalCenterY_L = centerY_L;
+			float finalCenterX_R = 0.5f + centerX_R * 0.5f;
+			float finalCenterY_R = centerY_R;
+
+			// Calculate aspect ratio from tangents
+			float aspectL = (r - l) / (t - b);
+			float aspectR = (widthR) / (heightR);  // Using prev variables
+			float aspectRatio = (aspectL + aspectR) * 0.5f;
+
+			// Only update if changed (to avoid overhead)
+			static float lastL_X = -1, lastL_Y = -1, lastR_X = -1, lastR_Y = -1, lastAspect = -1;
+			if (abs(finalCenterX_L - lastL_X) > 0.001f || abs(finalCenterY_L - lastL_Y) > 0.001f ||
+				abs(finalCenterX_R - lastR_X) > 0.001f || abs(finalCenterY_R - lastR_Y) > 0.001f ||
+				abs(aspectRatio - lastAspect) > 0.001f) {
+				auto vrs = VRFeatures::VRVariableRateShading::GetSingleton();
+				auto rdm = VRFeatures::VRRadialDensityMask::GetSingleton();
+
+				vrs->SetEyeCenters(finalCenterX_L, finalCenterY_L, finalCenterX_R, finalCenterY_R);
+				rdm->SetEyeCenters(finalCenterX_L, finalCenterY_L, finalCenterX_R, finalCenterY_R);
+
+				vrs->SetAspectRatio(aspectRatio);
+				rdm->SetAspectRatio(aspectRatio);
+
+				// Update settings to match auto values (so UI reflects reality if we switched to manual)
+				settings.FFRCenterX_Left = finalCenterX_L;
+				settings.FFRCenterY_Left = finalCenterY_L;
+				settings.FFRCenterX_Right = finalCenterX_R;
+				settings.FFRCenterY_Right = finalCenterY_R;
+
+				lastL_X = finalCenterX_L;
+				lastL_Y = finalCenterY_L;
+				lastR_X = finalCenterX_R;
+				lastR_Y = finalCenterY_R;
+				lastAspect = aspectRatio;
+
+				logger::info("VR FFR: Auto-calculated eye centers from OpenVR (Aspect: {:.3f}):", aspectRatio);
+				logger::info("  Left: ({:.3f}, {:.3f})", finalCenterX_L, finalCenterY_L);
+				logger::info("  Right: ({:.3f}, {:.3f})", finalCenterX_R, finalCenterY_R);
+			}
+		}
+	}
+
 	// Apply VRS/FFR state before main geometry pass
 	auto context = globals::d3d::context;
 
@@ -209,6 +286,22 @@ void VR::Prepass()
 	auto rdm = VRFeatures::VRRadialDensityMask::GetSingleton();
 	if (rdm->IsEnabled()) {
 		rdm->ApplyForRenderTarget(context, renderWidth, renderHeight);
+	}
+}
+
+void VR::Postpass()
+{
+	auto context = globals::d3d::context;
+
+	// Disable VRS if it was active
+	auto vrs = VRFeatures::VRVariableRateShading::GetSingleton();
+	if (vrs->IsEnabled()) {
+		vrs->Disable(context);
+	}
+
+	// Draw Debug Overlay if enabled
+	if (settings.FFRDebugOverlay) {
+		DrawDebugOverlay(context);
 	}
 }
 
@@ -664,13 +757,13 @@ namespace
 				if (settings.EnableFFR) {
 					// Enable based on settings
 					bool vrsAvailable = false;
-					if (settings.EnableHardwareVRS) {
+					if (settings.FFRMethod == 0 || settings.FFRMethod == 1) {  // Auto or Hardware
 						vrsAvailable = vrs->Initialize();
 						if (vrsAvailable) {
 							vrs->SetEnabled(true);
 						}
 					}
-					if (!vrsAvailable && settings.EnableSoftwareFFR) {
+					if (!vrsAvailable && (settings.FFRMethod == 0 || settings.FFRMethod == 2)) {  // Auto or Software
 						rdm->SetEnabled(true);
 					}
 				} else {
@@ -687,30 +780,33 @@ namespace
 				ImGui::Separator();
 				ImGui::Text("Method Selection:");
 
-				bool hardwareChanged = ImGui::Checkbox("Hardware VRS (NVIDIA RTX/GTX 16xx)", &settings.EnableHardwareVRS);
-				if (auto _tt = Util::HoverTooltipWrapper()) {
-					ImGui::Text("Uses NVIDIA Variable Rate Shading for best performance. Requires RTX or GTX 16xx series GPU.");
-				}
-
-				bool softwareChanged = ImGui::Checkbox("Software FFR (Fallback)", &settings.EnableSoftwareFFR);
-				if (auto _tt = Util::HoverTooltipWrapper()) {
-					ImGui::Text("Software-based Radial Density Mask. Works on all GPUs but less efficient than hardware VRS.");
-				}
-
-				if (hardwareChanged || softwareChanged) {
-					vrs->SetEnabled(false);
-					rdm->SetEnabled(false);
-
+				const char* methods[] = { "Auto (Prefer Hardware)", "Hardware VRS (NVIDIA)", "Software FFR (Fallback)" };
+				if (ImGui::Combo("FFR Method", &settings.FFRMethod, methods, IM_ARRAYSIZE(methods))) {
+					// Handle change if needed, but DataLoaded/Prepass handles active state
+					// Let's force an update to match the selected method immediately
 					bool vrsAvailable = false;
-					if (settings.EnableHardwareVRS) {
+					if (settings.FFRMethod == 0 || settings.FFRMethod == 1) {  // Auto or Hardware
 						vrsAvailable = vrs->Initialize();
 						if (vrsAvailable) {
 							vrs->SetEnabled(true);
+							rdm->SetEnabled(false);
 						}
 					}
-					if (!vrsAvailable && settings.EnableSoftwareFFR) {
+
+					if (!vrsAvailable && (settings.FFRMethod == 0 || settings.FFRMethod == 2)) {  // Auto (fallback) or Software
+						vrs->SetEnabled(false);
 						rdm->SetEnabled(true);
 					}
+
+					if (settings.FFRMethod == 1 && !vrsAvailable) {
+						// Hardware requested but failed
+						vrs->SetEnabled(false);
+						rdm->SetEnabled(false);
+					}
+				}
+
+				if (auto _tt = Util::HoverTooltipWrapper()) {
+					ImGui::Text("Select the Foveated Rendering method. Hardware VRS requires NVIDIA RTX/GTX 16xx. Software FFR works on all GPUs but uses culling.");
 				}
 
 				// Status display
@@ -718,22 +814,37 @@ namespace
 				if (vrs->IsEnabled()) {
 					ImGui::TextColored(Util::Colors::GetSuccess(), "Active: NVAPI Variable Rate Shading (Hardware)");
 				} else if (rdm->IsEnabled()) {
-					ImGui::TextColored(Util::Colors::GetWarning(), "Active: Software Radial Density Mask");
+					ImGui::TextColored(Util::Colors::GetWarning(), "Active: Software Radial Density Mask (Culling)");
 				} else {
 					ImGui::TextColored(Util::Colors::GetError(), "No FFR method active");
 				}
 
 				ImGui::Separator();
 				ImGui::Text("Radius Settings (VRPerfKit defaults: 0.6 / 0.8 / 1.0):");
-				ImGui::SliderFloat("Inner Radius (Full Res)", &settings.FFRInnerRadius, 0.1f, 1.0f, "%.2f");
-				ImGui::SliderFloat("Middle Radius (Half Res)", &settings.FFRMiddleRadius, 0.1f, 1.0f, "%.2f");
-				ImGui::SliderFloat("Outer Radius (Quarter Res)", &settings.FFROuterRadius, 0.1f, 1.0f, "%.2f");
 
-				// Validate radii order
-				if (settings.FFRInnerRadius > settings.FFRMiddleRadius)
-					settings.FFRMiddleRadius = settings.FFRInnerRadius;
-				if (settings.FFRMiddleRadius > settings.FFROuterRadius)
-					settings.FFROuterRadius = settings.FFRMiddleRadius;
+				bool innerChanged = ImGui::SliderFloat("Inner Radius (Full Res)", &settings.FFRInnerRadius, 0.1f, 1.05f, "%.2f");
+				bool middleChanged = ImGui::SliderFloat("Middle Radius (Half Res)", &settings.FFRMiddleRadius, 0.1f, 1.05f, "%.2f");
+				bool outerChanged = ImGui::SliderFloat("Outer Radius (Quarter Res)", &settings.FFROuterRadius, 0.1f, 1.05f, "%.2f");
+
+				// Bidirectional clamping for better UX
+				if (innerChanged) {
+					if (settings.FFRInnerRadius > settings.FFRMiddleRadius)
+						settings.FFRMiddleRadius = settings.FFRInnerRadius;
+					if (settings.FFRMiddleRadius > settings.FFROuterRadius)
+						settings.FFROuterRadius = settings.FFRMiddleRadius;
+				}
+				if (middleChanged) {
+					if (settings.FFRMiddleRadius < settings.FFRInnerRadius)
+						settings.FFRInnerRadius = settings.FFRMiddleRadius;
+					if (settings.FFRMiddleRadius > settings.FFROuterRadius)
+						settings.FFROuterRadius = settings.FFRMiddleRadius;
+				}
+				if (outerChanged) {
+					if (settings.FFROuterRadius < settings.FFRMiddleRadius)
+						settings.FFRMiddleRadius = settings.FFROuterRadius;
+					if (settings.FFRMiddleRadius < settings.FFRInnerRadius)
+						settings.FFRInnerRadius = settings.FFRMiddleRadius;
+				}
 
 				ImGui::Checkbox("Favor Horizontal Resolution", &settings.FFRFavorHorizontal);
 				if (auto _tt = Util::HoverTooltipWrapper()) {
@@ -745,15 +856,44 @@ namespace
 					ImGui::Text("Shows FFR zone visualization rings in the game view.");
 				}
 
+				ImGui::Separator();
+				ImGui::Text("Eye Centering:");
+				ImGui::Checkbox("Auto-Center (Use OpenVR Projection)", &settings.FFRAutoCenter);
+				if (auto _tt = Util::HoverTooltipWrapper()) {
+					ImGui::Text("Automatically calculates eye centers based on the headset's projection matrix. Disable for manual adjustment (e.g. for Pimax Parallel Projection issues).");
+				}
+
+				if (!settings.FFRAutoCenter) {
+					ImGui::Indent();
+					ImGui::Text("Manual Adjustments (Normalized 0.0-1.0):");
+					// Left Eye
+					ImGui::Text("Left Eye:");
+					ImGui::SliderFloat("L Center X", &settings.FFRCenterX_Left, 0.0f, 0.5f, "%.3f");
+					ImGui::SliderFloat("L Center Y", &settings.FFRCenterY_Left, 0.0f, 1.0f, "%.3f");
+
+					// Right Eye
+					ImGui::Text("Right Eye:");
+					ImGui::SliderFloat("R Center X", &settings.FFRCenterX_Right, 0.5f, 1.0f, "%.3f");
+					ImGui::SliderFloat("R Center Y", &settings.FFRCenterY_Right, 0.0f, 1.0f, "%.3f");
+
+					ImGui::Unindent();
+
+					// Update centers immediately if manual
+					vrs->SetEyeCenters(settings.FFRCenterX_Left, settings.FFRCenterY_Left, settings.FFRCenterX_Right, settings.FFRCenterY_Right);
+					rdm->SetEyeCenters(settings.FFRCenterX_Left, settings.FFRCenterY_Left, settings.FFRCenterX_Right, settings.FFRCenterY_Right);
+				}
+
 				// Sync settings to managers
 				vrs->settings.innerRadius = settings.FFRInnerRadius;
 				vrs->settings.middleRadius = settings.FFRMiddleRadius;
 				vrs->settings.outerRadius = settings.FFROuterRadius;
+				vrs->settings.favorHorizontal = settings.FFRFavorHorizontal;
 				if (vrs->IsEnabled())
 					vrs->UpdatePattern();
 
 				rdm->settings.innerRadius = settings.FFRInnerRadius;
 				rdm->settings.outerRadius = settings.FFROuterRadius;
+				rdm->settings.favorHorizontal = settings.FFRFavorHorizontal;
 				if (rdm->IsEnabled())
 					rdm->UpdateMask();
 			}
@@ -1726,11 +1866,54 @@ void VR::DrawDebugOverlay(ID3D11DeviceContext* context)
 	if (!settings.FFRDebugOverlay)
 		return;
 
-	if (!debugOverlayPS) {
-		auto ps = Util::CompileShader(L"Data\\Shaders\\VR\\VRDebugOverlay.hlsl", {}, "ps_5_0");
-		if (ps)
-			debugOverlayPS.attach(reinterpret_cast<ID3D11PixelShader*>(ps));
+	// Determine which overlay mode to use
+	auto vrs = VRFeatures::VRVariableRateShading::GetSingleton();
+	auto rdm = VRFeatures::VRRadialDensityMask::GetSingleton();
+	bool useMask = false;
+	ID3D11ShaderResourceView* maskSRV = nullptr;
+
+	if (vrs->IsEnabled()) {
+		maskSRV = vrs->GetDebugSRV();
+		useMask = (maskSRV != nullptr);
+	} else if (rdm->IsEnabled()) {
+		maskSRV = rdm->GetMaskSRV();
+		useMask = (maskSRV != nullptr);
 	}
+
+	static winrt::com_ptr<ID3D11PixelShader> maskOverlayPS;
+	static winrt::com_ptr<ID3D11PixelShader> geometricOverlayPS;
+
+	ID3D11PixelShader* activePS = nullptr;
+
+	if (useMask) {
+		// Compile Mask Visualization Shader if needed
+		if (!maskOverlayPS) {
+			auto ps = Util::CompileShader(L"Data\\Shaders\\VR\\VRDebugOverlay_Mask.hlsl", {}, "ps_5_0");
+			if (ps)
+				maskOverlayPS.attach(reinterpret_cast<ID3D11PixelShader*>(ps));
+		}
+
+		if (maskOverlayPS) {
+			activePS = maskOverlayPS.get();
+		} else {
+			useMask = false;  // Fallback to rings
+		}
+	}
+
+	if (!activePS) {
+		// Fallback to geometric rings if no mask available
+		if (!geometricOverlayPS) {
+			auto ps = Util::CompileShader(L"Data\\Shaders\\VR\\VRDebugOverlay.hlsl", {}, "ps_5_0");
+			if (ps)
+				geometricOverlayPS.attach(reinterpret_cast<ID3D11PixelShader*>(ps));
+		}
+		activePS = geometricOverlayPS.get();
+	}
+
+	if (!activePS)
+		return;
+
+	// Need CB for both (fallback uses it, mask shader might not but good to have)
 	if (!debugOverlayCB) {
 		D3D11_BUFFER_DESC desc = {};
 		desc.ByteWidth = sizeof(float) * 4;  // 16 bytes
@@ -1740,17 +1923,27 @@ void VR::DrawDebugOverlay(ID3D11DeviceContext* context)
 		globals::d3d::device->CreateBuffer(&desc, nullptr, debugOverlayCB.put());
 	}
 
-	if (!debugOverlayPS || !debugOverlayCB)
+	if (!debugOverlayCB)
 		return;
 
-	// Update CB
+	// Update CB (Aspect ratio needed for geometric fallback)
 	D3D11_MAPPED_SUBRESOURCE map;
 	if (SUCCEEDED(context->Map(debugOverlayCB.get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &map))) {
 		float* data = (float*)map.pData;
 		data[0] = settings.FFRInnerRadius;
 		data[1] = settings.FFRMiddleRadius;
 		data[2] = settings.FFROuterRadius;
-		data[3] = kOverlayWidth / (float)kOverlayHeight;  // Aspect ratio
+
+		// Use current viewport aspect ratio
+		UINT numViewports = 1;
+		D3D11_VIEWPORT vp = {};
+		context->RSGetViewports(&numViewports, &vp);
+		if (numViewports > 0 && vp.Height > 0) {
+			data[3] = vp.Width / vp.Height;
+		} else {
+			data[3] = kOverlayWidth / (float)kOverlayHeight;  // Fallback
+		}
+
 		context->Unmap(debugOverlayCB.get(), 0);
 	}
 
@@ -1782,20 +1975,30 @@ void VR::DrawDebugOverlay(ID3D11DeviceContext* context)
 	context->IASetInputLayout(nullptr);
 	context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 	context->VSSetShader(fsVS.get(), nullptr, 0);
-	context->PSSetShader(debugOverlayPS.get(), nullptr, 0);
+	context->PSSetShader(activePS, nullptr, 0);
 
-	ID3D11Buffer* cbs[] = { debugOverlayCB.get() };
-	context->PSSetConstantBuffers(0, 1, cbs);
+	if (useMask && maskSRV) {
+		context->PSSetShaderResources(0, 1, &maskSRV);
+	} else {
+		ID3D11Buffer* cbs[] = { debugOverlayCB.get() };
+		context->PSSetConstantBuffers(0, 1, cbs);
+	}
 
 	context->OMSetBlendState(blendState.get(), nullptr, 0xFFFFFFFF);
 
-	D3D11_VIEWPORT vp = {};
-	vp.Width = (float)kOverlayWidth;
-	vp.Height = (float)kOverlayHeight;
-	vp.MaxDepth = 1.0f;
-	context->RSSetViewports(1, &vp);
-
 	context->Draw(3, 0);
+
+	// Cleanup
+	context->VSSetShader(nullptr, nullptr, 0);
+	context->PSSetShader(nullptr, nullptr, 0);
+
+	if (useMask) {
+		ID3D11ShaderResourceView* nullSRV = nullptr;
+		context->PSSetShaderResources(0, 1, &nullSRV);
+	}
+
+	float blendFactor[4] = { 0.f, 0.f, 0.f, 0.f };
+	context->OMSetBlendState(nullptr, blendFactor, 0xFFFFFFFF);
 }
 
 void VR::SubmitOverlayFrame()

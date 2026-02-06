@@ -4,6 +4,8 @@
 #include "Utils/D3D.h"
 #include <spdlog/spdlog.h>
 
+// Logic inspired by fholger/vrperfkit (MIT License)
+
 namespace VRFeatures
 {
 	VRRadialDensityMask* VRRadialDensityMask::GetSingleton()
@@ -30,17 +32,13 @@ namespace VRFeatures
 		if (vs)
 			applyVS.attach(reinterpret_cast<ID3D11VertexShader*>(vs));
 
-		// Create Stencil State for Application
+		// Create Depth/Stencil State for Application
+		// We write to Depth Buffer to occlude pixels in the masked region.
 		D3D11_DEPTH_STENCIL_DESC dsDesc = {};
-		dsDesc.DepthEnable = FALSE;
-		dsDesc.StencilEnable = TRUE;
-		dsDesc.StencilReadMask = 0xFF;
-		dsDesc.StencilWriteMask = 0xFF;
-		dsDesc.FrontFace.StencilFailOp = D3D11_STENCIL_OP_KEEP;
-		dsDesc.FrontFace.StencilDepthFailOp = D3D11_STENCIL_OP_KEEP;
-		dsDesc.FrontFace.StencilPassOp = D3D11_STENCIL_OP_REPLACE;
-		dsDesc.FrontFace.StencilFunc = D3D11_COMPARISON_ALWAYS;
-		dsDesc.BackFace = dsDesc.FrontFace;
+		dsDesc.DepthEnable = TRUE;
+		dsDesc.DepthWriteMask = D3D11_DEPTH_WRITE_MASK_ALL;
+		dsDesc.DepthFunc = D3D11_COMPARISON_ALWAYS;  // Always overwrite depth
+		dsDesc.StencilEnable = FALSE;
 
 		globals::d3d::device->CreateDepthStencilState(&dsDesc, applyStencilState.put());
 
@@ -115,22 +113,46 @@ namespace VRFeatures
 			CBData* data = (CBData*)map.pData;
 
 			float halfWidth = width * 0.5f;
-			float eyeWidth = halfWidth;
 
-			// Left eye center: middle of left half
-			data->CenterLeft[0] = eyeWidth * 0.5f;
-			data->CenterLeft[1] = height * 0.5f;
+			// Left eye center
+			data->CenterLeft[0] = leftEyeCenterX * width;
+			data->CenterLeft[1] = leftEyeCenterY * height;
 
-			// Right eye center: middle of right half
-			data->CenterRight[0] = halfWidth + eyeWidth * 0.5f;
-			data->CenterRight[1] = height * 0.5f;
+			// Right eye center
+			data->CenterRight[0] = rightEyeCenterX * width;
+			data->CenterRight[1] = rightEyeCenterY * height;
 
-			// Radii based on smaller eye dimension
-			float radiusBase = std::min(eyeWidth, static_cast<float>(height)) * 0.5f;
+			// Calculate max distance from centers to corners for normalized radius (1.0 = covers everything)
+			float cX_L = leftEyeCenterX * width;
+			float cY_L = leftEyeCenterY * height;
+			float dL_1 = sqrt(cX_L * cX_L + cY_L * cY_L);
+			float dL_2 = sqrt((halfWidth - cX_L) * (halfWidth - cX_L) + cY_L * cY_L);
+			float dL_3 = sqrt(cX_L * cX_L + (height - cY_L) * (height - cY_L));
+			float dL_4 = sqrt((halfWidth - cX_L) * (halfWidth - cX_L) + (height - cY_L) * (height - cY_L));
+			float maxDistL = std::max({ dL_1, dL_2, dL_3, dL_4 });
+
+			float cX_R = rightEyeCenterX * width;
+			float cY_R = rightEyeCenterY * height;
+			float dR_1 = sqrt((cX_R - halfWidth) * (cX_R - halfWidth) + cY_R * cY_R);
+			float dR_2 = sqrt((width - cX_R) * (width - cX_R) + cY_R * cY_R);
+			float dR_3 = sqrt((cX_R - halfWidth) * (cX_R - halfWidth) + (height - cY_R) * (height - cY_R));
+			float dR_4 = sqrt((width - cX_R) * (width - cX_R) + (height - cY_R) * (height - cY_R));
+			float maxDistR = std::max({ dR_1, dR_2, dR_3, dR_4 });
+
+			// Use the max distance so 1.0 radius covers the furthest corner
+			float radiusBase = std::max(maxDistL, maxDistR);
+
 			data->InnerRadiusSq = (settings.innerRadius * radiusBase) * (settings.innerRadius * radiusBase);
+			data->MiddleRadiusSq = (settings.middleRadius * radiusBase) * (settings.middleRadius * radiusBase);
 			data->OuterRadiusSq = (settings.outerRadius * radiusBase) * (settings.outerRadius * radiusBase);
 			data->HalfWidth = halfWidth;
-			data->Pad = 0.0f;
+
+			float scale = (targetAspectRatio > 0.1f) ? targetAspectRatio : 1.33f;
+			data->HeightScale = settings.favorHorizontal ? scale : 1.0f;
+
+			data->Pad[0] = 0.0f;
+			data->Pad[1] = 0.0f;
+			data->Pad[2] = 0.0f;
 
 			context->Unmap(paramCB.get(), 0);
 		}
@@ -173,8 +195,8 @@ namespace VRFeatures
 		// Bind Main Depth/Stencil as target (no color)
 		context->OMSetRenderTargets(0, nullptr, depth.views[0]);
 
-		// Set Stencil State to REPLACE with 1
-		context->OMSetDepthStencilState(applyStencilState.get(), 1);
+		// Set Depth State to REPLACE with 0.0 (Near Plane)
+		context->OMSetDepthStencilState(applyStencilState.get(), 0);
 
 		// Set Shaders
 		context->VSSetShader(applyVS.get(), nullptr, 0);
@@ -235,6 +257,23 @@ namespace VRFeatures
 		if (enabled) {
 			Initialize();
 			GenerateMask();
+		}
+	}
+
+	void VRRadialDensityMask::SetEyeCenters(float leftX, float leftY, float rightX, float rightY)
+	{
+		leftEyeCenterX = leftX;
+		leftEyeCenterY = leftY;
+		rightEyeCenterX = rightX;
+		rightEyeCenterY = rightY;
+		UpdateMask();
+	}
+
+	void VRRadialDensityMask::SetAspectRatio(float aspect)
+	{
+		if (abs(targetAspectRatio - aspect) > 0.001f) {
+			targetAspectRatio = aspect;
+			UpdateMask();
 		}
 	}
 

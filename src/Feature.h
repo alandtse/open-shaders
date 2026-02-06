@@ -87,6 +87,7 @@ public:
 
 	virtual void ReflectionsPrepass() {};
 	virtual void Prepass() {}
+	virtual void Postpass() {}
 	virtual void EarlyPrepass() {}
 
 	virtual void Load() {}  // Called during SKSE Load - earliest hook point only for critical hooks like d3d

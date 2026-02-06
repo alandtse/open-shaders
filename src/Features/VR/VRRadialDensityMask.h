@@ -18,12 +18,19 @@ namespace VRFeatures
 		void SetEnabled(bool a_enabled);
 		void UpdateMask();                                                    // Regenerate mask with current settings
 		void UpdateMaskForSize(uint32_t renderWidth, uint32_t renderHeight);  // For dynamic resolution
+
+		void SetEyeCenters(float leftX, float leftY, float rightX, float rightY);  // Normalized coordinates (0-1)
+		void SetAspectRatio(float aspect);                                         // Visual aspect ratio (Width/Height)
+		ID3D11ShaderResourceView* GetMaskSRV() const { return maskSRV.get(); }
+
 		bool IsEnabled() const { return enabled; }
 
 		struct Settings
 		{
 			float innerRadius = 0.5f;
+			float middleRadius = 0.65f;
 			float outerRadius = 0.8f;
+			bool favorHorizontal = true;
 		} settings;
 
 	private:
@@ -36,6 +43,13 @@ namespace VRFeatures
 		bool initialized = false;
 		uint32_t currentWidth = 0;
 		uint32_t currentHeight = 0;
+
+		// Eye centers (normalized 0-1 across the whole texture)
+		float leftEyeCenterX = 0.25f;
+		float leftEyeCenterY = 0.5f;
+		float rightEyeCenterX = 0.75f;
+		float rightEyeCenterY = 0.5f;
+		float targetAspectRatio = 1.0f;
 
 		winrt::com_ptr<ID3D11ComputeShader> maskGenerationCS;
 		winrt::com_ptr<ID3D11VertexShader> applyVS;
@@ -51,9 +65,11 @@ namespace VRFeatures
 			float CenterLeft[2];   // Center of left eye in pixels
 			float CenterRight[2];  // Center of right eye in pixels
 			float InnerRadiusSq;   // Squared radius for full quality
-			float OuterRadiusSq;   // Squared radius for reduced quality
+			float MiddleRadiusSq;  // Squared radius for half quality (checkerboard)
+			float OuterRadiusSq;   // Squared radius for reduced quality (cull)
 			float HalfWidth;       // Boundary between left/right eye
-			float Pad;
+			float HeightScale;     // Vertical squashing factor (1.0 = circular, >1.0 = wider ellipse)
+			float Pad[3];          // Pad to 48 bytes (16-byte alignment)
 		};
 
 		void GenerateMask();

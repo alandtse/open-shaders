@@ -284,6 +284,7 @@ public:
 	virtual void DataLoaded() override;
 	virtual void EarlyPrepass() override;
 	virtual void Prepass() override;
+	virtual void Postpass() override;
 
 	void UpdateDepthBufferCulling(bool desired);
 
@@ -324,13 +325,19 @@ public:
 		// Fixed Foveated Rendering (VRS/RDM)
 		// VRPerfKit-aligned defaults: innerRadius=0.6, midRadius=0.8, outerRadius=1.0
 		bool EnableFFR = false;          // Master toggle for Fixed Foveated Rendering
-		bool EnableHardwareVRS = true;   // Use NVAPI VRS when available (NVIDIA RTX/GTX 16xx)
-		bool EnableSoftwareFFR = true;   // Fallback to software RDM when VRS unavailable
+		int FFRMethod = 0;               // 0=Auto, 1=Hardware VRS, 2=Software RDM
 		float FFRInnerRadius = 0.60f;    // Full resolution zone (VRPerfKit default: 0.6)
 		float FFRMiddleRadius = 0.80f;   // Half resolution zone (VRPerfKit default: 0.8)
 		float FFROuterRadius = 1.00f;    // Quarter resolution zone (VRPerfKit default: 1.0)
 		bool FFRFavorHorizontal = true;  // Prefer horizontal over vertical resolution
 		bool FFRDebugOverlay = false;    // Show FFR zone visualization in game view
+
+		// Manual Centering
+		bool FFRAutoCenter = true;      // Use OpenVR to calculate eye centers
+		float FFRCenterX_Left = 0.25f;  // Manual center for Left Eye
+		float FFRCenterY_Left = 0.50f;
+		float FFRCenterX_Right = 0.75f;  // Manual center for Right Eye
+		float FFRCenterY_Right = 0.50f;
 
 		// VR Menu Overlay positioning settings
 		float VRMenuScale = Config::kDefaultMenuScale;  ///< Scale factor for overlay UI (0.5-2.0)

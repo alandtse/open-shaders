@@ -696,6 +696,10 @@ void Deferred::Hooks::Main_RenderWorld_BlendedDecals::thunk(RE::BSShaderAccumula
 
 	deferred->EndDeferred();
 
+	Feature::ForEachLoadedFeature("Postpass", [](Feature* feature) {
+		feature->Postpass();
+	});
+
 	// Copy depth from before water
 	auto renderer = globals::game::renderer;
 	auto context = globals::d3d::context;

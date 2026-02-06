@@ -3,6 +3,8 @@
 #include "State.h"
 #include <spdlog/spdlog.h>
 
+// Logic inspired by fholger/vrperfkit (MIT License) and Skyrim-Upscaler (Puredark)
+
 namespace VRFeatures
 {
 	VRVariableRateShading* VRVariableRateShading::GetSingleton()
@@ -91,7 +93,37 @@ namespace VRFeatures
 			logger::error("VRVariableRateShading: Failed to create ShadingRateResourceView (Status: {})", static_cast<int>(status));
 			shadingRateView = nullptr;
 		} else {
+			// Create SRV for debug visualization
+			D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
+			srvDesc.Format = DXGI_FORMAT_R8_UINT;
+			srvDesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
+			srvDesc.Texture2D.MipLevels = 1;
+			srvDesc.Texture2D.MostDetailedMip = 0;
+			globals::d3d::device->CreateShaderResourceView(srrTexture.Get(), &srvDesc, srrSRV.ReleaseAndGetAddressOf());
+
 			UpdateShadingRatePattern();
+		}
+	}
+
+	ID3D11ShaderResourceView* VRVariableRateShading::GetDebugSRV()
+	{
+		return srrSRV.Get();
+	}
+
+	void VRVariableRateShading::SetEyeCenters(float leftX, float leftY, float rightX, float rightY)
+	{
+		leftEyeCenterX = leftX;
+		leftEyeCenterY = leftY;
+		rightEyeCenterX = rightX;
+		rightEyeCenterY = rightY;
+		UpdatePattern();
+	}
+
+	void VRVariableRateShading::SetAspectRatio(float aspect)
+	{
+		if (abs(targetAspectRatio - aspect) > 0.001f) {
+			targetAspectRatio = aspect;
+			UpdatePattern();
 		}
 	}
 
@@ -114,26 +146,51 @@ namespace VRFeatures
 		float middleSq = settings.middleRadius * settings.middleRadius;
 		float outerSq = settings.outerRadius * settings.outerRadius;
 
-		// Skyrim VR stereoscopic layout: Left eye [0, 0.5], Right eye [0.5, 1.0]
-		// The VRS texture is tiled (16x16 tiles), so desc.Width/Height are in tiles
-		float halfWidth = desc.Width * 0.5f;
-		float eyeWidth = halfWidth;  // Each eye takes half the tile texture
+		// VRS Texture Dimensions (Tiles)
+		float width = static_cast<float>(desc.Width);
+		float height = static_cast<float>(desc.Height);
+		float halfWidth = width * 0.5f;
 
-		// Centers in tile coordinates
-		float centerX_L = eyeWidth * 0.5f;              // Center of left eye
-		float centerX_R = halfWidth + eyeWidth * 0.5f;  // Center of right eye
-		float centerY = desc.Height * 0.5f;
+		// Normalized coordinates -> Tile coordinates
+		// We expect SetEyeCenters to provide centers in [0,1] relative to the *full* render target.
+		// Left eye is usually in [0, 0.5] width range, Right in [0.5, 1.0] width range.
 
-		// Normalize radius based on the smaller eye dimension
-		float radiusBase = std::min(eyeWidth, static_cast<float>(desc.Height)) * 0.5f;
+		float cX_L = leftEyeCenterX * width;
+		float cY_L = leftEyeCenterY * height;
+		float cX_R = rightEyeCenterX * width;
+		float cY_R = rightEyeCenterY * height;
+
+		// Calculate max distance from centers to corners for normalized radius (1.0 = covers everything)
+		// For Left Eye (0..halfWidth)
+		float dL_1 = sqrt(cX_L * cX_L + cY_L * cY_L);
+		float dL_2 = sqrt((halfWidth - cX_L) * (halfWidth - cX_L) + cY_L * cY_L);
+		float dL_3 = sqrt(cX_L * cX_L + (height - cY_L) * (height - cY_L));
+		float dL_4 = sqrt((halfWidth - cX_L) * (halfWidth - cX_L) + (height - cY_L) * (height - cY_L));
+		float maxDistL = std::max({ dL_1, dL_2, dL_3, dL_4 });
+
+		float dR_1 = sqrt((cX_R - halfWidth) * (cX_R - halfWidth) + cY_R * cY_R);
+		float dR_2 = sqrt((width - cX_R) * (width - cX_R) + cY_R * cY_R);
+		float dR_3 = sqrt((cX_R - halfWidth) * (cX_R - halfWidth) + (height - cY_R) * (height - cY_R));
+		float dR_4 = sqrt((width - cX_R) * (width - cX_R) + (height - cY_R) * (height - cY_R));
+		float maxDistR = std::max({ dR_1, dR_2, dR_3, dR_4 });
+
+		float radiusBase = std::max(maxDistL, maxDistR);
 
 		for (uint32_t y = 0; y < desc.Height; ++y) {
 			for (uint32_t x = 0; x < desc.Width; ++x) {
 				// Determine which eye based on x position
-				float centerX = (x < static_cast<uint32_t>(halfWidth)) ? centerX_L : centerX_R;
+				bool isLeft = (x < static_cast<uint32_t>(halfWidth));
+				float cX = isLeft ? cX_L : cX_R;
+				float cY = isLeft ? cY_L : cY_R;
 
-				float dx = (x - centerX) / radiusBase;
-				float dy = (y - centerY) / radiusBase;
+				float dx = (x - cX) / radiusBase;
+				float dy = (y - cY) / radiusBase;
+
+				if (settings.favorHorizontal) {
+					// Use calculated aspect ratio if available, otherwise fallback to 1.33
+					float scale = (targetAspectRatio > 0.1f) ? targetAspectRatio : 1.33f;
+					dy *= scale;
+				}
 
 				float distSq = dx * dx + dy * dy;
 				uint8_t rate = 0;  // Index 0 (1x1) - full quality
@@ -188,8 +245,9 @@ namespace VRFeatures
 		for (int i = 0; i < 16; ++i)
 			viewportDesc.shadingRateTable[i] = NV_PIXEL_X1_PER_RASTER_PIXEL;
 
-		viewportDesc.shadingRateTable[0] = NV_PIXEL_X1_PER_RASTER_PIXEL;       // 1x1 (Center)
-		viewportDesc.shadingRateTable[1] = NV_PIXEL_X1_PER_1X2_RASTER_PIXELS;  // 1x2 (Inner Ring)
+		viewportDesc.shadingRateTable[0] = NV_PIXEL_X1_PER_RASTER_PIXEL;  // 1x1 (Center)
+		// Use 1x2 (favor horizontal) or 2x1 (favor vertical) based on setting
+		viewportDesc.shadingRateTable[1] = settings.favorHorizontal ? NV_PIXEL_X1_PER_1X2_RASTER_PIXELS : NV_PIXEL_X1_PER_2X1_RASTER_PIXELS;
 		viewportDesc.shadingRateTable[2] = NV_PIXEL_X1_PER_2X2_RASTER_PIXELS;  // 2x2 (Middle Ring)
 		viewportDesc.shadingRateTable[3] = NV_PIXEL_X1_PER_4X4_RASTER_PIXELS;  // 4x4 (Outer Ring)
 
