@@ -4,7 +4,7 @@
 #include "../../State.h"
 
 #include <d3d11_4.h>
-#include <d3d12.h>
+#include <directx/d3d12.h>
 
 #define NV_WINDOWS
 
