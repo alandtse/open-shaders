@@ -23,11 +23,13 @@ public:
 	// First-time setup management
 	static bool ShouldShowFirstTimeSetup();
 	static void RenderFirstTimeSetupDialog();
+	static bool ShouldSkipKeyRelease(uint32_t key);
 
 private:
 	static void RenderWelcomeSection();
-	static void MarkFirstTimeSetupComplete();
+	static void MarkFirstTimeSetupComplete(uint32_t closingKey);
 
 	// State
 	static bool isFirstTimeSetupShown;
+	static uint32_t keyThatClosedDialog;
 };

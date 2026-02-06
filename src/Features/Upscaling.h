@@ -6,7 +6,7 @@
 #include "Upscaling/RCAS/RCAS.h"
 #include "Upscaling/Streamline.h"
 #include <d3d11_4.h>
-#include <d3d12.h>
+#include <directx/d3d12.h>
 #include <winrt/base.h>
 
 /**

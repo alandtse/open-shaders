@@ -23,7 +23,7 @@
 #pragma once
 #include "../ffx_api.h"
 #include "../ffx_api_types.h"
-#include <d3d12.h>
+#include <directx/d3d12.h>
 #include <dxgi.h>
 #include <dxgi1_5.h>
 
