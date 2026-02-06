@@ -1,6 +1,8 @@
 #pragma once
 #include "Menu.h"
 #include "OverlayFeature.h"
+#include "VR/VRRadialDensityMask.h"
+#include "VR/VRVariableRateShading.h"
 #include <algorithm>
 #include <d3d11.h>
 #include <imgui_impl_dx11.h>
@@ -281,6 +283,7 @@ public:
 	virtual void PostPostLoad() override;
 	virtual void DataLoaded() override;
 	virtual void EarlyPrepass() override;
+	virtual void Prepass() override;
 
 	void UpdateDepthBufferCulling(bool desired);
 
@@ -297,7 +300,7 @@ public:
 	//=============================================================================
 
 	virtual void DrawOverlay() override;
-	virtual bool IsOverlayVisible() const override { return openVRInfo.isCompatible && settings.kAutoHideSeconds > 0 && !globals::menu->IsEnabled; }
+	virtual bool IsOverlayVisible() const override { return openVRInfo.isCompatible && (settings.FFRDebugOverlay || (settings.kAutoHideSeconds > 0 && !globals::menu->IsEnabled)); }
 
 	//=============================================================================
 	// SETTINGS STRUCTURE
@@ -317,6 +320,17 @@ public:
 		bool EnableDepthBufferCullingExterior = true;  ///< Enable depth buffer culling for VR performance
 		bool EnableDepthBufferCullingInterior = false;
 		float MinOccludeeBoxExtent = 10.0f;  ///< Minimum bounding box size for occlusion culling
+
+		// Fixed Foveated Rendering (VRS/RDM)
+		// VRPerfKit-aligned defaults: innerRadius=0.6, midRadius=0.8, outerRadius=1.0
+		bool EnableFFR = false;          // Master toggle for Fixed Foveated Rendering
+		bool EnableHardwareVRS = true;   // Use NVAPI VRS when available (NVIDIA RTX/GTX 16xx)
+		bool EnableSoftwareFFR = true;   // Fallback to software RDM when VRS unavailable
+		float FFRInnerRadius = 0.60f;    // Full resolution zone (VRPerfKit default: 0.6)
+		float FFRMiddleRadius = 0.80f;   // Half resolution zone (VRPerfKit default: 0.8)
+		float FFROuterRadius = 1.00f;    // Quarter resolution zone (VRPerfKit default: 1.0)
+		bool FFRFavorHorizontal = true;  // Prefer horizontal over vertical resolution
+		bool FFRDebugOverlay = false;    // Show FFR zone visualization in game view
 
 		// VR Menu Overlay positioning settings
 		float VRMenuScale = Config::kDefaultMenuScale;  ///< Scale factor for overlay UI (0.5-2.0)
@@ -490,6 +504,11 @@ public:
 	//=============================================================================
 	// PUBLIC MEMBER VARIABLES
 	//=============================================================================
+
+	// Debug Overlay
+	winrt::com_ptr<ID3D11PixelShader> debugOverlayPS;
+	winrt::com_ptr<ID3D11Buffer> debugOverlayCB;
+	void DrawDebugOverlay(ID3D11DeviceContext* context);
 
 	// OpenVR overlay handles and DirectX 11 rendering resources
 	vr::VROverlayHandle_t menuOverlayHandle = vr::k_ulOverlayHandleInvalid;

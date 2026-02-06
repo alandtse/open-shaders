@@ -1,4 +1,4 @@
-﻿#include "VR.h"
+#include "VR.h"
 #include "Menu.h"
 #include "Menu/Fonts.h"
 #include "RE/B/BSOpenVR.h"
@@ -40,6 +40,14 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	EnableDepthBufferCullingInterior,
 	EnableDepthBufferCullingExterior,
 	MinOccludeeBoxExtent,
+	EnableFFR,
+	EnableHardwareVRS,
+	EnableSoftwareFFR,
+	FFRInnerRadius,
+	FFRMiddleRadius,
+	FFROuterRadius,
+	FFRFavorHorizontal,
+	FFRDebugOverlay,
 	VRMenuScale,
 	VRMenuPositioningMethod,
 	attachMode,
@@ -141,6 +149,37 @@ void VR::DataLoaded()
 	} else {
 		logger::warn("VR::DataLoaded: gMinOccludeeBoxExtent is null, skipping assignment");
 	}
+
+	// Initialize FFR/VRS managers
+	auto vrs = VRFeatures::VRVariableRateShading::GetSingleton();
+	auto rdm = VRFeatures::VRRadialDensityMask::GetSingleton();
+
+	if (settings.EnableFFR) {
+		// Sync radius settings to both managers
+		vrs->settings.innerRadius = settings.FFRInnerRadius;
+		vrs->settings.middleRadius = settings.FFRMiddleRadius;
+		vrs->settings.outerRadius = settings.FFROuterRadius;
+		rdm->settings.innerRadius = settings.FFRInnerRadius;
+		rdm->settings.outerRadius = settings.FFROuterRadius;
+
+		bool vrsAvailable = false;
+		if (settings.EnableHardwareVRS) {
+			vrsAvailable = vrs->Initialize();
+			if (vrsAvailable) {
+				vrs->SetEnabled(true);
+				logger::info("VR FFR: Enabled NVAPI Variable Rate Shading (Hardware)");
+			}
+		}
+
+		if (!vrsAvailable && settings.EnableSoftwareFFR) {
+			rdm->SetEnabled(true);
+			logger::info("VR FFR: Enabled Software Radial Density Mask (Fallback)");
+		}
+
+		if (!vrsAvailable && !settings.EnableSoftwareFFR) {
+			logger::info("VR FFR: No FFR method available or enabled");
+		}
+	}
 }
 
 void VR::EarlyPrepass()
@@ -149,6 +188,28 @@ void VR::EarlyPrepass()
 	// depth-buffer culling to avoid incorrect occlusion tests in VR.
 	bool desired = RE::TES::GetSingleton()->interiorCell ? settings.EnableDepthBufferCullingInterior : settings.EnableDepthBufferCullingExterior;
 	UpdateDepthBufferCulling(desired);
+}
+
+void VR::Prepass()
+{
+	// Apply VRS/FFR state before main geometry pass
+	auto context = globals::d3d::context;
+
+	// Get current render resolution (accounting for dynamic resolution)
+	auto screenSize = globals::state->screenSize;
+	auto& upscaling = globals::features::upscaling;
+	uint32_t renderWidth = static_cast<uint32_t>(screenSize.x * upscaling.dynamicResolutionWidthRatio);
+	uint32_t renderHeight = static_cast<uint32_t>(screenSize.y * upscaling.dynamicResolutionHeightRatio);
+
+	auto vrs = VRFeatures::VRVariableRateShading::GetSingleton();
+	if (vrs->IsEnabled()) {
+		vrs->ApplyForRenderTarget(context, renderWidth, renderHeight);
+	}
+
+	auto rdm = VRFeatures::VRRadialDensityMask::GetSingleton();
+	if (rdm->IsEnabled()) {
+		rdm->ApplyForRenderTarget(context, renderWidth, renderHeight);
+	}
 }
 
 //=============================================================================
@@ -165,8 +226,9 @@ void VR::DrawOverlay()
 
 	bool shouldShow = settings.kAutoHideSeconds > 0 && globals::game::ui && globals::game::ui->IsMenuOpen(RE::MainMenu::MENU_NAME) && globals::menu && !globals::menu->IsEnabled;
 
-	if (!shouldShow) {
-		overlayShowStart.QuadPart = 0;  // Reset timer when overlay is not shown
+	// Reset timer when overlay is not shown (and debug is off)
+	if (!shouldShow && !settings.FFRDebugOverlay) {
+		overlayShowStart.QuadPart = 0;
 		return;
 	}
 
@@ -183,37 +245,43 @@ void VR::DrawOverlay()
 
 	double elapsed = double(now.QuadPart - overlayShowStart.QuadPart) / double(freq.QuadPart);
 	const double autoHideSeconds = static_cast<double>(settings.kAutoHideSeconds);
-	if (elapsed >= autoHideSeconds) {
+
+	// Only timeout if we are showing the Welcome message (and not forcing debug)
+	if (!settings.FFRDebugOverlay && elapsed >= autoHideSeconds) {
 		return;
 	}
 	int secondsLeft = int(std::ceil(autoHideSeconds - elapsed));
 
-	ImGuiIO& io = ImGui::GetIO();
-	ImVec2 overlaySize(480, 0);  // width, height auto
-	ImVec2 overlayPos = ImVec2((io.DisplaySize.x - overlaySize.x) * 0.5f, 80.0f);
-	ImGui::SetNextWindowPos(overlayPos, ImGuiCond_Always);
-	ImGui::SetNextWindowSize(overlaySize, ImGuiCond_Always);
-	ImGui::SetNextWindowBgAlpha(0.92f);
+	if (shouldShow) {
+		ImGuiIO& io = ImGui::GetIO();
+		ImVec2 overlaySize(480, 0);  // width, height auto
+		ImVec2 overlayPos = ImVec2((io.DisplaySize.x - overlaySize.x) * 0.5f, 80.0f);
+		ImGui::SetNextWindowPos(overlayPos, ImGuiCond_Always);
+		ImGui::SetNextWindowSize(overlaySize, ImGuiCond_Always);
+		ImGui::SetNextWindowBgAlpha(0.92f);
 
-	ImGui::Begin("HowToUseOverlay", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNav);
-	ImGui::Text("How to Use VR Community Shaders Menu:");
-	ImGui::Separator();
-	ImGui::Text("You must be in the Main Menu or Tween Menu for these key binds to work.");
-	ImGui::Spacing();
-	ImGui::Text("Open Menu: ");
-	Util::DrawButtonCombo(settings.VRMenuOpenKeys, true);
-	ImGui::Text("\nClose Menu: ");
-	Util::DrawButtonCombo(settings.VRMenuCloseKeys, true);
-	ImGui::Spacing();
-	ImGui::TextDisabled("(This message will auto-disable in %d seconds)", secondsLeft);
-	ImGui::TextDisabled("(You can disable this message in VR settings > Controller Input Instructions)");
-	ImGui::End();
+		ImGui::Begin("HowToUseOverlay", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNav);
+		ImGui::Text("How to Use VR Community Shaders Menu:");
+		ImGui::Separator();
+		ImGui::Text("You must be in the Main Menu or Tween Menu for these key binds to work.");
+		ImGui::Spacing();
+		ImGui::Text("Open Menu: ");
+		Util::DrawButtonCombo(settings.VRMenuOpenKeys, true);
+		ImGui::Text("\nClose Menu: ");
+		Util::DrawButtonCombo(settings.VRMenuCloseKeys, true);
+		ImGui::Spacing();
+		ImGui::TextDisabled("(This message will auto-disable in %d seconds)", secondsLeft);
+		ImGui::TextDisabled("(You can disable this message in VR settings > Controller Input Instructions)");
+		ImGui::End();
+	}
 }
 
 namespace
 {
 	void DrawControllerInputInstructions();
+	void DrawPerformanceSettings();
 	void DrawGeneralVRSettings();
+
 	void DrawMenuSettings();
 	void DrawMouseSettings();
 	void DrawDragSettings();
@@ -230,6 +298,7 @@ void VR::DrawSettings()
 		// General Settings Tab
 		if (BeginTabItemWithFont("General", Menu::FontRole::Subheading)) {
 			if (ImGui::BeginChild("##VRGeneralFrame", { 0, 0 }, true)) {
+				DrawPerformanceSettings();
 				DrawGeneralVRSettings();
 				DrawControllerInputInstructions();
 				DrawMenuSettings();
@@ -583,6 +652,114 @@ namespace
 		}
 	}
 
+	void DrawPerformanceSettings()
+	{
+		auto& vr = globals::features::vr;
+		VR::Settings& settings = vr.settings;
+		auto vrs = VRFeatures::VRVariableRateShading::GetSingleton();
+		auto rdm = VRFeatures::VRRadialDensityMask::GetSingleton();
+
+		if (ImGui::CollapsingHeader("Fixed Foveated Rendering", ImGuiTreeNodeFlags_DefaultOpen)) {
+			if (ImGui::Checkbox("Enable FFR", &settings.EnableFFR)) {
+				if (settings.EnableFFR) {
+					// Enable based on settings
+					bool vrsAvailable = false;
+					if (settings.EnableHardwareVRS) {
+						vrsAvailable = vrs->Initialize();
+						if (vrsAvailable) {
+							vrs->SetEnabled(true);
+						}
+					}
+					if (!vrsAvailable && settings.EnableSoftwareFFR) {
+						rdm->SetEnabled(true);
+					}
+				} else {
+					vrs->SetEnabled(false);
+					rdm->SetEnabled(false);
+				}
+			}
+			if (auto _tt = Util::HoverTooltipWrapper()) {
+				ImGui::Text("Fixed Foveated Rendering reduces shading quality at the periphery of your vision to improve performance.");
+				ImGui::Text("VRPerfKit defaults: Inner=0.6, Middle=0.8, Outer=1.0");
+			}
+
+			if (settings.EnableFFR) {
+				ImGui::Separator();
+				ImGui::Text("Method Selection:");
+
+				bool hardwareChanged = ImGui::Checkbox("Hardware VRS (NVIDIA RTX/GTX 16xx)", &settings.EnableHardwareVRS);
+				if (auto _tt = Util::HoverTooltipWrapper()) {
+					ImGui::Text("Uses NVIDIA Variable Rate Shading for best performance. Requires RTX or GTX 16xx series GPU.");
+				}
+
+				bool softwareChanged = ImGui::Checkbox("Software FFR (Fallback)", &settings.EnableSoftwareFFR);
+				if (auto _tt = Util::HoverTooltipWrapper()) {
+					ImGui::Text("Software-based Radial Density Mask. Works on all GPUs but less efficient than hardware VRS.");
+				}
+
+				if (hardwareChanged || softwareChanged) {
+					vrs->SetEnabled(false);
+					rdm->SetEnabled(false);
+
+					bool vrsAvailable = false;
+					if (settings.EnableHardwareVRS) {
+						vrsAvailable = vrs->Initialize();
+						if (vrsAvailable) {
+							vrs->SetEnabled(true);
+						}
+					}
+					if (!vrsAvailable && settings.EnableSoftwareFFR) {
+						rdm->SetEnabled(true);
+					}
+				}
+
+				// Status display
+				ImGui::Separator();
+				if (vrs->IsEnabled()) {
+					ImGui::TextColored(Util::Colors::GetSuccess(), "Active: NVAPI Variable Rate Shading (Hardware)");
+				} else if (rdm->IsEnabled()) {
+					ImGui::TextColored(Util::Colors::GetWarning(), "Active: Software Radial Density Mask");
+				} else {
+					ImGui::TextColored(Util::Colors::GetError(), "No FFR method active");
+				}
+
+				ImGui::Separator();
+				ImGui::Text("Radius Settings (VRPerfKit defaults: 0.6 / 0.8 / 1.0):");
+				ImGui::SliderFloat("Inner Radius (Full Res)", &settings.FFRInnerRadius, 0.1f, 1.0f, "%.2f");
+				ImGui::SliderFloat("Middle Radius (Half Res)", &settings.FFRMiddleRadius, 0.1f, 1.0f, "%.2f");
+				ImGui::SliderFloat("Outer Radius (Quarter Res)", &settings.FFROuterRadius, 0.1f, 1.0f, "%.2f");
+
+				// Validate radii order
+				if (settings.FFRInnerRadius > settings.FFRMiddleRadius)
+					settings.FFRMiddleRadius = settings.FFRInnerRadius;
+				if (settings.FFRMiddleRadius > settings.FFROuterRadius)
+					settings.FFROuterRadius = settings.FFRMiddleRadius;
+
+				ImGui::Checkbox("Favor Horizontal Resolution", &settings.FFRFavorHorizontal);
+				if (auto _tt = Util::HoverTooltipWrapper()) {
+					ImGui::Text("When reducing resolution, prefer to keep horizontal (checked) or vertical (unchecked) detail.");
+				}
+
+				ImGui::Checkbox("Debug Overlay", &settings.FFRDebugOverlay);
+				if (auto _tt = Util::HoverTooltipWrapper()) {
+					ImGui::Text("Shows FFR zone visualization rings in the game view.");
+				}
+
+				// Sync settings to managers
+				vrs->settings.innerRadius = settings.FFRInnerRadius;
+				vrs->settings.middleRadius = settings.FFRMiddleRadius;
+				vrs->settings.outerRadius = settings.FFROuterRadius;
+				if (vrs->IsEnabled())
+					vrs->UpdatePattern();
+
+				rdm->settings.innerRadius = settings.FFRInnerRadius;
+				rdm->settings.outerRadius = settings.FFROuterRadius;
+				if (rdm->IsEnabled())
+					rdm->UpdateMask();
+			}
+		}
+	}
+
 	void DrawGeneralVRSettings()
 	{
 		auto& vr = globals::features::vr;
@@ -627,8 +804,8 @@ namespace
 					ImGui::Text("Improves performance in interiors, recommended OFF due to occasional visual glitches.");
 				}
 			}
-			if (ImGui::SliderFloat("Min Occludee Box Extent", &settings.MinOccludeeBoxExtent, 0.0f, 1000.0f, "%.1f"))
-				*vr.gMinOccludeeBoxExtent = settings.MinOccludeeBoxExtent;
+			ImGui::SliderFloat("Min Occludee Box Extent", &settings.MinOccludeeBoxExtent, 0.0f, 1000.0f, "%.1f");
+			*vr.gMinOccludeeBoxExtent = settings.MinOccludeeBoxExtent;
 			if (auto _tt = Util::HoverTooltipWrapper()) {
 				ImGui::Text("Minimum bounding box dimensions for object occlusion culling. Lower values improve performance but may result in visual artifacts.");
 			}
@@ -1544,6 +1721,83 @@ void VR::RecreateOverlayTexturesIfNeeded()
 	Util::CreateOverlayTextureAndRTV(globals::d3d::device, kOverlayWidth, kOverlayHeight, menuControllerTexture.put(), menuControllerRTV.put());
 }
 
+void VR::DrawDebugOverlay(ID3D11DeviceContext* context)
+{
+	if (!settings.FFRDebugOverlay)
+		return;
+
+	if (!debugOverlayPS) {
+		auto ps = Util::CompileShader(L"Data\\Shaders\\VR\\VRDebugOverlay.hlsl", {}, "ps_5_0");
+		if (ps)
+			debugOverlayPS.attach(reinterpret_cast<ID3D11PixelShader*>(ps));
+	}
+	if (!debugOverlayCB) {
+		D3D11_BUFFER_DESC desc = {};
+		desc.ByteWidth = sizeof(float) * 4;  // 16 bytes
+		desc.Usage = D3D11_USAGE_DYNAMIC;
+		desc.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
+		desc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
+		globals::d3d::device->CreateBuffer(&desc, nullptr, debugOverlayCB.put());
+	}
+
+	if (!debugOverlayPS || !debugOverlayCB)
+		return;
+
+	// Update CB
+	D3D11_MAPPED_SUBRESOURCE map;
+	if (SUCCEEDED(context->Map(debugOverlayCB.get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &map))) {
+		float* data = (float*)map.pData;
+		data[0] = settings.FFRInnerRadius;
+		data[1] = settings.FFRMiddleRadius;
+		data[2] = settings.FFROuterRadius;
+		data[3] = kOverlayWidth / (float)kOverlayHeight;  // Aspect ratio
+		context->Unmap(debugOverlayCB.get(), 0);
+	}
+
+	// Reuse RDM Vertex Shader (fullscreen triangle)
+	static winrt::com_ptr<ID3D11VertexShader> fsVS;
+	if (!fsVS) {
+		auto vs = Util::CompileShader(L"Data\\Shaders\\VR\\RDM_ApplyVS.hlsl", {}, "vs_5_0");
+		if (vs)
+			fsVS.attach(reinterpret_cast<ID3D11VertexShader*>(vs));
+	}
+	if (!fsVS)
+		return;
+
+	// Setup Blend State
+	static winrt::com_ptr<ID3D11BlendState> blendState;
+	if (!blendState) {
+		D3D11_BLEND_DESC desc = {};
+		desc.RenderTarget[0].BlendEnable = TRUE;
+		desc.RenderTarget[0].SrcBlend = D3D11_BLEND_SRC_ALPHA;
+		desc.RenderTarget[0].DestBlend = D3D11_BLEND_INV_SRC_ALPHA;
+		desc.RenderTarget[0].BlendOp = D3D11_BLEND_OP_ADD;
+		desc.RenderTarget[0].SrcBlendAlpha = D3D11_BLEND_ONE;
+		desc.RenderTarget[0].DestBlendAlpha = D3D11_BLEND_ZERO;
+		desc.RenderTarget[0].BlendOpAlpha = D3D11_BLEND_OP_ADD;
+		desc.RenderTarget[0].RenderTargetWriteMask = D3D11_COLOR_WRITE_ENABLE_ALL;
+		globals::d3d::device->CreateBlendState(&desc, blendState.put());
+	}
+
+	context->IASetInputLayout(nullptr);
+	context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+	context->VSSetShader(fsVS.get(), nullptr, 0);
+	context->PSSetShader(debugOverlayPS.get(), nullptr, 0);
+
+	ID3D11Buffer* cbs[] = { debugOverlayCB.get() };
+	context->PSSetConstantBuffers(0, 1, cbs);
+
+	context->OMSetBlendState(blendState.get(), nullptr, 0xFFFFFFFF);
+
+	D3D11_VIEWPORT vp = {};
+	vp.Width = (float)kOverlayWidth;
+	vp.Height = (float)kOverlayHeight;
+	vp.MaxDepth = 1.0f;
+	context->RSSetViewports(1, &vp);
+
+	context->Draw(3, 0);
+}
+
 void VR::SubmitOverlayFrame()
 {
 	// Skip overlay operations if OpenVR is incompatible
@@ -1577,7 +1831,7 @@ void VR::SubmitOverlayFrame()
 	// Update drag logic for all modes - only when overlay is visible
 	auto& enabled = globals::menu->IsEnabled;
 	auto& overlayVisible = globals::menu->overlayVisible;
-	if ((enabled || overlayVisible || settings.kAutoHideSeconds > 0) && menuOverlayHandle != vr::k_ulOverlayHandleInvalid && menuTexture.get() && menuRTV.get()) {
+	if ((enabled || overlayVisible || settings.kAutoHideSeconds > 0 || settings.FFRDebugOverlay) && menuOverlayHandle != vr::k_ulOverlayHandleInvalid && menuTexture.get() && menuRTV.get()) {
 		// Update drag logic only when overlay is active
 		UpdateOverlayDrag();
 		// Copy ImGui output to overlay texture
@@ -1587,6 +1841,10 @@ void VR::SubmitOverlayFrame()
 		globals::d3d::context->OMSetRenderTargets(1, &menuRTVPtr, nullptr);
 		float clearColor[4] = { 0, 0, 0, 0 };
 		globals::d3d::context->ClearRenderTargetView(menuRTV.get(), clearColor);
+
+		// Draw Debug Overlay (under UI)
+		DrawDebugOverlay(globals::d3d::context);
+
 		// Re-render ImGui for HMD overlay
 		ImGui::Render();
 		ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
@@ -1620,6 +1878,10 @@ void VR::SubmitOverlayFrame()
 			ID3D11RenderTargetView* menuControllerRTVPtr = menuControllerRTV.get();
 			globals::d3d::context->OMSetRenderTargets(1, &menuControllerRTVPtr, nullptr);
 			globals::d3d::context->ClearRenderTargetView(menuControllerRTV.get(), clearColor);
+
+			// Draw Debug Overlay (under UI)
+			DrawDebugOverlay(globals::d3d::context);
+
 			// Re-render ImGui for controller overlay
 			ImGui::Render();
 			ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());

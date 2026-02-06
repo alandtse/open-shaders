@@ -1749,6 +1749,18 @@ void Upscaling::Main_UpdateJitter::thunk(RE::BSGraphics::State* a_state)
 
 void Upscaling::MenuManagerDrawInterfaceStartHook::thunk(int64_t a1)
 {
+	// Fix for VR stencil issues (PureDark): Clear stencil before UI composition
+	// This prevents artifacts (masking) on the top-left corner and ensures proper UI depth testing
+	if (globals::game::isVR) {
+		auto renderer = globals::game::renderer;
+		auto context = globals::d3d::context;
+		auto& depth = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kMAIN];
+
+		if (depth.views[0]) {
+			context->ClearDepthStencilView(depth.views[0], D3D11_CLEAR_STENCIL, 1.0f, 0);
+		}
+	}
+
 	globals::features::upscaling.PostDisplay();
 	func(a1);
 }

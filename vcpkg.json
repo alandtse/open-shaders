@@ -29,7 +29,8 @@
         "stb",
         "tracy",
         "unordered-dense",
-        "xbyak"
+        "xbyak",
+        "nvapi"
     ],
     "overrides": [
         {

@@ -77,6 +77,7 @@ add_subdirectory(${CMAKE_SOURCE_DIR}/cmake/Streamline)
 
 find_path(DETOURS_INCLUDE_DIRS "detours/detours.h")
 find_library(DETOURS_LIBRARY detours REQUIRED)
+find_library(NVAPI_LIBRARY nvapi64 REQUIRED)
 include(FidelityFX-SDK)
 
 target_compile_definitions(
@@ -125,6 +126,7 @@ target_link_libraries(
         d3d12.lib
         Microsoft::DirectX-Headers
         ${DETOURS_LIBRARY}
+        ${NVAPI_LIBRARY}
 )
 
 # https://gitlab.kitware.com/cmake/cmake/-/issues/24922#note_1371990
