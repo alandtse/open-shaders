@@ -11,6 +11,16 @@
 
 // Static member definitions
 bool HomePageRenderer::isFirstTimeSetupShown = false;
+uint32_t HomePageRenderer::keyThatClosedDialog = 0;
+
+bool HomePageRenderer::ShouldSkipKeyRelease(uint32_t key)
+{
+	if (keyThatClosedDialog && key == keyThatClosedDialog) {
+		keyThatClosedDialog = 0;
+		return true;
+	}
+	return false;
+}
 
 void HomePageRenderer::RenderHomePage()
 {
@@ -177,7 +187,7 @@ void HomePageRenderer::RenderFirstTimeSetupDialog()
 			textColor.w = 0.24f;  // Low alpha for watermark effect
 			watermarkColor = ImGui::GetColorU32(textColor);
 		} else {
-			watermarkColor = IM_COL32(255, 255, 255, 60);
+			watermarkColor = IM_COL32(255, 255, 255, 180);
 		}
 
 		// Render as subtle watermark background
@@ -227,19 +237,19 @@ void HomePageRenderer::RenderFirstTimeSetupDialog()
 	// Hotkey selection - clickable hotkey text
 	// Show current toggle key and allow user to change it by clicking on it
 	auto& themeSettings = menu->GetTheme();
-	const char* currentKeyName = Util::Input::KeyIdToString(menu->GetSettings().ToggleKey);
+	std::string currentKeyName = Util::Input::KeyIdToString(menu->GetSettings().ToggleKey);
 
 	// Increase font size for hotkey text
 	ImGui::SetWindowFontScale(fontScale * HOTKEY_TEXT_SCALE_MULTIPLIER);
 
 	// Calculate text dimensions for centering and button area
-	float hotkeyWidth = ImGui::CalcTextSize(currentKeyName).x;
+	float hotkeyWidth = ImGui::CalcTextSize(currentKeyName.c_str()).x;
 	float centerX = (windowWidth - hotkeyWidth) * 0.5f;
 	ImGui::SetCursorPosX(centerX);
 
 	// Create invisible button for hover detection and clicking
 	ImVec2 buttonPos = ImGui::GetCursorScreenPos();
-	ImVec2 hotkeyTextSize = ImGui::CalcTextSize(currentKeyName);
+	ImVec2 hotkeyTextSize = ImGui::CalcTextSize(currentKeyName.c_str());
 	bool hovered = false;
 	bool clicked = false;
 
@@ -261,7 +271,7 @@ void HomePageRenderer::RenderFirstTimeSetupDialog()
 								 themeSettings.StatusPalette.CurrentHotkey.w) :
 	                         themeSettings.StatusPalette.CurrentHotkey;
 
-	ImGui::TextColored(hotkeyColor, "%s", currentKeyName);
+	ImGui::TextColored(hotkeyColor, "%s", currentKeyName.c_str());
 
 	// Reset font scale
 	ImGui::SetWindowFontScale(fontScale);
@@ -311,10 +321,12 @@ void HomePageRenderer::RenderFirstTimeSetupDialog()
 	ImGui::Spacing();
 
 	// Check for Enter or Escape key to close, but only if not capturing a hotkey
-	bool shouldClose = (ImGui::IsKeyPressed(ImGuiKey_Enter) || ImGui::IsKeyPressed(ImGuiKey_Escape)) && !menu->settingToggleKey;
+	bool escapePressed = ImGui::IsKeyPressed(ImGuiKey_Escape);
+	bool enterPressed = ImGui::IsKeyPressed(ImGuiKey_Enter);
+	bool shouldClose = (enterPressed || escapePressed) && !menu->settingToggleKey;
 
 	if (shouldClose) {
-		MarkFirstTimeSetupComplete();
+		MarkFirstTimeSetupComplete(escapePressed ? VK_ESCAPE : VK_RETURN);
 		// Note: Settings are automatically saved to ensure welcome screen won't show again
 	}
 
@@ -345,15 +357,17 @@ bool HomePageRenderer::ShouldShowFirstTimeSetup()
 	return !menu->GetSettings().FirstTimeSetupCompleted;
 }
 
-void HomePageRenderer::MarkFirstTimeSetupComplete()
+void HomePageRenderer::MarkFirstTimeSetupComplete(uint32_t closingKey)
 {
 	// Set the flag in the Menu settings
 	auto menu = Menu::GetSingleton();
 	menu->GetSettings().FirstTimeSetupCompleted = true;
+	menu->settingToggleKey = false;
 
 	// Immediately save settings to ensure the flag is persisted
 	// This prevents the welcome screen from showing again even if user doesn't manually save
 	globals::state->Save();
 
 	isFirstTimeSetupShown = true;  // Mark as shown this session
+	keyThatClosedDialog = closingKey;
 }
