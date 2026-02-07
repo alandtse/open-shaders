@@ -26,7 +26,7 @@ namespace FeatureVersions
         {"PerformanceOverlay"sv,   {1,0,0}},
         {"RenderDoc"sv,            {1,0,0}},
         {"ScreenSpaceGI"sv,        {4,0,1}},  // CS 1.4.7 
-        {"ScreenSpaceShadows"sv,   {1,2,1}}, // ← lower minimum for best SSS in VR 
+        {"ScreenSpaceShadows"sv,   {2,0,0}}, 
         {"SkySync"sv,              {1,0,0}},
         {"Skylighting"sv,          {1,2,3}}, // CS 1.4.7
         {"SubsurfaceScattering"sv, {3,0,1}},  //CS 1.4.7
@@ -34,7 +34,7 @@ namespace FeatureVersions
         {"TerrainHelper"sv,        {1,0,0}},
         {"TerrainShadows"sv,       {1,0,0}},
         {"TerrainVariation"sv,     {1,0,1}},
-        {"Upscaling"sv,            {1,1,2}},  // ←  CS 1.4.7
+        {"Upscaling"sv,            {1,2,0}},  // ←  CS 1.4.11
         {"VR"sv,                   {1,0,1}},
         {"VolumetricLighting"sv,   {1,0,0}},
         {"WaterEffects"sv,         {1,0,1}},
