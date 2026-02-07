@@ -6,7 +6,7 @@
 
 SKSE core plugin for community-driven advanced graphics modifications.
 
-This fork restores Particle Lights and Screen Space Shadows (SSS) in Community Shaders, which were removed after CS 1.3.6. It focuses on Skyrim VR but remains compatible with SE and AE. While SSS is not perfect in VR, especially when using upscaling, the visual benefits outweigh the potential bugs for me. Using SSS version 1.2.1 is recommended.
+This fork restores (and extents) Particle Lights functionality in Community Shaders, which was removed after CS 1.3.6. It also enables using and Screen Space Shadows (SSS) in VR again, while remaining compatible with SE and AE. While SSS is not perfect in VR, especially when using upscaling, the visual benefits outweigh the potential bugs for me. Using SSS version 1.2.1 is recommended.
 
 This fork inherits the original GPL-3.0-or-later license with the Modding Exception and Linking Exception (see below).
 
@@ -190,10 +190,15 @@ In Launch Application Menu, use the following settings:
 ### Default
 
 [GPL-3.0-or-later](COPYING) WITH [Modding Exception AND GPL-3.0 Linking Exception (with Corresponding Source)](EXCEPTIONS.md).  
-Specifically, the Modded Code includes:
+Specifically, the “Modded Code” includes:
+- The Elder Scrolls V: Skyrim (and its variants)
+- Third-party components used to enable optional upscaling / frame generation features, which are distributed under their own licenses, for example:
+  - NVIDIA DLSS (proprietary SDK/runtime; e.g., nvngx_dlss.dll) — https://developer.nvidia.com/rtx/dlss/get-started
+  - AMD FidelityFX FSR 3 (MIT-licensed, via GPUOpen) — https://gpuopen.com/fidelityfx-super-resolution-3/
 
--   Skyrim (and its variants)
--   Hardware drivers to enable additional functionality provided via proprietary SDKs, such as [Nvidia DLSS](https://developer.nvidia.com/rtx/dlss/get-started) and [AMD FidelityFX FSR3](https://gpuopen.com/fidelityfx-super-resolution-3/)
+NVIDIA DLSS / Streamline Notice
+If this distribution includes NVIDIA components (e.g., nvngx_dlss.dll and/or sl.*.dll), those binaries are NOT covered by the GPL license of this project and are redistributed (if at all) under the applicable NVIDIA RTX SDK / Streamline license terms provided alongside the binaries. This project does not grant any rights to NVIDIA components beyond what NVIDIA’s own licenses permit.
+The GPL applies only to this project’s source code (and any other components explicitly licensed under GPL-compatible terms).
 
 The Modding Libraries include:
 
@@ -208,7 +213,6 @@ See LICENSE within each directory; if none, it's [Default](#default)
 -   [Package Shaders](package/Shaders/)
 
 ### Icons
-
 
 This fork does not include or distribute the original Community Shaders logo files. For compatibility, the original Community Shaders logo and combined Discord logo have been replaced with new, custom artwork while keeping the original file names.
 
