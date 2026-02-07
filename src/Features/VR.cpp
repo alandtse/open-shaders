@@ -159,15 +159,21 @@ void VR::DataLoaded()
 	auto vrs = VRFeatures::VRVariableRateShading::GetSingleton();
 	auto rdm = VRFeatures::VRRadialDensityMask::GetSingleton();
 
+	// Initialize FFR blur
+	InitializeFFRBlur();
+
 	if (settings.EnableFFR) {
 		// Sync radius settings to both managers
 		vrs->settings.innerRadius = settings.FFRInnerRadius;
 		vrs->settings.middleRadius = settings.FFRMiddleRadius;
 		vrs->settings.outerRadius = settings.FFROuterRadius;
+		vrs->settings.edgeRadius = settings.FFREdgeRadius;
 		vrs->settings.favorHorizontal = settings.FFRFavorHorizontal;
 
 		rdm->settings.innerRadius = settings.FFRInnerRadius;
+		rdm->settings.middleRadius = settings.FFRMiddleRadius;
 		rdm->settings.outerRadius = settings.FFROuterRadius;
+		rdm->settings.edgeRadius = settings.FFREdgeRadius;
 		rdm->settings.favorHorizontal = settings.FFRFavorHorizontal;
 
 		// Apply centers if manual (otherwise Prepass will override)
@@ -295,15 +301,73 @@ void VR::Prepass()
 void VR::Postpass()
 {
 	auto context = globals::d3d::context;
+	auto renderer = globals::game::renderer;
+	auto& main = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMAIN];
+
+	auto rdm = VRFeatures::VRRadialDensityMask::GetSingleton();
+	auto vrs = VRFeatures::VRVariableRateShading::GetSingleton();
+
+	bool perf = globals::state->frameAnnotations;
+
+	// Chain filters properly:
+	// 1. Reconstruction (if Software FFR): Main → ReconstructionTarget → returns reconstructionSRV
+	// 2. Blur (if enabled): Reconstruction output (or Main) → Main
+
+	ID3D11ShaderResourceView* source = main.SRV;
+
+	// Apply reconstruction filter if Software FFR is enabled
+	// Returns reconstructionSRV if applied, otherwise returns original input
+	if (rdm->IsEnabled() && settings.FFREnableReconstruction) {
+		if (perf)
+			globals::state->BeginPerfEvent("VR FFR Reconstruction");
+		logger::trace("VR::Postpass - Applying reconstruction filter");
+		source = rdm->ApplyReconstruction(source);
+		if (perf)
+			globals::state->EndPerfEvent();
+	}
+
+	// Apply distance-based blur if enabled (works for both VRS and RDM)
+	// Reads from reconstruction output (if any) or original main
+	if ((vrs->IsEnabled() || rdm->IsEnabled()) && settings.FFREnableBlur) {
+		if (perf)
+			globals::state->BeginPerfEvent("VR FFR Blur");
+		logger::trace("VR::Postpass - Applying blur filter");
+		ApplyFFRBlur(source);
+		if (perf)
+			globals::state->EndPerfEvent();
+	} else if (rdm->IsEnabled() && settings.FFREnableReconstruction && source != main.SRV) {
+		// If reconstruction ran but blur didn't, we need to copy reconstruction result back to main
+		if (perf)
+			globals::state->BeginPerfEvent("VR FFR Copy Reconstruction");
+		logger::trace("VR::Postpass - Copying reconstruction result to main");
+
+		ID3D11Resource* mainTex = nullptr;
+		main.texture->QueryInterface(__uuidof(ID3D11Resource), (void**)&mainTex);
+
+		ID3D11Resource* reconTex = nullptr;
+		source->GetResource(&reconTex);
+
+		if (mainTex && reconTex) {
+			context->CopyResource(mainTex, reconTex);
+		}
+
+		if (mainTex)
+			mainTex->Release();
+		if (reconTex)
+			reconTex->Release();
+
+		if (perf)
+			globals::state->EndPerfEvent();
+	}
 
 	// Disable VRS if it was active
-	auto vrs = VRFeatures::VRVariableRateShading::GetSingleton();
 	if (vrs->IsEnabled()) {
 		vrs->Disable(context);
 	}
 
-	// Draw Debug Overlay if enabled
+	// Draw Debug Overlay if enabled (directly on main RT)
 	if (settings.FFRDebugOverlay) {
+		logger::trace("VR::Postpass - Drawing debug overlay");
 		DrawDebugOverlay(context);
 	}
 }
@@ -828,6 +892,12 @@ namespace
 				bool innerChanged = ImGui::SliderFloat("Inner Radius (Full Res)", &settings.FFRInnerRadius, 0.1f, 1.05f, "%.2f");
 				bool middleChanged = ImGui::SliderFloat("Middle Radius (Half Res)", &settings.FFRMiddleRadius, 0.1f, 1.05f, "%.2f");
 				bool outerChanged = ImGui::SliderFloat("Outer Radius (Quarter Res)", &settings.FFROuterRadius, 0.1f, 1.05f, "%.2f");
+				bool edgeChanged = ImGui::SliderFloat("Edge Radius (Transition)", &settings.FFREdgeRadius,
+					settings.FFROuterRadius, 1.5f, "%.2f");
+				if (auto _tt = Util::HoverTooltipWrapper()) {
+					ImGui::Text("Soft transition zone beyond outer radius. Reduces white outlines on thin objects.");
+					ImGui::Text("Recommended: 1.1-1.3x outer radius. Based on VRPerfKit edge smoothing.");
+				}
 
 				// Bidirectional clamping for better UX
 				if (innerChanged) {
@@ -835,23 +905,59 @@ namespace
 						settings.FFRMiddleRadius = settings.FFRInnerRadius;
 					if (settings.FFRMiddleRadius > settings.FFROuterRadius)
 						settings.FFROuterRadius = settings.FFRMiddleRadius;
+					if (settings.FFROuterRadius > settings.FFREdgeRadius)
+						settings.FFREdgeRadius = settings.FFROuterRadius * 1.15f;
 				}
 				if (middleChanged) {
 					if (settings.FFRMiddleRadius < settings.FFRInnerRadius)
 						settings.FFRInnerRadius = settings.FFRMiddleRadius;
 					if (settings.FFRMiddleRadius > settings.FFROuterRadius)
 						settings.FFROuterRadius = settings.FFRMiddleRadius;
+					if (settings.FFROuterRadius > settings.FFREdgeRadius)
+						settings.FFREdgeRadius = settings.FFROuterRadius * 1.15f;
 				}
 				if (outerChanged) {
 					if (settings.FFROuterRadius < settings.FFRMiddleRadius)
 						settings.FFRMiddleRadius = settings.FFROuterRadius;
 					if (settings.FFRMiddleRadius < settings.FFRInnerRadius)
 						settings.FFRInnerRadius = settings.FFRMiddleRadius;
+					if (settings.FFREdgeRadius < settings.FFROuterRadius)
+						settings.FFREdgeRadius = settings.FFROuterRadius * 1.15f;
+				}
+				if (edgeChanged) {
+					if (settings.FFREdgeRadius < settings.FFROuterRadius)
+						settings.FFREdgeRadius = settings.FFROuterRadius;
 				}
 
 				ImGui::Checkbox("Favor Horizontal Resolution", &settings.FFRFavorHorizontal);
 				if (auto _tt = Util::HoverTooltipWrapper()) {
 					ImGui::Text("When reducing resolution, prefer to keep horizontal (checked) or vertical (unchecked) detail.");
+				}
+
+				ImGui::Checkbox("Reconstruction Filter (Software FFR Only)", &settings.FFREnableReconstruction);
+				if (auto _tt = Util::HoverTooltipWrapper()) {
+					ImGui::Text("Enables Valve's bilinear reconstruction filter for Software FFR.");
+					ImGui::Text("Smooths transitions and reduces blockiness/white outlines.");
+					ImGui::Text("Based on 'Advanced VR Rendering Performance' (GDC 2016).");
+					ImGui::Text("Only applies to Software FFR, not Hardware VRS.");
+				}
+
+				ImGui::Checkbox("Distance-Based Blur (All Methods)", &settings.FFREnableBlur);
+				if (auto _tt = Util::HoverTooltipWrapper()) {
+					ImGui::Text("Applies radial blur based on distance from foveation center.");
+					ImGui::Text("Works for both Hardware VRS and Software FFR.");
+					ImGui::Text("Inspired by Skyrim-Upscaler (Puredark).");
+					ImGui::Text("Helps reduce visible quality transitions and white outlines.");
+				}
+
+				if (settings.FFREnableBlur) {
+					ImGui::Indent();
+					ImGui::SliderFloat("Blur Intensity", &settings.FFRBlurIntensity, 0.0f, 3.0f, "%.2f");
+					if (auto _tt = Util::HoverTooltipWrapper()) {
+						ImGui::Text("Controls the strength of the distance-based blur effect.");
+						ImGui::Text("Higher values = more blur at periphery.");
+					}
+					ImGui::Unindent();
 				}
 
 				ImGui::Checkbox("Debug Overlay", &settings.FFRDebugOverlay);
@@ -890,12 +996,15 @@ namespace
 				vrs->settings.innerRadius = settings.FFRInnerRadius;
 				vrs->settings.middleRadius = settings.FFRMiddleRadius;
 				vrs->settings.outerRadius = settings.FFROuterRadius;
+				vrs->settings.edgeRadius = settings.FFREdgeRadius;
 				vrs->settings.favorHorizontal = settings.FFRFavorHorizontal;
 				if (vrs->IsEnabled())
 					vrs->UpdatePattern();
 
 				rdm->settings.innerRadius = settings.FFRInnerRadius;
+				rdm->settings.middleRadius = settings.FFRMiddleRadius;
 				rdm->settings.outerRadius = settings.FFROuterRadius;
+				rdm->settings.edgeRadius = settings.FFREdgeRadius;
 				rdm->settings.favorHorizontal = settings.FFRFavorHorizontal;
 				if (rdm->IsEnabled())
 					rdm->UpdateMask();
@@ -915,7 +1024,7 @@ namespace
 				{ "VR", "EnableDepthBufferCullingExterior" });
 			// Show normal tooltip when not constrained
 			auto exteriorConstraint = FeatureConstraints::GetConstraints({ "VR", "EnableDepthBufferCullingExterior" });
-			if (!exteriorConstraint.isConstrained) {
+			if (!exteriorConstraint.isConstrained || globals::state->IsDeveloperMode()) {
 				if (auto _tt = Util::HoverTooltipWrapper()) {
 					ImGui::Text("Improves performance in exteriors, recommended ON.");
 				}
@@ -926,7 +1035,7 @@ namespace
 				{ "VR", "EnableDepthBufferCullingInterior" });
 			// Show normal tooltip when not constrained
 			auto interiorConstraint = FeatureConstraints::GetConstraints({ "VR", "EnableDepthBufferCullingInterior" });
-			if (!interiorConstraint.isConstrained) {
+			if (!interiorConstraint.isConstrained || globals::state->IsDeveloperMode()) {
 				if (auto _tt = Util::HoverTooltipWrapper()) {
 					ImGui::Text("Improves performance in interiors, recommended OFF due to occasional visual glitches.");
 				}
@@ -3115,4 +3224,133 @@ void VR::UpdateCursorFromWandPointing()
 		// Ensure wand state is cleared if no intersection
 		wandState.isIntersecting = false;
 	}
+}
+
+void VR::InitializeFFRBlur()
+{
+	auto device = globals::d3d::device;
+
+	// Compile blur pixel shader
+	auto ps = Util::CompileShader(L"Data\\Shaders\\VR\\FFR_BlurPS.hlsl", {}, "ps_5_0");
+	if (ps) {
+		ffrBlurPS.attach(reinterpret_cast<ID3D11PixelShader*>(ps));
+		logger::info("VR: FFR Blur shader compiled successfully");
+	} else {
+		logger::error("VR: Failed to compile FFR Blur shader");
+		return;
+	}
+
+	// Create constant buffer
+	D3D11_BUFFER_DESC cbDesc = {};
+	cbDesc.ByteWidth = sizeof(FFRBlurCBData);
+	cbDesc.Usage = D3D11_USAGE_DYNAMIC;
+	cbDesc.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
+	cbDesc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
+	device->CreateBuffer(&cbDesc, nullptr, ffrBlurCB.put());
+
+	// Create linear sampler
+	D3D11_SAMPLER_DESC sampDesc = {};
+	sampDesc.Filter = D3D11_FILTER_MIN_MAG_MIP_LINEAR;
+	sampDesc.AddressU = D3D11_TEXTURE_ADDRESS_CLAMP;
+	sampDesc.AddressV = D3D11_TEXTURE_ADDRESS_CLAMP;
+	sampDesc.AddressW = D3D11_TEXTURE_ADDRESS_CLAMP;
+	sampDesc.ComparisonFunc = D3D11_COMPARISON_NEVER;
+	sampDesc.MinLOD = 0;
+	sampDesc.MaxLOD = D3D11_FLOAT32_MAX;
+	device->CreateSamplerState(&sampDesc, ffrBlurSampler.put());
+}
+
+void VR::ApplyFFRBlur(ID3D11ShaderResourceView* sourceColor)
+{
+	if (!ffrBlurPS || !sourceColor)
+		return;
+
+	auto context = globals::d3d::context;
+	auto screenSize = globals::state->screenSize;
+	uint32_t width = static_cast<uint32_t>(screenSize.x);
+	uint32_t height = static_cast<uint32_t>(screenSize.y);
+
+	bool perf = globals::state->frameAnnotations;
+	if (perf)
+		globals::state->BeginPerfEvent("FFR Blur");
+
+	// Update constant buffer
+	D3D11_MAPPED_SUBRESOURCE map;
+	if (SUCCEEDED(context->Map(ffrBlurCB.get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &map))) {
+		FFRBlurCBData* data = (FFRBlurCBData*)map.pData;
+
+		data->InvResolution[0] = 1.0f / width;
+		data->InvResolution[1] = 1.0f / height;
+
+		// Use settings for eye centers (auto-center updates these in Prepass)
+		data->ProjectionCenterL[0] = settings.FFRCenterX_Left;
+		data->ProjectionCenterL[1] = settings.FFRCenterY_Left;
+		data->ProjectionCenterR[0] = settings.FFRCenterX_Right;
+		data->ProjectionCenterR[1] = settings.FFRCenterY_Right;
+
+		data->InnerRadius = settings.FFRInnerRadius;
+		data->BlurIntensity = settings.FFRBlurIntensity;
+		data->HalfWidth = 0.5f;
+		data->Pad[0] = 0.0f;
+		data->Pad[1] = 0.0f;
+		data->Pad[2] = 0.0f;
+
+		context->Unmap(ffrBlurCB.get(), 0);
+	}
+
+	// Reuse RDM Vertex Shader (fullscreen triangle)
+	static winrt::com_ptr<ID3D11VertexShader> fsVS;
+	if (!fsVS) {
+		auto vs = Util::CompileShader(L"Data\\Shaders\\VR\\RDM_ApplyVS.hlsl", {}, "vs_5_0");
+		if (vs)
+			fsVS.attach(reinterpret_cast<ID3D11VertexShader*>(vs));
+		else {
+			logger::error("VR: Failed to compile fullscreen VS for blur");
+			if (perf)
+				globals::state->EndPerfEvent();
+			return;
+		}
+	}
+
+	// Get main render target
+	auto renderer = globals::game::renderer;
+	auto& main = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMAIN];
+
+	// Get depth texture for sky detection
+	auto& depth = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kMAIN];
+
+	// Set up pipeline state
+	context->IASetInputLayout(nullptr);
+	context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+	context->VSSetShader(fsVS.get(), nullptr, 0);
+	context->PSSetShader(ffrBlurPS.get(), nullptr, 0);
+
+	ID3D11ShaderResourceView* srvs[] = { sourceColor, depth.depthSRV };
+	context->PSSetShaderResources(0, 2, srvs);
+	ID3D11Buffer* cbs[] = { ffrBlurCB.get() };
+	context->PSSetConstantBuffers(0, 1, cbs);
+	ID3D11SamplerState* samplers[] = { ffrBlurSampler.get(), ffrBlurSampler.get() };  // Linear sampler for both
+	context->PSSetSamplers(0, 2, samplers);
+
+	// Set render target
+	ID3D11RenderTargetView* rtvs[] = { main.RTV };
+	context->OMSetRenderTargets(1, rtvs, nullptr);
+
+	// Set viewport
+	D3D11_VIEWPORT viewport = {};
+	viewport.Width = static_cast<float>(width);
+	viewport.Height = static_cast<float>(height);
+	viewport.MinDepth = 0.0f;
+	viewport.MaxDepth = 1.0f;
+	context->RSSetViewports(1, &viewport);
+
+	// Draw fullscreen triangle
+	context->Draw(3, 0);
+
+	// Unbind
+	ID3D11ShaderResourceView* nullSRVs[2] = { nullptr, nullptr };
+	context->PSSetShaderResources(0, 2, nullSRVs);
+
+	if (perf)
+		globals::state->EndPerfEvent();
 }

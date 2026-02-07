@@ -148,13 +148,17 @@ public:
 
 		// Fixed Foveated Rendering (VRS/RDM)
 		// VRPerfKit-aligned defaults: innerRadius=0.6, midRadius=0.8, outerRadius=1.0
-		bool EnableFFR = false;          // Master toggle for Fixed Foveated Rendering
-		int FFRMethod = 0;               // 0=Auto, 1=Hardware VRS, 2=Software RDM
-		float FFRInnerRadius = 0.60f;    // Full resolution zone (VRPerfKit default: 0.6)
-		float FFRMiddleRadius = 0.80f;   // Half resolution zone (VRPerfKit default: 0.8)
-		float FFROuterRadius = 1.00f;    // Quarter resolution zone (VRPerfKit default: 1.0)
-		bool FFRFavorHorizontal = true;  // Prefer horizontal over vertical resolution
-		bool FFRDebugOverlay = false;    // Show FFR zone visualization in game view
+		bool EnableFFR = false;               // Master toggle for Fixed Foveated Rendering
+		int FFRMethod = 0;                    // 0=Auto, 1=Hardware VRS, 2=Software RDM
+		float FFRInnerRadius = 0.60f;         // Full resolution zone (VRPerfKit default: 0.6)
+		float FFRMiddleRadius = 0.80f;        // Half resolution zone (VRPerfKit default: 0.8)
+		float FFROuterRadius = 1.00f;         // Quarter resolution zone (VRPerfKit default: 1.0)
+		float FFREdgeRadius = 1.15f;          // Soft transition zone (reduces white outlines)
+		bool FFRFavorHorizontal = true;       // Prefer horizontal over vertical resolution
+		bool FFREnableReconstruction = true;  // Enable reconstruction filter (Valve technique)
+		bool FFREnableBlur = false;           // Enable distance-based blur (works for both VRS and RDM)
+		float FFRBlurIntensity = 1.0f;        // Blur strength multiplier
+		bool FFRDebugOverlay = false;         // Show FFR zone visualization in game view
 
 		// Manual Centering
 		bool FFRAutoCenter = true;      // Use OpenVR to calculate eye centers
@@ -452,6 +456,25 @@ public:
 		Vector3 rayOrigin = Vector3::Zero;
 		Vector3 rayDirection = Vector3::Zero;
 	} wandState;
+
+	// FFR Blur resources
+	winrt::com_ptr<ID3D11PixelShader> ffrBlurPS;
+	winrt::com_ptr<ID3D11Buffer> ffrBlurCB;
+	winrt::com_ptr<ID3D11SamplerState> ffrBlurSampler;
+
+	struct FFRBlurCBData
+	{
+		float InvResolution[2];
+		float ProjectionCenterL[2];
+		float ProjectionCenterR[2];
+		float InnerRadius;
+		float BlurIntensity;
+		float HalfWidth;
+		float Pad[3];
+	};
+
+	void InitializeFFRBlur();
+	void ApplyFFRBlur(ID3D11ShaderResourceView* sourceColor);
 
 public:
 	//=============================================================================

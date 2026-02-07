@@ -145,6 +145,7 @@ namespace VRFeatures
 		float innerSq = settings.innerRadius * settings.innerRadius;
 		float middleSq = settings.middleRadius * settings.middleRadius;
 		float outerSq = settings.outerRadius * settings.outerRadius;
+		float edgeSq = settings.edgeRadius * settings.edgeRadius;
 
 		// VRS Texture Dimensions (Tiles)
 		float width = static_cast<float>(desc.Width);
@@ -195,12 +196,36 @@ namespace VRFeatures
 				float distSq = dx * dx + dy * dy;
 				uint8_t rate = 0;  // Index 0 (1x1) - full quality
 
-				if (distSq > outerSq) {
+				// Determine base shading rate from distance
+				if (distSq > edgeSq) {
+					rate = 3;  // Beyond edge: 4x4
+				} else if (distSq > outerSq) {
 					rate = 3;  // Index 3 -> 4x4 (lowest quality)
 				} else if (distSq > middleSq) {
 					rate = 2;  // Index 2 -> 2x2
 				} else if (distSq > innerSq) {
 					rate = 1;  // Index 1 -> 1x2
+				}
+
+				// Skyrim-Upscaler edge detection technique:
+				// If tile is full-res but neighbors would be degraded, promote to half-res
+				// This reduces white outlines at quality boundaries (VRS anti-aliasing)
+				if (rate == 0) {
+					// Sample at stretched points to detect boundaries
+					float dx1 = dx;
+					float dy1 = dy * 2.0f;  // Vertical stretch
+					float distSq1 = dx1 * dx1 + dy1 * dy1;
+
+					float dx2 = dx * 2.0f;  // Horizontal stretch
+					float dy2 = dy;
+					float distSq2 = dx2 * dx2 + dy2 * dy2;
+
+					bool neighbor1Degraded = (distSq1 > innerSq);
+					bool neighbor2Degraded = (distSq2 > innerSq);
+
+					if (neighbor1Degraded && neighbor2Degraded) {
+						rate = 1;  // Promote to 1x2 to create smoother transition
+					}
 				}
 
 				buffer[y * desc.Width + x] = rate;

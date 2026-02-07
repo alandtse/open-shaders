@@ -205,6 +205,52 @@ namespace FrameAnnotations
 		static inline REL::Relocation<decltype(thunk)> func;
 	};
 
+	struct VR_RenderDepth_DownscaleDepthBuffer
+	{
+		static void thunk(RE::BSSceneGraph* a1)
+		{
+			globals::state->BeginPerfEvent("DownscaleDepthBuffer");
+
+			func(a1);
+
+			globals::state->EndPerfEvent();
+		};
+		static inline REL::Relocation<decltype(thunk)> func;
+	};
+
+	struct VR_RenderDepth_BSOBBOcclusionTestingShader
+	{
+		static void thunk(RE::BSImagespaceShader* a_this, RE::ImageSpaceEffectParam* a_param)
+		{
+			globals::state->BeginPerfEvent("BSOBBOcclusionTestingShader");
+
+			func(a_this, a_param);
+
+			globals::state->EndPerfEvent();
+		};
+		static inline REL::Relocation<decltype(thunk)> func;
+	};
+
+	struct VR_UpscaleDepthBuffer
+	{
+		static void thunk(RE::ImageSpaceManager* a_this, unsigned int a2, RE::RENDER_TARGET a_target, RE::RENDER_TARGET a_target2, __int64 a5, bool a6)
+		{
+			globals::state->BeginPerfEvent("UpscaleDepthBuffer");
+			func(a_this, a2, a_target, a_target2, a5, a6);
+			globals::state->EndPerfEvent();
+			auto renderer = globals::game::renderer;
+			if (renderer) {
+				auto depthStencilData = renderer->GetDepthStencilData();
+				auto& depth = depthStencilData.depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kMAIN];
+				auto& uiDepth = depthStencilData.depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kMAIN_COPY];
+				if (uiDepth.texture) {
+					globals::d3d::context->ClearDepthStencilView(uiDepth.views[0], D3D11_CLEAR_STENCIL, 0, 0);
+					globals::d3d::context->ClearDepthStencilView(depth.views[0], D3D11_CLEAR_STENCIL, 0, 0);
+				}
+			}
+		}
+		static inline REL::Relocation<decltype(thunk)> func;
+	};
 	struct Main_RenderShadowmasks
 	{
 		static void thunk(bool a1)
@@ -927,6 +973,8 @@ namespace FrameAnnotations
 				RE::VTABLE_BSImagespaceShaderCopyDepthBuffer[3]);
 			stl::write_vfunc<0x1, BSImagespaceShader_Render<RE::ImageSpaceManager::ISCopyDepthBuffer_DR>>(
 				RE::VTABLE_BSImagespaceShaderCopyDepthBuffer_DR[3]);
+			stl::write_vfunc<0x1, BSImagespaceShader_Render<RE::ImageSpaceManager::ISCopyDepthBuffer_DR>>(
+				RE::VTABLE_BSImagespaceShaderDepthBuffer4xDownscale[3]);
 			stl::write_vfunc<0x1, BSImagespaceShader_Render<RE::ImageSpaceManager::ISDownsampleHierarchicalDepthBufferCS>>(
 				RE::VTABLE_BSImagespaceShaderISDownsampleHierarchicalDepthBufferCS[3]);
 			stl::write_vfunc<0x1, BSImagespaceShader_Render<RE::ImageSpaceManager::ISDiffScaleDownsampleDepthBufferCS>>(
@@ -956,6 +1004,8 @@ namespace FrameAnnotations
 				RE::VTABLE_BSImagespaceShaderCopyDepthBuffer[0]);
 			stl::write_vfunc<0xC, BSImagespaceShader_Dispatch<RE::ImageSpaceManager::ISCopyDepthBuffer_DR>>(
 				RE::VTABLE_BSImagespaceShaderCopyDepthBuffer_DR[0]);
+			stl::write_vfunc<0xC, BSImagespaceShader_Dispatch<RE::ImageSpaceManager::ISCopyDepthBuffer_DR>>(
+				RE::VTABLE_BSImagespaceShaderDepthBuffer4xDownscale[0]);
 			stl::write_vfunc<0xC, BSImagespaceShader_Dispatch<RE::ImageSpaceManager::ISDownsampleHierarchicalDepthBufferCS>>(
 				RE::VTABLE_BSImagespaceShaderISDownsampleHierarchicalDepthBufferCS[0]);
 			stl::write_vfunc<0xC, BSImagespaceShader_Dispatch<RE::ImageSpaceManager::ISDiffScaleDownsampleDepthBufferCS>>(
@@ -980,6 +1030,9 @@ namespace FrameAnnotations
 				RE::VTABLE_BSImagespaceShaderLvl0PreTest[0]);
 			stl::write_vfunc<0xC, BSImagespaceShader_Dispatch<RE::ImageSpaceManager::ISSetupPreTest>>(
 				RE::VTABLE_BSImagespaceShaderSetupPreTest[0]);
+			stl::write_thunk_call<VR_RenderDepth_DownscaleDepthBuffer>(REL::RelocationID(100421, 107139).address() + REL::Relocate(0x37f, 0));
+			stl::write_thunk_call<VR_RenderDepth_BSOBBOcclusionTestingShader>(REL::RelocationID(100421, 107139).address() + REL::Relocate(0x3b1, 0));
+			stl::write_thunk_call<VR_UpscaleDepthBuffer>(REL::Offset(0x13246AE).address());
 		}
 
 		stl::write_vfunc<0x2A, BSShaderAccumulator_FinishAccumulatingDispatch>(

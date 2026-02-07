@@ -861,10 +861,27 @@ void Upscaling::PreparePerEyeInputs(ID3D11Resource* colorSrc, ID3D11Resource* de
 		vrResourcesAllocated[0] = vrResourcesAllocated[1] = false;
 	}
 
+	// Query current DSV before unbinding
+	ID3D11DepthStencilView* currentDSV = nullptr;
+	context->OMGetRenderTargets(0, nullptr, &currentDSV);
+
+	// Temporarily unbind depth-stencil view to allow copying
+	ID3D11DepthStencilView* nullDSV = nullptr;
+	context->OMSetRenderTargets(0, nullptr, nullDSV);  // Unbind any bound DSV
+
 	// Extract both eyes' inputs from combined stereo buffers
 	for (uint32_t i = 0; i < 2; ++i) {
 		uint32_t offsetXIn = (i == 1) ? eyeWidthIn : 0;
 		D3D11_BOX srcBox = { offsetXIn, 0, 0, offsetXIn + eyeWidthIn, eyeHeightIn, 1 };
+
+		// Verify format compatibility before copying
+		D3D11_TEXTURE2D_DESC srcDesc, dstDesc;
+		static_cast<ID3D11Texture2D*>(depthSrc)->GetDesc(&srcDesc);
+		vrIntermediateDepth[i]->resource->GetDesc(&dstDesc);
+		if (srcDesc.Format != dstDesc.Format) {
+			logger::warn("[Upscaling] Depth format mismatch: src {} vs dst {}. Copy may fail.",
+				magic_enum::enum_name(srcDesc.Format), magic_enum::enum_name(dstDesc.Format));
+		}
 
 		context->CopySubresourceRegion(vrIntermediateColorIn[i]->resource.get(), 0, 0, 0, 0, colorSrc, 0, &srcBox);
 		context->CopySubresourceRegion(vrIntermediateDepth[i]->resource.get(), 0, 0, 0, 0, depthSrc, 0, &srcBox);
@@ -873,6 +890,11 @@ void Upscaling::PreparePerEyeInputs(ID3D11Resource* colorSrc, ID3D11Resource* de
 		context->CopySubresourceRegion(vrIntermediateReactiveMask[i]->resource.get(), 0, 0, 0, 0, reactiveSrc, 0, &srcBox);
 	}
 
+	// Restore previous DSV binding
+	context->OMSetRenderTargets(0, nullptr, currentDSV);
+	if (currentDSV) {
+		currentDSV->Release();  // Release query reference
+	}
 	// Zero color where depth == 0 (HMD hidden area) in each per-eye buffer.
 	// Depth is read from the combined stereo SRV at the per-eye offset; color is written
 	// to the isolated per-eye UAV (ColorOffsetX = 0).
@@ -1082,7 +1104,7 @@ void Upscaling::ConfigureUpscaling(RE::BSGraphics::State* a_viewport)
 	// VR depth-buffer culling enabled which can cause incorrect occlusion.
 	if (globals::game::isVR) {
 		auto& vr = globals::features::vr;
-		if (IsUpscalingActive()) {
+		if (IsUpscalingActive() && !globals::state->IsDeveloperMode()) {
 			if (vr.gDepthBufferCulling) {
 				if (*vr.gDepthBufferCulling) {
 					*vr.gDepthBufferCulling = false;

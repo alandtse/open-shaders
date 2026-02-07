@@ -23,6 +23,9 @@ namespace VRFeatures
 		void SetAspectRatio(float aspect);                                         // Visual aspect ratio (Width/Height)
 		ID3D11ShaderResourceView* GetMaskSRV() const { return maskSRV.get(); }
 
+		// Apply reconstruction filter and return the output SRV (or input if reconstruction disabled)
+		ID3D11ShaderResourceView* ApplyReconstruction(ID3D11ShaderResourceView* sourceColor);
+
 		bool IsEnabled() const { return enabled; }
 
 		struct Settings
@@ -30,6 +33,7 @@ namespace VRFeatures
 			float innerRadius = 0.5f;
 			float middleRadius = 0.65f;
 			float outerRadius = 0.8f;
+			float edgeRadius = 1.15f;
 			bool favorHorizontal = true;
 		} settings;
 
@@ -52,13 +56,18 @@ namespace VRFeatures
 		float targetAspectRatio = 1.0f;
 
 		winrt::com_ptr<ID3D11ComputeShader> maskGenerationCS;
+		winrt::com_ptr<ID3D11ComputeShader> reconstructionCS;
 		winrt::com_ptr<ID3D11VertexShader> applyVS;
 		winrt::com_ptr<ID3D11PixelShader> applyPS;
 		winrt::com_ptr<ID3D11Texture2D> maskTexture;
+		winrt::com_ptr<ID3D11Texture2D> reconstructionTarget;
 		winrt::com_ptr<ID3D11ShaderResourceView> maskSRV;
+		winrt::com_ptr<ID3D11ShaderResourceView> reconstructionSRV;
 		winrt::com_ptr<ID3D11UnorderedAccessView> maskUAV;
-		winrt::com_ptr<ID3D11DepthStencilState> applyStencilState;
+		winrt::com_ptr<ID3D11UnorderedAccessView> reconstructionUAV;
+		winrt::com_ptr<ID3D11SamplerState> linearSampler;
 		winrt::com_ptr<ID3D11Buffer> paramCB;
+		winrt::com_ptr<ID3D11Buffer> reconstructCB;
 
 		struct CBData
 		{
@@ -67,9 +76,22 @@ namespace VRFeatures
 			float InnerRadiusSq;   // Squared radius for full quality
 			float MiddleRadiusSq;  // Squared radius for half quality (checkerboard)
 			float OuterRadiusSq;   // Squared radius for reduced quality (cull)
+			float EdgeRadiusSq;    // Squared radius for soft transition zone
 			float HalfWidth;       // Boundary between left/right eye
 			float HeightScale;     // Vertical squashing factor (1.0 = circular, >1.0 = wider ellipse)
-			float Pad[3];          // Pad to 48 bytes (16-byte alignment)
+			float Pad[2];          // Pad to 48 bytes (16-byte alignment)
+		};
+
+		struct ReconstructCBData
+		{
+			float InvResolution[2];      // 1.0 / resolution
+			float ProjectionCenterL[2];  // Left eye center (normalized)
+			float ProjectionCenterR[2];  // Right eye center (normalized)
+			float InvClusterRes[2];      // For 8x8 block calculations
+			float Radius[3];             // Inner, Middle, Outer (normalized)
+			float EdgeRadius;            // Edge transition
+			float HalfWidth;             // 0.5
+			float Pad2[3];
 		};
 
 		void GenerateMask();

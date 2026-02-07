@@ -1,54 +1,55 @@
+// Radial Density Mask Application Shader
+// Based on VRPerfKit (fholger/vrperfkit) radial_density_mask.frag.hlsl - MIT License
+// Uses discard + transparent output instead of depth writes
+
 Texture2D<uint> MaskTexture : register(t0);
+Texture2D<float4> SourceColor : register(t1);
+SamplerState PointSampler : register(s0);
 
-struct PS_OUTPUT
-{
-	float depth : SV_Depth;
-};
-
-PS_OUTPUT main(float4 pos : SV_Position)
+float4 main(float4 pos : SV_Position) : SV_TARGET
 {
 	// Load mask value:
-	// 0 = 1x1 (Keep All)
-	// 1 = 1x2 (Keep 1/2)
-	// 2 = 2x2 (Keep 1/4)
-	// 3 = 4x4 (Cull All)
+	// 0 = Keep All (Full Quality) - discard, don't modify
+	// 1 = Keep 1/2 (Half Quality) - discard kept pixels, cull others
+	// 2 = Keep 1/4 (Quarter Quality) - discard kept pixels, cull others
+	// 3 = Keep 1/16 (Edge Transition) - discard kept pixels, cull others
+	// 4 = Cull All - return black/transparent
 
 	uint mask = MaskTexture.Load(int3(pos.xy, 0));
+	uint2 p = uint2(pos.xy);
+	uint2 pHalf = p >> 1u; // Divide by 2
 
-	// Zone 0: Keep All -> Discard depth write
+	// VRPerfKit approach: discard pixels we want to KEEP, return transparent for pixels we want to CULL
+
+	// Zone 0: Inner - Keep All (Full Quality)
 	if (mask == 0) discard;
 
-	// Zone 3: Cull All (Outer Ring) -> Write Depth
-	if (mask == 3) {
-		PS_OUTPUT output;
-		output.depth = 0.0f;
-		return output;
-	}
-
-	// Zone 2: 2x2 (Middle Ring) -> Keep 1 out of 4 pixels
-	if (mask == 2) {
-		// Keep if (x%2==0 && y%2==0)
-		uint2 p = uint2(pos.xy);
-		if ((p.x & 1) == 0 && (p.y & 1) == 0) discard;
-	}
-
-	// Zone 1: 1x2 (Inner Ring) -> Keep 1 out of 2 pixels
-	// Check favoring (how do we know favoring here? Pass via constant buffer? Or assume based on pattern?)
-	// Actually, we can just use a simple checkerboard or scanline.
-	// Let's assume standard checkerboard (x+y)%2 for smoother look?
-	// Or scanlines?
-	// Let's use scanlines to match VRS 1x2 behavior approximately.
+	// Zone 1: Inner Ring - Half Resolution (1x2 pattern)
+	// Keep pixels where checkerboard pattern matches
 	if (mask == 1) {
-		// Keep even Y rows (1x2 behavior - half vertical res)
-		// Or even X cols (2x1 behavior)
-		// Since we don't have the setting here, let's just do checkerboard for now?
-		// No, checkerboard is 2x reduction but distributed.
-		// Let's discard if (x+y)%2 != 0
-		uint2 p = uint2(pos.xy);
-		if ((p.x + p.y) % 2 == 0) discard;
+		if ((pHalf.x & 0x01u) == (pHalf.y & 0x01u))
+			discard; // Keep this pixel
+		// Otherwise fall through to cull
 	}
 
-	PS_OUTPUT output;
-	output.depth = 0.0f;
-	return output;
+	// Zone 2: Middle Ring - Quarter Resolution (2x2 pattern)
+	// Keep only pixels where both halfX and halfY are odd
+	else if (mask == 2) {
+		if (!((pHalf.x & 0x01u) != 0u || (pHalf.y & 0x01u) != 0u))
+			discard; // Keep this pixel
+		// Otherwise fall through to cull
+	}
+
+	// Zone 3: Edge Transition - 1/16th Resolution (4x4 block pattern)
+	// Keep only top-left of each 4x4 block
+	else if (mask == 3) {
+		uint2 block = p & 0x03u;
+		if (!((block.x & 0x03u) != 0u || (block.y & 0x03u) != 0u))
+			discard; // Keep this pixel
+		// Otherwise fall through to cull
+	}
+
+	// Zone 4 or any culled pixel: Return transparent black
+	// This creates the "hole" that reconstruction/blur can fill
+	return float4(0, 0, 0, 0);
 }

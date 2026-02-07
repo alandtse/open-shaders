@@ -36,6 +36,7 @@ namespace VRFeatures
 			float innerRadius = 0.50f;
 			float middleRadius = 0.65f;
 			float outerRadius = 0.80f;
+			float edgeRadius = 1.15f;
 			bool favorHorizontal = true;
 			bool debugOverlay = false;
 		} settings;

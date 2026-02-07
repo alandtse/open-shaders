@@ -206,9 +206,21 @@ PS_OUTPUT main(PS_INPUT input)
 
 	float alpha = TexDiffuse.SampleBias(SampDiffuse, input.TexCoord.xy, SharedData::MipBias).w;
 
-	if ((alpha - AlphaTestRefRS) < 0) {
-		discard;
-	}
+#if defined(TREE_ANIM)
+// VRS Fix: For TREE_ANIM (full tree models), use a fixed low alpha threshold
+// instead of the variable AlphaTestRefRS.
+//
+// This fixes white outline artifacts caused by VRS coarse shading at alpha edges.
+// A low threshold (0.1) reduces the "gradient zone" where VRS can misclassify pixels.
+const float vrsFixedAlphaThreshold = 0.1;
+if (alpha - vrsFixedAlphaThreshold < 0) {
+    discard;
+}
+#else
+if (alpha - AlphaTestRefRS < 0) {
+    discard;
+}
+#endif  // TREE_ANIM
 
 	psout.Diffuse.xyz = input.Depth.xxx / input.Depth.yyy;
 	psout.Diffuse.w = 0;

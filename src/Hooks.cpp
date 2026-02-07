@@ -846,10 +846,8 @@ namespace Hooks
 	 */
 	void Install()
 	{
-		if (!REL::Module::IsVR()) {
-			logger::info("Hooking BSImageSpace::Init::IBLF");
-			stl::detour_thunk<BSImageSpace_Init_IBLF>(REL::RelocationID(100480, 107198));
-		}
+		logger::info("Hooking BSImageSpace::Init::IBLF");
+		stl::detour_thunk<BSImageSpace_Init_IBLF>(REL::RelocationID(100480, 107198));
 
 		logger::info("Hooking BSInputDeviceManager::PollInputDevices");
 		stl::write_thunk_call<BSInputDeviceManager_PollInputDevices>(REL::RelocationID(67315, 68617).address() + REL::Relocate(0x7B, 0x7B, 0x81));
