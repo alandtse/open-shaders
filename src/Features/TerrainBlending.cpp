@@ -14,16 +14,8 @@ namespace
 {
 	bool ShouldUseBlendedDepthSRV()
 	{
-		if (!globals::game::isVR) {
-			return true;
-		}
-
 		auto& vr = globals::features::vr;
-		if (vr.gDepthBufferCulling && *vr.gDepthBufferCulling) {
-			return false;
-		}
-
-		return true;
+		return !globals::game::isVR || !vr.gDepthBufferCulling || !*vr.gDepthBufferCulling;
 	}
 
 	bool IsShadowmaskDepthDescriptorWhitelisted(const uint32_t a_descriptor)
