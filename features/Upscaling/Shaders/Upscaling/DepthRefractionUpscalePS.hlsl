@@ -100,17 +100,7 @@ PS_OUTPUT main(PS_INPUT input)
 
 #	if defined(VR)
 	float bilinearDepth = psout.Depth;
-	float minDepth = (useWideKernel > 0.5f) ? SampleMinDepth3x3(uv) : SampleMinDepth2x2(uv);
-	float pointDepth = DepthTex.Load(int3(GetClampedTexelCoord(uv), 0));
-
-	// HMD hidden-area mask writes depth 0. Keep point depth near mask edges to avoid bleed.
-	if (minDepth == 0.0f) {
-		psout.Depth = pointDepth;
-	} else {
-		const float conservativeBias = 0.35f;
-		psout.Depth = lerp(pointDepth, minDepth, conservativeBias);
-	}
-
+	psout.Depth = (useWideKernel > 0.5f) ? SampleMinDepth3x3(uv) : SampleMinDepth2x2(uv);
 	// Keep SAO camera Z smooth to avoid over-occlusion; depth culling uses SV_Depth.
 	psout.SAOCameraZ = bilinearDepth;
 #	else
