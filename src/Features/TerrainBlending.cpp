@@ -257,6 +257,8 @@ bool IsDiagnosticSlot2GuardMode(const TerrainBlending& a_singleton)
 		state.isWhitelistedDescriptor = IsShadowmaskDepthDescriptorWhitelisted(a_descriptor);
 		state.shouldApply = state.gateSatisfied && state.inShadowmaskPhase && state.isUtility && state.isWhitelistedDescriptor;
 		return state;
+=======
+>>>>>>> d79b5301 (PR(Alandtse): Why isn't this using your new function: ShouldUseBlendedDepthSRV (TerrainBlendning.cpp))
 	}
 
 	struct SlotOverrideResult
