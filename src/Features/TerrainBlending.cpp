@@ -25,6 +25,204 @@ namespace
 
 		return true;
 	}
+
+	bool IsShadowmaskDepthDescriptorWhitelisted(const uint32_t a_descriptor)
+	{
+		return a_descriptor == kShadowmaskDepthDescriptor0 || a_descriptor == kShadowmaskDepthDescriptor1;
+	}
+
+	bool IsSlot2CallerAllowlisted(const uint32_t a_callerRva)
+	{
+		for (const auto rva : kSlot2CallerAllowlistRvas) {
+			if (rva == a_callerRva) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	bool ShouldApplySlot2Rewrite(const uint32_t a_callerRva)
+	{
+		if (slot2BroadFallbackActive) {
+			engineHookDiagnostics.slot2FallbackApplied++;
+			return true;
+		}
+
+		if (IsSlot2CallerAllowlisted(a_callerRva)) {
+			return true;
+		}
+
+		engineHookDiagnostics.slot2CallerRejected++;
+		slot2RejectTotal++;
+		slot2BlockedCallerRvas.insert(a_callerRva);
+
+		if (kEnableAutoBroadSlot2Fallback && slot2RejectTotal >= kSlot2AutoFallbackRejectThreshold) {
+			slot2BroadFallbackActive = true;
+			engineHookDiagnostics.slot2FallbackApplied++;
+			fallbackTriggerRva = a_callerRva;
+			if (!fallbackActivatedLogged && IsDiagnosticSlot2GuardMode(globals::features::terrainBlending)) {
+				logger::debug(
+					"[TB Override] slot2 fallback activated triggerRva=0x{:X} blockedEvents={} blockedUniqueRvas={}",
+					fallbackTriggerRva,
+					slot2RejectTotal,
+					slot2BlockedCallerRvas.size());
+				fallbackActivatedLogged = true;
+			}
+			return true;
+		}
+
+		return false;
+	}
+
+	bool IsEngineHookFeatureGateSatisfied(const TerrainBlending& a_singleton)
+	{
+		if (!globals::game::isVR || !a_singleton.loaded || !a_singleton.settings.Enabled) {
+			return false;
+		}
+
+		return !ShouldUseBlendedDepthSRV();
+	}
+
+	struct SlotOverrideResult
+	{
+		bool hasSrv = false;
+		bool applied = false;
+		bool alreadyBound = false;
+	};
+
+	using SlotRewriteGate = bool (*)(uint32_t);
+
+	SlotOverrideResult ApplyPixelShaderSlotOverride(
+		ID3D11DeviceContext* a_context,
+		const uint32_t a_slot,
+		ID3D11ShaderResourceView* a_overrideSrv,
+		uint64_t& a_appliedCounter,
+		uint64_t& a_alreadyBoundCounter,
+		uint64_t& a_missingCounter,
+		SlotRewriteGate a_rewriteGate,
+		const uint32_t a_callerRva)
+	{
+		SlotOverrideResult result{};
+		result.hasSrv = a_overrideSrv != nullptr;
+		if (!result.hasSrv) {
+			a_missingCounter++;
+			return result;
+		}
+
+		ID3D11ShaderResourceView* currentSrv = nullptr;
+		a_context->PSGetShaderResources(a_slot, 1, &currentSrv);
+		result.alreadyBound = currentSrv == a_overrideSrv;
+		if (result.alreadyBound) {
+			a_alreadyBoundCounter++;
+		} else {
+			const bool canRewrite = a_rewriteGate ? a_rewriteGate(a_callerRva) : true;
+			if (canRewrite) {
+				a_context->PSSetShaderResources(a_slot, 1, &a_overrideSrv);
+				result.applied = true;
+				a_appliedCounter++;
+			}
+		}
+
+		if (currentSrv) {
+			currentSrv->Release();
+		}
+
+		return result;
+	}
+
+	void LogEngineHookOverrideState(
+		EngineHookOverrideLogState& a_state,
+		const char* a_label,
+		RE::BSShader* a_shader,
+		const uint32_t a_descriptor,
+		const bool a_shouldApply,
+		const bool a_hasSrv,
+		const bool a_active)
+	{
+		(void)a_state;
+		(void)a_label;
+		(void)a_shader;
+		(void)a_descriptor;
+		(void)a_shouldApply;
+		(void)a_hasSrv;
+		(void)a_active;
+	}
+
+	void MaybeLogEngineHookSummary()
+	{
+		// Intentionally quiet: no periodic summary logs in normal/debug runs.
+	}
+
+	void MaybeLogHookActiveOnce()
+	{
+		if (!hookActiveLogged && IsDiagnosticSlot2GuardMode(globals::features::terrainBlending)) {
+			std::ostringstream allowlist;
+			for (size_t i = 0; i < kSlot2CallerAllowlistRvas.size(); i++) {
+				if (i != 0) {
+					allowlist << ", ";
+				}
+				allowlist << "0x" << std::uppercase << std::hex << kSlot2CallerAllowlistRvas[i];
+			}
+			logger::debug(
+				"[TB Override] pass-specific hook active slot2AllowlistCount={} slot2AllowlistRvas=[{}] fallbackThreshold={}",
+				kSlot2CallerAllowlistRvas.size(),
+				allowlist.str(),
+				kSlot2AutoFallbackRejectThreshold);
+			hookActiveLogged = true;
+		}
+	}
+
+	ID3D11ShaderResourceView* ResolveEngineOverrideSrv(const bool a_prefer16Bit)
+	{
+		auto& terrainBlending = globals::features::terrainBlending;
+		if (a_prefer16Bit) {
+			if (terrainBlending.blendedDepthTexture16 && terrainBlending.blendedDepthTexture16->srv) {
+				return terrainBlending.blendedDepthTexture16->srv.get();
+			}
+			if (terrainBlending.blendedDepthTexture && terrainBlending.blendedDepthTexture->srv) {
+				return terrainBlending.blendedDepthTexture->srv.get();
+			}
+		} else {
+			if (terrainBlending.blendedDepthTexture && terrainBlending.blendedDepthTexture->srv) {
+				return terrainBlending.blendedDepthTexture->srv.get();
+			}
+			if (terrainBlending.blendedDepthTexture16 && terrainBlending.blendedDepthTexture16->srv) {
+				return terrainBlending.blendedDepthTexture16->srv.get();
+			}
+		}
+
+		auto* renderer = globals::game::renderer;
+		if (!renderer) {
+			return nullptr;
+		}
+
+		auto& depthCopy = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kMAIN_COPY];
+		return depthCopy.depthSRV;
+	}
+
+	void ReleaseEngineHookTechniqueOverride()
+	{
+		if (!engineHookTechniqueState.active) {
+			return;
+		}
+
+		auto* context = globals::d3d::context;
+		if (context) {
+			context->PSSetShaderResources(17, 1, &engineHookTechniqueState.previousObbSrv);
+			context->PSSetShaderResources(2, 1, &engineHookTechniqueState.previousShadowmaskSrv);
+		}
+
+		if (engineHookTechniqueState.previousObbSrv) {
+			engineHookTechniqueState.previousObbSrv->Release();
+			engineHookTechniqueState.previousObbSrv = nullptr;
+		}
+		if (engineHookTechniqueState.previousShadowmaskSrv) {
+			engineHookTechniqueState.previousShadowmaskSrv->Release();
+			engineHookTechniqueState.previousShadowmaskSrv = nullptr;
+		}
+
+		engineHookTechniqueState.active = false;
+	}
 }
 
 std::vector<FeatureConstraints::Constraint> TerrainBlending::GetActiveConstraints() const
@@ -37,8 +235,7 @@ std::vector<FeatureConstraints::Constraint> TerrainBlending::GetActiveConstraint
 		return constraints;
 	}
 
-	auto& vr = globals::features::vr;
-	if (!vr.gDepthBufferCulling || !*vr.gDepthBufferCulling) {
+	if (ShouldUseBlendedDepthSRV()) {
 		return constraints;
 	}
 
