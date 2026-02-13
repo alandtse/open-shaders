@@ -9,6 +9,7 @@
 #include "VR.h"
 #include <Windows.h>
 #include <algorithm>
+#include <cfloat>
 #include <directx/d3dx12.h>
 #include <format>
 
@@ -1335,7 +1336,7 @@ void Upscaling::UpscaleDepth()
 		{
 			constexpr float kEnterWideKernelRatio = 1.55f;
 			constexpr float kExitWideKernelRatio = 1.45f;
-			const float minScale = std::max(std::min(resolutionScale.x, resolutionScale.y), 1e-6f);
+			const float minScale = std::max(std::min(resolutionScale.x, resolutionScale.y), FLT_EPSILON);
 			const float upscaleRatio = 1.0f / minScale;
 
 			if (depthUpscaleUseWideKernel) {
