@@ -8,6 +8,7 @@
 #include "VR.h"
 
 #include <array>
+#include <chrono>
 #include <cstdint>
 #include <intrin.h>
 #include <sstream>
@@ -15,12 +16,20 @@
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	TerrainBlending::Settings,
-	Enabled)
+	Enabled,
+	OverridePath,
+	Slot2GuardModeValue)
 
 namespace
 {
+	using DiagnosticsClock = std::chrono::steady_clock;
+
 	struct TbHookDiagnostics
 	{
+		bool initialized = false;
+		bool lastActive = false;
+		bool lastUseBlendedDepthSRV = false;
+
 		uint64_t renderDepthCalls = 0;
 		uint64_t queueTerrainCalls = 0;
 		uint64_t queueNoBlendCalls = 0;
@@ -29,9 +38,33 @@ namespace
 		uint64_t renderPassExecutedCalls = 0;
 		uint64_t renderPassTerrainCount = 0;
 		uint64_t renderPassNoBlendCount = 0;
+
+		DiagnosticsClock::time_point nextSummary = DiagnosticsClock::now() + std::chrono::seconds(2);
+
+		void ResetInterval()
+		{
+			renderDepthCalls = 0;
+			queueTerrainCalls = 0;
+			queueNoBlendCalls = 0;
+			terrainDepthDoubleDrawCalls = 0;
+			renderPassInvocationCalls = 0;
+			renderPassExecutedCalls = 0;
+			renderPassTerrainCount = 0;
+			renderPassNoBlendCount = 0;
+		}
 	};
 
 	TbHookDiagnostics tbHookDiagnostics{};
+
+	struct EngineHookOverrideLogState
+	{
+		bool initialized = false;
+		bool shouldApply = false;
+		bool hasSrv = false;
+		bool active = false;
+		uint32_t descriptor = 0;
+		std::string shaderName{};
+	};
 
 	struct EngineHookDiagnostics
 	{
@@ -49,6 +82,26 @@ namespace
 		uint64_t shadowmaskMissingSrv = 0;
 		uint64_t slot2CallerRejected = 0;
 		uint64_t slot2FallbackApplied = 0;
+
+		DiagnosticsClock::time_point nextSummary = DiagnosticsClock::now() + std::chrono::seconds(2);
+
+		void ResetInterval()
+		{
+			beginTechniqueCalls = 0;
+			gateSatisfiedCalls = 0;
+			inShadowmaskPhaseCalls = 0;
+			utilityCalls = 0;
+			whitelistedCalls = 0;
+			shouldApplyCalls = 0;
+			obbApplied = 0;
+			obbAlreadyBound = 0;
+			obbMissingSrv = 0;
+			shadowmaskApplied = 0;
+			shadowmaskAlreadyBound = 0;
+			shadowmaskMissingSrv = 0;
+			slot2CallerRejected = 0;
+			slot2FallbackApplied = 0;
+		}
 	};
 
 	struct EngineHookTechniqueOverrideState
@@ -59,16 +112,14 @@ namespace
 	};
 
 	EngineHookDiagnostics engineHookDiagnostics{};
+	EngineHookOverrideLogState engineHookObbLogState{};
+	EngineHookOverrideLogState engineHookShadowmaskLogState{};
 	EngineHookTechniqueOverrideState engineHookTechniqueState{};
 
 	constexpr uint32_t kShadowmaskDepthDescriptor0 = 0x262002u;
 	constexpr uint32_t kShadowmaskDepthDescriptor1 = 0x1062002u;
-
-	// Slot2 allowlist is only evaluated in VR (gated by IsEngineHookFeatureGateSatisfied).
-	// Keep variant mapping explicit to match existing codebase conventions.
-	// SE/AE offsets are intentionally 0 because this caller is VR-only.
-	const std::array<uint32_t, 1> kSlot2CallerAllowlistRvas = {
-		static_cast<uint32_t>(REL::Relocate(0u, 0u, 0xDC35DBu))
+	constexpr std::array<uint32_t, 1> kSlot2CallerAllowlistRvas = {
+		0xDC35DBu
 	};
 	constexpr bool kEnableAutoBroadSlot2Fallback = true;
 	constexpr uint64_t kSlot2AutoFallbackRejectThreshold = 5;
@@ -79,43 +130,50 @@ namespace
 	bool hookActiveLogged = false;
 	bool fallbackActivatedLogged = false;
 	uint32_t fallbackTriggerRva = 0;
-	bool slot2GateActivePrevious = false;
 
-	void ResetSlot2FallbackState()
-	{
-		slot2BroadFallbackActive = false;
-		slot2RejectTotal = 0;
-		slot2BlockedCallerRvas.clear();
-		fallbackActivatedLogged = false;
-		fallbackTriggerRva = 0;
-	}
-
-	bool IsDiagnosticSlot2GuardMode()
-	{
-		return globals::state && globals::state->IsDeveloperMode();
-	}
-
-// Caller identity must come from _ReturnAddress() at each hook callsite.
-// Normalize to module-relative RVA so values are stable across process ASLR.
-uint32_t ToModuleRva(const void* a_returnAddress)
+bool IsEngineHookPathActive(const TerrainBlending& a_singleton)
 {
-	return static_cast<uint32_t>(reinterpret_cast<std::uintptr_t>(a_returnAddress) - REL::Module::get().base());
+	(void)a_singleton;
+	return true;
 }
+
+bool IsDiagnosticSlot2GuardMode(const TerrainBlending& a_singleton)
+{
+	(void)a_singleton;
+	return globals::state && globals::state->IsDeveloperMode();
+}
+
+	void LogTbHookStateTransition(bool a_active, bool a_useBlendedDepthSRV)
+	{
+		(void)a_active;
+		(void)a_useBlendedDepthSRV;
+		tbHookDiagnostics.initialized = true;
+		tbHookDiagnostics.lastActive = a_active;
+		tbHookDiagnostics.lastUseBlendedDepthSRV = a_useBlendedDepthSRV;
+	}
+
+	void MaybeLogTbHookSummary()
+	{
+		// Intentionally quiet: no periodic summary logs in normal/debug runs.
+	}
 
 	bool ShouldUseBlendedDepthSRV()
 	{
+		if (!globals::game::isVR) {
+			return true;
+		}
+
 		auto& vr = globals::features::vr;
-		return !globals::game::isVR || !vr.gDepthBufferCulling || !*vr.gDepthBufferCulling;
+		if (vr.gDepthBufferCulling && *vr.gDepthBufferCulling) {
+			return false;
+		}
+
+		return true;
 	}
 
 	bool IsShadowmaskDepthDescriptorWhitelisted(const uint32_t a_descriptor)
 	{
 		return a_descriptor == kShadowmaskDepthDescriptor0 || a_descriptor == kShadowmaskDepthDescriptor1;
-	}
-
-	bool IsTbVrDepthCullingActive(const TerrainBlending& a_tb)
-	{
-		return globals::game::isVR && a_tb.loaded && a_tb.settings.Enabled && !ShouldUseBlendedDepthSRV();
 	}
 
 	bool IsSlot2CallerAllowlisted(const uint32_t a_callerRva)
@@ -147,7 +205,7 @@ uint32_t ToModuleRva(const void* a_returnAddress)
 			slot2BroadFallbackActive = true;
 			engineHookDiagnostics.slot2FallbackApplied++;
 			fallbackTriggerRva = a_callerRva;
-			if (!fallbackActivatedLogged && IsDiagnosticSlot2GuardMode()) {
+			if (!fallbackActivatedLogged && IsDiagnosticSlot2GuardMode(globals::features::terrainBlending)) {
 				logger::debug(
 					"[TB Override] slot2 fallback activated triggerRva=0x{:X} blockedEvents={} blockedUniqueRvas={}",
 					fallbackTriggerRva,
@@ -167,27 +225,8 @@ uint32_t ToModuleRva(const void* a_returnAddress)
 			return false;
 		}
 
-		return !ShouldUseBlendedDepthSRV();
-	}
-
-	struct EngineHookPassGateState
-	{
-		bool gateSatisfied = false;
-		bool inShadowmaskPhase = false;
-		bool isUtility = false;
-		bool isWhitelistedDescriptor = false;
-		bool shouldApply = false;
-	};
-
-	EngineHookPassGateState EvaluateEngineHookPassGate(const TerrainBlending& a_singleton, RE::BSShader* a_shader, uint32_t a_descriptor)
-	{
-		EngineHookPassGateState state{};
-		state.gateSatisfied = IsEngineHookFeatureGateSatisfied(a_singleton);
-		state.inShadowmaskPhase = FrameAnnotations::IsInRenderShadowmasksPhase();
-		state.isUtility = a_shader && a_shader->shaderType.get() == RE::BSShader::Type::Utility;
-		state.isWhitelistedDescriptor = IsShadowmaskDepthDescriptorWhitelisted(a_descriptor);
-		state.shouldApply = state.gateSatisfied && state.inShadowmaskPhase && state.isUtility && state.isWhitelistedDescriptor;
-		return state;
+		auto& vr = globals::features::vr;
+		return vr.gDepthBufferCulling && *vr.gDepthBufferCulling;
 	}
 
 	struct SlotOverrideResult
@@ -237,9 +276,32 @@ uint32_t ToModuleRva(const void* a_returnAddress)
 		return result;
 	}
 
+	void LogEngineHookOverrideState(
+		EngineHookOverrideLogState& a_state,
+		const char* a_label,
+		RE::BSShader* a_shader,
+		const uint32_t a_descriptor,
+		const bool a_shouldApply,
+		const bool a_hasSrv,
+		const bool a_active)
+	{
+		(void)a_state;
+		(void)a_label;
+		(void)a_shader;
+		(void)a_descriptor;
+		(void)a_shouldApply;
+		(void)a_hasSrv;
+		(void)a_active;
+	}
+
+	void MaybeLogEngineHookSummary()
+	{
+		// Intentionally quiet: no periodic summary logs in normal/debug runs.
+	}
+
 	void MaybeLogHookActiveOnce()
 	{
-		if (!hookActiveLogged && IsDiagnosticSlot2GuardMode()) {
+		if (!hookActiveLogged && IsDiagnosticSlot2GuardMode(globals::features::terrainBlending)) {
 			std::ostringstream allowlist;
 			for (size_t i = 0; i < kSlot2CallerAllowlistRvas.size(); i++) {
 				if (i != 0) {
@@ -256,9 +318,6 @@ uint32_t ToModuleRva(const void* a_returnAddress)
 		}
 	}
 
-	// Selects the depth SRV used by engine-hook slot overrides.
-	// Prefer blended depth outputs from Terrain Blending; fall back to MAIN_COPY depth
-	// when blended targets are unavailable so hook paths remain robust during init/teardown.
 	ID3D11ShaderResourceView* ResolveEngineOverrideSrv(const bool a_prefer16Bit)
 	{
 		auto& terrainBlending = globals::features::terrainBlending;
@@ -287,9 +346,6 @@ uint32_t ToModuleRva(const void* a_returnAddress)
 		return depthCopy.depthSRV;
 	}
 
-	// Restores PS slots 17 and 2 to the SRVs that were bound before this shadowmask
-	// technique override was applied. This keeps override scope limited to the
-	// targeted pass and avoids leaking TB depth bindings into unrelated draws.
 	void ReleaseEngineHookTechniqueOverride()
 	{
 		if (!engineHookTechniqueState.active) {
@@ -321,7 +377,12 @@ std::vector<FeatureConstraints::Constraint> TerrainBlending::GetActiveConstraint
 
 	// Only constrain when all requested conditions are active:
 	// VR + Terrain Blending enabled + runtime depth buffer culling enabled.
-	if (!IsTbVrDepthCullingActive(*this)) {
+	if (!loaded || !settings.Enabled || !globals::game::isVR) {
+		return constraints;
+	}
+
+	auto& vr = globals::features::vr;
+	if (!vr.gDepthBufferCulling || !*vr.gDepthBufferCulling) {
 		return constraints;
 	}
 
@@ -343,6 +404,10 @@ void TerrainBlending::DrawSettings()
 	if (auto _tt = Util::HoverTooltipWrapper()) {
 		ImGui::Text("Enable seamless blending between terrain and objects.");
 	}
+
+	ImGui::SeparatorText("Depth Override Path");
+	ImGui::TextWrapped("Pass-specific engine hooks are active (OnBeginTechnique + OnUtilitySetupGeometry + OnShaderPropertySetupGeometry).");
+	ImGui::TextWrapped("Global Draw*/PSSetShaderResources overrides are disabled for Terrain Blending.");
 }
 
 void TerrainBlending::LoadSettings(json& o_json)
@@ -357,41 +422,49 @@ void TerrainBlending::SaveSettings(json& o_json)
 
 void TerrainBlending::OnBeginTechnique(RE::BSShader* a_shader, uint32_t a_pixelDescriptor, uint32_t a_callerRva)
 {
+	if (!IsEngineHookPathActive(*this)) {
+		ReleaseEngineHookTechniqueOverride();
+		return;
+	}
+
 	engineHookDiagnostics.beginTechniqueCalls++;
 
-	const auto gateState = EvaluateEngineHookPassGate(*this, a_shader, a_pixelDescriptor);
-	if (!slot2GateActivePrevious && gateState.gateSatisfied) {
-		ResetSlot2FallbackState();
-		if (IsDiagnosticSlot2GuardMode()) {
-			logger::debug("[TB Override] slot2 fallback reset on TB/depth-culling off->on");
-		}
-	}
-	slot2GateActivePrevious = gateState.gateSatisfied;
+	const bool gateSatisfied = IsEngineHookFeatureGateSatisfied(*this);
+	const bool inShadowmaskPhase = FrameAnnotations::IsInRenderShadowmasksPhase();
+	const bool isUtility = a_shader && a_shader->shaderType.get() == RE::BSShader::Type::Utility;
+	const bool isWhitelistedDescriptor = IsShadowmaskDepthDescriptorWhitelisted(a_pixelDescriptor);
+	const bool shouldApply = gateSatisfied && inShadowmaskPhase && isUtility && isWhitelistedDescriptor;
 
-	if (gateState.gateSatisfied) {
+	if (gateSatisfied) {
 		engineHookDiagnostics.gateSatisfiedCalls++;
 	}
-	if (gateState.inShadowmaskPhase) {
+	if (inShadowmaskPhase) {
 		engineHookDiagnostics.inShadowmaskPhaseCalls++;
 	}
-	if (gateState.isUtility) {
+	if (isUtility) {
 		engineHookDiagnostics.utilityCalls++;
 	}
-	if (gateState.isWhitelistedDescriptor) {
+	if (isWhitelistedDescriptor) {
 		engineHookDiagnostics.whitelistedCalls++;
 	}
-	if (gateState.shouldApply) {
+	if (shouldApply) {
 		engineHookDiagnostics.shouldApplyCalls++;
 		MaybeLogHookActiveOnce();
 	}
 
-	if (!gateState.shouldApply) {
+	if (!shouldApply) {
 		ReleaseEngineHookTechniqueOverride();
+		LogEngineHookOverrideState(engineHookObbLogState, "OBB", a_shader, a_pixelDescriptor, false, false, false);
+		LogEngineHookOverrideState(engineHookShadowmaskLogState, "SHADOWMASK", a_shader, a_pixelDescriptor, false, false, false);
+		MaybeLogEngineHookSummary();
 		return;
 	}
 
 	auto* context = globals::d3d::context;
 	if (!context) {
+		LogEngineHookOverrideState(engineHookObbLogState, "OBB", a_shader, a_pixelDescriptor, true, false, false);
+		LogEngineHookOverrideState(engineHookShadowmaskLogState, "SHADOWMASK", a_shader, a_pixelDescriptor, true, false, false);
+		MaybeLogEngineHookSummary();
 		return;
 	}
 
@@ -422,6 +495,17 @@ void TerrainBlending::OnBeginTechnique(RE::BSShader* a_shader, uint32_t a_pixelD
 		&ShouldApplySlot2Rewrite,
 		a_callerRva);
 
+	LogEngineHookOverrideState(
+		engineHookObbLogState, "OBB", a_shader, a_pixelDescriptor, true, obbResult.hasSrv, obbResult.applied || obbResult.alreadyBound);
+	LogEngineHookOverrideState(
+		engineHookShadowmaskLogState,
+		"SHADOWMASK",
+		a_shader,
+		a_pixelDescriptor,
+		true,
+		shadowmaskResult.hasSrv,
+		shadowmaskResult.applied || shadowmaskResult.alreadyBound);
+	MaybeLogEngineHookSummary();
 }
 
 void TerrainBlending::OnShadowmaskPhaseEnd()
@@ -434,11 +518,20 @@ void TerrainBlending::OnUtilitySetupGeometry(RE::BSShader* a_shader, RE::BSRende
 	(void)a_pass;
 	(void)a_renderFlags;
 
+	if (!IsEngineHookPathActive(*this)) {
+		return;
+	}
+
 	auto* state = globals::state;
 	const uint32_t descriptor = state ? state->currentPixelDescriptor : 0u;
 
-	const auto gateState = EvaluateEngineHookPassGate(*this, a_shader, descriptor);
-	if (!gateState.shouldApply) {
+	const bool gateSatisfied = IsEngineHookFeatureGateSatisfied(*this);
+	const bool inShadowmaskPhase = FrameAnnotations::IsInRenderShadowmasksPhase();
+	const bool isUtility = a_shader && a_shader->shaderType.get() == RE::BSShader::Type::Utility;
+	const bool isWhitelistedDescriptor = IsShadowmaskDepthDescriptorWhitelisted(descriptor);
+	const bool shouldApply = gateSatisfied && inShadowmaskPhase && isUtility && isWhitelistedDescriptor;
+
+	if (!shouldApply) {
 		return;
 	}
 
@@ -468,6 +561,17 @@ void TerrainBlending::OnUtilitySetupGeometry(RE::BSShader* a_shader, RE::BSRende
 		&ShouldApplySlot2Rewrite,
 		a_callerRva);
 
+	LogEngineHookOverrideState(
+		engineHookObbLogState, "OBB", a_shader, descriptor, true, obbResult.hasSrv, obbResult.applied || obbResult.alreadyBound);
+	LogEngineHookOverrideState(
+		engineHookShadowmaskLogState,
+		"SHADOWMASK",
+		a_shader,
+		descriptor,
+		true,
+		shadowmaskResult.hasSrv,
+		shadowmaskResult.applied || shadowmaskResult.alreadyBound);
+	MaybeLogEngineHookSummary();
 }
 
 void TerrainBlending::OnShaderPropertySetupGeometry(RE::BSShaderProperty* a_shaderProperty, RE::BSGeometry* a_geometry, bool a_result, uint32_t a_callerRva)
@@ -476,12 +580,20 @@ void TerrainBlending::OnShaderPropertySetupGeometry(RE::BSShaderProperty* a_shad
 	(void)a_geometry;
 	(void)a_result;
 
+	if (!IsEngineHookPathActive(*this)) {
+		return;
+	}
+
 	auto* state = globals::state;
 	RE::BSShader* shader = state ? state->currentShader : nullptr;
 	const uint32_t descriptor = state ? state->currentPixelDescriptor : 0u;
 
-	const auto gateState = EvaluateEngineHookPassGate(*this, shader, descriptor);
-	if (!gateState.shouldApply) {
+	const bool gateSatisfied = IsEngineHookFeatureGateSatisfied(*this);
+	const bool inShadowmaskPhase = FrameAnnotations::IsInRenderShadowmasksPhase();
+	const bool isUtility = shader && shader->shaderType.get() == RE::BSShader::Type::Utility;
+	const bool isWhitelistedDescriptor = IsShadowmaskDepthDescriptorWhitelisted(descriptor);
+	const bool shouldApply = gateSatisfied && inShadowmaskPhase && isUtility && isWhitelistedDescriptor;
+	if (!shouldApply) {
 		return;
 	}
 
@@ -501,6 +613,15 @@ void TerrainBlending::OnShaderPropertySetupGeometry(RE::BSShaderProperty* a_shad
 		&ShouldApplySlot2Rewrite,
 		a_callerRva);
 
+	LogEngineHookOverrideState(
+		engineHookShadowmaskLogState,
+		"SHADOWMASK",
+		shader,
+		descriptor,
+		true,
+		shadowmaskResult.hasSrv,
+		shadowmaskResult.applied || shadowmaskResult.alreadyBound);
+	MaybeLogEngineHookSummary();
 }
 
 void TerrainBlending::OnSetDirtyStates(bool a_isCompute, uint32_t a_callerRva)
@@ -510,13 +631,20 @@ void TerrainBlending::OnSetDirtyStates(bool a_isCompute, uint32_t a_callerRva)
 	if (a_isCompute) {
 		return;
 	}
+	if (!IsEngineHookPathActive(*this)) {
+		return;
+	}
 
 	auto* state = globals::state;
 	RE::BSShader* shader = state ? state->currentShader : nullptr;
 	const uint32_t descriptor = state ? state->currentPixelDescriptor : 0u;
 
-	const auto gateState = EvaluateEngineHookPassGate(*this, shader, descriptor);
-	if (!gateState.shouldApply) {
+	const bool gateSatisfied = IsEngineHookFeatureGateSatisfied(*this);
+	const bool inShadowmaskPhase = FrameAnnotations::IsInRenderShadowmasksPhase();
+	const bool isUtility = shader && shader->shaderType.get() == RE::BSShader::Type::Utility;
+	const bool isWhitelistedDescriptor = IsShadowmaskDepthDescriptorWhitelisted(descriptor);
+	const bool shouldApply = gateSatisfied && inShadowmaskPhase && isUtility && isWhitelistedDescriptor;
+	if (!shouldApply) {
 		return;
 	}
 
@@ -546,6 +674,17 @@ void TerrainBlending::OnSetDirtyStates(bool a_isCompute, uint32_t a_callerRva)
 		&ShouldApplySlot2Rewrite,
 		a_callerRva);
 
+	LogEngineHookOverrideState(
+		engineHookObbLogState, "SETDIRTY_OBB", shader, descriptor, true, obbResult.hasSrv, obbResult.applied || obbResult.alreadyBound);
+	LogEngineHookOverrideState(
+		engineHookShadowmaskLogState,
+		"SETDIRTY_SHADOWMASK",
+		shader,
+		descriptor,
+		true,
+		shadowmaskResult.hasSrv,
+		shadowmaskResult.applied || shadowmaskResult.alreadyBound);
+	MaybeLogEngineHookSummary();
 }
 
 ID3D11VertexShader* TerrainBlending::GetTerrainVertexShader()
@@ -760,6 +899,7 @@ void TerrainBlending::Hooks::Main_RenderDepth::thunk(bool a1, bool a2)
 	const bool tbActive = shaderCache->IsEnabled() && singleton.settings.Enabled;
 	const bool useBlendedDepthSRV = tbActive && ShouldUseBlendedDepthSRV();
 	tbHookDiagnostics.renderDepthCalls++;
+	LogTbHookStateTransition(tbActive, useBlendedDepthSRV);
 
 	if (tbActive) {
 		if (useBlendedDepthSRV) {
@@ -790,6 +930,7 @@ void TerrainBlending::Hooks::Main_RenderDepth::thunk(bool a1, bool a2)
 		func(a1, a2);
 	}
 
+	MaybeLogTbHookSummary();
 }
 
 void TerrainBlending::Hooks::BSBatchRenderer__RenderPassImmediately::thunk(RE::BSRenderPass* a_pass, uint32_t a_technique, bool a_alphaTest, uint32_t a_renderFlags)
@@ -825,6 +966,7 @@ void TerrainBlending::Hooks::BSBatchRenderer__RenderPassImmediately::thunk(RE::B
 						RenderPass call{ a_pass, a_technique, a_alphaTest, a_renderFlags };
 						singleton.terrainRenderPasses.push_back(call);
 						tbHookDiagnostics.queueTerrainCalls++;
+						MaybeLogTbHookSummary();
 						return;
 					}
 
@@ -833,25 +975,27 @@ void TerrainBlending::Hooks::BSBatchRenderer__RenderPassImmediately::thunk(RE::B
 						RenderPass call{ a_pass, a_technique, a_alphaTest, a_renderFlags };
 						singleton.renderPasses.push_back(call);
 						tbHookDiagnostics.queueNoBlendCalls++;
+						MaybeLogTbHookSummary();
 						return;
 					}
 				}
 			}
 		}
 	}
+	MaybeLogTbHookSummary();
 	func(a_pass, a_technique, a_alphaTest, a_renderFlags);
 }
 
 void TerrainBlending::Hooks::BSUtilityShader_SetupGeometry::thunk(RE::BSShader* a_shader, RE::BSRenderPass* a_pass, uint32_t a_renderFlags)
 {
-	const auto callerRva = ToModuleRva(_ReturnAddress());
+	const auto callerRva = static_cast<uint32_t>(reinterpret_cast<std::uintptr_t>(_ReturnAddress()) - REL::Module::get().base());
 	func(a_shader, a_pass, a_renderFlags);
 	globals::features::terrainBlending.OnUtilitySetupGeometry(a_shader, a_pass, a_renderFlags, callerRva);
 }
 
 bool TerrainBlending::Hooks::BSShaderProperty_SetupGeometry::thunk(RE::BSShaderProperty* a_shaderProperty, RE::BSGeometry* a_geometry)
 {
-	const auto callerRva = ToModuleRva(_ReturnAddress());
+	const auto callerRva = static_cast<uint32_t>(reinterpret_cast<std::uintptr_t>(_ReturnAddress()) - REL::Module::get().base());
 	const bool result = func(a_shaderProperty, a_geometry);
 	globals::features::terrainBlending.OnShaderPropertySetupGeometry(a_shaderProperty, a_geometry, result, callerRva);
 	return result;
@@ -862,6 +1006,7 @@ void TerrainBlending::RenderTerrainBlendingPasses()
 	tbHookDiagnostics.renderPassInvocationCalls++;
 
 	if (!settings.Enabled) {
+		LogTbHookStateTransition(false, false);
 		renderDepth = false;
 		renderTerrainDepth = false;
 		renderAltTerrain = false;
@@ -872,6 +1017,7 @@ void TerrainBlending::RenderTerrainBlendingPasses()
 		auto& zPrepassCopy = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kPOST_ZPREPASS_COPY];
 		mainDepth.depthSRV = depthSRVBackup;
 		zPrepassCopy.depthSRV = prepassSRVBackup;
+		MaybeLogTbHookSummary();
 		return;
 	}
 
@@ -923,4 +1069,5 @@ void TerrainBlending::RenderTerrainBlendingPasses()
 
 	auto& mainDepth = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kMAIN];
 	mainDepth.depthSRV = depthSRVBackup;
+	MaybeLogTbHookSummary();
 }

@@ -217,14 +217,11 @@ namespace FrameAnnotations
 		{
 			renderShadowmasksPhaseDepth.fetch_add(1, std::memory_order_relaxed);
 
-			const bool frameAnnotations = globals::state->frameAnnotations;
-			if (frameAnnotations) {
-				globals::state->BeginPerfEvent("Shadowmasks");
-			}
+			globals::state->BeginPerfEvent("Shadowmasks");
+
 			func(a1);
-			if (frameAnnotations) {
-				globals::state->EndPerfEvent();
-			}
+
+			globals::state->EndPerfEvent();
 
 			const uint32_t remaining = renderShadowmasksPhaseDepth.fetch_sub(1, std::memory_order_relaxed) - 1;
 			if (remaining == 0) {
