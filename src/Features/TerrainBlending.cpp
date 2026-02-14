@@ -12,6 +12,144 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 
 namespace
 {
+	using DiagnosticsClock = std::chrono::steady_clock;
+
+	struct TbHookDiagnostics
+	{
+		bool initialized = false;
+		bool lastActive = false;
+		bool lastUseBlendedDepthSRV = false;
+
+		uint64_t renderDepthCalls = 0;
+		uint64_t queueTerrainCalls = 0;
+		uint64_t queueNoBlendCalls = 0;
+		uint64_t terrainDepthDoubleDrawCalls = 0;
+		uint64_t renderPassInvocationCalls = 0;
+		uint64_t renderPassExecutedCalls = 0;
+		uint64_t renderPassTerrainCount = 0;
+		uint64_t renderPassNoBlendCount = 0;
+
+		DiagnosticsClock::time_point nextSummary = DiagnosticsClock::now() + std::chrono::seconds(2);
+
+		void ResetInterval()
+		{
+			renderDepthCalls = 0;
+			queueTerrainCalls = 0;
+			queueNoBlendCalls = 0;
+			terrainDepthDoubleDrawCalls = 0;
+			renderPassInvocationCalls = 0;
+			renderPassExecutedCalls = 0;
+			renderPassTerrainCount = 0;
+			renderPassNoBlendCount = 0;
+		}
+	};
+
+	TbHookDiagnostics tbHookDiagnostics{};
+
+	struct EngineHookOverrideLogState
+	{
+		bool initialized = false;
+		bool shouldApply = false;
+		bool hasSrv = false;
+		bool active = false;
+		uint32_t descriptor = 0;
+		std::string shaderName{};
+	};
+
+	struct EngineHookDiagnostics
+	{
+		uint64_t beginTechniqueCalls = 0;
+		uint64_t gateSatisfiedCalls = 0;
+		uint64_t inShadowmaskPhaseCalls = 0;
+		uint64_t utilityCalls = 0;
+		uint64_t whitelistedCalls = 0;
+		uint64_t shouldApplyCalls = 0;
+		uint64_t obbApplied = 0;
+		uint64_t obbAlreadyBound = 0;
+		uint64_t obbMissingSrv = 0;
+		uint64_t shadowmaskApplied = 0;
+		uint64_t shadowmaskAlreadyBound = 0;
+		uint64_t shadowmaskMissingSrv = 0;
+		uint64_t slot2CallerRejected = 0;
+		uint64_t slot2FallbackApplied = 0;
+
+		DiagnosticsClock::time_point nextSummary = DiagnosticsClock::now() + std::chrono::seconds(2);
+
+		void ResetInterval()
+		{
+			beginTechniqueCalls = 0;
+			gateSatisfiedCalls = 0;
+			inShadowmaskPhaseCalls = 0;
+			utilityCalls = 0;
+			whitelistedCalls = 0;
+			shouldApplyCalls = 0;
+			obbApplied = 0;
+			obbAlreadyBound = 0;
+			obbMissingSrv = 0;
+			shadowmaskApplied = 0;
+			shadowmaskAlreadyBound = 0;
+			shadowmaskMissingSrv = 0;
+			slot2CallerRejected = 0;
+			slot2FallbackApplied = 0;
+		}
+	};
+
+	struct EngineHookTechniqueOverrideState
+	{
+		bool active = false;
+		ID3D11ShaderResourceView* previousObbSrv = nullptr;
+		ID3D11ShaderResourceView* previousShadowmaskSrv = nullptr;
+	};
+
+	EngineHookDiagnostics engineHookDiagnostics{};
+	EngineHookOverrideLogState engineHookObbLogState{};
+	EngineHookOverrideLogState engineHookShadowmaskLogState{};
+	EngineHookTechniqueOverrideState engineHookTechniqueState{};
+
+	constexpr uint32_t kShadowmaskDepthDescriptor0 = 0x262002u;
+	constexpr uint32_t kShadowmaskDepthDescriptor1 = 0x1062002u;
+
+	// Slot2 allowlist is only evaluated in VR (gated by IsEngineHookFeatureGateSatisfied).
+	// Keep variant mapping explicit to match existing codebase conventions.
+	// SE/AE offsets are intentionally 0 because this caller is VR-only.
+	const std::array<uint32_t, 1> kSlot2CallerAllowlistRvas = {
+		static_cast<uint32_t>(REL::Relocate(0u, 0u, 0xDC35DBu))
+	};
+	constexpr bool kEnableAutoBroadSlot2Fallback = true;
+	constexpr uint64_t kSlot2AutoFallbackRejectThreshold = 5;
+
+	bool slot2BroadFallbackActive = false;
+	uint64_t slot2RejectTotal = 0;
+	std::unordered_set<uint32_t> slot2BlockedCallerRvas{};
+	bool hookActiveLogged = false;
+	bool fallbackActivatedLogged = false;
+	uint32_t fallbackTriggerRva = 0;
+
+bool IsEngineHookPathActive(const TerrainBlending& a_singleton)
+{
+	(void)a_singleton;
+	return true;
+}
+
+bool IsDiagnosticSlot2GuardMode(const TerrainBlending& a_singleton)
+{
+	(void)a_singleton;
+	return globals::state && globals::state->IsDeveloperMode();
+}
+
+	void LogTbHookStateTransition(bool a_active, bool a_useBlendedDepthSRV)
+	{
+		(void)a_active;
+		(void)a_useBlendedDepthSRV;
+		tbHookDiagnostics.initialized = true;
+		tbHookDiagnostics.lastActive = a_active;
+		tbHookDiagnostics.lastUseBlendedDepthSRV = a_useBlendedDepthSRV;
+	}
+
+	void MaybeLogTbHookSummary()
+	{
+		// Intentionally quiet: no periodic summary logs in normal/debug runs.
+	}
 	bool ShouldUseBlendedDepthSRV()
 	{
 		auto& vr = globals::features::vr;
