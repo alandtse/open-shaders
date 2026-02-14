@@ -127,8 +127,8 @@ namespace
 
 bool IsEngineHookPathActive(const TerrainBlending& a_singleton)
 {
-	(void)a_singleton;
-	return true;
+	const auto overridePath = static_cast<TerrainBlending::DepthOverridePath>(a_singleton.settings.OverridePath);
+	return overridePath == TerrainBlending::DepthOverridePath::EngineHook;
 }
 
 bool IsDiagnosticSlot2GuardMode(const TerrainBlending& a_singleton)
@@ -393,6 +393,9 @@ void TerrainBlending::DrawSettings()
 void TerrainBlending::LoadSettings(json& o_json)
 {
 	settings = o_json;
+
+	// Global Draw interception was removed; always normalize to engine hook path.
+	settings.OverridePath = static_cast<uint32_t>(DepthOverridePath::EngineHook);
 }
 
 void TerrainBlending::SaveSettings(json& o_json)
