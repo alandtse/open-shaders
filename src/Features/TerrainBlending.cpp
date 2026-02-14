@@ -124,6 +124,16 @@ namespace
 	bool hookActiveLogged = false;
 	bool fallbackActivatedLogged = false;
 	uint32_t fallbackTriggerRva = 0;
+	bool slot2GateActivePrevious = false;
+
+	void ResetSlot2FallbackState()
+	{
+		slot2BroadFallbackActive = false;
+		slot2RejectTotal = 0;
+		slot2BlockedCallerRvas.clear();
+		fallbackActivatedLogged = false;
+		fallbackTriggerRva = 0;
+	}
 
 bool IsEngineHookPathActive(const TerrainBlending& a_singleton)
 {
@@ -216,6 +226,26 @@ bool IsDiagnosticSlot2GuardMode(const TerrainBlending& a_singleton)
 		}
 
 		return !ShouldUseBlendedDepthSRV();
+	}
+
+	struct EngineHookPassGateState
+	{
+		bool gateSatisfied = false;
+		bool inShadowmaskPhase = false;
+		bool isUtility = false;
+		bool isWhitelistedDescriptor = false;
+		bool shouldApply = false;
+	};
+
+	EngineHookPassGateState EvaluateEngineHookPassGate(const TerrainBlending& a_singleton, RE::BSShader* a_shader, uint32_t a_descriptor)
+	{
+		EngineHookPassGateState state{};
+		state.gateSatisfied = IsEngineHookFeatureGateSatisfied(a_singleton);
+		state.inShadowmaskPhase = FrameAnnotations::IsInRenderShadowmasksPhase();
+		state.isUtility = a_shader && a_shader->shaderType.get() == RE::BSShader::Type::Utility;
+		state.isWhitelistedDescriptor = IsShadowmaskDepthDescriptorWhitelisted(a_descriptor);
+		state.shouldApply = state.gateSatisfied && state.inShadowmaskPhase && state.isUtility && state.isWhitelistedDescriptor;
+		return state;
 	}
 
 	struct SlotOverrideResult
@@ -403,6 +433,262 @@ void TerrainBlending::SaveSettings(json& o_json)
 	o_json = settings;
 }
 
+void TerrainBlending::OnBeginTechnique(RE::BSShader* a_shader, uint32_t a_pixelDescriptor, uint32_t a_callerRva)
+{
+	if (!IsEngineHookPathActive(*this)) {
+		ReleaseEngineHookTechniqueOverride();
+		return;
+	}
+
+	engineHookDiagnostics.beginTechniqueCalls++;
+
+	const auto gateState = EvaluateEngineHookPassGate(*this, a_shader, a_pixelDescriptor);
+	if (!slot2GateActivePrevious && gateState.gateSatisfied) {
+		ResetSlot2FallbackState();
+		if (IsDiagnosticSlot2GuardMode(*this)) {
+			logger::debug("[TB Override] slot2 fallback reset on TB/depth-culling off->on");
+		}
+	}
+	slot2GateActivePrevious = gateState.gateSatisfied;
+
+	if (gateState.gateSatisfied) {
+		engineHookDiagnostics.gateSatisfiedCalls++;
+	}
+	if (gateState.inShadowmaskPhase) {
+		engineHookDiagnostics.inShadowmaskPhaseCalls++;
+	}
+	if (gateState.isUtility) {
+		engineHookDiagnostics.utilityCalls++;
+	}
+	if (gateState.isWhitelistedDescriptor) {
+		engineHookDiagnostics.whitelistedCalls++;
+	}
+	if (gateState.shouldApply) {
+		engineHookDiagnostics.shouldApplyCalls++;
+		MaybeLogHookActiveOnce();
+	}
+
+	if (!gateState.shouldApply) {
+		ReleaseEngineHookTechniqueOverride();
+		LogEngineHookOverrideState(engineHookObbLogState, "OBB", a_shader, a_pixelDescriptor, false, false, false);
+		LogEngineHookOverrideState(engineHookShadowmaskLogState, "SHADOWMASK", a_shader, a_pixelDescriptor, false, false, false);
+		MaybeLogEngineHookSummary();
+		return;
+	}
+
+	auto* context = globals::d3d::context;
+	if (!context) {
+		LogEngineHookOverrideState(engineHookObbLogState, "OBB", a_shader, a_pixelDescriptor, true, false, false);
+		LogEngineHookOverrideState(engineHookShadowmaskLogState, "SHADOWMASK", a_shader, a_pixelDescriptor, true, false, false);
+		MaybeLogEngineHookSummary();
+		return;
+	}
+
+	if (!engineHookTechniqueState.active) {
+		context->PSGetShaderResources(17, 1, &engineHookTechniqueState.previousObbSrv);
+		context->PSGetShaderResources(2, 1, &engineHookTechniqueState.previousShadowmaskSrv);
+		engineHookTechniqueState.active = true;
+	}
+
+	auto* obbOverrideSrv = ResolveEngineOverrideSrv(false);
+	auto* shadowmaskOverrideSrv = ResolveEngineOverrideSrv(true);
+	const auto obbResult = ApplyPixelShaderSlotOverride(
+		context,
+		17u,
+		obbOverrideSrv,
+		engineHookDiagnostics.obbApplied,
+		engineHookDiagnostics.obbAlreadyBound,
+		engineHookDiagnostics.obbMissingSrv,
+		nullptr,
+		0u);
+	const auto shadowmaskResult = ApplyPixelShaderSlotOverride(
+		context,
+		2u,
+		shadowmaskOverrideSrv,
+		engineHookDiagnostics.shadowmaskApplied,
+		engineHookDiagnostics.shadowmaskAlreadyBound,
+		engineHookDiagnostics.shadowmaskMissingSrv,
+		&ShouldApplySlot2Rewrite,
+		a_callerRva);
+
+	LogEngineHookOverrideState(
+		engineHookObbLogState, "OBB", a_shader, a_pixelDescriptor, true, obbResult.hasSrv, obbResult.applied || obbResult.alreadyBound);
+	LogEngineHookOverrideState(
+		engineHookShadowmaskLogState,
+		"SHADOWMASK",
+		a_shader,
+		a_pixelDescriptor,
+		true,
+		shadowmaskResult.hasSrv,
+		shadowmaskResult.applied || shadowmaskResult.alreadyBound);
+	MaybeLogEngineHookSummary();
+}
+
+void TerrainBlending::OnShadowmaskPhaseEnd()
+{
+	ReleaseEngineHookTechniqueOverride();
+}
+
+void TerrainBlending::OnUtilitySetupGeometry(RE::BSShader* a_shader, RE::BSRenderPass* a_pass, uint32_t a_renderFlags, uint32_t a_callerRva)
+{
+	(void)a_pass;
+	(void)a_renderFlags;
+
+	if (!IsEngineHookPathActive(*this)) {
+		return;
+	}
+
+	auto* state = globals::state;
+	const uint32_t descriptor = state ? state->currentPixelDescriptor : 0u;
+
+	const auto gateState = EvaluateEngineHookPassGate(*this, a_shader, descriptor);
+	if (!gateState.shouldApply) {
+		return;
+	}
+
+	auto* context = globals::d3d::context;
+	if (!context) {
+		return;
+	}
+
+	auto* obbOverrideSrv = ResolveEngineOverrideSrv(false);
+	auto* shadowmaskOverrideSrv = ResolveEngineOverrideSrv(true);
+	const auto obbResult = ApplyPixelShaderSlotOverride(
+		context,
+		17u,
+		obbOverrideSrv,
+		engineHookDiagnostics.obbApplied,
+		engineHookDiagnostics.obbAlreadyBound,
+		engineHookDiagnostics.obbMissingSrv,
+		nullptr,
+		0u);
+	const auto shadowmaskResult = ApplyPixelShaderSlotOverride(
+		context,
+		2u,
+		shadowmaskOverrideSrv,
+		engineHookDiagnostics.shadowmaskApplied,
+		engineHookDiagnostics.shadowmaskAlreadyBound,
+		engineHookDiagnostics.shadowmaskMissingSrv,
+		&ShouldApplySlot2Rewrite,
+		a_callerRva);
+
+	LogEngineHookOverrideState(
+		engineHookObbLogState, "OBB", a_shader, descriptor, true, obbResult.hasSrv, obbResult.applied || obbResult.alreadyBound);
+	LogEngineHookOverrideState(
+		engineHookShadowmaskLogState,
+		"SHADOWMASK",
+		a_shader,
+		descriptor,
+		true,
+		shadowmaskResult.hasSrv,
+		shadowmaskResult.applied || shadowmaskResult.alreadyBound);
+	MaybeLogEngineHookSummary();
+}
+
+void TerrainBlending::OnShaderPropertySetupGeometry(RE::BSShaderProperty* a_shaderProperty, RE::BSGeometry* a_geometry, bool a_result, uint32_t a_callerRva)
+{
+	(void)a_shaderProperty;
+	(void)a_geometry;
+	(void)a_result;
+
+	if (!IsEngineHookPathActive(*this)) {
+		return;
+	}
+
+	auto* state = globals::state;
+	RE::BSShader* shader = state ? state->currentShader : nullptr;
+	const uint32_t descriptor = state ? state->currentPixelDescriptor : 0u;
+
+	const auto gateState = EvaluateEngineHookPassGate(*this, shader, descriptor);
+	if (!gateState.shouldApply) {
+		return;
+	}
+
+	auto* context = globals::d3d::context;
+	if (!context) {
+		return;
+	}
+
+	auto* shadowmaskOverrideSrv = ResolveEngineOverrideSrv(true);
+	const auto shadowmaskResult = ApplyPixelShaderSlotOverride(
+		context,
+		2u,
+		shadowmaskOverrideSrv,
+		engineHookDiagnostics.shadowmaskApplied,
+		engineHookDiagnostics.shadowmaskAlreadyBound,
+		engineHookDiagnostics.shadowmaskMissingSrv,
+		&ShouldApplySlot2Rewrite,
+		a_callerRva);
+
+	LogEngineHookOverrideState(
+		engineHookShadowmaskLogState,
+		"SHADOWMASK",
+		shader,
+		descriptor,
+		true,
+		shadowmaskResult.hasSrv,
+		shadowmaskResult.applied || shadowmaskResult.alreadyBound);
+	MaybeLogEngineHookSummary();
+}
+
+void TerrainBlending::OnSetDirtyStates(bool a_isCompute, uint32_t a_callerRva)
+{
+	// Slot2 clobber was traced to BSGraphics::SetDirtyStates.
+	// Re-assert depth SRVs here under strict pass gates instead of global D3D interception.
+	if (a_isCompute) {
+		return;
+	}
+	if (!IsEngineHookPathActive(*this)) {
+		return;
+	}
+
+	auto* state = globals::state;
+	RE::BSShader* shader = state ? state->currentShader : nullptr;
+	const uint32_t descriptor = state ? state->currentPixelDescriptor : 0u;
+
+	const auto gateState = EvaluateEngineHookPassGate(*this, shader, descriptor);
+	if (!gateState.shouldApply) {
+		return;
+	}
+
+	auto* context = globals::d3d::context;
+	if (!context) {
+		return;
+	}
+
+	auto* obbOverrideSrv = ResolveEngineOverrideSrv(false);
+	auto* shadowmaskOverrideSrv = ResolveEngineOverrideSrv(true);
+	const auto obbResult = ApplyPixelShaderSlotOverride(
+		context,
+		17u,
+		obbOverrideSrv,
+		engineHookDiagnostics.obbApplied,
+		engineHookDiagnostics.obbAlreadyBound,
+		engineHookDiagnostics.obbMissingSrv,
+		nullptr,
+		0u);
+	const auto shadowmaskResult = ApplyPixelShaderSlotOverride(
+		context,
+		2u,
+		shadowmaskOverrideSrv,
+		engineHookDiagnostics.shadowmaskApplied,
+		engineHookDiagnostics.shadowmaskAlreadyBound,
+		engineHookDiagnostics.shadowmaskMissingSrv,
+		&ShouldApplySlot2Rewrite,
+		a_callerRva);
+
+	LogEngineHookOverrideState(
+		engineHookObbLogState, "SETDIRTY_OBB", shader, descriptor, true, obbResult.hasSrv, obbResult.applied || obbResult.alreadyBound);
+	LogEngineHookOverrideState(
+		engineHookShadowmaskLogState,
+		"SETDIRTY_SHADOWMASK",
+		shader,
+		descriptor,
+		true,
+		shadowmaskResult.hasSrv,
+		shadowmaskResult.applied || shadowmaskResult.alreadyBound);
+	MaybeLogEngineHookSummary();
+}
 ID3D11VertexShader* TerrainBlending::GetTerrainVertexShader()
 {
 	if (!terrainVertexShader) {
