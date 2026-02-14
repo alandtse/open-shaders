@@ -1,14 +1,24 @@
 #include "TerrainBlending.h"
 
 #include "Deferred.h"
+#include "FrameAnnotations.h"
 #include "Globals.h"
 #include "ShaderCache.h"
 #include "State.h"
 #include "VR.h"
 
+#include <array>
+#include <chrono>
+#include <cstdint>
+#include <intrin.h>
+#include <sstream>
+#include <unordered_set>
+
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	TerrainBlending::Settings,
-	Enabled)
+	Enabled,
+	OverridePath,
+	Slot2GuardModeValue)
 
 namespace
 {
@@ -160,6 +170,7 @@ bool IsDiagnosticSlot2GuardMode(const TerrainBlending& a_singleton)
 	{
 		// Intentionally quiet: no periodic summary logs in normal/debug runs.
 	}
+
 	bool ShouldUseBlendedDepthSRV()
 	{
 		auto& vr = globals::features::vr;
@@ -689,6 +700,7 @@ void TerrainBlending::OnSetDirtyStates(bool a_isCompute, uint32_t a_callerRva)
 		shadowmaskResult.applied || shadowmaskResult.alreadyBound);
 	MaybeLogEngineHookSummary();
 }
+
 ID3D11VertexShader* TerrainBlending::GetTerrainVertexShader()
 {
 	if (!terrainVertexShader) {
@@ -898,8 +910,13 @@ void TerrainBlending::Hooks::Main_RenderDepth::thunk(bool a1, bool a2)
 
 	singleton.averageEyePosition = Util::GetAverageEyePosition();
 
-	if (shaderCache->IsEnabled() && singleton.settings.Enabled) {
-		if (ShouldUseBlendedDepthSRV()) {
+	const bool tbActive = shaderCache->IsEnabled() && singleton.settings.Enabled;
+	const bool useBlendedDepthSRV = tbActive && ShouldUseBlendedDepthSRV();
+	tbHookDiagnostics.renderDepthCalls++;
+	LogTbHookStateTransition(tbActive, useBlendedDepthSRV);
+
+	if (tbActive) {
+		if (useBlendedDepthSRV) {
 			mainDepth.depthSRV = singleton.blendedDepthTexture->srv.get();
 			zPrepassCopy.depthSRV = singleton.blendedDepthTexture->srv.get();
 		} else {
@@ -926,6 +943,8 @@ void TerrainBlending::Hooks::Main_RenderDepth::thunk(bool a1, bool a2)
 
 		func(a1, a2);
 	}
+
+	MaybeLogTbHookSummary();
 }
 
 void TerrainBlending::Hooks::BSBatchRenderer__RenderPassImmediately::thunk(RE::BSRenderPass* a_pass, uint32_t a_technique, bool a_alphaTest, uint32_t a_renderFlags)
@@ -950,14 +969,18 @@ void TerrainBlending::Hooks::BSBatchRenderer__RenderPassImmediately::thunk(RE::B
 				singleton.renderTerrainDepth = inTerrain;
 			}
 
-			if (inTerrain)
+			if (inTerrain) {
+				tbHookDiagnostics.terrainDepthDoubleDrawCalls++;
 				func(a_pass, a_technique, a_alphaTest, a_renderFlags);  // Run terrain twice
+			}
 		} else if (globals::state->inWorld) {
 			if (auto shaderProperty = a_pass->shaderProperty) {
 				if (a_pass->shader->shaderType.get() == RE::BSShader::Type::Lighting) {
 					if (shaderProperty->flags.all(RE::BSShaderProperty::EShaderPropertyFlag::kMultiTextureLandscape)) {
 						RenderPass call{ a_pass, a_technique, a_alphaTest, a_renderFlags };
 						singleton.terrainRenderPasses.push_back(call);
+						tbHookDiagnostics.queueTerrainCalls++;
+						MaybeLogTbHookSummary();
 						return;
 					}
 
@@ -965,18 +988,39 @@ void TerrainBlending::Hooks::BSBatchRenderer__RenderPassImmediately::thunk(RE::B
 					if (shaderProperty->flags.any(RE::BSShaderProperty::EShaderPropertyFlag::kNoTransparencyMultiSample)) {
 						RenderPass call{ a_pass, a_technique, a_alphaTest, a_renderFlags };
 						singleton.renderPasses.push_back(call);
+						tbHookDiagnostics.queueNoBlendCalls++;
+						MaybeLogTbHookSummary();
 						return;
 					}
 				}
 			}
 		}
 	}
+	MaybeLogTbHookSummary();
 	func(a_pass, a_technique, a_alphaTest, a_renderFlags);
+}
+
+void TerrainBlending::Hooks::BSUtilityShader_SetupGeometry::thunk(RE::BSShader* a_shader, RE::BSRenderPass* a_pass, uint32_t a_renderFlags)
+{
+	const auto callerRva = static_cast<uint32_t>(reinterpret_cast<std::uintptr_t>(_ReturnAddress()) - REL::Module::get().base());
+	func(a_shader, a_pass, a_renderFlags);
+	globals::features::terrainBlending.OnUtilitySetupGeometry(a_shader, a_pass, a_renderFlags, callerRva);
+}
+
+bool TerrainBlending::Hooks::BSShaderProperty_SetupGeometry::thunk(RE::BSShaderProperty* a_shaderProperty, RE::BSGeometry* a_geometry)
+{
+	const auto callerRva = static_cast<uint32_t>(reinterpret_cast<std::uintptr_t>(_ReturnAddress()) - REL::Module::get().base());
+	const bool result = func(a_shaderProperty, a_geometry);
+	globals::features::terrainBlending.OnShaderPropertySetupGeometry(a_shaderProperty, a_geometry, result, callerRva);
+	return result;
 }
 
 void TerrainBlending::RenderTerrainBlendingPasses()
 {
+	tbHookDiagnostics.renderPassInvocationCalls++;
+
 	if (!settings.Enabled) {
+		LogTbHookStateTransition(false, false);
 		renderDepth = false;
 		renderTerrainDepth = false;
 		renderAltTerrain = false;
@@ -987,6 +1031,7 @@ void TerrainBlending::RenderTerrainBlendingPasses()
 		auto& zPrepassCopy = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kPOST_ZPREPASS_COPY];
 		mainDepth.depthSRV = depthSRVBackup;
 		zPrepassCopy.depthSRV = prepassSRVBackup;
+		MaybeLogTbHookSummary();
 		return;
 	}
 
@@ -998,7 +1043,14 @@ void TerrainBlending::RenderTerrainBlendingPasses()
 	// Used to get the distance of the surface to the lowest depth
 	context->PSSetShaderResources(55, 1, &terrainDepth.depthSRV);
 
-	if (!terrainRenderPasses.empty() || !renderPasses.empty()) {
+	const uint64_t terrainPassCount = static_cast<uint64_t>(terrainRenderPasses.size());
+	const uint64_t noBlendPassCount = static_cast<uint64_t>(renderPasses.size());
+	tbHookDiagnostics.renderPassTerrainCount += terrainPassCount;
+	tbHookDiagnostics.renderPassNoBlendCount += noBlendPassCount;
+
+	if (terrainPassCount != 0 || noBlendPassCount != 0) {
+		tbHookDiagnostics.renderPassExecutedCalls++;
+
 		GET_INSTANCE_MEMBER(alphaBlendMode, shadowState)
 		GET_INSTANCE_MEMBER(alphaBlendWriteMode, shadowState)
 		GET_INSTANCE_MEMBER(depthStencilDepthMode, shadowState)
@@ -1031,4 +1083,5 @@ void TerrainBlending::RenderTerrainBlendingPasses()
 
 	auto& mainDepth = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kMAIN];
 	mainDepth.depthSRV = depthSRVBackup;
+	MaybeLogTbHookSummary();
 }
