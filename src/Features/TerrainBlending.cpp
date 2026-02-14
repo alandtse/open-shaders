@@ -134,6 +134,16 @@ namespace
 	bool hookActiveLogged = false;
 	bool fallbackActivatedLogged = false;
 	uint32_t fallbackTriggerRva = 0;
+	bool slot2GateActivePrevious = false;
+
+	void ResetSlot2FallbackState()
+	{
+		slot2BroadFallbackActive = false;
+		slot2RejectTotal = 0;
+		slot2BlockedCallerRvas.clear();
+		fallbackActivatedLogged = false;
+		fallbackTriggerRva = 0;
+	}
 
 bool IsEngineHookPathActive(const TerrainBlending& a_singleton)
 {
@@ -227,6 +237,26 @@ bool IsDiagnosticSlot2GuardMode(const TerrainBlending& a_singleton)
 		}
 
 		return !ShouldUseBlendedDepthSRV();
+	}
+
+	struct EngineHookPassGateState
+	{
+		bool gateSatisfied = false;
+		bool inShadowmaskPhase = false;
+		bool isUtility = false;
+		bool isWhitelistedDescriptor = false;
+		bool shouldApply = false;
+	};
+
+	EngineHookPassGateState EvaluateEngineHookPassGate(const TerrainBlending& a_singleton, RE::BSShader* a_shader, uint32_t a_descriptor)
+	{
+		EngineHookPassGateState state{};
+		state.gateSatisfied = IsEngineHookFeatureGateSatisfied(a_singleton);
+		state.inShadowmaskPhase = FrameAnnotations::IsInRenderShadowmasksPhase();
+		state.isUtility = a_shader && a_shader->shaderType.get() == RE::BSShader::Type::Utility;
+		state.isWhitelistedDescriptor = IsShadowmaskDepthDescriptorWhitelisted(a_descriptor);
+		state.shouldApply = state.gateSatisfied && state.inShadowmaskPhase && state.isUtility && state.isWhitelistedDescriptor;
+		return state;
 	}
 
 	struct SlotOverrideResult
@@ -423,30 +453,33 @@ void TerrainBlending::OnBeginTechnique(RE::BSShader* a_shader, uint32_t a_pixelD
 
 	engineHookDiagnostics.beginTechniqueCalls++;
 
-	const bool gateSatisfied = IsEngineHookFeatureGateSatisfied(*this);
-	const bool inShadowmaskPhase = FrameAnnotations::IsInRenderShadowmasksPhase();
-	const bool isUtility = a_shader && a_shader->shaderType.get() == RE::BSShader::Type::Utility;
-	const bool isWhitelistedDescriptor = IsShadowmaskDepthDescriptorWhitelisted(a_pixelDescriptor);
-	const bool shouldApply = gateSatisfied && inShadowmaskPhase && isUtility && isWhitelistedDescriptor;
+	const auto gateState = EvaluateEngineHookPassGate(*this, a_shader, a_pixelDescriptor);
+	if (!slot2GateActivePrevious && gateState.gateSatisfied) {
+		ResetSlot2FallbackState();
+		if (IsDiagnosticSlot2GuardMode(*this)) {
+			logger::debug("[TB Override] slot2 fallback reset on TB/depth-culling off->on");
+		}
+	}
+	slot2GateActivePrevious = gateState.gateSatisfied;
 
-	if (gateSatisfied) {
+	if (gateState.gateSatisfied) {
 		engineHookDiagnostics.gateSatisfiedCalls++;
 	}
-	if (inShadowmaskPhase) {
+	if (gateState.inShadowmaskPhase) {
 		engineHookDiagnostics.inShadowmaskPhaseCalls++;
 	}
-	if (isUtility) {
+	if (gateState.isUtility) {
 		engineHookDiagnostics.utilityCalls++;
 	}
-	if (isWhitelistedDescriptor) {
+	if (gateState.isWhitelistedDescriptor) {
 		engineHookDiagnostics.whitelistedCalls++;
 	}
-	if (shouldApply) {
+	if (gateState.shouldApply) {
 		engineHookDiagnostics.shouldApplyCalls++;
 		MaybeLogHookActiveOnce();
 	}
 
-	if (!shouldApply) {
+	if (!gateState.shouldApply) {
 		ReleaseEngineHookTechniqueOverride();
 		LogEngineHookOverrideState(engineHookObbLogState, "OBB", a_shader, a_pixelDescriptor, false, false, false);
 		LogEngineHookOverrideState(engineHookShadowmaskLogState, "SHADOWMASK", a_shader, a_pixelDescriptor, false, false, false);
@@ -519,13 +552,8 @@ void TerrainBlending::OnUtilitySetupGeometry(RE::BSShader* a_shader, RE::BSRende
 	auto* state = globals::state;
 	const uint32_t descriptor = state ? state->currentPixelDescriptor : 0u;
 
-	const bool gateSatisfied = IsEngineHookFeatureGateSatisfied(*this);
-	const bool inShadowmaskPhase = FrameAnnotations::IsInRenderShadowmasksPhase();
-	const bool isUtility = a_shader && a_shader->shaderType.get() == RE::BSShader::Type::Utility;
-	const bool isWhitelistedDescriptor = IsShadowmaskDepthDescriptorWhitelisted(descriptor);
-	const bool shouldApply = gateSatisfied && inShadowmaskPhase && isUtility && isWhitelistedDescriptor;
-
-	if (!shouldApply) {
+	const auto gateState = EvaluateEngineHookPassGate(*this, a_shader, descriptor);
+	if (!gateState.shouldApply) {
 		return;
 	}
 
@@ -582,12 +610,8 @@ void TerrainBlending::OnShaderPropertySetupGeometry(RE::BSShaderProperty* a_shad
 	RE::BSShader* shader = state ? state->currentShader : nullptr;
 	const uint32_t descriptor = state ? state->currentPixelDescriptor : 0u;
 
-	const bool gateSatisfied = IsEngineHookFeatureGateSatisfied(*this);
-	const bool inShadowmaskPhase = FrameAnnotations::IsInRenderShadowmasksPhase();
-	const bool isUtility = shader && shader->shaderType.get() == RE::BSShader::Type::Utility;
-	const bool isWhitelistedDescriptor = IsShadowmaskDepthDescriptorWhitelisted(descriptor);
-	const bool shouldApply = gateSatisfied && inShadowmaskPhase && isUtility && isWhitelistedDescriptor;
-	if (!shouldApply) {
+	const auto gateState = EvaluateEngineHookPassGate(*this, shader, descriptor);
+	if (!gateState.shouldApply) {
 		return;
 	}
 
@@ -633,12 +657,8 @@ void TerrainBlending::OnSetDirtyStates(bool a_isCompute, uint32_t a_callerRva)
 	RE::BSShader* shader = state ? state->currentShader : nullptr;
 	const uint32_t descriptor = state ? state->currentPixelDescriptor : 0u;
 
-	const bool gateSatisfied = IsEngineHookFeatureGateSatisfied(*this);
-	const bool inShadowmaskPhase = FrameAnnotations::IsInRenderShadowmasksPhase();
-	const bool isUtility = shader && shader->shaderType.get() == RE::BSShader::Type::Utility;
-	const bool isWhitelistedDescriptor = IsShadowmaskDepthDescriptorWhitelisted(descriptor);
-	const bool shouldApply = gateSatisfied && inShadowmaskPhase && isUtility && isWhitelistedDescriptor;
-	if (!shouldApply) {
+	const auto gateState = EvaluateEngineHookPassGate(*this, shader, descriptor);
+	if (!gateState.shouldApply) {
 		return;
 	}
 
