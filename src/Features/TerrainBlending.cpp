@@ -118,8 +118,12 @@ namespace
 
 	constexpr uint32_t kShadowmaskDepthDescriptor0 = 0x262002u;
 	constexpr uint32_t kShadowmaskDepthDescriptor1 = 0x1062002u;
-	constexpr std::array<uint32_t, 1> kSlot2CallerAllowlistRvas = {
-		0xDC35DBu
+
+	// Slot2 allowlist is only evaluated in VR (gated by IsEngineHookFeatureGateSatisfied).
+	// Keep variant mapping explicit to match existing codebase conventions.
+	// SE/AE offsets are intentionally 0 because this caller is VR-only.
+	const std::array<uint32_t, 1> kSlot2CallerAllowlistRvas = {
+		static_cast<uint32_t>(REL::Relocate(0u, 0u, 0xDC35DBu))
 	};
 	constexpr bool kEnableAutoBroadSlot2Fallback = true;
 	constexpr uint64_t kSlot2AutoFallbackRejectThreshold = 5;
