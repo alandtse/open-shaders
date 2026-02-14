@@ -26,7 +26,7 @@ public:
 
 	ffx::Context swapChainContext{};
 	ffx::Context frameGenContext;
-	FfxFsr3Context fsrContext[2];
+	FfxFsr3Context fsrContext;
 
 	bool featureFSR3FG = false;
 
