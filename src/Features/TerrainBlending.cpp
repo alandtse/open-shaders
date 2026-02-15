@@ -95,12 +95,12 @@ namespace
 		return globals::state && globals::state->IsDeveloperMode();
 	}
 
-// Caller identity must come from _ReturnAddress() at each hook callsite.
-// Normalize to module-relative RVA so values are stable across process ASLR.
-uint32_t ToModuleRva(const void* a_returnAddress)
-{
-	return static_cast<uint32_t>(reinterpret_cast<std::uintptr_t>(a_returnAddress) - REL::Module::get().base());
-}
+	// Caller identity must come from _ReturnAddress() at each hook callsite.
+	// Normalize to module-relative RVA so values are stable across process ASLR.
+	uint32_t ToModuleRva(const void* a_returnAddress)
+	{
+		return static_cast<uint32_t>(reinterpret_cast<std::uintptr_t>(a_returnAddress) - REL::Module::get().base());
+	}
 
 	bool ShouldUseBlendedDepthSRV()
 	{
@@ -421,7 +421,6 @@ void TerrainBlending::OnBeginTechnique(RE::BSShader* a_shader, uint32_t a_pixelD
 		engineHookDiagnostics.shadowmaskMissingSrv,
 		&ShouldApplySlot2Rewrite,
 		a_callerRva);
-
 }
 
 void TerrainBlending::OnShadowmaskPhaseEnd()
@@ -467,7 +466,6 @@ void TerrainBlending::OnUtilitySetupGeometry(RE::BSShader* a_shader, RE::BSRende
 		engineHookDiagnostics.shadowmaskMissingSrv,
 		&ShouldApplySlot2Rewrite,
 		a_callerRva);
-
 }
 
 void TerrainBlending::OnShaderPropertySetupGeometry(RE::BSShaderProperty* a_shaderProperty, RE::BSGeometry* a_geometry, bool a_result, uint32_t a_callerRva)
@@ -500,7 +498,6 @@ void TerrainBlending::OnShaderPropertySetupGeometry(RE::BSShaderProperty* a_shad
 		engineHookDiagnostics.shadowmaskMissingSrv,
 		&ShouldApplySlot2Rewrite,
 		a_callerRva);
-
 }
 
 void TerrainBlending::OnSetDirtyStates(bool a_isCompute, uint32_t a_callerRva)
@@ -545,7 +542,6 @@ void TerrainBlending::OnSetDirtyStates(bool a_isCompute, uint32_t a_callerRva)
 		engineHookDiagnostics.shadowmaskMissingSrv,
 		&ShouldApplySlot2Rewrite,
 		a_callerRva);
-
 }
 
 ID3D11VertexShader* TerrainBlending::GetTerrainVertexShader()
@@ -789,7 +785,6 @@ void TerrainBlending::Hooks::Main_RenderDepth::thunk(bool a1, bool a2)
 
 		func(a1, a2);
 	}
-
 }
 
 void TerrainBlending::Hooks::BSBatchRenderer__RenderPassImmediately::thunk(RE::BSRenderPass* a_pass, uint32_t a_technique, bool a_alphaTest, uint32_t a_renderFlags)
