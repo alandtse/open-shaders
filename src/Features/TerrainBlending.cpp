@@ -15,9 +15,7 @@
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	TerrainBlending::Settings,
-	Enabled,
-	OverridePath,
-	Slot2GuardModeValue)
+	Enabled)
 
 namespace
 {
@@ -92,17 +90,10 @@ namespace
 		fallbackTriggerRva = 0;
 	}
 
-bool IsEngineHookPathActive(const TerrainBlending& a_singleton)
-{
-	const auto overridePath = static_cast<TerrainBlending::DepthOverridePath>(a_singleton.settings.OverridePath);
-	return overridePath == TerrainBlending::DepthOverridePath::EngineHook;
-}
-
-bool IsDiagnosticSlot2GuardMode(const TerrainBlending& a_singleton)
-{
-	(void)a_singleton;
-	return globals::state && globals::state->IsDeveloperMode();
-}
+	bool IsDiagnosticSlot2GuardMode()
+	{
+		return globals::state && globals::state->IsDeveloperMode();
+	}
 
 	bool ShouldUseBlendedDepthSRV()
 	{
@@ -149,7 +140,7 @@ bool IsDiagnosticSlot2GuardMode(const TerrainBlending& a_singleton)
 			slot2BroadFallbackActive = true;
 			engineHookDiagnostics.slot2FallbackApplied++;
 			fallbackTriggerRva = a_callerRva;
-			if (!fallbackActivatedLogged && IsDiagnosticSlot2GuardMode(globals::features::terrainBlending)) {
+			if (!fallbackActivatedLogged && IsDiagnosticSlot2GuardMode()) {
 				logger::debug(
 					"[TB Override] slot2 fallback activated triggerRva=0x{:X} blockedEvents={} blockedUniqueRvas={}",
 					fallbackTriggerRva,
@@ -190,8 +181,6 @@ bool IsDiagnosticSlot2GuardMode(const TerrainBlending& a_singleton)
 		state.isWhitelistedDescriptor = IsShadowmaskDepthDescriptorWhitelisted(a_descriptor);
 		state.shouldApply = state.gateSatisfied && state.inShadowmaskPhase && state.isUtility && state.isWhitelistedDescriptor;
 		return state;
-=======
->>>>>>> d79b5301 (PR(Alandtse): Why isn't this using your new function: ShouldUseBlendedDepthSRV (TerrainBlendning.cpp))
 	}
 
 	struct SlotOverrideResult
@@ -243,7 +232,7 @@ bool IsDiagnosticSlot2GuardMode(const TerrainBlending& a_singleton)
 
 	void MaybeLogHookActiveOnce()
 	{
-		if (!hookActiveLogged && IsDiagnosticSlot2GuardMode(globals::features::terrainBlending)) {
+		if (!hookActiveLogged && IsDiagnosticSlot2GuardMode()) {
 			std::ostringstream allowlist;
 			for (size_t i = 0; i < kSlot2CallerAllowlistRvas.size(); i++) {
 				if (i != 0) {
@@ -352,9 +341,6 @@ void TerrainBlending::DrawSettings()
 void TerrainBlending::LoadSettings(json& o_json)
 {
 	settings = o_json;
-
-	// Global Draw interception was removed; always normalize to engine hook path.
-	settings.OverridePath = static_cast<uint32_t>(DepthOverridePath::EngineHook);
 }
 
 void TerrainBlending::SaveSettings(json& o_json)
@@ -364,17 +350,12 @@ void TerrainBlending::SaveSettings(json& o_json)
 
 void TerrainBlending::OnBeginTechnique(RE::BSShader* a_shader, uint32_t a_pixelDescriptor, uint32_t a_callerRva)
 {
-	if (!IsEngineHookPathActive(*this)) {
-		ReleaseEngineHookTechniqueOverride();
-		return;
-	}
-
 	engineHookDiagnostics.beginTechniqueCalls++;
 
 	const auto gateState = EvaluateEngineHookPassGate(*this, a_shader, a_pixelDescriptor);
 	if (!slot2GateActivePrevious && gateState.gateSatisfied) {
 		ResetSlot2FallbackState();
-		if (IsDiagnosticSlot2GuardMode(*this)) {
+		if (IsDiagnosticSlot2GuardMode()) {
 			logger::debug("[TB Override] slot2 fallback reset on TB/depth-culling off->on");
 		}
 	}
@@ -446,10 +427,6 @@ void TerrainBlending::OnUtilitySetupGeometry(RE::BSShader* a_shader, RE::BSRende
 	(void)a_pass;
 	(void)a_renderFlags;
 
-	if (!IsEngineHookPathActive(*this)) {
-		return;
-	}
-
 	auto* state = globals::state;
 	const uint32_t descriptor = state ? state->currentPixelDescriptor : 0u;
 
@@ -492,10 +469,6 @@ void TerrainBlending::OnShaderPropertySetupGeometry(RE::BSShaderProperty* a_shad
 	(void)a_geometry;
 	(void)a_result;
 
-	if (!IsEngineHookPathActive(*this)) {
-		return;
-	}
-
 	auto* state = globals::state;
 	RE::BSShader* shader = state ? state->currentShader : nullptr;
 	const uint32_t descriptor = state ? state->currentPixelDescriptor : 0u;
@@ -528,9 +501,6 @@ void TerrainBlending::OnSetDirtyStates(bool a_isCompute, uint32_t a_callerRva)
 	// Slot2 clobber was traced to BSGraphics::SetDirtyStates.
 	// Re-assert depth SRVs here under strict pass gates instead of global D3D interception.
 	if (a_isCompute) {
-		return;
-	}
-	if (!IsEngineHookPathActive(*this)) {
 		return;
 	}
 
