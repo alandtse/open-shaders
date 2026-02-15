@@ -55,19 +55,6 @@ namespace Util
 	void DrawButtonCombo(const std::vector<ButtonCombo>& combo, bool showControllerLabels);
 
 	/**
-	 * @brief Sets standard input flags for a VR overlay
-	 * @param overlay Pointer to the OpenVR overlay interface
-	 * @param handle Handle to the VR overlay
-	 *
-	 * This function configures an overlay to accept VR input events including:
-	 * - Scroll events
-	 * - Touchpad events
-	 * - Gamepad events
-	 * - Dashboard visibility
-	 */
-	void SetOverlayInputFlags(vr::IVROverlay* overlay, vr::VROverlayHandle_t handle);
-
-	/**
 	 * @brief Computes a transformation matrix for positioning an overlay relative to the HMD
 	 * @param offsetX Horizontal offset from HMD in meters (positive = right)
 	 * @param offsetY Vertical offset from HMD in meters (positive = up)
@@ -78,20 +65,6 @@ namespace Util
 	 * in HMD local space to create a transformation matrix suitable for overlay positioning.
 	 */
 	vr::HmdMatrix34_t ComputeOverlayTransformFromHMD(float offsetX, float offsetY, float offsetZ);
-
-	/**
-	 * @brief Creates a transformation matrix for controller-relative overlay positioning
-	 * @param offsetX Horizontal offset from controller in meters
-	 * @param offsetY Vertical offset from controller in meters
-	 * @param offsetZ Depth offset from controller in meters
-	 * @param width Width of the overlay in meters
-	 * @param height Height of the overlay in meters
-	 * @return Transformation matrix for controller-relative positioning
-	 *
-	 * This function creates a transformation matrix that positions an overlay
-	 * relative to a VR controller with the specified dimensions and offsets.
-	 */
-	vr::HmdMatrix34_t CreateControllerOverlayTransform(float offsetX, float offsetY, float offsetZ, float width, float height);
 
 	/**
 	 * @brief Common OpenVR system access pattern with validation
@@ -126,17 +99,6 @@ namespace Util
 		 */
 		bool HasOverlay() const { return IsValid() && overlay; }
 	};
-
-	/**
-	 * @brief Get UI color for controller device type
-	 * @param device The controller device type
-	 * @param isRecording Whether the device is in recording mode (affects color)
-	 * @return ImVec4 color value for UI rendering
-	 *
-	 * This function provides consistent color coding for different controller
-	 * device types in the UI, with special handling for recording mode.
-	 */
-	ImVec4 GetControllerDeviceColor(ControllerDevice device, bool isRecording = false);
 
 	/**
 	 * @brief Get controller index for our ControllerDevice enum
@@ -283,25 +245,5 @@ namespace Util
 		// Fallback to average human IPD
 		return 0.064f;
 	}
-
-	//=============================================================================
-	// WAND POINTING UTILITIES
-	//=============================================================================
-
-	/**
-	 * @brief Computes controller ray intersection with a VR overlay
-	 * @param overlay OpenVR overlay interface
-	 * @param overlayHandle Handle to the overlay to test intersection with
-	 * @param controllerIndex Tracked device index of the controller
-	 * @param outUV Output UV coordinates (0-1 range) of intersection point
-	 * @return true if the controller ray intersects the overlay, false otherwise
-	 *
-	 * This function uses OpenVR's ComputeOverlayIntersection to perform ray-casting
-	 * from the controller's position and forward direction to detect if it's pointing
-	 * at the specified overlay. If an intersection is found, the UV coordinates are
-	 * returned in the outUV parameter.
-	 */
-	bool ComputeWandIntersection(vr::IVROverlay* overlay, vr::VROverlayHandle_t overlayHandle,
-		vr::TrackedDeviceIndex_t controllerIndex, ImVec2& outUV);
 
 }
