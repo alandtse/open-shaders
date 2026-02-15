@@ -189,7 +189,7 @@ void VR::EarlyPrepass()
 void VR::DrawOverlay()
 {
 	auto& vr = globals::features::vr;
-	if (!vr.IsEffectivelyCompatible())
+	if (!vr.IsOpenVRCompatible())
 		return;
 	static LARGE_INTEGER overlayShowStart = { 0 };
 	static LARGE_INTEGER freq = { 0 };
@@ -288,7 +288,7 @@ void VR::DrawSettings()
 		}
 
 		// Key Bindings Tab
-		if (IsEffectivelyCompatible()) {
+		if (IsOpenVRCompatible()) {
 			if (BeginTabItemWithFont("Bindings", Menu::FontRole::Subheading)) {
 				if (ImGui::BeginChild("##VRBindingsFrame", { 0, 0 }, true)) {
 					DrawKeyBindings();
@@ -511,7 +511,7 @@ namespace
 	{
 		auto& vr = globals::features::vr;
 		auto& settings = vr.settings;
-		if (!vr.IsEffectivelyCompatible())
+		if (!vr.IsOpenVRCompatible())
 			return;
 		if (ImGui::CollapsingHeader("Controller Input Instructions", ImGuiTreeNodeFlags_DefaultOpen)) {
 			ImGui::SliderInt("Auto-hide Welcome overlay timeout", &settings.kAutoHideSeconds, 0, VR::Config::kMaxAutoHideSeconds,
@@ -671,7 +671,7 @@ namespace
 	{
 		auto& vr = globals::features::vr;
 		auto& settings = vr.settings;
-		if (!vr.IsEffectivelyCompatible())
+		if (!vr.IsOpenVRCompatible())
 			return;
 		if (ImGui::CollapsingHeader("Menu Settings", ImGuiTreeNodeFlags_DefaultOpen)) {
 			float maxScale = VR::Config::kMaxMenuScale;
@@ -736,7 +736,7 @@ namespace
 	void DrawMouseSettings()
 	{
 		auto& vr = globals::features::vr;
-		if (!vr.IsEffectivelyCompatible())
+		if (!vr.IsOpenVRCompatible())
 			return;
 		VR::Settings& settings = vr.settings;
 		if (ImGui::CollapsingHeader("Input Settings", ImGuiTreeNodeFlags_DefaultOpen)) {
@@ -764,7 +764,7 @@ namespace
 	void DrawDragSettings()
 	{
 		auto& vr = globals::features::vr;
-		if (!vr.IsEffectivelyCompatible())
+		if (!vr.IsOpenVRCompatible())
 			return;
 		VR::Settings& settings = vr.settings;
 		if (ImGui::CollapsingHeader("Drag Settings", ImGuiTreeNodeFlags_DefaultOpen)) {
@@ -929,17 +929,11 @@ namespace
 		if (ImGui::CollapsingHeader("OpenVR Information", ImGuiTreeNodeFlags_DefaultOpen)) {
 			auto& info = vr.openVRInfo;
 			if (info.isAvailable) {
-				bool effective = vr.IsEffectivelyCompatible();
-				bool devOverride = !info.isCompatible && effective;
-
-				if (effective) {
-					if (devOverride)
-						ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.0f, 1.0f), "OpenVR System: Active (Developer Mode Override)");
-					else
-						ImGui::Text("OpenVR System: Active & Compatible");
+				if (vr.IsOpenVRCompatible()) {
+					ImGui::Text("OpenVR System: Active & Compatible");
 				} else {
 					ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.5f, 1.0f), "OpenVR System: Active but INCOMPATIBLE");
-					ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.5f, 1.0f), "VR overlay menus disabled. Enable developer mode (debug logging) to override.");
+					ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.5f, 1.0f), "VR overlay menus disabled.");
 				}
 
 				ImGui::Text("Runtime: %s", VRDetection::RuntimeTypeToString(info.runtimeType));
@@ -954,9 +948,6 @@ namespace
 				ImGui::Text("    IVROverlay_016: %s", info.hasOverlayInterface ? "OK" : "Missing");
 				ImGui::Text("    IVRSystem_017: %s", info.hasSystemInterface ? "OK" : "Missing");
 				ImGui::Text("    IVRCompositor_021: %s", info.hasCompositorInterface ? "OK" : "Missing");
-				if (devOverride) {
-					ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.0f, 1.0f), "  Developer Mode: Active (bypassing compatibility check)");
-				}
 				ImGui::TextColored(ImVec4(0.3f, 1.0f, 0.3f, 1.0f), "  Rendering: In-scene overlay (submit hook)");
 
 			} else {
@@ -1526,7 +1517,7 @@ void VR::UpdateVROverlayControllerPosition()
 // Add overlay management methods for VR menu overlays
 void VR::EnsureOverlayInitialized()
 {
-	if (!IsEffectivelyCompatible()) {
+	if (!IsOpenVRCompatible()) {
 		logger::warn("OpenVR version is incompatible.");
 		return;
 	}
@@ -2597,11 +2588,6 @@ void VR::DetectOpenVRInfo()
 bool VR::IsOpenVRCompatible() const
 {
 	return openVRInfo.isCompatible;
-}
-
-bool VR::IsEffectivelyCompatible() const
-{
-	return openVRInfo.isCompatible || globals::state->IsDeveloperMode();
 }
 
 //=============================================================================

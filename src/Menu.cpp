@@ -651,7 +651,7 @@ void Menu::Init()
 
 	BuildCategoryCounts();
 
-	if (globals::features::vr.IsEffectivelyCompatible()) {
+	if (globals::features::vr.IsOpenVRCompatible()) {
 		globals::features::vr.EnsureOverlayInitialized();
 	}
 
@@ -933,7 +933,7 @@ void Menu::ProcessInputEventQueue()
 								event.device == RE::INPUT_DEVICE::kOculusPrimary || event.device == RE::INPUT_DEVICE::kOculusSecondary ||
 								event.device == RE::INPUT_DEVICE::kWMRPrimary || event.device == RE::INPUT_DEVICE::kWMRSecondary));
 
-		if (globals::features::vr.IsEffectivelyCompatible() && isVRController) {
+		if (globals::features::vr.IsOpenVRCompatible() && isVRController) {
 			vrEvents.push_back(event);
 		} else {
 			nonVREvents.push_back(event);

@@ -3,7 +3,7 @@
 #include "Menu.h"
 #include "OverlayFeature.h"
 #include "Utils/Input.h"
-#include "VR/OpenVRDetection.h"
+#include "VR/OpenVRDetection.h"  // In Features/VR/
 #include <algorithm>
 #include <d3d11.h>
 #include <imgui_impl_dx11.h>
@@ -123,7 +123,7 @@ public:
 	//=============================================================================
 
 	virtual void DrawOverlay() override;
-	virtual bool IsOverlayVisible() const override { return IsEffectivelyCompatible() && settings.kAutoHideSeconds > 0 && !globals::menu->IsEnabled; }
+	virtual bool IsOverlayVisible() const override { return IsOpenVRCompatible() && settings.kAutoHideSeconds > 0 && !globals::menu->IsEnabled; }
 
 	//=============================================================================
 	// SETTINGS STRUCTURE
@@ -479,5 +479,4 @@ public:
 
 	void DetectOpenVRInfo();
 	bool IsOpenVRCompatible() const;
-	bool IsEffectivelyCompatible() const;
 };
