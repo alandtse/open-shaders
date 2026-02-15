@@ -13,6 +13,9 @@ void VR::UpdateOverlayMenuStateFromInput()
 		return;
 	}
 
+	if (globals::menu == nullptr)
+		return;
+
 	bool& isEnabled = globals::menu->IsEnabled;
 	bool& overlayEnabled = globals::menu->overlayVisible;
 	bool& testMode = settings.VRMenuControllerDiagnosticsTestMode;
@@ -176,7 +179,6 @@ void VR::ProcessVRButtonEvent(const Menu::KeyEvent& event)
 	}
 
 	ImGuiIO& io = ImGui::GetIO();
-	(void)event;
 	bool isPrimary = RE::BSOpenVRControllerDevice::IsPrimaryController(event.device);
 	bool isSecondary = RE::BSOpenVRControllerDevice::IsSecondaryController(event.device);
 	bool& testMode = settings.VRMenuControllerDiagnosticsTestMode;
@@ -300,7 +302,7 @@ void VR::ProcessThumbstickScroll(RE::VRControllerState& controllerState, size_t 
 
 void VR::ProcessControllerInputForImGui()
 {
-	if (!globals::menu->IsEnabled)
+	if (!globals::menu || !globals::menu->IsEnabled)
 		return;
 	bool testMode = settings.VRMenuControllerDiagnosticsTestMode;
 	float mouseDeadzone = settings.mouseDeadzone;
@@ -360,7 +362,6 @@ void VR::ProcessControllerInputForImGui()
 					io.AddMousePosEvent(mousePos.x, mousePos.y);
 					io.MouseDrawCursor = true;
 					io.WantSetMousePos = true;
-					io.AddMouseButtonEvent(ImGuiMouseButton_Left, false);
 				}
 			}
 

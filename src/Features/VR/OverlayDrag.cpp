@@ -55,7 +55,7 @@ bool VR::CanPerformDrag()
 	if (!settings.EnableDragToReposition)
 		return false;
 
-	if (!globals::menu->IsEnabled)
+	if (!globals::menu || !globals::menu->IsEnabled)
 		return false;
 
 	RE::BSOpenVR* openvr = RE::BSOpenVR::GetSingleton();
@@ -377,12 +377,8 @@ void VR::UpdateFixedWorldPositioning()
 	if (settings.VRMenuPositioningMethod != 1)
 		return;
 
-	bool isUninitialized = (fixedWorldOverlayPosition.m._41 == 0.0f &&
-							fixedWorldOverlayPosition.m._42 == 0.0f &&
-							fixedWorldOverlayPosition.m._43 == 0.0f &&
-							fixedWorldOverlayPosition.m._11 == 1.0f);
-
-	if (isUninitialized) {
+	if (!fixedWorldOverlayPosition.initialized) {
+		fixedWorldOverlayPosition.initialized = true;
 		SetFixedOverlayToCurrentHMD();
 		auto player = RE::PlayerCharacter::GetSingleton();
 		if (player) {

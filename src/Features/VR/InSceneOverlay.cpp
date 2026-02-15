@@ -48,6 +48,8 @@ void VR::InitInSceneResources()
 	if (inSceneResources.initialized)
 		return;
 
+	InSceneResources temp = {};
+
 	auto device = globals::d3d::device;
 
 	// 1. Compile shaders - compile VS to get bytecode for input layout, PS separately
@@ -102,8 +104,8 @@ void VR::InitInSceneResources()
 		return;
 	}
 
-	inSceneResources.vs.attach(vs);
-	inSceneResources.ps.attach(ps);
+	temp.vs.attach(vs);
+	temp.ps.attach(ps);
 	if (psBlob)
 		psBlob->Release();  // Don't need PS blob anymore
 
@@ -125,7 +127,7 @@ void VR::InitInSceneResources()
 	polygonLayout[1].InputSlotClass = D3D11_INPUT_PER_VERTEX_DATA;
 	polygonLayout[1].InstanceDataStepRate = 0;
 
-	if (FAILED(device->CreateInputLayout(polygonLayout, 2, vsBlob->GetBufferPointer(), vsBlob->GetBufferSize(), inSceneResources.inputLayout.put()))) {
+	if (FAILED(device->CreateInputLayout(polygonLayout, 2, vsBlob->GetBufferPointer(), vsBlob->GetBufferSize(), temp.inputLayout.put()))) {
 		logger::error("VR: Failed to create input layout");
 		vsBlob->Release();
 		return;
@@ -153,7 +155,7 @@ void VR::InitInSceneResources()
 	vertexBufferDesc.BindFlags = D3D11_BIND_VERTEX_BUFFER;
 	D3D11_SUBRESOURCE_DATA vertexData = {};
 	vertexData.pSysMem = vertices;
-	if (FAILED(device->CreateBuffer(&vertexBufferDesc, &vertexData, inSceneResources.vb.put()))) {
+	if (FAILED(device->CreateBuffer(&vertexBufferDesc, &vertexData, temp.vb.put()))) {
 		logger::error("VR: Failed to create vertex buffer");
 		return;
 	}
@@ -165,7 +167,7 @@ void VR::InitInSceneResources()
 	indexBufferDesc.BindFlags = D3D11_BIND_INDEX_BUFFER;
 	D3D11_SUBRESOURCE_DATA indexData = {};
 	indexData.pSysMem = indices;
-	if (FAILED(device->CreateBuffer(&indexBufferDesc, &indexData, inSceneResources.ib.put()))) {
+	if (FAILED(device->CreateBuffer(&indexBufferDesc, &indexData, temp.ib.put()))) {
 		logger::error("VR: Failed to create index buffer");
 		return;
 	}
@@ -175,7 +177,7 @@ void VR::InitInSceneResources()
 	matrixBufferDesc.ByteWidth = sizeof(InSceneCB);
 	matrixBufferDesc.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
 	matrixBufferDesc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
-	if (FAILED(device->CreateBuffer(&matrixBufferDesc, nullptr, inSceneResources.cb.put()))) {
+	if (FAILED(device->CreateBuffer(&matrixBufferDesc, nullptr, temp.cb.put()))) {
 		logger::error("VR: Failed to create constant buffer");
 		return;
 	}
@@ -190,7 +192,7 @@ void VR::InitInSceneResources()
 	blendDesc.RenderTarget[0].DestBlendAlpha = D3D11_BLEND_ZERO;
 	blendDesc.RenderTarget[0].BlendOpAlpha = D3D11_BLEND_OP_ADD;
 	blendDesc.RenderTarget[0].RenderTargetWriteMask = 0x0F;
-	if (FAILED(device->CreateBlendState(&blendDesc, inSceneResources.blendState.put()))) {
+	if (FAILED(device->CreateBlendState(&blendDesc, temp.blendState.put()))) {
 		logger::error("VR: Failed to create blend state");
 		return;
 	}
@@ -199,7 +201,7 @@ void VR::InitInSceneResources()
 	depthDesc.DepthEnable = FALSE;  // Always on top
 	depthDesc.DepthWriteMask = D3D11_DEPTH_WRITE_MASK_ZERO;
 	depthDesc.DepthFunc = D3D11_COMPARISON_ALWAYS;
-	if (FAILED(device->CreateDepthStencilState(&depthDesc, inSceneResources.depthState.put()))) {
+	if (FAILED(device->CreateDepthStencilState(&depthDesc, temp.depthState.put()))) {
 		logger::error("VR: Failed to create depth stencil state");
 		return;
 	}
@@ -209,7 +211,7 @@ void VR::InitInSceneResources()
 	rasterDesc.CullMode = D3D11_CULL_NONE;
 	rasterDesc.FrontCounterClockwise = FALSE;
 	rasterDesc.DepthClipEnable = TRUE;
-	if (FAILED(device->CreateRasterizerState(&rasterDesc, inSceneResources.rasterizerState.put()))) {
+	if (FAILED(device->CreateRasterizerState(&rasterDesc, temp.rasterizerState.put()))) {
 		logger::error("VR: Failed to create rasterizer state");
 		return;
 	}
@@ -222,11 +224,12 @@ void VR::InitInSceneResources()
 	samplerDesc.ComparisonFunc = D3D11_COMPARISON_NEVER;
 	samplerDesc.MinLOD = 0;
 	samplerDesc.MaxLOD = D3D11_FLOAT32_MAX;
-	if (FAILED(device->CreateSamplerState(&samplerDesc, inSceneResources.sampler.put()))) {
+	if (FAILED(device->CreateSamplerState(&samplerDesc, temp.sampler.put()))) {
 		logger::error("VR: Failed to create sampler state");
 		return;
 	}
 
+	inSceneResources = std::move(temp);
 	inSceneResources.initialized = true;
 	logger::debug("VR: In-Scene Overlay resources initialized.");
 }

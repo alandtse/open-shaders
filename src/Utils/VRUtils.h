@@ -220,7 +220,7 @@ namespace Util
 			return 0.064f;  // Default fallback IPD in meters
 
 		// Method 1: Query IPD property directly
-		vr::ETrackedPropertyError error;
+		vr::ETrackedPropertyError error = vr::TrackedProp_UnknownProperty;
 		float ipd = openvr->vrSystem->GetFloatTrackedDeviceProperty(
 			vr::k_unTrackedDeviceIndex_Hmd,
 			vr::Prop_UserIpdMeters_Float,
@@ -237,8 +237,7 @@ namespace Util
 		// Eye separation is in the X translation component (m[0][3])
 		float eyeSeparation = std::abs(leftEye.m[0][3] - rightEye.m[0][3]);
 
-		// Sanity check: typical IPD is 0.058-0.072 meters
-		if (eyeSeparation > 0.05f && eyeSeparation < 0.08f) {
+		if (eyeSeparation > 0.0f && eyeSeparation < 0.1f) {
 			return eyeSeparation;
 		}
 

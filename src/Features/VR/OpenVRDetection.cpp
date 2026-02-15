@@ -50,8 +50,11 @@ namespace VRDetection
 		result.isAvailable = true;
 
 		char dllPath[MAX_PATH];
-		if (GetModuleFileNameA(hModule, dllPath, MAX_PATH) == 0)
+		DWORD fileLength = GetModuleFileNameA(hModule, dllPath, MAX_PATH);
+		if (fileLength == 0 || (fileLength == MAX_PATH && GetLastError() == ERROR_INSUFFICIENT_BUFFER)) {
+			result.isAvailable = false;
 			return;
+		}
 
 		result.dllPath = dllPath;
 

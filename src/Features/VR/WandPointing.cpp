@@ -53,7 +53,7 @@ bool VR::ComputeWandIntersectionForOverlayType(OverlayType type, vr::TrackedDevi
 	Vector3 localOrigin = Vector3::Transform(rayOrigin, worldToOverlay);
 	Vector3 localDir = Vector3::TransformNormal(rayDir, worldToOverlay);
 
-	if (abs(localDir.z) < 1e-6f)
+	if (std::abs(localDir.z) < 1e-6f)
 		return false;
 
 	float t = -localOrigin.z / localDir.z;
@@ -73,6 +73,14 @@ bool VR::ComputeWandIntersectionForOverlayType(OverlayType type, vr::TrackedDevi
 
 bool VR::ComputeWandIntersection(vr::TrackedDeviceIndex_t controllerIndex, ImVec2& outUV)
 {
+	// float controllerM[3][4];
+	// if (!Util::GetControllerWorldMatrix(controllerIndex, controllerM)) {
+	// 	return false;
+	// }
+	// Matrix controllerWorld = Util::HmdMatrix34ToMatrix(Util::Float3x4ToHmdMatrix34(controllerM));
+	// wandState.rayOrigin = controllerWorld.Translation();
+	// wandState.rayDirection = controllerWorld.Forward();
+
 	bool intersected = false;
 	if (settings.attachMode == AttachMode::HMDOnly || settings.attachMode == AttachMode::Both) {
 		if (ComputeWandIntersectionForOverlayType(OverlayType::HMD, controllerIndex, outUV)) {
@@ -98,7 +106,7 @@ bool VR::ComputeWandIntersection(vr::TrackedDeviceIndex_t controllerIndex, ImVec
 
 void VR::UpdateCursorFromWandPointing()
 {
-	if (!settings.EnableWandPointing || !globals::menu->IsEnabled)
+	if (!settings.EnableWandPointing || !globals::menu || !globals::menu->IsEnabled)
 		return;
 
 	ImGuiIO& io = ImGui::GetIO();

@@ -128,7 +128,7 @@ public:
 	//=============================================================================
 
 	virtual void DrawOverlay() override;
-	virtual bool IsOverlayVisible() const override { return IsOpenVRCompatible() && settings.kAutoHideSeconds > 0 && !globals::menu->IsEnabled; }
+	virtual bool IsOverlayVisible() const override { return IsOpenVRCompatible() && settings.kAutoHideSeconds > 0 && globals::menu && !globals::menu->IsEnabled; }
 
 	//=============================================================================
 	// SETTINGS STRUCTURE
@@ -359,6 +359,7 @@ public:
 	struct OverlayWorldPosition
 	{
 		Matrix m = Matrix::Identity;
+		bool initialized = false;
 	} fixedWorldOverlayPosition;
 
 	struct OverlayDragState
@@ -476,7 +477,10 @@ public:
 	void InitInSceneResources();
 	void RenderInSceneOverlay(vr::EVREye eye, ID3D11Texture2D* targetTexture, const vr::VRTextureBounds_t* bounds);
 	void InstallSubmitHook();
+	void DetectOpenVRInfo();
+	bool IsOpenVRCompatible() const;
 
+private:
 	//=============================================================================
 	// PRIVATE HELPERS
 	//=============================================================================
@@ -484,12 +488,4 @@ public:
 	bool GetGripPressed(bool isLeft, bool isRight) const;
 	void ResetComboRecording();
 	void ApplyRecordedCombo();
-
-public:
-	//=============================================================================
-	// PRIVATE IMPLEMENTATION
-	//=============================================================================
-
-	void DetectOpenVRInfo();
-	bool IsOpenVRCompatible() const;
 };

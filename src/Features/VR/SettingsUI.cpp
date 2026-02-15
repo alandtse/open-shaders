@@ -509,19 +509,11 @@ namespace
 		}
 		ImGui::Spacing();
 		if (ImGui::Button("Reset to Defaults")) {
-			settings.VRMenuOpenKeys = {
-				InputCombo::Primary(static_cast<uint32_t>(RE::BSOpenVRControllerDevice::Keys::kXA)),
-				InputCombo::Primary(static_cast<uint32_t>(RE::BSOpenVRControllerDevice::Keys::kBY))
-			};
-			settings.VRMenuCloseKeys = {
-				InputCombo::Both(static_cast<uint32_t>(RE::BSOpenVRControllerDevice::Keys::kGrip))
-			};
-			settings.VROverlayOpenKeys = {
-				InputCombo::Secondary(static_cast<uint32_t>(RE::BSOpenVRControllerDevice::Keys::kJoystickTrigger))
-			};
-			settings.VROverlayCloseKeys = {
-				InputCombo::Primary(static_cast<uint32_t>(RE::BSOpenVRControllerDevice::Keys::kJoystickTrigger))
-			};
+			VR::Settings defaults;
+			settings.VRMenuOpenKeys = defaults.VRMenuOpenKeys;
+			settings.VRMenuCloseKeys = defaults.VRMenuCloseKeys;
+			settings.VROverlayOpenKeys = defaults.VROverlayOpenKeys;
+			settings.VROverlayCloseKeys = defaults.VROverlayCloseKeys;
 		}
 		if (auto _tt = Util::HoverTooltipWrapper()) {
 			ImGui::Text("Reset all VR key bindings to their default values.");
