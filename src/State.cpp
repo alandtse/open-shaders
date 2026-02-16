@@ -39,7 +39,7 @@ void State::Draw()
 			WeatherManager::GetSingleton()->UpdateFeatures();
 		}
 
-		if (terrainBlending.loaded && terrainBlending.settings.Enabled) {
+		if (terrainBlending.loaded && terrainBlending.IsRuntimeEnabled()) {
 			ZoneScopedN("TerrainBlending::TerrainShaderHacks");
 			terrainBlending.TerrainShaderHacks();
 		}
@@ -853,7 +853,7 @@ void State::UpdateSharedData([[maybe_unused]] bool a_inWorld, [[maybe_unused]] b
 
 	const auto& depth = globals::game::renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kPOST_ZPREPASS_COPY];
 	auto& terrainBlending = globals::features::terrainBlending;
-	auto srv = (terrainBlending.loaded && terrainBlending.settings.Enabled ? terrainBlending.blendedDepthTexture16->srv.get() : depth.depthSRV);
+	auto srv = (terrainBlending.loaded && terrainBlending.IsRuntimeEnabled() ? terrainBlending.blendedDepthTexture16->srv.get() : depth.depthSRV);
 
 	globals::d3d::context->PSSetShaderResources(17, 1, &srv);
 }

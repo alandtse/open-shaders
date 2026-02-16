@@ -63,6 +63,7 @@ namespace
 
 	constexpr uint32_t kShadowmaskDepthDescriptor0 = 0x262002u;
 	constexpr uint32_t kShadowmaskDepthDescriptor1 = 0x1062002u;
+	constexpr bool kDisableTerrainBlendingForDepthCullingPerfTest = true;
 
 	// Slot2 allowlist is only evaluated in VR (gated by IsEngineHookFeatureGateSatisfied).
 	// Keep variant mapping explicit to match existing codebase conventions.
@@ -113,11 +114,6 @@ uint32_t ToModuleRva(const void* a_returnAddress)
 		return a_descriptor == kShadowmaskDepthDescriptor0 || a_descriptor == kShadowmaskDepthDescriptor1;
 	}
 
-	bool IsTbVrDepthCullingActive(const TerrainBlending& a_tb)
-	{
-		return globals::game::isVR && a_tb.loaded && a_tb.settings.Enabled && !ShouldUseBlendedDepthSRV();
-	}
-
 	bool IsSlot2CallerAllowlisted(const uint32_t a_callerRva)
 	{
 		for (const auto rva : kSlot2CallerAllowlistRvas) {
@@ -163,7 +159,7 @@ uint32_t ToModuleRva(const void* a_returnAddress)
 
 	bool IsEngineHookFeatureGateSatisfied(const TerrainBlending& a_singleton)
 	{
-		if (!globals::game::isVR || !a_singleton.loaded || !a_singleton.settings.Enabled) {
+		if (!globals::game::isVR || !a_singleton.loaded || !a_singleton.IsRuntimeEnabled()) {
 			return false;
 		}
 
@@ -315,22 +311,15 @@ uint32_t ToModuleRva(const void* a_returnAddress)
 	}
 }
 
+bool TerrainBlending::IsRuntimeEnabled() const
+{
+	return settings.Enabled != 0 && !kDisableTerrainBlendingForDepthCullingPerfTest;
+}
+
 std::vector<FeatureConstraints::Constraint> TerrainBlending::GetActiveConstraints() const
 {
-	std::vector<FeatureConstraints::Constraint> constraints;
-
-	// Only constrain when all requested conditions are active:
-	// VR + Terrain Blending enabled + runtime depth buffer culling enabled.
-	if (!IsTbVrDepthCullingActive(*this)) {
-		return constraints;
-	}
-
-	constraints.push_back({ { "ScreenSpaceShadows", "Enable" },
-		false,
-		"Screen Space Shadows is disabled in VR when Terrain Blending and Depth Buffer Culling are both active.",
-		false });
-
-	return constraints;
+	// Performance test mode: do not apply cross-feature gating/constraints.
+	return {};
 }
 
 void TerrainBlending::DrawSettings()
@@ -757,7 +746,7 @@ void TerrainBlending::Hooks::Main_RenderDepth::thunk(bool a1, bool a2)
 
 	singleton.averageEyePosition = Util::GetAverageEyePosition();
 
-	const bool tbActive = shaderCache->IsEnabled() && singleton.settings.Enabled;
+	const bool tbActive = shaderCache->IsEnabled() && singleton.IsRuntimeEnabled();
 	const bool useBlendedDepthSRV = tbActive && ShouldUseBlendedDepthSRV();
 	tbHookDiagnostics.renderDepthCalls++;
 
@@ -797,7 +786,7 @@ void TerrainBlending::Hooks::BSBatchRenderer__RenderPassImmediately::thunk(RE::B
 	auto& singleton = globals::features::terrainBlending;
 	auto shaderCache = globals::shaderCache;
 
-	if (shaderCache->IsEnabled() && singleton.settings.Enabled) {
+	if (shaderCache->IsEnabled() && singleton.IsRuntimeEnabled()) {
 		if (singleton.renderDepth) {
 			// Entering or exiting terrain depth section
 			bool inTerrain = a_pass->shaderProperty && a_pass->shaderProperty->flags.all(RE::BSShaderProperty::EShaderPropertyFlag::kMultiTextureLandscape);
@@ -861,7 +850,7 @@ void TerrainBlending::RenderTerrainBlendingPasses()
 {
 	tbHookDiagnostics.renderPassInvocationCalls++;
 
-	if (!settings.Enabled) {
+	if (!IsRuntimeEnabled()) {
 		renderDepth = false;
 		renderTerrainDepth = false;
 		renderAltTerrain = false;

@@ -30,6 +30,7 @@ public:
 	STATIC_ASSERT_ALIGNAS_16(Settings);
 
 	Settings settings;
+	bool IsRuntimeEnabled() const;
 
 	virtual void DrawSettings() override;
 	virtual void LoadSettings(json& o_json) override;
