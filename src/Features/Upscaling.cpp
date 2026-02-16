@@ -1623,13 +1623,12 @@ void Upscaling::UpscaleDepth()
 		auto& depthCopy = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kMAIN_COPY];
 
 		auto screenSize = globals::state->screenSize;
-		float2 renderSize = screenSize * resolutionScale;
 
 		DepthUpscaleCB cbData;
-		cbData.SourceResolution = renderSize;
-		cbData.TargetResolution = screenSize;
-		cbData.ResolutionScale = renderSize / screenSize;
-		cbData.TexelSize = float2(1.0f / renderSize.x, 1.0f / renderSize.y);
+		cbData.SourceDim = screenSize;
+		cbData.InvSourceDim = float2(1.0f / screenSize.x, 1.0f / screenSize.y);
+		cbData.Scale = resolutionScale;
+		cbData.Pad = { 0, 0 };
 
 		depthUpscaleCB->Update(cbData);
 		auto bufferArray = depthUpscaleCB->CB();

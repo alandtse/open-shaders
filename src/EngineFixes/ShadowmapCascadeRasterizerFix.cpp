@@ -7,7 +7,8 @@ void ShadowmapRasterizerFix::Install()
 
 	gRasterStates = reinterpret_cast<RasterStateArray*>(REL::RelocationID(524748, 411363).address());
 
-	numCascades = static_cast<uint>(Util::GetGameSettingValue<std::int32_t>("iNumSplits:Display", Settings.at("iNumSplits:Display")));
+	auto rawCascades = Util::GetGameSettingValue<std::int32_t>("iNumSplits:Display", Settings.at("iNumSplits:Display"));
+	numCascades = static_cast<uint>(std::clamp(rawCascades, std::int32_t(1), std::int32_t(maxCascades)));
 }
 
 void ShadowmapRasterizerFix::BSShadowDirectionalLight_RenderShadowmaps_RenderCascade::thunk(RE::BSShadowDirectionalLight* light, void* arg1, void* arg2, uint32_t flags)

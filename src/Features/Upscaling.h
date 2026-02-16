@@ -116,10 +116,10 @@ public:
 
 	struct DepthUpscaleCB
 	{
-		float2 SourceResolution;
-		float2 TargetResolution;
-		float2 ResolutionScale;
-		float2 TexelSize;
+		float2 SourceDim;     // Full texture dimensions (texels)
+		float2 InvSourceDim;  // 1.0 / SourceDim
+		float2 Scale;         // resolutionScale (render/display ratio)
+		float2 Pad;
 	};
 
 	ConstantBuffer* depthUpscaleCB = nullptr;
