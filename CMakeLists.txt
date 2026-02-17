@@ -314,6 +314,7 @@ install(
     DIRECTORY ${CMAKE_SOURCE_DIR}/package/ ${FEATURE_PATHS_SLASH}
     DESTINATION .
     COMPONENT Shaders
+    PATTERN "Tests" EXCLUDE
 )
 install(CODE "file(REMOVE \${CMAKE_INSTALL_PREFIX}/Core)" COMPONENT Shaders)
 
@@ -331,6 +332,7 @@ if(AUTO_PLUGIN_DEPLOYMENT OR AIO_ZIP_TO_DIST)
         LIST_DIRECTORIES FALSE
         "${CMAKE_SOURCE_DIR}/package/*"
     )
+    list(FILTER _AIO_PACKAGE_FILES EXCLUDE REGEX "/Tests/")
     foreach(_fpath IN LISTS FEATURE_PATHS)
         file(GLOB_RECURSE _tmp LIST_DIRECTORIES FALSE "${_fpath}/*")
         list(APPEND _AIO_PACKAGE_FILES ${_tmp})
@@ -353,12 +355,13 @@ if(AUTO_PLUGIN_DEPLOYMENT OR AIO_ZIP_TO_DIST)
         "${AIO_DIR}/SKSE/Plugins"
     )
 
-    # Copy package files
+    # Copy package files (exclude test files from production packages)
     file(
         GLOB_RECURSE _AIO_PACKAGE_SOURCE_FILES
         LIST_DIRECTORIES FALSE
         "${CMAKE_SOURCE_DIR}/package/*"
     )
+    list(FILTER _AIO_PACKAGE_SOURCE_FILES EXCLUDE REGEX "/Tests/")
     foreach(_src IN LISTS _AIO_PACKAGE_SOURCE_FILES)
         file(RELATIVE_PATH _rel "${CMAKE_SOURCE_DIR}/package" "${_src}")
         set(_dst "${AIO_DIR}/${_rel}")
@@ -705,6 +708,7 @@ if(ZIP_TO_DIST)
         COMMAND
             ${CMAKE_COMMAND} -E copy_directory ${CMAKE_SOURCE_DIR}/package
             "${ZIP_DIR}"
+        COMMAND ${CMAKE_COMMAND} -E remove_directory "${ZIP_DIR}/Shaders/Tests"
         COMMAND
             ${CMAKE_COMMAND} -E copy $<TARGET_FILE:${PROJECT_NAME}>
             "${ZIP_DIR}/SKSE/Plugins/"
@@ -842,6 +846,7 @@ add_custom_command(
     COMMAND
         ${CMAKE_COMMAND} -E copy_directory ${CORE_FEATURE_PATHS} ${FEATURE_PATH}
     COMMAND ${CMAKE_COMMAND} -E rm -f -- ${FEATURE_PATH}/Core
+    COMMAND ${CMAKE_COMMAND} -E remove_directory "${FEATURE_PATH}/Shaders/Tests"
     COMMAND ${CMAKE_COMMAND} -E tar cfv ${CORE_PACKAGE} --format=7zip -- .
     WORKING_DIRECTORY ${FEATURE_PATH}
     COMMENT "Creating Core zip package"
