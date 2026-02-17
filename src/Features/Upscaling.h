@@ -73,7 +73,11 @@ public:
 	struct UpscalingDataCB
 	{
 		float2 trueSamplingDim;  // BufferDim.xy * ResolutionScale
-		float2 pad0;
+		float2 invTrueSamplingDim;
+		float seamCenterX;
+		float seamHalfWidthPx;
+		float maskDepthThreshold;
+		float vrSeamHardening;
 	};
 
 	ConstantBuffer* jitterCB = nullptr;

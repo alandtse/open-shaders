@@ -279,7 +279,14 @@ void Streamline::SetDLSSOptions()
 
 	dlssOptions.outputWidth = (uint)state->screenSize.x;
 	dlssOptions.outputHeight = (uint)state->screenSize.y;
-	dlssOptions.colorBuffersHDR = sl::Boolean::eTrue;
+	{
+		auto renderer = globals::game::renderer;
+		auto& main = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMAIN];
+		D3D11_TEXTURE2D_DESC mainDesc;
+		static_cast<ID3D11Texture2D*>(main.texture)->GetDesc(&mainDesc);
+		bool isHDR = mainDesc.Format != DXGI_FORMAT_R8G8B8A8_UNORM;
+		dlssOptions.colorBuffersHDR = isHDR ? sl::Boolean::eTrue : sl::Boolean::eFalse;
+	}
 	dlssOptions.useAutoExposure = sl::Boolean::eTrue;
 
 	dlssOptions.dlaaPreset = sl::DLSSPreset::ePresetJ;

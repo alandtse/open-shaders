@@ -489,8 +489,8 @@ void Upscaling::CreateUpscalingTextureResources(UpscaleMethod a_upscalemethod)
 		}
 	}
 
-	// Motion vector copy texture is only needed for DLSS
-	if (a_upscalemethod == UpscaleMethod::kDLSS) {
+	// Motion vector copy texture is used by DLSS and FSR encode pass.
+	if (a_upscalemethod == UpscaleMethod::kDLSS || a_upscalemethod == UpscaleMethod::kFSR) {
 		if (!motionVectorCopyTexture) {
 			auto& motionVector = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMOTION_VECTOR];
 
@@ -506,7 +506,10 @@ void Upscaling::CreateUpscalingTextureResources(UpscaleMethod a_upscalemethod)
 			motionVectorCopyTexture->CreateUAV(uavDesc);
 		}
 
-		// RCAS sharpener texture - matches kMAIN format for HDR sharpening
+	}
+
+	// RCAS sharpener texture - matches kMAIN format for HDR sharpening
+	if (a_upscalemethod == UpscaleMethod::kDLSS) {
 		if (!sharpenerTexture) {
 			main.texture->GetDesc(&texDesc);
 			main.SRV->GetDesc(&srvDesc);
@@ -555,8 +558,8 @@ void Upscaling::DestroyUpscalingTextureResources(UpscaleMethod a_upscalemethod)
 		}
 	}
 
-	// Motion vector copy texture is only needed for DLSS - destroy when switching away from DLSS
-	if (a_upscalemethod != UpscaleMethod::kDLSS) {
+	// Motion vector copy texture is used by DLSS/FSR - destroy when switching away from both.
+	if (a_upscalemethod != UpscaleMethod::kDLSS && a_upscalemethod != UpscaleMethod::kFSR) {
 		if (motionVectorCopyTexture) {
 			motionVectorCopyTexture->srv = nullptr;
 			motionVectorCopyTexture->uav = nullptr;
@@ -565,6 +568,10 @@ void Upscaling::DestroyUpscalingTextureResources(UpscaleMethod a_upscalemethod)
 			delete motionVectorCopyTexture;
 			motionVectorCopyTexture = nullptr;
 		}
+	}
+
+	// RCAS sharpener texture is only needed for DLSS.
+	if (a_upscalemethod != UpscaleMethod::kDLSS) {
 		if (sharpenerTexture) {
 			sharpenerTexture->srv = nullptr;
 			sharpenerTexture->uav = nullptr;
@@ -1216,6 +1223,11 @@ void Upscaling::Upscale()
 
 	auto& main = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMAIN];
 	auto& motionVector = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMOTION_VECTOR];
+	const bool requiresEncodedMotionVectors = upscaleMethod == UpscaleMethod::kDLSS || upscaleMethod == UpscaleMethod::kFSR;
+	if (requiresEncodedMotionVectors && (!motionVectorCopyTexture || !motionVectorCopyTexture->uav || !motionVectorCopyTexture->resource)) {
+		logger::error("[Upscaling] Missing encoded motion-vector resources for method {}", magic_enum::enum_name(upscaleMethod));
+		return;
+	}
 
 	auto dispatchCount = Util::GetScreenDispatchCount(true);
 
@@ -1231,6 +1243,11 @@ void Upscaling::Upscale()
 			auto renderSize = Util::ConvertToDynamic(globals::state->screenSize);
 			UpscalingDataCB upscalingData;
 			upscalingData.trueSamplingDim = renderSize;
+			upscalingData.invTrueSamplingDim = { renderSize.x > 0.0f ? 1.0f / renderSize.x : 0.0f, renderSize.y > 0.0f ? 1.0f / renderSize.y : 0.0f };
+			upscalingData.seamCenterX = renderSize.x * 0.5f;
+			upscalingData.seamHalfWidthPx = 2.0f;
+			upscalingData.maskDepthThreshold = 1e-6f;
+			upscalingData.vrSeamHardening = globals::game::isVR ? 1.0f : 0.0f;
 
 			upscalingDataCB->Update(upscalingData);
 			auto upscalingBuffer = upscalingDataCB->CB();
@@ -1239,7 +1256,11 @@ void Upscaling::Upscale()
 			ID3D11ShaderResourceView* views[4] = { temporalAAMask.SRV, normals.SRV, motionVector.SRV, depth.depthSRV };
 			context->CSSetShaderResources(0, ARRAYSIZE(views), views);
 
-			ID3D11UnorderedAccessView* uavs[3] = { reactiveMaskTexture->uav.get(), transparencyCompositionMaskTexture->uav.get(), upscaleMethod == UpscaleMethod::kDLSS ? motionVectorCopyTexture->uav.get() : nullptr };
+			ID3D11UnorderedAccessView* uavs[3] = {
+				reactiveMaskTexture->uav.get(),
+				transparencyCompositionMaskTexture->uav.get(),
+				(upscaleMethod == UpscaleMethod::kDLSS || upscaleMethod == UpscaleMethod::kFSR) ? motionVectorCopyTexture->uav.get() : nullptr
+			};
 			context->CSSetUnorderedAccessViews(0, ARRAYSIZE(uavs), uavs, nullptr);
 
 			context->CSSetShader(GetEncodeTexturesCS(), nullptr, 0);
@@ -1264,11 +1285,12 @@ void Upscaling::Upscale()
 
 	{
 		state->BeginPerfEvent("Upscaling");
+		auto motionVectorResource = motionVectorCopyTexture->resource.get();
 
 		if (upscaleMethod == UpscaleMethod::kDLSS) {
-			streamline.Upscale(main.texture, reactiveMaskTexture->resource.get(), transparencyCompositionMaskTexture->resource.get(), motionVectorCopyTexture->resource.get());
+			streamline.Upscale(main.texture, reactiveMaskTexture->resource.get(), transparencyCompositionMaskTexture->resource.get(), motionVectorResource);
 		} else if (upscaleMethod == UpscaleMethod::kFSR) {
-			fidelityFX.Upscale(main.texture, reactiveMaskTexture->resource.get(), transparencyCompositionMaskTexture->resource.get(), motionVector.texture, settings.sharpnessFSR);
+			fidelityFX.Upscale(main.texture, reactiveMaskTexture->resource.get(), transparencyCompositionMaskTexture->resource.get(), motionVectorResource, settings.sharpnessFSR);
 		}
 
 		state->EndPerfEvent();
