@@ -30,4 +30,8 @@ namespace Util
 
 	HRESULT SaveTextureToFile(ID3D11Device* device, ID3D11DeviceContext* context, const std::filesystem::path& path, ID3D11Texture2D* tex);
 	HRESULT LoadTextureFromFile(ID3D11Device* device, const std::filesystem::path& path, ID3D11Texture2D** outTex, ID3D11ShaderResourceView** outSRV);
+
+	// Returns the current scene depth SRV, preferring terrain blended depth if available.
+	// The caller does NOT own the returned pointer.
+	ID3D11ShaderResourceView* GetCurrentSceneDepthSRV();
 }  // namespace Util

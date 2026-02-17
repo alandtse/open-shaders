@@ -1,5 +1,6 @@
 #include "D3D.h"
 
+#include "Features/TerrainBlending.h"
 #include "State.h"
 #include "Utils/Format.h"
 #include <DDSTextureLoader.h>
@@ -9,6 +10,21 @@
 
 namespace Util
 {
+
+	ID3D11ShaderResourceView* GetCurrentSceneDepthSRV()
+	{
+		auto& tb = globals::features::terrainBlending;
+		if (tb.loaded && tb.settings.Enabled) {
+			auto* srv = tb.GetBlendedDepthSRV();
+			if (srv)
+				return srv;
+		}
+		auto renderer = globals::game::renderer;
+		if (renderer)
+			return renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kPOST_ZPREPASS_COPY].depthSRV;
+		return nullptr;
+	}
+
 	ID3D11ShaderResourceView* GetSRVFromRTV(const ID3D11RenderTargetView* a_rtv)
 	{
 		if (a_rtv) {

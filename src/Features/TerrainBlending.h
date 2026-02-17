@@ -74,6 +74,13 @@ public:
 	Texture2D* blendedDepthTexture = nullptr;
 	Texture2D* blendedDepthTexture16 = nullptr;
 
+	ID3D11ShaderResourceView* GetBlendedDepthSRV() const
+	{
+		if (blendedDepthTexture && blendedDepthTexture->srv)
+			return blendedDepthTexture->srv.get();
+		return nullptr;
+	}
+
 	RE::BSGraphics::DepthStencilData terrainDepth;
 
 	ID3D11DepthStencilState* terrainDepthStencilState = nullptr;
