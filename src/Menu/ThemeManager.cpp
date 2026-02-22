@@ -795,16 +795,17 @@ float ThemeManager::ResolveFontSize(const Menu& menu)
 	}
 
 	// Otherwise, compute dynamic default based on current screen resolution
-	float dynamicSize = Constants::DEFAULT_FONT_SIZE;
-	// Use VR overlay height if in VR, otherwise use screen height
-	float baseHeight = Constants::DEFAULT_SCREEN_HEIGHT;
+	float dynamicSize;
 	if (globals::game::isVR) {
-		baseHeight = VR::Config::kOverlayHeight;
+		// VR: use overlay height
+		dynamicSize = VR::Config::kOverlayHeight * Constants::DEFAULT_FONT_RATIO;
 	} else if (globals::state && globals::state->screenSize.y > 0) {
-		baseHeight = globals::state->screenSize.y;
+		// Non-VR: use current screen height
+		dynamicSize = globals::state->screenSize.y * Constants::DEFAULT_FONT_RATIO;
 	} else {
-		logger::warn("ThemeManager::ResolveFontSize() - Falling back to DEFAULT_FONT_SIZE due to missing screen height.");
+		// Fallback: use default font size
+		logger::warn("ThemeManager::ResolveFontSize() - Falling back to Constants::DEFAULT_FONT_SIZE due to missing screen height.");
+		dynamicSize = Constants::DEFAULT_FONT_SIZE;
 	}
-	dynamicSize = baseHeight * Constants::DEFAULT_FONT_RATIO;
 	return std::clamp(dynamicSize, Constants::MIN_FONT_SIZE, Constants::MAX_FONT_SIZE);
 }
