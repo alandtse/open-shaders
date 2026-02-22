@@ -303,11 +303,18 @@ PS_OUTPUT main(PS_INPUT input)
 	positionWS = mul(FrameBuffer::CameraViewProjInverse[eyeIndex], positionWS);
 	positionWS.xyz = positionWS.xyz / positionWS.w;
 
-	float llDirLightMult = (SharedData::linearLightingSettings.enableLinearLighting && !SharedData::linearLightingSettings.isDirLightLinear) ? SharedData::linearLightingSettings.dirLightMult : 1.0f;
-	float dirShadow = ShadowSampling::GetWorldShadow(positionWS.xyz, FrameBuffer::CameraPosAdjust[eyeIndex].xyz, eyeIndex);
-	float3 dirLightRaw = SharedData::DirLightColor.xyz * dirShadow;
-	float3 dirLightColor = Color::DirectionalLight(dirLightRaw / max(llDirLightMult, 1e-5), SharedData::linearLightingSettings.isDirLightLinear) * llDirLightMult * 0.5;
-	float3 ambientColor = Color::Ambient(max(0, mul(SharedData::DirectionalAmbient, float4(0, 0, 1, 1)).xyz));
+	float3 dirLightColor;
+	float3 ambientColor;
+	if (SharedData::lightLimitFixSettings.UseLegacyParticleLighting != 0) {
+		dirLightColor = SharedData::DirLightColor.xyz * ShadowSampling::GetWorldShadow(positionWS.xyz, FrameBuffer::CameraPosAdjust[eyeIndex].xyz, eyeIndex);
+		ambientColor = max(0, mul(SharedData::DirectionalAmbient, float4(0, 0, 1, 1)).xyz);
+	} else {
+		float llDirLightMult = (SharedData::linearLightingSettings.enableLinearLighting && !SharedData::linearLightingSettings.isDirLightLinear) ? SharedData::linearLightingSettings.dirLightMult : 1.0f;
+		float dirShadow = ShadowSampling::GetWorldShadow(positionWS.xyz, FrameBuffer::CameraPosAdjust[eyeIndex].xyz, eyeIndex);
+		float3 dirLightRaw = SharedData::DirLightColor.xyz * dirShadow;
+		dirLightColor = Color::DirectionalLight(dirLightRaw / max(llDirLightMult, 1e-5), SharedData::linearLightingSettings.isDirLightLinear) * llDirLightMult * 0.5;
+		ambientColor = Color::Ambient(max(0, mul(SharedData::DirectionalAmbient, float4(0, 0, 1, 1)).xyz));
+	}
 
 	propertyColor += dirLightColor;
 	propertyColor += ambientColor;
@@ -339,8 +346,13 @@ PS_OUTPUT main(PS_INPUT input)
 				float intensityMultiplier = 1 - intensityFactor * intensityFactor;
 #			endif
 
-				const bool isPointLightLinear = light.lightFlags & LightLimitFix::LightFlags::Linear;
-				float3 lightColor = Color::PointLight(light.color.xyz, isPointLightLinear) * intensityMultiplier * light.fade * 0.5;
+				float3 lightColor;
+				if (SharedData::lightLimitFixSettings.UseLegacyParticleLighting != 0) {
+					lightColor = light.color.xyz * intensityMultiplier * light.fade;
+				} else {
+					const bool isPointLightLinear = light.lightFlags & LightLimitFix::LightFlags::Linear;
+					lightColor = Color::PointLight(light.color.xyz, isPointLightLinear) * intensityMultiplier * light.fade * 0.5;
+				}
 				propertyColor += lightColor;
 			}
 		}
