@@ -27,7 +27,8 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	MaxParticlesPerEmitter,    // NEW
 	MaxParticleDistance,       // NEW
 	EnableLightsVisualisation,
-	LightsVisualisationMode)
+	LightsVisualisationMode,
+	UseLegacyParticleLighting)
 void LightLimitFix::DrawSettings()
 {
 	// Heat warp / refraction strength (moved from Advanced Settings)
@@ -187,6 +188,7 @@ LightLimitFix::PerFrame LightLimitFix::GetCommonBufferData()
 	PerFrame perFrame{};
 	perFrame.EnableLightsVisualisation = settings.EnableLightsVisualisation;
 	perFrame.LightsVisualisationMode = settings.LightsVisualisationMode;
+	perFrame.UseLegacyParticleLighting = settings.UseLegacyParticleLighting;
 	std::copy(clusterSize, clusterSize + 3, perFrame.ClusterSize);
 	return perFrame;
 }

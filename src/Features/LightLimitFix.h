@@ -103,7 +103,8 @@ public:
 	{
 		uint EnableLightsVisualisation;
 		uint LightsVisualisationMode;
-		float pad0[2];
+		uint UseLegacyParticleLighting;
+		uint pad0;
 		uint ClusterSize[4];
 	};
 	STATIC_ASSERT_ALIGNAS_16(PerFrame);
@@ -213,6 +214,7 @@ struct ParticleLightInfo
 		bool EnableContactShadows = false;
 		bool EnableLightsVisualisation = false;
 		uint LightsVisualisationMode = 0;
+		bool UseLegacyParticleLighting = true;
 		bool EnableParticleLights = true;
 		bool EnableParticleLightsCulling = true;
 		bool EnableParticleLightsDetection = true;
