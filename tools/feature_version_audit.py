@@ -87,7 +87,9 @@ def get_prior_version(ini_path, base_ref):
     except Exception:
         return None
 
-def get_changed_files(feature_path, base_ref):
+def get_changed_files(feature_path, base_ref, file_types=None):
+    if file_types is None:
+        file_types = SHADER_TYPES
     rel_path = str(feature_path).replace("\\", "/")
     try:
         output = subprocess.check_output(
@@ -98,7 +100,7 @@ def get_changed_files(feature_path, base_ref):
         for line in output.splitlines():
             status, file = line.split(maxsplit=1)
             ext = os.path.splitext(file)[1].lower()
-            if ext in SHADER_TYPES:
+            if ext in file_types:
                 changes.append((status, file))
         return changes
     except Exception:
@@ -154,7 +156,7 @@ def apply_version_bump(ini_path, proposed_ver_str):
                 f.write(new_content)
             return True
     except Exception as e:
-        print(f"Error applying bump to {ini_path}: {e}")
+        print(f"Error applying bump to {ini_path}: {e}", file=sys.stderr)
     return False
 
 def parse_feature_metadata_file(path, mod_id=None, is_core=False):
@@ -255,10 +257,10 @@ def detect_pr_base():
     # 1. Use GITHUB_BASE_REF if set (GitHub Actions)
     env_base_ref = os.environ.get("GITHUB_BASE_REF")
     if env_base_ref:
-        print(f"Detected PR base from GITHUB_BASE_REF: origin/{env_base_ref}")
+        print(f"Detected PR base from GITHUB_BASE_REF: origin/{env_base_ref}", file=sys.stderr)
         return f"origin/{env_base_ref}"
     # 2. Fallback
-    print(f"Falling back to {DEFAULT_PR_BASE_REF} for PR base.")
+    print(f"Falling back to {DEFAULT_PR_BASE_REF} for PR base.", file=sys.stderr)
     return DEFAULT_PR_BASE_REF
 
 def propose_new_version(prior_version, commits):
@@ -354,12 +356,13 @@ def analyze_features(FEATURES_DIR, feature_meta_map, base_ref, only_changed=Fals
             header_path = DEFAULT_FEATURE_HEADERS_DIR / (meta['name'] + ".h")
             cpp_path = DEFAULT_FEATURE_HEADERS_DIR / (meta['name'] + ".cpp")
             feature_src_dir = DEFAULT_FEATURE_HEADERS_DIR / meta['name']
+            cpp_types = (".h", ".hpp", ".cpp", ".c")
             if header_path.exists():
-                changes.extend(get_changed_files(header_path, base_ref))
+                changes.extend(get_changed_files(header_path, base_ref, file_types=cpp_types))
             if cpp_path.exists():
-                changes.extend(get_changed_files(cpp_path, base_ref))
+                changes.extend(get_changed_files(cpp_path, base_ref, file_types=cpp_types))
             if feature_src_dir.exists() and feature_src_dir.is_dir():
-                changes.extend(get_changed_files(feature_src_dir, base_ref))
+                changes.extend(get_changed_files(feature_src_dir, base_ref, file_types=cpp_types))
         changes = list(set(changes))
 
         change_types = set(os.path.splitext(f)[1].lower() for _, f in changes)
@@ -630,7 +633,7 @@ def main():
         if detected:
             base_ref = detected
         else:
-            print("No valid base ref found.")
+            print("No valid base ref found.", file=sys.stderr)
             sys.exit(1)
 
     base_date_iso = None
@@ -643,9 +646,9 @@ def main():
     except Exception:
         pass
 
-    print(f"Using base ref: {base_ref}")
+    print(f"Using base ref: {base_ref}", file=sys.stderr)
     if base_date_iso:
-        print(f"Base commit date: {base_date_iso} ({base_date_human})")
+        print(f"Base commit date: {base_date_iso} ({base_date_human})", file=sys.stderr)
 
     feature_metadata = extract_feature_metadata(DEFAULT_FEATURE_HEADERS_DIR)
     def normalize_name(name): return ''.join(name.lower().split())
@@ -674,9 +677,9 @@ def main():
         for fa in feature_analysis:
             if fa['needs_bump'] and fa['ini_path']:
                 if apply_version_bump(fa['ini_path'], fa['proposed_ver_str']):
-                    print(f"Applied bump to {fa['name']}: {fa['prior_ver_str']} -> {fa['proposed_ver_str']}")
+                    print(f"Applied bump to {fa['name']}: {fa['prior_ver_str']} -> {fa['proposed_ver_str']}", file=sys.stderr)
                     applied_count += 1
-        print(f"\nSuccessfully applied {applied_count} version bumps." if applied_count > 0 else "\nNo version bumps applied.")
+        print(f"\nSuccessfully applied {applied_count} version bumps." if applied_count > 0 else "\nNo version bumps applied.", file=sys.stderr)
 
     if actionable and (args.ci or args.fail_on_actionable):
         sys.exit(1)
