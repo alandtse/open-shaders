@@ -70,12 +70,15 @@ public:
 
 	struct UpscalingDataCB
 	{
+		float2 dispatchDim;      // Current dispatch/output dimensions (per-eye in VR, full in flat)
 		float2 trueSamplingDim;  // BufferDim.xy * ResolutionScale
 		float2 invTrueSamplingDim;
 		float seamCenterX;
 		float seamHalfWidthPx;
 		float maskDepthThreshold;
 		float vrSeamHardening;
+		float2 sourceOffset;  // Source offset in combined stereo inputs
+		float2 pad0;
 	};
 
 	ConstantBuffer* jitterCB = nullptr;
@@ -154,6 +157,8 @@ public:
 	// Helper to create/resize per-eye buffers matching source formats
 	void CreateVRIntermediateTextures(uint32_t inWidth, uint32_t inHeight, uint32_t outWidth, uint32_t outHeight,
 		ID3D11Resource* colorSrc, ID3D11Resource* mvecSrc, ID3D11Resource* reactiveSrc, ID3D11Resource* transparencySrc);
+	void EnsureVRIntermediateTextures(uint32_t inWidth, uint32_t inHeight, uint32_t outWidth, uint32_t outHeight,
+		ID3D11Resource* colorSrc, ID3D11Resource* mvecSrc, ID3D11Resource* reactiveSrc, ID3D11Resource* transparencySrc);
 
 	// Helper: Create a Texture2D matching source format at a given size
 	static eastl::unique_ptr<Texture2D> CreateTextureFromSource(ID3D11Resource* src, uint32_t width, uint32_t height,
@@ -161,7 +166,7 @@ public:
 
 	// Shared Pipeline Steps
 	void PreparePerEyeInputs(ID3D11Resource* colorSrc, ID3D11Resource* depthSrc, ID3D11Resource* mvecSrc,
-		ID3D11Resource* reactiveSrc, ID3D11Resource* transparencySrc);
+		ID3D11Resource* reactiveSrc, ID3D11Resource* transparencySrc, bool copyAuxiliaryInputs = true);
 	void FinalizePerEyeOutputs(ID3D11Resource* colorDst);
 
 	void ConfigureTAA();

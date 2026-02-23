@@ -190,6 +190,7 @@ void Streamline::CheckFeatures(IDXGIAdapter* a_adapter)
 	}
 
 	logger::info("[Streamline] DLSS {} available", featureDLSS ? "is" : "is not");
+	InvalidateDLSSOptionsCache();
 }
 
 void Streamline::PostDevice()
@@ -201,6 +202,8 @@ void Streamline::PostDevice()
 		slGetFeatureFunction(sl::kFeatureDLSS, "slDLSSGetState", (void*&)slDLSSGetState);
 		slGetFeatureFunction(sl::kFeatureDLSS, "slDLSSSetOptions", (void*&)slDLSSSetOptions);
 	}
+
+	InvalidateDLSSOptionsCache();
 }
 
 /**
@@ -304,12 +307,36 @@ bool Streamline::IsRTXAndBelow40Series(IDXGIAdapter* a_adapter)
 	return false;
 }
 
-void Streamline::SetDLSSOptions(sl::ViewportHandle p_viewport, uint32_t width)
+void Streamline::SetDLSSOptions(sl::ViewportHandle p_viewport, uint32_t eyeIndex, uint32_t width)
 {
-	sl::DLSSOptions dlssOptions{};
-
 	// Map quality mode to DLSS mode
 	uint32_t qualityMode = globals::features::upscaling.settings.qualityMode;
+	auto state = globals::state;
+	uint32_t outputHeight = (uint)state->screenSize.y;
+
+	// Detect HDR from kMAIN format at runtime -- VR kMAIN may be 8-bit while SE is FP16
+	bool isHDR = false;
+	{
+		auto renderer = globals::game::renderer;
+		auto& main = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMAIN];
+		D3D11_TEXTURE2D_DESC mainDesc;
+		static_cast<ID3D11Texture2D*>(main.texture)->GetDesc(&mainDesc);
+		isHDR = mainDesc.Format != DXGI_FORMAT_R8G8B8A8_UNORM;
+	}
+
+	uint32_t cacheIndex = globals::game::isVR ? (eyeIndex > 0 ? 1u : 0u) : 0u;
+	bool useLegacyProfile = isRTXBelow40series;
+	auto& cache = dlssOptionsCache[cacheIndex];
+	if (cache.valid &&
+		cache.outputWidth == width &&
+		cache.outputHeight == outputHeight &&
+		cache.qualityMode == qualityMode &&
+		cache.isHDR == isHDR &&
+		cache.useLegacyProfile == useLegacyProfile) {
+		return;
+	}
+
+	sl::DLSSOptions dlssOptions{};
 	switch (qualityMode) {
 	case 1:
 		dlssOptions.mode = sl::DLSSMode::eMaxQuality;
@@ -328,20 +355,9 @@ void Streamline::SetDLSSOptions(sl::ViewportHandle p_viewport, uint32_t width)
 		break;
 	}
 
-	auto state = globals::state;
-
 	dlssOptions.outputWidth = width;
-	dlssOptions.outputHeight = (uint)state->screenSize.y;
-
-	// Detect HDR from kMAIN format at runtime -- VR kMAIN may be 8-bit while SE is FP16
-	{
-		auto renderer = globals::game::renderer;
-		auto& main = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMAIN];
-		D3D11_TEXTURE2D_DESC mainDesc;
-		static_cast<ID3D11Texture2D*>(main.texture)->GetDesc(&mainDesc);
-		bool isHDR = mainDesc.Format != DXGI_FORMAT_R8G8B8A8_UNORM;
-		dlssOptions.colorBuffersHDR = isHDR ? sl::Boolean::eTrue : sl::Boolean::eFalse;
-	}
+	dlssOptions.outputHeight = outputHeight;
+	dlssOptions.colorBuffersHDR = isHDR ? sl::Boolean::eTrue : sl::Boolean::eFalse;
 	dlssOptions.useAutoExposure = sl::Boolean::eTrue;
 
 	if (isRTXBelow40series) {
@@ -365,7 +381,22 @@ void Streamline::SetDLSSOptions(sl::ViewportHandle p_viewport, uint32_t width)
 
 	if (SL_FAILED(result, slDLSSSetOptions(p_viewport, dlssOptions))) {
 		logger::critical("[Streamline] Could not enable DLSS");
+		cache.valid = false;
+		return;
 	}
+
+	cache.valid = true;
+	cache.outputWidth = width;
+	cache.outputHeight = outputHeight;
+	cache.qualityMode = qualityMode;
+	cache.isHDR = isHDR;
+	cache.useLegacyProfile = useLegacyProfile;
+}
+
+void Streamline::InvalidateDLSSOptionsCache()
+{
+	dlssOptionsCache[0] = {};
+	dlssOptionsCache[1] = {};
 }
 
 void Streamline::EvaluateDLSS(sl::ViewportHandle vp, uint32_t eyeIndex,
@@ -383,7 +414,7 @@ void Streamline::EvaluateDLSS(sl::ViewportHandle vp, uint32_t eyeIndex,
 	sl::Resource transparencyMaskRes = { sl::ResourceType::eTex2d, transparencyMask, 0 };
 
 	CheckFrameConstants(vp, eyeIndex);
-	SetDLSSOptions(vp, outputWidth);
+	SetDLSSOptions(vp, eyeIndex, outputWidth);
 
 	sl::ResourceTag tags[] = {
 		{ &colorInRes, sl::kBufferTypeScalingInputColor, sl::ResourceLifecycle::eOnlyValidNow, &extentIn },
@@ -445,7 +476,7 @@ void Streamline::Upscale(ID3D11Resource* a_upscalingTexture, ID3D11Resource* a_r
 		uint32_t eyeWidthIn = (uint32_t)(renderSize.x / 2);
 		uint32_t eyeHeightIn = (uint32_t)renderSize.y;
 
-		upscaling.PreparePerEyeInputs(a_upscalingTexture, depthTexture.texture, a_motionVectors, a_reactiveMask, a_transparencyCompositionMask);
+		upscaling.PreparePerEyeInputs(a_upscalingTexture, depthTexture.texture, a_motionVectors, a_reactiveMask, a_transparencyCompositionMask, false);
 
 		for (uint32_t i = 0; i < 2; ++i) {
 			sl::ViewportHandle vp = (i == 1) ? viewportRight : viewport;
@@ -488,4 +519,6 @@ void Streamline::DestroyDLSSResources()
 		slDLSSSetOptions(viewportRight, dlssOptions);
 		slFreeResources(sl::kFeatureDLSS, viewportRight);
 	}
+
+	InvalidateDLSSOptionsCache();
 }
