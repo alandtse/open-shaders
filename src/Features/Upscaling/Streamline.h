@@ -65,6 +65,17 @@ public:
 	sl::FrameToken* frameToken = nullptr;
 
 	bool isRTXBelow40series = false;
+	struct DLSSOptionsCache
+	{
+		bool valid = false;
+		uint32_t outputWidth = 0;
+		uint32_t outputHeight = 0;
+		uint32_t qualityMode = 0;
+		uint32_t dlssPreset = 0;
+		bool isHDR = false;
+		bool useLegacyProfile = false;
+	};
+	DLSSOptionsCache dlssOptionsCache[2]{};
 
 	// Helper: Execute DLSS for a single viewport with given resources
 	void EvaluateDLSS(sl::ViewportHandle vp, uint32_t eyeIndex,
@@ -85,7 +96,8 @@ public:
 
 	bool IsRTXAndBelow40Series(IDXGIAdapter* a_adapter);
 
-	void SetDLSSOptions(sl::ViewportHandle p_viewport, uint32_t width);
+	void SetDLSSOptions(sl::ViewportHandle p_viewport, uint32_t eyeIndex, uint32_t width);
+	void InvalidateDLSSOptionsCache();
 
 	void Upscale(ID3D11Resource* a_upscalingTexture, ID3D11Resource* a_reactiveMask, ID3D11Resource* a_transparencyCompositionMask, ID3D11Resource* a_motionVectors);
 

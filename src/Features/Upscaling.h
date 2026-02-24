@@ -51,6 +51,7 @@ public:
 		uint upscaleMethod = (uint)UpscaleMethod::kDLSS;
 		uint upscaleMethodNoDLSS = (uint)UpscaleMethod::kFSR;
 		uint qualityMode = 1;  // Default to Quality (1=Quality, 2=Balanced, 3=Performance, 4=Ultra Performance, 0=Native AA)
+		uint dlssPreset = 1;   // 0=J, 1=K, 2=L, 3=M (default K)
 		uint frameLimitMode = 1;
 		uint frameGenerationMode = 1;
 		uint frameGenerationForceEnable = 0;
