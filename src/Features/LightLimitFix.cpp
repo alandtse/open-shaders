@@ -54,6 +54,17 @@ void LightLimitFix::DrawSettings()
 			ImGui::Text("Enables Particle Lights.");
 		}
 
+		const bool legacyParticleLightingChanged =
+			ImGui::Checkbox("Legacy Particle Lighting", &settings.UseLegacyParticleLighting);
+		if (auto _tt = Util::HoverTooltipWrapper()) {
+			ImGui::Text(
+				"Uses pre-linear-lighting particle shading for particle pass only.\n"
+				"Helps preserve legacy warm/cool balance when Linear Lighting is enabled.");
+		}
+		// Recompile particle shaders only on explicit user toggle changes.
+		if (legacyParticleLightingChanged) {
+			globals::shaderCache->Clear(RE::BSShader::Type::Particle);
+		}
 		ImGui::Checkbox("Enable Culling", &settings.EnableParticleLightsCulling);
 		if (auto _tt = Util::HoverTooltipWrapper()) {
 			ImGui::Text("Significantly improves performance by not rendering empty textures. Only disable if you are encountering issues.");
