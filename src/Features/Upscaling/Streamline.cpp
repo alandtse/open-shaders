@@ -311,6 +311,7 @@ void Streamline::SetDLSSOptions(sl::ViewportHandle p_viewport, uint32_t eyeIndex
 {
 	// Map quality mode to DLSS mode
 	uint32_t qualityMode = globals::features::upscaling.settings.qualityMode;
+	uint32_t dlssPreset = std::min(globals::features::upscaling.settings.dlssPreset, 3u);
 	auto state = globals::state;
 	uint32_t outputHeight = (uint)state->screenSize.y;
 
@@ -331,6 +332,7 @@ void Streamline::SetDLSSOptions(sl::ViewportHandle p_viewport, uint32_t eyeIndex
 		cache.outputWidth == width &&
 		cache.outputHeight == outputHeight &&
 		cache.qualityMode == qualityMode &&
+		cache.dlssPreset == dlssPreset &&
 		cache.isHDR == isHDR &&
 		cache.useLegacyProfile == useLegacyProfile) {
 		return;
@@ -360,21 +362,31 @@ void Streamline::SetDLSSOptions(sl::ViewportHandle p_viewport, uint32_t eyeIndex
 	dlssOptions.colorBuffersHDR = isHDR ? sl::Boolean::eTrue : sl::Boolean::eFalse;
 	dlssOptions.useAutoExposure = sl::Boolean::eTrue;
 
-	if (isRTXBelow40series) {
-		dlssOptions.dlaaPreset = sl::DLSSPreset::ePresetJ;
-		dlssOptions.ultraQualityPreset = sl::DLSSPreset::ePresetJ;
-		dlssOptions.qualityPreset = sl::DLSSPreset::ePresetJ;
-		dlssOptions.balancedPreset = sl::DLSSPreset::ePresetJ;
-		dlssOptions.performancePreset = sl::DLSSPreset::ePresetJ;
-		dlssOptions.ultraPerformancePreset = sl::DLSSPreset::ePresetM;
-	} else {
-		dlssOptions.dlaaPreset = sl::DLSSPreset::ePresetJ;
-		dlssOptions.ultraQualityPreset = sl::DLSSPreset::ePresetJ;
-		dlssOptions.qualityPreset = sl::DLSSPreset::ePresetM;
-		dlssOptions.balancedPreset = sl::DLSSPreset::ePresetM;
-		dlssOptions.performancePreset = sl::DLSSPreset::ePresetM;
-		dlssOptions.ultraPerformancePreset = sl::DLSSPreset::ePresetL;
+	sl::DLSSPreset selectedPreset = sl::DLSSPreset::ePresetK;
+	switch (dlssPreset) {
+	case 0:
+		selectedPreset = sl::DLSSPreset::ePresetJ;
+		break;
+	case 1:
+		selectedPreset = sl::DLSSPreset::ePresetK;
+		break;
+	case 2:
+		selectedPreset = sl::DLSSPreset::ePresetL;
+		break;
+	case 3:
+		selectedPreset = sl::DLSSPreset::ePresetM;
+		break;
+	default:
+		selectedPreset = sl::DLSSPreset::ePresetK;
+		break;
 	}
+
+	dlssOptions.dlaaPreset = selectedPreset;
+	dlssOptions.ultraQualityPreset = selectedPreset;
+	dlssOptions.qualityPreset = selectedPreset;
+	dlssOptions.balancedPreset = selectedPreset;
+	dlssOptions.performancePreset = selectedPreset;
+	dlssOptions.ultraPerformancePreset = selectedPreset;
 
 	dlssOptions.preExposure = 1.0f;
 	dlssOptions.sharpness = 0.0f;
@@ -389,6 +401,7 @@ void Streamline::SetDLSSOptions(sl::ViewportHandle p_viewport, uint32_t eyeIndex
 	cache.outputWidth = width;
 	cache.outputHeight = outputHeight;
 	cache.qualityMode = qualityMode;
+	cache.dlssPreset = dlssPreset;
 	cache.isHDR = isHDR;
 	cache.useLegacyProfile = useLegacyProfile;
 }

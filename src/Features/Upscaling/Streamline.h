@@ -71,6 +71,7 @@ public:
 		uint32_t outputWidth = 0;
 		uint32_t outputHeight = 0;
 		uint32_t qualityMode = 0;
+		uint32_t dlssPreset = 0;
 		bool isHDR = false;
 		bool useLegacyProfile = false;
 	};
