@@ -43,6 +43,8 @@ public:
 
 	BendSettings bendSettings;
 	bool vrFloatCoordinateMath = false;
+	bool vrHardenDepthLayoutDynamicRes = false;
+	bool vrUseJitteredLightProjection = false;
 
 	struct alignas(16) RaymarchCB
 	{

@@ -4,6 +4,7 @@
 #include "Util.h"
 #include "Utils/D3D.h"
 #include <algorithm>
+#include <cmath>
 #include <vector>
 
 #pragma warning(push)
@@ -25,6 +26,38 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 
 namespace
 {
+	enum class VRDepthLayout
+	{
+		PerEye,
+		CombinedStereo,
+		Unknown
+	};
+
+	VRDepthLayout DetectVRDepthLayout(uint32_t a_depthWidth, int a_viewportWidthPerEye)
+	{
+		if (!a_depthWidth || a_viewportWidthPerEye <= 0)
+			return VRDepthLayout::Unknown;
+
+		const float ratio = static_cast<float>(a_depthWidth) / static_cast<float>(a_viewportWidthPerEye);
+		constexpr float kPerEyeMin = 0.85f;
+		constexpr float kPerEyeMax = 1.15f;
+		constexpr float kCombinedMin = 1.85f;
+		constexpr float kCombinedMax = 2.15f;
+
+		if (ratio >= kPerEyeMin && ratio <= kPerEyeMax)
+			return VRDepthLayout::PerEye;
+		if (ratio >= kCombinedMin && ratio <= kCombinedMax)
+			return VRDepthLayout::CombinedStereo;
+
+		// Fallback for slight runtime divergence from ideal ratios.
+		if (ratio > 1.5f)
+			return VRDepthLayout::CombinedStereo;
+		if (ratio > 0.5f)
+			return VRDepthLayout::PerEye;
+
+		return VRDepthLayout::Unknown;
+	}
+
 	bool TryGetDepthSrvDimensions(ID3D11ShaderResourceView* a_depthSrv, uint32_t& o_width, uint32_t& o_height)
 	{
 		o_width = 0;
@@ -108,8 +141,18 @@ void ScreenSpaceShadows::DrawSettings()
 
 		if (globals::game::isVR) {
 			ImGui::Spacing();
-			ImGui::TextUnformatted("Optional");
+			ImGui::TextUnformatted("Debug");
 			ImGui::Separator();
+
+			ImGui::Checkbox("VR Harden Depth Layout Scaling", &vrHardenDepthLayoutDynamicRes);
+			if (auto _tt = Util::HoverTooltipWrapper()) {
+				ImGui::Text("Improves stability when depth layout changes in VR.");
+			}
+
+			ImGui::Checkbox("VR Use Jittered Light Projection", &vrUseJitteredLightProjection);
+			if (auto _tt = Util::HoverTooltipWrapper()) {
+				ImGui::Text("Can change how shadows react to head movement.");
+			}
 
 			if (ImGui::Checkbox("VR Float Coordinate Math", &vrFloatCoordinateMath)) {
 				ClearShaderCache();
@@ -238,7 +281,10 @@ void ScreenSpaceShadows::DrawShadows()
 
 	// Helper lambda to calculate light projection for a given eye
 	auto CalculateLightProjection = [&](uint32_t eyeIndex = 0) -> std::array<float, 4> {
-		auto viewProjMat = globals::game::frameBufferCached.GetCameraViewProjUnjittered(eyeIndex).Transpose();
+		const auto& viewProj = (globals::game::isVR && vrUseJitteredLightProjection) ?
+								   globals::game::frameBufferCached.GetCameraViewProj(eyeIndex) :
+								   globals::game::frameBufferCached.GetCameraViewProjUnjittered(eyeIndex);
+		auto viewProjMat = viewProj.Transpose();
 		auto projectedLight = DirectX::SimpleMath::Vector4::Transform(lightProjection, viewProjMat);
 		return { projectedLight.x, projectedLight.y, projectedLight.z, projectedLight.w };
 	};
@@ -272,14 +318,35 @@ void ScreenSpaceShadows::DrawShadows()
 	uint32_t depthWidth = 0;
 	uint32_t depthHeight = 0;
 	if (TryGetDepthSrvDimensions(depthSRV, depthWidth, depthHeight)) {
-		if (globals::game::isVR) {
-			// In VR, viewportSize.x is per-eye but depth SRV can be either per-eye or combined.
+		if (!globals::game::isVR) {
+			dynamicRes.x = static_cast<float>(viewportSize[0]) / static_cast<float>(depthWidth);
+			dynamicRes.y = static_cast<float>(viewportSize[1]) / static_cast<float>(depthHeight);
+		} else if (!vrHardenDepthLayoutDynamicRes) {
+			// Legacy behavior assumes depth SRV is combined stereo.
 			dynamicRes.x = (static_cast<float>(viewportSize[0]) * 2.0f) / static_cast<float>(depthWidth);
 			dynamicRes.y = static_cast<float>(viewportSize[1]) / static_cast<float>(depthHeight);
 		} else {
-			dynamicRes.x = static_cast<float>(viewportSize[0]) / static_cast<float>(depthWidth);
+			const float combinedX = (static_cast<float>(viewportSize[0]) * 2.0f) / static_cast<float>(depthWidth);
+			const float perEyeX = static_cast<float>(viewportSize[0]) / static_cast<float>(depthWidth);
 			dynamicRes.y = static_cast<float>(viewportSize[1]) / static_cast<float>(depthHeight);
+
+			switch (DetectVRDepthLayout(depthWidth, viewportSize[0])) {
+			case VRDepthLayout::CombinedStereo:
+				dynamicRes.x = combinedX;
+				break;
+			case VRDepthLayout::PerEye:
+				dynamicRes.x = perEyeX;
+				break;
+			case VRDepthLayout::Unknown:
+			default:
+				// Ambiguous layout: pick whichever is closer to runtime DR ratio.
+				dynamicRes.x = std::abs(combinedX - dynamicRes.x) <= std::abs(perEyeX - dynamicRes.x) ? combinedX : perEyeX;
+				break;
+			}
 		}
+
+		dynamicRes.x = std::clamp(dynamicRes.x, 0.25f, 2.0f);
+		dynamicRes.y = std::clamp(dynamicRes.y, 0.25f, 2.0f);
 	}
 
 	auto* raymarchLeft = GetComputeRaymarch();
@@ -393,18 +460,24 @@ void ScreenSpaceShadows::LoadSettings(json& o_json)
 {
 	bendSettings = o_json;
 	vrFloatCoordinateMath = o_json.value("VRFloatCoordinateMath", false);
+	vrHardenDepthLayoutDynamicRes = o_json.value("VRHardenDepthLayoutDynamicRes", false);
+	vrUseJitteredLightProjection = o_json.value("VRUseJitteredLightProjection", false);
 }
 
 void ScreenSpaceShadows::SaveSettings(json& o_json)
 {
 	o_json = bendSettings;
 	o_json["VRFloatCoordinateMath"] = vrFloatCoordinateMath;
+	o_json["VRHardenDepthLayoutDynamicRes"] = vrHardenDepthLayoutDynamicRes;
+	o_json["VRUseJitteredLightProjection"] = vrUseJitteredLightProjection;
 }
 
 void ScreenSpaceShadows::RestoreDefaultSettings()
 {
 	bendSettings = {};
 	vrFloatCoordinateMath = false;
+	vrHardenDepthLayoutDynamicRes = false;
+	vrUseJitteredLightProjection = false;
 }
 
 bool ScreenSpaceShadows::HasShaderDefine(RE::BSShader::Type)
