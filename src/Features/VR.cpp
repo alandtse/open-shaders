@@ -131,9 +131,8 @@ void VR::PostPostLoad()
 
 void VR::DataLoaded()
 {
-	// Initialize occlusion culling based on user settings.
-	bool desired = settings.EnableDepthBufferCullingExterior;
-	UpdateDepthBufferCulling(desired);
+	// Initialize occlusion culling based on user settings and current interior/exterior state.
+	UpdateDepthBufferCulling();
 
 	if (gMinOccludeeBoxExtent) {
 		*gMinOccludeeBoxExtent = settings.MinOccludeeBoxExtent;
@@ -145,13 +144,7 @@ void VR::DataLoaded()
 void VR::EarlyPrepass()
 {
 	// Apply culling setting each prepass based on current interior/exterior state.
-	const auto* tes = globals::game::tes;
-	if (!tes) {
-		return;
-	}
-
-	const bool inInterior = tes->interiorCell != nullptr;
-	UpdateDepthBufferCulling(inInterior ? settings.EnableDepthBufferCullingInterior : settings.EnableDepthBufferCullingExterior);
+	UpdateDepthBufferCulling();
 }
 
 //=============================================================================
@@ -1657,12 +1650,16 @@ void VR::SubmitOverlayFrame()
 	}
 }
 
-// Helper to centralize VR depth buffer culling logic, reducing duplication between DataLoaded and EarlyPrepass.
-void VR::UpdateDepthBufferCulling(bool desired)
+// Helper to centralize VR depth buffer culling logic, reducing duplication between DataLoaded, EarlyPrepass, and Settings UI.
+void VR::UpdateDepthBufferCulling()
 {
 	if (!gDepthBufferCulling) {
 		return;
 	}
+
+	const auto* tes = globals::game::tes;
+	const bool inInterior = tes && tes->interiorCell != nullptr;
+	const bool desired = inInterior ? settings.EnableDepthBufferCullingInterior : settings.EnableDepthBufferCullingExterior;
 
 	const bool previous = *gDepthBufferCulling;
 	*gDepthBufferCulling = desired;
