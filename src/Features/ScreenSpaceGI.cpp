@@ -5,6 +5,7 @@
 #include "Deferred.h"
 #include "State.h"
 #include "Util.h"
+#include "Utils/D3D.h"
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	ScreenSpaceGI::Settings,
@@ -732,7 +733,7 @@ void ScreenSpaceGI::DrawSSGI()
 	{
 		TracyD3D11Zone(globals::state->tracyCtx, "SSGI - Prefilter Depths");
 
-		srvs.at(0) = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kPOST_ZPREPASS_COPY].depthSRV;
+		srvs.at(0) = Util::GetCurrentSceneDepthSRV();
 		for (int i = 0; i < 5; ++i)
 			uavs.at(i) = uavWorkingDepth[i].get();
 
