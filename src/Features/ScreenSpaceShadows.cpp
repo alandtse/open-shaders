@@ -19,10 +19,7 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	VRBaseSamplesAtReference,
 	SurfaceThickness,
 	BilinearThreshold,
-	ShadowContrast,
-	DistanceFadeStart,
-	DistanceFadeEnd,
-	EnableDistanceFade)
+	ShadowContrast)
 
 namespace
 {
@@ -65,19 +62,6 @@ void ScreenSpaceShadows::DrawSettings()
 		ImGui::SliderInt("Sample Count Multiplier", (int*)&bendSettings.SampleCount, 1, 4);
 		if (globals::game::isVR) {
 			ImGui::SliderFloat("VR Baseline Samples", &bendSettings.VRBaseSamplesAtReference, 16.0f, 96.0f, "%.0f");
-			bool enableDistanceFade = bendSettings.EnableDistanceFade != 0;
-			if (ImGui::Checkbox("Enable VR Distance Fade", &enableDistanceFade))
-				bendSettings.EnableDistanceFade = enableDistanceFade ? 1u : 0u;
-
-			ImGui::BeginDisabled(!enableDistanceFade);
-			ImGui::SliderFloat("VR Fade Start", &bendSettings.DistanceFadeStart, 0.0f, 1.0f, "%.3f");
-			ImGui::SliderFloat("VR Fade End", &bendSettings.DistanceFadeEnd, 0.0f, 1.0f, "%.3f");
-			ImGui::EndDisabled();
-			ImGui::TextDisabled("Fade controls are remapped to linear-distance range.");
-
-			// Clamp to a safe normalized range and enforce a minimum gap.
-			bendSettings.DistanceFadeStart = std::min(std::max(bendSettings.DistanceFadeStart, 0.0f), 0.98f);
-			bendSettings.DistanceFadeEnd = std::min(std::max(bendSettings.DistanceFadeEnd, bendSettings.DistanceFadeStart + 0.01f), 1.0f);
 		}
 		ImGui::SliderFloat("Surface Thickness", &bendSettings.SurfaceThickness, 0.005f, 0.05f);
 		ImGui::SliderFloat("Bilinear Threshold", &bendSettings.BilinearThreshold, 0.02f, 1.0f);

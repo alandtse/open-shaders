@@ -37,10 +37,7 @@ public:
 		uint Enable = 1;
 		uint SampleCount = 1;
 		float VRBaseSamplesAtReference = 44.0f;
-		float DistanceFadeStart = 0.70f;
-		float DistanceFadeEnd = 0.92f;
-		uint EnableDistanceFade = 0;
-		uint pad0[3];
+		uint pad0[2];
 	};
 
 	BendSettings bendSettings;
