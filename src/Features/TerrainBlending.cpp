@@ -16,7 +16,9 @@
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	TerrainBlending::Settings,
-	Enabled)
+	Enabled,
+	TerrainCullDistance,
+	BlendStrength)
 
 namespace
 {
@@ -473,10 +475,27 @@ uint32_t ToModuleRva(const void* a_returnAddress)
 
 void TerrainBlending::DrawSettings()
 {
-	ImGui::Checkbox("Enable Terrain Blending", (bool*)&settings.Enabled);
+	bool enabled = settings.Enabled != 0;
+	if (ImGui::Checkbox("Enable Terrain Blending", &enabled)) {
+		settings.Enabled = enabled ? 1u : 0u;
+	}
 
 	if (auto _tt = Util::HoverTooltipWrapper()) {
 		ImGui::Text("Enable seamless blending between terrain and objects.");
+	}
+
+	ImGui::SliderFloat("Blend Strength", &settings.BlendStrength, 0.125f, 1.25f, "%.3f");
+	if (auto _tt = Util::HoverTooltipWrapper()) {
+		ImGui::Text("Scales blending strength. Lower values make blending tighter.");
+	}
+
+	ImGui::Spacing();
+	if (ImGui::TreeNodeEx("Performance Options")) {
+		ImGui::SliderFloat("Terrain Depth Culling Distance", &settings.TerrainCullDistance, 0.0f, 8192.0f, "%.0f units");
+		if (auto _tt = Util::HoverTooltipWrapper()) {
+			ImGui::Text("Terrain farther than this distance skips TB depth rendering. Set to 0 to disable culling.");
+		}
+		ImGui::TreePop();
 	}
 }
 
@@ -968,8 +987,11 @@ void TerrainBlending::Hooks::BSBatchRenderer__RenderPassImmediately::thunk(RE::B
 			bool inTerrain = a_pass->shaderProperty && a_pass->shaderProperty->flags.all(RE::BSShaderProperty::EShaderPropertyFlag::kMultiTextureLandscape);
 
 			if (inTerrain && a_pass->geometry) {
-				if ((a_pass->geometry->worldBound.center.GetDistance(singleton.averageEyePosition) - a_pass->geometry->worldBound.radius) > 1024.0f) {
-					inTerrain = false;
+				const float cullDistance = singleton.settings.TerrainCullDistance;
+				if (cullDistance > 0.0f) {
+					if ((a_pass->geometry->worldBound.center.GetDistance(singleton.averageEyePosition) - a_pass->geometry->worldBound.radius) > cullDistance) {
+						inTerrain = false;
+					}
 				}
 			}
 
