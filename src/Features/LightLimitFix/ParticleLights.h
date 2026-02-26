@@ -1,5 +1,7 @@
 #pragma once
 
+#include <cstdint>
+
 class ParticleLights
 {
 public:
@@ -18,6 +20,7 @@ public:
 
 	ankerl::unordered_dense::map<std::string, Config> particleLightConfigs;
 	ankerl::unordered_dense::map<std::string, GradientConfig> particleLightGradientConfigs;
+	std::uint64_t configVersion = 0;
 
 	void GetConfigs();
 };

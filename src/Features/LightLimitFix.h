@@ -157,15 +157,18 @@ struct ParticleLightInfo
 		bool billboard;
 		RE::BSGeometry* node;
 		RE::NiColorA color;
+		float radiusMult = 1.0f;
 	};
 
 	struct ParticleLightReference
 	{
-		bool valid;
-		bool billboard;
-		ParticleLights::Config* config;
-		ParticleLights::GradientConfig* gradientConfig;
-		RE::NiColorA baseColor;
+		bool valid = false;
+		bool billboard = false;
+		ParticleLights::Config config{};
+		bool hasGradientConfig = false;
+		ParticleLights::GradientConfig gradientConfig{};
+		RE::NiColorA baseColor{ 1.0f, 1.0f, 1.0f, 1.0f };
+		std::uint64_t configVersion = 0;
 	};
 
 	eastl::hash_map<RE::NiNode*, ParticleLightReference> particleLightsReferences;
