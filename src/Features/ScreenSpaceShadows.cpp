@@ -15,6 +15,7 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	ScreenSpaceShadows::BendSettings,
 	Enable,
 	SampleCount,
+	VRBaseSamplesAtReference,
 	SurfaceThickness,
 	BilinearThreshold,
 	ShadowContrast)
@@ -58,6 +59,9 @@ void ScreenSpaceShadows::DrawSettings()
 	if (ImGui::TreeNodeEx("General", ImGuiTreeNodeFlags_DefaultOpen)) {
 		ImGui::Checkbox("Enable", (bool*)&bendSettings.Enable);
 		ImGui::SliderInt("Sample Count Multiplier", (int*)&bendSettings.SampleCount, 1, 4);
+		if (globals::game::isVR) {
+			ImGui::SliderFloat("VR Baseline Samples", &bendSettings.VRBaseSamplesAtReference, 16.0f, 96.0f, "%.0f");
+		}
 		ImGui::SliderFloat("Surface Thickness", &bendSettings.SurfaceThickness, 0.005f, 0.05f);
 		ImGui::SliderFloat("Bilinear Threshold", &bendSettings.BilinearThreshold, 0.02f, 1.0f);
 		ImGui::SliderFloat("Shadow Contrast", &bendSettings.ShadowContrast, 0.0f, 4.0f);
@@ -86,6 +90,16 @@ uint ScreenSpaceShadows::GetScaledSampleCount(bool a_dynamic)
 
 	if (a_dynamic)
 		screenSize = Util::ConvertToDynamic(globals::state->screenSize);
+
+	if (globals::game::isVR) {
+		// Per-eye VR scaling against a 4.5 MP reference eye.
+		constexpr float kReferencePerEyeArea = 4'500'000.0f;
+		float currentArea = (screenSize.x * 0.5f) * screenSize.y;
+		float areaScale = std::sqrt(currentArea / kReferencePerEyeArea);
+		float baseSamples = std::max(1.0f, bendSettings.VRBaseSamplesAtReference);
+		uint scaledSampleCount = static_cast<uint>(std::round(bendSettings.SampleCount * baseSamples * areaScale));
+		return std::max(1u, scaledSampleCount);
+	}
 
 	// Scale sample count based on both dimensions relative to 1920x1080 reference
 

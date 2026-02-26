@@ -36,7 +36,8 @@ public:
 		float ShadowContrast = 1.0f;
 		uint Enable = 1;
 		uint SampleCount = 1;
-		uint pad0[3];
+		float VRBaseSamplesAtReference = 44.0f;
+		uint pad0[2];
 	};
 
 	BendSettings bendSettings;
