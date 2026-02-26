@@ -31,6 +31,15 @@ cbuffer PerFrame : register(b1)
 	float SurfaceThickness;
 	float BilinearThreshold;
 	float ShadowContrast;
+	uint Enable;
+	uint SampleCount;
+	float VRBaseSamplesAtReference;
+	float DistanceFadeStart;
+	float DistanceFadeEnd;
+	uint EnableDistanceFade;
+	uint settingsPad0;
+	uint settingsPad1;
+	uint settingsPad2;
 };
 
 [numthreads(WAVE_SIZE, 1, 1)] void main(
@@ -43,8 +52,8 @@ cbuffer PerFrame : register(b1)
 
 	parameters.LightCoordinate = LightCoordinate;
 	parameters.WaveOffset = WaveOffset;
-	parameters.FarDepthValue = 1;
-	parameters.NearDepthValue = 0;
+	parameters.FarDepthValue = FarDepthValue;
+	parameters.NearDepthValue = NearDepthValue;
 	parameters.InvDepthTextureSize = InvDepthTextureSize;
 	parameters.DepthTexture = DepthTexture;
 	parameters.OutputTexture = OutputTexture;
@@ -53,6 +62,9 @@ cbuffer PerFrame : register(b1)
 	parameters.SurfaceThickness = SurfaceThickness;
 	parameters.BilinearThreshold = BilinearThreshold;
 	parameters.ShadowContrast = ShadowContrast;
+	parameters.DistanceFadeStart = DistanceFadeStart;
+	parameters.DistanceFadeEnd = DistanceFadeEnd;
+	parameters.EnableDistanceFade = EnableDistanceFade;
 
 	parameters.DynamicRes = DynamicRes;
 

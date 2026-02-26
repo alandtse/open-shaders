@@ -56,6 +56,10 @@ struct DispatchParameters
 	half ShadowContrast;  // A contrast boost is applied to the transition in/out of shadow.
 						  // Recommended starting value: 2 or 4. Values >= 1 are valid.
 
+	half DistanceFadeStart;  // Start of optional far-distance fade.
+	half DistanceFadeEnd;    // End of optional far-distance fade.
+	uint EnableDistanceFade;
+
 	float2 DynamicRes;
 
 	uint DynamicSampleCount;
@@ -95,6 +99,9 @@ struct DispatchParameters
 		SurfaceThickness = 0.005;
 		BilinearThreshold = 0.02;
 		ShadowContrast = 4;
+		DistanceFadeStart = 0.70;
+		DistanceFadeEnd = 0.92;
+		EnableDistanceFade = 0;
 		IgnoreEdgePixels = false;
 		UsePrecisionOffset = false;
 		BilinearSamplingOffsetMode = false;
@@ -391,6 +398,23 @@ void WriteScreenSpaceShadow(DispatchParameters inParameters, int3 inGroupID, int
 
 	// Take the average of 4 samples, this is useful to reduces aliasing noise in the source depth, especially with long shadows.
 	result = dot(shadow_value, 0.25);
+
+	// Optional far-distance fade to suppress HMD-motion-sensitive distant shadow shimmer.
+	if (inParameters.EnableDistanceFade != 0) {
+		// Linearize depth first; raw non-linear depth heavily compresses the useful control range near 1.0.
+		float linearDepth = SharedData::GetScreenDepth(sampling_depth[0]);
+
+		// UI values are normalized [0..1], remapped to linear-distance thresholds.
+		// This widens useful control range and avoids values that zero-out SSS globally.
+		float startT = saturate(inParameters.DistanceFadeStart);
+		float endT = saturate(inParameters.DistanceFadeEnd);
+		endT = max(endT, startT + 0.01);
+
+		float fadeStartLinear = lerp(10.0, 800.0, startT);
+		float fadeEndLinear = lerp(fadeStartLinear + 5.0, 6000.0, endT);
+		float fade = 1.0 - smoothstep(fadeStartLinear, fadeEndLinear, linearDepth);
+		result = lerp(1.0, result, fade);
+	}
 
 	// Asking the GPU to write scattered single-byte pixels isn't great,
 	// But thankfully the latency is hidden by all the work we're doing...
