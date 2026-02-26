@@ -28,7 +28,8 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	MaxParticleDistance,       // NEW
 	EnableLightsVisualisation,
 	LightsVisualisationMode,
-	UseLegacyParticleLighting)
+	UseLegacyParticleLighting,
+	UseLegacyParticleEmissionLighting)
 void LightLimitFix::DrawSettings()
 {
 	// Heat warp / refraction strength (moved from Advanced Settings)
@@ -54,17 +55,6 @@ void LightLimitFix::DrawSettings()
 			ImGui::Text("Enables Particle Lights.");
 		}
 
-		const bool legacyParticleLightingChanged =
-			ImGui::Checkbox("Legacy Particle Lighting", &settings.UseLegacyParticleLighting);
-		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::Text(
-				"Uses pre-linear-lighting particle shading for particle pass only.\n"
-				"Helps preserve legacy warm/cool balance when Linear Lighting is enabled.");
-		}
-		// Recompile particle shaders only on explicit user toggle changes.
-		if (legacyParticleLightingChanged) {
-			globals::shaderCache->Clear(RE::BSShader::Type::Particle);
-		}
 		ImGui::Checkbox("Enable Culling", &settings.EnableParticleLightsCulling);
 		if (auto _tt = Util::HoverTooltipWrapper()) {
 			ImGui::Text("Significantly improves performance by not rendering empty textures. Only disable if you are encountering issues.");
@@ -135,6 +125,22 @@ void LightLimitFix::DrawSettings()
 	///////////////////////////////
 	ImGui::SeparatorText("Debug");
 
+	if (ImGui::TreeNode("Particle Lights Legacy Options")) {
+		ImGui::Checkbox("Legacy Particle Shading", &settings.UseLegacyParticleLighting);
+		if (auto _tt = Util::HoverTooltipWrapper()) {
+			ImGui::Text("Disables the modern linear-light conversion path in the particle pass only.");
+		}
+
+		ImGui::Checkbox("Legacy Emitted Particle Light Color", &settings.UseLegacyParticleEmissionLighting);
+		if (auto _tt = Util::HoverTooltipWrapper()) {
+			ImGui::Text("Skips Color::PointLight conversion for particle-emitted lights in the main lighting pass (effective only when Linear Lighting is enabled).");
+		}
+
+		ImGui::Spacing();
+		ImGui::Spacing();
+		ImGui::TreePop();
+	}
+
 	if (ImGui::TreeNode("Light Limit Visualization")) {
 		ImGui::Checkbox("Enable Lights Visualisation", &settings.EnableLightsVisualisation);
 		if (auto _tt = Util::HoverTooltipWrapper()) {
@@ -188,6 +194,7 @@ LightLimitFix::PerFrame LightLimitFix::GetCommonBufferData()
 	perFrame.EnableLightsVisualisation = settings.EnableLightsVisualisation;
 	perFrame.LightsVisualisationMode = settings.LightsVisualisationMode;
 	perFrame.UseLegacyParticleLighting = settings.UseLegacyParticleLighting;
+	perFrame.UseLegacyParticleEmissionLighting = settings.UseLegacyParticleEmissionLighting;
 	std::copy(clusterSize, clusterSize + 3, perFrame.ClusterSize);
 	return perFrame;
 }
@@ -941,6 +948,7 @@ void LightLimitFix::UpdateLights()
 			}
 
 			clusteredLight.lightFlags.set(LightFlags::Simple);
+			clusteredLight.lightFlags.set(LightFlags::Particle);
 			AddCachedParticleLights(lightsData, clusteredLight);
 
 			clusteredLights = 0;
@@ -1048,6 +1056,7 @@ void LightLimitFix::UpdateLights()
 				SetLightPosition(light, position);  // Light is complete for both eyes by now
 
 				light.lightFlags.set(LightFlags::Simple);
+				light.lightFlags.set(LightFlags::Particle);
 
 				AddCachedParticleLights(lightsData, light);
 			}

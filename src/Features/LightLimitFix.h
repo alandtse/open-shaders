@@ -43,6 +43,7 @@ public:
 		Disabled = (1 << 9),
 		InverseSquare = (1 << 10),
 		Linear = (1 << 11),
+		Particle = (1 << 12),
 	};
 
 	struct PositionOpt
@@ -104,7 +105,7 @@ public:
 		uint EnableLightsVisualisation;
 		uint LightsVisualisationMode;
 		uint UseLegacyParticleLighting;
-		uint pad0;
+		uint UseLegacyParticleEmissionLighting;
 		uint ClusterSize[4];
 	};
 	STATIC_ASSERT_ALIGNAS_16(PerFrame);
@@ -218,6 +219,7 @@ struct ParticleLightInfo
 		bool EnableLightsVisualisation = false;
 		uint LightsVisualisationMode = 0;
 		bool UseLegacyParticleLighting = true;
+		bool UseLegacyParticleEmissionLighting = false;
 		bool EnableParticleLights = true;
 		bool EnableParticleLightsCulling = true;
 		bool EnableParticleLightsDetection = true;
