@@ -164,7 +164,7 @@ void ScreenSpaceShadows::DrawShadows()
 
 	// Helper lambda to calculate light projection for a given eye
 	auto CalculateLightProjection = [&](uint32_t eyeIndex = 0) -> std::array<float, 4> {
-		auto viewProjMat = globals::game::frameBufferCached.GetCameraViewProj(eyeIndex).Transpose();
+		auto viewProjMat = globals::game::frameBufferCached.GetCameraViewProjUnjittered(eyeIndex).Transpose();
 		auto projectedLight = DirectX::SimpleMath::Vector4::Transform(lightProjection, viewProjMat);
 		return { projectedLight.x, projectedLight.y, projectedLight.z, projectedLight.w };
 	};
