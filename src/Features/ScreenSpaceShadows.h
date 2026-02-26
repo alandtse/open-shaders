@@ -42,6 +42,7 @@ public:
 	};
 
 	BendSettings bendSettings;
+	bool vrFloatCoordinateMath = false;
 
 	struct alignas(16) RaymarchCB
 	{
@@ -75,6 +76,8 @@ public:
 	ID3D11ComputeShader* raymarchRightCS = nullptr;
 	uint compiledSampleCount = 0;
 	uint compiledSampleCountRight = 0;
+	bool compiledVRFloatCoordinateMath = false;
+	bool compiledVRFloatCoordinateMathRight = false;
 
 	Texture2D* screenSpaceShadowsTexture = nullptr;
 

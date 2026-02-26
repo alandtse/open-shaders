@@ -38,6 +38,14 @@
 
 //#endif
 
+#if defined(VR) && defined(SSS_VR_FLOAT_COORDS)
+#	define SSS_COORD float
+#	define SSS_COORD2 float2
+#else
+#	define SSS_COORD half
+#	define SSS_COORD2 half2
+#endif
+
 // This is the list of runtime properties to pass to the shader
 // Wherever possible, it is highly recommended to have these values be compile-time constants
 struct DispatchParameters
@@ -135,13 +143,13 @@ void WriteScreenSpaceShadow(struct DispatchParameters inParameters, int3 inGroup
 
 // Gets the start pixel coordinates for the pixels in the wavefront
 // Also returns the delta to get to the next pixel after WAVE_COUNT pixels along the ray
-static void ComputeWavefrontExtents(DispatchParameters inParameters, int3 inGroupID, uint inGroupThreadID, out half2 outDeltaXY, out half2 outPixelXY, out half outPixelDistance, out bool outMajorAxisX)
+static void ComputeWavefrontExtents(DispatchParameters inParameters, int3 inGroupID, uint inGroupThreadID, out SSS_COORD2 outDeltaXY, out SSS_COORD2 outPixelXY, out SSS_COORD outPixelDistance, out bool outMajorAxisX)
 {
 	int2 xy = inGroupID.yz * WAVE_SIZE + inParameters.WaveOffset.xy;
 
 	//integer light position / fractional component
-	half2 light_xy = floor(inParameters.LightCoordinate.xy) + 0.5;
-	half2 light_xy_fraction = inParameters.LightCoordinate.xy - light_xy;
+	SSS_COORD2 light_xy = floor(inParameters.LightCoordinate.xy) + 0.5;
+	SSS_COORD2 light_xy_fraction = inParameters.LightCoordinate.xy - light_xy;
 	bool reverse_direction = inParameters.LightCoordinate.w > 0.0f;
 
 	int2 sign_xy = sign(xy);
@@ -153,32 +161,32 @@ static void ComputeWavefrontExtents(DispatchParameters inParameters, int3 inGrou
 
 	// Apply wave offset
 	xy = axis * (int)inGroupID.x + xy;
-	half2 xy_f = (half2)xy;
+	SSS_COORD2 xy_f = (SSS_COORD2)xy;
 
 	// For interpolation to the light center, we only really care about the larger of the two axis
 	bool x_axis_major = abs(xy_f.x) > abs(xy_f.y);
-	half major_axis = x_axis_major ? xy_f.x : xy_f.y;
+	SSS_COORD major_axis = x_axis_major ? xy_f.x : xy_f.y;
 
-	half major_axis_start = abs(major_axis);
-	half major_axis_end = abs(major_axis) - (half)WAVE_SIZE;
+	SSS_COORD major_axis_start = abs(major_axis);
+	SSS_COORD major_axis_end = abs(major_axis) - (SSS_COORD)WAVE_SIZE;
 
-	half ma_light_frac = x_axis_major ? light_xy_fraction.x : light_xy_fraction.y;
+	SSS_COORD ma_light_frac = x_axis_major ? light_xy_fraction.x : light_xy_fraction.y;
 	ma_light_frac = major_axis > 0 ? -ma_light_frac : ma_light_frac;
 
 	// back in to screen direction
-	half2 start_xy = xy_f + light_xy;
+	SSS_COORD2 start_xy = xy_f + light_xy;
 
 	// For the very inner most ring, we need to interpolate to a pixel centered UV, so the UV->pixel rounding doesn't skip output pixels
-	half2 end_xy = lerp(inParameters.LightCoordinate.xy, start_xy, (major_axis_end + ma_light_frac) / (major_axis_start + ma_light_frac));
+	SSS_COORD2 end_xy = lerp(inParameters.LightCoordinate.xy, start_xy, (major_axis_end + ma_light_frac) / (major_axis_start + ma_light_frac));
 
 	// The major axis should be a round number
-	half2 xy_delta = (start_xy - end_xy);
+	SSS_COORD2 xy_delta = (start_xy - end_xy);
 
 	// Inverse the read order when reverse direction is true
-	half thread_step = (half)(inGroupThreadID ^ (reverse_direction ? 0 : (WAVE_SIZE - 1)));
+	SSS_COORD thread_step = (SSS_COORD)(inGroupThreadID ^ (reverse_direction ? 0 : (WAVE_SIZE - 1)));
 
-	half2 pixel_xy = lerp(start_xy, end_xy, thread_step / (half)WAVE_SIZE);
-	half pixel_distance = major_axis_start - thread_step + ma_light_frac;
+	SSS_COORD2 pixel_xy = lerp(start_xy, end_xy, thread_step / (SSS_COORD)WAVE_SIZE);
+	SSS_COORD pixel_distance = major_axis_start - thread_step + ma_light_frac;
 
 	outPixelXY = pixel_xy;
 	outPixelDistance = pixel_distance;
@@ -199,9 +207,9 @@ groupshared half DepthData[READ_COUNT * WAVE_SIZE];
 //	(int)	inGroupThreadId:	Compute shader group thread id register (SV_GroupThreadID)
 void WriteScreenSpaceShadow(DispatchParameters inParameters, int3 inGroupID, int inGroupThreadID)
 {
-	half2 xy_delta;
-	half2 pixel_xy;
-	half pixel_distance;
+	SSS_COORD2 xy_delta;
+	SSS_COORD2 pixel_xy;
+	SSS_COORD pixel_distance;
 	bool x_axis_major;  // major axis is x axis? abs(xy_delta.x) > abs(xy_delta.y).
 
 	ComputeWavefrontExtents(inParameters, (int3)inGroupID, inGroupThreadID.x, xy_delta, pixel_xy, pixel_distance, x_axis_major);
@@ -210,10 +218,10 @@ void WriteScreenSpaceShadow(DispatchParameters inParameters, int3 inGroupID, int
 	half sampling_depth[READ_COUNT];
 	half shadowing_depth[READ_COUNT];
 	half depth_thickness_scale[READ_COUNT];
-	half sample_distance[READ_COUNT];
+	SSS_COORD sample_distance[READ_COUNT];
 
-	const half direction = -inParameters.LightCoordinate.w;
-	const half z_sign = inParameters.NearDepthValue > inParameters.FarDepthValue ? -1 : +1;
+	const SSS_COORD direction = -inParameters.LightCoordinate.w;
+	const SSS_COORD z_sign = inParameters.NearDepthValue > inParameters.FarDepthValue ? -1 : +1;
 
 	int i;
 	bool is_edge = false;
@@ -223,7 +231,7 @@ void WriteScreenSpaceShadow(DispatchParameters inParameters, int3 inGroupID, int
 	pixel_xy.x += 1.0 / inParameters.InvDepthTextureSize.x;
 #	endif
 
-	half2 write_xy = floor(pixel_xy);
+	SSS_COORD2 write_xy = floor(pixel_xy);
 
 	[loop] for (i = 0; i < READ_COUNT; i++)
 	{
@@ -232,33 +240,33 @@ void WriteScreenSpaceShadow(DispatchParameters inParameters, int3 inGroupID, int
 
 		// We sample depth twice per pixel per sample, and interpolate with an edge detect filter
 		// Interpolation should only occur on the minor axis of the ray - major axis coordinates should be at pixel centers
-		half2 read_xy = floor(pixel_xy);
+		SSS_COORD2 read_xy = floor(pixel_xy);
 
 		read_xy *= inParameters.DynamicRes;
 
 #	if defined(VR)
-		read_xy *= half2(0.5, 1.0);
+		read_xy *= SSS_COORD2(0.5, 1.0);
 #	endif
 
-		half minor_axis = x_axis_major ? pixel_xy.y : pixel_xy.x;
+		SSS_COORD minor_axis = x_axis_major ? pixel_xy.y : pixel_xy.x;
 
 		// If a pixel has been detected as an edge, then optionally (inParameters.IgnoreEdgePixels) don't include it in the shadow
-		const half edge_skip = 1e20;  // if edge skipping is enabled, apply an extreme value/blend on edge samples to push the value out of range
+		const SSS_COORD edge_skip = 1e20;  // if edge skipping is enabled, apply an extreme value/blend on edge samples to push the value out of range
 
 		half2 depths;
-		half bilinear = frac(minor_axis) - 0.5;
+		SSS_COORD bilinear = frac(minor_axis) - 0.5;
 
 #	if USE_HALF_PIXEL_OFFSET
 		read_xy += 0.5;
 #	endif
 
-		half bias = bilinear > 0 ? 1 : -1;
-		half2 offset_xy = half2(x_axis_major ? 0 : bias, x_axis_major ? bias : 0);
+		SSS_COORD bias = bilinear > 0 ? 1 : -1;
+		SSS_COORD2 offset_xy = SSS_COORD2(x_axis_major ? 0 : bias, x_axis_major ? bias : 0);
 
 		// HLSL enforces that a pixel offset is a compile-time constant, which isn't strictly required (and can sometimes be a bit faster)
 		// So this fallback will use a manual uv offset instead
-		half2 coord = read_xy * inParameters.InvDepthTextureSize;
-		half2 coord_with_offset = (read_xy + offset_xy) * inParameters.InvDepthTextureSize;
+		SSS_COORD2 coord = read_xy * inParameters.InvDepthTextureSize;
+		SSS_COORD2 coord_with_offset = (read_xy + offset_xy) * inParameters.InvDepthTextureSize;
 
 #	if defined(VR)
 #		if defined(RIGHT)
@@ -384,7 +392,7 @@ void WriteScreenSpaceShadow(DispatchParameters inParameters, int3 inGroupID, int
 	// The 1.0 / inParameters.SurfaceThickness is to adjust user selected thickness. So a 0.5% thickness will scale depth values from [0,1] to [0,200]. The shadow window is always 1 wide.
 	// 1.0 / depth_thickness_scale[0] is because SurfaceThickness is percentage of remaining depth between the sample and the far clip - not a percentage of the full depth range.
 	// The min() function is to make sure the window is a minimum width when very close to the light. The +direction term will bias the result so the pixel at the very center of the light is either fully lit or shadowed
-	half depth_scale = min(sample_distance[0] + direction, 1.0 / inParameters.SurfaceThickness) * sample_distance[0] / depth_thickness_scale[0];
+	SSS_COORD depth_scale = min(sample_distance[0] + direction, 1.0 / inParameters.SurfaceThickness) * sample_distance[0] / depth_thickness_scale[0];
 
 	start_depth = start_depth * depth_scale - z_sign;
 

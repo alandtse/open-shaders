@@ -4,6 +4,7 @@
 #include "Util.h"
 #include "Utils/D3D.h"
 #include <algorithm>
+#include <vector>
 
 #pragma warning(push)
 #pragma warning(disable: 4838 4244)
@@ -105,6 +106,19 @@ void ScreenSpaceShadows::DrawSettings()
 			ImGui::Text("Controls overall shadow darkness.");
 		}
 
+		if (globals::game::isVR) {
+			ImGui::Spacing();
+			ImGui::TextUnformatted("Optional");
+			ImGui::Separator();
+
+			if (ImGui::Checkbox("VR Float Coordinate Math", &vrFloatCoordinateMath)) {
+				ClearShaderCache();
+			}
+			if (auto _tt = Util::HoverTooltipWrapper()) {
+				ImGui::Text("Improves VR shadow stability at a performance cost.");
+			}
+		}
+
 		ImGui::Spacing();
 		ImGui::Spacing();
 		ImGui::TreePop();
@@ -123,6 +137,8 @@ void ScreenSpaceShadows::ClearShaderCache()
 	}
 	compiledSampleCount = 0;
 	compiledSampleCountRight = 0;
+	compiledVRFloatCoordinateMath = false;
+	compiledVRFloatCoordinateMathRight = false;
 }
 
 uint ScreenSpaceShadows::GetScaledSampleCount(bool a_dynamic)
@@ -156,15 +172,23 @@ uint ScreenSpaceShadows::GetScaledSampleCount(bool a_dynamic)
 ID3D11ComputeShader* ScreenSpaceShadows::GetComputeRaymarch()
 {
 	const uint scaledSampleCount = GetScaledSampleCount(false);
-	if (raymarchCS && compiledSampleCount != scaledSampleCount) {
+	const bool useVRFloatCoordinates = globals::game::isVR && vrFloatCoordinateMath;
+	if (raymarchCS && (compiledSampleCount != scaledSampleCount || compiledVRFloatCoordinateMath != useVRFloatCoordinates)) {
 		raymarchCS->Release();
 		raymarchCS = nullptr;
 		compiledSampleCount = 0;
+		compiledVRFloatCoordinateMath = false;
 	}
 
 	if (!raymarchCS) {
-		raymarchCS = (ID3D11ComputeShader*)Util::CompileShader(L"Data\\Shaders\\ScreenSpaceShadows\\RaymarchCS.hlsl", { { "SAMPLE_COUNT", std::format("{}", scaledSampleCount).c_str() } }, "cs_5_0");
+		std::string sampleCount = std::format("{}", scaledSampleCount);
+		std::vector<std::pair<const char*, const char*>> defines{ { "SAMPLE_COUNT", sampleCount.c_str() } };
+		if (useVRFloatCoordinates)
+			defines.push_back({ "SSS_VR_FLOAT_COORDS", "" });
+
+		raymarchCS = (ID3D11ComputeShader*)Util::CompileShader(L"Data\\Shaders\\ScreenSpaceShadows\\RaymarchCS.hlsl", defines, "cs_5_0");
 		compiledSampleCount = scaledSampleCount;
+		compiledVRFloatCoordinateMath = useVRFloatCoordinates;
 	}
 	return raymarchCS;
 }
@@ -172,15 +196,26 @@ ID3D11ComputeShader* ScreenSpaceShadows::GetComputeRaymarch()
 ID3D11ComputeShader* ScreenSpaceShadows::GetComputeRaymarchRight()
 {
 	const uint scaledSampleCount = GetScaledSampleCount(false);
-	if (raymarchRightCS && compiledSampleCountRight != scaledSampleCount) {
+	const bool useVRFloatCoordinates = globals::game::isVR && vrFloatCoordinateMath;
+	if (raymarchRightCS && (compiledSampleCountRight != scaledSampleCount || compiledVRFloatCoordinateMathRight != useVRFloatCoordinates)) {
 		raymarchRightCS->Release();
 		raymarchRightCS = nullptr;
 		compiledSampleCountRight = 0;
+		compiledVRFloatCoordinateMathRight = false;
 	}
 
 	if (!raymarchRightCS) {
-		raymarchRightCS = (ID3D11ComputeShader*)Util::CompileShader(L"Data\\Shaders\\ScreenSpaceShadows\\RaymarchCS.hlsl", { { "SAMPLE_COUNT", std::format("{}", scaledSampleCount).c_str() }, { "RIGHT", "" } }, "cs_5_0");
+		std::string sampleCount = std::format("{}", scaledSampleCount);
+		std::vector<std::pair<const char*, const char*>> defines{
+			{ "SAMPLE_COUNT", sampleCount.c_str() },
+			{ "RIGHT", "" }
+		};
+		if (useVRFloatCoordinates)
+			defines.push_back({ "SSS_VR_FLOAT_COORDS", "" });
+
+		raymarchRightCS = (ID3D11ComputeShader*)Util::CompileShader(L"Data\\Shaders\\ScreenSpaceShadows\\RaymarchCS.hlsl", defines, "cs_5_0");
 		compiledSampleCountRight = scaledSampleCount;
+		compiledVRFloatCoordinateMathRight = useVRFloatCoordinates;
 	}
 	return raymarchRightCS;
 }
@@ -357,16 +392,19 @@ void ScreenSpaceShadows::Prepass()
 void ScreenSpaceShadows::LoadSettings(json& o_json)
 {
 	bendSettings = o_json;
+	vrFloatCoordinateMath = o_json.value("VRFloatCoordinateMath", false);
 }
 
 void ScreenSpaceShadows::SaveSettings(json& o_json)
 {
 	o_json = bendSettings;
+	o_json["VRFloatCoordinateMath"] = vrFloatCoordinateMath;
 }
 
 void ScreenSpaceShadows::RestoreDefaultSettings()
 {
 	bendSettings = {};
+	vrFloatCoordinateMath = false;
 }
 
 bool ScreenSpaceShadows::HasShaderDefine(RE::BSShader::Type)
