@@ -1,9 +1,38 @@
 #include "Features/LightLimitFix/ParticleLights.h"
 
 #include <numbers>
+#include <optional>
+
+namespace
+{
+	std::optional<std::string> ExtractIniStem(const std::string& path)
+	{
+		auto lastSeparatorPos = path.find_last_of("\\/");
+		if (lastSeparatorPos == std::string::npos) {
+			logger::error("[LLF] Path incomplete");
+			return std::nullopt;
+		}
+
+		std::string filename = path.substr(lastSeparatorPos + 1);
+		if (filename.size() < 4) {
+			logger::error("[LLF] Path too short");
+			return std::nullopt;
+		}
+
+		filename.erase(filename.length() - 4);  // Remove ".ini"
+		std::transform(filename.begin(), filename.end(), filename.begin(), [](auto c) { return (char)::tolower(c); });
+		return filename;
+	}
+}
 
 void ParticleLights::GetConfigs()
 {
+	++configVersion;
+	particleLightConfigs.clear();
+	particleLightGradientConfigs.clear();
+
+	particleLightConfigs["default"] = Config{};
+
 	if (std::filesystem::exists("Data\\ParticleLights")) {
 		logger::info("[LLF] Loading particle lights configs");
 
@@ -29,7 +58,6 @@ void ParticleLights::GetConfigs()
 			}
 
 			Config data{};
-			particleLightConfigs.insert({ "default", data });
 
 			data.cull = ini.GetBoolValue("Light", "Cull", false);
 			data.colorMult.red = (float)ini.GetDoubleValue("Light", "ColorMultRed", 1.0);
@@ -38,23 +66,13 @@ void ParticleLights::GetConfigs()
 			data.radiusMult = (float)ini.GetDoubleValue("Light", "RadiusMult", 1.0);
 			data.saturationMult = (float)ini.GetDoubleValue("Light", "SaturationMult", 1.0);
 
-			auto lastSeparatorPos = path.find_last_of("\\/");
-			if (lastSeparatorPos != std::string::npos) {
-				std::string filename = path.substr(lastSeparatorPos + 1);
-				if (filename.size() < 4) {
-					logger::error("[LLF] Path too short");
-					continue;
-				}
-
-				filename.erase(filename.length() - 4);  // Remove ".ini"
-				std::transform(filename.begin(), filename.end(), filename.begin(), [](auto c) { return (char)::tolower(c); });
-
-				logger::debug("[LLF] Inserting {}", filename);
-
-				particleLightConfigs.insert({ filename, data });
-			} else {
-				logger::error("[LLF] Path incomplete");
+			const auto filename = ExtractIniStem(path);
+			if (!filename) {
+				continue;
 			}
+
+			logger::debug("[LLF] Inserting {}", *filename);
+			particleLightConfigs[*filename] = data;
 		}
 	}
 
@@ -114,23 +132,13 @@ void ParticleLights::GetConfigs()
 				continue;
 			}
 
-			auto lastSeparatorPos = path.find_last_of("\\/");
-			if (lastSeparatorPos != std::string::npos) {
-				std::string filename = path.substr(lastSeparatorPos + 1);
-				if (filename.size() < 4) {
-					logger::error("[LLF] Path too short");
-					continue;
-				}
-
-				filename.erase(filename.length() - 4);  // Remove ".ini"
-				std::transform(filename.begin(), filename.end(), filename.begin(), [](auto c) { return (char)::tolower(c); });
-
-				logger::debug("[LLF] Inserting {}", filename);
-
-				particleLightGradientConfigs.insert({ filename, data });
-			} else {
-				logger::error("[LLF] Path incomplete");
+			const auto filename = ExtractIniStem(path);
+			if (!filename) {
+				continue;
 			}
+
+			logger::debug("[LLF] Inserting {}", *filename);
+			particleLightGradientConfigs[*filename] = data;
 		}
 	}
 }

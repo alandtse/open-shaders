@@ -55,7 +55,7 @@ public:
 	std::vector<std::pair<std::string, std::string>> shaderDefines{};  // data structure to parse string into; needed to avoid dangling pointers
 
 	float timer = 0;
-	float refractionScale = 1.0f;  // 1.0 = current behavior, <1.0 = weaker heat warp
+	float refractionScale = 0.5f;  // Default LLF heat warp strength
 	double smoothDrawCalls[RE::BSShader::Type::Total + 1];
 	int drawCalls[RE::BSShader::Type::Total + 1];
 
