@@ -17,6 +17,7 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	Enable,
 	SampleCount,
 	VRBaseSamplesAtReference,
+	VRCullDistance,
 	SurfaceThickness,
 	BilinearThreshold,
 	ShadowContrast)
@@ -59,13 +60,50 @@ void ScreenSpaceShadows::DrawSettings()
 {
 	if (ImGui::TreeNodeEx("General", ImGuiTreeNodeFlags_DefaultOpen)) {
 		ImGui::Checkbox("Enable", (bool*)&bendSettings.Enable);
+		if (auto _tt = Util::HoverTooltipWrapper()) {
+			ImGui::Text("Turns screen space shadows on or off.");
+		}
+
+		ImGui::Spacing();
+		ImGui::TextUnformatted("Performance");
+		ImGui::Separator();
+
 		ImGui::SliderInt("Sample Count Multiplier", (int*)&bendSettings.SampleCount, 1, 4);
+		if (auto _tt = Util::HoverTooltipWrapper()) {
+			ImGui::Text("Higher values improve detail but cost more performance. In VR, values >1 are not recommended.");
+		}
+
 		if (globals::game::isVR) {
 			ImGui::SliderFloat("VR Baseline Samples", &bendSettings.VRBaseSamplesAtReference, 16.0f, 96.0f, "%.0f");
+			if (auto _tt = Util::HoverTooltipWrapper()) {
+				ImGui::Text("Raises or lowers VR shadow quality and GPU cost.");
+			}
+
+			ImGui::SliderFloat("VR Shadow Cull Distance", &bendSettings.VRCullDistance, 0.0f, 20480.0f, "%.0f units");
+			if (auto _tt = Util::HoverTooltipWrapper()) {
+				ImGui::Text("0 disables. Lower values improve performance but remove distant shadows.");
+			}
+			bendSettings.VRCullDistance = std::clamp(bendSettings.VRCullDistance, 0.0f, 20480.0f);
 		}
+
+		ImGui::Spacing();
+		ImGui::TextUnformatted("Fine-tuning");
+		ImGui::Separator();
+
 		ImGui::SliderFloat("Surface Thickness", &bendSettings.SurfaceThickness, 0.005f, 0.05f);
+		if (auto _tt = Util::HoverTooltipWrapper()) {
+			ImGui::Text("Makes contact shadows thinner or thicker.");
+		}
+
 		ImGui::SliderFloat("Bilinear Threshold", &bendSettings.BilinearThreshold, 0.02f, 1.0f);
+		if (auto _tt = Util::HoverTooltipWrapper()) {
+			ImGui::Text("Balances edge sharpness versus smoothness.");
+		}
+
 		ImGui::SliderFloat("Shadow Contrast", &bendSettings.ShadowContrast, 0.0f, 4.0f);
+		if (auto _tt = Util::HoverTooltipWrapper()) {
+			ImGui::Text("Controls overall shadow darkness.");
+		}
 
 		ImGui::Spacing();
 		ImGui::Spacing();
@@ -260,6 +298,8 @@ void ScreenSpaceShadows::DrawShadows()
 			data.InvDepthTextureSize[1] = invTexSizeY;
 
 			data.settings = bendSettings;
+			if (!globals::game::isVR)
+				data.settings.VRCullDistance = 0.0f;
 
 			raymarchCB->Update(data);
 

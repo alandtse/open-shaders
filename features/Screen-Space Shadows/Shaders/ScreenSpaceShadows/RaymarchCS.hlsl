@@ -34,8 +34,8 @@ cbuffer PerFrame : register(b1)
 	uint Enable;
 	uint SampleCount;
 	float VRBaseSamplesAtReference;
+	float VRCullDistance;
 	uint settingsPad0;
-	uint settingsPad1;
 };
 
 [numthreads(WAVE_SIZE, 1, 1)] void main(
@@ -58,6 +58,7 @@ cbuffer PerFrame : register(b1)
 	parameters.SurfaceThickness = SurfaceThickness;
 	parameters.BilinearThreshold = BilinearThreshold;
 	parameters.ShadowContrast = ShadowContrast;
+	parameters.VRCullDistance = VRCullDistance;
 
 	parameters.DynamicRes = DynamicRes;
 

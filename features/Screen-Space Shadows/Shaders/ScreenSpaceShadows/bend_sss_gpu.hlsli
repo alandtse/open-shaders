@@ -55,6 +55,7 @@ struct DispatchParameters
 
 	half ShadowContrast;  // A contrast boost is applied to the transition in/out of shadow.
 						  // Recommended starting value: 2 or 4. Values >= 1 are valid.
+	float VRCullDistance;  // 0 disables distance culling.
 
 	float2 DynamicRes;
 
@@ -95,6 +96,7 @@ struct DispatchParameters
 		SurfaceThickness = 0.005;
 		BilinearThreshold = 0.02;
 		ShadowContrast = 4;
+		VRCullDistance = 0.0;
 		IgnoreEdgePixels = false;
 		UsePrecisionOffset = false;
 		BilinearSamplingOffsetMode = false;
@@ -349,6 +351,21 @@ void WriteScreenSpaceShadow(DispatchParameters inParameters, int3 inGroupID, int
 	if (start_depth == 0.0 || start_depth == 1.0)
 		return;
 
+	float cullFade = 1.0;
+	if (inParameters.VRCullDistance > 0.0) {
+		float linearDepth = SharedData::GetScreenDepth(start_depth);
+		float fadeBand = clamp(inParameters.VRCullDistance * 0.2, 200.0, 1200.0);
+		float fadeStart = inParameters.VRCullDistance - fadeBand;
+		float fadeEnd = inParameters.VRCullDistance;
+
+		if (linearDepth >= fadeEnd) {
+			inParameters.OutputTexture[(int2)write_xy] = 1.0;
+			return;
+		}
+
+		cullFade = 1.0 - smoothstep(fadeStart, fadeEnd, linearDepth);
+	}
+
 	// lerp away from far depth by a tiny fraction?
 	if (inParameters.UsePrecisionOffset)
 		start_depth = lerp(start_depth, inParameters.FarDepthValue, -1.0 / 0xFFFF);
@@ -391,6 +408,7 @@ void WriteScreenSpaceShadow(DispatchParameters inParameters, int3 inGroupID, int
 
 	// Take the average of 4 samples, this is useful to reduces aliasing noise in the source depth, especially with long shadows.
 	result = dot(shadow_value, 0.25);
+	result = lerp(1.0, result, cullFade);
 
 	// Asking the GPU to write scattered single-byte pixels isn't great,
 	// But thankfully the latency is hidden by all the work we're doing...

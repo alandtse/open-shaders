@@ -37,7 +37,8 @@ public:
 		uint Enable = 1;
 		uint SampleCount = 1;
 		float VRBaseSamplesAtReference = 44.0f;
-		uint pad0[2];
+		float VRCullDistance = 0.0f;  // 0 = disabled
+		uint pad0[1];
 	};
 
 	BendSettings bendSettings;
