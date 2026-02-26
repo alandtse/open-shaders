@@ -552,8 +552,24 @@ void TerrainBlending::OnBeginTechnique(RE::BSShader* a_shader, uint32_t a_pixelD
 
 	auto* obbOverrideSrv = Util::GetCurrentSceneDepthSRV(false);
 	auto* shadowmaskOverrideSrv = Util::GetCurrentSceneDepthSRV(true);
-	ApplyPixelShaderSlotOverride(context, 17u, obbOverrideSrv, nullptr, 0u);
-	ApplyPixelShaderSlotOverride(context, 2u, shadowmaskOverrideSrv, &ShouldApplySlot2Rewrite, a_callerRva);
+	ApplyPixelShaderSlotOverride(
+		context,
+		17u,
+		obbOverrideSrv,
+		engineHookDiagnostics.obbApplied,
+		engineHookDiagnostics.obbAlreadyBound,
+		engineHookDiagnostics.obbMissingSrv,
+		nullptr,
+		0u);
+	ApplyPixelShaderSlotOverride(
+		context,
+		2u,
+		shadowmaskOverrideSrv,
+		engineHookDiagnostics.shadowmaskApplied,
+		engineHookDiagnostics.shadowmaskAlreadyBound,
+		engineHookDiagnostics.shadowmaskMissingSrv,
+		&ShouldApplySlot2Rewrite,
+		a_callerRva);
 }
 
 void TerrainBlending::OnShadowmaskPhaseEnd()
@@ -584,8 +600,24 @@ void TerrainBlending::OnUtilitySetupGeometry(RE::BSShader* a_shader, RE::BSRende
 
 	auto* obbOverrideSrv = Util::GetCurrentSceneDepthSRV(false);
 	auto* shadowmaskOverrideSrv = Util::GetCurrentSceneDepthSRV(true);
-	ApplyPixelShaderSlotOverride(context, 17u, obbOverrideSrv, nullptr, 0u);
-	ApplyPixelShaderSlotOverride(context, 2u, shadowmaskOverrideSrv, &ShouldApplySlot2Rewrite, a_callerRva);
+	ApplyPixelShaderSlotOverride(
+		context,
+		17u,
+		obbOverrideSrv,
+		engineHookDiagnostics.obbApplied,
+		engineHookDiagnostics.obbAlreadyBound,
+		engineHookDiagnostics.obbMissingSrv,
+		nullptr,
+		0u);
+	ApplyPixelShaderSlotOverride(
+		context,
+		2u,
+		shadowmaskOverrideSrv,
+		engineHookDiagnostics.shadowmaskApplied,
+		engineHookDiagnostics.shadowmaskAlreadyBound,
+		engineHookDiagnostics.shadowmaskMissingSrv,
+		&ShouldApplySlot2Rewrite,
+		a_callerRva);
 }
 
 void TerrainBlending::OnShaderPropertySetupGeometry(RE::BSShaderProperty* a_shaderProperty, RE::BSGeometry* a_geometry, bool a_result, uint32_t a_callerRva)
@@ -612,7 +644,15 @@ void TerrainBlending::OnShaderPropertySetupGeometry(RE::BSShaderProperty* a_shad
 	EnsureEngineHookDepthOverride(descriptor, a_callerRva);
 
 	auto* shadowmaskOverrideSrv = Util::GetCurrentSceneDepthSRV(true);
-	ApplyPixelShaderSlotOverride(context, 2u, shadowmaskOverrideSrv, &ShouldApplySlot2Rewrite, a_callerRva);
+	ApplyPixelShaderSlotOverride(
+		context,
+		2u,
+		shadowmaskOverrideSrv,
+		engineHookDiagnostics.shadowmaskApplied,
+		engineHookDiagnostics.shadowmaskAlreadyBound,
+		engineHookDiagnostics.shadowmaskMissingSrv,
+		&ShouldApplySlot2Rewrite,
+		a_callerRva);
 }
 
 void TerrainBlending::OnSetDirtyStates(bool a_isCompute, uint32_t a_callerRva)
@@ -642,8 +682,24 @@ void TerrainBlending::OnSetDirtyStates(bool a_isCompute, uint32_t a_callerRva)
 
 	auto* obbOverrideSrv = Util::GetCurrentSceneDepthSRV(false);
 	auto* shadowmaskOverrideSrv = Util::GetCurrentSceneDepthSRV(true);
-	ApplyPixelShaderSlotOverride(context, 17u, obbOverrideSrv, nullptr, 0u);
-	ApplyPixelShaderSlotOverride(context, 2u, shadowmaskOverrideSrv, &ShouldApplySlot2Rewrite, a_callerRva);
+	ApplyPixelShaderSlotOverride(
+		context,
+		17u,
+		obbOverrideSrv,
+		engineHookDiagnostics.obbApplied,
+		engineHookDiagnostics.obbAlreadyBound,
+		engineHookDiagnostics.obbMissingSrv,
+		nullptr,
+		0u);
+	ApplyPixelShaderSlotOverride(
+		context,
+		2u,
+		shadowmaskOverrideSrv,
+		engineHookDiagnostics.shadowmaskApplied,
+		engineHookDiagnostics.shadowmaskAlreadyBound,
+		engineHookDiagnostics.shadowmaskMissingSrv,
+		&ShouldApplySlot2Rewrite,
+		a_callerRva);
 }
 
 ID3D11VertexShader* TerrainBlending::GetTerrainVertexShader()

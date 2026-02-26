@@ -584,34 +584,21 @@ namespace
 		auto& vr = globals::features::vr;
 		VR::Settings& settings = vr.settings;
 		if (ImGui::CollapsingHeader("General Settings", ImGuiTreeNodeFlags_DefaultOpen)) {
-			// Query the Upscaling feature for an authoritative state flag.
-			bool upscalingActive = globals::features::upscaling.IsUpscalingActive();
-
 			// Exteriors
 			bool exteriorChanged = ImGui::Checkbox("Enable Depth Buffer Culling in Exteriors", &settings.EnableDepthBufferCullingExterior);
 			if (auto _tt = Util::HoverTooltipWrapper()) {
-				if (upscalingActive) {
-					ImGui::Text("Compatible with upscaling using conservative depth upscaling. Disable if you notice artifacts.");
-				} else {
-					ImGui::Text("Improves performance in exteriors, recommended ON.");
-				}
+				ImGui::Text("Improves performance in exteriors, recommended ON.");
 			}
 
 			// Interiors
 			bool interiorChanged = ImGui::Checkbox("Enable Depth Buffer Culling in Interiors", &settings.EnableDepthBufferCullingInterior);
 			if (auto _tt = Util::HoverTooltipWrapper()) {
-				if (upscalingActive) {
-					ImGui::Text("Compatible with upscaling using conservative depth upscaling. Disable if you notice artifacts.");
-				} else {
-					ImGui::Text("Improves performance in interiors, recommended OFF due to occasional visual glitches.");
-				}
+				ImGui::Text("Improves performance in interiors, recommended ON.");
 			}
 
-			if (exteriorChanged || interiorChanged) {
-				const auto* tes = globals::game::tes;
-				const bool inInterior = tes && tes->interiorCell;
-				vr.UpdateDepthBufferCulling(inInterior ? settings.EnableDepthBufferCullingInterior : settings.EnableDepthBufferCullingExterior);
-			}
+		if (exteriorChanged || interiorChanged) {
+			vr.UpdateDepthBufferCulling();
+		}
 
 			if (ImGui::SliderFloat("Min Occludee Box Extent", &settings.MinOccludeeBoxExtent, 0.0f, 1000.0f, "%.1f")) {
 				if (vr.gMinOccludeeBoxExtent) {
