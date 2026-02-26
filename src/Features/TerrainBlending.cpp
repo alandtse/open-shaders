@@ -674,6 +674,7 @@ void TerrainBlending::TerrainShaderHacks()
 
 void TerrainBlending::ResetDepth()
 {
+	TracyD3D11Zone(globals::state->tracyCtx, "Terrain Blending - Reset Depth");
 	auto context = globals::d3d::context;
 
 	auto dsv = terrainDepth.views[0];
@@ -693,6 +694,11 @@ void TerrainBlending::ResetTerrainDepth()
 
 void TerrainBlending::BlendPrepassDepths()
 {
+	ZoneScoped;
+	TracyD3D11Zone(globals::state->tracyCtx, "Terrain Blending - Blend Prepass Depths");
+	if (globals::state->frameAnnotations)
+		globals::state->BeginPerfEvent("Terrain Blending - Blend Prepass Depths");
+
 	auto context = globals::d3d::context;
 	context->OMSetRenderTargets(0, nullptr, nullptr);
 
@@ -726,6 +732,9 @@ void TerrainBlending::BlendPrepassDepths()
 	auto& mainDepth = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kMAIN];
 
 	context->CopyResource(terrainDepth.texture, mainDepth.texture);
+
+	if (globals::state->frameAnnotations)
+		globals::state->EndPerfEvent();
 }
 
 void TerrainBlending::ClearShaderCache()
@@ -746,6 +755,8 @@ void TerrainBlending::ClearShaderCache()
 
 void TerrainBlending::Hooks::Main_RenderDepth::thunk(bool a1, bool a2)
 {
+	ZoneScoped;
+
 	auto& singleton = globals::features::terrainBlending;
 	auto shaderCache = globals::shaderCache;
 	auto renderer = globals::game::renderer;
@@ -859,6 +870,7 @@ bool TerrainBlending::Hooks::BSShaderProperty_SetupGeometry::thunk(RE::BSShaderP
 
 void TerrainBlending::RenderTerrainBlendingPasses()
 {
+	ZoneScoped;
 	tbHookDiagnostics.renderPassInvocationCalls++;
 
 	if (!settings.Enabled) {
@@ -890,6 +902,9 @@ void TerrainBlending::RenderTerrainBlendingPasses()
 
 	if (terrainPassCount != 0 || noBlendPassCount != 0) {
 		tbHookDiagnostics.renderPassExecutedCalls++;
+		TracyD3D11Zone(globals::state->tracyCtx, "Terrain Blending - Render Passes");
+		if (globals::state->frameAnnotations)
+			globals::state->BeginPerfEvent("Terrain Blending - Render Passes");
 
 		GET_INSTANCE_MEMBER(alphaBlendMode, shadowState)
 		GET_INSTANCE_MEMBER(alphaBlendWriteMode, shadowState)
@@ -919,6 +934,9 @@ void TerrainBlending::RenderTerrainBlendingPasses()
 
 		terrainRenderPasses.clear();
 		renderPasses.clear();
+
+		if (globals::state->frameAnnotations)
+			globals::state->EndPerfEvent();
 	}
 
 	auto& mainDepth = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kMAIN];
