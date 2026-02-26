@@ -19,6 +19,40 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	BilinearThreshold,
 	ShadowContrast)
 
+namespace
+{
+	bool TryGetDepthSrvDimensions(ID3D11ShaderResourceView* a_depthSrv, uint32_t& o_width, uint32_t& o_height)
+	{
+		o_width = 0;
+		o_height = 0;
+		if (!a_depthSrv)
+			return false;
+
+		ID3D11Resource* resource = nullptr;
+		a_depthSrv->GetResource(&resource);
+		if (!resource)
+			return false;
+
+		ID3D11Texture2D* texture = nullptr;
+		HRESULT hr = resource->QueryInterface(__uuidof(ID3D11Texture2D), reinterpret_cast<void**>(&texture));
+		resource->Release();
+
+		if (FAILED(hr) || !texture)
+			return false;
+
+		D3D11_TEXTURE2D_DESC desc{};
+		texture->GetDesc(&desc);
+		texture->Release();
+
+		if (desc.Width == 0 || desc.Height == 0)
+			return false;
+
+		o_width = desc.Width;
+		o_height = desc.Height;
+		return true;
+	}
+}
+
 void ScreenSpaceShadows::DrawSettings()
 {
 	if (ImGui::TreeNodeEx("General", ImGuiTreeNodeFlags_DefaultOpen)) {
@@ -151,6 +185,18 @@ void ScreenSpaceShadows::DrawShadows()
 	auto viewport = globals::game::graphicsState;
 
 	float2 dynamicRes = { viewport->GetRuntimeData().dynamicResolutionWidthRatio, viewport->GetRuntimeData().dynamicResolutionHeightRatio };
+	uint32_t depthWidth = 0;
+	uint32_t depthHeight = 0;
+	if (TryGetDepthSrvDimensions(depthSRV, depthWidth, depthHeight)) {
+		if (globals::game::isVR) {
+			// In VR, viewportSize.x is per-eye but depth SRV can be either per-eye or combined.
+			dynamicRes.x = (static_cast<float>(viewportSize[0]) * 2.0f) / static_cast<float>(depthWidth);
+			dynamicRes.y = static_cast<float>(viewportSize[1]) / static_cast<float>(depthHeight);
+		} else {
+			dynamicRes.x = static_cast<float>(viewportSize[0]) / static_cast<float>(depthWidth);
+			dynamicRes.y = static_cast<float>(viewportSize[1]) / static_cast<float>(depthHeight);
+		}
+	}
 
 	uint dynamicSampleCount = GetScaledSampleCount(true);
 	uint dynamicReadCount = (dynamicSampleCount / 64 + 2);
