@@ -82,6 +82,8 @@ void ScreenSpaceShadows::ClearShaderCache()
 		raymarchRightCS->Release();
 		raymarchRightCS = nullptr;
 	}
+	compiledSampleCount = 0;
+	compiledSampleCountRight = 0;
 }
 
 uint ScreenSpaceShadows::GetScaledSampleCount(bool a_dynamic)
@@ -114,38 +116,32 @@ uint ScreenSpaceShadows::GetScaledSampleCount(bool a_dynamic)
 
 ID3D11ComputeShader* ScreenSpaceShadows::GetComputeRaymarch()
 {
-	static uint sampleCount = bendSettings.SampleCount;
-
-	if (sampleCount != bendSettings.SampleCount) {
-		sampleCount = bendSettings.SampleCount;
-		if (raymarchCS) {
-			raymarchCS->Release();
-			raymarchCS = nullptr;
-		}
+	const uint scaledSampleCount = GetScaledSampleCount(false);
+	if (raymarchCS && compiledSampleCount != scaledSampleCount) {
+		raymarchCS->Release();
+		raymarchCS = nullptr;
+		compiledSampleCount = 0;
 	}
 
 	if (!raymarchCS) {
-		uint scaledSampleCount = GetScaledSampleCount(false);
 		raymarchCS = (ID3D11ComputeShader*)Util::CompileShader(L"Data\\Shaders\\ScreenSpaceShadows\\RaymarchCS.hlsl", { { "SAMPLE_COUNT", std::format("{}", scaledSampleCount).c_str() } }, "cs_5_0");
+		compiledSampleCount = scaledSampleCount;
 	}
 	return raymarchCS;
 }
 
 ID3D11ComputeShader* ScreenSpaceShadows::GetComputeRaymarchRight()
 {
-	static uint sampleCount = bendSettings.SampleCount;
-
-	if (sampleCount != bendSettings.SampleCount) {
-		sampleCount = bendSettings.SampleCount;
-		if (raymarchRightCS) {
-			raymarchRightCS->Release();
-			raymarchRightCS = nullptr;
-		}
+	const uint scaledSampleCount = GetScaledSampleCount(false);
+	if (raymarchRightCS && compiledSampleCountRight != scaledSampleCount) {
+		raymarchRightCS->Release();
+		raymarchRightCS = nullptr;
+		compiledSampleCountRight = 0;
 	}
 
 	if (!raymarchRightCS) {
-		uint scaledSampleCount = GetScaledSampleCount(false);
 		raymarchRightCS = (ID3D11ComputeShader*)Util::CompileShader(L"Data\\Shaders\\ScreenSpaceShadows\\RaymarchCS.hlsl", { { "SAMPLE_COUNT", std::format("{}", scaledSampleCount).c_str() }, { "RIGHT", "" } }, "cs_5_0");
+		compiledSampleCountRight = scaledSampleCount;
 	}
 	return raymarchRightCS;
 }
@@ -212,7 +208,15 @@ void ScreenSpaceShadows::DrawShadows()
 		}
 	}
 
-	uint dynamicSampleCount = GetScaledSampleCount(true);
+	auto* raymarchLeft = GetComputeRaymarch();
+	ID3D11ComputeShader* raymarchRight = globals::game::isVR ? GetComputeRaymarchRight() : nullptr;
+
+	uint maxCompiledSamples = compiledSampleCount > 0 ? compiledSampleCount : GetScaledSampleCount(false);
+	if (globals::game::isVR && compiledSampleCountRight > 0)
+		maxCompiledSamples = std::min(maxCompiledSamples, compiledSampleCountRight);
+
+	uint dynamicSampleCount = std::min(GetScaledSampleCount(true), maxCompiledSamples);
+	dynamicSampleCount = std::max(dynamicSampleCount, 1u);
 	uint dynamicReadCount = (dynamicSampleCount / 64 + 2);
 
 	// Shared dispatch logic for both VR and non-VR
@@ -270,13 +274,13 @@ void ScreenSpaceShadows::DrawShadows()
 	float InvTexSizeY = 1.0f / (float)viewportSize[1];
 
 	if (!globals::game::isVR) {
-		DispatchEye(nullptr, GetComputeRaymarch(), lightProjectionF.data(), InvTexSizeX, InvTexSizeY);
+		DispatchEye(nullptr, raymarchLeft, lightProjectionF.data(), InvTexSizeX, InvTexSizeY);
 	} else {
-		DispatchEye("Left Eye", GetComputeRaymarch(), lightProjectionF.data(), InvTexSizeX, InvTexSizeY);
+		DispatchEye("Left Eye", raymarchLeft, lightProjectionF.data(), InvTexSizeX, InvTexSizeY);
 
 		// Calculate light projection for right eye
 		auto lightProjectionRightF = CalculateLightProjection(1);
-		DispatchEye("Right Eye", GetComputeRaymarchRight(), lightProjectionRightF.data(), InvTexSizeX, InvTexSizeY);
+		DispatchEye("Right Eye", raymarchRight, lightProjectionRightF.data(), InvTexSizeX, InvTexSizeY);
 	}
 
 	ID3D11ShaderResourceView* views[1]{ nullptr };

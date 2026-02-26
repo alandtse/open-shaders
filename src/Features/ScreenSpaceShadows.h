@@ -72,6 +72,8 @@ public:
 	ConstantBuffer* raymarchCB = nullptr;
 	ID3D11ComputeShader* raymarchCS = nullptr;
 	ID3D11ComputeShader* raymarchRightCS = nullptr;
+	uint compiledSampleCount = 0;
+	uint compiledSampleCountRight = 0;
 
 	Texture2D* screenSpaceShadowsTexture = nullptr;
 

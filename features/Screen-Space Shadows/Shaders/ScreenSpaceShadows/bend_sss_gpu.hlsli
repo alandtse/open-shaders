@@ -331,14 +331,15 @@ void WriteScreenSpaceShadow(DispatchParameters inParameters, int3 inGroupID, int
 	GroupMemoryBarrierWithGroupSync();
 
 #	if defined(VR)
-	// Check if the pixel we're writing to is on the correct eye side
-	half writeX = write_xy.x * inParameters.InvDepthTextureSize.x;
+	// Enforce strict per-eye write bounds to prevent cross-eye seam leakage.
+	int eyeWidth = (int)round(1.0 / inParameters.InvDepthTextureSize.x);
+	int writeX = (int)write_xy.x;
 
 #		if defined(RIGHT)
-	if (writeX < 0.0)
+	if (writeX < eyeWidth || writeX >= eyeWidth * 2)
 		return;
 #		else
-	if (writeX > 1.0)
+	if (writeX < 0 || writeX >= eyeWidth)
 		return;
 #		endif
 #	endif
