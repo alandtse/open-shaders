@@ -18,6 +18,7 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	EnableParticleLightsCulling,
 	EnableParticleLightsDetection,
 	ParticleLightsSaturation,
+	LegacyParticleIntensityScale,
 	EnableParticleLightsOptimization,
 	ParticleBrightness,
 	ParticleRadius,
@@ -28,19 +29,21 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	MaxParticleDistance,       // NEW
 	EnableLightsVisualisation,
 	LightsVisualisationMode,
-	UseLegacyParticleLighting,
-	UseLegacyParticleEmissionLighting,
-	ForceLegacyParticleOutputPath)
+	UseParticleLightsLegacyMode)
 void LightLimitFix::DrawSettings()
 {
 	// Heat warp / refraction strength (moved from Advanced Settings)
 	ImGui::Text("ImageSpace Refraction");
+	ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0.10f, 0.20f, 0.38f, 1.0f));
+	ImGui::PushStyleColor(ImGuiCol_FrameBgHovered, ImVec4(0.15f, 0.28f, 0.50f, 1.0f));
+	ImGui::PushStyleColor(ImGuiCol_FrameBgActive, ImVec4(0.18f, 0.33f, 0.58f, 1.0f));
 	ImGui::SliderFloat(
 		"Heat Warp Strength",
 		&globals::state->refractionScale,
 		0.0f,
 		2.0f,
 		"%.2f");
+	ImGui::PopStyleColor(3);
 	if (auto _tt = Util::HoverTooltipWrapper()) {
 		ImGui::Text(
 			"Scales ImageSpace refraction (heat shimmer around fire/heat sources).\n"
@@ -55,6 +58,14 @@ void LightLimitFix::DrawSettings()
 		if (auto _tt = Util::HoverTooltipWrapper()) {
 			ImGui::Text("Enables Particle Lights.");
 		}
+
+		ImGui::Checkbox("Legacy Particle Lights", &settings.UseParticleLightsLegacyMode);
+		if (auto _tt = Util::HoverTooltipWrapper()) {
+			ImGui::Text("Apply Legacy Particle Light path; use when linear lighting is inactive.");
+		}
+
+		ImGui::Separator();
+		ImGui::TextWrapped("Particle Lights Performance");
 
 		ImGui::Checkbox("Enable Culling", &settings.EnableParticleLightsCulling);
 		if (auto _tt = Util::HoverTooltipWrapper()) {
@@ -109,6 +120,10 @@ void LightLimitFix::DrawSettings()
 		ImGui::SliderFloat("Particle Radius", &settings.ParticleRadius, 0.0, 10.0, "%.2f");
 		ImGui::SliderFloat("Billboard Brightness", &settings.BillboardBrightness, 0.0, 10.0, "%.2f");
 		ImGui::SliderFloat("Billboard Radius", &settings.BillboardRadius, 0.0, 10.0, "%.2f");
+		ImGui::SliderFloat("Legacy PL Intensity", &settings.LegacyParticleIntensityScale, 0.10f, 1.00f, "%.2f");
+		if (auto _tt = Util::HoverTooltipWrapper()) {
+			ImGui::Text("Scales legacy particle-light intensity in clustered shading.");
+		}
 
 		ImGui::Spacing();
 		ImGui::Spacing();
@@ -125,27 +140,6 @@ void LightLimitFix::DrawSettings()
 
 	///////////////////////////////
 	ImGui::SeparatorText("Debug");
-
-	if (ImGui::TreeNode("Particle Lights Legacy Options")) {
-		ImGui::Checkbox("Legacy Particle Shading", &settings.UseLegacyParticleLighting);
-		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::Text("Disables the modern linear-light conversion path in the particle pass only.");
-		}
-
-		ImGui::Checkbox("Legacy Emitted Particle Light Color", &settings.UseLegacyParticleEmissionLighting);
-		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::Text("Skips Color::PointLight conversion for particle-emitted lights in the main lighting pass (effective only when Linear Lighting is enabled).");
-		}
-
-		ImGui::Checkbox("Force Legacy Particle Output Path", &settings.ForceLegacyParticleOutputPath);
-		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::Text("Forces particle pixel output to ColorScale * baseColor and bypasses particle-pass directional, ambient, and clustered lighting.");
-		}
-
-		ImGui::Spacing();
-		ImGui::Spacing();
-		ImGui::TreePop();
-	}
 
 	if (ImGui::TreeNode("Light Limit Visualization")) {
 		ImGui::Checkbox("Enable Lights Visualisation", &settings.EnableLightsVisualisation);
@@ -199,9 +193,8 @@ LightLimitFix::PerFrame LightLimitFix::GetCommonBufferData()
 	PerFrame perFrame{};
 	perFrame.EnableLightsVisualisation = settings.EnableLightsVisualisation;
 	perFrame.LightsVisualisationMode = settings.LightsVisualisationMode;
-	perFrame.UseLegacyParticleLighting = settings.UseLegacyParticleLighting;
-	perFrame.UseLegacyParticleEmissionLighting = settings.UseLegacyParticleEmissionLighting;
-	perFrame.ForceLegacyParticleOutputPath = settings.ForceLegacyParticleOutputPath;
+	perFrame.UseParticleLightsLegacyMode = settings.UseParticleLightsLegacyMode;
+	perFrame.LegacyParticleIntensityScale = settings.LegacyParticleIntensityScale;
 	std::copy(clusterSize, clusterSize + 3, perFrame.ClusterSize);
 	return perFrame;
 }
@@ -742,6 +735,11 @@ bool LightLimitFix::AddParticleLight(RE::BSRenderPass* a_pass, ParticleLightRefe
 		color.blue *= config.colorMult.blue;
 	}
 
+	if (settings.UseParticleLightsLegacyMode) {
+		// v1.4.6 contract: radius multiplier is carried in alpha and reused downstream.
+		color.alpha = config.radiusMult;
+	}
+
 	ParticleLightInfo info;
 	info.billboard = a_reference.billboard;
 	info.node = a_pass->geometry;
@@ -788,6 +786,7 @@ void LightLimitFix::AddCachedParticleLights(eastl::vector<LightData>& lightsData
 {
 	static float& lightFadeStart = *reinterpret_cast<float*>(REL::RelocationID(527668, 414582).address());
 	static float& lightFadeEnd = *reinterpret_cast<float*>(REL::RelocationID(527669, 414583).address());
+	const float3 luminanceWeights = float3(0.3f, 0.59f, 0.11f);
 
 	// NEW: hard distance cutoff for particle lights
 	if (settings.MaxParticleDistance > 0.0f) {
@@ -815,14 +814,20 @@ void LightLimitFix::AddCachedParticleLights(eastl::vector<LightData>& lightsData
 		dimmer = 0.0f;
 	}
 
-	light.fade *= dimmer;
+	const bool useLegacyParticleLights = settings.UseParticleLightsLegacyMode;
+	if (useLegacyParticleLights) {
+		light.color *= dimmer;
+	} else {
+		light.fade *= dimmer;
+	}
 
-	if ((light.color.x + light.color.y + light.color.z) * light.fade > 1e-4 && light.radius > 1e-4) {
+	const float luminanceScale = useLegacyParticleLights ? 1.0f : light.fade;
+	if ((light.color.x + light.color.y + light.color.z) * luminanceScale > 1e-4 && light.radius > 1e-4) {
 		light.invRadius = 1.f / light.radius;
 		lightsData.push_back(light);
 
 		CachedParticleLight cachedParticleLight{};
-		cachedParticleLight.grey = float3(light.color.x, light.color.y, light.color.z).Dot(float3(0.3f, 0.59f, 0.11f)) * light.fade;
+		cachedParticleLight.grey = float3(light.color.x, light.color.y, light.color.z).Dot(luminanceWeights) * luminanceScale;
 		cachedParticleLight.radius = light.radius;
 		cachedParticleLight.position = { light.positionWS[0].data.x + eyePositionCached[0].x, light.positionWS[0].data.y + eyePositionCached[0].y, light.positionWS[0].data.z + eyePositionCached[0].z };
 
@@ -936,6 +941,10 @@ void LightLimitFix::UpdateLights()
 
 		LightData clusteredLight{};
 		uint32_t clusteredLights = 0;
+		const bool useLegacyParticleLights = settings.UseParticleLightsLegacyMode;
+		auto getParticleRadiusMult = [&](const ParticleLightInfo& particleLight) {
+			return useLegacyParticleLights ? particleLight.color.alpha : particleLight.radiusMult;
+		};
 
 		auto eyePositionOffset = eyePositionCached[0] - eyePositionCached[1];
 		auto flushClusteredLight = [&]() {
@@ -1036,7 +1045,8 @@ void LightLimitFix::UpdateLights()
 							clusteredLight.color += Saturation(color, settings.ParticleLightsSaturation) * alpha * settings.ParticleBrightness;
 						}
 
-						clusteredLight.radius += radius * particleLight.radiusMult * settings.ParticleRadius;
+						const float particleRadiusMult = getParticleRadiusMult(particleLight);
+						clusteredLight.radius += radius * particleRadiusMult * settings.ParticleRadius;
 
 						clusteredLight.positionWS[0].data.x += positionWS.x;
 						clusteredLight.positionWS[0].data.y += positionWS.y;
@@ -1056,7 +1066,8 @@ void LightLimitFix::UpdateLights()
 				light.color = Saturation(light.color, settings.ParticleLightsSaturation);
 
 				light.color *= particleLight.color.alpha * settings.BillboardBrightness;
-				light.radius = particleLight.node->worldBound.radius * particleLight.radiusMult * settings.BillboardRadius * 0.5f;
+				const float billboardRadiusMult = getParticleRadiusMult(particleLight);
+				light.radius = particleLight.node->worldBound.radius * billboardRadiusMult * settings.BillboardRadius * 0.5f;
 
 				auto position = particleLight.node->world.translate;
 

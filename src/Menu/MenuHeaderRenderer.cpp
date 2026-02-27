@@ -3,6 +3,7 @@
 #include <imgui.h>
 #include <imgui_internal.h>
 
+#include "Features/LightLimitFix.h"
 #include "Features/LightLimitFix/ParticleLights.h"
 #include "Globals.h"
 #include "Plugin.h"
