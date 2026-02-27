@@ -106,6 +106,8 @@ public:
 		uint LightsVisualisationMode;
 		uint UseLegacyParticleLighting;
 		uint UseLegacyParticleEmissionLighting;
+		uint ForceLegacyParticleOutputPath;
+		uint pad0[3];
 		uint ClusterSize[4];
 	};
 	STATIC_ASSERT_ALIGNAS_16(PerFrame);
@@ -220,6 +222,7 @@ struct ParticleLightInfo
 		uint LightsVisualisationMode = 0;
 		bool UseLegacyParticleLighting = true;
 		bool UseLegacyParticleEmissionLighting = false;
+		bool ForceLegacyParticleOutputPath = false;
 		bool EnableParticleLights = true;
 		bool EnableParticleLightsCulling = true;
 		bool EnableParticleLightsDetection = true;
