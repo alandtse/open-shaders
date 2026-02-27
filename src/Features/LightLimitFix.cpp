@@ -122,7 +122,7 @@ void LightLimitFix::DrawSettings()
 		ImGui::SliderFloat("Billboard Radius", &settings.BillboardRadius, 0.0, 10.0, "%.2f");
 		ImGui::Spacing();
 		ImGui::BeginDisabled(!settings.UseParticleLightsLegacyMode);
-		ImGui::SliderFloat("Legacy PL Intensity", &settings.LegacyParticleIntensityScale, 0.10f, 1.50f, "%.2f");
+		ImGui::SliderFloat("Legacy PL Intensity", &settings.LegacyParticleIntensityScale, 0.00f, 2.00f, "%.2f");
 		ImGui::EndDisabled();
 		if (auto _tt = Util::HoverTooltipWrapper()) {
 			ImGui::Text("Scales legacy particle-light intensity in clustered shading.");
@@ -738,11 +738,6 @@ bool LightLimitFix::AddParticleLight(RE::BSRenderPass* a_pass, ParticleLightRefe
 		color.blue *= config.colorMult.blue;
 	}
 
-	if (settings.UseParticleLightsLegacyMode) {
-		// v1.4.6 contract: radius multiplier is carried in alpha and reused downstream.
-		color.alpha = config.radiusMult;
-	}
-
 	ParticleLightInfo info;
 	info.billboard = a_reference.billboard;
 	info.node = a_pass->geometry;
@@ -944,9 +939,8 @@ void LightLimitFix::UpdateLights()
 
 		LightData clusteredLight{};
 		uint32_t clusteredLights = 0;
-		const bool useLegacyParticleLights = settings.UseParticleLightsLegacyMode;
 		auto getParticleRadiusMult = [&](const ParticleLightInfo& particleLight) {
-			return useLegacyParticleLights ? particleLight.color.alpha : particleLight.radiusMult;
+			return particleLight.radiusMult;
 		};
 
 		auto eyePositionOffset = eyePositionCached[0] - eyePositionCached[1];
