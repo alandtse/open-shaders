@@ -59,7 +59,7 @@ void LightLimitFix::DrawSettings()
 			ImGui::Text("Enables Particle Lights.");
 		}
 
-		ImGui::Checkbox("Legacy Particle Lights", &settings.UseParticleLightsLegacyMode);
+		ImGui::Checkbox("Legacy Particle Light Path", &settings.UseParticleLightsLegacyMode);
 		if (auto _tt = Util::HoverTooltipWrapper()) {
 			ImGui::Text("Apply Legacy Particle Light path; use when linear lighting is inactive.");
 		}
@@ -120,7 +120,10 @@ void LightLimitFix::DrawSettings()
 		ImGui::SliderFloat("Particle Radius", &settings.ParticleRadius, 0.0, 10.0, "%.2f");
 		ImGui::SliderFloat("Billboard Brightness", &settings.BillboardBrightness, 0.0, 10.0, "%.2f");
 		ImGui::SliderFloat("Billboard Radius", &settings.BillboardRadius, 0.0, 10.0, "%.2f");
-		ImGui::SliderFloat("Legacy PL Intensity", &settings.LegacyParticleIntensityScale, 0.10f, 1.00f, "%.2f");
+		ImGui::Spacing();
+		ImGui::BeginDisabled(!settings.UseParticleLightsLegacyMode);
+		ImGui::SliderFloat("Legacy PL Intensity", &settings.LegacyParticleIntensityScale, 0.10f, 1.50f, "%.2f");
+		ImGui::EndDisabled();
 		if (auto _tt = Util::HoverTooltipWrapper()) {
 			ImGui::Text("Scales legacy particle-light intensity in clustered shading.");
 		}

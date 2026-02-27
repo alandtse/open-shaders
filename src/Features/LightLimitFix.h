@@ -223,7 +223,7 @@ struct ParticleLightInfo
 		bool EnableParticleLightsCulling = true;
 		bool EnableParticleLightsDetection = true;
 		float ParticleLightsSaturation = 1.0f;
-		float LegacyParticleIntensityScale = 1.0f;
+		float LegacyParticleIntensityScale = 0.75f;
 		float ParticleBrightness = 1.0f;
 		float ParticleRadius = 1.0f;
 		float BillboardBrightness = 1.0f;
