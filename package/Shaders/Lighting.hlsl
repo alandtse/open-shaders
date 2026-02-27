@@ -2664,7 +2664,8 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 		const bool useLegacyParticleLights = SharedData::lightLimitFixSettings.UseParticleLightsLegacyMode != 0;
 		const bool useLegacyParticleLightPath = isParticleLight && useLegacyParticleLights;
 		if (useLegacyParticleLightPath) {
-			lightColor = Color::Light(light.color.xyz) * intensityMultiplier;
+			const float legacyRadialSoftening = lerp(0.55, 1.0, saturate(lightDist / max(light.radius, 1e-4)));
+			lightColor = Color::Light(light.color.xyz) * intensityMultiplier * light.fade * legacyRadialSoftening;
 			lightColor *= SharedData::lightLimitFixSettings.LegacyParticleIntensityScale;
 		} else {
 			const bool isPointLightLinear = light.lightFlags & LightLimitFix::LightFlags::Linear;
@@ -2736,12 +2737,15 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 #			if defined(TRUE_PBR)
 			DirectContext legacyPointLightContext =
 				CreateDirectLightingContext(worldNormal.xyz, coatWorldNormal, vertexNormal.xyz, refractedViewDirection, viewDirection, refractedLightDirection, normalizedLightDirection, lightColor, lightShadow, parallaxShadow);
-			DirectLightingOutput legacyPointLightOutput;
-			EvaluateLighting(legacyPointLightContext, material, tbnTr, uvOriginal, legacyPointLightOutput);
+			DirectLightingOutput legacyPointLightOutput = (DirectLightingOutput)0;
+			PBR::GetDirectLightInput(legacyPointLightOutput, legacyPointLightContext, material, tbnTr, uvOriginal);
 #				if defined(WETNESS_EFFECTS)
 			if (waterRoughnessSpecular < 1)
-				EvaluateWetnessLighting(wetnessNormal, legacyPointLightContext, waterRoughnessSpecular, legacyPointLightOutput);
+				legacyPointLightOutput.specular +=
+					PBR::GetWetnessDirectLightSpecularInput(wetnessNormal, legacyPointLightContext.viewDir, legacyPointLightContext.lightDir,
+						legacyPointLightContext.coatLightColor, waterRoughnessSpecular) * (wetnessGlossinessSpecular * 0.5);
 #				endif
+			legacyPointLightOutput.specular *= 0.45;
 			lightsDiffuseColor += legacyPointLightOutput.diffuse;
 			lightsSpecularColor += legacyPointLightOutput.specular;
 			coatLightsDiffuseColor += legacyPointLightOutput.coatDiffuse;
@@ -2766,7 +2770,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 #				endif
 
 #				if defined(SPECULAR) || (defined(SPARKLE) && !defined(SNOW))
-			lightsSpecularColor += GetLightSpecularInput(input, normalizedLightDirection, viewDirection, worldNormal.xyz, legacyLightColor, shininess, uv);
+			lightsSpecularColor += GetLightSpecularInput(input, normalizedLightDirection, viewDirection, worldNormal.xyz, legacyLightColor, shininess, uv) * 0.45;
 #				endif
 
 			lightsDiffuseColor += lightDiffuseColor;
