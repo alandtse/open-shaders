@@ -1554,6 +1554,21 @@ void VR::SubmitOverlayFrame()
 	// Update drag logic for all modes - only when overlay is visible
 	auto& enabled = globals::menu->IsEnabled;
 	auto& overlayVisible = globals::menu->overlayVisible;
+	static bool wasMenuEnabled = false;
+	const bool menuJustOpened = enabled && !wasMenuEnabled;
+	wasMenuEnabled = enabled;
+
+	// In fixed-world mode, recenter once on menu open using current HMD pose,
+	// then keep it world-locked for the rest of the session.
+	if (menuJustOpened &&
+	    settings.VRMenuPositioningMethod == 1 &&
+	    (settings.attachMode == AttachMode::HMDOnly || settings.attachMode == AttachMode::Both)) {
+		SetFixedOverlayToCurrentHMD();
+		if (auto* player = RE::PlayerCharacter::GetSingleton()) {
+			savedPlayerWorldPos = player->GetPosition();
+		}
+	}
+
 	if ((enabled || overlayVisible || settings.kAutoHideSeconds > 0) && menuOverlayHandle != vr::k_ulOverlayHandleInvalid && menuTexture.get() && menuRTV.get()) {
 		// Update drag logic only when overlay is active
 		UpdateOverlayDrag();
