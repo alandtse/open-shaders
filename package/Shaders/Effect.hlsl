@@ -541,13 +541,23 @@ float ComputeShadowVariance(float shadow)
     return (v < epsilon) ? 1.0 : 0.0;
 }
 
+bool UseLegacyParticleEffectPath()
+{
+#		if defined(LIGHT_LIMIT_FIX)
+	return SharedData::lightLimitFixSettings.UseParticleLightsLegacyMode != 0;
+#		else
+	return false;
+#		endif
+}
+
 #	if defined(LIGHTING)
 float3 GetLightingColor(float3 msPosition, float3 worldPosition, float4 screenPosition, uint eyeIndex, inout float shadowVariance)
 {
 	float4 lightDistanceSquared = (PLightPositionX[eyeIndex] - msPosition.xxxx) * (PLightPositionX[eyeIndex] - msPosition.xxxx) + (PLightPositionY[eyeIndex] - msPosition.yyyy) * (PLightPositionY[eyeIndex] - msPosition.yyyy) + (PLightPositionZ[eyeIndex] - msPosition.zzzz) * (PLightPositionZ[eyeIndex] - msPosition.zzzz);
 	float4 lightFadeMul = 1.0.xxxx - saturate(PLightingRadiusInverseSquared * lightDistanceSquared);
+	const bool useLegacyParticleEffectPath = UseLegacyParticleEffectPath();
 
-	float3 color = DLightColor.xyz * Color::EffectLightingMult();
+	float3 color = useLegacyParticleEffectPath ? DLightColor.xyz : DLightColor.xyz * Color::EffectLightingMult();
 
 	if ((Permutation::ExtraShaderDescriptor & Permutation::ExtraFlags::EffectShadows)) {
 		float llDirLightMult = (SharedData::linearLightingSettings.enableLinearLighting && !SharedData::linearLightingSettings.isDirLightLinear) ? SharedData::linearLightingSettings.dirLightMult : 1.0f;
@@ -632,9 +642,15 @@ float3 GetLightingColor(float3 msPosition, float3 worldPosition, float4 screenPo
 	if (!(Permutation::ExtraShaderDescriptor & Permutation::ExtraFlags::InWorld))
 #		endif
 	{
-		color.x += dot(Color::PointLight(PLightColorR.xxx).x * lightFadeMul * Color::EffectLightingMult(), 1.0.xxxx);
-        color.y += dot(Color::PointLight(PLightColorG.xxx).x * lightFadeMul * Color::EffectLightingMult(), 1.0.xxxx);
-        color.z += dot(Color::PointLight(PLightColorB.xxx).x * lightFadeMul * Color::EffectLightingMult(), 1.0.xxxx);
+		if (useLegacyParticleEffectPath) {
+			color.x += dot(PLightColorR * lightFadeMul, 1.0.xxxx);
+			color.y += dot(PLightColorG * lightFadeMul, 1.0.xxxx);
+			color.z += dot(PLightColorB * lightFadeMul, 1.0.xxxx);
+		} else {
+			color.x += dot(Color::PointLight(PLightColorR.xxx).x * lightFadeMul * Color::EffectLightingMult(), 1.0.xxxx);
+			color.y += dot(Color::PointLight(PLightColorG.xxx).x * lightFadeMul * Color::EffectLightingMult(), 1.0.xxxx);
+			color.z += dot(Color::PointLight(PLightColorB.xxx).x * lightFadeMul * Color::EffectLightingMult(), 1.0.xxxx);
+		}
 	}
 
 	return color;
@@ -644,6 +660,7 @@ float3 GetLightingColor(float3 msPosition, float3 worldPosition, float4 screenPo
 PS_OUTPUT main(PS_INPUT input)
 {
 	PS_OUTPUT psout = (PS_OUTPUT)0;
+	const bool useLegacyParticleEffectPath = UseLegacyParticleEffectPath();
 
 #	if !defined(VR)
 	uint eyeIndex = 0;
@@ -695,7 +712,7 @@ PS_OUTPUT main(PS_INPUT input)
 #	endif
 
 	float lightingInfluence = LightingInfluence.x;
-	float3 propertyColor = Color::Effect(PropertyColor.xyz);
+	float3 propertyColor = useLegacyParticleEffectPath ? PropertyColor.xyz : Color::Effect(PropertyColor.xyz);
 	float shadowVariance = 1.0;
 
 #	if defined(LIGHTING)
@@ -729,8 +746,13 @@ PS_OUTPUT main(PS_INPUT input)
 				float intensityMultiplier = 1 - intensityFactor * intensityFactor;
 #			endif
 
-				const bool isPointLightLinear = light.lightFlags & LightLimitFix::LightFlags::Linear;
-				float3 lightColor = Color::PointLight(light.color.xyz, isPointLightLinear) * intensityMultiplier * 0.5 * light.fade * Color::EffectLightingMult();
+				const bool useLegacyParticlePointLight =
+					useLegacyParticleEffectPath &&
+					((light.lightFlags & LightLimitFix::LightFlags::Particle) != 0);
+				const bool isPointLightLinear = (light.lightFlags & LightLimitFix::LightFlags::Linear) != 0;
+				float3 lightColor = useLegacyParticlePointLight ?
+					(light.color.xyz * intensityMultiplier * 0.5) :
+					(Color::PointLight(light.color.xyz, isPointLightLinear) * intensityMultiplier * 0.5 * light.fade * Color::EffectLightingMult());
 				propertyColor += lightColor;
 			}
 		}
@@ -748,7 +770,9 @@ PS_OUTPUT main(PS_INPUT input)
 #	endif
 	{
 		baseTexColor = TexBaseSampler.Sample(SampBaseSampler, input.TexCoord0.xy);
-		baseTexColor.xyz = Color::Effect(baseTexColor.xyz);
+		if (!useLegacyParticleEffectPath) {
+			baseTexColor.xyz = Color::Effect(baseTexColor.xyz);
+		}
 		baseColor *= baseTexColor;
 		if (Permutation::PixelShaderDescriptor & Permutation::EffectFlags::IgnoreTexAlpha || Permutation::PixelShaderDescriptor & Permutation::EffectFlags::GrayscaleToAlpha) {
 			baseColor.w = 1;
@@ -759,9 +783,15 @@ PS_OUTPUT main(PS_INPUT input)
 	float4 baseColorMul = float4(1, 1, 1, 1);
 #	else
 	float4 baseColorMul = BaseColor;
-	baseColorMul.xyz = Color::Effect(baseColorMul.xyz);
+	if (!useLegacyParticleEffectPath) {
+		baseColorMul.xyz = Color::Effect(baseColorMul.xyz);
+	}
 #		if defined(VC) && !defined(PROJECTED_UV)
-	baseColorMul *= float4(Color::Effect(input.Color.xyz), input.Color.w);
+	if (useLegacyParticleEffectPath) {
+		baseColorMul *= input.Color;
+	} else {
+		baseColorMul *= float4(Color::Effect(input.Color.xyz), input.Color.w);
+	}
 #		endif
 #	endif
 
@@ -814,7 +844,8 @@ PS_OUTPUT main(PS_INPUT input)
 #	if defined(MEMBRANE)
 		grayscaleToColorUv.y = PropertyColor.x;
 #	endif
-		baseColor.xyz = Color::Effect(baseColorScale * TexGrayscaleSampler.Sample(SampGrayscaleSampler, grayscaleToColorUv).xyz);
+		float3 grayscaleColor = baseColorScale * TexGrayscaleSampler.Sample(SampGrayscaleSampler, grayscaleToColorUv).xyz;
+		baseColor.xyz = useLegacyParticleEffectPath ? grayscaleColor : Color::Effect(grayscaleColor);
 	}
 
 	float3 lightColor = lerp(baseColor.xyz, propertyColor * baseColor.xyz, lightingInfluence.xxx);
@@ -827,25 +858,33 @@ PS_OUTPUT main(PS_INPUT input)
 
 #	if !defined(MOTIONVECTORS_NORMALS)
 #		if defined(ADDBLEND)
-	float3 blendedColor = lightColor * (1 - Color::FogAlpha(input.FogParam.w).xxx);
+	float3 blendedColor = useLegacyParticleEffectPath ?
+		lightColor * (1 - input.FogParam.www) :
+		lightColor * (1 - Color::FogAlpha(input.FogParam.w).xxx);
 #		elif defined(MULTBLEND) || defined(MULTBLEND_DECAL)
-	float3 blendedColor = lerp(lightColor, 1.0.xxx, saturate(1.5 * Color::FogAlpha(input.FogParam.w)).xxx);
+	float3 blendedColor = useLegacyParticleEffectPath ?
+		lerp(lightColor, 1.0.xxx, saturate(1.5 * input.FogParam.w).xxx) :
+		lerp(lightColor, 1.0.xxx, saturate(1.5 * Color::FogAlpha(input.FogParam.w)).xxx);
 #		else
-	float3 fogColor = Color::Fog(input.FogParam.xyz);
+	float3 fogColor = useLegacyParticleEffectPath ? input.FogParam.xyz : Color::Fog(input.FogParam.xyz);
 #			if defined(IBL)
 	if (SharedData::iblSettings.EnableDiffuseIBL && !SharedData::InInterior) {
 		fogColor = ImageBasedLighting::GetFogIBLColor(fogColor);
 	}
 #			endif
-	float3 blendedColor = lerp(lightColor, fogColor, Color::FogAlpha(input.FogParam.w).xxx);
+	float3 blendedColor = useLegacyParticleEffectPath ?
+		lerp(lightColor, fogColor, input.FogParam.www) :
+		lerp(lightColor, fogColor, Color::FogAlpha(input.FogParam.w).xxx);
 #		endif
 #	else
 	float3 blendedColor = lightColor.xyz;
 #	endif
 
-	alpha = Color::EffectAlpha(alpha);
+	if (!useLegacyParticleEffectPath) {
+		alpha = Color::EffectAlpha(alpha);
+	}
 
-	float4 finalColor = float4(Color::EffectMult(blendedColor), alpha);
+	float4 finalColor = float4(useLegacyParticleEffectPath ? blendedColor : Color::EffectMult(blendedColor), alpha);
 #	if defined(MULTBLEND_DECAL)
 	finalColor.xyz *= alpha;
 #	else
@@ -908,7 +947,9 @@ PS_OUTPUT main(PS_INPUT input)
 	psout.Color2 = finalColor;
 #	endif
 
-	if (!(Permutation::ExtraShaderDescriptor & Permutation::ExtraFlags::InWorld) && SharedData::linearLightingSettings.enableLinearLighting) {
+	if (!useLegacyParticleEffectPath &&
+	    !(Permutation::ExtraShaderDescriptor & Permutation::ExtraFlags::InWorld) &&
+	    SharedData::linearLightingSettings.enableLinearLighting) {
 		psout.Diffuse.xyz = Color::TrueLinearToGamma(psout.Diffuse.xyz);
 	}
 	return psout;
