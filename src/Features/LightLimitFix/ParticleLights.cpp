@@ -32,6 +32,7 @@ void ParticleLights::GetConfigs()
 	particleLightGradientConfigs.clear();
 
 	particleLightConfigs["default"] = Config{};
+	logger::info("[LLF] Particle lights config conflict policy: legacy first-win");
 
 	if (std::filesystem::exists("Data\\ParticleLights")) {
 		logger::info("[LLF] Loading particle lights configs");
@@ -71,8 +72,13 @@ void ParticleLights::GetConfigs()
 				continue;
 			}
 
+			if (auto it = particleLightConfigs.find(*filename); it != particleLightConfigs.end()) {
+				logger::warn("[LLF] Duplicate particle config '{}'; keeping first entry, ignoring {}", *filename, path);
+				continue;
+			}
+
 			logger::debug("[LLF] Inserting {}", *filename);
-			particleLightConfigs[*filename] = data;
+			particleLightConfigs.emplace(*filename, data);
 		}
 	}
 
@@ -137,8 +143,13 @@ void ParticleLights::GetConfigs()
 				continue;
 			}
 
+			if (auto it = particleLightGradientConfigs.find(*filename); it != particleLightGradientConfigs.end()) {
+				logger::warn("[LLF] Duplicate particle gradient config '{}'; keeping first entry, ignoring {}", *filename, path);
+				continue;
+			}
+
 			logger::debug("[LLF] Inserting {}", *filename);
-			particleLightGradientConfigs[*filename] = data;
+			particleLightGradientConfigs.emplace(*filename, data);
 		}
 	}
 }

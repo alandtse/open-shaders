@@ -104,10 +104,8 @@ public:
 	{
 		uint EnableLightsVisualisation;
 		uint LightsVisualisationMode;
-		uint UseLegacyParticleLighting;
-		uint UseLegacyParticleEmissionLighting;
-		uint ForceLegacyParticleOutputPath;
-		uint pad0[3];
+		uint UseParticleLightsLegacyMode;
+		float LegacyParticleIntensityScale;
 		uint ClusterSize[4];
 	};
 	STATIC_ASSERT_ALIGNAS_16(PerFrame);
@@ -220,13 +218,12 @@ struct ParticleLightInfo
 		bool EnableContactShadows = false;
 		bool EnableLightsVisualisation = false;
 		uint LightsVisualisationMode = 0;
-		bool UseLegacyParticleLighting = true;
-		bool UseLegacyParticleEmissionLighting = false;
-		bool ForceLegacyParticleOutputPath = false;
+		bool UseParticleLightsLegacyMode = true;
 		bool EnableParticleLights = true;
 		bool EnableParticleLightsCulling = true;
 		bool EnableParticleLightsDetection = true;
 		float ParticleLightsSaturation = 1.0f;
+		float LegacyParticleIntensityScale = 1.0f;
 		float ParticleBrightness = 1.0f;
 		float ParticleRadius = 1.0f;
 		float BillboardBrightness = 1.0f;
