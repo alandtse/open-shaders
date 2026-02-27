@@ -29,7 +29,8 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	EnableLightsVisualisation,
 	LightsVisualisationMode,
 	UseLegacyParticleLighting,
-	UseLegacyParticleEmissionLighting)
+	UseLegacyParticleEmissionLighting,
+	ForceLegacyParticleOutputPath)
 void LightLimitFix::DrawSettings()
 {
 	// Heat warp / refraction strength (moved from Advanced Settings)
@@ -136,6 +137,11 @@ void LightLimitFix::DrawSettings()
 			ImGui::Text("Skips Color::PointLight conversion for particle-emitted lights in the main lighting pass (effective only when Linear Lighting is enabled).");
 		}
 
+		ImGui::Checkbox("Force Legacy Particle Output Path", &settings.ForceLegacyParticleOutputPath);
+		if (auto _tt = Util::HoverTooltipWrapper()) {
+			ImGui::Text("Forces particle pixel output to ColorScale * baseColor and bypasses particle-pass directional, ambient, and clustered lighting.");
+		}
+
 		ImGui::Spacing();
 		ImGui::Spacing();
 		ImGui::TreePop();
@@ -195,6 +201,7 @@ LightLimitFix::PerFrame LightLimitFix::GetCommonBufferData()
 	perFrame.LightsVisualisationMode = settings.LightsVisualisationMode;
 	perFrame.UseLegacyParticleLighting = settings.UseLegacyParticleLighting;
 	perFrame.UseLegacyParticleEmissionLighting = settings.UseLegacyParticleEmissionLighting;
+	perFrame.ForceLegacyParticleOutputPath = settings.ForceLegacyParticleOutputPath;
 	std::copy(clusterSize, clusterSize + 3, perFrame.ClusterSize);
 	return perFrame;
 }

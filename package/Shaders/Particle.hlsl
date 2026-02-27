@@ -283,7 +283,6 @@ PS_OUTPUT main(PS_INPUT input)
 
 	float4 sourceColor = TexSourceTexture.Sample(SampSourceTexture, input.TexCoord0);
 	float4 baseColor = input.Color * sourceColor;
-	baseColor.xyz = Color::Diffuse(baseColor.xyz);
 #	if defined(GRAYSCALE_TO_COLOR)
 	float3 grayScaleColor =
 		TexGrayscaleTexture.Sample(SampGrayscaleTexture, float2(sourceColor.y, input.Color.x)).xyz;
@@ -294,6 +293,16 @@ PS_OUTPUT main(PS_INPUT input)
 		TexGrayscaleTexture.Sample(SampGrayscaleTexture, float2(sourceColor.w, input.Color.w)).w;
 	baseColor.w = grayScaleAlpha;
 #	endif
+
+	if (SharedData::lightLimitFixSettings.ForceLegacyParticleOutputPath != 0) {
+		psout.Color.xyz = ColorScale * baseColor.xyz;
+		psout.Color.w = baseColor.w;
+		psout.Normal.w = baseColor.w;
+		psout.Normal.xyz = float3(0, 1, 0);
+		return psout;
+	}
+
+	baseColor.xyz = Color::Diffuse(baseColor.xyz);
 
 	float3 propertyColor = 0.0;
 
