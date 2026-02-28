@@ -57,6 +57,20 @@ float GetDepthFade(float depth)
 	return saturate((depth - DepthFadeRange.x) * DepthFadeScaleConst);
 }
 
+float GetVRCullFade(float depth)
+{
+#ifdef VR
+	if (VRCullDistance <= 0.0)
+		return 1.0;
+
+	float fadeBand = clamp(VRCullDistance * 0.2, 200.0, 1200.0);
+	float fadeStart = VRCullDistance - fadeBand;
+	return 1.0 - smoothstep(fadeStart, VRCullDistance, depth);
+#else
+	return 1.0;
+#endif
+}
+
 // Engine-specific screen & temporal noise loader
 float2 SpatioTemporalNoise(uint2 pixCoord, uint temporalIndex)  // without TAA, temporalIndex is always 0
 {
@@ -339,12 +353,14 @@ void CalculateGI(
 	// Move center pixel slightly towards camera to avoid imprecision artifacts due to depth buffer imprecision; offset depends on depth texture format used
 	viewspaceZ *= 0.99920h;  // this is good for FP16 depth buffer
 
+	float vrCullFade = GetVRCullFade(viewspaceZ);
+
 	float currAo = 0;
 	float4 currY = 0;
 	float2 currCoCg = 0;
 	float4 currGIAOSpecular = float4(0, 0, 0, 0);
 
-	bool needGI = viewspaceZ > FP_Z && viewspaceZ < DepthFadeRange.y;
+	bool needGI = viewspaceZ > FP_Z && viewspaceZ < DepthFadeRange.y && vrCullFade > 0.0;
 	if (needGI) {
 		CalculateGI(
 			pxCoord, uv, viewspaceZ, viewspaceNormal,
@@ -358,8 +374,14 @@ void CalculateGI(
 #	ifdef GI_SPECULAR
 		currGIAOSpecular = lerp(srcPrevGISpecular[pxCoord], currGIAOSpecular, lerpFactor);
 #	endif
-#endif
+	#endif
 	}
+
+	currAo *= vrCullFade;
+	currY *= vrCullFade;
+	currCoCg *= vrCullFade;
+	currGIAOSpecular *= vrCullFade;
+
 	currY = filterNaN(currY);
 	currCoCg = filterNaN(currCoCg);
 	currGIAOSpecular = filterNaN(currGIAOSpecular);

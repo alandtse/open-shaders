@@ -61,7 +61,8 @@ cbuffer SSGICB : register(b1)
 
 	float BlurRadius;
 	float DistanceNormalisation;
-	float2 pad;
+	float VRCullDistance;
+	float pad;
 };
 
 SamplerState samplerPointClamp : register(s0);

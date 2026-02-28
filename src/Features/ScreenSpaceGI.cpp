@@ -16,6 +16,7 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	NumSlices,
 	NumSteps,
 	ResolutionMode,
+	VRCullDistance,
 	MinScreenRadius,
 	AORadius,
 	GIRadius,
@@ -273,6 +274,14 @@ void ScreenSpaceGI::DrawSettings()
 				ImGui::Text(
 					"How many samples does it take in one direction.\n"
 					"Controls accuracy of lighting, and noise when effect radius is large.");
+
+			if (REL::Module::IsVR()) {
+				ImGui::SliderFloat("Shadow/GI Cull Distance", &settings.VRCullDistance, 0.0f, 20480.0f, "%.0f units");
+				if (auto _tt = Util::HoverTooltipWrapper()) {
+					ImGui::Text("0 disables. Lower values improve performance but reduce distant AO/IL.");
+				}
+				settings.VRCullDistance = std::clamp(settings.VRCullDistance, 0.0f, 20480.0f);
+		}
 		}
 
 		if (ImGui::BeginTable("Less Work", 3)) {
@@ -788,6 +797,7 @@ void ScreenSpaceGI::UpdateSB()
 		data.MaxAccumFrames = settings.MaxAccumFrames;
 		data.BlurRadius = settings.BlurRadius;
 		data.DistanceNormalisation = settings.DistanceNormalisation;
+		data.VRCullDistance = REL::Module::IsVR() ? settings.VRCullDistance : 0.0f;
 	}
 
 	ssgiCB->Update(data);

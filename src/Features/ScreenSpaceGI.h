@@ -67,6 +67,7 @@ public:
 		uint NumSlices = REL::Module::IsVR() ? 1u : 4u;  // AO preset for VR
 		uint NumSteps = REL::Module::IsVR() ? 6u : 8u;   // AO preset for VR
 		int ResolutionMode = 1;                          // 0-full, 1-half, 2-quarter - DBF default
+		float VRCullDistance = 0.0f;                     // 0 disables VR distance culling
 		// visual
 		float MinScreenRadius = 0.01f;
 		float AORadius = 256.f;
@@ -129,8 +130,8 @@ public:
 
 		float BlurRadius;
 		float DistanceNormalisation;
-
-		float2 pad;
+		float VRCullDistance;
+		float pad;
 	};
 	STATIC_ASSERT_ALIGNAS_16(SSGICB);
 	eastl::unique_ptr<ConstantBuffer> ssgiCB;
