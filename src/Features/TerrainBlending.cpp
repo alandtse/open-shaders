@@ -575,6 +575,7 @@ void TerrainBlending::OnBeginTechnique(RE::BSShader* a_shader, uint32_t a_pixelD
 
 	auto* context = globals::d3d::context;
 	if (!context) {
+		ReleaseEngineHookTechniqueOverride();
 		return;
 	}
 
