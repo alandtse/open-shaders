@@ -119,7 +119,7 @@ void Feature::Load(json& o_json)
 		// Get the minimum required version to include in the error message
 		std::string requiredVersion = Feature::GetFeatureRequiredVersion(GetShortName());
 
-		failedLoadedMessage = std::format("The {} file is missing. This feature is not installed! Version required: {}", ini_filename, requiredVersion);
+		failedLoadedMessage = std::format("This feature is not installed! Version required: {}", ini_filename, requiredVersion);
 	}
 
 	if (hasError) {

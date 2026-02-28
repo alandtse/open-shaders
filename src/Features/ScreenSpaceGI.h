@@ -23,7 +23,7 @@ public:
 			"bounces off surfaces to illuminate other objects naturally.";
 		if (REL::Module::IsVR()) {
 			desc +=
-				"\n\nWarning: In VR, this feature may have visual artifacts and "
+				"\n\n In VR use AO with Full Res to prevent flimmer. Warning: This feature may have visual artifacts and "
 				"can have a significant performance impact due to the nature of "
 				"screen space effects.";
 		}
