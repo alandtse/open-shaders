@@ -71,8 +71,7 @@ namespace SharedData
 	{
 		uint EnableLightsVisualisation;
 		uint LightsVisualisationMode;
-		uint UseParticleLightsLegacyMode;
-		float LegacyParticleIntensityScale;
+		uint2 pad0;
 		uint4 ClusterSize;
 	};
 

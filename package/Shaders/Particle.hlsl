@@ -294,15 +294,6 @@ PS_OUTPUT main(PS_INPUT input)
 	baseColor.w = grayScaleAlpha;
 #	endif
 
-	const bool useLegacyParticleLights = SharedData::lightLimitFixSettings.UseParticleLightsLegacyMode != 0;
-	if (useLegacyParticleLights) {
-		psout.Color.xyz = ColorScale * baseColor.xyz;
-		psout.Color.w = baseColor.w;
-		psout.Normal.w = baseColor.w;
-		psout.Normal.xyz = float3(0, 1, 0);
-		return psout;
-	}
-
 	baseColor.xyz = Color::Diffuse(baseColor.xyz);
 
 	float3 propertyColor = 0.0;
