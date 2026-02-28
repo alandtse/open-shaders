@@ -1669,9 +1669,6 @@ void VR::UpdateDepthBufferCulling()
 	if (previous != desired) {
 		logger::info("VR depth buffer culling set to {}", desired);
 	}
-	if (*gDepthBufferCulling != desired) {
-		logger::warn("VR depth buffer culling write mismatch (desired {}, actual {})", desired, *gDepthBufferCulling);
-	}
 }
 
 // Handles overlay/menu open/close logic based on controller input state
