@@ -38,13 +38,8 @@
 
 //#endif
 
-#if defined(VR) && defined(SSS_VR_FLOAT_COORDS)
-#	define SSS_COORD float
-#	define SSS_COORD2 float2
-#else
-#	define SSS_COORD half
-#	define SSS_COORD2 half2
-#endif
+#define SSS_COORD half
+#define SSS_COORD2 half2
 
 // This is the list of runtime properties to pass to the shader
 // Wherever possible, it is highly recommended to have these values be compile-time constants

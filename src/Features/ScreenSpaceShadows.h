@@ -42,9 +42,6 @@ public:
 	};
 
 	BendSettings bendSettings;
-	bool vrFloatCoordinateMath = false;
-	bool vrHardenDepthLayoutDynamicRes = false;
-	bool vrUseJitteredLightProjection = false;
 
 	struct alignas(16) RaymarchCB
 	{
@@ -78,8 +75,6 @@ public:
 	ID3D11ComputeShader* raymarchRightCS = nullptr;
 	uint compiledSampleCount = 0;
 	uint compiledSampleCountRight = 0;
-	bool compiledVRFloatCoordinateMath = false;
-	bool compiledVRFloatCoordinateMathRight = false;
 
 	Texture2D* screenSpaceShadowsTexture = nullptr;
 
@@ -89,6 +84,7 @@ public:
 
 	virtual void ClearShaderCache() override;
 	uint GetScaledSampleCount(bool a_dynamic);
+	ID3D11ComputeShader* GetOrCreateRaymarchShader(ID3D11ComputeShader*& a_shader, uint& a_compiledSampleCount, bool a_rightEye);
 	ID3D11ComputeShader* GetComputeRaymarch();
 	ID3D11ComputeShader* GetComputeRaymarchRight();
 

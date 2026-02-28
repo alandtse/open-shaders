@@ -108,12 +108,12 @@ void ScreenSpaceShadows::DrawSettings()
 		}
 
 		if (globals::game::isVR) {
-			ImGui::SliderFloat("VR Baseline Samples", &bendSettings.VRBaseSamplesAtReference, 16.0f, 96.0f, "%.0f");
+			ImGui::SliderFloat("Baseline Samples", &bendSettings.VRBaseSamplesAtReference, 16.0f, 96.0f, "%.0f");
 			if (auto _tt = Util::HoverTooltipWrapper()) {
 				ImGui::Text("Raises or lowers VR shadow quality and GPU cost.");
 			}
 
-			ImGui::SliderFloat("VR Shadow Cull Distance", &bendSettings.VRCullDistance, 0.0f, 20480.0f, "%.0f units");
+			ImGui::SliderFloat("Shadow Cull Distance", &bendSettings.VRCullDistance, 0.0f, 20480.0f, "%.0f units");
 			if (auto _tt = Util::HoverTooltipWrapper()) {
 				ImGui::Text("0 disables. Lower values improve performance but remove distant shadows.");
 			}
@@ -139,29 +139,6 @@ void ScreenSpaceShadows::DrawSettings()
 			ImGui::Text("Controls overall shadow darkness.");
 		}
 
-		if (globals::game::isVR) {
-			ImGui::Spacing();
-			ImGui::TextUnformatted("Debug");
-			ImGui::Separator();
-
-			ImGui::Checkbox("VR Harden Depth Layout Scaling", &vrHardenDepthLayoutDynamicRes);
-			if (auto _tt = Util::HoverTooltipWrapper()) {
-				ImGui::Text("Improves stability when depth layout changes in VR.");
-			}
-
-			ImGui::Checkbox("VR Use Jittered Light Projection", &vrUseJitteredLightProjection);
-			if (auto _tt = Util::HoverTooltipWrapper()) {
-				ImGui::Text("Can change how shadows react to head movement.");
-			}
-
-			if (ImGui::Checkbox("VR Float Coordinate Math", &vrFloatCoordinateMath)) {
-				ClearShaderCache();
-			}
-			if (auto _tt = Util::HoverTooltipWrapper()) {
-				ImGui::Text("Improves VR shadow stability at a performance cost.");
-			}
-		}
-
 		ImGui::Spacing();
 		ImGui::Spacing();
 		ImGui::TreePop();
@@ -180,8 +157,6 @@ void ScreenSpaceShadows::ClearShaderCache()
 	}
 	compiledSampleCount = 0;
 	compiledSampleCountRight = 0;
-	compiledVRFloatCoordinateMath = false;
-	compiledVRFloatCoordinateMathRight = false;
 }
 
 uint ScreenSpaceShadows::GetScaledSampleCount(bool a_dynamic)
@@ -214,53 +189,36 @@ uint ScreenSpaceShadows::GetScaledSampleCount(bool a_dynamic)
 
 ID3D11ComputeShader* ScreenSpaceShadows::GetComputeRaymarch()
 {
-	const uint scaledSampleCount = GetScaledSampleCount(false);
-	const bool useVRFloatCoordinates = globals::game::isVR && vrFloatCoordinateMath;
-	if (raymarchCS && (compiledSampleCount != scaledSampleCount || compiledVRFloatCoordinateMath != useVRFloatCoordinates)) {
-		raymarchCS->Release();
-		raymarchCS = nullptr;
-		compiledSampleCount = 0;
-		compiledVRFloatCoordinateMath = false;
-	}
-
-	if (!raymarchCS) {
-		std::string sampleCount = std::format("{}", scaledSampleCount);
-		std::vector<std::pair<const char*, const char*>> defines{ { "SAMPLE_COUNT", sampleCount.c_str() } };
-		if (useVRFloatCoordinates)
-			defines.push_back({ "SSS_VR_FLOAT_COORDS", "" });
-
-		raymarchCS = (ID3D11ComputeShader*)Util::CompileShader(L"Data\\Shaders\\ScreenSpaceShadows\\RaymarchCS.hlsl", defines, "cs_5_0");
-		compiledSampleCount = scaledSampleCount;
-		compiledVRFloatCoordinateMath = useVRFloatCoordinates;
-	}
-	return raymarchCS;
+	return GetOrCreateRaymarchShader(raymarchCS, compiledSampleCount, false);
 }
 
 ID3D11ComputeShader* ScreenSpaceShadows::GetComputeRaymarchRight()
 {
+	return GetOrCreateRaymarchShader(raymarchRightCS, compiledSampleCountRight, true);
+}
+
+ID3D11ComputeShader* ScreenSpaceShadows::GetOrCreateRaymarchShader(
+	ID3D11ComputeShader*& a_shader,
+	uint& a_compiledSampleCount,
+	bool a_rightEye)
+{
 	const uint scaledSampleCount = GetScaledSampleCount(false);
-	const bool useVRFloatCoordinates = globals::game::isVR && vrFloatCoordinateMath;
-	if (raymarchRightCS && (compiledSampleCountRight != scaledSampleCount || compiledVRFloatCoordinateMathRight != useVRFloatCoordinates)) {
-		raymarchRightCS->Release();
-		raymarchRightCS = nullptr;
-		compiledSampleCountRight = 0;
-		compiledVRFloatCoordinateMathRight = false;
+	if (a_shader && a_compiledSampleCount != scaledSampleCount) {
+		a_shader->Release();
+		a_shader = nullptr;
+		a_compiledSampleCount = 0;
 	}
 
-	if (!raymarchRightCS) {
+	if (!a_shader) {
 		std::string sampleCount = std::format("{}", scaledSampleCount);
-		std::vector<std::pair<const char*, const char*>> defines{
-			{ "SAMPLE_COUNT", sampleCount.c_str() },
-			{ "RIGHT", "" }
-		};
-		if (useVRFloatCoordinates)
-			defines.push_back({ "SSS_VR_FLOAT_COORDS", "" });
+		std::vector<std::pair<const char*, const char*>> defines{ { "SAMPLE_COUNT", sampleCount.c_str() } };
+		if (a_rightEye)
+			defines.push_back({ "RIGHT", "" });
 
-		raymarchRightCS = (ID3D11ComputeShader*)Util::CompileShader(L"Data\\Shaders\\ScreenSpaceShadows\\RaymarchCS.hlsl", defines, "cs_5_0");
-		compiledSampleCountRight = scaledSampleCount;
-		compiledVRFloatCoordinateMathRight = useVRFloatCoordinates;
+		a_shader = (ID3D11ComputeShader*)Util::CompileShader(L"Data\\Shaders\\ScreenSpaceShadows\\RaymarchCS.hlsl", defines, "cs_5_0");
+		a_compiledSampleCount = scaledSampleCount;
 	}
-	return raymarchRightCS;
+	return a_shader;
 }
 
 void ScreenSpaceShadows::DrawShadows()
@@ -281,9 +239,7 @@ void ScreenSpaceShadows::DrawShadows()
 
 	// Helper lambda to calculate light projection for a given eye
 	auto CalculateLightProjection = [&](uint32_t eyeIndex = 0) -> std::array<float, 4> {
-		const auto& viewProj = (globals::game::isVR && vrUseJitteredLightProjection) ?
-								   globals::game::frameBufferCached.GetCameraViewProj(eyeIndex) :
-								   globals::game::frameBufferCached.GetCameraViewProjUnjittered(eyeIndex);
+		const auto& viewProj = globals::game::frameBufferCached.GetCameraViewProjUnjittered(eyeIndex);
 		auto viewProjMat = viewProj.Transpose();
 		auto projectedLight = DirectX::SimpleMath::Vector4::Transform(lightProjection, viewProjMat);
 		return { projectedLight.x, projectedLight.y, projectedLight.z, projectedLight.w };
@@ -321,11 +277,8 @@ void ScreenSpaceShadows::DrawShadows()
 		if (!globals::game::isVR) {
 			dynamicRes.x = static_cast<float>(viewportSize[0]) / static_cast<float>(depthWidth);
 			dynamicRes.y = static_cast<float>(viewportSize[1]) / static_cast<float>(depthHeight);
-		} else if (!vrHardenDepthLayoutDynamicRes) {
-			// Legacy behavior assumes depth SRV is combined stereo.
-			dynamicRes.x = (static_cast<float>(viewportSize[0]) * 2.0f) / static_cast<float>(depthWidth);
-			dynamicRes.y = static_cast<float>(viewportSize[1]) / static_cast<float>(depthHeight);
 		} else {
+			// Always use hardened depth-layout scaling in VR.
 			const float combinedX = (static_cast<float>(viewportSize[0]) * 2.0f) / static_cast<float>(depthWidth);
 			const float perEyeX = static_cast<float>(viewportSize[0]) / static_cast<float>(depthWidth);
 			dynamicRes.y = static_cast<float>(viewportSize[1]) / static_cast<float>(depthHeight);
@@ -459,25 +412,16 @@ void ScreenSpaceShadows::Prepass()
 void ScreenSpaceShadows::LoadSettings(json& o_json)
 {
 	bendSettings = o_json;
-	vrFloatCoordinateMath = o_json.value("VRFloatCoordinateMath", false);
-	vrHardenDepthLayoutDynamicRes = o_json.value("VRHardenDepthLayoutDynamicRes", false);
-	vrUseJitteredLightProjection = o_json.value("VRUseJitteredLightProjection", false);
 }
 
 void ScreenSpaceShadows::SaveSettings(json& o_json)
 {
 	o_json = bendSettings;
-	o_json["VRFloatCoordinateMath"] = vrFloatCoordinateMath;
-	o_json["VRHardenDepthLayoutDynamicRes"] = vrHardenDepthLayoutDynamicRes;
-	o_json["VRUseJitteredLightProjection"] = vrUseJitteredLightProjection;
 }
 
 void ScreenSpaceShadows::RestoreDefaultSettings()
 {
 	bendSettings = {};
-	vrFloatCoordinateMath = false;
-	vrHardenDepthLayoutDynamicRes = false;
-	vrUseJitteredLightProjection = false;
 }
 
 bool ScreenSpaceShadows::HasShaderDefine(RE::BSShader::Type)
