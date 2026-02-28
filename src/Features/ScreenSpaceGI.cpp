@@ -13,6 +13,7 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	EnableGI,
 	EnableExperimentalSpecularGI,
 	EnableVanillaSSAO,
+	InteriorsOnly,
 	NumSlices,
 	NumSteps,
 	ResolutionMode,
@@ -205,6 +206,11 @@ void ScreenSpaceGI::DrawSettings()
 
 	{
 		auto qualityGuard = Util::DisableGuard(!settings.Enabled);
+
+		ImGui::Checkbox("Interiors Only", &settings.InteriorsOnly);
+		if (auto _tt = Util::HoverTooltipWrapper()) {
+			ImGui::Text("Run SSGI only in interiors to improve exterior performance.");
+		}
 
 		if (ImGui::BeginTable("Presets", 5)) {
 			ImGui::TableNextColumn();
@@ -822,7 +828,8 @@ void ScreenSpaceGI::DrawSSGI()
 	static bool* enableSSAO = reinterpret_cast<bool*>(reinterpret_cast<uintptr_t>(BSImagespaceShaderISSAOBlurH.get()) + 0x50LL);
 	*enableSSAO = settings.EnableVanillaSSAO;
 
-	if (!(settings.Enabled && ShadersOK())) {
+	const bool allowCurrentSpace = !settings.InteriorsOnly || Util::IsInterior();
+	if (!(settings.Enabled && ShadersOK() && allowCurrentSpace)) {
 		FLOAT clr[4] = { 0.f, 0.f, 0.f, 0.f };
 		context->ClearUnorderedAccessViewFloat(texAo[outputAoIdx]->uav.get(), clr);
 		context->ClearUnorderedAccessViewFloat(texIlY[outputIlIdx]->uav.get(), clr);

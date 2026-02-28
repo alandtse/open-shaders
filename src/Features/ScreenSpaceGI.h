@@ -63,6 +63,7 @@ public:
 		bool EnableGI = REL::Module::IsVR() ? false : true;  // AO only for VR by default
 		bool EnableExperimentalSpecularGI = false;
 		bool EnableVanillaSSAO = false;
+		bool InteriorsOnly = false;
 		// performance/quality
 		uint NumSlices = REL::Module::IsVR() ? 1u : 4u;  // AO preset for VR
 		uint NumSteps = REL::Module::IsVR() ? 6u : 8u;   // AO preset for VR
