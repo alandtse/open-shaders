@@ -60,10 +60,14 @@ float GetDepthFade(float depth)
 float GetVRCullFade(float depth)
 {
 #ifdef VR
+	static const float kVRCullFadeFraction = 0.2;
+	static const float kVRCullFadeBandMin = 200.0;
+	static const float kVRCullFadeBandMax = 1200.0;
+
 	if (VRCullDistance <= 0.0)
 		return 1.0;
 
-	float fadeBand = clamp(VRCullDistance * 0.2, 200.0, 1200.0);
+	float fadeBand = clamp(VRCullDistance * kVRCullFadeFraction, kVRCullFadeBandMin, kVRCullFadeBandMax);
 	float fadeStart = VRCullDistance - fadeBand;
 	return 1.0 - smoothstep(fadeStart, VRCullDistance, depth);
 #else

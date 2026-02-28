@@ -32,11 +32,18 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	NormalDisocclusion,
 	MaxAccumFrames,
 	BlurRadius,
-	DistanceNormalisation,
-	DebugUseUnjitteredCameraReconstruction)
+	DistanceNormalisation)
 
 namespace
 {
+	constexpr float kVRCullDistanceMin = 0.0f;
+	constexpr float kVRCullDistanceMax = 20480.0f;
+
+	float ClampVRCullDistance(float a_distance)
+	{
+		return std::clamp(a_distance, kVRCullDistanceMin, kVRCullDistanceMax);
+	}
+
 	enum class VRDepthLayout
 	{
 		PerEye,
@@ -276,12 +283,16 @@ void ScreenSpaceGI::DrawSettings()
 					"Controls accuracy of lighting, and noise when effect radius is large.");
 
 			if (REL::Module::IsVR()) {
-				ImGui::SliderFloat("Shadow/GI Cull Distance", &settings.VRCullDistance, 0.0f, 20480.0f, "%.0f units");
+				ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0.10f, 0.20f, 0.45f, 0.85f));
+				ImGui::PushStyleColor(ImGuiCol_FrameBgHovered, ImVec4(0.14f, 0.28f, 0.58f, 0.90f));
+				ImGui::PushStyleColor(ImGuiCol_FrameBgActive, ImVec4(0.18f, 0.34f, 0.66f, 0.95f));
+				ImGui::SliderFloat("Shadow/GI Cull Distance", &settings.VRCullDistance, kVRCullDistanceMin, kVRCullDistanceMax, "%.0f units");
+				ImGui::PopStyleColor(3);
 				if (auto _tt = Util::HoverTooltipWrapper()) {
 					ImGui::Text("0 disables. Lower values improve performance but reduce distant AO/IL.");
 				}
-				settings.VRCullDistance = std::clamp(settings.VRCullDistance, 0.0f, 20480.0f);
-		}
+				settings.VRCullDistance = ClampVRCullDistance(settings.VRCullDistance);
+			}
 		}
 
 		if (ImGui::BeginTable("Less Work", 3)) {
@@ -425,25 +436,16 @@ void ScreenSpaceGI::DrawSettings()
 				auto blurGuard = Util::DisableGuard(!settings.EnableBlur);
 				ImGui::SliderFloat("Blur Radius", &settings.BlurRadius, 0.f, 30.f, "%.1f px");
 
-				if (showAdvanced) {
-					ImGui::SliderFloat("Geometry Weight", &settings.DistanceNormalisation, 0.f, 5.f, "%.2f");
-					if (auto _tt = Util::HoverTooltipWrapper())
-						ImGui::Text(
-							"Higher value makes the blur more sensitive to differences in geometry.");
-				}
+				ImGui::SliderFloat("Geometry Weight", &settings.DistanceNormalisation, 0.f, 5.f, "%.2f");
+				if (auto _tt = Util::HoverTooltipWrapper())
+					ImGui::Text(
+						"Higher value makes the blur more sensitive to differences in geometry.");
 			}
 		}
 	}
 
 	///////////////////////////////
 	ImGui::SeparatorText("Debug");
-
-	if (REL::Module::IsVR()) {
-		ImGui::Checkbox("Use Unjittered VR Camera", &settings.DebugUseUnjitteredCameraReconstruction);
-		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::Text("Improves VR GI stability during head movement.");
-		}
-	}
 
 	if (ImGui::TreeNode("Buffer Viewer")) {
 		static float debugRescale = .3f;
@@ -467,6 +469,7 @@ void ScreenSpaceGI::DrawSettings()
 void ScreenSpaceGI::LoadSettings(json& o_json)
 {
 	settings = o_json;
+	settings.VRCullDistance = ClampVRCullDistance(settings.VRCullDistance);
 
 	recompileFlag = true;
 }
@@ -744,7 +747,7 @@ void ScreenSpaceGI::UpdateSB()
 
 	SSGICB data;
 	{
-		const bool useUnjitteredCamera = REL::Module::IsVR() && settings.DebugUseUnjitteredCameraReconstruction;
+		const bool useUnjitteredCamera = REL::Module::IsVR();
 
 		for (int eyeIndex = 0; eyeIndex < (1 + REL::Module::IsVR()); ++eyeIndex) {
 			const auto eye = Util::GetCameraData(eyeIndex);
@@ -779,11 +782,16 @@ void ScreenSpaceGI::UpdateSB()
 		data.MinScreenRadius = settings.MinScreenRadius * dynres.x;
 
 		data.EffectRadius = std::max(settings.AORadius, settings.GIRadius);
-		data.AORadius = settings.AORadius / data.EffectRadius;
-		data.GIRadius = settings.GIRadius / data.EffectRadius;
+		const float safeEffectRadius = std::max(data.EffectRadius, 1e-3f);
+		data.EffectRadius = safeEffectRadius;
+		data.AORadius = settings.AORadius / safeEffectRadius;
+		data.GIRadius = settings.GIRadius / safeEffectRadius;
 		data.Thickness = settings.Thickness;
-		data.DepthFadeRange = settings.DepthFadeRange;
-		data.DepthFadeScaleConst = 1 / (settings.DepthFadeRange.y - settings.DepthFadeRange.x);
+		const float depthFadeStart = std::min(settings.DepthFadeRange.x, settings.DepthFadeRange.y);
+		const float depthFadeEnd = std::max(settings.DepthFadeRange.x, settings.DepthFadeRange.y);
+		data.DepthFadeRange = { depthFadeStart, depthFadeEnd };
+		const float depthFadeSpan = std::max(depthFadeEnd - depthFadeStart, 1.0f);
+		data.DepthFadeScaleConst = 1.0f / depthFadeSpan;
 
 		data.GISaturation = settings.GISaturation;
 		data.GIDistanceCompensation = settings.GIDistanceCompensation;
@@ -797,7 +805,7 @@ void ScreenSpaceGI::UpdateSB()
 		data.MaxAccumFrames = settings.MaxAccumFrames;
 		data.BlurRadius = settings.BlurRadius;
 		data.DistanceNormalisation = settings.DistanceNormalisation;
-		data.VRCullDistance = REL::Module::IsVR() ? settings.VRCullDistance : 0.0f;
+		data.VRCullDistance = REL::Module::IsVR() ? ClampVRCullDistance(settings.VRCullDistance) : 0.0f;
 	}
 
 	ssgiCB->Update(data);

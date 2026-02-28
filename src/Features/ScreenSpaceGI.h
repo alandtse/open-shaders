@@ -67,7 +67,7 @@ public:
 		uint NumSlices = REL::Module::IsVR() ? 1u : 4u;  // AO preset for VR
 		uint NumSteps = REL::Module::IsVR() ? 6u : 8u;   // AO preset for VR
 		int ResolutionMode = 1;                          // 0-full, 1-half, 2-quarter - DBF default
-		float VRCullDistance = 0.0f;                     // 0 disables VR distance culling
+		float VRCullDistance = 1000.0f;                  // 0 disables VR distance culling
 		// visual
 		float MinScreenRadius = 0.01f;
 		float AORadius = 256.f;
@@ -88,9 +88,6 @@ public:
 		uint MaxAccumFrames = 16;
 		float BlurRadius = 2.f;
 		float DistanceNormalisation = 2.f;
-
-		// Debug: toggles unjittered per-eye projection/inverse-view reconstruction path.
-		bool DebugUseUnjitteredCameraReconstruction = true;
 	} settings;
 
 	struct alignas(16) SSGICB
