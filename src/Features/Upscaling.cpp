@@ -29,6 +29,16 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 
 decltype(&D3D11CreateDeviceAndSwapChain) ptrD3D11CreateDeviceAndSwapChainUpscaling;
 
+namespace
+{
+	bool IsNvidiaAdapterDescription(const std::string& adapterDescription)
+	{
+		return adapterDescription.find("NVIDIA") != std::string::npos ||
+		       adapterDescription.find("Nvidia") != std::string::npos ||
+		       adapterDescription.find("nvidia") != std::string::npos;
+	}
+}
+
 /**
  * @brief Creates a Direct3D 11 device and swap chain, with support for advanced upscaling and frame generation features.
  *
@@ -253,7 +263,7 @@ void Upscaling::DrawSettings()
 			ImGui::SliderFloat("Sharpness", &settings.sharpnessDLSS, 0.0f, 1.0f, "%.1f");
 
 			const auto& adapter = globals::state->adapterDescription;
-			const bool isNvidia = adapter.find("NVIDIA") != std::string::npos || adapter.find("Nvidia") != std::string::npos || adapter.find("nvidia") != std::string::npos;
+			const bool isNvidia = IsNvidiaAdapterDescription(adapter);
 			if (isNvidia) {
 				ImGui::TextWrapped("Note: Presets L/M are best on RTX 40/50. On RTX 20/30, use K (default) or J for better FPS.");
 			}
@@ -474,6 +484,12 @@ void Upscaling::LoadSettings(json& o_json)
 void Upscaling::RestoreDefaultSettings()
 {
 	settings = {};
+	if (globals::state && IsNvidiaAdapterDescription(globals::state->adapterDescription)) {
+		// NVIDIA defaults: DLAA (qualityMode=0), preset K (dlssPreset=1), light sharpening.
+		settings.qualityMode = 0;
+		settings.dlssPreset = 1;
+		settings.sharpnessDLSS = 0.1f;
+	}
 }
 
 void Upscaling::DataLoaded()
@@ -484,6 +500,16 @@ void Upscaling::DataLoaded()
 	// The game defaults this to a non-zero value
 	static auto fDRClampOffset = RE::GetINISetting("fDRClampOffset:Display");
 	fDRClampOffset->data.f = 0.0f;
+
+	// Apply NVIDIA defaults only when values still match legacy defaults.
+	if (globals::state && IsNvidiaAdapterDescription(globals::state->adapterDescription)) {
+		const bool usesLegacyDefaults = settings.qualityMode == 1u && settings.dlssPreset == 1u && settings.sharpnessDLSS <= FLT_EPSILON;
+		if (usesLegacyDefaults) {
+			settings.qualityMode = 0;
+			settings.dlssPreset = 1;
+			settings.sharpnessDLSS = 0.1f;
+		}
+	}
 }
 
 void Upscaling::Load()

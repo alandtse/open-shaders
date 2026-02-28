@@ -33,7 +33,9 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 void LinearLighting::DrawSettings()
 {
 	ImGui::Checkbox("Enable Linear Lighting", (bool*)&settings.enableLinearLighting);
+	ImGui::BeginDisabled(!settings.enableLinearLighting);
 	ImGui::Checkbox("Enable Gamma Correction", (bool*)&settings.enableGammaCorrection);
+	ImGui::EndDisabled();
 
 	if (ImGui::BeginTabBar("##LinearLightingTabs", ImGuiTabBarFlags_None)) {
 		if (ImGui::BeginTabItem("General")) {

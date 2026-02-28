@@ -59,7 +59,7 @@ void MenuHeaderRenderer::RenderHeader(bool isDocked, bool showLogo, bool canShow
 		return;
 	}
 
-	auto title = std::format("Community Shaders {} Particle Light Fork", Util::GetFormattedVersion(Plugin::VERSION));
+	auto title = std::format("Community Shaders {} Particle Lights Fork", Util::GetFormattedVersion(Plugin::VERSION));
 	auto actionIcons = BuildActionIcons(canShowIcons, uiIcons);
 
 	if (isDocked) {
