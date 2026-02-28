@@ -71,14 +71,15 @@ float BlurShadow(int2 dtid, float centerDepth)
 	return weight > 0.0 ? shadow / weight : SrcShadowTexture[dtid];
 }
 
-// Samples four depth neighbors in a cross pattern (±offset pixels) around center.
-float4 SampleCrossDepths(int2 center, int offset)
+// Samples four depth neighbors in a cross pattern (±offset pixels) around center,
+// clamped to eyeIndex's half of the packed stereo buffer to avoid seam contamination.
+float4 SampleCrossDepths(int2 center, int offset, uint eyeIndex)
 {
 	return float4(
-		SrcDepthTexture[center + int2(offset, 0)],
-		SrcDepthTexture[center + int2(-offset, 0)],
-		SrcDepthTexture[center + int2(0, offset)],
-		SrcDepthTexture[center + int2(0, -offset)]);
+		SrcDepthTexture[Stereo::ClampToEyeBounds(center + int2(offset, 0), eyeIndex, FrameDim)],
+		SrcDepthTexture[Stereo::ClampToEyeBounds(center + int2(-offset, 0), eyeIndex, FrameDim)],
+		SrcDepthTexture[Stereo::ClampToEyeBounds(center + int2(0, offset), eyeIndex, FrameDim)],
+		SrcDepthTexture[Stereo::ClampToEyeBounds(center + int2(0, -offset), eyeIndex, FrameDim)]);
 }
 
 [numthreads(8, 8, 1)] void main(uint2 dtid : SV_DispatchThreadID) {
@@ -109,7 +110,7 @@ float4 SampleCrossDepths(int2 center, int offset)
 	// Skip stereo sync at depth discontinuities (arm/world silhouettes, object edges).
 	// Placed before the blur: the bilateral depth weighting zeroes out cross-edge
 	// samples, so the blur collapses to SrcShadowTexture[dtid] at these pixels anyway.
-	float4 edgeDepths = SampleCrossDepths(dtid, 1);
+	float4 edgeDepths = SampleCrossDepths(dtid, 1, eyeIndex);
 	if (Stereo::MaxDepthDiff(depth, edgeDepths) > kEdgeDepthThreshold) {
 		OutShadowTexture[dtid] = SrcShadowTexture[dtid];
 		return;
@@ -140,7 +141,7 @@ float4 SampleCrossDepths(int2 center, int offset)
 	// silhouette appears at a different screen position in each eye, so the
 	// reprojection can cross a boundary invisible from this eye's perspective.
 	// Reusing the same four neighbor reads covers both purposes at no extra cost.
-	float4 otherNeighbors = SampleCrossDepths(r.otherPx, kEdgeMargin);
+	float4 otherNeighbors = SampleCrossDepths(r.otherPx, kEdgeMargin, 1 - eyeIndex);
 	if (any(otherNeighbors < 1e-5) || Stereo::MaxDepthDiff(otherDepth, otherNeighbors) > kEdgeDepthThreshold) {
 		OutShadowTexture[dtid] = myShadow;
 		return;

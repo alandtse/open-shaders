@@ -37,13 +37,16 @@ void Passthrough(uint2 dtid)
 
 // Samples four depth neighbors in a cross pattern (±step.x, ±step.y) around centerUV,
 // scaled by texScale to map from output UV space to texture sample coords.
-float4 SampleCrossDepths(float2 centerUV, float2 step, float2 texScale)
+// centerUV is clamped to eyeIndex's half of the stereo buffer before offsetting
+// to prevent neighbor reads from crossing the x=0.5 seam into the other eye.
+float4 SampleCrossDepths(float2 centerUV, float2 step, float2 texScale, uint eyeIndex)
 {
+	float2 uv = Stereo::ClampToEyeUV(centerUV, eyeIndex);
 	return float4(
-		srcDepth.SampleLevel(samplerPointClamp, (centerUV + float2(step.x, 0)) * texScale, RES_MIP),
-		srcDepth.SampleLevel(samplerPointClamp, (centerUV + float2(-step.x, 0)) * texScale, RES_MIP),
-		srcDepth.SampleLevel(samplerPointClamp, (centerUV + float2(0, step.y)) * texScale, RES_MIP),
-		srcDepth.SampleLevel(samplerPointClamp, (centerUV + float2(0, -step.y)) * texScale, RES_MIP));
+		srcDepth.SampleLevel(samplerPointClamp, (uv + float2(step.x, 0)) * texScale, RES_MIP),
+		srcDepth.SampleLevel(samplerPointClamp, (uv + float2(-step.x, 0)) * texScale, RES_MIP),
+		srcDepth.SampleLevel(samplerPointClamp, (uv + float2(0, step.y)) * texScale, RES_MIP),
+		srcDepth.SampleLevel(samplerPointClamp, (uv + float2(0, -step.y)) * texScale, RES_MIP));
 }
 
 [numthreads(8, 8, 1)] void main(uint2 dtid : SV_DispatchThreadID) {
@@ -69,7 +72,7 @@ float4 SampleCrossDepths(float2 centerUV, float2 step, float2 texScale)
 	// Placed before rawDepth conversion and reprojection to save VP matrix work
 	// for edge pixels.
 	float2 pixelStep = 1.0 / outFrameDim;
-	float4 srcNeighborDepths = SampleCrossDepths(uv, pixelStep, frameScale);
+	float4 srcNeighborDepths = SampleCrossDepths(uv, pixelStep, frameScale, eyeIndex);
 	if (Stereo::MaxDepthDiff(depth, srcNeighborDepths) / max(depth, 1.0) > kEdgeRelThreshold) {
 		Passthrough(dtid);
 		return;
@@ -98,7 +101,7 @@ float4 SampleCrossDepths(float2 centerUV, float2 step, float2 texScale)
 	// arm silhouette appears at a different screen position per eye, so the reprojection
 	// can cross a boundary invisible from this eye's perspective.
 	float2 marginStep = float(kEdgeMargin) / outFrameDim;
-	float4 otherNeighborDepths = SampleCrossDepths(r.otherStereoUV, marginStep, frameScale);
+	float4 otherNeighborDepths = SampleCrossDepths(r.otherStereoUV, marginStep, frameScale, 1 - eyeIndex);
 	if (any(otherNeighborDepths < kMaskDepth) ||
 		Stereo::MaxDepthDiff(otherLinearDepth, otherNeighborDepths) / max(otherLinearDepth, 1.0) > kEdgeRelThreshold) {
 		Passthrough(dtid);

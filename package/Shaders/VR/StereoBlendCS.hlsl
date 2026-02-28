@@ -31,14 +31,15 @@ cbuffer StereoBlendCB : register(b1)
 static const float kEdgeDepthThreshold = 0.05;  // NDC depth difference above which a pixel is considered a depth discontinuity and excluded from stereo blend
 static const int kEdgeMargin = 2;               // Neighbor offset (pixels) for destination edge + mask boundary check
 
-// Samples four depth neighbors in a cross pattern (±offset pixels) around center.
-float4 SampleCrossDepths(int2 center, int offset)
+// Samples four depth neighbors in a cross pattern (±offset pixels) around center,
+// clamped to eyeIndex's half of the packed stereo buffer to avoid seam contamination.
+float4 SampleCrossDepths(int2 center, int offset, uint eyeIndex)
 {
 	return float4(
-		DepthTexture[center + int2(offset, 0)],
-		DepthTexture[center + int2(-offset, 0)],
-		DepthTexture[center + int2(0, offset)],
-		DepthTexture[center + int2(0, -offset)]);
+		DepthTexture[Stereo::ClampToEyeBounds(center + int2(offset, 0), eyeIndex, FrameDim)],
+		DepthTexture[Stereo::ClampToEyeBounds(center + int2(-offset, 0), eyeIndex, FrameDim)],
+		DepthTexture[Stereo::ClampToEyeBounds(center + int2(0, offset), eyeIndex, FrameDim)],
+		DepthTexture[Stereo::ClampToEyeBounds(center + int2(0, -offset), eyeIndex, FrameDim)]);
 }
 
 [numthreads(8, 8, 1)] void main(uint2 dtid : SV_DispatchThreadID) {
@@ -69,7 +70,7 @@ float4 SampleCrossDepths(int2 center, int offset)
 	if (!isSkipPixel) {
 		// Source edge detection: skip at depth discontinuities (arm/world silhouettes,
 		// object edges). Saves VP reprojection work and prevents halo artifacts.
-		float4 srcEdgeDepths = SampleCrossDepths(dtid, 1);
+		float4 srcEdgeDepths = SampleCrossDepths(dtid, 1, eyeIndex);
 		if (Stereo::MaxDepthDiff(centerDepth, srcEdgeDepths) > kEdgeDepthThreshold) {
 			debugState = 1;
 		} else {
@@ -81,7 +82,7 @@ float4 SampleCrossDepths(int2 center, int offset)
 				// mask boundary or at a depth discontinuity in the other eye. Due to VR
 				// parallax the arm silhouette appears at a different screen position per eye,
 				// so the reprojection can cross a boundary invisible from this eye.
-				float4 dstEdgeDepths = SampleCrossDepths(r.otherPx, kEdgeMargin);
+				float4 dstEdgeDepths = SampleCrossDepths(r.otherPx, kEdgeMargin, 1 - eyeIndex);
 				if (any(dstEdgeDepths < 1e-5) || Stereo::MaxDepthDiff(otherDepth, dstEdgeDepths) > kEdgeDepthThreshold) {
 					debugState = 2;
 				} else {
