@@ -23,9 +23,15 @@ cbuffer StereoSyncCB : register(b1)
 	float2 RcpFrameDim;
 };
 
-static const float kDepthSigma = 0.01;
-static const float kMaxBlend = 1.0;
-static const float kEdgeDepthThreshold = 0.05;
+static const float kDepthSigma = 0.01;          // Bilateral depth tolerance (NDC): surfaces within this range are considered the same and blended
+static const float kMaxBlend = 1.0;             // Maximum stereo blend weight; reduce below 1.0 to soften the cross-eye contribution
+static const float kEdgeDepthThreshold = 0.05;  // NDC depth difference above which a pixel is considered a depth discontinuity and excluded from stereo sync
+
+float MaxDepthDiff(float center, float4 neighbors)
+{
+	return max(max(abs(center - neighbors.x), abs(center - neighbors.y)),
+		max(abs(center - neighbors.z), abs(center - neighbors.w)));
+}
 
 // Depth-weighted 4-sample blur using a rotated Poisson disk.
 // Uses dtid hash for per-pixel rotation to break structured patterns.
@@ -103,9 +109,7 @@ float BlurShadow(int2 dtid, float centerDepth)
 		SrcDepthTexture[dtid + int2(-1, 0)],
 		SrcDepthTexture[dtid + int2(0, 1)],
 		SrcDepthTexture[dtid + int2(0, -1)]);
-	float maxEdgeDiff = max(max(abs(depth - edgeDepths.x), abs(depth - edgeDepths.y)),
-		max(abs(depth - edgeDepths.z), abs(depth - edgeDepths.w)));
-	if (maxEdgeDiff > kEdgeDepthThreshold) {
+	if (MaxDepthDiff(depth, edgeDepths) > kEdgeDepthThreshold) {
 		OutShadowTexture[dtid] = SrcShadowTexture[dtid];
 		return;
 	}
@@ -136,17 +140,14 @@ float BlurShadow(int2 dtid, float centerDepth)
 	// reprojection can cross a boundary invisible from this eye's perspective.
 	// Reusing the same four neighbor reads covers both purposes at no extra cost.
 	static const int kEdgeMargin = 2;
-	static const int2 kNeighborOffsets[4] = {
-		int2(-kEdgeMargin, 0), int2(kEdgeMargin, 0),
-		int2(0, -kEdgeMargin), int2(0, kEdgeMargin)
-	};
-	[unroll] for (int n = 0; n < 4; n++)
-	{
-		float neighborDepth = SrcDepthTexture[r.otherPx + kNeighborOffsets[n]];
-		if (neighborDepth < 1e-5 || abs(otherDepth - neighborDepth) > kEdgeDepthThreshold) {
-			OutShadowTexture[dtid] = myShadow;
-			return;
-		}
+	float4 otherNeighbors = float4(
+		SrcDepthTexture[r.otherPx + int2(-kEdgeMargin, 0)],
+		SrcDepthTexture[r.otherPx + int2(kEdgeMargin, 0)],
+		SrcDepthTexture[r.otherPx + int2(0, -kEdgeMargin)],
+		SrcDepthTexture[r.otherPx + int2(0, kEdgeMargin)]);
+	if (any(otherNeighbors < 1e-5) || MaxDepthDiff(otherDepth, otherNeighbors) > kEdgeDepthThreshold) {
+		OutShadowTexture[dtid] = myShadow;
+		return;
 	}
 
 	// Source + destination edge detection

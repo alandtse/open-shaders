@@ -350,7 +350,6 @@ void ScreenSpaceShadows::SetupResources()
 
 	if (globals::game::isVR) {
 		stereoSyncCB = new ConstantBuffer(ConstantBufferDesc<StereoSyncCB>());
-		stereoSyncCS = reinterpret_cast<ID3D11ComputeShader*>(Util::CompileShader(L"Data\\Shaders\\ScreenSpaceShadows\\StereoSyncCS.hlsl", { { "VR", "" }, { "FRAMEBUFFER", "" } }, "cs_5_0"));
 	}
 
 	{
