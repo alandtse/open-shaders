@@ -21,13 +21,33 @@ void ScreenSpaceShadows::DrawSettings()
 {
 	if (ImGui::TreeNodeEx("General", ImGuiTreeNodeFlags_DefaultOpen)) {
 		ImGui::Checkbox("Enable", (bool*)&bendSettings.Enable);
-		ImGui::SliderInt("Sample Count Multiplier", (int*)&bendSettings.SampleCount, 1, 4);
-		ImGui::SliderFloat("Surface Thickness", &bendSettings.SurfaceThickness, 0.005f, 0.05f);
-		ImGui::SliderFloat("Bilinear Threshold", &bendSettings.BilinearThreshold, 0.02f, 1.0f);
-		ImGui::SliderFloat("Shadow Contrast", &bendSettings.ShadowContrast, 0.0f, 4.0f);
+		if (auto _tt = Util::HoverTooltipWrapper())
+			ImGui::Text("Enable screen-space contact shadows from the sun/moon direction.");
 
-		if (REL::Module::IsVR())
+		ImGui::SliderInt("Sample Count Multiplier", (int*)&bendSettings.SampleCount, 1, 4);
+		if (auto _tt = Util::HoverTooltipWrapper())
+			ImGui::Text("Multiplier for shadow ray sample count. Higher values increase shadow reach at the cost of performance. Adapts to render resolution.");
+
+		ImGui::SliderFloat("Surface Thickness", &bendSettings.SurfaceThickness, 0.005f, 0.05f);
+		if (auto _tt = Util::HoverTooltipWrapper())
+			ImGui::Text("Assumed thickness of surfaces for shadow detection. Lower values produce thinner, more precise shadows.");
+
+		ImGui::SliderFloat("Bilinear Threshold", &bendSettings.BilinearThreshold, 0.02f, 1.0f);
+		if (auto _tt = Util::HoverTooltipWrapper())
+			ImGui::Text("Depth threshold for edge detection during bilinear interpolation. Higher values smooth more aggressively across edges.");
+
+		ImGui::SliderFloat("Shadow Contrast", &bendSettings.ShadowContrast, 0.0f, 4.0f);
+		if (auto _tt = Util::HoverTooltipWrapper())
+			ImGui::Text("Contrast boost for the shadow transition. Higher values produce harder shadow edges.");
+
+		if (globals::game::isVR && globals::state->IsDeveloperMode()) {
 			ImGui::Checkbox("VR Stereo Sync", &enableStereoSync);
+			if (auto _tt = Util::HoverTooltipWrapper())
+				ImGui::Text(
+					"Synchronizes shadow data between left and right eyes via bilateral reprojection "
+					"and applies a depth-weighted blur to reduce per-eye noise. "
+					"Uses min-blend so if either eye detects an occluder, the shadow is preserved. ");
+		}
 
 		ImGui::Spacing();
 		ImGui::Spacing();

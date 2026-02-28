@@ -1,8 +1,7 @@
-// Stereo Sync - Bilateral blend of SSS shadow buffer between eyes
-//
-// Reprojects each pixel to the other eye and blends shadow values based on
-// depth agreement with back-check validation. Runs after the raymarch pass
-// to reduce per-eye shadow disparities in VR.
+// Stereo Sync + Blur - Combined bilateral stereo blend and depth-weighted
+// blur for VR screen-space shadows. Runs as a single compute pass after the
+// raymarch to both synchronize shadow data between eyes and smooth per-pixel
+// noise.
 //
 // Based on: Shi, Billeter, Eisemann 2022, "Stereo-consistent screen-space
 // ambient occlusion" https://eprints.whiterose.ac.uk/id/eprint/187713/
@@ -27,6 +26,49 @@ static const float kDepthSigma = 0.01;
 static const float kMaxBlend = 1.0;
 static const float kBackCheckThreshold = 8.0;
 
+// Depth-weighted 4-sample blur using a rotated Poisson disk.
+// Uses dtid hash for per-pixel rotation to break structured patterns.
+float BlurShadow(int2 dtid, float centerDepth)
+{
+	// Per-pixel rotation from interleaved gradient noise
+	float noise = frac(52.9829189 * frac(0.06711056 * dtid.x + 0.00583715 * dtid.y));
+	float angle = noise * 6.28318530718;
+	float sn, cs;
+	sincos(angle, sn, cs);
+	float2x2 rot = float2x2(cs, sn, -sn, cs);
+
+	static const float2 kOffsets[4] = {
+		float2(0.382, 0.892),
+		float2(0.491, 0.217),
+		float2(0.938, 0.735),
+		float2(0.009, 0.056),
+	};
+
+	float weight = 0;
+	float shadow = 0;
+
+	[unroll] for (uint i = 0; i < 4; i++)
+	{
+		float2 offset = mul(kOffsets[i], rot);
+		int2 samplePx = dtid + int2(offset * 2.5);
+		samplePx = clamp(samplePx, int2(0, 0), int2(FrameDim) - 1);
+
+		float sampleDepth = DepthTexture[samplePx];
+
+		if (sampleDepth < 1e-5)
+			continue;
+
+		float attenuation = 1.0 - saturate(100.0 * abs(sampleDepth - centerDepth) / max(centerDepth, 1e-5));
+
+		if (attenuation > 0.0) {
+			shadow += SrcShadowTexture[samplePx] * attenuation;
+			weight += attenuation;
+		}
+	}
+
+	return weight > 0.0 ? shadow / weight : SrcShadowTexture[dtid];
+}
+
 [numthreads(8, 8, 1)] void main(uint2 dtid : SV_DispatchThreadID) {
 	if (any(dtid >= uint2(FrameDim)))
 		return;
@@ -43,10 +85,13 @@ static const float kBackCheckThreshold = 8.0;
 		return;
 	}
 
+	// Depth-weighted blur on this eye's shadow data
+	float myShadow = BlurShadow(dtid, depth);
+
 	Stereo::StereoBilateralResult r = Stereo::ReprojectToOtherEye(uv, depth, eyeIndex, FrameDim);
 
 	if (!r.valid) {
-		OutShadowTexture[dtid] = SrcShadowTexture[dtid];
+		OutShadowTexture[dtid] = myShadow;
 		return;
 	}
 
@@ -54,38 +99,30 @@ static const float kBackCheckThreshold = 8.0;
 
 	// Skip if other eye sees mask or sky
 	if (otherDepth < 1e-5 || otherDepth >= 1.0) {
-		OutShadowTexture[dtid] = SrcShadowTexture[dtid];
+		OutShadowTexture[dtid] = myShadow;
 		return;
 	}
 
-	// Reject if reprojected pixel is near the HMD mask boundary.
-	// The raymarch at edge pixels samples into the mask (depth=0 -> treated as
-	// far plane), producing incorrect shadow values that cause a visible seam.
+	// Reject if reprojected pixel is near the HMD mask boundary
 	static const int kEdgeMargin = 2;
-	[unroll] for (int dx = -kEdgeMargin; dx <= kEdgeMargin; dx += kEdgeMargin)
+	static const int2 kNeighborOffsets[4] = {
+		int2(-kEdgeMargin, 0), int2(kEdgeMargin, 0),
+		int2(0, -kEdgeMargin), int2(0, kEdgeMargin)
+	};
+	[unroll] for (int n = 0; n < 4; n++)
 	{
-		[unroll] for (int dy = -kEdgeMargin; dy <= kEdgeMargin; dy += kEdgeMargin)
-		{
-			float neighborDepth = DepthTexture[r.otherPx + int2(dx, dy)];
-			if (neighborDepth < 1e-5) {
-				OutShadowTexture[dtid] = SrcShadowTexture[dtid];
-				return;
-			}
+		if (DepthTexture[r.otherPx + kNeighborOffsets[n]] < 1e-5) {
+			OutShadowTexture[dtid] = myShadow;
+			return;
 		}
 	}
 
 	Stereo::FinalizeStereoBlend(r, uv, depth, otherDepth, eyeIndex, FrameDim, kDepthSigma, kMaxBlend, kBackCheckThreshold);
 
-	float myShadow = SrcShadowTexture[dtid];
 	float otherShadow = SrcShadowTexture[r.otherPx];
 
-	// For shadows, use min (darkest) when depths agree well.
-	// If either eye detected an occluder, that shadow should be visible.
-	// The bilateral blend weight gates this -- if depths disagree (different
-	// surfaces), we fall back toward our own eye's value.
-	//
-	// blend=0: keep myShadow unchanged
-	// blend>0: lerp toward min(myShadow, otherShadow)
+	// Use min (darkest) when depths agree: if either eye detected an
+	// occluder, that shadow should be visible.
 	float combined = min(myShadow, otherShadow);
 	OutShadowTexture[dtid] = lerp(myShadow, combined, r.blendWeight);
 }
