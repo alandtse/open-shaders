@@ -18,7 +18,6 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	EnableParticleLightsCulling,
 	EnableParticleLightsDetection,
 	ParticleLightsSaturation,
-	LegacyParticleIntensityScale,
 	EnableParticleLightsOptimization,
 	ParticleBrightness,
 	ParticleRadius,
@@ -28,8 +27,7 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	MaxParticlesPerEmitter,    // NEW
 	MaxParticleDistance,       // NEW
 	EnableLightsVisualisation,
-	LightsVisualisationMode,
-	UseParticleLightsLegacyMode)
+	LightsVisualisationMode)
 void LightLimitFix::DrawSettings()
 {
 	// Heat warp / refraction strength (moved from Advanced Settings)
@@ -57,11 +55,6 @@ void LightLimitFix::DrawSettings()
 		ImGui::Checkbox("Enable Particle Lights", &settings.EnableParticleLights);
 		if (auto _tt = Util::HoverTooltipWrapper()) {
 			ImGui::Text("Enables Particle Lights.");
-		}
-
-		ImGui::Checkbox("Legacy Particle Light Path", &settings.UseParticleLightsLegacyMode);
-		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::Text("Apply Legacy Particle Light path; use when linear lighting is inactive.");
 		}
 
 		ImGui::Separator();
@@ -120,13 +113,6 @@ void LightLimitFix::DrawSettings()
 		ImGui::SliderFloat("Particle Radius", &settings.ParticleRadius, 0.0, 10.0, "%.2f");
 		ImGui::SliderFloat("Billboard Brightness", &settings.BillboardBrightness, 0.0, 10.0, "%.2f");
 		ImGui::SliderFloat("Billboard Radius", &settings.BillboardRadius, 0.0, 10.0, "%.2f");
-		ImGui::Spacing();
-		ImGui::BeginDisabled(!settings.UseParticleLightsLegacyMode);
-		ImGui::SliderFloat("Legacy PL Intensity", &settings.LegacyParticleIntensityScale, 0.00f, 2.00f, "%.2f");
-		ImGui::EndDisabled();
-		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::Text("Scales legacy particle-light intensity in clustered shading.");
-		}
 
 		ImGui::Spacing();
 		ImGui::Spacing();
@@ -196,8 +182,6 @@ LightLimitFix::PerFrame LightLimitFix::GetCommonBufferData()
 	PerFrame perFrame{};
 	perFrame.EnableLightsVisualisation = settings.EnableLightsVisualisation;
 	perFrame.LightsVisualisationMode = settings.LightsVisualisationMode;
-	perFrame.UseParticleLightsLegacyMode = settings.UseParticleLightsLegacyMode;
-	perFrame.LegacyParticleIntensityScale = settings.LegacyParticleIntensityScale;
 	std::copy(clusterSize, clusterSize + 3, perFrame.ClusterSize);
 	return perFrame;
 }
@@ -812,14 +796,8 @@ void LightLimitFix::AddCachedParticleLights(eastl::vector<LightData>& lightsData
 		dimmer = 0.0f;
 	}
 
-	const bool useLegacyParticleLights = settings.UseParticleLightsLegacyMode;
-	if (useLegacyParticleLights) {
-		light.color *= dimmer;
-	} else {
-		light.fade *= dimmer;
-	}
-
-	const float luminanceScale = useLegacyParticleLights ? 1.0f : light.fade;
+	light.fade *= dimmer;
+	const float luminanceScale = light.fade;
 	if ((light.color.x + light.color.y + light.color.z) * luminanceScale > 1e-4 && light.radius > 1e-4) {
 		light.invRadius = 1.f / light.radius;
 		lightsData.push_back(light);
@@ -939,9 +917,6 @@ void LightLimitFix::UpdateLights()
 
 		LightData clusteredLight{};
 		uint32_t clusteredLights = 0;
-		auto getParticleRadiusMult = [&](const ParticleLightInfo& particleLight) {
-			return particleLight.radiusMult;
-		};
 
 		auto eyePositionOffset = eyePositionCached[0] - eyePositionCached[1];
 		auto flushClusteredLight = [&]() {
@@ -1042,8 +1017,7 @@ void LightLimitFix::UpdateLights()
 							clusteredLight.color += Saturation(color, settings.ParticleLightsSaturation) * alpha * settings.ParticleBrightness;
 						}
 
-						const float particleRadiusMult = getParticleRadiusMult(particleLight);
-						clusteredLight.radius += radius * particleRadiusMult * settings.ParticleRadius;
+						clusteredLight.radius += radius * particleLight.radiusMult * settings.ParticleRadius;
 
 						clusteredLight.positionWS[0].data.x += positionWS.x;
 						clusteredLight.positionWS[0].data.y += positionWS.y;
@@ -1063,8 +1037,7 @@ void LightLimitFix::UpdateLights()
 				light.color = Saturation(light.color, settings.ParticleLightsSaturation);
 
 				light.color *= particleLight.color.alpha * settings.BillboardBrightness;
-				const float billboardRadiusMult = getParticleRadiusMult(particleLight);
-				light.radius = particleLight.node->worldBound.radius * billboardRadiusMult * settings.BillboardRadius * 0.5f;
+				light.radius = particleLight.node->worldBound.radius * particleLight.radiusMult * settings.BillboardRadius * 0.5f;
 
 				auto position = particleLight.node->world.translate;
 

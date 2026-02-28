@@ -2659,18 +2659,8 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 		float intensityMultiplier = 1 - intensityFactor * intensityFactor;
 #			endif
 
-		float3 lightColor;
-		const bool isParticleLight = (light.lightFlags & LightLimitFix::LightFlags::Particle) != 0;
-		const bool useLegacyParticleLights = SharedData::lightLimitFixSettings.UseParticleLightsLegacyMode != 0;
-		const bool useLegacyParticleLightPath = isParticleLight && useLegacyParticleLights;
-		if (useLegacyParticleLightPath) {
-			const float legacyRadialSoftening = lerp(0.55, 1.0, saturate(lightDist / max(light.radius, 1e-4)));
-			lightColor = Color::Light(light.color.xyz) * intensityMultiplier * light.fade * legacyRadialSoftening;
-			lightColor *= SharedData::lightLimitFixSettings.LegacyParticleIntensityScale;
-		} else {
-			const bool isPointLightLinear = light.lightFlags & LightLimitFix::LightFlags::Linear;
-			lightColor = Color::PointLight(light.color.xyz, isPointLightLinear) * intensityMultiplier * light.fade;
-		}
+		const bool isPointLightLinear = (light.lightFlags & LightLimitFix::LightFlags::Linear) != 0;
+		float3 lightColor = Color::PointLight(light.color.xyz, isPointLightLinear) * intensityMultiplier * light.fade;
 		float lightShadow = 1.0;
 
 		float shadowComponent = 1.0;
@@ -2726,57 +2716,6 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 #				endif
 		}
 #			endif
-
-		bool useLegacyParticleLightsShading = useLegacyParticleLightPath;
-#			if !defined(TRUE_PBR)
-#				if defined(HAIR) && defined(CS_HAIR)
-		useLegacyParticleLightsShading = useLegacyParticleLightsShading && !SharedData::hairSpecularSettings.Enabled;
-#				endif
-#			endif
-		if (useLegacyParticleLightsShading) {
-#			if defined(TRUE_PBR)
-			DirectContext legacyPointLightContext =
-				CreateDirectLightingContext(worldNormal.xyz, coatWorldNormal, vertexNormal.xyz, refractedViewDirection, viewDirection, refractedLightDirection, normalizedLightDirection, lightColor, lightShadow, parallaxShadow);
-			DirectLightingOutput legacyPointLightOutput = (DirectLightingOutput)0;
-			PBR::GetDirectLightInput(legacyPointLightOutput, legacyPointLightContext, material, tbnTr, uvOriginal);
-#				if defined(WETNESS_EFFECTS)
-			if (waterRoughnessSpecular < 1)
-				legacyPointLightOutput.specular +=
-					PBR::GetWetnessDirectLightSpecularInput(wetnessNormal, legacyPointLightContext.viewDir, legacyPointLightContext.lightDir,
-						legacyPointLightContext.coatLightColor, waterRoughnessSpecular) * (wetnessGlossinessSpecular * 0.5);
-#				endif
-			legacyPointLightOutput.specular *= 0.45;
-			lightsDiffuseColor += legacyPointLightOutput.diffuse;
-			lightsSpecularColor += legacyPointLightOutput.specular;
-			coatLightsDiffuseColor += legacyPointLightOutput.coatDiffuse;
-			transmissionColor += legacyPointLightOutput.transmission;
-			continue;
-#			else
-			// Legacy non-PBR clustered particle shading contract.
-			float3 legacyLightColor = lightColor * lightShadow;
-			float3 lightDiffuseColor = legacyLightColor * parallaxShadow * saturate(lightAngle.xxx);
-			float lightBacklighting = 1.0 + saturate(dot(normalizedLightDirection.xyz, viewDirection));
-
-#				if defined(SOFT_LIGHTING)
-			lightDiffuseColor += lightBacklighting * legacyLightColor * GetSoftLightMultiplier(lightAngle) * rimSoftLightColor.xyz;
-#				endif
-
-#				if defined(RIM_LIGHTING)
-			lightDiffuseColor += lightBacklighting * legacyLightColor * GetRimLightMultiplier(normalizedLightDirection, viewDirection, worldNormal.xyz) * rimSoftLightColor.xyz;
-#				endif
-
-#				if defined(BACK_LIGHTING)
-			lightDiffuseColor += lightBacklighting * legacyLightColor * saturate(-lightAngle) * backLightColor.xyz;
-#				endif
-
-#				if defined(SPECULAR) || (defined(SPARKLE) && !defined(SNOW))
-			lightsSpecularColor += GetLightSpecularInput(input, normalizedLightDirection, viewDirection, worldNormal.xyz, legacyLightColor, shininess, uv) * 0.45;
-#				endif
-
-			lightsDiffuseColor += lightDiffuseColor;
-			continue;
-#			endif
-		}
 
 		DirectContext pointLightContext;
 		DirectLightingOutput pointLightOutput;
