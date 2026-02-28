@@ -113,6 +113,46 @@ float4 filterInf(float4 v) { return float4(filterInf(v.x), filterInf(v.y), filte
 #	define OUT_FRAME_SCALE frameScale
 #endif
 
+#ifdef VR
+uint GetEyeWidthPixels(float frameWidth)
+{
+	return max(1u, (uint)round(frameWidth * 0.5));
+}
+
+int2 ClampPixelCoordToEye(int2 pxCoord, uint eyeIndex, float2 frameDim)
+{
+	uint eyeWidth = GetEyeWidthPixels(frameDim.x);
+	int minX = (int)(eyeWidth * eyeIndex);
+	int maxX = minX + (int)eyeWidth - 1;
+	int maxY = max(0, (int)frameDim.y - 1);
+
+	pxCoord.x = clamp(pxCoord.x, minX, maxX);
+	pxCoord.y = clamp(pxCoord.y, 0, maxY);
+	return pxCoord;
+}
+
+uint2 ClampPixelCoordToEye(uint2 pxCoord, uint eyeIndex, float2 frameDim)
+{
+	int2 clamped = ClampPixelCoordToEye(int2(pxCoord), eyeIndex, frameDim);
+	return uint2(clamped);
+}
+
+float2 ClampUVToEye(float2 uv, uint eyeIndex, float2 frameDim)
+{
+	float2 minUV = float2(0.0, 0.0);
+	float2 maxUV = float2(1.0, 1.0);
+	float halfPixelX = 0.5 / max(frameDim.x, 1.0);
+
+	if (eyeIndex == 0) {
+		maxUV.x = 0.5 - halfPixelX;
+	} else {
+		minUV.x = 0.5 + halfPixelX;
+	}
+
+	return clamp(uv, minUV, maxUV);
+}
+#endif
+
 ///////////////////////////////////////////////////////////////////////////////
 
 // Inputs are screen XY and viewspace depth, output is viewspace position

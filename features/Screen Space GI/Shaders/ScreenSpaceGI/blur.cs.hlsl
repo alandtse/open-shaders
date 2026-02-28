@@ -142,14 +142,15 @@ float2x2 getRotationMatrix(float noise)
 		uvSample = (floor(uvSample * OUT_FRAME_DIM) + 0.5) * RCP_OUT_FRAME_DIM;  // Snap to the pixel centre
 
 #else
-		// old method without kernel transform for VR
-		float2 pxOffset = radius * poissonOffset.xy;
-		float2 pxSample = dtid + .5 + pxOffset;
-		float2 uvSample = (floor(pxSample) + 0.5) * RCP_OUT_FRAME_DIM;  // Snap to the pixel centre
-		float2 screenPosSample = Stereo::ConvertFromStereoUV(uvSample, eyeIndex);
+			// old method without kernel transform for VR
+			float2 pxOffset = radius * poissonOffset.xy;
+			float2 pxSample = dtid + .5 + pxOffset;
+			int2 sampleCoord = ClampPixelCoordToEye((int2)floor(pxSample), eyeIndex, OUT_FRAME_DIM);
+			float2 uvSample = (sampleCoord + 0.5) * RCP_OUT_FRAME_DIM;  // Snap to the pixel centre
+			float2 screenPosSample = Stereo::ConvertFromStereoUV(uvSample, eyeIndex);
 #endif
-		if (any(screenPosSample.xy < 0) || any(screenPosSample.xy > 1))
-			continue;
+			if (any(screenPosSample.xy < 0) || any(screenPosSample.xy > 1))
+				continue;
 
 		float depthSample = srcDepth.SampleLevel(samplerPointClamp, uvSample * frameScale, RES_MIP);
 		float3 posSample = ScreenToViewPosition(screenPosSample.xy, depthSample, eyeIndex);

@@ -24,6 +24,10 @@ RWTexture2D<half4> outGiSpecular : register(u3);
 	// Early exit if dispatch thread is outside frame bounds
 	if (any(dtid >= uint2(FrameDim)))
 		return;
+#ifdef VR
+	const float2 fullResUV = (dtid + .5) * RcpFrameDim;
+	const uint eyeIndex = Stereo::GetEyeIndexFromTexCoord(fullResUV);
+#endif
 #ifdef HALF_RES
 	int2 px00 = (dtid >> 1) + (dtid & 1) - 1;
 #else  // QUARTER_RES
@@ -32,6 +36,12 @@ RWTexture2D<half4> outGiSpecular : register(u3);
 	int2 px10 = px00 + int2(1, 0);
 	int2 px01 = px00 + int2(0, 1);
 	int2 px11 = px00 + int2(1, 1);
+#ifdef VR
+	px00 = ClampPixelCoordToEye(px00, eyeIndex, OUT_FRAME_DIM);
+	px10 = ClampPixelCoordToEye(px10, eyeIndex, OUT_FRAME_DIM);
+	px01 = ClampPixelCoordToEye(px01, eyeIndex, OUT_FRAME_DIM);
+	px11 = ClampPixelCoordToEye(px11, eyeIndex, OUT_FRAME_DIM);
+#endif
 
 	float4 d = float4(
 		srcDepth.Load(int3(px00, RES_MIP)),
@@ -68,6 +78,9 @@ RWTexture2D<half4> outGiSpecular : register(u3);
 	else
 	{
 		float2 uv = (dtid + .5) * RcpFrameDim * OUT_FRAME_DIM * RcpTexDim;
+#ifdef VR
+		uv = ClampUVToEye(uv, eyeIndex, OUT_FRAME_DIM);
+#endif
 		ao = srcAo.SampleLevel(samplerLinearClamp, uv, 0);
 		y = srcIlY.SampleLevel(samplerLinearClamp, uv, 0);
 		coCg = srcIlCoCg.SampleLevel(samplerLinearClamp, uv, 0);
