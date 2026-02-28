@@ -16,7 +16,7 @@ namespace FeatureVersions
         {"ExtendedTranslucency"sv, {1,0,0}},
         {"GrassCollision"sv,       {3,0,2}}, // ←  CS 1.4.7 requires
         {"GrassLighting"sv,        {2,0,0}},
-        {"HairSpecular"sv,         {1,0,3}},  // ←  CS 1.4.7 requires 
+        {"HairSpecular"sv,         {1,0,3}},  // ←  CS 1.4.7 requires
         {"ImageBasedLighting"sv,   {1,0,1}},
         {"InteriorSun"sv,          {1,0,0}},
         {"InverseSquareLighting"sv,{1,1,0}},
@@ -34,6 +34,7 @@ namespace FeatureVersions
         {"TerrainHelper"sv,        {1,0,0}},
         {"TerrainShadows"sv,       {1,0,0}},
         {"TerrainVariation"sv,     {1,0,1}},
+        {"UnifiedWater"sv,         {1,0,0}},
         {"Upscaling"sv,            {1,2,0}},  // ←  CS 1.4.11
         {"VR"sv,                   {1,0,1}},
         {"VolumetricLighting"sv,   {1,0,0}},
