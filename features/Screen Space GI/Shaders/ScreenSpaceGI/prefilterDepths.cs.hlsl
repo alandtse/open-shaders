@@ -46,6 +46,22 @@ float DepthMIPFilter(float depth0, float depth1, float depth2, float depth3)
 #endif
 }
 
+#ifdef VR
+uint ClampToEyeX(uint x, uint eyeIndex)
+{
+	uint eyeWidth = max(1u, (uint)round(FrameDim.x * 0.5));
+	uint eyeMin = eyeIndex * eyeWidth;
+	uint eyeMax = eyeMin + eyeWidth - 1;
+	return clamp(x, eyeMin, eyeMax);
+}
+
+float2 GetEyeSafeSampleUV(uint2 pxCoord, uint eyeIndex)
+{
+	pxCoord.x = ClampToEyeX(pxCoord.x, eyeIndex);
+	return (float2(pxCoord) + 0.5) * RcpFrameDim;
+}
+#endif
+
 groupshared float g_scratchDepths[8][8];
 [numthreads(8, 8, 1)] void main(uint2 dispatchThreadID
 								: SV_DispatchThreadID, uint2 groupThreadID
@@ -57,11 +73,30 @@ groupshared float g_scratchDepths[8][8];
 	const uint2 pixCoord = baseCoord * 2;
 	const float2 uv = (pixCoord + .5) * RcpFrameDim;
 
+	float depth0;
+	float depth1;
+	float depth2;
+	float depth3;
+#ifdef VR
+	// Prevent cross-eye taps near the stereo seam in VR.
+	const uint eyeIndex = Stereo::GetEyeIndexFromTexCoord(uv);
+	const float2 uv00 = GetEyeSafeSampleUV(pixCoord + uint2(0, 0), eyeIndex);
+	const float2 uv10 = GetEyeSafeSampleUV(pixCoord + uint2(1, 0), eyeIndex);
+	const float2 uv01 = GetEyeSafeSampleUV(pixCoord + uint2(0, 1), eyeIndex);
+	const float2 uv11 = GetEyeSafeSampleUV(pixCoord + uint2(1, 1), eyeIndex);
+
+	depth0 = ClampDepth(srcNDCDepth.SampleLevel(samplerPointClamp, uv00 * frameScale, 0));
+	depth1 = ClampDepth(srcNDCDepth.SampleLevel(samplerPointClamp, uv10 * frameScale, 0));
+	depth2 = ClampDepth(srcNDCDepth.SampleLevel(samplerPointClamp, uv01 * frameScale, 0));
+	depth3 = ClampDepth(srcNDCDepth.SampleLevel(samplerPointClamp, uv11 * frameScale, 0));
+#else
 	float4 depths4 = srcNDCDepth.GatherRed(samplerPointClamp, uv * frameScale);
-	float depth0 = ClampDepth(depths4.w);
-	float depth1 = ClampDepth(depths4.z);
-	float depth2 = ClampDepth(depths4.x);
-	float depth3 = ClampDepth(depths4.y);
+	depth0 = ClampDepth(depths4.w);
+	depth1 = ClampDepth(depths4.z);
+	depth2 = ClampDepth(depths4.x);
+	depth3 = ClampDepth(depths4.y);
+#endif
+
 	outDepth0[pixCoord + uint2(0, 0)] = depth0;
 	outDepth0[pixCoord + uint2(1, 0)] = depth1;
 	outDepth0[pixCoord + uint2(0, 1)] = depth2;

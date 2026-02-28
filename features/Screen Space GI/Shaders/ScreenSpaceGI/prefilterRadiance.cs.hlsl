@@ -29,6 +29,22 @@ float3 RadianceMIPFilter(float3 radiance0, float3 radiance1, float3 radiance2, f
 	return (radiance0 + radiance1 + radiance2 + radiance3) * 0.25;
 }
 
+#ifdef VR
+uint ClampToEyeX(uint x, uint eyeIndex)
+{
+	uint eyeWidth = max(1u, (uint)round(FrameDim.x * 0.5));
+	uint eyeMin = eyeIndex * eyeWidth;
+	uint eyeMax = eyeMin + eyeWidth - 1;
+	return clamp(x, eyeMin, eyeMax);
+}
+
+float2 GetEyeSafeSampleUV(uint2 pxCoord, uint eyeIndex)
+{
+	pxCoord.x = ClampToEyeX(pxCoord.x, eyeIndex);
+	return (float2(pxCoord) + 0.5) * RcpFrameDim;
+}
+#endif
+
 groupshared float3 g_scratchRadiance[8][8];
 [numthreads(8, 8, 1)] void main(uint2 dispatchThreadID
 								: SV_DispatchThreadID, uint2 groupThreadID
@@ -40,14 +56,32 @@ groupshared float3 g_scratchRadiance[8][8];
 	const uint2 pixCoord = baseCoord * 2;
 	const float2 uv = (pixCoord + .5) * RcpFrameDim;
 
+	float3 radiance0;
+	float3 radiance1;
+	float3 radiance2;
+	float3 radiance3;
+#ifdef VR
+	// Prevent cross-eye taps near the stereo seam in VR.
+	const uint eyeIndex = Stereo::GetEyeIndexFromTexCoord(uv);
+	const float2 uv00 = GetEyeSafeSampleUV(pixCoord + uint2(0, 0), eyeIndex);
+	const float2 uv10 = GetEyeSafeSampleUV(pixCoord + uint2(1, 0), eyeIndex);
+	const float2 uv01 = GetEyeSafeSampleUV(pixCoord + uint2(0, 1), eyeIndex);
+	const float2 uv11 = GetEyeSafeSampleUV(pixCoord + uint2(1, 1), eyeIndex);
+
+	radiance0 = srcRadiance.SampleLevel(samplerPointClamp, uv00 * frameScale, 0);
+	radiance1 = srcRadiance.SampleLevel(samplerPointClamp, uv10 * frameScale, 0);
+	radiance2 = srcRadiance.SampleLevel(samplerPointClamp, uv01 * frameScale, 0);
+	radiance3 = srcRadiance.SampleLevel(samplerPointClamp, uv11 * frameScale, 0);
+#else
 	float4 rad0 = srcRadiance.GatherRed(samplerPointClamp, uv * frameScale);
 	float4 rad1 = srcRadiance.GatherGreen(samplerPointClamp, uv * frameScale);
 	float4 rad2 = srcRadiance.GatherBlue(samplerPointClamp, uv * frameScale);
 
-	float3 radiance0 = float3(rad0.w, rad1.w, rad2.w);
-	float3 radiance1 = float3(rad0.z, rad1.z, rad2.z);
-	float3 radiance2 = float3(rad0.x, rad1.x, rad2.x);
-	float3 radiance3 = float3(rad0.y, rad1.y, rad2.y);
+	radiance0 = float3(rad0.w, rad1.w, rad2.w);
+	radiance1 = float3(rad0.z, rad1.z, rad2.z);
+	radiance2 = float3(rad0.x, rad1.x, rad2.x);
+	radiance3 = float3(rad0.y, rad1.y, rad2.y);
+#endif
 
 	outRadiance0[pixCoord + uint2(0, 0)] = radiance0;
 	outRadiance0[pixCoord + uint2(1, 0)] = radiance1;
