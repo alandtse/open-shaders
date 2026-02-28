@@ -87,6 +87,9 @@ public:
 		uint MaxAccumFrames = 16;
 		float BlurRadius = 2.f;
 		float DistanceNormalisation = 2.f;
+
+		// Debug: toggles unjittered per-eye projection/inverse-view reconstruction path.
+		bool DebugUseUnjitteredCameraReconstruction = true;
 	} settings;
 
 	struct alignas(16) SSGICB

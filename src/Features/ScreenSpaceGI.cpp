@@ -31,7 +31,8 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	NormalDisocclusion,
 	MaxAccumFrames,
 	BlurRadius,
-	DistanceNormalisation)
+	DistanceNormalisation,
+	DebugUseUnjitteredCameraReconstruction)
 
 namespace
 {
@@ -428,6 +429,13 @@ void ScreenSpaceGI::DrawSettings()
 	///////////////////////////////
 	ImGui::SeparatorText("Debug");
 
+	if (REL::Module::IsVR()) {
+		ImGui::Checkbox("Use Unjittered VR Camera", &settings.DebugUseUnjitteredCameraReconstruction);
+		if (auto _tt = Util::HoverTooltipWrapper()) {
+			ImGui::Text("Improves VR GI stability during head movement.");
+		}
+	}
+
 	if (ImGui::TreeNode("Buffer Viewer")) {
 		static float debugRescale = .3f;
 		ImGui::SliderFloat("View Resize", &debugRescale, 0.f, 1.f);
@@ -727,16 +735,28 @@ void ScreenSpaceGI::UpdateSB()
 
 	SSGICB data;
 	{
+		const bool useUnjitteredCamera = REL::Module::IsVR() && settings.DebugUseUnjitteredCameraReconstruction;
+
 		for (int eyeIndex = 0; eyeIndex < (1 + REL::Module::IsVR()); ++eyeIndex) {
-			auto eye = Util::GetCameraData(eyeIndex);
+			const auto eye = Util::GetCameraData(eyeIndex);
+			float proj11 = eye.projMat(0, 0);
+			float proj22 = eye.projMat(1, 1);
+			float4x4 currentInvView = eye.viewMat.Invert();
+
+			if (useUnjitteredCamera) {
+				const auto& projUnjittered = globals::game::frameBufferCached.GetCameraProjUnjittered(eyeIndex);
+				proj11 = projUnjittered._11;
+				proj22 = projUnjittered._22;
+				currentInvView = globals::game::frameBufferCached.GetCameraViewInverse(eyeIndex);
+			}
 
 			data.PrevInvViewMat[eyeIndex] = prevInvView[eyeIndex];
-			data.NDCToViewMul[eyeIndex] = { 2.0f / eye.projMat(0, 0), -2.0f / eye.projMat(1, 1) };
-			data.NDCToViewAdd[eyeIndex] = { -1.0f / eye.projMat(0, 0), 1.0f / eye.projMat(1, 1) };
+			data.NDCToViewMul[eyeIndex] = { 2.0f / proj11, -2.0f / proj22 };
+			data.NDCToViewAdd[eyeIndex] = { -1.0f / proj11, 1.0f / proj22 };
 			if (REL::Module::IsVR())
 				data.NDCToViewMul[eyeIndex].x *= 2;
 
-			prevInvView[eyeIndex] = eye.viewMat.Invert();
+			prevInvView[eyeIndex] = currentInvView;
 		}
 
 		data.TexDim = res;
