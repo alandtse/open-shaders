@@ -1,5 +1,6 @@
 #include "Features/LightLimitFix/ParticleLights.h"
 
+#include <exception>
 #include <numbers>
 #include <optional>
 
@@ -127,8 +128,13 @@ void ParticleLights::GetConfigs()
 				bool matches = std::strspn(str.data(), cset.data()) == str.size();
 
 				if (matches) {
-					uint32_t color = std::stoi(str.data(), 0, 16);
-					data.color = color;
+					try {
+						uint32_t color = static_cast<uint32_t>(std::stoul(std::string(str), nullptr, 16));
+						data.color = color;
+					} catch (const std::exception&) {
+						logger::error("[LLF] invalid color");
+						continue;
+					}
 				} else {
 					logger::error("[LLF] invalid color");
 					continue;

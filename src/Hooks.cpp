@@ -713,6 +713,12 @@ namespace Hooks
 		};
 		static inline REL::Relocation<decltype(thunk)> func;
 	};
+	bool ShouldSkipRenderPassForParticleLights(RE::BSRenderPass* a_pass, uint32_t a_technique)
+	{
+		return globals::features::lightLimitFix.loaded &&
+		       !globals::features::lightLimitFix.CheckParticleLights(a_pass, a_technique);
+	}
+
 	// This is from 1.4.0 but absent in 1.4.6
 	void BSBatchRenderer_RenderPassImmediately1::thunk(
 		RE::BSRenderPass* a_pass,
@@ -720,9 +726,7 @@ namespace Hooks
 		bool a_alphaTest,
 		uint32_t a_renderFlags)
 	{
-		// This is for Particle Lights
-		if (globals::features::lightLimitFix.loaded &&
-			!globals::features::lightLimitFix.CheckParticleLights(a_pass, a_technique)) {
+		if (ShouldSkipRenderPassForParticleLights(a_pass, a_technique)) {
 			return;
 		}
 
@@ -737,9 +741,7 @@ namespace Hooks
 			bool a_alphaTest,
 			uint32_t a_renderFlags)
 		{
-			// This is for Particle Lights
-			if (globals::features::lightLimitFix.loaded &&
-				!globals::features::lightLimitFix.CheckParticleLights(a_pass, a_technique)) {
+			if (ShouldSkipRenderPassForParticleLights(a_pass, a_technique)) {
 				return;
 			}
 
@@ -763,9 +765,7 @@ namespace Hooks
 			bool a_alphaTest,
 			uint32_t a_renderFlags)
 		{
-			// This is for Particle Lights
-			if (globals::features::lightLimitFix.loaded &&
-				!globals::features::lightLimitFix.CheckParticleLights(a_pass, a_technique)) {
+			if (ShouldSkipRenderPassForParticleLights(a_pass, a_technique)) {
 				return;
 			}
 
