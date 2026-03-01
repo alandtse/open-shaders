@@ -589,7 +589,8 @@ void TerrainBlending::OnBeginTechnique(RE::BSShader* a_shader, uint32_t a_pixelD
 	}
 
 	auto* obbOverrideSrv = Util::GetCurrentSceneDepthSRV(false);
-	auto* shadowmaskOverrideSrv = Util::GetCurrentSceneDepthSRV(true);
+	// Use R32 depth for shadowmask slot2 override to reduce edge instability during motion.
+	auto* shadowmaskOverrideSrv = Util::GetCurrentSceneDepthSRV(false);
 	// Override map items (1) and (2).
 	ApplyPixelShaderSlotOverride(
 		context,
@@ -638,7 +639,7 @@ void TerrainBlending::OnUtilitySetupGeometry(RE::BSShader* a_shader, RE::BSRende
 	EnsureEngineHookDepthOverride(descriptor, a_callerRva);
 
 	auto* obbOverrideSrv = Util::GetCurrentSceneDepthSRV(false);
-	auto* shadowmaskOverrideSrv = Util::GetCurrentSceneDepthSRV(true);
+	auto* shadowmaskOverrideSrv = Util::GetCurrentSceneDepthSRV(false);
 	ApplyPixelShaderSlotOverride(
 		context,
 		17u,
@@ -682,7 +683,7 @@ void TerrainBlending::OnShaderPropertySetupGeometry(RE::BSShaderProperty* a_shad
 	// Integration point 3/4 for override-map item (3): re-assert after material/property setup.
 	EnsureEngineHookDepthOverride(descriptor, a_callerRva);
 
-	auto* shadowmaskOverrideSrv = Util::GetCurrentSceneDepthSRV(true);
+	auto* shadowmaskOverrideSrv = Util::GetCurrentSceneDepthSRV(false);
 	ApplyPixelShaderSlotOverride(
 		context,
 		2u,
@@ -720,7 +721,7 @@ void TerrainBlending::OnSetDirtyStates(bool a_isCompute, uint32_t a_callerRva)
 	EnsureEngineHookDepthOverride(descriptor, a_callerRva);
 
 	auto* obbOverrideSrv = Util::GetCurrentSceneDepthSRV(false);
-	auto* shadowmaskOverrideSrv = Util::GetCurrentSceneDepthSRV(true);
+	auto* shadowmaskOverrideSrv = Util::GetCurrentSceneDepthSRV(false);
 	ApplyPixelShaderSlotOverride(
 		context,
 		17u,
