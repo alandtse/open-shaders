@@ -4,6 +4,7 @@
 
 #include "../EditorWindow.h"
 #include "FeatureIssues.h"
+#include "Features/IBL.h"
 #include "State.h"
 #include "Utils/UI.h"
 #include "WeatherManager.h"
@@ -1505,6 +1506,9 @@ void WeatherWidget::RevertChanges()
 
 void WeatherWidget::DrawFeatureSettings()
 {
+	static constexpr std::string_view kIblFeatureName = "ImageBasedLighting";
+	static constexpr std::string_view kIblWeatherToggle = "EnableDiffuseIBL";
+
 	ImGui::TextWrapped(
 		"Configure feature-specific settings that will be applied when this weather is active. "
 		"These override the feature's global settings for this weather only.");
@@ -1526,6 +1530,8 @@ void WeatherWidget::DrawFeatureSettings()
 		}
 
 		std::string displayName = feature->GetName();
+		const bool disableIblWeatherEnableToggle = (featureName == kIblFeatureName) &&
+		                                           (globals::features::ibl.settings.EnableIBL == 0);
 
 		// Get or initialize feature settings for this weather
 		if (settings.featureSettings.find(featureName) == settings.featureSettings.end()) {
@@ -1632,16 +1638,29 @@ void WeatherWidget::DrawFeatureSettings()
 
 					// Try to detect variable type and render appropriate control
 					// Check if it's a bool variable first
-					if (auto* boolVar = dynamic_cast<WeatherVariables::WeatherVariable<bool>*>(var.get())) {
+					if (dynamic_cast<WeatherVariables::WeatherVariable<bool>*>(var.get())) {
 						bool value = currentValue.get<bool>();
+						const bool disableThisBoolControl = disableIblWeatherEnableToggle && (varName == kIblWeatherToggle);
+
+						if (disableThisBoolControl) {
+							ImGui::BeginDisabled(true);
+						}
 
 						if (ImGui::Checkbox(varDisplayName.c_str(), &value)) {
 							featureJson[varName] = value;
 							modified = true;
 						}
 
+						if (disableThisBoolControl) {
+							ImGui::EndDisabled();
+						}
+
 						if (auto _tt = Util::HoverTooltipWrapper()) {
 							ImGui::Text("%s", tooltip.c_str());
+							if (disableThisBoolControl) {
+								ImGui::Separator();
+								ImGui::Text("Enable IBL globally to edit this weather toggle.");
+							}
 						}
 
 						// Right-click context menu to reset individual values
