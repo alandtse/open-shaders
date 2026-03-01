@@ -3,6 +3,9 @@
 #include "State.h"
 #include "Util.h"
 #include "Utils/D3D.h"
+#include <algorithm>
+#include <cmath>
+#include <vector>
 
 #pragma warning(push)
 #pragma warning(disable: 4838 4244)
@@ -15,18 +18,97 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	ScreenSpaceShadows::BendSettings,
 	Enable,
 	SampleCount,
+	VRBaseSamplesAtReference,
+	VRCullDistance,
 	SurfaceThickness,
 	BilinearThreshold,
 	ShadowContrast)
+
+namespace
+{
+	constexpr uint kSampleCountMin = 1u;
+	constexpr uint kSampleCountMax = 4u;
+	constexpr float kVRBaseSamplesMin = 16.0f;
+	constexpr float kVRBaseSamplesMax = 96.0f;
+	constexpr float kVRCullDistanceMin = 0.0f;
+	constexpr float kVRCullDistanceMax = 20480.0f;
+	constexpr float kSurfaceThicknessMin = 0.005f;
+	constexpr float kSurfaceThicknessMax = 0.05f;
+	constexpr float kBilinearThresholdMin = 0.02f;
+	constexpr float kBilinearThresholdMax = 1.0f;
+	constexpr float kShadowContrastMin = 0.0f;
+	constexpr float kShadowContrastMax = 4.0f;
+
+	float ClampFiniteOrDefault(float a_value, float a_min, float a_max, float a_default)
+	{
+		if (!std::isfinite(a_value))
+			return a_default;
+		return std::clamp(a_value, a_min, a_max);
+	}
+
+	void SanitizeBendSettings(ScreenSpaceShadows::BendSettings& a_settings)
+	{
+		a_settings.Enable = a_settings.Enable ? 1u : 0u;
+		a_settings.SampleCount = std::clamp(a_settings.SampleCount, kSampleCountMin, kSampleCountMax);
+		a_settings.VRBaseSamplesAtReference = ClampFiniteOrDefault(a_settings.VRBaseSamplesAtReference, kVRBaseSamplesMin, kVRBaseSamplesMax, 44.0f);
+		a_settings.VRCullDistance = ClampFiniteOrDefault(a_settings.VRCullDistance, kVRCullDistanceMin, kVRCullDistanceMax, 0.0f);
+		a_settings.SurfaceThickness = ClampFiniteOrDefault(a_settings.SurfaceThickness, kSurfaceThicknessMin, kSurfaceThicknessMax, 0.02f);
+		a_settings.BilinearThreshold = ClampFiniteOrDefault(a_settings.BilinearThreshold, kBilinearThresholdMin, kBilinearThresholdMax, 0.02f);
+		a_settings.ShadowContrast = ClampFiniteOrDefault(a_settings.ShadowContrast, kShadowContrastMin, kShadowContrastMax, 1.0f);
+	}
+}
 
 void ScreenSpaceShadows::DrawSettings()
 {
 	if (ImGui::TreeNodeEx("General", ImGuiTreeNodeFlags_DefaultOpen)) {
 		ImGui::Checkbox("Enable", (bool*)&bendSettings.Enable);
-		ImGui::SliderInt("Sample Count Multiplier", (int*)&bendSettings.SampleCount, 1, 4);
-		ImGui::SliderFloat("Surface Thickness", &bendSettings.SurfaceThickness, 0.005f, 0.05f);
-		ImGui::SliderFloat("Bilinear Threshold", &bendSettings.BilinearThreshold, 0.02f, 1.0f);
-		ImGui::SliderFloat("Shadow Contrast", &bendSettings.ShadowContrast, 0.0f, 4.0f);
+		if (auto _tt = Util::HoverTooltipWrapper()) {
+			ImGui::Text("Turns screen space shadows on or off.");
+		}
+
+		ImGui::Spacing();
+		ImGui::TextUnformatted("Performance");
+		ImGui::Separator();
+
+		ImGui::SliderInt("Sample Count Multiplier", (int*)&bendSettings.SampleCount, static_cast<int>(kSampleCountMin), static_cast<int>(kSampleCountMax));
+		if (auto _tt = Util::HoverTooltipWrapper()) {
+			ImGui::Text("Higher values improve detail but cost more performance. In VR, values >1 are not recommended.");
+		}
+
+		if (globals::game::isVR) {
+			ImGui::SliderFloat("Baseline Samples", &bendSettings.VRBaseSamplesAtReference, kVRBaseSamplesMin, kVRBaseSamplesMax, "%.0f");
+			if (auto _tt = Util::HoverTooltipWrapper()) {
+				ImGui::Text("Raises or lowers VR shadow quality and GPU cost.");
+			}
+
+			{
+				Util::BlueFrameStyleWrapper blueFrameStyle;
+				ImGui::SliderFloat("Shadow Cull Distance", &bendSettings.VRCullDistance, kVRCullDistanceMin, kVRCullDistanceMax, "%.0f units");
+			}
+			if (auto _tt = Util::HoverTooltipWrapper()) {
+				ImGui::Text("0 disables. Lower values improve performance but remove distant shadows.");
+			}
+			bendSettings.VRCullDistance = std::clamp(bendSettings.VRCullDistance, kVRCullDistanceMin, kVRCullDistanceMax);
+		}
+
+		ImGui::Spacing();
+		ImGui::TextUnformatted("Fine-tuning");
+		ImGui::Separator();
+
+		ImGui::SliderFloat("Surface Thickness", &bendSettings.SurfaceThickness, kSurfaceThicknessMin, kSurfaceThicknessMax);
+		if (auto _tt = Util::HoverTooltipWrapper()) {
+			ImGui::Text("Makes contact shadows thinner or thicker.");
+		}
+
+		ImGui::SliderFloat("Bilinear Threshold", &bendSettings.BilinearThreshold, kBilinearThresholdMin, kBilinearThresholdMax);
+		if (auto _tt = Util::HoverTooltipWrapper()) {
+			ImGui::Text("Balances edge sharpness versus smoothness.");
+		}
+
+		ImGui::SliderFloat("Shadow Contrast", &bendSettings.ShadowContrast, kShadowContrastMin, kShadowContrastMax);
+		if (auto _tt = Util::HoverTooltipWrapper()) {
+			ImGui::Text("Controls overall shadow darkness.");
+		}
 
 		ImGui::Spacing();
 		ImGui::Spacing();
@@ -44,6 +126,8 @@ void ScreenSpaceShadows::ClearShaderCache()
 		raymarchRightCS->Release();
 		raymarchRightCS = nullptr;
 	}
+	compiledSampleCount = 0;
+	compiledSampleCountRight = 0;
 }
 
 uint ScreenSpaceShadows::GetScaledSampleCount(bool a_dynamic)
@@ -52,6 +136,16 @@ uint ScreenSpaceShadows::GetScaledSampleCount(bool a_dynamic)
 
 	if (a_dynamic)
 		screenSize = Util::ConvertToDynamic(globals::state->screenSize);
+
+	if (globals::game::isVR) {
+		// Per-eye VR scaling against a 4.5 MP reference eye.
+		constexpr float kReferencePerEyeArea = 4'500'000.0f;
+		float currentArea = (screenSize.x * 0.5f) * screenSize.y;
+		float areaScale = std::sqrt(currentArea / kReferencePerEyeArea);
+		float baseSamples = std::max(1.0f, bendSettings.VRBaseSamplesAtReference);
+		uint scaledSampleCount = static_cast<uint>(std::round(bendSettings.SampleCount * baseSamples * areaScale));
+		return std::max(1u, scaledSampleCount);
+	}
 
 	// Scale sample count based on both dimensions relative to 1920x1080 reference
 
@@ -66,40 +160,36 @@ uint ScreenSpaceShadows::GetScaledSampleCount(bool a_dynamic)
 
 ID3D11ComputeShader* ScreenSpaceShadows::GetComputeRaymarch()
 {
-	static uint sampleCount = bendSettings.SampleCount;
-
-	if (sampleCount != bendSettings.SampleCount) {
-		sampleCount = bendSettings.SampleCount;
-		if (raymarchCS) {
-			raymarchCS->Release();
-			raymarchCS = nullptr;
-		}
-	}
-
-	if (!raymarchCS) {
-		uint scaledSampleCount = GetScaledSampleCount(false);
-		raymarchCS = (ID3D11ComputeShader*)Util::CompileShader(L"Data\\Shaders\\ScreenSpaceShadows\\RaymarchCS.hlsl", { { "SAMPLE_COUNT", std::format("{}", scaledSampleCount).c_str() } }, "cs_5_0");
-	}
-	return raymarchCS;
+	return GetOrCreateRaymarchShader(raymarchCS, compiledSampleCount, false);
 }
 
 ID3D11ComputeShader* ScreenSpaceShadows::GetComputeRaymarchRight()
 {
-	static uint sampleCount = bendSettings.SampleCount;
+	return GetOrCreateRaymarchShader(raymarchRightCS, compiledSampleCountRight, true);
+}
 
-	if (sampleCount != bendSettings.SampleCount) {
-		sampleCount = bendSettings.SampleCount;
-		if (raymarchRightCS) {
-			raymarchRightCS->Release();
-			raymarchRightCS = nullptr;
-		}
+ID3D11ComputeShader* ScreenSpaceShadows::GetOrCreateRaymarchShader(
+	ID3D11ComputeShader*& a_shader,
+	uint& a_compiledSampleCount,
+	bool a_rightEye)
+{
+	const uint scaledSampleCount = GetScaledSampleCount(false);
+	if (a_shader && a_compiledSampleCount != scaledSampleCount) {
+		a_shader->Release();
+		a_shader = nullptr;
+		a_compiledSampleCount = 0;
 	}
 
-	if (!raymarchRightCS) {
-		uint scaledSampleCount = GetScaledSampleCount(false);
-		raymarchRightCS = (ID3D11ComputeShader*)Util::CompileShader(L"Data\\Shaders\\ScreenSpaceShadows\\RaymarchCS.hlsl", { { "SAMPLE_COUNT", std::format("{}", scaledSampleCount).c_str() }, { "RIGHT", "" } }, "cs_5_0");
+	if (!a_shader) {
+		std::string sampleCount = std::format("{}", scaledSampleCount);
+		std::vector<std::pair<const char*, const char*>> defines{ { "SAMPLE_COUNT", sampleCount.c_str() } };
+		if (a_rightEye)
+			defines.push_back({ "RIGHT", "" });
+
+		a_shader = (ID3D11ComputeShader*)Util::CompileShader(L"Data\\Shaders\\ScreenSpaceShadows\\RaymarchCS.hlsl", defines, "cs_5_0");
+		a_compiledSampleCount = scaledSampleCount;
 	}
-	return raymarchRightCS;
+	return a_shader;
 }
 
 void ScreenSpaceShadows::DrawShadows()
@@ -120,7 +210,8 @@ void ScreenSpaceShadows::DrawShadows()
 
 	// Helper lambda to calculate light projection for a given eye
 	auto CalculateLightProjection = [&](uint32_t eyeIndex = 0) -> std::array<float, 4> {
-		auto viewProjMat = globals::game::frameBufferCached.GetCameraViewProj(eyeIndex).Transpose();
+		const auto& viewProj = globals::game::frameBufferCached.GetCameraViewProjUnjittered(eyeIndex);
+		auto viewProjMat = viewProj.Transpose();
 		auto projectedLight = DirectX::SimpleMath::Vector4::Transform(lightProjection, viewProjMat);
 		return { projectedLight.x, projectedLight.y, projectedLight.z, projectedLight.w };
 	};
@@ -151,8 +242,46 @@ void ScreenSpaceShadows::DrawShadows()
 	auto viewport = globals::game::graphicsState;
 
 	float2 dynamicRes = { viewport->GetRuntimeData().dynamicResolutionWidthRatio, viewport->GetRuntimeData().dynamicResolutionHeightRatio };
+	uint32_t depthWidth = 0;
+	uint32_t depthHeight = 0;
+	if (Util::TryGetDepthSrvDimensions(depthSRV, depthWidth, depthHeight)) {
+		if (!globals::game::isVR) {
+			dynamicRes.x = static_cast<float>(viewportSize[0]) / static_cast<float>(depthWidth);
+			dynamicRes.y = static_cast<float>(viewportSize[1]) / static_cast<float>(depthHeight);
+		} else {
+			// Always use hardened depth-layout scaling in VR.
+			const float combinedX = (static_cast<float>(viewportSize[0]) * 2.0f) / static_cast<float>(depthWidth);
+			const float perEyeX = static_cast<float>(viewportSize[0]) / static_cast<float>(depthWidth);
+			dynamicRes.y = static_cast<float>(viewportSize[1]) / static_cast<float>(depthHeight);
 
-	uint dynamicSampleCount = GetScaledSampleCount(true);
+			switch (Util::DetectVRDepthLayout(depthWidth, viewportSize[0])) {
+			case Util::VRDepthLayout::CombinedStereo:
+				dynamicRes.x = combinedX;
+				break;
+			case Util::VRDepthLayout::PerEye:
+				dynamicRes.x = perEyeX;
+				break;
+			case Util::VRDepthLayout::Unknown:
+			default:
+				// Ambiguous layout: pick whichever is closer to runtime DR ratio.
+				dynamicRes.x = std::abs(combinedX - dynamicRes.x) <= std::abs(perEyeX - dynamicRes.x) ? combinedX : perEyeX;
+				break;
+			}
+		}
+
+		dynamicRes.x = std::clamp(dynamicRes.x, 0.25f, 2.0f);
+		dynamicRes.y = std::clamp(dynamicRes.y, 0.25f, 2.0f);
+	}
+
+	auto* raymarchLeft = GetComputeRaymarch();
+	ID3D11ComputeShader* raymarchRight = globals::game::isVR ? GetComputeRaymarchRight() : nullptr;
+
+	uint maxCompiledSamples = compiledSampleCount > 0 ? compiledSampleCount : GetScaledSampleCount(false);
+	if (globals::game::isVR && compiledSampleCountRight > 0)
+		maxCompiledSamples = std::min(maxCompiledSamples, compiledSampleCountRight);
+
+	uint dynamicSampleCount = std::min(GetScaledSampleCount(true), maxCompiledSamples);
+	dynamicSampleCount = std::max(dynamicSampleCount, 1u);
 	uint dynamicReadCount = (dynamicSampleCount / 64 + 2);
 
 	// Shared dispatch logic for both VR and non-VR
@@ -195,6 +324,8 @@ void ScreenSpaceShadows::DrawShadows()
 			data.InvDepthTextureSize[1] = invTexSizeY;
 
 			data.settings = bendSettings;
+			if (!globals::game::isVR)
+				data.settings.VRCullDistance = 0.0f;
 
 			raymarchCB->Update(data);
 
@@ -210,13 +341,13 @@ void ScreenSpaceShadows::DrawShadows()
 	float InvTexSizeY = 1.0f / (float)viewportSize[1];
 
 	if (!globals::game::isVR) {
-		DispatchEye(nullptr, GetComputeRaymarch(), lightProjectionF.data(), InvTexSizeX, InvTexSizeY);
+		DispatchEye(nullptr, raymarchLeft, lightProjectionF.data(), InvTexSizeX, InvTexSizeY);
 	} else {
-		DispatchEye("Left Eye", GetComputeRaymarch(), lightProjectionF.data(), InvTexSizeX, InvTexSizeY);
+		DispatchEye("Left Eye", raymarchLeft, lightProjectionF.data(), InvTexSizeX, InvTexSizeY);
 
 		// Calculate light projection for right eye
 		auto lightProjectionRightF = CalculateLightProjection(1);
-		DispatchEye("Right Eye", GetComputeRaymarchRight(), lightProjectionRightF.data(), InvTexSizeX, InvTexSizeY);
+		DispatchEye("Right Eye", raymarchRight, lightProjectionRightF.data(), InvTexSizeX, InvTexSizeY);
 	}
 
 	ID3D11ShaderResourceView* views[1]{ nullptr };
@@ -252,6 +383,7 @@ void ScreenSpaceShadows::Prepass()
 void ScreenSpaceShadows::LoadSettings(json& o_json)
 {
 	bendSettings = o_json;
+	SanitizeBendSettings(bendSettings);
 }
 
 void ScreenSpaceShadows::SaveSettings(json& o_json)

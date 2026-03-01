@@ -13,9 +13,11 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	EnableGI,
 	EnableExperimentalSpecularGI,
 	EnableVanillaSSAO,
+	InteriorsOnly,
 	NumSlices,
 	NumSteps,
 	ResolutionMode,
+	VRCullDistance,
 	MinScreenRadius,
 	AORadius,
 	GIRadius,
@@ -33,16 +35,90 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	BlurRadius,
 	DistanceNormalisation)
 
+namespace
+{
+	constexpr float kVRCullDistanceMin = 0.0f;
+	constexpr float kVRCullDistanceMax = 20480.0f;
+	constexpr int kResolutionModeMin = 0;
+	constexpr int kResolutionModeMax = 2;
+
+	float ClampVRCullDistance(float a_distance)
+	{
+		return std::clamp(a_distance, kVRCullDistanceMin, kVRCullDistanceMax);
+	}
+
+	int ClampResolutionMode(int a_resolutionMode)
+	{
+		return std::clamp(a_resolutionMode, kResolutionModeMin, kResolutionModeMax);
+	}
+
+	void ApplyPlatformSettingOverrides(ScreenSpaceGI::Settings& a_settings)
+	{
+		a_settings.ResolutionMode = ClampResolutionMode(a_settings.ResolutionMode);
+		a_settings.VRCullDistance = ClampVRCullDistance(a_settings.VRCullDistance);
+	}
+
+	float2 GetHardenedSsgiFrameDim(float2 a_renderTexSize)
+	{
+		float2 frameDim = Util::ConvertToDynamic(a_renderTexSize);
+		frameDim = { floor(frameDim.x), floor(frameDim.y) };
+
+		auto* depthSRV = Util::GetCurrentSceneDepthSRV();
+		uint32_t depthWidth = 0;
+		uint32_t depthHeight = 0;
+		if (!Util::TryGetDepthSrvDimensions(depthSRV, depthWidth, depthHeight))
+			return { std::max(1.0f, frameDim.x), std::max(1.0f, frameDim.y) };
+
+		float scaleX = frameDim.x / a_renderTexSize.x;  // runtime ratio fallback
+		float scaleY = frameDim.y / static_cast<float>(depthHeight);
+		scaleY = std::clamp(scaleY, 0.25f, 2.0f);
+
+		if (!REL::Module::IsVR()) {
+			scaleX = frameDim.x / static_cast<float>(depthWidth);
+		} else {
+			const float perEyeFrameWidth = frameDim.x * 0.5f;
+			const float combinedX = (perEyeFrameWidth * 2.0f) / static_cast<float>(depthWidth);
+			const float perEyeX = perEyeFrameWidth / static_cast<float>(depthWidth);
+
+			const int viewportWidthPerEye = static_cast<int>(std::floor(a_renderTexSize.x * 0.5f));
+			switch (Util::DetectVRDepthLayout(depthWidth, viewportWidthPerEye)) {
+			case Util::VRDepthLayout::CombinedStereo:
+				scaleX = combinedX;
+				break;
+			case Util::VRDepthLayout::PerEye:
+				scaleX = perEyeX;
+				break;
+			case Util::VRDepthLayout::Unknown:
+			default:
+				scaleX = std::abs(combinedX - scaleX) <= std::abs(perEyeX - scaleX) ? combinedX : perEyeX;
+				break;
+			}
+		}
+
+		scaleX = std::clamp(scaleX, 0.25f, 2.0f);
+
+		float2 hardenedFrameDim = {
+			floor(a_renderTexSize.x * scaleX),
+			floor(a_renderTexSize.y * scaleY)
+		};
+		hardenedFrameDim.x = std::max(1.0f, hardenedFrameDim.x);
+		hardenedFrameDim.y = std::max(1.0f, hardenedFrameDim.y);
+		return hardenedFrameDim;
+	}
+}
+
 ////////////////////////////////////////////////////////////////////////////////////
 
 void ScreenSpaceGI::RestoreDefaultSettings()
 {
 	settings = {};
+	ApplyPlatformSettingOverrides(settings);
 	recompileFlag = true;
 }
 
 void ScreenSpaceGI::DrawSettings()
 {
+	ApplyPlatformSettingOverrides(settings);
 	static bool showAdvanced;
 
 	if (!ShadersOK())
@@ -85,21 +161,41 @@ void ScreenSpaceGI::DrawSettings()
 
 	{
 		auto qualityGuard = Util::DisableGuard(!settings.Enabled);
+		auto drawGreyPresetButton = [](const char* a_label, const ImVec2& a_size) {
+			ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.34f, 0.34f, 0.34f, 1.0f));
+			ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.42f, 0.42f, 0.42f, 1.0f));
+			ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.48f, 0.48f, 0.48f, 1.0f));
+			const bool clicked = ImGui::Button(a_label, a_size);
+			ImGui::PopStyleColor(3);
+			return clicked;
+		};
+
+		{
+			Util::BlueFrameStyleWrapper interiorsBlueStyle(true);
+			ImGui::Checkbox("Interiors Only", &settings.InteriorsOnly);
+		}
+		if (auto _tt = Util::HoverTooltipWrapper()) {
+			ImGui::Text("Run SSGI only in interiors to improve exterior performance.");
+		}
 
 		if (ImGui::BeginTable("Presets", 5)) {
 			ImGui::TableNextColumn();
 			if (ImGui::Button("AO only", { -1, 0 })) {
-				settings.NumSlices = 1;
+				settings.NumSlices = 3;
 				settings.NumSteps = 6;
-				settings.EnableBlur = true;
+				settings.ResolutionMode = 1;
+				settings.VRCullDistance = 1500.0f;
+				settings.AOPower = 1.8f;
+				settings.EnableBlur = false;
+				settings.EnableTemporalDenoiser = false;
 				settings.EnableGI = false;
 				recompileFlag = true;
 			}
 			if (auto _tt = Util::HoverTooltipWrapper())
-				ImGui::Text("1 Slice, 6 Steps, blur enabled, no GI\n");
+				ImGui::Text("Half res, AO power 1.8, 3 slices, 6 steps, no blur/temporal denoising; recommended for VR; use Full Res if you observe flimmer at a cost of speed.");
 
 			ImGui::TableNextColumn();
-			if (ImGui::Button("Low", { -1, 0 })) {
+			if (drawGreyPresetButton("Low", { -1, 0 })) {
 				settings.NumSlices = 10;
 				settings.NumSteps = 12;
 				settings.ResolutionMode = 2;
@@ -111,7 +207,7 @@ void ScreenSpaceGI::DrawSettings()
 				ImGui::Text("Quarter res and blurry.");
 
 			ImGui::TableNextColumn();
-			if (ImGui::Button("Standard", { -1, 0 })) {
+			if (drawGreyPresetButton("Standard", { -1, 0 })) {
 				settings.NumSlices = 4;
 				settings.NumSteps = 8;
 				settings.ResolutionMode = 1;
@@ -123,7 +219,7 @@ void ScreenSpaceGI::DrawSettings()
 				ImGui::Text("Half res and somewhat stable.");
 
 			ImGui::TableNextColumn();
-			if (ImGui::Button("Extreme", { -1, 0 })) {
+			if (drawGreyPresetButton("Extreme", { -1, 0 })) {
 				settings.NumSlices = 4;
 				settings.NumSteps = 8;
 				settings.ResolutionMode = 0;
@@ -149,6 +245,17 @@ void ScreenSpaceGI::DrawSettings()
 			ImGui::EndTable();
 		}
 
+		if (REL::Module::IsVR()) {
+			{
+				Util::BlueFrameStyleWrapper cullDistanceBlueStyle;
+				ImGui::SliderFloat("Shadow/GI Cull Distance", &settings.VRCullDistance, kVRCullDistanceMin, kVRCullDistanceMax, "%.0f units");
+			}
+			if (auto _tt = Util::HoverTooltipWrapper()) {
+				ImGui::Text("0 disables. Lower values improve performance but reduce distant AO/IL.");
+			}
+			settings.VRCullDistance = ClampVRCullDistance(settings.VRCullDistance);
+		}
+
 		if (showAdvanced) {
 			ImGui::SliderInt("Slices", (int*)&settings.NumSlices, 1, 10);
 			if (auto _tt = Util::HoverTooltipWrapper())
@@ -165,7 +272,10 @@ void ScreenSpaceGI::DrawSettings()
 
 		if (ImGui::BeginTable("Less Work", 3)) {
 			ImGui::TableNextColumn();
-			recompileFlag |= ImGui::RadioButton("Full Res", &settings.ResolutionMode, 0);
+			{
+				Util::BlueFrameStyleWrapper fullResBlueStyle(true);
+				recompileFlag |= ImGui::RadioButton("Full Res", &settings.ResolutionMode, 0);
+			}
 			ImGui::TableNextColumn();
 			recompileFlag |= ImGui::RadioButton("Half Res", &settings.ResolutionMode, 1);
 			ImGui::TableNextColumn();
@@ -304,12 +414,10 @@ void ScreenSpaceGI::DrawSettings()
 				auto blurGuard = Util::DisableGuard(!settings.EnableBlur);
 				ImGui::SliderFloat("Blur Radius", &settings.BlurRadius, 0.f, 30.f, "%.1f px");
 
-				if (showAdvanced) {
-					ImGui::SliderFloat("Geometry Weight", &settings.DistanceNormalisation, 0.f, 5.f, "%.2f");
-					if (auto _tt = Util::HoverTooltipWrapper())
-						ImGui::Text(
-							"Higher value makes the blur more sensitive to differences in geometry.");
-				}
+				ImGui::SliderFloat("Geometry Weight", &settings.DistanceNormalisation, 0.f, 5.f, "%.2f");
+				if (auto _tt = Util::HoverTooltipWrapper())
+					ImGui::Text(
+						"Higher value makes the blur more sensitive to differences in geometry.");
 			}
 		}
 	}
@@ -339,6 +447,7 @@ void ScreenSpaceGI::DrawSettings()
 void ScreenSpaceGI::LoadSettings(json& o_json)
 {
 	settings = o_json;
+	ApplyPlatformSettingOverrides(settings);
 
 	recompileFlag = true;
 }
@@ -610,23 +719,34 @@ bool ScreenSpaceGI::ShadersOK()
 void ScreenSpaceGI::UpdateSB()
 {
 	float2 res = { (float)texRadiance->desc.Width, (float)texRadiance->desc.Height };
-	float2 dynres = Util::ConvertToDynamic(res);
-	dynres = { floor(dynres.x), floor(dynres.y) };
+	float2 dynres = GetHardenedSsgiFrameDim(res);
 
 	static float4x4 prevInvView[2] = {};
 
 	SSGICB data;
 	{
+		const bool useUnjitteredCamera = REL::Module::IsVR();
+
 		for (int eyeIndex = 0; eyeIndex < (1 + REL::Module::IsVR()); ++eyeIndex) {
-			auto eye = Util::GetCameraData(eyeIndex);
+			const auto eye = Util::GetCameraData(eyeIndex);
+			float proj11 = eye.projMat(0, 0);
+			float proj22 = eye.projMat(1, 1);
+			float4x4 currentInvView = eye.viewMat.Invert();
+
+			if (useUnjitteredCamera) {
+				const auto& projUnjittered = globals::game::frameBufferCached.GetCameraProjUnjittered(eyeIndex);
+				proj11 = projUnjittered._11;
+				proj22 = projUnjittered._22;
+				currentInvView = globals::game::frameBufferCached.GetCameraViewInverse(eyeIndex);
+			}
 
 			data.PrevInvViewMat[eyeIndex] = prevInvView[eyeIndex];
-			data.NDCToViewMul[eyeIndex] = { 2.0f / eye.projMat(0, 0), -2.0f / eye.projMat(1, 1) };
-			data.NDCToViewAdd[eyeIndex] = { -1.0f / eye.projMat(0, 0), 1.0f / eye.projMat(1, 1) };
+			data.NDCToViewMul[eyeIndex] = { 2.0f / proj11, -2.0f / proj22 };
+			data.NDCToViewAdd[eyeIndex] = { -1.0f / proj11, 1.0f / proj22 };
 			if (REL::Module::IsVR())
 				data.NDCToViewMul[eyeIndex].x *= 2;
 
-			prevInvView[eyeIndex] = eye.viewMat.Invert();
+			prevInvView[eyeIndex] = currentInvView;
 		}
 
 		data.TexDim = res;
@@ -640,11 +760,16 @@ void ScreenSpaceGI::UpdateSB()
 		data.MinScreenRadius = settings.MinScreenRadius * dynres.x;
 
 		data.EffectRadius = std::max(settings.AORadius, settings.GIRadius);
-		data.AORadius = settings.AORadius / data.EffectRadius;
-		data.GIRadius = settings.GIRadius / data.EffectRadius;
+		const float safeEffectRadius = std::max(data.EffectRadius, 1e-3f);
+		data.EffectRadius = safeEffectRadius;
+		data.AORadius = settings.AORadius / safeEffectRadius;
+		data.GIRadius = settings.GIRadius / safeEffectRadius;
 		data.Thickness = settings.Thickness;
-		data.DepthFadeRange = settings.DepthFadeRange;
-		data.DepthFadeScaleConst = 1 / (settings.DepthFadeRange.y - settings.DepthFadeRange.x);
+		const float depthFadeStart = std::min(settings.DepthFadeRange.x, settings.DepthFadeRange.y);
+		const float depthFadeEnd = std::max(settings.DepthFadeRange.x, settings.DepthFadeRange.y);
+		data.DepthFadeRange = { depthFadeStart, depthFadeEnd };
+		const float depthFadeSpan = std::max(depthFadeEnd - depthFadeStart, 1.0f);
+		data.DepthFadeScaleConst = 1.0f / depthFadeSpan;
 
 		data.GISaturation = settings.GISaturation;
 		data.GIDistanceCompensation = settings.GIDistanceCompensation;
@@ -658,6 +783,7 @@ void ScreenSpaceGI::UpdateSB()
 		data.MaxAccumFrames = settings.MaxAccumFrames;
 		data.BlurRadius = settings.BlurRadius;
 		data.DistanceNormalisation = settings.DistanceNormalisation;
+		data.VRCullDistance = REL::Module::IsVR() ? ClampVRCullDistance(settings.VRCullDistance) : 0.0f;
 	}
 
 	ssgiCB->Update(data);
@@ -666,6 +792,7 @@ void ScreenSpaceGI::UpdateSB()
 void ScreenSpaceGI::DrawSSGI()
 {
 	auto context = globals::d3d::context;
+	const int resolutionMode = ClampResolutionMode(settings.ResolutionMode);
 
 	auto imageSpaceManager = RE::ImageSpaceManager::GetSingleton();
 	GET_INSTANCE_MEMBER(BSImagespaceShaderISSAOBlurH, imageSpaceManager);
@@ -674,11 +801,13 @@ void ScreenSpaceGI::DrawSSGI()
 	static bool* enableSSAO = reinterpret_cast<bool*>(reinterpret_cast<uintptr_t>(BSImagespaceShaderISSAOBlurH.get()) + 0x50LL);
 	*enableSSAO = settings.EnableVanillaSSAO;
 
-	if (!(settings.Enabled && ShadersOK())) {
+	const bool allowCurrentSpace = !settings.InteriorsOnly || Util::IsInterior();
+	if (!(settings.Enabled && ShadersOK() && allowCurrentSpace)) {
 		FLOAT clr[4] = { 0.f, 0.f, 0.f, 0.f };
 		context->ClearUnorderedAccessViewFloat(texAo[outputAoIdx]->uav.get(), clr);
 		context->ClearUnorderedAccessViewFloat(texIlY[outputIlIdx]->uav.get(), clr);
 		context->ClearUnorderedAccessViewFloat(texIlCoCg[outputIlIdx]->uav.get(), clr);
+		context->ClearUnorderedAccessViewFloat(texGiSpecular[outputAoIdx]->uav.get(), clr);
 		return;
 	}
 
@@ -704,12 +833,16 @@ void ScreenSpaceGI::DrawSSGI()
 	auto rts = renderer->GetRuntimeData().renderTargets;
 	auto deferred = globals::deferred;
 
-	float2 size = Util::ConvertToDynamic(globals::state->screenSize);
+	float2 size = {
+		(float)texRadiance->desc.Width,
+		(float)texRadiance->desc.Height
+	};
+	size = GetHardenedSsgiFrameDim(size);
 	auto resolution = std::array{ (uint)size.x, (uint)size.y };
 	auto resChoices = std::array{
 		resolution, std::array{ resolution[0] >> 1, resolution[1] >> 1 }, std::array{ resolution[0] >> 2, resolution[1] >> 2 }
 	};
-	auto internalRes = resChoices[settings.ResolutionMode];
+	auto internalRes = resChoices[resolutionMode];
 
 	std::array<ID3D11ShaderResourceView*, 11> srvs = { nullptr };
 	std::array<ID3D11UnorderedAccessView*, 6> uavs = { nullptr };
@@ -858,7 +991,7 @@ void ScreenSpaceGI::DrawSSGI()
 	}
 
 	// upsample
-	if (settings.ResolutionMode != 0) {
+	if (resolutionMode != 0) {
 		resetViews();
 		srvs.at(0) = texWorkingDepth->srv.get();
 		srvs.at(1) = texAo[inputAoTexIdx]->srv.get();

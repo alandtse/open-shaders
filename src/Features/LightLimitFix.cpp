@@ -123,7 +123,10 @@ void LightLimitFix::DrawSettings()
 	ImGui::Spacing();
 
 	if (ImGui::TreeNodeEx("Particle Lights", ImGuiTreeNodeFlags_DefaultOpen)) {
-		ImGui::Checkbox("Enable Particle Lights", &settings.EnableParticleLights);
+		{
+			Util::BlueFrameStyleWrapper particleLightsBlueStyle(true);
+			ImGui::Checkbox("Enable Particle Lights", &settings.EnableParticleLights);
+		}
 		if (auto _tt = Util::HoverTooltipWrapper()) {
 			ImGui::Text("Enables Particle Lights.");
 		}

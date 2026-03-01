@@ -309,6 +309,27 @@ namespace Util
 		}
 	}
 
+	BlueFrameStyleWrapper::BlueFrameStyleWrapper(bool includeCheckMark) :
+		m_pushedStyles(0)
+	{
+		ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0.10f, 0.20f, 0.45f, 0.85f));
+		ImGui::PushStyleColor(ImGuiCol_FrameBgHovered, ImVec4(0.14f, 0.28f, 0.58f, 0.90f));
+		ImGui::PushStyleColor(ImGuiCol_FrameBgActive, ImVec4(0.18f, 0.34f, 0.66f, 0.95f));
+		m_pushedStyles = 3;
+
+		if (includeCheckMark) {
+			ImGui::PushStyleColor(ImGuiCol_CheckMark, ImVec4(0.65f, 0.82f, 1.00f, 1.00f));
+			m_pushedStyles++;
+		}
+	}
+
+	BlueFrameStyleWrapper::~BlueFrameStyleWrapper()
+	{
+		if (m_pushedStyles > 0) {
+			ImGui::PopStyleColor(m_pushedStyles);
+		}
+	}
+
 	// SectionWrapper implementation
 	SectionWrapper::SectionWrapper(const char* title, const char* description, const ImVec4& titleColor, bool isVisible) :
 		m_shouldDraw(isVisible),

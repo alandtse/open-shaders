@@ -139,6 +139,25 @@ namespace Util
 	};
 
 	/**
+	 * RAII wrapper for the standard blue frame style used by highlighted sliders/checkboxes.
+	 * Optionally includes the checkmark color for checkbox controls.
+	 */
+	class BlueFrameStyleWrapper
+	{
+	public:
+		explicit BlueFrameStyleWrapper(bool includeCheckMark = false);
+		~BlueFrameStyleWrapper();
+
+		BlueFrameStyleWrapper(const BlueFrameStyleWrapper&) = delete;
+		BlueFrameStyleWrapper& operator=(const BlueFrameStyleWrapper&) = delete;
+		BlueFrameStyleWrapper(BlueFrameStyleWrapper&&) = delete;
+		BlueFrameStyleWrapper& operator=(BlueFrameStyleWrapper&&) = delete;
+
+	private:
+		int m_pushedStyles;
+	};
+
+	/**
 	 * Button with simple flash feedback (matches action icon hover effect style)
 	 * @param label Button text
 	 * @param size Button size (optional)
