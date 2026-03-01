@@ -45,6 +45,9 @@ Texture2D<float> srcPrevAo : register(t5);             // maybe half-res
 Texture2D<float4> srcPrevY : register(t6);             // maybe half-res
 Texture2D<float2> srcPrevCoCg : register(t7);          // maybe half-res
 Texture2D<float4> srcPrevGISpecular : register(t8);    // maybe half-res
+#ifdef CENTER_FULL_PASS
+Texture2D<float4> srcSceneColor : register(t9);
+#endif
 
 RWTexture2D<unorm float> outAo : register(u0);
 RWTexture2D<float4> outY : register(u1);
@@ -72,6 +75,19 @@ float GetVRCullFade(float depth)
 	return 1.0 - smoothstep(fadeStart, VRCullDistance, depth);
 #else
 	return 1.0;
+#endif
+}
+
+float GetCenterFullMaskWeight(float2 stereoUv, uint eyeIndex)
+{
+#ifdef CENTER_FULL_PASS
+	float2 eyeUv = Stereo::ConvertFromStereoUV(stereoUv, eyeIndex);
+	float halfSize = saturate(CenterFullResMaskScale) * 0.5;
+	float2 outside = abs(eyeUv - 0.5) - halfSize.xx;
+	float distanceOutside = max(outside.x, outside.y);
+	return 1.0 - smoothstep(0.0, max(CenterFullResMaskFeather, 1e-4), distanceOutside);
+#else
+	return 0.0;
 #endif
 }
 
@@ -274,9 +290,15 @@ void CalculateGI(
 					if (frontBackMult > 0.f) {
 						float3 sampleHorizonVecWS = normalize(mul(FrameBuffer::CameraViewInverse[eyeIndex], half4(sampleHorizonVec, 0)).xyz);
 
-						float3 sampleRadiance = srcRadiance.SampleLevel(samplerPointClamp, sampleUV * OUT_FRAME_SCALE, mipLevelRadiance).rgb * frontBackMult * giBoost * countbits(validBits) * 0.03125;
-						sampleRadiance = max(sampleRadiance, 0);
-						float3 sampleRadianceYCoCg = Color::RGBToYCoCg(sampleRadiance);
+					float3 sampleRadiance;
+#ifdef CENTER_FULL_PASS
+					sampleRadiance = Color::RadianceToLinear(srcSceneColor.SampleLevel(samplerPointClamp, sampleUV * frameScale, 0).rgb * GIStrength);
+#else
+					sampleRadiance = srcRadiance.SampleLevel(samplerPointClamp, sampleUV * OUT_FRAME_SCALE, mipLevelRadiance).rgb;
+#endif
+					sampleRadiance *= frontBackMult * giBoost * countbits(validBits) * 0.03125;
+					sampleRadiance = max(sampleRadiance, 0);
+					float3 sampleRadianceYCoCg = Color::RGBToYCoCg(sampleRadiance);
 
 						radianceY += sampleRadianceYCoCg.r * SphericalHarmonics::Evaluate(sampleHorizonVecWS);
 						radianceCoCg += sampleRadianceYCoCg.gb;
@@ -339,12 +361,28 @@ void CalculateGI(
 
 [numthreads(8, 8, 1)] void main(const uint2 dtid
 								: SV_DispatchThreadID) {
+#ifdef CENTER_FULL_PASS
+	if (any(dtid >= uint2(FrameDim)))
+		return;
+#endif
+
 	const float2 frameScale = FrameDim * RcpTexDim;
 
 	uint2 pxCoord = dtid;
 
 	float2 uv = (pxCoord + .5) * RCP_OUT_FRAME_DIM;
 	uint eyeIndex = Stereo::GetEyeIndexFromTexCoord(uv);
+#ifdef CENTER_FULL_PASS
+	if (GetCenterFullMaskWeight(uv, eyeIndex) <= 0.0) {
+		outAo[pxCoord] = 0;
+		outY[pxCoord] = 0;
+		outCoCg[pxCoord] = 0;
+#ifdef GI_SPECULAR
+		outGISpecular[pxCoord] = 0;
+#endif
+		return;
+	}
+#endif
 
 	float viewspaceZ = READ_DEPTH(srcWorkingDepth, pxCoord);
 
@@ -352,7 +390,9 @@ void CalculateGI(
 	float3 viewspaceNormal = GBuffer::DecodeNormal(normalSample);
 
 	half2 encodedWorldNormal = GBuffer::EncodeNormal(ViewToWorldVector(viewspaceNormal, FrameBuffer::CameraViewInverse[eyeIndex]));
+#ifndef CENTER_FULL_PASS
 	outPrevGeo[pxCoord] = half3(viewspaceZ, encodedWorldNormal);
+#endif
 
 	// Move center pixel slightly towards camera to avoid imprecision artifacts due to depth buffer imprecision; offset depends on depth texture format used
 	viewspaceZ *= 0.99920h;  // this is good for FP16 depth buffer
