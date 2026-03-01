@@ -56,6 +56,15 @@ public:
 
 	float timer = 0;
 	float refractionScale = 0.5f;  // Default LLF heat warp strength
+	// Burley SSS human skin controls.
+	float sssHumanMaleIntensity = 1.0f;
+	float sssHumanMaleSaturation = 1.0f;
+	float sssHumanMaleBrightness = 1.0f;
+	float sssHumanMaleBaseSaturation = 1.0f;
+	float sssHumanFemaleIntensity = 1.0f;
+	float sssHumanFemaleSaturation = 1.0f;
+	float sssHumanFemaleBrightness = 1.0f;
+	float sssHumanFemaleBaseSaturation = 1.0f;
 	double smoothDrawCalls[RE::BSShader::Type::Total + 1];
 	int drawCalls[RE::BSShader::Type::Total + 1];
 
@@ -157,7 +166,8 @@ public:
 		IsBeastRace = 1 << 2,
 		EffectShadows = 1 << 3,
 		IsTree = 1 << 4,
-		GrassSphereNormal = 1 << 5
+		GrassSphereNormal = 1 << 5,
+		IsFemale = 1 << 6
 	};
 
 	enum class ExtraFeatureDescriptors : uint32_t
@@ -195,6 +205,10 @@ public:
 
 	ConstantBuffer* permutationCB = nullptr;
 
+#ifdef _MSC_VER
+#pragma warning(push)
+#pragma warning(disable: 4324)  // SharedDataCB intentionally uses aligned float4 members for shader-compatible math
+#endif
 	struct alignas(16) SharedDataCB
 	{
 		float4 WaterData[25];
@@ -210,9 +224,20 @@ public:
 		uint InMapMenu;
 		uint HideSky;
 		float MipBias;
-		float RefractionScale;  //matches HLSL SharedData::RefractionScale
-		};
-		STATIC_ASSERT_ALIGNAS_16(SharedDataCB);
+		float RefractionScale;  // matches HLSL SharedData::RefractionScale
+		float SSSHumanMaleIntensity;
+		float SSSHumanMaleSaturation;
+		float SSSHumanMaleBrightness;
+		float SSSHumanMaleBaseSaturation;
+		float SSSHumanFemaleIntensity;
+		float SSSHumanFemaleSaturation;
+		float SSSHumanFemaleBrightness;
+		float SSSHumanFemaleBaseSaturation;
+	};
+#ifdef _MSC_VER
+#pragma warning(pop)
+#endif
+	STATIC_ASSERT_ALIGNAS_16(SharedDataCB);
 	ConstantBuffer* sharedDataCB = nullptr;
 	ConstantBuffer* featureDataCB = nullptr;
 
