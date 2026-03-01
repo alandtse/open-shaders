@@ -9,8 +9,30 @@
 #include <DDSTextureLoader.h>
 #include <DirectXTex.h>
 
+namespace
+{
+	constexpr uint32_t kIblPsSrvSlot = 76u;
+	constexpr uint32_t kIblPsSrvCount = 4u;
+
+	void SetIblPsSrvs(ID3D11DeviceContext* a_context,
+		ID3D11ShaderResourceView* a_diffuse,
+		ID3D11ShaderResourceView* a_diffuseSky,
+		ID3D11ShaderResourceView* a_staticDiffuse,
+		ID3D11ShaderResourceView* a_staticSpecular)
+	{
+		ID3D11ShaderResourceView* srvs[kIblPsSrvCount] = { a_diffuse, a_diffuseSky, a_staticDiffuse, a_staticSpecular };
+		a_context->PSSetShaderResources(kIblPsSrvSlot, kIblPsSrvCount, srvs);
+	}
+
+	void ClearIblPsSrvs(ID3D11DeviceContext* a_context)
+	{
+		SetIblPsSrvs(a_context, nullptr, nullptr, nullptr, nullptr);
+	}
+}
+
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	IBL::Settings,
+	EnableIBL,
 	EnableDiffuseIBL,
 	PreserveFogLuminance,
 	UseStaticIBL,
@@ -22,6 +44,15 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 
 void IBL::DrawSettings()
 {
+	bool enableIBL = settings.EnableIBL != 0;
+	if (ImGui::Checkbox("Enable IBL", &enableIBL)) {
+		settings.EnableIBL = enableIBL ? 1u : 0u;
+	}
+	if (auto _tt = Util::HoverTooltipWrapper()) {
+		ImGui::Text("Turns Image Based Lighting on or off.");
+	}
+
+	ImGui::BeginDisabled(settings.EnableIBL == 0);
 	Util::WeatherUI::Checkbox("Enable Diffuse IBL", this, "EnableDiffuseIBL", (bool*)&settings.EnableDiffuseIBL);
 	Util::WeatherUI::SliderFloat("Diffuse IBL Scale", this, "DiffuseIBLScale", &settings.DiffuseIBLScale, 0.0f, 10.0f, "%.2f");
 	Util::WeatherUI::SliderFloat("Diffuse IBL Saturation", this, "IBLSaturation", &settings.IBLSaturation, 0.0f, 2.0f, "%.2f");
@@ -33,6 +64,7 @@ void IBL::DrawSettings()
 	}
 	Util::WeatherUI::SliderFloat("Fog Mix", this, "FogAmount", &settings.FogAmount, 0.0f, 1.0f, "%.2f");
 	ImGui::Checkbox("Preserve Fog Luminance", (bool*)&settings.PreserveFogLuminance);
+	ImGui::EndDisabled();
 }
 
 void IBL::LoadSettings(json& o_json)
@@ -104,37 +136,45 @@ void IBL::RegisterWeatherVariables()
 
 void IBL::ReflectionsPrepass()
 {
-	if (loaded) {
-		auto context = globals::d3d::context;
+	auto context = globals::d3d::context;
+	if (!context)
+		return;
 
-		// Set PS shader resource
-		{
-			std::array<ID3D11ShaderResourceView*, 4> srvs = {
-				diffuseIBLTexture->srv.get(),
-				diffuseSkyIBLTexture->srv.get(),
-				staticDiffuseIBLTexture->srv.get(),
-				staticSpecularIBLTexture->srv.get()
-			};
-			context->PSSetShaderResources(76, 4, srvs.data());
-		}
+	if (!IsRuntimeEnabled()) {
+		ClearIblPsSrvs(context);
+		return;
 	}
+
+	SetIblPsSrvs(
+		context,
+		diffuseIBLTexture ? diffuseIBLTexture->srv.get() : nullptr,
+		diffuseSkyIBLTexture ? diffuseSkyIBLTexture->srv.get() : nullptr,
+		staticDiffuseIBLTexture ? staticDiffuseIBLTexture->srv.get() : nullptr,
+		staticSpecularIBLTexture ? staticSpecularIBLTexture->srv.get() : nullptr
+	);
 }
 
 void IBL::Prepass()
 {
 	auto context = globals::d3d::context;
+	if (!context)
+		return;
+
+	// Always clear all IBL SRV slots first to avoid stale bindings.
+	ClearIblPsSrvs(context);
+
+	if (!IsRuntimeEnabled())
+		return;
+
+	if (!diffuseIBLTexture || !diffuseSkyIBLTexture)
+		return;
+
 	auto state = globals::state;
 
 	auto& dynamicCubemaps = globals::features::dynamicCubemaps;
 
 	auto& envTexture = dynamicCubemaps.envTexture;
 	auto& envReflectionsTexture = dynamicCubemaps.envReflectionsTexture;
-
-	// Unset PS shader resource
-	{
-		ID3D11ShaderResourceView* views[2]{ nullptr, nullptr };
-		context->PSSetShaderResources(76, 2, views);
-	}
 
 	state->BeginPerfEvent("IBL");
 	std::array<ID3D11ShaderResourceView*, 1> srvs = { (dynamicCubemaps.loaded && envTexture) ? envTexture->srv.get() : nullptr };
@@ -176,10 +216,7 @@ void IBL::Prepass()
 	state->EndPerfEvent();
 
 	// Set PS shader resource
-	{
-		ID3D11ShaderResourceView* views[2]{ diffuseIBLTexture->srv.get(), diffuseSkyIBLTexture->srv.get() };
-		context->PSSetShaderResources(76, 2, views);
-	}
+	SetIblPsSrvs(context, diffuseIBLTexture->srv.get(), diffuseSkyIBLTexture->srv.get(), nullptr, nullptr);
 }
 
 void IBL::SetupResources()
@@ -310,4 +347,23 @@ ID3D11ComputeShader* IBL::GetDiffuseIBLCS()
 	if (!diffuseIBLCS)
 		diffuseIBLCS = static_cast<ID3D11ComputeShader*>(Util::CompileShader(L"Data\\Shaders\\IBL\\DiffuseIBLCS.hlsl", defines, "cs_5_0"));
 	return diffuseIBLCS;
+}
+
+IBL::CommonBufferData IBL::GetCommonBufferData() const
+{
+	return {
+		.EnableDiffuseIBL = (settings.EnableIBL != 0) ? settings.EnableDiffuseIBL : 0u,
+		.PreserveFogLuminance = settings.PreserveFogLuminance,
+		.UseStaticIBL = settings.UseStaticIBL,
+		.EnableInterior = settings.EnableInterior,
+		.DiffuseIBLScale = settings.DiffuseIBLScale,
+		.DALCAmount = settings.DALCAmount,
+		.IBLSaturation = settings.IBLSaturation,
+		.FogAmount = settings.FogAmount
+	};
+}
+
+bool IBL::IsRuntimeEnabled() const
+{
+	return loaded && settings.EnableIBL != 0;
 }

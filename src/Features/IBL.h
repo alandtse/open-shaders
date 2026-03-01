@@ -42,6 +42,7 @@ public:
 
 	struct Settings
 	{
+		uint EnableIBL = 1;
 		uint EnableDiffuseIBL = 0;
 		uint PreserveFogLuminance = 0;
 		uint UseStaticIBL = 1;
@@ -52,8 +53,22 @@ public:
 		float FogAmount = 0.0f;
 	} settings;
 
+	struct CommonBufferData
+	{
+		uint EnableDiffuseIBL;
+		uint PreserveFogLuminance;
+		uint UseStaticIBL;
+		uint EnableInterior;
+		float DiffuseIBLScale;
+		float DALCAmount;
+		float IBLSaturation;
+		float FogAmount;
+	};
+
 	eastl::unique_ptr<Texture2D> staticDiffuseIBLTexture = nullptr;
 	eastl::unique_ptr<Texture2D> staticSpecularIBLTexture = nullptr;
 
 	ID3D11ComputeShader* GetDiffuseIBLCS();
+	CommonBufferData GetCommonBufferData() const;
+	bool IsRuntimeEnabled() const;
 };
