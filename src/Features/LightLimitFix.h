@@ -5,6 +5,8 @@
 
 #include "Features/LightLimitFix/ParticleLights.h"
 
+#include <shared_mutex>
+
 class ParticleLights;
 struct LightLimitFix : OverlayFeature
 {
@@ -171,7 +173,7 @@ struct ParticleLightInfo
 		std::uint64_t configVersion = 0;
 	};
 
-	eastl::hash_map<RE::NiNode*, ParticleLightReference> particleLightsReferences;
+	eastl::hash_map<RE::BSGeometry*, ParticleLightReference> particleLightsReferences;
 	eastl::vector<ParticleLightInfo> queuedParticleLights;
 	eastl::vector<ParticleLightInfo> currentParticleLights;
 

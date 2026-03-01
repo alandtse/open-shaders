@@ -322,7 +322,7 @@ void Feature::DrawUnloadedUI()
 	// Get the minimum required version to include in the error message
 	std::string requiredVersion = Feature::GetFeatureRequiredVersion(GetShortName());
 
-	auto missingFileMessage = std::format("The {} file is missing. This feature is not installed! Version required: {}", ini_filename, requiredVersion);
+	auto missingFileMessage = std::format("This feature is not installed or may not yet be available! Version required: {}", ini_filename, requiredVersion);
 	ImGui::TextColored(themeSettings.StatusPalette.Error, missingFileMessage.c_str());
 
 	// Also show feature summary if available

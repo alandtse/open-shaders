@@ -8,8 +8,79 @@
 
 #include "RE/B/BSMultiBoundRoom.h"
 
+#include <algorithm>
+#include <cctype>
+#include <cmath>
+
 static constexpr uint CLUSTER_MAX_LIGHTS = 256;
 static constexpr uint MAX_LIGHTS = 1024;
+
+namespace
+{
+	constexpr uint kLightsVisualisationModeMax = 3;
+
+	constexpr float kParticleLightsSaturationMin = 1.0f;
+	constexpr float kParticleLightsSaturationMax = 2.0f;
+	constexpr float kParticleBrightnessMin = 0.0f;
+	constexpr float kParticleBrightnessMax = 10.0f;
+	constexpr float kParticleRadiusMin = 0.0f;
+	constexpr float kParticleRadiusMax = 10.0f;
+	constexpr float kBillboardBrightnessMin = 0.0f;
+	constexpr float kBillboardBrightnessMax = 10.0f;
+	constexpr float kBillboardRadiusMin = 0.0f;
+	constexpr float kBillboardRadiusMax = 10.0f;
+	constexpr float kParticleClusterThresholdMin = 8.0f;
+	constexpr float kParticleClusterThresholdMax = 128.0f;
+	constexpr int kMaxParticlesPerEmitterMin = 32;
+	constexpr int kMaxParticlesPerEmitterMax = 2048;
+	constexpr float kMaxParticleDistanceMin = 0.0f;
+	constexpr float kMaxParticleDistanceMax = 20000.0f;
+
+	float ClampFiniteOrDefault(float a_value, float a_min, float a_max, float a_default)
+	{
+		if (!std::isfinite(a_value)) {
+			return a_default;
+		}
+		return std::clamp(a_value, a_min, a_max);
+	}
+
+	void SanitizeSettings(LightLimitFix::Settings& a_settings)
+	{
+		a_settings.LightsVisualisationMode = std::min(a_settings.LightsVisualisationMode, kLightsVisualisationModeMax);
+		a_settings.ParticleLightsSaturation =
+			ClampFiniteOrDefault(a_settings.ParticleLightsSaturation, kParticleLightsSaturationMin, kParticleLightsSaturationMax, 1.0f);
+		a_settings.ParticleBrightness =
+			ClampFiniteOrDefault(a_settings.ParticleBrightness, kParticleBrightnessMin, kParticleBrightnessMax, 1.0f);
+		a_settings.ParticleRadius =
+			ClampFiniteOrDefault(a_settings.ParticleRadius, kParticleRadiusMin, kParticleRadiusMax, 1.0f);
+		a_settings.BillboardBrightness =
+			ClampFiniteOrDefault(a_settings.BillboardBrightness, kBillboardBrightnessMin, kBillboardBrightnessMax, 1.0f);
+		a_settings.BillboardRadius =
+			ClampFiniteOrDefault(a_settings.BillboardRadius, kBillboardRadiusMin, kBillboardRadiusMax, 1.0f);
+		a_settings.ParticleClusterThreshold =
+			ClampFiniteOrDefault(a_settings.ParticleClusterThreshold, kParticleClusterThresholdMin, kParticleClusterThresholdMax, 32.0f);
+		a_settings.MaxParticlesPerEmitter = std::clamp(a_settings.MaxParticlesPerEmitter, kMaxParticlesPerEmitterMin, kMaxParticlesPerEmitterMax);
+		a_settings.MaxParticleDistance =
+			ClampFiniteOrDefault(a_settings.MaxParticleDistance, kMaxParticleDistanceMin, kMaxParticleDistanceMax, 6000.0f);
+	}
+
+	char ToLowerAscii(char a_char)
+	{
+		return static_cast<char>(std::tolower(static_cast<unsigned char>(a_char)));
+	}
+
+	bool EndsWithDdsInsensitive(std::string_view a_filename)
+	{
+		if (a_filename.size() < 4) {
+			return false;
+		}
+		const std::string_view ext = a_filename.substr(a_filename.size() - 4);
+		return ToLowerAscii(ext[0]) == '.' &&
+		       ToLowerAscii(ext[1]) == 'd' &&
+		       ToLowerAscii(ext[2]) == 'd' &&
+		       ToLowerAscii(ext[3]) == 's';
+	}
+}
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	LightLimitFix::Settings,
@@ -76,7 +147,7 @@ void LightLimitFix::DrawSettings()
 		}
 
 		// NEW: clustering controls
-		ImGui::SliderFloat("Cluster Threshold", &settings.ParticleClusterThreshold, 8.0f, 128.0f, "%.1f");
+		ImGui::SliderFloat("Cluster Threshold", &settings.ParticleClusterThreshold, kParticleClusterThresholdMin, kParticleClusterThresholdMax, "%.1f");
 		if (auto _tt = Util::HoverTooltipWrapper()) {
 			ImGui::Text(
 				"Distance+radius similarity threshold for merging particles into one light.\n"
@@ -84,7 +155,7 @@ void LightLimitFix::DrawSettings()
 				"Lower = less merging, more precise, more expensive.");
 		}
 
-		ImGui::SliderInt("Max Particles per Emitter", &settings.MaxParticlesPerEmitter, 32, 2048);
+		ImGui::SliderInt("Max Particles per Emitter", &settings.MaxParticlesPerEmitter, kMaxParticlesPerEmitterMin, kMaxParticlesPerEmitterMax);
 		if (auto _tt = Util::HoverTooltipWrapper()) {
 			ImGui::Text(
 				"Maximum number of particles sampled per emitter per frame.\n"
@@ -93,7 +164,7 @@ void LightLimitFix::DrawSettings()
 		}
 
 		// NEW: distance cutoff for particle lights
-		ImGui::SliderFloat("Max Particle Distance", &settings.MaxParticleDistance, 1000.0f, 20000.0f, "%.0f");
+		ImGui::SliderFloat("Max Particle Distance", &settings.MaxParticleDistance, 1000.0f, kMaxParticleDistanceMax, "%.0f");
 		if (auto _tt = Util::HoverTooltipWrapper()) {
 			ImGui::Text(
 				"Particle lights beyond this distance from the camera are skipped entirely.\n"
@@ -105,14 +176,14 @@ void LightLimitFix::DrawSettings()
 		ImGui::Spacing();
 
 		ImGui::TextWrapped("Particle Lights Customisation");
-		ImGui::SliderFloat("Saturation", &settings.ParticleLightsSaturation, 1.0, 2.0, "%.2f");
+		ImGui::SliderFloat("Saturation", &settings.ParticleLightsSaturation, kParticleLightsSaturationMin, kParticleLightsSaturationMax, "%.2f");
 		if (auto _tt = Util::HoverTooltipWrapper()) {
 			ImGui::Text("Particle light saturation.");
 		}
-		ImGui::SliderFloat("Particle Brightness", &settings.ParticleBrightness, 0.0, 10.0, "%.2f");
-		ImGui::SliderFloat("Particle Radius", &settings.ParticleRadius, 0.0, 10.0, "%.2f");
-		ImGui::SliderFloat("Billboard Brightness", &settings.BillboardBrightness, 0.0, 10.0, "%.2f");
-		ImGui::SliderFloat("Billboard Radius", &settings.BillboardRadius, 0.0, 10.0, "%.2f");
+		ImGui::SliderFloat("Particle Brightness", &settings.ParticleBrightness, kParticleBrightnessMin, kParticleBrightnessMax, "%.2f");
+		ImGui::SliderFloat("Particle Radius", &settings.ParticleRadius, kParticleRadiusMin, kParticleRadiusMax, "%.2f");
+		ImGui::SliderFloat("Billboard Brightness", &settings.BillboardBrightness, kBillboardBrightnessMin, kBillboardBrightnessMax, "%.2f");
+		ImGui::SliderFloat("Billboard Radius", &settings.BillboardRadius, kBillboardRadiusMin, kBillboardRadiusMax, "%.2f");
 
 		ImGui::Spacing();
 		ImGui::Spacing();
@@ -188,7 +259,8 @@ LightLimitFix::PerFrame LightLimitFix::GetCommonBufferData()
 
 void LightLimitFix::CleanupParticleLights(RE::NiNode* a_node)
 {
-	particleLightsReferences.erase(a_node);
+	(void)a_node;
+	// References are invalidated once per frame in Reset(); keep this hook side-effect free.
 }
 
 void LightLimitFix::SetupResources()
@@ -302,11 +374,14 @@ void LightLimitFix::Reset()
 	}
 	currentParticleLights.clear();
 	std::swap(currentParticleLights, queuedParticleLights);
+	// Cache is keyed by transient pass geometry pointers; rebuild every frame to avoid stale entries.
+	particleLightsReferences.clear();
 }
 
 void LightLimitFix::LoadSettings(json& o_json)
 {
 	settings = o_json;
+	SanitizeSettings(settings);
 }
 
 void LightLimitFix::SaveSettings(json& o_json)
@@ -475,7 +550,7 @@ void LightLimitFix::AddParticleLightLuminance(RE::NiPoint3& targetPosition, int&
 	if (!shaderCache->IsEnabled())
 		return;
 
-	std::lock_guard<std::shared_mutex> lk{ cachedParticleLightsMutex };
+	std::shared_lock<std::shared_mutex> lk{ cachedParticleLightsMutex };
 	int particleLightsDetectionHits = 0;
 	if (settings.EnableParticleLightsDetection) {
 		for (auto& light : cachedParticleLights) {
@@ -528,18 +603,25 @@ struct VertexPosition
 
 std::string ExtractTextureStem(std::string_view a_path)
 {
-	if (a_path.size() < 1)
+	if (a_path.empty())
 		return {};
 
 	auto lastSeparatorPos = a_path.find_last_of("\\/");
-	if (lastSeparatorPos == std::string::npos)
+	std::string_view filename = (lastSeparatorPos == std::string::npos) ? a_path : a_path.substr(lastSeparatorPos + 1);
+	if (filename.empty() || !EndsWithDdsInsensitive(filename)) {
 		return {};
+	}
 
-	a_path = a_path.substr(lastSeparatorPos + 1);
-	a_path.remove_suffix(4);  // Remove ".dds"
+	filename.remove_suffix(4);  // Remove ".dds"
+	if (filename.empty()) {
+		return {};
+	}
 
-	auto textureNameView = a_path | std::views::transform([](auto c) { return (char)::tolower(c); });
-	std::string textureName = { textureNameView.begin(), textureNameView.end() };
+	std::string textureName{};
+	textureName.reserve(filename.size());
+	for (char c : filename) {
+		textureName.push_back(ToLowerAscii(c));
+	}
 
 	return textureName;
 }
@@ -548,7 +630,7 @@ LightLimitFix::ParticleLightReference LightLimitFix::GetParticleLightConfigs(RE:
 {
 	auto& particleLights = globals::features::llf::particleLights;
 
-	auto cacheInvalidReference = [&](RE::NiNode* node) {
+	auto cacheInvalidReference = [&](RE::BSGeometry* node) {
 		ParticleLightReference invalidReference{};
 		invalidReference.valid = false;
 		invalidReference.configVersion = particleLights.configVersion;
@@ -570,7 +652,7 @@ LightLimitFix::ParticleLightReference LightLimitFix::GetParticleLightConfigs(RE:
 						}
 					}
 
-					auto node = reinterpret_cast<RE::NiNode*>(a_pass->geometry);
+					auto* node = a_pass->geometry;
 
 					// Already scanned
 					{
