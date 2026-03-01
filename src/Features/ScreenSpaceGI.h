@@ -64,13 +64,15 @@ public:
 		bool EnableGI = REL::Module::IsVR() ? false : true;  // AO only for VR by default
 		bool EnableExperimentalSpecularGI = false;
 		bool EnableVanillaSSAO = false;
-		bool InteriorsOnly = REL::Module::IsVR() ? true : false;
+		bool AOInteriorsOnly = REL::Module::IsVR() ? true : false;
+		bool ILInteriorsOnly = REL::Module::IsVR() ? true : false;
 		// performance/quality
 		uint NumSlices = REL::Module::IsVR() ? 3u : 4u;
 		uint NumSteps = REL::Module::IsVR() ? 6u : 8u;   // AO preset for VR
 		int ResolutionMode = 0;  // Full Res default (VR and flat)
 		float VRCullDistance = 1500.0f;                  // 0 disables VR distance culling
 		float CenterFullResMaskScale = 0.0f;             // 0 = off, 1.0 = almost full frame center
+		int FoveatedPresetMode = 0;                      // 0=off, 1=strict foveated, 2=foveated
 		// visual
 		float MinScreenRadius = 0.01f;
 		float AORadius = 256.f;
@@ -93,7 +95,7 @@ public:
 		float DistanceNormalisation = 2.f;
 	} settings;
 
-	struct alignas(16) SSGICB
+	struct SSGICB
 	{
 		float4x4 PrevInvViewMat[2];
 		float2 NDCToViewMul[2];
@@ -133,10 +135,15 @@ public:
 		float VRCullDistance;
 		float CenterFullResMaskScale;
 		float CenterFullResMaskFeather;
+		float CenterDispatchOffsetX;
+		float CenterDispatchOffsetY;
+		float CenterDispatchSizeX;
+		float CenterDispatchSizeY;
 		float pad[3];
 	};
 	STATIC_ASSERT_ALIGNAS_16(SSGICB);
 	eastl::unique_ptr<ConstantBuffer> ssgiCB;
+	SSGICB ssgiCBData{};
 
 	eastl::unique_ptr<Texture2D> texNoise = nullptr;
 	eastl::unique_ptr<Texture2D> texWorkingDepth = nullptr;
@@ -172,8 +179,11 @@ public:
 	winrt::com_ptr<ID3D11ComputeShader> prefilterDepthsCompute = nullptr;
 	winrt::com_ptr<ID3D11ComputeShader> prefilterRadianceCompute = nullptr;
 	winrt::com_ptr<ID3D11ComputeShader> radianceDisoccCompute = nullptr;
+	winrt::com_ptr<ID3D11ComputeShader> radianceDisoccAOOnlyCompute = nullptr;
 	winrt::com_ptr<ID3D11ComputeShader> giCompute = nullptr;
+	winrt::com_ptr<ID3D11ComputeShader> giAOOnlyCompute = nullptr;
 	winrt::com_ptr<ID3D11ComputeShader> centerGIMaskedCompute = nullptr;
+	winrt::com_ptr<ID3D11ComputeShader> centerGIMaskedAOOnlyCompute = nullptr;
 	winrt::com_ptr<ID3D11ComputeShader> blurCompute = nullptr;
 	winrt::com_ptr<ID3D11ComputeShader> upsampleCompute = nullptr;
 	winrt::com_ptr<ID3D11ComputeShader> centerBlendCompute = nullptr;

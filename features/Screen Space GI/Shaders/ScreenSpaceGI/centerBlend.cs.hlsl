@@ -27,45 +27,48 @@ float GetCenterFullMaskWeight(float2 stereoUv, uint eyeIndex)
 
 [numthreads(8, 8, 1)] void main(const uint2 dtid : SV_DispatchThreadID)
 {
-	if (any(dtid >= uint2(FrameDim)))
+	const uint2 dispatchOffset = uint2(CenterDispatchOffsetX, CenterDispatchOffsetY);
+	const uint2 dispatchSize = uint2(CenterDispatchSizeX, CenterDispatchSizeY);
+	if (any(dtid >= dispatchSize))
 		return;
+	const uint2 pxCoord = dtid + dispatchOffset;
 
-	const float2 uv = (dtid + 0.5) * RcpFrameDim;
+	const float2 uv = (pxCoord + 0.5) * RcpFrameDim;
 	const uint eyeIndex = Stereo::GetEyeIndexFromTexCoord(uv);
 	const float blendWeight = GetCenterFullMaskWeight(uv, eyeIndex);
 
-	const half baseAo = srcBaseAo[dtid];
-	const half4 baseIlY = srcBaseIlY[dtid];
-	const half2 baseIlCoCg = srcBaseIlCoCg[dtid];
-	const half4 baseGiSpec = srcBaseGiSpecular[dtid];
+	const half baseAo = srcBaseAo[pxCoord];
+	const half4 baseIlY = srcBaseIlY[pxCoord];
+	const half2 baseIlCoCg = srcBaseIlCoCg[pxCoord];
+	const half4 baseGiSpec = srcBaseGiSpecular[pxCoord];
 
 	// Periphery path: no center contribution, so avoid center texture reads.
 	if (blendWeight <= 0.0) {
-		outAo[dtid] = baseAo;
-		outIlY[dtid] = baseIlY;
-		outIlCoCg[dtid] = baseIlCoCg;
-		outGiSpecular[dtid] = baseGiSpec;
+		outAo[pxCoord] = baseAo;
+		outIlY[pxCoord] = baseIlY;
+		outIlCoCg[pxCoord] = baseIlCoCg;
+		outGiSpecular[pxCoord] = baseGiSpec;
 		return;
 	}
 
-	const half centerAo = srcCenterAo[dtid];
-	const half4 centerIlY = srcCenterIlY[dtid];
-	const half2 centerIlCoCg = srcCenterIlCoCg[dtid];
+	const half centerAo = srcCenterAo[pxCoord];
+	const half4 centerIlY = srcCenterIlY[pxCoord];
+	const half2 centerIlCoCg = srcCenterIlCoCg[pxCoord];
 	const bool fullCenter = (blendWeight >= 1.0);
 
 	if (fullCenter) {
-		outAo[dtid] = centerAo;
-		outIlY[dtid] = centerIlY;
-		outIlCoCg[dtid] = centerIlCoCg;
+		outAo[pxCoord] = centerAo;
+		outIlY[pxCoord] = centerIlY;
+		outIlCoCg[pxCoord] = centerIlCoCg;
 	} else {
-		outAo[dtid] = lerp(baseAo, centerAo, blendWeight);
-		outIlY[dtid] = lerp(baseIlY, centerIlY, blendWeight);
-		outIlCoCg[dtid] = lerp(baseIlCoCg, centerIlCoCg, blendWeight);
+		outAo[pxCoord] = lerp(baseAo, centerAo, blendWeight);
+		outIlY[pxCoord] = lerp(baseIlY, centerIlY, blendWeight);
+		outIlCoCg[pxCoord] = lerp(baseIlCoCg, centerIlCoCg, blendWeight);
 	}
 #ifdef GI_SPECULAR
-	const half4 centerGiSpec = srcCenterGiSpecular[dtid];
-	outGiSpecular[dtid] = lerp(baseGiSpec, centerGiSpec, blendWeight);
+	const half4 centerGiSpec = srcCenterGiSpecular[pxCoord];
+	outGiSpecular[pxCoord] = lerp(baseGiSpec, centerGiSpec, blendWeight);
 #else
-	outGiSpecular[dtid] = baseGiSpec;
+	outGiSpecular[pxCoord] = baseGiSpec;
 #endif
 }

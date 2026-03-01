@@ -64,6 +64,10 @@ cbuffer SSGICB : register(b1)
 	float VRCullDistance;
 	float CenterFullResMaskScale;
 	float CenterFullResMaskFeather;
+	float CenterDispatchOffsetX;
+	float CenterDispatchOffsetY;
+	float CenterDispatchSizeX;
+	float CenterDispatchSizeY;
 	float3 pad;
 };
 

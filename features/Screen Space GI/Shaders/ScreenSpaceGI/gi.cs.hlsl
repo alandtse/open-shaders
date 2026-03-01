@@ -362,13 +362,16 @@ void CalculateGI(
 [numthreads(8, 8, 1)] void main(const uint2 dtid
 								: SV_DispatchThreadID) {
 #ifdef CENTER_FULL_PASS
-	if (any(dtid >= uint2(FrameDim)))
+	const uint2 dispatchOffset = uint2(CenterDispatchOffsetX, CenterDispatchOffsetY);
+	const uint2 dispatchSize = uint2(CenterDispatchSizeX, CenterDispatchSizeY);
+	if (any(dtid >= dispatchSize))
 		return;
+	uint2 pxCoord = dtid + dispatchOffset;
+#else
+	uint2 pxCoord = dtid;
 #endif
 
 	const float2 frameScale = FrameDim * RcpTexDim;
-
-	uint2 pxCoord = dtid;
 
 	float2 uv = (pxCoord + .5) * RCP_OUT_FRAME_DIM;
 	uint eyeIndex = Stereo::GetEyeIndexFromTexCoord(uv);
