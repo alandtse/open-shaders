@@ -26,67 +26,35 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 
 namespace
 {
-	enum class VRDepthLayout
+	constexpr uint kSampleCountMin = 1u;
+	constexpr uint kSampleCountMax = 4u;
+	constexpr float kVRBaseSamplesMin = 16.0f;
+	constexpr float kVRBaseSamplesMax = 96.0f;
+	constexpr float kVRCullDistanceMin = 0.0f;
+	constexpr float kVRCullDistanceMax = 20480.0f;
+	constexpr float kSurfaceThicknessMin = 0.005f;
+	constexpr float kSurfaceThicknessMax = 0.05f;
+	constexpr float kBilinearThresholdMin = 0.02f;
+	constexpr float kBilinearThresholdMax = 1.0f;
+	constexpr float kShadowContrastMin = 0.0f;
+	constexpr float kShadowContrastMax = 4.0f;
+
+	float ClampFiniteOrDefault(float a_value, float a_min, float a_max, float a_default)
 	{
-		PerEye,
-		CombinedStereo,
-		Unknown
-	};
-
-	VRDepthLayout DetectVRDepthLayout(uint32_t a_depthWidth, int a_viewportWidthPerEye)
-	{
-		if (!a_depthWidth || a_viewportWidthPerEye <= 0)
-			return VRDepthLayout::Unknown;
-
-		const float ratio = static_cast<float>(a_depthWidth) / static_cast<float>(a_viewportWidthPerEye);
-		constexpr float kPerEyeMin = 0.85f;
-		constexpr float kPerEyeMax = 1.15f;
-		constexpr float kCombinedMin = 1.85f;
-		constexpr float kCombinedMax = 2.15f;
-
-		if (ratio >= kPerEyeMin && ratio <= kPerEyeMax)
-			return VRDepthLayout::PerEye;
-		if (ratio >= kCombinedMin && ratio <= kCombinedMax)
-			return VRDepthLayout::CombinedStereo;
-
-		// Fallback for slight runtime divergence from ideal ratios.
-		if (ratio > 1.5f)
-			return VRDepthLayout::CombinedStereo;
-		if (ratio > 0.5f)
-			return VRDepthLayout::PerEye;
-
-		return VRDepthLayout::Unknown;
+		if (!std::isfinite(a_value))
+			return a_default;
+		return std::clamp(a_value, a_min, a_max);
 	}
 
-	bool TryGetDepthSrvDimensions(ID3D11ShaderResourceView* a_depthSrv, uint32_t& o_width, uint32_t& o_height)
+	void SanitizeBendSettings(ScreenSpaceShadows::BendSettings& a_settings)
 	{
-		o_width = 0;
-		o_height = 0;
-		if (!a_depthSrv)
-			return false;
-
-		ID3D11Resource* resource = nullptr;
-		a_depthSrv->GetResource(&resource);
-		if (!resource)
-			return false;
-
-		ID3D11Texture2D* texture = nullptr;
-		HRESULT hr = resource->QueryInterface(__uuidof(ID3D11Texture2D), reinterpret_cast<void**>(&texture));
-		resource->Release();
-
-		if (FAILED(hr) || !texture)
-			return false;
-
-		D3D11_TEXTURE2D_DESC desc{};
-		texture->GetDesc(&desc);
-		texture->Release();
-
-		if (desc.Width == 0 || desc.Height == 0)
-			return false;
-
-		o_width = desc.Width;
-		o_height = desc.Height;
-		return true;
+		a_settings.Enable = a_settings.Enable ? 1u : 0u;
+		a_settings.SampleCount = std::clamp(a_settings.SampleCount, kSampleCountMin, kSampleCountMax);
+		a_settings.VRBaseSamplesAtReference = ClampFiniteOrDefault(a_settings.VRBaseSamplesAtReference, kVRBaseSamplesMin, kVRBaseSamplesMax, 44.0f);
+		a_settings.VRCullDistance = ClampFiniteOrDefault(a_settings.VRCullDistance, kVRCullDistanceMin, kVRCullDistanceMax, 0.0f);
+		a_settings.SurfaceThickness = ClampFiniteOrDefault(a_settings.SurfaceThickness, kSurfaceThicknessMin, kSurfaceThicknessMax, 0.02f);
+		a_settings.BilinearThreshold = ClampFiniteOrDefault(a_settings.BilinearThreshold, kBilinearThresholdMin, kBilinearThresholdMax, 0.02f);
+		a_settings.ShadowContrast = ClampFiniteOrDefault(a_settings.ShadowContrast, kShadowContrastMin, kShadowContrastMax, 1.0f);
 	}
 }
 
@@ -102,39 +70,39 @@ void ScreenSpaceShadows::DrawSettings()
 		ImGui::TextUnformatted("Performance");
 		ImGui::Separator();
 
-		ImGui::SliderInt("Sample Count Multiplier", (int*)&bendSettings.SampleCount, 1, 4);
+		ImGui::SliderInt("Sample Count Multiplier", (int*)&bendSettings.SampleCount, static_cast<int>(kSampleCountMin), static_cast<int>(kSampleCountMax));
 		if (auto _tt = Util::HoverTooltipWrapper()) {
 			ImGui::Text("Higher values improve detail but cost more performance. In VR, values >1 are not recommended.");
 		}
 
 		if (globals::game::isVR) {
-			ImGui::SliderFloat("Baseline Samples", &bendSettings.VRBaseSamplesAtReference, 16.0f, 96.0f, "%.0f");
+			ImGui::SliderFloat("Baseline Samples", &bendSettings.VRBaseSamplesAtReference, kVRBaseSamplesMin, kVRBaseSamplesMax, "%.0f");
 			if (auto _tt = Util::HoverTooltipWrapper()) {
 				ImGui::Text("Raises or lowers VR shadow quality and GPU cost.");
 			}
 
-			ImGui::SliderFloat("Shadow Cull Distance", &bendSettings.VRCullDistance, 0.0f, 20480.0f, "%.0f units");
+			ImGui::SliderFloat("Shadow Cull Distance", &bendSettings.VRCullDistance, kVRCullDistanceMin, kVRCullDistanceMax, "%.0f units");
 			if (auto _tt = Util::HoverTooltipWrapper()) {
 				ImGui::Text("0 disables. Lower values improve performance but remove distant shadows.");
 			}
-			bendSettings.VRCullDistance = std::clamp(bendSettings.VRCullDistance, 0.0f, 20480.0f);
+			bendSettings.VRCullDistance = std::clamp(bendSettings.VRCullDistance, kVRCullDistanceMin, kVRCullDistanceMax);
 		}
 
 		ImGui::Spacing();
 		ImGui::TextUnformatted("Fine-tuning");
 		ImGui::Separator();
 
-		ImGui::SliderFloat("Surface Thickness", &bendSettings.SurfaceThickness, 0.005f, 0.05f);
+		ImGui::SliderFloat("Surface Thickness", &bendSettings.SurfaceThickness, kSurfaceThicknessMin, kSurfaceThicknessMax);
 		if (auto _tt = Util::HoverTooltipWrapper()) {
 			ImGui::Text("Makes contact shadows thinner or thicker.");
 		}
 
-		ImGui::SliderFloat("Bilinear Threshold", &bendSettings.BilinearThreshold, 0.02f, 1.0f);
+		ImGui::SliderFloat("Bilinear Threshold", &bendSettings.BilinearThreshold, kBilinearThresholdMin, kBilinearThresholdMax);
 		if (auto _tt = Util::HoverTooltipWrapper()) {
 			ImGui::Text("Balances edge sharpness versus smoothness.");
 		}
 
-		ImGui::SliderFloat("Shadow Contrast", &bendSettings.ShadowContrast, 0.0f, 4.0f);
+		ImGui::SliderFloat("Shadow Contrast", &bendSettings.ShadowContrast, kShadowContrastMin, kShadowContrastMax);
 		if (auto _tt = Util::HoverTooltipWrapper()) {
 			ImGui::Text("Controls overall shadow darkness.");
 		}
@@ -273,7 +241,7 @@ void ScreenSpaceShadows::DrawShadows()
 	float2 dynamicRes = { viewport->GetRuntimeData().dynamicResolutionWidthRatio, viewport->GetRuntimeData().dynamicResolutionHeightRatio };
 	uint32_t depthWidth = 0;
 	uint32_t depthHeight = 0;
-	if (TryGetDepthSrvDimensions(depthSRV, depthWidth, depthHeight)) {
+	if (Util::TryGetDepthSrvDimensions(depthSRV, depthWidth, depthHeight)) {
 		if (!globals::game::isVR) {
 			dynamicRes.x = static_cast<float>(viewportSize[0]) / static_cast<float>(depthWidth);
 			dynamicRes.y = static_cast<float>(viewportSize[1]) / static_cast<float>(depthHeight);
@@ -283,14 +251,14 @@ void ScreenSpaceShadows::DrawShadows()
 			const float perEyeX = static_cast<float>(viewportSize[0]) / static_cast<float>(depthWidth);
 			dynamicRes.y = static_cast<float>(viewportSize[1]) / static_cast<float>(depthHeight);
 
-			switch (DetectVRDepthLayout(depthWidth, viewportSize[0])) {
-			case VRDepthLayout::CombinedStereo:
+			switch (Util::DetectVRDepthLayout(depthWidth, viewportSize[0])) {
+			case Util::VRDepthLayout::CombinedStereo:
 				dynamicRes.x = combinedX;
 				break;
-			case VRDepthLayout::PerEye:
+			case Util::VRDepthLayout::PerEye:
 				dynamicRes.x = perEyeX;
 				break;
-			case VRDepthLayout::Unknown:
+			case Util::VRDepthLayout::Unknown:
 			default:
 				// Ambiguous layout: pick whichever is closer to runtime DR ratio.
 				dynamicRes.x = std::abs(combinedX - dynamicRes.x) <= std::abs(perEyeX - dynamicRes.x) ? combinedX : perEyeX;
@@ -412,6 +380,7 @@ void ScreenSpaceShadows::Prepass()
 void ScreenSpaceShadows::LoadSettings(json& o_json)
 {
 	bendSettings = o_json;
+	SanitizeBendSettings(bendSettings);
 }
 
 void ScreenSpaceShadows::SaveSettings(json& o_json)

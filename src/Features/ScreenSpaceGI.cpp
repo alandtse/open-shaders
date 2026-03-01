@@ -39,70 +39,17 @@ namespace
 {
 	constexpr float kVRCullDistanceMin = 0.0f;
 	constexpr float kVRCullDistanceMax = 20480.0f;
+	constexpr int kResolutionModeMin = 0;
+	constexpr int kResolutionModeMax = 2;
 
 	float ClampVRCullDistance(float a_distance)
 	{
 		return std::clamp(a_distance, kVRCullDistanceMin, kVRCullDistanceMax);
 	}
 
-	enum class VRDepthLayout
+	int ClampResolutionMode(int a_resolutionMode)
 	{
-		PerEye,
-		CombinedStereo,
-		Unknown
-	};
-
-	VRDepthLayout DetectVRDepthLayout(uint32_t a_depthWidth, int a_viewportWidthPerEye)
-	{
-		if (!a_depthWidth || a_viewportWidthPerEye <= 0)
-			return VRDepthLayout::Unknown;
-
-		const float ratio = static_cast<float>(a_depthWidth) / static_cast<float>(a_viewportWidthPerEye);
-		constexpr float kPerEyeMin = 0.85f;
-		constexpr float kPerEyeMax = 1.15f;
-		constexpr float kCombinedMin = 1.85f;
-		constexpr float kCombinedMax = 2.15f;
-
-		if (ratio >= kPerEyeMin && ratio <= kPerEyeMax)
-			return VRDepthLayout::PerEye;
-		if (ratio >= kCombinedMin && ratio <= kCombinedMax)
-			return VRDepthLayout::CombinedStereo;
-
-		if (ratio > 1.5f)
-			return VRDepthLayout::CombinedStereo;
-		if (ratio > 0.5f)
-			return VRDepthLayout::PerEye;
-
-		return VRDepthLayout::Unknown;
-	}
-
-	bool TryGetDepthSrvDimensions(ID3D11ShaderResourceView* a_depthSrv, uint32_t& o_width, uint32_t& o_height)
-	{
-		o_width = 0;
-		o_height = 0;
-		if (!a_depthSrv)
-			return false;
-
-		ID3D11Resource* resource = nullptr;
-		a_depthSrv->GetResource(&resource);
-		if (!resource)
-			return false;
-
-		ID3D11Texture2D* texture = nullptr;
-		const HRESULT hr = resource->QueryInterface(__uuidof(ID3D11Texture2D), reinterpret_cast<void**>(&texture));
-		resource->Release();
-		if (FAILED(hr) || !texture)
-			return false;
-
-		D3D11_TEXTURE2D_DESC desc{};
-		texture->GetDesc(&desc);
-		texture->Release();
-		if (desc.Width == 0 || desc.Height == 0)
-			return false;
-
-		o_width = desc.Width;
-		o_height = desc.Height;
-		return true;
+		return std::clamp(a_resolutionMode, kResolutionModeMin, kResolutionModeMax);
 	}
 
 	float2 GetHardenedSsgiFrameDim(float2 a_renderTexSize)
@@ -113,7 +60,7 @@ namespace
 		auto* depthSRV = Util::GetCurrentSceneDepthSRV();
 		uint32_t depthWidth = 0;
 		uint32_t depthHeight = 0;
-		if (!TryGetDepthSrvDimensions(depthSRV, depthWidth, depthHeight))
+		if (!Util::TryGetDepthSrvDimensions(depthSRV, depthWidth, depthHeight))
 			return { std::max(1.0f, frameDim.x), std::max(1.0f, frameDim.y) };
 
 		float scaleX = frameDim.x / a_renderTexSize.x;  // runtime ratio fallback
@@ -128,14 +75,14 @@ namespace
 			const float perEyeX = perEyeFrameWidth / static_cast<float>(depthWidth);
 
 			const int viewportWidthPerEye = static_cast<int>(std::floor(a_renderTexSize.x * 0.5f));
-			switch (DetectVRDepthLayout(depthWidth, viewportWidthPerEye)) {
-			case VRDepthLayout::CombinedStereo:
+			switch (Util::DetectVRDepthLayout(depthWidth, viewportWidthPerEye)) {
+			case Util::VRDepthLayout::CombinedStereo:
 				scaleX = combinedX;
 				break;
-			case VRDepthLayout::PerEye:
+			case Util::VRDepthLayout::PerEye:
 				scaleX = perEyeX;
 				break;
-			case VRDepthLayout::Unknown:
+			case Util::VRDepthLayout::Unknown:
 			default:
 				scaleX = std::abs(combinedX - scaleX) <= std::abs(perEyeX - scaleX) ? combinedX : perEyeX;
 				break;
@@ -475,6 +422,7 @@ void ScreenSpaceGI::DrawSettings()
 void ScreenSpaceGI::LoadSettings(json& o_json)
 {
 	settings = o_json;
+	settings.ResolutionMode = ClampResolutionMode(settings.ResolutionMode);
 	settings.VRCullDistance = ClampVRCullDistance(settings.VRCullDistance);
 
 	recompileFlag = true;
@@ -820,6 +768,7 @@ void ScreenSpaceGI::UpdateSB()
 void ScreenSpaceGI::DrawSSGI()
 {
 	auto context = globals::d3d::context;
+	const int resolutionMode = ClampResolutionMode(settings.ResolutionMode);
 
 	auto imageSpaceManager = RE::ImageSpaceManager::GetSingleton();
 	GET_INSTANCE_MEMBER(BSImagespaceShaderISSAOBlurH, imageSpaceManager);
@@ -834,6 +783,7 @@ void ScreenSpaceGI::DrawSSGI()
 		context->ClearUnorderedAccessViewFloat(texAo[outputAoIdx]->uav.get(), clr);
 		context->ClearUnorderedAccessViewFloat(texIlY[outputIlIdx]->uav.get(), clr);
 		context->ClearUnorderedAccessViewFloat(texIlCoCg[outputIlIdx]->uav.get(), clr);
+		context->ClearUnorderedAccessViewFloat(texGiSpecular[outputAoIdx]->uav.get(), clr);
 		return;
 	}
 
@@ -868,7 +818,7 @@ void ScreenSpaceGI::DrawSSGI()
 	auto resChoices = std::array{
 		resolution, std::array{ resolution[0] >> 1, resolution[1] >> 1 }, std::array{ resolution[0] >> 2, resolution[1] >> 2 }
 	};
-	auto internalRes = resChoices[settings.ResolutionMode];
+	auto internalRes = resChoices[resolutionMode];
 
 	std::array<ID3D11ShaderResourceView*, 11> srvs = { nullptr };
 	std::array<ID3D11UnorderedAccessView*, 6> uavs = { nullptr };
@@ -1017,7 +967,7 @@ void ScreenSpaceGI::DrawSSGI()
 	}
 
 	// upsample
-	if (settings.ResolutionMode != 0) {
+	if (resolutionMode != 0) {
 		resetViews();
 		srvs.at(0) = texWorkingDepth->srv.get();
 		srvs.at(1) = texAo[inputAoTexIdx]->srv.get();

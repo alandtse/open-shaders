@@ -1,10 +1,21 @@
 #pragma once
 #include <array>
+#include <cstdint>
 #include <d3d11.h>
 #include <winrt/base.h>
 
 namespace Util
 {
+	enum class VRDepthLayout
+	{
+		PerEye,
+		CombinedStereo,
+		Unknown
+	};
+
+	VRDepthLayout DetectVRDepthLayout(uint32_t a_depthWidth, int a_viewportWidthPerEye);
+	bool TryGetDepthSrvDimensions(ID3D11ShaderResourceView* a_depthSrv, uint32_t& o_width, uint32_t& o_height);
+
 	ID3D11ShaderResourceView* GetSRVFromRTV(ID3D11RenderTargetView* a_rtv);
 	ID3D11RenderTargetView* GetRTVFromSRV(ID3D11ShaderResourceView* a_srv);
 	std::string GetNameFromSRV(ID3D11ShaderResourceView* a_srv);
