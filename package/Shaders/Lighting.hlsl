@@ -3247,8 +3247,27 @@ if (alpha - AlphaTestRefRS < 0) {
 	psout.Parameters.w = psout.Diffuse.w;
 #		endif
 
-#		if defined(SSS) && defined(SKIN)
-	psout.Masks = float4(saturate(baseColor.a), !(Permutation::ExtraShaderDescriptor & Permutation::ExtraFlags::IsBeastRace), Color::RGBToYCoCg(directionalAmbientColor).x, psout.Diffuse.w);
+#		if defined(SSS) && (defined(SKIN) || defined(HAIR))
+	float humanClass = 0.0;
+	if (!(Permutation::ExtraShaderDescriptor & Permutation::ExtraFlags::IsBeastRace)) {
+		humanClass = (Permutation::ExtraShaderDescriptor & Permutation::ExtraFlags::IsFemale) ? 2.0 : 1.0;
+	}
+
+	float sssMask = 0.0;
+#			if defined(SKIN)
+	sssMask = saturate(baseColor.a);
+#			elif defined(HAIR)
+	float a = saturate(baseColor.a);
+	// Fixed, low-cost transition mask for brow/hairline blending in Burley SSS.
+	// This avoids derivative/depth-gated behavior and keeps runtime cost stable.
+	const float kHairTransitionStrength = 0.35;
+	const float2 kHairTransitionEdgeRange = float2(0.02, 0.20);
+	const float2 kHairTransitionBandRange = float2(0.35, 0.70);
+	float edgeRamp = smoothstep(kHairTransitionEdgeRange.x, kHairTransitionEdgeRange.y, a);
+	float midBand = 1.0 - smoothstep(kHairTransitionBandRange.x, kHairTransitionBandRange.y, a);
+	sssMask = saturate(kHairTransitionStrength * edgeRamp * midBand);
+#			endif
+	psout.Masks = float4(saturate(sssMask), humanClass, Color::RGBToYCoCg(directionalAmbientColor).x, psout.Diffuse.w);
 #		else
 	psout.Masks = float4(0, 0, Color::RGBToYCoCg(directionalAmbientColor).x, psout.Diffuse.w);
 #		endif

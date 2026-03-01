@@ -842,8 +842,16 @@ void State::UpdateSharedData([[maybe_unused]] bool a_inWorld, [[maybe_unused]] b
 		} else {
 			data.MipBias = 0;
 		}
-		// New: push the global refraction scale into the shared CB
 		data.RefractionScale = refractionScale;
+
+		data.SSSHumanMaleIntensity = sssHumanMaleIntensity;
+		data.SSSHumanMaleSaturation = sssHumanMaleSaturation;
+		data.SSSHumanMaleBrightness = sssHumanMaleBrightness;
+		data.SSSHumanMaleBaseSaturation = sssHumanMaleBaseSaturation;
+		data.SSSHumanFemaleIntensity = sssHumanFemaleIntensity;
+		data.SSSHumanFemaleSaturation = sssHumanFemaleSaturation;
+		data.SSSHumanFemaleBrightness = sssHumanFemaleBrightness;
+		data.SSSHumanFemaleBaseSaturation = sssHumanFemaleBaseSaturation;
 		sharedDataCB->Update(data);
 	}
 
