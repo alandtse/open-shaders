@@ -26,7 +26,7 @@ public:
 	{
 		uint32_t Enabled = true;
 		float TerrainCullDistance = 1024.0f;
-		float BlendStrength = 0.5f;
+		float BlendStrength = 0.25f;
 		float pad0 = 0.0f;
 	};
 	STATIC_ASSERT_ALIGNAS_16(Settings);

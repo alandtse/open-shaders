@@ -42,7 +42,7 @@ public:
 
 	struct Settings
 	{
-		uint EnableIBL = 1;
+		uint EnableIBL = 0;
 		uint EnableDiffuseIBL = 0;
 		uint PreserveFogLuminance = 0;
 		uint UseStaticIBL = 1;

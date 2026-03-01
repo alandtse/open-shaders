@@ -52,6 +52,12 @@ namespace
 		return std::clamp(a_resolutionMode, kResolutionModeMin, kResolutionModeMax);
 	}
 
+	void ApplyPlatformSettingOverrides(ScreenSpaceGI::Settings& a_settings)
+	{
+		a_settings.ResolutionMode = ClampResolutionMode(a_settings.ResolutionMode);
+		a_settings.VRCullDistance = ClampVRCullDistance(a_settings.VRCullDistance);
+	}
+
 	float2 GetHardenedSsgiFrameDim(float2 a_renderTexSize)
 	{
 		float2 frameDim = Util::ConvertToDynamic(a_renderTexSize);
@@ -106,11 +112,13 @@ namespace
 void ScreenSpaceGI::RestoreDefaultSettings()
 {
 	settings = {};
+	ApplyPlatformSettingOverrides(settings);
 	recompileFlag = true;
 }
 
 void ScreenSpaceGI::DrawSettings()
 {
+	ApplyPlatformSettingOverrides(settings);
 	static bool showAdvanced;
 
 	if (!ShadersOK())
@@ -153,8 +161,19 @@ void ScreenSpaceGI::DrawSettings()
 
 	{
 		auto qualityGuard = Util::DisableGuard(!settings.Enabled);
+		auto drawGreyPresetButton = [](const char* a_label, const ImVec2& a_size) {
+			ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.34f, 0.34f, 0.34f, 1.0f));
+			ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.42f, 0.42f, 0.42f, 1.0f));
+			ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.48f, 0.48f, 0.48f, 1.0f));
+			const bool clicked = ImGui::Button(a_label, a_size);
+			ImGui::PopStyleColor(3);
+			return clicked;
+		};
 
-		ImGui::Checkbox("Interiors Only", &settings.InteriorsOnly);
+		{
+			Util::BlueFrameStyleWrapper interiorsBlueStyle(true);
+			ImGui::Checkbox("Interiors Only", &settings.InteriorsOnly);
+		}
 		if (auto _tt = Util::HoverTooltipWrapper()) {
 			ImGui::Text("Run SSGI only in interiors to improve exterior performance.");
 		}
@@ -162,17 +181,21 @@ void ScreenSpaceGI::DrawSettings()
 		if (ImGui::BeginTable("Presets", 5)) {
 			ImGui::TableNextColumn();
 			if (ImGui::Button("AO only", { -1, 0 })) {
-				settings.NumSlices = 1;
+				settings.NumSlices = 3;
 				settings.NumSteps = 6;
-				settings.EnableBlur = true;
+				settings.ResolutionMode = 1;
+				settings.VRCullDistance = 1500.0f;
+				settings.AOPower = 1.8f;
+				settings.EnableBlur = false;
+				settings.EnableTemporalDenoiser = false;
 				settings.EnableGI = false;
 				recompileFlag = true;
 			}
 			if (auto _tt = Util::HoverTooltipWrapper())
-				ImGui::Text("1 Slice, 6 Steps, blur enabled, no GI\n");
+				ImGui::Text("Half res, AO power 1.8, 3 slices, 6 steps, no blur/temporal denoising; recommended for VR; use Full Res if you observe flimmer at a cost of speed.");
 
 			ImGui::TableNextColumn();
-			if (ImGui::Button("Low", { -1, 0 })) {
+			if (drawGreyPresetButton("Low", { -1, 0 })) {
 				settings.NumSlices = 10;
 				settings.NumSteps = 12;
 				settings.ResolutionMode = 2;
@@ -184,7 +207,7 @@ void ScreenSpaceGI::DrawSettings()
 				ImGui::Text("Quarter res and blurry.");
 
 			ImGui::TableNextColumn();
-			if (ImGui::Button("Standard", { -1, 0 })) {
+			if (drawGreyPresetButton("Standard", { -1, 0 })) {
 				settings.NumSlices = 4;
 				settings.NumSteps = 8;
 				settings.ResolutionMode = 1;
@@ -196,7 +219,7 @@ void ScreenSpaceGI::DrawSettings()
 				ImGui::Text("Half res and somewhat stable.");
 
 			ImGui::TableNextColumn();
-			if (ImGui::Button("Extreme", { -1, 0 })) {
+			if (drawGreyPresetButton("Extreme", { -1, 0 })) {
 				settings.NumSlices = 4;
 				settings.NumSteps = 8;
 				settings.ResolutionMode = 0;
@@ -222,6 +245,17 @@ void ScreenSpaceGI::DrawSettings()
 			ImGui::EndTable();
 		}
 
+		if (REL::Module::IsVR()) {
+			{
+				Util::BlueFrameStyleWrapper cullDistanceBlueStyle;
+				ImGui::SliderFloat("Shadow/GI Cull Distance", &settings.VRCullDistance, kVRCullDistanceMin, kVRCullDistanceMax, "%.0f units");
+			}
+			if (auto _tt = Util::HoverTooltipWrapper()) {
+				ImGui::Text("0 disables. Lower values improve performance but reduce distant AO/IL.");
+			}
+			settings.VRCullDistance = ClampVRCullDistance(settings.VRCullDistance);
+		}
+
 		if (showAdvanced) {
 			ImGui::SliderInt("Slices", (int*)&settings.NumSlices, 1, 10);
 			if (auto _tt = Util::HoverTooltipWrapper())
@@ -234,23 +268,14 @@ void ScreenSpaceGI::DrawSettings()
 				ImGui::Text(
 					"How many samples does it take in one direction.\n"
 					"Controls accuracy of lighting, and noise when effect radius is large.");
-
-			if (REL::Module::IsVR()) {
-				ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0.10f, 0.20f, 0.45f, 0.85f));
-				ImGui::PushStyleColor(ImGuiCol_FrameBgHovered, ImVec4(0.14f, 0.28f, 0.58f, 0.90f));
-				ImGui::PushStyleColor(ImGuiCol_FrameBgActive, ImVec4(0.18f, 0.34f, 0.66f, 0.95f));
-				ImGui::SliderFloat("Shadow/GI Cull Distance", &settings.VRCullDistance, kVRCullDistanceMin, kVRCullDistanceMax, "%.0f units");
-				ImGui::PopStyleColor(3);
-				if (auto _tt = Util::HoverTooltipWrapper()) {
-					ImGui::Text("0 disables. Lower values improve performance but reduce distant AO/IL.");
-				}
-				settings.VRCullDistance = ClampVRCullDistance(settings.VRCullDistance);
-			}
 		}
 
 		if (ImGui::BeginTable("Less Work", 3)) {
 			ImGui::TableNextColumn();
-			recompileFlag |= ImGui::RadioButton("Full Res", &settings.ResolutionMode, 0);
+			{
+				Util::BlueFrameStyleWrapper fullResBlueStyle(true);
+				recompileFlag |= ImGui::RadioButton("Full Res", &settings.ResolutionMode, 0);
+			}
 			ImGui::TableNextColumn();
 			recompileFlag |= ImGui::RadioButton("Half Res", &settings.ResolutionMode, 1);
 			ImGui::TableNextColumn();
@@ -422,8 +447,7 @@ void ScreenSpaceGI::DrawSettings()
 void ScreenSpaceGI::LoadSettings(json& o_json)
 {
 	settings = o_json;
-	settings.ResolutionMode = ClampResolutionMode(settings.ResolutionMode);
-	settings.VRCullDistance = ClampVRCullDistance(settings.VRCullDistance);
+	ApplyPlatformSettingOverrides(settings);
 
 	recompileFlag = true;
 }

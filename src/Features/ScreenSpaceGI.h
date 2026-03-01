@@ -24,7 +24,7 @@ public:
 			"bounces off surfaces to illuminate other objects naturally.";
 		if (REL::Module::IsVR()) {
 			desc +=
-				"\n\n In VR use AO with Full Res to prevent flimmer. Warning: This feature may have visual artifacts and "
+				"\n\n In VR use AO preset; use Full Res if you observe flimmer at a cost of speed. Warning: This feature may have visual artifacts and "
 				"can have a significant performance impact due to the nature of "
 				"screen space effects.";
 		}
@@ -64,12 +64,12 @@ public:
 		bool EnableGI = REL::Module::IsVR() ? false : true;  // AO only for VR by default
 		bool EnableExperimentalSpecularGI = false;
 		bool EnableVanillaSSAO = false;
-		bool InteriorsOnly = false;
+		bool InteriorsOnly = REL::Module::IsVR() ? true : false;
 		// performance/quality
-		uint NumSlices = REL::Module::IsVR() ? 1u : 4u;  // AO preset for VR
+		uint NumSlices = REL::Module::IsVR() ? 3u : 4u;
 		uint NumSteps = REL::Module::IsVR() ? 6u : 8u;   // AO preset for VR
-		int ResolutionMode = 1;                          // 0-full, 1-half, 2-quarter - DBF default
-		float VRCullDistance = 1000.0f;                  // 0 disables VR distance culling
+		int ResolutionMode = 1;  // Half Res default (VR and flat)
+		float VRCullDistance = 1500.0f;                  // 0 disables VR distance culling
 		// visual
 		float MinScreenRadius = 0.01f;
 		float AORadius = 256.f;
@@ -80,11 +80,11 @@ public:
 		float GISaturation = 0.8f;
 		float GIDistanceCompensation = 0.f;
 		// mix
-		float AOPower = 1.0f;
+		float AOPower = 1.8f;
 		float GIStrength = 1.0f;
 		// denoise
-		bool EnableTemporalDenoiser = true;
-		bool EnableBlur = true;
+		bool EnableTemporalDenoiser = REL::Module::IsVR() ? false : true;
+		bool EnableBlur = REL::Module::IsVR() ? false : true;
 		float DepthDisocclusion = .1f;
 		float NormalDisocclusion = .1f;
 		uint MaxAccumFrames = 16;

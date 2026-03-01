@@ -484,12 +484,6 @@ void Upscaling::LoadSettings(json& o_json)
 void Upscaling::RestoreDefaultSettings()
 {
 	settings = {};
-	if (globals::state && IsNvidiaAdapterDescription(globals::state->adapterDescription)) {
-		// NVIDIA defaults: DLAA (qualityMode=0), preset K (dlssPreset=1), light sharpening.
-		settings.qualityMode = 0;
-		settings.dlssPreset = 1;
-		settings.sharpnessDLSS = 0.1f;
-	}
 }
 
 void Upscaling::DataLoaded()
@@ -500,16 +494,6 @@ void Upscaling::DataLoaded()
 	// The game defaults this to a non-zero value
 	static auto fDRClampOffset = RE::GetINISetting("fDRClampOffset:Display");
 	fDRClampOffset->data.f = 0.0f;
-
-	// Apply NVIDIA defaults only when values still match legacy defaults.
-	if (globals::state && IsNvidiaAdapterDescription(globals::state->adapterDescription)) {
-		const bool usesLegacyDefaults = settings.qualityMode == 1u && settings.dlssPreset == 1u && settings.sharpnessDLSS <= FLT_EPSILON;
-		if (usesLegacyDefaults) {
-			settings.qualityMode = 0;
-			settings.dlssPreset = 1;
-			settings.sharpnessDLSS = 0.1f;
-		}
-	}
 }
 
 void Upscaling::Load()

@@ -81,7 +81,10 @@ void ScreenSpaceShadows::DrawSettings()
 				ImGui::Text("Raises or lowers VR shadow quality and GPU cost.");
 			}
 
-			ImGui::SliderFloat("Shadow Cull Distance", &bendSettings.VRCullDistance, kVRCullDistanceMin, kVRCullDistanceMax, "%.0f units");
+			{
+				Util::BlueFrameStyleWrapper blueFrameStyle;
+				ImGui::SliderFloat("Shadow Cull Distance", &bendSettings.VRCullDistance, kVRCullDistanceMin, kVRCullDistanceMax, "%.0f units");
+			}
 			if (auto _tt = Util::HoverTooltipWrapper()) {
 				ImGui::Text("0 disables. Lower values improve performance but remove distant shadows.");
 			}
