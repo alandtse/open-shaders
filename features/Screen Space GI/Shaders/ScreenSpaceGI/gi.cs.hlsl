@@ -50,9 +50,11 @@ Texture2D<float4> srcSceneColor : register(t9);
 #endif
 
 RWTexture2D<unorm float> outAo : register(u0);
+#ifdef GI
 RWTexture2D<float4> outY : register(u1);
 RWTexture2D<float2> outCoCg : register(u2);
 RWTexture2D<float4> outGISpecular : register(u3);
+#endif
 RWTexture2D<half3> outPrevGeo : register(u4);
 
 float GetDepthFade(float depth)
@@ -378,10 +380,12 @@ void CalculateGI(
 #ifdef CENTER_FULL_PASS
 	if (GetCenterFullMaskWeight(uv, eyeIndex) <= 0.0) {
 		outAo[pxCoord] = 0;
+#ifdef GI
 		outY[pxCoord] = 0;
 		outCoCg[pxCoord] = 0;
 #ifdef GI_SPECULAR
 		outGISpecular[pxCoord] = 0;
+#endif
 #endif
 		return;
 	}
@@ -415,16 +419,18 @@ void CalculateGI(
 
 #ifdef TEMPORAL_DENOISER
 		float lerpFactor = rcp(srcAccumFrames[pxCoord] * 255);
-
+#ifdef GI
 		currY = lerp(srcPrevY[pxCoord], currY, lerpFactor);
 		currCoCg = lerp(srcPrevCoCg[pxCoord], currCoCg, lerpFactor);
-#	ifdef GI_SPECULAR
+#endif
+#	if defined(GI) && defined(GI_SPECULAR)
 		currGIAOSpecular = lerp(srcPrevGISpecular[pxCoord], currGIAOSpecular, lerpFactor);
 #	endif
 	#endif
 	}
 
 	currAo *= vrCullFade;
+#ifdef GI
 	currY *= vrCullFade;
 	currCoCg *= vrCullFade;
 	currGIAOSpecular *= vrCullFade;
@@ -432,11 +438,14 @@ void CalculateGI(
 	currY = filterNaN(currY);
 	currCoCg = filterNaN(currCoCg);
 	currGIAOSpecular = filterNaN(currGIAOSpecular);
+#endif
 
 	outAo[pxCoord] = currAo;
+#ifdef GI
 	outY[pxCoord] = currY;
 	outCoCg[pxCoord] = currCoCg;
 #ifdef GI_SPECULAR
 	outGISpecular[pxCoord] = currGIAOSpecular;
+#endif
 #endif
 }

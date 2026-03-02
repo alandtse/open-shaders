@@ -19,14 +19,10 @@ public:
 	virtual std::pair<std::string, std::vector<std::string>> GetFeatureSummary() override
 	{
 		std::string desc =
-			"Screen Space Global Illumination adds realistic indirect lighting and "
-			"ambient occlusion to the game. This technique simulates how light "
-			"bounces off surfaces to illuminate other objects naturally.";
+			"Screen Space Global Illumination adds realistic indirect lighting and ambient occlusion.";
 		if (REL::Module::IsVR()) {
 			desc +=
-				"\n\n In VR use AO preset; use Full Res if you observe flimmer at a cost of speed. Warning: This feature may have visual artifacts and "
-				"can have a significant performance impact due to the nature of "
-				"screen space effects.";
+				"\n\nIn VR, use AO preset with Full Res for best quality at a cost of speed. For more performance use Foveated or Half/Quarter Res setting. Foveated is not compatible with IL.";
 		}
 		return std::make_pair(
 			desc,
@@ -57,6 +53,23 @@ public:
 	bool recompileFlag = false;
 	uint outputAoIdx = 0;
 	uint outputIlIdx = 0;
+
+	struct CenterDispatchRect
+	{
+		uint x = 0;
+		uint y = 0;
+		uint width = 0;
+		uint height = 0;
+	};
+
+	struct CenterRectCacheState
+	{
+		uint frameWidth = 0;
+		uint frameHeight = 0;
+		bool isVR = false;
+		float scale = -1.0f;
+		std::array<CenterDispatchRect, 2> rects{};
+	} centerRectCache;
 
 	struct Settings
 	{
@@ -186,5 +199,7 @@ public:
 	winrt::com_ptr<ID3D11ComputeShader> centerGIMaskedAOOnlyCompute = nullptr;
 	winrt::com_ptr<ID3D11ComputeShader> blurCompute = nullptr;
 	winrt::com_ptr<ID3D11ComputeShader> upsampleCompute = nullptr;
+	winrt::com_ptr<ID3D11ComputeShader> upsampleAOOnlyCompute = nullptr;
 	winrt::com_ptr<ID3D11ComputeShader> centerBlendCompute = nullptr;
+	winrt::com_ptr<ID3D11ComputeShader> centerBlendAOOnlyCompute = nullptr;
 };

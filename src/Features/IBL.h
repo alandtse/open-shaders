@@ -47,6 +47,7 @@ public:
 		uint PreserveFogLuminance = 0;
 		uint UseStaticIBL = 1;
 		uint EnableInterior = 0;
+		bool CaptureWeatherBaselineOnSliderChange = true;
 		float DiffuseIBLScale = 1.0f;
 		float DALCAmount = 1.0f;
 		float IBLSaturation = 1.0f;
