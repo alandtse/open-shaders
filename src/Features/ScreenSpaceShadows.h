@@ -36,7 +36,9 @@ public:
 		float ShadowContrast = 1.0f;
 		uint Enable = 1;
 		uint SampleCount = 1;
-		uint pad0[3];
+		float VRBaseSamplesAtReference = 44.0f;
+		float VRCullDistance = 0.0f;  // 0 = disabled
+		uint pad0[1];
 	};
 
 	BendSettings bendSettings;
@@ -71,6 +73,8 @@ public:
 	ConstantBuffer* raymarchCB = nullptr;
 	ID3D11ComputeShader* raymarchCS = nullptr;
 	ID3D11ComputeShader* raymarchRightCS = nullptr;
+	uint compiledSampleCount = 0;
+	uint compiledSampleCountRight = 0;
 
 	Texture2D* screenSpaceShadowsTexture = nullptr;
 
@@ -80,6 +84,7 @@ public:
 
 	virtual void ClearShaderCache() override;
 	uint GetScaledSampleCount(bool a_dynamic);
+	ID3D11ComputeShader* GetOrCreateRaymarchShader(ID3D11ComputeShader*& a_shader, uint& a_compiledSampleCount, bool a_rightEye);
 	ID3D11ComputeShader* GetComputeRaymarch();
 	ID3D11ComputeShader* GetComputeRaymarchRight();
 
