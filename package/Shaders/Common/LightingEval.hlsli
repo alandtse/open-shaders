@@ -171,12 +171,17 @@ void EvaluateWetnessLighting(float3 wetnessNormal, DirectContext context, float 
 {
 	const float wetnessStrength = saturate(1 - roughness);
 #	if defined(TRUE_PBR)
-	const float3 lightColor = context.coatLightColor;
+	float3 lightColor = context.coatLightColor;
 #	else
-	const float3 lightColor = context.lightColor;
+	float3 lightColor = context.lightColor;
 #	endif
 
-	const float wetnessF0 = 0.02;
+	float wetnessF0 = 0.02;
+	const bool useLegacyRainBehavior = SharedData::wetnessEffectsSettings.EnableLegacyRainBehavior != 0;
+	if (useLegacyRainBehavior) {
+		wetnessF0 = saturate(1.0 - roughness);
+		lightColor *= 0.1;
+	}
 
 	const float3 N = wetnessNormal;
 	const float3 V = context.viewDir;
@@ -207,7 +212,11 @@ void EvaluateWetnessLighting(float3 wetnessNormal, DirectContext context, float 
 
 float3 GetWetnessIndirectLobeWeights(inout IndirectLobeWeights lobeWeights, float3 wetnessNormal, float roughness, IndirectContext context)
 {
-	const float wetnessF0 = 0.02;
+	float wetnessF0 = 0.02;
+	const bool useLegacyRainBehavior = SharedData::wetnessEffectsSettings.EnableLegacyRainBehavior != 0;
+	if (useLegacyRainBehavior) {
+		wetnessF0 = saturate(1.0 - roughness);
+	}
 	const float wetnessStrength = saturate(1 - roughness);
 
 	const float3 N = wetnessNormal;
@@ -219,6 +228,11 @@ float3 GetWetnessIndirectLobeWeights(inout IndirectLobeWeights lobeWeights, floa
 	float3 specularLobeWeight = wetnessF0 * specularBRDF.x + specularBRDF.y;
 
 	specularLobeWeight *= wetnessStrength;
+	if (useLegacyRainBehavior) {
+		// Legacy 0.82-style cheap ambient sheen boost at glancing angles.
+		float glancing = saturate(1.0 - NdotV);
+		specularLobeWeight *= (1.0 + 0.25 * glancing);
+	}
 
 	lobeWeights.diffuse *= 1 - specularLobeWeight;
 	lobeWeights.specular *= 1 - specularLobeWeight;

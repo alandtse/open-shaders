@@ -41,12 +41,18 @@ public:
 		float MinRainWetness = 0.65f;
 		float SkinWetness = 0.95f;
 		float WeatherTransitionSpeed = 3.0f;
+		// Default surface drying heuristic:
+		// stone keeps wetness longer, dirt is baseline, grass dries fastest.
+		float StoneDryingMultiplier = 0.75f;
+		float DirtDryingMultiplier = 1.00f;
+		float GrassDryingMultiplier = 1.35f;
 
 		// Raindrop fx settings
 		uint EnableRaindropFx = true;
 		uint EnableSplashes = true;
 		uint EnableRipples = true;
 		uint EnableVanillaRipples = false;
+		uint EnableLegacyRainBehavior = false;
 		float RaindropFxRange = 1000.f;
 		float RaindropGridSize = 4.f;
 		float RaindropInterval = 1.0f;
@@ -69,9 +75,10 @@ public:
 		float Wetness;
 		float PuddleWetness;
 		Settings settings;
-		uint pad0;
+		uint pad0[5];
 	};
 	STATIC_ASSERT_ALIGNAS_16(PerFrame);
+	static_assert((sizeof(PerFrame) % 16) == 0, "WetnessEffects::PerFrame must stay 16-byte sized");
 
 	struct DebugSettings
 	{
@@ -142,8 +149,20 @@ public:
 
 private:
 	void DrawWeatherAnalysis() const;
+	void ResetRuntimeState();
 
 	bool splashesOfStormsLoaded = false;
+
+	struct RuntimeState
+	{
+		float wetnessDepth = 0.0f;
+		float puddleDepth = 0.0f;
+		float rainEventExposure = 0.0f;
+		float rainEventWeight = 0.0f;
+		double lastGameTimeSeconds = 0.0;
+		bool hasLastGameTime = false;
+	};
+	mutable RuntimeState runtimeState{};
 
 	// Weather wetness calculation result for debug display
 	struct WeatherWetnessResult

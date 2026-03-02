@@ -108,12 +108,16 @@ namespace SharedData
 		float MinRainWetness;
 		float SkinWetness;
 		float WeatherTransitionSpeed;
+		float StoneDryingMultiplier;
+		float DirtDryingMultiplier;
+		float GrassDryingMultiplier;
 		bool EnableRaindropFx;
 
 		bool EnableSplashes;
 		bool EnableRipples;
-        uint EnableVanillaRipples;
-        float RaindropFxRange;
+		uint EnableVanillaRipples;
+		uint EnableLegacyRainBehavior;
+		float RaindropFxRange;
 
 		float RaindropGridSizeRcp;
 		float RaindropIntervalRcp;
@@ -128,7 +132,7 @@ namespace SharedData
 		float RippleRadius;
 		float RippleBreadth;
 		float RippleLifetimeRcp;
-		float pad0;
+		float2 pad1;
 	};
 
 	struct SkylightingSettings

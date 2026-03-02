@@ -41,6 +41,6 @@ namespace FeatureVersions
         {"WaterEffects"sv,         {1,0,1}},
         {"WeatherPicker"sv,        {1,0,0}},
         {"WeatherEditor"sv,        {1,0,0}},  
-        {"WetnessEffects"sv,       {3,0,0}},
+        {"WetnessEffects"sv,       {3,1,0}},
     };
 }
