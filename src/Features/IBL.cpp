@@ -37,6 +37,7 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	PreserveFogLuminance,
 	UseStaticIBL,
 	EnableInterior,
+	CaptureWeatherBaselineOnSliderChange,
 	DiffuseIBLScale,
 	DALCAmount,
 	IBLSaturation,
@@ -45,6 +46,7 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 void IBL::DrawSettings()
 {
 	bool enableIBL = settings.EnableIBL != 0;
+	bool recaptureWeatherBaseline = false;
 	if (ImGui::Checkbox("Enable IBL", &enableIBL)) {
 		settings.EnableIBL = enableIBL ? 1u : 0u;
 	}
@@ -54,17 +56,30 @@ void IBL::DrawSettings()
 
 	ImGui::BeginDisabled(settings.EnableIBL == 0);
 	Util::WeatherUI::Checkbox("Enable Diffuse IBL", this, "EnableDiffuseIBL", (bool*)&settings.EnableDiffuseIBL);
-	Util::WeatherUI::SliderFloat("Diffuse IBL Scale", this, "DiffuseIBLScale", &settings.DiffuseIBLScale, 0.0f, 10.0f, "%.2f");
-	Util::WeatherUI::SliderFloat("Diffuse IBL Saturation", this, "IBLSaturation", &settings.IBLSaturation, 0.0f, 2.0f, "%.2f");
-	Util::WeatherUI::SliderFloat("DALC Amount", this, "DALCAmount", &settings.DALCAmount, 0.0f, 1.0f, "%.2f");
+	recaptureWeatherBaseline |= Util::WeatherUI::SliderFloat("Diffuse IBL Scale", this, "DiffuseIBLScale", &settings.DiffuseIBLScale, 0.0f, 10.0f, "%.2f");
+	recaptureWeatherBaseline |= Util::WeatherUI::SliderFloat("Diffuse IBL Saturation", this, "IBLSaturation", &settings.IBLSaturation, 0.0f, 2.0f, "%.2f");
+	recaptureWeatherBaseline |= Util::WeatherUI::SliderFloat("DALC Amount", this, "DALCAmount", &settings.DALCAmount, 0.0f, 1.0f, "%.2f");
 	ImGui::Checkbox("Enable Interior", (bool*)&settings.EnableInterior);
 	ImGui::Checkbox("Use Static IBL For Out-of-World Objects", (bool*)&settings.UseStaticIBL);
 	if (auto _tt = Util::HoverTooltipWrapper()) {
 		ImGui::Text("Enables the use of static IBL textures for objects that are not in the world (e.g. inventory items).");
 	}
-	Util::WeatherUI::SliderFloat("Fog Mix", this, "FogAmount", &settings.FogAmount, 0.0f, 1.0f, "%.2f");
+	recaptureWeatherBaseline |= Util::WeatherUI::SliderFloat("Fog Mix", this, "FogAmount", &settings.FogAmount, 0.0f, 1.0f, "%.2f");
 	ImGui::Checkbox("Preserve Fog Luminance", (bool*)&settings.PreserveFogLuminance);
+	ImGui::Checkbox("Sync Slider Edits to Weather Fallback", &settings.CaptureWeatherBaselineOnSliderChange);
+	if (auto _tt = Util::HoverTooltipWrapper()) {
+		ImGui::Text("Default: ON.");
+		ImGui::Text("When enabled, manual IBL slider edits update the weather fallback baseline.");
+		ImGui::Text("This prevents values from snapping back after interior/exterior transitions");
+		ImGui::Text("when the active weather has no override for that setting.");
+		ImGui::Text("Disable to keep legacy behavior.");
+	}
 	ImGui::EndDisabled();
+
+	// Keep weather fallback values in sync with user edits when enabled.
+	if (settings.CaptureWeatherBaselineOnSliderChange && recaptureWeatherBaseline) {
+		WeatherVariables::GlobalWeatherRegistry::GetSingleton()->CaptureFeatureUserSettings(GetShortName());
+	}
 }
 
 void IBL::LoadSettings(json& o_json)

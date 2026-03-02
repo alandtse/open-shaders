@@ -864,17 +864,45 @@ void Upscaling::CreateVRIntermediateTextures(uint32_t inWidth, uint32_t inHeight
 			vrIntermediateDepth[i]->CreateSRV(srvDesc);
 		}
 
-		vrIntermediateMotionVectors[i] = CreateTextureFromSource(mvecSrc, inWidth, inHeight, false, true, false, ("Upscale_MVec_" + suffix).c_str());
-		vrIntermediateReactiveMask[i] = CreateTextureFromSource(reactiveSrc, inWidth, inHeight, false, true, false, ("Upscale_Reactive_" + suffix).c_str());
-		vrIntermediateTransparencyMask[i] = CreateTextureFromSource(transparencySrc, inWidth, inHeight, false, true, false, ("Upscale_Transparency_" + suffix).c_str());
+		vrIntermediateMotionVectors[i] = CreateTextureFromSource(mvecSrc, inWidth, inHeight, false, true, true, ("Upscale_MVec_" + suffix).c_str());
+		vrIntermediateReactiveMask[i] = CreateTextureFromSource(reactiveSrc, inWidth, inHeight, false, true, true, ("Upscale_Reactive_" + suffix).c_str());
+		vrIntermediateTransparencyMask[i] = CreateTextureFromSource(transparencySrc, inWidth, inHeight, false, true, true, ("Upscale_Transparency_" + suffix).c_str());
 	}
 
 	logger::info("[Upscaling] Created VR intermediate textures: per-eye in {}x{}, out {}x{}",
 		inWidth, inHeight, outWidth, outHeight);
 }
 
+void Upscaling::EnsureVRIntermediateTextures(uint32_t inWidth, uint32_t inHeight, uint32_t outWidth, uint32_t outHeight,
+	ID3D11Resource* colorSrc, ID3D11Resource* mvecSrc, ID3D11Resource* reactiveSrc, ID3D11Resource* transparencySrc)
+{
+	bool hasAllIntermediates =
+		vrIntermediateColorIn[0] && vrIntermediateColorIn[1] &&
+		vrIntermediateColorOut[0] && vrIntermediateColorOut[1] &&
+		vrIntermediateDepth[0] && vrIntermediateDepth[1] &&
+		vrIntermediateMotionVectors[0] && vrIntermediateMotionVectors[1] &&
+		vrIntermediateReactiveMask[0] && vrIntermediateReactiveMask[1] &&
+		vrIntermediateTransparencyMask[0] && vrIntermediateTransparencyMask[1];
+
+	bool needsRecreate = !hasAllIntermediates;
+	if (!needsRecreate) {
+		needsRecreate =
+			(vrIntermediateColorIn[0]->desc.Width != inWidth || vrIntermediateColorIn[0]->desc.Height != inHeight ||
+				vrIntermediateColorOut[0]->desc.Width != outWidth || vrIntermediateColorOut[0]->desc.Height != outHeight ||
+				!vrIntermediateMotionVectors[0]->uav || !vrIntermediateMotionVectors[1]->uav ||
+				!vrIntermediateReactiveMask[0]->uav || !vrIntermediateReactiveMask[1]->uav ||
+				!vrIntermediateTransparencyMask[0]->uav || !vrIntermediateTransparencyMask[1]->uav);
+	}
+
+	if (needsRecreate) {
+		logger::info("[Upscaling] (Re)creating VR intermediates: per-eye in {}x{}, out {}x{}",
+			inWidth, inHeight, outWidth, outHeight);
+		CreateVRIntermediateTextures(inWidth, inHeight, outWidth, outHeight, colorSrc, mvecSrc, reactiveSrc, transparencySrc);
+	}
+}
+
 void Upscaling::PreparePerEyeInputs(ID3D11Resource* colorSrc, ID3D11Resource* depthSrc, ID3D11Resource* mvecSrc,
-	ID3D11Resource* reactiveSrc, ID3D11Resource* transparencySrc)
+	ID3D11Resource* reactiveSrc, ID3D11Resource* transparencySrc, bool copyAuxiliaryInputs)
 {
 	if (!globals::game::isVR)
 		return;
@@ -892,41 +920,66 @@ void Upscaling::PreparePerEyeInputs(ID3D11Resource* colorSrc, ID3D11Resource* de
 	uint32_t eyeWidthIn = (uint32_t)(renderSize.x / 2);
 	uint32_t eyeHeightIn = (uint32_t)renderSize.y;
 
-	bool needsRecreate = !vrIntermediateColorIn[0] || !vrIntermediateColorOut[0];
-	if (!needsRecreate) {
-		needsRecreate = (vrIntermediateColorIn[0]->desc.Width != eyeWidthIn ||
-						 vrIntermediateColorIn[0]->desc.Height != eyeHeightIn ||
-						 vrIntermediateColorOut[0]->desc.Width != eyeWidthOut ||
-						 vrIntermediateColorOut[0]->desc.Height != eyeHeightOut);
-	}
-	if (needsRecreate) {
-		logger::info("[Upscaling] (Re)creating VR intermediates: per-eye in {}x{}, out {}x{}",
-			eyeWidthIn, eyeHeightIn, eyeWidthOut, eyeHeightOut);
-		CreateVRIntermediateTextures(eyeWidthIn, eyeHeightIn, eyeWidthOut, eyeHeightOut,
-			colorSrc, mvecSrc, reactiveSrc, transparencySrc);
-	}
+	EnsureVRIntermediateTextures(eyeWidthIn, eyeHeightIn, eyeWidthOut, eyeHeightOut, colorSrc, mvecSrc, reactiveSrc, transparencySrc);
 
-	// Extract both eyes' inputs from combined stereo buffers
+	// Extract both eyes' required inputs from combined stereo buffers.
+	// Reactive / transparency / encoded motion vectors can be pre-generated directly per-eye by the encode pass.
 	for (uint32_t i = 0; i < 2; ++i) {
 		uint32_t offsetXIn = (i == 1) ? eyeWidthIn : 0;
 		D3D11_BOX srcBox = { offsetXIn, 0, 0, offsetXIn + eyeWidthIn, eyeHeightIn, 1 };
 
 		context->CopySubresourceRegion(vrIntermediateColorIn[i]->resource.get(), 0, 0, 0, 0, colorSrc, 0, &srcBox);
 		context->CopySubresourceRegion(vrIntermediateDepth[i]->resource.get(), 0, 0, 0, 0, depthSrc, 0, &srcBox);
-		context->CopySubresourceRegion(vrIntermediateMotionVectors[i]->resource.get(), 0, 0, 0, 0, mvecSrc, 0, &srcBox);
-		context->CopySubresourceRegion(vrIntermediateTransparencyMask[i]->resource.get(), 0, 0, 0, 0, transparencySrc, 0, &srcBox);
-		context->CopySubresourceRegion(vrIntermediateReactiveMask[i]->resource.get(), 0, 0, 0, 0, reactiveSrc, 0, &srcBox);
+		if (copyAuxiliaryInputs) {
+			context->CopySubresourceRegion(vrIntermediateMotionVectors[i]->resource.get(), 0, 0, 0, 0, mvecSrc, 0, &srcBox);
+			context->CopySubresourceRegion(vrIntermediateTransparencyMask[i]->resource.get(), 0, 0, 0, 0, transparencySrc, 0, &srcBox);
+			context->CopySubresourceRegion(vrIntermediateReactiveMask[i]->resource.get(), 0, 0, 0, 0, reactiveSrc, 0, &srcBox);
+		}
 	}
 
 	// Zero color where depth == 0 (HMD hidden area) in each per-eye buffer.
-	// Depth is read from the combined stereo SRV at the per-eye offset; color is written
-	// to the isolated per-eye UAV (ColorOffsetX = 0).
+	// Bind CS/SRV/CB once for both eyes to reduce per-frame CPU overhead.
 	auto& depthTexture = globals::game::renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kMAIN];
+	if (!vrClearHMDMaskCS) {
+		vrClearHMDMaskCS.attach((ID3D11ComputeShader*)Util::CompileShader(L"Data/Shaders/Upscaling/ClearHMDMaskCS.hlsl", {}, "cs_5_0"));
 
-	for (uint32_t i = 0; i < 2; ++i) {
-		uint32_t depthOffset = (i == 1) ? eyeWidthIn : 0;
-		ClearHMDMask(vrIntermediateColorIn[i]->uav.get(), depthTexture.depthSRV,
-			eyeWidthIn, eyeHeightIn, depthOffset, 0);
+		D3D11_BUFFER_DESC cbDesc = {};
+		cbDesc.ByteWidth = 16;  // 4 uints
+		cbDesc.Usage = D3D11_USAGE_DEFAULT;
+		cbDesc.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
+		cbDesc.CPUAccessFlags = 0;
+		DX::ThrowIfFailed(globals::d3d::device->CreateBuffer(&cbDesc, nullptr, vrClearHMDMaskCB.put()));
+	}
+
+	if (vrClearHMDMaskCS && vrClearHMDMaskCB) {
+		auto dispatchX = (eyeWidthIn + 7) / 8;
+		auto dispatchY = (eyeHeightIn + 7) / 8;
+
+		context->CSSetShader(vrClearHMDMaskCS.get(), nullptr, 0);
+
+		ID3D11ShaderResourceView* srvs[1] = { depthTexture.depthSRV };
+		context->CSSetShaderResources(0, 1, srvs);
+
+		ID3D11Buffer* cbs[1] = { vrClearHMDMaskCB.get() };
+		context->CSSetConstantBuffers(0, 1, cbs);
+
+		for (uint32_t i = 0; i < 2; ++i) {
+			uint32_t depthOffset = (i == 1) ? eyeWidthIn : 0;
+			uint32_t offsets[4] = { depthOffset, 0, 0, 0 };
+			context->UpdateSubresource(vrClearHMDMaskCB.get(), 0, nullptr, offsets, 0, 0);
+
+			ID3D11UnorderedAccessView* uavs[1] = { vrIntermediateColorIn[i]->uav.get() };
+			context->CSSetUnorderedAccessViews(0, 1, uavs, nullptr);
+			context->Dispatch(dispatchX, dispatchY, 1);
+		}
+
+		ID3D11ShaderResourceView* nullSRV[1] = { nullptr };
+		ID3D11UnorderedAccessView* nullUAV[1] = { nullptr };
+		ID3D11Buffer* nullCB[1] = { nullptr };
+		context->CSSetShaderResources(0, 1, nullSRV);
+		context->CSSetUnorderedAccessViews(0, 1, nullUAV, nullptr);
+		context->CSSetConstantBuffers(0, 1, nullCB);
+		context->CSSetShader(nullptr, nullptr, 0);
 	}
 
 	if (state->frameAnnotations)
@@ -972,9 +1025,9 @@ void Upscaling::ClearHMDMask(ID3D11UnorderedAccessView* colorUAV, ID3D11ShaderRe
 
 		D3D11_BUFFER_DESC cbDesc = {};
 		cbDesc.ByteWidth = 16;  // 4 uints
-		cbDesc.Usage = D3D11_USAGE_DYNAMIC;
+		cbDesc.Usage = D3D11_USAGE_DEFAULT;
 		cbDesc.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
-		cbDesc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
+		cbDesc.CPUAccessFlags = 0;
 		DX::ThrowIfFailed(globals::d3d::device->CreateBuffer(&cbDesc, nullptr, vrClearHMDMaskCB.put()));
 	}
 
@@ -990,13 +1043,8 @@ void Upscaling::ClearHMDMask(ID3D11UnorderedAccessView* colorUAV, ID3D11ShaderRe
 		ID3D11UnorderedAccessView* uavs[1] = { colorUAV };
 		context->CSSetUnorderedAccessViews(0, 1, uavs, nullptr);
 
-		D3D11_MAPPED_SUBRESOURCE mapped{};
-		context->Map(vrClearHMDMaskCB.get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped);
-
 		uint32_t offsets[4] = { depthOffsetX, colorOffsetX, 0, 0 };
-
-		memcpy(mapped.pData, offsets, sizeof(offsets));
-		context->Unmap(vrClearHMDMaskCB.get(), 0);
+		context->UpdateSubresource(vrClearHMDMaskCB.get(), 0, nullptr, offsets, 0, 0);
 
 		ID3D11Buffer* cbs[1] = { vrClearHMDMaskCB.get() };
 		context->CSSetConstantBuffers(0, 1, cbs);
@@ -1543,7 +1591,8 @@ void Upscaling::Upscale()
 	auto& main = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMAIN];
 	auto& motionVector = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMOTION_VECTOR];
 	const bool requiresEncodedMotionVectors = upscaleMethod == UpscaleMethod::kDLSS || upscaleMethod == UpscaleMethod::kFSR;
-	if (requiresEncodedMotionVectors && (!motionVectorCopyTexture || !motionVectorCopyTexture->uav || !motionVectorCopyTexture->resource)) {
+	const bool requiresCombinedEncodedMotionVectors = requiresEncodedMotionVectors && !globals::game::isVR;
+	if (requiresCombinedEncodedMotionVectors && (!motionVectorCopyTexture || !motionVectorCopyTexture->uav || !motionVectorCopyTexture->resource)) {
 		logger::error("[Upscaling] Missing encoded motion-vector resources for method {}", magic_enum::enum_name(upscaleMethod));
 		return;
 	}
@@ -1560,31 +1609,66 @@ void Upscaling::Upscale()
 		{
 			// Set up upscaling data constant buffer
 			auto renderSize = Util::ConvertToDynamic(globals::state->screenSize);
-			UpscalingDataCB upscalingData;
-			upscalingData.trueSamplingDim = renderSize;
-			upscalingData.invTrueSamplingDim = { renderSize.x > 0.0f ? 1.0f / renderSize.x : 0.0f, renderSize.y > 0.0f ? 1.0f / renderSize.y : 0.0f };
-			upscalingData.seamCenterX = renderSize.x * 0.5f;
-			upscalingData.seamHalfWidthPx = 2.0f;
-			upscalingData.maskDepthThreshold = 1e-6f;
-			upscalingData.vrSeamHardening = globals::game::isVR ? 1.0f : 0.0f;
-
-			upscalingDataCB->Update(upscalingData);
-			auto upscalingBuffer = upscalingDataCB->CB();
-			context->CSSetConstantBuffers(0, 1, &upscalingBuffer);
-
 			ID3D11ShaderResourceView* views[4] = { temporalAAMask.SRV, normals.SRV, motionVector.SRV, depth.depthSRV };
 			context->CSSetShaderResources(0, ARRAYSIZE(views), views);
 
-			ID3D11UnorderedAccessView* uavs[3] = {
-				reactiveMaskTexture->uav.get(),
-				transparencyCompositionMaskTexture->uav.get(),
-				(upscaleMethod == UpscaleMethod::kDLSS || upscaleMethod == UpscaleMethod::kFSR) ? motionVectorCopyTexture->uav.get() : nullptr
-			};
-			context->CSSetUnorderedAccessViews(0, ARRAYSIZE(uavs), uavs, nullptr);
-
+			auto upscalingBuffer = upscalingDataCB->CB();
+			context->CSSetConstantBuffers(0, 1, &upscalingBuffer);
 			context->CSSetShader(GetEncodeTexturesCS(), nullptr, 0);
 
-			context->Dispatch(dispatchCount.x, dispatchCount.y, 1);
+			if (globals::game::isVR) {
+				uint32_t eyeWidthOut = (uint32_t)(state->screenSize.x / 2);
+				uint32_t eyeHeightOut = (uint32_t)state->screenSize.y;
+				uint32_t eyeWidthIn = (uint32_t)(renderSize.x / 2);
+				uint32_t eyeHeightIn = (uint32_t)renderSize.y;
+
+				EnsureVRIntermediateTextures(eyeWidthIn, eyeHeightIn, eyeWidthOut, eyeHeightOut,
+					main.texture, motionVector.texture, reactiveMaskTexture->resource.get(), transparencyCompositionMaskTexture->resource.get());
+
+				for (uint32_t i = 0; i < 2; ++i) {
+					UpscalingDataCB upscalingData{};
+					upscalingData.dispatchDim = { (float)eyeWidthIn, (float)eyeHeightIn };
+					upscalingData.trueSamplingDim = renderSize;
+					upscalingData.invTrueSamplingDim = { renderSize.x > 0.0f ? 1.0f / renderSize.x : 0.0f, renderSize.y > 0.0f ? 1.0f / renderSize.y : 0.0f };
+					upscalingData.seamCenterX = renderSize.x * 0.5f;
+					upscalingData.seamHalfWidthPx = 2.0f;
+					upscalingData.maskDepthThreshold = 1e-6f;
+					upscalingData.vrSeamHardening = 1.0f;
+					upscalingData.sourceOffset = { i == 1 ? (float)eyeWidthIn : 0.0f, 0.0f };
+
+					upscalingDataCB->Update(upscalingData);
+
+					ID3D11UnorderedAccessView* uavs[3] = {
+						vrIntermediateReactiveMask[i]->uav.get(),
+						vrIntermediateTransparencyMask[i]->uav.get(),
+						vrIntermediateMotionVectors[i]->uav.get()
+					};
+					context->CSSetUnorderedAccessViews(0, ARRAYSIZE(uavs), uavs, nullptr);
+
+					auto eyeDispatchX = (eyeWidthIn + 7) / 8;
+					auto eyeDispatchY = (eyeHeightIn + 7) / 8;
+					context->Dispatch(eyeDispatchX, eyeDispatchY, 1);
+				}
+			} else {
+				UpscalingDataCB upscalingData{};
+				upscalingData.dispatchDim = renderSize;
+				upscalingData.trueSamplingDim = renderSize;
+				upscalingData.invTrueSamplingDim = { renderSize.x > 0.0f ? 1.0f / renderSize.x : 0.0f, renderSize.y > 0.0f ? 1.0f / renderSize.y : 0.0f };
+				upscalingData.seamCenterX = renderSize.x * 0.5f;
+				upscalingData.seamHalfWidthPx = 2.0f;
+				upscalingData.maskDepthThreshold = 1e-6f;
+				upscalingData.vrSeamHardening = 0.0f;
+				upscalingData.sourceOffset = { 0.0f, 0.0f };
+				upscalingDataCB->Update(upscalingData);
+
+				ID3D11UnorderedAccessView* uavs[3] = {
+					reactiveMaskTexture->uav.get(),
+					transparencyCompositionMaskTexture->uav.get(),
+					requiresEncodedMotionVectors ? motionVectorCopyTexture->uav.get() : nullptr
+				};
+				context->CSSetUnorderedAccessViews(0, ARRAYSIZE(uavs), uavs, nullptr);
+				context->Dispatch(dispatchCount.x, dispatchCount.y, 1);
+			}
 		}
 
 		ID3D11ShaderResourceView* views[4] = { nullptr, nullptr, nullptr, nullptr };
@@ -1594,7 +1678,7 @@ void Upscaling::Upscale()
 		context->CSSetUnorderedAccessViews(0, ARRAYSIZE(uavs), uavs, nullptr);
 
 		ID3D11Buffer* nullBuffer = nullptr;
-		context->CSSetConstantBuffers(7, 1, &nullBuffer);
+		context->CSSetConstantBuffers(0, 1, &nullBuffer);
 
 		ID3D11ComputeShader* shader = nullptr;
 		context->CSSetShader(shader, nullptr, 0);
@@ -1604,7 +1688,7 @@ void Upscaling::Upscale()
 
 	{
 		state->BeginPerfEvent("Upscaling");
-		auto motionVectorResource = motionVectorCopyTexture->resource.get();
+		ID3D11Resource* motionVectorResource = globals::game::isVR ? motionVector.texture : motionVectorCopyTexture->resource.get();
 
 		if (upscaleMethod == UpscaleMethod::kDLSS) {
 			streamline.Upscale(main.texture, reactiveMaskTexture->resource.get(), transparencyCompositionMaskTexture->resource.get(), motionVectorResource);

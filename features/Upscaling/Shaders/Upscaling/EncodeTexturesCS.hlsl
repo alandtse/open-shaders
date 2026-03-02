@@ -2,12 +2,15 @@
 
 cbuffer UpscalingData : register(b0)
 {
+	float2 DispatchDim;
 	float2 TrueSamplingDim;  // BufferDim.xy * ResolutionScale
 	float2 InvTrueSamplingDim;
 	float SeamCenterX;
 	float SeamHalfWidthPx;
 	float MaskDepthThreshold;
 	float VRSeamHardening;
+	float2 SourceOffset;
+	float2 pad0;
 };
 
 Texture2D<float2> TAAMask : register(t0);
@@ -24,7 +27,7 @@ float IsMaskedDepth(float depth)
 	return depth <= MaskDepthThreshold ? 1.0 : 0.0;
 }
 
-float ComputeMaskEdgeFactor(uint2 pixelPos)
+float ComputeMaskEdgeFactor(uint2 sourcePos)
 {
 	static const int2 offsets[4] = {
 		int2(1, 0),
@@ -33,12 +36,12 @@ float ComputeMaskEdgeFactor(uint2 pixelPos)
 		int2(0, -1)
 	};
 
-	float centerMasked = IsMaskedDepth(DepthMask[pixelPos]);
+	float centerMasked = IsMaskedDepth(DepthMask[sourcePos]);
 	float edge = 0.0;
 
 	[unroll]
 	for (uint i = 0; i < 4; ++i) {
-		int2 samplePos = int2(pixelPos) + offsets[i];
+		int2 samplePos = int2(sourcePos) + offsets[i];
 		if (any(samplePos < 0) || any(samplePos >= int2(TrueSamplingDim)))
 			continue;
 
@@ -49,31 +52,34 @@ float ComputeMaskEdgeFactor(uint2 pixelPos)
 	return edge;
 }
 
-float ComputeSeamFactor(uint2 pixelPos)
+float ComputeSeamFactor(uint2 sourcePos)
 {
 	float seamHalfWidth = max(SeamHalfWidthPx, 0.0001);
 	float seamCenterUv = SeamCenterX * InvTrueSamplingDim.x;
-	float pixelUv = (float(pixelPos.x) + 0.5) * InvTrueSamplingDim.x;
+	float pixelUv = (float(sourcePos.x) + 0.5) * InvTrueSamplingDim.x;
 	float seamDistance = abs(pixelUv - seamCenterUv) * TrueSamplingDim.x;
 	return saturate((seamHalfWidth - seamDistance) / seamHalfWidth);
 }
 
 [numthreads(8, 8, 1)] void main(uint3 dispatchID : SV_DispatchThreadID) {
-	// Early exit if dispatch thread is outside true sampling dimensions
-	if (any(dispatchID.xy >= uint2(TrueSamplingDim)))
+	uint2 localPos = dispatchID.xy;
+	if (any(localPos >= uint2(DispatchDim)))
 		return;
 
-	float2 taaMask = TAAMask[dispatchID.xy];
-	float transparencyCompositionMask = NormalsWaterMask[dispatchID.xy].z;
+	uint2 sourceOffset = uint2(SourceOffset + 0.5);
+	uint2 sourcePos = localPos + sourceOffset;
+
+	float2 taaMask = TAAMask[sourcePos];
+	float transparencyCompositionMask = NormalsWaterMask[sourcePos].z;
 	float reactiveMask = taaMask.x * 0.1 + taaMask.y;
 
 #if defined(DLSS) || defined(FSR)
-	float2 motionVector = MotionVectorMask[dispatchID.xy];
+	float2 motionVector = MotionVectorMask[sourcePos];
 	float2 outputMotionVector = motionVector;
 #endif
 
 #if defined(DLSS)
-	float depth = DepthMask[dispatchID.xy];
+	float depth = DepthMask[sourcePos];
 	float nearFactor = smoothstep(4096.0 * 2.5, 0.0, SharedData::GetScreenDepth(depth));
 
 	// Find longest motion vector in 5x5 neighborhood
@@ -84,7 +90,7 @@ float ComputeSeamFactor(uint2 pixelPos)
 	for (int y = -2; y <= 2; y++) {
 		[unroll]
 		for (int x = -2; x <= 2; x++) {
-			int2 samplePos = int2(dispatchID.xy) + int2(x, y);
+			int2 samplePos = int2(sourcePos) + int2(x, y);
 
 			// Skip samples outside true sampling dimensions
 			if (any(samplePos < 0) || any(samplePos >= int2(TrueSamplingDim)))
@@ -111,8 +117,8 @@ float ComputeSeamFactor(uint2 pixelPos)
 #endif
 
 	if (VRSeamHardening > 0.5) {
-		float seamFactor = ComputeSeamFactor(dispatchID.xy);
-		float maskEdgeFactor = ComputeMaskEdgeFactor(dispatchID.xy);
+		float seamFactor = ComputeSeamFactor(sourcePos);
+		float maskEdgeFactor = ComputeMaskEdgeFactor(sourcePos);
 
 #if defined(DLSS) || defined(FSR)
 		// Reduce temporal reprojection confidence near eye seam and HMD mask edges.
@@ -127,10 +133,10 @@ float ComputeSeamFactor(uint2 pixelPos)
 	}
 
 #if defined(DLSS) || defined(FSR)
-	MotionVectorOutput[dispatchID.xy] = outputMotionVector;
+	MotionVectorOutput[localPos] = outputMotionVector;
 #endif
 
-	ReactiveMask[dispatchID.xy] = reactiveMask;
+	ReactiveMask[localPos] = reactiveMask;
 
-	TransparencyCompositionMask[dispatchID.xy] = transparencyCompositionMask;
+	TransparencyCompositionMask[localPos] = transparencyCompositionMask;
 }
