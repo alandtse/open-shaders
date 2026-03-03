@@ -89,6 +89,17 @@ namespace
 			a_data.RoomIndex = -1;
 		}
 	}
+
+	int GetValidShadowMaskIndex(RE::BSLight* a_light) noexcept
+	{
+		if (!a_light || !a_light->IsShadowLight()) {
+			return -1;
+		}
+
+		auto* shadowLight = static_cast<RE::BSShadowLight*>(a_light);
+		GET_INSTANCE_MEMBER(maskIndex, shadowLight);
+		return maskIndex < 32 ? static_cast<int>(maskIndex) : -1;
+	}
 }
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
@@ -477,7 +488,6 @@ void LightLimitFix::BSLightingShader_SetupGeometry_GeometrySetupConstantPointLig
 	const uint32_t availableSceneLights = a_pass->numLights > 0 ? (a_pass->numLights - 1) : 0;
 	const uint32_t requestedStrictLights = inWorld ? 0u : availableSceneLights;
 	const uint32_t strictLightCount = std::min(requestedStrictLights, kStrictLightCapacity);
-	const uint32_t shadowLightCount = std::min(static_cast<uint32_t>(a_pass->numShadowLights), availableSceneLights);
 
 	ClearStrictLightData(strictLightDataTemp, false);
 
@@ -514,28 +524,24 @@ void LightLimitFix::BSLightingShader_SetupGeometry_GeometrySetupConstantPointLig
 
 			SetLightPosition(light, niLight->world.translate, inWorld);
 
-			if (i < shadowLightCount && bsLight->IsShadowLight()) {
-				auto* shadowLight = static_cast<RE::BSShadowLight*>(bsLight);
-				GET_INSTANCE_MEMBER(maskIndex, shadowLight);
-				if (maskIndex < 32) {
-					light.shadowMaskIndex = maskIndex;
-					light.lightFlags.set(LightFlags::Shadow);
-				}
+			if (const int shadowMaskIndex = GetValidShadowMaskIndex(bsLight); shadowMaskIndex >= 0) {
+				light.shadowMaskIndex = static_cast<uint32_t>(shadowMaskIndex);
+				light.lightFlags.set(LightFlags::Shadow);
+			} else if (bsLight->IsShadowLight()) {
+				light.shadowMaskIndex = 255;
 			}
 
 			strictLightDataTemp.StrictLights[outIndex++] = light;
 		}
 		strictLightDataTemp.NumStrictLights = outIndex;
 
-		for (uint32_t i = 0; i < shadowLightCount; i++) {
+		for (uint32_t i = 0; i < strictLightCount; i++) {
 			auto bsLight = a_pass->sceneLights[i + 1];
-			if (!bsLight || !bsLight->IsShadowLight()) {
+			if (!bsLight) {
 				continue;
 			}
-			auto* shadowLight = static_cast<RE::BSShadowLight*>(bsLight);
-			GET_INSTANCE_MEMBER(maskIndex, shadowLight);
-			if (maskIndex < 32) {
-				strictLightDataTemp.ShadowBitMask |= (1u << maskIndex);
+			if (const int shadowMaskIndex = GetValidShadowMaskIndex(bsLight); shadowMaskIndex >= 0) {
+				strictLightDataTemp.ShadowBitMask |= (1u << shadowMaskIndex);
 			}
 		}
 	}
@@ -1159,11 +1165,11 @@ void LightLimitFix::UpdateLights()
 						light.lightFlags.set(LightFlags::PortalStrict);
 					}
 
-					if (bsLight->IsShadowLight()) {
-						auto* shadowLight = static_cast<RE::BSShadowLight*>(bsLight);
-						GET_INSTANCE_MEMBER(maskIndex, shadowLight);
-						light.shadowMaskIndex = maskIndex;
+					if (const int shadowMaskIndex = GetValidShadowMaskIndex(bsLight); shadowMaskIndex >= 0) {
+						light.shadowMaskIndex = static_cast<uint32_t>(shadowMaskIndex);
 						light.lightFlags.set(LightFlags::Shadow);
+					} else if (bsLight->IsShadowLight()) {
+						light.shadowMaskIndex = 255;
 					}
 
 					// Check for inactive shadow light

@@ -715,8 +715,20 @@ namespace Hooks
 	};
 	bool ShouldSkipRenderPassForParticleLights(RE::BSRenderPass* a_pass, uint32_t a_technique)
 	{
-		return globals::features::lightLimitFix.loaded &&
-		       !globals::features::lightLimitFix.CheckParticleLights(a_pass, a_technique);
+#if defined(_MSC_VER)
+		__try
+#endif
+		{
+			return globals::features::lightLimitFix.loaded &&
+			       !globals::features::lightLimitFix.CheckParticleLights(a_pass, a_technique);
+		}
+#if defined(_MSC_VER)
+		__except (1)
+		{
+			// Fail open on transient invalid render-pass data to avoid crashing render-thread hooks.
+			return false;
+		}
+#endif
 	}
 
 	// This is from 1.4.0 but absent in 1.4.6

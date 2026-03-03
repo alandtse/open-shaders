@@ -71,6 +71,7 @@ public:
 		uint pad1;
 	};
 	STATIC_ASSERT_ALIGNAS_16(LightData);
+	static_assert(sizeof(LightData) == 96);
 
 	struct ClusterAABB
 	{
@@ -111,6 +112,7 @@ public:
 		uint ClusterSize[4];
 	};
 	STATIC_ASSERT_ALIGNAS_16(PerFrame);
+	static_assert(sizeof(PerFrame) == 32);
 
 	PerFrame GetCommonBufferData();
 
@@ -136,8 +138,8 @@ public:
 	ConstantBuffer* strictLightDataCB = nullptr;
 
 	int eyeCount = !REL::Module::IsVR() ? 1 : 2;
-	bool previousEnableLightsVisualisation = settings.EnableLightsVisualisation;
-	bool currentEnableLightsVisualisation = settings.EnableLightsVisualisation;
+	bool previousEnableLightsVisualisation = false;
+	bool currentEnableLightsVisualisation = false;
 
 	ID3D11ComputeShader* clusterBuildingCS = nullptr;
 	ID3D11ComputeShader* clusterCullingCS = nullptr;
