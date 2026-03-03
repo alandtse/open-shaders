@@ -25,7 +25,12 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	frameGenerationForceEnable,
 	streamlineLogLevel,
 	sharpnessFSR,
-	sharpnessDLSS);
+	sharpnessDLSS,
+	reflexLowLatencyMode,
+	reflexLowLatencyBoost,
+	reflexUseMarkersToOptimize,
+	reflexUseFPSLimit,
+	reflexFPSLimit);
 
 decltype(&D3D11CreateDeviceAndSwapChain) ptrD3D11CreateDeviceAndSwapChainUpscaling;
 
@@ -127,6 +132,9 @@ HRESULT WINAPI hk_D3D11CreateDeviceAndSwapChainUpscaling(
 				upscaling.UpgradeBackendInterface((void**)&(*ppDevice));
 				upscaling.UpgradeBackendInterface((void**)&(*ppSwapChain));
 				upscaling.SetBackendD3DDevice(*ppDevice);
+				// Some Streamline features (notably Reflex/PCL) may not report
+				// load/support status reliably until the D3D device is bound.
+				upscaling.CheckBackendFeatures(pAdapter);
 				upscaling.PostBackendDevice();
 			}
 
@@ -154,6 +162,8 @@ HRESULT WINAPI hk_D3D11CreateDeviceAndSwapChainUpscaling(
 		upscaling.UpgradeBackendInterface((void**)&(*ppDevice));
 		upscaling.UpgradeBackendInterface((void**)&(*ppSwapChain));
 		upscaling.SetBackendD3DDevice(*ppDevice);
+		// Re-check after device bind to ensure feature availability is accurate.
+		upscaling.CheckBackendFeatures(pAdapter);
 		upscaling.PostBackendDevice();
 	}
 
@@ -343,6 +353,86 @@ void Upscaling::DrawSettings()
 		}
 	}
 
+	if (ImGui::TreeNodeEx("NVIDIA Reflex", ImGuiTreeNodeFlags_DefaultOpen)) {
+		const bool reflexAvailable = streamline.initialized && streamline.featureReflex;
+		const bool markerOptimizationAvailable = reflexAvailable && streamline.featurePCL;
+		const char* toggleModes[] = { "Disabled", "Enabled" };
+
+		if (!reflexAvailable) {
+			ImGui::TextDisabled("Reflex is not available. Ensure sl.reflex.dll is present and restart.");
+		}
+
+		if (!reflexAvailable)
+			ImGui::BeginDisabled();
+
+		int lowLatencyMode = settings.reflexLowLatencyMode ? 1 : 0;
+		ImGui::SliderInt("Low Latency Mode", &lowLatencyMode, 0, 1, toggleModes[lowLatencyMode]);
+		if (auto _tt = Util::HoverTooltipWrapper()) {
+			ImGui::TextUnformatted("Cuts input delay by syncing CPU work closer to the GPU.");
+			ImGui::TextUnformatted("May reduce max FPS a little, but usually feels much more responsive.");
+		}
+		settings.reflexLowLatencyMode = lowLatencyMode > 0;
+
+		if (!settings.reflexLowLatencyMode)
+			ImGui::BeginDisabled();
+
+		int lowLatencyBoost = settings.reflexLowLatencyBoost ? 1 : 0;
+		ImGui::SliderInt("Low Latency Boost", &lowLatencyBoost, 0, 1, toggleModes[lowLatencyBoost]);
+		if (auto _tt = Util::HoverTooltipWrapper()) {
+			ImGui::TextUnformatted("Keeps GPU clocks higher to avoid latency spikes at low GPU load.");
+			ImGui::TextUnformatted("Useful if frametime jumps and responsiveness feels inconsistent.");
+			ImGui::TextColored(ImVec4(1.0f, 0.25f, 0.25f, 1.0f), "Increases power draw and heat, so leave Off unless needed.");
+		}
+		settings.reflexLowLatencyBoost = lowLatencyBoost > 0;
+
+		if (!settings.reflexLowLatencyMode)
+			ImGui::EndDisabled();
+
+		if (!markerOptimizationAvailable)
+			ImGui::BeginDisabled();
+
+		int markersToOptimize = settings.reflexUseMarkersToOptimize ? 1 : 0;
+		ImGui::SliderInt("Use Markers To Optimize", &markersToOptimize, 0, 1, toggleModes[markersToOptimize]);
+		if (auto _tt = Util::HoverTooltipWrapper()) {
+			ImGui::TextUnformatted("Uses frame markers for tighter Reflex timing.");
+			ImGui::TextUnformatted("Try On first; turn Off if it causes stutter on your setup.");
+		}
+		settings.reflexUseMarkersToOptimize = markersToOptimize > 0;
+
+		if (!markerOptimizationAvailable)
+			ImGui::EndDisabled();
+
+		if (!markerOptimizationAvailable) {
+			ImGui::TextDisabled("Marker optimization unavailable (PCL not loaded).");
+		}
+
+		int useFPSLimit = settings.reflexUseFPSLimit ? 1 : 0;
+		ImGui::SliderInt("Use FPS Limit", &useFPSLimit, 0, 1, toggleModes[useFPSLimit]);
+		if (auto _tt = Util::HoverTooltipWrapper()) {
+			ImGui::TextUnformatted("Uses Reflex's internal FPS cap for steadier frametimes.");
+			ImGui::TextUnformatted("Can lower latency versus uncapped rendering.");
+		}
+		settings.reflexUseFPSLimit = useFPSLimit > 0;
+
+		if (!settings.reflexUseFPSLimit)
+			ImGui::BeginDisabled();
+
+		settings.reflexFPSLimit = std::clamp(settings.reflexFPSLimit, 20.0f, 240.0f);
+		ImGui::SliderFloat("FPS Limit", &settings.reflexFPSLimit, 20.0f, 240.0f, "%.0f");
+		if (auto _tt = Util::HoverTooltipWrapper()) {
+			ImGui::TextUnformatted("Set your frame cap target.");
+			ImGui::TextUnformatted("Start about 2-3 FPS below refresh rate (e.g. 117 for 120 Hz).");
+		}
+
+		if (!settings.reflexUseFPSLimit)
+			ImGui::EndDisabled();
+
+		if (!reflexAvailable)
+			ImGui::EndDisabled();
+
+		ImGui::TreePop();
+	}
+
 	if (ImGui::TreeNodeEx("Backend Diagnostics")) {
 		// Streamline log level selection
 		const char* logLevels[] = { "Off", "Default", "Verbose" };
@@ -472,6 +562,7 @@ void Upscaling::LoadSettings(json& o_json)
 		logger::warn("[Upscaling] Loaded upscaleMethodNoDLSS {} out of range, clamping to {}", settings.upscaleMethodNoDLSS, enumCount ? enumCount - 1 : 0);
 		settings.upscaleMethodNoDLSS = enumCount ? enumCount - 1 : 0;
 	}
+	settings.reflexFPSLimit = std::clamp(settings.reflexFPSLimit, 20.0f, 240.0f);
 	auto iniSettingCollection = globals::game::iniPrefSettingCollection;
 	if (iniSettingCollection) {
 		auto setting = iniSettingCollection->GetSetting("bUseTAA:Display");

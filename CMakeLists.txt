@@ -75,6 +75,120 @@ find_package(Tracy CONFIG REQUIRED)
 find_package(directx-headers CONFIG REQUIRED)
 add_subdirectory(${CMAKE_SOURCE_DIR}/cmake/Streamline)
 
+set(STREAMLINE_RUNTIME_DLLS "")
+if(WIN32 AND EXISTS "${CMAKE_SOURCE_DIR}/extern/Streamline-DX12/build.bat")
+    set(STREAMLINE_RUNTIME_ROOT "${CMAKE_SOURCE_DIR}/extern/Streamline-DX12")
+    set(STREAMLINE_RUNTIME_OUTPUT_DIR "${CMAKE_BINARY_DIR}/streamline-runtime")
+    # Local self-built Streamline plugins are unsigned. Use Develop runtime so
+    # interposer secure-signature enforcement is disabled and Reflex/PCL can load.
+    set(STREAMLINE_RUNTIME_CONFIG_FLAG "-develop")
+    set(STREAMLINE_RUNTIME_CONFIG_DIR "Develop_x64")
+    set(
+        STREAMLINE_COMMON_ARTIFACT_DLL
+        "${STREAMLINE_RUNTIME_ROOT}/_artifacts/sl.common/${STREAMLINE_RUNTIME_CONFIG_DIR}/sl.common.dll"
+    )
+    set(
+        STREAMLINE_COMMON_RUNTIME_DLL
+        "${STREAMLINE_RUNTIME_OUTPUT_DIR}/sl.common.dll"
+    )
+    set(
+        STREAMLINE_INTERPOSER_ARTIFACT_DLL
+        "${STREAMLINE_RUNTIME_ROOT}/_artifacts/sl.interposer/${STREAMLINE_RUNTIME_CONFIG_DIR}/sl.interposer.dll"
+    )
+    set(
+        STREAMLINE_INTERPOSER_RUNTIME_DLL
+        "${STREAMLINE_RUNTIME_OUTPUT_DIR}/sl.interposer.dll"
+    )
+    set(
+        STREAMLINE_DLSS_ARTIFACT_DLL
+        "${STREAMLINE_RUNTIME_ROOT}/_artifacts/sl.dlss/${STREAMLINE_RUNTIME_CONFIG_DIR}/sl.dlss.dll"
+    )
+    set(
+        STREAMLINE_DLSS_RUNTIME_DLL
+        "${STREAMLINE_RUNTIME_OUTPUT_DIR}/sl.dlss.dll"
+    )
+    set(
+        STREAMLINE_REFLEX_ARTIFACT_DLL
+        "${STREAMLINE_RUNTIME_ROOT}/_artifacts/sl.reflex/${STREAMLINE_RUNTIME_CONFIG_DIR}/sl.reflex.dll"
+    )
+    set(
+        STREAMLINE_REFLEX_RUNTIME_DLL
+        "${STREAMLINE_RUNTIME_OUTPUT_DIR}/sl.reflex.dll"
+    )
+    set(
+        STREAMLINE_PCL_ARTIFACT_DLL
+        "${STREAMLINE_RUNTIME_ROOT}/_artifacts/sl.pcl/${STREAMLINE_RUNTIME_CONFIG_DIR}/sl.pcl.dll"
+    )
+    set(
+        STREAMLINE_PCL_RUNTIME_DLL
+        "${STREAMLINE_RUNTIME_OUTPUT_DIR}/sl.pcl.dll"
+    )
+
+    add_custom_command(
+        OUTPUT
+            "${STREAMLINE_COMMON_RUNTIME_DLL}"
+            "${STREAMLINE_INTERPOSER_RUNTIME_DLL}"
+            "${STREAMLINE_DLSS_RUNTIME_DLL}"
+            "${STREAMLINE_REFLEX_RUNTIME_DLL}"
+            "${STREAMLINE_PCL_RUNTIME_DLL}"
+        COMMAND
+            ${CMAKE_COMMAND} -E make_directory
+            "${STREAMLINE_RUNTIME_OUTPUT_DIR}"
+        COMMAND
+            ${CMAKE_COMMAND} -E chdir "${STREAMLINE_RUNTIME_ROOT}" cmd /c
+            "call setup.bat vs2022"
+        COMMAND
+            ${CMAKE_COMMAND} -E chdir "${STREAMLINE_RUNTIME_ROOT}" cmd /c
+            "call build.bat ${STREAMLINE_RUNTIME_CONFIG_FLAG}"
+        COMMAND
+            ${CMAKE_COMMAND} -E copy_if_different
+            "${STREAMLINE_COMMON_ARTIFACT_DLL}"
+            "${STREAMLINE_COMMON_RUNTIME_DLL}"
+        COMMAND
+            ${CMAKE_COMMAND} -E copy_if_different
+            "${STREAMLINE_INTERPOSER_ARTIFACT_DLL}"
+            "${STREAMLINE_INTERPOSER_RUNTIME_DLL}"
+        COMMAND
+            ${CMAKE_COMMAND} -E copy_if_different
+            "${STREAMLINE_DLSS_ARTIFACT_DLL}"
+            "${STREAMLINE_DLSS_RUNTIME_DLL}"
+        COMMAND
+            ${CMAKE_COMMAND} -E copy_if_different
+            "${STREAMLINE_PCL_ARTIFACT_DLL}"
+            "${STREAMLINE_PCL_RUNTIME_DLL}"
+        COMMAND
+            ${CMAKE_COMMAND} -E copy_if_different
+            "${STREAMLINE_REFLEX_ARTIFACT_DLL}"
+            "${STREAMLINE_REFLEX_RUNTIME_DLL}"
+        DEPENDS
+            "${STREAMLINE_RUNTIME_ROOT}/setup.bat"
+            "${STREAMLINE_RUNTIME_ROOT}/build.bat"
+        COMMENT "Building Streamline runtime modules (Develop: interposer/common/dlss/pcl/reflex)"
+        VERBATIM
+    )
+
+    list(
+        APPEND
+        STREAMLINE_RUNTIME_DLLS
+        "${STREAMLINE_COMMON_RUNTIME_DLL}"
+        "${STREAMLINE_INTERPOSER_RUNTIME_DLL}"
+        "${STREAMLINE_DLSS_RUNTIME_DLL}"
+        "${STREAMLINE_PCL_RUNTIME_DLL}"
+        "${STREAMLINE_REFLEX_RUNTIME_DLL}"
+    )
+
+    add_custom_target(
+        StreamlineRuntimeModules
+        DEPENDS ${STREAMLINE_RUNTIME_DLLS}
+    )
+    add_dependencies(${PROJECT_NAME} StreamlineRuntimeModules)
+elseif(WIN32)
+    message(
+        WARNING
+            "Streamline submodule missing; automatic Streamline runtime module build/copy is disabled."
+    )
+endif()
+
 find_path(DETOURS_INCLUDE_DIRS "detours/detours.h")
 find_library(DETOURS_LIBRARY detours REQUIRED)
 include(FidelityFX-SDK)
@@ -315,6 +429,13 @@ install(
     DESTINATION .
     COMPONENT Shaders
 )
+if(STREAMLINE_RUNTIME_DLLS)
+    install(
+        FILES ${STREAMLINE_RUNTIME_DLLS}
+        DESTINATION Shaders/Upscaling/Streamline
+        COMPONENT Shaders
+    )
+endif()
 install(CODE "file(REMOVE \${CMAKE_INSTALL_PREFIX}/Core)" COMPONENT Shaders)
 
 # #######################################################################################################################
@@ -335,6 +456,9 @@ if(AUTO_PLUGIN_DEPLOYMENT OR AIO_ZIP_TO_DIST)
         file(GLOB_RECURSE _tmp LIST_DIRECTORIES FALSE "${_fpath}/*")
         list(APPEND _AIO_PACKAGE_FILES ${_tmp})
     endforeach()
+    if(STREAMLINE_RUNTIME_DLLS)
+        list(APPEND _AIO_PACKAGE_FILES ${STREAMLINE_RUNTIME_DLLS})
+    endif()
 
     # Prepare AIO by copying files only when different. This avoids updating
     # timestamps for unchanged files and prevents downstream incremental
@@ -410,6 +534,35 @@ if(AUTO_PLUGIN_DEPLOYMENT OR AIO_ZIP_TO_DIST)
             endforeach()
         endif()
     endforeach()
+
+    if(STREAMLINE_RUNTIME_DLLS)
+        list(
+            APPEND
+            _prepare_aio_cmds
+            COMMAND
+            ${CMAKE_COMMAND}
+            -E
+            make_directory
+            "${AIO_DIR}/Shaders/Upscaling/Streamline"
+        )
+        foreach(_streamline_runtime_dll IN LISTS STREAMLINE_RUNTIME_DLLS)
+            get_filename_component(
+                _streamline_runtime_name
+                "${_streamline_runtime_dll}"
+                NAME
+            )
+            list(
+                APPEND
+                _prepare_aio_cmds
+                COMMAND
+                ${CMAKE_COMMAND}
+                -E
+                copy_if_different
+                "${_streamline_runtime_dll}"
+                "${AIO_DIR}/Shaders/Upscaling/Streamline/${_streamline_runtime_name}"
+            )
+        endforeach()
+    endif()
 
     # Remove CORE from AIO if it exists (keep rest intact)
     list(
@@ -728,6 +881,19 @@ if(ZIP_TO_DIST)
         POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E remove "${ZIP_DIR}/CORE"
     )
+    if(STREAMLINE_RUNTIME_DLLS)
+        add_custom_command(
+            TARGET ${PROJECT_NAME}
+            POST_BUILD
+            COMMAND
+                ${CMAKE_COMMAND} -E make_directory
+                "${ZIP_DIR}/Shaders/Upscaling/Streamline"
+            COMMAND
+                ${CMAKE_COMMAND} -E copy_if_different
+                ${STREAMLINE_RUNTIME_DLLS}
+                "${ZIP_DIR}/Shaders/Upscaling/Streamline"
+        )
+    endif()
 
     set(TARGET_ZIP "${PROJECT_NAME}-${UTC_NOW}.7z")
     message("Zipping ${ZIP_DIR} to ${CMAKE_SOURCE_DIR}/dist/${TARGET_ZIP}")
@@ -819,6 +985,9 @@ file(
 # Add SKSE plugin dll as dependency (use target-file generator expression so CMake
 # knows the actual output path of the target at build time)
 list(APPEND CORE_SOURCES "$<TARGET_FILE:${PROJECT_NAME}>")
+if(STREAMLINE_RUNTIME_DLLS)
+    list(APPEND CORE_SOURCES ${STREAMLINE_RUNTIME_DLLS})
+endif()
 
 set(CORE_FEATURE_PATHS "${CMAKE_SOURCE_DIR}/package/")
 
