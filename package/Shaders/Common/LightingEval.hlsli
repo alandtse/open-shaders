@@ -167,21 +167,59 @@ void GetIndirectLobeWeights(out IndirectLobeWeights lobeWeights, IndirectContext
 }
 
 #if defined(WETNESS_EFFECTS)
-void EvaluateWetnessLighting(float3 wetnessNormal, DirectContext context, float roughness, inout DirectLightingOutput lightingOutput)
+float3 GetWetReflectionModeConfig(float wetReflectionScale)
+{
+	const float LEGACY_REFLECTION_SCALE_MAX = 0.25;
+	// Curve normalized legacy slider with:
+	// f(0)=0, f(1)=1, f(0.3)=0.12 (so 30% of 0.25 maps to 0.03).
+	const float LEGACY_CURVE_A = 0.857142857;
+	const float LEGACY_CURVE_B = 0.142857143;
+	const float wetReflectionScaleClamped = saturate(wetReflectionScale);
+	if (wetReflectionScaleClamped <= 0.0) {
+		return 0.0;
+	}
+
+	const bool enableModern = SharedData::wetnessEffectsSettings.EnableModernWetReflection != 0;
+	const bool enableLegacy = SharedData::wetnessEffectsSettings.EnableLegacyWetReflection != 0;
+	const float modeCount = (enableModern ? 1.0 : 0.0) + (enableLegacy ? 1.0 : 0.0);
+	if (modeCount <= 0.0) {
+		return 0.0;
+	}
+
+	const float invModeCount = rcp(modeCount);
+	const float modernScale = wetReflectionScaleClamped;
+	const float legacySliderNormalized = saturate(wetReflectionScaleClamped / LEGACY_REFLECTION_SCALE_MAX);
+	const float legacyCurve = legacySliderNormalized * (LEGACY_CURVE_B + LEGACY_CURVE_A * legacySliderNormalized);
+	const float legacyScale = LEGACY_REFLECTION_SCALE_MAX * saturate(legacyCurve);
+	const float effectiveScale = (modernScale * (enableModern ? 1.0 : 0.0) + legacyScale * (enableLegacy ? 1.0 : 0.0)) * invModeCount;
+	return float3(
+		enableModern ? invModeCount : 0.0,
+		enableLegacy ? invModeCount : 0.0,
+		effectiveScale);
+}
+
+void EvaluateWetnessLighting(float3 wetnessNormal, DirectContext context, float roughness, float3 wetReflectionModeConfig, inout DirectLightingOutput lightingOutput)
 {
 	const float wetnessStrength = saturate(1 - roughness);
+	if (wetnessStrength <= 0.0) {
+		return;
+	}
+
+	const float modernWeight = wetReflectionModeConfig.x;
+	const float legacyWeight = wetReflectionModeConfig.y;
+	const float wetReflectionScale = wetReflectionModeConfig.z;
+	if (wetReflectionScale <= 0.0 || (modernWeight + legacyWeight) <= 0.0) {
+		return;
+	}
+
 #	if defined(TRUE_PBR)
 	float3 lightColor = context.coatLightColor;
 #	else
 	float3 lightColor = context.lightColor;
 #	endif
 
-	float wetnessF0 = 0.02;
-	const bool useLegacyRainBehavior = SharedData::wetnessEffectsSettings.EnableLegacyRainBehavior != 0;
-	if (useLegacyRainBehavior) {
-		wetnessF0 = saturate(1.0 - roughness);
-		lightColor *= 0.1;
-	}
+	const float wetnessF0 = 0.02 * modernWeight + saturate(1.0 - roughness) * legacyWeight;
+	lightColor *= modernWeight + legacyWeight * 0.1;
 
 	const float3 N = wetnessNormal;
 	const float3 V = context.viewDir;
@@ -197,27 +235,28 @@ void EvaluateWetnessLighting(float3 wetnessNormal, DirectContext context, float 
 	float G = BRDF::Vis_SmithJointApprox(roughness, NdotV, NdotL);
 	float3 F = BRDF::F_Schlick(wetnessF0, VdotH);
 
-	F *= wetnessStrength;
+	F *= wetnessStrength * wetReflectionScale;
 
 	float3 wetnessSpecular = D * G * F * NdotL * lightColor;
-
-#if !defined(TRUE_PBR)
-	wetnessSpecular *= Color::PBRLightingCompensation * Color::PBRLightingScale;  // Compensate for GGX on traditional specular
-#endif
 
 	lightingOutput.diffuse *= 1 - F;
 	lightingOutput.specular *= 1 - F;
 	lightingOutput.specular += wetnessSpecular;
 }
 
-float3 GetWetnessIndirectLobeWeights(inout IndirectLobeWeights lobeWeights, float3 wetnessNormal, float roughness, IndirectContext context)
+float3 GetWetnessIndirectLobeWeights(inout IndirectLobeWeights lobeWeights, float3 wetnessNormal, float roughness, IndirectContext context, float3 wetReflectionModeConfig)
 {
-	float wetnessF0 = 0.02;
-	const bool useLegacyRainBehavior = SharedData::wetnessEffectsSettings.EnableLegacyRainBehavior != 0;
-	if (useLegacyRainBehavior) {
-		wetnessF0 = saturate(1.0 - roughness);
-	}
 	const float wetnessStrength = saturate(1 - roughness);
+	if (wetnessStrength <= 0.0) {
+		return 0.0;
+	}
+
+	const float modernWeight = wetReflectionModeConfig.x;
+	const float legacyWeight = wetReflectionModeConfig.y;
+	const float wetnessScaleClamped = wetReflectionModeConfig.z;
+	if (wetnessScaleClamped <= 0.0 || (modernWeight + legacyWeight) <= 0.0) {
+		return 0.0;
+	}
 
 	const float3 N = wetnessNormal;
 	const float3 V = context.viewDir;
@@ -225,14 +264,11 @@ float3 GetWetnessIndirectLobeWeights(inout IndirectLobeWeights lobeWeights, floa
 
 	float NdotV = saturate(abs(dot(N, V)) + EPSILON_DOT_CLAMP);
 	float2 specularBRDF = BRDF::EnvBRDF(roughness, NdotV);
-	float3 specularLobeWeight = wetnessF0 * specularBRDF.x + specularBRDF.y;
-
-	specularLobeWeight *= wetnessStrength;
-	if (useLegacyRainBehavior) {
-		// Legacy 0.82-style cheap ambient sheen boost at glancing angles.
-		float glancing = saturate(1.0 - NdotV);
-		specularLobeWeight *= (1.0 + 0.25 * glancing);
-	}
+	float3 modernLobeWeight = 0.02 * specularBRDF.x + specularBRDF.y;
+	float3 legacyLobeWeight = saturate(1.0 - roughness) * specularBRDF.x + specularBRDF.y;
+	float glancing = saturate(1.0 - NdotV);
+	legacyLobeWeight *= (1.0 + 0.25 * glancing);
+	float3 specularLobeWeight = (modernLobeWeight * modernWeight + legacyLobeWeight * legacyWeight) * wetnessStrength * wetnessScaleClamped;
 
 	lobeWeights.diffuse *= 1 - specularLobeWeight;
 	lobeWeights.specular *= 1 - specularLobeWeight;

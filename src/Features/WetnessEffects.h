@@ -53,6 +53,9 @@ public:
 		uint EnableRipples = true;
 		uint EnableVanillaRipples = false;
 		uint EnableLegacyRainBehavior = false;
+		uint EnableModernWetReflection = true;
+		uint EnableLegacyWetReflection = false;
+		float WetIndirectSpecularScale = 0.25f;
 		float RaindropFxRange = 1000.f;
 		float RaindropGridSize = 4.f;
 		float RaindropInterval = 1.0f;
@@ -75,7 +78,7 @@ public:
 		float Wetness;
 		float PuddleWetness;
 		Settings settings;
-		uint pad0[5];
+		uint pad0[2];
 	};
 	STATIC_ASSERT_ALIGNAS_16(PerFrame);
 	static_assert((sizeof(PerFrame) % 16) == 0, "WetnessEffects::PerFrame must stay 16-byte sized");

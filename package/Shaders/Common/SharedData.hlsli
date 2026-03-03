@@ -117,6 +117,9 @@ namespace SharedData
 		bool EnableRipples;
 		uint EnableVanillaRipples;
 		uint EnableLegacyRainBehavior;
+		uint EnableModernWetReflection;
+		uint EnableLegacyWetReflection;
+		float WetIndirectSpecularScale;
 		float RaindropFxRange;
 
 		float RaindropGridSizeRcp;

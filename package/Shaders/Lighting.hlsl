@@ -2487,6 +2487,12 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	float3 rippleNormal = normalize(lerp(float3(0, 0, 1), raindropInfo.xyz, lerp(1.0, flatnessAmount, 0.8)));
 	wetnessNormal = WetnessEffects::ReorientNormal(rippleNormal, wetnessNormal);
 
+	// Suppress grazing-angle over-brightening: keep wet gloss from top-down views,
+	// but reduce "milky white" highlights when viewed close to horizontal.
+	float wetnessViewNdotV = saturate(abs(dot(wetnessNormal, viewDirection)));
+	float wetnessGrazingAttenuation = lerp(0.35, 1.0, smoothstep(0.05, 0.35, wetnessViewNdotV));
+	wetnessGlossinessSpecular *= wetnessGrazingAttenuation;
+
 	waterRoughnessSpecular = 1.0 - wetnessGlossinessSpecular * 0.9;
 #	endif
 
@@ -2591,6 +2597,10 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 
 	float3 lodLandDiffuseColor = 0;
 
+#	if defined(WETNESS_EFFECTS)
+	float3 wetReflectionModeConfig = GetWetReflectionModeConfig(SharedData::wetnessEffectsSettings.WetIndirectSpecularScale);
+#	endif
+
 	// Directiontal Lighting
 	DirectContext dirLightContext;
 	DirectLightingOutput dirLightOutput;
@@ -2614,8 +2624,8 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	dirLightOutput.coatDiffuse = SanitizeFloat3(dirLightOutput.coatDiffuse);
 #	endif
 #	if defined(WETNESS_EFFECTS)
-	if (waterRoughnessSpecular < 1)
-		EvaluateWetnessLighting(wetnessNormal, dirLightContext, waterRoughnessSpecular, dirLightOutput);
+	if (waterRoughnessSpecular < 1 && wetReflectionModeConfig.z > 0.0)
+		EvaluateWetnessLighting(wetnessNormal, dirLightContext, waterRoughnessSpecular, wetReflectionModeConfig, dirLightOutput);
 #	endif
 
 	lightsDiffuseColor += dirLightOutput.diffuse;
@@ -2683,8 +2693,8 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 		pointLightOutput.coatDiffuse = SanitizeFloat3(pointLightOutput.coatDiffuse);
 #			endif
 #			if defined(WETNESS_EFFECTS)
-		if (waterRoughnessSpecular < 1)
-			EvaluateWetnessLighting(wetnessNormal, pointLightContext, waterRoughnessSpecular, pointLightOutput);
+		if (waterRoughnessSpecular < 1 && wetReflectionModeConfig.z > 0.0)
+			EvaluateWetnessLighting(wetnessNormal, pointLightContext, waterRoughnessSpecular, wetReflectionModeConfig, pointLightOutput);
 #			endif
 		lightsDiffuseColor += pointLightOutput.diffuse;
 		lightsSpecularColor += pointLightOutput.specular;
@@ -2814,8 +2824,8 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 		pointLightOutput.coatDiffuse = SanitizeFloat3(pointLightOutput.coatDiffuse);
 #			endif
 #			if defined(WETNESS_EFFECTS)
-		if (waterRoughnessSpecular < 1)
-			EvaluateWetnessLighting(wetnessNormal, pointLightContext, waterRoughnessSpecular, pointLightOutput);
+		if (waterRoughnessSpecular < 1 && wetReflectionModeConfig.z > 0.0)
+			EvaluateWetnessLighting(wetnessNormal, pointLightContext, waterRoughnessSpecular, wetReflectionModeConfig, pointLightOutput);
 #			endif
 
 		lightsDiffuseColor += pointLightOutput.diffuse;
@@ -2939,7 +2949,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	porosity = lerp(porosity, 0.0, saturate(sqrt(envMask)));
 #			endif
 	float wetnessDarkeningAmount = porosity * wetnessGlossinessAlbedo;
-	material.BaseColor = lerp(material.BaseColor, pow(abs(material.BaseColor), 1.0 + wetnessDarkeningAmount), 0.5);
+	material.BaseColor = lerp(material.BaseColor, pow(abs(material.BaseColor), 1.0 + wetnessDarkeningAmount), 0.8);
 #		endif
 #	endif
 
@@ -2996,7 +3006,10 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 
 #	if defined(WETNESS_EFFECTS)
 #		if defined(DYNAMIC_CUBEMAPS)
-	float3 wetnessReflectance = GetWetnessIndirectLobeWeights(indirectLobeWeights, wetnessNormal, waterRoughnessSpecular, indirectContext);
+	float3 wetnessReflectance = 0.0;
+	if (waterRoughnessSpecular < 1 && wetReflectionModeConfig.z > 1e-4) {
+		wetnessReflectance = GetWetnessIndirectLobeWeights(indirectLobeWeights, wetnessNormal, waterRoughnessSpecular, indirectContext, wetReflectionModeConfig);
+	}
 #		else
 	float3 wetnessReflectance = 0.0;
 #		endif
@@ -3068,20 +3081,6 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	if (!dynamicCubemap)
 #		endif
 		specularColor += envColor * Color::IrradianceToLinear(diffuseColor);
-#		if defined(WETNESS_EFFECTS)
-#			if defined(DYNAMIC_CUBEMAPS)
-	if (!dynamicCubemap)
-#			endif
-		if (SharedData::wetnessEffectsSettings.EnableLegacyRainBehavior != 0 && envMask > 0.0) {
-			float wetSheen = saturate(wetnessReflectance.x);
-			if (wetSheen > 0.0) {
-				float3 reflectedWet = reflect(-viewDirection, normalize(wetnessNormal));
-				float wetMip = saturate(waterRoughnessSpecular) * 9.0;
-				float3 wetEnv = Color::GammaToLinear(TexEnvSampler.SampleLevel(SampEnvSampler, reflectedWet, wetMip).xyz);
-				specularColor += wetEnv * envMask * wetSheen * Color::IrradianceToLinear(diffuseColor);
-			}
-		}
-#		endif
 		indirectLobeWeights.diffuse += envColor;
 #	endif
 
@@ -3116,13 +3115,13 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 #			if defined(SKYLIGHTING)
 		color.xyz += indirectLobeWeights.specular * SanitizeFloat3(DynamicCubemaps::GetDynamicCubemapSpecularIrradiance(screenUV, worldNormal, vertexNormal, viewDirection, material.Roughness, skylightingSH));
 #				if defined(WETNESS_EFFECTS)
-		if (waterRoughnessSpecular < 1)
+		if (waterRoughnessSpecular < 1 && any(wetnessReflectance > 0.0))
 			color.xyz += wetnessReflectance * SanitizeFloat3(DynamicCubemaps::GetDynamicCubemapSpecularIrradiance(screenUV, wetnessNormal, vertexNormal, viewDirection, waterRoughnessSpecular, skylightingSH));
 #				endif
 #			else
 		color.xyz += indirectLobeWeights.specular * SanitizeFloat3(DynamicCubemaps::GetDynamicCubemapSpecularIrradiance(screenUV, worldNormal, vertexNormal, viewDirection, material.Roughness));
 #				if defined(WETNESS_EFFECTS)
-		if (waterRoughnessSpecular < 1)
+		if (waterRoughnessSpecular < 1 && any(wetnessReflectance > 0.0))
 			color.xyz += wetnessReflectance * SanitizeFloat3(DynamicCubemaps::GetDynamicCubemapSpecularIrradiance(screenUV, wetnessNormal, vertexNormal, viewDirection, waterRoughnessSpecular));
 #				endif
 #			endif

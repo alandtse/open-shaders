@@ -19,6 +19,15 @@ namespace
 	constexpr double MAX_TIME_DELTA_SECONDS = SECONDS_IN_A_DAY - 30.0;
 	constexpr float MIN_TRANSITION_SPEED = 0.2f;
 	constexpr float MAX_TRANSITION_SPEED = 8.0f;
+	constexpr float MIN_RAINDROP_GRID_SIZE = 1e-3f;
+	constexpr float MIN_RAINDROP_INTERVAL = 1e-3f;
+	constexpr float MIN_RIPPLE_LIFETIME = 1e-3f;
+	constexpr float MIN_RIPPLE_BREADTH = 1e-3f;
+	constexpr float MIN_SPLASH_LIFETIME = 1e-3f;
+	constexpr float MIN_PUDDLE_RADIUS = 1e-3f;
+	constexpr float MAX_LEGACY_WET_REFLECTION_SCALE = 0.25f;
+	constexpr float DEFAULT_LEGACY_WET_INDIRECT_SPECULAR_SCALE = 0.05f;
+	constexpr float DEFAULT_WET_INDIRECT_SPECULAR_SCALE = 0.25f;
 	// Persistence tuning:
 	// - Long/strong rain events should keep puddles for much longer than ground wetness.
 	// - With default transition speed, strong events can keep puddles around roughly half a day.
@@ -75,6 +84,53 @@ namespace
 		wetnessDepth = std::clamp(wetnessDepth + wetnessDeltaPerSecond * deltaSeconds, 0.0f, MAX_WETNESS_DEPTH);
 		puddleDepth = std::clamp(puddleDepth + puddleDeltaPerSecond * deltaSeconds, 0.0f, MAX_PUDDLE_DEPTH);
 	}
+
+	float SanitizeUnitScale(float value, float fallback = DEFAULT_WET_INDIRECT_SPECULAR_SCALE)
+	{
+		if (value >= 0.0f && value <= 1.0f) {
+			return value;
+		}
+		if (value < 0.0f) {
+			return 0.0f;
+		}
+		if (value > 1.0f) {
+			return 1.0f;
+		}
+		return fallback;
+	}
+
+	uint SanitizeToggle(uint value)
+	{
+		return value != 0 ? 1u : 0u;
+	}
+
+	void SanitizeReflectionSettings(WetnessEffects::Settings& settings)
+	{
+		settings.EnableModernWetReflection = SanitizeToggle(settings.EnableModernWetReflection);
+		settings.EnableLegacyWetReflection = SanitizeToggle(settings.EnableLegacyWetReflection);
+		if (settings.EnableModernWetReflection && settings.EnableLegacyWetReflection) {
+			// Keep modes mutually exclusive; modern wins on invalid combined input.
+			settings.EnableLegacyWetReflection = 0u;
+		}
+		settings.WetIndirectSpecularScale = SanitizeUnitScale(settings.WetIndirectSpecularScale);
+		if (settings.EnableLegacyWetReflection && !settings.EnableModernWetReflection) {
+			settings.WetIndirectSpecularScale = std::min(settings.WetIndirectSpecularScale, MAX_LEGACY_WET_REFLECTION_SCALE);
+		}
+		if (!settings.EnableModernWetReflection && !settings.EnableLegacyWetReflection) {
+			settings.WetIndirectSpecularScale = 0.0f;
+		}
+	}
+
+	void SanitizeToggleSettings(WetnessEffects::Settings& settings)
+	{
+		settings.EnableWetnessEffects = SanitizeToggle(settings.EnableWetnessEffects);
+		settings.EnableRaindropFx = SanitizeToggle(settings.EnableRaindropFx);
+		settings.EnableSplashes = SanitizeToggle(settings.EnableSplashes);
+		settings.EnableRipples = SanitizeToggle(settings.EnableRipples);
+		settings.EnableVanillaRipples = SanitizeToggle(settings.EnableVanillaRipples);
+		settings.EnableLegacyRainBehavior = SanitizeToggle(settings.EnableLegacyRainBehavior);
+		SanitizeReflectionSettings(settings);
+	}
 }
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
@@ -98,6 +154,9 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	EnableRipples,
 	EnableVanillaRipples,
 	EnableLegacyRainBehavior,
+	EnableModernWetReflection,
+	EnableLegacyWetReflection,
+	WetIndirectSpecularScale,
 	RaindropFxRange,
 	RaindropGridSize,
 	RaindropInterval,
@@ -335,6 +394,13 @@ void WetnessEffects::ResetRuntimeState()
 
 void WetnessEffects::DrawSettings()
 {
+	const auto drawUintCheckbox = [](const char* label, uint& value) {
+		bool enabled = value != 0;
+		const bool changed = ImGui::Checkbox(label, &enabled);
+		value = enabled ? 1u : 0u;
+		return changed;
+	};
+
 	// Climate Preset Selection - Always visible at the top
 	Util::DrawSectionHeader("Climate Presets", false, false);
 
@@ -400,7 +466,7 @@ void WetnessEffects::DrawSettings()
 	ImGui::Spacing();
 
 	if (ImGui::TreeNodeEx("Wetness Effects", ImGuiTreeNodeFlags_DefaultOpen)) {
-		if (ImGui::Checkbox("Enable Wetness", (bool*)&settings.EnableWetnessEffects)) {
+		if (drawUintCheckbox("Enable Wetness", settings.EnableWetnessEffects)) {
 			Ripples::UpdateSettings();  // Update cache when settings change
 		}
 		if (auto _tt = Util::HoverTooltipWrapper()) {
@@ -422,14 +488,14 @@ void WetnessEffects::DrawSettings()
 	ImGui::Spacing();
 
 	if (ImGui::TreeNodeEx("Raindrop Effects", ImGuiTreeNodeFlags_DefaultOpen)) {
-		ImGui::Checkbox("Enable Raindrop Effects", (bool*)&settings.EnableRaindropFx);
+		drawUintCheckbox("Enable Raindrop Effects", settings.EnableRaindropFx);
 
 		ImGui::BeginDisabled(!settings.EnableRaindropFx);
 
-		ImGui::Checkbox("Enable Splashes", (bool*)&settings.EnableSplashes);
+		drawUintCheckbox("Enable Splashes", settings.EnableSplashes);
 		if (auto _tt = Util::HoverTooltipWrapper())
 			ImGui::Text("Enables small splashes of wetness on dry surfaces.");
-		ImGui::Checkbox("Enable Ripples", (bool*)&settings.EnableRipples);
+		drawUintCheckbox("Enable Ripples", settings.EnableRipples);
 		if (auto _tt = Util::HoverTooltipWrapper())
 			ImGui::Text("Enables circular ripples on puddles, and to a less extent other wet surfaces");
 
@@ -438,7 +504,7 @@ void WetnessEffects::DrawSettings()
 		                                "Enable Vanilla Ripples - Controlled by Splashes of Storms" :
 		                                "Enable Vanilla Ripples";
 
-		if (ImGui::Checkbox(checkboxLabel.c_str(), (bool*)&settings.EnableVanillaRipples)) {
+		if (drawUintCheckbox(checkboxLabel.c_str(), settings.EnableVanillaRipples)) {
 			Ripples::UpdateSettings();  // Update cache when settings change
 		}
 		if (auto _tt = Util::HoverTooltipWrapper()) {
@@ -505,11 +571,46 @@ void WetnessEffects::DrawSettings()
 
 		ImGui::EndDisabled();
 
-		ImGui::Checkbox("Legacy 0.82 Rain Behavior", (bool*)&settings.EnableLegacyRainBehavior);
+		ImGui::BeginDisabled(settings.EnableLegacyWetReflection != 0);
+		if (drawUintCheckbox("Modern Wetness Reflection", settings.EnableModernWetReflection) && settings.EnableModernWetReflection) {
+			settings.EnableLegacyWetReflection = 0u;
+			settings.WetIndirectSpecularScale = DEFAULT_WET_INDIRECT_SPECULAR_SCALE;
+		}
+		ImGui::EndDisabled();
 		if (auto _tt = Util::HoverTooltipWrapper()) {
-			Util::DrawMultiLineTooltip({ "Uses legacy 0.82-style rain response in the shader path.",
-				"Enables chaotic ripple turbulence and legacy wet-spec/ambient sheen shaping.",
-				"Still uses the current wetness duration core and all existing sliders." });
+			ImGui::TextUnformatted("Current wet reflection look. Turns off Legacy Reflection.");
+		}
+		ImGui::BeginDisabled(settings.EnableModernWetReflection != 0);
+		if (drawUintCheckbox("Legacy Wetness Reflection", settings.EnableLegacyWetReflection) && settings.EnableLegacyWetReflection) {
+			settings.EnableModernWetReflection = 0u;
+			settings.WetIndirectSpecularScale = DEFAULT_LEGACY_WET_INDIRECT_SPECULAR_SCALE;
+		}
+		ImGui::EndDisabled();
+		if (auto _tt = Util::HoverTooltipWrapper()) {
+			ImGui::TextUnformatted("Older wet reflection look. Turns off Modern Reflection.");
+		}
+
+		SanitizeReflectionSettings(settings);
+		const bool anyReflectionModeEnabled = settings.EnableModernWetReflection != 0 || settings.EnableLegacyWetReflection != 0;
+		const bool legacyReflectionModeEnabled = settings.EnableLegacyWetReflection != 0 && settings.EnableModernWetReflection == 0;
+		const float wetReflectionSliderMax = legacyReflectionModeEnabled ? MAX_LEGACY_WET_REFLECTION_SCALE : 1.0f;
+		ImGui::BeginDisabled(!anyReflectionModeEnabled);
+		ImGui::SliderFloat("Wet Reflection Shine", &settings.WetIndirectSpecularScale, 0.0f, wetReflectionSliderMax, "%.3f", ImGuiSliderFlags_AlwaysClamp);
+		ImGui::EndDisabled();
+		if (anyReflectionModeEnabled) {
+			settings.WetIndirectSpecularScale = SanitizeUnitScale(settings.WetIndirectSpecularScale);
+			if (legacyReflectionModeEnabled) {
+				settings.WetIndirectSpecularScale = std::min(settings.WetIndirectSpecularScale, MAX_LEGACY_WET_REFLECTION_SCALE);
+			}
+		} else {
+			settings.WetIndirectSpecularScale = 0.0f;
+		}
+		if (auto _tt = Util::HoverTooltipWrapper()) {
+			ImGui::TextUnformatted("Higher value = stronger reflections.");
+		}
+		drawUintCheckbox("Chaotic Ripple Turbulence", settings.EnableLegacyRainBehavior);
+		if (auto _tt = Util::HoverTooltipWrapper()) {
+			ImGui::TextUnformatted("Adds extra random ripple motion. Works with either reflection mode.");
 		}
 
 		ImGui::TreePop();
@@ -519,26 +620,22 @@ void WetnessEffects::DrawSettings()
 	ImGui::Spacing();
 
 	if (ImGui::TreeNodeEx("Advanced", ImGuiTreeNodeFlags_DefaultOpen)) {
+		const auto drawDryingSlider = [](const char* label, float& value, const char* tooltip) {
+			ImGui::SliderFloat(label, &value, 0.25f, 2.5f, "%.2f");
+			if (auto _tt = Util::HoverTooltipWrapper()) {
+				ImGui::TextUnformatted(tooltip);
+			}
+		};
+
 		ImGui::SliderFloat("Weather transition speed", &settings.WeatherTransitionSpeed, 0.2f, 8.0f);
 		if (ImGui::IsItemDeactivatedAfterEdit())
 			DetectCurrentPreset();
 		if (auto _tt = Util::HoverTooltipWrapper()) {
 			ImGui::Text("How fast wetness appears when raining and how quickly it dries after rain has stopped.");
 		}
-		ImGui::SliderFloat("Stone Drying", &settings.StoneDryingMultiplier, 0.25f, 2.5f, "%.2f");
-		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::Text("Post-rain drying response for hard/stone-like surfaces. Lower values keep wetness longer.");
-		}
-
-		ImGui::SliderFloat("Dirt Drying", &settings.DirtDryingMultiplier, 0.25f, 2.5f, "%.2f");
-		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::Text("Post-rain drying response for soil/dirt-like surfaces. 1.0 is neutral.");
-		}
-
-		ImGui::SliderFloat("Grass Drying", &settings.GrassDryingMultiplier, 0.25f, 2.5f, "%.2f");
-		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::Text("Post-rain drying response for grass/vegetation-like surfaces. Higher values dry faster.");
-		}
+		drawDryingSlider("Stone Drying", settings.StoneDryingMultiplier, "Post-rain drying response for hard/stone-like surfaces. Lower values keep wetness longer.");
+		drawDryingSlider("Dirt Drying", settings.DirtDryingMultiplier, "Post-rain drying response for soil/dirt-like surfaces. 1.0 is neutral.");
+		drawDryingSlider("Grass Drying", settings.GrassDryingMultiplier, "Post-rain drying response for grass/vegetation-like surfaces. Higher values dry faster.");
 
 		ImGui::SliderFloat("Min Rain Wetness", &settings.MinRainWetness, 0.0f, 0.9f);
 		if (auto _tt = Util::HoverTooltipWrapper()) {
@@ -549,7 +646,10 @@ void WetnessEffects::DrawSettings()
 		if (auto _tt = Util::HoverTooltipWrapper()) {
 			ImGui::Text("How wet character skin and hair get during rain.");
 		}
-		ImGui::SliderInt("Shore Range", (int*)&settings.ShoreRange, 1, 64);
+		int shoreRange = static_cast<int>(settings.ShoreRange);
+		if (ImGui::SliderInt("Shore Range", &shoreRange, 1, 64, "%d", ImGuiSliderFlags_AlwaysClamp)) {
+			settings.ShoreRange = static_cast<uint>(shoreRange);
+		}
 		if (auto _tt = Util::HoverTooltipWrapper()) {
 			std::vector<std::string> tooltipLines = {
 				"The maximum distance from a body of water that Shore Wetness affects",
@@ -942,11 +1042,19 @@ WetnessEffects::PerFrame WetnessEffects::GetCommonBufferData() const
 	data.Time = rainTimer / 1000.f;
 
 	data.settings = settings;
-	data.settings.MaxShoreWetness = settings.EnableWetnessEffects ? settings.MaxShoreWetness : 0.0f;
+	SanitizeToggleSettings(data.settings);
+	data.settings.MaxShoreWetness = data.settings.EnableWetnessEffects ? data.settings.MaxShoreWetness : 0.0f;
+	data.settings.PuddleRadius = std::max(data.settings.PuddleRadius, MIN_PUDDLE_RADIUS);
+	data.settings.RippleBreadth = std::max(data.settings.RippleBreadth, MIN_RIPPLE_BREADTH);
+	data.settings.SplashesLifetime = std::max(data.settings.SplashesLifetime, MIN_SPLASH_LIFETIME);
 	data.settings.RaindropChance *= data.Raining * data.Raining;
-	data.settings.RaindropGridSize = 1.0f / settings.RaindropGridSize;
-	data.settings.RaindropInterval = 1.0f / settings.RaindropInterval;
-	data.settings.RippleLifetime = settings.RaindropInterval / settings.RippleLifetime;
+	data.settings.RaindropChance = std::clamp(data.settings.RaindropChance, 0.0f, 1.0f);
+	const float safeRaindropGridSize = std::max(data.settings.RaindropGridSize, MIN_RAINDROP_GRID_SIZE);
+	const float safeRaindropInterval = std::max(data.settings.RaindropInterval, MIN_RAINDROP_INTERVAL);
+	const float safeRippleLifetime = std::max(data.settings.RippleLifetime, MIN_RIPPLE_LIFETIME);
+	data.settings.RaindropGridSize = 1.0f / safeRaindropGridSize;
+	data.settings.RaindropInterval = 1.0f / safeRaindropInterval;
+	data.settings.RippleLifetime = safeRaindropInterval / safeRippleLifetime;
 
 	return data;
 }
@@ -964,6 +1072,30 @@ void WetnessEffects::Prepass()
 void WetnessEffects::LoadSettings(json& o_json)
 {
 	settings = o_json;
+	if (!o_json.contains("EnableModernWetReflection")) {
+		settings.EnableModernWetReflection = 1u;
+	}
+	if (!o_json.contains("EnableLegacyWetReflection")) {
+		settings.EnableLegacyWetReflection = 0u;
+	}
+	const bool hasExplicitWetReflectionScale = o_json.contains("WetIndirectSpecularScale");
+	if (o_json.contains("EnableWetIndirectSpecular") && !o_json.contains("WetIndirectSpecularScale")) {
+		const auto& legacy = o_json["EnableWetIndirectSpecular"];
+		if (legacy.is_boolean()) {
+			const bool enabled = legacy.get<bool>();
+			const bool useLegacyDefault = settings.EnableLegacyWetReflection != 0 && settings.EnableModernWetReflection == 0;
+			settings.WetIndirectSpecularScale = enabled ? (useLegacyDefault ? DEFAULT_LEGACY_WET_INDIRECT_SPECULAR_SCALE : DEFAULT_WET_INDIRECT_SPECULAR_SCALE) : 0.0f;
+		} else if (legacy.is_number()) {
+			const bool enabled = legacy.get<float>() != 0.0f;
+			const bool useLegacyDefault = settings.EnableLegacyWetReflection != 0 && settings.EnableModernWetReflection == 0;
+			settings.WetIndirectSpecularScale = enabled ? (useLegacyDefault ? DEFAULT_LEGACY_WET_INDIRECT_SPECULAR_SCALE : DEFAULT_WET_INDIRECT_SPECULAR_SCALE) : 0.0f;
+		} else {
+			settings.WetIndirectSpecularScale = DEFAULT_WET_INDIRECT_SPECULAR_SCALE;
+		}
+	} else if (!hasExplicitWetReflectionScale && settings.EnableLegacyWetReflection != 0 && settings.EnableModernWetReflection == 0) {
+		settings.WetIndirectSpecularScale = DEFAULT_LEGACY_WET_INDIRECT_SPECULAR_SCALE;
+	}
+	SanitizeToggleSettings(settings);
 	ResetRuntimeState();
 
 	// Auto-detect which preset matches the loaded settings

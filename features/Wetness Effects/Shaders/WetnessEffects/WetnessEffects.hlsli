@@ -75,9 +75,13 @@ namespace WetnessEffects
 
 		// Precompute constants
 		float uintToFloat = rcp(4294967295.0);
-		float rippleBreadthRcp = rcp(SharedData::wetnessEffectsSettings.RippleBreadth);
+		float rippleBreadthRcp = rcp(max(SharedData::wetnessEffectsSettings.RippleBreadth, 1e-3));
 		float intervalRcp = SharedData::wetnessEffectsSettings.RaindropIntervalRcp;
 		float lifetimeRcp = SharedData::wetnessEffectsSettings.RippleLifetimeRcp;
+		float raindropChance = saturate(SharedData::wetnessEffectsSettings.RaindropChance);
+		bool enableSplashes = SharedData::wetnessEffectsSettings.EnableSplashes;
+		bool enableRipples = SharedData::wetnessEffectsSettings.EnableRipples;
+		bool useLegacyRainBehavior = SharedData::wetnessEffectsSettings.EnableLegacyRainBehavior != 0;
 
 		// Calculate grid coordinates
 		float2 gridUV = worldPos.xy * SharedData::wetnessEffectsSettings.RaindropGridSizeRcp + normal.xy;
@@ -89,8 +93,8 @@ namespace WetnessEffects
 		float wetness = 0.0;
 
 		// Early exit if no effects enabled
-		bool hasEffects = SharedData::wetnessEffectsSettings.EnableSplashes || SharedData::wetnessEffectsSettings.EnableRipples;
-		if (!hasEffects) {
+		bool hasEffects = enableSplashes || enableRipples;
+		if (!hasEffects || raindropChance <= 0.0 || intervalRcp <= 0.0 || lifetimeRcp <= 0.0) {
 			return float4(rippleNormal, wetness * SharedData::wetnessEffectsSettings.SplashesStrength);
 		}
 
@@ -101,7 +105,7 @@ namespace WetnessEffects
 				float tOffset = float(Random::iqint3(gridCurr)) * uintToFloat;
 
 				// Calculate splashes
-				if (SharedData::wetnessEffectsSettings.EnableSplashes) {
+				if (enableSplashes) {
 					float residual = t * intervalRcp / SharedData::wetnessEffectsSettings.SplashesLifetime + tOffset + worldPos.z * 0.001;
 					uint timestep = uint(residual);
 					residual -= timestep;
@@ -109,7 +113,7 @@ namespace WetnessEffects
 					uint3 hash = Random::pcg3d(uint3(asuint(gridCurr), timestep));
 					float3 floatHash = float3(hash) * uintToFloat;
 
-					if (floatHash.z < SharedData::wetnessEffectsSettings.RaindropChance) {
+					if (floatHash.z < raindropChance) {
 						float2 vec2Centre = int2(i, j) + floatHash.xy - gridUV;
 						float distSqr = dot(vec2Centre, vec2Centre);
 						float dropRadius = lerp(SharedData::wetnessEffectsSettings.SplashesMinRadius,
@@ -122,7 +126,7 @@ namespace WetnessEffects
 				}
 
 				// Calculate ripples
-				if (SharedData::wetnessEffectsSettings.EnableRipples) {
+				if (enableRipples) {
 					float residual = t * intervalRcp + tOffset + worldPos.z * 0.001;
 					uint timestep = uint(residual);
 					residual -= timestep;
@@ -130,7 +134,7 @@ namespace WetnessEffects
 					uint3 hash = Random::pcg3d(uint3(asuint(gridCurr), timestep));
 					float3 floatHash = float3(hash) * uintToFloat;
 
-					if (floatHash.z < SharedData::wetnessEffectsSettings.RaindropChance) {
+					if (floatHash.z < raindropChance) {
 						float2 vec2Centre = int2(i, j) + floatHash.xy - gridUV;
 						float distSqr = dot(vec2Centre, vec2Centre);
 						float rippleT = residual * lifetimeRcp;
@@ -162,7 +166,7 @@ namespace WetnessEffects
 			}
 		}
 
-		if (SharedData::wetnessEffectsSettings.EnableLegacyRainBehavior != 0) {
+		[branch] if (useLegacyRainBehavior && enableRipples) {
 			const float gridSize = rcp(max(SharedData::wetnessEffectsSettings.RaindropGridSizeRcp, 1e-3));
 			const float chaoticScaleRcp = rcp(max(gridSize * 5.0, 1e-3));
 			const float chaoticSpeed = max(0.2, SharedData::wetnessEffectsSettings.RaindropIntervalRcp * 0.5);
