@@ -2627,7 +2627,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	uint clusterIndex = 0;
 	uint lightOffset = 0;
 	if (inWorld && LightLimitFix::GetClusterIndex(screenUV, viewPosition.z, clusterIndex)) {
-		numClusteredLights = min(LightLimitFix::lightGrid[clusterIndex].lightCount, MAX_CLUSTER_LIGHTS);
+		numClusteredLights = LightLimitFix::lightGrid[clusterIndex].lightCount;
 		totalLightCount += numClusteredLights;
 		lightOffset = LightLimitFix::lightGrid[clusterIndex].offset;
 	}

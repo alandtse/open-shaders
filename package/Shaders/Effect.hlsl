@@ -709,7 +709,7 @@ PS_OUTPUT main(PS_INPUT input)
 
 		uint clusterIndex = 0;
 		if (inWorld && LightLimitFix::GetClusterIndex(screenUV, viewPosition.z, clusterIndex)) {
-			lightCount = min(LightLimitFix::lightGrid[clusterIndex].lightCount, MAX_CLUSTER_LIGHTS);
+			lightCount = LightLimitFix::lightGrid[clusterIndex].lightCount;
 			uint lightOffset = LightLimitFix::lightGrid[clusterIndex].offset;
 			[loop] for (uint i = 0; i < lightCount; i++)
 			{
