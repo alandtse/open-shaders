@@ -5,6 +5,7 @@
 
 #include "Features/LightLimitFix/ParticleLights.h"
 
+#include <mutex>
 #include <shared_mutex>
 
 class ParticleLights;
@@ -178,6 +179,7 @@ struct ParticleLightInfo
 	eastl::hash_map<RE::BSGeometry*, ParticleLightReference> particleLightsReferences;
 	eastl::vector<ParticleLightInfo> queuedParticleLights;
 	eastl::vector<ParticleLightInfo> currentParticleLights;
+	std::mutex particleLightsQueueMutex;
 
 	void CleanupParticleLights(RE::NiNode* a_node);
 
