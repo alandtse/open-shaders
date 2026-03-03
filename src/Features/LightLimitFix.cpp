@@ -80,15 +80,6 @@ namespace
 		       ToLowerAscii(ext[2]) == 'd' &&
 		       ToLowerAscii(ext[3]) == 's';
 	}
-
-	void ClearStrictLightData(LightLimitFix::StrictLightDataCB& a_data, bool a_resetRoomIndex) noexcept
-	{
-		a_data.NumStrictLights = 0;
-		a_data.ShadowBitMask = 0;
-		if (a_resetRoomIndex) {
-			a_data.RoomIndex = -1;
-		}
-	}
 }
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
@@ -374,13 +365,7 @@ void LightLimitFix::SetupResources()
 
 void LightLimitFix::Reset()
 {
-	std::lock_guard<std::mutex> queueLock{ particleLightsQueueMutex };
-
 	for (auto& particleLight : currentParticleLights) {
-		if (!particleLight.node) {
-			continue;
-		}
-
 		if (!particleLight.billboard) {
 			if (const auto particleSystem = static_cast<RE::NiParticleSystem*>(particleLight.node)) {
 				if (auto particleData = particleSystem->GetParticlesRuntimeData().particleData.get()) {
@@ -436,7 +421,9 @@ void LightLimitFix::BSLightingShader_SetupGeometry_Before(RE::BSRenderPass* a_pa
 	if (!shaderCache->IsEnabled())
 		return;
 
-	ClearStrictLightData(strictLightDataTemp, true);
+	strictLightDataTemp.NumStrictLights = 0;
+	strictLightDataTemp.ShadowBitMask = 0;
+	strictLightDataTemp.RoomIndex = -1;
 
 	if (!a_pass || !a_pass->geometry) {
 		return;
@@ -453,13 +440,15 @@ void LightLimitFix::BSLightingShader_SetupGeometry_Before(RE::BSRenderPass* a_pa
 void LightLimitFix::BSLightingShader_SetupGeometry_GeometrySetupConstantPointLights(RE::BSRenderPass* a_pass)
 {
 	if (!a_pass || !a_pass->sceneLights) {
-		ClearStrictLightData(strictLightDataTemp, false);
+		strictLightDataTemp.NumStrictLights = 0;
+		strictLightDataTemp.ShadowBitMask = 0;
 		return;
 	}
 
 	auto smState = globals::game::smState;
 	if (!smState) {
-		ClearStrictLightData(strictLightDataTemp, false);
+		strictLightDataTemp.NumStrictLights = 0;
+		strictLightDataTemp.ShadowBitMask = 0;
 		return;
 	}
 
@@ -467,7 +456,8 @@ void LightLimitFix::BSLightingShader_SetupGeometry_GeometrySetupConstantPointLig
 
 	auto accumulator = *globals::game::currentAccumulator.get();
 	if (!accumulator) {
-		ClearStrictLightData(strictLightDataTemp, false);
+		strictLightDataTemp.NumStrictLights = 0;
+		strictLightDataTemp.ShadowBitMask = 0;
 		return;
 	}
 
@@ -479,7 +469,8 @@ void LightLimitFix::BSLightingShader_SetupGeometry_GeometrySetupConstantPointLig
 	const uint32_t strictLightCount = std::min(requestedStrictLights, kStrictLightCapacity);
 	const uint32_t shadowLightCount = std::min(static_cast<uint32_t>(a_pass->numShadowLights), availableSceneLights);
 
-	ClearStrictLightData(strictLightDataTemp, false);
+	strictLightDataTemp.NumStrictLights = 0;
+	strictLightDataTemp.ShadowBitMask = 0;
 
 	uint32_t outIndex = 0;
 #if defined(_MSC_VER)
@@ -542,7 +533,8 @@ void LightLimitFix::BSLightingShader_SetupGeometry_GeometrySetupConstantPointLig
 #if defined(_MSC_VER)
 	__except (1)
 	{
-		ClearStrictLightData(strictLightDataTemp, false);
+		strictLightDataTemp.NumStrictLights = 0;
+		strictLightDataTemp.ShadowBitMask = 0;
 	}
 #endif
 }
@@ -640,11 +632,8 @@ void LightLimitFix::AddParticleLightLuminance(RE::NiPoint3& targetPosition, int&
 void LightLimitFix::Prepass()
 {
 	auto context = globals::d3d::context;
+
 	auto state = globals::state;
-	if (!context || !state || !lights || !lightIndexList || !lightGrid ||
-		!lights->srv || !lightIndexList->srv || !lightGrid->srv) {
-		return;
-	}
 
 	state->BeginPerfEvent("LightLimitFix Prepass");
 	UpdateLights();
@@ -665,7 +654,7 @@ bool LightLimitFix::IsValidLight(RE::BSLight* a_light)
 
 bool LightLimitFix::IsGlobalLight(RE::BSLight* a_light)
 {
-	return a_light && !(a_light->portalStrict || !a_light->portalGraph);
+	return !(a_light->portalStrict || !a_light->portalGraph);
 }
 
 struct VertexColor
@@ -756,7 +745,6 @@ LightLimitFix::ParticleLightReference LightLimitFix::GetParticleLightConfigs(RE:
 		ParticleLightReference invalidReference{};
 		invalidReference.valid = false;
 		invalidReference.configVersion = particleLights.configVersion;
-		std::lock_guard<std::mutex> queueLock{ particleLightsQueueMutex };
 		particleLightsReferences[node] = invalidReference;
 		return invalidReference;
 	};
@@ -779,7 +767,6 @@ LightLimitFix::ParticleLightReference LightLimitFix::GetParticleLightConfigs(RE:
 
 					// Already scanned
 					{
-						std::lock_guard<std::mutex> queueLock{ particleLightsQueueMutex };
 						auto it = particleLightsReferences.find(node);
 						if (it != particleLightsReferences.end()) {
 							if (it->second.configVersion == particleLights.configVersion) {
@@ -852,10 +839,7 @@ LightLimitFix::ParticleLightReference LightLimitFix::GetParticleLightConfigs(RE:
 							}
 						}
 
-						{
-							std::lock_guard<std::mutex> queueLock{ particleLightsQueueMutex };
-							particleLightsReferences[node] = reference;
-						}
+						particleLightsReferences[node] = reference;
 						return reference;
 					}
 				}
@@ -943,28 +927,7 @@ bool LightLimitFix::AddParticleLight(RE::BSRenderPass* a_pass, ParticleLightRefe
 	info.color = color;
 	info.radiusMult = config.radiusMult;
 
-	bool enqueued = false;
-	{
-		std::lock_guard<std::mutex> queueLock{ particleLightsQueueMutex };
-		constexpr std::size_t kMaxQueuedParticleLights = static_cast<std::size_t>(MAX_LIGHTS) * 16u;
-		if (queuedParticleLights.size() < kMaxQueuedParticleLights) {
-			queuedParticleLights.push_back(info);
-			enqueued = true;
-		}
-	}
-
-	if (!enqueued) {
-		if (!a_reference.billboard) {
-			if (auto particleSystem = static_cast<RE::NiParticleSystem*>(a_pass->geometry)) {
-				if (auto particleData = particleSystem->GetParticlesRuntimeData().particleData.get()) {
-					particleData->DecRefCount();
-				}
-			}
-		}
-		a_pass->geometry->DecRefCount();
-		return false;
-	}
-
+	queuedParticleLights.push_back(info);
 	return true;
 }
 
@@ -976,12 +939,9 @@ void LightLimitFix::PostPostLoad()
 
 void LightLimitFix::DataLoaded()
 {
-	if (auto gameSettings = globals::game::gameSettingCollection) {
-		if (auto iMagicLightMaxCount = gameSettings->GetSetting("iMagicLightMaxCount")) {
-			iMagicLightMaxCount->data.i = MAXINT32;
-			logger::info("[LLF] Unlocked magic light limit");
-		}
-	}
+	auto iMagicLightMaxCount = globals::game::gameSettingCollection->GetSetting("iMagicLightMaxCount");
+	iMagicLightMaxCount->data.i = MAXINT32;
+	logger::info("[LLF] Unlocked magic light limit");
 }
 
 void LightLimitFix::ClearShaderCache()
@@ -1005,10 +965,6 @@ float LightLimitFix::CalculateLightDistance(float3 a_lightPosition, float a_radi
 
 void LightLimitFix::AddCachedParticleLights(eastl::vector<LightData>& lightsData, LightLimitFix::LightData& light)
 {
-	if (lightsData.size() >= MAX_LIGHTS) {
-		return;
-	}
-
 	static float& lightFadeStart = *reinterpret_cast<float*>(REL::RelocationID(527668, 414582).address());
 	static float& lightFadeEnd = *reinterpret_cast<float*>(REL::RelocationID(527669, 414583).address());
 	const float3 luminanceWeights = float3(0.3f, 0.59f, 0.11f);
@@ -1045,14 +1001,12 @@ void LightLimitFix::AddCachedParticleLights(eastl::vector<LightData>& lightsData
 		light.invRadius = 1.f / light.radius;
 		lightsData.push_back(light);
 
-		if (cachedParticleLights.size() < MAX_LIGHTS) {
-			CachedParticleLight cachedParticleLight{};
-			cachedParticleLight.grey = float3(light.color.x, light.color.y, light.color.z).Dot(luminanceWeights) * luminanceScale;
-			cachedParticleLight.radius = light.radius;
-			cachedParticleLight.position = { light.positionWS[0].data.x + eyePositionCached[0].x, light.positionWS[0].data.y + eyePositionCached[0].y, light.positionWS[0].data.z + eyePositionCached[0].z };
+		CachedParticleLight cachedParticleLight{};
+		cachedParticleLight.grey = float3(light.color.x, light.color.y, light.color.z).Dot(luminanceWeights) * luminanceScale;
+		cachedParticleLight.radius = light.radius;
+		cachedParticleLight.position = { light.positionWS[0].data.x + eyePositionCached[0].x, light.positionWS[0].data.y + eyePositionCached[0].y, light.positionWS[0].data.z + eyePositionCached[0].z };
 
-			cachedParticleLights.push_back(cachedParticleLight);
-		}
+		cachedParticleLights.push_back(cachedParticleLight);
 	}
 }
 
@@ -1067,26 +1021,19 @@ float3 LightLimitFix::Saturation(float3 color, float saturation)
 
 void LightLimitFix::UpdateLights()
 {
-	auto context = globals::d3d::context;
-	if (!context || !lights || !lights->resource) {
-		return;
-	}
-
 	auto smState = globals::game::smState;
 	auto& isl = globals::features::inverseSquareLighting;
-	auto clearAndUpdate = [&]() {
-		lightCount = 0;
-		UpdateStructure();
-	};
 
 	if (!smState) {
-		clearAndUpdate();
+		lightCount = 0;
+		UpdateStructure();
 		return;
 	}
 
 	auto shadowSceneNode = smState->shadowSceneNode[0];
 	if (!shadowSceneNode) {
-		clearAndUpdate();
+		lightCount = 0;
+		UpdateStructure();
 		return;
 	}
 
@@ -1170,8 +1117,7 @@ void LightLimitFix::UpdateLights()
 					if (light.shadowMaskIndex != 255) {
 						SetLightPosition(light, niLight->world.translate);
 
-						if ((light.color.x + light.color.y + light.color.z) * light.fade > 1e-4 && light.radius > 1e-4 &&
-							lightsData.size() < MAX_LIGHTS) {
+						if ((light.color.x + light.color.y + light.color.z) * light.fade > 1e-4 && light.radius > 1e-4) {
 							lightsData.push_back(light);
 						}
 					}
@@ -1219,12 +1165,7 @@ void LightLimitFix::UpdateLights()
 			clusteredLight = {};
 		};
 
-		std::lock_guard<std::mutex> queueLock{ particleLightsQueueMutex };
 		for (const auto& particleLight : currentParticleLights) {
-			if (!particleLight.node) {
-				continue;
-			}
-
 			if (!particleLight.billboard) {
 				auto particleSystem = static_cast<RE::NiParticleSystem*>(particleLight.node);
 				if (particleSystem && particleSystem->GetParticlesRuntimeData().particleData.get()) {
@@ -1290,19 +1231,25 @@ void LightLimitFix::UpdateLights()
 							}
 						}
 
-						float alpha = particleLight.color.alpha;
-						float3 color{
-							particleLight.color.red,
-							particleLight.color.green,
-							particleLight.color.blue
-						};
 						if (particleRuntimeData.color) {
-							alpha *= particleRuntimeData.color[p].alpha;
-							color.x *= particleRuntimeData.color[p].red;
-							color.y *= particleRuntimeData.color[p].green;
-							color.z *= particleRuntimeData.color[p].blue;
+							float alpha = particleLight.color.alpha * particleRuntimeData.color[p].alpha;
+
+							float3 color;
+							color.x = particleLight.color.red * particleRuntimeData.color[p].red;
+							color.y = particleLight.color.green * particleRuntimeData.color[p].green;
+							color.z = particleLight.color.blue * particleRuntimeData.color[p].blue;
+
+							clusteredLight.color += Saturation(color, settings.ParticleLightsSaturation) * alpha * settings.ParticleBrightness;
+						} else {
+							float alpha = particleLight.color.alpha;
+
+							float3 color;
+							color.x = particleLight.color.red;
+							color.y = particleLight.color.green;
+							color.z = particleLight.color.blue;
+
+							clusteredLight.color += Saturation(color, settings.ParticleLightsSaturation) * alpha * settings.ParticleBrightness;
 						}
-						clusteredLight.color += Saturation(color, settings.ParticleLightsSaturation) * alpha * settings.ParticleBrightness;
 
 						clusteredLight.radius += radius * particleLight.radiusMult * settings.ParticleRadius;
 
@@ -1340,14 +1287,14 @@ void LightLimitFix::UpdateLights()
 		flushClusteredLight();
 	}
 
+	auto context = globals::d3d::context;
+
 	lightCount = std::min((uint)lightsData.size(), MAX_LIGHTS);
 
 	D3D11_MAPPED_SUBRESOURCE mapped;
 	DX::ThrowIfFailed(context->Map(lights->resource.get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped));
 	size_t bytes = sizeof(LightData) * lightCount;
-	if (bytes > 0) {
-		memcpy_s(mapped.pData, bytes, lightsData.data(), bytes);
-	}
+	memcpy_s(mapped.pData, bytes, lightsData.data(), bytes);
 	context->Unmap(lights->resource.get(), 0);
 
 	UpdateStructure();
@@ -1356,17 +1303,9 @@ void LightLimitFix::UpdateLights()
 void LightLimitFix::UpdateStructure()
 {
 	auto context = globals::d3d::context;
-	if (!context || !lightBuildingCB || !lightCullingCB || !clusters || !lights ||
-		!lightIndexCounter || !lightIndexList || !lightGrid || !clusterBuildingCS || !clusterCullingCS) {
-		return;
-	}
 
-	if (globals::game::cameraNear) {
-		lightsNear = *globals::game::cameraNear;
-	}
-	if (globals::game::cameraFar) {
-		lightsFar = *globals::game::cameraFar;
-	}
+	lightsNear = *globals::game::cameraNear;
+	lightsFar = *globals::game::cameraFar;
 
 	auto renderSize = Util::ConvertToDynamic(globals::state->screenSize);
 	if (REL::Module::IsVR())
