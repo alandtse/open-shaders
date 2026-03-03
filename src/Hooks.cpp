@@ -383,6 +383,9 @@ struct BSInputDeviceManager_PollInputDevices
 {
 	static void thunk(RE::BSTEventSource<RE::InputEvent*>* a_dispatcher, RE::InputEvent* const* a_events)
 	{
+		// Run Reflex frame pacing as early as possible in the frame loop.
+		globals::features::upscaling.streamline.UpdateReflex();
+
 		bool blockedDevice = true;
 
 		auto menu = globals::menu;

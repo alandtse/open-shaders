@@ -58,6 +58,11 @@ public:
 		uint streamlineLogLevel = 0;  // 0=Off, 1=Default, 2=Verbose
 		float sharpnessFSR = 0.0f;
 		float sharpnessDLSS = 0.1f;
+		bool reflexLowLatencyMode = false;
+		bool reflexLowLatencyBoost = false;
+		bool reflexUseMarkersToOptimize = false;
+		bool reflexUseFPSLimit = false;
+		float reflexFPSLimit = 60.0f;
 	};
 
 	Settings settings;
