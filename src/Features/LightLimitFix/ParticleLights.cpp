@@ -1,5 +1,6 @@
 #include "Features/LightLimitFix/ParticleLights.h"
 
+#include <cctype>
 #include <exception>
 #include <numbers>
 #include <optional>
@@ -21,7 +22,7 @@ namespace
 		}
 
 		filename.erase(filename.length() - 4);  // Remove ".ini"
-		std::transform(filename.begin(), filename.end(), filename.begin(), [](auto c) { return (char)::tolower(c); });
+		std::transform(filename.begin(), filename.end(), filename.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
 		return filename;
 	}
 }
