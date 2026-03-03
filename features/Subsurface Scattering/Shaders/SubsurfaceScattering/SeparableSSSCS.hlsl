@@ -42,18 +42,15 @@ cbuffer PerFrameSSS : register(b1)
 #if defined(BURLEY)
 
 	float sssAmount = MaskTexture[DTid.xy].x;
-	float humanClass = MaskTexture[DTid.xy].y;
-	bool humanProfile = humanClass > 0.5;
-	bool isFemale = humanClass > 1.5;
+	bool humanProfile = MaskTexture[DTid.xy].y > 0.0;
 
-	float4 color = BurleyNormalizedSS(DTid.xy, texCoord, eyeIndex, sssAmount, humanProfile, isFemale);
+	float4 color = BurleyNormalizedSS(DTid.xy, texCoord, eyeIndex, sssAmount, humanProfile);
 	SSSRW[DTid.xy] = max(0, color);
 
 #elif defined(HORIZONTAL)
 
 	float sssAmount = MaskTexture[DTid.xy].x;
-	float humanClass = MaskTexture[DTid.xy].y;
-	bool humanProfile = humanClass > 0.5;
+	bool humanProfile = MaskTexture[DTid.xy].y > 0.0;
 
 	float4 color = SSSSBlurCS(DTid.xy, texCoord, float2(1.0, 0.0), sssAmount, humanProfile);
 	SSSRW[DTid.xy] = max(0, color);
@@ -63,8 +60,7 @@ cbuffer PerFrameSSS : register(b1)
 	float sssAmount = MaskTexture[DTid.xy].x;
 
 	if (sssAmount > 0.0) {
-		float humanClass = MaskTexture[DTid.xy].y;
-		bool humanProfile = humanClass > 0.5;
+		bool humanProfile = MaskTexture[DTid.xy].y > 0.0;
 
 		float4 color = SSSSBlurCS(DTid.xy, texCoord, float2(0.0, 1.0), sssAmount, humanProfile);
 		color.rgb = Color::IrradianceToGamma(color.rgb);

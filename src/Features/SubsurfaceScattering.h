@@ -28,15 +28,6 @@ public:
 		uint BurleySamples = 16;
 		float4 MeanFreePathBase = { 0.56f, 0.56f, 0.56f, 2.67f };
 		float4 MeanFreePathHuman = { 1.0f, 0.37f, 0.3f, 2.67f };
-		// Burley-only: per-sex human skin controls.
-		float HumanMaleSSSIntensity = 1.0f;
-		float HumanMaleSSSSaturation = 1.0f;
-		float HumanMaleSSSBrightness = 1.0f;
-		float HumanMaleSSSBaseSaturation = 1.0f;
-		float HumanFemaleSSSIntensity = 1.0f;
-		float HumanFemaleSSSSaturation = 1.0f;
-		float HumanFemaleSSSBrightness = 1.0f;
-		float HumanFemaleSSSBaseSaturation = 1.0f;
 	};
 
 	Settings settings;

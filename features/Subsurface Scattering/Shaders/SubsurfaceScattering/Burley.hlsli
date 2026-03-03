@@ -48,7 +48,7 @@ float3 GetScalingFactor(float3 albedo)
 	return 3.5f + 100.f * pow(abs(value), 4);
 }
 
-float4 BurleyNormalizedSS(uint2 DTid, float2 texCoord, uint eyeIndex, float sssAmount, bool humanProfile, bool isFemale)
+float4 BurleyNormalizedSS(uint2 DTid, float2 texCoord, uint eyeIndex, float sssAmount, bool humanProfile)
 {
 	float centerDepth = SharedData::GetScreenDepth(DepthTexture[DTid].x);
 
@@ -134,23 +134,6 @@ float4 BurleyNormalizedSS(uint2 DTid, float2 texCoord, uint eyeIndex, float sssA
 	colorSum = lerp(colorSum, originalColor, saturate(centerWeight));
 	float3 color = Color::IrradianceToGamma(colorSum) * AlbedoTexture[DTid.xy].xyz;
 	color = lerp(centerColor.xyz, color, saturate(sssAmount));
-
-	if (humanProfile) {
-		float3 base0 = centerColor.xyz;
-		float intensity = clamp(isFemale ? SharedData::SSSHumanFemaleIntensity : SharedData::SSSHumanMaleIntensity, 0.0f, 2.0f);
-		float brightness = clamp(isFemale ? SharedData::SSSHumanFemaleBrightness : SharedData::SSSHumanMaleBrightness, 0.0f, 2.0f);
-		float baseSat = clamp(isFemale ? SharedData::SSSHumanFemaleBaseSaturation : SharedData::SSSHumanMaleBaseSaturation, 0.0f, 2.0f);
-		float finalSat = clamp(isFemale ? SharedData::SSSHumanFemaleSaturation : SharedData::SSSHumanMaleSaturation, 0.0f, 2.0f);
-
-		float luma0 = dot(color, float3(0.2126f, 0.7152f, 0.0722f));
-		float3 base = lerp(luma0.xxx, color, baseSat) * brightness;
-		float3 delta = base - base0;
-		color = base0 + delta * intensity;
-
-		float luma = dot(color, float3(0.2126f, 0.7152f, 0.0722f));
-		color = lerp(luma.xxx, color, finalSat);
-		color = max(color, 0.0f.xxx);
-	}
 
 	float4 outColor = float4(color, ColorTexture[DTid.xy].w);
 	return outColor;
