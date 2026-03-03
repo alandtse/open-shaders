@@ -318,6 +318,11 @@ PS_OUTPUT main(PS_INPUT input)
 	{
 		float3 viewPosition = FrameBuffer::WorldToView(positionWS.xyz, true, eyeIndex);
 		float2 screenUV = FrameBuffer::ViewToUV(viewPosition, true, eyeIndex);
+#		if defined(VR)
+		float3 particleWorldPosition = FrameBuffer::ViewToWorld(viewPosition, true, eyeIndex);
+#		else
+		float3 particleWorldPosition = positionWS.xyz;
+#		endif
 
 		uint clusterIndex = 0;
 		if (LightLimitFix::GetClusterIndex(screenUV, viewPosition.z, clusterIndex)) {
@@ -330,7 +335,7 @@ PS_OUTPUT main(PS_INPUT input)
 				if (LightLimitFix::IsLightIgnored(light) || light.lightFlags & LightLimitFix::LightFlags::Shadow) {
 					continue;
 				}
-				float3 lightDirection = light.positionWS[eyeIndex].xyz - positionWS.xyz;
+				float3 lightDirection = light.positionWS[eyeIndex].xyz - particleWorldPosition;
 				float lightDist = length(lightDirection);
 
 #			if defined(ISL)
