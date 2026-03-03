@@ -2,6 +2,8 @@
 #include "Menu.h"
 #include "WeatherPicker.h"
 
+#include <cmath>
+
 namespace
 {
 	// Legacy depth model constants (CS 0.8.x) used for persistence behavior.
@@ -130,6 +132,58 @@ namespace
 		settings.EnableVanillaRipples = SanitizeToggle(settings.EnableVanillaRipples);
 		settings.EnableLegacyRainBehavior = SanitizeToggle(settings.EnableLegacyRainBehavior);
 		SanitizeReflectionSettings(settings);
+	}
+
+	float ClampFiniteOrDefault(float value, float minValue, float maxValue, float fallback)
+	{
+		if (!std::isfinite(value)) {
+			return fallback;
+		}
+		return std::clamp(value, minValue, maxValue);
+	}
+
+	void SanitizeShaderFacingSettings(WetnessEffects::Settings& settings)
+	{
+		settings.WeatherTransitionSpeed = ClampFiniteOrDefault(settings.WeatherTransitionSpeed, MIN_TRANSITION_SPEED, MAX_TRANSITION_SPEED, 3.0f);
+		settings.ShoreRange = std::max(settings.ShoreRange, 1u);
+		settings.PuddleRadius = ClampFiniteOrDefault(settings.PuddleRadius, MIN_PUDDLE_RADIUS, 10.0f, 1.0f);
+		settings.PuddleMaxAngle = ClampFiniteOrDefault(settings.PuddleMaxAngle, 1e-3f, 1.0f, 0.95f);
+		settings.PuddleMinWetness = ClampFiniteOrDefault(settings.PuddleMinWetness, 0.0f, 1.0f, 0.85f);
+		settings.MinRainWetness = ClampFiniteOrDefault(settings.MinRainWetness, 0.0f, 1.0f, 0.65f);
+		settings.SkinWetness = ClampFiniteOrDefault(settings.SkinWetness, 0.0f, 1.0f, 0.95f);
+
+		settings.StoneDryingMultiplier = ClampFiniteOrDefault(settings.StoneDryingMultiplier, 0.05f, 4.0f, 0.75f);
+		settings.DirtDryingMultiplier = ClampFiniteOrDefault(settings.DirtDryingMultiplier, 0.05f, 4.0f, 1.0f);
+		settings.GrassDryingMultiplier = ClampFiniteOrDefault(settings.GrassDryingMultiplier, 0.05f, 4.0f, 1.35f);
+
+		settings.RaindropFxRange = ClampFiniteOrDefault(settings.RaindropFxRange, 0.0f, 5000.0f, 1000.0f);
+		settings.RaindropGridSize = ClampFiniteOrDefault(settings.RaindropGridSize, MIN_RAINDROP_GRID_SIZE, 100.0f, 4.0f);
+		settings.RaindropInterval = ClampFiniteOrDefault(settings.RaindropInterval, MIN_RAINDROP_INTERVAL, 60.0f, 1.0f);
+		settings.RaindropChance = ClampFiniteOrDefault(settings.RaindropChance, 0.0f, 1.0f, 1.0f);
+		settings.SplashesLifetime = ClampFiniteOrDefault(settings.SplashesLifetime, MIN_SPLASH_LIFETIME, 120.0f, 10.0f);
+		settings.RippleLifetime = ClampFiniteOrDefault(settings.RippleLifetime, MIN_RIPPLE_LIFETIME, 60.0f, 0.5f);
+		settings.RippleBreadth = ClampFiniteOrDefault(settings.RippleBreadth, MIN_RIPPLE_BREADTH, 10.0f, 0.5f);
+	}
+
+	RE::BSParticleShaderRainEmitter* GetRainEmitterFromPrecipGeometry(RE::BSGeometry* precipObject)
+	{
+		if (!precipObject) {
+			return nullptr;
+		}
+
+		auto& effect = precipObject->GetGeometryRuntimeData().properties[RE::BSGeometry::States::kEffect];
+		auto shaderProp = netimmerse_cast<RE::BSShaderProperty*>(effect.get());
+		auto particleShaderProperty = netimmerse_cast<RE::BSParticleShaderProperty*>(shaderProp);
+		if (!particleShaderProperty || !particleShaderProperty->particleEmitter) {
+			return nullptr;
+		}
+
+		auto* emitter = particleShaderProperty->particleEmitter;
+		if (!emitter->emitterType.any(RE::BSParticleShaderEmitter::EMITTER_TYPE::kRain)) {
+			return nullptr;
+		}
+
+		return static_cast<RE::BSParticleShaderRainEmitter*>(emitter);
 	}
 }
 
@@ -390,6 +444,8 @@ void WetnessEffects::PostPostLoad()
 void WetnessEffects::ResetRuntimeState()
 {
 	runtimeState = {};
+	lastFrameData = {};
+	hasLastFrameData = false;
 }
 
 void WetnessEffects::DrawSettings()
@@ -399,6 +455,11 @@ void WetnessEffects::DrawSettings()
 		const bool changed = ImGui::Checkbox(label, &enabled);
 		value = enabled ? 1u : 0u;
 		return changed;
+	};
+	const auto markPresetDirtyIfEdited = [this]() {
+		if (ImGui::IsItemDeactivatedAfterEdit()) {
+			DetectCurrentPreset();
+		}
 	};
 
 	// Climate Preset Selection - Always visible at the top
@@ -473,12 +534,10 @@ void WetnessEffects::DrawSettings()
 			ImGui::Text("Enables a wetness effect near water and when it is raining.");
 		}
 		ImGui::SliderFloat("Rain Wetness", &settings.MaxRainWetness, 0.0f, 2.5f);
-		if (ImGui::IsItemDeactivatedAfterEdit())
-			DetectCurrentPreset();
+		markPresetDirtyIfEdited();
 
 		ImGui::SliderFloat("Puddle Wetness", &settings.MaxPuddleWetness, 0.0f, 6.0f);
-		if (ImGui::IsItemDeactivatedAfterEdit())
-			DetectCurrentPreset();
+		markPresetDirtyIfEdited();
 
 		ImGui::SliderFloat("Shore Wetness", &settings.MaxShoreWetness, 0.0f, 1.0f);
 		ImGui::TreePop();
@@ -628,8 +687,7 @@ void WetnessEffects::DrawSettings()
 		};
 
 		ImGui::SliderFloat("Weather transition speed", &settings.WeatherTransitionSpeed, 0.2f, 8.0f);
-		if (ImGui::IsItemDeactivatedAfterEdit())
-			DetectCurrentPreset();
+		markPresetDirtyIfEdited();
 		if (auto _tt = Util::HoverTooltipWrapper()) {
 			ImGui::Text("How fast wetness appears when raining and how quickly it dries after rain has stopped.");
 		}
@@ -778,16 +836,7 @@ float WetnessEffects::GetRainIntensity(RE::NiPointer<RE::BSGeometry> precipObjec
 		return 0.0f;
 	}
 
-	auto& effect = precipObject->GetGeometryRuntimeData().properties[RE::BSGeometry::States::kEffect];
-	auto shaderProp = netimmerse_cast<RE::BSShaderProperty*>(effect.get());
-	auto particleShaderProperty = netimmerse_cast<RE::BSParticleShaderProperty*>(shaderProp);
-
-	if (!particleShaderProperty || !particleShaderProperty->particleEmitter) {
-		return 0.0f;
-	}
-
-	auto rain = (RE::BSParticleShaderRainEmitter*)(particleShaderProperty->particleEmitter);
-	if (!rain->emitterType.any(RE::BSParticleShaderEmitter::EMITTER_TYPE::kRain)) {
+	if (!GetRainEmitterFromPrecipGeometry(precipObject.get())) {
 		return 0.0f;
 	}
 
@@ -936,11 +985,9 @@ WetnessEffects::PerFrame WetnessEffects::GetCommonBufferData() const
 					precipObject = precip->lastPrecip;
 				}
 				if (precipObject) {
-					auto& effect = precipObject->GetGeometryRuntimeData().properties[RE::BSGeometry::States::kEffect];
-					auto shaderProp = netimmerse_cast<RE::BSShaderProperty*>(effect.get());
-					auto particleShaderProperty = netimmerse_cast<RE::BSParticleShaderProperty*>(shaderProp);
-					auto rain = (RE::BSParticleShaderRainEmitter*)(particleShaderProperty->particleEmitter);
-					data.OcclusionViewProj = rain->occlusionProjection;
+					if (auto* rainEmitter = GetRainEmitterFromPrecipGeometry(precipObject.get())) {
+						data.OcclusionViewProj = rainEmitter->occlusionProjection;
+					}
 				}
 
 				if (precip->currentPrecip && currentWeather) {
@@ -1043,10 +1090,8 @@ WetnessEffects::PerFrame WetnessEffects::GetCommonBufferData() const
 
 	data.settings = settings;
 	SanitizeToggleSettings(data.settings);
+	SanitizeShaderFacingSettings(data.settings);
 	data.settings.MaxShoreWetness = data.settings.EnableWetnessEffects ? data.settings.MaxShoreWetness : 0.0f;
-	data.settings.PuddleRadius = std::max(data.settings.PuddleRadius, MIN_PUDDLE_RADIUS);
-	data.settings.RippleBreadth = std::max(data.settings.RippleBreadth, MIN_RIPPLE_BREADTH);
-	data.settings.SplashesLifetime = std::max(data.settings.SplashesLifetime, MIN_SPLASH_LIFETIME);
 	data.settings.RaindropChance *= data.Raining * data.Raining;
 	data.settings.RaindropChance = std::clamp(data.settings.RaindropChance, 0.0f, 1.0f);
 	const float safeRaindropGridSize = std::max(data.settings.RaindropGridSize, MIN_RAINDROP_GRID_SIZE);
@@ -1056,17 +1101,27 @@ WetnessEffects::PerFrame WetnessEffects::GetCommonBufferData() const
 	data.settings.RaindropInterval = 1.0f / safeRaindropInterval;
 	data.settings.RippleLifetime = safeRaindropInterval / safeRippleLifetime;
 
+	lastFrameData = data;
+	hasLastFrameData = true;
+
 	return data;
 }
 
 void WetnessEffects::Prepass()
 {
-	static auto renderer = globals::game::renderer;
-	static auto& precipOcclusionTexture = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kPRECIPITATION_OCCLUSION_MAP];
-
+	auto renderer = globals::game::renderer;
 	auto context = globals::d3d::context;
+	if (!renderer || !context) {
+		return;
+	}
 
-	context->PSSetShaderResources(70, 1, &precipOcclusionTexture.depthSRV);
+	ID3D11ShaderResourceView* precipOcclusionSrv = nullptr;
+	auto& precipOcclusionTexture = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kPRECIPITATION_OCCLUSION_MAP];
+	if (precipOcclusionTexture.depthSRV) {
+		precipOcclusionSrv = precipOcclusionTexture.depthSRV;
+	}
+
+	context->PSSetShaderResources(70, 1, &precipOcclusionSrv);
 }
 
 void WetnessEffects::LoadSettings(json& o_json)
@@ -1081,14 +1136,16 @@ void WetnessEffects::LoadSettings(json& o_json)
 	const bool hasExplicitWetReflectionScale = o_json.contains("WetIndirectSpecularScale");
 	if (o_json.contains("EnableWetIndirectSpecular") && !o_json.contains("WetIndirectSpecularScale")) {
 		const auto& legacy = o_json["EnableWetIndirectSpecular"];
+		const bool useLegacyDefault = settings.EnableLegacyWetReflection != 0 && settings.EnableModernWetReflection == 0;
+		const auto applyLegacyToggle = [&](bool enabled) {
+			settings.WetIndirectSpecularScale = enabled ?
+				                                (useLegacyDefault ? DEFAULT_LEGACY_WET_INDIRECT_SPECULAR_SCALE : DEFAULT_WET_INDIRECT_SPECULAR_SCALE) :
+				                                0.0f;
+		};
 		if (legacy.is_boolean()) {
-			const bool enabled = legacy.get<bool>();
-			const bool useLegacyDefault = settings.EnableLegacyWetReflection != 0 && settings.EnableModernWetReflection == 0;
-			settings.WetIndirectSpecularScale = enabled ? (useLegacyDefault ? DEFAULT_LEGACY_WET_INDIRECT_SPECULAR_SCALE : DEFAULT_WET_INDIRECT_SPECULAR_SCALE) : 0.0f;
+			applyLegacyToggle(legacy.get<bool>());
 		} else if (legacy.is_number()) {
-			const bool enabled = legacy.get<float>() != 0.0f;
-			const bool useLegacyDefault = settings.EnableLegacyWetReflection != 0 && settings.EnableModernWetReflection == 0;
-			settings.WetIndirectSpecularScale = enabled ? (useLegacyDefault ? DEFAULT_LEGACY_WET_INDIRECT_SPECULAR_SCALE : DEFAULT_WET_INDIRECT_SPECULAR_SCALE) : 0.0f;
+			applyLegacyToggle(legacy.get<float>() != 0.0f);
 		} else {
 			settings.WetIndirectSpecularScale = DEFAULT_WET_INDIRECT_SPECULAR_SCALE;
 		}
@@ -1096,6 +1153,7 @@ void WetnessEffects::LoadSettings(json& o_json)
 		settings.WetIndirectSpecularScale = DEFAULT_LEGACY_WET_INDIRECT_SPECULAR_SCALE;
 	}
 	SanitizeToggleSettings(settings);
+	SanitizeShaderFacingSettings(settings);
 	ResetRuntimeState();
 
 	// Auto-detect which preset matches the loaded settings
@@ -1123,6 +1181,7 @@ void WetnessEffects::RestoreDefaultSettings()
 
 	// Apply the default climate preset to ensure settings reflect the preset values
 	ApplyClimatePreset(climatePreset);
+	SanitizeShaderFacingSettings(settings);
 
 	Ripples::UpdateSettings();  // Sync cached values after restoring defaults
 }
@@ -1138,7 +1197,10 @@ void WetnessEffects::DrawWeatherAnalysis() const
 		return;
 
 	// Get the current frame data (reuses already calculated values)
-	auto frameData = GetCommonBufferData();
+	if (!hasLastFrameData) {
+		return;
+	}
+	const auto frameData = lastFrameData;
 
 	// Get weather particle density for precipitation calculations
 	float weatherMaxParticleDensity = 0.0f;

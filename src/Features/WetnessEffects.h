@@ -166,6 +166,8 @@ private:
 		bool hasLastGameTime = false;
 	};
 	mutable RuntimeState runtimeState{};
+	mutable PerFrame lastFrameData{};
+	mutable bool hasLastFrameData = false;
 
 	// Weather wetness calculation result for debug display
 	struct WeatherWetnessResult
