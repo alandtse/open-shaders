@@ -102,6 +102,7 @@ namespace SharedData
 
 		uint ShoreRange;
 		float PuddleRadius;
+		float PuddlePatternScale;
 		float PuddleMaxAngle;
 		float PuddleMinWetness;
 
@@ -135,7 +136,7 @@ namespace SharedData
 		float RippleRadius;
 		float RippleBreadth;
 		float RippleLifetimeRcp;
-		float2 pad1;
+		float pad1;
 	};
 
 	struct SkylightingSettings

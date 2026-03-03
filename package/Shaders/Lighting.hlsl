@@ -2460,11 +2460,18 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	// Calculate puddle effects
 	float puddle = wetness;
 	if (wetness > 0.0 || puddleWetness > 0.0) {
-		float3 puddleCoords = ((input.WorldPosition.xyz + FrameBuffer::CameraPosAdjust[eyeIndex].xyz) * 0.5 + 0.5) * 0.01 / SharedData::wetnessEffectsSettings.PuddleRadius;
+		float puddlePatternScale = max(SharedData::wetnessEffectsSettings.PuddlePatternScale, 1e-3);
+		float3 puddleCoords = ((input.WorldPosition.xyz + FrameBuffer::CameraPosAdjust[eyeIndex].xyz) * 0.5 + 0.5) * 0.01 / puddlePatternScale;
 #		if !defined(SKINNED)
-		puddle = Random::perlinNoise(puddleCoords) * .5 + .5;
-		puddle = puddle * ((minWetnessAngle / SharedData::wetnessEffectsSettings.PuddleMaxAngle) * SharedData::wetnessEffectsSettings.MaxPuddleWetness * 0.25) + 0.5;
-		wetness = lerp(wetness, puddleWetness, saturate(puddle - 0.25));
+		float puddleSignal = Random::perlinNoise(puddleCoords) * .5 + .5;
+		puddleSignal = puddleSignal * ((minWetnessAngle / SharedData::wetnessEffectsSettings.PuddleMaxAngle) * SharedData::wetnessEffectsSettings.MaxPuddleWetness * 0.25) + 0.5;
+
+		// Radius is a monotonic size control: larger radius lowers threshold and expands puddle coverage.
+		float puddleSize01 = saturate((SharedData::wetnessEffectsSettings.PuddleRadius - 0.3) / (3.0 - 0.3));
+		float puddleThreshold = lerp(0.70, 0.20, puddleSize01);
+		float puddleBlend = saturate((puddleSignal - puddleThreshold) / max(1e-3, 1.0 - puddleThreshold));
+		wetness = lerp(wetness, puddleWetness, puddleBlend);
+		puddle = puddleBlend;
 #		endif
 		puddle *= wetness;
 	}

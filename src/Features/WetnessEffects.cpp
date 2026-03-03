@@ -27,6 +27,7 @@ namespace
 	constexpr float MIN_RIPPLE_BREADTH = 1e-3f;
 	constexpr float MIN_SPLASH_LIFETIME = 1e-3f;
 	constexpr float MIN_PUDDLE_RADIUS = 1e-3f;
+	constexpr float MIN_PUDDLE_PATTERN_SCALE = 1e-3f;
 	constexpr float MAX_LEGACY_WET_REFLECTION_SCALE = 0.25f;
 	constexpr float DEFAULT_LEGACY_WET_INDIRECT_SPECULAR_SCALE = 0.05f;
 	constexpr float DEFAULT_WET_INDIRECT_SPECULAR_SCALE = 0.25f;
@@ -147,6 +148,7 @@ namespace
 		settings.WeatherTransitionSpeed = ClampFiniteOrDefault(settings.WeatherTransitionSpeed, MIN_TRANSITION_SPEED, MAX_TRANSITION_SPEED, 3.0f);
 		settings.ShoreRange = std::max(settings.ShoreRange, 1u);
 		settings.PuddleRadius = ClampFiniteOrDefault(settings.PuddleRadius, MIN_PUDDLE_RADIUS, 10.0f, 1.0f);
+		settings.PuddlePatternScale = ClampFiniteOrDefault(settings.PuddlePatternScale, MIN_PUDDLE_PATTERN_SCALE, 10.0f, 1.0f);
 		settings.PuddleMaxAngle = ClampFiniteOrDefault(settings.PuddleMaxAngle, 1e-3f, 1.0f, 0.95f);
 		settings.PuddleMinWetness = ClampFiniteOrDefault(settings.PuddleMinWetness, 0.0f, 1.0f, 0.85f);
 		settings.MinRainWetness = ClampFiniteOrDefault(settings.MinRainWetness, 0.0f, 1.0f, 0.65f);
@@ -195,6 +197,7 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	MaxShoreWetness,
 	ShoreRange,
 	PuddleRadius,
+	PuddlePatternScale,
 	PuddleMaxAngle,
 	PuddleMinWetness,
 	MinRainWetness,
@@ -719,9 +722,18 @@ void WetnessEffects::DrawSettings()
 		ImGui::SliderFloat("Puddle Radius", &settings.PuddleRadius, 0.3f, 3.0f);
 		if (auto _tt = Util::HoverTooltipWrapper()) {
 			std::vector<std::string> tooltipLines = {
-				"The radius used to determine puddle size and location",
+				"Controls Puddle size",
 				Util::Units::FormatDistance(settings.PuddleRadius),
 				std::format("{:.2f} meters", Util::Units::GameUnitsToMeters(settings.PuddleRadius))
+			};
+			Util::DrawMultiLineTooltip(tooltipLines);
+		}
+		ImGui::SliderFloat("Puddle Pattern", &settings.PuddlePatternScale, 0.3f, 3.0f);
+		if (auto _tt = Util::HoverTooltipWrapper()) {
+			std::vector<std::string> tooltipLines = {
+				"Changes Puddle layout density/visibility pattern.",
+				Util::Units::FormatDistance(settings.PuddlePatternScale),
+				std::format("{:.2f} meters", Util::Units::GameUnitsToMeters(settings.PuddlePatternScale))
 			};
 			Util::DrawMultiLineTooltip(tooltipLines);
 		}
