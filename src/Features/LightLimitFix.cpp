@@ -423,8 +423,11 @@ void LightLimitFix::BSLightingShader_SetupGeometry_Before(RE::BSRenderPass* a_pa
 
 	strictLightDataTemp.NumStrictLights = 0;
 	strictLightDataTemp.ShadowBitMask = 0;
-
 	strictLightDataTemp.RoomIndex = -1;
+
+	if (!a_pass || !a_pass->geometry) {
+		return;
+	}
 	if (!roomNodes.empty()) {
 		if (RE::NiNode* roomNode = GetParentRoomNode(a_pass->geometry)) {
 			if (auto it = roomNodes.find(roomNode); it != roomNodes.cend()) {
@@ -436,51 +439,104 @@ void LightLimitFix::BSLightingShader_SetupGeometry_Before(RE::BSRenderPass* a_pa
 
 void LightLimitFix::BSLightingShader_SetupGeometry_GeometrySetupConstantPointLights(RE::BSRenderPass* a_pass)
 {
+	if (!a_pass || !a_pass->sceneLights) {
+		strictLightDataTemp.NumStrictLights = 0;
+		strictLightDataTemp.ShadowBitMask = 0;
+		return;
+	}
+
+	auto smState = globals::game::smState;
+	if (!smState) {
+		strictLightDataTemp.NumStrictLights = 0;
+		strictLightDataTemp.ShadowBitMask = 0;
+		return;
+	}
+
 	auto& isl = globals::features::inverseSquareLighting;
 
 	auto accumulator = *globals::game::currentAccumulator.get();
-	bool inWorld = accumulator->GetRuntimeData().activeShadowSceneNode == globals::game::smState->shadowSceneNode[0];
+	if (!accumulator) {
+		strictLightDataTemp.NumStrictLights = 0;
+		strictLightDataTemp.ShadowBitMask = 0;
+		return;
+	}
 
-	strictLightDataTemp.NumStrictLights = inWorld ? 0 : (a_pass->numLights - 1);
+	bool inWorld = accumulator->GetRuntimeData().activeShadowSceneNode == smState->shadowSceneNode[0];
 
-	for (uint32_t i = 0; i < strictLightDataTemp.NumStrictLights; i++) {
-		auto bsLight = a_pass->sceneLights[i + 1];
-		auto niLight = bsLight->light.get();
+	constexpr uint32_t kStrictLightCapacity = 15;
+	const uint32_t availableSceneLights = a_pass->numLights > 0 ? (a_pass->numLights - 1) : 0;
+	const uint32_t requestedStrictLights = inWorld ? 0u : availableSceneLights;
+	const uint32_t strictLightCount = std::min(requestedStrictLights, kStrictLightCapacity);
+	const uint32_t shadowLightCount = std::min(static_cast<uint32_t>(a_pass->numShadowLights), availableSceneLights);
 
-		auto& runtimeData = niLight->GetLightRuntimeData();
+	strictLightDataTemp.NumStrictLights = 0;
+	strictLightDataTemp.ShadowBitMask = 0;
 
-		LightData light{};
-		light.color = { runtimeData.diffuse.red, runtimeData.diffuse.green, runtimeData.diffuse.blue };
-		light.lightFlags = std::bit_cast<LightFlags>(runtimeData.ambient.red);
+	uint32_t outIndex = 0;
+#if defined(_MSC_VER)
+	__try
+#endif
+	{
+		for (uint32_t i = 0; i < strictLightCount; i++) {
+			auto bsLight = a_pass->sceneLights[i + 1];
+			if (!bsLight) {
+				continue;
+			}
+			auto niLight = bsLight->light.get();
+			if (!niLight) {
+				continue;
+			}
 
-		if (isl.loaded) {
-			isl.ProcessLight(light, bsLight, niLight);
-		} else {
-			light.radius = runtimeData.radius.x;
-			// light.color *= runtimeData.fade;
-			light.fade = runtimeData.fade;
+			auto& runtimeData = niLight->GetLightRuntimeData();
+
+			LightData light{};
+			light.color = { runtimeData.diffuse.red, runtimeData.diffuse.green, runtimeData.diffuse.blue };
+			light.lightFlags = std::bit_cast<LightFlags>(runtimeData.ambient.red);
+
+			if (isl.loaded) {
+				isl.ProcessLight(light, bsLight, niLight);
+			} else {
+				light.radius = runtimeData.radius.x;
+				// light.color *= runtimeData.fade;
+				light.fade = runtimeData.fade;
+			}
+
+			light.fade *= bsLight->lodDimmer;
+
+			SetLightPosition(light, niLight->world.translate, inWorld);
+
+			if (i < shadowLightCount && bsLight->IsShadowLight()) {
+				auto* shadowLight = static_cast<RE::BSShadowLight*>(bsLight);
+				GET_INSTANCE_MEMBER(maskIndex, shadowLight);
+				if (maskIndex < 32) {
+					light.shadowMaskIndex = maskIndex;
+					light.lightFlags.set(LightFlags::Shadow);
+				}
+			}
+
+			strictLightDataTemp.StrictLights[outIndex++] = light;
 		}
+		strictLightDataTemp.NumStrictLights = outIndex;
 
-		light.fade *= bsLight->lodDimmer;
-
-		SetLightPosition(light, niLight->world.translate, inWorld);
-
-		if (i < a_pass->numShadowLights) {
+		for (uint32_t i = 0; i < shadowLightCount; i++) {
+			auto bsLight = a_pass->sceneLights[i + 1];
+			if (!bsLight || !bsLight->IsShadowLight()) {
+				continue;
+			}
 			auto* shadowLight = static_cast<RE::BSShadowLight*>(bsLight);
 			GET_INSTANCE_MEMBER(maskIndex, shadowLight);
-			light.shadowMaskIndex = maskIndex;
-			light.lightFlags.set(LightFlags::Shadow);
+			if (maskIndex < 32) {
+				strictLightDataTemp.ShadowBitMask |= (1u << maskIndex);
+			}
 		}
-
-		strictLightDataTemp.StrictLights[i] = light;
 	}
-
-	for (uint32_t i = 0; i < a_pass->numShadowLights; i++) {
-		auto bsLight = a_pass->sceneLights[i + 1];
-		auto* shadowLight = static_cast<RE::BSShadowLight*>(bsLight);
-		GET_INSTANCE_MEMBER(maskIndex, shadowLight);
-		strictLightDataTemp.ShadowBitMask |= (1 << maskIndex);
+#if defined(_MSC_VER)
+	__except (1)
+	{
+		strictLightDataTemp.NumStrictLights = 0;
+		strictLightDataTemp.ShadowBitMask = 0;
 	}
+#endif
 }
 
 void LightLimitFix::BSLightingShader_SetupGeometry_After(RE::BSRenderPass*)
@@ -492,7 +548,14 @@ void LightLimitFix::BSLightingShader_SetupGeometry_After(RE::BSRenderPass*)
 	if (!shaderCache->IsEnabled())
 		return;
 
+	if (!smState || !strictLightDataCB) {
+		return;
+	}
+
 	auto accumulator = *globals::game::currentAccumulator.get();
+	if (!accumulator) {
+		return;
+	}
 
 	auto shadowSceneNode = smState->shadowSceneNode[0];
 
@@ -586,7 +649,7 @@ void LightLimitFix::Prepass()
 
 bool LightLimitFix::IsValidLight(RE::BSLight* a_light)
 {
-	return a_light && !a_light->light->GetFlags().any(RE::NiAVObject::Flag::kHidden);
+	return a_light && a_light->light && !a_light->light->GetFlags().any(RE::NiAVObject::Flag::kHidden);
 }
 
 bool LightLimitFix::IsGlobalLight(RE::BSLight* a_light)
@@ -603,6 +666,47 @@ struct VertexPosition
 {
 	std::uint8_t data[3];
 };
+
+bool TryGetMaxAlphaVertexColor(const std::uint8_t* a_rawVertexData, std::uint32_t a_vertexSize, std::uint32_t a_colorOffset, std::uint32_t a_vertexCount, VertexColor& a_outVertexColor)
+{
+	if (!a_rawVertexData || a_vertexSize < sizeof(VertexColor) || a_vertexCount == 0) {
+		return false;
+	}
+	if (a_colorOffset > (a_vertexSize - sizeof(VertexColor))) {
+		return false;
+	}
+
+	std::uint8_t maxAlpha = 0;
+	bool found = false;
+	VertexColor bestColor{};
+
+#if defined(_MSC_VER)
+	__try
+#endif
+	{
+		for (std::uint32_t v = 0; v < a_vertexCount; ++v) {
+			const std::size_t byteOffset = static_cast<std::size_t>(a_vertexSize) * static_cast<std::size_t>(v) + static_cast<std::size_t>(a_colorOffset);
+			const auto* vertex = reinterpret_cast<const VertexColor*>(a_rawVertexData + byteOffset);
+			const std::uint8_t alpha = vertex->data[3];
+			if (alpha > maxAlpha) {
+				maxAlpha = alpha;
+				bestColor = *vertex;
+				found = true;
+			}
+		}
+	}
+#if defined(_MSC_VER)
+	__except (1)
+	{
+		return false;
+	}
+#endif
+
+	if (found) {
+		a_outVertexColor = bestColor;
+	}
+	return found;
+}
 
 std::string ExtractTextureStem(std::string_view a_path)
 {
@@ -631,6 +735,10 @@ std::string ExtractTextureStem(std::string_view a_path)
 
 LightLimitFix::ParticleLightReference LightLimitFix::GetParticleLightConfigs(RE::BSRenderPass* a_pass)
 {
+	if (!a_pass || !a_pass->geometry || !a_pass->shaderProperty) {
+		return {};
+	}
+
 	auto& particleLights = globals::features::llf::particleLights;
 
 	auto cacheInvalidReference = [&](RE::BSGeometry* node) {
@@ -712,29 +820,18 @@ LightLimitFix::ParticleLightReference LightLimitFix::GetParticleLightConfigs(RE:
 						if (billboard) {
 							if (auto rendererData = a_pass->geometry->GetGeometryRuntimeData().rendererData) {
 								if (auto triShape = a_pass->geometry->AsTriShape()) {
-									uint32_t vertexSize = rendererData->vertexDesc.GetSize();
-									if (rendererData->vertexDesc.HasFlag(RE::BSGraphics::Vertex::Flags::VF_COLORS)) {
-										uint32_t offset = rendererData->vertexDesc.GetAttributeOffset(RE::BSGraphics::Vertex::Attribute::VA_COLOR);
+									const std::uint32_t vertexSize = rendererData->vertexDesc.GetSize();
+									if (rendererData->vertexDesc.HasFlag(RE::BSGraphics::Vertex::Flags::VF_COLORS) && rendererData->rawVertexData && vertexSize > 0u) {
+										const std::uint32_t offset = rendererData->vertexDesc.GetAttributeOffset(RE::BSGraphics::Vertex::Attribute::VA_COLOR);
+										const std::uint32_t vertexCount = static_cast<std::uint32_t>(triShape->GetTrishapeRuntimeData().vertexCount);
 
-										uint8_t maxAlpha = 0u;
-										VertexColor* vertexColor = nullptr;
-
-										for (int v = 0; v < triShape->GetTrishapeRuntimeData().vertexCount; v++) {
-											if (VertexColor* vertex = reinterpret_cast<VertexColor*>(&rendererData->rawVertexData[vertexSize * v + offset])) {
-												uint8_t alpha = vertex->data[3];
-												if (alpha > maxAlpha) {
-													maxAlpha = alpha;
-													vertexColor = vertex;
-												}
-											}
-										}
-
-										if (vertexColor) {
-											reference.baseColor.red *= vertexColor->data[0] / 255.f;
-											reference.baseColor.green *= vertexColor->data[1] / 255.f;
-											reference.baseColor.blue *= vertexColor->data[2] / 255.f;
+										VertexColor maxAlphaVertexColor{};
+										if (TryGetMaxAlphaVertexColor(rendererData->rawVertexData, vertexSize, offset, vertexCount, maxAlphaVertexColor)) {
+											reference.baseColor.red *= maxAlphaVertexColor.data[0] / 255.f;
+											reference.baseColor.green *= maxAlphaVertexColor.data[1] / 255.f;
+											reference.baseColor.blue *= maxAlphaVertexColor.data[2] / 255.f;
 											if (shaderProperty->flags.any(RE::BSShaderProperty::EShaderPropertyFlag::kVertexAlpha)) {
-												reference.baseColor.alpha *= vertexColor->data[3] / 255.f;
+												reference.baseColor.alpha *= maxAlphaVertexColor.data[3] / 255.f;
 											}
 										}
 									}
@@ -754,6 +851,10 @@ LightLimitFix::ParticleLightReference LightLimitFix::GetParticleLightConfigs(RE:
 
 bool LightLimitFix::CheckParticleLights(RE::BSRenderPass* a_pass, uint32_t)
 {
+	if (!a_pass || !a_pass->geometry || !a_pass->shaderProperty) {
+		return true;
+	}
+
 	auto shaderCache = globals::shaderCache;
 
 	if (!shaderCache->IsEnabled())
@@ -770,8 +871,21 @@ bool LightLimitFix::CheckParticleLights(RE::BSRenderPass* a_pass, uint32_t)
 
 bool LightLimitFix::AddParticleLight(RE::BSRenderPass* a_pass, ParticleLightReference a_reference)
 {
-	auto shaderProperty = static_cast<RE::BSEffectShaderProperty*>(a_pass->shaderProperty);
+	if (!a_pass || !a_pass->geometry || !a_pass->shaderProperty) {
+		return false;
+	}
+
+	auto shaderProperty = a_pass->shaderProperty->GetRTTI() == globals::rtti::BSEffectShaderPropertyRTTI.get() ?
+		                      static_cast<RE::BSEffectShaderProperty*>(a_pass->shaderProperty) :
+		                      nullptr;
+	if (!shaderProperty) {
+		return false;
+	}
+
 	auto material = shaderProperty->GetMaterial();
+	if (!material) {
+		return false;
+	}
 	const auto& config = a_reference.config;
 
 	a_pass->geometry->IncRefCount();
@@ -910,7 +1024,18 @@ void LightLimitFix::UpdateLights()
 	auto smState = globals::game::smState;
 	auto& isl = globals::features::inverseSquareLighting;
 
+	if (!smState) {
+		lightCount = 0;
+		UpdateStructure();
+		return;
+	}
+
 	auto shadowSceneNode = smState->shadowSceneNode[0];
+	if (!shadowSceneNode) {
+		lightCount = 0;
+		UpdateStructure();
+		return;
+	}
 
 	// Cache data since cameraData can become invalid in first-person
 
@@ -927,8 +1052,16 @@ void LightLimitFix::UpdateLights()
 	roomNodes.clear();
 
 	auto addRoom = [&](RE::NiNode* node, LightData& light) {
+		if (!node) {
+			return;
+		}
+
+		constexpr std::size_t kMaxRoomFlags = 128;
 		uint8_t roomIndex = 0;
 		if (auto it = roomNodes.find(node); it == roomNodes.cend()) {
+			if (roomNodes.size() >= kMaxRoomFlags) {
+				return;
+			}
 			roomIndex = static_cast<uint8_t>(roomNodes.size());
 			roomNodes.insert_or_assign(node, roomIndex);
 		} else {
@@ -960,11 +1093,15 @@ void LightLimitFix::UpdateLights()
 					if (!IsGlobalLight(bsLight)) {
 						// List of BSMultiBoundRooms affected by a light
 						for (const auto& roomPtr : bsLight->rooms) {
-							addRoom(static_cast<RE::NiNode*>(roomPtr), light);
+							if (roomPtr) {
+								addRoom(static_cast<RE::NiNode*>(roomPtr), light);
+							}
 						}
 						// List of BSPortals affected by a light
 						for (const auto& portalPtr : bsLight->portals) {
-							addRoom(static_cast<RE::NiNode*>(portalPtr->portalSharedNode.get()), light);
+							if (portalPtr && portalPtr->portalSharedNode) {
+								addRoom(static_cast<RE::NiNode*>(portalPtr->portalSharedNode.get()), light);
+							}
 						}
 						light.lightFlags.set(LightFlags::PortalStrict);
 					}
@@ -1037,15 +1174,27 @@ void LightLimitFix::UpdateLights()
 					auto& particleSystemRuntimeData = particleSystem->GetParticleSystemRuntimeData();
 					auto& particleRuntimeData = particleData->GetParticlesRuntimeData();
 
+					if (!particleRuntimeData.radii || !particleRuntimeData.sizes || !particleRuntimeData.positions) {
+						continue;
+					}
+
 					// Use explicit 32-bit type to avoid narrowing warnings
 					std::uint32_t numVertices = static_cast<std::uint32_t>(particleData->GetActiveVertexCount());
+					const std::uint32_t runtimeMaxVertices = static_cast<std::uint32_t>(particleRuntimeData.maxNumVertices);
+					const std::uint32_t runtimeNumVertices = static_cast<std::uint32_t>(particleRuntimeData.numVertices);
+					if (runtimeMaxVertices == 0) {
+						continue;
+					}
+					numVertices = std::min(numVertices, runtimeMaxVertices);
+					if (runtimeNumVertices > 0) {
+						numVertices = std::min(numVertices, runtimeNumVertices);
+					}
 
 					// NEW: clamp by MaxParticlesPerEmitter (also 32-bit)
 					std::uint32_t maxPerEmitter = static_cast<std::uint32_t>(std::max(1, settings.MaxParticlesPerEmitter));
 					if (numVertices > maxPerEmitter) {
 						numVertices = maxPerEmitter;
 					}
-
 					for (std::uint32_t p = 0; p < numVertices; p++) {
 
 						float radius = particleRuntimeData.radii[p] * particleRuntimeData.sizes[p];
