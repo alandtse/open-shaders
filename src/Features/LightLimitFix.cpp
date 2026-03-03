@@ -80,6 +80,14 @@ namespace
 		       ToLowerAscii(ext[2]) == 'd' &&
 		       ToLowerAscii(ext[3]) == 's';
 	}
+	void ClearStrictLightData(LightLimitFix::StrictLightDataCB& a_data, bool a_resetRoomIndex) noexcept
+	{
+		a_data.NumStrictLights = 0;
+		a_data.ShadowBitMask = 0;
+		if (a_resetRoomIndex) {
+			a_data.RoomIndex = -1;
+		}
+	}
 }
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
