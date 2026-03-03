@@ -89,8 +89,11 @@ namespace
 		a_settings.ResolutionMode = ClampResolutionMode(a_settings.ResolutionMode);
 		a_settings.VRCullDistance = ClampVRCullDistance(a_settings.VRCullDistance);
 		if (a_settings.FoveatedPresetMode != kFoveatedPresetModeOff) {
-			a_settings.ResolutionMode = 2;  // foveated presets are quarter-res periphery by design
-			a_settings.CenterFullResMaskScale = GetFoveatedPresetCenterScale(a_settings.FoveatedPresetMode);
+			// Foveated presets run through the quarter-res base path; "Foveated" mode later suppresses periphery AO.
+			a_settings.ResolutionMode = 2;
+			a_settings.CenterFullResMaskScale = ClampCenterMaskScale(a_settings.CenterFullResMaskScale);
+			if (a_settings.CenterFullResMaskScale <= 0.0f)
+				a_settings.CenterFullResMaskScale = GetFoveatedPresetCenterScale(a_settings.FoveatedPresetMode);
 			// Foveated presets are AO-only by design; IL must stay off while active.
 			a_settings.EnableGI = false;
 			if (a_settings.FoveatedPresetMode == kFoveatedPresetModeStrict) {
@@ -278,11 +281,11 @@ void ScreenSpaceGI::DrawSettings()
 				recompileFlag = true;
 			}
 			if (auto _tt = Util::HoverTooltipWrapper())
-				ImGui::Text("Full Res, no GI, no Foveated; use Half Res, Quarter Res, or Foveated for more performance.");
+				ImGui::Text("Full Res, no GI, no Foveated; use Half Res, Quarter Res, Foveated/QRes, or Foveated/Only for more performance.");
 
 			ImGui::TableNextColumn();
 			const bool strictActive = settings.FoveatedPresetMode == kFoveatedPresetModeStrict;
-			if (drawFoveatedToggleButton("Strict Foveated", strictActive, { -1, 0 })) {
+			if (drawFoveatedToggleButton("Foveated/QRes", strictActive, { -1, 0 })) {
 				if (strictActive) {
 					settings.FoveatedPresetMode = kFoveatedPresetModeOff;
 					settings.CenterFullResMaskScale = 0.0f;
@@ -290,8 +293,10 @@ void ScreenSpaceGI::DrawSettings()
 					settings.NumSlices = 3;
 					settings.NumSteps = 6;
 					settings.ResolutionMode = 2;
-					settings.CenterFullResMaskScale = 0.45f;
 					settings.FoveatedPresetMode = kFoveatedPresetModeStrict;
+					settings.CenterFullResMaskScale = settings.CenterFullResMaskScale > 0.0f ?
+					                                     ClampCenterMaskScale(settings.CenterFullResMaskScale) :
+					                                     GetFoveatedPresetCenterScale(settings.FoveatedPresetMode);
 					settings.VRCullDistance = 1500.0f;
 					settings.AOPower = 1.8f;
 					settings.EnableBlur = false;
@@ -301,11 +306,11 @@ void ScreenSpaceGI::DrawSettings()
 				recompileFlag = true;
 			}
 			if (auto _tt = Util::HoverTooltipWrapper())
-				ImGui::Text("Quarter-res periphery with 0.45 Full Res center. Strict mode disables denoising while active for stable, fast output.");
+				ImGui::Text("Quarter-res AO outside with Full Res AO in the center. Denoisers are disabled while active.");
 
 			ImGui::TableNextColumn();
 			const bool foveatedActive = settings.FoveatedPresetMode == kFoveatedPresetModeFoveated;
-			if (drawFoveatedToggleButton("Foveated", foveatedActive, { -1, 0 })) {
+			if (drawFoveatedToggleButton("Foveated/Only", foveatedActive, { -1, 0 })) {
 				if (foveatedActive) {
 					settings.FoveatedPresetMode = kFoveatedPresetModeOff;
 					settings.CenterFullResMaskScale = 0.0f;
@@ -313,8 +318,10 @@ void ScreenSpaceGI::DrawSettings()
 					settings.NumSlices = 3;
 					settings.NumSteps = 6;
 					settings.ResolutionMode = 2;
-					settings.CenterFullResMaskScale = 0.45f;
 					settings.FoveatedPresetMode = kFoveatedPresetModeFoveated;
+					settings.CenterFullResMaskScale = settings.CenterFullResMaskScale > 0.0f ?
+					                                     ClampCenterMaskScale(settings.CenterFullResMaskScale) :
+					                                     GetFoveatedPresetCenterScale(settings.FoveatedPresetMode);
 					settings.VRCullDistance = 1500.0f;
 					settings.AOPower = 1.8f;
 					settings.EnableGI = false;
@@ -322,7 +329,7 @@ void ScreenSpaceGI::DrawSettings()
 				recompileFlag = true;
 			}
 			if (auto _tt = Util::HoverTooltipWrapper())
-				ImGui::Text("Quarter-res periphery with 0.45 Full Res center for maximum performance. Denoising settings remain user-controlled.");
+				ImGui::Text("Full Res AO in center only; AO is disabled outside center. Use the center-area slider to tune coverage.");
 
 			ImGui::TableNextColumn();
 			if (ImGui::Button("Reference", { -1, 0 })) {
@@ -400,7 +407,11 @@ void ScreenSpaceGI::DrawSettings()
 		recompileFlag |= (settings.ResolutionMode != previousResolutionMode);
 		if (foveatedPresetActiveInPerfSection) {
 			settings.ResolutionMode = 2;
-			settings.CenterFullResMaskScale = GetFoveatedPresetCenterScale(settings.FoveatedPresetMode);
+			ImGui::SliderFloat("Foveated Center Area", &settings.CenterFullResMaskScale, kCenterMaskScaleMin, kCenterMaskScaleMax, "%.2f");
+			settings.CenterFullResMaskScale = ClampCenterMaskScale(settings.CenterFullResMaskScale);
+			if (auto _tt = Util::HoverTooltipWrapper()) {
+				ImGui::Text("Controls how much of the screen keeps Full Res AO when a foveated preset is active.");
+			}
 		}
 	}
 
@@ -506,7 +517,7 @@ void ScreenSpaceGI::DrawSettings()
 			ImGui::EndTable();
 		}
 		if (strictFoveatedActive) {
-			ImGui::TextDisabled("Strict Foveated is active: denoising is disabled.");
+			ImGui::TextDisabled("Foveated/QRes is active: denoising is disabled.");
 		}
 
 		if (showAdvanced) {
@@ -1007,7 +1018,9 @@ void ScreenSpaceGI::DrawSSGI()
 	if (!context)
 		return;
 	const int resolutionMode = ClampResolutionMode(settings.ResolutionMode);
+	const int foveatedPresetMode = ClampFoveatedPresetMode(settings.FoveatedPresetMode);
 	const float centerScale = ClampCenterMaskScale(settings.CenterFullResMaskScale);
+	const bool foveatedCenterOnlyMode = foveatedPresetMode == kFoveatedPresetModeFoveated;
 
 	auto imageSpaceManager = RE::ImageSpaceManager::GetSingleton();
 	GET_INSTANCE_MEMBER(BSImagespaceShaderISSAOBlurH, imageSpaceManager);
@@ -1021,9 +1034,9 @@ void ScreenSpaceGI::DrawSSGI()
 	const bool allowILSpace = !settings.ILInteriorsOnly || isInterior;
 	const bool runILPath = settings.EnableGI && allowILSpace;
 	const bool temporalEnabled = settings.EnableTemporalDenoiser;
-	const bool runRadianceDisoccPass = runILPath || temporalEnabled;
+	const bool runRadianceDisoccPass = !foveatedCenterOnlyMode && (runILPath || temporalEnabled);
 	const bool runPrefilterRadiancePass = runILPath;
-	const bool blurEnabled = settings.EnableBlur && runILPath;
+	const bool blurEnabled = !foveatedCenterOnlyMode && settings.EnableBlur && runILPath;
 	ID3D11ComputeShader* activeRadianceDisoccCompute = nullptr;
 	ID3D11ComputeShader* activeGICompute = nullptr;
 	ID3D11ComputeShader* activeCenterGICompute = nullptr;
@@ -1144,9 +1157,9 @@ void ScreenSpaceGI::DrawSSGI()
 		return false;
 	};
 	if (!requireActiveShader(runRadianceDisoccPass, activeRadianceDisoccCompute, "radianceDisocc(active)") ||
-	    !requireActiveShader(true, activeGICompute, "gi(active)") ||
+	    !requireActiveShader(!foveatedCenterOnlyMode, activeGICompute, "gi(active)") ||
 	    !requireActiveShader(blurEnabled, blurCompute.get(), "blur") ||
-	    !requireActiveShader((resolutionMode != 0) && !centerDirectWrite, activeUpsampleCompute, "upsample(active)") ||
+	    !requireActiveShader((resolutionMode != 0) && !centerDirectWrite && !foveatedCenterOnlyMode, activeUpsampleCompute, "upsample(active)") ||
 	    !requireActiveShader(centerMaskEnabled, activeCenterGICompute, "centerGI(active)") ||
 	    !requireActiveShader(centerBlendNeeded, activeCenterBlendCompute, "centerBlend(active)")) {
 		return;
@@ -1396,7 +1409,7 @@ void ScreenSpaceGI::DrawSSGI()
 	}
 
 	// GI
-	{
+	if (!foveatedCenterOnlyMode) {
 		TracyD3D11Zone(globals::state->tracyCtx, "SSGI - GI");
 
 		resetViews();
@@ -1456,7 +1469,7 @@ void ScreenSpaceGI::DrawSSGI()
 	}
 
 	// upsample
-	if (resolutionMode != 0 && !centerDirectWrite) {
+	if (resolutionMode != 0 && !centerDirectWrite && !foveatedCenterOnlyMode) {
 		resetViews();
 		srvs.at(0) = texWorkingDepth->srv.get();
 		srvs.at(1) = texAo[inputAoTexIdx]->srv.get();
@@ -1484,6 +1497,13 @@ void ScreenSpaceGI::DrawSSGI()
 
 	// full-res center refinement (half/quarter modes), then smooth blend into current output
 	if (centerMaskEnabled) {
+		if (foveatedCenterOnlyMode) {
+			FLOAT clr[4] = { 0.f, 0.f, 0.f, 0.f };
+			const uint clearAoIdx = centerBlendNeeded ? inputAoTexIdx : !inputAoTexIdx;
+			if (clearAoIdx < 2 && texAo[clearAoIdx] && texAo[clearAoIdx]->uav)
+				context->ClearUnorderedAccessViewFloat(texAo[clearAoIdx]->uav.get(), clr);
+		}
+
 		{
 			TracyD3D11Zone(globals::state->tracyCtx, "SSGI - Center FullRes GI");
 
