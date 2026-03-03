@@ -7,6 +7,8 @@
 #include "Deferred.h"
 #include "FeatureIssues.h"
 #include "Features/CloudShadows.h"
+#include "Features/InteriorSun.h"
+#include "Features/LightLimitFix.h"
 #include "Features/PerformanceOverlay.h"
 #include "Features/TerrainBlending.h"
 #include "Features/TerrainHelper.h"
@@ -34,6 +36,15 @@ void State::Draw()
 	auto context = globals::d3d::context;
 
 	if (shaderCache->IsEnabled()) {
+		if (pendingPostLoadRuntimeReset) {
+			globals::OnDataLoaded();
+			WeatherManager::GetSingleton()->ClearCache();
+			globals::features::lightLimitFix.Reset();
+			globals::features::interiorSun.isInteriorWithSun = false;
+			pendingPostLoadRuntimeReset = false;
+			logger::info("Applied deferred post-load runtime reset");
+		}
+
 		if (weatherEditor.loaded) {
 			ZoneScopedN("WeatherManager::UpdateFeatures");
 			WeatherManager::GetSingleton()->UpdateFeatures();

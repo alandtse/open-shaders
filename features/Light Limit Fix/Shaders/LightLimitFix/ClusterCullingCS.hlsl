@@ -18,8 +18,6 @@ RWStructuredBuffer<uint> lightIndexCounter : register(u0);
 RWStructuredBuffer<uint> lightIndexList : register(u1);
 RWStructuredBuffer<LightGrid> lightGrid : register(u2);
 
-groupshared Light sharedLights[GROUP_SIZE];
-
 bool LightIntersectsCluster(float3 position, float radiusSquared, ClusterAABB cluster)
 {
 	float3 closest = max(cluster.minPoint.xyz, min(position, cluster.maxPoint.xyz));
@@ -28,12 +26,7 @@ bool LightIntersectsCluster(float3 position, float radiusSquared, ClusterAABB cl
 	return dot(dist, dist) <= radiusSquared;
 }
 
-[numthreads(NUMTHREAD_X, NUMTHREAD_Y, NUMTHREAD_Z)] void main(
-	uint3 groupId
-	: SV_GroupID, uint3 dispatchThreadId
-	: SV_DispatchThreadID, uint3 groupThreadId
-	: SV_GroupThreadID, uint groupIndex
-	: SV_GroupIndex) {
+[numthreads(NUMTHREAD_X, NUMTHREAD_Y, NUMTHREAD_Z)] void main(uint3 dispatchThreadId : SV_DispatchThreadID) {
 	if (any(dispatchThreadId >= uint3(ClusterSize.x, ClusterSize.y, ClusterSize.z)))
 		return;
 
@@ -45,14 +38,6 @@ bool LightIntersectsCluster(float3 position, float radiusSquared, ClusterAABB cl
 	                    dispatchThreadId.z * (ClusterSize.x * ClusterSize.y);
 
 	ClusterAABB cluster = clusters[clusterIndex];
-
-	if (groupIndex < LightCount) {
-		uint lightIndex = groupIndex;
-		Light light = lights[lightIndex];
-		sharedLights[groupIndex] = light;
-	}
-
-	GroupMemoryBarrierWithGroupSync();
 
 	for (uint i = 0; i < LightCount; i++) {
 		Light light = lights[i];
@@ -77,8 +62,6 @@ bool LightIntersectsCluster(float3 position, float radiusSquared, ClusterAABB cl
 				break;
 		}
 	}
-
-	GroupMemoryBarrierWithGroupSync();
 
 	uint offset = 0;
 	InterlockedAdd(lightIndexCounter[0], visibleLightCount, offset);

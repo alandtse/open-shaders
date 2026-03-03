@@ -321,7 +321,7 @@ PS_OUTPUT main(PS_INPUT input)
 
 		uint clusterIndex = 0;
 		if (LightLimitFix::GetClusterIndex(screenUV, viewPosition.z, clusterIndex)) {
-			lightCount = LightLimitFix::lightGrid[clusterIndex].lightCount;
+			lightCount = min(LightLimitFix::lightGrid[clusterIndex].lightCount, MAX_CLUSTER_LIGHTS);
 			uint lightOffset = LightLimitFix::lightGrid[clusterIndex].offset;
 			[loop] for (uint i = 0; i < lightCount; i++)
 			{

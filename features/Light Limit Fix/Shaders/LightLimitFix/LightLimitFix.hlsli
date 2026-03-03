@@ -20,13 +20,25 @@ namespace LightLimitFix
 	bool GetClusterIndex(in float2 uv, in float z, inout uint clusterIndex)
 	{
 		const uint3 clusterSize = SharedData::lightLimitFixSettings.ClusterSize.xyz;
+		if (any(clusterSize == 0) || clusterSize.x > 512 || clusterSize.y > 512 || clusterSize.z > 128) {
+			return false;
+		}
+		if (SharedData::CameraData.y <= 0.0 || SharedData::CameraData.x <= SharedData::CameraData.y) {
+			return false;
+		}
 
 		if (!FrameBuffer::FrameParams.y) // Fix first person lights
 			uv = 0.5;
 
-		z = max(z, SharedData::CameraData.y);
+		const float nearPlane = SharedData::CameraData.y;
+		const float farPlane = SharedData::CameraData.x;
+		const float logDenominator = log(farPlane / nearPlane);
+		if (abs(logDenominator) < 1e-6) {
+			return false;
+		}
 
-		uint clusterZ = log(z / SharedData::CameraData.y) * clusterSize.z / log(SharedData::CameraData.x / SharedData::CameraData.y);
+		z = max(z, nearPlane);
+		uint clusterZ = (uint)(log(z / nearPlane) * clusterSize.z / logDenominator);
 		uint3 cluster = uint3(uint2(uv * clusterSize.xy), clusterZ);
 
 		// Bounds validation to prevent out-of-range cluster indices
@@ -71,6 +83,9 @@ namespace LightLimitFix
 	{
 		if (light.lightFlags & LightLimitFix::LightFlags::Shadow)
 		{
+			if (light.shadowLightIndex >= 32) {
+				return true;
+			}
 			return !(ShadowBitMask & (1 << light.shadowLightIndex));
 		}
 
