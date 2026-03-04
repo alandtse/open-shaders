@@ -1359,19 +1359,24 @@ void ScreenSpaceGI::DrawSSGI()
 			srvs.at(4) = rts[RE::RENDER_TARGET::kMOTION_VECTOR].SRV;
 			srvs.at(5) = texAccumFrames[lastFrameAccumTexIdx]->srv.get();
 			srvs.at(6) = texAo[inputAoTexIdx]->srv.get();
-			srvs.at(7) = texIlY[inputGITexIdx]->srv.get();
-			srvs.at(8) = texIlCoCg[inputGITexIdx]->srv.get();
-			srvs.at(9) = texGiSpecular[inputAoTexIdx]->srv.get();
+			if (runILPath) {
+				srvs.at(7) = texIlY[inputGITexIdx]->srv.get();
+				srvs.at(8) = texIlCoCg[inputGITexIdx]->srv.get();
+				srvs.at(9) = texGiSpecular[inputAoTexIdx]->srv.get();
+			}
 		}
 		srvs.at(10) = nullptr;
 
-		uavs.at(0) = texRadiance->uav.get();
+		// AO-only temporal mode does not need radiance or IL history traffic.
+		uavs.at(0) = runILPath ? texRadiance->uav.get() : nullptr;
 		if (temporalEnabled) {
 			uavs.at(1) = texAccumFrames[!lastFrameAccumTexIdx]->uav.get();
 			uavs.at(2) = texAo[!inputAoTexIdx]->uav.get();
-			uavs.at(3) = texIlY[!inputGITexIdx]->uav.get();
-			uavs.at(4) = texIlCoCg[!inputGITexIdx]->uav.get();
-			uavs.at(5) = texGiSpecular[!inputAoTexIdx]->uav.get();
+			if (runILPath) {
+				uavs.at(3) = texIlY[!inputGITexIdx]->uav.get();
+				uavs.at(4) = texIlCoCg[!inputGITexIdx]->uav.get();
+				uavs.at(5) = texGiSpecular[!inputAoTexIdx]->uav.get();
+			}
 		}
 
 		context->CSSetShaderResources(0, (uint)srvs.size(), srvs.data());

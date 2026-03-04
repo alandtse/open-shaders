@@ -4,23 +4,32 @@
 #include "Common/VR.hlsli"
 #include "ScreenSpaceGI/common.hlsli"
 
+// AO-only temporal path does not need scene radiance.
+#ifdef GI
 Texture2D<half4> srcDiffuse : register(t0);
+#endif
 Texture2D<half> srcCurrDepth : register(t1);
 Texture2D<half4> srcCurrNormal : register(t2);
 Texture2D<half3> srcPrevGeo : register(t3);  // maybe half-res
 Texture2D<float4> srcMotionVec : register(t4);
 Texture2D<unorm float> srcAccumFrames : register(t5);  // maybe half-res
 Texture2D<half> srcPrevAo : register(t6);              // maybe half-res
+#ifdef GI
 Texture2D<half4> srcPrevIlY : register(t7);            // maybe half-res
 Texture2D<half2> srcPrevIlCoCg : register(t8);         // maybe half-res
 Texture2D<half4> srcPrevGISpecular : register(t9);    // maybe half-res
+#endif
 
+#ifdef GI
 RWTexture2D<float3> outRadianceDisocc : register(u0);
+#endif
 RWTexture2D<unorm float> outAccumFrames : register(u1);
 RWTexture2D<float> outRemappedAo : register(u2);
+#ifdef GI
 RWTexture2D<float4> outRemappedIlY : register(u3);
 RWTexture2D<float2> outRemappedIlCoCg : register(u4);
 RWTexture2D<float4> outRemappedPrevGISpecular : register(u5);
+#endif
 
 #if defined(TEMPORAL_DENOISER) || defined(HALF_RATE)
 #	define REPROJECTION
@@ -54,10 +63,12 @@ void readHistory(
 	if (depth_pass) {
 #ifdef TEMPORAL_DENOISER
 		prev_ao += srcPrevAo[pixCoord] * bilinear_weight;
+#	ifdef GI
 		prev_y += srcPrevIlY[pixCoord] * bilinear_weight;
 		prev_co_cg += srcPrevIlCoCg[pixCoord] * bilinear_weight;
+#	endif
 		accum_frames += srcAccumFrames[pixCoord] * bilinear_weight;
-#	ifdef GI_SPECULAR
+#	if defined(GI) && defined(GI_SPECULAR)
 		prev_gi_specular += srcPrevGISpecular[pixCoord] * bilinear_weight;
 #	endif
 #endif
@@ -90,10 +101,14 @@ void readHistory(
 	const float curr_depth = READ_DEPTH(srcCurrDepth, pixCoord);
 
 	if (curr_depth < FP_Z) {
+#ifdef GI
 		outRadianceDisocc[pixCoord] = half3(0, 0, 0);
+#endif
 		outAccumFrames[pixCoord] = 1.0 / 255.0;
+#ifdef GI
 		outRemappedIlY[pixCoord] = half4(0, 0, 0, 0);
 		outRemappedIlCoCg[pixCoord] = half2(0, 0);
+#endif
 		return;
 	}
 
@@ -125,10 +140,12 @@ void readHistory(
 			float rcpWsum = rcp(wsum + 1e-10);
 #	ifdef TEMPORAL_DENOISER
 			prev_ao *= rcpWsum;
+#		ifdef GI
 			prev_y *= rcpWsum;
 			prev_co_cg *= rcpWsum;
+#		endif
 			accum_frames *= rcpWsum;
-#		ifdef GI_SPECULAR
+#		if defined(GI) && defined(GI_SPECULAR)
 			prev_gi_specular *= rcpWsum;
 #		endif
 #	endif
@@ -148,8 +165,10 @@ void readHistory(
 	accum_frames = max(1, min(accum_frames * 255 + 1, MaxAccumFrames));
 	outAccumFrames[pixCoord] = accum_frames / 255.0;
 	outRemappedAo[pixCoord] = prev_ao;
+#ifdef GI
 	outRemappedIlY[pixCoord] = prev_y;
 	outRemappedIlCoCg[pixCoord] = prev_co_cg;
 	outRemappedPrevGISpecular[pixCoord] = prev_gi_specular;
+#endif
 #endif
 }
