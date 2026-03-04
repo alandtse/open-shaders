@@ -131,7 +131,8 @@ void CalculateGI(
 	float2 normalizedScreenPos = Stereo::ConvertFromStereoUV(uv, eyeIndex);
 
 	const float rcpNumSlices = rcp((float)NumSlices);
-	const float rcpNumSteps = rcp((float)NumSteps);
+	uint numSteps = NumSteps;
+	float rcpNumSteps = rcp((float)max(numSteps, 1u));
 
 	// if the offset is under approx pixel size (pixelTooCloseThreshold), push it out to the minimum distance
 	const float pixelTooCloseThreshold = 1.3;
@@ -155,6 +156,45 @@ void CalculateGI(
 	const float3 viewVec = normalize(-pixCenterPos);
 #ifdef GI_SPECULAR
 	const float NoV = clamp(dot(viewVec, viewspaceNormal), 1e-5, 1);
+#endif
+
+#ifdef ADAPTIVE_SAMPLING
+	{
+		const uint2 frameMax = uint2(max(OUT_FRAME_DIM.x - 1.0, 0.0), max(OUT_FRAME_DIM.y - 1.0, 0.0));
+		const uint2 pxL = uint2(max(int(dtid.x) - 1, 0), dtid.y);
+		const uint2 pxR = uint2(min(dtid.x + 1, frameMax.x), dtid.y);
+		const uint2 pxU = uint2(dtid.x, max(int(dtid.y) - 1, 0));
+		const uint2 pxD = uint2(dtid.x, min(dtid.y + 1, frameMax.y));
+
+		const float depthL = READ_DEPTH(srcWorkingDepth, pxL);
+		const float depthR = READ_DEPTH(srcWorkingDepth, pxR);
+		const float depthU = READ_DEPTH(srcWorkingDepth, pxU);
+		const float depthD = READ_DEPTH(srcWorkingDepth, pxD);
+		const float depthScale = rcp(max(viewspaceZ, 1.0));
+		const float depthVariance = (abs(depthL - viewspaceZ) + abs(depthR - viewspaceZ) + abs(depthU - viewspaceZ) + abs(depthD - viewspaceZ)) * 0.25 * depthScale;
+
+		const float2 uvL = (pxL + 0.5) * RCP_OUT_FRAME_DIM;
+		const float2 uvR = (pxR + 0.5) * RCP_OUT_FRAME_DIM;
+		const float2 uvU = (pxU + 0.5) * RCP_OUT_FRAME_DIM;
+		const float2 uvD = (pxD + 0.5) * RCP_OUT_FRAME_DIM;
+		const float3 normalL = GBuffer::DecodeNormal(FULLRES_LOAD(srcNormalRoughness, pxL, uvL * frameScale, samplerLinearClamp).xy);
+		const float3 normalR = GBuffer::DecodeNormal(FULLRES_LOAD(srcNormalRoughness, pxR, uvR * frameScale, samplerLinearClamp).xy);
+		const float3 normalU = GBuffer::DecodeNormal(FULLRES_LOAD(srcNormalRoughness, pxU, uvU * frameScale, samplerLinearClamp).xy);
+		const float3 normalD = GBuffer::DecodeNormal(FULLRES_LOAD(srcNormalRoughness, pxD, uvD * frameScale, samplerLinearClamp).xy);
+		const float normalVariance = ((1.0 - saturate(dot(viewspaceNormal, normalL))) +
+		                              (1.0 - saturate(dot(viewspaceNormal, normalR))) +
+		                              (1.0 - saturate(dot(viewspaceNormal, normalU))) +
+		                              (1.0 - saturate(dot(viewspaceNormal, normalD)))) * 0.25;
+
+		const float localVariance = saturate(depthVariance * 6.0 + normalVariance * 2.0);
+		const float farDepthT = saturate((viewspaceZ - DepthFadeRange.x) * DepthFadeScaleConst);
+		const float farStepScale = lerp(1.0, 0.45, farDepthT);
+		const float varianceStepScale = lerp(0.55, 1.0, localVariance);
+		const float adaptiveStepScale = min(farStepScale, varianceStepScale);
+		const uint adaptiveSteps = max(1u, (uint)round((float)NumSteps * adaptiveStepScale));
+		numSteps = min(NumSteps, adaptiveSteps);
+		rcpNumSteps = rcp((float)max(numSteps, 1u));
+	}
 #endif
 
 	// flip foliage normal
@@ -205,7 +245,7 @@ void CalculateGI(
 
 		[unroll] for (int sideSign = -1; sideSign <= 1; sideSign += 2)
 		{
-			[loop] for (uint step = 0; step < NumSteps; step++)
+			[loop] for (uint step = 0; step < numSteps; step++)
 			{
 				float s = (step + stepNoise) * rcpNumSteps;
 				s *= s;     // default 2 is fine
@@ -370,6 +410,8 @@ void CalculateGI(
 		return;
 	uint2 pxCoord = dtid + dispatchOffset;
 #else
+	if (any(dtid >= uint2(OUT_FRAME_DIM)))
+		return;
 	uint2 pxCoord = dtid;
 #endif
 

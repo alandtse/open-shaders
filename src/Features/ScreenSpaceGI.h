@@ -82,6 +82,7 @@ public:
 		// performance/quality
 		uint NumSlices = REL::Module::IsVR() ? 3u : 4u;
 		uint NumSteps = REL::Module::IsVR() ? 6u : 8u;   // AO preset for VR
+		bool EnableAdaptiveSampling = false;
 		int ResolutionMode = 0;  // Full Res default (VR and flat)
 		float VRCullDistance = 1500.0f;                  // 0 disables VR distance culling
 		float CenterFullResMaskScale = 0.0f;             // 0 = off, 1.0 = almost full frame center

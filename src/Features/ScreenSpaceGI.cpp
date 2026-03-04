@@ -18,6 +18,7 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	ILInteriorsOnly,
 	NumSlices,
 	NumSteps,
+	EnableAdaptiveSampling,
 	ResolutionMode,
 	VRCullDistance,
 	CenterFullResMaskScale,
@@ -368,6 +369,11 @@ void ScreenSpaceGI::DrawSettings()
 				ImGui::Text(
 					"How many samples does it take in one direction.\n"
 					"Controls accuracy of lighting, and noise when effect radius is large.");
+		}
+
+		recompileFlag |= ImGui::Checkbox("Adaptive Sampling", &settings.EnableAdaptiveSampling);
+		if (auto _tt = Util::HoverTooltipWrapper()) {
+			ImGui::Text("Reduces AO sample count in far distance and low-variance regions to improve performance.");
 		}
 
 		const int previousResolutionMode = settings.ResolutionMode;
@@ -855,6 +861,7 @@ void ScreenSpaceGI::CompileComputeShaders()
 		bool includeResolutionDefines = true;
 		bool includeTemporalDefines = true;
 		bool includeGIDefines = true;
+		bool includeAdaptiveSamplingDefines = false;
 	};
 
 	std::vector<ShaderCompileInfo>
@@ -863,10 +870,10 @@ void ScreenSpaceGI::CompileComputeShaders()
 			{ &prefilterRadianceCompute, "prefilterRadiance.cs.hlsl", {} },
 			{ &radianceDisoccCompute, "radianceDisocc.cs.hlsl", {} },
 			{ &radianceDisoccAOOnlyCompute, "radianceDisocc.cs.hlsl", {}, true, true, false },
-			{ &giCompute, "gi.cs.hlsl", {} },
-			{ &giAOOnlyCompute, "gi.cs.hlsl", {}, true, true, false },
-			{ &centerGIMaskedCompute, "gi.cs.hlsl", { { "CENTER_FULL_PASS", "" } }, false, false },
-			{ &centerGIMaskedAOOnlyCompute, "gi.cs.hlsl", { { "CENTER_FULL_PASS", "" } }, false, false, false },
+			{ &giCompute, "gi.cs.hlsl", {}, true, true, true, true },
+			{ &giAOOnlyCompute, "gi.cs.hlsl", {}, true, true, false, true },
+			{ &centerGIMaskedCompute, "gi.cs.hlsl", { { "CENTER_FULL_PASS", "" } }, false, false, true, true },
+			{ &centerGIMaskedAOOnlyCompute, "gi.cs.hlsl", { { "CENTER_FULL_PASS", "" } }, false, false, false, true },
 			{ &blurCompute, "blur.cs.hlsl", {} },
 			{ &upsampleCompute, "upsample.cs.hlsl", {} },
 			{ &upsampleAOOnlyCompute, "upsample.cs.hlsl", {}, true, false, false },
@@ -888,6 +895,8 @@ void ScreenSpaceGI::CompileComputeShaders()
 			info.defines.push_back({ "GI", "" });
 		if (info.includeGIDefines && settings.EnableExperimentalSpecularGI)
 			info.defines.push_back({ "GI_SPECULAR", "" });
+		if (info.includeAdaptiveSamplingDefines && settings.EnableAdaptiveSampling)
+			info.defines.push_back({ "ADAPTIVE_SAMPLING", "" });
 	}
 
 	for (auto& info : shaderInfos) {
@@ -1351,7 +1360,7 @@ void ScreenSpaceGI::DrawSSGI()
 		TracyD3D11Zone(globals::state->tracyCtx, "SSGI - Radiance Disocc");
 
 		resetViews();
-		srvs.at(0) = rts[deferred->forwardRenderTargets[0]].SRV;
+		srvs.at(0) = runILPath ? rts[deferred->forwardRenderTargets[0]].SRV : nullptr;
 		srvs.at(1) = texWorkingDepth->srv.get();
 		srvs.at(2) = rts[NORMALROUGHNESS].SRV;
 		if (temporalEnabled) {
