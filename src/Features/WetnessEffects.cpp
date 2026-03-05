@@ -2,6 +2,7 @@
 #include "Menu.h"
 #include "WeatherPicker.h"
 
+#include <algorithm>
 #include <cmath>
 
 namespace
@@ -31,6 +32,14 @@ namespace
 	constexpr float MAX_LEGACY_WET_REFLECTION_SCALE = 0.25f;
 	constexpr float DEFAULT_LEGACY_WET_INDIRECT_SPECULAR_SCALE = 0.05f;
 	constexpr float DEFAULT_WET_INDIRECT_SPECULAR_SCALE = 0.25f;
+	constexpr float SUNNY_MAX_POST_RAIN_SECONDS = 12.0f * 3600.0f;
+	constexpr float CLOUDY_MAX_POST_RAIN_SECONDS = 24.0f * 3600.0f;
+	constexpr float SNOW_MAX_POST_RAIN_SECONDS = 6.0f * 3600.0f;
+	constexpr float MIN_POST_RAIN_SECONDS = 2.0f * 3600.0f;
+	constexpr float FAST_DRY_LOW_PUDDLE_MULT = 1.55f;
+	constexpr float SLOW_DRY_DEEP_PUDDLE_MULT = 0.70f;
+	constexpr float SNOW_WETNESS_DRY_MULT = 2.0f;
+	constexpr float SNOW_PUDDLE_DRY_MULT = 4.0f;
 	// Persistence tuning:
 	// - Long/strong rain events should keep puddles for much longer than ground wetness.
 	// - With default transition speed, strong events can keep puddles around roughly half a day.
@@ -38,6 +47,11 @@ namespace
 	constexpr float RAIN_EVENT_DECAY_SECONDS = 43200.0f;
 	constexpr float MIN_WETNESS_DRY_SCALE_AT_MAX_EVENT = 0.12f;
 	constexpr float MIN_PUDDLE_DRY_SCALE_AT_MAX_EVENT = 0.02f;
+
+	// Cached per-frame data for debug/weather analysis UI.
+	// Keep this outside WetnessEffects object layout to avoid class-level alignment padding warnings.
+	WetnessEffects::PerFrame g_lastFrameData{};
+	bool g_hasLastFrameData = false;
 
 	float GetWeatherRainIntensity(RE::TESWeather* weather)
 	{
@@ -74,12 +88,36 @@ namespace
 	void GetDepthDeltaRates(RE::TESWeather* weather, float rainIntensity, float& wetnessDeltaPerSecond, float& puddleDeltaPerSecond)
 	{
 		float deltaPerSecond = GetWeatherDepthDeltaPerSecond(weather);
+		const bool snowing = weather && weather->precipitationData && weather->data.flags.any(RE::TESWeather::WeatherDataFlag::kSnow);
 		if (deltaPerSecond > 0.0f) {
 			deltaPerSecond *= std::clamp(rainIntensity, 0.0f, 1.0f);
 		}
 
 		wetnessDeltaPerSecond = deltaPerSecond * WETNESS_SCALE;
 		puddleDeltaPerSecond = deltaPerSecond * PUDDLE_SCALE;
+		if (snowing && deltaPerSecond < 0.0f) {
+			// Snow should suppress wet look and puddles quickly.
+			wetnessDeltaPerSecond *= SNOW_WETNESS_DRY_MULT;
+			puddleDeltaPerSecond *= SNOW_PUDDLE_DRY_MULT;
+		}
+	}
+
+	bool IsRainyWeather(const RE::TESWeather* weather)
+	{
+		return weather && weather->precipitationData && weather->data.flags.any(RE::TESWeather::WeatherDataFlag::kRainy);
+	}
+
+	bool IsCloudyDryWeather(const RE::TESWeather* weather)
+	{
+		if (!weather) {
+			return false;
+		}
+		return weather->data.flags.any(RE::TESWeather::WeatherDataFlag::kCloudy);
+	}
+
+	bool IsSnowWeather(const RE::TESWeather* weather)
+	{
+		return weather && weather->precipitationData && weather->data.flags.any(RE::TESWeather::WeatherDataFlag::kSnow);
 	}
 
 	void ApplyDepthDelta(float deltaSeconds, float wetnessDeltaPerSecond, float puddleDeltaPerSecond, float& wetnessDepth, float& puddleDepth)
@@ -132,6 +170,7 @@ namespace
 		settings.EnableRipples = SanitizeToggle(settings.EnableRipples);
 		settings.EnableVanillaRipples = SanitizeToggle(settings.EnableVanillaRipples);
 		settings.EnableLegacyRainBehavior = SanitizeToggle(settings.EnableLegacyRainBehavior);
+		settings.EnableDualPuddleModel = SanitizeToggle(settings.EnableDualPuddleModel);
 		SanitizeReflectionSettings(settings);
 	}
 
@@ -149,14 +188,14 @@ namespace
 		settings.ShoreRange = std::max(settings.ShoreRange, 1u);
 		settings.PuddleRadius = ClampFiniteOrDefault(settings.PuddleRadius, MIN_PUDDLE_RADIUS, 10.0f, 1.0f);
 		settings.PuddlePatternScale = ClampFiniteOrDefault(settings.PuddlePatternScale, MIN_PUDDLE_PATTERN_SCALE, 10.0f, 1.0f);
-		settings.PuddleMaxAngle = ClampFiniteOrDefault(settings.PuddleMaxAngle, 1e-3f, 1.0f, 0.95f);
+		settings.PuddleMaxAngle = ClampFiniteOrDefault(settings.PuddleMaxAngle, 0.0f, 1.0f, 0.95f);
 		settings.PuddleMinWetness = ClampFiniteOrDefault(settings.PuddleMinWetness, 0.0f, 1.0f, 0.85f);
 		settings.MinRainWetness = ClampFiniteOrDefault(settings.MinRainWetness, 0.0f, 1.0f, 0.65f);
 		settings.SkinWetness = ClampFiniteOrDefault(settings.SkinWetness, 0.0f, 1.0f, 0.95f);
 
-		settings.StoneDryingMultiplier = ClampFiniteOrDefault(settings.StoneDryingMultiplier, 0.05f, 4.0f, 0.75f);
-		settings.DirtDryingMultiplier = ClampFiniteOrDefault(settings.DirtDryingMultiplier, 0.05f, 4.0f, 1.0f);
-		settings.GrassDryingMultiplier = ClampFiniteOrDefault(settings.GrassDryingMultiplier, 0.05f, 4.0f, 1.35f);
+		settings.StoneDryingMultiplier = ClampFiniteOrDefault(settings.StoneDryingMultiplier, 0.05f, 4.0f, 1.0f);
+		settings.DirtDryingMultiplier = ClampFiniteOrDefault(settings.DirtDryingMultiplier, 0.05f, 4.0f, 1.2f);
+		settings.GrassDryingMultiplier = ClampFiniteOrDefault(settings.GrassDryingMultiplier, 0.05f, 4.0f, 1.6f);
 
 		settings.RaindropFxRange = ClampFiniteOrDefault(settings.RaindropFxRange, 0.0f, 5000.0f, 1000.0f);
 		settings.RaindropGridSize = ClampFiniteOrDefault(settings.RaindropGridSize, MIN_RAINDROP_GRID_SIZE, 100.0f, 4.0f);
@@ -165,6 +204,10 @@ namespace
 		settings.SplashesLifetime = ClampFiniteOrDefault(settings.SplashesLifetime, MIN_SPLASH_LIFETIME, 120.0f, 10.0f);
 		settings.RippleLifetime = ClampFiniteOrDefault(settings.RippleLifetime, MIN_RIPPLE_LIFETIME, 60.0f, 0.5f);
 		settings.RippleBreadth = ClampFiniteOrDefault(settings.RippleBreadth, MIN_RIPPLE_BREADTH, 10.0f, 0.5f);
+		settings.PostRainPuddleWaterStrength = ClampFiniteOrDefault(settings.PostRainPuddleWaterStrength, 0.0f, 2.0f, 0.8f);
+		settings.CloseRangeWetnessBoost = ClampFiniteOrDefault(settings.CloseRangeWetnessBoost, 0.5f, 2.0f, 1.2f);
+		settings.RaindropTransitionFalloff = ClampFiniteOrDefault(settings.RaindropTransitionFalloff, 0.5f, 6.0f, 2.0f);
+		settings.PuddleDepthBlend = ClampFiniteOrDefault(settings.PuddleDepthBlend, 0.0f, 1.0f, 0.5f);
 	}
 
 	RE::BSParticleShaderRainEmitter* GetRainEmitterFromPrecipGeometry(RE::BSGeometry* precipObject)
@@ -225,7 +268,12 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	RippleStrength,
 	RippleRadius,
 	RippleBreadth,
-	RippleLifetime)
+	RippleLifetime,
+	PostRainPuddleWaterStrength,
+	CloseRangeWetnessBoost,
+	RaindropTransitionFalloff,
+	EnableDualPuddleModel,
+	PuddleDepthBlend)
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	WetnessEffects::DebugSettings,
@@ -447,8 +495,8 @@ void WetnessEffects::PostPostLoad()
 void WetnessEffects::ResetRuntimeState()
 {
 	runtimeState = {};
-	lastFrameData = {};
-	hasLastFrameData = false;
+	g_lastFrameData = {};
+	g_hasLastFrameData = false;
 }
 
 void WetnessEffects::DrawSettings()
@@ -538,11 +586,20 @@ void WetnessEffects::DrawSettings()
 		}
 		ImGui::SliderFloat("Rain Wetness", &settings.MaxRainWetness, 0.0f, 2.5f);
 		markPresetDirtyIfEdited();
+		if (auto _tt = Util::HoverTooltipWrapper()) {
+			ImGui::TextUnformatted("Overall strength of rain wetness on surfaces.");
+		}
 
 		ImGui::SliderFloat("Puddle Wetness", &settings.MaxPuddleWetness, 0.0f, 6.0f);
 		markPresetDirtyIfEdited();
+		if (auto _tt = Util::HoverTooltipWrapper()) {
+			ImGui::TextUnformatted("Maximum depth/intensity of puddle wetness.");
+		}
 
 		ImGui::SliderFloat("Shore Wetness", &settings.MaxShoreWetness, 0.0f, 1.0f);
+		if (auto _tt = Util::HoverTooltipWrapper()) {
+			ImGui::TextUnformatted("How wet ground appears near water edges.");
+		}
 		ImGui::TreePop();
 	}
 
@@ -611,6 +668,9 @@ void WetnessEffects::DrawSettings()
 
 		if (ImGui::TreeNodeEx("Splashes")) {
 			ImGui::SliderFloat("Strength", &settings.SplashesStrength, 0.f, 2.f, "%.2f");
+			if (auto _tt = Util::HoverTooltipWrapper()) {
+				ImGui::TextUnformatted("Brightness/visibility of raindrop splash marks.");
+			}
 			ImGui::SliderFloat("Min Radius", &settings.SplashesMinRadius, 0.f, 1.f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
 			if (auto _tt = Util::HoverTooltipWrapper())
 				ImGui::Text("As portion of grid size.");
@@ -618,16 +678,28 @@ void WetnessEffects::DrawSettings()
 			if (auto _tt = Util::HoverTooltipWrapper())
 				ImGui::Text("As portion of grid size.");
 			ImGui::SliderFloat("Lifetime", &settings.SplashesLifetime, 0.1f, 20.f, "%.1f");
+			if (auto _tt = Util::HoverTooltipWrapper()) {
+				ImGui::TextUnformatted("How long each splash remains visible.");
+			}
 			ImGui::TreePop();
 		}
 
 		if (ImGui::TreeNodeEx("Ripples")) {
 			ImGui::SliderFloat("Strength", &settings.RippleStrength, 0.f, 2.f, "%.2f");
+			if (auto _tt = Util::HoverTooltipWrapper()) {
+				ImGui::TextUnformatted("Intensity of ripple normal distortion.");
+			}
 			ImGui::SliderFloat("Radius", &settings.RippleRadius, 0.f, 1.f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
 			if (auto _tt = Util::HoverTooltipWrapper())
 				ImGui::Text("As portion of grid size.");
 			ImGui::SliderFloat("Breadth", &settings.RippleBreadth, 0.f, 1.f, "%.2f");
+			if (auto _tt = Util::HoverTooltipWrapper()) {
+				ImGui::TextUnformatted("Width/thickness of ripple rings.");
+			}
 			ImGui::SliderFloat("Lifetime", &settings.RippleLifetime, 0.f, settings.RaindropInterval, "%.2f sec", ImGuiSliderFlags_AlwaysClamp);
+			if (auto _tt = Util::HoverTooltipWrapper()) {
+				ImGui::TextUnformatted("How long each ripple lasts.");
+			}
 			ImGui::TreePop();
 		}
 
@@ -737,8 +809,18 @@ void WetnessEffects::DrawSettings()
 			};
 			Util::DrawMultiLineTooltip(tooltipLines);
 		}
+		drawUintCheckbox("Enable Dual Puddle Model", settings.EnableDualPuddleModel);
+		if (auto _tt = Util::HoverTooltipWrapper()) {
+			ImGui::TextUnformatted("Combines flat-surface puddles with micro-depth puddles (e.g. gaps between cobblestones).");
+		}
+		ImGui::BeginDisabled(settings.EnableDualPuddleModel == 0);
+		ImGui::SliderFloat("Flat vs Depth", &settings.PuddleDepthBlend, 0.0f, 1.0f, "%.2f");
+		ImGui::EndDisabled();
+		if (auto _tt = Util::HoverTooltipWrapper()) {
+			ImGui::TextUnformatted("0 = flat-angle puddles, 1 = micro-depth puddles, 0.5 = balanced blend.");
+		}
 
-		ImGui::SliderFloat("Puddle Max Angle", &settings.PuddleMaxAngle, 0.6f, 1.0f);
+		ImGui::SliderFloat("Puddle Max Angle", &settings.PuddleMaxAngle, 0.0f, 1.0f);
 		if (auto _tt = Util::HoverTooltipWrapper()) {
 			ImGui::Text("How flat a surface needs to be for puddles to form on it.");
 		}
@@ -746,6 +828,18 @@ void WetnessEffects::DrawSettings()
 		ImGui::SliderFloat("Puddle Min Wetness", &settings.PuddleMinWetness, 0.0f, 1.0f);
 		if (auto _tt = Util::HoverTooltipWrapper()) {
 			ImGui::Text("The wetness value at which puddles start to form.");
+		}
+		ImGui::SliderFloat("Post-Rain Puddle Water", &settings.PostRainPuddleWaterStrength, 0.0f, 2.0f, "%.2f");
+		if (auto _tt = Util::HoverTooltipWrapper()) {
+			ImGui::TextUnformatted("How much puddles keep visible standing water after rain stops.");
+		}
+		ImGui::SliderFloat("Close-Range Wetness", &settings.CloseRangeWetnessBoost, 0.5f, 2.0f, "%.2f");
+		if (auto _tt = Util::HoverTooltipWrapper()) {
+			ImGui::TextUnformatted("Boosts wetness/puddle visibility near the camera (looking down at your feet).");
+		}
+		ImGui::SliderFloat("Raindrop End Fade", &settings.RaindropTransitionFalloff, 0.5f, 6.0f, "%.2f");
+		if (auto _tt = Util::HoverTooltipWrapper()) {
+			ImGui::TextUnformatted("Higher value makes ground raindrops fade out faster during weather transition.");
 		}
 
 		ImGui::TreePop();
@@ -1012,8 +1106,22 @@ WetnessEffects::PerFrame WetnessEffects::GetCommonBufferData() const
 		}
 	}
 
-	const float blendedRainingFX = std::clamp(currentRainingFX * currentWeight + lastRainingFX * lastWeight, 0.0f, 1.0f);
+	const float weatherRainTransitionWeight = IsRainyWeather(currentWeather) ? currentWeight : 0.0f;
+	// Prevent long raindrop linger near transition end by requiring both:
+	// - active precipitation FX intensity
+	// - weather-level rain state
+	const float currentRainingVisual = std::min(currentRainingFX, currentRainingAccum);
+	const float lastRainingVisual = std::min(lastRainingFX, lastRainingAccum);
 	const float blendedRainingAccum = std::clamp(currentRainingAccum * currentWeight + lastRainingAccum * lastWeight, 0.0f, 1.0f);
+	const float blendedRainingVisualWeighted = std::clamp(currentRainingVisual * currentWeight + lastRainingVisual * lastWeight, 0.0f, 1.0f);
+	const float blendedRainingVisual = currentRainingVisual * std::clamp(weatherRainTransitionWeight, 0.0f, 1.0f);
+	const float raindropTransitionFalloff = std::clamp(settings.RaindropTransitionFalloff, 0.5f, 6.0f);
+	const float blendedRainingVisualShaped = std::pow(std::clamp(blendedRainingVisual, 0.0f, 1.0f), raindropTransitionFalloff);
+	const float blendedRainingVisualSnapped = (weatherRainTransitionWeight > 0.02f && blendedRainingVisualShaped >= 0.01f) ? blendedRainingVisualShaped : 0.0f;
+	const bool hasPrecipitationFxSignal = (currentRainingFX > 0.0f) || (lastRainingFX > 0.0f);
+	const bool rainingByWeatherMetadata = (weatherRainTransitionWeight > 0.05f) && (blendedRainingAccum > 0.02f);
+	const bool rainingNow = hasPrecipitationFxSignal ? (blendedRainingVisualSnapped > 0.0f) : rainingByWeatherMetadata;
+	const float rainExposureSource = hasPrecipitationFxSignal ? blendedRainingVisualWeighted : blendedRainingAccum;
 
 	double deltaGameSeconds = 0.0;
 	const bool gamePaused = globals::game::ui && globals::game::ui->GameIsPaused();
@@ -1044,13 +1152,23 @@ WetnessEffects::PerFrame WetnessEffects::GetCommonBufferData() const
 		const float transitionSpeed = std::clamp(settings.WeatherTransitionSpeed, MIN_TRANSITION_SPEED, MAX_TRANSITION_SPEED);
 		const float scaledDeltaSeconds = static_cast<float>(deltaGameSeconds) * transitionSpeed;
 
+		// Do not keep increasing wetness/puddles when rain is effectively off for the current render context.
+		if (!rainingNow) {
+			blendedWetnessRate = std::min(blendedWetnessRate, 0.0f);
+			blendedPuddleRate = std::min(blendedPuddleRate, 0.0f);
+		}
+
 		// Track rain-event memory (duration-weighted intensity) for post-rain persistence.
-		if (blendedRainingAccum > 0.01f) {
-			runtimeState.rainEventExposure += blendedRainingAccum * scaledDeltaSeconds;
+		if (rainingNow) {
+			runtimeState.rainEventExposure += rainExposureSource * scaledDeltaSeconds;
 			runtimeState.rainEventExposure = std::min(runtimeState.rainEventExposure, RAIN_EVENT_REFERENCE_SECONDS * 4.0f);
+			runtimeState.postRainElapsedSeconds = 0.0f;
 		} else if (runtimeState.rainEventExposure > 0.0f) {
 			const float memoryDecayPerSecond = RAIN_EVENT_REFERENCE_SECONDS / RAIN_EVENT_DECAY_SECONDS;
 			runtimeState.rainEventExposure = std::max(0.0f, runtimeState.rainEventExposure - memoryDecayPerSecond * scaledDeltaSeconds);
+			runtimeState.postRainElapsedSeconds += static_cast<float>(deltaGameSeconds);
+		} else {
+			runtimeState.postRainElapsedSeconds = 0.0f;
 		}
 
 		runtimeState.rainEventWeight = std::clamp(runtimeState.rainEventExposure / RAIN_EVENT_REFERENCE_SECONDS, 0.0f, 1.0f);
@@ -1063,16 +1181,49 @@ WetnessEffects::PerFrame WetnessEffects::GetCommonBufferData() const
 		if (blendedPuddleRate < 0.0f) {
 			const float puddleDryScale = std::lerp(1.0f, MIN_PUDDLE_DRY_SCALE_AT_MAX_EVENT, runtimeState.rainEventWeight);
 			blendedPuddleRate *= puddleDryScale;
+			// Depth-dependent puddle decay: shallow puddles dry faster, deep puddles slower.
+			const float puddleDepth01 = std::clamp(runtimeState.puddleDepth / MAX_PUDDLE_DEPTH, 0.0f, 1.0f);
+			const float depthDryMultiplier = std::lerp(FAST_DRY_LOW_PUDDLE_MULT, SLOW_DRY_DEEP_PUDDLE_MULT, puddleDepth01);
+			blendedPuddleRate *= depthDryMultiplier;
 		}
 
 		ApplyDepthDelta(scaledDeltaSeconds, blendedWetnessRate, blendedPuddleRate, runtimeState.wetnessDepth, runtimeState.puddleDepth);
+
+		if (!rainingNow && (runtimeState.wetnessDepth > 0.0f || runtimeState.puddleDepth > 0.0f)) {
+			const float cloudyWeatherWeight =
+				(IsCloudyDryWeather(currentWeather) ? currentWeight : 0.0f) +
+				(IsCloudyDryWeather(lastWeather) ? lastWeight : 0.0f);
+			const float snowWeatherWeight =
+				(IsSnowWeather(currentWeather) ? currentWeight : 0.0f) +
+				(IsSnowWeather(lastWeather) ? lastWeight : 0.0f);
+			float baseCapSeconds = std::lerp(SUNNY_MAX_POST_RAIN_SECONDS, CLOUDY_MAX_POST_RAIN_SECONDS, std::clamp(cloudyWeatherWeight, 0.0f, 1.0f));
+			baseCapSeconds = std::lerp(baseCapSeconds, SNOW_MAX_POST_RAIN_SECONDS, std::clamp(snowWeatherWeight, 0.0f, 1.0f));
+			const float cappedDurationSeconds = std::lerp(MIN_POST_RAIN_SECONDS, baseCapSeconds, runtimeState.rainEventWeight);
+			if (cappedDurationSeconds > 0.0f) {
+				const float forcedRemaining = std::clamp(1.0f - (runtimeState.postRainElapsedSeconds / cappedDurationSeconds), 0.0f, 1.0f);
+				runtimeState.wetnessDepth = std::min(runtimeState.wetnessDepth, MAX_WETNESS_DEPTH * forcedRemaining);
+				runtimeState.puddleDepth = std::min(runtimeState.puddleDepth, MAX_PUDDLE_DEPTH * forcedRemaining);
+			}
+		}
 	}
+
+	const float snowTransitionWeight = std::clamp(
+		(IsSnowWeather(currentWeather) ? currentWeight : 0.0f) +
+			(IsSnowWeather(lastWeather) ? lastWeight : 0.0f),
+		0.0f,
+		1.0f);
+	const float snowBlendT = std::clamp((snowTransitionWeight - 0.05f) / 0.30f, 0.0f, 1.0f);
+	const float snowBlend = snowBlendT * snowBlendT * (3.0f - 2.0f * snowBlendT);
+	const float snowWetnessSuppression = 1.0f - snowBlend;
 
 	if (settings.EnableWetnessEffects) {
 		if (fullSkyMode) {
-			data.Raining = blendedRainingFX;
+			data.Raining = blendedRainingVisualSnapped;
 			data.Wetness = std::min(runtimeState.wetnessDepth, MAX_OUTPUT_WETNESS);
 			data.PuddleWetness = std::min(runtimeState.puddleDepth, MAX_OUTPUT_PUDDLE_WETNESS);
+			// Snow should not present as broad wet puddles on flat surfaces.
+			data.Wetness *= snowWetnessSuppression;
+			data.PuddleWetness *= (snowWetnessSuppression * snowWetnessSuppression);
 			if (debugSettings.EnableWetnessOverride) {
 				data.Wetness = debugSettings.WetnessOverride.y;
 			}
@@ -1113,8 +1264,8 @@ WetnessEffects::PerFrame WetnessEffects::GetCommonBufferData() const
 	data.settings.RaindropInterval = 1.0f / safeRaindropInterval;
 	data.settings.RippleLifetime = safeRaindropInterval / safeRippleLifetime;
 
-	lastFrameData = data;
-	hasLastFrameData = true;
+	g_lastFrameData = data;
+	g_hasLastFrameData = true;
 
 	return data;
 }
@@ -1209,10 +1360,10 @@ void WetnessEffects::DrawWeatherAnalysis() const
 		return;
 
 	// Get the current frame data (reuses already calculated values)
-	if (!hasLastFrameData) {
+	if (!g_hasLastFrameData) {
 		return;
 	}
-	const auto frameData = lastFrameData;
+	const auto frameData = g_lastFrameData;
 
 	// Get weather particle density for precipitation calculations
 	float weatherMaxParticleDensity = 0.0f;

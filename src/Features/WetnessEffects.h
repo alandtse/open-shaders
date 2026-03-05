@@ -43,10 +43,10 @@ public:
 		float SkinWetness = 0.95f;
 		float WeatherTransitionSpeed = 3.0f;
 		// Default surface drying heuristic:
-		// stone keeps wetness longer, dirt is baseline, grass dries fastest.
-		float StoneDryingMultiplier = 0.75f;
-		float DirtDryingMultiplier = 1.00f;
-		float GrassDryingMultiplier = 1.35f;
+		// stone keeps wetness longest, dirt is medium, grass dries fastest.
+		float StoneDryingMultiplier = 1.00f;
+		float DirtDryingMultiplier = 1.20f;
+		float GrassDryingMultiplier = 1.60f;
 
 		// Raindrop fx settings
 		uint EnableRaindropFx = true;
@@ -69,6 +69,13 @@ public:
 		float RippleRadius = 1.f;
 		float RippleBreadth = .5f;
 		float RippleLifetime = .5f;
+
+		// Dev tuning controls (temporary while calibrating wetness behavior in-game)
+		float PostRainPuddleWaterStrength = 0.8f;
+		float CloseRangeWetnessBoost = 1.2f;
+		float RaindropTransitionFalloff = 2.0f;
+		uint EnableDualPuddleModel = true;
+		float PuddleDepthBlend = 0.5f;
 	};
 
 	struct alignas(16) PerFrame
@@ -79,7 +86,6 @@ public:
 		float Wetness;
 		float PuddleWetness;
 		Settings settings;
-		uint pad0[1];
 	};
 	STATIC_ASSERT_ALIGNAS_16(PerFrame);
 	static_assert((sizeof(PerFrame) % 16) == 0, "WetnessEffects::PerFrame must stay 16-byte sized");
@@ -164,12 +170,11 @@ private:
 		float puddleDepth = 0.0f;
 		float rainEventExposure = 0.0f;
 		float rainEventWeight = 0.0f;
+		float postRainElapsedSeconds = 0.0f;
 		double lastGameTimeSeconds = 0.0;
 		bool hasLastGameTime = false;
 	};
 	mutable RuntimeState runtimeState{};
-	mutable PerFrame lastFrameData{};
-	mutable bool hasLastFrameData = false;
 
 	// Weather wetness calculation result for debug display
 	struct WeatherWetnessResult

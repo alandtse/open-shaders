@@ -136,7 +136,12 @@ namespace SharedData
 		float RippleRadius;
 		float RippleBreadth;
 		float RippleLifetimeRcp;
-		float pad1;
+		float PostRainPuddleWaterStrength;
+
+		float CloseRangeWetnessBoost;
+		float RaindropTransitionFalloff;
+		uint EnableDualPuddleModel;
+		float PuddleDepthBlend;
 	};
 
 	struct SkylightingSettings
