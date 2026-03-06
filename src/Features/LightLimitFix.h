@@ -169,6 +169,8 @@ struct ParticleLightInfo
 	{
 		bool valid = false;
 		bool billboard = false;
+		// True when baseColor should still be multiplied by the billboard effect material/emittance.
+		bool applyEffectMaterialTint = true;
 		ParticleLights::Config config{};
 		bool hasGradientConfig = false;
 		ParticleLights::GradientConfig gradientConfig{};
