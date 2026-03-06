@@ -1014,6 +1014,7 @@ LightLimitFix::ParticleLightReference LightLimitFix::GetParticleLightConfigs(RE:
 						ParticleLightReference reference{};
 						reference.valid = true;
 						reference.billboard = billboard;
+						reference.applyEffectMaterialTint = true;
 						reference.config = config;
 						reference.hasGradientConfig = hasGradientConfig;
 						reference.gradientConfig = gradientConfig;
@@ -1048,32 +1049,31 @@ LightLimitFix::ParticleLightReference LightLimitFix::GetParticleLightConfigs(RE:
 							const bool vertexTintLooksWhite = hasVertexTint && IsNearWhiteTint(reference.baseColor);
 							if (!hasVertexTint || vertexTintLooksWhite) {
 								hasSiblingEmissiveTint = TryGetBillboardSiblingEmissiveTint(node, siblingEmissiveTint);
-							}
-							if (vertexTintLooksWhite && hasSiblingEmissiveTint) {
-								// Vertex tint reads can occasionally return near-white garbage; prefer nearby mesh emissive tint.
-								reference.baseColor = siblingEmissiveTint;
-							}
-							if (vertexTintLooksWhite && !hasSiblingEmissiveTint) {
+								const bool siblingTintIsNonWhite = hasSiblingEmissiveTint && !IsNearWhiteTint(siblingEmissiveTint);
+
 								const RE::NiColorA materialEmissiveTint = BuildEffectMaterialEmissiveTint(material, shaderProperty);
-								const float emissiveLuma = GetEmissiveTintLuma(materialEmissiveTint);
-								if (emissiveLuma > 1e-4f && !IsNearWhiteTint(materialEmissiveTint)) {
+								const float materialEmissiveLuma = GetEmissiveTintLuma(materialEmissiveTint);
+								const bool hasMaterialEmissiveTint = materialEmissiveLuma > 1e-4f;
+								const bool materialTintIsNonWhite = hasMaterialEmissiveTint && !IsNearWhiteTint(materialEmissiveTint);
+
+								// Resolve fallback from a single source to avoid mixing color from one source
+								// with emissive energy from another. Prefer the billboard's own effect material
+								// when it already provides a non-white tint, then fall back to sibling tint.
+								if (materialTintIsNonWhite) {
 									reference.baseColor = materialEmissiveTint;
+									reference.applyEffectMaterialTint = false;
+								} else if (siblingTintIsNonWhite) {
+									reference.baseColor = siblingEmissiveTint;
+									reference.applyEffectMaterialTint = false;
+								} else if (hasMaterialEmissiveTint) {
+									reference.baseColor = materialEmissiveTint;
+									reference.applyEffectMaterialTint = false;
+								} else if (hasSiblingEmissiveTint) {
+									reference.baseColor = siblingEmissiveTint;
+									reference.applyEffectMaterialTint = false;
 								} else {
 									reference.baseColor = BuildBillboardFallbackTint(config, hasGradientConfig, gradientConfig);
-								}
-							}
-
-							if (!hasVertexTint) {
-								if (hasSiblingEmissiveTint) {
-									reference.baseColor = siblingEmissiveTint;
-								}
-
-								const RE::NiColorA materialEmissiveTint = BuildEffectMaterialEmissiveTint(material, shaderProperty);
-								const float emissiveLuma = GetEmissiveTintLuma(materialEmissiveTint);
-								if (!hasSiblingEmissiveTint && emissiveLuma > 1e-4f && !IsNearWhiteTint(materialEmissiveTint)) {
-									reference.baseColor = materialEmissiveTint;
-								} else if (!hasSiblingEmissiveTint) {
-									reference.baseColor = BuildBillboardFallbackTint(config, hasGradientConfig, gradientConfig);
+									reference.applyEffectMaterialTint = true;
 								}
 							}
 						}
@@ -1141,14 +1141,16 @@ bool LightLimitFix::AddParticleLight(RE::BSRenderPass* a_pass, ParticleLightRefe
 	}
 
 	RE::NiColorA color = a_reference.baseColor;
-	color.red *= material->baseColor.red * material->baseColorScale;
-	color.green *= material->baseColor.green * material->baseColorScale;
-	color.blue *= material->baseColor.blue * material->baseColorScale;
+	if (a_reference.applyEffectMaterialTint) {
+		color.red *= material->baseColor.red * material->baseColorScale;
+		color.green *= material->baseColor.green * material->baseColorScale;
+		color.blue *= material->baseColor.blue * material->baseColorScale;
 
-	if (auto emittance = shaderProperty->unk88) {
-		color.red *= emittance->red;
-		color.green *= emittance->green;
-		color.blue *= emittance->blue;
+		if (auto emittance = shaderProperty->unk88) {
+			color.red *= emittance->red;
+			color.green *= emittance->green;
+			color.blue *= emittance->blue;
+		}
 	}
 
 	if (a_reference.hasGradientConfig) {
