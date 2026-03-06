@@ -11,6 +11,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cmath>
+#include <limits>
 
 static constexpr uint CLUSTER_MAX_LIGHTS = 256;
 static constexpr uint MAX_LIGHTS = 1024;
@@ -88,6 +89,195 @@ namespace
 		if (a_resetRoomIndex) {
 			a_data.RoomIndex = -1;
 		}
+	}
+
+	bool IsNearWhiteTint(const RE::NiColorA& a_color)
+	{
+		const float avg = (a_color.red + a_color.green + a_color.blue) / 3.0f;
+		return std::abs(a_color.red - avg) < 0.02f &&
+		       std::abs(a_color.green - avg) < 0.02f &&
+		       std::abs(a_color.blue - avg) < 0.02f &&
+		       avg > 0.92f;
+	}
+
+	struct EmissiveTintCandidate
+	{
+		bool valid = false;
+		float distanceSq = std::numeric_limits<float>::max();
+		float luma = -1.0f;
+		RE::NiColorA tint{};
+	};
+
+	void UpdateEmissiveTintCandidate(
+		EmissiveTintCandidate& a_candidate,
+		float a_distanceSq,
+		float a_luma,
+		const RE::NiColorA& a_tint)
+	{
+		const bool isCloser = a_distanceSq + 1e-3f < a_candidate.distanceSq;
+		const bool sameDistance = std::abs(a_distanceSq - a_candidate.distanceSq) <= 1e-3f;
+		if (!a_candidate.valid || isCloser || (sameDistance && a_luma > a_candidate.luma)) {
+			a_candidate.valid = true;
+			a_candidate.distanceSq = a_distanceSq;
+			a_candidate.luma = a_luma;
+			a_candidate.tint = a_tint;
+		}
+	}
+
+	RE::NiColorA BuildBillboardFallbackTint(
+		const ParticleLights::Config& a_config,
+		bool a_hasGradientConfig,
+		const ParticleLights::GradientConfig& a_gradientConfig)
+	{
+		RE::NiColorA fallback{ 1.0f, 1.0f, 1.0f, 1.0f };
+
+		if (a_hasGradientConfig) {
+			fallback.red = a_gradientConfig.color.red;
+			fallback.green = a_gradientConfig.color.green;
+			fallback.blue = a_gradientConfig.color.blue;
+		} else {
+			fallback.red = a_config.colorMult.red;
+			fallback.green = a_config.colorMult.green;
+			fallback.blue = a_config.colorMult.blue;
+		}
+		return fallback;
+	}
+
+	RE::BSLightingShaderProperty* GetLightingShaderProperty(RE::NiProperty* a_property)
+	{
+		if (!a_property || a_property->GetRTTI() != globals::rtti::BSLightingShaderPropertyRTTI.get()) {
+			return nullptr;
+		}
+		return static_cast<RE::BSLightingShaderProperty*>(a_property);
+	}
+
+	void ConsiderLightingEmissiveTint(
+		RE::BSGeometry* a_geometry,
+		RE::BSGeometry* a_ignoreGeometry,
+		const RE::NiPoint3& a_targetPosition,
+		EmissiveTintCandidate& a_bestAnyTint,
+		EmissiveTintCandidate& a_bestNonWhiteTint)
+	{
+		if (!a_geometry || a_geometry == a_ignoreGeometry) {
+			return;
+		}
+
+		auto& properties = a_geometry->GetGeometryRuntimeData().properties;
+		auto* lightingProperty = GetLightingShaderProperty(properties[RE::BSGeometry::States::kEffect].get());
+		if (!lightingProperty) {
+			lightingProperty = GetLightingShaderProperty(properties[RE::BSGeometry::States::kProperty].get());
+		}
+
+		if (!lightingProperty || !lightingProperty->emissiveColor || lightingProperty->emissiveMult <= 1e-4f) {
+			return;
+		}
+
+		RE::NiColorA emissiveTint{
+			std::max(lightingProperty->emissiveColor->red, 0.0f) * lightingProperty->emissiveMult,
+			std::max(lightingProperty->emissiveColor->green, 0.0f) * lightingProperty->emissiveMult,
+			std::max(lightingProperty->emissiveColor->blue, 0.0f) * lightingProperty->emissiveMult,
+			1.0f
+		};
+
+		const float emissiveLuma =
+			std::max(emissiveTint.red, 0.0f) +
+			std::max(emissiveTint.green, 0.0f) +
+			std::max(emissiveTint.blue, 0.0f);
+		if (emissiveLuma <= 1e-4f) {
+			return;
+		}
+
+		const auto& center = a_geometry->worldBound.center;
+		const float dx = center.x - a_targetPosition.x;
+		const float dy = center.y - a_targetPosition.y;
+		const float dz = center.z - a_targetPosition.z;
+		const float distanceSq = (dx * dx) + (dy * dy) + (dz * dz);
+		UpdateEmissiveTintCandidate(a_bestAnyTint, distanceSq, emissiveLuma, emissiveTint);
+		if (!IsNearWhiteTint(emissiveTint)) {
+			UpdateEmissiveTintCandidate(a_bestNonWhiteTint, distanceSq, emissiveLuma, emissiveTint);
+		}
+	}
+
+	void CollectNearbyLightingTint(
+		RE::NiNode* a_root,
+		RE::BSGeometry* a_ignoreGeometry,
+		std::uint32_t a_depthRemaining,
+		const RE::NiPoint3& a_targetPosition,
+		EmissiveTintCandidate& a_bestAnyTint,
+		EmissiveTintCandidate& a_bestNonWhiteTint)
+	{
+		if (!a_root) {
+			return;
+		}
+
+		for (const auto& child : a_root->GetChildren()) {
+			auto* childObject = child.get();
+			if (!childObject) {
+				continue;
+			}
+
+			if (auto* childGeometry = childObject->AsGeometry()) {
+				ConsiderLightingEmissiveTint(childGeometry, a_ignoreGeometry, a_targetPosition, a_bestAnyTint, a_bestNonWhiteTint);
+			}
+
+			if (a_depthRemaining > 0) {
+				if (auto* childNode = childObject->AsNode()) {
+					CollectNearbyLightingTint(childNode, a_ignoreGeometry, a_depthRemaining - 1, a_targetPosition, a_bestAnyTint, a_bestNonWhiteTint);
+				}
+			}
+		}
+	}
+
+	bool TryGetBillboardSiblingEmissiveTint(RE::BSGeometry* a_billboardGeometry, RE::NiColorA& a_outTint)
+	{
+		if (!a_billboardGeometry) {
+			return false;
+		}
+
+		auto* billboardParentNode = a_billboardGeometry->parent ? a_billboardGeometry->parent->AsNode() : nullptr;
+		if (!billboardParentNode) {
+			return false;
+		}
+
+		RE::NiNode* searchRoot = billboardParentNode;
+		if (auto* ownerNode = billboardParentNode->parent ? billboardParentNode->parent->AsNode() : nullptr) {
+			searchRoot = ownerNode;
+		}
+
+		const RE::NiPoint3 targetPosition = a_billboardGeometry->world.translate;
+		EmissiveTintCandidate bestAnyTint{};
+		EmissiveTintCandidate bestNonWhiteTint{};
+		CollectNearbyLightingTint(searchRoot, a_billboardGeometry, 2u, targetPosition, bestAnyTint, bestNonWhiteTint);
+		if (!bestAnyTint.valid) {
+			return false;
+		}
+
+		// Prefer non-white sibling emissive tint when available; fall back to closest emissive tint otherwise.
+		a_outTint = bestNonWhiteTint.valid ? bestNonWhiteTint.tint : bestAnyTint.tint;
+		return true;
+	}
+
+	RE::NiColorA BuildEffectMaterialEmissiveTint(RE::BSEffectShaderMaterial* a_material, RE::BSEffectShaderProperty* a_shaderProperty)
+	{
+		RE::NiColorA materialEmissiveTint{
+			a_material->baseColor.red * a_material->baseColorScale,
+			a_material->baseColor.green * a_material->baseColorScale,
+			a_material->baseColor.blue * a_material->baseColorScale,
+			1.0f
+		};
+		if (auto emittance = a_shaderProperty->unk88) {
+			materialEmissiveTint.red *= emittance->red;
+			materialEmissiveTint.green *= emittance->green;
+			materialEmissiveTint.blue *= emittance->blue;
+		}
+		return materialEmissiveTint;
+	}
+
+	float GetEmissiveTintLuma(const RE::NiColorA& a_tint)
+	{
+		return std::max(a_tint.red, 0.0f) +
+		       std::max(a_tint.green, 0.0f) +
+		       std::max(a_tint.blue, 0.0f);
 	}
 }
 
@@ -831,6 +1021,7 @@ LightLimitFix::ParticleLightReference LightLimitFix::GetParticleLightConfigs(RE:
 						reference.configVersion = particleLights.configVersion;
 
 						if (billboard) {
+							bool hasVertexTint = false;
 							if (auto rendererData = a_pass->geometry->GetGeometryRuntimeData().rendererData) {
 								if (auto triShape = a_pass->geometry->AsTriShape()) {
 									const std::uint32_t vertexSize = rendererData->vertexDesc.GetSize();
@@ -843,11 +1034,46 @@ LightLimitFix::ParticleLightReference LightLimitFix::GetParticleLightConfigs(RE:
 											reference.baseColor.red *= maxAlphaVertexColor.data[0] / 255.f;
 											reference.baseColor.green *= maxAlphaVertexColor.data[1] / 255.f;
 											reference.baseColor.blue *= maxAlphaVertexColor.data[2] / 255.f;
+											hasVertexTint = true;
 											if (shaderProperty->flags.any(RE::BSShaderProperty::EShaderPropertyFlag::kVertexAlpha)) {
 												reference.baseColor.alpha *= maxAlphaVertexColor.data[3] / 255.f;
 											}
 										}
 									}
+								}
+							}
+
+							RE::NiColorA siblingEmissiveTint{};
+							bool hasSiblingEmissiveTint = false;
+							const bool vertexTintLooksWhite = hasVertexTint && IsNearWhiteTint(reference.baseColor);
+							if (!hasVertexTint || vertexTintLooksWhite) {
+								hasSiblingEmissiveTint = TryGetBillboardSiblingEmissiveTint(node, siblingEmissiveTint);
+							}
+							if (vertexTintLooksWhite && hasSiblingEmissiveTint) {
+								// Vertex tint reads can occasionally return near-white garbage; prefer nearby mesh emissive tint.
+								reference.baseColor = siblingEmissiveTint;
+							}
+							if (vertexTintLooksWhite && !hasSiblingEmissiveTint) {
+								const RE::NiColorA materialEmissiveTint = BuildEffectMaterialEmissiveTint(material, shaderProperty);
+								const float emissiveLuma = GetEmissiveTintLuma(materialEmissiveTint);
+								if (emissiveLuma > 1e-4f && !IsNearWhiteTint(materialEmissiveTint)) {
+									reference.baseColor = materialEmissiveTint;
+								} else {
+									reference.baseColor = BuildBillboardFallbackTint(config, hasGradientConfig, gradientConfig);
+								}
+							}
+
+							if (!hasVertexTint) {
+								if (hasSiblingEmissiveTint) {
+									reference.baseColor = siblingEmissiveTint;
+								}
+
+								const RE::NiColorA materialEmissiveTint = BuildEffectMaterialEmissiveTint(material, shaderProperty);
+								const float emissiveLuma = GetEmissiveTintLuma(materialEmissiveTint);
+								if (!hasSiblingEmissiveTint && emissiveLuma > 1e-4f && !IsNearWhiteTint(materialEmissiveTint)) {
+									reference.baseColor = materialEmissiveTint;
+								} else if (!hasSiblingEmissiveTint) {
+									reference.baseColor = BuildBillboardFallbackTint(config, hasGradientConfig, gradientConfig);
 								}
 							}
 						}
@@ -918,7 +1144,6 @@ bool LightLimitFix::AddParticleLight(RE::BSRenderPass* a_pass, ParticleLightRefe
 	color.red *= material->baseColor.red * material->baseColorScale;
 	color.green *= material->baseColor.green * material->baseColorScale;
 	color.blue *= material->baseColor.blue * material->baseColorScale;
-	color.alpha *= material->baseColor.alpha * shaderProperty->alpha;
 
 	if (auto emittance = shaderProperty->unk88) {
 		color.red *= emittance->red;
@@ -936,6 +1161,8 @@ bool LightLimitFix::AddParticleLight(RE::BSRenderPass* a_pass, ParticleLightRefe
 		color.green *= config.colorMult.green;
 		color.blue *= config.colorMult.blue;
 	}
+	// Keep particle light energy stable and config-driven (1.4.6-style behavior).
+	color.alpha = std::max(config.radiusMult, 0.0f);
 
 	ParticleLightInfo info;
 	info.billboard = a_reference.billboard;
