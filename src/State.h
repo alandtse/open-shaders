@@ -55,9 +55,9 @@ public:
 	std::vector<std::pair<std::string, std::string>> shaderDefines{};  // data structure to parse string into; needed to avoid dangling pointers
 
 	float timer = 0;
-	float refractionScale = 0.5f;  // Default LLF heat warp strength
+	float refractionScale = 0.25f;  // Default LLF heat warp strength
 	float pbrMetalReflectionScale = 1.0f;  // Global scale for PBR metal reflections
-	float pbrMetalHighlightScale = 1.0f;  // Global scale for direct PBR metal highlights
+	float pbrMetalHighlightScale = 0.2f;  // Global scale for direct PBR metal highlights
 	// Burley SSS human skin controls.
 	float sssHumanMaleIntensity = 1.0f;
 	float sssHumanMaleSaturation = 1.0f;
