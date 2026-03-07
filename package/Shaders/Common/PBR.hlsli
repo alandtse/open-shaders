@@ -205,6 +205,8 @@ namespace PBR
 				lightingOutput.specular += coatSpecular * material.CoatStrength;
 			}
 #endif
+			const float metalHighlightScale = lerp(1.0, SharedData::PBRMetalHighlightScale, saturate(material.Metallic));
+			lightingOutput.specular *= metalHighlightScale;
 		}
 	}
 
@@ -286,6 +288,9 @@ namespace PBR
 
 		lobeWeights.diffuse *= diffuseAO;
 		lobeWeights.specular *= specularAO;
+
+		const float metalReflectionScale = lerp(1.0, SharedData::PBRMetalReflectionScale, saturate(material.Metallic));
+		lobeWeights.specular *= metalReflectionScale;
 	}
 }
 

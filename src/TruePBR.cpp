@@ -107,6 +107,15 @@ void SetupPBRLandscapeTextureParameters(BSLightingShaderMaterialPBRLandscape& ma
 void TruePBR::DrawSettings()
 {
 	if (ImGui::CollapsingHeader("PBR", ImGuiTreeNodeFlags_DefaultOpen | ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_OpenOnDoubleClick)) {
+		ImGui::SliderFloat("PBR Metal Reflection", &globals::state->pbrMetalReflectionScale, 0.0f, 2.0f, "%.2f");
+		if (ImGui::IsItemHovered()) {
+			ImGui::SetTooltip("Global multiplier for broad TruePBR metallic reflection response.\n1.0 = default. Lower values reduce overall metal reflectivity; higher values strengthen it.\nDoes not affect non-PBR shading.");
+		}
+		ImGui::SliderFloat("PBR Metal Highlight", &globals::state->pbrMetalHighlightScale, 0.0f, 2.0f, "%.2f");
+		if (ImGui::IsItemHovered()) {
+			ImGui::SetTooltip("Scales focused direct-light highlights on TruePBR metals.\nUse this to reduce sharp bright hotspots without flattening the broader reflection response.");
+		}
+
 		if (ImGui::TreeNodeEx("Texture Set Settings", ImGuiTreeNodeFlags_DefaultOpen)) {
 			if (Util::SearchableCombo("Texture Set", selectedPbrTextureSetName, pbrTextureSets)) {
 				selectedPbrTextureSet = &pbrTextureSets[selectedPbrTextureSetName];

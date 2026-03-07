@@ -56,6 +56,8 @@ public:
 
 	float timer = 0;
 	float refractionScale = 0.5f;  // Default LLF heat warp strength
+	float pbrMetalReflectionScale = 1.0f;  // Global scale for PBR metal reflections
+	float pbrMetalHighlightScale = 1.0f;  // Global scale for direct PBR metal highlights
 	// Burley SSS human skin controls.
 	float sssHumanMaleIntensity = 1.0f;
 	float sssHumanMaleSaturation = 1.0f;
@@ -226,6 +228,10 @@ public:
 		uint HideSky;
 		float MipBias;
 		float RefractionScale;  // matches HLSL SharedData::RefractionScale
+		float PBRMetalReflectionScale;  // matches HLSL SharedData::PBRMetalReflectionScale
+		float PBRMetalHighlightScale;  // matches HLSL SharedData::PBRMetalHighlightScale
+		float PBRMetalReflectionScalePad0;
+		float PBRMetalReflectionScalePad1;
 		float SSSHumanMaleIntensity;
 		float SSSHumanMaleSaturation;
 		float SSSHumanMaleBrightness;
