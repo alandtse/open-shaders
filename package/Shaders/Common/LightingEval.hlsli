@@ -8,24 +8,30 @@
 #	include "Common/PBR.hlsli"
 #endif
 
+float3 SafeNormalizeLighting(float3 v, float3 fallback)
+{
+	float lenSq = dot(v, v);
+	return (lenSq > EPSILON_DIVISION && lenSq == lenSq && lenSq < 1.0e16) ? v * rsqrt(lenSq) : fallback;
+}
+
 #if defined(TRUE_PBR)
 DirectContext CreateDirectLightingContext(float3 worldNormal, float3 coatWorldNormal, float3 vertexNormal, float3 viewDir, float3 coatViewDir, float3 lightDir, float3 coatLightDir, float3 lightColor, float shadowFactor, float parallaxShadow)
 #else
 DirectContext CreateDirectLightingContext(float3 worldNormal, float3 vertexNormal, float3 viewDir, float3 lightDir, float3 lightColor, float shadowFactor, float parallaxShadow)
 #endif
 {
-    DirectContext context = (DirectContext)0;
-    context.worldNormal = normalize(worldNormal);
-    context.vertexNormal = normalize(vertexNormal);
-    context.viewDir = normalize(viewDir);
-    context.lightDir = normalize(lightDir);
-    context.halfVector = normalize(context.viewDir + context.lightDir);
-    context.lightColor = lightColor * shadowFactor * parallaxShadow;
+	DirectContext context = (DirectContext)0;
+	context.worldNormal = SafeNormalizeLighting(worldNormal, float3(0.0, 0.0, 1.0));
+	context.vertexNormal = SafeNormalizeLighting(vertexNormal, context.worldNormal);
+	context.viewDir = SafeNormalizeLighting(viewDir, context.worldNormal);
+	context.lightDir = SafeNormalizeLighting(lightDir, context.worldNormal);
+	context.halfVector = SafeNormalizeLighting(context.viewDir + context.lightDir, context.worldNormal);
+	context.lightColor = lightColor * shadowFactor * parallaxShadow;
 #if defined(TRUE_PBR)
-	context.coatWorldNormal = normalize(coatWorldNormal);
-	context.coatViewDir = normalize(coatViewDir);
-	context.coatLightDir = normalize(coatLightDir);
-	context.coatHalfVector = normalize(context.coatViewDir + context.coatLightDir);
+	context.coatWorldNormal = SafeNormalizeLighting(coatWorldNormal, context.worldNormal);
+	context.coatViewDir = SafeNormalizeLighting(coatViewDir, context.coatWorldNormal);
+	context.coatLightDir = SafeNormalizeLighting(coatLightDir, context.coatWorldNormal);
+	context.coatHalfVector = SafeNormalizeLighting(context.coatViewDir + context.coatLightDir, context.coatWorldNormal);
 	[branch] if ((PBRFlags & PBR::Flags::InterlayerParallax) != 0)
 	{
 		context.coatLightColor = lightColor * shadowFactor;
@@ -41,9 +47,9 @@ DirectContext CreateDirectLightingContext(float3 worldNormal, float3 vertexNorma
 IndirectContext CreateIndirectLightingContext(float3 worldNormal, float3 vertexNormal, float3 viewDir)
 {
 	IndirectContext context = (IndirectContext)0;
-	context.worldNormal = normalize(worldNormal);
-	context.vertexNormal = normalize(vertexNormal);
-	context.viewDir = normalize(viewDir);
+	context.worldNormal = SafeNormalizeLighting(worldNormal, float3(0.0, 0.0, 1.0));
+	context.vertexNormal = SafeNormalizeLighting(vertexNormal, context.worldNormal);
+	context.viewDir = SafeNormalizeLighting(viewDir, context.worldNormal);
 	return context;
 }
 
@@ -56,7 +62,7 @@ float3 VanillaSpecular(DirectContext context, float shininess, float2 uv)
     const float3 H = context.halfVector;
     float HdotN;
 #	if defined(ANISO_LIGHTING)
-	const float3 AN = normalize(N * 0.5 + G);
+	const float3 AN = SafeNormalizeLighting(N * 0.5 + G, N);
 	float LdotAN = dot(AN, L);
 	float HdotAN = dot(AN, H);
 	HdotN = 1 - min(1, abs(LdotAN - HdotAN));
