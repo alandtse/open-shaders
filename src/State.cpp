@@ -406,6 +406,8 @@ void State::SaveToJson(nlohmann::json& settings)
 	advanced["Use FileWatcher"] = shaderCache->UseFileWatcher();
 	advanced["Frame Annotations"] = frameAnnotations;
 	advanced["Refraction Scale"] = refractionScale;
+	advanced["PBR Metal Reflection Scale"] = pbrMetalReflectionScale;
+	advanced["PBR Metal Highlight Scale"] = pbrMetalHighlightScale;
 	settings["Advanced"] = advanced;
 
 	json general;
@@ -481,6 +483,10 @@ void State::LoadFromJson(nlohmann::json& settings)
 			frameAnnotations = advanced["Frame Annotations"];
 		if (advanced.contains("Refraction Scale") && advanced["Refraction Scale"].is_number())
 			refractionScale = std::clamp(advanced["Refraction Scale"].get<float>(), 0.0f, 2.0f);
+		if (advanced.contains("PBR Metal Reflection Scale") && advanced["PBR Metal Reflection Scale"].is_number())
+			pbrMetalReflectionScale = std::clamp(advanced["PBR Metal Reflection Scale"].get<float>(), 0.0f, 2.0f);
+		if (advanced.contains("PBR Metal Highlight Scale") && advanced["PBR Metal Highlight Scale"].is_number())
+			pbrMetalHighlightScale = std::clamp(advanced["PBR Metal Highlight Scale"].get<float>(), 0.0f, 2.0f);
 	}
 
 	if (settings.contains("General") && settings["General"].is_object()) {
@@ -855,6 +861,8 @@ void State::UpdateSharedData([[maybe_unused]] bool a_inWorld, [[maybe_unused]] b
 		}
 		// New: push the global refraction scale into the shared CB
 		data.RefractionScale = refractionScale;
+		data.PBRMetalReflectionScale = pbrMetalReflectionScale;
+		data.PBRMetalHighlightScale = pbrMetalHighlightScale;
 		sharedDataCB->Update(data);
 	}
 
