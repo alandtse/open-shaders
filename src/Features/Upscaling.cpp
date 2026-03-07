@@ -369,7 +369,7 @@ void Upscaling::DrawSettings()
 		ImGui::SliderInt("Low Latency Mode", &lowLatencyMode, 0, 1, toggleModes[lowLatencyMode]);
 		if (auto _tt = Util::HoverTooltipWrapper()) {
 			ImGui::TextUnformatted("Cuts input delay by syncing CPU work closer to the GPU.");
-			ImGui::TextUnformatted("Can reduce max FPS a little, but usually feels more responsive.");
+			ImGui::TextUnformatted("May reduce max FPS a little, but usually feels much more responsive.");
 		}
 		settings.reflexLowLatencyMode = lowLatencyMode > 0;
 
@@ -380,7 +380,8 @@ void Upscaling::DrawSettings()
 		ImGui::SliderInt("Low Latency Boost", &lowLatencyBoost, 0, 1, toggleModes[lowLatencyBoost]);
 		if (auto _tt = Util::HoverTooltipWrapper()) {
 			ImGui::TextUnformatted("Keeps GPU clocks higher to avoid latency spikes at low GPU load.");
-			ImGui::TextUnformatted("Useful if frametime jumps; costs extra power and heat.");
+			ImGui::TextUnformatted("Useful if frametime jumps and responsiveness feels inconsistent.");
+			ImGui::TextColored(ImVec4(1.0f, 0.25f, 0.25f, 1.0f), "Increases power draw and heat, so leave Off unless needed.");
 		}
 		settings.reflexLowLatencyBoost = lowLatencyBoost > 0;
 
