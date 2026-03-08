@@ -57,7 +57,7 @@ public:
 	float timer = 0;
 	float refractionScale = 0.5f;  // Default LLF heat warp strength
 	float pbrMetalReflectionScale = 1.0f;  // Global scale for PBR metal reflections
-	float pbrMetalHighlightScale = 0.2f;  // Global scale for direct PBR metal highlights
+	float pbrMetalHighlightScale = 1.0f;  // Global scale for direct PBR metal highlights
 	double smoothDrawCalls[RE::BSShader::Type::Total + 1];
 	int drawCalls[RE::BSShader::Type::Total + 1];
 

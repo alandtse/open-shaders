@@ -982,30 +982,13 @@ float GetSnowParameterY(float texProjTmp, float alpha)
 
 #	include "Common/LightingEval.hlsli"
 
-bool IsFiniteFloat3(float3 v)
-{
-	const float3 finiteLimit = float3(1.0e8, 1.0e8, 1.0e8);
-	return all(v == v) && all(abs(v) < finiteLimit);
-}
-
-float3 SanitizeFloat3(float3 v)
-{
-	return IsFiniteFloat3(v) ? v : 0.0.xxx;
-}
-
-float3 SafeNormalize3(float3 v, float3 fallback)
-{
-	float lenSq = dot(v, v);
-	return (lenSq > EPSILON_DIVISION && lenSq == lenSq && lenSq < 1.0e16) ? v * rsqrt(lenSq) : fallback;
-}
-
 PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 {
 	PS_OUTPUT psout;
 	uint eyeIndex = Stereo::GetEyeIndexPS(input.Position, VPOSOffset);
 
 	float3 viewPosition = mul(FrameBuffer::CameraView[eyeIndex], float4(input.WorldPosition.xyz, 1)).xyz;
-	float3 viewDirection = -SafeNormalize3(input.WorldPosition.xyz, float3(0.0, 0.0, 1.0));
+	float3 viewDirection = -normalize(input.WorldPosition.xyz);
 
 	float2 screenUV = FrameBuffer::ViewToUV(viewPosition, true, eyeIndex);
 	float screenNoise = Random::InterleavedGradientNoise(input.Position.xy, SharedData::FrameCount);
@@ -1030,9 +1013,9 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 
 	float3x3 tbnTr = transpose(tbn);
 
-	tbnTr[0] = SafeNormalize3(tbnTr[0], float3(1.0, 0.0, 0.0));
-	tbnTr[1] = SafeNormalize3(tbnTr[1], float3(0.0, 1.0, 0.0));
-	tbnTr[2] = SafeNormalize3(tbnTr[2], float3(0.0, 0.0, 1.0));
+	tbnTr[0] = normalize(tbnTr[0]);
+	tbnTr[1] = normalize(tbnTr[1]);
+	tbnTr[2] = normalize(tbnTr[2]);
 
 	tbn = transpose(tbnTr);
 
@@ -2022,7 +2005,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	float3 worldNormal = normal.xyz;
 	float3x3 tbnTr = ReconstructTBN(input.WorldPosition.xyz, worldNormal, screenUV);
 #	else
-	float3 worldNormal = SafeNormalize3(mul(tbn, normal.xyz), float3(0.0, 0.0, 1.0));
+	float3 worldNormal = normalize(mul(tbn, normal.xyz));
 
 #		if defined(SPARKLE)
 	float3 projectedNormal = normalize(mul(tbn, float3(ProjectedUVParams2.xx * normal.xy, normal.z)));
@@ -2128,7 +2111,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	float3 vertexNormal = worldNormal;
 #	endif
 
-	float3 screenSpaceNormal = SafeNormalize3(FrameBuffer::WorldToView(worldNormal, false, eyeIndex), float3(0.0, 0.0, 1.0));
+	float3 screenSpaceNormal = normalize(FrameBuffer::WorldToView(worldNormal, false, eyeIndex));
 
 #	if defined(HAIR) && defined(CS_HAIR)
 	float3 Bitangent = normalize(float3(input.TBN0.y, input.TBN1.y, input.TBN2.y));
@@ -2565,12 +2548,6 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 #	endif
 
 	EvaluateLighting(dirLightContext, material, tbnTr, uvOriginal, dirLightOutput);
-	dirLightOutput.diffuse = SanitizeFloat3(dirLightOutput.diffuse);
-	dirLightOutput.specular = SanitizeFloat3(dirLightOutput.specular);
-	dirLightOutput.transmission = SanitizeFloat3(dirLightOutput.transmission);
-#	if defined(TRUE_PBR)
-	dirLightOutput.coatDiffuse = SanitizeFloat3(dirLightOutput.coatDiffuse);
-#	endif
 #	if defined(WETNESS_EFFECTS)
 	if (waterRoughnessSpecular < 1)
 		EvaluateWetnessLighting(wetnessNormal, dirLightContext, waterRoughnessSpecular, dirLightOutput);
@@ -2592,10 +2569,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	{
 		float3 lightDirection = PointLightPosition[eyeIndex * numLights + lightIndex].xyz - input.WorldPosition.xyz;
 		float lightDist = length(lightDirection);
-		if (lightDist <= EPSILON_DIVISION)
-			continue;
-		float lightRadius = max(PointLightPosition[eyeIndex * numLights + lightIndex].w, EPSILON_DIVISION);
-		float intensityFactor = saturate(lightDist / lightRadius);
+		float intensityFactor = saturate(lightDist / PointLightPosition[lightIndex].w);
 		if (intensityFactor == 1)
 			continue;
 
@@ -2608,7 +2582,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 			}
 		}
 
-		float3 normalizedLightDirection = lightDirection / lightDist;
+		float3 normalizedLightDirection = normalize(lightDirection);
 
 		DirectContext pointLightContext;
 		DirectLightingOutput pointLightOutput;
@@ -2634,12 +2608,6 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 #				endif
 #			endif
 		EvaluateLighting(pointLightContext, material, tbnTr, uvOriginal, pointLightOutput);
-		pointLightOutput.diffuse = SanitizeFloat3(pointLightOutput.diffuse);
-		pointLightOutput.specular = SanitizeFloat3(pointLightOutput.specular);
-		pointLightOutput.transmission = SanitizeFloat3(pointLightOutput.transmission);
-#			if defined(TRUE_PBR)
-		pointLightOutput.coatDiffuse = SanitizeFloat3(pointLightOutput.coatDiffuse);
-#			endif
 #			if defined(WETNESS_EFFECTS)
 		if (waterRoughnessSpecular < 1)
 			EvaluateWetnessLighting(wetnessNormal, pointLightContext, waterRoughnessSpecular, pointLightOutput);
@@ -2679,8 +2647,6 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 
 		float3 lightDirection = light.positionWS[eyeIndex].xyz - input.WorldPosition.xyz;
 		float lightDist = length(lightDirection);
-		if (lightDist <= EPSILON_DIVISION)
-			continue;
 
 #			if defined(ISL)
 		float intensityMultiplier = InverseSquareLighting::GetAttenuation(lightDist, light);
@@ -2705,7 +2671,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 			}
 		}
 
-		float3 normalizedLightDirection = lightDirection / lightDist;
+		float3 normalizedLightDirection = normalize(lightDirection);
 		float lightAngle = dot(worldNormal.xyz, normalizedLightDirection.xyz);
 
 		float3 refractedLightDirection = normalizedLightDirection;
@@ -2765,12 +2731,6 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 #				endif
 #			endif
 		EvaluateLighting(pointLightContext, material, tbnTr, uvOriginal, pointLightOutput);
-		pointLightOutput.diffuse = SanitizeFloat3(pointLightOutput.diffuse);
-		pointLightOutput.specular = SanitizeFloat3(pointLightOutput.specular);
-		pointLightOutput.transmission = SanitizeFloat3(pointLightOutput.transmission);
-#			if defined(TRUE_PBR)
-		pointLightOutput.coatDiffuse = SanitizeFloat3(pointLightOutput.coatDiffuse);
-#			endif
 #			if defined(WETNESS_EFFECTS)
 		if (waterRoughnessSpecular < 1)
 			EvaluateWetnessLighting(wetnessNormal, pointLightContext, waterRoughnessSpecular, pointLightOutput);
@@ -3058,16 +3018,16 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	)
 #		if defined(DYNAMIC_CUBEMAPS)
 #			if defined(SKYLIGHTING)
-		color.xyz += indirectLobeWeights.specular * SanitizeFloat3(DynamicCubemaps::GetDynamicCubemapSpecularIrradiance(screenUV, worldNormal, vertexNormal, viewDirection, material.Roughness, skylightingSH));
+		color.xyz += indirectLobeWeights.specular * DynamicCubemaps::GetDynamicCubemapSpecularIrradiance(screenUV, worldNormal, vertexNormal, viewDirection, material.Roughness, skylightingSH);
 #				if defined(WETNESS_EFFECTS)
 		if (waterRoughnessSpecular < 1)
-			color.xyz += wetnessReflectance * SanitizeFloat3(DynamicCubemaps::GetDynamicCubemapSpecularIrradiance(screenUV, wetnessNormal, vertexNormal, viewDirection, waterRoughnessSpecular, skylightingSH));
+			color.xyz += wetnessReflectance * DynamicCubemaps::GetDynamicCubemapSpecularIrradiance(screenUV, wetnessNormal, vertexNormal, viewDirection, waterRoughnessSpecular, skylightingSH);
 #				endif
 #			else
-		color.xyz += indirectLobeWeights.specular * SanitizeFloat3(DynamicCubemaps::GetDynamicCubemapSpecularIrradiance(screenUV, worldNormal, vertexNormal, viewDirection, material.Roughness));
+		color.xyz += indirectLobeWeights.specular * DynamicCubemaps::GetDynamicCubemapSpecularIrradiance(screenUV, worldNormal, vertexNormal, viewDirection, material.Roughness);
 #				if defined(WETNESS_EFFECTS)
 		if (waterRoughnessSpecular < 1)
-			color.xyz += wetnessReflectance * SanitizeFloat3(DynamicCubemaps::GetDynamicCubemapSpecularIrradiance(screenUV, wetnessNormal, vertexNormal, viewDirection, waterRoughnessSpecular));
+			color.xyz += wetnessReflectance * DynamicCubemaps::GetDynamicCubemapSpecularIrradiance(screenUV, wetnessNormal, vertexNormal, viewDirection, waterRoughnessSpecular);
 #				endif
 #			endif
 #		else
@@ -3102,17 +3062,6 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	if (FrameBuffer::FrameParams.y && FrameBuffer::FrameParams.z)
 		color.xyz = lerp(color.xyz, fogColor, Color::FogAlpha(input.FogParam.w));
 #	endif
-
-	color.xyz = SanitizeFloat3(color.xyz);
-	specularColor = SanitizeFloat3(specularColor);
-	indirectLobeWeights.diffuse = SanitizeFloat3(indirectLobeWeights.diffuse);
-	indirectLobeWeights.specular = SanitizeFloat3(indirectLobeWeights.specular);
-	screenSpaceNormal = SafeNormalize3(screenSpaceNormal, float3(0.0, 0.0, 1.0));
-	if (!(material.Roughness == material.Roughness) || abs(material.Roughness) > 1.0e8) {
-		material.Roughness = 1.0;
-	} else {
-		material.Roughness = saturate(material.Roughness);
-	}
 
 #	if defined(TESTCUBEMAP) && defined(ENVMAP) && defined(DYNAMIC_CUBEMAPS)
 	baseColor.xyz = 0.0;
