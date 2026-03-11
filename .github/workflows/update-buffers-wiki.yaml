@@ -34,7 +34,13 @@ jobs:
 
             - name: Checkout existing wiki
               run: |
-                  git clone --depth=1 "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.wiki.git" wiki-content || mkdir -p wiki-content
+                  WIKI_URL="https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.wiki.git"
+                  if git ls-remote --exit-code "$WIKI_URL" &>/dev/null; then
+                      git clone --depth=1 "$WIKI_URL" wiki-content
+                  else
+                      echo "Wiki does not exist yet; initializing empty wiki-content directory."
+                      mkdir -p wiki-content
+                  fi
               shell: bash
 
             - name: Scan buffer usage
