@@ -356,13 +356,18 @@ void Upscaling::DrawSettings()
 	if (ImGui::TreeNodeEx("NVIDIA Reflex", ImGuiTreeNodeFlags_DefaultOpen)) {
 		const bool reflexAvailable = streamline.initialized && streamline.featureReflex;
 		const bool markerOptimizationAvailable = reflexAvailable && streamline.featurePCL;
+		const bool reflexBlockedByFrameGeneration = IsFrameGenerationDx12PathActive();
 		const char* toggleModes[] = { "Disabled", "Enabled" };
 
 		if (!reflexAvailable) {
 			ImGui::TextDisabled("Reflex is not available. Ensure sl.reflex.dll is present and restart.");
 		}
 
-		if (!reflexAvailable)
+		if (reflexBlockedByFrameGeneration) {
+			ImGui::TextDisabled("Reflex is disabled while Frame Generation is active on the DX12 swap chain.");
+		}
+
+		if (!reflexAvailable || reflexBlockedByFrameGeneration)
 			ImGui::BeginDisabled();
 
 		int lowLatencyMode = settings.reflexLowLatencyMode ? 1 : 0;
@@ -427,7 +432,7 @@ void Upscaling::DrawSettings()
 		if (!settings.reflexUseFPSLimit)
 			ImGui::EndDisabled();
 
-		if (!reflexAvailable)
+		if (!reflexAvailable || reflexBlockedByFrameGeneration)
 			ImGui::EndDisabled();
 
 		ImGui::TreePop();
@@ -1548,7 +1553,13 @@ double Upscaling::GetRefreshRate(HWND a_window)
 
 bool Upscaling::IsFrameGenerationActive() const
 {
-	return d3d12SwapChainActive && settings.frameGenerationMode && fidelityFX.isFrameGenActive && !globals::game::isVR;
+	return IsFrameGenerationDx12PathActive() && fidelityFX.isFrameGenActive;
+}
+
+bool Upscaling::IsFrameGenerationDx12PathActive() const
+{
+	// Frame generation in this implementation runs via the DX12 swap-chain proxy path.
+	return d3d12SwapChainActive && settings.frameGenerationMode && !globals::game::isVR;
 }
 
 bool Upscaling::IsUpscalingActive() const
