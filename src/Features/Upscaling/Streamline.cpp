@@ -644,6 +644,31 @@ void Streamline::UpdateReflex()
 	if (!initialized || !featureReflex || !slReflexSetOptions)
 		return;
 
+	const auto& upscaling = globals::features::upscaling;
+	const bool reflexBlockedByFrameGeneration = upscaling.IsFrameGenerationDx12PathActive();
+	if (reflexBlockedByFrameGeneration) {
+		const bool reflexAlreadyOff = reflexOptionsCache.valid &&
+			reflexOptionsCache.mode == sl::ReflexMode::eOff &&
+			reflexOptionsCache.frameLimitUs == 0 &&
+			!reflexOptionsCache.useMarkersToOptimize;
+		if (!reflexAlreadyOff) {
+			sl::ReflexOptions disableOptions{};
+			disableOptions.mode = sl::ReflexMode::eOff;
+			disableOptions.frameLimitUs = 0;
+			disableOptions.useMarkersToOptimize = false;
+			if (SL_FAILED(result, slReflexSetOptions(disableOptions))) {
+				logger::error("[Streamline] Failed to disable Reflex while Frame Generation is active: {}", magic_enum::enum_name(result));
+			} else {
+				reflexOptionsCache.valid = true;
+				reflexOptionsCache.mode = disableOptions.mode;
+				reflexOptionsCache.frameLimitUs = disableOptions.frameLimitUs;
+				reflexOptionsCache.useMarkersToOptimize = disableOptions.useMarkersToOptimize;
+			}
+		}
+		lastReflexSleepFrame = UINT32_MAX;
+		return;
+	}
+
 	auto& settings = globals::features::upscaling.settings;
 
 	sl::ReflexOptions options{};
