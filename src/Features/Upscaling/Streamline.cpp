@@ -432,13 +432,11 @@ bool Streamline::IsRTXAndBelow40Series(IDXGIAdapter* a_adapter)
 	return false;
 }
 
-void Streamline::SetDLSSOptions(sl::ViewportHandle p_viewport, uint32_t eyeIndex, uint32_t width)
+void Streamline::SetDLSSOptions(sl::ViewportHandle p_viewport, uint32_t eyeIndex, uint32_t width, uint32_t height)
 {
 	// Map quality mode to DLSS mode
 	uint32_t qualityMode = globals::features::upscaling.settings.qualityMode;
 	uint32_t dlssPreset = std::min(globals::features::upscaling.settings.dlssPreset, Upscaling::kDLSSPresetMaxIndex);
-	auto state = globals::state;
-	uint32_t outputHeight = (uint)state->screenSize.y;
 
 	// Detect HDR from kMAIN format at runtime -- VR kMAIN may be 8-bit while SE is FP16
 	bool isHDR = false;
@@ -455,7 +453,7 @@ void Streamline::SetDLSSOptions(sl::ViewportHandle p_viewport, uint32_t eyeIndex
 	auto& cache = dlssOptionsCache[cacheIndex];
 	if (cache.valid &&
 		cache.outputWidth == width &&
-		cache.outputHeight == outputHeight &&
+		cache.outputHeight == height &&
 		cache.qualityMode == qualityMode &&
 		cache.dlssPreset == dlssPreset &&
 		cache.isHDR == isHDR &&
@@ -483,7 +481,7 @@ void Streamline::SetDLSSOptions(sl::ViewportHandle p_viewport, uint32_t eyeIndex
 	}
 
 	dlssOptions.outputWidth = width;
-	dlssOptions.outputHeight = outputHeight;
+	dlssOptions.outputHeight = height;
 	dlssOptions.colorBuffersHDR = isHDR ? sl::Boolean::eTrue : sl::Boolean::eFalse;
 	dlssOptions.useAutoExposure = sl::Boolean::eTrue;
 
@@ -527,7 +525,7 @@ void Streamline::SetDLSSOptions(sl::ViewportHandle p_viewport, uint32_t eyeIndex
 
 	cache.valid = true;
 	cache.outputWidth = width;
-	cache.outputHeight = outputHeight;
+	cache.outputHeight = height;
 	cache.qualityMode = qualityMode;
 	cache.dlssPreset = dlssPreset;
 	cache.isHDR = isHDR;
@@ -540,7 +538,7 @@ void Streamline::InvalidateDLSSOptionsCache()
 	dlssOptionsCache[1] = {};
 }
 
-void Streamline::EvaluateDLSS(sl::ViewportHandle vp, uint32_t eyeIndex,
+bool Streamline::EvaluateDLSS(sl::ViewportHandle vp, uint32_t eyeIndex,
 	ID3D11Resource* colorIn, ID3D11Resource* colorOut, ID3D11Resource* depth,
 	ID3D11Resource* mvec, ID3D11Resource* reactiveMask, ID3D11Resource* transparencyMask,
 	const sl::Extent& extentIn, const sl::Extent& extentOut, uint32_t outputWidth)
@@ -555,7 +553,7 @@ void Streamline::EvaluateDLSS(sl::ViewportHandle vp, uint32_t eyeIndex,
 	sl::Resource transparencyMaskRes = { sl::ResourceType::eTex2d, transparencyMask, 0 };
 
 	CheckFrameConstants(vp, eyeIndex);
-	SetDLSSOptions(vp, eyeIndex, outputWidth);
+	SetDLSSOptions(vp, eyeIndex, outputWidth, extentOut.height);
 
 	sl::ResourceTag tags[] = {
 		{ &colorInRes, sl::kBufferTypeScalingInputColor, sl::ResourceLifecycle::eOnlyValidNow, &extentIn },
@@ -595,6 +593,22 @@ void Streamline::EvaluateDLSS(sl::ViewportHandle vp, uint32_t eyeIndex,
 			logger::error("[Streamline] slEvaluateFeature failed{} result={}", globals::game::isVR ? std::format(" for eye {}", eyeIndex) : "", (int)evalResult);
 		}
 	}
+
+	return evalResult == sl::Result::eOk;
+}
+
+bool Streamline::UpscaleRegion(uint32_t eyeIndex, ID3D11Resource* colorIn, ID3D11Resource* colorOut, ID3D11Resource* depth,
+	ID3D11Resource* mvec, ID3D11Resource* reactiveMask, ID3D11Resource* transparencyMask,
+	uint32_t renderWidth, uint32_t renderHeight, uint32_t outputWidth, uint32_t outputHeight)
+{
+	if (!initialized || !featureDLSS || !colorIn || !colorOut || !depth || !mvec || !reactiveMask || !transparencyMask)
+		return false;
+
+	sl::ViewportHandle vp = (globals::game::isVR && eyeIndex == 1) ? viewportRight : viewport;
+	sl::Extent extentIn{ 0u, 0u, renderWidth, renderHeight };
+	sl::Extent extentOut{ 0u, 0u, outputWidth, outputHeight };
+
+	return EvaluateDLSS(vp, eyeIndex, colorIn, colorOut, depth, mvec, reactiveMask, transparencyMask, extentIn, extentOut, outputWidth);
 }
 
 void Streamline::Upscale(ID3D11Resource* a_upscalingTexture, ID3D11Resource* a_reactiveMask, ID3D11Resource* a_transparencyCompositionMask, ID3D11Resource* a_motionVectors)

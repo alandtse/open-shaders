@@ -99,7 +99,7 @@ public:
 	uint32_t lastReflexSleepFrame = UINT32_MAX;
 
 	// Helper: Execute DLSS for a single viewport with given resources
-	void EvaluateDLSS(sl::ViewportHandle vp, uint32_t eyeIndex,
+	bool EvaluateDLSS(sl::ViewportHandle vp, uint32_t eyeIndex,
 		ID3D11Resource* colorIn, ID3D11Resource* colorOut, ID3D11Resource* depth,
 		ID3D11Resource* mvec, ID3D11Resource* reactiveMask, ID3D11Resource* transparencyMask,
 		const sl::Extent& extentIn, const sl::Extent& extentOut, uint32_t outputWidth);
@@ -118,10 +118,13 @@ public:
 
 	bool IsRTXAndBelow40Series(IDXGIAdapter* a_adapter);
 
-	void SetDLSSOptions(sl::ViewportHandle p_viewport, uint32_t eyeIndex, uint32_t width);
+	void SetDLSSOptions(sl::ViewportHandle p_viewport, uint32_t eyeIndex, uint32_t width, uint32_t height);
 	void InvalidateDLSSOptionsCache();
 
 	void Upscale(ID3D11Resource* a_upscalingTexture, ID3D11Resource* a_reactiveMask, ID3D11Resource* a_transparencyCompositionMask, ID3D11Resource* a_motionVectors);
+	bool UpscaleRegion(uint32_t eyeIndex, ID3D11Resource* colorIn, ID3D11Resource* colorOut, ID3D11Resource* depth,
+		ID3D11Resource* mvec, ID3D11Resource* reactiveMask, ID3D11Resource* transparencyMask,
+		uint32_t renderWidth, uint32_t renderHeight, uint32_t outputWidth, uint32_t outputHeight);
 	void UpdateReflex();
 
 	void DestroyDLSSResources();

@@ -26,6 +26,10 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	streamlineLogLevel,
 	sharpnessFSR,
 	sharpnessDLSS,
+	foveatedVendorDispatch,
+	foveatedCenterArea,
+	linkFoveatedCenterAreaWithSSGI,
+	hasExplicitFoveatedCenterLinkPreference,
 	reflexLowLatencyMode,
 	reflexLowLatencyBoost,
 	reflexUseMarkersToOptimize,
@@ -36,6 +40,28 @@ decltype(&D3D11CreateDeviceAndSwapChain) ptrD3D11CreateDeviceAndSwapChainUpscali
 
 namespace
 {
+	constexpr float kFoveatedCenterAreaMin = 0.45f;
+	constexpr float kFoveatedCenterAreaMax = 1.0f;
+	constexpr float kFoveatedCenterFeather = 0.05f;
+
+	float ClampFoveatedCenterArea(float value)
+	{
+		return std::clamp(value, kFoveatedCenterAreaMin, kFoveatedCenterAreaMax);
+	}
+
+	bool TryGetTexture2DDesc(ID3D11Resource* resource, D3D11_TEXTURE2D_DESC& outDesc)
+	{
+		if (!resource)
+			return false;
+
+		winrt::com_ptr<ID3D11Texture2D> texture;
+		if (FAILED(resource->QueryInterface(IID_PPV_ARGS(texture.put()))))
+			return false;
+
+		texture->GetDesc(&outDesc);
+		return true;
+	}
+
 	bool IsNvidiaAdapterDescription(const std::string& adapterDescription)
 	{
 		return adapterDescription.find("NVIDIA") != std::string::npos ||
@@ -298,6 +324,24 @@ void Upscaling::DrawSettings()
 				ImGui::TextWrapped("Note: Use presets L/M only on RTX 40/50. Even on those GPUs, J/K/F usually provide better quality/performance. On RTX 20/30, use K (default) or J/F for better FPS.");
 			}
 		}
+
+		if (globals::game::isVR) {
+			const char* toggleModes[] = { "Disabled", "Enabled" };
+			int foveatedVendorDispatch = settings.foveatedVendorDispatch ? 1 : 0;
+			ImGui::SliderInt("Foveated Vendor Dispatch", &foveatedVendorDispatch, 0, 1, toggleModes[foveatedVendorDispatch]);
+			settings.foveatedVendorDispatch = foveatedVendorDispatch > 0;
+			settings.foveatedCenterArea = ClampFoveatedCenterArea(settings.foveatedCenterArea);
+			if (settings.foveatedVendorDispatch) {
+				ImGui::SliderFloat("Foveated Center Area", &settings.foveatedCenterArea, kFoveatedCenterAreaMin, kFoveatedCenterAreaMax, "%.2f");
+				settings.foveatedCenterArea = ClampFoveatedCenterArea(settings.foveatedCenterArea);
+				if (auto _tt = Util::HoverTooltipWrapper()) {
+					ImGui::TextUnformatted("Runs vendor upscaling only in the center region and fills periphery with TAA-only upscaling.");
+					ImGui::TextUnformatted("1.00 means full-center coverage (equivalent to full-frame vendor dispatch).");
+					if (settings.linkFoveatedCenterAreaWithSSGI)
+						ImGui::TextUnformatted("Linked with SSGI center area (shared source).");
+				}
+			}
+		}
 	}
 
 	if (!globals::game::isVR) {
@@ -470,6 +514,17 @@ void Upscaling::DrawSettings()
 			ImGui::Text("Streamline logging controls the verbosity of NVIDIA Streamline backend logs. Useful for debugging issues with DLSS/DLSS-G.");
 		}
 
+		if (globals::game::isVR) {
+			ImGui::Separator();
+			ImGui::TextUnformatted("Advanced / Developer");
+			if (ImGui::Checkbox("Link Foveated Center Area With SSGI", &settings.linkFoveatedCenterAreaWithSSGI))
+				settings.hasExplicitFoveatedCenterLinkPreference = true;
+			if (auto _tt = Util::HoverTooltipWrapper()) {
+				ImGui::TextUnformatted("Enabled: one shared center-area value drives both SSGI foveation and vendor-dispatch upscaling foveation.");
+				ImGui::TextUnformatted("Disable to tune SSGI and upscaling center areas independently.");
+			}
+		}
+
 		// VR Debug visualization -- per-eye buffers and native inputs
 		if (globals::game::isVR) {
 			ImGui::Separator();
@@ -576,6 +631,8 @@ void Upscaling::SaveSettings(json& o_json)
 void Upscaling::LoadSettings(json& o_json)
 {
 	settings = o_json;
+	if (!settings.hasExplicitFoveatedCenterLinkPreference)
+		settings.linkFoveatedCenterAreaWithSSGI = true;
 
 	// Sanitize loaded settings to ensure enum indices are valid
 	constexpr auto enumCount = 4;  // UpscaleMethod has 4 values: kNONE, kTAA, kFSR, kDLSS
@@ -588,6 +645,7 @@ void Upscaling::LoadSettings(json& o_json)
 		settings.upscaleMethodNoDLSS = enumCount ? enumCount - 1 : 0;
 	}
 	settings.dlssPreset = std::min<uint>(settings.dlssPreset, kDLSSPresetMaxIndex);
+	settings.foveatedCenterArea = ClampFoveatedCenterArea(settings.foveatedCenterArea);
 	settings.reflexFPSLimit = std::clamp(settings.reflexFPSLimit, 20.0f, 240.0f);
 	auto iniSettingCollection = globals::game::iniPrefSettingCollection;
 	if (iniSettingCollection) {
@@ -800,12 +858,19 @@ void Upscaling::CheckResources(UpscaleMethod a_upscalemethod)
 {
 	static auto previousUpscaleMode = UpscaleMethod::kTAA;
 	static bool previousFrameGenMode = false;
+	static bool previousFoveatedDispatch = false;
+	static uint32_t previousFoveatedCenterAreaMilli = static_cast<uint32_t>(std::round(ClampFoveatedCenterArea(settings.foveatedCenterArea) * 1000.0f));
 
 	bool frameGenModeCurrent = (settings.frameGenerationMode && d3d12SwapChainActive);
 	bool frameGenModeChanged = frameGenModeCurrent != previousFrameGenMode;
 	bool upscaleModeChanged = (previousUpscaleMode != a_upscalemethod);
+	const bool foveatedDispatchCurrent = IsFoveatedVendorDispatchEnabled(a_upscalemethod);
+	const uint32_t foveatedCenterAreaMilli = static_cast<uint32_t>(std::round(ClampFoveatedCenterArea(settings.foveatedCenterArea) * 1000.0f));
+	const bool compareFoveatedArea = foveatedDispatchCurrent || previousFoveatedDispatch;
+	const bool foveatedDispatchChanged = previousFoveatedDispatch != foveatedDispatchCurrent ||
+	                                     (compareFoveatedArea && previousFoveatedCenterAreaMilli != foveatedCenterAreaMilli);
 
-	if (upscaleModeChanged || frameGenModeChanged) {
+	if (upscaleModeChanged || frameGenModeChanged || foveatedDispatchChanged) {
 		logger::debug("[Upscaling] Resource change detected - Upscale: {} ({}) -> {} ({}), FrameGen: {} -> {} (d3d12Active={})",
 			static_cast<int>(previousUpscaleMode), magic_enum::enum_name(previousUpscaleMode), static_cast<int>(a_upscalemethod), magic_enum::enum_name(a_upscalemethod), previousFrameGenMode, frameGenModeCurrent, d3d12SwapChainActive);
 
@@ -840,9 +905,16 @@ void Upscaling::CheckResources(UpscaleMethod a_upscalemethod)
 			CreateUpscalingTextureResources(a_upscalemethod);
 		}
 
+		if (upscaleModeChanged || foveatedDispatchChanged) {
+			if (!foveatedDispatchCurrent)
+				DestroyFoveatedResources();
+		}
+
 		// Update tracking for next call
 		previousUpscaleMode = a_upscalemethod;
 		previousFrameGenMode = (settings.frameGenerationMode && d3d12SwapChainActive);
+		previousFoveatedDispatch = foveatedDispatchCurrent;
+		previousFoveatedCenterAreaMilli = foveatedCenterAreaMilli;
 		previousUpscalingWasActive = IsUpscalingActive();
 	}
 }
@@ -907,6 +979,26 @@ ID3D11VertexShader* Upscaling::GetUpscaleVS()
 	return upscaleVS.get();
 }
 
+ID3D11ComputeShader* Upscaling::GetFoveatedPeripheryCS()
+{
+	if (!foveatedPeripheryCS) {
+		logger::debug("Compiling FoveatedPeripheryCS.hlsl");
+		foveatedPeripheryCS.attach((ID3D11ComputeShader*)Util::CompileShader(L"Data/Shaders/Upscaling/FoveatedPeripheryCS.hlsl", {}, "cs_5_0"));
+	}
+
+	return foveatedPeripheryCS.get();
+}
+
+ID3D11ComputeShader* Upscaling::GetFoveatedCenterBlendCS()
+{
+	if (!foveatedCenterBlendCS) {
+		logger::debug("Compiling FoveatedCenterBlendCS.hlsl");
+		foveatedCenterBlendCS.attach((ID3D11ComputeShader*)Util::CompileShader(L"Data/Shaders/Upscaling/FoveatedCenterBlendCS.hlsl", {}, "cs_5_0"));
+	}
+
+	return foveatedCenterBlendCS.get();
+}
+
 eastl::unique_ptr<Texture2D> Upscaling::CreateTextureFromSource(ID3D11Resource* src, uint32_t width, uint32_t height,
 	bool copyBindFlags, bool createSRV, bool createUAV, const char* name)
 {
@@ -947,6 +1039,440 @@ eastl::unique_ptr<Texture2D> Upscaling::CreateTextureFromSource(ID3D11Resource* 
 	return tex;
 }
 
+bool Upscaling::IsFoveatedVendorDispatchEnabled(UpscaleMethod a_upscaleMethod) const
+{
+	if (!globals::game::isVR)
+		return false;
+
+	if (!settings.foveatedVendorDispatch)
+		return false;
+
+	if (a_upscaleMethod != UpscaleMethod::kDLSS && a_upscaleMethod != UpscaleMethod::kFSR)
+		return false;
+
+	const float centerArea = ClampFoveatedCenterArea(settings.foveatedCenterArea);
+	// 1.0 is effectively full-frame vendor dispatch, so keep the default path.
+	return centerArea < 0.999f;
+}
+
+bool Upscaling::BuildFoveatedDispatchRects(uint32_t inputWidthPerEye, uint32_t inputHeight, uint32_t outputWidthPerEye, uint32_t outputHeight, bool isVR, float centerScale)
+{
+	centerScale = ClampFoveatedCenterArea(centerScale);
+
+	auto& cache = foveatedRectCache;
+	const bool cacheDirty =
+		cache.inputWidthPerEye != inputWidthPerEye ||
+		cache.inputHeight != inputHeight ||
+		cache.outputWidthPerEye != outputWidthPerEye ||
+		cache.outputHeight != outputHeight ||
+		cache.isVR != isVR ||
+		std::abs(cache.centerScale - centerScale) > 1e-6f;
+
+	if (!cacheDirty)
+		return true;
+
+	cache.inputWidthPerEye = inputWidthPerEye;
+	cache.inputHeight = inputHeight;
+	cache.outputWidthPerEye = outputWidthPerEye;
+	cache.outputHeight = outputHeight;
+	cache.isVR = isVR;
+	cache.centerScale = centerScale;
+	cache.rects = {};
+
+	auto buildRect = [&](uint32_t eyeIndex) {
+		FoveatedDispatchRect rect{};
+		if (!inputWidthPerEye || !inputHeight || !outputWidthPerEye || !outputHeight)
+			return rect;
+
+		const float centerX = static_cast<float>(outputWidthPerEye) * 0.5f;
+		const float centerY = static_cast<float>(outputHeight) * 0.5f;
+		const float extentX = centerScale * static_cast<float>(outputWidthPerEye) * 0.5f + kFoveatedCenterFeather * static_cast<float>(outputWidthPerEye);
+		const float extentY = centerScale * static_cast<float>(outputHeight) * 0.5f + kFoveatedCenterFeather * static_cast<float>(outputHeight);
+
+		int minX = static_cast<int>(centerX - extentX);
+		int maxX = static_cast<int>(centerX + extentX + 0.9999f);
+		int minY = static_cast<int>(centerY - extentY);
+		int maxY = static_cast<int>(centerY + extentY + 0.9999f);
+
+		minX = std::clamp(minX, 0, static_cast<int>(outputWidthPerEye));
+		maxX = std::clamp(maxX, 0, static_cast<int>(outputWidthPerEye));
+		minY = std::clamp(minY, 0, static_cast<int>(outputHeight));
+		maxY = std::clamp(maxY, 0, static_cast<int>(outputHeight));
+
+		const auto alignDownToGroup = [](int value) {
+			return value & ~7;
+		};
+		const auto alignUpToGroup = [](int value) {
+			return (value + 7) & ~7;
+		};
+
+		minX = std::max(alignDownToGroup(minX), 0);
+		maxX = std::min(alignUpToGroup(maxX), static_cast<int>(outputWidthPerEye));
+		minY = std::max(alignDownToGroup(minY), 0);
+		maxY = std::min(alignUpToGroup(maxY), static_cast<int>(outputHeight));
+
+		if (maxX <= minX || maxY <= minY)
+			return rect;
+
+		rect.outputOffsetX = static_cast<uint32_t>(minX);
+		rect.outputOffsetY = static_cast<uint32_t>(minY);
+		rect.outputWidth = static_cast<uint32_t>(maxX - minX);
+		rect.outputHeight = static_cast<uint32_t>(maxY - minY);
+
+		const float inputScaleX = static_cast<float>(inputWidthPerEye) / static_cast<float>(outputWidthPerEye);
+		const float inputScaleY = static_cast<float>(inputHeight) / static_cast<float>(outputHeight);
+
+		int inputMinX = static_cast<int>(std::floor(static_cast<float>(minX) * inputScaleX));
+		int inputMaxX = static_cast<int>(std::ceil(static_cast<float>(maxX) * inputScaleX));
+		int inputMinY = static_cast<int>(std::floor(static_cast<float>(minY) * inputScaleY));
+		int inputMaxY = static_cast<int>(std::ceil(static_cast<float>(maxY) * inputScaleY));
+
+		inputMinX = std::clamp(inputMinX, 0, static_cast<int>(inputWidthPerEye));
+		inputMaxX = std::clamp(inputMaxX, 0, static_cast<int>(inputWidthPerEye));
+		inputMinY = std::clamp(inputMinY, 0, static_cast<int>(inputHeight));
+		inputMaxY = std::clamp(inputMaxY, 0, static_cast<int>(inputHeight));
+
+		if (inputMaxX <= inputMinX || inputMaxY <= inputMinY)
+			return FoveatedDispatchRect{};
+
+		rect.inputOffsetX = static_cast<uint32_t>(inputMinX);
+		rect.inputOffsetY = static_cast<uint32_t>(inputMinY);
+		rect.inputWidth = static_cast<uint32_t>(inputMaxX - inputMinX);
+		rect.inputHeight = static_cast<uint32_t>(inputMaxY - inputMinY);
+
+		(void)eyeIndex;
+		return rect;
+	};
+
+	cache.rects[0] = buildRect(0);
+	if (isVR)
+		cache.rects[1] = buildRect(1);
+
+	return true;
+}
+
+bool Upscaling::EnsureFoveatedTexture(eastl::unique_ptr<Texture2D>& texture, ID3D11Resource* source, uint32_t width, uint32_t height, bool copyBindFlags, bool createSRV, bool createUAV, bool createRTV, const char* name)
+{
+	if (!source || !width || !height)
+		return false;
+
+	D3D11_TEXTURE2D_DESC sourceDesc{};
+	if (!TryGetTexture2DDesc(source, sourceDesc))
+		return false;
+
+	bool recreate = !texture;
+	if (!recreate) {
+		recreate = texture->desc.Width != width ||
+		           texture->desc.Height != height ||
+		           texture->desc.Format != sourceDesc.Format;
+		if (createSRV && !texture->srv)
+			recreate = true;
+		if (createUAV && !texture->uav)
+			recreate = true;
+		if (createRTV && !texture->rtv)
+			recreate = true;
+	}
+
+	if (recreate) {
+		texture = CreateTextureFromSource(source, width, height, copyBindFlags, createSRV, createUAV, name);
+		if (!texture)
+			return false;
+	}
+
+	if (createRTV && !texture->rtv) {
+		D3D11_RENDER_TARGET_VIEW_DESC rtvDesc{};
+		rtvDesc.Format = texture->desc.Format;
+		rtvDesc.ViewDimension = D3D11_RTV_DIMENSION_TEXTURE2D;
+		rtvDesc.Texture2D.MipSlice = 0;
+		texture->CreateRTV(rtvDesc);
+	}
+
+	if (createSRV && !texture->srv) {
+		D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc{};
+		srvDesc.Format = texture->desc.Format;
+		srvDesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
+		srvDesc.Texture2D.MostDetailedMip = 0;
+		srvDesc.Texture2D.MipLevels = 1;
+		texture->CreateSRV(srvDesc);
+	}
+
+	if (createUAV && !texture->uav) {
+		D3D11_UNORDERED_ACCESS_VIEW_DESC uavDesc{};
+		uavDesc.Format = texture->desc.Format;
+		uavDesc.ViewDimension = D3D11_UAV_DIMENSION_TEXTURE2D;
+		uavDesc.Texture2D.MipSlice = 0;
+		texture->CreateUAV(uavDesc);
+	}
+
+	return true;
+}
+
+void Upscaling::DestroyFoveatedResources()
+{
+	for (uint32_t i = 0; i < 2; ++i) {
+		foveatedCenterColorIn[i].reset();
+		foveatedCenterColorOut[i].reset();
+		foveatedCenterDepth[i].reset();
+		foveatedCenterMotionVectors[i].reset();
+		foveatedCenterReactiveMask[i].reset();
+		foveatedCenterTransparencyMask[i].reset();
+	}
+	foveatedRectCache = {};
+}
+
+void Upscaling::DispatchFoveatedPeripheryPass(ID3D11ShaderResourceView* sourceSRV, ID3D11UnorderedAccessView* outputUAV, uint32_t sourceWidth, uint32_t sourceHeight, uint32_t outputWidth, uint32_t outputHeight)
+{
+	auto* peripheryCS = GetFoveatedPeripheryCS();
+	if (!peripheryCS || !sourceSRV || !outputUAV || !foveatedPeripheryCB)
+		return;
+
+	auto context = globals::d3d::context;
+	auto deferred = globals::deferred;
+	if (!context || !deferred || !deferred->linearSampler)
+		return;
+
+	FoveatedPeripheryCB cbData{};
+	cbData.outputDim = { static_cast<float>(outputWidth), static_cast<float>(outputHeight) };
+	cbData.invOutputDim = {
+		outputWidth > 0 ? 1.0f / static_cast<float>(outputWidth) : 0.0f,
+		outputHeight > 0 ? 1.0f / static_cast<float>(outputHeight) : 0.0f
+	};
+	cbData.invSourceDim = {
+		sourceWidth > 0 ? 1.0f / static_cast<float>(sourceWidth) : 0.0f,
+		sourceHeight > 0 ? 1.0f / static_cast<float>(sourceHeight) : 0.0f
+	};
+	cbData.jitter = jitter;
+	foveatedPeripheryCB->Update(cbData);
+
+	ID3D11Buffer* cb = foveatedPeripheryCB->CB();
+	ID3D11SamplerState* samplers[1] = { deferred->linearSampler };
+	ID3D11ShaderResourceView* srvs[1] = { sourceSRV };
+	ID3D11UnorderedAccessView* uavs[1] = { outputUAV };
+
+	context->CSSetShader(peripheryCS, nullptr, 0);
+	context->CSSetConstantBuffers(0, 1, &cb);
+	context->CSSetSamplers(0, 1, samplers);
+	context->CSSetShaderResources(0, 1, srvs);
+	context->CSSetUnorderedAccessViews(0, 1, uavs, nullptr);
+	context->Dispatch((outputWidth + 7u) >> 3, (outputHeight + 7u) >> 3, 1);
+
+	ID3D11ShaderResourceView* nullSRV[1] = { nullptr };
+	ID3D11UnorderedAccessView* nullUAV[1] = { nullptr };
+	ID3D11SamplerState* nullSampler[1] = { nullptr };
+	ID3D11Buffer* nullCB[1] = { nullptr };
+	context->CSSetShaderResources(0, 1, nullSRV);
+	context->CSSetUnorderedAccessViews(0, 1, nullUAV, nullptr);
+	context->CSSetSamplers(0, 1, nullSampler);
+	context->CSSetConstantBuffers(0, 1, nullCB);
+	context->CSSetShader(nullptr, nullptr, 0);
+}
+
+void Upscaling::DispatchFoveatedBlendPass(ID3D11ShaderResourceView* centerSRV, ID3D11UnorderedAccessView* outputUAV, uint32_t eyeIndex, uint32_t outputWidthPerEye, uint32_t outputHeight, const FoveatedDispatchRect& rect)
+{
+	if (!centerSRV || !outputUAV || rect.outputWidth == 0 || rect.outputHeight == 0 || !foveatedCenterBlendCB)
+		return;
+
+	auto* blendCS = GetFoveatedCenterBlendCS();
+	auto context = globals::d3d::context;
+	auto deferred = globals::deferred;
+	if (!blendCS || !context || !deferred || !deferred->linearSampler)
+		return;
+
+	FoveatedCenterBlendCB cbData{};
+	cbData.invOutputDim = {
+		outputWidthPerEye > 0 ? 1.0f / static_cast<float>(outputWidthPerEye) : 0.0f,
+		outputHeight > 0 ? 1.0f / static_cast<float>(outputHeight) : 0.0f
+	};
+	cbData.centerScale = ClampFoveatedCenterArea(settings.foveatedCenterArea);
+	cbData.centerFeather = kFoveatedCenterFeather;
+	cbData.outputOffset = { static_cast<float>(rect.outputOffsetX), static_cast<float>(rect.outputOffsetY) };
+	cbData.dispatchDim = { static_cast<float>(rect.outputWidth), static_cast<float>(rect.outputHeight) };
+	cbData.invDispatchDim = {
+		rect.outputWidth > 0 ? 1.0f / static_cast<float>(rect.outputWidth) : 0.0f,
+		rect.outputHeight > 0 ? 1.0f / static_cast<float>(rect.outputHeight) : 0.0f
+	};
+	foveatedCenterBlendCB->Update(cbData);
+
+	(void)eyeIndex;
+
+	ID3D11Buffer* cb = foveatedCenterBlendCB->CB();
+	ID3D11SamplerState* samplers[1] = { deferred->linearSampler };
+	ID3D11ShaderResourceView* srvs[1] = { centerSRV };
+	ID3D11UnorderedAccessView* uavs[1] = { outputUAV };
+
+	context->CSSetShader(blendCS, nullptr, 0);
+	context->CSSetConstantBuffers(0, 1, &cb);
+	context->CSSetSamplers(0, 1, samplers);
+	context->CSSetShaderResources(0, 1, srvs);
+	context->CSSetUnorderedAccessViews(0, 1, uavs, nullptr);
+	context->Dispatch((rect.outputWidth + 7u) >> 3, (rect.outputHeight + 7u) >> 3, 1);
+
+	ID3D11ShaderResourceView* nullSRV[1] = { nullptr };
+	ID3D11UnorderedAccessView* nullUAV[1] = { nullptr };
+	ID3D11SamplerState* nullSampler[1] = { nullptr };
+	ID3D11Buffer* nullCB[1] = { nullptr };
+	context->CSSetShaderResources(0, 1, nullSRV);
+	context->CSSetUnorderedAccessViews(0, 1, nullUAV, nullptr);
+	context->CSSetSamplers(0, 1, nullSampler);
+	context->CSSetConstantBuffers(0, 1, nullCB);
+	context->CSSetShader(nullptr, nullptr, 0);
+}
+
+bool Upscaling::DispatchSingleFoveatedVendorEye(UpscaleMethod a_upscaleMethod, uint32_t eyeIndex, ID3D11Resource* colorIn, ID3D11Resource* depthIn, ID3D11Resource* motionVectorsIn, ID3D11Resource* reactiveMaskIn, ID3D11Resource* transparencyMaskIn, uint32_t outputWidthPerEye, uint32_t outputHeight)
+{
+	if (eyeIndex > 1)
+		return false;
+
+	const auto& rect = foveatedRectCache.rects[eyeIndex];
+	if (!rect.outputWidth || !rect.outputHeight || !rect.inputWidth || !rect.inputHeight)
+		return false;
+
+	const std::string suffix = eyeIndex == 0 ? "Left" : "Right";
+
+	if (!EnsureFoveatedTexture(foveatedCenterColorIn[eyeIndex], colorIn, rect.inputWidth, rect.inputHeight, false, false, false, false, ("Upscale_FoveatedCenter_ColorIn_" + suffix).c_str()))
+		return false;
+	if (!EnsureFoveatedTexture(foveatedCenterColorOut[eyeIndex], colorIn, rect.outputWidth, rect.outputHeight, false, true, false, false, ("Upscale_FoveatedCenter_ColorOut_" + suffix).c_str()))
+		return false;
+	if (!EnsureFoveatedTexture(foveatedCenterDepth[eyeIndex], depthIn, rect.inputWidth, rect.inputHeight, true, false, false, false, ("Upscale_FoveatedCenter_Depth_" + suffix).c_str()))
+		return false;
+	if (!EnsureFoveatedTexture(foveatedCenterMotionVectors[eyeIndex], motionVectorsIn, rect.inputWidth, rect.inputHeight, false, false, false, false, ("Upscale_FoveatedCenter_MVec_" + suffix).c_str()))
+		return false;
+	if (!EnsureFoveatedTexture(foveatedCenterReactiveMask[eyeIndex], reactiveMaskIn, rect.inputWidth, rect.inputHeight, false, false, false, false, ("Upscale_FoveatedCenter_Reactive_" + suffix).c_str()))
+		return false;
+	if (!EnsureFoveatedTexture(foveatedCenterTransparencyMask[eyeIndex], transparencyMaskIn, rect.inputWidth, rect.inputHeight, false, false, false, false, ("Upscale_FoveatedCenter_Transparency_" + suffix).c_str()))
+		return false;
+
+	auto context = globals::d3d::context;
+	if (!context)
+		return false;
+
+	D3D11_BOX srcBox{
+		rect.inputOffsetX,
+		rect.inputOffsetY,
+		0u,
+		rect.inputOffsetX + rect.inputWidth,
+		rect.inputOffsetY + rect.inputHeight,
+		1u
+	};
+
+	context->CopySubresourceRegion(foveatedCenterColorIn[eyeIndex]->resource.get(), 0, 0, 0, 0, colorIn, 0, &srcBox);
+	context->CopySubresourceRegion(foveatedCenterDepth[eyeIndex]->resource.get(), 0, 0, 0, 0, depthIn, 0, &srcBox);
+	context->CopySubresourceRegion(foveatedCenterMotionVectors[eyeIndex]->resource.get(), 0, 0, 0, 0, motionVectorsIn, 0, &srcBox);
+	context->CopySubresourceRegion(foveatedCenterReactiveMask[eyeIndex]->resource.get(), 0, 0, 0, 0, reactiveMaskIn, 0, &srcBox);
+	context->CopySubresourceRegion(foveatedCenterTransparencyMask[eyeIndex]->resource.get(), 0, 0, 0, 0, transparencyMaskIn, 0, &srcBox);
+
+	bool dispatchOK = false;
+	if (a_upscaleMethod == UpscaleMethod::kDLSS) {
+		dispatchOK = streamline.UpscaleRegion(
+			eyeIndex,
+			foveatedCenterColorIn[eyeIndex]->resource.get(),
+			foveatedCenterColorOut[eyeIndex]->resource.get(),
+			foveatedCenterDepth[eyeIndex]->resource.get(),
+			foveatedCenterMotionVectors[eyeIndex]->resource.get(),
+			foveatedCenterReactiveMask[eyeIndex]->resource.get(),
+			foveatedCenterTransparencyMask[eyeIndex]->resource.get(),
+			rect.inputWidth,
+			rect.inputHeight,
+			rect.outputWidth,
+			rect.outputHeight);
+	} else if (a_upscaleMethod == UpscaleMethod::kFSR) {
+		dispatchOK = fidelityFX.UpscaleRegion(
+			eyeIndex,
+			foveatedCenterColorIn[eyeIndex]->resource.get(),
+			foveatedCenterDepth[eyeIndex]->resource.get(),
+			foveatedCenterMotionVectors[eyeIndex]->resource.get(),
+			foveatedCenterReactiveMask[eyeIndex]->resource.get(),
+			foveatedCenterTransparencyMask[eyeIndex]->resource.get(),
+			foveatedCenterColorOut[eyeIndex]->resource.get(),
+			rect.inputWidth,
+			rect.inputHeight,
+			rect.outputWidth,
+			rect.outputHeight,
+			static_cast<float>(rect.inputWidth),
+			static_cast<float>(rect.inputHeight),
+			settings.sharpnessFSR);
+	}
+
+	if (!dispatchOK)
+		return false;
+
+	if (!vrIntermediateColorOut[eyeIndex] || !vrIntermediateColorOut[eyeIndex]->uav)
+		return false;
+	ID3D11UnorderedAccessView* outputUAV = vrIntermediateColorOut[eyeIndex]->uav.get();
+
+	DispatchFoveatedBlendPass(
+		foveatedCenterColorOut[eyeIndex]->srv.get(),
+		outputUAV,
+		eyeIndex,
+		outputWidthPerEye,
+		outputHeight,
+		rect);
+
+	return true;
+}
+
+bool Upscaling::DispatchFoveatedVendorUpscaling(UpscaleMethod a_upscaleMethod, ID3D11Resource* colorTexture, ID3D11Resource* depthTexture, ID3D11Resource* motionVectors, ID3D11Resource* reactiveMask, ID3D11Resource* transparencyMask)
+{
+	if (!globals::game::isVR)
+		return false;
+
+	if (!colorTexture || !depthTexture || !motionVectors || !reactiveMask || !transparencyMask)
+		return false;
+
+	auto state = globals::state;
+	if (!state)
+		return false;
+
+	auto renderSize = Util::ConvertToDynamic(state->screenSize);
+	const uint32_t outputWidthPerEye = static_cast<uint32_t>(state->screenSize.x / 2.0f);
+	const uint32_t outputHeight = static_cast<uint32_t>(state->screenSize.y);
+	const uint32_t inputWidthPerEye = static_cast<uint32_t>(renderSize.x / 2.0f);
+	const uint32_t inputHeight = static_cast<uint32_t>(renderSize.y);
+
+	if (!BuildFoveatedDispatchRects(inputWidthPerEye, inputHeight, outputWidthPerEye, outputHeight, true, settings.foveatedCenterArea))
+		return false;
+
+	auto* peripheryCS = GetFoveatedPeripheryCS();
+	auto* blendCS = GetFoveatedCenterBlendCS();
+	if (!peripheryCS || !blendCS || !foveatedPeripheryCB || !foveatedCenterBlendCB)
+		return false;
+
+	PreparePerEyeInputs(colorTexture, depthTexture, motionVectors, reactiveMask, transparencyMask, false);
+
+	for (uint32_t eye = 0; eye < 2; ++eye) {
+		if (!vrIntermediateColorIn[eye] || !vrIntermediateColorIn[eye]->srv ||
+			!vrIntermediateColorOut[eye] || !vrIntermediateColorOut[eye]->uav ||
+			!vrIntermediateDepth[eye] || !vrIntermediateMotionVectors[eye] ||
+			!vrIntermediateReactiveMask[eye] || !vrIntermediateTransparencyMask[eye]) {
+			return false;
+		}
+
+		DispatchFoveatedPeripheryPass(
+			vrIntermediateColorIn[eye]->srv.get(),
+			vrIntermediateColorOut[eye]->uav.get(),
+			inputWidthPerEye,
+			inputHeight,
+			outputWidthPerEye,
+			outputHeight);
+
+		if (!DispatchSingleFoveatedVendorEye(
+				a_upscaleMethod,
+				eye,
+				vrIntermediateColorIn[eye]->resource.get(),
+				vrIntermediateDepth[eye]->resource.get(),
+				vrIntermediateMotionVectors[eye]->resource.get(),
+				vrIntermediateReactiveMask[eye]->resource.get(),
+				vrIntermediateTransparencyMask[eye]->resource.get(),
+				outputWidthPerEye,
+				outputHeight)) {
+			return false;
+		}
+	}
+
+	FinalizePerEyeOutputs(colorTexture);
+	return true;
+}
+
 void Upscaling::CreateVRIntermediateTextures(uint32_t inWidth, uint32_t inHeight, uint32_t outWidth, uint32_t outHeight,
 	ID3D11Resource* colorSrc, ID3D11Resource* mvecSrc, ID3D11Resource* reactiveSrc, ID3D11Resource* transparencySrc)
 {
@@ -956,7 +1482,7 @@ void Upscaling::CreateVRIntermediateTextures(uint32_t inWidth, uint32_t inHeight
 		std::string suffix = (i == 0) ? "Left" : "Right";
 
 		vrIntermediateColorIn[i] = CreateTextureFromSource(colorSrc, inWidth, inHeight, false, true, true, ("Upscale_ColorIn_" + suffix).c_str());
-		vrIntermediateColorOut[i] = CreateTextureFromSource(colorSrc, outWidth, outHeight, false, true, false, ("Upscale_ColorOut_" + suffix).c_str());
+		vrIntermediateColorOut[i] = CreateTextureFromSource(colorSrc, outWidth, outHeight, false, true, true, ("Upscale_ColorOut_" + suffix).c_str());
 
 		// Depth: R32_TYPELESS base (matches kMAIN), with R32_FLOAT SRV for ClearHMDMaskCS.
 		// CopySubresourceRegion requires matching typeless formats; SRV reinterprets as R32_FLOAT.
@@ -1006,6 +1532,7 @@ void Upscaling::EnsureVRIntermediateTextures(uint32_t inWidth, uint32_t inHeight
 		needsRecreate =
 			(vrIntermediateColorIn[0]->desc.Width != inWidth || vrIntermediateColorIn[0]->desc.Height != inHeight ||
 				vrIntermediateColorOut[0]->desc.Width != outWidth || vrIntermediateColorOut[0]->desc.Height != outHeight ||
+				!vrIntermediateColorOut[0]->uav || !vrIntermediateColorOut[1]->uav ||
 				!vrIntermediateMotionVectors[0]->uav || !vrIntermediateMotionVectors[1]->uav ||
 				!vrIntermediateReactiveMask[0]->uav || !vrIntermediateReactiveMask[1]->uav ||
 				!vrIntermediateTransparencyMask[0]->uav || !vrIntermediateTransparencyMask[1]->uav);
@@ -1340,6 +1867,8 @@ void Upscaling::SetupResources()
 
 	// Create upscaling data constant buffer for encode textures compute shader
 	upscalingDataCB = new ConstantBuffer(ConstantBufferDesc<UpscalingDataCB>());
+	foveatedPeripheryCB = new ConstantBuffer(ConstantBufferDesc<FoveatedPeripheryCB>());
+	foveatedCenterBlendCB = new ConstantBuffer(ConstantBufferDesc<FoveatedCenterBlendCB>());
 
 	// Create blend state for depth upscaling
 	D3D11_BLEND_DESC blendDesc = {};
@@ -1382,6 +1911,8 @@ void Upscaling::ClearShaderCache()
 	depthRefractionUpscalePS = nullptr;  // com_ptr automatically releases
 	underwaterMaskUpscalePS = nullptr;   // com_ptr automatically releases
 	upscaleVS = nullptr;                 // com_ptr automatically releases
+	foveatedPeripheryCS = nullptr;       // com_ptr automatically releases
+	foveatedCenterBlendCS = nullptr;     // com_ptr automatically releases
 }
 
 void Upscaling::CopySharedD3D12Resources()
@@ -1598,6 +2129,99 @@ bool Upscaling::IsUpscalingActive() const
 	return resolutionScale.x < .99f;
 }
 
+void Upscaling::RequestHistoryReset()
+{
+	historyResetRequested = true;
+}
+
+bool Upscaling::ShouldResetHistoryThisFrame() const
+{
+	return historyResetThisFrame;
+}
+
+void Upscaling::LatchHistoryResetForCurrentFrame()
+{
+	const uint32_t frame = globals::state ? globals::state->frameCount : 0;
+	if (historyResetLatchedFrame == frame)
+		return;
+
+	historyResetLatchedFrame = frame;
+	historyResetThisFrame = historyResetRequested;
+	historyResetRequested = false;
+}
+
+void Upscaling::UpdateHistoryResetState(UpscaleMethod a_upscaleMethod)
+{
+	auto state = globals::state;
+	if (!state)
+		return;
+
+	const bool inWorld = state->inWorld;
+	const bool inMapMenu = globals::game::ui ? globals::game::ui->IsMenuOpen(RE::MapMenu::MENU_NAME) : false;
+	const float2 screenSize = state->screenSize;
+	const bool foveatedDispatchEnabled = IsFoveatedVendorDispatchEnabled(a_upscaleMethod);
+	const float foveatedCenterArea = ClampFoveatedCenterArea(settings.foveatedCenterArea);
+
+	auto cameraCutDetected = []() {
+		constexpr float kCameraCutDistanceThreshold = 2500.0f;  // ~35m teleport/cut in Skyrim units
+		const float cutDistanceSq = kCameraCutDistanceThreshold * kCameraCutDistanceThreshold;
+
+		auto exceededThreshold = [&](uint32_t eyeIndex) {
+			const auto& currentPos = globals::game::frameBufferCached.GetCameraPosAdjust(eyeIndex);
+			const auto& previousPos = globals::game::frameBufferCached.GetCameraPreviousPosAdjust(eyeIndex);
+			const float dx = currentPos.x - previousPos.x;
+			const float dy = currentPos.y - previousPos.y;
+			const float dz = currentPos.z - previousPos.z;
+			return (dx * dx + dy * dy + dz * dz) > cutDistanceSq;
+		};
+
+		if (globals::game::isVR)
+			return exceededThreshold(0) || exceededThreshold(1);
+		return exceededThreshold(0);
+	};
+
+	bool shouldReset = false;
+	if (!historyResetTrackingInitialized) {
+		shouldReset = true;
+		historyResetTrackingInitialized = true;
+	} else {
+		const bool screenSizeChanged =
+			std::abs(screenSize.x - previousHistoryScreenSize.x) > 0.5f ||
+			std::abs(screenSize.y - previousHistoryScreenSize.y) > 0.5f;
+		const bool scaleChanged =
+			std::abs(resolutionScale.x - previousHistoryResolutionScale.x) > 1e-4f ||
+			std::abs(resolutionScale.y - previousHistoryResolutionScale.y) > 1e-4f;
+		const bool worldStateChanged =
+			inWorld != previousHistoryInWorld ||
+			inMapMenu != previousHistoryInMapMenu;
+		const bool methodChanged = a_upscaleMethod != previousHistoryUpscaleMethod;
+		const bool compareFoveatedArea = foveatedDispatchEnabled || previousHistoryFoveatedDispatch;
+		const bool foveatedChanged =
+			foveatedDispatchEnabled != previousHistoryFoveatedDispatch ||
+			(compareFoveatedArea && std::abs(foveatedCenterArea - previousHistoryFoveatedCenterArea) > 1e-4f);
+		const bool longFrameGap = globals::game::deltaTime &&
+								  std::isfinite(*globals::game::deltaTime) &&
+								  *globals::game::deltaTime > 0.20f;
+		const bool cameraCut = inWorld && cameraCutDetected();
+
+		shouldReset = screenSizeChanged || scaleChanged || worldStateChanged || methodChanged || foveatedChanged || longFrameGap || cameraCut;
+	}
+
+	if (state->pendingPostLoadRuntimeReset)
+		shouldReset = true;
+
+	if (shouldReset)
+		RequestHistoryReset();
+
+	previousHistoryScreenSize = screenSize;
+	previousHistoryResolutionScale = resolutionScale;
+	previousHistoryInWorld = inWorld;
+	previousHistoryInMapMenu = inMapMenu;
+	previousHistoryUpscaleMethod = a_upscaleMethod;
+	previousHistoryFoveatedDispatch = foveatedDispatchEnabled;
+	previousHistoryFoveatedCenterArea = foveatedCenterArea;
+}
+
 /**
  * @brief Retrieves the current frame time for frame generation.
  *
@@ -1812,11 +2436,38 @@ void Upscaling::Upscale()
 	{
 		state->BeginPerfEvent("Upscaling");
 		ID3D11Resource* motionVectorResource = globals::game::isVR ? motionVector.texture : motionVectorCopyTexture->resource.get();
+		const bool foveatedDispatchRequested = IsFoveatedVendorDispatchEnabled(upscaleMethod);
+		bool dispatched = false;
+		static bool loggedFoveatedFallback = false;
 
-		if (upscaleMethod == UpscaleMethod::kDLSS) {
-			streamline.Upscale(main.texture, reactiveMaskTexture->resource.get(), transparencyCompositionMaskTexture->resource.get(), motionVectorResource);
-		} else if (upscaleMethod == UpscaleMethod::kFSR) {
-			fidelityFX.Upscale(main.texture, reactiveMaskTexture->resource.get(), transparencyCompositionMaskTexture->resource.get(), motionVectorResource, settings.sharpnessFSR);
+		if (foveatedDispatchRequested) {
+			auto& depth = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kMAIN];
+			dispatched = DispatchFoveatedVendorUpscaling(
+				upscaleMethod,
+				main.texture,
+				depth.texture,
+				motionVectorResource,
+				reactiveMaskTexture->resource.get(),
+				transparencyCompositionMaskTexture->resource.get());
+			if (!dispatched) {
+				if (!loggedFoveatedFallback) {
+					logger::warn("[Upscaling] Foveated vendor dispatch failed; falling back to full-frame {} dispatch.",
+						magic_enum::enum_name(upscaleMethod));
+					loggedFoveatedFallback = true;
+				}
+			} else {
+				loggedFoveatedFallback = false;
+			}
+		} else {
+			loggedFoveatedFallback = false;
+		}
+
+		if (!dispatched) {
+			if (upscaleMethod == UpscaleMethod::kDLSS) {
+				streamline.Upscale(main.texture, reactiveMaskTexture->resource.get(), transparencyCompositionMaskTexture->resource.get(), motionVectorResource);
+			} else if (upscaleMethod == UpscaleMethod::kFSR) {
+				fidelityFX.Upscale(main.texture, reactiveMaskTexture->resource.get(), transparencyCompositionMaskTexture->resource.get(), motionVectorResource, settings.sharpnessFSR);
+			}
 		}
 
 		state->EndPerfEvent();
