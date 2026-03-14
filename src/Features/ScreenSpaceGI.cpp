@@ -5,6 +5,7 @@
 
 #include "Deferred.h"
 #include "State.h"
+#include "Upscaling.h"
 #include "Util.h"
 #include "Utils/D3D.h"
 
@@ -82,6 +83,33 @@ namespace
 		if (a_scale <= 0.0f)
 			return 0.0f;
 		return std::clamp(a_scale, kCenterMaskScaleMin, kCenterMaskScaleMax);
+	}
+
+	bool IsCenterAreaLinkedToUpscaling()
+	{
+		return REL::Module::IsVR() && globals::features::upscaling.settings.linkFoveatedCenterAreaWithSSGI;
+	}
+
+	float GetLinkedUpscalingCenterMaskScale()
+	{
+		return ClampCenterMaskScale(globals::features::upscaling.settings.foveatedCenterArea);
+	}
+
+	float ResolveFoveatedCenterMaskScale(const ScreenSpaceGI::Settings& a_settings)
+	{
+		const bool foveatedPresetActive = ClampFoveatedPresetMode(a_settings.FoveatedPresetMode) != kFoveatedPresetModeOff;
+		if (!foveatedPresetActive)
+			return ClampCenterMaskScale(a_settings.CenterFullResMaskScale);
+
+		if (IsCenterAreaLinkedToUpscaling())
+			return GetLinkedUpscalingCenterMaskScale();
+
+		return ClampCenterMaskScale(a_settings.CenterFullResMaskScale);
+	}
+
+	void SyncResolvedCenterMaskScale(ScreenSpaceGI::Settings& a_settings)
+	{
+		a_settings.CenterFullResMaskScale = ResolveFoveatedCenterMaskScale(a_settings);
 	}
 
 	void ApplyPlatformSettingOverrides(ScreenSpaceGI::Settings& a_settings)
@@ -168,7 +196,9 @@ void ScreenSpaceGI::RestoreDefaultSettings()
 void ScreenSpaceGI::DrawSettings()
 {
 	ApplyPlatformSettingOverrides(settings);
+	SyncResolvedCenterMaskScale(settings);
 	static bool showAdvanced;
+	const bool linkedCenterArea = IsCenterAreaLinkedToUpscaling();
 	const bool foveatedPresetActive = ClampFoveatedPresetMode(settings.FoveatedPresetMode) != kFoveatedPresetModeOff;
 
 	if (!ShadersOK())
@@ -295,9 +325,11 @@ void ScreenSpaceGI::DrawSettings()
 					settings.NumSteps = 6;
 					settings.ResolutionMode = 2;
 					settings.FoveatedPresetMode = kFoveatedPresetModeStrict;
-					settings.CenterFullResMaskScale = settings.CenterFullResMaskScale > 0.0f ?
-					                                     ClampCenterMaskScale(settings.CenterFullResMaskScale) :
-					                                     GetFoveatedPresetCenterScale(settings.FoveatedPresetMode);
+					settings.CenterFullResMaskScale = linkedCenterArea ?
+					                                     GetLinkedUpscalingCenterMaskScale() :
+					                                     (settings.CenterFullResMaskScale > 0.0f ?
+					                                          ClampCenterMaskScale(settings.CenterFullResMaskScale) :
+					                                          GetFoveatedPresetCenterScale(settings.FoveatedPresetMode));
 					settings.VRCullDistance = 1500.0f;
 					settings.AOPower = 1.8f;
 					settings.EnableBlur = false;
@@ -320,9 +352,11 @@ void ScreenSpaceGI::DrawSettings()
 					settings.NumSteps = 6;
 					settings.ResolutionMode = 2;
 					settings.FoveatedPresetMode = kFoveatedPresetModeFoveated;
-					settings.CenterFullResMaskScale = settings.CenterFullResMaskScale > 0.0f ?
-					                                     ClampCenterMaskScale(settings.CenterFullResMaskScale) :
-					                                     GetFoveatedPresetCenterScale(settings.FoveatedPresetMode);
+					settings.CenterFullResMaskScale = linkedCenterArea ?
+					                                     GetLinkedUpscalingCenterMaskScale() :
+					                                     (settings.CenterFullResMaskScale > 0.0f ?
+					                                          ClampCenterMaskScale(settings.CenterFullResMaskScale) :
+					                                          GetFoveatedPresetCenterScale(settings.FoveatedPresetMode));
 					settings.VRCullDistance = 1500.0f;
 					settings.AOPower = 1.8f;
 					settings.EnableGI = false;
@@ -413,10 +447,16 @@ void ScreenSpaceGI::DrawSettings()
 		recompileFlag |= (settings.ResolutionMode != previousResolutionMode);
 		if (foveatedPresetActiveInPerfSection) {
 			settings.ResolutionMode = 2;
-			ImGui::SliderFloat("Foveated Center Area", &settings.CenterFullResMaskScale, kCenterMaskScaleMin, kCenterMaskScaleMax, "%.2f");
-			settings.CenterFullResMaskScale = ClampCenterMaskScale(settings.CenterFullResMaskScale);
+			float centerArea = ResolveFoveatedCenterMaskScale(settings);
+			ImGui::SliderFloat("Foveated Center Area", &centerArea, kCenterMaskScaleMin, kCenterMaskScaleMax, "%.2f");
+			centerArea = ClampCenterMaskScale(centerArea);
+			if (linkedCenterArea)
+				globals::features::upscaling.settings.foveatedCenterArea = centerArea;
+			settings.CenterFullResMaskScale = centerArea;
 			if (auto _tt = Util::HoverTooltipWrapper()) {
 				ImGui::Text("Controls how much of the screen keeps Full Res AO when a foveated preset is active.");
+				if (linkedCenterArea)
+					ImGui::Text("Linked with Upscaling center area (shared source).");
 			}
 		}
 	}
@@ -929,7 +969,7 @@ bool ScreenSpaceGI::ShadersOK()
 	                             centerGIMaskedAOOnlyCompute &&
 	                             centerBlendCompute &&
 	                             centerBlendAOOnlyCompute;
-	const float centerScale = ClampCenterMaskScale(settings.CenterFullResMaskScale);
+	const float centerScale = ResolveFoveatedCenterMaskScale(settings);
 	const bool centerMaskActive = centerScale > 0.0f;
 
 	// Keep legacy SSGI path fully functional when center mask is off.
@@ -943,6 +983,7 @@ void ScreenSpaceGI::UpdateSB()
 {
 	float2 res = { (float)texRadiance->desc.Width, (float)texRadiance->desc.Height };
 	float2 dynres = GetHardenedSsgiFrameDim(res);
+	const float centerMaskScale = ResolveFoveatedCenterMaskScale(settings);
 
 	static float4x4 prevInvView[2] = {};
 
@@ -1008,7 +1049,7 @@ void ScreenSpaceGI::UpdateSB()
 		data.BlurRadius = settings.BlurRadius;
 		data.DistanceNormalisation = settings.DistanceNormalisation;
 		data.VRCullDistance = REL::Module::IsVR() ? ClampVRCullDistance(settings.VRCullDistance) : 0.0f;
-		data.CenterFullResMaskScale = ClampCenterMaskScale(settings.CenterFullResMaskScale);
+		data.CenterFullResMaskScale = centerMaskScale;
 		data.CenterFullResMaskFeather = kCenterMaskFeather;
 		data.CenterDispatchOffsetX = 0.0f;
 		data.CenterDispatchOffsetY = 0.0f;
@@ -1022,13 +1063,14 @@ void ScreenSpaceGI::UpdateSB()
 void ScreenSpaceGI::DrawSSGI()
 {
 	ApplyPlatformSettingOverrides(settings);
+	SyncResolvedCenterMaskScale(settings);
 
 	auto context = globals::d3d::context;
 	if (!context)
 		return;
 	const int resolutionMode = ClampResolutionMode(settings.ResolutionMode);
 	const int foveatedPresetMode = ClampFoveatedPresetMode(settings.FoveatedPresetMode);
-	const float centerScale = ClampCenterMaskScale(settings.CenterFullResMaskScale);
+	const float centerScale = ResolveFoveatedCenterMaskScale(settings);
 	const bool foveatedCenterOnlyMode = foveatedPresetMode == kFoveatedPresetModeFoveated;
 
 	auto imageSpaceManager = RE::ImageSpaceManager::GetSingleton();

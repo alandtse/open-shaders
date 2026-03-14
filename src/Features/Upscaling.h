@@ -5,8 +5,10 @@
 #include "Upscaling/FidelityFX.h"
 #include "Upscaling/RCAS/RCAS.h"
 #include "Upscaling/Streamline.h"
+#include <array>
 #include <d3d11_4.h>
 #include <directx/d3d12.h>
+#include <limits>
 #include <winrt/base.h>
 
 /**
@@ -59,6 +61,10 @@ public:
 		uint streamlineLogLevel = 0;  // 0=Off, 1=Default, 2=Verbose
 		float sharpnessFSR = 0.0f;
 		float sharpnessDLSS = 0.1f;
+		bool foveatedVendorDispatch = false;
+		float foveatedCenterArea = 1.0f;
+		bool linkFoveatedCenterAreaWithSSGI = true;
+		bool hasExplicitFoveatedCenterLinkPreference = false;
 		bool reflexLowLatencyMode = true;
 		bool reflexLowLatencyBoost = false;
 		bool reflexUseMarkersToOptimize = true;
@@ -88,8 +94,52 @@ public:
 		float2 pad0;
 	};
 
+	struct FoveatedPeripheryCB
+	{
+		float2 outputDim;
+		float2 invOutputDim;
+		float2 invSourceDim;
+		float2 jitter;
+	};
+
+	struct FoveatedCenterBlendCB
+	{
+		float2 invOutputDim;
+		float centerScale;
+		float centerFeather;
+		float2 outputOffset;
+		float2 dispatchDim;
+		float2 invDispatchDim;
+		float2 pad0;
+	};
+
+	struct FoveatedDispatchRect
+	{
+		uint outputOffsetX = 0;
+		uint outputOffsetY = 0;
+		uint outputWidth = 0;
+		uint outputHeight = 0;
+		uint inputOffsetX = 0;
+		uint inputOffsetY = 0;
+		uint inputWidth = 0;
+		uint inputHeight = 0;
+	};
+
+	struct FoveatedRectCacheState
+	{
+		uint inputWidthPerEye = 0;
+		uint inputHeight = 0;
+		uint outputWidthPerEye = 0;
+		uint outputHeight = 0;
+		bool isVR = false;
+		float centerScale = -1.0f;
+		std::array<FoveatedDispatchRect, 2> rects{};
+	} foveatedRectCache;
+
 	ConstantBuffer* jitterCB = nullptr;
 	ConstantBuffer* upscalingDataCB = nullptr;
+	ConstantBuffer* foveatedPeripheryCB = nullptr;
+	ConstantBuffer* foveatedCenterBlendCB = nullptr;
 
 	// Runtime state
 	bool isWindowed = false;
@@ -142,6 +192,12 @@ public:
 	winrt::com_ptr<ID3D11VertexShader> upscaleVS;
 	ID3D11VertexShader* GetUpscaleVS();
 
+	winrt::com_ptr<ID3D11ComputeShader> foveatedPeripheryCS;
+	ID3D11ComputeShader* GetFoveatedPeripheryCS();
+
+	winrt::com_ptr<ID3D11ComputeShader> foveatedCenterBlendCS;
+	ID3D11ComputeShader* GetFoveatedCenterBlendCS();
+
 	winrt::com_ptr<ID3D11DepthStencilState> upscaleDepthStencilState;
 	winrt::com_ptr<ID3D11BlendState> upscaleBlendState;
 	winrt::com_ptr<ID3D11RasterizerState> upscaleRasterizerState;
@@ -186,6 +242,12 @@ public:
 	Texture2D* transparencyCompositionMaskTexture = nullptr;
 	Texture2D* motionVectorCopyTexture = nullptr;
 	Texture2D* sharpenerTexture = nullptr;
+	eastl::unique_ptr<Texture2D> foveatedCenterColorIn[2];
+	eastl::unique_ptr<Texture2D> foveatedCenterColorOut[2];
+	eastl::unique_ptr<Texture2D> foveatedCenterDepth[2];
+	eastl::unique_ptr<Texture2D> foveatedCenterMotionVectors[2];
+	eastl::unique_ptr<Texture2D> foveatedCenterReactiveMask[2];
+	eastl::unique_ptr<Texture2D> foveatedCenterTransparencyMask[2];
 
 	virtual void ClearShaderCache() override;
 
@@ -205,11 +267,34 @@ public:
 
 	bool previousUpscalingWasActive = false;
 	bool depthUpscaleUseWideKernel = false;
+	bool historyResetRequested = true;
+	bool historyResetThisFrame = false;
+	uint32_t historyResetLatchedFrame = std::numeric_limits<uint32_t>::max();
+	bool historyResetTrackingInitialized = false;
+	float2 previousHistoryScreenSize = { 0.0f, 0.0f };
+	float2 previousHistoryResolutionScale = { 1.0f, 1.0f };
+	bool previousHistoryInWorld = false;
+	bool previousHistoryInMapMenu = false;
+	UpscaleMethod previousHistoryUpscaleMethod = UpscaleMethod::kNONE;
+	bool previousHistoryFoveatedDispatch = false;
+	float previousHistoryFoveatedCenterArea = 1.0f;
 
 	void CopySharedD3D12Resources();
 	void PostDisplay();
 	void PerformUpscaling();
 	void UpscaleDepth();
+	void RequestHistoryReset();
+	bool ShouldResetHistoryThisFrame() const;
+	void UpdateHistoryResetState(UpscaleMethod a_upscaleMethod);
+	void LatchHistoryResetForCurrentFrame();
+	bool IsFoveatedVendorDispatchEnabled(UpscaleMethod a_upscaleMethod) const;
+	bool BuildFoveatedDispatchRects(uint32_t inputWidthPerEye, uint32_t inputHeight, uint32_t outputWidthPerEye, uint32_t outputHeight, bool isVR, float centerScale);
+	bool EnsureFoveatedTexture(eastl::unique_ptr<Texture2D>& texture, ID3D11Resource* source, uint32_t width, uint32_t height, bool copyBindFlags, bool createSRV, bool createUAV, bool createRTV, const char* name);
+	void DestroyFoveatedResources();
+	bool DispatchFoveatedVendorUpscaling(UpscaleMethod a_upscaleMethod, ID3D11Resource* colorTexture, ID3D11Resource* depthTexture, ID3D11Resource* motionVectors, ID3D11Resource* reactiveMask, ID3D11Resource* transparencyMask);
+	bool DispatchSingleFoveatedVendorEye(UpscaleMethod a_upscaleMethod, uint32_t eyeIndex, ID3D11Resource* colorIn, ID3D11Resource* depthIn, ID3D11Resource* motionVectorsIn, ID3D11Resource* reactiveMaskIn, ID3D11Resource* transparencyMaskIn, uint32_t outputWidthPerEye, uint32_t outputHeight);
+	void DispatchFoveatedPeripheryPass(ID3D11ShaderResourceView* sourceSRV, ID3D11UnorderedAccessView* outputUAV, uint32_t sourceWidth, uint32_t sourceHeight, uint32_t outputWidth, uint32_t outputHeight);
+	void DispatchFoveatedBlendPass(ID3D11ShaderResourceView* centerSRV, ID3D11UnorderedAccessView* outputUAV, uint32_t eyeIndex, uint32_t outputWidthPerEye, uint32_t outputHeight, const FoveatedDispatchRect& rect);
 
 	/**
 	 * @brief Applies RCAS sharpening to the main render target after DLSS upscaling.

@@ -279,6 +279,153 @@ FfxResource ffxGetResource(ID3D11Resource* dx11Resource,
 	return resource;
 }
 
+bool FidelityFX::UpscaleRegion(uint32_t a_contextIndex, ID3D11Resource* a_color, ID3D11Resource* a_depth, ID3D11Resource* a_motionVectors,
+	ID3D11Resource* a_reactiveMask, ID3D11Resource* a_transparencyCompositionMask, ID3D11Resource* a_output,
+	uint32_t a_renderWidth, uint32_t a_renderHeight, uint32_t a_displayWidth, uint32_t a_displayHeight,
+	float a_motionVectorScaleX, float a_motionVectorScaleY, float a_sharpness)
+{
+	if (!a_color || !a_depth || !a_motionVectors || !a_reactiveMask || !a_transparencyCompositionMask || !a_output ||
+		!a_renderWidth || !a_renderHeight || !a_displayWidth || !a_displayHeight) {
+		return false;
+	}
+
+#ifdef CS_FFX_HAS_API_UPSCALE
+	static bool loggedRuntimeRegionFallback = false;
+	const bool runtimeSelected = CanUseRuntimeUpscalerPath();
+	if (!runtimeSelected) {
+		loggedRuntimeRegionFallback = false;
+	}
+
+	if (runtimeSelected) {
+		D3D11_TEXTURE2D_DESC outputDesc{};
+		if (!TryGetTexture2DDesc(a_output, outputDesc))
+			return false;
+
+		auto state = globals::state;
+		if (!state)
+			return false;
+
+		const uint32_t fullDisplayWidth = static_cast<uint32_t>(globals::game::isVR ? state->screenSize.x / 2.0f : state->screenSize.x);
+		const uint32_t fullDisplayHeight = static_cast<uint32_t>(state->screenSize.y);
+		const uint32_t contextCount = globals::game::isVR ? 2u : 1u;
+
+		if (!EnsureRuntimeUpscalerContexts(fullDisplayWidth, fullDisplayHeight, outputDesc.Format, contextCount)) {
+			runtimeUpscalerReady = false;
+		} else {
+			runtimeUpscalerReady = true;
+			if (DispatchRuntimeUpscalerSingle(
+					a_contextIndex,
+					a_color,
+					a_depth,
+					a_motionVectors,
+					a_reactiveMask,
+					a_transparencyCompositionMask,
+					a_output,
+					a_renderWidth,
+					a_renderHeight,
+					a_displayWidth,
+					a_displayHeight,
+					a_motionVectorScaleX,
+					a_motionVectorScaleY,
+					a_sharpness)) {
+				loggedRuntimeRegionFallback = false;
+				return true;
+			}
+		}
+
+#ifdef CS_FFX_HAS_HOST_FSR3
+		if (!loggedRuntimeRegionFallback) {
+			logger::warn("[FidelityFX] Runtime region upscaler dispatch failed, falling back to host FSR3.1 dispatch.");
+			loggedRuntimeRegionFallback = true;
+		}
+#else
+		logger::warn("[FidelityFX] Runtime region upscaler dispatch failed and host FSR3 fallback is unavailable.");
+		return false;
+#endif
+	}
+#endif
+
+#ifdef CS_FFX_HAS_HOST_FSR3
+	if (!fsrScratchBuffer || a_contextIndex >= 2)
+		return false;
+
+	(void)a_displayWidth;
+	(void)a_displayHeight;
+
+	auto context = globals::d3d::context;
+	auto state = globals::state;
+	if (!context || !state)
+		return false;
+
+	auto& upscaling = globals::features::upscaling;
+	auto jitter = upscaling.jitter;
+
+	if (state->frameAnnotations) {
+		if (globals::game::isVR) {
+			char buf[32];
+			snprintf(buf, sizeof(buf), "FSR Dispatch Eye %u", a_contextIndex);
+			state->BeginPerfEvent(buf);
+		} else {
+			state->BeginPerfEvent("FSR Dispatch");
+		}
+	}
+
+	FfxFsr3DispatchUpscaleDescription dispatchParameters{};
+	dispatchParameters.commandList = ffxGetCommandListDX11(context);
+	dispatchParameters.color = ffxGetResource(a_color, L"FSR3_Input_OutputColor");
+	dispatchParameters.depth = ffxGetResource(a_depth, L"FSR3_InputDepth");
+	dispatchParameters.motionVectors = ffxGetResource(a_motionVectors, L"FSR3_InputMotionVectors");
+	dispatchParameters.exposure = ffxGetResource(nullptr, L"FSR3_InputExposure");
+	dispatchParameters.upscaleOutput = ffxGetResource(a_output, L"FSR3_OutputColor");
+	dispatchParameters.reactive = ffxGetResource(a_reactiveMask, L"FSR3_InputReactiveMap");
+	dispatchParameters.transparencyAndComposition = ffxGetResource(a_transparencyCompositionMask, L"FSR3_TransparencyAndCompositionMap");
+
+	dispatchParameters.motionVectorScale.x = a_motionVectorScaleX;
+	dispatchParameters.motionVectorScale.y = a_motionVectorScaleY;
+	dispatchParameters.renderSize.width = a_renderWidth;
+	dispatchParameters.renderSize.height = a_renderHeight;
+
+	dispatchParameters.jitterOffset.x = -jitter.x;
+	dispatchParameters.jitterOffset.y = -jitter.y;
+
+	dispatchParameters.frameTimeDelta = *globals::game::deltaTime * 1000.f;
+	dispatchParameters.cameraFar = *globals::game::cameraFar;
+	dispatchParameters.cameraNear = *globals::game::cameraNear;
+	dispatchParameters.enableSharpening = true;
+	dispatchParameters.sharpness = a_sharpness;
+	dispatchParameters.cameraFovAngleVertical = Util::GetVerticalFOVRad();
+	dispatchParameters.viewSpaceToMetersFactor = 0.01428222656f;
+	dispatchParameters.reset = globals::features::upscaling.ShouldResetHistoryThisFrame();
+	dispatchParameters.preExposure = 1.0f;
+	dispatchParameters.flags = 0;
+
+	bool dispatchOK = true;
+	__try {
+		if (ffxFsr3ContextDispatchUpscale(&fsrContext[a_contextIndex], &dispatchParameters) != FFX_OK) {
+			logger::critical("[FidelityFX] Failed to dispatch region upscaling for eye {}!", a_contextIndex);
+			dispatchOK = false;
+		}
+	} __except (EXCEPTION_EXECUTE_HANDLER) {
+		if (!fsrDispatchCrashLogged) {
+			logger::critical("[FidelityFX] Region FSR3 dispatch crashed for eye {} - this may be caused by RenderDoc capture interfering with FSR operations. Try disabling RenderDoc capture.", a_contextIndex);
+			fsrDispatchCrashLogged = true;
+		}
+		dispatchOK = false;
+	}
+
+	if (state->frameAnnotations)
+		state->EndPerfEvent();
+
+	return dispatchOK;
+#else
+	(void)a_contextIndex;
+	(void)a_motionVectorScaleX;
+	(void)a_motionVectorScaleY;
+	(void)a_sharpness;
+	return false;
+#endif
+}
+
 void FidelityFX::Upscale(ID3D11Resource* a_upscalingTexture, ID3D11Resource* a_reactiveMask, ID3D11Resource* a_transparencyCompositionMask, ID3D11Resource* a_motionVectors, float a_sharpness)
 {
 	auto renderer = globals::game::renderer;
