@@ -436,7 +436,7 @@ void Streamline::SetDLSSOptions(sl::ViewportHandle p_viewport, uint32_t eyeIndex
 {
 	// Map quality mode to DLSS mode
 	uint32_t qualityMode = globals::features::upscaling.settings.qualityMode;
-	uint32_t dlssPreset = std::min(globals::features::upscaling.settings.dlssPreset, 3u);
+	uint32_t dlssPreset = std::min(globals::features::upscaling.settings.dlssPreset, Upscaling::kDLSSPresetMaxIndex);
 	auto state = globals::state;
 	uint32_t outputHeight = (uint)state->screenSize.y;
 
@@ -500,6 +500,9 @@ void Streamline::SetDLSSOptions(sl::ViewportHandle p_viewport, uint32_t eyeIndex
 		break;
 	case 3:
 		selectedPreset = sl::DLSSPreset::ePresetM;
+		break;
+	case 4:
+		selectedPreset = sl::DLSSPreset::ePresetF;
 		break;
 	default:
 		selectedPreset = sl::DLSSPreset::ePresetK;
