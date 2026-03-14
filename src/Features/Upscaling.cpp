@@ -353,7 +353,7 @@ void Upscaling::DrawSettings()
 		}
 	}
 
-	if (ImGui::TreeNodeEx("NVIDIA Reflex", ImGuiTreeNodeFlags_DefaultOpen)) {
+	if (streamline.reflexSupportedOnCurrentAdapter && ImGui::TreeNodeEx("NVIDIA Reflex", ImGuiTreeNodeFlags_DefaultOpen)) {
 		const bool reflexAvailable = streamline.initialized && streamline.featureReflex;
 		const bool markerOptimizationAvailable = reflexAvailable && streamline.featurePCL;
 		const bool reflexBlockedByFrameGeneration = IsFrameGenerationDx12PathActive();
