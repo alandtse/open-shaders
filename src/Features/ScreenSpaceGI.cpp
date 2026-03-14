@@ -97,6 +97,9 @@ namespace
 
 	float ResolveFoveatedCenterMaskScale(const ScreenSpaceGI::Settings& a_settings)
 	{
+		if (!REL::Module::IsVR())
+			return ClampCenterMaskScale(a_settings.CenterFullResMaskScale);
+
 		const bool foveatedPresetActive = ClampFoveatedPresetMode(a_settings.FoveatedPresetMode) != kFoveatedPresetModeOff;
 		if (!foveatedPresetActive)
 			return ClampCenterMaskScale(a_settings.CenterFullResMaskScale);
@@ -117,6 +120,10 @@ namespace
 		a_settings.FoveatedPresetMode = ClampFoveatedPresetMode(a_settings.FoveatedPresetMode);
 		a_settings.ResolutionMode = ClampResolutionMode(a_settings.ResolutionMode);
 		a_settings.VRCullDistance = ClampVRCullDistance(a_settings.VRCullDistance);
+		if (!REL::Module::IsVR()) {
+			a_settings.FoveatedPresetMode = kFoveatedPresetModeOff;
+			a_settings.CenterFullResMaskScale = 0.0f;
+		}
 		if (a_settings.FoveatedPresetMode != kFoveatedPresetModeOff) {
 			// Foveated presets run through the quarter-res base path; "Foveated" mode later suppresses periphery AO.
 			a_settings.ResolutionMode = 2;
@@ -198,6 +205,7 @@ void ScreenSpaceGI::DrawSettings()
 	ApplyPlatformSettingOverrides(settings);
 	SyncResolvedCenterMaskScale(settings);
 	static bool showAdvanced;
+	const bool isVR = REL::Module::IsVR();
 	const bool linkedCenterArea = IsCenterAreaLinkedToUpscaling();
 	const bool foveatedPresetActive = ClampFoveatedPresetMode(settings.FoveatedPresetMode) != kFoveatedPresetModeOff;
 
@@ -316,55 +324,67 @@ void ScreenSpaceGI::DrawSettings()
 
 			ImGui::TableNextColumn();
 			const bool strictActive = settings.FoveatedPresetMode == kFoveatedPresetModeStrict;
-			if (drawFoveatedToggleButton("Foveated/QRes", strictActive, { -1, 0 })) {
-				if (strictActive) {
-					settings.FoveatedPresetMode = kFoveatedPresetModeOff;
-					settings.CenterFullResMaskScale = 0.0f;
-				} else {
-					settings.NumSlices = 3;
-					settings.NumSteps = 6;
-					settings.ResolutionMode = 2;
-					settings.FoveatedPresetMode = kFoveatedPresetModeStrict;
-					settings.CenterFullResMaskScale = linkedCenterArea ?
-					                                     GetLinkedUpscalingCenterMaskScale() :
-					                                     (settings.CenterFullResMaskScale > 0.0f ?
-					                                          ClampCenterMaskScale(settings.CenterFullResMaskScale) :
-					                                          GetFoveatedPresetCenterScale(settings.FoveatedPresetMode));
-					settings.VRCullDistance = 1500.0f;
-					settings.AOPower = 1.8f;
-					settings.EnableBlur = false;
-					settings.EnableTemporalDenoiser = false;
-					settings.EnableGI = false;
+			{
+				auto foveatedGuard = Util::DisableGuard(!isVR);
+				if (drawFoveatedToggleButton("Foveated/QRes", strictActive, { -1, 0 })) {
+					if (strictActive) {
+						settings.FoveatedPresetMode = kFoveatedPresetModeOff;
+						settings.CenterFullResMaskScale = 0.0f;
+					} else {
+						settings.NumSlices = 3;
+						settings.NumSteps = 6;
+						settings.ResolutionMode = 2;
+						settings.FoveatedPresetMode = kFoveatedPresetModeStrict;
+						settings.CenterFullResMaskScale = linkedCenterArea ?
+						                                     GetLinkedUpscalingCenterMaskScale() :
+						                                     (settings.CenterFullResMaskScale > 0.0f ?
+						                                          ClampCenterMaskScale(settings.CenterFullResMaskScale) :
+						                                          GetFoveatedPresetCenterScale(settings.FoveatedPresetMode));
+						settings.VRCullDistance = 1500.0f;
+						settings.AOPower = 1.8f;
+						settings.EnableBlur = false;
+						settings.EnableTemporalDenoiser = false;
+						settings.EnableGI = false;
+					}
+					recompileFlag = true;
 				}
-				recompileFlag = true;
 			}
-			if (auto _tt = Util::HoverTooltipWrapper())
+			if (auto _tt = Util::HoverTooltipWrapper()) {
+				if (!isVR)
+					ImGui::Text("VR only.");
 				ImGui::Text("Quarter-res AO outside with Full Res AO in the center. Denoisers are disabled while active.");
+			}
 
 			ImGui::TableNextColumn();
 			const bool foveatedActive = settings.FoveatedPresetMode == kFoveatedPresetModeFoveated;
-			if (drawFoveatedToggleButton("Foveated/Only", foveatedActive, { -1, 0 })) {
-				if (foveatedActive) {
-					settings.FoveatedPresetMode = kFoveatedPresetModeOff;
-					settings.CenterFullResMaskScale = 0.0f;
-				} else {
-					settings.NumSlices = 3;
-					settings.NumSteps = 6;
-					settings.ResolutionMode = 2;
-					settings.FoveatedPresetMode = kFoveatedPresetModeFoveated;
-					settings.CenterFullResMaskScale = linkedCenterArea ?
-					                                     GetLinkedUpscalingCenterMaskScale() :
-					                                     (settings.CenterFullResMaskScale > 0.0f ?
-					                                          ClampCenterMaskScale(settings.CenterFullResMaskScale) :
-					                                          GetFoveatedPresetCenterScale(settings.FoveatedPresetMode));
-					settings.VRCullDistance = 1500.0f;
-					settings.AOPower = 1.8f;
-					settings.EnableGI = false;
+			{
+				auto foveatedGuard = Util::DisableGuard(!isVR);
+				if (drawFoveatedToggleButton("Foveated/Only", foveatedActive, { -1, 0 })) {
+					if (foveatedActive) {
+						settings.FoveatedPresetMode = kFoveatedPresetModeOff;
+						settings.CenterFullResMaskScale = 0.0f;
+					} else {
+						settings.NumSlices = 3;
+						settings.NumSteps = 6;
+						settings.ResolutionMode = 2;
+						settings.FoveatedPresetMode = kFoveatedPresetModeFoveated;
+						settings.CenterFullResMaskScale = linkedCenterArea ?
+						                                     GetLinkedUpscalingCenterMaskScale() :
+						                                     (settings.CenterFullResMaskScale > 0.0f ?
+						                                          ClampCenterMaskScale(settings.CenterFullResMaskScale) :
+						                                          GetFoveatedPresetCenterScale(settings.FoveatedPresetMode));
+						settings.VRCullDistance = 1500.0f;
+						settings.AOPower = 1.8f;
+						settings.EnableGI = false;
+					}
+					recompileFlag = true;
 				}
-				recompileFlag = true;
 			}
-			if (auto _tt = Util::HoverTooltipWrapper())
+			if (auto _tt = Util::HoverTooltipWrapper()) {
+				if (!isVR)
+					ImGui::Text("VR only.");
 				ImGui::Text("Full Res AO in center only; AO is disabled outside center. Use the center-area slider to tune coverage.");
+			}
 
 			ImGui::TableNextColumn();
 			if (ImGui::Button("Reference", { -1, 0 })) {
@@ -382,8 +402,11 @@ void ScreenSpaceGI::DrawSettings()
 
 			ImGui::EndTable();
 		}
+		if (!isVR) {
+			ImGui::TextDisabled("Foveated/QRes and Foveated/Only presets are VR only.");
+		}
 
-		if (REL::Module::IsVR()) {
+		if (isVR) {
 			ImGui::SliderFloat("Shadow/GI Cull Distance", &settings.VRCullDistance, kVRCullDistanceMin, kVRCullDistanceMax, "%.0f units");
 			if (auto _tt = Util::HoverTooltipWrapper()) {
 				ImGui::Text("0 disables. Lower values improve performance but reduce distant AO/IL.");
