@@ -12,6 +12,11 @@
 #include "../Upscaling.h"
 #include "DX12SwapChain.h"
 
+namespace
+{
+	constexpr UINT NVIDIA_VENDOR_ID = 0x10DE;
+}
+
 void LoggingCallback(sl::LogType type, const char* msg)
 {
 	// Remove trailing newlines from the raw message
@@ -174,6 +179,7 @@ void Streamline::LoadInterposer()
 		featureDLSS = false;
 		featureReflex = false;
 		featurePCL = false;
+		reflexSupportedOnCurrentAdapter = false;
 		dlssOptionsCache[0] = {};
 		dlssOptionsCache[1] = {};
 		reflexOptionsCache = {};
@@ -187,6 +193,7 @@ void Streamline::CheckFeatures(IDXGIAdapter* a_adapter)
 	logger::info("[Streamline] Checking features");
 	DXGI_ADAPTER_DESC adapterDesc;
 	a_adapter->GetDesc(&adapterDesc);
+	reflexSupportedOnCurrentAdapter = adapterDesc.VendorId == NVIDIA_VENDOR_ID;
 
 	sl::AdapterInfo adapterInfo;
 	adapterInfo.deviceLUID = (uint8_t*)&adapterDesc.AdapterLuid;
@@ -214,8 +221,13 @@ void Streamline::CheckFeatures(IDXGIAdapter* a_adapter)
 	};
 
 	checkFeatureAvailability(sl::kFeatureDLSS, "DLSS", featureDLSS);
-	checkFeatureAvailability(sl::kFeatureReflex, "Reflex", featureReflex);
-	checkFeatureAvailability(sl::kFeaturePCL, "PCL", featurePCL);
+	if (reflexSupportedOnCurrentAdapter) {
+		checkFeatureAvailability(sl::kFeatureReflex, "Reflex", featureReflex);
+		checkFeatureAvailability(sl::kFeaturePCL, "PCL", featurePCL);
+	} else {
+		featureReflex = false;
+		featurePCL = false;
+	}
 
 	if (featureDLSS) {
 		isRTXBelow40series = IsRTXAndBelow40Series(a_adapter);
@@ -227,8 +239,12 @@ void Streamline::CheckFeatures(IDXGIAdapter* a_adapter)
 	}
 
 	logger::info("[Streamline] DLSS {} available", featureDLSS ? "is" : "is not");
-	logger::info("[Streamline] Reflex {} available", featureReflex ? "is" : "is not");
-	logger::info("[Streamline] PCL {} available", featurePCL ? "is" : "is not");
+	if (reflexSupportedOnCurrentAdapter) {
+		logger::info("[Streamline] Reflex {} available", featureReflex ? "is" : "is not");
+		logger::info("[Streamline] PCL {} available", featurePCL ? "is" : "is not");
+	} else {
+		logger::info("[Streamline] Reflex/PCL disabled on non-NVIDIA adapter");
+	}
 	InvalidateDLSSOptionsCache();
 	reflexOptionsCache = {};
 	lastReflexSleepFrame = UINT32_MAX;
@@ -244,7 +260,14 @@ void Streamline::PostDevice()
 		slGetFeatureFunction(sl::kFeatureDLSS, "slDLSSSetOptions", (void*&)slDLSSSetOptions);
 	}
 
-	if (slGetFeatureFunction) {
+	slReflexGetState = nullptr;
+	slReflexSleep = nullptr;
+	slReflexSetOptions = nullptr;
+	slPCLSetMarker = nullptr;
+	featureReflex = false;
+	featurePCL = false;
+
+	if (slGetFeatureFunction && reflexSupportedOnCurrentAdapter) {
 		if (slSetFeatureLoaded) {
 			const auto requestFeatureLoad = [&](sl::Feature feature, const char* featureName) {
 				const sl::Result loadResult = slSetFeatureLoaded(feature, true);
@@ -264,9 +287,6 @@ void Streamline::PostDevice()
 			return bindResult == sl::Result::eOk && fn != nullptr;
 		};
 
-		slReflexGetState = nullptr;
-		slReflexSleep = nullptr;
-		slReflexSetOptions = nullptr;
 		bool reflexFnsBound = true;
 		reflexFnsBound &= bindFeatureFn(sl::kFeatureReflex, "slReflexGetState", (void*&)slReflexGetState);
 		reflexFnsBound &= bindFeatureFn(sl::kFeatureReflex, "slReflexSleep", (void*&)slReflexSleep);
@@ -287,6 +307,8 @@ void Streamline::PostDevice()
 		} else {
 			logger::info("[Streamline] PCL marker interface is available");
 		}
+	} else if (!reflexSupportedOnCurrentAdapter) {
+		logger::info("[Streamline] Skipping Reflex/PCL binding on non-NVIDIA adapter");
 	}
 
 	InvalidateDLSSOptionsCache();
@@ -641,7 +663,7 @@ void Streamline::DestroyDLSSResources()
 
 void Streamline::UpdateReflex()
 {
-	if (!initialized || !featureReflex || !slReflexSetOptions)
+	if (!initialized || !reflexSupportedOnCurrentAdapter || !featureReflex || !slReflexSetOptions)
 		return;
 
 	const auto& upscaling = globals::features::upscaling;
