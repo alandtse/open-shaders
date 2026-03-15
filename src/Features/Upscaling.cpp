@@ -28,6 +28,14 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	sharpnessDLSS,
 	foveatedVendorDispatch,
 	foveatedCenterArea,
+	foveatedPeripheryMipBias,
+	foveatedPeripheryMipBiasStrength,
+	foveatedPeripheryEdgeBlur,
+	foveatedPeripheryEdgeBlurStrength,
+	foveatedPeripheryJitterAttenuation,
+	foveatedPeripheryJitterAttenuationStrength,
+	foveatedPeripheryJitterDecimation,
+	foveatedPeripheryJitterDecimationFrames,
 	linkFoveatedCenterAreaWithSSGI,
 	hasExplicitFoveatedCenterLinkPreference,
 	reflexLowLatencyMode,
@@ -40,9 +48,17 @@ decltype(&D3D11CreateDeviceAndSwapChain) ptrD3D11CreateDeviceAndSwapChainUpscali
 
 namespace
 {
-	constexpr float kFoveatedCenterAreaMin = 0.45f;
-	constexpr float kFoveatedCenterAreaMax = 1.0f;
-	constexpr float kFoveatedCenterFeather = 0.05f;
+	constexpr float kFoveatedCenterAreaMin = FoveatedCommon::kCenterAreaMin;
+	constexpr float kFoveatedCenterAreaMax = FoveatedCommon::kCenterAreaMax;
+	constexpr float kFoveatedCenterFeather = FoveatedCommon::kCenterFeather;
+	constexpr float kPeripheryMipBiasStrengthMin = 0.0f;
+	constexpr float kPeripheryMipBiasStrengthMax = 2.0f;
+	constexpr float kPeripheryEdgeBlurStrengthMin = 0.0f;
+	constexpr float kPeripheryEdgeBlurStrengthMax = 1.0f;
+	constexpr float kPeripheryJitterAttenuationStrengthMin = 0.0f;
+	constexpr float kPeripheryJitterAttenuationStrengthMax = 1.0f;
+	constexpr int kPeripheryJitterDecimationFramesMin = 2;
+	constexpr int kPeripheryJitterDecimationFramesMax = 8;
 
 	float ClampFoveatedCenterArea(float value)
 	{
@@ -339,6 +355,59 @@ void Upscaling::DrawSettings()
 					ImGui::TextUnformatted("1.00 means full-center coverage (equivalent to full-frame vendor dispatch).");
 					if (settings.linkFoveatedCenterAreaWithSSGI)
 						ImGui::TextUnformatted("Linked with SSGI center area (shared source).");
+				}
+
+				ImGui::Separator();
+				ImGui::TextUnformatted("Periphery Anti-Flicker");
+
+				int peripheryMipBiasEnabled = settings.foveatedPeripheryMipBias ? 1 : 0;
+				ImGui::SliderInt("Periphery Mip Bias", &peripheryMipBiasEnabled, 0, 1, toggleModes[peripheryMipBiasEnabled]);
+				settings.foveatedPeripheryMipBias = peripheryMipBiasEnabled > 0;
+				if (settings.foveatedPeripheryMipBias) {
+					ImGui::SliderFloat("Periphery Mip Bias Strength", &settings.foveatedPeripheryMipBiasStrength, kPeripheryMipBiasStrengthMin, kPeripheryMipBiasStrengthMax, "%.2f");
+					settings.foveatedPeripheryMipBiasStrength = std::clamp(settings.foveatedPeripheryMipBiasStrength, kPeripheryMipBiasStrengthMin, kPeripheryMipBiasStrengthMax);
+				}
+				if (auto _tt = Util::HoverTooltipWrapper()) {
+					ImGui::TextUnformatted("Applies radial mip-bias in peripheral sampling to reduce shimmering/aliasing.");
+					ImGui::TextUnformatted("Very low performance cost.");
+				}
+
+				int peripheryEdgeBlurEnabled = settings.foveatedPeripheryEdgeBlur ? 1 : 0;
+				ImGui::SliderInt("Periphery Edge Blur", &peripheryEdgeBlurEnabled, 0, 1, toggleModes[peripheryEdgeBlurEnabled]);
+				settings.foveatedPeripheryEdgeBlur = peripheryEdgeBlurEnabled > 0;
+				if (settings.foveatedPeripheryEdgeBlur) {
+					ImGui::SliderFloat("Periphery Edge Blur Strength", &settings.foveatedPeripheryEdgeBlurStrength, kPeripheryEdgeBlurStrengthMin, kPeripheryEdgeBlurStrengthMax, "%.2f");
+					settings.foveatedPeripheryEdgeBlurStrength = std::clamp(settings.foveatedPeripheryEdgeBlurStrength, kPeripheryEdgeBlurStrengthMin, kPeripheryEdgeBlurStrengthMax);
+				}
+				if (auto _tt = Util::HoverTooltipWrapper()) {
+					ImGui::TextUnformatted("Applies a lightweight edge-aware 5-tap blur in periphery only.");
+					ImGui::TextUnformatted("Low cost; stronger values reduce flicker but soften peripheral detail.");
+				}
+
+				int peripheryJitterAttenuationEnabled = settings.foveatedPeripheryJitterAttenuation ? 1 : 0;
+				ImGui::SliderInt("Periphery Jitter Attenuation", &peripheryJitterAttenuationEnabled, 0, 1, toggleModes[peripheryJitterAttenuationEnabled]);
+				settings.foveatedPeripheryJitterAttenuation = peripheryJitterAttenuationEnabled > 0;
+				if (settings.foveatedPeripheryJitterAttenuation) {
+					ImGui::SliderFloat("Periphery Jitter Attenuation Strength", &settings.foveatedPeripheryJitterAttenuationStrength, kPeripheryJitterAttenuationStrengthMin, kPeripheryJitterAttenuationStrengthMax, "%.2f");
+					settings.foveatedPeripheryJitterAttenuationStrength = std::clamp(settings.foveatedPeripheryJitterAttenuationStrength, kPeripheryJitterAttenuationStrengthMin, kPeripheryJitterAttenuationStrengthMax);
+				}
+				if (auto _tt = Util::HoverTooltipWrapper()) {
+					ImGui::TextUnformatted("Reduces periphery jitter amplitude while keeping center jitter unchanged.");
+					ImGui::TextUnformatted("Very low cost; higher values reduce shimmer but can soften periphery.");
+				}
+
+				int peripheryJitterDecimationEnabled = settings.foveatedPeripheryJitterDecimation ? 1 : 0;
+				ImGui::SliderInt("Periphery Jitter Decimation", &peripheryJitterDecimationEnabled, 0, 1, toggleModes[peripheryJitterDecimationEnabled]);
+				settings.foveatedPeripheryJitterDecimation = peripheryJitterDecimationEnabled > 0;
+				int peripheryJitterDecimationFrames = static_cast<int>(std::clamp(settings.foveatedPeripheryJitterDecimationFrames, static_cast<uint>(kPeripheryJitterDecimationFramesMin), static_cast<uint>(kPeripheryJitterDecimationFramesMax)));
+				if (settings.foveatedPeripheryJitterDecimation) {
+					ImGui::SliderInt("Periphery Jitter Hold Frames", &peripheryJitterDecimationFrames, kPeripheryJitterDecimationFramesMin, kPeripheryJitterDecimationFramesMax, "%d");
+				}
+				peripheryJitterDecimationFrames = std::clamp(peripheryJitterDecimationFrames, kPeripheryJitterDecimationFramesMin, kPeripheryJitterDecimationFramesMax);
+				settings.foveatedPeripheryJitterDecimationFrames = static_cast<uint>(peripheryJitterDecimationFrames);
+				if (auto _tt = Util::HoverTooltipWrapper()) {
+					ImGui::TextUnformatted("Holds periphery jitter for N frames to lower temporal update frequency.");
+					ImGui::TextUnformatted("Low cost; larger values reduce flicker more but increase trailing risk.");
 				}
 			}
 		}
@@ -1241,7 +1310,49 @@ void Upscaling::DispatchFoveatedPeripheryPass(ID3D11ShaderResourceView* sourceSR
 		sourceWidth > 0 ? 1.0f / static_cast<float>(sourceWidth) : 0.0f,
 		sourceHeight > 0 ? 1.0f / static_cast<float>(sourceHeight) : 0.0f
 	};
-	cbData.jitter = jitter;
+	float2 jitterForPeriphery = jitter;
+	if (settings.foveatedPeripheryJitterDecimation) {
+		const uint32_t holdFrames = std::clamp(
+			settings.foveatedPeripheryJitterDecimationFrames,
+			static_cast<uint>(kPeripheryJitterDecimationFramesMin),
+			static_cast<uint>(kPeripheryJitterDecimationFramesMax));
+		if (auto state = globals::state) {
+			const uint32_t frame = state->frameCount;
+			const bool uninitialized = foveatedPeripheryHeldJitterFrame == std::numeric_limits<uint32_t>::max();
+			const bool elapsed = !uninitialized && (frame - foveatedPeripheryHeldJitterFrame) >= holdFrames;
+			if (uninitialized || elapsed) {
+				foveatedPeripheryHeldJitter = jitter;
+				foveatedPeripheryHeldJitterFrame = frame;
+			}
+			jitterForPeriphery = foveatedPeripheryHeldJitter;
+		}
+	} else {
+		foveatedPeripheryHeldJitter = jitter;
+		foveatedPeripheryHeldJitterFrame = std::numeric_limits<uint32_t>::max();
+	}
+	cbData.jitter = jitterForPeriphery;
+	const float centerArea = ClampFoveatedCenterArea(settings.foveatedCenterArea);
+	const float mipBiasStrength = std::clamp(settings.foveatedPeripheryMipBiasStrength, kPeripheryMipBiasStrengthMin, kPeripheryMipBiasStrengthMax);
+	const float edgeBlurStrength = std::clamp(settings.foveatedPeripheryEdgeBlurStrength, kPeripheryEdgeBlurStrengthMin, kPeripheryEdgeBlurStrengthMax);
+	const float jitterAttenuationStrength = std::clamp(settings.foveatedPeripheryJitterAttenuationStrength, kPeripheryJitterAttenuationStrengthMin, kPeripheryJitterAttenuationStrengthMax);
+	cbData.tuning0 = {
+		centerArea,
+		kFoveatedCenterFeather,
+		settings.foveatedPeripheryMipBias ? 1.0f : 0.0f,
+		mipBiasStrength
+	};
+	cbData.tuning1 = {
+		settings.foveatedPeripheryEdgeBlur ? 1.0f : 0.0f,
+		edgeBlurStrength,
+		12.0f,
+		0.0f
+	};
+	cbData.tuning2 = {
+		settings.foveatedPeripheryJitterAttenuation ? 1.0f : 0.0f,
+		jitterAttenuationStrength,
+		0.0f,
+		0.0f
+	};
 	foveatedPeripheryCB->Update(cbData);
 
 	ID3D11Buffer* cb = foveatedPeripheryCB->CB();
