@@ -5,6 +5,8 @@ cbuffer FoveatedPeripheryCB : register(b0)
 	float2 OutputDim;
 	float2 InvOutputDim;
 	float2 InvSourceDim;
+	float2 DispatchDim;
+	float2 OutputOffset;
 	float2 Jitter;
 	float4 Tuning0;  // x=centerScale, y=centerFeather, z=useMipBias, w=mipBiasStrength
 	float4 Tuning1;  // x=useEdgeBlur, y=edgeBlurStrength, z=edgeSensitivity, w=pad
@@ -22,7 +24,11 @@ float Luma(float3 c)
 
 [numthreads(8, 8, 1)] void main(uint3 dispatchID : SV_DispatchThreadID)
 {
-	uint2 outputPos = dispatchID.xy;
+	uint2 localPos = dispatchID.xy;
+	if (any(localPos >= uint2(DispatchDim)))
+		return;
+
+	uint2 outputPos = localPos + uint2(OutputOffset + 0.5);
 	if (any(outputPos >= uint2(OutputDim)))
 		return;
 

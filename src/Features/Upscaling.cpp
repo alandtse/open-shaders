@@ -1289,15 +1289,23 @@ void Upscaling::DestroyFoveatedResources()
 	foveatedRectCache = {};
 }
 
-void Upscaling::DispatchFoveatedPeripheryPass(ID3D11ShaderResourceView* sourceSRV, ID3D11UnorderedAccessView* outputUAV, uint32_t sourceWidth, uint32_t sourceHeight, uint32_t outputWidth, uint32_t outputHeight)
+void Upscaling::DispatchFoveatedPeripheryPass(ID3D11ShaderResourceView* sourceSRV, ID3D11UnorderedAccessView* outputUAV, uint32_t sourceWidth, uint32_t sourceHeight, uint32_t outputWidth, uint32_t outputHeight, uint32_t outputOffsetX, uint32_t outputOffsetY, uint32_t dispatchWidth, uint32_t dispatchHeight)
 {
 	auto* peripheryCS = GetFoveatedPeripheryCS();
 	if (!peripheryCS || !sourceSRV || !outputUAV || !foveatedPeripheryCB)
+		return;
+	if (!dispatchWidth || !dispatchHeight)
 		return;
 
 	auto context = globals::d3d::context;
 	auto deferred = globals::deferred;
 	if (!context || !deferred || !deferred->linearSampler)
+		return;
+	if (outputOffsetX >= outputWidth || outputOffsetY >= outputHeight)
+		return;
+	dispatchWidth = std::min(dispatchWidth, outputWidth - outputOffsetX);
+	dispatchHeight = std::min(dispatchHeight, outputHeight - outputOffsetY);
+	if (!dispatchWidth || !dispatchHeight)
 		return;
 
 	FoveatedPeripheryCB cbData{};
@@ -1310,6 +1318,8 @@ void Upscaling::DispatchFoveatedPeripheryPass(ID3D11ShaderResourceView* sourceSR
 		sourceWidth > 0 ? 1.0f / static_cast<float>(sourceWidth) : 0.0f,
 		sourceHeight > 0 ? 1.0f / static_cast<float>(sourceHeight) : 0.0f
 	};
+	cbData.dispatchDim = { static_cast<float>(dispatchWidth), static_cast<float>(dispatchHeight) };
+	cbData.outputOffset = { static_cast<float>(outputOffsetX), static_cast<float>(outputOffsetY) };
 	float2 jitterForPeriphery = jitter;
 	if (settings.foveatedPeripheryJitterDecimation) {
 		const uint32_t holdFrames = std::clamp(
@@ -1365,7 +1375,7 @@ void Upscaling::DispatchFoveatedPeripheryPass(ID3D11ShaderResourceView* sourceSR
 	context->CSSetSamplers(0, 1, samplers);
 	context->CSSetShaderResources(0, 1, srvs);
 	context->CSSetUnorderedAccessViews(0, 1, uavs, nullptr);
-	context->Dispatch((outputWidth + 7u) >> 3, (outputHeight + 7u) >> 3, 1);
+	context->Dispatch((dispatchWidth + 7u) >> 3, (dispatchHeight + 7u) >> 3, 1);
 
 	ID3D11ShaderResourceView* nullSRV[1] = { nullptr };
 	ID3D11UnorderedAccessView* nullUAV[1] = { nullptr };
@@ -1549,6 +1559,19 @@ bool Upscaling::DispatchFoveatedVendorUpscaling(UpscaleMethod a_upscaleMethod, I
 		return false;
 
 	PreparePerEyeInputs(colorTexture, depthTexture, motionVectors, reactiveMask, transparencyMask, false, !depthAlreadyPrepared);
+	const float centerScale = ClampFoveatedCenterArea(settings.foveatedCenterArea);
+	const float halfCenterScale = centerScale * 0.5f;
+	const float outputWidthF = static_cast<float>(outputWidthPerEye);
+	const float outputHeightF = static_cast<float>(outputHeight);
+	const int innerMinXInt = std::clamp(static_cast<int>(std::ceil((0.5f - halfCenterScale) * outputWidthF - 0.5f)), 0, static_cast<int>(outputWidthPerEye));
+	const int innerMaxXInt = std::clamp(static_cast<int>(std::floor((0.5f + halfCenterScale) * outputWidthF - 0.5f)) + 1, 0, static_cast<int>(outputWidthPerEye));
+	const int innerMinYInt = std::clamp(static_cast<int>(std::ceil((0.5f - halfCenterScale) * outputHeightF - 0.5f)), 0, static_cast<int>(outputHeight));
+	const int innerMaxYInt = std::clamp(static_cast<int>(std::floor((0.5f + halfCenterScale) * outputHeightF - 0.5f)) + 1, 0, static_cast<int>(outputHeight));
+	const uint32_t innerMinX = static_cast<uint32_t>(innerMinXInt);
+	const uint32_t innerMaxX = static_cast<uint32_t>(innerMaxXInt);
+	const uint32_t innerMinY = static_cast<uint32_t>(innerMinYInt);
+	const uint32_t innerMaxY = static_cast<uint32_t>(innerMaxYInt);
+	const bool hasCenterInterior = innerMaxX > innerMinX && innerMaxY > innerMinY;
 
 	for (uint32_t eye = 0; eye < 2; ++eye) {
 		if (!vrIntermediateColorIn[eye] || !vrIntermediateColorIn[eye]->srv ||
@@ -1558,13 +1581,29 @@ bool Upscaling::DispatchFoveatedVendorUpscaling(UpscaleMethod a_upscaleMethod, I
 			return false;
 		}
 
-		DispatchFoveatedPeripheryPass(
-			vrIntermediateColorIn[eye]->srv.get(),
-			vrIntermediateColorOut[eye]->uav.get(),
-			inputWidthPerEye,
-			inputHeight,
-			outputWidthPerEye,
-			outputHeight);
+		auto dispatchPeripheryBand = [&](uint32_t outputOffsetX, uint32_t outputOffsetY, uint32_t dispatchWidth, uint32_t dispatchHeight) {
+			DispatchFoveatedPeripheryPass(
+				vrIntermediateColorIn[eye]->srv.get(),
+				vrIntermediateColorOut[eye]->uav.get(),
+				inputWidthPerEye,
+				inputHeight,
+				outputWidthPerEye,
+				outputHeight,
+				outputOffsetX,
+				outputOffsetY,
+				dispatchWidth,
+				dispatchHeight);
+		};
+
+		if (hasCenterInterior) {
+			const uint32_t innerHeight = innerMaxY - innerMinY;
+			dispatchPeripheryBand(0, 0, outputWidthPerEye, innerMinY);
+			dispatchPeripheryBand(0, innerMaxY, outputWidthPerEye, outputHeight - innerMaxY);
+			dispatchPeripheryBand(0, innerMinY, innerMinX, innerHeight);
+			dispatchPeripheryBand(innerMaxX, innerMinY, outputWidthPerEye - innerMaxX, innerHeight);
+		} else {
+			dispatchPeripheryBand(0, 0, outputWidthPerEye, outputHeight);
+		}
 
 		if (!DispatchSingleFoveatedVendorEye(
 				a_upscaleMethod,
