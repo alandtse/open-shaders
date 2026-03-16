@@ -99,7 +99,7 @@ public:
 		float maskDepthThreshold;
 		float vrSeamHardening;
 		float2 sourceOffset;  // Source offset in combined stereo inputs
-		float2 pad0;
+		float2 outputOffset;  // Output offset in per-eye intermediates
 	};
 
 	struct FoveatedPeripheryCB
