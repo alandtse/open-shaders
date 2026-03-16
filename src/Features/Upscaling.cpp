@@ -1330,7 +1330,7 @@ void Upscaling::DestroyFoveatedResources()
 	foveatedRectCache = {};
 }
 
-void Upscaling::DispatchFoveatedPeripheryPass(ID3D11ShaderResourceView* sourceSRV, ID3D11UnorderedAccessView* outputUAV, uint32_t sourceWidth, uint32_t sourceHeight, uint32_t outputWidth, uint32_t outputHeight, uint32_t outputOffsetX, uint32_t outputOffsetY, uint32_t dispatchWidth, uint32_t dispatchHeight)
+void Upscaling::DispatchFoveatedPeripheryPass(ID3D11ShaderResourceView* sourceSRV, ID3D11UnorderedAccessView* outputUAV, uint32_t sourceWidth, uint32_t sourceHeight, uint32_t outputWidth, uint32_t outputHeight, uint32_t outputOffsetX, uint32_t outputOffsetY, uint32_t dispatchWidth, uint32_t dispatchHeight, bool keepBindingsBound)
 {
 	auto* peripheryCS = GetFoveatedPeripheryCS();
 	if (!peripheryCS || !sourceSRV || !outputUAV || !foveatedPeripheryCB)
@@ -1412,27 +1412,31 @@ void Upscaling::DispatchFoveatedPeripheryPass(ID3D11ShaderResourceView* sourceSR
 	};
 	foveatedPeripheryCB->Update(cbData);
 
-	ID3D11Buffer* cb = foveatedPeripheryCB->CB();
-	ID3D11SamplerState* samplers[1] = { deferred->linearSampler };
-	ID3D11ShaderResourceView* srvs[1] = { sourceSRV };
-	ID3D11UnorderedAccessView* uavs[1] = { outputUAV };
+	if (keepBindingsBound) {
+		context->Dispatch((dispatchWidth + 7u) >> 3, (dispatchHeight + 7u) >> 3, 1);
+	} else {
+		ID3D11Buffer* cb = foveatedPeripheryCB->CB();
+		ID3D11SamplerState* samplers[1] = { deferred->linearSampler };
+		ID3D11ShaderResourceView* srvs[1] = { sourceSRV };
+		ID3D11UnorderedAccessView* uavs[1] = { outputUAV };
 
-	context->CSSetShader(peripheryCS, nullptr, 0);
-	context->CSSetConstantBuffers(0, 1, &cb);
-	context->CSSetSamplers(0, 1, samplers);
-	context->CSSetShaderResources(0, 1, srvs);
-	context->CSSetUnorderedAccessViews(0, 1, uavs, nullptr);
-	context->Dispatch((dispatchWidth + 7u) >> 3, (dispatchHeight + 7u) >> 3, 1);
+		context->CSSetShader(peripheryCS, nullptr, 0);
+		context->CSSetConstantBuffers(0, 1, &cb);
+		context->CSSetSamplers(0, 1, samplers);
+		context->CSSetShaderResources(0, 1, srvs);
+		context->CSSetUnorderedAccessViews(0, 1, uavs, nullptr);
+		context->Dispatch((dispatchWidth + 7u) >> 3, (dispatchHeight + 7u) >> 3, 1);
 
-	ID3D11ShaderResourceView* nullSRV[1] = { nullptr };
-	ID3D11UnorderedAccessView* nullUAV[1] = { nullptr };
-	ID3D11SamplerState* nullSampler[1] = { nullptr };
-	ID3D11Buffer* nullCB[1] = { nullptr };
-	context->CSSetShaderResources(0, 1, nullSRV);
-	context->CSSetUnorderedAccessViews(0, 1, nullUAV, nullptr);
-	context->CSSetSamplers(0, 1, nullSampler);
-	context->CSSetConstantBuffers(0, 1, nullCB);
-	context->CSSetShader(nullptr, nullptr, 0);
+		ID3D11ShaderResourceView* nullSRV[1] = { nullptr };
+		ID3D11UnorderedAccessView* nullUAV[1] = { nullptr };
+		ID3D11SamplerState* nullSampler[1] = { nullptr };
+		ID3D11Buffer* nullCB[1] = { nullptr };
+		context->CSSetShaderResources(0, 1, nullSRV);
+		context->CSSetUnorderedAccessViews(0, 1, nullUAV, nullptr);
+		context->CSSetSamplers(0, 1, nullSampler);
+		context->CSSetConstantBuffers(0, 1, nullCB);
+		context->CSSetShader(nullptr, nullptr, 0);
+	}
 }
 
 void Upscaling::DispatchFoveatedBlendPass(ID3D11ShaderResourceView* centerSRV, ID3D11UnorderedAccessView* outputUAV, uint32_t eyeIndex, uint32_t outputWidthPerEye, uint32_t outputHeight, const FoveatedDispatchRect& rect, uint32_t dispatchOffsetX, uint32_t dispatchOffsetY, uint32_t dispatchWidth, uint32_t dispatchHeight)
@@ -1700,6 +1704,10 @@ bool Upscaling::DispatchFoveatedVendorUpscaling(UpscaleMethod a_upscaleMethod, I
 	auto* blendCS = GetFoveatedCenterBlendCS();
 	if (!peripheryCS || !blendCS || !foveatedPeripheryCB || !foveatedCenterBlendCB)
 		return false;
+	auto context = globals::d3d::context;
+	auto deferred = globals::deferred;
+	if (!context || !deferred || !deferred->linearSampler)
+		return false;
 
 	PreparePerEyeInputs(colorTexture, depthTexture, motionVectors, reactiveMask, transparencyMask, false, !depthAlreadyPrepared);
 	const float centerScale = ClampFoveatedCenterArea(settings.foveatedCenterArea);
@@ -1724,6 +1732,17 @@ bool Upscaling::DispatchFoveatedVendorUpscaling(UpscaleMethod a_upscaleMethod, I
 			return false;
 		}
 
+		// Batch periphery setup once per eye to avoid repeated CS bind/unbind overhead.
+		ID3D11Buffer* peripheryCB = foveatedPeripheryCB->CB();
+		ID3D11SamplerState* peripherySamplers[1] = { deferred->linearSampler };
+		ID3D11ShaderResourceView* peripherySRVs[1] = { vrIntermediateColorIn[eye]->srv.get() };
+		ID3D11UnorderedAccessView* peripheryUAVs[1] = { vrIntermediateColorOut[eye]->uav.get() };
+		context->CSSetShader(peripheryCS, nullptr, 0);
+		context->CSSetConstantBuffers(0, 1, &peripheryCB);
+		context->CSSetSamplers(0, 1, peripherySamplers);
+		context->CSSetShaderResources(0, 1, peripherySRVs);
+		context->CSSetUnorderedAccessViews(0, 1, peripheryUAVs, nullptr);
+
 		auto dispatchPeripheryBand = [&](uint32_t outputOffsetX, uint32_t outputOffsetY, uint32_t dispatchWidth, uint32_t dispatchHeight) {
 			DispatchFoveatedPeripheryPass(
 				vrIntermediateColorIn[eye]->srv.get(),
@@ -1735,7 +1754,8 @@ bool Upscaling::DispatchFoveatedVendorUpscaling(UpscaleMethod a_upscaleMethod, I
 				outputOffsetX,
 				outputOffsetY,
 				dispatchWidth,
-				dispatchHeight);
+				dispatchHeight,
+				true);
 		};
 
 		if (hasCenterInterior) {
@@ -1747,6 +1767,16 @@ bool Upscaling::DispatchFoveatedVendorUpscaling(UpscaleMethod a_upscaleMethod, I
 		} else {
 			dispatchPeripheryBand(0, 0, outputWidthPerEye, outputHeight);
 		}
+
+		ID3D11ShaderResourceView* nullSRV[1] = { nullptr };
+		ID3D11UnorderedAccessView* nullUAV[1] = { nullptr };
+		ID3D11SamplerState* nullSampler[1] = { nullptr };
+		ID3D11Buffer* nullCB[1] = { nullptr };
+		context->CSSetShaderResources(0, 1, nullSRV);
+		context->CSSetUnorderedAccessViews(0, 1, nullUAV, nullptr);
+		context->CSSetSamplers(0, 1, nullSampler);
+		context->CSSetConstantBuffers(0, 1, nullCB);
+		context->CSSetShader(nullptr, nullptr, 0);
 
 		if (!DispatchSingleFoveatedVendorEye(
 				a_upscaleMethod,
