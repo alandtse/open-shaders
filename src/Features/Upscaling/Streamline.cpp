@@ -438,7 +438,8 @@ void Streamline::CheckFrameConstants(sl::ViewportHandle p_viewport, uint32_t eye
 	auto& upscaling = globals::features::upscaling;
 	auto jitter = upscaling.jitter;
 	slConstants.jitterOffset = { -jitter.x, -jitter.y };
-	slConstants.reset = sl::Boolean::eFalse;
+	const bool requestHistoryReset = upscaling.settings.dlssUseHistoryReset && upscaling.ShouldResetHistoryThisFrame();
+	slConstants.reset = requestHistoryReset ? sl::Boolean::eTrue : sl::Boolean::eFalse;
 
 	if (globals::game::isVR && (clampedViewportScaleX < 0.999f || clampedViewportScaleY < 0.999f)) {
 		slConstants.mvecScale = { 1.0f / clampedViewportScaleX, 1.0f / clampedViewportScaleY };

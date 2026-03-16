@@ -2618,6 +2618,8 @@ IDXGISwapChain* Upscaling::GetProxySwapChain()
 void Upscaling::Upscale()
 {
 	auto upscaleMethod = GetUpscaleMethod();
+	UpdateHistoryResetState(upscaleMethod);
+	LatchHistoryResetForCurrentFrame();
 
 	auto state = globals::state;
 	auto context = globals::d3d::context;
