@@ -69,6 +69,17 @@ namespace
 		return std::clamp(a_mode, kFoveatedPresetModeOff, kFoveatedPresetModeFoveated);
 	}
 
+	int ResolveRuntimeFoveatedPresetMode(const ScreenSpaceGI::Settings& a_settings)
+	{
+		if (!REL::Module::IsVR())
+			return kFoveatedPresetModeOff;
+		return ClampFoveatedPresetMode(a_settings.FoveatedPresetMode);
+	}
+
+	bool IsRuntimeFoveatedPresetActive(const ScreenSpaceGI::Settings& a_settings)
+	{
+		return ResolveRuntimeFoveatedPresetMode(a_settings) != kFoveatedPresetModeOff;
+	}
 	float GetFoveatedPresetCenterScale(int a_mode)
 	{
 		if (a_mode == kFoveatedPresetModeStrict)
@@ -98,9 +109,9 @@ namespace
 	float ResolveFoveatedCenterMaskScale(const ScreenSpaceGI::Settings& a_settings)
 	{
 		if (!REL::Module::IsVR())
-			return ClampCenterMaskScale(a_settings.CenterFullResMaskScale);
+			return 0.0f;
 
-		const bool foveatedPresetActive = ClampFoveatedPresetMode(a_settings.FoveatedPresetMode) != kFoveatedPresetModeOff;
+		const bool foveatedPresetActive = IsRuntimeFoveatedPresetActive(a_settings);
 		if (!foveatedPresetActive)
 			return ClampCenterMaskScale(a_settings.CenterFullResMaskScale);
 
@@ -117,11 +128,10 @@ namespace
 
 	void ApplyPlatformSettingOverrides(ScreenSpaceGI::Settings& a_settings)
 	{
-		a_settings.FoveatedPresetMode = ClampFoveatedPresetMode(a_settings.FoveatedPresetMode);
+		a_settings.FoveatedPresetMode = ResolveRuntimeFoveatedPresetMode(a_settings);
 		a_settings.ResolutionMode = ClampResolutionMode(a_settings.ResolutionMode);
 		a_settings.VRCullDistance = ClampVRCullDistance(a_settings.VRCullDistance);
 		if (!REL::Module::IsVR()) {
-			a_settings.FoveatedPresetMode = kFoveatedPresetModeOff;
 			a_settings.CenterFullResMaskScale = 0.0f;
 		}
 		if (a_settings.FoveatedPresetMode != kFoveatedPresetModeOff) {
@@ -207,7 +217,7 @@ void ScreenSpaceGI::DrawSettings()
 	static bool showAdvanced;
 	const bool isVR = REL::Module::IsVR();
 	const bool linkedCenterArea = IsCenterAreaLinkedToUpscaling();
-	const bool foveatedPresetActive = ClampFoveatedPresetMode(settings.FoveatedPresetMode) != kFoveatedPresetModeOff;
+	const bool foveatedPresetActive = IsRuntimeFoveatedPresetActive(settings);
 
 	if (!ShadersOK())
 		ImGui::TextColored({ 1, 0, 0, 1 }, "Compute shaders failed to compile!");
@@ -435,7 +445,7 @@ void ScreenSpaceGI::DrawSettings()
 
 		const int previousResolutionMode = settings.ResolutionMode;
 		settings.ResolutionMode = ClampResolutionMode(settings.ResolutionMode);
-		settings.FoveatedPresetMode = ClampFoveatedPresetMode(settings.FoveatedPresetMode);
+		settings.FoveatedPresetMode = ResolveRuntimeFoveatedPresetMode(settings);
 		const bool foveatedPresetActiveInPerfSection = settings.FoveatedPresetMode != kFoveatedPresetModeOff;
 
 		bool clickedFullRes = false;
@@ -1006,6 +1016,7 @@ void ScreenSpaceGI::UpdateSB()
 {
 	float2 res = { (float)texRadiance->desc.Width, (float)texRadiance->desc.Height };
 	float2 dynres = GetHardenedSsgiFrameDim(res);
+	const bool isVR = REL::Module::IsVR();
 	const float centerMaskScale = ResolveFoveatedCenterMaskScale(settings);
 
 	static float4x4 prevInvView[2] = {};
@@ -1013,9 +1024,9 @@ void ScreenSpaceGI::UpdateSB()
 	SSGICB& data = ssgiCBData;
 	data = {};
 	{
-		const bool useUnjitteredCamera = REL::Module::IsVR();
+		const bool useUnjitteredCamera = isVR;
 
-		for (int eyeIndex = 0; eyeIndex < (1 + REL::Module::IsVR()); ++eyeIndex) {
+		for (int eyeIndex = 0; eyeIndex < (1 + isVR); ++eyeIndex) {
 			const auto eye = Util::GetCameraData(eyeIndex);
 			float proj11 = eye.projMat(0, 0);
 			float proj22 = eye.projMat(1, 1);
@@ -1031,7 +1042,7 @@ void ScreenSpaceGI::UpdateSB()
 			data.PrevInvViewMat[eyeIndex] = prevInvView[eyeIndex];
 			data.NDCToViewMul[eyeIndex] = { 2.0f / proj11, -2.0f / proj22 };
 			data.NDCToViewAdd[eyeIndex] = { -1.0f / proj11, 1.0f / proj22 };
-			if (REL::Module::IsVR())
+			if (isVR)
 				data.NDCToViewMul[eyeIndex].x *= 2;
 
 			prevInvView[eyeIndex] = currentInvView;
@@ -1071,7 +1082,7 @@ void ScreenSpaceGI::UpdateSB()
 		data.MaxAccumFrames = settings.MaxAccumFrames;
 		data.BlurRadius = settings.BlurRadius;
 		data.DistanceNormalisation = settings.DistanceNormalisation;
-		data.VRCullDistance = REL::Module::IsVR() ? ClampVRCullDistance(settings.VRCullDistance) : 0.0f;
+		data.VRCullDistance = isVR ? ClampVRCullDistance(settings.VRCullDistance) : 0.0f;
 		data.CenterFullResMaskScale = centerMaskScale;
 		data.CenterFullResMaskFeather = kCenterMaskFeather;
 		data.CenterDispatchOffsetX = 0.0f;
@@ -1091,10 +1102,11 @@ void ScreenSpaceGI::DrawSSGI()
 	auto context = globals::d3d::context;
 	if (!context)
 		return;
+	const bool isVR = REL::Module::IsVR();
 	const int resolutionMode = ClampResolutionMode(settings.ResolutionMode);
-	const int foveatedPresetMode = ClampFoveatedPresetMode(settings.FoveatedPresetMode);
+	const int foveatedPresetMode = ResolveRuntimeFoveatedPresetMode(settings);
 	const float centerScale = ResolveFoveatedCenterMaskScale(settings);
-	const bool foveatedCenterOnlyMode = foveatedPresetMode == kFoveatedPresetModeFoveated;
+	const bool foveatedCenterOnlyMode = isVR && foveatedPresetMode == kFoveatedPresetModeFoveated;
 
 	auto imageSpaceManager = RE::ImageSpaceManager::GetSingleton();
 	GET_INSTANCE_MEMBER(BSImagespaceShaderISSAOBlurH, imageSpaceManager);
@@ -1179,7 +1191,7 @@ void ScreenSpaceGI::DrawSSGI()
 		modeSignature ^= a_value + 0x9e3779b97f4a7c15ull + (modeSignature << 6) + (modeSignature >> 2);
 	};
 	hashCombine(static_cast<uint64_t>(resolutionMode));
-	hashCombine(static_cast<uint64_t>(settings.FoveatedPresetMode));
+	hashCombine(static_cast<uint64_t>(foveatedPresetMode));
 	hashCombine(static_cast<uint64_t>(modeCenterScaleMilli));
 	hashCombine(static_cast<uint64_t>(runILPath));
 	hashCombine(static_cast<uint64_t>(temporalEnabled));
@@ -1331,7 +1343,6 @@ void ScreenSpaceGI::DrawSSGI()
 		return rect;
 	};
 
-	const bool isVR = REL::Module::IsVR();
 	auto& cache = centerRectCache;
 	const float centerScaleDelta = cache.scale - centerScale;
 	const bool centerCacheDirty =
