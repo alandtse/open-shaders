@@ -438,6 +438,34 @@ if(STREAMLINE_RUNTIME_DLLS)
 endif()
 install(CODE "file(REMOVE \${CMAKE_INSTALL_PREFIX}/Core)" COMPONENT Shaders)
 
+# Shared clean AIO assembly used by AIO folder + AIO zip packaging targets.
+# This reuses install() so all AIO artifacts are built from the same clean layout.
+file(
+    GLOB_RECURSE AIO_ASSEMBLY_SOURCES
+    LIST_DIRECTORIES FALSE
+    "${CMAKE_SOURCE_DIR}/package/*"
+)
+foreach(_fpath IN LISTS FEATURE_PATHS)
+    if(EXISTS "${_fpath}")
+        file(GLOB_RECURSE _tmp LIST_DIRECTORIES FALSE "${_fpath}/*")
+        list(APPEND AIO_ASSEMBLY_SOURCES ${_tmp})
+    endif()
+endforeach()
+if(STREAMLINE_RUNTIME_DLLS)
+    list(APPEND AIO_ASSEMBLY_SOURCES ${STREAMLINE_RUNTIME_DLLS})
+endif()
+
+set(AIO_ASSEMBLY_STAMP "${CMAKE_CURRENT_BINARY_DIR}/assemble_aio_clean.stamp")
+add_custom_command(
+    OUTPUT ${AIO_ASSEMBLY_STAMP}
+    COMMAND ${CMAKE_COMMAND} -E make_directory "${AIO_DIR}"
+    COMMAND ${CMAKE_COMMAND} --install ${CMAKE_BINARY_DIR} --prefix ${AIO_DIR}
+    COMMAND ${CMAKE_COMMAND} -E touch ${AIO_ASSEMBLY_STAMP}
+    DEPENDS ${AIO_ASSEMBLY_SOURCES} ${PROJECT_NAME}
+    COMMENT "Assembling AIO package using clean install() layout"
+)
+add_custom_target(ASSEMBLE_AIO_CLEAN DEPENDS ${AIO_ASSEMBLY_STAMP})
+
 # #######################################################################################################################
 # # Automatic AIO preparation (incremental copy system)
 # #######################################################################################################################
@@ -593,7 +621,6 @@ if(AUTO_PLUGIN_DEPLOYMENT OR AIO_ZIP_TO_DIST)
 
     add_custom_target(
         PREPARE_AIO
-        ALL
         DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/prepare_aio.stamp
     )
 
@@ -954,7 +981,7 @@ if(AIO_ZIP_TO_DIST)
         COMMAND ${CMAKE_COMMAND} -E tar cf ${AIO_ARCHIVE} --format=7zip -- .
         COMMAND ${CMAKE_COMMAND} -E touch ${AIO_ZIP_STAMP}
         WORKING_DIRECTORY ${AIO_DIR}
-        DEPENDS PREPARE_AIO
+        DEPENDS ${AIO_ASSEMBLY_STAMP}
         COMMENT "Creating AIO archive ${AIO_ARCHIVE}"
     )
 
@@ -1045,21 +1072,13 @@ foreach(FEATURE_PATH ${FEATURE_PATHS})
 endforeach()
 
 # AIO Folder target
-add_custom_command(
-    OUTPUT ${AIO_DIR}/SKSE/Plugins/${PROJECT_NAME}.dll
-    DEPENDS ${CORE_SOURCES}
-    COMMAND ${CMAKE_COMMAND} --install ${CMAKE_BINARY_DIR} --prefix ${AIO_DIR}
-    COMMENT "Installing to AIO folder"
-)
-add_custom_target("AIO" DEPENDS ${AIO_DIR}/SKSE/Plugins/${PROJECT_NAME}.dll)
+add_custom_target("AIO" DEPENDS ${AIO_ASSEMBLY_STAMP})
 
 # Manual AIO package target
 set(AIO_PACKAGE "${DIST_PATH}/${PROJECT_NAME}_AIO-${UTC_NOW}.7z")
 add_custom_command(
     OUTPUT ${AIO_PACKAGE}
-    DEPENDS ${CORE_SOURCES}
-    COMMAND ${CMAKE_COMMAND} -E make_directory ${AIO_DIR}
-    COMMAND ${CMAKE_COMMAND} --install ${CMAKE_BINARY_DIR} --prefix ${AIO_DIR}
+    DEPENDS ${AIO_ASSEMBLY_STAMP}
     COMMAND
         ${CMAKE_COMMAND} -E chdir ${AIO_DIR} ${CMAKE_COMMAND} -E tar cfv
         ${AIO_PACKAGE} --format=7zip -- .
