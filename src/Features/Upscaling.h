@@ -66,15 +66,9 @@ public:
 		bool foveatedDirectSourcePath = false;
 		float foveatedCenterArea = 0.6f;
 		bool foveatedPeripheryUseTAA = true;
-		bool foveatedPeripheryMipBias = false;
-		float foveatedPeripheryMipBiasStrength = 1.0f;
 		bool foveatedPeripheryEdgeBlur = false;
 		float foveatedPeripheryEdgeBlurStrength = 0.35f;
 		bool foveatedPeripheryOuterRingBlur = false;
-		bool foveatedPeripheryJitterAttenuation = false;
-		float foveatedPeripheryJitterAttenuationStrength = 0.65f;
-		bool foveatedPeripheryJitterDecimation = false;
-		uint foveatedPeripheryJitterDecimationFrames = 2;
 		bool linkFoveatedCenterAreaWithSSGI = true;
 		bool hasExplicitFoveatedCenterLinkPreference = false;
 		bool reflexLowLatencyMode = true;
@@ -116,9 +110,9 @@ public:
 		float2 dispatchDim;
 		float2 outputOffset;
 		float2 jitter;
-		float4 tuning0;  // x=centerScale, y=centerFeather, z=useMipBias, w=mipBiasStrength
+		float4 tuning0;  // x=centerScale, y=centerFeather, z/w reserved
 		float4 tuning1;  // x=useEdgeBlur, y=edgeBlurStrength, z=edgeSensitivity, w=useOuterRingBlur
-		float4 tuning2;  // x=useJitterAttenuation, y=jitterAttenuationStrength, z=usePeripheryTAA, w=pad
+		float4 tuning2;  // x/y reserved, z=usePeripheryTAA, w=pad
 	};
 
 	struct FoveatedCenterBlendCB
@@ -297,8 +291,6 @@ public:
 	UpscaleMethod previousHistoryUpscaleMethod = UpscaleMethod::kNONE;
 	bool previousHistoryFoveatedDispatch = false;
 	float previousHistoryFoveatedCenterArea = 1.0f;
-	float2 foveatedPeripheryHeldJitter = { 0.0f, 0.0f };
-	uint32_t foveatedPeripheryHeldJitterFrame = std::numeric_limits<uint32_t>::max();
 
 	void CopySharedD3D12Resources();
 	void PostDisplay();
