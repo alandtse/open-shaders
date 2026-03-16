@@ -1435,9 +1435,11 @@ void Upscaling::DispatchFoveatedPeripheryPass(ID3D11ShaderResourceView* sourceSR
 	context->CSSetShader(nullptr, nullptr, 0);
 }
 
-void Upscaling::DispatchFoveatedBlendPass(ID3D11ShaderResourceView* centerSRV, ID3D11UnorderedAccessView* outputUAV, uint32_t eyeIndex, uint32_t outputWidthPerEye, uint32_t outputHeight, const FoveatedDispatchRect& rect)
+void Upscaling::DispatchFoveatedBlendPass(ID3D11ShaderResourceView* centerSRV, ID3D11UnorderedAccessView* outputUAV, uint32_t eyeIndex, uint32_t outputWidthPerEye, uint32_t outputHeight, const FoveatedDispatchRect& rect, uint32_t dispatchOffsetX, uint32_t dispatchOffsetY, uint32_t dispatchWidth, uint32_t dispatchHeight)
 {
 	if (!centerSRV || !outputUAV || rect.outputWidth == 0 || rect.outputHeight == 0 || !foveatedCenterBlendCB)
+		return;
+	if (!dispatchWidth || !dispatchHeight)
 		return;
 
 	auto* blendCS = GetFoveatedCenterBlendCS();
@@ -1445,6 +1447,30 @@ void Upscaling::DispatchFoveatedBlendPass(ID3D11ShaderResourceView* centerSRV, I
 	auto deferred = globals::deferred;
 	if (!blendCS || !context || !deferred || !deferred->linearSampler)
 		return;
+	if (dispatchOffsetX >= outputWidthPerEye || dispatchOffsetY >= outputHeight)
+		return;
+
+	dispatchWidth = std::min(dispatchWidth, outputWidthPerEye - dispatchOffsetX);
+	dispatchHeight = std::min(dispatchHeight, outputHeight - dispatchOffsetY);
+	if (!dispatchWidth || !dispatchHeight)
+		return;
+
+	const uint32_t rectMinX = rect.outputOffsetX;
+	const uint32_t rectMinY = rect.outputOffsetY;
+	const uint32_t rectMaxX = rect.outputOffsetX + rect.outputWidth;
+	const uint32_t rectMaxY = rect.outputOffsetY + rect.outputHeight;
+
+	const uint32_t dispatchMinX = std::max(dispatchOffsetX, rectMinX);
+	const uint32_t dispatchMinY = std::max(dispatchOffsetY, rectMinY);
+	const uint32_t dispatchMaxX = std::min(dispatchOffsetX + dispatchWidth, rectMaxX);
+	const uint32_t dispatchMaxY = std::min(dispatchOffsetY + dispatchHeight, rectMaxY);
+	if (dispatchMaxX <= dispatchMinX || dispatchMaxY <= dispatchMinY)
+		return;
+
+	const uint32_t actualDispatchWidth = dispatchMaxX - dispatchMinX;
+	const uint32_t actualDispatchHeight = dispatchMaxY - dispatchMinY;
+	const uint32_t sourceOffsetX = dispatchMinX - rectMinX;
+	const uint32_t sourceOffsetY = dispatchMinY - rectMinY;
 
 	FoveatedCenterBlendCB cbData{};
 	cbData.invOutputDim = {
@@ -1453,9 +1479,10 @@ void Upscaling::DispatchFoveatedBlendPass(ID3D11ShaderResourceView* centerSRV, I
 	};
 	cbData.centerScale = ClampFoveatedCenterArea(settings.foveatedCenterArea);
 	cbData.centerFeather = FoveatedCommon::kCenterFeather;
-	cbData.outputOffset = { static_cast<float>(rect.outputOffsetX), static_cast<float>(rect.outputOffsetY) };
-	cbData.dispatchDim = { static_cast<float>(rect.outputWidth), static_cast<float>(rect.outputHeight) };
-	cbData.invDispatchDim = {
+	cbData.outputOffset = { static_cast<float>(dispatchMinX), static_cast<float>(dispatchMinY) };
+	cbData.dispatchDim = { static_cast<float>(actualDispatchWidth), static_cast<float>(actualDispatchHeight) };
+	cbData.sourceOffset = { static_cast<float>(sourceOffsetX), static_cast<float>(sourceOffsetY) };
+	cbData.invSourceDim = {
 		rect.outputWidth > 0 ? 1.0f / static_cast<float>(rect.outputWidth) : 0.0f,
 		rect.outputHeight > 0 ? 1.0f / static_cast<float>(rect.outputHeight) : 0.0f
 	};
@@ -1473,7 +1500,7 @@ void Upscaling::DispatchFoveatedBlendPass(ID3D11ShaderResourceView* centerSRV, I
 	context->CSSetSamplers(0, 1, samplers);
 	context->CSSetShaderResources(0, 1, srvs);
 	context->CSSetUnorderedAccessViews(0, 1, uavs, nullptr);
-	context->Dispatch((rect.outputWidth + 7u) >> 3, (rect.outputHeight + 7u) >> 3, 1);
+	context->Dispatch((actualDispatchWidth + 7u) >> 3, (actualDispatchHeight + 7u) >> 3, 1);
 
 	ID3D11ShaderResourceView* nullSRV[1] = { nullptr };
 	ID3D11UnorderedAccessView* nullUAV[1] = { nullptr };
@@ -1486,7 +1513,7 @@ void Upscaling::DispatchFoveatedBlendPass(ID3D11ShaderResourceView* centerSRV, I
 	context->CSSetShader(nullptr, nullptr, 0);
 }
 
-bool Upscaling::DispatchSingleFoveatedVendorEye(UpscaleMethod a_upscaleMethod, uint32_t eyeIndex, ID3D11Resource* colorIn, ID3D11Resource* depthIn, ID3D11Resource* motionVectorsIn, ID3D11Resource* reactiveMaskIn, ID3D11Resource* transparencyMaskIn, uint32_t outputWidthPerEye, uint32_t outputHeight)
+bool Upscaling::DispatchSingleFoveatedVendorEye(UpscaleMethod a_upscaleMethod, uint32_t eyeIndex, ID3D11Resource* colorIn, ID3D11Resource* depthIn, ID3D11Resource* motionVectorsIn, ID3D11Resource* reactiveMaskIn, ID3D11Resource* transparencyMaskIn, uint32_t outputWidthPerEye, uint32_t outputHeight, uint32_t innerMinX, uint32_t innerMinY, uint32_t innerMaxX, uint32_t innerMaxY)
 {
 	if (eyeIndex > 1)
 		return false;
@@ -1564,17 +1591,86 @@ bool Upscaling::DispatchSingleFoveatedVendorEye(UpscaleMethod a_upscaleMethod, u
 	if (!dispatchOK)
 		return false;
 
-	if (!vrIntermediateColorOut[eyeIndex] || !vrIntermediateColorOut[eyeIndex]->uav)
+	if (!vrIntermediateColorOut[eyeIndex] || !vrIntermediateColorOut[eyeIndex]->uav || !vrIntermediateColorOut[eyeIndex]->resource)
 		return false;
-	ID3D11UnorderedAccessView* outputUAV = vrIntermediateColorOut[eyeIndex]->uav.get();
+	if (!foveatedCenterColorOut[eyeIndex] || !foveatedCenterColorOut[eyeIndex]->resource || !foveatedCenterColorOut[eyeIndex]->srv)
+		return false;
 
-	DispatchFoveatedBlendPass(
-		foveatedCenterColorOut[eyeIndex]->srv.get(),
-		outputUAV,
-		eyeIndex,
-		outputWidthPerEye,
-		outputHeight,
-		rect);
+	const uint32_t rectMinX = rect.outputOffsetX;
+	const uint32_t rectMinY = rect.outputOffsetY;
+	const uint32_t rectMaxX = rect.outputOffsetX + rect.outputWidth;
+	const uint32_t rectMaxY = rect.outputOffsetY + rect.outputHeight;
+
+	uint32_t interiorMinX = std::max(innerMinX, rectMinX);
+	uint32_t interiorMinY = std::max(innerMinY, rectMinY);
+	uint32_t interiorMaxX = std::min(innerMaxX, rectMaxX);
+	uint32_t interiorMaxY = std::min(innerMaxY, rectMaxY);
+
+	if (interiorMaxX > interiorMinX && interiorMaxY > interiorMinY) {
+		D3D11_BOX centerInteriorBox{
+			interiorMinX - rectMinX,
+			interiorMinY - rectMinY,
+			0u,
+			interiorMaxX - rectMinX,
+			interiorMaxY - rectMinY,
+			1u
+		};
+		context->CopySubresourceRegion(
+			vrIntermediateColorOut[eyeIndex]->resource.get(),
+			0,
+			interiorMinX,
+			interiorMinY,
+			0,
+			foveatedCenterColorOut[eyeIndex]->resource.get(),
+			0,
+			&centerInteriorBox);
+	}
+
+	ID3D11UnorderedAccessView* outputUAV = vrIntermediateColorOut[eyeIndex]->uav.get();
+	ID3D11ShaderResourceView* centerSRV = foveatedCenterColorOut[eyeIndex]->srv.get();
+
+	bool dispatchedRingBlend = false;
+	auto dispatchBlendRing = [&](uint32_t offsetX, uint32_t offsetY, uint32_t width, uint32_t height) {
+		if (!width || !height)
+			return;
+		dispatchedRingBlend = true;
+		DispatchFoveatedBlendPass(
+			centerSRV,
+			outputUAV,
+			eyeIndex,
+			outputWidthPerEye,
+			outputHeight,
+			rect,
+			offsetX,
+			offsetY,
+			width,
+			height);
+	};
+
+	if (interiorMaxX > interiorMinX && interiorMaxY > interiorMinY) {
+		const uint32_t middleMinY = interiorMinY;
+		const uint32_t middleMaxY = interiorMaxY;
+		const uint32_t middleHeight = middleMaxY - middleMinY;
+
+		dispatchBlendRing(rectMinX, rectMinY, rect.outputWidth, interiorMinY - rectMinY);
+		dispatchBlendRing(rectMinX, interiorMaxY, rect.outputWidth, rectMaxY - interiorMaxY);
+		dispatchBlendRing(rectMinX, middleMinY, interiorMinX - rectMinX, middleHeight);
+		dispatchBlendRing(interiorMaxX, middleMinY, rectMaxX - interiorMaxX, middleHeight);
+	}
+
+	if (!dispatchedRingBlend) {
+		DispatchFoveatedBlendPass(
+			centerSRV,
+			outputUAV,
+			eyeIndex,
+			outputWidthPerEye,
+			outputHeight,
+			rect,
+			rect.outputOffsetX,
+			rect.outputOffsetY,
+			rect.outputWidth,
+			rect.outputHeight);
+	}
 
 	return true;
 }
@@ -1661,7 +1757,11 @@ bool Upscaling::DispatchFoveatedVendorUpscaling(UpscaleMethod a_upscaleMethod, I
 				vrIntermediateReactiveMask[eye]->resource.get(),
 				vrIntermediateTransparencyMask[eye]->resource.get(),
 				outputWidthPerEye,
-				outputHeight)) {
+				outputHeight,
+				innerMinX,
+				innerMinY,
+				innerMaxX,
+				innerMaxY)) {
 			return false;
 		}
 	}

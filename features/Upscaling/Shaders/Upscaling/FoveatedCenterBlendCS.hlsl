@@ -5,8 +5,8 @@ cbuffer FoveatedCenterBlendCB : register(b0)
 	float CenterFeather;
 	float2 OutputOffset;
 	float2 DispatchDim;
-	float2 InvDispatchDim;
-	float2 pad0;
+	float2 SourceOffset;
+	float2 InvSourceDim;
 };
 
 Texture2D<float4> CenterColor : register(t0);
@@ -34,7 +34,7 @@ float ComputeCenterBlendWeight(float2 uv)
 		return;
 
 	float4 baseColor = OutputColor[outputPos];
-	float2 centerUV = (float2(localPos) + 0.5) * InvDispatchDim;
+	float2 centerUV = (float2(localPos) + SourceOffset + 0.5) * InvSourceDim;
 	float4 centerColor = CenterColor.SampleLevel(LinearSampler, centerUV, 0);
 
 	OutputColor[outputPos] = blendWeight >= 1.0 ? centerColor : lerp(baseColor, centerColor, blendWeight);
