@@ -1,6 +1,7 @@
 #include "Upscaling.h"
 
 #include "Deferred.h"
+#include "FoveatedCommon.h"
 #include "Hooks.h"
 #include "State.h"
 #include "Upscaling/DX12SwapChain.h"
@@ -53,9 +54,6 @@ decltype(&D3D11CreateDeviceAndSwapChain) ptrD3D11CreateDeviceAndSwapChainUpscali
 
 namespace
 {
-	constexpr float kFoveatedCenterAreaMin = 0.45f;
-	constexpr float kFoveatedCenterAreaMax = 1.0f;
-	constexpr float kFoveatedCenterFeather = 0.05f;
 	constexpr float kPeripheryMipBiasStrengthMin = 0.0f;
 	constexpr float kPeripheryMipBiasStrengthMax = 2.0f;
 	constexpr float kPeripheryEdgeBlurStrengthMin = 0.0f;
@@ -69,7 +67,7 @@ namespace
 
 	float ClampFoveatedCenterArea(float value)
 	{
-		return std::clamp(value, kFoveatedCenterAreaMin, kFoveatedCenterAreaMax);
+		return FoveatedCommon::ClampCenterArea(value);
 	}
 
 	bool SupportsFoveatedVendorDispatch(Upscaling::UpscaleMethod a_upscaleMethod)
@@ -374,7 +372,7 @@ void Upscaling::DrawSettings()
 			settings.foveatedVendorDispatch = foveatedVendorDispatch > 0;
 			settings.foveatedCenterArea = ClampFoveatedCenterArea(settings.foveatedCenterArea);
 			if (settings.foveatedVendorDispatch && foveatedDispatchSupportedForMethod) {
-				ImGui::SliderFloat("Foveated Center Area", &settings.foveatedCenterArea, kFoveatedCenterAreaMin, kFoveatedCenterAreaMax, "%.2f");
+				ImGui::SliderFloat("Foveated Center Area", &settings.foveatedCenterArea, FoveatedCommon::kCenterAreaMin, FoveatedCommon::kCenterAreaMax, "%.2f");
 				settings.foveatedCenterArea = ClampFoveatedCenterArea(settings.foveatedCenterArea);
 				if (auto _tt = Util::HoverTooltipWrapper()) {
 					ImGui::TextUnformatted("Runs vendor upscaling only in the center region and fills periphery with the periphery pass.");
@@ -1249,8 +1247,8 @@ bool Upscaling::BuildFoveatedDispatchRects(uint32_t inputWidthPerEye, uint32_t i
 
 		const float centerX = static_cast<float>(outputWidthPerEye) * 0.5f;
 		const float centerY = static_cast<float>(outputHeight) * 0.5f;
-		const float extentX = centerScale * static_cast<float>(outputWidthPerEye) * 0.5f + kFoveatedCenterFeather * static_cast<float>(outputWidthPerEye);
-		const float extentY = centerScale * static_cast<float>(outputHeight) * 0.5f + kFoveatedCenterFeather * static_cast<float>(outputHeight);
+		const float extentX = centerScale * static_cast<float>(outputWidthPerEye) * 0.5f + FoveatedCommon::kCenterFeather * static_cast<float>(outputWidthPerEye);
+		const float extentY = centerScale * static_cast<float>(outputHeight) * 0.5f + FoveatedCommon::kCenterFeather * static_cast<float>(outputHeight);
 
 		int minX = static_cast<int>(centerX - extentX);
 		int maxX = static_cast<int>(centerX + extentX + 0.9999f);
@@ -1262,17 +1260,10 @@ bool Upscaling::BuildFoveatedDispatchRects(uint32_t inputWidthPerEye, uint32_t i
 		minY = std::clamp(minY, 0, static_cast<int>(outputHeight));
 		maxY = std::clamp(maxY, 0, static_cast<int>(outputHeight));
 
-		const auto alignDownToGroup = [](int value) {
-			return value & ~7;
-		};
-		const auto alignUpToGroup = [](int value) {
-			return (value + 7) & ~7;
-		};
-
-		minX = std::max(alignDownToGroup(minX), 0);
-		maxX = std::min(alignUpToGroup(maxX), static_cast<int>(outputWidthPerEye));
-		minY = std::max(alignDownToGroup(minY), 0);
-		maxY = std::min(alignUpToGroup(maxY), static_cast<int>(outputHeight));
+		minX = std::max(FoveatedCommon::AlignDownToThreadGroup(minX), 0);
+		maxX = std::min(FoveatedCommon::AlignUpToThreadGroup(maxX), static_cast<int>(outputWidthPerEye));
+		minY = std::max(FoveatedCommon::AlignDownToThreadGroup(minY), 0);
+		maxY = std::min(FoveatedCommon::AlignUpToThreadGroup(maxY), static_cast<int>(outputHeight));
 
 		if (maxX <= minX || maxY <= minY)
 			return rect;
@@ -1447,7 +1438,7 @@ void Upscaling::DispatchFoveatedPeripheryPass(ID3D11ShaderResourceView* sourceSR
 	const float jitterAttenuationStrength = std::clamp(settings.foveatedPeripheryJitterAttenuationStrength, kPeripheryJitterAttenuationStrengthMin, kPeripheryJitterAttenuationStrengthMax);
 	cbData.tuning0 = {
 		centerArea,
-		kFoveatedCenterFeather,
+		FoveatedCommon::kCenterFeather,
 		settings.foveatedPeripheryMipBias ? 1.0f : 0.0f,
 		mipBiasStrength
 	};
@@ -1505,7 +1496,7 @@ void Upscaling::DispatchFoveatedBlendPass(ID3D11ShaderResourceView* centerSRV, I
 		outputHeight > 0 ? 1.0f / static_cast<float>(outputHeight) : 0.0f
 	};
 	cbData.centerScale = ClampFoveatedCenterArea(settings.foveatedCenterArea);
-	cbData.centerFeather = kFoveatedCenterFeather;
+	cbData.centerFeather = FoveatedCommon::kCenterFeather;
 	cbData.outputOffset = { static_cast<float>(rect.outputOffsetX), static_cast<float>(rect.outputOffsetY) };
 	cbData.dispatchDim = { static_cast<float>(rect.outputWidth), static_cast<float>(rect.outputHeight) };
 	cbData.invDispatchDim = {
