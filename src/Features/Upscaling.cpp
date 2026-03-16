@@ -28,6 +28,7 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	sharpnessFSR,
 	sharpnessDLSS,
 	dlssUseHistoryReset,
+	dlssBypassCroppedConstantsCorrection,
 	foveatedVendorDispatch,
 	foveatedDirectSourcePath,
 	foveatedCenterArea,
@@ -373,6 +374,15 @@ void Upscaling::DrawSettings()
 					ImGui::TextUnformatted("Experimental: skip full-eye prepare copies for foveated DLSS.");
 					ImGui::TextUnformatted("Periphery samples combined input directly; center crop copies come from original buffers.");
 					ImGui::TextUnformatted("Use to test bandwidth/CPU overhead reduction.");
+				}
+
+				int bypassCroppedConstantsCorrection = settings.dlssBypassCroppedConstantsCorrection ? 1 : 0;
+				ImGui::SliderInt("DLSS Bypass Cropped Constants Fix", &bypassCroppedConstantsCorrection, 0, 1, toggleModes[bypassCroppedConstantsCorrection]);
+				settings.dlssBypassCroppedConstantsCorrection = bypassCroppedConstantsCorrection > 0;
+				if (auto _tt = Util::HoverTooltipWrapper()) {
+					ImGui::TextUnformatted("Temporary A/B test toggle for VR foveated DLSS center region.");
+					ImGui::TextUnformatted("Enabled: bypass cropped-viewport projection/reprojection/mvec corrections.");
+					ImGui::TextUnformatted("Disabled: use current cropped constants correction path (default).");
 				}
 
 				int peripheryUseTAA = settings.foveatedPeripheryUseTAA ? 1 : 0;

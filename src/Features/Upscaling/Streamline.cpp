@@ -349,6 +349,9 @@ void Streamline::CheckFrameConstants(sl::ViewportHandle p_viewport, uint32_t eye
 	// In VR, we need to set constants for each viewport/eye separately
 	// In non-VR, this is called once per frame
 	auto state = globals::state;
+	auto& upscaling = globals::features::upscaling;
+	const bool bypassCroppedConstantsCorrection = upscaling.settings.dlssBypassCroppedConstantsCorrection;
+	bool applyCroppedConstantsCorrection = false;
 	float clampedViewportScaleX = std::clamp(viewportScaleX, 1e-4f, 1.0f);
 	float clampedViewportScaleY = std::clamp(viewportScaleY, 1e-4f, 1.0f);
 	if (!globals::game::isVR) {
@@ -381,7 +384,8 @@ void Streamline::CheckFrameConstants(sl::ViewportHandle p_viewport, uint32_t eye
 
 	if (globals::game::isVR) {
 		const bool isCroppedViewport = clampedViewportScaleX < 0.999f || clampedViewportScaleY < 0.999f;
-		if (isCroppedViewport) {
+		applyCroppedConstantsCorrection = isCroppedViewport && !bypassCroppedConstantsCorrection;
+		if (applyCroppedConstantsCorrection) {
 			const float invScaleX = 1.0f / clampedViewportScaleX;
 			const float invScaleY = 1.0f / clampedViewportScaleY;
 
@@ -414,7 +418,7 @@ void Streamline::CheckFrameConstants(sl::ViewportHandle p_viewport, uint32_t eye
 		sl::matrixFullInvert(invCurrViewProj, currViewProjSL);
 		sl::matrixMul(slConstants.clipToPrevClip, invCurrViewProj, prevViewProjSL);
 
-		if (isCroppedViewport) {
+		if (applyCroppedConstantsCorrection) {
 			const float invScaleX = 1.0f / clampedViewportScaleX;
 			const float invScaleY = 1.0f / clampedViewportScaleY;
 			const float leftFactors[4] = { clampedViewportScaleX, clampedViewportScaleY, 1.0f, 1.0f };
@@ -435,13 +439,12 @@ void Streamline::CheckFrameConstants(sl::ViewportHandle p_viewport, uint32_t eye
 		recalculateCameraMatrices(slConstants);
 	}
 
-	auto& upscaling = globals::features::upscaling;
 	auto jitter = upscaling.jitter;
 	slConstants.jitterOffset = { -jitter.x, -jitter.y };
 	const bool requestHistoryReset = upscaling.settings.dlssUseHistoryReset && upscaling.ShouldResetHistoryThisFrame();
 	slConstants.reset = requestHistoryReset ? sl::Boolean::eTrue : sl::Boolean::eFalse;
 
-	if (globals::game::isVR && (clampedViewportScaleX < 0.999f || clampedViewportScaleY < 0.999f)) {
+	if (globals::game::isVR && applyCroppedConstantsCorrection) {
 		slConstants.mvecScale = { 1.0f / clampedViewportScaleX, 1.0f / clampedViewportScaleY };
 	} else {
 		slConstants.mvecScale = { 1.0f, 1.0f };
