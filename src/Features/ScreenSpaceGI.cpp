@@ -4,6 +4,7 @@
 #include <cmath>
 
 #include "Deferred.h"
+#include "FoveatedCommon.h"
 #include "State.h"
 #include "Upscaling.h"
 #include "Util.h"
@@ -45,9 +46,6 @@ namespace
 {
 	constexpr float kVRCullDistanceMin = 0.0f;
 	constexpr float kVRCullDistanceMax = 20480.0f;
-	constexpr float kCenterMaskScaleMin = 0.45f;
-	constexpr float kCenterMaskScaleMax = 1.0f;
-	constexpr float kCenterMaskFeather = 0.05f;
 	constexpr int kResolutionModeMin = 0;
 	constexpr int kResolutionModeMax = 2;
 	constexpr int kFoveatedPresetModeOff = 0;
@@ -93,7 +91,7 @@ namespace
 	{
 		if (a_scale <= 0.0f)
 			return 0.0f;
-		return std::clamp(a_scale, kCenterMaskScaleMin, kCenterMaskScaleMax);
+		return FoveatedCommon::ClampCenterArea(a_scale);
 	}
 
 	bool IsCenterAreaLinkedToUpscaling()
@@ -481,7 +479,7 @@ void ScreenSpaceGI::DrawSettings()
 		if (foveatedPresetActiveInPerfSection) {
 			settings.ResolutionMode = 2;
 			float centerArea = ResolveFoveatedCenterMaskScale(settings);
-			ImGui::SliderFloat("Foveated Center Area", &centerArea, kCenterMaskScaleMin, kCenterMaskScaleMax, "%.2f");
+			ImGui::SliderFloat("Foveated Center Area", &centerArea, FoveatedCommon::kCenterAreaMin, FoveatedCommon::kCenterAreaMax, "%.2f");
 			centerArea = ClampCenterMaskScale(centerArea);
 			if (linkedCenterArea)
 				globals::features::upscaling.settings.foveatedCenterArea = centerArea;
@@ -1084,7 +1082,7 @@ void ScreenSpaceGI::UpdateSB()
 		data.DistanceNormalisation = settings.DistanceNormalisation;
 		data.VRCullDistance = isVR ? ClampVRCullDistance(settings.VRCullDistance) : 0.0f;
 		data.CenterFullResMaskScale = centerMaskScale;
-		data.CenterFullResMaskFeather = kCenterMaskFeather;
+		data.CenterFullResMaskFeather = FoveatedCommon::kCenterFeather;
 		data.CenterDispatchOffsetX = 0.0f;
 		data.CenterDispatchOffsetY = 0.0f;
 		data.CenterDispatchSizeX = dynres.x;
@@ -1279,14 +1277,6 @@ void ScreenSpaceGI::DrawSSGI()
 
 	auto buildCenterDispatchRect = [&](uint a_eyeIndex) -> DispatchRect {
 		DispatchRect rect{};
-		auto alignDownToGroup = [](int a_value) {
-			constexpr int kGroupMask = 8 - 1;
-			return a_value & ~kGroupMask;
-		};
-		auto alignUpToGroup = [](int a_value) {
-			constexpr int kGroupSize = 8;
-			return (a_value + (kGroupSize - 1)) & ~(kGroupSize - 1);
-		};
 		const uint frameWidth = resolution[0];
 		const uint frameHeight = resolution[1];
 		if (frameWidth == 0 || frameHeight == 0)
@@ -1311,8 +1301,8 @@ void ScreenSpaceGI::DrawSSGI()
 
 		const float centerX = static_cast<float>(eyeMinX) + static_cast<float>(eyeWidth) * 0.5f;
 		const float centerY = static_cast<float>(frameHeight) * 0.5f;
-		const float extentX = (centerScale * static_cast<float>(eyeWidth) * 0.5f) + (kCenterMaskFeather * static_cast<float>(eyeWidth));
-		const float extentY = (centerScale * static_cast<float>(frameHeight) * 0.5f) + (kCenterMaskFeather * static_cast<float>(frameHeight));
+		const float extentX = (centerScale * static_cast<float>(eyeWidth) * 0.5f) + (FoveatedCommon::kCenterFeather * static_cast<float>(eyeWidth));
+		const float extentY = (centerScale * static_cast<float>(frameHeight) * 0.5f) + (FoveatedCommon::kCenterFeather * static_cast<float>(frameHeight));
 
 		int minX = static_cast<int>(centerX - extentX);
 		int maxX = static_cast<int>(centerX + extentX + 0.9999f);
@@ -1328,10 +1318,10 @@ void ScreenSpaceGI::DrawSSGI()
 		const int eyeMinXInt = static_cast<int>(eyeMinX);
 		const int eyeMaxXInt = static_cast<int>(eyeMaxX);
 		const int frameHeightInt = static_cast<int>(frameHeight);
-		minX = std::max(alignDownToGroup(minX - eyeMinXInt) + eyeMinXInt, eyeMinXInt);
-		maxX = std::min(alignUpToGroup(maxX - eyeMinXInt) + eyeMinXInt, eyeMaxXInt);
-		minY = std::max(alignDownToGroup(minY), 0);
-		maxY = std::min(alignUpToGroup(maxY), frameHeightInt);
+		minX = std::max(FoveatedCommon::AlignDownToThreadGroup(minX - eyeMinXInt) + eyeMinXInt, eyeMinXInt);
+		maxX = std::min(FoveatedCommon::AlignUpToThreadGroup(maxX - eyeMinXInt) + eyeMinXInt, eyeMaxXInt);
+		minY = std::max(FoveatedCommon::AlignDownToThreadGroup(minY), 0);
+		maxY = std::min(FoveatedCommon::AlignUpToThreadGroup(maxY), frameHeightInt);
 
 		if (maxX <= minX || maxY <= minY)
 			return rect;
