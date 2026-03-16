@@ -130,29 +130,8 @@ void MessageHandler(SKSE::MessagingInterface::Message* message)
 
 				auto shaderCache = globals::shaderCache;
 				shaderCache->menuLoaded = true;
-				auto lastProgressCount = shaderCache->GetCompletedTasks() + shaderCache->GetFailedTasks();
-				auto lastProgressTime = std::chrono::steady_clock::now();
-				constexpr auto kCompilationStallTimeout = std::chrono::seconds(90);
 				while (shaderCache->IsCompiling() && !shaderCache->backgroundCompilation) {
 					std::this_thread::sleep_for(100ms);
-
-					const auto progressCount = shaderCache->GetCompletedTasks() + shaderCache->GetFailedTasks();
-					if (progressCount != lastProgressCount) {
-						lastProgressCount = progressCount;
-						lastProgressTime = std::chrono::steady_clock::now();
-						continue;
-					}
-
-					if ((std::chrono::steady_clock::now() - lastProgressTime) >= kCompilationStallTimeout) {
-						logger::warn(
-							"Shader compilation appears stalled at {}/{} after {}s with no progress; "
-							"switching to background compilation to continue load.",
-							progressCount,
-							shaderCache->GetTotalTasks(),
-							kCompilationStallTimeout.count());
-						shaderCache->backgroundCompilation = true;
-						break;
-					}
 				}
 
 				if (shaderCache->IsDiskCache()) {
