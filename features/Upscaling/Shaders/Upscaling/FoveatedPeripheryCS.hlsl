@@ -60,6 +60,7 @@ float Luma(float3 c)
 		float centerLuma = Luma(centerSample.rgb);
 		float3 accum = centerSample.rgb;
 		float accumWeight = 1.0;
+		const bool useReducedInnerKernel = peripheryWeight < 0.45;
 
 		static const float2 kOffsets[4] = {
 			float2(1.0, 0.0),
@@ -68,15 +69,33 @@ float Luma(float3 c)
 			float2(0.0, -1.0)
 		};
 
-		[unroll]
-		for (uint i = 0; i < 4; ++i) {
-			float2 tapUV = saturate(sourceUV + kOffsets[i] * blurStep);
-			float4 tap = InputColor.SampleLevel(LinearSampler, tapUV, 0.0);
-			float tapLuma = Luma(tap.rgb);
-			float edgeWeight = exp2(-abs(tapLuma - centerLuma) * edgeSensitivity);
-			float weight = 0.85 * edgeWeight;
-			accum += tap.rgb * weight;
-			accumWeight += weight;
+		if (useReducedInnerKernel) {
+			// Alternate between horizontal and vertical 2-tap kernels to avoid directional bias.
+			const bool useHorizontalAxis = ((outputPos.x ^ outputPos.y) & 1u) == 0u;
+			float2 axis = useHorizontalAxis ? float2(1.0, 0.0) : float2(0.0, 1.0);
+			float2 tapUV0 = saturate(sourceUV + axis * blurStep);
+			float2 tapUV1 = saturate(sourceUV - axis * blurStep);
+			float4 tap0 = InputColor.SampleLevel(LinearSampler, tapUV0, 0.0);
+			float4 tap1 = InputColor.SampleLevel(LinearSampler, tapUV1, 0.0);
+			float tapLuma0 = Luma(tap0.rgb);
+			float tapLuma1 = Luma(tap1.rgb);
+			float edgeWeight0 = exp2(-abs(tapLuma0 - centerLuma) * edgeSensitivity);
+			float edgeWeight1 = exp2(-abs(tapLuma1 - centerLuma) * edgeSensitivity);
+			float weight0 = 0.95 * edgeWeight0;
+			float weight1 = 0.95 * edgeWeight1;
+			accum += tap0.rgb * weight0 + tap1.rgb * weight1;
+			accumWeight += weight0 + weight1;
+		} else {
+			[unroll]
+			for (uint i = 0; i < 4; ++i) {
+				float2 tapUV = saturate(sourceUV + kOffsets[i] * blurStep);
+				float4 tap = InputColor.SampleLevel(LinearSampler, tapUV, 0.0);
+				float tapLuma = Luma(tap.rgb);
+				float edgeWeight = exp2(-abs(tapLuma - centerLuma) * edgeSensitivity);
+				float weight = 0.85 * edgeWeight;
+				accum += tap.rgb * weight;
+				accumWeight += weight;
+			}
 		}
 
 		float3 blurred = accum / max(accumWeight, 1e-4);
@@ -88,17 +107,21 @@ float Luma(float3 c)
 	if (useOuterRingBlur > 0.5 && useEdgeBlur > 0.5 && edgeBlurStrength > 0.001) {
 		const float outerRingStart = 0.60;
 		float outerRingWeight = saturate((peripheryWeight - outerRingStart) / (1.0 - outerRingStart));
-		if (outerRingWeight > 0.001) {
+		if (outerRingWeight > 0.10) {
 			float2 blurStepOuter = InvOutputDim * 2.0;
 			float centerLumaOuter = Luma(outSample.rgb);
 			float3 accumOuter = outSample.rgb;
 			float accumOuterWeight = 1.0;
+			const bool useFullOuterKernel = outerRingWeight > 0.65;
 
-			static const float2 kOuterOffsets[8] = {
+			static const float2 kOuterCardinalOffsets[4] = {
 				float2(1.0, 0.0),
 				float2(-1.0, 0.0),
 				float2(0.0, 1.0),
-				float2(0.0, -1.0),
+				float2(0.0, -1.0)
+			};
+
+			static const float2 kOuterDiagonalOffsets[4] = {
 				float2(1.0, 1.0),
 				float2(-1.0, 1.0),
 				float2(1.0, -1.0),
@@ -106,14 +129,27 @@ float Luma(float3 c)
 			};
 
 			[unroll]
-			for (uint i = 0; i < 8; ++i) {
-				float2 tapUV = saturate(sourceUV + kOuterOffsets[i] * blurStepOuter);
+			for (uint i = 0; i < 4; ++i) {
+				float2 tapUV = saturate(sourceUV + kOuterCardinalOffsets[i] * blurStepOuter);
 				float4 tap = InputColor.SampleLevel(LinearSampler, tapUV, 0.0);
 				float tapLuma = Luma(tap.rgb);
 				float edgeWeight = exp2(-abs(tapLuma - centerLumaOuter) * (edgeSensitivity * 0.75));
-				float weight = 0.7 * edgeWeight;
+				float weight = (useFullOuterKernel ? 0.70 : 0.90) * edgeWeight;
 				accumOuter += tap.rgb * weight;
 				accumOuterWeight += weight;
+			}
+
+			if (useFullOuterKernel) {
+				[unroll]
+				for (uint i = 0; i < 4; ++i) {
+					float2 tapUV = saturate(sourceUV + kOuterDiagonalOffsets[i] * blurStepOuter);
+					float4 tap = InputColor.SampleLevel(LinearSampler, tapUV, 0.0);
+					float tapLuma = Luma(tap.rgb);
+					float edgeWeight = exp2(-abs(tapLuma - centerLumaOuter) * (edgeSensitivity * 0.75));
+					float weight = 0.55 * edgeWeight;
+					accumOuter += tap.rgb * weight;
+					accumOuterWeight += weight;
+				}
 			}
 
 			float3 outerBlurred = accumOuter / max(accumOuterWeight, 1e-4);
