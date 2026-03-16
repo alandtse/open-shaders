@@ -25,7 +25,6 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	frameGenerationForceEnable,
 	streamlineLogLevel,
 	sharpnessFSR,
-	fsrMotionVectorReconstruction,
 	sharpnessDLSS,
 	overrideTAAHFFrequencies,
 	taaHighFreq,
@@ -302,11 +301,6 @@ void Upscaling::DrawSettings()
 
 		if (upscaleMethod == UpscaleMethod::kFSR) {
 			ImGui::SliderFloat("Sharpness", &settings.sharpnessFSR, 0.0f, 1.0f, "%.1f");
-			ImGui::Checkbox("FSR MV Reconstruction", &settings.fsrMotionVectorReconstruction);
-			if (auto _tt = Util::HoverTooltipWrapper()) {
-				ImGui::TextUnformatted("Runs depth-based motion-vector reconstruction for FSR.");
-				ImGui::TextUnformatted("Applies to both flat and VR FSR paths. Disable to use encoded vectors directly.");
-			}
 		} else if (upscaleMethod == UpscaleMethod::kDLSS) {
 			// Keep persisted preset values stable (0=J,1=K,2=L,3=M,4=F) while
 			// presenting an alphabetical selection list in the UI.

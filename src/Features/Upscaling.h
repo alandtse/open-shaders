@@ -60,7 +60,6 @@ public:
 		uint frameGenerationForceEnable = 0;
 		uint streamlineLogLevel = 0;  // 0=Off, 1=Default, 2=Verbose
 		float sharpnessFSR = 0.0f;
-		bool fsrMotionVectorReconstruction = true;
 		float sharpnessDLSS = 0.1f;
 		bool overrideTAAHFFrequencies = false;
 		float taaHighFreq = 0.8f;
