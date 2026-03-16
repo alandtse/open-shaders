@@ -26,6 +26,7 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	streamlineLogLevel,
 	sharpnessFSR,
 	sharpnessDLSS,
+	dlssUseHistoryReset,
 	overrideTAAHFFrequencies,
 	taaHighFreq,
 	taaLowFreq,
@@ -345,6 +346,14 @@ void Upscaling::DrawSettings()
 			}
 
 			ImGui::SliderFloat("Sharpness", &settings.sharpnessDLSS, 0.0f, 1.0f, "%.1f");
+			const char* toggleModes[] = { "Disabled", "Enabled" };
+			int dlssHistoryReset = settings.dlssUseHistoryReset ? 1 : 0;
+			ImGui::SliderInt("DLSS History Reset", &dlssHistoryReset, 0, 1, toggleModes[dlssHistoryReset]);
+			settings.dlssUseHistoryReset = dlssHistoryReset > 0;
+			if (auto _tt = Util::HoverTooltipWrapper()) {
+				ImGui::TextUnformatted("When enabled, DLSS receives reset events on camera/method/scale/foveation changes.");
+				ImGui::TextUnformatted("When disabled, DLSS history is never explicitly reset (current default behavior).");
+			}
 
 			const auto& adapter = globals::state->adapterDescription;
 			const bool isNvidia = IsNvidiaAdapterDescription(adapter);

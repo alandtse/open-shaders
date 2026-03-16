@@ -61,6 +61,7 @@ public:
 		uint streamlineLogLevel = 0;  // 0=Off, 1=Default, 2=Verbose
 		float sharpnessFSR = 0.0f;
 		float sharpnessDLSS = 0.1f;
+		bool dlssUseHistoryReset = false;
 		bool overrideTAAHFFrequencies = false;
 		float taaHighFreq = 0.8f;
 		float taaLowFreq = 0.8f;
