@@ -38,6 +38,7 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	foveatedPeripheryMipBiasStrength,
 	foveatedPeripheryEdgeBlur,
 	foveatedPeripheryEdgeBlurStrength,
+	foveatedPeripheryOuterRingBlur,
 	foveatedPeripheryJitterAttenuation,
 	foveatedPeripheryJitterAttenuationStrength,
 	foveatedPeripheryJitterDecimation,
@@ -55,7 +56,7 @@ decltype(&D3D11CreateDeviceAndSwapChain) ptrD3D11CreateDeviceAndSwapChainUpscali
 namespace
 {
 	constexpr float kPeripheryMipBiasStrengthMin = 0.0f;
-	constexpr float kPeripheryMipBiasStrengthMax = 2.0f;
+	constexpr float kPeripheryMipBiasStrengthMax = 4.0f;
 	constexpr float kPeripheryEdgeBlurStrengthMin = 0.0f;
 	constexpr float kPeripheryEdgeBlurStrengthMax = 1.0f;
 	constexpr float kPeripheryJitterAttenuationStrengthMin = 0.0f;
@@ -414,6 +415,19 @@ void Upscaling::DrawSettings()
 				if (auto _tt = Util::HoverTooltipWrapper()) {
 					ImGui::TextUnformatted("Applies a lightweight edge-aware 5-tap blur in periphery only.");
 					ImGui::TextUnformatted("Low cost; stronger values reduce flicker but soften peripheral detail.");
+				}
+
+				int peripheryOuterRingBlurEnabled = settings.foveatedPeripheryOuterRingBlur ? 1 : 0;
+				{
+					auto outerRingBlurGuard = Util::DisableGuard(!settings.foveatedPeripheryEdgeBlur);
+					ImGui::SliderInt("Periphery Outer Ring Blur", &peripheryOuterRingBlurEnabled, 0, 1, toggleModes[peripheryOuterRingBlurEnabled]);
+					settings.foveatedPeripheryOuterRingBlur = peripheryOuterRingBlurEnabled > 0;
+				}
+				if (auto _tt = Util::HoverTooltipWrapper()) {
+					ImGui::TextUnformatted("Adds a second stronger blur stage only in the far outer ring.");
+					ImGui::TextUnformatted("Higher stability/less shimmer in the edge-periphery at added softening and cost.");
+					if (!settings.foveatedPeripheryEdgeBlur)
+						ImGui::TextUnformatted("Requires Periphery Edge Blur = Enabled.");
 				}
 
 				int peripheryJitterAttenuationEnabled = settings.foveatedPeripheryJitterAttenuation ? 1 : 0;
@@ -1446,7 +1460,7 @@ void Upscaling::DispatchFoveatedPeripheryPass(ID3D11ShaderResourceView* sourceSR
 		settings.foveatedPeripheryEdgeBlur ? 1.0f : 0.0f,
 		edgeBlurStrength,
 		12.0f,
-		0.0f
+		settings.foveatedPeripheryOuterRingBlur ? 1.0f : 0.0f
 	};
 	cbData.tuning2 = {
 		settings.foveatedPeripheryJitterAttenuation ? 1.0f : 0.0f,
