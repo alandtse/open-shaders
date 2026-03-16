@@ -1522,7 +1522,7 @@ bool Upscaling::DispatchSingleFoveatedVendorEye(UpscaleMethod a_upscaleMethod, u
 	return true;
 }
 
-bool Upscaling::DispatchFoveatedVendorUpscaling(UpscaleMethod a_upscaleMethod, ID3D11Resource* colorTexture, ID3D11Resource* depthTexture, ID3D11Resource* motionVectors, ID3D11Resource* reactiveMask, ID3D11Resource* transparencyMask)
+bool Upscaling::DispatchFoveatedVendorUpscaling(UpscaleMethod a_upscaleMethod, ID3D11Resource* colorTexture, ID3D11Resource* depthTexture, ID3D11Resource* motionVectors, ID3D11Resource* reactiveMask, ID3D11Resource* transparencyMask, bool depthAlreadyPrepared)
 {
 	if (!globals::game::isVR)
 		return false;
@@ -1548,7 +1548,7 @@ bool Upscaling::DispatchFoveatedVendorUpscaling(UpscaleMethod a_upscaleMethod, I
 	if (!peripheryCS || !blendCS || !foveatedPeripheryCB || !foveatedCenterBlendCB)
 		return false;
 
-	PreparePerEyeInputs(colorTexture, depthTexture, motionVectors, reactiveMask, transparencyMask, false);
+	PreparePerEyeInputs(colorTexture, depthTexture, motionVectors, reactiveMask, transparencyMask, false, !depthAlreadyPrepared);
 
 	for (uint32_t eye = 0; eye < 2; ++eye) {
 		if (!vrIntermediateColorIn[eye] || !vrIntermediateColorIn[eye]->srv ||
@@ -1657,7 +1657,7 @@ void Upscaling::EnsureVRIntermediateTextures(uint32_t inWidth, uint32_t inHeight
 }
 
 void Upscaling::PreparePerEyeInputs(ID3D11Resource* colorSrc, ID3D11Resource* depthSrc, ID3D11Resource* mvecSrc,
-	ID3D11Resource* reactiveSrc, ID3D11Resource* transparencySrc, bool copyAuxiliaryInputs)
+	ID3D11Resource* reactiveSrc, ID3D11Resource* transparencySrc, bool copyAuxiliaryInputs, bool copyDepthInput)
 {
 	if (!globals::game::isVR)
 		return;
@@ -1684,7 +1684,8 @@ void Upscaling::PreparePerEyeInputs(ID3D11Resource* colorSrc, ID3D11Resource* de
 		D3D11_BOX srcBox = { offsetXIn, 0, 0, offsetXIn + eyeWidthIn, eyeHeightIn, 1 };
 
 		context->CopySubresourceRegion(vrIntermediateColorIn[i]->resource.get(), 0, 0, 0, 0, colorSrc, 0, &srcBox);
-		context->CopySubresourceRegion(vrIntermediateDepth[i]->resource.get(), 0, 0, 0, 0, depthSrc, 0, &srcBox);
+		if (copyDepthInput)
+			context->CopySubresourceRegion(vrIntermediateDepth[i]->resource.get(), 0, 0, 0, 0, depthSrc, 0, &srcBox);
 		if (copyAuxiliaryInputs) {
 			context->CopySubresourceRegion(vrIntermediateMotionVectors[i]->resource.get(), 0, 0, 0, 0, mvecSrc, 0, &srcBox);
 			context->CopySubresourceRegion(vrIntermediateTransparencyMask[i]->resource.get(), 0, 0, 0, 0, transparencySrc, 0, &srcBox);
@@ -2456,6 +2457,7 @@ void Upscaling::Upscale()
 	}
 
 	auto dispatchCount = Util::GetScreenDispatchCount(true);
+	bool depthPreparedForFoveatedDispatch = false;
 
 	{
 		state->BeginPerfEvent("Encode Upscaling Textures");
@@ -2559,7 +2561,8 @@ void Upscaling::Upscale()
 				depth.texture,
 				motionVectorResource,
 				reactiveMaskTexture->resource.get(),
-				transparencyCompositionMaskTexture->resource.get());
+				transparencyCompositionMaskTexture->resource.get(),
+				depthPreparedForFoveatedDispatch);
 			if (!dispatched) {
 				if (!loggedFoveatedFallback) {
 					logger::warn("[Upscaling] Foveated vendor dispatch failed; falling back to full-frame {} dispatch.",
