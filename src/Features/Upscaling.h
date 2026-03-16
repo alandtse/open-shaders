@@ -72,6 +72,7 @@ public:
 		float foveatedPeripheryMipBiasStrength = 1.0f;
 		bool foveatedPeripheryEdgeBlur = false;
 		float foveatedPeripheryEdgeBlurStrength = 0.35f;
+		bool foveatedPeripheryOuterRingBlur = false;
 		bool foveatedPeripheryJitterAttenuation = false;
 		float foveatedPeripheryJitterAttenuationStrength = 0.65f;
 		bool foveatedPeripheryJitterDecimation = false;
@@ -116,7 +117,7 @@ public:
 		float2 outputOffset;
 		float2 jitter;
 		float4 tuning0;  // x=centerScale, y=centerFeather, z=useMipBias, w=mipBiasStrength
-		float4 tuning1;  // x=useEdgeBlur, y=edgeBlurStrength, z=edgeSensitivity, w=pad
+		float4 tuning1;  // x=useEdgeBlur, y=edgeBlurStrength, z=edgeSensitivity, w=useOuterRingBlur
 		float4 tuning2;  // x=useJitterAttenuation, y=jitterAttenuationStrength, z=usePeripheryTAA, w=pad
 	};
 

@@ -9,7 +9,7 @@ cbuffer FoveatedPeripheryCB : register(b0)
 	float2 OutputOffset;
 	float2 Jitter;
 	float4 Tuning0;  // x=centerScale, y=centerFeather, z=useMipBias, w=mipBiasStrength
-	float4 Tuning1;  // x=useEdgeBlur, y=edgeBlurStrength, z=edgeSensitivity, w=pad
+	float4 Tuning1;  // x=useEdgeBlur, y=edgeBlurStrength, z=edgeSensitivity, w=useOuterRingBlur
 	float4 Tuning2;  // x=useJitterAttenuation, y=jitterAttenuationStrength, z=usePeripheryTAA, w=pad
 };
 
@@ -41,6 +41,7 @@ float Luma(float3 c)
 	const float useEdgeBlur = Tuning1.x;
 	const float edgeBlurStrength = Tuning1.y;
 	const float edgeSensitivity = Tuning1.z;
+	const float useOuterRingBlur = Tuning1.w;
 	const float useJitterAttenuation = Tuning2.x;
 	const float jitterAttenuationStrength = Tuning2.y;
 	const float usePeripheryTAA = Tuning2.z;
@@ -95,6 +96,44 @@ float Luma(float3 c)
 		float3 blurred = accum / max(accumWeight, 1e-4);
 		float blurBlend = saturate(edgeBlurStrength * peripheryWeight);
 		outSample.rgb = lerp(centerSample.rgb, blurred, blurBlend);
+	}
+
+	// Optional second blur stage for the far outer ring only.
+	if (useOuterRingBlur > 0.5 && useEdgeBlur > 0.5 && edgeBlurStrength > 0.001) {
+		const float outerRingStart = 0.60;
+		float outerRingWeight = saturate((peripheryWeight - outerRingStart) / (1.0 - outerRingStart));
+		if (outerRingWeight > 0.001) {
+			float2 blurStepOuter = InvOutputDim * 2.0;
+			float centerLumaOuter = Luma(outSample.rgb);
+			float3 accumOuter = outSample.rgb;
+			float accumOuterWeight = 1.0;
+
+			static const float2 kOuterOffsets[8] = {
+				float2(1.0, 0.0),
+				float2(-1.0, 0.0),
+				float2(0.0, 1.0),
+				float2(0.0, -1.0),
+				float2(1.0, 1.0),
+				float2(-1.0, 1.0),
+				float2(1.0, -1.0),
+				float2(-1.0, -1.0)
+			};
+
+			[unroll]
+			for (uint i = 0; i < 8; ++i) {
+				float2 tapUV = saturate(sourceUV + kOuterOffsets[i] * blurStepOuter);
+				float4 tap = InputColor.SampleLevel(LinearSampler, tapUV, mipBias);
+				float tapLuma = Luma(tap.rgb);
+				float edgeWeight = exp2(-abs(tapLuma - centerLumaOuter) * (edgeSensitivity * 0.75));
+				float weight = 0.7 * edgeWeight;
+				accumOuter += tap.rgb * weight;
+				accumOuterWeight += weight;
+			}
+
+			float3 outerBlurred = accumOuter / max(accumOuterWeight, 1e-4);
+			float outerBlend = saturate(edgeBlurStrength * outerRingWeight);
+			outSample.rgb = lerp(outSample.rgb, outerBlurred, outerBlend);
+		}
 	}
 
 	OutColor[outputPos] = outSample;
