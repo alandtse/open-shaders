@@ -10,7 +10,7 @@ cbuffer FoveatedPeripheryCB : register(b0)
 	float2 Jitter;
 	float4 Tuning0;  // x=centerScale, y=centerFeather, z=useMipBias, w=mipBiasStrength
 	float4 Tuning1;  // x=useEdgeBlur, y=edgeBlurStrength, z=edgeSensitivity, w=pad
-	float4 Tuning2;  // x=useJitterAttenuation, y=jitterAttenuationStrength, z=pad, w=pad
+	float4 Tuning2;  // x=useJitterAttenuation, y=jitterAttenuationStrength, z=usePeripheryTAA, w=pad
 };
 
 Texture2D<float4> InputColor : register(t0);
@@ -43,12 +43,13 @@ float Luma(float3 c)
 	const float edgeSensitivity = Tuning1.z;
 	const float useJitterAttenuation = Tuning2.x;
 	const float jitterAttenuationStrength = Tuning2.y;
+	const float usePeripheryTAA = Tuning2.z;
 
 	float centerWeight = FoveatedComputeCenterBlendWeight(uv, centerScale, centerFeather);
 	float peripheryWeight = saturate(1.0 - centerWeight);
 
-	float2 jitterApplied = Jitter;
-	if (useJitterAttenuation > 0.5) {
+	float2 jitterApplied = usePeripheryTAA > 0.5 ? Jitter : float2(0.0, 0.0);
+	if (usePeripheryTAA > 0.5 && useJitterAttenuation > 0.5) {
 		float attenuation = saturate(jitterAttenuationStrength) * peripheryWeight;
 		jitterApplied *= (1.0 - attenuation);
 	}
