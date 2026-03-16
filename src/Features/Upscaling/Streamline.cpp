@@ -338,7 +338,7 @@ bool Streamline::EnsureFrameToken()
 	return frameToken != nullptr;
 }
 
-void Streamline::CheckFrameConstants(sl::ViewportHandle p_viewport, uint32_t eyeIndex)
+void Streamline::CheckFrameConstants(sl::ViewportHandle p_viewport, uint32_t eyeIndex, float viewportScaleX, float viewportScaleY)
 {
 	if (!globals::features::upscaling.streamline.initialized)
 		return;
@@ -349,12 +349,19 @@ void Streamline::CheckFrameConstants(sl::ViewportHandle p_viewport, uint32_t eye
 	// In VR, we need to set constants for each viewport/eye separately
 	// In non-VR, this is called once per frame
 	auto state = globals::state;
+	float clampedViewportScaleX = std::clamp(viewportScaleX, 1e-4f, 1.0f);
+	float clampedViewportScaleY = std::clamp(viewportScaleY, 1e-4f, 1.0f);
+	if (!globals::game::isVR) {
+		clampedViewportScaleX = 1.0f;
+		clampedViewportScaleY = 1.0f;
+	}
 
 	sl::Constants slConstants = {};
 
 	// Calculate aspect ratio for the SINGLE EYE
 	float eyeWidth = state->screenSize.x * (globals::game::isVR ? 0.5f : 1.0f);
-	slConstants.cameraAspectRatio = eyeWidth / state->screenSize.y;
+	float eyeHeight = state->screenSize.y;
+	slConstants.cameraAspectRatio = (eyeWidth * clampedViewportScaleX) / (eyeHeight * clampedViewportScaleY);
 
 	slConstants.cameraFOV = Util::GetVerticalFOVRad();
 	slConstants.cameraNear = *globals::game::cameraNear;
@@ -373,6 +380,26 @@ void Streamline::CheckFrameConstants(sl::ViewportHandle p_viewport, uint32_t eye
 	slConstants.depthInverted = sl::Boolean::eFalse;
 
 	if (globals::game::isVR) {
+		const bool isCroppedViewport = clampedViewportScaleX < 0.999f || clampedViewportScaleY < 0.999f;
+		if (isCroppedViewport) {
+			const float invScaleX = 1.0f / clampedViewportScaleX;
+			const float invScaleY = 1.0f / clampedViewportScaleY;
+
+			// Match projection to the cropped DLSS viewport so temporal reprojection
+			// operates in the same clip space as color/depth/mvec inputs.
+			slConstants.cameraViewToClip[0].x *= invScaleX;
+			slConstants.cameraViewToClip[0].y *= invScaleX;
+			slConstants.cameraViewToClip[0].z *= invScaleX;
+			slConstants.cameraViewToClip[0].w *= invScaleX;
+			slConstants.cameraViewToClip[1].x *= invScaleY;
+			slConstants.cameraViewToClip[1].y *= invScaleY;
+			slConstants.cameraViewToClip[1].z *= invScaleY;
+			slConstants.cameraViewToClip[1].w *= invScaleY;
+
+			// cameraFOV is vertical; scale by cropped Y region.
+			slConstants.cameraFOV = 2.0f * atanf(clampedViewportScaleY * tanf(slConstants.cameraFOV * 0.5f));
+		}
+
 		// VR: compute clipToCameraView / clipToPrevClip / prevClipToClip from Skyrim's per-eye matrices.
 		// recalculateCameraMatrices() uses a single static prev-frame slot -- unusable for two viewports.
 		sl::matrixFullInvert(slConstants.clipToCameraView, slConstants.cameraViewToClip);
@@ -386,6 +413,23 @@ void Streamline::CheckFrameConstants(sl::ViewportHandle p_viewport, uint32_t eye
 		sl::float4x4 invCurrViewProj;
 		sl::matrixFullInvert(invCurrViewProj, currViewProjSL);
 		sl::matrixMul(slConstants.clipToPrevClip, invCurrViewProj, prevViewProjSL);
+
+		if (isCroppedViewport) {
+			const float invScaleX = 1.0f / clampedViewportScaleX;
+			const float invScaleY = 1.0f / clampedViewportScaleY;
+			const float leftFactors[4] = { clampedViewportScaleX, clampedViewportScaleY, 1.0f, 1.0f };
+			const float rightFactors[4] = { invScaleX, invScaleY, 1.0f, 1.0f };
+
+			// Conjugate clipToPrevClip into cropped clip-space basis:
+			// CTP_cropped = inv(S) * CTP * S
+			float* ctpValues = &slConstants.clipToPrevClip[0].x;
+			for (uint32_t row = 0; row < 4; ++row) {
+				for (uint32_t col = 0; col < 4; ++col) {
+					ctpValues[row * 4 + col] *= leftFactors[row] * rightFactors[col];
+				}
+			}
+		}
+
 		sl::matrixFullInvert(slConstants.prevClipToClip, slConstants.clipToPrevClip);
 	} else {
 		recalculateCameraMatrices(slConstants);
@@ -396,7 +440,11 @@ void Streamline::CheckFrameConstants(sl::ViewportHandle p_viewport, uint32_t eye
 	slConstants.jitterOffset = { -jitter.x, -jitter.y };
 	slConstants.reset = sl::Boolean::eFalse;
 
-	slConstants.mvecScale = { 1.0f, 1.0f };
+	if (globals::game::isVR && (clampedViewportScaleX < 0.999f || clampedViewportScaleY < 0.999f)) {
+		slConstants.mvecScale = { 1.0f / clampedViewportScaleX, 1.0f / clampedViewportScaleY };
+	} else {
+		slConstants.mvecScale = { 1.0f, 1.0f };
+	}
 	slConstants.motionVectors3D = sl::Boolean::eFalse;
 	slConstants.motionVectorsInvalidValue = FLT_MIN;
 	slConstants.orthographicProjection = sl::Boolean::eFalse;
@@ -552,7 +600,18 @@ bool Streamline::EvaluateDLSS(sl::ViewportHandle vp, uint32_t eyeIndex,
 	sl::Resource reactiveMaskRes = { sl::ResourceType::eTex2d, reactiveMask, 0 };
 	sl::Resource transparencyMaskRes = { sl::ResourceType::eTex2d, transparencyMask, 0 };
 
-	CheckFrameConstants(vp, eyeIndex);
+	float viewportScaleX = 1.0f;
+	float viewportScaleY = 1.0f;
+	if (auto state = globals::state) {
+		const float fullOutputWidth = globals::game::isVR ? (state->screenSize.x * 0.5f) : state->screenSize.x;
+		const float fullOutputHeight = state->screenSize.y;
+		if (fullOutputWidth > 0.0f && fullOutputHeight > 0.0f) {
+			viewportScaleX = std::clamp(static_cast<float>(extentOut.width) / fullOutputWidth, 1e-4f, 1.0f);
+			viewportScaleY = std::clamp(static_cast<float>(extentOut.height) / fullOutputHeight, 1e-4f, 1.0f);
+		}
+	}
+
+	CheckFrameConstants(vp, eyeIndex, viewportScaleX, viewportScaleY);
 	SetDLSSOptions(vp, eyeIndex, outputWidth, extentOut.height);
 
 	sl::ResourceTag tags[] = {
