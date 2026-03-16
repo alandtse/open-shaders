@@ -62,6 +62,7 @@ public:
 		float sharpnessFSR = 0.0f;
 		float sharpnessDLSS = 0.1f;
 		bool dlssUseHistoryReset = false;
+		bool dlssBypassCroppedConstantsCorrection = false;
 		bool foveatedVendorDispatch = false;
 		bool foveatedDirectSourcePath = false;
 		float foveatedCenterArea = 0.6f;
