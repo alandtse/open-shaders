@@ -28,9 +28,6 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	sharpnessFSR,
 	sharpnessDLSS,
 	dlssUseHistoryReset,
-	overrideTAAHFFrequencies,
-	taaHighFreq,
-	taaLowFreq,
 	foveatedVendorDispatch,
 	foveatedCenterArea,
 	foveatedPeripheryUseTAA,
@@ -63,8 +60,6 @@ namespace
 	constexpr float kPeripheryJitterAttenuationStrengthMax = 1.0f;
 	constexpr int kPeripheryJitterDecimationFramesMin = 2;
 	constexpr int kPeripheryJitterDecimationFramesMax = 8;
-	constexpr float kTAAFrequencyMin = 0.0f;
-	constexpr float kTAAFrequencyMax = 2.0f;
 
 	float ClampFoveatedCenterArea(float value)
 	{
@@ -473,43 +468,6 @@ void Upscaling::DrawSettings()
 		}
 	}
 
-	if (upscaleMethod != UpscaleMethod::kNONE) {
-		ImGui::Separator();
-		ImGui::TextUnformatted("TAA Frequency");
-		const char* taaToggleModes[] = { "Disabled", "Enabled" };
-		int taaFrequencyOverrideEnabled = settings.overrideTAAHFFrequencies ? 1 : 0;
-		ImGui::SliderInt("Override TAA HF/LF", &taaFrequencyOverrideEnabled, 0, 1, taaToggleModes[taaFrequencyOverrideEnabled]);
-		settings.overrideTAAHFFrequencies = taaFrequencyOverrideEnabled > 0;
-		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::TextUnformatted("Overrides the game's TAA frequencies (taa hf / taa lf).");
-			ImGui::TextUnformatted("Turn off to restore the values from before the override.");
-		}
-
-		if (settings.overrideTAAHFFrequencies) {
-			settings.taaHighFreq = std::clamp(settings.taaHighFreq, kTAAFrequencyMin, kTAAFrequencyMax);
-			settings.taaLowFreq = std::clamp(settings.taaLowFreq, kTAAFrequencyMin, kTAAFrequencyMax);
-			ImGui::SliderFloat("fTAAHighFreq", &settings.taaHighFreq, kTAAFrequencyMin, kTAAFrequencyMax, "%.3f");
-			if (auto _tt = Util::HoverTooltipWrapper()) {
-				ImGui::TextUnformatted("Fine-detail stability control.");
-				ImGui::TextUnformatted("Lower: less shimmer/aliasing, softer details. Higher: sharper, more flicker.");
-			}
-			ImGui::SliderFloat("fTAALowFreq", &settings.taaLowFreq, kTAAFrequencyMin, kTAAFrequencyMax, "%.3f");
-			if (auto _tt = Util::HoverTooltipWrapper()) {
-				ImGui::TextUnformatted("Large-scale temporal smoothing control.");
-				ImGui::TextUnformatted("Lower: less ghosting, more noise. Higher: smoother image, more trailing.");
-			}
-			settings.taaHighFreq = std::clamp(settings.taaHighFreq, kTAAFrequencyMin, kTAAFrequencyMax);
-			settings.taaLowFreq = std::clamp(settings.taaLowFreq, kTAAFrequencyMin, kTAAFrequencyMax);
-		}
-
-		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::TextUnformatted("Tip: for periphery flicker, lower fTAAHighFreq first in small steps.");
-			ImGui::TextUnformatted("Then fine-tune fTAALowFreq if you see ghosting or trailing.");
-		}
-
-		SyncTAAFrequencyOverrides();
-	}
-
 	if (!globals::game::isVR) {
 		if (ImGui::TreeNodeEx("Frame Generation", ImGuiTreeNodeFlags_DefaultOpen)) {
 			ImGui::Text("Frame Generation interpolates real frames with generated ones for a smoother experience");
@@ -789,10 +747,6 @@ void Upscaling::SaveSettings(json& o_json)
 	if (iniSettingCollection) {
 		if (auto setting = iniSettingCollection->GetSetting("bUseTAA:Display"))
 			iniSettingCollection->WriteSetting(setting);
-		if (auto setting = iniSettingCollection->GetSetting("fTAAHighFreq:Display"))
-			iniSettingCollection->WriteSetting(setting);
-		if (auto setting = iniSettingCollection->GetSetting("fTAALowFreq:Display"))
-			iniSettingCollection->WriteSetting(setting);
 	}
 }
 
@@ -814,23 +768,11 @@ void Upscaling::LoadSettings(json& o_json)
 	}
 	settings.dlssPreset = std::min<uint>(settings.dlssPreset, kDLSSPresetMaxIndex);
 	settings.foveatedCenterArea = ClampFoveatedCenterArea(settings.foveatedCenterArea);
-	settings.taaHighFreq = std::clamp(settings.taaHighFreq, kTAAFrequencyMin, kTAAFrequencyMax);
-	settings.taaLowFreq = std::clamp(settings.taaLowFreq, kTAAFrequencyMin, kTAAFrequencyMax);
 	settings.reflexFPSLimit = std::clamp(settings.reflexFPSLimit, 20.0f, 240.0f);
 	auto iniSettingCollection = globals::game::iniPrefSettingCollection;
 	if (iniSettingCollection) {
 		if (auto setting = iniSettingCollection->GetSetting("bUseTAA:Display"))
 			iniSettingCollection->ReadSetting(setting);
-		if (auto setting = iniSettingCollection->GetSetting("fTAAHighFreq:Display")) {
-			iniSettingCollection->ReadSetting(setting);
-			if (!settings.overrideTAAHFFrequencies)
-				settings.taaHighFreq = std::clamp(setting->data.f, kTAAFrequencyMin, kTAAFrequencyMax);
-		}
-		if (auto setting = iniSettingCollection->GetSetting("fTAALowFreq:Display")) {
-			iniSettingCollection->ReadSetting(setting);
-			if (!settings.overrideTAAHFFrequencies)
-				settings.taaLowFreq = std::clamp(setting->data.f, kTAAFrequencyMin, kTAAFrequencyMax);
-		}
 	}
 }
 
@@ -1992,36 +1934,9 @@ void GetJitterOffset(float* outX, float* outY, int32_t index, int32_t phaseCount
 	*outY = y;
 }
 
-void Upscaling::SyncTAAFrequencyOverrides()
-{
-	auto* taaHighFreqSetting = RE::GetINISetting("fTAAHighFreq:Display");
-	auto* taaLowFreqSetting = RE::GetINISetting("fTAALowFreq:Display");
-	if (!taaHighFreqSetting || !taaLowFreqSetting)
-		return;
-
-	settings.taaHighFreq = std::clamp(settings.taaHighFreq, kTAAFrequencyMin, kTAAFrequencyMax);
-	settings.taaLowFreq = std::clamp(settings.taaLowFreq, kTAAFrequencyMin, kTAAFrequencyMax);
-
-	if (settings.overrideTAAHFFrequencies) {
-		if (!taaFrequencyOverrideApplied) {
-			taaHighFreqBeforeOverride = taaHighFreqSetting->data.f;
-			taaLowFreqBeforeOverride = taaLowFreqSetting->data.f;
-		}
-
-		taaHighFreqSetting->data.f = settings.taaHighFreq;
-		taaLowFreqSetting->data.f = settings.taaLowFreq;
-		taaFrequencyOverrideApplied = true;
-	} else if (taaFrequencyOverrideApplied) {
-		taaHighFreqSetting->data.f = taaHighFreqBeforeOverride;
-		taaLowFreqSetting->data.f = taaLowFreqBeforeOverride;
-		taaFrequencyOverrideApplied = false;
-	}
-}
-
 void Upscaling::ConfigureTAA()
 {
 	auto upscaleMethod = GetUpscaleMethod();
-	SyncTAAFrequencyOverrides();
 
 	auto imageSpaceManager = RE::ImageSpaceManager::GetSingleton();
 	GET_INSTANCE_MEMBER(BSImagespaceShaderISTemporalAA, imageSpaceManager);
