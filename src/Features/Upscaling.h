@@ -66,7 +66,7 @@ public:
 		float taaHighFreq = 0.8f;
 		float taaLowFreq = 0.8f;
 		bool foveatedVendorDispatch = false;
-		float foveatedCenterArea = 1.0f;
+		float foveatedCenterArea = 0.6f;
 		bool foveatedPeripheryUseTAA = true;
 		bool foveatedPeripheryMipBias = false;
 		float foveatedPeripheryMipBiasStrength = 1.0f;
