@@ -10,7 +10,7 @@ cbuffer UpscalingData : register(b0)
 	float MaskDepthThreshold;
 	float VRSeamHardening;
 	float2 SourceOffset;
-	float2 pad0;
+	float2 OutputOffset;
 };
 
 Texture2D<float2> TAAMask : register(t0);
@@ -68,6 +68,9 @@ float ComputeSeamFactor(uint2 sourcePos)
 
 	uint2 sourceOffset = uint2(SourceOffset + 0.5);
 	uint2 sourcePos = localPos + sourceOffset;
+	uint2 outputOffset = uint2(OutputOffset + 0.5);
+	uint2 outputPos = localPos + outputOffset;
+	float depth = DepthMask[sourcePos];
 
 	float2 taaMask = TAAMask[sourcePos];
 	float transparencyCompositionMask = NormalsWaterMask[sourcePos].z;
@@ -79,7 +82,6 @@ float ComputeSeamFactor(uint2 sourcePos)
 #endif
 
 #if defined(DLSS)
-	float depth = DepthMask[sourcePos];
 	float nearFactor = smoothstep(4096.0 * 2.5, 0.0, SharedData::GetScreenDepth(depth));
 
 	// Find longest motion vector in 5x5 neighborhood
@@ -133,10 +135,10 @@ float ComputeSeamFactor(uint2 sourcePos)
 	}
 
 #if defined(DLSS) || defined(FSR)
-	MotionVectorOutput[localPos] = outputMotionVector;
+	MotionVectorOutput[outputPos] = outputMotionVector;
 #endif
 
-	ReactiveMask[localPos] = reactiveMask;
+	ReactiveMask[outputPos] = reactiveMask;
 
-	TransparencyCompositionMask[localPos] = transparencyCompositionMask;
+	TransparencyCompositionMask[outputPos] = transparencyCompositionMask;
 }
