@@ -25,12 +25,14 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	frameGenerationForceEnable,
 	streamlineLogLevel,
 	sharpnessFSR,
+	fsrMotionVectorReconstruction,
 	sharpnessDLSS,
 	overrideTAAHFFrequencies,
 	taaHighFreq,
 	taaLowFreq,
 	foveatedVendorDispatch,
 	foveatedCenterArea,
+	foveatedPeripheryUseTAA,
 	foveatedPeripheryMipBias,
 	foveatedPeripheryMipBiasStrength,
 	foveatedPeripheryEdgeBlur,
@@ -300,6 +302,11 @@ void Upscaling::DrawSettings()
 
 		if (upscaleMethod == UpscaleMethod::kFSR) {
 			ImGui::SliderFloat("Sharpness", &settings.sharpnessFSR, 0.0f, 1.0f, "%.1f");
+			ImGui::Checkbox("FSR MV Reconstruction", &settings.fsrMotionVectorReconstruction);
+			if (auto _tt = Util::HoverTooltipWrapper()) {
+				ImGui::TextUnformatted("Runs depth-based motion-vector reconstruction for FSR.");
+				ImGui::TextUnformatted("Applies to both flat and VR FSR paths. Disable to use encoded vectors directly.");
+			}
 		} else if (upscaleMethod == UpscaleMethod::kDLSS) {
 			// Keep persisted preset values stable (0=J,1=K,2=L,3=M,4=F) while
 			// presenting an alphabetical selection list in the UI.
@@ -367,10 +374,18 @@ void Upscaling::DrawSettings()
 				ImGui::SliderFloat("Foveated Center Area", &settings.foveatedCenterArea, kFoveatedCenterAreaMin, kFoveatedCenterAreaMax, "%.2f");
 				settings.foveatedCenterArea = ClampFoveatedCenterArea(settings.foveatedCenterArea);
 				if (auto _tt = Util::HoverTooltipWrapper()) {
-					ImGui::TextUnformatted("Runs vendor upscaling only in the center region and fills periphery with TAA-only upscaling.");
+					ImGui::TextUnformatted("Runs vendor upscaling only in the center region and fills periphery with the periphery pass.");
 					ImGui::TextUnformatted("1.00 means full-center coverage (equivalent to full-frame vendor dispatch).");
 					if (settings.linkFoveatedCenterAreaWithSSGI)
 						ImGui::TextUnformatted("Linked with SSGI center area (shared source).");
+				}
+
+				int peripheryUseTAA = settings.foveatedPeripheryUseTAA ? 1 : 0;
+				ImGui::SliderInt("Periphery TAA", &peripheryUseTAA, 0, 1, toggleModes[peripheryUseTAA]);
+				settings.foveatedPeripheryUseTAA = peripheryUseTAA > 0;
+				if (auto _tt = Util::HoverTooltipWrapper()) {
+					ImGui::TextUnformatted("Controls temporal jitter compensation in the foveated periphery pass.");
+					ImGui::TextUnformatted("Enabled = current TAA-style periphery path. Disabled = no-TAA periphery sampling.");
 				}
 
 				ImGui::Separator();
@@ -401,29 +416,42 @@ void Upscaling::DrawSettings()
 				}
 
 				int peripheryJitterAttenuationEnabled = settings.foveatedPeripheryJitterAttenuation ? 1 : 0;
-				ImGui::SliderInt("Periphery Jitter Attenuation", &peripheryJitterAttenuationEnabled, 0, 1, toggleModes[peripheryJitterAttenuationEnabled]);
-				settings.foveatedPeripheryJitterAttenuation = peripheryJitterAttenuationEnabled > 0;
-				if (settings.foveatedPeripheryJitterAttenuation) {
-					ImGui::SliderFloat("Periphery Jitter Attenuation Strength", &settings.foveatedPeripheryJitterAttenuationStrength, kPeripheryJitterAttenuationStrengthMin, kPeripheryJitterAttenuationStrengthMax, "%.2f");
-					settings.foveatedPeripheryJitterAttenuationStrength = std::clamp(settings.foveatedPeripheryJitterAttenuationStrength, kPeripheryJitterAttenuationStrengthMin, kPeripheryJitterAttenuationStrengthMax);
+				{
+					auto jitterGuard = Util::DisableGuard(!settings.foveatedPeripheryUseTAA);
+					ImGui::SliderInt("Periphery Jitter Attenuation", &peripheryJitterAttenuationEnabled, 0, 1, toggleModes[peripheryJitterAttenuationEnabled]);
+					settings.foveatedPeripheryJitterAttenuation = peripheryJitterAttenuationEnabled > 0;
+					if (settings.foveatedPeripheryJitterAttenuation) {
+						ImGui::SliderFloat("Periphery Jitter Attenuation Strength", &settings.foveatedPeripheryJitterAttenuationStrength, kPeripheryJitterAttenuationStrengthMin, kPeripheryJitterAttenuationStrengthMax, "%.2f");
+						settings.foveatedPeripheryJitterAttenuationStrength = std::clamp(settings.foveatedPeripheryJitterAttenuationStrength, kPeripheryJitterAttenuationStrengthMin, kPeripheryJitterAttenuationStrengthMax);
+					}
 				}
 				if (auto _tt = Util::HoverTooltipWrapper()) {
 					ImGui::TextUnformatted("Reduces periphery jitter amplitude while keeping center jitter unchanged.");
 					ImGui::TextUnformatted("Very low cost; higher values reduce shimmer but can soften periphery.");
+					if (!settings.foveatedPeripheryUseTAA)
+						ImGui::TextUnformatted("Requires Periphery TAA = Enabled.");
 				}
 
 				int peripheryJitterDecimationEnabled = settings.foveatedPeripheryJitterDecimation ? 1 : 0;
-				ImGui::SliderInt("Periphery Jitter Decimation", &peripheryJitterDecimationEnabled, 0, 1, toggleModes[peripheryJitterDecimationEnabled]);
-				settings.foveatedPeripheryJitterDecimation = peripheryJitterDecimationEnabled > 0;
+				{
+					auto jitterGuard = Util::DisableGuard(!settings.foveatedPeripheryUseTAA);
+					ImGui::SliderInt("Periphery Jitter Decimation", &peripheryJitterDecimationEnabled, 0, 1, toggleModes[peripheryJitterDecimationEnabled]);
+					settings.foveatedPeripheryJitterDecimation = peripheryJitterDecimationEnabled > 0;
+				}
 				int peripheryJitterDecimationFrames = static_cast<int>(std::clamp(settings.foveatedPeripheryJitterDecimationFrames, static_cast<uint>(kPeripheryJitterDecimationFramesMin), static_cast<uint>(kPeripheryJitterDecimationFramesMax)));
-				if (settings.foveatedPeripheryJitterDecimation) {
-					ImGui::SliderInt("Periphery Jitter Hold Frames", &peripheryJitterDecimationFrames, kPeripheryJitterDecimationFramesMin, kPeripheryJitterDecimationFramesMax, "%d");
+				{
+					auto jitterGuard = Util::DisableGuard(!settings.foveatedPeripheryUseTAA);
+					if (settings.foveatedPeripheryJitterDecimation) {
+						ImGui::SliderInt("Periphery Jitter Hold Frames", &peripheryJitterDecimationFrames, kPeripheryJitterDecimationFramesMin, kPeripheryJitterDecimationFramesMax, "%d");
+					}
 				}
 				peripheryJitterDecimationFrames = std::clamp(peripheryJitterDecimationFrames, kPeripheryJitterDecimationFramesMin, kPeripheryJitterDecimationFramesMax);
 				settings.foveatedPeripheryJitterDecimationFrames = static_cast<uint>(peripheryJitterDecimationFrames);
 				if (auto _tt = Util::HoverTooltipWrapper()) {
 					ImGui::TextUnformatted("Holds periphery jitter for N frames to lower temporal update frequency.");
 					ImGui::TextUnformatted("Low cost; larger values reduce flicker more but increase trailing risk.");
+					if (!settings.foveatedPeripheryUseTAA)
+						ImGui::TextUnformatted("Requires Periphery TAA = Enabled.");
 				}
 			}
 			ImGui::EndDisabled();
@@ -1383,21 +1411,27 @@ void Upscaling::DispatchFoveatedPeripheryPass(ID3D11ShaderResourceView* sourceSR
 	};
 	cbData.dispatchDim = { static_cast<float>(dispatchWidth), static_cast<float>(dispatchHeight) };
 	cbData.outputOffset = { static_cast<float>(outputOffsetX), static_cast<float>(outputOffsetY) };
-	float2 jitterForPeriphery = jitter;
-	if (settings.foveatedPeripheryJitterDecimation) {
-		const uint32_t holdFrames = std::clamp(
-			settings.foveatedPeripheryJitterDecimationFrames,
-			static_cast<uint>(kPeripheryJitterDecimationFramesMin),
-			static_cast<uint>(kPeripheryJitterDecimationFramesMax));
-		if (auto state = globals::state) {
-			const uint32_t frame = state->frameCount;
-			const bool uninitialized = foveatedPeripheryHeldJitterFrame == std::numeric_limits<uint32_t>::max();
-			const bool elapsed = !uninitialized && (frame - foveatedPeripheryHeldJitterFrame) >= holdFrames;
-			if (uninitialized || elapsed) {
-				foveatedPeripheryHeldJitter = jitter;
-				foveatedPeripheryHeldJitterFrame = frame;
+	float2 jitterForPeriphery = { 0.0f, 0.0f };
+	if (settings.foveatedPeripheryUseTAA) {
+		jitterForPeriphery = jitter;
+		if (settings.foveatedPeripheryJitterDecimation) {
+			const uint32_t holdFrames = std::clamp(
+				settings.foveatedPeripheryJitterDecimationFrames,
+				static_cast<uint>(kPeripheryJitterDecimationFramesMin),
+				static_cast<uint>(kPeripheryJitterDecimationFramesMax));
+			if (auto state = globals::state) {
+				const uint32_t frame = state->frameCount;
+				const bool uninitialized = foveatedPeripheryHeldJitterFrame == std::numeric_limits<uint32_t>::max();
+				const bool elapsed = !uninitialized && (frame - foveatedPeripheryHeldJitterFrame) >= holdFrames;
+				if (uninitialized || elapsed) {
+					foveatedPeripheryHeldJitter = jitter;
+					foveatedPeripheryHeldJitterFrame = frame;
+				}
+				jitterForPeriphery = foveatedPeripheryHeldJitter;
 			}
-			jitterForPeriphery = foveatedPeripheryHeldJitter;
+		} else {
+			foveatedPeripheryHeldJitter = jitter;
+			foveatedPeripheryHeldJitterFrame = std::numeric_limits<uint32_t>::max();
 		}
 	} else {
 		foveatedPeripheryHeldJitter = jitter;
@@ -1423,7 +1457,7 @@ void Upscaling::DispatchFoveatedPeripheryPass(ID3D11ShaderResourceView* sourceSR
 	cbData.tuning2 = {
 		settings.foveatedPeripheryJitterAttenuation ? 1.0f : 0.0f,
 		jitterAttenuationStrength,
-		0.0f,
+		settings.foveatedPeripheryUseTAA ? 1.0f : 0.0f,
 		0.0f
 	};
 	foveatedPeripheryCB->Update(cbData);

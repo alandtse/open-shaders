@@ -60,12 +60,14 @@ public:
 		uint frameGenerationForceEnable = 0;
 		uint streamlineLogLevel = 0;  // 0=Off, 1=Default, 2=Verbose
 		float sharpnessFSR = 0.0f;
+		bool fsrMotionVectorReconstruction = true;
 		float sharpnessDLSS = 0.1f;
 		bool overrideTAAHFFrequencies = false;
 		float taaHighFreq = 0.8f;
 		float taaLowFreq = 0.8f;
 		bool foveatedVendorDispatch = false;
 		float foveatedCenterArea = 1.0f;
+		bool foveatedPeripheryUseTAA = true;
 		bool foveatedPeripheryMipBias = false;
 		float foveatedPeripheryMipBiasStrength = 1.0f;
 		bool foveatedPeripheryEdgeBlur = false;
@@ -115,7 +117,7 @@ public:
 		float2 jitter;
 		float4 tuning0;  // x=centerScale, y=centerFeather, z=useMipBias, w=mipBiasStrength
 		float4 tuning1;  // x=useEdgeBlur, y=edgeBlurStrength, z=edgeSensitivity, w=pad
-		float4 tuning2;  // x=useJitterAttenuation, y=jitterAttenuationStrength, z=pad, w=pad
+		float4 tuning2;  // x=useJitterAttenuation, y=jitterAttenuationStrength, z=usePeripheryTAA, w=pad
 	};
 
 	struct FoveatedCenterBlendCB
