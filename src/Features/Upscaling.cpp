@@ -52,9 +52,9 @@ decltype(&D3D11CreateDeviceAndSwapChain) ptrD3D11CreateDeviceAndSwapChainUpscali
 
 namespace
 {
-	constexpr float kFoveatedCenterAreaMin = FoveatedCommon::kCenterAreaMin;
-	constexpr float kFoveatedCenterAreaMax = FoveatedCommon::kCenterAreaMax;
-	constexpr float kFoveatedCenterFeather = FoveatedCommon::kCenterFeather;
+	constexpr float kFoveatedCenterAreaMin = 0.45f;
+	constexpr float kFoveatedCenterAreaMax = 1.0f;
+	constexpr float kFoveatedCenterFeather = 0.05f;
 	constexpr float kPeripheryMipBiasStrengthMin = 0.0f;
 	constexpr float kPeripheryMipBiasStrengthMax = 2.0f;
 	constexpr float kPeripheryEdgeBlurStrengthMin = 0.0f;
