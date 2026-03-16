@@ -70,6 +70,12 @@ namespace
 		return std::clamp(value, kFoveatedCenterAreaMin, kFoveatedCenterAreaMax);
 	}
 
+	bool SupportsFoveatedVendorDispatch(Upscaling::UpscaleMethod a_upscaleMethod)
+	{
+		// Foveated vendor dispatch is VR-only and currently DLSS-only.
+		return globals::game::isVR && a_upscaleMethod == Upscaling::UpscaleMethod::kDLSS;
+	}
+
 	bool TryGetTexture2DDesc(ID3D11Resource* resource, D3D11_TEXTURE2D_DESC& outDesc)
 	{
 		if (!resource)
@@ -348,11 +354,16 @@ void Upscaling::DrawSettings()
 
 		if (globals::game::isVR) {
 			const char* toggleModes[] = { "Disabled", "Enabled" };
+			const bool foveatedDispatchSupportedForMethod = SupportsFoveatedVendorDispatch(upscaleMethod);
+			if (!foveatedDispatchSupportedForMethod) {
+				ImGui::TextDisabled("Foveated vendor dispatch is currently DLSS-only. FSR uses full-eye dispatch.");
+			}
+			ImGui::BeginDisabled(!foveatedDispatchSupportedForMethod);
 			int foveatedVendorDispatch = settings.foveatedVendorDispatch ? 1 : 0;
 			ImGui::SliderInt("Foveated Vendor Dispatch", &foveatedVendorDispatch, 0, 1, toggleModes[foveatedVendorDispatch]);
 			settings.foveatedVendorDispatch = foveatedVendorDispatch > 0;
 			settings.foveatedCenterArea = ClampFoveatedCenterArea(settings.foveatedCenterArea);
-			if (settings.foveatedVendorDispatch) {
+			if (settings.foveatedVendorDispatch && foveatedDispatchSupportedForMethod) {
 				ImGui::SliderFloat("Foveated Center Area", &settings.foveatedCenterArea, kFoveatedCenterAreaMin, kFoveatedCenterAreaMax, "%.2f");
 				settings.foveatedCenterArea = ClampFoveatedCenterArea(settings.foveatedCenterArea);
 				if (auto _tt = Util::HoverTooltipWrapper()) {
@@ -415,6 +426,7 @@ void Upscaling::DrawSettings()
 					ImGui::TextUnformatted("Low cost; larger values reduce flicker more but increase trailing risk.");
 				}
 			}
+			ImGui::EndDisabled();
 		}
 	}
 
@@ -1164,13 +1176,10 @@ eastl::unique_ptr<Texture2D> Upscaling::CreateTextureFromSource(ID3D11Resource* 
 
 bool Upscaling::IsFoveatedVendorDispatchEnabled(UpscaleMethod a_upscaleMethod) const
 {
-	if (!globals::game::isVR)
+	if (!SupportsFoveatedVendorDispatch(a_upscaleMethod))
 		return false;
 
 	if (!settings.foveatedVendorDispatch)
-		return false;
-
-	if (a_upscaleMethod != UpscaleMethod::kDLSS && a_upscaleMethod != UpscaleMethod::kFSR)
 		return false;
 
 	const float centerArea = ClampFoveatedCenterArea(settings.foveatedCenterArea);
