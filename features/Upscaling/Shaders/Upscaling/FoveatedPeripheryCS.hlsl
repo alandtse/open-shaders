@@ -5,6 +5,8 @@ cbuffer FoveatedPeripheryCB : register(b0)
 	float2 OutputDim;
 	float2 InvOutputDim;
 	float2 InvSourceDim;
+	float2 SourceScale;
+	float2 SourceOffset;
 	float2 DispatchDim;
 	float2 OutputOffset;
 	float2 Jitter;
@@ -55,7 +57,7 @@ float Luma(float3 c)
 		jitterApplied *= (1.0 - attenuation);
 	}
 
-	float2 sourceUV = uv - (jitterApplied * InvSourceDim);
+	float2 sourceUV = (uv * SourceScale + SourceOffset) - (jitterApplied * InvSourceDim);
 	sourceUV = saturate(sourceUV);
 
 	float mipBias = 0.0;
