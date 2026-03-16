@@ -62,9 +62,6 @@ public:
 		float sharpnessFSR = 0.0f;
 		float sharpnessDLSS = 0.1f;
 		bool dlssUseHistoryReset = false;
-		bool overrideTAAHFFrequencies = false;
-		float taaHighFreq = 0.8f;
-		float taaLowFreq = 0.8f;
 		bool foveatedVendorDispatch = false;
 		float foveatedCenterArea = 0.6f;
 		bool foveatedPeripheryUseTAA = true;
@@ -176,7 +173,6 @@ public:
 	bool IsFrameGenerationActive() const;
 	float GetFrameGenerationFrameTime() const;
 	bool IsUpscalingActive() const;
-	void SyncTAAFrequencyOverrides();
 
 	// Feature interface overrides
 	virtual void DrawSettings() override;
@@ -298,9 +294,6 @@ public:
 	UpscaleMethod previousHistoryUpscaleMethod = UpscaleMethod::kNONE;
 	bool previousHistoryFoveatedDispatch = false;
 	float previousHistoryFoveatedCenterArea = 1.0f;
-	bool taaFrequencyOverrideApplied = false;
-	float taaHighFreqBeforeOverride = 0.0f;
-	float taaLowFreqBeforeOverride = 0.0f;
 	float2 foveatedPeripheryHeldJitter = { 0.0f, 0.0f };
 	uint32_t foveatedPeripheryHeldJitterFrame = std::numeric_limits<uint32_t>::max();
 
