@@ -12,7 +12,7 @@ cbuffer FoveatedPeripheryCB : register(b0)
 	float2 Jitter;
 	float4 Tuning0;  // x=centerScale, y=centerFeather, z/w reserved
 	float4 Tuning1;  // x=useEdgeBlur, y=edgeBlurStrength, z=edgeSensitivity, w=useOuterRingBlur
-	float4 Tuning2;  // x/y reserved, z=usePeripheryTAA, w=pad
+	float4 Tuning2;  // x=visualizeMask, y reserved, z=usePeripheryTAA, w=pad
 };
 
 Texture2D<float4> InputColor : register(t0);
@@ -42,10 +42,31 @@ float Luma(float3 c)
 	const float edgeBlurStrength = Tuning1.y;
 	const float edgeSensitivity = Tuning1.z;
 	const float useOuterRingBlur = Tuning1.w;
+	const float visualizeMask = Tuning2.x;
 	const float usePeripheryTAA = Tuning2.z;
 
 	float centerWeight = FoveatedComputeCenterBlendWeight(uv, centerScale, centerFeather);
 	float peripheryWeight = saturate(1.0 - centerWeight);
+
+	if (visualizeMask > 0.5) {
+		const float centerRadius = max(saturate(centerScale) * 0.5, FOVEATED_CENTER_FEATHER_MIN);
+		const float normalizedFeather = max(centerFeather, FOVEATED_CENTER_FEATHER_MIN) / centerRadius;
+		const float ellipseDistance = FoveatedComputeEllipseDistance(uv, centerScale);
+
+		static const float3 kCenterColor = float3(0.20, 0.34, 0.28);
+		static const float3 kFeatherColor = float3(0.43, 0.35, 0.20);
+		static const float3 kPeripheryColor = float3(0.17, 0.22, 0.31);
+
+		float3 maskColor = kPeripheryColor;
+		if (ellipseDistance <= 1.0) {
+			maskColor = kCenterColor;
+		} else if (ellipseDistance <= (1.0 + normalizedFeather)) {
+			maskColor = kFeatherColor;
+		}
+
+		OutColor[outputPos] = float4(maskColor, 1.0);
+		return;
+	}
 
 	float2 jitterApplied = usePeripheryTAA > 0.5 ? Jitter : float2(0.0, 0.0);
 

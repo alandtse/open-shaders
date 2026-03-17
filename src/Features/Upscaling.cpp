@@ -36,6 +36,7 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	foveatedPeripheryEdgeBlur,
 	foveatedPeripheryEdgeBlurStrength,
 	foveatedPeripheryOuterRingBlur,
+	foveatedPeripheryMaskVisualization,
 	linkFoveatedCenterAreaWithSSGI,
 	hasExplicitFoveatedCenterLinkPreference,
 	reflexLowLatencyMode,
@@ -419,6 +420,14 @@ void Upscaling::DrawSettings()
 					ImGui::TextUnformatted("Higher stability/less shimmer in the edge-periphery at added softening and cost.");
 					if (!settings.foveatedPeripheryEdgeBlur)
 						ImGui::TextUnformatted("Requires Periphery Edge Blur = Enabled.");
+				}
+
+				int peripheryMaskVisualizationEnabled = settings.foveatedPeripheryMaskVisualization ? 1 : 0;
+				ImGui::SliderInt("Periphery Mask Visualization", &peripheryMaskVisualizationEnabled, 0, 1, toggleModes[peripheryMaskVisualizationEnabled]);
+				settings.foveatedPeripheryMaskVisualization = peripheryMaskVisualizationEnabled > 0;
+				if (auto _tt = Util::HoverTooltipWrapper()) {
+					ImGui::TextUnformatted("Shows center, feather, and periphery regions with muted debug colors.");
+					ImGui::TextUnformatted("Use this to verify foveated alignment and blend coverage.");
 				}
 			}
 			ImGui::EndDisabled();
@@ -1323,7 +1332,7 @@ void Upscaling::DispatchFoveatedPeripheryPass(ID3D11ShaderResourceView* sourceSR
 		settings.foveatedPeripheryOuterRingBlur ? 1.0f : 0.0f
 	};
 	cbData.tuning2 = {
-		0.0f,
+		settings.foveatedPeripheryMaskVisualization ? 1.0f : 0.0f,
 		0.0f,
 		settings.foveatedPeripheryUseTAA ? 1.0f : 0.0f,
 		0.0f
@@ -1635,8 +1644,9 @@ bool Upscaling::DispatchFoveatedVendorUpscaling(UpscaleMethod a_upscaleMethod, I
 		return false;
 
 	auto* peripheryCS = GetFoveatedPeripheryCS();
-	auto* blendCS = GetFoveatedCenterBlendCS();
-	if (!peripheryCS || !blendCS || !foveatedPeripheryCB || !foveatedCenterBlendCB)
+	const bool visualizeMask = settings.foveatedPeripheryMaskVisualization;
+	auto* blendCS = visualizeMask ? nullptr : GetFoveatedCenterBlendCS();
+	if (!peripheryCS || !foveatedPeripheryCB || (!visualizeMask && (!blendCS || !foveatedCenterBlendCB)))
 		return false;
 	auto context = globals::d3d::context;
 	auto deferred = globals::deferred;
@@ -1657,11 +1667,17 @@ bool Upscaling::DispatchFoveatedVendorUpscaling(UpscaleMethod a_upscaleMethod, I
 	const bool hasCenterInterior = innerMaxX > innerMinX && innerMaxY > innerMinY;
 
 	for (uint32_t eye = 0; eye < 2; ++eye) {
-		if (!vrIntermediateColorOut[eye] || !vrIntermediateColorOut[eye]->uav ||
-			!vrIntermediateMotionVectors[eye] || !vrIntermediateReactiveMask[eye] || !vrIntermediateTransparencyMask[eye]) {
+		if (!vrIntermediateColorOut[eye] || !vrIntermediateColorOut[eye]->uav) {
 			return false;
 		}
-		if (!useDirectSourcePath && (!vrIntermediateColorIn[eye] || !vrIntermediateColorIn[eye]->srv || !vrIntermediateDepth[eye])) {
+		if (!useDirectSourcePath && (!vrIntermediateColorIn[eye] || !vrIntermediateColorIn[eye]->srv)) {
+			return false;
+		}
+		if (!visualizeMask &&
+			(!vrIntermediateMotionVectors[eye] || !vrIntermediateReactiveMask[eye] || !vrIntermediateTransparencyMask[eye])) {
+			return false;
+		}
+		if (!visualizeMask && !useDirectSourcePath && !vrIntermediateDepth[eye]) {
 			return false;
 		}
 
@@ -1703,7 +1719,9 @@ bool Upscaling::DispatchFoveatedVendorUpscaling(UpscaleMethod a_upscaleMethod, I
 				peripherySourceOffsetY);
 		};
 
-		if (hasCenterInterior) {
+		if (visualizeMask) {
+			dispatchPeripheryBand(0, 0, outputWidthPerEye, outputHeight);
+		} else if (hasCenterInterior) {
 			const uint32_t innerHeight = innerMaxY - innerMinY;
 			dispatchPeripheryBand(0, 0, outputWidthPerEye, innerMinY);
 			dispatchPeripheryBand(0, innerMaxY, outputWidthPerEye, outputHeight - innerMaxY);
@@ -1722,6 +1740,9 @@ bool Upscaling::DispatchFoveatedVendorUpscaling(UpscaleMethod a_upscaleMethod, I
 		context->CSSetSamplers(0, 1, nullSampler);
 		context->CSSetConstantBuffers(0, 1, nullCB);
 		context->CSSetShader(nullptr, nullptr, 0);
+
+		if (visualizeMask)
+			continue;
 
 		ID3D11Resource* centerColorInput = useDirectSourcePath ? colorTexture : vrIntermediateColorIn[eye]->resource.get();
 		ID3D11Resource* centerDepthInput = useDirectSourcePath ? depthTexture : vrIntermediateDepth[eye]->resource.get();
