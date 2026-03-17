@@ -12,7 +12,13 @@ SamplerComparisonState comparisonSampler : register(s0);
 	const float fadeInThreshold = 15;
 	const static sh2 unitSH = float4(sqrt(4.0 * Math::PI), 0, 0, 0);
 	const SharedData::SkylightingSettings settings = SharedData::skylightingSettings;
-	uint3 cellID = uint3(max(int3(dtid) - settings.ArrayOrigin.xyz, 0) % Skylighting::ARRAY_DIM);
+	uint sliceCount = max(1u, settings.ProbeUpdateSliceCount);
+	uint probeSlice = settings.ProbeUpdateSliceStart + dtid.z;
+	if (dtid.z >= sliceCount || probeSlice >= Skylighting::ARRAY_DIM.z)
+		return;
+
+	uint3 probeTexID = uint3(dtid.xy, probeSlice);
+	uint3 cellID = uint3(max(int3(probeTexID) - settings.ArrayOrigin.xyz, 0) % Skylighting::ARRAY_DIM);
 	uint3 validMin = (uint3)max(0, settings.ValidMargin.xyz);
 	uint3 validMax = Skylighting::ARRAY_DIM - 1 + (uint3)min(0, settings.ValidMargin.xyz);
 	bool isValid = all(cellID >= validMin) && all(cellID <= validMax);  // check if the cell is newly added
@@ -24,7 +30,7 @@ SamplerComparisonState comparisonSampler : register(s0);
 	float2 occlusionUV = cellCentreOS.xy * 0.5 + 0.5;
 
 	if (all(occlusionUV > 0) && all(occlusionUV < 1)) {
-		uint accumFrames = isValid ? (outAccumFramesArray[dtid] + 1) : 1;
+		uint accumFrames = isValid ? (outAccumFramesArray[probeTexID] + 1) : 1;
 		float occlusionDepth = srcOcclusionDepth.SampleCmpLevelZero(comparisonSampler, occlusionUV, 0);
 		float visibility = srcOcclusionDepth.SampleCmpLevelZero(comparisonSampler, occlusionUV, cellCentreOS.z);
 
@@ -33,15 +39,15 @@ SamplerComparisonState comparisonSampler : register(s0);
 			float lerpFactor = rcp(accumFrames);
 			sh2 prevProbeSH = unitSH;
 			if (accumFrames > 1)
-				prevProbeSH += (outProbeArray[dtid] - unitSH) * fadeInThreshold / min(fadeInThreshold, accumFrames - 1);  // inverse confidence
+				prevProbeSH += (outProbeArray[probeTexID] - unitSH) * fadeInThreshold / min(fadeInThreshold, accumFrames - 1);  // inverse confidence
 			occlusionSH = lerp(prevProbeSH, occlusionSH, lerpFactor);
 		}
 		occlusionSH = lerp(unitSH, occlusionSH, min(fadeInThreshold, accumFrames) / fadeInThreshold);  // confidence fade in
 
-		outProbeArray[dtid] = occlusionSH;
-		outAccumFramesArray[dtid] = accumFrames;
+		outProbeArray[probeTexID] = occlusionSH;
+		outAccumFramesArray[probeTexID] = accumFrames;
 	} else if (!isValid) {
-		outProbeArray[dtid] = unitSH;
-		outAccumFramesArray[dtid] = 0;
+		outProbeArray[probeTexID] = unitSH;
+		outAccumFramesArray[probeTexID] = 0;
 	}
 }
