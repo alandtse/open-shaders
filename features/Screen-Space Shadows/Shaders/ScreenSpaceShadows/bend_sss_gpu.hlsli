@@ -22,6 +22,8 @@
 // Common screen space shadow projection code (GPU):
 //--------------------------------------------------------------
 
+#include "Common/FoveatedMask.hlsli"
+
 // The main shadow generation function is WriteScreenSpaceShadow(), it will read a depth texture, and write to a shadow texture
 // This code is setup to target DX12 DXC shader compiler, but has also been tested on PS5 with appropriate API remapping.
 // It can compile to DX11, but requires some modifications (e.g., early-out's use of wave intrinsics is not supported in DX11).
@@ -64,6 +66,12 @@ struct DispatchParameters
 
 	uint DynamicSampleCount;
 	uint DynamicReadCount;
+	half FoveatedCenterScale;
+	half FoveatedCenterFeather;
+	half FoveatedPeripherySampleScale;
+	half FoveatedPeripheryCullDistanceScale;
+	half2 FoveatedCenterOffset;
+	bool FoveatedEnabled;
 
 	bool IgnoreEdgePixels;  // If an edge is detected, the edge pixel will not contribute to the shadow.
 							// If a very flat surface is being lit and rendered at an grazing angles, the edge detect may incorrectly detect multiple 'edge' pixels along that flat surface.
@@ -100,6 +108,12 @@ struct DispatchParameters
 		BilinearThreshold = 0.02;
 		ShadowContrast = 4;
 		VRCullDistance = 0.0;
+		FoveatedCenterScale = 1.0;
+		FoveatedCenterFeather = 0.0;
+		FoveatedPeripherySampleScale = 1.0;
+		FoveatedPeripheryCullDistanceScale = 1.0;
+		FoveatedCenterOffset = half2(0.0, 0.0);
+		FoveatedEnabled = false;
 		IgnoreEdgePixels = false;
 		UsePrecisionOffset = false;
 		BilinearSamplingOffsetMode = false;
@@ -221,6 +235,8 @@ void WriteScreenSpaceShadow(DispatchParameters inParameters, int3 inGroupID, int
 	int i;
 	bool is_edge = false;
 	bool skip_pixel = false;
+	uint effectiveDynamicSampleCount = inParameters.DynamicSampleCount;
+	float effectiveVRCullDistance = inParameters.VRCullDistance;
 
 #	if defined(RIGHT)
 	pixel_xy.x += 1.0 / inParameters.InvDepthTextureSize.x;
@@ -228,9 +244,26 @@ void WriteScreenSpaceShadow(DispatchParameters inParameters, int3 inGroupID, int
 
 	SSS_COORD2 write_xy = floor(pixel_xy);
 
+#	if defined(VR)
+	if (inParameters.FoveatedEnabled)
+	{
+		const float eyeWidth = 1.0 / inParameters.InvDepthTextureSize.x;
+		float2 eyeWriteXY = write_xy;
+#		if defined(RIGHT)
+		eyeWriteXY.x -= eyeWidth;
+#		endif
+		const float2 eyeUv = saturate((eyeWriteXY + 0.5) * inParameters.InvDepthTextureSize);
+		const float centerWeight = FoveatedComputeCenterBlendWeight(eyeUv, inParameters.FoveatedCenterScale, inParameters.FoveatedCenterFeather, inParameters.FoveatedCenterOffset);
+		const float sampleScale = lerp(inParameters.FoveatedPeripherySampleScale, 1.0, centerWeight);
+		effectiveDynamicSampleCount = max(1u, min(inParameters.DynamicSampleCount, (uint)round((float)inParameters.DynamicSampleCount * sampleScale)));
+		if (effectiveVRCullDistance > 0.0)
+			effectiveVRCullDistance = lerp(effectiveVRCullDistance * inParameters.FoveatedPeripheryCullDistanceScale, effectiveVRCullDistance, centerWeight);
+	}
+#	endif
+
 	[loop] for (i = 0; i < READ_COUNT; i++)
 	{
-		if (i == inParameters.DynamicSampleCount)
+		if (i == effectiveDynamicSampleCount)
 			break;
 
 		// We sample depth twice per pixel per sample, and interpolate with an edge detect filter
@@ -315,7 +348,7 @@ void WriteScreenSpaceShadow(DispatchParameters inParameters, int3 inGroupID, int
 	// Write the shadow depths to LDS
 	[loop] for (i = 0; i < READ_COUNT; i++)
 	{
-		if (i == inParameters.DynamicSampleCount)
+		if (i == effectiveDynamicSampleCount)
 			break;
 
 		// Perspective correct the shadowing depth, in this space, all light rays are parallel
@@ -355,11 +388,11 @@ void WriteScreenSpaceShadow(DispatchParameters inParameters, int3 inGroupID, int
 		return;
 
 	float cullFade = 1.0;
-	if (inParameters.VRCullDistance > 0.0) {
+	if (effectiveVRCullDistance > 0.0) {
 		float linearDepth = SharedData::GetScreenDepth(start_depth);
-		float fadeBand = clamp(inParameters.VRCullDistance * 0.2, 200.0, 1200.0);
-		float fadeStart = inParameters.VRCullDistance - fadeBand;
-		float fadeEnd = inParameters.VRCullDistance;
+		float fadeBand = clamp(effectiveVRCullDistance * 0.2, 200.0, 1200.0);
+		float fadeStart = effectiveVRCullDistance - fadeBand;
+		float fadeEnd = effectiveVRCullDistance;
 
 		if (linearDepth >= fadeEnd) {
 			inParameters.OutputTexture[(int2)write_xy] = 1.0;
@@ -393,7 +426,7 @@ void WriteScreenSpaceShadow(DispatchParameters inParameters, int3 inGroupID, int
 
 	for (i = 0; i < SAMPLE_COUNT; i++)
 	{
-		if (i == inParameters.DynamicSampleCount)
+		if (i == effectiveDynamicSampleCount)
 			break;
 
 		half depth_delta = abs(start_depth - DepthData[sample_index + i] * depth_scale);
