@@ -45,6 +45,8 @@ public:
 	virtual void LoadSettings(json&) override;
 	virtual void RestoreDefaultSettings() override;
 	virtual void DrawSettings() override;
+	bool IsExteriorEnabled() const;
+	void SetExteriorEnabled(bool enabled);
 	virtual void DataLoaded() override;
 	virtual void PostPostLoad() override;
 	virtual void SetupResources() override;

@@ -139,6 +139,20 @@ void VolumetricLighting::RestoreDefaultSettings()
 		Util::ResetGameSettingsToDefaults(hiddenVRSettings);
 }
 
+bool VolumetricLighting::IsExteriorEnabled() const
+{
+	return settings.ExteriorEnabled;
+}
+
+void VolumetricLighting::SetExteriorEnabled(bool enabled)
+{
+	settings.ExteriorEnabled = enabled;
+
+	if (initialised && !inInterior && bEnableVolumetricLighting && gVolumetricLightingSizeHigh) {
+		SetupVL();
+	}
+}
+
 void VolumetricLighting::DataLoaded()
 {
 	auto shaderCache = globals::shaderCache;
