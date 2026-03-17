@@ -10,6 +10,7 @@
 #include "ShaderCache.h"
 #include "State.h"
 #include "TruePBR.h"
+#include "VRAPI/CSpluginapi.h"
 #include "WeatherManager.h"
 
 #include "ENB/ENBSeriesAPI.h"
@@ -174,7 +175,20 @@ bool Load()
 	}
 
 	auto messaging = SKSE::GetMessagingInterface();
-	messaging->RegisterListener("SKSE", MessageHandler);
+	if (!messaging) {
+		logger::error("SKSE messaging interface unavailable");
+		return false;
+	}
+
+	if (!messaging->RegisterListener("SKSE", MessageHandler)) {
+		logger::error("Failed to register SKSE message listener");
+		return false;
+	}
+
+	if (!messaging->RegisterListener(nullptr, CSPluginAPI::ModMessageHandler)) {
+		logger::error("Failed to register Community Shaders API message listener");
+		return false;
+	}
 
 	globals::OnInit();
 	globals::ReInit();
