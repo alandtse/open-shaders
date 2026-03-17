@@ -1083,6 +1083,10 @@ void ScreenSpaceGI::UpdateSB()
 		data.VRCullDistance = isVR ? ClampVRCullDistance(settings.VRCullDistance) : 0.0f;
 		data.CenterFullResMaskScale = centerMaskScale;
 		data.CenterFullResMaskFeather = FoveatedCommon::kCenterFeather;
+		auto centerOffsets = globals::features::upscaling.GetResolvedFoveatedMaskCenterOffsets();
+		if (!isVR)
+			centerOffsets[1] = { 0.0f, 0.0f };
+		data.CenterFullResMaskOffsets = { centerOffsets[0].x, centerOffsets[0].y, centerOffsets[1].x, centerOffsets[1].y };
 		data.CenterDispatchOffsetX = 0.0f;
 		data.CenterDispatchOffsetY = 0.0f;
 		data.CenterDispatchSizeX = dynres.x;
@@ -1274,6 +1278,9 @@ void ScreenSpaceGI::DrawSSGI()
 	};
 	auto internalRes = resChoices[resolutionMode];
 	using DispatchRect = CenterDispatchRect;
+	auto centerOffsets = globals::features::upscaling.GetResolvedFoveatedMaskCenterOffsets();
+	if (!isVR)
+		centerOffsets[1] = { 0.0f, 0.0f };
 
 	auto buildCenterDispatchRect = [&](uint a_eyeIndex) -> DispatchRect {
 		DispatchRect rect{};
@@ -1284,7 +1291,7 @@ void ScreenSpaceGI::DrawSSGI()
 
 		uint eyeMinX = 0;
 		uint eyeMaxX = frameWidth;
-		if (REL::Module::IsVR()) {
+		if (isVR) {
 			const uint midX = frameWidth >> 1;
 			if (a_eyeIndex == 0) {
 				eyeMinX = 0;
@@ -1299,7 +1306,8 @@ void ScreenSpaceGI::DrawSSGI()
 		if (eyeWidth == 0)
 			return rect;
 
-		const auto bounds = FoveatedCommon::BuildCenteredDispatchBounds(eyeMinX, eyeMaxX, frameHeight, centerScale);
+		const float2 centerOffset = centerOffsets[a_eyeIndex];
+		const auto bounds = FoveatedCommon::BuildCenteredDispatchBounds(eyeMinX, eyeMaxX, frameHeight, centerScale, centerOffset.x, centerOffset.y);
 		const int minX = bounds.minX;
 		const int maxX = bounds.maxX;
 		const int minY = bounds.minY;
@@ -1321,12 +1329,17 @@ void ScreenSpaceGI::DrawSSGI()
 		cache.frameWidth != resolution[0] ||
 		cache.frameHeight != resolution[1] ||
 		cache.isVR != isVR ||
-		(centerScaleDelta < 0.0f ? -centerScaleDelta : centerScaleDelta) > 1e-6f;
+		(centerScaleDelta < 0.0f ? -centerScaleDelta : centerScaleDelta) > 1e-6f ||
+		std::abs(cache.centerOffsets[0].x - centerOffsets[0].x) > 1e-6f ||
+		std::abs(cache.centerOffsets[0].y - centerOffsets[0].y) > 1e-6f ||
+		(isVR && (std::abs(cache.centerOffsets[1].x - centerOffsets[1].x) > 1e-6f ||
+		          std::abs(cache.centerOffsets[1].y - centerOffsets[1].y) > 1e-6f));
 	if (centerCacheDirty) {
 		cache.frameWidth = resolution[0];
 		cache.frameHeight = resolution[1];
 		cache.isVR = isVR;
 		cache.scale = centerScale;
+		cache.centerOffsets = centerOffsets;
 		cache.rects[0] = buildCenterDispatchRect(0);
 		cache.rects[1] = isVR ? buildCenterDispatchRect(1) : DispatchRect{};
 	}

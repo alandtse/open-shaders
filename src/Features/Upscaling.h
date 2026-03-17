@@ -63,6 +63,10 @@ public:
 		float sharpnessDLSS = 0.1f;
 		bool foveatedVendorDispatch = false;
 		float foveatedCenterArea = 0.6f;
+		float foveatedLeftEyeMaskOffsetX = 0.0f;
+		float foveatedLeftEyeMaskOffsetY = 0.0f;
+		float foveatedRightEyeMaskOffsetX = 0.0f;
+		float foveatedRightEyeMaskOffsetY = 0.0f;
 		bool foveatedPeripheryEdgeBlur = false;
 		float foveatedPeripheryEdgeBlurStrength = 0.35f;
 		bool foveatedPeripheryMaskVisualization = false;
@@ -107,6 +111,8 @@ public:
 		float2 dispatchDim;
 		float2 outputOffset;
 		float2 jitter;
+		float2 centerOffset;
+		float2 pad0;
 		float4 tuning0;  // x=centerScale, y=centerFeather, z/w reserved
 		float4 tuning1;  // x=useEdgeBlur, y=edgeBlurStrength, z=edgeSensitivity, w reserved
 		float4 tuning2;  // x=visualizeMask, y/z/w reserved
@@ -117,6 +123,7 @@ public:
 		float2 invOutputDim;
 		float centerScale;
 		float centerFeather;
+		float2 centerOffset;
 		float2 outputOffset;
 		float2 dispatchDim;
 		float2 sourceOffset;
@@ -143,6 +150,7 @@ public:
 		uint outputHeight = 0;
 		bool isVR = false;
 		float centerScale = -1.0f;
+		std::array<float2, 2> centerOffsets{};
 		std::array<FoveatedDispatchRect, 2> rects{};
 	} foveatedRectCache;
 
@@ -298,12 +306,16 @@ public:
 	void UpdateHistoryResetState(UpscaleMethod a_upscaleMethod);
 	void LatchHistoryResetForCurrentFrame();
 	bool IsFoveatedVendorDispatchEnabled(UpscaleMethod a_upscaleMethod) const;
+	float2 GetDefaultFoveatedMaskCenterOffset(uint32_t eyeIndex) const;
+	std::array<float2, 2> GetDefaultFoveatedMaskCenterOffsets() const;
+	float2 GetResolvedFoveatedMaskCenterOffset(uint32_t eyeIndex) const;
+	std::array<float2, 2> GetResolvedFoveatedMaskCenterOffsets() const;
 	bool BuildFoveatedDispatchRects(uint32_t inputWidthPerEye, uint32_t inputHeight, uint32_t outputWidthPerEye, uint32_t outputHeight, bool isVR, float centerScale);
 	bool EnsureFoveatedTexture(eastl::unique_ptr<Texture2D>& texture, ID3D11Resource* source, uint32_t width, uint32_t height, bool copyBindFlags, bool createSRV, bool createUAV, bool createRTV, const char* name);
 	void DestroyFoveatedResources();
 	bool DispatchFoveatedVendorUpscaling(UpscaleMethod a_upscaleMethod, ID3D11Resource* colorTexture, ID3D11Resource* depthTexture, ID3D11Resource* motionVectors, ID3D11Resource* reactiveMask, ID3D11Resource* transparencyMask, ID3D11ShaderResourceView* colorSRV, bool depthAlreadyPrepared);
 	bool DispatchSingleFoveatedVendorEye(UpscaleMethod a_upscaleMethod, uint32_t eyeIndex, ID3D11Resource* colorIn, ID3D11Resource* depthIn, ID3D11Resource* motionVectorsIn, ID3D11Resource* reactiveMaskIn, ID3D11Resource* transparencyMaskIn, uint32_t outputWidthPerEye, uint32_t outputHeight, uint32_t innerMinX, uint32_t innerMinY, uint32_t innerMaxX, uint32_t innerMaxY, uint32_t colorInputBaseOffsetX = 0, uint32_t depthInputBaseOffsetX = 0, uint32_t auxInputBaseOffsetX = 0);
-	void DispatchFoveatedPeripheryPass(ID3D11ShaderResourceView* sourceSRV, ID3D11UnorderedAccessView* outputUAV, uint32_t sourceWidth, uint32_t sourceHeight, uint32_t outputWidth, uint32_t outputHeight, uint32_t outputOffsetX, uint32_t outputOffsetY, uint32_t dispatchWidth, uint32_t dispatchHeight, bool keepBindingsBound = false, float sourceScaleX = 1.0f, float sourceScaleY = 1.0f, float sourceOffsetX = 0.0f, float sourceOffsetY = 0.0f);
+	void DispatchFoveatedPeripheryPass(ID3D11ShaderResourceView* sourceSRV, ID3D11UnorderedAccessView* outputUAV, uint32_t sourceWidth, uint32_t sourceHeight, uint32_t outputWidth, uint32_t outputHeight, uint32_t outputOffsetX, uint32_t outputOffsetY, uint32_t dispatchWidth, uint32_t dispatchHeight, bool keepBindingsBound = false, float sourceScaleX = 1.0f, float sourceScaleY = 1.0f, float sourceOffsetX = 0.0f, float sourceOffsetY = 0.0f, float centerOffsetX = 0.0f, float centerOffsetY = 0.0f);
 	void DispatchFoveatedBlendPass(ID3D11ShaderResourceView* centerSRV, ID3D11UnorderedAccessView* outputUAV, uint32_t eyeIndex, uint32_t outputWidthPerEye, uint32_t outputHeight, const FoveatedDispatchRect& rect, uint32_t dispatchOffsetX, uint32_t dispatchOffsetY, uint32_t dispatchWidth, uint32_t dispatchHeight);
 
 	/**

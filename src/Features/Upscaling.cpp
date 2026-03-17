@@ -11,6 +11,7 @@
 #include "VR.h"
 #include <Windows.h>
 #include <algorithm>
+#include <cmath>
 #include <cfloat>
 #include <directx/d3dx12.h>
 #include <format>
@@ -29,6 +30,10 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	sharpnessDLSS,
 	foveatedVendorDispatch,
 	foveatedCenterArea,
+	foveatedLeftEyeMaskOffsetX,
+	foveatedLeftEyeMaskOffsetY,
+	foveatedRightEyeMaskOffsetX,
+	foveatedRightEyeMaskOffsetY,
 	foveatedPeripheryEdgeBlur,
 	foveatedPeripheryEdgeBlurStrength,
 	foveatedPeripheryMaskVisualization,
@@ -46,10 +51,19 @@ namespace
 {
 	constexpr float kPeripheryEdgeBlurStrengthMin = 0.0f;
 	constexpr float kPeripheryEdgeBlurStrengthMax = 2.0f;
+	constexpr float kFoveatedMaskOffsetAdjustMin = -0.15f;
+	constexpr float kFoveatedMaskOffsetAdjustMax = 0.15f;
+	constexpr float kFoveatedMaskOffsetResolvedMin = -0.25f;
+	constexpr float kFoveatedMaskOffsetResolvedMax = 0.25f;
 
 	float ClampFoveatedCenterArea(float value)
 	{
 		return FoveatedCommon::ClampCenterArea(value);
+	}
+
+	float ClampFoveatedMaskOffsetAdjustment(float value)
+	{
+		return std::clamp(value, kFoveatedMaskOffsetAdjustMin, kFoveatedMaskOffsetAdjustMax);
 	}
 
 	bool SupportsFoveatedVendorDispatch(Upscaling::UpscaleMethod a_upscaleMethod)
@@ -345,6 +359,10 @@ void Upscaling::DrawSettings()
 				ImGui::Checkbox("Foveated Upscaling", &settings.foveatedVendorDispatch);
 			}
 			settings.foveatedCenterArea = ClampFoveatedCenterArea(settings.foveatedCenterArea);
+			settings.foveatedLeftEyeMaskOffsetX = ClampFoveatedMaskOffsetAdjustment(settings.foveatedLeftEyeMaskOffsetX);
+			settings.foveatedLeftEyeMaskOffsetY = ClampFoveatedMaskOffsetAdjustment(settings.foveatedLeftEyeMaskOffsetY);
+			settings.foveatedRightEyeMaskOffsetX = ClampFoveatedMaskOffsetAdjustment(settings.foveatedRightEyeMaskOffsetX);
+			settings.foveatedRightEyeMaskOffsetY = ClampFoveatedMaskOffsetAdjustment(settings.foveatedRightEyeMaskOffsetY);
 			if (settings.foveatedVendorDispatch && foveatedDispatchSupportedForMethod) {
 				ImGui::SliderFloat("Foveated Area", &settings.foveatedCenterArea, FoveatedCommon::kCenterAreaMin, FoveatedCommon::kCenterAreaMax, "%.2f");
 				settings.foveatedCenterArea = ClampFoveatedCenterArea(settings.foveatedCenterArea);
@@ -368,10 +386,54 @@ void Upscaling::DrawSettings()
 					ImGui::TextUnformatted("Low cost; stronger values reduce flicker but soften peripheral detail.");
 				}
 
-				ImGui::Checkbox("Periphery Mask Visualization", &settings.foveatedPeripheryMaskVisualization);
+				ImGui::Checkbox("Foveated Mask Visualization", &settings.foveatedPeripheryMaskVisualization);
 				if (auto _tt = Util::HoverTooltipWrapper()) {
 					ImGui::TextUnformatted("Shows center, feather, and periphery regions with muted debug colors.");
-					ImGui::TextUnformatted("Use this to verify foveated alignment and blend coverage.");
+					ImGui::TextUnformatted("Use this to derive and verify the real per-eye mask position before judging image quality.");
+					ImGui::TextUnformatted("When enabled, the X/Y eye-offset sliders below adjust the actual foveated mask placement, not just the debug view.");
+				}
+
+				if (settings.foveatedPeripheryMaskVisualization) {
+					const auto defaultOffsets = GetDefaultFoveatedMaskCenterOffsets();
+					const auto resolvedOffsets = GetResolvedFoveatedMaskCenterOffsets();
+					const std::array<const char*, 2> eyeLabels{ "Left", "Right" };
+					const std::array<std::array<float*, 2>, 2> adjustmentSettings{ {
+						{ &settings.foveatedLeftEyeMaskOffsetX, &settings.foveatedLeftEyeMaskOffsetY },
+						{ &settings.foveatedRightEyeMaskOffsetX, &settings.foveatedRightEyeMaskOffsetY },
+					} };
+					const std::array<const char*, 2> axisLabels{ "X", "Y" };
+
+					auto drawMaskAlignmentSlider = [&](size_t eyeIndex, size_t axisIndex) {
+						const bool isHorizontal = axisIndex == 0;
+						float* adjustment = adjustmentSettings[eyeIndex][axisIndex];
+						const float defaultCenter = isHorizontal ? defaultOffsets[eyeIndex].x : defaultOffsets[eyeIndex].y;
+						const float resolvedCenter = isHorizontal ? resolvedOffsets[eyeIndex].x : resolvedOffsets[eyeIndex].y;
+						const std::string sliderLabel = std::format("{} Eye Mask Offset {}", eyeLabels[eyeIndex], axisLabels[axisIndex]);
+						ImGui::SliderFloat(sliderLabel.c_str(), adjustment, kFoveatedMaskOffsetAdjustMin, kFoveatedMaskOffsetAdjustMax, "%.3f");
+						*adjustment = ClampFoveatedMaskOffsetAdjustment(*adjustment);
+						if (auto _tt = Util::HoverTooltipWrapper()) {
+							ImGui::Text("Adds a %s offset to the centered %s-eye mask.", isHorizontal ? "horizontal" : "vertical", eyeLabels[eyeIndex]);
+							ImGui::TextUnformatted(isHorizontal ?
+								                       "Positive moves the foveated mask right. Negative moves it left." :
+								                       "Positive moves the foveated mask down. Negative moves it up.");
+							ImGui::Text("Default center %s: %.3f, resolved center %s: %.3f", axisLabels[axisIndex], defaultCenter, axisLabels[axisIndex], resolvedCenter);
+						}
+					};
+
+					ImGui::Separator();
+					ImGui::TextUnformatted("Mask Alignment");
+					drawMaskAlignmentSlider(0, 0);
+					drawMaskAlignmentSlider(0, 1);
+					drawMaskAlignmentSlider(1, 0);
+					drawMaskAlignmentSlider(1, 1);
+
+					ImGui::TextDisabled("Mask alignment notes");
+					if (auto _tt = Util::HoverTooltipWrapper()) {
+						ImGui::TextUnformatted("Use the mask view to line the center ellipse up with the real headset image in each eye horizontally and vertically.");
+						ImGui::TextUnformatted("These offsets also drive the actual foveated crop and blend placement.");
+						if (settings.linkFoveatedCenterAreaWithSSGI)
+							ImGui::TextUnformatted("When SSGI is linked, the same eye offsets are reused there.");
+					}
 				}
 			}
 			ImGui::EndDisabled();
@@ -1082,18 +1144,52 @@ bool Upscaling::IsFoveatedVendorDispatchEnabled(UpscaleMethod a_upscaleMethod) c
 	return centerArea < 0.999f;
 }
 
+float2 Upscaling::GetDefaultFoveatedMaskCenterOffset(uint32_t eyeIndex) const
+{
+	(void)eyeIndex;
+	return { 0.0f, 0.0f };
+}
+
+std::array<float2, 2> Upscaling::GetDefaultFoveatedMaskCenterOffsets() const
+{
+	return { GetDefaultFoveatedMaskCenterOffset(0), GetDefaultFoveatedMaskCenterOffset(1) };
+}
+
+float2 Upscaling::GetResolvedFoveatedMaskCenterOffset(uint32_t eyeIndex) const
+{
+	float2 resolved = GetDefaultFoveatedMaskCenterOffset(eyeIndex);
+	const bool isLeftEye = eyeIndex == 0;
+	const float userAdjustX = isLeftEye ? settings.foveatedLeftEyeMaskOffsetX : settings.foveatedRightEyeMaskOffsetX;
+	const float userAdjustY = isLeftEye ? settings.foveatedLeftEyeMaskOffsetY : settings.foveatedRightEyeMaskOffsetY;
+	resolved.x = std::clamp(resolved.x + ClampFoveatedMaskOffsetAdjustment(userAdjustX), kFoveatedMaskOffsetResolvedMin, kFoveatedMaskOffsetResolvedMax);
+	resolved.y = std::clamp(resolved.y + ClampFoveatedMaskOffsetAdjustment(userAdjustY), kFoveatedMaskOffsetResolvedMin, kFoveatedMaskOffsetResolvedMax);
+	return resolved;
+}
+
+std::array<float2, 2> Upscaling::GetResolvedFoveatedMaskCenterOffsets() const
+{
+	return { GetResolvedFoveatedMaskCenterOffset(0), GetResolvedFoveatedMaskCenterOffset(1) };
+}
+
 bool Upscaling::BuildFoveatedDispatchRects(uint32_t inputWidthPerEye, uint32_t inputHeight, uint32_t outputWidthPerEye, uint32_t outputHeight, bool isVR, float centerScale)
 {
 	centerScale = ClampFoveatedCenterArea(centerScale);
 
 	auto& cache = foveatedRectCache;
+	auto centerOffsets = GetResolvedFoveatedMaskCenterOffsets();
+	if (!isVR)
+		centerOffsets[1] = { 0.0f, 0.0f };
 	const bool cacheDirty =
 		cache.inputWidthPerEye != inputWidthPerEye ||
 		cache.inputHeight != inputHeight ||
 		cache.outputWidthPerEye != outputWidthPerEye ||
 		cache.outputHeight != outputHeight ||
 		cache.isVR != isVR ||
-		std::abs(cache.centerScale - centerScale) > 1e-6f;
+		std::abs(cache.centerScale - centerScale) > 1e-6f ||
+		std::abs(cache.centerOffsets[0].x - centerOffsets[0].x) > 1e-6f ||
+		std::abs(cache.centerOffsets[0].y - centerOffsets[0].y) > 1e-6f ||
+		(isVR && (std::abs(cache.centerOffsets[1].x - centerOffsets[1].x) > 1e-6f ||
+		          std::abs(cache.centerOffsets[1].y - centerOffsets[1].y) > 1e-6f));
 
 	if (!cacheDirty)
 		return true;
@@ -1104,6 +1200,7 @@ bool Upscaling::BuildFoveatedDispatchRects(uint32_t inputWidthPerEye, uint32_t i
 	cache.outputHeight = outputHeight;
 	cache.isVR = isVR;
 	cache.centerScale = centerScale;
+	cache.centerOffsets = centerOffsets;
 	cache.rects = {};
 
 	auto buildRect = [&](uint32_t eyeIndex) {
@@ -1111,7 +1208,8 @@ bool Upscaling::BuildFoveatedDispatchRects(uint32_t inputWidthPerEye, uint32_t i
 		if (!inputWidthPerEye || !inputHeight || !outputWidthPerEye || !outputHeight)
 			return rect;
 
-		const auto bounds = FoveatedCommon::BuildCenteredDispatchBounds(0, outputWidthPerEye, outputHeight, centerScale);
+		const float2 centerOffset = centerOffsets[eyeIndex];
+		const auto bounds = FoveatedCommon::BuildCenteredDispatchBounds(0, outputWidthPerEye, outputHeight, centerScale, centerOffset.x, centerOffset.y);
 		const int minX = bounds.minX;
 		const int maxX = bounds.maxX;
 		const int minY = bounds.minY;
@@ -1226,7 +1324,7 @@ void Upscaling::DestroyFoveatedResources()
 	foveatedRectCache = {};
 }
 
-void Upscaling::DispatchFoveatedPeripheryPass(ID3D11ShaderResourceView* sourceSRV, ID3D11UnorderedAccessView* outputUAV, uint32_t sourceWidth, uint32_t sourceHeight, uint32_t outputWidth, uint32_t outputHeight, uint32_t outputOffsetX, uint32_t outputOffsetY, uint32_t dispatchWidth, uint32_t dispatchHeight, bool keepBindingsBound, float sourceScaleX, float sourceScaleY, float sourceOffsetX, float sourceOffsetY)
+void Upscaling::DispatchFoveatedPeripheryPass(ID3D11ShaderResourceView* sourceSRV, ID3D11UnorderedAccessView* outputUAV, uint32_t sourceWidth, uint32_t sourceHeight, uint32_t outputWidth, uint32_t outputHeight, uint32_t outputOffsetX, uint32_t outputOffsetY, uint32_t dispatchWidth, uint32_t dispatchHeight, bool keepBindingsBound, float sourceScaleX, float sourceScaleY, float sourceOffsetX, float sourceOffsetY, float centerOffsetX, float centerOffsetY)
 {
 	auto* peripheryCS = GetFoveatedPeripheryCS();
 	if (!peripheryCS || !sourceSRV || !outputUAV || !foveatedPeripheryCB)
@@ -1260,6 +1358,8 @@ void Upscaling::DispatchFoveatedPeripheryPass(ID3D11ShaderResourceView* sourceSR
 	cbData.dispatchDim = { static_cast<float>(dispatchWidth), static_cast<float>(dispatchHeight) };
 	cbData.outputOffset = { static_cast<float>(outputOffsetX), static_cast<float>(outputOffsetY) };
 	cbData.jitter = jitter;
+	cbData.centerOffset = { centerOffsetX, centerOffsetY };
+	cbData.pad0 = { 0.0f, 0.0f };
 	const float centerArea = ClampFoveatedCenterArea(settings.foveatedCenterArea);
 	const float edgeBlurStrength = std::clamp(settings.foveatedPeripheryEdgeBlurStrength, kPeripheryEdgeBlurStrengthMin, kPeripheryEdgeBlurStrengthMax);
 	cbData.tuning0 = {
@@ -1351,8 +1451,10 @@ void Upscaling::DispatchFoveatedBlendPass(ID3D11ShaderResourceView* centerSRV, I
 		outputWidthPerEye > 0 ? 1.0f / static_cast<float>(outputWidthPerEye) : 0.0f,
 		outputHeight > 0 ? 1.0f / static_cast<float>(outputHeight) : 0.0f
 	};
+	const float2 centerOffset = GetResolvedFoveatedMaskCenterOffset(eyeIndex);
 	cbData.centerScale = ClampFoveatedCenterArea(settings.foveatedCenterArea);
 	cbData.centerFeather = FoveatedCommon::kCenterFeather;
+	cbData.centerOffset = centerOffset;
 	cbData.outputOffset = { static_cast<float>(dispatchMinX), static_cast<float>(dispatchMinY) };
 	cbData.dispatchDim = { static_cast<float>(actualDispatchWidth), static_cast<float>(actualDispatchHeight) };
 	cbData.sourceOffset = { static_cast<float>(sourceOffsetX), static_cast<float>(sourceOffsetY) };
@@ -1602,14 +1704,16 @@ bool Upscaling::DispatchFoveatedVendorUpscaling(UpscaleMethod a_upscaleMethod, I
 	}
 
 	const float centerScale = ClampFoveatedCenterArea(settings.foveatedCenterArea);
-	const auto innerBounds = FoveatedCommon::BuildCenteredInscribedEllipseRect(outputWidthPerEye, outputHeight, centerScale);
-	const uint32_t innerMinX = static_cast<uint32_t>(innerBounds.minX);
-	const uint32_t innerMaxX = static_cast<uint32_t>(innerBounds.maxX);
-	const uint32_t innerMinY = static_cast<uint32_t>(innerBounds.minY);
-	const uint32_t innerMaxY = static_cast<uint32_t>(innerBounds.maxY);
-	const bool hasCenterInterior = innerMaxX > innerMinX && innerMaxY > innerMinY;
 
 	for (uint32_t eye = 0; eye < 2; ++eye) {
+		const float2 centerOffset = GetResolvedFoveatedMaskCenterOffset(eye);
+		const auto innerBounds = FoveatedCommon::BuildCenteredInscribedEllipseRect(outputWidthPerEye, outputHeight, centerScale, centerOffset.x, centerOffset.y);
+		const uint32_t innerMinX = static_cast<uint32_t>(innerBounds.minX);
+		const uint32_t innerMaxX = static_cast<uint32_t>(innerBounds.maxX);
+		const uint32_t innerMinY = static_cast<uint32_t>(innerBounds.minY);
+		const uint32_t innerMaxY = static_cast<uint32_t>(innerBounds.maxY);
+		const bool hasCenterInterior = innerMaxX > innerMinX && innerMaxY > innerMinY;
+
 		if (!vrIntermediateColorOut[eye] || !vrIntermediateColorOut[eye]->uav) {
 			return false;
 		}
@@ -1659,7 +1763,9 @@ bool Upscaling::DispatchFoveatedVendorUpscaling(UpscaleMethod a_upscaleMethod, I
 				peripherySourceScaleX,
 				peripherySourceScaleY,
 				peripherySourceOffsetX,
-				peripherySourceOffsetY);
+				peripherySourceOffsetY,
+				centerOffset.x,
+				centerOffset.y);
 		};
 
 		if (visualizeMask) {
