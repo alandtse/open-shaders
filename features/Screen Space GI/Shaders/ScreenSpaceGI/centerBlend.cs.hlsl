@@ -1,4 +1,3 @@
-#include "Common/VR.hlsli"
 #include "ScreenSpaceGI/common.hlsli"
 
 Texture2D<half> srcBaseAo : register(t0);
@@ -21,15 +20,6 @@ RWTexture2D<half4> outIlY : register(u1);
 RWTexture2D<half2> outIlCoCg : register(u2);
 RWTexture2D<half4> outGiSpecular : register(u3);
 #endif
-
-float GetCenterFullMaskWeight(float2 stereoUv, uint eyeIndex)
-{
-	float2 eyeUv = Stereo::ConvertFromStereoUV(stereoUv, eyeIndex);
-	float halfSize = saturate(CenterFullResMaskScale) * 0.5;
-	float2 outside = abs(eyeUv - 0.5) - halfSize.xx;
-	float distanceOutside = max(outside.x, outside.y);
-	return 1.0 - smoothstep(0.0, max(CenterFullResMaskFeather, 1e-4), distanceOutside);
-}
 
 [numthreads(8, 8, 1)] void main(const uint2 dtid : SV_DispatchThreadID)
 {

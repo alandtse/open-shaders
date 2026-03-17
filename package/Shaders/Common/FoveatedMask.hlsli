@@ -16,12 +16,19 @@ float FoveatedClampCenterArea(float centerScale)
 	return clamp(centerScale, FOVEATED_CENTER_AREA_MIN, FOVEATED_CENTER_AREA_MAX);
 }
 
+float FoveatedComputeEllipseDistance(float2 eyeUv, float centerScale)
+{
+	float radius = max(saturate(centerScale) * 0.5, FOVEATED_CENTER_FEATHER_MIN);
+	float2 normalized = (eyeUv - 0.5) / radius.xx;
+	return length(normalized);
+}
+
 float FoveatedComputeCenterBlendWeight(float2 eyeUv, float centerScale, float centerFeather)
 {
-	float halfSize = saturate(centerScale) * 0.5;
-	float2 outside = abs(eyeUv - 0.5) - halfSize.xx;
-	float distanceOutside = max(outside.x, outside.y);
-	return 1.0 - smoothstep(0.0, max(centerFeather, FOVEATED_CENTER_FEATHER_MIN), distanceOutside);
+	float radius = max(saturate(centerScale) * 0.5, FOVEATED_CENTER_FEATHER_MIN);
+	float normalizedFeather = max(centerFeather, FOVEATED_CENTER_FEATHER_MIN) / radius;
+	float ellipseDistance = FoveatedComputeEllipseDistance(eyeUv, centerScale);
+	return 1.0 - smoothstep(1.0, 1.0 + normalizedFeather, ellipseDistance);
 }
 
 #endif

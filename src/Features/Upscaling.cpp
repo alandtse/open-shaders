@@ -1158,25 +1158,11 @@ bool Upscaling::BuildFoveatedDispatchRects(uint32_t inputWidthPerEye, uint32_t i
 		if (!inputWidthPerEye || !inputHeight || !outputWidthPerEye || !outputHeight)
 			return rect;
 
-		const float centerX = static_cast<float>(outputWidthPerEye) * 0.5f;
-		const float centerY = static_cast<float>(outputHeight) * 0.5f;
-		const float extentX = centerScale * static_cast<float>(outputWidthPerEye) * 0.5f + FoveatedCommon::kCenterFeather * static_cast<float>(outputWidthPerEye);
-		const float extentY = centerScale * static_cast<float>(outputHeight) * 0.5f + FoveatedCommon::kCenterFeather * static_cast<float>(outputHeight);
-
-		int minX = static_cast<int>(centerX - extentX);
-		int maxX = static_cast<int>(centerX + extentX + 0.9999f);
-		int minY = static_cast<int>(centerY - extentY);
-		int maxY = static_cast<int>(centerY + extentY + 0.9999f);
-
-		minX = std::clamp(minX, 0, static_cast<int>(outputWidthPerEye));
-		maxX = std::clamp(maxX, 0, static_cast<int>(outputWidthPerEye));
-		minY = std::clamp(minY, 0, static_cast<int>(outputHeight));
-		maxY = std::clamp(maxY, 0, static_cast<int>(outputHeight));
-
-		minX = std::max(FoveatedCommon::AlignDownToThreadGroup(minX), 0);
-		maxX = std::min(FoveatedCommon::AlignUpToThreadGroup(maxX), static_cast<int>(outputWidthPerEye));
-		minY = std::max(FoveatedCommon::AlignDownToThreadGroup(minY), 0);
-		maxY = std::min(FoveatedCommon::AlignUpToThreadGroup(maxY), static_cast<int>(outputHeight));
+		const auto bounds = FoveatedCommon::BuildCenteredDispatchBounds(0, outputWidthPerEye, outputHeight, centerScale);
+		const int minX = bounds.minX;
+		const int maxX = bounds.maxX;
+		const int minY = bounds.minY;
+		const int maxY = bounds.maxY;
 
 		if (maxX <= minX || maxY <= minY)
 			return rect;
@@ -1663,17 +1649,11 @@ bool Upscaling::DispatchFoveatedVendorUpscaling(UpscaleMethod a_upscaleMethod, I
 	}
 
 	const float centerScale = ClampFoveatedCenterArea(settings.foveatedCenterArea);
-	const float halfCenterScale = centerScale * 0.5f;
-	const float outputWidthF = static_cast<float>(outputWidthPerEye);
-	const float outputHeightF = static_cast<float>(outputHeight);
-	const int innerMinXInt = std::clamp(static_cast<int>(std::ceil((0.5f - halfCenterScale) * outputWidthF - 0.5f)), 0, static_cast<int>(outputWidthPerEye));
-	const int innerMaxXInt = std::clamp(static_cast<int>(std::floor((0.5f + halfCenterScale) * outputWidthF - 0.5f)) + 1, 0, static_cast<int>(outputWidthPerEye));
-	const int innerMinYInt = std::clamp(static_cast<int>(std::ceil((0.5f - halfCenterScale) * outputHeightF - 0.5f)), 0, static_cast<int>(outputHeight));
-	const int innerMaxYInt = std::clamp(static_cast<int>(std::floor((0.5f + halfCenterScale) * outputHeightF - 0.5f)) + 1, 0, static_cast<int>(outputHeight));
-	const uint32_t innerMinX = static_cast<uint32_t>(innerMinXInt);
-	const uint32_t innerMaxX = static_cast<uint32_t>(innerMaxXInt);
-	const uint32_t innerMinY = static_cast<uint32_t>(innerMinYInt);
-	const uint32_t innerMaxY = static_cast<uint32_t>(innerMaxYInt);
+	const auto innerBounds = FoveatedCommon::BuildCenteredInscribedEllipseRect(outputWidthPerEye, outputHeight, centerScale);
+	const uint32_t innerMinX = static_cast<uint32_t>(innerBounds.minX);
+	const uint32_t innerMaxX = static_cast<uint32_t>(innerBounds.maxX);
+	const uint32_t innerMinY = static_cast<uint32_t>(innerBounds.minY);
+	const uint32_t innerMaxY = static_cast<uint32_t>(innerBounds.maxY);
 	const bool hasCenterInterior = innerMaxX > innerMinX && innerMaxY > innerMinY;
 
 	for (uint32_t eye = 0; eye < 2; ++eye) {

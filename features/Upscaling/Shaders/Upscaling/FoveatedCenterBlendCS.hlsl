@@ -1,3 +1,5 @@
+#include "Common/FoveatedMask.hlsli"
+
 cbuffer FoveatedCenterBlendCB : register(b0)
 {
 	float2 InvOutputDim;
@@ -13,14 +15,6 @@ Texture2D<float4> CenterColor : register(t0);
 SamplerState LinearSampler : register(s0);
 RWTexture2D<float4> OutputColor : register(u0);
 
-float ComputeCenterBlendWeight(float2 uv)
-{
-	float halfSize = saturate(CenterScale) * 0.5;
-	float2 outside = abs(uv - 0.5) - halfSize.xx;
-	float distanceOutside = max(outside.x, outside.y);
-	return 1.0 - smoothstep(0.0, max(CenterFeather, 1e-4), distanceOutside);
-}
-
 [numthreads(8, 8, 1)] void main(uint3 dispatchID : SV_DispatchThreadID)
 {
 	uint2 localPos = dispatchID.xy;
@@ -29,7 +23,7 @@ float ComputeCenterBlendWeight(float2 uv)
 
 	uint2 outputPos = localPos + uint2(OutputOffset + 0.5);
 	float2 outputUV = (float2(outputPos) + 0.5) * InvOutputDim;
-	float blendWeight = ComputeCenterBlendWeight(outputUV);
+	float blendWeight = FoveatedComputeCenterBlendWeight(outputUV, CenterScale, CenterFeather);
 	if (blendWeight <= 0.0)
 		return;
 
