@@ -2,7 +2,7 @@
 #define FOVEATED_MASK_HLSLI
 
 #ifndef FOVEATED_CENTER_AREA_MIN
-#	define FOVEATED_CENTER_AREA_MIN 0.25
+#	define FOVEATED_CENTER_AREA_MIN 0.45
 #endif
 #ifndef FOVEATED_CENTER_AREA_MAX
 #	define FOVEATED_CENTER_AREA_MAX 1.0
@@ -18,14 +18,16 @@ float FoveatedClampCenterArea(float centerScale)
 
 float FoveatedComputeEllipseDistance(float2 eyeUv, float centerScale)
 {
-	float radius = max(saturate(centerScale) * 0.5, FOVEATED_CENTER_FEATHER_MIN);
+	float clampedCenterScale = FoveatedClampCenterArea(centerScale);
+	float radius = max(clampedCenterScale * 0.5, FOVEATED_CENTER_FEATHER_MIN);
 	float2 normalized = (eyeUv - 0.5) / radius.xx;
 	return length(normalized);
 }
 
 float FoveatedComputeCenterBlendWeight(float2 eyeUv, float centerScale, float centerFeather)
 {
-	float radius = max(saturate(centerScale) * 0.5, FOVEATED_CENTER_FEATHER_MIN);
+	float clampedCenterScale = FoveatedClampCenterArea(centerScale);
+	float radius = max(clampedCenterScale * 0.5, FOVEATED_CENTER_FEATHER_MIN);
 	float normalizedFeather = max(centerFeather, FOVEATED_CENTER_FEATHER_MIN) / radius;
 	float ellipseDistance = FoveatedComputeEllipseDistance(eyeUv, centerScale);
 	return 1.0 - smoothstep(1.0, 1.0 + normalizedFeather, ellipseDistance);

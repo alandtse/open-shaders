@@ -81,9 +81,9 @@ namespace
 	float GetFoveatedPresetCenterScale(int a_mode)
 	{
 		if (a_mode == kFoveatedPresetModeStrict)
-			return 0.45f;
+			return FoveatedCommon::kCenterAreaMin;
 		if (a_mode == kFoveatedPresetModeFoveated)
-			return 0.45f;
+			return FoveatedCommon::kCenterAreaMin;
 		return 0.0f;
 	}
 
@@ -479,7 +479,7 @@ void ScreenSpaceGI::DrawSettings()
 		if (foveatedPresetActiveInPerfSection) {
 			settings.ResolutionMode = 2;
 			float centerArea = ResolveFoveatedCenterMaskScale(settings);
-			ImGui::SliderFloat("Foveated Center Area", &centerArea, FoveatedCommon::kCenterAreaMin, FoveatedCommon::kCenterAreaMax, "%.2f");
+			ImGui::SliderFloat("Foveated Area", &centerArea, FoveatedCommon::kCenterAreaMin, FoveatedCommon::kCenterAreaMax, "%.2f");
 			centerArea = ClampCenterMaskScale(centerArea);
 			if (linkedCenterArea)
 				globals::features::upscaling.settings.foveatedCenterArea = centerArea;
@@ -487,7 +487,7 @@ void ScreenSpaceGI::DrawSettings()
 			if (auto _tt = Util::HoverTooltipWrapper()) {
 				ImGui::Text("Controls how much of the screen keeps Full Res AO when a foveated preset is active.");
 				if (linkedCenterArea)
-					ImGui::Text("Linked with Upscaling center area (shared source).");
+					ImGui::Text("Linked with Upscaling center area (shared value).");
 			}
 		}
 	}

@@ -27,15 +27,10 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	streamlineLogLevel,
 	sharpnessFSR,
 	sharpnessDLSS,
-	dlssUseHistoryReset,
-	dlssBypassCroppedConstantsCorrection,
 	foveatedVendorDispatch,
-	foveatedDirectSourcePath,
 	foveatedCenterArea,
-	foveatedPeripheryUseTAA,
 	foveatedPeripheryEdgeBlur,
 	foveatedPeripheryEdgeBlurStrength,
-	foveatedPeripheryOuterRingBlur,
 	foveatedPeripheryMaskVisualization,
 	linkFoveatedCenterAreaWithSSGI,
 	hasExplicitFoveatedCenterLinkPreference,
@@ -331,14 +326,6 @@ void Upscaling::DrawSettings()
 			}
 
 			ImGui::SliderFloat("Sharpness", &settings.sharpnessDLSS, 0.0f, 1.0f, "%.1f");
-			const char* toggleModes[] = { "Disabled", "Enabled" };
-			int dlssHistoryReset = settings.dlssUseHistoryReset ? 1 : 0;
-			ImGui::SliderInt("DLSS History Reset", &dlssHistoryReset, 0, 1, toggleModes[dlssHistoryReset]);
-			settings.dlssUseHistoryReset = dlssHistoryReset > 0;
-			if (auto _tt = Util::HoverTooltipWrapper()) {
-				ImGui::TextUnformatted("When enabled, DLSS receives reset events on camera/method/scale/foveation changes.");
-				ImGui::TextUnformatted("When disabled, DLSS history is never explicitly reset (current default behavior).");
-			}
 
 			const auto& adapter = globals::state->adapterDescription;
 			const bool isNvidia = IsNvidiaAdapterDescription(adapter);
@@ -348,60 +335,32 @@ void Upscaling::DrawSettings()
 		}
 
 		if (globals::game::isVR) {
-			const char* toggleModes[] = { "Disabled", "Enabled" };
 			const bool foveatedDispatchSupportedForMethod = SupportsFoveatedVendorDispatch(upscaleMethod);
 			if (!foveatedDispatchSupportedForMethod) {
-				ImGui::TextDisabled("Foveated vendor dispatch is currently DLSS-only. FSR uses full-eye dispatch.");
+				ImGui::TextDisabled("Foveated Upscaling is currently DLSS-only. FSR uses full-eye dispatch.");
 			}
 			ImGui::BeginDisabled(!foveatedDispatchSupportedForMethod);
-			int foveatedVendorDispatch = settings.foveatedVendorDispatch ? 1 : 0;
-			ImGui::SliderInt("Foveated Vendor Dispatch", &foveatedVendorDispatch, 0, 1, toggleModes[foveatedVendorDispatch]);
-			settings.foveatedVendorDispatch = foveatedVendorDispatch > 0;
+			{
+				Util::BlueFrameStyleWrapper foveatedStyle(true);
+				ImGui::Checkbox("Foveated Upscaling", &settings.foveatedVendorDispatch);
+			}
 			settings.foveatedCenterArea = ClampFoveatedCenterArea(settings.foveatedCenterArea);
 			if (settings.foveatedVendorDispatch && foveatedDispatchSupportedForMethod) {
-				ImGui::SliderFloat("Foveated Center Area", &settings.foveatedCenterArea, FoveatedCommon::kCenterAreaMin, FoveatedCommon::kCenterAreaMax, "%.2f");
+				ImGui::SliderFloat("Foveated Area", &settings.foveatedCenterArea, FoveatedCommon::kCenterAreaMin, FoveatedCommon::kCenterAreaMax, "%.2f");
 				settings.foveatedCenterArea = ClampFoveatedCenterArea(settings.foveatedCenterArea);
 				if (auto _tt = Util::HoverTooltipWrapper()) {
 					ImGui::TextUnformatted("Runs vendor upscaling only in the center region and fills periphery with the periphery pass.");
 					ImGui::TextUnformatted("1.00 means full-center coverage (equivalent to full-frame vendor dispatch).");
 					if (settings.linkFoveatedCenterAreaWithSSGI)
-						ImGui::TextUnformatted("Linked with SSGI center area (shared source).");
-				}
-
-				int directSourcePathEnabled = settings.foveatedDirectSourcePath ? 1 : 0;
-				ImGui::SliderInt("Foveated Direct Source Path", &directSourcePathEnabled, 0, 1, toggleModes[directSourcePathEnabled]);
-				settings.foveatedDirectSourcePath = directSourcePathEnabled > 0;
-				if (auto _tt = Util::HoverTooltipWrapper()) {
-					ImGui::TextUnformatted("Experimental: skip full-eye prepare copies for foveated DLSS.");
-					ImGui::TextUnformatted("Periphery samples combined input directly; center crop copies come from original buffers.");
-					ImGui::TextUnformatted("Use to test bandwidth/CPU overhead reduction.");
-				}
-
-				int bypassCroppedConstantsCorrection = settings.dlssBypassCroppedConstantsCorrection ? 1 : 0;
-				ImGui::SliderInt("DLSS Bypass Cropped Constants Fix", &bypassCroppedConstantsCorrection, 0, 1, toggleModes[bypassCroppedConstantsCorrection]);
-				settings.dlssBypassCroppedConstantsCorrection = bypassCroppedConstantsCorrection > 0;
-				if (auto _tt = Util::HoverTooltipWrapper()) {
-					ImGui::TextUnformatted("Temporary A/B test toggle for VR foveated DLSS center region.");
-					ImGui::TextUnformatted("Enabled: bypass cropped-viewport projection/reprojection/mvec corrections.");
-					ImGui::TextUnformatted("Disabled: use current cropped constants correction path (default).");
-				}
-
-				int peripheryUseTAA = settings.foveatedPeripheryUseTAA ? 1 : 0;
-				ImGui::SliderInt("Periphery TAA", &peripheryUseTAA, 0, 1, toggleModes[peripheryUseTAA]);
-				settings.foveatedPeripheryUseTAA = peripheryUseTAA > 0;
-				if (auto _tt = Util::HoverTooltipWrapper()) {
-					ImGui::TextUnformatted("Controls temporal jitter compensation in the foveated periphery pass.");
-					ImGui::TextUnformatted("Enabled = current TAA-style periphery path. Disabled = no-TAA periphery sampling.");
+						ImGui::TextUnformatted("Linked with SSGI foveated area (shared value).");
 				}
 
 				ImGui::Separator();
 				ImGui::TextUnformatted("Periphery Anti-Flicker");
 
-				int peripheryEdgeBlurEnabled = settings.foveatedPeripheryEdgeBlur ? 1 : 0;
-				ImGui::SliderInt("Periphery Edge Blur", &peripheryEdgeBlurEnabled, 0, 1, toggleModes[peripheryEdgeBlurEnabled]);
-				settings.foveatedPeripheryEdgeBlur = peripheryEdgeBlurEnabled > 0;
+				ImGui::Checkbox("Edge Blur", &settings.foveatedPeripheryEdgeBlur);
 				if (settings.foveatedPeripheryEdgeBlur) {
-					ImGui::SliderFloat("Periphery Edge Blur Strength", &settings.foveatedPeripheryEdgeBlurStrength, kPeripheryEdgeBlurStrengthMin, kPeripheryEdgeBlurStrengthMax, "%.2f");
+					ImGui::SliderFloat("Edge Blur Strength", &settings.foveatedPeripheryEdgeBlurStrength, kPeripheryEdgeBlurStrengthMin, kPeripheryEdgeBlurStrengthMax, "%.2f");
 					settings.foveatedPeripheryEdgeBlurStrength = std::clamp(settings.foveatedPeripheryEdgeBlurStrength, kPeripheryEdgeBlurStrengthMin, kPeripheryEdgeBlurStrengthMax);
 				}
 				if (auto _tt = Util::HoverTooltipWrapper()) {
@@ -409,22 +368,7 @@ void Upscaling::DrawSettings()
 					ImGui::TextUnformatted("Low cost; stronger values reduce flicker but soften peripheral detail.");
 				}
 
-				int peripheryOuterRingBlurEnabled = settings.foveatedPeripheryOuterRingBlur ? 1 : 0;
-				{
-					auto outerRingBlurGuard = Util::DisableGuard(!settings.foveatedPeripheryEdgeBlur);
-					ImGui::SliderInt("Periphery Outer Ring Blur", &peripheryOuterRingBlurEnabled, 0, 1, toggleModes[peripheryOuterRingBlurEnabled]);
-					settings.foveatedPeripheryOuterRingBlur = peripheryOuterRingBlurEnabled > 0;
-				}
-				if (auto _tt = Util::HoverTooltipWrapper()) {
-					ImGui::TextUnformatted("Adds a second stronger blur stage only in the far outer ring.");
-					ImGui::TextUnformatted("Higher stability/less shimmer in the edge-periphery at added softening and cost.");
-					if (!settings.foveatedPeripheryEdgeBlur)
-						ImGui::TextUnformatted("Requires Periphery Edge Blur = Enabled.");
-				}
-
-				int peripheryMaskVisualizationEnabled = settings.foveatedPeripheryMaskVisualization ? 1 : 0;
-				ImGui::SliderInt("Periphery Mask Visualization", &peripheryMaskVisualizationEnabled, 0, 1, toggleModes[peripheryMaskVisualizationEnabled]);
-				settings.foveatedPeripheryMaskVisualization = peripheryMaskVisualizationEnabled > 0;
+				ImGui::Checkbox("Periphery Mask Visualization", &settings.foveatedPeripheryMaskVisualization);
 				if (auto _tt = Util::HoverTooltipWrapper()) {
 					ImGui::TextUnformatted("Shows center, feather, and periphery regions with muted debug colors.");
 					ImGui::TextUnformatted("Use this to verify foveated alignment and blend coverage.");
@@ -607,7 +551,7 @@ void Upscaling::DrawSettings()
 		if (globals::game::isVR) {
 			ImGui::Separator();
 			ImGui::TextUnformatted("Advanced / Developer");
-			if (ImGui::Checkbox("Link Foveated Center Area With SSGI", &settings.linkFoveatedCenterAreaWithSSGI))
+			if (ImGui::Checkbox("Link Foveated Area With SSGI", &settings.linkFoveatedCenterAreaWithSSGI))
 				settings.hasExplicitFoveatedCenterLinkPreference = true;
 			if (auto _tt = Util::HoverTooltipWrapper()) {
 				ImGui::TextUnformatted("Enabled: one shared center-area value drives both SSGI foveation and vendor-dispatch upscaling foveation.");
@@ -1315,8 +1259,7 @@ void Upscaling::DispatchFoveatedPeripheryPass(ID3D11ShaderResourceView* sourceSR
 	cbData.sourceOffset = { sourceOffsetX, sourceOffsetY };
 	cbData.dispatchDim = { static_cast<float>(dispatchWidth), static_cast<float>(dispatchHeight) };
 	cbData.outputOffset = { static_cast<float>(outputOffsetX), static_cast<float>(outputOffsetY) };
-	float2 jitterForPeriphery = settings.foveatedPeripheryUseTAA ? jitter : float2{ 0.0f, 0.0f };
-	cbData.jitter = jitterForPeriphery;
+	cbData.jitter = jitter;
 	const float centerArea = ClampFoveatedCenterArea(settings.foveatedCenterArea);
 	const float edgeBlurStrength = std::clamp(settings.foveatedPeripheryEdgeBlurStrength, kPeripheryEdgeBlurStrengthMin, kPeripheryEdgeBlurStrengthMax);
 	cbData.tuning0 = {
@@ -1329,12 +1272,12 @@ void Upscaling::DispatchFoveatedPeripheryPass(ID3D11ShaderResourceView* sourceSR
 		settings.foveatedPeripheryEdgeBlur ? 1.0f : 0.0f,
 		edgeBlurStrength,
 		12.0f,
-		settings.foveatedPeripheryOuterRingBlur ? 1.0f : 0.0f
+		0.0f
 	};
 	cbData.tuning2 = {
 		settings.foveatedPeripheryMaskVisualization ? 1.0f : 0.0f,
 		0.0f,
-		settings.foveatedPeripheryUseTAA ? 1.0f : 0.0f,
+		0.0f,
 		0.0f
 	};
 	foveatedPeripheryCB->Update(cbData);
@@ -1653,7 +1596,7 @@ bool Upscaling::DispatchFoveatedVendorUpscaling(UpscaleMethod a_upscaleMethod, I
 	if (!context || !deferred || !deferred->linearSampler)
 		return false;
 
-	const bool useDirectSourcePath = settings.foveatedDirectSourcePath && colorSRV != nullptr;
+	const bool useDirectSourcePath = (a_upscaleMethod == UpscaleMethod::kDLSS) && settings.qualityMode == 0 && colorSRV != nullptr;
 	if (!useDirectSourcePath) {
 		PreparePerEyeInputs(colorTexture, depthTexture, motionVectors, reactiveMask, transparencyMask, false, !depthAlreadyPrepared);
 	}
