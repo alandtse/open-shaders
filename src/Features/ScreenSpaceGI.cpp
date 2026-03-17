@@ -119,6 +119,16 @@ namespace
 		return ClampCenterMaskScale(a_settings.CenterFullResMaskScale);
 	}
 
+	std::array<float2, 2> GetSharedUpscalingMaskOffsetsForSsgi()
+	{
+		// Mask placement is always owned by the upscaling feature so both systems stay aligned.
+		// The link toggle only controls whether the center-area size is shared.
+		auto centerOffsets = globals::features::upscaling.GetResolvedFoveatedMaskCenterOffsets();
+		if (!REL::Module::IsVR())
+			centerOffsets[1] = { 0.0f, 0.0f };
+		return centerOffsets;
+	}
+
 	void SyncResolvedCenterMaskScale(ScreenSpaceGI::Settings& a_settings)
 	{
 		a_settings.CenterFullResMaskScale = ResolveFoveatedCenterMaskScale(a_settings);
@@ -328,7 +338,7 @@ void ScreenSpaceGI::DrawSettings()
 				recompileFlag = true;
 			}
 			if (auto _tt = Util::HoverTooltipWrapper())
-				ImGui::Text("Full Res, no GI, no Foveated; use Half Res, Quarter Res, Foveated/QRes, or Foveated/Only for more performance.");
+				ImGui::Text("Full Res, no GI, no SSGI foveation. Upscaling foveation remains independent and can stay enabled.");
 
 			ImGui::TableNextColumn();
 			const bool strictActive = settings.FoveatedPresetMode == kFoveatedPresetModeStrict;
@@ -1083,9 +1093,7 @@ void ScreenSpaceGI::UpdateSB()
 		data.VRCullDistance = isVR ? ClampVRCullDistance(settings.VRCullDistance) : 0.0f;
 		data.CenterFullResMaskScale = centerMaskScale;
 		data.CenterFullResMaskFeather = FoveatedCommon::kCenterFeather;
-		auto centerOffsets = globals::features::upscaling.GetResolvedFoveatedMaskCenterOffsets();
-		if (!isVR)
-			centerOffsets[1] = { 0.0f, 0.0f };
+		auto centerOffsets = GetSharedUpscalingMaskOffsetsForSsgi();
 		data.CenterFullResMaskOffsets = { centerOffsets[0].x, centerOffsets[0].y, centerOffsets[1].x, centerOffsets[1].y };
 		data.CenterDispatchOffsetX = 0.0f;
 		data.CenterDispatchOffsetY = 0.0f;
@@ -1278,9 +1286,7 @@ void ScreenSpaceGI::DrawSSGI()
 	};
 	auto internalRes = resChoices[resolutionMode];
 	using DispatchRect = CenterDispatchRect;
-	auto centerOffsets = globals::features::upscaling.GetResolvedFoveatedMaskCenterOffsets();
-	if (!isVR)
-		centerOffsets[1] = { 0.0f, 0.0f };
+	auto centerOffsets = GetSharedUpscalingMaskOffsetsForSsgi();
 
 	auto buildCenterDispatchRect = [&](uint a_eyeIndex) -> DispatchRect {
 		DispatchRect rect{};

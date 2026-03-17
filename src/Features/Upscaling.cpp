@@ -49,8 +49,8 @@ decltype(&D3D11CreateDeviceAndSwapChain) ptrD3D11CreateDeviceAndSwapChainUpscali
 
 namespace
 {
-	constexpr float kPeripheryEdgeBlurStrengthMin = 0.0f;
-	constexpr float kPeripheryEdgeBlurStrengthMax = 2.0f;
+	constexpr float kPeripheryEdgeBlurStrengthMin = 1.0f;
+	constexpr float kPeripheryEdgeBlurStrengthMax = 5.0f;
 	constexpr float kFoveatedMaskOffsetAdjustMin = -0.15f;
 	constexpr float kFoveatedMaskOffsetAdjustMax = 0.15f;
 	constexpr float kFoveatedMaskOffsetResolvedMin = -0.25f;
@@ -64,6 +64,21 @@ namespace
 	float ClampFoveatedMaskOffsetAdjustment(float value)
 	{
 		return std::clamp(value, kFoveatedMaskOffsetAdjustMin, kFoveatedMaskOffsetAdjustMax);
+	}
+
+	float ClampPeripheryEdgeBlurStrength(float value)
+	{
+		return std::clamp(value, kPeripheryEdgeBlurStrengthMin, kPeripheryEdgeBlurStrengthMax);
+	}
+
+	void SanitizeFoveatedSettings(Upscaling::Settings& settings)
+	{
+		settings.foveatedCenterArea = ClampFoveatedCenterArea(settings.foveatedCenterArea);
+		settings.foveatedLeftEyeMaskOffsetX = ClampFoveatedMaskOffsetAdjustment(settings.foveatedLeftEyeMaskOffsetX);
+		settings.foveatedLeftEyeMaskOffsetY = ClampFoveatedMaskOffsetAdjustment(settings.foveatedLeftEyeMaskOffsetY);
+		settings.foveatedRightEyeMaskOffsetX = ClampFoveatedMaskOffsetAdjustment(settings.foveatedRightEyeMaskOffsetX);
+		settings.foveatedRightEyeMaskOffsetY = ClampFoveatedMaskOffsetAdjustment(settings.foveatedRightEyeMaskOffsetY);
+		settings.foveatedPeripheryEdgeBlurStrength = ClampPeripheryEdgeBlurStrength(settings.foveatedPeripheryEdgeBlurStrength);
 	}
 
 	bool SupportsFoveatedVendorDispatch(Upscaling::UpscaleMethod a_upscaleMethod)
@@ -358,39 +373,31 @@ void Upscaling::DrawSettings()
 				Util::BlueFrameStyleWrapper foveatedStyle(true);
 				ImGui::Checkbox("Foveated Upscaling", &settings.foveatedVendorDispatch);
 			}
-			settings.foveatedCenterArea = ClampFoveatedCenterArea(settings.foveatedCenterArea);
-			settings.foveatedLeftEyeMaskOffsetX = ClampFoveatedMaskOffsetAdjustment(settings.foveatedLeftEyeMaskOffsetX);
-			settings.foveatedLeftEyeMaskOffsetY = ClampFoveatedMaskOffsetAdjustment(settings.foveatedLeftEyeMaskOffsetY);
-			settings.foveatedRightEyeMaskOffsetX = ClampFoveatedMaskOffsetAdjustment(settings.foveatedRightEyeMaskOffsetX);
-			settings.foveatedRightEyeMaskOffsetY = ClampFoveatedMaskOffsetAdjustment(settings.foveatedRightEyeMaskOffsetY);
+			SanitizeFoveatedSettings(settings);
 			if (settings.foveatedVendorDispatch && foveatedDispatchSupportedForMethod) {
-				ImGui::SliderFloat("Foveated Area", &settings.foveatedCenterArea, FoveatedCommon::kCenterAreaMin, FoveatedCommon::kCenterAreaMax, "%.2f");
+				{
+					Util::BlueFrameStyleWrapper foveatedAreaStyle;
+					ImGui::SliderFloat("Foveated Area", &settings.foveatedCenterArea, FoveatedCommon::kCenterAreaMin, FoveatedCommon::kCenterAreaMax, "%.2f");
+				}
 				settings.foveatedCenterArea = ClampFoveatedCenterArea(settings.foveatedCenterArea);
 				if (auto _tt = Util::HoverTooltipWrapper()) {
 					ImGui::TextUnformatted("Runs vendor upscaling only in the center region and fills periphery with the periphery pass.");
 					ImGui::TextUnformatted("1.00 means full-center coverage (equivalent to full-frame vendor dispatch).");
 					if (settings.linkFoveatedCenterAreaWithSSGI)
-						ImGui::TextUnformatted("Linked with SSGI foveated area (shared value).");
+						ImGui::TextUnformatted("Shared with SSGI only while an SSGI foveated mode is active.");
 				}
 
 				ImGui::Separator();
-				ImGui::TextUnformatted("Periphery Anti-Flicker");
-
-				ImGui::Checkbox("Edge Blur", &settings.foveatedPeripheryEdgeBlur);
-				if (settings.foveatedPeripheryEdgeBlur) {
-					ImGui::SliderFloat("Edge Blur Strength", &settings.foveatedPeripheryEdgeBlurStrength, kPeripheryEdgeBlurStrengthMin, kPeripheryEdgeBlurStrengthMax, "%.2f");
-					settings.foveatedPeripheryEdgeBlurStrength = std::clamp(settings.foveatedPeripheryEdgeBlurStrength, kPeripheryEdgeBlurStrengthMin, kPeripheryEdgeBlurStrengthMax);
+				{
+					Util::YellowFrameStyleWrapper maskStyle(true);
+					ImGui::Checkbox("Foveated Mask Visualization", &settings.foveatedPeripheryMaskVisualization);
 				}
 				if (auto _tt = Util::HoverTooltipWrapper()) {
-					ImGui::TextUnformatted("Applies a lightweight edge-aware 5-tap blur in periphery only.");
-					ImGui::TextUnformatted("Low cost; stronger values reduce flicker but soften peripheral detail.");
-				}
-
-				ImGui::Checkbox("Foveated Mask Visualization", &settings.foveatedPeripheryMaskVisualization);
-				if (auto _tt = Util::HoverTooltipWrapper()) {
-					ImGui::TextUnformatted("Shows center, feather, and periphery regions with muted debug colors.");
-					ImGui::TextUnformatted("Use this to derive and verify the real per-eye mask position before judging image quality.");
-					ImGui::TextUnformatted("When enabled, the X/Y eye-offset sliders below adjust the actual foveated mask placement, not just the debug view.");
+					ImGui::TextUnformatted("Shows foveated and periphery regions for each eye in Upscaling and SSGI foveated modes.");
+					ImGui::TextUnformatted("X/Y sliders move the real per-eye masks, not just the debug view.");
+					ImGui::TextUnformatted("Lower Foveated Area until the full ellipse is visible in each eye.");
+					ImGui::TextUnformatted("Center each mask with the sliders, then raise Foveated Area until the periphery reaches the view edge.");
+					ImGui::TextUnformatted("X and Y offsets do not need to match between eyes.");
 				}
 
 				if (settings.foveatedPeripheryMaskVisualization) {
@@ -408,32 +415,67 @@ void Upscaling::DrawSettings()
 						float* adjustment = adjustmentSettings[eyeIndex][axisIndex];
 						const float defaultCenter = isHorizontal ? defaultOffsets[eyeIndex].x : defaultOffsets[eyeIndex].y;
 						const float resolvedCenter = isHorizontal ? resolvedOffsets[eyeIndex].x : resolvedOffsets[eyeIndex].y;
-						const std::string sliderLabel = std::format("{} Eye Mask Offset {}", eyeLabels[eyeIndex], axisLabels[axisIndex]);
+						const std::string sliderLabel = std::format("{} Eye Offset {}", eyeLabels[eyeIndex], axisLabels[axisIndex]);
 						ImGui::SliderFloat(sliderLabel.c_str(), adjustment, kFoveatedMaskOffsetAdjustMin, kFoveatedMaskOffsetAdjustMax, "%.3f");
 						*adjustment = ClampFoveatedMaskOffsetAdjustment(*adjustment);
 						if (auto _tt = Util::HoverTooltipWrapper()) {
-							ImGui::Text("Adds a %s offset to the centered %s-eye mask.", isHorizontal ? "horizontal" : "vertical", eyeLabels[eyeIndex]);
-							ImGui::TextUnformatted(isHorizontal ?
-								                       "Positive moves the foveated mask right. Negative moves it left." :
-								                       "Positive moves the foveated mask down. Negative moves it up.");
-							ImGui::Text("Default center %s: %.3f, resolved center %s: %.3f", axisLabels[axisIndex], defaultCenter, axisLabels[axisIndex], resolvedCenter);
+							if (eyeIndex == 0) {
+								ImGui::TextUnformatted(isHorizontal ?
+									                       "Close right eye to determine horizontal offset to the centered left-eye mask." :
+									                       "Close right eye to determine vertical offset to the centered left-eye mask.");
+								ImGui::TextUnformatted(isHorizontal ?
+									                       "Positive moves the foveated mask right. Negative moves it left." :
+									                       "Positive moves the foveated mask down. Negative moves it up.");
+								ImGui::Text("Default center %s: %.3f, resolved center %s: %.3f", axisLabels[axisIndex], defaultCenter, axisLabels[axisIndex], resolvedCenter);
+							} else {
+								ImGui::TextUnformatted(isHorizontal ?
+									                       "Close left eye to determine horizontal offset to the centered right-eye mask." :
+									                       "Close left eye to determine vertical offset to the centered right-eye mask.");
+								ImGui::TextUnformatted(isHorizontal ?
+									                       "Positive moves the foveated mask right. Negative moves it left." :
+									                       "Positive moves the foveated mask down. Negative moves it up.");
+								ImGui::Text("Default center %s: %.3f, resolved center %s: %.3f", axisLabels[axisIndex], defaultCenter, axisLabels[axisIndex], resolvedCenter);
+							}
 						}
 					};
 
 					ImGui::Separator();
 					ImGui::TextUnformatted("Mask Alignment");
-					drawMaskAlignmentSlider(0, 0);
-					drawMaskAlignmentSlider(0, 1);
-					drawMaskAlignmentSlider(1, 0);
-					drawMaskAlignmentSlider(1, 1);
+					{
+						Util::YellowFrameStyleWrapper maskSliderStyle;
+						drawMaskAlignmentSlider(0, 0);
+						drawMaskAlignmentSlider(0, 1);
+						drawMaskAlignmentSlider(1, 0);
+						drawMaskAlignmentSlider(1, 1);
+					}
 
 					ImGui::TextDisabled("Mask alignment notes");
 					if (auto _tt = Util::HoverTooltipWrapper()) {
 						ImGui::TextUnformatted("Use the mask view to line the center ellipse up with the real headset image in each eye horizontally and vertically.");
 						ImGui::TextUnformatted("These offsets also drive the actual foveated crop and blend placement.");
-						if (settings.linkFoveatedCenterAreaWithSSGI)
-							ImGui::TextUnformatted("When SSGI is linked, the same eye offsets are reused there.");
+						ImGui::TextUnformatted("When SSGI foveation is active, the same eye offsets are reused there.");
 					}
+				}
+
+				ImGui::Separator();
+				if (ImGui::Checkbox("Link Foveated Area With SSGI", &settings.linkFoveatedCenterAreaWithSSGI))
+					settings.hasExplicitFoveatedCenterLinkPreference = true;
+				if (auto _tt = Util::HoverTooltipWrapper()) {
+					ImGui::TextUnformatted("Enabled: one shared center-area value drives both SSGI foveation and Upscaling foveation.");
+					ImGui::TextUnformatted("Disable to tune only the area size independently, or to leave SSGI unfoveated while Upscaling stays foveated.");
+					ImGui::TextUnformatted("Mask placement always stays shared and is defined by Upscaling.");
+					ImGui::TextUnformatted("If SSGI is in AO only or another non-foveated mode, this shared area is ignored there.");
+				}
+
+				ImGui::Separator();
+				ImGui::Checkbox("Edge Blur", &settings.foveatedPeripheryEdgeBlur);
+				if (settings.foveatedPeripheryEdgeBlur) {
+					ImGui::SliderFloat("Edge Blur Strength", &settings.foveatedPeripheryEdgeBlurStrength, kPeripheryEdgeBlurStrengthMin, kPeripheryEdgeBlurStrengthMax, "%.2f");
+					settings.foveatedPeripheryEdgeBlurStrength = ClampPeripheryEdgeBlurStrength(settings.foveatedPeripheryEdgeBlurStrength);
+				}
+				if (auto _tt = Util::HoverTooltipWrapper()) {
+					ImGui::TextUnformatted("Applies a lightweight edge-aware blur in periphery only at a low performance cost.");
+					ImGui::TextUnformatted("Stronger values reduce flicker but soften peripheral detail.");
 				}
 			}
 			ImGui::EndDisabled();
@@ -504,11 +546,6 @@ void Upscaling::DrawSettings()
 			ImGui::Text("Allows frame generation to function on low refresh rate monitors");
 			ImGui::SliderInt("Force Enable Frame Generation", (int*)&settings.frameGenerationForceEnable, 0, 1, std::format("{}", toggleModes[settings.frameGenerationForceEnable]).c_str());
 
-			ImGui::TreePop();
-		}
-	} else {
-		if (ImGui::TreeNodeEx("Frame Generation", ImGuiTreeNodeFlags_DefaultOpen)) {
-			ImGui::Text("Frame Generation is not available on your system.\nThis requires either NVIDIA DLSS-G or AMD FSR 3.1 Frame Generation support and D3D12 interop.");
 			ImGui::TreePop();
 		}
 	}
@@ -608,17 +645,6 @@ void Upscaling::DrawSettings()
 		ImGui::TextUnformatted("Changing this requires a restart to take effect.");
 		if (auto _tt = Util::HoverTooltipWrapper()) {
 			ImGui::Text("Streamline logging controls the verbosity of NVIDIA Streamline backend logs. Useful for debugging issues with DLSS/DLSS-G.");
-		}
-
-		if (globals::game::isVR) {
-			ImGui::Separator();
-			ImGui::TextUnformatted("Advanced / Developer");
-			if (ImGui::Checkbox("Link Foveated Area With SSGI", &settings.linkFoveatedCenterAreaWithSSGI))
-				settings.hasExplicitFoveatedCenterLinkPreference = true;
-			if (auto _tt = Util::HoverTooltipWrapper()) {
-				ImGui::TextUnformatted("Enabled: one shared center-area value drives both SSGI foveation and vendor-dispatch upscaling foveation.");
-				ImGui::TextUnformatted("Disable to tune SSGI and upscaling center areas independently.");
-			}
 		}
 
 		// VR Debug visualization -- per-eye buffers and native inputs
@@ -739,7 +765,7 @@ void Upscaling::LoadSettings(json& o_json)
 		settings.upscaleMethodNoDLSS = enumCount ? enumCount - 1 : 0;
 	}
 	settings.dlssPreset = std::min<uint>(settings.dlssPreset, kDLSSPresetMaxIndex);
-	settings.foveatedCenterArea = ClampFoveatedCenterArea(settings.foveatedCenterArea);
+	SanitizeFoveatedSettings(settings);
 	settings.reflexFPSLimit = std::clamp(settings.reflexFPSLimit, 20.0f, 240.0f);
 	auto iniSettingCollection = globals::game::iniPrefSettingCollection;
 	if (iniSettingCollection) {
@@ -1361,7 +1387,7 @@ void Upscaling::DispatchFoveatedPeripheryPass(ID3D11ShaderResourceView* sourceSR
 	cbData.centerOffset = { centerOffsetX, centerOffsetY };
 	cbData.pad0 = { 0.0f, 0.0f };
 	const float centerArea = ClampFoveatedCenterArea(settings.foveatedCenterArea);
-	const float edgeBlurStrength = std::clamp(settings.foveatedPeripheryEdgeBlurStrength, kPeripheryEdgeBlurStrengthMin, kPeripheryEdgeBlurStrengthMax);
+	const float edgeBlurStrength = ClampPeripheryEdgeBlurStrength(settings.foveatedPeripheryEdgeBlurStrength);
 	cbData.tuning0 = {
 		centerArea,
 		FoveatedCommon::kCenterFeather,

@@ -68,7 +68,7 @@ public:
 		float foveatedRightEyeMaskOffsetX = 0.0f;
 		float foveatedRightEyeMaskOffsetY = 0.0f;
 		bool foveatedPeripheryEdgeBlur = false;
-		float foveatedPeripheryEdgeBlurStrength = 0.35f;
+		float foveatedPeripheryEdgeBlurStrength = 1.0f;
 		bool foveatedPeripheryMaskVisualization = false;
 		bool linkFoveatedCenterAreaWithSSGI = true;
 		bool hasExplicitFoveatedCenterLinkPreference = false;
