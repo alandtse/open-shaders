@@ -158,6 +158,25 @@ namespace Util
 	};
 
 	/**
+	 * RAII wrapper for a highlighted yellow frame style used by debug/visualization toggles.
+	 * Optionally includes the checkmark color for checkbox controls.
+	 */
+	class YellowFrameStyleWrapper
+	{
+	public:
+		explicit YellowFrameStyleWrapper(bool includeCheckMark = false);
+		~YellowFrameStyleWrapper();
+
+		YellowFrameStyleWrapper(const YellowFrameStyleWrapper&) = delete;
+		YellowFrameStyleWrapper& operator=(const YellowFrameStyleWrapper&) = delete;
+		YellowFrameStyleWrapper(YellowFrameStyleWrapper&&) = delete;
+		YellowFrameStyleWrapper& operator=(YellowFrameStyleWrapper&&) = delete;
+
+	private:
+		int m_pushedStyles;
+	};
+
+	/**
 	 * Button with simple flash feedback (matches action icon hover effect style)
 	 * @param label Button text
 	 * @param size Button size (optional)
