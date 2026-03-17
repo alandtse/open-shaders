@@ -47,6 +47,8 @@ public:
 		float MaxZenith = 3.1415926f / 2.f;  // 90 deg
 		float MinDiffuseVisibility = 0.1f;
 		float MinSpecularVisibility = 0.1f;
+		bool EnableIncrementalProbeUpdates = false;
+		uint StableSliceCount = 8;
 	} settings;
 
 	struct SkylightingCB
@@ -56,13 +58,14 @@ public:
 
 		float3 PosOffset;  // cell origin in camera model space
 		uint _pad0;
-		uint ArrayOrigin[3];  // xyz: array origin, w: max accum frames
+		uint ArrayOrigin[3];  // xyz: array origin
 		uint _pad1;
 		int ValidMargin[4];
 
 		float MinDiffuseVisibility;
 		float MinSpecularVisibility;
-		uint _pad2[2];
+		uint ProbeUpdateSliceStart;
+		uint ProbeUpdateSliceCount;
 	};
 	static_assert(sizeof(SkylightingCB) % 16 == 0);
 
@@ -87,6 +90,11 @@ public:
 	REX::W32::XMFLOAT4X4 OcclusionTransform;
 	float4 OcclusionDir;
 	uint frameCount = 0;
+	float3 prevCellID = { 0, 0, 0 };
+	uint probeUpdateSliceStart = 0;
+	uint probeUpdateSliceCount = 128;
+	uint probeUpdateSliceCursor = 0;
+	uint forcedFullUpdateFrames = 1;
 
 	void ResetSkylighting();
 

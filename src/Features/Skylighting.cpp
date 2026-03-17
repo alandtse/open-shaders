@@ -1,15 +1,27 @@
 #include "Skylighting.h"
 
 #include <DDSTextureLoader.h>
+#include <algorithm>
 
 #include "ShaderCache.h"
 #include "State.h"
+
+namespace
+{
+	uint ClampStableSliceCount(uint a_sliceCount, uint a_maxSlices)
+	{
+		const uint maxSlices = std::max(1u, a_maxSlices);
+		return std::clamp(a_sliceCount, 1u, maxSlices);
+	}
+}
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	Skylighting::Settings,
 	MaxZenith,
 	MinDiffuseVisibility,
-	MinSpecularVisibility)
+	MinSpecularVisibility,
+	EnableIncrementalProbeUpdates,
+	StableSliceCount)
 
 void Skylighting::LoadSettings(json& o_json)
 {
@@ -31,6 +43,8 @@ void Skylighting::ResetSkylighting()
 	auto context = globals::d3d::context;
 	UINT clr[1] = { 0 };
 	context->ClearUnorderedAccessViewUint(texAccumFramesArray->uav.get(), clr);
+	probeUpdateSliceCursor = 0;
+	forcedFullUpdateFrames = 1;
 	queuedResetSkylighting = false;
 }
 
@@ -48,6 +62,25 @@ void Skylighting::DrawSettings()
 	if (auto _tt = Util::HoverTooltipWrapper())
 		ImGui::Text("Changes below require rebuilding, a loading screen, or moving away from the current location to apply.");
 
+	ImGui::Separator();
+	ImGui::Text("Performance options");
+	ImGui::Checkbox("Enable Incremental Probe Updates", &settings.EnableIncrementalProbeUpdates);
+	if (auto _tt = Util::HoverTooltipWrapper())
+		ImGui::Text("Updates only a slice of stable probes per frame while forcing full updates when the probe grid shifts.");
+
+	uint stableSliceCount = ClampStableSliceCount(settings.StableSliceCount, probeArrayDims[2]);
+	settings.StableSliceCount = stableSliceCount;
+
+	int stableSliceCountUI = static_cast<int>(stableSliceCount);
+	if (ImGui::SliderInt("Stable Slice Count", &stableSliceCountUI, 1, static_cast<int>(probeArrayDims[2])))
+		settings.StableSliceCount = ClampStableSliceCount(static_cast<uint>(stableSliceCountUI), probeArrayDims[2]);
+	if (auto _tt = Util::HoverTooltipWrapper())
+		ImGui::Text("Higher values converge faster but cost more GPU time. Lower values spread work over more frames.");
+
+	const uint stableRefreshFrames = (probeArrayDims[2] + settings.StableSliceCount - 1) / settings.StableSliceCount;
+	ImGui::Text("Stable probe field full refresh: ~%u frame(s)", stableRefreshFrames);
+
+	ImGui::Separator();
 	ImGui::SliderAngle("Max Zenith Angle", &settings.MaxZenith, 0, 90);
 	if (auto _tt = Util::HoverTooltipWrapper())
 		ImGui::Text("Smaller angles creates more focused top-down shadow.");
@@ -174,8 +207,6 @@ Skylighting::SkylightingCB Skylighting::GetCommonBufferData(bool a_inWorld)
 		if (ui->IsMenuOpen(RE::MapMenu::MENU_NAME))
 			return Skylighting::SkylightingCB{};
 
-	static float3 prevCellID = { 0, 0, 0 };
-
 	auto eyePosNI = Util::GetEyePosition(0);
 	auto eyePos = float3{ eyePosNI.x, eyePosNI.y, eyePosNI.z };
 
@@ -189,6 +220,32 @@ Skylighting::SkylightingCB Skylighting::GetCommonBufferData(bool a_inWorld)
 	auto cellOrigin = cellID * cellSize;
 	float3 cellIDDiff = prevCellID - cellID;
 	prevCellID = cellID;
+	DirectX::XMINT3 cellIDDiffI = { (int)cellIDDiff.x, (int)cellIDDiff.y, (int)cellIDDiff.z };
+
+	bool shouldForceFullUpdate =
+		cellIDDiffI.x != 0 ||
+		cellIDDiffI.y != 0 ||
+		cellIDDiffI.z != 0 ||
+		forcedFullUpdateFrames > 0;
+
+	probeUpdateSliceStart = 0;
+	probeUpdateSliceCount = probeArrayDims[2];
+
+	if (settings.EnableIncrementalProbeUpdates && !shouldForceFullUpdate) {
+		uint stableSliceCount = ClampStableSliceCount(settings.StableSliceCount, probeArrayDims[2]);
+
+		probeUpdateSliceStart = probeUpdateSliceCursor;
+		probeUpdateSliceCount = std::min(stableSliceCount, probeArrayDims[2] - probeUpdateSliceStart);
+
+		probeUpdateSliceCursor += probeUpdateSliceCount;
+		if (probeUpdateSliceCursor >= probeArrayDims[2])
+			probeUpdateSliceCursor = 0;
+	} else {
+		probeUpdateSliceCursor = 0;
+	}
+
+	if (forcedFullUpdateFrames > 0)
+		forcedFullUpdateFrames--;
 
 	return {
 		.OcclusionViewProj = OcclusionTransform,
@@ -198,9 +255,11 @@ Skylighting::SkylightingCB Skylighting::GetCommonBufferData(bool a_inWorld)
 			((int)cellID.x - probeArrayDims[0] / 2) % probeArrayDims[0],
 			((int)cellID.y - probeArrayDims[1] / 2) % probeArrayDims[1],
 			((int)cellID.z - probeArrayDims[2] / 2) % probeArrayDims[2] },
-		.ValidMargin = { (int)cellIDDiff.x, (int)cellIDDiff.y, (int)cellIDDiff.z },
+		.ValidMargin = { cellIDDiffI.x, cellIDDiffI.y, cellIDDiffI.z },
 		.MinDiffuseVisibility = settings.MinDiffuseVisibility,
-		.MinSpecularVisibility = settings.MinSpecularVisibility
+		.MinSpecularVisibility = settings.MinSpecularVisibility,
+		.ProbeUpdateSliceStart = probeUpdateSliceStart,
+		.ProbeUpdateSliceCount = probeUpdateSliceCount
 	};
 }
 
@@ -229,11 +288,15 @@ void Skylighting::Prepass()
 
 		// Update probe array
 		{
+			uint dispatchSliceCount = probeUpdateSliceCount == 0 ? 1 : probeUpdateSliceCount;
+			if (dispatchSliceCount > probeArrayDims[2])
+				dispatchSliceCount = probeArrayDims[2];
+
 			context->CSSetSamplers(0, (uint)samplers.size(), samplers.data());
 			context->CSSetShaderResources(0, (uint)srvs.size(), srvs.data());
 			context->CSSetUnorderedAccessViews(0, (uint)uavs.size(), uavs.data(), nullptr);
 			context->CSSetShader(probeUpdateCompute.get(), nullptr, 0);
-			context->Dispatch((probeArrayDims[0] + 7u) >> 3, (probeArrayDims[1] + 7u) >> 3, probeArrayDims[2]);
+			context->Dispatch((probeArrayDims[0] + 7u) >> 3, (probeArrayDims[1] + 7u) >> 3, dispatchSliceCount);
 		}
 
 		// Reset
