@@ -1,9 +1,12 @@
 #include "ScreenSpaceShadows.h"
 
+#include "FoveatedCommon.h"
 #include "State.h"
+#include "Upscaling.h"
 #include "Util.h"
 #include "Utils/D3D.h"
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <vector>
 
@@ -20,6 +23,8 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	SampleCount,
 	VRBaseSamplesAtReference,
 	VRCullDistance,
+	EnableFoveated,
+	FoveatedCenterArea,
 	SurfaceThickness,
 	BilinearThreshold,
 	ShadowContrast)
@@ -38,6 +43,16 @@ namespace
 	constexpr float kBilinearThresholdMax = 1.0f;
 	constexpr float kShadowContrastMin = 0.0f;
 	constexpr float kShadowContrastMax = 4.0f;
+	constexpr float kFoveatedAreaDefault = 0.6f;
+	constexpr float kFoveatedPeripherySampleScale = 0.6f;
+	constexpr float kFoveatedPeripheryCullDistanceScale = 0.75f;
+
+	struct SharedFoveatedMaskState
+	{
+		bool active = false;
+		float centerScale = FoveatedCommon::kCenterAreaMax;
+		std::array<float2, 2> centerOffsets{};
+	};
 
 	float ClampFiniteOrDefault(float a_value, float a_min, float a_max, float a_default)
 	{
@@ -52,9 +67,54 @@ namespace
 		a_settings.SampleCount = std::clamp(a_settings.SampleCount, kSampleCountMin, kSampleCountMax);
 		a_settings.VRBaseSamplesAtReference = ClampFiniteOrDefault(a_settings.VRBaseSamplesAtReference, kVRBaseSamplesMin, kVRBaseSamplesMax, 44.0f);
 		a_settings.VRCullDistance = ClampFiniteOrDefault(a_settings.VRCullDistance, kVRCullDistanceMin, kVRCullDistanceMax, 0.0f);
+		a_settings.EnableFoveated = a_settings.EnableFoveated ? 1u : 0u;
+		a_settings.FoveatedCenterArea = ClampFiniteOrDefault(a_settings.FoveatedCenterArea, FoveatedCommon::kCenterAreaMin, FoveatedCommon::kCenterAreaMax, kFoveatedAreaDefault);
 		a_settings.SurfaceThickness = ClampFiniteOrDefault(a_settings.SurfaceThickness, kSurfaceThicknessMin, kSurfaceThicknessMax, 0.02f);
 		a_settings.BilinearThreshold = ClampFiniteOrDefault(a_settings.BilinearThreshold, kBilinearThresholdMin, kBilinearThresholdMax, 0.02f);
 		a_settings.ShadowContrast = ClampFiniteOrDefault(a_settings.ShadowContrast, kShadowContrastMin, kShadowContrastMax, 1.0f);
+	}
+
+	float ClampFoveatedCenterAreaForShadows(float a_value)
+	{
+		return ClampFiniteOrDefault(a_value, FoveatedCommon::kCenterAreaMin, FoveatedCommon::kCenterAreaMax, kFoveatedAreaDefault);
+	}
+
+	bool IsCenterAreaLinkedToUpscalingForShadows()
+	{
+		if (!globals::game::isVR)
+			return false;
+
+		return globals::features::upscaling.settings.linkFoveatedCenterAreaWithSSS;
+	}
+
+	float GetLinkedUpscalingCenterAreaForShadows()
+	{
+		return ClampFoveatedCenterAreaForShadows(globals::features::upscaling.settings.foveatedCenterArea);
+	}
+
+	float ResolveFoveatedCenterAreaForShadows(const ScreenSpaceShadows::BendSettings& a_settings)
+	{
+		if (!globals::game::isVR || !a_settings.EnableFoveated)
+			return FoveatedCommon::kCenterAreaMax;
+
+		if (IsCenterAreaLinkedToUpscalingForShadows())
+			return GetLinkedUpscalingCenterAreaForShadows();
+
+		return ClampFoveatedCenterAreaForShadows(a_settings.FoveatedCenterArea);
+	}
+
+	SharedFoveatedMaskState ResolveSharedFoveatedMaskStateForShadows(const ScreenSpaceShadows::BendSettings& a_settings)
+	{
+		SharedFoveatedMaskState state{};
+		if (!globals::game::isVR)
+			return state;
+
+		const auto& upscaling = globals::features::upscaling;
+		state.centerOffsets = upscaling.GetResolvedFoveatedMaskCenterOffsets();
+
+		state.centerScale = ResolveFoveatedCenterAreaForShadows(a_settings);
+		state.active = a_settings.EnableFoveated && state.centerScale < 0.999f;
+		return state;
 	}
 }
 
@@ -89,6 +149,35 @@ void ScreenSpaceShadows::DrawSettings()
 				ImGui::Text("0 disables. Lower values improve performance but remove distant shadows.");
 			}
 			bendSettings.VRCullDistance = std::clamp(bendSettings.VRCullDistance, kVRCullDistanceMin, kVRCullDistanceMax);
+
+			ImGui::Separator();
+			bool foveatedEnabled = bendSettings.EnableFoveated != 0;
+			{
+				Util::BlueFrameStyleWrapper blueFrameStyle(true);
+				if (ImGui::Checkbox("Foveated Screen Space Shadows", &foveatedEnabled))
+					bendSettings.EnableFoveated = foveatedEnabled ? 1u : 0u;
+			}
+			if (auto _tt = Util::HoverTooltipWrapper()) {
+				ImGui::TextUnformatted("Reduces Screen Space Shadows raymarch cost in the periphery while keeping full-quality sampling in the center.");
+				ImGui::TextUnformatted("Mask placement always follows the shared Upscaling per-eye mask offsets.");
+			}
+
+			if (bendSettings.EnableFoveated) {
+				float centerArea = ResolveFoveatedCenterAreaForShadows(bendSettings);
+				{
+					Util::BlueFrameStyleWrapper blueFrameStyle;
+					ImGui::SliderFloat("Foveated Area", &centerArea, FoveatedCommon::kCenterAreaMin, FoveatedCommon::kCenterAreaMax, "%.2f");
+				}
+				centerArea = ClampFoveatedCenterAreaForShadows(centerArea);
+				if (IsCenterAreaLinkedToUpscalingForShadows())
+					globals::features::upscaling.settings.foveatedCenterArea = centerArea;
+				bendSettings.FoveatedCenterArea = centerArea;
+				if (auto _tt = Util::HoverTooltipWrapper()) {
+					ImGui::TextUnformatted("Controls how much of the screen keeps full-quality Screen Space Shadows sampling when foveated Screen Space Shadows are active.");
+					if (IsCenterAreaLinkedToUpscalingForShadows())
+						ImGui::TextUnformatted("Linked with Upscaling center area (shared value).");
+				}
+			}
 		}
 
 		ImGui::Spacing();
@@ -283,9 +372,10 @@ void ScreenSpaceShadows::DrawShadows()
 	uint dynamicSampleCount = std::min(GetScaledSampleCount(true), maxCompiledSamples);
 	dynamicSampleCount = std::max(dynamicSampleCount, 1u);
 	uint dynamicReadCount = (dynamicSampleCount / 64 + 2);
+	const SharedFoveatedMaskState sharedFoveatedMaskState = ResolveSharedFoveatedMaskStateForShadows(bendSettings);
 
 	// Shared dispatch logic for both VR and non-VR
-	auto DispatchEye = [&](const char* eyeName, ID3D11ComputeShader* shader, const float* lightProj,
+	auto DispatchEye = [&](const char* eyeName, ID3D11ComputeShader* shader, uint32_t eyeIndex, const float* lightProj,
 						   float invTexSizeX, float invTexSizeY) {
 		if (globals::state->frameAnnotations && eyeName) {
 			std::string eventName = std::format("SSS - Ray March ({})", eyeName);
@@ -319,6 +409,21 @@ void ScreenSpaceShadows::DrawShadows()
 
 			data.DynamicSampleCount = dynamicSampleCount;
 			data.DynamicReadCount = dynamicReadCount;
+			data.FoveatedPadding0[0] = 0.0f;
+			data.FoveatedPadding0[1] = 0.0f;
+			data.FoveatedData0[0] = sharedFoveatedMaskState.centerScale;
+			data.FoveatedData0[1] = FoveatedCommon::kCenterFeather;
+			data.FoveatedData0[2] = kFoveatedPeripherySampleScale;
+			data.FoveatedData0[3] = kFoveatedPeripheryCullDistanceScale;
+			const float2 centerOffset = sharedFoveatedMaskState.centerOffsets[std::min<size_t>(eyeIndex, sharedFoveatedMaskState.centerOffsets.size() - 1)];
+			data.FoveatedCenterOffset[0] = centerOffset.x;
+			data.FoveatedCenterOffset[1] = centerOffset.y;
+			data.FoveatedCenterOffset[2] = 0.0f;
+			data.FoveatedCenterOffset[3] = 0.0f;
+			data.FoveatedEnabled = sharedFoveatedMaskState.active ? 1u : 0u;
+			data.FoveatedPad1[0] = 0.0f;
+			data.FoveatedPad1[1] = 0.0f;
+			data.FoveatedPad1[2] = 0.0f;
 
 			data.InvDepthTextureSize[0] = invTexSizeX;
 			data.InvDepthTextureSize[1] = invTexSizeY;
@@ -341,13 +446,13 @@ void ScreenSpaceShadows::DrawShadows()
 	float InvTexSizeY = 1.0f / (float)viewportSize[1];
 
 	if (!globals::game::isVR) {
-		DispatchEye(nullptr, raymarchLeft, lightProjectionF.data(), InvTexSizeX, InvTexSizeY);
+		DispatchEye(nullptr, raymarchLeft, 0, lightProjectionF.data(), InvTexSizeX, InvTexSizeY);
 	} else {
-		DispatchEye("Left Eye", raymarchLeft, lightProjectionF.data(), InvTexSizeX, InvTexSizeY);
+		DispatchEye("Left Eye", raymarchLeft, 0, lightProjectionF.data(), InvTexSizeX, InvTexSizeY);
 
 		// Calculate light projection for right eye
 		auto lightProjectionRightF = CalculateLightProjection(1);
-		DispatchEye("Right Eye", raymarchRight, lightProjectionRightF.data(), InvTexSizeX, InvTexSizeY);
+		DispatchEye("Right Eye", raymarchRight, 1, lightProjectionRightF.data(), InvTexSizeX, InvTexSizeY);
 	}
 
 	ID3D11ShaderResourceView* views[1]{ nullptr };

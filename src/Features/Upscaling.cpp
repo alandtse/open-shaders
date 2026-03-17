@@ -38,6 +38,7 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	foveatedPeripheryEdgeBlurStrength,
 	foveatedPeripheryMaskVisualization,
 	linkFoveatedCenterAreaWithSSGI,
+	linkFoveatedCenterAreaWithSSS,
 	hasExplicitFoveatedCenterLinkPreference,
 	reflexLowLatencyMode,
 	reflexLowLatencyBoost,
@@ -385,6 +386,8 @@ void Upscaling::DrawSettings()
 					ImGui::TextUnformatted("1.00 means full-center coverage (equivalent to full-frame vendor dispatch).");
 					if (settings.linkFoveatedCenterAreaWithSSGI)
 						ImGui::TextUnformatted("Shared with SSGI only while an SSGI foveated mode is active.");
+					if (settings.linkFoveatedCenterAreaWithSSS)
+						ImGui::TextUnformatted("Shared with Screen Space Shadows while foveated Screen Space Shadows are active.");
 				}
 
 				ImGui::Separator();
@@ -393,7 +396,8 @@ void Upscaling::DrawSettings()
 					ImGui::Checkbox("Foveated Mask Visualization", &settings.foveatedPeripheryMaskVisualization);
 				}
 				if (auto _tt = Util::HoverTooltipWrapper()) {
-					ImGui::TextUnformatted("Shows foveated and periphery regions for each eye in Upscaling and SSGI foveated modes.");
+					ImGui::TextUnformatted("Shows the current Upscaling foveated and periphery regions for each eye.");
+					ImGui::TextUnformatted("SSGI and Screen Space Shadows reuse the same per-eye mask placement, even when their area sizes are unlinked.");
 					ImGui::TextUnformatted("X/Y sliders move the real per-eye masks, not just the debug view.");
 					ImGui::TextUnformatted("Lower Foveated Area until the full ellipse is visible in each eye.");
 					ImGui::TextUnformatted("Center each mask with the sliders, then raise Foveated Area until the periphery reaches the view edge.");
@@ -453,18 +457,8 @@ void Upscaling::DrawSettings()
 					if (auto _tt = Util::HoverTooltipWrapper()) {
 						ImGui::TextUnformatted("Use the mask view to line the center ellipse up with the real headset image in each eye horizontally and vertically.");
 						ImGui::TextUnformatted("These offsets also drive the actual foveated crop and blend placement.");
-						ImGui::TextUnformatted("When SSGI foveation is active, the same eye offsets are reused there.");
+						ImGui::TextUnformatted("When SSGI or Screen Space Shadows foveation is active, the same eye offsets are reused there.");
 					}
-				}
-
-				ImGui::Separator();
-				if (ImGui::Checkbox("Link Foveated Area With SSGI", &settings.linkFoveatedCenterAreaWithSSGI))
-					settings.hasExplicitFoveatedCenterLinkPreference = true;
-				if (auto _tt = Util::HoverTooltipWrapper()) {
-					ImGui::TextUnformatted("Enabled: one shared center-area value drives both SSGI foveation and Upscaling foveation.");
-					ImGui::TextUnformatted("Disable to tune only the area size independently, or to leave SSGI unfoveated while Upscaling stays foveated.");
-					ImGui::TextUnformatted("Mask placement always stays shared and is defined by Upscaling.");
-					ImGui::TextUnformatted("If SSGI is in AO only or another non-foveated mode, this shared area is ignored there.");
 				}
 
 				ImGui::Separator();
@@ -479,6 +473,25 @@ void Upscaling::DrawSettings()
 				}
 			}
 			ImGui::EndDisabled();
+
+			ImGui::Separator();
+			if (ImGui::Checkbox("Link Foveated Area With SSGI", &settings.linkFoveatedCenterAreaWithSSGI))
+				settings.hasExplicitFoveatedCenterLinkPreference = true;
+			if (auto _tt = Util::HoverTooltipWrapper()) {
+				ImGui::TextUnformatted("Enabled: one shared center-area value drives both SSGI foveation and Upscaling foveation.");
+				ImGui::TextUnformatted("Disable to tune only the area size independently, or to leave SSGI unfoveated while Upscaling stays foveated.");
+				ImGui::TextUnformatted("Mask placement always stays shared and is defined by Upscaling.");
+				ImGui::TextUnformatted("If SSGI is in AO only or another non-foveated mode, this shared area is ignored there.");
+			}
+
+			ImGui::Separator();
+			ImGui::Checkbox("Link Foveated Area With Screen Space Shadows", &settings.linkFoveatedCenterAreaWithSSS);
+			if (auto _tt = Util::HoverTooltipWrapper()) {
+				ImGui::TextUnformatted("Enabled: one shared center-area value drives both Screen Space Shadows foveation and Upscaling foveation.");
+				ImGui::TextUnformatted("Disable to tune only the area size independently, or to leave Screen Space Shadows unfoveated while Upscaling stays foveated.");
+				ImGui::TextUnformatted("Mask placement always stays shared and is defined by Upscaling.");
+				ImGui::TextUnformatted("If foveated Screen Space Shadows are disabled, this shared area is ignored there.");
+			}
 		}
 	}
 
@@ -753,6 +766,8 @@ void Upscaling::LoadSettings(json& o_json)
 	settings = o_json;
 	if (!settings.hasExplicitFoveatedCenterLinkPreference)
 		settings.linkFoveatedCenterAreaWithSSGI = true;
+	if (!o_json.contains("linkFoveatedCenterAreaWithSSS"))
+		settings.linkFoveatedCenterAreaWithSSS = true;
 
 	// Sanitize loaded settings to ensure enum indices are valid
 	constexpr auto enumCount = 4;  // UpscaleMethod has 4 values: kNONE, kTAA, kFSR, kDLSS
@@ -1168,6 +1183,11 @@ bool Upscaling::IsFoveatedVendorDispatchEnabled(UpscaleMethod a_upscaleMethod) c
 	const float centerArea = ClampFoveatedCenterArea(settings.foveatedCenterArea);
 	// 1.0 is effectively full-frame vendor dispatch, so keep the default path.
 	return centerArea < 0.999f;
+}
+
+bool Upscaling::IsFoveatedUpscalingActive() const
+{
+	return IsFoveatedVendorDispatchEnabled(GetUpscaleMethod());
 }
 
 float2 Upscaling::GetDefaultFoveatedMaskCenterOffset(uint32_t eyeIndex) const

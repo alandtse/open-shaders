@@ -39,7 +39,9 @@ public:
 		uint SampleCount = 1;
 		float VRBaseSamplesAtReference = 44.0f;
 		float VRCullDistance = 0.0f;  // 0 = disabled
-		uint pad0[1];
+		uint EnableFoveated = 0;
+		float FoveatedCenterArea = 0.6f;
+		float pad0[3]{};
 	};
 
 	BendSettings bendSettings;
@@ -63,7 +65,11 @@ public:
 
 		uint DynamicSampleCount;
 		uint DynamicReadCount;
-		float pad0[2];
+		float FoveatedPadding0[2];
+		float FoveatedData0[4];      // x=centerScale, y=centerFeather, z=peripherySampleScale, w=peripheryCullDistanceScale
+		float FoveatedCenterOffset[4];
+		uint FoveatedEnabled;
+		float FoveatedPad1[3];
 
 		BendSettings settings;
 	};
