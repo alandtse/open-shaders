@@ -53,7 +53,7 @@ public:
 	{
 		uint upscaleMethod = (uint)UpscaleMethod::kDLSS;
 		uint upscaleMethodNoDLSS = (uint)UpscaleMethod::kFSR;
-		uint qualityMode = 1;  // Default to Quality (1=Quality, 2=Balanced, 3=Performance, 4=Ultra Performance, 0=Native AA)
+		uint qualityMode = 0;  // Default to DLAA / Native AA (1=Quality, 2=Balanced, 3=Performance, 4=Ultra Performance, 0=Native AA)
 		uint dlssPreset = 1;   // 0=J, 1=K, 2=L, 3=M, 4=F (default K)
 		uint frameLimitMode = 1;
 		uint frameGenerationMode = 1;
@@ -61,15 +61,10 @@ public:
 		uint streamlineLogLevel = 0;  // 0=Off, 1=Default, 2=Verbose
 		float sharpnessFSR = 0.0f;
 		float sharpnessDLSS = 0.1f;
-		bool dlssUseHistoryReset = false;
-		bool dlssBypassCroppedConstantsCorrection = false;
 		bool foveatedVendorDispatch = false;
-		bool foveatedDirectSourcePath = false;
 		float foveatedCenterArea = 0.6f;
-		bool foveatedPeripheryUseTAA = true;
 		bool foveatedPeripheryEdgeBlur = false;
 		float foveatedPeripheryEdgeBlurStrength = 0.35f;
-		bool foveatedPeripheryOuterRingBlur = false;
 		bool foveatedPeripheryMaskVisualization = false;
 		bool linkFoveatedCenterAreaWithSSGI = true;
 		bool hasExplicitFoveatedCenterLinkPreference = false;
@@ -113,8 +108,8 @@ public:
 		float2 outputOffset;
 		float2 jitter;
 		float4 tuning0;  // x=centerScale, y=centerFeather, z/w reserved
-		float4 tuning1;  // x=useEdgeBlur, y=edgeBlurStrength, z=edgeSensitivity, w=useOuterRingBlur
-		float4 tuning2;  // x=visualizeMask, y reserved, z=usePeripheryTAA, w=pad
+		float4 tuning1;  // x=useEdgeBlur, y=edgeBlurStrength, z=edgeSensitivity, w reserved
+		float4 tuning2;  // x=visualizeMask, y/z/w reserved
 	};
 
 	struct FoveatedCenterBlendCB

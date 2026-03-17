@@ -350,7 +350,6 @@ void Streamline::CheckFrameConstants(sl::ViewportHandle p_viewport, uint32_t eye
 	// In non-VR, this is called once per frame
 	auto state = globals::state;
 	auto& upscaling = globals::features::upscaling;
-	const bool bypassCroppedConstantsCorrection = upscaling.settings.dlssBypassCroppedConstantsCorrection;
 	bool applyCroppedConstantsCorrection = false;
 	float clampedViewportScaleX = std::clamp(viewportScaleX, 1e-4f, 1.0f);
 	float clampedViewportScaleY = std::clamp(viewportScaleY, 1e-4f, 1.0f);
@@ -384,7 +383,7 @@ void Streamline::CheckFrameConstants(sl::ViewportHandle p_viewport, uint32_t eye
 
 	if (globals::game::isVR) {
 		const bool isCroppedViewport = clampedViewportScaleX < 0.999f || clampedViewportScaleY < 0.999f;
-		applyCroppedConstantsCorrection = isCroppedViewport && !bypassCroppedConstantsCorrection;
+		applyCroppedConstantsCorrection = isCroppedViewport;
 		if (applyCroppedConstantsCorrection) {
 			const float invScaleX = 1.0f / clampedViewportScaleX;
 			const float invScaleY = 1.0f / clampedViewportScaleY;
@@ -441,7 +440,7 @@ void Streamline::CheckFrameConstants(sl::ViewportHandle p_viewport, uint32_t eye
 
 	auto jitter = upscaling.jitter;
 	slConstants.jitterOffset = { -jitter.x, -jitter.y };
-	const bool requestHistoryReset = upscaling.settings.dlssUseHistoryReset && upscaling.ShouldResetHistoryThisFrame();
+	const bool requestHistoryReset = upscaling.ShouldResetHistoryThisFrame();
 	slConstants.reset = requestHistoryReset ? sl::Boolean::eTrue : sl::Boolean::eFalse;
 
 	if (globals::game::isVR && applyCroppedConstantsCorrection) {
