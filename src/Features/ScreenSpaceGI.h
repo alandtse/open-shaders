@@ -68,6 +68,7 @@ public:
 		uint frameHeight = 0;
 		bool isVR = false;
 		float scale = -1.0f;
+		std::array<float2, 2> centerOffsets{};
 		std::array<CenterDispatchRect, 2> rects{};
 	} centerRectCache;
 
@@ -148,6 +149,7 @@ public:
 		float DistanceNormalisation;
 		float VRCullDistance;
 		float CenterFullResMaskScale;
+		float4 CenterFullResMaskOffsets;
 		float CenterFullResMaskFeather;
 		float CenterDispatchOffsetX;
 		float CenterDispatchOffsetY;

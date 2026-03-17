@@ -10,6 +10,8 @@ cbuffer FoveatedPeripheryCB : register(b0)
 	float2 DispatchDim;
 	float2 OutputOffset;
 	float2 Jitter;
+	float2 CenterOffset;
+	float2 Pad0;
 	float4 Tuning0;  // x=centerScale, y=centerFeather, z/w reserved
 	float4 Tuning1;  // x=useEdgeBlur, y=edgeBlurStrength, z=edgeSensitivity, w reserved
 	float4 Tuning2;  // x=visualizeMask, y/z/w reserved
@@ -43,13 +45,13 @@ float Luma(float3 c)
 	const float edgeSensitivity = Tuning1.z;
 	const float visualizeMask = Tuning2.x;
 
-	float centerWeight = FoveatedComputeCenterBlendWeight(uv, centerScale, centerFeather);
+	float centerWeight = FoveatedComputeCenterBlendWeight(uv, centerScale, centerFeather, CenterOffset);
 	float peripheryWeight = saturate(1.0 - centerWeight);
 
 	if (visualizeMask > 0.5) {
-		const float centerRadius = max(saturate(centerScale) * 0.5, FOVEATED_CENTER_FEATHER_MIN);
+		const float centerRadius = max(FoveatedClampCenterArea(centerScale) * 0.5, FOVEATED_CENTER_FEATHER_MIN);
 		const float normalizedFeather = max(centerFeather, FOVEATED_CENTER_FEATHER_MIN) / centerRadius;
-		const float ellipseDistance = FoveatedComputeEllipseDistance(uv, centerScale);
+		const float ellipseDistance = FoveatedComputeEllipseDistance(uv, centerScale, CenterOffset);
 
 		static const float3 kCenterColor = float3(0.20, 0.34, 0.28);
 		static const float3 kFeatherColor = float3(0.43, 0.35, 0.20);

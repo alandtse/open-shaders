@@ -65,6 +65,7 @@ cbuffer SSGICB : register(b1)
 	float DistanceNormalisation;
 	float VRCullDistance;
 	float CenterFullResMaskScale;
+	float4 CenterFullResMaskOffsets;
 	float CenterFullResMaskFeather;
 	float CenterDispatchOffsetX;
 	float CenterDispatchOffsetY;
@@ -162,10 +163,15 @@ float2 ClampUVToEye(float2 uv, uint eyeIndex, float2 frameDim)
 }
 #endif
 
+float2 GetCenterFullMaskOffset(uint eyeIndex)
+{
+	return eyeIndex == 0 ? CenterFullResMaskOffsets.xy : CenterFullResMaskOffsets.zw;
+}
+
 float GetCenterFullMaskWeight(float2 stereoUv, uint eyeIndex)
 {
 	float2 eyeUv = Stereo::ConvertFromStereoUV(stereoUv, eyeIndex);
-	return FoveatedComputeCenterBlendWeight(eyeUv, CenterFullResMaskScale, CenterFullResMaskFeather);
+	return FoveatedComputeCenterBlendWeight(eyeUv, CenterFullResMaskScale, CenterFullResMaskFeather, GetCenterFullMaskOffset(eyeIndex));
 }
 
 ///////////////////////////////////////////////////////////////////////////////
