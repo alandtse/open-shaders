@@ -13,7 +13,7 @@ This fork inherits the original GPL-3.0-or-later license with the Modding Except
 ## Requirements
 
 -   Any terminal of your choice (e.g., PowerShell)
--   [Visual Studio Community 2022](https://visualstudio.microsoft.com/)
+-   [Visual Studio Community 2026](https://visualstudio.microsoft.com/)
     -   Desktop development with C++
     -   CMake Tools for Windows
     -   HLSL Tools
@@ -69,7 +69,7 @@ Right click on the target and select `Build` to create the zip package in `./dis
 
 ### Advanced build with CMake in command line
 
-Open the "Developer PowerShell for VS 2022" or the "x64 Native Tools Command Prompt" (these set up the Visual Studio toolchain for you).
+Open the "Developer PowerShell for VS 2026" or the "x64 Native Tools Command Prompt" (these set up the Visual Studio toolchain for you).
 
 Then from the repository root run:
 
