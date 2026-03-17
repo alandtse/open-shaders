@@ -1299,29 +1299,11 @@ void ScreenSpaceGI::DrawSSGI()
 		if (eyeWidth == 0)
 			return rect;
 
-		const float centerX = static_cast<float>(eyeMinX) + static_cast<float>(eyeWidth) * 0.5f;
-		const float centerY = static_cast<float>(frameHeight) * 0.5f;
-		const float extentX = (centerScale * static_cast<float>(eyeWidth) * 0.5f) + (FoveatedCommon::kCenterFeather * static_cast<float>(eyeWidth));
-		const float extentY = (centerScale * static_cast<float>(frameHeight) * 0.5f) + (FoveatedCommon::kCenterFeather * static_cast<float>(frameHeight));
-
-		int minX = static_cast<int>(centerX - extentX);
-		int maxX = static_cast<int>(centerX + extentX + 0.9999f);
-		int minY = static_cast<int>(centerY - extentY);
-		int maxY = static_cast<int>(centerY + extentY + 0.9999f);
-
-		minX = std::max(minX, static_cast<int>(eyeMinX));
-		maxX = std::min(maxX, static_cast<int>(eyeMaxX));
-		minY = std::max(minY, 0);
-		maxY = std::min(maxY, static_cast<int>(frameHeight));
-
-		// Expand to full 8x8 threadgroups to minimize partial-group boundary overhead.
-		const int eyeMinXInt = static_cast<int>(eyeMinX);
-		const int eyeMaxXInt = static_cast<int>(eyeMaxX);
-		const int frameHeightInt = static_cast<int>(frameHeight);
-		minX = std::max(FoveatedCommon::AlignDownToThreadGroup(minX - eyeMinXInt) + eyeMinXInt, eyeMinXInt);
-		maxX = std::min(FoveatedCommon::AlignUpToThreadGroup(maxX - eyeMinXInt) + eyeMinXInt, eyeMaxXInt);
-		minY = std::max(FoveatedCommon::AlignDownToThreadGroup(minY), 0);
-		maxY = std::min(FoveatedCommon::AlignUpToThreadGroup(maxY), frameHeightInt);
+		const auto bounds = FoveatedCommon::BuildCenteredDispatchBounds(eyeMinX, eyeMaxX, frameHeight, centerScale);
+		const int minX = bounds.minX;
+		const int maxX = bounds.maxX;
+		const int minY = bounds.minY;
+		const int maxY = bounds.maxY;
 
 		if (maxX <= minX || maxY <= minY)
 			return rect;

@@ -31,7 +31,6 @@
 #include "Common/GBuffer.hlsli"
 #include "Common/Math.hlsli"
 #include "Common/Spherical Harmonics/SphericalHarmonics.hlsli"
-#include "Common/VR.hlsli"
 #include "ScreenSpaceGI/common.hlsli"
 
 #define RCP_PI (0.31830988618)
@@ -77,19 +76,6 @@ float GetVRCullFade(float depth)
 	return 1.0 - smoothstep(fadeStart, VRCullDistance, depth);
 #else
 	return 1.0;
-#endif
-}
-
-float GetCenterFullMaskWeight(float2 stereoUv, uint eyeIndex)
-{
-#ifdef CENTER_FULL_PASS
-	float2 eyeUv = Stereo::ConvertFromStereoUV(stereoUv, eyeIndex);
-	float halfSize = saturate(CenterFullResMaskScale) * 0.5;
-	float2 outside = abs(eyeUv - 0.5) - halfSize.xx;
-	float distanceOutside = max(outside.x, outside.y);
-	return 1.0 - smoothstep(0.0, max(CenterFullResMaskFeather, 1e-4), distanceOutside);
-#else
-	return 0.0;
 #endif
 }
 

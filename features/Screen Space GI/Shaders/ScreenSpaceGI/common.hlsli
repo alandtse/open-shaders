@@ -20,8 +20,10 @@
 
 ///////////////////////////////////////////////////////////////////////////////
 
+#include "Common/FoveatedMask.hlsli"
 #include "Common/Math.hlsli"
 #include "Common/SharedData.hlsli"
+#include "Common/VR.hlsli"
 
 cbuffer SSGICB : register(b1)
 {
@@ -159,6 +161,12 @@ float2 ClampUVToEye(float2 uv, uint eyeIndex, float2 frameDim)
 	return clamp(uv, minUV, maxUV);
 }
 #endif
+
+float GetCenterFullMaskWeight(float2 stereoUv, uint eyeIndex)
+{
+	float2 eyeUv = Stereo::ConvertFromStereoUV(stereoUv, eyeIndex);
+	return FoveatedComputeCenterBlendWeight(eyeUv, CenterFullResMaskScale, CenterFullResMaskFeather);
+}
 
 ///////////////////////////////////////////////////////////////////////////////
 
