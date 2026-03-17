@@ -13,6 +13,18 @@ namespace
 		const uint maxSlices = std::max(1u, a_maxSlices);
 		return std::clamp(a_sliceCount, 1u, maxSlices);
 	}
+
+	uint ClampUpdateInterval(uint a_interval)
+	{
+		return std::clamp(a_interval, 1u, 32u);
+	}
+
+	bool ShouldRunPeriodicUpdate(uint& a_frameCounter, uint a_interval, bool a_forceRun)
+	{
+		const bool shouldRun = a_forceRun || ((a_frameCounter % a_interval) == 0);
+		a_frameCounter++;
+		return shouldRun;
+	}
 }
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
@@ -21,7 +33,10 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	MinDiffuseVisibility,
 	MinSpecularVisibility,
 	EnableIncrementalProbeUpdates,
-	StableSliceCount)
+	StableSliceCount,
+	EnableReducedUpdateFrequency,
+	OcclusionUpdateInterval,
+	ProbeUpdateInterval)
 
 void Skylighting::LoadSettings(json& o_json)
 {
@@ -45,6 +60,9 @@ void Skylighting::ResetSkylighting()
 	context->ClearUnorderedAccessViewUint(texAccumFramesArray->uav.get(), clr);
 	probeUpdateSliceCursor = 0;
 	forcedFullUpdateFrames = 1;
+	forceProbeUpdateThisFrame = true;
+	probeUpdateFrameCounter = 0;
+	occlusionUpdateFrameCounter = 0;
 	queuedResetSkylighting = false;
 }
 
@@ -79,6 +97,37 @@ void Skylighting::DrawSettings()
 
 	const uint stableRefreshFrames = (probeArrayDims[2] + settings.StableSliceCount - 1) / settings.StableSliceCount;
 	ImGui::Text("Stable probe field full refresh: ~%u frame(s)", stableRefreshFrames);
+
+	ImGui::Separator();
+	ImGui::Checkbox("Enable Reduced Update Frequency", &settings.EnableReducedUpdateFrequency);
+	if (auto _tt = Util::HoverTooltipWrapper())
+		ImGui::Text("Reuses previous occlusion/probe data for several frames before refreshing.");
+
+	settings.OcclusionUpdateInterval = ClampUpdateInterval(settings.OcclusionUpdateInterval);
+	settings.ProbeUpdateInterval = ClampUpdateInterval(settings.ProbeUpdateInterval);
+
+	ImGui::BeginDisabled(!settings.EnableReducedUpdateFrequency);
+	{
+		int occlusionIntervalUI = static_cast<int>(settings.OcclusionUpdateInterval);
+		if (ImGui::SliderInt("Occlusion Update Interval", &occlusionIntervalUI, 1, 16))
+			settings.OcclusionUpdateInterval = ClampUpdateInterval(static_cast<uint>(occlusionIntervalUI));
+		if (auto _tt = Util::HoverTooltipWrapper())
+			ImGui::Text("1 = every frame. Higher values refresh world occlusion less often.");
+
+		int probeIntervalUI = static_cast<int>(settings.ProbeUpdateInterval);
+		if (ImGui::SliderInt("Probe Update Interval", &probeIntervalUI, 1, 16))
+			settings.ProbeUpdateInterval = ClampUpdateInterval(static_cast<uint>(probeIntervalUI));
+		if (auto _tt = Util::HoverTooltipWrapper())
+			ImGui::Text("1 = every frame. Higher values skip probe updates between refreshes.");
+	}
+	ImGui::EndDisabled();
+
+	if (settings.EnableReducedUpdateFrequency) {
+		ImGui::Text("Occlusion refresh cadence: every %u frame(s)", settings.OcclusionUpdateInterval);
+		ImGui::Text("Probe refresh cadence: every %u frame(s)", settings.ProbeUpdateInterval);
+		if (settings.ProbeUpdateInterval < settings.OcclusionUpdateInterval)
+			ImGui::Text("Note: Probe updates faster than occlusion mostly reuse the same occlusion sample.");
+	}
 
 	ImGui::Separator();
 	ImGui::SliderAngle("Max Zenith Angle", &settings.MaxZenith, 0, 90);
@@ -227,6 +276,7 @@ Skylighting::SkylightingCB Skylighting::GetCommonBufferData(bool a_inWorld)
 		cellIDDiffI.y != 0 ||
 		cellIDDiffI.z != 0 ||
 		forcedFullUpdateFrames > 0;
+	forceProbeUpdateThisFrame = shouldForceFullUpdate;
 
 	probeUpdateSliceStart = 0;
 	probeUpdateSliceCount = probeArrayDims[2];
@@ -236,10 +286,6 @@ Skylighting::SkylightingCB Skylighting::GetCommonBufferData(bool a_inWorld)
 
 		probeUpdateSliceStart = probeUpdateSliceCursor;
 		probeUpdateSliceCount = std::min(stableSliceCount, probeArrayDims[2] - probeUpdateSliceStart);
-
-		probeUpdateSliceCursor += probeUpdateSliceCount;
-		if (probeUpdateSliceCursor >= probeArrayDims[2])
-			probeUpdateSliceCursor = 0;
 	} else {
 		probeUpdateSliceCursor = 0;
 	}
@@ -288,15 +334,27 @@ void Skylighting::Prepass()
 
 		// Update probe array
 		{
+			const uint probeUpdateInterval = settings.EnableReducedUpdateFrequency ? ClampUpdateInterval(settings.ProbeUpdateInterval) : 1;
+			const bool shouldUpdateProbes = ShouldRunPeriodicUpdate(probeUpdateFrameCounter, probeUpdateInterval, forceProbeUpdateThisFrame);
+
 			uint dispatchSliceCount = probeUpdateSliceCount == 0 ? 1 : probeUpdateSliceCount;
 			if (dispatchSliceCount > probeArrayDims[2])
 				dispatchSliceCount = probeArrayDims[2];
 
-			context->CSSetSamplers(0, (uint)samplers.size(), samplers.data());
-			context->CSSetShaderResources(0, (uint)srvs.size(), srvs.data());
-			context->CSSetUnorderedAccessViews(0, (uint)uavs.size(), uavs.data(), nullptr);
-			context->CSSetShader(probeUpdateCompute.get(), nullptr, 0);
-			context->Dispatch((probeArrayDims[0] + 7u) >> 3, (probeArrayDims[1] + 7u) >> 3, dispatchSliceCount);
+			if (shouldUpdateProbes) {
+				context->CSSetSamplers(0, (uint)samplers.size(), samplers.data());
+				context->CSSetShaderResources(0, (uint)srvs.size(), srvs.data());
+				context->CSSetUnorderedAccessViews(0, (uint)uavs.size(), uavs.data(), nullptr);
+				context->CSSetShader(probeUpdateCompute.get(), nullptr, 0);
+				context->Dispatch((probeArrayDims[0] + 7u) >> 3, (probeArrayDims[1] + 7u) >> 3, dispatchSliceCount);
+
+				// Advance the rotating incremental window only when work actually executes.
+				if (probeUpdateSliceCount < probeArrayDims[2]) {
+					probeUpdateSliceCursor += probeUpdateSliceCount;
+					if (probeUpdateSliceCursor >= probeArrayDims[2])
+						probeUpdateSliceCursor = 0;
+				}
+			}
 		}
 
 		// Reset
@@ -588,8 +646,17 @@ void Skylighting::RenderOcclusion()
 			{
 				state->BeginPerfEvent("Skylighting Mask");
 
+				const bool forceOcclusionRefresh = queuedResetSkylighting;
 				if (queuedResetSkylighting)
 					ResetSkylighting();
+
+				const uint occlusionUpdateInterval = settings.EnableReducedUpdateFrequency ? ClampUpdateInterval(settings.OcclusionUpdateInterval) : 1;
+				const bool shouldUpdateOcclusion = ShouldRunPeriodicUpdate(occlusionUpdateFrameCounter, occlusionUpdateInterval, forceOcclusionRefresh);
+
+				if (!shouldUpdateOcclusion) {
+					state->EndPerfEvent();
+					return;
+				}
 
 				frameCount++;
 

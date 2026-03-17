@@ -49,6 +49,9 @@ public:
 		float MinSpecularVisibility = 0.1f;
 		bool EnableIncrementalProbeUpdates = false;
 		uint StableSliceCount = 8;
+		bool EnableReducedUpdateFrequency = false;
+		uint OcclusionUpdateInterval = 2;
+		uint ProbeUpdateInterval = 2;
 	} settings;
 
 	struct SkylightingCB
@@ -95,6 +98,9 @@ public:
 	uint probeUpdateSliceCount = 128;
 	uint probeUpdateSliceCursor = 0;
 	uint forcedFullUpdateFrames = 1;
+	bool forceProbeUpdateThisFrame = true;
+	uint probeUpdateFrameCounter = 0;
+	uint occlusionUpdateFrameCounter = 0;
 
 	void ResetSkylighting();
 
