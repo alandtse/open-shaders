@@ -26,11 +26,7 @@ cbuffer PerFrame : register(b1)
 
 	uint DynamicSampleCount;
 	uint DynamicReadCount;
-	float2 FoveatedPadding0;
-	float4 FoveatedData0;
-	float4 FoveatedCenterOffset;
-	uint FoveatedEnabled;
-	float3 FoveatedPad1;
+	float2 pad0;
 
 	float SurfaceThickness;
 	float BilinearThreshold;
@@ -39,9 +35,7 @@ cbuffer PerFrame : register(b1)
 	uint SampleCount;
 	float VRBaseSamplesAtReference;
 	float VRCullDistance;
-	uint EnableFoveated;
-	float FoveatedCenterArea;
-	float3 settingsPad0;
+	uint settingsPad0;
 };
 
 [numthreads(WAVE_SIZE, 1, 1)] void main(
@@ -70,12 +64,6 @@ cbuffer PerFrame : register(b1)
 
 	parameters.DynamicSampleCount = DynamicSampleCount;
 	parameters.DynamicReadCount = DynamicReadCount;
-	parameters.FoveatedCenterScale = FoveatedData0.x;
-	parameters.FoveatedCenterFeather = FoveatedData0.y;
-	parameters.FoveatedPeripherySampleScale = FoveatedData0.z;
-	parameters.FoveatedPeripheryCullDistanceScale = FoveatedData0.w;
-	parameters.FoveatedCenterOffset = FoveatedCenterOffset.xy;
-	parameters.FoveatedEnabled = FoveatedEnabled != 0;
 
 	parameters.UsePrecisionOffset = true;
 

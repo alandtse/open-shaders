@@ -71,7 +71,6 @@ public:
 		float foveatedPeripheryEdgeBlurStrength = 1.0f;
 		bool foveatedPeripheryMaskVisualization = false;
 		bool linkFoveatedCenterAreaWithSSGI = true;
-		bool linkFoveatedCenterAreaWithSSS = true;
 		bool hasExplicitFoveatedCenterLinkPreference = false;
 		bool reflexLowLatencyMode = true;
 		bool reflexLowLatencyBoost = false;
@@ -194,7 +193,6 @@ public:
 	virtual void SetupResources() override;
 
 	UpscaleMethod GetUpscaleMethod() const;
-	bool IsFoveatedUpscalingActive() const;
 
 	void CheckResources(UpscaleMethod a_upscalemethod);
 	void CreateUpscalingTextureResources(UpscaleMethod a_upscalemethod);
