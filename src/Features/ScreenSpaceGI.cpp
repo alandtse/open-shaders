@@ -298,23 +298,19 @@ void ScreenSpaceGI::DrawSettings()
 	}
 
 	///////////////////////////////
-	ImGui::SeparatorText("Quality/Performance");
+	ImGui::SeparatorText("Presets");
 
 	{
-		auto qualityGuard = Util::DisableGuard(!settings.Enabled);
-		auto drawFoveatedToggleButton = [](const char* a_label, bool a_active, const ImVec2& a_size) {
-			if (a_active) {
-				ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.88f, 0.74f, 0.22f, 1.0f));
-				ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.95f, 0.82f, 0.30f, 1.0f));
-				ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.98f, 0.88f, 0.38f, 1.0f));
-			} else {
-				ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.34f, 0.34f, 0.34f, 1.0f));
-				ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.42f, 0.42f, 0.42f, 1.0f));
-				ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.48f, 0.48f, 0.48f, 1.0f));
-			}
-			const bool clicked = ImGui::Button(a_label, a_size);
-			ImGui::PopStyleColor(3);
-			return clicked;
+		auto presetsAndQualityGuard = Util::DisableGuard(!settings.Enabled);
+		auto drawPresetButton = [](const char* a_label, const ImVec2& a_size, const ImVec4& a_normal, const ImVec4& a_hovered, const ImVec4& a_active) {
+			Util::StyledButtonWrapper style(a_normal, a_hovered, a_active);
+			return ImGui::Button(a_label, a_size);
+		};
+		auto drawFoveatedToggleButton = [&](const char* a_label, bool a_active, const ImVec2& a_size) {
+			const ImVec4 normal = a_active ? ImVec4(0.88f, 0.74f, 0.22f, 1.0f) : ImVec4(0.62f, 0.49f, 0.12f, 1.0f);
+			const ImVec4 hovered = a_active ? ImVec4(0.95f, 0.82f, 0.30f, 1.0f) : ImVec4(0.74f, 0.58f, 0.16f, 1.0f);
+			const ImVec4 pressed = a_active ? ImVec4(0.98f, 0.88f, 0.38f, 1.0f) : ImVec4(0.82f, 0.66f, 0.20f, 1.0f);
+			return drawPresetButton(a_label, a_size, normal, hovered, pressed);
 		};
 
 		if (ImGui::BeginTable("Presets", 4, ImGuiTableFlags_SizingStretchProp)) {
@@ -424,8 +420,10 @@ void ScreenSpaceGI::DrawSettings()
 			ImGui::TextDisabled("Foveated/QRes and Foveated/Only presets are VR only.");
 		}
 
+		ImGui::SeparatorText("Quality/Performance");
+
 		if (isVR) {
-			ImGui::SliderFloat("Shadow/GI Cull Distance", &settings.VRCullDistance, kVRCullDistanceMin, kVRCullDistanceMax, "%.0f units");
+			ImGui::SliderFloat("AO/IL Cull Distance", &settings.VRCullDistance, kVRCullDistanceMin, kVRCullDistanceMax, "%.0f units");
 			if (auto _tt = Util::HoverTooltipWrapper()) {
 				ImGui::Text("0 disables. Lower values improve performance but reduce distant AO/IL.");
 			}
