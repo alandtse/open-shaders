@@ -70,6 +70,7 @@ public:
 		bool foveatedPeripheryEdgeBlur = false;
 		float foveatedPeripheryEdgeBlurStrength = 0.35f;
 		bool foveatedPeripheryOuterRingBlur = false;
+		bool foveatedPeripheryMaskVisualization = false;
 		bool linkFoveatedCenterAreaWithSSGI = true;
 		bool hasExplicitFoveatedCenterLinkPreference = false;
 		bool reflexLowLatencyMode = true;
@@ -113,7 +114,7 @@ public:
 		float2 jitter;
 		float4 tuning0;  // x=centerScale, y=centerFeather, z/w reserved
 		float4 tuning1;  // x=useEdgeBlur, y=edgeBlurStrength, z=edgeSensitivity, w=useOuterRingBlur
-		float4 tuning2;  // x/y reserved, z=usePeripheryTAA, w=pad
+		float4 tuning2;  // x=visualizeMask, y reserved, z=usePeripheryTAA, w=pad
 	};
 
 	struct FoveatedCenterBlendCB
