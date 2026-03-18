@@ -338,13 +338,13 @@ bool Streamline::EnsureFrameToken()
 	return frameToken != nullptr;
 }
 
-void Streamline::CheckFrameConstants(sl::ViewportHandle p_viewport, uint32_t eyeIndex, float viewportScaleX, float viewportScaleY)
+bool Streamline::CheckFrameConstants(sl::ViewportHandle p_viewport, uint32_t eyeIndex, float viewportScaleX, float viewportScaleY)
 {
 	if (!globals::features::upscaling.streamline.initialized)
-		return;
+		return false;
 
 	if (!EnsureFrameToken())
-		return;
+		return false;
 
 	// In VR, we need to set constants for each viewport/eye separately
 	// In non-VR, this is called once per frame
@@ -456,7 +456,10 @@ void Streamline::CheckFrameConstants(sl::ViewportHandle p_viewport, uint32_t eye
 
 	if (SL_FAILED(res, slSetConstants(slConstants, *frameToken, p_viewport))) {
 		logger::error("[Streamline] Could not set constants for eye {}", eyeIndex);
+		return false;
 	}
+
+	return true;
 }
 
 bool Streamline::IsRTXAndBelow40Series(IDXGIAdapter* a_adapter)
@@ -614,7 +617,8 @@ bool Streamline::EvaluateDLSS(sl::ViewportHandle vp, uint32_t eyeIndex,
 		}
 	}
 
-	CheckFrameConstants(vp, eyeIndex, viewportScaleX, viewportScaleY);
+	if (!CheckFrameConstants(vp, eyeIndex, viewportScaleX, viewportScaleY))
+		return false;
 	SetDLSSOptions(vp, eyeIndex, outputWidth, extentOut.height);
 
 	sl::ResourceTag tags[] = {
