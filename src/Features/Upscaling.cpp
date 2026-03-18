@@ -768,7 +768,14 @@ void Upscaling::LoadSettings(json& o_json)
 	}
 	settings.dlssPreset = std::min<uint>(settings.dlssPreset, kDLSSPresetMaxIndex);
 	SanitizeFoveatedSettings(settings);
+	const float originalReflexFPSLimit = settings.reflexFPSLimit;
 	settings.reflexFPSLimit = std::clamp(settings.reflexFPSLimit, 20.0f, 240.0f);
+	if (settings.reflexFPSLimit != originalReflexFPSLimit) {
+		logger::warn(
+			"[Upscaling] Loaded reflexFPSLimit {} out of range, clamping to {}",
+			originalReflexFPSLimit,
+			settings.reflexFPSLimit);
+	}
 	auto iniSettingCollection = globals::game::iniPrefSettingCollection;
 	if (iniSettingCollection) {
 		if (auto setting = iniSettingCollection->GetSetting("bUseTAA:Display"))
