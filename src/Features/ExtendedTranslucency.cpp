@@ -26,10 +26,9 @@ void ExtendedTranslucency::BSLightingShader_SetupGeometry(RE::BSRenderPass* pass
 	// Clear the ExtraFeatureDescriptor to disable this effect on default
 	SetFeatureDescriptor(MaterialModel::DescriptorDisabled);
 
-	auto& property0 = pass->geometry->GetGeometryRuntimeData().properties[0];
-	auto& property1 = pass->geometry->GetGeometryRuntimeData().properties[1];
-	auto alphaProperty = property0 && property0->GetRTTI() == globals::rtti::NiAlphaPropertyRTTI.get() ? static_cast<RE::NiAlphaProperty*>(property0.get()) : nullptr;
-	auto lightProperty = property1 && property1->GetRTTI() == globals::rtti::BSLightingShaderPropertyRTTI.get() ? static_cast<RE::BSLightingShaderProperty*>(property1.get()) : nullptr;
+	auto alphaProperty = pass->geometry->GetGeometryRuntimeData().alphaProperty.get();
+	auto shaderProperty = pass->geometry->GetGeometryRuntimeData().shaderProperty.get();
+	auto lightProperty = shaderProperty && shaderProperty->GetRTTI() == globals::rtti::BSLightingShaderPropertyRTTI.get() ? static_cast<RE::BSLightingShaderProperty*>(shaderProperty) : nullptr;
 
 	// This effect only matters when alpha property exists and blending is enabled
 	// Geometries with alpha < 1 have an implicit alpha blend property

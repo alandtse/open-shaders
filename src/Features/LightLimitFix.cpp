@@ -162,11 +162,7 @@ namespace
 			return;
 		}
 
-		auto& properties = a_geometry->GetGeometryRuntimeData().properties;
-		auto* lightingProperty = GetLightingShaderProperty(properties[RE::BSGeometry::States::kEffect].get());
-		if (!lightingProperty) {
-			lightingProperty = GetLightingShaderProperty(properties[RE::BSGeometry::States::kProperty].get());
-		}
+		auto* lightingProperty = GetLightingShaderProperty(a_geometry->GetGeometryRuntimeData().shaderProperty.get());
 
 		if (!lightingProperty || !lightingProperty->emissiveColor || lightingProperty->emissiveMult <= 1e-4f) {
 			return;
