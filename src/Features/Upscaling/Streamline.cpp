@@ -779,7 +779,7 @@ void Streamline::UpdateReflex()
 		options.mode = settings.reflexLowLatencyBoost ? sl::ReflexMode::eLowLatencyWithBoost : sl::ReflexMode::eLowLatency;
 	}
 
-	const float fpsLimit = std::clamp(settings.reflexFPSLimit, 1.0f, 1000.0f);
+	const float fpsLimit = std::clamp(settings.reflexFPSLimit, 20.0f, 240.0f);
 	options.frameLimitUs = settings.reflexUseFPSLimit ? static_cast<uint32_t>(std::round(1000000.0f / fpsLimit)) : 0u;
 	options.useMarkersToOptimize = settings.reflexUseMarkersToOptimize && featurePCL && slPCLSetMarker;
 
