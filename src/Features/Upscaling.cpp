@@ -482,11 +482,13 @@ void Upscaling::DrawSettings()
 		}
 	}
 
+	const bool frameGenerationDx12PathActive = IsFrameGenerationDx12PathActive();
+
 	if (!globals::game::isVR) {
 		if (ImGui::TreeNodeEx("Frame Generation", ImGuiTreeNodeFlags_DefaultOpen)) {
 			ImGui::Text("Frame Generation interpolates real frames with generated ones for a smoother experience");
 			ImGui::Text("Uses AMD FSR Frame Generation technology");
-			if (fidelityFX.featureFSR3FG)
+			if (HasFrameGenModule())
 				ImGui::Text("AMD FSR Frame Generation is available.");
 			ImGui::Text("Requires a D3D11 to D3D12 proxy which can create compatibility issues");
 			ImGui::Text("Toggling this setting requires a restart to work correctly");
@@ -517,13 +519,13 @@ void Upscaling::DrawSettings()
 				onlyRequiresRestart = false;
 			}
 
-			if (onlyRequiresRestart && settings.frameGenerationMode && !d3d12SwapChainActive) {
+			if (onlyRequiresRestart && settings.frameGenerationMode && !frameGenerationDx12PathActive) {
 				ImGui::PushStyleColor(ImGuiCol_Text, Util::Colors::GetWarning());
 				ImGui::Text("Warning: Requires restart");
 				ImGui::PopStyleColor();
 			}
 
-			if (!settings.frameGenerationMode && d3d12SwapChainActive) {
+			if (!settings.frameGenerationMode && frameGenerationDx12PathActive) {
 				ImGui::PushStyleColor(ImGuiCol_Text, Util::Colors::GetWarning());
 				ImGui::Text("Warning: Requires restart");
 				ImGui::PopStyleColor();
@@ -535,12 +537,12 @@ void Upscaling::DrawSettings()
 
 			ImGui::SliderInt("Frame Generation", (int*)&settings.frameGenerationMode, 0, 1, toggleModesFG[settings.frameGenerationMode]);
 
-			if (!d3d12SwapChainActive)
+			if (!frameGenerationDx12PathActive)
 				ImGui::BeginDisabled();
 
 			ImGui::SliderInt("Frame Limit (Variable Refresh Rate)", (int*)&settings.frameLimitMode, 0, 1, std::format("{}", toggleModes[settings.frameLimitMode]).c_str());
 
-			if (!d3d12SwapChainActive)
+			if (!frameGenerationDx12PathActive)
 				ImGui::EndDisabled();
 
 			ImGui::Text("Allows frame generation to function on low refresh rate monitors");
@@ -2481,13 +2483,13 @@ double Upscaling::GetRefreshRate(HWND a_window)
 
 bool Upscaling::IsFrameGenerationActive() const
 {
-	return IsFrameGenerationDx12PathActive() && fidelityFX.isFrameGenActive;
+	return IsFrameGenerationDx12PathActive() && settings.frameGenerationMode && fidelityFX.isFrameGenActive;
 }
 
 bool Upscaling::IsFrameGenerationDx12PathActive() const
 {
 	// Frame generation in this implementation runs via the DX12 swap-chain proxy path.
-	return d3d12SwapChainActive && settings.frameGenerationMode && !globals::game::isVR;
+	return d3d12SwapChainActive && !globals::game::isVR;
 }
 
 bool Upscaling::IsUpscalingActive() const
