@@ -1595,6 +1595,14 @@ bool Upscaling::DispatchSingleFoveatedVendorEye(UpscaleMethod a_upscaleMethod, u
 
 	bool dispatchOK = false;
 	if (a_upscaleMethod == UpscaleMethod::kDLSS) {
+		const float outputWidthPerEyeF = std::max(1.0f, static_cast<float>(outputWidthPerEye));
+		const float outputHeightF = std::max(1.0f, static_cast<float>(outputHeight));
+		const float rectCenterX = (static_cast<float>(rect.outputOffsetX) + static_cast<float>(rect.outputWidth) * 0.5f) / outputWidthPerEyeF;
+		const float rectCenterY = (static_cast<float>(rect.outputOffsetY) + static_cast<float>(rect.outputHeight) * 0.5f) / outputHeightF;
+		const float pinholeOffsetX = std::clamp((rectCenterX - 0.5f) * 2.0f, -1.0f, 1.0f);
+		// Texture-space Y grows downward, while clip-space Y grows upward.
+		const float pinholeOffsetY = std::clamp((0.5f - rectCenterY) * 2.0f, -1.0f, 1.0f);
+
 		dispatchOK = streamline.UpscaleRegion(
 			eyeIndex,
 			foveatedCenterColorIn[eyeIndex]->resource.get(),
@@ -1606,7 +1614,9 @@ bool Upscaling::DispatchSingleFoveatedVendorEye(UpscaleMethod a_upscaleMethod, u
 			rect.inputWidth,
 			rect.inputHeight,
 			rect.outputWidth,
-			rect.outputHeight);
+			rect.outputHeight,
+			pinholeOffsetX,
+			pinholeOffsetY);
 	} else if (a_upscaleMethod == UpscaleMethod::kFSR) {
 		dispatchOK = fidelityFX.UpscaleRegion(
 			eyeIndex,

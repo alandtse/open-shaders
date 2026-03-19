@@ -337,7 +337,7 @@ bool Streamline::EnsureFrameToken()
 	return frameToken != nullptr;
 }
 
-bool Streamline::CheckFrameConstants(sl::ViewportHandle p_viewport, uint32_t eyeIndex, float viewportScaleX, float viewportScaleY)
+bool Streamline::CheckFrameConstants(sl::ViewportHandle p_viewport, uint32_t eyeIndex, float viewportScaleX, float viewportScaleY, float pinholeOffsetX, float pinholeOffsetY)
 {
 	if (!globals::features::upscaling.streamline.initialized)
 		return false;
@@ -352,9 +352,13 @@ bool Streamline::CheckFrameConstants(sl::ViewportHandle p_viewport, uint32_t eye
 	bool applyCroppedConstantsCorrection = false;
 	float clampedViewportScaleX = std::clamp(viewportScaleX, 1e-4f, 1.0f);
 	float clampedViewportScaleY = std::clamp(viewportScaleY, 1e-4f, 1.0f);
+	float clampedPinholeOffsetX = std::isfinite(pinholeOffsetX) ? std::clamp(pinholeOffsetX, -1.0f, 1.0f) : 0.0f;
+	float clampedPinholeOffsetY = std::isfinite(pinholeOffsetY) ? std::clamp(pinholeOffsetY, -1.0f, 1.0f) : 0.0f;
 	if (!globals::game::isVR) {
 		clampedViewportScaleX = 1.0f;
 		clampedViewportScaleY = 1.0f;
+		clampedPinholeOffsetX = 0.0f;
+		clampedPinholeOffsetY = 0.0f;
 	}
 
 	sl::Constants slConstants = {};
@@ -400,6 +404,10 @@ bool Streamline::CheckFrameConstants(sl::ViewportHandle p_viewport, uint32_t eye
 
 			// cameraFOV is vertical; scale by cropped Y region.
 			slConstants.cameraFOV = 2.0f * atanf(clampedViewportScaleY * tanf(slConstants.cameraFOV * 0.5f));
+			slConstants.cameraPinholeOffset = {
+				clampedPinholeOffsetX / clampedViewportScaleX,
+				clampedPinholeOffsetY / clampedViewportScaleY
+			};
 		}
 
 		// VR: compute clipToCameraView / clipToPrevClip / prevClipToClip from Skyrim's per-eye matrices.
@@ -594,7 +602,8 @@ void Streamline::InvalidateDLSSOptionsCache()
 bool Streamline::EvaluateDLSS(sl::ViewportHandle vp, uint32_t eyeIndex,
 	ID3D11Resource* colorIn, ID3D11Resource* colorOut, ID3D11Resource* depth,
 	ID3D11Resource* mvec, ID3D11Resource* reactiveMask, ID3D11Resource* transparencyMask,
-	const sl::Extent& extentIn, const sl::Extent& extentOut, uint32_t outputWidth)
+	const sl::Extent& extentIn, const sl::Extent& extentOut, uint32_t outputWidth,
+	float pinholeOffsetX, float pinholeOffsetY)
 {
 	auto context = globals::d3d::context;
 
@@ -616,7 +625,7 @@ bool Streamline::EvaluateDLSS(sl::ViewportHandle vp, uint32_t eyeIndex,
 		}
 	}
 
-	if (!CheckFrameConstants(vp, eyeIndex, viewportScaleX, viewportScaleY))
+	if (!CheckFrameConstants(vp, eyeIndex, viewportScaleX, viewportScaleY, pinholeOffsetX, pinholeOffsetY))
 		return false;
 	SetDLSSOptions(vp, eyeIndex, outputWidth, extentOut.height);
 
@@ -689,7 +698,8 @@ bool Streamline::EvaluateDLSS(sl::ViewportHandle vp, uint32_t eyeIndex,
 
 bool Streamline::UpscaleRegion(uint32_t eyeIndex, ID3D11Resource* colorIn, ID3D11Resource* colorOut, ID3D11Resource* depth,
 	ID3D11Resource* mvec, ID3D11Resource* reactiveMask, ID3D11Resource* transparencyMask,
-	uint32_t renderWidth, uint32_t renderHeight, uint32_t outputWidth, uint32_t outputHeight)
+	uint32_t renderWidth, uint32_t renderHeight, uint32_t outputWidth, uint32_t outputHeight,
+	float pinholeOffsetX, float pinholeOffsetY)
 {
 	if (!initialized || !featureDLSS || !colorIn || !colorOut || !depth || !mvec || !reactiveMask || !transparencyMask)
 		return false;
@@ -698,7 +708,7 @@ bool Streamline::UpscaleRegion(uint32_t eyeIndex, ID3D11Resource* colorIn, ID3D1
 	sl::Extent extentIn{ 0u, 0u, renderWidth, renderHeight };
 	sl::Extent extentOut{ 0u, 0u, outputWidth, outputHeight };
 
-	return EvaluateDLSS(vp, eyeIndex, colorIn, colorOut, depth, mvec, reactiveMask, transparencyMask, extentIn, extentOut, outputWidth);
+	return EvaluateDLSS(vp, eyeIndex, colorIn, colorOut, depth, mvec, reactiveMask, transparencyMask, extentIn, extentOut, outputWidth, pinholeOffsetX, pinholeOffsetY);
 }
 
 void Streamline::Upscale(ID3D11Resource* a_upscalingTexture, ID3D11Resource* a_reactiveMask, ID3D11Resource* a_transparencyCompositionMask, ID3D11Resource* a_motionVectors)
