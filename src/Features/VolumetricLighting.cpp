@@ -1,8 +1,35 @@
 #include "VolumetricLighting.h"
 
+#include <algorithm>
+
 #include "InteriorSun.h"
 #include "ShaderCache.h"
 #include "State.h"
+
+namespace
+{
+	constexpr float kWeatherTransitionEpsilon = 0.001f;
+
+	bool IsRainWeatherActive(const RE::TESWeather* a_weather, float a_weight)
+	{
+		return a_weather &&
+		       a_weather->precipitationData &&
+		       a_weather->data.flags.any(RE::TESWeather::WeatherDataFlag::kRainy) &&
+		       a_weight > kWeatherTransitionEpsilon;
+	}
+
+	bool IsRainTransitionActive()
+	{
+		auto* sky = globals::game::sky;
+		if (!sky || !sky->precip || sky->mode.get() != RE::Sky::Mode::kFull)
+			return false;
+
+		const float currentWeight = std::clamp(sky->currentWeatherPct, 0.0f, 1.0f);
+		const float lastWeight = 1.0f - currentWeight;
+		return IsRainWeatherActive(sky->currentWeather, currentWeight) ||
+		       IsRainWeatherActive(sky->lastWeather, lastWeight);
+	}
+}
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	VolumetricLighting::TextureSize,
@@ -13,7 +40,7 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	VolumetricLighting::Settings,
 	ExteriorEnabled,
-	WeatherInteractionEnabled,
+	DisableWeatherInteractionDuringRain,
 	ExteriorQuality,
 	ExteriorCustomSize,
 	InteriorEnabled,
@@ -22,15 +49,16 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 
 void VolumetricLighting::DrawSettings()
 {
-	if (ImGui::Checkbox("Enable Volumetric Lighting in Exteriors", &settings.ExteriorEnabled))
-		SetupVL();
-
 	if (REL::Module::IsVR()) {
-		if (ImGui::Checkbox("Enable Weather-Driven Volumetric Lighting", &settings.WeatherInteractionEnabled))
+		if (ImGui::Checkbox("Disable Weather-Driven VL During Rain", &settings.DisableWeatherInteractionDuringRain))
 			SetupVL();
 		if (auto _tt = Util::HoverTooltipWrapper())
-			ImGui::Text("When disabled, weather changes (for example rain transitions) will not retune volumetric lighting.");
+			ImGui::Text("Rain-only mode. Automatically disables weather-driven VL while rain is active and restores it after rain.");
+		ImGui::Separator();
 	}
+
+	if (ImGui::Checkbox("Enable Volumetric Lighting in Exteriors", &settings.ExteriorEnabled))
+		SetupVL();
 
 	if (settings.ExteriorEnabled)
 		DrawVolumetricLightingSettings(settings.ExteriorQuality, settings.ExteriorCustomSize, false, !inInterior);
@@ -164,20 +192,6 @@ void VolumetricLighting::SetExteriorEnabled(bool enabled)
 	}
 }
 
-bool VolumetricLighting::IsWeatherInteractionEnabled() const
-{
-	return settings.WeatherInteractionEnabled;
-}
-
-void VolumetricLighting::SetWeatherInteractionEnabled(bool enabled)
-{
-	settings.WeatherInteractionEnabled = enabled;
-
-	if (initialised && gVolumetricLightingSizeHigh) {
-		SetupVL();
-	}
-}
-
 void VolumetricLighting::DataLoaded()
 {
 	auto shaderCache = globals::shaderCache;
@@ -196,7 +210,8 @@ void VolumetricLighting::PostPostLoad()
 	if (REL::Module::IsVR()) {
 		if (settings.ExteriorEnabled || settings.InteriorEnabled) {
 			EnableBooleanSettings(hiddenVREnableSettings, GetName());
-			SetBooleanSettings(hiddenVRWeatherUpdateSettings, GetName(), settings.WeatherInteractionEnabled);
+			const bool weatherInteractionEnabled = !(settings.DisableWeatherInteractionDuringRain && IsRainTransitionActive());
+			SetBooleanSettings(hiddenVRWeatherUpdateSettings, GetName(), weatherInteractionEnabled);
 		}
 		auto address = REL::RelocationID(100475, 0).address() + 0x45b;  // AE not needed, VR only hook
 		logger::info("[{}] Hooking CopyResource at {:x}", GetName(), address);
@@ -248,13 +263,20 @@ void VolumetricLighting::EarlyPrepass()
 
 	const auto interiorCell = RE::TES::GetSingleton()->interiorCell;
 	const bool currentlyInInterior = interiorCell != nullptr;
+	const bool nextRainSuppressionActive =
+		settings.DisableWeatherInteractionDuringRain &&
+		!currentlyInInterior &&
+		IsRainTransitionActive();
 
-	if (initialised && currentlyInInterior == inInterior)
+	if (initialised &&
+	    currentlyInInterior == inInterior &&
+	    nextRainSuppressionActive == rainOnlySuppressionActive)
 		return;
 
 	initialised = true;
 	inInterior = currentlyInInterior;
 	inInteriorWithSun = InteriorSun::IsInteriorWithSun(interiorCell);
+	rainOnlySuppressionActive = nextRainSuppressionActive;
 	SetupVL();
 }
 
@@ -269,8 +291,18 @@ void VolumetricLighting::SetupVL()
 	const TextureSize& customSize = inInterior ? settings.InteriorCustomSize : settings.ExteriorCustomSize;
 
 	if (globals::game::isVR) {
+		rainOnlySuppressionActive =
+			settings.DisableWeatherInteractionDuringRain &&
+			!inInterior &&
+			IsRainTransitionActive();
+		const bool weatherInteractionEnabled = !rainOnlySuppressionActive;
+		const bool effectiveWeatherUpdateEnabled = runtimeEnabled && weatherInteractionEnabled;
 		SetBooleanSettings(hiddenVREnableSettings, GetName(), runtimeEnabled);
-		SetBooleanSettings(hiddenVRWeatherUpdateSettings, GetName(), runtimeEnabled && settings.WeatherInteractionEnabled);
+		SetBooleanSettings(hiddenVRWeatherUpdateSettings, GetName(), effectiveWeatherUpdateEnabled);
+		if (runtimeEnabled && !effectiveWeatherUpdateEnabled) {
+			// Drop stale volumetric history immediately when weather updates are suppressed.
+			ClearVolumetricLightingTargets();
+		}
 	} else {
 		*bEnableVolumetricLighting = runtimeEnabled;
 	}

@@ -13,7 +13,7 @@ public:
 	struct Settings
 	{
 		bool ExteriorEnabled = true;
-		bool WeatherInteractionEnabled = true;
+		bool DisableWeatherInteractionDuringRain = false;
 		int32_t ExteriorQuality = 2;
 		TextureSize ExteriorCustomSize;
 		bool InteriorEnabled = true;
@@ -48,8 +48,6 @@ public:
 	virtual void DrawSettings() override;
 	bool IsExteriorEnabled() const;
 	void SetExteriorEnabled(bool enabled);
-	bool IsWeatherInteractionEnabled() const;
-	void SetWeatherInteractionEnabled(bool enabled);
 	virtual void DataLoaded() override;
 	virtual void PostPostLoad() override;
 	virtual void SetupResources() override;
@@ -138,6 +136,7 @@ private:
 	bool initialised = false;
 	bool inInterior = false;
 	bool inInteriorWithSun = false;
+	bool rainOnlySuppressionActive = false;
 
 	struct VLData
 	{
