@@ -87,7 +87,7 @@ RWTexture2D<half4> outGiSpecular : register(u3);
 	{
 		float2 uv = (dtid + .5) * RcpFrameDim * OUT_FRAME_DIM * RcpTexDim;
 #ifdef VR
-		uv = ClampUVToEye(uv, eyeIndex, OUT_FRAME_DIM);
+		uv = ClampPackedUVToEye(uv, eyeIndex, OUT_FRAME_DIM, TexDim);
 #endif
 		ao = srcAo.SampleLevel(samplerLinearClamp, uv, 0);
 #ifdef GI
