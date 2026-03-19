@@ -727,7 +727,7 @@ RE::BSShaderProperty::RenderPassArray* Skylighting::BSLightingShaderProperty_Get
 			technique.set(Vc);
 		}
 
-		const auto alphaProperty = geometry->GetGeometryRuntimeData().alphaProperty.get();
+		const auto alphaProperty = static_cast<RE::NiAlphaProperty*>(geometry->GetGeometryRuntimeData().alphaProperty.get());
 		if (alphaProperty && alphaProperty->GetAlphaTesting()) {
 			technique.set(Texture);
 			technique.set(AlphaTest);
