@@ -38,6 +38,9 @@ namespace CSPluginAPI
 
 		virtual bool GetVolumetricLightingExteriorEnabled() = 0;
 		virtual void SetVolumetricLightingExteriorEnabled(bool enabled) = 0;
+
+		virtual bool GetVolumetricLightingWeatherInteractionEnabled() = 0;
+		virtual void SetVolumetricLightingWeatherInteractionEnabled(bool enabled) = 0;
 	};
 }  // namespace CSPluginAPI
 
