@@ -6,7 +6,7 @@
 #include "Globals.h"
 #include "VRAPI/CSinterface001.h"
 
-inline constexpr unsigned int CSBuildNumber = 1;
+inline constexpr unsigned int CSBuildNumber = 2;
 
 namespace CSPluginAPI
 {
@@ -27,6 +27,9 @@ namespace CSPluginAPI
 
 		virtual bool GetVolumetricLightingExteriorEnabled() override;
 		virtual void SetVolumetricLightingExteriorEnabled(bool enabled) override;
+
+		virtual bool GetVolumetricLightingWeatherInteractionEnabled() override;
+		virtual void SetVolumetricLightingWeatherInteractionEnabled(bool enabled) override;
 	};
 
 	namespace detail
@@ -106,5 +109,15 @@ namespace CSPluginAPI
 	inline void CSInterface001::SetVolumetricLightingExteriorEnabled(bool enabled)
 	{
 		globals::features::volumetricLighting.SetExteriorEnabled(enabled);
+	}
+
+	inline bool CSInterface001::GetVolumetricLightingWeatherInteractionEnabled()
+	{
+		return globals::features::volumetricLighting.IsWeatherInteractionEnabled();
+	}
+
+	inline void CSInterface001::SetVolumetricLightingWeatherInteractionEnabled(bool enabled)
+	{
+		globals::features::volumetricLighting.SetWeatherInteractionEnabled(enabled);
 	}
 }  // namespace CSPluginAPI

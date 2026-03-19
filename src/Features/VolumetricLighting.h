@@ -13,6 +13,7 @@ public:
 	struct Settings
 	{
 		bool ExteriorEnabled = true;
+		bool WeatherInteractionEnabled = true;
 		int32_t ExteriorQuality = 2;
 		TextureSize ExteriorCustomSize;
 		bool InteriorEnabled = true;
@@ -47,26 +48,31 @@ public:
 	virtual void DrawSettings() override;
 	bool IsExteriorEnabled() const;
 	void SetExteriorEnabled(bool enabled);
+	bool IsWeatherInteractionEnabled() const;
+	void SetWeatherInteractionEnabled(bool enabled);
 	virtual void DataLoaded() override;
 	virtual void PostPostLoad() override;
 	virtual void SetupResources() override;
 	virtual void EarlyPrepass() override;
 
-	std::map<std::string, Util::GameSetting> hiddenVRSettings{
+	std::map<std::string, Util::GameSetting> hiddenVREnableSettings{
 		{ "bEnableVolumetricLighting:Display", { "Enable VL Shaders (INI) ",
 												   "Enables volumetric lighting effects by creating shaders. "
 												   "Needed at startup. ",
 												   0x1ed63d8, true, false, true } },
 		{ "bVolumetricLightingEnable:Display", { "Enable VL (INI))", "Enables volumetric lighting. ", 0x3485360, true, false, true } },
+		{ "bVolumetricLightingEnabled_143232EF0", { "Enable VL (Papyrus) ",
+													  "Enables volumetric lighting. "
+													  "This is the Papyrus command. ",
+													  REL::Relocate<uintptr_t>(0x3232ef0, 0, 0x3485362), true, false, true } },
+	};
+
+	std::map<std::string, Util::GameSetting> hiddenVRWeatherUpdateSettings{
 		{ "bVolumetricLightingUpdateWeather:Display", { "Enable Volumetric Lighting (Weather) (INI) ",
 														  "Enables volumetric lighting for weather. "
 														  "Only used during startup and used to set bVLWeatherUpdate.",
 														  0x3485361, true, false, true } },
 		{ "bVLWeatherUpdate", { "Enable VL (Weather)", "Enables volumetric lighting for weather.", 0x3485363, true, false, true } },
-		{ "bVolumetricLightingEnabled_143232EF0", { "Enable VL (Papyrus) ",
-													  "Enables volumetric lighting. "
-													  "This is the Papyrus command. ",
-													  REL::Relocate<uintptr_t>(0x3232ef0, 0, 0x3485362), true, false, true } },
 	};
 
 	virtual bool SupportsVR() override { return true; };

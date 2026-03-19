@@ -13,6 +13,7 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	VolumetricLighting::Settings,
 	ExteriorEnabled,
+	WeatherInteractionEnabled,
 	ExteriorQuality,
 	ExteriorCustomSize,
 	InteriorEnabled,
@@ -23,6 +24,13 @@ void VolumetricLighting::DrawSettings()
 {
 	if (ImGui::Checkbox("Enable Volumetric Lighting in Exteriors", &settings.ExteriorEnabled))
 		SetupVL();
+
+	if (REL::Module::IsVR()) {
+		if (ImGui::Checkbox("Enable Weather-Driven Volumetric Lighting", &settings.WeatherInteractionEnabled))
+			SetupVL();
+		if (auto _tt = Util::HoverTooltipWrapper())
+			ImGui::Text("When disabled, weather changes (for example rain transitions) will not retune volumetric lighting.");
+	}
 
 	if (settings.ExteriorEnabled)
 		DrawVolumetricLightingSettings(settings.ExteriorQuality, settings.ExteriorCustomSize, false, !inInterior);
@@ -136,7 +144,10 @@ void VolumetricLighting::RestoreDefaultSettings()
 {
 	settings = {};
 	if (globals::game::isVR)
-		Util::ResetGameSettingsToDefaults(hiddenVRSettings);
+	{
+		Util::ResetGameSettingsToDefaults(hiddenVREnableSettings);
+		Util::ResetGameSettingsToDefaults(hiddenVRWeatherUpdateSettings);
+	}
 }
 
 bool VolumetricLighting::IsExteriorEnabled() const
@@ -149,6 +160,20 @@ void VolumetricLighting::SetExteriorEnabled(bool enabled)
 	settings.ExteriorEnabled = enabled;
 
 	if (initialised && !inInterior && bEnableVolumetricLighting && gVolumetricLightingSizeHigh) {
+		SetupVL();
+	}
+}
+
+bool VolumetricLighting::IsWeatherInteractionEnabled() const
+{
+	return settings.WeatherInteractionEnabled;
+}
+
+void VolumetricLighting::SetWeatherInteractionEnabled(bool enabled)
+{
+	settings.WeatherInteractionEnabled = enabled;
+
+	if (initialised && gVolumetricLightingSizeHigh) {
 		SetupVL();
 	}
 }
@@ -169,8 +194,10 @@ void VolumetricLighting::DataLoaded()
 void VolumetricLighting::PostPostLoad()
 {
 	if (REL::Module::IsVR()) {
-		if (settings.ExteriorEnabled || settings.InteriorEnabled)
-			EnableBooleanSettings(hiddenVRSettings, GetName());
+		if (settings.ExteriorEnabled || settings.InteriorEnabled) {
+			EnableBooleanSettings(hiddenVREnableSettings, GetName());
+			SetBooleanSettings(hiddenVRWeatherUpdateSettings, GetName(), settings.WeatherInteractionEnabled);
+		}
 		auto address = REL::RelocationID(100475, 0).address() + 0x45b;  // AE not needed, VR only hook
 		logger::info("[{}] Hooking CopyResource at {:x}", GetName(), address);
 		REL::safe_fill(address, REL::NOP, 7);
@@ -242,7 +269,8 @@ void VolumetricLighting::SetupVL()
 	const TextureSize& customSize = inInterior ? settings.InteriorCustomSize : settings.ExteriorCustomSize;
 
 	if (globals::game::isVR) {
-		SetBooleanSettings(hiddenVRSettings, GetName(), runtimeEnabled);
+		SetBooleanSettings(hiddenVREnableSettings, GetName(), runtimeEnabled);
+		SetBooleanSettings(hiddenVRWeatherUpdateSettings, GetName(), runtimeEnabled && settings.WeatherInteractionEnabled);
 	} else {
 		*bEnableVolumetricLighting = runtimeEnabled;
 	}
