@@ -41,6 +41,16 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	VolumetricLighting::Settings,
 	ExteriorEnabled,
 	DisableWeatherInteractionDuringRain,
+	GodrayIntensity,
+	DensityContribution,
+	DensitySize,
+	PhaseFunctionContribution,
+	PhaseFunctionScattering,
+	SamplingRangeFactor,
+	CustomColorContribution,
+	CustomColorRed,
+	CustomColorGreen,
+	CustomColorBlue,
 	ExteriorQuality,
 	ExteriorCustomSize,
 	InteriorEnabled,
@@ -57,6 +67,8 @@ void VolumetricLighting::DrawSettings()
 		ImGui::Separator();
 	}
 
+	DrawGodrayTuningSettings();
+
 	if (ImGui::Checkbox("Enable Volumetric Lighting in Exteriors", &settings.ExteriorEnabled))
 		SetupVL();
 
@@ -68,6 +80,32 @@ void VolumetricLighting::DrawSettings()
 
 	if (settings.InteriorEnabled)
 		DrawVolumetricLightingSettings(settings.InteriorQuality, settings.InteriorCustomSize, true, inInterior);
+}
+
+void VolumetricLighting::DrawGodrayTuningSettings()
+{
+	auto drawSlider = [](const char* label, float& value, float minValue, float maxValue, const char* tooltip) {
+		const bool changed = ImGui::SliderFloat(label, &value, minValue, maxValue, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+		if (auto _tt = Util::HoverTooltipWrapper())
+			ImGui::TextUnformatted(tooltip);
+		return changed;
+	};
+
+	ImGui::SeparatorText("Godray Tuning");
+	drawSlider("Godray Intensity", settings.GodrayIntensity, 0.0f, 3.0f, "Scales volumetric light shaft brightness. 1.0 = default.");
+
+	drawSlider("Density Contribution", settings.DensityContribution, 0.0f, 1.0f, "How much the volume contributes to visible shafts.");
+	drawSlider("Density Size", settings.DensitySize, 0.0f, 10.0f, "Controls how broad or compact volumetric density appears.");
+
+	drawSlider("Phase Function Contribution", settings.PhaseFunctionContribution, 0.0f, 1.0f, "Controls how strongly directional scattering affects godrays.");
+	drawSlider("Phase Function Scattering", settings.PhaseFunctionScattering, -1.0f, 1.0f, "Adjusts forward/backward scattering direction bias.");
+
+	drawSlider("Sampling Range Factor", settings.SamplingRangeFactor, 0.0f, 10.0f, "Adjusts how far volumetric sampling is distributed through depth.");
+
+	drawSlider("Custom Color Contribution", settings.CustomColorContribution, 0.0f, 1.0f, "Blends custom color into volumetric lighting.");
+	drawSlider("Custom Color Red", settings.CustomColorRed, 0.0f, 1.0f, "Red channel for custom volumetric color.");
+	drawSlider("Custom Color Green", settings.CustomColorGreen, 0.0f, 1.0f, "Green channel for custom volumetric color.");
+	drawSlider("Custom Color Blue", settings.CustomColorBlue, 0.0f, 1.0f, "Blue channel for custom volumetric color.");
 }
 
 void VolumetricLighting::DrawVolumetricLightingSettings(int32_t& quality, TextureSize& customSize, const bool isInterior, const bool inLocationType)
@@ -224,6 +262,8 @@ void VolumetricLighting::PostPostLoad()
 		stl::write_thunk_call<RenderDepth>(REL::RelocationID(35560, 0).address() + REL::Relocate(0x2EE, 0));
 	}
 
+	stl::write_thunk_call<ApplyVolumetricLighting_VolumetricLightingDescriptor_Get>(REL::RelocationID(100475, 107193).address() + 0x354);
+
 	bEnableVolumetricLighting = reinterpret_cast<bool*>(REL::RelocationID(527940, 414913).address());
 	gVolumetricLightingSizeLow = reinterpret_cast<TextureSize*>(REL::RelocationID(527970, 414916).address());
 	gVolumetricLightingSizeMedium = reinterpret_cast<TextureSize*>(REL::RelocationID(527973, 414919).address());
@@ -369,6 +409,26 @@ void VolumetricLighting::RenderDepth::thunk()
 	func();
 	if (globals::features::volumetricLighting.bEnableVolumetricLighting)
 		RenderVolumetricLighting(&GetVLDescriptor(), RE::Main::WorldRootCamera(), false);
+}
+
+VolumetricLighting::VolumetricLightingDescriptor* VolumetricLighting::ApplyVolumetricLighting_VolumetricLightingDescriptor_Get::thunk()
+{
+	auto* descriptor = func();
+	if (!descriptor)
+		return nullptr;
+
+	const auto& runtimeSettings = globals::features::volumetricLighting.settings;
+	descriptor->intensity *= std::max(0.0f, runtimeSettings.GodrayIntensity);
+	descriptor->density.contribution = std::clamp(runtimeSettings.DensityContribution, 0.0f, 1.0f);
+	descriptor->density.size = std::clamp(runtimeSettings.DensitySize, 0.0f, 10.0f);
+	descriptor->phaseFunction.contribution = std::clamp(runtimeSettings.PhaseFunctionContribution, 0.0f, 1.0f);
+	descriptor->phaseFunction.scattering = std::clamp(runtimeSettings.PhaseFunctionScattering, -1.0f, 1.0f);
+	descriptor->samplingRepartition.rangeFactor = std::clamp(runtimeSettings.SamplingRangeFactor, 0.0f, 10.0f);
+	descriptor->customColor.contribution = std::clamp(runtimeSettings.CustomColorContribution, 0.0f, 1.0f);
+	descriptor->red = std::clamp(runtimeSettings.CustomColorRed, 0.0f, 1.0f);
+	descriptor->green = std::clamp(runtimeSettings.CustomColorGreen, 0.0f, 1.0f);
+	descriptor->blue = std::clamp(runtimeSettings.CustomColorBlue, 0.0f, 1.0f);
+	return descriptor;
 }
 
 RE::BSImagespaceShader* VolumetricLighting::CreateShader(const std::string_view& name, const std::string_view& fileName, RE::BSComputeShader* computeShader)
