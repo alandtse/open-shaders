@@ -10,16 +10,14 @@ This is for **consumer plugins** (mods that want to call into Community Shaders)
 
 - Interface revision: `1`
 - Build number: returned by `getBuildNumber()`
-- Weather-interaction methods were added in build `2`
 
 ## What This API Exposes
 
 - Screen Space Shadows toggle (`SSS` in method names)
 - Screen Space GI toggle
 - Volumetric Lighting Exterior toggle
-- Volumetric Lighting Weather-Interaction toggle
 
-All four are runtime toggles.
+All three are runtime toggles.
 
 ## Files You Need In The Consumer Mod
 
@@ -92,15 +90,11 @@ void SetShadowsEnabled(bool enabled)
 - `void SetSSGIEnabled(bool enabled)`
 - `bool GetVolumetricLightingExteriorEnabled()`
 - `void SetVolumetricLightingExteriorEnabled(bool enabled)`
-- `bool GetVolumetricLightingWeatherInteractionEnabled()`
-- `void SetVolumetricLightingWeatherInteractionEnabled(bool enabled)`
 
 ## Behavior Notes
 
 - `SSS` means **Screen Space Shadows**, not Subsurface Scattering.
 - Setters change runtime state in Community Shaders.
-- `SetVolumetricLightingWeatherInteractionEnabled(false)` keeps VL available but stops weather-driven retuning (useful for rain-transition mod logic).
-- Check `getBuildNumber() >= 2` before calling the weather-interaction methods.
 - If the API pointer is null, Community Shaders is missing, too old, or not ready yet.
 - Call from the main/game thread, or queue via SKSE task interface.
 
