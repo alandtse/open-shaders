@@ -2,6 +2,8 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
+#include <unordered_map>
 
 #include "RE/B/BSSkyShaderProperty.h"
 #include "RE/N/NiDirectionalLight.h"
@@ -28,11 +30,46 @@ namespace
 		RE::NiColor customColor = { 1.0f, 1.0f, 1.0f };
 	};
 
+	struct WeatherSunGlareState
+	{
+		std::uint8_t baseline = 0;
+		std::uint8_t lastApplied = 0;
+		bool initialized = false;
+	};
+
 	float ClampFinite(float value, float minValue, float maxValue, float fallback)
 	{
 		if (!std::isfinite(value))
 			value = fallback;
 		return std::clamp(value, minValue, maxValue);
+	}
+
+	void ApplyScaledSunGlareToWeather(RE::TESWeather* weather, float glareScale)
+	{
+		if (!weather)
+			return;
+
+		static std::unordered_map<RE::TESWeather*, WeatherSunGlareState> weatherSunGlareStates{};
+		glareScale = ClampFinite(glareScale, 0.0f, kGodrayIntensityMax, 1.0f);
+
+		auto entry = weatherSunGlareStates.try_emplace(weather);
+		WeatherSunGlareState& state = entry.first->second;
+		if (!state.initialized) {
+			state.baseline = weather->data.sunGlare;
+			state.lastApplied = weather->data.sunGlare;
+			state.initialized = true;
+		}
+
+		// Always adopt live weather updates as baseline (unless value is exactly what we wrote last frame).
+		if (weather->data.sunGlare != state.lastApplied) {
+			state.baseline = weather->data.sunGlare;
+		}
+
+		const float baseValue = static_cast<float>(state.baseline);
+		const auto scaledValue = static_cast<long>(std::lround(baseValue * glareScale));
+		const auto appliedValue = static_cast<std::uint8_t>(std::clamp(scaledValue, 0L, 255L));
+		weather->data.sunGlare = appliedValue;
+		state.lastApplied = appliedValue;
 	}
 
 	bool IsRainWeatherActive(const RE::TESWeather* a_weather, float a_weight)
@@ -518,11 +555,18 @@ void VolumetricLighting::ApplySunGlareTuning() const
 
 	auto* sun = sky->sun;
 	const float glareScale = ClampFinite(settings.GodrayIntensity, 0.0f, kGodrayIntensityMax, 1.0f);
+
+	// Keep weather-driven glare values in sync so engine updates don't stomp the slider.
+	ApplyScaledSunGlareToWeather(sky->currentWeather, glareScale);
+	if (sky->lastWeather != sky->currentWeather)
+		ApplyScaledSunGlareToWeather(sky->lastWeather, glareScale);
+
 	sun->glareScale = glareScale;
 
 	if (sun->sunGlare) {
 		if (const auto glareProperty = skyrim_cast<RE::BSSkyShaderProperty*>(sun->sunGlare->GetGeometryRuntimeData().shaderProperty.get())) {
-			glareProperty->kBlendColor.alpha = glareScale;
+			glareProperty->kBlendColor.alpha = std::clamp(glareScale, 0.0f, 1.0f);
+			glareProperty->fBlendValue = glareScale;
 		}
 	}
 }
