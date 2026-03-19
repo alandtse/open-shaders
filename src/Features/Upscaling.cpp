@@ -50,7 +50,7 @@ decltype(&D3D11CreateDeviceAndSwapChain) ptrD3D11CreateDeviceAndSwapChainUpscali
 namespace
 {
 	constexpr float kPeripheryEdgeBlurStrengthMin = 1.0f;
-	constexpr float kPeripheryEdgeBlurStrengthMax = 5.0f;
+	constexpr float kPeripheryEdgeBlurStrengthMax = 10.0f;
 	constexpr float kFoveatedMaskOffsetAdjustMin = -0.15f;
 	constexpr float kFoveatedMaskOffsetAdjustMax = 0.15f;
 	constexpr float kFoveatedMaskOffsetResolvedMin = -0.25f;
