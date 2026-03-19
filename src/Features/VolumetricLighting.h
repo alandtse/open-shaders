@@ -107,6 +107,7 @@ private:
 	void DrawVolumetricLightingSettings(int32_t& quality, TextureSize& customSize, bool isInterior, bool inLocationType);
 	TextureSize& FetchCurrentSizeInUnits(bool interior);
 	void SetupVL();
+	void ClearVolumetricLightingTargets();
 
 	enum class Quality : uint8_t
 	{

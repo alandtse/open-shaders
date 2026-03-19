@@ -233,21 +233,54 @@ void VolumetricLighting::EarlyPrepass()
 
 void VolumetricLighting::SetupVL()
 {
-	if (inInterior) {
-		if (globals::game::isVR)
-			SetBooleanSettings(hiddenVRSettings, GetName(), settings.InteriorEnabled && inInteriorWithSun);
-		else
-			*bEnableVolumetricLighting = settings.InteriorEnabled && inInteriorWithSun;
-		*gVolumetricLightingSizeHigh = static_cast<Quality>(settings.InteriorQuality) == Quality::Custom ? settings.InteriorCustomSize : defaultSizeHigh;
-		SetVLQuality(GetVLDescriptor(), settings.InteriorQuality);
-	} else {
-		if (globals::game::isVR)
-			SetBooleanSettings(hiddenVRSettings, GetName(), settings.ExteriorEnabled);
-		else
-			*bEnableVolumetricLighting = settings.ExteriorEnabled;
-		*gVolumetricLightingSizeHigh = static_cast<Quality>(settings.ExteriorQuality) == Quality::Custom ? settings.ExteriorCustomSize : defaultSizeHigh;
-		SetVLQuality(GetVLDescriptor(), settings.ExteriorQuality);
+	if (!gVolumetricLightingSizeHigh || (!globals::game::isVR && !bEnableVolumetricLighting)) {
+		return;
 	}
+
+	const bool runtimeEnabled = inInterior ? (settings.InteriorEnabled && inInteriorWithSun) : settings.ExteriorEnabled;
+	const int32_t quality = inInterior ? settings.InteriorQuality : settings.ExteriorQuality;
+	const TextureSize& customSize = inInterior ? settings.InteriorCustomSize : settings.ExteriorCustomSize;
+
+	if (globals::game::isVR) {
+		SetBooleanSettings(hiddenVRSettings, GetName(), runtimeEnabled);
+	} else {
+		*bEnableVolumetricLighting = runtimeEnabled;
+	}
+
+	*gVolumetricLightingSizeHigh = static_cast<Quality>(quality) == Quality::Custom ? customSize : defaultSizeHigh;
+	SetVLQuality(GetVLDescriptor(), quality);
+
+	if (!runtimeEnabled) {
+		ClearVolumetricLightingTargets();
+	}
+}
+
+void VolumetricLighting::ClearVolumetricLightingTargets()
+{
+	auto* context = globals::d3d::context;
+	auto* renderer = globals::game::renderer;
+	if (!context || !renderer) {
+		return;
+	}
+
+	const float clearColor[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
+	auto clearRT = [&](RE::RENDER_TARGET index) {
+		auto& target = renderer->GetRuntimeData().renderTargets[index];
+		if (target.RTV) {
+			context->ClearRenderTargetView(target.RTV, clearColor);
+		}
+		if (target.UAV) {
+			context->ClearUnorderedAccessViewFloat(target.UAV, clearColor);
+		}
+	};
+
+	clearRT(RE::RENDER_TARGETS::kIMAGESPACE_VOLUMETRIC_LIGHTING);
+	clearRT(RE::RENDER_TARGETS::kIMAGESPACE_VOLUMETRIC_LIGHTING_PREVIOUS);
+	clearRT(RE::RENDER_TARGETS::kIMAGESPACE_VOLUMETRIC_LIGHTING_COPY);
+	clearRT(RE::RENDER_TARGETS::kVOLUMETRIC_LIGHTING_HALF_RES);
+	clearRT(RE::RENDER_TARGETS::kVOLUMETRIC_LIGHTING_BLUR_HALF_RES);
+	clearRT(RE::RENDER_TARGETS::kVOLUMETRIC_LIGHTING_QUARTER_RES);
+	clearRT(RE::RENDER_TARGETS::kVOLUMETRIC_LIGHTING_BLUR_QUARTER_RES);
 }
 
 VolumetricLighting::VolumetricLightingDescriptor& VolumetricLighting::GetVLDescriptor()
