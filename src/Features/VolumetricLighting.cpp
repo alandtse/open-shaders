@@ -2,6 +2,7 @@
 
 #include <algorithm>
 
+#include "RE/B/BSSkyShaderProperty.h"
 #include "InteriorSun.h"
 #include "ShaderCache.h"
 #include "State.h"
@@ -42,11 +43,8 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	ExteriorEnabled,
 	DisableWeatherInteractionDuringRain,
 	GodrayIntensity,
-	DensityContribution,
-	DensitySize,
-	PhaseFunctionContribution,
-	PhaseFunctionScattering,
-	SamplingRangeFactor,
+	GodrayOpacity,
+	GodraySaturation,
 	CustomColorContribution,
 	CustomColorRed,
 	CustomColorGreen,
@@ -92,20 +90,17 @@ void VolumetricLighting::DrawGodrayTuningSettings()
 	};
 
 	ImGui::SeparatorText("Godray Tuning");
-	drawSlider("Godray Intensity", settings.GodrayIntensity, 0.0f, 3.0f, "Scales volumetric light shaft brightness. 1.0 = default.");
+	const bool glareChanged = drawSlider("Sun Glare Intensity", settings.GodrayIntensity, 0.0f, 3.0f, "Scales sun glare brightness without reducing shaft strength.");
+	drawSlider("Godray Opacity", settings.GodrayOpacity, 0.0f, 1.0f, "Controls shaft visibility/strength.");
+	drawSlider("Godray Saturation", settings.GodraySaturation, 0.0f, 2.0f, "Controls color richness of godrays. 0 = grayscale, 1 = default.");
 
-	drawSlider("Density Contribution", settings.DensityContribution, 0.0f, 1.0f, "How much the volume contributes to visible shafts.");
-	drawSlider("Density Size", settings.DensitySize, 0.0f, 10.0f, "Controls how broad or compact volumetric density appears.");
-
-	drawSlider("Phase Function Contribution", settings.PhaseFunctionContribution, 0.0f, 1.0f, "Controls how strongly directional scattering affects godrays.");
-	drawSlider("Phase Function Scattering", settings.PhaseFunctionScattering, -1.0f, 1.0f, "Adjusts forward/backward scattering direction bias.");
-
-	drawSlider("Sampling Range Factor", settings.SamplingRangeFactor, 0.0f, 10.0f, "Adjusts how far volumetric sampling is distributed through depth.");
-
-	drawSlider("Custom Color Contribution", settings.CustomColorContribution, 0.0f, 1.0f, "Blends custom color into volumetric lighting.");
+	drawSlider("Custom Color Contribution", settings.CustomColorContribution, 0.0f, 1.0f, "Blends custom color into godrays.");
 	drawSlider("Custom Color Red", settings.CustomColorRed, 0.0f, 1.0f, "Red channel for custom volumetric color.");
 	drawSlider("Custom Color Green", settings.CustomColorGreen, 0.0f, 1.0f, "Green channel for custom volumetric color.");
 	drawSlider("Custom Color Blue", settings.CustomColorBlue, 0.0f, 1.0f, "Blue channel for custom volumetric color.");
+
+	if (glareChanged)
+		ApplySunGlareTuning();
 }
 
 void VolumetricLighting::DrawVolumetricLightingSettings(int32_t& quality, TextureSize& customSize, const bool isInterior, const bool inLocationType)
@@ -301,6 +296,8 @@ void VolumetricLighting::EarlyPrepass()
 	vlData.screenYMin1 = height - 1;
 	vlDataCB->Update(vlData);
 
+	ApplySunGlareTuning();
+
 	const auto interiorCell = RE::TES::GetSingleton()->interiorCell;
 	const bool currentlyInInterior = interiorCell != nullptr;
 	const bool nextRainSuppressionActive =
@@ -411,6 +408,23 @@ void VolumetricLighting::RenderDepth::thunk()
 		RenderVolumetricLighting(&GetVLDescriptor(), RE::Main::WorldRootCamera(), false);
 }
 
+void VolumetricLighting::ApplySunGlareTuning() const
+{
+	auto* sky = globals::game::sky;
+	if (!sky || !sky->sun)
+		return;
+
+	auto* sun = sky->sun;
+	const float glareScale = std::clamp(settings.GodrayIntensity, 0.0f, 3.0f);
+	sun->glareScale = glareScale;
+
+	if (sun->sunGlare) {
+		if (const auto glareProperty = skyrim_cast<RE::BSSkyShaderProperty*>(sun->sunGlare->GetGeometryRuntimeData().shaderProperty.get())) {
+			glareProperty->kBlendColor.alpha = std::clamp(glareScale, 0.0f, 1.0f);
+		}
+	}
+}
+
 VolumetricLighting::VolumetricLightingDescriptor* VolumetricLighting::ApplyVolumetricLighting_VolumetricLightingDescriptor_Get::thunk()
 {
 	auto* descriptor = func();
@@ -418,16 +432,19 @@ VolumetricLighting::VolumetricLightingDescriptor* VolumetricLighting::ApplyVolum
 		return nullptr;
 
 	const auto& runtimeSettings = globals::features::volumetricLighting.settings;
-	descriptor->intensity *= std::max(0.0f, runtimeSettings.GodrayIntensity);
-	descriptor->density.contribution = std::clamp(runtimeSettings.DensityContribution, 0.0f, 1.0f);
-	descriptor->density.size = std::clamp(runtimeSettings.DensitySize, 0.0f, 10.0f);
-	descriptor->phaseFunction.contribution = std::clamp(runtimeSettings.PhaseFunctionContribution, 0.0f, 1.0f);
-	descriptor->phaseFunction.scattering = std::clamp(runtimeSettings.PhaseFunctionScattering, -1.0f, 1.0f);
-	descriptor->samplingRepartition.rangeFactor = std::clamp(runtimeSettings.SamplingRangeFactor, 0.0f, 10.0f);
+	const float opacity = std::clamp(runtimeSettings.GodrayOpacity, 0.0f, 1.0f);
+	const float saturation = std::clamp(runtimeSettings.GodraySaturation, 0.0f, 2.0f);
+	descriptor->intensity *= opacity;
 	descriptor->customColor.contribution = std::clamp(runtimeSettings.CustomColorContribution, 0.0f, 1.0f);
-	descriptor->red = std::clamp(runtimeSettings.CustomColorRed, 0.0f, 1.0f);
-	descriptor->green = std::clamp(runtimeSettings.CustomColorGreen, 0.0f, 1.0f);
-	descriptor->blue = std::clamp(runtimeSettings.CustomColorBlue, 0.0f, 1.0f);
+
+	const float customRed = std::clamp(runtimeSettings.CustomColorRed, 0.0f, 1.0f);
+	const float customGreen = std::clamp(runtimeSettings.CustomColorGreen, 0.0f, 1.0f);
+	const float customBlue = std::clamp(runtimeSettings.CustomColorBlue, 0.0f, 1.0f);
+	const float luminance = customRed * 0.2126f + customGreen * 0.7152f + customBlue * 0.0722f;
+
+	descriptor->red = std::clamp(luminance + (customRed - luminance) * saturation, 0.0f, 1.0f);
+	descriptor->green = std::clamp(luminance + (customGreen - luminance) * saturation, 0.0f, 1.0f);
+	descriptor->blue = std::clamp(luminance + (customBlue - luminance) * saturation, 0.0f, 1.0f);
 	return descriptor;
 }
 
