@@ -2,10 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
-#include <cstdint>
-#include <unordered_map>
 
-#include "RE/B/BSSkyShaderProperty.h"
 #include "RE/N/NiDirectionalLight.h"
 #include "RE/S/Sun.h"
 #include "InteriorSun.h"
@@ -16,6 +13,7 @@ namespace
 {
 	constexpr float kWeatherTransitionEpsilon = 0.001f;
 	constexpr float kGodrayIntensityMax = 3.0f;
+	constexpr float kGodrayShaftIntensityMax = 3.0f;
 	constexpr float kGodrayOpacityMax = 2.0f;
 	constexpr float kGodraySaturationMax = 4.0f;
 	constexpr float kColorLumaR = 0.2126f;
@@ -24,17 +22,11 @@ namespace
 
 	struct GodrayRuntimeParams
 	{
+		float shaftIntensity = 1.0f;
 		float opacity = 1.0f;
 		float saturation = 1.0f;
 		float customContribution = 0.0f;
 		RE::NiColor customColor = { 1.0f, 1.0f, 1.0f };
-	};
-
-	struct WeatherSunGlareState
-	{
-		std::uint8_t baseline = 0;
-		std::uint8_t lastApplied = 0;
-		bool initialized = false;
 	};
 
 	float ClampFinite(float value, float minValue, float maxValue, float fallback)
@@ -42,34 +34,6 @@ namespace
 		if (!std::isfinite(value))
 			value = fallback;
 		return std::clamp(value, minValue, maxValue);
-	}
-
-	void ApplyScaledSunGlareToWeather(RE::TESWeather* weather, float glareScale)
-	{
-		if (!weather)
-			return;
-
-		static std::unordered_map<RE::TESWeather*, WeatherSunGlareState> weatherSunGlareStates{};
-		glareScale = ClampFinite(glareScale, 0.0f, kGodrayIntensityMax, 1.0f);
-
-		auto entry = weatherSunGlareStates.try_emplace(weather);
-		WeatherSunGlareState& state = entry.first->second;
-		if (!state.initialized) {
-			state.baseline = weather->data.sunGlare;
-			state.lastApplied = weather->data.sunGlare;
-			state.initialized = true;
-		}
-
-		// Always adopt live weather updates as baseline (unless value is exactly what we wrote last frame).
-		if (weather->data.sunGlare != state.lastApplied) {
-			state.baseline = weather->data.sunGlare;
-		}
-
-		const float baseValue = static_cast<float>(state.baseline);
-		const auto scaledValue = static_cast<long>(std::lround(baseValue * glareScale));
-		const auto appliedValue = static_cast<std::uint8_t>(std::clamp(scaledValue, 0L, 255L));
-		weather->data.sunGlare = appliedValue;
-		state.lastApplied = appliedValue;
 	}
 
 	bool IsRainWeatherActive(const RE::TESWeather* a_weather, float a_weight)
@@ -150,6 +114,12 @@ namespace
 		descriptor.density.contribution *= opacity;
 	}
 
+	void ApplyGodrayShaftIntensity(RE::BSVolumetricLightingRenderData& descriptor, float intensity)
+	{
+		intensity = ClampFinite(intensity, 0.0f, kGodrayShaftIntensityMax, 1.0f);
+		descriptor.intensity *= intensity;
+	}
+
 	RE::NiColor GetCurrentWeatherSunColor(const RE::NiColor& fallbackColor)
 	{
 		auto* sky = globals::game::sky;
@@ -163,6 +133,7 @@ namespace
 	GodrayRuntimeParams BuildGodrayRuntimeParams(const VolumetricLighting::Settings& settings)
 	{
 		GodrayRuntimeParams params{};
+		params.shaftIntensity = ClampFinite(settings.GodrayShaftIntensity, 0.0f, kGodrayShaftIntensityMax, 1.0f);
 		params.opacity = ClampFinite(settings.GodrayOpacity, 0.0f, kGodrayOpacityMax, 1.0f);
 		params.saturation = ClampFinite(settings.GodraySaturation, 0.0f, kGodraySaturationMax, 1.0f);
 		params.customContribution = ClampFinite(settings.CustomColorContribution, 0.0f, 1.0f, 0.0f);
@@ -182,6 +153,7 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	ExteriorEnabled,
 	DisableWeatherInteractionDuringRain,
 	GodrayIntensity,
+	GodrayShaftIntensity,
 	GodrayOpacity,
 	GodraySaturation,
 	CustomColorContribution,
@@ -229,7 +201,8 @@ void VolumetricLighting::DrawGodrayTuningSettings()
 	};
 
 	ImGui::SeparatorText("Godray Tuning");
-	const bool glareChanged = drawSlider("Sun Glare Intensity", settings.GodrayIntensity, 0.0f, kGodrayIntensityMax, "Scales sun glare brightness.");
+	const bool glareChanged = drawSlider("Sun Glare Intensity", settings.GodrayIntensity, 0.0f, kGodrayIntensityMax, "Scales the sun glare sprite brightness.");
+	drawSlider("Godray Intensity", settings.GodrayShaftIntensity, 0.0f, kGodrayShaftIntensityMax, "Scales volumetric godray shaft brightness.");
 	drawSlider("Godray Opacity", settings.GodrayOpacity, 0.0f, kGodrayOpacityMax, "Controls shaft strength and visibility. 1.0 is default; values above 1.0 boost presence.");
 	drawSlider("Godray Saturation", settings.GodraySaturation, 0.0f, kGodraySaturationMax, "Adjusts weather-driven godray color richness. 1.0 is default.");
 
@@ -333,6 +306,21 @@ VolumetricLighting::TextureSize& VolumetricLighting::FetchCurrentSizeInUnits(con
 void VolumetricLighting::LoadSettings(json& o_json)
 {
 	settings = o_json;
+
+	// Backward-compat migration: older configs only had GodrayIntensity.
+	if (!o_json.contains("GodrayShaftIntensity")) {
+		settings.GodrayShaftIntensity = settings.GodrayIntensity;
+	}
+
+	// Sanitize persisted values once on load for stable runtime behavior.
+	settings.GodrayIntensity = ClampFinite(settings.GodrayIntensity, 0.0f, kGodrayIntensityMax, 1.0f);
+	settings.GodrayShaftIntensity = ClampFinite(settings.GodrayShaftIntensity, 0.0f, kGodrayShaftIntensityMax, 1.0f);
+	settings.GodrayOpacity = ClampFinite(settings.GodrayOpacity, 0.0f, kGodrayOpacityMax, 1.0f);
+	settings.GodraySaturation = ClampFinite(settings.GodraySaturation, 0.0f, kGodraySaturationMax, 1.0f);
+	settings.CustomColorContribution = ClampFinite(settings.CustomColorContribution, 0.0f, 1.0f, 0.0f);
+	settings.CustomColorRed = ClampFinite(settings.CustomColorRed, 0.0f, 1.0f, 1.0f);
+	settings.CustomColorGreen = ClampFinite(settings.CustomColorGreen, 0.0f, 1.0f, 1.0f);
+	settings.CustomColorBlue = ClampFinite(settings.CustomColorBlue, 0.0f, 1.0f, 1.0f);
 }
 
 void VolumetricLighting::SaveSettings(json& o_json)
@@ -555,20 +543,7 @@ void VolumetricLighting::ApplySunGlareTuning() const
 
 	auto* sun = sky->sun;
 	const float glareScale = ClampFinite(settings.GodrayIntensity, 0.0f, kGodrayIntensityMax, 1.0f);
-
-	// Keep weather-driven glare values in sync so engine updates don't stomp the slider.
-	ApplyScaledSunGlareToWeather(sky->currentWeather, glareScale);
-	if (sky->lastWeather != sky->currentWeather)
-		ApplyScaledSunGlareToWeather(sky->lastWeather, glareScale);
-
 	sun->glareScale = glareScale;
-
-	if (sun->sunGlare) {
-		if (const auto glareProperty = skyrim_cast<RE::BSSkyShaderProperty*>(sun->sunGlare->GetGeometryRuntimeData().shaderProperty.get())) {
-			glareProperty->kBlendColor.alpha = std::clamp(glareScale, 0.0f, 1.0f);
-			glareProperty->fBlendValue = glareScale;
-		}
-	}
 }
 
 VolumetricLighting::VolumetricLightingDescriptor* VolumetricLighting::ApplyVolumetricLighting_VolumetricLightingDescriptor_Get::thunk()
@@ -583,6 +558,7 @@ VolumetricLighting::VolumetricLightingDescriptor* VolumetricLighting::ApplyVolum
 	// Re-apply here to avoid later frame-stage game updates stomping glare tuning.
 	globals::features::volumetricLighting.ApplySunGlareTuning();
 
+	ApplyGodrayShaftIntensity(*descriptor, params.shaftIntensity);
 	ApplyGodrayOpacity(*descriptor, params.opacity);
 
 	const RE::NiColor weatherColor = SaturateColor(GetCurrentWeatherSunColor(GetDescriptorColor(*descriptor)), params.saturation);
