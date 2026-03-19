@@ -17,11 +17,8 @@ public:
 		bool ExteriorEnabled = true;
 		bool DisableWeatherInteractionDuringRain = false;
 		float GodrayIntensity = 1.0f;
-		float DensityContribution = 0.5f;
-		float DensitySize = 1.0f;
-		float PhaseFunctionContribution = 0.0f;
-		float PhaseFunctionScattering = 0.0f;
-		float SamplingRangeFactor = 1.0f;
+		float GodrayOpacity = 1.0f;
+		float GodraySaturation = 1.0f;
 		float CustomColorContribution = 0.0f;
 		float CustomColorRed = 1.0f;
 		float CustomColorGreen = 1.0f;
@@ -125,6 +122,7 @@ private:
 	static void SetVLQuality(VolumetricLightingDescriptor& descriptor, std::uint32_t quality);
 	static void RenderVolumetricLighting(VolumetricLightingDescriptor* descriptor, RE::NiCamera* camera, bool flag);
 
+	void ApplySunGlareTuning() const;
 	void DrawGodrayTuningSettings();
 	void DrawVolumetricLightingSettings(int32_t& quality, TextureSize& customSize, bool isInterior, bool inLocationType);
 	TextureSize& FetchCurrentSizeInUnits(bool interior);
