@@ -26,6 +26,11 @@ float Luma(float3 c)
 	return dot(c, float3(0.2126, 0.7152, 0.0722));
 }
 
+float2 ClampToSourceRegion(float2 uv, float2 regionMin, float2 regionMax)
+{
+	return clamp(uv, regionMin, regionMax);
+}
+
 [numthreads(8, 8, 1)] void main(uint3 dispatchID : SV_DispatchThreadID)
 {
 	uint2 localPos = dispatchID.xy;
@@ -68,8 +73,14 @@ float Luma(float3 c)
 		return;
 	}
 
+	float2 sourceRegionMin = SourceOffset;
+	float2 sourceRegionMax = SourceOffset + SourceScale;
+	float2 halfTexel = InvSourceDim * 0.5;
+	sourceRegionMin = min(sourceRegionMin + halfTexel, sourceRegionMax);
+	sourceRegionMax = max(sourceRegionMax - halfTexel, sourceRegionMin);
+
 	float2 sourceUV = (uv * SourceScale + SourceOffset) - (Jitter * InvSourceDim);
-	sourceUV = saturate(sourceUV);
+	sourceUV = ClampToSourceRegion(sourceUV, sourceRegionMin, sourceRegionMax);
 
 	float4 centerSample = InputColor.SampleLevel(LinearSampler, sourceUV, 0.0);
 	float4 outSample = centerSample;
@@ -92,8 +103,8 @@ float Luma(float3 c)
 			// Alternate between horizontal and vertical 2-tap kernels to avoid directional bias.
 			const bool useHorizontalAxis = ((outputPos.x ^ outputPos.y) & 1u) == 0u;
 			float2 axis = useHorizontalAxis ? float2(1.0, 0.0) : float2(0.0, 1.0);
-			float2 tapUV0 = saturate(sourceUV + axis * blurStep);
-			float2 tapUV1 = saturate(sourceUV - axis * blurStep);
+			float2 tapUV0 = ClampToSourceRegion(sourceUV + axis * blurStep, sourceRegionMin, sourceRegionMax);
+			float2 tapUV1 = ClampToSourceRegion(sourceUV - axis * blurStep, sourceRegionMin, sourceRegionMax);
 			float4 tap0 = InputColor.SampleLevel(LinearSampler, tapUV0, 0.0);
 			float4 tap1 = InputColor.SampleLevel(LinearSampler, tapUV1, 0.0);
 			float tapLuma0 = Luma(tap0.rgb);
@@ -107,7 +118,7 @@ float Luma(float3 c)
 		} else {
 			[unroll]
 			for (uint i = 0; i < 4; ++i) {
-				float2 tapUV = saturate(sourceUV + kOffsets[i] * blurStep);
+				float2 tapUV = ClampToSourceRegion(sourceUV + kOffsets[i] * blurStep, sourceRegionMin, sourceRegionMax);
 				float4 tap = InputColor.SampleLevel(LinearSampler, tapUV, 0.0);
 				float tapLuma = Luma(tap.rgb);
 				float edgeWeight = exp2(-abs(tapLuma - centerLuma) * edgeSensitivity);
