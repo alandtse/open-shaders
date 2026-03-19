@@ -75,10 +75,6 @@ find_package(Tracy CONFIG REQUIRED)
 find_package(directx-headers CONFIG REQUIRED)
 add_subdirectory(${CMAKE_SOURCE_DIR}/cmake/Streamline)
 
-set(STREAMLINE_RUNTIME_DLLS "")
-# External Streamline runtime module build is intentionally disabled.
-# Runtime DLLs are expected to be provided in the packaged feature content.
-
 find_path(DETOURS_INCLUDE_DIRS "detours/detours.h")
 find_library(DETOURS_LIBRARY detours REQUIRED)
 include(FidelityFX-SDK)
@@ -173,8 +169,7 @@ foreach(FEATURE_PATH ${FEATURE_CONFIG_FILES})
     string(STRIP "${CONFIG_VALUE}" CONFIG_VALUE)
     if(CONFIG_VALUE)
         string(
-            REGEX MATCH
-            "Version = ([0-9]+)-([0-9]+)-([0-9]+)"
+            REGEX MATCH "Version = ([0-9]+)-([0-9]+)-([0-9]+)"
             _
             "${CONFIG_VALUE}"
         )
@@ -187,8 +182,7 @@ foreach(FEATURE_PATH ${FEATURE_CONFIG_FILES})
             set(ver_minor ${CMAKE_MATCH_2})
             set(ver_patch ${CMAKE_MATCH_3})
             list(
-                APPEND
-                FEATURE_VERSIONS
+                APPEND FEATURE_VERSIONS
                 "\t\t{\"${FEATURE}\"sv, {${ver_major},${ver_minor},${ver_patch}}}"
             )
         else()
@@ -222,6 +216,37 @@ configure_file(
 target_sources(
     "${PROJECT_NAME}"
     PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/cmake/FeatureVersions.h
+)
+
+# #######################################################################################################################
+# # Theme presets
+# #######################################################################################################################
+set(THEMES_DIR
+    "${CMAKE_CURRENT_SOURCE_DIR}/package/SKSE/Plugins/CommunityShaders/Themes"
+)
+file(GLOB THEME_JSON_FILES CONFIGURE_DEPENDS "${THEMES_DIR}/*.json")
+set(THEME_PRESET_NAMES_LIST "")
+foreach(f IN LISTS THEME_JSON_FILES)
+    get_filename_component(name "${f}" NAME_WE)
+    list(APPEND THEME_PRESET_NAMES_LIST "${name}")
+endforeach()
+list(SORT THEME_PRESET_NAMES_LIST)
+list(LENGTH THEME_PRESET_NAMES_LIST THEME_PRESET_COUNT)
+set(THEME_PRESET_NAMES "")
+foreach(p IN LISTS THEME_PRESET_NAMES_LIST)
+    set(THEME_PRESET_NAMES "${THEME_PRESET_NAMES}\t\t\"${p}\",\n")
+endforeach()
+string(REGEX REPLACE ",\n$" "" THEME_PRESET_NAMES "${THEME_PRESET_NAMES}")
+
+configure_file(
+    ${CMAKE_CURRENT_SOURCE_DIR}/cmake/ThemePresets.h.in
+    ${CMAKE_CURRENT_BINARY_DIR}/cmake/ThemePresets.h
+    @ONLY
+)
+
+target_sources(
+    "${PROJECT_NAME}"
+    PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/cmake/ThemePresets.h
 )
 
 # #######################################################################################################################
@@ -291,8 +316,7 @@ set(AIO_DIR "${CMAKE_CURRENT_BINARY_DIR}/aio")
 if(WIN32)
     set(ROBOCOPY_WRAPPER "${CMAKE_BINARY_DIR}/robocopy_wrapper.cmd")
     file(
-        WRITE
-        ${ROBOCOPY_WRAPPER}
+        WRITE ${ROBOCOPY_WRAPPER}
         "@echo off\r\nrem Robocopy wrapper: forwards all args to robocopy and normalizes exit codes\r\nrobocopy %*\r\nset rc=%ERRORLEVEL%\r\nif %rc% GEQ 8 exit /b %rc%\r\nexit /b 0\r\n"
     )
 endif()
@@ -318,43 +342,9 @@ install(
     DIRECTORY ${CMAKE_SOURCE_DIR}/package/ ${FEATURE_PATHS_SLASH}
     DESTINATION .
     COMPONENT Shaders
+    PATTERN "Tests" EXCLUDE
 )
-if(STREAMLINE_RUNTIME_DLLS)
-    install(
-        FILES ${STREAMLINE_RUNTIME_DLLS}
-        DESTINATION Shaders/Upscaling/Streamline
-        COMPONENT Shaders
-    )
-endif()
 install(CODE "file(REMOVE \${CMAKE_INSTALL_PREFIX}/Core)" COMPONENT Shaders)
-
-# Shared clean AIO assembly used by AIO folder + AIO zip packaging targets.
-# This reuses install() so all AIO artifacts are built from the same clean layout.
-file(
-    GLOB_RECURSE AIO_ASSEMBLY_SOURCES
-    LIST_DIRECTORIES FALSE
-    "${CMAKE_SOURCE_DIR}/package/*"
-)
-foreach(_fpath IN LISTS FEATURE_PATHS)
-    if(EXISTS "${_fpath}")
-        file(GLOB_RECURSE _tmp LIST_DIRECTORIES FALSE "${_fpath}/*")
-        list(APPEND AIO_ASSEMBLY_SOURCES ${_tmp})
-    endif()
-endforeach()
-if(STREAMLINE_RUNTIME_DLLS)
-    list(APPEND AIO_ASSEMBLY_SOURCES ${STREAMLINE_RUNTIME_DLLS})
-endif()
-
-set(AIO_ASSEMBLY_STAMP "${CMAKE_CURRENT_BINARY_DIR}/assemble_aio_clean.stamp")
-add_custom_command(
-    OUTPUT ${AIO_ASSEMBLY_STAMP}
-    COMMAND ${CMAKE_COMMAND} -E make_directory "${AIO_DIR}"
-    COMMAND ${CMAKE_COMMAND} --install ${CMAKE_BINARY_DIR} --prefix ${AIO_DIR}
-    COMMAND ${CMAKE_COMMAND} -E touch ${AIO_ASSEMBLY_STAMP}
-    DEPENDS ${AIO_ASSEMBLY_SOURCES} ${PROJECT_NAME}
-    COMMENT "Assembling AIO package using clean install() layout"
-)
-add_custom_target(ASSEMBLE_AIO_CLEAN DEPENDS ${AIO_ASSEMBLY_STAMP})
 
 # #######################################################################################################################
 # # Automatic AIO preparation (incremental copy system)
@@ -370,13 +360,11 @@ if(AUTO_PLUGIN_DEPLOYMENT OR AIO_ZIP_TO_DIST)
         LIST_DIRECTORIES FALSE
         "${CMAKE_SOURCE_DIR}/package/*"
     )
+    list(FILTER _AIO_PACKAGE_FILES EXCLUDE REGEX "/Tests/")
     foreach(_fpath IN LISTS FEATURE_PATHS)
         file(GLOB_RECURSE _tmp LIST_DIRECTORIES FALSE "${_fpath}/*")
         list(APPEND _AIO_PACKAGE_FILES ${_tmp})
     endforeach()
-    if(STREAMLINE_RUNTIME_DLLS)
-        list(APPEND _AIO_PACKAGE_FILES ${STREAMLINE_RUNTIME_DLLS})
-    endif()
 
     # Prepare AIO by copying files only when different. This avoids updating
     # timestamps for unchanged files and prevents downstream incremental
@@ -386,8 +374,7 @@ if(AUTO_PLUGIN_DEPLOYMENT OR AIO_ZIP_TO_DIST)
     # Ensure SKSE/Plugins dir exists
     # Note: DLL and PDB are copied via POST_BUILD command to avoid race conditions
     list(
-        APPEND
-        _prepare_aio_cmds
+        APPEND _prepare_aio_cmds
         COMMAND
         ${CMAKE_COMMAND}
         -E
@@ -395,19 +382,19 @@ if(AUTO_PLUGIN_DEPLOYMENT OR AIO_ZIP_TO_DIST)
         "${AIO_DIR}/SKSE/Plugins"
     )
 
-    # Copy package files
+    # Copy package files (exclude test files from production packages)
     file(
         GLOB_RECURSE _AIO_PACKAGE_SOURCE_FILES
         LIST_DIRECTORIES FALSE
         "${CMAKE_SOURCE_DIR}/package/*"
     )
+    list(FILTER _AIO_PACKAGE_SOURCE_FILES EXCLUDE REGEX "/Tests/")
     foreach(_src IN LISTS _AIO_PACKAGE_SOURCE_FILES)
         file(RELATIVE_PATH _rel "${CMAKE_SOURCE_DIR}/package" "${_src}")
         set(_dst "${AIO_DIR}/${_rel}")
         get_filename_component(_dst_dir "${_dst}" DIRECTORY)
         list(
-            APPEND
-            _prepare_aio_cmds
+            APPEND _prepare_aio_cmds
             COMMAND
             ${CMAKE_COMMAND}
             -E
@@ -435,8 +422,7 @@ if(AUTO_PLUGIN_DEPLOYMENT OR AIO_ZIP_TO_DIST)
                 set(_dst "${AIO_DIR}/${_rel}")
                 get_filename_component(_dst_dir "${_dst}" DIRECTORY)
                 list(
-                    APPEND
-                    _prepare_aio_cmds
+                    APPEND _prepare_aio_cmds
                     COMMAND
                     ${CMAKE_COMMAND}
                     -E
@@ -453,39 +439,9 @@ if(AUTO_PLUGIN_DEPLOYMENT OR AIO_ZIP_TO_DIST)
         endif()
     endforeach()
 
-    if(STREAMLINE_RUNTIME_DLLS)
-        list(
-            APPEND
-            _prepare_aio_cmds
-            COMMAND
-            ${CMAKE_COMMAND}
-            -E
-            make_directory
-            "${AIO_DIR}/Shaders/Upscaling/Streamline"
-        )
-        foreach(_streamline_runtime_dll IN LISTS STREAMLINE_RUNTIME_DLLS)
-            get_filename_component(
-                _streamline_runtime_name
-                "${_streamline_runtime_dll}"
-                NAME
-            )
-            list(
-                APPEND
-                _prepare_aio_cmds
-                COMMAND
-                ${CMAKE_COMMAND}
-                -E
-                copy_if_different
-                "${_streamline_runtime_dll}"
-                "${AIO_DIR}/Shaders/Upscaling/Streamline/${_streamline_runtime_name}"
-            )
-        endforeach()
-    endif()
-
     # Remove CORE from AIO if it exists (keep rest intact)
     list(
-        APPEND
-        _prepare_aio_cmds
+        APPEND _prepare_aio_cmds
         COMMAND
         ${CMAKE_COMMAND}
         -E
@@ -493,8 +449,7 @@ if(AUTO_PLUGIN_DEPLOYMENT OR AIO_ZIP_TO_DIST)
         "${AIO_DIR}/CORE"
     )
     list(
-        APPEND
-        _prepare_aio_cmds
+        APPEND _prepare_aio_cmds
         COMMAND
         ${CMAKE_COMMAND}
         -E
@@ -511,6 +466,7 @@ if(AUTO_PLUGIN_DEPLOYMENT OR AIO_ZIP_TO_DIST)
 
     add_custom_target(
         PREPARE_AIO
+        ALL
         DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/prepare_aio.stamp
     )
 
@@ -547,8 +503,7 @@ if(AUTO_PLUGIN_DEPLOYMENT OR AIO_ZIP_TO_DIST)
         set(_dst "${AIO_DIR}/Shaders/${_rel}")
         get_filename_component(_dst_dir "${_dst}" DIRECTORY)
         list(
-            APPEND
-            _shader_copy_cmds
+            APPEND _shader_copy_cmds
             COMMAND
             ${CMAKE_COMMAND}
             -E
@@ -570,6 +525,7 @@ if(AUTO_PLUGIN_DEPLOYMENT OR AIO_ZIP_TO_DIST)
                 LIST_DIRECTORIES FALSE
                 "${_fpath}/Shaders/*"
             )
+            list(FILTER _feat_shaders EXCLUDE REGEX "/Tests/")
             get_filename_component(_feat_name "${_fpath}" NAME)
             foreach(_src IN LISTS _feat_shaders)
                 file(RELATIVE_PATH _rel "${_fpath}/Shaders" "${_src}")
@@ -578,8 +534,7 @@ if(AUTO_PLUGIN_DEPLOYMENT OR AIO_ZIP_TO_DIST)
                 set(_dst "${AIO_DIR}/Shaders/${_rel}")
                 get_filename_component(_dst_dir "${_dst}" DIRECTORY)
                 list(
-                    APPEND
-                    _shader_copy_cmds
+                    APPEND _shader_copy_cmds
                     COMMAND
                     ${CMAKE_COMMAND}
                     -E
@@ -691,8 +646,7 @@ if(AUTO_PLUGIN_DEPLOYMENT)
             )
 
             list(
-                APPEND
-                SHADER_ONLY_HASHES
+                APPEND SHADER_ONLY_HASHES
                 ${DEPLOY_TARGET_HASH}_shaders_only.stamp
             )
 
@@ -719,8 +673,7 @@ if(AUTO_PLUGIN_DEPLOYMENT)
 
             list(APPEND DEPLOY_TARGET_HASHES ${DEPLOY_TARGET_HASH}_deploy.stamp)
             list(
-                APPEND
-                DEPLOY_TARGET_HASHES
+                APPEND DEPLOY_TARGET_HASHES
                 ${DEPLOY_TARGET_HASH}_shaders_full.stamp
             )
         endforeach()
@@ -797,20 +750,8 @@ if(ZIP_TO_DIST)
         TARGET ${PROJECT_NAME}
         POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E remove "${ZIP_DIR}/CORE"
+        COMMAND ${CMAKE_COMMAND} -E remove_directory "${ZIP_DIR}/Shaders/Tests"
     )
-    if(STREAMLINE_RUNTIME_DLLS)
-        add_custom_command(
-            TARGET ${PROJECT_NAME}
-            POST_BUILD
-            COMMAND
-                ${CMAKE_COMMAND} -E make_directory
-                "${ZIP_DIR}/Shaders/Upscaling/Streamline"
-            COMMAND
-                ${CMAKE_COMMAND} -E copy_if_different
-                ${STREAMLINE_RUNTIME_DLLS}
-                "${ZIP_DIR}/Shaders/Upscaling/Streamline"
-        )
-    endif()
 
     set(TARGET_ZIP "${PROJECT_NAME}-${UTC_NOW}.7z")
     message("Zipping ${ZIP_DIR} to ${CMAKE_SOURCE_DIR}/dist/${TARGET_ZIP}")
@@ -871,7 +812,7 @@ if(AIO_ZIP_TO_DIST)
         COMMAND ${CMAKE_COMMAND} -E tar cf ${AIO_ARCHIVE} --format=7zip -- .
         COMMAND ${CMAKE_COMMAND} -E touch ${AIO_ZIP_STAMP}
         WORKING_DIRECTORY ${AIO_DIR}
-        DEPENDS ${AIO_ASSEMBLY_STAMP}
+        DEPENDS PREPARE_AIO
         COMMENT "Creating AIO archive ${AIO_ARCHIVE}"
     )
 
@@ -902,9 +843,6 @@ file(
 # Add SKSE plugin dll as dependency (use target-file generator expression so CMake
 # knows the actual output path of the target at build time)
 list(APPEND CORE_SOURCES "$<TARGET_FILE:${PROJECT_NAME}>")
-if(STREAMLINE_RUNTIME_DLLS)
-    list(APPEND CORE_SOURCES ${STREAMLINE_RUNTIME_DLLS})
-endif()
 
 set(CORE_FEATURE_PATHS "${CMAKE_SOURCE_DIR}/package/")
 
@@ -928,6 +866,7 @@ add_custom_command(
     COMMAND
         ${CMAKE_COMMAND} -E copy_directory ${CORE_FEATURE_PATHS} ${FEATURE_PATH}
     COMMAND ${CMAKE_COMMAND} -E rm -f -- ${FEATURE_PATH}/Core
+    COMMAND ${CMAKE_COMMAND} -E remove_directory "${FEATURE_PATH}/Shaders/Tests"
     COMMAND ${CMAKE_COMMAND} -E tar cfv ${CORE_PACKAGE} --format=7zip -- .
     WORKING_DIRECTORY ${FEATURE_PATH}
     COMMENT "Creating Core zip package"
@@ -962,13 +901,21 @@ foreach(FEATURE_PATH ${FEATURE_PATHS})
 endforeach()
 
 # AIO Folder target
-add_custom_target("AIO" DEPENDS ${AIO_ASSEMBLY_STAMP})
+add_custom_command(
+    OUTPUT ${AIO_DIR}/SKSE/Plugins/${PROJECT_NAME}.dll
+    DEPENDS ${CORE_SOURCES}
+    COMMAND ${CMAKE_COMMAND} --install ${CMAKE_BINARY_DIR} --prefix ${AIO_DIR}
+    COMMENT "Installing to AIO folder"
+)
+add_custom_target("AIO" DEPENDS ${AIO_DIR}/SKSE/Plugins/${PROJECT_NAME}.dll)
 
 # Manual AIO package target
 set(AIO_PACKAGE "${DIST_PATH}/${PROJECT_NAME}_AIO-${UTC_NOW}.7z")
 add_custom_command(
     OUTPUT ${AIO_PACKAGE}
-    DEPENDS ${AIO_ASSEMBLY_STAMP}
+    DEPENDS ${CORE_SOURCES}
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${AIO_DIR}
+    COMMAND ${CMAKE_COMMAND} --install ${CMAKE_BINARY_DIR} --prefix ${AIO_DIR}
     COMMAND
         ${CMAKE_COMMAND} -E chdir ${AIO_DIR} ${CMAKE_COMMAND} -E tar cfv
         ${AIO_PACKAGE} --format=7zip -- .
