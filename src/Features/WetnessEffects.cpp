@@ -32,10 +32,10 @@ namespace
 	constexpr float MAX_LEGACY_WET_REFLECTION_SCALE = 0.25f;
 	constexpr float DEFAULT_LEGACY_WET_INDIRECT_SPECULAR_SCALE = 0.05f;
 	constexpr float DEFAULT_WET_INDIRECT_SPECULAR_SCALE = 0.25f;
-	constexpr float SUNNY_MAX_POST_RAIN_SECONDS = 12.0f * 3600.0f;
-	constexpr float CLOUDY_MAX_POST_RAIN_SECONDS = 24.0f * 3600.0f;
-	constexpr float SNOW_MAX_POST_RAIN_SECONDS = 6.0f * 3600.0f;
-	constexpr float MIN_POST_RAIN_SECONDS = 2.0f * 3600.0f;
+	constexpr float MIN_SURFACE_POST_RAIN_SECONDS = 2.0f * 3600.0f;
+	constexpr float MAX_SURFACE_POST_RAIN_SECONDS = 12.0f * 3600.0f;
+	constexpr float MIN_PUDDLE_POST_RAIN_SECONDS = 2.0f * 3600.0f;
+	constexpr float MAX_PUDDLE_POST_RAIN_SECONDS = 24.0f * 3600.0f;
 	constexpr float FAST_DRY_LOW_PUDDLE_MULT = 1.55f;
 	constexpr float SLOW_DRY_DEEP_PUDDLE_MULT = 0.70f;
 	constexpr float SNOW_WETNESS_DRY_MULT = 2.0f;
@@ -105,14 +105,6 @@ namespace
 	bool IsRainyWeather(const RE::TESWeather* weather)
 	{
 		return weather && weather->precipitationData && weather->data.flags.any(RE::TESWeather::WeatherDataFlag::kRainy);
-	}
-
-	bool IsCloudyDryWeather(const RE::TESWeather* weather)
-	{
-		if (!weather) {
-			return false;
-		}
-		return weather->data.flags.any(RE::TESWeather::WeatherDataFlag::kCloudy);
 	}
 
 	bool IsSnowWeather(const RE::TESWeather* weather)
@@ -216,8 +208,7 @@ namespace
 			return nullptr;
 		}
 
-		auto& effect = precipObject->GetGeometryRuntimeData().properties[RE::BSGeometry::States::kEffect];
-		auto shaderProp = netimmerse_cast<RE::BSShaderProperty*>(effect.get());
+		auto* shaderProp = precipObject->GetGeometryRuntimeData().shaderProperty.get();
 		auto particleShaderProperty = netimmerse_cast<RE::BSParticleShaderProperty*>(shaderProp);
 		if (!particleShaderProperty || !particleShaderProperty->particleEmitter) {
 			return nullptr;
@@ -1162,16 +1153,24 @@ WetnessEffects::PerFrame WetnessEffects::GetCommonBufferData() const
 		if (rainingNow) {
 			runtimeState.rainEventExposure += rainExposureSource * scaledDeltaSeconds;
 			runtimeState.rainEventExposure = std::min(runtimeState.rainEventExposure, RAIN_EVENT_REFERENCE_SECONDS * 4.0f);
+			runtimeState.rainEventWeight = std::clamp(runtimeState.rainEventExposure / RAIN_EVENT_REFERENCE_SECONDS, 0.0f, 1.0f);
+			runtimeState.postRainEventWeight = runtimeState.rainEventWeight;
 			runtimeState.postRainElapsedSeconds = 0.0f;
-		} else if (runtimeState.rainEventExposure > 0.0f) {
-			const float memoryDecayPerSecond = RAIN_EVENT_REFERENCE_SECONDS / RAIN_EVENT_DECAY_SECONDS;
-			runtimeState.rainEventExposure = std::max(0.0f, runtimeState.rainEventExposure - memoryDecayPerSecond * scaledDeltaSeconds);
-			runtimeState.postRainElapsedSeconds += static_cast<float>(deltaGameSeconds);
 		} else {
-			runtimeState.postRainElapsedSeconds = 0.0f;
-		}
+			if (runtimeState.wasRainingLastFrame) {
+				runtimeState.postRainEventWeight = std::clamp(runtimeState.rainEventExposure / RAIN_EVENT_REFERENCE_SECONDS, 0.0f, 1.0f);
+				runtimeState.postRainElapsedSeconds = 0.0f;
+			} else {
+				runtimeState.postRainElapsedSeconds += static_cast<float>(deltaGameSeconds);
+			}
 
-		runtimeState.rainEventWeight = std::clamp(runtimeState.rainEventExposure / RAIN_EVENT_REFERENCE_SECONDS, 0.0f, 1.0f);
+			if (runtimeState.rainEventExposure > 0.0f) {
+				const float memoryDecayPerSecond = RAIN_EVENT_REFERENCE_SECONDS / RAIN_EVENT_DECAY_SECONDS;
+				runtimeState.rainEventExposure = std::max(0.0f, runtimeState.rainEventExposure - memoryDecayPerSecond * scaledDeltaSeconds);
+			}
+
+			runtimeState.rainEventWeight = std::clamp(runtimeState.rainEventExposure / RAIN_EVENT_REFERENCE_SECONDS, 0.0f, 1.0f);
+		}
 
 		// Long rain events slow down drying after rain stops.
 		if (blendedWetnessRate < 0.0f) {
@@ -1190,21 +1189,22 @@ WetnessEffects::PerFrame WetnessEffects::GetCommonBufferData() const
 		ApplyDepthDelta(scaledDeltaSeconds, blendedWetnessRate, blendedPuddleRate, runtimeState.wetnessDepth, runtimeState.puddleDepth);
 
 		if (!rainingNow && (runtimeState.wetnessDepth > 0.0f || runtimeState.puddleDepth > 0.0f)) {
-			const float cloudyWeatherWeight =
-				(IsCloudyDryWeather(currentWeather) ? currentWeight : 0.0f) +
-				(IsCloudyDryWeather(lastWeather) ? lastWeight : 0.0f);
-			const float snowWeatherWeight =
-				(IsSnowWeather(currentWeather) ? currentWeight : 0.0f) +
-				(IsSnowWeather(lastWeather) ? lastWeight : 0.0f);
-			float baseCapSeconds = std::lerp(SUNNY_MAX_POST_RAIN_SECONDS, CLOUDY_MAX_POST_RAIN_SECONDS, std::clamp(cloudyWeatherWeight, 0.0f, 1.0f));
-			baseCapSeconds = std::lerp(baseCapSeconds, SNOW_MAX_POST_RAIN_SECONDS, std::clamp(snowWeatherWeight, 0.0f, 1.0f));
-			const float cappedDurationSeconds = std::lerp(MIN_POST_RAIN_SECONDS, baseCapSeconds, runtimeState.rainEventWeight);
-			if (cappedDurationSeconds > 0.0f) {
-				const float forcedRemaining = std::clamp(1.0f - (runtimeState.postRainElapsedSeconds / cappedDurationSeconds), 0.0f, 1.0f);
-				runtimeState.wetnessDepth = std::min(runtimeState.wetnessDepth, MAX_WETNESS_DEPTH * forcedRemaining);
-				runtimeState.puddleDepth = std::min(runtimeState.puddleDepth, MAX_PUDDLE_DEPTH * forcedRemaining);
+			const float eventWeight = std::clamp(runtimeState.postRainEventWeight, 0.0f, 1.0f);
+			const float wetnessDurationSeconds = std::lerp(MIN_SURFACE_POST_RAIN_SECONDS, MAX_SURFACE_POST_RAIN_SECONDS, eventWeight);
+			const float puddleDurationSeconds = std::lerp(MIN_PUDDLE_POST_RAIN_SECONDS, MAX_PUDDLE_POST_RAIN_SECONDS, eventWeight);
+			const float elapsedSeconds = std::max(0.0f, runtimeState.postRainElapsedSeconds);
+
+			if (wetnessDurationSeconds > 0.0f) {
+				const float wetnessRemaining = std::clamp(1.0f - (elapsedSeconds / wetnessDurationSeconds), 0.0f, 1.0f);
+				runtimeState.wetnessDepth = std::min(runtimeState.wetnessDepth, MAX_WETNESS_DEPTH * wetnessRemaining);
+			}
+			if (puddleDurationSeconds > 0.0f) {
+				const float puddleRemaining = std::clamp(1.0f - (elapsedSeconds / puddleDurationSeconds), 0.0f, 1.0f);
+				runtimeState.puddleDepth = std::min(runtimeState.puddleDepth, MAX_PUDDLE_DEPTH * puddleRemaining);
 			}
 		}
+
+		runtimeState.wasRainingLastFrame = rainingNow;
 	}
 
 	const float snowTransitionWeight = std::clamp(

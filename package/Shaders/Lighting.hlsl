@@ -2493,55 +2493,16 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	// Calculate puddle effects
 	float puddle = wetness;
 	if (wetness > 0.0 || puddleWetness > 0.0) {
-		float puddlePatternScale = max(SharedData::wetnessEffectsSettings.PuddlePatternScale, 1e-3);
 		float puddleMaxAngleSafe = max(SharedData::wetnessEffectsSettings.PuddleMaxAngle, 1e-3);
-		float3 puddleCoords = ((input.WorldPosition.xyz + FrameBuffer::CameraPosAdjust[eyeIndex].xyz) * 0.5 + 0.5) * 0.01 / puddlePatternScale;
+		float puddleRadiusSafe = max(SharedData::wetnessEffectsSettings.PuddleRadius, 1e-3);
+		float3 puddleCoords = ((input.WorldPosition.xyz + FrameBuffer::CameraPosAdjust[eyeIndex].xyz) * 0.5 + 0.5) * 0.01 / puddleRadiusSafe;
 #		if !defined(SKINNED)
 		float puddleSignal = Random::perlinNoise(puddleCoords) * .5 + .5;
 		puddleSignal = puddleSignal * ((minWetnessAngle / puddleMaxAngleSafe) * SharedData::wetnessEffectsSettings.MaxPuddleWetness * 0.25) + 0.5;
-
-		// Radius is a monotonic size control in post-rain mode.
-		float puddleSize01 = saturate((SharedData::wetnessEffectsSettings.PuddleRadius - 0.3) / (3.0 - 0.3));
-		float puddleThreshold = lerp(0.70, 0.20, puddleSize01);
-		// Preserve visible standing water after rain, but only where puddle depth is genuinely high.
-		float postRainPuddleWaterStrength = max(0.0, SharedData::wetnessEffectsSettings.PostRainPuddleWaterStrength);
-		float puddlePersistenceMask = smoothstep(0.35, 0.80, saturate(puddleWetness));
-		float postRainPuddleSupport = puddlePersistenceMask * postRainBlend * postRainPuddleWaterStrength;
-		float puddleThresholdPostRain = lerp(puddleThreshold, 0.42, saturate(postRainPuddleSupport));
-		float closeRangeThresholdBias = max(0.0, closeRangeWetnessBoost - 1.0) * 0.12 * closeRangeBlend;
-		puddleThresholdPostRain = saturate(puddleThresholdPostRain - closeRangeThresholdBias);
-		float puddleBlendModern = saturate((puddleSignal - puddleThresholdPostRain) / max(1e-3, 1.0 - puddleThresholdPostRain));
-		float puddleBlendLegacyRain = saturate(puddleSignal - 0.25);
-		float puddleBlend = lerp(puddleBlendModern, puddleBlendLegacyRain, inRainBlend);
-
-		// Micro-depth puddle model: uses high-frequency signal + cavity cues (AO/roughness)
-		// to keep water in fine depressions (e.g. gaps between cobblestones).
-		float3 depthCoords = puddleCoords * 6.0 + float3(worldNormal.xy * 2.0, 0.0);
-		float depthNoiseA = Random::perlinNoise(depthCoords) * 0.5 + 0.5;
-		float depthNoiseB = Random::perlinNoise(depthCoords * 1.7 + float3(13.37, 7.91, 5.21)) * 0.5 + 0.5;
-		float microDepthPattern = saturate(depthNoiseA * 0.70 + depthNoiseB * 0.30);
-		// material.AO is not available in all permutations; use wetness occlusion as a robust cavity proxy.
-		float cavityAmount = saturate(1.0 - wetnessOcclusion);
-		float roughnessRetention = saturate(material.Roughness);
-		float microDepthSignal = saturate(microDepthPattern + cavityAmount * 0.45 + roughnessRetention * 0.10);
-		float depthThreshold = saturate(puddleThresholdPostRain + 0.08 - cavityAmount * 0.20);
-		float puddleBlendDepth = saturate((microDepthSignal - depthThreshold) / max(1e-3, 1.0 - depthThreshold));
-		float depthSlopeGate = smoothstep(0.12, 0.60, minWetnessAngle);
-		puddleBlendDepth *= depthSlopeGate;
-
-		float puddleDepthBlend = saturate(SharedData::wetnessEffectsSettings.PuddleDepthBlend);
-		if (SharedData::wetnessEffectsSettings.EnableDualPuddleModel == 0)
-			puddleDepthBlend = 0.0;
-		puddleBlend = lerp(puddleBlend, puddleBlendDepth, puddleDepthBlend);
-
-		wetness = lerp(wetness, puddleWetness, puddleBlend);
-		// Decouple post-rain puddle body from fast surface-wetness fade so puddles remain "water-like".
-		float puddleBodyLerp = saturate(lerp(0.35, 0.90, postRainBlend * puddlePersistenceMask) * postRainPuddleWaterStrength);
-		float puddleBody = lerp(wetness, puddleWetness, puddleBodyLerp);
-		puddle = puddleBlend * puddleBody;
+		puddle *= lerp(wetness, puddleWetness, saturate(puddleSignal - 0.25));
 #		endif
 	}
-	puddle *= nearFactor;
+	puddle *= saturate(wetnessOcclusion * 2.0) * nearFactor;
 
 	// Calculate wetness glossiness factors
 	float wetnessGlossinessAlbedo = max(puddle, shoreFactorAlbedo * SharedData::wetnessEffectsSettings.MaxShoreWetness);

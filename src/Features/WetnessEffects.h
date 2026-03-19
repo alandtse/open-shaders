@@ -170,9 +170,11 @@ private:
 		float puddleDepth = 0.0f;
 		float rainEventExposure = 0.0f;
 		float rainEventWeight = 0.0f;
+		float postRainEventWeight = 0.0f;
 		float postRainElapsedSeconds = 0.0f;
 		double lastGameTimeSeconds = 0.0;
 		bool hasLastGameTime = false;
+		bool wasRainingLastFrame = false;
 	};
 	mutable RuntimeState runtimeState{};
 
