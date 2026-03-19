@@ -3,6 +3,8 @@
 #include <algorithm>
 
 #include "RE/B/BSSkyShaderProperty.h"
+#include "RE/N/NiDirectionalLight.h"
+#include "RE/S/Sun.h"
 #include "InteriorSun.h"
 #include "ShaderCache.h"
 #include "State.h"
@@ -10,6 +12,19 @@
 namespace
 {
 	constexpr float kWeatherTransitionEpsilon = 0.001f;
+	constexpr float kGodrayOpacityMax = 2.0f;
+	constexpr float kGodraySaturationMax = 2.0f;
+	constexpr float kColorLumaR = 0.2126f;
+	constexpr float kColorLumaG = 0.7152f;
+	constexpr float kColorLumaB = 0.0722f;
+
+	struct GodrayRuntimeParams
+	{
+		float opacity = 1.0f;
+		float saturation = 1.0f;
+		float customContribution = 0.0f;
+		RE::NiColor customColor = { 1.0f, 1.0f, 1.0f };
+	};
 
 	bool IsRainWeatherActive(const RE::TESWeather* a_weather, float a_weight)
 	{
@@ -29,6 +44,82 @@ namespace
 		const float lastWeight = 1.0f - currentWeight;
 		return IsRainWeatherActive(sky->currentWeather, currentWeight) ||
 		       IsRainWeatherActive(sky->lastWeather, lastWeight);
+	}
+
+	RE::NiColor ClampColor01(const RE::NiColor& color)
+	{
+		return {
+			std::clamp(color.red, 0.0f, 1.0f),
+			std::clamp(color.green, 0.0f, 1.0f),
+			std::clamp(color.blue, 0.0f, 1.0f)
+		};
+	}
+
+	float GetLuminance(const RE::NiColor& color)
+	{
+		return color.red * kColorLumaR + color.green * kColorLumaG + color.blue * kColorLumaB;
+	}
+
+	RE::NiColor SaturateColor(const RE::NiColor& color, float saturation)
+	{
+		saturation = std::clamp(saturation, 0.0f, kGodraySaturationMax);
+		const float luminance = GetLuminance(color);
+		return ClampColor01({
+			luminance + (color.red - luminance) * saturation,
+			luminance + (color.green - luminance) * saturation,
+			luminance + (color.blue - luminance) * saturation
+		});
+	}
+
+	RE::NiColor LerpColor(const RE::NiColor& a, const RE::NiColor& b, float t)
+	{
+		t = std::clamp(t, 0.0f, 1.0f);
+		return {
+			a.red + (b.red - a.red) * t,
+			a.green + (b.green - a.green) * t,
+			a.blue + (b.blue - a.blue) * t
+		};
+	}
+
+	RE::NiColor GetDescriptorColor(const RE::BSVolumetricLightingRenderData& descriptor)
+	{
+		return ClampColor01({ descriptor.red, descriptor.green, descriptor.blue });
+	}
+
+	void SetDescriptorColor(RE::BSVolumetricLightingRenderData& descriptor, const RE::NiColor& color)
+	{
+		const RE::NiColor clamped = ClampColor01(color);
+		descriptor.red = clamped.red;
+		descriptor.green = clamped.green;
+		descriptor.blue = clamped.blue;
+	}
+
+	void ApplyGodrayOpacity(RE::BSVolumetricLightingRenderData& descriptor, float opacity)
+	{
+		opacity = std::clamp(opacity, 0.0f, kGodrayOpacityMax);
+		if (opacity <= 1.0f)
+			descriptor.intensity *= opacity;
+		descriptor.density.contribution *= opacity;
+	}
+
+	RE::NiColor GetCurrentWeatherSunColor(const RE::NiColor& fallbackColor)
+	{
+		auto* sky = globals::game::sky;
+		if (sky && sky->sun && sky->sun->light) {
+			return ClampColor01(sky->sun->light->GetLightRuntimeData().diffuse);
+		}
+
+		return ClampColor01(fallbackColor);
+	}
+
+	GodrayRuntimeParams BuildGodrayRuntimeParams(const VolumetricLighting::Settings& settings)
+	{
+		GodrayRuntimeParams params{};
+		params.opacity = std::clamp(settings.GodrayOpacity, 0.0f, kGodrayOpacityMax);
+		params.saturation = std::clamp(settings.GodraySaturation, 0.0f, kGodraySaturationMax);
+		params.customContribution = std::clamp(settings.CustomColorContribution, 0.0f, 1.0f);
+		params.customColor = ClampColor01({ settings.CustomColorRed, settings.CustomColorGreen, settings.CustomColorBlue });
+		return params;
 	}
 }
 
@@ -91,10 +182,10 @@ void VolumetricLighting::DrawGodrayTuningSettings()
 
 	ImGui::SeparatorText("Godray Tuning");
 	const bool glareChanged = drawSlider("Sun Glare Intensity", settings.GodrayIntensity, 0.0f, 3.0f, "Scales sun glare brightness without reducing shaft strength.");
-	drawSlider("Godray Opacity", settings.GodrayOpacity, 0.0f, 1.0f, "Controls shaft visibility/strength.");
-	drawSlider("Godray Saturation", settings.GodraySaturation, 0.0f, 2.0f, "Controls color richness of godrays. 0 = grayscale, 1 = default.");
+	drawSlider("Godray Opacity", settings.GodrayOpacity, 0.0f, kGodrayOpacityMax, "Controls shaft thickness/presence. 1.0 is default, values above 1.0 make shafts fuller.");
+	drawSlider("Godray Saturation", settings.GodraySaturation, 0.0f, kGodraySaturationMax, "Adjusts weather-driven godray color richness. 1.0 is default.");
 
-	drawSlider("Custom Color Contribution", settings.CustomColorContribution, 0.0f, 1.0f, "Blends custom color into godrays.");
+	drawSlider("Custom Color Contribution", settings.CustomColorContribution, 0.0f, 1.0f, "Blends your custom color into the weather godray color.");
 	drawSlider("Custom Color Red", settings.CustomColorRed, 0.0f, 1.0f, "Red channel for custom volumetric color.");
 	drawSlider("Custom Color Green", settings.CustomColorGreen, 0.0f, 1.0f, "Green channel for custom volumetric color.");
 	drawSlider("Custom Color Blue", settings.CustomColorBlue, 0.0f, 1.0f, "Blue channel for custom volumetric color.");
@@ -432,19 +523,16 @@ VolumetricLighting::VolumetricLightingDescriptor* VolumetricLighting::ApplyVolum
 		return nullptr;
 
 	const auto& runtimeSettings = globals::features::volumetricLighting.settings;
-	const float opacity = std::clamp(runtimeSettings.GodrayOpacity, 0.0f, 1.0f);
-	const float saturation = std::clamp(runtimeSettings.GodraySaturation, 0.0f, 2.0f);
-	descriptor->intensity *= opacity;
-	descriptor->customColor.contribution = std::clamp(runtimeSettings.CustomColorContribution, 0.0f, 1.0f);
+	const GodrayRuntimeParams params = BuildGodrayRuntimeParams(runtimeSettings);
 
-	const float customRed = std::clamp(runtimeSettings.CustomColorRed, 0.0f, 1.0f);
-	const float customGreen = std::clamp(runtimeSettings.CustomColorGreen, 0.0f, 1.0f);
-	const float customBlue = std::clamp(runtimeSettings.CustomColorBlue, 0.0f, 1.0f);
-	const float luminance = customRed * 0.2126f + customGreen * 0.7152f + customBlue * 0.0722f;
+	ApplyGodrayOpacity(*descriptor, params.opacity);
 
-	descriptor->red = std::clamp(luminance + (customRed - luminance) * saturation, 0.0f, 1.0f);
-	descriptor->green = std::clamp(luminance + (customGreen - luminance) * saturation, 0.0f, 1.0f);
-	descriptor->blue = std::clamp(luminance + (customBlue - luminance) * saturation, 0.0f, 1.0f);
+	const RE::NiColor weatherColor = SaturateColor(GetCurrentWeatherSunColor(GetDescriptorColor(*descriptor)), params.saturation);
+	const RE::NiColor finalColor = LerpColor(weatherColor, params.customColor, params.customContribution);
+
+	// Use explicit final color each frame so saturation and custom contribution are independent.
+	descriptor->customColor.contribution = 1.0f;
+	SetDescriptorColor(*descriptor, finalColor);
 	return descriptor;
 }
 
