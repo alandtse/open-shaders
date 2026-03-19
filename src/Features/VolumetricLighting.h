@@ -1,5 +1,7 @@
 #pragma once
 
+#include "RE/B/BSVolumetricLightingRenderData.h"
+
 struct VolumetricLighting : Feature
 {
 public:
@@ -14,6 +16,16 @@ public:
 	{
 		bool ExteriorEnabled = true;
 		bool DisableWeatherInteractionDuringRain = false;
+		float GodrayIntensity = 1.0f;
+		float DensityContribution = 0.5f;
+		float DensitySize = 1.0f;
+		float PhaseFunctionContribution = 0.0f;
+		float PhaseFunctionScattering = 0.0f;
+		float SamplingRangeFactor = 1.0f;
+		float CustomColorContribution = 0.0f;
+		float CustomColorRed = 1.0f;
+		float CustomColorGreen = 1.0f;
+		float CustomColorBlue = 1.0f;
 		int32_t ExteriorQuality = 2;
 		TextureSize ExteriorCustomSize;
 		bool InteriorEnabled = true;
@@ -100,14 +112,20 @@ public:
 	};
 
 private:
-	struct VolumetricLightingDescriptor
-	{};
+	using VolumetricLightingDescriptor = RE::BSVolumetricLightingRenderData;
+
+	struct ApplyVolumetricLighting_VolumetricLightingDescriptor_Get
+	{
+		static VolumetricLightingDescriptor* thunk();
+		static inline REL::Relocation<decltype(thunk)> func;
+	};
 
 	static const char* FromUnits(int32_t value, int32_t unitScale);
 	static VolumetricLightingDescriptor& GetVLDescriptor();
 	static void SetVLQuality(VolumetricLightingDescriptor& descriptor, std::uint32_t quality);
 	static void RenderVolumetricLighting(VolumetricLightingDescriptor* descriptor, RE::NiCamera* camera, bool flag);
 
+	void DrawGodrayTuningSettings();
 	void DrawVolumetricLightingSettings(int32_t& quality, TextureSize& customSize, bool isInterior, bool inLocationType);
 	TextureSize& FetchCurrentSizeInUnits(bool interior);
 	void SetupVL();
