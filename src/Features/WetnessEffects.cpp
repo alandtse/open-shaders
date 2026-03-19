@@ -19,7 +19,8 @@ namespace
 	constexpr float MAX_OUTPUT_WETNESS = 1.0f;
 	constexpr float MAX_OUTPUT_PUDDLE_WETNESS = 1.0f;
 	constexpr double SECONDS_IN_A_DAY = 86400.0;
-	constexpr double MAX_TIME_DELTA_SECONDS = SECONDS_IN_A_DAY - 30.0;
+	// Accept large in-game waits/sleeps; clamp only extreme jumps (load anomalies, time rewinds).
+	constexpr double MAX_TIME_DELTA_SECONDS = SECONDS_IN_A_DAY * 7.0;
 	constexpr float MIN_TRANSITION_SPEED = 0.2f;
 	constexpr float MAX_TRANSITION_SPEED = 8.0f;
 	constexpr float MIN_RAINDROP_GRID_SIZE = 1e-3f;
@@ -1063,6 +1064,7 @@ WetnessEffects::PerFrame WetnessEffects::GetCommonBufferData() const
 	RE::TESWeather* currentWeather = nullptr;
 	RE::TESWeather* lastWeather = nullptr;
 	bool fullSkyMode = false;
+	bool engineRaining = false;
 
 	if (auto sky = globals::game::sky) {
 		currentWeather = sky->currentWeather;
@@ -1070,6 +1072,7 @@ WetnessEffects::PerFrame WetnessEffects::GetCommonBufferData() const
 		currentWeight = std::clamp(sky->currentWeatherPct, 0.0f, 1.0f);
 		lastWeight = 1.0f - currentWeight;
 		fullSkyMode = sky->mode.get() == RE::Sky::Mode::kFull;
+		engineRaining = fullSkyMode && sky->IsRaining();
 
 		// Wetness accumulation uses weather-level precipitation data, independent of active precipitation geometry.
 		currentRainingAccum = GetWeatherRainIntensity(currentWeather);
@@ -1110,8 +1113,8 @@ WetnessEffects::PerFrame WetnessEffects::GetCommonBufferData() const
 	const float blendedRainingVisualShaped = std::pow(std::clamp(blendedRainingVisual, 0.0f, 1.0f), raindropTransitionFalloff);
 	const float blendedRainingVisualSnapped = (weatherRainTransitionWeight > 0.02f && blendedRainingVisualShaped >= 0.01f) ? blendedRainingVisualShaped : 0.0f;
 	const bool hasPrecipitationFxSignal = (currentRainingFX > 0.0f) || (lastRainingFX > 0.0f);
-	const bool rainingByWeatherMetadata = (weatherRainTransitionWeight > 0.05f) && (blendedRainingAccum > 0.02f);
-	const bool rainingNow = hasPrecipitationFxSignal ? (blendedRainingVisualSnapped > 0.0f) : rainingByWeatherMetadata;
+	const bool rainingByWeatherMetadata = engineRaining && (weatherRainTransitionWeight > 0.05f) && (blendedRainingAccum > 0.02f);
+	const bool rainingNow = (blendedRainingVisualSnapped > 0.0f) || rainingByWeatherMetadata;
 	const float rainExposureSource = hasPrecipitationFxSignal ? blendedRainingVisualWeighted : blendedRainingAccum;
 
 	double deltaGameSeconds = 0.0;
@@ -1120,8 +1123,10 @@ WetnessEffects::PerFrame WetnessEffects::GetCommonBufferData() const
 		const double currentGameSeconds = static_cast<double>(calendar->GetCurrentGameTime()) * SECONDS_IN_A_DAY;
 		if (runtimeState.hasLastGameTime) {
 			deltaGameSeconds = currentGameSeconds - runtimeState.lastGameTimeSeconds;
-			if (deltaGameSeconds < 0.0 || std::abs(deltaGameSeconds) >= MAX_TIME_DELTA_SECONDS) {
+			if (deltaGameSeconds < 0.0) {
 				deltaGameSeconds = 0.0;
+			} else if (deltaGameSeconds > MAX_TIME_DELTA_SECONDS) {
+				deltaGameSeconds = MAX_TIME_DELTA_SECONDS;
 			}
 		}
 		runtimeState.lastGameTimeSeconds = currentGameSeconds;
