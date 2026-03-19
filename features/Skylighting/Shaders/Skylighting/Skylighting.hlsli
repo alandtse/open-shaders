@@ -13,9 +13,17 @@ namespace Skylighting
 	Texture2DArray<float3> stbn_vec3_2Dx1D_128x128x64 : register(t51);
 #endif
 
-	const static uint3 ARRAY_DIM = uint3(256, 256, 128);
 	const static float3 ARRAY_SIZE = 4096.f * 2.5f * float3(1, 1, 0.5);
-	const static float3 CELL_SIZE = ARRAY_SIZE / ARRAY_DIM;
+
+	uint3 GetArrayDims(SharedData::SkylightingSettings params)
+	{
+		return max(params.ArrayDims.xyz, uint3(1, 1, 1));
+	}
+
+	float3 GetCellSize(SharedData::SkylightingSettings params)
+	{
+		return ARRAY_SIZE / float3(GetArrayDims(params));
+	}
 
 	float getFadeOutFactor(float3 positionMS)
 	{
@@ -57,17 +65,19 @@ namespace Skylighting
 
 	sh2 sample(SharedData::SkylightingSettings params, Texture3D<sh2> probeArray, Texture2DArray<float3> blueNoise, float2 screenPosition, float3 positionMS, float3 normalWS)
 	{
+		const uint3 arrayDims = GetArrayDims(params);
+		const float3 cellSize = GetCellSize(params);
 		const static sh2 unitSH = float4(sqrt(4 * Math::PI), 0, 0, 0);
 		sh2 scaledUnitSH = unitSH / 1e-10;
 
 		if (SharedData::InInterior)
 			return scaledUnitSH;
 
-		positionMS.xyz += normalWS * CELL_SIZE;  // Receiver normal bias
+		positionMS.xyz += normalWS * cellSize;  // Receiver normal bias
 
 		if (SharedData::FrameCount) {  // Check TAA
 			float3 offset = blueNoise[int3(screenPosition.xy % 128, SharedData::FrameCount % 64)] * 2.0 - 1.0;
-			positionMS.xyz += offset * CELL_SIZE * 0.5;
+			positionMS.xyz += offset * cellSize * 0.5;
 		}
 
 		float3 positionMSAdjusted = positionMS - params.PosOffset.xyz;
@@ -76,7 +86,7 @@ namespace Skylighting
 		if (any(uvw < 0) || any(uvw > 1))
 			return scaledUnitSH;
 
-		float3 cellVxCoord = uvw * ARRAY_DIM;
+		float3 cellVxCoord = uvw * arrayDims;
 		int3 cell000 = floor(cellVxCoord - 0.5);
 		float3 trilinearPos = cellVxCoord - 0.5 - cell000;
 
@@ -88,20 +98,22 @@ namespace Skylighting
 					int3 offset = int3(i, j, k);
 					int3 cellID = cell000 + offset;
 
-					if (any(cellID < 0) || any((uint3)cellID >= ARRAY_DIM))
+					if (any(cellID < 0) || any((uint3)cellID >= arrayDims))
 						continue;
 
-					float3 cellCentreMS = cellID + 0.5 - ARRAY_DIM / 2;
-					cellCentreMS = cellCentreMS * CELL_SIZE;
+					float3 cellCentreMS = (float3(cellID) + 0.5 - float3(arrayDims) * 0.5) * cellSize;
 
-					// https://handmade.network/p/75/monter/blog/p/7288-engine_work__global_illumination_with_irradiance_probes
-					// basic tangent checks
-					float tangentWeight = dot(normalize(cellCentreMS - positionMSAdjusted), normalWS) * 0.5 + 0.5;
+					float tangentWeight = 1.0;
+					[branch] if (params.FastSamplingMode == 0) {
+						// https://handmade.network/p/75/monter/blog/p/7288-engine_work__global_illumination_with_irradiance_probes
+						// Basic tangent checks. This branch can be skipped for fast-sampling mode.
+						tangentWeight = saturate(dot(normalize(cellCentreMS - positionMSAdjusted), normalWS) * 0.5 + 0.5);
+					}
 
 					float3 trilinearWeights = 1 - abs(offset - trilinearPos);
 					float w = trilinearWeights.x * trilinearWeights.y * trilinearWeights.z * tangentWeight;
 
-					uint3 cellTexID = (cellID + params.ArrayOrigin.xyz) % ARRAY_DIM;
+					uint3 cellTexID = (uint3(cellID) + params.ArrayOrigin.xyz) % arrayDims;
 					sh2 probe = SphericalHarmonics::Scale(probeArray[cellTexID], w);
 
 					sum = SphericalHarmonics::Add(sum, probe);
@@ -113,6 +125,7 @@ namespace Skylighting
 
 	sh2 sampleNoBias(SharedData::SkylightingSettings params, Texture3D<sh2> probeArray, float3 positionMS)
 	{
+		const uint3 arrayDims = GetArrayDims(params);
 		const static sh2 unitSH = float4(sqrt(4 * Math::PI), 0, 0, 0);
 		sh2 scaledUnitSH = unitSH / 1e-10;
 
@@ -125,7 +138,7 @@ namespace Skylighting
 		if (any(uvw < 0) || any(uvw > 1))
 			return scaledUnitSH;
 
-		float3 cellVxCoord = uvw * ARRAY_DIM;
+		float3 cellVxCoord = uvw * arrayDims;
 		int3 cell000 = floor(cellVxCoord - 0.5);
 		float3 trilinearPos = cellVxCoord - 0.5 - cell000;
 
@@ -138,16 +151,13 @@ namespace Skylighting
 			int3 offset = int3(i, j, k);
 			int3 cellID = cell000 + offset;
 
-			if (any(cellID < 0) || any((uint3)cellID >= ARRAY_DIM))
+			if (any(cellID < 0) || any((uint3)cellID >= arrayDims))
 				continue;
-
-			float3 cellCentreMS = cellID + 0.5 - ARRAY_DIM / 2;
-			cellCentreMS = cellCentreMS * CELL_SIZE;
 
 			float3 trilinearWeights = 1 - abs(offset - trilinearPos);
 			float w = trilinearWeights.x * trilinearWeights.y * trilinearWeights.z;
 
-			uint3 cellTexID = (cellID + params.ArrayOrigin.xyz) % ARRAY_DIM;
+			uint3 cellTexID = (uint3(cellID) + params.ArrayOrigin.xyz) % arrayDims;
 			sh2 probe = SphericalHarmonics::Scale(probeArray[cellTexID], w);
 
 			sum = SphericalHarmonics::Add(sum, probe);

@@ -47,23 +47,27 @@ public:
 		float MaxZenith = 3.1415926f / 2.f;  // 90 deg
 		float MinDiffuseVisibility = 0.1f;
 		float MinSpecularVisibility = 0.1f;
+		uint ProbeGridQuality = 2;  // 0: performance, 1: balanced, 2: quality
 		bool EnableIncrementalProbeUpdates = false;
 		uint StableSliceCount = 8;
 		bool EnableReducedUpdateFrequency = false;
 		uint OcclusionUpdateInterval = 2;
 		uint ProbeUpdateInterval = 2;
+		bool EnableFastProbeSampling = false;
 	} settings;
 
 	struct SkylightingCB
 	{
 		REX::W32::XMFLOAT4X4 OcclusionViewProj;
-		float4 OcclusionDir;
+		float4 OcclusionSHBasis4Pi;
 
 		float3 PosOffset;  // cell origin in camera model space
-		uint _pad0;
+		uint FastSamplingMode;
 		uint ArrayOrigin[3];  // xyz: array origin
-		uint _pad1;
+		uint _pad0;
 		int ValidMargin[4];
+		uint ArrayDims[3];
+		uint _pad1;
 
 		float MinDiffuseVisibility;
 		float MinSpecularVisibility;
@@ -94,6 +98,7 @@ public:
 	float4 OcclusionDir;
 	uint frameCount = 0;
 	float3 prevCellID = { 0, 0, 0 };
+	float4 occlusionSHBasis4Pi = { 3.5449078f, 0, 0, 0 };
 	uint probeUpdateSliceStart = 0;
 	uint probeUpdateSliceCount = 128;
 	uint probeUpdateSliceCursor = 0;
@@ -103,6 +108,7 @@ public:
 	uint occlusionUpdateFrameCounter = 0;
 
 	void ResetSkylighting();
+	void ApplyProbeGridQuality();
 
 	std::chrono::time_point<std::chrono::system_clock> lastUpdateTimer = std::chrono::system_clock::now();
 
