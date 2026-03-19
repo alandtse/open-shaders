@@ -25,6 +25,53 @@ namespace
 		a_frameCounter++;
 		return shouldRun;
 	}
+
+	void ApplyPlatformDefaults(Skylighting::Settings& a_settings)
+	{
+		a_settings = {};
+		if (REL::Module::IsVR()) {
+			// VR is significantly more sensitive to both probe-update and occlusion cadence.
+			a_settings.EnableIncrementalProbeUpdates = true;
+			a_settings.EnableReducedUpdateFrequency = true;
+		}
+	}
+
+	void NormalizeSettingsForRuntime(Skylighting::Settings& a_settings)
+	{
+		a_settings.OcclusionUpdateInterval = ClampUpdateInterval(a_settings.OcclusionUpdateInterval);
+		a_settings.ProbeUpdateInterval = ClampUpdateInterval(a_settings.ProbeUpdateInterval);
+		if (a_settings.ProbeUpdateInterval < a_settings.OcclusionUpdateInterval)
+			a_settings.ProbeUpdateInterval = a_settings.OcclusionUpdateInterval;
+	}
+
+	template <class T>
+	void LoadIfPresent(const json& a_json, const char* a_key, T& a_value)
+	{
+		if (auto it = a_json.find(a_key); it != a_json.end() && !it->is_null())
+			a_value = it->get<T>();
+	}
+
+	RE::NiPointer<RE::BSGeometry> GetActivePrecipitationObject(RE::Precipitation* a_precip)
+	{
+		if (!a_precip)
+			return nullptr;
+		if (a_precip->currentPrecip)
+			return a_precip->currentPrecip;
+		return a_precip->lastPrecip;
+	}
+
+	RE::BSParticleShaderRainEmitter* GetRainEmitter(const RE::NiPointer<RE::BSGeometry>& a_precipObject)
+	{
+		if (!a_precipObject)
+			return nullptr;
+
+		auto* shaderProp = a_precipObject->GetGeometryRuntimeData().shaderProperty.get();
+		auto* particleShaderProperty = netimmerse_cast<RE::BSParticleShaderProperty*>(shaderProp);
+		if (!particleShaderProperty || !particleShaderProperty->particleEmitter)
+			return nullptr;
+
+		return static_cast<RE::BSParticleShaderRainEmitter*>(particleShaderProperty->particleEmitter);
+	}
 }
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
@@ -40,7 +87,18 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 
 void Skylighting::LoadSettings(json& o_json)
 {
-	settings = o_json;
+	ApplyPlatformDefaults(settings);
+
+	LoadIfPresent(o_json, "MaxZenith", settings.MaxZenith);
+	LoadIfPresent(o_json, "MinDiffuseVisibility", settings.MinDiffuseVisibility);
+	LoadIfPresent(o_json, "MinSpecularVisibility", settings.MinSpecularVisibility);
+	LoadIfPresent(o_json, "EnableIncrementalProbeUpdates", settings.EnableIncrementalProbeUpdates);
+	LoadIfPresent(o_json, "StableSliceCount", settings.StableSliceCount);
+	LoadIfPresent(o_json, "EnableReducedUpdateFrequency", settings.EnableReducedUpdateFrequency);
+	LoadIfPresent(o_json, "OcclusionUpdateInterval", settings.OcclusionUpdateInterval);
+	LoadIfPresent(o_json, "ProbeUpdateInterval", settings.ProbeUpdateInterval);
+
+	NormalizeSettingsForRuntime(settings);
 }
 
 void Skylighting::SaveSettings(json& o_json)
@@ -50,7 +108,8 @@ void Skylighting::SaveSettings(json& o_json)
 
 void Skylighting::RestoreDefaultSettings()
 {
-	settings = {};
+	ApplyPlatformDefaults(settings);
+	NormalizeSettingsForRuntime(settings);
 }
 
 void Skylighting::ResetSkylighting()
@@ -103,8 +162,7 @@ void Skylighting::DrawSettings()
 	if (auto _tt = Util::HoverTooltipWrapper())
 		ImGui::Text("Reuses previous occlusion/probe data for several frames before refreshing.");
 
-	settings.OcclusionUpdateInterval = ClampUpdateInterval(settings.OcclusionUpdateInterval);
-	settings.ProbeUpdateInterval = ClampUpdateInterval(settings.ProbeUpdateInterval);
+	NormalizeSettingsForRuntime(settings);
 
 	ImGui::BeginDisabled(!settings.EnableReducedUpdateFrequency);
 	{
@@ -121,12 +179,11 @@ void Skylighting::DrawSettings()
 			ImGui::Text("1 = every frame. Higher values skip probe updates between refreshes.");
 	}
 	ImGui::EndDisabled();
+	NormalizeSettingsForRuntime(settings);
 
 	if (settings.EnableReducedUpdateFrequency) {
 		ImGui::Text("Occlusion refresh cadence: every %u frame(s)", settings.OcclusionUpdateInterval);
 		ImGui::Text("Probe refresh cadence: every %u frame(s)", settings.ProbeUpdateInterval);
-		if (settings.ProbeUpdateInterval < settings.OcclusionUpdateInterval)
-			ImGui::Text("Note: Probe updates faster than occlusion mostly reuse the same occlusion sample.");
 	}
 
 	ImGui::Separator();
@@ -334,7 +391,9 @@ void Skylighting::Prepass()
 
 		// Update probe array
 		{
-			const uint probeUpdateInterval = settings.EnableReducedUpdateFrequency ? ClampUpdateInterval(settings.ProbeUpdateInterval) : 1;
+			const uint probeUpdateInterval = settings.EnableReducedUpdateFrequency ?
+				                                 std::max(ClampUpdateInterval(settings.ProbeUpdateInterval), ClampUpdateInterval(settings.OcclusionUpdateInterval)) :
+				                                 1;
 			const bool shouldUpdateProbes = ShouldRunPeriodicUpdate(probeUpdateFrameCounter, probeUpdateInterval, forceProbeUpdateThisFrame);
 
 			uint dispatchSliceCount = probeUpdateSliceCount == 0 ? 1 : probeUpdateSliceCount;
@@ -393,7 +452,7 @@ void Skylighting::PostPostLoad()
 
 //////////////////////////////////////////////////////////////
 
-struct BSParticleShaderRainEmitter
+struct RainEmitterProjectionCapture
 {
 	void* vftable_BSParticleShaderRainEmitter_0;
 	char _pad_8[4056];
@@ -493,6 +552,9 @@ RE::BSShaderProperty::RenderPassArray* Skylighting::BSLightingShaderProperty_Get
 			return precipitationOcclusionMapRenderPassList;
 	}
 
+	if (geometry->worldBound.radius <= 32)
+		return precipitationOcclusionMapRenderPassList;
+
 	if (skylighting.inOcclusion) {
 		if (auto userData = geometry->GetUserData()) {
 			RE::BSFadeNode* fadeNode = nullptr;
@@ -533,34 +595,32 @@ RE::BSShaderProperty::RenderPassArray* Skylighting::BSLightingShaderProperty_Get
 	}
 
 	if (valid) {
-		if (geometry->worldBound.radius > 32) {
-			stl::enumeration<RE::BSUtilityShader::Flags> technique;
-			technique.set(RenderDepth);
+		stl::enumeration<RE::BSUtilityShader::Flags> technique;
+		technique.set(RenderDepth);
 
-			if (property->flags.any(kVertexColors)) {
-				technique.set(Vc);
-			}
-
-			const auto alphaProperty = geometry->GetGeometryRuntimeData().alphaProperty.get();
-			if (alphaProperty && alphaProperty->GetAlphaTesting()) {
-				technique.set(Texture);
-				technique.set(AlphaTest);
-			}
-
-			if (property->flags.any(kLODObjects, kHDLODObjects)) {
-				technique.set(LodObject);
-			}
-
-			if (property->flags.any(kTreeAnim)) {
-				technique.set(TreeAnim);
-			}
-
-			precipitationOcclusionMapRenderPassList->EmplacePass(
-				globals::game::utilityShader,
-				property,
-				geometry,
-				technique.underlying() + static_cast<uint32_t>(ShaderTechnique::UtilityGeneralStart));
+		if (property->flags.any(kVertexColors)) {
+			technique.set(Vc);
 		}
+
+		const auto alphaProperty = geometry->GetGeometryRuntimeData().alphaProperty.get();
+		if (alphaProperty && alphaProperty->GetAlphaTesting()) {
+			technique.set(Texture);
+			technique.set(AlphaTest);
+		}
+
+		if (property->flags.any(kLODObjects, kHDLODObjects)) {
+			technique.set(LodObject);
+		}
+
+		if (property->flags.any(kTreeAnim)) {
+			technique.set(TreeAnim);
+		}
+
+		precipitationOcclusionMapRenderPassList->EmplacePass(
+			globals::game::utilityShader,
+			property,
+			geometry,
+			technique.underlying() + static_cast<uint32_t>(ShaderTechnique::UtilityGeneralStart));
 	}
 	return precipitationOcclusionMapRenderPassList;
 }
@@ -617,26 +677,15 @@ void Skylighting::RenderOcclusion()
 
 	if (sky) {
 		if (!Util::IsInterior()) {
-			static bool doPrecip = false;
-
 			auto precip = sky->precip;
 
 			{
 				state->BeginPerfEvent("Precipitation Mask");
 
-				doPrecip = false;
-
-				auto precipObject = precip->currentPrecip;
-				if (!precipObject) {
-					precipObject = precip->lastPrecip;
-				}
-				if (precipObject) {
+				if (auto precipObject = GetActivePrecipitationObject(precip)) {
 					precip->SetupMask();
-					auto shaderProp = precipObject->GetGeometryRuntimeData().shaderProperty.get();
-					auto particleShaderProperty = netimmerse_cast<RE::BSParticleShaderProperty*>(shaderProp);
-					auto rain = (RE::BSParticleShaderRainEmitter*)(particleShaderProperty->particleEmitter);
-
-					precip->RenderMask(rain);
+					if (auto* rain = GetRainEmitter(precipObject))
+						precip->RenderMask(rain);
 				}
 
 				state->EndPerfEvent();
@@ -711,17 +760,15 @@ void Skylighting::RenderOcclusion()
 				_computeProjection(precip, precip->occlusionData.camera);
 				precip->SetupMask();
 
-				BSParticleShaderRainEmitter* rain = new BSParticleShaderRainEmitter;
+				RainEmitterProjectionCapture rainCapture{};
 				{
 					TracyD3D11Zone(state->tracyCtx, "Skylighting - Render Height Map");
-					precip->RenderMask((RE::BSParticleShaderRainEmitter*)rain);
+					precip->RenderMask(reinterpret_cast<RE::BSParticleShaderRainEmitter*>(&rainCapture));
 				}
 				inOcclusion = false;
 
 				OcclusionDir = -float4{ PrecipitationShaderDirectionF.x, PrecipitationShaderDirectionF.y, PrecipitationShaderDirectionF.z, 0 };
-				OcclusionTransform = ((RE::BSParticleShaderRainEmitter*)rain)->occlusionProjection;
-
-				delete rain;
+				OcclusionTransform = reinterpret_cast<RE::BSParticleShaderRainEmitter*>(&rainCapture)->occlusionProjection;
 
 				PrecipitationShaderCubeSize = originalPrecipitationShaderCubeSize;
 				precip->lastCubeSize = originaLastCubeSize;
