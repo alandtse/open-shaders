@@ -161,6 +161,18 @@ float2 ClampUVToEye(float2 uv, uint eyeIndex, float2 frameDim)
 
 	return clamp(uv, minUV, maxUV);
 }
+
+float2 ClampPackedUVToEye(float2 uv, uint eyeIndex, float2 packedFrameDim, float2 packedTexDim)
+{
+	const uint eyeWidth = GetEyeWidthPixels(packedFrameDim.x);
+	const float safeTexWidth = max(packedTexDim.x, 1.0);
+	const float safeTexHeight = max(packedTexDim.y, 1.0);
+	const float minX = ((float)(eyeWidth * eyeIndex) + 0.5) / safeTexWidth;
+	const float maxX = ((float)(eyeWidth * (eyeIndex + 1)) - 0.5) / safeTexWidth;
+	const float minY = 0.5 / safeTexHeight;
+	const float maxY = (packedFrameDim.y - 0.5) / safeTexHeight;
+	return clamp(uv, float2(minX, minY), float2(maxX, maxY));
+}
 #endif
 
 float2 GetCenterFullMaskOffset(uint eyeIndex)
