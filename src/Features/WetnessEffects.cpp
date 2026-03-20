@@ -61,8 +61,6 @@ namespace
 	constexpr float SURFACE_DRYING_WEIGHT_STONE = 0.20f;
 	constexpr float SURFACE_DRYING_WEIGHT_GRASS = 0.35f;
 	constexpr float SURFACE_DRYING_WEIGHT_DIRT = 0.45f;
-	constexpr float FAST_DRY_LOW_PUDDLE_MULT = 1.55f;
-	constexpr float SLOW_DRY_DEEP_PUDDLE_MULT = 0.70f;
 	constexpr float SNOW_WETNESS_DRY_MULT = 2.0f;
 	constexpr float SNOW_PUDDLE_DRY_MULT = 4.0f;
 	// Persistence tuning:
@@ -71,7 +69,6 @@ namespace
 	constexpr float RAIN_EVENT_REFERENCE_SECONDS = 1800.0f;
 	constexpr float RAIN_EVENT_DECAY_SECONDS = 43200.0f;
 	constexpr float MIN_WETNESS_DRY_SCALE_AT_MAX_EVENT = 0.12f;
-	constexpr float MIN_PUDDLE_DRY_SCALE_AT_MAX_EVENT = 0.02f;
 
 	// Cached per-frame data for debug/weather analysis UI.
 	// Keep this outside WetnessEffects object layout to avoid class-level alignment padding warnings.
@@ -1423,7 +1420,8 @@ WetnessEffects::PerFrame WetnessEffects::GetCommonBufferData() const
 
 	double deltaGameSeconds = 0.0;
 	const bool gamePaused = globals::game::ui && globals::game::ui->GameIsPaused();
-	if (auto calendar = RE::Calendar::GetSingleton()) {
+	const auto* calendar = RE::Calendar::GetSingleton();
+	if (calendar) {
 		const double currentGameSeconds = static_cast<double>(calendar->GetCurrentGameTime()) * SECONDS_IN_A_DAY;
 		if (runtimeState.hasLastGameTime) {
 			deltaGameSeconds = currentGameSeconds - runtimeState.lastGameTimeSeconds;
@@ -1439,7 +1437,10 @@ WetnessEffects::PerFrame WetnessEffects::GetCommonBufferData() const
 		deltaGameSeconds = RE::GetSecondsSinceLastFrame();
 	}
 
-	if (!gamePaused && deltaGameSeconds > 0.0) {
+	// Allow wetness timelines to progress from calendar delta even while the game is paused
+	// (e.g. wait/sleep), but still avoid frame-time updates while paused without calendar data.
+	const bool canAdvanceWetnessTime = deltaGameSeconds > 0.0 && (calendar != nullptr || !gamePaused);
+	if (canAdvanceWetnessTime) {
 		float wetnessCurrentRate = 0.0f;
 		float puddleCurrentRate = 0.0f;
 		float wetnessLastRate = 0.0f;
@@ -1455,7 +1456,12 @@ WetnessEffects::PerFrame WetnessEffects::GetCommonBufferData() const
 		// Do not keep increasing wetness/puddles when rain is effectively off for the current render context.
 		if (!rainingNow) {
 			blendedWetnessRate = std::min(blendedWetnessRate, 0.0f);
-			blendedPuddleRate = std::min(blendedPuddleRate, 0.0f);
+			// Post-rain puddle timeline is controlled by the envelope duration only
+			// (manual Puddle Drying Time or weather-driven puddle hours).
+			blendedPuddleRate = 0.0f;
+		} else {
+			// While rain is active/transitioning, puddles should only accumulate.
+			blendedPuddleRate = std::max(blendedPuddleRate, 0.0f);
 		}
 
 		// Track rain-event memory (duration-weighted intensity) for post-rain persistence.
@@ -1496,17 +1502,6 @@ WetnessEffects::PerFrame WetnessEffects::GetCommonBufferData() const
 			const float wetnessRateScaleFromDuration = std::clamp(DRYING_HOURS_MAX / wetnessDurationHours, 0.25f, DRYING_HOURS_MAX);
 			blendedWetnessRate *= wetnessRateScaleFromDuration;
 		}
-		if (blendedPuddleRate < 0.0f) {
-			const float puddleDryScale = std::lerp(1.0f, MIN_PUDDLE_DRY_SCALE_AT_MAX_EVENT, runtimeState.rainEventWeight);
-			blendedPuddleRate *= puddleDryScale;
-			const float puddleRateScaleFromDuration = std::clamp(DRYING_HOURS_MAX / puddleDurationHours, 0.25f, DRYING_HOURS_MAX);
-			blendedPuddleRate *= puddleRateScaleFromDuration;
-			// Depth-dependent puddle decay: shallow puddles dry faster, deep puddles slower.
-			const float puddleDepth01 = std::clamp(runtimeState.puddleDepth / MAX_PUDDLE_DEPTH, 0.0f, 1.0f);
-			const float depthDryMultiplier = std::lerp(FAST_DRY_LOW_PUDDLE_MULT, SLOW_DRY_DEEP_PUDDLE_MULT, puddleDepth01);
-			blendedPuddleRate *= depthDryMultiplier;
-		}
-
 		ApplyDepthDelta(scaledDeltaSeconds, blendedWetnessRate, blendedPuddleRate, runtimeState.wetnessDepth, runtimeState.puddleDepth);
 
 		if (!rainingNow && (runtimeState.wetnessDepth > 0.0f || runtimeState.puddleDepth > 0.0f)) {

@@ -2482,7 +2482,9 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 
 	// Apply per-surface post-rain drying response (neutral at multiplier=1.0).
 	rainWetness = pow(saturate(rainWetness), surfaceDryingPower);
-	puddleWetness = pow(saturate(puddleWetness), surfaceDryingPower);
+	// Keep puddle visual persistence decoupled from surface drying sliders.
+	// Puddle timing is controlled by the CPU puddle timeline (manual or weather-driven puddle hours).
+	puddleWetness = saturate(puddleWetness);
 	// Trim residual low-end surface gloss after rain so ground does not look wet forever.
 	float postRainDryCut = lerp(0.0, 0.08, postRainBlend);
 	rainWetness = saturate((rainWetness - postRainDryCut) / max(1e-3, 1.0 - postRainDryCut));
