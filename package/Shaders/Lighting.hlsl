@@ -2495,7 +2495,20 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 #		if !defined(SKINNED)
 		float puddleSignal = Random::perlinNoise(puddleCoords) * .5 + .5;
 		puddleSignal = puddleSignal * ((minWetnessAngle / puddleMaxAngleSafe) * SharedData::wetnessEffectsSettings.MaxPuddleWetness * 0.25) + 0.5;
-		puddle *= lerp(wetness, puddleWetness, saturate(puddleSignal - 0.25));
+		float flatPuddleMix = saturate(puddleSignal - 0.25);
+
+		// Dual puddle model:
+		// - flatPuddleMix follows large, flat-surface pooling
+		// - depthPuddleMix boosts pooling in micro-depth/uneven materials (e.g. cobblestone gaps)
+		float dualPuddleEnabled = SharedData::wetnessEffectsSettings.EnableDualPuddleModel ? 1.0 : 0.0;
+		float depthBlend = saturate(SharedData::wetnessEffectsSettings.PuddleDepthBlend) * dualPuddleEnabled;
+		float unevenDepthMask = 0.0;
+#			if !defined(SKIN) && !defined(HAIR)
+		unevenDepthMask = saturate((surfaceRoughness - 0.30) * 1.7) * (1.0 - vegetationFactor * 0.85);
+#			endif
+		float depthPuddleMix = saturate((puddleSignal - 0.10) * (1.0 + depthBlend * 0.9)) * unevenDepthMask;
+		float puddleMix = lerp(flatPuddleMix, max(flatPuddleMix, depthPuddleMix), depthBlend);
+		puddle *= lerp(wetness, puddleWetness, puddleMix);
 #		endif
 	}
 	puddle *= saturate(wetnessOcclusion * 2.0) * nearFactor;
@@ -2524,13 +2537,15 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	// but reduce "milky white" highlights when viewed close to horizontal.
 	float wetnessViewNdotV = saturate(abs(dot(wetnessNormal, viewDirection)));
 	float wetHighlightReduction = max(0.25, SharedData::wetnessEffectsSettings.WetHighlightReduction);
-	float highlightReductionT = saturate(wetHighlightReduction - 1.0);
-	float highlightRelaxT = saturate(1.0 - wetHighlightReduction);
-	float grazingMinAttenuation = 0.35;
-	grazingMinAttenuation = lerp(grazingMinAttenuation, 0.08, highlightReductionT);
-	grazingMinAttenuation = lerp(grazingMinAttenuation, 0.55, highlightRelaxT);
-	float wetnessGrazingAttenuation = lerp(grazingMinAttenuation, 1.0, smoothstep(0.05, 0.35, wetnessViewNdotV));
+	float highlightReductionT = saturate((wetHighlightReduction - 1.0) / 1.0);
+	float highlightRelaxT = saturate((1.0 - wetHighlightReduction) / 0.75);
+	float grazingMask = 1.0 - smoothstep(0.10, 0.60, wetnessViewNdotV);
+	float grazingMinAttenuation = 0.45;
+	grazingMinAttenuation = lerp(grazingMinAttenuation, 0.02, highlightReductionT);
+	grazingMinAttenuation = lerp(grazingMinAttenuation, 0.80, highlightRelaxT);
+	float wetnessGrazingAttenuation = saturate(lerp(1.0, grazingMinAttenuation, grazingMask));
 	wetnessGlossinessSpecular *= wetnessGrazingAttenuation;
+	float wetHighlightReflectanceScale = lerp(1.0, wetnessGrazingAttenuation, saturate(0.35 + highlightReductionT));
 
 	waterRoughnessSpecular = 1.0 - wetnessGlossinessSpecular * 0.9;
 #	endif
@@ -3054,6 +3069,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	float3 wetnessReflectance = 0.0;
 	if (waterRoughnessSpecular < 1 && wetReflectionModeConfig.z > 1e-4) {
 		wetnessReflectance = GetWetnessIndirectLobeWeights(indirectLobeWeights, wetnessNormal, waterRoughnessSpecular, indirectContext, wetReflectionModeConfig);
+		wetnessReflectance *= wetHighlightReflectanceScale;
 	}
 #		else
 	float3 wetnessReflectance = 0.0;

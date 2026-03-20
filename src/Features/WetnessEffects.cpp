@@ -30,10 +30,14 @@ namespace
 	constexpr float MIN_SPLASH_LIFETIME = 1e-3f;
 	constexpr float MIN_PUDDLE_RADIUS = 1e-3f;
 	constexpr float MIN_PUDDLE_PATTERN_SCALE = 1e-3f;
-	constexpr float MAX_LEGACY_WET_REFLECTION_SCALE = 0.25f;
-	constexpr float MAX_MODERN_WET_REFLECTION_UI_SCALE = 0.25f;
-	constexpr float DEFAULT_LEGACY_WET_INDIRECT_SPECULAR_SCALE = 0.05f;
-	constexpr float DEFAULT_WET_INDIRECT_SPECULAR_SCALE = 0.25f;
+	constexpr float MAX_LEGACY_WET_REFLECTION_SCALE = 0.10f;
+	constexpr float MAX_MODERN_WET_REFLECTION_UI_SCALE = 0.40f;
+	constexpr float DEFAULT_LEGACY_WET_INDIRECT_SPECULAR_SCALE = 0.0145f;
+	constexpr float DEFAULT_WET_INDIRECT_SPECULAR_SCALE = 0.05f;
+	constexpr float LEGACY_WET_REFLECTION_FINE_LOW = 0.01f;
+	constexpr float LEGACY_WET_REFLECTION_FINE_HIGH = 0.02f;
+	constexpr float LEGACY_WET_REFLECTION_FINE_LOW_T = 0.35f;
+	constexpr float LEGACY_WET_REFLECTION_FINE_HIGH_T = 0.75f;
 	constexpr float MIN_SURFACE_POST_RAIN_SECONDS = 3.0f * 3600.0f;
 	constexpr float MAX_SURFACE_POST_RAIN_SECONDS = 12.0f * 3600.0f;
 	constexpr float MIN_PUDDLE_POST_RAIN_SECONDS = 3.0f * 3600.0f;
@@ -226,6 +230,40 @@ namespace
 			return 1.0f;
 		}
 		return fallback;
+	}
+
+	float LegacyWetReflectionScaleFromSlider(float sliderT)
+	{
+		sliderT = std::clamp(sliderT, 0.0f, 1.0f);
+		if (sliderT <= LEGACY_WET_REFLECTION_FINE_LOW_T) {
+			const float t = sliderT / LEGACY_WET_REFLECTION_FINE_LOW_T;
+			return std::lerp(0.0f, LEGACY_WET_REFLECTION_FINE_LOW, t);
+		}
+		if (sliderT <= LEGACY_WET_REFLECTION_FINE_HIGH_T) {
+			const float t = (sliderT - LEGACY_WET_REFLECTION_FINE_LOW_T) / (LEGACY_WET_REFLECTION_FINE_HIGH_T - LEGACY_WET_REFLECTION_FINE_LOW_T);
+			return std::lerp(LEGACY_WET_REFLECTION_FINE_LOW, LEGACY_WET_REFLECTION_FINE_HIGH, t);
+		}
+
+		const float t = (sliderT - LEGACY_WET_REFLECTION_FINE_HIGH_T) / (1.0f - LEGACY_WET_REFLECTION_FINE_HIGH_T);
+		return std::lerp(LEGACY_WET_REFLECTION_FINE_HIGH, MAX_LEGACY_WET_REFLECTION_SCALE, t);
+	}
+
+	float LegacyWetReflectionSliderFromScale(float value)
+	{
+		value = std::clamp(value, 0.0f, MAX_LEGACY_WET_REFLECTION_SCALE);
+		if (value <= LEGACY_WET_REFLECTION_FINE_LOW) {
+			if (LEGACY_WET_REFLECTION_FINE_LOW <= 0.0f)
+				return 0.0f;
+			const float t = value / LEGACY_WET_REFLECTION_FINE_LOW;
+			return std::lerp(0.0f, LEGACY_WET_REFLECTION_FINE_LOW_T, t);
+		}
+		if (value <= LEGACY_WET_REFLECTION_FINE_HIGH) {
+			const float t = (value - LEGACY_WET_REFLECTION_FINE_LOW) / (LEGACY_WET_REFLECTION_FINE_HIGH - LEGACY_WET_REFLECTION_FINE_LOW);
+			return std::lerp(LEGACY_WET_REFLECTION_FINE_LOW_T, LEGACY_WET_REFLECTION_FINE_HIGH_T, t);
+		}
+
+		const float t = (value - LEGACY_WET_REFLECTION_FINE_HIGH) / (MAX_LEGACY_WET_REFLECTION_SCALE - LEGACY_WET_REFLECTION_FINE_HIGH);
+		return std::lerp(LEGACY_WET_REFLECTION_FINE_HIGH_T, 1.0f, t);
 	}
 
 	uint SanitizeToggle(uint value)
@@ -821,9 +859,15 @@ void WetnessEffects::DrawSettings()
 		SanitizeReflectionSettings(settings);
 		const bool anyReflectionModeEnabled = settings.EnableModernWetReflection != 0 || settings.EnableLegacyWetReflection != 0;
 		const bool legacyReflectionModeEnabled = settings.EnableLegacyWetReflection != 0 && settings.EnableModernWetReflection == 0;
-		const float wetReflectionSliderMax = legacyReflectionModeEnabled ? MAX_LEGACY_WET_REFLECTION_SCALE : MAX_MODERN_WET_REFLECTION_UI_SCALE;
 		ImGui::BeginDisabled(!anyReflectionModeEnabled);
-		ImGui::SliderFloat("Wet Reflection Shine", &settings.WetIndirectSpecularScale, 0.0f, wetReflectionSliderMax, "%.4f", ImGuiSliderFlags_AlwaysClamp);
+		if (legacyReflectionModeEnabled) {
+			float sliderT = LegacyWetReflectionSliderFromScale(settings.WetIndirectSpecularScale);
+			if (ImGui::SliderFloat("Wet Reflection Shine", &sliderT, 0.0f, 1.0f, "%.4f", ImGuiSliderFlags_AlwaysClamp)) {
+				settings.WetIndirectSpecularScale = LegacyWetReflectionScaleFromSlider(sliderT);
+			}
+		} else {
+			ImGui::SliderFloat("Wet Reflection Shine", &settings.WetIndirectSpecularScale, 0.0f, MAX_MODERN_WET_REFLECTION_UI_SCALE, "%.4f", ImGuiSliderFlags_AlwaysClamp);
+		}
 		ImGui::EndDisabled();
 		if (anyReflectionModeEnabled) {
 			settings.WetIndirectSpecularScale = SanitizeUnitScale(settings.WetIndirectSpecularScale);
@@ -836,7 +880,11 @@ void WetnessEffects::DrawSettings()
 			settings.WetIndirectSpecularScale = 0.0f;
 		}
 		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::TextUnformatted("Higher value = stronger reflections.");
+			if (legacyReflectionModeEnabled) {
+				ImGui::TextUnformatted("Higher value = stronger reflections. Legacy mode uses finer control around 0.01-0.02.");
+			} else {
+				ImGui::TextUnformatted("Higher value = stronger reflections.");
+			}
 		}
 		drawUintCheckbox("Chaotic Ripple Turbulence", settings.EnableLegacyRainBehavior);
 		if (auto _tt = Util::HoverTooltipWrapper()) {

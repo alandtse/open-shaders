@@ -56,7 +56,7 @@ public:
 		uint EnableLegacyRainBehavior = false;
 		uint EnableModernWetReflection = true;
 		uint EnableLegacyWetReflection = false;
-		float WetIndirectSpecularScale = 0.25f;
+		float WetIndirectSpecularScale = 0.05f;
 		float RaindropFxRange = 1000.f;
 		float RaindropGridSize = 4.f;
 		float RaindropInterval = 1.0f;
