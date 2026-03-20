@@ -671,24 +671,26 @@ VolumetricLighting::VolumetricLightingDescriptor* VolumetricLighting::ApplyVolum
 		return nullptr;
 
 	auto& feature = globals::features::volumetricLighting;
+	const bool imageSpaceReplacementEnabled = IsImageSpaceReplacementEnabled();
 	const auto& runtimeSettings = feature.settings;
 	const GodrayRuntimeParams params = BuildGodrayRuntimeParams(runtimeSettings);
 	const float glareScale = ClampFinite(runtimeSettings.GodrayIntensity, 0.0f, kGodrayIntensityMax, kDefaultGodrayIntensity);
 
 	// Keep sun glare tuning active without touching descriptor data when no shaft/color overrides are set.
-	if (IsImageSpaceReplacementEnabled() && !IsNear(glareScale, kDefaultGodrayIntensity)) {
+	if (imageSpaceReplacementEnabled && !IsNear(glareScale, kDefaultGodrayIntensity)) {
 		feature.ApplySunGlareTuning();
 	} else {
 		feature.RestoreSunGlareTuning();
 	}
 
-	if (!HasDescriptorTuning(params))
-	{
-		descriptor->customColor.contribution = kDefaultCustomContribution;
+	// If image-space replacement is disabled, keep vanilla descriptor behavior untouched.
+	if (!imageSpaceReplacementEnabled) {
 		return descriptor;
 	}
 
-	descriptor->customColor.contribution = kDefaultCustomContribution;
+	if (!HasDescriptorTuning(params)) {
+		return descriptor;
+	}
 
 	if (!IsNear(params.shaftIntensity, kDefaultGodrayShaftIntensity))
 		ApplyGodrayShaftIntensity(*descriptor, params.shaftIntensity);
