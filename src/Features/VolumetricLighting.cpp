@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <unordered_map>
 
+#include "RE/B/BSSkyShaderProperty.h"
 #include "RE/N/NiDirectionalLight.h"
 #include "RE/S/Sun.h"
 #include "InteriorSun.h"
@@ -37,10 +38,12 @@ namespace
 		RE::NiColor customColor = { 1.0f, 1.0f, 1.0f };
 	};
 
-	struct WeatherSunGlareState
+	struct SunGlarePropertyState
 	{
-		std::uint8_t baseline = 0;
-		std::uint8_t lastApplied = 0;
+		float baselineAlpha = 1.0f;
+		float baselineBlendValue = 1.0f;
+		float lastAppliedAlpha = 1.0f;
+		float lastAppliedBlendValue = 1.0f;
 		bool initialized = false;
 	};
 
@@ -71,51 +74,10 @@ namespace
 		return state->enablePShaders;
 	}
 
-	std::unordered_map<RE::TESWeather*, WeatherSunGlareState>& GetSunGlareStateMap()
+	std::unordered_map<RE::BSSkyShaderProperty*, SunGlarePropertyState>& GetSunGlarePropertyStateMap()
 	{
-		static std::unordered_map<RE::TESWeather*, WeatherSunGlareState> states{};
+		static std::unordered_map<RE::BSSkyShaderProperty*, SunGlarePropertyState> states{};
 		return states;
-	}
-
-	void ApplyScaledSunGlareToWeather(RE::TESWeather* weather, float glareScale)
-	{
-		if (!weather)
-			return;
-
-		auto& states = GetSunGlareStateMap();
-		auto [it, inserted] = states.try_emplace(weather);
-		WeatherSunGlareState& state = it->second;
-		if (inserted || !state.initialized) {
-			state.baseline = weather->data.sunGlare;
-			state.lastApplied = weather->data.sunGlare;
-			state.initialized = true;
-		}
-
-		// Track live game/weather changes unless it's the value we wrote last frame.
-		if (weather->data.sunGlare != state.lastApplied) {
-			state.baseline = weather->data.sunGlare;
-		}
-
-		glareScale = ClampFinite(glareScale, 0.0f, kGodrayIntensityMax, kDefaultGodrayIntensity);
-		const float base = static_cast<float>(state.baseline);
-		const auto scaled = static_cast<long>(std::lround(base * glareScale));
-		const auto applied = static_cast<std::uint8_t>(std::clamp(scaled, 0L, 255L));
-		weather->data.sunGlare = applied;
-		state.lastApplied = applied;
-	}
-
-	void RestoreWeatherSunGlare(RE::TESWeather* weather)
-	{
-		if (!weather)
-			return;
-
-		auto& states = GetSunGlareStateMap();
-		const auto it = states.find(weather);
-		if (it == states.end() || !it->second.initialized)
-			return;
-
-		weather->data.sunGlare = it->second.baseline;
-		it->second.lastApplied = it->second.baseline;
 	}
 
 	bool IsRainWeatherActive(const RE::TESWeather* a_weather, float a_weight)
@@ -644,12 +606,32 @@ void VolumetricLighting::ApplySunGlareTuning() const
 		return;
 
 	const float glareScale = ClampFinite(settings.GodrayIntensity, 0.0f, kGodrayIntensityMax, kDefaultGodrayIntensity);
-	ApplyScaledSunGlareToWeather(sky->currentWeather, glareScale);
-	if (sky->lastWeather != sky->currentWeather)
-		ApplyScaledSunGlareToWeather(sky->lastWeather, glareScale);
-
-	// Keep engine glare scalar neutral to avoid bypassing native occlusion behavior.
+	// Keep engine glare scalar neutral to preserve native occlusion/visibility behavior.
 	sky->sun->glareScale = kDefaultGodrayIntensity;
+
+	if (!sky->sun->sunGlare)
+		return;
+
+	auto* glareProperty = skyrim_cast<RE::BSSkyShaderProperty*>(sky->sun->sunGlare->GetGeometryRuntimeData().shaderProperty.get());
+	if (!glareProperty)
+		return;
+
+	auto& states = GetSunGlarePropertyStateMap();
+	auto& state = states[glareProperty];
+	const bool externalAlpha = !state.initialized || !IsNear(glareProperty->kBlendColor.alpha, state.lastAppliedAlpha);
+	const bool externalBlend = !state.initialized || !IsNear(glareProperty->fBlendValue, state.lastAppliedBlendValue);
+	if (externalAlpha || externalBlend) {
+		state.baselineAlpha = glareProperty->kBlendColor.alpha;
+		state.baselineBlendValue = glareProperty->fBlendValue;
+		state.initialized = true;
+	}
+
+	const float appliedAlpha = std::clamp(state.baselineAlpha * glareScale, 0.0f, 1.0f);
+	const float appliedBlendValue = std::max(0.0f, state.baselineBlendValue * glareScale);
+	glareProperty->kBlendColor.alpha = appliedAlpha;
+	glareProperty->fBlendValue = appliedBlendValue;
+	state.lastAppliedAlpha = appliedAlpha;
+	state.lastAppliedBlendValue = appliedBlendValue;
 }
 
 void VolumetricLighting::RestoreSunGlareTuning() const
@@ -658,10 +640,24 @@ void VolumetricLighting::RestoreSunGlareTuning() const
 	if (!sky || !sky->sun)
 		return;
 
-	RestoreWeatherSunGlare(sky->currentWeather);
-	if (sky->lastWeather != sky->currentWeather)
-		RestoreWeatherSunGlare(sky->lastWeather);
 	sky->sun->glareScale = kDefaultGodrayIntensity;
+
+	if (!sky->sun->sunGlare)
+		return;
+
+	auto* glareProperty = skyrim_cast<RE::BSSkyShaderProperty*>(sky->sun->sunGlare->GetGeometryRuntimeData().shaderProperty.get());
+	if (!glareProperty)
+		return;
+
+	auto& states = GetSunGlarePropertyStateMap();
+	const auto it = states.find(glareProperty);
+	if (it == states.end() || !it->second.initialized)
+		return;
+
+	glareProperty->kBlendColor.alpha = it->second.baselineAlpha;
+	glareProperty->fBlendValue = it->second.baselineBlendValue;
+	it->second.lastAppliedAlpha = it->second.baselineAlpha;
+	it->second.lastAppliedBlendValue = it->second.baselineBlendValue;
 }
 
 VolumetricLighting::VolumetricLightingDescriptor* VolumetricLighting::ApplyVolumetricLighting_VolumetricLightingDescriptor_Get::thunk()
