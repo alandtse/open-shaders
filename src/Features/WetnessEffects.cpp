@@ -33,6 +33,14 @@ namespace
 	constexpr float MAX_MODERN_WET_REFLECTION_UI_SCALE = 0.40f;
 	constexpr float DEFAULT_LEGACY_WET_INDIRECT_SPECULAR_SCALE = 0.0145f;
 	constexpr float DEFAULT_WET_INDIRECT_SPECULAR_SCALE = 0.05f;
+	constexpr float RUNOFF_STRENGTH_MIN = 0.0f;
+	constexpr float RUNOFF_STRENGTH_MAX = 2.0f;
+	constexpr float RUNOFF_SPEED_MIN = 0.0f;
+	constexpr float RUNOFF_SPEED_MAX = 2.0f;
+	constexpr float RUNOFF_WIDTH_MIN = 0.25f;
+	constexpr float RUNOFF_WIDTH_MAX = 3.0f;
+	constexpr float WET_HIGHLIGHT_REDUCTION_MIN = 0.25f;
+	constexpr float WET_HIGHLIGHT_REDUCTION_MAX = 10.0f;
 	constexpr float LEGACY_WET_REFLECTION_FINE_LOW = 0.01f;
 	constexpr float LEGACY_WET_REFLECTION_FINE_HIGH = 0.02f;
 	constexpr float LEGACY_WET_REFLECTION_FINE_LOW_T = 0.35f;
@@ -347,7 +355,7 @@ namespace
 		settings.WeatherTransitionSpeed = ClampFiniteOrDefault(settings.WeatherTransitionSpeed, MIN_TRANSITION_SPEED, MAX_TRANSITION_SPEED, 3.0f);
 		settings.ShoreRange = std::max(settings.ShoreRange, 1u);
 		settings.PuddleRadius = ClampFiniteOrDefault(settings.PuddleRadius, MIN_PUDDLE_RADIUS, 10.0f, 1.0f);
-		settings.PuddlePatternScale = ClampFiniteOrDefault(settings.PuddlePatternScale, 0.25f, 3.0f, 1.0f);
+		settings.PuddlePatternScale = ClampFiniteOrDefault(settings.PuddlePatternScale, RUNOFF_WIDTH_MIN, RUNOFF_WIDTH_MAX, 1.0f);
 		settings.PuddleMaxAngle = ClampFiniteOrDefault(settings.PuddleMaxAngle, 0.0f, 1.0f, 0.95f);
 		settings.PuddleMinWetness = ClampFiniteOrDefault(settings.PuddleMinWetness, 0.0f, 1.0f, 0.85f);
 		settings.MinRainWetness = ClampFiniteOrDefault(settings.MinRainWetness, 0.0f, 1.0f, 0.65f);
@@ -365,13 +373,13 @@ namespace
 		settings.RippleLifetime = ClampFiniteOrDefault(settings.RippleLifetime, MIN_RIPPLE_LIFETIME, 60.0f, 0.5f);
 		settings.RippleBreadth = ClampFiniteOrDefault(settings.RippleBreadth, MIN_RIPPLE_BREADTH, 10.0f, 0.5f);
 		settings.PostRainPuddleWaterStrength = ClampFiniteOrDefault(settings.PostRainPuddleWaterStrength, 0.0f, 2.0f, 0.8f);
-		settings.CloseRangeWetnessBoost = ClampFiniteOrDefault(settings.CloseRangeWetnessBoost, 0.0f, 2.0f, 1.0f);
+		settings.CloseRangeWetnessBoost = ClampFiniteOrDefault(settings.CloseRangeWetnessBoost, RUNOFF_STRENGTH_MIN, RUNOFF_STRENGTH_MAX, 1.0f);
 		settings.RaindropTransitionFalloff = ClampFiniteOrDefault(settings.RaindropTransitionFalloff, 0.5f, 6.0f, 2.0f);
 		settings.PuddleDepthBlend = ClampFiniteOrDefault(settings.PuddleDepthBlend, 0.0f, 1.0f, 0.5f);
 		settings.WetDarkeningStrength = ClampFiniteOrDefault(settings.WetDarkeningStrength, 0.0f, 2.0f, 1.0f);
 		settings.WetColorSaturation = ClampFiniteOrDefault(settings.WetColorSaturation, 0.0f, 2.5f, 1.0f);
-		settings.WetHighlightReduction = ClampFiniteOrDefault(settings.WetHighlightReduction, 0.25f, 10.0f, 1.0f);
-		settings.WetVisualPad0 = ClampFiniteOrDefault(settings.WetVisualPad0, 0.0f, 2.0f, 1.0f);
+		settings.WetHighlightReduction = ClampFiniteOrDefault(settings.WetHighlightReduction, WET_HIGHLIGHT_REDUCTION_MIN, WET_HIGHLIGHT_REDUCTION_MAX, 1.0f);
+		settings.WetVisualPad0 = ClampFiniteOrDefault(settings.WetVisualPad0, RUNOFF_SPEED_MIN, RUNOFF_SPEED_MAX, 1.0f);
 	}
 
 	RE::BSParticleShaderRainEmitter* GetRainEmitterFromPrecipGeometry(RE::BSGeometry* precipObject)
@@ -439,7 +447,8 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	PuddleDepthBlend,
 	WetDarkeningStrength,
 	WetColorSaturation,
-	WetHighlightReduction)
+	WetHighlightReduction,
+	WetVisualPad0)
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	WetnessEffects::DebugSettings,
@@ -954,19 +963,19 @@ void WetnessEffects::DrawSettings()
 		if (auto _tt = Util::HoverTooltipWrapper()) {
 			ImGui::TextUnformatted("Boosts wet surface color richness so puddles read less chalky.");
 		}
-		ImGui::SliderFloat("Wet Highlight Reduction", &settings.WetHighlightReduction, 0.25f, 10.0f, "%.2f");
+		ImGui::SliderFloat("Wet Highlight Reduction", &settings.WetHighlightReduction, WET_HIGHLIGHT_REDUCTION_MIN, WET_HIGHLIGHT_REDUCTION_MAX, "%.2f");
 		if (auto _tt = Util::HoverTooltipWrapper()) {
 			ImGui::TextUnformatted("Reduces white grazing-angle highlights; higher values look more water-like.");
 		}
-		ImGui::SliderFloat("Runoff Strength", &settings.CloseRangeWetnessBoost, 0.0f, 2.0f, "%.2f");
+		ImGui::SliderFloat("Runoff Strength", &settings.CloseRangeWetnessBoost, RUNOFF_STRENGTH_MIN, RUNOFF_STRENGTH_MAX, "%.2f");
 		if (auto _tt = Util::HoverTooltipWrapper()) {
 			ImGui::TextUnformatted("How visible and strong downhill wet streaks are on sloped surfaces.");
 		}
-		ImGui::SliderFloat("Runoff Speed", &settings.WetVisualPad0, 0.0f, 2.0f, "%.2f");
+		ImGui::SliderFloat("Runoff Speed", &settings.WetVisualPad0, RUNOFF_SPEED_MIN, RUNOFF_SPEED_MAX, "%.2f");
 		if (auto _tt = Util::HoverTooltipWrapper()) {
 			ImGui::TextUnformatted("How fast downhill wet streak animation moves.");
 		}
-		ImGui::SliderFloat("Runoff Width", &settings.PuddlePatternScale, 0.25f, 3.0f, "%.2f");
+		ImGui::SliderFloat("Runoff Width", &settings.PuddlePatternScale, RUNOFF_WIDTH_MIN, RUNOFF_WIDTH_MAX, "%.2f");
 		if (auto _tt = Util::HoverTooltipWrapper()) {
 			ImGui::TextUnformatted("Controls runoff streak thickness. Lower = thinner lines, higher = wider streams.");
 		}

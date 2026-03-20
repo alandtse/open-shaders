@@ -2543,8 +2543,8 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 
 	// Slope-driven runoff streaks (visual only): downhill thin streams on inclined wet surfaces.
 	{
-		float3 geomNormal = normalize(-cross(ddx(input.WorldPosition.xyz), ddy(input.WorldPosition.xyz)));
-		float3 runoffSlopeNormal = normalize(lerp(geomNormal, worldNormal, 0.30));
+		float3 geomNormal = SafeNormalize3(-cross(ddx(input.WorldPosition.xyz), ddy(input.WorldPosition.xyz)), worldNormal);
+		float3 runoffSlopeNormal = SafeNormalize3(lerp(geomNormal, worldNormal, 0.30), worldNormal);
 		float runoffStrength = max(0.0, SharedData::wetnessEffectsSettings.CloseRangeWetnessBoost);
 		float runoffSpeedScale = max(0.0, SharedData::wetnessEffectsSettings.WetVisualPad0);
 		float runoffWidthScale = max(0.25, SharedData::wetnessEffectsSettings.PuddlePatternScale);
