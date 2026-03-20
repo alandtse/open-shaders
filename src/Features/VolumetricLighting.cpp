@@ -2,6 +2,8 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
+#include <unordered_map>
 
 #include "RE/N/NiDirectionalLight.h"
 #include "RE/S/Sun.h"
@@ -19,6 +21,12 @@ namespace
 	constexpr float kColorLumaR = 0.2126f;
 	constexpr float kColorLumaG = 0.7152f;
 	constexpr float kColorLumaB = 0.0722f;
+	constexpr float kDefaultGodrayIntensity = 1.0f;
+	constexpr float kDefaultGodrayShaftIntensity = 1.0f;
+	constexpr float kDefaultGodrayOpacity = 1.0f;
+	constexpr float kDefaultGodraySaturation = 1.0f;
+	constexpr float kDefaultCustomContribution = 0.0f;
+	constexpr float kFloatEpsilon = 1e-4f;
 
 	struct GodrayRuntimeParams
 	{
@@ -29,11 +37,85 @@ namespace
 		RE::NiColor customColor = { 1.0f, 1.0f, 1.0f };
 	};
 
+	struct WeatherSunGlareState
+	{
+		std::uint8_t baseline = 0;
+		std::uint8_t lastApplied = 0;
+		bool initialized = false;
+	};
+
 	float ClampFinite(float value, float minValue, float maxValue, float fallback)
 	{
 		if (!std::isfinite(value))
 			value = fallback;
 		return std::clamp(value, minValue, maxValue);
+	}
+
+	bool IsNear(float value, float target, float epsilon = kFloatEpsilon)
+	{
+		return std::abs(value - target) <= epsilon;
+	}
+
+	bool IsImageSpaceReplacementEnabled()
+	{
+		auto* state = globals::state;
+		if (!state)
+			return true;
+
+		const int classCount = static_cast<int>(sizeof(state->enabledClasses) / sizeof(state->enabledClasses[0]));
+		const int imageSpaceClassIndex = static_cast<int>(RE::BSShader::Type::ImageSpace) - 1;
+		if (imageSpaceClassIndex >= 0 && imageSpaceClassIndex < classCount && !state->enabledClasses[imageSpaceClassIndex]) {
+			return false;
+		}
+
+		return state->enablePShaders;
+	}
+
+	std::unordered_map<RE::TESWeather*, WeatherSunGlareState>& GetSunGlareStateMap()
+	{
+		static std::unordered_map<RE::TESWeather*, WeatherSunGlareState> states{};
+		return states;
+	}
+
+	void ApplyScaledSunGlareToWeather(RE::TESWeather* weather, float glareScale)
+	{
+		if (!weather)
+			return;
+
+		auto& states = GetSunGlareStateMap();
+		auto [it, inserted] = states.try_emplace(weather);
+		WeatherSunGlareState& state = it->second;
+		if (inserted || !state.initialized) {
+			state.baseline = weather->data.sunGlare;
+			state.lastApplied = weather->data.sunGlare;
+			state.initialized = true;
+		}
+
+		// Track live game/weather changes unless it's the value we wrote last frame.
+		if (weather->data.sunGlare != state.lastApplied) {
+			state.baseline = weather->data.sunGlare;
+		}
+
+		glareScale = ClampFinite(glareScale, 0.0f, kGodrayIntensityMax, kDefaultGodrayIntensity);
+		const float base = static_cast<float>(state.baseline);
+		const auto scaled = static_cast<long>(std::lround(base * glareScale));
+		const auto applied = static_cast<std::uint8_t>(std::clamp(scaled, 0L, 255L));
+		weather->data.sunGlare = applied;
+		state.lastApplied = applied;
+	}
+
+	void RestoreWeatherSunGlare(RE::TESWeather* weather)
+	{
+		if (!weather)
+			return;
+
+		auto& states = GetSunGlareStateMap();
+		const auto it = states.find(weather);
+		if (it == states.end() || !it->second.initialized)
+			return;
+
+		weather->data.sunGlare = it->second.baseline;
+		it->second.lastApplied = it->second.baseline;
 	}
 
 	bool IsRainWeatherActive(const RE::TESWeather* a_weather, float a_weight)
@@ -140,6 +222,14 @@ namespace
 		params.customColor = ClampColor01({ settings.CustomColorRed, settings.CustomColorGreen, settings.CustomColorBlue });
 		return params;
 	}
+
+	bool HasDescriptorTuning(const GodrayRuntimeParams& params)
+	{
+		return !IsNear(params.shaftIntensity, kDefaultGodrayShaftIntensity) ||
+		       !IsNear(params.opacity, kDefaultGodrayOpacity) ||
+		       !IsNear(params.saturation, kDefaultGodraySaturation) ||
+		       !IsNear(params.customContribution, kDefaultCustomContribution);
+	}
 }
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
@@ -211,8 +301,14 @@ void VolumetricLighting::DrawGodrayTuningSettings()
 	drawSlider("Custom Color Green", settings.CustomColorGreen, 0.0f, 1.0f, "Green channel for custom volumetric color.");
 	drawSlider("Custom Color Blue", settings.CustomColorBlue, 0.0f, 1.0f, "Blue channel for custom volumetric color.");
 
-	if (glareChanged)
-		ApplySunGlareTuning();
+	if (glareChanged) {
+		const float glareScale = ClampFinite(settings.GodrayIntensity, 0.0f, kGodrayIntensityMax, kDefaultGodrayIntensity);
+		if (IsImageSpaceReplacementEnabled() && !IsNear(glareScale, kDefaultGodrayIntensity)) {
+			ApplySunGlareTuning();
+		} else {
+			RestoreSunGlareTuning();
+		}
+	}
 }
 
 void VolumetricLighting::DrawVolumetricLightingSettings(int32_t& quality, TextureSize& customSize, const bool isInterior, const bool inLocationType)
@@ -423,7 +519,12 @@ void VolumetricLighting::EarlyPrepass()
 	vlData.screenYMin1 = height - 1;
 	vlDataCB->Update(vlData);
 
-	ApplySunGlareTuning();
+	const float glareScale = ClampFinite(settings.GodrayIntensity, 0.0f, kGodrayIntensityMax, kDefaultGodrayIntensity);
+	if (IsImageSpaceReplacementEnabled() && !IsNear(glareScale, kDefaultGodrayIntensity)) {
+		ApplySunGlareTuning();
+	} else {
+		RestoreSunGlareTuning();
+	}
 
 	const auto interiorCell = RE::TES::GetSingleton()->interiorCell;
 	const bool currentlyInInterior = interiorCell != nullptr;
@@ -476,6 +577,7 @@ void VolumetricLighting::SetupVL()
 
 	if (!runtimeEnabled) {
 		ClearVolumetricLightingTargets();
+		RestoreSunGlareTuning();
 	}
 }
 
@@ -541,9 +643,25 @@ void VolumetricLighting::ApplySunGlareTuning() const
 	if (!sky || !sky->sun)
 		return;
 
-	auto* sun = sky->sun;
-	const float glareScale = ClampFinite(settings.GodrayIntensity, 0.0f, kGodrayIntensityMax, 1.0f);
-	sun->glareScale = glareScale;
+	const float glareScale = ClampFinite(settings.GodrayIntensity, 0.0f, kGodrayIntensityMax, kDefaultGodrayIntensity);
+	ApplyScaledSunGlareToWeather(sky->currentWeather, glareScale);
+	if (sky->lastWeather != sky->currentWeather)
+		ApplyScaledSunGlareToWeather(sky->lastWeather, glareScale);
+
+	// Keep engine glare scalar neutral to avoid bypassing native occlusion behavior.
+	sky->sun->glareScale = kDefaultGodrayIntensity;
+}
+
+void VolumetricLighting::RestoreSunGlareTuning() const
+{
+	auto* sky = globals::game::sky;
+	if (!sky || !sky->sun)
+		return;
+
+	RestoreWeatherSunGlare(sky->currentWeather);
+	if (sky->lastWeather != sky->currentWeather)
+		RestoreWeatherSunGlare(sky->lastWeather);
+	sky->sun->glareScale = kDefaultGodrayIntensity;
 }
 
 VolumetricLighting::VolumetricLightingDescriptor* VolumetricLighting::ApplyVolumetricLighting_VolumetricLightingDescriptor_Get::thunk()
@@ -552,21 +670,40 @@ VolumetricLighting::VolumetricLightingDescriptor* VolumetricLighting::ApplyVolum
 	if (!descriptor)
 		return nullptr;
 
-	const auto& runtimeSettings = globals::features::volumetricLighting.settings;
+	auto& feature = globals::features::volumetricLighting;
+	const auto& runtimeSettings = feature.settings;
 	const GodrayRuntimeParams params = BuildGodrayRuntimeParams(runtimeSettings);
+	const float glareScale = ClampFinite(runtimeSettings.GodrayIntensity, 0.0f, kGodrayIntensityMax, kDefaultGodrayIntensity);
 
-	// Re-apply here to avoid later frame-stage game updates stomping glare tuning.
-	globals::features::volumetricLighting.ApplySunGlareTuning();
+	// Keep sun glare tuning active without touching descriptor data when no shaft/color overrides are set.
+	if (IsImageSpaceReplacementEnabled() && !IsNear(glareScale, kDefaultGodrayIntensity)) {
+		feature.ApplySunGlareTuning();
+	} else {
+		feature.RestoreSunGlareTuning();
+	}
 
-	ApplyGodrayShaftIntensity(*descriptor, params.shaftIntensity);
-	ApplyGodrayOpacity(*descriptor, params.opacity);
+	if (!HasDescriptorTuning(params))
+	{
+		descriptor->customColor.contribution = kDefaultCustomContribution;
+		return descriptor;
+	}
 
-	const RE::NiColor weatherColor = SaturateColor(GetCurrentWeatherSunColor(GetDescriptorColor(*descriptor)), params.saturation);
-	const RE::NiColor finalColor = LerpColor(weatherColor, params.customColor, params.customContribution);
+	descriptor->customColor.contribution = kDefaultCustomContribution;
 
-	// Use explicit final color each frame so saturation and custom contribution are independent.
-	descriptor->customColor.contribution = 1.0f;
-	SetDescriptorColor(*descriptor, finalColor);
+	if (!IsNear(params.shaftIntensity, kDefaultGodrayShaftIntensity))
+		ApplyGodrayShaftIntensity(*descriptor, params.shaftIntensity);
+	if (!IsNear(params.opacity, kDefaultGodrayOpacity))
+		ApplyGodrayOpacity(*descriptor, params.opacity);
+
+	if (!IsNear(params.saturation, kDefaultGodraySaturation) || !IsNear(params.customContribution, kDefaultCustomContribution)) {
+		const RE::NiColor weatherColor = SaturateColor(GetCurrentWeatherSunColor(GetDescriptorColor(*descriptor)), params.saturation);
+		const RE::NiColor finalColor = LerpColor(weatherColor, params.customColor, params.customContribution);
+
+		// Use explicit final color each frame so saturation and custom contribution are independent.
+		descriptor->customColor.contribution = 1.0f;
+		SetDescriptorColor(*descriptor, finalColor);
+	}
+
 	return descriptor;
 }
 
