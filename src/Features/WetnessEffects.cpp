@@ -370,7 +370,7 @@ namespace
 		settings.PuddleDepthBlend = ClampFiniteOrDefault(settings.PuddleDepthBlend, 0.0f, 1.0f, 0.5f);
 		settings.WetDarkeningStrength = ClampFiniteOrDefault(settings.WetDarkeningStrength, 0.0f, 2.0f, 1.0f);
 		settings.WetColorSaturation = ClampFiniteOrDefault(settings.WetColorSaturation, 0.0f, 2.5f, 1.0f);
-		settings.WetHighlightReduction = ClampFiniteOrDefault(settings.WetHighlightReduction, 0.25f, 2.0f, 1.0f);
+		settings.WetHighlightReduction = ClampFiniteOrDefault(settings.WetHighlightReduction, 0.25f, 10.0f, 1.0f);
 		settings.WetVisualPad0 = ClampFiniteOrDefault(settings.WetVisualPad0, 0.0f, 2.0f, 1.0f);
 	}
 
@@ -954,7 +954,7 @@ void WetnessEffects::DrawSettings()
 		if (auto _tt = Util::HoverTooltipWrapper()) {
 			ImGui::TextUnformatted("Boosts wet surface color richness so puddles read less chalky.");
 		}
-		ImGui::SliderFloat("Wet Highlight Reduction", &settings.WetHighlightReduction, 0.25f, 2.0f, "%.2f");
+		ImGui::SliderFloat("Wet Highlight Reduction", &settings.WetHighlightReduction, 0.25f, 10.0f, "%.2f");
 		if (auto _tt = Util::HoverTooltipWrapper()) {
 			ImGui::TextUnformatted("Reduces white grazing-angle highlights; higher values look more water-like.");
 		}
