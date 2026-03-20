@@ -17,7 +17,6 @@ public:
 		bool ExteriorEnabled = true;
 		bool DisableWeatherInteractionDuringRain = false;
 		float GodrayIntensity = 1.0f;
-		bool DebugUseVanillaSunGlarePath = false;
 		float GodrayShaftIntensity = 1.0f;
 		float GodrayOpacity = 1.0f;
 		float GodraySaturation = 1.0f;
