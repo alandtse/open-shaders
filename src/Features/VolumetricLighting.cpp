@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <unordered_map>
 
+#include "RE/B/BSSkyShaderProperty.h"
 #include "RE/N/NiDirectionalLight.h"
 #include "RE/S/Sun.h"
 #include "InteriorSun.h"
@@ -27,6 +28,7 @@ namespace
 	constexpr float kDefaultGodraySaturation = 1.0f;
 	constexpr float kDefaultCustomContribution = 0.0f;
 	constexpr float kFloatEpsilon = 1e-4f;
+	constexpr float kSunGlareOcclusionCutoff = 0.01f;
 
 	struct GodrayRuntimeParams
 	{
@@ -229,6 +231,33 @@ namespace
 		       !IsNear(params.opacity, kDefaultGodrayOpacity) ||
 		       !IsNear(params.saturation, kDefaultGodraySaturation) ||
 		       !IsNear(params.customContribution, kDefaultCustomContribution);
+	}
+
+	float GetSunGlareBlendValue(const RE::Sun* sun)
+	{
+		if (!sun || !sun->sunGlare)
+			return 1.0f;
+
+		const auto* shaderProp = skyrim_cast<const RE::BSSkyShaderProperty*>(
+			static_cast<const RE::BSShaderProperty*>(sun->sunGlare->GetGeometryRuntimeData().shaderProperty.get()));
+		if (!shaderProp)
+			return 1.0f;
+
+		return ClampFinite(shaderProp->fBlendValue, 0.0f, 1.0f, 1.0f);
+	}
+
+	void ApplySunGlareOcclusionGate(RE::Sun* sun)
+	{
+		if (!sun)
+			return;
+
+		if (!sun->doOcclusionTests) {
+			sun->glareScale = kDefaultGodrayIntensity;
+			return;
+		}
+
+		const float blend = GetSunGlareBlendValue(sun);
+		sun->glareScale = blend <= kSunGlareOcclusionCutoff ? 0.0f : kDefaultGodrayIntensity;
 	}
 }
 
@@ -648,8 +677,8 @@ void VolumetricLighting::ApplySunGlareTuning() const
 	if (sky->lastWeather != sky->currentWeather)
 		ApplyScaledSunGlareToWeather(sky->lastWeather, glareScale);
 
-	// Keep engine glare scalar neutral to preserve native occlusion behavior.
-	sky->sun->glareScale = kDefaultGodrayIntensity;
+	// Keep the tuning weather-driven, but hard-gate glare when the sun is fully occluded.
+	ApplySunGlareOcclusionGate(sky->sun);
 }
 
 void VolumetricLighting::RestoreSunGlareTuning() const
