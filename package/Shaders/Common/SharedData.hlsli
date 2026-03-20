@@ -142,6 +142,10 @@ namespace SharedData
 		float RaindropTransitionFalloff;
 		uint EnableDualPuddleModel;
 		float PuddleDepthBlend;
+		float WetDarkeningStrength;
+		float WetColorSaturation;
+		float WetHighlightReduction;
+		float WetVisualPad0;
 	};
 
 	struct SkylightingSettings

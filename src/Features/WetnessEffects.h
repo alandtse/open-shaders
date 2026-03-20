@@ -43,10 +43,10 @@ public:
 		float SkinWetness = 0.95f;
 		float WeatherTransitionSpeed = 3.0f;
 		// Default surface drying heuristic:
-		// stone keeps wetness longest, dirt is medium, grass dries fastest.
-		float StoneDryingMultiplier = 1.00f;
-		float DirtDryingMultiplier = 1.20f;
-		float GrassDryingMultiplier = 1.60f;
+		// stone/wood dries first, grass next, dirt last.
+		float StoneDryingMultiplier = 1.60f;
+		float DirtDryingMultiplier = 1.00f;
+		float GrassDryingMultiplier = 1.20f;
 
 		// Raindrop fx settings
 		uint EnableRaindropFx = true;
@@ -76,6 +76,10 @@ public:
 		float RaindropTransitionFalloff = 2.0f;
 		uint EnableDualPuddleModel = true;
 		float PuddleDepthBlend = 0.5f;
+		float WetDarkeningStrength = 1.0f;
+		float WetColorSaturation = 1.0f;
+		float WetHighlightReduction = 1.0f;
+		float WetVisualPad0 = 0.0f;
 	};
 
 	struct alignas(16) PerFrame
@@ -172,6 +176,8 @@ private:
 		float rainEventWeight = 0.0f;
 		float postRainEventWeight = 0.0f;
 		float postRainElapsedSeconds = 0.0f;
+		float postRainStartWetnessDepth = 0.0f;
+		float postRainStartPuddleDepth = 0.0f;
 		double lastGameTimeSeconds = 0.0;
 		bool hasLastGameTime = false;
 		bool wasRainingLastFrame = false;

@@ -2411,7 +2411,8 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 		abs(SharedData::wetnessEffectsSettings.DirtDryingMultiplier - 1.0) +
 		abs(SharedData::wetnessEffectsSettings.GrassDryingMultiplier - 1.0);
 	[branch] if (postRainBlend > 0.0 && dryingOverrideAmount > 1e-3) {
-		// Surface response model for post-rain drying: stone retains longer, grass dries fastest.
+		// Surface response model for post-rain drying:
+		// stone/wood first, grass next, dirt last (via per-surface multipliers).
 		float surfaceDryingMultiplier =
 			stoneFactor * SharedData::wetnessEffectsSettings.StoneDryingMultiplier +
 			dirtFactor * SharedData::wetnessEffectsSettings.DirtDryingMultiplier +
@@ -2472,11 +2473,6 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 
 	rainWetness *= wetnessOcclusion;
 	puddleWetness *= wetnessOcclusion;
-	const float closeRangeWetnessBoost = max(0.5, SharedData::wetnessEffectsSettings.CloseRangeWetnessBoost);
-	const float closeRangeBlend = saturate(nearFactor);
-	const float closeRangeWetnessScale = lerp(1.0, closeRangeWetnessBoost, closeRangeBlend);
-	rainWetness *= closeRangeWetnessScale;
-	puddleWetness *= closeRangeWetnessScale;
 
 	// Apply per-surface post-rain drying response (neutral at multiplier=1.0).
 	rainWetness = pow(saturate(rainWetness), surfaceDryingPower);
@@ -2527,11 +2523,14 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	// Suppress grazing-angle over-brightening: keep wet gloss from top-down views,
 	// but reduce "milky white" highlights when viewed close to horizontal.
 	float wetnessViewNdotV = saturate(abs(dot(wetnessNormal, viewDirection)));
-	float wetnessGrazingAttenuation = lerp(0.35, 1.0, smoothstep(0.05, 0.35, wetnessViewNdotV));
+	float wetHighlightReduction = max(0.25, SharedData::wetnessEffectsSettings.WetHighlightReduction);
+	float highlightReductionT = saturate(wetHighlightReduction - 1.0);
+	float highlightRelaxT = saturate(1.0 - wetHighlightReduction);
+	float grazingMinAttenuation = 0.35;
+	grazingMinAttenuation = lerp(grazingMinAttenuation, 0.08, highlightReductionT);
+	grazingMinAttenuation = lerp(grazingMinAttenuation, 0.55, highlightRelaxT);
+	float wetnessGrazingAttenuation = lerp(grazingMinAttenuation, 1.0, smoothstep(0.05, 0.35, wetnessViewNdotV));
 	wetnessGlossinessSpecular *= wetnessGrazingAttenuation;
-	// Improve "looking straight down" readability in heavy rain/near field.
-	float topDownBoost = 1.0 + (max(0.0, closeRangeWetnessBoost - 1.0) * 0.20) * smoothstep(0.70, 1.0, wetnessViewNdotV) * closeRangeBlend;
-	wetnessGlossinessSpecular = saturate(wetnessGlossinessSpecular * topDownBoost);
 
 	waterRoughnessSpecular = 1.0 - wetnessGlossinessSpecular * 0.9;
 #	endif
@@ -2988,8 +2987,14 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 #			elif defined(ENVMAP) || defined(MULTI_LAYER_PARALLAX)
 	porosity = lerp(porosity, 0.0, saturate(sqrt(envMask)));
 #			endif
-	float wetnessDarkeningAmount = porosity * wetnessGlossinessAlbedo;
-	material.BaseColor = lerp(material.BaseColor, pow(abs(material.BaseColor), 1.0 + wetnessDarkeningAmount), 0.8);
+	float wetDarkeningStrength = max(0.0, SharedData::wetnessEffectsSettings.WetDarkeningStrength);
+	float wetnessDarkeningAmount = porosity * wetnessGlossinessAlbedo * wetDarkeningStrength;
+	float wetDarkeningBlend = saturate(0.8 * wetDarkeningStrength);
+	float3 wetDarkenedBaseColor = pow(abs(material.BaseColor), 1.0 + wetnessDarkeningAmount);
+	material.BaseColor = lerp(material.BaseColor, wetDarkenedBaseColor, wetDarkeningBlend);
+	float wetColorSaturation = max(0.0, SharedData::wetnessEffectsSettings.WetColorSaturation);
+	float wetSaturationScale = lerp(1.0, wetColorSaturation, saturate(wetnessGlossinessAlbedo));
+	material.BaseColor = Color::Saturation(material.BaseColor, wetSaturationScale);
 #		endif
 #	endif
 
