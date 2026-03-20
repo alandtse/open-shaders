@@ -29,7 +29,6 @@ namespace
 	constexpr float MIN_RIPPLE_BREADTH = 1e-3f;
 	constexpr float MIN_SPLASH_LIFETIME = 1e-3f;
 	constexpr float MIN_PUDDLE_RADIUS = 1e-3f;
-	constexpr float MIN_PUDDLE_PATTERN_SCALE = 1e-3f;
 	constexpr float MAX_LEGACY_WET_REFLECTION_SCALE = 0.10f;
 	constexpr float MAX_MODERN_WET_REFLECTION_UI_SCALE = 0.40f;
 	constexpr float DEFAULT_LEGACY_WET_INDIRECT_SPECULAR_SCALE = 0.0145f;
@@ -288,6 +287,41 @@ namespace
 		}
 	}
 
+	float SanitizeReflectionScale(float value, float maxValue, float fallback)
+	{
+		if (!std::isfinite(value)) {
+			return fallback;
+		}
+		return std::clamp(value, 0.0f, maxValue);
+	}
+
+	void SyncActiveReflectionScale(
+		WetnessEffects::Settings& settings,
+		float modernScale,
+		float legacyScale)
+	{
+		if (settings.EnableLegacyWetReflection && !settings.EnableModernWetReflection) {
+			settings.WetIndirectSpecularScale = legacyScale;
+			return;
+		}
+		if (settings.EnableModernWetReflection) {
+			settings.WetIndirectSpecularScale = modernScale;
+			return;
+		}
+		settings.WetIndirectSpecularScale = 0.0f;
+	}
+
+	void SanitizePersistentReflectionSettings(
+		WetnessEffects::Settings& settings,
+		float& modernScale,
+		float& legacyScale)
+	{
+		SanitizeReflectionSettings(settings);
+		modernScale = SanitizeReflectionScale(modernScale, MAX_MODERN_WET_REFLECTION_UI_SCALE, DEFAULT_WET_INDIRECT_SPECULAR_SCALE);
+		legacyScale = SanitizeReflectionScale(legacyScale, MAX_LEGACY_WET_REFLECTION_SCALE, DEFAULT_LEGACY_WET_INDIRECT_SPECULAR_SCALE);
+		SyncActiveReflectionScale(settings, modernScale, legacyScale);
+	}
+
 	void SanitizeToggleSettings(WetnessEffects::Settings& settings)
 	{
 		settings.EnableWetnessEffects = SanitizeToggle(settings.EnableWetnessEffects);
@@ -313,7 +347,7 @@ namespace
 		settings.WeatherTransitionSpeed = ClampFiniteOrDefault(settings.WeatherTransitionSpeed, MIN_TRANSITION_SPEED, MAX_TRANSITION_SPEED, 3.0f);
 		settings.ShoreRange = std::max(settings.ShoreRange, 1u);
 		settings.PuddleRadius = ClampFiniteOrDefault(settings.PuddleRadius, MIN_PUDDLE_RADIUS, 10.0f, 1.0f);
-		settings.PuddlePatternScale = ClampFiniteOrDefault(settings.PuddlePatternScale, MIN_PUDDLE_PATTERN_SCALE, 10.0f, 1.0f);
+		settings.PuddlePatternScale = ClampFiniteOrDefault(settings.PuddlePatternScale, 0.25f, 3.0f, 1.0f);
 		settings.PuddleMaxAngle = ClampFiniteOrDefault(settings.PuddleMaxAngle, 0.0f, 1.0f, 0.95f);
 		settings.PuddleMinWetness = ClampFiniteOrDefault(settings.PuddleMinWetness, 0.0f, 1.0f, 0.85f);
 		settings.MinRainWetness = ClampFiniteOrDefault(settings.MinRainWetness, 0.0f, 1.0f, 0.65f);
@@ -331,13 +365,13 @@ namespace
 		settings.RippleLifetime = ClampFiniteOrDefault(settings.RippleLifetime, MIN_RIPPLE_LIFETIME, 60.0f, 0.5f);
 		settings.RippleBreadth = ClampFiniteOrDefault(settings.RippleBreadth, MIN_RIPPLE_BREADTH, 10.0f, 0.5f);
 		settings.PostRainPuddleWaterStrength = ClampFiniteOrDefault(settings.PostRainPuddleWaterStrength, 0.0f, 2.0f, 0.8f);
-		settings.CloseRangeWetnessBoost = ClampFiniteOrDefault(settings.CloseRangeWetnessBoost, 0.5f, 2.0f, 1.2f);
+		settings.CloseRangeWetnessBoost = ClampFiniteOrDefault(settings.CloseRangeWetnessBoost, 0.0f, 2.0f, 1.0f);
 		settings.RaindropTransitionFalloff = ClampFiniteOrDefault(settings.RaindropTransitionFalloff, 0.5f, 6.0f, 2.0f);
 		settings.PuddleDepthBlend = ClampFiniteOrDefault(settings.PuddleDepthBlend, 0.0f, 1.0f, 0.5f);
 		settings.WetDarkeningStrength = ClampFiniteOrDefault(settings.WetDarkeningStrength, 0.0f, 2.0f, 1.0f);
 		settings.WetColorSaturation = ClampFiniteOrDefault(settings.WetColorSaturation, 0.0f, 2.5f, 1.0f);
 		settings.WetHighlightReduction = ClampFiniteOrDefault(settings.WetHighlightReduction, 0.25f, 2.0f, 1.0f);
-		settings.WetVisualPad0 = 0.0f;
+		settings.WetVisualPad0 = ClampFiniteOrDefault(settings.WetVisualPad0, 0.0f, 2.0f, 1.0f);
 	}
 
 	RE::BSParticleShaderRainEmitter* GetRainEmitterFromPrecipGeometry(RE::BSGeometry* precipObject)
@@ -840,7 +874,6 @@ void WetnessEffects::DrawSettings()
 		ImGui::BeginDisabled(settings.EnableLegacyWetReflection != 0);
 		if (drawUintCheckbox("Modern Wetness Reflection", settings.EnableModernWetReflection) && settings.EnableModernWetReflection) {
 			settings.EnableLegacyWetReflection = 0u;
-			settings.WetIndirectSpecularScale = DEFAULT_WET_INDIRECT_SPECULAR_SCALE;
 		}
 		ImGui::EndDisabled();
 		if (auto _tt = Util::HoverTooltipWrapper()) {
@@ -849,36 +882,26 @@ void WetnessEffects::DrawSettings()
 		ImGui::BeginDisabled(settings.EnableModernWetReflection != 0);
 		if (drawUintCheckbox("Legacy Wetness Reflection", settings.EnableLegacyWetReflection) && settings.EnableLegacyWetReflection) {
 			settings.EnableModernWetReflection = 0u;
-			settings.WetIndirectSpecularScale = DEFAULT_LEGACY_WET_INDIRECT_SPECULAR_SCALE;
 		}
 		ImGui::EndDisabled();
 		if (auto _tt = Util::HoverTooltipWrapper()) {
 			ImGui::TextUnformatted("Older wet reflection look. Turns off Modern Reflection.");
 		}
 
-		SanitizeReflectionSettings(settings);
+		SanitizePersistentReflectionSettings(settings, modernWetIndirectSpecularScale, legacyWetIndirectSpecularScale);
 		const bool anyReflectionModeEnabled = settings.EnableModernWetReflection != 0 || settings.EnableLegacyWetReflection != 0;
 		const bool legacyReflectionModeEnabled = settings.EnableLegacyWetReflection != 0 && settings.EnableModernWetReflection == 0;
 		ImGui::BeginDisabled(!anyReflectionModeEnabled);
 		if (legacyReflectionModeEnabled) {
-			float sliderT = LegacyWetReflectionSliderFromScale(settings.WetIndirectSpecularScale);
+			float sliderT = LegacyWetReflectionSliderFromScale(legacyWetIndirectSpecularScale);
 			if (ImGui::SliderFloat("Wet Reflection Shine", &sliderT, 0.0f, 1.0f, "%.4f", ImGuiSliderFlags_AlwaysClamp)) {
-				settings.WetIndirectSpecularScale = LegacyWetReflectionScaleFromSlider(sliderT);
+				legacyWetIndirectSpecularScale = LegacyWetReflectionScaleFromSlider(sliderT);
 			}
 		} else {
-			ImGui::SliderFloat("Wet Reflection Shine", &settings.WetIndirectSpecularScale, 0.0f, MAX_MODERN_WET_REFLECTION_UI_SCALE, "%.4f", ImGuiSliderFlags_AlwaysClamp);
+			ImGui::SliderFloat("Wet Reflection Shine", &modernWetIndirectSpecularScale, 0.0f, MAX_MODERN_WET_REFLECTION_UI_SCALE, "%.4f", ImGuiSliderFlags_AlwaysClamp);
 		}
 		ImGui::EndDisabled();
-		if (anyReflectionModeEnabled) {
-			settings.WetIndirectSpecularScale = SanitizeUnitScale(settings.WetIndirectSpecularScale);
-			if (legacyReflectionModeEnabled) {
-				settings.WetIndirectSpecularScale = std::min(settings.WetIndirectSpecularScale, MAX_LEGACY_WET_REFLECTION_SCALE);
-			} else {
-				settings.WetIndirectSpecularScale = std::min(settings.WetIndirectSpecularScale, MAX_MODERN_WET_REFLECTION_UI_SCALE);
-			}
-		} else {
-			settings.WetIndirectSpecularScale = 0.0f;
-		}
+		SanitizePersistentReflectionSettings(settings, modernWetIndirectSpecularScale, legacyWetIndirectSpecularScale);
 		if (auto _tt = Util::HoverTooltipWrapper()) {
 			if (legacyReflectionModeEnabled) {
 				ImGui::TextUnformatted("Higher value = stronger reflections. Legacy mode uses finer control around 0.01-0.02.");
@@ -935,6 +958,18 @@ void WetnessEffects::DrawSettings()
 		if (auto _tt = Util::HoverTooltipWrapper()) {
 			ImGui::TextUnformatted("Reduces white grazing-angle highlights; higher values look more water-like.");
 		}
+		ImGui::SliderFloat("Runoff Strength", &settings.CloseRangeWetnessBoost, 0.0f, 2.0f, "%.2f");
+		if (auto _tt = Util::HoverTooltipWrapper()) {
+			ImGui::TextUnformatted("How visible and strong downhill wet streaks are on sloped surfaces.");
+		}
+		ImGui::SliderFloat("Runoff Speed", &settings.WetVisualPad0, 0.0f, 2.0f, "%.2f");
+		if (auto _tt = Util::HoverTooltipWrapper()) {
+			ImGui::TextUnformatted("How fast downhill wet streak animation moves.");
+		}
+		ImGui::SliderFloat("Runoff Width", &settings.PuddlePatternScale, 0.25f, 3.0f, "%.2f");
+		if (auto _tt = Util::HoverTooltipWrapper()) {
+			ImGui::TextUnformatted("Controls runoff streak thickness. Lower = thinner lines, higher = wider streams.");
+		}
 		int shoreRange = static_cast<int>(settings.ShoreRange);
 		if (ImGui::SliderInt("Shore Range", &shoreRange, 1, 64, "%d", ImGuiSliderFlags_AlwaysClamp)) {
 			settings.ShoreRange = static_cast<uint>(shoreRange);
@@ -953,15 +988,6 @@ void WetnessEffects::DrawSettings()
 				"Controls Puddle size",
 				Util::Units::FormatDistance(settings.PuddleRadius),
 				std::format("{:.2f} meters", Util::Units::GameUnitsToMeters(settings.PuddleRadius))
-			};
-			Util::DrawMultiLineTooltip(tooltipLines);
-		}
-		ImGui::SliderFloat("Puddle Pattern", &settings.PuddlePatternScale, 0.3f, 3.0f);
-		if (auto _tt = Util::HoverTooltipWrapper()) {
-			std::vector<std::string> tooltipLines = {
-				"Changes Puddle layout density/visibility pattern.",
-				Util::Units::FormatDistance(settings.PuddlePatternScale),
-				std::format("{:.2f} meters", Util::Units::GameUnitsToMeters(settings.PuddlePatternScale))
 			};
 			Util::DrawMultiLineTooltip(tooltipLines);
 		}
@@ -1436,6 +1462,9 @@ WetnessEffects::PerFrame WetnessEffects::GetCommonBufferData() const
 
 	data.settings = settings;
 	SanitizeToggleSettings(data.settings);
+	const float modernReflectionScale = SanitizeReflectionScale(modernWetIndirectSpecularScale, MAX_MODERN_WET_REFLECTION_UI_SCALE, DEFAULT_WET_INDIRECT_SPECULAR_SCALE);
+	const float legacyReflectionScale = SanitizeReflectionScale(legacyWetIndirectSpecularScale, MAX_LEGACY_WET_REFLECTION_SCALE, DEFAULT_LEGACY_WET_INDIRECT_SPECULAR_SCALE);
+	SyncActiveReflectionScale(data.settings, modernReflectionScale, legacyReflectionScale);
 	SanitizeShaderFacingSettings(data.settings);
 	data.settings.MaxShoreWetness = data.settings.EnableWetnessEffects ? data.settings.MaxShoreWetness : 0.0f;
 	data.settings.RaindropChance *= data.Raining * data.Raining;
@@ -1473,32 +1502,58 @@ void WetnessEffects::Prepass()
 void WetnessEffects::LoadSettings(json& o_json)
 {
 	settings = o_json;
+	modernWetIndirectSpecularScale = DEFAULT_WET_INDIRECT_SPECULAR_SCALE;
+	legacyWetIndirectSpecularScale = DEFAULT_LEGACY_WET_INDIRECT_SPECULAR_SCALE;
+
 	if (!o_json.contains("EnableModernWetReflection")) {
 		settings.EnableModernWetReflection = 1u;
 	}
 	if (!o_json.contains("EnableLegacyWetReflection")) {
 		settings.EnableLegacyWetReflection = 0u;
 	}
-	const bool hasExplicitWetReflectionScale = o_json.contains("WetIndirectSpecularScale");
-	if (o_json.contains("EnableWetIndirectSpecular") && !o_json.contains("WetIndirectSpecularScale")) {
-		const auto& legacy = o_json["EnableWetIndirectSpecular"];
-		const bool useLegacyDefault = settings.EnableLegacyWetReflection != 0 && settings.EnableModernWetReflection == 0;
-		const auto applyLegacyToggle = [&](bool enabled) {
-			settings.WetIndirectSpecularScale = enabled ?
-				                                (useLegacyDefault ? DEFAULT_LEGACY_WET_INDIRECT_SPECULAR_SCALE : DEFAULT_WET_INDIRECT_SPECULAR_SCALE) :
-				                                0.0f;
-		};
-		if (legacy.is_boolean()) {
-			applyLegacyToggle(legacy.get<bool>());
-		} else if (legacy.is_number()) {
-			applyLegacyToggle(legacy.get<float>() != 0.0f);
-		} else {
-			settings.WetIndirectSpecularScale = DEFAULT_WET_INDIRECT_SPECULAR_SCALE;
-		}
-	} else if (!hasExplicitWetReflectionScale && settings.EnableLegacyWetReflection != 0 && settings.EnableModernWetReflection == 0) {
-		settings.WetIndirectSpecularScale = DEFAULT_LEGACY_WET_INDIRECT_SPECULAR_SCALE;
+
+	const bool hasModernWetReflectionScale = o_json.contains("ModernWetIndirectSpecularScale");
+	if (hasModernWetReflectionScale && o_json["ModernWetIndirectSpecularScale"].is_number()) {
+		modernWetIndirectSpecularScale = o_json["ModernWetIndirectSpecularScale"].get<float>();
 	}
+
+	const bool hasLegacyWetReflectionScale = o_json.contains("LegacyWetIndirectSpecularScale");
+	if (hasLegacyWetReflectionScale && o_json["LegacyWetIndirectSpecularScale"].is_number()) {
+		legacyWetIndirectSpecularScale = o_json["LegacyWetIndirectSpecularScale"].get<float>();
+	}
+
+	const bool hasExplicitWetReflectionScale = o_json.contains("WetIndirectSpecularScale");
+	if (hasExplicitWetReflectionScale && !hasModernWetReflectionScale && !hasLegacyWetReflectionScale && o_json["WetIndirectSpecularScale"].is_number()) {
+		const float compatScale = o_json["WetIndirectSpecularScale"].get<float>();
+		if (settings.EnableLegacyWetReflection != 0 && settings.EnableModernWetReflection == 0) {
+			legacyWetIndirectSpecularScale = compatScale;
+		} else {
+			modernWetIndirectSpecularScale = compatScale;
+		}
+	}
+
+	if (o_json.contains("EnableWetIndirectSpecular") && !hasExplicitWetReflectionScale && !hasModernWetReflectionScale && !hasLegacyWetReflectionScale) {
+		const auto& legacyToggle = o_json["EnableWetIndirectSpecular"];
+		const auto applyLegacyToggle = [&](bool enabled) {
+			if (!enabled) {
+				modernWetIndirectSpecularScale = 0.0f;
+				legacyWetIndirectSpecularScale = 0.0f;
+				return;
+			}
+			modernWetIndirectSpecularScale = DEFAULT_WET_INDIRECT_SPECULAR_SCALE;
+			legacyWetIndirectSpecularScale = DEFAULT_LEGACY_WET_INDIRECT_SPECULAR_SCALE;
+		};
+		if (legacyToggle.is_boolean()) {
+			applyLegacyToggle(legacyToggle.get<bool>());
+		} else if (legacyToggle.is_number()) {
+			applyLegacyToggle(legacyToggle.get<float>() != 0.0f);
+		} else {
+			applyLegacyToggle(true);
+		}
+	}
+
 	SanitizeToggleSettings(settings);
+	SanitizePersistentReflectionSettings(settings, modernWetIndirectSpecularScale, legacyWetIndirectSpecularScale);
 	SanitizeShaderFacingSettings(settings);
 	ResetRuntimeState();
 
@@ -1514,7 +1569,10 @@ void WetnessEffects::LoadSettings(json& o_json)
 
 void WetnessEffects::SaveSettings(json& o_json)
 {
+	SanitizePersistentReflectionSettings(settings, modernWetIndirectSpecularScale, legacyWetIndirectSpecularScale);
 	o_json = settings;
+	o_json["ModernWetIndirectSpecularScale"] = modernWetIndirectSpecularScale;
+	o_json["LegacyWetIndirectSpecularScale"] = legacyWetIndirectSpecularScale;
 
 	o_json["DebugSettings"] = debugSettings;
 }
@@ -1522,11 +1580,14 @@ void WetnessEffects::SaveSettings(json& o_json)
 void WetnessEffects::RestoreDefaultSettings()
 {
 	settings = {};
+	modernWetIndirectSpecularScale = DEFAULT_WET_INDIRECT_SPECULAR_SCALE;
+	legacyWetIndirectSpecularScale = DEFAULT_LEGACY_WET_INDIRECT_SPECULAR_SCALE;
 	climatePreset = defaultPreset;
 	ResetRuntimeState();
 
 	// Apply the default climate preset to ensure settings reflect the preset values
 	ApplyClimatePreset(climatePreset);
+	SanitizePersistentReflectionSettings(settings, modernWetIndirectSpecularScale, legacyWetIndirectSpecularScale);
 	SanitizeShaderFacingSettings(settings);
 
 	Ripples::UpdateSettings();  // Sync cached values after restoring defaults

@@ -72,14 +72,16 @@ public:
 
 		// Dev tuning controls (temporary while calibrating wetness behavior in-game)
 		float PostRainPuddleWaterStrength = 0.8f;
-		float CloseRangeWetnessBoost = 1.2f;
+		// Runoff Strength tuning (reuses legacy field slot to keep CB layout stable).
+		float CloseRangeWetnessBoost = 1.0f;
 		float RaindropTransitionFalloff = 2.0f;
 		uint EnableDualPuddleModel = true;
 		float PuddleDepthBlend = 0.5f;
 		float WetDarkeningStrength = 1.0f;
 		float WetColorSaturation = 1.0f;
 		float WetHighlightReduction = 1.0f;
-		float WetVisualPad0 = 0.0f;
+		// Runoff Speed tuning (reuses prior padding slot).
+		float WetVisualPad0 = 1.0f;
 	};
 
 	struct alignas(16) PerFrame
@@ -106,6 +108,8 @@ public:
 	} debugSettings;
 
 	Settings settings;
+	float modernWetIndirectSpecularScale = 0.05f;
+	float legacyWetIndirectSpecularScale = 0.0145f;
 	// Climate preset system
 	enum class ClimatePreset : uint32_t
 	{

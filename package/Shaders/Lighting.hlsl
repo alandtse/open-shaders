@@ -2488,6 +2488,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 
 	// Calculate puddle effects
 	float puddle = wetness;
+	float runoffStreakMask = 0.0;
 	if (wetness > 0.0 || puddleWetness > 0.0) {
 		float puddleMaxAngleSafe = max(SharedData::wetnessEffectsSettings.PuddleMaxAngle, 1e-3);
 		float puddleRadiusSafe = max(SharedData::wetnessEffectsSettings.PuddleRadius, 1e-3);
@@ -2510,6 +2511,13 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 		float puddleMix = lerp(flatPuddleMix, max(flatPuddleMix, depthPuddleMix), depthBlend);
 		puddle *= lerp(wetness, puddleWetness, puddleMix);
 #		endif
+
+		// Mandatory flat pooling: once the surface gets very flat and wet enough,
+		// enforce a broad puddle floor regardless of local puddle noise.
+		float flatAngleMask = smoothstep(0.88, 0.995, saturate(worldNormal.z));
+		float flatWetGate = smoothstep(SharedData::wetnessEffectsSettings.PuddleMinWetness * 0.65, 1.0, max(wetness, puddleWetness));
+		float flatMandatoryPuddle = max(wetness, puddleWetness) * flatAngleMask * flatWetGate;
+		puddle = max(puddle, flatMandatoryPuddle);
 	}
 	puddle *= saturate(wetnessOcclusion * 2.0) * nearFactor;
 
@@ -2533,6 +2541,46 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	float3 rippleNormal = normalize(lerp(float3(0, 0, 1), raindropInfo.xyz, lerp(1.0, flatnessAmount, 0.8)));
 	wetnessNormal = WetnessEffects::ReorientNormal(rippleNormal, wetnessNormal);
 
+	// Slope-driven runoff streaks (visual only): downhill thin streams on inclined wet surfaces.
+	{
+		float runoffStrength = max(0.0, SharedData::wetnessEffectsSettings.CloseRangeWetnessBoost);
+		float runoffSpeedScale = max(0.0, SharedData::wetnessEffectsSettings.WetVisualPad0);
+		float runoffWidthScale = max(0.25, SharedData::wetnessEffectsSettings.PuddlePatternScale);
+		float slopeMask = saturate((1.0 - saturate(worldNormal.z) - 0.06) * 2.2);
+		float wetRainMask = saturate(max(rainingAmount, rainWetness * 0.75 + puddleWetness * 0.35));
+		float materialMask = 0.0;
+#		if !defined(SKIN) && !defined(HAIR)
+		materialMask = saturate(stoneFactor * 1.00 + dirtFactor * 0.60 + (1.0 - vegetationFactor) * 0.25);
+#		endif
+		float postRainPersistence = postRainBlend * slopeMask * saturate(0.35 + stoneFactor * 0.65);
+		float runoffActivity = saturate(inRainBlend + postRainPersistence * 0.55);
+		float runoffMask = min(slopeMask * wetRainMask * materialMask * runoffActivity * runoffStrength, 2.0);
+
+		[branch] if (runoffMask > 1e-3) {
+			float3 gravityDir = float3(0.0, 0.0, -1.0);
+			float3 downhill = gravityDir - worldNormal * dot(gravityDir, worldNormal);
+			float2 downhillXY = downhill.xy;
+			float downhillLen2 = dot(downhillXY, downhillXY);
+			float2 flowDir = downhillLen2 > 1e-6 ? downhillXY * rsqrt(downhillLen2) : float2(1.0, 0.0);
+
+			float3 worldPos = input.WorldPosition.xyz + FrameBuffer::CameraPosAdjust[eyeIndex].xyz;
+			float2 runoffUV = float2(
+				dot(worldPos.xy, flowDir),
+				dot(worldPos.xy, float2(-flowDir.y, flowDir.x)));
+			float runoffTime = SharedData::wetnessEffectsSettings.Time;
+			float runoffSpeed = lerp(0.06, 0.13, saturate(slopeMask + stoneFactor * 0.4)) * runoffSpeedScale;
+			float streakBase = Random::perlinNoise(float3(runoffUV.x * 2.6 - runoffTime * runoffSpeed, runoffUV.y * 4.2, runoffTime * 0.015)) * 0.5 + 0.5;
+			float streakInput = saturate(((streakBase - 0.45) / 0.55) * runoffWidthScale);
+			float streakThin = pow(streakInput, max(1.0, 5.0 / runoffWidthScale));
+			runoffStreakMask = runoffMask * streakThin;
+
+			float2 runoffNxy = flowDir * runoffStreakMask * 0.10;
+			float runoffNz = sqrt(saturate(1.0 - dot(runoffNxy, runoffNxy)));
+			float3 runoffNormal = float3(runoffNxy, runoffNz);
+			wetnessNormal = WetnessEffects::ReorientNormal(runoffNormal, wetnessNormal);
+		}
+	}
+
 	// Suppress grazing-angle over-brightening: keep wet gloss from top-down views,
 	// but reduce "milky white" highlights when viewed close to horizontal.
 	float wetnessViewNdotV = saturate(abs(dot(wetnessNormal, viewDirection)));
@@ -2545,6 +2593,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	grazingMinAttenuation = lerp(grazingMinAttenuation, 0.80, highlightRelaxT);
 	float wetnessGrazingAttenuation = saturate(lerp(1.0, grazingMinAttenuation, grazingMask));
 	wetnessGlossinessSpecular *= wetnessGrazingAttenuation;
+	wetnessGlossinessSpecular = saturate(wetnessGlossinessSpecular + runoffStreakMask * 0.22);
 	float wetHighlightReflectanceScale = lerp(1.0, wetnessGrazingAttenuation, saturate(0.35 + highlightReductionT));
 
 	waterRoughnessSpecular = 1.0 - wetnessGlossinessSpecular * 0.9;
@@ -3004,6 +3053,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 #			endif
 	float wetDarkeningStrength = max(0.0, SharedData::wetnessEffectsSettings.WetDarkeningStrength);
 	float wetnessDarkeningAmount = porosity * wetnessGlossinessAlbedo * wetDarkeningStrength;
+	wetnessDarkeningAmount += runoffStreakMask * 0.35 * wetDarkeningStrength;
 	float wetDarkeningBlend = saturate(0.8 * wetDarkeningStrength);
 	float3 wetDarkenedBaseColor = pow(abs(material.BaseColor), 1.0 + wetnessDarkeningAmount);
 	material.BaseColor = lerp(material.BaseColor, wetDarkenedBaseColor, wetDarkeningBlend);
