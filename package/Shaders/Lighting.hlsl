@@ -3061,14 +3061,18 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	porosity = lerp(porosity, 0.0, saturate(sqrt(envMask)));
 #			endif
 	float wetDarkeningStrength = max(0.0, SharedData::wetnessEffectsSettings.WetDarkeningStrength);
-	float wetnessDarkeningAmount = porosity * wetnessGlossinessAlbedo * wetDarkeningStrength;
+	// Darkening/saturation should follow active rain/post-rain wetness (and runoff),
+	// not persistent shore wetness, so surfaces can visually dry out after rain.
+	float rainDrivenWetness = saturate(max(rainWetness, puddleWetness));
+	float wetnessDarkeningAmount = porosity * rainDrivenWetness * wetDarkeningStrength;
 	wetnessDarkeningAmount += runoffStreakMask * 0.35 * wetDarkeningStrength;
-	float wetVisualMask = smoothstep(0.01, 0.05, max(wetnessGlossinessAlbedo, runoffStreakMask));
+	float rainWetVisualMask = smoothstep(0.02, 0.08, rainDrivenWetness);
+	float wetVisualMask = max(rainWetVisualMask, smoothstep(0.01, 0.05, runoffStreakMask));
 	float wetDarkeningBlend = saturate(0.8 * wetDarkeningStrength) * wetVisualMask;
 	float3 wetDarkenedBaseColor = pow(abs(material.BaseColor), 1.0 + wetnessDarkeningAmount);
 	material.BaseColor = lerp(material.BaseColor, wetDarkenedBaseColor, wetDarkeningBlend);
 	float wetColorSaturation = max(0.0, SharedData::wetnessEffectsSettings.WetColorSaturation);
-	float wetSaturationMix = smoothstep(0.01, 0.05, wetnessGlossinessAlbedo);
+	float wetSaturationMix = rainWetVisualMask;
 	float wetSaturationScale = lerp(1.0, wetColorSaturation, wetSaturationMix);
 	material.BaseColor = Color::Saturation(material.BaseColor, wetSaturationScale);
 #		endif
