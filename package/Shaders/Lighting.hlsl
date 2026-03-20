@@ -2519,7 +2519,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 		float flatMandatoryPuddle = max(wetness, puddleWetness) * flatAngleMask * flatWetGate;
 		puddle = max(puddle, flatMandatoryPuddle);
 	}
-	puddle *= saturate(wetnessOcclusion * 2.0) * nearFactor;
+	puddle *= saturate(wetnessOcclusion * 2.0);
 
 	// Calculate wetness glossiness factors
 	float wetnessGlossinessAlbedo = max(puddle, shoreFactorAlbedo * SharedData::wetnessEffectsSettings.MaxShoreWetness);
