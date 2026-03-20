@@ -58,6 +58,9 @@ namespace
 	constexpr float SUMMER_DRYING_SPEED_MULT = 1.15f;
 	constexpr float SPRING_AUTUMN_DRYING_SPEED_MULT = 1.00f;
 	constexpr float WINTER_DRYING_SPEED_MULT = 0.80f;
+	constexpr float SURFACE_DRYING_WEIGHT_STONE = 0.20f;
+	constexpr float SURFACE_DRYING_WEIGHT_GRASS = 0.35f;
+	constexpr float SURFACE_DRYING_WEIGHT_DIRT = 0.45f;
 	constexpr float FAST_DRY_LOW_PUDDLE_MULT = 1.55f;
 	constexpr float SLOW_DRY_DEEP_PUDDLE_MULT = 0.70f;
 	constexpr float SNOW_WETNESS_DRY_MULT = 2.0f;
@@ -266,6 +269,15 @@ namespace
 			WEATHER_DRIVEN_PUDDLE_MAX_HOURS);
 
 		return result;
+	}
+
+	float GetWeightedSurfaceDryingHours(const EffectiveDryingHours& hours)
+	{
+		const float weightedHours =
+			hours.stoneHours * SURFACE_DRYING_WEIGHT_STONE +
+			hours.grassHours * SURFACE_DRYING_WEIGHT_GRASS +
+			hours.dirtHours * SURFACE_DRYING_WEIGHT_DIRT;
+		return ClampDryingHours(weightedHours, DRYING_HOURS_MAX);
 	}
 
 	bool JsonValueToBool(const json& value, bool fallback)
@@ -1474,13 +1486,21 @@ WetnessEffects::PerFrame WetnessEffects::GetCommonBufferData() const
 		}
 
 		// Long rain events slow down drying after rain stops.
+		const float dryingEventWeight = rainingNow ? runtimeState.rainEventWeight : runtimeState.postRainEventWeight;
+		const EffectiveDryingHours frameDryingHours = getEffectiveDryingHours(dryingEventWeight);
+		const float wetnessDurationHours = GetWeightedSurfaceDryingHours(frameDryingHours);
+		const float puddleDurationHours = ClampDryingHours(frameDryingHours.puddleHours, DRYING_HOURS_MAX);
 		if (blendedWetnessRate < 0.0f) {
 			const float wetnessDryScale = std::lerp(1.0f, MIN_WETNESS_DRY_SCALE_AT_MAX_EVENT, runtimeState.rainEventWeight);
 			blendedWetnessRate *= wetnessDryScale;
+			const float wetnessRateScaleFromDuration = std::clamp(DRYING_HOURS_MAX / wetnessDurationHours, 0.25f, DRYING_HOURS_MAX);
+			blendedWetnessRate *= wetnessRateScaleFromDuration;
 		}
 		if (blendedPuddleRate < 0.0f) {
 			const float puddleDryScale = std::lerp(1.0f, MIN_PUDDLE_DRY_SCALE_AT_MAX_EVENT, runtimeState.rainEventWeight);
 			blendedPuddleRate *= puddleDryScale;
+			const float puddleRateScaleFromDuration = std::clamp(DRYING_HOURS_MAX / puddleDurationHours, 0.25f, DRYING_HOURS_MAX);
+			blendedPuddleRate *= puddleRateScaleFromDuration;
 			// Depth-dependent puddle decay: shallow puddles dry faster, deep puddles slower.
 			const float puddleDepth01 = std::clamp(runtimeState.puddleDepth / MAX_PUDDLE_DEPTH, 0.0f, 1.0f);
 			const float depthDryMultiplier = std::lerp(FAST_DRY_LOW_PUDDLE_MULT, SLOW_DRY_DEEP_PUDDLE_MULT, puddleDepth01);
@@ -1494,15 +1514,12 @@ WetnessEffects::PerFrame WetnessEffects::GetCommonBufferData() const
 			// Surface dry-out cap:
 			// - weather-driven model: non-puddles dry within 3..18h
 			// - manual model: uses slider values
-			const EffectiveDryingHours effectiveDrying = getEffectiveDryingHours(runtimeState.postRainEventWeight);
-			const float slowestSurfaceHours = std::max(
-				std::max(effectiveDrying.stoneHours, effectiveDrying.grassHours),
-				effectiveDrying.dirtHours);
-			const float wetnessDurationSeconds = DryingHoursToSeconds(slowestSurfaceHours);
+			// Use weighted surface duration so each slider has visible influence.
+			const float wetnessDurationSeconds = DryingHoursToSeconds(wetnessDurationHours);
 			// Puddle dry-out cap:
 			// - weather-driven model: 12..24h
 			// - manual model: explicit slider control
-			const float puddleDurationSeconds = DryingHoursToSeconds(effectiveDrying.puddleHours);
+			const float puddleDurationSeconds = DryingHoursToSeconds(puddleDurationHours);
 
 			ApplyPostRainDepthEnvelope(
 				runtimeState.wetnessDepth,
