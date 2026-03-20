@@ -2407,19 +2407,25 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	// Surface drying response should mainly act after rain has mostly stopped.
 	float postRainBlend = 1.0 - smoothstep(0.02, 0.20, rainingAmount);
 	float surfaceDryingPower = 1.0;
-	float dryingOverrideAmount = abs(SharedData::wetnessEffectsSettings.StoneDryingMultiplier - 1.0) +
-		abs(SharedData::wetnessEffectsSettings.DirtDryingMultiplier - 1.0) +
-		abs(SharedData::wetnessEffectsSettings.GrassDryingMultiplier - 1.0);
+	float stoneDryingHours = clamp(SharedData::wetnessEffectsSettings.StoneDryingMultiplier, 1.0, 24.0);
+	float dirtDryingHours = clamp(SharedData::wetnessEffectsSettings.DirtDryingMultiplier, 1.0, 24.0);
+	float grassDryingHours = clamp(SharedData::wetnessEffectsSettings.GrassDryingMultiplier, 1.0, 24.0);
+	float stoneDryingPower = 24.0 / stoneDryingHours;
+	float dirtDryingPower = 24.0 / dirtDryingHours;
+	float grassDryingPower = 24.0 / grassDryingHours;
+	float dryingOverrideAmount = abs(stoneDryingPower - 1.0) +
+		abs(dirtDryingPower - 1.0) +
+		abs(grassDryingPower - 1.0);
 	[branch] if (postRainBlend > 0.0 && dryingOverrideAmount > 1e-3) {
 		// Surface response model for post-rain drying:
-		// stone/wood first, grass next, dirt last (via per-surface multipliers).
+		// stone/wood first, grass next, dirt last (via per-surface drying times in hours).
 		float surfaceDryingMultiplier =
-			stoneFactor * SharedData::wetnessEffectsSettings.StoneDryingMultiplier +
-			dirtFactor * SharedData::wetnessEffectsSettings.DirtDryingMultiplier +
-			vegetationFactor * SharedData::wetnessEffectsSettings.GrassDryingMultiplier;
+			stoneFactor * stoneDryingPower +
+			dirtFactor * dirtDryingPower +
+			vegetationFactor * grassDryingPower;
 
 #		if defined(SKIN) || defined(HAIR)
-		surfaceDryingMultiplier = SharedData::wetnessEffectsSettings.DirtDryingMultiplier;
+		surfaceDryingMultiplier = dirtDryingPower;
 #		endif
 
 		surfaceDryingMultiplier = max(surfaceDryingMultiplier, 0.05);
@@ -2550,7 +2556,9 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 		float runoffWidthScale = max(0.25, SharedData::wetnessEffectsSettings.PuddlePatternScale);
 		float slopeBase = 1.0 - saturate(runoffSlopeNormal.z);
 		float slopeMask = saturate((slopeBase - 0.01) * 3.6);
-		float wetRainMask = saturate(max(rainingAmount, max(rainWetness, wetness) * 0.85 + max(puddleWetness, puddle) * 0.35));
+		// Runoff should be rain/post-rain driven, not shore-driven.
+		float rainDrivenRunoffWetness = saturate(max(rainWetness, puddleWetness));
+		float wetRainMask = saturate(max(rainingAmount, rainDrivenRunoffWetness));
 		float materialMask = 0.35;
 #		if !defined(SKIN) && !defined(HAIR)
 		materialMask = saturate(0.35 + stoneFactor * 1.00 + dirtFactor * 0.60 + (1.0 - vegetationFactor) * 0.25);
@@ -3065,9 +3073,10 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	// not persistent shore wetness, so surfaces can visually dry out after rain.
 	float rainDrivenWetness = saturate(max(rainWetness, puddleWetness));
 	float wetnessDarkeningAmount = porosity * rainDrivenWetness * wetDarkeningStrength;
-	wetnessDarkeningAmount += runoffStreakMask * 0.35 * wetDarkeningStrength;
+	float runoffRainMask = smoothstep(0.02, 0.08, rainDrivenWetness);
+	wetnessDarkeningAmount += (runoffStreakMask * runoffRainMask) * 0.35 * wetDarkeningStrength;
 	float rainWetVisualMask = smoothstep(0.02, 0.08, rainDrivenWetness);
-	float wetVisualMask = max(rainWetVisualMask, smoothstep(0.01, 0.05, runoffStreakMask));
+	float wetVisualMask = max(rainWetVisualMask, smoothstep(0.01, 0.05, runoffStreakMask * runoffRainMask));
 	float wetDarkeningBlend = saturate(0.8 * wetDarkeningStrength) * wetVisualMask;
 	float3 wetDarkenedBaseColor = pow(abs(material.BaseColor), 1.0 + wetnessDarkeningAmount);
 	material.BaseColor = lerp(material.BaseColor, wetDarkenedBaseColor, wetDarkeningBlend);

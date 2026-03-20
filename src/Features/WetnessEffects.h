@@ -42,11 +42,11 @@ public:
 		float MinRainWetness = 0.65f;
 		float SkinWetness = 0.95f;
 		float WeatherTransitionSpeed = 3.0f;
-		// Default surface drying heuristic:
-		// stone/wood dries first, grass next, dirt last.
-		float StoneDryingMultiplier = 1.60f;
-		float DirtDryingMultiplier = 1.00f;
-		float GrassDryingMultiplier = 1.20f;
+		// Surface drying-time controls in hours (1..24):
+		// stone/wood dries first, grass next, dirt last by default.
+		float StoneDryingMultiplier = 15.0f;
+		float DirtDryingMultiplier = 24.0f;
+		float GrassDryingMultiplier = 20.0f;
 
 		// Raindrop fx settings
 		uint EnableRaindropFx = true;
@@ -108,6 +108,8 @@ public:
 	} debugSettings;
 
 	Settings settings;
+	bool enableWeatherDrivenDryingModel = true;
+	float puddleDryingHours = 24.0f;
 	float modernWetIndirectSpecularScale = 0.05f;
 	float legacyWetIndirectSpecularScale = 0.0145f;
 	// Climate preset system

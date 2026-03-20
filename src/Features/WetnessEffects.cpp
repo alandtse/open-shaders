@@ -45,10 +45,19 @@ namespace
 	constexpr float LEGACY_WET_REFLECTION_FINE_HIGH = 0.02f;
 	constexpr float LEGACY_WET_REFLECTION_FINE_LOW_T = 0.35f;
 	constexpr float LEGACY_WET_REFLECTION_FINE_HIGH_T = 0.75f;
-	constexpr float MIN_SURFACE_POST_RAIN_SECONDS = 3.0f * 3600.0f;
-	constexpr float MAX_SURFACE_POST_RAIN_SECONDS = 12.0f * 3600.0f;
-	constexpr float MIN_PUDDLE_POST_RAIN_SECONDS = 3.0f * 3600.0f;
-	constexpr float MAX_PUDDLE_POST_RAIN_SECONDS = 24.0f * 3600.0f;
+	constexpr float DRYING_HOURS_MIN = 1.0f;
+	constexpr float DRYING_HOURS_MAX = 24.0f;
+	constexpr float DRYING_SECONDS_PER_HOUR = 3600.0f;
+	constexpr float WEATHER_DRIVEN_NON_PUDDLE_MIN_HOURS = 3.0f;
+	constexpr float WEATHER_DRIVEN_NON_PUDDLE_MAX_HOURS = 18.0f;
+	constexpr float WEATHER_DRIVEN_PUDDLE_MIN_HOURS = 12.0f;
+	constexpr float WEATHER_DRIVEN_PUDDLE_MAX_HOURS = 24.0f;
+	constexpr float SUNNY_DRYING_SPEED_MULT = 1.20f;
+	constexpr float CLEAR_DRYING_SPEED_MULT = 1.00f;
+	constexpr float OVERCAST_DRYING_SPEED_MULT = 0.80f;
+	constexpr float SUMMER_DRYING_SPEED_MULT = 1.15f;
+	constexpr float SPRING_AUTUMN_DRYING_SPEED_MULT = 1.00f;
+	constexpr float WINTER_DRYING_SPEED_MULT = 0.80f;
 	constexpr float FAST_DRY_LOW_PUDDLE_MULT = 1.55f;
 	constexpr float SLOW_DRY_DEEP_PUDDLE_MULT = 0.70f;
 	constexpr float SNOW_WETNESS_DRY_MULT = 2.0f;
@@ -60,15 +69,6 @@ namespace
 	constexpr float RAIN_EVENT_DECAY_SECONDS = 43200.0f;
 	constexpr float MIN_WETNESS_DRY_SCALE_AT_MAX_EVENT = 0.12f;
 	constexpr float MIN_PUDDLE_DRY_SCALE_AT_MAX_EVENT = 0.02f;
-	constexpr float POST_RAIN_DRY_MULT_SUNNY = 1.20f;
-	constexpr float POST_RAIN_DRY_MULT_CLEAR = 1.00f;
-	constexpr float POST_RAIN_DRY_MULT_CLOUDY = 0.80f;
-	constexpr float POST_RAIN_DRY_MULT_RAINY = 0.65f;
-	constexpr float POST_RAIN_DRY_MULT_SNOW = 1.10f;
-	constexpr float SUNRISE_BLEND_START_HOUR = 5.5f;
-	constexpr float SUNRISE_BLEND_END_HOUR = 7.5f;
-	constexpr float SUNSET_BLEND_START_HOUR = 17.5f;
-	constexpr float SUNSET_BLEND_END_HOUR = 19.5f;
 
 	// Cached per-frame data for debug/weather analysis UI.
 	// Keep this outside WetnessEffects object layout to avoid class-level alignment padding warnings.
@@ -134,75 +134,149 @@ namespace
 		return weather && weather->precipitationData && weather->data.flags.any(RE::TESWeather::WeatherDataFlag::kSnow);
 	}
 
-	float SmoothStep(float edge0, float edge1, float x)
+	float ClampDryingHours(float hours, float fallback = DRYING_HOURS_MAX)
 	{
-		const float denom = edge1 - edge0;
-		if (denom == 0.0f) {
-			return x >= edge1 ? 1.0f : 0.0f;
+		if (!std::isfinite(hours))
+			return fallback;
+		return std::clamp(hours, DRYING_HOURS_MIN, DRYING_HOURS_MAX);
+	}
+
+	// Legacy migration helper: old slider semantics used multiplicative drying strength.
+	// Convert legacy value to an equivalent "hours to dry" approximation.
+	float LegacyDryingMultiplierToHours(float multiplier, float fallbackHours)
+	{
+		if (!std::isfinite(multiplier))
+			multiplier = 1.0f;
+		multiplier = std::clamp(multiplier, 0.05f, 4.0f);
+		return ClampDryingHours(DRYING_HOURS_MAX / multiplier, fallbackHours);
+	}
+
+	float DryingHoursToSeconds(float hours)
+	{
+		return ClampDryingHours(hours) * DRYING_SECONDS_PER_HOUR;
+	}
+
+	struct EffectiveDryingHours
+	{
+		float stoneHours = DRYING_HOURS_MAX;
+		float grassHours = DRYING_HOURS_MAX;
+		float dirtHours = DRYING_HOURS_MAX;
+		float puddleHours = DRYING_HOURS_MAX;
+	};
+
+	EffectiveDryingHours GetManualDryingHours(const WetnessEffects::Settings& settings, float puddleDryingHours)
+	{
+		EffectiveDryingHours result{};
+		result.stoneHours = ClampDryingHours(settings.StoneDryingMultiplier, 15.0f);
+		result.grassHours = ClampDryingHours(settings.GrassDryingMultiplier, 20.0f);
+		result.dirtHours = ClampDryingHours(settings.DirtDryingMultiplier, 24.0f);
+		result.puddleHours = ClampDryingHours(puddleDryingHours, DRYING_HOURS_MAX);
+		return result;
+	}
+
+	float GetSeasonDryingSpeedMultiplier()
+	{
+		if (const auto* calendar = RE::Calendar::GetSingleton()) {
+			const uint32_t month = calendar->GetMonth() % 12u;
+			switch (month) {
+			// Midyear, Sun's Height, Last Seed
+			case 5u:
+			case 6u:
+			case 7u:
+				return SUMMER_DRYING_SPEED_MULT;
+			// Morning Star, Sun's Dawn, Evening Star
+			case 0u:
+			case 1u:
+			case 11u:
+				return WINTER_DRYING_SPEED_MULT;
+			// Spring and Autumn
+			default:
+				return SPRING_AUTUMN_DRYING_SPEED_MULT;
+			}
 		}
-		const float t = std::clamp((x - edge0) / denom, 0.0f, 1.0f);
-		return t * t * (3.0f - 2.0f * t);
+		return CLEAR_DRYING_SPEED_MULT;
 	}
 
-	float GetCurrentGameHour24()
-	{
-		const auto* calendar = RE::Calendar::GetSingleton();
-		if (!calendar) {
-			return 12.0f;
-		}
-
-		const double dayTime = static_cast<double>(calendar->GetCurrentGameTime());
-		const double dayFraction = dayTime - std::floor(dayTime);
-		return static_cast<float>(dayFraction * 24.0);
-	}
-
-	float GetDaylightWeight()
-	{
-		const float hour24 = GetCurrentGameHour24();
-		const float sunriseWeight = SmoothStep(SUNRISE_BLEND_START_HOUR, SUNRISE_BLEND_END_HOUR, hour24);
-		const float sunsetWeight = 1.0f - SmoothStep(SUNSET_BLEND_START_HOUR, SUNSET_BLEND_END_HOUR, hour24);
-		return std::clamp(sunriseWeight * sunsetWeight, 0.0f, 1.0f);
-	}
-
-	float GetPostRainDryWeatherMultiplierSingle(const RE::TESWeather* weather, float daylightWeight)
+	float GetWeatherDryingSpeedMultiplier(const RE::TESWeather* weather)
 	{
 		if (!weather) {
-			return std::lerp(POST_RAIN_DRY_MULT_CLEAR, POST_RAIN_DRY_MULT_SUNNY, daylightWeight);
+			return CLEAR_DRYING_SPEED_MULT;
 		}
-		if (IsSnowWeather(weather)) {
-			return POST_RAIN_DRY_MULT_SNOW;
+
+		const auto flags = weather->data.flags;
+		if (flags.any(RE::TESWeather::WeatherDataFlag::kRainy) ||
+		    flags.any(RE::TESWeather::WeatherDataFlag::kSnow) ||
+		    flags.any(RE::TESWeather::WeatherDataFlag::kCloudy)) {
+			return OVERCAST_DRYING_SPEED_MULT;
 		}
-		if (IsRainyWeather(weather)) {
-			return POST_RAIN_DRY_MULT_RAINY;
+		if (flags.any(RE::TESWeather::WeatherDataFlag::kPleasant)) {
+			return SUNNY_DRYING_SPEED_MULT;
 		}
-		if (weather->data.flags.any(RE::TESWeather::WeatherDataFlag::kCloudy)) {
-			return POST_RAIN_DRY_MULT_CLOUDY;
-		}
-		return std::lerp(POST_RAIN_DRY_MULT_CLEAR, POST_RAIN_DRY_MULT_SUNNY, daylightWeight);
+		return CLEAR_DRYING_SPEED_MULT;
 	}
 
-	float GetPostRainDryWeatherMultiplier(const RE::TESWeather* currentWeather, const RE::TESWeather* lastWeather, float currentWeight, float lastWeight)
+	EffectiveDryingHours GetWeatherDrivenDryingHours(
+		const RE::TESWeather* currentWeather,
+		const RE::TESWeather* lastWeather,
+		float currentWeight,
+		float lastWeight,
+		float rainEventWeight)
 	{
-		const float daylightWeight = GetDaylightWeight();
-		const float currentDryMult = GetPostRainDryWeatherMultiplierSingle(currentWeather, daylightWeight);
-		const float lastDryMult = GetPostRainDryWeatherMultiplierSingle(lastWeather, daylightWeight);
-		const float normalizedCurrentWeight = std::clamp(currentWeight, 0.0f, 1.0f);
-		const float normalizedLastWeight = std::clamp(lastWeight, 0.0f, 1.0f);
-		const float weightSum = normalizedCurrentWeight + normalizedLastWeight;
-		if (weightSum <= 1e-3f) {
-			return currentDryMult;
-		}
+		EffectiveDryingHours result{};
+		const float safeCurrentWeight = std::clamp(currentWeight, 0.0f, 1.0f);
+		const float safeLastWeight = std::clamp(lastWeight, 0.0f, 1.0f);
+		const float totalWeight = std::max(safeCurrentWeight + safeLastWeight, 1e-3f);
+		const float weatherSpeed =
+			(GetWeatherDryingSpeedMultiplier(currentWeather) * safeCurrentWeight +
+				GetWeatherDryingSpeedMultiplier(lastWeather) * safeLastWeight) /
+			totalWeight;
+		const float seasonSpeed = GetSeasonDryingSpeedMultiplier();
+		const float combinedSpeed = std::clamp(weatherSpeed * seasonSpeed, 0.55f, 1.35f);
 
-		const float blendedDryMult = (currentDryMult * normalizedCurrentWeight + lastDryMult * normalizedLastWeight) / weightSum;
-		return std::clamp(blendedDryMult, 0.5f, 1.25f);
+		const float rainWeight = std::clamp(rainEventWeight, 0.0f, 1.0f);
+		const float baseNonPuddleHours = std::lerp(
+			WEATHER_DRIVEN_NON_PUDDLE_MIN_HOURS,
+			WEATHER_DRIVEN_NON_PUDDLE_MAX_HOURS,
+			rainWeight);
+
+		result.stoneHours = std::clamp(
+			(baseNonPuddleHours - 3.0f) / combinedSpeed,
+			WEATHER_DRIVEN_NON_PUDDLE_MIN_HOURS,
+			WEATHER_DRIVEN_NON_PUDDLE_MAX_HOURS);
+		result.grassHours = std::clamp(
+			baseNonPuddleHours / combinedSpeed,
+			WEATHER_DRIVEN_NON_PUDDLE_MIN_HOURS,
+			WEATHER_DRIVEN_NON_PUDDLE_MAX_HOURS);
+		result.dirtHours = std::clamp(
+			(baseNonPuddleHours + 3.0f) / combinedSpeed,
+			WEATHER_DRIVEN_NON_PUDDLE_MIN_HOURS,
+			WEATHER_DRIVEN_NON_PUDDLE_MAX_HOURS);
+
+		// Enforce drying order: stone/wood first, grass next, dirt last.
+		result.grassHours = std::max(result.grassHours, result.stoneHours);
+		result.dirtHours = std::max(result.dirtHours, result.grassHours);
+
+		const float basePuddleHours = std::lerp(
+			WEATHER_DRIVEN_PUDDLE_MIN_HOURS,
+			WEATHER_DRIVEN_PUDDLE_MAX_HOURS,
+			rainWeight);
+		result.puddleHours = std::clamp(
+			basePuddleHours / combinedSpeed,
+			WEATHER_DRIVEN_PUDDLE_MIN_HOURS,
+			WEATHER_DRIVEN_PUDDLE_MAX_HOURS);
+
+		return result;
 	}
 
-	float ComputePostRainDurationSeconds(float minSeconds, float maxSeconds, float eventWeight, float weatherDryMultiplier)
+	bool JsonValueToBool(const json& value, bool fallback)
 	{
-		const float baseDuration = std::lerp(minSeconds, maxSeconds, std::clamp(eventWeight, 0.0f, 1.0f));
-		const float safeDryMultiplier = std::max(weatherDryMultiplier, 1e-3f);
-		const float weatherScaledDuration = baseDuration / safeDryMultiplier;
-		return std::clamp(weatherScaledDuration, minSeconds, maxSeconds);
+		if (value.is_boolean()) {
+			return value.get<bool>();
+		}
+		if (value.is_number()) {
+			return value.get<double>() != 0.0;
+		}
+		return fallback;
 	}
 
 	void ApplyPostRainDepthEnvelope(float& depth, float startDepth, float maxDepth, float elapsedSeconds, float durationSeconds)
@@ -361,9 +435,9 @@ namespace
 		settings.MinRainWetness = ClampFiniteOrDefault(settings.MinRainWetness, 0.0f, 1.0f, 0.65f);
 		settings.SkinWetness = ClampFiniteOrDefault(settings.SkinWetness, 0.0f, 1.0f, 0.95f);
 
-		settings.StoneDryingMultiplier = ClampFiniteOrDefault(settings.StoneDryingMultiplier, 0.05f, 4.0f, 1.6f);
-		settings.DirtDryingMultiplier = ClampFiniteOrDefault(settings.DirtDryingMultiplier, 0.05f, 4.0f, 1.0f);
-		settings.GrassDryingMultiplier = ClampFiniteOrDefault(settings.GrassDryingMultiplier, 0.05f, 4.0f, 1.2f);
+		settings.StoneDryingMultiplier = ClampFiniteOrDefault(settings.StoneDryingMultiplier, DRYING_HOURS_MIN, DRYING_HOURS_MAX, 15.0f);
+		settings.DirtDryingMultiplier = ClampFiniteOrDefault(settings.DirtDryingMultiplier, DRYING_HOURS_MIN, DRYING_HOURS_MAX, 24.0f);
+		settings.GrassDryingMultiplier = ClampFiniteOrDefault(settings.GrassDryingMultiplier, DRYING_HOURS_MIN, DRYING_HOURS_MAX, 20.0f);
 
 		settings.RaindropFxRange = ClampFiniteOrDefault(settings.RaindropFxRange, 0.0f, 5000.0f, 1000.0f);
 		settings.RaindropGridSize = ClampFiniteOrDefault(settings.RaindropGridSize, MIN_RAINDROP_GRID_SIZE, 100.0f, 4.0f);
@@ -931,20 +1005,31 @@ void WetnessEffects::DrawSettings()
 
 	if (ImGui::TreeNodeEx("Advanced", ImGuiTreeNodeFlags_DefaultOpen)) {
 		const auto drawDryingSlider = [](const char* label, float& value, const char* tooltip) {
-			ImGui::SliderFloat(label, &value, 0.25f, 2.5f, "%.2f");
+			ImGui::SliderFloat(label, &value, DRYING_HOURS_MIN, DRYING_HOURS_MAX, "%.0f h", ImGuiSliderFlags_AlwaysClamp);
 			if (auto _tt = Util::HoverTooltipWrapper()) {
 				ImGui::TextUnformatted(tooltip);
 			}
 		};
+
+		ImGui::Checkbox("Enable Weather-Driven Drying", &enableWeatherDrivenDryingModel);
+		if (auto _tt = Util::HoverTooltipWrapper()) {
+			ImGui::TextUnformatted("Automatically sets drying by rain strength, weather, and season. When enabled, manual drying sliders are ignored.");
+		}
 
 		ImGui::SliderFloat("Weather transition speed", &settings.WeatherTransitionSpeed, 0.2f, 8.0f);
 		markPresetDirtyIfEdited();
 		if (auto _tt = Util::HoverTooltipWrapper()) {
 			ImGui::Text("How fast wetness appears when raining and how quickly it dries after rain has stopped.");
 		}
-		drawDryingSlider("Stone Drying", settings.StoneDryingMultiplier, "Post-rain drying response for hard/stone-like surfaces. Higher values dry faster.");
-		drawDryingSlider("Grass Drying", settings.GrassDryingMultiplier, "Post-rain drying response for grass/vegetation-like surfaces. Higher values dry faster.");
-		drawDryingSlider("Dirt Drying", settings.DirtDryingMultiplier, "Post-rain drying response for soil/dirt-like surfaces. Lower values keep wetness longer.");
+		ImGui::BeginDisabled(enableWeatherDrivenDryingModel);
+		drawDryingSlider("Stone Drying Time", settings.StoneDryingMultiplier, "Target dry-out time for hard/stone-like surfaces after rain stops.");
+		drawDryingSlider("Grass Drying Time", settings.GrassDryingMultiplier, "Target dry-out time for grass/vegetation-like surfaces after rain stops.");
+		drawDryingSlider("Dirt Drying Time", settings.DirtDryingMultiplier, "Target dry-out time for soil/dirt-like surfaces after rain stops.");
+		drawDryingSlider("Puddle Drying Time", puddleDryingHours, "Target dry-out time for puddles after rain stops.");
+		ImGui::EndDisabled();
+		if (enableWeatherDrivenDryingModel) {
+			ImGui::TextDisabled("Manual drying sliders are disabled while weather-driven drying is enabled.");
+		}
 
 		ImGui::SliderFloat("Min Rain Wetness", &settings.MinRainWetness, 0.0f, 0.9f);
 		if (auto _tt = Util::HoverTooltipWrapper()) {
@@ -1295,22 +1380,34 @@ WetnessEffects::PerFrame WetnessEffects::GetCommonBufferData() const
 		}
 	}
 
-	const float weatherRainTransitionWeight = IsRainyWeather(currentWeather) ? currentWeight : 0.0f;
+	const float currentRainWeight = IsRainyWeather(currentWeather) ? currentWeight : 0.0f;
+	const float lastRainWeight = IsRainyWeather(lastWeather) ? lastWeight : 0.0f;
+	// Keep rain-driven visuals transition-aware: if either current or last weather is rainy,
+	// blend both contributions so rain fades out/in over the handoff instead of hard-dropping.
+	const float weatherRainTransitionWeight = std::clamp(currentRainWeight + lastRainWeight, 0.0f, 1.0f);
 	// Prevent long raindrop linger near transition end by requiring both:
 	// - active precipitation FX intensity
 	// - weather-level rain state
 	const float currentRainingVisual = std::min(currentRainingFX, currentRainingAccum);
 	const float lastRainingVisual = std::min(lastRainingFX, lastRainingAccum);
 	const float blendedRainingAccum = std::clamp(currentRainingAccum * currentWeight + lastRainingAccum * lastWeight, 0.0f, 1.0f);
-	const float blendedRainingVisualWeighted = std::clamp(currentRainingVisual * currentWeight + lastRainingVisual * lastWeight, 0.0f, 1.0f);
-	const float blendedRainingVisual = currentRainingVisual * std::clamp(weatherRainTransitionWeight, 0.0f, 1.0f);
+	const float blendedRainingVisualWeighted = std::clamp(currentRainingVisual * currentRainWeight + lastRainingVisual * lastRainWeight, 0.0f, 1.0f);
+	const float blendedRainingVisual = blendedRainingVisualWeighted;
 	const float raindropTransitionFalloff = std::clamp(settings.RaindropTransitionFalloff, 0.5f, 6.0f);
 	const float blendedRainingVisualShaped = std::pow(std::clamp(blendedRainingVisual, 0.0f, 1.0f), raindropTransitionFalloff);
-	const float blendedRainingVisualSnapped = (weatherRainTransitionWeight > 0.02f && blendedRainingVisualShaped >= 0.01f) ? blendedRainingVisualShaped : 0.0f;
+	const float blendedRainingVisualSnapped = (weatherRainTransitionWeight > 0.005f && blendedRainingVisualShaped >= 0.0025f) ? blendedRainingVisualShaped : 0.0f;
 	const bool hasPrecipitationFxSignal = (currentRainingFX > 0.0f) || (lastRainingFX > 0.0f);
-	const bool rainingByWeatherMetadata = engineRaining && (weatherRainTransitionWeight > 0.05f) && (blendedRainingAccum > 0.02f);
+	const bool rainingByWeatherMetadata =
+		(engineRaining && blendedRainingAccum > 0.0f) ||
+		((weatherRainTransitionWeight > 0.01f) && (blendedRainingAccum > 0.01f));
 	const bool rainingNow = (blendedRainingVisualSnapped > 0.0f) || rainingByWeatherMetadata;
 	const float rainExposureSource = hasPrecipitationFxSignal ? blendedRainingVisualWeighted : blendedRainingAccum;
+	const auto getEffectiveDryingHours = [&](float rainEventWeight) {
+		if (enableWeatherDrivenDryingModel) {
+			return GetWeatherDrivenDryingHours(currentWeather, lastWeather, currentWeight, lastWeight, rainEventWeight);
+		}
+		return GetManualDryingHours(settings, puddleDryingHours);
+	};
 
 	double deltaGameSeconds = 0.0;
 	const bool gamePaused = globals::game::ui && globals::game::ui->GameIsPaused();
@@ -1342,13 +1439,11 @@ WetnessEffects::PerFrame WetnessEffects::GetCommonBufferData() const
 		float blendedPuddleRate = puddleCurrentRate * currentWeight + puddleLastRate * lastWeight;
 		const float transitionSpeed = std::clamp(settings.WeatherTransitionSpeed, MIN_TRANSITION_SPEED, MAX_TRANSITION_SPEED);
 		const float scaledDeltaSeconds = static_cast<float>(deltaGameSeconds) * transitionSpeed;
-		float postRainWeatherDryMultiplier = 1.0f;
 
 		// Do not keep increasing wetness/puddles when rain is effectively off for the current render context.
 		if (!rainingNow) {
 			blendedWetnessRate = std::min(blendedWetnessRate, 0.0f);
 			blendedPuddleRate = std::min(blendedPuddleRate, 0.0f);
-			postRainWeatherDryMultiplier = GetPostRainDryWeatherMultiplier(currentWeather, lastWeather, currentWeight, lastWeight);
 		}
 
 		// Track rain-event memory (duration-weighted intensity) for post-rain persistence.
@@ -1395,18 +1490,19 @@ WetnessEffects::PerFrame WetnessEffects::GetCommonBufferData() const
 		ApplyDepthDelta(scaledDeltaSeconds, blendedWetnessRate, blendedPuddleRate, runtimeState.wetnessDepth, runtimeState.puddleDepth);
 
 		if (!rainingNow && (runtimeState.wetnessDepth > 0.0f || runtimeState.puddleDepth > 0.0f)) {
-			const float eventWeight = std::clamp(runtimeState.postRainEventWeight, 0.0f, 1.0f);
 			const float elapsedSeconds = std::max(0.0f, runtimeState.postRainElapsedSeconds);
-			const float wetnessDurationSeconds = ComputePostRainDurationSeconds(
-				MIN_SURFACE_POST_RAIN_SECONDS,
-				MAX_SURFACE_POST_RAIN_SECONDS,
-				eventWeight,
-				postRainWeatherDryMultiplier);
-			const float puddleDurationSeconds = ComputePostRainDurationSeconds(
-				MIN_PUDDLE_POST_RAIN_SECONDS,
-				MAX_PUDDLE_POST_RAIN_SECONDS,
-				eventWeight,
-				postRainWeatherDryMultiplier);
+			// Surface dry-out cap:
+			// - weather-driven model: non-puddles dry within 3..18h
+			// - manual model: uses slider values
+			const EffectiveDryingHours effectiveDrying = getEffectiveDryingHours(runtimeState.postRainEventWeight);
+			const float slowestSurfaceHours = std::max(
+				std::max(effectiveDrying.stoneHours, effectiveDrying.grassHours),
+				effectiveDrying.dirtHours);
+			const float wetnessDurationSeconds = DryingHoursToSeconds(slowestSurfaceHours);
+			// Puddle dry-out cap:
+			// - weather-driven model: 12..24h
+			// - manual model: explicit slider control
+			const float puddleDurationSeconds = DryingHoursToSeconds(effectiveDrying.puddleHours);
 
 			ApplyPostRainDepthEnvelope(
 				runtimeState.wetnessDepth,
@@ -1471,10 +1567,20 @@ WetnessEffects::PerFrame WetnessEffects::GetCommonBufferData() const
 
 	data.settings = settings;
 	SanitizeToggleSettings(data.settings);
+	// Raindrops should stop when rain weather transition is complete (weight reaches zero),
+	// not immediately when current weather pointer flips.
+	if (weatherRainTransitionWeight <= 0.005f) {
+		data.settings.EnableRaindropFx = 0u;
+	}
 	const float modernReflectionScale = SanitizeReflectionScale(modernWetIndirectSpecularScale, MAX_MODERN_WET_REFLECTION_UI_SCALE, DEFAULT_WET_INDIRECT_SPECULAR_SCALE);
 	const float legacyReflectionScale = SanitizeReflectionScale(legacyWetIndirectSpecularScale, MAX_LEGACY_WET_REFLECTION_SCALE, DEFAULT_LEGACY_WET_INDIRECT_SPECULAR_SCALE);
 	SyncActiveReflectionScale(data.settings, modernReflectionScale, legacyReflectionScale);
 	SanitizeShaderFacingSettings(data.settings);
+	const float dryingEventWeight = rainingNow ? runtimeState.rainEventWeight : runtimeState.postRainEventWeight;
+	const EffectiveDryingHours effectiveDryingHours = getEffectiveDryingHours(dryingEventWeight);
+	data.settings.StoneDryingMultiplier = effectiveDryingHours.stoneHours;
+	data.settings.GrassDryingMultiplier = effectiveDryingHours.grassHours;
+	data.settings.DirtDryingMultiplier = effectiveDryingHours.dirtHours;
 	data.settings.MaxShoreWetness = data.settings.EnableWetnessEffects ? data.settings.MaxShoreWetness : 0.0f;
 	data.settings.RaindropChance *= data.Raining * data.Raining;
 	data.settings.RaindropChance = std::clamp(data.settings.RaindropChance, 0.0f, 1.0f);
@@ -1561,9 +1667,31 @@ void WetnessEffects::LoadSettings(json& o_json)
 		}
 	}
 
+	const bool hasDryingHoursSemantics = o_json.value("DryingHoursSemanticsV2", false);
+	const bool hasLegacyDryingFields =
+		o_json.contains("StoneDryingMultiplier") ||
+		o_json.contains("DirtDryingMultiplier") ||
+		o_json.contains("GrassDryingMultiplier");
+	if (!hasDryingHoursSemantics && hasLegacyDryingFields &&
+	    settings.StoneDryingMultiplier <= 4.0f &&
+	    settings.DirtDryingMultiplier <= 4.0f &&
+	    settings.GrassDryingMultiplier <= 4.0f) {
+		// Migrate legacy multiplier sliders (0.25..2.5-ish) to hour semantics (1..24h).
+		settings.StoneDryingMultiplier = LegacyDryingMultiplierToHours(settings.StoneDryingMultiplier, 15.0f);
+		settings.DirtDryingMultiplier = LegacyDryingMultiplierToHours(settings.DirtDryingMultiplier, 24.0f);
+		settings.GrassDryingMultiplier = LegacyDryingMultiplierToHours(settings.GrassDryingMultiplier, 20.0f);
+	}
+
+	puddleDryingHours = o_json.value("PuddleDryingHours", DRYING_HOURS_MAX);
+	puddleDryingHours = ClampDryingHours(puddleDryingHours, DRYING_HOURS_MAX);
+	enableWeatherDrivenDryingModel = o_json.contains("EnableWeatherDrivenDryingModel") ?
+	                                     JsonValueToBool(o_json["EnableWeatherDrivenDryingModel"], true) :
+	                                     true;
+
 	SanitizeToggleSettings(settings);
 	SanitizePersistentReflectionSettings(settings, modernWetIndirectSpecularScale, legacyWetIndirectSpecularScale);
 	SanitizeShaderFacingSettings(settings);
+	puddleDryingHours = ClampDryingHours(puddleDryingHours, DRYING_HOURS_MAX);
 	ResetRuntimeState();
 
 	// Auto-detect which preset matches the loaded settings
@@ -1579,9 +1707,13 @@ void WetnessEffects::LoadSettings(json& o_json)
 void WetnessEffects::SaveSettings(json& o_json)
 {
 	SanitizePersistentReflectionSettings(settings, modernWetIndirectSpecularScale, legacyWetIndirectSpecularScale);
+	puddleDryingHours = ClampDryingHours(puddleDryingHours, DRYING_HOURS_MAX);
 	o_json = settings;
 	o_json["ModernWetIndirectSpecularScale"] = modernWetIndirectSpecularScale;
 	o_json["LegacyWetIndirectSpecularScale"] = legacyWetIndirectSpecularScale;
+	o_json["PuddleDryingHours"] = puddleDryingHours;
+	o_json["DryingHoursSemanticsV2"] = true;
+	o_json["EnableWeatherDrivenDryingModel"] = enableWeatherDrivenDryingModel;
 
 	o_json["DebugSettings"] = debugSettings;
 }
@@ -1589,6 +1721,8 @@ void WetnessEffects::SaveSettings(json& o_json)
 void WetnessEffects::RestoreDefaultSettings()
 {
 	settings = {};
+	enableWeatherDrivenDryingModel = true;
+	puddleDryingHours = DRYING_HOURS_MAX;
 	modernWetIndirectSpecularScale = DEFAULT_WET_INDIRECT_SPECULAR_SCALE;
 	legacyWetIndirectSpecularScale = DEFAULT_LEGACY_WET_INDIRECT_SPECULAR_SCALE;
 	climatePreset = defaultPreset;
