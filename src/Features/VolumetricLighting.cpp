@@ -5,7 +5,6 @@
 #include <cstdint>
 #include <unordered_map>
 
-#include "RE/B/BSSkyShaderProperty.h"
 #include "RE/N/NiDirectionalLight.h"
 #include "RE/S/Sun.h"
 #include "InteriorSun.h"
@@ -38,10 +37,10 @@ namespace
 		RE::NiColor customColor = { 1.0f, 1.0f, 1.0f };
 	};
 
-	struct SunGlarePropertyState
+	struct WeatherSunGlareState
 	{
-		float baselineBlendValue = 1.0f;
-		float lastAppliedBlendValue = 1.0f;
+		std::uint8_t baseline = 0;
+		std::uint8_t lastApplied = 0;
 		bool initialized = false;
 	};
 
@@ -72,52 +71,51 @@ namespace
 		return state->enablePShaders;
 	}
 
-	std::unordered_map<RE::BSSkyShaderProperty*, SunGlarePropertyState>& GetSunGlarePropertyStateMap()
+	std::unordered_map<RE::TESWeather*, WeatherSunGlareState>& GetSunGlareStateMap()
 	{
-		static std::unordered_map<RE::BSSkyShaderProperty*, SunGlarePropertyState> states{};
+		static std::unordered_map<RE::TESWeather*, WeatherSunGlareState> states{};
 		return states;
 	}
 
-	RE::BSSkyShaderProperty* GetSunGlareProperty(RE::Sun* sun)
+	void ApplyScaledSunGlareToWeather(RE::TESWeather* weather, float glareScale)
 	{
-		if (!sun || !sun->sunGlare)
-			return nullptr;
-
-		return skyrim_cast<RE::BSSkyShaderProperty*>(sun->sunGlare->GetGeometryRuntimeData().shaderProperty.get());
-	}
-
-	void RestoreSunGlarePropertyOverride(RE::Sun* sun)
-	{
-		auto* glareProperty = GetSunGlareProperty(sun);
-		if (!glareProperty)
+		if (!weather)
 			return;
 
-		auto& states = GetSunGlarePropertyStateMap();
-		const auto it = states.find(glareProperty);
-		if (it == states.end() || !it->second.initialized)
-			return;
-
-		glareProperty->fBlendValue = it->second.baselineBlendValue;
-		it->second.lastAppliedBlendValue = it->second.baselineBlendValue;
-	}
-
-	void ApplySunGlarePropertyScale(RE::Sun* sun, float glareScale)
-	{
-		auto* glareProperty = GetSunGlareProperty(sun);
-		if (!glareProperty)
-			return;
-
-		auto& states = GetSunGlarePropertyStateMap();
-		auto& state = states[glareProperty];
-		const bool externalBlend = !state.initialized || !IsNear(glareProperty->fBlendValue, state.lastAppliedBlendValue);
-		if (externalBlend) {
-			state.baselineBlendValue = glareProperty->fBlendValue;
+		auto& states = GetSunGlareStateMap();
+		auto [it, inserted] = states.try_emplace(weather);
+		WeatherSunGlareState& state = it->second;
+		if (inserted || !state.initialized) {
+			state.baseline = weather->data.sunGlare;
+			state.lastApplied = weather->data.sunGlare;
 			state.initialized = true;
 		}
 
-		const float appliedBlendValue = std::max(0.0f, state.baselineBlendValue * glareScale);
-		glareProperty->fBlendValue = appliedBlendValue;
-		state.lastAppliedBlendValue = appliedBlendValue;
+		// Track live game/weather edits unless this is the value we wrote.
+		if (weather->data.sunGlare != state.lastApplied) {
+			state.baseline = weather->data.sunGlare;
+		}
+
+		glareScale = ClampFinite(glareScale, 0.0f, kGodrayIntensityMax, kDefaultGodrayIntensity);
+		const float base = static_cast<float>(state.baseline);
+		const auto scaled = static_cast<long>(std::lround(base * glareScale));
+		const auto applied = static_cast<std::uint8_t>(std::clamp(scaled, 0L, 255L));
+		weather->data.sunGlare = applied;
+		state.lastApplied = applied;
+	}
+
+	void RestoreWeatherSunGlare(RE::TESWeather* weather)
+	{
+		if (!weather)
+			return;
+
+		auto& states = GetSunGlareStateMap();
+		const auto it = states.find(weather);
+		if (it == states.end() || !it->second.initialized)
+			return;
+
+		weather->data.sunGlare = it->second.baseline;
+		it->second.lastApplied = it->second.baseline;
 	}
 
 	bool IsRainWeatherActive(const RE::TESWeather* a_weather, float a_weight)
@@ -245,7 +243,6 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	ExteriorEnabled,
 	DisableWeatherInteractionDuringRain,
 	GodrayIntensity,
-	DebugUseVanillaSunGlarePath,
 	GodrayShaftIntensity,
 	GodrayOpacity,
 	GodraySaturation,
@@ -295,9 +292,6 @@ void VolumetricLighting::DrawGodrayTuningSettings()
 
 	ImGui::SeparatorText("Godray Tuning");
 	const bool glareChanged = drawSlider("Sun Glare Intensity", settings.GodrayIntensity, 0.0f, kGodrayIntensityMax, "Scales the sun glare sprite brightness.");
-	const bool debugGlareModeChanged = ImGui::Checkbox("Debug: Use Vanilla Sun Glare Path", &settings.DebugUseVanillaSunGlarePath);
-	if (auto _tt = Util::HoverTooltipWrapper())
-		ImGui::TextUnformatted("A/B mode: uses origin/dev-style sun glare handling (sun->glareScale) and disables CS glare property override.");
 	drawSlider("Godray Intensity", settings.GodrayShaftIntensity, 0.0f, kGodrayShaftIntensityMax, "Scales volumetric godray shaft brightness.");
 	drawSlider("Godray Opacity", settings.GodrayOpacity, 0.0f, kGodrayOpacityMax, "Controls shaft strength and visibility. 1.0 is default; values above 1.0 boost presence.");
 	drawSlider("Godray Saturation", settings.GodraySaturation, 0.0f, kGodraySaturationMax, "Adjusts weather-driven godray color richness. 1.0 is default.");
@@ -307,7 +301,7 @@ void VolumetricLighting::DrawGodrayTuningSettings()
 	drawSlider("Custom Color Green", settings.CustomColorGreen, 0.0f, 1.0f, "Green channel for custom volumetric color.");
 	drawSlider("Custom Color Blue", settings.CustomColorBlue, 0.0f, 1.0f, "Blue channel for custom volumetric color.");
 
-	if (glareChanged || debugGlareModeChanged) {
+	if (glareChanged) {
 		const float glareScale = ClampFinite(settings.GodrayIntensity, 0.0f, kGodrayIntensityMax, kDefaultGodrayIntensity);
 		if (IsImageSpaceReplacementEnabled() && !IsNear(glareScale, kDefaultGodrayIntensity)) {
 			ApplySunGlareTuning();
@@ -650,16 +644,12 @@ void VolumetricLighting::ApplySunGlareTuning() const
 		return;
 
 	const float glareScale = ClampFinite(settings.GodrayIntensity, 0.0f, kGodrayIntensityMax, kDefaultGodrayIntensity);
-	if (settings.DebugUseVanillaSunGlarePath) {
-		// Debug fallback: origin/dev-style path for A/B validation.
-		RestoreSunGlarePropertyOverride(sky->sun);
-		sky->sun->glareScale = glareScale;
-		return;
-	}
+	ApplyScaledSunGlareToWeather(sky->currentWeather, glareScale);
+	if (sky->lastWeather != sky->currentWeather)
+		ApplyScaledSunGlareToWeather(sky->lastWeather, glareScale);
 
-	// CS path: preserve native occlusion behavior and scale only the glare property output.
+	// Keep engine glare scalar neutral to preserve native occlusion behavior.
 	sky->sun->glareScale = kDefaultGodrayIntensity;
-	ApplySunGlarePropertyScale(sky->sun, glareScale);
 }
 
 void VolumetricLighting::RestoreSunGlareTuning() const
@@ -668,8 +658,10 @@ void VolumetricLighting::RestoreSunGlareTuning() const
 	if (!sky || !sky->sun)
 		return;
 
+	RestoreWeatherSunGlare(sky->currentWeather);
+	if (sky->lastWeather != sky->currentWeather)
+		RestoreWeatherSunGlare(sky->lastWeather);
 	sky->sun->glareScale = kDefaultGodrayIntensity;
-	RestoreSunGlarePropertyOverride(sky->sun);
 }
 
 VolumetricLighting::VolumetricLightingDescriptor* VolumetricLighting::ApplyVolumetricLighting_VolumetricLightingDescriptor_Get::thunk()
