@@ -264,12 +264,4 @@ private:
 	mutable Settings sanitizedSettingsCache{};
 	mutable bool sanitizedSettingsCacheValid = false;
 
-	// Weather wetness calculation result for debug display
-	struct WeatherWetnessResult
-	{
-		float wetness = 0.0f;
-		float puddleWetness = 0.0f;
-	};
-
-	WeatherWetnessResult CalculateWeatherWetness(RE::TESWeather* weather, float weatherPct, bool isCurrentWeather) const;
 };

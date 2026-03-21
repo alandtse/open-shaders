@@ -442,6 +442,18 @@ namespace
 		SyncActiveReflectionScale(settings, modernScale, legacyScale);
 	}
 
+	void SanitizePersistentUiState(
+		WetnessEffects::Settings& settings,
+		float& modernScale,
+		float& legacyScale,
+		float& puddleHours,
+		float& layout)
+	{
+		SanitizePersistentReflectionSettings(settings, modernScale, legacyScale);
+		puddleHours = ClampDryingHours(puddleHours, DRYING_HOURS_MAX);
+		layout = std::clamp(layout, PUDDLE_LAYOUT_MIN, PUDDLE_LAYOUT_MAX);
+	}
+
 	void SanitizeToggleSettings(WetnessEffects::Settings& settings)
 	{
 		settings.EnableWetnessEffects = SanitizeToggle(settings.EnableWetnessEffects);
@@ -1334,45 +1346,6 @@ static void DrawRainTypeLabel(const char* prefix, float rate)
 // Weather/Precipitation Analysis Helpers
 // =====================
 
-WetnessEffects::WeatherWetnessResult WetnessEffects::CalculateWeatherWetness(RE::TESWeather* weather, float weatherPct, bool isCurrentWeather) const
-{
-	WeatherWetnessResult result{};
-
-	if (!weather || !weather->precipitationData || !weather->data.flags.any(RE::TESWeather::WeatherDataFlag::kRainy)) {
-		return result;
-	}
-
-	auto linearstep = [](float edge0, float edge1, float x) {
-		return std::clamp((x - edge0) / (edge1 - edge0), 0.0f, 1.0f);
-	};
-
-	if (isCurrentWeather) {
-		// Current weather uses fade-in logic
-		float fadeValue = weather->data.precipitationBeginFadeIn;
-		float fadeNormalized = fadeValue / 255.0f;
-		float fadeThreshold = 255.0f * (1.0f - fadeNormalized);
-		float weatherProgress = weatherPct * 255.0f;
-
-		if (fadeNormalized == 0.0f) {
-			// No fade-in period, use immediate wetness
-			result.wetness = (weatherPct > 0.1f) ? 1.0f : 0.0f;
-		} else {
-			result.wetness = linearstep(fadeThreshold, 255.0f, weatherProgress);
-		}
-		result.puddleWetness = pow(result.wetness, 2.0f);
-	} else {
-		// Last weather uses fade-out logic
-		float fadeValue = weather->data.precipitationEndFadeOut;
-		float fadeNormalized = fadeValue / 255.0f;
-		float fadeThreshold = 255.0f * fadeNormalized;
-		float weatherProgress = weatherPct * 255.0f;
-
-		result.wetness = 1.0f - linearstep(fadeThreshold, 255.0f, weatherProgress);
-		result.puddleWetness = pow(std::max(result.wetness, 1.0f - weatherPct), 0.25f);
-	}
-	return result;
-}
-
 // Helper function to calculate precipitation rate from shader data and settings
 float WetnessEffects::CalculatePrecipitationRate(float raindropChance, float raindropGridSizeGameUnits, float raindropIntervalSeconds, float mlPerDrop) const
 {
@@ -1833,10 +1806,8 @@ void WetnessEffects::LoadSettings(json& o_json)
 			true;
 
 	SanitizeToggleSettings(settings);
-	SanitizePersistentReflectionSettings(settings, modernWetIndirectSpecularScale, legacyWetIndirectSpecularScale);
+	SanitizePersistentUiState(settings, modernWetIndirectSpecularScale, legacyWetIndirectSpecularScale, puddleDryingHours, puddleLayout);
 	SanitizeShaderFacingSettings(settings);
-	puddleLayout = std::clamp(puddleLayout, PUDDLE_LAYOUT_MIN, PUDDLE_LAYOUT_MAX);
-	puddleDryingHours = ClampDryingHours(puddleDryingHours, DRYING_HOURS_MAX);
 	InvalidateSanitizedSettingsCache();
 	ResetRuntimeState();
 
@@ -1858,9 +1829,7 @@ void WetnessEffects::LoadSettings(json& o_json)
 
 void WetnessEffects::SaveSettings(json& o_json)
 {
-	SanitizePersistentReflectionSettings(settings, modernWetIndirectSpecularScale, legacyWetIndirectSpecularScale);
-	puddleDryingHours = ClampDryingHours(puddleDryingHours, DRYING_HOURS_MAX);
-	puddleLayout = std::clamp(puddleLayout, PUDDLE_LAYOUT_MIN, PUDDLE_LAYOUT_MAX);
+	SanitizePersistentUiState(settings, modernWetIndirectSpecularScale, legacyWetIndirectSpecularScale, puddleDryingHours, puddleLayout);
 	InvalidateSanitizedSettingsCache();
 	o_json = settings;
 	o_json["ModernWetIndirectSpecularScale"] = modernWetIndirectSpecularScale;
@@ -1886,7 +1855,7 @@ void WetnessEffects::RestoreDefaultSettings()
 
 	// Apply the default climate preset to ensure settings reflect the preset values
 	ApplyClimatePreset(climatePreset);
-	SanitizePersistentReflectionSettings(settings, modernWetIndirectSpecularScale, legacyWetIndirectSpecularScale);
+	SanitizePersistentUiState(settings, modernWetIndirectSpecularScale, legacyWetIndirectSpecularScale, puddleDryingHours, puddleLayout);
 	SanitizeShaderFacingSettings(settings);
 	InvalidateSanitizedSettingsCache();
 
