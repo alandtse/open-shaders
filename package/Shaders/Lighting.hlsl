@@ -2508,7 +2508,8 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	if (wetness > 0.0 || puddleWetness > 0.0) {
 		float puddleMaxAngleSafe = max(SharedData::wetnessEffectsSettings.PuddleMaxAngle, 1e-3);
 		float puddleRadiusSafe = max(SharedData::wetnessEffectsSettings.PuddleRadius, 1e-3);
-		float3 puddleCoords = ((input.WorldPosition.xyz + FrameBuffer::CameraPosAdjust[eyeIndex].xyz) * 0.5 + 0.5) * 0.01 / puddleRadiusSafe;
+		float puddleLayoutSafe = max(SharedData::wetnessEffectsSettings.PuddleLayout, 1e-3);
+		float3 puddleCoords = ((input.WorldPosition.xyz + FrameBuffer::CameraPosAdjust[eyeIndex].xyz) * 0.5 + 0.5) * 0.01 / (puddleRadiusSafe * puddleLayoutSafe);
 #		if !defined(SKINNED)
 		float puddleSignal = Random::perlinNoise(puddleCoords) * .5 + .5;
 		puddleSignal = puddleSignal * ((minWetnessAngle / puddleMaxAngleSafe) * SharedData::wetnessEffectsSettings.MaxPuddleWetness * 0.25) + 0.5;
@@ -2567,8 +2568,8 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 		float3 geomNormal = SafeNormalize3(-cross(ddx(input.WorldPosition.xyz), ddy(input.WorldPosition.xyz)), worldNormal);
 		float3 runoffSlopeNormal = SafeNormalize3(lerp(geomNormal, worldNormal, 0.30), worldNormal);
 		float runoffStrength = max(0.0, SharedData::wetnessEffectsSettings.CloseRangeWetnessBoost);
-		float runoffSpeedScale = max(0.0, SharedData::wetnessEffectsSettings.WetVisualPad0);
-		float runoffWidthScale = max(0.25, SharedData::wetnessEffectsSettings.PuddlePatternScale);
+		float runoffSpeedScale = max(0.0, SharedData::wetnessEffectsSettings.RunoffSpeed);
+		float runoffWidthScale = max(0.25, SharedData::wetnessEffectsSettings.RunoffWidth);
 		float slopeBase = 1.0 - saturate(runoffSlopeNormal.z);
 		float slopeMask = saturate((slopeBase - 0.01) * 3.6);
 		// Runoff should be rain/post-rain driven, not shore-driven.

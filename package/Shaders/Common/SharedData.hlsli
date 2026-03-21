@@ -102,13 +102,13 @@ namespace SharedData
 
 		uint ShoreRange;
 		float PuddleRadius;
-		float PuddlePatternScale;
+		float RunoffWidth;
 		float PuddleMaxAngle;
 		float PuddleMinWetness;
 
 		float MinRainWetness;
 		float SkinWetness;
-		float WeatherTransitionSpeed;
+		float PuddleLayout;
 		float StoneDryingMultiplier;
 		float DirtDryingMultiplier;
 		float GrassDryingMultiplier;
@@ -145,7 +145,7 @@ namespace SharedData
 		float WetDarkeningStrength;
 		float WetColorSaturation;
 		float WetHighlightReduction;
-		float WetVisualPad0;
+		float RunoffSpeed;
 	};
 
 	struct SkylightingSettings

@@ -36,7 +36,8 @@ public:
 		float MaxShoreWetness = 1.0f;
 		uint ShoreRange = 32;
 		float PuddleRadius = 1.0f;
-		float PuddlePatternScale = 1.0f;
+		// Runoff Width tuning (keeps original CB slot/order).
+		float RunoffWidth = 1.0f;
 		float PuddleMaxAngle = 0.95f;
 		float PuddleMinWetness = 0.85f;
 		float MinRainWetness = 0.65f;
@@ -80,8 +81,8 @@ public:
 		float WetDarkeningStrength = 1.0f;
 		float WetColorSaturation = 1.0f;
 		float WetHighlightReduction = 1.0f;
-		// Runoff Speed tuning (reuses prior padding slot).
-		float WetVisualPad0 = 1.0f;
+		// Runoff Speed tuning (keeps original CB slot/order).
+		float RunoffSpeed = 1.0f;
 	};
 
 	struct alignas(16) PerFrame
@@ -110,6 +111,7 @@ public:
 	Settings settings;
 	bool enableWeatherDrivenDryingModel = true;
 	float puddleDryingHours = 24.0f;
+	float puddleLayout = 1.0f;
 	float modernWetIndirectSpecularScale = 0.05f;
 	float legacyWetIndirectSpecularScale = 0.0145f;
 	// Climate preset system
