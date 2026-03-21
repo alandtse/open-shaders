@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Buffer.h"
+#include <cstddef>
 
 struct WetnessEffects : Feature
 {
@@ -84,6 +85,73 @@ public:
 		// Runoff Speed tuning (keeps original CB slot/order).
 		float RunoffSpeed = 1.0f;
 	};
+	static_assert(sizeof(Settings) == 176, "WetnessEffects::Settings layout changed; update wetness shader/CB contract.");
+	static_assert(offsetof(Settings, WeatherTransitionSpeed) == 44, "WetnessEffects::Settings WeatherTransitionSpeed offset changed.");
+	static_assert(offsetof(Settings, EnableRaindropFx) == 60, "WetnessEffects::Settings EnableRaindropFx offset changed.");
+	static_assert(offsetof(Settings, WetIndirectSpecularScale) == 88, "WetnessEffects::Settings WetIndirectSpecularScale offset changed.");
+	static_assert(offsetof(Settings, RaindropGridSize) == 96, "WetnessEffects::Settings RaindropGridSize offset changed.");
+	static_assert(offsetof(Settings, RippleLifetime) == 136, "WetnessEffects::Settings RippleLifetime offset changed.");
+	static_assert(offsetof(Settings, EnableDualPuddleModel) == 152, "WetnessEffects::Settings EnableDualPuddleModel offset changed.");
+	static_assert(offsetof(Settings, RunoffSpeed) == 172, "WetnessEffects::Settings RunoffSpeed offset changed.");
+
+	// Shader-facing wetness settings layout.
+	// Keep this binary-compatible with Settings while exposing shader semantics directly.
+	struct ShaderSettings
+	{
+		uint EnableWetnessEffects = true;
+		float MaxRainWetness = 1.0f;
+		float MaxPuddleWetness = 2.5f;
+		float MaxShoreWetness = 1.0f;
+		uint ShoreRange = 32;
+		float PuddleRadius = 1.0f;
+		float RunoffWidth = 1.0f;
+		float PuddleMaxAngle = 0.95f;
+		float PuddleMinWetness = 0.85f;
+		float MinRainWetness = 0.65f;
+		float SkinWetness = 0.95f;
+		float PuddleLayout = 1.0f;
+		float StoneDryingMultiplier = 15.0f;
+		float DirtDryingMultiplier = 24.0f;
+		float GrassDryingMultiplier = 20.0f;
+
+		uint EnableRaindropFx = true;
+		uint EnableSplashes = true;
+		uint EnableRipples = true;
+		uint EnableVanillaRipples = false;
+		uint EnableLegacyRainBehavior = false;
+		uint EnableModernWetReflection = true;
+		uint EnableLegacyWetReflection = false;
+		float WetIndirectSpecularScale = 0.05f;
+		float RaindropFxRange = 1000.f;
+		float RaindropGridSize = 4.f;
+		float RaindropInterval = 1.0f;
+		float RaindropChance = 1.0f;
+		float SplashesLifetime = 10.0f;
+		float SplashesStrength = 1.05f;
+		float SplashesMinRadius = .3f;
+		float SplashesMaxRadius = .5f;
+		float RippleStrength = 1.f;
+		float RippleRadius = 1.f;
+		float RippleBreadth = .5f;
+		float RippleLifetime = .5f;
+
+		float PostRainPuddleWaterStrength = 0.8f;
+		float CloseRangeWetnessBoost = 1.0f;
+		float RaindropTransitionFalloff = 2.0f;
+		uint EnableDualPuddleModel = true;
+		float PuddleDepthBlend = 0.5f;
+		float WetDarkeningStrength = 1.0f;
+		float WetColorSaturation = 1.0f;
+		float WetHighlightReduction = 1.0f;
+		float RunoffSpeed = 1.0f;
+	};
+	static_assert(sizeof(ShaderSettings) == sizeof(Settings), "WetnessEffects::ShaderSettings must stay binary-compatible with Settings.");
+	static_assert(offsetof(ShaderSettings, PuddleLayout) == offsetof(Settings, WeatherTransitionSpeed),
+		"WetnessEffects::ShaderSettings::PuddleLayout must match Settings::WeatherTransitionSpeed offset.");
+	static_assert(offsetof(ShaderSettings, EnableRaindropFx) == offsetof(Settings, EnableRaindropFx),
+		"WetnessEffects::ShaderSettings toggle offsets must match Settings.");
+	static_assert(offsetof(ShaderSettings, WetIndirectSpecularScale) == offsetof(Settings, WetIndirectSpecularScale),
+		"WetnessEffects::ShaderSettings reflection offsets must match Settings.");
 
 	struct alignas(16) PerFrame
 	{
@@ -92,9 +160,11 @@ public:
 		float Raining;
 		float Wetness;
 		float PuddleWetness;
-		Settings settings;
+		ShaderSettings settings;
 	};
 	STATIC_ASSERT_ALIGNAS_16(PerFrame);
+	static_assert(offsetof(PerFrame, settings) == 80, "WetnessEffects::PerFrame settings offset changed.");
+	static_assert(sizeof(PerFrame) == 256, "WetnessEffects::PerFrame size changed; update wetness shader/CB contract.");
 	static_assert((sizeof(PerFrame) % 16) == 0, "WetnessEffects::PerFrame must stay 16-byte sized");
 
 	struct DebugSettings
@@ -162,8 +232,6 @@ public:
 	// Constants and utilities for rain intensity calculations
 	static constexpr float MAX_RAIN_PARTICLE_DENSITY = 3.0f;
 
-	// Helper function to extract rain intensity from precipitation object and weather
-	static float GetRainIntensity(RE::NiPointer<RE::BSGeometry> precipObject, RE::TESWeather* weather);  // Helper function to calculate precipitation rate from shader data and settings
 	float CalculatePrecipitationRate(float raindropChance, float raindropGridSizeGameUnits, float raindropIntervalSeconds, float mlPerDrop = 0.01f) const;
 	static const ClimateSettings& GetClimateSettings(ClimatePreset preset);
 	void ApplyClimatePreset(ClimatePreset preset);

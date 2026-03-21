@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstring>
 
 namespace
 {
@@ -290,6 +291,31 @@ namespace
 		return fallback;
 	}
 
+	template <class T>
+	T JsonValueOr(const json& root, const char* key, T fallback)
+	{
+		if (!root.is_object()) {
+			return fallback;
+		}
+		const auto it = root.find(key);
+		if (it == root.end()) {
+			return fallback;
+		}
+		try {
+			return it->get<T>();
+		} catch (...) {
+			return fallback;
+		}
+	}
+
+	WetnessEffects::ShaderSettings MakeShaderSettings(const WetnessEffects::Settings& settings)
+	{
+		WetnessEffects::ShaderSettings shaderSettings{};
+		static_assert(sizeof(shaderSettings) == sizeof(settings), "Wetness settings binary layout mismatch.");
+		std::memcpy(&shaderSettings, &settings, sizeof(shaderSettings));
+		return shaderSettings;
+	}
+
 	void ApplyPostRainDepthEnvelope(float& depth, float startDepth, float maxDepth, float elapsedSeconds, float durationSeconds)
 	{
 		if (durationSeconds <= 0.0f) {
@@ -388,8 +414,9 @@ namespace
 		return std::clamp(value, 0.0f, maxValue);
 	}
 
+	template <class TSettings>
 	void SyncActiveReflectionScale(
-		WetnessEffects::Settings& settings,
+		TSettings& settings,
 		float modernScale,
 		float legacyScale)
 	{
@@ -1307,22 +1334,6 @@ static void DrawRainTypeLabel(const char* prefix, float rate)
 // Weather/Precipitation Analysis Helpers
 // =====================
 
-float WetnessEffects::GetRainIntensity(RE::NiPointer<RE::BSGeometry> precipObject, RE::TESWeather* weather)
-{
-	if (!precipObject || !weather || !weather->precipitationData) {
-		return 0.0f;
-	}
-
-	if (!GetRainEmitterFromPrecipGeometry(precipObject.get())) {
-		return 0.0f;
-	}
-
-	auto maxDensity = weather->precipitationData->GetSettingValue(RE::BGSShaderParticleGeometryData::DataID::kParticleDensity).f;  // Use weather particle density as authoritative source for rain intensity
-	// This provides consistent intensity scaling based on weather type (1-3 scale)
-	// Note: rain->density equals maxDensity when fully active
-	return (maxDensity > 0.0f) ? (maxDensity / MAX_RAIN_PARTICLE_DENSITY) : 0.0f;
-}
-
 WetnessEffects::WeatherWetnessResult WetnessEffects::CalculateWeatherWetness(RE::TESWeather* weather, float weatherPct, bool isCurrentWeather) const
 {
 	WeatherWetnessResult result{};
@@ -1460,21 +1471,25 @@ WetnessEffects::PerFrame WetnessEffects::GetCommonBufferData() const
 
 		if (fullSkyMode) {
 			if (auto precip = sky->precip) {
-				auto precipObject = precip->currentPrecip;
-				if (!precipObject) {
-					precipObject = precip->lastPrecip;
+				RE::BSParticleShaderRainEmitter* currentRainEmitter = nullptr;
+				RE::BSParticleShaderRainEmitter* lastRainEmitter = nullptr;
+				if (precip->currentPrecip) {
+					currentRainEmitter = GetRainEmitterFromPrecipGeometry(precip->currentPrecip.get());
 				}
-				if (precipObject) {
-					if (auto* rainEmitter = GetRainEmitterFromPrecipGeometry(precipObject.get())) {
-						data.OcclusionViewProj = rainEmitter->occlusionProjection;
-					}
+				if (precip->lastPrecip) {
+					lastRainEmitter = GetRainEmitterFromPrecipGeometry(precip->lastPrecip.get());
 				}
 
-				if (precip->currentPrecip && currentWeather) {
-					currentRainingFX = GetRainIntensity(precip->currentPrecip, currentWeather);
+				auto* rainEmitter = currentRainEmitter ? currentRainEmitter : lastRainEmitter;
+				if (rainEmitter) {
+					data.OcclusionViewProj = rainEmitter->occlusionProjection;
 				}
-				if (precip->lastPrecip && lastWeather) {
-					lastRainingFX = GetRainIntensity(precip->lastPrecip, lastWeather);
+
+				if (currentRainEmitter && currentWeather) {
+					currentRainingFX = GetWeatherRainIntensity(currentWeather);
+				}
+				if (lastRainEmitter && lastWeather) {
+					lastRainingFX = GetWeatherRainIntensity(lastWeather);
 				}
 			}
 		}
@@ -1508,7 +1523,7 @@ WetnessEffects::PerFrame WetnessEffects::GetCommonBufferData() const
 		}
 		return GetManualDryingHours(settings, puddleDryingHours);
 	};
-	EffectiveDryingHours effectiveDryingHours = getEffectiveDryingHours(rainingNow ? runtimeState.rainEventWeight : runtimeState.postRainEventWeight);
+	EffectiveDryingHours effectiveDryingHours{};
 
 	double deltaGameSeconds = 0.0;
 	const bool gamePaused = globals::game::ui && globals::game::ui->GameIsPaused();
@@ -1669,7 +1684,12 @@ WetnessEffects::PerFrame WetnessEffects::GetCommonBufferData() const
 		rainTimer += (size_t)(RE::GetSecondsSinceLastFrame() * 1000);  // BSTimer::delta is always 0 for some reason
 	data.Time = rainTimer / 1000.f;
 
-	data.settings = GetSanitizedSettings();
+	if (!canAdvanceWetnessTime) {
+		const float dryingEventWeight = rainingNow ? runtimeState.rainEventWeight : runtimeState.postRainEventWeight;
+		effectiveDryingHours = getEffectiveDryingHours(dryingEventWeight);
+	}
+
+	data.settings = MakeShaderSettings(GetSanitizedSettings());
 	// Raindrops should stop when rain weather transition is complete (weight reaches zero),
 	// not immediately when current weather pointer flips.
 	if (weatherRainTransitionWeight <= 0.005f) {
@@ -1679,9 +1699,9 @@ WetnessEffects::PerFrame WetnessEffects::GetCommonBufferData() const
 	const float legacyReflectionScale = SanitizeReflectionScale(legacyWetIndirectSpecularScale, MAX_LEGACY_WET_REFLECTION_SCALE, DEFAULT_LEGACY_WET_INDIRECT_SPECULAR_SCALE);
 	SyncActiveReflectionScale(data.settings, modernReflectionScale, legacyReflectionScale);
 	const float clampedPuddleLayout = std::clamp(puddleLayout, PUDDLE_LAYOUT_MIN, PUDDLE_LAYOUT_MAX);
-	// Reuse the shader-only wetness CB slot (former WeatherTransitionSpeed) for puddle layout.
+	// Shader CB carries puddle layout in its dedicated shader-facing field.
 	// CPU simulation above still uses settings.WeatherTransitionSpeed.
-	data.settings.WeatherTransitionSpeed = clampedPuddleLayout;
+	data.settings.PuddleLayout = clampedPuddleLayout;
 	data.settings.StoneDryingMultiplier = effectiveDryingHours.stoneHours;
 	data.settings.GrassDryingMultiplier = effectiveDryingHours.grassHours;
 	data.settings.DirtDryingMultiplier = effectiveDryingHours.dirtHours;
@@ -1720,30 +1740,42 @@ void WetnessEffects::Prepass()
 
 void WetnessEffects::LoadSettings(json& o_json)
 {
-	settings = o_json;
-	puddleLayout = o_json.value("PuddleLayout", 1.0f);
+	const bool isObject = o_json.is_object();
+	settings = {};
+	if (isObject) {
+		try {
+			settings = o_json.get<Settings>();
+		} catch (const std::exception& e) {
+			logger::warn("[{}] Failed to parse wetness settings object ({}); using defaults.", GetName(), e.what());
+			settings = {};
+		}
+	} else {
+		logger::warn("[{}] Wetness settings root is not an object; using defaults.", GetName());
+	}
+
+	puddleLayout = JsonValueOr<float>(o_json, "PuddleLayout", 1.0f);
 	puddleLayout = std::clamp(puddleLayout, PUDDLE_LAYOUT_MIN, PUDDLE_LAYOUT_MAX);
 	modernWetIndirectSpecularScale = DEFAULT_WET_INDIRECT_SPECULAR_SCALE;
 	legacyWetIndirectSpecularScale = DEFAULT_LEGACY_WET_INDIRECT_SPECULAR_SCALE;
 
-	if (!o_json.contains("EnableModernWetReflection")) {
+	if (isObject && !o_json.contains("EnableModernWetReflection")) {
 		settings.EnableModernWetReflection = 1u;
 	}
-	if (!o_json.contains("EnableLegacyWetReflection")) {
+	if (isObject && !o_json.contains("EnableLegacyWetReflection")) {
 		settings.EnableLegacyWetReflection = 0u;
 	}
 
-	const bool hasModernWetReflectionScale = o_json.contains("ModernWetIndirectSpecularScale");
+	const bool hasModernWetReflectionScale = isObject && o_json.contains("ModernWetIndirectSpecularScale");
 	if (hasModernWetReflectionScale && o_json["ModernWetIndirectSpecularScale"].is_number()) {
 		modernWetIndirectSpecularScale = o_json["ModernWetIndirectSpecularScale"].get<float>();
 	}
 
-	const bool hasLegacyWetReflectionScale = o_json.contains("LegacyWetIndirectSpecularScale");
+	const bool hasLegacyWetReflectionScale = isObject && o_json.contains("LegacyWetIndirectSpecularScale");
 	if (hasLegacyWetReflectionScale && o_json["LegacyWetIndirectSpecularScale"].is_number()) {
 		legacyWetIndirectSpecularScale = o_json["LegacyWetIndirectSpecularScale"].get<float>();
 	}
 
-	const bool hasExplicitWetReflectionScale = o_json.contains("WetIndirectSpecularScale");
+	const bool hasExplicitWetReflectionScale = isObject && o_json.contains("WetIndirectSpecularScale");
 	if (hasExplicitWetReflectionScale && !hasModernWetReflectionScale && !hasLegacyWetReflectionScale && o_json["WetIndirectSpecularScale"].is_number()) {
 		const float compatScale = o_json["WetIndirectSpecularScale"].get<float>();
 		if (settings.EnableLegacyWetReflection != 0 && settings.EnableModernWetReflection == 0) {
@@ -1753,7 +1785,8 @@ void WetnessEffects::LoadSettings(json& o_json)
 		}
 	}
 
-	if (o_json.contains("EnableWetIndirectSpecular") && !hasExplicitWetReflectionScale && !hasModernWetReflectionScale && !hasLegacyWetReflectionScale) {
+	if (isObject && o_json.contains("EnableWetIndirectSpecular") && !hasExplicitWetReflectionScale && !hasModernWetReflectionScale &&
+	    !hasLegacyWetReflectionScale) {
 		const auto& legacyToggle = o_json["EnableWetIndirectSpecular"];
 		const auto applyLegacyToggle = [&](bool enabled) {
 			if (!enabled) {
@@ -1773,11 +1806,15 @@ void WetnessEffects::LoadSettings(json& o_json)
 		}
 	}
 
-	const bool hasDryingHoursSemantics = o_json.value("DryingHoursSemanticsV2", false);
+	const bool hasDryingHoursSemantics =
+		(isObject && o_json.contains("DryingHoursSemanticsV2")) ?
+			JsonValueToBool(o_json["DryingHoursSemanticsV2"], false) :
+			false;
 	const bool hasLegacyDryingFields =
-		o_json.contains("StoneDryingMultiplier") ||
-		o_json.contains("DirtDryingMultiplier") ||
-		o_json.contains("GrassDryingMultiplier");
+		isObject &&
+		(o_json.contains("StoneDryingMultiplier") ||
+		 o_json.contains("DirtDryingMultiplier") ||
+		 o_json.contains("GrassDryingMultiplier"));
 	if (!hasDryingHoursSemantics && hasLegacyDryingFields &&
 	    settings.StoneDryingMultiplier <= 4.0f &&
 	    settings.DirtDryingMultiplier <= 4.0f &&
@@ -1788,11 +1825,12 @@ void WetnessEffects::LoadSettings(json& o_json)
 		settings.GrassDryingMultiplier = LegacyDryingMultiplierToHours(settings.GrassDryingMultiplier, 20.0f);
 	}
 
-	puddleDryingHours = o_json.value("PuddleDryingHours", DRYING_HOURS_MAX);
+	puddleDryingHours = JsonValueOr<float>(o_json, "PuddleDryingHours", DRYING_HOURS_MAX);
 	puddleDryingHours = ClampDryingHours(puddleDryingHours, DRYING_HOURS_MAX);
-	enableWeatherDrivenDryingModel = o_json.contains("EnableWeatherDrivenDryingModel") ?
-	                                     JsonValueToBool(o_json["EnableWeatherDrivenDryingModel"], true) :
-	                                     true;
+	enableWeatherDrivenDryingModel =
+		(isObject && o_json.contains("EnableWeatherDrivenDryingModel")) ?
+			JsonValueToBool(o_json["EnableWeatherDrivenDryingModel"], true) :
+			true;
 
 	SanitizeToggleSettings(settings);
 	SanitizePersistentReflectionSettings(settings, modernWetIndirectSpecularScale, legacyWetIndirectSpecularScale);
@@ -1807,8 +1845,14 @@ void WetnessEffects::LoadSettings(json& o_json)
 
 	Ripples::UpdateSettings();  // Sync cached values after loading
 
-	if (o_json.contains("DebugSettings")) {
-		debugSettings = o_json["DebugSettings"].get<DebugSettings>();
+	debugSettings = {};
+	if (isObject && o_json.contains("DebugSettings")) {
+		try {
+			debugSettings = o_json["DebugSettings"].get<DebugSettings>();
+		} catch (const std::exception& e) {
+			logger::warn("[{}] Failed to parse wetness debug settings ({}); using defaults.", GetName(), e.what());
+			debugSettings = {};
+		}
 	}
 }
 
