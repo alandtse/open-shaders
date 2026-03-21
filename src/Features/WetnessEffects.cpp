@@ -83,8 +83,6 @@ namespace
 	{
 		const char* name;
 		const char* description;
-		float maxRainWetness;
-		float maxPuddleWetness;
 		float maxShoreWetness;
 		uint enableRaindropFx;
 		uint enableSplashes;
@@ -93,9 +91,6 @@ namespace
 		uint enableLegacyRainBehavior;
 		float raindropTransitionFalloff;
 		float raindropFxRange;
-		float raindropGridSize;
-		float raindropInterval;
-		float raindropChance;
 		float splashesStrength;
 		float splashesMinRadius;
 		float splashesMaxRadius;
@@ -113,8 +108,6 @@ namespace
 	constexpr std::array<WetnessUiPresetDefinition, 3> WETNESS_UI_PRESETS = { {
 		{ "Performance",
 			"Lower cost profile with retained puddles and raindrops.",
-			1.0f,
-			2.0f,
 			0.6f,
 			1u,
 			1u,
@@ -123,9 +116,6 @@ namespace
 			0u,
 			2.5f,
 			700.0f,
-			6.0f,
-			1.2f,
-			0.55f,
 			0.9f,
 			0.25f,
 			0.45f,
@@ -137,11 +127,9 @@ namespace
 			0.0f,
 			1.0f,
 			1.0f,
-			0.03f },
+			0.2f },
 		{ "Balanced",
 			"Balanced visuals and performance for typical gameplay.",
-			1.2f,
-			2.8f,
 			0.75f,
 			1u,
 			1u,
@@ -150,9 +138,6 @@ namespace
 			0u,
 			2.2f,
 			1000.0f,
-			4.5f,
-			0.9f,
-			0.75f,
 			1.0f,
 			0.28f,
 			0.50f,
@@ -164,11 +149,9 @@ namespace
 			0.5f,
 			1.0f,
 			1.2f,
-			0.05f },
+			0.2f },
 		{ "Quality",
 			"Higher fidelity wetness with denser raindrop/ripple coverage.",
-			1.5f,
-			3.5f,
 			0.9f,
 			1u,
 			1u,
@@ -177,9 +160,6 @@ namespace
 			1u,
 			2.0f,
 			1400.0f,
-			3.0f,
-			0.45f,
-			1.0f,
 			1.2f,
 			0.30f,
 			0.55f,
@@ -191,7 +171,7 @@ namespace
 			0.9f,
 			1.15f,
 			1.25f,
-			0.07f }
+			0.25f }
 	} };
 
 	// Cached per-frame data for debug/weather analysis UI.
@@ -584,8 +564,6 @@ namespace
 		float& legacyScale,
 		const WetnessUiPresetDefinition& preset)
 	{
-		settings.MaxRainWetness = preset.maxRainWetness;
-		settings.MaxPuddleWetness = preset.maxPuddleWetness;
 		settings.MaxShoreWetness = preset.maxShoreWetness;
 
 		settings.EnableRaindropFx = preset.enableRaindropFx;
@@ -596,9 +574,6 @@ namespace
 
 		settings.RaindropTransitionFalloff = preset.raindropTransitionFalloff;
 		settings.RaindropFxRange = preset.raindropFxRange;
-		settings.RaindropGridSize = preset.raindropGridSize;
-		settings.RaindropInterval = preset.raindropInterval;
-		settings.RaindropChance = preset.raindropChance;
 
 		settings.SplashesStrength = preset.splashesStrength;
 		settings.SplashesMinRadius = preset.splashesMinRadius;
@@ -608,7 +583,7 @@ namespace
 		settings.RippleStrength = preset.rippleStrength;
 		settings.RippleRadius = preset.rippleRadius;
 		settings.RippleBreadth = preset.rippleBreadth;
-		settings.RippleLifetime = std::min(preset.rippleLifetime, preset.raindropInterval);
+		settings.RippleLifetime = std::min(preset.rippleLifetime, settings.RaindropInterval);
 
 		settings.CloseRangeWetnessBoost = preset.runoffStrength;
 		settings.RunoffSpeed = preset.runoffSpeed;
@@ -619,6 +594,17 @@ namespace
 		modernScale = preset.modernReflectionShine;
 		legacyScale = DEFAULT_LEGACY_WET_INDIRECT_SPECULAR_SCALE;
 		SanitizePersistentReflectionSettings(settings, modernScale, legacyScale);
+	}
+
+	constexpr size_t DEFAULT_WETNESS_UI_PRESET_INDEX = 1;  // Balanced
+
+	void ApplyDefaultWetnessUiPreset(
+		WetnessEffects::Settings& settings,
+		float& modernScale,
+		float& legacyScale)
+	{
+		static_assert(DEFAULT_WETNESS_UI_PRESET_INDEX < WETNESS_UI_PRESETS.size(), "Default wetness preset index out of range.");
+		ApplyWetnessUiPreset(settings, modernScale, legacyScale, WETNESS_UI_PRESETS[DEFAULT_WETNESS_UI_PRESET_INDEX]);
 	}
 
 	void SanitizeToggleSettings(WetnessEffects::Settings& settings)
@@ -1909,6 +1895,21 @@ void WetnessEffects::Prepass()
 void WetnessEffects::LoadSettings(json& o_json)
 {
 	const bool isObject = o_json.is_object();
+	const bool hasExplicitWetnessSettings = isObject &&
+		(o_json.contains("EnableWetnessEffects") ||
+		 o_json.contains("MaxRainWetness") ||
+		 o_json.contains("MaxPuddleWetness") ||
+		 o_json.contains("MaxShoreWetness") ||
+		 o_json.contains("EnableRaindropFx") ||
+		 o_json.contains("RaindropChance") ||
+		 o_json.contains("WetDarkeningStrength") ||
+		 o_json.contains("WetHighlightReduction") ||
+		 o_json.contains("PuddleDryingHours") ||
+		 o_json.contains("EnableWeatherDrivenDryingModel") ||
+		 o_json.contains("PuddleLayout") ||
+		 o_json.contains("ModernWetIndirectSpecularScale") ||
+		 o_json.contains("LegacyWetIndirectSpecularScale") ||
+		 o_json.contains("WetIndirectSpecularScale"));
 	settings = {};
 	if (isObject) {
 		try {
@@ -2000,6 +2001,12 @@ void WetnessEffects::LoadSettings(json& o_json)
 			JsonValueToBool(o_json["EnableWeatherDrivenDryingModel"], true) :
 			true;
 
+	if (!hasExplicitWetnessSettings) {
+		ApplyDefaultWetnessUiPreset(settings, modernWetIndirectSpecularScale, legacyWetIndirectSpecularScale);
+		climatePreset = defaultPreset;
+		ApplyClimatePreset(climatePreset);
+	}
+
 	SanitizeToggleSettings(settings);
 	SanitizePersistentUiState(settings, modernWetIndirectSpecularScale, legacyWetIndirectSpecularScale, puddleDryingHours, puddleLayout);
 	SanitizeShaderFacingSettings(settings);
@@ -2046,13 +2053,13 @@ void WetnessEffects::RestoreDefaultSettings()
 	modernWetIndirectSpecularScale = DEFAULT_WET_INDIRECT_SPECULAR_SCALE;
 	legacyWetIndirectSpecularScale = DEFAULT_LEGACY_WET_INDIRECT_SPECULAR_SCALE;
 	climatePreset = defaultPreset;
-	ResetRuntimeState();
-
-	// Apply the default climate preset to ensure settings reflect the preset values
+	ApplyDefaultWetnessUiPreset(settings, modernWetIndirectSpecularScale, legacyWetIndirectSpecularScale);
 	ApplyClimatePreset(climatePreset);
+	ResetRuntimeState();
 	SanitizePersistentUiState(settings, modernWetIndirectSpecularScale, legacyWetIndirectSpecularScale, puddleDryingHours, puddleLayout);
 	SanitizeShaderFacingSettings(settings);
 	InvalidateSanitizedSettingsCache();
+	DetectCurrentPreset();
 
 	Ripples::UpdateSettings();  // Sync cached values after restoring defaults
 }
