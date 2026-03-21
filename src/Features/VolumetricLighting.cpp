@@ -202,7 +202,7 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 void VolumetricLighting::DrawSettings()
 {
 	if (REL::Module::IsVR()) {
-		if (ImGui::Checkbox("Disable Weather-Driven VL During Rain", &settings.DisableWeatherInteractionDuringRain))
+		if (ImGui::Checkbox("Disable Weather-Driven Volumetric Lighting During Rain", &settings.DisableWeatherInteractionDuringRain))
 			SetupVL();
 		if (auto _tt = Util::HoverTooltipWrapper())
 			ImGui::Text("Rain-only mode. Automatically disables weather-driven VL while rain is active and restores it after rain.");
@@ -239,9 +239,12 @@ void VolumetricLighting::DrawGodrayTuningSettings()
 	drawSlider("Godray Saturation", settings.GodraySaturation, 0.0f, kGodraySaturationMax, "Adjusts weather-driven godray color richness. 1.0 is default.");
 
 	drawSlider("Custom Color Contribution", settings.CustomColorContribution, 0.0f, 1.0f, "Blends your custom color into the weather godray color.");
+	const bool customColorDisabled = settings.CustomColorContribution <= kFloatEpsilon;
+	ImGui::BeginDisabled(customColorDisabled);
 	drawSlider("Custom Color Red", settings.CustomColorRed, 0.0f, 1.0f, "Red channel for custom volumetric color.");
 	drawSlider("Custom Color Green", settings.CustomColorGreen, 0.0f, 1.0f, "Green channel for custom volumetric color.");
 	drawSlider("Custom Color Blue", settings.CustomColorBlue, 0.0f, 1.0f, "Blue channel for custom volumetric color.");
+	ImGui::EndDisabled();
 }
 
 void VolumetricLighting::DrawVolumetricLightingSettings(int32_t& quality, TextureSize& customSize, const bool isInterior, const bool inLocationType)
