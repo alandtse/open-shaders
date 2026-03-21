@@ -759,8 +759,25 @@ void WetnessEffects::ResetRuntimeState()
 	g_hasLastFrameData = false;
 }
 
+void WetnessEffects::InvalidateSanitizedSettingsCache()
+{
+	sanitizedSettingsCacheValid = false;
+}
+
+const WetnessEffects::Settings& WetnessEffects::GetSanitizedSettings() const
+{
+	if (!sanitizedSettingsCacheValid) {
+		sanitizedSettingsCache = settings;
+		SanitizeToggleSettings(sanitizedSettingsCache);
+		SanitizeShaderFacingSettings(sanitizedSettingsCache);
+		sanitizedSettingsCacheValid = true;
+	}
+	return sanitizedSettingsCache;
+}
+
 void WetnessEffects::DrawSettings()
 {
+	InvalidateSanitizedSettingsCache();
 	const auto drawUintCheckbox = [](const char* label, uint& value) {
 		bool enabled = value != 0;
 		const bool changed = ImGui::Checkbox(label, &enabled);
@@ -1408,6 +1425,7 @@ void WetnessEffects::ApplyClimatePreset(ClimatePreset preset)
 	settings.RaindropInterval = climate.raindropInterval;
 
 	// Removed clamping for all settings to allow full preset range
+	InvalidateSanitizedSettingsCache();
 }
 
 WetnessEffects::PerFrame WetnessEffects::GetCommonBufferData() const
@@ -1490,6 +1508,7 @@ WetnessEffects::PerFrame WetnessEffects::GetCommonBufferData() const
 		}
 		return GetManualDryingHours(settings, puddleDryingHours);
 	};
+	EffectiveDryingHours effectiveDryingHours = getEffectiveDryingHours(rainingNow ? runtimeState.rainEventWeight : runtimeState.postRainEventWeight);
 
 	double deltaGameSeconds = 0.0;
 	const bool gamePaused = globals::game::ui && globals::game::ui->GameIsPaused();
@@ -1566,9 +1585,9 @@ WetnessEffects::PerFrame WetnessEffects::GetCommonBufferData() const
 
 		// Long rain events slow down drying after rain stops.
 		const float dryingEventWeight = rainingNow ? runtimeState.rainEventWeight : runtimeState.postRainEventWeight;
-		const EffectiveDryingHours frameDryingHours = getEffectiveDryingHours(dryingEventWeight);
-		const float wetnessDurationHours = GetWeightedSurfaceDryingHours(frameDryingHours);
-		const float puddleDurationHours = ClampDryingHours(frameDryingHours.puddleHours, DRYING_HOURS_MAX);
+		effectiveDryingHours = getEffectiveDryingHours(dryingEventWeight);
+		const float wetnessDurationHours = GetWeightedSurfaceDryingHours(effectiveDryingHours);
+		const float puddleDurationHours = ClampDryingHours(effectiveDryingHours.puddleHours, DRYING_HOURS_MAX);
 		if (blendedWetnessRate < 0.0f) {
 			const float wetnessDryScale = std::lerp(1.0f, MIN_WETNESS_DRY_SCALE_AT_MAX_EVENT, runtimeState.rainEventWeight);
 			blendedWetnessRate *= wetnessDryScale;
@@ -1650,8 +1669,7 @@ WetnessEffects::PerFrame WetnessEffects::GetCommonBufferData() const
 		rainTimer += (size_t)(RE::GetSecondsSinceLastFrame() * 1000);  // BSTimer::delta is always 0 for some reason
 	data.Time = rainTimer / 1000.f;
 
-	data.settings = settings;
-	SanitizeToggleSettings(data.settings);
+	data.settings = GetSanitizedSettings();
 	// Raindrops should stop when rain weather transition is complete (weight reaches zero),
 	// not immediately when current weather pointer flips.
 	if (weatherRainTransitionWeight <= 0.005f) {
@@ -1660,13 +1678,10 @@ WetnessEffects::PerFrame WetnessEffects::GetCommonBufferData() const
 	const float modernReflectionScale = SanitizeReflectionScale(modernWetIndirectSpecularScale, MAX_MODERN_WET_REFLECTION_UI_SCALE, DEFAULT_WET_INDIRECT_SPECULAR_SCALE);
 	const float legacyReflectionScale = SanitizeReflectionScale(legacyWetIndirectSpecularScale, MAX_LEGACY_WET_REFLECTION_SCALE, DEFAULT_LEGACY_WET_INDIRECT_SPECULAR_SCALE);
 	SyncActiveReflectionScale(data.settings, modernReflectionScale, legacyReflectionScale);
-	SanitizeShaderFacingSettings(data.settings);
 	const float clampedPuddleLayout = std::clamp(puddleLayout, PUDDLE_LAYOUT_MIN, PUDDLE_LAYOUT_MAX);
 	// Reuse the shader-only wetness CB slot (former WeatherTransitionSpeed) for puddle layout.
 	// CPU simulation above still uses settings.WeatherTransitionSpeed.
 	data.settings.WeatherTransitionSpeed = clampedPuddleLayout;
-	const float dryingEventWeight = rainingNow ? runtimeState.rainEventWeight : runtimeState.postRainEventWeight;
-	const EffectiveDryingHours effectiveDryingHours = getEffectiveDryingHours(dryingEventWeight);
 	data.settings.StoneDryingMultiplier = effectiveDryingHours.stoneHours;
 	data.settings.GrassDryingMultiplier = effectiveDryingHours.grassHours;
 	data.settings.DirtDryingMultiplier = effectiveDryingHours.dirtHours;
@@ -1784,6 +1799,7 @@ void WetnessEffects::LoadSettings(json& o_json)
 	SanitizeShaderFacingSettings(settings);
 	puddleLayout = std::clamp(puddleLayout, PUDDLE_LAYOUT_MIN, PUDDLE_LAYOUT_MAX);
 	puddleDryingHours = ClampDryingHours(puddleDryingHours, DRYING_HOURS_MAX);
+	InvalidateSanitizedSettingsCache();
 	ResetRuntimeState();
 
 	// Auto-detect which preset matches the loaded settings
@@ -1801,6 +1817,7 @@ void WetnessEffects::SaveSettings(json& o_json)
 	SanitizePersistentReflectionSettings(settings, modernWetIndirectSpecularScale, legacyWetIndirectSpecularScale);
 	puddleDryingHours = ClampDryingHours(puddleDryingHours, DRYING_HOURS_MAX);
 	puddleLayout = std::clamp(puddleLayout, PUDDLE_LAYOUT_MIN, PUDDLE_LAYOUT_MAX);
+	InvalidateSanitizedSettingsCache();
 	o_json = settings;
 	o_json["ModernWetIndirectSpecularScale"] = modernWetIndirectSpecularScale;
 	o_json["LegacyWetIndirectSpecularScale"] = legacyWetIndirectSpecularScale;
@@ -1827,6 +1844,7 @@ void WetnessEffects::RestoreDefaultSettings()
 	ApplyClimatePreset(climatePreset);
 	SanitizePersistentReflectionSettings(settings, modernWetIndirectSpecularScale, legacyWetIndirectSpecularScale);
 	SanitizeShaderFacingSettings(settings);
+	InvalidateSanitizedSettingsCache();
 
 	Ripples::UpdateSettings();  // Sync cached values after restoring defaults
 }

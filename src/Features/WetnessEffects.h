@@ -173,6 +173,8 @@ public:
 private:
 	void DrawWeatherAnalysis() const;
 	void ResetRuntimeState();
+	void InvalidateSanitizedSettingsCache();
+	const Settings& GetSanitizedSettings() const;
 
 	bool splashesOfStormsLoaded = false;
 
@@ -191,6 +193,8 @@ private:
 		bool wasRainingLastFrame = false;
 	};
 	mutable RuntimeState runtimeState{};
+	mutable Settings sanitizedSettingsCache{};
+	mutable bool sanitizedSettingsCacheValid = false;
 
 	// Weather wetness calculation result for debug display
 	struct WeatherWetnessResult
