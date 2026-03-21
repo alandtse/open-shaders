@@ -2,12 +2,8 @@
 
 #include <algorithm>
 #include <cmath>
-#include <cstdint>
-#include <unordered_map>
 
-#include "RE/B/BSSkyShaderProperty.h"
 #include "RE/N/NiDirectionalLight.h"
-#include "RE/S/Sun.h"
 #include "InteriorSun.h"
 #include "ShaderCache.h"
 #include "State.h"
@@ -22,13 +18,11 @@ namespace
 	constexpr float kColorLumaR = 0.2126f;
 	constexpr float kColorLumaG = 0.7152f;
 	constexpr float kColorLumaB = 0.0722f;
-	constexpr float kDefaultGodrayIntensity = 1.0f;
 	constexpr float kDefaultGodrayShaftIntensity = 1.0f;
 	constexpr float kDefaultGodrayOpacity = 1.0f;
 	constexpr float kDefaultGodraySaturation = 1.0f;
 	constexpr float kDefaultCustomContribution = 0.0f;
 	constexpr float kFloatEpsilon = 1e-4f;
-	constexpr float kSunGlareOcclusionCutoff = 0.01f;
 
 	struct GodrayRuntimeParams
 	{
@@ -37,13 +31,6 @@ namespace
 		float saturation = 1.0f;
 		float customContribution = 0.0f;
 		RE::NiColor customColor = { 1.0f, 1.0f, 1.0f };
-	};
-
-	struct WeatherSunGlareState
-	{
-		std::uint8_t baseline = 0;
-		std::uint8_t lastApplied = 0;
-		bool initialized = false;
 	};
 
 	float ClampFinite(float value, float minValue, float maxValue, float fallback)
@@ -71,53 +58,6 @@ namespace
 		}
 
 		return state->enablePShaders;
-	}
-
-	std::unordered_map<RE::TESWeather*, WeatherSunGlareState>& GetSunGlareStateMap()
-	{
-		static std::unordered_map<RE::TESWeather*, WeatherSunGlareState> states{};
-		return states;
-	}
-
-	void ApplyScaledSunGlareToWeather(RE::TESWeather* weather, float glareScale)
-	{
-		if (!weather)
-			return;
-
-		auto& states = GetSunGlareStateMap();
-		auto [it, inserted] = states.try_emplace(weather);
-		WeatherSunGlareState& state = it->second;
-		if (inserted || !state.initialized) {
-			state.baseline = weather->data.sunGlare;
-			state.lastApplied = weather->data.sunGlare;
-			state.initialized = true;
-		}
-
-		// Track live game/weather edits unless this is the value we wrote.
-		if (weather->data.sunGlare != state.lastApplied) {
-			state.baseline = weather->data.sunGlare;
-		}
-
-		glareScale = ClampFinite(glareScale, 0.0f, kGodrayIntensityMax, kDefaultGodrayIntensity);
-		const float base = static_cast<float>(state.baseline);
-		const auto scaled = static_cast<long>(std::lround(base * glareScale));
-		const auto applied = static_cast<std::uint8_t>(std::clamp(scaled, 0L, 255L));
-		weather->data.sunGlare = applied;
-		state.lastApplied = applied;
-	}
-
-	void RestoreWeatherSunGlare(RE::TESWeather* weather)
-	{
-		if (!weather)
-			return;
-
-		auto& states = GetSunGlareStateMap();
-		const auto it = states.find(weather);
-		if (it == states.end() || !it->second.initialized)
-			return;
-
-		weather->data.sunGlare = it->second.baseline;
-		it->second.lastApplied = it->second.baseline;
 	}
 
 	bool IsRainWeatherActive(const RE::TESWeather* a_weather, float a_weight)
@@ -233,32 +173,6 @@ namespace
 		       !IsNear(params.customContribution, kDefaultCustomContribution);
 	}
 
-	float GetSunGlareBlendValue(const RE::Sun* sun)
-	{
-		if (!sun || !sun->sunGlare)
-			return 1.0f;
-
-		const auto* shaderProp = skyrim_cast<const RE::BSSkyShaderProperty*>(
-			static_cast<const RE::BSShaderProperty*>(sun->sunGlare->GetGeometryRuntimeData().shaderProperty.get()));
-		if (!shaderProp)
-			return 1.0f;
-
-		return ClampFinite(shaderProp->fBlendValue, 0.0f, 1.0f, 1.0f);
-	}
-
-	void ApplySunGlareOcclusionGate(RE::Sun* sun)
-	{
-		if (!sun)
-			return;
-
-		if (!sun->doOcclusionTests) {
-			sun->glareScale = kDefaultGodrayIntensity;
-			return;
-		}
-
-		const float blend = GetSunGlareBlendValue(sun);
-		sun->glareScale = blend <= kSunGlareOcclusionCutoff ? 0.0f : kDefaultGodrayIntensity;
-	}
 }
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
@@ -320,7 +234,6 @@ void VolumetricLighting::DrawGodrayTuningSettings()
 	};
 
 	ImGui::SeparatorText("Godray Tuning");
-	const bool glareChanged = drawSlider("Sun Glare Intensity", settings.GodrayIntensity, 0.0f, kGodrayIntensityMax, "Scales the sun glare sprite brightness.");
 	drawSlider("Godray Intensity", settings.GodrayShaftIntensity, 0.0f, kGodrayShaftIntensityMax, "Scales volumetric godray shaft brightness.");
 	drawSlider("Godray Opacity", settings.GodrayOpacity, 0.0f, kGodrayOpacityMax, "Controls shaft strength and visibility. 1.0 is default; values above 1.0 boost presence.");
 	drawSlider("Godray Saturation", settings.GodraySaturation, 0.0f, kGodraySaturationMax, "Adjusts weather-driven godray color richness. 1.0 is default.");
@@ -329,15 +242,6 @@ void VolumetricLighting::DrawGodrayTuningSettings()
 	drawSlider("Custom Color Red", settings.CustomColorRed, 0.0f, 1.0f, "Red channel for custom volumetric color.");
 	drawSlider("Custom Color Green", settings.CustomColorGreen, 0.0f, 1.0f, "Green channel for custom volumetric color.");
 	drawSlider("Custom Color Blue", settings.CustomColorBlue, 0.0f, 1.0f, "Blue channel for custom volumetric color.");
-
-	if (glareChanged) {
-		const float glareScale = ClampFinite(settings.GodrayIntensity, 0.0f, kGodrayIntensityMax, kDefaultGodrayIntensity);
-		if (IsImageSpaceReplacementEnabled() && !IsNear(glareScale, kDefaultGodrayIntensity)) {
-			ApplySunGlareTuning();
-		} else {
-			RestoreSunGlareTuning();
-		}
-	}
 }
 
 void VolumetricLighting::DrawVolumetricLightingSettings(int32_t& quality, TextureSize& customSize, const bool isInterior, const bool inLocationType)
@@ -548,13 +452,6 @@ void VolumetricLighting::EarlyPrepass()
 	vlData.screenYMin1 = height - 1;
 	vlDataCB->Update(vlData);
 
-	const float glareScale = ClampFinite(settings.GodrayIntensity, 0.0f, kGodrayIntensityMax, kDefaultGodrayIntensity);
-	if (IsImageSpaceReplacementEnabled() && !IsNear(glareScale, kDefaultGodrayIntensity)) {
-		ApplySunGlareTuning();
-	} else {
-		RestoreSunGlareTuning();
-	}
-
 	const auto interiorCell = RE::TES::GetSingleton()->interiorCell;
 	const bool currentlyInInterior = interiorCell != nullptr;
 	const bool nextRainSuppressionActive =
@@ -604,10 +501,8 @@ void VolumetricLighting::SetupVL()
 	*gVolumetricLightingSizeHigh = static_cast<Quality>(quality) == Quality::Custom ? customSize : defaultSizeHigh;
 	SetVLQuality(GetVLDescriptor(), quality);
 
-	if (!runtimeEnabled) {
+	if (!runtimeEnabled)
 		ClearVolumetricLightingTargets();
-		RestoreSunGlareTuning();
-	}
 }
 
 void VolumetricLighting::ClearVolumetricLightingTargets()
@@ -666,33 +561,6 @@ void VolumetricLighting::RenderDepth::thunk()
 		RenderVolumetricLighting(&GetVLDescriptor(), RE::Main::WorldRootCamera(), false);
 }
 
-void VolumetricLighting::ApplySunGlareTuning() const
-{
-	auto* sky = globals::game::sky;
-	if (!sky || !sky->sun)
-		return;
-
-	const float glareScale = ClampFinite(settings.GodrayIntensity, 0.0f, kGodrayIntensityMax, kDefaultGodrayIntensity);
-	ApplyScaledSunGlareToWeather(sky->currentWeather, glareScale);
-	if (sky->lastWeather != sky->currentWeather)
-		ApplyScaledSunGlareToWeather(sky->lastWeather, glareScale);
-
-	// Keep the tuning weather-driven, but hard-gate glare when the sun is fully occluded.
-	ApplySunGlareOcclusionGate(sky->sun);
-}
-
-void VolumetricLighting::RestoreSunGlareTuning() const
-{
-	auto* sky = globals::game::sky;
-	if (!sky || !sky->sun)
-		return;
-
-	RestoreWeatherSunGlare(sky->currentWeather);
-	if (sky->lastWeather != sky->currentWeather)
-		RestoreWeatherSunGlare(sky->lastWeather);
-	sky->sun->glareScale = kDefaultGodrayIntensity;
-}
-
 VolumetricLighting::VolumetricLightingDescriptor* VolumetricLighting::ApplyVolumetricLighting_VolumetricLightingDescriptor_Get::thunk()
 {
 	auto* descriptor = func();
@@ -703,14 +571,6 @@ VolumetricLighting::VolumetricLightingDescriptor* VolumetricLighting::ApplyVolum
 	const bool imageSpaceReplacementEnabled = IsImageSpaceReplacementEnabled();
 	const auto& runtimeSettings = feature.settings;
 	const GodrayRuntimeParams params = BuildGodrayRuntimeParams(runtimeSettings);
-	const float glareScale = ClampFinite(runtimeSettings.GodrayIntensity, 0.0f, kGodrayIntensityMax, kDefaultGodrayIntensity);
-
-	// Keep sun glare tuning active without touching descriptor data when no shaft/color overrides are set.
-	if (imageSpaceReplacementEnabled && !IsNear(glareScale, kDefaultGodrayIntensity)) {
-		feature.ApplySunGlareTuning();
-	} else {
-		feature.RestoreSunGlareTuning();
-	}
 
 	// If image-space replacement is disabled, keep vanilla descriptor behavior untouched.
 	if (!imageSpaceReplacementEnabled) {
