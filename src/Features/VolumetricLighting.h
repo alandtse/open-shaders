@@ -126,8 +126,11 @@ private:
 	void DrawGodrayTuningSettings();
 	void DrawVolumetricLightingSettings(int32_t& quality, TextureSize& customSize, bool isInterior, bool inLocationType);
 	TextureSize& FetchCurrentSizeInUnits(bool interior);
+	void SanitizeSettings();
 	void SetupVL();
 	void ClearVolumetricLightingTargets();
+	static int32_t ClampQualityIndex(int32_t quality);
+	static TextureSize ClampTextureSize(const TextureSize& size);
 
 	enum class Quality : uint8_t
 	{
