@@ -2521,10 +2521,15 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 		float depthBlend = saturate(SharedData::wetnessEffectsSettings.PuddleDepthBlend) * dualPuddleEnabled;
 		float unevenDepthMask = 0.0;
 #			if !defined(SKIN) && !defined(HAIR)
-		unevenDepthMask = saturate((surfaceRoughness - 0.30) * 1.7) * (1.0 - vegetationFactor * 0.85);
+		float roughDepthMask = saturate((surfaceRoughness - 0.22) * 2.2);
+		// Capture micro-variation (e.g. cobblestone joints) even when roughness alone is not enough.
+		float normalVarianceMask = saturate((length(ddx(worldNormal)) + length(ddy(worldNormal)) - 0.04) * 4.0);
+		unevenDepthMask = saturate(max(roughDepthMask, normalVarianceMask)) * (1.0 - vegetationFactor * 0.85);
 #			endif
-		float depthPuddleMix = saturate((puddleSignal - 0.10) * (1.0 + depthBlend * 0.9)) * unevenDepthMask;
-		float puddleMix = lerp(flatPuddleMix, max(flatPuddleMix, depthPuddleMix), depthBlend);
+		float depthPuddleMix = saturate((puddleSignal - 0.02) * (1.25 + depthBlend * 1.75)) * unevenDepthMask;
+		// Keep flat pooling as baseline and add depth pooling only where unevenness exists.
+		float depthContribution = depthPuddleMix * depthBlend;
+		float puddleMix = saturate(flatPuddleMix + depthContribution * (1.0 - flatPuddleMix));
 		puddle *= lerp(wetness, puddleWetness, puddleMix);
 #		endif
 
