@@ -770,6 +770,11 @@ void WetnessEffects::DrawSettings()
 			DetectCurrentPreset();
 		}
 	};
+	const auto drawSectionDivider = []() {
+		ImGui::Spacing();
+		ImGui::Separator();
+		ImGui::Spacing();
+	};
 
 	// Climate Preset Selection - Always visible at the top
 	Util::DrawSectionHeader("Climate Presets", false, false);
@@ -831,50 +836,54 @@ void WetnessEffects::DrawSettings()
 		}
 	}
 
-	ImGui::Spacing();
-	ImGui::Separator();
-	ImGui::Spacing();
+	drawSectionDivider();
 
 	if (ImGui::TreeNodeEx("Wetness Effects", ImGuiTreeNodeFlags_DefaultOpen)) {
 		if (drawUintCheckbox("Enable Wetness", settings.EnableWetnessEffects)) {
 			Ripples::UpdateSettings();  // Update cache when settings change
 		}
 		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::Text("Enables a wetness effect near water and when it is raining.");
+			ImGui::TextUnformatted("Master switch for all wetness visuals. Off = no rain film, puddles, or shore wetness.");
 		}
 		ImGui::SliderFloat("Rain Wetness", &settings.MaxRainWetness, 0.0f, 2.5f);
 		markPresetDirtyIfEdited();
 		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::TextUnformatted("Overall strength of rain wetness on surfaces.");
+			ImGui::TextUnformatted("How wet surfaces get while it rains. Higher = stronger rain film, lower = lighter wet look.");
 		}
 
 		ImGui::SliderFloat("Puddle Wetness", &settings.MaxPuddleWetness, 0.0f, 6.0f);
 		markPresetDirtyIfEdited();
 		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::TextUnformatted("Maximum depth/intensity of puddle wetness.");
+			ImGui::TextUnformatted("How strong puddles can look. Higher = deeper/more visible puddles, lower = shallower puddles.");
 		}
 
 		ImGui::SliderFloat("Shore Wetness", &settings.MaxShoreWetness, 0.0f, 1.0f);
+		markPresetDirtyIfEdited();
 		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::TextUnformatted("How wet ground appears near water edges.");
+			ImGui::TextUnformatted("Wetness near rivers, lakes, and shorelines. Higher = wetter banks, lower = drier edges.");
 		}
 		ImGui::TreePop();
 	}
 
-	ImGui::Spacing();
-	ImGui::Spacing();
+	drawSectionDivider();
 
 	if (ImGui::TreeNodeEx("Raindrop Effects", ImGuiTreeNodeFlags_DefaultOpen)) {
 		drawUintCheckbox("Enable Raindrop Effects", settings.EnableRaindropFx);
+		if (auto _tt = Util::HoverTooltipWrapper()) {
+			ImGui::TextUnformatted("Master switch for raindrop splashes and ripple motion.");
+		}
 
 		ImGui::BeginDisabled(!settings.EnableRaindropFx);
 
 		drawUintCheckbox("Enable Splashes", settings.EnableSplashes);
-		if (auto _tt = Util::HoverTooltipWrapper())
-			ImGui::Text("Enables small splashes of wetness on dry surfaces.");
+		if (auto _tt = Util::HoverTooltipWrapper()) {
+			ImGui::TextUnformatted("Shows splash marks where raindrops hit. Off = no splash marks.");
+		}
+
 		drawUintCheckbox("Enable Ripples", settings.EnableRipples);
-		if (auto _tt = Util::HoverTooltipWrapper())
-			ImGui::Text("Enables circular ripples on puddles, and to a less extent other wet surfaces");
+		if (auto _tt = Util::HoverTooltipWrapper()) {
+			ImGui::TextUnformatted("Shows circular ripple rings on wet surfaces. Off = no ripple rings.");
+		}
 
 		ImGui::BeginDisabled(splashesOfStormsLoaded);
 		std::string checkboxLabel = splashesOfStormsLoaded ?
@@ -893,33 +902,31 @@ void WetnessEffects::DrawSettings()
 		ImGui::SliderFloat("Effect Range", &settings.RaindropFxRange, 1e2f, 2e3f, "%.0f units");
 		if (auto _tt = Util::HoverTooltipWrapper()) {
 			std::vector<std::string> tooltipLines = {
-				"Range for raindrop effects",
+				"Higher = raindrop effects cover a larger area around you.",
+				"Lower = effects stay closer to you.",
 				Util::Units::FormatDistance(settings.RaindropFxRange),
 				std::format("{:.2f} meters", Util::Units::GameUnitsToMeters(settings.RaindropFxRange))
 			};
 			Util::DrawMultiLineTooltip(tooltipLines);
 		}
-		if (ImGui::TreeNodeEx("Raindrops")) {
-			ImGui::BulletText(
-				"At every interval, a raindrop is placed within each grid cell.\n"
-				"Only a set portion of raindrops will actually trigger splashes and ripples.\n");
 
+		if (ImGui::TreeNodeEx("Raindrops")) {
 			ImGui::SliderFloat("Grid Size", &settings.RaindropGridSize, 1.0f, 10.0f, "%.1f units");
 			if (auto _tt = Util::HoverTooltipWrapper()) {
 				std::vector<std::string> tooltipLines = {
-					"Spatial grid size for raindrop placement (smaller = more grid cells, higher GPU cost)",
-					"This is the most performance-sensitive setting. Lower only if needed for realism.",
+					"Higher = raindrops are spaced farther apart.",
+					"Lower = denser raindrops and fuller rain coverage.",
 					Util::Units::FormatDistance(settings.RaindropGridSize)
 				};
 				Util::DrawMultiLineTooltip(tooltipLines);
 			}
 			ImGui::SliderFloat("Interval", &settings.RaindropInterval, 0.1f, 2.0f, "%.1f sec");
 			if (auto _tt = Util::HoverTooltipWrapper()) {
-				ImGui::Text("How often raindrop effects are checked (lower = more frequent, moderate performance impact)");
+				ImGui::TextUnformatted("How often new raindrops are added. Lower = more frequent updates, higher = slower updates.");
 			}
 			ImGui::SliderFloat("Chance", &settings.RaindropChance, 0.0f, 1.0f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
 			if (auto _tt = Util::HoverTooltipWrapper()) {
-				ImGui::Text("Portion of raindrops that will actually cause splashes and ripples. Higher values increase effect density but have the least performance impact.");
+				ImGui::TextUnformatted("How many possible drops actually appear. Higher = denser drops, lower = fewer drops.");
 			}
 			ImGui::TreePop();
 		}
@@ -927,17 +934,21 @@ void WetnessEffects::DrawSettings()
 		if (ImGui::TreeNodeEx("Splashes")) {
 			ImGui::SliderFloat("Strength", &settings.SplashesStrength, 0.f, 2.f, "%.2f");
 			if (auto _tt = Util::HoverTooltipWrapper()) {
-				ImGui::TextUnformatted("Brightness/visibility of raindrop splash marks.");
+				ImGui::TextUnformatted("How visible splash marks are. Higher = bolder splashes, lower = subtler splashes.");
 			}
 			ImGui::SliderFloat("Min Radius", &settings.SplashesMinRadius, 0.f, 1.f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
-			if (auto _tt = Util::HoverTooltipWrapper())
-				ImGui::Text("As portion of grid size.");
+			if (auto _tt = Util::HoverTooltipWrapper()) {
+				ImGui::TextUnformatted("Minimum splash size. Higher = no tiny splashes, lower = allows smaller splashes.");
+			}
+
 			ImGui::SliderFloat("Max Radius", &settings.SplashesMaxRadius, 0.f, 1.f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
-			if (auto _tt = Util::HoverTooltipWrapper())
-				ImGui::Text("As portion of grid size.");
+			if (auto _tt = Util::HoverTooltipWrapper()) {
+				ImGui::TextUnformatted("Maximum splash size. Higher = bigger possible splashes, lower = caps splash size.");
+			}
+
 			ImGui::SliderFloat("Lifetime", &settings.SplashesLifetime, 0.1f, 20.f, "%.1f");
 			if (auto _tt = Util::HoverTooltipWrapper()) {
-				ImGui::TextUnformatted("How long each splash remains visible.");
+				ImGui::TextUnformatted("How long each splash stays visible. Higher = lingers longer, lower = fades sooner.");
 			}
 			ImGui::TreePop();
 		}
@@ -945,39 +956,49 @@ void WetnessEffects::DrawSettings()
 		if (ImGui::TreeNodeEx("Ripples")) {
 			ImGui::SliderFloat("Strength", &settings.RippleStrength, 0.f, 2.f, "%.2f");
 			if (auto _tt = Util::HoverTooltipWrapper()) {
-				ImGui::TextUnformatted("Intensity of ripple normal distortion.");
+				ImGui::TextUnformatted("How strong ripple rings look. Higher = stronger ripples, lower = softer ripples.");
 			}
+
 			ImGui::SliderFloat("Radius", &settings.RippleRadius, 0.f, 1.f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
-			if (auto _tt = Util::HoverTooltipWrapper())
-				ImGui::Text("As portion of grid size.");
+			if (auto _tt = Util::HoverTooltipWrapper()) {
+				ImGui::TextUnformatted("Ripple ring size. Higher = wider rings, lower = tighter rings.");
+			}
+
 			ImGui::SliderFloat("Breadth", &settings.RippleBreadth, 0.f, 1.f, "%.2f");
 			if (auto _tt = Util::HoverTooltipWrapper()) {
-				ImGui::TextUnformatted("Width/thickness of ripple rings.");
+				ImGui::TextUnformatted("Ripple ring thickness. Higher = thicker rings, lower = thinner rings.");
 			}
+
 			ImGui::SliderFloat("Lifetime", &settings.RippleLifetime, 0.f, settings.RaindropInterval, "%.2f sec", ImGuiSliderFlags_AlwaysClamp);
 			if (auto _tt = Util::HoverTooltipWrapper()) {
-				ImGui::TextUnformatted("How long each ripple lasts.");
+				ImGui::TextUnformatted("How long each ripple remains visible. Higher = longer rings, lower = faster fade.");
 			}
 			ImGui::TreePop();
 		}
 
 		ImGui::EndDisabled();
+		ImGui::TreePop();
+	}
 
+	drawSectionDivider();
+
+	if (ImGui::TreeNodeEx("Wet Reflection Mode", ImGuiTreeNodeFlags_DefaultOpen)) {
 		ImGui::BeginDisabled(settings.EnableLegacyWetReflection != 0);
 		if (drawUintCheckbox("Modern Wetness Reflection", settings.EnableModernWetReflection) && settings.EnableModernWetReflection) {
 			settings.EnableLegacyWetReflection = 0u;
 		}
 		ImGui::EndDisabled();
 		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::TextUnformatted("Current wet reflection look. Turns off Legacy Reflection.");
+			ImGui::TextUnformatted("Modern reflection style. Turning this on will turn Legacy off.");
 		}
+
 		ImGui::BeginDisabled(settings.EnableModernWetReflection != 0);
 		if (drawUintCheckbox("Legacy Wetness Reflection", settings.EnableLegacyWetReflection) && settings.EnableLegacyWetReflection) {
 			settings.EnableModernWetReflection = 0u;
 		}
 		ImGui::EndDisabled();
 		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::TextUnformatted("Older wet reflection look. Turns off Modern Reflection.");
+			ImGui::TextUnformatted("Legacy reflection style. Turning this on will turn Modern off.");
 		}
 
 		SanitizePersistentReflectionSettings(settings, modernWetIndirectSpecularScale, legacyWetIndirectSpecularScale);
@@ -996,21 +1017,21 @@ void WetnessEffects::DrawSettings()
 		SanitizePersistentReflectionSettings(settings, modernWetIndirectSpecularScale, legacyWetIndirectSpecularScale);
 		if (auto _tt = Util::HoverTooltipWrapper()) {
 			if (legacyReflectionModeEnabled) {
-				ImGui::TextUnformatted("Higher value = stronger reflections. Legacy mode uses finer control around 0.01-0.02.");
+				ImGui::TextUnformatted("Overall reflection brightness. Higher = stronger shine, lower = softer shine.");
 			} else {
-				ImGui::TextUnformatted("Higher value = stronger reflections.");
+				ImGui::TextUnformatted("Overall reflection brightness. Higher = stronger shine, lower = softer shine.");
 			}
 		}
+
 		drawUintCheckbox("Chaotic Ripple Turbulence", settings.EnableLegacyRainBehavior);
 		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::TextUnformatted("Adds extra random ripple motion. Works with either reflection mode.");
+			ImGui::TextUnformatted("Adds extra random movement to rain ripples. Higher motion feel when enabled.");
 		}
 
 		ImGui::TreePop();
 	}
 
-	ImGui::Spacing();
-	ImGui::Spacing();
+	drawSectionDivider();
 
 	if (ImGui::TreeNodeEx("Advanced", ImGuiTreeNodeFlags_DefaultOpen)) {
 		const auto drawDryingSlider = [](const char* label, float& value, const char* tooltip) {
@@ -1022,112 +1043,139 @@ void WetnessEffects::DrawSettings()
 
 		ImGui::Checkbox("Enable Weather-Driven Drying", &enableWeatherDrivenDryingModel);
 		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::TextUnformatted("Automatically sets drying by rain strength, weather, and season. When enabled, manual drying sliders are ignored.");
+			ImGui::TextUnformatted("Automatically controls drying based on weather and season. When on, manual drying-time sliders below are ignored.");
 		}
 
 		ImGui::SliderFloat("Weather transition speed", &settings.WeatherTransitionSpeed, 0.2f, 8.0f);
 		markPresetDirtyIfEdited();
 		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::Text("How fast wetness appears when raining and how quickly it dries after rain has stopped.");
+			ImGui::TextUnformatted("How fast wetness responds to weather changes. Higher = quicker wet/dry transitions, lower = slower transitions.");
 		}
+
+		ImGui::Separator();
+		ImGui::TextDisabled("Drying Times");
+
 		ImGui::BeginDisabled(enableWeatherDrivenDryingModel);
-		drawDryingSlider("Stone Drying Time", settings.StoneDryingMultiplier, "Target dry-out time for hard/stone-like surfaces after rain stops.");
-		drawDryingSlider("Grass Drying Time", settings.GrassDryingMultiplier, "Target dry-out time for grass/vegetation-like surfaces after rain stops.");
-		drawDryingSlider("Dirt Drying Time", settings.DirtDryingMultiplier, "Target dry-out time for soil/dirt-like surfaces after rain stops.");
-		drawDryingSlider("Puddle Drying Time", puddleDryingHours, "Target dry-out time for puddles after rain stops.");
+		drawDryingSlider("Stone Drying Time", settings.StoneDryingMultiplier, "Drying time for stone-like surfaces after rain. Higher = dries slower, lower = dries faster.");
+		drawDryingSlider("Grass Drying Time", settings.GrassDryingMultiplier, "Drying time for grass-like surfaces after rain. Higher = dries slower, lower = dries faster.");
+		drawDryingSlider("Dirt Drying Time", settings.DirtDryingMultiplier, "Drying time for dirt-like surfaces after rain. Higher = dries slower, lower = dries faster.");
+		drawDryingSlider("Puddle Drying Time", puddleDryingHours, "How long puddles remain after rain. Higher = puddles last longer, lower = puddles fade sooner.");
 		ImGui::EndDisabled();
 		if (enableWeatherDrivenDryingModel) {
-			ImGui::TextDisabled("Manual drying sliders are disabled while weather-driven drying is enabled.");
+			ImGui::TextDisabled("Manual drying-time sliders are disabled while weather-driven drying is enabled.");
 		}
+
+		ImGui::Separator();
+		ImGui::TextDisabled("Surface Response");
 
 		ImGui::SliderFloat("Min Rain Wetness", &settings.MinRainWetness, 0.0f, 0.9f);
 		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::Text("The minimum amount an object gets wet from rain.");
+			ImGui::TextUnformatted("Minimum wetness during rain. Higher = even light rain looks wetter, lower = more subtle light rain.");
 		}
 
 		ImGui::SliderFloat("Skin Wetness", &settings.SkinWetness, 0.0f, 1.0f);
 		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::Text("How wet character skin and hair get during rain.");
+			ImGui::TextUnformatted("How wet skin and hair look in rain. Higher = stronger wet look, lower = subtler wet look.");
 		}
+
 		ImGui::SliderFloat("Wet Surface Darkening", &settings.WetDarkeningStrength, 0.0f, 2.0f, "%.2f");
 		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::TextUnformatted("How much wet ground darkens, improving liquid-film visibility.");
+			ImGui::TextUnformatted("How much wet ground darkens. Higher = darker wet patches, lower = closer to original brightness.");
 		}
+
 		ImGui::SliderFloat("Wet Surface Saturation", &settings.WetColorSaturation, 0.0f, 2.5f, "%.2f");
 		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::TextUnformatted("Boosts wet surface color richness so puddles read less chalky.");
+			ImGui::TextUnformatted("How colorful wet surfaces look. Higher = richer color, lower = more neutral color.");
 		}
+
 		ImGui::SliderFloat("Wet Highlight Reduction", &settings.WetHighlightReduction, WET_HIGHLIGHT_REDUCTION_MIN, WET_HIGHLIGHT_REDUCTION_MAX, "%.2f");
 		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::TextUnformatted("Reduces white grazing-angle highlights; higher values look more water-like.");
+			ImGui::TextUnformatted("Reduces bright white wet highlights. Higher = less white glare, lower = brighter highlights.");
 		}
+
+		ImGui::Separator();
+		ImGui::TextDisabled("Runoff");
+
 		ImGui::SliderFloat("Runoff Strength", &settings.CloseRangeWetnessBoost, RUNOFF_STRENGTH_MIN, RUNOFF_STRENGTH_MAX, "%.2f");
 		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::TextUnformatted("How visible and strong downhill wet streaks are on sloped surfaces.");
+			ImGui::TextUnformatted("How visible downhill wet streaks are. Higher = stronger streaks, lower = subtler streaks.");
 		}
+
 		ImGui::SliderFloat("Runoff Speed", &settings.WetVisualPad0, RUNOFF_SPEED_MIN, RUNOFF_SPEED_MAX, "%.2f");
 		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::TextUnformatted("How fast downhill wet streak animation moves.");
+			ImGui::TextUnformatted("How fast runoff streaks move. Higher = faster motion, lower = slower motion.");
 		}
+
 		ImGui::SliderFloat("Runoff Width", &settings.PuddlePatternScale, RUNOFF_WIDTH_MIN, RUNOFF_WIDTH_MAX, "%.2f");
 		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::TextUnformatted("Controls runoff streak thickness. Lower = thinner lines, higher = wider streams.");
+			ImGui::TextUnformatted("Runoff streak thickness. Higher = wider streaks, lower = thinner streaks.");
 		}
+
+		ImGui::Separator();
+		ImGui::TextDisabled("Shore and Puddles");
+
 		int shoreRange = static_cast<int>(settings.ShoreRange);
 		if (ImGui::SliderInt("Shore Range", &shoreRange, 1, 64, "%d", ImGuiSliderFlags_AlwaysClamp)) {
 			settings.ShoreRange = static_cast<uint>(shoreRange);
 		}
 		if (auto _tt = Util::HoverTooltipWrapper()) {
 			std::vector<std::string> tooltipLines = {
-				"The maximum distance from a body of water that Shore Wetness affects",
+				"How far shore wetness reaches from water.",
+				"Higher = wetness extends farther from the shoreline.",
+				"Lower = wetness stays close to the shoreline.",
 				Util::Units::FormatDistance(static_cast<float>(settings.ShoreRange)),
 				std::format("{:.2f} meters", Util::Units::GameUnitsToMeters(static_cast<float>(settings.ShoreRange)))
 			};
 			Util::DrawMultiLineTooltip(tooltipLines);
 		}
+
 		ImGui::SliderFloat("Puddle Radius", &settings.PuddleRadius, 0.3f, 3.0f);
 		if (auto _tt = Util::HoverTooltipWrapper()) {
 			std::vector<std::string> tooltipLines = {
-				"Controls Puddle size",
+				"Higher = larger puddle pattern, lower = smaller puddle pattern.",
 				Util::Units::FormatDistance(settings.PuddleRadius),
 				std::format("{:.2f} meters", Util::Units::GameUnitsToMeters(settings.PuddleRadius))
 			};
 			Util::DrawMultiLineTooltip(tooltipLines);
 		}
+
 		drawUintCheckbox("Enable Dual Puddle Model", settings.EnableDualPuddleModel);
 		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::TextUnformatted("Combines flat-surface puddles with micro-depth puddles (e.g. gaps between cobblestones).");
+			ImGui::TextUnformatted("Blends broad flat puddles with small puddles in surface gaps. Off = simpler puddle style.");
 		}
+
 		ImGui::BeginDisabled(settings.EnableDualPuddleModel == 0);
 		ImGui::SliderFloat("Flat vs Depth", &settings.PuddleDepthBlend, 0.0f, 1.0f, "%.2f");
 		ImGui::EndDisabled();
 		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::TextUnformatted("0 = flat-angle puddles, 1 = micro-depth puddles, 0.5 = balanced blend.");
+			ImGui::TextUnformatted("Blend between broad flat puddles and gap-following puddles. Lower = flatter pooling, higher = more depth-following pooling.");
 		}
 
 		ImGui::SliderFloat("Puddle Max Angle", &settings.PuddleMaxAngle, 0.0f, 1.0f);
 		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::Text("How flat a surface needs to be for puddles to form on it.");
+			ImGui::TextUnformatted("Controls how easily puddles form on slopes. Higher = puddles can appear on steeper ground, lower = mostly flat areas only.");
 		}
 
 		ImGui::SliderFloat("Puddle Min Wetness", &settings.PuddleMinWetness, 0.0f, 1.0f);
 		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::Text("The wetness value at which puddles start to form.");
+			ImGui::TextUnformatted("Wetness needed before puddles appear. Higher = puddles appear later, lower = puddles appear sooner.");
 		}
+
 		ImGui::SliderFloat("Post-Rain Puddle Water", &settings.PostRainPuddleWaterStrength, 0.0f, 2.0f, "%.2f");
 		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::TextUnformatted("How much puddles keep visible standing water after rain stops.");
+			ImGui::TextUnformatted("How much standing water remains visible after rain stops. Higher = puddles stay fuller longer, lower = less leftover water.");
 		}
+
 		ImGui::SliderFloat("Raindrop End Fade", &settings.RaindropTransitionFalloff, 0.5f, 6.0f, "%.2f");
 		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::TextUnformatted("Higher value makes ground raindrops fade out faster during weather transition.");
+			ImGui::TextUnformatted("How quickly raindrop effects fade when rain ends. Higher = faster fade, lower = slower fade.");
 		}
 
 		ImGui::TreePop();
 	}
 
-	ImGui::Spacing();
-	ImGui::Spacing();
+	drawSectionDivider();
+
 	auto& weatherPicker = globals::features::weatherPicker;
 	if (weatherPicker.loaded) {
 		if (ImGui::SmallButton(("Open " + weatherPicker.GetName()).c_str())) {
@@ -1139,26 +1187,46 @@ void WetnessEffects::DrawSettings()
 		}
 	}
 
-	if (ImGui::TreeNodeEx("Debug", ImGuiTreeNodeFlags_DefaultOpen)) {
+	if (ImGui::TreeNodeEx("Debug (Testing)", ImGuiTreeNodeFlags_DefaultOpen)) {
 		ImGui::Checkbox("Enable Wetness Override", &debugSettings.EnableWetnessOverride);
+		if (auto _tt = Util::HoverTooltipWrapper()) {
+			ImGui::TextUnformatted("Use manual wetness values instead of automatic values.");
+		}
+
 		ImGui::Checkbox("Enable Puddle Override", &debugSettings.EnablePuddleOverride);
+		if (auto _tt = Util::HoverTooltipWrapper()) {
+			ImGui::TextUnformatted("Use manual puddle values instead of automatic values.");
+		}
+
 		ImGui::Checkbox("Enable Rain Override", &debugSettings.EnableRainOverride);
+		if (auto _tt = Util::HoverTooltipWrapper()) {
+			ImGui::TextUnformatted("Use manual rain-signal values instead of weather rain values.");
+		}
+
 		ImGui::Checkbox("Enable Interior/Exterior Override", &debugSettings.EnableIntExOverride);
 		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::Text(
-				"If disabled, will only use the exterior value. ");
+			ImGui::TextUnformatted("When disabled, only exterior override values are used.");
 		}
 
 		if (debugSettings.EnableWetnessOverride) {
 			ImGui::SliderFloat2("Wetness In/Exterior", &debugSettings.WetnessOverride.x, 0.0f, 2.0f);
+			if (auto _tt = Util::HoverTooltipWrapper()) {
+				ImGui::TextUnformatted("Manual wetness values. Higher = wetter look, lower = drier look.");
+			}
 		}
 
 		if (debugSettings.EnablePuddleOverride) {
 			ImGui::SliderFloat2("Puddle Wetness In/Exterior", &debugSettings.PuddleWetnessOverride.x, 0.0f, 2.0f);
+			if (auto _tt = Util::HoverTooltipWrapper()) {
+				ImGui::TextUnformatted("Manual puddle values. Higher = stronger puddles, lower = weaker puddles.");
+			}
 		}
 
 		if (debugSettings.EnableRainOverride) {
 			ImGui::SliderFloat2("Rain In/Exterior", &debugSettings.RainOverride.x, 0.0f, 1.0f);
+			if (auto _tt = Util::HoverTooltipWrapper()) {
+				ImGui::TextUnformatted("Manual rain signal. Higher = stronger rain signal, lower = weaker rain signal.");
+			}
 		}
 		ImGui::TreePop();
 	}
