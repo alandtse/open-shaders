@@ -44,11 +44,10 @@ public:
 		float MinRainWetness = 0.65f;
 		float SkinWetness = 0.95f;
 		float WeatherTransitionSpeed = 3.0f;
-		// Surface drying-time controls in hours (1..24):
-		// stone/wood dries first, grass next, dirt last by default.
-		float StoneDryingMultiplier = 15.0f;
-		float DirtDryingMultiplier = 24.0f;
-		float GrassDryingMultiplier = 20.0f;
+		// Surface drying-time controls in hours (1..24).
+		float StoneDryingMultiplier = 6.0f;
+		float DirtDryingMultiplier = 12.0f;
+		float GrassDryingMultiplier = 3.0f;
 
 		// Raindrop fx settings
 		uint EnableRaindropFx = true;
@@ -75,7 +74,7 @@ public:
 		// Dev tuning controls (temporary while calibrating wetness behavior in-game)
 		float PostRainPuddleWaterStrength = 0.8f;
 		// Runoff Strength tuning (reuses legacy field slot to keep CB layout stable).
-		float CloseRangeWetnessBoost = 1.0f;
+		float CloseRangeWetnessBoost = 0.0f;
 		float RaindropTransitionFalloff = 2.0f;
 		uint EnableDualPuddleModel = true;
 		float PuddleDepthBlend = 0.5f;
@@ -109,10 +108,10 @@ public:
 		float PuddleMinWetness = 0.85f;
 		float MinRainWetness = 0.65f;
 		float SkinWetness = 0.95f;
-		float PuddleLayout = 1.0f;
-		float StoneDryingMultiplier = 15.0f;
-		float DirtDryingMultiplier = 24.0f;
-		float GrassDryingMultiplier = 20.0f;
+		float PuddleLayout = 2.0f;
+		float StoneDryingMultiplier = 6.0f;
+		float DirtDryingMultiplier = 12.0f;
+		float GrassDryingMultiplier = 3.0f;
 
 		uint EnableRaindropFx = true;
 		uint EnableSplashes = true;
@@ -136,7 +135,7 @@ public:
 		float RippleLifetime = .5f;
 
 		float PostRainPuddleWaterStrength = 0.8f;
-		float CloseRangeWetnessBoost = 1.0f;
+		float CloseRangeWetnessBoost = 0.0f;
 		float RaindropTransitionFalloff = 2.0f;
 		uint EnableDualPuddleModel = true;
 		float PuddleDepthBlend = 0.5f;
@@ -180,8 +179,8 @@ public:
 
 	Settings settings;
 	bool enableWeatherDrivenDryingModel = true;
-	float puddleDryingHours = 24.0f;
-	float puddleLayout = 1.0f;
+	float puddleDryingHours = 18.0f;
+	float puddleLayout = 2.0f;
 	float modernWetIndirectSpecularScale = 0.05f;
 	float legacyWetIndirectSpecularScale = 0.0145f;
 	// Climate preset system
