@@ -2442,14 +2442,17 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 		float4 precipOcclusionTexCoord = mul(SharedData::wetnessEffectsSettings.OcclusionViewProj, float4(input.WorldPosition.xyz, 1));
 		precipOcclusionTexCoord.y = -precipOcclusionTexCoord.y;
 		float2 precipOcclusionUV = precipOcclusionTexCoord.xy * 0.5 + 0.5;
+		float2 clampedPrecipOcclusionUV = saturate(precipOcclusionUV);
+		float2 occlusionOutsideDelta = abs(precipOcclusionUV - clampedPrecipOcclusionUV);
+		float occlusionDomainBlend = saturate(1.0 - max(occlusionOutsideDelta.x, occlusionOutsideDelta.y) * 8.0);
+		float precipOcclusionZ = WetnessEffects::TexPrecipOcclusion.SampleLevel(SampColorSampler, clampedPrecipOcclusionUV, 0).x;
+		float2 occlusionUvMargin = min(clampedPrecipOcclusionUV, 1.0 - clampedPrecipOcclusionUV);
+		float occlusionEdgeFade = saturate(min(occlusionUvMargin.x, occlusionUvMargin.y) * 16.0);
+		float occlusionValidity = occlusionDomainBlend * occlusionEdgeFade;
+		float occlusionPass = (precipOcclusionTexCoord.z < precipOcclusionZ + 0.1) ? 1.0 : 0.0;
+		float raindropFade = distanceFadeout * lerp(1.0, occlusionPass, occlusionValidity);
 
-		if (saturate(precipOcclusionUV.x) == precipOcclusionUV.x && saturate(precipOcclusionUV.y) == precipOcclusionUV.y) {
-			float precipOcclusionZ = WetnessEffects::TexPrecipOcclusion.SampleLevel(SampColorSampler, precipOcclusionUV, 0).x;
-			float2 occlusionUvMargin = min(precipOcclusionUV, 1.0 - precipOcclusionUV);
-			float occlusionEdgeFade = saturate(min(occlusionUvMargin.x, occlusionUvMargin.y) * 16.0);
-			float raindropFade = distanceFadeout * occlusionEdgeFade;
-
-			if (precipOcclusionTexCoord.z < precipOcclusionZ + 0.1)
+		if (raindropFade > 0.0)
 #		if defined(SKINNED)
 				raindropInfo = WetnessEffects::GetRainDrops(input.ModelPosition.xyz, SharedData::wetnessEffectsSettings.Time, worldNormal, raindropFade);
 #		elif defined(DEFERRED)
@@ -2457,8 +2460,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 #		else
 				raindropInfo = WetnessEffects::GetRainDrops(!FrameBuffer::FrameParams.y ? input.ModelPosition.xyz : input.WorldPosition.xyz + FrameBuffer::CameraPosAdjust[eyeIndex].xyz, SharedData::wetnessEffectsSettings.Time, worldNormal, raindropFade);
 #		endif
-			raindropInfo.w *= raindropFade;
-		}
+		raindropInfo.w *= raindropFade;
 	}
 
 	// Calculate different wetness types

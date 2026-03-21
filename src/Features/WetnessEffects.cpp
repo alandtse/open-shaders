@@ -1661,10 +1661,10 @@ WetnessEffects::PerFrame WetnessEffects::GetCommonBufferData() const
 	const float legacyReflectionScale = SanitizeReflectionScale(legacyWetIndirectSpecularScale, MAX_LEGACY_WET_REFLECTION_SCALE, DEFAULT_LEGACY_WET_INDIRECT_SPECULAR_SCALE);
 	SyncActiveReflectionScale(data.settings, modernReflectionScale, legacyReflectionScale);
 	SanitizeShaderFacingSettings(data.settings);
-	puddleLayout = std::clamp(puddleLayout, PUDDLE_LAYOUT_MIN, PUDDLE_LAYOUT_MAX);
+	const float clampedPuddleLayout = std::clamp(puddleLayout, PUDDLE_LAYOUT_MIN, PUDDLE_LAYOUT_MAX);
 	// Reuse the shader-only wetness CB slot (former WeatherTransitionSpeed) for puddle layout.
 	// CPU simulation above still uses settings.WeatherTransitionSpeed.
-	data.settings.WeatherTransitionSpeed = puddleLayout;
+	data.settings.WeatherTransitionSpeed = clampedPuddleLayout;
 	const float dryingEventWeight = rainingNow ? runtimeState.rainEventWeight : runtimeState.postRainEventWeight;
 	const EffectiveDryingHours effectiveDryingHours = getEffectiveDryingHours(dryingEventWeight);
 	data.settings.StoneDryingMultiplier = effectiveDryingHours.stoneHours;
