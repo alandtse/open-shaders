@@ -23,6 +23,12 @@ namespace
 	constexpr float kDefaultGodraySaturation = 1.0f;
 	constexpr float kDefaultCustomContribution = 0.0f;
 	constexpr float kFloatEpsilon = 1e-4f;
+	constexpr int32_t kTextureWidthMin = 32;
+	constexpr int32_t kTextureWidthMax = 640;
+	constexpr int32_t kTextureHeightMin = 32;
+	constexpr int32_t kTextureHeightMax = 640;
+	constexpr int32_t kTextureDepthMin = 10;
+	constexpr int32_t kTextureDepthMax = 640;
 
 	struct GodrayRuntimeParams
 	{
@@ -201,6 +207,8 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 
 void VolumetricLighting::DrawSettings()
 {
+	SanitizeSettings();
+
 	if (REL::Module::IsVR()) {
 		if (ImGui::Checkbox("Disable Weather-Driven Volumetric Lighting During Rain", &settings.DisableWeatherInteractionDuringRain))
 			SetupVL();
@@ -249,6 +257,7 @@ void VolumetricLighting::DrawGodrayTuningSettings()
 
 void VolumetricLighting::DrawVolumetricLightingSettings(int32_t& quality, TextureSize& customSize, const bool isInterior, const bool inLocationType)
 {
+	quality = ClampQualityIndex(quality);
 	auto& [Width, Height, Depth] = FetchCurrentSizeInUnits(isInterior);
 
 	if (ImGui::SliderInt(isInterior ? "Interior Quality" : "Exterior Quality", &quality, 0, static_cast<uint8_t>(Quality::Count) - 1, QualityNames[quality])) {
@@ -293,7 +302,8 @@ VolumetricLighting::TextureSize& VolumetricLighting::FetchCurrentSizeInUnits(con
 {
 	auto& size = interior ? interiorSizeInUnits : exteriorSizeInUnits;
 	if (interior) {
-		switch (static_cast<Quality>(settings.InteriorQuality)) {
+		const int32_t quality = ClampQualityIndex(settings.InteriorQuality);
+		switch (static_cast<Quality>(quality)) {
 		case Quality::Low:
 			size = *gVolumetricLightingSizeLow;
 			break;
@@ -310,7 +320,8 @@ VolumetricLighting::TextureSize& VolumetricLighting::FetchCurrentSizeInUnits(con
 			break;
 		}
 	} else {
-		switch (static_cast<Quality>(settings.ExteriorQuality)) {
+		const int32_t quality = ClampQualityIndex(settings.ExteriorQuality);
+		switch (static_cast<Quality>(quality)) {
 		case Quality::Low:
 			size = *gVolumetricLightingSizeLow;
 			break;
@@ -344,7 +355,43 @@ void VolumetricLighting::LoadSettings(json& o_json)
 		settings.GodrayShaftIntensity = settings.GodrayIntensity;
 	}
 
-	// Sanitize persisted values once on load for stable runtime behavior.
+	SanitizeSettings();
+}
+
+void VolumetricLighting::SaveSettings(json& o_json)
+{
+	// Keep legacy value aligned for older config readers.
+	settings.GodrayIntensity = settings.GodrayShaftIntensity;
+	o_json = settings;
+}
+
+void VolumetricLighting::RestoreDefaultSettings()
+{
+	settings = {};
+	SanitizeSettings();
+	if (globals::game::isVR)
+	{
+		Util::ResetGameSettingsToDefaults(hiddenVREnableSettings);
+		Util::ResetGameSettingsToDefaults(hiddenVRWeatherUpdateSettings);
+	}
+}
+
+int32_t VolumetricLighting::ClampQualityIndex(int32_t quality)
+{
+	return std::clamp(quality, static_cast<int32_t>(Quality::Low), static_cast<int32_t>(Quality::Custom));
+}
+
+VolumetricLighting::TextureSize VolumetricLighting::ClampTextureSize(const TextureSize& size)
+{
+	return {
+		.Width = std::clamp(size.Width, kTextureWidthMin, kTextureWidthMax),
+		.Height = std::clamp(size.Height, kTextureHeightMin, kTextureHeightMax),
+		.Depth = std::clamp(size.Depth, kTextureDepthMin, kTextureDepthMax),
+	};
+}
+
+void VolumetricLighting::SanitizeSettings()
+{
 	settings.GodrayIntensity = ClampFinite(settings.GodrayIntensity, 0.0f, kGodrayIntensityMax, 1.0f);
 	settings.GodrayShaftIntensity = ClampFinite(settings.GodrayShaftIntensity, 0.0f, kGodrayShaftIntensityMax, 1.0f);
 	settings.GodrayOpacity = ClampFinite(settings.GodrayOpacity, 0.0f, kGodrayOpacityMax, 1.0f);
@@ -353,21 +400,10 @@ void VolumetricLighting::LoadSettings(json& o_json)
 	settings.CustomColorRed = ClampFinite(settings.CustomColorRed, 0.0f, 1.0f, 1.0f);
 	settings.CustomColorGreen = ClampFinite(settings.CustomColorGreen, 0.0f, 1.0f, 1.0f);
 	settings.CustomColorBlue = ClampFinite(settings.CustomColorBlue, 0.0f, 1.0f, 1.0f);
-}
-
-void VolumetricLighting::SaveSettings(json& o_json)
-{
-	o_json = settings;
-}
-
-void VolumetricLighting::RestoreDefaultSettings()
-{
-	settings = {};
-	if (globals::game::isVR)
-	{
-		Util::ResetGameSettingsToDefaults(hiddenVREnableSettings);
-		Util::ResetGameSettingsToDefaults(hiddenVRWeatherUpdateSettings);
-	}
+	settings.ExteriorQuality = ClampQualityIndex(settings.ExteriorQuality);
+	settings.InteriorQuality = ClampQualityIndex(settings.InteriorQuality);
+	settings.ExteriorCustomSize = ClampTextureSize(settings.ExteriorCustomSize);
+	settings.InteriorCustomSize = ClampTextureSize(settings.InteriorCustomSize);
 }
 
 bool VolumetricLighting::IsExteriorEnabled() const
@@ -476,12 +512,14 @@ void VolumetricLighting::EarlyPrepass()
 
 void VolumetricLighting::SetupVL()
 {
+	SanitizeSettings();
+
 	if (!gVolumetricLightingSizeHigh || (!globals::game::isVR && !bEnableVolumetricLighting)) {
 		return;
 	}
 
 	const bool runtimeEnabled = inInterior ? (settings.InteriorEnabled && inInteriorWithSun) : settings.ExteriorEnabled;
-	const int32_t quality = inInterior ? settings.InteriorQuality : settings.ExteriorQuality;
+	const int32_t quality = ClampQualityIndex(inInterior ? settings.InteriorQuality : settings.ExteriorQuality);
 	const TextureSize& customSize = inInterior ? settings.InteriorCustomSize : settings.ExteriorCustomSize;
 
 	if (globals::game::isVR) {
