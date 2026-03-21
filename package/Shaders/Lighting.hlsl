@@ -2375,7 +2375,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	float wetnessGlossinessSpecular = 0.0;
 	float runoffStreakMask = 0.0;
 	float wetHighlightReflectanceScale = 1.0;
-	const bool wetnessEnabled = SharedData::wetnessEffectsSettings.EnableWetnessEffects;
+	const bool wetnessEnabled = (SharedData::wetnessEffectsSettings.EnableWetnessEffects != 0);
 	[branch] if (wetnessEnabled) {
 
 	// Calculate shore wetness factors
@@ -2451,7 +2451,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	float maxRainDropDistance = SharedData::wetnessEffectsSettings.RaindropFxRange * SharedData::wetnessEffectsSettings.RaindropFxRange * 3;
 	float rainDropDistance = dot(input.WorldPosition.xyz, input.WorldPosition.xyz);
 	float distanceFadeout = saturate((1 - saturate(rainDropDistance / maxRainDropDistance)) * 3);
-	if (worldNormal.z > 0.0 && SharedData::wetnessEffectsSettings.Raining > 0.0f && SharedData::wetnessEffectsSettings.EnableRaindropFx &&
+	if (worldNormal.z > 0.0 && SharedData::wetnessEffectsSettings.Raining > 0.0f && (SharedData::wetnessEffectsSettings.EnableRaindropFx != 0) &&
 		(rainDropDistance < maxRainDropDistance)) {
 		float4 precipOcclusionTexCoord = mul(SharedData::wetnessEffectsSettings.OcclusionViewProj, float4(input.WorldPosition.xyz, 1));
 		precipOcclusionTexCoord.y = -precipOcclusionTexCoord.y;

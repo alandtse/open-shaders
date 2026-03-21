@@ -95,7 +95,7 @@ namespace SharedData
 		float Wetness;
 		float PuddleWetness;
 
-		bool EnableWetnessEffects;
+		uint EnableWetnessEffects;
 		float MaxRainWetness;
 		float MaxPuddleWetness;
 		float MaxShoreWetness;
@@ -112,10 +112,10 @@ namespace SharedData
 		float StoneDryingMultiplier;
 		float DirtDryingMultiplier;
 		float GrassDryingMultiplier;
-		bool EnableRaindropFx;
+		uint EnableRaindropFx;
 
-		bool EnableSplashes;
-		bool EnableRipples;
+		uint EnableSplashes;
+		uint EnableRipples;
 		uint EnableVanillaRipples;
 		uint EnableLegacyRainBehavior;
 		uint EnableModernWetReflection;
