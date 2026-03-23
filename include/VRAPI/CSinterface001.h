@@ -2,6 +2,7 @@
 
 #include <RE/Skyrim.h>
 #include <SKSE/SKSE.h>
+#include <cstdint>
 
 namespace CSPluginAPI
 {
@@ -24,6 +25,15 @@ namespace CSPluginAPI
 	struct ICSInterface001;
 	ICSInterface001* GetCSInterface001();
 
+	enum class DLSSMode : uint32_t
+	{
+		kDLAA = 0,
+		kQuality = 1,
+		kBalanced = 2,
+		kPerformance = 3,
+		kUltraPerformance = 4
+	};
+
 	// This object provides access to Community Shaders' mod support API.
 	struct ICSInterface001
 	{
@@ -38,6 +48,10 @@ namespace CSPluginAPI
 
 		virtual bool GetVolumetricLightingExteriorEnabled() = 0;
 		virtual void SetVolumetricLightingExteriorEnabled(bool enabled) = 0;
+
+		// DLSS quality mode only (does not expose profile/reflex controls).
+		virtual DLSSMode GetDLSSMode() = 0;
+		virtual void SetDLSSMode(DLSSMode mode) = 0;
 	};
 }  // namespace CSPluginAPI
 

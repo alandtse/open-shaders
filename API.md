@@ -16,8 +16,9 @@ This is for **consumer plugins** (mods that want to call into Community Shaders)
 - Screen Space Shadows toggle (`SSS` in method names)
 - Screen Space GI toggle
 - Volumetric Lighting Exterior toggle
+- DLSS quality mode control (`DLAA`, `Quality`, `Balanced`, `Performance`, `Ultra Performance`)
 
-All three are runtime toggles.
+The first three are runtime toggles. DLSS exposure is limited to quality mode only.
 
 ## Files You Need In The Consumer Mod
 
@@ -90,11 +91,22 @@ void SetShadowsEnabled(bool enabled)
 - `void SetSSGIEnabled(bool enabled)`
 - `bool GetVolumetricLightingExteriorEnabled()`
 - `void SetVolumetricLightingExteriorEnabled(bool enabled)`
+- `DLSSMode GetDLSSMode()`
+- `void SetDLSSMode(DLSSMode mode)`
+
+`DLSSMode` values:
+
+- `DLSSMode::kDLAA`
+- `DLSSMode::kQuality`
+- `DLSSMode::kBalanced`
+- `DLSSMode::kPerformance`
+- `DLSSMode::kUltraPerformance`
 
 ## Behavior Notes
 
 - `SSS` means **Screen Space Shadows**, not Subsurface Scattering.
 - Setters change runtime state in Community Shaders.
+- DLSS API controls only the quality mode; it does **not** expose DLSS profile or Reflex settings.
 - If the API pointer is null, Community Shaders is missing, too old, or not ready yet.
 - Call from the main/game thread, or queue via SKSE task interface.
 
@@ -102,4 +114,5 @@ void SetShadowsEnabled(bool enabled)
 
 - Always null-check the API pointer.
 - Prefer checking `getBuildNumber()` before relying on behavior.
+- `GetDLSSMode`/`SetDLSSMode` require `getBuildNumber() >= 2`.
 - Treat missing API as optional integration and continue without hard failure.
