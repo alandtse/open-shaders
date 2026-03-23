@@ -1606,6 +1606,7 @@ WetnessEffects::PerFrame WetnessEffects::GetCommonBufferData() const
 	float lastRainingFX = 0.0f;
 	float currentRainingAccum = 0.0f;
 	float lastRainingAccum = 0.0f;
+	const bool isInterior = Util::IsInterior();
 	RE::TESWeather* currentWeather = nullptr;
 	RE::TESWeather* lastWeather = nullptr;
 	bool fullSkyMode = false;
@@ -1833,6 +1834,13 @@ WetnessEffects::PerFrame WetnessEffects::GetCommonBufferData() const
 		}
 	}
 
+	// Strict interior guard: never render rain/wetness indoors.
+	if (isInterior) {
+		data.Raining = 0.0f;
+		data.Wetness = 0.0f;
+		data.PuddleWetness = 0.0f;
+	}
+
 	static size_t rainTimer = 0;  // size_t for precision
 	if (!gamePaused)
 		rainTimer += (size_t)(RE::GetSecondsSinceLastFrame() * 1000);  // BSTimer::delta is always 0 for some reason
@@ -1846,7 +1854,7 @@ WetnessEffects::PerFrame WetnessEffects::GetCommonBufferData() const
 	data.settings = MakeShaderSettings(GetSanitizedSettings());
 	// Raindrops should stop when rain weather transition is complete (weight reaches zero),
 	// not immediately when current weather pointer flips.
-	if (weatherRainTransitionWeight <= 0.005f) {
+	if (weatherRainTransitionWeight <= 0.005f || isInterior) {
 		data.settings.EnableRaindropFx = 0u;
 	}
 	const float modernReflectionScale = SanitizeReflectionScale(modernWetIndirectSpecularScale, MAX_MODERN_WET_REFLECTION_UI_SCALE, DEFAULT_WET_INDIRECT_SPECULAR_SCALE);
