@@ -1,12 +1,15 @@
 #pragma once
 
+#include "Features/Upscaling.h"
 #include "Features/ScreenSpaceGI.h"
 #include "Features/ScreenSpaceShadows.h"
 #include "Features/VolumetricLighting.h"
 #include "Globals.h"
 #include "VRAPI/CSinterface001.h"
 
-inline constexpr unsigned int CSBuildNumber = 1;
+#include <algorithm>
+
+inline constexpr unsigned int CSBuildNumber = 2;
 
 namespace CSPluginAPI
 {
@@ -27,6 +30,9 @@ namespace CSPluginAPI
 
 		virtual bool GetVolumetricLightingExteriorEnabled() override;
 		virtual void SetVolumetricLightingExteriorEnabled(bool enabled) override;
+
+		virtual DLSSMode GetDLSSMode() override;
+		virtual void SetDLSSMode(DLSSMode mode) override;
 	};
 
 	namespace detail
@@ -43,6 +49,20 @@ namespace CSPluginAPI
 		constexpr TFlag BoolToFlag(bool enabled)
 		{
 			return enabled ? static_cast<TFlag>(1) : static_cast<TFlag>(0);
+		}
+
+		inline bool IsValidDLSSMode(DLSSMode mode)
+		{
+			switch (mode) {
+			case DLSSMode::kDLAA:
+			case DLSSMode::kQuality:
+			case DLSSMode::kBalanced:
+			case DLSSMode::kPerformance:
+			case DLSSMode::kUltraPerformance:
+				return true;
+			default:
+				return false;
+			}
 		}
 	}
 
@@ -106,5 +126,21 @@ namespace CSPluginAPI
 	inline void CSInterface001::SetVolumetricLightingExteriorEnabled(bool enabled)
 	{
 		globals::features::volumetricLighting.SetExteriorEnabled(enabled);
+	}
+
+	inline DLSSMode CSInterface001::GetDLSSMode()
+	{
+		const uint32_t clampedMode = std::min(globals::features::upscaling.settings.qualityMode, 4u);
+		return static_cast<DLSSMode>(clampedMode);
+	}
+
+	inline void CSInterface001::SetDLSSMode(DLSSMode mode)
+	{
+		if (!detail::IsValidDLSSMode(mode)) {
+			logger::warn("[CS API] Ignoring invalid DLSS mode value {}", static_cast<uint32_t>(mode));
+			return;
+		}
+
+		globals::features::upscaling.settings.qualityMode = static_cast<uint32_t>(mode);
 	}
 }  // namespace CSPluginAPI
