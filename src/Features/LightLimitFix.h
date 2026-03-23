@@ -190,6 +190,8 @@ struct ParticleLightInfo
 	bool wasWorld = false;
 	int previousRoomIndex = -1;
 	uint previousShadowBitMask = 0;
+	eastl::hash_map<RE::NiLight*, bool> jsonPlacedLightCache;
+	Util::FrameChecker jsonPlacedLightCacheFrameChecker;
 
 	Util::FrameChecker frameChecker;
 
@@ -212,6 +214,14 @@ struct ParticleLightInfo
 	float CalculateLightDistance(float3 a_lightPosition, float a_radius);
 	void AddCachedParticleLights(eastl::vector<LightData>& lightsData, LightLimitFix::LightData& light);
 	void SetLightPosition(LightLimitFix::LightData& a_light, RE::NiPoint3 a_initialPosition, bool a_cached = true);
+	void RefreshJsonPlacedLightCacheFrame();
+	bool IsJsonPlacedLight(RE::BSLight* a_bsLight, RE::NiLight* a_niLight);
+	void ApplyJsonPlacedLightIntensityScale(
+		LightData& a_light,
+		RE::BSLight* a_bsLight,
+		RE::NiLight* a_niLight,
+		bool a_isPortalStrict,
+		bool a_isInterior);
 	void UpdateLights();
 	void UpdateStructure();
 	virtual void Prepass() override;
@@ -237,6 +247,9 @@ struct ParticleLightInfo
 		int MaxParticlesPerEmitter = 256;        // max default						
 		float MaxParticleDistance = 6000.0f;  // distance cutoff for particle lights (in game units)
 		bool EnableParticleLightsOptimization = true;
+		float JsonPlacedLightIntensity = 1.0f;
+		bool JsonPlacedLightsInteriorsOnly = false;
+		bool JsonPlacedLightsPortalStrictOnly = false;
 	};
 
 	uint clusterSize[3] = { 16 };

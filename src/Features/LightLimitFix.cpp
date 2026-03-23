@@ -1,6 +1,7 @@
 #include "LightLimitFix.h"
 #include "Globals.h"
 #include "InverseSquareLighting.h"
+#include "Features/InverseSquareLighting/Common.h"
 #include "LinearLighting.h"
 
 #include "Shadercache.h"
@@ -36,6 +37,8 @@ namespace
 	constexpr int kMaxParticlesPerEmitterMax = 2048;
 	constexpr float kMaxParticleDistanceMin = 0.0f;
 	constexpr float kMaxParticleDistanceMax = 20000.0f;
+	constexpr float kJsonPlacedLightIntensityMin = 0.0f;
+	constexpr float kJsonPlacedLightIntensityMax = 8.0f;
 
 	float ClampFiniteOrDefault(float a_value, float a_min, float a_max, float a_default)
 	{
@@ -63,6 +66,8 @@ namespace
 		a_settings.MaxParticlesPerEmitter = std::clamp(a_settings.MaxParticlesPerEmitter, kMaxParticlesPerEmitterMin, kMaxParticlesPerEmitterMax);
 		a_settings.MaxParticleDistance =
 			ClampFiniteOrDefault(a_settings.MaxParticleDistance, kMaxParticleDistanceMin, kMaxParticleDistanceMax, 6000.0f);
+		a_settings.JsonPlacedLightIntensity =
+			ClampFiniteOrDefault(a_settings.JsonPlacedLightIntensity, kJsonPlacedLightIntensityMin, kJsonPlacedLightIntensityMax, 1.0f);
 	}
 
 	char ToLowerAscii(char a_char)
@@ -292,6 +297,9 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	ParticleClusterThreshold,  // NEW
 	MaxParticlesPerEmitter,    // NEW
 	MaxParticleDistance,       // NEW
+	JsonPlacedLightIntensity,
+	JsonPlacedLightsInteriorsOnly,
+	JsonPlacedLightsPortalStrictOnly,
 	EnableLightsVisualisation,
 	LightsVisualisationMode)
 void LightLimitFix::DrawSettings()
@@ -382,6 +390,29 @@ void LightLimitFix::DrawSettings()
 		ImGui::SliderFloat("Particle Radius", &settings.ParticleRadius, kParticleRadiusMin, kParticleRadiusMax, "%.2f");
 		ImGui::SliderFloat("Billboard Brightness", &settings.BillboardBrightness, kBillboardBrightnessMin, kBillboardBrightnessMax, "%.2f");
 		ImGui::SliderFloat("Billboard Radius", &settings.BillboardRadius, kBillboardRadiusMin, kBillboardRadiusMax, "%.2f");
+
+		ImGui::Spacing();
+		ImGui::Spacing();
+		ImGui::TreePop();
+	}
+
+	if (ImGui::TreeNodeEx("Placed Lights (JSON)", ImGuiTreeNodeFlags_DefaultOpen)) {
+		ImGui::SliderFloat("Intensity Scale", &settings.JsonPlacedLightIntensity, kJsonPlacedLightIntensityMin, kJsonPlacedLightIntensityMax, "%.2f");
+		if (auto _tt = Util::HoverTooltipWrapper()) {
+			ImGui::Text(
+				"Scales intensity for attached runtime lights generated from light records.\n"
+				"This primarily targets Light Placer-style JSON lights.");
+		}
+
+		ImGui::Checkbox("Interiors Only", &settings.JsonPlacedLightsInteriorsOnly);
+		if (auto _tt = Util::HoverTooltipWrapper()) {
+			ImGui::Text("Only apply the intensity scale while in interiors.");
+		}
+
+		ImGui::Checkbox("Portal Strict Only", &settings.JsonPlacedLightsPortalStrictOnly);
+		if (auto _tt = Util::HoverTooltipWrapper()) {
+			ImGui::Text("Only apply the intensity scale to portal-strict lights.");
+		}
 
 		ImGui::Spacing();
 		ImGui::Spacing();
@@ -580,6 +611,7 @@ void LightLimitFix::Reset()
 	std::swap(currentParticleLights, queuedParticleLights);
 	// Cache is keyed by transient pass geometry pointers; rebuild every frame to avoid stale entries.
 	particleLightsReferences.clear();
+	jsonPlacedLightCache.clear();
 }
 
 void LightLimitFix::LoadSettings(json& o_json)
@@ -658,12 +690,14 @@ void LightLimitFix::BSLightingShader_SetupGeometry_GeometrySetupConstantPointLig
 	}
 
 	bool inWorld = accumulator->GetRuntimeData().activeShadowSceneNode == smState->shadowSceneNode[0];
+	const bool isInterior = Util::IsInterior();
 
 	constexpr uint32_t kStrictLightCapacity = 15;
 	const uint32_t availableSceneLights = a_pass->numLights > 0 ? (a_pass->numLights - 1) : 0;
 	const uint32_t requestedStrictLights = inWorld ? 0u : availableSceneLights;
 	const uint32_t strictLightCount = std::min(requestedStrictLights, kStrictLightCapacity);
 	const uint32_t shadowLightCount = std::min(static_cast<uint32_t>(a_pass->numShadowLights), availableSceneLights);
+	RefreshJsonPlacedLightCacheFrame();
 
 	ClearStrictLightData(strictLightDataTemp, false);
 
@@ -697,6 +731,8 @@ void LightLimitFix::BSLightingShader_SetupGeometry_GeometrySetupConstantPointLig
 			}
 
 			light.fade *= bsLight->lodDimmer;
+			const bool isPortalStrict = !IsGlobalLight(bsLight);
+			ApplyJsonPlacedLightIntensityScale(light, bsLight, niLight, isPortalStrict, isInterior);
 
 			SetLightPosition(light, niLight->world.translate, inWorld);
 
@@ -788,6 +824,64 @@ void LightLimitFix::SetLightPosition(LightLimitFix::LightData& a_light, RE::NiPo
 		a_light.positionWS[eyeIndex].data.y = worldPos.y;
 		a_light.positionWS[eyeIndex].data.z = worldPos.z;
 	}
+}
+
+void LightLimitFix::RefreshJsonPlacedLightCacheFrame()
+{
+	if (jsonPlacedLightCacheFrameChecker.IsNewFrame()) {
+		jsonPlacedLightCache.clear();
+	}
+}
+
+bool LightLimitFix::IsJsonPlacedLight(RE::BSLight* a_bsLight, RE::NiLight* a_niLight)
+{
+	if (!a_bsLight || !a_niLight || !a_bsLight->pointLight) {
+		return false;
+	}
+	if (!globals::features::inverseSquareLighting.loaded) {
+		return false;
+	}
+	if (const auto it = jsonPlacedLightCache.find(a_niLight); it != jsonPlacedLightCache.end()) {
+		return it->second;
+	}
+
+	bool isJsonPlacedLight = false;
+	const auto ownerRef = a_niLight->GetUserData();
+	if (ownerRef) {
+		if (const auto ownerBase = ownerRef->GetObjectReference(); ownerBase && ownerBase->GetFormType() != RE::FormType::Light) {
+			const auto runtimeData = ISLCommon::RuntimeLightDataExt::Get(a_niLight);
+			if (runtimeData && runtimeData->lighFormId != 0) {
+				const auto lighForm = RE::TESForm::LookupByID(runtimeData->lighFormId);
+				isJsonPlacedLight = lighForm && lighForm->GetFormType() == RE::FormType::Light;
+			}
+		}
+	}
+
+	jsonPlacedLightCache.insert_or_assign(a_niLight, isJsonPlacedLight);
+	return isJsonPlacedLight;
+}
+
+void LightLimitFix::ApplyJsonPlacedLightIntensityScale(
+	LightData& a_light,
+	RE::BSLight* a_bsLight,
+	RE::NiLight* a_niLight,
+	bool a_isPortalStrict,
+	bool a_isInterior)
+{
+	if (settings.JsonPlacedLightIntensity == 1.0f) {
+		return;
+	}
+	if (settings.JsonPlacedLightsInteriorsOnly && !a_isInterior) {
+		return;
+	}
+	if (settings.JsonPlacedLightsPortalStrictOnly && !a_isPortalStrict) {
+		return;
+	}
+	if (!IsJsonPlacedLight(a_bsLight, a_niLight)) {
+		return;
+	}
+
+	a_light.fade *= settings.JsonPlacedLightIntensity;
 }
 
 float LightLimitFix::CalculateLuminance(CachedParticleLight& light, RE::NiPoint3& point)
@@ -1324,6 +1418,8 @@ void LightLimitFix::UpdateLights()
 
 	eastl::vector<LightData> lightsData{};
 	lightsData.reserve(MAX_LIGHTS);
+	const bool isInterior = Util::IsInterior();
+	RefreshJsonPlacedLightCacheFrame();
 
 	// Process point lights
 
@@ -1367,8 +1463,9 @@ void LightLimitFix::UpdateLights()
 					}
 
 					light.fade *= bsLight->lodDimmer;
+					const bool isPortalStrict = !IsGlobalLight(bsLight);
 
-					if (!IsGlobalLight(bsLight)) {
+					if (isPortalStrict) {
 						// List of BSMultiBoundRooms affected by a light
 						for (const auto& roomPtr : bsLight->rooms) {
 							if (roomPtr) {
@@ -1383,6 +1480,7 @@ void LightLimitFix::UpdateLights()
 						}
 						light.lightFlags.set(LightFlags::PortalStrict);
 					}
+					ApplyJsonPlacedLightIntensityScale(light, bsLight, niLight, isPortalStrict, isInterior);
 
 					if (bsLight->IsShadowLight()) {
 						auto* shadowLight = static_cast<RE::BSShadowLight*>(bsLight);
