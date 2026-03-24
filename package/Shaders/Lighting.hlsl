@@ -2552,7 +2552,19 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 		float flatAngleMask = smoothstep(0.88, 0.995, saturate(worldNormal.z));
 		float flatWetGate = smoothstep(SharedData::wetnessEffectsSettings.PuddleMinWetness * 0.65, 1.0, max(wetness, puddleWetness));
 		float flatMandatoryPuddle = max(wetness, puddleWetness) * flatAngleMask * flatWetGate;
+
+#		if !defined(SKINNED)
+		// Keep mandatory pooling, but gate it by the puddle-pattern signal so
+		// Puddle Radius/Layout and Max Puddle Wetness still visibly affect shape.
+		float puddleStrength = saturate(SharedData::wetnessEffectsSettings.MaxPuddleWetness / 6.0);
+		float flatPatternThreshold = lerp(0.50, 0.12, puddleStrength);
+		float flatPattern = saturate((puddleSignal - flatPatternThreshold) / max(1e-3, 1.0 - flatPatternThreshold));
+		float flatPatternCoverage = lerp(0.30, 1.0, flatPattern);
+		float flatStrength = lerp(0.35, 1.0, puddleStrength);
+		puddle = max(puddle, flatMandatoryPuddle * flatPatternCoverage * flatStrength);
+#		else
 		puddle = max(puddle, flatMandatoryPuddle);
+#		endif
 	}
 	puddle *= saturate(wetnessOcclusion * 2.0);
 

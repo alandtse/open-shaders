@@ -33,9 +33,11 @@ namespace
 	constexpr float PUDDLE_LAYOUT_MIN = 0.3f;
 	constexpr float PUDDLE_LAYOUT_MAX = 3.0f;
 	constexpr float MAX_LEGACY_WET_REFLECTION_SCALE = 0.10f;
-	constexpr float MAX_MODERN_WET_REFLECTION_UI_SCALE = 0.40f;
+	constexpr float MAX_MODERN_WET_REFLECTION_UI_SCALE = 1.00f;
 	constexpr float DEFAULT_LEGACY_WET_INDIRECT_SPECULAR_SCALE = 0.0145f;
-	constexpr float DEFAULT_WET_INDIRECT_SPECULAR_SCALE = 0.05f;
+	constexpr float DEFAULT_WET_INDIRECT_SPECULAR_SCALE = 0.2f;
+	constexpr float MODERN_WET_REFLECTION_FINE_HIGH = 0.10f;
+	constexpr float MODERN_WET_REFLECTION_FINE_HIGH_T = 0.70f;
 	constexpr float RUNOFF_STRENGTH_MIN = 0.0f;
 	constexpr float RUNOFF_STRENGTH_MAX = 2.0f;
 	constexpr float RUNOFF_SPEED_MIN = 0.0f;
@@ -483,6 +485,35 @@ namespace
 
 		const float t = (value - LEGACY_WET_REFLECTION_FINE_HIGH) / (MAX_LEGACY_WET_REFLECTION_SCALE - LEGACY_WET_REFLECTION_FINE_HIGH);
 		return std::lerp(LEGACY_WET_REFLECTION_FINE_HIGH_T, 1.0f, t);
+	}
+
+	float ModernWetReflectionScaleFromSlider(float sliderT)
+	{
+		sliderT = std::clamp(sliderT, 0.0f, 1.0f);
+		if (sliderT <= MODERN_WET_REFLECTION_FINE_HIGH_T) {
+			if (MODERN_WET_REFLECTION_FINE_HIGH_T <= 0.0f)
+				return 0.0f;
+			const float t = sliderT / MODERN_WET_REFLECTION_FINE_HIGH_T;
+			return std::lerp(0.0f, MODERN_WET_REFLECTION_FINE_HIGH, t);
+		}
+
+		const float t = (sliderT - MODERN_WET_REFLECTION_FINE_HIGH_T) / (1.0f - MODERN_WET_REFLECTION_FINE_HIGH_T);
+		return std::lerp(MODERN_WET_REFLECTION_FINE_HIGH, MAX_MODERN_WET_REFLECTION_UI_SCALE, t * t);
+	}
+
+	float ModernWetReflectionSliderFromScale(float value)
+	{
+		value = std::clamp(value, 0.0f, MAX_MODERN_WET_REFLECTION_UI_SCALE);
+		if (value <= MODERN_WET_REFLECTION_FINE_HIGH) {
+			if (MODERN_WET_REFLECTION_FINE_HIGH <= 0.0f)
+				return 0.0f;
+			const float t = value / MODERN_WET_REFLECTION_FINE_HIGH;
+			return std::lerp(0.0f, MODERN_WET_REFLECTION_FINE_HIGH_T, t);
+		}
+
+		const float t = (value - MODERN_WET_REFLECTION_FINE_HIGH) / (MAX_MODERN_WET_REFLECTION_UI_SCALE - MODERN_WET_REFLECTION_FINE_HIGH);
+		const float linearT = std::sqrt(std::max(0.0f, t));
+		return std::lerp(MODERN_WET_REFLECTION_FINE_HIGH_T, 1.0f, linearT);
 	}
 
 	uint SanitizeToggle(uint value)
@@ -1256,12 +1287,17 @@ void WetnessEffects::DrawSettings()
 				legacyWetIndirectSpecularScale = LegacyWetReflectionScaleFromSlider(sliderT);
 			}
 		} else {
-			ImGui::SliderFloat("Wet Reflection Shine", &modernWetIndirectSpecularScale, 0.0f, MAX_MODERN_WET_REFLECTION_UI_SCALE, "%.4f", ImGuiSliderFlags_AlwaysClamp);
+			float sliderT = ModernWetReflectionSliderFromScale(modernWetIndirectSpecularScale);
+			if (ImGui::SliderFloat("Wet Reflection Shine", &sliderT, 0.0f, 1.0f, "%.4f", ImGuiSliderFlags_AlwaysClamp)) {
+				modernWetIndirectSpecularScale = ModernWetReflectionScaleFromSlider(sliderT);
+			}
+			ImGui::SameLine();
+			ImGui::TextDisabled("(%.4f)", modernWetIndirectSpecularScale);
 		}
 		ImGui::EndDisabled();
 		SanitizePersistentReflectionSettings(settings, modernWetIndirectSpecularScale, legacyWetIndirectSpecularScale);
 		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::TextUnformatted("Overall reflection brightness. Higher = stronger shine, lower = softer shine.");
+			ImGui::TextUnformatted("Overall reflection brightness. Higher = stronger shine, lower = softer shine. Modern mode uses a non-linear slider for finer low-range control.");
 		}
 
 		ImGui::BeginDisabled(settings.EnableRipples == 0);

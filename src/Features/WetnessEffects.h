@@ -57,7 +57,7 @@ public:
 		uint EnableLegacyRainBehavior = false;
 		uint EnableModernWetReflection = true;
 		uint EnableLegacyWetReflection = false;
-		float WetIndirectSpecularScale = 0.05f;
+		float WetIndirectSpecularScale = 0.2f;
 		float RaindropFxRange = 1000.f;
 		float RaindropGridSize = 4.f;
 		float RaindropInterval = 1.0f;
@@ -120,7 +120,7 @@ public:
 		uint EnableLegacyRainBehavior = false;
 		uint EnableModernWetReflection = true;
 		uint EnableLegacyWetReflection = false;
-		float WetIndirectSpecularScale = 0.05f;
+		float WetIndirectSpecularScale = 0.2f;
 		float RaindropFxRange = 1000.f;
 		float RaindropGridSize = 4.f;
 		float RaindropInterval = 1.0f;
@@ -181,7 +181,7 @@ public:
 	bool enableWeatherDrivenDryingModel = true;
 	float puddleDryingHours = 18.0f;
 	float puddleLayout = 2.0f;
-	float modernWetIndirectSpecularScale = 0.05f;
+	float modernWetIndirectSpecularScale = 0.2f;
 	float legacyWetIndirectSpecularScale = 0.0145f;
 	// Climate preset system
 	enum class ClimatePreset : uint32_t
