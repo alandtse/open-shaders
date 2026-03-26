@@ -62,6 +62,12 @@ void Feature::Load(json& o_json)
 		return;
 	}
 
+	// Read Nexus metadata (populated regardless of version compatibility)
+	if (auto nexusId = ini.GetValue("Info", "NexusModID"); nexusId && *nexusId)
+		nexusModID = nexusId;
+	if (auto nexusFileGroup = ini.GetValue("Info", "NexusFileGroupID"); nexusFileGroup && *nexusFileGroup)
+		nexusFileGroupID = nexusFileGroup;
+
 	bool hasError = false;
 	std::string errorVersion;
 	FeatureIssues::FeatureIssueInfo::IssueType errorType = FeatureIssues::FeatureIssueInfo::IssueType::UNKNOWN;

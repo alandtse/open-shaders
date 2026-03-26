@@ -4,8 +4,6 @@
 struct SkySync : Feature
 {
 private:
-	static constexpr std::string_view MOD_ID = "153543";
-
 public:
 	virtual inline std::string GetName() override { return "Sky Sync"; }
 	virtual inline std::string GetShortName() override { return "SkySync"; }

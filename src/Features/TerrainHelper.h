@@ -3,8 +3,6 @@
 struct TerrainHelper : Feature
 {
 private:
-	static constexpr std::string_view MOD_ID = "143149";
-
 public:
 	virtual inline std::string GetName() override { return "Terrain Helper"; }
 	virtual inline std::string GetShortName() override { return "TerrainHelper"; }
@@ -39,8 +37,6 @@ public:
 
 	virtual void DataLoaded() override;
 	virtual bool SupportsVR() override { return true; };
-	virtual std::string GetFeatureModLink() override { return MakeNexusModURL(MOD_ID); }
-
 	void SetShaderResouces(ID3D11DeviceContext* a_context);
 	bool TESObjectLAND_SetupMaterial(RE::TESObjectLAND* land);
 	void BSLightingShader_SetupMaterial(RE::BSLightingShaderMaterialBase const* material);

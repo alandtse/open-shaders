@@ -22,9 +22,8 @@ DEFAULT_NEXUS_BASE_URL = "https://www.nexusmods.com/skyrimspecialedition/mods/"
 DEFAULT_SHADER_TYPES = (".ini", ".hlsl", ".hlsli")
 
 # Regex patterns for feature metadata extraction (all DRY, only here)
-RE_MOD_ID = re.compile(r'MOD_ID\s*=\s*"([^"]+)"')
-RE_FEATURE_MOD_LINK_DIRECT = re.compile(r'GetFeatureModLink\s*\([^)]*\)\s*\{\s*return\s*"(https?://[^"]+)";\s*\}')
-RE_FEATURE_MOD_LINK_NEXUS = re.compile(r'GetFeatureModLink\s*\([^)]*\)\s*\{\s*return\s*MakeNexusModURL\(MOD_ID\);')
+RE_NEXUS_MOD_ID_INI = re.compile(r'^NexusModID\s*=\s*(.+)$', re.MULTILINE)
+RE_SHORT_NAME = re.compile(r'GetShortName\s*\([^)]*\)\s*(?:override)?\s*\{\s*return\s*"([^"]+)"')
 RE_FEATURE_SUMMARY_DIRECT = re.compile(r'GetFeatureSummary\s*\([^)]*\)\s*(?:override)?\s*\{\s*return \{\s*"([^"]+)"\s*,\s*\{([^}]*)\}', re.DOTALL)
 RE_FEATURE_SUMMARY_MULTILINE = re.compile(r'GetFeatureSummary\s*\([^)]*\)\s*(?:override)?\s*\{\s*return \{\s*((?:"[^"]*"\s*)+),\s*\{([^}]*)\}', re.DOTALL)
 RE_FEATURE_SUMMARY_CPP = re.compile(r'GetFeatureSummary\s*\([^)]*\)\s*\{[^}]*?std::string description\s*=\s*"([^"]+)";\s*std::vector<std::string> keyFeatures\s*=\s*\{([^}]*)\}', re.DOTALL)
@@ -174,20 +173,11 @@ def apply_version_bump(ini_path, proposed_ver_str):
     return False
 
 def parse_feature_metadata_file(path, mod_id=None, is_core=False):
-    mod_link = ""
+    mod_link = DEFAULT_NEXUS_BASE_URL + mod_id if (mod_id and not is_core) else ""
     description = ""
     key_features = []
     with open(path, encoding="utf-8") as f:
         content = f.read()
-        # modId
-        if not mod_id:
-            mod_id = extract_regex(RE_MOD_ID, content)
-        # GetFeatureModLink
-        mod_link = extract_regex(RE_FEATURE_MOD_LINK_DIRECT, content) or mod_link
-        if RE_FEATURE_MOD_LINK_NEXUS.search(content) and mod_id:
-            mod_link = DEFAULT_NEXUS_BASE_URL + mod_id
-        if not mod_link and not is_core and mod_id:
-            mod_link = DEFAULT_NEXUS_BASE_URL + mod_id
         # GetFeatureSummary
         m = RE_FEATURE_SUMMARY_DIRECT.search(content)
         if m:
@@ -228,9 +218,20 @@ def extract_feature_metadata(feature_headers_dir):
             # IsCore
             if RE_IS_CORE.search(content):
                 is_core = True
-            m = RE_MOD_ID.search(content)
+            # Short name (may differ from header stem, e.g. IBL -> ImageBasedLighting)
+            m_sn = RE_SHORT_NAME.search(content)
+            if m_sn:
+                short_name = m_sn.group(1)
+        # --- Read NexusModID from feature ini (dirs may have spaces, search by ini filename) ---
+        ini_lookup_name = short_name if short_name else name
+        found_inis = list(DEFAULT_FEATURES_DIR.glob(f"*/Shaders/Features/{ini_lookup_name}.ini"))
+        if found_inis:
+            ini_content = found_inis[0].read_text(encoding="utf-8")
+            m = RE_NEXUS_MOD_ID_INI.search(ini_content)
             if m:
-                mod_id = m.group(1)
+                val = m.group(1).strip()
+                if val:
+                    mod_id = val
         h_meta = parse_feature_metadata_file(header, mod_id=mod_id, is_core=is_core)
         # --- If missing, try .cpp ---
         cpp_path = header.with_suffix('.cpp')

@@ -24,11 +24,13 @@ struct Feature
 	static constexpr std::string_view NEXUS_BASE_URL = "https://www.nexusmods.com/skyrimspecialedition/mods/";
 	bool loaded = false;
 	std::string version;
+	std::string nexusModID;
+	std::string nexusFileGroupID;
 	std::string failedLoadedMessage;
 
 	virtual std::string GetName() = 0;
 	virtual std::string GetShortName() = 0;
-	virtual std::string GetFeatureModLink() { return ""; }
+	virtual std::string GetFeatureModLink() { return nexusModID.empty() ? "" : MakeNexusModURL(nexusModID); }
 	virtual std::string_view GetShaderDefineName() { return ""; }
 	virtual std::vector<std::pair<std::string_view, std::string_view>> GetShaderDefineOptions() { return {}; }
 

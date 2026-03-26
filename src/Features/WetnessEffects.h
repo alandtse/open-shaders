@@ -5,12 +5,9 @@
 struct WetnessEffects : Feature
 {
 private:
-	static constexpr std::string_view MOD_ID = "112739";
-
 public:
 	virtual inline std::string GetName() override { return "Wetness Effects"; }
 	virtual inline std::string GetShortName() override { return "WetnessEffects"; }
-	virtual inline std::string GetFeatureModLink() override { return MakeNexusModURL(MOD_ID); }
 	virtual inline std::string_view GetShaderDefineName() override { return "WETNESS_EFFECTS"; }
 	virtual std::string_view GetCategory() const override { return FeatureCategories::kWater; }
 

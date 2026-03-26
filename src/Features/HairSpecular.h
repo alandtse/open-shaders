@@ -3,8 +3,6 @@
 struct HairSpecular : Feature
 {
 private:
-	static constexpr std::string_view MOD_ID = "149011";
-
 public:
 	virtual inline std::string GetName() override { return "Hair Specular"; }
 	virtual inline std::string GetShortName() override { return "HairSpecular"; }
@@ -21,9 +19,6 @@ public:
 		};
 	}
 	virtual bool HasShaderDefine(RE::BSShader::Type shaderType) override { return shaderType == RE::BSShader::Type::Lighting; };
-
-	virtual inline std::string GetFeatureModLink() override { return MakeNexusModURL(MOD_ID); }
-
 	virtual void Prepass() override;
 
 	virtual void SetupResources() override;
