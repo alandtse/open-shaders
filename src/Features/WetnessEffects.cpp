@@ -32,7 +32,8 @@ namespace
 	constexpr float MIN_PUDDLE_RADIUS = 1e-3f;
 	constexpr float PUDDLE_LAYOUT_MIN = 0.3f;
 	constexpr float PUDDLE_LAYOUT_MAX = 3.0f;
-	constexpr float MAX_LEGACY_WET_REFLECTION_SCALE = 0.10f;
+	constexpr float DEFAULT_LEGACY_WET_REFLECTION_SCALE_MAX = 0.10f;
+	constexpr float HOSTILES_EXTENDED_LEGACY_WET_REFLECTION_SCALE_MAX = 0.25f;
 	constexpr float MAX_MODERN_WET_REFLECTION_UI_SCALE = 1.00f;
 	constexpr float DEFAULT_LEGACY_WET_INDIRECT_SPECULAR_SCALE = 0.0145f;
 	constexpr float DEFAULT_WET_INDIRECT_SPECULAR_SCALE = 0.2f;
@@ -46,6 +47,8 @@ namespace
 	constexpr float RUNOFF_WIDTH_MAX = 3.0f;
 	constexpr float WET_HIGHLIGHT_REDUCTION_MIN = 0.25f;
 	constexpr float WET_HIGHLIGHT_REDUCTION_MAX = 10.0f;
+	constexpr float PUDDLE_PATTERN_DOMINANCE_MIN = 0.25f;
+	constexpr float PUDDLE_PATTERN_DOMINANCE_MAX = 2.0f;
 	constexpr float LEGACY_WET_REFLECTION_FINE_LOW = 0.01f;
 	constexpr float LEGACY_WET_REFLECTION_FINE_HIGH = 0.02f;
 	constexpr float LEGACY_WET_REFLECTION_FINE_LOW_T = 0.35f;
@@ -453,7 +456,15 @@ namespace
 		return fallback;
 	}
 
-	float LegacyWetReflectionScaleFromSlider(float sliderT)
+	template <class TSettings>
+	float GetLegacyReflectionUiMax(const TSettings& settings)
+	{
+		const bool hostilesWetProfileEnabled = settings.EnableHostilesWetProfile != 0;
+		const bool extendedLegacyRangeEnabled = hostilesWetProfileEnabled && settings.EnableExtendedLegacyReflectionRange != 0;
+		return extendedLegacyRangeEnabled ? HOSTILES_EXTENDED_LEGACY_WET_REFLECTION_SCALE_MAX : DEFAULT_LEGACY_WET_REFLECTION_SCALE_MAX;
+	}
+
+	float LegacyWetReflectionScaleFromSlider(float sliderT, float legacyScaleMax)
 	{
 		sliderT = std::clamp(sliderT, 0.0f, 1.0f);
 		if (sliderT <= LEGACY_WET_REFLECTION_FINE_LOW_T) {
@@ -465,13 +476,15 @@ namespace
 			return std::lerp(LEGACY_WET_REFLECTION_FINE_LOW, LEGACY_WET_REFLECTION_FINE_HIGH, t);
 		}
 
+		const float safeLegacyScaleMax = std::max(LEGACY_WET_REFLECTION_FINE_HIGH, legacyScaleMax);
 		const float t = (sliderT - LEGACY_WET_REFLECTION_FINE_HIGH_T) / (1.0f - LEGACY_WET_REFLECTION_FINE_HIGH_T);
-		return std::lerp(LEGACY_WET_REFLECTION_FINE_HIGH, MAX_LEGACY_WET_REFLECTION_SCALE, t);
+		return std::lerp(LEGACY_WET_REFLECTION_FINE_HIGH, safeLegacyScaleMax, t);
 	}
 
-	float LegacyWetReflectionSliderFromScale(float value)
+	float LegacyWetReflectionSliderFromScale(float value, float legacyScaleMax)
 	{
-		value = std::clamp(value, 0.0f, MAX_LEGACY_WET_REFLECTION_SCALE);
+		const float safeLegacyScaleMax = std::max(LEGACY_WET_REFLECTION_FINE_HIGH, legacyScaleMax);
+		value = std::clamp(value, 0.0f, safeLegacyScaleMax);
 		if (value <= LEGACY_WET_REFLECTION_FINE_LOW) {
 			if (LEGACY_WET_REFLECTION_FINE_LOW <= 0.0f)
 				return 0.0f;
@@ -483,7 +496,7 @@ namespace
 			return std::lerp(LEGACY_WET_REFLECTION_FINE_LOW_T, LEGACY_WET_REFLECTION_FINE_HIGH_T, t);
 		}
 
-		const float t = (value - LEGACY_WET_REFLECTION_FINE_HIGH) / (MAX_LEGACY_WET_REFLECTION_SCALE - LEGACY_WET_REFLECTION_FINE_HIGH);
+		const float t = (value - LEGACY_WET_REFLECTION_FINE_HIGH) / (safeLegacyScaleMax - LEGACY_WET_REFLECTION_FINE_HIGH);
 		return std::lerp(LEGACY_WET_REFLECTION_FINE_HIGH_T, 1.0f, t);
 	}
 
@@ -531,7 +544,7 @@ namespace
 		}
 		settings.WetIndirectSpecularScale = SanitizeUnitScale(settings.WetIndirectSpecularScale);
 		if (settings.EnableLegacyWetReflection && !settings.EnableModernWetReflection) {
-			settings.WetIndirectSpecularScale = std::min(settings.WetIndirectSpecularScale, MAX_LEGACY_WET_REFLECTION_SCALE);
+			settings.WetIndirectSpecularScale = std::min(settings.WetIndirectSpecularScale, GetLegacyReflectionUiMax(settings));
 		}
 		if (!settings.EnableModernWetReflection && !settings.EnableLegacyWetReflection) {
 			settings.WetIndirectSpecularScale = 0.0f;
@@ -569,10 +582,13 @@ namespace
 		float& legacyScale)
 	{
 		SanitizeReflectionSettings(settings);
+		const float legacyScaleMax = GetLegacyReflectionUiMax(settings);
 		modernScale = SanitizeReflectionScale(modernScale, MAX_MODERN_WET_REFLECTION_UI_SCALE, DEFAULT_WET_INDIRECT_SPECULAR_SCALE);
-		legacyScale = SanitizeReflectionScale(legacyScale, MAX_LEGACY_WET_REFLECTION_SCALE, DEFAULT_LEGACY_WET_INDIRECT_SPECULAR_SCALE);
+		legacyScale = SanitizeReflectionScale(legacyScale, legacyScaleMax, DEFAULT_LEGACY_WET_INDIRECT_SPECULAR_SCALE);
 		SyncActiveReflectionScale(settings, modernScale, legacyScale);
 	}
+
+	float ClampFiniteOrDefault(float value, float minValue, float maxValue, float fallback);
 
 	void SanitizePersistentUiState(
 		WetnessEffects::Settings& settings,
@@ -582,6 +598,7 @@ namespace
 		float& layout)
 	{
 		SanitizePersistentReflectionSettings(settings, modernScale, legacyScale);
+		settings.PuddlePatternDominance = ClampFiniteOrDefault(settings.PuddlePatternDominance, PUDDLE_PATTERN_DOMINANCE_MIN, PUDDLE_PATTERN_DOMINANCE_MAX, 1.0f);
 		puddleHours = ClampDryingHours(puddleHours, DEFAULT_PUDDLE_DRYING_HOURS);
 		layout = std::clamp(
 			std::isfinite(layout) ? layout : DEFAULT_PUDDLE_LAYOUT,
@@ -647,6 +664,13 @@ namespace
 		settings.EnableVanillaRipples = SanitizeToggle(settings.EnableVanillaRipples);
 		settings.EnableLegacyRainBehavior = SanitizeToggle(settings.EnableLegacyRainBehavior);
 		settings.EnableDualPuddleModel = SanitizeToggle(settings.EnableDualPuddleModel);
+		settings.EnableHostilesWetProfile = SanitizeToggle(settings.EnableHostilesWetProfile);
+		settings.EnableMarch3WetnessProfile = SanitizeToggle(settings.EnableMarch3WetnessProfile);
+		settings.EnableExtendedLegacyReflectionRange = SanitizeToggle(settings.EnableExtendedLegacyReflectionRange);
+		settings.EnableForwardReflectionBias = SanitizeToggle(settings.EnableForwardReflectionBias);
+		settings.EnableVanillaReflectionCompensation = SanitizeToggle(settings.EnableVanillaReflectionCompensation);
+		settings.EnablePuddleInfluenceDebugReadout = SanitizeToggle(settings.EnablePuddleInfluenceDebugReadout);
+		settings.EnableLodSafeWetDarkening = SanitizeToggle(settings.EnableLodSafeWetDarkening);
 		SanitizeReflectionSettings(settings);
 	}
 
@@ -688,6 +712,7 @@ namespace
 		settings.WetColorSaturation = ClampFiniteOrDefault(settings.WetColorSaturation, 0.0f, 2.5f, 1.0f);
 		settings.WetHighlightReduction = ClampFiniteOrDefault(settings.WetHighlightReduction, WET_HIGHLIGHT_REDUCTION_MIN, WET_HIGHLIGHT_REDUCTION_MAX, 1.0f);
 		settings.RunoffSpeed = ClampFiniteOrDefault(settings.RunoffSpeed, RUNOFF_SPEED_MIN, RUNOFF_SPEED_MAX, 1.0f);
+		settings.PuddlePatternDominance = ClampFiniteOrDefault(settings.PuddlePatternDominance, PUDDLE_PATTERN_DOMINANCE_MIN, PUDDLE_PATTERN_DOMINANCE_MAX, 1.0f);
 	}
 
 	RE::BSParticleShaderRainEmitter* GetRainEmitterFromPrecipGeometry(RE::BSGeometry* precipObject)
@@ -756,7 +781,15 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	WetDarkeningStrength,
 	WetColorSaturation,
 	WetHighlightReduction,
-	RunoffSpeed)
+	RunoffSpeed,
+	EnableHostilesWetProfile,
+	EnableMarch3WetnessProfile,
+	EnableExtendedLegacyReflectionRange,
+	EnableForwardReflectionBias,
+	EnableVanillaReflectionCompensation,
+	PuddlePatternDominance,
+	EnablePuddleInfluenceDebugReadout,
+	EnableLodSafeWetDarkening)
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	WetnessEffects::DebugSettings,
@@ -1007,6 +1040,13 @@ void WetnessEffects::DrawSettings()
 		value = enabled ? 1u : 0u;
 		return changed;
 	};
+	const auto drawUintCheckboxWithTooltip = [&](const char* label, uint& value, const char* tooltip) {
+		const bool changed = drawUintCheckbox(label, value);
+		if (auto _tt = Util::HoverTooltipWrapper()) {
+			ImGui::TextUnformatted(tooltip);
+		}
+		return changed;
+	};
 	const auto markPresetDirtyIfEdited = [this]() {
 		if (ImGui::IsItemDeactivatedAfterEdit()) {
 			DetectCurrentPreset();
@@ -1108,9 +1148,85 @@ void WetnessEffects::DrawSettings()
 			ImGui::SameLine();
 		}
 	}
+	ImGui::SameLine(0.0f, 14.0f);
+	drawUintCheckbox("Hostile's Wet", settings.EnableHostilesWetProfile);
+	if (auto _tt = Util::HoverTooltipWrapper()) {
+		ImGui::TextUnformatted("Optional compatibility profile. Enables extra wetness look controls without changing default visuals.");
+	}
 	ImGui::PopStyleColor(3);
 
 	ImGui::Separator();
+
+	if (settings.EnableHostilesWetProfile != 0 && ImGui::TreeNodeEx("Hostile's Wet (Optional Look)", ImGuiTreeNodeFlags_DefaultOpen)) {
+		if (drawUintCheckbox("March 3 Wetness Profile", settings.EnableMarch3WetnessProfile) && settings.EnableMarch3WetnessProfile != 0) {
+			// Compatibility mode targets legacy reflection response behavior.
+			settings.EnableModernWetReflection = 0u;
+			settings.EnableLegacyWetReflection = 1u;
+			SanitizePersistentReflectionSettings(settings, modernWetIndirectSpecularScale, legacyWetIndirectSpecularScale);
+		}
+		if (auto _tt = Util::HoverTooltipWrapper()) {
+			ImGui::TextUnformatted("Restores the older compatibility response profile for reflections and mandatory flat puddle weighting.");
+		}
+
+		if (drawUintCheckbox("Extended Legacy Reflection Range", settings.EnableExtendedLegacyReflectionRange)) {
+			SanitizePersistentReflectionSettings(settings, modernWetIndirectSpecularScale, legacyWetIndirectSpecularScale);
+		}
+		if (auto _tt = Util::HoverTooltipWrapper()) {
+			ImGui::TextUnformatted("Allows higher legacy reflection shine range for mirror-like wet looks.");
+		}
+
+		drawUintCheckboxWithTooltip(
+			"Forward Reflection Bias",
+			settings.EnableForwardReflectionBias,
+			"Reduces glancing-angle suppression so reflections remain visible when looking ahead.");
+
+		drawUintCheckboxWithTooltip(
+			"Vanilla Reflection Compensation",
+			settings.EnableVanillaReflectionCompensation,
+			"Non-PBR only: lifts darker/banded vanilla wet reflections without changing PBR output.");
+
+		drawUintCheckboxWithTooltip(
+			"LOD-safe Wet Darkening",
+			settings.EnableLodSafeWetDarkening,
+			"Softens wet darkening at long range to reduce LOD transition borders.");
+
+		ImGui::SliderFloat("Puddle Pattern Dominance", &settings.PuddlePatternDominance, PUDDLE_PATTERN_DOMINANCE_MIN, PUDDLE_PATTERN_DOMINANCE_MAX, "%.2f");
+		if (auto _tt = Util::HoverTooltipWrapper()) {
+			ImGui::TextUnformatted("How strongly mandatory flat pooling can override Radius/Layout/Depth pattern controls. 1.00 = current default behavior.");
+		}
+
+		drawUintCheckboxWithTooltip(
+			"Puddle Influence Debug Readout",
+			settings.EnablePuddleInfluenceDebugReadout,
+			"Shows live estimated factor weights for flat floor, depth blend, and layout influence.");
+
+		if (settings.EnablePuddleInfluenceDebugReadout != 0) {
+			if (g_hasLastFrameData) {
+				const auto smoothstep = [](float edge0, float edge1, float x) {
+					const float width = std::max(edge1 - edge0, 1e-4f);
+					const float t = std::clamp((x - edge0) / width, 0.0f, 1.0f);
+					return t * t * (3.0f - 2.0f * t);
+				};
+
+				const float effectiveWetness = std::clamp(std::max(g_lastFrameData.Wetness, g_lastFrameData.PuddleWetness), 0.0f, 1.0f);
+				const float flatFloorInfluence = smoothstep(settings.PuddleMinWetness * 0.65f, 1.0f, effectiveWetness);
+				const float depthInfluence = (settings.EnableDualPuddleModel != 0) ? std::clamp(settings.PuddleDepthBlend * effectiveWetness, 0.0f, 1.0f) : 0.0f;
+				const float layoutScale = std::clamp((PUDDLE_LAYOUT_MAX - puddleLayout) / (PUDDLE_LAYOUT_MAX - PUDDLE_LAYOUT_MIN), 0.0f, 1.0f);
+				const float dominanceSuppression = std::clamp(1.0f - std::max(0.0f, settings.PuddlePatternDominance - 1.0f), 0.0f, 1.0f);
+				const float layoutInfluence = std::clamp(layoutScale * dominanceSuppression, 0.0f, 1.0f);
+
+				ImGui::TextDisabled("Estimated effective factors (global):");
+				ImGui::Text("Flat floor influence: %.1f%%", flatFloorInfluence * 100.0f);
+				ImGui::Text("Depth contribution: %.1f%%", depthInfluence * 100.0f);
+				ImGui::Text("Layout contribution: %.1f%%", layoutInfluence * 100.0f);
+			} else {
+				ImGui::TextDisabled("Puddle influence debug data becomes available after rendering at least one wetness frame.");
+			}
+		}
+
+		ImGui::TreePop();
+		ImGui::Separator();
+	}
 
 	if (ImGui::TreeNodeEx("Wetness Effects", ImGuiTreeNodeFlags_DefaultOpen)) {
 		ImGui::SliderFloat("Rain Wetness", &settings.MaxRainWetness, 0.0f, 2.5f);
@@ -1280,12 +1396,15 @@ void WetnessEffects::DrawSettings()
 		SanitizePersistentReflectionSettings(settings, modernWetIndirectSpecularScale, legacyWetIndirectSpecularScale);
 		const bool anyReflectionModeEnabled = settings.EnableModernWetReflection != 0 || settings.EnableLegacyWetReflection != 0;
 		const bool legacyReflectionModeEnabled = settings.EnableLegacyWetReflection != 0 && settings.EnableModernWetReflection == 0;
+		const float legacyReflectionScaleMax = GetLegacyReflectionUiMax(settings);
 		ImGui::BeginDisabled(!anyReflectionModeEnabled);
 		if (legacyReflectionModeEnabled) {
-			float sliderT = LegacyWetReflectionSliderFromScale(legacyWetIndirectSpecularScale);
+			float sliderT = LegacyWetReflectionSliderFromScale(legacyWetIndirectSpecularScale, legacyReflectionScaleMax);
 			if (ImGui::SliderFloat("Wet Reflection Shine", &sliderT, 0.0f, 1.0f, "%.4f", ImGuiSliderFlags_AlwaysClamp)) {
-				legacyWetIndirectSpecularScale = LegacyWetReflectionScaleFromSlider(sliderT);
+				legacyWetIndirectSpecularScale = LegacyWetReflectionScaleFromSlider(sliderT, legacyReflectionScaleMax);
 			}
+			ImGui::SameLine();
+			ImGui::TextDisabled("(%.4f max %.4f)", legacyWetIndirectSpecularScale, legacyReflectionScaleMax);
 		} else {
 			float sliderT = ModernWetReflectionSliderFromScale(modernWetIndirectSpecularScale);
 			if (ImGui::SliderFloat("Wet Reflection Shine", &sliderT, 0.0f, 1.0f, "%.4f", ImGuiSliderFlags_AlwaysClamp)) {
@@ -1894,7 +2013,7 @@ WetnessEffects::PerFrame WetnessEffects::GetCommonBufferData() const
 		data.settings.EnableRaindropFx = 0u;
 	}
 	const float modernReflectionScale = SanitizeReflectionScale(modernWetIndirectSpecularScale, MAX_MODERN_WET_REFLECTION_UI_SCALE, DEFAULT_WET_INDIRECT_SPECULAR_SCALE);
-	const float legacyReflectionScale = SanitizeReflectionScale(legacyWetIndirectSpecularScale, MAX_LEGACY_WET_REFLECTION_SCALE, DEFAULT_LEGACY_WET_INDIRECT_SPECULAR_SCALE);
+	const float legacyReflectionScale = SanitizeReflectionScale(legacyWetIndirectSpecularScale, GetLegacyReflectionUiMax(data.settings), DEFAULT_LEGACY_WET_INDIRECT_SPECULAR_SCALE);
 	SyncActiveReflectionScale(data.settings, modernReflectionScale, legacyReflectionScale);
 	const float clampedPuddleLayout = std::clamp(puddleLayout, PUDDLE_LAYOUT_MIN, PUDDLE_LAYOUT_MAX);
 	// Shader CB carries puddle layout in its dedicated shader-facing field.
@@ -1953,6 +2072,14 @@ void WetnessEffects::LoadSettings(json& o_json)
 		 o_json.contains("PuddleLayout") ||
 		 o_json.contains("ModernWetIndirectSpecularScale") ||
 		 o_json.contains("LegacyWetIndirectSpecularScale") ||
+		 o_json.contains("EnableHostilesWetProfile") ||
+		 o_json.contains("EnableMarch3WetnessProfile") ||
+		 o_json.contains("EnableExtendedLegacyReflectionRange") ||
+		 o_json.contains("EnableForwardReflectionBias") ||
+		 o_json.contains("EnableVanillaReflectionCompensation") ||
+		 o_json.contains("PuddlePatternDominance") ||
+		 o_json.contains("EnablePuddleInfluenceDebugReadout") ||
+		 o_json.contains("EnableLodSafeWetDarkening") ||
 		 o_json.contains("WetIndirectSpecularScale"));
 	settings = {};
 	if (isObject) {

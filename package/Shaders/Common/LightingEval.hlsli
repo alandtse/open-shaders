@@ -167,6 +167,16 @@ void GetIndirectLobeWeights(out IndirectLobeWeights lobeWeights, IndirectContext
 }
 
 #if defined(WETNESS_EFFECTS)
+bool IsHostilesWetProfileEnabled()
+{
+	return SharedData::wetnessEffectsSettings.EnableHostilesWetProfile != 0;
+}
+
+bool IsHostilesWetOptionEnabled(uint optionToggle)
+{
+	return IsHostilesWetProfileEnabled() && optionToggle != 0;
+}
+
 float3 GetWetReflectionModeConfig(float wetReflectionScale)
 {
 	const float LEGACY_REFLECTION_SCALE_MAX = 0.25;
@@ -174,6 +184,7 @@ float3 GetWetReflectionModeConfig(float wetReflectionScale)
 	// f(0)=0, f(1)=1, f(0.3)=0.12 (so 30% of 0.25 maps to 0.03).
 	const float LEGACY_CURVE_A = 0.857142857;
 	const float LEGACY_CURVE_B = 0.142857143;
+	const bool march3CompatibilityProfileEnabled = IsHostilesWetOptionEnabled(SharedData::wetnessEffectsSettings.EnableMarch3WetnessProfile);
 	const float wetReflectionScaleClamped = saturate(wetReflectionScale);
 	if (wetReflectionScaleClamped <= 0.0) {
 		return 0.0;
@@ -190,7 +201,9 @@ float3 GetWetReflectionModeConfig(float wetReflectionScale)
 	const float modernScale = wetReflectionScaleClamped;
 	const float legacySliderNormalized = saturate(wetReflectionScaleClamped / LEGACY_REFLECTION_SCALE_MAX);
 	const float legacyCurve = legacySliderNormalized * (LEGACY_CURVE_B + LEGACY_CURVE_A * legacySliderNormalized);
-	const float legacyScale = LEGACY_REFLECTION_SCALE_MAX * saturate(legacyCurve);
+	const float legacyScale = march3CompatibilityProfileEnabled ?
+		(LEGACY_REFLECTION_SCALE_MAX * legacySliderNormalized) :
+		(LEGACY_REFLECTION_SCALE_MAX * saturate(legacyCurve));
 	const float effectiveScale = (modernScale * (enableModern ? 1.0 : 0.0) + legacyScale * (enableLegacy ? 1.0 : 0.0)) * invModeCount;
 	return float3(
 		enableModern ? invModeCount : 0.0,
@@ -225,9 +238,14 @@ void EvaluateWetnessLighting(float3 wetnessNormal, DirectContext context, float 
 	const float3 V = context.viewDir;
 	const float3 L = context.lightDir;
 	const float3 H = context.halfVector;
+	const bool forwardReflectionBiasEnabled = IsHostilesWetOptionEnabled(SharedData::wetnessEffectsSettings.EnableForwardReflectionBias);
+	const bool vanillaReflectionCompensationEnabled = IsHostilesWetOptionEnabled(SharedData::wetnessEffectsSettings.EnableVanillaReflectionCompensation);
 
 	float NdotL = clamp(dot(N, L), EPSILON_DOT_CLAMP, 1);
 	float NdotV = saturate(abs(dot(N, V)) + EPSILON_DOT_CLAMP);
+	if (forwardReflectionBiasEnabled) {
+		NdotV = max(NdotV, 0.32);
+	}
 	float NdotH = saturate(dot(N, H));
 	float VdotH = saturate(dot(V, H));
 
@@ -236,6 +254,13 @@ void EvaluateWetnessLighting(float3 wetnessNormal, DirectContext context, float 
 	float3 F = BRDF::F_Schlick(wetnessF0, VdotH);
 
 	F *= wetnessStrength * wetReflectionScale;
+#	if !defined(TRUE_PBR)
+	if (vanillaReflectionCompensationEnabled) {
+		lightColor *= 1.1;
+		F *= 1.1;
+	}
+#	endif
+	F = saturate(F);
 
 	float3 wetnessSpecular = D * G * F * NdotL * lightColor;
 
@@ -261,14 +286,25 @@ float3 GetWetnessIndirectLobeWeights(inout IndirectLobeWeights lobeWeights, floa
 	const float3 N = wetnessNormal;
 	const float3 V = context.viewDir;
 	const float3 VN = context.vertexNormal;
+	const bool forwardReflectionBiasEnabled = IsHostilesWetOptionEnabled(SharedData::wetnessEffectsSettings.EnableForwardReflectionBias);
+	const bool vanillaReflectionCompensationEnabled = IsHostilesWetOptionEnabled(SharedData::wetnessEffectsSettings.EnableVanillaReflectionCompensation);
 
 	float NdotV = saturate(abs(dot(N, V)) + EPSILON_DOT_CLAMP);
+	if (forwardReflectionBiasEnabled) {
+		NdotV = max(NdotV, 0.32);
+	}
 	float2 specularBRDF = BRDF::EnvBRDF(roughness, NdotV);
 	float3 modernLobeWeight = 0.02 * specularBRDF.x + specularBRDF.y;
 	float3 legacyLobeWeight = saturate(1.0 - roughness) * specularBRDF.x + specularBRDF.y;
 	float glancing = saturate(1.0 - NdotV);
 	legacyLobeWeight *= (1.0 + 0.25 * glancing);
 	float3 specularLobeWeight = (modernLobeWeight * modernWeight + legacyLobeWeight * legacyWeight) * wetnessStrength * wetnessScaleClamped;
+#	if !defined(TRUE_PBR)
+	if (vanillaReflectionCompensationEnabled) {
+		specularLobeWeight *= 1.12;
+	}
+#	endif
+	specularLobeWeight = saturate(specularLobeWeight);
 
 	lobeWeights.diffuse *= 1 - specularLobeWeight;
 	lobeWeights.specular *= 1 - specularLobeWeight;
@@ -278,6 +314,9 @@ float3 GetWetnessIndirectLobeWeights(inout IndirectLobeWeights lobeWeights, floa
 	float3 R = reflect(-V, N);
 	float horizon = min(1.0 + dot(R, VN), 1.0);
 	horizon = horizon * horizon;
+	if (vanillaReflectionCompensationEnabled) {
+		horizon = max(horizon, 0.35);
+	}
 	specularLobeWeight *= horizon;
 
 	return specularLobeWeight;

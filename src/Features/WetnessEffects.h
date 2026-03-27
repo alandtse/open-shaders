@@ -83,8 +83,17 @@ public:
 		float WetHighlightReduction = 1.0f;
 		// Runoff Speed tuning (keeps original CB slot/order).
 		float RunoffSpeed = 1.0f;
+		// Optional compatibility profile and tuning controls (opt-in).
+		uint EnableHostilesWetProfile = false;
+		uint EnableMarch3WetnessProfile = false;
+		uint EnableExtendedLegacyReflectionRange = false;
+		uint EnableForwardReflectionBias = false;
+		uint EnableVanillaReflectionCompensation = false;
+		float PuddlePatternDominance = 1.0f;
+		uint EnablePuddleInfluenceDebugReadout = false;
+		uint EnableLodSafeWetDarkening = false;
 	};
-	static_assert(sizeof(Settings) == 176, "WetnessEffects::Settings layout changed; update wetness shader/CB contract.");
+	static_assert(sizeof(Settings) == 208, "WetnessEffects::Settings layout changed; update wetness shader/CB contract.");
 	static_assert(offsetof(Settings, WeatherTransitionSpeed) == 44, "WetnessEffects::Settings WeatherTransitionSpeed offset changed.");
 	static_assert(offsetof(Settings, EnableRaindropFx) == 60, "WetnessEffects::Settings EnableRaindropFx offset changed.");
 	static_assert(offsetof(Settings, WetIndirectSpecularScale) == 88, "WetnessEffects::Settings WetIndirectSpecularScale offset changed.");
@@ -92,6 +101,7 @@ public:
 	static_assert(offsetof(Settings, RippleLifetime) == 136, "WetnessEffects::Settings RippleLifetime offset changed.");
 	static_assert(offsetof(Settings, EnableDualPuddleModel) == 152, "WetnessEffects::Settings EnableDualPuddleModel offset changed.");
 	static_assert(offsetof(Settings, RunoffSpeed) == 172, "WetnessEffects::Settings RunoffSpeed offset changed.");
+	static_assert(offsetof(Settings, EnableHostilesWetProfile) == 176, "WetnessEffects::Settings EnableHostilesWetProfile offset changed.");
 
 	// Shader-facing wetness settings layout.
 	// Keep this binary-compatible with Settings while exposing shader semantics directly.
@@ -143,6 +153,14 @@ public:
 		float WetColorSaturation = 1.0f;
 		float WetHighlightReduction = 1.0f;
 		float RunoffSpeed = 1.0f;
+		uint EnableHostilesWetProfile = false;
+		uint EnableMarch3WetnessProfile = false;
+		uint EnableExtendedLegacyReflectionRange = false;
+		uint EnableForwardReflectionBias = false;
+		uint EnableVanillaReflectionCompensation = false;
+		float PuddlePatternDominance = 1.0f;
+		uint EnablePuddleInfluenceDebugReadout = false;
+		uint EnableLodSafeWetDarkening = false;
 	};
 	static_assert(sizeof(ShaderSettings) == sizeof(Settings), "WetnessEffects::ShaderSettings must stay binary-compatible with Settings.");
 	static_assert(offsetof(ShaderSettings, PuddleLayout) == offsetof(Settings, WeatherTransitionSpeed),
@@ -163,7 +181,7 @@ public:
 	};
 	STATIC_ASSERT_ALIGNAS_16(PerFrame);
 	static_assert(offsetof(PerFrame, settings) == 80, "WetnessEffects::PerFrame settings offset changed.");
-	static_assert(sizeof(PerFrame) == 256, "WetnessEffects::PerFrame size changed; update wetness shader/CB contract.");
+	static_assert(sizeof(PerFrame) == 288, "WetnessEffects::PerFrame size changed; update wetness shader/CB contract.");
 	static_assert((sizeof(PerFrame) % 16) == 0, "WetnessEffects::PerFrame must stay 16-byte sized");
 
 	struct DebugSettings

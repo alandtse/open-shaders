@@ -2561,14 +2561,28 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 		float flatMandatoryPuddle = max(wetness, puddleWetness) * flatAngleMask * flatWetGate;
 
 #		if !defined(SKINNED)
+		const bool hostilesWetProfileEnabled = SharedData::wetnessEffectsSettings.EnableHostilesWetProfile != 0;
+		const bool march3CompatibilityProfileEnabled = hostilesWetProfileEnabled && SharedData::wetnessEffectsSettings.EnableMarch3WetnessProfile != 0;
+		const float puddlePatternDominance = hostilesWetProfileEnabled ? max(0.0, SharedData::wetnessEffectsSettings.PuddlePatternDominance) : 1.0;
 		// Keep mandatory pooling, but gate it by the puddle-pattern signal so
 		// Puddle Radius/Layout and Max Puddle Wetness still visibly affect shape.
-		float puddleStrength = saturate(SharedData::wetnessEffectsSettings.MaxPuddleWetness / 6.0);
-		float flatPatternThreshold = lerp(0.50, 0.12, puddleStrength);
-		float flatPattern = saturate((puddleSignal - flatPatternThreshold) / max(1e-3, 1.0 - flatPatternThreshold));
-		float flatPatternCoverage = lerp(0.30, 1.0, flatPattern);
-		float flatStrength = lerp(0.35, 1.0, puddleStrength);
-		puddle = max(puddle, flatMandatoryPuddle * flatPatternCoverage * flatStrength);
+		if (march3CompatibilityProfileEnabled) {
+			puddle = max(puddle, flatMandatoryPuddle);
+		} else {
+			float puddleStrength = saturate(SharedData::wetnessEffectsSettings.MaxPuddleWetness / 6.0);
+			float flatPatternThreshold = lerp(0.50, 0.12, puddleStrength);
+			float flatPattern = saturate((puddleSignal - flatPatternThreshold) / max(1e-3, 1.0 - flatPatternThreshold));
+			float flatPatternCoverage = lerp(0.30, 1.0, flatPattern);
+			float flatStrength = lerp(0.35, 1.0, puddleStrength);
+			float dominanceDelta = puddlePatternDominance - 1.0;
+			float dominanceTowardMandatory = saturate(dominanceDelta);
+			float dominanceTowardPattern = saturate(-dominanceDelta);
+			flatPatternCoverage = lerp(flatPatternCoverage, 1.0, dominanceTowardMandatory);
+			flatPatternCoverage = lerp(flatPatternCoverage, flatPattern * 0.5, dominanceTowardPattern);
+			flatStrength *= lerp(1.0, 1.20, dominanceTowardMandatory);
+			flatStrength *= lerp(1.0, 0.70, dominanceTowardPattern);
+			puddle = max(puddle, flatMandatoryPuddle * flatPatternCoverage * flatStrength);
+		}
 #		else
 		puddle = max(puddle, flatMandatoryPuddle);
 #		endif
@@ -3120,6 +3134,14 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	porosity = lerp(porosity, 0.0, saturate(sqrt(envMask)));
 #			endif
 	float wetDarkeningStrength = max(0.0, SharedData::wetnessEffectsSettings.WetDarkeningStrength);
+	const bool hostilesWetProfileEnabled = SharedData::wetnessEffectsSettings.EnableHostilesWetProfile != 0;
+	const bool lodSafeWetDarkeningEnabled = hostilesWetProfileEnabled && SharedData::wetnessEffectsSettings.EnableLodSafeWetDarkening != 0;
+	float lodSafeWetDarkeningFade = 1.0;
+	if (lodSafeWetDarkeningEnabled) {
+		float viewDistance = abs(viewPosition.z);
+		lodSafeWetDarkeningFade = 1.0 - smoothstep(4096.0, 12288.0, viewDistance);
+		wetDarkeningStrength *= lerp(0.65, 1.0, lodSafeWetDarkeningFade);
+	}
 	// Darkening/saturation should follow active rain/post-rain wetness (and runoff),
 	// not persistent shore wetness, so surfaces can visually dry out after rain.
 	float rainDrivenWetness = saturate(max(rainWetness, puddleWetness));
@@ -3129,6 +3151,9 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	float rainWetVisualMask = smoothstep(0.02, 0.08, rainDrivenWetness);
 	float wetVisualMask = max(rainWetVisualMask, smoothstep(0.01, 0.05, runoffStreakMask * runoffRainMask));
 	float wetDarkeningBlend = saturate(0.8 * wetDarkeningStrength) * wetVisualMask;
+	if (lodSafeWetDarkeningEnabled) {
+		wetDarkeningBlend *= lerp(0.75, 1.0, lodSafeWetDarkeningFade);
+	}
 	float3 wetDarkenedBaseColor = pow(abs(material.BaseColor), 1.0 + wetnessDarkeningAmount);
 	material.BaseColor = lerp(material.BaseColor, wetDarkenedBaseColor, wetDarkeningBlend);
 	float wetColorSaturation = max(0.0, SharedData::wetnessEffectsSettings.WetColorSaturation);
