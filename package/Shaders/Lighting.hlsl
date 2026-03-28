@@ -2538,7 +2538,14 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 		float roughDepthMask = saturate((surfaceRoughness - 0.22) * 2.2);
 		// Capture micro-variation (e.g. cobblestone joints) even when roughness alone is not enough.
 		float normalVarianceMask = saturate((length(ddx(worldNormal)) + length(ddy(worldNormal)) - 0.04) * 4.0);
-		unevenDepthMask = saturate(max(roughDepthMask, normalVarianceMask)) * (1.0 - vegetationFactor * 0.85);
+#				if defined(TRUE_PBR)
+		float cavityMask = saturate(1.0 - material.AO);
+#				else
+		float cavityMask = 0.0;
+#				endif
+		float depthProxy = max(normalVarianceMask, cavityMask * 0.75);
+		float roughDepthConfidence = lerp(0.55, 1.0, roughDepthMask);
+		unevenDepthMask = saturate(depthProxy * roughDepthConfidence) * (1.0 - vegetationFactor * 0.85);
 #			endif
 		float depthPuddleMix = saturate((puddleSignal - 0.02) * (1.25 + depthBlend * 1.75)) * unevenDepthMask;
 		// Keep flat pooling as baseline and add depth pooling only where unevenness exists.
