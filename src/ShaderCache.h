@@ -4,6 +4,8 @@
 #include <efsw/efsw.hpp>
 #include <vector>
 
+#include "Utils/WinApi.h"
+
 using namespace std::chrono;
 
 namespace ShaderConstants
@@ -218,12 +220,21 @@ namespace SIE
 		size_t GetId() const;
 		std::string GetString() const;
 
+		/// LPT scheduling score: higher = more expensive = should be dispatched first.
+		/// Based on shader type, class, descriptor complexity, and known heavy defines.
+		/// Computed once at construction and cached.
+		int GetPriority() const { return cachedPriority; }
+
 		bool operator==(const ShaderCompilationTask& other) const;
 
 	protected:
 		ShaderClass shaderClass;
 		const RE::BSShader& shader;
 		uint32_t descriptor;
+
+	private:
+		static int ComputePriority(ShaderClass shaderClass, const RE::BSShader& shader, uint32_t descriptor);
+		int cachedPriority;
 	};
 }
 
@@ -238,6 +249,11 @@ struct std::hash<SIE::ShaderCompilationTask>
 
 namespace SIE
 {
+	/// Threshold above which a shader task is considered "heavy" and benefits
+	/// from P-core placement on hybrid CPUs.  Used by both WaitTake() (to limit
+	/// concurrent heavy dispatches) and ProcessCompilationSet (for thread priority).
+	constexpr int kHeavyPriorityThreshold = 500;
+
 	class CompilationSet
 	{
 	public:
@@ -265,10 +281,16 @@ namespace SIE
 		std::atomic<uint64_t> completedTasks = 0;
 		std::atomic<uint64_t> totalTasks = 0;
 		std::atomic<uint64_t> failedTasks = 0;
-		std::atomic<uint64_t> cacheHitTasks = 0;  // number of compiles of a previously seen shader combo
+		std::atomic<uint64_t> cacheHitTasks = 0;            // number of compiles of a previously seen shader combo
+		std::atomic<uint64_t> slowTasks = 0;                // shaders taking >= 2s
+		std::atomic<uint64_t> verySlowTasks = 0;            // shaders taking >= 8s
+		std::atomic<uint64_t> totalPriorityWeight = 0;      // sum of (GetPriority()+1) for all queued tasks
+		std::atomic<uint64_t> completedPriorityWeight = 0;  // sum of (GetPriority()+1) for completed/failed tasks
+		std::atomic<int> heavyTasksInFlight = 0;            // number of dispatched heavy (>= kHeavyPriorityThreshold) tasks still running
 		std::mutex compilationMutex;
 
 	private:
+		/// Tasks awaiting dispatch — we scan for the highest-priority entry in WaitTake().
 		std::unordered_set<ShaderCompilationTask> availableTasks;
 		std::unordered_set<ShaderCompilationTask> tasksInProgress;
 		std::unordered_set<ShaderCompilationTask> processedTasks;  // completed or failed
@@ -394,6 +416,14 @@ namespace SIE
 		bool Clear(const std::string& a_path);
 
 		bool AddCompletedShader(ShaderClass shaderClass, const RE::BSShader& shader, uint32_t descriptor, ID3DBlob* a_blob);
+
+		enum class ClaimResult
+		{
+			CacheHit,  // Already compiled; use the returned blob
+			Claimed    // Claimed as Pending; caller must compile and call AddCompletedShader
+		};
+		std::pair<ClaimResult, ID3DBlob*> ClaimCompilation(const std::string& key);
+
 		ID3DBlob* GetCompletedShader(const std::string& a_key);
 		ID3DBlob* GetCompletedShader(const SIE::ShaderCompilationTask& a_task);
 		ID3DBlob* GetCompletedShader(ShaderClass shaderClass, const RE::BSShader& shader, uint32_t descriptor);
@@ -432,6 +462,11 @@ namespace SIE
 		void IterateShaderBlock(bool a_forward = true);
 		bool IsHideErrors();
 
+		// Overlay stats
+		int GetHeavyTasksInFlight();
+		uint64_t GetSlowTasks();
+		uint64_t GetVerySlowTasks();
+
 		/**
 		 * @brief Clears all shaders of a specific type from the shader map.
 		 *
@@ -445,9 +480,13 @@ namespace SIE
 
 		ShaderFileDependencyTracker* GetDependencyTracker() { return dependencyTracker.get(); }
 
-		int32_t compilationThreadCount = std::max({ static_cast<int32_t>(std::thread::hardware_concurrency()) - 4, static_cast<int32_t>(std::thread::hardware_concurrency()) * 3 / 4, 1 });
-		int32_t backgroundCompilationThreadCount = std::max(static_cast<int32_t>(std::thread::hardware_concurrency()) / 2, 1);
-		BS::thread_pool<> compilationPool{};
+		// Reserve 1 logical core for OS headroom at startup (E-cores included).
+		// Management and file watcher run on dedicated jthreads, not pool slots.
+		// Background (in-game): half of P-cores only, to avoid starving the render thread.
+		int32_t compilationThreadCount = std::max(static_cast<int32_t>(std::thread::hardware_concurrency()) - 1, 1);
+		int32_t backgroundCompilationThreadCount = std::max(static_cast<int32_t>(Util::GetPerformanceCoreCount()) / 2, 1);
+		BS::thread_pool<> compilationPool{ static_cast<std::size_t>(std::thread::hardware_concurrency()) };
+		std::jthread managementJthread;  // dedicated thread for ManageCompilationSet (not in pool)
 		bool backgroundCompilation = false;
 		bool menuLoaded = false;
 
@@ -717,6 +756,7 @@ namespace SIE
 		CompilationSet compilationSet;
 		ankerl::unordered_dense::map<std::string, ShaderCacheResult> shaderMap{};
 		std::mutex mapMutex;                                                                      // guard for shaderMap
+		std::condition_variable mapCV;                                                            // signalled when a Pending entry transitions to Completed/Failed
 		ankerl::unordered_dense::map<std::string, system_clock::time_point> modifiedShaderMap{};  // hashmap when a shader source file last modified
 		std::mutex modifiedMapMutex;                                                              // guard for modifiedShaderMap
 		ankerl::unordered_dense::map<std::string, std::set<hlslRecord>> hlslToShaderMap{};        // hashmap linking specific hlsl files to shader keys in shaderMap
@@ -755,6 +795,8 @@ namespace SIE
 		void UpdateCache(const std::filesystem::path& filePath, SIE::ShaderCache* cache, bool& clearCache, bool& retFlag);
 		void processQueue();
 		void handleFileAction(efsw::WatchID, const std::string& dir, const std::string& filename, efsw::Action action, std::string) override;
+
+		std::jthread fileWatcherThread;  // dedicated thread for processQueue (not in pool)
 
 	private:
 		ShaderFileDependencyTracker* deps;

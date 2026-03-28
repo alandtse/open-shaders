@@ -126,15 +126,16 @@ void AdvancedSettingsRenderer::RenderLoggingSection()
 	ImGui::SliderInt("Compiler Threads", &shaderCache->compilationThreadCount, 1, static_cast<int32_t>(std::thread::hardware_concurrency()));
 	if (auto _tt = Util::HoverTooltipWrapper()) {
 		ImGui::Text(
-			"Number of threads to use to compile shaders. "
-			"The more threads the faster compilation will finish but may make the system unresponsive. ");
+			"Number of threads used to compile shaders at startup. "
+			"Defaults to all logical cores minus one for OS headroom (E-cores included). "
+			"Higher values finish compilation faster but may make the system less responsive.");
 	}
 	ImGui::SliderInt("Background Compiler Threads", &shaderCache->backgroundCompilationThreadCount, 1, static_cast<int32_t>(std::thread::hardware_concurrency()));
 	if (auto _tt = Util::HoverTooltipWrapper()) {
 		ImGui::Text(
-			"Number of threads to use to compile shaders while playing game. "
-			"This is activated if the startup compilation is skipped. "
-			"The more threads the faster compilation will finish but may make the system unresponsive. ");
+			"Number of threads used to compile shaders during gameplay. "
+			"Defaults to half of performance cores to avoid impacting the render thread. "
+			"Higher values finish compilation faster but may cause stuttering.");
 	}
 
 	ImGui::Columns(2, nullptr, false);
