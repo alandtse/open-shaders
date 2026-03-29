@@ -33,19 +33,6 @@ float4 GetImageColor(float2 texCoord, float blurScale)
 #	if defined(BRIGHTPASS)
 static const float kBrightPassSoftKneeRatio = 0.5;
 
-// Karis average: weight each pixel inversely by its luminance so isolated bright outliers
-// (fireflies) are automatically suppressed relative to their local 2x2 neighborhood.
-// Technique: Brian Karis, "Real Shading in Unreal Engine 4", SIGGRAPH 2013, p.10
-// https://cdn2.unrealengine.com/Resources/files/2013SiggraphPresentationsNotes-26915738.pdf
-float3 KarisWeightedAverage(float3 a, float3 b, float3 c, float3 d)
-{
-	float wa = rcp(1.0 + Color::RGBToLuminance(a));
-	float wb = rcp(1.0 + Color::RGBToLuminance(b));
-	float wc = rcp(1.0 + Color::RGBToLuminance(c));
-	float wd = rcp(1.0 + Color::RGBToLuminance(d));
-	return (a * wa + b * wb + c * wc + d * wd) / (wa + wb + wc + wd);
-}
-
 // Sample a 2x2 neighborhood and Karis-average to suppress isolated HDR outliers.
 float3 SampleKarisFireflySuppress(float2 uv, float2 texelSize)
 {
@@ -53,7 +40,7 @@ float3 SampleKarisFireflySuppress(float2 uv, float2 texelSize)
 	float3 s1 = ImageTex.SampleLevel(ImageSampler, uv + float2(0.5, -0.5) * texelSize, 0).rgb;
 	float3 s2 = ImageTex.SampleLevel(ImageSampler, uv + float2(-0.5, 0.5) * texelSize, 0).rgb;
 	float3 s3 = ImageTex.SampleLevel(ImageSampler, uv + float2(0.5, 0.5) * texelSize, 0).rgb;
-	return KarisWeightedAverage(s0, s1, s2, s3);
+	return Color::KarisWeightedAverage(s0, s1, s2, s3);
 }
 
 float3 ApplyBrightPass(float3 hdrColor)

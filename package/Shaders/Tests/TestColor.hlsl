@@ -88,9 +88,44 @@
 	ASSERT(IsTrue, overSat.b >= 0.0f);
 }
 
-	/// @tags color, gamma, colorspace
-	[numthreads(1, 1, 1)] void TestGammaConversionRoundtrip()
+	/// @tags color, bloom, firefly
+	[numthreads(1, 1, 1)] void TestKarisWeightedAverage()
 {
+	// Test 1: Identical inputs should return that same value (weights cancel)
+	float3 gray = float3(0.3, 0.3, 0.3);
+	float3 result = Color::KarisWeightedAverage(gray, gray, gray, gray);
+	ASSERT(IsTrue, abs(result.r - gray.r) < 0.001f);
+	ASSERT(IsTrue, abs(result.g - gray.g) < 0.001f);
+	ASSERT(IsTrue, abs(result.b - gray.b) < 0.001f);
+
+	// Test 2: One extreme firefly among three dark neighbors.
+	// The average should stay close to the dark neighbors, not blow up.
+	float3 dark = float3(0.1, 0.1, 0.1);
+	float3 firefly = float3(100.0, 100.0, 100.0);
+	float3 mixed = Color::KarisWeightedAverage(dark, dark, dark, firefly);
+	// Result should be much closer to dark than to firefly
+	ASSERT(IsTrue, Color::RGBToLuminance(mixed) < 1.0f);
+
+	// Test 3: Two bright, two dark - result should sit between them
+	float3 bright = float3(5.0, 5.0, 5.0);
+	float3 between = Color::KarisWeightedAverage(dark, dark, bright, bright);
+	float betweenLum = Color::RGBToLuminance(between);
+	ASSERT(IsTrue, betweenLum > Color::RGBToLuminance(dark));
+	ASSERT(IsTrue, betweenLum < Color::RGBToLuminance(bright));
+
+	// Test 4: Output should never exceed the maximum input luminance
+	float3 a = float3(0.2, 0.5, 0.1);
+	float3 b = float3(0.8, 0.3, 0.4);
+	float3 c = float3(0.1, 0.9, 0.2);
+	float3 d = float3(0.6, 0.1, 0.7);
+	float maxInputLum = max(max(Color::RGBToLuminance(a), Color::RGBToLuminance(b)),
+		max(Color::RGBToLuminance(c), Color::RGBToLuminance(d)));
+	float3 avg = Color::KarisWeightedAverage(a, b, c, d);
+	ASSERT(IsTrue, Color::RGBToLuminance(avg) <= maxInputLum + 0.001f);
+}
+
+/// @tags color, gamma, colorspace
+[numthreads(1, 1, 1)] void TestGammaConversionRoundtrip() {
 	float3 testColors[3] = {
 		float3(0.5, 0.5, 0.5),
 		float3(0.2, 0.7, 0.3),
@@ -118,8 +153,9 @@
 	}
 }
 
-/// @tags color, luminance
-[numthreads(1, 1, 1)] void TestRGBToLuminanceVariants() {
+	/// @tags color, luminance
+	[numthreads(1, 1, 1)] void TestRGBToLuminanceVariants()
+{
 	float3 testColor = float3(0.6, 0.4, 0.3);
 
 	float lum1 = Color::RGBToLuminance(testColor);
@@ -134,9 +170,8 @@
 	ASSERT(IsTrue, abs(lum1 - lum3) < 0.2f);
 }
 
-	/// @tags color, lighting
-	[numthreads(1, 1, 1)] void TestDiffuseAndLight()
-{
+/// @tags color, lighting
+[numthreads(1, 1, 1)] void TestDiffuseAndLight() {
 	float3 color = float3(0.5, 0.3, 0.7);
 
 	float3 diffuse = Color::Diffuse(color);

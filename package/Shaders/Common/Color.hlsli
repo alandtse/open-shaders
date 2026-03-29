@@ -115,6 +115,20 @@ namespace Color
 		return pow(abs(color), 1.0 / 2.2);
 	}
 
+	// Luminance-weighted average of four HDR colors.
+	// Each input is weighted by rcp(1 + luminance) so isolated bright outliers
+	// (fireflies) contribute far less than their neighbors.
+	// Technique: Brian Karis, "Real Shading in Unreal Engine 4", SIGGRAPH 2013, p.10
+	// https://cdn2.unrealengine.com/Resources/files/2013SiggraphPresentationsNotes-26915738.pdf
+	float3 KarisWeightedAverage(float3 a, float3 b, float3 c, float3 d)
+	{
+		float wa = rcp(1.0 + RGBToLuminance(a));
+		float wb = rcp(1.0 + RGBToLuminance(b));
+		float wc = rcp(1.0 + RGBToLuminance(c));
+		float wd = rcp(1.0 + RGBToLuminance(d));
+		return (a * wa + b * wb + c * wc + d * wd) / (wa + wb + wc + wd);
+	}
+
 #if defined(PSHADER) || defined(CSHADER) || defined(COMPUTESHADER)
 	// Attempt to match vanilla materials that are darker than PBR
 	const static float PBRLightingScale = ENABLE_LL ? 1.0 : 0.65;
