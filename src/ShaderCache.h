@@ -299,6 +299,18 @@ namespace SIE
 			uintmax_t sourceSizeBytes = 0;  // HLSL source file size at compile time
 		};
 
+		/// On-demand parallelism metrics derived from task timings.
+		struct ParallelismStats
+		{
+			double workMs = 0.0;                  // W = sum of all task times
+			double spanMs = 0.0;                  // S ~= longest single task
+			double makespanMs = 0.0;              // T_p = wall-clock compile duration
+			double avgParallelism = 0.0;          // W / S
+			double infiniteCoreEfficiency = 0.0;  // S / T_p
+			double infiniteCoreGapPercent = 0.0;  // 100 * (1 - S / T_p)
+			size_t sampleCount = 0;
+		};
+
 		/// All per-task timing records for this build (appended from multiple threads).
 		/// Protected by slowTasksMutex.
 		std::vector<SlowTaskRecord> slowTaskRecords;
@@ -306,6 +318,9 @@ namespace SIE
 
 		/// Returns a copy of the N records with the highest elapsedMs, sorted descending.
 		std::vector<SlowTaskRecord> GetTopSlowTasks(size_t n = 3) const;
+
+		/// Computes parallelism metrics on demand from collected task timings.
+		std::optional<ParallelismStats> GetParallelismStats() const;
 
 	private:
 		/// Tasks awaiting dispatch — we scan for the highest-priority entry in WaitTake().
@@ -487,6 +502,7 @@ namespace SIE
 
 		/// Returns a copy of the top-N slowest task records from the last build, sorted descending.
 		std::vector<CompilationSet::SlowTaskRecord> GetTopSlowTasks(size_t n = 3);
+		std::optional<CompilationSet::ParallelismStats> GetParallelismStats();
 
 		/**
 		 * @brief Clears all shaders of a specific type from the shader map.

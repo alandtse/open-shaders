@@ -554,6 +554,50 @@ void AdvancedSettingsRenderer::RenderDeveloperSection()
 	if (ImGui::TreeNodeEx("Statistics", ImGuiTreeNodeFlags_DefaultOpen)) {
 		ImGui::Text(std::format("Shader Compiler : {}", shaderCache->GetShaderStatsString()).c_str());
 
+		// Derived parallelism metrics are computed lazily on demand and only shown
+		// once compilation has completed to avoid per-frame analysis while compiling.
+		if (!shaderCache->IsCompiling()) {
+			auto parallelism = shaderCache->GetParallelismStats();
+			if (parallelism.has_value()) {
+				const auto& p = parallelism.value();
+				ImGui::Spacing();
+				ImGui::TextDisabled("Parallelism (derived from %zu compiled tasks)", p.sampleCount);
+				if (auto _tt = Util::HoverTooltipWrapper()) {
+					ImGui::Text("Computed lazily from the last completed build.");
+					ImGui::Text("Only evaluated when this Statistics section is open.");
+				}
+				ImGui::Text("Work (W): %s", Util::FormatDuration(p.workMs).c_str());
+				if (auto _tt = Util::HoverTooltipWrapper()) {
+					ImGui::Text("Total compile work: sum of all per-shader compile times.");
+					ImGui::Text("Equivalent serial time on one worker.");
+				}
+				ImGui::Text("Span (S, longest): %s", Util::FormatDuration(p.spanMs).c_str());
+				if (auto _tt = Util::HoverTooltipWrapper()) {
+					ImGui::Text("Critical-path lower bound, approximated by the single slowest shader.");
+					ImGui::Text("Even infinite cores cannot finish faster than this.");
+				}
+				ImGui::Text("Makespan (T_p): %s", Util::FormatDuration(p.makespanMs).c_str());
+				if (auto _tt = Util::HoverTooltipWrapper()) {
+					ImGui::Text("Observed wall-clock duration for the full shader build.");
+				}
+				ImGui::Text("Average parallelism (W/S): %.2fx", p.avgParallelism);
+				if (auto _tt = Util::HoverTooltipWrapper()) {
+					ImGui::Text("Average useful concurrency in this workload.");
+					ImGui::Text("Roughly the worker count where adding more cores gives diminishing returns.");
+				}
+				ImGui::Text("Infinite-core efficiency (S/T_p): %.1f%%", 100.0 * p.infiniteCoreEfficiency);
+				if (auto _tt = Util::HoverTooltipWrapper()) {
+					ImGui::Text("How close runtime is to the infinite-core lower bound.");
+					ImGui::Text("100%% means T_p == S.");
+				}
+				ImGui::Text("Infinite-core gap: %.1f%%", p.infiniteCoreGapPercent);
+				if (auto _tt = Util::HoverTooltipWrapper()) {
+					ImGui::Text("Distance from ideal infinite-core time.");
+					ImGui::Text("Defined as 100 * (1 - S / T_p). Lower is better.");
+				}
+			}
+		}
+
 		// Top-3 slowest shaders from the last build
 		auto topSlow = shaderCache->GetTopSlowTasks(3);
 		if (!topSlow.empty()) {

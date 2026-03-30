@@ -2640,6 +2640,48 @@ namespace SIE
 		return compilationSet.GetTopSlowTasks(n);
 	}
 
+	std::optional<CompilationSet::ParallelismStats> CompilationSet::GetParallelismStats() const
+	{
+		std::vector<SlowTaskRecord> records;
+		{
+			std::lock_guard lock(slowTasksMutex);
+			if (slowTaskRecords.empty()) {
+				return std::nullopt;
+			}
+			records = slowTaskRecords;
+		}
+
+		ParallelismStats stats;
+		stats.sampleCount = records.size();
+		for (const auto& rec : records) {
+			stats.workMs += rec.elapsedMs;
+			stats.spanMs = std::max(stats.spanMs, rec.elapsedMs);
+		}
+
+		LARGE_INTEGER now;
+		QueryPerformanceCounter(&now);
+		int64_t endTime = completionTime.load(std::memory_order_relaxed);
+		if (endTime == 0) {
+			endTime = now.QuadPart;
+		}
+		stats.makespanMs = static_cast<double>(endTime - lastReset.QuadPart) * 1000.0 / frequency.QuadPart;
+
+		if (stats.spanMs > 0.0) {
+			stats.avgParallelism = stats.workMs / stats.spanMs;
+		}
+		if (stats.makespanMs > 0.0) {
+			stats.infiniteCoreEfficiency = stats.spanMs / stats.makespanMs;
+			stats.infiniteCoreGapPercent = std::max(0.0, 100.0 * (1.0 - stats.infiniteCoreEfficiency));
+		}
+
+		return stats;
+	}
+
+	std::optional<CompilationSet::ParallelismStats> ShaderCache::GetParallelismStats()
+	{
+		return compilationSet.GetParallelismStats();
+	}
+
 	void ShaderCache::ClearShaderMap(RE::BSShader::Type a_type)
 	{
 		std::string_view shaderTypeStr = magic_enum::enum_name(a_type);
