@@ -2672,7 +2672,10 @@ namespace SIE
 		for (const auto& rec : records) {
 			stats.workMs += rec.elapsedMs;
 			stats.spanMs = std::max(stats.spanMs, rec.elapsedMs);
+			stats.avgQueueWaitMs += rec.queueWaitMs;
+			stats.maxQueueWaitMs = std::max(stats.maxQueueWaitMs, rec.queueWaitMs);
 		}
+		stats.avgQueueWaitMs /= static_cast<double>(stats.sampleCount);
 
 		LARGE_INTEGER now;
 		QueryPerformanceCounter(&now);
@@ -2895,6 +2898,9 @@ namespace SIE
 		LARGE_INTEGER start, end, freq;
 		QueryPerformanceFrequency(&freq);
 		QueryPerformanceCounter(&start);
+		const double queueWaitMs = task.GetEnqueuedQpc() > 0 ?
+		                               static_cast<double>(start.QuadPart - task.GetEnqueuedQpc()) * 1000.0 / freq.QuadPart :
+		                               0.0;
 
 		try {
 			task.Perform();
@@ -2928,8 +2934,8 @@ namespace SIE
 		}
 
 		// Debug: full per-task record for post-mortem straggler analysis.
-		logger::debug("[ShaderTiming] {:.0f}ms | remaining={} | defines={} | src={}B | prio={} | tid={} | {}",
-			elapsedMs, remaining, descriptorComplexity, sourceBytes,
+		logger::debug("[ShaderTiming] {:.0f}ms | queue_wait={:.0f}ms | remaining={} | defines={} | src={}B | prio={} | tid={} | {}",
+			elapsedMs, queueWaitMs, remaining, descriptorComplexity, sourceBytes,
 			task.GetPriority(), GetCurrentThreadId(), taskKey);
 
 		constexpr double kSlowMs = 2000.0;
@@ -2938,19 +2944,19 @@ namespace SIE
 		// Record every task for post-mortem analysis and developer UI (top-N display).
 		{
 			std::lock_guard lock(compilationSet.slowTasksMutex);
-			compilationSet.slowTaskRecords.push_back({ taskKey, elapsedMs, task.GetPriority(),
+			compilationSet.slowTaskRecords.push_back({ taskKey, elapsedMs, queueWaitMs, task.GetPriority(),
 				static_cast<int>(descriptorComplexity), sourceBytes });
 		}
 
 		if (elapsedMs >= kVerySlowMs) {
 			compilationSet.verySlowTasks++;
 			compilationSet.slowTasks++;
-			logger::info("[ShaderTiming] Very slow {:.0f}ms | remaining={} | defines={} | src={}B | prio={} | {}",
-				elapsedMs, remaining, descriptorComplexity, sourceBytes, task.GetPriority(), taskKey);
+			logger::info("[ShaderTiming] Very slow {:.0f}ms | queue_wait={:.0f}ms | remaining={} | defines={} | src={}B | prio={} | {}",
+				elapsedMs, queueWaitMs, remaining, descriptorComplexity, sourceBytes, task.GetPriority(), taskKey);
 		} else if (elapsedMs >= kSlowMs) {
 			compilationSet.slowTasks++;
-			logger::debug("[ShaderTiming] Slow {:.0f}ms | remaining={} | defines={} | src={}B | prio={} | {}",
-				elapsedMs, remaining, descriptorComplexity, sourceBytes, task.GetPriority(), taskKey);
+			logger::debug("[ShaderTiming] Slow {:.0f}ms | queue_wait={:.0f}ms | remaining={} | defines={} | src={}B | prio={} | {}",
+				elapsedMs, queueWaitMs, remaining, descriptorComplexity, sourceBytes, task.GetPriority(), taskKey);
 		}
 
 		if (stoken.stop_requested()) {
@@ -3083,42 +3089,26 @@ namespace SIE
 			lastCalculation = lastReset;
 		}
 
-		// On hybrid CPUs (Intel P/E core), limit concurrent heavy tasks to the
-		// P-core count so they stay on fast cores via the Thread Director hints.
-		// On non-hybrid CPUs GetPerformanceCoreCount() == hardware_concurrency(),
-		// so heavyCoreLimit >= compilationThreadCount and this never activates.
-		const uint32_t heavyCoreLimit = Util::GetPerformanceCoreCount();
-		const bool heavySlotsAvailable = heavyTasksInFlight.load(std::memory_order_relaxed) < heavyCoreLimit;
-
-		decltype(availableTasks)::iterator bestIt = availableTasks.end();
-
-		if (!heavySlotsAvailable) {
-			// P-core slots full — prefer the highest-priority light task
-			for (auto it = availableTasks.begin(); it != availableTasks.end(); ++it) {
-				if (it->GetPriority() < kHeavyPriorityThreshold) {
-					if (bestIt == availableTasks.end() || it->GetPriority() > bestIt->GetPriority()) {
-						bestIt = it;
-					}
-				}
-			}
+		// Startup policy: keep dispatching the hardest queued work first.
+		// This preserves the existing priority score while preventing light tasks
+		// from bypassing queued heavy shaders and stretching the tail.
+		auto bestIt = availableTasks.end();
+		if (!availableTasks.empty()) {
+			bestIt = std::prev(availableTasks.end());
 		}
 
 		if (bestIt == availableTasks.end()) {
-			// Either heavy slots available, or only heavy tasks remain — pick highest priority overall
-			bestIt = std::max_element(availableTasks.begin(), availableTasks.end(),
-				[](const ShaderCompilationTask& a, const ShaderCompilationTask& b) {
-					return a.GetPriority() < b.GetPriority();
-				});
+			return std::nullopt;
 		}
 
-		auto node = availableTasks.extract(bestIt);
-		auto& task = node.value();
+		ShaderCompilationTask task = *bestIt;
+		availableTasks.erase(bestIt);
 
 		if (task.GetPriority() >= kHeavyPriorityThreshold) {
 			heavyTasksInFlight.fetch_add(1, std::memory_order_relaxed);
 		}
 
-		tasksInProgress.insert(std::move(node));
+		tasksInProgress.insert(task);
 		return task;
 	}
 
@@ -3128,7 +3118,11 @@ namespace SIE
 		auto inProgressIt = tasksInProgress.find(task);
 		auto processedIt = processedTasks.find(task);
 		if (inProgressIt == tasksInProgress.end() && processedIt == processedTasks.end() && !globals::shaderCache->GetCompletedShader(task)) {
-			auto [availableIt, wasAdded] = availableTasks.insert(task);
+			LARGE_INTEGER now;
+			QueryPerformanceCounter(&now);
+			auto queuedTask = task;
+			queuedTask.SetEnqueuedQpc(now.QuadPart);
+			auto [_, wasAdded] = availableTasks.insert(queuedTask);
 			lock.unlock();
 			if (wasAdded) {
 				conditionVariable.notify_one();

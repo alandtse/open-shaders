@@ -224,6 +224,8 @@ namespace SIE
 		/// Based on shader type, class, descriptor complexity, and known heavy defines.
 		/// Computed once at construction and cached.
 		int GetPriority() const { return cachedPriority; }
+		void SetEnqueuedQpc(int64_t qpc) { enqueuedQpc = qpc; }
+		int64_t GetEnqueuedQpc() const { return enqueuedQpc; }
 
 		bool operator==(const ShaderCompilationTask& other) const;
 
@@ -235,6 +237,7 @@ namespace SIE
 	private:
 		static int ComputePriority(ShaderClass shaderClass, const RE::BSShader& shader, uint32_t descriptor);
 		int cachedPriority;
+		int64_t enqueuedQpc = 0;
 	};
 }
 
@@ -247,11 +250,22 @@ struct std::hash<SIE::ShaderCompilationTask>
 	}
 };
 
+struct TaskPriorityLess
+{
+	bool operator()(const SIE::ShaderCompilationTask& a, const SIE::ShaderCompilationTask& b) const
+	{
+		if (a.GetPriority() != b.GetPriority()) {
+			return a.GetPriority() < b.GetPriority();
+		}
+		return a.GetId() < b.GetId();
+	}
+};
+
 namespace SIE
 {
 	/// Threshold above which a shader task is considered "heavy" and benefits
-	/// from P-core placement on hybrid CPUs.  Used by both WaitTake() (to limit
-	/// concurrent heavy dispatches) and ProcessCompilationSet (for thread priority).
+	/// from P-core placement on hybrid CPUs. Used for thread-priority hints,
+	/// telemetry, and developer-facing diagnostics.
 	constexpr int kHeavyPriorityThreshold = 500;
 
 	class CompilationSet
@@ -294,6 +308,7 @@ namespace SIE
 		{
 			std::string key;  // ShaderCompilationTask::GetString() — "fxpFile:Class:defines"
 			double elapsedMs = 0.0;
+			double queueWaitMs = 0.0;
 			int priority = 0;               // estimated compile weight (see ComputePriority)
 			int defineCount = 0;            // popcount of descriptor — active define permutations
 			uintmax_t sourceSizeBytes = 0;  // HLSL source file size at compile time
@@ -308,6 +323,8 @@ namespace SIE
 			double avgParallelism = 0.0;          // W / S
 			double infiniteCoreEfficiency = 0.0;  // S / T_p
 			double infiniteCoreGapPercent = 0.0;  // 100 * (1 - S / T_p)
+			double avgQueueWaitMs = 0.0;          // average enqueue -> dispatch delay
+			double maxQueueWaitMs = 0.0;          // worst enqueue -> dispatch delay
 			size_t sampleCount = 0;
 		};
 
@@ -323,10 +340,10 @@ namespace SIE
 		std::optional<ParallelismStats> GetParallelismStats() const;
 
 	private:
-		/// Tasks awaiting dispatch — we scan for the highest-priority entry in WaitTake().
-		std::unordered_set<ShaderCompilationTask> availableTasks;
-		std::unordered_set<ShaderCompilationTask> tasksInProgress;
-		std::unordered_set<ShaderCompilationTask> processedTasks;  // completed or failed
+		/// Tasks awaiting dispatch, ordered by cached priority and task id.
+		std::set<ShaderCompilationTask, TaskPriorityLess> availableTasks;
+		std::set<ShaderCompilationTask, TaskPriorityLess> tasksInProgress;
+		std::set<ShaderCompilationTask, TaskPriorityLess> processedTasks;  // completed or failed
 		std::condition_variable_any conditionVariable;
 	};
 

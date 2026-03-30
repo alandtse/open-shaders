@@ -566,10 +566,11 @@ void AdvancedSettingsRenderer::RenderDeveloperSection()
 					ImGui::Text("Computed lazily from the last completed build.");
 					ImGui::Text("Only evaluated when this Statistics section is open.");
 				}
-				ImGui::Text("Work (W): %s", Util::FormatDuration(p.workMs).c_str());
+				ImGui::Text("Work (W, sum of task wall times): %s", Util::FormatDuration(p.workMs).c_str());
 				if (auto _tt = Util::HoverTooltipWrapper()) {
-					ImGui::Text("Total compile work: sum of all per-shader compile times.");
-					ImGui::Text("Equivalent serial time on one worker.");
+					ImGui::Text("Total compile work: sum of all per-shader wall-clock compile times.");
+					ImGui::Text("This is not CPU time; it is accumulated task elapsed time.");
+					ImGui::Text("Equivalent serial time on one worker if overhead stayed the same.");
 				}
 				ImGui::Text("Span (S, longest): %s", Util::FormatDuration(p.spanMs).c_str());
 				if (auto _tt = Util::HoverTooltipWrapper()) {
@@ -579,6 +580,13 @@ void AdvancedSettingsRenderer::RenderDeveloperSection()
 				ImGui::Text("Makespan (T_p): %s", Util::FormatDuration(p.makespanMs).c_str());
 				if (auto _tt = Util::HoverTooltipWrapper()) {
 					ImGui::Text("Observed wall-clock duration for the full shader build.");
+				}
+				ImGui::Text("Queue wait (avg/max): %s / %s",
+					Util::FormatDuration(p.avgQueueWaitMs).c_str(),
+					Util::FormatDuration(p.maxQueueWaitMs).c_str());
+				if (auto _tt = Util::HoverTooltipWrapper()) {
+					ImGui::Text("Time spent waiting in the ready queue before a worker started compilation.");
+					ImGui::Text("Useful for identifying scheduler-induced delay separate from compile cost.");
 				}
 				ImGui::Text("Average parallelism (W/S): %.2fx", p.avgParallelism);
 				if (auto _tt = Util::HoverTooltipWrapper()) {
