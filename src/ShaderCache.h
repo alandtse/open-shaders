@@ -286,7 +286,7 @@ namespace SIE
 		std::atomic<uint64_t> verySlowTasks = 0;            // shaders taking >= 8s
 		std::atomic<uint64_t> totalPriorityWeight = 0;      // sum of (GetPriority()+1) for all queued tasks
 		std::atomic<uint64_t> completedPriorityWeight = 0;  // sum of (GetPriority()+1) for completed/failed tasks
-		std::atomic<int> heavyTasksInFlight = 0;            // number of dispatched heavy (>= kHeavyPriorityThreshold) tasks still running
+		std::atomic<uint32_t> heavyTasksInFlight = 0;       // number of dispatched heavy (>= kHeavyPriorityThreshold) tasks still running
 		std::mutex compilationMutex;
 
 		/// Per-task timing record stored for post-mortem analysis and developer UI.
@@ -456,6 +456,7 @@ namespace SIE
 			Claimed    // Claimed as Pending; caller must compile and call AddCompletedShader
 		};
 		std::pair<ClaimResult, ID3DBlob*> ClaimCompilation(const std::string& key);
+		void ResolvePendingFailure(const std::string& key);
 
 		ID3DBlob* GetCompletedShader(const std::string& a_key);
 		ID3DBlob* GetCompletedShader(const SIE::ShaderCompilationTask& a_task);
@@ -522,7 +523,7 @@ namespace SIE
 		// Background (in-game): half of P-cores only, to avoid starving the render thread.
 		int32_t compilationThreadCount = std::max(static_cast<int32_t>(std::thread::hardware_concurrency()) - 1, 1);
 		int32_t backgroundCompilationThreadCount = std::max(static_cast<int32_t>(Util::GetPerformanceCoreCount()) / 2, 1);
-		BS::thread_pool<> compilationPool{ static_cast<std::size_t>(std::thread::hardware_concurrency()) };
+		BS::thread_pool<> compilationPool{ static_cast<std::size_t>(compilationThreadCount) };
 		std::jthread managementJthread;  // dedicated thread for ManageCompilationSet (not in pool)
 		bool backgroundCompilation = false;
 		bool menuLoaded = false;

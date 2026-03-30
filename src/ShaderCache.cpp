@@ -2180,6 +2180,22 @@ namespace SIE
 		return { ClaimResult::Claimed, nullptr };
 	}
 
+	void ShaderCache::ResolvePendingFailure(const std::string& key)
+	{
+		bool changed = false;
+		{
+			std::unique_lock lockM{ mapMutex };
+			auto it = shaderMap.find(key);
+			if (it != shaderMap.end() && it->second.status == ShaderCompilationTask::Status::Pending) {
+				it->second = ShaderCacheResult{ nullptr, ShaderCompilationTask::Status::Failed, system_clock::now() };
+				changed = true;
+			}
+		}
+		if (changed) {
+			mapCV.notify_all();
+		}
+	}
+
 	ID3DBlob* ShaderCache::GetCompletedShader(const std::string& a_key)
 	{
 		std::string type = SIE::SShaderCache::GetTypeFromShaderString(a_key);
@@ -2606,7 +2622,7 @@ namespace SIE
 
 	int ShaderCache::GetHeavyTasksInFlight()
 	{
-		return compilationSet.heavyTasksInFlight.load(std::memory_order_relaxed);
+		return static_cast<int>(compilationSet.heavyTasksInFlight.load(std::memory_order_relaxed));
 	}
 
 	uint64_t ShaderCache::GetSlowTasks()
@@ -2866,6 +2882,8 @@ namespace SIE
 			return;
 		}
 
+		const auto taskKey = task.GetString();
+
 		// Thread priority serves as a signal to Intel Thread Director and
 		// the Windows scheduler for P-core vs E-core placement on hybrid CPUs.
 		// Heavy shaders compile at normal priority (favouring P-cores); light
@@ -2878,7 +2896,15 @@ namespace SIE
 		QueryPerformanceFrequency(&freq);
 		QueryPerformanceCounter(&start);
 
-		task.Perform();
+		try {
+			task.Perform();
+		} catch (const std::exception& e) {
+			logger::error("Unhandled exception compiling shader task {}: {}", taskKey, e.what());
+			ResolvePendingFailure(taskKey);
+		} catch (...) {
+			logger::error("Unhandled non-standard exception compiling shader task {}", taskKey);
+			ResolvePendingFailure(taskKey);
+		}
 
 		QueryPerformanceCounter(&end);
 		const double elapsedMs = static_cast<double>(end.QuadPart - start.QuadPart) * 1000.0 / freq.QuadPart;
@@ -2904,7 +2930,7 @@ namespace SIE
 		// Debug: full per-task record for post-mortem straggler analysis.
 		logger::debug("[ShaderTiming] {:.0f}ms | remaining={} | defines={} | src={}B | prio={} | tid={} | {}",
 			elapsedMs, remaining, descriptorComplexity, sourceBytes,
-			task.GetPriority(), GetCurrentThreadId(), task.GetString());
+			task.GetPriority(), GetCurrentThreadId(), taskKey);
 
 		constexpr double kSlowMs = 2000.0;
 		constexpr double kVerySlowMs = 8000.0;
@@ -2912,7 +2938,7 @@ namespace SIE
 		// Record every task for post-mortem analysis and developer UI (top-N display).
 		{
 			std::lock_guard lock(compilationSet.slowTasksMutex);
-			compilationSet.slowTaskRecords.push_back({ task.GetString(), elapsedMs, task.GetPriority(),
+			compilationSet.slowTaskRecords.push_back({ taskKey, elapsedMs, task.GetPriority(),
 				static_cast<int>(descriptorComplexity), sourceBytes });
 		}
 
@@ -2920,11 +2946,11 @@ namespace SIE
 			compilationSet.verySlowTasks++;
 			compilationSet.slowTasks++;
 			logger::info("[ShaderTiming] Very slow {:.0f}ms | remaining={} | defines={} | src={}B | prio={} | {}",
-				elapsedMs, remaining, descriptorComplexity, sourceBytes, task.GetPriority(), task.GetString());
+				elapsedMs, remaining, descriptorComplexity, sourceBytes, task.GetPriority(), taskKey);
 		} else if (elapsedMs >= kSlowMs) {
 			compilationSet.slowTasks++;
 			logger::debug("[ShaderTiming] Slow {:.0f}ms | remaining={} | defines={} | src={}B | prio={} | {}",
-				elapsedMs, remaining, descriptorComplexity, sourceBytes, task.GetPriority(), task.GetString());
+				elapsedMs, remaining, descriptorComplexity, sourceBytes, task.GetPriority(), taskKey);
 		}
 
 		if (stoken.stop_requested()) {
@@ -3061,7 +3087,7 @@ namespace SIE
 		// P-core count so they stay on fast cores via the Thread Director hints.
 		// On non-hybrid CPUs GetPerformanceCoreCount() == hardware_concurrency(),
 		// so heavyCoreLimit >= compilationThreadCount and this never activates.
-		const int heavyCoreLimit = static_cast<int>(Util::GetPerformanceCoreCount());
+		const uint32_t heavyCoreLimit = Util::GetPerformanceCoreCount();
 		const bool heavySlotsAvailable = heavyTasksInFlight.load(std::memory_order_relaxed) < heavyCoreLimit;
 
 		decltype(availableTasks)::iterator bestIt = availableTasks.end();
@@ -3137,7 +3163,12 @@ namespace SIE
 
 			// Track heavy task completion for P-core concurrency limiting
 			if (task.GetPriority() >= kHeavyPriorityThreshold) {
-				heavyTasksInFlight.fetch_sub(1, std::memory_order_relaxed);
+				auto current = heavyTasksInFlight.load(std::memory_order_relaxed);
+				while (current > 0 &&
+					   !heavyTasksInFlight.compare_exchange_weak(current, current - 1,
+						   std::memory_order_relaxed,
+						   std::memory_order_relaxed)) {
+				}
 			}
 
 			// Update timing

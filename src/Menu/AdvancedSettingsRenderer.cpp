@@ -595,6 +595,24 @@ void AdvancedSettingsRenderer::RenderDeveloperSection()
 					ImGui::Text("Distance from ideal infinite-core time.");
 					ImGui::Text("Defined as 100 * (1 - S / T_p). Lower is better.");
 				}
+
+				ImGui::Spacing();
+				ImGui::TextDisabled("Infinite-core efficiency");
+				float efficiency = static_cast<float>(std::clamp(p.infiniteCoreEfficiency, 0.0, 1.0));
+				ImGui::ProgressBar(efficiency, ImVec2(-1.0f, 0.0f), std::format("{:.1f}% efficient / {:.1f}% gap", 100.0 * p.infiniteCoreEfficiency, p.infiniteCoreGapPercent).c_str());
+
+				ImGui::Spacing();
+				ImGui::TextDisabled("Relative durations (normalized)");
+				double maxMs = std::max({ p.workMs, p.spanMs, p.makespanMs, 1.0 });
+				auto drawRelativeBar = [maxMs](const char* label, double value) {
+					float ratio = static_cast<float>(std::clamp(value / maxMs, 0.0, 1.0));
+					ImGui::TextUnformatted(label);
+					ImGui::SameLine();
+					ImGui::ProgressBar(ratio, ImVec2(-1.0f, 0.0f), std::format("{} ({:.1f}%)", Util::FormatDuration(value), 100.0 * ratio).c_str());
+				};
+				drawRelativeBar("Span (S)", p.spanMs);
+				drawRelativeBar("Makespan (T_p)", p.makespanMs);
+				drawRelativeBar("Work (W)", p.workMs);
 			}
 		}
 
