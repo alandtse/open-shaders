@@ -158,6 +158,15 @@ namespace Util
 		}
 	}
 
+	std::string FormatDuration(double ms)
+	{
+		int total_s = static_cast<int>(ms) / 1000;
+		int hours = total_s / 3600;
+		int minutes = (total_s % 3600) / 60;
+		int seconds = total_s % 60;
+		return fmt::format("{:02}:{:02}:{:02}", hours, minutes, seconds);
+	}
+
 	std::string TimeAgoString(std::chrono::steady_clock::time_point last)
 	{
 		using namespace std::chrono;

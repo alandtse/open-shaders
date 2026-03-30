@@ -2619,6 +2619,27 @@ namespace SIE
 		return compilationSet.verySlowTasks.load(std::memory_order_relaxed);
 	}
 
+	std::vector<CompilationSet::SlowTaskRecord> CompilationSet::GetTopSlowTasks(size_t n) const
+	{
+		std::lock_guard lock(slowTasksMutex);
+		// Partial sort to get the N highest without fully sorting the whole vector.
+		std::vector<SlowTaskRecord> result = slowTaskRecords;
+		if (result.size() > n) {
+			std::partial_sort(result.begin(), result.begin() + n, result.end(),
+				[](const SlowTaskRecord& a, const SlowTaskRecord& b) { return a.elapsedMs > b.elapsedMs; });
+			result.resize(n);
+		} else {
+			std::sort(result.begin(), result.end(),
+				[](const SlowTaskRecord& a, const SlowTaskRecord& b) { return a.elapsedMs > b.elapsedMs; });
+		}
+		return result;
+	}
+
+	std::vector<CompilationSet::SlowTaskRecord> ShaderCache::GetTopSlowTasks(size_t n)
+	{
+		return compilationSet.GetTopSlowTasks(n);
+	}
+
 	void ShaderCache::ClearShaderMap(RE::BSShader::Type a_type)
 	{
 		std::string_view shaderTypeStr = magic_enum::enum_name(a_type);
@@ -2845,6 +2866,14 @@ namespace SIE
 
 		constexpr double kSlowMs = 2000.0;
 		constexpr double kVerySlowMs = 8000.0;
+
+		// Record every task for post-mortem analysis and developer UI (top-N display).
+		{
+			std::lock_guard lock(compilationSet.slowTasksMutex);
+			compilationSet.slowTaskRecords.push_back({ task.GetString(), elapsedMs, task.GetPriority(),
+				static_cast<int>(descriptorComplexity), sourceBytes });
+		}
+
 		if (elapsedMs >= kVerySlowMs) {
 			compilationSet.verySlowTasks++;
 			compilationSet.slowTasks++;
@@ -3114,18 +3143,15 @@ namespace SIE
 		QueryPerformanceCounter(&lastCalculation);
 		completionTime = { 0 };  // Reset completion time
 		totalTime = { 0 };
+		{
+			std::lock_guard slowLock(slowTasksMutex);
+			slowTaskRecords.clear();
+		}
 	}
 
 	std::string CompilationSet::GetHumanTime(double a_totalMs)
 	{
-		int milliseconds = static_cast<int>(a_totalMs);
-		int seconds = milliseconds / 1000;
-		int minutes = seconds / 60;
-		seconds %= 60;
-		int hours = minutes / 60;
-		minutes %= 60;
-
-		return fmt::format("{:02}:{:02}:{:02}", hours, minutes, seconds);
+		return Util::FormatDuration(a_totalMs);
 	}
 
 	double CompilationSet::GetEta()

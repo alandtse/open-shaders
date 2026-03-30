@@ -553,6 +553,33 @@ void AdvancedSettingsRenderer::RenderDeveloperSection()
 	// Statistics section (moved from Advanced/Logging)
 	if (ImGui::TreeNodeEx("Statistics", ImGuiTreeNodeFlags_DefaultOpen)) {
 		ImGui::Text(std::format("Shader Compiler : {}", shaderCache->GetShaderStatsString()).c_str());
+
+		// Top-3 slowest shaders from the last build
+		auto topSlow = shaderCache->GetTopSlowTasks(3);
+		if (!topSlow.empty()) {
+			ImGui::Spacing();
+			ImGui::TextDisabled("Top %zu Slowest Shaders (last build)", topSlow.size());
+			for (size_t i = 0; i < topSlow.size(); ++i) {
+				const auto& rec = topSlow[i];
+				ImGui::Text("#%zu  %s  (weight %d)", i + 1,
+					Util::FormatDuration(rec.elapsedMs).c_str(), rec.priority);
+				ImGui::SameLine();
+				ImGui::TextDisabled("%s", rec.key.c_str());
+				if (ImGui::IsItemHovered()) {
+					if (auto _tt = Util::HoverTooltipWrapper()) {
+						ImGui::Text("%s", rec.key.c_str());
+					}
+				}
+				// Allow copying the full key with a right-click
+				if (ImGui::BeginPopupContextItem(std::format("##slowcopy{}", i).c_str())) {
+					if (ImGui::MenuItem("Copy key")) {
+						ImGui::SetClipboardText(rec.key.c_str());
+					}
+					ImGui::EndPopup();
+				}
+			}
+		}
+
 		ImGui::TreePop();
 	}
 

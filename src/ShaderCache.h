@@ -275,7 +275,7 @@ namespace SIE
 		void Add(const ShaderCompilationTask& task);
 		void Complete(const ShaderCompilationTask& task);
 		void Clear();
-		std::string GetHumanTime(double a_totalMs);
+		static std::string GetHumanTime(double a_totalMs);
 		double GetEta();
 		std::string GetStatsString(bool a_timeOnly = false, bool a_elapsedOnly = false);
 		std::atomic<uint64_t> completedTasks = 0;
@@ -288,6 +288,24 @@ namespace SIE
 		std::atomic<uint64_t> completedPriorityWeight = 0;  // sum of (GetPriority()+1) for completed/failed tasks
 		std::atomic<int> heavyTasksInFlight = 0;            // number of dispatched heavy (>= kHeavyPriorityThreshold) tasks still running
 		std::mutex compilationMutex;
+
+		/// Per-task timing record stored for post-mortem analysis and developer UI.
+		struct SlowTaskRecord
+		{
+			std::string key;  // ShaderCompilationTask::GetString() — "fxpFile:Class:defines"
+			double elapsedMs = 0.0;
+			int priority = 0;               // estimated compile weight (see ComputePriority)
+			int defineCount = 0;            // popcount of descriptor — active define permutations
+			uintmax_t sourceSizeBytes = 0;  // HLSL source file size at compile time
+		};
+
+		/// All per-task timing records for this build (appended from multiple threads).
+		/// Protected by slowTasksMutex.
+		std::vector<SlowTaskRecord> slowTaskRecords;
+		mutable std::mutex slowTasksMutex;
+
+		/// Returns a copy of the N records with the highest elapsedMs, sorted descending.
+		std::vector<SlowTaskRecord> GetTopSlowTasks(size_t n = 3) const;
 
 	private:
 		/// Tasks awaiting dispatch — we scan for the highest-priority entry in WaitTake().
@@ -466,6 +484,9 @@ namespace SIE
 		int GetHeavyTasksInFlight();
 		uint64_t GetSlowTasks();
 		uint64_t GetVerySlowTasks();
+
+		/// Returns a copy of the top-N slowest task records from the last build, sorted descending.
+		std::vector<CompilationSet::SlowTaskRecord> GetTopSlowTasks(size_t n = 3);
 
 		/**
 		 * @brief Clears all shaders of a specific type from the shader map.
