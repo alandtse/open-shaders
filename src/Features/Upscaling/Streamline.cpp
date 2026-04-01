@@ -726,12 +726,21 @@ void Streamline::Upscale(ID3D11Resource* a_upscalingTexture, ID3D11Resource* a_r
 	// Per-eye isolation with extents at {0,0} is required.
 	if (globals::game::isVR) {
 		auto& upscaling = globals::features::upscaling;
+		const bool vrPipelineDedupActive = upscaling.IsVRPipelineDedupActive(Upscaling::UpscaleMethod::kDLSS);
 		uint32_t eyeWidthOut = (uint32_t)(screenSize.x / 2);
 		uint32_t eyeHeightOut = (uint32_t)screenSize.y;
 		uint32_t eyeWidthIn = (uint32_t)(renderSize.x / 2);
 		uint32_t eyeHeightIn = (uint32_t)renderSize.y;
 
-		upscaling.PreparePerEyeInputs(a_upscalingTexture, depthTexture.texture, a_motionVectors, a_reactiveMask, a_transparencyCompositionMask, false);
+		// In dedup mode, encode stage outputs combined stereo aux textures.
+		// Split reactive/transparency/motion-vectors here to keep per-eye DLSS evaluation unchanged.
+		upscaling.PreparePerEyeInputs(
+			a_upscalingTexture,
+			depthTexture.texture,
+			a_motionVectors,
+			a_reactiveMask,
+			a_transparencyCompositionMask,
+			vrPipelineDedupActive);
 
 		for (uint32_t i = 0; i < 2; ++i) {
 			sl::ViewportHandle vp = (i == 1) ? viewportRight : viewport;

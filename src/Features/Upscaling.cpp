@@ -365,9 +365,15 @@ void Upscaling::DrawSettings()
 		}
 
 		if (globals::game::isVR) {
-			const bool vrPipelineDedupSupportedForMethod = upscaleMethod == UpscaleMethod::kFSR;
+			const bool vrPipelineDedupMethodSupported = upscaleMethod == UpscaleMethod::kFSR || upscaleMethod == UpscaleMethod::kDLSS;
+			const bool vrPipelineDedupBlockedByFoveated = vrPipelineDedupMethodSupported && IsFoveatedVendorDispatchEnabled(upscaleMethod);
+			const bool vrPipelineDedupSupportedForMethod = vrPipelineDedupMethodSupported && !vrPipelineDedupBlockedByFoveated;
 			if (!vrPipelineDedupSupportedForMethod) {
-				ImGui::TextDisabled("VR Pipeline Deduplication is currently FSR-only.");
+				if (!vrPipelineDedupMethodSupported) {
+					ImGui::TextDisabled("VR Pipeline Deduplication is available for DLSS and FSR only.");
+				} else {
+					ImGui::TextDisabled("Disable Foveated Upscaling to enable VR Pipeline Deduplication.");
+				}
 			}
 			ImGui::BeginDisabled(!vrPipelineDedupSupportedForMethod);
 			{
@@ -375,8 +381,8 @@ void Upscaling::DrawSettings()
 				ImGui::Checkbox("VR Pipeline Deduplication (Experimental)", &settings.vrPipelineDeduplication);
 			}
 			if (auto _tt = Util::HoverTooltipWrapper()) {
-				ImGui::TextUnformatted("Runs VR FSR through a single combined-stereo pipeline to reduce duplicate per-eye prep work.");
-				ImGui::TextUnformatted("Keeps stereo rendering intact and leaves DLSS behavior unchanged.");
+				ImGui::TextUnformatted("Runs VR upscaling prep through a combined-stereo encode path to reduce duplicate per-eye plumbing work.");
+				ImGui::TextUnformatted("Keeps stereo rendering intact and preserves per-eye DLSS/FSR history ownership.");
 				ImGui::TextUnformatted("Experimental: if you observe seam artifacts, disable this option.");
 			}
 			ImGui::EndDisabled();
@@ -1227,11 +1233,11 @@ bool Upscaling::IsVRPipelineDedupActive(UpscaleMethod a_upscaleMethod) const
 	if (!settings.vrPipelineDeduplication)
 		return false;
 
-	// Current prototype is intentionally limited to FSR to avoid DLSS history artifacts.
-	if (a_upscaleMethod != UpscaleMethod::kFSR)
+	const bool supportsDedupForMethod = a_upscaleMethod == UpscaleMethod::kFSR || a_upscaleMethod == UpscaleMethod::kDLSS;
+	if (!supportsDedupForMethod)
 		return false;
 
-	// Keep the paths mutually exclusive in case foveated FSR support is added later.
+	// Keep the paths mutually exclusive with foveated vendor dispatch.
 	if (IsFoveatedVendorDispatchEnabled(a_upscaleMethod))
 		return false;
 
