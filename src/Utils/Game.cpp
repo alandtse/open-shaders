@@ -167,7 +167,7 @@ namespace Util
 		float2 resolution = globals::state->screenSize;
 
 		if (a_dynamic)
-			ConvertToDynamic(resolution);
+			resolution = ConvertToDynamic(resolution);
 
 		uint dispatchX = (uint)std::ceil(resolution.x / 8.0f);
 		uint dispatchY = (uint)std::ceil(resolution.y / 8.0f);
