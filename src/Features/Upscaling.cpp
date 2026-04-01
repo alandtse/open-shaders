@@ -28,6 +28,7 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	streamlineLogLevel,
 	sharpnessFSR,
 	sharpnessDLSS,
+	vrPipelineDeduplication,
 	foveatedVendorDispatch,
 	foveatedCenterArea,
 	foveatedLeftEyeMaskOffsetX,
@@ -364,6 +365,24 @@ void Upscaling::DrawSettings()
 		}
 
 		if (globals::game::isVR) {
+			const bool vrPipelineDedupSupportedForMethod = upscaleMethod == UpscaleMethod::kFSR;
+			if (!vrPipelineDedupSupportedForMethod) {
+				ImGui::TextDisabled("VR Pipeline Deduplication is currently FSR-only.");
+			}
+			ImGui::BeginDisabled(!vrPipelineDedupSupportedForMethod);
+			{
+				Util::YellowFrameStyleWrapper dedupStyle(true);
+				ImGui::Checkbox("VR Pipeline Deduplication (Experimental)", &settings.vrPipelineDeduplication);
+			}
+			if (auto _tt = Util::HoverTooltipWrapper()) {
+				ImGui::TextUnformatted("Runs VR FSR through a single combined-stereo pipeline to reduce duplicate per-eye prep work.");
+				ImGui::TextUnformatted("Keeps stereo rendering intact and leaves DLSS behavior unchanged.");
+				ImGui::TextUnformatted("Experimental: if you observe seam artifacts, disable this option.");
+			}
+			ImGui::EndDisabled();
+
+			ImGui::Separator();
+
 			const bool foveatedDispatchSupportedForMethod = SupportsFoveatedVendorDispatch(upscaleMethod);
 			if (!foveatedDispatchSupportedForMethod) {
 				ImGui::TextDisabled("Foveated Upscaling is currently DLSS-only. FSR uses full-eye dispatch.");
@@ -995,21 +1014,25 @@ void Upscaling::CheckResources(UpscaleMethod a_upscalemethod)
 {
 	static auto previousUpscaleMode = UpscaleMethod::kTAA;
 	static bool previousFrameGenMode = false;
+	static bool previousVRPipelineDedupActive = false;
 	static bool previousFoveatedDispatch = false;
 	static uint32_t previousFoveatedCenterAreaMilli = static_cast<uint32_t>(std::round(ClampFoveatedCenterArea(settings.foveatedCenterArea) * 1000.0f));
 
 	bool frameGenModeCurrent = (settings.frameGenerationMode && d3d12SwapChainActive);
 	bool frameGenModeChanged = frameGenModeCurrent != previousFrameGenMode;
 	bool upscaleModeChanged = (previousUpscaleMode != a_upscalemethod);
+	const bool vrPipelineDedupCurrent = IsVRPipelineDedupActive(a_upscalemethod);
+	const bool vrPipelineDedupChanged = previousVRPipelineDedupActive != vrPipelineDedupCurrent;
 	const bool foveatedDispatchCurrent = IsFoveatedVendorDispatchEnabled(a_upscalemethod);
 	const uint32_t foveatedCenterAreaMilli = static_cast<uint32_t>(std::round(ClampFoveatedCenterArea(settings.foveatedCenterArea) * 1000.0f));
 	const bool compareFoveatedArea = foveatedDispatchCurrent || previousFoveatedDispatch;
 	const bool foveatedDispatchChanged = previousFoveatedDispatch != foveatedDispatchCurrent ||
 	                                     (compareFoveatedArea && previousFoveatedCenterAreaMilli != foveatedCenterAreaMilli);
 
-	if (upscaleModeChanged || frameGenModeChanged || foveatedDispatchChanged) {
-		logger::debug("[Upscaling] Resource change detected - Upscale: {} ({}) -> {} ({}), FrameGen: {} -> {} (d3d12Active={})",
-			static_cast<int>(previousUpscaleMode), magic_enum::enum_name(previousUpscaleMode), static_cast<int>(a_upscalemethod), magic_enum::enum_name(a_upscalemethod), previousFrameGenMode, frameGenModeCurrent, d3d12SwapChainActive);
+	if (upscaleModeChanged || frameGenModeChanged || vrPipelineDedupChanged || foveatedDispatchChanged) {
+		logger::debug("[Upscaling] Resource change detected - Upscale: {} ({}) -> {} ({}), FrameGen: {} -> {} (d3d12Active={}), VRPipelineDedup: {} -> {}",
+			static_cast<int>(previousUpscaleMode), magic_enum::enum_name(previousUpscaleMode), static_cast<int>(a_upscalemethod), magic_enum::enum_name(a_upscalemethod), previousFrameGenMode, frameGenModeCurrent, d3d12SwapChainActive,
+			previousVRPipelineDedupActive, vrPipelineDedupCurrent);
 
 		// Destroy previous upscaling method resources (only if they were actually active)
 		if (upscaleModeChanged) {
@@ -1037,6 +1060,12 @@ void Upscaling::CheckResources(UpscaleMethod a_upscalemethod)
 				fidelityFX.CreateFSRResources();
 		}
 
+		// Rebuild FSR resources when toggling VR pipeline dedup mode without changing method.
+		if (!upscaleModeChanged && vrPipelineDedupChanged && a_upscalemethod == UpscaleMethod::kFSR) {
+			fidelityFX.DestroyFSRResources();
+			fidelityFX.CreateFSRResources();
+		}
+
 		// Create new upscaling method resources
 		if (upscaleModeChanged) {
 			CreateUpscalingTextureResources(a_upscalemethod);
@@ -1050,6 +1079,7 @@ void Upscaling::CheckResources(UpscaleMethod a_upscalemethod)
 		// Update tracking for next call
 		previousUpscaleMode = a_upscalemethod;
 		previousFrameGenMode = (settings.frameGenerationMode && d3d12SwapChainActive);
+		previousVRPipelineDedupActive = vrPipelineDedupCurrent;
 		previousFoveatedDispatch = foveatedDispatchCurrent;
 		previousFoveatedCenterAreaMilli = foveatedCenterAreaMilli;
 		previousUpscalingWasActive = IsUpscalingActive();
@@ -1187,6 +1217,25 @@ bool Upscaling::IsFoveatedVendorDispatchEnabled(UpscaleMethod a_upscaleMethod) c
 	const float centerArea = ClampFoveatedCenterArea(settings.foveatedCenterArea);
 	// 1.0 is effectively full-frame vendor dispatch, so keep the default path.
 	return centerArea < 0.999f;
+}
+
+bool Upscaling::IsVRPipelineDedupActive(UpscaleMethod a_upscaleMethod) const
+{
+	if (!globals::game::isVR)
+		return false;
+
+	if (!settings.vrPipelineDeduplication)
+		return false;
+
+	// Current prototype is intentionally limited to FSR to avoid DLSS history artifacts.
+	if (a_upscaleMethod != UpscaleMethod::kFSR)
+		return false;
+
+	// Keep the paths mutually exclusive in case foveated FSR support is added later.
+	if (IsFoveatedVendorDispatchEnabled(a_upscaleMethod))
+		return false;
+
+	return true;
 }
 
 float2 Upscaling::GetDefaultFoveatedMaskCenterOffset(uint32_t eyeIndex) const
@@ -2564,6 +2613,7 @@ void Upscaling::UpdateHistoryResetState(UpscaleMethod a_upscaleMethod)
 	const bool inWorld = state->inWorld;
 	const bool inMapMenu = globals::game::ui ? globals::game::ui->IsMenuOpen(RE::MapMenu::MENU_NAME) : false;
 	const float2 screenSize = state->screenSize;
+	const bool vrPipelineDedupEnabled = IsVRPipelineDedupActive(a_upscaleMethod);
 	const bool foveatedDispatchEnabled = IsFoveatedVendorDispatchEnabled(a_upscaleMethod);
 	const float foveatedCenterArea = ClampFoveatedCenterArea(settings.foveatedCenterArea);
 
@@ -2600,6 +2650,7 @@ void Upscaling::UpdateHistoryResetState(UpscaleMethod a_upscaleMethod)
 			inWorld != previousHistoryInWorld ||
 			inMapMenu != previousHistoryInMapMenu;
 		const bool methodChanged = a_upscaleMethod != previousHistoryUpscaleMethod;
+		const bool vrPipelineDedupChanged = vrPipelineDedupEnabled != previousHistoryVRPipelineDedup;
 		const bool compareFoveatedArea = foveatedDispatchEnabled || previousHistoryFoveatedDispatch;
 		const bool foveatedChanged =
 			foveatedDispatchEnabled != previousHistoryFoveatedDispatch ||
@@ -2609,7 +2660,7 @@ void Upscaling::UpdateHistoryResetState(UpscaleMethod a_upscaleMethod)
 								  *globals::game::deltaTime > 0.20f;
 		const bool cameraCut = inWorld && cameraCutDetected();
 
-		shouldReset = screenSizeChanged || scaleChanged || worldStateChanged || methodChanged || foveatedChanged || longFrameGap || cameraCut;
+		shouldReset = screenSizeChanged || scaleChanged || worldStateChanged || methodChanged || vrPipelineDedupChanged || foveatedChanged || longFrameGap || cameraCut;
 	}
 
 	if (state->pendingPostLoadRuntimeReset)
@@ -2623,6 +2674,7 @@ void Upscaling::UpdateHistoryResetState(UpscaleMethod a_upscaleMethod)
 	previousHistoryInWorld = inWorld;
 	previousHistoryInMapMenu = inMapMenu;
 	previousHistoryUpscaleMethod = a_upscaleMethod;
+	previousHistoryVRPipelineDedup = vrPipelineDedupEnabled;
 	previousHistoryFoveatedDispatch = foveatedDispatchEnabled;
 	previousHistoryFoveatedCenterArea = foveatedCenterArea;
 }
@@ -2744,8 +2796,9 @@ void Upscaling::Upscale()
 
 	auto& main = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMAIN];
 	auto& motionVector = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMOTION_VECTOR];
+	const bool vrPipelineDedupActive = IsVRPipelineDedupActive(upscaleMethod);
 	const bool requiresEncodedMotionVectors = upscaleMethod == UpscaleMethod::kDLSS || upscaleMethod == UpscaleMethod::kFSR;
-	const bool requiresCombinedEncodedMotionVectors = requiresEncodedMotionVectors && !globals::game::isVR;
+	const bool requiresCombinedEncodedMotionVectors = requiresEncodedMotionVectors && (!globals::game::isVR || vrPipelineDedupActive);
 	if (requiresCombinedEncodedMotionVectors && (!motionVectorCopyTexture || !motionVectorCopyTexture->uav || !motionVectorCopyTexture->resource)) {
 		logger::error("[Upscaling] Missing encoded motion-vector resources for method {}", magic_enum::enum_name(upscaleMethod));
 		return;
@@ -2771,7 +2824,7 @@ void Upscaling::Upscale()
 			context->CSSetConstantBuffers(0, 1, &upscalingBuffer);
 			context->CSSetShader(GetEncodeTexturesCS(), nullptr, 0);
 
-			if (globals::game::isVR) {
+			if (globals::game::isVR && !vrPipelineDedupActive) {
 				uint32_t eyeWidthOut = (uint32_t)(state->screenSize.x / 2);
 				uint32_t eyeHeightOut = (uint32_t)state->screenSize.y;
 				uint32_t eyeWidthIn = (uint32_t)(renderSize.x / 2);
@@ -2812,14 +2865,14 @@ void Upscaling::Upscale()
 				upscalingData.seamCenterX = renderSize.x * 0.5f;
 				upscalingData.seamHalfWidthPx = 2.0f;
 				upscalingData.maskDepthThreshold = 1e-6f;
-				upscalingData.vrSeamHardening = 0.0f;
+				upscalingData.vrSeamHardening = globals::game::isVR ? 1.0f : 0.0f;
 				upscalingData.sourceOffset = { 0.0f, 0.0f };
 				upscalingDataCB->Update(upscalingData);
 
 				ID3D11UnorderedAccessView* uavs[3] = {
 					reactiveMaskTexture->uav.get(),
 					transparencyCompositionMaskTexture->uav.get(),
-					requiresEncodedMotionVectors ? motionVectorCopyTexture->uav.get() : nullptr
+					requiresCombinedEncodedMotionVectors ? motionVectorCopyTexture->uav.get() : nullptr
 				};
 				context->CSSetUnorderedAccessViews(0, ARRAYSIZE(uavs), uavs, nullptr);
 				context->Dispatch(dispatchCount.x, dispatchCount.y, 1);
@@ -2843,7 +2896,7 @@ void Upscaling::Upscale()
 
 	{
 		state->BeginPerfEvent("Upscaling");
-		ID3D11Resource* motionVectorResource = globals::game::isVR ? motionVector.texture : motionVectorCopyTexture->resource.get();
+		ID3D11Resource* motionVectorResource = (globals::game::isVR && !vrPipelineDedupActive) ? motionVector.texture : motionVectorCopyTexture->resource.get();
 		const bool foveatedDispatchRequested = IsFoveatedVendorDispatchEnabled(upscaleMethod);
 		bool dispatched = false;
 		static bool loggedFoveatedFallback = false;
