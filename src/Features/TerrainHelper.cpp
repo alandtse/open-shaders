@@ -3,6 +3,15 @@
 #include "ShaderCache.h"
 #include "State.h"
 
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
+	TerrainHelper::Settings,
+	EnableTerrainHelper)
+
+namespace
+{
+	void ClearTerrainHelperRuntimeState();
+}
+
 void TerrainHelper::DataLoaded()
 {
 	// Get the default landscape texture set for terrain helper
@@ -11,16 +20,57 @@ void TerrainHelper::DataLoaded()
 		logger::info("[Terrain Helper] LandscapeDefault EDID texture set found");
 		defaultLandTexture = defaultLandTextureSet;
 		// only enable if TerrainHelper.esp is loaded
-		enabled = true;
+		featureAvailable = true;
+		if (!settings.EnableTerrainHelper) {
+			ClearTerrainHelperRuntimeState();
+		}
 	} else {
 		logger::warn("[Terrain Helper] LandscapeDefault EDID texture set from TerrainHelper.esp not found. Terrain helper is disabled.");
-		enabled = false;
+		defaultLandTexture = nullptr;
+		featureAvailable = false;
+		ClearTerrainHelperRuntimeState();
 	}
+}
+
+void TerrainHelper::DrawSettings()
+{
+	if (!featureAvailable) {
+		ImGui::TextDisabled("TerrainHelper.esp not detected. Runtime toggle is unavailable.");
+		return;
+	}
+
+	if (ImGui::Checkbox("Enable Terrain Helper (Hard Toggle)", &settings.EnableTerrainHelper)) {
+		if (!settings.EnableTerrainHelper)
+			ClearTerrainHelperRuntimeState();
+	}
+}
+
+void TerrainHelper::LoadSettings(json& o_json)
+{
+	settings = o_json;
+	if (!settings.EnableTerrainHelper) {
+		ClearTerrainHelperRuntimeState();
+	}
+}
+
+void TerrainHelper::SaveSettings(json& o_json)
+{
+	o_json = settings;
+}
+
+void TerrainHelper::RestoreDefaultSettings()
+{
+	settings = {};
+}
+
+bool TerrainHelper::IsRuntimeEnabled() const
+{
+	return featureAvailable && settings.EnableTerrainHelper;
 }
 
 bool TerrainHelper::TESObjectLAND_SetupMaterial(RE::TESObjectLAND* land)
 {
-	if (!enabled) {
+	if (!IsRuntimeEnabled()) {
 		// terrain helper is not enabled
 		return false;
 	}
@@ -120,6 +170,22 @@ struct THExtendedRendererState
 	}
 } thExtendedRendererState;
 
+namespace
+{
+	void ClearTerrainHelperRuntimeState()
+	{
+		auto state = globals::state;
+		if (state) {
+			constexpr uint32_t kTerrainHelperTextureBitsMask = (1u << THExtendedRendererState::NumPSTextures) - 1u;
+			state->permutationData.ExtraFeatureDescriptor &= ~kTerrainHelperTextureBitsMask;
+			state->permutationData.ExtraFeatureDescriptor &= ~uint(State::ExtraFeatureDescriptors::THLandHasDisplacement);
+		}
+
+		for (uint32_t textureI = 0; textureI < THExtendedRendererState::NumPSTextures; ++textureI)
+			thExtendedRendererState.SetPSTexture(textureI, nullptr);
+	}
+}
+
 void TerrainHelper::SetShaderResouces(ID3D11DeviceContext* a_context)
 {
 	uint32_t mask = thExtendedRendererState.PSResourceModifiedBits;
@@ -154,8 +220,9 @@ void TerrainHelper::SetShaderResouces(ID3D11DeviceContext* a_context)
 
 void TerrainHelper::BSLightingShader_SetupMaterial(RE::BSLightingShaderMaterialBase const* material)
 {
-	if (!enabled) {
-		// terrain helper is not enabled
+	if (!IsRuntimeEnabled()) {
+		// terrain helper is not enabled at runtime
+		ClearTerrainHelperRuntimeState();
 		return;
 	}
 
