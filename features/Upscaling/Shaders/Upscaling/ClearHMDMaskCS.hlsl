@@ -4,6 +4,12 @@
 // depth == 0.0 is the unrendered/hidden area value (Skyrim reversed-Z: far plane = 0).
 // DepthIn is the combined stereo depth buffer; DepthOffsetX selects the eye's half.
 // ColorInOut is the isolated per-eye buffer; ColorOffsetX is always 0.
+//
+// NOTE: depth == 0.0 also matches sky pixels (reversed-Z far plane). We intentionally
+// do NOT set the reactive mask here — setting reactive=1.0 for sky would prevent the
+// upscaler from using temporal history for sky, causing permanently black sky.
+// Reactive mask is only set via the mesh-based path (ApplyHMDMaskCS.hlsl), which is
+// resolution-exact and covers only the true hidden-area corners.
 
 cbuffer ClearHMDMaskCB : register(b0)
 {
