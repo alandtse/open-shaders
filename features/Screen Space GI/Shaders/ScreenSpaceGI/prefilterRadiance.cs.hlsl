@@ -36,16 +36,27 @@ groupshared float3 g_scratchRadiance[8][8];
 	// MIP 0
 	const uint2 baseCoord = dispatchThreadID;
 	const uint2 pixCoord = baseCoord * 2;
+#if defined(VR)
+	// No depth input in this shader; use t21 stencil texture for the hidden-pixel check.
+	const bool isHiddenPixel = HMDMask::IsHiddenPixel(pixCoord);
+#else
+	const bool isHiddenPixel = false;
+#endif
 	const float2 uv = (pixCoord + .5) * RcpFrameDim;
 
-	float4 rad0 = srcRadiance.GatherRed(samplerPointClamp, uv * frameScale);
-	float4 rad1 = srcRadiance.GatherGreen(samplerPointClamp, uv * frameScale);
-	float4 rad2 = srcRadiance.GatherBlue(samplerPointClamp, uv * frameScale);
-
-	float3 radiance0 = float3(rad0.w, rad1.w, rad2.w);
-	float3 radiance1 = float3(rad0.z, rad1.z, rad2.z);
-	float3 radiance2 = float3(rad0.x, rad1.x, rad2.x);
-	float3 radiance3 = float3(rad0.y, rad1.y, rad2.y);
+	float3 radiance0 = 0.0;
+	float3 radiance1 = 0.0;
+	float3 radiance2 = 0.0;
+	float3 radiance3 = 0.0;
+	if (!isHiddenPixel) {
+		float4 rad0 = srcRadiance.GatherRed(samplerPointClamp, uv * frameScale);
+		float4 rad1 = srcRadiance.GatherGreen(samplerPointClamp, uv * frameScale);
+		float4 rad2 = srcRadiance.GatherBlue(samplerPointClamp, uv * frameScale);
+		radiance0 = float3(rad0.w, rad1.w, rad2.w);
+		radiance1 = float3(rad0.z, rad1.z, rad2.z);
+		radiance2 = float3(rad0.x, rad1.x, rad2.x);
+		radiance3 = float3(rad0.y, rad1.y, rad2.y);
+	}
 
 	outRadiance0[pixCoord + uint2(0, 0)] = radiance0;
 	outRadiance0[pixCoord + uint2(1, 0)] = radiance1;

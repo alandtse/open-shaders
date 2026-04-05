@@ -4,6 +4,7 @@
 #include "Features/DynamicCubemaps.h"
 #include "Features/ScreenSpaceGI.h"
 #include "Features/ScreenSpaceShadows.h"
+#include "Globals.h"
 #include "State.h"
 #include "Utils/D3D.h"
 

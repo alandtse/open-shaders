@@ -102,6 +102,10 @@ float2x2 getRotationMatrix(float noise)
 	const float2 screenPos = Stereo::ConvertFromStereoUV(uv, eyeIndex);
 
 	float depth = READ_DEPTH(srcDepth, dtid);
+#if defined(VR)
+	if (depth == 0.0)  // depth sentinel: ClearHMDMaskCS writes 0 at hidden-area pixels
+		return;
+#endif
 	float3 pos = ScreenToViewPosition(screenPos, depth, eyeIndex);
 	float3 normal = GBuffer::DecodeNormal(FULLRES_LOAD(srcNormalRoughness, dtid, uv, samplerLinearClamp).xy);
 

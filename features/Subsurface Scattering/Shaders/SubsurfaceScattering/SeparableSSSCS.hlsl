@@ -34,6 +34,10 @@ cbuffer PerFrameSSS : register(b1)
 	// Early exit if dispatch thread is outside screen bounds
 	if (any(DTid.xy >= uint2(SharedData::BufferDim.xy)))
 		return;
+#if defined(VR)
+	if (HMDMask::IsHiddenPixel(DTid.xy))
+		return;
+#endif
 
 	float2 texCoord = (DTid.xy + 0.5) * SharedData::BufferDim.zw;
 	uint eyeIndex = Stereo::GetEyeIndexFromTexCoord(texCoord);

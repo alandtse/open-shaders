@@ -6,6 +6,16 @@
 
 namespace Util
 {
+	float GetPerEyeVerticalFOVRad(uint32_t eyeIndex)
+	{
+		return globals::features::vr.GetPerEyeVerticalFOVRad(eyeIndex);
+	}
+
+	float GetPerEyeHorizontalFOVRad(uint32_t eyeIndex)
+	{
+		return globals::features::vr.GetPerEyeHorizontalFOVRad(eyeIndex);
+	}
+
 	void DrawButtonCombo(const std::vector<ButtonCombo>& combo, bool showControllerLabels)
 	{
 		bool anyDrawn = false;
@@ -236,6 +246,30 @@ namespace Util
 
 		// If compositor methods failed, return false rather than using the problematic direct call
 		return false;
+	}
+
+	bool TryGetLastHMDPose(vr::TrackedDevicePose_t& outPose)
+	{
+		OpenVRContext ctx;
+		if (!ctx.IsValid())
+			return false;
+
+		auto* compositor = RE::BSOpenVR::GetIVRCompositor();
+		if (!compositor && ctx.openvr)
+			compositor = ctx.openvr->vrContext.vrCompositor;
+		if (!compositor)
+			return false;
+
+		vr::TrackedDevicePose_t poses[vr::k_unTrackedDeviceIndex_Hmd + 1];
+		auto err = compositor->GetLastPoses(poses, vr::k_unTrackedDeviceIndex_Hmd + 1, nullptr, 0);
+		if (err != vr::VRCompositorError_None)
+			return false;
+
+		if (!poses[vr::k_unTrackedDeviceIndex_Hmd].bPoseIsValid)
+			return false;
+
+		outPose = poses[vr::k_unTrackedDeviceIndex_Hmd];
+		return true;
 	}
 
 }

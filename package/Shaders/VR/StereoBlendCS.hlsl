@@ -75,7 +75,6 @@ float4 SampleCrossDepths(int2 center, int offset, uint eyeIndex)
 [numthreads(8, 8, 1)] void main(uint2 dtid : SV_DispatchThreadID) {
 	if (any(dtid >= uint2(FrameDim)))
 		return;
-
 #ifdef STEREO_OVERWRITE
 	// =========================================================================
 	// Mode-driven stereo merge: reads per-pixel classification from StencilCS
@@ -88,8 +87,9 @@ float4 SampleCrossDepths(int2 center, int offset, uint eyeIndex)
 
 	float centerDepth = DepthTexture[dtid];
 
-	// HMD mask pixels (depth >= 1.0 in reversed-Z) — always skip
-	if (centerDepth >= 1.0)
+	// HMD hidden-area: ClearHMDMaskCS writes reversed-Z far-plane (0.0) at masked pixels.
+	// Near-clip geometry (depth >= 1.0) is also degenerate — skip both.
+	if (centerDepth == 0.0 || centerDepth >= 1.0)
 		return;
 
 	uint pixelMode = ModeTexture[dtid];

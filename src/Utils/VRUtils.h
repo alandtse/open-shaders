@@ -36,6 +36,9 @@ namespace Util
 	inline ImVec4 GetControllerBothColor() { return Colors::Both; }
 	inline ImVec4 GetControllerDefaultColor() { return Colors::Default; }
 
+	float GetPerEyeVerticalFOVRad(uint32_t eyeIndex);
+	float GetPerEyeHorizontalFOVRad(uint32_t eyeIndex);
+
 	/**
 	 * @brief Draws a button combination in the ImGui interface with color coding
 	 * @param combo Vector of ButtonCombo structures representing the key combination
@@ -135,6 +138,11 @@ namespace Util
 	 * when available for better OpenComposite compatibility.
 	 */
 	bool GetDeviceToAbsoluteTrackingPoseCompatible(vr::ETrackingUniverseOrigin eOrigin, float fPredictedSecondsToPhotonsFromNow, vr::TrackedDevicePose_t* pTrackedDevicePoseArray, uint32_t unTrackedDevicePoseArrayCount);
+
+	/// Non-blocking HMD pose query: uses compositor GetLastPoses only — never WaitGetPoses.
+	/// Returns false (leaving pose unchanged) if no cached pose is available.
+	/// Safe to call from the render hot path; use for best-effort data like angular velocity.
+	bool TryGetLastHMDPose(vr::TrackedDevicePose_t& outPose);
 
 	//=============================================================================
 	// MATRIX CONVERSION UTILITIES

@@ -8,12 +8,14 @@
 #include "Upscaling/FidelityFX.h"
 #include "Upscaling/Streamline.h"
 #include "Utils/UI.h"
+#include "Utils/VRUtils.h"
 #include <Windows.h>
 #include <algorithm>
 #include <cfloat>
 #include <cmath>
 #include <directx/d3dx12.h>
 #include <format>
+#include <openvr.h>
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	Upscaling::Settings,
@@ -939,7 +941,7 @@ void Upscaling::CreateVRIntermediateTextures(uint32_t inWidth, uint32_t inHeight
 		std::string suffix = (i == 0) ? "Left" : "Right";
 
 		vrIntermediateColorIn[i] = CreateTextureFromSource(colorSrc, inWidth, inHeight, false, true, true, ("Upscale_ColorIn_" + suffix).c_str());
-		vrIntermediateColorOut[i] = CreateTextureFromSource(colorSrc, outWidth, outHeight, false, true, false, ("Upscale_ColorOut_" + suffix).c_str());
+		vrIntermediateColorOut[i] = CreateTextureFromSource(colorSrc, outWidth, outHeight, false, true, true, ("Upscale_ColorOut_" + suffix).c_str());
 
 		// Depth: R24G8_TYPELESS matches the game's D24S8_TYPELESS cast group so that
 		// CopySubresourceRegion can copy from the game depth buffer without format errors.
@@ -1002,6 +1004,15 @@ void Upscaling::CreateVRIntermediateTextures(uint32_t inWidth, uint32_t inHeight
 		vrIntermediateTransparencyMask[i] = CreateTextureFromSource(transparencySrc, inWidth, inHeight, false, true, true, ("Upscale_Transparency_" + suffix).c_str());
 	}
 
+	// Build HMD mesh once; rasterize masks whenever resolution changes.
+	if (!vrHMDMeshBuilt)
+		BuildHMDMesh();
+	// The VR stereo buffer is over-allocated in height: Skyrim only renders into the top
+	// min(inHeight, outHeight) rows regardless of quality mode. OpenVR mesh UV [0,1] spans
+	// that content region, so the render-res mask must use the smaller of the two heights.
+	// The display-res mask uses outHeight directly since the upscaler fills the full output.
+	RasterizeHMDMasks(inWidth, std::min(inHeight, outHeight), outWidth, outHeight);
+
 	logger::info("[Upscaling] Created VR intermediate textures: per-eye in {}x{}, out {}x{}",
 		inWidth, inHeight, outWidth, outHeight);
 }
@@ -1020,7 +1031,8 @@ void Upscaling::EnsureVRIntermediateTextures()
 	uint32_t eyeWidthIn = (uint32_t)(renderSize.x / 2);
 	uint32_t eyeHeightIn = (uint32_t)renderSize.y;
 
-	bool needsRecreate = !vrIntermediateColorIn[0] || !vrIntermediateColorOut[0] || !vrIntermediateLinearDepth[0];
+	bool needsRecreate = !vrIntermediateColorIn[0] || !vrIntermediateColorOut[0] || !vrIntermediateLinearDepth[0] ||
+	                     !vrHMDMaskRenderRes[0] || !vrHMDMaskDisplayRes[0] || !vrHMDMaskStereoRenderRes;
 	if (!needsRecreate) {
 		needsRecreate = (vrIntermediateColorIn[0]->desc.Width != eyeWidthIn ||
 						 vrIntermediateColorIn[0]->desc.Height != eyeHeightIn ||
@@ -1051,6 +1063,25 @@ void Upscaling::PreparePerEyeInputs(ID3D11Resource* colorSrc, ID3D11Resource* de
 	uint32_t eyeWidthIn = (uint32_t)(renderSize.x / 2);
 	uint32_t eyeHeightIn = (uint32_t)renderSize.y;
 
+	// Update velocity-adaptive dilation radius from current HMD angular velocity.
+	// radius = ceil(angVel_rad_per_sec * deltaTime * renderW / hFOV_rad), clamped to [4, 64].
+	// TryGetLastHMDPose uses compositor GetLastPoses only (non-blocking, cached last-frame pose).
+	// On failure the previous vrDilationRadius is kept — acceptable for a smoothly changing value.
+	{
+		vr::TrackedDevicePose_t hmdPose{};
+		if (Util::TryGetLastHMDPose(hmdPose) && hmdPose.bPoseIsValid) {
+			const auto& av = hmdPose.vAngularVelocity;  // rad/sec
+			float angSpeed = sqrtf(av.v[0] * av.v[0] + av.v[1] * av.v[1] + av.v[2] * av.v[2]);
+			float angPerFrame = angSpeed * (*globals::game::deltaTime);
+			float hFOVRad = Util::GetPerEyeHorizontalFOVRad(0);
+			if (hFOVRad <= 0.0f)
+				hFOVRad = 1.5708f;  // 90° fallback
+			float pxPerRad = vrRenderPerEyeW > 0 ? static_cast<float>(vrRenderPerEyeW) / hFOVRad : 1000.0f;
+			uint32_t r = static_cast<uint32_t>(ceilf(angPerFrame * pxPerRad));
+			vrDilationRadius = std::clamp(r, 4u, 64u);
+		}
+	}
+
 	// Textures guaranteed to exist: EnsureVRIntermediateTextures() was called in Upscale()
 	// Read the original game depth SRV for ClearHMDMask — the combined stereo buffer is
 	// definitively valid here, whereas the per-eye copy may silently produce zeros on some
@@ -1072,9 +1103,17 @@ void Upscaling::PreparePerEyeInputs(ID3D11Resource* colorSrc, ID3D11Resource* de
 		if (GetUpscaleMethod() != UpscaleMethod::kDLSS)
 			context->CopySubresourceRegion(vrIntermediateMotionVectors[i]->resource.get(), 0, 0, 0, 0, motionVectorRT.texture, 0, &srcBox);
 
-		uint32_t depthOffset = (i == 1) ? eyeWidthIn : 0;
-		ClearHMDMask(vrIntermediateColorIn[i]->uav.get(), depthTexture.depthSRV,
-			eyeWidthIn, eyeHeightIn, depthOffset, 0);
+		// Apply HMD hidden area mask: zero color and mark reactive to prevent temporal bleed.
+		// Mesh path (OpenVR GetHiddenAreaMesh) is resolution-exact and safe for reactive marking.
+		// Depth fallback (depth==0) zeros color only — depth==0 also matches sky (reversed-Z far
+		// plane), so setting reactive there would black out the sky.
+		if (vrHMDMeshVertCount[i] > 0 && vrHMDMaskRenderRes[i]) {
+			ApplyHMDMaskToEyeInputs(i, eyeWidthIn, eyeHeightIn);
+		} else {
+			uint32_t depthOffset = (i == 1) ? eyeWidthIn : 0;
+			ClearHMDMask(vrIntermediateColorIn[i]->uav.get(), depthTexture.depthSRV,
+				eyeWidthIn, eyeHeightIn, depthOffset, 0);
+		}
 	}
 
 	if (state->frameAnnotations)
@@ -1098,6 +1137,14 @@ void Upscaling::FinalizePerEyeOutputs(ID3D11Resource* colorDst)
 
 	uint32_t eyeWidthOut = (uint32_t)(screenSize.x / 2);
 	uint32_t eyeHeightOut = (uint32_t)screenSize.y;
+
+	// Re-zero the hidden area in upscaled outputs at display resolution before copying back.
+	// The upscaler may have accumulated or interpolated across the render-res mask boundary;
+	// rasterizing the OpenVR mesh at display-res gives the exact boundary.
+	for (uint32_t i = 0; i < 2; ++i) {
+		if (vrHMDMeshVertCount[i] > 0 && vrHMDMaskDisplayRes[i])
+			ApplyHMDMaskToEyeOutput(i, eyeWidthOut, eyeHeightOut);
+	}
 
 	// Write upscaled outputs back
 	for (uint32_t i = 0; i < 2; ++i) {
@@ -1163,6 +1210,438 @@ void Upscaling::ClearHMDMask(ID3D11UnorderedAccessView* colorUAV, ID3D11ShaderRe
 		context->CSSetConstantBuffers(0, 1, nullCB);
 		context->CSSetShader(nullptr, nullptr, 0);
 	}
+}
+
+void Upscaling::BuildHMDMesh()
+{
+	vrHMDMeshBuilt = true;
+
+	if (!globals::game::isVR)
+		return;
+
+	Util::OpenVRContext ctx;
+	if (!ctx.IsValid()) {
+		logger::warn("[Upscaling] BuildHMDMesh: OpenVR not available, HMD mask will use depth fallback");
+		return;
+	}
+
+	// Bypass openvr->vrSystem — other mods (e.g. HookVRSystem) may hook that pointer and
+	// return null or garbage from GetHiddenAreaMesh. VR_GetGenericInterface goes straight
+	// to the runtime, same approach as BSOpenVR::GetCleanIVROverlay.
+	typedef void* (*pfnVRGetGenericInterface)(const char*, vr::EVRInitError*);
+	vr::IVRSystem* system = ctx.system;  // fallback: use whatever the game has
+	REX::W32::HMODULE openvr_mod = REX::W32::GetModuleHandleA("openvr_api.dll");
+	if (openvr_mod) {
+		auto fn = reinterpret_cast<pfnVRGetGenericInterface>(
+			reinterpret_cast<void*>(REX::W32::GetProcAddress(openvr_mod, "VR_GetGenericInterface")));
+		if (fn) {
+			vr::EVRInitError err = vr::VRInitError_None;
+			auto* clean = reinterpret_cast<vr::IVRSystem*>(fn(vr::IVRSystem_Version, &err));
+			if (err == vr::VRInitError_None && clean) {
+				system = clean;
+				logger::info("[Upscaling] BuildHMDMesh: obtained clean IVRSystem via VR_GetGenericInterface");
+			}
+		}
+	}
+
+	if (!system) {
+		logger::warn("[Upscaling] BuildHMDMesh: no IVRSystem available, using depth fallback");
+		return;
+	}
+
+	for (int eye = 0; eye < 2; ++eye) {
+		vr::EVREye vrEye = (eye == 0) ? vr::Eye_Left : vr::Eye_Right;
+		vr::HiddenAreaMesh_t mesh = system->GetHiddenAreaMesh(vrEye, vr::k_eHiddenAreaMesh_Standard);
+
+		if (!mesh.pVertexData || mesh.unTriangleCount == 0) {
+			logger::info("[Upscaling] BuildHMDMesh: no hidden area mesh for eye {}, using depth fallback", eye);
+			continue;
+		}
+
+		// OpenVR GetHiddenAreaMesh returns UVs with v=0 at BOTTOM (GL convention), not top.
+		// D3D NDC has y=-1 at bottom, so both X and Y map with `v * 2 - 1` (no flip).
+		// (A Y-flip here was measured to invert the mask: captured mask had its wide hidden
+		// strip on the bottom-left while the game's drawn region shows the top-left
+		// as the more-clipped area.)
+		auto toNDC = [](const vr::HmdVector2_t& uv) -> float2 {
+			return { uv.v[0] * 2.0f - 1.0f, uv.v[1] * 2.0f - 1.0f };
+		};
+
+		// Validate pVertexData before any access.
+		//
+		// Hooked VR systems (e.g. HookVRSystem from other mods) or buggy runtimes can return
+		// a garbage pointer — including addresses inside DLL code sections (MEM_IMAGE type).
+		// Reading from those would either produce junk or crash far into the image.
+		// Reject any pointer that is not in private/mapped heap memory.
+		MEMORY_BASIC_INFORMATION mbi{};
+		size_t validBytes = 0;
+		// Whitelist only explicitly readable page protections.
+		// PAGE_EXECUTE alone is not readable on x64 (DEP); PAGE_NOACCESS/PAGE_GUARD trap.
+		constexpr DWORD kReadableProtect =
+			PAGE_READONLY | PAGE_READWRITE | PAGE_WRITECOPY |
+			PAGE_EXECUTE_READ | PAGE_EXECUTE_READWRITE | PAGE_EXECUTE_WRITECOPY;
+		if (VirtualQuery(mesh.pVertexData, &mbi, sizeof(mbi)) &&
+			mbi.State == MEM_COMMIT &&
+			mbi.Type != MEM_IMAGE &&           // code/data section of a PE: not valid mesh data
+			(mbi.Protect & kReadableProtect))  // must be explicitly readable
+		{
+			validBytes = (static_cast<const char*>(mbi.BaseAddress) + mbi.RegionSize) -
+			             reinterpret_cast<const char*>(mesh.pVertexData);
+		}
+
+		if (validBytes == 0) {
+			logger::warn(
+				"[Upscaling] BuildHMDMesh: eye {} — pVertexData {:p} is not valid heap memory "
+				"(State={:#x} Type={:#x}), skipping (hooked/buggy VR runtime?)",
+				eye, static_cast<const void*>(mesh.pVertexData), mbi.State, mbi.Type);
+			continue;
+		}
+
+		uint32_t maxSafeVerts = static_cast<uint32_t>(
+			std::min(validBytes / sizeof(vr::HmdVector2_t), static_cast<size_t>(UINT32_MAX)));
+
+		// Hard cap: no legitimate HMD mask needs more than 64 K verts.
+		// Prevents enormous allocations from a misbehaving runtime.
+		constexpr uint32_t kMaxHMDMaskVerts = 65536;
+
+		// Determine whether the runtime returned a true triangle mesh or a line-loop polygon.
+		//
+		// Oculus/Meta runtimes (Quest 2/3, Rift S) return a line-loop when
+		// k_eHiddenAreaMesh_Standard is requested: unTriangleCount = polygon vertex count,
+		// buffer holds exactly that many float2 entries — NOT unTriangleCount*3.
+		//
+		// Two independent checks — either is sufficient to fan-triangulate:
+		//   1. k_eHiddenAreaMesh_LineLoop query: if the line-loop mesh has the same vertex
+		//      count as the "standard" mesh, the runtime returned line-loop data for both.
+		//   2. VirtualQuery: buffer too small to hold unTriangleCount*3 entries → line-loop.
+
+		vr::HiddenAreaMesh_t loopMesh = system->GetHiddenAreaMesh(vrEye, vr::k_eHiddenAreaMesh_LineLoop);
+		bool lineLoopByQuery = (loopMesh.pVertexData && loopMesh.unTriangleCount == mesh.unTriangleCount);
+		// Use uint64_t to avoid overflow when unTriangleCount is near UINT32_MAX.
+		bool lineLoopByMemory = (static_cast<uint64_t>(mesh.unTriangleCount) * 3 > maxSafeVerts);
+		bool isLineLoop = lineLoopByQuery || lineLoopByMemory;
+
+		std::vector<float2> ndcVerts;
+		uint32_t vertCount = 0;
+
+		if (!isLineLoop) {
+			// Standard triangle mesh (SteamVR / WMR / Pimax normal case)
+			uint64_t safeProduct = static_cast<uint64_t>(mesh.unTriangleCount) * 3;
+			vertCount = static_cast<uint32_t>(std::min<uint64_t>(safeProduct, std::min<uint64_t>(maxSafeVerts, kMaxHMDMaskVerts)));
+			ndcVerts.resize(vertCount);
+			for (uint32_t v = 0; v < vertCount; ++v)
+				ndcVerts[v] = toNDC(mesh.pVertexData[v]);
+		} else {
+			// Line-loop (convex polygon) — seen on Oculus/Meta runtimes.
+			// unTriangleCount is the polygon vertex count; clamp to safe limits.
+			uint32_t polyVerts = std::min({ mesh.unTriangleCount, maxSafeVerts, kMaxHMDMaskVerts });
+			if (polyVerts < 3) {
+				logger::warn("[Upscaling] BuildHMDMesh: eye {} mesh too small ({} verts), skipping", eye, polyVerts);
+				continue;
+			}
+			logger::info(
+				"[Upscaling] BuildHMDMesh: eye {} — line-loop mesh detected "
+				"({} poly-verts, capped to {}, lineLoopByQuery={}, lineLoopByMemory={}), fan-triangulating",
+				eye, mesh.unTriangleCount, polyVerts, lineLoopByQuery, lineLoopByMemory);
+
+			vertCount = (polyVerts - 2) * 3;  // safe: polyVerts <= 65536, product <= 196602
+			ndcVerts.resize(vertCount);
+			float2 hub = toNDC(mesh.pVertexData[0]);
+			uint32_t out = 0;
+			for (uint32_t v = 1; v + 1 < polyVerts; ++v) {
+				ndcVerts[out++] = hub;
+				ndcVerts[out++] = toNDC(mesh.pVertexData[v]);
+				ndcVerts[out++] = toNDC(mesh.pVertexData[v + 1]);
+			}
+		}
+
+		D3D11_BUFFER_DESC bd = {};
+		bd.ByteWidth = vertCount * sizeof(float2);
+		bd.Usage = D3D11_USAGE_IMMUTABLE;
+		bd.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+		bd.MiscFlags = D3D11_RESOURCE_MISC_BUFFER_STRUCTURED;
+		bd.StructureByteStride = sizeof(float2);
+
+		D3D11_SUBRESOURCE_DATA init = { ndcVerts.data(), 0, 0 };
+		DX::ThrowIfFailed(globals::d3d::device->CreateBuffer(&bd, &init, vrHMDMeshVB[eye].put()));
+
+		D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
+		srvDesc.Format = DXGI_FORMAT_UNKNOWN;
+		srvDesc.ViewDimension = D3D11_SRV_DIMENSION_BUFFER;
+		srvDesc.Buffer.FirstElement = 0;
+		srvDesc.Buffer.NumElements = vertCount;
+		DX::ThrowIfFailed(globals::d3d::device->CreateShaderResourceView(vrHMDMeshVB[eye].get(), &srvDesc, vrHMDMeshVBSRV[eye].put()));
+
+		vrHMDMeshVertCount[eye] = vertCount;
+		logger::info("[Upscaling] BuildHMDMesh: eye {} — {} triangles, first 3 NDC verts: ({:.3f},{:.3f}) ({:.3f},{:.3f}) ({:.3f},{:.3f})",
+			eye, mesh.unTriangleCount,
+			ndcVerts[0].x, ndcVerts[0].y,
+			ndcVerts[1].x, ndcVerts[1].y,
+			ndcVerts[2].x, ndcVerts[2].y);
+	}
+}
+
+void Upscaling::RasterizeHMDMasks(uint32_t renderW, uint32_t renderH, uint32_t displayW, uint32_t displayH)
+{
+	vrRenderPerEyeW = renderW;
+	vrRenderPerEyeH = renderH;
+	auto context = globals::d3d::context;
+	const float clearBlack[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
+
+	auto CreateMaskTex = [&](uint32_t w, uint32_t h, const char* name) -> eastl::unique_ptr<Texture2D> {
+		D3D11_TEXTURE2D_DESC desc = {};
+		desc.Width = w;
+		desc.Height = h;
+		desc.MipLevels = 1;
+		desc.ArraySize = 1;
+		desc.Format = DXGI_FORMAT_R8_UNORM;
+		desc.SampleDesc.Count = 1;
+		desc.Usage = D3D11_USAGE_DEFAULT;
+		desc.BindFlags = D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE;
+		auto tex = eastl::make_unique<Texture2D>(desc);
+		Util::SetResourceName(tex->resource.get(), name);
+		D3D11_RENDER_TARGET_VIEW_DESC rtvDesc = {};
+		rtvDesc.Format = DXGI_FORMAT_R8_UNORM;
+		rtvDesc.ViewDimension = D3D11_RTV_DIMENSION_TEXTURE2D;
+		tex->CreateRTV(rtvDesc);
+		D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
+		srvDesc.Format = DXGI_FORMAT_R8_UNORM;
+		srvDesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
+		srvDesc.Texture2D.MipLevels = 1;
+		tex->CreateSRV(srvDesc);
+		// Clear to black immediately — GPU memory is undefined at creation.
+		// This ensures a safe "no mask" state even if rasterization is skipped.
+		context->ClearRenderTargetView(tex->rtv.get(), clearBlack);
+		return tex;
+	};
+
+	for (int eye = 0; eye < 2; ++eye) {
+		std::string s = (eye == 0) ? "Left" : "Right";
+		vrHMDMaskRenderRes[eye] = CreateMaskTex(renderW, renderH, ("HMDMask_RenderRes_" + s).c_str());
+		vrHMDMaskDisplayRes[eye] = CreateMaskTex(displayW, displayH, ("HMDMask_DisplayRes_" + s).c_str());
+	}
+
+	// Unbind RTVs left from the clears above before compiling shaders
+	ID3D11RenderTargetView* nullRTV = nullptr;
+	context->OMSetRenderTargets(1, &nullRTV, nullptr);
+
+	if (!vrHMDMaskRasterVS) {
+		vrHMDMaskRasterVS.attach((ID3D11VertexShader*)Util::CompileShader(L"Data/Shaders/Upscaling/HMDMaskRasterVS.hlsl", {}, "vs_5_0"));
+		vrHMDMaskRasterPS.attach((ID3D11PixelShader*)Util::CompileShader(L"Data/Shaders/Upscaling/HMDMaskRasterPS.hlsl", {}, "ps_5_0"));
+	}
+
+	if (!vrHMDMaskRasterVS || !vrHMDMaskRasterPS) {
+		logger::warn("[Upscaling] RasterizeHMDMasks: shader compile failed, HMD mask left as all-black (no masking)");
+		return;
+	}
+
+	context->IASetInputLayout(nullptr);
+	context->IASetVertexBuffers(0, 0, nullptr, nullptr, nullptr);
+	context->IASetIndexBuffer(nullptr, DXGI_FORMAT_UNKNOWN, 0);
+	context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+	context->VSSetShader(vrHMDMaskRasterVS.get(), nullptr, 0);
+	context->PSSetShader(vrHMDMaskRasterPS.get(), nullptr, 0);
+	context->RSSetState(upscaleRasterizerState.get());
+	context->OMSetBlendState(upscaleBlendState.get(), nullptr, 0xffffffff);
+	context->OMSetDepthStencilState(nullptr, 0);
+
+	auto RasterForEye = [&](int eye, Texture2D* maskTex, uint32_t w, uint32_t h) {
+		if (vrHMDMeshVertCount[eye] == 0 || !vrHMDMeshVBSRV[eye])
+			return;
+
+		D3D11_VIEWPORT vp = { 0.0f, 0.0f, (float)w, (float)h, 0.0f, 1.0f };
+		context->RSSetViewports(1, &vp);
+
+		ID3D11RenderTargetView* rtv = maskTex->rtv.get();
+		context->OMSetRenderTargets(1, &rtv, nullptr);
+
+		ID3D11ShaderResourceView* srv = vrHMDMeshVBSRV[eye].get();
+		context->VSSetShaderResources(0, 1, &srv);
+
+		context->Draw(vrHMDMeshVertCount[eye], 0);
+	};
+
+	for (int eye = 0; eye < 2; ++eye) {
+		RasterForEye(eye, vrHMDMaskRenderRes[eye].get(), renderW, renderH);
+		RasterForEye(eye, vrHMDMaskDisplayRes[eye].get(), displayW, displayH);
+	}
+
+	// Unbind rasterizer state
+	context->OMSetRenderTargets(1, &nullRTV, nullptr);
+	ID3D11ShaderResourceView* nullSRV = nullptr;
+	context->VSSetShaderResources(0, 1, &nullSRV);
+	context->VSSetShader(nullptr, nullptr, 0);
+	context->PSSetShader(nullptr, nullptr, 0);
+
+	// Build full-stereo render-res mask for t21 binding.
+	// Layout matches the SBS render-res buffer: left eye at [0, renderW-1], right eye
+	// at [renderW, 2*renderW-1].  IsHiddenPixel can then sample directly without remapping.
+	{
+		uint32_t stereoW = renderW * 2;
+
+		D3D11_TEXTURE2D_DESC stDesc = {};
+		stDesc.Width = stereoW;
+		stDesc.Height = renderH;
+		stDesc.MipLevels = 1;
+		stDesc.ArraySize = 1;
+		stDesc.Format = DXGI_FORMAT_R8_UNORM;
+		stDesc.SampleDesc.Count = 1;
+		stDesc.Usage = D3D11_USAGE_DEFAULT;
+		stDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS;
+		vrHMDMaskStereoRenderRes = eastl::make_unique<Texture2D>(stDesc);
+		Util::SetResourceName(vrHMDMaskStereoRenderRes->resource.get(), "HMDMask_StereoRenderRes");
+
+		D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
+		srvDesc.Format = DXGI_FORMAT_R8_UNORM;
+		srvDesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
+		srvDesc.Texture2D.MipLevels = 1;
+		vrHMDMaskStereoRenderRes->CreateSRV(srvDesc);
+
+		D3D11_UNORDERED_ACCESS_VIEW_DESC uavDesc = {};
+		uavDesc.Format = DXGI_FORMAT_R8_UNORM;
+		uavDesc.ViewDimension = D3D11_UAV_DIMENSION_TEXTURE2D;
+		vrHMDMaskStereoRenderRes->CreateUAV(uavDesc);
+
+		// Zero the stereo mask so BindVRHMDStencil never serves undefined data if the
+		// BuildStereoMaskCS dispatch below is skipped (compile failure, cbuffer failure).
+		{
+			const UINT zero[4] = { 0, 0, 0, 0 };
+			context->ClearUnorderedAccessViewUint(vrHMDMaskStereoRenderRes->uav.get(), zero);
+		}
+
+		if (!vrBuildStereoMaskCS) {
+			vrBuildStereoMaskCS.attach((ID3D11ComputeShader*)Util::CompileShader(
+				L"Data/Shaders/Upscaling/BuildStereoMaskCS.hlsl", {}, "cs_5_0"));
+		}
+
+		if (vrBuildStereoMaskCS) {
+			struct BuildCB
+			{
+				uint32_t renderW, renderH, pad0, pad1;
+			};
+			BuildCB cbData{ renderW, renderH, 0, 0 };
+			D3D11_BUFFER_DESC cbDesc = {};
+			cbDesc.ByteWidth = sizeof(BuildCB);
+			cbDesc.Usage = D3D11_USAGE_IMMUTABLE;
+			cbDesc.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
+			D3D11_SUBRESOURCE_DATA cbInit = { &cbData };
+			winrt::com_ptr<ID3D11Buffer> cb;
+			if (FAILED(globals::d3d::device->CreateBuffer(&cbDesc, &cbInit, cb.put()))) {
+				logger::warn("[Upscaling] BuildStereoMaskCS cbuffer creation failed — t21 will be all-zero");
+				return;
+			}
+
+			ID3D11ShaderResourceView* srvs[2] = {
+				vrHMDMaskRenderRes[0] ? vrHMDMaskRenderRes[0]->srv.get() : nullptr,
+				vrHMDMaskRenderRes[1] ? vrHMDMaskRenderRes[1]->srv.get() : nullptr
+			};
+			ID3D11UnorderedAccessView* uav = vrHMDMaskStereoRenderRes->uav.get();
+			ID3D11Buffer* cbBuf = cb.get();
+
+			context->CSSetShader(vrBuildStereoMaskCS.get(), nullptr, 0);
+			context->CSSetShaderResources(0, 2, srvs);
+			context->CSSetUnorderedAccessViews(0, 1, &uav, nullptr);
+			context->CSSetConstantBuffers(0, 1, &cbBuf);
+			context->Dispatch((stereoW + 7) / 8, (renderH + 7) / 8, 1);
+
+			ID3D11ShaderResourceView* nullSRVs[2] = { nullptr, nullptr };
+			ID3D11UnorderedAccessView* nullUAV = nullptr;
+			ID3D11Buffer* nullCB = nullptr;
+			context->CSSetShaderResources(0, 2, nullSRVs);
+			context->CSSetUnorderedAccessViews(0, 1, &nullUAV, nullptr);
+			context->CSSetConstantBuffers(0, 1, &nullCB);
+			context->CSSetShader(nullptr, nullptr, 0);
+		} else {
+			logger::warn("[Upscaling] BuildStereoMaskCS compile failed — t21 binding unavailable");
+		}
+	}
+}
+
+void Upscaling::ApplyHMDMaskToEyeInputs(uint32_t eye, uint32_t eyeWidth, uint32_t eyeHeight)
+{
+	if (!vrApplyHMDMaskWithReactiveCS) {
+		vrApplyHMDMaskWithReactiveCS.attach((ID3D11ComputeShader*)Util::CompileShader(
+			L"Data/Shaders/Upscaling/ApplyHMDMaskCS.hlsl", { { "UPDATE_REACTIVE", "" } }, "cs_5_0"));
+	}
+	if (!vrApplyHMDMaskWithReactiveCS)
+		return;
+
+	auto context = globals::d3d::context;
+	context->CSSetShader(vrApplyHMDMaskWithReactiveCS.get(), nullptr, 0);
+
+	// Create dilation cbuffer lazily
+	if (!vrDilationCB) {
+		D3D11_BUFFER_DESC cbDesc = {};
+		cbDesc.ByteWidth = 16;
+		cbDesc.Usage = D3D11_USAGE_DYNAMIC;
+		cbDesc.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
+		cbDesc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
+		DX::ThrowIfFailed(globals::d3d::device->CreateBuffer(&cbDesc, nullptr, vrDilationCB.put()));
+	}
+	{
+		D3D11_MAPPED_SUBRESOURCE mapped{};
+		context->Map(vrDilationCB.get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped);
+		// velocityFactor: ramp from 0 (r=4, stationary) to 1 (r=52+, fast rotation).
+		// Reaches 1.0 at ~48 px/frame displacement — roughly 2 rad/s at native resolution.
+		float vf = (vrDilationRadius > 4u) ? std::clamp((float)(vrDilationRadius - 4u) / 48.0f, 0.0f, 1.0f) : 0.0f;
+		struct
+		{
+			uint32_t dilRadius;
+			float velFactor;
+			uint32_t pad[2];
+		} cbData{ vrDilationRadius, vf, {} };
+		memcpy(mapped.pData, &cbData, sizeof(cbData));
+		context->Unmap(vrDilationCB.get(), 0);
+	}
+	ID3D11Buffer* cb = vrDilationCB.get();
+	context->CSSetConstantBuffers(0, 1, &cb);
+
+	ID3D11ShaderResourceView* srv = vrHMDMaskRenderRes[eye]->srv.get();
+	context->CSSetShaderResources(0, 1, &srv);
+
+	ID3D11UnorderedAccessView* uavs[3] = {
+		vrIntermediateColorIn[eye]->uav.get(),
+		vrIntermediateReactiveMask[eye]->uav.get(),
+		vrIntermediateTransparencyMask[eye]->uav.get()
+	};
+	context->CSSetUnorderedAccessViews(0, 3, uavs, nullptr);
+
+	context->Dispatch((eyeWidth + 7) / 8, (eyeHeight + 7) / 8, 1);
+
+	ID3D11Buffer* nullCB = nullptr;
+	ID3D11ShaderResourceView* nullSRV = nullptr;
+	ID3D11UnorderedAccessView* nullUAVs[3] = { nullptr, nullptr, nullptr };
+	context->CSSetConstantBuffers(0, 1, &nullCB);
+	context->CSSetShaderResources(0, 1, &nullSRV);
+	context->CSSetUnorderedAccessViews(0, 3, nullUAVs, nullptr);
+	context->CSSetShader(nullptr, nullptr, 0);
+}
+
+void Upscaling::ApplyHMDMaskToEyeOutput(uint32_t eye, uint32_t eyeWidth, uint32_t eyeHeight)
+{
+	if (!vrApplyHMDMaskCS) {
+		vrApplyHMDMaskCS.attach((ID3D11ComputeShader*)Util::CompileShader(
+			L"Data/Shaders/Upscaling/ApplyHMDMaskCS.hlsl", {}, "cs_5_0"));
+	}
+	if (!vrApplyHMDMaskCS)
+		return;
+
+	auto context = globals::d3d::context;
+	context->CSSetShader(vrApplyHMDMaskCS.get(), nullptr, 0);
+
+	ID3D11ShaderResourceView* srv = vrHMDMaskDisplayRes[eye]->srv.get();
+	context->CSSetShaderResources(0, 1, &srv);
+
+	ID3D11UnorderedAccessView* uav = vrIntermediateColorOut[eye]->uav.get();
+	context->CSSetUnorderedAccessViews(0, 1, &uav, nullptr);
+
+	context->Dispatch((eyeWidth + 7) / 8, (eyeHeight + 7) / 8, 1);
+
+	ID3D11ShaderResourceView* nullSRV = nullptr;
+	ID3D11UnorderedAccessView* nullUAV = nullptr;
+	context->CSSetShaderResources(0, 1, &nullSRV);
+	context->CSSetUnorderedAccessViews(0, 1, &nullUAV, nullptr);
+	context->CSSetShader(nullptr, nullptr, 0);
 }
 
 int32_t GetJitterPhaseCount(int32_t renderWidth, int32_t displayWidth)
@@ -1360,16 +1839,53 @@ void Upscaling::SetupResources()
 	}
 }
 
+void Upscaling::BindVRHMDStencil()
+{
+	if (!vrHMDMaskStereoRenderRes) {
+		// Explicitly unbind t21 so shaders never see a stale SRV from a previous frame.
+		ID3D11ShaderResourceView* nullSRV = nullptr;
+		globals::d3d::context->CSSetShaderResources(21, 1, &nullSRV);
+		static bool warnedOnce = false;
+		if (!warnedOnce) {
+			warnedOnce = true;
+			logger::warn("[Upscaling] BindVRHMDStencil: stereo mask not ready — t21 unbound");
+		}
+		return;
+	}
+	ID3D11ShaderResourceView* srv = vrHMDMaskStereoRenderRes->srv.get();
+	globals::d3d::context->CSSetShaderResources(21, 1, &srv);
+}
+
+void Upscaling::UnbindVRHMDStencil()
+{
+	ID3D11ShaderResourceView* nullSRV = nullptr;
+	globals::d3d::context->CSSetShaderResources(21, 1, &nullSRV);
+}
+
 void Upscaling::ClearShaderCache()
 {
 	for (int i = 0; i < 5; ++i) {
-		encodeTexturesCS[i] = nullptr;  // com_ptr automatically releases
+		encodeTexturesCS[i] = nullptr;
 	}
 	encodeTexturesCSDepthOutput = nullptr;
 
-	depthRefractionUpscalePS = nullptr;  // com_ptr automatically releases
-	underwaterMaskUpscalePS = nullptr;   // com_ptr automatically releases
-	upscaleVS = nullptr;                 // com_ptr automatically releases
+	depthRefractionUpscalePS = nullptr;
+	underwaterMaskUpscalePS = nullptr;
+	upscaleVS = nullptr;
+	vrClearHMDMaskCS = nullptr;
+	vrHMDMaskRasterVS = nullptr;
+	vrHMDMaskRasterPS = nullptr;
+	vrApplyHMDMaskCS = nullptr;
+	vrApplyHMDMaskWithReactiveCS = nullptr;
+	vrDilationCB = nullptr;
+	vrBuildStereoMaskCS = nullptr;
+	vrHMDMaskStereoRenderRes = nullptr;
+	vrHMDMaskRenderRes[0].reset();
+	vrHMDMaskRenderRes[1].reset();
+	vrHMDMaskDisplayRes[0].reset();
+	vrHMDMaskDisplayRes[1].reset();
+	vrRenderPerEyeW = 0;
+	vrRenderPerEyeH = 0;
 }
 
 void Upscaling::CopySharedD3D12Resources()

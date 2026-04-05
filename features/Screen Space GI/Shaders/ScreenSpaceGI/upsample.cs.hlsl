@@ -23,6 +23,11 @@ RWTexture2D<half4> outGiSpecular : register(u3);
 	// Early exit if dispatch thread is outside frame bounds
 	if (any(dtid >= uint2(FrameDim)))
 		return;
+#if defined(VR)
+	// Use the depth sentinel instead of t21: ClearHMDMaskCS writes 0 at hidden-area pixels.
+	if (srcDepth.Load(int3(dtid, RES_MIP)) == 0.0)
+		return;
+#endif
 #ifdef HALF_RES
 	int2 px00 = (dtid >> 1) + (dtid & 1) - 1;
 #else  // QUARTER_RES

@@ -35,7 +35,7 @@ namespace Util
 	float4 TryGetWaterData(float offsetX, float offsetY);
 	float4 GetCameraData();
 	bool GetTemporal();
-	float GetVerticalFOVRad();
+	float GetVerticalFOVRad(uint32_t eyeIndex = 0);
 
 	RE::NiPoint3 GetAverageEyePosition();
 	RE::NiPoint3 GetEyePosition(int eyeIndex);

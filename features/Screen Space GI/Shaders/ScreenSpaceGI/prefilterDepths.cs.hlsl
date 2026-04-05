@@ -53,13 +53,25 @@ groupshared float g_scratchDepths[8][8];
 	// MIP 0
 	const uint2 baseCoord = dispatchThreadID;
 	const uint2 pixCoord = baseCoord * 2;
+#if defined(VR)
+	// Use the depth sentinel instead of t21: ClearHMDMaskCS writes NDC depth=0 at hidden-area pixels.
+	const bool isHiddenPixel = (srcNDCDepth.Load(int3(pixCoord, 0)) == 0.0);
+#else
+	const bool isHiddenPixel = false;
+#endif
 	const float2 uv = (pixCoord + .5) * RcpFrameDim;
 
-	float4 depths4 = srcNDCDepth.GatherRed(samplerPointClamp, uv * frameScale);
-	float depth0 = ClampDepth(depths4.w);
-	float depth1 = ClampDepth(depths4.z);
-	float depth2 = ClampDepth(depths4.x);
-	float depth3 = ClampDepth(depths4.y);
+	float depth0 = 0.0;
+	float depth1 = 0.0;
+	float depth2 = 0.0;
+	float depth3 = 0.0;
+	if (!isHiddenPixel) {
+		float4 depths4 = srcNDCDepth.GatherRed(samplerPointClamp, uv * frameScale);
+		depth0 = ClampDepth(depths4.w);
+		depth1 = ClampDepth(depths4.z);
+		depth2 = ClampDepth(depths4.x);
+		depth3 = ClampDepth(depths4.y);
+	}
 	outDepth0[pixCoord + uint2(0, 0)] = depth0;
 	outDepth0[pixCoord + uint2(1, 0)] = depth1;
 	outDepth0[pixCoord + uint2(0, 1)] = depth2;

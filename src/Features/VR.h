@@ -302,6 +302,8 @@ public:
 	void RecreateOverlayTexturesIfNeeded();
 	void SubmitOverlayFrame();
 	bool IsWelcomeOverlayVisible() const;
+	float GetPerEyeVerticalFOVRad(uint32_t eyeIndex);
+	float GetPerEyeHorizontalFOVRad(uint32_t eyeIndex);
 
 	/**
 	 * @brief Context for rendering VR overlays with render target management
@@ -495,6 +497,11 @@ public:
 		bool probingSucceeded = false;
 	} openVRInfo;
 
+	// Cached per-eye OpenVR projection FOV values.
+	// Values are 0 until successfully queried from OpenVR.
+	float vrPerEyeVFOVRad[2] = { 0.0f, 0.0f };
+	float vrPerEyeHFOVRad[2] = { 0.0f, 0.0f };
+
 	RE::NiPoint3 savedPlayerWorldPos = RE::NiPoint3();  // Used for auto-reset distance check
 
 	// Wand pointing state
@@ -551,6 +558,8 @@ private:
 	//=============================================================================
 	// PRIVATE HELPERS
 	//=============================================================================
+
+	void RefreshPerEyeProjectionFOV();
 
 	bool GetGripPressed(bool isLeft, bool isRight) const;
 	void ResetComboRecording();

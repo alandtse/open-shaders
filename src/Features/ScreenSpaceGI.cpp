@@ -3,7 +3,9 @@
 #include <DirectXTex.h>
 
 #include "Deferred.h"
+#include "Globals.h"
 #include "State.h"
+#include "Upscaling.h"
 #include "Util.h"
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
@@ -752,6 +754,9 @@ void ScreenSpaceGI::DrawSSGI()
 	context->CSSetConstantBuffers(5, 1, &sharedDataBuf);
 	context->CSSetSamplers(0, (uint)samplers.size(), samplers.data());
 
+	if (globals::game::isVR)
+		globals::features::upscaling.BindVRHMDStencil();  // stencil SRV at t21 for CS HMD culling
+
 	// prefilter depths
 	{
 		TracyD3D11Zone(globals::state->tracyCtx, "SSGI - Prefilter Depths");
@@ -935,6 +940,9 @@ void ScreenSpaceGI::DrawSSGI()
 
 	// cleanup
 	resetViews();
+
+	if (globals::game::isVR)
+		globals::features::upscaling.UnbindVRHMDStencil();  // t21
 
 	samplers.fill(nullptr);
 	cb = nullptr;

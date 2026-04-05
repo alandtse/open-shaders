@@ -199,7 +199,9 @@ void FidelityFX::Present(bool a_useFrameGeneration, bool a_isHDR)
 		dispatchParameters.cameraFar = *globals::game::cameraFar;
 		dispatchParameters.cameraNear = *globals::game::cameraNear;
 
-		dispatchParameters.cameraFovAngleVertical = Util::GetVerticalFOVRad();
+		// Frame generation is DX12-only and operates on a single combined frame, not per-eye.
+		// VR never enables frame generation (OpenVR owns the swapchain), so eye 0 is always correct here.
+		dispatchParameters.cameraFovAngleVertical = Util::GetVerticalFOVRad(0);
 		dispatchParameters.viewSpaceToMetersFactor = 0.01428222656f;
 
 		dispatchParameters.frameID = frameID;
@@ -391,7 +393,7 @@ void FidelityFX::Upscale(ID3D11Resource* a_upscalingTexture, ID3D11Resource* a_r
 		dispatchParameters.cameraNear = *globals::game::cameraNear;
 		dispatchParameters.enableSharpening = true;
 		dispatchParameters.sharpness = a_sharpness;
-		dispatchParameters.cameraFovAngleVertical = Util::GetVerticalFOVRad();
+		dispatchParameters.cameraFovAngleVertical = Util::GetVerticalFOVRad(contextIndex);
 		dispatchParameters.viewSpaceToMetersFactor = 0.01428222656f;
 		dispatchParameters.reset = false;
 		dispatchParameters.preExposure = 1.0f;

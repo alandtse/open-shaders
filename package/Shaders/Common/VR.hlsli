@@ -21,7 +21,22 @@ cbuffer VRValues : register(b13)
 	float2 EyeOffsetScale : packoffset(c0.z);
 	float4 EyeClipEdge[2] : packoffset(c1);
 }
-#endif
+
+// Full-stereo R8 HMD mask: 1.0=hidden, 0.0=visible.
+// Built from the OpenVR GetHiddenAreaMesh() at render resolution; gap columns and rows
+// below render height are also marked 1.0.  More accurate than the game's D24S8 stencil,
+// which does not cover all OpenVR-hidden pixels after a resolution change.
+// Bound by Upscaling::BindVRHMDStencil() into t21 before each VR deferred CS pass.
+#	if defined(CSHADER) || defined(COMPUTESHADER)
+Texture2D<float> VRHMDStencil : register(t21);
+
+namespace HMDMask
+{
+	// Returns true when pos is inside the HMD hidden area and should produce no output.
+	bool IsHiddenPixel(uint2 pos) { return VRHMDStencil.Load(int3(pos, 0)) > 0.5f; }
+}
+#	endif  // CSHADER
+#endif      // VR
 
 namespace Stereo
 {

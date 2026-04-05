@@ -1,5 +1,6 @@
 #include "ScreenSpaceShadows.h"
 
+#include "Globals.h"
 #include "State.h"
 
 #pragma warning(push)

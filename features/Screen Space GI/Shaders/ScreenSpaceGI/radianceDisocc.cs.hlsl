@@ -76,6 +76,12 @@ void readHistory(
 
 	const float2 uv = (pixCoord + .5) * RCP_OUT_FRAME_DIM;
 	const uint eyeIndex = Stereo::GetEyeIndexFromTexCoord(uv);
+#if defined(VR)
+	// Use the depth sentinel instead of t21: ClearHMDMaskCS writes 0 at hidden-area pixels.
+	// The READ_DEPTH below re-reads the same pixel; GPU L1 cache makes this essentially free.
+	if (READ_DEPTH(srcCurrDepth, pixCoord) == 0.0)
+		return;
+#endif
 	const float2 screen_pos = Stereo::ConvertFromStereoUV(uv, eyeIndex);
 
 	float2 prev_screen_pos = screen_pos;

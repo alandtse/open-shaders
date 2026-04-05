@@ -85,14 +85,13 @@ float4 SampleCrossDepths(int2 center, int offset, uint eyeIndex)
 [numthreads(8, 8, 1)] void main(uint2 dtid : SV_DispatchThreadID) {
 	if (any(dtid >= uint2(FrameDim)))
 		return;
-
 	float2 uv = (dtid + 0.5) * RcpFrameDim;
 
 	uint eyeIndex = Stereo::GetEyeIndexFromTexCoord(uv);
 
 	float depth = SrcDepthTexture[dtid];
 
-	// depth == 0: VR HMD mask; depth == 1: sky/far plane
+	// depth == 0: VR HMD hidden-area sentinel (ClearHMDMaskCS); depth == 1: sky/far plane
 	if (depth < 1e-5 || depth >= 1.0) {
 		OutShadowTexture[dtid] = SrcShadowTexture[dtid];
 		return;

@@ -58,10 +58,13 @@ float4 SampleCrossDepths(float2 centerUV, float2 step, float2 texScale, uint eye
 	float2 uv = (dtid + 0.5) / outFrameDim;
 
 	uint eyeIndex = Stereo::GetEyeIndexFromTexCoord(uv);
-
 	// SSGI working depth is linear view-space Z.
 	// 0.0 = mask (outside lens area). FP_Z = first-person hands threshold (~18.0).
 	float depth = srcDepth.SampleLevel(samplerPointClamp, uv * frameScale, RES_MIP);
+#	if defined(VR)
+	if (depth < kMaskDepth)  // depth sentinel: ClearHMDMaskCS writes 0 at hidden-area pixels
+		return;
+#	endif
 	if (depth < FP_Z) {
 		Passthrough(dtid);
 		return;

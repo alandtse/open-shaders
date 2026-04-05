@@ -79,6 +79,8 @@ void VR::RestoreDefaultSettings()
 
 void VR::SetupResources()
 {
+	RefreshPerEyeProjectionFOV();
+
 	// Compile stereo blend compute shader and create copy texture
 	std::vector<std::pair<const char*, const char*>> defines = { { "VR", "" }, { "FRAMEBUFFER", "" } };
 	if (auto rawPtr = reinterpret_cast<ID3D11ComputeShader*>(Util::CompileShader(L"Data\\Shaders\\VR\\StereoBlendCS.hlsl", defines, "cs_5_0")))
@@ -230,6 +232,53 @@ bool VR::IsWelcomeOverlayVisible() const
 	       !globals::menu->IsEnabled;
 }
 
+float VR::GetPerEyeVerticalFOVRad(uint32_t eyeIndex)
+{
+	if (eyeIndex > 1) {
+		return 0.0f;
+	}
+
+	if (vrPerEyeVFOVRad[eyeIndex] <= 0.0f) {
+		RefreshPerEyeProjectionFOV();
+	}
+
+	return vrPerEyeVFOVRad[eyeIndex];
+}
+
+float VR::GetPerEyeHorizontalFOVRad(uint32_t eyeIndex)
+{
+	if (eyeIndex > 1) {
+		return 0.0f;
+	}
+
+	if (vrPerEyeHFOVRad[eyeIndex] <= 0.0f) {
+		RefreshPerEyeProjectionFOV();
+	}
+
+	return vrPerEyeHFOVRad[eyeIndex];
+}
+
+void VR::RefreshPerEyeProjectionFOV()
+{
+	if (!globals::game::isVR) {
+		return;
+	}
+
+	Util::OpenVRContext ctx;
+	if (!(ctx.IsValid() && ctx.system)) {
+		return;
+	}
+
+	for (int eye = 0; eye < 2; ++eye) {
+		float l, r, b, t;
+		// Note: OpenVR GetProjectionRaw has a known bug (Valve #110): the parameter named
+		// "pTop" (3rd) actually returns the bottom tangent, "pBottom" (4th) returns top.
+		ctx.system->GetProjectionRaw(eye == 0 ? vr::Eye_Left : vr::Eye_Right, &l, &r, &b, &t);
+		vrPerEyeVFOVRad[eye] = atanf(t) + atanf(-b);
+		vrPerEyeHFOVRad[eye] = atanf(r) + atanf(-l);
+	}
+}
+
 void VR::SubmitOverlayFrame()
 {
 	InstallSubmitHook();
@@ -313,5 +362,9 @@ bool VR::IsOpenVRCompatible() const
 
 void VR::Reset()
 {
+	vrPerEyeVFOVRad[0] = 0.0f;
+	vrPerEyeVFOVRad[1] = 0.0f;
+	vrPerEyeHFOVRad[0] = 0.0f;
+	vrPerEyeHFOVRad[1] = 0.0f;
 	stereoOpt.Reset();
 }

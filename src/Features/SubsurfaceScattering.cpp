@@ -1,8 +1,10 @@
 #include "SubsurfaceScattering.h"
 
 #include "Deferred.h"
+#include "Globals.h"
 #include "ShaderCache.h"
 #include "State.h"
+#include "Upscaling.h"
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(SubsurfaceScattering::DiffusionProfile,
 	BlurRadius, Thickness, Strength, Falloff)
@@ -225,6 +227,9 @@ void SubsurfaceScattering::DrawSSS()
 	auto renderer = globals::game::renderer;
 	auto context = globals::d3d::context;
 
+	if (globals::game::isVR)
+		globals::features::upscaling.BindVRHMDStencil();  // stencil SRV at t21 for CS HMD culling
+
 	{
 		ID3D11Buffer* buffer[1] = { blurCB->CB() };
 		context->CSSetConstantBuffers(1, 1, buffer);
@@ -290,6 +295,9 @@ void SubsurfaceScattering::DrawSSS()
 			}
 		}
 	}
+
+	if (globals::game::isVR)
+		globals::features::upscaling.UnbindVRHMDStencil();  // t21
 
 	ID3D11Buffer* buffer = nullptr;
 	context->CSSetConstantBuffers(1, 1, &buffer);

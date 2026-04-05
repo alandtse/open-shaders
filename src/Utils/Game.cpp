@@ -1,6 +1,7 @@
 #include "Game.h"
-
+#include "Globals.h"
 #include "State.h"
+#include "VRUtils.h"
 
 namespace Util
 {
@@ -138,8 +139,15 @@ namespace Util
 		return (!REL::Module::IsVR() ? imageSpaceManager->GetRuntimeData().BSImagespaceShaderISTemporalAA->taaEnabled : imageSpaceManager->GetVRRuntimeData().BSImagespaceShaderISTemporalAA->taaEnabled);
 	}
 
-	float GetVerticalFOVRad()
+	float GetVerticalFOVRad(uint32_t eyeIndex)
 	{
+		// VR: use per-eye vertical FOV from OpenVR projection when available (via core VR feature).
+		// Fallback remains the game's flat-screen FOV conversion.
+		if (globals::game::isVR) {
+			float vfov = Util::GetPerEyeVerticalFOVRad(eyeIndex);
+			if (vfov > 0.0f)
+				return vfov;
+		}
 		static float& cameraFOVDeg = (*(float*)(REL::RelocationID(513786, 388785).address()));  // FOV degrees
 		float hFOVRad = cameraFOVDeg * (3.14159265359f / 180.0f);
 		float unitHalfWidth = tan(hFOVRad / 2);                                                                // This is same as camera frustum RL

@@ -352,7 +352,7 @@ bool Streamline::CheckFrameConstants(sl::ViewportHandle p_viewport, uint32_t eye
 	float eyeWidth = state->screenSize.x * (globals::game::isVR ? 0.5f : 1.0f);
 	slConstants.cameraAspectRatio = eyeWidth / state->screenSize.y;
 
-	slConstants.cameraFOV = Util::GetVerticalFOVRad();
+	slConstants.cameraFOV = Util::GetVerticalFOVRad(eyeIndex);
 	slConstants.cameraNear = *globals::game::cameraNear;
 	slConstants.cameraFar = *globals::game::cameraFar;
 

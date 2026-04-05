@@ -342,8 +342,11 @@ void CalculateGI(
 
 	float2 uv = (pxCoord + .5) * RCP_OUT_FRAME_DIM;
 	uint eyeIndex = Stereo::GetEyeIndexFromTexCoord(uv);
-
 	float viewspaceZ = READ_DEPTH(srcWorkingDepth, pxCoord);
+#if defined(VR)
+	if (viewspaceZ == 0.0)  // depth sentinel: ClearHMDMaskCS writes 0 at hidden-area pixels
+		return;
+#endif
 
 	float2 normalSample = FULLRES_LOAD(srcNormalRoughness, pxCoord, uv * frameScale, samplerLinearClamp).xy;
 	float3 viewspaceNormal = GBuffer::DecodeNormal(normalSample);

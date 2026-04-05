@@ -140,12 +140,59 @@ public:
 	winrt::com_ptr<ID3D11BlendState> upscaleBlendState;
 	winrt::com_ptr<ID3D11RasterizerState> upscaleRasterizerState;
 
-	// Shared VR HMD Mask Clearing
+	// Shared VR HMD Mask Clearing (depth-based fallback — used when no OpenVR mesh is available)
 	winrt::com_ptr<ID3D11ComputeShader> vrClearHMDMaskCS;
 	winrt::com_ptr<ID3D11Buffer> vrClearHMDMaskCB;
-	// Helper to dispatch mask clearing for a single eye region
 	void ClearHMDMask(ID3D11UnorderedAccessView* colorUAV, ID3D11ShaderResourceView* depthSRV,
 		uint32_t eyeWidth, uint32_t eyeHeight, uint32_t depthOffsetX, uint32_t colorOffsetX);
+
+	// Per-eye render resolution (eye content, not the padded texture allocation height).
+	// Set by RasterizeHMDMasks. Zero until the first VR upscale frame.
+	uint32_t vrRenderPerEyeW = 0;
+	uint32_t vrRenderPerEyeH = 0;
+
+	// HMD hidden area mesh — queried once from OpenVR at first VR upscale setup.
+	// Vertices are stored in NDC space (CPU converts from OpenVR UV [0,1]).
+	// vrHMDMeshVertCount[eye] == 0 means no mesh available; fall back to depth heuristic.
+	bool vrHMDMeshBuilt = false;
+	winrt::com_ptr<ID3D11Buffer> vrHMDMeshVB[2];
+	winrt::com_ptr<ID3D11ShaderResourceView> vrHMDMeshVBSRV[2];
+	uint32_t vrHMDMeshVertCount[2] = { 0, 0 };
+
+	// Per-eye R8_UNORM mask textures rasterized from the HMD mesh.
+	// RenderRes: at per-eye render resolution — used to clean upscaler inputs.
+	// DisplayRes: at per-eye display resolution — re-zeroes upscaler output at the exact boundary.
+	eastl::unique_ptr<Texture2D> vrHMDMaskRenderRes[2];
+	eastl::unique_ptr<Texture2D> vrHMDMaskDisplayRes[2];
+
+	// Shaders for HMD mesh rasterization and mask application
+	winrt::com_ptr<ID3D11VertexShader> vrHMDMaskRasterVS;
+	winrt::com_ptr<ID3D11PixelShader> vrHMDMaskRasterPS;
+	winrt::com_ptr<ID3D11ComputeShader> vrApplyHMDMaskCS;              // color only (post-upscale)
+	winrt::com_ptr<ID3D11ComputeShader> vrApplyHMDMaskWithReactiveCS;  // color + reactive + transparency (pre-upscale)
+	winrt::com_ptr<ID3D11Buffer> vrDilationCB;                         // cbuffer carrying per-frame dilation radius
+	uint32_t vrDilationRadius = 32;                                    // pixels; updated each frame from HMD angular velocity
+	// Full-stereo R8 mask at renderW*2 x renderH; 1=hidden, 0=visible.
+	// Layout matches the SBS render-res stereo buffer (left eye [0,renderW-1], right eye
+	// [renderW,2*renderW-1]), so IsHiddenPixel can sample without coordinate remapping.
+	// Built from per-eye render-res masks by BuildStereoMaskCS.
+	eastl::unique_ptr<Texture2D> vrHMDMaskStereoRenderRes;
+	winrt::com_ptr<ID3D11ComputeShader> vrBuildStereoMaskCS;
+
+	/// Binds vrHMDMaskStereoRenderRes as a CS SRV at t21 so deferred compute shaders can
+	/// early-exit for HMD hidden pixels via HMDMask::IsHiddenPixel.
+	void BindVRHMDStencil();
+	/// Unbinds t21.
+	void UnbindVRHMDStencil();
+
+	/// Queries GetHiddenAreaMesh() for both eyes, converts UV→NDC, builds structured buffer VBs.
+	void BuildHMDMesh();
+	/// Rasterizes the HMD mesh into R8 mask textures at render-res and display-res.
+	void RasterizeHMDMasks(uint32_t renderW, uint32_t renderH, uint32_t displayW, uint32_t displayH);
+	/// Zeros per-eye color input and marks reactive/transparency masks where hidden.
+	void ApplyHMDMaskToEyeInputs(uint32_t eye, uint32_t eyeWidth, uint32_t eyeHeight);
+	/// Zeros per-eye color output where hidden, preventing upscaler boundary bleed.
+	void ApplyHMDMaskToEyeOutput(uint32_t eye, uint32_t eyeWidth, uint32_t eyeHeight);
 
 	// Shared VR Per-Eye Intermediate Buffers
 	// Owned here so both Streamline (DLSS) and FidelityFX (FSR) can use them.
