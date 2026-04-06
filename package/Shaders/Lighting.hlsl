@@ -538,6 +538,7 @@ Texture2D<float4> TexLandLodNoiseSampler : register(t15);
 #	endif
 
 Texture2D<float4> TexShadowMaskSampler : register(t14);
+Texture2D<float4> TexPuddleRetentionMask : register(t71);
 
 cbuffer PerTechnique : register(b0)
 {
@@ -2375,8 +2376,14 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	float wetnessGlossinessSpecular = 0.0;
 	float runoffStreakMask = 0.0;
 	float wetHighlightReflectanceScale = 1.0;
+	float retentionMaskDebug = 0.0;
+	float fillLevelDebug = 0.0;
+	float finalPuddleDebug = 0.0;
+	float3 puddleDebugColor = -1.0.xxx;
+	uint puddleDebugMode = 0;
 	const bool wetnessEnabled = (SharedData::wetnessEffectsSettings.EnableWetnessEffects != 0);
 	[branch] if (wetnessEnabled) {
+	puddleDebugMode = SharedData::wetnessEffectsSettings.EnablePuddleInfluenceDebugReadout;
 
 	// Calculate shore wetness factors
 	float wetnessDistToWater = abs(input.WorldPosition.z - waterHeight);
@@ -2518,6 +2525,8 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 
 	// Calculate puddle effects
 	float puddle = wetness;
+	float retentionMask = 1.0;
+	float fillLevel = saturate(max(wetness, puddleWetness));
 	if (wetness > 0.0 || puddleWetness > 0.0) {
 		float puddleMaxAngleSafe = max(SharedData::wetnessEffectsSettings.PuddleMaxAngle, 1e-3);
 		float puddleRadiusSafe = max(SharedData::wetnessEffectsSettings.PuddleRadius, 1e-3);
@@ -2548,17 +2557,33 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 		unevenDepthMask = saturate(depthProxy * roughDepthConfidence) * (1.0 - vegetationFactor * 0.85);
 #			endif
 		float puddleStrength = saturate(SharedData::wetnessEffectsSettings.MaxPuddleWetness / 6.0);
+
+		// Retention mask (where water can exist):
+		// geometry concavity + slope + material response, modulated by optional authored mask texture.
+		float slopeRetentionMask = smoothstep(0.35, 0.98, saturate(worldNormal.z));
+		float materialRetentionMask = saturate(0.20 + dirtFactor * 1.00 + stoneFactor * 0.75 + (1.0 - vegetationFactor) * 0.25);
+		float derivedRetentionMask = saturate((0.55 * unevenDepthMask + 0.30 * slopeRetentionMask + 0.15 * flatPuddleMix) * materialRetentionMask);
+		float authoredRetentionMask = TexPuddleRetentionMask.Sample(SampColorSampler, frac(puddleCoords.xy * 0.65 + 0.5)).x;
+		retentionMask = saturate(derivedRetentionMask * authoredRetentionMask);
+
+		// Fill level (how full puddles are) from the active wetness timeline.
+		// Perlin is only used for edge breakup/variation.
+		float edgeVariation = lerp(0.90, 1.10, saturate((puddleSignal - 0.5) * 1.8 + 0.5));
+		float fillLevelShaped = saturate(fillLevel * edgeVariation);
+		float modeledPuddle = retentionMask * fillLevelShaped;
+		puddle = max(puddle, modeledPuddle);
+
 		// Keep depth model primarily geometry-driven; noise only breaks up coverage.
 		float depthPatternMix = saturate((puddleSignal - 0.02) * (1.25 + depthBlend * 1.75)) * unevenDepthMask;
 		float depthPuddleMix = saturate(lerp(unevenDepthMask, depthPatternMix, 0.35));
 		float depthWetGate = smoothstep(SharedData::wetnessEffectsSettings.PuddleMinWetness * 0.5, 1.0, max(wetness, puddleWetness));
 		float depthBoost = depthPuddleMix * depthBlend * depthWetGate * lerp(0.20, 0.75, puddleStrength);
-		float depthPuddleTarget = saturate(wetness + depthBoost * (1.0 - wetness));
-		float flatPuddleTarget = saturate(lerp(wetness, max(wetness, puddleWetness), flatPuddleMix));
+		float depthPuddleTarget = saturate(modeledPuddle + depthBoost * (1.0 - modeledPuddle));
+		float flatPuddleTarget = saturate(lerp(modeledPuddle, max(modeledPuddle, puddleWetness * retentionMask), flatPuddleMix));
 		float puddleMix = saturate(flatPuddleMix + depthPuddleMix * depthBlend * (1.0 - flatPuddleMix));
 		float puddleTarget = max(flatPuddleTarget, depthPuddleTarget);
 		// Depth contribution should never reduce puddle intensity.
-		puddle = max(puddle, lerp(wetness, puddleTarget, puddleMix));
+		puddle = max(puddle, lerp(modeledPuddle, puddleTarget, puddleMix));
 #		endif
 
 		// Mandatory flat pooling: once the surface gets very flat and wet enough,
@@ -2566,6 +2591,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 		float flatAngleMask = smoothstep(0.88, 0.995, saturate(worldNormal.z));
 		float flatWetGate = smoothstep(SharedData::wetnessEffectsSettings.PuddleMinWetness * 0.65, 1.0, max(wetness, puddleWetness));
 		float flatMandatoryPuddle = max(wetness, puddleWetness) * flatAngleMask * flatWetGate;
+		flatMandatoryPuddle *= retentionMask;
 
 #		if !defined(SKINNED)
 		const bool strongReflectionsProfileEnabled = SharedData::wetnessEffectsSettings.EnableStrongReflectionsProfile != 0;
@@ -2599,6 +2625,19 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 #		endif
 	}
 	puddle *= saturate(wetnessOcclusion * 2.0);
+	retentionMaskDebug = saturate(retentionMask);
+	fillLevelDebug = saturate(fillLevel);
+	finalPuddleDebug = saturate(puddle);
+
+	[branch] if (puddleDebugMode >= 2 && puddleDebugMode <= 4) {
+		if (puddleDebugMode == 2) {
+			puddleDebugColor = lerp(float3(0.08, 0.02, 0.20), float3(0.10, 0.95, 0.25), retentionMaskDebug);
+		} else if (puddleDebugMode == 3) {
+			puddleDebugColor = lerp(float3(0.05, 0.05, 0.20), float3(0.10, 0.85, 1.00), fillLevelDebug);
+		} else {
+			puddleDebugColor = lerp(float3(0.03, 0.03, 0.03), float3(0.00, 0.60, 1.00), finalPuddleDebug);
+		}
+	}
 
 	// Calculate wetness glossiness factors
 	wetnessGlossinessAlbedo = max(puddle, shoreFactorAlbedo * SharedData::wetnessEffectsSettings.MaxShoreWetness);
@@ -3539,6 +3578,12 @@ if (alpha - AlphaTestRefRS < 0) {
 	psout.Diffuse.xyz = color.xyz;
 #	endif  // defined(LIGHT_LIMIT_FIX)
 
+#	if defined(WETNESS_EFFECTS)
+	[branch] if (all(puddleDebugColor >= 0.0.xxx)) {
+		psout.Diffuse.xyz = puddleDebugColor;
+	}
+#	endif
+
 	psout.MotionVectors.xy = screenMotionVector.xy;
 	psout.MotionVectors.zw = float2(0, psout.Diffuse.w);
 
@@ -3551,6 +3596,15 @@ if (alpha - AlphaTestRefRS < 0) {
 #		endif
 
 	psout.MotionVectors.zw = float2(0.0, psout.Diffuse.w);
+
+#		if defined(WETNESS_EFFECTS)
+	[branch] if (all(puddleDebugColor >= 0.0.xxx)) {
+		specularColor = 0.0.xxx;
+		outputAlbedo = puddleDebugColor;
+		indirectLobeWeights.specular = 0.0.xxx;
+	}
+#		endif
+
 	psout.Specular = float4(specularColor, psout.Diffuse.w);
 	psout.Albedo = float4(outputAlbedo, psout.Diffuse.w);
 

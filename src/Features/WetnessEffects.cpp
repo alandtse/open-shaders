@@ -2,12 +2,19 @@
 #include "Menu.h"
 #include "WeatherPicker.h"
 
+#include <DirectXTex.h>
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <filesystem>
+#include <utility>
 
 namespace
 {
+	constexpr uint32_t kWetnessPsSrvPrecipOcclusionSlot = 70u;
+	constexpr uint32_t kWetnessPsSrvPuddleRetentionMaskSlot = 71u;
+	constexpr const char* kPuddleRetentionMaskPath = "Data\\Shaders\\WetnessEffects\\PuddleRetentionMask.dds";
+
 	// Legacy depth model constants (CS 0.8.x) used for persistence behavior.
 	constexpr float RAIN_DELTA_PER_SECOND = 2.0f / 3600.0f;
 	constexpr float SNOWY_DAY_DELTA_PER_SECOND = -0.489f / 3600.0f;
@@ -669,7 +676,11 @@ namespace
 		settings.EnableExtendedLegacyReflectionRange = SanitizeToggle(settings.EnableExtendedLegacyReflectionRange);
 		settings.EnableForwardReflectionBias = SanitizeToggle(settings.EnableForwardReflectionBias);
 		settings.EnableVanillaReflectionCompensation = SanitizeToggle(settings.EnableVanillaReflectionCompensation);
-		settings.EnablePuddleInfluenceDebugReadout = SanitizeToggle(settings.EnablePuddleInfluenceDebugReadout);
+		settings.EnablePuddleInfluenceDebugReadout = std::min(settings.EnablePuddleInfluenceDebugReadout, 4u);
+		if (settings.EnableStrongReflectionsProfile == 0u) {
+			// Avoid hidden active debug overlays when the Strong Reflections section is disabled.
+			settings.EnablePuddleInfluenceDebugReadout = 0u;
+		}
 		settings.EnableLodSafeWetDarkening = SanitizeToggle(settings.EnableLodSafeWetDarkening);
 		SanitizeReflectionSettings(settings);
 	}
@@ -1008,6 +1019,95 @@ void WetnessEffects::PostPostLoad()
 	Ripples::Install();
 }
 
+void WetnessEffects::SetupResources()
+{
+	auto device = globals::d3d::device;
+	if (!device) {
+		return;
+	}
+
+	const auto createFallbackMask = [&]() {
+		D3D11_TEXTURE2D_DESC texDesc{};
+		texDesc.Width = 1;
+		texDesc.Height = 1;
+		texDesc.MipLevels = 1;
+		texDesc.ArraySize = 1;
+		texDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+		texDesc.SampleDesc = { 1, 0 };
+		texDesc.Usage = D3D11_USAGE_IMMUTABLE;
+		texDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+
+		const uint32_t whitePixel = 0xFFFFFFFFu;
+		D3D11_SUBRESOURCE_DATA initData{};
+		initData.pSysMem = &whitePixel;
+		initData.SysMemPitch = sizeof(whitePixel);
+
+		ID3D11Texture2D* fallbackTexture = nullptr;
+		DX::ThrowIfFailed(device->CreateTexture2D(&texDesc, &initData, &fallbackTexture));
+
+		texPuddleRetentionMask = eastl::make_unique<Texture2D>(fallbackTexture);
+		D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc{
+			.Format = texPuddleRetentionMask->desc.Format,
+			.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D,
+			.Texture2D = {
+				.MostDetailedMip = 0,
+				.MipLevels = 1 }
+		};
+		texPuddleRetentionMask->CreateSRV(srvDesc);
+	};
+
+	try {
+		createFallbackMask();
+	} catch (const DX::com_exception& e) {
+		logger::error("[{}] Failed to create fallback puddle retention mask: {}", GetName(), e.what());
+		texPuddleRetentionMask.reset();
+		return;
+	}
+
+	DirectX::ScratchImage image;
+	try {
+		const std::filesystem::path path = kPuddleRetentionMaskPath;
+		DX::ThrowIfFailed(LoadFromDDSFile(path.c_str(), DirectX::DDS_FLAGS_NONE, nullptr, image));
+	} catch (const DX::com_exception& e) {
+		logger::debug("[{}] Puddle retention mask DDS not found; using built-in fallback. ({})", GetName(), e.what());
+		return;
+	}
+
+	winrt::com_ptr<ID3D11Resource> resource;
+	try {
+		DX::ThrowIfFailed(CreateTexture(device,
+			image.GetImages(), image.GetImageCount(),
+			image.GetMetadata(), resource.put()));
+	} catch (const DX::com_exception& e) {
+		logger::warn("[{}] Failed to create puddle retention mask texture; using fallback. ({})", GetName(), e.what());
+		return;
+	}
+
+	winrt::com_ptr<ID3D11Texture2D> loadedTexture;
+	if (!resource || FAILED(resource->QueryInterface(IID_PPV_ARGS(loadedTexture.put())))) {
+		logger::warn("[{}] Puddle retention mask DDS is not a Texture2D; using fallback.", GetName());
+		return;
+	}
+
+	try {
+		auto loadedMask = eastl::make_unique<Texture2D>(loadedTexture.detach());
+		D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc{
+			.Format = loadedMask->desc.Format,
+			.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D,
+			.Texture2D = {
+				.MostDetailedMip = 0,
+				.MipLevels = static_cast<UINT>(loadedMask->desc.MipLevels) }
+		};
+		loadedMask->CreateSRV(srvDesc);
+		texPuddleRetentionMask = std::move(loadedMask);
+	} catch (const DX::com_exception& e) {
+		logger::warn("[{}] Failed to finalize puddle retention mask SRV; using fallback. ({})", GetName(), e.what());
+		return;
+	}
+
+	logger::info("[{}] Loaded puddle retention mask from {}", GetName(), kPuddleRetentionMaskPath);
+}
+
 void WetnessEffects::ResetRuntimeState()
 {
 	runtimeState = {};
@@ -1195,12 +1295,28 @@ void WetnessEffects::DrawSettings()
 			ImGui::TextUnformatted("How strongly mandatory flat pooling can override Radius/Layout/Depth pattern controls. 1.00 = current default behavior.");
 		}
 
-		drawUintCheckboxWithTooltip(
-			"Puddle Influence Debug Readout",
-			settings.EnablePuddleInfluenceDebugReadout,
-			"Shows live estimated factor weights for flat floor, depth blend, and layout influence.");
+		int puddleDebugViewMode = std::clamp(static_cast<int>(settings.EnablePuddleInfluenceDebugReadout), 0, 4);
+		const char* puddleDebugViewModes[] = {
+			"Off",
+			"Influence Readout",
+			"Retention Mask",
+			"Fill Level",
+			"Final Puddle"
+		};
+		if (ImGui::Combo("Puddle Debug View", &puddleDebugViewMode, puddleDebugViewModes, IM_ARRAYSIZE(puddleDebugViewModes))) {
+			settings.EnablePuddleInfluenceDebugReadout = static_cast<uint>(puddleDebugViewMode);
+		}
+		if (auto _tt = Util::HoverTooltipWrapper()) {
+			Util::DrawMultiLineTooltip({
+				"Off: no puddle debug overlay.",
+				"Influence Readout: text estimates for flat/depth/layout factors.",
+				"Retention Mask: shader visualization of puddle retention zones.",
+				"Fill Level: shader visualization of puddle fill amount from wetness timeline.",
+				"Final Puddle: shader visualization of final puddle result."
+			});
+		}
 
-		if (settings.EnablePuddleInfluenceDebugReadout != 0) {
+		if (settings.EnablePuddleInfluenceDebugReadout == 1u) {
 			if (g_hasLastFrameData) {
 				const auto smoothstep = [](float edge0, float edge1, float x) {
 					const float width = std::max(edge1 - edge0, 1e-4f);
@@ -1222,6 +1338,8 @@ void WetnessEffects::DrawSettings()
 			} else {
 				ImGui::TextDisabled("Puddle influence debug data becomes available after rendering at least one wetness frame.");
 			}
+		} else if (settings.EnablePuddleInfluenceDebugReadout >= 2u) {
+			ImGui::TextDisabled("Shader puddle debug view is active.");
 		}
 
 		ImGui::TreePop();
@@ -2047,12 +2165,17 @@ void WetnessEffects::Prepass()
 	}
 
 	ID3D11ShaderResourceView* precipOcclusionSrv = nullptr;
+	ID3D11ShaderResourceView* puddleRetentionMaskSrv = nullptr;
 	auto& precipOcclusionTexture = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kPRECIPITATION_OCCLUSION_MAP];
 	if (precipOcclusionTexture.depthSRV) {
 		precipOcclusionSrv = precipOcclusionTexture.depthSRV;
 	}
+	if (texPuddleRetentionMask && texPuddleRetentionMask->srv) {
+		puddleRetentionMaskSrv = texPuddleRetentionMask->srv.get();
+	}
 
-	context->PSSetShaderResources(70, 1, &precipOcclusionSrv);
+	context->PSSetShaderResources(kWetnessPsSrvPrecipOcclusionSlot, 1, &precipOcclusionSrv);
+	context->PSSetShaderResources(kWetnessPsSrvPuddleRetentionMaskSlot, 1, &puddleRetentionMaskSrv);
 }
 
 void WetnessEffects::LoadSettings(json& o_json)

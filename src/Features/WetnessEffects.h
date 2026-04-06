@@ -225,6 +225,7 @@ public:
 
 	PerFrame GetCommonBufferData() const;
 
+	virtual void SetupResources() override;
 	virtual void Prepass() override;
 	virtual void PostPostLoad() override;
 
@@ -262,6 +263,7 @@ private:
 	const Settings& GetSanitizedSettings() const;
 
 	bool splashesOfStormsLoaded = false;
+	eastl::unique_ptr<Texture2D> texPuddleRetentionMask = nullptr;
 
 	struct RuntimeState
 	{
