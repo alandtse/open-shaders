@@ -2547,11 +2547,18 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 		float roughDepthConfidence = lerp(0.55, 1.0, roughDepthMask);
 		unevenDepthMask = saturate(depthProxy * roughDepthConfidence) * (1.0 - vegetationFactor * 0.85);
 #			endif
-		float depthPuddleMix = saturate((puddleSignal - 0.02) * (1.25 + depthBlend * 1.75)) * unevenDepthMask;
-		// Keep flat pooling as baseline and add depth pooling only where unevenness exists.
-		float depthContribution = depthPuddleMix * depthBlend;
-		float puddleMix = saturate(flatPuddleMix + depthContribution * (1.0 - flatPuddleMix));
-		puddle *= lerp(wetness, puddleWetness, puddleMix);
+		float puddleStrength = saturate(SharedData::wetnessEffectsSettings.MaxPuddleWetness / 6.0);
+		// Keep depth model primarily geometry-driven; noise only breaks up coverage.
+		float depthPatternMix = saturate((puddleSignal - 0.02) * (1.25 + depthBlend * 1.75)) * unevenDepthMask;
+		float depthPuddleMix = saturate(lerp(unevenDepthMask, depthPatternMix, 0.35));
+		float depthWetGate = smoothstep(SharedData::wetnessEffectsSettings.PuddleMinWetness * 0.5, 1.0, max(wetness, puddleWetness));
+		float depthBoost = depthPuddleMix * depthBlend * depthWetGate * lerp(0.20, 0.75, puddleStrength);
+		float depthPuddleTarget = saturate(wetness + depthBoost * (1.0 - wetness));
+		float flatPuddleTarget = saturate(lerp(wetness, max(wetness, puddleWetness), flatPuddleMix));
+		float puddleMix = saturate(flatPuddleMix + depthPuddleMix * depthBlend * (1.0 - flatPuddleMix));
+		float puddleTarget = max(flatPuddleTarget, depthPuddleTarget);
+		// Depth contribution should never reduce puddle intensity.
+		puddle = max(puddle, lerp(wetness, puddleTarget, puddleMix));
 #		endif
 
 		// Mandatory flat pooling: once the surface gets very flat and wet enough,
@@ -2569,7 +2576,6 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 		if (march3CompatibilityProfileEnabled) {
 			puddle = max(puddle, flatMandatoryPuddle);
 		} else {
-			float puddleStrength = saturate(SharedData::wetnessEffectsSettings.MaxPuddleWetness / 6.0);
 			float flatPatternThreshold = lerp(0.50, 0.12, puddleStrength);
 			float flatPattern = saturate((puddleSignal - flatPatternThreshold) / max(1e-3, 1.0 - flatPatternThreshold));
 			float flatPatternCoverage = lerp(0.30, 1.0, flatPattern);
@@ -2581,7 +2587,12 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 			flatPatternCoverage = lerp(flatPatternCoverage, flatPattern * 0.5, dominanceTowardPattern);
 			flatStrength *= lerp(1.0, 1.20, dominanceTowardMandatory);
 			flatStrength *= lerp(1.0, 0.70, dominanceTowardPattern);
-			puddle = max(puddle, flatMandatoryPuddle * flatPatternCoverage * flatStrength);
+			// Avoid hard-overriding depth-driven puddles with the flat mandatory floor.
+			float depthModelDominance = saturate(depthBlend * unevenDepthMask);
+			float mandatoryDepthAttenuation = lerp(1.0, 0.55, depthModelDominance);
+			float mandatoryTarget = flatMandatoryPuddle * flatPatternCoverage * flatStrength * mandatoryDepthAttenuation;
+			float mandatoryHeadroom = saturate(1.0 - puddle);
+			puddle = saturate(puddle + mandatoryTarget * mandatoryHeadroom);
 		}
 #		else
 		puddle = max(puddle, flatMandatoryPuddle);
