@@ -2561,9 +2561,9 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 		float flatMandatoryPuddle = max(wetness, puddleWetness) * flatAngleMask * flatWetGate;
 
 #		if !defined(SKINNED)
-		const bool hostilesWetProfileEnabled = SharedData::wetnessEffectsSettings.EnableHostilesWetProfile != 0;
-		const bool march3CompatibilityProfileEnabled = hostilesWetProfileEnabled && SharedData::wetnessEffectsSettings.EnableMarch3WetnessProfile != 0;
-		const float puddlePatternDominance = hostilesWetProfileEnabled ? max(0.0, SharedData::wetnessEffectsSettings.PuddlePatternDominance) : 1.0;
+		const bool strongReflectionsProfileEnabled = SharedData::wetnessEffectsSettings.EnableStrongReflectionsProfile != 0;
+		const bool march3CompatibilityProfileEnabled = strongReflectionsProfileEnabled && SharedData::wetnessEffectsSettings.EnableMarch3WetnessProfile != 0;
+		const float puddlePatternDominance = strongReflectionsProfileEnabled ? max(0.0, SharedData::wetnessEffectsSettings.PuddlePatternDominance) : 1.0;
 		// Keep mandatory pooling, but gate it by the puddle-pattern signal so
 		// Puddle Radius/Layout and Max Puddle Wetness still visibly affect shape.
 		if (march3CompatibilityProfileEnabled) {
@@ -3134,8 +3134,8 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	porosity = lerp(porosity, 0.0, saturate(sqrt(envMask)));
 #			endif
 	float wetDarkeningStrength = max(0.0, SharedData::wetnessEffectsSettings.WetDarkeningStrength);
-	const bool hostilesWetProfileEnabled = SharedData::wetnessEffectsSettings.EnableHostilesWetProfile != 0;
-	const bool lodSafeWetDarkeningEnabled = hostilesWetProfileEnabled && SharedData::wetnessEffectsSettings.EnableLodSafeWetDarkening != 0;
+	const bool strongReflectionsProfileEnabled = SharedData::wetnessEffectsSettings.EnableStrongReflectionsProfile != 0;
+	const bool lodSafeWetDarkeningEnabled = strongReflectionsProfileEnabled && SharedData::wetnessEffectsSettings.EnableLodSafeWetDarkening != 0;
 	float lodSafeWetDarkeningFade = 1.0;
 	if (lodSafeWetDarkeningEnabled) {
 		float viewDistance = abs(viewPosition.z);

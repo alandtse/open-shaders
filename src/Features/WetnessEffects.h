@@ -84,7 +84,7 @@ public:
 		// Runoff Speed tuning (keeps original CB slot/order).
 		float RunoffSpeed = 1.0f;
 		// Optional compatibility profile and tuning controls (opt-in).
-		uint EnableHostilesWetProfile = false;
+		uint EnableStrongReflectionsProfile = false;
 		uint EnableMarch3WetnessProfile = false;
 		uint EnableExtendedLegacyReflectionRange = false;
 		uint EnableForwardReflectionBias = false;
@@ -101,7 +101,7 @@ public:
 	static_assert(offsetof(Settings, RippleLifetime) == 136, "WetnessEffects::Settings RippleLifetime offset changed.");
 	static_assert(offsetof(Settings, EnableDualPuddleModel) == 152, "WetnessEffects::Settings EnableDualPuddleModel offset changed.");
 	static_assert(offsetof(Settings, RunoffSpeed) == 172, "WetnessEffects::Settings RunoffSpeed offset changed.");
-	static_assert(offsetof(Settings, EnableHostilesWetProfile) == 176, "WetnessEffects::Settings EnableHostilesWetProfile offset changed.");
+	static_assert(offsetof(Settings, EnableStrongReflectionsProfile) == 176, "WetnessEffects::Settings EnableStrongReflectionsProfile offset changed.");
 
 	// Shader-facing wetness settings layout.
 	// Keep this binary-compatible with Settings while exposing shader semantics directly.
@@ -153,7 +153,7 @@ public:
 		float WetColorSaturation = 1.0f;
 		float WetHighlightReduction = 1.0f;
 		float RunoffSpeed = 1.0f;
-		uint EnableHostilesWetProfile = false;
+		uint EnableStrongReflectionsProfile = false;
 		uint EnableMarch3WetnessProfile = false;
 		uint EnableExtendedLegacyReflectionRange = false;
 		uint EnableForwardReflectionBias = false;

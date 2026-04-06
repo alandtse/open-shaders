@@ -146,7 +146,7 @@ namespace SharedData
 		float WetColorSaturation;
 		float WetHighlightReduction;
 		float RunoffSpeed;
-		uint EnableHostilesWetProfile;
+		uint EnableStrongReflectionsProfile;
 		uint EnableMarch3WetnessProfile;
 		uint EnableExtendedLegacyReflectionRange;
 		uint EnableForwardReflectionBias;

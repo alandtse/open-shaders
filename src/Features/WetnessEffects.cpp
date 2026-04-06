@@ -33,7 +33,7 @@ namespace
 	constexpr float PUDDLE_LAYOUT_MIN = 0.3f;
 	constexpr float PUDDLE_LAYOUT_MAX = 3.0f;
 	constexpr float DEFAULT_LEGACY_WET_REFLECTION_SCALE_MAX = 0.10f;
-	constexpr float HOSTILES_EXTENDED_LEGACY_WET_REFLECTION_SCALE_MAX = 0.25f;
+	constexpr float STRONG_REFLECTIONS_EXTENDED_LEGACY_WET_REFLECTION_SCALE_MAX = 0.25f;
 	constexpr float MAX_MODERN_WET_REFLECTION_UI_SCALE = 1.00f;
 	constexpr float DEFAULT_LEGACY_WET_INDIRECT_SPECULAR_SCALE = 0.0145f;
 	constexpr float DEFAULT_WET_INDIRECT_SPECULAR_SCALE = 0.2f;
@@ -459,9 +459,9 @@ namespace
 	template <class TSettings>
 	float GetLegacyReflectionUiMax(const TSettings& settings)
 	{
-		const bool hostilesWetProfileEnabled = settings.EnableHostilesWetProfile != 0;
-		const bool extendedLegacyRangeEnabled = hostilesWetProfileEnabled && settings.EnableExtendedLegacyReflectionRange != 0;
-		return extendedLegacyRangeEnabled ? HOSTILES_EXTENDED_LEGACY_WET_REFLECTION_SCALE_MAX : DEFAULT_LEGACY_WET_REFLECTION_SCALE_MAX;
+		const bool strongReflectionsProfileEnabled = settings.EnableStrongReflectionsProfile != 0;
+		const bool extendedLegacyRangeEnabled = strongReflectionsProfileEnabled && settings.EnableExtendedLegacyReflectionRange != 0;
+		return extendedLegacyRangeEnabled ? STRONG_REFLECTIONS_EXTENDED_LEGACY_WET_REFLECTION_SCALE_MAX : DEFAULT_LEGACY_WET_REFLECTION_SCALE_MAX;
 	}
 
 	float LegacyWetReflectionScaleFromSlider(float sliderT, float legacyScaleMax)
@@ -664,7 +664,7 @@ namespace
 		settings.EnableVanillaRipples = SanitizeToggle(settings.EnableVanillaRipples);
 		settings.EnableLegacyRainBehavior = SanitizeToggle(settings.EnableLegacyRainBehavior);
 		settings.EnableDualPuddleModel = SanitizeToggle(settings.EnableDualPuddleModel);
-		settings.EnableHostilesWetProfile = SanitizeToggle(settings.EnableHostilesWetProfile);
+		settings.EnableStrongReflectionsProfile = SanitizeToggle(settings.EnableStrongReflectionsProfile);
 		settings.EnableMarch3WetnessProfile = SanitizeToggle(settings.EnableMarch3WetnessProfile);
 		settings.EnableExtendedLegacyReflectionRange = SanitizeToggle(settings.EnableExtendedLegacyReflectionRange);
 		settings.EnableForwardReflectionBias = SanitizeToggle(settings.EnableForwardReflectionBias);
@@ -782,7 +782,7 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	WetColorSaturation,
 	WetHighlightReduction,
 	RunoffSpeed,
-	EnableHostilesWetProfile,
+	EnableStrongReflectionsProfile,
 	EnableMarch3WetnessProfile,
 	EnableExtendedLegacyReflectionRange,
 	EnableForwardReflectionBias,
@@ -1149,15 +1149,15 @@ void WetnessEffects::DrawSettings()
 		}
 	}
 	ImGui::SameLine(0.0f, 14.0f);
-	drawUintCheckbox("Hostile's Wet", settings.EnableHostilesWetProfile);
+	drawUintCheckbox("Strong Reflections", settings.EnableStrongReflectionsProfile);
 	if (auto _tt = Util::HoverTooltipWrapper()) {
-		ImGui::TextUnformatted("Optional compatibility profile. Enables extra wetness look controls without changing default visuals.");
+		ImGui::TextUnformatted("Optional Strong Reflections profile. Enables extra wetness look controls without changing default visuals.");
 	}
 	ImGui::PopStyleColor(3);
 
 	ImGui::Separator();
 
-	if (settings.EnableHostilesWetProfile != 0 && ImGui::TreeNodeEx("Hostile's Wet (Optional Look)", ImGuiTreeNodeFlags_DefaultOpen)) {
+	if (settings.EnableStrongReflectionsProfile != 0 && ImGui::TreeNodeEx("Strong Reflections (Optional Look)", ImGuiTreeNodeFlags_DefaultOpen)) {
 		if (drawUintCheckbox("March 3 Wetness Profile", settings.EnableMarch3WetnessProfile) && settings.EnableMarch3WetnessProfile != 0) {
 			// Compatibility mode targets legacy reflection response behavior.
 			settings.EnableModernWetReflection = 0u;
@@ -2072,7 +2072,7 @@ void WetnessEffects::LoadSettings(json& o_json)
 		 o_json.contains("PuddleLayout") ||
 		 o_json.contains("ModernWetIndirectSpecularScale") ||
 		 o_json.contains("LegacyWetIndirectSpecularScale") ||
-		 o_json.contains("EnableHostilesWetProfile") ||
+		 o_json.contains("EnableStrongReflectionsProfile") ||
 		 o_json.contains("EnableMarch3WetnessProfile") ||
 		 o_json.contains("EnableExtendedLegacyReflectionRange") ||
 		 o_json.contains("EnableForwardReflectionBias") ||

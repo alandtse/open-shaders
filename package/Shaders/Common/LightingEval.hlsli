@@ -167,14 +167,14 @@ void GetIndirectLobeWeights(out IndirectLobeWeights lobeWeights, IndirectContext
 }
 
 #if defined(WETNESS_EFFECTS)
-bool IsHostilesWetProfileEnabled()
+bool IsStrongReflectionsProfileEnabled()
 {
-	return SharedData::wetnessEffectsSettings.EnableHostilesWetProfile != 0;
+	return SharedData::wetnessEffectsSettings.EnableStrongReflectionsProfile != 0;
 }
 
-bool IsHostilesWetOptionEnabled(uint optionToggle)
+bool IsStrongReflectionsOptionEnabled(uint optionToggle)
 {
-	return IsHostilesWetProfileEnabled() && optionToggle != 0;
+	return IsStrongReflectionsProfileEnabled() && optionToggle != 0;
 }
 
 float3 GetWetReflectionModeConfig(float wetReflectionScale)
@@ -184,7 +184,7 @@ float3 GetWetReflectionModeConfig(float wetReflectionScale)
 	// f(0)=0, f(1)=1, f(0.3)=0.12 (so 30% of 0.25 maps to 0.03).
 	const float LEGACY_CURVE_A = 0.857142857;
 	const float LEGACY_CURVE_B = 0.142857143;
-	const bool march3CompatibilityProfileEnabled = IsHostilesWetOptionEnabled(SharedData::wetnessEffectsSettings.EnableMarch3WetnessProfile);
+	const bool march3CompatibilityProfileEnabled = IsStrongReflectionsOptionEnabled(SharedData::wetnessEffectsSettings.EnableMarch3WetnessProfile);
 	const float wetReflectionScaleClamped = saturate(wetReflectionScale);
 	if (wetReflectionScaleClamped <= 0.0) {
 		return 0.0;
@@ -238,8 +238,8 @@ void EvaluateWetnessLighting(float3 wetnessNormal, DirectContext context, float 
 	const float3 V = context.viewDir;
 	const float3 L = context.lightDir;
 	const float3 H = context.halfVector;
-	const bool forwardReflectionBiasEnabled = IsHostilesWetOptionEnabled(SharedData::wetnessEffectsSettings.EnableForwardReflectionBias);
-	const bool vanillaReflectionCompensationEnabled = IsHostilesWetOptionEnabled(SharedData::wetnessEffectsSettings.EnableVanillaReflectionCompensation);
+	const bool forwardReflectionBiasEnabled = IsStrongReflectionsOptionEnabled(SharedData::wetnessEffectsSettings.EnableForwardReflectionBias);
+	const bool vanillaReflectionCompensationEnabled = IsStrongReflectionsOptionEnabled(SharedData::wetnessEffectsSettings.EnableVanillaReflectionCompensation);
 
 	float NdotL = clamp(dot(N, L), EPSILON_DOT_CLAMP, 1);
 	float NdotV = saturate(abs(dot(N, V)) + EPSILON_DOT_CLAMP);
@@ -286,8 +286,8 @@ float3 GetWetnessIndirectLobeWeights(inout IndirectLobeWeights lobeWeights, floa
 	const float3 N = wetnessNormal;
 	const float3 V = context.viewDir;
 	const float3 VN = context.vertexNormal;
-	const bool forwardReflectionBiasEnabled = IsHostilesWetOptionEnabled(SharedData::wetnessEffectsSettings.EnableForwardReflectionBias);
-	const bool vanillaReflectionCompensationEnabled = IsHostilesWetOptionEnabled(SharedData::wetnessEffectsSettings.EnableVanillaReflectionCompensation);
+	const bool forwardReflectionBiasEnabled = IsStrongReflectionsOptionEnabled(SharedData::wetnessEffectsSettings.EnableForwardReflectionBias);
+	const bool vanillaReflectionCompensationEnabled = IsStrongReflectionsOptionEnabled(SharedData::wetnessEffectsSettings.EnableVanillaReflectionCompensation);
 
 	float NdotV = saturate(abs(dot(N, V)) + EPSILON_DOT_CLAMP);
 	if (forwardReflectionBiasEnabled) {
