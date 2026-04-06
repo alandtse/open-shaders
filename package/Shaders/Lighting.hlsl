@@ -2544,25 +2544,31 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 		float depthBlend = saturate(SharedData::wetnessEffectsSettings.PuddleDepthBlend) * dualPuddleEnabled;
 		float unevenDepthMask = 0.0;
 #			if !defined(SKIN) && !defined(HAIR)
-		float roughDepthMask = saturate((surfaceRoughness - 0.22) * 2.2);
-		// Capture micro-variation (e.g. cobblestone joints) even when roughness alone is not enough.
-		float normalVarianceMask = saturate((length(ddx(worldNormal)) + length(ddy(worldNormal)) - 0.04) * 4.0);
+		[branch] if (dualPuddleEnabled > 0.0) {
+			float roughDepthMask = saturate((surfaceRoughness - 0.22) * 2.2);
+			// Capture micro-variation (e.g. cobblestone joints) even when roughness alone is not enough.
+			float normalVarianceMask = saturate((length(ddx(worldNormal)) + length(ddy(worldNormal)) - 0.04) * 4.0);
 #				if defined(TRUE_PBR)
-		float cavityMask = saturate(1.0 - material.AO);
+			float cavityMask = saturate(1.0 - material.AO);
 #				else
-		float cavityMask = 0.0;
+			float cavityMask = 0.0;
 #				endif
-		float depthProxy = max(normalVarianceMask, cavityMask * 0.75);
-		float roughDepthConfidence = lerp(0.55, 1.0, roughDepthMask);
-		unevenDepthMask = saturate(depthProxy * roughDepthConfidence) * (1.0 - vegetationFactor * 0.85);
+			float depthProxy = max(normalVarianceMask, cavityMask * 0.75);
+			float roughDepthConfidence = lerp(0.55, 1.0, roughDepthMask);
+			unevenDepthMask = saturate(depthProxy * roughDepthConfidence) * (1.0 - vegetationFactor * 0.85);
+		}
 #			endif
 		float puddleStrength = saturate(SharedData::wetnessEffectsSettings.MaxPuddleWetness / 6.0);
 
 		// Retention mask (where water can exist):
-		// geometry concavity + slope + material response, modulated by optional authored mask texture.
+		// OFF (single model): broad flat/slope retention only.
+		// ON  (dual model): concavity/depth retention + slope response.
+		// Optional authored mask can further constrain both modes.
 		float slopeRetentionMask = smoothstep(0.35, 0.98, saturate(worldNormal.z));
 		float materialRetentionMask = saturate(0.20 + dirtFactor * 1.00 + stoneFactor * 0.75 + (1.0 - vegetationFactor) * 0.25);
-		float derivedRetentionMask = saturate((0.55 * unevenDepthMask + 0.30 * slopeRetentionMask + 0.15 * flatPuddleMix) * materialRetentionMask);
+		float flatRetentionMask = saturate((0.75 * slopeRetentionMask + 0.25 * flatPuddleMix) * materialRetentionMask);
+		float depthRetentionMask = saturate((0.55 * unevenDepthMask + 0.30 * slopeRetentionMask + 0.15 * flatPuddleMix) * materialRetentionMask);
+		float derivedRetentionMask = lerp(flatRetentionMask, depthRetentionMask, dualPuddleEnabled);
 		float authoredRetentionMask = TexPuddleRetentionMask.Sample(SampColorSampler, frac(puddleCoords.xy * 0.65 + 0.5)).x;
 		retentionMask = saturate(derivedRetentionMask * authoredRetentionMask);
 

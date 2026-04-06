@@ -677,10 +677,6 @@ namespace
 		settings.EnableForwardReflectionBias = SanitizeToggle(settings.EnableForwardReflectionBias);
 		settings.EnableVanillaReflectionCompensation = SanitizeToggle(settings.EnableVanillaReflectionCompensation);
 		settings.EnablePuddleInfluenceDebugReadout = std::min(settings.EnablePuddleInfluenceDebugReadout, 4u);
-		if (settings.EnableStrongReflectionsProfile == 0u) {
-			// Avoid hidden active debug overlays when the Strong Reflections section is disabled.
-			settings.EnablePuddleInfluenceDebugReadout = 0u;
-		}
 		settings.EnableLodSafeWetDarkening = SanitizeToggle(settings.EnableLodSafeWetDarkening);
 		SanitizeReflectionSettings(settings);
 	}
@@ -1258,7 +1254,7 @@ void WetnessEffects::DrawSettings()
 	ImGui::Separator();
 
 	if (settings.EnableStrongReflectionsProfile != 0 && ImGui::TreeNodeEx("Strong Reflections (Optional Look)", ImGuiTreeNodeFlags_DefaultOpen)) {
-		if (drawUintCheckbox("March 3 Wetness Profile", settings.EnableMarch3WetnessProfile) && settings.EnableMarch3WetnessProfile != 0) {
+		if (drawUintCheckbox("Legacy Wetness Profile", settings.EnableMarch3WetnessProfile) && settings.EnableMarch3WetnessProfile != 0) {
 			// Compatibility mode targets legacy reflection response behavior.
 			settings.EnableModernWetReflection = 0u;
 			settings.EnableLegacyWetReflection = 1u;
@@ -1293,53 +1289,6 @@ void WetnessEffects::DrawSettings()
 		ImGui::SliderFloat("Puddle Pattern Dominance", &settings.PuddlePatternDominance, PUDDLE_PATTERN_DOMINANCE_MIN, PUDDLE_PATTERN_DOMINANCE_MAX, "%.2f");
 		if (auto _tt = Util::HoverTooltipWrapper()) {
 			ImGui::TextUnformatted("How strongly mandatory flat pooling can override Radius/Layout/Depth pattern controls. 1.00 = current default behavior.");
-		}
-
-		int puddleDebugViewMode = std::clamp(static_cast<int>(settings.EnablePuddleInfluenceDebugReadout), 0, 4);
-		const char* puddleDebugViewModes[] = {
-			"Off",
-			"Influence Readout",
-			"Retention Mask",
-			"Fill Level",
-			"Final Puddle"
-		};
-		if (ImGui::Combo("Puddle Debug View", &puddleDebugViewMode, puddleDebugViewModes, IM_ARRAYSIZE(puddleDebugViewModes))) {
-			settings.EnablePuddleInfluenceDebugReadout = static_cast<uint>(puddleDebugViewMode);
-		}
-		if (auto _tt = Util::HoverTooltipWrapper()) {
-			Util::DrawMultiLineTooltip({
-				"Off: no puddle debug overlay.",
-				"Influence Readout: text estimates for flat/depth/layout factors.",
-				"Retention Mask: shader visualization of puddle retention zones.",
-				"Fill Level: shader visualization of puddle fill amount from wetness timeline.",
-				"Final Puddle: shader visualization of final puddle result."
-			});
-		}
-
-		if (settings.EnablePuddleInfluenceDebugReadout == 1u) {
-			if (g_hasLastFrameData) {
-				const auto smoothstep = [](float edge0, float edge1, float x) {
-					const float width = std::max(edge1 - edge0, 1e-4f);
-					const float t = std::clamp((x - edge0) / width, 0.0f, 1.0f);
-					return t * t * (3.0f - 2.0f * t);
-				};
-
-				const float effectiveWetness = std::clamp(std::max(g_lastFrameData.Wetness, g_lastFrameData.PuddleWetness), 0.0f, 1.0f);
-				const float flatFloorInfluence = smoothstep(settings.PuddleMinWetness * 0.65f, 1.0f, effectiveWetness);
-				const float depthInfluence = (settings.EnableDualPuddleModel != 0) ? std::clamp(settings.PuddleDepthBlend * effectiveWetness, 0.0f, 1.0f) : 0.0f;
-				const float layoutScale = std::clamp((PUDDLE_LAYOUT_MAX - puddleLayout) / (PUDDLE_LAYOUT_MAX - PUDDLE_LAYOUT_MIN), 0.0f, 1.0f);
-				const float dominanceSuppression = std::clamp(1.0f - std::max(0.0f, settings.PuddlePatternDominance - 1.0f), 0.0f, 1.0f);
-				const float layoutInfluence = std::clamp(layoutScale * dominanceSuppression, 0.0f, 1.0f);
-
-				ImGui::TextDisabled("Estimated effective factors (global):");
-				ImGui::Text("Flat floor influence: %.1f%%", flatFloorInfluence * 100.0f);
-				ImGui::Text("Depth contribution: %.1f%%", depthInfluence * 100.0f);
-				ImGui::Text("Layout contribution: %.1f%%", layoutInfluence * 100.0f);
-			} else {
-				ImGui::TextDisabled("Puddle influence debug data becomes available after rendering at least one wetness frame.");
-			}
-		} else if (settings.EnablePuddleInfluenceDebugReadout >= 2u) {
-			ImGui::TextDisabled("Shader puddle debug view is active.");
 		}
 
 		ImGui::TreePop();
@@ -1703,6 +1652,54 @@ void WetnessEffects::DrawSettings()
 	}
 
 	if (ImGui::TreeNodeEx("Debug (Testing)")) {
+		int puddleDebugViewMode = std::clamp(static_cast<int>(settings.EnablePuddleInfluenceDebugReadout), 0, 4);
+		const char* puddleDebugViewModes[] = {
+			"Off",
+			"Influence Readout",
+			"Retention Mask",
+			"Fill Level",
+			"Final Puddle"
+		};
+		if (ImGui::Combo("Puddle Debug View", &puddleDebugViewMode, puddleDebugViewModes, IM_ARRAYSIZE(puddleDebugViewModes))) {
+			settings.EnablePuddleInfluenceDebugReadout = static_cast<uint>(puddleDebugViewMode);
+		}
+		if (auto _tt = Util::HoverTooltipWrapper()) {
+			Util::DrawMultiLineTooltip({
+				"Off: no puddle debug overlay.",
+				"Influence Readout: text estimates for flat/depth/layout factors.",
+				"Retention Mask: shader visualization of puddle retention zones.",
+				"Fill Level: shader visualization of puddle fill amount from wetness timeline.",
+				"Final Puddle: shader visualization of final puddle result."
+			});
+		}
+
+		if (settings.EnablePuddleInfluenceDebugReadout == 1u) {
+			if (g_hasLastFrameData) {
+				const auto smoothstep = [](float edge0, float edge1, float x) {
+					const float width = std::max(edge1 - edge0, 1e-4f);
+					const float t = std::clamp((x - edge0) / width, 0.0f, 1.0f);
+					return t * t * (3.0f - 2.0f * t);
+				};
+
+				const float effectiveWetness = std::clamp(std::max(g_lastFrameData.Wetness, g_lastFrameData.PuddleWetness), 0.0f, 1.0f);
+				const float flatFloorInfluence = smoothstep(settings.PuddleMinWetness * 0.65f, 1.0f, effectiveWetness);
+				const float depthInfluence = (settings.EnableDualPuddleModel != 0) ? std::clamp(settings.PuddleDepthBlend * effectiveWetness, 0.0f, 1.0f) : 0.0f;
+				const float layoutScale = std::clamp((PUDDLE_LAYOUT_MAX - puddleLayout) / (PUDDLE_LAYOUT_MAX - PUDDLE_LAYOUT_MIN), 0.0f, 1.0f);
+				const float dominanceSuppression = std::clamp(1.0f - std::max(0.0f, settings.PuddlePatternDominance - 1.0f), 0.0f, 1.0f);
+				const float layoutInfluence = std::clamp(layoutScale * dominanceSuppression, 0.0f, 1.0f);
+
+				ImGui::TextDisabled("Estimated effective factors (global):");
+				ImGui::Text("Flat floor influence: %.1f%%", flatFloorInfluence * 100.0f);
+				ImGui::Text("Depth contribution: %.1f%%", depthInfluence * 100.0f);
+				ImGui::Text("Layout contribution: %.1f%%", layoutInfluence * 100.0f);
+			} else {
+				ImGui::TextDisabled("Puddle influence debug data becomes available after rendering at least one wetness frame.");
+			}
+		} else if (settings.EnablePuddleInfluenceDebugReadout >= 2u) {
+			ImGui::TextDisabled("Shader puddle debug view is active.");
+		}
+
+		ImGui::Separator();
 		ImGui::Checkbox("Enable Wetness Override", &debugSettings.EnableWetnessOverride);
 		if (auto _tt = Util::HoverTooltipWrapper()) {
 			ImGui::TextUnformatted("Use manual wetness values instead of automatic values.");
