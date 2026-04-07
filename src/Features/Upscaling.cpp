@@ -2200,15 +2200,20 @@ void Upscaling::ConfigureTAA()
 {
 	auto upscaleMethod = GetUpscaleMethod();
 
+	// When no upscaling method is active, preserve vanilla TAA state.
+	// UpdateJitter (called immediately after this hook) owns the non-upscaling path.
+	if (upscaleMethod == UpscaleMethod::kNONE)
+		return;
+
 	auto imageSpaceManager = RE::ImageSpaceManager::GetSingleton();
 	GET_INSTANCE_MEMBER(BSImagespaceShaderISTemporalAA, imageSpaceManager);
 
-	// Disable water TAA when upscaling is enabled
+	// CS TAA replaces vanilla TAA, so disable water TAA there.
+	// FSR/DLSS keep water TAA enabled.
 	bool* enableWaterTAA = reinterpret_cast<bool*>(reinterpret_cast<uintptr_t>(BSImagespaceShaderISTemporalAA) + 0x38LL);
-	*enableWaterTAA = upscaleMethod == UpscaleMethod::kNONE || upscaleMethod == UpscaleMethod::kTAA;
+	*enableWaterTAA = upscaleMethod != UpscaleMethod::kTAA;
 
-	// Force enable TAA if needed
-	BSImagespaceShaderISTemporalAA->taaEnabled = upscaleMethod != UpscaleMethod::kNONE;
+	BSImagespaceShaderISTemporalAA->taaEnabled = true;
 }
 
 void Upscaling::ConfigureUpscaling(RE::BSGraphics::State* a_viewport)
@@ -3182,6 +3187,12 @@ void Upscaling::Main_PostProcessing::thunk(RE::ImageSpaceManager* a_this, uint32
 
 	auto imageSpaceManager = RE::ImageSpaceManager::GetSingleton();
 	GET_INSTANCE_MEMBER(BSImagespaceShaderISTemporalAA, imageSpaceManager);
+
+	if (upscaleMethod == UpscaleMethod::kNONE) {
+		// Keep vanilla TAA/water stabilization state untouched when no upscaler is active.
+		func(a_this, a3, a_target, a_4, a_5);
+		return;
+	}
 
 	BSImagespaceShaderISTemporalAA->taaEnabled = upscaleMethod == UpscaleMethod::kTAA;
 
