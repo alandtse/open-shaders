@@ -538,7 +538,6 @@ Texture2D<float4> TexLandLodNoiseSampler : register(t15);
 #	endif
 
 Texture2D<float4> TexShadowMaskSampler : register(t14);
-Texture2D<float4> TexPuddleRetentionMask : register(t71);
 
 cbuffer PerTechnique : register(b0)
 {
@@ -2563,14 +2562,18 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 		// Retention mask (where water can exist):
 		// OFF (single model): broad flat/slope retention only.
 		// ON  (dual model): concavity/depth retention + slope response.
-		// Optional authored mask can further constrain both modes.
+		// Generated fully from runtime material/depth cues (no authored DDS mask).
 		float slopeRetentionMask = smoothstep(0.35, 0.98, saturate(worldNormal.z));
 		float materialRetentionMask = saturate(0.20 + dirtFactor * 1.00 + stoneFactor * 0.75 + (1.0 - vegetationFactor) * 0.25);
-		float flatRetentionMask = saturate((0.75 * slopeRetentionMask + 0.25 * flatPuddleMix) * materialRetentionMask);
-		float depthRetentionMask = saturate((0.55 * unevenDepthMask + 0.30 * slopeRetentionMask + 0.15 * flatPuddleMix) * materialRetentionMask);
-		float derivedRetentionMask = lerp(flatRetentionMask, depthRetentionMask, dualPuddleEnabled);
-		float authoredRetentionMask = TexPuddleRetentionMask.Sample(SampColorSampler, frac(puddleCoords.xy * 0.65 + 0.5)).x;
-		retentionMask = saturate(derivedRetentionMask * authoredRetentionMask);
+		float flatRetentionMask = saturate((0.85 * slopeRetentionMask + 0.15 * flatPuddleMix) * materialRetentionMask);
+		float depthRetentionBase = saturate((0.82 * unevenDepthMask + 0.13 * slopeRetentionMask + 0.05 * flatPuddleMix) * materialRetentionMask);
+		float depthRetentionExponent = lerp(1.05, 1.85, depthBlend);
+		float depthRetentionShaped = pow(depthRetentionBase, depthRetentionExponent);
+		float depthRetentionFloor = slopeRetentionMask * materialRetentionMask * lerp(0.42, 0.08, depthBlend);
+		float depthRetentionMask = saturate(max(depthRetentionShaped, depthRetentionFloor));
+		float depthRetentionMix = saturate(0.20 + depthBlend * 0.80);
+		float derivedRetentionMask = lerp(flatRetentionMask, depthRetentionMask, dualPuddleEnabled * depthRetentionMix);
+		retentionMask = saturate(derivedRetentionMask);
 
 		// Fill level (how full puddles are) from the active wetness timeline.
 		// Perlin is only used for edge breakup/variation.
@@ -2584,7 +2587,9 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 		float depthPuddleMix = saturate(lerp(unevenDepthMask, depthPatternMix, 0.35));
 		float depthWetGate = smoothstep(SharedData::wetnessEffectsSettings.PuddleMinWetness * 0.5, 1.0, max(wetness, puddleWetness));
 		float depthBoost = depthPuddleMix * depthBlend * depthWetGate * lerp(0.20, 0.75, puddleStrength);
-		float depthPuddleTarget = saturate(modeledPuddle + depthBoost * (1.0 - modeledPuddle));
+		float depthRetentionPuddle = depthRetentionMask * fillLevelShaped;
+		float depthPuddleBase = max(modeledPuddle, depthRetentionPuddle);
+		float depthPuddleTarget = saturate(depthPuddleBase + depthBoost * (1.0 - depthPuddleBase));
 		float flatPuddleTarget = saturate(lerp(modeledPuddle, max(modeledPuddle, puddleWetness * retentionMask), flatPuddleMix));
 		float puddleMix = saturate(flatPuddleMix + depthPuddleMix * depthBlend * (1.0 - flatPuddleMix));
 		float puddleTarget = max(flatPuddleTarget, depthPuddleTarget);

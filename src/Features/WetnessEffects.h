@@ -263,7 +263,6 @@ private:
 	const Settings& GetSanitizedSettings() const;
 
 	bool splashesOfStormsLoaded = false;
-	eastl::unique_ptr<Texture2D> texPuddleRetentionMask = nullptr;
 
 	struct RuntimeState
 	{

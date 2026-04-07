@@ -2,18 +2,14 @@
 #include "Menu.h"
 #include "WeatherPicker.h"
 
-#include <DirectXTex.h>
 #include <algorithm>
 #include <cmath>
 #include <cstring>
-#include <filesystem>
 #include <utility>
 
 namespace
 {
 	constexpr uint32_t kWetnessPsSrvPrecipOcclusionSlot = 70u;
-	constexpr uint32_t kWetnessPsSrvPuddleRetentionMaskSlot = 71u;
-	constexpr const char* kPuddleRetentionMaskPath = "Data\\Shaders\\WetnessEffects\\PuddleRetentionMask.dds";
 
 	// Legacy depth model constants (CS 0.8.x) used for persistence behavior.
 	constexpr float RAIN_DELTA_PER_SECOND = 2.0f / 3600.0f;
@@ -1017,91 +1013,8 @@ void WetnessEffects::PostPostLoad()
 
 void WetnessEffects::SetupResources()
 {
-	auto device = globals::d3d::device;
-	if (!device) {
-		return;
-	}
-
-	const auto createFallbackMask = [&]() {
-		D3D11_TEXTURE2D_DESC texDesc{};
-		texDesc.Width = 1;
-		texDesc.Height = 1;
-		texDesc.MipLevels = 1;
-		texDesc.ArraySize = 1;
-		texDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
-		texDesc.SampleDesc = { 1, 0 };
-		texDesc.Usage = D3D11_USAGE_IMMUTABLE;
-		texDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
-
-		const uint32_t whitePixel = 0xFFFFFFFFu;
-		D3D11_SUBRESOURCE_DATA initData{};
-		initData.pSysMem = &whitePixel;
-		initData.SysMemPitch = sizeof(whitePixel);
-
-		ID3D11Texture2D* fallbackTexture = nullptr;
-		DX::ThrowIfFailed(device->CreateTexture2D(&texDesc, &initData, &fallbackTexture));
-
-		texPuddleRetentionMask = eastl::make_unique<Texture2D>(fallbackTexture);
-		D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc{
-			.Format = texPuddleRetentionMask->desc.Format,
-			.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D,
-			.Texture2D = {
-				.MostDetailedMip = 0,
-				.MipLevels = 1 }
-		};
-		texPuddleRetentionMask->CreateSRV(srvDesc);
-	};
-
-	try {
-		createFallbackMask();
-	} catch (const DX::com_exception& e) {
-		logger::error("[{}] Failed to create fallback puddle retention mask: {}", GetName(), e.what());
-		texPuddleRetentionMask.reset();
-		return;
-	}
-
-	DirectX::ScratchImage image;
-	try {
-		const std::filesystem::path path = kPuddleRetentionMaskPath;
-		DX::ThrowIfFailed(LoadFromDDSFile(path.c_str(), DirectX::DDS_FLAGS_NONE, nullptr, image));
-	} catch (const DX::com_exception& e) {
-		logger::debug("[{}] Puddle retention mask DDS not found; using built-in fallback. ({})", GetName(), e.what());
-		return;
-	}
-
-	winrt::com_ptr<ID3D11Resource> resource;
-	try {
-		DX::ThrowIfFailed(CreateTexture(device,
-			image.GetImages(), image.GetImageCount(),
-			image.GetMetadata(), resource.put()));
-	} catch (const DX::com_exception& e) {
-		logger::warn("[{}] Failed to create puddle retention mask texture; using fallback. ({})", GetName(), e.what());
-		return;
-	}
-
-	winrt::com_ptr<ID3D11Texture2D> loadedTexture;
-	if (!resource || FAILED(resource->QueryInterface(IID_PPV_ARGS(loadedTexture.put())))) {
-		logger::warn("[{}] Puddle retention mask DDS is not a Texture2D; using fallback.", GetName());
-		return;
-	}
-
-	try {
-		auto loadedMask = eastl::make_unique<Texture2D>(loadedTexture.detach());
-		D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc{
-			.Format = loadedMask->desc.Format,
-			.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D,
-			.Texture2D = {
-				.MostDetailedMip = 0,
-				.MipLevels = static_cast<UINT>(loadedMask->desc.MipLevels) }
-		};
-		loadedMask->CreateSRV(srvDesc);
-		texPuddleRetentionMask = std::move(loadedMask);
-	} catch (const DX::com_exception& e) {
-		logger::warn("[{}] Failed to finalize puddle retention mask SRV; using fallback. ({})", GetName(), e.what());
-		return;
-	}
-
-	logger::info("[{}] Loaded puddle retention mask from {}", GetName(), kPuddleRetentionMaskPath);
+	// Retention mask is now fully generated in shader from existing material/depth cues.
+	// No authored puddle DDS resource setup is required.
 }
 
 void WetnessEffects::ResetRuntimeState()
@@ -2162,17 +2075,12 @@ void WetnessEffects::Prepass()
 	}
 
 	ID3D11ShaderResourceView* precipOcclusionSrv = nullptr;
-	ID3D11ShaderResourceView* puddleRetentionMaskSrv = nullptr;
 	auto& precipOcclusionTexture = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kPRECIPITATION_OCCLUSION_MAP];
 	if (precipOcclusionTexture.depthSRV) {
 		precipOcclusionSrv = precipOcclusionTexture.depthSRV;
 	}
-	if (texPuddleRetentionMask && texPuddleRetentionMask->srv) {
-		puddleRetentionMaskSrv = texPuddleRetentionMask->srv.get();
-	}
 
 	context->PSSetShaderResources(kWetnessPsSrvPrecipOcclusionSlot, 1, &precipOcclusionSrv);
-	context->PSSetShaderResources(kWetnessPsSrvPuddleRetentionMaskSlot, 1, &puddleRetentionMaskSrv);
 }
 
 void WetnessEffects::LoadSettings(json& o_json)
