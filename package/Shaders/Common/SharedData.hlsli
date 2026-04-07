@@ -150,7 +150,7 @@ namespace SharedData
 		uint EnableForwardReflectionBias;
 		uint EnableVanillaReflectionCompensation;
 		uint EnablePuddleInfluenceDebugReadout;
-		uint EnableLodSafeWetDarkening;
+		uint ReservedWetnessControl0;
 		uint ReservedPadding0;
 		uint ReservedPadding1;
 		uint ReservedPadding2;

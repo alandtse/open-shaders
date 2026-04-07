@@ -39,9 +39,10 @@ namespace
 	constexpr float LEGACY_WET_REFLECTION_UI_SCALE_MAX = 1.00f;
 	constexpr float MAX_MODERN_WET_REFLECTION_UI_SCALE = 1.00f;
 	constexpr float DEFAULT_WET_INDIRECT_SPECULAR_SCALE = 0.2f;
-	constexpr float DEFAULT_LEGACY_WET_REFLECTION_UI = 0.80f;
-	constexpr float DEFAULT_MODERN_WET_REFLECTION_UI = 0.75f;
-	constexpr float REFLECTION_UI_ANCHOR_T = 0.50f;
+	constexpr float DEFAULT_LEGACY_WET_REFLECTION_UI = 0.68f;
+	constexpr float DEFAULT_MODERN_WET_REFLECTION_UI = 0.61f;
+	constexpr float MODERN_REFLECTION_UI_ANCHOR_T = 0.30f;
+	constexpr float LEGACY_REFLECTION_UI_ANCHOR_T = 0.28f;
 	constexpr float MODERN_REFLECTION_SCALE_AT_ANCHOR = 0.02f;
 	constexpr float LEGACY_REFLECTION_SCALE_AT_ANCHOR = 0.001f;
 	constexpr float RUNOFF_STRENGTH_MIN = 0.0f;
@@ -131,7 +132,7 @@ namespace
 			0.0f,
 			1.0f,
 			1.0f,
-			0.70f },
+			0.55f },
 		{ "Balanced",
 			"Balanced visuals and performance for typical gameplay.",
 			0.75f,
@@ -153,7 +154,7 @@ namespace
 			0.5f,
 			1.0f,
 			1.2f,
-			0.75f },
+			0.62f },
 		{ "Quality",
 			"Higher fidelity wetness with denser raindrop/ripple coverage.",
 			0.9f,
@@ -175,7 +176,7 @@ namespace
 			0.9f,
 			1.15f,
 			1.25f,
-			0.80f }
+			0.70f }
 	} };
 
 	// Cached per-frame data for debug/weather analysis UI.
@@ -466,7 +467,8 @@ namespace
 	float ReflectionScaleFromUi(
 		float uiValue,
 		float maxScale,
-		float anchorScale)
+		float anchorScale,
+		float anchorT)
 	{
 		const float clampedUi = std::clamp(uiValue, 0.0f, 1.0f);
 		if (clampedUi <= 0.0f) {
@@ -475,19 +477,19 @@ namespace
 
 		const float safeMaxScale = std::max(maxScale, 1e-6f);
 		const float safeAnchorScale = std::clamp(anchorScale, 1e-6f, safeMaxScale * 0.999999f);
-		const float safeAnchorT = std::clamp(REFLECTION_UI_ANCHOR_T, 1e-3f, 0.999f);
+		const float safeAnchorT = std::clamp(anchorT, 1e-3f, 0.999f);
 		const float exponent = std::log(safeAnchorScale / safeMaxScale) / std::log(safeAnchorT);
 		return safeMaxScale * std::pow(clampedUi, exponent);
 	}
 
 	float ModernWetReflectionScaleFromUi(float uiValue)
 	{
-		return ReflectionScaleFromUi(uiValue, MAX_MODERN_WET_REFLECTION_UI_SCALE, MODERN_REFLECTION_SCALE_AT_ANCHOR);
+		return ReflectionScaleFromUi(uiValue, MAX_MODERN_WET_REFLECTION_UI_SCALE, MODERN_REFLECTION_SCALE_AT_ANCHOR, MODERN_REFLECTION_UI_ANCHOR_T);
 	}
 
 	float LegacyWetReflectionScaleFromUi(float uiValue, float legacyScaleMax)
 	{
-		return ReflectionScaleFromUi(uiValue, legacyScaleMax, LEGACY_REFLECTION_SCALE_AT_ANCHOR);
+		return ReflectionScaleFromUi(uiValue, legacyScaleMax, LEGACY_REFLECTION_SCALE_AT_ANCHOR, LEGACY_REFLECTION_UI_ANCHOR_T);
 	}
 
 	uint SanitizeToggle(uint value)
@@ -629,7 +631,6 @@ namespace
 		settings.EnableForwardReflectionBias = SanitizeToggle(settings.EnableForwardReflectionBias);
 		settings.EnableVanillaReflectionCompensation = SanitizeToggle(settings.EnableVanillaReflectionCompensation);
 		settings.EnablePuddleInfluenceDebugReadout = std::min(settings.EnablePuddleInfluenceDebugReadout, 4u);
-		settings.EnableLodSafeWetDarkening = SanitizeToggle(settings.EnableLodSafeWetDarkening);
 		SanitizeReflectionSettings(settings);
 	}
 
@@ -742,8 +743,7 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	RunoffSpeed,
 	EnableForwardReflectionBias,
 	EnableVanillaReflectionCompensation,
-	EnablePuddleInfluenceDebugReadout,
-	EnableLodSafeWetDarkening)
+	EnablePuddleInfluenceDebugReadout)
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	WetnessEffects::DebugSettings,
@@ -1296,7 +1296,7 @@ void WetnessEffects::DrawSettings()
 		ImGui::EndDisabled();
 		SanitizePersistentReflectionSettings(settings, modernWetIndirectSpecularScale, legacyWetIndirectSpecularScale);
 		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::TextUnformatted("Overall reflection brightness. Perceptual curve: slider midpoint maps to practical scales (modern ~0.02, legacy ~0.001) while still allowing full 0-1 output.");
+			ImGui::TextUnformatted("Overall reflection brightness. Perceptual curve spreads response across the full slider; practical wet reflection levels begin in the lower third.");
 		}
 
 		drawUintCheckboxWithTooltip(
@@ -1370,11 +1370,6 @@ void WetnessEffects::DrawSettings()
 		if (auto _tt = Util::HoverTooltipWrapper()) {
 			ImGui::TextUnformatted("How much wet ground darkens. Higher = darker wet patches, lower = closer to original brightness.");
 		}
-		drawUintCheckboxWithTooltip(
-			"LOD-safe Wet Darkening",
-			settings.EnableLodSafeWetDarkening,
-			"Softens wet darkening at long range to reduce LOD transition borders.");
-
 		ImGui::SliderFloat("Wet Surface Saturation", &settings.WetColorSaturation, 0.0f, 2.5f, "%.2f");
 		if (auto _tt = Util::HoverTooltipWrapper()) {
 			ImGui::TextUnformatted("How colorful wet surfaces look. Higher = richer color, lower = more neutral color.");
@@ -2020,7 +2015,6 @@ void WetnessEffects::LoadSettings(json& o_json)
 			"EnableForwardReflectionBias",
 			"EnableVanillaReflectionCompensation",
 			"EnablePuddleInfluenceDebugReadout",
-			"EnableLodSafeWetDarkening",
 		});
 	settings = {};
 	if (isObject) {

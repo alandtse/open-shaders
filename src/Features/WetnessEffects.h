@@ -87,7 +87,7 @@ public:
 		uint EnableForwardReflectionBias = false;
 		uint EnableVanillaReflectionCompensation = false;
 		uint EnablePuddleInfluenceDebugReadout = false;
-		uint EnableLodSafeWetDarkening = false;
+		uint ReservedWetnessControl0 = 0;
 		// Reserved padding to keep shader-facing settings size 16-byte aligned.
 		uint ReservedPadding0 = 0;
 		uint ReservedPadding1 = 0;
@@ -105,7 +105,7 @@ public:
 	static_assert(offsetof(Settings, EnableForwardReflectionBias) == 180, "WetnessEffects::Settings EnableForwardReflectionBias offset changed.");
 	static_assert(offsetof(Settings, EnableVanillaReflectionCompensation) == 184, "WetnessEffects::Settings EnableVanillaReflectionCompensation offset changed.");
 	static_assert(offsetof(Settings, EnablePuddleInfluenceDebugReadout) == 188, "WetnessEffects::Settings EnablePuddleInfluenceDebugReadout offset changed.");
-	static_assert(offsetof(Settings, EnableLodSafeWetDarkening) == 192, "WetnessEffects::Settings EnableLodSafeWetDarkening offset changed.");
+	static_assert(offsetof(Settings, ReservedWetnessControl0) == 192, "WetnessEffects::Settings ReservedWetnessControl0 offset changed.");
 	static_assert(offsetof(Settings, ReservedPadding0) == 196, "WetnessEffects::Settings ReservedPadding0 offset changed.");
 	static_assert(offsetof(Settings, ReservedPadding1) == 200, "WetnessEffects::Settings ReservedPadding1 offset changed.");
 	static_assert(offsetof(Settings, ReservedPadding2) == 204, "WetnessEffects::Settings ReservedPadding2 offset changed.");
@@ -164,7 +164,7 @@ public:
 		uint EnableForwardReflectionBias = false;
 		uint EnableVanillaReflectionCompensation = false;
 		uint EnablePuddleInfluenceDebugReadout = false;
-		uint EnableLodSafeWetDarkening = false;
+		uint ReservedWetnessControl0 = 0;
 		uint ReservedPadding0 = 0;
 		uint ReservedPadding1 = 0;
 		uint ReservedPadding2 = 0;
@@ -184,8 +184,8 @@ public:
 		"WetnessEffects::ShaderSettings vanilla reflection compensation offsets must match Settings.");
 	static_assert(offsetof(ShaderSettings, EnablePuddleInfluenceDebugReadout) == offsetof(Settings, EnablePuddleInfluenceDebugReadout),
 		"WetnessEffects::ShaderSettings debug readout offsets must match Settings.");
-	static_assert(offsetof(ShaderSettings, EnableLodSafeWetDarkening) == offsetof(Settings, EnableLodSafeWetDarkening),
-		"WetnessEffects::ShaderSettings LOD-safe wet darkening offsets must match Settings.");
+	static_assert(offsetof(ShaderSettings, ReservedWetnessControl0) == offsetof(Settings, ReservedWetnessControl0),
+		"WetnessEffects::ShaderSettings reserved wetness control offsets must match Settings.");
 	static_assert(offsetof(ShaderSettings, ReservedPadding0) == offsetof(Settings, ReservedPadding0),
 		"WetnessEffects::ShaderSettings reserved padding offsets must match Settings.");
 	static_assert(offsetof(ShaderSettings, ReservedPadding1) == offsetof(Settings, ReservedPadding1),
@@ -222,8 +222,8 @@ public:
 	bool enableWeatherDrivenDryingModel = true;
 	float puddleDryingHours = 18.0f;
 	float puddleLayout = 2.0f;
-	float modernWetIndirectSpecularScale = 0.75f;
-	float legacyWetIndirectSpecularScale = 0.80f;
+	float modernWetIndirectSpecularScale = 0.61f;
+	float legacyWetIndirectSpecularScale = 0.68f;
 	// Climate preset system
 	enum class ClimatePreset : uint32_t
 	{

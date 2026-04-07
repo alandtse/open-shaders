@@ -3221,13 +3221,10 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	porosity = lerp(porosity, 0.0, saturate(sqrt(envMask)));
 #			endif
 	float wetDarkeningStrength = max(0.0, SharedData::wetnessEffectsSettings.WetDarkeningStrength);
-	const bool lodSafeWetDarkeningEnabled = SharedData::wetnessEffectsSettings.EnableLodSafeWetDarkening != 0;
 	float lodSafeWetDarkeningFade = 1.0;
-	if (lodSafeWetDarkeningEnabled) {
-		float viewDistance = abs(viewPosition.z);
-		lodSafeWetDarkeningFade = 1.0 - smoothstep(4096.0, 12288.0, viewDistance);
-		wetDarkeningStrength *= lerp(0.65, 1.0, lodSafeWetDarkeningFade);
-	}
+	float viewDistance = abs(viewPosition.z);
+	lodSafeWetDarkeningFade = 1.0 - smoothstep(4096.0, 12288.0, viewDistance);
+	wetDarkeningStrength *= lerp(0.65, 1.0, lodSafeWetDarkeningFade);
 	// Darkening/saturation should follow active rain/post-rain wetness (and runoff),
 	// not persistent shore wetness, so surfaces can visually dry out after rain.
 	float rainDrivenWetness = saturate(max(rainWetness, puddleWetness));
@@ -3237,9 +3234,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	float rainWetVisualMask = smoothstep(0.02, 0.08, rainDrivenWetness);
 	float wetVisualMask = max(rainWetVisualMask, smoothstep(0.01, 0.05, runoffStreakMask * runoffRainMask));
 	float wetDarkeningBlend = saturate(0.8 * wetDarkeningStrength) * wetVisualMask;
-	if (lodSafeWetDarkeningEnabled) {
-		wetDarkeningBlend *= lerp(0.75, 1.0, lodSafeWetDarkeningFade);
-	}
+	wetDarkeningBlend *= lerp(0.75, 1.0, lodSafeWetDarkeningFade);
 	float3 wetDarkenedBaseColor = pow(abs(material.BaseColor), 1.0 + wetnessDarkeningAmount);
 	material.BaseColor = lerp(material.BaseColor, wetDarkenedBaseColor, wetDarkeningBlend);
 	float wetColorSaturation = max(0.0, SharedData::wetnessEffectsSettings.WetColorSaturation);
