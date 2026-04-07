@@ -167,25 +167,11 @@ void GetIndirectLobeWeights(out IndirectLobeWeights lobeWeights, IndirectContext
 }
 
 #if defined(WETNESS_EFFECTS)
-bool IsStrongReflectionsProfileEnabled()
-{
-	return SharedData::wetnessEffectsSettings.EnableStrongReflectionsProfile != 0;
-}
-
-bool IsStrongReflectionsOptionEnabled(uint optionToggle)
-{
-	return IsStrongReflectionsProfileEnabled() && optionToggle != 0;
-}
-
 float3 GetWetReflectionModeConfig(float wetReflectionScale)
 {
-	const float LEGACY_REFLECTION_SCALE_MAX = 0.25;
-	// Curve normalized legacy slider with:
-	// f(0)=0, f(1)=1, f(0.3)=0.12 (so 30% of 0.25 maps to 0.03).
-	const float LEGACY_CURVE_A = 0.857142857;
-	const float LEGACY_CURVE_B = 0.142857143;
-	const bool march3CompatibilityProfileEnabled = IsStrongReflectionsOptionEnabled(SharedData::wetnessEffectsSettings.EnableMarch3WetnessProfile);
-	const float wetReflectionScaleClamped = saturate(wetReflectionScale);
+	const float WET_REFLECTION_SCALE_MAX = 1.0;
+	const float legacyReflectionScaleMax = 1.0;
+	const float wetReflectionScaleClamped = clamp(wetReflectionScale, 0.0, WET_REFLECTION_SCALE_MAX);
 	if (wetReflectionScaleClamped <= 0.0) {
 		return 0.0;
 	}
@@ -199,11 +185,7 @@ float3 GetWetReflectionModeConfig(float wetReflectionScale)
 
 	const float invModeCount = rcp(modeCount);
 	const float modernScale = wetReflectionScaleClamped;
-	const float legacySliderNormalized = saturate(wetReflectionScaleClamped / LEGACY_REFLECTION_SCALE_MAX);
-	const float legacyCurve = legacySliderNormalized * (LEGACY_CURVE_B + LEGACY_CURVE_A * legacySliderNormalized);
-	const float legacyScale = march3CompatibilityProfileEnabled ?
-		(LEGACY_REFLECTION_SCALE_MAX * legacySliderNormalized) :
-		(LEGACY_REFLECTION_SCALE_MAX * saturate(legacyCurve));
+	const float legacyScale = min(wetReflectionScaleClamped, legacyReflectionScaleMax);
 	const float effectiveScale = (modernScale * (enableModern ? 1.0 : 0.0) + legacyScale * (enableLegacy ? 1.0 : 0.0)) * invModeCount;
 	return float3(
 		enableModern ? invModeCount : 0.0,
@@ -238,8 +220,8 @@ void EvaluateWetnessLighting(float3 wetnessNormal, DirectContext context, float 
 	const float3 V = context.viewDir;
 	const float3 L = context.lightDir;
 	const float3 H = context.halfVector;
-	const bool forwardReflectionBiasEnabled = IsStrongReflectionsOptionEnabled(SharedData::wetnessEffectsSettings.EnableForwardReflectionBias);
-	const bool vanillaReflectionCompensationEnabled = IsStrongReflectionsOptionEnabled(SharedData::wetnessEffectsSettings.EnableVanillaReflectionCompensation);
+	const bool forwardReflectionBiasEnabled = SharedData::wetnessEffectsSettings.EnableForwardReflectionBias != 0;
+	const bool vanillaReflectionCompensationEnabled = SharedData::wetnessEffectsSettings.EnableVanillaReflectionCompensation != 0;
 
 	float NdotL = clamp(dot(N, L), EPSILON_DOT_CLAMP, 1);
 	float NdotV = saturate(abs(dot(N, V)) + EPSILON_DOT_CLAMP);
@@ -286,8 +268,8 @@ float3 GetWetnessIndirectLobeWeights(inout IndirectLobeWeights lobeWeights, floa
 	const float3 N = wetnessNormal;
 	const float3 V = context.viewDir;
 	const float3 VN = context.vertexNormal;
-	const bool forwardReflectionBiasEnabled = IsStrongReflectionsOptionEnabled(SharedData::wetnessEffectsSettings.EnableForwardReflectionBias);
-	const bool vanillaReflectionCompensationEnabled = IsStrongReflectionsOptionEnabled(SharedData::wetnessEffectsSettings.EnableVanillaReflectionCompensation);
+	const bool forwardReflectionBiasEnabled = SharedData::wetnessEffectsSettings.EnableForwardReflectionBias != 0;
+	const bool vanillaReflectionCompensationEnabled = SharedData::wetnessEffectsSettings.EnableVanillaReflectionCompensation != 0;
 
 	float NdotV = saturate(abs(dot(N, V)) + EPSILON_DOT_CLAMP);
 	if (forwardReflectionBiasEnabled) {

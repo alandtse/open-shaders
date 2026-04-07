@@ -2375,9 +2375,11 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	float wetnessGlossinessSpecular = 0.0;
 	float runoffStreakMask = 0.0;
 	float wetHighlightReflectanceScale = 1.0;
+	float influenceDebug = 0.0;
 	float retentionMaskDebug = 0.0;
 	float fillLevelDebug = 0.0;
 	float finalPuddleDebug = 0.0;
+	float puddleDebugContributorMask = 0.0;
 	float3 puddleDebugColor = -1.0.xxx;
 	uint puddleDebugMode = 0;
 	const bool wetnessEnabled = (SharedData::wetnessEffectsSettings.EnableWetnessEffects != 0);
@@ -2567,8 +2569,10 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 		// ON  (dual model): concavity/depth retention + slope response.
 		// Generated fully from runtime material/depth cues (no authored DDS mask).
 		float slopeRetentionMask = smoothstep(0.58, 0.985, saturate(worldNormal.z));
+		float debugGroundMask = smoothstep(0.70, 0.94, saturate(worldNormal.z));
 		float puddleSurfaceMask = saturate(dirtFactor * 1.00 + stoneFactor * 0.80 + (1.0 - vegetationFactor) * 0.10 - vegetationFactor * 0.85);
 		puddleEligibilityMask = saturate(slopeRetentionMask * puddleSurfaceMask);
+		puddleDebugContributorMask = saturate(puddleEligibilityMask * debugGroundMask);
 		float materialRetentionMask = saturate((0.25 + dirtFactor * 1.00 + stoneFactor * 0.80) * puddleSurfaceMask);
 		float flatRetentionMask = saturate((0.85 * slopeRetentionMask + 0.15 * flatPuddleMix) * materialRetentionMask);
 		float depthRetentionBase = saturate((0.82 * unevenDepthMask + 0.13 * slopeRetentionMask + 0.05 * flatPuddleMix) * materialRetentionMask);
@@ -2614,45 +2618,37 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 		flatMandatoryPuddle *= retentionMask;
 
 #		if !defined(SKINNED)
-		const bool strongReflectionsProfileEnabled = SharedData::wetnessEffectsSettings.EnableStrongReflectionsProfile != 0;
-		const bool march3CompatibilityProfileEnabled = strongReflectionsProfileEnabled && SharedData::wetnessEffectsSettings.EnableMarch3WetnessProfile != 0;
-		const float puddlePatternDominance = strongReflectionsProfileEnabled ? max(0.0, SharedData::wetnessEffectsSettings.PuddlePatternDominance) : 1.0;
 		// Keep mandatory pooling, but gate it by the puddle-pattern signal so
 		// Puddle Radius/Layout and Max Puddle Wetness still visibly affect shape.
-		if (march3CompatibilityProfileEnabled) {
-			puddleFormation = max(puddleFormation, flatMandatoryPuddle);
-		} else {
-			float flatPatternThreshold = lerp(0.50, 0.12, puddleStrength);
-			float flatPattern = saturate((puddleSignal - flatPatternThreshold) / max(1e-3, 1.0 - flatPatternThreshold));
-			float flatPatternCoverage = lerp(0.30, 1.0, flatPattern);
-			float flatStrength = lerp(0.35, 1.0, puddleStrength);
-			float dominanceDelta = puddlePatternDominance - 1.0;
-			float dominanceTowardMandatory = saturate(dominanceDelta);
-			float dominanceTowardPattern = saturate(-dominanceDelta);
-			flatPatternCoverage = lerp(flatPatternCoverage, 1.0, dominanceTowardMandatory);
-			flatPatternCoverage = lerp(flatPatternCoverage, flatPattern * 0.5, dominanceTowardPattern);
-			flatStrength *= lerp(1.0, 1.20, dominanceTowardMandatory);
-			flatStrength *= lerp(1.0, 0.70, dominanceTowardPattern);
-			// Avoid hard-overriding depth-driven puddles with the flat mandatory floor.
-			float depthModelDominance = saturate(depthBlend * unevenDepthMask);
-			float mandatoryDepthAttenuation = lerp(1.0, 0.55, depthModelDominance);
-			float mandatoryTarget = flatMandatoryPuddle * flatPatternCoverage * flatStrength * mandatoryDepthAttenuation;
-			float mandatoryHeadroom = saturate(1.0 - puddleFormation);
-			puddleFormation = saturate(puddleFormation + mandatoryTarget * mandatoryHeadroom);
-		}
+		float flatPatternThreshold = lerp(0.50, 0.12, puddleStrength);
+		float flatPattern = saturate((puddleSignal - flatPatternThreshold) / max(1e-3, 1.0 - flatPatternThreshold));
+		float flatPatternCoverage = lerp(0.30, 1.0, flatPattern);
+		float flatStrength = lerp(0.35, 1.0, puddleStrength);
+		// Avoid hard-overriding depth-driven puddles with the flat mandatory floor.
+		float depthModelDominance = saturate(depthBlend * unevenDepthMask);
+		float mandatoryDepthAttenuation = lerp(1.0, 0.55, depthModelDominance);
+		float mandatoryTarget = flatMandatoryPuddle * flatPatternCoverage * flatStrength * mandatoryDepthAttenuation;
+		float mandatoryHeadroom = saturate(1.0 - puddleFormation);
+		puddleFormation = saturate(puddleFormation + mandatoryTarget * mandatoryHeadroom);
 #		else
 		puddleFormation = max(puddleFormation, flatMandatoryPuddle);
 #		endif
 	}
 	puddleFormation *= saturate(wetnessOcclusion * 2.0);
 	puddle = max(wetness, puddleFormation);
-	retentionMaskDebug = saturate(pow(retentionMask, 1.25));
-	fillLevelDebug = saturate(pow(fillLevel * puddleEligibilityMask, 1.10));
-	finalPuddleDebug = saturate(puddleFormation);
+	influenceDebug = saturate((0.35 * retentionMask + 0.35 * fillLevel + 0.30 * puddleFormation) * puddleDebugContributorMask);
+	retentionMaskDebug = saturate(pow(retentionMask * puddleDebugContributorMask, 1.25));
+	fillLevelDebug = saturate(pow(fillLevel * puddleDebugContributorMask, 1.10));
+	finalPuddleDebug = saturate(puddleFormation * puddleDebugContributorMask);
 
-	[branch] if (puddleDebugMode >= 2 && puddleDebugMode <= 4) {
+	[branch] if (puddleDebugMode >= 1 && puddleDebugMode <= 4) {
 		float debugValue = 0.0;
-		if (puddleDebugMode == 2) {
+		if (puddleDebugMode == 1) {
+			debugValue = influenceDebug;
+			[branch] if (debugValue > 1e-3) {
+				puddleDebugColor = lerp(float3(0.03, 0.03, 0.03), float3(1.00, 0.75, 0.08), debugValue);
+			}
+		} else if (puddleDebugMode == 2) {
 			debugValue = retentionMaskDebug;
 			[branch] if (debugValue > 1e-3) {
 				puddleDebugColor = lerp(float3(0.08, 0.02, 0.20), float3(0.10, 0.95, 0.25), debugValue);
@@ -3215,8 +3211,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	porosity = lerp(porosity, 0.0, saturate(sqrt(envMask)));
 #			endif
 	float wetDarkeningStrength = max(0.0, SharedData::wetnessEffectsSettings.WetDarkeningStrength);
-	const bool strongReflectionsProfileEnabled = SharedData::wetnessEffectsSettings.EnableStrongReflectionsProfile != 0;
-	const bool lodSafeWetDarkeningEnabled = strongReflectionsProfileEnabled && SharedData::wetnessEffectsSettings.EnableLodSafeWetDarkening != 0;
+	const bool lodSafeWetDarkeningEnabled = SharedData::wetnessEffectsSettings.EnableLodSafeWetDarkening != 0;
 	float lodSafeWetDarkeningFade = 1.0;
 	if (lodSafeWetDarkeningEnabled) {
 		float viewDistance = abs(viewPosition.z);

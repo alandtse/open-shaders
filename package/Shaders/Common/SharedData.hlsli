@@ -146,14 +146,14 @@ namespace SharedData
 		float WetColorSaturation;
 		float WetHighlightReduction;
 		float RunoffSpeed;
-		uint EnableStrongReflectionsProfile;
-		uint EnableMarch3WetnessProfile;
-		uint EnableExtendedLegacyReflectionRange;
+		uint ReservedReflectionControl0;
 		uint EnableForwardReflectionBias;
 		uint EnableVanillaReflectionCompensation;
-		float PuddlePatternDominance;
 		uint EnablePuddleInfluenceDebugReadout;
 		uint EnableLodSafeWetDarkening;
+		uint ReservedPadding0;
+		uint ReservedPadding1;
+		uint ReservedPadding2;
 	};
 
 	struct SkylightingSettings
