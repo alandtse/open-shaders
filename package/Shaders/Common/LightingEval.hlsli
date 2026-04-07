@@ -226,7 +226,11 @@ void EvaluateWetnessLighting(float3 wetnessNormal, DirectContext context, float 
 	float NdotL = clamp(dot(N, L), EPSILON_DOT_CLAMP, 1);
 	float NdotV = saturate(abs(dot(N, V)) + EPSILON_DOT_CLAMP);
 	if (forwardReflectionBiasEnabled) {
-		NdotV = max(NdotV, 0.32);
+		// Make forward/top-down wet reflections visibly stronger instead of only
+		// applying a subtle floor that is often imperceptible in gameplay.
+		float forwardBiasAmount = saturate((0.62 - NdotV) / 0.62);
+		float biasedNdotV = max(NdotV, 0.55);
+		NdotV = lerp(NdotV, biasedNdotV, forwardBiasAmount);
 	}
 	float NdotH = saturate(dot(N, H));
 	float VdotH = saturate(dot(V, H));
@@ -236,6 +240,9 @@ void EvaluateWetnessLighting(float3 wetnessNormal, DirectContext context, float 
 	float3 F = BRDF::F_Schlick(wetnessF0, VdotH);
 
 	F *= wetnessStrength * wetReflectionScale;
+	if (forwardReflectionBiasEnabled) {
+		F *= 1.18;
+	}
 #	if !defined(TRUE_PBR)
 	if (vanillaReflectionCompensationEnabled) {
 		lightColor *= 1.1;
@@ -273,7 +280,9 @@ float3 GetWetnessIndirectLobeWeights(inout IndirectLobeWeights lobeWeights, floa
 
 	float NdotV = saturate(abs(dot(N, V)) + EPSILON_DOT_CLAMP);
 	if (forwardReflectionBiasEnabled) {
-		NdotV = max(NdotV, 0.32);
+		float forwardBiasAmount = saturate((0.62 - NdotV) / 0.62);
+		float biasedNdotV = max(NdotV, 0.55);
+		NdotV = lerp(NdotV, biasedNdotV, forwardBiasAmount);
 	}
 	float2 specularBRDF = BRDF::EnvBRDF(roughness, NdotV);
 	float3 modernLobeWeight = 0.02 * specularBRDF.x + specularBRDF.y;
@@ -281,6 +290,9 @@ float3 GetWetnessIndirectLobeWeights(inout IndirectLobeWeights lobeWeights, floa
 	float glancing = saturate(1.0 - NdotV);
 	legacyLobeWeight *= (1.0 + 0.25 * glancing);
 	float3 specularLobeWeight = (modernLobeWeight * modernWeight + legacyLobeWeight * legacyWeight) * wetnessStrength * wetnessScaleClamped;
+	if (forwardReflectionBiasEnabled) {
+		specularLobeWeight *= 1.15;
+	}
 #	if !defined(TRUE_PBR)
 	if (vanillaReflectionCompensationEnabled) {
 		specularLobeWeight *= 1.12;
@@ -296,6 +308,9 @@ float3 GetWetnessIndirectLobeWeights(inout IndirectLobeWeights lobeWeights, floa
 	float3 R = reflect(-V, N);
 	float horizon = min(1.0 + dot(R, VN), 1.0);
 	horizon = horizon * horizon;
+	if (forwardReflectionBiasEnabled) {
+		horizon = max(horizon, 0.45);
+	}
 	if (vanillaReflectionCompensationEnabled) {
 		horizon = max(horizon, 0.35);
 	}
