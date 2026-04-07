@@ -1292,14 +1292,8 @@ void WetnessEffects::DrawSettings()
 		ImGui::BeginDisabled(!anyReflectionModeEnabled);
 		if (legacyReflectionModeEnabled) {
 			ImGui::SliderFloat("Wet Reflection Shine", &legacyWetIndirectSpecularScale, 0.0f, legacyReflectionScaleMax, "%.4f", ImGuiSliderFlags_AlwaysClamp);
-			const float legacyMappedScale = LegacyWetReflectionScaleFromUi(legacyWetIndirectSpecularScale, legacyReflectionScaleMax);
-			ImGui::SameLine();
-			ImGui::TextDisabled("(ui %.4f -> %.4f)", legacyWetIndirectSpecularScale, legacyMappedScale);
 		} else {
 			ImGui::SliderFloat("Wet Reflection Shine", &modernWetIndirectSpecularScale, 0.0f, MAX_MODERN_WET_REFLECTION_UI_SCALE, "%.4f", ImGuiSliderFlags_AlwaysClamp);
-			const float modernMappedScale = ModernWetReflectionScaleFromUi(modernWetIndirectSpecularScale);
-			ImGui::SameLine();
-			ImGui::TextDisabled("(ui %.4f -> %.4f)", modernWetIndirectSpecularScale, modernMappedScale);
 		}
 		ImGui::EndDisabled();
 		SanitizePersistentReflectionSettings(settings, modernWetIndirectSpecularScale, legacyWetIndirectSpecularScale);
