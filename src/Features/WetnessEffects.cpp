@@ -1,5 +1,6 @@
 #include "WetnessEffects.h"
 #include "Menu.h"
+#include "State.h"
 #include "WeatherPicker.h"
 
 #include <algorithm>
@@ -83,6 +84,7 @@ namespace
 	constexpr float RAIN_EVENT_REFERENCE_SECONDS = 1800.0f;
 	constexpr float RAIN_EVENT_DECAY_SECONDS = 43200.0f;
 	constexpr float MIN_WETNESS_DRY_SCALE_AT_MAX_EVENT = 0.12f;
+	constexpr float RUNTIME_DRY_EPSILON = 1e-4f;
 
 	struct WetnessUiPresetDefinition
 	{
@@ -183,6 +185,9 @@ namespace
 	// Keep this outside WetnessEffects object layout to avoid class-level alignment padding warnings.
 	WetnessEffects::PerFrame g_lastFrameData{};
 	bool g_hasLastFrameData = false;
+	WetnessEffects::PerFrame g_cachedCommonBufferData{};
+	bool g_hasCachedCommonBufferData = false;
+	uint32_t g_cachedCommonBufferFrame = 0;
 
 	float GetWeatherRainIntensity(RE::TESWeather* weather)
 	{
@@ -973,6 +978,9 @@ void WetnessEffects::ResetRuntimeState()
 	runtimeState = {};
 	g_lastFrameData = {};
 	g_hasLastFrameData = false;
+	g_cachedCommonBufferData = {};
+	g_hasCachedCommonBufferData = false;
+	g_cachedCommonBufferFrame = 0;
 }
 
 void WetnessEffects::InvalidateSanitizedSettingsCache()
@@ -1686,6 +1694,12 @@ void WetnessEffects::ApplyClimatePreset(ClimatePreset preset)
 
 WetnessEffects::PerFrame WetnessEffects::GetCommonBufferData() const
 {
+	const bool canUseFrameCache = globals::state != nullptr;
+	const uint32_t frameIndex = canUseFrameCache ? globals::state->frameCount : 0u;
+	if (canUseFrameCache && g_hasCachedCommonBufferData && g_cachedCommonBufferFrame == frameIndex) {
+		return g_cachedCommonBufferData;
+	}
+
 	PerFrame data{};
 
 	data.Raining = 0.0f;
@@ -1793,7 +1807,35 @@ WetnessEffects::PerFrame WetnessEffects::GetCommonBufferData() const
 	// Allow wetness timelines to progress from calendar delta even while the game is paused
 	// (e.g. wait/sleep), but still avoid frame-time updates while paused without calendar data.
 	const bool canAdvanceWetnessTime = deltaGameSeconds > 0.0 && (calendar != nullptr || !gamePaused);
-	if (canAdvanceWetnessTime) {
+	const bool hasDebugOverrides =
+		debugSettings.EnableWetnessOverride ||
+		debugSettings.EnablePuddleOverride ||
+		debugSettings.EnableRainOverride;
+	const bool dryTimelineSettled =
+		runtimeState.wetnessDepth <= RUNTIME_DRY_EPSILON &&
+		runtimeState.puddleDepth <= RUNTIME_DRY_EPSILON &&
+		runtimeState.rainEventExposure <= RUNTIME_DRY_EPSILON &&
+		runtimeState.postRainEventWeight <= RUNTIME_DRY_EPSILON;
+	bool runtimeInactive = settings.EnableWetnessEffects == 0 ||
+		(settings.EnableWetnessEffects != 0 &&
+		!hasDebugOverrides &&
+		!rainingNow &&
+		dryTimelineSettled);
+
+	if (runtimeInactive) {
+		runtimeState.wetnessDepth = 0.0f;
+		runtimeState.puddleDepth = 0.0f;
+		runtimeState.rainEventExposure = 0.0f;
+		runtimeState.rainEventWeight = 0.0f;
+		runtimeState.postRainEventWeight = 0.0f;
+		runtimeState.postRainElapsedSeconds = 0.0f;
+		runtimeState.postRainStartWetnessDepth = 0.0f;
+		runtimeState.postRainStartPuddleDepth = 0.0f;
+		runtimeState.wasRainingLastFrame = false;
+		effectiveDryingHours = getEffectiveDryingHours(0.0f);
+	}
+
+	if (canAdvanceWetnessTime && !runtimeInactive) {
 		float wetnessCurrentRate = 0.0f;
 		float puddleCurrentRate = 0.0f;
 		float wetnessLastRate = 0.0f;
@@ -1937,12 +1979,15 @@ WetnessEffects::PerFrame WetnessEffects::GetCommonBufferData() const
 		rainTimer += (size_t)(RE::GetSecondsSinceLastFrame() * 1000);  // BSTimer::delta is always 0 for some reason
 	data.Time = rainTimer / 1000.f;
 
-	if (!canAdvanceWetnessTime) {
+	if (!canAdvanceWetnessTime && !runtimeInactive) {
 		const float dryingEventWeight = rainingNow ? runtimeState.rainEventWeight : runtimeState.postRainEventWeight;
 		effectiveDryingHours = getEffectiveDryingHours(dryingEventWeight);
 	}
 
 	data.settings = MakeShaderSettings(GetSanitizedSettings());
+	if (runtimeInactive) {
+		data.settings.EnableWetnessEffects = 0u;
+	}
 	// Raindrops should stop when rain weather transition is complete (weight reaches zero),
 	// not immediately when current weather pointer flips.
 	if (weatherRainTransitionWeight <= 0.005f || isInterior) {
@@ -1972,6 +2017,11 @@ WetnessEffects::PerFrame WetnessEffects::GetCommonBufferData() const
 
 	g_lastFrameData = data;
 	g_hasLastFrameData = true;
+	if (canUseFrameCache) {
+		g_cachedCommonBufferData = data;
+		g_hasCachedCommonBufferData = true;
+		g_cachedCommonBufferFrame = frameIndex;
+	}
 
 	return data;
 }
@@ -1981,6 +2031,12 @@ void WetnessEffects::Prepass()
 	auto renderer = globals::game::renderer;
 	auto context = globals::d3d::context;
 	if (!renderer || !context) {
+		return;
+	}
+
+	if (g_hasLastFrameData && g_lastFrameData.settings.EnableWetnessEffects == 0u) {
+		ID3D11ShaderResourceView* nullSrv = nullptr;
+		context->PSSetShaderResources(kWetnessPsSrvPrecipOcclusionSlot, 1, &nullSrv);
 		return;
 	}
 

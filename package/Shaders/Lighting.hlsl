@@ -2420,7 +2420,8 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 		float wetnessOcclusionBase = saturate(SphericalHarmonics::Unproject(skylightingSH, float3(0, 0, 1)));
 		// Keep skylighting influence subtle for wetness so probe refresh latency does not
 		// create a player-following dark spotlight on terrain.
-		wetnessOcclusion = lerp(1.0, wetnessOcclusionBase, 0.22);
+		float wetnessOcclusionStable = max(wetnessOcclusionBase, 0.90);
+		wetnessOcclusion = lerp(1.0, wetnessOcclusionStable, 0.12);
 	}
 #		else
 	float wetnessOcclusion = inWorld;
@@ -2511,8 +2512,9 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	rainWetness = SharedData::wetnessEffectsSettings.SkinWetness * SharedData::wetnessEffectsSettings.Wetness * 0.8f;
 #		endif
 
-	rainWetness *= wetnessOcclusion;
-	puddleWetness *= wetnessOcclusion;
+	float wetnessOcclusionMix = lerp(1.0, wetnessOcclusion, 0.35);
+	rainWetness *= wetnessOcclusionMix;
+	puddleWetness *= wetnessOcclusionMix;
 
 	// Apply per-surface post-rain drying response (neutral at multiplier=1.0).
 	rainWetness = pow(saturate(rainWetness), surfaceDryingPower);
@@ -2576,27 +2578,29 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 		// ON  (dual model): concavity/depth retention + slope response.
 		// Generated fully from runtime material/depth cues (no authored DDS mask).
 		float slopeRetentionMask = saturate(lerp(smoothstep(0.58, 0.985, saturate(worldNormal.z)), geomSlopeMask, 0.75));
-		float debugGroundMask = geomDebugGroundMask;
+		float debugGroundMask = saturate(smoothstep(0.78, 0.985, saturate(worldNormal.z)) * geomDebugGroundMask);
 		float puddleSurfaceMask = saturate(dirtFactor * 1.10 + stoneFactor * 0.70 - vegetationFactor * 0.90);
-		puddleEligibilityMask = saturate(slopeRetentionMask * puddleSurfaceMask);
+		puddleEligibilityMask = saturate(pow(slopeRetentionMask, 1.35) * puddleSurfaceMask);
 		puddleDebugContributorMask = saturate(puddleEligibilityMask * debugGroundMask);
-		float materialRetentionMask = saturate((0.10 + dirtFactor * 1.05 + stoneFactor * 0.75) * puddleSurfaceMask);
-		float flatRetentionMask = saturate((0.78 * slopeRetentionMask + 0.22 * flatPuddleMix) * materialRetentionMask);
-		float depthRetentionBase = saturate((0.58 * unevenDepthMask + 0.24 * geomVarianceMask + 0.13 * slopeRetentionMask + 0.05 * flatPuddleMix) * materialRetentionMask);
+		float materialRetentionMask = saturate((0.05 + dirtFactor * 0.90 + stoneFactor * 0.55) * puddleSurfaceMask);
+		float flatRetentionMask = saturate((0.24 * slopeRetentionMask + 0.12 * flatPuddleMix) * materialRetentionMask);
+		float depthRetentionBase = saturate((0.66 * unevenDepthMask + 0.24 * geomVarianceMask + 0.07 * slopeRetentionMask + 0.03 * flatPuddleMix) * materialRetentionMask);
 		float depthRetentionExponent = lerp(1.10, 2.15, depthBlend);
 		float depthRetentionShaped = pow(depthRetentionBase, depthRetentionExponent);
 		float depthRetentionFloor = slopeRetentionMask * materialRetentionMask * lerp(0.34, 0.04, depthBlend);
-		float depthRetentionMask = saturate(max(depthRetentionShaped, depthRetentionFloor));
-		float depthRetentionMix = saturate(0.15 + depthBlend * 0.85);
+		float depthPresenceMask = saturate((max(unevenDepthMask, geomVarianceMask) - 0.10) * 1.35);
+		float depthRetentionMask = saturate(max(depthRetentionShaped, depthRetentionFloor) * lerp(0.35, 1.0, depthPresenceMask));
+		float depthRetentionMix = saturate(0.35 + depthBlend * 0.65);
 		float derivedRetentionMask = lerp(flatRetentionMask, depthRetentionMask, dualPuddleEnabled * depthRetentionMix);
-		retentionMask = saturate(derivedRetentionMask * puddleEligibilityMask);
+		retentionMask = pow(saturate(derivedRetentionMask * puddleEligibilityMask), lerp(1.15, 1.70, depthBlend));
 
 		// Fill level (how full puddles are) from puddle timeline with limited rain assist.
 		// Perlin is only used for edge breakup/variation.
-		float fillSource = saturate(max(puddleWetness, rainWetness * 0.55));
+		float fillSource = saturate(max(puddleWetness, rainWetness * 0.40));
 		float fillGate = smoothstep(SharedData::wetnessEffectsSettings.PuddleMinWetness * 0.35, 1.0, fillSource);
 		fillLevel = saturate(lerp(fillGate, fillSource, 0.25 + 0.25 * inRainBlend));
-		float localCapacity = saturate(0.30 + 0.45 * depthRetentionMask + 0.25 * geomVarianceMask);
+		float localCapacity = saturate(0.06 + 0.74 * depthRetentionMask + 0.20 * geomVarianceMask);
+		localCapacity *= lerp(0.55, 1.0, retentionMask);
 		localFillLevel = saturate(fillLevel * localCapacity);
 		float edgeVariation = lerp(0.88, 1.14, saturate((puddleSignal - 0.5) * 1.8 + 0.5));
 		float fillLevelShaped = saturate(localFillLevel * edgeVariation);
@@ -2621,10 +2625,10 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 		// Mandatory flat pooling: once the surface gets very flat and wet enough,
 		// enforce a broad puddle floor regardless of local puddle noise.
 		float flatAngleMask = smoothstep(0.88, 0.995, saturate(worldNormal.z));
-		float flatSource = saturate(max(fillLevel, puddleWetness));
+		float flatSource = saturate(max(localFillLevel, puddleWetness * 0.85));
 		float flatWetGate = smoothstep(SharedData::wetnessEffectsSettings.PuddleMinWetness * 0.65, 1.0, flatSource);
 		float flatMandatoryPuddle = flatSource * flatAngleMask * flatWetGate;
-		flatMandatoryPuddle *= retentionMask;
+		flatMandatoryPuddle *= retentionMask * saturate(retentionMask + depthRetentionMask * 0.25);
 
 #		if !defined(SKINNED)
 		// Keep mandatory pooling, but gate it by the puddle-pattern signal so
@@ -2646,9 +2650,9 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	puddleFormation *= saturate(wetnessOcclusion * 2.0);
 	puddle = max(wetness, puddleFormation);
 	influenceDebug = saturate((0.45 * retentionMask + 0.20 * fillLevel + 0.35 * puddleFormation) * puddleDebugContributorMask);
-	retentionMaskDebug = saturate(retentionMask * puddleDebugContributorMask);
-	fillLevelDebug = saturate(localFillLevel * puddleDebugContributorMask);
-	finalPuddleDebug = saturate(puddleFormation * puddleDebugContributorMask);
+	retentionMaskDebug = saturate(pow(retentionMask * puddleDebugContributorMask, 1.10));
+	fillLevelDebug = saturate(pow(localFillLevel * puddleDebugContributorMask, 1.35));
+	finalPuddleDebug = saturate(smoothstep(0.05, 0.70, puddleFormation) * puddleDebugContributorMask);
 
 	[branch] if (puddleDebugMode >= 1 && puddleDebugMode <= 4) {
 		float debugValue = 0.0;
@@ -2656,7 +2660,8 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 			float3 contributors = float3(retentionMaskDebug, fillLevelDebug, finalPuddleDebug);
 			debugValue = max(max(contributors.x, contributors.y), contributors.z);
 			[branch] if (debugValue > 0.03) {
-				puddleDebugColor = contributors;
+				float3 normalizedContributors = contributors / max(debugValue, 1e-3);
+				puddleDebugColor = lerp(float3(0.03, 0.03, 0.03), normalizedContributors, debugValue);
 			}
 		} else if (puddleDebugMode == 2) {
 			debugValue = retentionMaskDebug;
@@ -2870,7 +2875,10 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	float3 lodLandDiffuseColor = 0;
 
 #	if defined(WETNESS_EFFECTS)
-	float3 wetReflectionModeConfig = GetWetReflectionModeConfig(SharedData::wetnessEffectsSettings.WetIndirectSpecularScale);
+	float3 wetReflectionModeConfig = 0.0.xxx;
+	[branch] if (wetnessEnabled) {
+		wetReflectionModeConfig = GetWetReflectionModeConfig(SharedData::wetnessEffectsSettings.WetIndirectSpecularScale);
+	}
 #	endif
 
 	// Directiontal Lighting
@@ -2896,7 +2904,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	dirLightOutput.coatDiffuse = SanitizeFloat3(dirLightOutput.coatDiffuse);
 #	endif
 #	if defined(WETNESS_EFFECTS)
-	if (waterRoughnessSpecular < 1 && wetReflectionModeConfig.z > 0.0)
+	if (wetnessEnabled && waterRoughnessSpecular < 1 && wetReflectionModeConfig.z > 0.0)
 		EvaluateWetnessLighting(wetnessNormal, dirLightContext, waterRoughnessSpecular, wetReflectionModeConfig, dirLightOutput);
 #	endif
 
@@ -2965,7 +2973,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 		pointLightOutput.coatDiffuse = SanitizeFloat3(pointLightOutput.coatDiffuse);
 #			endif
 #			if defined(WETNESS_EFFECTS)
-		if (waterRoughnessSpecular < 1 && wetReflectionModeConfig.z > 0.0)
+		if (wetnessEnabled && waterRoughnessSpecular < 1 && wetReflectionModeConfig.z > 0.0)
 			EvaluateWetnessLighting(wetnessNormal, pointLightContext, waterRoughnessSpecular, wetReflectionModeConfig, pointLightOutput);
 #			endif
 		lightsDiffuseColor += pointLightOutput.diffuse;
@@ -3096,7 +3104,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 		pointLightOutput.coatDiffuse = SanitizeFloat3(pointLightOutput.coatDiffuse);
 #			endif
 #			if defined(WETNESS_EFFECTS)
-		if (waterRoughnessSpecular < 1 && wetReflectionModeConfig.z > 0.0)
+		if (wetnessEnabled && waterRoughnessSpecular < 1 && wetReflectionModeConfig.z > 0.0)
 			EvaluateWetnessLighting(wetnessNormal, pointLightContext, waterRoughnessSpecular, wetReflectionModeConfig, pointLightOutput);
 #			endif
 
@@ -3206,6 +3214,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 
 #	if defined(WETNESS_EFFECTS)
 #		if !(defined(FACEGEN) || defined(FACEGEN_RGB_TINT) || defined(EYE)) || defined(TREE_ANIM)
+	[branch] if (wetnessEnabled) {
 #			if defined(TRUE_PBR)
 #				if !defined(LANDSCAPE)
 	[branch] if ((PBRFlags & PBR::Flags::TwoLayer) != 0)
@@ -3241,6 +3250,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	float wetSaturationMix = rainWetVisualMask;
 	float wetSaturationScale = lerp(1.0, wetColorSaturation, wetSaturationMix);
 	material.BaseColor = Color::Saturation(material.BaseColor, wetSaturationScale);
+	}
 #		endif
 #	endif
 
@@ -3298,7 +3308,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 #	if defined(WETNESS_EFFECTS)
 #		if defined(DYNAMIC_CUBEMAPS)
 	float3 wetnessReflectance = 0.0;
-	if (waterRoughnessSpecular < 1 && wetReflectionModeConfig.z > 1e-4) {
+	if (wetnessEnabled && waterRoughnessSpecular < 1 && wetReflectionModeConfig.z > 1e-4) {
 		wetnessReflectance = GetWetnessIndirectLobeWeights(indirectLobeWeights, wetnessNormal, waterRoughnessSpecular, indirectContext, wetReflectionModeConfig);
 		wetnessReflectance *= wetHighlightReflectanceScale;
 	}
