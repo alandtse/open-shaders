@@ -1482,9 +1482,9 @@ void WetnessEffects::DrawSettings()
 		int puddleDebugViewMode = std::clamp(static_cast<int>(settings.EnablePuddleInfluenceDebugReadout), 0, 4);
 		const char* puddleDebugViewModes[] = {
 			"Off",
-			"Influence Heatmap",
+			"Contributors (RGB)",
 			"Retention Mask",
-			"Fill Level",
+			"Local Fill Level",
 			"Final Puddle"
 		};
 		if (ImGui::Combo("Puddle Debug View", &puddleDebugViewMode, puddleDebugViewModes, IM_ARRAYSIZE(puddleDebugViewModes))) {
@@ -1493,9 +1493,9 @@ void WetnessEffects::DrawSettings()
 		if (auto _tt = Util::HoverTooltipWrapper()) {
 			Util::DrawMultiLineTooltip({
 				"Off: no puddle debug overlay.",
-				"Influence Heatmap: on-screen puddle influence overlay plus text estimates.",
-				"Retention Mask: shader visualization of puddle retention zones.",
-				"Fill Level: shader visualization of puddle fill amount from wetness timeline.",
+				"Contributors (RGB): red=retention, green=local fill, blue=final puddle.",
+				"Retention Mask: where puddles are allowed to form (ground-only).",
+				"Local Fill Level: dynamic fill after retention/capacity shaping.",
 				"Final Puddle: shader visualization of final puddle result."
 			});
 		}

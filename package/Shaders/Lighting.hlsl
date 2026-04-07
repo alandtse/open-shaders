@@ -2533,6 +2533,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	float retentionMask = 0.0;
 	float puddleEligibilityMask = 0.0;
 	float fillLevel = 0.0;
+	float localFillLevel = 0.0;
 	if (wetness > 0.0 || puddleWetness > 0.0) {
 		float puddleMaxAngleSafe = max(SharedData::wetnessEffectsSettings.PuddleMaxAngle, 1e-3);
 		float puddleRadiusSafe = max(SharedData::wetnessEffectsSettings.PuddleRadius, 1e-3);
@@ -2542,6 +2543,10 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 		float puddleSignal = Random::perlinNoise(puddleCoords) * .5 + .5;
 		puddleSignal = puddleSignal * ((minWetnessAngle / puddleMaxAngleSafe) * SharedData::wetnessEffectsSettings.MaxPuddleWetness * 0.25) + 0.5;
 		float flatPuddleMix = saturate(puddleSignal - 0.25);
+		float3 geomNormalPuddle = SafeNormalize3(-cross(ddx(input.WorldPosition.xyz), ddy(input.WorldPosition.xyz)), worldNormal);
+		float geomSlopeMask = smoothstep(0.52, 0.99, saturate(geomNormalPuddle.z));
+		float geomDebugGroundMask = smoothstep(0.70, 0.97, saturate(geomNormalPuddle.z));
+		float geomVarianceMask = saturate((length(ddx(geomNormalPuddle)) + length(ddy(geomNormalPuddle)) - 0.018) * 5.5);
 
 		// Dual puddle model:
 		// - flatPuddleMix follows large, flat-surface pooling
@@ -2551,17 +2556,17 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 		float unevenDepthMask = 0.0;
 #			if !defined(SKIN) && !defined(HAIR)
 		[branch] if (dualPuddleEnabled > 0.0) {
-			float roughDepthMask = saturate((surfaceRoughness - 0.22) * 2.2);
+			float roughDepthMask = saturate((surfaceRoughness - 0.20) * 2.0);
 			// Capture micro-variation (e.g. cobblestone joints) even when roughness alone is not enough.
-			float normalVarianceMask = saturate((length(ddx(worldNormal)) + length(ddy(worldNormal)) - 0.04) * 4.0);
+			float normalVarianceMask = saturate((length(ddx(worldNormal)) + length(ddy(worldNormal)) - 0.03) * 3.8);
 #				if defined(TRUE_PBR)
 			float cavityMask = saturate(1.0 - material.AO);
 #				else
 			float cavityMask = 0.0;
 #				endif
-			float depthProxy = max(normalVarianceMask, cavityMask * 0.75);
-			float roughDepthConfidence = lerp(0.55, 1.0, roughDepthMask);
-			unevenDepthMask = saturate(depthProxy * roughDepthConfidence) * (1.0 - vegetationFactor * 0.85);
+			float depthProxy = max(max(normalVarianceMask, geomVarianceMask * 0.90), cavityMask * 0.85);
+			float roughDepthConfidence = lerp(0.50, 1.0, roughDepthMask);
+			unevenDepthMask = saturate((depthProxy * roughDepthConfidence + geomVarianceMask * 0.35) * (1.0 - vegetationFactor * 0.85));
 		}
 #			endif
 		float puddleStrength = saturate(SharedData::wetnessEffectsSettings.MaxPuddleWetness / 6.0);
@@ -2570,29 +2575,31 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 		// OFF (single model): broad flat/slope retention only.
 		// ON  (dual model): concavity/depth retention + slope response.
 		// Generated fully from runtime material/depth cues (no authored DDS mask).
-		float slopeRetentionMask = smoothstep(0.58, 0.985, saturate(worldNormal.z));
-		float debugGroundMask = smoothstep(0.70, 0.94, saturate(worldNormal.z));
-		float puddleSurfaceMask = saturate(dirtFactor * 1.00 + stoneFactor * 0.80 + (1.0 - vegetationFactor) * 0.10 - vegetationFactor * 0.85);
+		float slopeRetentionMask = saturate(lerp(smoothstep(0.58, 0.985, saturate(worldNormal.z)), geomSlopeMask, 0.75));
+		float debugGroundMask = geomDebugGroundMask;
+		float puddleSurfaceMask = saturate(dirtFactor * 1.10 + stoneFactor * 0.70 - vegetationFactor * 0.90);
 		puddleEligibilityMask = saturate(slopeRetentionMask * puddleSurfaceMask);
 		puddleDebugContributorMask = saturate(puddleEligibilityMask * debugGroundMask);
-		float materialRetentionMask = saturate((0.25 + dirtFactor * 1.00 + stoneFactor * 0.80) * puddleSurfaceMask);
-		float flatRetentionMask = saturate((0.85 * slopeRetentionMask + 0.15 * flatPuddleMix) * materialRetentionMask);
-		float depthRetentionBase = saturate((0.82 * unevenDepthMask + 0.13 * slopeRetentionMask + 0.05 * flatPuddleMix) * materialRetentionMask);
-		float depthRetentionExponent = lerp(1.05, 1.85, depthBlend);
+		float materialRetentionMask = saturate((0.10 + dirtFactor * 1.05 + stoneFactor * 0.75) * puddleSurfaceMask);
+		float flatRetentionMask = saturate((0.78 * slopeRetentionMask + 0.22 * flatPuddleMix) * materialRetentionMask);
+		float depthRetentionBase = saturate((0.58 * unevenDepthMask + 0.24 * geomVarianceMask + 0.13 * slopeRetentionMask + 0.05 * flatPuddleMix) * materialRetentionMask);
+		float depthRetentionExponent = lerp(1.10, 2.15, depthBlend);
 		float depthRetentionShaped = pow(depthRetentionBase, depthRetentionExponent);
-		float depthRetentionFloor = slopeRetentionMask * materialRetentionMask * lerp(0.42, 0.08, depthBlend);
+		float depthRetentionFloor = slopeRetentionMask * materialRetentionMask * lerp(0.34, 0.04, depthBlend);
 		float depthRetentionMask = saturate(max(depthRetentionShaped, depthRetentionFloor));
-		float depthRetentionMix = saturate(0.20 + depthBlend * 0.80);
+		float depthRetentionMix = saturate(0.15 + depthBlend * 0.85);
 		float derivedRetentionMask = lerp(flatRetentionMask, depthRetentionMask, dualPuddleEnabled * depthRetentionMix);
 		retentionMask = saturate(derivedRetentionMask * puddleEligibilityMask);
 
 		// Fill level (how full puddles are) from puddle timeline with limited rain assist.
 		// Perlin is only used for edge breakup/variation.
-		float fillSource = saturate(max(puddleWetness, rainWetness * 0.45));
+		float fillSource = saturate(max(puddleWetness, rainWetness * 0.55));
 		float fillGate = smoothstep(SharedData::wetnessEffectsSettings.PuddleMinWetness * 0.35, 1.0, fillSource);
 		fillLevel = saturate(lerp(fillGate, fillSource, 0.25 + 0.25 * inRainBlend));
-		float edgeVariation = lerp(0.90, 1.10, saturate((puddleSignal - 0.5) * 1.8 + 0.5));
-		float fillLevelShaped = saturate(fillLevel * edgeVariation);
+		float localCapacity = saturate(0.30 + 0.45 * depthRetentionMask + 0.25 * geomVarianceMask);
+		localFillLevel = saturate(fillLevel * localCapacity);
+		float edgeVariation = lerp(0.88, 1.14, saturate((puddleSignal - 0.5) * 1.8 + 0.5));
+		float fillLevelShaped = saturate(localFillLevel * edgeVariation);
 		float modeledPuddle = retentionMask * fillLevelShaped;
 		puddleFormation = max(puddleFormation, modeledPuddle);
 
@@ -2600,11 +2607,11 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 		float depthPatternMix = saturate((puddleSignal - 0.02) * (1.25 + depthBlend * 1.75)) * unevenDepthMask;
 		float depthPuddleMix = saturate(lerp(unevenDepthMask, depthPatternMix, 0.35));
 		float depthWetGate = smoothstep(SharedData::wetnessEffectsSettings.PuddleMinWetness * 0.5, 1.0, fillSource);
-		float depthBoost = depthPuddleMix * depthBlend * depthWetGate * lerp(0.20, 0.75, puddleStrength);
+		float depthBoost = depthPuddleMix * depthBlend * depthWetGate * lerp(0.30, 1.05, puddleStrength);
 		float depthRetentionPuddle = depthRetentionMask * fillLevelShaped;
 		float depthPuddleBase = max(modeledPuddle, depthRetentionPuddle);
 		float depthPuddleTarget = saturate(depthPuddleBase + depthBoost * (1.0 - depthPuddleBase));
-		float flatPuddleTarget = saturate(lerp(modeledPuddle, max(modeledPuddle, fillLevel * retentionMask), flatPuddleMix));
+		float flatPuddleTarget = saturate(lerp(modeledPuddle, max(modeledPuddle, localFillLevel * retentionMask), flatPuddleMix));
 		float puddleMix = saturate(flatPuddleMix + depthPuddleMix * depthBlend * (1.0 - flatPuddleMix));
 		float puddleTarget = max(flatPuddleTarget, depthPuddleTarget);
 		// Depth contribution should never reduce puddle intensity.
@@ -2628,7 +2635,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 		float flatStrength = lerp(0.35, 1.0, puddleStrength);
 		// Avoid hard-overriding depth-driven puddles with the flat mandatory floor.
 		float depthModelDominance = saturate(depthBlend * unevenDepthMask);
-		float mandatoryDepthAttenuation = lerp(1.0, 0.55, depthModelDominance);
+		float mandatoryDepthAttenuation = lerp(1.0, 0.72, depthModelDominance);
 		float mandatoryTarget = flatMandatoryPuddle * flatPatternCoverage * flatStrength * mandatoryDepthAttenuation;
 		float mandatoryHeadroom = saturate(1.0 - puddleFormation);
 		puddleFormation = saturate(puddleFormation + mandatoryTarget * mandatoryHeadroom);
@@ -2638,32 +2645,33 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	}
 	puddleFormation *= saturate(wetnessOcclusion * 2.0);
 	puddle = max(wetness, puddleFormation);
-	influenceDebug = saturate((0.35 * retentionMask + 0.35 * fillLevel + 0.30 * puddleFormation) * puddleDebugContributorMask);
-	retentionMaskDebug = saturate(pow(retentionMask * puddleDebugContributorMask, 1.25));
-	fillLevelDebug = saturate(pow(fillLevel * puddleDebugContributorMask, 1.10));
+	influenceDebug = saturate((0.45 * retentionMask + 0.20 * fillLevel + 0.35 * puddleFormation) * puddleDebugContributorMask);
+	retentionMaskDebug = saturate(retentionMask * puddleDebugContributorMask);
+	fillLevelDebug = saturate(localFillLevel * puddleDebugContributorMask);
 	finalPuddleDebug = saturate(puddleFormation * puddleDebugContributorMask);
 
 	[branch] if (puddleDebugMode >= 1 && puddleDebugMode <= 4) {
 		float debugValue = 0.0;
 		if (puddleDebugMode == 1) {
-			debugValue = influenceDebug;
-			[branch] if (debugValue > 1e-3) {
-				puddleDebugColor = lerp(float3(0.03, 0.03, 0.03), float3(1.00, 0.75, 0.08), debugValue);
+			float3 contributors = float3(retentionMaskDebug, fillLevelDebug, finalPuddleDebug);
+			debugValue = max(max(contributors.x, contributors.y), contributors.z);
+			[branch] if (debugValue > 0.03) {
+				puddleDebugColor = contributors;
 			}
 		} else if (puddleDebugMode == 2) {
 			debugValue = retentionMaskDebug;
-			[branch] if (debugValue > 1e-3) {
-				puddleDebugColor = lerp(float3(0.08, 0.02, 0.20), float3(0.10, 0.95, 0.25), debugValue);
+			[branch] if (debugValue > 0.03) {
+				puddleDebugColor = lerp(float3(0.02, 0.02, 0.02), float3(0.10, 0.95, 0.25), debugValue);
 			}
 		} else if (puddleDebugMode == 3) {
 			debugValue = fillLevelDebug;
-			[branch] if (debugValue > 1e-3) {
-				puddleDebugColor = lerp(float3(0.05, 0.05, 0.20), float3(0.10, 0.85, 1.00), debugValue);
+			[branch] if (debugValue > 0.03) {
+				puddleDebugColor = lerp(float3(0.02, 0.02, 0.02), float3(0.10, 0.85, 1.00), debugValue);
 			}
 		} else {
 			debugValue = finalPuddleDebug;
-			[branch] if (debugValue > 1e-3) {
-				puddleDebugColor = lerp(float3(0.03, 0.03, 0.03), float3(0.00, 0.60, 1.00), debugValue);
+			[branch] if (debugValue > 0.03) {
+				puddleDebugColor = lerp(float3(0.02, 0.02, 0.02), float3(0.00, 0.60, 1.00), debugValue);
 			}
 		}
 	}
