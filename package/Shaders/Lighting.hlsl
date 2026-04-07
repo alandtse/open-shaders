@@ -2523,9 +2523,12 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	wetness = max(shoreWetness, rainWetness);
 
 	// Calculate puddle effects
+	// Keep general wetness separate from standing-water puddle formation.
 	float puddle = wetness;
-	float retentionMask = 1.0;
-	float fillLevel = saturate(max(wetness, puddleWetness));
+	float puddleFormation = 0.0;
+	float retentionMask = 0.0;
+	float puddleEligibilityMask = 0.0;
+	float fillLevel = 0.0;
 	if (wetness > 0.0 || puddleWetness > 0.0) {
 		float puddleMaxAngleSafe = max(SharedData::wetnessEffectsSettings.PuddleMaxAngle, 1e-3);
 		float puddleRadiusSafe = max(SharedData::wetnessEffectsSettings.PuddleRadius, 1e-3);
@@ -2563,8 +2566,10 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 		// OFF (single model): broad flat/slope retention only.
 		// ON  (dual model): concavity/depth retention + slope response.
 		// Generated fully from runtime material/depth cues (no authored DDS mask).
-		float slopeRetentionMask = smoothstep(0.35, 0.98, saturate(worldNormal.z));
-		float materialRetentionMask = saturate(0.20 + dirtFactor * 1.00 + stoneFactor * 0.75 + (1.0 - vegetationFactor) * 0.25);
+		float slopeRetentionMask = smoothstep(0.58, 0.985, saturate(worldNormal.z));
+		float puddleSurfaceMask = saturate(dirtFactor * 1.00 + stoneFactor * 0.80 + (1.0 - vegetationFactor) * 0.10 - vegetationFactor * 0.85);
+		puddleEligibilityMask = saturate(slopeRetentionMask * puddleSurfaceMask);
+		float materialRetentionMask = saturate((0.25 + dirtFactor * 1.00 + stoneFactor * 0.80) * puddleSurfaceMask);
 		float flatRetentionMask = saturate((0.85 * slopeRetentionMask + 0.15 * flatPuddleMix) * materialRetentionMask);
 		float depthRetentionBase = saturate((0.82 * unevenDepthMask + 0.13 * slopeRetentionMask + 0.05 * flatPuddleMix) * materialRetentionMask);
 		float depthRetentionExponent = lerp(1.05, 1.85, depthBlend);
@@ -2573,35 +2578,39 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 		float depthRetentionMask = saturate(max(depthRetentionShaped, depthRetentionFloor));
 		float depthRetentionMix = saturate(0.20 + depthBlend * 0.80);
 		float derivedRetentionMask = lerp(flatRetentionMask, depthRetentionMask, dualPuddleEnabled * depthRetentionMix);
-		retentionMask = saturate(derivedRetentionMask);
+		retentionMask = saturate(derivedRetentionMask * puddleEligibilityMask);
 
-		// Fill level (how full puddles are) from the active wetness timeline.
+		// Fill level (how full puddles are) from puddle timeline with limited rain assist.
 		// Perlin is only used for edge breakup/variation.
+		float fillSource = saturate(max(puddleWetness, rainWetness * 0.45));
+		float fillGate = smoothstep(SharedData::wetnessEffectsSettings.PuddleMinWetness * 0.35, 1.0, fillSource);
+		fillLevel = saturate(lerp(fillGate, fillSource, 0.25 + 0.25 * inRainBlend));
 		float edgeVariation = lerp(0.90, 1.10, saturate((puddleSignal - 0.5) * 1.8 + 0.5));
 		float fillLevelShaped = saturate(fillLevel * edgeVariation);
 		float modeledPuddle = retentionMask * fillLevelShaped;
-		puddle = max(puddle, modeledPuddle);
+		puddleFormation = max(puddleFormation, modeledPuddle);
 
 		// Keep depth model primarily geometry-driven; noise only breaks up coverage.
 		float depthPatternMix = saturate((puddleSignal - 0.02) * (1.25 + depthBlend * 1.75)) * unevenDepthMask;
 		float depthPuddleMix = saturate(lerp(unevenDepthMask, depthPatternMix, 0.35));
-		float depthWetGate = smoothstep(SharedData::wetnessEffectsSettings.PuddleMinWetness * 0.5, 1.0, max(wetness, puddleWetness));
+		float depthWetGate = smoothstep(SharedData::wetnessEffectsSettings.PuddleMinWetness * 0.5, 1.0, fillSource);
 		float depthBoost = depthPuddleMix * depthBlend * depthWetGate * lerp(0.20, 0.75, puddleStrength);
 		float depthRetentionPuddle = depthRetentionMask * fillLevelShaped;
 		float depthPuddleBase = max(modeledPuddle, depthRetentionPuddle);
 		float depthPuddleTarget = saturate(depthPuddleBase + depthBoost * (1.0 - depthPuddleBase));
-		float flatPuddleTarget = saturate(lerp(modeledPuddle, max(modeledPuddle, puddleWetness * retentionMask), flatPuddleMix));
+		float flatPuddleTarget = saturate(lerp(modeledPuddle, max(modeledPuddle, fillLevel * retentionMask), flatPuddleMix));
 		float puddleMix = saturate(flatPuddleMix + depthPuddleMix * depthBlend * (1.0 - flatPuddleMix));
 		float puddleTarget = max(flatPuddleTarget, depthPuddleTarget);
 		// Depth contribution should never reduce puddle intensity.
-		puddle = max(puddle, lerp(modeledPuddle, puddleTarget, puddleMix));
+		puddleFormation = max(puddleFormation, lerp(modeledPuddle, puddleTarget, puddleMix));
 #		endif
 
 		// Mandatory flat pooling: once the surface gets very flat and wet enough,
 		// enforce a broad puddle floor regardless of local puddle noise.
 		float flatAngleMask = smoothstep(0.88, 0.995, saturate(worldNormal.z));
-		float flatWetGate = smoothstep(SharedData::wetnessEffectsSettings.PuddleMinWetness * 0.65, 1.0, max(wetness, puddleWetness));
-		float flatMandatoryPuddle = max(wetness, puddleWetness) * flatAngleMask * flatWetGate;
+		float flatSource = saturate(max(fillLevel, puddleWetness));
+		float flatWetGate = smoothstep(SharedData::wetnessEffectsSettings.PuddleMinWetness * 0.65, 1.0, flatSource);
+		float flatMandatoryPuddle = flatSource * flatAngleMask * flatWetGate;
 		flatMandatoryPuddle *= retentionMask;
 
 #		if !defined(SKINNED)
@@ -2611,7 +2620,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 		// Keep mandatory pooling, but gate it by the puddle-pattern signal so
 		// Puddle Radius/Layout and Max Puddle Wetness still visibly affect shape.
 		if (march3CompatibilityProfileEnabled) {
-			puddle = max(puddle, flatMandatoryPuddle);
+			puddleFormation = max(puddleFormation, flatMandatoryPuddle);
 		} else {
 			float flatPatternThreshold = lerp(0.50, 0.12, puddleStrength);
 			float flatPattern = saturate((puddleSignal - flatPatternThreshold) / max(1e-3, 1.0 - flatPatternThreshold));
@@ -2628,25 +2637,36 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 			float depthModelDominance = saturate(depthBlend * unevenDepthMask);
 			float mandatoryDepthAttenuation = lerp(1.0, 0.55, depthModelDominance);
 			float mandatoryTarget = flatMandatoryPuddle * flatPatternCoverage * flatStrength * mandatoryDepthAttenuation;
-			float mandatoryHeadroom = saturate(1.0 - puddle);
-			puddle = saturate(puddle + mandatoryTarget * mandatoryHeadroom);
+			float mandatoryHeadroom = saturate(1.0 - puddleFormation);
+			puddleFormation = saturate(puddleFormation + mandatoryTarget * mandatoryHeadroom);
 		}
 #		else
-		puddle = max(puddle, flatMandatoryPuddle);
+		puddleFormation = max(puddleFormation, flatMandatoryPuddle);
 #		endif
 	}
-	puddle *= saturate(wetnessOcclusion * 2.0);
-	retentionMaskDebug = saturate(retentionMask);
-	fillLevelDebug = saturate(fillLevel);
-	finalPuddleDebug = saturate(puddle);
+	puddleFormation *= saturate(wetnessOcclusion * 2.0);
+	puddle = max(wetness, puddleFormation);
+	retentionMaskDebug = saturate(pow(retentionMask, 1.25));
+	fillLevelDebug = saturate(pow(fillLevel * puddleEligibilityMask, 1.10));
+	finalPuddleDebug = saturate(puddleFormation);
 
 	[branch] if (puddleDebugMode >= 2 && puddleDebugMode <= 4) {
+		float debugValue = 0.0;
 		if (puddleDebugMode == 2) {
-			puddleDebugColor = lerp(float3(0.08, 0.02, 0.20), float3(0.10, 0.95, 0.25), retentionMaskDebug);
+			debugValue = retentionMaskDebug;
+			[branch] if (debugValue > 1e-3) {
+				puddleDebugColor = lerp(float3(0.08, 0.02, 0.20), float3(0.10, 0.95, 0.25), debugValue);
+			}
 		} else if (puddleDebugMode == 3) {
-			puddleDebugColor = lerp(float3(0.05, 0.05, 0.20), float3(0.10, 0.85, 1.00), fillLevelDebug);
+			debugValue = fillLevelDebug;
+			[branch] if (debugValue > 1e-3) {
+				puddleDebugColor = lerp(float3(0.05, 0.05, 0.20), float3(0.10, 0.85, 1.00), debugValue);
+			}
 		} else {
-			puddleDebugColor = lerp(float3(0.03, 0.03, 0.03), float3(0.00, 0.60, 1.00), finalPuddleDebug);
+			debugValue = finalPuddleDebug;
+			[branch] if (debugValue > 1e-3) {
+				puddleDebugColor = lerp(float3(0.03, 0.03, 0.03), float3(0.00, 0.60, 1.00), debugValue);
+			}
 		}
 	}
 
