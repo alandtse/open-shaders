@@ -2418,13 +2418,15 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	float wetnessOcclusion = 0.0;
 	if (inWorld) {
 		float wetnessOcclusionBase = saturate(SphericalHarmonics::Unproject(skylightingSH, float3(0, 0, 1)));
-		wetnessOcclusion = wetnessOcclusionBase * wetnessOcclusionBase;
+		// Keep skylighting influence subtle for wetness so probe refresh latency does not
+		// create a player-following dark spotlight on terrain.
+		wetnessOcclusion = lerp(1.0, wetnessOcclusionBase, 0.22);
 	}
 #		else
 	float wetnessOcclusion = inWorld;
 #		endif
 	// Keep rain coverage from collapsing in overcast/rainy lighting.
-	wetnessOcclusion = lerp(wetnessOcclusion, max(wetnessOcclusion, 0.55), inRainBlend);
+	wetnessOcclusion = lerp(wetnessOcclusion, max(wetnessOcclusion, 0.82), inRainBlend);
 
 	// Surface drying response should mainly act after rain has mostly stopped.
 	postRainBlend = 1.0 - smoothstep(0.02, 0.20, rainingAmount);
