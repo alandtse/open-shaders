@@ -2536,6 +2536,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	float puddleEligibilityMask = 0.0;
 	float fillLevel = 0.0;
 	float localFillLevel = 0.0;
+	float depthRetentionMask = 0.0;
 	if (wetness > 0.0 || puddleWetness > 0.0) {
 		float puddleMaxAngleSafe = max(SharedData::wetnessEffectsSettings.PuddleMaxAngle, 1e-3);
 		float puddleRadiusSafe = max(SharedData::wetnessEffectsSettings.PuddleRadius, 1e-3);
@@ -2589,7 +2590,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 		float depthRetentionShaped = pow(depthRetentionBase, depthRetentionExponent);
 		float depthRetentionFloor = slopeRetentionMask * materialRetentionMask * lerp(0.34, 0.04, depthBlend);
 		float depthPresenceMask = saturate((max(unevenDepthMask, geomVarianceMask) - 0.10) * 1.35);
-		float depthRetentionMask = saturate(max(depthRetentionShaped, depthRetentionFloor) * lerp(0.35, 1.0, depthPresenceMask));
+		depthRetentionMask = saturate(max(depthRetentionShaped, depthRetentionFloor) * lerp(0.35, 1.0, depthPresenceMask));
 		float depthRetentionMix = saturate(0.35 + depthBlend * 0.65);
 		float derivedRetentionMask = lerp(flatRetentionMask, depthRetentionMask, dualPuddleEnabled * depthRetentionMix);
 		retentionMask = pow(saturate(derivedRetentionMask * puddleEligibilityMask), lerp(1.15, 1.70, depthBlend));
