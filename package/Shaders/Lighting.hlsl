@@ -2531,9 +2531,9 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 			puddleSignal = puddleSignal * ((minWetnessAngle / puddleMaxAngleSafe) * SharedData::wetnessEffectsSettings.MaxPuddleWetness * 0.25) + 0.5;
 			float existingPuddleBlend = lerp(wetness, puddleWetness, saturate(puddleSignal - 0.25));
 
-			float3 geomNormal = normalize(-cross(ddx(input.WorldPosition.xyz), ddy(input.WorldPosition.xyz)));
-			float horizontalBias = smoothstep(0.90, 0.995, saturate(abs(geomNormal.z)));
-			float normalVar = abs(ddx(geomNormal.z)) + abs(ddy(geomNormal.z));
+			// Use stable geometry-normal slope bias; avoid derivative-of-derivative terms
+			// here because they can create visible triangle/quad seam artifacts.
+			float horizontalBias = smoothstep(0.90, 0.995, saturate(abs(vertexNormal.z)));
 
 			float cavity = 0.0;
 			bool optionalBiasEnabled = false;
@@ -2631,7 +2631,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 			}
 
 			float toggledCavity = optionalBiasEnabled ? (cavity * 0.5) : 0.0;
-			float depthBias = saturate(normalVar * 2.0 + toggledCavity * 0.25);
+			float depthBias = saturate(toggledCavity * 0.25);
 			float placementBias = saturate(max(horizontalBias, depthBias * 0.6));
 			float threshold = lerp(0.62, 0.34, placementBias);
 			float gate = saturate((puddleSignal - threshold) / max(1e-3, 1.0 - threshold));
@@ -2648,11 +2648,14 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	float postRainSpecularPower = lerp(1.0, 0.75, saturate(postRainBlend * max(0.0, SharedData::wetnessEffectsSettings.PostRainPuddleWaterStrength)));
 	wetnessGlossinessSpecular = lerp(saturate(puddle), saturate(pow(saturate(puddle), postRainSpecularPower)), postRainBlend);
 	wetnessGlossinessSpecular = lerp(wetnessGlossinessSpecular, wetnessGlossinessSpecular * shoreFactor, input.WorldPosition.z < waterHeight);
+	float deepPuddleMask = smoothstep(0.14, 0.88, saturate(puddle));
+	wetnessGlossinessSpecular = saturate(wetnessGlossinessSpecular * lerp(1.0, 1.65, deepPuddleMask));
 
 	// Update flatness and normal calculations
 	float flatnessAmount = smoothstep(max(SharedData::wetnessEffectsSettings.PuddleMaxAngle, 0.0), 1.0, minWetnessAngle);
 	float puddleMinWetness = lerp(SharedData::wetnessEffectsSettings.PuddleMinWetness, SharedData::wetnessEffectsSettings.PuddleMinWetness * 0.8, inRainBlend);
 	flatnessAmount *= smoothstep(puddleMinWetness, 1.0, wetnessGlossinessSpecular);
+	flatnessAmount = saturate(lerp(flatnessAmount, 1.0, deepPuddleMask * 0.85));
 
 	wetnessNormal = normalize(lerp(wetnessNormal, float3(0, 0, 1), flatnessAmount));
 
@@ -2676,7 +2679,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	wetnessGlossinessSpecular *= wetnessGrazingAttenuation;
 	wetHighlightReflectanceScale = lerp(1.0, wetnessGrazingAttenuation, saturate((0.35 + highlightReductionT) * wetHighlightMask));
 
-	waterRoughnessSpecular = 1.0 - wetnessGlossinessSpecular * 0.9;
+	waterRoughnessSpecular = 1.0 - wetnessGlossinessSpecular * 0.97;
 	}
 #	endif
 
