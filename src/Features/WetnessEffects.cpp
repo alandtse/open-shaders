@@ -611,6 +611,10 @@ namespace
 		settings.EnableLegacyRainBehavior = SanitizeToggle(settings.EnableLegacyRainBehavior);
 		settings.EnableForwardReflectionBias = SanitizeToggle(settings.EnableForwardReflectionBias);
 		settings.EnableVanillaReflectionCompensation = SanitizeToggle(settings.EnableVanillaReflectionCompensation);
+		settings.EnablePuddleAOCavityBias = SanitizeToggle(settings.EnablePuddleAOCavityBias);
+		settings.EnablePuddleModelLocalLowBias = SanitizeToggle(settings.EnablePuddleModelLocalLowBias);
+		settings.EnablePuddleScreenSpaceCavityBias = SanitizeToggle(settings.EnablePuddleScreenSpaceCavityBias);
+		settings.EnablePuddleScreenSpaceCavityFreeze = SanitizeToggle(settings.EnablePuddleScreenSpaceCavityFreeze);
 		SanitizeReflectionSettings(settings);
 	}
 
@@ -713,7 +717,11 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	WetColorSaturation,
 	WetHighlightReduction,
 	EnableForwardReflectionBias,
-	EnableVanillaReflectionCompensation)
+	EnableVanillaReflectionCompensation,
+	EnablePuddleAOCavityBias,
+	EnablePuddleModelLocalLowBias,
+	EnablePuddleScreenSpaceCavityBias,
+	EnablePuddleScreenSpaceCavityFreeze)
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	WetnessEffects::DebugSettings,
@@ -1379,6 +1387,28 @@ void WetnessEffects::DrawSettings()
 			ImGui::TextUnformatted("Changes how puddle patches are arranged. Lower = finer, busier pattern. Higher = broader, smoother pattern.");
 		}
 
+		drawUintCheckboxWithTooltip(
+			"Puddle AO Cavity Bias",
+			settings.EnablePuddleAOCavityBias,
+			"Adds AO-driven cavity bias to puddle placement. PBR-focused option; enables one extra AO sample in the puddle pass.");
+
+		drawUintCheckboxWithTooltip(
+			"Puddle Model-Space Low Bias",
+			settings.EnablePuddleModelLocalLowBias,
+			"Biases puddles toward lower local model-space Z areas. Can be inaccurate on strongly rotated assets.");
+
+		drawUintCheckboxWithTooltip(
+			"Puddle Screen-Space Cavity Bias",
+			settings.EnablePuddleScreenSpaceCavityBias,
+			"Uses a 4-tap depth cavity probe linked to puddle size to prefer local depressions. View-dependent and more expensive.");
+
+		ImGui::BeginDisabled(settings.EnablePuddleScreenSpaceCavityBias == 0);
+		drawUintCheckboxWithTooltip(
+			"Puddle Cavity Freeze In Fx Range",
+			settings.EnablePuddleScreenSpaceCavityFreeze,
+			"Stabilizes cavity probe centers to a puddle-sized world grid while inside raindrop FX range, reducing camera-angle drift.");
+		ImGui::EndDisabled();
+
 		ImGui::SliderFloat("Puddle Max Angle", &settings.PuddleMaxAngle, 0.0f, 1.0f);
 		if (auto _tt = Util::HoverTooltipWrapper()) {
 			ImGui::TextUnformatted("Controls how easily puddles form on slopes. Higher = puddles can appear on steeper ground, lower = mostly flat areas only.");
@@ -1952,6 +1982,10 @@ void WetnessEffects::LoadSettings(json& o_json)
 			"LegacyWetIndirectSpecularScale",
 			"EnableForwardReflectionBias",
 			"EnableVanillaReflectionCompensation",
+			"EnablePuddleAOCavityBias",
+			"EnablePuddleModelLocalLowBias",
+			"EnablePuddleScreenSpaceCavityBias",
+			"EnablePuddleScreenSpaceCavityFreeze",
 		});
 	settings = {};
 	if (isObject) {

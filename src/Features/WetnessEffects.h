@@ -77,8 +77,12 @@ public:
 		float WetHighlightReduction = 1.0f;
 		uint EnableForwardReflectionBias = false;
 		uint EnableVanillaReflectionCompensation = false;
+		uint EnablePuddleAOCavityBias = false;
+		uint EnablePuddleModelLocalLowBias = false;
+		uint EnablePuddleScreenSpaceCavityBias = false;
+		uint EnablePuddleScreenSpaceCavityFreeze = false;
 	};
-	static_assert(sizeof(Settings) == 164, "WetnessEffects::Settings layout changed; update wetness shader/CB contract.");
+	static_assert(sizeof(Settings) == 180, "WetnessEffects::Settings layout changed; update wetness shader/CB contract.");
 	static_assert(offsetof(Settings, WeatherTransitionSpeed) == 40, "WetnessEffects::Settings WeatherTransitionSpeed offset changed.");
 	static_assert(offsetof(Settings, EnableRaindropFx) == 56, "WetnessEffects::Settings EnableRaindropFx offset changed.");
 	static_assert(offsetof(Settings, WetIndirectSpecularScale) == 84, "WetnessEffects::Settings WetIndirectSpecularScale offset changed.");
@@ -87,6 +91,10 @@ public:
 	static_assert(offsetof(Settings, WetHighlightReduction) == 152, "WetnessEffects::Settings WetHighlightReduction offset changed.");
 	static_assert(offsetof(Settings, EnableForwardReflectionBias) == 156, "WetnessEffects::Settings EnableForwardReflectionBias offset changed.");
 	static_assert(offsetof(Settings, EnableVanillaReflectionCompensation) == 160, "WetnessEffects::Settings EnableVanillaReflectionCompensation offset changed.");
+	static_assert(offsetof(Settings, EnablePuddleAOCavityBias) == 164, "WetnessEffects::Settings EnablePuddleAOCavityBias offset changed.");
+	static_assert(offsetof(Settings, EnablePuddleModelLocalLowBias) == 168, "WetnessEffects::Settings EnablePuddleModelLocalLowBias offset changed.");
+	static_assert(offsetof(Settings, EnablePuddleScreenSpaceCavityBias) == 172, "WetnessEffects::Settings EnablePuddleScreenSpaceCavityBias offset changed.");
+	static_assert(offsetof(Settings, EnablePuddleScreenSpaceCavityFreeze) == 176, "WetnessEffects::Settings EnablePuddleScreenSpaceCavityFreeze offset changed.");
 
 	// Shader-facing wetness settings layout.
 	// Keep this binary-compatible with Settings while exposing shader semantics directly.
@@ -135,6 +143,10 @@ public:
 		float WetHighlightReduction = 1.0f;
 		uint EnableForwardReflectionBias = false;
 		uint EnableVanillaReflectionCompensation = false;
+		uint EnablePuddleAOCavityBias = false;
+		uint EnablePuddleModelLocalLowBias = false;
+		uint EnablePuddleScreenSpaceCavityBias = false;
+		uint EnablePuddleScreenSpaceCavityFreeze = false;
 	};
 	static_assert(sizeof(ShaderSettings) == sizeof(Settings), "WetnessEffects::ShaderSettings must stay binary-compatible with Settings.");
 	static_assert(offsetof(ShaderSettings, PuddleLayout) == offsetof(Settings, WeatherTransitionSpeed),
@@ -147,6 +159,14 @@ public:
 		"WetnessEffects::ShaderSettings forward reflection bias offsets must match Settings.");
 	static_assert(offsetof(ShaderSettings, EnableVanillaReflectionCompensation) == offsetof(Settings, EnableVanillaReflectionCompensation),
 		"WetnessEffects::ShaderSettings vanilla reflection compensation offsets must match Settings.");
+	static_assert(offsetof(ShaderSettings, EnablePuddleAOCavityBias) == offsetof(Settings, EnablePuddleAOCavityBias),
+		"WetnessEffects::ShaderSettings puddle AO cavity offsets must match Settings.");
+	static_assert(offsetof(ShaderSettings, EnablePuddleModelLocalLowBias) == offsetof(Settings, EnablePuddleModelLocalLowBias),
+		"WetnessEffects::ShaderSettings puddle model-space bias offsets must match Settings.");
+	static_assert(offsetof(ShaderSettings, EnablePuddleScreenSpaceCavityBias) == offsetof(Settings, EnablePuddleScreenSpaceCavityBias),
+		"WetnessEffects::ShaderSettings puddle screen-space cavity offsets must match Settings.");
+	static_assert(offsetof(ShaderSettings, EnablePuddleScreenSpaceCavityFreeze) == offsetof(Settings, EnablePuddleScreenSpaceCavityFreeze),
+		"WetnessEffects::ShaderSettings puddle cavity freeze offsets must match Settings.");
 
 	struct PerFrame
 	{
@@ -163,7 +183,7 @@ public:
 	};
 	STATIC_ASSERT_ALIGNAS_16(PerFrame);
 	static_assert(offsetof(PerFrame, settings) == 80, "WetnessEffects::PerFrame settings offset changed.");
-	static_assert(sizeof(PerFrame) == 256, "WetnessEffects::PerFrame size changed; update wetness shader/CB contract.");
+	static_assert(sizeof(PerFrame) == 272, "WetnessEffects::PerFrame size changed; update wetness shader/CB contract.");
 	static_assert((sizeof(PerFrame) % 16) == 0, "WetnessEffects::PerFrame must stay 16-byte sized");
 
 	struct DebugSettings
