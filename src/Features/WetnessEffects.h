@@ -37,8 +37,6 @@ public:
 		float MaxShoreWetness = 1.0f;
 		uint ShoreRange = 32;
 		float PuddleRadius = 1.0f;
-		// Runoff Width tuning (keeps original CB slot/order).
-		float RunoffWidth = 1.0f;
 		float PuddleMaxAngle = 0.95f;
 		float PuddleMinWetness = 0.85f;
 		float MinRainWetness = 0.65f;
@@ -71,44 +69,24 @@ public:
 		float RippleBreadth = .5f;
 		float RippleLifetime = .5f;
 
-		// Dev tuning controls (temporary while calibrating wetness behavior in-game)
+		// Wetness tuning controls.
 		float PostRainPuddleWaterStrength = 0.8f;
-		// Runoff Strength tuning (reuses legacy field slot to keep CB layout stable).
-		float CloseRangeWetnessBoost = 0.0f;
 		float RaindropTransitionFalloff = 2.0f;
-		uint EnableDualPuddleModel = true;
-		float PuddleDepthBlend = 0.5f;
 		float WetDarkeningStrength = 1.0f;
 		float WetColorSaturation = 1.0f;
 		float WetHighlightReduction = 1.0f;
-		// Runoff Speed tuning (keeps original CB slot/order).
-		float RunoffSpeed = 1.0f;
-		uint ReservedReflectionControl0 = 0;
 		uint EnableForwardReflectionBias = false;
 		uint EnableVanillaReflectionCompensation = false;
-		uint EnablePuddleInfluenceDebugReadout = false;
-		uint ReservedWetnessControl0 = 0;
-		// Reserved padding to keep shader-facing settings size 16-byte aligned.
-		uint ReservedPadding0 = 0;
-		uint ReservedPadding1 = 0;
-		uint ReservedPadding2 = 0;
 	};
-	static_assert(sizeof(Settings) == 208, "WetnessEffects::Settings layout changed; update wetness shader/CB contract.");
-	static_assert(offsetof(Settings, WeatherTransitionSpeed) == 44, "WetnessEffects::Settings WeatherTransitionSpeed offset changed.");
-	static_assert(offsetof(Settings, EnableRaindropFx) == 60, "WetnessEffects::Settings EnableRaindropFx offset changed.");
-	static_assert(offsetof(Settings, WetIndirectSpecularScale) == 88, "WetnessEffects::Settings WetIndirectSpecularScale offset changed.");
-	static_assert(offsetof(Settings, RaindropGridSize) == 96, "WetnessEffects::Settings RaindropGridSize offset changed.");
-	static_assert(offsetof(Settings, RippleLifetime) == 136, "WetnessEffects::Settings RippleLifetime offset changed.");
-	static_assert(offsetof(Settings, EnableDualPuddleModel) == 152, "WetnessEffects::Settings EnableDualPuddleModel offset changed.");
-	static_assert(offsetof(Settings, RunoffSpeed) == 172, "WetnessEffects::Settings RunoffSpeed offset changed.");
-	static_assert(offsetof(Settings, ReservedReflectionControl0) == 176, "WetnessEffects::Settings ReservedReflectionControl0 offset changed.");
-	static_assert(offsetof(Settings, EnableForwardReflectionBias) == 180, "WetnessEffects::Settings EnableForwardReflectionBias offset changed.");
-	static_assert(offsetof(Settings, EnableVanillaReflectionCompensation) == 184, "WetnessEffects::Settings EnableVanillaReflectionCompensation offset changed.");
-	static_assert(offsetof(Settings, EnablePuddleInfluenceDebugReadout) == 188, "WetnessEffects::Settings EnablePuddleInfluenceDebugReadout offset changed.");
-	static_assert(offsetof(Settings, ReservedWetnessControl0) == 192, "WetnessEffects::Settings ReservedWetnessControl0 offset changed.");
-	static_assert(offsetof(Settings, ReservedPadding0) == 196, "WetnessEffects::Settings ReservedPadding0 offset changed.");
-	static_assert(offsetof(Settings, ReservedPadding1) == 200, "WetnessEffects::Settings ReservedPadding1 offset changed.");
-	static_assert(offsetof(Settings, ReservedPadding2) == 204, "WetnessEffects::Settings ReservedPadding2 offset changed.");
+	static_assert(sizeof(Settings) == 164, "WetnessEffects::Settings layout changed; update wetness shader/CB contract.");
+	static_assert(offsetof(Settings, WeatherTransitionSpeed) == 40, "WetnessEffects::Settings WeatherTransitionSpeed offset changed.");
+	static_assert(offsetof(Settings, EnableRaindropFx) == 56, "WetnessEffects::Settings EnableRaindropFx offset changed.");
+	static_assert(offsetof(Settings, WetIndirectSpecularScale) == 84, "WetnessEffects::Settings WetIndirectSpecularScale offset changed.");
+	static_assert(offsetof(Settings, RaindropGridSize) == 92, "WetnessEffects::Settings RaindropGridSize offset changed.");
+	static_assert(offsetof(Settings, RippleLifetime) == 132, "WetnessEffects::Settings RippleLifetime offset changed.");
+	static_assert(offsetof(Settings, WetHighlightReduction) == 152, "WetnessEffects::Settings WetHighlightReduction offset changed.");
+	static_assert(offsetof(Settings, EnableForwardReflectionBias) == 156, "WetnessEffects::Settings EnableForwardReflectionBias offset changed.");
+	static_assert(offsetof(Settings, EnableVanillaReflectionCompensation) == 160, "WetnessEffects::Settings EnableVanillaReflectionCompensation offset changed.");
 
 	// Shader-facing wetness settings layout.
 	// Keep this binary-compatible with Settings while exposing shader semantics directly.
@@ -120,7 +98,6 @@ public:
 		float MaxShoreWetness = 1.0f;
 		uint ShoreRange = 32;
 		float PuddleRadius = 1.0f;
-		float RunoffWidth = 1.0f;
 		float PuddleMaxAngle = 0.95f;
 		float PuddleMinWetness = 0.85f;
 		float MinRainWetness = 0.65f;
@@ -152,22 +129,12 @@ public:
 		float RippleLifetime = .5f;
 
 		float PostRainPuddleWaterStrength = 0.8f;
-		float CloseRangeWetnessBoost = 0.0f;
 		float RaindropTransitionFalloff = 2.0f;
-		uint EnableDualPuddleModel = true;
-		float PuddleDepthBlend = 0.5f;
 		float WetDarkeningStrength = 1.0f;
 		float WetColorSaturation = 1.0f;
 		float WetHighlightReduction = 1.0f;
-		float RunoffSpeed = 1.0f;
-		uint ReservedReflectionControl0 = 0;
 		uint EnableForwardReflectionBias = false;
 		uint EnableVanillaReflectionCompensation = false;
-		uint EnablePuddleInfluenceDebugReadout = false;
-		uint ReservedWetnessControl0 = 0;
-		uint ReservedPadding0 = 0;
-		uint ReservedPadding1 = 0;
-		uint ReservedPadding2 = 0;
 	};
 	static_assert(sizeof(ShaderSettings) == sizeof(Settings), "WetnessEffects::ShaderSettings must stay binary-compatible with Settings.");
 	static_assert(offsetof(ShaderSettings, PuddleLayout) == offsetof(Settings, WeatherTransitionSpeed),
@@ -176,24 +143,12 @@ public:
 		"WetnessEffects::ShaderSettings toggle offsets must match Settings.");
 	static_assert(offsetof(ShaderSettings, WetIndirectSpecularScale) == offsetof(Settings, WetIndirectSpecularScale),
 		"WetnessEffects::ShaderSettings reflection offsets must match Settings.");
-	static_assert(offsetof(ShaderSettings, ReservedReflectionControl0) == offsetof(Settings, ReservedReflectionControl0),
-		"WetnessEffects::ShaderSettings reserved reflection control offsets must match Settings.");
 	static_assert(offsetof(ShaderSettings, EnableForwardReflectionBias) == offsetof(Settings, EnableForwardReflectionBias),
 		"WetnessEffects::ShaderSettings forward reflection bias offsets must match Settings.");
 	static_assert(offsetof(ShaderSettings, EnableVanillaReflectionCompensation) == offsetof(Settings, EnableVanillaReflectionCompensation),
 		"WetnessEffects::ShaderSettings vanilla reflection compensation offsets must match Settings.");
-	static_assert(offsetof(ShaderSettings, EnablePuddleInfluenceDebugReadout) == offsetof(Settings, EnablePuddleInfluenceDebugReadout),
-		"WetnessEffects::ShaderSettings debug readout offsets must match Settings.");
-	static_assert(offsetof(ShaderSettings, ReservedWetnessControl0) == offsetof(Settings, ReservedWetnessControl0),
-		"WetnessEffects::ShaderSettings reserved wetness control offsets must match Settings.");
-	static_assert(offsetof(ShaderSettings, ReservedPadding0) == offsetof(Settings, ReservedPadding0),
-		"WetnessEffects::ShaderSettings reserved padding offsets must match Settings.");
-	static_assert(offsetof(ShaderSettings, ReservedPadding1) == offsetof(Settings, ReservedPadding1),
-		"WetnessEffects::ShaderSettings reserved padding offsets must match Settings.");
-	static_assert(offsetof(ShaderSettings, ReservedPadding2) == offsetof(Settings, ReservedPadding2),
-		"WetnessEffects::ShaderSettings reserved padding offsets must match Settings.");
 
-	struct alignas(16) PerFrame
+	struct PerFrame
 	{
 		REX::W32::XMFLOAT4X4 OcclusionViewProj;
 		float Time;
@@ -201,10 +156,14 @@ public:
 		float Wetness;
 		float PuddleWetness;
 		ShaderSettings settings;
+		// Explicit tail padding so the packed feature buffer keeps 16-byte CB stride.
+		uint ReservedPerFramePadding0 = 0;
+		uint ReservedPerFramePadding1 = 0;
+		uint ReservedPerFramePadding2 = 0;
 	};
 	STATIC_ASSERT_ALIGNAS_16(PerFrame);
 	static_assert(offsetof(PerFrame, settings) == 80, "WetnessEffects::PerFrame settings offset changed.");
-	static_assert(sizeof(PerFrame) == 288, "WetnessEffects::PerFrame size changed; update wetness shader/CB contract.");
+	static_assert(sizeof(PerFrame) == 256, "WetnessEffects::PerFrame size changed; update wetness shader/CB contract.");
 	static_assert((sizeof(PerFrame) % 16) == 0, "WetnessEffects::PerFrame must stay 16-byte sized");
 
 	struct DebugSettings

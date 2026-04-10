@@ -46,12 +46,6 @@ namespace
 	constexpr float LEGACY_REFLECTION_UI_ANCHOR_T = 0.28f;
 	constexpr float MODERN_REFLECTION_SCALE_AT_ANCHOR = 0.02f;
 	constexpr float LEGACY_REFLECTION_SCALE_AT_ANCHOR = 0.001f;
-	constexpr float RUNOFF_STRENGTH_MIN = 0.0f;
-	constexpr float RUNOFF_STRENGTH_MAX = 2.0f;
-	constexpr float RUNOFF_SPEED_MIN = 0.0f;
-	constexpr float RUNOFF_SPEED_MAX = 2.0f;
-	constexpr float RUNOFF_WIDTH_MIN = 0.25f;
-	constexpr float RUNOFF_WIDTH_MAX = 3.0f;
 	constexpr float WET_HIGHLIGHT_REDUCTION_MIN = 0.25f;
 	constexpr float WET_HIGHLIGHT_REDUCTION_MAX = 10.0f;
 	constexpr float DRYING_HOURS_MIN = 1.0f;
@@ -62,7 +56,6 @@ namespace
 	constexpr float DEFAULT_DIRT_DRYING_HOURS = 12.0f;
 	constexpr float DEFAULT_PUDDLE_DRYING_HOURS = 18.0f;
 	constexpr float DEFAULT_PUDDLE_LAYOUT = 2.0f;
-	constexpr float DEFAULT_RUNOFF_STRENGTH = 0.0f;
 	constexpr float WEATHER_DRIVEN_NON_PUDDLE_MIN_HOURS = 3.0f;
 	constexpr float WEATHER_DRIVEN_NON_PUDDLE_MAX_HOURS = 18.0f;
 	constexpr float WEATHER_DRIVEN_PUDDLE_MIN_HOURS = 12.0f;
@@ -106,9 +99,6 @@ namespace
 		float rippleRadius;
 		float rippleBreadth;
 		float rippleLifetime;
-		float runoffStrength;
-		float runoffSpeed;
-		float runoffWidth;
 		float modernReflectionShine;
 	};
 
@@ -131,9 +121,6 @@ namespace
 			0.8f,
 			0.45f,
 			0.35f,
-			0.0f,
-			1.0f,
-			1.0f,
 			0.55f },
 		{ "Balanced",
 			"Balanced visuals and performance for typical gameplay.",
@@ -153,9 +140,6 @@ namespace
 			0.9f,
 			0.5f,
 			0.45f,
-			0.5f,
-			1.0f,
-			1.2f,
 			0.62f },
 		{ "Quality",
 			"Higher fidelity wetness with denser raindrop/ripple coverage.",
@@ -175,9 +159,6 @@ namespace
 			1.0f,
 			0.55f,
 			0.40f,
-			0.9f,
-			1.15f,
-			1.25f,
 			0.70f }
 	} };
 
@@ -602,10 +583,6 @@ namespace
 		settings.RippleBreadth = preset.rippleBreadth;
 		settings.RippleLifetime = std::min(preset.rippleLifetime, settings.RaindropInterval);
 
-		settings.CloseRangeWetnessBoost = preset.runoffStrength;
-		settings.RunoffSpeed = preset.runoffSpeed;
-		settings.RunoffWidth = preset.runoffWidth;
-
 		settings.EnableModernWetReflection = 1u;
 		settings.EnableLegacyWetReflection = 0u;
 		modernScale = preset.modernReflectionShine;
@@ -632,10 +609,8 @@ namespace
 		settings.EnableRipples = SanitizeToggle(settings.EnableRipples);
 		settings.EnableVanillaRipples = SanitizeToggle(settings.EnableVanillaRipples);
 		settings.EnableLegacyRainBehavior = SanitizeToggle(settings.EnableLegacyRainBehavior);
-		settings.EnableDualPuddleModel = SanitizeToggle(settings.EnableDualPuddleModel);
 		settings.EnableForwardReflectionBias = SanitizeToggle(settings.EnableForwardReflectionBias);
 		settings.EnableVanillaReflectionCompensation = SanitizeToggle(settings.EnableVanillaReflectionCompensation);
-		settings.EnablePuddleInfluenceDebugReadout = std::min(settings.EnablePuddleInfluenceDebugReadout, 4u);
 		SanitizeReflectionSettings(settings);
 	}
 
@@ -652,7 +627,6 @@ namespace
 		settings.WeatherTransitionSpeed = ClampFiniteOrDefault(settings.WeatherTransitionSpeed, MIN_TRANSITION_SPEED, MAX_TRANSITION_SPEED, 3.0f);
 		settings.ShoreRange = std::max(settings.ShoreRange, 1u);
 		settings.PuddleRadius = ClampFiniteOrDefault(settings.PuddleRadius, MIN_PUDDLE_RADIUS, 10.0f, 1.0f);
-		settings.RunoffWidth = ClampFiniteOrDefault(settings.RunoffWidth, RUNOFF_WIDTH_MIN, RUNOFF_WIDTH_MAX, 1.0f);
 		settings.PuddleMaxAngle = ClampFiniteOrDefault(settings.PuddleMaxAngle, 0.0f, 1.0f, 0.95f);
 		settings.PuddleMinWetness = ClampFiniteOrDefault(settings.PuddleMinWetness, 0.0f, 1.0f, 0.85f);
 		settings.MinRainWetness = ClampFiniteOrDefault(settings.MinRainWetness, 0.0f, 1.0f, 0.65f);
@@ -670,13 +644,10 @@ namespace
 		settings.RippleLifetime = ClampFiniteOrDefault(settings.RippleLifetime, MIN_RIPPLE_LIFETIME, 60.0f, 0.5f);
 		settings.RippleBreadth = ClampFiniteOrDefault(settings.RippleBreadth, MIN_RIPPLE_BREADTH, 10.0f, 0.5f);
 		settings.PostRainPuddleWaterStrength = ClampFiniteOrDefault(settings.PostRainPuddleWaterStrength, 0.0f, 2.0f, 0.8f);
-		settings.CloseRangeWetnessBoost = ClampFiniteOrDefault(settings.CloseRangeWetnessBoost, RUNOFF_STRENGTH_MIN, RUNOFF_STRENGTH_MAX, DEFAULT_RUNOFF_STRENGTH);
 		settings.RaindropTransitionFalloff = ClampFiniteOrDefault(settings.RaindropTransitionFalloff, 0.5f, 6.0f, 2.0f);
-		settings.PuddleDepthBlend = ClampFiniteOrDefault(settings.PuddleDepthBlend, 0.0f, 1.0f, 0.5f);
 		settings.WetDarkeningStrength = ClampFiniteOrDefault(settings.WetDarkeningStrength, 0.0f, 2.0f, 1.0f);
 		settings.WetColorSaturation = ClampFiniteOrDefault(settings.WetColorSaturation, 0.0f, 2.5f, 1.0f);
 		settings.WetHighlightReduction = ClampFiniteOrDefault(settings.WetHighlightReduction, WET_HIGHLIGHT_REDUCTION_MIN, WET_HIGHLIGHT_REDUCTION_MAX, 1.0f);
-		settings.RunoffSpeed = ClampFiniteOrDefault(settings.RunoffSpeed, RUNOFF_SPEED_MIN, RUNOFF_SPEED_MAX, 1.0f);
 	}
 
 	RE::BSParticleShaderRainEmitter* GetRainEmitterFromPrecipGeometry(RE::BSGeometry* precipObject)
@@ -708,7 +679,6 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	MaxShoreWetness,
 	ShoreRange,
 	PuddleRadius,
-	RunoffWidth,
 	PuddleMaxAngle,
 	PuddleMinWetness,
 	MinRainWetness,
@@ -738,17 +708,12 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	RippleBreadth,
 	RippleLifetime,
 	PostRainPuddleWaterStrength,
-	CloseRangeWetnessBoost,
 	RaindropTransitionFalloff,
-	EnableDualPuddleModel,
-	PuddleDepthBlend,
 	WetDarkeningStrength,
 	WetColorSaturation,
 	WetHighlightReduction,
-	RunoffSpeed,
 	EnableForwardReflectionBias,
-	EnableVanillaReflectionCompensation,
-	EnablePuddleInfluenceDebugReadout)
+	EnableVanillaReflectionCompensation)
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	WetnessEffects::DebugSettings,
@@ -900,7 +865,7 @@ static constexpr std::array<ClimatePresetInfo, 6> CLIMATE_PRESET_INFO = {
 
 // Extract just the settings for the actual climate preset array
 static const std::array<WetnessEffects::ClimateSettings, 6> CLIMATE_PRESETS = { {
-	CLIMATE_PRESET_INFO[0].settings,  // Custom (placeholder)
+	CLIMATE_PRESET_INFO[0].settings,  // Custom
 	CLIMATE_PRESET_INFO[1].settings,  // Legacy
 	CLIMATE_PRESET_INFO[2].settings,  // Nordic Standard
 	CLIMATE_PRESET_INFO[3].settings,  // Arctic Tundra
@@ -969,8 +934,8 @@ void WetnessEffects::PostPostLoad()
 
 void WetnessEffects::SetupResources()
 {
-	// Retention mask is now fully generated in shader from existing material/depth cues.
-	// No authored puddle DDS resource setup is required.
+	// No authored puddle-mask resources are required.
+	// Puddle placement is generated procedurally in shader.
 }
 
 void WetnessEffects::ResetRuntimeState()
@@ -1383,24 +1348,6 @@ void WetnessEffects::DrawSettings()
 		}
 
 		ImGui::Separator();
-		ImGui::TextDisabled("Runoff");
-
-		ImGui::SliderFloat("Runoff Strength", &settings.CloseRangeWetnessBoost, RUNOFF_STRENGTH_MIN, RUNOFF_STRENGTH_MAX, "%.2f");
-		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::TextUnformatted("How visible downhill wet streaks are. Higher = stronger streaks, lower = subtler streaks. This is one of the costlier wetness effects; setting this to 0 disables runoff.");
-		}
-
-		ImGui::SliderFloat("Runoff Speed", &settings.RunoffSpeed, RUNOFF_SPEED_MIN, RUNOFF_SPEED_MAX, "%.2f");
-		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::TextUnformatted("How fast runoff streaks move. Higher = faster motion, lower = slower motion. Only active when Runoff Strength is above 0.");
-		}
-
-		ImGui::SliderFloat("Runoff Width", &settings.RunoffWidth, RUNOFF_WIDTH_MIN, RUNOFF_WIDTH_MAX, "%.2f");
-		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::TextUnformatted("Runoff streak thickness. Higher = wider streaks, lower = thinner streaks. Only active when Runoff Strength is above 0.");
-		}
-
-		ImGui::Separator();
 		ImGui::TextDisabled("Shore and Puddles");
 
 		int shoreRange = static_cast<int>(settings.ShoreRange);
@@ -1430,18 +1377,6 @@ void WetnessEffects::DrawSettings()
 		ImGui::SliderFloat("Puddle Layout", &puddleLayout, PUDDLE_LAYOUT_MIN, PUDDLE_LAYOUT_MAX, "%.2f", ImGuiSliderFlags_AlwaysClamp);
 		if (auto _tt = Util::HoverTooltipWrapper()) {
 			ImGui::TextUnformatted("Changes how puddle patches are arranged. Lower = finer, busier pattern. Higher = broader, smoother pattern.");
-		}
-
-		drawUintCheckbox("Enable Dual Puddle Model", settings.EnableDualPuddleModel);
-		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::TextUnformatted("Blends broad flat puddles with small puddles in surface gaps. Off = simpler puddle style.");
-		}
-
-		ImGui::BeginDisabled(settings.EnableDualPuddleModel == 0);
-		ImGui::SliderFloat("Flat vs Depth", &settings.PuddleDepthBlend, 0.0f, 1.0f, "%.2f");
-		ImGui::EndDisabled();
-		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::TextUnformatted("Blend between broad flat puddles and gap-following puddles. Lower = flatter pooling, higher = more depth-following pooling.");
 		}
 
 		ImGui::SliderFloat("Puddle Max Angle", &settings.PuddleMaxAngle, 0.0f, 1.0f);
@@ -1476,53 +1411,6 @@ void WetnessEffects::DrawSettings()
 	}
 
 	if (ImGui::TreeNodeEx("Debug (Testing)")) {
-		int puddleDebugViewMode = std::clamp(static_cast<int>(settings.EnablePuddleInfluenceDebugReadout), 0, 4);
-		const char* puddleDebugViewModes[] = {
-			"Off",
-			"Contributors (RGB)",
-			"Retention Mask",
-			"Local Fill Level",
-			"Final Puddle"
-		};
-		if (ImGui::Combo("Puddle Debug View", &puddleDebugViewMode, puddleDebugViewModes, IM_ARRAYSIZE(puddleDebugViewModes))) {
-			settings.EnablePuddleInfluenceDebugReadout = static_cast<uint>(puddleDebugViewMode);
-		}
-		if (auto _tt = Util::HoverTooltipWrapper()) {
-			Util::DrawMultiLineTooltip({
-				"Off: no puddle debug overlay.",
-				"Contributors (RGB): red=retention, green=local fill, blue=final puddle.",
-				"Retention Mask: where puddles are allowed to form (ground-only).",
-				"Local Fill Level: dynamic fill after retention/capacity shaping.",
-				"Final Puddle: shader visualization of final puddle result."
-			});
-		}
-
-		if (settings.EnablePuddleInfluenceDebugReadout == 1u) {
-			if (g_hasLastFrameData) {
-				const auto smoothstep = [](float edge0, float edge1, float x) {
-					const float width = std::max(edge1 - edge0, 1e-4f);
-					const float t = std::clamp((x - edge0) / width, 0.0f, 1.0f);
-					return t * t * (3.0f - 2.0f * t);
-				};
-
-				const float effectiveWetness = std::clamp(std::max(g_lastFrameData.Wetness, g_lastFrameData.PuddleWetness), 0.0f, 1.0f);
-				const float flatFloorInfluence = smoothstep(settings.PuddleMinWetness * 0.65f, 1.0f, effectiveWetness);
-				const float depthInfluence = (settings.EnableDualPuddleModel != 0) ? std::clamp(settings.PuddleDepthBlend * effectiveWetness, 0.0f, 1.0f) : 0.0f;
-				const float layoutScale = std::clamp((PUDDLE_LAYOUT_MAX - puddleLayout) / (PUDDLE_LAYOUT_MAX - PUDDLE_LAYOUT_MIN), 0.0f, 1.0f);
-				const float layoutInfluence = layoutScale;
-
-				ImGui::TextDisabled("Estimated effective factors (global):");
-				ImGui::Text("Flat floor influence: %.1f%%", flatFloorInfluence * 100.0f);
-				ImGui::Text("Depth contribution: %.1f%%", depthInfluence * 100.0f);
-				ImGui::Text("Layout contribution: %.1f%%", layoutInfluence * 100.0f);
-			} else {
-				ImGui::TextDisabled("Puddle influence debug data becomes available after rendering at least one wetness frame.");
-			}
-		} else if (settings.EnablePuddleInfluenceDebugReadout >= 2u) {
-			ImGui::TextDisabled("Shader puddle debug view is active.");
-		}
-
-		ImGui::Separator();
 		ImGui::Checkbox("Enable Wetness Override", &debugSettings.EnableWetnessOverride);
 		if (auto _tt = Util::HoverTooltipWrapper()) {
 			ImGui::TextUnformatted("Use manual wetness values instead of automatic values.");
@@ -2064,7 +1952,6 @@ void WetnessEffects::LoadSettings(json& o_json)
 			"LegacyWetIndirectSpecularScale",
 			"EnableForwardReflectionBias",
 			"EnableVanillaReflectionCompensation",
-			"EnablePuddleInfluenceDebugReadout",
 		});
 	settings = {};
 	if (isObject) {

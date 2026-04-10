@@ -102,7 +102,6 @@ namespace SharedData
 
 		uint ShoreRange;
 		float PuddleRadius;
-		float RunoffWidth;
 		float PuddleMaxAngle;
 		float PuddleMinWetness;
 
@@ -138,22 +137,12 @@ namespace SharedData
 		float RippleLifetimeRcp;
 		float PostRainPuddleWaterStrength;
 
-		float CloseRangeWetnessBoost;
 		float RaindropTransitionFalloff;
-		uint EnableDualPuddleModel;
-		float PuddleDepthBlend;
 		float WetDarkeningStrength;
 		float WetColorSaturation;
 		float WetHighlightReduction;
-		float RunoffSpeed;
-		uint ReservedReflectionControl0;
 		uint EnableForwardReflectionBias;
 		uint EnableVanillaReflectionCompensation;
-		uint EnablePuddleInfluenceDebugReadout;
-		uint ReservedWetnessControl0;
-		uint ReservedPadding0;
-		uint ReservedPadding1;
-		uint ReservedPadding2;
 	};
 
 	struct SkylightingSettings
