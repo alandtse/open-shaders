@@ -2555,17 +2555,22 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 		if (wetness > 0.0 || puddleWetness > 0.0) {
 			float puddleMaxAngleSafe = max(SharedData::wetnessEffectsSettings.PuddleMaxAngle, 1e-3);
 			float puddleRadiusSafe = max(SharedData::wetnessEffectsSettings.PuddleRadius, 1e-3);
-			float puddleLayoutSafe = max(SharedData::wetnessEffectsSettings.PuddleLayout, 1e-3);
-			float3 puddleCoords = ((input.WorldPosition.xyz + FrameBuffer::CameraPosAdjust[eyeIndex].xyz) * 0.5 + 0.5) * 0.01 / (puddleRadiusSafe * puddleLayoutSafe);
-			float puddleSignal = Random::perlinNoise(puddleCoords) * 0.5 + 0.5;
+			float puddleLayoutSafe = clamp(SharedData::wetnessEffectsSettings.PuddleLayout, 0.3, 10.0);
+			float3 puddleCoordsBase = ((input.WorldPosition.xyz + FrameBuffer::CameraPosAdjust[eyeIndex].xyz) * 0.5 + 0.5) * 0.01;
+			float layoutT = saturate((puddleLayoutSafe - 0.3) / 9.7);
+			float3 layoutSeed = float3(12.7, 19.1, 23.3) * puddleLayoutSafe;
+			float layoutWarp = Random::perlinNoise(puddleCoordsBase * 0.45 + layoutSeed) * 2.0 - 1.0;
+			float3 puddleCoordsWarped = puddleCoordsBase + layoutWarp * float3(0.55, 0.35, 0.42);
+			float3 puddlePatternOffset = float3(31.0, 17.0, 43.0) * layoutT;
+			// Keep layout/placement independent from puddle radius:
+			// layout controls signal shape/placement, radius only dilates/erodes puddle footprint via threshold bias.
+			float puddleSignal = Random::perlinNoise(puddleCoordsWarped + puddlePatternOffset) * 0.5 + 0.5;
 			puddleSignal = puddleSignal * ((minWetnessAngle / puddleMaxAngleSafe) * SharedData::wetnessEffectsSettings.MaxPuddleWetness * 0.25) + 0.5;
 			float basePuddleBlend = lerp(wetness, puddleWetness, saturate(puddleSignal - 0.25));
 			float maxPuddleStrength = saturate(SharedData::wetnessEffectsSettings.MaxPuddleWetness * (1.0 / 3.5));
-			float baseThreshold = lerp(0.93, 0.72, maxPuddleStrength);
-			// Small puddle-size values increase noise frequency; raise threshold there so
-			// this does not collapse into "wet everywhere except tiny dry holes".
-			float smallRadiusBoost = saturate((1.0 - puddleRadiusSafe) / 0.7);
-			baseThreshold = saturate(baseThreshold + smallRadiusBoost * 0.20);
+			float radiusSizeT = saturate((puddleRadiusSafe - 0.15) * (1.0 / 11.85));
+			float radiusThresholdBias = lerp(0.20, -0.55, radiusSizeT);
+			float baseThreshold = saturate(lerp(0.93, 0.72, maxPuddleStrength) + radiusThresholdBias);
 			float baseGate = saturate((puddleSignal - baseThreshold) / max(1e-3, 1.0 - baseThreshold));
 			// Suppress low-amplitude puddle tails so puddle radius does not drive a broad
 			// weak sheen pattern across non-puddle regions.

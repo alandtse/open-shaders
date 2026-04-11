@@ -35,8 +35,11 @@ namespace
 	constexpr float MIN_RIPPLE_BREADTH = 1e-3f;
 	constexpr float MIN_SPLASH_LIFETIME = 1e-3f;
 	constexpr float MIN_PUDDLE_RADIUS = 1e-3f;
+	constexpr float PUDDLE_RADIUS_UI_MIN = 0.15f;
+	constexpr float PUDDLE_RADIUS_UI_MAX = 50.0f;
+	constexpr float PUDDLE_RADIUS_CLAMP_MAX = 50.0f;
 	constexpr float PUDDLE_LAYOUT_MIN = 0.3f;
-	constexpr float PUDDLE_LAYOUT_MAX = 3.0f;
+	constexpr float PUDDLE_LAYOUT_MAX = 10.0f;
 	constexpr float LEGACY_WET_REFLECTION_UI_SCALE_MAX = 1.00f;
 	constexpr float MODERN_WET_REFLECTION_LEGACY_UI_MAX = 1.00f;
 	constexpr float MAX_MODERN_WET_REFLECTION_UI_SCALE = 2.00f;
@@ -676,7 +679,7 @@ namespace
 	{
 		settings.WeatherTransitionSpeed = ClampFiniteOrDefault(settings.WeatherTransitionSpeed, MIN_TRANSITION_SPEED, MAX_TRANSITION_SPEED, 3.0f);
 		settings.ShoreRange = std::max(settings.ShoreRange, 1u);
-		settings.PuddleRadius = ClampFiniteOrDefault(settings.PuddleRadius, MIN_PUDDLE_RADIUS, 10.0f, 1.0f);
+		settings.PuddleRadius = ClampFiniteOrDefault(settings.PuddleRadius, MIN_PUDDLE_RADIUS, PUDDLE_RADIUS_CLAMP_MAX, 1.0f);
 		settings.PuddleMaxAngle = ClampFiniteOrDefault(settings.PuddleMaxAngle, 0.0f, 1.0f, 0.95f);
 		settings.PuddleMinWetness = ClampFiniteOrDefault(settings.PuddleMinWetness, 0.0f, 1.0f, 0.85f);
 		settings.MinRainWetness = ClampFiniteOrDefault(settings.MinRainWetness, 0.0f, 1.0f, 0.65f);
@@ -1406,10 +1409,11 @@ void WetnessEffects::DrawSettings()
 			ImGui::TextUnformatted("Controls how easily puddles form on slopes. Higher = puddles can appear on steeper ground, lower = mostly flat areas only.");
 		}
 
-		ImGui::SliderFloat("Puddle Radius", &settings.PuddleRadius, 0.3f, 3.0f);
+		ImGui::SliderFloat("Puddle Radius", &settings.PuddleRadius, PUDDLE_RADIUS_UI_MIN, PUDDLE_RADIUS_UI_MAX, "%.2f", ImGuiSliderFlags_AlwaysClamp);
 		if (auto _tt = Util::HoverTooltipWrapper()) {
 			std::vector<std::string> tooltipLines = {
-				"Higher = larger puddle pattern, lower = smaller puddle pattern.",
+				"Higher = larger individual puddles, lower = smaller individual puddles.",
+				"Does not control puddle layout/placement.",
 				Util::Units::FormatDistance(settings.PuddleRadius),
 				std::format("{:.2f} meters", Util::Units::GameUnitsToMeters(settings.PuddleRadius))
 			};
@@ -1417,7 +1421,7 @@ void WetnessEffects::DrawSettings()
 		}
 		ImGui::SliderFloat("Puddle Layout", &puddleLayout, PUDDLE_LAYOUT_MIN, PUDDLE_LAYOUT_MAX, "%.2f", ImGuiSliderFlags_AlwaysClamp);
 		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::TextUnformatted("Changes how puddle patches are arranged. Lower = finer, busier pattern. Higher = broader, smoother pattern.");
+			ImGui::TextUnformatted("Changes puddle shape/placement pattern only (not puddle size). Lower values = smoother, broader patches. Higher values = more irregular, broken-up placement.");
 		}
 
 		ImGui::SliderFloat("Post-Rain Puddle Water", &settings.PostRainPuddleWaterStrength, 0.0f, 2.0f, "%.2f");
