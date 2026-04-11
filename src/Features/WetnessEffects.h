@@ -52,7 +52,6 @@ public:
 		uint EnableSplashes = true;
 		uint EnableRipples = true;
 		uint EnableVanillaRipples = false;
-		uint EnableLegacyRainBehavior = false;
 		uint EnableModernWetReflection = true;
 		uint EnableLegacyWetReflection = false;
 		float WetIndirectSpecularScale = 0.2f;
@@ -79,16 +78,16 @@ public:
 		uint EnableVanillaReflectionCompensation = false;
 		float WetFilmSpecularFloorScale = 1.0f;
 	};
-	static_assert(sizeof(Settings) == 168, "WetnessEffects::Settings layout changed; update wetness shader/CB contract.");
+	static_assert(sizeof(Settings) == 164, "WetnessEffects::Settings layout changed; update wetness shader/CB contract.");
 	static_assert(offsetof(Settings, WeatherTransitionSpeed) == 40, "WetnessEffects::Settings WeatherTransitionSpeed offset changed.");
 	static_assert(offsetof(Settings, EnableRaindropFx) == 56, "WetnessEffects::Settings EnableRaindropFx offset changed.");
-	static_assert(offsetof(Settings, WetIndirectSpecularScale) == 84, "WetnessEffects::Settings WetIndirectSpecularScale offset changed.");
-	static_assert(offsetof(Settings, RaindropGridSize) == 92, "WetnessEffects::Settings RaindropGridSize offset changed.");
-	static_assert(offsetof(Settings, RippleLifetime) == 132, "WetnessEffects::Settings RippleLifetime offset changed.");
-	static_assert(offsetof(Settings, WetHighlightReduction) == 152, "WetnessEffects::Settings WetHighlightReduction offset changed.");
-	static_assert(offsetof(Settings, EnableForwardReflectionBias) == 156, "WetnessEffects::Settings EnableForwardReflectionBias offset changed.");
-	static_assert(offsetof(Settings, EnableVanillaReflectionCompensation) == 160, "WetnessEffects::Settings EnableVanillaReflectionCompensation offset changed.");
-	static_assert(offsetof(Settings, WetFilmSpecularFloorScale) == 164, "WetnessEffects::Settings WetFilmSpecularFloorScale offset changed.");
+	static_assert(offsetof(Settings, WetIndirectSpecularScale) == 80, "WetnessEffects::Settings WetIndirectSpecularScale offset changed.");
+	static_assert(offsetof(Settings, RaindropGridSize) == 88, "WetnessEffects::Settings RaindropGridSize offset changed.");
+	static_assert(offsetof(Settings, RippleLifetime) == 128, "WetnessEffects::Settings RippleLifetime offset changed.");
+	static_assert(offsetof(Settings, WetHighlightReduction) == 148, "WetnessEffects::Settings WetHighlightReduction offset changed.");
+	static_assert(offsetof(Settings, EnableForwardReflectionBias) == 152, "WetnessEffects::Settings EnableForwardReflectionBias offset changed.");
+	static_assert(offsetof(Settings, EnableVanillaReflectionCompensation) == 156, "WetnessEffects::Settings EnableVanillaReflectionCompensation offset changed.");
+	static_assert(offsetof(Settings, WetFilmSpecularFloorScale) == 160, "WetnessEffects::Settings WetFilmSpecularFloorScale offset changed.");
 
 	// Shader-facing wetness settings layout.
 	// Keep this binary-compatible with Settings while exposing shader semantics directly.
@@ -113,7 +112,6 @@ public:
 		uint EnableSplashes = true;
 		uint EnableRipples = true;
 		uint EnableVanillaRipples = false;
-		uint EnableLegacyRainBehavior = false;
 		uint EnableModernWetReflection = true;
 		uint EnableLegacyWetReflection = false;
 		float WetIndirectSpecularScale = 0.2f;
@@ -164,6 +162,7 @@ public:
 		// Explicit tail padding so the packed feature buffer keeps 16-byte CB stride.
 		uint ReservedPerFramePadding0 = 0;
 		uint ReservedPerFramePadding1 = 0;
+		uint ReservedPerFramePadding2 = 0;
 	};
 	STATIC_ASSERT_ALIGNAS_16(PerFrame);
 	static_assert(offsetof(PerFrame, settings) == 80, "WetnessEffects::PerFrame settings offset changed.");
@@ -189,7 +188,6 @@ public:
 	float legacyWetIndirectSpecularScale = 0.68f;
 	float shorePersistentDarkeningStrength = 1.0f;
 	float shorePersistentWetFilmScale = 1.0f;
-	bool enableMicroPuddleWetFilm = false;
 	// Climate preset system
 	enum class ClimatePreset : uint32_t
 	{

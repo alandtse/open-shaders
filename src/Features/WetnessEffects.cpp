@@ -100,7 +100,6 @@ namespace
 		uint enableSplashes;
 		uint enableRipples;
 		uint enableVanillaRipples;
-		uint enableLegacyRainBehavior;
 		float raindropTransitionFalloff;
 		float raindropFxRange;
 		float splashesStrength;
@@ -122,7 +121,6 @@ namespace
 			1u,
 			1u,
 			0u,
-			0u,
 			2.5f,
 			700.0f,
 			0.9f,
@@ -140,7 +138,6 @@ namespace
 			1u,
 			1u,
 			1u,
-			0u,
 			0u,
 			2.2f,
 			1000.0f,
@@ -160,7 +157,6 @@ namespace
 			1u,
 			1u,
 			0u,
-			1u,
 			2.0f,
 			1400.0f,
 			1.2f,
@@ -570,18 +566,6 @@ namespace
 		return bits;
 	}
 
-	float EncodeSignedToggleFloat(float value, bool toggleEnabled)
-	{
-		const float clampedValue = std::isfinite(value) ? std::max(value, 0.0f) : 0.0f;
-		if (!toggleEnabled) {
-			return clampedValue;
-		}
-
-		// Encode toggle state in sign while preserving value magnitude.
-		const float encodedMagnitude = std::max(clampedValue, 1e-6f);
-		return -encodedMagnitude;
-	}
-
 	void SanitizePersistentUiState(
 		WetnessEffects::Settings& settings,
 		float& modernScale,
@@ -621,7 +605,6 @@ namespace
 		settings.EnableSplashes = preset.enableSplashes;
 		settings.EnableRipples = preset.enableRipples;
 		settings.EnableVanillaRipples = preset.enableVanillaRipples;
-		settings.EnableLegacyRainBehavior = preset.enableLegacyRainBehavior;
 
 		settings.RaindropTransitionFalloff = preset.raindropTransitionFalloff;
 		settings.RaindropFxRange = preset.raindropFxRange;
@@ -661,7 +644,6 @@ namespace
 		settings.EnableSplashes = SanitizeToggle(settings.EnableSplashes);
 		settings.EnableRipples = SanitizeToggle(settings.EnableRipples);
 		settings.EnableVanillaRipples = SanitizeToggle(settings.EnableVanillaRipples);
-		settings.EnableLegacyRainBehavior = SanitizeToggle(settings.EnableLegacyRainBehavior);
 		settings.EnableForwardReflectionBias = SanitizeToggle(settings.EnableForwardReflectionBias);
 		settings.EnableVanillaReflectionCompensation = SanitizeToggle(settings.EnableVanillaReflectionCompensation);
 		SanitizeReflectionSettings(settings);
@@ -745,7 +727,6 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	EnableSplashes,
 	EnableRipples,
 	EnableVanillaRipples,
-	EnableLegacyRainBehavior,
 	EnableModernWetReflection,
 	EnableLegacyWetReflection,
 	WetIndirectSpecularScale,
@@ -1308,13 +1289,6 @@ void WetnessEffects::DrawSettings()
 			settings.EnableVanillaReflectionCompensation,
 			"Non-PBR only: lifts darker/banded vanilla wet reflections without changing PBR output.");
 
-		ImGui::BeginDisabled(settings.EnableRipples == 0);
-		drawUintCheckbox("Chaotic Ripple Turbulence", settings.EnableLegacyRainBehavior);
-		ImGui::EndDisabled();
-		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::TextUnformatted("Adds extra random movement to rain ripples. Requires Enable Ripples.");
-		}
-
 		ImGui::TreePop();
 	}
 
@@ -1427,11 +1401,6 @@ void WetnessEffects::DrawSettings()
 		ImGui::SliderFloat("Post-Rain Puddle Water", &settings.PostRainPuddleWaterStrength, 0.0f, 2.0f, "%.2f");
 		if (auto _tt = Util::HoverTooltipWrapper()) {
 			ImGui::TextUnformatted("How much standing water remains visible after rain stops. Higher = puddles stay fuller longer, lower = less leftover water.");
-		}
-
-		ImGui::Checkbox("Enable Micro Puddles", &enableMicroPuddleWetFilm);
-		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::TextUnformatted("Adds fine cavity-guided micro puddles on top of the main puddle model. Uses rain wetness/surface drying timeline, not puddle persistence timeline.");
 		}
 
 		ImGui::Separator();
@@ -1974,10 +1943,9 @@ WetnessEffects::PerFrame WetnessEffects::GetCommonBufferData() const
 	const bool masterWetnessEnabled = settings.EnableWetnessEffects != 0;
 	const float activeShorePersistentDarkeningStrength = masterWetnessEnabled ? clampedShorePersistentDarkeningStrength : 0.0f;
 	const float activeShorePersistentWetFilmScale = masterWetnessEnabled ? clampedShorePersistentWetFilmScale : 0.0f;
-	const bool microPuddlesEnabled = masterWetnessEnabled && enableMicroPuddleWetFilm;
-	const float encodedShorePersistentDarkeningStrength = EncodeSignedToggleFloat(activeShorePersistentDarkeningStrength, microPuddlesEnabled);
-	data.ReservedPerFramePadding0 = EncodeFloatToUint(encodedShorePersistentDarkeningStrength);
+	data.ReservedPerFramePadding0 = EncodeFloatToUint(activeShorePersistentDarkeningStrength);
 	data.ReservedPerFramePadding1 = EncodeFloatToUint(activeShorePersistentWetFilmScale);
+	data.ReservedPerFramePadding2 = 0u;
 	data.settings.PostRainPuddleWaterStrength = ClampFiniteOrDefault(data.settings.PostRainPuddleWaterStrength, 0.0f, 2.0f, 0.8f);
 	data.settings.RaindropChance *= data.Raining * data.Raining;
 	data.settings.RaindropChance = std::clamp(data.settings.RaindropChance, 0.0f, 1.0f);
@@ -2042,8 +2010,6 @@ void WetnessEffects::LoadSettings(json& o_json)
 			"PuddleDryingHours",
 			"EnableWeatherDrivenDryingModel",
 			"PuddleLayout",
-			"EnableMicroPuddleCurvature",
-			"EnableOpenSkyPuddleOcclusionBypass",
 			"ModernWetIndirectSpecularScale",
 			"LegacyWetIndirectSpecularScale",
 			"EnableForwardReflectionBias",
@@ -2091,10 +2057,6 @@ void WetnessEffects::LoadSettings(json& o_json)
 		(isObject && o_json.contains("EnableWeatherDrivenDryingModel")) ?
 			JsonValueToBool(o_json["EnableWeatherDrivenDryingModel"], true) :
 			true;
-	enableMicroPuddleWetFilm =
-		(isObject && o_json.contains("EnableMicroPuddleWetFilm")) ?
-			JsonValueToBool(o_json["EnableMicroPuddleWetFilm"], false) :
-			false;
 
 	if (!hasExplicitWetnessSettings) {
 		ApplyDefaultWetnessUiPreset(settings, modernWetIndirectSpecularScale, legacyWetIndirectSpecularScale);
@@ -2136,7 +2098,6 @@ void WetnessEffects::SaveSettings(json& o_json)
 	o_json["ShorePersistentDarkeningStrength"] = shorePersistentDarkeningStrength;
 	o_json["ShorePersistentWetFilmScale"] = shorePersistentWetFilmScale;
 	o_json["EnableWeatherDrivenDryingModel"] = enableWeatherDrivenDryingModel;
-	o_json["EnableMicroPuddleWetFilm"] = enableMicroPuddleWetFilm;
 
 	o_json["DebugSettings"] = debugSettings;
 }
@@ -2149,7 +2110,6 @@ void WetnessEffects::RestoreDefaultSettings()
 	puddleLayout = DEFAULT_PUDDLE_LAYOUT;
 	shorePersistentDarkeningStrength = SHORE_PERSISTENT_DARKENING_DEFAULT;
 	shorePersistentWetFilmScale = SHORE_PERSISTENT_WET_FILM_DEFAULT;
-	enableMicroPuddleWetFilm = false;
 	modernWetIndirectSpecularScale = DEFAULT_MODERN_WET_REFLECTION_UI;
 	legacyWetIndirectSpecularScale = DEFAULT_LEGACY_WET_REFLECTION_UI;
 	climatePreset = defaultPreset;

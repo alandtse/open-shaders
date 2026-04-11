@@ -116,7 +116,6 @@ namespace SharedData
 		uint EnableSplashes;
 		uint EnableRipples;
 		uint EnableVanillaRipples;
-		uint EnableLegacyRainBehavior;
 		uint EnableModernWetReflection;
 		uint EnableLegacyWetReflection;
 		float WetIndirectSpecularScale;
@@ -146,6 +145,7 @@ namespace SharedData
 		float WetFilmSpecularFloorScale;
 		float ShorePersistentDarkeningStrength;
 		float ShorePersistentWetFilmScale;
+		float WetnessEffectsPadding0;
 	};
 
 	struct SkylightingSettings
