@@ -2391,6 +2391,11 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	// Calculate wetness angle and occlusion
 	float minWetnessValue = SharedData::wetnessEffectsSettings.MinRainWetness;
 	float minWetnessAngle = saturate(max(minWetnessValue, worldNormal.z));
+#		if !defined(MODELSPACENORMALS)
+	float rainSurfaceUpness = saturate(vertexNormal.z);
+#		else
+	float rainSurfaceUpness = saturate(worldNormal.z);
+#		endif
 	const float rainingAmount = saturate(SharedData::wetnessEffectsSettings.Raining);
 	const float inRainBlend = smoothstep(0.05, 0.35, rainingAmount);
 
@@ -2454,7 +2459,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	// Calculate raindrop effects
 	float4 raindropInfo = float4(0, 0, 1, 0);
 	float localRainOcclusion = 1.0;
-	if (worldNormal.z > 0.0 && SharedData::wetnessEffectsSettings.Raining > 0.0f) {
+	if (rainSurfaceUpness > 0.05 && SharedData::wetnessEffectsSettings.Raining > 0.0f) {
 		float4 precipOcclusionTexCoord = mul(SharedData::wetnessEffectsSettings.OcclusionViewProj, float4(input.WorldPosition.xyz, 1));
 		precipOcclusionTexCoord.y = -precipOcclusionTexCoord.y;
 		float2 precipOcclusionUV = precipOcclusionTexCoord.xy * 0.5 + 0.5;
@@ -2469,7 +2474,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 		localRainOcclusion = lerp(1.0, occlusionPass, occlusionValidity);
 	}
 	float puddleRainExposure = lerp(1.0, localRainOcclusion, inRainBlend);
-	if (worldNormal.z > 0.0 && SharedData::wetnessEffectsSettings.Raining > 0.0f && (SharedData::wetnessEffectsSettings.EnableRaindropFx != 0)) {
+	if (rainSurfaceUpness > 0.05 && SharedData::wetnessEffectsSettings.Raining > 0.0f && (SharedData::wetnessEffectsSettings.EnableRaindropFx != 0)) {
 		float raindropFade = localRainOcclusion;
 
 		if (raindropFade > 0.0)
@@ -2564,13 +2569,15 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	wetnessGlossinessSpecular = lerp(wetnessGlossinessSpecular, wetnessGlossinessSpecular * shoreFactor, input.WorldPosition.z < waterHeight);
 	// Keep a subtle rain-film sheen outside standing puddles so wet ground still
 	// glitters even where puddle placement gate is low.
-	float wetFilmSource = max(rainWetness, wetness * 0.70);
+	float wetFilmSource = max(rainWetness, wetness * 0.35);
 	float wetFilmFloorScale = max(0.0, SharedData::wetnessEffectsSettings.WetFilmSpecularFloorScale);
-	// Follow shelter/rain occlusion more closely for the wet-film floor. Keep a
-	// small in-rain floor so recently-wet surfaces don't hard-pop to dry.
-	float wetFilmRainExposure = lerp(1.0, saturate(puddleRainExposure * puddleRainExposure), inRainBlend);
-	wetFilmRainExposure = max(wetFilmRainExposure, lerp(1.0, 0.12, inRainBlend));
-	float wetFilmSpecular = saturate(wetFilmSource * lerp(0.14, 0.32, inRainBlend) * wetFilmRainExposure * wetFilmFloorScale);
+	// Keep occlusion influence for shelter behavior, but avoid strong player-centered
+	// projection artifacts by limiting how much occlusion drives the wet-film floor.
+	float wetFilmSlopeMask = smoothstep(0.18, 0.92, rainSurfaceUpness);
+	float wetFilmRainExposure = lerp(1.0, puddleRainExposure, inRainBlend * 0.16 * wetFilmSlopeMask);
+	wetFilmRainExposure = max(wetFilmRainExposure, lerp(1.0, 0.80, inRainBlend));
+	float wetFilmSpecular = saturate(wetFilmSource * lerp(0.10, 0.24, inRainBlend) * wetFilmRainExposure * wetFilmFloorScale);
+	wetFilmSpecular *= wetFilmSlopeMask;
 	wetnessGlossinessSpecular = max(wetnessGlossinessSpecular, wetFilmSpecular);
 	float deepPuddleMask = smoothstep(0.14, 0.88, saturate(puddle));
 	wetnessGlossinessSpecular = saturate(wetnessGlossinessSpecular * lerp(1.0, 1.65, deepPuddleMask));
@@ -2609,6 +2616,8 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 #		if !defined(SKIN) && !defined(HAIR)
 	float shorePersistentShineMask = saturate(shoreFactor);
 	shorePersistentShineMask *= shorePersistentShineMask;
+	float shorePersistentSlopeMask = smoothstep(0.45, 0.92, saturate(worldNormal.z));
+	shorePersistentShineMask *= shorePersistentSlopeMask;
 	float shorePersistentShineScale = max(0.0, SharedData::wetnessEffectsSettings.ShorePersistentWetFilmScale);
 	if (shorePersistentShineScale > 1e-4 && shorePersistentShineMask > 1e-4) {
 		float shoreShineBase = lerp(0.10, 0.34, shorePersistentShineMask);
@@ -3062,6 +3071,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 #		if !(defined(FACEGEN) || defined(FACEGEN_RGB_TINT) || defined(EYE)) || defined(TREE_ANIM)
 	float shorePersistentDarkeningMask = saturate(shoreFactor);
 	shorePersistentDarkeningMask *= shorePersistentDarkeningMask;
+	shorePersistentDarkeningMask *= smoothstep(0.35, 0.90, saturate(worldNormal.z));
 	float shorePersistentDarkeningStrength = max(0.0, SharedData::wetnessEffectsSettings.ShorePersistentDarkeningStrength);
 	const bool shorePersistentDarkeningEnabled = shorePersistentDarkeningStrength > 1e-4 && shorePersistentDarkeningMask > 1e-4;
 	[branch] if (wetnessEnabled || shorePersistentDarkeningEnabled) {
