@@ -2562,7 +2562,11 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	// glitters even where puddle placement gate is low.
 	float wetFilmSource = max(rainWetness, wetness * 0.70);
 	float wetFilmFloorScale = max(0.0, SharedData::wetnessEffectsSettings.WetFilmSpecularFloorScale);
-	float wetFilmSpecular = saturate(wetFilmSource * lerp(0.14, 0.32, inRainBlend) * wetFilmFloorScale);
+	// Follow shelter/rain occlusion more closely for the wet-film floor. Keep a
+	// small in-rain floor so recently-wet surfaces don't hard-pop to dry.
+	float wetFilmRainExposure = lerp(1.0, saturate(puddleRainExposure * puddleRainExposure), inRainBlend);
+	wetFilmRainExposure = max(wetFilmRainExposure, lerp(1.0, 0.12, inRainBlend));
+	float wetFilmSpecular = saturate(wetFilmSource * lerp(0.14, 0.32, inRainBlend) * wetFilmRainExposure * wetFilmFloorScale);
 	wetnessGlossinessSpecular = max(wetnessGlossinessSpecular, wetFilmSpecular);
 	float deepPuddleMask = smoothstep(0.14, 0.88, saturate(puddle));
 	wetnessGlossinessSpecular = saturate(wetnessGlossinessSpecular * lerp(1.0, 1.65, deepPuddleMask));
