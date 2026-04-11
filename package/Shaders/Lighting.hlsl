@@ -2374,6 +2374,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 		float wetnessGlossinessAlbedo = 0.0;
 		float wetnessGlossinessSpecular = 0.0;
 		float wetHighlightReflectanceScale = 1.0;
+		float wetDirectSpecularScale = 1.0;
 		const bool wetnessEnabled = (SharedData::wetnessEffectsSettings.EnableWetnessEffects != 0);
 	float wetnessDistToWater = abs(input.WorldPosition.z - waterHeight);
 	float shoreRangeSafe = max(1.0, (float)SharedData::wetnessEffectsSettings.ShoreRange);
@@ -2580,6 +2581,11 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	wetFilmSpecular *= wetFilmSlopeMask;
 	wetnessGlossinessSpecular = max(wetnessGlossinessSpecular, wetFilmSpecular);
 	float deepPuddleMask = smoothstep(0.14, 0.88, saturate(puddle));
+	float wetFilmNonPuddleMask = wetFilmSpecular * (1.0 - deepPuddleMask);
+	float wetFilmDominance = saturate(wetFilmNonPuddleMask / max(wetnessGlossinessSpecular, 1e-3));
+	// Keep wet-film looking like clear wetness (env reflection / darker surface) rather
+	// than milky white direct-light glare when puddle coverage is low.
+	wetDirectSpecularScale = lerp(1.0, 0.52, wetFilmDominance * saturate(wetFilmFloorScale * 0.85));
 	wetnessGlossinessSpecular = saturate(wetnessGlossinessSpecular * lerp(1.0, 1.65, deepPuddleMask));
 
 	// Update flatness and normal calculations
@@ -2731,8 +2737,11 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 
 #	if defined(WETNESS_EFFECTS)
 	float3 wetReflectionModeConfig = 0.0.xxx;
+	float3 wetReflectionModeConfigDirect = 0.0.xxx;
 	[branch] if (wetSpecularEnabled) {
 		wetReflectionModeConfig = GetWetReflectionModeConfig(SharedData::wetnessEffectsSettings.WetIndirectSpecularScale);
+		wetReflectionModeConfigDirect = wetReflectionModeConfig;
+		wetReflectionModeConfigDirect.z *= wetDirectSpecularScale;
 	}
 #	endif
 
@@ -2759,8 +2768,8 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	dirLightOutput.coatDiffuse = SanitizeFloat3(dirLightOutput.coatDiffuse);
 #	endif
 #	if defined(WETNESS_EFFECTS)
-	if (wetSpecularEnabled && waterRoughnessSpecular < 1 && wetReflectionModeConfig.z > 0.0)
-		EvaluateWetnessLighting(wetnessNormal, dirLightContext, waterRoughnessSpecular, wetReflectionModeConfig, dirLightOutput);
+	if (wetSpecularEnabled && waterRoughnessSpecular < 1 && wetReflectionModeConfigDirect.z > 0.0)
+		EvaluateWetnessLighting(wetnessNormal, dirLightContext, waterRoughnessSpecular, wetReflectionModeConfigDirect, dirLightOutput);
 #	endif
 
 	lightsDiffuseColor += dirLightOutput.diffuse;
@@ -2828,8 +2837,8 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 		pointLightOutput.coatDiffuse = SanitizeFloat3(pointLightOutput.coatDiffuse);
 #			endif
 #			if defined(WETNESS_EFFECTS)
-		if (wetSpecularEnabled && waterRoughnessSpecular < 1 && wetReflectionModeConfig.z > 0.0)
-			EvaluateWetnessLighting(wetnessNormal, pointLightContext, waterRoughnessSpecular, wetReflectionModeConfig, pointLightOutput);
+		if (wetSpecularEnabled && waterRoughnessSpecular < 1 && wetReflectionModeConfigDirect.z > 0.0)
+			EvaluateWetnessLighting(wetnessNormal, pointLightContext, waterRoughnessSpecular, wetReflectionModeConfigDirect, pointLightOutput);
 #			endif
 		lightsDiffuseColor += pointLightOutput.diffuse;
 		lightsSpecularColor += pointLightOutput.specular;
@@ -2959,8 +2968,8 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 		pointLightOutput.coatDiffuse = SanitizeFloat3(pointLightOutput.coatDiffuse);
 #			endif
 #			if defined(WETNESS_EFFECTS)
-		if (wetSpecularEnabled && waterRoughnessSpecular < 1 && wetReflectionModeConfig.z > 0.0)
-			EvaluateWetnessLighting(wetnessNormal, pointLightContext, waterRoughnessSpecular, wetReflectionModeConfig, pointLightOutput);
+		if (wetSpecularEnabled && waterRoughnessSpecular < 1 && wetReflectionModeConfigDirect.z > 0.0)
+			EvaluateWetnessLighting(wetnessNormal, pointLightContext, waterRoughnessSpecular, wetReflectionModeConfigDirect, pointLightOutput);
 #			endif
 
 		lightsDiffuseColor += pointLightOutput.diffuse;
