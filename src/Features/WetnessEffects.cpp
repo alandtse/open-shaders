@@ -80,8 +80,7 @@ namespace
 	constexpr float SURFACE_DRYING_WEIGHT_STONE = 0.20f;
 	constexpr float SURFACE_DRYING_WEIGHT_GRASS = 0.35f;
 	constexpr float SURFACE_DRYING_WEIGHT_DIRT = 0.45f;
-	constexpr float SNOW_WETNESS_DRY_MULT = 2.0f;
-	constexpr float SNOW_PUDDLE_DRY_MULT = 4.0f;
+	constexpr float SNOW_PUDDLE_DRY_SLOW_MULT = 0.35f;
 	// Persistence tuning:
 	// - Long/strong rain events should keep puddles for much longer than ground wetness.
 	// - With default transition speed, strong events can keep puddles around roughly half a day.
@@ -220,20 +219,14 @@ namespace
 		wetnessDeltaPerSecond = deltaPerSecond * WETNESS_SCALE;
 		puddleDeltaPerSecond = deltaPerSecond * PUDDLE_SCALE;
 		if (snowing && deltaPerSecond < 0.0f) {
-			// Snow should suppress wet look and puddles quickly.
-			wetnessDeltaPerSecond *= SNOW_WETNESS_DRY_MULT;
-			puddleDeltaPerSecond *= SNOW_PUDDLE_DRY_MULT;
+			// During snowfall after rain, puddles should persist longer before they fully dry out.
+			puddleDeltaPerSecond *= SNOW_PUDDLE_DRY_SLOW_MULT;
 		}
 	}
 
 	bool IsRainyWeather(const RE::TESWeather* weather)
 	{
 		return weather && weather->precipitationData && weather->data.flags.any(RE::TESWeather::WeatherDataFlag::kRainy);
-	}
-
-	bool IsSnowWeather(const RE::TESWeather* weather)
-	{
-		return weather && weather->precipitationData && weather->data.flags.any(RE::TESWeather::WeatherDataFlag::kSnow);
 	}
 
 	float ClampDryingHours(float hours, float fallback = DRYING_HOURS_MAX)
@@ -1843,23 +1836,11 @@ WetnessEffects::PerFrame WetnessEffects::GetCommonBufferData() const
 		runtimeState.wasRainingLastFrame = rainingNow;
 	}
 
-	const float snowTransitionWeight = std::clamp(
-		(IsSnowWeather(currentWeather) ? currentWeight : 0.0f) +
-			(IsSnowWeather(lastWeather) ? lastWeight : 0.0f),
-		0.0f,
-		1.0f);
-	const float snowBlendT = std::clamp((snowTransitionWeight - 0.05f) / 0.30f, 0.0f, 1.0f);
-	const float snowBlend = snowBlendT * snowBlendT * (3.0f - 2.0f * snowBlendT);
-	const float snowWetnessSuppression = 1.0f - snowBlend;
-
 	if (settings.EnableWetnessEffects) {
 		if (fullSkyMode) {
 			data.Raining = blendedRainingVisualSnapped;
 			data.Wetness = std::min(runtimeState.wetnessDepth, MAX_OUTPUT_WETNESS);
 			data.PuddleWetness = std::min(runtimeState.puddleDepth, MAX_OUTPUT_PUDDLE_WETNESS);
-			// Snow should not present as broad wet puddles on flat surfaces.
-			data.Wetness *= snowWetnessSuppression;
-			data.PuddleWetness *= (snowWetnessSuppression * snowWetnessSuppression);
 			if (debugSettings.EnableWetnessOverride) {
 				data.Wetness = debugSettings.WetnessOverride.y;
 			}
