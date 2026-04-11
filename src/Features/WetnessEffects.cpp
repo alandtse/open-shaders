@@ -567,6 +567,18 @@ namespace
 		return bits;
 	}
 
+	float EncodeShoreValueWithToggle(float value, bool toggleEnabled)
+	{
+		const float clampedValue = std::max(value, 0.0f);
+		if (!toggleEnabled) {
+			return clampedValue;
+		}
+
+		// Encode toggle state in sign while preserving magnitude for shoreline behavior.
+		const float encodedMagnitude = std::max(clampedValue, 1e-6f);
+		return -encodedMagnitude;
+	}
+
 	void SanitizePersistentUiState(
 		WetnessEffects::Settings& settings,
 		float& modernScale,
@@ -1413,6 +1425,20 @@ void WetnessEffects::DrawSettings()
 			ImGui::TextUnformatted("How much standing water remains visible after rain stops. Higher = puddles stay fuller longer, lower = less leftover water.");
 		}
 
+		ImGui::Checkbox("Enable Micro Puddles (AO/Roughness)", &enableMicroPuddleWetFilm);
+		if (auto _tt = Util::HoverTooltipWrapper()) {
+			ImGui::TextUnformatted("Adds fine cavity-guided micro puddles on top of the main puddle model. Uses rain wetness/surface drying timeline, not puddle persistence timeline.");
+		}
+		ImGui::BeginDisabled(!enableMicroPuddleWetFilm);
+		ImGui::Checkbox("Micro Puddles Use Normal Curvature", &enableMicroPuddleCurvature);
+		ImGui::EndDisabled();
+		if (!enableMicroPuddleWetFilm) {
+			enableMicroPuddleCurvature = false;
+		}
+		if (auto _tt = Util::HoverTooltipWrapper()) {
+			ImGui::TextUnformatted("Adds a ddx/ddy normal-curvature cavity term to micro puddles. This toggle is only active when micro puddles are enabled.");
+		}
+
 		ImGui::Separator();
 		ImGui::TextDisabled("Shore");
 
@@ -1953,8 +1979,12 @@ WetnessEffects::PerFrame WetnessEffects::GetCommonBufferData() const
 	const bool masterWetnessEnabled = settings.EnableWetnessEffects != 0;
 	const float activeShorePersistentDarkeningStrength = masterWetnessEnabled ? clampedShorePersistentDarkeningStrength : 0.0f;
 	const float activeShorePersistentWetFilmScale = masterWetnessEnabled ? clampedShorePersistentWetFilmScale : 0.0f;
-	data.ReservedPerFramePadding0 = EncodeFloatToUint(activeShorePersistentDarkeningStrength);
-	data.ReservedPerFramePadding1 = EncodeFloatToUint(activeShorePersistentWetFilmScale);
+	const bool microPuddlesEnabled = masterWetnessEnabled && enableMicroPuddleWetFilm;
+	const bool microPuddleCurvatureEnabled = microPuddlesEnabled && enableMicroPuddleCurvature;
+	const float encodedShorePersistentDarkeningStrength = EncodeShoreValueWithToggle(activeShorePersistentDarkeningStrength, microPuddlesEnabled);
+	const float encodedShorePersistentWetFilmScale = EncodeShoreValueWithToggle(activeShorePersistentWetFilmScale, microPuddleCurvatureEnabled);
+	data.ReservedPerFramePadding0 = EncodeFloatToUint(encodedShorePersistentDarkeningStrength);
+	data.ReservedPerFramePadding1 = EncodeFloatToUint(encodedShorePersistentWetFilmScale);
 	data.settings.RaindropChance *= data.Raining * data.Raining;
 	data.settings.RaindropChance = std::clamp(data.settings.RaindropChance, 0.0f, 1.0f);
 	const float safeRaindropGridSize = std::max(data.settings.RaindropGridSize, MIN_RAINDROP_GRID_SIZE);
@@ -2065,6 +2095,17 @@ void WetnessEffects::LoadSettings(json& o_json)
 		(isObject && o_json.contains("EnableWeatherDrivenDryingModel")) ?
 			JsonValueToBool(o_json["EnableWeatherDrivenDryingModel"], true) :
 			true;
+	enableMicroPuddleWetFilm =
+		(isObject && o_json.contains("EnableMicroPuddleWetFilm")) ?
+			JsonValueToBool(o_json["EnableMicroPuddleWetFilm"], false) :
+			false;
+	enableMicroPuddleCurvature =
+		(isObject && o_json.contains("EnableMicroPuddleCurvature")) ?
+			JsonValueToBool(o_json["EnableMicroPuddleCurvature"], false) :
+			false;
+	if (!enableMicroPuddleWetFilm) {
+		enableMicroPuddleCurvature = false;
+	}
 
 	if (!hasExplicitWetnessSettings) {
 		ApplyDefaultWetnessUiPreset(settings, modernWetIndirectSpecularScale, legacyWetIndirectSpecularScale);
@@ -2106,6 +2147,8 @@ void WetnessEffects::SaveSettings(json& o_json)
 	o_json["ShorePersistentDarkeningStrength"] = shorePersistentDarkeningStrength;
 	o_json["ShorePersistentWetFilmScale"] = shorePersistentWetFilmScale;
 	o_json["EnableWeatherDrivenDryingModel"] = enableWeatherDrivenDryingModel;
+	o_json["EnableMicroPuddleWetFilm"] = enableMicroPuddleWetFilm;
+	o_json["EnableMicroPuddleCurvature"] = (enableMicroPuddleWetFilm && enableMicroPuddleCurvature);
 
 	o_json["DebugSettings"] = debugSettings;
 }
@@ -2118,6 +2161,8 @@ void WetnessEffects::RestoreDefaultSettings()
 	puddleLayout = DEFAULT_PUDDLE_LAYOUT;
 	shorePersistentDarkeningStrength = SHORE_PERSISTENT_DARKENING_DEFAULT;
 	shorePersistentWetFilmScale = SHORE_PERSISTENT_WET_FILM_DEFAULT;
+	enableMicroPuddleWetFilm = false;
+	enableMicroPuddleCurvature = false;
 	modernWetIndirectSpecularScale = DEFAULT_MODERN_WET_REFLECTION_UI;
 	legacyWetIndirectSpecularScale = DEFAULT_LEGACY_WET_REFLECTION_UI;
 	climatePreset = defaultPreset;
