@@ -41,8 +41,8 @@ namespace
 	constexpr float MODERN_WET_REFLECTION_LEGACY_UI_MAX = 1.00f;
 	constexpr float MAX_MODERN_WET_REFLECTION_UI_SCALE = 2.00f;
 	constexpr float DEFAULT_WET_INDIRECT_SPECULAR_SCALE = 0.2f;
-	constexpr float DEFAULT_LEGACY_WET_REFLECTION_UI = 0.68f;
-	constexpr float DEFAULT_MODERN_WET_REFLECTION_UI = 0.61f;
+	constexpr float DEFAULT_LEGACY_WET_REFLECTION_UI = 0.50f;
+	constexpr float DEFAULT_MODERN_WET_REFLECTION_UI = 0.65f;
 	constexpr float MODERN_REFLECTION_UI_ANCHOR_T = 0.30f;
 	constexpr float LEGACY_REFLECTION_UI_ANCHOR_T = 0.28f;
 	constexpr float MODERN_REFLECTION_SCALE_AT_ANCHOR = 0.02f;
@@ -149,7 +149,7 @@ namespace
 			0.9f,
 			0.5f,
 			0.45f,
-			0.62f },
+			0.65f },
 		{ "Quality",
 			"Higher fidelity wetness with denser raindrop/ripple coverage.",
 			0.9f,
@@ -1123,29 +1123,6 @@ void WetnessEffects::DrawSettings()
 	}
 	ImGui::PopStyleColor(3);
 
-	ImGui::Separator();
-
-	if (ImGui::TreeNodeEx("Wetness Effects", ImGuiTreeNodeFlags_DefaultOpen)) {
-		ImGui::SliderFloat("Rain Wetness", &settings.MaxRainWetness, 0.0f, 2.5f);
-		markPresetDirtyIfEdited();
-		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::TextUnformatted("How wet surfaces get while it rains. Higher = stronger rain film, lower = lighter wet look.");
-		}
-
-		ImGui::SliderFloat("Puddle Wetness", &settings.MaxPuddleWetness, 0.0f, 6.0f);
-		markPresetDirtyIfEdited();
-		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::TextUnformatted("How strong puddles can look. Higher = deeper/more visible puddles, lower = shallower puddles.");
-		}
-
-		ImGui::SliderFloat("Shore Wetness", &settings.MaxShoreWetness, 0.0f, 1.0f);
-		markPresetDirtyIfEdited();
-		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::TextUnformatted("Wetness near rivers, lakes, and shorelines. Higher = wetter banks, lower = drier edges.");
-		}
-		ImGui::TreePop();
-	}
-
 	drawSectionDivider();
 
 	if (ImGui::TreeNodeEx("Raindrop Effects", ImGuiTreeNodeFlags_DefaultOpen)) {
@@ -1361,16 +1338,17 @@ void WetnessEffects::DrawSettings()
 		}
 
 		ImGui::Separator();
-		ImGui::TextDisabled("Surface Response");
+		ImGui::TextDisabled("Rain");
+
+		ImGui::SliderFloat("Rain Wetness", &settings.MaxRainWetness, 0.0f, 2.5f);
+		markPresetDirtyIfEdited();
+		if (auto _tt = Util::HoverTooltipWrapper()) {
+			ImGui::TextUnformatted("How wet surfaces get while it rains. Higher = stronger rain film, lower = lighter wet look.");
+		}
 
 		ImGui::SliderFloat("Min Rain Wetness", &settings.MinRainWetness, 0.0f, 0.9f);
 		if (auto _tt = Util::HoverTooltipWrapper()) {
 			ImGui::TextUnformatted("Minimum wetness during rain. Higher = even light rain looks wetter, lower = more subtle light rain.");
-		}
-
-		ImGui::SliderFloat("Skin Wetness", &settings.SkinWetness, 0.0f, 1.0f);
-		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::TextUnformatted("How wet skin and hair look in rain. Higher = stronger wet look, lower = subtler wet look.");
 		}
 
 		ImGui::SliderFloat("Wet Surface Darkening", &settings.WetDarkeningStrength, 0.0f, 2.0f, "%.2f");
@@ -1382,39 +1360,38 @@ void WetnessEffects::DrawSettings()
 			ImGui::TextUnformatted("How colorful wet surfaces look. Higher = richer color, lower = more neutral color.");
 		}
 
-		ImGui::SliderFloat("Wet Highlight Reduction", &settings.WetHighlightReduction, WET_HIGHLIGHT_REDUCTION_MIN, WET_HIGHLIGHT_REDUCTION_MAX, "%.2f");
-		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::TextUnformatted("Reduces bright white wet highlights. Higher = less white glare, lower = brighter highlights.");
-		}
 		ImGui::SliderFloat("Wet Film Specular Floor", &settings.WetFilmSpecularFloorScale, WET_FILM_SPECULAR_FLOOR_SCALE_MIN, WET_FILM_SPECULAR_FLOOR_SCALE_MAX, "%.2f");
 		if (auto _tt = Util::HoverTooltipWrapper()) {
 			ImGui::TextUnformatted("Controls subtle wet-film reflections outside standing puddles. Higher = stronger ground glitter between puddles.");
 		}
-		ImGui::SliderFloat("Shore Persistent Darkening", &shorePersistentDarkeningStrength, SHORE_PERSISTENT_DARKENING_MIN, SHORE_PERSISTENT_DARKENING_MAX, "%.2f");
+
+		ImGui::SliderFloat("Wet Highlight Reduction", &settings.WetHighlightReduction, WET_HIGHLIGHT_REDUCTION_MIN, WET_HIGHLIGHT_REDUCTION_MAX, "%.2f");
 		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::TextUnformatted("Independent shoreline darkening that persists when rain-driven wetness is inactive (while Enable Wetness is on).");
+			ImGui::TextUnformatted("Reduces bright white wet highlights. Higher = less white glare, lower = brighter highlights.");
 		}
-		ImGui::SliderFloat("Shore Wet Film Shine", &shorePersistentWetFilmScale, SHORE_PERSISTENT_WET_FILM_MIN, SHORE_PERSISTENT_WET_FILM_MAX, "%.2f");
+
+		ImGui::SliderFloat("Skin Wetness", &settings.SkinWetness, 0.0f, 1.0f);
 		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::TextUnformatted("Adds near-water wet-film style reflection sheen. Strongest at waterline and tails out with Shore Range (while Enable Wetness is on).");
+			ImGui::TextUnformatted("How wet skin and hair look in rain. Higher = stronger wet look, lower = subtler wet look.");
 		}
 
 		ImGui::Separator();
-		ImGui::TextDisabled("Shore and Puddles");
+		ImGui::TextDisabled("Puddles");
 
-		int shoreRange = static_cast<int>(settings.ShoreRange);
-		if (ImGui::SliderInt("Shore Range", &shoreRange, 1, 64, "%d", ImGuiSliderFlags_AlwaysClamp)) {
-			settings.ShoreRange = static_cast<uint>(shoreRange);
-		}
+		ImGui::SliderFloat("Puddle Wetness", &settings.MaxPuddleWetness, 0.0f, 6.0f);
+		markPresetDirtyIfEdited();
 		if (auto _tt = Util::HoverTooltipWrapper()) {
-			std::vector<std::string> tooltipLines = {
-				"How far shore wetness reaches from water.",
-				"Higher = wetness extends farther from the shoreline.",
-				"Lower = wetness stays close to the shoreline.",
-				Util::Units::FormatDistance(static_cast<float>(settings.ShoreRange)),
-				std::format("{:.2f} meters", Util::Units::GameUnitsToMeters(static_cast<float>(settings.ShoreRange)))
-			};
-			Util::DrawMultiLineTooltip(tooltipLines);
+			ImGui::TextUnformatted("How strong puddles can look. Higher = deeper/more visible puddles, lower = shallower puddles.");
+		}
+
+		ImGui::SliderFloat("Puddle Min Wetness", &settings.PuddleMinWetness, 0.0f, 1.0f);
+		if (auto _tt = Util::HoverTooltipWrapper()) {
+			ImGui::TextUnformatted("Wetness needed before puddles appear. Higher = puddles appear later, lower = puddles appear sooner.");
+		}
+
+		ImGui::SliderFloat("Puddle Max Angle", &settings.PuddleMaxAngle, 0.0f, 1.0f);
+		if (auto _tt = Util::HoverTooltipWrapper()) {
+			ImGui::TextUnformatted("Controls how easily puddles form on slopes. Higher = puddles can appear on steeper ground, lower = mostly flat areas only.");
 		}
 
 		ImGui::SliderFloat("Puddle Radius", &settings.PuddleRadius, 0.3f, 3.0f);
@@ -1431,19 +1408,42 @@ void WetnessEffects::DrawSettings()
 			ImGui::TextUnformatted("Changes how puddle patches are arranged. Lower = finer, busier pattern. Higher = broader, smoother pattern.");
 		}
 
-		ImGui::SliderFloat("Puddle Max Angle", &settings.PuddleMaxAngle, 0.0f, 1.0f);
-		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::TextUnformatted("Controls how easily puddles form on slopes. Higher = puddles can appear on steeper ground, lower = mostly flat areas only.");
-		}
-
-		ImGui::SliderFloat("Puddle Min Wetness", &settings.PuddleMinWetness, 0.0f, 1.0f);
-		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::TextUnformatted("Wetness needed before puddles appear. Higher = puddles appear later, lower = puddles appear sooner.");
-		}
-
 		ImGui::SliderFloat("Post-Rain Puddle Water", &settings.PostRainPuddleWaterStrength, 0.0f, 2.0f, "%.2f");
 		if (auto _tt = Util::HoverTooltipWrapper()) {
 			ImGui::TextUnformatted("How much standing water remains visible after rain stops. Higher = puddles stay fuller longer, lower = less leftover water.");
+		}
+
+		ImGui::Separator();
+		ImGui::TextDisabled("Shore");
+
+		ImGui::SliderFloat("Shore Wetness", &settings.MaxShoreWetness, 0.0f, 1.0f);
+		markPresetDirtyIfEdited();
+		if (auto _tt = Util::HoverTooltipWrapper()) {
+			ImGui::TextUnformatted("Wetness near rivers, lakes, and shorelines. Higher = wetter banks, lower = drier edges.");
+		}
+
+		int shoreRange = static_cast<int>(settings.ShoreRange);
+		if (ImGui::SliderInt("Shore Range", &shoreRange, 1, 64, "%d", ImGuiSliderFlags_AlwaysClamp)) {
+			settings.ShoreRange = static_cast<uint>(shoreRange);
+		}
+		if (auto _tt = Util::HoverTooltipWrapper()) {
+			std::vector<std::string> tooltipLines = {
+				"How far shore wetness reaches from water.",
+				"Higher = wetness extends farther from the shoreline.",
+				"Lower = wetness stays close to the shoreline.",
+				Util::Units::FormatDistance(static_cast<float>(settings.ShoreRange)),
+				std::format("{:.2f} meters", Util::Units::GameUnitsToMeters(static_cast<float>(settings.ShoreRange)))
+			};
+			Util::DrawMultiLineTooltip(tooltipLines);
+		}
+
+		ImGui::SliderFloat("Shore Persistent Darkening", &shorePersistentDarkeningStrength, SHORE_PERSISTENT_DARKENING_MIN, SHORE_PERSISTENT_DARKENING_MAX, "%.2f");
+		if (auto _tt = Util::HoverTooltipWrapper()) {
+			ImGui::TextUnformatted("Independent shoreline darkening that persists when rain-driven wetness is inactive (while Enable Wetness is on).");
+		}
+		ImGui::SliderFloat("Shore Wet Film Shine", &shorePersistentWetFilmScale, SHORE_PERSISTENT_WET_FILM_MIN, SHORE_PERSISTENT_WET_FILM_MAX, "%.2f");
+		if (auto _tt = Util::HoverTooltipWrapper()) {
+			ImGui::TextUnformatted("Adds near-water wet-film style reflection sheen. Strongest at waterline and tails out with Shore Range (while Enable Wetness is on).");
 		}
 
 		ImGui::TreePop();
