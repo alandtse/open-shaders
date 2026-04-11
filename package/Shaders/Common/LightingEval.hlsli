@@ -169,7 +169,7 @@ void GetIndirectLobeWeights(out IndirectLobeWeights lobeWeights, IndirectContext
 #if defined(WETNESS_EFFECTS)
 float3 GetWetReflectionModeConfig(float wetReflectionScale)
 {
-	const float WET_REFLECTION_SCALE_MAX = 1.0;
+	const float WET_REFLECTION_SCALE_MAX = 2.0;
 	const float legacyReflectionScaleMax = 1.0;
 	const float wetReflectionScaleClamped = clamp(wetReflectionScale, 0.0, WET_REFLECTION_SCALE_MAX);
 	if (wetReflectionScaleClamped <= 0.0) {

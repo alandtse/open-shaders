@@ -38,7 +38,8 @@ namespace
 	constexpr float PUDDLE_LAYOUT_MIN = 0.3f;
 	constexpr float PUDDLE_LAYOUT_MAX = 3.0f;
 	constexpr float LEGACY_WET_REFLECTION_UI_SCALE_MAX = 1.00f;
-	constexpr float MAX_MODERN_WET_REFLECTION_UI_SCALE = 1.00f;
+	constexpr float MODERN_WET_REFLECTION_LEGACY_UI_MAX = 1.00f;
+	constexpr float MAX_MODERN_WET_REFLECTION_UI_SCALE = 2.00f;
 	constexpr float DEFAULT_WET_INDIRECT_SPECULAR_SCALE = 0.2f;
 	constexpr float DEFAULT_LEGACY_WET_REFLECTION_UI = 0.68f;
 	constexpr float DEFAULT_MODERN_WET_REFLECTION_UI = 0.61f;
@@ -472,7 +473,16 @@ namespace
 
 	float ModernWetReflectionScaleFromUi(float uiValue)
 	{
-		return ReflectionScaleFromUi(uiValue, MAX_MODERN_WET_REFLECTION_UI_SCALE, MODERN_REFLECTION_SCALE_AT_ANCHOR, MODERN_REFLECTION_UI_ANCHOR_T);
+		const float clampedUi = std::clamp(uiValue, 0.0f, MAX_MODERN_WET_REFLECTION_UI_SCALE);
+		if (clampedUi <= MODERN_WET_REFLECTION_LEGACY_UI_MAX) {
+			// Preserve the existing modern reflection response for the legacy [0..1] slider range.
+			return ReflectionScaleFromUi(clampedUi, MODERN_WET_REFLECTION_LEGACY_UI_MAX, MODERN_REFLECTION_SCALE_AT_ANCHOR, MODERN_REFLECTION_UI_ANCHOR_T);
+		}
+
+		// Extend only the upper range [1..2] linearly so prior values (e.g. 0.5) remain unchanged.
+		const float extendedT = (clampedUi - MODERN_WET_REFLECTION_LEGACY_UI_MAX) /
+			(MAX_MODERN_WET_REFLECTION_UI_SCALE - MODERN_WET_REFLECTION_LEGACY_UI_MAX);
+		return std::lerp(MODERN_WET_REFLECTION_LEGACY_UI_MAX, MAX_MODERN_WET_REFLECTION_UI_SCALE, extendedT);
 	}
 
 	float LegacyWetReflectionScaleFromUi(float uiValue, float legacyScaleMax)
