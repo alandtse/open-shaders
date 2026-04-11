@@ -2378,6 +2378,8 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 		const bool wetnessEnabled = (SharedData::wetnessEffectsSettings.EnableWetnessEffects != 0);
 		bool microPuddlesEnabled = false;
 		bool microPuddleCurvatureEnabled = false;
+		bool openSkyPuddleOcclusionBypassEnabled = false;
+		float postRainPuddleWaterStrength = max(0.0, SharedData::wetnessEffectsSettings.PostRainPuddleWaterStrength);
 	float wetnessDistToWater = abs(input.WorldPosition.z - waterHeight);
 	float shoreRangeSafe = max(1.0, (float)SharedData::wetnessEffectsSettings.ShoreRange);
 	float shoreFactor = saturate(1.0 - (wetnessDistToWater / shoreRangeSafe));
@@ -2392,8 +2394,11 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 		// even when rain-driven wetness runtime is idle-gated.
 		const float encodedShorePersistentDarkeningSignal = SharedData::wetnessEffectsSettings.ShorePersistentDarkeningStrength;
 		const float encodedShorePersistentWetFilmSignal = SharedData::wetnessEffectsSettings.ShorePersistentWetFilmScale;
+		const float encodedPostRainPuddleWaterSignal = SharedData::wetnessEffectsSettings.PostRainPuddleWaterStrength;
 		microPuddlesEnabled = encodedShorePersistentDarkeningSignal < 0.0;
 		microPuddleCurvatureEnabled = microPuddlesEnabled && (encodedShorePersistentWetFilmSignal < 0.0);
+		openSkyPuddleOcclusionBypassEnabled = encodedPostRainPuddleWaterSignal < 0.0;
+		postRainPuddleWaterStrength = abs(encodedPostRainPuddleWaterSignal);
 
 	// Calculate wetness angle and occlusion
 	float minWetnessValue = SharedData::wetnessEffectsSettings.MinRainWetness;
@@ -2424,8 +2429,10 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 #		endif
 #		if defined(SKYLIGHTING)
 	float wetnessOcclusion = 0.0;
+	float openSkyVisibility = 0.0;
 	if (inWorld) {
 		float wetnessOcclusionBase = saturate(SphericalHarmonics::Unproject(skylightingSH, float3(0, 0, 1)));
+		openSkyVisibility = wetnessOcclusionBase;
 		// Keep skylighting influence subtle for wetness so probe refresh latency does not
 		// create a player-following dark spotlight on terrain.
 		float wetnessOcclusionStable = max(wetnessOcclusionBase, 0.90);
@@ -2433,6 +2440,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	}
 #		else
 	float wetnessOcclusion = inWorld;
+	float openSkyVisibility = inWorld;
 #		endif
 	// Keep rain coverage from collapsing in overcast/rainy lighting.
 	wetnessOcclusion = lerp(wetnessOcclusion, max(wetnessOcclusion, 0.82), inRainBlend);
@@ -2483,6 +2491,14 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 		localRainOcclusion = lerp(1.0, occlusionPass, occlusionValidity);
 	}
 	float puddleRainExposure = lerp(1.0, localRainOcclusion, inRainBlend);
+	[branch] if (openSkyPuddleOcclusionBypassEnabled && inRainBlend > 0.0) {
+		// Open-sky bypass for puddles: use up-facing slope + ambient sky visibility,
+		// independent of direct sun intensity, so cloudy weather still qualifies.
+		float openSkyUpness = smoothstep(0.55, 0.96, rainSurfaceUpness);
+		float openSkyAmbient = smoothstep(0.35, 0.75, saturate(openSkyVisibility));
+		float openSkyMask = openSkyUpness * openSkyAmbient;
+		puddleRainExposure = lerp(puddleRainExposure, 1.0, openSkyMask);
+	}
 	if (rainSurfaceUpness > 0.05 && SharedData::wetnessEffectsSettings.Raining > 0.0f && (SharedData::wetnessEffectsSettings.EnableRaindropFx != 0)) {
 		float raindropFade = localRainOcclusion;
 
@@ -2603,7 +2619,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	wetnessGlossinessAlbedo *= wetnessGlossinessAlbedo;
 
 	// Preserve clearer water appearance after rain by shaping mid-range puddle values upward.
-	float postRainSpecularPower = lerp(1.0, 0.75, saturate(postRainBlend * max(0.0, SharedData::wetnessEffectsSettings.PostRainPuddleWaterStrength)));
+	float postRainSpecularPower = lerp(1.0, 0.75, saturate(postRainBlend * postRainPuddleWaterStrength));
 	wetnessGlossinessSpecular = lerp(saturate(puddleReflection), saturate(pow(saturate(puddleReflection), postRainSpecularPower)), postRainBlend);
 	wetnessGlossinessSpecular = lerp(wetnessGlossinessSpecular, wetnessGlossinessSpecular * shoreFactor, input.WorldPosition.z < waterHeight);
 	// Keep a subtle rain-film sheen outside standing puddles so wet ground still

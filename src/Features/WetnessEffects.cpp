@@ -567,14 +567,14 @@ namespace
 		return bits;
 	}
 
-	float EncodeShoreValueWithToggle(float value, bool toggleEnabled)
+	float EncodeSignedToggleFloat(float value, bool toggleEnabled)
 	{
 		const float clampedValue = std::max(value, 0.0f);
 		if (!toggleEnabled) {
 			return clampedValue;
 		}
 
-		// Encode toggle state in sign while preserving magnitude for shoreline behavior.
+		// Encode toggle state in sign while preserving value magnitude.
 		const float encodedMagnitude = std::max(clampedValue, 1e-6f);
 		return -encodedMagnitude;
 	}
@@ -1438,6 +1438,10 @@ void WetnessEffects::DrawSettings()
 		if (auto _tt = Util::HoverTooltipWrapper()) {
 			ImGui::TextUnformatted("Adds a ddx/ddy normal-curvature cavity term to micro puddles. This toggle is only active when micro puddles are enabled.");
 		}
+		ImGui::Checkbox("Open-Sky Puddle Occlusion Bypass", &enableOpenSkyPuddleOcclusionBypass);
+		if (auto _tt = Util::HoverTooltipWrapper()) {
+			ImGui::TextUnformatted("Relaxes precipitation-occlusion damping for puddles on open, up-facing ground so puddle intensity remains stable while moving.");
+		}
 
 		ImGui::Separator();
 		ImGui::TextDisabled("Shore");
@@ -1981,10 +1985,12 @@ WetnessEffects::PerFrame WetnessEffects::GetCommonBufferData() const
 	const float activeShorePersistentWetFilmScale = masterWetnessEnabled ? clampedShorePersistentWetFilmScale : 0.0f;
 	const bool microPuddlesEnabled = masterWetnessEnabled && enableMicroPuddleWetFilm;
 	const bool microPuddleCurvatureEnabled = microPuddlesEnabled && enableMicroPuddleCurvature;
-	const float encodedShorePersistentDarkeningStrength = EncodeShoreValueWithToggle(activeShorePersistentDarkeningStrength, microPuddlesEnabled);
-	const float encodedShorePersistentWetFilmScale = EncodeShoreValueWithToggle(activeShorePersistentWetFilmScale, microPuddleCurvatureEnabled);
+	const bool openSkyPuddleOcclusionBypassEnabled = masterWetnessEnabled && enableOpenSkyPuddleOcclusionBypass;
+	const float encodedShorePersistentDarkeningStrength = EncodeSignedToggleFloat(activeShorePersistentDarkeningStrength, microPuddlesEnabled);
+	const float encodedShorePersistentWetFilmScale = EncodeSignedToggleFloat(activeShorePersistentWetFilmScale, microPuddleCurvatureEnabled);
 	data.ReservedPerFramePadding0 = EncodeFloatToUint(encodedShorePersistentDarkeningStrength);
 	data.ReservedPerFramePadding1 = EncodeFloatToUint(encodedShorePersistentWetFilmScale);
+	data.settings.PostRainPuddleWaterStrength = EncodeSignedToggleFloat(data.settings.PostRainPuddleWaterStrength, openSkyPuddleOcclusionBypassEnabled);
 	data.settings.RaindropChance *= data.Raining * data.Raining;
 	data.settings.RaindropChance = std::clamp(data.settings.RaindropChance, 0.0f, 1.0f);
 	const float safeRaindropGridSize = std::max(data.settings.RaindropGridSize, MIN_RAINDROP_GRID_SIZE);
@@ -2048,6 +2054,7 @@ void WetnessEffects::LoadSettings(json& o_json)
 			"PuddleDryingHours",
 			"EnableWeatherDrivenDryingModel",
 			"PuddleLayout",
+			"EnableOpenSkyPuddleOcclusionBypass",
 			"ModernWetIndirectSpecularScale",
 			"LegacyWetIndirectSpecularScale",
 			"EnableForwardReflectionBias",
@@ -2106,6 +2113,10 @@ void WetnessEffects::LoadSettings(json& o_json)
 	if (!enableMicroPuddleWetFilm) {
 		enableMicroPuddleCurvature = false;
 	}
+	enableOpenSkyPuddleOcclusionBypass =
+		(isObject && o_json.contains("EnableOpenSkyPuddleOcclusionBypass")) ?
+			JsonValueToBool(o_json["EnableOpenSkyPuddleOcclusionBypass"], false) :
+			false;
 
 	if (!hasExplicitWetnessSettings) {
 		ApplyDefaultWetnessUiPreset(settings, modernWetIndirectSpecularScale, legacyWetIndirectSpecularScale);
@@ -2149,6 +2160,7 @@ void WetnessEffects::SaveSettings(json& o_json)
 	o_json["EnableWeatherDrivenDryingModel"] = enableWeatherDrivenDryingModel;
 	o_json["EnableMicroPuddleWetFilm"] = enableMicroPuddleWetFilm;
 	o_json["EnableMicroPuddleCurvature"] = (enableMicroPuddleWetFilm && enableMicroPuddleCurvature);
+	o_json["EnableOpenSkyPuddleOcclusionBypass"] = enableOpenSkyPuddleOcclusionBypass;
 
 	o_json["DebugSettings"] = debugSettings;
 }
@@ -2163,6 +2175,7 @@ void WetnessEffects::RestoreDefaultSettings()
 	shorePersistentWetFilmScale = SHORE_PERSISTENT_WET_FILM_DEFAULT;
 	enableMicroPuddleWetFilm = false;
 	enableMicroPuddleCurvature = false;
+	enableOpenSkyPuddleOcclusionBypass = false;
 	modernWetIndirectSpecularScale = DEFAULT_MODERN_WET_REFLECTION_UI;
 	legacyWetIndirectSpecularScale = DEFAULT_LEGACY_WET_REFLECTION_UI;
 	climatePreset = defaultPreset;
