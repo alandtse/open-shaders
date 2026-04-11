@@ -1112,7 +1112,7 @@ void WetnessEffects::DrawSettings()
 		ImGui::TextUnformatted("Enables wetness visuals. Off = no rain film, puddles, or shore wetness.");
 	}
 
-	ImGui::TextDisabled("Wetness Presets");
+	ImGui::TextUnformatted("Wetness Presets");
 	if (auto _tt = Util::HoverTooltipWrapper()) {
 		ImGui::TextUnformatted("Quick profiles for wetness performance/quality balance.");
 	}
@@ -1337,7 +1337,7 @@ void WetnessEffects::DrawSettings()
 		}
 
 		ImGui::Separator();
-		ImGui::TextDisabled("Drying Times");
+		ImGui::TextUnformatted("Drying Times");
 
 		ImGui::BeginDisabled(enableWeatherDrivenDryingModel);
 		drawDryingSlider("Stone Drying Time", settings.StoneDryingMultiplier, "Drying time for stone-like surfaces after rain. Higher = dries slower, lower = dries faster.");
@@ -1350,7 +1350,7 @@ void WetnessEffects::DrawSettings()
 		}
 
 		ImGui::Separator();
-		ImGui::TextDisabled("Rain");
+		ImGui::TextUnformatted("Rain");
 
 		ImGui::SliderFloat("Rain Wetness", &settings.MaxRainWetness, 0.0f, 2.5f);
 		markPresetDirtyIfEdited();
@@ -1388,7 +1388,7 @@ void WetnessEffects::DrawSettings()
 		}
 
 		ImGui::Separator();
-		ImGui::TextDisabled("Puddles");
+		ImGui::TextUnformatted("Puddles");
 
 		ImGui::SliderFloat("Puddle Wetness", &settings.MaxPuddleWetness, 0.0f, 6.0f);
 		markPresetDirtyIfEdited();
@@ -1444,7 +1444,7 @@ void WetnessEffects::DrawSettings()
 		}
 
 		ImGui::Separator();
-		ImGui::TextDisabled("Shore");
+		ImGui::TextUnformatted("Shore");
 
 		ImGui::SliderFloat("Shore Wetness", &settings.MaxShoreWetness, 0.0f, 1.0f);
 		markPresetDirtyIfEdited();
