@@ -2375,14 +2375,18 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 		float wetnessGlossinessSpecular = 0.0;
 		float wetHighlightReflectanceScale = 1.0;
 		const bool wetnessEnabled = (SharedData::wetnessEffectsSettings.EnableWetnessEffects != 0);
-		[branch] if (wetnessEnabled) {
-		// Calculate shore wetness factors
 	float wetnessDistToWater = abs(input.WorldPosition.z - waterHeight);
-	float shoreFactor = saturate(1.0 - (wetnessDistToWater / SharedData::wetnessEffectsSettings.ShoreRange));
+	float shoreRangeSafe = max(1.0, (float)SharedData::wetnessEffectsSettings.ShoreRange);
+	float shoreFactor = saturate(1.0 - (wetnessDistToWater / shoreRangeSafe));
 	float shoreFactorAlbedo = shoreFactor;
 
 	[flatten] if (input.WorldPosition.z < waterHeight)
 		shoreFactorAlbedo = 1.0;
+	float shorePersistentShine = 0.0;
+
+	[branch] if (wetnessEnabled) {
+		// Shore factors are precomputed above so shoreline response can persist
+		// even when rain-driven wetness runtime is idle-gated.
 
 	// Calculate wetness angle and occlusion
 	float minWetnessValue = SharedData::wetnessEffectsSettings.MinRainWetness;
@@ -2601,6 +2605,18 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 
 	waterRoughnessSpecular = 1.0 - wetnessGlossinessSpecular * 0.97;
 	}
+	// Persistent near-shore wet-film sheen: independent of rain timelines.
+#		if !defined(SKIN) && !defined(HAIR)
+	float shorePersistentShineMask = saturate(shoreFactor);
+	shorePersistentShineMask *= shorePersistentShineMask;
+	float shorePersistentShineScale = max(0.0, SharedData::wetnessEffectsSettings.ShorePersistentWetFilmScale);
+	if (shorePersistentShineScale > 1e-4 && shorePersistentShineMask > 1e-4) {
+		float shoreShineBase = lerp(0.10, 0.34, shorePersistentShineMask);
+		shorePersistentShine = saturate(shoreShineBase * shorePersistentShineScale);
+		waterRoughnessSpecular = min(waterRoughnessSpecular, 1.0 - shorePersistentShine * 0.94);
+	}
+#		endif
+	const bool wetSpecularEnabled = wetnessEnabled || (shorePersistentShine > 1e-4);
 #	endif
 
 	float llDirLightMult = SharedData::linearLightingSettings.enableLinearLighting && !SharedData::linearLightingSettings.isDirLightLinear && (inWorld || inReflection) && !SharedData::InInterior ? SharedData::linearLightingSettings.dirLightMult : 1.0f;
@@ -2706,7 +2722,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 
 #	if defined(WETNESS_EFFECTS)
 	float3 wetReflectionModeConfig = 0.0.xxx;
-	[branch] if (wetnessEnabled) {
+	[branch] if (wetSpecularEnabled) {
 		wetReflectionModeConfig = GetWetReflectionModeConfig(SharedData::wetnessEffectsSettings.WetIndirectSpecularScale);
 	}
 #	endif
@@ -2734,7 +2750,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	dirLightOutput.coatDiffuse = SanitizeFloat3(dirLightOutput.coatDiffuse);
 #	endif
 #	if defined(WETNESS_EFFECTS)
-	if (wetnessEnabled && waterRoughnessSpecular < 1 && wetReflectionModeConfig.z > 0.0)
+	if (wetSpecularEnabled && waterRoughnessSpecular < 1 && wetReflectionModeConfig.z > 0.0)
 		EvaluateWetnessLighting(wetnessNormal, dirLightContext, waterRoughnessSpecular, wetReflectionModeConfig, dirLightOutput);
 #	endif
 
@@ -2803,7 +2819,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 		pointLightOutput.coatDiffuse = SanitizeFloat3(pointLightOutput.coatDiffuse);
 #			endif
 #			if defined(WETNESS_EFFECTS)
-		if (wetnessEnabled && waterRoughnessSpecular < 1 && wetReflectionModeConfig.z > 0.0)
+		if (wetSpecularEnabled && waterRoughnessSpecular < 1 && wetReflectionModeConfig.z > 0.0)
 			EvaluateWetnessLighting(wetnessNormal, pointLightContext, waterRoughnessSpecular, wetReflectionModeConfig, pointLightOutput);
 #			endif
 		lightsDiffuseColor += pointLightOutput.diffuse;
@@ -2934,7 +2950,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 		pointLightOutput.coatDiffuse = SanitizeFloat3(pointLightOutput.coatDiffuse);
 #			endif
 #			if defined(WETNESS_EFFECTS)
-		if (wetnessEnabled && waterRoughnessSpecular < 1 && wetReflectionModeConfig.z > 0.0)
+		if (wetSpecularEnabled && waterRoughnessSpecular < 1 && wetReflectionModeConfig.z > 0.0)
 			EvaluateWetnessLighting(wetnessNormal, pointLightContext, waterRoughnessSpecular, wetReflectionModeConfig, pointLightOutput);
 #			endif
 
@@ -3044,7 +3060,11 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 
 #	if defined(WETNESS_EFFECTS)
 #		if !(defined(FACEGEN) || defined(FACEGEN_RGB_TINT) || defined(EYE)) || defined(TREE_ANIM)
-	[branch] if (wetnessEnabled) {
+	float shorePersistentDarkeningMask = saturate(shoreFactor);
+	shorePersistentDarkeningMask *= shorePersistentDarkeningMask;
+	float shorePersistentDarkeningStrength = max(0.0, SharedData::wetnessEffectsSettings.ShorePersistentDarkeningStrength);
+	const bool shorePersistentDarkeningEnabled = shorePersistentDarkeningStrength > 1e-4 && shorePersistentDarkeningMask > 1e-4;
+	[branch] if (wetnessEnabled || shorePersistentDarkeningEnabled) {
 #			if defined(TRUE_PBR)
 #				if !defined(LANDSCAPE)
 	[branch] if ((PBRFlags & PBR::Flags::TwoLayer) != 0)
@@ -3077,6 +3097,15 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	float wetSaturationMix = rainWetVisualMask;
 	float wetSaturationScale = lerp(1.0, wetColorSaturation, wetSaturationMix);
 	material.BaseColor = Color::Saturation(material.BaseColor, wetSaturationScale);
+#			if !defined(SKIN) && !defined(HAIR)
+	[branch] if (shorePersistentDarkeningEnabled) {
+		float shoreDarkeningAmount = porosity * shorePersistentDarkeningMask * shorePersistentDarkeningStrength;
+		float shoreDarkeningBlend = saturate(0.80 * shorePersistentDarkeningStrength) * shorePersistentDarkeningMask;
+		shoreDarkeningBlend *= lerp(0.75, 1.0, lodSafeWetDarkeningFade);
+		float3 shoreDarkenedBaseColor = pow(abs(material.BaseColor), 1.0 + shoreDarkeningAmount);
+		material.BaseColor = lerp(material.BaseColor, shoreDarkenedBaseColor, shoreDarkeningBlend);
+	}
+#			endif
 	}
 #		endif
 #	endif
@@ -3135,7 +3164,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 #	if defined(WETNESS_EFFECTS)
 #		if defined(DYNAMIC_CUBEMAPS)
 	float3 wetnessReflectance = 0.0;
-	if (wetnessEnabled && waterRoughnessSpecular < 1 && wetReflectionModeConfig.z > 1e-4) {
+	if (wetSpecularEnabled && waterRoughnessSpecular < 1 && wetReflectionModeConfig.z > 1e-4) {
 		wetnessReflectance = GetWetnessIndirectLobeWeights(indirectLobeWeights, wetnessNormal, waterRoughnessSpecular, indirectContext, wetReflectionModeConfig);
 		wetnessReflectance *= wetHighlightReflectanceScale;
 	}

@@ -144,6 +144,8 @@ namespace SharedData
 		uint EnableForwardReflectionBias;
 		uint EnableVanillaReflectionCompensation;
 		float WetFilmSpecularFloorScale;
+		float ShorePersistentDarkeningStrength;
+		float ShorePersistentWetFilmScale;
 	};
 
 	struct SkylightingSettings
