@@ -2377,8 +2377,6 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 		float wetDirectSpecularScale = 1.0;
 		const bool wetnessEnabled = (SharedData::wetnessEffectsSettings.EnableWetnessEffects != 0);
 		bool microPuddlesEnabled = false;
-		bool microPuddleCurvatureEnabled = false;
-		bool openSkyPuddleOcclusionBypassEnabled = false;
 		float postRainPuddleWaterStrength = max(0.0, SharedData::wetnessEffectsSettings.PostRainPuddleWaterStrength);
 	float wetnessDistToWater = abs(input.WorldPosition.z - waterHeight);
 	float shoreRangeSafe = max(1.0, (float)SharedData::wetnessEffectsSettings.ShoreRange);
@@ -2393,12 +2391,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 		// Shore factors are precomputed above so shoreline response can persist
 		// even when rain-driven wetness runtime is idle-gated.
 		const float encodedShorePersistentDarkeningSignal = SharedData::wetnessEffectsSettings.ShorePersistentDarkeningStrength;
-		const float encodedShorePersistentWetFilmSignal = SharedData::wetnessEffectsSettings.ShorePersistentWetFilmScale;
-		const float encodedPostRainPuddleWaterSignal = SharedData::wetnessEffectsSettings.PostRainPuddleWaterStrength;
 		microPuddlesEnabled = encodedShorePersistentDarkeningSignal < 0.0;
-		microPuddleCurvatureEnabled = microPuddlesEnabled && (encodedShorePersistentWetFilmSignal < 0.0);
-		openSkyPuddleOcclusionBypassEnabled = encodedPostRainPuddleWaterSignal < 0.0;
-		postRainPuddleWaterStrength = abs(encodedPostRainPuddleWaterSignal);
 
 	// Calculate wetness angle and occlusion
 	float minWetnessValue = SharedData::wetnessEffectsSettings.MinRainWetness;
@@ -2491,7 +2484,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 		localRainOcclusion = lerp(1.0, occlusionPass, occlusionValidity);
 	}
 	float puddleRainExposure = lerp(1.0, localRainOcclusion, inRainBlend);
-	[branch] if (openSkyPuddleOcclusionBypassEnabled && inRainBlend > 0.0) {
+	[branch] if (inRainBlend > 0.0) {
 		// Open-sky bypass for puddles: use up-facing slope + ambient sky visibility,
 		// independent of direct sun intensity, so cloudy weather still qualifies.
 		float openSkyUpness = smoothstep(0.55, 0.96, rainSurfaceUpness);
@@ -2590,13 +2583,6 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 			float aoCavity = 0.0;
 #			endif
 			float cavityMask = saturate(roughnessCavity * 0.60 + aoCavity * 0.40);
-			[branch] if (microPuddleCurvatureEnabled) {
-				// Derivative-based normal curvature highlights small local cavities.
-				float3 normalDx = ddx(worldNormal);
-				float3 normalDy = ddy(worldNormal);
-				float curvatureCavity = saturate((length(normalDx) + length(normalDy)) * 2.2);
-				cavityMask = saturate(cavityMask + curvatureCavity * (1.0 - cavityMask));
-			}
 
 			float3 microCoords = (input.WorldPosition.xyz + FrameBuffer::CameraPosAdjust[eyeIndex].xyz) * 0.2857143;
 			float microSignal = Random::perlinNoise(microCoords) * 0.5 + 0.5;

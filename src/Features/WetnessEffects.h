@@ -190,8 +190,6 @@ public:
 	float shorePersistentDarkeningStrength = 1.0f;
 	float shorePersistentWetFilmScale = 1.0f;
 	bool enableMicroPuddleWetFilm = false;
-	bool enableMicroPuddleCurvature = false;
-	bool enableOpenSkyPuddleOcclusionBypass = false;
 	// Climate preset system
 	enum class ClimatePreset : uint32_t
 	{
