@@ -2529,19 +2529,28 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 			float3 puddleCoords = ((input.WorldPosition.xyz + FrameBuffer::CameraPosAdjust[eyeIndex].xyz) * 0.5 + 0.5) * 0.01 / (puddleRadiusSafe * puddleLayoutSafe);
 			float puddleSignal = Random::perlinNoise(puddleCoords) * 0.5 + 0.5;
 			puddleSignal = puddleSignal * ((minWetnessAngle / puddleMaxAngleSafe) * SharedData::wetnessEffectsSettings.MaxPuddleWetness * 0.25) + 0.5;
-			float existingPuddleBlend = lerp(wetness, puddleWetness, saturate(puddleSignal - 0.25));
+			float basePuddleBlend = lerp(wetness, puddleWetness, saturate(puddleSignal - 0.25));
+			float maxPuddleStrength = saturate(SharedData::wetnessEffectsSettings.MaxPuddleWetness * (1.0 / 3.5));
+			float baseThreshold = lerp(0.80, 0.64, maxPuddleStrength);
+			// Small puddle-size values increase noise frequency; raise threshold there so
+			// this does not collapse into "wet everywhere except tiny dry holes".
+			float smallRadiusBoost = saturate((1.0 - puddleRadiusSafe) / 0.7);
+			baseThreshold = saturate(baseThreshold + smallRadiusBoost * 0.10);
+			float baseGate = saturate((puddleSignal - baseThreshold) / max(1e-3, 1.0 - baseThreshold));
+			float basePuddle = baseGate * basePuddleBlend;
+			float3 geomNormal = normalize(-cross(ddx(input.WorldPosition.xyz), ddy(input.WorldPosition.xyz)));
+			float horizontalBias = smoothstep(0.90, 0.995, saturate(abs(geomNormal.z)));
 
-			// Use stable geometry-normal slope bias; avoid derivative-of-derivative terms
-			// here because they can create visible triangle/quad seam artifacts.
-			float horizontalBias = smoothstep(0.90, 0.995, saturate(abs(vertexNormal.z)));
-
-			float cavity = 0.0;
-			bool optionalBiasEnabled = false;
+			float aoCavity = 0.0;
+			float modelLowBias = 0.0;
+			float screenCavity = 0.0;
+			bool aoBiasEnabled = false;
+			bool modelBiasEnabled = false;
+			bool screenBiasEnabled = false;
 
 			if (SharedData::wetnessEffectsSettings.EnablePuddleAOCavityBias != 0) {
-				float aoCavity = 0.0;
 #			if defined(TRUE_PBR)
-				optionalBiasEnabled = true;
+				aoBiasEnabled = true;
 #				if !defined(LANDSCAPE) && !defined(LODLANDSCAPE)
 				float aoSample = TexRMAOSSampler.SampleBias(SampRMAOSSampler, uv, SharedData::MipBias).z;
 				aoCavity = saturate(1.0 - aoSample);
@@ -2549,11 +2558,10 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 				aoCavity = saturate(1.0 - material.AO);
 #				endif
 #			endif
-				cavity = max(cavity, aoCavity);
 			}
 
 			if (SharedData::wetnessEffectsSettings.EnablePuddleModelLocalLowBias != 0) {
-				optionalBiasEnabled = true;
+				modelBiasEnabled = true;
 				float modelZ = input.ModelPosition.z;
 				float modelDx = ddx(modelZ);
 				float modelDy = ddy(modelZ);
@@ -2561,18 +2569,22 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 				float modelR = modelZ - modelDx;
 				float modelU = modelZ + modelDy;
 				float modelD = modelZ - modelDy;
-				float modelMax = max(max(modelL, modelR), max(modelU, modelD));
-				float modelMin = min(min(modelL, modelR), min(modelU, modelD));
-				float modelSpan = max(modelMax - modelMin, 1e-3);
-				float modelLowBias = saturate((modelMax - modelZ) / modelSpan);
-				cavity = max(cavity, modelLowBias);
+				// Keep this signal soft: high-contrast model-space derivatives can create
+				// quad-like artifacts if used as a hard puddle placement mask.
+				float modelMean = 0.25 * (modelL + modelR + modelU + modelD);
+				float modelDepression = max(0.0, modelMean - modelZ);
+				float modelRange = abs(modelL - modelR) + abs(modelU - modelD) + 0.02;
+				float modelSignal = saturate(modelDepression / modelRange);
+				modelLowBias = smoothstep(0.04, 0.35, modelSignal);
+				modelLowBias *= lerp(0.55, 1.0, horizontalBias);
 			}
 
 			if (SharedData::wetnessEffectsSettings.EnablePuddleScreenSpaceCavityBias != 0) {
-				optionalBiasEnabled = true;
+				screenBiasEnabled = true;
 				float2 uvTexel = FrameBuffer::DynamicResolutionParams2.xy / max(SharedData::BufferDim.xy, 1.0.xx);
 				float worldPerPixel = max(length(ddx(input.WorldPosition.xyz)), length(ddy(input.WorldPosition.xyz)));
-				float cavityRadiusWorld = max(1.0, puddleRadiusSafe * puddleLayoutSafe * 96.0);
+				// Keep screen-cavity placement independent from puddle layout/size sliders.
+				float cavityRadiusWorld = 128.0;
 				float cavityRadiusPixels = clamp(cavityRadiusWorld / max(worldPerPixel, 1e-3), 1.0, 6.0);
 				float2 cavityOffsetUV = uvTexel * cavityRadiusPixels;
 				float2 cavityProbeCenterUV = screenUV;
@@ -2591,51 +2603,42 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 				}
 
 				float2 centerUV = saturate(cavityProbeCenterUV);
-				float centerDepth = SharedData::GetScreenDepth(centerUV, eyeIndex);
-				float depthLeft = SharedData::GetScreenDepth(saturate(centerUV + float2(-cavityOffsetUV.x, 0.0)), eyeIndex);
-				float depthRight = SharedData::GetScreenDepth(saturate(centerUV + float2(cavityOffsetUV.x, 0.0)), eyeIndex);
-				float depthUp = SharedData::GetScreenDepth(saturate(centerUV + float2(0.0, -cavityOffsetUV.y)), eyeIndex);
-				float depthDown = SharedData::GetScreenDepth(saturate(centerUV + float2(0.0, cavityOffsetUV.y)), eyeIndex);
-
-				float bestDepth = centerDepth;
-				float2 bestOffset = 0.0.xx;
-				if (depthLeft > bestDepth) {
-					bestDepth = depthLeft;
-					bestOffset = float2(-cavityOffsetUV.x, 0.0);
-				}
-				if (depthRight > bestDepth) {
-					bestDepth = depthRight;
-					bestOffset = float2(cavityOffsetUV.x, 0.0);
-				}
-				if (depthUp > bestDepth) {
-					bestDepth = depthUp;
-					bestOffset = float2(0.0, -cavityOffsetUV.y);
-				}
-				if (depthDown > bestDepth) {
-					bestDepth = depthDown;
-					bestOffset = float2(0.0, cavityOffsetUV.y);
-				}
-
-				centerUV = saturate(centerUV + bestOffset);
 				float depthCenter = SharedData::GetScreenDepth(centerUV, eyeIndex);
 				float ringLeft = SharedData::GetScreenDepth(saturate(centerUV + float2(-cavityOffsetUV.x, 0.0)), eyeIndex);
 				float ringRight = SharedData::GetScreenDepth(saturate(centerUV + float2(cavityOffsetUV.x, 0.0)), eyeIndex);
 				float ringUp = SharedData::GetScreenDepth(saturate(centerUV + float2(0.0, -cavityOffsetUV.y)), eyeIndex);
 				float ringDown = SharedData::GetScreenDepth(saturate(centerUV + float2(0.0, cavityOffsetUV.y)), eyeIndex);
 				float ringAverage = 0.25 * (ringLeft + ringRight + ringUp + ringDown);
-				float cavityDepth = saturate((depthCenter - ringAverage) * 0.40);
-				float cavityEdge = max(max(abs(ringLeft - ringRight), abs(ringUp - ringDown)), abs(depthCenter - ringAverage));
-				float cavityStability = 1.0 - smoothstep(0.08, 0.40, cavityEdge);
-				float screenCavity = saturate(cavityDepth * cavityStability);
-				cavity = max(cavity, screenCavity);
+				float cavityDelta = abs(depthCenter - ringAverage);
+				float cavityRelative = cavityDelta / max(depthCenter, 1e-3);
+				float cavityDepth = saturate((cavityRelative - 1e-4) * 180.0);
+				float cavityEdge = max(abs(ringLeft - ringRight), abs(ringUp - ringDown));
+				float cavityEdgeRelative = cavityEdge / max(depthCenter, 1e-3);
+				float cavityStability = 1.0 - smoothstep(0.004, 0.030, cavityEdgeRelative);
+				screenCavity = saturate(cavityDepth * cavityStability);
+				screenCavity = max(screenCavity, cavityDepth * horizontalBias * 0.30);
 			}
 
-			float toggledCavity = optionalBiasEnabled ? (cavity * 0.5) : 0.0;
-			float depthBias = saturate(toggledCavity * 0.25);
-			float placementBias = saturate(max(horizontalBias, depthBias * 0.6));
-			float threshold = lerp(0.62, 0.34, placementBias);
-			float gate = saturate((puddleSignal - threshold) / max(1e-3, 1.0 - threshold));
-			puddle = gate * existingPuddleBlend;
+			bool anyTogglePlacementEnabled = aoBiasEnabled || modelBiasEnabled || screenBiasEnabled;
+			if (anyTogglePlacementEnabled) {
+				// In toggle mode, placement is defined by toggle signals only.
+				float toggleSignal = 0.0;
+				if (aoBiasEnabled) {
+					toggleSignal = max(toggleSignal, aoCavity);
+				}
+				if (modelBiasEnabled) {
+					toggleSignal = max(toggleSignal, modelLowBias);
+				}
+				if (screenBiasEnabled) {
+					toggleSignal = max(toggleSignal, screenCavity);
+				}
+				float toggleGate = smoothstep(0.0, 0.22, saturate(toggleSignal + 0.06));
+				float placementGate = toggleGate;
+				float togglePuddleBlend = lerp(wetness, puddleWetness, placementGate);
+				puddle = placementGate * togglePuddleBlend;
+			} else {
+				puddle = basePuddle;
+			}
 		}
 	#		endif
 		puddle *= saturate(wetnessOcclusion * 2.0);
@@ -2648,6 +2651,12 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	float postRainSpecularPower = lerp(1.0, 0.75, saturate(postRainBlend * max(0.0, SharedData::wetnessEffectsSettings.PostRainPuddleWaterStrength)));
 	wetnessGlossinessSpecular = lerp(saturate(puddle), saturate(pow(saturate(puddle), postRainSpecularPower)), postRainBlend);
 	wetnessGlossinessSpecular = lerp(wetnessGlossinessSpecular, wetnessGlossinessSpecular * shoreFactor, input.WorldPosition.z < waterHeight);
+	// Keep a subtle rain-film sheen outside standing puddles so wet ground still
+	// glitters even where puddle placement gate is low.
+	float wetFilmSource = max(rainWetness, wetness * 0.70);
+	float wetFilmFloorScale = max(0.0, SharedData::wetnessEffectsSettings.WetFilmSpecularFloorScale);
+	float wetFilmSpecular = saturate(wetFilmSource * lerp(0.14, 0.32, inRainBlend) * wetFilmFloorScale);
+	wetnessGlossinessSpecular = max(wetnessGlossinessSpecular, wetFilmSpecular);
 	float deepPuddleMask = smoothstep(0.14, 0.88, saturate(puddle));
 	wetnessGlossinessSpecular = saturate(wetnessGlossinessSpecular * lerp(1.0, 1.65, deepPuddleMask));
 

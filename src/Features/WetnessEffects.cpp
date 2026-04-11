@@ -48,6 +48,8 @@ namespace
 	constexpr float LEGACY_REFLECTION_SCALE_AT_ANCHOR = 0.001f;
 	constexpr float WET_HIGHLIGHT_REDUCTION_MIN = 0.25f;
 	constexpr float WET_HIGHLIGHT_REDUCTION_MAX = 10.0f;
+	constexpr float WET_FILM_SPECULAR_FLOOR_SCALE_MIN = 0.0f;
+	constexpr float WET_FILM_SPECULAR_FLOOR_SCALE_MAX = 3.0f;
 	constexpr float DRYING_HOURS_MIN = 1.0f;
 	constexpr float DRYING_HOURS_MAX = 24.0f;
 	constexpr float DRYING_SECONDS_PER_HOUR = 3600.0f;
@@ -652,6 +654,7 @@ namespace
 		settings.WetDarkeningStrength = ClampFiniteOrDefault(settings.WetDarkeningStrength, 0.0f, 2.0f, 1.0f);
 		settings.WetColorSaturation = ClampFiniteOrDefault(settings.WetColorSaturation, 0.0f, 2.5f, 1.0f);
 		settings.WetHighlightReduction = ClampFiniteOrDefault(settings.WetHighlightReduction, WET_HIGHLIGHT_REDUCTION_MIN, WET_HIGHLIGHT_REDUCTION_MAX, 1.0f);
+		settings.WetFilmSpecularFloorScale = ClampFiniteOrDefault(settings.WetFilmSpecularFloorScale, WET_FILM_SPECULAR_FLOOR_SCALE_MIN, WET_FILM_SPECULAR_FLOOR_SCALE_MAX, 1.0f);
 	}
 
 	RE::BSParticleShaderRainEmitter* GetRainEmitterFromPrecipGeometry(RE::BSGeometry* precipObject)
@@ -721,7 +724,8 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	EnablePuddleAOCavityBias,
 	EnablePuddleModelLocalLowBias,
 	EnablePuddleScreenSpaceCavityBias,
-	EnablePuddleScreenSpaceCavityFreeze)
+	EnablePuddleScreenSpaceCavityFreeze,
+	WetFilmSpecularFloorScale)
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	WetnessEffects::DebugSettings,
@@ -1354,6 +1358,10 @@ void WetnessEffects::DrawSettings()
 		if (auto _tt = Util::HoverTooltipWrapper()) {
 			ImGui::TextUnformatted("Reduces bright white wet highlights. Higher = less white glare, lower = brighter highlights.");
 		}
+		ImGui::SliderFloat("Wet Film Specular Floor", &settings.WetFilmSpecularFloorScale, WET_FILM_SPECULAR_FLOOR_SCALE_MIN, WET_FILM_SPECULAR_FLOOR_SCALE_MAX, "%.2f");
+		if (auto _tt = Util::HoverTooltipWrapper()) {
+			ImGui::TextUnformatted("Controls subtle wet-film reflections outside standing puddles. Higher = stronger ground glitter between puddles.");
+		}
 
 		ImGui::Separator();
 		ImGui::TextDisabled("Shore and Puddles");
@@ -1975,6 +1983,7 @@ void WetnessEffects::LoadSettings(json& o_json)
 			"RaindropChance",
 			"WetDarkeningStrength",
 			"WetHighlightReduction",
+			"WetFilmSpecularFloorScale",
 			"PuddleDryingHours",
 			"EnableWeatherDrivenDryingModel",
 			"PuddleLayout",

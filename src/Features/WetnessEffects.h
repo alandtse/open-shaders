@@ -81,8 +81,9 @@ public:
 		uint EnablePuddleModelLocalLowBias = false;
 		uint EnablePuddleScreenSpaceCavityBias = false;
 		uint EnablePuddleScreenSpaceCavityFreeze = false;
+		float WetFilmSpecularFloorScale = 1.0f;
 	};
-	static_assert(sizeof(Settings) == 180, "WetnessEffects::Settings layout changed; update wetness shader/CB contract.");
+	static_assert(sizeof(Settings) == 184, "WetnessEffects::Settings layout changed; update wetness shader/CB contract.");
 	static_assert(offsetof(Settings, WeatherTransitionSpeed) == 40, "WetnessEffects::Settings WeatherTransitionSpeed offset changed.");
 	static_assert(offsetof(Settings, EnableRaindropFx) == 56, "WetnessEffects::Settings EnableRaindropFx offset changed.");
 	static_assert(offsetof(Settings, WetIndirectSpecularScale) == 84, "WetnessEffects::Settings WetIndirectSpecularScale offset changed.");
@@ -95,6 +96,7 @@ public:
 	static_assert(offsetof(Settings, EnablePuddleModelLocalLowBias) == 168, "WetnessEffects::Settings EnablePuddleModelLocalLowBias offset changed.");
 	static_assert(offsetof(Settings, EnablePuddleScreenSpaceCavityBias) == 172, "WetnessEffects::Settings EnablePuddleScreenSpaceCavityBias offset changed.");
 	static_assert(offsetof(Settings, EnablePuddleScreenSpaceCavityFreeze) == 176, "WetnessEffects::Settings EnablePuddleScreenSpaceCavityFreeze offset changed.");
+	static_assert(offsetof(Settings, WetFilmSpecularFloorScale) == 180, "WetnessEffects::Settings WetFilmSpecularFloorScale offset changed.");
 
 	// Shader-facing wetness settings layout.
 	// Keep this binary-compatible with Settings while exposing shader semantics directly.
@@ -147,6 +149,7 @@ public:
 		uint EnablePuddleModelLocalLowBias = false;
 		uint EnablePuddleScreenSpaceCavityBias = false;
 		uint EnablePuddleScreenSpaceCavityFreeze = false;
+		float WetFilmSpecularFloorScale = 1.0f;
 	};
 	static_assert(sizeof(ShaderSettings) == sizeof(Settings), "WetnessEffects::ShaderSettings must stay binary-compatible with Settings.");
 	static_assert(offsetof(ShaderSettings, PuddleLayout) == offsetof(Settings, WeatherTransitionSpeed),
@@ -167,6 +170,8 @@ public:
 		"WetnessEffects::ShaderSettings puddle screen-space cavity offsets must match Settings.");
 	static_assert(offsetof(ShaderSettings, EnablePuddleScreenSpaceCavityFreeze) == offsetof(Settings, EnablePuddleScreenSpaceCavityFreeze),
 		"WetnessEffects::ShaderSettings puddle cavity freeze offsets must match Settings.");
+	static_assert(offsetof(ShaderSettings, WetFilmSpecularFloorScale) == offsetof(Settings, WetFilmSpecularFloorScale),
+		"WetnessEffects::ShaderSettings wet-film specular floor offset must match Settings.");
 
 	struct PerFrame
 	{
@@ -179,7 +184,6 @@ public:
 		// Explicit tail padding so the packed feature buffer keeps 16-byte CB stride.
 		uint ReservedPerFramePadding0 = 0;
 		uint ReservedPerFramePadding1 = 0;
-		uint ReservedPerFramePadding2 = 0;
 	};
 	STATIC_ASSERT_ALIGNAS_16(PerFrame);
 	static_assert(offsetof(PerFrame, settings) == 80, "WetnessEffects::PerFrame settings offset changed.");

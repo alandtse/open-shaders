@@ -147,6 +147,7 @@ namespace SharedData
 		uint EnablePuddleModelLocalLowBias;
 		uint EnablePuddleScreenSpaceCavityBias;
 		uint EnablePuddleScreenSpaceCavityFreeze;
+		float WetFilmSpecularFloorScale;
 	};
 
 	struct SkylightingSettings
