@@ -2461,7 +2461,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 		float2 occlusionUvMargin = min(clampedPrecipOcclusionUV, 1.0 - clampedPrecipOcclusionUV);
 		float occlusionEdgeFade = saturate(min(occlusionUvMargin.x, occlusionUvMargin.y) * 16.0);
 		float occlusionValidity = occlusionDomainBlend * occlusionEdgeFade;
-		float occlusionPass = (precipOcclusionTexCoord.z < precipOcclusionZ + 0.1) ? 1.0 : 0.0;
+		float occlusionPass = (precipOcclusionTexCoord.z < precipOcclusionZ + 0.05) ? 1.0 : 0.0;
 		localRainOcclusion = lerp(1.0, occlusionPass, occlusionValidity);
 	}
 	float puddleRainExposure = lerp(1.0, localRainOcclusion, inRainBlend);
@@ -2539,7 +2539,11 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 			float smallRadiusBoost = saturate((1.0 - puddleRadiusSafe) / 0.7);
 			baseThreshold = saturate(baseThreshold + smallRadiusBoost * 0.20);
 			float baseGate = saturate((puddleSignal - baseThreshold) / max(1e-3, 1.0 - baseThreshold));
-			float basePuddle = baseGate * basePuddleBlend;
+			// Suppress low-amplitude puddle tails so puddle radius does not drive a broad
+			// weak sheen pattern across non-puddle regions.
+			baseGate = smoothstep(0.22, 0.88, baseGate);
+			float puddleSlopeMask = smoothstep(puddleMaxAngleSafe, 1.0, saturate(worldNormal.z));
+			float basePuddle = baseGate * basePuddleBlend * puddleSlopeMask;
 			puddle = basePuddle;
 		}
 	#		endif
