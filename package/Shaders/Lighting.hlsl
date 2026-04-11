@@ -2576,7 +2576,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 			float baseGate = saturate((puddleSignal - baseThreshold) / max(1e-3, 1.0 - baseThreshold));
 			// Suppress low-amplitude puddle tails so puddle radius does not drive a broad
 			// weak sheen pattern across non-puddle regions.
-			baseGate = smoothstep(0.22, 0.88, baseGate);
+			baseGate = smoothstep(0.16, 0.82, baseGate);
 			float puddleSlopeMask = smoothstep(puddleMaxAngleSafe, 1.0, saturate(worldNormal.z));
 			float basePuddle = baseGate * basePuddleBlend * puddleSlopeMask;
 			puddle = basePuddle;
@@ -2613,6 +2613,8 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 		puddle = saturate(puddle + microPuddle);
 		const float microReflectionScale = 0.75;
 		float puddleReflection = saturate(puddle - microPuddle * (1.0 - microReflectionScale));
+		float puddleDepthSignal = saturate(pow(saturate(puddleReflection), 0.80));
+		float puddleSpecularBase = saturate(lerp(puddleReflection, puddleDepthSignal, 0.40));
 
 		// Calculate wetness glossiness factors
 	wetnessGlossinessAlbedo = max(puddle, shoreFactorAlbedo * SharedData::wetnessEffectsSettings.MaxShoreWetness);
@@ -2620,7 +2622,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 
 	// Preserve clearer water appearance after rain by shaping mid-range puddle values upward.
 	float postRainSpecularPower = lerp(1.0, 0.75, saturate(postRainBlend * postRainPuddleWaterStrength));
-	wetnessGlossinessSpecular = lerp(saturate(puddleReflection), saturate(pow(saturate(puddleReflection), postRainSpecularPower)), postRainBlend);
+	wetnessGlossinessSpecular = lerp(saturate(puddleSpecularBase), saturate(pow(saturate(puddleSpecularBase), postRainSpecularPower)), postRainBlend);
 	wetnessGlossinessSpecular = lerp(wetnessGlossinessSpecular, wetnessGlossinessSpecular * shoreFactor, input.WorldPosition.z < waterHeight);
 	// Keep a subtle rain-film sheen outside standing puddles so wet ground still
 	// glitters even where puddle placement gate is low.
@@ -2634,7 +2636,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	float wetFilmSpecular = saturate(wetFilmSource * lerp(0.10, 0.24, inRainBlend) * wetFilmRainExposure * wetFilmFloorScale);
 	wetFilmSpecular *= wetFilmSlopeMask;
 	wetnessGlossinessSpecular = max(wetnessGlossinessSpecular, wetFilmSpecular);
-	float deepPuddleMask = smoothstep(0.14, 0.88, saturate(puddleReflection));
+	float deepPuddleMask = smoothstep(0.10, 0.80, puddleDepthSignal);
 	float wetFilmNonPuddleMask = wetFilmSpecular * (1.0 - deepPuddleMask);
 	float wetFilmDominance = saturate(wetFilmNonPuddleMask / max(wetnessGlossinessSpecular, 1e-3));
 	// Keep wet-film looking like clear wetness (env reflection / darker surface) rather
@@ -2646,7 +2648,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	float flatnessAmount = smoothstep(max(SharedData::wetnessEffectsSettings.PuddleMaxAngle, 0.0), 1.0, minWetnessAngle);
 	float puddleMinWetness = lerp(SharedData::wetnessEffectsSettings.PuddleMinWetness, SharedData::wetnessEffectsSettings.PuddleMinWetness * 0.8, inRainBlend);
 	flatnessAmount *= smoothstep(puddleMinWetness, 1.0, wetnessGlossinessSpecular);
-	flatnessAmount = saturate(lerp(flatnessAmount, 1.0, deepPuddleMask * 0.85));
+	flatnessAmount = saturate(lerp(flatnessAmount, 1.0, deepPuddleMask * 0.92));
 
 	wetnessNormal = normalize(lerp(wetnessNormal, float3(0, 0, 1), flatnessAmount));
 
@@ -2659,16 +2661,23 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	float wetnessViewNdotV = saturate(abs(dot(wetnessNormal, viewDirection)));
 	float wetHighlightMask = smoothstep(0.01, 0.05, wetnessGlossinessAlbedo);
 	float wetHighlightReduction = max(0.25, SharedData::wetnessEffectsSettings.WetHighlightReduction);
-	float highlightReductionT = saturate((wetHighlightReduction - 1.0) / 9.0) * wetHighlightMask;
+	float highlightReductionT = saturate((wetHighlightReduction - 1.0) / 9.0);
+	float highlightReductionCurve = (highlightReductionT * highlightReductionT) * wetHighlightMask;
 	float highlightRelaxT = saturate((1.0 - wetHighlightReduction) / 0.75) * wetHighlightMask;
 	float grazingMask = 1.0 - smoothstep(0.10, 0.60, wetnessViewNdotV);
 	float grazingMinAttenuation = 0.45;
-	grazingMinAttenuation = lerp(grazingMinAttenuation, 0.02, highlightReductionT);
+	grazingMinAttenuation = lerp(grazingMinAttenuation, 0.01, highlightReductionCurve);
 	grazingMinAttenuation = lerp(grazingMinAttenuation, 0.80, highlightRelaxT);
 	float wetnessGrazingAttenuation = saturate(lerp(1.0, grazingMinAttenuation, grazingMask));
 	wetnessGrazingAttenuation = lerp(1.0, wetnessGrazingAttenuation, wetHighlightMask);
 	wetnessGlossinessSpecular *= wetnessGrazingAttenuation;
-	wetHighlightReflectanceScale = lerp(1.0, wetnessGrazingAttenuation, saturate((0.35 + highlightReductionT) * wetHighlightMask));
+	wetHighlightReflectanceScale = lerp(1.0, wetnessGrazingAttenuation, saturate(0.30 * wetHighlightMask + highlightReductionCurve));
+	float wetHighlightViewDistance = abs(viewPosition.z);
+	float farWhiteDistanceMask = smoothstep(2048.0, 8192.0, wetHighlightViewDistance);
+	float farGrazingWhiteMask = saturate(grazingMask * farWhiteDistanceMask);
+	float farWhiteSuppression = farGrazingWhiteMask * highlightReductionCurve;
+	wetDirectSpecularScale *= lerp(1.0, 0.18, farWhiteSuppression);
+	wetHighlightReflectanceScale *= lerp(1.0, 0.65, farWhiteSuppression);
 
 	waterRoughnessSpecular = 1.0 - wetnessGlossinessSpecular * 0.97;
 	}
