@@ -143,10 +143,6 @@ namespace SharedData
 		float WetHighlightReduction;
 		uint EnableForwardReflectionBias;
 		uint EnableVanillaReflectionCompensation;
-		uint EnablePuddleAOCavityBias;
-		uint EnablePuddleModelLocalLowBias;
-		uint EnablePuddleScreenSpaceCavityBias;
-		uint EnablePuddleScreenSpaceCavityFreeze;
 		float WetFilmSpecularFloorScale;
 	};
 
