@@ -1448,11 +1448,6 @@ void WetnessEffects::DrawSettings()
 			ImGui::TextUnformatted("Overall puddle strength. Higher = stronger puddles and broader puddle coverage, lower = weaker/more limited puddles.");
 		}
 
-		ImGui::SliderFloat("Puddle Water Look", &settings.PuddleMinWetness, 0.0f, 1.0f);
-		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::TextUnformatted("Wetness threshold for puddles to look like standing water. Higher = only stronger puddles become flat/reflective; lower = watery look appears sooner.");
-		}
-
 		ImGui::SliderFloat("Puddle Max Angle", &settings.PuddleMaxAngle, 0.0f, 1.0f);
 		if (auto _tt = Util::HoverTooltipWrapper()) {
 			ImGui::TextUnformatted("Slope limit for puddle formation. Higher = puddles restricted to flatter ground, lower = puddles can appear on steeper slopes.");
@@ -1472,15 +1467,27 @@ void WetnessEffects::DrawSettings()
 			};
 			Util::DrawMultiLineTooltip(tooltipLines);
 		}
-		ImGui::Checkbox("Inactivate Rain Puddle Auto-Expansion", &inactivateRainPuddleAutoExpansion);
-		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::TextUnformatted("On = disables automatic max puddle size during rain, so Puddle Radius controls puddle size during rain and after rain. Off = rain forces max puddle size, then settles back after rain.");
-		}
+
 		ImGui::SliderFloat("Puddle Layout", &puddleLayout, PUDDLE_LAYOUT_MIN, PUDDLE_LAYOUT_MAX, "%.2f", ImGuiSliderFlags_AlwaysClamp);
 		if (auto _tt = Util::HoverTooltipWrapper()) {
 			ImGui::TextUnformatted("Changes puddle shape/placement pattern only (not puddle size). Lower values = smoother, broader patches. Higher values = more irregular, broken-up placement.");
 		}
 
+		ImGui::SliderFloat("Puddle Water Look", &settings.PuddleMinWetness, 0.0f, 1.0f);
+		if (auto _tt = Util::HoverTooltipWrapper()) {
+			ImGui::TextUnformatted("Wetness threshold for puddles to look like standing water. Higher = only stronger puddles become flat/reflective; lower = watery look appears sooner.");
+		}
+
+		ImGui::SliderFloat("Rain Cubemap Suppression", &inRainPuddleCubemapSuppression, IN_RAIN_PUDDLE_CUBEMAP_SUPPRESSION_MIN, IN_RAIN_PUDDLE_CUBEMAP_SUPPRESSION_MAX, "%.2f");
+		if (auto _tt = Util::HoverTooltipWrapper()) {
+			ImGui::TextUnformatted("Reduces wet cubemap reflections during active rain. 0 = off (no suppression). Higher = less cubemap reflection during rain. 1 = strongest suppression.");
+		}
+		ImGui::SliderFloat("Rain Specular Boost", &inRainPuddleSpecularBoost, IN_RAIN_PUDDLE_SPECULAR_BOOST_MIN, IN_RAIN_PUDDLE_SPECULAR_BOOST_MAX, "%.2f");
+		if (auto _tt = Util::HoverTooltipWrapper()) {
+			ImGui::TextUnformatted("Increases rain-time puddle specular to compensate when cubemap reflections are suppressed. 0 = no change. Higher = stronger rain-time specular highlights. 1 = strongest boost.");
+		}
+
+		ImGui::Dummy(ImVec2(0.0f, 12.0f));
 		ImGui::SliderFloat("Post-Rain Puddle Shine", &settings.PostRainPuddleWaterStrength, POST_RAIN_PUDDLE_SHINE_MIN, POST_RAIN_PUDDLE_SHINE_MAX, "%.2f");
 		if (auto _tt = Util::HoverTooltipWrapper()) {
 			ImGui::TextUnformatted("Controls how strong puddle reflections look after rain. Lower = subtler/dimmer puddle reflections, higher = stronger/brighter puddle reflections.");
@@ -1493,13 +1500,11 @@ void WetnessEffects::DrawSettings()
 		if (auto _tt = Util::HoverTooltipWrapper()) {
 			ImGui::TextUnformatted("Boosts post-rain puddle specular for a clearer water-like look. 0 = no change. Higher = stronger specular/clearer puddles. 1 = strongest boost.");
 		}
-		ImGui::SliderFloat("Rain Cubemap Suppression", &inRainPuddleCubemapSuppression, IN_RAIN_PUDDLE_CUBEMAP_SUPPRESSION_MIN, IN_RAIN_PUDDLE_CUBEMAP_SUPPRESSION_MAX, "%.2f");
+
+		ImGui::Dummy(ImVec2(0.0f, 8.0f));
+		ImGui::Checkbox("Inactivate Rain Puddle Auto-Expansion (adjust Post-Rain Puddle Size/Pattern)", &inactivateRainPuddleAutoExpansion);
 		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::TextUnformatted("Reduces wet cubemap reflections during active rain. 0 = off (no suppression). Higher = less cubemap reflection during rain. 1 = strongest suppression.");
-		}
-		ImGui::SliderFloat("Rain Specular Boost", &inRainPuddleSpecularBoost, IN_RAIN_PUDDLE_SPECULAR_BOOST_MIN, IN_RAIN_PUDDLE_SPECULAR_BOOST_MAX, "%.2f");
-		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::TextUnformatted("Increases rain-time puddle specular to compensate when cubemap reflections are suppressed. 0 = no change. Higher = stronger rain-time specular highlights. 1 = strongest boost.");
+			ImGui::TextUnformatted("On = disables automatic max puddle size during rain, so Puddle Radius controls puddle size during rain and after rain. Off = rain forces max puddle size, then settles back after rain.");
 		}
 
 		ImGui::Separator();
