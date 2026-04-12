@@ -50,10 +50,19 @@ float3 GetSamplingVector(uint3 ThreadID, in RWTexture2DArray<float4> OutputTextu
 	return normalize(result);
 }
 
+float GetFrameEdgeMask(float2 uvMono)
+{
+	float2 edgeDistance = min(uvMono, 1.0 - uvMono);
+	float minEdgeDistance = min(edgeDistance.x, edgeDistance.y);
+	const float edgeFadeStart = 0.015;
+	const float edgeFadeEnd = 0.14;
+	return smoothstep(edgeFadeStart, edgeFadeEnd, minEdgeDistance);
+}
+
 cbuffer UpdateData : register(b0)
 {
 	float3 CameraPreviousPosAdjust2;
-	uint padb10;
+	uint CaptureFlags;
 }
 
 [numthreads(8, 8, 1)] void main(uint3 ThreadID
@@ -61,6 +70,8 @@ cbuffer UpdateData : register(b0)
 	float3 captureDirection = -GetSamplingVector(ThreadID, DynamicCubemap);
 	float3 viewDirection = FrameBuffer::WorldToView(captureDirection, false);
 	float2 uv = FrameBuffer::ViewToUV(viewDirection, false);
+	const bool disableForwardCaptureGate = ((CaptureFlags & 0x1u) != 0);
+	const bool suppressSkyAndFrameEdgeCapture = ((CaptureFlags & 0x2u) != 0);
 
 	bool shouldTryCapture = true;
 #if !defined(VR)
@@ -73,11 +84,12 @@ cbuffer UpdateData : register(b0)
 		float weight = 0.0;
 		// Wider/softer capture gate to reduce player-attached looking cutoffs:
 		// - extend side/slightly-behind coverage (forwardGateEnd)
-		// - broaden near-depth ramp so the in-front capture area fades smoothly
-		const float forwardGateStart = -0.06;
-		const float forwardGateEnd = 0.30;
-		const float nearDepthGateStart = 3.0;
-		const float nearDepthGateEnd = 32.0;
+		// - avoid strong radial depth weighting (prevents concentric ring look)
+		const float forwardGateStart = -0.12;
+		const float forwardGateEnd = 0.55;
+		const float nearDepthValidityStart = 0.75;
+		const float nearDepthValidityEnd = 2.75;
+		const float nearDepthWeightFloor = 0.88;
 
 #if !defined(VR)
 		uv = FrameBuffer::GetDynamicResolutionAdjustedScreenPosition(uv);
@@ -95,25 +107,34 @@ cbuffer UpdateData : register(b0)
 			// - full weight in front
 			// - gradual falloff toward side/slightly-behind directions
 			float forwardMask = 1.0 - smoothstep(forwardGateStart, forwardGateEnd, eyeViewDirection.z);
-			forwardMask = sqrt(saturate(forwardMask));
+			forwardMask = smoothstep(0.0, 1.0, sqrt(saturate(forwardMask)));
+			if (disableForwardCaptureGate)
+				forwardMask = 1.0;
 			if (forwardMask <= 1e-3)
+				continue;
+			float frameEdgeMask = suppressSkyAndFrameEdgeCapture ? GetFrameEdgeMask(eyeUVMono) : 1.0;
+			if (frameEdgeMask <= 1e-3)
 				continue;
 
 			float2 eyeUV = FrameBuffer::GetDynamicResolutionAdjustedScreenPosition(eyeUVMono, 0);
 			eyeUV = Stereo::ConvertToStereoUV(eyeUV, eyeIndex);
 			float depth = DepthTexture.SampleLevel(LinearSampler, eyeUV, 0);
 			float linearDepth = SharedData::GetScreenDepth(depth);
-			// Soft near-depth cutoff to avoid a hard moving reflection boundary near the player.
-			float nearDepthMask = smoothstep(nearDepthGateStart, nearDepthGateEnd, linearDepth);
-			if (nearDepthMask <= 1e-3)
+			// Near-depth validity:
+			// - reject extremely close samples (camera-near instability)
+			// - keep remaining depth weighting subtle to avoid concentric rings.
+			float nearDepthValidity = smoothstep(nearDepthValidityStart, nearDepthValidityEnd, linearDepth);
+			if (nearDepthValidity <= 1e-3)
 				continue;
+			float nearDepthWeight = lerp(nearDepthWeightFloor, 1.0, nearDepthValidity);
 
 #	if defined(REFLECTIONS)
-			float sampleWeight = forwardMask * nearDepthMask;
+			float nonSkyMask = suppressSkyAndFrameEdgeCapture ? (1.0 - smoothstep(0.9988, 0.99997, depth)) : 1.0;
+			float sampleWeight = forwardMask * nearDepthWeight * frameEdgeMask * nonSkyMask;
 #	else
 			// Soft sky rejection to reduce blocky transitions at geometry/sky boundaries.
 			float nonSkyMask = 1.0 - smoothstep(0.9992, 0.99995, depth);
-			float sampleWeight = forwardMask * nearDepthMask * nonSkyMask;
+			float sampleWeight = forwardMask * nearDepthWeight * nonSkyMask * frameEdgeMask;
 #	endif
 			if (sampleWeight > 1e-3) {
 				half4 positionCS = half4(2 * half2(eyeUVMono.x, -eyeUVMono.y + 1) - 1, depth, 1);
@@ -130,23 +151,30 @@ cbuffer UpdateData : register(b0)
 		float depth = DepthTexture.SampleLevel(LinearSampler, eyeUV, 0);
 		float linearDepth = SharedData::GetScreenDepth(depth);
 		float forwardMask = 1.0 - smoothstep(forwardGateStart, forwardGateEnd, viewDirection.z);
-		forwardMask = sqrt(saturate(forwardMask));
-		float nearDepthMask = smoothstep(nearDepthGateStart, nearDepthGateEnd, linearDepth);
+		forwardMask = smoothstep(0.0, 1.0, sqrt(saturate(forwardMask)));
+		if (disableForwardCaptureGate)
+			forwardMask = 1.0;
+		float nearDepthValidity = smoothstep(nearDepthValidityStart, nearDepthValidityEnd, linearDepth);
+		if (nearDepthValidity > 1e-3) {
+			float nearDepthWeight = lerp(nearDepthWeightFloor, 1.0, nearDepthValidity);
+			float frameEdgeMask = suppressSkyAndFrameEdgeCapture ? GetFrameEdgeMask(uv) : 1.0;
 
 #	if defined(REFLECTIONS)
-		float sampleWeight = forwardMask * nearDepthMask;
+			float nonSkyMask = suppressSkyAndFrameEdgeCapture ? (1.0 - smoothstep(0.9988, 0.99997, depth)) : 1.0;
+			float sampleWeight = forwardMask * nearDepthWeight * frameEdgeMask * nonSkyMask;
 #	else
-		float nonSkyMask = 1.0 - smoothstep(0.9992, 0.99995, depth);
-		float sampleWeight = forwardMask * nearDepthMask * nonSkyMask;
+			float nonSkyMask = 1.0 - smoothstep(0.9992, 0.99995, depth);
+			float sampleWeight = forwardMask * nearDepthWeight * nonSkyMask * frameEdgeMask;
 #	endif
-		if (sampleWeight > 1e-3) {
-			half4 positionCS = half4(2 * half2(eyeUV.x, -eyeUV.y + 1) - 1, depth, 1);
-			positionCS = mul(FrameBuffer::CameraViewProjInverse[0], positionCS);
-			positionCS.xyz = positionCS.xyz / positionCS.w;
+			if (sampleWeight > 1e-3) {
+				half4 positionCS = half4(2 * half2(eyeUV.x, -eyeUV.y + 1) - 1, depth, 1);
+				positionCS = mul(FrameBuffer::CameraViewProjInverse[0], positionCS);
+				positionCS.xyz = positionCS.xyz / positionCS.w;
 
-			position += positionCS.xyz * sampleWeight;
-			color += ColorTexture.SampleLevel(LinearSampler, eyeUV, 0).rgb * sampleWeight;
-			weight += sampleWeight;
+				position += positionCS.xyz * sampleWeight;
+				color += ColorTexture.SampleLevel(LinearSampler, eyeUV, 0).rgb * sampleWeight;
+				weight += sampleWeight;
+			}
 		}
 #endif
 
@@ -185,6 +213,13 @@ cbuffer UpdateData : register(b0)
 #if defined(FAKEREFLECTIONS)
 	historyFade = 0.97;
 #endif
+	if (suppressSkyAndFrameEdgeCapture) {
+#if defined(REFLECTIONS)
+		historyFade = min(historyFade, 0.86);
+#else
+		historyFade = min(historyFade, 0.90);
+#endif
+	}
 	color *= historyFade;
 
 	DynamicCubemap[ThreadID] = max(0, color);

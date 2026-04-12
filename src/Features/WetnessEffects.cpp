@@ -1494,11 +1494,11 @@ void WetnessEffects::DrawSettings()
 		}
 		ImGui::SliderFloat("Post-Rain Cubemap Desaturation", &postRainPuddleCubemapDesaturation, POST_RAIN_PUDDLE_CUBEMAP_DESAT_MIN, POST_RAIN_PUDDLE_CUBEMAP_DESAT_MAX, "%.2f");
 		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::TextUnformatted("Desaturates post-rain puddle cubemap reflections. 0 = no color change. Higher = less colorful/more neutral reflections. 1 = strongest desaturation.");
+			ImGui::TextUnformatted("Reduces post-rain puddle cubemap color and glare. 0 = no change. Higher = less colorful and dimmer cubemap reflections. 1 = strongest reduction.");
 		}
 		ImGui::SliderFloat("Post-Rain Specular Boost", &postRainPuddleSpecularBoost, POST_RAIN_PUDDLE_SPECULAR_BOOST_MIN, POST_RAIN_PUDDLE_SPECULAR_BOOST_MAX, "%.2f");
 		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::TextUnformatted("Boosts post-rain puddle specular for a clearer water-like look. 0 = no change. Higher = stronger specular/clearer puddles. 1 = strongest boost.");
+			ImGui::TextUnformatted("Boosts post-rain puddle specular for a clearer water-like look. 0 = no change. Higher = stronger specular response. 1 = strongest boost.");
 		}
 
 		ImGui::Dummy(ImVec2(0.0f, 8.0f));

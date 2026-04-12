@@ -11,7 +11,9 @@ constexpr auto MIPLEVELS = 8;
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	DynamicCubemaps::Settings,
 	EnabledSSR,
-	EnabledCreator);
+	EnabledCreator,
+	InactivateVRForwardCaptureGate,
+	SuppressSkyAndFrameEdgeCapture);
 
 std::vector<std::pair<std::string_view, std::string_view>> DynamicCubemaps::GetShaderDefineOptions()
 {
@@ -121,6 +123,15 @@ void DynamicCubemaps::DrawSettings()
 	}
 	if (REL::Module::IsVR()) {
 		if (ImGui::TreeNodeEx("Advanced VR Settings", ImGuiTreeNodeFlags_DefaultOpen)) {
+			ImGui::Checkbox("Inactivate Forward Capture Gate (A/B)", reinterpret_cast<bool*>(&settings.InactivateVRForwardCaptureGate));
+			if (auto _tt = Util::HoverTooltipWrapper()) {
+				ImGui::TextUnformatted("A/B toggle for VR cubemap capture. On = disables forward-facing capture gate so reflections are less view-locked to HMD orientation.");
+			}
+			ImGui::Checkbox("Suppress Sky/Frame-Edge Capture (A/B)", reinterpret_cast<bool*>(&settings.SuppressSkyAndFrameEdgeCapture));
+			if (auto _tt = Util::HoverTooltipWrapper()) {
+				ImGui::TextUnformatted("A/B toggle to reduce stale rain puddle artifacts. On = suppresses sky and frame-edge capture samples, and clears non-refreshed cubemap texels faster.");
+			}
+			ImGui::Spacing();
 			Util::RenderImGuiSettingsTree(iniVRCubeMapSettings, "VR");
 			Util::RenderImGuiSettingsTree(hiddenVRCubeMapSettings, "hiddenVR");
 			ImGui::TreePop();
@@ -351,6 +362,13 @@ void DynamicCubemaps::UpdateCubemapCapture(bool a_reflections)
 	auto eyePosition = Util::GetAverageEyePosition();
 
 	cameraPreviousPosAdjust[index] = { eyePosition.x, eyePosition.y, eyePosition.z };
+	updateData.CaptureFlags = 0u;
+	if (REL::Module::IsVR() && settings.InactivateVRForwardCaptureGate) {
+		updateData.CaptureFlags |= kCaptureFlagDisableForwardGate;
+	}
+	if (a_reflections && settings.SuppressSkyAndFrameEdgeCapture) {
+		updateData.CaptureFlags |= kCaptureFlagSuppressSkyAndFrameEdge;
+	}
 
 	updateCubemapCB->Update(updateData);
 

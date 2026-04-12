@@ -2711,8 +2711,11 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	// Post-rain phase: constrain direct white highlight while preserving cubemap clarity.
 	wetDirectSpecularScale *= lerp(1.0, postRainDirectScale, postRainPuddlePhase);
 	wetnessGlossinessSpecular *= lerp(1.0, postRainGlossScale, postRainPuddlePhase);
-	float postRainSpecBoostScale = lerp(1.0, 1.42, postRainPuddleSpecularBoost);
+	float postRainSpecBoostCurve = smoothstep(0.0, 1.0, postRainPuddleSpecularBoost);
+	float postRainSpecBoostScale = lerp(1.0, 2.15, postRainSpecBoostCurve);
 	wetnessGlossinessSpecular *= lerp(1.0, postRainSpecBoostScale, postRainPuddlePhase);
+	float postRainDirectSpecCompensation = lerp(1.0, 1.28, postRainSpecBoostCurve);
+	wetDirectSpecularScale *= lerp(1.0, postRainDirectSpecCompensation, postRainPuddlePhase * 0.55);
 	wetnessGlossinessSpecular = saturate(wetnessGlossinessSpecular * lerp(1.0, 1.65, deepPuddleMask));
 
 	// Update flatness and normal calculations
@@ -3426,8 +3429,11 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 			float3 wetCubemapIrradiance = SanitizeFloat3(DynamicCubemaps::GetDynamicCubemapSpecularIrradiance(screenUV, wetnessNormal, vertexNormal, viewDirection, waterRoughnessSpecular, skylightingSH));
 			float wetCubemapDesatAmount = saturate(postRainBlend * postRainPuddleCubemapDesaturation);
 			if (wetCubemapDesatAmount > 1e-4) {
+				float wetCubemapDesatT = smoothstep(0.0, 1.0, wetCubemapDesatAmount);
 				float wetCubemapLuma = dot(wetCubemapIrradiance, float3(0.2126, 0.7152, 0.0722));
-				wetCubemapIrradiance = lerp(wetCubemapIrradiance, wetCubemapLuma.xxx, wetCubemapDesatAmount);
+				wetCubemapIrradiance = lerp(wetCubemapIrradiance, wetCubemapLuma.xxx, wetCubemapDesatT);
+				// Make the slider visibly useful under bright/overcast skies where desaturation alone is subtle.
+				wetCubemapIrradiance *= lerp(1.0, 0.58, wetCubemapDesatT);
 			}
 			color.xyz += wetnessReflectance * wetCubemapIrradiance;
 		}
@@ -3440,8 +3446,11 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 			float3 wetCubemapIrradiance = SanitizeFloat3(DynamicCubemaps::GetDynamicCubemapSpecularIrradiance(screenUV, wetnessNormal, vertexNormal, viewDirection, waterRoughnessSpecular));
 			float wetCubemapDesatAmount = saturate(postRainBlend * postRainPuddleCubemapDesaturation);
 			if (wetCubemapDesatAmount > 1e-4) {
+				float wetCubemapDesatT = smoothstep(0.0, 1.0, wetCubemapDesatAmount);
 				float wetCubemapLuma = dot(wetCubemapIrradiance, float3(0.2126, 0.7152, 0.0722));
-				wetCubemapIrradiance = lerp(wetCubemapIrradiance, wetCubemapLuma.xxx, wetCubemapDesatAmount);
+				wetCubemapIrradiance = lerp(wetCubemapIrradiance, wetCubemapLuma.xxx, wetCubemapDesatT);
+				// Make the slider visibly useful under bright/overcast skies where desaturation alone is subtle.
+				wetCubemapIrradiance *= lerp(1.0, 0.58, wetCubemapDesatT);
 			}
 			color.xyz += wetnessReflectance * wetCubemapIrradiance;
 		}

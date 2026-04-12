@@ -37,9 +37,15 @@ public:
 	struct alignas(16) UpdateCubemapCB
 	{
 		float3 CameraPreviousPosAdjust;
-		uint pad0;
+		uint CaptureFlags;
 	};
 	STATIC_ASSERT_ALIGNAS_16(UpdateCubemapCB);
+
+	enum CaptureFlagsBits : uint
+	{
+		kCaptureFlagDisableForwardGate = 1u << 0,
+		kCaptureFlagSuppressSkyAndFrameEdge = 1u << 1
+	};
 
 	ID3D11ComputeShader* updateCubemapCS = nullptr;
 	ID3D11ComputeShader* updateCubemapReflectionsCS = nullptr;
@@ -88,7 +94,8 @@ public:
 	{
 		uint EnabledCreator = false;
 		uint EnabledSSR = true;
-		uint pad0[2];
+		uint InactivateVRForwardCaptureGate = true;
+		uint SuppressSkyAndFrameEdgeCapture = true;
 		float4 CubemapColor{ 1.0f, 1.0f, 1.0f, 0.0f };
 	};
 
