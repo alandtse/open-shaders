@@ -192,6 +192,10 @@ public:
 	float puddleLayout = 3.0f;
 	float modernWetIndirectSpecularScale = 0.80f;
 	float legacyWetIndirectSpecularScale = 0.40f;
+	float postRainPuddleCubemapDesaturation = 0.0f;
+	float postRainPuddleSpecularBoost = 0.0f;
+	float inRainPuddleCubemapSuppression = 0.0f;
+	float inRainPuddleSpecularBoost = 0.0f;
 	float shorePersistentDarkeningStrength = 1.5f;
 	// Climate preset system
 	enum class ClimatePreset : uint32_t

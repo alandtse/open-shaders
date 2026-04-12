@@ -2377,6 +2377,12 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 		float wetDirectSpecularScale = 1.0;
 		const bool wetnessEnabled = (SharedData::wetnessEffectsSettings.EnableWetnessEffects != 0);
 		float postRainPuddleWaterStrength = max(0.0, SharedData::wetnessEffectsSettings.PostRainPuddleWaterStrength);
+		float wetnessPackedPadding0 = SharedData::wetnessEffectsSettings.WetnessEffectsPadding0;
+		float postRainPuddleSpecularBoost = saturate(frac(wetnessPackedPadding0) / 0.999);
+		uint wetnessPackedPadding1 = asuint(SharedData::wetnessEffectsSettings.WetnessEffectsPadding1);
+		float postRainPuddleCubemapDesaturation = saturate((float)(wetnessPackedPadding1 & 0x3FFu) * (1.0 / 1023.0));
+		float inRainPuddleCubemapSuppression = saturate((float)((wetnessPackedPadding1 >> 10) & 0x3FFu) * (1.0 / 1023.0));
+		float inRainPuddleSpecularBoost = saturate((float)((wetnessPackedPadding1 >> 20) & 0x3FFu) * (1.0 / 1023.0));
 	float wetnessDistToWater = abs(input.WorldPosition.z - waterHeight);
 	float shoreRangeSafe = max(1.0, (float)SharedData::wetnessEffectsSettings.ShoreRange);
 	float shoreFactor = saturate(1.0 - (wetnessDistToWater / shoreRangeSafe));
@@ -2396,8 +2402,10 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 #		endif
 	const float rainingAmount = saturate(SharedData::wetnessEffectsSettings.Raining);
 	const float inRainBlend = smoothstep(0.05, 0.35, rainingAmount);
-	// CPU sets this flag only while rain-time puddle auto-expansion is actively forcing max radius.
-	const bool rainAutoExpansionPhaseActive = SharedData::wetnessEffectsSettings.WetnessEffectsPadding0 > 0.5;
+	// Wetness padding0 packs:
+	// - integer part: rain auto-expansion phase flag (>= 1.0 means active)
+	// - fractional part: post-rain puddle specular boost slider packed in [0..0.999]
+	const bool rainAutoExpansionPhaseActive = wetnessPackedPadding0 >= 1.0;
 
 	// Surface classification used for both in-rain response and post-rain drying.
 	float vegetationFactor = 0.0;
@@ -2694,9 +2702,17 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	// Rain phase: keep puddles wet-looking but reduce bright/milky white shine.
 	wetDirectSpecularScale *= lerp(1.0, 0.42, rainPuddlePhase);
 	wetnessGlossinessSpecular *= lerp(1.0, 0.88, rainPuddlePhase);
+	// Optional rain-time compensation when cubemap suppression is used:
+	// boost direct/gloss specular so wetness still reads clearly without sky cubemap.
+	float inRainDirectSpecBoostScale = lerp(1.0, 1.25, inRainPuddleSpecularBoost);
+	float inRainGlossSpecBoostScale = lerp(1.0, 1.55, inRainPuddleSpecularBoost);
+	wetDirectSpecularScale *= lerp(1.0, inRainDirectSpecBoostScale, rainPuddlePhase);
+	wetnessGlossinessSpecular *= lerp(1.0, inRainGlossSpecBoostScale, rainPuddlePhase);
 	// Post-rain phase: constrain direct white highlight while preserving cubemap clarity.
 	wetDirectSpecularScale *= lerp(1.0, postRainDirectScale, postRainPuddlePhase);
 	wetnessGlossinessSpecular *= lerp(1.0, postRainGlossScale, postRainPuddlePhase);
+	float postRainSpecBoostScale = lerp(1.0, 1.42, postRainPuddleSpecularBoost);
+	wetnessGlossinessSpecular *= lerp(1.0, postRainSpecBoostScale, postRainPuddlePhase);
 	wetnessGlossinessSpecular = saturate(wetnessGlossinessSpecular * lerp(1.0, 1.65, deepPuddleMask));
 
 	// Update flatness and normal calculations
@@ -2734,9 +2750,11 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	wetDirectSpecularScale *= lerp(1.0, 0.18, farWhiteSuppression);
 	wetHighlightReflectanceScale *= lerp(1.0, 0.65, farWhiteSuppression);
 	// Reflection phase shaping:
-	// - During rain: suppress cubemap glare to avoid milky puddle look.
+	// - During rain: smoothly suppress wet cubemap reflections to zero so
+	//   rain look is driven by direct/specular + raindrops, not sky cubemap.
 	// - After rain: Post-Rain Puddle Shine scales puddle cubemap response.
-	wetHighlightReflectanceScale *= lerp(1.0, 0.46, rainPuddlePhase);
+	float rainCubemapSuppression = saturate(inRainBlend * inRainPuddleCubemapSuppression);
+	wetHighlightReflectanceScale *= (1.0 - rainCubemapSuppression);
 	wetHighlightReflectanceScale *= lerp(1.0, postRainCubemapScale, postRainPuddlePhase);
 
 	waterRoughnessSpecular = 1.0 - wetnessGlossinessSpecular * 0.97;
@@ -3404,13 +3422,29 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 		color.xyz += indirectLobeWeights.specular * SanitizeFloat3(DynamicCubemaps::GetDynamicCubemapSpecularIrradiance(screenUV, worldNormal, vertexNormal, viewDirection, material.Roughness, skylightingSH));
 #				if defined(WETNESS_EFFECTS)
 		if (waterRoughnessSpecular < 1 && any(wetnessReflectance > 0.0))
-			color.xyz += wetnessReflectance * SanitizeFloat3(DynamicCubemaps::GetDynamicCubemapSpecularIrradiance(screenUV, wetnessNormal, vertexNormal, viewDirection, waterRoughnessSpecular, skylightingSH));
+		{
+			float3 wetCubemapIrradiance = SanitizeFloat3(DynamicCubemaps::GetDynamicCubemapSpecularIrradiance(screenUV, wetnessNormal, vertexNormal, viewDirection, waterRoughnessSpecular, skylightingSH));
+			float wetCubemapDesatAmount = saturate(postRainBlend * postRainPuddleCubemapDesaturation);
+			if (wetCubemapDesatAmount > 1e-4) {
+				float wetCubemapLuma = dot(wetCubemapIrradiance, float3(0.2126, 0.7152, 0.0722));
+				wetCubemapIrradiance = lerp(wetCubemapIrradiance, wetCubemapLuma.xxx, wetCubemapDesatAmount);
+			}
+			color.xyz += wetnessReflectance * wetCubemapIrradiance;
+		}
 #				endif
 #			else
 		color.xyz += indirectLobeWeights.specular * SanitizeFloat3(DynamicCubemaps::GetDynamicCubemapSpecularIrradiance(screenUV, worldNormal, vertexNormal, viewDirection, material.Roughness));
 #				if defined(WETNESS_EFFECTS)
 		if (waterRoughnessSpecular < 1 && any(wetnessReflectance > 0.0))
-			color.xyz += wetnessReflectance * SanitizeFloat3(DynamicCubemaps::GetDynamicCubemapSpecularIrradiance(screenUV, wetnessNormal, vertexNormal, viewDirection, waterRoughnessSpecular));
+		{
+			float3 wetCubemapIrradiance = SanitizeFloat3(DynamicCubemaps::GetDynamicCubemapSpecularIrradiance(screenUV, wetnessNormal, vertexNormal, viewDirection, waterRoughnessSpecular));
+			float wetCubemapDesatAmount = saturate(postRainBlend * postRainPuddleCubemapDesaturation);
+			if (wetCubemapDesatAmount > 1e-4) {
+				float wetCubemapLuma = dot(wetCubemapIrradiance, float3(0.2126, 0.7152, 0.0722));
+				wetCubemapIrradiance = lerp(wetCubemapIrradiance, wetCubemapLuma.xxx, wetCubemapDesatAmount);
+			}
+			color.xyz += wetnessReflectance * wetCubemapIrradiance;
+		}
 #				endif
 #			endif
 #		else
