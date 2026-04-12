@@ -1192,8 +1192,8 @@ void WetnessEffects::DrawSettings()
 		if (auto _tt = Util::HoverTooltipWrapper()) {
 			const float rangeGameUnits = MetersToGameUnits(settings.RaindropFxRange);
 			std::vector<std::string> tooltipLines = {
-				"Higher = wetness FX coverage extends farther around you (surface wetness, puddles, and raindrops).",
-				"Lower = effects stay closer to you.",
+				"Higher = raindrop effects cover a larger area around you (terrain/objects and water).",
+				"Lower = raindrop effects stay closer to you.",
 				"Higher values increase performance cost.",
 				std::format("{:.2f} meters", settings.RaindropFxRange),
 				std::format("{:.1f} game units", rangeGameUnits)
