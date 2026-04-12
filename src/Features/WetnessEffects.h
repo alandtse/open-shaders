@@ -72,7 +72,7 @@ public:
 		float RippleLifetime = .35f;
 
 		// Wetness tuning controls.
-		float PostRainPuddleWaterStrength = 0.4f;
+		float PostRainPuddleWaterStrength = 2.5f;
 		float RaindropTransitionFalloff = 2.0f;
 		float WetDarkeningStrength = 0.85f;
 		float WetHighlightReduction = 0.25f;
@@ -132,7 +132,7 @@ public:
 		float RippleBreadth = .45f;
 		float RippleLifetime = .35f;
 
-		float PostRainPuddleWaterStrength = 0.4f;
+		float PostRainPuddleWaterStrength = 2.5f;
 		float RaindropTransitionFalloff = 2.0f;
 		float WetDarkeningStrength = 0.85f;
 		float WetHighlightReduction = 0.25f;
