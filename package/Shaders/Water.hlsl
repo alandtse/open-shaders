@@ -554,13 +554,6 @@ float GetFlowmapHeightBlended(PS_INPUT input, float2 normalMul, float2 uvShift, 
 	return blendedHeight;
 }
 
-// Keep this for compatibility - just forwards to the proper function
-float GetFlowmapHeightBarycentric(PS_INPUT input, float2 flowmapDimensions, float2 baseUV, float mipLevel)
-{
-	// This is now unused - we use GetFlowmapHeightBlended directly
-	return FlowMapNormalsTex.SampleLevel(FlowMapNormalsSampler, baseUV, mipLevel).w;
-}
-
 /**
  * Computes mip level for flowmap texture sampling
  */

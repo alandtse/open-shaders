@@ -13,7 +13,7 @@ namespace
 {
 	constexpr uint32_t kWetnessPsSrvPrecipOcclusionSlot = 70u;
 
-	// Legacy depth model constants (CS 0.8.x) used for persistence behavior.
+	// Reference depth-model constants used for wetness persistence behavior.
 	constexpr float RAIN_DELTA_PER_SECOND = 2.0f / 3600.0f;
 	constexpr float SNOWY_DAY_DELTA_PER_SECOND = -0.489f / 3600.0f;
 	constexpr float CLOUDY_DAY_DELTA_PER_SECOND = -0.735f / 3600.0f;
@@ -51,13 +51,12 @@ namespace
 	constexpr float PUDDLE_LAYOUT_MIN = 0.3f;
 	constexpr float PUDDLE_LAYOUT_MAX = 10.0f;
 	constexpr float LEGACY_WET_REFLECTION_UI_SCALE_MAX = 1.00f;
-	constexpr float MODERN_WET_REFLECTION_LEGACY_UI_MAX = 1.00f;
+	constexpr float MODERN_WET_REFLECTION_BASE_UI_MAX = 1.00f;
 	constexpr float MAX_MODERN_WET_REFLECTION_UI_SCALE = 2.00f;
 	constexpr float DEFAULT_WET_INDIRECT_SPECULAR_SCALE = 0.8f;
 	constexpr float DEFAULT_LEGACY_WET_REFLECTION_UI = 0.40f;
 	constexpr float DEFAULT_MODERN_WET_REFLECTION_UI = 0.80f;
-	constexpr float DEFAULT_POST_RAIN_PUDDLE_SHINE_MODERN = 2.5f;
-	constexpr float DEFAULT_POST_RAIN_PUDDLE_SHINE_LEGACY = 2.5f;
+	constexpr float DEFAULT_POST_RAIN_PUDDLE_SHINE = 2.5f;
 	constexpr float POST_RAIN_PUDDLE_SHINE_MIN = 0.0f;
 	constexpr float POST_RAIN_PUDDLE_SHINE_MAX = 5.0f;
 	constexpr float RAIN_REFLECTION_BALANCE_MIN = 0.0f;
@@ -487,27 +486,20 @@ namespace
 	float ModernWetReflectionScaleFromUi(float uiValue)
 	{
 		const float clampedUi = std::clamp(uiValue, 0.0f, MAX_MODERN_WET_REFLECTION_UI_SCALE);
-		if (clampedUi <= MODERN_WET_REFLECTION_LEGACY_UI_MAX) {
-			// Preserve the existing modern reflection response for the legacy [0..1] slider range.
-			return ReflectionScaleFromUi(clampedUi, MODERN_WET_REFLECTION_LEGACY_UI_MAX, MODERN_REFLECTION_SCALE_AT_ANCHOR, MODERN_REFLECTION_UI_ANCHOR_T);
+		if (clampedUi <= MODERN_WET_REFLECTION_BASE_UI_MAX) {
+			// Preserve the established response across the base [0..1] slider range.
+			return ReflectionScaleFromUi(clampedUi, MODERN_WET_REFLECTION_BASE_UI_MAX, MODERN_REFLECTION_SCALE_AT_ANCHOR, MODERN_REFLECTION_UI_ANCHOR_T);
 		}
 
-		// Extend only the upper range [1..2] linearly so prior values (e.g. 0.5) remain unchanged.
-		const float extendedT = (clampedUi - MODERN_WET_REFLECTION_LEGACY_UI_MAX) /
-			(MAX_MODERN_WET_REFLECTION_UI_SCALE - MODERN_WET_REFLECTION_LEGACY_UI_MAX);
-		return std::lerp(MODERN_WET_REFLECTION_LEGACY_UI_MAX, MAX_MODERN_WET_REFLECTION_UI_SCALE, extendedT);
+		// Extend only the upper range [1..2] linearly so the base response remains unchanged.
+		const float extendedT = (clampedUi - MODERN_WET_REFLECTION_BASE_UI_MAX) /
+			(MAX_MODERN_WET_REFLECTION_UI_SCALE - MODERN_WET_REFLECTION_BASE_UI_MAX);
+		return std::lerp(MODERN_WET_REFLECTION_BASE_UI_MAX, MAX_MODERN_WET_REFLECTION_UI_SCALE, extendedT);
 	}
 
 	float LegacyWetReflectionScaleFromUi(float uiValue, float legacyScaleMax)
 	{
 		return ReflectionScaleFromUi(uiValue, legacyScaleMax, LEGACY_REFLECTION_SCALE_AT_ANCHOR, LEGACY_REFLECTION_UI_ANCHOR_T);
-	}
-
-	template <class TSettings>
-	float GetDefaultPostRainPuddleShineForMode(const TSettings& settings)
-	{
-		const bool legacyOnlyMode = settings.EnableLegacyWetReflection != 0 && settings.EnableModernWetReflection == 0;
-		return legacyOnlyMode ? DEFAULT_POST_RAIN_PUDDLE_SHINE_LEGACY : DEFAULT_POST_RAIN_PUDDLE_SHINE_MODERN;
 	}
 
 	uint SanitizeToggle(uint value)
@@ -662,7 +654,7 @@ namespace
 
 		settings.EnableModernWetReflection = 1u;
 		settings.EnableLegacyWetReflection = 0u;
-		settings.PostRainPuddleWaterStrength = GetDefaultPostRainPuddleShineForMode(settings);
+		settings.PostRainPuddleWaterStrength = DEFAULT_POST_RAIN_PUDDLE_SHINE;
 		modernScale = preset.modernReflectionShine;
 		legacyScale = DEFAULT_LEGACY_WET_REFLECTION_UI;
 		SanitizePersistentReflectionSettings(settings, modernScale, legacyScale);
@@ -727,7 +719,7 @@ namespace
 			settings.PostRainPuddleWaterStrength,
 			POST_RAIN_PUDDLE_SHINE_MIN,
 			POST_RAIN_PUDDLE_SHINE_MAX,
-			GetDefaultPostRainPuddleShineForMode(settings));
+			DEFAULT_POST_RAIN_PUDDLE_SHINE);
 		settings.RaindropTransitionFalloff = ClampFiniteOrDefault(settings.RaindropTransitionFalloff, 0.5f, 6.0f, 2.0f);
 		settings.WetDarkeningStrength = ClampFiniteOrDefault(settings.WetDarkeningStrength, 0.0f, 2.0f, 0.85f);
 		settings.WetHighlightReduction = ClampFiniteOrDefault(settings.WetHighlightReduction, WET_HIGHLIGHT_REDUCTION_MIN, WET_HIGHLIGHT_REDUCTION_MAX, 0.25f);
@@ -820,7 +812,7 @@ struct ClimatePresetInfo
 
 // Climate preset detailed descriptions
 static constexpr const char* LEGACY_DETAILED[] = {
-	"Riverwood's original rain effect values for full backward compatibility.",
+	"Riverwood's original lighter rain profile.",
 	"Max precipitation: ~0.66 mm/hr (very light)",
 	"Multipliers: Wetness 1.0x, Puddle 1.0x, Transition 1.0x.",
 	"Raindrop: 30% chance, grid 4.0 units, interval 0.5s.",
@@ -1977,7 +1969,7 @@ WetnessEffects::PerFrame WetnessEffects::GetCommonBufferData() const
 		data.settings.PostRainPuddleWaterStrength,
 		POST_RAIN_PUDDLE_SHINE_MIN,
 		POST_RAIN_PUDDLE_SHINE_MAX,
-		GetDefaultPostRainPuddleShineForMode(data.settings));
+		DEFAULT_POST_RAIN_PUDDLE_SHINE);
 	data.settings.RaindropFxRange = std::clamp(
 		ClampFiniteOrDefault(
 			data.settings.RaindropFxRange,
@@ -2080,14 +2072,8 @@ void WetnessEffects::LoadSettings(json& o_json)
 	modernWetIndirectSpecularScale = DEFAULT_MODERN_WET_REFLECTION_UI;
 	legacyWetIndirectSpecularScale = DEFAULT_LEGACY_WET_REFLECTION_UI;
 
-	if (isObject && !o_json.contains("EnableModernWetReflection")) {
-		settings.EnableModernWetReflection = 1u;
-	}
-	if (isObject && !o_json.contains("EnableLegacyWetReflection")) {
-		settings.EnableLegacyWetReflection = 0u;
-	}
 	if (!isObject || !o_json.contains("PostRainPuddleWaterStrength")) {
-		settings.PostRainPuddleWaterStrength = GetDefaultPostRainPuddleShineForMode(settings);
+		settings.PostRainPuddleWaterStrength = DEFAULT_POST_RAIN_PUDDLE_SHINE;
 	}
 
 	const bool hasModernWetReflectionScale = isObject && o_json.contains("ModernWetIndirectSpecularScale");
@@ -2214,7 +2200,6 @@ void WetnessEffects::DrawWeatherAnalysis() const
 		// Climate Preset Information Section
 		auto climateSection = Util::SectionWrapper("Current Climate Preset");
 		if (climateSection) {
-			// const auto& climate = GetClimateSettings(climatePreset); // Unused, remove to fix warning treated as error
 			const auto& presetInfo = CLIMATE_PRESET_INFO[static_cast<size_t>(climatePreset)];
 
 			ImGui::Text("Active Preset: %s", presetInfo.name);
