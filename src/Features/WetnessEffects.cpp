@@ -36,8 +36,8 @@ namespace
 	constexpr float MIN_SPLASH_LIFETIME = 1e-3f;
 	constexpr float MIN_PUDDLE_RADIUS = 1e-3f;
 	constexpr float PUDDLE_RADIUS_UI_MIN = 0.15f;
-	constexpr float PUDDLE_RADIUS_UI_MAX = 20.0f;
-	constexpr float PUDDLE_RADIUS_CLAMP_MAX = 20.0f;
+	constexpr float PUDDLE_RADIUS_UI_MAX = 50.0f;
+	constexpr float PUDDLE_RADIUS_CLAMP_MAX = 50.0f;
 	constexpr float PUDDLE_LAYOUT_MIN = 0.3f;
 	constexpr float PUDDLE_LAYOUT_MAX = 10.0f;
 	constexpr float LEGACY_WET_REFLECTION_UI_SCALE_MAX = 1.00f;
@@ -57,9 +57,6 @@ namespace
 	constexpr float SHORE_PERSISTENT_DARKENING_MIN = 0.0f;
 	constexpr float SHORE_PERSISTENT_DARKENING_MAX = 2.0f;
 	constexpr float SHORE_PERSISTENT_DARKENING_DEFAULT = 1.0f;
-	constexpr float SHORE_PERSISTENT_WET_FILM_MIN = 0.0f;
-	constexpr float SHORE_PERSISTENT_WET_FILM_MAX = 3.0f;
-	constexpr float SHORE_PERSISTENT_WET_FILM_DEFAULT = 1.0f;
 	constexpr float DRYING_HOURS_MIN = 1.0f;
 	constexpr float DRYING_HOURS_MAX = 24.0f;
 	constexpr float DRYING_SECONDS_PER_HOUR = 3600.0f;
@@ -574,8 +571,7 @@ namespace
 		float& legacyScale,
 		float& puddleHours,
 		float& layout,
-		float& shoreDarkeningStrength,
-		float& shoreWetFilmScale)
+		float& shoreDarkeningStrength)
 	{
 		SanitizePersistentReflectionSettings(settings, modernScale, legacyScale);
 		puddleHours = ClampDryingHours(puddleHours, DEFAULT_PUDDLE_DRYING_HOURS);
@@ -588,11 +584,6 @@ namespace
 			SHORE_PERSISTENT_DARKENING_MIN,
 			SHORE_PERSISTENT_DARKENING_MAX,
 			SHORE_PERSISTENT_DARKENING_DEFAULT);
-		shoreWetFilmScale = ClampFiniteOrDefault(
-			shoreWetFilmScale,
-			SHORE_PERSISTENT_WET_FILM_MIN,
-			SHORE_PERSISTENT_WET_FILM_MAX,
-			SHORE_PERSISTENT_WET_FILM_DEFAULT);
 	}
 
 	void ApplyWetnessUiPreset(
@@ -1435,10 +1426,6 @@ void WetnessEffects::DrawSettings()
 		if (auto _tt = Util::HoverTooltipWrapper()) {
 			ImGui::TextUnformatted("Persistent shoreline darkening independent of rain runtime. Higher = darker shore band, lower = subtler darkening.");
 		}
-		ImGui::SliderFloat("Shore Wet Film Shine", &shorePersistentWetFilmScale, SHORE_PERSISTENT_WET_FILM_MIN, SHORE_PERSISTENT_WET_FILM_MAX, "%.2f");
-		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::TextUnformatted("Persistent near-water wet-film reflections. Higher = stronger shoreline shine, lower = subtler shoreline shine.");
-		}
 
 		ImGui::TreePop();
 	}
@@ -1952,16 +1939,10 @@ WetnessEffects::PerFrame WetnessEffects::GetCommonBufferData() const
 		SHORE_PERSISTENT_DARKENING_MIN,
 		SHORE_PERSISTENT_DARKENING_MAX,
 		SHORE_PERSISTENT_DARKENING_DEFAULT);
-	const float clampedShorePersistentWetFilmScale = ClampFiniteOrDefault(
-		shorePersistentWetFilmScale,
-		SHORE_PERSISTENT_WET_FILM_MIN,
-		SHORE_PERSISTENT_WET_FILM_MAX,
-		SHORE_PERSISTENT_WET_FILM_DEFAULT);
 	const bool masterWetnessEnabled = settings.EnableWetnessEffects != 0;
 	const float activeShorePersistentDarkeningStrength = masterWetnessEnabled ? clampedShorePersistentDarkeningStrength : 0.0f;
-	const float activeShorePersistentWetFilmScale = masterWetnessEnabled ? clampedShorePersistentWetFilmScale : 0.0f;
 	data.ReservedPerFramePadding0 = EncodeFloatToUint(activeShorePersistentDarkeningStrength);
-	data.ReservedPerFramePadding1 = EncodeFloatToUint(activeShorePersistentWetFilmScale);
+	data.ReservedPerFramePadding1 = 0u;
 	data.ReservedPerFramePadding2 = 0u;
 	data.settings.PostRainPuddleWaterStrength = ClampFiniteOrDefault(data.settings.PostRainPuddleWaterStrength, 0.0f, 2.0f, 0.8f);
 	data.settings.RaindropChance *= data.Raining * data.Raining;
@@ -2023,7 +2004,6 @@ void WetnessEffects::LoadSettings(json& o_json)
 			"WetHighlightReduction",
 			"WetFilmSpecularFloorScale",
 			"ShorePersistentDarkeningStrength",
-			"ShorePersistentWetFilmScale",
 			"PuddleDryingHours",
 			"EnableWeatherDrivenDryingModel",
 			"PuddleLayout",
@@ -2047,7 +2027,6 @@ void WetnessEffects::LoadSettings(json& o_json)
 	puddleLayout = JsonValueOr<float>(o_json, "PuddleLayout", DEFAULT_PUDDLE_LAYOUT);
 	puddleLayout = std::clamp(puddleLayout, PUDDLE_LAYOUT_MIN, PUDDLE_LAYOUT_MAX);
 	shorePersistentDarkeningStrength = JsonValueOr<float>(o_json, "ShorePersistentDarkeningStrength", SHORE_PERSISTENT_DARKENING_DEFAULT);
-	shorePersistentWetFilmScale = JsonValueOr<float>(o_json, "ShorePersistentWetFilmScale", SHORE_PERSISTENT_WET_FILM_DEFAULT);
 	modernWetIndirectSpecularScale = DEFAULT_MODERN_WET_REFLECTION_UI;
 	legacyWetIndirectSpecularScale = DEFAULT_LEGACY_WET_REFLECTION_UI;
 
@@ -2082,7 +2061,7 @@ void WetnessEffects::LoadSettings(json& o_json)
 	}
 
 	SanitizeToggleSettings(settings);
-	SanitizePersistentUiState(settings, modernWetIndirectSpecularScale, legacyWetIndirectSpecularScale, puddleDryingHours, puddleLayout, shorePersistentDarkeningStrength, shorePersistentWetFilmScale);
+	SanitizePersistentUiState(settings, modernWetIndirectSpecularScale, legacyWetIndirectSpecularScale, puddleDryingHours, puddleLayout, shorePersistentDarkeningStrength);
 	SanitizeShaderFacingSettings(settings);
 	InvalidateSanitizedSettingsCache();
 	ResetRuntimeState();
@@ -2105,7 +2084,7 @@ void WetnessEffects::LoadSettings(json& o_json)
 
 void WetnessEffects::SaveSettings(json& o_json)
 {
-	SanitizePersistentUiState(settings, modernWetIndirectSpecularScale, legacyWetIndirectSpecularScale, puddleDryingHours, puddleLayout, shorePersistentDarkeningStrength, shorePersistentWetFilmScale);
+	SanitizePersistentUiState(settings, modernWetIndirectSpecularScale, legacyWetIndirectSpecularScale, puddleDryingHours, puddleLayout, shorePersistentDarkeningStrength);
 	InvalidateSanitizedSettingsCache();
 	o_json = settings;
 	o_json["ModernWetIndirectSpecularScale"] = modernWetIndirectSpecularScale;
@@ -2113,7 +2092,6 @@ void WetnessEffects::SaveSettings(json& o_json)
 	o_json["PuddleDryingHours"] = puddleDryingHours;
 	o_json["PuddleLayout"] = puddleLayout;
 	o_json["ShorePersistentDarkeningStrength"] = shorePersistentDarkeningStrength;
-	o_json["ShorePersistentWetFilmScale"] = shorePersistentWetFilmScale;
 	o_json["EnableWeatherDrivenDryingModel"] = enableWeatherDrivenDryingModel;
 
 	o_json["DebugSettings"] = debugSettings;
@@ -2126,14 +2104,13 @@ void WetnessEffects::RestoreDefaultSettings()
 	puddleDryingHours = DEFAULT_PUDDLE_DRYING_HOURS;
 	puddleLayout = DEFAULT_PUDDLE_LAYOUT;
 	shorePersistentDarkeningStrength = SHORE_PERSISTENT_DARKENING_DEFAULT;
-	shorePersistentWetFilmScale = SHORE_PERSISTENT_WET_FILM_DEFAULT;
 	modernWetIndirectSpecularScale = DEFAULT_MODERN_WET_REFLECTION_UI;
 	legacyWetIndirectSpecularScale = DEFAULT_LEGACY_WET_REFLECTION_UI;
 	climatePreset = defaultPreset;
 	ApplyDefaultWetnessUiPreset(settings, modernWetIndirectSpecularScale, legacyWetIndirectSpecularScale);
 	ApplyClimatePreset(climatePreset);
 	ResetRuntimeState();
-	SanitizePersistentUiState(settings, modernWetIndirectSpecularScale, legacyWetIndirectSpecularScale, puddleDryingHours, puddleLayout, shorePersistentDarkeningStrength, shorePersistentWetFilmScale);
+	SanitizePersistentUiState(settings, modernWetIndirectSpecularScale, legacyWetIndirectSpecularScale, puddleDryingHours, puddleLayout, shorePersistentDarkeningStrength);
 	SanitizeShaderFacingSettings(settings);
 	InvalidateSanitizedSettingsCache();
 	DetectCurrentPreset();

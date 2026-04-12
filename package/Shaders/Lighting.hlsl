@@ -2384,7 +2384,6 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 
 	[flatten] if (input.WorldPosition.z < waterHeight)
 		shoreFactorAlbedo = 1.0;
-	float shorePersistentShine = 0.0;
 
 	[branch] if (wetnessEnabled) {
 	// Calculate wetness angle and occlusion
@@ -2566,7 +2565,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 			float basePuddleBlend = lerp(wetness, puddleWetness, saturate(puddleSignal - 0.25));
 			float maxPuddleStrength = saturate(SharedData::wetnessEffectsSettings.MaxPuddleWetness * (1.0 / 3.5));
 			const float puddleRadiusMin = 0.15;
-			const float puddleRadiusMax = 20.0;
+			const float puddleRadiusMax = 50.0;
 			float radiusSizeT = saturate((puddleRadiusSafe - puddleRadiusMin) / max(1e-3, puddleRadiusMax - puddleRadiusMin));
 			float radiusThresholdBias = lerp(0.20, -0.55, radiusSizeT);
 			float baseThreshold = saturate(lerp(0.93, 0.72, maxPuddleStrength) + radiusThresholdBias);
@@ -2596,7 +2595,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	// Keep cubemap reflections stronger than direct white highlights so puddles
 	// read as reflected sky/light, not milky glare.
 	float postRainShineControl = clamp(postRainPuddleWaterStrength, 0.0, 2.0);
-	float postRainShineScale = (postRainShineControl <= 1.0) ?
+	float postRainCubemapScale = (postRainShineControl <= 1.0) ?
 		lerp(0.12, 1.0, postRainShineControl) :
 		lerp(1.0, 1.38, postRainShineControl - 1.0);
 	float postRainDirectScale = (postRainShineControl <= 1.0) ?
@@ -2650,8 +2649,8 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 		float3 rippleNormal = normalize(lerp(float3(0, 0, 1), raindropInfo.xyz, lerp(1.0, flatnessAmount, 0.8)));
 		wetnessNormal = WetnessEffects::ReorientNormal(rippleNormal, wetnessNormal);
 
-		// Suppress grazing-angle over-brightening: keep wet gloss from top-down views,
-		// but reduce "milky white" highlights when viewed close to horizontal.
+	// Suppress grazing-angle over-brightening: keep wet gloss from top-down views,
+	// but reduce "milky white" highlights when viewed close to horizontal.
 	float wetnessViewNdotV = saturate(abs(dot(wetnessNormal, viewDirection)));
 	float wetHighlightMask = smoothstep(0.01, 0.05, wetnessGlossinessAlbedo);
 	float wetHighlightReduction = max(0.25, SharedData::wetnessEffectsSettings.WetHighlightReduction);
@@ -2670,31 +2669,17 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	float farWhiteDistanceMask = smoothstep(2048.0, 8192.0, wetHighlightViewDistance);
 	float farGrazingWhiteMask = saturate(grazingMask * farWhiteDistanceMask);
 	float farWhiteSuppression = farGrazingWhiteMask * highlightReductionCurve;
-	// Reflection phase shaping:
-	// - During rain: suppress cubemap glare to avoid milky puddle look.
-	// - After rain: Post-Rain Puddle Shine scales puddle cubemap response (can suppress strongly at low values).
-	wetHighlightReflectanceScale *= lerp(1.0, 0.46, rainPuddlePhase);
-	wetHighlightReflectanceScale *= lerp(1.0, postRainShineScale, postRainPuddlePhase);
 	wetDirectSpecularScale *= lerp(1.0, 0.18, farWhiteSuppression);
 	wetHighlightReflectanceScale *= lerp(1.0, 0.65, farWhiteSuppression);
+	// Reflection phase shaping:
+	// - During rain: suppress cubemap glare to avoid milky puddle look.
+	// - After rain: Post-Rain Puddle Shine scales puddle cubemap response.
+	wetHighlightReflectanceScale *= lerp(1.0, 0.46, rainPuddlePhase);
+	wetHighlightReflectanceScale *= lerp(1.0, postRainCubemapScale, postRainPuddlePhase);
 
 	waterRoughnessSpecular = 1.0 - wetnessGlossinessSpecular * 0.97;
 	}
-	// Persistent near-shore wet-film sheen: independent of rain timelines.
-#		if !defined(SKIN) && !defined(HAIR)
-	float shorePersistentShineMask = saturate(shoreFactor);
-	shorePersistentShineMask *= shorePersistentShineMask;
-	float shorePersistentSlopeMask = smoothstep(0.45, 0.92, saturate(worldNormal.z));
-	shorePersistentShineMask *= shorePersistentSlopeMask;
-	float shorePersistentShineScale = max(0.0, abs(SharedData::wetnessEffectsSettings.ShorePersistentWetFilmScale));
-	shorePersistentShineScale = (shorePersistentShineScale < 1e-5) ? 0.0 : shorePersistentShineScale;
-	if (shorePersistentShineScale > 1e-4 && shorePersistentShineMask > 1e-4) {
-		float shoreShineBase = lerp(0.10, 0.34, shorePersistentShineMask);
-		shorePersistentShine = saturate(shoreShineBase * shorePersistentShineScale);
-		waterRoughnessSpecular = min(waterRoughnessSpecular, 1.0 - shorePersistentShine * 0.94);
-	}
-#		endif
-	const bool wetSpecularEnabled = wetnessEnabled || (shorePersistentShine > 1e-4);
+	const bool wetSpecularEnabled = wetnessEnabled;
 #	endif
 
 	float llDirLightMult = SharedData::linearLightingSettings.enableLinearLighting && !SharedData::linearLightingSettings.isDirLightLinear && (inWorld || inReflection) && !SharedData::InInterior ? SharedData::linearLightingSettings.dirLightMult : 1.0f;
