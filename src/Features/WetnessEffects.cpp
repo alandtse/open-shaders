@@ -36,8 +36,8 @@ namespace
 	constexpr float MIN_SPLASH_LIFETIME = 1e-3f;
 	constexpr float MIN_PUDDLE_RADIUS = 1e-3f;
 	constexpr float PUDDLE_RADIUS_UI_MIN = 0.15f;
-	constexpr float PUDDLE_RADIUS_UI_MAX = 50.0f;
-	constexpr float PUDDLE_RADIUS_CLAMP_MAX = 50.0f;
+	constexpr float PUDDLE_RADIUS_UI_MAX = 20.0f;
+	constexpr float PUDDLE_RADIUS_CLAMP_MAX = 20.0f;
 	constexpr float PUDDLE_LAYOUT_MIN = 0.3f;
 	constexpr float PUDDLE_LAYOUT_MAX = 10.0f;
 	constexpr float LEGACY_WET_REFLECTION_UI_SCALE_MAX = 1.00f;
@@ -63,6 +63,8 @@ namespace
 	constexpr float DRYING_HOURS_MIN = 1.0f;
 	constexpr float DRYING_HOURS_MAX = 24.0f;
 	constexpr float DRYING_SECONDS_PER_HOUR = 3600.0f;
+	constexpr float POST_RAIN_RADIUS_SETTLE_HOURS = 3.0f;
+	constexpr float POST_RAIN_RADIUS_SETTLE_SECONDS = POST_RAIN_RADIUS_SETTLE_HOURS * DRYING_SECONDS_PER_HOUR;
 	constexpr float DEFAULT_STONE_DRYING_HOURS = 6.0f;
 	constexpr float DEFAULT_GRASS_DRYING_HOURS = 3.0f;
 	constexpr float DEFAULT_DIRT_DRYING_HOURS = 12.0f;
@@ -1162,10 +1164,10 @@ void WetnessEffects::DrawSettings()
 		if (auto _tt = Util::HoverTooltipWrapper()) {
 			ImGui::TextUnformatted("How quickly raindrop effects fade when rain ends. Higher = faster fade, lower = slower fade.");
 		}
-		ImGui::SliderFloat("Effect Range", &settings.RaindropFxRange, 1e2f, 2e3f, "%.0f units");
+		ImGui::SliderFloat("Effect Range", &settings.RaindropFxRange, 1e2f, 5e3f, "%.0f units");
 		if (auto _tt = Util::HoverTooltipWrapper()) {
 			std::vector<std::string> tooltipLines = {
-				"Higher = raindrop effects cover a larger area around you.",
+				"Higher = raindrop effects cover a larger area around you (terrain/objects and water).",
 				"Lower = effects stay closer to you.",
 				"Higher values increase performance cost.",
 				Util::Units::FormatDistance(settings.RaindropFxRange),
@@ -1276,7 +1278,7 @@ void WetnessEffects::DrawSettings()
 		ImGui::EndDisabled();
 		SanitizePersistentReflectionSettings(settings, modernWetIndirectSpecularScale, legacyWetIndirectSpecularScale);
 		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::TextUnformatted("Overall wet reflection brightness. Higher = brighter/stronger reflections, lower = subtler reflections.");
+			ImGui::TextUnformatted("Base wet reflection intensity. During rain this is the main reflection control. After rain, Post-Rain Puddle Shine scales puddle shine while puddles persist.");
 		}
 
 		drawUintCheckboxWithTooltip(
@@ -1387,6 +1389,8 @@ void WetnessEffects::DrawSettings()
 		if (auto _tt = Util::HoverTooltipWrapper()) {
 			std::vector<std::string> tooltipLines = {
 				"Higher = larger individual puddles, lower = smaller individual puddles.",
+				"During rain puddle radius expands to maximum automatically.",
+				"After rain stops, radius settles toward this value over about 3 in-game hours.",
 				"Does not control puddle layout/placement.",
 				Util::Units::FormatDistance(settings.PuddleRadius),
 				std::format("{:.2f} meters", Util::Units::GameUnitsToMeters(settings.PuddleRadius))
@@ -1400,7 +1404,7 @@ void WetnessEffects::DrawSettings()
 
 		ImGui::SliderFloat("Post-Rain Puddle Shine", &settings.PostRainPuddleWaterStrength, 0.0f, 2.0f, "%.2f");
 		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::TextUnformatted("Appearance only: controls how shiny/reflective puddles look after rain while they still exist. Does not change puddle lifetime.");
+			ImGui::TextUnformatted("Post-rain puddle shine scale. 0 = strong post-rain shine suppression, 1 = neutral, >1 = stronger post-rain shine/reflections. During rain, Wet Reflection Shine is the primary control.");
 		}
 
 		ImGui::Separator();
@@ -1926,6 +1930,19 @@ WetnessEffects::PerFrame WetnessEffects::GetCommonBufferData() const
 	// Shader CB carries puddle layout in its dedicated shader-facing field.
 	// CPU simulation above still uses settings.WeatherTransitionSpeed.
 	data.settings.PuddleLayout = clampedPuddleLayout;
+	const float basePuddleRadius = ClampFiniteOrDefault(data.settings.PuddleRadius, MIN_PUDDLE_RADIUS, PUDDLE_RADIUS_CLAMP_MAX, 1.0f);
+	const float rainExpandedPuddleRadius = std::max(basePuddleRadius, PUDDLE_RADIUS_UI_MAX);
+	float effectivePuddleRadius = basePuddleRadius;
+	const bool rainRadiusPhaseActive = (data.Raining > 0.005f) || (weatherRainTransitionWeight > 0.005f);
+	const bool hasPostRainPuddleSignal = (!rainRadiusPhaseActive) &&
+		((data.PuddleWetness > RUNTIME_DRY_EPSILON) || (runtimeState.puddleDepth > RUNTIME_DRY_EPSILON));
+	if (rainRadiusPhaseActive) {
+		effectivePuddleRadius = rainExpandedPuddleRadius;
+	} else if (hasPostRainPuddleSignal) {
+		const float settleT = std::clamp(runtimeState.postRainElapsedSeconds / POST_RAIN_RADIUS_SETTLE_SECONDS, 0.0f, 1.0f);
+		effectivePuddleRadius = std::lerp(rainExpandedPuddleRadius, basePuddleRadius, settleT);
+	}
+	data.settings.PuddleRadius = std::clamp(effectivePuddleRadius, MIN_PUDDLE_RADIUS, PUDDLE_RADIUS_CLAMP_MAX);
 	data.settings.StoneDryingMultiplier = effectiveDryingHours.stoneHours;
 	data.settings.GrassDryingMultiplier = effectiveDryingHours.grassHours;
 	data.settings.DirtDryingMultiplier = effectiveDryingHours.dirtHours;
