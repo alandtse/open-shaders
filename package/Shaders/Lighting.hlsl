@@ -2546,9 +2546,11 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 
 		// Calculate puddle effects
 		// Keep general wetness separate from standing-water puddle formation.
-		float puddle = wetness;
+		// Never form puddles on water surfaces.
+		const bool puddleAllowed = input.WorldPosition.z > (waterHeight + 0.5);
+		float puddle = puddleAllowed ? wetness : 0.0;
 	#		if !defined(SKINNED)
-		if (wetness > 0.0 || puddleWetness > 0.0) {
+		if (puddleAllowed && (wetness > 0.0 || puddleWetness > 0.0)) {
 			float puddleMaxAngleSafe = max(SharedData::wetnessEffectsSettings.PuddleMaxAngle, 1e-3);
 			float puddleRadiusSafe = max(SharedData::wetnessEffectsSettings.PuddleRadius, 1e-3);
 			float puddleLayoutSafe = clamp(SharedData::wetnessEffectsSettings.PuddleLayout, 0.3, 10.0);
