@@ -2483,7 +2483,13 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 		float occlusionPass = (precipOcclusionTexCoord.z < precipOcclusionZ + 0.05) ? 1.0 : 0.0;
 		localRainOcclusion = lerp(1.0, occlusionPass, occlusionValidity);
 	}
-	float puddleRainExposure = lerp(1.0, localRainOcclusion, inRainBlend);
+	// Keep strict occlusion for raindrop spawning, but stabilize puddle/wet-film response:
+	// - Open ground: soften occlusion contrast to avoid player-following bright/dark patches.
+	// - Roof-like low-sky areas: keep stricter occlusion so shelter behavior still works.
+	float puddleOcclusionSoft = lerp(0.72, 1.0, localRainOcclusion);
+	float roofLikeMask = smoothstep(0.55, 0.90, 1.0 - saturate(openSkyVisibility));
+	float puddleOcclusion = lerp(puddleOcclusionSoft, localRainOcclusion, roofLikeMask);
+	float puddleRainExposure = lerp(1.0, puddleOcclusion, inRainBlend);
 	[branch] if (rainFxDistanceMask > 1e-3 && inRainBlend > 0.0) {
 		// Open-sky bypass for puddles: use up-facing slope + ambient sky visibility,
 		// independent of direct sun intensity, so cloudy weather still qualifies.
@@ -2572,7 +2578,8 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 			float3 puddlePatternOffset = float3(31.0, 17.0, 43.0) * layoutT;
 			// Keep layout/placement independent from puddle radius:
 			// layout controls signal shape/placement, radius only dilates/erodes puddle footprint via threshold bias.
-			float puddleSignal = Random::perlinNoise(puddleCoordsWarped * layoutFrequency + puddlePatternOffset) * 0.5 + 0.5;
+			float puddleNoiseSignal = Random::perlinNoise(puddleCoordsWarped * layoutFrequency + puddlePatternOffset) * 0.5 + 0.5;
+			float puddleSignal = puddleNoiseSignal;
 			puddleSignal = puddleSignal * ((minWetnessAngle / puddleMaxAngleSafe) * SharedData::wetnessEffectsSettings.MaxPuddleWetness * 0.25) + 0.5;
 			float basePuddleBlend = lerp(wetness, puddleWetness, saturate(puddleSignal - 0.25));
 			float maxPuddleStrength = saturate(SharedData::wetnessEffectsSettings.MaxPuddleWetness * (1.0 / 3.5));
@@ -2595,7 +2602,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 			float rainMergeThreshold = lerp(0.78, 0.26, radiusSizeT);
 			rainMergeThreshold = lerp(rainMergeThreshold, 0.18, radiusOverflowT);
 			rainMergeThreshold = lerp(1.0, rainMergeThreshold, saturate(SharedData::wetnessEffectsSettings.MaxPuddleWetness * (1.0 / 2.5)));
-			float rainMergeGate = saturate((puddleSignal - rainMergeThreshold) / max(1e-3, 1.0 - rainMergeThreshold));
+			float rainMergeGate = saturate((puddleNoiseSignal - rainMergeThreshold) / max(1e-3, 1.0 - rainMergeThreshold));
 			rainMergeGate = smoothstep(0.05, 0.65, rainMergeGate);
 			baseGate = lerp(baseGate, max(baseGate, rainMergeGate), inRainBlend);
 			float puddleSlopeMask = smoothstep(puddleMaxAngleSafe, 1.0, saturate(worldNormal.z));
