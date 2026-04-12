@@ -56,12 +56,6 @@ cbuffer UpdateData : register(b0)
 	uint padb10;
 }
 
-float smoothbumpstep(float edge0, float edge1, float x)
-{
-	x = 1.0 - abs(saturate((x - edge0) / (edge1 - edge0)) - 0.5) * 2.0;
-	return x * x * (3.0 - x - x);
-}
-
 [numthreads(8, 8, 1)] void main(uint3 ThreadID
 								: SV_DispatchThreadID) {
 	float3 captureDirection = -GetSamplingVector(ThreadID, DynamicCubemap);
@@ -119,18 +113,13 @@ float smoothbumpstep(float edge0, float edge1, float x)
 	DynamicCubemapPosition[ThreadID] = position;
 
 	float4 color = DynamicCubemapRaw[ThreadID];
-
-	float distance = length(position.xyz);
-	float distanceFactor = smoothbumpstep(0.0, 2.0, distance);
-
-	if (distance < 1.0)
-		distanceFactor = sqrt(distanceFactor);
-
+	// Temporal history decay for texels not refreshed this frame.
+	// Avoid radial distance weighting here: it produces concentric player-centered rings in motion.
+	float historyFade = 0.94;
 #if defined(FAKEREFLECTIONS)
-	distanceFactor = max(distanceFactor, smoothstep(0.0, 2.0, distance));
+	historyFade = 0.97;
 #endif
-
-	color *= distanceFactor;
+	color *= historyFade;
 
 	DynamicCubemap[ThreadID] = max(0, color);
 }
