@@ -366,7 +366,7 @@ void DynamicCubemaps::UpdateCubemapCapture(bool a_reflections)
 	if (REL::Module::IsVR() && settings.InactivateVRForwardCaptureGate) {
 		updateData.CaptureFlags |= kCaptureFlagDisableForwardGate;
 	}
-	if (a_reflections && settings.SuppressSkyAndFrameEdgeCapture) {
+	if (settings.SuppressSkyAndFrameEdgeCapture) {
 		updateData.CaptureFlags |= kCaptureFlagSuppressSkyAndFrameEdge;
 	}
 

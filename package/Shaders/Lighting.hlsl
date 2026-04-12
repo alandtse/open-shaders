@@ -2495,13 +2495,14 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 		float occlusionPass = (precipOcclusionTexCoord.z < precipOcclusionZ + 0.05) ? 1.0 : 0.0;
 		localRainOcclusion = lerp(1.0, occlusionPass, occlusionValidity);
 	}
-	// Keep strict occlusion for raindrop spawning, but stabilize puddle/wet-film response:
-	// - Open ground: soften occlusion contrast to avoid player-following bright/dark patches.
-	// - Roof-like low-sky areas: keep stricter occlusion so shelter behavior still works.
+	// Keep strict occlusion for raindrop spawning, but make puddle/wet-film exposure
+	// much less sensitive on open ground so local precipitation-mask errors do not read
+	// as a player-centered dark ring. Roof-like low-sky areas still keep shelter behavior.
 	float puddleOcclusionSoft = lerp(0.72, 1.0, localRainOcclusion);
 	float roofLikeMask = smoothstep(0.55, 0.90, 1.0 - saturate(openSkyVisibility));
 	float puddleOcclusion = lerp(puddleOcclusionSoft, localRainOcclusion, roofLikeMask);
-	float puddleRainExposure = lerp(1.0, puddleOcclusion, inRainBlend);
+	float puddleOcclusionInfluence = lerp(0.08, 1.0, roofLikeMask);
+	float puddleRainExposure = lerp(1.0, puddleOcclusion, inRainBlend * puddleOcclusionInfluence);
 	[branch] if (inRainBlend > 0.0) {
 		// Open-sky bypass for puddles: use up-facing slope + ambient sky visibility,
 		// independent of direct sun intensity, so cloudy weather still qualifies.
