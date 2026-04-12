@@ -1133,11 +1133,13 @@ void WetnessEffects::DrawSettings()
 		}
 		ImGui::SliderFloat("Raindrop Effect Range", &settings.RaindropFxRangeWorldUnits, RAINDROP_FX_RANGE_UI_MIN_GAME_UNITS, RAINDROP_FX_RANGE_UI_MAX_GAME_UNITS, "%.0f units", ImGuiSliderFlags_AlwaysClamp);
 		if (auto _tt = Util::HoverTooltipWrapper()) {
+			const float rangeMeters = Util::Units::GameUnitsToMeters(settings.RaindropFxRangeWorldUnits);
 			std::vector<std::string> tooltipLines = {
 				"Higher = raindrop effects cover a larger area around you (terrain/objects and water).",
 				"Lower = raindrop effects stay closer to you.",
 				"Higher values increase performance cost.",
-				std::format("{:.1f} units", settings.RaindropFxRangeWorldUnits)
+				std::format("{:.1f} units", settings.RaindropFxRangeWorldUnits),
+				std::format("{:.2f} m", rangeMeters)
 			};
 			Util::DrawMultiLineTooltip(tooltipLines);
 		}
@@ -1325,12 +1327,14 @@ void WetnessEffects::DrawSettings()
 
 		ImGui::SliderFloat("Wetness Fade Range", &wetnessDistanceFadeRange, WETNESS_DISTANCE_FADE_RANGE_UI_MIN_GAME_UNITS, WETNESS_DISTANCE_FADE_RANGE_UI_MAX_GAME_UNITS, "%.0f units", ImGuiSliderFlags_AlwaysClamp);
 		if (auto _tt = Util::HoverTooltipWrapper()) {
+			const float fadeRangeMeters = Util::Units::GameUnitsToMeters(wetnessDistanceFadeRange);
 			std::vector<std::string> tooltipLines = {
 				"View-depth fade range for dev-style wetness culling.",
 				"Higher = puddles, wet sheen, wet darkening, and wet-normal flattening stay visible farther away.",
 				"Lower = those wetness effects fade sooner for performance.",
 				"Does not affect raindrop FX or water ripple range.",
-				std::format("{:.1f} units", wetnessDistanceFadeRange)
+				std::format("{:.1f} units", wetnessDistanceFadeRange),
+				std::format("{:.2f} m", fadeRangeMeters)
 			};
 			Util::DrawMultiLineTooltip(tooltipLines);
 		}
@@ -1356,13 +1360,15 @@ void WetnessEffects::DrawSettings()
 
 		ImGui::SliderFloat("Puddle Radius", &settings.PuddleRadiusWorldUnits, PUDDLE_RADIUS_UI_MIN_GAME_UNITS, PUDDLE_RADIUS_UI_MAX_GAME_UNITS, "%.0f units", ImGuiSliderFlags_AlwaysClamp);
 		if (auto _tt = Util::HoverTooltipWrapper()) {
+			const float puddleRadiusMeters = Util::Units::GameUnitsToMeters(settings.PuddleRadiusWorldUnits);
 			std::vector<std::string> tooltipLines = {
 				"Higher = larger individual puddles, lower = smaller individual puddles.",
 				"When Inactivate Rain Puddle Auto-Expansion is off, rain expands radius to maximum.",
 				"After rain stops, radius settles toward this value over about 1 in-game hour.",
 				"When Inactivate Rain Puddle Auto-Expansion is on, this slider is used directly during rain and after rain.",
 				"Does not control puddle layout/placement.",
-				std::format("{:.1f} units", settings.PuddleRadiusWorldUnits)
+				std::format("{:.1f} units", settings.PuddleRadiusWorldUnits),
+				std::format("{:.2f} m", puddleRadiusMeters)
 			};
 			Util::DrawMultiLineTooltip(tooltipLines);
 		}
@@ -1412,11 +1418,13 @@ void WetnessEffects::DrawSettings()
 			settings.ShoreRange = static_cast<uint>(shoreRange);
 		}
 		if (auto _tt = Util::HoverTooltipWrapper()) {
+			const float shoreRangeMeters = Util::Units::GameUnitsToMeters(static_cast<float>(settings.ShoreRange));
 			std::vector<std::string> tooltipLines = {
 				"How far shore wetness reaches from water.",
 				"Higher = wetness extends farther from the shoreline.",
 				"Lower = wetness stays close to the shoreline.",
-				std::format("{} units", settings.ShoreRange)
+				std::format("{} units", settings.ShoreRange),
+				std::format("{:.2f} m", shoreRangeMeters)
 			};
 			Util::DrawMultiLineTooltip(tooltipLines);
 		}

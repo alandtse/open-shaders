@@ -2393,13 +2393,11 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 		float inRainSpecularBoostFromBalance = saturate((float)((wetnessPackedPadding1 >> 20) & 0x3FFu) * (1.0 / 1023.0));
 		float wetnessDistanceFadeRange = max(1.0, SharedData::wetnessEffectsSettings.WetnessDistanceFadeRange);
 		float wetnessDistanceFade = lerp(1.0, 0.0, saturate(viewPosition.z / wetnessDistanceFadeRange));
+		const bool wetSurfaceAllowed = input.WorldPosition.z > (waterHeight + 0.5);
 		float wetnessDistToWater = abs(input.WorldPosition.z - waterHeight);
 		float shoreRangeSafe = max(1.0, (float)SharedData::wetnessEffectsSettings.ShoreRange);
-		float shoreFactor = saturate(1.0 - (wetnessDistToWater / shoreRangeSafe));
+		float shoreFactor = wetSurfaceAllowed ? saturate(1.0 - (wetnessDistToWater / shoreRangeSafe)) : 0.0;
 		float shoreFactorAlbedo = shoreFactor;
-
-		[flatten] if (input.WorldPosition.z < waterHeight)
-			shoreFactorAlbedo = 1.0;
 
 	[branch] if (wetnessEnabled) {
 	// Calculate wetness angle and occlusion
@@ -2484,7 +2482,8 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	float rainDropDistance = dot(viewPosition, viewPosition);
 	float distanceFadeout = saturate((1.0 - saturate(rainDropDistance / maxRainDropDistance)) * 3.0);
 	float localRainOcclusion = 1.0;
-	if (rainSurfaceUpness > 0.05 && SharedData::wetnessEffectsSettings.Raining > 0.0f) {
+	const float puddleOcclusionPhase = saturate(max(inRainBlend, postRainBlend));
+	if (rainSurfaceUpness > 0.05 && puddleOcclusionPhase > 0.0f) {
 		float4 precipOcclusionTexCoord = mul(SharedData::wetnessEffectsSettings.OcclusionViewProj, float4(input.WorldPosition.xyz, 1));
 		precipOcclusionTexCoord.y = -precipOcclusionTexCoord.y;
 		float2 precipOcclusionUV = precipOcclusionTexCoord.xy * 0.5 + 0.5;
@@ -2506,7 +2505,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	float roofLikeMask = smoothstep(0.35, 0.92, 1.0 - saturate(openSkyVisibility));
 	float puddleOcclusion = lerp(puddleOcclusionSoft, localRainOcclusion, roofLikeMask);
 	float puddleOcclusionInfluence = roofLikeMask * roofLikeMask;
-	float puddleRainExposure = lerp(1.0, puddleOcclusion, inRainBlend * puddleOcclusionInfluence);
+	float puddleRainExposure = lerp(1.0, puddleOcclusion, puddleOcclusionPhase * puddleOcclusionInfluence);
 	[branch] if (inRainBlend > 0.0) {
 		// Open-sky bypass for puddles: use up-facing slope + ambient sky visibility,
 		// independent of direct sun intensity, so cloudy weather still qualifies.
@@ -2568,6 +2567,10 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	// Trim residual low-end surface gloss after rain so ground does not look wet forever.
 	float postRainDryCut = lerp(0.0, 0.08, postRainBlend);
 	rainWetness = saturate((rainWetness - postRainDryCut) / max(1e-3, 1.0 - postRainDryCut));
+	if (!wetSurfaceAllowed) {
+		rainWetness = 0.0;
+		puddleWetness = 0.0;
+	}
 
 	float shoreWetness = shoreFactor * SharedData::wetnessEffectsSettings.MaxShoreWetness;
 	wetness = max(shoreWetness, rainWetness);
@@ -2575,7 +2578,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 		// Calculate puddle effects
 		// Keep general wetness separate from standing-water puddle formation.
 		// Never form puddles on water surfaces.
-		const bool puddleAllowed = input.WorldPosition.z > (waterHeight + 0.5);
+		const bool puddleAllowed = wetSurfaceAllowed;
 		float puddle = puddleAllowed ? wetness : 0.0;
 	#		if !defined(SKINNED)
 		if (puddleAllowed && (wetness > 0.0 || puddleWetness > 0.0)) {
