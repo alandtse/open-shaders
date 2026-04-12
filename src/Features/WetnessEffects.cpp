@@ -1243,7 +1243,7 @@ void WetnessEffects::DrawSettings()
 		ImGui::EndDisabled();
 		SanitizePersistentReflectionSettings(settings, modernWetIndirectSpecularScale, legacyWetIndirectSpecularScale);
 		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::TextUnformatted("Base wet reflection intensity. During rain this is the main reflection control. After rain, Post-Rain Puddle Shine scales puddle shine while puddles persist.");
+			ImGui::TextUnformatted("Base wet reflection intensity. During rain this is the main reflection control. After rain, this remains the baseline and the post-rain controls bias puddle reflections up or down while puddles persist.");
 		}
 
 		drawUintCheckboxWithTooltip(
@@ -1374,11 +1374,11 @@ void WetnessEffects::DrawSettings()
 		ImGui::Dummy(ImVec2(0.0f, 12.0f));
 		ImGui::SliderFloat("Post-Rain Puddle Shine", &settings.PostRainPuddleWaterStrength, POST_RAIN_PUDDLE_SHINE_MIN, POST_RAIN_PUDDLE_SHINE_MAX, "%.2f");
 		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::TextUnformatted("Controls post-rain puddle reflection intensity (independent of Wet Reflection). 2.5 = neutral/current intensity. Lower = dimmer/subtler, higher = stronger/brighter.");
+			ImGui::TextUnformatted("Controls post-rain puddle reflection intensity relative to Wet Reflection. 2.5 = neutral. Lower = dimmer/subtler, higher = stronger/brighter.");
 		}
 		ImGui::SliderFloat("Post-Rain Water Clarity", &postRainWaterClarity, POST_RAIN_WATER_CLARITY_MIN, POST_RAIN_WATER_CLARITY_MAX, "%.2f");
 		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::TextUnformatted("Controls post-rain puddle reflections independently of Wet Reflection. 0 = strongest cubemap mirror (sky reflected clearly). Higher = less sky glare, deeper puddle body, and clearer water-like puddles.");
+			ImGui::TextUnformatted("Shapes post-rain puddle reflections on top of Wet Reflection. 0 = more cubemap mirror. Higher = less sky glare, deeper puddle body, and clearer water-like puddles.");
 		}
 
 		ImGui::Dummy(ImVec2(0.0f, 8.0f));

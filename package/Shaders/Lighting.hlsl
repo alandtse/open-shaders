@@ -2698,7 +2698,9 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	wetnessGlossinessSpecular = max(wetnessGlossinessSpecular, wetFilmSpecular);
 	float deepPuddleMask = smoothstep(0.10, 0.80, puddleDepthSignal);
 	float rainPuddlePhase = saturate(inRainBlend * deepPuddleMask);
-	float postRainPuddlePhase = saturate(postRainBlend * deepPuddleMask);
+	// Keep the post-rain cubemap override focused on clearly puddled areas.
+	// Broad wet film should not jump to a near-mirror state the moment rain stops.
+	float postRainPuddlePhase = saturate(postRainBlend * smoothstep(0.30, 0.88, deepPuddleMask));
 	float wetFilmNonPuddleMask = wetFilmSpecular * (1.0 - deepPuddleMask);
 	float wetFilmDominance = saturate(wetFilmNonPuddleMask / max(wetnessGlossinessSpecular, 1e-3));
 	// Keep wet-film looking like clear wetness (env reflection / darker surface) rather
@@ -2721,9 +2723,11 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	// - 0.0 => cubemap-dominant mirror puddles (strong sky reflection)
 	// - 1.0 => clearer/deeper water shaping
 	float postRainMirrorMix = 1.0 - postRainSpecBoostCurve;
-	float postRainClarityCubemapScale = lerp(2.20, 0.30, postRainSpecBoostCurve);
-	// Single post-rain cubemap intensity scale path (clarity-style * shine-intensity).
-	postRainPuddleReflectionOverrideScale = clamp(postRainClarityCubemapScale * postRainShineCubemapScale, 0.0, 6.0);
+	// Post-rain cubemap scaling now layers on top of the user's general Wet Reflection
+	// setting instead of replacing it outright. Keep the modifier near 1.0 so the
+	// global wet reflection scale remains the dominant control.
+	float postRainClarityCubemapScale = lerp(1.15, 0.65, postRainSpecBoostCurve);
+	postRainPuddleReflectionOverrideScale = clamp(postRainClarityCubemapScale * postRainShineCubemapScale, 0.25, 1.6);
 	float postRainDirectMirrorScale = lerp(1.0, 0.82, postRainMirrorMix);
 	wetDirectSpecularScale *= lerp(1.0, postRainDirectMirrorScale, postRainPuddlePhase * 0.90);
 	float postRainSpecBoostScale = lerp(1.0, 2.45, postRainSpecBoostCurve);
@@ -2895,23 +2899,11 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 		wetReflectionModeConfig = GetWetReflectionModeConfig(SharedData::wetnessEffectsSettings.WetIndirectSpecularScale);
 		const float postRainOverridePhase = saturate(postRainPuddlePhase);
 		if (postRainOverridePhase > 1e-4) {
-			// If global Wet Reflection scale is near zero, recover mode weights so
-			// Post-Rain Water Clarity can still control puddle reflections.
-			if ((wetReflectionModeConfig.x + wetReflectionModeConfig.y) <= 1e-4) {
-				const float modernModeEnabled = (SharedData::wetnessEffectsSettings.EnableModernWetReflection != 0) ? 1.0 : 0.0;
-				const float legacyModeEnabled = (SharedData::wetnessEffectsSettings.EnableLegacyWetReflection != 0) ? 1.0 : 0.0;
-				const float enabledModeCount = modernModeEnabled + legacyModeEnabled;
-				if (enabledModeCount > 0.0) {
-					const float invEnabledModeCount = rcp(enabledModeCount);
-					wetReflectionModeConfig.x = modernModeEnabled * invEnabledModeCount;
-					wetReflectionModeConfig.y = legacyModeEnabled * invEnabledModeCount;
-				}
-			}
-			// Post-rain puddles: uncouple indirect/direct wet reflection scale from the
-			// global Wet Reflection slider and drive it from Post-Rain Water Clarity.
+			// Post-rain puddles keep the general Wet Reflection scale as the baseline.
+			// The post-rain controls only bias that baseline up or down.
 			wetReflectionModeConfig.z = lerp(
 				wetReflectionModeConfig.z,
-				postRainPuddleReflectionOverrideScale,
+				wetReflectionModeConfig.z * postRainPuddleReflectionOverrideScale,
 				postRainOverridePhase);
 		}
 		wetReflectionModeConfigDirect = wetReflectionModeConfig;
