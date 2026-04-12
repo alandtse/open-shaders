@@ -2590,13 +2590,21 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	wetnessGlossinessAlbedo *= wetnessGlossinessAlbedo;
 
 	// Post-rain shine control:
-	// - 0..1 strongly reduces post-rain puddle shine (0 gives heavy suppression).
+	// - 0..1 strongly reduces post-rain puddle shine.
 	// - 1 is neutral.
-	// - 1..2 reintroduces extra post-rain shine.
+	// - 1..2 increases post-rain puddle shine.
+	// Keep cubemap reflections stronger than direct white highlights so puddles
+	// read as reflected sky/light, not milky glare.
 	float postRainShineControl = clamp(postRainPuddleWaterStrength, 0.0, 2.0);
 	float postRainShineScale = (postRainShineControl <= 1.0) ?
 		lerp(0.12, 1.0, postRainShineControl) :
 		lerp(1.0, 1.38, postRainShineControl - 1.0);
+	float postRainDirectScale = (postRainShineControl <= 1.0) ?
+		lerp(0.06, 0.82, postRainShineControl) :
+		lerp(0.82, 0.95, postRainShineControl - 1.0);
+	float postRainGlossScale = (postRainShineControl <= 1.0) ?
+		lerp(0.60, 0.95, postRainShineControl) :
+		lerp(0.95, 1.08, postRainShineControl - 1.0);
 	float postRainBoostT = saturate(postRainShineControl - 1.0);
 	// Preserve clearer water appearance after rain by shaping mid-range puddle values upward.
 	float postRainSpecularPower = lerp(1.0, 0.75, saturate(postRainBlend * postRainBoostT));
@@ -2625,9 +2633,9 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	// Rain phase: keep puddles wet-looking but reduce bright/milky white shine.
 	wetDirectSpecularScale *= lerp(1.0, 0.42, rainPuddlePhase);
 	wetnessGlossinessSpecular *= lerp(1.0, 0.88, rainPuddlePhase);
-	// Post-rain phase: allow strong suppression at low Post-Rain Puddle Shine values.
-	wetDirectSpecularScale *= lerp(1.0, postRainShineScale, postRainPuddlePhase);
-	wetnessGlossinessSpecular *= lerp(1.0, postRainShineScale, postRainPuddlePhase);
+	// Post-rain phase: constrain direct white highlight while preserving cubemap clarity.
+	wetDirectSpecularScale *= lerp(1.0, postRainDirectScale, postRainPuddlePhase);
+	wetnessGlossinessSpecular *= lerp(1.0, postRainGlossScale, postRainPuddlePhase);
 	wetnessGlossinessSpecular = saturate(wetnessGlossinessSpecular * lerp(1.0, 1.65, deepPuddleMask));
 
 	// Update flatness and normal calculations
