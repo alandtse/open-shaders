@@ -2613,22 +2613,22 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 			if (rainAutoExpansionPhaseActive && inRainBlend > 1e-3) {
 				float autoExpandT = saturate(inRainBlend * (0.4 + 0.6 * radiusOverflowT));
 				float3 puddleNoiseCoord = puddleCoordsWarped * layoutFrequency + puddlePatternOffset;
-				float dilationStep = lerp(0.00, 0.60, autoExpandT);
+				// Keep bridge behavior but reduce aggressiveness and sample cost:
+				// - smaller dilation step
+				// - 4-neighbor taps (XY) instead of 6-neighbor taps (XYZ)
+				float dilationStep = lerp(0.00, 0.38, autoExpandT);
 				float3 dilateX = float3(dilationStep, 0.0, 0.0);
 				float3 dilateY = float3(0.0, dilationStep, 0.0);
-				float3 dilateZ = float3(0.0, 0.0, dilationStep);
 				float dilatedNoise = puddleNoiseSignal;
 				dilatedNoise = max(dilatedNoise, Random::perlinNoise(puddleNoiseCoord + dilateX) * 0.5 + 0.5);
 				dilatedNoise = max(dilatedNoise, Random::perlinNoise(puddleNoiseCoord - dilateX) * 0.5 + 0.5);
 				dilatedNoise = max(dilatedNoise, Random::perlinNoise(puddleNoiseCoord + dilateY) * 0.5 + 0.5);
 				dilatedNoise = max(dilatedNoise, Random::perlinNoise(puddleNoiseCoord - dilateY) * 0.5 + 0.5);
-				dilatedNoise = max(dilatedNoise, Random::perlinNoise(puddleNoiseCoord + dilateZ) * 0.5 + 0.5);
-				dilatedNoise = max(dilatedNoise, Random::perlinNoise(puddleNoiseCoord - dilateZ) * 0.5 + 0.5);
 
-				float bridgeThreshold = lerp(rainMergeThreshold, 0.06, autoExpandT);
+				float bridgeThreshold = lerp(rainMergeThreshold, 0.12, autoExpandT);
 				float bridgeGate = saturate((dilatedNoise - bridgeThreshold) / max(1e-3, 1.0 - bridgeThreshold));
-				bridgeGate = smoothstep(0.02, 0.55, bridgeGate);
-				baseGate = max(baseGate, bridgeGate);
+				bridgeGate = smoothstep(0.05, 0.68, bridgeGate);
+				baseGate = max(baseGate, lerp(0.0, bridgeGate, 0.85));
 			}
 			float puddleSlopeMask = smoothstep(puddleMaxAngleSafe, 1.0, saturate(worldNormal.z));
 			float basePuddle = baseGate * basePuddleBlend * puddleSlopeMask;
