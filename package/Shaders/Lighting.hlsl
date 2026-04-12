@@ -3241,7 +3241,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	float viewDistance = abs(viewPosition.z);
 	lodSafeWetDarkeningFade = 1.0 - smoothstep(4096.0, 12288.0, viewDistance);
 	wetDarkeningStrength *= lerp(0.65, 1.0, lodSafeWetDarkeningFade);
-	// Darkening/saturation should follow active rain/post-rain wetness,
+	// Darkening should follow active rain/post-rain wetness,
 	// not persistent shore wetness, so surfaces can visually dry out after rain.
 	float rainDrivenWetness = saturate(max(rainWetness, puddleWetness));
 	float wetnessDarkeningAmount = porosity * rainDrivenWetness * wetDarkeningStrength;
@@ -3250,10 +3250,6 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	wetDarkeningBlend *= lerp(0.75, 1.0, lodSafeWetDarkeningFade);
 	float3 wetDarkenedBaseColor = pow(abs(material.BaseColor), 1.0 + wetnessDarkeningAmount);
 	material.BaseColor = lerp(material.BaseColor, wetDarkenedBaseColor, wetDarkeningBlend);
-	float wetColorSaturation = max(0.0, SharedData::wetnessEffectsSettings.WetColorSaturation);
-	float wetSaturationMix = rainWetVisualMask;
-	float wetSaturationScale = lerp(1.0, wetColorSaturation, wetSaturationMix);
-	material.BaseColor = Color::Saturation(material.BaseColor, wetSaturationScale);
 #			if !defined(SKIN) && !defined(HAIR)
 	[branch] if (shorePersistentDarkeningEnabled) {
 		float shoreDarkeningAmount = porosity * shorePersistentDarkeningMask * shorePersistentDarkeningStrength;

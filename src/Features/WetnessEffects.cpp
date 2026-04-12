@@ -63,7 +63,7 @@ namespace
 	constexpr float POST_RAIN_PUDDLE_SHINE_MAX = 5.0f;
 	constexpr float RAIN_REFLECTION_BALANCE_MIN = 0.0f;
 	constexpr float RAIN_REFLECTION_BALANCE_MAX = 1.0f;
-	constexpr float DEFAULT_RAIN_REFLECTION_BALANCE = 0.0f;
+	constexpr float DEFAULT_RAIN_REFLECTION_BALANCE = 0.5f;
 	constexpr float POST_RAIN_WATER_CLARITY_MIN = 0.0f;
 	constexpr float POST_RAIN_WATER_CLARITY_MAX = 1.0f;
 	constexpr float DEFAULT_POST_RAIN_WATER_CLARITY = 0.0f;
@@ -732,9 +732,8 @@ namespace
 			POST_RAIN_PUDDLE_SHINE_MAX,
 			GetDefaultPostRainPuddleShineForMode(settings));
 		settings.RaindropTransitionFalloff = ClampFiniteOrDefault(settings.RaindropTransitionFalloff, 0.5f, 6.0f, 2.0f);
-		settings.WetDarkeningStrength = ClampFiniteOrDefault(settings.WetDarkeningStrength, 0.0f, 2.0f, 1.05f);
-		settings.WetColorSaturation = ClampFiniteOrDefault(settings.WetColorSaturation, 0.0f, 2.5f, 1.0f);
-		settings.WetHighlightReduction = ClampFiniteOrDefault(settings.WetHighlightReduction, WET_HIGHLIGHT_REDUCTION_MIN, WET_HIGHLIGHT_REDUCTION_MAX, 5.0f);
+		settings.WetDarkeningStrength = ClampFiniteOrDefault(settings.WetDarkeningStrength, 0.0f, 2.0f, 0.85f);
+		settings.WetHighlightReduction = ClampFiniteOrDefault(settings.WetHighlightReduction, WET_HIGHLIGHT_REDUCTION_MIN, WET_HIGHLIGHT_REDUCTION_MAX, 0.25f);
 		settings.WetFilmSpecularFloorScale = ClampFiniteOrDefault(settings.WetFilmSpecularFloorScale, WET_FILM_SPECULAR_FLOOR_SCALE_MIN, WET_FILM_SPECULAR_FLOOR_SCALE_MAX, 1.5f);
 	}
 
@@ -796,7 +795,6 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	PostRainPuddleWaterStrength,
 	RaindropTransitionFalloff,
 	WetDarkeningStrength,
-	WetColorSaturation,
 	WetHighlightReduction,
 	EnableForwardReflectionBias,
 	EnableVanillaReflectionCompensation,
@@ -1395,10 +1393,6 @@ void WetnessEffects::DrawSettings()
 		ImGui::SliderFloat("Wet Surface Darkening", &settings.WetDarkeningStrength, 0.0f, 2.0f, "%.2f");
 		if (auto _tt = Util::HoverTooltipWrapper()) {
 			ImGui::TextUnformatted("How much wet ground darkens. Higher = darker wet patches, lower = closer to original brightness.");
-		}
-		ImGui::SliderFloat("Wet Surface Saturation", &settings.WetColorSaturation, 0.0f, 2.5f, "%.2f");
-		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::TextUnformatted("How colorful wet surfaces look. Higher = richer color, lower = more neutral color.");
 		}
 
 		ImGui::SliderFloat("Wet Film Specular Floor", &settings.WetFilmSpecularFloorScale, WET_FILM_SPECULAR_FLOOR_SCALE_MIN, WET_FILM_SPECULAR_FLOOR_SCALE_MAX, "%.2f");

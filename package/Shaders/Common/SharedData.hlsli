@@ -138,7 +138,6 @@ namespace SharedData
 
 		float RaindropTransitionFalloff;
 		float WetDarkeningStrength;
-		float WetColorSaturation;
 		float WetHighlightReduction;
 		uint EnableForwardReflectionBias;
 		uint EnableVanillaReflectionCompensation;
@@ -146,6 +145,7 @@ namespace SharedData
 		float ShorePersistentDarkeningStrength;
 		float WetnessEffectsPadding0;
 		float WetnessEffectsPadding1;
+		float WetnessEffectsPadding2;
 	};
 
 	struct SkylightingSettings
