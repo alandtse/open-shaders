@@ -2378,11 +2378,17 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 		const bool wetnessEnabled = (SharedData::wetnessEffectsSettings.EnableWetnessEffects != 0);
 		float postRainPuddleWaterStrength = max(0.0, SharedData::wetnessEffectsSettings.PostRainPuddleWaterStrength);
 		float wetnessPackedPadding0 = SharedData::wetnessEffectsSettings.WetnessEffectsPadding0;
-		float postRainPuddleSpecularBoost = saturate(frac(wetnessPackedPadding0) / 0.999);
+		// Packed control lane layout:
+		// - WetnessEffectsPadding0 integer part: rain auto-expansion phase flag
+		// - WetnessEffectsPadding0 fractional part: post-rain spec boost (derived from Post-Rain Water Clarity)
+		// - WetnessEffectsPadding1[0..9]: post-rain cubemap desaturation (derived from Post-Rain Water Clarity)
+		// - WetnessEffectsPadding1[10..19]: in-rain cubemap suppression (derived from Rain Reflection Balance)
+		// - WetnessEffectsPadding1[20..29]: in-rain specular boost (derived from Rain Reflection Balance)
+		float postRainSpecBoostFromClarity = saturate(frac(wetnessPackedPadding0) / 0.999);
 		uint wetnessPackedPadding1 = asuint(SharedData::wetnessEffectsSettings.WetnessEffectsPadding1);
-		float postRainPuddleCubemapDesaturation = saturate((float)(wetnessPackedPadding1 & 0x3FFu) * (1.0 / 1023.0));
-		float inRainPuddleCubemapSuppression = saturate((float)((wetnessPackedPadding1 >> 10) & 0x3FFu) * (1.0 / 1023.0));
-		float inRainPuddleSpecularBoost = saturate((float)((wetnessPackedPadding1 >> 20) & 0x3FFu) * (1.0 / 1023.0));
+		float postRainCubemapDesatFromClarity = saturate((float)(wetnessPackedPadding1 & 0x3FFu) * (1.0 / 1023.0));
+		float inRainCubemapSuppressionFromBalance = saturate((float)((wetnessPackedPadding1 >> 10) & 0x3FFu) * (1.0 / 1023.0));
+		float inRainSpecularBoostFromBalance = saturate((float)((wetnessPackedPadding1 >> 20) & 0x3FFu) * (1.0 / 1023.0));
 	float wetnessDistToWater = abs(input.WorldPosition.z - waterHeight);
 	float shoreRangeSafe = max(1.0, (float)SharedData::wetnessEffectsSettings.ShoreRange);
 	float shoreFactor = saturate(1.0 - (wetnessDistToWater / shoreRangeSafe));
@@ -2704,14 +2710,14 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	wetnessGlossinessSpecular *= lerp(1.0, 0.88, rainPuddlePhase);
 	// Optional rain-time compensation when cubemap suppression is used:
 	// boost direct/gloss specular so wetness still reads clearly without sky cubemap.
-	float inRainDirectSpecBoostScale = lerp(1.0, 1.25, inRainPuddleSpecularBoost);
-	float inRainGlossSpecBoostScale = lerp(1.0, 1.55, inRainPuddleSpecularBoost);
+	float inRainDirectSpecBoostScale = lerp(1.0, 1.25, inRainSpecularBoostFromBalance);
+	float inRainGlossSpecBoostScale = lerp(1.0, 1.55, inRainSpecularBoostFromBalance);
 	wetDirectSpecularScale *= lerp(1.0, inRainDirectSpecBoostScale, rainPuddlePhase);
 	wetnessGlossinessSpecular *= lerp(1.0, inRainGlossSpecBoostScale, rainPuddlePhase);
 	// Post-rain phase: constrain direct white highlight while preserving cubemap clarity.
 	wetDirectSpecularScale *= lerp(1.0, postRainDirectScale, postRainPuddlePhase);
 	wetnessGlossinessSpecular *= lerp(1.0, postRainGlossScale, postRainPuddlePhase);
-	float postRainSpecBoostCurve = smoothstep(0.0, 1.0, postRainPuddleSpecularBoost);
+	float postRainSpecBoostCurve = smoothstep(0.0, 1.0, postRainSpecBoostFromClarity);
 	float postRainSpecBoostScale = lerp(1.0, 2.15, postRainSpecBoostCurve);
 	wetnessGlossinessSpecular *= lerp(1.0, postRainSpecBoostScale, postRainPuddlePhase);
 	float postRainDirectSpecCompensation = lerp(1.0, 1.28, postRainSpecBoostCurve);
@@ -2756,7 +2762,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	// - During rain: smoothly suppress wet cubemap reflections to zero so
 	//   rain look is driven by direct/specular + raindrops, not sky cubemap.
 	// - After rain: Post-Rain Puddle Shine scales puddle cubemap response.
-	float rainCubemapSuppression = saturate(inRainBlend * inRainPuddleCubemapSuppression);
+	float rainCubemapSuppression = saturate(inRainBlend * inRainCubemapSuppressionFromBalance);
 	wetHighlightReflectanceScale *= (1.0 - rainCubemapSuppression);
 	wetHighlightReflectanceScale *= lerp(1.0, postRainCubemapScale, postRainPuddlePhase);
 
@@ -3427,7 +3433,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 		if (waterRoughnessSpecular < 1 && any(wetnessReflectance > 0.0))
 		{
 			float3 wetCubemapIrradiance = SanitizeFloat3(DynamicCubemaps::GetDynamicCubemapSpecularIrradiance(screenUV, wetnessNormal, vertexNormal, viewDirection, waterRoughnessSpecular, skylightingSH));
-			float wetCubemapDesatAmount = saturate(postRainBlend * postRainPuddleCubemapDesaturation);
+			float wetCubemapDesatAmount = saturate(postRainBlend * postRainCubemapDesatFromClarity);
 			if (wetCubemapDesatAmount > 1e-4) {
 				float wetCubemapDesatT = smoothstep(0.0, 1.0, wetCubemapDesatAmount);
 				float wetCubemapLuma = dot(wetCubemapIrradiance, float3(0.2126, 0.7152, 0.0722));
@@ -3444,7 +3450,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 		if (waterRoughnessSpecular < 1 && any(wetnessReflectance > 0.0))
 		{
 			float3 wetCubemapIrradiance = SanitizeFloat3(DynamicCubemaps::GetDynamicCubemapSpecularIrradiance(screenUV, wetnessNormal, vertexNormal, viewDirection, waterRoughnessSpecular));
-			float wetCubemapDesatAmount = saturate(postRainBlend * postRainPuddleCubemapDesaturation);
+			float wetCubemapDesatAmount = saturate(postRainBlend * postRainCubemapDesatFromClarity);
 			if (wetCubemapDesatAmount > 1e-4) {
 				float wetCubemapDesatT = smoothstep(0.0, 1.0, wetCubemapDesatAmount);
 				float wetCubemapLuma = dot(wetCubemapIrradiance, float3(0.2126, 0.7152, 0.0722));

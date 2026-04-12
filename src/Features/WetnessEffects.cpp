@@ -61,18 +61,12 @@ namespace
 	constexpr float DEFAULT_POST_RAIN_PUDDLE_SHINE_LEGACY = 1.5f;
 	constexpr float POST_RAIN_PUDDLE_SHINE_MIN = 0.0f;
 	constexpr float POST_RAIN_PUDDLE_SHINE_MAX = 5.0f;
-	constexpr float POST_RAIN_PUDDLE_CUBEMAP_DESAT_MIN = 0.0f;
-	constexpr float POST_RAIN_PUDDLE_CUBEMAP_DESAT_MAX = 1.0f;
-	constexpr float DEFAULT_POST_RAIN_PUDDLE_CUBEMAP_DESAT = 0.0f;
-	constexpr float POST_RAIN_PUDDLE_SPECULAR_BOOST_MIN = 0.0f;
-	constexpr float POST_RAIN_PUDDLE_SPECULAR_BOOST_MAX = 1.0f;
-	constexpr float DEFAULT_POST_RAIN_PUDDLE_SPECULAR_BOOST = 0.0f;
-	constexpr float IN_RAIN_PUDDLE_CUBEMAP_SUPPRESSION_MIN = 0.0f;
-	constexpr float IN_RAIN_PUDDLE_CUBEMAP_SUPPRESSION_MAX = 1.0f;
-	constexpr float DEFAULT_IN_RAIN_PUDDLE_CUBEMAP_SUPPRESSION = 0.0f;
-	constexpr float IN_RAIN_PUDDLE_SPECULAR_BOOST_MIN = 0.0f;
-	constexpr float IN_RAIN_PUDDLE_SPECULAR_BOOST_MAX = 1.0f;
-	constexpr float DEFAULT_IN_RAIN_PUDDLE_SPECULAR_BOOST = 0.0f;
+	constexpr float RAIN_REFLECTION_BALANCE_MIN = 0.0f;
+	constexpr float RAIN_REFLECTION_BALANCE_MAX = 1.0f;
+	constexpr float DEFAULT_RAIN_REFLECTION_BALANCE = 0.0f;
+	constexpr float POST_RAIN_WATER_CLARITY_MIN = 0.0f;
+	constexpr float POST_RAIN_WATER_CLARITY_MAX = 1.0f;
+	constexpr float DEFAULT_POST_RAIN_WATER_CLARITY = 0.0f;
 	constexpr float MODERN_REFLECTION_UI_ANCHOR_T = 0.30f;
 	constexpr float LEGACY_REFLECTION_UI_ANCHOR_T = 0.28f;
 	constexpr float MODERN_REFLECTION_SCALE_AT_ANCHOR = 0.02f;
@@ -589,11 +583,6 @@ namespace
 		return meters * GAME_UNITS_PER_METER;
 	}
 
-	constexpr float GameUnitsToMeters(float gameUnits)
-	{
-		return gameUnits * Util::Units::GAME_UNIT_TO_M;
-	}
-
 	uint32_t EncodeFloatToUint(float value)
 	{
 		uint32_t bits = 0;
@@ -620,10 +609,8 @@ namespace
 		float& legacyScale,
 		float& puddleHours,
 		float& layout,
-		float& postRainPuddleCubemapDesat,
-		float& postRainPuddleSpecBoost,
-		float& inRainPuddleCubemapSuppression,
-		float& inRainPuddleSpecularBoost,
+		float& rainReflectionBalance,
+		float& postRainWaterClarity,
 		float& shoreDarkeningStrength)
 	{
 		SanitizePersistentReflectionSettings(settings, modernScale, legacyScale);
@@ -632,26 +619,16 @@ namespace
 			std::isfinite(layout) ? layout : DEFAULT_PUDDLE_LAYOUT,
 			PUDDLE_LAYOUT_MIN,
 			PUDDLE_LAYOUT_MAX);
-		postRainPuddleCubemapDesat = ClampFiniteOrDefault(
-			postRainPuddleCubemapDesat,
-			POST_RAIN_PUDDLE_CUBEMAP_DESAT_MIN,
-			POST_RAIN_PUDDLE_CUBEMAP_DESAT_MAX,
-			DEFAULT_POST_RAIN_PUDDLE_CUBEMAP_DESAT);
-		postRainPuddleSpecBoost = ClampFiniteOrDefault(
-			postRainPuddleSpecBoost,
-			POST_RAIN_PUDDLE_SPECULAR_BOOST_MIN,
-			POST_RAIN_PUDDLE_SPECULAR_BOOST_MAX,
-			DEFAULT_POST_RAIN_PUDDLE_SPECULAR_BOOST);
-		inRainPuddleCubemapSuppression = ClampFiniteOrDefault(
-			inRainPuddleCubemapSuppression,
-			IN_RAIN_PUDDLE_CUBEMAP_SUPPRESSION_MIN,
-			IN_RAIN_PUDDLE_CUBEMAP_SUPPRESSION_MAX,
-			DEFAULT_IN_RAIN_PUDDLE_CUBEMAP_SUPPRESSION);
-		inRainPuddleSpecularBoost = ClampFiniteOrDefault(
-			inRainPuddleSpecularBoost,
-			IN_RAIN_PUDDLE_SPECULAR_BOOST_MIN,
-			IN_RAIN_PUDDLE_SPECULAR_BOOST_MAX,
-			DEFAULT_IN_RAIN_PUDDLE_SPECULAR_BOOST);
+		rainReflectionBalance = ClampFiniteOrDefault(
+			rainReflectionBalance,
+			RAIN_REFLECTION_BALANCE_MIN,
+			RAIN_REFLECTION_BALANCE_MAX,
+			DEFAULT_RAIN_REFLECTION_BALANCE);
+		postRainWaterClarity = ClampFiniteOrDefault(
+			postRainWaterClarity,
+			POST_RAIN_WATER_CLARITY_MIN,
+			POST_RAIN_WATER_CLARITY_MAX,
+			DEFAULT_POST_RAIN_WATER_CLARITY);
 		shoreDarkeningStrength = ClampFiniteOrDefault(
 			shoreDarkeningStrength,
 			SHORE_PERSISTENT_DARKENING_MIN,
@@ -1478,13 +1455,9 @@ void WetnessEffects::DrawSettings()
 			ImGui::TextUnformatted("Wetness threshold for puddles to look like standing water. Higher = only stronger puddles become flat/reflective; lower = watery look appears sooner.");
 		}
 
-		ImGui::SliderFloat("Rain Cubemap Suppression", &inRainPuddleCubemapSuppression, IN_RAIN_PUDDLE_CUBEMAP_SUPPRESSION_MIN, IN_RAIN_PUDDLE_CUBEMAP_SUPPRESSION_MAX, "%.2f");
+		ImGui::SliderFloat("Rain Reflection Balance", &rainReflectionBalance, RAIN_REFLECTION_BALANCE_MIN, RAIN_REFLECTION_BALANCE_MAX, "%.2f");
 		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::TextUnformatted("Reduces wet cubemap reflections during active rain. 0 = off (no suppression). Higher = less cubemap reflection during rain. 1 = strongest suppression.");
-		}
-		ImGui::SliderFloat("Rain Specular Boost", &inRainPuddleSpecularBoost, IN_RAIN_PUDDLE_SPECULAR_BOOST_MIN, IN_RAIN_PUDDLE_SPECULAR_BOOST_MAX, "%.2f");
-		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::TextUnformatted("Increases rain-time puddle specular to compensate when cubemap reflections are suppressed. 0 = no change. Higher = stronger rain-time specular highlights. 1 = strongest boost.");
+			ImGui::TextUnformatted("Balances rain puddle reflections. 0 = more cubemap reflection. Higher = less cubemap and more specular wet-film response. 1 = strongest shift.");
 		}
 
 		ImGui::Dummy(ImVec2(0.0f, 12.0f));
@@ -1492,13 +1465,9 @@ void WetnessEffects::DrawSettings()
 		if (auto _tt = Util::HoverTooltipWrapper()) {
 			ImGui::TextUnformatted("Controls how strong puddle reflections look after rain. Lower = subtler/dimmer puddle reflections, higher = stronger/brighter puddle reflections.");
 		}
-		ImGui::SliderFloat("Post-Rain Cubemap Desaturation", &postRainPuddleCubemapDesaturation, POST_RAIN_PUDDLE_CUBEMAP_DESAT_MIN, POST_RAIN_PUDDLE_CUBEMAP_DESAT_MAX, "%.2f");
+		ImGui::SliderFloat("Post-Rain Water Clarity", &postRainWaterClarity, POST_RAIN_WATER_CLARITY_MIN, POST_RAIN_WATER_CLARITY_MAX, "%.2f");
 		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::TextUnformatted("Reduces post-rain puddle cubemap color and glare. 0 = no change. Higher = less colorful and dimmer cubemap reflections. 1 = strongest reduction.");
-		}
-		ImGui::SliderFloat("Post-Rain Specular Boost", &postRainPuddleSpecularBoost, POST_RAIN_PUDDLE_SPECULAR_BOOST_MIN, POST_RAIN_PUDDLE_SPECULAR_BOOST_MAX, "%.2f");
-		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::TextUnformatted("Boosts post-rain puddle specular for a clearer water-like look. 0 = no change. Higher = stronger specular response. 1 = strongest boost.");
+			ImGui::TextUnformatted("Shapes post-rain puddles toward a clearer water look. 0 = brighter/milkier reflections. Higher = less cubemap glare and stronger water-like specular. 1 = strongest clarity.");
 		}
 
 		ImGui::Dummy(ImVec2(0.0f, 8.0f));
@@ -2046,44 +2015,34 @@ WetnessEffects::PerFrame WetnessEffects::GetCommonBufferData() const
 		SHORE_PERSISTENT_DARKENING_DEFAULT);
 	const bool masterWetnessEnabled = settings.EnableWetnessEffects != 0;
 	const float activeShorePersistentDarkeningStrength = masterWetnessEnabled ? clampedShorePersistentDarkeningStrength : 0.0f;
-	const float activePostRainPuddleCubemapDesat = masterWetnessEnabled ?
+	const float activeRainReflectionBalance = masterWetnessEnabled ?
 		ClampFiniteOrDefault(
-			postRainPuddleCubemapDesaturation,
-			POST_RAIN_PUDDLE_CUBEMAP_DESAT_MIN,
-			POST_RAIN_PUDDLE_CUBEMAP_DESAT_MAX,
-			DEFAULT_POST_RAIN_PUDDLE_CUBEMAP_DESAT) :
+			rainReflectionBalance,
+			RAIN_REFLECTION_BALANCE_MIN,
+			RAIN_REFLECTION_BALANCE_MAX,
+			DEFAULT_RAIN_REFLECTION_BALANCE) :
 		0.0f;
-	const float activePostRainPuddleSpecBoost = masterWetnessEnabled ?
+	const float activePostRainWaterClarity = masterWetnessEnabled ?
 		ClampFiniteOrDefault(
-			postRainPuddleSpecularBoost,
-			POST_RAIN_PUDDLE_SPECULAR_BOOST_MIN,
-			POST_RAIN_PUDDLE_SPECULAR_BOOST_MAX,
-			DEFAULT_POST_RAIN_PUDDLE_SPECULAR_BOOST) :
+			postRainWaterClarity,
+			POST_RAIN_WATER_CLARITY_MIN,
+			POST_RAIN_WATER_CLARITY_MAX,
+			DEFAULT_POST_RAIN_WATER_CLARITY) :
 		0.0f;
-	const float activeInRainPuddleCubemapSuppression = masterWetnessEnabled ?
-		ClampFiniteOrDefault(
-			inRainPuddleCubemapSuppression,
-			IN_RAIN_PUDDLE_CUBEMAP_SUPPRESSION_MIN,
-			IN_RAIN_PUDDLE_CUBEMAP_SUPPRESSION_MAX,
-			DEFAULT_IN_RAIN_PUDDLE_CUBEMAP_SUPPRESSION) :
-		0.0f;
-	const float activeInRainPuddleSpecularBoost = masterWetnessEnabled ?
-		ClampFiniteOrDefault(
-			inRainPuddleSpecularBoost,
-			IN_RAIN_PUDDLE_SPECULAR_BOOST_MIN,
-			IN_RAIN_PUDDLE_SPECULAR_BOOST_MAX,
-			DEFAULT_IN_RAIN_PUDDLE_SPECULAR_BOOST) :
-		0.0f;
+	const float postRainCubemapDesatFromClarity = activePostRainWaterClarity * 0.80f;
+	const float postRainSpecBoostFromClarity = activePostRainWaterClarity;
+	const float inRainCubemapSuppressionFromBalance = activeRainReflectionBalance;
+	const float inRainSpecularBoostFromBalance = activeRainReflectionBalance;
 	// Pack auto-expansion flag + post-rain spec boost into one float for shader padding slot.
 	// Fractional lane stores boost in [0, 0.999] so 1.0 remains reserved for the auto-expansion flag boundary.
-	const float packedWetnessPadding0 = activePostRainPuddleSpecBoost * 0.999f + (rainAutoExpansionPhaseActive ? 1.0f : 0.0f);
+	const float packedWetnessPadding0 = postRainSpecBoostFromClarity * 0.999f + (rainAutoExpansionPhaseActive ? 1.0f : 0.0f);
 	data.ReservedPerFramePadding0 = EncodeFloatToUint(activeShorePersistentDarkeningStrength);
 	data.ReservedPerFramePadding1 = EncodeFloatToUint(packedWetnessPadding0);
-	// Pack three [0..1] sliders into one uint lane using UNORM10 triplet:
-	// bits  0.. 9 = post-rain cubemap desaturation
-	// bits 10..19 = in-rain cubemap suppression
-	// bits 20..29 = in-rain specular boost
-	data.ReservedPerFramePadding2 = PackThreeUnorm10(activePostRainPuddleCubemapDesat, activeInRainPuddleCubemapSuppression, activeInRainPuddleSpecularBoost);
+	// Pack derived [0..1] controls into one uint lane using UNORM10 triplet:
+	// bits  0.. 9 = post-rain cubemap desaturation (derived from Post-Rain Water Clarity)
+	// bits 10..19 = in-rain cubemap suppression (derived from Rain Reflection Balance)
+	// bits 20..29 = in-rain specular boost      (derived from Rain Reflection Balance)
+	data.ReservedPerFramePadding2 = PackThreeUnorm10(postRainCubemapDesatFromClarity, inRainCubemapSuppressionFromBalance, inRainSpecularBoostFromBalance);
 	data.settings.PostRainPuddleWaterStrength = ClampFiniteOrDefault(
 		data.settings.PostRainPuddleWaterStrength,
 		POST_RAIN_PUDDLE_SHINE_MIN,
@@ -2157,10 +2116,8 @@ void WetnessEffects::LoadSettings(json& o_json)
 			"WetHighlightReduction",
 			"WetFilmSpecularFloorScale",
 			"ShorePersistentDarkeningStrength",
-			"PostRainPuddleCubemapDesaturation",
-			"PostRainPuddleSpecularBoost",
-			"InRainPuddleCubemapSuppression",
-			"InRainPuddleSpecularBoost",
+			"RainReflectionBalance",
+			"PostRainWaterClarity",
 			"PuddleDryingHours",
 			"EnableWeatherDrivenDryingModel",
 			"InactivateRainPuddleAutoExpansion",
@@ -2181,20 +2138,10 @@ void WetnessEffects::LoadSettings(json& o_json)
 	} else {
 		logger::warn("[{}] Wetness settings root is not an object; using defaults.", GetName());
 	}
-	// Migration: older configs stored RaindropFxRange in game units.
-	// New configs store it in meters.
-	if (isObject && o_json.contains("RaindropFxRange") && o_json["RaindropFxRange"].is_number()) {
-		if (settings.RaindropFxRange > RAINDROP_FX_RANGE_UI_MAX_METERS) {
-			settings.RaindropFxRange = GameUnitsToMeters(settings.RaindropFxRange);
-		}
-	}
-
 	puddleLayout = JsonValueOr<float>(o_json, "PuddleLayout", DEFAULT_PUDDLE_LAYOUT);
 	puddleLayout = std::clamp(puddleLayout, PUDDLE_LAYOUT_MIN, PUDDLE_LAYOUT_MAX);
-	postRainPuddleCubemapDesaturation = JsonValueOr<float>(o_json, "PostRainPuddleCubemapDesaturation", DEFAULT_POST_RAIN_PUDDLE_CUBEMAP_DESAT);
-	postRainPuddleSpecularBoost = JsonValueOr<float>(o_json, "PostRainPuddleSpecularBoost", DEFAULT_POST_RAIN_PUDDLE_SPECULAR_BOOST);
-	inRainPuddleCubemapSuppression = JsonValueOr<float>(o_json, "InRainPuddleCubemapSuppression", DEFAULT_IN_RAIN_PUDDLE_CUBEMAP_SUPPRESSION);
-	inRainPuddleSpecularBoost = JsonValueOr<float>(o_json, "InRainPuddleSpecularBoost", DEFAULT_IN_RAIN_PUDDLE_SPECULAR_BOOST);
+	rainReflectionBalance = JsonValueOr<float>(o_json, "RainReflectionBalance", DEFAULT_RAIN_REFLECTION_BALANCE);
+	postRainWaterClarity = JsonValueOr<float>(o_json, "PostRainWaterClarity", DEFAULT_POST_RAIN_WATER_CLARITY);
 	shorePersistentDarkeningStrength = JsonValueOr<float>(o_json, "ShorePersistentDarkeningStrength", SHORE_PERSISTENT_DARKENING_DEFAULT);
 	modernWetIndirectSpecularScale = DEFAULT_MODERN_WET_REFLECTION_UI;
 	legacyWetIndirectSpecularScale = DEFAULT_LEGACY_WET_REFLECTION_UI;
@@ -2237,7 +2184,7 @@ void WetnessEffects::LoadSettings(json& o_json)
 	}
 
 	SanitizeToggleSettings(settings);
-	SanitizePersistentUiState(settings, modernWetIndirectSpecularScale, legacyWetIndirectSpecularScale, puddleDryingHours, puddleLayout, postRainPuddleCubemapDesaturation, postRainPuddleSpecularBoost, inRainPuddleCubemapSuppression, inRainPuddleSpecularBoost, shorePersistentDarkeningStrength);
+	SanitizePersistentUiState(settings, modernWetIndirectSpecularScale, legacyWetIndirectSpecularScale, puddleDryingHours, puddleLayout, rainReflectionBalance, postRainWaterClarity, shorePersistentDarkeningStrength);
 	SanitizeShaderFacingSettings(settings);
 	InvalidateSanitizedSettingsCache();
 	ResetRuntimeState();
@@ -2260,17 +2207,15 @@ void WetnessEffects::LoadSettings(json& o_json)
 
 void WetnessEffects::SaveSettings(json& o_json)
 {
-	SanitizePersistentUiState(settings, modernWetIndirectSpecularScale, legacyWetIndirectSpecularScale, puddleDryingHours, puddleLayout, postRainPuddleCubemapDesaturation, postRainPuddleSpecularBoost, inRainPuddleCubemapSuppression, inRainPuddleSpecularBoost, shorePersistentDarkeningStrength);
+	SanitizePersistentUiState(settings, modernWetIndirectSpecularScale, legacyWetIndirectSpecularScale, puddleDryingHours, puddleLayout, rainReflectionBalance, postRainWaterClarity, shorePersistentDarkeningStrength);
 	InvalidateSanitizedSettingsCache();
 	o_json = settings;
 	o_json["ModernWetIndirectSpecularScale"] = modernWetIndirectSpecularScale;
 	o_json["LegacyWetIndirectSpecularScale"] = legacyWetIndirectSpecularScale;
 	o_json["PuddleDryingHours"] = puddleDryingHours;
 	o_json["PuddleLayout"] = puddleLayout;
-	o_json["PostRainPuddleCubemapDesaturation"] = postRainPuddleCubemapDesaturation;
-	o_json["PostRainPuddleSpecularBoost"] = postRainPuddleSpecularBoost;
-	o_json["InRainPuddleCubemapSuppression"] = inRainPuddleCubemapSuppression;
-	o_json["InRainPuddleSpecularBoost"] = inRainPuddleSpecularBoost;
+	o_json["RainReflectionBalance"] = rainReflectionBalance;
+	o_json["PostRainWaterClarity"] = postRainWaterClarity;
 	o_json["ShorePersistentDarkeningStrength"] = shorePersistentDarkeningStrength;
 	o_json["EnableWeatherDrivenDryingModel"] = enableWeatherDrivenDryingModel;
 	o_json["InactivateRainPuddleAutoExpansion"] = inactivateRainPuddleAutoExpansion;
@@ -2285,10 +2230,8 @@ void WetnessEffects::RestoreDefaultSettings()
 	inactivateRainPuddleAutoExpansion = false;
 	puddleDryingHours = DEFAULT_PUDDLE_DRYING_HOURS;
 	puddleLayout = DEFAULT_PUDDLE_LAYOUT;
-	postRainPuddleCubemapDesaturation = DEFAULT_POST_RAIN_PUDDLE_CUBEMAP_DESAT;
-	postRainPuddleSpecularBoost = DEFAULT_POST_RAIN_PUDDLE_SPECULAR_BOOST;
-	inRainPuddleCubemapSuppression = DEFAULT_IN_RAIN_PUDDLE_CUBEMAP_SUPPRESSION;
-	inRainPuddleSpecularBoost = DEFAULT_IN_RAIN_PUDDLE_SPECULAR_BOOST;
+	rainReflectionBalance = DEFAULT_RAIN_REFLECTION_BALANCE;
+	postRainWaterClarity = DEFAULT_POST_RAIN_WATER_CLARITY;
 	shorePersistentDarkeningStrength = SHORE_PERSISTENT_DARKENING_DEFAULT;
 	modernWetIndirectSpecularScale = DEFAULT_MODERN_WET_REFLECTION_UI;
 	legacyWetIndirectSpecularScale = DEFAULT_LEGACY_WET_REFLECTION_UI;
@@ -2296,7 +2239,7 @@ void WetnessEffects::RestoreDefaultSettings()
 	ApplyDefaultWetnessUiPreset(settings, modernWetIndirectSpecularScale, legacyWetIndirectSpecularScale);
 	ApplyClimatePreset(climatePreset);
 	ResetRuntimeState();
-	SanitizePersistentUiState(settings, modernWetIndirectSpecularScale, legacyWetIndirectSpecularScale, puddleDryingHours, puddleLayout, postRainPuddleCubemapDesaturation, postRainPuddleSpecularBoost, inRainPuddleCubemapSuppression, inRainPuddleSpecularBoost, shorePersistentDarkeningStrength);
+	SanitizePersistentUiState(settings, modernWetIndirectSpecularScale, legacyWetIndirectSpecularScale, puddleDryingHours, puddleLayout, rainReflectionBalance, postRainWaterClarity, shorePersistentDarkeningStrength);
 	SanitizeShaderFacingSettings(settings);
 	InvalidateSanitizedSettingsCache();
 	DetectCurrentPreset();
