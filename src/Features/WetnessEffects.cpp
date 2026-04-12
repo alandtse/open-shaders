@@ -87,7 +87,7 @@ namespace
 	constexpr float DRYING_HOURS_MIN = 1.0f;
 	constexpr float DRYING_HOURS_MAX = 24.0f;
 	constexpr float DRYING_SECONDS_PER_HOUR = 3600.0f;
-	constexpr float POST_RAIN_RADIUS_SETTLE_HOURS = 3.0f;
+	constexpr float POST_RAIN_RADIUS_SETTLE_HOURS = 1.0f;
 	constexpr float POST_RAIN_RADIUS_SETTLE_SECONDS = POST_RAIN_RADIUS_SETTLE_HOURS * DRYING_SECONDS_PER_HOUR;
 	constexpr float DEFAULT_STONE_DRYING_HOURS = 6.0f;
 	constexpr float DEFAULT_GRASS_DRYING_HOURS = 3.0f;
@@ -1459,7 +1459,7 @@ void WetnessEffects::DrawSettings()
 			std::vector<std::string> tooltipLines = {
 				"Higher = larger individual puddles, lower = smaller individual puddles.",
 				"When Inactivate Rain Puddle Auto-Expansion is off, rain expands radius to maximum.",
-				"After rain stops, radius settles toward this value over about 3 in-game hours.",
+				"After rain stops, radius settles toward this value over about 1 in-game hour.",
 				"When Inactivate Rain Puddle Auto-Expansion is on, this slider is used directly during rain and after rain.",
 				"Does not control puddle layout/placement.",
 				std::format("{:.2f} meters", settings.PuddleRadius),
