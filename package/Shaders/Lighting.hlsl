@@ -2649,19 +2649,29 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	// Post-rain shine control:
 	// - 0..1 strongly reduces post-rain puddle shine.
 	// - 1 is neutral.
-	// - 1..2 increases post-rain puddle shine.
+	// - 1..2 keeps legacy boost behavior.
+	// - 2..5 extends the high-shine range.
 	// Keep cubemap reflections stronger than direct white highlights so puddles
 	// read as reflected sky/light, not milky glare.
-	float postRainShineControl = clamp(postRainPuddleWaterStrength, 0.0, 2.0);
-	float postRainCubemapScale = (postRainShineControl <= 1.0) ?
-		lerp(0.12, 1.0, postRainShineControl) :
-		lerp(1.0, 1.38, postRainShineControl - 1.0);
-	float postRainDirectScale = (postRainShineControl <= 1.0) ?
-		lerp(0.06, 0.82, postRainShineControl) :
-		lerp(0.82, 0.95, postRainShineControl - 1.0);
-	float postRainGlossScale = (postRainShineControl <= 1.0) ?
-		lerp(0.60, 0.95, postRainShineControl) :
-		lerp(0.95, 1.08, postRainShineControl - 1.0);
+	float postRainShineControl = clamp(postRainPuddleWaterStrength, 0.0, 5.0);
+	float postRainCubemapScale = 1.0;
+	float postRainDirectScale = 0.82;
+	float postRainGlossScale = 0.95;
+	if (postRainShineControl <= 1.0) {
+		postRainCubemapScale = lerp(0.12, 1.0, postRainShineControl);
+		postRainDirectScale = lerp(0.06, 0.82, postRainShineControl);
+		postRainGlossScale = lerp(0.60, 0.95, postRainShineControl);
+	} else if (postRainShineControl <= 2.0) {
+		float legacyBoostT = postRainShineControl - 1.0;
+		postRainCubemapScale = lerp(1.0, 1.38, legacyBoostT);
+		postRainDirectScale = lerp(0.82, 0.95, legacyBoostT);
+		postRainGlossScale = lerp(0.95, 1.08, legacyBoostT);
+	} else {
+		float extendedBoostT = saturate((postRainShineControl - 2.0) / 3.0);
+		postRainCubemapScale = lerp(1.38, 2.20, extendedBoostT);
+		postRainDirectScale = lerp(0.95, 1.15, extendedBoostT);
+		postRainGlossScale = lerp(1.08, 1.28, extendedBoostT);
+	}
 	float postRainBoostT = saturate(postRainShineControl - 1.0);
 	// Preserve clearer water appearance after rain by shaping mid-range puddle values upward.
 	float postRainSpecularPower = lerp(1.0, 0.75, saturate(postRainBlend * postRainBoostT));

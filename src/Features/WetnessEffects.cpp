@@ -59,6 +59,8 @@ namespace
 	constexpr float DEFAULT_MODERN_WET_REFLECTION_UI = 0.80f;
 	constexpr float DEFAULT_POST_RAIN_PUDDLE_SHINE_MODERN = 0.4f;
 	constexpr float DEFAULT_POST_RAIN_PUDDLE_SHINE_LEGACY = 1.5f;
+	constexpr float POST_RAIN_PUDDLE_SHINE_MIN = 0.0f;
+	constexpr float POST_RAIN_PUDDLE_SHINE_MAX = 5.0f;
 	constexpr float MODERN_REFLECTION_UI_ANCHOR_T = 0.30f;
 	constexpr float LEGACY_REFLECTION_UI_ANCHOR_T = 0.28f;
 	constexpr float MODERN_REFLECTION_SCALE_AT_ANCHOR = 0.02f;
@@ -701,8 +703,8 @@ namespace
 		settings.RippleBreadth = ClampFiniteOrDefault(settings.RippleBreadth, MIN_RIPPLE_BREADTH, 10.0f, 0.45f);
 		settings.PostRainPuddleWaterStrength = ClampFiniteOrDefault(
 			settings.PostRainPuddleWaterStrength,
-			0.0f,
-			2.0f,
+			POST_RAIN_PUDDLE_SHINE_MIN,
+			POST_RAIN_PUDDLE_SHINE_MAX,
 			GetDefaultPostRainPuddleShineForMode(settings));
 		settings.RaindropTransitionFalloff = ClampFiniteOrDefault(settings.RaindropTransitionFalloff, 0.5f, 6.0f, 2.0f);
 		settings.WetDarkeningStrength = ClampFiniteOrDefault(settings.WetDarkeningStrength, 0.0f, 2.0f, 1.05f);
@@ -1431,9 +1433,9 @@ void WetnessEffects::DrawSettings()
 			ImGui::TextUnformatted("Changes puddle shape/placement pattern only (not puddle size). Lower values = smoother, broader patches. Higher values = more irregular, broken-up placement.");
 		}
 
-		ImGui::SliderFloat("Post-Rain Puddle Shine", &settings.PostRainPuddleWaterStrength, 0.0f, 2.0f, "%.2f");
+		ImGui::SliderFloat("Post-Rain Puddle Shine", &settings.PostRainPuddleWaterStrength, POST_RAIN_PUDDLE_SHINE_MIN, POST_RAIN_PUDDLE_SHINE_MAX, "%.2f");
 		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::TextUnformatted("Post-rain puddle shine scale. 0 = strong post-rain shine suppression, 1 = neutral, >1 = stronger post-rain shine/reflections. During rain, Wet Reflection Shine is the primary control.");
+			ImGui::TextUnformatted("Post-rain puddle shine scale. 0 = strong post-rain shine suppression, 1 = neutral, >1 = stronger post-rain shine/reflections (extended up to 5). During rain, Wet Reflection Shine is the primary control.");
 		}
 
 		ImGui::Separator();
@@ -1980,8 +1982,8 @@ WetnessEffects::PerFrame WetnessEffects::GetCommonBufferData() const
 	data.ReservedPerFramePadding2 = 0u;
 	data.settings.PostRainPuddleWaterStrength = ClampFiniteOrDefault(
 		data.settings.PostRainPuddleWaterStrength,
-		0.0f,
-		2.0f,
+		POST_RAIN_PUDDLE_SHINE_MIN,
+		POST_RAIN_PUDDLE_SHINE_MAX,
 		GetDefaultPostRainPuddleShineForMode(data.settings));
 	data.settings.RaindropFxRange = std::clamp(
 		MetersToGameUnits(ClampFiniteOrDefault(
