@@ -145,8 +145,8 @@ namespace SharedData
 		float WetnessEffectsPadding0;
 		float WetnessEffectsPadding1;
 		float WetnessEffectsPadding2;
-		// Reserved to keep CB layout parity with WetnessEffects::PerFrame.
-		float WetnessEffectsPadding3;
+		// View-depth fade/cull range for dev-style wetness distance fading, in game units.
+		float WetnessDistanceFadeRange;
 	};
 
 	struct SkylightingSettings

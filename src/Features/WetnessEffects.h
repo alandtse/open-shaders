@@ -36,8 +36,8 @@ public:
 		float MaxPuddleWetness = 2.5f;
 		float MaxShoreWetness = 0.75f;
 		uint ShoreRange = 32;
-		// User/persisted value in meters; converted to game units when sent to shader.
-		float PuddleRadius = 1.7f;
+		// User/persisted value in game units.
+		float PuddleRadiusWorldUnits = 119.05f;
 		float PuddleMaxAngle = 0.9f;
 		float PuddleMinWetness = 0.85f;
 		float MinRainWetness = 0.65f;
@@ -56,8 +56,8 @@ public:
 		uint EnableLegacyWetReflection = false;
 		// Derived runtime shader scale (from modern/legacy UI reflection sliders), not a persisted UI control.
 		float WetIndirectSpecularScale = 0.8f;
-		// User/persisted value in meters; converted to game units when sent to shader.
-		float RaindropFxRange = 25.0f;
+		// User/persisted value in game units.
+		float RaindropFxRangeWorldUnits = 1750.70f;
 		float RaindropGridSize = 3.f;
 		float RaindropInterval = 1.0f;
 		float RaindropChance = 1.0f;
@@ -100,7 +100,7 @@ public:
 		float MaxShoreWetness = 0.75f;
 		uint ShoreRange = 32;
 		// Shader/runtime value in game units.
-		float PuddleRadius = 1.7f;
+		float PuddleRadius = 119.05f;
 		float PuddleMaxAngle = 0.9f;
 		float PuddleMinWetness = 0.85f;
 		float MinRainWetness = 0.65f;
@@ -117,7 +117,7 @@ public:
 		uint EnableLegacyWetReflection = false;
 		float WetIndirectSpecularScale = 0.8f;
 		// Shader/runtime value in game units.
-		float RaindropFxRange = 1500.f;
+		float RaindropFxRange = 1750.70f;
 		float RaindropGridSize = 3.f;
 		float RaindropInterval = 1.0f;
 		float RaindropChance = 1.0f;
@@ -193,6 +193,7 @@ public:
 	float rainReflectionBalance = 0.5f;
 	float postRainWaterClarity = 0.0f;
 	float shorePersistentDarkeningStrength = 1.5f;
+	float wetnessDistanceFadeRange = 10240.0f;
 	// Climate preset system
 	enum class ClimatePreset : uint32_t
 	{
