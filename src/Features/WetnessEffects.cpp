@@ -34,10 +34,21 @@ namespace
 	constexpr float MIN_RIPPLE_LIFETIME = 1e-3f;
 	constexpr float MIN_RIPPLE_BREADTH = 1e-3f;
 	constexpr float MIN_SPLASH_LIFETIME = 1e-3f;
-	constexpr float MIN_PUDDLE_RADIUS = 1e-3f;
-	constexpr float PUDDLE_RADIUS_UI_MIN = 0.15f;
-	constexpr float PUDDLE_RADIUS_UI_MAX = 50.0f;
-	constexpr float PUDDLE_RADIUS_CLAMP_MAX = 50.0f;
+	// Puddle radius is user-facing and persisted in meters.
+	constexpr float PUDDLE_RADIUS_UI_MIN_METERS = 0.15f;
+	constexpr float PUDDLE_RADIUS_UI_MAX_METERS = 50.0f;
+	constexpr float PUDDLE_RADIUS_CLAMP_MAX_METERS = PUDDLE_RADIUS_UI_MAX_METERS;
+	constexpr float GAME_UNITS_PER_METER = 1.0f / Util::Units::GAME_UNIT_TO_M;
+	// Rain FX range is user-facing and persisted in meters.
+	constexpr float RAINDROP_FX_RANGE_UI_MIN_METERS = 1.0f;
+	constexpr float RAINDROP_FX_RANGE_UI_MAX_METERS = 75.0f;
+	constexpr float RAINDROP_FX_RANGE_CLAMP_MAX_METERS = RAINDROP_FX_RANGE_UI_MAX_METERS;
+	constexpr float DEFAULT_RAINDROP_FX_RANGE_METERS = 25.0f;
+	// Shader receives puddle radius in game units.
+	constexpr float PUDDLE_RADIUS_GAME_MIN = PUDDLE_RADIUS_UI_MIN_METERS * GAME_UNITS_PER_METER;
+	constexpr float PUDDLE_RADIUS_GAME_MAX = PUDDLE_RADIUS_UI_MAX_METERS * GAME_UNITS_PER_METER;
+	constexpr float RAINDROP_FX_RANGE_GAME_MIN = RAINDROP_FX_RANGE_UI_MIN_METERS * GAME_UNITS_PER_METER;
+	constexpr float RAINDROP_FX_RANGE_GAME_MAX = RAINDROP_FX_RANGE_UI_MAX_METERS * GAME_UNITS_PER_METER;
 	constexpr float PUDDLE_LAYOUT_MIN = 0.3f;
 	constexpr float PUDDLE_LAYOUT_MAX = 10.0f;
 	constexpr float LEGACY_WET_REFLECTION_UI_SCALE_MAX = 1.00f;
@@ -122,7 +133,7 @@ namespace
 			1u,
 			0u,
 			2.0f,
-			1000.0f,
+			15.0f,
 			0.80f,
 			0.24f,
 			0.28f,
@@ -140,7 +151,7 @@ namespace
 			1u,
 			0u,
 			2.0f,
-			1250.0f,
+			20.0f,
 			0.85f,
 			0.25f,
 			0.30f,
@@ -158,7 +169,7 @@ namespace
 			1u,
 			0u,
 			2.0f,
-			1500.0f,
+			25.0f,
 			0.9f,
 			0.25f,
 			0.30f,
@@ -559,6 +570,16 @@ namespace
 
 	float ClampFiniteOrDefault(float value, float minValue, float maxValue, float fallback);
 
+	constexpr float MetersToGameUnits(float meters)
+	{
+		return meters * GAME_UNITS_PER_METER;
+	}
+
+	constexpr float GameUnitsToMeters(float gameUnits)
+	{
+		return gameUnits * Util::Units::GAME_UNIT_TO_M;
+	}
+
 	uint32_t EncodeFloatToUint(float value)
 	{
 		uint32_t bits = 0;
@@ -657,7 +678,7 @@ namespace
 	{
 		settings.WeatherTransitionSpeed = ClampFiniteOrDefault(settings.WeatherTransitionSpeed, MIN_TRANSITION_SPEED, MAX_TRANSITION_SPEED, 3.0f);
 		settings.ShoreRange = std::max(settings.ShoreRange, 1u);
-		settings.PuddleRadius = ClampFiniteOrDefault(settings.PuddleRadius, MIN_PUDDLE_RADIUS, PUDDLE_RADIUS_CLAMP_MAX, 1.7f);
+		settings.PuddleRadius = ClampFiniteOrDefault(settings.PuddleRadius, PUDDLE_RADIUS_UI_MIN_METERS, PUDDLE_RADIUS_CLAMP_MAX_METERS, 1.7f);
 		settings.PuddleMaxAngle = ClampFiniteOrDefault(settings.PuddleMaxAngle, 0.0f, 1.0f, 0.9f);
 		settings.PuddleMinWetness = ClampFiniteOrDefault(settings.PuddleMinWetness, 0.0f, 1.0f, 0.85f);
 		settings.MinRainWetness = ClampFiniteOrDefault(settings.MinRainWetness, 0.0f, 1.0f, 0.65f);
@@ -667,7 +688,11 @@ namespace
 		settings.DirtDryingMultiplier = ClampFiniteOrDefault(settings.DirtDryingMultiplier, DRYING_HOURS_MIN, DRYING_HOURS_MAX, DEFAULT_DIRT_DRYING_HOURS);
 		settings.GrassDryingMultiplier = ClampFiniteOrDefault(settings.GrassDryingMultiplier, DRYING_HOURS_MIN, DRYING_HOURS_MAX, DEFAULT_GRASS_DRYING_HOURS);
 
-		settings.RaindropFxRange = ClampFiniteOrDefault(settings.RaindropFxRange, 0.0f, 5000.0f, 1500.0f);
+		settings.RaindropFxRange = ClampFiniteOrDefault(
+			settings.RaindropFxRange,
+			RAINDROP_FX_RANGE_UI_MIN_METERS,
+			RAINDROP_FX_RANGE_CLAMP_MAX_METERS,
+			DEFAULT_RAINDROP_FX_RANGE_METERS);
 		settings.RaindropGridSize = ClampFiniteOrDefault(settings.RaindropGridSize, MIN_RAINDROP_GRID_SIZE, 100.0f, 3.0f);
 		settings.RaindropInterval = ClampFiniteOrDefault(settings.RaindropInterval, MIN_RAINDROP_INTERVAL, 60.0f, 1.0f);
 		settings.RaindropChance = ClampFiniteOrDefault(settings.RaindropChance, 0.0f, 1.0f, 1.0f);
@@ -1161,14 +1186,15 @@ void WetnessEffects::DrawSettings()
 		if (auto _tt = Util::HoverTooltipWrapper()) {
 			ImGui::TextUnformatted("How quickly raindrop effects fade when rain ends. Higher = faster fade, lower = slower fade.");
 		}
-		ImGui::SliderFloat("Effect Range", &settings.RaindropFxRange, 1e2f, 5e3f, "%.0f units");
+		ImGui::SliderFloat("Effect Range", &settings.RaindropFxRange, RAINDROP_FX_RANGE_UI_MIN_METERS, RAINDROP_FX_RANGE_UI_MAX_METERS, "%.1f m");
 		if (auto _tt = Util::HoverTooltipWrapper()) {
+			const float rangeGameUnits = MetersToGameUnits(settings.RaindropFxRange);
 			std::vector<std::string> tooltipLines = {
 				"Higher = wetness FX coverage extends farther around you (surface wetness, puddles, and raindrops).",
 				"Lower = effects stay closer to you.",
 				"Higher values increase performance cost.",
-				Util::Units::FormatDistance(settings.RaindropFxRange),
-				std::format("{:.2f} meters", Util::Units::GameUnitsToMeters(settings.RaindropFxRange))
+				std::format("{:.2f} meters", settings.RaindropFxRange),
+				std::format("{:.1f} game units", rangeGameUnits)
 			};
 			Util::DrawMultiLineTooltip(tooltipLines);
 		}
@@ -1382,16 +1408,17 @@ void WetnessEffects::DrawSettings()
 			ImGui::TextUnformatted("Slope limit for puddle formation. Higher = puddles restricted to flatter ground, lower = puddles can appear on steeper slopes.");
 		}
 
-		ImGui::SliderFloat("Puddle Radius", &settings.PuddleRadius, PUDDLE_RADIUS_UI_MIN, PUDDLE_RADIUS_UI_MAX, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+		ImGui::SliderFloat("Puddle Radius", &settings.PuddleRadius, PUDDLE_RADIUS_UI_MIN_METERS, PUDDLE_RADIUS_UI_MAX_METERS, "%.2f m", ImGuiSliderFlags_AlwaysClamp);
 		if (auto _tt = Util::HoverTooltipWrapper()) {
+			const float puddleRadiusGameUnits = MetersToGameUnits(settings.PuddleRadius);
 			std::vector<std::string> tooltipLines = {
 				"Higher = larger individual puddles, lower = smaller individual puddles.",
 				"When Inactivate Rain Puddle Auto-Expansion is off, rain expands radius to maximum.",
 				"After rain stops, radius settles toward this value over about 3 in-game hours.",
 				"When Inactivate Rain Puddle Auto-Expansion is on, this slider is used directly during rain and after rain.",
 				"Does not control puddle layout/placement.",
-				Util::Units::FormatDistance(settings.PuddleRadius),
-				std::format("{:.2f} meters", Util::Units::GameUnitsToMeters(settings.PuddleRadius))
+				std::format("{:.2f} meters", settings.PuddleRadius),
+				std::format("{:.1f} game units", puddleRadiusGameUnits)
 			};
 			Util::DrawMultiLineTooltip(tooltipLines);
 		}
@@ -1916,9 +1943,9 @@ WetnessEffects::PerFrame WetnessEffects::GetCommonBufferData() const
 	// Shader CB carries puddle layout in its dedicated shader-facing field.
 	// CPU simulation above still uses settings.WeatherTransitionSpeed.
 	data.settings.PuddleLayout = clampedPuddleLayout;
-	const float basePuddleRadius = ClampFiniteOrDefault(data.settings.PuddleRadius, MIN_PUDDLE_RADIUS, PUDDLE_RADIUS_CLAMP_MAX, 1.7f);
-	const float rainExpandedPuddleRadius = std::max(basePuddleRadius, PUDDLE_RADIUS_UI_MAX);
-	float effectivePuddleRadius = basePuddleRadius;
+	const float basePuddleRadiusMeters = ClampFiniteOrDefault(data.settings.PuddleRadius, PUDDLE_RADIUS_UI_MIN_METERS, PUDDLE_RADIUS_CLAMP_MAX_METERS, 1.7f);
+	const float rainExpandedPuddleRadiusMeters = std::max(basePuddleRadiusMeters, PUDDLE_RADIUS_UI_MAX_METERS);
+	float effectivePuddleRadiusMeters = basePuddleRadiusMeters;
 	if (!inactivateRainPuddleAutoExpansion) {
 		// Keep rain-expanded radius tied to visible rain intensity, not lingering weather metadata,
 		// so post-rain radius controls become responsive immediately after rain visuals stop.
@@ -1926,15 +1953,15 @@ WetnessEffects::PerFrame WetnessEffects::GetCommonBufferData() const
 		const bool hasPostRainPuddleSignal = (!rainRadiusPhaseActive) &&
 			((data.PuddleWetness > RUNTIME_DRY_EPSILON) || (runtimeState.puddleDepth > RUNTIME_DRY_EPSILON));
 		if (rainRadiusPhaseActive) {
-			effectivePuddleRadius = rainExpandedPuddleRadius;
+			effectivePuddleRadiusMeters = rainExpandedPuddleRadiusMeters;
 		} else if (hasPostRainPuddleSignal) {
 			// Ease out quickly so the user-selected radius regains influence early in post-rain phase.
 			const float settleLinearT = std::clamp(runtimeState.postRainElapsedSeconds / POST_RAIN_RADIUS_SETTLE_SECONDS, 0.0f, 1.0f);
 			const float settleT = std::sqrt(settleLinearT);
-			effectivePuddleRadius = std::lerp(rainExpandedPuddleRadius, basePuddleRadius, settleT);
+			effectivePuddleRadiusMeters = std::lerp(rainExpandedPuddleRadiusMeters, basePuddleRadiusMeters, settleT);
 		}
 	}
-	data.settings.PuddleRadius = std::clamp(effectivePuddleRadius, MIN_PUDDLE_RADIUS, PUDDLE_RADIUS_CLAMP_MAX);
+	data.settings.PuddleRadius = std::clamp(MetersToGameUnits(effectivePuddleRadiusMeters), PUDDLE_RADIUS_GAME_MIN, PUDDLE_RADIUS_GAME_MAX);
 	data.settings.StoneDryingMultiplier = effectiveDryingHours.stoneHours;
 	data.settings.GrassDryingMultiplier = effectiveDryingHours.grassHours;
 	data.settings.DirtDryingMultiplier = effectiveDryingHours.dirtHours;
@@ -1954,6 +1981,14 @@ WetnessEffects::PerFrame WetnessEffects::GetCommonBufferData() const
 		0.0f,
 		2.0f,
 		GetDefaultPostRainPuddleShineForMode(data.settings));
+	data.settings.RaindropFxRange = std::clamp(
+		MetersToGameUnits(ClampFiniteOrDefault(
+			data.settings.RaindropFxRange,
+			RAINDROP_FX_RANGE_UI_MIN_METERS,
+			RAINDROP_FX_RANGE_CLAMP_MAX_METERS,
+			DEFAULT_RAINDROP_FX_RANGE_METERS)),
+		RAINDROP_FX_RANGE_GAME_MIN,
+		RAINDROP_FX_RANGE_GAME_MAX);
 	data.settings.RaindropChance *= data.Raining * data.Raining;
 	data.settings.RaindropChance = std::clamp(data.settings.RaindropChance, 0.0f, 1.0f);
 	const float safeRaindropGridSize = std::max(data.settings.RaindropGridSize, MIN_RAINDROP_GRID_SIZE);
@@ -2008,6 +2043,7 @@ void WetnessEffects::LoadSettings(json& o_json)
 			"MaxPuddleWetness",
 			"MaxShoreWetness",
 			"EnableRaindropFx",
+			"RaindropFxRange",
 			"RaindropChance",
 			"WetDarkeningStrength",
 			"WetHighlightReduction",
@@ -2032,6 +2068,13 @@ void WetnessEffects::LoadSettings(json& o_json)
 		}
 	} else {
 		logger::warn("[{}] Wetness settings root is not an object; using defaults.", GetName());
+	}
+	// Migration: older configs stored RaindropFxRange in game units.
+	// New configs store it in meters.
+	if (isObject && o_json.contains("RaindropFxRange") && o_json["RaindropFxRange"].is_number()) {
+		if (settings.RaindropFxRange > RAINDROP_FX_RANGE_UI_MAX_METERS) {
+			settings.RaindropFxRange = GameUnitsToMeters(settings.RaindropFxRange);
+		}
 	}
 
 	puddleLayout = JsonValueOr<float>(o_json, "PuddleLayout", DEFAULT_PUDDLE_LAYOUT);

@@ -2566,23 +2566,38 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 			float layoutT = saturate((puddleLayoutSafe - 0.3) / 9.7);
 			float3 layoutSeed = float3(12.7, 19.1, 23.3) * puddleLayoutSafe;
 			float layoutWarp = Random::perlinNoise(puddleCoordsBase * 0.45 + layoutSeed) * 2.0 - 1.0;
-			float3 puddleCoordsWarped = puddleCoordsBase + layoutWarp * float3(0.55, 0.35, 0.42);
+			float layoutWarpStrength = lerp(0.18, 0.85, layoutT);
+			float3 puddleCoordsWarped = puddleCoordsBase + layoutWarp * float3(0.55, 0.35, 0.42) * layoutWarpStrength;
+			float layoutFrequency = lerp(0.58, 2.45, layoutT);
 			float3 puddlePatternOffset = float3(31.0, 17.0, 43.0) * layoutT;
 			// Keep layout/placement independent from puddle radius:
 			// layout controls signal shape/placement, radius only dilates/erodes puddle footprint via threshold bias.
-			float puddleSignal = Random::perlinNoise(puddleCoordsWarped + puddlePatternOffset) * 0.5 + 0.5;
+			float puddleSignal = Random::perlinNoise(puddleCoordsWarped * layoutFrequency + puddlePatternOffset) * 0.5 + 0.5;
 			puddleSignal = puddleSignal * ((minWetnessAngle / puddleMaxAngleSafe) * SharedData::wetnessEffectsSettings.MaxPuddleWetness * 0.25) + 0.5;
 			float basePuddleBlend = lerp(wetness, puddleWetness, saturate(puddleSignal - 0.25));
 			float maxPuddleStrength = saturate(SharedData::wetnessEffectsSettings.MaxPuddleWetness * (1.0 / 3.5));
-			const float puddleRadiusMin = 0.15;
-			const float puddleRadiusMax = 50.0;
-			float radiusSizeT = saturate((puddleRadiusSafe - puddleRadiusMin) / max(1e-3, puddleRadiusMax - puddleRadiusMin));
-			float radiusThresholdBias = lerp(0.20, -0.55, radiusSizeT);
+			// Puddle radius is user-controlled in meters on CPU, but shader receives game units.
+			const float gameUnitsPerMeter = (1.0 / 0.01428);
+			const float puddleRadiusMin = 0.15 * gameUnitsPerMeter;
+			const float puddleRadiusFullMerge = 20.0 * gameUnitsPerMeter;
+			const float puddleRadiusMax = 50.0 * gameUnitsPerMeter;
+			float radiusSizeT = saturate((puddleRadiusSafe - puddleRadiusMin) / max(1e-3, puddleRadiusFullMerge - puddleRadiusMin));
+			float radiusOverflowT = saturate((puddleRadiusSafe - puddleRadiusFullMerge) / max(1e-3, puddleRadiusMax - puddleRadiusFullMerge));
+			float radiusThresholdBias = lerp(0.24, -0.62, radiusSizeT);
+			radiusThresholdBias = lerp(radiusThresholdBias, -0.74, radiusOverflowT);
 			float baseThreshold = saturate(lerp(0.93, 0.72, maxPuddleStrength) + radiusThresholdBias);
 			float baseGate = saturate((puddleSignal - baseThreshold) / max(1e-3, 1.0 - baseThreshold));
 			// Suppress low-amplitude puddle tails so puddle radius does not drive a broad
 			// weak sheen pattern across non-puddle regions.
-			baseGate = smoothstep(0.16, 0.82, baseGate);
+			baseGate = smoothstep(0.12, 0.78, baseGate);
+			// During rain, let large puddle radius values merge local puddles so coverage
+			// expands toward continuous connected water instead of isolated islands.
+			float rainMergeThreshold = lerp(0.78, 0.26, radiusSizeT);
+			rainMergeThreshold = lerp(rainMergeThreshold, 0.18, radiusOverflowT);
+			rainMergeThreshold = lerp(1.0, rainMergeThreshold, saturate(SharedData::wetnessEffectsSettings.MaxPuddleWetness * (1.0 / 2.5)));
+			float rainMergeGate = saturate((puddleSignal - rainMergeThreshold) / max(1e-3, 1.0 - rainMergeThreshold));
+			rainMergeGate = smoothstep(0.05, 0.65, rainMergeGate);
+			baseGate = lerp(baseGate, max(baseGate, rainMergeGate), inRainBlend);
 			float puddleSlopeMask = smoothstep(puddleMaxAngleSafe, 1.0, saturate(worldNormal.z));
 			float basePuddle = baseGate * basePuddleBlend * puddleSlopeMask;
 			puddle = basePuddle;
