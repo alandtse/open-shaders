@@ -1946,6 +1946,7 @@ WetnessEffects::PerFrame WetnessEffects::GetCommonBufferData() const
 	const float basePuddleRadiusMeters = ClampFiniteOrDefault(data.settings.PuddleRadius, PUDDLE_RADIUS_UI_MIN_METERS, PUDDLE_RADIUS_CLAMP_MAX_METERS, 1.7f);
 	const float rainExpandedPuddleRadiusMeters = std::max(basePuddleRadiusMeters, PUDDLE_RADIUS_UI_MAX_METERS);
 	float effectivePuddleRadiusMeters = basePuddleRadiusMeters;
+	bool rainAutoExpansionPhaseActive = false;
 	if (!inactivateRainPuddleAutoExpansion) {
 		// Keep rain-expanded radius tied to visible rain intensity, not lingering weather metadata,
 		// so post-rain radius controls become responsive immediately after rain visuals stop.
@@ -1954,6 +1955,7 @@ WetnessEffects::PerFrame WetnessEffects::GetCommonBufferData() const
 			((data.PuddleWetness > RUNTIME_DRY_EPSILON) || (runtimeState.puddleDepth > RUNTIME_DRY_EPSILON));
 		if (rainRadiusPhaseActive) {
 			effectivePuddleRadiusMeters = rainExpandedPuddleRadiusMeters;
+			rainAutoExpansionPhaseActive = true;
 		} else if (hasPostRainPuddleSignal) {
 			// Ease out quickly so the user-selected radius regains influence early in post-rain phase.
 			const float settleLinearT = std::clamp(runtimeState.postRainElapsedSeconds / POST_RAIN_RADIUS_SETTLE_SECONDS, 0.0f, 1.0f);
@@ -1974,7 +1976,7 @@ WetnessEffects::PerFrame WetnessEffects::GetCommonBufferData() const
 	const bool masterWetnessEnabled = settings.EnableWetnessEffects != 0;
 	const float activeShorePersistentDarkeningStrength = masterWetnessEnabled ? clampedShorePersistentDarkeningStrength : 0.0f;
 	data.ReservedPerFramePadding0 = EncodeFloatToUint(activeShorePersistentDarkeningStrength);
-	data.ReservedPerFramePadding1 = 0u;
+	data.ReservedPerFramePadding1 = EncodeFloatToUint(rainAutoExpansionPhaseActive ? 1.0f : 0.0f);
 	data.ReservedPerFramePadding2 = 0u;
 	data.settings.PostRainPuddleWaterStrength = ClampFiniteOrDefault(
 		data.settings.PostRainPuddleWaterStrength,

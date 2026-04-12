@@ -2397,6 +2397,8 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 #		endif
 	const float rainingAmount = saturate(SharedData::wetnessEffectsSettings.Raining);
 	const float inRainBlend = smoothstep(0.05, 0.35, rainingAmount);
+	// CPU sets this flag only while rain-time puddle auto-expansion is actively forcing max radius.
+	const bool rainAutoExpansionPhaseActive = SharedData::wetnessEffectsSettings.WetnessEffectsPadding0 > 0.5;
 
 	// Surface classification used for both in-rain response and post-rain drying.
 	float vegetationFactor = 0.0;
@@ -2605,6 +2607,29 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 			float rainMergeGate = saturate((puddleNoiseSignal - rainMergeThreshold) / max(1e-3, 1.0 - rainMergeThreshold));
 			rainMergeGate = smoothstep(0.05, 0.65, rainMergeGate);
 			baseGate = lerp(baseGate, max(baseGate, rainMergeGate), inRainBlend);
+
+			// Rain auto-expansion phase: approximate segmentation-mask dilation so puddle islands
+			// bridge and connect instead of staying as disconnected spots.
+			if (rainAutoExpansionPhaseActive && inRainBlend > 1e-3) {
+				float autoExpandT = saturate(inRainBlend * (0.4 + 0.6 * radiusOverflowT));
+				float3 puddleNoiseCoord = puddleCoordsWarped * layoutFrequency + puddlePatternOffset;
+				float dilationStep = lerp(0.00, 0.60, autoExpandT);
+				float3 dilateX = float3(dilationStep, 0.0, 0.0);
+				float3 dilateY = float3(0.0, dilationStep, 0.0);
+				float3 dilateZ = float3(0.0, 0.0, dilationStep);
+				float dilatedNoise = puddleNoiseSignal;
+				dilatedNoise = max(dilatedNoise, Random::perlinNoise(puddleNoiseCoord + dilateX) * 0.5 + 0.5);
+				dilatedNoise = max(dilatedNoise, Random::perlinNoise(puddleNoiseCoord - dilateX) * 0.5 + 0.5);
+				dilatedNoise = max(dilatedNoise, Random::perlinNoise(puddleNoiseCoord + dilateY) * 0.5 + 0.5);
+				dilatedNoise = max(dilatedNoise, Random::perlinNoise(puddleNoiseCoord - dilateY) * 0.5 + 0.5);
+				dilatedNoise = max(dilatedNoise, Random::perlinNoise(puddleNoiseCoord + dilateZ) * 0.5 + 0.5);
+				dilatedNoise = max(dilatedNoise, Random::perlinNoise(puddleNoiseCoord - dilateZ) * 0.5 + 0.5);
+
+				float bridgeThreshold = lerp(rainMergeThreshold, 0.06, autoExpandT);
+				float bridgeGate = saturate((dilatedNoise - bridgeThreshold) / max(1e-3, 1.0 - bridgeThreshold));
+				bridgeGate = smoothstep(0.02, 0.55, bridgeGate);
+				baseGate = max(baseGate, bridgeGate);
+			}
 			float puddleSlopeMask = smoothstep(puddleMaxAngleSafe, 1.0, saturate(worldNormal.z));
 			float basePuddle = baseGate * basePuddleBlend * puddleSlopeMask;
 			puddle = basePuddle;
