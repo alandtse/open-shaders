@@ -246,13 +246,8 @@ struct IDXGISwapChain_Present
 		// HDR pipeline runs when:
 		// 1. HDR Display loaded + enableHDR=true + resources ready (full HDR processing)
 		// 2. Frame Gen active (needs ScaleUIBrightnessForFG to premultiply UI even in SDR mode)
-		// 3. VR in developer mode (SupportsVR()=false removes HDRDisplay from the VR feature
-		//    list in production, so hdr is null there and this branch is never reached).
-		//    In VR, kFRAMEBUFFER is an intermediate texture — not the companion back buffer.
-		//    ApplyHDR blits kFRAMEBUFFER (scene + vanilla UI + ImGui all baked in) to the
-		//    companion swap chain so the desktop window receives the complete frame.
 		bool hdrReady = hdr && hdr->hdrDataCB && hdr->outputTexture &&
-		                (hdr->settings.enableHDR || frameGenActive || globals::game::isVR);
+		                (hdr->settings.enableHDR || frameGenActive);
 
 		// Save original viewport to restore after UI rendering
 		D3D11_VIEWPORT savedViewport = {};

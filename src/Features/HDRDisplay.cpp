@@ -212,12 +212,20 @@ namespace
 			func(a_this, a3, a_target, a_4, a_5);
 			hdr->RestoreFramebuffer();
 
-			// VR: RedirectFramebuffer made ISHDR write to hdrTexture; after
-			// RestoreFramebuffer kFRAMEBUFFER reverts to its original (pre-ISHDR)
-			// texture.  ISCopy reads kFRAMEBUFFER to build the per-eye HMD textures,
-			// so we must restore the tonemapped content before ISCopy runs.
-			// ApplyHDR (called later at Present) will overwrite the companion back
-			// buffer with the full HDR composite.
+			// VR: RedirectFramebuffer made ISHDR write to hdrTexture (float16); after
+			// RestoreFramebuffer kFRAMEBUFFER reverts to its original texture.
+			// ISCopy reads kFRAMEBUFFER.SRV to distribute the frame to the HMD and
+			// companion window, so we must write the tonemapped content back into
+			// kFRAMEBUFFER before ISCopy runs.
+			//
+			// TODO (future HDR HMD support): The correct pipeline is to run the full
+			// HDR composite (PQ encode, paper white, peak nits) HERE, writing the
+			// result back to kFRAMEBUFFER so ISCopy distributes HDR-processed content
+			// to both the HMD and companion at their native sizes.  The post-Present
+			// ApplyHDR path cannot do this correctly because ISCopy has already run
+			// and the companion back buffer (1024x1024) does not match outputTexture
+			// (sized from kMAIN).  Requires hooking the ISCopy vfunc to fire
+			// HDROutputCS before distribution.
 			if (globals::game::isVR && hdr->settings.enableHDR &&
 				hdr->hdrTexture && hdr->hdrTexture->resource) {
 				auto& fb = globals::game::renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kFRAMEBUFFER];
@@ -890,14 +898,16 @@ void HDRDisplay::ApplyHDR()
 			(settings.enableHDR && hdrTexture && hdrTexture->srv) ? hdrTexture->srv.get() :
 																	framebufferRT.SRV;
 
-		// Choose the correct UI buffer based on which path is active
-		// When D3D12 swap chain is active, vanilla UI renders to uiBufferWrapped
-		// Otherwise it renders to our uiTexture
+		// Choose the correct UI buffer based on which path is active.
+		// VR uses the framebuffer directly, which already contains vanilla UI/ImGui.
+		// Binding a separate uiTexture here would duplicate the UI layer.
 		ID3D11ShaderResourceView* uiSRV = nullptr;
-		if (upscaling.d3d12SwapChainActive && upscaling.dx12SwapChain.uiBufferWrapped) {
-			uiSRV = upscaling.dx12SwapChain.uiBufferWrapped->srv;
-		} else if (uiTexture && uiTexture->srv) {
-			uiSRV = uiTexture->srv.get();
+		if (!globals::game::isVR) {
+			if (upscaling.d3d12SwapChainActive && upscaling.dx12SwapChain.uiBufferWrapped) {
+				uiSRV = upscaling.dx12SwapChain.uiBufferWrapped->srv;
+			} else if (uiTexture && uiTexture->srv) {
+				uiSRV = uiTexture->srv.get();
+			}
 		}
 
 		ID3D11ShaderResourceView* views[2] = { sceneSRV, uiSRV };
