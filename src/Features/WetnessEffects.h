@@ -52,7 +52,6 @@ public:
 		uint EnableRaindropFx = true;
 		uint EnableSplashes = true;
 		uint EnableRipples = true;
-		uint EnableVanillaRipples = false;
 		uint EnableModernWetReflection = true;
 		uint EnableLegacyWetReflection = false;
 		// Derived runtime shader scale (from modern/legacy UI reflection sliders), not a persisted UI control.
@@ -80,16 +79,16 @@ public:
 		uint EnableVanillaReflectionCompensation = true;
 		float WetFilmSpecularFloorScale = 1.5f;
 	};
-	static_assert(sizeof(Settings) == 160, "WetnessEffects::Settings layout changed; update wetness shader/CB contract.");
+	static_assert(sizeof(Settings) == 156, "WetnessEffects::Settings layout changed; update wetness shader/CB contract.");
 	static_assert(offsetof(Settings, WeatherTransitionSpeed) == 40, "WetnessEffects::Settings WeatherTransitionSpeed offset changed.");
 	static_assert(offsetof(Settings, EnableRaindropFx) == 56, "WetnessEffects::Settings EnableRaindropFx offset changed.");
-	static_assert(offsetof(Settings, WetIndirectSpecularScale) == 80, "WetnessEffects::Settings WetIndirectSpecularScale offset changed.");
-	static_assert(offsetof(Settings, RaindropGridSize) == 88, "WetnessEffects::Settings RaindropGridSize offset changed.");
-	static_assert(offsetof(Settings, RippleLifetime) == 128, "WetnessEffects::Settings RippleLifetime offset changed.");
-	static_assert(offsetof(Settings, WetHighlightReduction) == 144, "WetnessEffects::Settings WetHighlightReduction offset changed.");
-	static_assert(offsetof(Settings, EnableForwardReflectionBias) == 148, "WetnessEffects::Settings EnableForwardReflectionBias offset changed.");
-	static_assert(offsetof(Settings, EnableVanillaReflectionCompensation) == 152, "WetnessEffects::Settings EnableVanillaReflectionCompensation offset changed.");
-	static_assert(offsetof(Settings, WetFilmSpecularFloorScale) == 156, "WetnessEffects::Settings WetFilmSpecularFloorScale offset changed.");
+	static_assert(offsetof(Settings, WetIndirectSpecularScale) == 76, "WetnessEffects::Settings WetIndirectSpecularScale offset changed.");
+	static_assert(offsetof(Settings, RaindropGridSize) == 84, "WetnessEffects::Settings RaindropGridSize offset changed.");
+	static_assert(offsetof(Settings, RippleLifetime) == 124, "WetnessEffects::Settings RippleLifetime offset changed.");
+	static_assert(offsetof(Settings, WetHighlightReduction) == 140, "WetnessEffects::Settings WetHighlightReduction offset changed.");
+	static_assert(offsetof(Settings, EnableForwardReflectionBias) == 144, "WetnessEffects::Settings EnableForwardReflectionBias offset changed.");
+	static_assert(offsetof(Settings, EnableVanillaReflectionCompensation) == 148, "WetnessEffects::Settings EnableVanillaReflectionCompensation offset changed.");
+	static_assert(offsetof(Settings, WetFilmSpecularFloorScale) == 152, "WetnessEffects::Settings WetFilmSpecularFloorScale offset changed.");
 
 	// Shader-facing wetness settings layout.
 	// Keep this binary-compatible with Settings while exposing shader semantics directly.
@@ -114,7 +113,6 @@ public:
 		uint EnableRaindropFx = true;
 		uint EnableSplashes = true;
 		uint EnableRipples = true;
-		uint EnableVanillaRipples = false;
 		uint EnableModernWetReflection = true;
 		uint EnableLegacyWetReflection = false;
 		float WetIndirectSpecularScale = 0.8f;
@@ -162,11 +160,12 @@ public:
 		float Wetness;
 		float PuddleWetness;
 		ShaderSettings settings;
-		// Explicit tail padding so the packed feature buffer keeps 16-byte CB stride.
+		// Explicit tail padding so the packed feature buffer and shader CB stay 16-byte aligned.
 		uint ReservedPerFramePadding0 = 0;
 		uint ReservedPerFramePadding1 = 0;
 		uint ReservedPerFramePadding2 = 0;
 		uint ReservedPerFramePadding3 = 0;
+		uint ReservedPerFramePadding4 = 0;
 	};
 	STATIC_ASSERT_ALIGNAS_16(PerFrame);
 	static_assert(offsetof(PerFrame, settings) == 80, "WetnessEffects::PerFrame settings offset changed.");
@@ -220,7 +219,6 @@ public:
 
 	virtual void SetupResources() override;
 	virtual void Prepass() override;
-	virtual void PostPostLoad() override;
 
 	virtual void DrawSettings() override;
 
@@ -254,8 +252,6 @@ private:
 	void ResetRuntimeState();
 	void InvalidateSanitizedSettingsCache();
 	const Settings& GetSanitizedSettings() const;
-
-	bool splashesOfStormsLoaded = false;
 
 	struct RuntimeState
 	{

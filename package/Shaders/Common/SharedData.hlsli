@@ -115,7 +115,6 @@ namespace SharedData
 
 		uint EnableSplashes;
 		uint EnableRipples;
-		uint EnableVanillaRipples;
 		uint EnableModernWetReflection;
 		uint EnableLegacyWetReflection;
 		float WetIndirectSpecularScale;
@@ -146,6 +145,8 @@ namespace SharedData
 		float WetnessEffectsPadding0;
 		float WetnessEffectsPadding1;
 		float WetnessEffectsPadding2;
+		// Reserved to keep CB layout parity with WetnessEffects::PerFrame.
+		float WetnessEffectsPadding3;
 	};
 
 	struct SkylightingSettings

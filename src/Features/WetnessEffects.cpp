@@ -118,7 +118,6 @@ namespace
 		uint enableRaindropFx;
 		uint enableSplashes;
 		uint enableRipples;
-		uint enableVanillaRipples;
 		float raindropTransitionFalloff;
 		float raindropFxRange;
 		float splashesStrength;
@@ -139,7 +138,6 @@ namespace
 			1u,
 			1u,
 			1u,
-			0u,
 			2.0f,
 			15.0f,
 			0.80f,
@@ -157,7 +155,6 @@ namespace
 			1u,
 			1u,
 			1u,
-			0u,
 			2.0f,
 			20.0f,
 			0.85f,
@@ -175,7 +172,6 @@ namespace
 			1u,
 			1u,
 			1u,
-			0u,
 			2.0f,
 			25.0f,
 			0.9f,
@@ -647,7 +643,6 @@ namespace
 		settings.EnableRaindropFx = preset.enableRaindropFx;
 		settings.EnableSplashes = preset.enableSplashes;
 		settings.EnableRipples = preset.enableRipples;
-		settings.EnableVanillaRipples = preset.enableVanillaRipples;
 
 		settings.RaindropTransitionFalloff = preset.raindropTransitionFalloff;
 		settings.RaindropFxRange = preset.raindropFxRange;
@@ -687,7 +682,6 @@ namespace
 		settings.EnableRaindropFx = SanitizeToggle(settings.EnableRaindropFx);
 		settings.EnableSplashes = SanitizeToggle(settings.EnableSplashes);
 		settings.EnableRipples = SanitizeToggle(settings.EnableRipples);
-		settings.EnableVanillaRipples = SanitizeToggle(settings.EnableVanillaRipples);
 		settings.EnableForwardReflectionBias = SanitizeToggle(settings.EnableForwardReflectionBias);
 		settings.EnableVanillaReflectionCompensation = SanitizeToggle(settings.EnableVanillaReflectionCompensation);
 		SanitizeReflectionSettings(settings);
@@ -777,7 +771,6 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	EnableRaindropFx,
 	EnableSplashes,
 	EnableRipples,
-	EnableVanillaRipples,
 	EnableModernWetReflection,
 	EnableLegacyWetReflection,
 	RaindropFxRange,
@@ -958,65 +951,6 @@ static const std::array<WetnessEffects::ClimateSettings, 6> CLIMATE_PRESETS = { 
 	CLIMATE_PRESET_INFO[5].settings   // Monsoon/Extreme
 } };
 
-// Ripples code borrowed from po3 SplashesofStorms
-// https://github.com/powerof3/SplashesOfStorms/blob/master/src/Hooks.cpp under MIT License
-namespace Ripples
-{
-	// Cache settings to avoid repeated singleton access
-	static bool s_isEnabled = false;
-	static bool s_vanillaRipplesEnabled = false;
-
-	struct ToggleWaterSplashes
-	{
-		static void thunk(RE::TESWaterSystem* a_waterSystem, bool a_enabled, float a_fadeAmount)
-		{
-			// Apply our logic only if wetness effects are enabled
-			if (s_isEnabled) {
-				a_enabled = a_enabled && s_vanillaRipplesEnabled;
-			}
-			for (auto& waterObject : a_waterSystem->waterObjects) {
-				if (waterObject) {
-					if (const auto& rippleObject = waterObject->waterRippleObject; rippleObject) {
-						rippleObject->SetAppCulled(!a_enabled);
-					}
-				}
-			}
-
-			func(a_waterSystem, a_enabled, a_fadeAmount);
-		}
-		static inline REL::Relocation<decltype(thunk)> func;
-	};
-
-	void UpdateSettings()
-	{
-		auto& wetnessEffects = globals::features::wetnessEffects;
-		s_isEnabled = wetnessEffects.settings.EnableWetnessEffects;
-		s_vanillaRipplesEnabled = wetnessEffects.settings.EnableVanillaRipples;
-		logger::debug("[{}] UpdateSettings: EnableWetnessEffects={}, EnableVanillaRipples={}",
-			wetnessEffects.GetName(), s_isEnabled, s_vanillaRipplesEnabled);
-	}
-
-	void Install()
-	{
-		auto& wetnessEffects = globals::features::wetnessEffects;
-		REL::Relocation<std::uintptr_t> target{ RELOCATION_ID(25638, 26179), REL::VariantOffset(0x238, 0x223, 0x238) };
-		stl::write_thunk_call<ToggleWaterSplashes>(target.address());
-		logger::info("[{}] Installed ripple hooks", wetnessEffects.GetName());
-	}
-}
-
-void WetnessEffects::PostPostLoad()
-{
-	splashesOfStormsLoaded = static_cast<bool>(GetModuleHandle(L"po3_SplashesOfStorms.dll"));
-	if (splashesOfStormsLoaded) {
-		logger::info("[{}] Splashes of Storms detected, compatibility enabled", GetName());
-		return;
-	}
-
-	// Only hook if SoS is not loaded
-	Ripples::Install();
-}
-
 void WetnessEffects::SetupResources()
 {
 	// No authored puddle-mask resources are required.
@@ -1138,9 +1072,7 @@ void WetnessEffects::DrawSettings()
 
 	drawSectionDivider();
 
-	if (drawUintCheckbox("Enable Wetness", settings.EnableWetnessEffects)) {
-		Ripples::UpdateSettings();  // Update cache when settings change
-	}
+	drawUintCheckbox("Enable Wetness", settings.EnableWetnessEffects);
 	if (auto _tt = Util::HoverTooltipWrapper()) {
 		ImGui::TextUnformatted("Enables wetness visuals. Off = no rain film, puddles, or shore wetness.");
 	}
@@ -1157,7 +1089,6 @@ void WetnessEffects::DrawSettings()
 		if (ImGui::Button(preset.name)) {
 			ApplyWetnessUiPreset(settings, modernWetIndirectSpecularScale, legacyWetIndirectSpecularScale, preset);
 			DetectCurrentPreset();
-			Ripples::UpdateSettings();
 		}
 		if (auto _tt = Util::HoverTooltipWrapper()) {
 			ImGui::TextUnformatted(preset.description);
@@ -1190,20 +1121,6 @@ void WetnessEffects::DrawSettings()
 		if (auto _tt = Util::HoverTooltipWrapper()) {
 			ImGui::TextUnformatted("Shows circular ripple rings on wet surfaces. Off = no ripple rings. Can be a noticeable cost in heavy rain.");
 		}
-
-		ImGui::BeginDisabled(splashesOfStormsLoaded);
-		std::string checkboxLabel = splashesOfStormsLoaded ?
-		                                "Enable Vanilla Ripples - Controlled by Splashes of Storms" :
-		                                "Enable Vanilla Ripples";
-
-		if (drawUintCheckbox(checkboxLabel.c_str(), settings.EnableVanillaRipples)) {
-			Ripples::UpdateSettings();  // Update cache when settings change
-		}
-		if (auto _tt = Util::HoverTooltipWrapper()) {
-			Util::DrawMultiLineTooltip({ "Enables default ripples (e.g., Ripples01).",
-				"Disabling may not take effect until the next weather change." });
-		}
-		ImGui::EndDisabled();
 		ImGui::EndDisabled();
 
 		ImGui::BeginDisabled(raindropAdvancedDisabled);
@@ -2186,8 +2103,6 @@ void WetnessEffects::LoadSettings(json& o_json)
 	// Auto-detect which preset matches the loaded settings
 	DetectCurrentPreset();
 
-	Ripples::UpdateSettings();  // Sync cached values after loading
-
 	debugSettings = {};
 	if (isObject && o_json.contains("DebugSettings")) {
 		try {
@@ -2238,7 +2153,6 @@ void WetnessEffects::RestoreDefaultSettings()
 	InvalidateSanitizedSettingsCache();
 	DetectCurrentPreset();
 
-	Ripples::UpdateSettings();  // Sync cached values after restoring defaults
 }
 
 void WetnessEffects::DrawWeatherAnalysis() const
