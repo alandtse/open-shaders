@@ -2370,6 +2370,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	float rainWetness = 0.0;
 	float puddleWetness = 0.0;
 	float postRainBlend = 0.0;
+	float wetnessRangeMask = 0.0;
 	float3 wetnessNormal = worldNormal;
 		float wetnessGlossinessAlbedo = 0.0;
 		float wetnessGlossinessSpecular = 0.0;
@@ -2463,8 +2464,12 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	float maxRainDropDistance = raindropRange * raindropRange * 3.0;
 	float rainDropDistance = dot(viewPosition, viewPosition);
 	float distanceFadeout = saturate((1.0 - saturate(rainDropDistance / maxRainDropDistance)) * 3.0);
+	// Shared wetness-fx distance gate driven by Effect Range slider.
+	// Keeps puddle pattern edits (radius/layout) localized instead of affecting the full world.
+	float rainFxDistanceMask = saturate(distanceFadeout);
+	wetnessRangeMask = rainFxDistanceMask;
 	float localRainOcclusion = 1.0;
-	if (rainSurfaceUpness > 0.05 && SharedData::wetnessEffectsSettings.Raining > 0.0f) {
+	if (rainFxDistanceMask > 1e-3 && rainSurfaceUpness > 0.05 && SharedData::wetnessEffectsSettings.Raining > 0.0f) {
 		float4 precipOcclusionTexCoord = mul(SharedData::wetnessEffectsSettings.OcclusionViewProj, float4(input.WorldPosition.xyz, 1));
 		precipOcclusionTexCoord.y = -precipOcclusionTexCoord.y;
 		float2 precipOcclusionUV = precipOcclusionTexCoord.xy * 0.5 + 0.5;
@@ -2479,7 +2484,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 		localRainOcclusion = lerp(1.0, occlusionPass, occlusionValidity);
 	}
 	float puddleRainExposure = lerp(1.0, localRainOcclusion, inRainBlend);
-	[branch] if (inRainBlend > 0.0) {
+	[branch] if (rainFxDistanceMask > 1e-3 && inRainBlend > 0.0) {
 		// Open-sky bypass for puddles: use up-facing slope + ambient sky visibility,
 		// independent of direct sun intensity, so cloudy weather still qualifies.
 		float openSkyUpness = smoothstep(0.55, 0.96, rainSurfaceUpness);
@@ -2531,6 +2536,8 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	float wetnessOcclusionMix = lerp(1.0, wetnessOcclusion, 0.35);
 	rainWetness *= wetnessOcclusionMix;
 	puddleWetness *= wetnessOcclusionMix;
+	rainWetness *= rainFxDistanceMask;
+	puddleWetness *= rainFxDistanceMask;
 
 	// Apply per-surface post-rain drying response (neutral at multiplier=1.0).
 	rainWetness = pow(saturate(rainWetness), surfaceDryingPower);
@@ -2542,6 +2549,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	rainWetness = saturate((rainWetness - postRainDryCut) / max(1e-3, 1.0 - postRainDryCut));
 
 	float shoreWetness = shoreFactor * SharedData::wetnessEffectsSettings.MaxShoreWetness;
+	shoreWetness *= rainFxDistanceMask;
 	wetness = max(shoreWetness, rainWetness);
 
 		// Calculate puddle effects
@@ -2550,7 +2558,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 		const bool puddleAllowed = input.WorldPosition.z > (waterHeight + 0.5);
 		float puddle = puddleAllowed ? wetness : 0.0;
 	#		if !defined(SKINNED)
-		if (puddleAllowed && (wetness > 0.0 || puddleWetness > 0.0)) {
+		if (rainFxDistanceMask > 1e-3 && puddleAllowed && (wetness > 0.0 || puddleWetness > 0.0)) {
 			float puddleMaxAngleSafe = max(SharedData::wetnessEffectsSettings.PuddleMaxAngle, 1e-3);
 			float puddleRadiusSafe = max(SharedData::wetnessEffectsSettings.PuddleRadius, 1e-3);
 			float puddleLayoutSafe = clamp(SharedData::wetnessEffectsSettings.PuddleLayout, 0.3, 10.0);
@@ -2582,12 +2590,13 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	#		endif
 		puddle *= puddleRainExposure;
 		puddle *= saturate(wetnessOcclusion * 2.0);
+		puddle *= rainFxDistanceMask;
 		float puddleReflection = saturate(puddle);
 		float puddleDepthSignal = saturate(pow(saturate(puddleReflection), 0.80));
 		float puddleSpecularBase = saturate(lerp(puddleReflection, puddleDepthSignal, 0.40));
 
 		// Calculate wetness glossiness factors
-	wetnessGlossinessAlbedo = max(puddle, shoreFactorAlbedo * SharedData::wetnessEffectsSettings.MaxShoreWetness);
+	wetnessGlossinessAlbedo = max(puddle, shoreFactorAlbedo * SharedData::wetnessEffectsSettings.MaxShoreWetness * rainFxDistanceMask);
 	wetnessGlossinessAlbedo *= wetnessGlossinessAlbedo;
 
 	// Post-rain shine control:
@@ -2622,6 +2631,10 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	wetFilmRainExposure = max(wetFilmRainExposure, lerp(1.0, 0.80, inRainBlend));
 	float wetFilmSpecular = saturate(wetFilmSource * lerp(0.10, 0.24, inRainBlend) * wetFilmRainExposure * wetFilmFloorScale);
 	wetFilmSpecular *= wetFilmSlopeMask;
+	wetFilmSpecular *= rainFxDistanceMask;
+	// Reduce broad post-rain wet-film baseline so puddle radius/layout remains readable
+	// instead of collapsing into a nearly uniform sheen with dark cutouts.
+	wetFilmSpecular *= lerp(1.0, 0.62, postRainBlend);
 	wetnessGlossinessSpecular = max(wetnessGlossinessSpecular, wetFilmSpecular);
 	float deepPuddleMask = smoothstep(0.10, 0.80, puddleDepthSignal);
 	float rainPuddlePhase = saturate(inRainBlend * deepPuddleMask);
@@ -2681,7 +2694,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 
 	waterRoughnessSpecular = 1.0 - wetnessGlossinessSpecular * 0.97;
 	}
-	const bool wetSpecularEnabled = wetnessEnabled;
+	const bool wetSpecularEnabled = wetnessEnabled && (wetnessRangeMask > 1e-3);
 #	endif
 
 	float llDirLightMult = SharedData::linearLightingSettings.enableLinearLighting && !SharedData::linearLightingSettings.isDirLightLinear && (inWorld || inReflection) && !SharedData::InInterior ? SharedData::linearLightingSettings.dirLightMult : 1.0f;
@@ -3131,10 +3144,12 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	float shorePersistentDarkeningMask = saturate(shoreFactor);
 	shorePersistentDarkeningMask *= shorePersistentDarkeningMask;
 	shorePersistentDarkeningMask *= smoothstep(0.35, 0.90, saturate(worldNormal.z));
+	shorePersistentDarkeningMask *= wetnessRangeMask;
 	float shorePersistentDarkeningStrength = max(0.0, SharedData::wetnessEffectsSettings.ShorePersistentDarkeningStrength);
 	shorePersistentDarkeningStrength = (shorePersistentDarkeningStrength < 1e-5) ? 0.0 : shorePersistentDarkeningStrength;
 	const bool shorePersistentDarkeningEnabled = shorePersistentDarkeningStrength > 1e-4 && shorePersistentDarkeningMask > 1e-4;
-	[branch] if (wetnessEnabled || shorePersistentDarkeningEnabled) {
+	const bool wetnessInRange = wetnessEnabled && (wetnessRangeMask > 1e-3);
+	[branch] if (wetnessInRange || shorePersistentDarkeningEnabled) {
 #			if defined(TRUE_PBR)
 #				if !defined(LANDSCAPE)
 	[branch] if ((PBRFlags & PBR::Flags::TwoLayer) != 0)

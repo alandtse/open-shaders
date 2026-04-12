@@ -34,10 +34,10 @@ public:
 		uint EnableWetnessEffects = true;
 		float MaxRainWetness = 1.0f;
 		float MaxPuddleWetness = 2.5f;
-		float MaxShoreWetness = 1.0f;
+		float MaxShoreWetness = 0.75f;
 		uint ShoreRange = 32;
-		float PuddleRadius = 1.0f;
-		float PuddleMaxAngle = 0.95f;
+		float PuddleRadius = 1.7f;
+		float PuddleMaxAngle = 0.9f;
 		float PuddleMinWetness = 0.85f;
 		float MinRainWetness = 0.65f;
 		float SkinWetness = 0.95f;
@@ -54,29 +54,30 @@ public:
 		uint EnableVanillaRipples = false;
 		uint EnableModernWetReflection = true;
 		uint EnableLegacyWetReflection = false;
-		float WetIndirectSpecularScale = 0.2f;
-		float RaindropFxRange = 1000.f;
-		float RaindropGridSize = 4.f;
+		// Derived runtime shader scale (from modern/legacy UI reflection sliders), not a persisted UI control.
+		float WetIndirectSpecularScale = 0.8f;
+		float RaindropFxRange = 1500.f;
+		float RaindropGridSize = 3.f;
 		float RaindropInterval = 1.0f;
 		float RaindropChance = 1.0f;
-		float SplashesLifetime = 10.0f;
-		float SplashesStrength = 1.05f;
-		float SplashesMinRadius = .3f;
-		float SplashesMaxRadius = .5f;
-		float RippleStrength = 1.f;
-		float RippleRadius = 1.f;
-		float RippleBreadth = .5f;
-		float RippleLifetime = .5f;
+		float SplashesLifetime = 6.0f;
+		float SplashesStrength = 0.9f;
+		float SplashesMinRadius = .25f;
+		float SplashesMaxRadius = .3f;
+		float RippleStrength = .7f;
+		float RippleRadius = .6f;
+		float RippleBreadth = .45f;
+		float RippleLifetime = .35f;
 
 		// Wetness tuning controls.
-		float PostRainPuddleWaterStrength = 0.8f;
+		float PostRainPuddleWaterStrength = 0.4f;
 		float RaindropTransitionFalloff = 2.0f;
-		float WetDarkeningStrength = 1.0f;
+		float WetDarkeningStrength = 1.05f;
 		float WetColorSaturation = 1.0f;
-		float WetHighlightReduction = 1.0f;
+		float WetHighlightReduction = 5.0f;
 		uint EnableForwardReflectionBias = false;
-		uint EnableVanillaReflectionCompensation = false;
-		float WetFilmSpecularFloorScale = 1.0f;
+		uint EnableVanillaReflectionCompensation = true;
+		float WetFilmSpecularFloorScale = 1.5f;
 	};
 	static_assert(sizeof(Settings) == 164, "WetnessEffects::Settings layout changed; update wetness shader/CB contract.");
 	static_assert(offsetof(Settings, WeatherTransitionSpeed) == 40, "WetnessEffects::Settings WeatherTransitionSpeed offset changed.");
@@ -96,14 +97,14 @@ public:
 		uint EnableWetnessEffects = true;
 		float MaxRainWetness = 1.0f;
 		float MaxPuddleWetness = 2.5f;
-		float MaxShoreWetness = 1.0f;
+		float MaxShoreWetness = 0.75f;
 		uint ShoreRange = 32;
-		float PuddleRadius = 1.0f;
-		float PuddleMaxAngle = 0.95f;
+		float PuddleRadius = 1.7f;
+		float PuddleMaxAngle = 0.9f;
 		float PuddleMinWetness = 0.85f;
 		float MinRainWetness = 0.65f;
 		float SkinWetness = 0.95f;
-		float PuddleLayout = 2.0f;
+		float PuddleLayout = 3.0f;
 		float StoneDryingMultiplier = 6.0f;
 		float DirtDryingMultiplier = 12.0f;
 		float GrassDryingMultiplier = 3.0f;
@@ -114,28 +115,28 @@ public:
 		uint EnableVanillaRipples = false;
 		uint EnableModernWetReflection = true;
 		uint EnableLegacyWetReflection = false;
-		float WetIndirectSpecularScale = 0.2f;
-		float RaindropFxRange = 1000.f;
-		float RaindropGridSize = 4.f;
+		float WetIndirectSpecularScale = 0.8f;
+		float RaindropFxRange = 1500.f;
+		float RaindropGridSize = 3.f;
 		float RaindropInterval = 1.0f;
 		float RaindropChance = 1.0f;
-		float SplashesLifetime = 10.0f;
-		float SplashesStrength = 1.05f;
-		float SplashesMinRadius = .3f;
-		float SplashesMaxRadius = .5f;
-		float RippleStrength = 1.f;
-		float RippleRadius = 1.f;
-		float RippleBreadth = .5f;
-		float RippleLifetime = .5f;
+		float SplashesLifetime = 6.0f;
+		float SplashesStrength = 0.9f;
+		float SplashesMinRadius = .25f;
+		float SplashesMaxRadius = .3f;
+		float RippleStrength = .7f;
+		float RippleRadius = .6f;
+		float RippleBreadth = .45f;
+		float RippleLifetime = .35f;
 
-		float PostRainPuddleWaterStrength = 0.8f;
+		float PostRainPuddleWaterStrength = 0.4f;
 		float RaindropTransitionFalloff = 2.0f;
-		float WetDarkeningStrength = 1.0f;
+		float WetDarkeningStrength = 1.05f;
 		float WetColorSaturation = 1.0f;
-		float WetHighlightReduction = 1.0f;
+		float WetHighlightReduction = 5.0f;
 		uint EnableForwardReflectionBias = false;
-		uint EnableVanillaReflectionCompensation = false;
-		float WetFilmSpecularFloorScale = 1.0f;
+		uint EnableVanillaReflectionCompensation = true;
+		float WetFilmSpecularFloorScale = 1.5f;
 	};
 	static_assert(sizeof(ShaderSettings) == sizeof(Settings), "WetnessEffects::ShaderSettings must stay binary-compatible with Settings.");
 	static_assert(offsetof(ShaderSettings, PuddleLayout) == offsetof(Settings, WeatherTransitionSpeed),
@@ -182,11 +183,12 @@ public:
 
 	Settings settings;
 	bool enableWeatherDrivenDryingModel = true;
+	bool inactivateRainPuddleAutoExpansion = false;
 	float puddleDryingHours = 18.0f;
-	float puddleLayout = 2.0f;
-	float modernWetIndirectSpecularScale = 0.61f;
-	float legacyWetIndirectSpecularScale = 0.68f;
-	float shorePersistentDarkeningStrength = 1.0f;
+	float puddleLayout = 3.0f;
+	float modernWetIndirectSpecularScale = 0.80f;
+	float legacyWetIndirectSpecularScale = 0.40f;
+	float shorePersistentDarkeningStrength = 1.5f;
 	// Climate preset system
 	enum class ClimatePreset : uint32_t
 	{
