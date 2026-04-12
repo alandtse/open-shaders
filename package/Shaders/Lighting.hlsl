@@ -2721,9 +2721,8 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	// - 1.0 => clearer/deeper water shaping
 	float postRainMirrorMix = 1.0 - postRainSpecBoostCurve;
 	float postRainClarityCubemapScale = lerp(2.20, 0.30, postRainSpecBoostCurve);
+	// Single post-rain cubemap intensity scale path (clarity-style * shine-intensity).
 	postRainPuddleReflectionOverrideScale = clamp(postRainClarityCubemapScale * postRainShineCubemapScale, 0.0, 6.0);
-	float postRainCubemapMirrorScale = lerp(1.0, 1.30, postRainMirrorMix);
-	wetHighlightReflectanceScale *= lerp(1.0, postRainCubemapMirrorScale, postRainPuddlePhase);
 	float postRainDirectMirrorScale = lerp(1.0, 0.82, postRainMirrorMix);
 	wetDirectSpecularScale *= lerp(1.0, postRainDirectMirrorScale, postRainPuddlePhase * 0.90);
 	float postRainSpecBoostScale = lerp(1.0, 2.45, postRainSpecBoostCurve);
@@ -2776,11 +2775,10 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	// Reflection phase shaping:
 	// - During rain: smoothly suppress wet cubemap reflections to zero so
 	//   rain look is driven by direct/specular + raindrops, not sky cubemap.
-	// - After rain: puddle cubemap response is shaped by Post-Rain Water Clarity
-	//   and scaled by Post-Rain Puddle Shine.
+	// - After rain: puddle cubemap response is set through the single post-rain
+	//   reflection-scale override path below.
 	float rainCubemapSuppression = saturate(inRainBlend * inRainCubemapSuppressionFromBalance);
 	wetHighlightReflectanceScale *= (1.0 - rainCubemapSuppression);
-	wetHighlightReflectanceScale *= lerp(1.0, postRainPuddleReflectionOverrideScale, postRainPuddlePhase);
 
 	float wetRoughnessScale = lerp(0.97, 0.995, postRainPuddlePhase * postRainSpecBoostCurve);
 	waterRoughnessSpecular = 1.0 - wetnessGlossinessSpecular * wetRoughnessScale;
