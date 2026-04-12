@@ -13,7 +13,27 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	EnabledSSR,
 	EnabledCreator,
 	InactivateVRForwardCaptureGate,
+	UseVRPlayerRootCaptureAnchor,
 	SuppressSkyAndFrameEdgeCapture);
+
+namespace
+{
+	RE::NiPoint3 GetCubemapCaptureAnchorPosition(bool usePlayerRootAnchor)
+	{
+		if (!(REL::Module::IsVR() && usePlayerRootAnchor)) {
+			return Util::GetAverageEyePosition();
+		}
+
+		if (auto* player = RE::PlayerCharacter::GetSingleton()) {
+			if (auto* root = player->Get3D(false)) {
+				return root->world.translate;
+			}
+			return player->GetPosition();
+		}
+
+		return Util::GetAverageEyePosition();
+	}
+}
 
 std::vector<std::pair<std::string_view, std::string_view>> DynamicCubemaps::GetShaderDefineOptions()
 {
@@ -126,6 +146,10 @@ void DynamicCubemaps::DrawSettings()
 			ImGui::Checkbox("Inactivate Forward Capture Gate (A/B)", reinterpret_cast<bool*>(&settings.InactivateVRForwardCaptureGate));
 			if (auto _tt = Util::HoverTooltipWrapper()) {
 				ImGui::TextUnformatted("A/B toggle for VR cubemap capture. On = disables forward-facing capture gate so reflections are less view-locked to HMD orientation.");
+			}
+			ImGui::Checkbox("Use Player Root Capture Anchor (A/B)", reinterpret_cast<bool*>(&settings.UseVRPlayerRootCaptureAnchor));
+			if (auto _tt = Util::HoverTooltipWrapper()) {
+				ImGui::TextUnformatted("A/B toggle for VR cubemap capture. On = anchor dynamic cubemap history to the player root/body instead of average eye position. This reduces head-locked motion, but the capture remains player-centered rather than truly world-probe-locked.");
 			}
 			ImGui::Checkbox("Suppress Sky/Frame-Edge Capture (A/B)", reinterpret_cast<bool*>(&settings.SuppressSkyAndFrameEdgeCapture));
 			if (auto _tt = Util::HoverTooltipWrapper()) {
@@ -359,7 +383,7 @@ void DynamicCubemaps::UpdateCubemapCapture(bool a_reflections)
 	static float3 cameraPreviousPosAdjust[2] = { { 0, 0, 0 }, { 0, 0, 0 } };
 	updateData.CameraPreviousPosAdjust = cameraPreviousPosAdjust[index];
 
-	auto eyePosition = Util::GetAverageEyePosition();
+	auto eyePosition = GetCubemapCaptureAnchorPosition(settings.UseVRPlayerRootCaptureAnchor);
 
 	cameraPreviousPosAdjust[index] = { eyePosition.x, eyePosition.y, eyePosition.z };
 	updateData.CaptureFlags = 0u;

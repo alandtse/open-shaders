@@ -28,7 +28,7 @@ namespace
 {
 	using GrassLightingSettingsCB = GrassLighting::Settings;
 	using ExtendedMaterialsSettingsCB = ExtendedMaterials::Settings;
-	using DynamicCubemapsSettingsCB = DynamicCubemaps::Settings;
+	using DynamicCubemapsSettingsCB = DynamicCubemaps::CommonBufferData;
 	using TerrainShadowsSettingsCB = TerrainShadows::PerFrame;
 	using LightLimitFixSettingsCB = LightLimitFix::PerFrame;
 	using WetnessEffectsSettingsCB = WetnessEffects::PerFrame;
@@ -151,7 +151,7 @@ std::pair<unsigned char*, size_t> GetFeatureBufferData(bool a_inWorld)
 	return BuildFeatureBufferData(
 		globals::features::grassLighting.settings,
 		globals::features::extendedMaterials.settings,
-		globals::features::dynamicCubemaps.settings,
+		globals::features::dynamicCubemaps.GetCommonBufferData(),
 		globals::features::terrainShadows.GetCommonBufferData(),
 		globals::features::lightLimitFix.GetCommonBufferData(),
 		globals::features::wetnessEffects.GetCommonBufferData(),

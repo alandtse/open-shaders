@@ -95,11 +95,27 @@ public:
 		uint EnabledCreator = false;
 		uint EnabledSSR = true;
 		uint InactivateVRForwardCaptureGate = true;
+		uint UseVRPlayerRootCaptureAnchor = true;
 		uint SuppressSkyAndFrameEdgeCapture = true;
 		float4 CubemapColor{ 1.0f, 1.0f, 1.0f, 0.0f };
 	};
 
+	struct alignas(16) CommonBufferData
+	{
+		uint Enabled = false;
+		float pad0[3]{};
+		float4 CubemapColor{ 1.0f, 1.0f, 1.0f, 0.0f };
+	};
+	STATIC_ASSERT_ALIGNAS_16(CommonBufferData);
+
 	Settings settings;
+	CommonBufferData GetCommonBufferData() const
+	{
+		auto data = CommonBufferData{};
+		data.Enabled = settings.EnabledCreator;
+		data.CubemapColor = settings.CubemapColor;
+		return data;
+	}
 	bool enabledAtBoot = false;
 	void UpdateCubemap();
 
