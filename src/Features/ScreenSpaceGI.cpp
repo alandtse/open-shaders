@@ -74,6 +74,11 @@ namespace
 		return ClampFoveatedPresetMode(a_settings.FoveatedPresetMode);
 	}
 
+	uint32_t QuantizeCenterOffset(float a_value)
+	{
+		return static_cast<uint32_t>(std::lround((a_value + 1.0f) * 10000.0f));
+	}
+
 	bool IsRuntimeFoveatedPresetActive(const ScreenSpaceGI::Settings& a_settings)
 	{
 		return ResolveRuntimeFoveatedPresetMode(a_settings) != kFoveatedPresetModeOff;
@@ -132,6 +137,21 @@ namespace
 	void SyncResolvedCenterMaskScale(ScreenSpaceGI::Settings& a_settings)
 	{
 		a_settings.CenterFullResMaskScale = ResolveFoveatedCenterMaskScale(a_settings);
+	}
+
+	void ResetVRSpecificSettings(ScreenSpaceGI::Settings& a_settings)
+	{
+		const ScreenSpaceGI::Settings defaults{};
+		a_settings.VRCullDistance = defaults.VRCullDistance;
+		a_settings.CenterFullResMaskScale = defaults.CenterFullResMaskScale;
+		a_settings.FoveatedPresetMode = defaults.FoveatedPresetMode;
+	}
+
+	void StripVRSpecificSettings(json& o_json)
+	{
+		o_json.erase("VRCullDistance");
+		o_json.erase("CenterFullResMaskScale");
+		o_json.erase("FoveatedPresetMode");
 	}
 
 	void ApplyPlatformSettingOverrides(ScreenSpaceGI::Settings& a_settings)
@@ -674,6 +694,9 @@ void ScreenSpaceGI::LoadSettings(json& o_json)
 		settings.AOInteriorsOnly = legacyInteriorsOnly;
 		settings.ILInteriorsOnly = legacyInteriorsOnly;
 	}
+	if (!REL::Module::IsVR()) {
+		ResetVRSpecificSettings(settings);
+	}
 	ApplyPlatformSettingOverrides(settings);
 
 	recompileFlag = true;
@@ -681,7 +704,11 @@ void ScreenSpaceGI::LoadSettings(json& o_json)
 
 void ScreenSpaceGI::SaveSettings(json& o_json)
 {
+	ApplyPlatformSettingOverrides(settings);
 	o_json = settings;
+	if (!REL::Module::IsVR()) {
+		StripVRSpecificSettings(o_json);
+	}
 }
 
 void ScreenSpaceGI::SetupResources()
@@ -1201,6 +1228,15 @@ void ScreenSpaceGI::DrawSSGI()
 	hashCombine(static_cast<uint64_t>(resolutionMode));
 	hashCombine(static_cast<uint64_t>(foveatedPresetMode));
 	hashCombine(static_cast<uint64_t>(modeCenterScaleMilli));
+	if (modeCenterScaleMilli > 0) {
+		const auto modeCenterOffsets = GetSharedUpscalingMaskOffsetsForSsgi();
+		hashCombine(static_cast<uint64_t>(QuantizeCenterOffset(modeCenterOffsets[0].x)));
+		hashCombine(static_cast<uint64_t>(QuantizeCenterOffset(modeCenterOffsets[0].y)));
+		if (isVR) {
+			hashCombine(static_cast<uint64_t>(QuantizeCenterOffset(modeCenterOffsets[1].x)));
+			hashCombine(static_cast<uint64_t>(QuantizeCenterOffset(modeCenterOffsets[1].y)));
+		}
+	}
 	hashCombine(static_cast<uint64_t>(runILPath));
 	hashCombine(static_cast<uint64_t>(temporalEnabled));
 	hashCombine(static_cast<uint64_t>(blurEnabled));
