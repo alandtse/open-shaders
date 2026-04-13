@@ -386,8 +386,46 @@ namespace
 	WetnessEffects::ShaderSettings MakeShaderSettings(const WetnessEffects::Settings& settings)
 	{
 		WetnessEffects::ShaderSettings shaderSettings{};
-		static_assert(sizeof(shaderSettings) == sizeof(settings), "Wetness settings binary layout mismatch.");
-		std::memcpy(&shaderSettings, &settings, sizeof(shaderSettings));
+		shaderSettings.EnableWetnessEffects = settings.EnableWetnessEffects;
+		shaderSettings.MaxRainWetness = settings.MaxRainWetness;
+		shaderSettings.MaxPuddleWetness = settings.MaxPuddleWetness;
+		shaderSettings.MaxShoreWetness = settings.MaxShoreWetness;
+		shaderSettings.ShoreRange = settings.ShoreRange;
+		shaderSettings.PuddleRadius = settings.PuddleRadiusWorldUnits;
+		shaderSettings.PuddleMaxAngle = settings.PuddleMaxAngle;
+		shaderSettings.PuddleMinWetness = settings.PuddleMinWetness;
+		shaderSettings.MinRainWetness = settings.MinRainWetness;
+		shaderSettings.SkinWetness = settings.SkinWetness;
+		shaderSettings.PuddleLayout = settings.WeatherTransitionSpeed;
+		shaderSettings.StoneDryingMultiplier = settings.StoneDryingMultiplier;
+		shaderSettings.DirtDryingMultiplier = settings.DirtDryingMultiplier;
+		shaderSettings.GrassDryingMultiplier = settings.GrassDryingMultiplier;
+		shaderSettings.EnableRaindropFx = settings.EnableRaindropFx;
+		shaderSettings.EnableSplashes = settings.EnableSplashes;
+		shaderSettings.EnableRipples = settings.EnableRipples;
+		shaderSettings.EnableModernWetReflection = settings.EnableModernWetReflection;
+		shaderSettings.EnableLegacyWetReflection = settings.EnableLegacyWetReflection;
+		shaderSettings.WetIndirectSpecularScale = settings.WetIndirectSpecularScale;
+		shaderSettings.RaindropFxRange = settings.RaindropFxRangeWorldUnits;
+		shaderSettings.RaindropGridSize = settings.RaindropGridSize;
+		shaderSettings.RaindropInterval = settings.RaindropInterval;
+		shaderSettings.RaindropChance = settings.RaindropChance;
+		shaderSettings.SplashesLifetime = settings.SplashesLifetime;
+		shaderSettings.SplashesStrength = settings.SplashesStrength;
+		shaderSettings.SplashesMinRadius = settings.SplashesMinRadius;
+		shaderSettings.SplashesMaxRadius = settings.SplashesMaxRadius;
+		shaderSettings.RippleStrength = settings.RippleStrength;
+		shaderSettings.RippleRadius = settings.RippleRadius;
+		shaderSettings.RippleBreadth = settings.RippleBreadth;
+		shaderSettings.RippleLifetime = settings.RippleLifetime;
+		shaderSettings.PostRainPuddleWaterStrength = settings.PostRainPuddleWaterStrength;
+		shaderSettings.RaindropTransitionFalloff = settings.RaindropTransitionFalloff;
+		shaderSettings.WetDarkeningStrength = settings.WetDarkeningStrength;
+		shaderSettings.WetHighlightReduction = settings.WetHighlightReduction;
+		shaderSettings.EnableForwardReflectionBias = settings.EnableForwardReflectionBias;
+		shaderSettings.EnableVanillaReflectionCompensation = settings.EnableVanillaReflectionCompensation;
+		shaderSettings.WetFilmSpecularFloorScale = settings.WetFilmSpecularFloorScale;
+		shaderSettings.ShorePersistentDarkeningStrength = 0.0f;
 		return shaderSettings;
 	}
 
@@ -1883,7 +1921,8 @@ WetnessEffects::PerFrame WetnessEffects::GetCommonBufferData() const
 		effectiveDryingHours = getEffectiveDryingHours(dryingEventWeight);
 	}
 
-	data.settings = MakeShaderSettings(GetSanitizedSettings());
+	const Settings& sanitizedSettings = GetSanitizedSettings();
+	data.settings = MakeShaderSettings(sanitizedSettings);
 	if (runtimeInactive) {
 		data.settings.EnableWetnessEffects = 0u;
 	}
@@ -1953,16 +1992,16 @@ WetnessEffects::PerFrame WetnessEffects::GetCommonBufferData() const
 	const float inRainSpecularBoostFromBalance = activeRainReflectionBalance;
 	// Pack auto-expansion flag + post-rain spec boost into one float for shader padding slot.
 	// Fractional lane stores boost in [0, 0.999] so 1.0 remains reserved for the auto-expansion flag boundary.
-	const float packedWetnessPadding0 = postRainSpecBoostFromClarity * 0.999f + (rainAutoExpansionPhaseActive ? 1.0f : 0.0f);
-	data.ReservedPerFramePadding0 = EncodeFloatToUint(activeShorePersistentDarkeningStrength);
-	data.ReservedPerFramePadding1 = EncodeFloatToUint(packedWetnessPadding0);
+	const float packedPostRainControl = postRainSpecBoostFromClarity * 0.999f + (rainAutoExpansionPhaseActive ? 1.0f : 0.0f);
+	data.settings.ShorePersistentDarkeningStrength = activeShorePersistentDarkeningStrength;
+	data.PackedPostRainControl = EncodeFloatToUint(packedPostRainControl);
 	// Pack derived [0..1] controls into one uint lane using UNORM10 triplet:
 	// bits  0.. 9 = post-rain cubemap glare reduction (derived from Post-Rain Water Clarity)
 	// bits 10..19 = in-rain cubemap suppression (derived from Rain Reflection Balance)
 	// bits 20..29 = in-rain specular boost      (derived from Rain Reflection Balance)
-	data.ReservedPerFramePadding2 = PackThreeUnorm10(postRainCubemapGlareReductionFromClarity, inRainCubemapSuppressionFromBalance, inRainSpecularBoostFromBalance);
-	data.ReservedPerFramePadding3 = EncodeFloatToUint(ClampRaindropVisibilityBoost(raindropVisibilityBoost));
-	// Remaining wetness tail lanes carry range/bias test controls in game units.
+	data.PackedRainReflectionControl = PackThreeUnorm10(postRainCubemapGlareReductionFromClarity, inRainCubemapSuppressionFromBalance, inRainSpecularBoostFromBalance);
+	data.RaindropVisibilityBoostPacked = EncodeFloatToUint(ClampRaindropVisibilityBoost(raindropVisibilityBoost));
+	// Remaining wetness packed lanes carry range/bias test controls in game units.
 	data.settings.PostRainPuddleWaterStrength = ClampFiniteOrDefault(
 		data.settings.PostRainPuddleWaterStrength,
 		POST_RAIN_PUDDLE_SHINE_MIN,
@@ -1976,13 +2015,13 @@ WetnessEffects::PerFrame WetnessEffects::GetCommonBufferData() const
 			DEFAULT_RAINDROP_FX_RANGE_GAME_UNITS),
 		RAINDROP_FX_RANGE_UI_MIN_GAME_UNITS,
 		RAINDROP_FX_RANGE_UI_MAX_GAME_UNITS);
-	data.ReservedPerFramePadding4 = EncodeFloatToUint(ClampWetnessDistanceFadeRange(wetnessDistanceFadeRange));
-	data.ReservedPerFramePadding5 = EncodeFloatToUint(ClampFiniteOrDefault(
-		data.settings.WetCubemapStabilityBiasStrength,
+	data.WetnessDistanceFadeRangePacked = EncodeFloatToUint(ClampWetnessDistanceFadeRange(wetnessDistanceFadeRange));
+	data.WetCubemapStabilityBiasStrengthPacked = EncodeFloatToUint(ClampFiniteOrDefault(
+		sanitizedSettings.WetCubemapStabilityBiasStrength,
 		WET_CUBEMAP_STABILITY_BIAS_STRENGTH_MIN,
 		WET_CUBEMAP_STABILITY_BIAS_STRENGTH_MAX,
 		DEFAULT_WET_CUBEMAP_STABILITY_BIAS_STRENGTH));
-	data.ReservedPerFramePadding6 = EncodeFloatToUint(ClampWetCubemapStabilityBiasRange(data.settings.WetCubemapStabilityBiasRange));
+	data.WetCubemapStabilityBiasRangePacked = EncodeFloatToUint(ClampWetCubemapStabilityBiasRange(sanitizedSettings.WetCubemapStabilityBiasRangeWorldUnits));
 	data.settings.RaindropChance *= data.Raining * data.Raining;
 	data.settings.RaindropChance = std::clamp(data.settings.RaindropChance, 0.0f, 1.0f);
 	const float safeRaindropGridSize = std::max(data.settings.RaindropGridSize, MIN_RAINDROP_GRID_SIZE);
@@ -2105,6 +2144,8 @@ void WetnessEffects::LoadSettings(json& o_json)
 void WetnessEffects::SaveSettings(json& o_json)
 {
 	SanitizePersistentUiState(settings, modernWetIndirectSpecularScale, legacyWetIndirectSpecularScale, puddleDryingHours, puddleLayout, rainReflectionBalance, postRainWaterClarity, shorePersistentDarkeningStrength, wetnessDistanceFadeRange, raindropVisibilityBoost);
+	SanitizeToggleSettings(settings);
+	SanitizeShaderFacingSettings(settings);
 	InvalidateSanitizedSettingsCache();
 	o_json = settings;
 	o_json["ModernWetIndirectSpecularScale"] = modernWetIndirectSpecularScale;

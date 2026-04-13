@@ -2377,6 +2377,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 		float wetnessGlossinessSpecular = 0.0;
 		float wetHighlightReflectanceScale = 1.0;
 		float wetDirectSpecularScale = 1.0;
+		float raindropVisibilityPhase = 0.0;
 		const bool wetnessEnabled = (SharedData::wetnessEffectsSettings.EnableWetnessEffects != 0);
 		float postRainPuddleWaterStrength = max(0.0, SharedData::wetnessEffectsSettings.PostRainPuddleWaterStrength);
 		float packedPostRainControl = SharedData::wetnessEffectsSettings.PackedPostRainControl;
@@ -2771,9 +2772,9 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 		float raindropRippleSignal = saturate(length(raindropInfo.xy) * 1.35);
 		float raindropSplashSignal = saturate(raindropInfo.w);
 		float raindropLocalSignal = saturate(max(raindropSplashSignal, raindropRippleSignal) * wetFilmSlopeMask);
-		float raindropVisibilityPhase = saturate(raindropLocalSignal * raindropVisibilityBoost);
-		wetDirectSpecularScale *= lerp(1.0, 1.0 + 0.45 * raindropVisibilityBoost, raindropLocalSignal);
-		wetnessGlossinessSpecular = saturate(wetnessGlossinessSpecular + raindropVisibilityPhase * 0.16);
+		raindropVisibilityPhase = saturate(raindropLocalSignal * raindropVisibilityBoost);
+		wetDirectSpecularScale *= lerp(1.0, 1.0 + 0.65 * raindropVisibilityBoost, raindropLocalSignal);
+		wetnessGlossinessSpecular = saturate(wetnessGlossinessSpecular + raindropVisibilityPhase * 0.24);
 	}
 	[branch] if (postRainVisible) {
 		postRainPuddleReflectionOverrideScale = clamp(
@@ -2824,6 +2825,12 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	float farWhiteSuppression = farGrazingWhiteMask * highlightReductionCurve;
 	wetDirectSpecularScale *= lerp(1.0, 0.18, farWhiteSuppression);
 	wetHighlightReflectanceScale *= lerp(1.0, 0.65, farWhiteSuppression);
+	if (raindropVisibilityPhase > 1e-4) {
+		float raindropReflectanceBoost = lerp(1.0, 1.0 + 0.65 * raindropVisibilityBoost, raindropVisibilityPhase);
+		float raindropDirectBoost = lerp(1.0, 1.0 + 0.85 * raindropVisibilityBoost, raindropVisibilityPhase);
+		wetHighlightReflectanceScale *= raindropReflectanceBoost;
+		wetDirectSpecularScale *= raindropDirectBoost;
+	}
 	// Reflection phase shaping:
 	// - During rain: smoothly suppress wet cubemap reflections to zero so
 	//   rain look is driven by direct/specular + raindrops, not sky cubemap.
@@ -2834,6 +2841,10 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 
 	float wetRoughnessScale = lerp(0.97, 0.995, postRainOverridePhase * postRainSpecBoostCurve);
 	waterRoughnessSpecular = 1.0 - wetnessGlossinessSpecular * wetRoughnessScale;
+	if (raindropVisibilityPhase > 1e-4) {
+		float raindropRoughnessReduction = 0.08 * saturate(raindropVisibilityBoost) * raindropVisibilityPhase;
+		waterRoughnessSpecular = saturate(waterRoughnessSpecular - raindropRoughnessReduction);
+	}
 	}
 	const bool wetSpecularEnabled = wetnessEnabled;
 #	endif
