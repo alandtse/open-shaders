@@ -210,14 +210,17 @@ void VolumetricLighting::DrawSettings()
 	SanitizeSettings();
 
 	if (REL::Module::IsVR()) {
-		if (ImGui::Checkbox("Disable Weather-Driven Volumetric Lighting During Rain", &settings.DisableWeatherInteractionDuringRain))
-			SetupVL();
+		{
+			Util::BlueFrameStyleWrapper disableDuringRainStyle(true);
+			if (ImGui::Checkbox("Disable Weather-Driven Volumetric Lighting During Rain", &settings.DisableWeatherInteractionDuringRain))
+				SetupVL();
+		}
 		if (auto _tt = Util::HoverTooltipWrapper())
 			ImGui::Text("Rain-only mode. Automatically disables weather-driven VL while rain is active and restores it after rain.");
-		ImGui::Separator();
 	}
 
 	DrawGodrayTuningSettings();
+	ImGui::Separator();
 
 	if (ImGui::Checkbox("Enable Volumetric Lighting in Exteriors", &settings.ExteriorEnabled))
 		SetupVL();
