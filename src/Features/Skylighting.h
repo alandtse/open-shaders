@@ -39,6 +39,7 @@ public:
 	virtual void Prepass() override;
 
 	virtual void PostPostLoad() override;
+	virtual bool IsCore() const override { return true; };
 
 	//////////////////////////////////////////////////////////////////////////////////
 
