@@ -194,6 +194,8 @@ public:
 	float postRainWaterClarity = 0.0f;
 	float shorePersistentDarkeningStrength = 1.5f;
 	float wetnessDistanceFadeRange = 10240.0f;
+	bool preventPuddlesOnGrass = false;
+	bool enableMaterialWetShineScaling = false;
 	// Climate preset system
 	enum class ClimatePreset : uint32_t
 	{

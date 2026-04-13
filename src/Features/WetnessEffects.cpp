@@ -107,6 +107,8 @@ namespace
 	constexpr float RAIN_EVENT_DECAY_SECONDS = 43200.0f;
 	constexpr float MIN_WETNESS_DRY_SCALE_AT_MAX_EVENT = 0.12f;
 	constexpr float RUNTIME_DRY_EPSILON = 1e-4f;
+	constexpr uint32_t WETNESS_TOGGLE_PREVENT_PUDDLES_ON_GRASS = 1u << 0;
+	constexpr uint32_t WETNESS_TOGGLE_ENABLE_MATERIAL_WET_SHINE_SCALING = 1u << 1;
 
 	struct WetnessUiPresetDefinition
 	{
@@ -1375,6 +1377,16 @@ void WetnessEffects::DrawSettings()
 			ImGui::TextUnformatted("Wetness threshold for puddles to look like standing water. Higher = only stronger puddles become flat/reflective; lower = watery look appears sooner.");
 		}
 
+		ImGui::Checkbox("Prevent Puddles On Grass", &preventPuddlesOnGrass);
+		if (auto _tt = Util::HoverTooltipWrapper()) {
+			ImGui::TextUnformatted("Prevents standing-water puddles from forming on vegetation-like surfaces while keeping the normal wet darkening and wet sheen.");
+		}
+
+		ImGui::Checkbox("Material-Based Wet Shine Scaling", &enableMaterialWetShineScaling);
+		if (auto _tt = Util::HoverTooltipWrapper()) {
+			ImGui::TextUnformatted("Scales rain and post-rain wet reflections by surface type. Flat metal/cobble respond strongest, then rock, wood, compact dirt, loose dirt, and grass weakest.");
+		}
+
 		ImGui::SliderFloat("Rain Reflection Balance", &rainReflectionBalance, RAIN_REFLECTION_BALANCE_MIN, RAIN_REFLECTION_BALANCE_MAX, "%.2f");
 		if (auto _tt = Util::HoverTooltipWrapper()) {
 			ImGui::TextUnformatted("Balances rain puddle reflections. 0 = more cubemap reflection. Higher = less cubemap and more specular wet-film response. 1 = strongest shift.");
@@ -1964,7 +1976,15 @@ WetnessEffects::PerFrame WetnessEffects::GetCommonBufferData() const
 	// bits 10..19 = in-rain cubemap suppression (derived from Rain Reflection Balance)
 	// bits 20..29 = in-rain specular boost      (derived from Rain Reflection Balance)
 	data.ReservedPerFramePadding2 = PackThreeUnorm10(postRainCubemapGlareReductionFromClarity, inRainCubemapSuppressionFromBalance, inRainSpecularBoostFromBalance);
-	// Final spare wetness lane carries the distance fade/cull range in game units.
+	uint32_t wetnessToggleBits = 0u;
+	if (preventPuddlesOnGrass) {
+		wetnessToggleBits |= WETNESS_TOGGLE_PREVENT_PUDDLES_ON_GRASS;
+	}
+	if (enableMaterialWetShineScaling) {
+		wetnessToggleBits |= WETNESS_TOGGLE_ENABLE_MATERIAL_WET_SHINE_SCALING;
+	}
+	data.ReservedPerFramePadding3 = wetnessToggleBits;
+	// Remaining wetness tail lane carries the distance fade/cull range in game units.
 	data.settings.PostRainPuddleWaterStrength = ClampFiniteOrDefault(
 		data.settings.PostRainPuddleWaterStrength,
 		POST_RAIN_PUDDLE_SHINE_MIN,
@@ -2045,6 +2065,8 @@ void WetnessEffects::LoadSettings(json& o_json)
 			"PuddleDryingHours",
 			"EnableWeatherDrivenDryingModel",
 			"InactivateRainPuddleAutoExpansion",
+			"PreventPuddlesOnGrass",
+			"EnableMaterialWetShineScaling",
 			"PuddleLayout",
 			"PuddleRadiusWorldUnits",
 			"ModernWetIndirectSpecularScale",
@@ -2096,6 +2118,14 @@ void WetnessEffects::LoadSettings(json& o_json)
 		(isObject && o_json.contains("InactivateRainPuddleAutoExpansion")) ?
 			JsonValueToBool(o_json["InactivateRainPuddleAutoExpansion"], false) :
 			false;
+	preventPuddlesOnGrass =
+		(isObject && o_json.contains("PreventPuddlesOnGrass")) ?
+			JsonValueToBool(o_json["PreventPuddlesOnGrass"], false) :
+			false;
+	enableMaterialWetShineScaling =
+		(isObject && o_json.contains("EnableMaterialWetShineScaling")) ?
+			JsonValueToBool(o_json["EnableMaterialWetShineScaling"], false) :
+			false;
 
 	if (!hasExplicitWetnessSettings) {
 		ApplyDefaultWetnessUiPreset(settings, modernWetIndirectSpecularScale, legacyWetIndirectSpecularScale);
@@ -2138,6 +2168,8 @@ void WetnessEffects::SaveSettings(json& o_json)
 	o_json["WetnessFadeRange"] = wetnessDistanceFadeRange;
 	o_json["EnableWeatherDrivenDryingModel"] = enableWeatherDrivenDryingModel;
 	o_json["InactivateRainPuddleAutoExpansion"] = inactivateRainPuddleAutoExpansion;
+	o_json["PreventPuddlesOnGrass"] = preventPuddlesOnGrass;
+	o_json["EnableMaterialWetShineScaling"] = enableMaterialWetShineScaling;
 
 	o_json["DebugSettings"] = debugSettings;
 }
@@ -2147,6 +2179,8 @@ void WetnessEffects::RestoreDefaultSettings()
 	settings = {};
 	enableWeatherDrivenDryingModel = true;
 	inactivateRainPuddleAutoExpansion = false;
+	preventPuddlesOnGrass = false;
+	enableMaterialWetShineScaling = false;
 	puddleDryingHours = DEFAULT_PUDDLE_DRYING_HOURS;
 	puddleLayout = DEFAULT_PUDDLE_LAYOUT;
 	rainReflectionBalance = DEFAULT_RAIN_REFLECTION_BALANCE;
