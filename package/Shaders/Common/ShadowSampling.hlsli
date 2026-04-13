@@ -132,7 +132,7 @@ namespace ShadowSampling
 #endif
 	}
 
-	float GetDirectionalShadow(float3 worldPosition, float2x2 rotationMatrix, uint eyeIndex)
+	float GetDirectionalShadow(float3 worldPosition, float3 worldPositionWS, float2x2 rotationMatrix)
 	{
 		DirectionalShadowData shadowData = DirectionalShadows[0];
 
@@ -143,8 +143,6 @@ namespace ShadowSampling
 
 		float fadeFactor = 1.0 - pow(saturate(dot(worldPosition.xyz, worldPosition.xyz) / shadowData.EndSplitDistances.y), 8);
 
-		worldPosition.xyz += FrameBuffer::CameraPosAdjust[eyeIndex].xyz;
-
 		// Compute cascade blend factor
 		float cascadeSelect = smoothstep(shadowData.StartSplitDistances.y, shadowData.EndSplitDistances.x, shadowMapDepth);
 
@@ -153,7 +151,7 @@ namespace ShadowSampling
 		bool needsBlending = (cascadeSelect > 0.0) && (cascadeSelect < 1.0);
 
 		// Transform ray to light space for primary cascade
-		float3 positionLS = mul(shadowData.ShadowProj[primaryCascade], float4(worldPosition, 1)).xyz;
+		float3 positionLS = mul(shadowData.ShadowProj[primaryCascade], float4(worldPositionWS, 1)).xyz;
 		positionLS.z -= Constants::DirectionalBias;
 
 		// Sample primary cascade
@@ -179,7 +177,7 @@ namespace ShadowSampling
 			onePlusLayerIndex = 1.0 + secondaryCascade;
 			layerIndexRcp = rcp(onePlusLayerIndex);
 
-			positionLS = mul(shadowData.ShadowProj[secondaryCascade], float4(worldPosition, 1)).xyz;
+			positionLS = mul(shadowData.ShadowProj[secondaryCascade], float4(worldPositionWS, 1)).xyz;
 			positionLS.z -= Constants::DirectionalBias;
 
 			float shadowBlend = 0.0;
@@ -266,7 +264,7 @@ namespace ShadowSampling
 	// hasCoverage is set to false when the pixel falls outside the spotlight frustum /
 	// cone (early-exit with 0.0 return) so the debug visualizer can skip those pixels
 	// in its min-shadow accumulation.  For hemi / omni lights hasCoverage is always true.
-	float GetShadowLightShadow(uint shadowIndex, float3 worldPosition, uint eyeIndex, out bool hasCoverage)
+	float GetShadowLightShadow(uint shadowIndex, float3 worldPositionWS, out bool hasCoverage)
 	{
 		hasCoverage = true;  // default: paraboloid lights always sample
 
@@ -279,9 +277,7 @@ namespace ShadowSampling
 		[flatten] if (shadowData.ShadowLightParam.y == 0) return 1.0;
 		[flatten] if (shadowData.ShadowLightParam.y < 0) return 0.0;
 
-		worldPosition.xyz += FrameBuffer::CameraPosAdjust[eyeIndex].xyz;
-
-		float4 positionLS = mul(shadowData.ShadowProj, float4(worldPosition, 1));
+		float4 positionLS = mul(shadowData.ShadowProj, float4(worldPositionWS, 1));
 
 		[branch] if (shadowData.ShadowLightParam.x == 0)
 		{

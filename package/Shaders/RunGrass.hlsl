@@ -599,8 +599,10 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	sincos(Math::TAU * screenNoise, rotation.y, rotation.x);
 	float2x2 rotationMatrix = float2x2(rotation.x, rotation.y, -rotation.y, rotation.x);
 
+	float3 worldPositionWS = input.WorldPosition.xyz + FrameBuffer::CameraPosAdjust[eyeIndex].xyz;
+
 	if (!SharedData::InInterior) {
-		dirDetailedShadow = ShadowSampling::GetDirectionalShadow(input.WorldPosition.xyz, rotationMatrix, eyeIndex);
+		dirDetailedShadow = ShadowSampling::GetDirectionalShadow(input.WorldPosition.xyz, worldPositionWS, rotationMatrix);
 		dirSoftShadow = dirDetailedShadow;
 	}
 
@@ -696,7 +698,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 				float shadowComponent = 1.0;
 				bool shadowCoverage = false;
 				if (light.lightFlags & LightLimitFix::LightFlags::Shadow) {
-					shadowComponent = ShadowSampling::GetShadowLightShadow(light.shadowMapIndex, input.WorldPosition.xyz, eyeIndex, shadowCoverage);
+					shadowComponent = ShadowSampling::GetShadowLightShadow(light.shadowMapIndex, worldPositionWS, shadowCoverage);
 					lightShadow *= shadowComponent;
 				}
 
@@ -886,8 +888,10 @@ PS_OUTPUT main(PS_INPUT input)
 	sincos(Math::TAU * screenNoise, rotation.y, rotation.x);
 	float2x2 rotationMatrix = float2x2(rotation.x, rotation.y, -rotation.y, rotation.x);
 
+	float3 worldPositionWS = input.WorldPosition.xyz + FrameBuffer::CameraPosAdjust[eyeIndex].xyz;
+
 	if (!SharedData::InInterior) {
-		dirDetailedShadow = ShadowSampling::GetDirectionalShadow(input.WorldPosition.xyz, rotationMatrix, eyeIndex);
+		dirDetailedShadow = ShadowSampling::GetDirectionalShadow(input.WorldPosition.xyz, worldPositionWS, rotationMatrix);
 		dirSoftShadow = dirDetailedShadow;
 	}
 
@@ -939,7 +943,7 @@ PS_OUTPUT main(PS_INPUT input)
 				float shadowComponent = 1.0;
 				bool shadowCoverage = false;
 				if (light.lightFlags & LightLimitFix::LightFlags::Shadow) {
-					shadowComponent = ShadowSampling::GetShadowLightShadow(light.shadowMapIndex, input.WorldPosition.xyz, eyeIndex, shadowCoverage);
+					shadowComponent = ShadowSampling::GetShadowLightShadow(light.shadowMapIndex, worldPositionWS, shadowCoverage);
 					lightShadow *= shadowComponent;
 				}
 

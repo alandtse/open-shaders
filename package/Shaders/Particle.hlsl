@@ -300,9 +300,11 @@ PS_OUTPUT main(PS_INPUT input)
 	sincos(Math::TAU * screenNoise, rotation.y, rotation.x);
 	float2x2 rotationMatrix = float2x2(rotation.x, rotation.y, -rotation.y, rotation.x);
 
+	float3 worldPositionWS = positionWS.xyz + FrameBuffer::CameraPosAdjust[eyeIndex].xyz;
+
 	float dirDetailedShadow = 1.0;
 	if (!SharedData::InInterior)
-		dirDetailedShadow = ShadowSampling::GetDirectionalShadow(positionWS.xyz, rotationMatrix, eyeIndex);
+		dirDetailedShadow = ShadowSampling::GetDirectionalShadow(positionWS.xyz, worldPositionWS, rotationMatrix);
 
 	float3 dirLightColor = SharedData::DirLightColor.xyz * dirDetailedShadow;
 	float3 ambientColor = max(0, SharedData::GetAmbient(float3(0, 0, 1)));

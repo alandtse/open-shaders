@@ -62,11 +62,12 @@ namespace VolumetricShadows
 
 	float GetVSMShadow3D(DirectionalShadowData sD, float3 startPosition, float3 endPosition, float noise, uint baseSampleCount, uint eyeIndex, out float surfaceShadow)
 	{
+		// Compute camera-relative distance before adjusting to world space.
+		float3 midPosition = (startPosition + endPosition) * 0.5;
+		float shadowMapDepth = length(midPosition);
+
 		startPosition += FrameBuffer::CameraPosAdjust[eyeIndex].xyz;
 		endPosition += FrameBuffer::CameraPosAdjust[eyeIndex].xyz;
-
-		float3 midPosition = (startPosition + endPosition) * 0.5;
-		float shadowMapDepth = length(midPosition - FrameBuffer::CameraPosAdjust[eyeIndex].xyz);
 
 		// Early out beyond cascade range
 		if (shadowMapDepth >= sD.EndSplitDistances.y) {
