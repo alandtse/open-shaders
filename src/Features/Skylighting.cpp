@@ -165,14 +165,27 @@ void Skylighting::LoadSettings(json& o_json)
 
 void Skylighting::SaveSettings(json& o_json)
 {
+	NormalizeSettingsForRuntime(settings);
+	ApplyProbeGridQuality();
 	o_json = settings;
 }
 
 void Skylighting::RestoreDefaultSettings()
 {
+	const uint previousProbeGridQuality = settings.ProbeGridQuality;
 	ApplyPlatformDefaults(settings);
 	NormalizeSettingsForRuntime(settings);
 	ApplyProbeGridQuality();
+	const bool probeGridChanged = previousProbeGridQuality != settings.ProbeGridQuality;
+	const bool canResetRuntimeResources = globals::d3d::device && globals::game::renderer;
+
+	if (canResetRuntimeResources && probeGridChanged)
+		SetupResources();
+
+	if (canResetRuntimeResources)
+		ResetSkylighting();
+	else
+		queuedResetSkylighting = true;
 }
 
 void Skylighting::ApplyProbeGridQuality()
@@ -793,6 +806,8 @@ void Skylighting::RenderOcclusion()
 	if (sky) {
 		if (!Util::IsInterior()) {
 			auto precip = sky->precip;
+			if (!precip)
+				return;
 
 			{
 				state->BeginPerfEvent("Precipitation Mask");
