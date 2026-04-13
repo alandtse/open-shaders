@@ -18,15 +18,7 @@
 #	include "IBL/IBL.hlsli"
 #endif
 
-// Only declared when volumetric shadows are active; the #if guard already prevents
-// any conflict with TRUE_PBR LANDSCAPE shaders since VOLUMETRIC_SHADOWS is never
-// defined in Lighting.hlsl permutations.
-#if defined(VOLUMETRIC_SHADOWS)
-Texture2D<float2> SharedShadowMap : register(t18);
-#endif
-
-// Directional (sun) shadow data: cascade split distances and projection matrices.
-struct DirectionalShadowData
+struct DirectionalShadowLightData
 {
 	column_major float4x4 ShadowProj[2];
 	column_major float4x4 InvShadowProj[2];
@@ -34,18 +26,17 @@ struct DirectionalShadowData
 	float2 StartSplitDistances;
 };
 
-StructuredBuffer<DirectionalShadowData> DirectionalShadows : register(t98);
-
+StructuredBuffer<DirectionalShadowLightData> DirectionalShadowLights : register(t98);
 Texture2DArray<float> DirectionalShadowCascades : register(t99);
 
-struct ShadowData
+struct ShadowLightData
 {
 	column_major float4x4 ShadowProj;
 	column_major float4x4 InvShadowProj;
 	float4 ShadowLightParam;
 };
 
-StructuredBuffer<ShadowData> Shadows : register(t100);
+StructuredBuffer<ShadowLightData> ShadowsLights : register(t100);
 Texture2DArray<float> ShadowMaps : register(t101);
 
 #if defined(VOLUMETRIC_SHADOWS)
@@ -124,7 +115,7 @@ namespace ShadowSampling
 
 #if defined(VOLUMETRIC_SHADOWS)
 		float vsmSurfaceShadow;
-		float shadow = VolumetricShadows::GetVSMShadow3D(DirectionalShadows[0], startPosition, endPosition, noise, sampleCount, eyeIndex, vsmSurfaceShadow);
+		float shadow = VolumetricShadows::GetVSMShadow3D(DirectionalShadowLights[0], startPosition, endPosition, noise, sampleCount, eyeIndex, vsmSurfaceShadow);
 		surfaceShadow *= vsmSurfaceShadow;
 		return worldShadow * shadow;
 #else
@@ -134,24 +125,24 @@ namespace ShadowSampling
 
 	float GetDirectionalShadow(float3 worldPosition, float3 worldPositionWS, float2x2 rotationMatrix)
 	{
-		DirectionalShadowData shadowData = DirectionalShadows[0];
+		DirectionalShadowLightData shadowLightData = DirectionalShadowLights[0];
 
 		float shadowMapDepth = length(worldPosition);
 
-		if (shadowMapDepth > shadowData.EndSplitDistances.y)
+		if (shadowMapDepth > shadowLightData.EndSplitDistances.y)
 			return 1.0;
 
-		float fadeFactor = 1.0 - pow(saturate(dot(worldPosition.xyz, worldPosition.xyz) / shadowData.EndSplitDistances.y), 8);
+		float fadeFactor = 1.0 - pow(saturate(dot(worldPosition.xyz, worldPosition.xyz) / shadowLightData.EndSplitDistances.y), 8);
 
 		// Compute cascade blend factor
-		float cascadeSelect = smoothstep(shadowData.StartSplitDistances.y, shadowData.EndSplitDistances.x, shadowMapDepth);
+		float cascadeSelect = smoothstep(shadowLightData.StartSplitDistances.y, shadowLightData.EndSplitDistances.x, shadowMapDepth);
 
 		// Determine which cascade(s) to sample
 		uint primaryCascade = cascadeSelect;
 		bool needsBlending = (cascadeSelect > 0.0) && (cascadeSelect < 1.0);
 
 		// Transform ray to light space for primary cascade
-		float3 positionLS = mul(shadowData.ShadowProj[primaryCascade], float4(worldPositionWS, 1)).xyz;
+		float3 positionLS = mul(shadowLightData.ShadowProj[primaryCascade], float4(worldPositionWS, 1)).xyz;
 		positionLS.z -= Constants::DirectionalBias;
 
 		// Sample primary cascade
@@ -177,7 +168,7 @@ namespace ShadowSampling
 			onePlusLayerIndex = 1.0 + secondaryCascade;
 			layerIndexRcp = rcp(onePlusLayerIndex);
 
-			positionLS = mul(shadowData.ShadowProj[secondaryCascade], float4(worldPositionWS, 1)).xyz;
+			positionLS = mul(shadowLightData.ShadowProj[secondaryCascade], float4(worldPositionWS, 1)).xyz;
 			positionLS.z -= Constants::DirectionalBias;
 
 			float shadowBlend = 0.0;
@@ -203,7 +194,7 @@ namespace ShadowSampling
 		return dot(float4(samples > receiverDepth), 0.25);
 	}
 
-	float GetSpotlightShadow(ShadowData shadowData, uint shadowIndex, float4 positionLS)
+	float GetSpotlightShadow(ShadowLightData shadowLightData, uint shadowIndex, float4 positionLS)
 	{
 		positionLS.xyz /= positionLS.w;
 
@@ -239,7 +230,7 @@ namespace ShadowSampling
 		return shadow / 8.0;
 	}
 
-	float GetOmnidirectionalShadow(ShadowData shadowData, uint shadowIndex, float4 positionLS)
+	float GetOmnidirectionalShadow(ShadowLightData shadowLightData, uint shadowIndex, float4 positionLS)
 	{
 		bool lowerHalf = positionLS.z < 0;
 
@@ -254,8 +245,8 @@ namespace ShadowSampling
 		float2 sampleUV = lightDirection.xy / lightDirection.z * 0.5 + 0.5;
 		sampleUV.y = lowerHalf ? 1.0 - 0.5 * sampleUV.y : 0.5 * sampleUV.y;
 
-		float depth = saturate(length(positionLS.xyz) / shadowData.ShadowLightParam.y);
-		depth -= shadowData.ShadowLightParam.z;
+		float depth = saturate(length(positionLS.xyz) / shadowLightData.ShadowLightParam.y);
+		depth -= shadowLightData.ShadowLightParam.z;
 
 		return SampleParaboloidShadow(shadowIndex, sampleUV, depth);
 	}
@@ -268,20 +259,20 @@ namespace ShadowSampling
 	{
 		hasCoverage = true;  // default: paraboloid lights always sample
 
-		ShadowData shadowData = Shadows[shadowIndex];
+		ShadowLightData shadowLightData = ShadowsLights[shadowIndex];
 
 		// ShadowLightParam.y encodes slot state:
 		//   == 0  : slot not written (capacity exceeded) → unshadowed (fully lit)
 		//    < 0  : slot suppressed via debug overlay    → fully dark (light hidden)
 		//    > 0  : valid radius                         → normal shadow test
-		[flatten] if (shadowData.ShadowLightParam.y == 0) return 1.0;
-		[flatten] if (shadowData.ShadowLightParam.y < 0) return 0.0;
+		[flatten] if (shadowLightData.ShadowLightParam.y == 0) return 1.0;
+		[flatten] if (shadowLightData.ShadowLightParam.y < 0) return 0.0;
 
-		float4 positionLS = mul(shadowData.ShadowProj, float4(worldPositionWS, 1));
+		float4 positionLS = mul(shadowLightData.ShadowProj, float4(worldPositionWS, 1));
 
-		[branch] if (shadowData.ShadowLightParam.x == 0)
+		[branch] if (shadowLightData.ShadowLightParam.x == 0)
 		{
-			float shadowBaseVisibility = GetSpotlightShadow(shadowData, shadowIndex, positionLS);
+			float shadowBaseVisibility = GetSpotlightShadow(shadowLightData, shadowIndex, positionLS);
 			positionLS.xyz /= positionLS.w;
 
 			float spotFalloff = saturate(1.0 - dot(positionLS.xy, positionLS.xy));
@@ -290,7 +281,7 @@ namespace ShadowSampling
 			return shadowBaseVisibility * spotFalloff;
 		}
 
-		return GetOmnidirectionalShadow(shadowData, shadowIndex, positionLS);
+		return GetOmnidirectionalShadow(shadowLightData, shadowIndex, positionLS);
 	}
 
 #if defined(SKYLIGHTING) && !defined(INTERIOR)

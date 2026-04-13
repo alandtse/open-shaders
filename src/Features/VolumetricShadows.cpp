@@ -69,10 +69,10 @@ void VolumetricShadows::ClearShaderCache()
 	blurShadowVerticalCS = static_cast<ID3D11ComputeShader*>(Util::CompileShader(L"Data\\Shaders\\VolumetricShadows\\BlurShadowCS.hlsl", defines, "cs_5_0"));
 }
 
-void VolumetricShadows::CopyShadowData()
+void VolumetricShadows::CopyShadowLightData()
 {
 	ZoneScoped;
-	TracyD3D11Zone(globals::state->tracyCtx, "VolumetricShadows::CopyShadowData");
+	TracyD3D11Zone(globals::state->tracyCtx, "VolumetricShadows::CopyShadowLightData");
 
 	auto context = globals::d3d::context;
 

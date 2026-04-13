@@ -21,25 +21,23 @@ public:
 		return &singleton;
 	}
 
-	struct alignas(16) DirectionalShadowData
+	struct alignas(16) DirectionalShadowLightData
 	{
-		DirectX::XMFLOAT4X4 ShadowProj[2];
-		DirectX::XMFLOAT4X4 InvShadowProj[2];
-
-		DirectX::XMFLOAT2 EndSplitDistances;
-		DirectX::XMFLOAT2 StartSplitDistances;
+		float4x4 ShadowProj[2];
+		float4x4 InvShadowProj[2];
+		float2   EndSplitDistances;
+		float2   StartSplitDistances;
 	};
-	STATIC_ASSERT_ALIGNAS_16(DirectionalShadowData);
+	STATIC_ASSERT_ALIGNAS_16(DirectionalShadowLightData);
 
-	struct alignas(16) ShadowData
+	struct alignas(16) ShadowLightData
 	{
-		DirectX::XMFLOAT4X4 ShadowProj;
-		DirectX::XMFLOAT4X4 InvShadowProj;
-
+		float4x4 ShadowProj;
+		float4x4 InvShadowProj;
 		float4 ShadowParam;
 	};
 
-	STATIC_ASSERT_ALIGNAS_16(ShadowData);
+	STATIC_ASSERT_ALIGNAS_16(ShadowLightData);
 
 	void SetupResources();
 	void ReflectionsPrepasses();
@@ -55,10 +53,10 @@ public:
 	void ClearShaderCache();
 
 	// Reads directional shadow parameters and uploads to structured buffers.
-	//   t98 — DirectionalShadowData  (cascade splits + world-to-shadow projections)
+	//   t98 — DirectionalShadowLightData  (cascade splits + world-to-shadow projections)
 	//   t99 — DirectionalShadowCascades  (Texture2DArray, game's kSHADOWMAPS_ESRAM depth SRV)
 	// Called during EarlyPrepasses immediately after shadow maps have been rendered.
-	void CopyShadowData();
+	void CopyShadowLightData();
 
 	ID3D11ComputeShader* GetComputeMainComposite();
 	ID3D11ComputeShader* GetComputeMainCompositeInterior();
@@ -76,7 +74,7 @@ public:
 	uint32_t shadowMapSlots = 0;
 
 	// Directional shadow structured buffer (t98): cascade splits and projections.
-	Buffer* perDirectionalShadow = nullptr;
+	Buffer* directionalShadowLights = nullptr;
 
 	bool deferredPass = false;
 
@@ -85,7 +83,7 @@ public:
 
 private:
 	template <typename T>
-	void SetShadowCascadeParameters(T& lightData, DirectionalShadowData& dd);
+	void SetShadowCascadeParameters(T& lightData, DirectionalShadowLightData& dd);
 
 public:
 	struct Hooks

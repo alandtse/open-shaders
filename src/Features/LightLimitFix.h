@@ -155,10 +155,10 @@ public:
 	Util::FrameChecker frameChecker;
 
 	// Point/spot shadow resources (t100, t101)
-	// perShadows is lazily allocated in CopyPointShadowData() since shadowMapSlots
+	// shadowLights is lazily allocated in CopyShadowLightData() since shadowMapSlots
 	// is not known until Deferred::SetupResources() runs (after Feature::SetupResources()).
-	Buffer* perShadows = nullptr;
-	uint32_t perShadowsCapacity = 0;
+	Buffer* shadowLights = nullptr;
+	uint32_t shadowLightsCapacity = 0;
 
 	// Per-frame shadow accounting (displayed in DrawSettings Statistics tree).
 	uint32_t shadowLightCount = 0;            // distinct lights processed (including dropped)
@@ -188,7 +188,7 @@ public:
 	void UpdateStructure();
 	virtual void EarlyPrepass() override;
 	virtual void Prepass() override;
-	void CopyPointShadowData();
+	void CopyShadowLightData();
 
 	// Shadow rendering helpers (implemented in LightLimitFix/ShadowRenderer.cpp)
 

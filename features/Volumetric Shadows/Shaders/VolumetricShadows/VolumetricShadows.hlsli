@@ -6,6 +6,8 @@
 
 namespace VolumetricShadows
 {
+	Texture2D<float2> SharedShadowMap : register(t18);
+
 	static const float VSM_MIN_VARIANCE = 0.00001;
 	static const float VSM_BLEEDING_REDUCTION = 0.2;
 

@@ -344,7 +344,7 @@ namespace ShadowCasterManager
 	};
 
 	// -------------------------------------------------------------------------
-	// Per-slot visualization metadata (filled by LLF::CopyPointShadowData)
+	// Per-slot visualization metadata (filled by LLF::CopyShadowLightData)
 	// -------------------------------------------------------------------------
 	struct ShadowSlotInfo
 	{
@@ -354,7 +354,7 @@ namespace ShadowCasterManager
 		uintptr_t lightKey = 0;  ///< Light object pointer (stable key for suppression)
 	};
 
-	/// Resets slot metadata for a new frame.  Call at the start of CopyPointShadowData.
+	/// Resets slot metadata for a new frame.  Call at the start of CopyShadowLightData.
 	void BeginSlotFrame(uint32_t slotCount);
 
 	/// Records metadata for one filled shadow slot.

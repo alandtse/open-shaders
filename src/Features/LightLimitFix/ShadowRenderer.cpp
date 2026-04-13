@@ -7,13 +7,14 @@
 #include "State.h"
 #include "Util.h"
 
-// Fills a ShadowData entry from a light's shadowmap descriptor transform.
+// Fills a ShadowLightData entry from a light's shadowmap descriptor transform.
 // Mirrors the former Deferred::SetShadowParameters private template.
 template <typename T>
-static void SetShadowParameters(T& lightData, Deferred::ShadowData& sd)
+static void SetShadowParameters(T& lightData, Deferred::ShadowLightData& sd)
 {
 	if (lightData.shadowmapDescriptors.empty())
 		return;
+
 	auto& desc = lightData.shadowmapDescriptors[0];
 	DirectX::XMMATRIX proj = DirectX::XMLoadFloat4x4(reinterpret_cast<const DirectX::XMFLOAT4X4*>(&desc.lightTransform));
 	DirectX::XMStoreFloat4x4(&sd.ShadowProj, proj);
@@ -29,16 +30,16 @@ static void SetShadowParameters(T& lightData, Deferred::ShadowData& sd)
 void LightLimitFix::EarlyPrepass()
 {
 	auto state = globals::state;
-	state->BeginPerfEvent("LLF CopyPointShadowData");
-	CopyPointShadowData();
+	state->BeginPerfEvent("LLF CopyShadowLightData");
+	CopyShadowLightData();
 	state->EndPerfEvent();
 }
 
-void LightLimitFix::CopyPointShadowData()
+void LightLimitFix::CopyShadowLightData()
 {
 	ZoneScoped;
 #ifdef TRACY_ENABLE
-	TracyD3D11Zone(globals::state->tracyCtx, "LLF CopyPointShadowData");
+	TracyD3D11Zone(globals::state->tracyCtx, "LLF CopyShadowLightData");
 #endif
 
 	auto deferred = globals::deferred;
@@ -51,17 +52,17 @@ void LightLimitFix::CopyPointShadowData()
 		return;
 
 	// Lazy (re)allocation when slot count changes (e.g. on resolution change).
-	if (!perShadows || perShadowsCapacity != slots) {
-		delete perShadows;
-		perShadows = nullptr;
+	if (!shadowLights || shadowLightsCapacity != slots) {
+		delete shadowLights;
+		shadowLights = nullptr;
 
 		D3D11_BUFFER_DESC sbDesc{};
 		sbDesc.Usage = D3D11_USAGE_DYNAMIC;
 		sbDesc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
 		sbDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
 		sbDesc.MiscFlags = D3D11_RESOURCE_MISC_BUFFER_STRUCTURED;
-		sbDesc.StructureByteStride = sizeof(Deferred::ShadowData);
-		sbDesc.ByteWidth = slots * sizeof(Deferred::ShadowData);
+		sbDesc.StructureByteStride = sizeof(Deferred::ShadowLightData);
+		sbDesc.ByteWidth = slots * sizeof(Deferred::ShadowLightData);
 
 		D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc{};
 		srvDesc.Format = DXGI_FORMAT_UNKNOWN;
@@ -69,12 +70,12 @@ void LightLimitFix::CopyPointShadowData()
 		srvDesc.Buffer.FirstElement = 0;
 		srvDesc.Buffer.NumElements = slots;
 
-		perShadows = new Buffer(sbDesc);
-		perShadows->CreateSRV(srvDesc);
-		perShadowsCapacity = slots;
+		shadowLights = new Buffer(sbDesc);
+		shadowLights->CreateSRV(srvDesc);
+		shadowLightsCapacity = slots;
 	}
 
-	std::vector<Deferred::ShadowData> sd(slots);
+	std::vector<Deferred::ShadowLightData> sd(slots);
 	uint32_t prevSlotUsage = ShadowCasterManager::GetSlotUsage();
 	ShadowCasterManager::BeginSlotFrame(slots);
 	auto context = globals::d3d::context;
@@ -131,10 +132,10 @@ void LightLimitFix::CopyPointShadowData()
 
 	{
 		D3D11_MAPPED_SUBRESOURCE mapped{};
-		DX::ThrowIfFailed(context->Map(perShadows->resource.get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped));
-		memcpy(mapped.pData, sd.data(), slots * sizeof(Deferred::ShadowData));
-		context->Unmap(perShadows->resource.get(), 0);
-		ID3D11ShaderResourceView* srv = perShadows->srv.get();
+		DX::ThrowIfFailed(context->Map(shadowLights->resource.get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped));
+		memcpy(mapped.pData, sd.data(), slots * sizeof(Deferred::ShadowLightData));
+		context->Unmap(shadowLights->resource.get(), 0);
+		ID3D11ShaderResourceView* srv = shadowLights->srv.get();
 		context->PSSetShaderResources(100, 1, &srv);
 	}
 

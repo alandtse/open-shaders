@@ -58,7 +58,7 @@ public:
 	virtual void SetupResources() override;
 	virtual void ClearShaderCache() override;
 
-	void CopyShadowData();
+	void CopyShadowLightData();
 
 	virtual void LoadSettings(json& o_json) override;
 	virtual void SaveSettings(json& o_json) override;

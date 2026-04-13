@@ -1512,7 +1512,7 @@ namespace ShadowCasterManager
 
 					// GameSetShadowCasterSlot (via Accumulate) overwrites shadowmapIndex
 					// with the sequential endIdx counter, diverging from the stable
-					// container-slot index that CopyPointShadowData and Prepass expect.
+					// container-slot index that CopyShadowLightData and Prepass expect.
 					// All shadow-slot light types are affected:
 					//   Spot (!IsParabolicLight): 1 descriptor, 1 atlas slice.
 					//   Hemi (IsParabolicLight && !IsOmniLight): 1 descriptor, 1 atlas slice.
