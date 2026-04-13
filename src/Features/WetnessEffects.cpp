@@ -140,6 +140,8 @@ namespace
 	WetnessEffects::PerFrame g_cachedCommonBufferData{};
 	bool g_hasCachedCommonBufferData = false;
 	uint32_t g_cachedCommonBufferFrame = 0;
+	REX::W32::XMFLOAT4X4 g_lastValidOcclusionViewProj{};
+	bool g_hasLastValidOcclusionViewProj = false;
 
 	float GetWeatherRainIntensity(RE::TESWeather* weather)
 	{
@@ -885,6 +887,8 @@ void WetnessEffects::ResetRuntimeState()
 	g_cachedCommonBufferData = {};
 	g_hasCachedCommonBufferData = false;
 	g_cachedCommonBufferFrame = 0;
+	g_lastValidOcclusionViewProj = {};
+	g_hasLastValidOcclusionViewProj = false;
 }
 
 void WetnessEffects::InvalidateSanitizedSettingsCache()
@@ -1582,6 +1586,15 @@ WetnessEffects::PerFrame WetnessEffects::GetCommonBufferData() const
 		lastRainingAccum = GetWeatherRainIntensity(lastWeather);
 
 		if (fullSkyMode) {
+			const bool needsOcclusionProjection =
+				engineRaining ||
+				runtimeState.wasRainingLastFrame ||
+				runtimeState.postRainEventWeight > RUNTIME_DRY_EPSILON ||
+				runtimeState.puddleDepth > RUNTIME_DRY_EPSILON ||
+				runtimeState.wetnessDepth > RUNTIME_DRY_EPSILON;
+			if (g_hasLastValidOcclusionViewProj && needsOcclusionProjection) {
+				data.OcclusionViewProj = g_lastValidOcclusionViewProj;
+			}
 			if (auto precip = sky->precip) {
 				RE::BSParticleShaderRainEmitter* currentRainEmitter = nullptr;
 				RE::BSParticleShaderRainEmitter* lastRainEmitter = nullptr;
@@ -1595,6 +1608,8 @@ WetnessEffects::PerFrame WetnessEffects::GetCommonBufferData() const
 				auto* rainEmitter = currentRainEmitter ? currentRainEmitter : lastRainEmitter;
 				if (rainEmitter) {
 					data.OcclusionViewProj = rainEmitter->occlusionProjection;
+					g_lastValidOcclusionViewProj = data.OcclusionViewProj;
+					g_hasLastValidOcclusionViewProj = true;
 				}
 
 				if (currentRainEmitter && currentWeather) {
