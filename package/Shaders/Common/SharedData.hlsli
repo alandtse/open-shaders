@@ -144,12 +144,9 @@ namespace SharedData
 		float ShorePersistentDarkeningStrength;
 		float PackedPostRainControl;
 		float PackedRainReflectionControl;
-		float RaindropVisibilityBoost;
 		// View-depth fade/cull range for dev-style wetness distance fading, in game units.
 		float WetnessDistanceFadeRange;
-		// Wet-only dynamic cubemap sampling bias test controls.
-		float WetCubemapStabilityBiasStrength;
-		float WetCubemapStabilityBiasRange;
+		float pad0;
 	};
 
 	struct SkylightingSettings
