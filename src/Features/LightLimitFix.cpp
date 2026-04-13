@@ -397,11 +397,14 @@ void LightLimitFix::DrawSettings()
 	}
 
 	if (ImGui::TreeNodeEx("Placed Lights (JSON)", ImGuiTreeNodeFlags_DefaultOpen)) {
+		const bool jsonPlacedLightsSupported = globals::features::inverseSquareLighting.loaded;
+		ImGui::BeginDisabled(!jsonPlacedLightsSupported);
 		ImGui::SliderFloat("Intensity Scale", &settings.JsonPlacedLightIntensity, kJsonPlacedLightIntensityMin, kJsonPlacedLightIntensityMax, "%.2f");
 		if (auto _tt = Util::HoverTooltipWrapper()) {
 			ImGui::Text(
 				"Scales intensity for attached runtime lights generated from light records.\n"
-				"This primarily targets Light Placer-style JSON lights.");
+				"This primarily targets Light Placer-style JSON lights.\n"
+				"Requires Inverse Square Lighting runtime metadata to identify those lights.");
 		}
 
 		ImGui::Checkbox("Interiors Only", &settings.JsonPlacedLightsInteriorsOnly);
@@ -412,6 +415,11 @@ void LightLimitFix::DrawSettings()
 		ImGui::Checkbox("Portal Strict Only", &settings.JsonPlacedLightsPortalStrictOnly);
 		if (auto _tt = Util::HoverTooltipWrapper()) {
 			ImGui::Text("Only apply the intensity scale to portal-strict lights.");
+		}
+		ImGui::EndDisabled();
+
+		if (!jsonPlacedLightsSupported) {
+			ImGui::TextDisabled("Requires Inverse Square Lighting to identify JSON-placed runtime lights.");
 		}
 
 		ImGui::Spacing();
@@ -622,12 +630,14 @@ void LightLimitFix::LoadSettings(json& o_json)
 
 void LightLimitFix::SaveSettings(json& o_json)
 {
+	SanitizeSettings(settings);
 	o_json = settings;
 }
 
 void LightLimitFix::RestoreDefaultSettings()
 {
 	settings = {};
+	SanitizeSettings(settings);
 }
 
 RE::NiNode* GetParentRoomNode(RE::NiAVObject* object)
@@ -868,7 +878,7 @@ void LightLimitFix::ApplyJsonPlacedLightIntensityScale(
 	bool a_isPortalStrict,
 	bool a_isInterior)
 {
-	if (settings.JsonPlacedLightIntensity == 1.0f) {
+	if (std::abs(settings.JsonPlacedLightIntensity - 1.0f) <= 1e-4f) {
 		return;
 	}
 	if (settings.JsonPlacedLightsInteriorsOnly && !a_isInterior) {
