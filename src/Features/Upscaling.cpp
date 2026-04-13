@@ -343,7 +343,7 @@ void Upscaling::DrawSettings()
 					ImGui::Text("For quality/stability, lowest ghosting. Slowest preset. Best for Ultra Performance (esp. on 4K). Not recommended on pre-RTX 40 cards.");
 					break;
 				case 3:
-					ImGui::Text("Near-L image quality with speed closer to K. Best for Performance mode. Not recommended on pre-RTX 40 cards.");
+					ImGui::Text("Near-L image quality, but much slower than K. Best for Performance mode. Not recommended on pre-RTX 40 cards.");
 					break;
 				case 4:
 					ImGui::Text("Intended for Ultra Performance/DLAA. Default preset for Ultra Performance.");
@@ -370,19 +370,19 @@ void Upscaling::DrawSettings()
 			const bool vrPipelineDedupSupportedForMethod = vrPipelineDedupMethodSupported && !vrPipelineDedupBlockedByFoveated;
 			if (!vrPipelineDedupSupportedForMethod) {
 				if (!vrPipelineDedupMethodSupported) {
-					ImGui::TextDisabled("VR Pipeline Deduplication is available for DLSS and FSR only.");
+					ImGui::TextDisabled("Per-Eye Deduplication is available for DLSS and FSR only.");
 				} else {
-					ImGui::TextDisabled("Disable Foveated Upscaling to enable VR Pipeline Deduplication.");
+					ImGui::TextDisabled("Disable Foveated Upscaling to enable Per-Eye Deduplication.");
 				}
 			}
 			ImGui::BeginDisabled(!vrPipelineDedupSupportedForMethod);
 			{
-				Util::YellowFrameStyleWrapper dedupStyle(true);
-				ImGui::Checkbox("VR Pipeline Deduplication (Experimental)", &settings.vrPipelineDeduplication);
+				ImGui::Checkbox("Per-Eye Deduplication (Experimental)", &settings.vrPipelineDeduplication);
 			}
 			if (auto _tt = Util::HoverTooltipWrapper()) {
-				ImGui::TextUnformatted("Runs VR upscaling prep through a combined-stereo encode path to reduce duplicate per-eye plumbing work.");
-				ImGui::TextUnformatted("Keeps stereo rendering intact and preserves per-eye DLSS/FSR history ownership.");
+				ImGui::TextUnformatted("VR-only. Reduces duplicate per-eye upscaling prep work by using a combined-stereo encode path where supported.");
+				ImGui::TextUnformatted("FSR benefits the most because it can also avoid split per-eye contexts. DLSS users can use it too, but the gain is smaller.");
+				ImGui::TextUnformatted("Stereo rendering stays intact and per-eye DLSS/FSR history ownership is preserved.");
 				ImGui::TextUnformatted("Experimental: if you observe seam artifacts, disable this option.");
 			}
 			ImGui::EndDisabled();
@@ -412,7 +412,6 @@ void Upscaling::DrawSettings()
 						ImGui::TextUnformatted("Shared with SSGI only while an SSGI foveated mode is active.");
 				}
 
-				ImGui::Separator();
 				{
 					Util::YellowFrameStyleWrapper maskStyle(true);
 					ImGui::Checkbox("Foveated Mask Visualization", &settings.foveatedPeripheryMaskVisualization);
@@ -492,7 +491,6 @@ void Upscaling::DrawSettings()
 					ImGui::TextUnformatted("If SSGI is in AO only or another non-foveated mode, this shared area is ignored there.");
 				}
 
-				ImGui::Separator();
 				ImGui::Checkbox("Edge Blur", &settings.foveatedPeripheryEdgeBlur);
 				if (settings.foveatedPeripheryEdgeBlur) {
 					ImGui::SliderFloat("Edge Blur Strength", &settings.foveatedPeripheryEdgeBlurStrength, kPeripheryEdgeBlurStrengthMin, kPeripheryEdgeBlurStrengthMax, "%.2f");
@@ -504,6 +502,9 @@ void Upscaling::DrawSettings()
 				}
 			}
 			ImGui::EndDisabled();
+
+			if (streamline.reflexSupportedOnCurrentAdapter)
+				ImGui::Separator();
 		}
 	}
 
