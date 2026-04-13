@@ -279,7 +279,6 @@ namespace ShadowSampling
 			positionLS.xyz /= positionLS.w;
 
 			float spotFalloff = saturate(1.0 - dot(positionLS.xy, positionLS.xy));
-			spotFalloff = spotFalloff * spotFalloff;
 
 			return shadowBaseVisibility * spotFalloff;
 		}
