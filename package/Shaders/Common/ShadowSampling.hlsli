@@ -29,9 +29,9 @@ struct DirectionalShadowLightData
 StructuredBuffer<DirectionalShadowLightData> DirectionalShadowLights : register(t98);
 Texture2DArray<float> DirectionalShadowCascades : register(t99);
 
-#	if defined(VOLUMETRIC_SHADOWS)
-#		include "VolumetricShadows/VolumetricShadows.hlsli"
-#	endif
+#if defined(VOLUMETRIC_SHADOWS)
+#	include "VolumetricShadows/VolumetricShadows.hlsli"
+#endif
 
 namespace ShadowSampling
 {

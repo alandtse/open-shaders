@@ -706,7 +706,7 @@ PS_OUTPUT main(PS_INPUT input)
 	float shadowVariance = 1.0;
 
 	float screenNoise = Random::InterleavedGradientNoise(input.Position.xy, SharedData::FrameCount);
-	
+
 	float2 rotation;
 	sincos(Math::TAU * screenNoise, rotation.y, rotation.x);
 	float2x2 rotationMatrix = float2x2(rotation.x, rotation.y, -rotation.y, rotation.x);

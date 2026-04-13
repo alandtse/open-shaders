@@ -367,7 +367,8 @@ cbuffer AlphaTestRefCB : register(b11)
 float SampleShadowPCF(Texture2DArray<float4> tex, SamplerComparisonState samp, float2 baseUV, float layerIndex, float compareValue, float2x2 rotationMatrix, float radius)
 {
 	float visibility = 0.0;
-	[unroll] for (int i = 0; i < 8; i++) {
+	[unroll] for (int i = 0; i < 8; i++)
+	{
 		float2 offset = mul(Random::SpiralSampleOffsets8[i], rotationMatrix) * radius;
 		visibility += tex.SampleCmpLevelZero(samp, float3(baseUV + offset, layerIndex), compareValue).x;
 	}
@@ -377,7 +378,8 @@ float SampleShadowPCF(Texture2DArray<float4> tex, SamplerComparisonState samp, f
 float SampleDualParaboloidShadowPCF(Texture2DArray<float4> tex, SamplerComparisonState samp, float2 baseUV, float layerIndex, float compareValue, float2x2 rotationMatrix, float radius, bool lowerHalf)
 {
 	float visibility = 0.0;
-	[unroll] for (int i = 0; i < 8; i++) {
+	[unroll] for (int i = 0; i < 8; i++)
+	{
 		float2 offset = mul(Random::SpiralSampleOffsets8[i], rotationMatrix) * radius;
 		float2 uv = baseUV + offset;
 		uv.y = lowerHalf ? max(uv.y, 0.5) : min(uv.y, 0.5);
