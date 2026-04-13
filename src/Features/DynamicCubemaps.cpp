@@ -143,15 +143,15 @@ void DynamicCubemaps::DrawSettings()
 	}
 	if (REL::Module::IsVR()) {
 		if (ImGui::TreeNodeEx("Advanced VR Settings", ImGuiTreeNodeFlags_DefaultOpen)) {
-			ImGui::Checkbox("Inactivate Forward Capture Gate (A/B)", reinterpret_cast<bool*>(&settings.InactivateVRForwardCaptureGate));
+			ImGui::Checkbox("Inactivate Forward Capture Gate", reinterpret_cast<bool*>(&settings.InactivateVRForwardCaptureGate));
 			if (auto _tt = Util::HoverTooltipWrapper()) {
 				ImGui::TextUnformatted("A/B toggle for VR cubemap capture. On = disables forward-facing capture gate so reflections are less view-locked to HMD orientation.");
 			}
-			ImGui::Checkbox("Use Player Root Capture Anchor (A/B)", reinterpret_cast<bool*>(&settings.UseVRPlayerRootCaptureAnchor));
+			ImGui::Checkbox("Use Player Root Capture Anchor", reinterpret_cast<bool*>(&settings.UseVRPlayerRootCaptureAnchor));
 			if (auto _tt = Util::HoverTooltipWrapper()) {
 				ImGui::TextUnformatted("A/B toggle for VR cubemap capture. On = anchor dynamic cubemap history to the player root/body instead of average eye position. This reduces head-locked motion, but the capture remains player-centered rather than truly world-probe-locked.");
 			}
-			ImGui::Checkbox("Suppress Sky/Frame-Edge Capture (A/B)", reinterpret_cast<bool*>(&settings.SuppressSkyAndFrameEdgeCapture));
+			ImGui::Checkbox("Suppress Sky/Frame-Edge Capture", reinterpret_cast<bool*>(&settings.SuppressSkyAndFrameEdgeCapture));
 			if (auto _tt = Util::HoverTooltipWrapper()) {
 				ImGui::TextUnformatted("A/B toggle to reduce stale rain puddle artifacts. On = suppresses sky and frame-edge capture samples, and clears non-refreshed cubemap texels faster.");
 			}
