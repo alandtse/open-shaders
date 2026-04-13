@@ -18,6 +18,21 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 
 namespace
 {
+	void ResetVRScopedSettings(DynamicCubemaps::Settings& settings)
+	{
+		const DynamicCubemaps::Settings defaults{};
+		settings.InactivateVRForwardCaptureGate = defaults.InactivateVRForwardCaptureGate;
+		settings.UseVRPlayerRootCaptureAnchor = defaults.UseVRPlayerRootCaptureAnchor;
+		settings.SuppressSkyAndFrameEdgeCapture = defaults.SuppressSkyAndFrameEdgeCapture;
+	}
+
+	void EraseVRScopedSettings(json& jsonSettings)
+	{
+		jsonSettings.erase("InactivateVRForwardCaptureGate");
+		jsonSettings.erase("UseVRPlayerRootCaptureAnchor");
+		jsonSettings.erase("SuppressSkyAndFrameEdgeCapture");
+	}
+
 	RE::NiPoint3 GetCubemapCaptureAnchorPosition(bool usePlayerRootAnchor)
 	{
 		if (!(REL::Module::IsVR() && usePlayerRootAnchor)) {
@@ -210,6 +225,9 @@ void DynamicCubemaps::DrawSettings()
 void DynamicCubemaps::LoadSettings(json& o_json)
 {
 	settings = o_json;
+	if (!REL::Module::IsVR()) {
+		ResetVRScopedSettings(settings);
+	}
 	if (REL::Module::IsVR()) {
 		Util::LoadGameSettings(iniVRCubeMapSettings);
 	}
@@ -219,6 +237,9 @@ void DynamicCubemaps::LoadSettings(json& o_json)
 void DynamicCubemaps::SaveSettings(json& o_json)
 {
 	o_json = settings;
+	if (!REL::Module::IsVR()) {
+		EraseVRScopedSettings(o_json);
+	}
 	if (REL::Module::IsVR()) {
 		Util::SaveGameSettings(iniVRCubeMapSettings);
 	}
