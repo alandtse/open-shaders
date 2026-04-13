@@ -48,6 +48,9 @@ namespace
 	constexpr float WETNESS_DISTANCE_FADE_RANGE_UI_MIN_GAME_UNITS = 100.0f * GAME_UNITS_PER_METER;
 	constexpr float WETNESS_DISTANCE_FADE_RANGE_UI_MAX_GAME_UNITS = 25000.0f;
 	constexpr float DEFAULT_WETNESS_DISTANCE_FADE_RANGE_GAME_UNITS = 10000.0f;
+	constexpr float RAINDROP_VISIBILITY_BOOST_MIN = 0.0f;
+	constexpr float RAINDROP_VISIBILITY_BOOST_MAX = 2.0f;
+	constexpr float DEFAULT_RAINDROP_VISIBILITY_BOOST = 0.0f;
 	constexpr float WET_CUBEMAP_STABILITY_BIAS_STRENGTH_MIN = 0.0f;
 	constexpr float WET_CUBEMAP_STABILITY_BIAS_STRENGTH_MAX = 1.0f;
 	constexpr float DEFAULT_WET_CUBEMAP_STABILITY_BIAS_STRENGTH = 0.0f;
@@ -113,9 +116,6 @@ namespace
 	constexpr float RAIN_EVENT_DECAY_SECONDS = 43200.0f;
 	constexpr float MIN_WETNESS_DRY_SCALE_AT_MAX_EVENT = 0.12f;
 	constexpr float RUNTIME_DRY_EPSILON = 1e-4f;
-	constexpr uint32_t WETNESS_TOGGLE_PREVENT_PUDDLES_ON_GRASS = 1u << 0;
-	constexpr uint32_t WETNESS_TOGGLE_ENABLE_MATERIAL_WET_SHINE_SCALING = 1u << 1;
-
 	struct WetnessUiPresetDefinition
 	{
 		const char* name;
@@ -557,6 +557,13 @@ namespace
 		return bits0 | (bits1 << 10) | (bits2 << 20);
 	}
 
+	float ClampRaindropVisibilityBoost(float value)
+	{
+		return std::isfinite(value) ?
+			std::clamp(value, RAINDROP_VISIBILITY_BOOST_MIN, RAINDROP_VISIBILITY_BOOST_MAX) :
+			DEFAULT_RAINDROP_VISIBILITY_BOOST;
+	}
+
 	void SanitizePersistentUiState(
 		WetnessEffects::Settings& settings,
 		float& modernScale,
@@ -566,7 +573,8 @@ namespace
 		float& rainReflectionBalance,
 		float& postRainWaterClarity,
 		float& shoreDarkeningStrength,
-		float& wetnessDistanceFadeRange)
+		float& wetnessDistanceFadeRange,
+		float& raindropVisibilityBoost)
 	{
 		SanitizePersistentReflectionSettings(settings, modernScale, legacyScale);
 		puddleHours = ClampDryingHours(puddleHours, DEFAULT_PUDDLE_DRYING_HOURS);
@@ -590,6 +598,7 @@ namespace
 			SHORE_PERSISTENT_DARKENING_MAX,
 			SHORE_PERSISTENT_DARKENING_DEFAULT);
 		wetnessDistanceFadeRange = ClampWetnessDistanceFadeRange(wetnessDistanceFadeRange);
+		raindropVisibilityBoost = ClampRaindropVisibilityBoost(raindropVisibilityBoost);
 	}
 
 	void ApplyWetnessUiPreset(
@@ -1073,6 +1082,10 @@ void WetnessEffects::DrawSettings()
 		if (auto _tt = Util::HoverTooltipWrapper()) {
 			ImGui::TextUnformatted("How quickly raindrop effects fade when rain ends. Higher = faster fade, lower = slower fade.");
 		}
+		ImGui::SliderFloat("Raindrop Visibility Boost", &raindropVisibilityBoost, RAINDROP_VISIBILITY_BOOST_MIN, RAINDROP_VISIBILITY_BOOST_MAX, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+		if (auto _tt = Util::HoverTooltipWrapper()) {
+			ImGui::TextUnformatted("Adds a local gloss/specular boost under active raindrops so ripples and splashes stay easier to read in bright scenes. 0 = current behavior.");
+		}
 		ImGui::SliderFloat("Raindrop Effect Range", &settings.RaindropFxRangeWorldUnits, RAINDROP_FX_RANGE_UI_MIN_GAME_UNITS, RAINDROP_FX_RANGE_UI_MAX_GAME_UNITS, "%.0f units", ImGuiSliderFlags_AlwaysClamp);
 		if (auto _tt = Util::HoverTooltipWrapper()) {
 			const float rangeMeters = Util::Units::GameUnitsToMeters(settings.RaindropFxRangeWorldUnits);
@@ -1354,16 +1367,6 @@ void WetnessEffects::DrawSettings()
 		ImGui::SliderFloat("Post-Rain Water Clarity", &postRainWaterClarity, POST_RAIN_WATER_CLARITY_MIN, POST_RAIN_WATER_CLARITY_MAX, "%.2f");
 		if (auto _tt = Util::HoverTooltipWrapper()) {
 			ImGui::TextUnformatted("Shapes post-rain puddle reflections on top of Wet Reflection. 0 = more cubemap mirror. Higher = less sky glare, deeper puddle body, and clearer water-like puddles.");
-		}
-
-		ImGui::Checkbox("Prevent Puddles On Grass", &preventPuddlesOnGrass);
-		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::TextUnformatted("Prevents standing-water puddles from forming on vegetation-like surfaces while keeping the normal wet darkening and wet sheen.");
-		}
-
-		ImGui::Checkbox("Material-Based Wet Shine Scaling", &enableMaterialWetShineScaling);
-		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::TextUnformatted("Scales rain and post-rain wet reflections by surface type. Flat metal/cobble respond strongest, then rock, wood, compact dirt, loose dirt, and grass weakest.");
 		}
 
 		ImGui::Dummy(ImVec2(0.0f, 8.0f));
@@ -1951,14 +1954,7 @@ WetnessEffects::PerFrame WetnessEffects::GetCommonBufferData() const
 	// bits 10..19 = in-rain cubemap suppression (derived from Rain Reflection Balance)
 	// bits 20..29 = in-rain specular boost      (derived from Rain Reflection Balance)
 	data.ReservedPerFramePadding2 = PackThreeUnorm10(postRainCubemapGlareReductionFromClarity, inRainCubemapSuppressionFromBalance, inRainSpecularBoostFromBalance);
-	uint32_t wetnessToggleBits = 0u;
-	if (preventPuddlesOnGrass) {
-		wetnessToggleBits |= WETNESS_TOGGLE_PREVENT_PUDDLES_ON_GRASS;
-	}
-	if (enableMaterialWetShineScaling) {
-		wetnessToggleBits |= WETNESS_TOGGLE_ENABLE_MATERIAL_WET_SHINE_SCALING;
-	}
-	data.ReservedPerFramePadding3 = wetnessToggleBits;
+	data.ReservedPerFramePadding3 = EncodeFloatToUint(ClampRaindropVisibilityBoost(raindropVisibilityBoost));
 	// Remaining wetness tail lanes carry range/bias test controls in game units.
 	data.settings.PostRainPuddleWaterStrength = ClampFiniteOrDefault(
 		data.settings.PostRainPuddleWaterStrength,
@@ -2044,6 +2040,7 @@ void WetnessEffects::LoadSettings(json& o_json)
 	postRainWaterClarity = JsonValueOr<float>(o_json, "PostRainWaterClarity", DEFAULT_POST_RAIN_WATER_CLARITY);
 	shorePersistentDarkeningStrength = JsonValueOr<float>(o_json, "ShorePersistentDarkeningStrength", SHORE_PERSISTENT_DARKENING_DEFAULT);
 	wetnessDistanceFadeRange = JsonValueOr<float>(o_json, "WetnessFadeRange", DEFAULT_WETNESS_DISTANCE_FADE_RANGE_GAME_UNITS);
+	raindropVisibilityBoost = JsonValueOr<float>(o_json, "RaindropVisibilityBoost", DEFAULT_RAINDROP_VISIBILITY_BOOST);
 	modernWetIndirectSpecularScale = DEFAULT_MODERN_WET_REFLECTION_UI;
 	legacyWetIndirectSpecularScale = DEFAULT_LEGACY_WET_REFLECTION_UI;
 
@@ -2071,14 +2068,6 @@ void WetnessEffects::LoadSettings(json& o_json)
 		(isObject && o_json.contains("InactivateRainPuddleAutoExpansion")) ?
 			JsonValueToBool(o_json["InactivateRainPuddleAutoExpansion"], false) :
 			false;
-	preventPuddlesOnGrass =
-		(isObject && o_json.contains("PreventPuddlesOnGrass")) ?
-			JsonValueToBool(o_json["PreventPuddlesOnGrass"], false) :
-			false;
-	enableMaterialWetShineScaling =
-		(isObject && o_json.contains("EnableMaterialWetShineScaling")) ?
-			JsonValueToBool(o_json["EnableMaterialWetShineScaling"], false) :
-			false;
 
 	if (!hasExplicitWetnessSettings) {
 		ApplyDefaultWetnessUiPreset(settings, wetnessDistanceFadeRange);
@@ -2087,7 +2076,7 @@ void WetnessEffects::LoadSettings(json& o_json)
 	}
 
 	SanitizeToggleSettings(settings);
-	SanitizePersistentUiState(settings, modernWetIndirectSpecularScale, legacyWetIndirectSpecularScale, puddleDryingHours, puddleLayout, rainReflectionBalance, postRainWaterClarity, shorePersistentDarkeningStrength, wetnessDistanceFadeRange);
+	SanitizePersistentUiState(settings, modernWetIndirectSpecularScale, legacyWetIndirectSpecularScale, puddleDryingHours, puddleLayout, rainReflectionBalance, postRainWaterClarity, shorePersistentDarkeningStrength, wetnessDistanceFadeRange, raindropVisibilityBoost);
 	SanitizeShaderFacingSettings(settings);
 	InvalidateSanitizedSettingsCache();
 	ResetRuntimeState();
@@ -2108,7 +2097,7 @@ void WetnessEffects::LoadSettings(json& o_json)
 
 void WetnessEffects::SaveSettings(json& o_json)
 {
-	SanitizePersistentUiState(settings, modernWetIndirectSpecularScale, legacyWetIndirectSpecularScale, puddleDryingHours, puddleLayout, rainReflectionBalance, postRainWaterClarity, shorePersistentDarkeningStrength, wetnessDistanceFadeRange);
+	SanitizePersistentUiState(settings, modernWetIndirectSpecularScale, legacyWetIndirectSpecularScale, puddleDryingHours, puddleLayout, rainReflectionBalance, postRainWaterClarity, shorePersistentDarkeningStrength, wetnessDistanceFadeRange, raindropVisibilityBoost);
 	InvalidateSanitizedSettingsCache();
 	o_json = settings;
 	o_json["ModernWetIndirectSpecularScale"] = modernWetIndirectSpecularScale;
@@ -2119,10 +2108,9 @@ void WetnessEffects::SaveSettings(json& o_json)
 	o_json["PostRainWaterClarity"] = postRainWaterClarity;
 	o_json["ShorePersistentDarkeningStrength"] = shorePersistentDarkeningStrength;
 	o_json["WetnessFadeRange"] = wetnessDistanceFadeRange;
+	o_json["RaindropVisibilityBoost"] = raindropVisibilityBoost;
 	o_json["EnableWeatherDrivenDryingModel"] = enableWeatherDrivenDryingModel;
 	o_json["InactivateRainPuddleAutoExpansion"] = inactivateRainPuddleAutoExpansion;
-	o_json["PreventPuddlesOnGrass"] = preventPuddlesOnGrass;
-	o_json["EnableMaterialWetShineScaling"] = enableMaterialWetShineScaling;
 
 	o_json["DebugSettings"] = debugSettings;
 }
@@ -2132,21 +2120,20 @@ void WetnessEffects::RestoreDefaultSettings()
 	settings = {};
 	enableWeatherDrivenDryingModel = true;
 	inactivateRainPuddleAutoExpansion = false;
-	preventPuddlesOnGrass = false;
-	enableMaterialWetShineScaling = false;
 	puddleDryingHours = DEFAULT_PUDDLE_DRYING_HOURS;
 	puddleLayout = DEFAULT_PUDDLE_LAYOUT;
 	rainReflectionBalance = DEFAULT_RAIN_REFLECTION_BALANCE;
 	postRainWaterClarity = DEFAULT_POST_RAIN_WATER_CLARITY;
 	shorePersistentDarkeningStrength = SHORE_PERSISTENT_DARKENING_DEFAULT;
 	wetnessDistanceFadeRange = DEFAULT_WETNESS_DISTANCE_FADE_RANGE_GAME_UNITS;
+	raindropVisibilityBoost = DEFAULT_RAINDROP_VISIBILITY_BOOST;
 	modernWetIndirectSpecularScale = DEFAULT_MODERN_WET_REFLECTION_UI;
 	legacyWetIndirectSpecularScale = DEFAULT_LEGACY_WET_REFLECTION_UI;
 	climatePreset = defaultPreset;
 	ApplyDefaultWetnessUiPreset(settings, wetnessDistanceFadeRange);
 	ApplyClimatePreset(climatePreset);
 	ResetRuntimeState();
-	SanitizePersistentUiState(settings, modernWetIndirectSpecularScale, legacyWetIndirectSpecularScale, puddleDryingHours, puddleLayout, rainReflectionBalance, postRainWaterClarity, shorePersistentDarkeningStrength, wetnessDistanceFadeRange);
+	SanitizePersistentUiState(settings, modernWetIndirectSpecularScale, legacyWetIndirectSpecularScale, puddleDryingHours, puddleLayout, rainReflectionBalance, postRainWaterClarity, shorePersistentDarkeningStrength, wetnessDistanceFadeRange, raindropVisibilityBoost);
 	SanitizeShaderFacingSettings(settings);
 	InvalidateSanitizedSettingsCache();
 	DetectCurrentPreset();

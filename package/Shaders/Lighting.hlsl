@@ -2386,16 +2386,13 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 		// - WetnessEffectsPadding1[0..9]: post-rain cubemap glare reduction (derived from Post-Rain Water Clarity)
 		// - WetnessEffectsPadding1[10..19]: in-rain cubemap suppression (derived from Rain Reflection Balance)
 		// - WetnessEffectsPadding1[20..29]: in-rain specular boost (derived from Rain Reflection Balance)
-		// - WetnessEffectsPadding2 bit 0: prevent puddles on grass
-		// - WetnessEffectsPadding2 bit 1: material-based wet shine scaling
+		// - WetnessEffectsPadding2: raindrop visibility boost
 		float postRainSpecBoostFromClarity = saturate(frac(wetnessPackedPadding0) / 0.999);
 		uint wetnessPackedPadding1 = asuint(SharedData::wetnessEffectsSettings.WetnessEffectsPadding1);
 		float postRainCubemapGlareReductionFromClarity = saturate((float)(wetnessPackedPadding1 & 0x3FFu) * (1.0 / 1023.0));
 		float inRainCubemapSuppressionFromBalance = saturate((float)((wetnessPackedPadding1 >> 10) & 0x3FFu) * (1.0 / 1023.0));
 		float inRainSpecularBoostFromBalance = saturate((float)((wetnessPackedPadding1 >> 20) & 0x3FFu) * (1.0 / 1023.0));
-		uint wetnessToggleBits = asuint(SharedData::wetnessEffectsSettings.WetnessEffectsPadding2);
-		const bool preventPuddlesOnGrass = (wetnessToggleBits & 0x1u) != 0u;
-		const bool enableMaterialWetShineScaling = (wetnessToggleBits & 0x2u) != 0u;
+		float raindropVisibilityBoost = max(0.0, SharedData::wetnessEffectsSettings.WetnessEffectsPadding2);
 		float wetnessDistanceFadeRange = max(1.0, SharedData::wetnessEffectsSettings.WetnessDistanceFadeRange);
 		float wetnessDistanceFade = lerp(1.0, 0.0, saturate(viewPosition.z / wetnessDistanceFadeRange));
 		const bool wetSurfaceAllowed = input.WorldPosition.z > (waterHeight + 0.5);
@@ -2424,8 +2421,6 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	float vegetationFactor = 0.0;
 	float stoneFactor = 0.0;
 	float dirtFactor = 1.0;
-	float puddleSurfaceAllowance = 1.0;
-	float materialWetReflectionScale = 1.0;
 #		if !defined(SKIN) && !defined(HAIR)
 	float3 surfaceBaseColor = saturate(material.BaseColor);
 	float surfaceRoughness = material.Roughness;
@@ -2435,40 +2430,6 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	vegetationFactor = smoothstep(0.06, 0.30, surfaceBaseColor.g - max(surfaceBaseColor.r, surfaceBaseColor.b));
 	stoneFactor = saturate((0.62 - surfaceRoughness) * 2.4) * (1.0 - vegetationFactor);
 	dirtFactor = saturate(1.0 - vegetationFactor - stoneFactor);
-	// Keep vegetation broadly wet, but do not let grass-like surfaces accumulate standing puddles.
-	if (preventPuddlesOnGrass) {
-		puddleSurfaceAllowance = 1.0 - smoothstep(0.12, 0.42, vegetationFactor);
-	}
-	if (enableMaterialWetShineScaling) {
-		float flatSurfaceFactor = smoothstep(0.55, 0.96, rainSurfaceUpness);
-		float metalFactor = 0.0;
-#		if defined(TRUE_PBR)
-		metalFactor = saturate(material.Metallic);
-#		endif
-		float woodTone = saturate((surfaceBaseColor.r - surfaceBaseColor.b) * 2.4) * saturate((surfaceBaseColor.g - surfaceBaseColor.b) * 1.8);
-		float woodFactor = woodTone * (1.0 - vegetationFactor) * (1.0 - metalFactor);
-		woodFactor *= (1.0 - saturate(stoneFactor * 0.70));
-		woodFactor *= saturate(surfaceRoughness * 1.25 + 0.05);
-		float dirtBaseFactor = dirtFactor * (1.0 - woodFactor);
-		float grassFactor = vegetationFactor;
-		float regularDirtFactor = dirtBaseFactor * (1.0 - 0.70 * flatSurfaceFactor);
-		float roadDirtFactor = dirtBaseFactor * flatSurfaceFactor;
-		float rockFactor = stoneFactor * (1.0 - 0.75 * flatSurfaceFactor) * (1.0 - metalFactor);
-		float flatStoneFactor = stoneFactor * flatSurfaceFactor * (1.0 - metalFactor);
-		float roughMetalFactor = metalFactor * (1.0 - 0.70 * flatSurfaceFactor);
-		float flatMetalFactor = metalFactor * flatSurfaceFactor;
-
-		materialWetReflectionScale = 1.0;
-		materialWetReflectionScale = lerp(materialWetReflectionScale, 0.62, saturate(grassFactor));
-		materialWetReflectionScale = lerp(materialWetReflectionScale, 0.78, saturate(regularDirtFactor));
-		materialWetReflectionScale = lerp(materialWetReflectionScale, 0.90, saturate(roadDirtFactor));
-		materialWetReflectionScale = lerp(materialWetReflectionScale, 0.98, saturate(woodFactor));
-		materialWetReflectionScale = lerp(materialWetReflectionScale, 1.10, saturate(rockFactor));
-		materialWetReflectionScale = lerp(materialWetReflectionScale, 1.22, saturate(flatStoneFactor));
-		materialWetReflectionScale = lerp(materialWetReflectionScale, 1.18, saturate(roughMetalFactor));
-		materialWetReflectionScale = lerp(materialWetReflectionScale, 1.32, saturate(flatMetalFactor));
-		materialWetReflectionScale = clamp(materialWetReflectionScale, 0.62, 1.32);
-	}
 #		endif
 #		if defined(SKYLIGHTING)
 	float wetnessOcclusion = 0.0;
@@ -2593,7 +2554,6 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	rainWetness *= lerp(1.0, inRainWetnessScale, inRainBlend);
 	puddleWetness *= lerp(1.0, inRainWetnessScale * 1.10, inRainBlend);
 	puddleWetness *= puddleRainExposure;
-	puddleWetness *= puddleSurfaceAllowance;
 
 #		if defined(SKIN)
 	rainWetness = SharedData::wetnessEffectsSettings.SkinWetness * SharedData::wetnessEffectsSettings.Wetness;
@@ -2625,7 +2585,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 		// Calculate puddle effects
 		// Keep general wetness separate from standing-water puddle formation.
 		// Never form puddles on water surfaces.
-		const bool puddleAllowed = wetSurfaceAllowed && puddleSurfaceAllowance > 1e-3;
+		const bool puddleAllowed = wetSurfaceAllowed;
 		float puddle = puddleAllowed ? wetness : 0.0;
 	#		if !defined(SKINNED)
 		if (puddleAllowed && (wetness > 0.0 || puddleWetness > 0.0)) {
@@ -2696,7 +2656,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 				baseGate = max(baseGate, lerp(0.0, bridgeGate, 0.85));
 			}
 			float puddleSlopeMask = smoothstep(puddleMaxAngleSafe, 1.0, saturate(worldNormal.z));
-			float basePuddle = baseGate * basePuddleBlend * puddleSlopeMask * puddleSurfaceAllowance;
+			float basePuddle = baseGate * basePuddleBlend * puddleSlopeMask;
 			puddle = basePuddle;
 		}
 	#		endif
@@ -2807,14 +2767,17 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 		float postRainDirectSpecCompensation = lerp(1.0, 0.82, postRainSpecBoostCurve);
 		wetDirectSpecularScale *= lerp(1.0, postRainDirectSpecCompensation, postRainOverridePhase * 0.75);
 	}
-	float materialRainReflectionPhase = max(rainPuddlePhase, inRainBlend * 0.45);
-	float materialWetReflectionPhase = max(materialRainReflectionPhase, postRainOverridePhase);
-	float materialWetReflectionResponseScale = lerp(1.0, materialWetReflectionScale, materialWetReflectionPhase);
-	wetDirectSpecularScale *= materialWetReflectionResponseScale;
-	wetnessGlossinessSpecular *= materialWetReflectionResponseScale;
+	if (raindropVisibilityBoost > 1e-4 && inRainBlend > 0.0) {
+		float raindropRippleSignal = saturate(length(raindropInfo.xy) * 1.35);
+		float raindropSplashSignal = saturate(raindropInfo.w);
+		float raindropLocalSignal = saturate(max(raindropSplashSignal, raindropRippleSignal) * wetFilmSlopeMask);
+		float raindropVisibilityPhase = saturate(raindropLocalSignal * raindropVisibilityBoost);
+		wetDirectSpecularScale *= lerp(1.0, 1.0 + 0.45 * raindropVisibilityBoost, raindropLocalSignal);
+		wetnessGlossinessSpecular = saturate(wetnessGlossinessSpecular + raindropVisibilityPhase * 0.16);
+	}
 	[branch] if (postRainVisible) {
 		postRainPuddleReflectionOverrideScale = clamp(
-			postRainPuddleReflectionOverrideScale * lerp(1.0, materialWetReflectionScale, postRainOverridePhase),
+			postRainPuddleReflectionOverrideScale,
 			0.25,
 			1.9);
 		// Add a stronger "water body" term so post-rain puddles read as deeper/clearer water
@@ -2868,7 +2831,6 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	//   reflection-scale override path below.
 	float rainCubemapSuppression = saturate(inRainBlend * inRainCubemapSuppressionFromBalance);
 	wetHighlightReflectanceScale *= (1.0 - rainCubemapSuppression);
-	wetHighlightReflectanceScale *= materialWetReflectionResponseScale;
 
 	float wetRoughnessScale = lerp(0.97, 0.995, postRainOverridePhase * postRainSpecBoostCurve);
 	waterRoughnessSpecular = 1.0 - wetnessGlossinessSpecular * wetRoughnessScale;
@@ -3449,7 +3411,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 				float wetCubemapBiasDistanceFade = 1.0 - saturate(abs(viewPosition.z) / wetCubemapStabilityBiasRange);
 				float wetSurfaceUpness = smoothstep(0.55, 0.96, saturate(worldNormal.z));
 				float wetGlossMask = smoothstep(0.03, 0.22, wetnessGlossinessSpecular);
-				float wetDepthMask = smoothstep(0.10, 0.65, max(deepPuddleMask, wetFilmSpecular));
+				float wetDepthMask = smoothstep(0.08, 0.55, wetnessGlossinessSpecular);
 				float wetCubemapBiasAmount = saturate(wetCubemapStabilityBiasStrength * wetCubemapBiasDistanceFade * wetSurfaceUpness * wetGlossMask * wetDepthMask);
 				if (wetCubemapBiasAmount > 1e-4) {
 					float3 wetStableTarget = normalize(lerp(wetnessNormal, float3(0.0, 0.0, 1.0), 0.35 * wetSurfaceUpness));
