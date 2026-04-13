@@ -47,7 +47,7 @@ namespace
 	constexpr float RAINDROP_FX_RANGE_CLAMP_MAX_GAME_UNITS = RAINDROP_FX_RANGE_UI_MAX_GAME_UNITS;
 	constexpr float WETNESS_DISTANCE_FADE_RANGE_UI_MIN_GAME_UNITS = 100.0f * GAME_UNITS_PER_METER;
 	constexpr float WETNESS_DISTANCE_FADE_RANGE_UI_MAX_GAME_UNITS = 25000.0f;
-	constexpr float DEFAULT_WETNESS_DISTANCE_FADE_RANGE_GAME_UNITS = 4096.0f * 2.5f;
+	constexpr float DEFAULT_WETNESS_DISTANCE_FADE_RANGE_GAME_UNITS = 10000.0f;
 	constexpr float PUDDLE_LAYOUT_MIN = 0.3f;
 	constexpr float PUDDLE_LAYOUT_MAX = 10.0f;
 	constexpr float LEGACY_WET_REFLECTION_UI_SCALE_MAX = 1.00f;
@@ -355,13 +355,13 @@ namespace
 		}
 	}
 
-	bool JsonContainsAnyKey(const json& root, std::initializer_list<const char*> keys)
+	bool JsonHasAnyNonDebugKey(const json& root)
 	{
 		if (!root.is_object()) {
 			return false;
 		}
-		for (const char* key : keys) {
-			if (root.contains(key)) {
+		for (const auto& [key, _] : root.items()) {
+			if (key != "DebugSettings") {
 				return true;
 			}
 		}
@@ -1063,6 +1063,7 @@ void WetnessEffects::DrawSettings()
 
 		if (ImGui::TreeNodeEx("Raindrops")) {
 			ImGui::SliderFloat("Grid Size", &settings.RaindropGridSize, 1.0f, 10.0f, "%.1f units");
+			markPresetDirtyIfEdited();
 			if (auto _tt = Util::HoverTooltipWrapper()) {
 				std::vector<std::string> tooltipLines = {
 					"Higher = raindrops are spaced farther apart.",
@@ -1073,10 +1074,12 @@ void WetnessEffects::DrawSettings()
 				Util::DrawMultiLineTooltip(tooltipLines);
 			}
 			ImGui::SliderFloat("Interval", &settings.RaindropInterval, 0.1f, 2.0f, "%.1f sec");
+			markPresetDirtyIfEdited();
 			if (auto _tt = Util::HoverTooltipWrapper()) {
 				ImGui::TextUnformatted("How often new raindrops are added. Lower = more frequent updates, higher = slower updates. Lower values are more expensive.");
 			}
 			ImGui::SliderFloat("Chance", &settings.RaindropChance, 0.0f, 1.0f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+			markPresetDirtyIfEdited();
 			if (auto _tt = Util::HoverTooltipWrapper()) {
 				ImGui::TextUnformatted("How many possible drops actually appear. Higher = denser drops, lower = fewer drops. Higher values are more expensive.");
 			}
@@ -1968,35 +1971,7 @@ void WetnessEffects::Prepass()
 void WetnessEffects::LoadSettings(json& o_json)
 {
 	const bool isObject = o_json.is_object();
-	const bool hasExplicitWetnessSettings = JsonContainsAnyKey(
-		o_json,
-		{
-			"EnableWetnessEffects",
-			"MaxRainWetness",
-			"MaxPuddleWetness",
-			"MaxShoreWetness",
-			"EnableRaindropFx",
-			"RaindropFxRangeWorldUnits",
-			"RaindropChance",
-			"WetDarkeningStrength",
-			"WetHighlightReduction",
-			"WetFilmSpecularFloorScale",
-			"ShorePersistentDarkeningStrength",
-			"RainReflectionBalance",
-			"PostRainWaterClarity",
-			"WetnessFadeRange",
-			"PuddleDryingHours",
-			"EnableWeatherDrivenDryingModel",
-			"InactivateRainPuddleAutoExpansion",
-			"PreventPuddlesOnGrass",
-			"EnableMaterialWetShineScaling",
-			"PuddleLayout",
-			"PuddleRadiusWorldUnits",
-			"ModernWetIndirectSpecularScale",
-			"LegacyWetIndirectSpecularScale",
-			"EnableForwardReflectionBias",
-			"EnableVanillaReflectionCompensation",
-		});
+	const bool hasExplicitWetnessSettings = JsonHasAnyNonDebugKey(o_json);
 	settings = {};
 	if (isObject) {
 		try {
@@ -2176,7 +2151,7 @@ void WetnessEffects::DrawWeatherAnalysis() const
 
 			// Show current preset-applied values vs defaults
 			Settings defaultSettings{};
-			ImGui::Text("Current Settings (applied from preset):");
+			ImGui::TextUnformatted(climatePreset == ClimatePreset::Custom ? "Current Settings:" : "Current Settings (applied from preset):");
 			ImGui::Indent();
 			ImGui::Text("Rain Wetness: %.2f (default %.2f × %.1fx)", settings.MaxRainWetness, defaultSettings.MaxRainWetness, presetInfo.settings.wetnessMultiplier);
 			ImGui::Text("Puddle Wetness: %.2f (default %.2f × %.1fx)", settings.MaxPuddleWetness, defaultSettings.MaxPuddleWetness, presetInfo.settings.puddleMultiplier);
@@ -2193,9 +2168,13 @@ void WetnessEffects::DrawWeatherAnalysis() const
 			float actualRainRate = weatherBasedRainRate;
 
 			// Theoretical max using preset values and intensity = 1.0
-			const auto& presetSettings = GetClimateSettings(climatePreset);
+			const bool customClimateSettings = climatePreset == ClimatePreset::Custom;
+			const auto& presetSettings = GetClimateSettings(customClimateSettings ? defaultPreset : climatePreset);
+			const float maxRateChance = customClimateSettings ? settings.RaindropChance : presetSettings.raindropChance;
+			const float maxRateGridSize = customClimateSettings ? settings.RaindropGridSize : presetSettings.raindropGridSize;
+			const float maxRateInterval = customClimateSettings ? settings.RaindropInterval : presetSettings.raindropInterval;
 			float theoreticalMaxRainRate = CalculatePrecipitationRate(
-				presetSettings.raindropChance, presetSettings.raindropGridSize, presetSettings.raindropInterval);
+				maxRateChance, maxRateGridSize, maxRateInterval);
 
 			if (ImGui::BeginTable("RainAnalysis", 2, ImGuiTableFlags_Resizable | ImGuiTableFlags_BordersV)) {
 				ImGui::TableSetupColumn("Current Shader State", ImGuiTableColumnFlags_WidthStretch, 0.5f);
@@ -2259,10 +2238,14 @@ bool WetnessEffects::DoesCurrentSettingsMatchPreset(ClimatePreset preset) const
 	float expectedMaxPuddleWetness = defaultSettings.MaxPuddleWetness * climate.puddleMultiplier;
 	float expectedWeatherTransitionSpeed = defaultSettings.WeatherTransitionSpeed * climate.transitionSpeed;
 	float expectedRaindropChance = climate.raindropChance;
+	float expectedRaindropGridSize = climate.raindropGridSize;
+	float expectedRaindropInterval = climate.raindropInterval;
 
 	const float tolerance = 0.001f;
 	return (std::abs(settings.MaxRainWetness - expectedMaxRainWetness) < tolerance &&
 			std::abs(settings.MaxPuddleWetness - expectedMaxPuddleWetness) < tolerance &&
 			std::abs(settings.WeatherTransitionSpeed - expectedWeatherTransitionSpeed) < tolerance &&
-			std::abs(settings.RaindropChance - expectedRaindropChance) < tolerance);
+			std::abs(settings.RaindropChance - expectedRaindropChance) < tolerance &&
+			std::abs(settings.RaindropGridSize - expectedRaindropGridSize) < tolerance &&
+			std::abs(settings.RaindropInterval - expectedRaindropInterval) < tolerance);
 }

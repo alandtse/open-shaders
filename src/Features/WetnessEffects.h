@@ -193,7 +193,7 @@ public:
 	float rainReflectionBalance = 0.2f;
 	float postRainWaterClarity = 0.8f;
 	float shorePersistentDarkeningStrength = 1.0f;
-	float wetnessDistanceFadeRange = 10240.0f;
+	float wetnessDistanceFadeRange = 10000.0f;
 	bool preventPuddlesOnGrass = false;
 	bool enableMaterialWetShineScaling = false;
 	// Climate preset system
