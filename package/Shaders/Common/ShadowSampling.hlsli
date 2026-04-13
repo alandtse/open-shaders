@@ -60,7 +60,7 @@ namespace ShadowSampling
 	{
 		// Shadow depth bias — applied before depth comparisons to prevent self-shadowing acne.
 		static const float ShadowBiasConst = 0.0001;
-		
+
 		// Shadow Radius for PCF
 		static const float PCFRadius2D = 0.002;
 
@@ -228,15 +228,12 @@ namespace ShadowSampling
 	{
 		float shadow = 0.0;
 
-		for (int i = 0; i < 8; i++)
-		{
+		for (int i = 0; i < 8; i++) {
 			float2 offset = Random::SpiralSampleOffsets8[i] * Constants::PCFRadius2D;
 			float2 uv = sampleUV + offset;
 
 			// Clamp to the correct paraboloid half
-			uv.y = (sampleUV.y >= 0.5)
-				? max(uv.y, 0.5)
-				: min(uv.y, 0.5);
+			uv.y = (sampleUV.y >= 0.5) ? max(uv.y, 0.5) : min(uv.y, 0.5);
 
 			shadow += SampleShadowGather(shadowIndex, uv, depth);
 		}
@@ -288,10 +285,8 @@ namespace ShadowSampling
 
 		float4 positionLS = mul(shadowData.ShadowProj, float4(worldPosition, 1));
 
-		[branch] 
-		if (shadowData.ShadowParam.x == 0) 
-			return GetSpotlightShadow(shadowData, shadowIndex, positionLS);
-	
+		[branch] if (shadowData.ShadowParam.x == 0) return GetSpotlightShadow(shadowData, shadowIndex, positionLS);
+
 		return GetOmnidirectionalShadow(shadowData, shadowIndex, positionLS);
 	}
 
