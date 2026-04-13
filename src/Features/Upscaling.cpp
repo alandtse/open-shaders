@@ -72,6 +72,28 @@ namespace
 		return std::clamp(value, kPeripheryEdgeBlurStrengthMin, kPeripheryEdgeBlurStrengthMax);
 	}
 
+	uint ClampToggleUInt(uint value)
+	{
+		return std::min<uint>(value, 1u);
+	}
+
+	uint ClampQualityModeUInt(uint value)
+	{
+		return std::min<uint>(value, 4u);
+	}
+
+	uint ClampStreamlineLogLevelUInt(uint value)
+	{
+		return std::min<uint>(value, 2u);
+	}
+
+	float ClampFiniteUnitRange(float value, float fallback)
+	{
+		if (!std::isfinite(value))
+			return fallback;
+		return std::clamp(value, 0.0f, 1.0f);
+	}
+
 	void SanitizeFoveatedSettings(Upscaling::Settings& settings)
 	{
 		settings.foveatedCenterArea = ClampFoveatedCenterArea(settings.foveatedCenterArea);
@@ -80,6 +102,53 @@ namespace
 		settings.foveatedRightEyeMaskOffsetX = ClampFoveatedMaskOffsetAdjustment(settings.foveatedRightEyeMaskOffsetX);
 		settings.foveatedRightEyeMaskOffsetY = ClampFoveatedMaskOffsetAdjustment(settings.foveatedRightEyeMaskOffsetY);
 		settings.foveatedPeripheryEdgeBlurStrength = ClampPeripheryEdgeBlurStrength(settings.foveatedPeripheryEdgeBlurStrength);
+	}
+
+	void SanitizeUpscalingSettings(Upscaling::Settings& settings)
+	{
+		settings.upscaleMethod = std::min<uint>(settings.upscaleMethod, static_cast<uint>(Upscaling::UpscaleMethod::kDLSS));
+		settings.upscaleMethodNoDLSS = std::min<uint>(settings.upscaleMethodNoDLSS, static_cast<uint>(Upscaling::UpscaleMethod::kFSR));
+		settings.qualityMode = ClampQualityModeUInt(settings.qualityMode);
+		settings.dlssPreset = std::min<uint>(settings.dlssPreset, Upscaling::kDLSSPresetMaxIndex);
+		settings.frameLimitMode = ClampToggleUInt(settings.frameLimitMode);
+		settings.frameGenerationMode = ClampToggleUInt(settings.frameGenerationMode);
+		settings.frameGenerationForceEnable = ClampToggleUInt(settings.frameGenerationForceEnable);
+		settings.streamlineLogLevel = ClampStreamlineLogLevelUInt(settings.streamlineLogLevel);
+		settings.sharpnessFSR = ClampFiniteUnitRange(settings.sharpnessFSR, 0.0f);
+		settings.sharpnessDLSS = ClampFiniteUnitRange(settings.sharpnessDLSS, 0.1f);
+		SanitizeFoveatedSettings(settings);
+	}
+
+	void ResetVRSpecificUpscalingSettings(Upscaling::Settings& settings)
+	{
+		settings.vrPipelineDeduplication = false;
+		settings.foveatedVendorDispatch = false;
+		settings.foveatedCenterArea = 0.6f;
+		settings.foveatedLeftEyeMaskOffsetX = 0.0f;
+		settings.foveatedLeftEyeMaskOffsetY = 0.0f;
+		settings.foveatedRightEyeMaskOffsetX = 0.0f;
+		settings.foveatedRightEyeMaskOffsetY = 0.0f;
+		settings.foveatedPeripheryEdgeBlur = false;
+		settings.foveatedPeripheryEdgeBlurStrength = 1.0f;
+		settings.foveatedPeripheryMaskVisualization = false;
+		settings.linkFoveatedCenterAreaWithSSGI = true;
+		settings.hasExplicitFoveatedCenterLinkPreference = false;
+	}
+
+	void StripVRSpecificUpscalingSettings(json& o_json)
+	{
+		o_json.erase("vrPipelineDeduplication");
+		o_json.erase("foveatedVendorDispatch");
+		o_json.erase("foveatedCenterArea");
+		o_json.erase("foveatedLeftEyeMaskOffsetX");
+		o_json.erase("foveatedLeftEyeMaskOffsetY");
+		o_json.erase("foveatedRightEyeMaskOffsetX");
+		o_json.erase("foveatedRightEyeMaskOffsetY");
+		o_json.erase("foveatedPeripheryEdgeBlur");
+		o_json.erase("foveatedPeripheryEdgeBlurStrength");
+		o_json.erase("foveatedPeripheryMaskVisualization");
+		o_json.erase("linkFoveatedCenterAreaWithSSGI");
+		o_json.erase("hasExplicitFoveatedCenterLinkPreference");
 	}
 
 	bool SupportsFoveatedVendorDispatch(Upscaling::UpscaleMethod a_upscaleMethod)
@@ -770,7 +839,11 @@ void Upscaling::DrawSettings()
 
 void Upscaling::SaveSettings(json& o_json)
 {
+	SanitizeUpscalingSettings(settings);
 	o_json = settings;
+	if (!REL::Module::IsVR()) {
+		StripVRSpecificUpscalingSettings(o_json);
+	}
 	auto iniSettingCollection = globals::game::iniPrefSettingCollection;
 	if (iniSettingCollection) {
 		if (auto setting = iniSettingCollection->GetSetting("bUseTAA:Display"))
@@ -781,21 +854,19 @@ void Upscaling::SaveSettings(json& o_json)
 void Upscaling::LoadSettings(json& o_json)
 {
 	settings = o_json;
+	if (!REL::Module::IsVR()) {
+		ResetVRSpecificUpscalingSettings(settings);
+	}
 	if (!settings.hasExplicitFoveatedCenterLinkPreference)
 		settings.linkFoveatedCenterAreaWithSSGI = true;
 
-	// Sanitize loaded settings to ensure enum indices are valid
-	constexpr auto enumCount = 4;  // UpscaleMethod has 4 values: kNONE, kTAA, kFSR, kDLSS
-	if (settings.upscaleMethod >= static_cast<uint>(enumCount)) {
-		logger::warn("[Upscaling] Loaded upscaleMethod {} out of range, clamping to {}", settings.upscaleMethod, enumCount ? enumCount - 1 : 0);
-		settings.upscaleMethod = enumCount ? enumCount - 1 : 0;
+	if (settings.upscaleMethod > static_cast<uint>(UpscaleMethod::kDLSS)) {
+		logger::warn("[Upscaling] Loaded upscaleMethod {} out of range, clamping to {}", settings.upscaleMethod, static_cast<uint>(UpscaleMethod::kDLSS));
 	}
-	if (settings.upscaleMethodNoDLSS >= static_cast<uint>(enumCount)) {
-		logger::warn("[Upscaling] Loaded upscaleMethodNoDLSS {} out of range, clamping to {}", settings.upscaleMethodNoDLSS, enumCount ? enumCount - 1 : 0);
-		settings.upscaleMethodNoDLSS = enumCount ? enumCount - 1 : 0;
+	if (settings.upscaleMethodNoDLSS > static_cast<uint>(UpscaleMethod::kFSR)) {
+		logger::warn("[Upscaling] Loaded upscaleMethodNoDLSS {} out of range, clamping to {}", settings.upscaleMethodNoDLSS, static_cast<uint>(UpscaleMethod::kFSR));
 	}
-	settings.dlssPreset = std::min<uint>(settings.dlssPreset, kDLSSPresetMaxIndex);
-	SanitizeFoveatedSettings(settings);
+	SanitizeUpscalingSettings(settings);
 	const float originalReflexFPSLimit = settings.reflexFPSLimit;
 	if (!std::isfinite(settings.reflexFPSLimit)) {
 		settings.reflexFPSLimit = 60.0f;
@@ -822,6 +893,7 @@ void Upscaling::LoadSettings(json& o_json)
 void Upscaling::RestoreDefaultSettings()
 {
 	settings = {};
+	SanitizeUpscalingSettings(settings);
 }
 
 void Upscaling::DataLoaded()
