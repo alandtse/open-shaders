@@ -78,8 +78,10 @@ public:
 		uint EnableForwardReflectionBias = false;
 		uint EnableVanillaReflectionCompensation = true;
 		float WetFilmSpecularFloorScale = 1.0f;
+		float WetCubemapStabilityBiasStrength = 0.0f;
+		float WetCubemapStabilityBiasRangeWorldUnits = 5000.0f;
 	};
-	static_assert(sizeof(Settings) == 156, "WetnessEffects::Settings layout changed; update wetness shader/CB contract.");
+	static_assert(sizeof(Settings) == 164, "WetnessEffects::Settings layout changed; update wetness shader/CB contract.");
 	static_assert(offsetof(Settings, WeatherTransitionSpeed) == 40, "WetnessEffects::Settings WeatherTransitionSpeed offset changed.");
 	static_assert(offsetof(Settings, EnableRaindropFx) == 56, "WetnessEffects::Settings EnableRaindropFx offset changed.");
 	static_assert(offsetof(Settings, WetIndirectSpecularScale) == 76, "WetnessEffects::Settings WetIndirectSpecularScale offset changed.");
@@ -89,6 +91,8 @@ public:
 	static_assert(offsetof(Settings, EnableForwardReflectionBias) == 144, "WetnessEffects::Settings EnableForwardReflectionBias offset changed.");
 	static_assert(offsetof(Settings, EnableVanillaReflectionCompensation) == 148, "WetnessEffects::Settings EnableVanillaReflectionCompensation offset changed.");
 	static_assert(offsetof(Settings, WetFilmSpecularFloorScale) == 152, "WetnessEffects::Settings WetFilmSpecularFloorScale offset changed.");
+	static_assert(offsetof(Settings, WetCubemapStabilityBiasStrength) == 156, "WetnessEffects::Settings WetCubemapStabilityBiasStrength offset changed.");
+	static_assert(offsetof(Settings, WetCubemapStabilityBiasRangeWorldUnits) == 160, "WetnessEffects::Settings WetCubemapStabilityBiasRangeWorldUnits offset changed.");
 
 	// Shader-facing wetness settings layout.
 	// Keep this binary-compatible with Settings while exposing shader semantics directly.
@@ -137,6 +141,8 @@ public:
 		uint EnableForwardReflectionBias = false;
 		uint EnableVanillaReflectionCompensation = true;
 		float WetFilmSpecularFloorScale = 1.0f;
+		float WetCubemapStabilityBiasStrength = 0.0f;
+		float WetCubemapStabilityBiasRange = 5000.0f;
 	};
 	static_assert(sizeof(ShaderSettings) == sizeof(Settings), "WetnessEffects::ShaderSettings must stay binary-compatible with Settings.");
 	static_assert(offsetof(ShaderSettings, PuddleLayout) == offsetof(Settings, WeatherTransitionSpeed),
@@ -151,6 +157,10 @@ public:
 		"WetnessEffects::ShaderSettings vanilla reflection compensation offsets must match Settings.");
 	static_assert(offsetof(ShaderSettings, WetFilmSpecularFloorScale) == offsetof(Settings, WetFilmSpecularFloorScale),
 		"WetnessEffects::ShaderSettings wet-film specular floor offset must match Settings.");
+	static_assert(offsetof(ShaderSettings, WetCubemapStabilityBiasStrength) == offsetof(Settings, WetCubemapStabilityBiasStrength),
+		"WetnessEffects::ShaderSettings wet cubemap stability strength offset must match Settings.");
+	static_assert(offsetof(ShaderSettings, WetCubemapStabilityBiasRange) == offsetof(Settings, WetCubemapStabilityBiasRangeWorldUnits),
+		"WetnessEffects::ShaderSettings wet cubemap stability range offset must match Settings.");
 
 	struct PerFrame
 	{
@@ -166,10 +176,12 @@ public:
 		uint ReservedPerFramePadding2 = 0;
 		uint ReservedPerFramePadding3 = 0;
 		uint ReservedPerFramePadding4 = 0;
+		uint ReservedPerFramePadding5 = 0;
+		uint ReservedPerFramePadding6 = 0;
 	};
 	STATIC_ASSERT_ALIGNAS_16(PerFrame);
 	static_assert(offsetof(PerFrame, settings) == 80, "WetnessEffects::PerFrame settings offset changed.");
-	static_assert(sizeof(PerFrame) == 256, "WetnessEffects::PerFrame size changed; update wetness shader/CB contract.");
+	static_assert(sizeof(PerFrame) == 272, "WetnessEffects::PerFrame size changed; update wetness shader/CB contract.");
 	static_assert((sizeof(PerFrame) % 16) == 0, "WetnessEffects::PerFrame must stay 16-byte sized");
 
 	struct DebugSettings

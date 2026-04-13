@@ -147,6 +147,9 @@ namespace SharedData
 		float WetnessEffectsPadding2;
 		// View-depth fade/cull range for dev-style wetness distance fading, in game units.
 		float WetnessDistanceFadeRange;
+		// Wet-only dynamic cubemap sampling bias test controls.
+		float WetCubemapStabilityBiasStrength;
+		float WetCubemapStabilityBiasRange;
 	};
 
 	struct SkylightingSettings

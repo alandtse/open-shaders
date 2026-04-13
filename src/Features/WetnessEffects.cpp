@@ -48,6 +48,12 @@ namespace
 	constexpr float WETNESS_DISTANCE_FADE_RANGE_UI_MIN_GAME_UNITS = 100.0f * GAME_UNITS_PER_METER;
 	constexpr float WETNESS_DISTANCE_FADE_RANGE_UI_MAX_GAME_UNITS = 25000.0f;
 	constexpr float DEFAULT_WETNESS_DISTANCE_FADE_RANGE_GAME_UNITS = 10000.0f;
+	constexpr float WET_CUBEMAP_STABILITY_BIAS_STRENGTH_MIN = 0.0f;
+	constexpr float WET_CUBEMAP_STABILITY_BIAS_STRENGTH_MAX = 1.0f;
+	constexpr float DEFAULT_WET_CUBEMAP_STABILITY_BIAS_STRENGTH = 0.0f;
+	constexpr float WET_CUBEMAP_STABILITY_BIAS_RANGE_UI_MIN_GAME_UNITS = 1.0f * GAME_UNITS_PER_METER;
+	constexpr float WET_CUBEMAP_STABILITY_BIAS_RANGE_UI_MAX_GAME_UNITS = 25000.0f;
+	constexpr float DEFAULT_WET_CUBEMAP_STABILITY_BIAS_RANGE_GAME_UNITS = 5000.0f;
 	constexpr float PUDDLE_LAYOUT_MIN = 0.3f;
 	constexpr float PUDDLE_LAYOUT_MAX = 10.0f;
 	constexpr float LEGACY_WET_REFLECTION_UI_SCALE_MAX = 1.00f;
@@ -524,6 +530,13 @@ namespace
 			DEFAULT_WETNESS_DISTANCE_FADE_RANGE_GAME_UNITS;
 	}
 
+	float ClampWetCubemapStabilityBiasRange(float gameUnits)
+	{
+		return (std::isfinite(gameUnits)) ?
+			std::clamp(gameUnits, WET_CUBEMAP_STABILITY_BIAS_RANGE_UI_MIN_GAME_UNITS, WET_CUBEMAP_STABILITY_BIAS_RANGE_UI_MAX_GAME_UNITS) :
+			DEFAULT_WET_CUBEMAP_STABILITY_BIAS_RANGE_GAME_UNITS;
+	}
+
 	uint32_t EncodeFloatToUint(float value)
 	{
 		uint32_t bits = 0;
@@ -651,6 +664,12 @@ namespace
 		settings.WetDarkeningStrength = ClampFiniteOrDefault(settings.WetDarkeningStrength, 0.0f, 2.0f, 0.85f);
 		settings.WetHighlightReduction = ClampFiniteOrDefault(settings.WetHighlightReduction, WET_HIGHLIGHT_REDUCTION_MIN, WET_HIGHLIGHT_REDUCTION_MAX, 5.0f);
 		settings.WetFilmSpecularFloorScale = ClampFiniteOrDefault(settings.WetFilmSpecularFloorScale, WET_FILM_SPECULAR_FLOOR_SCALE_MIN, WET_FILM_SPECULAR_FLOOR_SCALE_MAX, 1.0f);
+		settings.WetCubemapStabilityBiasStrength = ClampFiniteOrDefault(
+			settings.WetCubemapStabilityBiasStrength,
+			WET_CUBEMAP_STABILITY_BIAS_STRENGTH_MIN,
+			WET_CUBEMAP_STABILITY_BIAS_STRENGTH_MAX,
+			DEFAULT_WET_CUBEMAP_STABILITY_BIAS_STRENGTH);
+		settings.WetCubemapStabilityBiasRangeWorldUnits = ClampWetCubemapStabilityBiasRange(settings.WetCubemapStabilityBiasRangeWorldUnits);
 	}
 
 	RE::BSParticleShaderRainEmitter* GetRainEmitterFromPrecipGeometry(RE::BSGeometry* precipObject)
@@ -713,7 +732,9 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	WetHighlightReduction,
 	EnableForwardReflectionBias,
 	EnableVanillaReflectionCompensation,
-	WetFilmSpecularFloorScale)
+	WetFilmSpecularFloorScale,
+	WetCubemapStabilityBiasStrength,
+	WetCubemapStabilityBiasRangeWorldUnits)
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	WetnessEffects::DebugSettings,
@@ -1166,6 +1187,19 @@ void WetnessEffects::DrawSettings()
 			ImGui::SliderFloat("Wet Reflection Shine", &legacyWetIndirectSpecularScale, 0.0f, legacyReflectionScaleMax, "%.4f", ImGuiSliderFlags_AlwaysClamp);
 		} else {
 			ImGui::SliderFloat("Wet Reflection Shine", &modernWetIndirectSpecularScale, 0.0f, MAX_MODERN_WET_REFLECTION_UI_SCALE, "%.4f", ImGuiSliderFlags_AlwaysClamp);
+		}
+		ImGui::SliderFloat("Wet Cubemap Stability Bias", &settings.WetCubemapStabilityBiasStrength, WET_CUBEMAP_STABILITY_BIAS_STRENGTH_MIN, WET_CUBEMAP_STABILITY_BIAS_STRENGTH_MAX, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+		if (auto _tt = Util::HoverTooltipWrapper()) {
+			ImGui::TextUnformatted("Wet-only dynamic cubemap test control. Biases puddle reflections toward the surface normal/world up on upward-facing surfaces near the player, making them broader and more stable but also more sky-heavy.");
+		}
+		ImGui::SliderFloat("Wet Cubemap Stability Range", &settings.WetCubemapStabilityBiasRangeWorldUnits, WET_CUBEMAP_STABILITY_BIAS_RANGE_UI_MIN_GAME_UNITS, WET_CUBEMAP_STABILITY_BIAS_RANGE_UI_MAX_GAME_UNITS, "%.0f units", ImGuiSliderFlags_AlwaysClamp);
+		if (auto _tt = Util::HoverTooltipWrapper()) {
+			const float stabilityRangeMeters = Util::Units::GameUnitsToMeters(settings.WetCubemapStabilityBiasRangeWorldUnits);
+			Util::DrawMultiLineTooltip({
+				"Controls how far from the player the wet cubemap stability bias remains active.",
+				std::format("{:.1f} units", settings.WetCubemapStabilityBiasRangeWorldUnits),
+				std::format("{:.1f} m", stabilityRangeMeters)
+			});
 		}
 		ImGui::EndDisabled();
 		SanitizePersistentReflectionSettings(settings, modernWetIndirectSpecularScale, legacyWetIndirectSpecularScale);
@@ -1925,7 +1959,7 @@ WetnessEffects::PerFrame WetnessEffects::GetCommonBufferData() const
 		wetnessToggleBits |= WETNESS_TOGGLE_ENABLE_MATERIAL_WET_SHINE_SCALING;
 	}
 	data.ReservedPerFramePadding3 = wetnessToggleBits;
-	// Remaining wetness tail lane carries the distance fade/cull range in game units.
+	// Remaining wetness tail lanes carry range/bias test controls in game units.
 	data.settings.PostRainPuddleWaterStrength = ClampFiniteOrDefault(
 		data.settings.PostRainPuddleWaterStrength,
 		POST_RAIN_PUDDLE_SHINE_MIN,
@@ -1940,6 +1974,12 @@ WetnessEffects::PerFrame WetnessEffects::GetCommonBufferData() const
 		RAINDROP_FX_RANGE_UI_MIN_GAME_UNITS,
 		RAINDROP_FX_RANGE_UI_MAX_GAME_UNITS);
 	data.ReservedPerFramePadding4 = EncodeFloatToUint(ClampWetnessDistanceFadeRange(wetnessDistanceFadeRange));
+	data.ReservedPerFramePadding5 = EncodeFloatToUint(ClampFiniteOrDefault(
+		data.settings.WetCubemapStabilityBiasStrength,
+		WET_CUBEMAP_STABILITY_BIAS_STRENGTH_MIN,
+		WET_CUBEMAP_STABILITY_BIAS_STRENGTH_MAX,
+		DEFAULT_WET_CUBEMAP_STABILITY_BIAS_STRENGTH));
+	data.ReservedPerFramePadding6 = EncodeFloatToUint(ClampWetCubemapStabilityBiasRange(data.settings.WetCubemapStabilityBiasRange));
 	data.settings.RaindropChance *= data.Raining * data.Raining;
 	data.settings.RaindropChance = std::clamp(data.settings.RaindropChance, 0.0f, 1.0f);
 	const float safeRaindropGridSize = std::max(data.settings.RaindropGridSize, MIN_RAINDROP_GRID_SIZE);
