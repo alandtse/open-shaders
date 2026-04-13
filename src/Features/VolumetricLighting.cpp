@@ -354,15 +354,22 @@ void VolumetricLighting::LoadSettings(json& o_json)
 	if (!o_json.contains("GodrayShaftIntensity")) {
 		settings.GodrayShaftIntensity = settings.GodrayIntensity;
 	}
+	if (!REL::Module::IsVR()) {
+		settings.DisableWeatherInteractionDuringRain = false;
+	}
 
 	SanitizeSettings();
 }
 
 void VolumetricLighting::SaveSettings(json& o_json)
 {
+	SanitizeSettings();
 	// Keep legacy value aligned for older config readers.
 	settings.GodrayIntensity = settings.GodrayShaftIntensity;
 	o_json = settings;
+	if (!REL::Module::IsVR()) {
+		o_json.erase("DisableWeatherInteractionDuringRain");
+	}
 }
 
 void VolumetricLighting::RestoreDefaultSettings()
@@ -374,6 +381,8 @@ void VolumetricLighting::RestoreDefaultSettings()
 		Util::ResetGameSettingsToDefaults(hiddenVREnableSettings);
 		Util::ResetGameSettingsToDefaults(hiddenVRWeatherUpdateSettings);
 	}
+	if (initialised)
+		SetupVL();
 }
 
 int32_t VolumetricLighting::ClampQualityIndex(int32_t quality)
@@ -494,6 +503,7 @@ void VolumetricLighting::EarlyPrepass()
 	const auto interiorCell = RE::TES::GetSingleton()->interiorCell;
 	const bool currentlyInInterior = interiorCell != nullptr;
 	const bool nextRainSuppressionActive =
+		globals::game::isVR &&
 		settings.DisableWeatherInteractionDuringRain &&
 		!currentlyInInterior &&
 		IsRainTransitionActive();
