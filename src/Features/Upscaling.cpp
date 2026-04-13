@@ -211,7 +211,8 @@ HRESULT WINAPI hk_D3D11CreateDeviceAndSwapChainUpscaling(
 	// Use better swap effect to prevent tearing and improve performance
 	pSwapChainDesc->SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD;
 
-	bool shouldProxy = !globals::game::isVR;
+	const bool isVR = REL::Module::IsVR();
+	bool shouldProxy = !isVR;
 	if (shouldProxy)
 		if (!pSwapChainDesc->Windowed)
 			shouldProxy = false;
@@ -2090,7 +2091,7 @@ void Upscaling::PreparePerEyeInputs(ID3D11Resource* colorSrc, ID3D11Resource* de
 		vrClearHMDMaskCS.attach((ID3D11ComputeShader*)Util::CompileShader(L"Data/Shaders/Upscaling/ClearHMDMaskCS.hlsl", {}, "cs_5_0"));
 
 		D3D11_BUFFER_DESC cbDesc = {};
-		cbDesc.ByteWidth = 16;  // 4 uints
+		cbDesc.ByteWidth = 32;  // 8 uints
 		cbDesc.Usage = D3D11_USAGE_DEFAULT;
 		cbDesc.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
 		cbDesc.CPUAccessFlags = 0;
@@ -2111,8 +2112,17 @@ void Upscaling::PreparePerEyeInputs(ID3D11Resource* colorSrc, ID3D11Resource* de
 
 		for (uint32_t i = 0; i < 2; ++i) {
 			uint32_t depthOffset = (i == 1) ? eyeWidthIn : 0;
-			uint32_t offsets[4] = { depthOffset, 0, 0, 0 };
-			context->UpdateSubresource(vrClearHMDMaskCB.get(), 0, nullptr, offsets, 0, 0);
+			uint32_t clearMaskParams[8] = {
+				depthOffset,
+				0,
+				0,
+				0,
+				eyeWidthIn,
+				eyeHeightIn,
+				eyeWidthIn,
+				eyeHeightIn
+			};
+			context->UpdateSubresource(vrClearHMDMaskCB.get(), 0, nullptr, clearMaskParams, 0, 0);
 
 			ID3D11UnorderedAccessView* uavs[1] = { vrIntermediateColorIn[i]->uav.get() };
 			context->CSSetUnorderedAccessViews(0, 1, uavs, nullptr);
@@ -2170,7 +2180,7 @@ void Upscaling::ClearHMDMask(ID3D11UnorderedAccessView* colorUAV, ID3D11ShaderRe
 		vrClearHMDMaskCS.attach((ID3D11ComputeShader*)Util::CompileShader(L"Data/Shaders/Upscaling/ClearHMDMaskCS.hlsl", {}, "cs_5_0"));
 
 		D3D11_BUFFER_DESC cbDesc = {};
-		cbDesc.ByteWidth = 16;  // 4 uints
+		cbDesc.ByteWidth = 32;  // 8 uints
 		cbDesc.Usage = D3D11_USAGE_DEFAULT;
 		cbDesc.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
 		cbDesc.CPUAccessFlags = 0;
@@ -2189,8 +2199,17 @@ void Upscaling::ClearHMDMask(ID3D11UnorderedAccessView* colorUAV, ID3D11ShaderRe
 		ID3D11UnorderedAccessView* uavs[1] = { colorUAV };
 		context->CSSetUnorderedAccessViews(0, 1, uavs, nullptr);
 
-		uint32_t offsets[4] = { depthOffsetX, colorOffsetX, 0, 0 };
-		context->UpdateSubresource(vrClearHMDMaskCB.get(), 0, nullptr, offsets, 0, 0);
+		uint32_t clearMaskParams[8] = {
+			depthOffsetX,
+			colorOffsetX,
+			0,
+			0,
+			eyeWidth,
+			eyeHeight,
+			eyeWidth,
+			eyeHeight
+		};
+		context->UpdateSubresource(vrClearHMDMaskCB.get(), 0, nullptr, clearMaskParams, 0, 0);
 
 		ID3D11Buffer* cbs[1] = { vrClearHMDMaskCB.get() };
 		context->CSSetConstantBuffers(0, 1, cbs);
@@ -2668,6 +2687,7 @@ void Upscaling::UpdateHistoryResetState(UpscaleMethod a_upscaleMethod)
 	const float2 screenSize = state->screenSize;
 	const bool foveatedDispatchEnabled = IsFoveatedVendorDispatchEnabled(a_upscaleMethod);
 	const float foveatedCenterArea = ClampFoveatedCenterArea(settings.foveatedCenterArea);
+	const auto foveatedCenterOffsets = GetResolvedFoveatedMaskCenterOffsets();
 
 	auto cameraCutDetected = []() {
 		constexpr float kCameraCutDistanceThreshold = 2500.0f;  // ~35m teleport/cut in Skyrim units
@@ -2703,9 +2723,16 @@ void Upscaling::UpdateHistoryResetState(UpscaleMethod a_upscaleMethod)
 			inMapMenu != previousHistoryInMapMenu;
 		const bool methodChanged = a_upscaleMethod != previousHistoryUpscaleMethod;
 		const bool compareFoveatedArea = foveatedDispatchEnabled || previousHistoryFoveatedDispatch;
+		const bool foveatedOffsetsChanged =
+			compareFoveatedArea &&
+			(std::abs(foveatedCenterOffsets[0].x - previousHistoryFoveatedCenterOffsets[0].x) > 1e-4f ||
+			 std::abs(foveatedCenterOffsets[0].y - previousHistoryFoveatedCenterOffsets[0].y) > 1e-4f ||
+			 std::abs(foveatedCenterOffsets[1].x - previousHistoryFoveatedCenterOffsets[1].x) > 1e-4f ||
+			 std::abs(foveatedCenterOffsets[1].y - previousHistoryFoveatedCenterOffsets[1].y) > 1e-4f);
 		const bool foveatedChanged =
 			foveatedDispatchEnabled != previousHistoryFoveatedDispatch ||
-			(compareFoveatedArea && std::abs(foveatedCenterArea - previousHistoryFoveatedCenterArea) > 1e-4f);
+			(compareFoveatedArea && std::abs(foveatedCenterArea - previousHistoryFoveatedCenterArea) > 1e-4f) ||
+			foveatedOffsetsChanged;
 		const bool longFrameGap = globals::game::deltaTime &&
 								  std::isfinite(*globals::game::deltaTime) &&
 								  *globals::game::deltaTime > 0.20f;
@@ -2727,6 +2754,7 @@ void Upscaling::UpdateHistoryResetState(UpscaleMethod a_upscaleMethod)
 	previousHistoryUpscaleMethod = a_upscaleMethod;
 	previousHistoryFoveatedDispatch = foveatedDispatchEnabled;
 	previousHistoryFoveatedCenterArea = foveatedCenterArea;
+	previousHistoryFoveatedCenterOffsets = foveatedCenterOffsets;
 }
 
 /**

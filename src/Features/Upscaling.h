@@ -296,6 +296,7 @@ public:
 	UpscaleMethod previousHistoryUpscaleMethod = UpscaleMethod::kNONE;
 	bool previousHistoryFoveatedDispatch = false;
 	float previousHistoryFoveatedCenterArea = 1.0f;
+	std::array<float2, 2> previousHistoryFoveatedCenterOffsets = {};
 
 	void CopySharedD3D12Resources();
 	void PostDisplay();
