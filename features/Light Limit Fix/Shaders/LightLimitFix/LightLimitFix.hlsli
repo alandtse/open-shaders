@@ -1,8 +1,8 @@
 
 namespace LightLimitFix
 {
-	
-#	include "LightLimitFix/Common.hlsli"
+
+#include "LightLimitFix/Common.hlsli"
 
 	static const float DirectionalBias = (0.00025f) / 3.0f;
 
@@ -71,7 +71,6 @@ namespace LightLimitFix
 
 	StructuredBuffer<ShadowLightData> ShadowsLights : register(t100);
 	Texture2DArray<float> ShadowMaps : register(t101);
-
 
 	float GetDirectionalShadow(float3 worldPosition, float3 worldPositionWS, float2x2 rotationMatrix, uint eyeIndex)
 	{

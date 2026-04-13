@@ -602,11 +602,11 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	float3 worldPositionWS = input.WorldPosition.xyz + FrameBuffer::CameraPosAdjust[eyeIndex].xyz;
 
 	if (!SharedData::InInterior) {
-#if defined(LIGHT_LIMIT_FIX)
+#			if defined(LIGHT_LIMIT_FIX)
 		dirDetailedShadow = LightLimitFix::GetDirectionalShadow(input.WorldPosition.xyz, worldPositionWS, rotationMatrix, eyeIndex);
-#else
+#			else
 		dirDetailedShadow = shadowColor.x;
-#endif
+#			endif
 		dirSoftShadow = dirDetailedShadow;
 	}
 
@@ -895,11 +895,11 @@ PS_OUTPUT main(PS_INPUT input)
 	float3 worldPositionWS = input.WorldPosition.xyz + FrameBuffer::CameraPosAdjust[eyeIndex].xyz;
 
 	if (!SharedData::InInterior) {
-#if defined(LIGHT_LIMIT_FIX)
+#			if defined(LIGHT_LIMIT_FIX)
 		dirDetailedShadow = LightLimitFix::GetDirectionalShadow(input.WorldPosition.xyz, worldPositionWS, rotationMatrix, eyeIndex);
-#else
+#			else
 		dirDetailedShadow = shadowColor.x;
-#endif
+#			endif
 		dirSoftShadow = dirDetailedShadow;
 	}
 
