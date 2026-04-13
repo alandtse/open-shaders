@@ -32,15 +32,15 @@ public:
 	struct Settings
 	{
 		uint EnableWetnessEffects = true;
-		float MaxRainWetness = 1.0f;
+		float MaxRainWetness = 1.05f;
 		float MaxPuddleWetness = 2.5f;
 		float MaxShoreWetness = 0.75f;
 		uint ShoreRange = 32;
 		// User/persisted value in game units.
 		float PuddleRadiusWorldUnits = 119.05f;
-		float PuddleMaxAngle = 0.9f;
-		float PuddleMinWetness = 0.85f;
-		float MinRainWetness = 0.65f;
+		float PuddleMaxAngle = 0.75f;
+		float PuddleMinWetness = 0.525f;
+		float MinRainWetness = 0.60f;
 		float SkinWetness = 0.95f;
 		float WeatherTransitionSpeed = 3.0f;
 		// Surface drying-time controls in hours (1..24).
@@ -57,27 +57,27 @@ public:
 		// Derived runtime shader scale (from modern/legacy UI reflection sliders), not a persisted UI control.
 		float WetIndirectSpecularScale = 0.8f;
 		// User/persisted value in game units.
-		float RaindropFxRangeWorldUnits = 1750.70f;
+		float RaindropFxRangeWorldUnits = 2000.0f;
 		float RaindropGridSize = 3.f;
-		float RaindropInterval = 1.0f;
-		float RaindropChance = 1.0f;
+		float RaindropInterval = 0.5f;
+		float RaindropChance = 0.8f;
 		float SplashesLifetime = 6.0f;
-		float SplashesStrength = 0.9f;
-		float SplashesMinRadius = .25f;
-		float SplashesMaxRadius = .3f;
-		float RippleStrength = .7f;
+		float SplashesStrength = 1.2f;
+		float SplashesMinRadius = .35f;
+		float SplashesMaxRadius = .5f;
+		float RippleStrength = 2.0f;
 		float RippleRadius = .6f;
-		float RippleBreadth = .45f;
-		float RippleLifetime = .35f;
+		float RippleBreadth = .40f;
+		float RippleLifetime = .30f;
 
 		// Wetness tuning controls.
 		float PostRainPuddleWaterStrength = 2.5f;
 		float RaindropTransitionFalloff = 2.0f;
 		float WetDarkeningStrength = 0.85f;
-		float WetHighlightReduction = 0.25f;
+		float WetHighlightReduction = 5.0f;
 		uint EnableForwardReflectionBias = false;
 		uint EnableVanillaReflectionCompensation = true;
-		float WetFilmSpecularFloorScale = 1.5f;
+		float WetFilmSpecularFloorScale = 1.0f;
 	};
 	static_assert(sizeof(Settings) == 156, "WetnessEffects::Settings layout changed; update wetness shader/CB contract.");
 	static_assert(offsetof(Settings, WeatherTransitionSpeed) == 40, "WetnessEffects::Settings WeatherTransitionSpeed offset changed.");
@@ -95,15 +95,15 @@ public:
 	struct ShaderSettings
 	{
 		uint EnableWetnessEffects = true;
-		float MaxRainWetness = 1.0f;
+		float MaxRainWetness = 1.05f;
 		float MaxPuddleWetness = 2.5f;
 		float MaxShoreWetness = 0.75f;
 		uint ShoreRange = 32;
 		// Shader/runtime value in game units.
 		float PuddleRadius = 119.05f;
-		float PuddleMaxAngle = 0.9f;
-		float PuddleMinWetness = 0.85f;
-		float MinRainWetness = 0.65f;
+		float PuddleMaxAngle = 0.75f;
+		float PuddleMinWetness = 0.525f;
+		float MinRainWetness = 0.60f;
 		float SkinWetness = 0.95f;
 		float PuddleLayout = 3.0f;
 		float StoneDryingMultiplier = 6.0f;
@@ -117,26 +117,26 @@ public:
 		uint EnableLegacyWetReflection = false;
 		float WetIndirectSpecularScale = 0.8f;
 		// Shader/runtime value in game units.
-		float RaindropFxRange = 1750.70f;
+		float RaindropFxRange = 2000.0f;
 		float RaindropGridSize = 3.f;
-		float RaindropInterval = 1.0f;
-		float RaindropChance = 1.0f;
+		float RaindropInterval = 0.5f;
+		float RaindropChance = 0.8f;
 		float SplashesLifetime = 6.0f;
-		float SplashesStrength = 0.9f;
-		float SplashesMinRadius = .25f;
-		float SplashesMaxRadius = .3f;
-		float RippleStrength = .7f;
+		float SplashesStrength = 1.2f;
+		float SplashesMinRadius = .35f;
+		float SplashesMaxRadius = .5f;
+		float RippleStrength = 2.0f;
 		float RippleRadius = .6f;
-		float RippleBreadth = .45f;
-		float RippleLifetime = .35f;
+		float RippleBreadth = .40f;
+		float RippleLifetime = .30f;
 
 		float PostRainPuddleWaterStrength = 2.5f;
 		float RaindropTransitionFalloff = 2.0f;
 		float WetDarkeningStrength = 0.85f;
-		float WetHighlightReduction = 0.25f;
+		float WetHighlightReduction = 5.0f;
 		uint EnableForwardReflectionBias = false;
 		uint EnableVanillaReflectionCompensation = true;
-		float WetFilmSpecularFloorScale = 1.5f;
+		float WetFilmSpecularFloorScale = 1.0f;
 	};
 	static_assert(sizeof(ShaderSettings) == sizeof(Settings), "WetnessEffects::ShaderSettings must stay binary-compatible with Settings.");
 	static_assert(offsetof(ShaderSettings, PuddleLayout) == offsetof(Settings, WeatherTransitionSpeed),
@@ -190,9 +190,9 @@ public:
 	float puddleLayout = 3.0f;
 	float modernWetIndirectSpecularScale = 0.80f;
 	float legacyWetIndirectSpecularScale = 0.40f;
-	float rainReflectionBalance = 0.5f;
-	float postRainWaterClarity = 0.0f;
-	float shorePersistentDarkeningStrength = 1.5f;
+	float rainReflectionBalance = 0.2f;
+	float postRainWaterClarity = 0.8f;
+	float shorePersistentDarkeningStrength = 1.0f;
 	float wetnessDistanceFadeRange = 10240.0f;
 	bool preventPuddlesOnGrass = false;
 	bool enableMaterialWetShineScaling = false;
