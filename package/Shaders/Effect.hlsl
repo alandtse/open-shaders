@@ -715,37 +715,54 @@ PS_OUTPUT main(PS_INPUT input)
 	propertyColor = GetLightingColor(input.MSPosition.xyz, input.WorldPosition.xyz, input.Position.xy, eyeIndex, shadowVariance);
 
 #		if defined(LIGHT_LIMIT_FIX)
-	uint lightCount = 0;
-
 	float3 viewPosition = mul(FrameBuffer::CameraView[eyeIndex], float4(input.WorldPosition.xyz, 1)).xyz;
 	float2 screenUV = FrameBuffer::ViewToUV(viewPosition, true, eyeIndex);
 	bool inWorld = Permutation::ExtraShaderDescriptor & Permutation::ExtraFlags::InWorld;
 
+	uint numClusteredLights = 0;
+	uint lightOffset = 0;
 	uint clusterIndex = 0;
 	if (inWorld && LightLimitFix::GetClusterIndex(screenUV, viewPosition.z, clusterIndex)) {
-		lightCount = LightLimitFix::lightGrid[clusterIndex].lightCount;
-		uint lightOffset = LightLimitFix::lightGrid[clusterIndex].offset;
-		[loop] for (uint i = 0; i < lightCount; i++)
-		{
-			uint clusteredLightIndex = LightLimitFix::lightList[lightOffset + i];
-			LightLimitFix::Light light = LightLimitFix::lights[clusteredLightIndex];
-			if (LightLimitFix::IsLightIgnored(light) || light.lightFlags & LightLimitFix::LightFlags::Shadow) {
+		numClusteredLights = LightLimitFix::lightGrid[clusterIndex].lightCount;
+		lightOffset = LightLimitFix::lightGrid[clusterIndex].offset;
+	}
+	uint totalLightCount = LightLimitFix::NumStrictLights + numClusteredLights;
+
+	[loop] for (uint i = 0; i < totalLightCount; i++)
+	{
+		LightLimitFix::Light light;
+		if (i < LightLimitFix::NumStrictLights) {
+			light = LightLimitFix::StrictLights[i];
+		} else {
+			uint clusteredLightIndex = LightLimitFix::lightList[lightOffset + (i - LightLimitFix::NumStrictLights)];
+			light = LightLimitFix::lights[clusteredLightIndex];
+			if (LightLimitFix::IsLightIgnored(light))
 				continue;
-			}
-			float3 lightDirection = light.positionWS[eyeIndex].xyz - input.WorldPosition.xyz;
-			float lightDist = length(lightDirection);
+		}
+
+		float3 lightDirection = light.positionWS[eyeIndex].xyz - input.WorldPosition.xyz;
+		float lightDist = length(lightDirection);
 
 #			if defined(ISL)
-			float intensityMultiplier = InverseSquareLighting::GetAttenuation(lightDist, light);
+		float intensityMultiplier = InverseSquareLighting::GetAttenuation(lightDist, light);
+		if (intensityMultiplier < 1e-5)
+			continue;
 #			else
-			float intensityFactor = saturate(lightDist / light.radius);
-			float intensityMultiplier = 1 - intensityFactor * intensityFactor;
+		float intensityFactor = saturate(lightDist / light.radius);
+		if (intensityFactor == 1)
+			continue;
+		float intensityMultiplier = 1 - intensityFactor * intensityFactor;
 #			endif
 
-			const bool isPointLightLinear = light.lightFlags & LightLimitFix::LightFlags::Linear;
-			float3 lightColor = Color::PointLight(light.color.xyz, isPointLightLinear) * intensityMultiplier * 0.5 * light.fade * Color::EffectLightingMult();
-			propertyColor += lightColor;
+		float shadowMul = 1.0;
+		if (inWorld && (light.lightFlags & LightLimitFix::LightFlags::Shadow)) {
+			bool shadowCoverage;
+			shadowMul = ShadowSampling::GetShadowLightShadow(light.shadowMapIndex, input.WorldPosition.xyz, shadowCoverage);
 		}
+
+		const bool isPointLightLinear = light.lightFlags & LightLimitFix::LightFlags::Linear;
+		float3 lightColor = Color::PointLight(light.color.xyz, isPointLightLinear) * intensityMultiplier * 0.5 * light.fade * Color::EffectLightingMult() * shadowMul;
+		propertyColor += lightColor;
 	}
 
 #		endif
