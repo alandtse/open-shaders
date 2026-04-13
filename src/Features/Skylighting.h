@@ -47,13 +47,13 @@ public:
 		float MaxZenith = 3.1415926f / 2.f;  // 90 deg
 		float MinDiffuseVisibility = 0.1f;
 		float MinSpecularVisibility = 0.1f;
-		uint ProbeGridQuality = 2;  // 0: performance, 1: balanced, 2: quality
-		bool EnableIncrementalProbeUpdates = false;
+		uint ProbeGridQuality = 1;  // 0: performance, 1: balanced, 2: quality
+		bool EnableIncrementalProbeUpdates = true;
 		uint StableSliceCount = 8;
-		bool EnableReducedUpdateFrequency = false;
-		uint OcclusionUpdateInterval = 2;
-		uint ProbeUpdateInterval = 2;
-		bool EnableFastProbeSampling = false;
+		bool EnableReducedUpdateFrequency = true;
+		uint OcclusionUpdateInterval = 3;
+		uint ProbeUpdateInterval = 3;
+		bool EnableFastProbeSampling = true;
 	} settings;
 
 	struct SkylightingCB

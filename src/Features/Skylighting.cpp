@@ -90,13 +90,6 @@ namespace
 	void ApplyPlatformDefaults(Skylighting::Settings& a_settings)
 	{
 		a_settings = {};
-		if (REL::Module::IsVR()) {
-			// VR is significantly more sensitive to both probe-update and occlusion cadence.
-			a_settings.ProbeGridQuality = 1;
-			a_settings.EnableIncrementalProbeUpdates = true;
-			a_settings.EnableReducedUpdateFrequency = true;
-			a_settings.EnableFastProbeSampling = true;
-		}
 	}
 
 	void NormalizeSettingsForRuntime(Skylighting::Settings& a_settings)
@@ -248,7 +241,6 @@ void Skylighting::DrawSettings()
 	}
 	ImGui::Text("Active Probe Grid: %u x %u x %u", probeArrayDims[0], probeArrayDims[1], probeArrayDims[2]);
 
-	ImGui::Separator();
 	ImGui::Checkbox("Enable Reduced Update Frequency", &settings.EnableReducedUpdateFrequency);
 	if (auto _tt = Util::HoverTooltipWrapper())
 		ImGui::Text("Updates skylighting less often for a bigger FPS gain. Higher values can react a bit slower.");
@@ -277,7 +269,6 @@ void Skylighting::DrawSettings()
 		ImGui::Text("Probe refresh cadence: every %u frame(s)", settings.ProbeUpdateInterval);
 	}
 
-	ImGui::Separator();
 	ImGui::Checkbox("Enable Incremental Probe Updates", &settings.EnableIncrementalProbeUpdates);
 	if (auto _tt = Util::HoverTooltipWrapper())
 		ImGui::Text("Spreads skylighting work over multiple frames to smooth spikes.");
@@ -297,7 +288,6 @@ void Skylighting::DrawSettings()
 	const uint stableRefreshFrames = (probeArrayDims[2] + settings.StableSliceCount - 1) / settings.StableSliceCount;
 	ImGui::Text("Stable probe field full refresh: ~%u frame(s)", stableRefreshFrames);
 
-	ImGui::Separator();
 	ImGui::Checkbox("Enable Fast Probe Sampling", &settings.EnableFastProbeSampling);
 	if (auto _tt = Util::HoverTooltipWrapper())
 		ImGui::Text("Uses a lighter sampling mode. Usually faster, with slightly softer lighting detail.");
