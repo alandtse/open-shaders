@@ -2379,20 +2379,20 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 		float wetDirectSpecularScale = 1.0;
 		const bool wetnessEnabled = (SharedData::wetnessEffectsSettings.EnableWetnessEffects != 0);
 		float postRainPuddleWaterStrength = max(0.0, SharedData::wetnessEffectsSettings.PostRainPuddleWaterStrength);
-		float wetnessPackedPadding0 = SharedData::wetnessEffectsSettings.WetnessEffectsPadding0;
+		float packedPostRainControl = SharedData::wetnessEffectsSettings.PackedPostRainControl;
 		// Packed control lane layout:
-		// - WetnessEffectsPadding0 integer part: rain auto-expansion phase flag
-		// - WetnessEffectsPadding0 fractional part: post-rain spec boost (derived from Post-Rain Water Clarity)
-		// - WetnessEffectsPadding1[0..9]: post-rain cubemap glare reduction (derived from Post-Rain Water Clarity)
-		// - WetnessEffectsPadding1[10..19]: in-rain cubemap suppression (derived from Rain Reflection Balance)
-		// - WetnessEffectsPadding1[20..29]: in-rain specular boost (derived from Rain Reflection Balance)
-		// - WetnessEffectsPadding2: raindrop visibility boost
-		float postRainSpecBoostFromClarity = saturate(frac(wetnessPackedPadding0) / 0.999);
-		uint wetnessPackedPadding1 = asuint(SharedData::wetnessEffectsSettings.WetnessEffectsPadding1);
-		float postRainCubemapGlareReductionFromClarity = saturate((float)(wetnessPackedPadding1 & 0x3FFu) * (1.0 / 1023.0));
-		float inRainCubemapSuppressionFromBalance = saturate((float)((wetnessPackedPadding1 >> 10) & 0x3FFu) * (1.0 / 1023.0));
-		float inRainSpecularBoostFromBalance = saturate((float)((wetnessPackedPadding1 >> 20) & 0x3FFu) * (1.0 / 1023.0));
-		float raindropVisibilityBoost = max(0.0, SharedData::wetnessEffectsSettings.WetnessEffectsPadding2);
+		// - PackedPostRainControl integer part: rain auto-expansion phase flag
+		// - PackedPostRainControl fractional part: post-rain spec boost (derived from Post-Rain Water Clarity)
+		// - PackedRainReflectionControl[0..9]: post-rain cubemap glare reduction (derived from Post-Rain Water Clarity)
+		// - PackedRainReflectionControl[10..19]: in-rain cubemap suppression (derived from Rain Reflection Balance)
+		// - PackedRainReflectionControl[20..29]: in-rain specular boost (derived from Rain Reflection Balance)
+		// - RaindropVisibilityBoost: local raindrop visibility assist
+		float postRainSpecBoostFromClarity = saturate(frac(packedPostRainControl) / 0.999);
+		uint packedRainReflectionControl = asuint(SharedData::wetnessEffectsSettings.PackedRainReflectionControl);
+		float postRainCubemapGlareReductionFromClarity = saturate((float)(packedRainReflectionControl & 0x3FFu) * (1.0 / 1023.0));
+		float inRainCubemapSuppressionFromBalance = saturate((float)((packedRainReflectionControl >> 10) & 0x3FFu) * (1.0 / 1023.0));
+		float inRainSpecularBoostFromBalance = saturate((float)((packedRainReflectionControl >> 20) & 0x3FFu) * (1.0 / 1023.0));
+		float raindropVisibilityBoost = max(0.0, SharedData::wetnessEffectsSettings.RaindropVisibilityBoost);
 		float wetnessDistanceFadeRange = max(1.0, SharedData::wetnessEffectsSettings.WetnessDistanceFadeRange);
 		float wetnessDistanceFade = lerp(1.0, 0.0, saturate(viewPosition.z / wetnessDistanceFadeRange));
 		const bool wetSurfaceAllowed = input.WorldPosition.z > (waterHeight + 0.5);
@@ -2412,10 +2412,10 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 #		endif
 	const float rainingAmount = saturate(SharedData::wetnessEffectsSettings.Raining);
 	const float inRainBlend = smoothstep(0.05, 0.35, rainingAmount);
-	// Wetness padding0 packs:
+	// PackedPostRainControl packs:
 	// - integer part: rain auto-expansion phase flag (>= 1.0 means active)
 	// - fractional part: post-rain puddle specular boost slider packed in [0..0.999]
-	const bool rainAutoExpansionPhaseActive = wetnessPackedPadding0 >= 1.0;
+	const bool rainAutoExpansionPhaseActive = packedPostRainControl >= 1.0;
 
 	// Surface classification used for both in-rain response and post-rain drying.
 	float vegetationFactor = 0.0;

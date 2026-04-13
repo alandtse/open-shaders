@@ -142,9 +142,9 @@ namespace SharedData
 		uint EnableVanillaReflectionCompensation;
 		float WetFilmSpecularFloorScale;
 		float ShorePersistentDarkeningStrength;
-		float WetnessEffectsPadding0;
-		float WetnessEffectsPadding1;
-		float WetnessEffectsPadding2;
+		float PackedPostRainControl;
+		float PackedRainReflectionControl;
+		float RaindropVisibilityBoost;
 		// View-depth fade/cull range for dev-style wetness distance fading, in game units.
 		float WetnessDistanceFadeRange;
 		// Wet-only dynamic cubemap sampling bias test controls.

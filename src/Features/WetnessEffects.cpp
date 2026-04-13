@@ -3,6 +3,7 @@
 #include "State.h"
 #include "WeatherPicker.h"
 
+#include <array>
 #include <algorithm>
 #include <cmath>
 #include <cstring>
@@ -368,8 +369,14 @@ namespace
 		if (!root.is_object()) {
 			return false;
 		}
+		static constexpr std::array<std::string_view, 3> ignoredKeys = {
+			"DebugSettings",
+			"PreventPuddlesOnGrass",
+			"EnableMaterialWetShineScaling"
+		};
 		for (const auto& [key, _] : root.items()) {
-			if (key != "DebugSettings") {
+			const bool ignored = std::find(ignoredKeys.begin(), ignoredKeys.end(), key) != ignoredKeys.end();
+			if (!ignored) {
 				return true;
 			}
 		}
