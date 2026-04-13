@@ -47,6 +47,50 @@ std::vector<std::pair<std::string_view, std::string_view>> DynamicCubemaps::GetS
 
 void DynamicCubemaps::DrawSettings()
 {
+	const auto renderInlineSettingsMap = [](const std::map<std::string, Util::GameSetting>& settingsMap) {
+		std::vector<std::pair<RE::INISettingCollection*, std::string>> iniCollections = {
+			{ globals::game::iniSettingCollection, "INISettingCollection" },
+			{ globals::game::iniPrefSettingCollection, "INIPrefSettingCollection" }
+		};
+		auto gameSettingCollection = globals::game::gameSettingCollection;
+
+		for (const auto& [settingName, settingData] : settingsMap) {
+			if (settingData.offset == 0) {
+				bool found = false;
+				for (const auto& [collection, collectionName] : iniCollections) {
+					if (auto setting = collection->GetSetting(settingName); setting) {
+						Util::RenderImGuiElement(settingName, settingData, setting, collectionName);
+						found = true;
+						break;
+					}
+				}
+				if (!found) {
+					if (auto gameSetting = gameSettingCollection->GetSetting(settingName.data()); gameSetting) {
+						Util::RenderImGuiElement(settingName, settingData, gameSetting, "GameSetting");
+					}
+				}
+			} else {
+				std::visit([&](auto&& defaultValue) {
+					using ValueType = std::decay_t<decltype(defaultValue)>;
+					if constexpr (std::is_same_v<ValueType, bool>) {
+						bool* ptr = reinterpret_cast<bool*>(REL::Offset{ settingData.offset }.address());
+						Util::RenderImGuiElement(settingName, settingData, ptr);
+					} else if constexpr (std::is_same_v<ValueType, float>) {
+						float* ptr = reinterpret_cast<float*>(REL::Offset{ settingData.offset }.address());
+						Util::RenderImGuiElement(settingName, settingData, ptr);
+					} else if constexpr (std::is_same_v<ValueType, int32_t>) {
+						int32_t* ptr = reinterpret_cast<int32_t*>(REL::Offset{ settingData.offset }.address());
+						Util::RenderImGuiElement(settingName, settingData, ptr);
+					} else if constexpr (std::is_same_v<ValueType, uint32_t>) {
+						uint32_t* ptr = reinterpret_cast<uint32_t*>(REL::Offset{ settingData.offset }.address());
+						Util::RenderImGuiElement(settingName, settingData, ptr);
+					}
+				},
+					settingData.defaultValue);
+			}
+		}
+	};
+
 	if (ImGui::TreeNodeEx("Screen Space Reflections", ImGuiTreeNodeFlags_DefaultOpen)) {
 		recompileFlag |= ImGui::Checkbox("Enable Screen Space Reflections", reinterpret_cast<bool*>(&settings.EnabledSSR));
 		if (auto _tt = Util::HoverTooltipWrapper()) {
@@ -142,22 +186,23 @@ void DynamicCubemaps::DrawSettings()
 		ImGui::TreePop();
 	}
 	if (REL::Module::IsVR()) {
-		ImGui::Separator();
-		ImGui::TextUnformatted("VR");
-		ImGui::Checkbox("Inactivate Forward Capture Gate", reinterpret_cast<bool*>(&settings.InactivateVRForwardCaptureGate));
-		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::TextUnformatted("Disables the forward-facing capture gate so dynamic cubemap updates are less tied to HMD orientation.");
+		if (ImGui::TreeNode("VR")) {
+			ImGui::Checkbox("Inactivate Forward Capture Gate", reinterpret_cast<bool*>(&settings.InactivateVRForwardCaptureGate));
+			if (auto _tt = Util::HoverTooltipWrapper()) {
+				ImGui::TextUnformatted("Disables the forward-facing capture gate so dynamic cubemap updates are less tied to HMD orientation.");
+			}
+			ImGui::Checkbox("Use Player Root Capture Anchor", reinterpret_cast<bool*>(&settings.UseVRPlayerRootCaptureAnchor));
+			if (auto _tt = Util::HoverTooltipWrapper()) {
+				ImGui::TextUnformatted("Anchors dynamic cubemap history to the player root/body instead of average eye position. This reduces head-locked motion, but the capture remains player-centered rather than truly world-probe-locked.");
+			}
+			ImGui::Checkbox("Suppress Sky/Frame-Edge Capture", reinterpret_cast<bool*>(&settings.SuppressSkyAndFrameEdgeCapture));
+			if (auto _tt = Util::HoverTooltipWrapper()) {
+				ImGui::TextUnformatted("Suppresses sky and frame-edge capture samples, and clears non-refreshed cubemap texels faster to reduce stale reflection artifacts.");
+			}
+			ImGui::Spacing();
+			renderInlineSettingsMap(iniVRCubeMapSettings);
+			ImGui::TreePop();
 		}
-		ImGui::Checkbox("Use Player Root Capture Anchor", reinterpret_cast<bool*>(&settings.UseVRPlayerRootCaptureAnchor));
-		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::TextUnformatted("Anchors dynamic cubemap history to the player root/body instead of average eye position. This reduces head-locked motion, but the capture remains player-centered rather than truly world-probe-locked.");
-		}
-		ImGui::Checkbox("Suppress Sky/Frame-Edge Capture", reinterpret_cast<bool*>(&settings.SuppressSkyAndFrameEdgeCapture));
-		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::TextUnformatted("Suppresses sky and frame-edge capture samples, and clears non-refreshed cubemap texels faster to reduce stale reflection artifacts.");
-		}
-		ImGui::Spacing();
-		Util::RenderImGuiSettingsTree(iniVRCubeMapSettings, "VR");
 		Util::RenderImGuiSettingsTree(hiddenVRCubeMapSettings, "hiddenVR");
 	}
 }
