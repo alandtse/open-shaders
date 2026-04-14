@@ -592,7 +592,7 @@ PS_OUTPUT main(PS_INPUT input)
 #			elif SHADOWFILTER == 1
 	shadowBaseVisibility = TexShadowMapSamplerComp.SampleCmpLevelZero(SampShadowMapSamplerComp, float3(shadowMapUv, EndSplitDistances.x), positionLS.z - AlphaTestRef.y).x;
 #			elif SHADOWFILTER == 3
-	shadowBaseVisibility = SampleShadowPCF(TexShadowMapSamplerComp, SampShadowMapSamplerComp, shadowMapUv, EndSplitDistances.x, positionLS.z - AlphaTestRef.y, rotationMatrix, ShadowSampleParam.z * 0.5);
+	shadowBaseVisibility = SampleShadowPCF(TexShadowMapSamplerComp, SampShadowMapSamplerComp, shadowMapUv, EndSplitDistances.x, positionLS.z - AlphaTestRef.y, rotationMatrix, ShadowSampleParam.z);
 #			endif
 	float shadowVisibilityFactor = pow(2 * length(0.5 * positionLS.xy), ShadowLightParam.x);
 	float shadowVisibility = shadowBaseVisibility - shadowVisibilityFactor * shadowBaseVisibility;
@@ -611,7 +611,7 @@ PS_OUTPUT main(PS_INPUT input)
 #			elif SHADOWFILTER == 1
 		focusShadowVisibility = TexShadowMapSamplerComp.SampleCmpLevelZero(SampShadowMapSamplerComp, focusShadowMapUv, focusShadowMapCompareValue).x;
 #			elif SHADOWFILTER == 3
-		focusShadowVisibility = SampleShadowPCF(TexShadowMapSamplerComp, SampShadowMapSamplerComp, focusShadowMapUv.xy, focusShadowMapUv.z, focusShadowMapCompareValue, rotationMatrix, ShadowSampleParam.z * 0.5);
+		focusShadowVisibility = SampleShadowPCF(TexShadowMapSamplerComp, SampShadowMapSamplerComp, focusShadowMapUv.xy, focusShadowMapUv.z, focusShadowMapCompareValue, rotationMatrix, ShadowSampleParam.z);
 #			endif
 		shadowVisibility = min(shadowVisibility, lerp(1, focusShadowVisibility, FocusShadowFadeParam[focusShadowIndex]));
 	}
@@ -635,7 +635,7 @@ PS_OUTPUT main(PS_INPUT input)
 #			elif SHADOWFILTER == 1
 		shadowVisibility = TexShadowMapSamplerComp.SampleCmpLevelZero(SampShadowMapSamplerComp, float3(shadowMapUv, EndSplitDistances.x), shadowMapCompareValue).x;
 #			elif SHADOWFILTER == 3
-		shadowVisibility = SampleDualParaboloidShadowPCF(TexShadowMapSamplerComp, SampShadowMapSamplerComp, shadowMapUv, EndSplitDistances.x, shadowMapCompareValue, rotationMatrix, ShadowSampleParam.z * 0.5, false);
+		shadowVisibility = SampleDualParaboloidShadowPCF(TexShadowMapSamplerComp, SampShadowMapSamplerComp, shadowMapUv, EndSplitDistances.x, shadowMapCompareValue, rotationMatrix, ShadowSampleParam.z, false);
 #			endif
 	} else {
 		shadowVisibility = 1;
@@ -664,7 +664,7 @@ PS_OUTPUT main(PS_INPUT input)
 #			elif SHADOWFILTER == 1
 	shadowVisibility = TexShadowMapSamplerComp.SampleCmpLevelZero(SampShadowMapSamplerComp, float3(shadowMapUv, EndSplitDistances.x), shadowMapCompareValue).x;
 #			elif SHADOWFILTER == 3
-	shadowVisibility = SampleDualParaboloidShadowPCF(TexShadowMapSamplerComp, SampShadowMapSamplerComp, shadowMapUv, EndSplitDistances.x, shadowMapCompareValue, rotationMatrix, ShadowSampleParam.z * 0.5, lowerHalf);
+	shadowVisibility = SampleDualParaboloidShadowPCF(TexShadowMapSamplerComp, SampShadowMapSamplerComp, shadowMapUv, EndSplitDistances.x, shadowMapCompareValue, rotationMatrix, ShadowSampleParam.z, lowerHalf);
 #			endif
 
 	shadowColor.xyzw = fadeFactor * shadowVisibility;
