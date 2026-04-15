@@ -59,8 +59,6 @@ cbuffer PerGeometry : register(b2)
 	float4 ThresholdParams : packoffset(c5);  // w = depth rejection threshold
 };
 
-// Dynamic resolution parameters are declared via FrameBuffer.hlsli include (handles SE/AE vs VR).
-
 namespace TAA
 {
 	// Neighbor tap indices within the 9-tap grid (row-major, 3x3).
@@ -293,7 +291,6 @@ PS_OUTPUT main(PS_INPUT input)
 	float3 minBracket_collapsed = minBracket_adj;
 	float maxLuma_collapsed = maxSentinel ? minLuma_adj : maxLuma;
 	float minLuma_collapsed = minLuma_adj;
-	// effectiveHistLuma_collapsed = min(max(minLuma_collapsed, historyLuma), maxLuma_collapsed)
 	float effectiveHistLuma_collapsed = min(max(minLuma_collapsed, historyLuma), maxLuma_collapsed);
 
 	// Select collapsed vs pre-collapse based on blendFactor_base:
