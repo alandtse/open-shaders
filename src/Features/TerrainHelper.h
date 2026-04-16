@@ -25,6 +25,7 @@ public:
 
 	struct Settings
 	{
+		bool EnableTerrainHelper = true;
 	} settings;
 
 	struct ExtendedSlots
@@ -34,12 +35,17 @@ public:
 
 	std::shared_mutex extendedSlotsMutex;
 	std::unordered_map<uint32_t, ExtendedSlots> extendedSlots;
-	RE::BGSTextureSet* defaultLandTexture;
-	bool enabled = false;
+	RE::BGSTextureSet* defaultLandTexture = nullptr;
+	bool featureAvailable = false;
 
 	virtual void DataLoaded() override;
+	virtual void DrawSettings() override;
+	virtual void LoadSettings(json& o_json) override;
+	virtual void SaveSettings(json& o_json) override;
+	virtual void RestoreDefaultSettings() override;
 	virtual bool SupportsVR() override { return true; };
 	virtual std::string GetFeatureModLink() override { return MakeNexusModURL(MOD_ID); }
+	bool IsRuntimeEnabled() const;
 
 	void SetShaderResouces(ID3D11DeviceContext* a_context);
 	bool TESObjectLAND_SetupMaterial(RE::TESObjectLAND* land);
