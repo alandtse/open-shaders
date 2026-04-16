@@ -900,14 +900,18 @@ foreach(FEATURE_PATH ${FEATURE_PATHS})
     add_custom_target("Package-${FEATURE}" DEPENDS ${FEATURE_PACKAGE})
 endforeach()
 
-# AIO Folder target
-add_custom_command(
-    OUTPUT ${AIO_DIR}/SKSE/Plugins/${PROJECT_NAME}.dll
-    DEPENDS ${CORE_SOURCES}
-    COMMAND ${CMAKE_COMMAND} --install ${CMAKE_BINARY_DIR} --prefix ${AIO_DIR}
-    COMMENT "Installing to AIO folder"
+# AIO Folder target (always refresh)
+#
+# Keep this as a command-style custom target (no OUTPUT) so invoking target AIO
+# always performs a full install step. The install script already clears the
+# prefix first, which guarantees a fresh AIO folder each run.
+add_custom_target(
+    "AIO"
+    COMMAND ${CMAKE_COMMAND} --install ${CMAKE_BINARY_DIR} --prefix ${AIO_DIR} --config $<CONFIG>
+    DEPENDS ${PROJECT_NAME}
+    COMMENT "Installing fresh AIO folder"
+    VERBATIM
 )
-add_custom_target("AIO" DEPENDS ${AIO_DIR}/SKSE/Plugins/${PROJECT_NAME}.dll)
 
 # Manual AIO package target
 set(AIO_PACKAGE "${DIST_PATH}/${PROJECT_NAME}_AIO-${UTC_NOW}.7z")
