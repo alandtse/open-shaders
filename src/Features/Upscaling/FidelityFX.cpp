@@ -11,6 +11,15 @@ ffxFunctions ffxModule;
 
 std::vector<std::pair<std::string, std::string>> FidelityFX::dllVersions = {};
 
+namespace
+{
+	bool UseSplitPerEyeFSRContexts()
+	{
+		auto& upscaling = globals::features::upscaling;
+		return globals::game::isVR && !upscaling.IsVRPipelineDedupActive(Upscaling::UpscaleMethod::kFSR);
+	}
+}
+
 void FidelityFX::LoadFFX()
 {
 	// Load uframe generation DLL and its function pointers
@@ -185,6 +194,14 @@ void FidelityFX::Present(bool a_useFrameGeneration)
 void FidelityFX::CreateFSRResources()
 {
 	auto state = globals::state;
+	if (!state) {
+		logger::critical("[FidelityFX] Missing global state when creating FSR resources.");
+		fsrContextCount = 0;
+		return;
+	}
+
+	const bool splitPerEyeContexts = UseSplitPerEyeFSRContexts();
+	const bool vrPipelineDedupActive = globals::game::isVR && !splitPerEyeContexts;
 
 	// Prevent multiple allocations
 	if (fsrScratchBuffer) {
@@ -194,11 +211,12 @@ void FidelityFX::CreateFSRResources()
 
 	auto fsrDevice = ffxGetDeviceDX11(globals::d3d::device);
 
-	uint32_t numContexts = globals::game::isVR ? 2 : 1;
+	uint32_t numContexts = splitPerEyeContexts ? 2u : 1u;
 	size_t scratchBufferSize = ffxGetScratchMemorySizeDX11(numContexts);
 	fsrScratchBuffer = calloc(scratchBufferSize, 1);
 	if (!fsrScratchBuffer) {
 		logger::critical("[FidelityFX] Failed to allocate FSR3 scratch buffer memory!");
+		fsrContextCount = 0;
 		return;
 	}
 	memset(fsrScratchBuffer, 0, scratchBufferSize);
@@ -208,15 +226,16 @@ void FidelityFX::CreateFSRResources()
 		logger::critical("[FidelityFX] Failed to initialize FSR3 backend interface!");
 		free(fsrScratchBuffer);
 		fsrScratchBuffer = nullptr;
+		fsrContextCount = 0;
 		return;
 	}
 
 	auto screenSize = state->screenSize;
 	auto renderSize = Util::ConvertToDynamic(screenSize);
 
-	uint32_t displayWidth = (uint32_t)(globals::game::isVR ? screenSize.x / 2 : screenSize.x);
+	uint32_t displayWidth = (uint32_t)(splitPerEyeContexts ? screenSize.x / 2 : screenSize.x);
 	uint32_t displayHeight = (uint32_t)screenSize.y;
-	uint32_t renderWidth = (uint32_t)(globals::game::isVR ? renderSize.x / 2 : renderSize.x);
+	uint32_t renderWidth = (uint32_t)(splitPerEyeContexts ? renderSize.x / 2 : renderSize.x);
 	uint32_t renderHeight = (uint32_t)renderSize.y;
 
 	for (uint32_t i = 0; i < numContexts; ++i) {
@@ -236,20 +255,25 @@ void FidelityFX::CreateFSRResources()
 				ffxFsr3ContextDestroy(&fsrContext[j]);
 			free(fsrScratchBuffer);
 			fsrScratchBuffer = nullptr;
+			fsrContextCount = 0;
 			return;
 		}
 	}
-	logger::info("[FidelityFX] Created {} FSR3 contexts (Display: {}x{}, Render: {}x{})",
-		numContexts, displayWidth, displayHeight, renderWidth, renderHeight);
+	fsrContextCount = numContexts;
+	logger::info("[FidelityFX] Created {} FSR3 contexts (Display: {}x{}, Render: {}x{}, VRPipelineDedup={})",
+		numContexts, displayWidth, displayHeight, renderWidth, renderHeight, vrPipelineDedupActive);
 }
 
 void FidelityFX::DestroyFSRResources()
 {
-	uint32_t numContexts = globals::game::isVR ? 2 : 1;
+	uint32_t numContexts = fsrContextCount;
+	if (numContexts == 0 && fsrScratchBuffer)
+		logger::warn("[FidelityFX] DestroyFSRResources called with unknown context count; skipping context destruction to avoid mismatched teardown.");
 	for (uint32_t i = 0; i < numContexts; ++i) {
 		if (ffxFsr3ContextDestroy(&fsrContext[i]) != FFX_OK)
 			logger::critical("[FidelityFX] Failed to destroy FSR3 context for eye {}!", i);
 	}
+	fsrContextCount = 0;
 
 	// Free the scratch buffer to prevent memory leak
 	if (fsrScratchBuffer) {
@@ -305,9 +329,10 @@ bool FidelityFX::UpscaleRegion(uint32_t a_contextIndex, ID3D11Resource* a_color,
 		if (!state)
 			return false;
 
-		const uint32_t fullDisplayWidth = static_cast<uint32_t>(globals::game::isVR ? state->screenSize.x / 2.0f : state->screenSize.x);
+		const bool splitPerEyeContexts = UseSplitPerEyeFSRContexts();
+		const uint32_t fullDisplayWidth = static_cast<uint32_t>(splitPerEyeContexts ? state->screenSize.x / 2.0f : state->screenSize.x);
 		const uint32_t fullDisplayHeight = static_cast<uint32_t>(state->screenSize.y);
-		const uint32_t contextCount = globals::game::isVR ? 2u : 1u;
+		const uint32_t contextCount = splitPerEyeContexts ? 2u : 1u;
 
 		if (!EnsureRuntimeUpscalerContexts(fullDisplayWidth, fullDisplayHeight, outputDesc.Format, contextCount)) {
 			runtimeUpscalerReady = false;
@@ -346,7 +371,7 @@ bool FidelityFX::UpscaleRegion(uint32_t a_contextIndex, ID3D11Resource* a_color,
 #endif
 
 #ifdef CS_FFX_HAS_HOST_FSR3
-	if (!fsrScratchBuffer || a_contextIndex >= 2)
+	if (!fsrScratchBuffer || a_contextIndex >= fsrContextCount)
 		return false;
 
 	(void)a_displayWidth;
@@ -477,7 +502,7 @@ void FidelityFX::Upscale(ID3D11Resource* a_upscalingTexture, ID3D11Resource* a_r
 		dispatchParameters.sharpness = a_sharpness;
 		dispatchParameters.cameraFovAngleVertical = Util::GetVerticalFOVRad();
 		dispatchParameters.viewSpaceToMetersFactor = 0.01428222656f;
-		dispatchParameters.reset = false;
+		dispatchParameters.reset = upscaling.ShouldResetHistoryThisFrame();
 		dispatchParameters.preExposure = 1.0f;
 		dispatchParameters.flags = 0;
 
@@ -495,7 +520,16 @@ void FidelityFX::Upscale(ID3D11Resource* a_upscalingTexture, ID3D11Resource* a_r
 			state->EndPerfEvent();
 	};
 
-	if (globals::game::isVR) {
+	const bool splitPerEyeContexts = UseSplitPerEyeFSRContexts();
+	if (fsrContextCount == 0) {
+		logger::error("[FidelityFX] FSR resources are not initialized; skipping upscale dispatch.");
+		return;
+	}
+	if (splitPerEyeContexts && fsrContextCount < 2) {
+		logger::error("[FidelityFX] Missing per-eye FSR contexts for VR dispatch (available: {}).", fsrContextCount);
+		return;
+	}
+	if (splitPerEyeContexts) {
 		// Prepare per-eye inputs and clear mask
 		upscaling.PreparePerEyeInputs(a_upscalingTexture, depthTexture.texture, a_motionVectors, a_reactiveMask, a_transparencyCompositionMask, false);
 

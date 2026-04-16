@@ -65,12 +65,6 @@ cbuffer UpdateData : register(b0)
 	uint CaptureFlags;
 }
 
-float smoothbumpstep(float edge0, float edge1, float x)
-{
-	x = 1.0 - abs(saturate((x - edge0) / (edge1 - edge0)) - 0.5) * 2.0;
-	return x * x * (3.0 - x - x);
-}
-
 [numthreads(8, 8, 1)] void main(uint3 ThreadID
 								: SV_DispatchThreadID) {
 	float3 captureDirection = -GetSamplingVector(ThreadID, DynamicCubemap);
@@ -78,41 +72,111 @@ float smoothbumpstep(float edge0, float edge1, float x)
 	float2 uv = FrameBuffer::ViewToUV(viewDirection, false);
 	const bool disableForwardCaptureGate = ((CaptureFlags & 0x1u) != 0);
 	const bool suppressSkyAndFrameEdgeCapture = ((CaptureFlags & 0x2u) != 0);
-	const bool allowCaptureDirection = (viewDirection.z < 0.0) || disableForwardCaptureGate;
 
-	if (!FrameBuffer::IsOutsideFrame(uv) && allowCaptureDirection) {  // Check that the view direction exists in screenspace and that it is in front of the camera
+	bool shouldTryCapture = true;
+#if !defined(VR)
+	shouldTryCapture = !FrameBuffer::IsOutsideFrame(uv);
+#endif
+
+	if (shouldTryCapture) {  // Check that the view direction exists in screenspace and that it is in front of the camera
 		float3 color = 0.0;
 		float3 position = 0.0;
 		float weight = 0.0;
+		// Wider/softer capture gate to reduce player-attached looking cutoffs:
+		// - extend side/slightly-behind coverage (forwardGateEnd)
+		// - avoid strong radial depth weighting (prevents concentric ring look)
+		const float forwardGateStart = -0.12;
+		const float forwardGateEnd = 0.55;
+		const float nearDepthValidityStart = 0.75;
+		const float nearDepthValidityEnd = 2.75;
+		const float nearDepthWeightFloor = 0.88;
 
+#if !defined(VR)
 		uv = FrameBuffer::GetDynamicResolutionAdjustedScreenPosition(uv);
-		uv = Stereo::ConvertToStereoUV(uv, 0);
-		float frameEdgeMask = 1.0;
-		if (suppressSkyAndFrameEdgeCapture) {
-			frameEdgeMask = GetFrameEdgeMask(Stereo::ConvertFromStereoUV(uv, 0, 1));
-		}
-
-		float depth = DepthTexture.SampleLevel(LinearSampler, uv, 0);
-		float linearDepth = SharedData::GetScreenDepth(depth);
-
-#if defined(REFLECTIONS)
-		if (linearDepth > 16.5 && frameEdgeMask > 1e-3) {  // Ignore objects which are too close
-#else
-		float nonSkyMask = 1.0;
-		if (suppressSkyAndFrameEdgeCapture) {
-			nonSkyMask = 1.0 - smoothstep(0.9992, 0.99995, depth);
-		}
-		if (linearDepth > 16.5 && depth != 1.0 && frameEdgeMask > 1e-3 && nonSkyMask > 1e-3) {  // Ignore objects which are too close or the sky
 #endif
-			half4 positionCS = half4(2 * half2(uv.x, -uv.y + 1) - 1, depth, 1);
-			positionCS = mul(FrameBuffer::CameraViewProjInverse[0], positionCS);
-			positionCS.xyz = positionCS.xyz / positionCS.w;
 
-			position += positionCS.xyz;
+#if defined(VR)
+		[unroll] for (uint eyeIndex = 0; eyeIndex < 2; eyeIndex++) {
+			float3 eyeViewDirection = FrameBuffer::WorldToView(captureDirection, false, eyeIndex);
+			float2 eyeUVMono = FrameBuffer::ViewToUV(eyeViewDirection, false, eyeIndex);
 
-			color += ColorTexture.SampleLevel(LinearSampler, uv, 0).rgb;
-			weight = suppressSkyAndFrameEdgeCapture ? frameEdgeMask : 1.0;
+			if (FrameBuffer::IsOutsideFrame(eyeUVMono))
+				continue;
+
+			// Soft forward visibility gate:
+			// - full weight in front
+			// - gradual falloff toward side/slightly-behind directions
+			float forwardMask = 1.0 - smoothstep(forwardGateStart, forwardGateEnd, eyeViewDirection.z);
+			forwardMask = smoothstep(0.0, 1.0, sqrt(saturate(forwardMask)));
+			if (disableForwardCaptureGate)
+				forwardMask = 1.0;
+			if (forwardMask <= 1e-3)
+				continue;
+			float frameEdgeMask = suppressSkyAndFrameEdgeCapture ? GetFrameEdgeMask(eyeUVMono) : 1.0;
+			if (frameEdgeMask <= 1e-3)
+				continue;
+
+			float2 eyeUV = FrameBuffer::GetDynamicResolutionAdjustedScreenPosition(eyeUVMono, 0);
+			eyeUV = Stereo::ConvertToStereoUV(eyeUV, eyeIndex);
+			float depth = DepthTexture.SampleLevel(LinearSampler, eyeUV, 0);
+			float linearDepth = SharedData::GetScreenDepth(depth);
+			// Near-depth validity:
+			// - reject extremely close samples (camera-near instability)
+			// - keep remaining depth weighting subtle to avoid concentric rings.
+			float nearDepthValidity = smoothstep(nearDepthValidityStart, nearDepthValidityEnd, linearDepth);
+			if (nearDepthValidity <= 1e-3)
+				continue;
+			float nearDepthWeight = lerp(nearDepthWeightFloor, 1.0, nearDepthValidity);
+
+#	if defined(REFLECTIONS)
+			float nonSkyMask = suppressSkyAndFrameEdgeCapture ? (1.0 - smoothstep(0.9988, 0.99997, depth)) : 1.0;
+			float sampleWeight = forwardMask * nearDepthWeight * frameEdgeMask * nonSkyMask;
+#	else
+			// Soft sky rejection to reduce blocky transitions at geometry/sky boundaries.
+			float nonSkyMask = 1.0 - smoothstep(0.9992, 0.99995, depth);
+			float sampleWeight = forwardMask * nearDepthWeight * nonSkyMask * frameEdgeMask;
+#	endif
+			if (sampleWeight > 1e-3) {
+				half4 positionCS = half4(2 * half2(eyeUVMono.x, -eyeUVMono.y + 1) - 1, depth, 1);
+				positionCS = mul(FrameBuffer::CameraViewProjInverse[eyeIndex], positionCS);
+				positionCS.xyz = positionCS.xyz / positionCS.w;
+
+				position += positionCS.xyz * sampleWeight;
+				color += ColorTexture.SampleLevel(LinearSampler, eyeUV, 0).rgb * sampleWeight;
+				weight += sampleWeight;
+			}
 		}
+#else
+		float2 eyeUV = Stereo::ConvertToStereoUV(uv, 0);
+		float depth = DepthTexture.SampleLevel(LinearSampler, eyeUV, 0);
+		float linearDepth = SharedData::GetScreenDepth(depth);
+		float forwardMask = 1.0 - smoothstep(forwardGateStart, forwardGateEnd, viewDirection.z);
+		forwardMask = smoothstep(0.0, 1.0, sqrt(saturate(forwardMask)));
+		if (disableForwardCaptureGate)
+			forwardMask = 1.0;
+		float nearDepthValidity = smoothstep(nearDepthValidityStart, nearDepthValidityEnd, linearDepth);
+		if (nearDepthValidity > 1e-3) {
+			float nearDepthWeight = lerp(nearDepthWeightFloor, 1.0, nearDepthValidity);
+			float frameEdgeMask = suppressSkyAndFrameEdgeCapture ? GetFrameEdgeMask(uv) : 1.0;
+
+#	if defined(REFLECTIONS)
+			float nonSkyMask = suppressSkyAndFrameEdgeCapture ? (1.0 - smoothstep(0.9988, 0.99997, depth)) : 1.0;
+			float sampleWeight = forwardMask * nearDepthWeight * frameEdgeMask * nonSkyMask;
+#	else
+			float nonSkyMask = 1.0 - smoothstep(0.9992, 0.99995, depth);
+			float sampleWeight = forwardMask * nearDepthWeight * nonSkyMask * frameEdgeMask;
+#	endif
+			if (sampleWeight > 1e-3) {
+				half4 positionCS = half4(2 * half2(eyeUV.x, -eyeUV.y + 1) - 1, depth, 1);
+				positionCS = mul(FrameBuffer::CameraViewProjInverse[0], positionCS);
+				positionCS.xyz = positionCS.xyz / positionCS.w;
+
+				position += positionCS.xyz * sampleWeight;
+				color += ColorTexture.SampleLevel(LinearSampler, eyeUV, 0).rgb * sampleWeight;
+				weight += sampleWeight;
+			}
+		}
+#endif
 
 		if (weight > 0.0) {
 			position /= weight;
@@ -135,26 +199,28 @@ float smoothbumpstep(float edge0, float edge1, float x)
 	}
 
 	float4 position = DynamicCubemapPosition[ThreadID];
-	position.xyz = (position.xyz + (CameraPreviousPosAdjust2.xyz * 0.001)) - (FrameBuffer::CameraPosAdjust[0].xyz * 0.001);  // Remove adjustment, add new adjustment
+	float3 cameraPosAdjustCenter = FrameBuffer::CameraPosAdjust[0].xyz;
+#if defined(VR)
+	cameraPosAdjustCenter = 0.5 * (FrameBuffer::CameraPosAdjust[0].xyz + FrameBuffer::CameraPosAdjust[1].xyz);
+#endif
+	position.xyz = (position.xyz + (CameraPreviousPosAdjust2.xyz * 0.001)) - (cameraPosAdjustCenter * 0.001);  // Remove adjustment, add new adjustment
 	DynamicCubemapPosition[ThreadID] = position;
 
 	float4 color = DynamicCubemapRaw[ThreadID];
-
-	float distance = length(position.xyz);
-	float distanceFactor = smoothbumpstep(0.0, 2.0, distance);
-
-	if (distance < 1.0)
-		distanceFactor = sqrt(distanceFactor);
-
+	// Temporal history decay for texels not refreshed this frame.
+	// Avoid radial distance weighting here: it produces concentric player-centered rings in motion.
+	float historyFade = 0.94;
 #if defined(FAKEREFLECTIONS)
-	distanceFactor = max(distanceFactor, smoothstep(0.0, 2.0, distance));
+	historyFade = 0.97;
 #endif
-
 	if (suppressSkyAndFrameEdgeCapture) {
-		distanceFactor = min(distanceFactor, 0.90);
+#if defined(REFLECTIONS)
+		historyFade = min(historyFade, 0.86);
+#else
+		historyFade = min(historyFade, 0.90);
+#endif
 	}
-
-	color *= distanceFactor;
+	color *= historyFade;
 
 	DynamicCubemap[ThreadID] = max(0, color);
 }

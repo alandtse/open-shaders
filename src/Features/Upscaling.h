@@ -61,6 +61,7 @@ public:
 		uint streamlineLogLevel = 0;  // 0=Off, 1=Default, 2=Verbose
 		float sharpnessFSR = 0.0f;
 		float sharpnessDLSS = 0.1f;
+		bool vrPipelineDeduplication = false;
 		bool foveatedVendorDispatch = false;
 		float foveatedCenterArea = 0.6f;
 		float foveatedLeftEyeMaskOffsetX = 0.0f;
@@ -294,6 +295,7 @@ public:
 	bool previousHistoryInWorld = false;
 	bool previousHistoryInMapMenu = false;
 	UpscaleMethod previousHistoryUpscaleMethod = UpscaleMethod::kNONE;
+	bool previousHistoryVRPipelineDedup = false;
 	bool previousHistoryFoveatedDispatch = false;
 	float previousHistoryFoveatedCenterArea = 1.0f;
 	std::array<float2, 2> previousHistoryFoveatedCenterOffsets = {};
@@ -306,6 +308,7 @@ public:
 	bool ShouldResetHistoryThisFrame() const;
 	void UpdateHistoryResetState(UpscaleMethod a_upscaleMethod);
 	void LatchHistoryResetForCurrentFrame();
+	bool IsVRPipelineDedupActive(UpscaleMethod a_upscaleMethod) const;
 	bool IsFoveatedVendorDispatchEnabled(UpscaleMethod a_upscaleMethod) const;
 	float2 GetDefaultFoveatedMaskCenterOffset(uint32_t eyeIndex) const;
 	std::array<float2, 2> GetDefaultFoveatedMaskCenterOffsets() const;
