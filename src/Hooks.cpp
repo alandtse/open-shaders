@@ -379,75 +379,6 @@ struct BSShaderRenderTargets_Create
 	static inline REL::Relocation<decltype(thunk)> func;
 };
 
-namespace
-{
-	inline constexpr RE::InputEvent* kEmptyInputEvents[] = { nullptr };
-
-	[[nodiscard]] bool IsLikelyValidPointer(std::uintptr_t a_address, std::uintptr_t a_alignment = alignof(void*))
-	{
-		return a_address >= 0x10000 && (a_address & (a_alignment - 1)) == 0;
-	}
-
-	[[nodiscard]] bool TryReadFirstInputEvent(RE::InputEvent* const* a_events, RE::InputEvent*& a_firstEvent)
-	{
-		a_firstEvent = nullptr;
-		if (a_events == nullptr) {
-			return true;
-		}
-
-		const auto eventsAddress = reinterpret_cast<std::uintptr_t>(a_events);
-		if (!IsLikelyValidPointer(eventsAddress, alignof(RE::InputEvent*))) {
-			return false;
-		}
-
-#if defined(_MSC_VER)
-		__try
-#endif
-		{
-			a_firstEvent = *a_events;
-			if (a_firstEvent == nullptr) {
-				return true;
-			}
-
-			const auto firstEventAddress = reinterpret_cast<std::uintptr_t>(a_firstEvent);
-			if (!IsLikelyValidPointer(firstEventAddress, alignof(RE::InputEvent))) {
-				return false;
-			}
-
-			// Touch the vtable pointer to reject obvious invalid objects before forwarding down the hook chain.
-			const auto vtbl = *reinterpret_cast<const std::uintptr_t*>(a_firstEvent);
-			return IsLikelyValidPointer(vtbl, alignof(std::uintptr_t));
-		}
-#if defined(_MSC_VER)
-		__except (EXCEPTION_EXECUTE_HANDLER)
-		{
-			return false;
-		}
-#endif
-	}
-
-	[[nodiscard]] bool TryProcessInputEvents(Menu* a_menu, RE::InputEvent* const* a_events)
-	{
-		if (a_menu == nullptr || a_events == nullptr) {
-			return true;
-		}
-
-#if defined(_MSC_VER)
-		__try
-#endif
-		{
-			a_menu->ProcessInputEvents(a_events);
-			return true;
-		}
-#if defined(_MSC_VER)
-		__except (EXCEPTION_EXECUTE_HANDLER)
-		{
-			return false;
-		}
-#endif
-	}
-}
-
 struct BSInputDeviceManager_PollInputDevices
 {
 	static void thunk(RE::BSTEventSource<RE::InputEvent*>* a_dispatcher, RE::InputEvent* const* a_events)
@@ -458,36 +389,12 @@ struct BSInputDeviceManager_PollInputDevices
 		bool blockedDevice = true;
 
 		auto menu = globals::menu;
-		auto forwardedEvents = a_events ? a_events : kEmptyInputEvents;
-		RE::InputEvent* firstEvent = nullptr;
-		bool eventsValid = TryReadFirstInputEvent(a_events, firstEvent);
 
-		if (!eventsValid) {
-			static bool loggedInvalidInputEventHead = false;
-			if (!loggedInvalidInputEventHead) {
-				loggedInvalidInputEventHead = true;
-				logger::error("[Input] Dropping malformed input event list (invalid head pointer) to prevent PollInputDevices CTD");
-			}
-			forwardedEvents = kEmptyInputEvents;
-		}
+		if (a_events) {
+			menu->ProcessInputEvents(a_events);
 
-		if (eventsValid && !TryProcessInputEvents(menu, forwardedEvents)) {
-			static bool loggedInputEventReadFailure = false;
-			if (!loggedInputEventReadFailure) {
-				loggedInputEventReadFailure = true;
-				logger::error("[Input] Exception while reading input events, forwarding empty list to avoid CTD");
-			}
-			eventsValid = false;
-			forwardedEvents = kEmptyInputEvents;
-			firstEvent = nullptr;
-		}
-
-		if (eventsValid && firstEvent) {
-#if defined(_MSC_VER)
-			__try
-#endif
-			{
-				if (auto device = firstEvent->GetDevice()) {
+			if (*a_events) {
+				if (auto device = (*a_events)->GetDevice()) {
 					if (globals::game::isVR) {
 						// In VR, block mouse/keyboard input when menu is open (like Flatrim)
 						// Allow gamepad input to pass through
@@ -517,26 +424,15 @@ struct BSInputDeviceManager_PollInputDevices
 					}
 				}
 			}
-#if defined(_MSC_VER)
-			__except (EXCEPTION_EXECUTE_HANDLER)
-			{
-				static bool loggedInputEventDeviceFailure = false;
-				if (!loggedInputEventDeviceFailure) {
-					loggedInputEventDeviceFailure = true;
-					logger::error("[Input] Exception while reading first input event device, dropping event list for safety");
-				}
-				eventsValid = false;
-				forwardedEvents = kEmptyInputEvents;
-			}
-#endif
 		}
 
-		if (menu && blockedDevice && menu->ShouldSwallowInput()) {  //the menu is open, eat all keypresses
-			func(a_dispatcher, kEmptyInputEvents);
+		if (blockedDevice && menu->ShouldSwallowInput()) {  //the menu is open, eat all keypresses
+			constexpr RE::InputEvent* const dummy[] = { nullptr };
+			func(a_dispatcher, dummy);
 			return;
 		}
 
-		func(a_dispatcher, forwardedEvents);
+		func(a_dispatcher, a_events);
 	}
 	static inline REL::Relocation<decltype(thunk)> func;
 };
