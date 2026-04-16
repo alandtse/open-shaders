@@ -658,6 +658,18 @@ struct BSLightingShaderProperty_GetRenderPasses
 		if (renderPasses == nullptr) {
 			return renderPasses;
 		}
+		// Guard against invalid hook-chain returns (e.g. other SKSE mods returning non-pointer values), which can surface as cold-breath CTDs.
+		const auto renderPassesAddress = reinterpret_cast<std::uintptr_t>(renderPasses);
+		if (renderPassesAddress < 0x10000 || (renderPassesAddress & (alignof(RE::BSShaderProperty::RenderPassArray) - 1)) != 0) {
+			static bool loggedInvalidRenderPassAddress = false;
+			if (!loggedInvalidRenderPassAddress) {
+				loggedInvalidRenderPassAddress = true;
+				logger::error("[TruePBR] Invalid GetRenderPasses pointer {:X} (geometry: {}) - returning null for safety (prevents known cold-breath CTD path)",
+					renderPassesAddress,
+					geometry && geometry->name.c_str() ? geometry->name.c_str() : "<null>");
+			}
+			return nullptr;
+		}
 
 		const auto issEnabledAndInteriorWithSun = globals::features::interiorSun.loaded && globals::features::interiorSun.isInteriorWithSun;
 
@@ -669,6 +681,10 @@ struct BSLightingShaderProperty_GetRenderPasses
 
 		auto currentPass = renderPasses->head;
 		while (currentPass != nullptr) {
+			if (currentPass->shader == nullptr) {
+				currentPass = currentPass->next;
+				continue;
+			}
 			if (currentPass->shader->shaderType == RE::BSShader::Type::Lighting) {
 				constexpr uint32_t LightingTechniqueStart = 0x4800002D;
 				auto lightingTechnique = currentPass->passEnum - LightingTechniqueStart;

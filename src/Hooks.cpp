@@ -39,6 +39,175 @@ const std::pair<std::unique_ptr<uint8_t[]>, size_t>& GetShaderBytecode(void* Sha
 	return ShaderBytecodeMap.at(Shader);
 }
 
+namespace
+{
+	enum class InputHookSafeguardReason : uint32_t
+	{
+		kSwallow = 1u << 0,
+		kInvalidHead = 1u << 1,
+		kProcessInputEventsException = 1u << 2,
+		kGetDeviceException = 1u << 3
+	};
+
+	const char* ToString(InputHookSafeguardReason a_reason)
+	{
+		switch (a_reason) {
+		case InputHookSafeguardReason::kSwallow:
+			return "swallow";
+		case InputHookSafeguardReason::kInvalidHead:
+			return "invalid_head";
+		case InputHookSafeguardReason::kProcessInputEventsException:
+			return "process_input_events_exception";
+		case InputHookSafeguardReason::kGetDeviceException:
+			return "get_device_exception";
+		default:
+			return "unknown";
+		}
+	}
+
+	HMODULE GetModuleHandleFromAddress(const void* a_address)
+	{
+		if (!a_address) {
+			return nullptr;
+		}
+
+		HMODULE moduleHandle = nullptr;
+		if (!GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+				reinterpret_cast<LPCSTR>(a_address),
+				&moduleHandle) ||
+			!moduleHandle) {
+			MEMORY_BASIC_INFORMATION memoryInfo{};
+			if (VirtualQuery(a_address, &memoryInfo, sizeof(memoryInfo)) == 0 || !memoryInfo.AllocationBase) {
+				return nullptr;
+			}
+			moduleHandle = static_cast<HMODULE>(memoryInfo.AllocationBase);
+		}
+
+		return moduleHandle;
+	}
+
+	std::string GetModuleName(HMODULE a_moduleHandle)
+	{
+		if (!a_moduleHandle) {
+			return {};
+		}
+
+		char modulePath[MAX_PATH]{};
+		const auto length = GetModuleFileNameA(a_moduleHandle, modulePath, static_cast<DWORD>(std::size(modulePath)));
+		if (length == 0) {
+			return {};
+		}
+
+		return std::filesystem::path(std::string_view(modulePath, length)).filename().string();
+	}
+
+	const void* TryGetObjectVtable(const void* a_object)
+	{
+		if (!a_object) {
+			return nullptr;
+		}
+
+		__try {
+			return *reinterpret_cast<const void* const*>(a_object);
+		} __except (EXCEPTION_EXECUTE_HANDLER) {
+			return nullptr;
+		}
+	}
+
+	std::vector<std::string> CollectExternalInputSinkModules(RE::BSTEventSource<RE::InputEvent*>* a_dispatcher)
+	{
+		std::vector<std::string> modules;
+		if (!a_dispatcher) {
+			return modules;
+		}
+
+		const auto selfModule = GetModuleHandleFromAddress(&CollectExternalInputSinkModules);
+
+		std::vector<const void*> sinkVtables;
+		{
+			RE::BSSpinLockGuard locker(a_dispatcher->lock);
+			sinkVtables.reserve(a_dispatcher->sinks.size());
+			for (auto* sink : a_dispatcher->sinks) {
+				if (!sink) {
+					continue;
+				}
+
+				const auto vtable = TryGetObjectVtable(sink);
+				if (vtable) {
+					sinkVtables.push_back(vtable);
+				}
+			}
+		}
+
+		std::unordered_set<HMODULE> seenModules;
+		seenModules.reserve(sinkVtables.size());
+		for (const auto* sinkVtable : sinkVtables) {
+			const auto moduleHandle = GetModuleHandleFromAddress(sinkVtable);
+			if (!moduleHandle || moduleHandle == selfModule || !seenModules.emplace(moduleHandle).second) {
+				continue;
+			}
+
+			auto moduleName = GetModuleName(moduleHandle);
+			if (moduleName.empty()) {
+				continue;
+			}
+
+			std::string moduleNameLower = moduleName;
+			std::ranges::transform(moduleNameLower, moduleNameLower.begin(), [](unsigned char c) {
+				return static_cast<char>(std::tolower(c));
+			});
+
+			if (moduleNameLower.ends_with(".exe")) {
+				continue;
+			}
+
+			modules.push_back(std::move(moduleName));
+		}
+
+		std::ranges::sort(modules);
+		return modules;
+	}
+
+	std::string JoinModules(const std::vector<std::string>& a_modules)
+	{
+		if (a_modules.empty()) {
+			return "<none>";
+		}
+
+		std::string result;
+		for (size_t i = 0; i < a_modules.size(); ++i) {
+			if (i != 0) {
+				result += ", ";
+			}
+			result += a_modules[i];
+		}
+		return result;
+	}
+
+	void LogInputHookSafeguardOnce(
+		InputHookSafeguardReason a_reason,
+		RE::BSTEventSource<RE::InputEvent*>* a_dispatcher,
+		const RE::InputEvent* a_originalHead,
+		bool a_substitutedEmptyList)
+	{
+		static std::atomic<uint32_t> loggedReasons = 0;
+		const auto reasonBit = static_cast<uint32_t>(a_reason);
+		if ((loggedReasons.load(std::memory_order_relaxed) & reasonBit) != 0) {
+			return;
+		}
+		if ((loggedReasons.fetch_or(reasonBit, std::memory_order_relaxed) & reasonBit) != 0) {
+			return;
+		}
+
+		const auto externalModules = CollectExternalInputSinkModules(a_dispatcher);
+		logger::warn("[InputHook] safeguard engaged: reason={} original_head=0x{:X} substituted_empty_list={} external_sinks=[{}]",
+			ToString(a_reason),
+			reinterpret_cast<std::uintptr_t>(a_originalHead),
+			a_substitutedEmptyList ? "yes" : "no",
+			JoinModules(externalModules));
+	}
+}
+
 template <class ShaderType>
 void DumpShader(const REX::BSShader* thisClass, const ShaderType* shader, const std::pair<std::unique_ptr<uint8_t[]>, size_t>& bytecode)
 {
@@ -427,6 +596,7 @@ struct BSInputDeviceManager_PollInputDevices
 		}
 
 		if (blockedDevice && menu->ShouldSwallowInput()) {  //the menu is open, eat all keypresses
+			LogInputHookSafeguardOnce(InputHookSafeguardReason::kSwallow, a_dispatcher, a_events ? *a_events : nullptr, true);
 			constexpr RE::InputEvent* const dummy[] = { nullptr };
 			func(a_dispatcher, dummy);
 			return;
