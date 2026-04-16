@@ -656,6 +656,14 @@ FlowmapData GetFlowmapDataWorldSpace(FlowmapData textureSpaceData)
 #				undef WETNESS_EFFECTS
 #			endif
 
+#			if defined(ADVANCED_WETNESS)
+#				define CS_ADVANCED_WETNESS_ALIAS
+#				define WETNESS_EFFECTS
+#				define CS_WETNESS_SETTINGS SharedData::advancedWetnessSettings
+#			else
+#				define CS_WETNESS_SETTINGS SharedData::wetnessEffectsSettings
+#			endif
+
 #			if defined(WATER_EFFECTS) && !defined(VC)
 #				define WATER_PARALLAX
 #				include "WaterEffects/WaterParallax.hlsli"
@@ -666,7 +674,11 @@ FlowmapData GetFlowmapDataWorldSpace(FlowmapData textureSpaceData)
 #			endif
 
 #			if defined(WETNESS_EFFECTS)
-#				include "WetnessEffects/WetnessEffects.hlsli"
+#				if defined(CS_ADVANCED_WETNESS_ALIAS)
+#					include "AdvancedWetness/AdvancedWetness.hlsli"
+#				else
+#					include "WetnessEffects/WetnessEffects.hlsli"
+#				endif
 #			endif
 
 // Structure to return both normal and ripple/splash color information
@@ -810,10 +822,10 @@ WaterNormalData GetWaterNormal(PS_INPUT input, float distanceFactor, float norma
 #				endif
 
 	float4 raindropInfo = float4(0, 0, 1, 0);
-	float maxRainDropDistance = SharedData::wetnessEffectsSettings.RaindropFxRange * SharedData::wetnessEffectsSettings.RaindropFxRange * 3;
+	float maxRainDropDistance = CS_WETNESS_SETTINGS.RaindropFxRange * CS_WETNESS_SETTINGS.RaindropFxRange * 3;
 	float rainDropDistance = dot(input.WPosition, input.WPosition);
 	float distanceFadeout = saturate((1 - saturate(rainDropDistance / maxRainDropDistance)) * 3);
-	if (finalNormal.z > 0 && SharedData::wetnessEffectsSettings.Raining > 0.0f && SharedData::wetnessEffectsSettings.EnableRaindropFx &&
+	if (finalNormal.z > 0 && CS_WETNESS_SETTINGS.Raining > 0.0f && CS_WETNESS_SETTINGS.EnableRaindropFx &&
 		(rainDropDistance < maxRainDropDistance) && wetnessOcclusion > 0.05) {
 		float rippleStrengthModifier = (wetnessOcclusion * wetnessOcclusion) * distanceFadeout;
 		float3 rippleWPosition = input.WPosition.xyz + finalNormal * 16;
@@ -837,7 +849,7 @@ WaterNormalData GetWaterNormal(PS_INPUT input, float distanceFactor, float norma
 
 		rippleWPosition.xy += flowOffset;
 #				endif
-		raindropInfo = WetnessEffects::GetRainDrops(rippleWPosition + FrameBuffer::CameraPosAdjust[eyeIndex].xyz, SharedData::wetnessEffectsSettings.Time, finalNormal, rippleStrengthModifier);
+		raindropInfo = WetnessEffects::GetRainDrops(rippleWPosition + FrameBuffer::CameraPosAdjust[eyeIndex].xyz, CS_WETNESS_SETTINGS.Time, finalNormal, rippleStrengthModifier);
 
 		// Calculate ripple and splash color intensities
 		float rippleIntensity = length(raindropInfo.xy) * rippleStrengthModifier;

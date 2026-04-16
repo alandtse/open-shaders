@@ -3,6 +3,7 @@
 #include <DDSTextureLoader.h>
 #include <DirectXTex.h>
 
+#include "AdvancedWetness.h"
 #include "ShaderCache.h"
 #include "State.h"
 
@@ -12,6 +13,49 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	DynamicCubemaps::Settings,
 	EnabledSSR,
 	EnabledCreator);
+
+namespace
+{
+	const AdvancedWetness* GetActiveAdvancedWetness()
+	{
+		auto& advancedWetness = globals::features::advancedWetness;
+		return advancedWetness.IsRuntimeActive() ? &advancedWetness : nullptr;
+	}
+
+	RE::NiPoint3 GetCubemapCaptureAnchorPosition()
+	{
+		const auto* advancedWetness = GetActiveAdvancedWetness();
+		if (!(REL::Module::IsVR() && advancedWetness && advancedWetness->vrCubemapSettings.UsePlayerRootCaptureAnchor)) {
+			return Util::GetAverageEyePosition();
+		}
+
+		if (auto* player = RE::PlayerCharacter::GetSingleton()) {
+			if (auto* root = player->Get3D(false)) {
+				return root->world.translate;
+			}
+			return player->GetPosition();
+		}
+
+		return Util::GetAverageEyePosition();
+	}
+
+	uint GetVRCaptureFlags()
+	{
+		const auto* advancedWetness = GetActiveAdvancedWetness();
+		if (!(REL::Module::IsVR() && advancedWetness)) {
+			return 0u;
+		}
+
+		uint captureFlags = 0u;
+		if (advancedWetness->vrCubemapSettings.InactivateForwardCaptureGate) {
+			captureFlags |= DynamicCubemaps::kCaptureFlagDisableForwardGate;
+		}
+		if (advancedWetness->vrCubemapSettings.SuppressSkyAndFrameEdgeCapture) {
+			captureFlags |= DynamicCubemaps::kCaptureFlagSuppressSkyAndFrameEdge;
+		}
+		return captureFlags;
+	}
+}
 
 std::vector<std::pair<std::string_view, std::string_view>> DynamicCubemaps::GetShaderDefineOptions()
 {
@@ -348,9 +392,10 @@ void DynamicCubemaps::UpdateCubemapCapture(bool a_reflections)
 	static float3 cameraPreviousPosAdjust[2] = { { 0, 0, 0 }, { 0, 0, 0 } };
 	updateData.CameraPreviousPosAdjust = cameraPreviousPosAdjust[index];
 
-	auto eyePosition = Util::GetEyePosition(0);
+	auto eyePosition = GetCubemapCaptureAnchorPosition();
 
 	cameraPreviousPosAdjust[index] = { eyePosition.x, eyePosition.y, eyePosition.z };
+	updateData.CaptureFlags = GetVRCaptureFlags();
 
 	updateCubemapCB->Update(updateData);
 

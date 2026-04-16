@@ -10,6 +10,7 @@ namespace FeatureVersions
     using namespace std::literals::string_view_literals;
 
     inline const std::map<std::string_view, REL::Version> FEATURE_MINIMAL_VERSIONS{
+        {"AdvancedWetness"sv,      {1,0,0}},
         {"CloudShadows"sv,         {1,2,0}},
         {"DynamicCubemaps"sv,      {2,2,2}},
         {"ExtendedMaterials"sv,    {1,1,0}},

@@ -131,6 +131,68 @@ namespace SharedData
 		float pad0;
 	};
 
+	struct AdvancedWetnessSettings
+	{
+		row_major float4x4 OcclusionViewProj;
+
+		float Time;
+		float Raining;
+		float Wetness;
+		float PuddleWetness;
+
+		uint EnableWetnessEffects;
+		float MaxRainWetness;
+		float MaxPuddleWetness;
+		float MaxShoreWetness;
+
+		uint ShoreRange;
+		float PuddleRadius;
+		float RunoffWidth;
+		float PuddleMaxAngle;
+		float PuddleMinWetness;
+
+		float MinRainWetness;
+		float SkinWetness;
+		float PuddleLayout;
+		float StoneDryingMultiplier;
+		float DirtDryingMultiplier;
+		float GrassDryingMultiplier;
+		uint EnableRaindropFx;
+
+		uint EnableSplashes;
+		uint EnableRipples;
+		uint EnableVanillaRipples;
+		uint EnableLegacyRainBehavior;
+		uint EnableModernWetReflection;
+		uint EnableLegacyWetReflection;
+		float WetIndirectSpecularScale;
+		float RaindropFxRange;
+
+		float RaindropGridSizeRcp;
+		float RaindropIntervalRcp;
+		float RaindropChance;
+		float SplashesLifetime;
+
+		float SplashesStrength;
+		float SplashesMinRadius;
+		float SplashesMaxRadius;
+		float RippleStrength;
+
+		float RippleRadius;
+		float RippleBreadth;
+		float RippleLifetimeRcp;
+		float PostRainPuddleWaterStrength;
+
+		float CloseRangeWetnessBoost;
+		float RaindropTransitionFalloff;
+		uint EnableDualPuddleModel;
+		float PuddleDepthBlend;
+		float WetDarkeningStrength;
+		float WetColorSaturation;
+		float WetHighlightReduction;
+		float RunoffSpeed;
+	};
+
 	struct SkylightingSettings
 	{
 		row_major float4x4 OcclusionViewProj;
@@ -265,6 +327,7 @@ namespace SharedData
 		TerraOccSettings terraOccSettings;
 		LightLimitFixSettings lightLimitFixSettings;
 		WetnessEffectsSettings wetnessEffectsSettings;
+		AdvancedWetnessSettings advancedWetnessSettings;
 		SkylightingSettings skylightingSettings;
 		CloudShadowsSettings cloudShadowsSettings;
 		LODBlendingSettings lodBlendingSettings;

@@ -50,10 +50,19 @@ float3 GetSamplingVector(uint3 ThreadID, in RWTexture2DArray<float4> OutputTextu
 	return normalize(result);
 }
 
+float GetFrameEdgeMask(float2 uvMono)
+{
+	float2 edgeDistance = min(uvMono, 1.0 - uvMono);
+	float minEdgeDistance = min(edgeDistance.x, edgeDistance.y);
+	const float edgeFadeStart = 0.015;
+	const float edgeFadeEnd = 0.14;
+	return smoothstep(edgeFadeStart, edgeFadeEnd, minEdgeDistance);
+}
+
 cbuffer UpdateData : register(b0)
 {
 	float3 CameraPreviousPosAdjust2;
-	uint padb10;
+	uint CaptureFlags;
 }
 
 float smoothbumpstep(float edge0, float edge1, float x)
@@ -67,22 +76,33 @@ float smoothbumpstep(float edge0, float edge1, float x)
 	float3 captureDirection = -GetSamplingVector(ThreadID, DynamicCubemap);
 	float3 viewDirection = FrameBuffer::WorldToView(captureDirection, false);
 	float2 uv = FrameBuffer::ViewToUV(viewDirection, false);
+	const bool disableForwardCaptureGate = ((CaptureFlags & 0x1u) != 0);
+	const bool suppressSkyAndFrameEdgeCapture = ((CaptureFlags & 0x2u) != 0);
+	const bool allowCaptureDirection = (viewDirection.z < 0.0) || disableForwardCaptureGate;
 
-	if (!FrameBuffer::IsOutsideFrame(uv) && viewDirection.z < 0.0) {  // Check that the view direction exists in screenspace and that it is in front of the camera
+	if (!FrameBuffer::IsOutsideFrame(uv) && allowCaptureDirection) {  // Check that the view direction exists in screenspace and that it is in front of the camera
 		float3 color = 0.0;
 		float3 position = 0.0;
 		float weight = 0.0;
 
 		uv = FrameBuffer::GetDynamicResolutionAdjustedScreenPosition(uv);
 		uv = Stereo::ConvertToStereoUV(uv, 0);
+		float frameEdgeMask = 1.0;
+		if (suppressSkyAndFrameEdgeCapture) {
+			frameEdgeMask = GetFrameEdgeMask(Stereo::ConvertFromStereoUV(uv, 0, 1));
+		}
 
 		float depth = DepthTexture.SampleLevel(LinearSampler, uv, 0);
 		float linearDepth = SharedData::GetScreenDepth(depth);
 
 #if defined(REFLECTIONS)
-		if (linearDepth > 16.5) {  // Ignore objects which are too close
+		if (linearDepth > 16.5 && frameEdgeMask > 1e-3) {  // Ignore objects which are too close
 #else
-		if (linearDepth > 16.5 && depth != 1.0) {  // Ignore objects which are too close or the sky
+		float nonSkyMask = 1.0;
+		if (suppressSkyAndFrameEdgeCapture) {
+			nonSkyMask = 1.0 - smoothstep(0.9992, 0.99995, depth);
+		}
+		if (linearDepth > 16.5 && depth != 1.0 && frameEdgeMask > 1e-3 && nonSkyMask > 1e-3) {  // Ignore objects which are too close or the sky
 #endif
 			half4 positionCS = half4(2 * half2(uv.x, -uv.y + 1) - 1, depth, 1);
 			positionCS = mul(FrameBuffer::CameraViewProjInverse[0], positionCS);
@@ -91,7 +111,7 @@ float smoothbumpstep(float edge0, float edge1, float x)
 			position += positionCS.xyz;
 
 			color += ColorTexture.SampleLevel(LinearSampler, uv, 0).rgb;
-			weight++;
+			weight = suppressSkyAndFrameEdgeCapture ? frameEdgeMask : 1.0;
 		}
 
 		if (weight > 0.0) {
@@ -129,6 +149,10 @@ float smoothbumpstep(float edge0, float edge1, float x)
 #if defined(FAKEREFLECTIONS)
 	distanceFactor = max(distanceFactor, smoothstep(0.0, 2.0, distance));
 #endif
+
+	if (suppressSkyAndFrameEdgeCapture) {
+		distanceFactor = min(distanceFactor, 0.90);
+	}
 
 	color *= distanceFactor;
 

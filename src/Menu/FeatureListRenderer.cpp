@@ -12,6 +12,7 @@
 #include "Feature.h"
 #include "FeatureConstraints.h"
 #include "FeatureIssues.h"
+#include "Features/AdvancedWetness.h"
 #include "Fonts.h"
 #include "Globals.h"
 #include "Menu.h"
@@ -693,6 +694,12 @@ void FeatureListRenderer::DrawMenuVisitor::RenderFeatureSettings(Feature* feat, 
 		ImGui::TextColored(themeSettings.StatusPalette.Disable, "Feature settings are hidden because this feature is disabled at boot.");
 		ImGui::Spacing();
 		ImGui::Text("Enable the feature above to access its configuration options.");
+		if (feat->GetShortName() == "WetnessEffects" && globals::features::advancedWetness.loaded) {
+			ImGui::Spacing();
+			ImGui::TextColored(
+				themeSettings.StatusPalette.Error,
+				"Advanced Wetness is active. Wetness Effects must be de-installed or disabled at boot while Advanced Wetness is activated.");
+		}
 	} else {
 		if (isLoaded) {
 			auto weatherRegistry = WeatherVariables::GlobalWeatherRegistry::GetSingleton();

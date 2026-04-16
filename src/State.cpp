@@ -22,6 +22,25 @@
 #include "WeatherManager.h"
 #include "WeatherVariableRegistry.h"
 
+namespace
+{
+	void ApplyDefaultDisableAtBootSettings(json& a_disabledFeaturesJson)
+	{
+		static constexpr std::pair<std::string_view, bool> defaultDisableAtBootSettings[] = {
+			{ "WetnessEffects", false },
+			{ "AdvancedWetness", true }
+		};
+
+		for (const auto& [featureName, isDisabled] : defaultDisableAtBootSettings) {
+			const std::string featureKey(featureName);
+			if (!a_disabledFeaturesJson.contains(featureKey)) {
+				a_disabledFeaturesJson[featureKey] = isDisabled;
+				logger::info("Default boot state for '{}' set to {}", featureName, isDisabled ? "Disabled" : "Enabled");
+			}
+		}
+	}
+}
+
 void State::Draw()
 {
 	ZoneScoped;
@@ -305,8 +324,10 @@ void State::Load(ConfigMode a_configMode, bool a_allowReload)
 		}
 
 		json& disabledFeaturesJson = settings["Disable at Boot"];
+		ApplyDefaultDisableAtBootSettings(disabledFeaturesJson);
 		logger::info("Loading 'Disable at Boot' settings");
 
+		disabledFeatures.clear();
 		for (auto& [featureName, featureStatus] : disabledFeaturesJson.items()) {
 			if (featureStatus.is_boolean()) {
 				disabledFeatures[featureName] = featureStatus.get<bool>();
@@ -328,6 +349,10 @@ void State::Load(ConfigMode a_configMode, bool a_allowReload)
 
 					// Load base feature settings from merged config (default + user)
 					feature->Load(settings);
+					if (!feature->loaded) {
+						logger::info("Feature '{}' did not finish loading; skipping post-load initialization.", featureName);
+						continue;
+					}
 
 					// Register weather variables (features opt-in by implementing this)
 					feature->RegisterWeatherVariables();
@@ -431,6 +456,7 @@ void State::SaveToJson(nlohmann::json& settings)
 	for (const auto& [featureName, isDisabled] : disabledFeatures) {
 		disabledFeaturesJson[featureName] = isDisabled;
 	}
+	ApplyDefaultDisableAtBootSettings(disabledFeaturesJson);
 	settings["Disable at Boot"] = disabledFeaturesJson;
 
 	settings["Version"] = Plugin::VERSION.string();

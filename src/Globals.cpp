@@ -1,6 +1,7 @@
 #include "Globals.h"
 
 #include "Deferred.h"
+#include "Features/AdvancedWetness.h"
 #include "Features/CloudShadows.h"
 #include "Features/DynamicCubemaps.h"
 #include "Features/ExtendedMaterials.h"
@@ -52,6 +53,7 @@ namespace globals
 	namespace features
 	{
 		CloudShadows cloudShadows{};
+		AdvancedWetness advancedWetness{};
 		DynamicCubemaps dynamicCubemaps{};
 		ExtendedMaterials extendedMaterials{};
 		GrassCollision grassCollision{};
