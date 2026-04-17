@@ -61,6 +61,8 @@ public:
 		uint streamlineLogLevel = 0;  // 0=Off, 1=Default, 2=Verbose
 		float sharpnessFSR = 0.0f;
 		float sharpnessDLSS = 0.1f;
+		bool fsr4RuntimeEnable = true;
+		bool fsr4AllowNonRx90Amd = false;
 		bool vrPipelineDeduplication = false;
 		bool foveatedVendorDispatch = false;
 		float foveatedCenterArea = 0.6f;
@@ -306,7 +308,7 @@ public:
 
 	// Static instances instead of singletons
 	static inline Streamline streamline;
-	static inline FidelityFX fidelityFX;  ///< Only for frame generation
+	static inline FidelityFX fidelityFX;  ///< AMD FidelityFX runtime for FSR upscaling and frame generation
 	static inline DX12SwapChain dx12SwapChain;
 	static inline RCAS rcas;  ///< Standalone RCAS sharpening for DLSS
 
@@ -339,6 +341,7 @@ public:
 	bool previousHistoryPeripheryTAADisableLocks = false;
 	bool previousHistoryPeripheryTAADisableReactivity = false;
 	bool previousHistoryPeripheryTAADisableInstability = false;
+	bool previousHistoryFSRRuntimePathActive = false;
 
 	void CopySharedD3D12Resources();
 	void PostDisplay();
@@ -349,6 +352,7 @@ public:
 	void UpdateHistoryResetState(UpscaleMethod a_upscaleMethod);
 	void LatchHistoryResetForCurrentFrame();
 	bool IsVRPipelineDedupActive(UpscaleMethod a_upscaleMethod) const;
+	bool IsFSRRuntimePathActive(UpscaleMethod a_upscaleMethod) const;
 	bool IsFoveatedVendorDispatchEnabled(UpscaleMethod a_upscaleMethod) const;
 	bool IsPeripheryTAAEnabled(UpscaleMethod a_upscaleMethod) const;
 	bool IsPeripheryTAAPathActive(UpscaleMethod a_upscaleMethod) const;

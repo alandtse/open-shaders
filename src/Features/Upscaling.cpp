@@ -28,6 +28,8 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	streamlineLogLevel,
 	sharpnessFSR,
 	sharpnessDLSS,
+	fsr4RuntimeEnable,
+	fsr4AllowNonRx90Amd,
 	vrPipelineDeduplication,
 	foveatedVendorDispatch,
 	foveatedCenterArea,
@@ -126,6 +128,8 @@ namespace
 
 	void ResetVRSpecificUpscalingSettings(Upscaling::Settings& settings)
 	{
+		settings.fsr4RuntimeEnable = true;
+		settings.fsr4AllowNonRx90Amd = false;
 		settings.vrPipelineDeduplication = false;
 		settings.foveatedVendorDispatch = false;
 		settings.foveatedCenterArea = 0.6f;
@@ -147,6 +151,8 @@ namespace
 
 	void StripVRSpecificUpscalingSettings(json& o_json)
 	{
+		o_json.erase("fsr4RuntimeEnable");
+		o_json.erase("fsr4AllowNonRx90Amd");
 		o_json.erase("vrPipelineDeduplication");
 		o_json.erase("foveatedVendorDispatch");
 		o_json.erase("foveatedCenterArea");
@@ -367,7 +373,10 @@ void Upscaling::DrawSettings()
 	// Display upscaling options in the UI
 	std::vector<std::string> upscaleModes = { "None", "TAA" };
 
-	std::string fsrLabel = "AMD FSR 3.1";
+	const bool isAmdAdapter = fidelityFX.IsAmdAdapterDetected();
+	const bool runtimeFsr4Present = fidelityFX.IsRuntimeUpscalerPresent();
+	const bool runtimeFsr4Detected = fidelityFX.IsRuntimeUpscalerAvailable();
+	std::string fsrLabel = (runtimeFsr4Detected || (isAmdAdapter && runtimeFsr4Present)) ? "AMD FSR 3.1 / 4" : "AMD FSR 3.1";
 	upscaleModes.push_back(fsrLabel);
 
 	std::string dlssLabel = "NVIDIA DLSS";
@@ -438,6 +447,30 @@ void Upscaling::DrawSettings()
 		}
 
 		if (upscaleMethod == UpscaleMethod::kFSR) {
+			if (globals::game::isVR && isAmdAdapter) {
+				if (runtimeFsr4Present) {
+					ImGui::Checkbox("Allow FSR4 on Non-RX90 AMD", &settings.fsr4AllowNonRx90Amd);
+					if (auto _tt = Util::HoverTooltipWrapper()) {
+						ImGui::TextUnformatted("Enables Runtime FSR4 on AMD cards that are not auto-detected as RX 90.");
+						ImGui::TextUnformatted("Keep this off unless your AMD card supports FSR4 and detection failed.");
+					}
+				} else {
+					ImGui::TextDisabled("Runtime FSR4 unavailable: missing FidelityFX upscaler runtime.");
+				}
+
+				const bool runtimeFsr4AvailableNow = fidelityFX.IsRuntimeUpscalerAvailable();
+				if (runtimeFsr4AvailableNow) {
+					const char* fsrRuntimeModes[] = { "Host FSR 3.1", "Runtime FSR 4" };
+					int fsrRuntimeMode = settings.fsr4RuntimeEnable ? 1 : 0;
+					ImGui::SliderInt("FSR Runtime", &fsrRuntimeMode, 0, 1, fsrRuntimeModes[fsrRuntimeMode]);
+					fsrRuntimeMode = std::clamp(fsrRuntimeMode, 0, 1);
+					settings.fsr4RuntimeEnable = (fsrRuntimeMode == 1);
+					if (auto _tt = Util::HoverTooltipWrapper()) {
+						ImGui::TextUnformatted("Choose between host FSR3.1 and runtime FSR4.");
+						ImGui::TextUnformatted("Use host FSR3.1 for A/B testing and fallback comparisons.");
+					}
+				}
+			}
 			ImGui::SliderFloat("Sharpness", &settings.sharpnessFSR, 0.0f, 1.0f, "%.1f");
 		} else if (upscaleMethod == UpscaleMethod::kDLSS) {
 			// Keep persisted preset values stable (0=J,1=K,2=L,3=M,4=F) while
@@ -1181,6 +1214,7 @@ void Upscaling::CheckResources(UpscaleMethod a_upscalemethod)
 	static bool previousVRPipelineDedupActive = false;
 	static bool previousFoveatedDispatch = false;
 	static bool previousPeripheryTAA = false;
+	static bool previousFSRRuntimePathActive = false;
 	static uint32_t previousFoveatedCenterAreaMilli = static_cast<uint32_t>(std::round(ClampFoveatedCenterArea(settings.foveatedCenterArea) * 1000.0f));
 
 	bool frameGenModeCurrent = (settings.frameGenerationMode && d3d12SwapChainActive);
@@ -1190,16 +1224,19 @@ void Upscaling::CheckResources(UpscaleMethod a_upscalemethod)
 	const bool vrPipelineDedupChanged = previousVRPipelineDedupActive != vrPipelineDedupCurrent;
 	const bool foveatedDispatchCurrent = IsFoveatedVendorDispatchEnabled(a_upscalemethod);
 	const bool peripheryTAACurrent = IsPeripheryTAAEnabled(a_upscalemethod);
+	const bool fsrRuntimePathCurrent = IsFSRRuntimePathActive(a_upscalemethod);
 	const uint32_t foveatedCenterAreaMilli = static_cast<uint32_t>(std::round(ClampFoveatedCenterArea(settings.foveatedCenterArea) * 1000.0f));
 	const bool compareFoveatedArea = foveatedDispatchCurrent || previousFoveatedDispatch;
 	const bool foveatedDispatchChanged = previousFoveatedDispatch != foveatedDispatchCurrent ||
 	                                     (compareFoveatedArea && previousFoveatedCenterAreaMilli != foveatedCenterAreaMilli);
 	const bool peripheryTAAChanged = previousPeripheryTAA != peripheryTAACurrent;
+	const bool compareFSRRuntimePath = a_upscalemethod == UpscaleMethod::kFSR || previousUpscaleMode == UpscaleMethod::kFSR;
+	const bool fsrRuntimePathChanged = compareFSRRuntimePath && previousFSRRuntimePathActive != fsrRuntimePathCurrent;
 
-	if (upscaleModeChanged || frameGenModeChanged || vrPipelineDedupChanged || foveatedDispatchChanged || peripheryTAAChanged) {
-		logger::debug("[Upscaling] Resource change detected - Upscale: {} ({}) -> {} ({}), FrameGen: {} -> {} (d3d12Active={}), VRPipelineDedup: {} -> {}",
+	if (upscaleModeChanged || frameGenModeChanged || vrPipelineDedupChanged || foveatedDispatchChanged || peripheryTAAChanged || fsrRuntimePathChanged) {
+		logger::debug("[Upscaling] Resource change detected - Upscale: {} ({}) -> {} ({}), FrameGen: {} -> {} (d3d12Active={}), VRPipelineDedup: {} -> {}, FSRRuntimePath: {} -> {}",
 			static_cast<int>(previousUpscaleMode), magic_enum::enum_name(previousUpscaleMode), static_cast<int>(a_upscalemethod), magic_enum::enum_name(a_upscalemethod), previousFrameGenMode, frameGenModeCurrent, d3d12SwapChainActive,
-			previousVRPipelineDedupActive, vrPipelineDedupCurrent);
+			previousVRPipelineDedupActive, vrPipelineDedupCurrent, previousFSRRuntimePathActive, fsrRuntimePathCurrent);
 
 		// Destroy previous upscaling method resources (only if they were actually active)
 		if (upscaleModeChanged) {
@@ -1238,6 +1275,13 @@ void Upscaling::CheckResources(UpscaleMethod a_upscalemethod)
 			fidelityFX.CreateFSRResources();
 		}
 
+		// Host FSR3.1 and runtime FSR4 keep separate temporal state; rebuild on path changes.
+		if (!upscaleModeChanged && fsrRuntimePathChanged && a_upscalemethod == UpscaleMethod::kFSR) {
+			fidelityFX.DestroyFSRResources();
+			fidelityFX.CreateFSRResources();
+			RequestHistoryReset();
+		}
+
 		if (upscaleModeChanged || foveatedDispatchChanged) {
 			if (!foveatedDispatchCurrent)
 				DestroyFoveatedResources();
@@ -1253,6 +1297,7 @@ void Upscaling::CheckResources(UpscaleMethod a_upscalemethod)
 		previousVRPipelineDedupActive = vrPipelineDedupCurrent;
 		previousFoveatedDispatch = foveatedDispatchCurrent;
 		previousPeripheryTAA = peripheryTAACurrent;
+		previousFSRRuntimePathActive = fsrRuntimePathCurrent;
 		previousFoveatedCenterAreaMilli = foveatedCenterAreaMilli;
 		previousUpscalingWasActive = IsUpscalingActive();
 	}
@@ -1399,6 +1444,13 @@ bool Upscaling::IsFoveatedVendorDispatchEnabled(UpscaleMethod a_upscaleMethod) c
 	const float centerArea = ClampFoveatedCenterArea(settings.foveatedCenterArea);
 	// 1.0 is effectively full-frame vendor dispatch, so keep the default path.
 	return centerArea < 0.999f;
+}
+
+bool Upscaling::IsFSRRuntimePathActive(UpscaleMethod a_upscaleMethod) const
+{
+	return a_upscaleMethod == UpscaleMethod::kFSR &&
+	       fidelityFX.IsRuntimeUpscalerAvailable() &&
+	       settings.fsr4RuntimeEnable;
 }
 
 bool Upscaling::IsPeripheryTAAEnabled(UpscaleMethod a_upscaleMethod) const
@@ -3071,6 +3123,7 @@ void Upscaling::UpdateHistoryResetState(UpscaleMethod a_upscaleMethod)
 	const bool foveatedDispatchEnabled = IsFoveatedVendorDispatchEnabled(a_upscaleMethod);
 	const bool peripheryTAAEnabled = IsPeripheryTAAEnabled(a_upscaleMethod);
 	const bool peripheryTAAPathActive = IsPeripheryTAAPathActive(a_upscaleMethod);
+	const bool fsrRuntimePathActive = IsFSRRuntimePathActive(a_upscaleMethod);
 	const float foveatedCenterArea = ClampFoveatedCenterArea(settings.foveatedCenterArea);
 	const auto foveatedCenterOffsets = GetResolvedFoveatedMaskCenterOffsets();
 
@@ -3108,6 +3161,7 @@ void Upscaling::UpdateHistoryResetState(UpscaleMethod a_upscaleMethod)
 			inMapMenu != previousHistoryInMapMenu;
 		const bool methodChanged = a_upscaleMethod != previousHistoryUpscaleMethod;
 		const bool vrPipelineDedupChanged = vrPipelineDedupEnabled != previousHistoryVRPipelineDedup;
+		const bool fsrRuntimePathChanged = fsrRuntimePathActive != previousHistoryFSRRuntimePathActive;
 		const bool compareFoveatedArea = foveatedDispatchEnabled || previousHistoryFoveatedDispatch;
 		const bool foveatedOffsetsChanged =
 			compareFoveatedArea &&
@@ -3132,7 +3186,7 @@ void Upscaling::UpdateHistoryResetState(UpscaleMethod a_upscaleMethod)
 								  *globals::game::deltaTime > 0.20f;
 		const bool cameraCut = inWorld && cameraCutDetected();
 
-		shouldReset = screenSizeChanged || scaleChanged || worldStateChanged || methodChanged || vrPipelineDedupChanged || foveatedChanged || peripheryTAAChanged || longFrameGap || cameraCut;
+		shouldReset = screenSizeChanged || scaleChanged || worldStateChanged || methodChanged || vrPipelineDedupChanged || fsrRuntimePathChanged || foveatedChanged || peripheryTAAChanged || longFrameGap || cameraCut;
 	}
 
 	if (state->pendingPostLoadRuntimeReset)
@@ -3156,6 +3210,7 @@ void Upscaling::UpdateHistoryResetState(UpscaleMethod a_upscaleMethod)
 	previousHistoryPeripheryTAADisableLocks = settings.periphery_taa_disable_locks;
 	previousHistoryPeripheryTAADisableReactivity = settings.periphery_taa_disable_reactivity;
 	previousHistoryPeripheryTAADisableInstability = settings.periphery_taa_disable_instability;
+	previousHistoryFSRRuntimePathActive = fsrRuntimePathActive;
 }
 
 /**
@@ -3185,7 +3240,7 @@ void Upscaling::LoadUpscalingSDKs()
 	// Initialize upscaling SDK components during plugin startup
 	// This ensures all SDKs are available before any D3D device creation
 	streamline.LoadInterposer();
-	fidelityFX.LoadFFX();  // Only for frame generation now
+	fidelityFX.LoadFFX();
 }
 
 void Upscaling::SetUIBuffer()

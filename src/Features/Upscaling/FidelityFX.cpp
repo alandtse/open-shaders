@@ -1,6 +1,11 @@
 #include "FidelityFX.h"
 
+#include <algorithm>
+#include <array>
+#include <cctype>
 #include <directx/d3dx12.h>
+#include <filesystem>
+#include <string>
 
 #include "../../State.h"
 #include "../../Utils/FileSystem.h"
@@ -13,43 +18,170 @@ std::vector<std::pair<std::string, std::string>> FidelityFX::dllVersions = {};
 
 namespace
 {
+	constexpr wchar_t kFrameGenerationDllName[] = L"amd_fidelityfx_framegeneration_dx12.dll";
+	constexpr wchar_t kLoaderDllName[] = L"amd_fidelityfx_loader_dx12.dll";
+	constexpr wchar_t kUpscalerDllName[] = L"amd_fidelityfx_upscaler_dx12.dll";
+	constexpr uint32_t kAmdVendorId = 0x1002u;
+
 	bool UseSplitPerEyeFSRContexts()
 	{
 		auto& upscaling = globals::features::upscaling;
 		return globals::game::isVR && !upscaling.IsVRPipelineDedupActive(Upscaling::UpscaleMethod::kFSR);
 	}
+
+	bool TryGetTexture2DDesc(ID3D11Resource* a_resource, D3D11_TEXTURE2D_DESC& a_outDesc)
+	{
+		if (!a_resource)
+			return false;
+
+		winrt::com_ptr<ID3D11Texture2D> texture;
+		if (FAILED(a_resource->QueryInterface(IID_PPV_ARGS(texture.put()))))
+			return false;
+
+		texture->GetDesc(&a_outDesc);
+		return true;
+	}
+
+	bool TryGetCurrentAdapterDesc(DXGI_ADAPTER_DESC& a_outDesc)
+	{
+		if (!globals::d3d::device)
+			return false;
+
+		winrt::com_ptr<IDXGIDevice> dxgiDevice;
+		if (FAILED(globals::d3d::device->QueryInterface(IID_PPV_ARGS(dxgiDevice.put()))))
+			return false;
+
+		winrt::com_ptr<IDXGIAdapter> adapter;
+		if (FAILED(dxgiDevice->GetAdapter(adapter.put())))
+			return false;
+
+		a_outDesc = {};
+		if (FAILED(adapter->GetDesc(&a_outDesc)))
+			return false;
+
+		return true;
+	}
+
+	std::string ToUpperAscii(std::string a_value)
+	{
+		std::transform(a_value.begin(), a_value.end(), a_value.begin(), [](unsigned char c) {
+			return static_cast<char>(std::toupper(c));
+		});
+		return a_value;
+	}
+
+	bool IsLikelyRDNA4Adapter(const DXGI_ADAPTER_DESC& a_desc)
+	{
+		if (a_desc.VendorId != kAmdVendorId)
+			return false;
+
+		std::wstring wideDescription(a_desc.Description);
+		const std::string description = ToUpperAscii(stl::utf16_to_utf8(wideDescription).value_or(""));
+		if (description.find("RADEON") == std::string::npos)
+			return false;
+
+		return description.find("RX 90") != std::string::npos ||
+		       description.find("RX90") != std::string::npos;
+	}
+
+	void RuntimeFfxMessage(uint32_t a_type, const wchar_t* a_message)
+	{
+		const std::string message = stl::utf16_to_utf8(a_message ? a_message : L"").value_or("unknown FidelityFX runtime message");
+		if (a_type == FFX_API_MESSAGE_TYPE_ERROR) {
+			logger::error("[FidelityFX] {}", message);
+		} else {
+			logger::warn("[FidelityFX] {}", message);
+		}
+	}
+
+	D3D11_TEXTURE2D_DESC MakeSharedTextureDesc(const D3D11_TEXTURE2D_DESC& a_sourceDesc, uint32_t a_width, uint32_t a_height, UINT a_bindFlags)
+	{
+		D3D11_TEXTURE2D_DESC desc = a_sourceDesc;
+		desc.Width = a_width;
+		desc.Height = a_height;
+		desc.MipLevels = 1;
+		desc.ArraySize = 1;
+		desc.SampleDesc.Count = 1;
+		desc.SampleDesc.Quality = 0;
+		desc.Usage = D3D11_USAGE_DEFAULT;
+		desc.CPUAccessFlags = 0;
+		desc.BindFlags = a_bindFlags;
+		desc.MiscFlags = 0;
+		return desc;
+	}
+
+	bool SameTextureDesc(const D3D11_TEXTURE2D_DESC& a_left, const D3D11_TEXTURE2D_DESC& a_right)
+	{
+		return a_left.Width == a_right.Width &&
+		       a_left.Height == a_right.Height &&
+		       a_left.MipLevels == a_right.MipLevels &&
+		       a_left.ArraySize == a_right.ArraySize &&
+		       a_left.Format == a_right.Format &&
+		       a_left.SampleDesc.Count == a_right.SampleDesc.Count &&
+		       a_left.SampleDesc.Quality == a_right.SampleDesc.Quality &&
+		       a_left.Usage == a_right.Usage &&
+		       a_left.BindFlags == a_right.BindFlags &&
+		       a_left.CPUAccessFlags == a_right.CPUAccessFlags &&
+		       a_left.MiscFlags == a_right.MiscFlags;
+	}
+
+	template <size_t N>
+	void DeleteWrappedResourceArray(WrappedResource* (&a_resources)[N])
+	{
+		for (auto*& resource : a_resources) {
+			delete resource;
+			resource = nullptr;
+		}
+	}
+
+	bool DispatchHostFsr3UpscaleProtected(FfxFsr3Context& a_context, FfxFsr3DispatchUpscaleDescription& a_dispatchParameters, bool& a_crashed)
+	{
+		a_crashed = false;
+		bool dispatchOk = true;
+
+		__try {
+			dispatchOk = ffxFsr3ContextDispatchUpscale(&a_context, &a_dispatchParameters) == FFX_OK;
+		} __except (EXCEPTION_EXECUTE_HANDLER) {
+			a_crashed = true;
+			dispatchOk = false;
+		}
+
+		return dispatchOk;
+	}
 }
 
 void FidelityFX::LoadFFX()
 {
-	// Load uframe generation DLL and its function pointers
-	std::wstring framegenDllName = L"amd_fidelityfx_framegeneration_dx12.dll";
-	std::wstring framegenPath = std::wstring(FidelityFX::PluginDir) + L"\\" + framegenDllName;
-	featureFSR3FG = LoadLibrary(framegenPath.c_str());
+	const std::filesystem::path pluginDir = std::filesystem::path(FidelityFX::PluginDir);
 
-	// Load loader DLL from plugin directory
-	std::wstring loaderDllName = L"amd_fidelityfx_loader_dx12.dll";
-	std::wstring pluginLoaderPath = std::wstring(FidelityFX::PluginDir) + L"\\" + loaderDllName;
+	const std::filesystem::path framegenPath = pluginDir / kFrameGenerationDllName;
+	const std::filesystem::path loaderPath = pluginDir / kLoaderDllName;
+	const std::filesystem::path upscalerPath = pluginDir / kUpscalerDllName;
 
-	module = LoadLibrary(pluginLoaderPath.c_str());
+	featureFSR3FG = LoadLibraryW(framegenPath.c_str()) != nullptr;
+	featureFSR4Upscaler = std::filesystem::exists(upscalerPath);
+	module = LoadLibraryW(loaderPath.c_str());
 
-	// Cache all DLL versions in the FidelityFX directory
-	std::filesystem::path pluginDir = std::filesystem::path(FidelityFX::PluginDir);
 	FidelityFX::dllVersions = Util::EnumerateDllVersions(pluginDir);
 
 	if (module) {
-		logger::info("[FidelityFX] Loader DLL loaded successfully from plugin directory");
-
 		ffxLoadFunctions(&ffxModule, module);
-
-		if (featureFSR3FG) {
-			logger::info("[FidelityFX] Frame generation DLL found and available");
-		} else {
-			logger::warn("[FidelityFX] Frame generation DLL not found - FSR3 frame generation disabled");
-		}
+		logger::info("[FidelityFX] Loader DLL loaded successfully from plugin directory");
 	} else {
 		logger::error("[FidelityFX] Failed to load {} from plugin directory",
-			stl::utf16_to_utf8(loaderDllName).value_or("loader DLL"));
+			stl::utf16_to_utf8(kLoaderDllName).value_or("loader DLL"));
+	}
+
+	if (featureFSR3FG) {
+		logger::info("[FidelityFX] Frame generation DLL found and available");
+	} else {
+		logger::warn("[FidelityFX] Frame generation DLL not found - FSR3 frame generation disabled");
+	}
+
+	if (featureFSR4Upscaler) {
+		logger::info("[FidelityFX] Runtime upscaler DLL found and available for eligible VR AMD hardware");
+	} else {
+		logger::warn("[FidelityFX] Runtime upscaler DLL not found - FSR4 runtime path disabled");
 	}
 }
 
@@ -70,13 +202,6 @@ void FidelityFX::SetupFrameGeneration()
 		logger::critical("[FidelityFX] Failed to create frame generation context!");
 }
 
-/**
- * @brief Presents the current frame, optionally performing frame generation using FidelityFX.
- *
- * Configures and dispatches FidelityFX frame generation for the current swap chain frame if enabled. Sets up frame pacing, prepares resources, and issues dispatches for both frame generation parameters and camera information. Increments the internal frame ID after each call.
- *
- * @param a_useFrameGeneration If true, enables frame generation and dispatches the necessary workloads; otherwise, presents without frame generation.
- */
 void FidelityFX::Present(bool a_useFrameGeneration)
 {
 	auto& upscaling = globals::features::upscaling;
@@ -92,16 +217,13 @@ void FidelityFX::Present(bool a_useFrameGeneration)
 		};
 
 		configParameters.frameGenerationCallbackUserContext = &frameGenContext;
-
 	} else {
 		configParameters.frameGenerationEnabled = false;
-
 		configParameters.frameGenerationCallbackUserContext = nullptr;
 		configParameters.frameGenerationCallback = nullptr;
 	}
 
 	configParameters.HUDLessColor = FfxApiResource({});
-
 	configParameters.presentCallback = nullptr;
 	configParameters.presentCallbackUserContext = nullptr;
 
@@ -113,56 +235,45 @@ void FidelityFX::Present(bool a_useFrameGeneration)
 	configParameters.allowAsyncWorkloads = true;
 
 	auto state = globals::state;
-
 	auto renderSize = state->screenSize * upscaling.resolutionScale;
 
-	configParameters.generationRect.left = (swapChain.swapChainDesc.Width - swapChain.swapChainDesc.Width) / 2;
-	configParameters.generationRect.top = (swapChain.swapChainDesc.Height - swapChain.swapChainDesc.Height) / 2;
+	configParameters.generationRect.left = 0;
+	configParameters.generationRect.top = 0;
 	configParameters.generationRect.width = swapChain.swapChainDesc.Width;
 	configParameters.generationRect.height = swapChain.swapChainDesc.Height;
 
-	if (ffx::Configure(frameGenContext, configParameters) != ffx::ReturnCode::Ok) {
+	if (ffx::Configure(frameGenContext, configParameters) != ffx::ReturnCode::Ok)
 		logger::critical("[FidelityFX] Failed to configure frame generation!");
-	}
 
 	ffx::ConfigureDescFrameGenerationSwapChainRegisterUiResourceDX12 uiConfig{};
 	uiConfig.uiResource = ffxApiGetResourceDX12(swapChain.uiBufferWrapped->resource.get());
 	uiConfig.flags = FFX_FRAMEGENERATION_UI_COMPOSITION_FLAG_USE_PREMUL_ALPHA | FFX_FRAMEGENERATION_UI_COMPOSITION_FLAG_ENABLE_INTERNAL_UI_DOUBLE_BUFFERING;
 
-	if (ffx::Configure(swapChainContext, uiConfig) != ffx::ReturnCode::Ok) {
+	if (ffx::Configure(swapChainContext, uiConfig) != ffx::ReturnCode::Ok)
 		logger::critical("[FidelityFX] Failed to configure UI composition!");
-	}
 
 	if (a_useFrameGeneration) {
 		ffx::DispatchDescFrameGenerationPrepare dispatchParameters{};
 
 		dispatchParameters.commandList = swapChain.commandLists[swapChain.frameIndex].get();
-
 		dispatchParameters.motionVectorScale.x = renderSize.x;
 		dispatchParameters.motionVectorScale.y = renderSize.y;
 		dispatchParameters.renderSize.width = static_cast<uint32_t>(renderSize.x);
 		dispatchParameters.renderSize.height = static_cast<uint32_t>(renderSize.y);
-
 		dispatchParameters.jitterOffset.x = -upscaling.jitter.x;
 		dispatchParameters.jitterOffset.y = -upscaling.jitter.y;
-
 		dispatchParameters.frameTimeDelta = RE::GetSecondsSinceLastFrame() * 1000.f;
-
 		dispatchParameters.cameraFar = *globals::game::cameraFar;
 		dispatchParameters.cameraNear = *globals::game::cameraNear;
-
 		dispatchParameters.cameraFovAngleVertical = Util::GetVerticalFOVRad();
 		dispatchParameters.viewSpaceToMetersFactor = 0.01428222656f;
-
 		dispatchParameters.frameID = frameID;
-
 		dispatchParameters.depth = ffxApiGetResourceDX12(swapChain.depthBufferShared12->resource.get());
 		dispatchParameters.motionVectors = ffxApiGetResourceDX12(swapChain.motionVectorBufferShared12->resource.get());
 
 		ffx::DispatchDescFrameGenerationPrepareCameraInfo cameraConfig{};
 
 		auto viewMatrix = globals::game::frameBufferCached.GetCameraViewInverse().Transpose();
-		auto cameraViewToClip = globals::game::frameBufferCached.GetCameraProjUnjittered().Transpose();
 
 		cameraConfig.cameraRight[0] = viewMatrix._11;
 		cameraConfig.cameraRight[1] = viewMatrix._12;
@@ -180,14 +291,11 @@ void FidelityFX::Present(bool a_useFrameGeneration)
 		cameraConfig.cameraPosition[1] = globals::game::frameBufferCached.GetCameraPosAdjust().y;
 		cameraConfig.cameraPosition[2] = globals::game::frameBufferCached.GetCameraPosAdjust().z;
 
-		if (ffx::Dispatch(frameGenContext, dispatchParameters, cameraConfig) != ffx::ReturnCode::Ok) {
+		if (ffx::Dispatch(frameGenContext, dispatchParameters, cameraConfig) != ffx::ReturnCode::Ok)
 			logger::critical("[FidelityFX] Failed to dispatch frame generation!");
-		}
 	}
 
 	frameID++;
-
-	// Set isFrameGenActive based on whether FSR3 frame generation is enabled
 	isFrameGenActive = a_useFrameGeneration;
 }
 
@@ -203,7 +311,9 @@ void FidelityFX::CreateFSRResources()
 	const bool splitPerEyeContexts = UseSplitPerEyeFSRContexts();
 	const bool vrPipelineDedupActive = globals::game::isVR && !splitPerEyeContexts;
 
-	// Prevent multiple allocations
+	DestroyRuntimeUpscalerContexts();
+	DestroyRuntimeUpscalerResources();
+
 	if (fsrScratchBuffer) {
 		logger::warn("[FidelityFX] FSR resources already created, skipping allocation");
 		return;
@@ -211,8 +321,8 @@ void FidelityFX::CreateFSRResources()
 
 	auto fsrDevice = ffxGetDeviceDX11(globals::d3d::device);
 
-	uint32_t numContexts = splitPerEyeContexts ? 2u : 1u;
-	size_t scratchBufferSize = ffxGetScratchMemorySizeDX11(numContexts);
+	const uint32_t numContexts = splitPerEyeContexts ? 2u : 1u;
+	const size_t scratchBufferSize = ffxGetScratchMemorySizeDX11(numContexts);
 	fsrScratchBuffer = calloc(scratchBufferSize, 1);
 	if (!fsrScratchBuffer) {
 		logger::critical("[FidelityFX] Failed to allocate FSR3 scratch buffer memory!");
@@ -233,13 +343,13 @@ void FidelityFX::CreateFSRResources()
 	auto screenSize = state->screenSize;
 	auto renderSize = Util::ConvertToDynamic(screenSize);
 
-	uint32_t displayWidth = (uint32_t)(splitPerEyeContexts ? screenSize.x / 2 : screenSize.x);
-	uint32_t displayHeight = (uint32_t)screenSize.y;
-	uint32_t renderWidth = (uint32_t)(splitPerEyeContexts ? renderSize.x / 2 : renderSize.x);
-	uint32_t renderHeight = (uint32_t)renderSize.y;
+	const uint32_t displayWidth = static_cast<uint32_t>(splitPerEyeContexts ? screenSize.x / 2 : screenSize.x);
+	const uint32_t displayHeight = static_cast<uint32_t>(screenSize.y);
+	const uint32_t renderWidth = static_cast<uint32_t>(splitPerEyeContexts ? renderSize.x / 2 : renderSize.x);
+	const uint32_t renderHeight = static_cast<uint32_t>(renderSize.y);
 
 	for (uint32_t i = 0; i < numContexts; ++i) {
-		FfxFsr3ContextDescription contextDescription;
+		FfxFsr3ContextDescription contextDescription{};
 		contextDescription.maxRenderSize.width = renderWidth;
 		contextDescription.maxRenderSize.height = renderHeight;
 		contextDescription.maxUpscaleSize.width = displayWidth;
@@ -259,14 +369,47 @@ void FidelityFX::CreateFSRResources()
 			return;
 		}
 	}
+
 	fsrContextCount = numContexts;
 	logger::info("[FidelityFX] Created {} FSR3 contexts (Display: {}x{}, Render: {}x{}, VRPipelineDedup={})",
 		numContexts, displayWidth, displayHeight, renderWidth, renderHeight, vrPipelineDedupActive);
 }
 
+void FidelityFX::DestroyRuntimeUpscalerContexts()
+{
+	for (uint32_t i = 0; i < std::size(runtimeUpscalerContexts); ++i) {
+		if (runtimeUpscalerContexts[i] && ffx::DestroyContext(runtimeUpscalerContexts[i]) != ffx::ReturnCode::Ok)
+			logger::warn("[FidelityFX] Failed to destroy runtime upscaler context {} cleanly.", i);
+		runtimeUpscalerContexts[i] = nullptr;
+	}
+
+	runtimeUpscalerContextCount = 0;
+	runtimeUpscalerMaxRenderWidth = 0;
+	runtimeUpscalerMaxRenderHeight = 0;
+	runtimeUpscalerMaxDisplayWidth = 0;
+	runtimeUpscalerMaxDisplayHeight = 0;
+}
+
+void FidelityFX::DestroyRuntimeUpscalerResources()
+{
+	DeleteWrappedResourceArray(runtimeColorShared);
+	DeleteWrappedResourceArray(runtimeDepthShared);
+	DeleteWrappedResourceArray(runtimeMotionShared);
+	DeleteWrappedResourceArray(runtimeReactiveShared);
+	DeleteWrappedResourceArray(runtimeTransparencyShared);
+	DeleteWrappedResourceArray(runtimeOutputShared);
+
+	runtimeColorSharedDesc = {};
+	runtimeDepthSharedDesc = {};
+	runtimeMotionSharedDesc = {};
+	runtimeReactiveSharedDesc = {};
+	runtimeTransparencySharedDesc = {};
+	runtimeOutputSharedDesc = {};
+}
+
 void FidelityFX::DestroyFSRResources()
 {
-	uint32_t numContexts = fsrContextCount;
+	const uint32_t numContexts = fsrContextCount;
 	if (numContexts == 0 && fsrScratchBuffer)
 		logger::warn("[FidelityFX] DestroyFSRResources called with unknown context count; skipping context destruction to avoid mismatched teardown.");
 	for (uint32_t i = 0; i < numContexts; ++i) {
@@ -275,14 +418,56 @@ void FidelityFX::DestroyFSRResources()
 	}
 	fsrContextCount = 0;
 
-	// Free the scratch buffer to prevent memory leak
 	if (fsrScratchBuffer) {
 		free(fsrScratchBuffer);
 		fsrScratchBuffer = nullptr;
 	}
 
-	// Reset crash logging flag when resources are destroyed
+	DestroyRuntimeUpscalerContexts();
+	DestroyRuntimeUpscalerResources();
+
+	runtimeD3D11Fence = nullptr;
+	runtimeD3D12Fence = nullptr;
+	runtimeFenceValue = 1;
+	runtimeCommandFrameIndex = 0;
 	fsrDispatchCrashLogged = false;
+}
+
+bool FidelityFX::IsAmdAdapterDetected() const
+{
+	DXGI_ADAPTER_DESC adapterDesc{};
+	if (TryGetCurrentAdapterDesc(adapterDesc))
+		return adapterDesc.VendorId == kAmdVendorId;
+
+	return false;
+}
+
+bool FidelityFX::IsRuntimeUpscalerPresent() const
+{
+	if (!globals::game::isVR)
+		return false;
+	if (!featureFSR4Upscaler || !module)
+		return false;
+	if (!ffxModule.CreateContext || !ffxModule.DestroyContext || !ffxModule.Dispatch)
+		return false;
+
+	return true;
+}
+
+bool FidelityFX::IsRuntimeUpscalerAvailable() const
+{
+	if (!IsRuntimeUpscalerPresent())
+		return false;
+
+	DXGI_ADAPTER_DESC adapterDesc{};
+	if (!TryGetCurrentAdapterDesc(adapterDesc))
+		return false;
+	if (adapterDesc.VendorId != kAmdVendorId)
+		return false;
+	if (IsLikelyRDNA4Adapter(adapterDesc))
+		return true;
+
+	return globals::features::upscaling.settings.fsr4AllowNonRx90Amd;
 }
 
 FfxResource ffxGetResource(ID3D11Resource* dx11Resource,
@@ -303,6 +488,443 @@ FfxResource ffxGetResource(ID3D11Resource* dx11Resource,
 	return resource;
 }
 
+bool FidelityFX::CanUseRuntimeUpscalerPath() const
+{
+	if (!IsRuntimeUpscalerAvailable())
+		return false;
+	return globals::features::upscaling.settings.fsr4RuntimeEnable;
+}
+
+bool FidelityFX::EnsureRuntimeUpscalerInterop()
+{
+	auto& swapChain = globals::features::upscaling.dx12SwapChain;
+
+	if (!globals::d3d::device || !globals::d3d::context)
+		return false;
+
+	try {
+		if (!swapChain.d3d11Device)
+			swapChain.SetD3D11Device(globals::d3d::device);
+		if (!swapChain.d3d11Context)
+			swapChain.SetD3D11DeviceContext(globals::d3d::context);
+
+		if (!swapChain.d3d12Device) {
+			winrt::com_ptr<IDXGIDevice> dxgiDevice;
+			DX::ThrowIfFailed(globals::d3d::device->QueryInterface(IID_PPV_ARGS(dxgiDevice.put())));
+
+			winrt::com_ptr<IDXGIAdapter> adapter;
+			DX::ThrowIfFailed(dxgiDevice->GetAdapter(adapter.put()));
+			swapChain.CreateD3D12Device(adapter.get());
+		}
+
+		if (!runtimeD3D12Fence || !runtimeD3D11Fence) {
+			winrt::handle sharedFenceHandle;
+			DX::ThrowIfFailed(swapChain.d3d12Device->CreateFence(0, D3D12_FENCE_FLAG_SHARED, IID_PPV_ARGS(&runtimeD3D12Fence)));
+			DX::ThrowIfFailed(swapChain.d3d12Device->CreateSharedHandle(runtimeD3D12Fence.get(), nullptr, GENERIC_ALL, nullptr, sharedFenceHandle.put()));
+			DX::ThrowIfFailed(swapChain.d3d11Device->OpenSharedFence(sharedFenceHandle.get(), IID_PPV_ARGS(&runtimeD3D11Fence)));
+			runtimeFenceValue = 1;
+			runtimeCommandFrameIndex = 0;
+		}
+	} catch (const std::exception& e) {
+		logger::error("[FidelityFX] Failed to initialize DX11->DX12 runtime interop: {}", e.what());
+		return false;
+	} catch (...) {
+		logger::error("[FidelityFX] Failed to initialize DX11->DX12 runtime interop.");
+		return false;
+	}
+
+	return swapChain.d3d11Device.get() &&
+	       swapChain.d3d11Context.get() &&
+	       swapChain.d3d12Device.get() &&
+	       swapChain.commandQueue.get() &&
+	       swapChain.commandAllocators[0].get() &&
+	       swapChain.commandAllocators[1].get() &&
+	       swapChain.commandLists[0].get() &&
+	       swapChain.commandLists[1].get() &&
+	       runtimeD3D11Fence.get() &&
+	       runtimeD3D12Fence.get();
+}
+
+bool FidelityFX::EnsureRuntimeUpscalerContexts(uint32_t a_fullRenderWidth, uint32_t a_fullRenderHeight, uint32_t a_fullDisplayWidth, uint32_t a_fullDisplayHeight, uint32_t a_contextCount)
+{
+	if (!a_fullRenderWidth || !a_fullRenderHeight || !a_fullDisplayWidth || !a_fullDisplayHeight)
+		return false;
+	if (a_contextCount == 0 || a_contextCount > std::size(runtimeUpscalerContexts))
+		return false;
+	if (!EnsureRuntimeUpscalerInterop())
+		return false;
+	if (!ffxModule.CreateContext)
+		return false;
+
+	bool allContextsValid = true;
+	for (uint32_t i = 0; i < a_contextCount; ++i) {
+		if (!runtimeUpscalerContexts[i]) {
+			allContextsValid = false;
+			break;
+		}
+	}
+
+	const bool needsRecreate =
+		!allContextsValid ||
+		runtimeUpscalerContextCount != a_contextCount ||
+		runtimeUpscalerMaxRenderWidth != a_fullRenderWidth ||
+		runtimeUpscalerMaxRenderHeight != a_fullRenderHeight ||
+		runtimeUpscalerMaxDisplayWidth != a_fullDisplayWidth ||
+		runtimeUpscalerMaxDisplayHeight != a_fullDisplayHeight;
+
+	if (!needsRecreate && runtimeUpscalerContextCount == a_contextCount)
+		return true;
+
+	DestroyRuntimeUpscalerContexts();
+
+	auto& swapChain = globals::features::upscaling.dx12SwapChain;
+
+	ffx::CreateBackendDX12Desc backendDesc{};
+	backendDesc.device = swapChain.d3d12Device.get();
+
+	for (uint32_t i = 0; i < a_contextCount; ++i) {
+		ffx::CreateContextDescUpscale createDesc{};
+		createDesc.flags = FFX_UPSCALE_ENABLE_HIGH_DYNAMIC_RANGE | FFX_UPSCALE_ENABLE_AUTO_EXPOSURE;
+		createDesc.maxRenderSize = { a_fullRenderWidth, a_fullRenderHeight };
+		createDesc.maxUpscaleSize = { a_fullDisplayWidth, a_fullDisplayHeight };
+		createDesc.fpMessage = RuntimeFfxMessage;
+
+		ffx::CreateContextDescUpscaleVersion versionDesc{};
+		versionDesc.version = FFX_UPSCALER_VERSION;
+
+		createDesc.header.pNext = &versionDesc.header;
+		versionDesc.header.pNext = &backendDesc.header;
+		backendDesc.header.pNext = nullptr;
+
+		if (ffxModule.CreateContext(&runtimeUpscalerContexts[i], &createDesc.header, nullptr) != FFX_API_RETURN_OK) {
+			logger::error("[FidelityFX] Failed to create runtime upscaler context {} for {}x{} -> {}x{}.",
+				i, a_fullRenderWidth, a_fullRenderHeight, a_fullDisplayWidth, a_fullDisplayHeight);
+			DestroyRuntimeUpscalerContexts();
+			return false;
+		}
+	}
+
+	runtimeUpscalerContextCount = a_contextCount;
+	runtimeUpscalerMaxRenderWidth = a_fullRenderWidth;
+	runtimeUpscalerMaxRenderHeight = a_fullRenderHeight;
+	runtimeUpscalerMaxDisplayWidth = a_fullDisplayWidth;
+	runtimeUpscalerMaxDisplayHeight = a_fullDisplayHeight;
+
+	logger::info("[FidelityFX] Created {} runtime upscaler context(s) for VR (Render: {}x{}, Display: {}x{}).",
+		a_contextCount, a_fullRenderWidth, a_fullRenderHeight, a_fullDisplayWidth, a_fullDisplayHeight);
+	return true;
+}
+
+bool FidelityFX::EnsureRuntimeUpscalerSharedResources(uint32_t a_contextCount, uint32_t a_fullRenderWidth, uint32_t a_fullRenderHeight, uint32_t a_fullDisplayWidth, uint32_t a_fullDisplayHeight,
+	const D3D11_TEXTURE2D_DESC& a_colorDesc,
+	const D3D11_TEXTURE2D_DESC& a_depthDesc,
+	const D3D11_TEXTURE2D_DESC& a_motionDesc,
+	const D3D11_TEXTURE2D_DESC& a_reactiveDesc,
+	const D3D11_TEXTURE2D_DESC& a_transparencyDesc,
+	const D3D11_TEXTURE2D_DESC& a_outputDesc)
+{
+	if (!EnsureRuntimeUpscalerInterop())
+		return false;
+	if (a_contextCount == 0 || a_contextCount > std::size(runtimeColorShared))
+		return false;
+
+	const D3D11_TEXTURE2D_DESC desiredColorDesc = MakeSharedTextureDesc(a_colorDesc, a_fullRenderWidth, a_fullRenderHeight, 0);
+	const D3D11_TEXTURE2D_DESC desiredDepthDesc = MakeSharedTextureDesc(a_depthDesc, a_fullRenderWidth, a_fullRenderHeight, 0);
+	const D3D11_TEXTURE2D_DESC desiredMotionDesc = MakeSharedTextureDesc(a_motionDesc, a_fullRenderWidth, a_fullRenderHeight, 0);
+	const D3D11_TEXTURE2D_DESC desiredReactiveDesc = MakeSharedTextureDesc(a_reactiveDesc, a_fullRenderWidth, a_fullRenderHeight, 0);
+	const D3D11_TEXTURE2D_DESC desiredTransparencyDesc = MakeSharedTextureDesc(a_transparencyDesc, a_fullRenderWidth, a_fullRenderHeight, 0);
+	const D3D11_TEXTURE2D_DESC desiredOutputDesc = MakeSharedTextureDesc(a_outputDesc, a_fullDisplayWidth, a_fullDisplayHeight, D3D11_BIND_UNORDERED_ACCESS);
+
+	bool missingRequiredResource = false;
+	for (uint32_t i = 0; i < a_contextCount; ++i) {
+		if (!runtimeColorShared[i] ||
+			!runtimeDepthShared[i] ||
+			!runtimeMotionShared[i] ||
+			!runtimeReactiveShared[i] ||
+			!runtimeTransparencyShared[i] ||
+			!runtimeOutputShared[i] ||
+			!runtimeColorShared[i]->resource11 ||
+			!runtimeDepthShared[i]->resource11 ||
+			!runtimeMotionShared[i]->resource11 ||
+			!runtimeReactiveShared[i]->resource11 ||
+			!runtimeTransparencyShared[i]->resource11 ||
+			!runtimeOutputShared[i]->resource11 ||
+			!runtimeColorShared[i]->resource.get() ||
+			!runtimeDepthShared[i]->resource.get() ||
+			!runtimeMotionShared[i]->resource.get() ||
+			!runtimeReactiveShared[i]->resource.get() ||
+			!runtimeTransparencyShared[i]->resource.get() ||
+			!runtimeOutputShared[i]->resource.get()) {
+			missingRequiredResource = true;
+			break;
+		}
+	}
+
+	const bool needsRecreate =
+		missingRequiredResource ||
+		!SameTextureDesc(runtimeColorSharedDesc, desiredColorDesc) ||
+		!SameTextureDesc(runtimeDepthSharedDesc, desiredDepthDesc) ||
+		!SameTextureDesc(runtimeMotionSharedDesc, desiredMotionDesc) ||
+		!SameTextureDesc(runtimeReactiveSharedDesc, desiredReactiveDesc) ||
+		!SameTextureDesc(runtimeTransparencySharedDesc, desiredTransparencyDesc) ||
+		!SameTextureDesc(runtimeOutputSharedDesc, desiredOutputDesc);
+
+	if (!needsRecreate) {
+		for (uint32_t i = a_contextCount; i < std::size(runtimeColorShared); ++i) {
+			delete runtimeColorShared[i];
+			runtimeColorShared[i] = nullptr;
+			delete runtimeDepthShared[i];
+			runtimeDepthShared[i] = nullptr;
+			delete runtimeMotionShared[i];
+			runtimeMotionShared[i] = nullptr;
+			delete runtimeReactiveShared[i];
+			runtimeReactiveShared[i] = nullptr;
+			delete runtimeTransparencyShared[i];
+			runtimeTransparencyShared[i] = nullptr;
+			delete runtimeOutputShared[i];
+			runtimeOutputShared[i] = nullptr;
+		}
+		return true;
+	}
+
+	DestroyRuntimeUpscalerResources();
+
+	auto& swapChain = globals::features::upscaling.dx12SwapChain;
+
+	try {
+		for (uint32_t i = 0; i < a_contextCount; ++i) {
+			runtimeColorShared[i] = new WrappedResource(desiredColorDesc, swapChain.d3d11Device.get(), swapChain.d3d12Device.get());
+			runtimeDepthShared[i] = new WrappedResource(desiredDepthDesc, swapChain.d3d11Device.get(), swapChain.d3d12Device.get());
+			runtimeMotionShared[i] = new WrappedResource(desiredMotionDesc, swapChain.d3d11Device.get(), swapChain.d3d12Device.get());
+			runtimeReactiveShared[i] = new WrappedResource(desiredReactiveDesc, swapChain.d3d11Device.get(), swapChain.d3d12Device.get());
+			runtimeTransparencyShared[i] = new WrappedResource(desiredTransparencyDesc, swapChain.d3d11Device.get(), swapChain.d3d12Device.get());
+			runtimeOutputShared[i] = new WrappedResource(desiredOutputDesc, swapChain.d3d11Device.get(), swapChain.d3d12Device.get());
+		}
+	} catch (const std::exception& e) {
+		logger::error("[FidelityFX] Failed to create runtime shared resources: {}", e.what());
+		DestroyRuntimeUpscalerResources();
+		return false;
+	} catch (...) {
+		logger::error("[FidelityFX] Failed to create runtime shared resources.");
+		DestroyRuntimeUpscalerResources();
+		return false;
+	}
+
+	runtimeColorSharedDesc = desiredColorDesc;
+	runtimeDepthSharedDesc = desiredDepthDesc;
+	runtimeMotionSharedDesc = desiredMotionDesc;
+	runtimeReactiveSharedDesc = desiredReactiveDesc;
+	runtimeTransparencySharedDesc = desiredTransparencyDesc;
+	runtimeOutputSharedDesc = desiredOutputDesc;
+
+	return true;
+}
+
+bool FidelityFX::DispatchRuntimeUpscalerSingle(uint32_t a_contextIndex, ID3D11Resource* a_color, ID3D11Resource* a_depth, ID3D11Resource* a_motionVectors,
+	ID3D11Resource* a_reactiveMask, ID3D11Resource* a_transparencyCompositionMask, ID3D11Resource* a_output,
+	uint32_t a_renderWidth, uint32_t a_renderHeight, uint32_t a_displayWidth, uint32_t a_displayHeight,
+	float a_motionVectorScaleX, float a_motionVectorScaleY, float a_sharpness)
+{
+	if (a_contextIndex >= runtimeUpscalerContextCount || !runtimeUpscalerContexts[a_contextIndex])
+		return false;
+	if (!a_color || !a_depth || !a_motionVectors || !a_reactiveMask || !a_transparencyCompositionMask || !a_output)
+		return false;
+	if (!a_renderWidth || !a_renderHeight || !a_displayWidth || !a_displayHeight)
+		return false;
+
+	D3D11_TEXTURE2D_DESC colorDesc{};
+	D3D11_TEXTURE2D_DESC depthDesc{};
+	D3D11_TEXTURE2D_DESC motionDesc{};
+	D3D11_TEXTURE2D_DESC reactiveDesc{};
+	D3D11_TEXTURE2D_DESC transparencyDesc{};
+	D3D11_TEXTURE2D_DESC outputDesc{};
+	if (!TryGetTexture2DDesc(a_color, colorDesc) ||
+		!TryGetTexture2DDesc(a_depth, depthDesc) ||
+		!TryGetTexture2DDesc(a_motionVectors, motionDesc) ||
+		!TryGetTexture2DDesc(a_reactiveMask, reactiveDesc) ||
+		!TryGetTexture2DDesc(a_transparencyCompositionMask, transparencyDesc) ||
+		!TryGetTexture2DDesc(a_output, outputDesc)) {
+		return false;
+	}
+
+	if (!EnsureRuntimeUpscalerSharedResources(
+			runtimeUpscalerContextCount,
+			runtimeUpscalerMaxRenderWidth,
+			runtimeUpscalerMaxRenderHeight,
+			runtimeUpscalerMaxDisplayWidth,
+			runtimeUpscalerMaxDisplayHeight,
+			colorDesc,
+			depthDesc,
+			motionDesc,
+			reactiveDesc,
+			transparencyDesc,
+			outputDesc)) {
+		return false;
+	}
+
+	auto& swapChain = globals::features::upscaling.dx12SwapChain;
+	auto& upscaling = globals::features::upscaling;
+	auto state = globals::state;
+
+	if (!swapChain.d3d11Context || !swapChain.commandQueue || !runtimeD3D11Fence || !runtimeD3D12Fence)
+		return false;
+
+	auto isValidShared = [](WrappedResource* a_resource) {
+		return a_resource && a_resource->resource11 && a_resource->resource.get();
+	};
+	if (!isValidShared(runtimeColorShared[a_contextIndex]) ||
+		!isValidShared(runtimeDepthShared[a_contextIndex]) ||
+		!isValidShared(runtimeMotionShared[a_contextIndex]) ||
+		!isValidShared(runtimeReactiveShared[a_contextIndex]) ||
+		!isValidShared(runtimeTransparencyShared[a_contextIndex]) ||
+		!isValidShared(runtimeOutputShared[a_contextIndex])) {
+		return false;
+	}
+
+	const uint32_t commandIndex = runtimeCommandFrameIndex % std::size(swapChain.commandLists);
+	runtimeCommandFrameIndex++;
+
+	auto* commandAllocator = swapChain.commandAllocators[commandIndex].get();
+	auto* commandList = swapChain.commandLists[commandIndex].get();
+	if (!commandAllocator || !commandList)
+		return false;
+
+	const bool annotateDispatch = state && state->frameAnnotations;
+	if (annotateDispatch) {
+		if (globals::game::isVR) {
+			char buf[32];
+			snprintf(buf, sizeof(buf), "FSR4 Dispatch Eye %u", a_contextIndex);
+			state->BeginPerfEvent(buf);
+		} else {
+			state->BeginPerfEvent("FSR4 Dispatch");
+		}
+	}
+
+	bool dispatchOk = false;
+	try {
+		auto copyIntoShared = [&](ID3D11Resource* a_source, WrappedResource* a_destination, uint32_t a_width, uint32_t a_height, uint32_t a_maxWidth, uint32_t a_maxHeight) {
+			if (!a_source || !a_destination || !a_destination->resource11)
+				return false;
+
+			const uint32_t copyWidth = std::min(a_width, a_maxWidth);
+			const uint32_t copyHeight = std::min(a_height, a_maxHeight);
+			if (!copyWidth || !copyHeight)
+				return false;
+
+			D3D11_BOX sourceBox{};
+			sourceBox.left = 0;
+			sourceBox.top = 0;
+			sourceBox.front = 0;
+			sourceBox.right = copyWidth;
+			sourceBox.bottom = copyHeight;
+			sourceBox.back = 1;
+			swapChain.d3d11Context->CopySubresourceRegion(a_destination->resource11, 0, 0, 0, 0, a_source, 0, &sourceBox);
+			return true;
+		};
+
+		if (!copyIntoShared(a_color, runtimeColorShared[a_contextIndex], colorDesc.Width, colorDesc.Height, runtimeColorSharedDesc.Width, runtimeColorSharedDesc.Height) ||
+			!copyIntoShared(a_depth, runtimeDepthShared[a_contextIndex], depthDesc.Width, depthDesc.Height, runtimeDepthSharedDesc.Width, runtimeDepthSharedDesc.Height) ||
+			!copyIntoShared(a_motionVectors, runtimeMotionShared[a_contextIndex], motionDesc.Width, motionDesc.Height, runtimeMotionSharedDesc.Width, runtimeMotionSharedDesc.Height) ||
+			!copyIntoShared(a_reactiveMask, runtimeReactiveShared[a_contextIndex], reactiveDesc.Width, reactiveDesc.Height, runtimeReactiveSharedDesc.Width, runtimeReactiveSharedDesc.Height) ||
+			!copyIntoShared(a_transparencyCompositionMask, runtimeTransparencyShared[a_contextIndex], transparencyDesc.Width, transparencyDesc.Height, runtimeTransparencySharedDesc.Width, runtimeTransparencySharedDesc.Height)) {
+			dispatchOk = false;
+		} else {
+			const uint64_t d3d11SubmitFence = runtimeFenceValue++;
+			DX::ThrowIfFailed(swapChain.d3d11Context->Signal(runtimeD3D11Fence.get(), d3d11SubmitFence));
+			DX::ThrowIfFailed(swapChain.commandQueue->Wait(runtimeD3D12Fence.get(), d3d11SubmitFence));
+
+			DX::ThrowIfFailed(commandAllocator->Reset());
+			DX::ThrowIfFailed(commandList->Reset(commandAllocator, nullptr));
+
+			std::array<D3D12_RESOURCE_BARRIER, 6> beginBarriers = {
+				CD3DX12_RESOURCE_BARRIER::Transition(runtimeColorShared[a_contextIndex]->resource.get(), D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE),
+				CD3DX12_RESOURCE_BARRIER::Transition(runtimeDepthShared[a_contextIndex]->resource.get(), D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE),
+				CD3DX12_RESOURCE_BARRIER::Transition(runtimeMotionShared[a_contextIndex]->resource.get(), D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE),
+				CD3DX12_RESOURCE_BARRIER::Transition(runtimeReactiveShared[a_contextIndex]->resource.get(), D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE),
+				CD3DX12_RESOURCE_BARRIER::Transition(runtimeTransparencyShared[a_contextIndex]->resource.get(), D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE),
+				CD3DX12_RESOURCE_BARRIER::Transition(runtimeOutputShared[a_contextIndex]->resource.get(), D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_UNORDERED_ACCESS),
+			};
+			commandList->ResourceBarrier(static_cast<UINT>(beginBarriers.size()), beginBarriers.data());
+
+			ffx::DispatchDescUpscale dispatchParameters{};
+			dispatchParameters.commandList = commandList;
+			dispatchParameters.color = ffxApiGetResourceDX12(runtimeColorShared[a_contextIndex]->resource.get(), FFX_API_RESOURCE_STATE_COMPUTE_READ);
+			dispatchParameters.depth = ffxApiGetResourceDX12(runtimeDepthShared[a_contextIndex]->resource.get(), FFX_API_RESOURCE_STATE_COMPUTE_READ);
+			dispatchParameters.motionVectors = ffxApiGetResourceDX12(runtimeMotionShared[a_contextIndex]->resource.get(), FFX_API_RESOURCE_STATE_COMPUTE_READ);
+			dispatchParameters.exposure = FfxApiResource({});
+			dispatchParameters.reactive = ffxApiGetResourceDX12(runtimeReactiveShared[a_contextIndex]->resource.get(), FFX_API_RESOURCE_STATE_COMPUTE_READ);
+			dispatchParameters.transparencyAndComposition = ffxApiGetResourceDX12(runtimeTransparencyShared[a_contextIndex]->resource.get(), FFX_API_RESOURCE_STATE_COMPUTE_READ);
+			dispatchParameters.output = ffxApiGetResourceDX12(runtimeOutputShared[a_contextIndex]->resource.get(), FFX_API_RESOURCE_STATE_UNORDERED_ACCESS, FFX_API_RESOURCE_USAGE_UAV);
+			dispatchParameters.jitterOffset = { -upscaling.jitter.x, -upscaling.jitter.y };
+			dispatchParameters.motionVectorScale = { a_motionVectorScaleX, a_motionVectorScaleY };
+			dispatchParameters.renderSize = { a_renderWidth, a_renderHeight };
+			dispatchParameters.upscaleSize = { a_displayWidth, a_displayHeight };
+			dispatchParameters.enableSharpening = true;
+			dispatchParameters.sharpness = a_sharpness;
+			dispatchParameters.frameTimeDelta = *globals::game::deltaTime * 1000.f;
+			dispatchParameters.preExposure = 1.0f;
+			dispatchParameters.reset = upscaling.ShouldResetHistoryThisFrame();
+			dispatchParameters.cameraNear = *globals::game::cameraNear;
+			dispatchParameters.cameraFar = *globals::game::cameraFar;
+			dispatchParameters.cameraFovAngleVertical = Util::GetVerticalFOVRad();
+			dispatchParameters.viewSpaceToMetersFactor = 0.01428222656f;
+			dispatchParameters.flags = 0;
+
+			dispatchOk = ffx::Dispatch(runtimeUpscalerContexts[a_contextIndex], dispatchParameters) == ffx::ReturnCode::Ok;
+			if (!dispatchOk) {
+				logger::error("[FidelityFX] Runtime upscaler dispatch failed for eye {}.", a_contextIndex);
+			}
+
+			std::array<D3D12_RESOURCE_BARRIER, 6> endBarriers = {
+				CD3DX12_RESOURCE_BARRIER::Transition(runtimeColorShared[a_contextIndex]->resource.get(), D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_COMMON),
+				CD3DX12_RESOURCE_BARRIER::Transition(runtimeDepthShared[a_contextIndex]->resource.get(), D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_COMMON),
+				CD3DX12_RESOURCE_BARRIER::Transition(runtimeMotionShared[a_contextIndex]->resource.get(), D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_COMMON),
+				CD3DX12_RESOURCE_BARRIER::Transition(runtimeReactiveShared[a_contextIndex]->resource.get(), D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_COMMON),
+				CD3DX12_RESOURCE_BARRIER::Transition(runtimeTransparencyShared[a_contextIndex]->resource.get(), D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_COMMON),
+				CD3DX12_RESOURCE_BARRIER::Transition(runtimeOutputShared[a_contextIndex]->resource.get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COMMON),
+			};
+			commandList->ResourceBarrier(static_cast<UINT>(endBarriers.size()), endBarriers.data());
+
+			DX::ThrowIfFailed(commandList->Close());
+
+			ID3D12CommandList* commandListsToExecute[] = { commandList };
+			swapChain.commandQueue->ExecuteCommandLists(1, commandListsToExecute);
+
+			const uint64_t d3d12SubmitFence = runtimeFenceValue++;
+			DX::ThrowIfFailed(swapChain.commandQueue->Signal(runtimeD3D12Fence.get(), d3d12SubmitFence));
+			DX::ThrowIfFailed(swapChain.d3d11Context->Wait(runtimeD3D11Fence.get(), d3d12SubmitFence));
+
+			if (dispatchOk) {
+				const uint32_t copyWidth = std::min({ a_displayWidth, outputDesc.Width, runtimeOutputSharedDesc.Width });
+				const uint32_t copyHeight = std::min({ a_displayHeight, outputDesc.Height, runtimeOutputSharedDesc.Height });
+				if (!copyWidth || !copyHeight) {
+					dispatchOk = false;
+				} else {
+					D3D11_BOX outputBox{};
+					outputBox.left = 0;
+					outputBox.top = 0;
+					outputBox.front = 0;
+					outputBox.right = copyWidth;
+					outputBox.bottom = copyHeight;
+					outputBox.back = 1;
+					swapChain.d3d11Context->CopySubresourceRegion(a_output, 0, 0, 0, 0, runtimeOutputShared[a_contextIndex]->resource11, 0, &outputBox);
+				}
+			}
+		}
+	} catch (const std::exception& e) {
+		logger::error("[FidelityFX] Runtime upscaler dispatch path failed for eye {}: {}", a_contextIndex, e.what());
+		dispatchOk = false;
+	} catch (...) {
+		logger::error("[FidelityFX] Runtime upscaler dispatch path failed for eye {}.", a_contextIndex);
+		dispatchOk = false;
+	}
+
+	if (annotateDispatch)
+		state->EndPerfEvent();
+
+	return dispatchOk;
+}
+
 bool FidelityFX::UpscaleRegion(uint32_t a_contextIndex, ID3D11Resource* a_color, ID3D11Resource* a_depth, ID3D11Resource* a_motionVectors,
 	ID3D11Resource* a_reactiveMask, ID3D11Resource* a_transparencyCompositionMask, ID3D11Resource* a_output,
 	uint32_t a_renderWidth, uint32_t a_renderHeight, uint32_t a_displayWidth, uint32_t a_displayHeight,
@@ -313,69 +935,59 @@ bool FidelityFX::UpscaleRegion(uint32_t a_contextIndex, ID3D11Resource* a_color,
 		return false;
 	}
 
-#ifdef CS_FFX_HAS_API_UPSCALE
 	static bool loggedRuntimeRegionFallback = false;
 	const bool runtimeSelected = CanUseRuntimeUpscalerPath();
-	if (!runtimeSelected) {
+	if (!runtimeSelected)
 		loggedRuntimeRegionFallback = false;
-	}
 
 	if (runtimeSelected) {
-		D3D11_TEXTURE2D_DESC outputDesc{};
-		if (!TryGetTexture2DDesc(a_output, outputDesc))
-			return false;
-
 		auto state = globals::state;
 		if (!state)
 			return false;
 
+		const auto renderSize = Util::ConvertToDynamic(state->screenSize);
 		const bool splitPerEyeContexts = UseSplitPerEyeFSRContexts();
+		const uint32_t fullRenderWidth = static_cast<uint32_t>(splitPerEyeContexts ? renderSize.x / 2.0f : renderSize.x);
+		const uint32_t fullRenderHeight = static_cast<uint32_t>(renderSize.y);
 		const uint32_t fullDisplayWidth = static_cast<uint32_t>(splitPerEyeContexts ? state->screenSize.x / 2.0f : state->screenSize.x);
 		const uint32_t fullDisplayHeight = static_cast<uint32_t>(state->screenSize.y);
 		const uint32_t contextCount = splitPerEyeContexts ? 2u : 1u;
 
-		if (!EnsureRuntimeUpscalerContexts(fullDisplayWidth, fullDisplayHeight, outputDesc.Format, contextCount)) {
-			runtimeUpscalerReady = false;
-		} else {
-			runtimeUpscalerReady = true;
-			if (DispatchRuntimeUpscalerSingle(
-					a_contextIndex,
-					a_color,
-					a_depth,
-					a_motionVectors,
-					a_reactiveMask,
-					a_transparencyCompositionMask,
-					a_output,
-					a_renderWidth,
-					a_renderHeight,
-					a_displayWidth,
-					a_displayHeight,
-					a_motionVectorScaleX,
-					a_motionVectorScaleY,
-					a_sharpness)) {
-				loggedRuntimeRegionFallback = false;
-				return true;
+		if (EnsureRuntimeUpscalerContexts(fullRenderWidth, fullRenderHeight, fullDisplayWidth, fullDisplayHeight, contextCount)) {
+			try {
+				if (DispatchRuntimeUpscalerSingle(
+						a_contextIndex,
+						a_color,
+						a_depth,
+						a_motionVectors,
+						a_reactiveMask,
+						a_transparencyCompositionMask,
+						a_output,
+						a_renderWidth,
+						a_renderHeight,
+						a_displayWidth,
+						a_displayHeight,
+						a_motionVectorScaleX,
+						a_motionVectorScaleY,
+						a_sharpness)) {
+					loggedRuntimeRegionFallback = false;
+					return true;
+				}
+			} catch (const std::exception& e) {
+				logger::error("[FidelityFX] Runtime upscaler dispatch threw an exception: {}", e.what());
+			} catch (...) {
+				logger::error("[FidelityFX] Runtime upscaler dispatch threw an unknown exception.");
 			}
 		}
 
-#ifdef CS_FFX_HAS_HOST_FSR3
 		if (!loggedRuntimeRegionFallback) {
-			logger::warn("[FidelityFX] Runtime region upscaler dispatch failed, falling back to host FSR3.1 dispatch.");
+			logger::warn("[FidelityFX] Runtime upscaler dispatch failed, falling back to host FSR3.1 dispatch.");
 			loggedRuntimeRegionFallback = true;
 		}
-#else
-		logger::warn("[FidelityFX] Runtime region upscaler dispatch failed and host FSR3 fallback is unavailable.");
-		return false;
-#endif
 	}
-#endif
 
-#ifdef CS_FFX_HAS_HOST_FSR3
 	if (!fsrScratchBuffer || a_contextIndex >= fsrContextCount)
 		return false;
-
-	(void)a_displayWidth;
-	(void)a_displayHeight;
 
 	auto context = globals::d3d::context;
 	auto state = globals::state;
@@ -404,15 +1016,12 @@ bool FidelityFX::UpscaleRegion(uint32_t a_contextIndex, ID3D11Resource* a_color,
 	dispatchParameters.upscaleOutput = ffxGetResource(a_output, L"FSR3_OutputColor");
 	dispatchParameters.reactive = ffxGetResource(a_reactiveMask, L"FSR3_InputReactiveMap");
 	dispatchParameters.transparencyAndComposition = ffxGetResource(a_transparencyCompositionMask, L"FSR3_TransparencyAndCompositionMap");
-
 	dispatchParameters.motionVectorScale.x = a_motionVectorScaleX;
 	dispatchParameters.motionVectorScale.y = a_motionVectorScaleY;
 	dispatchParameters.renderSize.width = a_renderWidth;
 	dispatchParameters.renderSize.height = a_renderHeight;
-
 	dispatchParameters.jitterOffset.x = -jitter.x;
 	dispatchParameters.jitterOffset.y = -jitter.y;
-
 	dispatchParameters.frameTimeDelta = *globals::game::deltaTime * 1000.f;
 	dispatchParameters.cameraFar = *globals::game::cameraFar;
 	dispatchParameters.cameraNear = *globals::game::cameraNear;
@@ -424,140 +1033,86 @@ bool FidelityFX::UpscaleRegion(uint32_t a_contextIndex, ID3D11Resource* a_color,
 	dispatchParameters.preExposure = 1.0f;
 	dispatchParameters.flags = 0;
 
-	bool dispatchOK = true;
-	__try {
-		if (ffxFsr3ContextDispatchUpscale(&fsrContext[a_contextIndex], &dispatchParameters) != FFX_OK) {
-			logger::critical("[FidelityFX] Failed to dispatch region upscaling for eye {}!", a_contextIndex);
-			dispatchOK = false;
-		}
-	} __except (EXCEPTION_EXECUTE_HANDLER) {
+	bool hostDispatchCrashed = false;
+	const bool dispatchOK = DispatchHostFsr3UpscaleProtected(fsrContext[a_contextIndex], dispatchParameters, hostDispatchCrashed);
+	if (!dispatchOK && !hostDispatchCrashed) {
+		logger::critical("[FidelityFX] Failed to dispatch region upscaling for eye {}!", a_contextIndex);
+	}
+	if (hostDispatchCrashed) {
 		if (!fsrDispatchCrashLogged) {
 			logger::critical("[FidelityFX] Region FSR3 dispatch crashed for eye {} - this may be caused by RenderDoc capture interfering with FSR operations. Try disabling RenderDoc capture.", a_contextIndex);
 			fsrDispatchCrashLogged = true;
 		}
-		dispatchOK = false;
 	}
 
 	if (state->frameAnnotations)
 		state->EndPerfEvent();
 
 	return dispatchOK;
-#else
-	(void)a_contextIndex;
-	(void)a_motionVectorScaleX;
-	(void)a_motionVectorScaleY;
-	(void)a_sharpness;
-	return false;
-#endif
 }
 
 void FidelityFX::Upscale(ID3D11Resource* a_upscalingTexture, ID3D11Resource* a_reactiveMask, ID3D11Resource* a_transparencyCompositionMask, ID3D11Resource* a_motionVectors, float a_sharpness)
 {
 	auto renderer = globals::game::renderer;
-	auto context = globals::d3d::context;
 	auto state = globals::state;
+	if (!renderer || !state)
+		return;
+
 	auto& depthTexture = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kMAIN];
 
-	auto screenSize = state->screenSize;
-	auto renderSize = Util::ConvertToDynamic(screenSize);
+	const auto screenSize = state->screenSize;
+	const auto renderSize = Util::ConvertToDynamic(screenSize);
 
 	auto& upscaling = globals::features::upscaling;
-	auto jitter = upscaling.jitter;
-
-	auto DispatchFSR = [&](uint32_t contextIndex, ID3D11Resource* r_color, ID3D11Resource* r_depth, ID3D11Resource* r_mvec,
-						   ID3D11Resource* r_reactive, ID3D11Resource* r_trans, ID3D11Resource* r_output,
-						   uint32_t r_width, float mv_scale_x) {
-		if (state->frameAnnotations) {
-			if (globals::game::isVR) {
-				char buf[32];
-				snprintf(buf, sizeof(buf), "FSR Dispatch Eye %u", contextIndex);
-				state->BeginPerfEvent(buf);
-			} else {
-				state->BeginPerfEvent("FSR Dispatch");
-			}
-		}
-
-		FfxFsr3DispatchUpscaleDescription dispatchParameters{};
-		dispatchParameters.commandList = ffxGetCommandListDX11(context);
-		dispatchParameters.color = ffxGetResource(r_color, L"FSR3_Input_OutputColor");
-		dispatchParameters.depth = ffxGetResource(r_depth, L"FSR3_InputDepth");
-		dispatchParameters.motionVectors = ffxGetResource(r_mvec, L"FSR3_InputMotionVectors");
-		dispatchParameters.exposure = ffxGetResource(nullptr, L"FSR3_InputExposure");
-		dispatchParameters.upscaleOutput = ffxGetResource(r_output, L"FSR3_OutputColor");
-		dispatchParameters.reactive = ffxGetResource(r_reactive, L"FSR3_InputReactiveMap");
-		dispatchParameters.transparencyAndComposition = ffxGetResource(r_trans, L"FSR3_TransparencyAndCompositionMap");
-
-		dispatchParameters.motionVectorScale.x = mv_scale_x;
-		dispatchParameters.motionVectorScale.y = renderSize.y;
-		dispatchParameters.renderSize.width = r_width;
-		dispatchParameters.renderSize.height = (uint)renderSize.y;
-
-		dispatchParameters.jitterOffset.x = -jitter.x;
-		dispatchParameters.jitterOffset.y = -jitter.y;
-
-		dispatchParameters.frameTimeDelta = *globals::game::deltaTime * 1000.f;
-		dispatchParameters.cameraFar = *globals::game::cameraFar;
-		dispatchParameters.cameraNear = *globals::game::cameraNear;
-		dispatchParameters.enableSharpening = true;
-		dispatchParameters.sharpness = a_sharpness;
-		dispatchParameters.cameraFovAngleVertical = Util::GetVerticalFOVRad();
-		dispatchParameters.viewSpaceToMetersFactor = 0.01428222656f;
-		dispatchParameters.reset = upscaling.ShouldResetHistoryThisFrame();
-		dispatchParameters.preExposure = 1.0f;
-		dispatchParameters.flags = 0;
-
-		__try {
-			if (ffxFsr3ContextDispatchUpscale(&fsrContext[contextIndex], &dispatchParameters) != FFX_OK)
-				logger::critical("[FidelityFX] Failed to dispatch upscaling for eye {}!", contextIndex);
-		} __except (EXCEPTION_EXECUTE_HANDLER) {
-			if (!fsrDispatchCrashLogged) {
-				logger::critical("[FidelityFX] FSR3 dispatch crashed for eye {} - this may be caused by RenderDoc capture interfering with FSR operations. Try disabling RenderDoc capture.", contextIndex);
-				fsrDispatchCrashLogged = true;
-			}
-		}
-
-		if (state->frameAnnotations)
-			state->EndPerfEvent();
-	};
-
 	const bool splitPerEyeContexts = UseSplitPerEyeFSRContexts();
-	if (fsrContextCount == 0) {
-		logger::error("[FidelityFX] FSR resources are not initialized; skipping upscale dispatch.");
-		return;
-	}
-	if (splitPerEyeContexts && fsrContextCount < 2) {
-		logger::error("[FidelityFX] Missing per-eye FSR contexts for VR dispatch (available: {}).", fsrContextCount);
-		return;
-	}
+
 	if (splitPerEyeContexts) {
-		// Prepare per-eye inputs and clear mask
 		upscaling.PreparePerEyeInputs(a_upscalingTexture, depthTexture.texture, a_motionVectors, a_reactiveMask, a_transparencyCompositionMask, false);
 
-		uint32_t numViews = 2;
-		uint32_t eyeWidth = (uint32_t)(renderSize.x / 2);
-		for (uint32_t i = 0; i < numViews; ++i) {
-			DispatchFSR(i,
-				upscaling.vrIntermediateColorIn[i]->resource.get(),
-				upscaling.vrIntermediateDepth[i]->resource.get(),
-				upscaling.vrIntermediateMotionVectors[i]->resource.get(),
-				upscaling.vrIntermediateReactiveMask[i]->resource.get(),
-				upscaling.vrIntermediateTransparencyMask[i]->resource.get(),
-				upscaling.vrIntermediateColorOut[i]->resource.get(),
-				eyeWidth,
-				renderSize.x / 2.0f);
+		const uint32_t eyeDisplayWidth = static_cast<uint32_t>(screenSize.x / 2.0f);
+		const uint32_t eyeDisplayHeight = static_cast<uint32_t>(screenSize.y);
+		const uint32_t eyeRenderWidth = static_cast<uint32_t>(renderSize.x / 2.0f);
+		const uint32_t eyeRenderHeight = static_cast<uint32_t>(renderSize.y);
+
+		for (uint32_t i = 0; i < 2; ++i) {
+			if (!UpscaleRegion(
+					i,
+					upscaling.vrIntermediateColorIn[i]->resource.get(),
+					upscaling.vrIntermediateDepth[i]->resource.get(),
+					upscaling.vrIntermediateMotionVectors[i]->resource.get(),
+					upscaling.vrIntermediateReactiveMask[i]->resource.get(),
+					upscaling.vrIntermediateTransparencyMask[i]->resource.get(),
+					upscaling.vrIntermediateColorOut[i]->resource.get(),
+					eyeRenderWidth,
+					eyeRenderHeight,
+					eyeDisplayWidth,
+					eyeDisplayHeight,
+					renderSize.x / 2.0f,
+					renderSize.y,
+					a_sharpness)) {
+				logger::error("[FidelityFX] Upscale dispatch failed for VR eye {}.", i);
+			}
 		}
 
-		// Merge outputs back to kMAIN
 		upscaling.FinalizePerEyeOutputs(a_upscalingTexture);
-	} else {
-		DispatchFSR(0,
+		return;
+	}
+
+	if (!UpscaleRegion(
+			0,
 			a_upscalingTexture,
 			depthTexture.texture,
 			a_motionVectors,
 			a_reactiveMask,
 			a_transparencyCompositionMask,
-			a_upscalingTexture,  // Output to same texture
-			(uint)renderSize.x,
-			renderSize.x);
+			a_upscalingTexture,
+			static_cast<uint32_t>(renderSize.x),
+			static_cast<uint32_t>(renderSize.y),
+			static_cast<uint32_t>(screenSize.x),
+			static_cast<uint32_t>(screenSize.y),
+			renderSize.x,
+			renderSize.y,
+			a_sharpness)) {
+		logger::error("[FidelityFX] Upscale dispatch failed.");
 	}
 }
