@@ -172,6 +172,11 @@ namespace
 		return globals::game::isVR && a_upscaleMethod == Upscaling::UpscaleMethod::kDLSS;
 	}
 
+	bool IsVRRuntimeActive()
+	{
+		return globals::game::isVR;
+	}
+
 	bool TryGetTexture2DDesc(ID3D11Resource* resource, D3D11_TEXTURE2D_DESC& outDesc)
 	{
 		if (!resource)
@@ -921,7 +926,7 @@ void Upscaling::SaveSettings(json& o_json)
 {
 	SanitizeUpscalingSettings(settings);
 	o_json = settings;
-	if (!REL::Module::IsVR()) {
+	if (!IsVRRuntimeActive()) {
 		StripVRSpecificUpscalingSettings(o_json);
 	}
 	auto iniSettingCollection = globals::game::iniPrefSettingCollection;
@@ -934,7 +939,7 @@ void Upscaling::SaveSettings(json& o_json)
 void Upscaling::LoadSettings(json& o_json)
 {
 	settings = o_json;
-	if (!REL::Module::IsVR()) {
+	if (!IsVRRuntimeActive()) {
 		ResetVRSpecificUpscalingSettings(settings);
 	}
 	if (!settings.hasExplicitFoveatedCenterLinkPreference)
