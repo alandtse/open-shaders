@@ -6,7 +6,7 @@
 
 namespace FoveatedCommon
 {
-	constexpr float kCenterAreaMin = 0.45f;
+	constexpr float kCenterAreaMin = 0.30f;
 	constexpr float kCenterAreaMax = 1.0f;
 	constexpr float kCenterFeather = 0.05f;
 	constexpr float kEllipseInscribedRectScale = 0.70710678f;

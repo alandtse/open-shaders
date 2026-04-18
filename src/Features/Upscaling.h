@@ -78,6 +78,10 @@ public:
 		bool periphery_taa_disable_locks = false;
 		bool periphery_taa_disable_reactivity = false;
 		bool periphery_taa_disable_instability = false;
+		bool periphery_taa_hmd_reprojection = false;
+		bool periphery_taa_hmd_motion_guard = false;
+		bool periphery_taa_sharpen_fallback = false;
+		bool periphery_taa_stabilize_motion = false;
 		bool linkFoveatedCenterAreaWithSSGI = true;
 		bool hasExplicitFoveatedCenterLinkPreference = false;
 		bool reflexLowLatencyMode = true;
@@ -152,11 +156,14 @@ public:
 		float4 tuning0;  // x=centerScale, y=centerFeather, z=resetHistory, w=showDebug
 		float4 tuning1;  // x=disableLocks, y=disableReactivity, z=disableInstability, w=historyValid
 		float4 tuning2;  // x=reactivityScale, y=instabilityScale, z=velocityScale, w=lockDecay
+		float4 tuning3;  // x=enableHmdReprojection, y=enableHmdMotionGuard, z=enableSharpenFallback, w=enableMotionStabilization
+		float4x4 currentViewProjInverse;
+		float4x4 previousViewProj;
 	};
 
 	static_assert(sizeof(FoveatedPeripheryCB) == 128, "FoveatedPeripheryCB layout changed; update HLSL cbuffer.");
 	static_assert(sizeof(FoveatedCenterBlendCB) == 64, "FoveatedCenterBlendCB layout changed; update HLSL cbuffer.");
-	static_assert(sizeof(PeripheryTAACB) == 112, "PeripheryTAACB layout changed; update HLSL cbuffer.");
+	static_assert(sizeof(PeripheryTAACB) == 256, "PeripheryTAACB layout changed; update HLSL cbuffer.");
 
 	struct FoveatedDispatchRect
 	{
@@ -341,6 +348,10 @@ public:
 	bool previousHistoryPeripheryTAADisableLocks = false;
 	bool previousHistoryPeripheryTAADisableReactivity = false;
 	bool previousHistoryPeripheryTAADisableInstability = false;
+	bool previousHistoryPeripheryTAAHmdReprojection = false;
+	bool previousHistoryPeripheryTAAHmdMotionGuard = false;
+	bool previousHistoryPeripheryTAASharpenFallback = false;
+	bool previousHistoryPeripheryTAAStabilizeMotion = false;
 	bool previousHistoryFSRRuntimePathActive = false;
 
 	void CopySharedD3D12Resources();
@@ -373,7 +384,7 @@ public:
 		ID3D11ShaderResourceView* historyVelocitySRV, ID3D11ShaderResourceView* historyLockSRV, ID3D11UnorderedAccessView* outputColorUAV,
 		ID3D11UnorderedAccessView* outputVelocityUAV, ID3D11UnorderedAccessView* outputLockUAV, uint32_t inputWidth, uint32_t inputHeight,
 		uint32_t outputWidth, uint32_t outputHeight, uint32_t outputOffsetX, uint32_t outputOffsetY, uint32_t dispatchWidth, uint32_t dispatchHeight,
-		bool resetHistory, float centerOffsetX, float centerOffsetY);
+		const float4x4& currentViewProjInverse, const float4x4& previousViewProj, bool resetHistory, float centerOffsetX, float centerOffsetY);
 	void DispatchFoveatedBlendPass(ID3D11ShaderResourceView* centerSRV, ID3D11UnorderedAccessView* outputUAV, uint32_t eyeIndex, uint32_t outputWidthPerEye, uint32_t outputHeight, const FoveatedDispatchRect& rect, uint32_t dispatchOffsetX, uint32_t dispatchOffsetY, uint32_t dispatchWidth, uint32_t dispatchHeight);
 
 	/**
