@@ -28,6 +28,9 @@ cbuffer PeripheryTAACB : register(b0)
 	float4 Tuning3;  // x=enableHmdReprojection, y=enableHmdMotionGuard, z=enableSharpenFallback, w=enableMotionStabilization
 	row_major float4x4 CurrentViewProjInverse;
 	row_major float4x4 PreviousViewProj;
+	float4 CurrentCameraPosAdjust;
+	float4 PreviousCameraPosAdjust;
+	float4 DebugParams;  // x=debugMode, y=motionMagnitudeScale, z=velocityDeltaScale, w reserved
 };
 
 Texture2D<float4> CurrentColor : register(t0);
@@ -42,8 +45,9 @@ Texture2D<float> HistoryLock : register(t7);
 SamplerState LinearSampler : register(s0);
 
 RWTexture2D<float4> OutColor : register(u0);
-RWTexture2D<float2> OutVelocity : register(u1);
-RWTexture2D<float> OutLock : register(u2);
+RWTexture2D<float4> OutHistoryColor : register(u1);
+RWTexture2D<float2> OutVelocity : register(u2);
+RWTexture2D<float> OutLock : register(u3);
 
 static const int2 kOffsets3x3[9] = {
 	int2(-1, -1), int2(0, -1), int2(1, -1),
@@ -53,6 +57,14 @@ static const int2 kOffsets3x3[9] = {
 static const float kHmdMotionGuardThresholdPixels = 1.25;
 static const float kHmdMotionGuardScale = 0.18;
 static const float kSharpenFallbackBlendStart = 0.45;
+static const int kDebugModeComposite = 0;
+static const int kDebugModeReactivity = 1;
+static const int kDebugModeLock = 2;
+static const int kDebugModeDisocclusion = 3;
+static const int kDebugModeInstability = 4;
+static const int kDebugModeHmdMotion = 5;
+static const int kDebugModeMotionMagnitude = 6;
+static const int kDebugModeVelocityDelta = 7;
 
 float3 Reinhard(float3 color)
 {
@@ -120,6 +132,7 @@ struct ClosestDepthSample
 {
 	float depth;
 	float2 velocity;
+	float2 uv;
 };
 
 ClosestDepthSample GetClosestDepthSample3x3(float2 inputUV)
@@ -141,6 +154,7 @@ ClosestDepthSample GetClosestDepthSample3x3(float2 inputUV)
 	ClosestDepthSample result;
 	result.depth = minDepth;
 	result.velocity = LoadMotionClamped(minPos);
+	result.uv = ClampInputUV((float2(minPos) + 0.5) * InvInputDim);
 	return result;
 }
 
@@ -256,24 +270,27 @@ float ComputeDisocclusion(float velocityDeltaPixels, float stabilityBias)
 	return saturate((velocityDeltaPixels - threshold) * scale);
 }
 
-float2 ComputeHmdHistoryDelta(float2 outputUV, float depth)
+float2 ComputeHmdHistoryDelta(float2 reprojectionUV, float depth)
 {
 	if (depth <= 0.0 || depth >= 0.99995)
 		return 0.0.xx;
 
-	float4 currentClip = float4(outputUV.x * 2.0 - 1.0, 1.0 - outputUV.y * 2.0, depth, 1.0);
-	float4 worldPosition = mul(CurrentViewProjInverse, currentClip);
-	if (abs(worldPosition.w) <= 1e-5)
+	float4 currentClip = float4(reprojectionUV.x * 2.0 - 1.0, 1.0 - reprojectionUV.y * 2.0, depth, 1.0);
+	float4 worldPositionRelative = mul(CurrentViewProjInverse, currentClip);
+	if (abs(worldPositionRelative.w) <= 1e-5)
 		return 0.0.xx;
-	worldPosition /= worldPosition.w;
+	worldPositionRelative /= worldPositionRelative.w;
 
-	float4 previousClip = mul(PreviousViewProj, worldPosition);
+	float3 worldPositionAbsolute = worldPositionRelative.xyz + CurrentCameraPosAdjust.xyz;
+	float3 previousRelativeWorld = worldPositionAbsolute - PreviousCameraPosAdjust.xyz;
+
+	float4 previousClip = mul(PreviousViewProj, float4(previousRelativeWorld, 1.0));
 	if (previousClip.w <= 1e-5)
 		return 0.0.xx;
 
 	float2 previousNdc = previousClip.xy / previousClip.w;
 	float2 previousUV = float2(previousNdc.x * 0.5 + 0.5, 0.5 - previousNdc.y * 0.5);
-	return previousUV - outputUV;
+	return previousUV - reprojectionUV;
 }
 
 float ComputeHmdMotionFactor(float2 hmdDelta)
@@ -308,6 +325,7 @@ void main(uint3 dispatchID : SV_DispatchThreadID)
 	bool enableHmdMotionGuard = Tuning3.y > 0.5;
 	bool enableSharpenFallback = Tuning3.z > 0.5;
 	bool enableMotionStabilization = Tuning3.w > 0.5;
+	int debugMode = (int)(DebugParams.x + 0.5);
 
 	float centerWeight = FoveatedComputeCenterBlendWeight(outputUV, centerScale, centerFeather, CenterOffset);
 	float peripheryWeight = saturate(1.0 - centerWeight);
@@ -318,9 +336,10 @@ void main(uint3 dispatchID : SV_DispatchThreadID)
 	ClosestDepthSample closestDepth = GetClosestDepthSample3x3(inputUV);
 	float currentDepth = closestDepth.depth;
 	float2 currentVelocity = closestDepth.velocity;
-	float2 hmdHistoryDelta = (enableHmdReprojection || enableHmdMotionGuard) ? ComputeHmdHistoryDelta(outputUV, currentDepth) : 0.0.xx;
+	float2 hmdHistoryDelta = (enableHmdReprojection || enableHmdMotionGuard) ? ComputeHmdHistoryDelta(closestDepth.uv, currentDepth) : 0.0.xx;
 	float hmdMotionFactor = enableHmdMotionGuard ? ComputeHmdMotionFactor(hmdHistoryDelta) : 0.0;
 	float2 historyVelocity = currentVelocity + (enableHmdReprojection ? hmdHistoryDelta : 0.0.xx);
+	float velocityPixels = length(historyVelocity * OutputDim);
 	float reactiveMask = CurrentReactiveMask.SampleLevel(LinearSampler, inputUV, 0.0);
 	float transparencyMask = CurrentTransparencyMask.SampleLevel(LinearSampler, inputUV, 0.0);
 	float reactivity = disableReactivity ? 0.0 : saturate(max(reactiveMask, transparencyMask) * Tuning2.x);
@@ -330,6 +349,7 @@ void main(uint3 dispatchID : SV_DispatchThreadID)
 	float disocclusion = 1.0;
 	float instability = 0.0;
 	float previousLock = 0.0;
+	float velocityDeltaPixels = 0.0;
 
 	if (historyValid) {
 		float2 historyUV = outputUV + historyVelocity;
@@ -342,7 +362,7 @@ void main(uint3 dispatchID : SV_DispatchThreadID)
 			float lockBias = disableLocks ? 0.35 : saturate(previousLock * 0.90 + 0.25);
 			stabilityBias = lockBias * (1.0 - hmdMotionFactor);
 		}
-		float velocityDeltaPixels = ComputeVelocityDeltaPixels(historyUV, historyVelocity);
+		velocityDeltaPixels = ComputeVelocityDeltaPixels(historyUV, historyVelocity);
 		disocclusion = ComputeDisocclusion(velocityDeltaPixels, stabilityBias);
 
 		float3 currentTM = Reinhard(currentColor);
@@ -350,7 +370,6 @@ void main(uint3 dispatchID : SV_DispatchThreadID)
 		float currentLuma = Luma(currentTM);
 		float historyLuma = Luma(historyTM);
 
-		float velocityPixels = length(historyVelocity * OutputDim);
 		float motionFactor = saturate(velocityPixels * Tuning2.z);
 
 		if (!disableInstability) {
@@ -386,11 +405,29 @@ void main(uint3 dispatchID : SV_DispatchThreadID)
 		resolvedColor = SampleCurrentCatmullRom(inputUV);
 	}
 
+	OutHistoryColor[outputPos] = float4(resolvedColor, currentAlpha);
 	OutVelocity[outputPos] = historyVelocity;
 	OutLock[outputPos] = newLock;
 
 	if (showDebug) {
-		float3 debugColor = float3(reactivity, disableLocks ? 0.0 : newLock, max(max(disocclusion, instability), hmdMotionFactor));
+		float3 debugColor;
+		if (debugMode == kDebugModeReactivity) {
+			debugColor = reactivity.xxx;
+		} else if (debugMode == kDebugModeLock) {
+			debugColor = (disableLocks ? 0.0 : newLock).xxx;
+		} else if (debugMode == kDebugModeDisocclusion) {
+			debugColor = disocclusion.xxx;
+		} else if (debugMode == kDebugModeInstability) {
+			debugColor = instability.xxx;
+		} else if (debugMode == kDebugModeHmdMotion) {
+			debugColor = hmdMotionFactor.xxx;
+		} else if (debugMode == kDebugModeMotionMagnitude) {
+			debugColor = saturate(velocityPixels * DebugParams.y).xxx;
+		} else if (debugMode == kDebugModeVelocityDelta) {
+			debugColor = saturate(velocityDeltaPixels * DebugParams.z).xxx;
+		} else {
+			debugColor = float3(reactivity, disableLocks ? 0.0 : newLock, max(max(disocclusion, instability), hmdMotionFactor));
+		}
 		OutColor[outputPos] = float4(debugColor, 1.0);
 	} else {
 		OutColor[outputPos] = float4(resolvedColor, currentAlpha);

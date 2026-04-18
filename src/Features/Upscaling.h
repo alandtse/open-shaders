@@ -75,6 +75,7 @@ public:
 		bool foveatedPeripheryMaskVisualization = false;
 		bool periphery_taa_enable = false;
 		bool periphery_taa_show_debug = false;
+		uint periphery_taa_debug_mode = 0;
 		bool periphery_taa_disable_locks = false;
 		bool periphery_taa_disable_reactivity = false;
 		bool periphery_taa_disable_instability = false;
@@ -159,11 +160,14 @@ public:
 		float4 tuning3;  // x=enableHmdReprojection, y=enableHmdMotionGuard, z=enableSharpenFallback, w=enableMotionStabilization
 		float4x4 currentViewProjInverse;
 		float4x4 previousViewProj;
+		float4 currentCameraPosAdjust;
+		float4 previousCameraPosAdjust;
+		float4 debugParams;  // x=debugMode, y=motionMagnitudeScale, z=velocityDeltaScale, w reserved
 	};
 
 	static_assert(sizeof(FoveatedPeripheryCB) == 128, "FoveatedPeripheryCB layout changed; update HLSL cbuffer.");
 	static_assert(sizeof(FoveatedCenterBlendCB) == 64, "FoveatedCenterBlendCB layout changed; update HLSL cbuffer.");
-	static_assert(sizeof(PeripheryTAACB) == 256, "PeripheryTAACB layout changed; update HLSL cbuffer.");
+	static_assert(sizeof(PeripheryTAACB) == 304, "PeripheryTAACB layout changed; update HLSL cbuffer.");
 
 	struct FoveatedDispatchRect
 	{
@@ -305,7 +309,7 @@ public:
 	eastl::unique_ptr<Texture2D> foveatedCenterMotionVectors[2];
 	eastl::unique_ptr<Texture2D> foveatedCenterReactiveMask[2];
 	eastl::unique_ptr<Texture2D> foveatedCenterTransparencyMask[2];
-	eastl::unique_ptr<Texture2D> peripheryTAAHistoryColor[2];
+	eastl::unique_ptr<Texture2D> peripheryTAAHistoryColor[2][2];
 	eastl::unique_ptr<Texture2D> peripheryTAAVelocityHistory[2][2];
 	eastl::unique_ptr<Texture2D> peripheryTAALockHistory[2][2];
 	uint32_t peripheryTAAHistoryReadIndex = 0;
@@ -344,7 +348,6 @@ public:
 	std::array<float2, 2> previousHistoryFoveatedCenterOffsets = {};
 	bool previousHistoryPeripheryTAA = false;
 	bool previousHistoryPeripheryTAAPathActive = false;
-	bool previousHistoryPeripheryTAAShowDebug = false;
 	bool previousHistoryPeripheryTAADisableLocks = false;
 	bool previousHistoryPeripheryTAADisableReactivity = false;
 	bool previousHistoryPeripheryTAADisableInstability = false;
@@ -377,14 +380,16 @@ public:
 	bool EnsurePeripheryTAAResources(uint32_t outputWidthPerEye, uint32_t outputHeight, ID3D11Resource* colorSource);
 	void DestroyPeripheryTAAResources();
 	bool DispatchFoveatedVendorUpscaling(UpscaleMethod a_upscaleMethod, ID3D11Resource* colorTexture, ID3D11Resource* depthTexture, ID3D11Resource* motionVectors, ID3D11Resource* reactiveMask, ID3D11Resource* transparencyMask, ID3D11ShaderResourceView* colorSRV, bool depthAlreadyPrepared);
-	bool DispatchSingleFoveatedVendorEye(UpscaleMethod a_upscaleMethod, uint32_t eyeIndex, ID3D11Resource* colorIn, ID3D11Resource* depthIn, ID3D11Resource* motionVectorsIn, ID3D11Resource* reactiveMaskIn, ID3D11Resource* transparencyMaskIn, uint32_t outputWidthPerEye, uint32_t outputHeight, uint32_t innerMinX, uint32_t innerMinY, uint32_t innerMaxX, uint32_t innerMaxY, uint32_t colorInputBaseOffsetX = 0, uint32_t depthInputBaseOffsetX = 0, uint32_t auxInputBaseOffsetX = 0);
+	bool DispatchSingleFoveatedVendorEye(UpscaleMethod a_upscaleMethod, uint32_t eyeIndex, ID3D11Resource* colorIn, ID3D11Resource* depthIn, ID3D11Resource* motionVectorsIn, ID3D11Resource* reactiveMaskIn, ID3D11Resource* transparencyMaskIn, uint32_t outputWidthPerEye, uint32_t outputHeight, uint32_t innerMinX, uint32_t innerMinY, uint32_t innerMaxX, uint32_t innerMaxY, ID3D11Resource* historyColorResource = nullptr, ID3D11UnorderedAccessView* historyColorUAV = nullptr, uint32_t colorInputBaseOffsetX = 0, uint32_t depthInputBaseOffsetX = 0, uint32_t auxInputBaseOffsetX = 0);
 	void DispatchFoveatedPeripheryPass(ID3D11ShaderResourceView* sourceSRV, ID3D11UnorderedAccessView* outputUAV, uint32_t sourceWidth, uint32_t sourceHeight, uint32_t outputWidth, uint32_t outputHeight, uint32_t outputOffsetX, uint32_t outputOffsetY, uint32_t dispatchWidth, uint32_t dispatchHeight, bool keepBindingsBound = false, float sourceScaleX = 1.0f, float sourceScaleY = 1.0f, float sourceOffsetX = 0.0f, float sourceOffsetY = 0.0f, float centerOffsetX = 0.0f, float centerOffsetY = 0.0f);
 	void DispatchPeripheryTAAPass(ID3D11ShaderResourceView* currentColorSRV, ID3D11ShaderResourceView* currentDepthSRV, ID3D11ShaderResourceView* currentMotionVectorSRV,
 		ID3D11ShaderResourceView* currentReactiveSRV, ID3D11ShaderResourceView* currentTransparencySRV, ID3D11ShaderResourceView* historyColorSRV,
 		ID3D11ShaderResourceView* historyVelocitySRV, ID3D11ShaderResourceView* historyLockSRV, ID3D11UnorderedAccessView* outputColorUAV,
+		ID3D11UnorderedAccessView* outputHistoryColorUAV,
 		ID3D11UnorderedAccessView* outputVelocityUAV, ID3D11UnorderedAccessView* outputLockUAV, uint32_t inputWidth, uint32_t inputHeight,
 		uint32_t outputWidth, uint32_t outputHeight, uint32_t outputOffsetX, uint32_t outputOffsetY, uint32_t dispatchWidth, uint32_t dispatchHeight,
-		const float4x4& currentViewProjInverse, const float4x4& previousViewProj, bool resetHistory, float centerOffsetX, float centerOffsetY);
+		const float4x4& currentViewProjInverse, const float4x4& previousViewProj, const float4& currentCameraPosAdjust, const float4& previousCameraPosAdjust,
+		bool resetHistory, float centerOffsetX, float centerOffsetY);
 	void DispatchFoveatedBlendPass(ID3D11ShaderResourceView* centerSRV, ID3D11UnorderedAccessView* outputUAV, uint32_t eyeIndex, uint32_t outputWidthPerEye, uint32_t outputHeight, const FoveatedDispatchRect& rect, uint32_t dispatchOffsetX, uint32_t dispatchOffsetY, uint32_t dispatchWidth, uint32_t dispatchHeight);
 
 	/**

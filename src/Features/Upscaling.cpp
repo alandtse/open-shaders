@@ -42,6 +42,7 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	foveatedPeripheryMaskVisualization,
 	periphery_taa_enable,
 	periphery_taa_show_debug,
+	periphery_taa_debug_mode,
 	periphery_taa_disable_locks,
 	periphery_taa_disable_reactivity,
 	periphery_taa_disable_instability,
@@ -63,6 +64,7 @@ namespace
 {
 	constexpr float kPeripheryEdgeBlurStrengthMin = 1.0f;
 	constexpr float kPeripheryEdgeBlurStrengthMax = 10.0f;
+	constexpr uint32_t kPeripheryTAADebugModeMaxIndex = 7u;
 	constexpr float kFoveatedMaskOffsetAdjustMin = -0.15f;
 	constexpr float kFoveatedMaskOffsetAdjustMax = 0.15f;
 	constexpr float kFoveatedMaskOffsetResolvedMin = -0.25f;
@@ -98,6 +100,11 @@ namespace
 		return std::min<uint>(value, 2u);
 	}
 
+	uint ClampPeripheryTAADebugModeUInt(uint value)
+	{
+		return std::min<uint>(value, kPeripheryTAADebugModeMaxIndex);
+	}
+
 	float ClampFiniteUnitRange(float value, float fallback)
 	{
 		if (!std::isfinite(value))
@@ -127,6 +134,7 @@ namespace
 		settings.streamlineLogLevel = ClampStreamlineLogLevelUInt(settings.streamlineLogLevel);
 		settings.sharpnessFSR = ClampFiniteUnitRange(settings.sharpnessFSR, 0.0f);
 		settings.sharpnessDLSS = ClampFiniteUnitRange(settings.sharpnessDLSS, 0.1f);
+		settings.periphery_taa_debug_mode = ClampPeripheryTAADebugModeUInt(settings.periphery_taa_debug_mode);
 		SanitizeFoveatedSettings(settings);
 	}
 
@@ -146,6 +154,7 @@ namespace
 		settings.foveatedPeripheryMaskVisualization = false;
 		settings.periphery_taa_enable = false;
 		settings.periphery_taa_show_debug = false;
+		settings.periphery_taa_debug_mode = 0;
 		settings.periphery_taa_disable_locks = false;
 		settings.periphery_taa_disable_reactivity = false;
 		settings.periphery_taa_disable_instability = false;
@@ -173,6 +182,7 @@ namespace
 		o_json.erase("foveatedPeripheryMaskVisualization");
 		o_json.erase("periphery_taa_enable");
 		o_json.erase("periphery_taa_show_debug");
+		o_json.erase("periphery_taa_debug_mode");
 		o_json.erase("periphery_taa_disable_locks");
 		o_json.erase("periphery_taa_disable_reactivity");
 		o_json.erase("periphery_taa_disable_instability");
@@ -670,6 +680,21 @@ void Upscaling::DrawSettings()
 					ImGui::Checkbox("periphery_taa_enable", &settings.periphery_taa_enable);
 					if (settings.periphery_taa_enable) {
 						ImGui::Checkbox("periphery_taa_show_debug", &settings.periphery_taa_show_debug);
+						if (settings.periphery_taa_show_debug) {
+							const char* debugModes[] = {
+								"Composite",
+								"Reactivity",
+								"Lock",
+								"Disocclusion",
+								"Instability",
+								"HMD Motion",
+								"Motion Magnitude",
+								"Velocity Delta"
+							};
+							int debugMode = static_cast<int>(settings.periphery_taa_debug_mode);
+							ImGui::SliderInt("periphery_taa_debug_mode", &debugMode, 0, static_cast<int>(kPeripheryTAADebugModeMaxIndex), debugModes[debugMode]);
+							settings.periphery_taa_debug_mode = ClampPeripheryTAADebugModeUInt(static_cast<uint>(debugMode));
+						}
 						ImGui::Checkbox("periphery_taa_disable_locks", &settings.periphery_taa_disable_locks);
 						ImGui::Checkbox("periphery_taa_disable_reactivity", &settings.periphery_taa_disable_reactivity);
 						ImGui::Checkbox("periphery_taa_disable_instability", &settings.periphery_taa_disable_instability);
@@ -684,6 +709,7 @@ void Upscaling::DrawSettings()
 					ImGui::TextUnformatted("Masked periphery TAA replacement for the old spatial periphery path.");
 					ImGui::TextUnformatted("When enabled, the current spatial periphery pass is replaced so you can A/B directly against the existing implementation.");
 					ImGui::TextUnformatted("The center vendor upscaler path stays unchanged.");
+					ImGui::TextUnformatted("When debug is enabled, periphery history still advances so the debug views reflect live temporal behavior.");
 					ImGui::Separator();
 					ImGui::TextUnformatted("periphery_taa_hmd_reprojection: adds explicit per-eye HMD reprojection to temporal history lookup.");
 					ImGui::TextUnformatted("periphery_taa_hmd_motion_guard: suppresses history faster during strong HMD motion.");
@@ -1685,29 +1711,29 @@ bool Upscaling::EnsurePeripheryTAAResources(uint32_t outputWidthPerEye, uint32_t
 	for (uint32_t eye = 0; eye < 2; ++eye) {
 		const std::string suffix = eye == 0 ? "Left" : "Right";
 
-		auto& historyColorTexture = peripheryTAAHistoryColor[eye];
-		const bool recreateHistoryColor =
-			!historyColorTexture ||
-			historyColorTexture->desc.Width != outputWidthPerEye ||
-			historyColorTexture->desc.Height != outputHeight ||
-			historyColorTexture->desc.Format != colorDesc.Format ||
-			!historyColorTexture->srv;
-		recreatedResources = recreatedResources || recreateHistoryColor;
-
-		if (!EnsureFoveatedTexture(
-				historyColorTexture,
-				colorSource,
-				outputWidthPerEye,
-				outputHeight,
-				false,
-				true,
-				false,
-				false,
-				("Upscale_PeripheryTAA_HistoryColor_" + suffix).c_str())) {
-			return false;
-		}
-
 		for (uint32_t historySlot = 0; historySlot < 2; ++historySlot) {
+			auto& historyColorTexture = peripheryTAAHistoryColor[eye][historySlot];
+			const bool recreateHistoryColor =
+				!historyColorTexture ||
+				historyColorTexture->desc.Width != outputWidthPerEye ||
+				historyColorTexture->desc.Height != outputHeight ||
+				historyColorTexture->desc.Format != colorDesc.Format ||
+				!historyColorTexture->srv || !historyColorTexture->uav;
+			recreatedResources = recreatedResources || recreateHistoryColor;
+
+			if (!EnsureFoveatedTexture(
+					historyColorTexture,
+					colorSource,
+					outputWidthPerEye,
+					outputHeight,
+					false,
+					true,
+					true,
+					false,
+					(std::format("Upscale_PeripheryTAA_HistoryColor_{}_{}", suffix, historySlot)).c_str())) {
+				return false;
+			}
+
 			auto& velocityTexture = peripheryTAAVelocityHistory[eye][historySlot];
 			const bool recreateVelocity =
 				!velocityTexture ||
@@ -1772,8 +1798,8 @@ void Upscaling::DestroyFoveatedResources()
 void Upscaling::DestroyPeripheryTAAResources()
 {
 	for (uint32_t eye = 0; eye < 2; ++eye) {
-		peripheryTAAHistoryColor[eye].reset();
 		for (uint32_t historySlot = 0; historySlot < 2; ++historySlot) {
+			peripheryTAAHistoryColor[eye][historySlot].reset();
 			peripheryTAAVelocityHistory[eye][historySlot].reset();
 			peripheryTAALockHistory[eye][historySlot].reset();
 		}
@@ -1870,9 +1896,10 @@ void Upscaling::DispatchFoveatedPeripheryPass(ID3D11ShaderResourceView* sourceSR
 void Upscaling::DispatchPeripheryTAAPass(ID3D11ShaderResourceView* currentColorSRV, ID3D11ShaderResourceView* currentDepthSRV, ID3D11ShaderResourceView* currentMotionVectorSRV,
 	ID3D11ShaderResourceView* currentReactiveSRV, ID3D11ShaderResourceView* currentTransparencySRV, ID3D11ShaderResourceView* historyColorSRV,
 	ID3D11ShaderResourceView* historyVelocitySRV, ID3D11ShaderResourceView* historyLockSRV, ID3D11UnorderedAccessView* outputColorUAV,
+	ID3D11UnorderedAccessView* outputHistoryColorUAV,
 	ID3D11UnorderedAccessView* outputVelocityUAV, ID3D11UnorderedAccessView* outputLockUAV, uint32_t inputWidth, uint32_t inputHeight, uint32_t outputWidth,
 	uint32_t outputHeight, uint32_t outputOffsetX, uint32_t outputOffsetY, uint32_t dispatchWidth, uint32_t dispatchHeight, const float4x4& currentViewProjInverse,
-	const float4x4& previousViewProj, bool resetHistory, float centerOffsetX, float centerOffsetY)
+	const float4x4& previousViewProj, const float4& currentCameraPosAdjust, const float4& previousCameraPosAdjust, bool resetHistory, float centerOffsetX, float centerOffsetY)
 {
 	// This custom periphery-only TAA path adapts MIT-licensed ideas from:
 	// - Godot's TAA resolve / Spartan Engine lineage (taa_resolve.glsl, copyright Panos Karabelas)
@@ -1886,7 +1913,7 @@ void Upscaling::DispatchPeripheryTAAPass(ID3D11ShaderResourceView* currentColorS
 		return;
 	if (!historyColorSRV || !historyVelocitySRV || !historyLockSRV)
 		return;
-	if (!outputColorUAV || !outputVelocityUAV || !outputLockUAV)
+	if (!outputColorUAV || !outputHistoryColorUAV || !outputVelocityUAV || !outputLockUAV)
 		return;
 	if (!dispatchWidth || !dispatchHeight)
 		return;
@@ -1944,6 +1971,14 @@ void Upscaling::DispatchPeripheryTAAPass(ID3D11ShaderResourceView* currentColorS
 	};
 	cbData.currentViewProjInverse = currentViewProjInverse;
 	cbData.previousViewProj = previousViewProj;
+	cbData.currentCameraPosAdjust = currentCameraPosAdjust;
+	cbData.previousCameraPosAdjust = previousCameraPosAdjust;
+	cbData.debugParams = {
+		static_cast<float>(ClampPeripheryTAADebugModeUInt(settings.periphery_taa_debug_mode)),
+		1.0f / 12.0f,
+		1.0f / 12.0f,
+		0.0f
+	};
 	peripheryTAACB->Update(cbData);
 
 	ID3D11Buffer* cb = peripheryTAACB->CB();
@@ -1958,7 +1993,7 @@ void Upscaling::DispatchPeripheryTAAPass(ID3D11ShaderResourceView* currentColorS
 		historyVelocitySRV,
 		historyLockSRV
 	};
-	ID3D11UnorderedAccessView* uavs[3] = { outputColorUAV, outputVelocityUAV, outputLockUAV };
+	ID3D11UnorderedAccessView* uavs[4] = { outputColorUAV, outputHistoryColorUAV, outputVelocityUAV, outputLockUAV };
 
 	context->CSSetShader(peripheryTAA, nullptr, 0);
 	context->CSSetConstantBuffers(0, 1, &cb);
@@ -1968,7 +2003,7 @@ void Upscaling::DispatchPeripheryTAAPass(ID3D11ShaderResourceView* currentColorS
 	context->Dispatch((dispatchWidth + 7u) >> 3, (dispatchHeight + 7u) >> 3, 1);
 
 	ID3D11ShaderResourceView* nullSRV[8] = {};
-	ID3D11UnorderedAccessView* nullUAV[3] = {};
+	ID3D11UnorderedAccessView* nullUAV[4] = {};
 	ID3D11SamplerState* nullSampler[1] = { nullptr };
 	ID3D11Buffer* nullCB[1] = { nullptr };
 	context->CSSetShaderResources(0, ARRAYSIZE(nullSRV), nullSRV);
@@ -2059,9 +2094,12 @@ void Upscaling::DispatchFoveatedBlendPass(ID3D11ShaderResourceView* centerSRV, I
 	context->CSSetShader(nullptr, nullptr, 0);
 }
 
-bool Upscaling::DispatchSingleFoveatedVendorEye(UpscaleMethod a_upscaleMethod, uint32_t eyeIndex, ID3D11Resource* colorIn, ID3D11Resource* depthIn, ID3D11Resource* motionVectorsIn, ID3D11Resource* reactiveMaskIn, ID3D11Resource* transparencyMaskIn, uint32_t outputWidthPerEye, uint32_t outputHeight, uint32_t innerMinX, uint32_t innerMinY, uint32_t innerMaxX, uint32_t innerMaxY, uint32_t colorInputBaseOffsetX, uint32_t depthInputBaseOffsetX, uint32_t auxInputBaseOffsetX)
+bool Upscaling::DispatchSingleFoveatedVendorEye(UpscaleMethod a_upscaleMethod, uint32_t eyeIndex, ID3D11Resource* colorIn, ID3D11Resource* depthIn, ID3D11Resource* motionVectorsIn, ID3D11Resource* reactiveMaskIn, ID3D11Resource* transparencyMaskIn, uint32_t outputWidthPerEye, uint32_t outputHeight, uint32_t innerMinX, uint32_t innerMinY, uint32_t innerMaxX, uint32_t innerMaxY, ID3D11Resource* historyColorResource, ID3D11UnorderedAccessView* historyColorUAV, uint32_t colorInputBaseOffsetX, uint32_t depthInputBaseOffsetX, uint32_t auxInputBaseOffsetX)
 {
 	if (eyeIndex > 1)
+		return false;
+
+	if ((historyColorResource == nullptr) != (historyColorUAV == nullptr))
 		return false;
 
 	const auto& rect = foveatedRectCache.rects[eyeIndex];
@@ -2196,6 +2234,17 @@ bool Upscaling::DispatchSingleFoveatedVendorEye(UpscaleMethod a_upscaleMethod, u
 			foveatedCenterColorOut[eyeIndex]->resource.get(),
 			0,
 			&centerInteriorBox);
+		if (historyColorResource) {
+			context->CopySubresourceRegion(
+				historyColorResource,
+				0,
+				interiorMinX,
+				interiorMinY,
+				0,
+				foveatedCenterColorOut[eyeIndex]->resource.get(),
+				0,
+				&centerInteriorBox);
+		}
 	}
 
 	ID3D11UnorderedAccessView* outputUAV = vrIntermediateColorOut[eyeIndex]->uav.get();
@@ -2217,6 +2266,19 @@ bool Upscaling::DispatchSingleFoveatedVendorEye(UpscaleMethod a_upscaleMethod, u
 			offsetY,
 			width,
 			height);
+		if (historyColorUAV) {
+			DispatchFoveatedBlendPass(
+				centerSRV,
+				historyColorUAV,
+				eyeIndex,
+				outputWidthPerEye,
+				outputHeight,
+				rect,
+				offsetX,
+				offsetY,
+				width,
+				height);
+		}
 	};
 
 	if (interiorMaxX > interiorMinX && interiorMaxY > interiorMinY) {
@@ -2242,6 +2304,19 @@ bool Upscaling::DispatchSingleFoveatedVendorEye(UpscaleMethod a_upscaleMethod, u
 			rect.outputOffsetY,
 			rect.outputWidth,
 			rect.outputHeight);
+		if (historyColorUAV) {
+			DispatchFoveatedBlendPass(
+				centerSRV,
+				historyColorUAV,
+				eyeIndex,
+				outputWidthPerEye,
+				outputHeight,
+				rect,
+				rect.outputOffsetX,
+				rect.outputOffsetY,
+				rect.outputWidth,
+				rect.outputHeight);
+		}
 	}
 
 	return true;
@@ -2296,9 +2371,13 @@ bool Upscaling::DispatchFoveatedVendorUpscaling(UpscaleMethod a_upscaleMethod, I
 	for (uint32_t eye = 0; eye < 2; ++eye) {
 		float4x4 currentViewProjInverse{};
 		float4x4 previousViewProj{};
+		float4 currentCameraPosAdjust{};
+		float4 previousCameraPosAdjust{};
 		if (usePeripheryTAA) {
 			currentViewProjInverse = globals::game::frameBufferCached.GetCameraViewProjUnjittered(eye).Invert();
 			previousViewProj = globals::game::frameBufferCached.GetCameraPreviousViewProjUnjittered(eye);
+			currentCameraPosAdjust = globals::game::frameBufferCached.GetCameraPosAdjust(eye);
+			previousCameraPosAdjust = globals::game::frameBufferCached.GetCameraPreviousPosAdjust(eye);
 		}
 		const float2 centerOffset = GetResolvedFoveatedMaskCenterOffset(eye);
 		const auto innerBounds = FoveatedCommon::BuildCenteredInscribedEllipseRect(outputWidthPerEye, outputHeight, centerScale, centerOffset.x, centerOffset.y);
@@ -2330,10 +2409,11 @@ bool Upscaling::DispatchFoveatedVendorUpscaling(UpscaleMethod a_upscaleMethod, I
 					vrIntermediateMotionVectors[eye]->srv.get(),
 					vrIntermediateReactiveMask[eye]->srv.get(),
 					vrIntermediateTransparencyMask[eye]->srv.get(),
-					peripheryTAAHistoryColor[eye]->srv.get(),
+					peripheryTAAHistoryColor[eye][peripheryTAAHistoryReadIndex]->srv.get(),
 					peripheryTAAVelocityHistory[eye][peripheryTAAHistoryReadIndex]->srv.get(),
 					peripheryTAALockHistory[eye][peripheryTAAHistoryReadIndex]->srv.get(),
 					vrIntermediateColorOut[eye]->uav.get(),
+					peripheryTAAHistoryColor[eye][peripheryTAAWriteIndex]->uav.get(),
 					peripheryTAAVelocityHistory[eye][peripheryTAAWriteIndex]->uav.get(),
 					peripheryTAALockHistory[eye][peripheryTAAWriteIndex]->uav.get(),
 					inputWidthPerEye,
@@ -2346,6 +2426,8 @@ bool Upscaling::DispatchFoveatedVendorUpscaling(UpscaleMethod a_upscaleMethod, I
 					dispatchHeight,
 					currentViewProjInverse,
 					previousViewProj,
+					currentCameraPosAdjust,
+					previousCameraPosAdjust,
 					resetPeripheryTAA,
 					centerOffset.x,
 					centerOffset.y);
@@ -2379,7 +2461,8 @@ bool Upscaling::DispatchFoveatedVendorUpscaling(UpscaleMethod a_upscaleMethod, I
 		};
 
 		if (usePeripheryTAA) {
-			if (!peripheryTAAHistoryColor[eye] || !peripheryTAAHistoryColor[eye]->srv ||
+			if (!peripheryTAAHistoryColor[eye][peripheryTAAHistoryReadIndex] || !peripheryTAAHistoryColor[eye][peripheryTAAHistoryReadIndex]->srv ||
+				!peripheryTAAHistoryColor[eye][peripheryTAAWriteIndex] || !peripheryTAAHistoryColor[eye][peripheryTAAWriteIndex]->uav ||
 				!peripheryTAAVelocityHistory[eye][peripheryTAAHistoryReadIndex] || !peripheryTAAVelocityHistory[eye][peripheryTAAHistoryReadIndex]->srv ||
 				!peripheryTAAVelocityHistory[eye][peripheryTAAWriteIndex] || !peripheryTAAVelocityHistory[eye][peripheryTAAWriteIndex]->uav ||
 				!peripheryTAALockHistory[eye][peripheryTAAHistoryReadIndex] || !peripheryTAALockHistory[eye][peripheryTAAHistoryReadIndex]->srv ||
@@ -2388,6 +2471,7 @@ bool Upscaling::DispatchFoveatedVendorUpscaling(UpscaleMethod a_upscaleMethod, I
 			}
 
 			const float clearValue[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
+			context->ClearUnorderedAccessViewFloat(peripheryTAAHistoryColor[eye][peripheryTAAWriteIndex]->uav.get(), clearValue);
 			context->ClearUnorderedAccessViewFloat(peripheryTAAVelocityHistory[eye][peripheryTAAWriteIndex]->uav.get(), clearValue);
 			context->ClearUnorderedAccessViewFloat(peripheryTAALockHistory[eye][peripheryTAAWriteIndex]->uav.get(), clearValue);
 		}
@@ -2425,18 +2509,17 @@ bool Upscaling::DispatchFoveatedVendorUpscaling(UpscaleMethod a_upscaleMethod, I
 				innerMinY,
 				innerMaxX,
 				innerMaxY,
+				usePeripheryTAA ? peripheryTAAHistoryColor[eye][peripheryTAAWriteIndex]->resource.get() : nullptr,
+				usePeripheryTAA ? peripheryTAAHistoryColor[eye][peripheryTAAWriteIndex]->uav.get() : nullptr,
 				useDirectSourcePath ? combinedEyeInputOffsetX : 0u,
 				useDirectSourcePath ? combinedEyeInputOffsetX : 0u,
 				0u)) {
 			return false;
 		}
 
-		if (usePeripheryTAA && !settings.periphery_taa_show_debug) {
-			context->CopyResource(peripheryTAAHistoryColor[eye]->resource.get(), vrIntermediateColorOut[eye]->resource.get());
-		}
 	}
 
-	if (usePeripheryTAA && !settings.periphery_taa_show_debug) {
+	if (usePeripheryTAA) {
 		peripheryTAAHistoryReadIndex = peripheryTAAWriteIndex;
 		peripheryTAAHistoryValid = true;
 	}
@@ -3215,7 +3298,6 @@ void Upscaling::UpdateHistoryResetState(UpscaleMethod a_upscaleMethod)
 			peripheryTAAEnabled != previousHistoryPeripheryTAA ||
 			peripheryTAAPathActive != previousHistoryPeripheryTAAPathActive ||
 			(peripheryTAAPathActive && (
-				settings.periphery_taa_show_debug != previousHistoryPeripheryTAAShowDebug ||
 				settings.periphery_taa_disable_locks != previousHistoryPeripheryTAADisableLocks ||
 				settings.periphery_taa_disable_reactivity != previousHistoryPeripheryTAADisableReactivity ||
 				settings.periphery_taa_disable_instability != previousHistoryPeripheryTAADisableInstability ||
@@ -3248,7 +3330,6 @@ void Upscaling::UpdateHistoryResetState(UpscaleMethod a_upscaleMethod)
 	previousHistoryFoveatedCenterOffsets = foveatedCenterOffsets;
 	previousHistoryPeripheryTAA = peripheryTAAEnabled;
 	previousHistoryPeripheryTAAPathActive = peripheryTAAPathActive;
-	previousHistoryPeripheryTAAShowDebug = settings.periphery_taa_show_debug;
 	previousHistoryPeripheryTAADisableLocks = settings.periphery_taa_disable_locks;
 	previousHistoryPeripheryTAADisableReactivity = settings.periphery_taa_disable_reactivity;
 	previousHistoryPeripheryTAADisableInstability = settings.periphery_taa_disable_instability;
