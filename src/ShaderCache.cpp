@@ -124,6 +124,53 @@ namespace SIE
 			return nullptr;
 		}
 
+		static std::string GetShaderSourceTreeStamp()
+		{
+			std::filesystem::path shaderRoot{ "Data/Shaders" };
+			std::error_code ec;
+			if (!std::filesystem::exists(shaderRoot, ec)) {
+				return {};
+			}
+
+			auto latestWriteTime = std::filesystem::file_time_type::min();
+			for (std::filesystem::recursive_directory_iterator it(shaderRoot, std::filesystem::directory_options::skip_permission_denied, ec), end;
+				it != end;
+				it.increment(ec)) {
+				if (ec) {
+					ec.clear();
+					continue;
+				}
+
+				if (!it->is_regular_file(ec)) {
+					ec.clear();
+					continue;
+				}
+
+				auto extension = it->path().extension().string();
+				std::ranges::transform(extension, extension.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+				if (extension != ".hlsl" && extension != ".hlsli") {
+					continue;
+				}
+
+				const auto writeTime = it->last_write_time(ec);
+				if (ec) {
+					ec.clear();
+					continue;
+				}
+				if (writeTime > latestWriteTime) {
+					latestWriteTime = writeTime;
+				}
+			}
+
+			if (latestWriteTime == std::filesystem::file_time_type::min()) {
+				return {};
+			}
+
+			const auto systemTime = std::chrono::clock_cast<std::chrono::system_clock>(latestWriteTime);
+			const auto stamp = std::chrono::duration_cast<std::chrono::milliseconds>(systemTime.time_since_epoch()).count();
+			return std::to_string(stamp);
+		}
+
 		uint32_t GetTechnique(uint32_t descriptor)
 		{
 			return 0x3F & (descriptor >> 24);
@@ -1298,15 +1345,29 @@ namespace SIE
 			mapBufferConsts("PerGeometry", bufferSizes[2]);
 		}
 
-		std::wstring GetDiskPath(const std::string_view& name, uint32_t descriptor, ShaderClass shaderClass)
+		static std::string GetDiskCacheVariantKey(ShaderClass shaderClass, const RE::BSShader& shader, uint32_t descriptor)
 		{
+			std::string key = GetShaderString(shaderClass, shader, descriptor, true);
+			key += "|defines=";
+			key += globals::state->shaderDefinesString;
+			key += REL::Module::IsVR() ? "|runtime=VR" : "|runtime=Flat";
+			key += globals::state->IsDeveloperMode() ? "|mode=Developer" : "|mode=Release";
+			return key;
+		}
+
+		std::wstring GetDiskPath(const std::string_view& name, uint32_t descriptor, ShaderClass shaderClass, std::string_view variantKey = {})
+		{
+			const auto suffixNarrow = Util::GetShaderDefinesSuffix(std::string(variantKey));
+			const std::wstring suffix(suffixNarrow.begin(), suffixNarrow.end());
+			const auto wname = std::wstring(name.begin(), name.end());
+
 			switch (shaderClass) {
 			case ShaderClass::Pixel:
-				return std::format(L"Data/ShaderCache/{}/{:X}.pso", std::wstring(name.begin(), name.end()), descriptor);
+				return std::format(L"Data/ShaderCache/{}/{:X}{}.pso", wname, descriptor, suffix);
 			case ShaderClass::Vertex:
-				return std::format(L"Data/ShaderCache/{}/{:X}.vso", std::wstring(name.begin(), name.end()), descriptor);
+				return std::format(L"Data/ShaderCache/{}/{:X}{}.vso", wname, descriptor, suffix);
 			case ShaderClass::Compute:
-				return std::format(L"Data/ShaderCache/{}/{:X}.cso", std::wstring(name.begin(), name.end()), descriptor);
+				return std::format(L"Data/ShaderCache/{}/{:X}{}.cso", wname, descriptor, suffix);
 			}
 			return {};
 		}
@@ -1341,26 +1402,52 @@ namespace SIE
 				return nullptr;
 			}
 
-			// check hashmap
 			auto& cache = ShaderCache::Instance();
-			ID3DBlob* shaderBlob = cache.GetCompletedShader(shaderClass, shader, descriptor);
-
-			if (shaderBlob) {
-				// already compiled before
-				logger::debug("Shader already compiled; using cache: {}", SShaderCache::GetShaderString(shaderClass, shader, descriptor));
+			auto key = SShaderCache::GetShaderString(shaderClass, shader, descriptor, true);
+			auto [claimResult, cachedBlob] = cache.ClaimCompilation(key);
+			if (claimResult == ShaderCache::ClaimResult::CacheHit) {
 				cache.IncCacheHitTasks();
-				return shaderBlob;
+				return cachedBlob;
 			}
+
 			const auto type = shader.shaderType.get();
 
+			const auto variantKey = GetDiskCacheVariantKey(shaderClass, shader, descriptor);
+
 			// check diskcache
-			auto diskPath = GetDiskPath(shader.fxpFilename, descriptor, shaderClass);
+			auto diskPath = GetDiskPath(shader.fxpFilename, descriptor, shaderClass, variantKey);
+			ID3DBlob* shaderBlob = nullptr;
 
 			if (useDiskCache && std::filesystem::exists(diskPath)) {
-				// check build time of cache
-				auto diskCacheTime = cache.UseFileWatcher() ? std::chrono::clock_cast<std::chrono::system_clock>(std::filesystem::last_write_time(diskPath)) : system_clock::now();
-				if (cache.ShaderModifiedSince(shader.fxpFilename, diskCacheTime)) {
-					logger::debug("Diskcached shader {} older than {}", SIE::SShaderCache::GetShaderString(shaderClass, shader, descriptor, true), std::format("{:%Y%m%d%H%M}", diskCacheTime));
+				bool diskCacheOutdated = false;
+				std::error_code ec;
+				const auto diskCacheTime = std::chrono::clock_cast<std::chrono::system_clock>(std::filesystem::last_write_time(diskPath, ec));
+				if (ec) {
+					logger::debug("Failed to read disk cache mtime for {}: {}", Util::WStringToString(diskPath), ec.message());
+					diskCacheOutdated = true;
+				} else if (cache.UseFileWatcher()) {
+					diskCacheOutdated = cache.ShaderModifiedSince(shader.fxpFilename, diskCacheTime);
+					if (diskCacheOutdated) {
+						logger::debug("Diskcached shader {} older than {}", key, std::format("{:%Y%m%d%H%M}", diskCacheTime));
+					}
+				} else {
+					const std::wstring shaderSourcePath = GetShaderPath(
+						shader.shaderType == RE::BSShader::Type::ImageSpace ?
+							static_cast<const RE::BSImagespaceShader&>(shader).originalShaderName :
+							shader.fxpFilename);
+					if (std::filesystem::exists(shaderSourcePath, ec)) {
+						const auto sourceTime = std::chrono::clock_cast<std::chrono::system_clock>(std::filesystem::last_write_time(shaderSourcePath, ec));
+						if (ec) {
+							logger::debug("Failed to read source mtime for {}: {}", Util::WStringToString(shaderSourcePath), ec.message());
+						} else if (sourceTime > diskCacheTime) {
+							diskCacheOutdated = true;
+							logger::debug("Disk-cached shader {} outdated: source is newer than cache", key);
+						}
+					}
+				}
+
+				if (diskCacheOutdated) {
+					// Fall through to recompile from source.
 				} else if (FAILED(D3DReadFileToBlob(diskPath.c_str(), &shaderBlob))) {
 					logger::error("Failed to load {} shader {}::{:X}", magic_enum::enum_name(shaderClass), magic_enum::enum_name(type), descriptor);
 
@@ -1369,7 +1456,7 @@ namespace SIE
 					}
 				} else {
 					logger::debug("Loaded shader from {}", Util::WStringToString(diskPath));
-					cache.AddCompletedShader(shaderClass, shader, descriptor, shaderBlob);
+					cache.AddCompletedShader(shaderClass, shader, descriptor, shaderBlob, variantKey);
 					return shaderBlob;
 				}
 			}
@@ -1405,6 +1492,7 @@ namespace SIE
 			auto pathString = Util::WStringToString(path);
 			if (!std::filesystem::exists(path)) {
 				logger::error("Failed to compile {} shader {}::{:X}: {} does not exist", magic_enum::enum_name(shaderClass), magic_enum::enum_name(type), descriptor, pathString);
+				cache.AddCompletedShader(shaderClass, shader, descriptor, nullptr, variantKey);
 				return nullptr;
 			}
 			logger::debug("Compiling {} {}:{}:{:X} to {}", pathString, magic_enum::enum_name(type), magic_enum::enum_name(shaderClass), descriptor, MergeDefinesString(defines));
@@ -1439,7 +1527,7 @@ namespace SIE
 					shaderBlob->Release();
 				}
 
-				cache.AddCompletedShader(shaderClass, shader, descriptor, nullptr);
+				cache.AddCompletedShader(shaderClass, shader, descriptor, nullptr, variantKey);
 				return nullptr;
 			}
 			if (errorBlob)
@@ -1477,7 +1565,7 @@ namespace SIE
 					logger::debug("Saved shader to {}", Util::WStringToString(diskPath));
 				}
 			}
-			cache.AddCompletedShader(shaderClass, shader, descriptor, shaderBlob);
+			cache.AddCompletedShader(shaderClass, shader, descriptor, shaderBlob, variantKey);
 			return shaderBlob;
 		}
 
@@ -1967,6 +2055,7 @@ namespace SIE
 			std::unique_lock lockM{ mapMutex };
 			shaderMap.clear();
 		}
+		mapCV.notify_all();
 		{
 			std::unique_lock lockH{ hlslMapMutex };
 			hlslToShaderMap.clear();
@@ -2016,12 +2105,14 @@ namespace SIE
 			hlslToShaderMap.erase(it);
 		}
 
+		bool erasedShaderEntries = false;
+
 		// Step 2: Process the copied entries without holding hlslMapMutex
 		for (auto& entry : entries) {
 			// Remove shader key from shaderMap
 			{
 				std::unique_lock lockM{ mapMutex };
-				shaderMap.erase(entry.key);
+				erasedShaderEntries = shaderMap.erase(entry.key) > 0 || erasedShaderEntries;
 			}
 
 			// Handle vertex, pixel, and compute shaders (each will lock)
@@ -2060,6 +2151,9 @@ namespace SIE
 			logger::debug("Marked {} entries for recompile due to change to {}", entries.size(), a_path);
 			compilationSet.Clear();
 		}
+		if (erasedShaderEntries) {
+			mapCV.notify_all();
+		}
 
 		return true;
 	}
@@ -2092,7 +2186,7 @@ namespace SIE
 		compilationSet.Clear();
 	}
 
-	bool ShaderCache::AddCompletedShader(ShaderClass shaderClass, const RE::BSShader& shader, uint32_t descriptor, ID3DBlob* a_blob)
+	bool ShaderCache::AddCompletedShader(ShaderClass shaderClass, const RE::BSShader& shader, uint32_t descriptor, ID3DBlob* a_blob, std::string_view variantKey)
 	{
 		auto key = SIE::SShaderCache::GetShaderString(shaderClass, shader, descriptor, true);
 		auto keyWithDescriptor = SIE::SShaderCache::GetShaderString(shaderClass, shader, descriptor, false);
@@ -2102,6 +2196,7 @@ namespace SIE
 			std::unique_lock lockM{ mapMutex };
 			shaderMap.insert_or_assign(key, ShaderCacheResult{ a_blob, status, system_clock::now() });
 		}
+		mapCV.notify_all();
 		const std::wstring path = SIE::SShaderCache::GetShaderPath(
 			shader.shaderType == RE::BSShader::Type::ImageSpace ?
 				static_cast<const RE::BSImagespaceShader&>(shader).originalShaderName :
@@ -2114,7 +2209,8 @@ namespace SIE
 		{
 			std::unique_lock lockH{ hlslMapMutex };
 			auto it = hlslToShaderMap.find(lowerFilePath);
-			hlslRecord newRecord{ key, shader.shaderType.get(), descriptor, shaderClass, SIE::SShaderCache::GetDiskPath(shader.fxpFilename, descriptor, shaderClass) };
+			const auto resolvedVariantKey = variantKey.empty() ? SIE::SShaderCache::GetDiskCacheVariantKey(shaderClass, shader, descriptor) : std::string(variantKey);
+			hlslRecord newRecord{ key, shader.shaderType.get(), descriptor, shaderClass, SIE::SShaderCache::GetDiskPath(shader.fxpFilename, descriptor, shaderClass, resolvedVariantKey) };
 
 			if (it != hlslToShaderMap.end()) {
 				auto& entries = it->second;
@@ -2136,6 +2232,61 @@ namespace SIE
 		}
 
 		return a_blob != nullptr;
+	}
+
+	std::pair<ShaderCache::ClaimResult, ID3DBlob*> ShaderCache::ClaimCompilation(const std::string& key)
+	{
+		const auto type = SIE::SShaderCache::GetTypeFromShaderString(key);
+		UpdateShaderModifiedTime(type);
+
+		std::unique_lock lockM{ mapMutex };
+
+		for (;;) {
+			auto it = shaderMap.find(key);
+			if (it != shaderMap.end()) {
+				auto& entry = it->second;
+				if (entry.status == ShaderCompilationTask::Status::Completed) {
+					if (entry.blob) {
+						if (ShaderModifiedSince(type, entry.compileTime)) {
+							logger::debug("Cached shader {} is stale; scheduling recompile", key);
+							entry = ShaderCacheResult{ nullptr, ShaderCompilationTask::Status::Failed, system_clock::now() };
+							break;
+						}
+						logger::debug("Shader already compiled; using cache: {}", key);
+						return { ClaimResult::CacheHit, entry.blob };
+					}
+					break;
+				}
+				if (entry.status == ShaderCompilationTask::Status::Failed) {
+					break;
+				}
+
+				logger::debug("Shader compilation in progress, waiting: {}", key);
+				mapCV.wait(lockM);
+				continue;
+			}
+			break;
+		}
+
+		shaderMap.insert_or_assign(key, ShaderCacheResult{ nullptr, ShaderCompilationTask::Status::Pending, system_clock::now() });
+		return { ClaimResult::Claimed, nullptr };
+	}
+
+	void ShaderCache::ResolvePendingFailure(const std::string& key)
+	{
+		bool changed = false;
+		{
+			std::unique_lock lockM{ mapMutex };
+			auto it = shaderMap.find(key);
+			if (it != shaderMap.end() && it->second.status == ShaderCompilationTask::Status::Pending) {
+				it->second = ShaderCacheResult{ nullptr, ShaderCompilationTask::Status::Failed, system_clock::now() };
+				changed = true;
+			}
+		}
+
+		if (changed) {
+			mapCV.notify_all();
+		}
 	}
 
 	ID3DBlob* ShaderCache::GetCompletedShader(const std::string& a_key)
@@ -2282,6 +2433,17 @@ namespace SIE
 			valid = false;
 		}
 
+		const auto shaderSourceStamp = SShaderCache::GetShaderSourceTreeStamp();
+		if (auto cachedShaderSourceStamp = ini.GetValue("Cache", "ShaderSourceStamp")) {
+			if (shaderSourceStamp != cachedShaderSourceStamp) {
+				logger::info("Disk cache outdated: shader sources changed");
+				valid = false;
+			}
+		} else {
+			logger::info("Disk cache outdated: no shader source stamp found");
+			valid = false;
+		}
+
 		if (valid) {
 			logger::info("Using disk cache");
 		} else {
@@ -2294,6 +2456,8 @@ namespace SIE
 		CSimpleIniA ini;
 		ini.SetUnicode();
 		ini.SetValue("Cache", "PluginVersion", Plugin::VERSION.string().c_str());
+		const auto shaderSourceStamp = SShaderCache::GetShaderSourceTreeStamp();
+		ini.SetValue("Cache", "ShaderSourceStamp", shaderSourceStamp.c_str());
 		globals::state->WriteDiskCacheInfo(ini);
 		ini.SaveFile(L"Data\\ShaderCache\\Info.ini");
 		logger::info("Saved disk cache info (plugin version: {})", Plugin::VERSION.string());
@@ -2543,13 +2707,19 @@ namespace SIE
 
 		std::unique_lock lockM{ SIE::ShaderCache::mapMutex };
 		logger::debug("Clearing shaderMap of {}", shaderTypeStr);
+		bool erasedAny = false;
 		for (auto it = shaderMap.begin(); it != shaderMap.end();) {
 			auto typeInKey = SIE::SShaderCache::GetTypeFromShaderString(it->first);
 			if (typeInKey == shaderTypeStr) {
 				it = shaderMap.erase(it);
+				erasedAny = true;
 			} else {
 				++it;
 			}
+		}
+		lockM.unlock();
+		if (erasedAny) {
+			mapCV.notify_all();
 		}
 	}
 
@@ -2656,7 +2826,7 @@ namespace SIE
 				shader.shaderType == RE::BSShader::Type::ImageSpace ?
 					static_cast<const RE::BSImagespaceShader&>(shader).originalShaderName :
 					shader.fxpFilename,
-				descriptor, shaderClass);
+				descriptor, shaderClass, SIE::SShaderCache::GetDiskCacheVariantKey(shaderClass, shader, descriptor));
 		}
 
 		info.isActive = true;
@@ -2722,7 +2892,16 @@ namespace SIE
 		}
 
 		SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL);
-		task.Perform();
+		const auto taskKey = task.GetString();
+		try {
+			task.Perform();
+		} catch (const std::exception& e) {
+			logger::error("Unhandled exception compiling shader task {}: {}", taskKey, e.what());
+			ResolvePendingFailure(taskKey);
+		} catch (...) {
+			logger::error("Unhandled non-standard exception compiling shader task {}", taskKey);
+			ResolvePendingFailure(taskKey);
+		}
 
 		if (stoken.stop_requested()) {
 			return;

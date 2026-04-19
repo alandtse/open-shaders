@@ -2,6 +2,7 @@
 
 #include <BS_thread_pool.hpp>
 #include <efsw/efsw.hpp>
+#include <condition_variable>
 #include <vector>
 
 using namespace std::chrono;
@@ -392,7 +393,16 @@ namespace SIE
 		*/
 		bool Clear(const std::string& a_path);
 
-		bool AddCompletedShader(ShaderClass shaderClass, const RE::BSShader& shader, uint32_t descriptor, ID3DBlob* a_blob);
+		bool AddCompletedShader(ShaderClass shaderClass, const RE::BSShader& shader, uint32_t descriptor, ID3DBlob* a_blob, std::string_view variantKey = {});
+
+		enum class ClaimResult
+		{
+			CacheHit,
+			Claimed
+		};
+		std::pair<ClaimResult, ID3DBlob*> ClaimCompilation(const std::string& key);
+		void ResolvePendingFailure(const std::string& key);
+
 		ID3DBlob* GetCompletedShader(const std::string& a_key);
 		ID3DBlob* GetCompletedShader(const SIE::ShaderCompilationTask& a_task);
 		ID3DBlob* GetCompletedShader(ShaderClass shaderClass, const RE::BSShader& shader, uint32_t descriptor);
@@ -716,6 +726,7 @@ namespace SIE
 		CompilationSet compilationSet;
 		ankerl::unordered_dense::map<std::string, ShaderCacheResult> shaderMap{};
 		std::mutex mapMutex;                                                                      // guard for shaderMap
+		std::condition_variable mapCV;                                                            // signalled when Pending entries resolve
 		ankerl::unordered_dense::map<std::string, system_clock::time_point> modifiedShaderMap{};  // hashmap when a shader source file last modified
 		std::mutex modifiedMapMutex;                                                              // guard for modifiedShaderMap
 		ankerl::unordered_dense::map<std::string, std::set<hlslRecord>> hlslToShaderMap{};        // hashmap linking specific hlsl files to shader keys in shaderMap

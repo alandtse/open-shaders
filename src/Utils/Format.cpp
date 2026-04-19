@@ -239,4 +239,18 @@ namespace Util
 	{
 		return totalFrameTime - measuredSum;
 	}
+
+	std::string GetShaderDefinesSuffix(const std::string& definesStr)
+	{
+		if (definesStr.empty())
+			return {};
+
+		uint32_t hash = 2166136261u;
+		for (unsigned char c : definesStr) {
+			hash ^= c;
+			hash *= 16777619u;
+		}
+
+		return std::format("_{:08X}", hash);
+	}
 }  // namespace Util

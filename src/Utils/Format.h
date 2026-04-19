@@ -104,4 +104,10 @@ namespace Util
 	 * @return The remaining frame time not accounted for by measured components
 	 */
 	float CalculateOtherFrameTime(float totalFrameTime, float measuredSum);
+
+	/**
+	 * Returns a stable cache filename suffix for a shader variant string, or an
+	 * empty string when the variant string is empty.
+	 */
+	std::string GetShaderDefinesSuffix(const std::string& definesStr);
 }  // namespace Util
