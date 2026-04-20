@@ -30,6 +30,7 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	sharpnessDLSS,
 	fsr4RuntimeEnable,
 	fsr4AllowNonRx90Amd,
+	fsr4AllowNvidia,
 	vrPipelineDeduplication,
 	foveatedVendorDispatch,
 	foveatedCenterArea,
@@ -145,6 +146,7 @@ namespace
 	{
 		settings.fsr4RuntimeEnable = true;
 		settings.fsr4AllowNonRx90Amd = false;
+		settings.fsr4AllowNvidia = false;
 		settings.vrPipelineDeduplication = false;
 		settings.foveatedVendorDispatch = false;
 		settings.foveatedCenterArea = 0.6f;
@@ -176,6 +178,7 @@ namespace
 	{
 		o_json.erase("fsr4RuntimeEnable");
 		o_json.erase("fsr4AllowNonRx90Amd");
+		o_json.erase("fsr4AllowNvidia");
 		o_json.erase("vrPipelineDeduplication");
 		o_json.erase("foveatedVendorDispatch");
 		o_json.erase("foveatedCenterArea");
@@ -262,13 +265,6 @@ namespace
 		}
 
 		return texture;
-	}
-
-	bool IsNvidiaAdapterDescription(const std::string& adapterDescription)
-	{
-		return adapterDescription.find("NVIDIA") != std::string::npos ||
-		       adapterDescription.find("Nvidia") != std::string::npos ||
-		       adapterDescription.find("nvidia") != std::string::npos;
 	}
 }
 
@@ -401,41 +397,94 @@ HRESULT WINAPI hk_D3D11CreateDeviceAndSwapChainUpscaling(
 
 void Upscaling::DrawSettings()
 {
-	// Display upscaling options in the UI
-	std::vector<std::string> upscaleModes = { "None", "TAA" };
+	struct UpscaleUiChoice
+	{
+		UpscaleMethod method;
+		bool useRuntimeFsr4;
+		const char* label;
+	};
+	std::vector<UpscaleUiChoice> upscaleChoices = {
+		{ UpscaleMethod::kNONE, false, "None" },
+		{ UpscaleMethod::kTAA, false, "TAA" },
+		{ UpscaleMethod::kFSR, false, "AMD FSR 3.1" }
+	};
 
 	const bool isAmdAdapter = fidelityFX.IsAmdAdapterDetected();
+	const bool isNvidiaAdapter = fidelityFX.IsNvidiaAdapterDetected();
 	const bool runtimeFsr4Present = fidelityFX.IsRuntimeUpscalerPresent();
-	const bool runtimeFsr4Detected = fidelityFX.IsRuntimeUpscalerAvailable();
-	std::string fsrLabel = (runtimeFsr4Detected || (isAmdAdapter && runtimeFsr4Present)) ? "AMD FSR 3.1 / 4" : "AMD FSR 3.1";
-	upscaleModes.push_back(fsrLabel);
+	const bool runtimeFsr4Available = fidelityFX.IsRuntimeUpscalerAvailable();
+	if (runtimeFsr4Available)
+		upscaleChoices.push_back({ UpscaleMethod::kFSR, true, "AMD FSR 4" });
 
-	std::string dlssLabel = "NVIDIA DLSS";
-	upscaleModes.push_back(dlssLabel);
+	const bool featureDLSS = streamline.featureDLSS;
+	if (featureDLSS)
+		upscaleChoices.push_back({ UpscaleMethod::kDLSS, false, "NVIDIA DLSS" });
 
 	// Determine available modes
-	bool featureDLSS = streamline.featureDLSS;
-	bool featureFSR = true;  // FSR is always available
-
 	uint32_t* currentUpscaleMode = &settings.upscaleMethod;
-	uint32_t availableModes = 1;  // Start with TAA
-	if (featureFSR)
-		availableModes = 2;  // Add FSR
-	if (featureDLSS)
-		availableModes = 3;  // Add DLSS if available
-	else
+	if (!featureDLSS)
 		currentUpscaleMode = &settings.upscaleMethodNoDLSS;
+	const bool requestedRuntimeFsr4BeforeMethodSelection =
+		*currentUpscaleMode == static_cast<uint32_t>(UpscaleMethod::kFSR) &&
+		settings.fsr4RuntimeEnable;
 
-	// Slider for method selection
-	// Clamp the index used to read from the built label vector to avoid OOB if the stored value is stale
-	uint32_t modeLabelIndex = std::min(*currentUpscaleMode, static_cast<uint32_t>(upscaleModes.size() - 1));
-	std::string currentLabel = upscaleModes[modeLabelIndex];
-	ImGui::SliderInt("Method", (int*)currentUpscaleMode, 0, availableModes, currentLabel.c_str());
+	auto matchesCurrentChoice = [&](const UpscaleUiChoice& choice) {
+		if (static_cast<uint32_t>(choice.method) != *currentUpscaleMode)
+			return false;
+		if (choice.method == UpscaleMethod::kFSR)
+			return settings.fsr4RuntimeEnable == choice.useRuntimeFsr4;
+		return true;
+	};
 
-	*currentUpscaleMode = std::min(availableModes, *currentUpscaleMode);
+	int methodUiIndex = 0;
+	for (int i = 0; i < static_cast<int>(upscaleChoices.size()); ++i) {
+		if (matchesCurrentChoice(upscaleChoices[i])) {
+			methodUiIndex = i;
+			break;
+		}
+	}
+	if (methodUiIndex == 0 && !matchesCurrentChoice(upscaleChoices[0])) {
+		for (int i = 0; i < static_cast<int>(upscaleChoices.size()); ++i) {
+			if (static_cast<uint32_t>(upscaleChoices[i].method) == *currentUpscaleMode) {
+				methodUiIndex = i;
+				break;
+			}
+		}
+	}
+
+	const char* currentMethodLabel = upscaleChoices[methodUiIndex].label;
+	ImGui::SliderInt("Method", &methodUiIndex, 0, static_cast<int>(upscaleChoices.size() - 1), currentMethodLabel);
+	methodUiIndex = std::clamp(methodUiIndex, 0, static_cast<int>(upscaleChoices.size() - 1));
+	const auto& selectedUpscaleChoice = upscaleChoices[methodUiIndex];
+	*currentUpscaleMode = static_cast<uint32_t>(selectedUpscaleChoice.method);
+	if (selectedUpscaleChoice.method == UpscaleMethod::kFSR)
+		settings.fsr4RuntimeEnable = selectedUpscaleChoice.useRuntimeFsr4;
 
 	// Check the current upscale method
 	auto upscaleMethod = GetUpscaleMethod();
+
+	auto drawFsr4OverrideControls = [&]() {
+		if (!globals::game::isVR)
+			return;
+
+		if (runtimeFsr4Present && isAmdAdapter) {
+			ImGui::Checkbox("Allow FSR4 on Non-RX90 AMD", &settings.fsr4AllowNonRx90Amd);
+			if (auto _tt = Util::HoverTooltipWrapper()) {
+				ImGui::TextUnformatted("Enables Runtime FSR4 on AMD cards that are not auto-detected as RX 90.");
+				ImGui::TextUnformatted("Keep this off unless your AMD card supports FSR4 and detection failed.");
+			}
+		}
+		if (runtimeFsr4Present && isNvidiaAdapter) {
+			ImGui::Checkbox("Allow FSR4 on NVIDIA GPUs (Experimental)", &settings.fsr4AllowNvidia);
+			if (auto _tt = Util::HoverTooltipWrapper()) {
+				ImGui::TextUnformatted("Experimental: exposes Runtime FSR4 method on NVIDIA adapters.");
+				ImGui::TextUnformatted("Use for testing only. Compatibility and image stability are not guaranteed.");
+			}
+		}
+		if (!runtimeFsr4Present && requestedRuntimeFsr4BeforeMethodSelection) {
+			ImGui::TextDisabled("Runtime FSR4 unavailable: missing FidelityFX upscaler runtime.");
+		}
+	};
 
 	// Display warning for DLSS resolution limits (non-VR only; VR handles this automatically)
 	if (!globals::game::isVR && upscaleMethod == UpscaleMethod::kDLSS) {
@@ -448,6 +497,9 @@ void Upscaling::DrawSettings()
 			ImGui::PopStyleColor();
 		}
 	}
+
+	if (upscaleMethod == UpscaleMethod::kNONE || upscaleMethod == UpscaleMethod::kTAA)
+		drawFsr4OverrideControls();
 
 	// Display upscaling settings if applicable
 	if (upscaleMethod != UpscaleMethod::kNONE && upscaleMethod != UpscaleMethod::kTAA) {
@@ -478,30 +530,6 @@ void Upscaling::DrawSettings()
 		}
 
 		if (upscaleMethod == UpscaleMethod::kFSR) {
-			if (globals::game::isVR && isAmdAdapter) {
-				if (runtimeFsr4Present) {
-					ImGui::Checkbox("Allow FSR4 on Non-RX90 AMD", &settings.fsr4AllowNonRx90Amd);
-					if (auto _tt = Util::HoverTooltipWrapper()) {
-						ImGui::TextUnformatted("Enables Runtime FSR4 on AMD cards that are not auto-detected as RX 90.");
-						ImGui::TextUnformatted("Keep this off unless your AMD card supports FSR4 and detection failed.");
-					}
-				} else {
-					ImGui::TextDisabled("Runtime FSR4 unavailable: missing FidelityFX upscaler runtime.");
-				}
-
-				const bool runtimeFsr4AvailableNow = fidelityFX.IsRuntimeUpscalerAvailable();
-				if (runtimeFsr4AvailableNow) {
-					const char* fsrRuntimeModes[] = { "Host FSR 3.1", "Runtime FSR 4" };
-					int fsrRuntimeMode = settings.fsr4RuntimeEnable ? 1 : 0;
-					ImGui::SliderInt("FSR Runtime", &fsrRuntimeMode, 0, 1, fsrRuntimeModes[fsrRuntimeMode]);
-					fsrRuntimeMode = std::clamp(fsrRuntimeMode, 0, 1);
-					settings.fsr4RuntimeEnable = (fsrRuntimeMode == 1);
-					if (auto _tt = Util::HoverTooltipWrapper()) {
-						ImGui::TextUnformatted("Choose between host FSR3.1 and runtime FSR4.");
-						ImGui::TextUnformatted("Use host FSR3.1 for A/B testing and fallback comparisons.");
-					}
-				}
-			}
 			ImGui::SliderFloat("Sharpness", &settings.sharpnessFSR, 0.0f, 1.0f, "%.1f");
 		} else if (upscaleMethod == UpscaleMethod::kDLSS) {
 			// Keep persisted preset values stable (0=J,1=K,2=L,3=M,4=F) while
@@ -548,14 +576,14 @@ void Upscaling::DrawSettings()
 
 			ImGui::SliderFloat("Sharpness", &settings.sharpnessDLSS, 0.0f, 1.0f, "%.1f");
 
-			const auto& adapter = globals::state->adapterDescription;
-			const bool isNvidia = IsNvidiaAdapterDescription(adapter);
-			if (isNvidia) {
+			if (isNvidiaAdapter) {
 				ImGui::TextWrapped("Note: Use presets L/M only on RTX 40/50. Even on those GPUs, J/K/F usually provide better quality/performance. On RTX 20/30, use K (default) or J/F for better FPS.");
 			}
 		}
 
 		if (globals::game::isVR) {
+			drawFsr4OverrideControls();
+
 			const bool vrPipelineDedupMethodSupported = upscaleMethod == UpscaleMethod::kFSR || upscaleMethod == UpscaleMethod::kDLSS;
 			const bool vrPipelineDedupBlockedByFoveated = vrPipelineDedupMethodSupported && IsFoveatedVendorDispatchEnabled(upscaleMethod);
 			const bool vrPipelineDedupSupportedForMethod = vrPipelineDedupMethodSupported && !vrPipelineDedupBlockedByFoveated;

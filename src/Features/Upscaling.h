@@ -63,6 +63,7 @@ public:
 		float sharpnessDLSS = 0.1f;
 		bool fsr4RuntimeEnable = true;
 		bool fsr4AllowNonRx90Amd = false;
+		bool fsr4AllowNvidia = false;
 		bool vrPipelineDeduplication = false;
 		bool foveatedVendorDispatch = false;
 		float foveatedCenterArea = 0.6f;

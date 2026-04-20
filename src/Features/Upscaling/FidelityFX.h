@@ -50,6 +50,7 @@ public:
 	void DestroyFSRResources();
 
 	bool IsAmdAdapterDetected() const;
+	bool IsNvidiaAdapterDetected() const;
 	bool IsRuntimeUpscalerPresent() const;
 	bool IsRuntimeUpscalerAvailable() const;
 

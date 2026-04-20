@@ -22,6 +22,7 @@ namespace
 	constexpr wchar_t kLoaderDllName[] = L"amd_fidelityfx_loader_dx12.dll";
 	constexpr wchar_t kUpscalerDllName[] = L"amd_fidelityfx_upscaler_dx12.dll";
 	constexpr uint32_t kAmdVendorId = 0x1002u;
+	constexpr uint32_t kNvidiaVendorId = 0x10DEu;
 
 	bool UseSplitPerEyeFSRContexts()
 	{
@@ -442,6 +443,15 @@ bool FidelityFX::IsAmdAdapterDetected() const
 	return false;
 }
 
+bool FidelityFX::IsNvidiaAdapterDetected() const
+{
+	DXGI_ADAPTER_DESC adapterDesc{};
+	if (TryGetCurrentAdapterDesc(adapterDesc))
+		return adapterDesc.VendorId == kNvidiaVendorId;
+
+	return false;
+}
+
 bool FidelityFX::IsRuntimeUpscalerPresent() const
 {
 	if (!globals::game::isVR)
@@ -462,12 +472,15 @@ bool FidelityFX::IsRuntimeUpscalerAvailable() const
 	DXGI_ADAPTER_DESC adapterDesc{};
 	if (!TryGetCurrentAdapterDesc(adapterDesc))
 		return false;
-	if (adapterDesc.VendorId != kAmdVendorId)
-		return false;
-	if (IsLikelyRDNA4Adapter(adapterDesc))
-		return true;
+	if (adapterDesc.VendorId == kAmdVendorId) {
+		if (IsLikelyRDNA4Adapter(adapterDesc))
+			return true;
+		return globals::features::upscaling.settings.fsr4AllowNonRx90Amd;
+	}
+	if (adapterDesc.VendorId == kNvidiaVendorId)
+		return globals::features::upscaling.settings.fsr4AllowNvidia;
 
-	return globals::features::upscaling.settings.fsr4AllowNonRx90Amd;
+	return false;
 }
 
 FfxResource ffxGetResource(ID3D11Resource* dx11Resource,
