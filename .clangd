@@ -8,4 +8,4 @@ CompileFlags:
     - -Iextern/CommonLibSSE-NG/include
     - -Ibuild/ALL/vcpkg_installed/x64-windows-static-md/include
     - -Ipackage/Shaders
-  Compiler: cl
+  Compiler: clang-cl
