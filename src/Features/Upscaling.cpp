@@ -144,9 +144,6 @@ namespace
 
 	void ResetVRSpecificUpscalingSettings(Upscaling::Settings& settings)
 	{
-		settings.fsr4RuntimeEnable = true;
-		settings.fsr4AllowNonRx90Amd = false;
-		settings.fsr4AllowNvidia = false;
 		settings.vrPipelineDeduplication = false;
 		settings.foveatedVendorDispatch = false;
 		settings.foveatedCenterArea = 0.6f;
@@ -176,9 +173,6 @@ namespace
 
 	void StripVRSpecificUpscalingSettings(json& o_json)
 	{
-		o_json.erase("fsr4RuntimeEnable");
-		o_json.erase("fsr4AllowNonRx90Amd");
-		o_json.erase("fsr4AllowNvidia");
 		o_json.erase("vrPipelineDeduplication");
 		o_json.erase("foveatedVendorDispatch");
 		o_json.erase("foveatedCenterArea");
@@ -464,9 +458,6 @@ void Upscaling::DrawSettings()
 	auto upscaleMethod = GetUpscaleMethod();
 
 	auto drawFsr4OverrideControls = [&]() {
-		if (!globals::game::isVR)
-			return;
-
 		if (runtimeFsr4Present && isAmdAdapter) {
 			ImGui::Checkbox("Allow FSR4 on Non-RX90 AMD", &settings.fsr4AllowNonRx90Amd);
 			if (auto _tt = Util::HoverTooltipWrapper()) {
@@ -581,9 +572,9 @@ void Upscaling::DrawSettings()
 			}
 		}
 
-		if (globals::game::isVR) {
-			drawFsr4OverrideControls();
+		drawFsr4OverrideControls();
 
+		if (globals::game::isVR) {
 			const bool vrPipelineDedupMethodSupported = upscaleMethod == UpscaleMethod::kFSR || upscaleMethod == UpscaleMethod::kDLSS;
 			const bool vrPipelineDedupBlockedByFoveated = vrPipelineDedupMethodSupported && IsFoveatedVendorDispatchEnabled(upscaleMethod);
 			const bool vrPipelineDedupSupportedForMethod = vrPipelineDedupMethodSupported && !vrPipelineDedupBlockedByFoveated;

@@ -180,7 +180,7 @@ void FidelityFX::LoadFFX()
 	}
 
 	if (featureFSR4Upscaler) {
-		logger::info("[FidelityFX] Runtime upscaler DLL found and available for eligible VR AMD hardware");
+		logger::info("[FidelityFX] Runtime upscaler DLL found and available for eligible hardware");
 	} else {
 		logger::warn("[FidelityFX] Runtime upscaler DLL not found - FSR4 runtime path disabled");
 	}
@@ -454,8 +454,6 @@ bool FidelityFX::IsNvidiaAdapterDetected() const
 
 bool FidelityFX::IsRuntimeUpscalerPresent() const
 {
-	if (!globals::game::isVR)
-		return false;
 	if (!featureFSR4Upscaler || !module)
 		return false;
 	if (!ffxModule.CreateContext || !ffxModule.DestroyContext || !ffxModule.Dispatch)
@@ -623,7 +621,7 @@ bool FidelityFX::EnsureRuntimeUpscalerContexts(uint32_t a_fullRenderWidth, uint3
 	runtimeUpscalerMaxDisplayWidth = a_fullDisplayWidth;
 	runtimeUpscalerMaxDisplayHeight = a_fullDisplayHeight;
 
-	logger::info("[FidelityFX] Created {} runtime upscaler context(s) for VR (Render: {}x{}, Display: {}x{}).",
+	logger::info("[FidelityFX] Created {} runtime upscaler context(s) (Render: {}x{}, Display: {}x{}).",
 		a_contextCount, a_fullRenderWidth, a_fullRenderHeight, a_fullDisplayWidth, a_fullDisplayHeight);
 	return true;
 }
