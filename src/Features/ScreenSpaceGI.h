@@ -72,6 +72,9 @@ public:
 		std::array<CenterDispatchRect, 2> rects{};
 	} centerRectCache;
 
+	static constexpr int kResourceProfileFullGI = 0;
+	static constexpr int kResourceProfileAOOnly = 1;
+
 	struct Settings
 	{
 		bool Enabled = REL::Module::IsVR() ? false : true;   // disabled in VR by default
@@ -85,6 +88,7 @@ public:
 		uint NumSteps = REL::Module::IsVR() ? 6u : 8u;   // AO preset for VR
 		bool EnableAdaptiveSampling = true;
 		int ResolutionMode = 0;  // Full Res default (VR and flat)
+		int ResourceProfile = REL::Module::IsVR() ? kResourceProfileAOOnly : kResourceProfileFullGI;
 		float VRCullDistance = 1500.0f;                  // 0 disables VR distance culling
 		float CenterFullResMaskScale = 0.0f;             // 0 = off, 1.0 = almost full frame center
 		int FoveatedPresetMode = 0;                      // 0=off, 1=strict foveated, 2=foveated
@@ -109,6 +113,13 @@ public:
 		float BlurRadius = 2.f;
 		float DistanceNormalisation = 2.f;
 	} settings;
+
+	int activeResourceProfile = REL::Module::IsVR() ? kResourceProfileAOOnly : kResourceProfileFullGI;
+
+	bool HasGIResources() const { return activeResourceProfile == kResourceProfileFullGI; }
+	bool IsResourceProfileRestartPending() const { return settings.ResourceProfile != activeResourceProfile; }
+	bool IsGIActive() const { return settings.EnableGI && HasGIResources(); }
+	bool IsSpecularGIActive() const { return IsGIActive() && settings.EnableExperimentalSpecularGI; }
 
 	struct SSGICB
 	{
@@ -178,15 +189,17 @@ public:
 	eastl::unique_ptr<Texture2D> texCenterIlCoCg = nullptr;
 	eastl::unique_ptr<Texture2D> texCenterGiSpecular = nullptr;
 
-	inline auto GetOutputTextures()
+	inline std::tuple<ID3D11ShaderResourceView*, ID3D11ShaderResourceView*, ID3D11ShaderResourceView*, ID3D11ShaderResourceView*> GetOutputTextures()
 	{
-		return (loaded && settings.Enabled) ?
-		           std::make_tuple(
-					   texAo[outputAoIdx]->srv.get(),
-					   texIlY[outputIlIdx]->srv.get(),
-					   texIlCoCg[outputIlIdx]->srv.get(),
-					   texGiSpecular[outputAoIdx]->srv.get()) :
-		           std::make_tuple(nullptr, nullptr, nullptr, nullptr);
+		if (!(loaded && settings.Enabled) || outputAoIdx >= 2 || outputIlIdx >= 2 || !texAo[outputAoIdx])
+			return { nullptr, nullptr, nullptr, nullptr };
+
+		return {
+			texAo[outputAoIdx]->srv.get(),
+			texIlY[outputIlIdx] ? texIlY[outputIlIdx]->srv.get() : nullptr,
+			texIlCoCg[outputIlIdx] ? texIlCoCg[outputIlIdx]->srv.get() : nullptr,
+			texGiSpecular[outputAoIdx] ? texGiSpecular[outputAoIdx]->srv.get() : nullptr
+		};
 	}
 
 	winrt::com_ptr<ID3D11SamplerState> linearClampSampler = nullptr;

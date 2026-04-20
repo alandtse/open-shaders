@@ -22,6 +22,7 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	NumSteps,
 	EnableAdaptiveSampling,
 	ResolutionMode,
+	ResourceProfile,
 	VRCullDistance,
 	CenterFullResMaskScale,
 	FoveatedPresetMode,
@@ -65,6 +66,11 @@ namespace
 	int ClampFoveatedPresetMode(int a_mode)
 	{
 		return std::clamp(a_mode, kFoveatedPresetModeOff, kFoveatedPresetModeFoveated);
+	}
+
+	int ClampResourceProfile(int a_profile)
+	{
+		return std::clamp(a_profile, ScreenSpaceGI::kResourceProfileFullGI, ScreenSpaceGI::kResourceProfileAOOnly);
 	}
 
 	int ResolveRuntimeFoveatedPresetMode(const ScreenSpaceGI::Settings& a_settings)
@@ -154,11 +160,20 @@ namespace
 		o_json.erase("FoveatedPresetMode");
 	}
 
+	void DisableGIEffects(ScreenSpaceGI::Settings& a_settings)
+	{
+		a_settings.EnableGI = false;
+		a_settings.EnableExperimentalSpecularGI = false;
+	}
+
 	void ApplyPlatformSettingOverrides(ScreenSpaceGI::Settings& a_settings)
 	{
 		a_settings.FoveatedPresetMode = ResolveRuntimeFoveatedPresetMode(a_settings);
 		a_settings.ResolutionMode = ClampResolutionMode(a_settings.ResolutionMode);
+		a_settings.ResourceProfile = ClampResourceProfile(a_settings.ResourceProfile);
 		a_settings.VRCullDistance = ClampVRCullDistance(a_settings.VRCullDistance);
+		if (a_settings.ResourceProfile == ScreenSpaceGI::kResourceProfileAOOnly)
+			DisableGIEffects(a_settings);
 		if (!REL::Module::IsVR()) {
 			a_settings.CenterFullResMaskScale = 0.0f;
 		}
@@ -251,28 +266,18 @@ void ScreenSpaceGI::DrawSettings()
 		ImGui::TextColored({ 1, 0, 0, 1 }, "Compute shaders failed to compile!");
 
 	///////////////////////////////
-	ImGui::SeparatorText("Toggles");
-
-	if (ImGui::BeginTable("Toggles", 3, ImGuiTableFlags_SizingStretchSame)) {
-		ImGui::TableSetupColumn("ToggleCol1", ImGuiTableColumnFlags_WidthStretch, 1.0f);
-		ImGui::TableSetupColumn("ToggleCol2", ImGuiTableColumnFlags_WidthStretch, 1.0f);
-		ImGui::TableSetupColumn("ToggleCol3", ImGuiTableColumnFlags_WidthStretch, 1.0f);
+	if (ImGui::BeginTable("TopToggles", 3, ImGuiTableFlags_SizingStretchSame)) {
+		ImGui::TableSetupColumn("TopToggleCol1", ImGuiTableColumnFlags_WidthStretch, 1.0f);
+		ImGui::TableSetupColumn("TopToggleCol2", ImGuiTableColumnFlags_WidthStretch, 1.0f);
+		ImGui::TableSetupColumn("TopToggleCol3", ImGuiTableColumnFlags_WidthStretch, 1.0f);
 
 		ImGui::TableNextRow();
 		ImGui::TableNextColumn();
-		ImGui::Checkbox("Enabled", &settings.Enabled);
+		ImGui::Checkbox("Enable", &settings.Enabled);
 		if (auto _tt = Util::HoverTooltipWrapper()) {
 			ImGui::Text("Enable Screen Space Global Illumination. When disabled, all other settings are ignored.");
 		}
 
-		ImGui::TableNextColumn();
-		{
-			auto ilToggleGuard = Util::DisableGuard(!settings.Enabled || foveatedPresetActive);
-			recompileFlag |= ImGui::Checkbox("Indirect Lighting (IL)", &settings.EnableGI);
-		}
-		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::Text("Indirect Lighting is forced off while a foveated preset is active.");
-		}
 		ImGui::TableNextColumn();
 		{
 			auto ssaoToggleGuard = Util::DisableGuard(!settings.Enabled);
@@ -282,11 +287,41 @@ void ScreenSpaceGI::DrawSettings()
 			ImGui::Text("Enable Skyrim's built-in SSAO. Usually disabled when using SSGI to avoid double-darkening.");
 		}
 
-		ImGui::TableNextRow();
 		ImGui::TableNextColumn();
 		{
 			auto advancedGuard = Util::DisableGuard(!settings.Enabled);
-			ImGui::Checkbox("Advanced Options", &showAdvanced);
+			ImGui::Checkbox("Advanced Option", &showAdvanced);
+		}
+
+		ImGui::EndTable();
+	}
+
+	///////////////////////////////
+	ImGui::SeparatorText("SSGI Effects & Resources");
+
+	const int previousResourceProfile = settings.ResourceProfile;
+	if (ImGui::BeginTable("SSGIEffectsResources", 3, ImGuiTableFlags_SizingFixedFit)) {
+		ImGui::TableNextRow();
+		ImGui::TableNextColumn();
+		{
+			auto effectModeGuard = Util::DisableGuard(!settings.Enabled || foveatedPresetActive);
+			if (ImGui::RadioButton("AO-only", !settings.EnableGI)) {
+				DisableGIEffects(settings);
+				recompileFlag = true;
+			}
+		}
+		if (auto _tt = Util::HoverTooltipWrapper()) {
+			ImGui::Text("AO-only mode disables GI/IL rendering.");
+		}
+
+		ImGui::TableNextColumn();
+		{
+			auto resourceProfileGuard = Util::DisableGuard(!settings.Enabled);
+			if (ImGui::RadioButton("AO-only Resources", settings.ResourceProfile == kResourceProfileAOOnly))
+				settings.ResourceProfile = kResourceProfileAOOnly;
+		}
+		if (auto _tt = Util::HoverTooltipWrapper()) {
+			ImGui::Text("Keeps all AO modes available but does not allocate IL/GI/specular buffers.");
 		}
 
 		ImGui::TableNextColumn();
@@ -298,23 +333,61 @@ void ScreenSpaceGI::DrawSettings()
 			ImGui::Text("Run AO only in interiors to improve exterior performance.");
 		}
 
+		ImGui::TableNextRow();
+		ImGui::TableNextColumn();
+		{
+			auto effectModeGuard = Util::DisableGuard(!settings.Enabled || foveatedPresetActive);
+			if (ImGui::RadioButton("AO + GI", settings.EnableGI)) {
+				settings.ResourceProfile = kResourceProfileFullGI;
+				settings.EnableGI = true;
+				recompileFlag = true;
+			}
+		}
+		if (auto _tt = Util::HoverTooltipWrapper()) {
+			ImGui::Text("AO + GI enables indirect lighting for global illumination.");
+		}
+
+		ImGui::TableNextColumn();
+		{
+			auto resourceProfileGuard = Util::DisableGuard(!settings.Enabled);
+			if (ImGui::RadioButton("AO + GI Resources", settings.ResourceProfile == kResourceProfileFullGI))
+				settings.ResourceProfile = kResourceProfileFullGI;
+		}
+		if (auto _tt = Util::HoverTooltipWrapper()) {
+			ImGui::Text("Keeps IL/specular buffers resident so GI can be toggled at runtime.");
+		}
+
 		ImGui::TableNextColumn();
 		{
 			auto ilInteriorsGuard = Util::DisableGuard(!settings.Enabled || !settings.EnableGI || foveatedPresetActive);
-			ImGui::Checkbox("IL Interiors Only", &settings.ILInteriorsOnly);
+			ImGui::Checkbox("GI Interiors Only", &settings.ILInteriorsOnly);
 		}
 		if (auto _tt = Util::HoverTooltipWrapper()) {
 			ImGui::Text("Run indirect lighting only in interiors to improve exterior performance.");
 		}
 
-		if (showAdvanced) {
-			auto hqSpecGuard = Util::DisableGuard(!settings.Enabled || !settings.EnableGI || foveatedPresetActive);
-			recompileFlag |= ImGui::Checkbox("(Experimental) HQ Specular IL", &settings.EnableExperimentalSpecularGI);
-			if (auto _tt = Util::HoverTooltipWrapper())
-				ImGui::Text("An experimental specular GI that is more accurate but requires more samples. Won't be blurred.");
-		}
-
 		ImGui::EndTable();
+	}
+
+	if (showAdvanced) {
+		auto hqSpecGuard = Util::DisableGuard(!settings.Enabled || !settings.EnableGI || foveatedPresetActive);
+		recompileFlag |= ImGui::Checkbox("(Experimental) HQ Specular IL", &settings.EnableExperimentalSpecularGI);
+		if (auto _tt = Util::HoverTooltipWrapper())
+			ImGui::Text("An experimental specular GI that is more accurate but requires more samples. Won't be blurred.");
+	}
+
+	settings.ResourceProfile = ClampResourceProfile(settings.ResourceProfile);
+	if (settings.ResourceProfile != previousResourceProfile) {
+		if (settings.ResourceProfile == kResourceProfileAOOnly)
+			DisableGIEffects(settings);
+		recompileFlag = true;
+	}
+	if (foveatedPresetActive)
+		ImGui::TextDisabled("Foveated SSGI modes are AO-only; IL is disabled while foveated mode is active.");
+	if (settings.EnableGI && !HasGIResources())
+		ImGui::TextColored({ 1.0f, 0.75f, 0.25f, 1.0f }, "Full GI resources are not allocated in this session. Restart required.");
+	if (IsResourceProfileRestartPending()) {
+		ImGui::TextColored({ 1.0f, 0.75f, 0.25f, 1.0f }, "Resource profile changes require restart to change allocated VRAM.");
 	}
 
 	///////////////////////////////
@@ -428,6 +501,7 @@ void ScreenSpaceGI::DrawSettings()
 				settings.FoveatedPresetMode = kFoveatedPresetModeOff;
 				settings.CenterFullResMaskScale = 0.0f;
 				settings.EnableBlur = true;
+				settings.ResourceProfile = kResourceProfileFullGI;
 				settings.EnableGI = true;
 				recompileFlag = true;
 			}
@@ -686,6 +760,10 @@ void ScreenSpaceGI::DrawSettings()
 void ScreenSpaceGI::LoadSettings(json& o_json)
 {
 	settings = o_json;
+	if (!o_json.contains("ResourceProfile")) {
+		// Existing VR configs that already run GI keep full resources; AO-only VR configs move to the lean profile.
+		settings.ResourceProfile = (REL::Module::IsVR() && !settings.EnableGI) ? kResourceProfileAOOnly : kResourceProfileFullGI;
+	}
 	// Backward compatibility: older configs used a single InteriorsOnly toggle.
 	if (o_json.contains("InteriorsOnly") &&
 	    !o_json.contains("AOInteriorsOnly") &&
@@ -715,6 +793,35 @@ void ScreenSpaceGI::SetupResources()
 {
 	auto renderer = globals::game::renderer;
 	auto device = globals::d3d::device;
+
+	ApplyPlatformSettingOverrides(settings);
+	const int previousActiveResourceProfile = activeResourceProfile;
+	activeResourceProfile = ClampResourceProfile(settings.ResourceProfile);
+	const bool allocateGIResources = HasGIResources();
+	logger::info("SSGI resource profile: {}", allocateGIResources ? "Full GI resources" : "AO-only resources");
+
+	// SetupResources can run multiple times during runtime/device resets.
+	// Drop profile-specific allocations first so stale GI resources are not kept alive accidentally.
+	texRadiance = nullptr;
+	texRadianceTemp = nullptr;
+	for (auto& uav : uavRadiance)
+		uav = nullptr;
+	texIlY[0] = nullptr;
+	texIlY[1] = nullptr;
+	texIlCoCg[0] = nullptr;
+	texIlCoCg[1] = nullptr;
+	texGiSpecular[0] = nullptr;
+	texGiSpecular[1] = nullptr;
+	texCenterIlY = nullptr;
+	texCenterIlCoCg = nullptr;
+	texCenterGiSpecular = nullptr;
+	outputAoIdx = 0;
+	outputIlIdx = 0;
+	centerRectCache = {};
+
+	if (previousActiveResourceProfile != activeResourceProfile && globals::deferred) {
+		globals::deferred->ClearShaderCache();
+	}
 
 	logger::debug("Creating buffers...");
 	{
@@ -750,11 +857,15 @@ void ScreenSpaceGI::SetupResources()
 
 		auto mainTex = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMAIN];
 		mainTex.texture->GetDesc(&texDesc);
-		srvDesc.Format = uavDesc.Format = texDesc.Format = DXGI_FORMAT_R11G11B10_FLOAT;
 		texDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS;
-		texDesc.MipLevels = srvDesc.Texture2D.MipLevels = 5;
+		texDesc.CPUAccessFlags = 0;
+		texDesc.MiscFlags = 0;
 
-		{
+		if (allocateGIResources) {
+			srvDesc.Format = uavDesc.Format = texDesc.Format = DXGI_FORMAT_R11G11B10_FLOAT;
+			texDesc.MipLevels = srvDesc.Texture2D.MipLevels = 5;
+			uavDesc.Texture2D.MipSlice = 0;
+
 			texRadiance = eastl::make_unique<Texture2D>(texDesc);
 			texRadiance->CreateSRV(srvDesc);
 			texRadiance->CreateUAV(uavDesc);  // Create default UAV for mip 0
@@ -786,9 +897,8 @@ void ScreenSpaceGI::SetupResources()
 			texRadianceTemp->CreateSRV(tempSrvDesc);
 		}
 
-		texDesc.BindFlags &= ~D3D11_BIND_RENDER_TARGET;
-		texDesc.MiscFlags &= ~D3D11_RESOURCE_MISC_GENERATE_MIPS;
 		texDesc.Format = srvDesc.Format = uavDesc.Format = DXGI_FORMAT_R16_FLOAT;
+		texDesc.MipLevels = srvDesc.Texture2D.MipLevels = 5;
 
 		{
 			texWorkingDepth = eastl::make_unique<Texture2D>(texDesc);
@@ -801,33 +911,35 @@ void ScreenSpaceGI::SetupResources()
 
 		uavDesc.Texture2D.MipSlice = 0;
 		texDesc.MipLevels = srvDesc.Texture2D.MipLevels = 1;
-		srvDesc.Format = uavDesc.Format = texDesc.Format = DXGI_FORMAT_R16G16B16A16_FLOAT;
-		{
-			texIlY[0] = eastl::make_unique<Texture2D>(texDesc);
-			texIlY[0]->CreateSRV(srvDesc);
-			texIlY[0]->CreateUAV(uavDesc);
+		if (allocateGIResources) {
+			srvDesc.Format = uavDesc.Format = texDesc.Format = DXGI_FORMAT_R16G16B16A16_FLOAT;
+			{
+				texIlY[0] = eastl::make_unique<Texture2D>(texDesc);
+				texIlY[0]->CreateSRV(srvDesc);
+				texIlY[0]->CreateUAV(uavDesc);
 
-			texIlY[1] = eastl::make_unique<Texture2D>(texDesc);
-			texIlY[1]->CreateSRV(srvDesc);
-			texIlY[1]->CreateUAV(uavDesc);
+				texIlY[1] = eastl::make_unique<Texture2D>(texDesc);
+				texIlY[1]->CreateSRV(srvDesc);
+				texIlY[1]->CreateUAV(uavDesc);
 
-			texGiSpecular[0] = eastl::make_unique<Texture2D>(texDesc);
-			texGiSpecular[0]->CreateSRV(srvDesc);
-			texGiSpecular[0]->CreateUAV(uavDesc);
+				texGiSpecular[0] = eastl::make_unique<Texture2D>(texDesc);
+				texGiSpecular[0]->CreateSRV(srvDesc);
+				texGiSpecular[0]->CreateUAV(uavDesc);
 
-			texGiSpecular[1] = eastl::make_unique<Texture2D>(texDesc);
-			texGiSpecular[1]->CreateSRV(srvDesc);
-			texGiSpecular[1]->CreateUAV(uavDesc);
-		}
-		srvDesc.Format = uavDesc.Format = texDesc.Format = DXGI_FORMAT_R16G16_FLOAT;
-		{
-			texIlCoCg[0] = eastl::make_unique<Texture2D>(texDesc);
-			texIlCoCg[0]->CreateSRV(srvDesc);
-			texIlCoCg[0]->CreateUAV(uavDesc);
+				texGiSpecular[1] = eastl::make_unique<Texture2D>(texDesc);
+				texGiSpecular[1]->CreateSRV(srvDesc);
+				texGiSpecular[1]->CreateUAV(uavDesc);
+			}
+			srvDesc.Format = uavDesc.Format = texDesc.Format = DXGI_FORMAT_R16G16_FLOAT;
+			{
+				texIlCoCg[0] = eastl::make_unique<Texture2D>(texDesc);
+				texIlCoCg[0]->CreateSRV(srvDesc);
+				texIlCoCg[0]->CreateUAV(uavDesc);
 
-			texIlCoCg[1] = eastl::make_unique<Texture2D>(texDesc);
-			texIlCoCg[1]->CreateSRV(srvDesc);
-			texIlCoCg[1]->CreateUAV(uavDesc);
+				texIlCoCg[1] = eastl::make_unique<Texture2D>(texDesc);
+				texIlCoCg[1]->CreateSRV(srvDesc);
+				texIlCoCg[1]->CreateUAV(uavDesc);
+			}
 		}
 
 		srvDesc.Format = uavDesc.Format = texDesc.Format = DXGI_FORMAT_R8_UNORM;
@@ -853,22 +965,24 @@ void ScreenSpaceGI::SetupResources()
 			texCenterAo->CreateUAV(uavDesc);
 		}
 
-		srvDesc.Format = uavDesc.Format = texDesc.Format = DXGI_FORMAT_R16G16B16A16_FLOAT;
-		{
-			texCenterIlY = eastl::make_unique<Texture2D>(texDesc);
-			texCenterIlY->CreateSRV(srvDesc);
-			texCenterIlY->CreateUAV(uavDesc);
+		if (allocateGIResources) {
+			srvDesc.Format = uavDesc.Format = texDesc.Format = DXGI_FORMAT_R16G16B16A16_FLOAT;
+			{
+				texCenterIlY = eastl::make_unique<Texture2D>(texDesc);
+				texCenterIlY->CreateSRV(srvDesc);
+				texCenterIlY->CreateUAV(uavDesc);
 
-			texCenterGiSpecular = eastl::make_unique<Texture2D>(texDesc);
-			texCenterGiSpecular->CreateSRV(srvDesc);
-			texCenterGiSpecular->CreateUAV(uavDesc);
-		}
+				texCenterGiSpecular = eastl::make_unique<Texture2D>(texDesc);
+				texCenterGiSpecular->CreateSRV(srvDesc);
+				texCenterGiSpecular->CreateUAV(uavDesc);
+			}
 
-		srvDesc.Format = uavDesc.Format = texDesc.Format = DXGI_FORMAT_R16G16_FLOAT;
-		{
-			texCenterIlCoCg = eastl::make_unique<Texture2D>(texDesc);
-			texCenterIlCoCg->CreateSRV(srvDesc);
-			texCenterIlCoCg->CreateUAV(uavDesc);
+			srvDesc.Format = uavDesc.Format = texDesc.Format = DXGI_FORMAT_R16G16_FLOAT;
+			{
+				texCenterIlCoCg = eastl::make_unique<Texture2D>(texDesc);
+				texCenterIlCoCg->CreateSRV(srvDesc);
+				texCenterIlCoCg->CreateUAV(uavDesc);
+			}
 		}
 
 		srvDesc.Format = uavDesc.Format = texDesc.Format = DXGI_FORMAT_R11G11B10_FLOAT;
@@ -973,19 +1087,21 @@ void ScreenSpaceGI::CompileComputeShaders()
 	std::vector<ShaderCompileInfo>
 		shaderInfos = {
 			{ &prefilterDepthsCompute, "prefilterDepths.cs.hlsl", { { "LINEAR_FILTER", "" } } },
-			{ &prefilterRadianceCompute, "prefilterRadiance.cs.hlsl", {} },
-			{ &radianceDisoccCompute, "radianceDisocc.cs.hlsl", {} },
 			{ &radianceDisoccAOOnlyCompute, "radianceDisocc.cs.hlsl", {}, true, true, false },
-			{ &giCompute, "gi.cs.hlsl", {}, true, true, true, true },
 			{ &giAOOnlyCompute, "gi.cs.hlsl", {}, true, true, false, true },
-			{ &centerGIMaskedCompute, "gi.cs.hlsl", { { "CENTER_FULL_PASS", "" } }, false, false, true, true },
 			{ &centerGIMaskedAOOnlyCompute, "gi.cs.hlsl", { { "CENTER_FULL_PASS", "" } }, false, false, false, true },
-			{ &blurCompute, "blur.cs.hlsl", {} },
-			{ &upsampleCompute, "upsample.cs.hlsl", {} },
 			{ &upsampleAOOnlyCompute, "upsample.cs.hlsl", {}, true, false, false },
-			{ &centerBlendCompute, "centerBlend.cs.hlsl", {}, false, false },
 			{ &centerBlendAOOnlyCompute, "centerBlend.cs.hlsl", {}, false, false, false },
 		};
+	if (HasGIResources()) {
+		shaderInfos.push_back({ &prefilterRadianceCompute, "prefilterRadiance.cs.hlsl", {} });
+		shaderInfos.push_back({ &radianceDisoccCompute, "radianceDisocc.cs.hlsl", {} });
+		shaderInfos.push_back({ &giCompute, "gi.cs.hlsl", {}, true, true, true, true });
+		shaderInfos.push_back({ &centerGIMaskedCompute, "gi.cs.hlsl", { { "CENTER_FULL_PASS", "" } }, false, false, true, true });
+		shaderInfos.push_back({ &blurCompute, "blur.cs.hlsl", {} });
+		shaderInfos.push_back({ &upsampleCompute, "upsample.cs.hlsl", {} });
+		shaderInfos.push_back({ &centerBlendCompute, "centerBlend.cs.hlsl", {}, false, false });
+	}
 	for (auto& info : shaderInfos) {
 		if (REL::Module::IsVR())
 			info.defines.push_back({ "VR", "" });
@@ -1017,37 +1133,54 @@ void ScreenSpaceGI::CompileComputeShaders()
 bool ScreenSpaceGI::ShadersOK()
 {
 	const bool baseShadersOK = texNoise &&
+	                           texWorkingDepth &&
+	                           texPrevGeo &&
+	                           texAo[0] &&
+	                           texAo[1] &&
+	                           texAccumFrames[0] &&
+	                           texAccumFrames[1] &&
 	                           prefilterDepthsCompute &&
-	                           prefilterRadianceCompute &&
-	                           radianceDisoccCompute &&
 	                           radianceDisoccAOOnlyCompute &&
-	                           giCompute &&
 	                           giAOOnlyCompute &&
-	                           blurCompute &&
-	                           upsampleCompute &&
 	                           upsampleAOOnlyCompute;
 
-	const bool centerShadersOK = texCenterAo &&
-	                             texCenterIlY &&
-	                             texCenterIlCoCg &&
-	                             texCenterGiSpecular &&
-	                             centerGIMaskedCompute &&
-	                             centerGIMaskedAOOnlyCompute &&
-	                             centerBlendCompute &&
-	                             centerBlendAOOnlyCompute;
+	const bool fullGIShadersOK = !IsGIActive() ||
+	                             (texRadiance &&
+	                              texRadianceTemp &&
+	                              texIlY[0] &&
+	                              texIlY[1] &&
+	                              texIlCoCg[0] &&
+	                              texIlCoCg[1] &&
+	                              texGiSpecular[0] &&
+	                              texGiSpecular[1] &&
+	                              prefilterRadianceCompute &&
+	                              radianceDisoccCompute &&
+	                              giCompute &&
+	                              blurCompute &&
+	                              upsampleCompute);
+
+	const bool centerAOShadersOK = texCenterAo &&
+	                               centerGIMaskedAOOnlyCompute &&
+	                               centerBlendAOOnlyCompute;
+	const bool centerGIShadersOK = !IsGIActive() ||
+	                               (texCenterIlY &&
+	                                texCenterIlCoCg &&
+	                                texCenterGiSpecular &&
+	                                centerGIMaskedCompute &&
+	                                centerBlendCompute);
 	const float centerScale = ResolveFoveatedCenterMaskScale(settings);
 	const bool centerMaskActive = centerScale > 0.0f;
 
 	// Keep legacy SSGI path fully functional when center mask is off.
 	if (ClampResolutionMode(settings.ResolutionMode) == 0 || !centerMaskActive)
-		return baseShadersOK;
+		return baseShadersOK && fullGIShadersOK;
 
-	return baseShadersOK && centerShadersOK;
+	return baseShadersOK && fullGIShadersOK && centerAOShadersOK && centerGIShadersOK;
 }
 
 void ScreenSpaceGI::UpdateSB()
 {
-	float2 res = { (float)texRadiance->desc.Width, (float)texRadiance->desc.Height };
+	float2 res = { (float)texWorkingDepth->desc.Width, (float)texWorkingDepth->desc.Height };
 	float2 dynres = GetHardenedSsgiFrameDim(res);
 	const bool isVR = REL::Module::IsVR();
 	const float centerMaskScale = ResolveFoveatedCenterMaskScale(settings);
@@ -1153,7 +1286,7 @@ void ScreenSpaceGI::DrawSSGI()
 	const bool isInterior = Util::IsInterior();
 	const bool allowAOSpace = !settings.AOInteriorsOnly || isInterior;
 	const bool allowILSpace = !settings.ILInteriorsOnly || isInterior;
-	const bool runILPath = settings.EnableGI && allowILSpace;
+	const bool runILPath = IsGIActive() && allowILSpace;
 	const bool temporalEnabled = settings.EnableTemporalDenoiser;
 	const bool runRadianceDisoccPass = !foveatedCenterOnlyMode && (runILPath || temporalEnabled);
 	const bool runPrefilterRadiancePass = runILPath;
@@ -1263,14 +1396,16 @@ void ScreenSpaceGI::DrawSSGI()
 		return;
 	}
 
-	const bool centerShadersReady = texCenterAo &&
-	                                texCenterIlY &&
-	                                texCenterIlCoCg &&
-	                                texCenterGiSpecular &&
-	                                centerGIMaskedCompute &&
-	                                centerGIMaskedAOOnlyCompute &&
-	                                centerBlendCompute &&
-	                                centerBlendAOOnlyCompute;
+	const bool centerAOShadersReady = texCenterAo &&
+	                                  centerGIMaskedAOOnlyCompute &&
+	                                  centerBlendAOOnlyCompute;
+	const bool centerGIShadersReady = !runILPath ||
+	                                  (texCenterIlY &&
+	                                   texCenterIlCoCg &&
+	                                   texCenterGiSpecular &&
+	                                   centerGIMaskedCompute &&
+	                                   centerBlendCompute);
+	const bool centerShadersReady = centerAOShadersReady && centerGIShadersReady;
 	const bool centerMaskEnabled = centerShadersReady &&
 	                               (resolutionMode != 0) &&
 	                               (centerScale > 0.0f);
@@ -1310,8 +1445,8 @@ void ScreenSpaceGI::DrawSSGI()
 	auto deferred = globals::deferred;
 
 	float2 size = {
-		(float)texRadiance->desc.Width,
-		(float)texRadiance->desc.Height
+		(float)texWorkingDepth->desc.Width,
+		(float)texWorkingDepth->desc.Height
 	};
 	size = GetHardenedSsgiFrameDim(size);
 	auto resolution = std::array{ (uint)size.x, (uint)size.y };
@@ -1535,15 +1670,19 @@ void ScreenSpaceGI::DrawSSGI()
 		if (temporalEnabled) {
 			srvs.at(4) = texAccumFrames[lastFrameAccumTexIdx]->srv.get();
 			srvs.at(5) = texAo[inputAoTexIdx]->srv.get();
-			srvs.at(6) = texIlY[inputGITexIdx]->srv.get();
-			srvs.at(7) = texIlCoCg[inputGITexIdx]->srv.get();
-			srvs.at(8) = texGiSpecular[inputAoTexIdx]->srv.get();
+			if (runILPath) {
+				srvs.at(6) = texIlY[inputGITexIdx]->srv.get();
+				srvs.at(7) = texIlCoCg[inputGITexIdx]->srv.get();
+				srvs.at(8) = texGiSpecular[inputAoTexIdx]->srv.get();
+			}
 		}
 
 		uavs.at(0) = texAo[!inputAoTexIdx]->uav.get();
-		uavs.at(1) = texIlY[!inputGITexIdx]->uav.get();
-		uavs.at(2) = texIlCoCg[!inputGITexIdx]->uav.get();
-		uavs.at(3) = texGiSpecular[!inputAoTexIdx]->uav.get();
+		if (runILPath) {
+			uavs.at(1) = texIlY[!inputGITexIdx]->uav.get();
+			uavs.at(2) = texIlCoCg[!inputGITexIdx]->uav.get();
+			uavs.at(3) = texGiSpecular[!inputAoTexIdx]->uav.get();
+		}
 		uavs.at(4) = texPrevGeo->uav.get();
 
 		context->CSSetShaderResources(0, (uint)srvs.size(), srvs.data());
@@ -1630,8 +1769,10 @@ void ScreenSpaceGI::DrawSSGI()
 			srvs.at(9) = runILPath ? rts[deferred->forwardRenderTargets[0]].SRV : nullptr;
 
 			uavs.at(0) = centerBlendNeeded ? texCenterAo->uav.get() : texAo[!inputAoTexIdx]->uav.get();
-			uavs.at(1) = centerBlendNeeded ? texCenterIlY->uav.get() : texIlY[!inputGITexIdx]->uav.get();
-			uavs.at(2) = centerBlendNeeded ? texCenterIlCoCg->uav.get() : texIlCoCg[!inputGITexIdx]->uav.get();
+			if (runILPath) {
+				uavs.at(1) = centerBlendNeeded ? texCenterIlY->uav.get() : texIlY[!inputGITexIdx]->uav.get();
+				uavs.at(2) = centerBlendNeeded ? texCenterIlCoCg->uav.get() : texIlCoCg[!inputGITexIdx]->uav.get();
+			}
 			const bool writeCenterSpecular = runILPath && settings.EnableExperimentalSpecularGI;
 			uavs.at(3) = writeCenterSpecular ?
 			                 (centerBlendNeeded ? texCenterGiSpecular->uav.get() : texGiSpecular[!inputAoTexIdx]->uav.get()) :
@@ -1690,7 +1831,7 @@ void ScreenSpaceGI::DrawSSGI()
 		FLOAT clr[4] = { 0.f, 0.f, 0.f, 0.f };
 		context->ClearUnorderedAccessViewFloat(texAo[outputAoIdx]->uav.get(), clr);
 	}
-	if (!allowILSpace && settings.EnableGI) {
+	if (!allowILSpace && IsGIActive()) {
 		FLOAT clr[4] = { 0.f, 0.f, 0.f, 0.f };
 		context->ClearUnorderedAccessViewFloat(texIlY[outputIlIdx]->uav.get(), clr);
 		context->ClearUnorderedAccessViewFloat(texIlCoCg[outputIlIdx]->uav.get(), clr);
