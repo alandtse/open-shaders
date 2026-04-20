@@ -81,6 +81,9 @@ public:
 		bool periphery_taa_disable_instability = false;
 		bool periphery_taa_hmd_reprojection = false;
 		bool periphery_taa_hmd_motion_guard = false;
+		bool periphery_taa_separate_hmd_rejection = false;
+		bool periphery_taa_reduce_hmd_blend = false;
+		bool periphery_taa_anchor_hmd_reprojection = false;
 		bool periphery_taa_sharpen_fallback = false;
 		bool periphery_taa_stabilize_motion = false;
 		bool linkFoveatedCenterAreaWithSSGI = true;
@@ -158,6 +161,7 @@ public:
 		float4 tuning1;  // x=disableLocks, y=disableReactivity, z=disableInstability, w=historyValid
 		float4 tuning2;  // x=reactivityScale, y=instabilityScale, z=velocityScale, w=lockDecay
 		float4 tuning3;  // x=enableHmdReprojection, y=enableHmdMotionGuard, z=enableSharpenFallback, w=enableMotionStabilization
+		float4 tuning4;  // x=separateHmdRejection, y=reduceHmdBlend, z=anchorHmdReprojection, w reserved
 		float4x4 currentViewProjInverse;
 		float4x4 previousViewProj;
 		float4 currentCameraPosAdjust;
@@ -167,7 +171,7 @@ public:
 
 	static_assert(sizeof(FoveatedPeripheryCB) == 128, "FoveatedPeripheryCB layout changed; update HLSL cbuffer.");
 	static_assert(sizeof(FoveatedCenterBlendCB) == 64, "FoveatedCenterBlendCB layout changed; update HLSL cbuffer.");
-	static_assert(sizeof(PeripheryTAACB) == 304, "PeripheryTAACB layout changed; update HLSL cbuffer.");
+	static_assert(sizeof(PeripheryTAACB) == 320, "PeripheryTAACB layout changed; update HLSL cbuffer.");
 
 	struct FoveatedDispatchRect
 	{
@@ -353,6 +357,9 @@ public:
 	bool previousHistoryPeripheryTAADisableInstability = false;
 	bool previousHistoryPeripheryTAAHmdReprojection = false;
 	bool previousHistoryPeripheryTAAHmdMotionGuard = false;
+	bool previousHistoryPeripheryTAASeparateHmdRejection = false;
+	bool previousHistoryPeripheryTAAReduceHmdBlend = false;
+	bool previousHistoryPeripheryTAAAnchorHmdReprojection = false;
 	bool previousHistoryPeripheryTAASharpenFallback = false;
 	bool previousHistoryPeripheryTAAStabilizeMotion = false;
 	bool previousHistoryFSRRuntimePathActive = false;

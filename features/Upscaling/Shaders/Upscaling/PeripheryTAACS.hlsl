@@ -26,6 +26,7 @@ cbuffer PeripheryTAACB : register(b0)
 	float4 Tuning1;  // x=disableLocks, y=disableReactivity, z=disableInstability, w=historyValid
 	float4 Tuning2;  // x=reactivityScale, y=instabilityScale, z=velocityScale, w=lockDecay
 	float4 Tuning3;  // x=enableHmdReprojection, y=enableHmdMotionGuard, z=enableSharpenFallback, w=enableMotionStabilization
+	float4 Tuning4;  // x=separateHmdRejection, y=reduceHmdBlend, z=anchorHmdReprojection, w reserved
 	row_major float4x4 CurrentViewProjInverse;
 	row_major float4x4 PreviousViewProj;
 	float4 CurrentCameraPosAdjust;
@@ -325,6 +326,9 @@ void main(uint3 dispatchID : SV_DispatchThreadID)
 	bool enableHmdMotionGuard = Tuning3.y > 0.5;
 	bool enableSharpenFallback = Tuning3.z > 0.5;
 	bool enableMotionStabilization = Tuning3.w > 0.5;
+	bool separateHmdRejection = Tuning4.x > 0.5;
+	bool reduceHmdBlend = Tuning4.y > 0.5;
+	bool anchorHmdReprojection = Tuning4.z > 0.5;
 	int debugMode = (int)(DebugParams.x + 0.5);
 
 	float centerWeight = FoveatedComputeCenterBlendWeight(outputUV, centerScale, centerFeather, CenterOffset);
@@ -336,10 +340,25 @@ void main(uint3 dispatchID : SV_DispatchThreadID)
 	ClosestDepthSample closestDepth = GetClosestDepthSample3x3(inputUV);
 	float currentDepth = closestDepth.depth;
 	float2 currentVelocity = closestDepth.velocity;
-	float2 hmdHistoryDelta = (enableHmdReprojection || enableHmdMotionGuard) ? ComputeHmdHistoryDelta(closestDepth.uv, currentDepth) : 0.0.xx;
-	float hmdMotionFactor = enableHmdMotionGuard ? ComputeHmdMotionFactor(hmdHistoryDelta) : 0.0;
-	float2 historyVelocity = currentVelocity + (enableHmdReprojection ? hmdHistoryDelta : 0.0.xx);
-	float velocityPixels = length(historyVelocity * OutputDim);
+	float2 hmdHistoryDeltaLookup = 0.0.xx;
+	if (enableHmdReprojection) {
+		float2 hmdLookupUV = anchorHmdReprojection ? outputUV : closestDepth.uv;
+		hmdHistoryDeltaLookup = ComputeHmdHistoryDelta(hmdLookupUV, currentDepth);
+	}
+	float2 hmdHistoryDeltaGuard = 0.0.xx;
+	if (enableHmdMotionGuard) {
+		// Keep motion-guard in geometry space (closest-depth UV) so guard behavior stays stable
+		// while allowing reprojection lookup anchor experiments independently.
+		if (enableHmdReprojection && !anchorHmdReprojection) {
+			hmdHistoryDeltaGuard = hmdHistoryDeltaLookup;
+		} else {
+			hmdHistoryDeltaGuard = ComputeHmdHistoryDelta(closestDepth.uv, currentDepth);
+		}
+	}
+	float hmdMotionFactor = enableHmdMotionGuard ? ComputeHmdMotionFactor(hmdHistoryDeltaGuard) : 0.0;
+	float2 historyVelocity = currentVelocity + hmdHistoryDeltaLookup;
+	float2 rejectionVelocity = separateHmdRejection ? currentVelocity : historyVelocity;
+	float velocityPixels = length(rejectionVelocity * OutputDim);
 	float reactiveMask = CurrentReactiveMask.SampleLevel(LinearSampler, inputUV, 0.0);
 	float transparencyMask = CurrentTransparencyMask.SampleLevel(LinearSampler, inputUV, 0.0);
 	float reactivity = disableReactivity ? 0.0 : saturate(max(reactiveMask, transparencyMask) * Tuning2.x);
@@ -354,7 +373,7 @@ void main(uint3 dispatchID : SV_DispatchThreadID)
 	if (historyValid) {
 		float2 historyUV = outputUV + historyVelocity;
 		float3 historyColor = SampleHistoryCatmullRom(historyUV);
-		float3 clippedHistory = VarianceClipHistory3x3(inputUV, historyColor, historyVelocity);
+		float3 clippedHistory = VarianceClipHistory3x3(inputUV, historyColor, rejectionVelocity);
 
 		previousLock = disableLocks ? 0.0 : HistoryLock.Load(int3(ToHistoryPos(historyUV), 0));
 		float stabilityBias = 0.0;
@@ -362,7 +381,7 @@ void main(uint3 dispatchID : SV_DispatchThreadID)
 			float lockBias = disableLocks ? 0.35 : saturate(previousLock * 0.90 + 0.25);
 			stabilityBias = lockBias * (1.0 - hmdMotionFactor);
 		}
-		velocityDeltaPixels = ComputeVelocityDeltaPixels(historyUV, historyVelocity);
+		velocityDeltaPixels = ComputeVelocityDeltaPixels(historyUV, rejectionVelocity);
 		disocclusion = ComputeDisocclusion(velocityDeltaPixels, stabilityBias);
 
 		float3 currentTM = Reinhard(currentColor);
@@ -384,7 +403,7 @@ void main(uint3 dispatchID : SV_DispatchThreadID)
 		currentBlend += disocclusion * lerp(0.62, 0.50, stabilityBias);
 		currentBlend += reactivity * lerp(0.35, 0.30, stabilityBias);
 		currentBlend += instability * lerp(0.20, 0.14, stabilityBias);
-		currentBlend += hmdMotionFactor * 0.60;
+		currentBlend += hmdMotionFactor * (reduceHmdBlend ? 0.12 : 0.60);
 		currentBlend -= lockBoost * lerp(0.18, 0.24, stabilityBias);
 		currentBlend = clamp(currentBlend, 0.05, 1.0);
 		currentBlend = lerp(1.0, currentBlend, peripheryWeight);
@@ -406,7 +425,7 @@ void main(uint3 dispatchID : SV_DispatchThreadID)
 	}
 
 	OutHistoryColor[outputPos] = float4(resolvedColor, currentAlpha);
-	OutVelocity[outputPos] = historyVelocity;
+	OutVelocity[outputPos] = rejectionVelocity;
 	OutLock[outputPos] = newLock;
 
 	if (showDebug) {

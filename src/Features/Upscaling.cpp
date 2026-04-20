@@ -48,6 +48,9 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	periphery_taa_disable_instability,
 	periphery_taa_hmd_reprojection,
 	periphery_taa_hmd_motion_guard,
+	periphery_taa_separate_hmd_rejection,
+	periphery_taa_reduce_hmd_blend,
+	periphery_taa_anchor_hmd_reprojection,
 	periphery_taa_sharpen_fallback,
 	periphery_taa_stabilize_motion,
 	linkFoveatedCenterAreaWithSSGI,
@@ -160,6 +163,9 @@ namespace
 		settings.periphery_taa_disable_instability = false;
 		settings.periphery_taa_hmd_reprojection = false;
 		settings.periphery_taa_hmd_motion_guard = false;
+		settings.periphery_taa_separate_hmd_rejection = false;
+		settings.periphery_taa_reduce_hmd_blend = false;
+		settings.periphery_taa_anchor_hmd_reprojection = false;
 		settings.periphery_taa_sharpen_fallback = false;
 		settings.periphery_taa_stabilize_motion = false;
 		settings.linkFoveatedCenterAreaWithSSGI = true;
@@ -188,6 +194,9 @@ namespace
 		o_json.erase("periphery_taa_disable_instability");
 		o_json.erase("periphery_taa_hmd_reprojection");
 		o_json.erase("periphery_taa_hmd_motion_guard");
+		o_json.erase("periphery_taa_separate_hmd_rejection");
+		o_json.erase("periphery_taa_reduce_hmd_blend");
+		o_json.erase("periphery_taa_anchor_hmd_reprojection");
 		o_json.erase("periphery_taa_sharpen_fallback");
 		o_json.erase("periphery_taa_stabilize_motion");
 		o_json.erase("linkFoveatedCenterAreaWithSSGI");
@@ -701,6 +710,14 @@ void Upscaling::DrawSettings()
 						ImGui::Separator();
 						ImGui::Checkbox("periphery_taa_hmd_reprojection", &settings.periphery_taa_hmd_reprojection);
 						ImGui::Checkbox("periphery_taa_hmd_motion_guard", &settings.periphery_taa_hmd_motion_guard);
+						ImGui::Separator();
+						ImGui::BeginDisabled(!settings.periphery_taa_hmd_reprojection);
+						ImGui::Checkbox("periphery_taa_separate_hmd_rejection", &settings.periphery_taa_separate_hmd_rejection);
+						ImGui::Checkbox("periphery_taa_anchor_hmd_reprojection", &settings.periphery_taa_anchor_hmd_reprojection);
+						ImGui::EndDisabled();
+						ImGui::BeginDisabled(!settings.periphery_taa_hmd_motion_guard);
+						ImGui::Checkbox("periphery_taa_reduce_hmd_blend", &settings.periphery_taa_reduce_hmd_blend);
+						ImGui::EndDisabled();
 						ImGui::Checkbox("periphery_taa_sharpen_fallback", &settings.periphery_taa_sharpen_fallback);
 						ImGui::Checkbox("periphery_taa_stabilize_motion", &settings.periphery_taa_stabilize_motion);
 					}
@@ -713,6 +730,9 @@ void Upscaling::DrawSettings()
 					ImGui::Separator();
 					ImGui::TextUnformatted("periphery_taa_hmd_reprojection: adds explicit per-eye HMD reprojection to temporal history lookup.");
 					ImGui::TextUnformatted("periphery_taa_hmd_motion_guard: suppresses history faster during strong HMD motion.");
+					ImGui::TextUnformatted("periphery_taa_separate_hmd_rejection: requires periphery_taa_hmd_reprojection. Uses HMD reprojection for lookup but excludes it from velocity-delta rejection/history storage.");
+					ImGui::TextUnformatted("periphery_taa_reduce_hmd_blend: requires periphery_taa_hmd_motion_guard. Lowers direct HMD-motion contribution to current-frame blending.");
+					ImGui::TextUnformatted("periphery_taa_anchor_hmd_reprojection: requires periphery_taa_hmd_reprojection. Uses output pixel UV anchor for reprojection lookup only.");
 					ImGui::TextUnformatted("periphery_taa_sharpen_fallback: uses a sharper current-frame fallback when history is weak.");
 					ImGui::TextUnformatted("periphery_taa_stabilize_motion: reduces motion-onset sensitivity to tame tiny periphery flicker.");
 				}
@@ -1968,6 +1988,15 @@ void Upscaling::DispatchPeripheryTAAPass(ID3D11ShaderResourceView* currentColorS
 		settings.periphery_taa_hmd_motion_guard ? 1.0f : 0.0f,
 		settings.periphery_taa_sharpen_fallback ? 1.0f : 0.0f,
 		settings.periphery_taa_stabilize_motion ? 1.0f : 0.0f
+	};
+	const bool effectiveSeparateHmdRejection = settings.periphery_taa_hmd_reprojection && settings.periphery_taa_separate_hmd_rejection;
+	const bool effectiveReduceHmdBlend = settings.periphery_taa_hmd_motion_guard && settings.periphery_taa_reduce_hmd_blend;
+	const bool effectiveAnchorHmdReprojection = settings.periphery_taa_hmd_reprojection && settings.periphery_taa_anchor_hmd_reprojection;
+	cbData.tuning4 = {
+		effectiveSeparateHmdRejection ? 1.0f : 0.0f,
+		effectiveReduceHmdBlend ? 1.0f : 0.0f,
+		effectiveAnchorHmdReprojection ? 1.0f : 0.0f,
+		0.0f
 	};
 	cbData.currentViewProjInverse = currentViewProjInverse;
 	cbData.previousViewProj = previousViewProj;
@@ -3294,7 +3323,15 @@ void Upscaling::UpdateHistoryResetState(UpscaleMethod a_upscaleMethod)
 			foveatedDispatchEnabled != previousHistoryFoveatedDispatch ||
 			(compareFoveatedArea && std::abs(foveatedCenterArea - previousHistoryFoveatedCenterArea) > 1e-4f) ||
 			foveatedOffsetsChanged;
-		const bool peripheryTAAChanged =
+		const bool effectiveSeparateHmdRejection = settings.periphery_taa_hmd_reprojection && settings.periphery_taa_separate_hmd_rejection;
+		const bool effectiveReduceHmdBlend = settings.periphery_taa_hmd_motion_guard && settings.periphery_taa_reduce_hmd_blend;
+		const bool effectiveAnchorHmdReprojection = settings.periphery_taa_hmd_reprojection && settings.periphery_taa_anchor_hmd_reprojection;
+		const bool longFrameGap = globals::game::deltaTime &&
+								  std::isfinite(*globals::game::deltaTime) &&
+								  *globals::game::deltaTime > 0.20f;
+		const bool cameraCut = inWorld && cameraCutDetected();
+
+		const bool effectivePeripheryTAAChanged =
 			peripheryTAAEnabled != previousHistoryPeripheryTAA ||
 			peripheryTAAPathActive != previousHistoryPeripheryTAAPathActive ||
 			(peripheryTAAPathActive && (
@@ -3303,14 +3340,13 @@ void Upscaling::UpdateHistoryResetState(UpscaleMethod a_upscaleMethod)
 				settings.periphery_taa_disable_instability != previousHistoryPeripheryTAADisableInstability ||
 				settings.periphery_taa_hmd_reprojection != previousHistoryPeripheryTAAHmdReprojection ||
 				settings.periphery_taa_hmd_motion_guard != previousHistoryPeripheryTAAHmdMotionGuard ||
+				effectiveSeparateHmdRejection != previousHistoryPeripheryTAASeparateHmdRejection ||
+				effectiveReduceHmdBlend != previousHistoryPeripheryTAAReduceHmdBlend ||
+				effectiveAnchorHmdReprojection != previousHistoryPeripheryTAAAnchorHmdReprojection ||
 				settings.periphery_taa_sharpen_fallback != previousHistoryPeripheryTAASharpenFallback ||
 				settings.periphery_taa_stabilize_motion != previousHistoryPeripheryTAAStabilizeMotion));
-		const bool longFrameGap = globals::game::deltaTime &&
-								  std::isfinite(*globals::game::deltaTime) &&
-								  *globals::game::deltaTime > 0.20f;
-		const bool cameraCut = inWorld && cameraCutDetected();
 
-		shouldReset = screenSizeChanged || scaleChanged || worldStateChanged || methodChanged || vrPipelineDedupChanged || fsrRuntimePathChanged || foveatedChanged || peripheryTAAChanged || longFrameGap || cameraCut;
+		shouldReset = screenSizeChanged || scaleChanged || worldStateChanged || methodChanged || vrPipelineDedupChanged || fsrRuntimePathChanged || foveatedChanged || effectivePeripheryTAAChanged || longFrameGap || cameraCut;
 	}
 
 	if (state->pendingPostLoadRuntimeReset)
@@ -3335,6 +3371,9 @@ void Upscaling::UpdateHistoryResetState(UpscaleMethod a_upscaleMethod)
 	previousHistoryPeripheryTAADisableInstability = settings.periphery_taa_disable_instability;
 	previousHistoryPeripheryTAAHmdReprojection = settings.periphery_taa_hmd_reprojection;
 	previousHistoryPeripheryTAAHmdMotionGuard = settings.periphery_taa_hmd_motion_guard;
+	previousHistoryPeripheryTAASeparateHmdRejection = settings.periphery_taa_hmd_reprojection && settings.periphery_taa_separate_hmd_rejection;
+	previousHistoryPeripheryTAAReduceHmdBlend = settings.periphery_taa_hmd_motion_guard && settings.periphery_taa_reduce_hmd_blend;
+	previousHistoryPeripheryTAAAnchorHmdReprojection = settings.periphery_taa_hmd_reprojection && settings.periphery_taa_anchor_hmd_reprojection;
 	previousHistoryPeripheryTAASharpenFallback = settings.periphery_taa_sharpen_fallback;
 	previousHistoryPeripheryTAAStabilizeMotion = settings.periphery_taa_stabilize_motion;
 	previousHistoryFSRRuntimePathActive = fsrRuntimePathActive;
