@@ -691,6 +691,7 @@ void State::SetupResources()
 	featureLevel = globals::d3d::device->GetFeatureLevel();
 
 	tracyCtx = TracyD3D11Context(globals::d3d::device, globals::d3d::context);
+	Feature::SetTracyCtx(tracyCtx);
 }
 
 void State::ModifyShaderLookup(const RE::BSShader& a_shader, uint& a_vertexDescriptor, uint& a_pixelDescriptor, bool a_forceDeferred)
