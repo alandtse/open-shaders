@@ -639,14 +639,16 @@ void Upscaling::DrawSettings()
 					ImGui::Text("Default for DLAA/Quality/Balanced. Best all-round stability and image quality. Speed: fast. Recommended for most users.");
 					break;
 				case 2:
-					ImGui::Text("For quality/stability, lowest ghosting. Slowest preset. Best for Ultra Performance (esp. on 4K). Not recommended on pre-RTX 40 cards.");
+					ImGui::Text("Default for Ultra Performance on newer RTX cards. Sharper and more stable, but higher cost than J/K/F.");
+					ImGui::Text("For RTX 3000-series cards, F is usually the better Performance/Ultra Performance choice.");
 					break;
 				case 3:
-					ImGui::Text("Near-L image quality, but much slower than K. Best for Performance mode. Not recommended on pre-RTX 40 cards.");
+					ImGui::Text("Default for Performance on newer RTX cards. Similar image-quality improvements to L, closer in speed to J/K.");
+					ImGui::Text("For RTX 3000-series cards, F is usually the better Performance/Ultra Performance choice.");
 					break;
 				case 4:
 					ImGui::Text("Intended for Ultra Performance/DLAA. Default preset for Ultra Performance.");
-					ImGui::Text("Use when chasing max FPS; outside Ultra Performance/DLAA, K is usually more stable.");
+					ImGui::Text("Best Performance/Ultra Performance choice for RTX 3000-series cards.");
 					break;
 				default:
 					ImGui::Text("Default for DLAA/Quality/Balanced. Best all-round stability and image quality. Speed: fast. Recommended for most users.");
@@ -661,7 +663,7 @@ void Upscaling::DrawSettings()
 			}
 
 			if (isNvidiaAdapter) {
-				ImGui::TextWrapped("Note: Use presets L/M only on RTX 40/50. Even on those GPUs, J/K/F usually provide better quality/performance. On RTX 20/30, use K (default) or J/F for better FPS.");
+				ImGui::TextWrapped("Note: Use K for DLAA/Quality/Balanced. For Performance and Ultra Performance, use L/M on newer RTX cards and F on RTX 3000-series cards.");
 			}
 		}
 
