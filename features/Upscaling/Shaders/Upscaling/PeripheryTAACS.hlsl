@@ -22,8 +22,8 @@ cbuffer PeripheryTAACB : register(b0)
 	float2 OutputOffset;
 	float2 Jitter;
 	float2 CenterOffset;
-	float4 Tuning0;  // x=centerScale, y=centerFeather, z=resetHistory, w reserved
-	float4 Tuning1;  // x=historyValid, y=centerHorizontalScale, z/w reserved
+	float4 Tuning0;  // x=centerScale, y=centerFeather, z=resetHistory, w=taaOuterScale
+	float4 Tuning1;  // x=historyValid, y=centerHorizontalScale, z=tileDispatch, w=tileDispatchWidth
 	float4 Tuning2;  // x=reactivityScale, y=instabilityScale, z=velocityScale, w=lockDecay
 	row_major float4x4 CurrentViewProjInverse;
 	row_major float4x4 PreviousViewProj;
@@ -39,13 +39,13 @@ Texture2D<float> CurrentTransparencyMask : register(t4);
 Texture2D<float4> HistoryColor : register(t5);
 Texture2D<float2> HistoryVelocity : register(t6);
 Texture2D<float> HistoryLock : register(t7);
+StructuredBuffer<uint2> DispatchTiles : register(t8);
 
 SamplerState LinearSampler : register(s0);
 
 RWTexture2D<float4> OutColor : register(u0);
-RWTexture2D<float4> OutHistoryColor : register(u1);
-RWTexture2D<float2> OutVelocity : register(u2);
-RWTexture2D<float> OutLock : register(u3);
+RWTexture2D<float2> OutVelocity : register(u1);
+RWTexture2D<float> OutLock : register(u2);
 
 static const int2 kOffsets3x3[9] = {
 	int2(-1, -1), int2(0, -1), int2(1, -1),
@@ -62,6 +62,11 @@ static const float kHmdMotionBlendSuppression = 0.65;
 static const float kMotionInstabilitySuppression = 0.85;
 static const float kCameraVelocityRelaxThresholdPixels = 0.50;
 static const float kCameraVelocityRelaxScale = 0.10;
+static const uint kCurrentCacheDim = 16;
+
+groupshared float4 gCurrentColorCache[kCurrentCacheDim * kCurrentCacheDim];
+groupshared float gCurrentDepthCache[kCurrentCacheDim * kCurrentCacheDim];
+groupshared int2 gCurrentCacheBase;
 
 float3 Reinhard(float3 color)
 {
@@ -125,33 +130,78 @@ float3 LoadCurrentColorClamped(int2 pos)
 	return LoadCurrentSampleClamped(pos).rgb;
 }
 
-struct ClosestDepthSample
+uint FlattenCurrentCachePos(int2 cachePos)
+{
+	return (uint)cachePos.y * kCurrentCacheDim + (uint)cachePos.x;
+}
+
+bool TryGetCurrentCachePos(int2 pos, out int2 cachePos)
+{
+	cachePos = pos - gCurrentCacheBase;
+	return all(cachePos >= int2(0, 0)) && all(cachePos < int2((int)kCurrentCacheDim, (int)kCurrentCacheDim));
+}
+
+float LoadCachedDepthClamped(int2 pos)
+{
+	int2 cachePos;
+	if (TryGetCurrentCachePos(pos, cachePos))
+		return gCurrentDepthCache[FlattenCurrentCachePos(cachePos)];
+	return LoadDepthClamped(pos);
+}
+
+float3 LoadCachedCurrentColorClamped(int2 pos)
+{
+	int2 cachePos;
+	if (TryGetCurrentCachePos(pos, cachePos))
+		return gCurrentColorCache[FlattenCurrentCachePos(cachePos)].rgb;
+	return LoadCurrentColorClamped(pos);
+}
+
+struct NeighborhoodStats
 {
 	float depth;
 	float2 velocity;
 	float2 uv;
+	float3 meanColor;
+	float3 meanSquare;
+	float3 minColor;
+	float3 maxColor;
 };
 
-ClosestDepthSample GetClosestDepthSample3x3(float2 inputUV)
+NeighborhoodStats GatherNeighborhoodStats3x3(float2 inputUV)
 {
 	uint2 inputPos = ToInputPos(inputUV);
 	float minDepth = 1.0;
 	int2 minPos = int2(inputPos);
+	float3 meanColor = 0.0.xxx;
+	float3 meanSquare = 0.0.xxx;
+	float3 minColor = 65504.0.xxx;
+	float3 maxColor = -65504.0.xxx;
 
 	[unroll]
 	for (uint i = 0; i < 9; ++i) {
 		int2 samplePos = int2(inputPos) + kOffsets3x3[i];
-		float sampleDepth = LoadDepthClamped(samplePos);
+		float sampleDepth = LoadCachedDepthClamped(samplePos);
 		if (sampleDepth < minDepth) {
 			minDepth = sampleDepth;
 			minPos = samplePos;
 		}
+
+		float3 sampleColor = LoadCachedCurrentColorClamped(samplePos);
+		meanColor += sampleColor;
+		meanSquare += sampleColor * sampleColor;
+		minColor = min(minColor, sampleColor);
+		maxColor = max(maxColor, sampleColor);
 	}
 
-	ClosestDepthSample result;
+	NeighborhoodStats result;
 	result.depth = minDepth;
 	result.velocity = LoadMotionClamped(minPos);
 	result.uv = ClampInputUV((float2(minPos) + 0.5) * InvInputDim);
+	result.meanColor = meanColor * (1.0 / 9.0);
+	result.meanSquare = meanSquare * (1.0 / 9.0);
+	result.minColor = minColor;
+	result.maxColor = maxColor;
 	return result;
 }
 
@@ -189,31 +239,14 @@ float3 SampleHistoryCatmullRom(float2 historyUV)
 	return result;
 }
 
-float3 VarianceClipHistory3x3(float2 inputUV, float3 historyColor, float2 velocity)
+float3 VarianceClipHistory3x3(NeighborhoodStats stats, float3 historyColor, float2 velocity)
 {
-	uint2 inputPos = ToInputPos(inputUV);
-	float3 meanColor = 0.0.xxx;
-	float3 meanSquare = 0.0.xxx;
-	float3 minColor = 65504.0.xxx;
-	float3 maxColor = -65504.0.xxx;
-
-	[unroll]
-	for (uint i = 0; i < 9; ++i) {
-		float3 sampleColor = LoadCurrentColorClamped(int2(inputPos) + kOffsets3x3[i]);
-		meanColor += sampleColor;
-		meanSquare += sampleColor * sampleColor;
-		minColor = min(minColor, sampleColor);
-		maxColor = max(maxColor, sampleColor);
-	}
-
-	meanColor *= (1.0 / 9.0);
-	meanSquare *= (1.0 / 9.0);
-	float3 sigma = sqrt(max(meanSquare - meanColor * meanColor, 0.0.xxx));
+	float3 sigma = sqrt(max(stats.meanSquare - stats.meanColor * stats.meanColor, 0.0.xxx));
 
 	float velocityPixels = length(velocity * OutputDim);
 	float varianceGamma = lerp(2.1, 1.15, saturate(velocityPixels * Tuning2.z));
-	float3 clipMin = max(minColor, meanColor - sigma * varianceGamma);
-	float3 clipMax = min(maxColor, meanColor + sigma * varianceGamma);
+	float3 clipMin = max(stats.minColor, stats.meanColor - sigma * varianceGamma);
+	float3 clipMax = min(stats.maxColor, stats.meanColor + sigma * varianceGamma);
 	return clamp(historyColor, clipMin, clipMax);
 }
 
@@ -264,14 +297,47 @@ float ComputeHmdRejectionRelaxation(float2 hmdDelta)
 }
 
 [numthreads(8, 8, 1)]
-void main(uint3 dispatchID : SV_DispatchThreadID)
+void main(uint3 dispatchID : SV_DispatchThreadID, uint3 groupID : SV_GroupID, uint3 groupThreadID : SV_GroupThreadID)
 {
-	uint2 localPos = dispatchID.xy;
-	if (any(localPos >= uint2(DispatchDim)))
+	const bool tileDispatch = Tuning1.z > 0.5;
+	const uint tileDispatchWidth = max(1u, (uint)(Tuning1.w + 0.5));
+	const uint tileIndex = groupID.x + groupID.y * tileDispatchWidth;
+	if (tileDispatch && tileIndex >= (uint)(DispatchDim.x + 0.5))
 		return;
 
-	uint2 outputPos = localPos + uint2(OutputOffset + 0.5);
-	if (any(outputPos >= uint2(OutputDim)))
+	uint2 tileOrigin;
+	uint2 localPos;
+	uint2 outputPos;
+	bool pixelValid;
+	if (tileDispatch) {
+		tileOrigin = DispatchTiles[tileIndex];
+		localPos = groupThreadID.xy;
+		outputPos = tileOrigin + groupThreadID.xy;
+		pixelValid = !any(outputPos >= uint2(OutputDim));
+	} else {
+		tileOrigin = uint2(OutputOffset + 0.5) + groupID.xy * 8u;
+		localPos = dispatchID.xy;
+		outputPos = localPos + uint2(OutputOffset + 0.5);
+		pixelValid = !any(localPos >= uint2(DispatchDim)) && !any(outputPos >= uint2(OutputDim));
+	}
+
+	if (groupThreadID.x == 0 && groupThreadID.y == 0) {
+		float2 tileOutputUV = (float2(tileOrigin) + 0.5) * InvOutputDim;
+		uint2 tileInputPos = ToInputPos(tileOutputUV - (Jitter * InvInputDim));
+		gCurrentCacheBase = int2(tileInputPos) - int2(4, 4);
+	}
+	GroupMemoryBarrierWithGroupSync();
+
+	const uint groupThreadIndex = groupThreadID.y * 8u + groupThreadID.x;
+	for (uint cacheIndex = groupThreadIndex; cacheIndex < kCurrentCacheDim * kCurrentCacheDim; cacheIndex += 64u) {
+		int2 cacheOffset = int2((int)(cacheIndex % kCurrentCacheDim), (int)(cacheIndex / kCurrentCacheDim));
+		int2 samplePos = gCurrentCacheBase + cacheOffset;
+		gCurrentColorCache[cacheIndex] = LoadCurrentSampleClamped(samplePos);
+		gCurrentDepthCache[cacheIndex] = LoadDepthClamped(samplePos);
+	}
+	GroupMemoryBarrierWithGroupSync();
+
+	if (!pixelValid)
 		return;
 
 	float2 outputUV = (float2(outputPos) + 0.5) * InvOutputDim;
@@ -280,6 +346,7 @@ void main(uint3 dispatchID : SV_DispatchThreadID)
 	float centerScale = Tuning0.x;
 	float centerFeather = Tuning0.y;
 	float centerHorizontalScale = Tuning1.y;
+	float taaOuterScale = max(Tuning0.w, centerScale);
 	bool resetHistory = Tuning0.z > 0.5;
 	bool historyValid = Tuning1.x > 0.5 && !resetHistory;
 
@@ -287,15 +354,17 @@ void main(uint3 dispatchID : SV_DispatchThreadID)
 	float peripheryWeight = saturate(1.0 - centerWeight);
 	if (peripheryWeight <= 0.0)
 		return;
+	if (FoveatedComputeMaskDistance(outputUV, taaOuterScale, centerHorizontalScale, CenterOffset) > 1.0)
+		return;
 
 	float4 currentSample = CurrentColor.SampleLevel(LinearSampler, inputUV, 0.0);
 	float3 currentColor = currentSample.rgb;
 	float currentAlpha = currentSample.a;
-	ClosestDepthSample closestDepth = GetClosestDepthSample3x3(inputUV);
-	float currentDepth = closestDepth.depth;
-	float2 currentVelocity = closestDepth.velocity;
+	NeighborhoodStats neighborhood = GatherNeighborhoodStats3x3(inputUV);
+	float currentDepth = neighborhood.depth;
+	float2 currentVelocity = neighborhood.velocity;
 	float2 hmdHistoryDeltaLookup = 0.0.xx;
-	hmdHistoryDeltaLookup = ComputeHmdHistoryDelta(closestDepth.uv, currentDepth);
+	hmdHistoryDeltaLookup = ComputeHmdHistoryDelta(neighborhood.uv, currentDepth);
 	float2 historyVelocity = currentVelocity + hmdHistoryDeltaLookup;
 	float2 rejectionVelocity = currentVelocity;
 	float velocityPixels = length(rejectionVelocity * OutputDim);
@@ -315,7 +384,7 @@ void main(uint3 dispatchID : SV_DispatchThreadID)
 
 	if (historyValid) {
 		float3 rawHistoryColor = SampleHistoryCatmullRom(historyUV);
-		float3 clippedHistory = VarianceClipHistory3x3(inputUV, rawHistoryColor, rejectionVelocity);
+		float3 clippedHistory = VarianceClipHistory3x3(neighborhood, rawHistoryColor, rejectionVelocity);
 
 		previousLock = HistoryLock.Load(int3(ToHistoryPos(historyUV), 0));
 		float stabilityBias = 0.0;
@@ -367,7 +436,6 @@ void main(uint3 dispatchID : SV_DispatchThreadID)
 		newLock = saturate(max(previousLock * Tuning2.w * trust, accumulation * trust));
 	}
 
-	OutHistoryColor[outputPos] = float4(resolvedColor, currentAlpha);
 	OutVelocity[outputPos] = rejectionVelocity;
 	OutLock[outputPos] = newLock;
 	OutColor[outputPos] = float4(resolvedColor, currentAlpha);

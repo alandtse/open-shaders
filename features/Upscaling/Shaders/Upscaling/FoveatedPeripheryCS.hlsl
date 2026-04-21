@@ -51,9 +51,7 @@ float2 ClampToSourceRegion(float2 uv, float2 regionMin, float2 regionMax)
 		static const float3 kCenterZoneColor = float3(0.22, 0.68, 0.53);
 		static const float3 kTaaZoneColor = float3(0.95, 0.76, 0.33);
 		static const float3 kOuterZoneColor = float3(0.36, 0.50, 0.86);
-		static const float3 kLegacyCenterColor = float3(0.20, 0.34, 0.28);
-		static const float3 kLegacyFeatherColor = float3(0.43, 0.35, 0.20);
-		static const float3 kLegacyPeripheryColor = float3(0.17, 0.22, 0.31);
+		static const float3 kBaseOutsideColor = float3(0.17, 0.22, 0.31);
 
 		float3 maskColor;
 		if (showThreeZoneMask > 0.5) {
@@ -62,12 +60,8 @@ float2 ClampToSourceRegion(float2 uv, float2 regionMin, float2 regionMax)
 			const bool inTaaZone = !inCenterZone && outerDistance <= 1.0;
 			maskColor = inCenterZone ? kCenterZoneColor : (inTaaZone ? kTaaZoneColor : kOuterZoneColor);
 		} else {
-			maskColor = kLegacyPeripheryColor;
-			if (centerDistance <= 1.0) {
-				maskColor = kLegacyCenterColor;
-			} else if (centerDistance <= (1.0 + normalizedFeather)) {
-				maskColor = kLegacyFeatherColor;
-			}
+			const bool inBaseCenterMask = centerDistance <= (1.0 + normalizedFeather);
+			maskColor = inBaseCenterMask ? kCenterZoneColor : kBaseOutsideColor;
 		}
 
 		OutColor[outputPos] = float4(maskColor, 1.0);

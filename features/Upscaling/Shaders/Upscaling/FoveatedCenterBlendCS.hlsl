@@ -29,9 +29,13 @@ RWTexture2D<float4> OutputColor : register(u0);
 	if (blendWeight <= 0.0)
 		return;
 
-	float4 baseColor = OutputColor[outputPos];
 	float2 centerUV = (float2(localPos) + SourceOffset + 0.5) * InvSourceDim;
 	float4 centerColor = CenterColor.SampleLevel(LinearSampler, centerUV, 0);
 
-	OutputColor[outputPos] = blendWeight >= 1.0 ? centerColor : lerp(baseColor, centerColor, blendWeight);
+	if (blendWeight >= 1.0) {
+		OutputColor[outputPos] = centerColor;
+	} else {
+		float4 baseColor = OutputColor[outputPos];
+		OutputColor[outputPos] = lerp(baseColor, centerColor, blendWeight);
+	}
 }

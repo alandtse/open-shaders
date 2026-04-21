@@ -24,7 +24,6 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	ResolutionMode,
 	ResourceProfile,
 	VRCullDistance,
-	CenterFullResMaskScale,
 	FoveatedPresetMode,
 	MinScreenRadius,
 	AORadius,
@@ -89,14 +88,6 @@ namespace
 	{
 		return ResolveRuntimeFoveatedPresetMode(a_settings) != kFoveatedPresetModeOff;
 	}
-	float GetFoveatedPresetCenterScale(int a_mode)
-	{
-		if (a_mode == kFoveatedPresetModeStrict)
-			return FoveatedCommon::kCenterAreaMin;
-		if (a_mode == kFoveatedPresetModeFoveated)
-			return FoveatedCommon::kCenterAreaMin;
-		return 0.0f;
-	}
 
 	float ClampCenterMaskScale(float a_scale)
 	{
@@ -105,12 +96,7 @@ namespace
 		return FoveatedCommon::ClampCenterArea(a_scale);
 	}
 
-	bool IsCenterAreaLinkedToUpscaling()
-	{
-		return REL::Module::IsVR() && globals::features::upscaling.settings.linkFoveatedCenterAreaWithSSGI;
-	}
-
-	float GetLinkedUpscalingCenterMaskScale()
+	float GetUpscalingBaseCenterMaskScale()
 	{
 		return ClampCenterMaskScale(globals::features::upscaling.settings.foveatedCenterArea);
 	}
@@ -130,17 +116,12 @@ namespace
 		const bool foveatedPresetActive = IsRuntimeFoveatedPresetActive(a_settings);
 		if (!foveatedPresetActive)
 			return ClampCenterMaskScale(a_settings.CenterFullResMaskScale);
-
-		if (IsCenterAreaLinkedToUpscaling())
-			return GetLinkedUpscalingCenterMaskScale();
-
-		return ClampCenterMaskScale(a_settings.CenterFullResMaskScale);
+		return GetUpscalingBaseCenterMaskScale();
 	}
 
 	std::array<float2, 2> GetSharedUpscalingMaskOffsetsForSsgi()
 	{
-		// Mask placement is always owned by the upscaling feature so both systems stay aligned.
-		// The link toggle only controls whether the center-area size is shared.
+		// SSGI foveation always uses the upscaler Base FOV, not the optional TAA profile.
 		auto centerOffsets = globals::features::upscaling.GetResolvedFoveatedMaskCenterOffsets();
 		if (!REL::Module::IsVR())
 			centerOffsets[1] = { 0.0f, 0.0f };
@@ -187,9 +168,7 @@ namespace
 		if (a_settings.FoveatedPresetMode != kFoveatedPresetModeOff) {
 			// Foveated presets run through the quarter-res base path; "Foveated" mode later suppresses periphery AO.
 			a_settings.ResolutionMode = 2;
-			a_settings.CenterFullResMaskScale = ClampCenterMaskScale(a_settings.CenterFullResMaskScale);
-			if (a_settings.CenterFullResMaskScale <= 0.0f)
-				a_settings.CenterFullResMaskScale = GetFoveatedPresetCenterScale(a_settings.FoveatedPresetMode);
+			a_settings.CenterFullResMaskScale = GetUpscalingBaseCenterMaskScale();
 			// Foveated presets are AO-only by design; IL must stay off while active.
 			a_settings.EnableGI = false;
 			if (a_settings.FoveatedPresetMode == kFoveatedPresetModeStrict) {
@@ -266,7 +245,6 @@ void ScreenSpaceGI::DrawSettings()
 	SyncResolvedCenterMaskScale(settings);
 	static bool showAdvanced;
 	const bool isVR = REL::Module::IsVR();
-	const bool linkedCenterArea = IsCenterAreaLinkedToUpscaling();
 	const bool foveatedPresetActive = IsRuntimeFoveatedPresetActive(settings);
 
 	if (!ShadersOK())
@@ -449,11 +427,7 @@ void ScreenSpaceGI::DrawSettings()
 						settings.NumSteps = 6;
 						settings.ResolutionMode = 2;
 						settings.FoveatedPresetMode = kFoveatedPresetModeStrict;
-						settings.CenterFullResMaskScale = linkedCenterArea ?
-						                                     GetLinkedUpscalingCenterMaskScale() :
-						                                     (settings.CenterFullResMaskScale > 0.0f ?
-						                                          ClampCenterMaskScale(settings.CenterFullResMaskScale) :
-						                                          GetFoveatedPresetCenterScale(settings.FoveatedPresetMode));
+						settings.CenterFullResMaskScale = GetUpscalingBaseCenterMaskScale();
 						settings.VRCullDistance = 1500.0f;
 						settings.AOPower = 1.8f;
 						settings.EnableBlur = false;
@@ -482,11 +456,7 @@ void ScreenSpaceGI::DrawSettings()
 						settings.NumSteps = 6;
 						settings.ResolutionMode = 2;
 						settings.FoveatedPresetMode = kFoveatedPresetModeFoveated;
-						settings.CenterFullResMaskScale = linkedCenterArea ?
-						                                     GetLinkedUpscalingCenterMaskScale() :
-						                                     (settings.CenterFullResMaskScale > 0.0f ?
-						                                          ClampCenterMaskScale(settings.CenterFullResMaskScale) :
-						                                          GetFoveatedPresetCenterScale(settings.FoveatedPresetMode));
+						settings.CenterFullResMaskScale = GetUpscalingBaseCenterMaskScale();
 						settings.VRCullDistance = 1500.0f;
 						settings.AOPower = 1.8f;
 						settings.EnableGI = false;
@@ -587,16 +557,13 @@ void ScreenSpaceGI::DrawSettings()
 		recompileFlag |= (settings.ResolutionMode != previousResolutionMode);
 		if (foveatedPresetActiveInPerfSection) {
 			settings.ResolutionMode = 2;
-			float centerArea = ResolveFoveatedCenterMaskScale(settings);
-			ImGui::SliderFloat("Foveated Area", &centerArea, FoveatedCommon::kCenterAreaMin, FoveatedCommon::kCenterAreaMax, "%.2f");
-			centerArea = ClampCenterMaskScale(centerArea);
-			if (linkedCenterArea)
-				globals::features::upscaling.settings.foveatedCenterArea = centerArea;
+			const float centerArea = ResolveFoveatedCenterMaskScale(settings);
 			settings.CenterFullResMaskScale = centerArea;
+			ImGui::Text("Upscaling Base FOV Area: %.2f", centerArea);
 			if (auto _tt = Util::HoverTooltipWrapper()) {
-				ImGui::Text("Controls how much of the screen keeps Full Res AO when a foveated preset is active.");
-				if (linkedCenterArea)
-					ImGui::Text("Linked with Upscaling center area (shared value).");
+				ImGui::TextUnformatted("SSGI foveation always uses the Upscaling Base FOV.");
+				ImGui::TextUnformatted("Edit Base FOV Area, Expand and eye offsets in Upscaling FOV Step 1.");
+				ImGui::TextUnformatted("Peripheral TAA and TAA FOV do not change the SSGI mask.");
 			}
 		}
 	}
@@ -1362,6 +1329,7 @@ void ScreenSpaceGI::DrawSSGI()
 	static uint64_t lastModeSignature = 0;
 	static bool hasModeSignature = false;
 	const uint modeCenterScaleMilli = static_cast<uint>(std::round(centerScale * 1000.0f));
+	const uint modeCenterHorizontalScaleMilli = static_cast<uint>(std::round(GetSharedUpscalingCenterMaskHorizontalScale() * 1000.0f));
 	uint64_t modeSignature = 1469598103934665603ull;
 	auto hashCombine = [&](uint64_t a_value) {
 		modeSignature ^= a_value + 0x9e3779b97f4a7c15ull + (modeSignature << 6) + (modeSignature >> 2);
@@ -1370,6 +1338,7 @@ void ScreenSpaceGI::DrawSSGI()
 	hashCombine(static_cast<uint64_t>(foveatedPresetMode));
 	hashCombine(static_cast<uint64_t>(modeCenterScaleMilli));
 	if (modeCenterScaleMilli > 0) {
+		hashCombine(static_cast<uint64_t>(modeCenterHorizontalScaleMilli));
 		const auto modeCenterOffsets = GetSharedUpscalingMaskOffsetsForSsgi();
 		hashCombine(static_cast<uint64_t>(QuantizeCenterOffset(modeCenterOffsets[0].x)));
 		hashCombine(static_cast<uint64_t>(QuantizeCenterOffset(modeCenterOffsets[0].y)));

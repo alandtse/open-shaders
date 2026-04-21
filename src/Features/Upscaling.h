@@ -9,6 +9,7 @@
 #include <d3d11_4.h>
 #include <directx/d3d12.h>
 #include <limits>
+#include <vector>
 #include <winrt/base.h>
 
 /**
@@ -70,12 +71,16 @@ public:
 		float foveatedLeftEyeMaskOffsetY = 0.0f;
 		float foveatedRightEyeMaskOffsetX = 0.0f;
 		float foveatedRightEyeMaskOffsetY = 0.0f;
+		float periphery_taa_center_area = 0.6f;
+		float periphery_taa_center_horizontal_scale = 1.0f;
+		float periphery_taa_left_eye_mask_offset_x = 0.0f;
+		float periphery_taa_left_eye_mask_offset_y = 0.0f;
+		float periphery_taa_right_eye_mask_offset_x = 0.0f;
+		float periphery_taa_right_eye_mask_offset_y = 0.0f;
 		bool foveatedPeripheryMaskVisualization = false;
 		bool periphery_taa_enable = false;
 		float periphery_taa_outer_scale = 0.70f;
 		float periphery_taa_center_blend_feather = 0.05f;
-		bool linkFoveatedCenterAreaWithSSGI = true;
-		bool hasExplicitFoveatedCenterLinkPreference = false;
 		bool reflexLowLatencyMode = true;
 		bool reflexLowLatencyBoost = false;
 		bool reflexUseMarkersToOptimize = true;
@@ -144,8 +149,8 @@ public:
 		float2 outputOffset;
 		float2 jitter;
 		float2 centerOffset;
-		float4 tuning0;  // x=centerScale, y=centerFeather, z=resetHistory, w reserved
-		float4 tuning1;  // x=historyValid, y=centerHorizontalScale, z/w reserved
+		float4 tuning0;  // x=centerScale, y=centerFeather, z=resetHistory, w=taaOuterScale
+		float4 tuning1;  // x=historyValid, y=centerHorizontalScale, z=tileDispatch, w=tileDispatchWidth
 		float4 tuning2;  // x=reactivityScale, y=instabilityScale, z=velocityScale, w=lockDecay
 		float4x4 currentViewProjInverse;
 		float4x4 previousViewProj;
@@ -167,6 +172,12 @@ public:
 		uint inputOffsetY = 0;
 		uint inputWidth = 0;
 		uint inputHeight = 0;
+	};
+
+	struct PeripheryTAATile
+	{
+		uint32_t x = 0;
+		uint32_t y = 0;
 	};
 
 	struct FoveatedRectCacheState
@@ -302,6 +313,9 @@ public:
 	eastl::unique_ptr<Texture2D> peripheryTAAHistoryColor[2][2];
 	eastl::unique_ptr<Texture2D> peripheryTAAVelocityHistory[2][2];
 	eastl::unique_ptr<Texture2D> peripheryTAALockHistory[2][2];
+	eastl::unique_ptr<Buffer> peripheryTAATileBuffer;
+	uint32_t peripheryTAATileCapacity = 0;
+	std::vector<PeripheryTAATile> peripheryTAATileUpload;
 	uint32_t peripheryTAAHistoryReadIndex = 0;
 	bool peripheryTAAHistoryValid = false;
 
@@ -356,25 +370,27 @@ public:
 	bool IsPeripheryTAAPathActive(UpscaleMethod a_upscaleMethod) const;
 	float2 GetDefaultFoveatedMaskCenterOffset(uint32_t eyeIndex) const;
 	std::array<float2, 2> GetDefaultFoveatedMaskCenterOffsets() const;
-	float2 GetResolvedFoveatedMaskCenterOffset(uint32_t eyeIndex) const;
-	std::array<float2, 2> GetResolvedFoveatedMaskCenterOffsets() const;
-	bool BuildFoveatedDispatchRects(uint32_t inputWidthPerEye, uint32_t inputHeight, uint32_t outputWidthPerEye, uint32_t outputHeight, bool isVR, float centerScale, float centerFeather, float centerHorizontalScale);
+	float2 GetResolvedFoveatedMaskCenterOffset(uint32_t eyeIndex, bool usePeripheryTAAProfile = false) const;
+	std::array<float2, 2> GetResolvedFoveatedMaskCenterOffsets(bool usePeripheryTAAProfile = false) const;
+	bool BuildFoveatedDispatchRects(uint32_t inputWidthPerEye, uint32_t inputHeight, uint32_t outputWidthPerEye, uint32_t outputHeight, bool isVR, float centerScale, float centerFeather, float centerHorizontalScale, bool usePeripheryTAAProfile = false);
 	bool EnsureFoveatedTexture(eastl::unique_ptr<Texture2D>& texture, ID3D11Resource* source, uint32_t width, uint32_t height, bool copyBindFlags, bool createSRV, bool createUAV, bool createRTV, const char* name);
 	void DestroyFoveatedResources();
 	bool EnsurePeripheryTAAResources(uint32_t outputWidthPerEye, uint32_t outputHeight, ID3D11Resource* colorSource);
+	bool EnsurePeripheryTAATileBuffer(uint32_t tileCapacity);
+	bool BuildPeripheryTAATileList(uint32_t outputWidth, uint32_t outputHeight, float centerScale, float taaOuterScale, float centerHorizontalScale, float centerOffsetX, float centerOffsetY, uint32_t& outTileCount);
 	void DestroyPeripheryTAAResources();
 	bool DispatchFoveatedVendorUpscaling(UpscaleMethod a_upscaleMethod, ID3D11Resource* colorTexture, ID3D11Resource* depthTexture, ID3D11Resource* motionVectors, ID3D11Resource* reactiveMask, ID3D11Resource* transparencyMask, ID3D11ShaderResourceView* colorSRV);
-	bool DispatchSingleFoveatedVendorEye(UpscaleMethod a_upscaleMethod, uint32_t eyeIndex, ID3D11Resource* colorIn, ID3D11Resource* depthIn, ID3D11Resource* motionVectorsIn, ID3D11Resource* reactiveMaskIn, ID3D11Resource* transparencyMaskIn, uint32_t outputWidthPerEye, uint32_t outputHeight, ID3D11Resource* historyColorResource = nullptr, ID3D11UnorderedAccessView* historyColorUAV = nullptr, uint32_t colorInputBaseOffsetX = 0, uint32_t depthInputBaseOffsetX = 0, uint32_t auxInputBaseOffsetX = 0);
-	void DispatchFoveatedPeripheryPass(ID3D11ShaderResourceView* sourceSRV, ID3D11UnorderedAccessView* outputUAV, uint32_t sourceWidth, uint32_t sourceHeight, uint32_t outputWidth, uint32_t outputHeight, uint32_t outputOffsetX, uint32_t outputOffsetY, uint32_t dispatchWidth, uint32_t dispatchHeight, bool keepBindingsBound = false, float sourceScaleX = 1.0f, float sourceScaleY = 1.0f, float sourceOffsetX = 0.0f, float sourceOffsetY = 0.0f, float centerOffsetX = 0.0f, float centerOffsetY = 0.0f);
+	bool DispatchSingleFoveatedVendorEye(UpscaleMethod a_upscaleMethod, uint32_t eyeIndex, ID3D11Resource* colorIn, ID3D11Resource* depthIn, ID3D11Resource* motionVectorsIn, ID3D11Resource* reactiveMaskIn, ID3D11Resource* transparencyMaskIn, uint32_t outputWidthPerEye, uint32_t outputHeight, float centerScale, float centerHorizontalScale, const float2& centerOffset, bool usePeripheryTAAHistory = false, uint32_t colorInputBaseOffsetX = 0, uint32_t depthInputBaseOffsetX = 0, uint32_t auxInputBaseOffsetX = 0);
+	void DispatchFoveatedPeripheryPass(ID3D11ShaderResourceView* sourceSRV, ID3D11UnorderedAccessView* outputUAV, uint32_t sourceWidth, uint32_t sourceHeight, uint32_t outputWidth, uint32_t outputHeight, uint32_t outputOffsetX, uint32_t outputOffsetY, uint32_t dispatchWidth, uint32_t dispatchHeight, float centerScale, float centerHorizontalScale, bool keepBindingsBound = false, float sourceScaleX = 1.0f, float sourceScaleY = 1.0f, float sourceOffsetX = 0.0f, float sourceOffsetY = 0.0f, float centerOffsetX = 0.0f, float centerOffsetY = 0.0f);
 	void DispatchPeripheryTAAPass(ID3D11ShaderResourceView* currentColorSRV, ID3D11ShaderResourceView* currentDepthSRV, ID3D11ShaderResourceView* currentMotionVectorSRV,
 		ID3D11ShaderResourceView* currentReactiveSRV, ID3D11ShaderResourceView* currentTransparencySRV, ID3D11ShaderResourceView* historyColorSRV,
 		ID3D11ShaderResourceView* historyVelocitySRV, ID3D11ShaderResourceView* historyLockSRV, ID3D11UnorderedAccessView* outputColorUAV,
-		ID3D11UnorderedAccessView* outputHistoryColorUAV,
-		ID3D11UnorderedAccessView* outputVelocityUAV, ID3D11UnorderedAccessView* outputLockUAV, uint32_t inputWidth, uint32_t inputHeight,
+		ID3D11UnorderedAccessView* outputVelocityUAV, ID3D11UnorderedAccessView* outputLockUAV, ID3D11ShaderResourceView* tileListSRV, uint32_t tileCount,
+		uint32_t inputWidth, uint32_t inputHeight,
 		uint32_t outputWidth, uint32_t outputHeight, uint32_t outputOffsetX, uint32_t outputOffsetY, uint32_t dispatchWidth, uint32_t dispatchHeight,
 		const float4x4& currentViewProjInverse, const float4x4& previousViewProj, const float4& currentCameraPosAdjust, const float4& previousCameraPosAdjust,
-		bool resetHistory, float centerOffsetX, float centerOffsetY);
-	void DispatchFoveatedBlendPass(ID3D11ShaderResourceView* centerSRV, ID3D11UnorderedAccessView* outputUAV, uint32_t eyeIndex, uint32_t outputWidthPerEye, uint32_t outputHeight, const FoveatedDispatchRect& rect, uint32_t dispatchOffsetX, uint32_t dispatchOffsetY, uint32_t dispatchWidth, uint32_t dispatchHeight, float centerFeather);
+		bool resetHistory, float centerScale, float centerHorizontalScale, float centerOffsetX, float centerOffsetY);
+	void DispatchFoveatedBlendPass(ID3D11ShaderResourceView* centerSRV, ID3D11UnorderedAccessView* outputUAV, uint32_t outputWidthPerEye, uint32_t outputHeight, const FoveatedDispatchRect& rect, uint32_t dispatchOffsetX, uint32_t dispatchOffsetY, uint32_t dispatchWidth, uint32_t dispatchHeight, float centerScale, float centerHorizontalScale, const float2& centerOffset, float centerFeather);
 
 	/**
 	 * @brief Applies RCAS sharpening to the main render target after DLSS upscaling.
