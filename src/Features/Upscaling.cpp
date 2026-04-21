@@ -74,6 +74,8 @@ namespace
 
 	float ClampFoveatedMaskOffsetAdjustment(float value)
 	{
+		if (!std::isfinite(value))
+			return 0.0f;
 		return std::clamp(value, kFoveatedMaskOffsetAdjustMin, kFoveatedMaskOffsetAdjustMax);
 	}
 
@@ -1792,12 +1794,6 @@ void Upscaling::DispatchFoveatedPeripheryPass(ID3D11ShaderResourceView* sourceSR
 		0.0f
 	};
 	cbData.tuning1 = {
-		0.0f,
-		0.0f,
-		0.0f,
-		0.0f
-	};
-	cbData.tuning2 = {
 		visualizeMask ? 1.0f : 0.0f,
 		showThreeZoneMask ? 1.0f : 0.0f,
 		taaOuterScale,
@@ -1901,12 +1897,6 @@ void Upscaling::DispatchPeripheryTAAPass(ID3D11ShaderResourceView* currentColorS
 		1.25f,
 		0.10f,
 		0.92f
-	};
-	cbData.tuning3 = {
-		1.0f,
-		1.0f,
-		1.0f,
-		0.0f
 	};
 	cbData.currentViewProjInverse = currentViewProjInverse;
 	cbData.previousViewProj = previousViewProj;
@@ -2029,6 +2019,9 @@ void Upscaling::DispatchFoveatedBlendPass(ID3D11ShaderResourceView* centerSRV, I
 
 bool Upscaling::DispatchSingleFoveatedVendorEye(UpscaleMethod a_upscaleMethod, uint32_t eyeIndex, ID3D11Resource* colorIn, ID3D11Resource* depthIn, ID3D11Resource* motionVectorsIn, ID3D11Resource* reactiveMaskIn, ID3D11Resource* transparencyMaskIn, uint32_t outputWidthPerEye, uint32_t outputHeight, ID3D11Resource* historyColorResource, ID3D11UnorderedAccessView* historyColorUAV, uint32_t colorInputBaseOffsetX, uint32_t depthInputBaseOffsetX, uint32_t auxInputBaseOffsetX)
 {
+	if (a_upscaleMethod != UpscaleMethod::kDLSS)
+		return false;
+
 	if (eyeIndex > 1)
 		return false;
 
@@ -2089,48 +2082,28 @@ bool Upscaling::DispatchSingleFoveatedVendorEye(UpscaleMethod a_upscaleMethod, u
 	context->CopySubresourceRegion(foveatedCenterReactiveMask[eyeIndex]->resource.get(), 0, 0, 0, 0, reactiveMaskIn, 0, &auxSrcBox);
 	context->CopySubresourceRegion(foveatedCenterTransparencyMask[eyeIndex]->resource.get(), 0, 0, 0, 0, transparencyMaskIn, 0, &auxSrcBox);
 
-	bool dispatchOK = false;
-	if (a_upscaleMethod == UpscaleMethod::kDLSS) {
-		const float outputWidthPerEyeF = std::max(1.0f, static_cast<float>(outputWidthPerEye));
-		const float outputHeightF = std::max(1.0f, static_cast<float>(outputHeight));
-		const float rectCenterX = (static_cast<float>(rect.outputOffsetX) + static_cast<float>(rect.outputWidth) * 0.5f) / outputWidthPerEyeF;
-		const float rectCenterY = (static_cast<float>(rect.outputOffsetY) + static_cast<float>(rect.outputHeight) * 0.5f) / outputHeightF;
-		const float pinholeOffsetX = std::clamp((rectCenterX - 0.5f) * 2.0f, -1.0f, 1.0f);
-		// Texture-space Y grows downward, while clip-space Y grows upward.
-		const float pinholeOffsetY = std::clamp((0.5f - rectCenterY) * 2.0f, -1.0f, 1.0f);
+	const float outputWidthPerEyeF = std::max(1.0f, static_cast<float>(outputWidthPerEye));
+	const float outputHeightF = std::max(1.0f, static_cast<float>(outputHeight));
+	const float rectCenterX = (static_cast<float>(rect.outputOffsetX) + static_cast<float>(rect.outputWidth) * 0.5f) / outputWidthPerEyeF;
+	const float rectCenterY = (static_cast<float>(rect.outputOffsetY) + static_cast<float>(rect.outputHeight) * 0.5f) / outputHeightF;
+	const float pinholeOffsetX = std::clamp((rectCenterX - 0.5f) * 2.0f, -1.0f, 1.0f);
+	// Texture-space Y grows downward, while clip-space Y grows upward.
+	const float pinholeOffsetY = std::clamp((0.5f - rectCenterY) * 2.0f, -1.0f, 1.0f);
 
-		dispatchOK = streamline.UpscaleRegion(
-			eyeIndex,
-			foveatedCenterColorIn[eyeIndex]->resource.get(),
-			foveatedCenterColorOut[eyeIndex]->resource.get(),
-			foveatedCenterDepth[eyeIndex]->resource.get(),
-			foveatedCenterMotionVectors[eyeIndex]->resource.get(),
-			foveatedCenterReactiveMask[eyeIndex]->resource.get(),
-			foveatedCenterTransparencyMask[eyeIndex]->resource.get(),
-			rect.inputWidth,
-			rect.inputHeight,
-			rect.outputWidth,
-			rect.outputHeight,
-			pinholeOffsetX,
-			pinholeOffsetY);
-	} else if (a_upscaleMethod == UpscaleMethod::kFSR) {
-		dispatchOK = fidelityFX.UpscaleRegion(
-			eyeIndex,
-			foveatedCenterColorIn[eyeIndex]->resource.get(),
-			foveatedCenterDepth[eyeIndex]->resource.get(),
-			foveatedCenterMotionVectors[eyeIndex]->resource.get(),
-			foveatedCenterReactiveMask[eyeIndex]->resource.get(),
-			foveatedCenterTransparencyMask[eyeIndex]->resource.get(),
-			foveatedCenterColorOut[eyeIndex]->resource.get(),
-			rect.inputWidth,
-			rect.inputHeight,
-			rect.outputWidth,
-			rect.outputHeight,
-			static_cast<float>(rect.inputWidth),
-			static_cast<float>(rect.inputHeight),
-			settings.sharpnessFSR);
-	}
-
+	const bool dispatchOK = streamline.UpscaleRegion(
+		eyeIndex,
+		foveatedCenterColorIn[eyeIndex]->resource.get(),
+		foveatedCenterColorOut[eyeIndex]->resource.get(),
+		foveatedCenterDepth[eyeIndex]->resource.get(),
+		foveatedCenterMotionVectors[eyeIndex]->resource.get(),
+		foveatedCenterReactiveMask[eyeIndex]->resource.get(),
+		foveatedCenterTransparencyMask[eyeIndex]->resource.get(),
+		rect.inputWidth,
+		rect.inputHeight,
+		rect.outputWidth,
+		rect.outputHeight,
+		pinholeOffsetX,
+		pinholeOffsetY);
 	if (!dispatchOK)
 		return false;
 
@@ -2178,9 +2151,11 @@ bool Upscaling::DispatchSingleFoveatedVendorEye(UpscaleMethod a_upscaleMethod, u
 	return true;
 }
 
-bool Upscaling::DispatchFoveatedVendorUpscaling(UpscaleMethod a_upscaleMethod, ID3D11Resource* colorTexture, ID3D11Resource* depthTexture, ID3D11Resource* motionVectors, ID3D11Resource* reactiveMask, ID3D11Resource* transparencyMask, ID3D11ShaderResourceView* colorSRV, bool depthAlreadyPrepared)
+bool Upscaling::DispatchFoveatedVendorUpscaling(UpscaleMethod a_upscaleMethod, ID3D11Resource* colorTexture, ID3D11Resource* depthTexture, ID3D11Resource* motionVectors, ID3D11Resource* reactiveMask, ID3D11Resource* transparencyMask, ID3D11ShaderResourceView* colorSRV)
 {
 	if (!globals::game::isVR)
+		return false;
+	if (a_upscaleMethod != UpscaleMethod::kDLSS)
 		return false;
 
 	if (!colorTexture || !depthTexture || !motionVectors || !reactiveMask || !transparencyMask)
@@ -2216,9 +2191,9 @@ bool Upscaling::DispatchFoveatedVendorUpscaling(UpscaleMethod a_upscaleMethod, I
 	if (!context || !deferred || !deferred->linearSampler)
 		return false;
 
-	const bool useDirectSourcePath = (a_upscaleMethod == UpscaleMethod::kDLSS) && settings.qualityMode == 0 && colorSRV != nullptr && !usePeripheryTAA;
+	const bool useDirectSourcePath = settings.qualityMode == 0 && colorSRV != nullptr && !usePeripheryTAA;
 	if (!useDirectSourcePath) {
-		PreparePerEyeInputs(colorTexture, depthTexture, motionVectors, reactiveMask, transparencyMask, false, !depthAlreadyPrepared);
+		PreparePerEyeInputs(colorTexture, depthTexture, motionVectors, reactiveMask, transparencyMask, false, true);
 	}
 	if (usePeripheryTAA && !EnsurePeripheryTAAResources(outputWidthPerEye, outputHeight, colorTexture))
 		return false;
@@ -3381,7 +3356,6 @@ void Upscaling::Upscale()
 	}
 
 	auto dispatchCount = Util::GetScreenDispatchCount(true);
-	bool depthPreparedForFoveatedDispatch = false;
 
 	{
 		state->BeginPerfEvent("Encode Upscaling Textures");
@@ -3486,8 +3460,7 @@ void Upscaling::Upscale()
 				motionVectorResource,
 				reactiveMaskTexture->resource.get(),
 				transparencyCompositionMaskTexture->resource.get(),
-				main.SRV,
-				depthPreparedForFoveatedDispatch);
+				main.SRV);
 			if (!dispatched) {
 				if (!loggedFoveatedFallback) {
 					logger::warn("[Upscaling] Foveated vendor dispatch failed; falling back to full-frame {} dispatch.",

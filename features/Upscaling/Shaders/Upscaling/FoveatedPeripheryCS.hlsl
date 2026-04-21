@@ -13,8 +13,7 @@ cbuffer FoveatedPeripheryCB : register(b0)
 	float2 CenterOffset;
 	float2 Pad0;
 	float4 Tuning0;  // x=centerScale, y=centerFeather, z=centerHorizontalScale, w reserved
-	float4 Tuning1;  // reserved
-	float4 Tuning2;  // x=visualizeMask, y=showThreeZoneMask, z=taaOuterScale, w reserved
+	float4 Tuning1;  // x=visualizeMask, y=showThreeZoneMask, z=taaOuterScale, w reserved
 };
 
 Texture2D<float4> InputColor : register(t0);
@@ -41,9 +40,9 @@ float2 ClampToSourceRegion(float2 uv, float2 regionMin, float2 regionMax)
 	const float centerScale = Tuning0.x;
 	const float centerFeather = Tuning0.y;
 	const float centerHorizontalScale = Tuning0.z;
-	const float visualizeMask = Tuning2.x;
-	const float showThreeZoneMask = Tuning2.y;
-	const float taaOuterScale = max(Tuning2.z, centerScale);
+	const float visualizeMask = Tuning1.x;
+	const float showThreeZoneMask = Tuning1.y;
+	const float taaOuterScale = max(Tuning1.z, centerScale);
 
 	if (visualizeMask > 0.5) {
 		const float normalizedFeather = FoveatedComputeNormalizedFeather(centerScale, centerFeather, centerHorizontalScale);

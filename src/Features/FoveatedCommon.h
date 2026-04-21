@@ -24,6 +24,8 @@ namespace FoveatedCommon
 
 	inline float ClampCenterArea(float value)
 	{
+		if (!std::isfinite(value))
+			return kCenterAreaMax;
 		return std::clamp(value, kCenterAreaMin, kCenterAreaMax);
 	}
 

@@ -118,8 +118,7 @@ public:
 		float2 centerOffset;
 		float2 pad0;
 		float4 tuning0;  // x=centerScale, y=centerFeather, z=centerHorizontalScale, w reserved
-		float4 tuning1;  // reserved
-		float4 tuning2;  // x=visualizeMask, y=showThreeZoneMask, z=taaOuterScale, w reserved
+		float4 tuning1;  // x=visualizeMask, y=showThreeZoneMask, z=taaOuterScale, w reserved
 	};
 
 	struct FoveatedCenterBlendCB
@@ -148,16 +147,15 @@ public:
 		float4 tuning0;  // x=centerScale, y=centerFeather, z=resetHistory, w reserved
 		float4 tuning1;  // x=historyValid, y=centerHorizontalScale, z/w reserved
 		float4 tuning2;  // x=reactivityScale, y=instabilityScale, z=velocityScale, w=lockDecay
-		float4 tuning3;  // x=enableHmdReprojection, y=separateHmdRejection, z=enableMotionStabilization, w reserved
 		float4x4 currentViewProjInverse;
 		float4x4 previousViewProj;
 		float4 currentCameraPosAdjust;
 		float4 previousCameraPosAdjust;
 	};
 
-	static_assert(sizeof(FoveatedPeripheryCB) == 128, "FoveatedPeripheryCB layout changed; update HLSL cbuffer.");
+	static_assert(sizeof(FoveatedPeripheryCB) == 112, "FoveatedPeripheryCB layout changed; update HLSL cbuffer.");
 	static_assert(sizeof(FoveatedCenterBlendCB) == 64, "FoveatedCenterBlendCB layout changed; update HLSL cbuffer.");
-	static_assert(sizeof(PeripheryTAACB) == 288, "PeripheryTAACB layout changed; update HLSL cbuffer.");
+	static_assert(sizeof(PeripheryTAACB) == 272, "PeripheryTAACB layout changed; update HLSL cbuffer.");
 
 	struct FoveatedDispatchRect
 	{
@@ -365,7 +363,7 @@ public:
 	void DestroyFoveatedResources();
 	bool EnsurePeripheryTAAResources(uint32_t outputWidthPerEye, uint32_t outputHeight, ID3D11Resource* colorSource);
 	void DestroyPeripheryTAAResources();
-	bool DispatchFoveatedVendorUpscaling(UpscaleMethod a_upscaleMethod, ID3D11Resource* colorTexture, ID3D11Resource* depthTexture, ID3D11Resource* motionVectors, ID3D11Resource* reactiveMask, ID3D11Resource* transparencyMask, ID3D11ShaderResourceView* colorSRV, bool depthAlreadyPrepared);
+	bool DispatchFoveatedVendorUpscaling(UpscaleMethod a_upscaleMethod, ID3D11Resource* colorTexture, ID3D11Resource* depthTexture, ID3D11Resource* motionVectors, ID3D11Resource* reactiveMask, ID3D11Resource* transparencyMask, ID3D11ShaderResourceView* colorSRV);
 	bool DispatchSingleFoveatedVendorEye(UpscaleMethod a_upscaleMethod, uint32_t eyeIndex, ID3D11Resource* colorIn, ID3D11Resource* depthIn, ID3D11Resource* motionVectorsIn, ID3D11Resource* reactiveMaskIn, ID3D11Resource* transparencyMaskIn, uint32_t outputWidthPerEye, uint32_t outputHeight, ID3D11Resource* historyColorResource = nullptr, ID3D11UnorderedAccessView* historyColorUAV = nullptr, uint32_t colorInputBaseOffsetX = 0, uint32_t depthInputBaseOffsetX = 0, uint32_t auxInputBaseOffsetX = 0);
 	void DispatchFoveatedPeripheryPass(ID3D11ShaderResourceView* sourceSRV, ID3D11UnorderedAccessView* outputUAV, uint32_t sourceWidth, uint32_t sourceHeight, uint32_t outputWidth, uint32_t outputHeight, uint32_t outputOffsetX, uint32_t outputOffsetY, uint32_t dispatchWidth, uint32_t dispatchHeight, bool keepBindingsBound = false, float sourceScaleX = 1.0f, float sourceScaleY = 1.0f, float sourceOffsetX = 0.0f, float sourceOffsetY = 0.0f, float centerOffsetX = 0.0f, float centerOffsetY = 0.0f);
 	void DispatchPeripheryTAAPass(ID3D11ShaderResourceView* currentColorSRV, ID3D11ShaderResourceView* currentDepthSRV, ID3D11ShaderResourceView* currentMotionVectorSRV,

@@ -62,27 +62,6 @@ float FoveatedComputeMaskDistance(float2 eyeUv, float centerScale, float centerH
 	return pow(max(pNorm, 0.0), invShapePower);
 }
 
-float FoveatedComputeMaskDistance(float2 eyeUv, float centerScale, float2 centerOffset)
-{
-	return FoveatedComputeMaskDistance(eyeUv, centerScale, 1.0, centerOffset);
-}
-
-// Backward-compatible alias: ownership shape is now a superellipse/squircle, not a strict ellipse.
-float FoveatedComputeEllipseDistance(float2 eyeUv, float centerScale, float2 centerOffset)
-{
-	return FoveatedComputeMaskDistance(eyeUv, centerScale, centerOffset);
-}
-
-float FoveatedComputeEllipseDistance(float2 eyeUv, float centerScale, float centerHorizontalScale, float2 centerOffset)
-{
-	return FoveatedComputeMaskDistance(eyeUv, centerScale, centerHorizontalScale, centerOffset);
-}
-
-float FoveatedComputeEllipseDistance(float2 eyeUv, float centerScale)
-{
-	return FoveatedComputeEllipseDistance(eyeUv, centerScale, float2(0.0, 0.0));
-}
-
 float FoveatedComputeCenterBlendWeight(float2 eyeUv, float centerScale, float centerFeather, float centerHorizontalScale, float2 centerOffset)
 {
 	float normalizedFeather = FoveatedComputeNormalizedFeather(centerScale, centerFeather, centerHorizontalScale);

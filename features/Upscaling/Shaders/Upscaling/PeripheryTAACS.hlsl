@@ -25,7 +25,6 @@ cbuffer PeripheryTAACB : register(b0)
 	float4 Tuning0;  // x=centerScale, y=centerFeather, z=resetHistory, w reserved
 	float4 Tuning1;  // x=historyValid, y=centerHorizontalScale, z/w reserved
 	float4 Tuning2;  // x=reactivityScale, y=instabilityScale, z=velocityScale, w=lockDecay
-	float4 Tuning3;  // x=enableHmdReprojection, y=separateHmdRejection, z=enableMotionStabilization, w reserved
 	row_major float4x4 CurrentViewProjInverse;
 	row_major float4x4 PreviousViewProj;
 	float4 CurrentCameraPosAdjust;
@@ -283,9 +282,6 @@ void main(uint3 dispatchID : SV_DispatchThreadID)
 	float centerHorizontalScale = Tuning1.y;
 	bool resetHistory = Tuning0.z > 0.5;
 	bool historyValid = Tuning1.x > 0.5 && !resetHistory;
-	bool enableHmdReprojection = Tuning3.x > 0.5;
-	bool separateHmdRejection = Tuning3.y > 0.5;
-	bool enableMotionStabilization = Tuning3.z > 0.5;
 
 	float centerWeight = FoveatedComputeCenterBlendWeight(outputUV, centerScale, centerFeather, centerHorizontalScale, CenterOffset);
 	float peripheryWeight = saturate(1.0 - centerWeight);
@@ -299,11 +295,9 @@ void main(uint3 dispatchID : SV_DispatchThreadID)
 	float currentDepth = closestDepth.depth;
 	float2 currentVelocity = closestDepth.velocity;
 	float2 hmdHistoryDeltaLookup = 0.0.xx;
-	if (enableHmdReprojection) {
-		hmdHistoryDeltaLookup = ComputeHmdHistoryDelta(closestDepth.uv, currentDepth);
-	}
+	hmdHistoryDeltaLookup = ComputeHmdHistoryDelta(closestDepth.uv, currentDepth);
 	float2 historyVelocity = currentVelocity + hmdHistoryDeltaLookup;
-	float2 rejectionVelocity = separateHmdRejection ? currentVelocity : historyVelocity;
+	float2 rejectionVelocity = currentVelocity;
 	float velocityPixels = length(rejectionVelocity * OutputDim);
 	float2 historyUV = outputUV + historyVelocity;
 	float reactiveMask = CurrentReactiveMask.SampleLevel(LinearSampler, inputUV, 0.0);
@@ -325,29 +319,23 @@ void main(uint3 dispatchID : SV_DispatchThreadID)
 
 		previousLock = HistoryLock.Load(int3(ToHistoryPos(historyUV), 0));
 		float stabilityBias = 0.0;
-		if (enableMotionStabilization) {
-			float lockBias = saturate(previousLock * 0.90 + 0.25);
-			stabilityBias = lockBias;
-		}
+		float lockBias = saturate(previousLock * 0.90 + 0.25);
+		stabilityBias = lockBias;
 		velocityDeltaPixels = ComputeVelocityDeltaPixels(historyUV, rejectionVelocity);
 		float disocclusionVelocityDeltaPixels = velocityDeltaPixels;
-		if (enableMotionStabilization) {
-			float hmdRejectionRelaxation = ComputeHmdRejectionRelaxation(hmdHistoryDeltaLookup);
-			float cameraVelocityRelaxation = saturate((velocityPixels - kCameraVelocityRelaxThresholdPixels) * kCameraVelocityRelaxScale);
-			motionRejectionRelaxation = max(hmdRejectionRelaxation, cameraVelocityRelaxation);
-			float hmdMotionPixels = length(hmdHistoryDeltaLookup * OutputDim);
-			disocclusionVelocityDeltaPixels = lerp(
-				velocityDeltaPixels,
-				max(0.0, velocityDeltaPixels - hmdMotionPixels * kHmdVelocityDeltaRelaxStrength),
-				motionRejectionRelaxation);
-			disocclusion = ComputeDisocclusion(disocclusionVelocityDeltaPixels, stabilityBias);
-			float stableHistoryConfidence = max(kHmdDisocclusionConfidenceFloor, saturate(previousLock * 1.5 + 0.10));
-			float hmdDisocclusionSuppression = motionRejectionRelaxation * stableHistoryConfidence;
-			disocclusion *= 1.0 - hmdDisocclusionSuppression * kHmdDisocclusionSuppression;
-			disocclusion = min(disocclusion, lerp(1.0, kHmdDisocclusionCap, hmdDisocclusionSuppression));
-		} else {
-			disocclusion = ComputeDisocclusion(disocclusionVelocityDeltaPixels, stabilityBias);
-		}
+		float hmdRejectionRelaxation = ComputeHmdRejectionRelaxation(hmdHistoryDeltaLookup);
+		float cameraVelocityRelaxation = saturate((velocityPixels - kCameraVelocityRelaxThresholdPixels) * kCameraVelocityRelaxScale);
+		motionRejectionRelaxation = max(hmdRejectionRelaxation, cameraVelocityRelaxation);
+		float hmdMotionPixels = length(hmdHistoryDeltaLookup * OutputDim);
+		disocclusionVelocityDeltaPixels = lerp(
+			velocityDeltaPixels,
+			max(0.0, velocityDeltaPixels - hmdMotionPixels * kHmdVelocityDeltaRelaxStrength),
+			motionRejectionRelaxation);
+		disocclusion = ComputeDisocclusion(disocclusionVelocityDeltaPixels, stabilityBias);
+		float stableHistoryConfidence = max(kHmdDisocclusionConfidenceFloor, saturate(previousLock * 1.5 + 0.10));
+		float hmdDisocclusionSuppression = motionRejectionRelaxation * stableHistoryConfidence;
+		disocclusion *= 1.0 - hmdDisocclusionSuppression * kHmdDisocclusionSuppression;
+		disocclusion = min(disocclusion, lerp(1.0, kHmdDisocclusionCap, hmdDisocclusionSuppression));
 
 		float3 currentTM = Reinhard(currentColor);
 		float3 historyTM = Reinhard(clippedHistory);
@@ -355,14 +343,12 @@ void main(uint3 dispatchID : SV_DispatchThreadID)
 		float historyLuma = Luma(historyTM);
 
 		float motionFactor = saturate(velocityPixels * Tuning2.z);
-		if (enableMotionStabilization)
-			motionFactor *= 1.0 - motionRejectionRelaxation * kHmdMotionBlendSuppression;
+		motionFactor *= 1.0 - motionRejectionRelaxation * kHmdMotionBlendSuppression;
 
 		float lumaDiff = abs(currentLuma - historyLuma) / max(max(currentLuma, historyLuma), 1e-3);
 		instability = saturate(lumaDiff * Tuning2.y);
 		instability *= (1.0 - motionFactor);
-		if (enableMotionStabilization)
-			instability *= 1.0 - motionRejectionRelaxation * kMotionInstabilitySuppression;
+		instability *= 1.0 - motionRejectionRelaxation * kMotionInstabilitySuppression;
 
 		float lockBoost = previousLock * (1.0 - reactivity) * (1.0 - disocclusion);
 		currentBlend = 0.08;

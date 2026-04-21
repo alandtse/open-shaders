@@ -330,7 +330,7 @@ void FidelityFX::CreateFSRResources()
 	}
 	memset(fsrScratchBuffer, 0, scratchBufferSize);
 
-	FfxInterface fsrInterface;
+	FfxInterface fsrInterface{};
 	if (ffxGetInterfaceDX11(&fsrInterface, fsrDevice, fsrScratchBuffer, scratchBufferSize, numContexts) != FFX_OK) {
 		logger::critical("[FidelityFX] Failed to initialize FSR3 backend interface!");
 		free(fsrScratchBuffer);
@@ -946,6 +946,7 @@ bool FidelityFX::UpscaleRegion(uint32_t a_contextIndex, ID3D11Resource* a_color,
 
 	static bool loggedRuntimeRegionFallback = false;
 	const bool runtimeSelected = CanUseRuntimeUpscalerPath();
+	bool runtimeFallbackUsed = false;
 	if (!runtimeSelected)
 		loggedRuntimeRegionFallback = false;
 
@@ -993,6 +994,7 @@ bool FidelityFX::UpscaleRegion(uint32_t a_contextIndex, ID3D11Resource* a_color,
 			logger::warn("[FidelityFX] Runtime upscaler dispatch failed, falling back to host FSR3.1 dispatch.");
 			loggedRuntimeRegionFallback = true;
 		}
+		runtimeFallbackUsed = true;
 	}
 
 	if (!fsrScratchBuffer || a_contextIndex >= fsrContextCount)
@@ -1038,7 +1040,7 @@ bool FidelityFX::UpscaleRegion(uint32_t a_contextIndex, ID3D11Resource* a_color,
 	dispatchParameters.sharpness = a_sharpness;
 	dispatchParameters.cameraFovAngleVertical = Util::GetVerticalFOVRad();
 	dispatchParameters.viewSpaceToMetersFactor = 0.01428222656f;
-	dispatchParameters.reset = globals::features::upscaling.ShouldResetHistoryThisFrame();
+	dispatchParameters.reset = globals::features::upscaling.ShouldResetHistoryThisFrame() || runtimeFallbackUsed;
 	dispatchParameters.preExposure = 1.0f;
 	dispatchParameters.flags = 0;
 
