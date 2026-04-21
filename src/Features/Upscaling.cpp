@@ -44,15 +44,9 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	periphery_taa_enable,
 	periphery_taa_show_debug,
 	periphery_taa_debug_mode,
-	periphery_taa_disable_locks,
-	periphery_taa_disable_reactivity,
-	periphery_taa_disable_instability,
+	periphery_taa_center_blend_feather,
 	periphery_taa_hmd_reprojection,
-	periphery_taa_hmd_motion_guard,
 	periphery_taa_separate_hmd_rejection,
-	periphery_taa_reduce_hmd_blend,
-	periphery_taa_anchor_hmd_reprojection,
-	periphery_taa_sharpen_fallback,
 	periphery_taa_stabilize_motion,
 	linkFoveatedCenterAreaWithSSGI,
 	hasExplicitFoveatedCenterLinkPreference,
@@ -68,7 +62,9 @@ namespace
 {
 	constexpr float kPeripheryEdgeBlurStrengthMin = 1.0f;
 	constexpr float kPeripheryEdgeBlurStrengthMax = 10.0f;
-	constexpr uint32_t kPeripheryTAADebugModeMaxIndex = 7u;
+	constexpr uint32_t kPeripheryTAADebugModeMaxIndex = 12u;
+	constexpr float kPeripheryTAACenterBlendFeatherMin = 0.0f;
+	constexpr float kPeripheryTAACenterBlendFeatherMax = 0.08f;
 	constexpr float kFoveatedMaskOffsetAdjustMin = -0.15f;
 	constexpr float kFoveatedMaskOffsetAdjustMax = 0.15f;
 	constexpr float kFoveatedMaskOffsetResolvedMin = -0.25f;
@@ -109,6 +105,13 @@ namespace
 		return std::min<uint>(value, kPeripheryTAADebugModeMaxIndex);
 	}
 
+	float ClampPeripheryTAACenterBlendFeather(float value)
+	{
+		if (!std::isfinite(value))
+			return FoveatedCommon::kCenterFeather;
+		return std::clamp(value, kPeripheryTAACenterBlendFeatherMin, kPeripheryTAACenterBlendFeatherMax);
+	}
+
 	float ClampFiniteUnitRange(float value, float fallback)
 	{
 		if (!std::isfinite(value))
@@ -139,6 +142,7 @@ namespace
 		settings.sharpnessFSR = ClampFiniteUnitRange(settings.sharpnessFSR, 0.0f);
 		settings.sharpnessDLSS = ClampFiniteUnitRange(settings.sharpnessDLSS, 0.1f);
 		settings.periphery_taa_debug_mode = ClampPeripheryTAADebugModeUInt(settings.periphery_taa_debug_mode);
+		settings.periphery_taa_center_blend_feather = ClampPeripheryTAACenterBlendFeather(settings.periphery_taa_center_blend_feather);
 		SanitizeFoveatedSettings(settings);
 	}
 
@@ -157,15 +161,9 @@ namespace
 		settings.periphery_taa_enable = false;
 		settings.periphery_taa_show_debug = false;
 		settings.periphery_taa_debug_mode = 0;
-		settings.periphery_taa_disable_locks = false;
-		settings.periphery_taa_disable_reactivity = false;
-		settings.periphery_taa_disable_instability = false;
+		settings.periphery_taa_center_blend_feather = FoveatedCommon::kCenterFeather;
 		settings.periphery_taa_hmd_reprojection = false;
-		settings.periphery_taa_hmd_motion_guard = false;
 		settings.periphery_taa_separate_hmd_rejection = false;
-		settings.periphery_taa_reduce_hmd_blend = false;
-		settings.periphery_taa_anchor_hmd_reprojection = false;
-		settings.periphery_taa_sharpen_fallback = false;
 		settings.periphery_taa_stabilize_motion = false;
 		settings.linkFoveatedCenterAreaWithSSGI = true;
 		settings.hasExplicitFoveatedCenterLinkPreference = false;
@@ -186,15 +184,9 @@ namespace
 		o_json.erase("periphery_taa_enable");
 		o_json.erase("periphery_taa_show_debug");
 		o_json.erase("periphery_taa_debug_mode");
-		o_json.erase("periphery_taa_disable_locks");
-		o_json.erase("periphery_taa_disable_reactivity");
-		o_json.erase("periphery_taa_disable_instability");
+		o_json.erase("periphery_taa_center_blend_feather");
 		o_json.erase("periphery_taa_hmd_reprojection");
-		o_json.erase("periphery_taa_hmd_motion_guard");
 		o_json.erase("periphery_taa_separate_hmd_rejection");
-		o_json.erase("periphery_taa_reduce_hmd_blend");
-		o_json.erase("periphery_taa_anchor_hmd_reprojection");
-		o_json.erase("periphery_taa_sharpen_fallback");
 		o_json.erase("periphery_taa_stabilize_motion");
 		o_json.erase("linkFoveatedCenterAreaWithSSGI");
 		o_json.erase("hasExplicitFoveatedCenterLinkPreference");
@@ -715,29 +707,32 @@ void Upscaling::DrawSettings()
 								"Lock",
 								"Disocclusion",
 								"Instability",
-								"HMD Motion",
 								"Motion Magnitude",
-								"Velocity Delta"
+								"Velocity Delta",
+								"Current Blend",
+								"Periphery Weight",
+								"History UV OOB",
+								"Raw Current Velocity",
+								"HMD History Delta",
+								"Final History Velocity"
 							};
 							int debugMode = static_cast<int>(settings.periphery_taa_debug_mode);
+							debugMode = std::clamp(debugMode, 0, static_cast<int>(kPeripheryTAADebugModeMaxIndex));
 							ImGui::SliderInt("periphery_taa_debug_mode", &debugMode, 0, static_cast<int>(kPeripheryTAADebugModeMaxIndex), debugModes[debugMode]);
 							settings.periphery_taa_debug_mode = ClampPeripheryTAADebugModeUInt(static_cast<uint>(debugMode));
 						}
-						ImGui::Checkbox("periphery_taa_disable_locks", &settings.periphery_taa_disable_locks);
-						ImGui::Checkbox("periphery_taa_disable_reactivity", &settings.periphery_taa_disable_reactivity);
-						ImGui::Checkbox("periphery_taa_disable_instability", &settings.periphery_taa_disable_instability);
+						ImGui::SliderFloat(
+							"periphery_taa_center_blend_feather",
+							&settings.periphery_taa_center_blend_feather,
+							kPeripheryTAACenterBlendFeatherMin,
+							kPeripheryTAACenterBlendFeatherMax,
+							"%.3f");
+						settings.periphery_taa_center_blend_feather = ClampPeripheryTAACenterBlendFeather(settings.periphery_taa_center_blend_feather);
 						ImGui::Separator();
 						ImGui::Checkbox("periphery_taa_hmd_reprojection", &settings.periphery_taa_hmd_reprojection);
-						ImGui::Checkbox("periphery_taa_hmd_motion_guard", &settings.periphery_taa_hmd_motion_guard);
-						ImGui::Separator();
 						ImGui::BeginDisabled(!settings.periphery_taa_hmd_reprojection);
 						ImGui::Checkbox("periphery_taa_separate_hmd_rejection", &settings.periphery_taa_separate_hmd_rejection);
-						ImGui::Checkbox("periphery_taa_anchor_hmd_reprojection", &settings.periphery_taa_anchor_hmd_reprojection);
 						ImGui::EndDisabled();
-						ImGui::BeginDisabled(!settings.periphery_taa_hmd_motion_guard);
-						ImGui::Checkbox("periphery_taa_reduce_hmd_blend", &settings.periphery_taa_reduce_hmd_blend);
-						ImGui::EndDisabled();
-						ImGui::Checkbox("periphery_taa_sharpen_fallback", &settings.periphery_taa_sharpen_fallback);
 						ImGui::Checkbox("periphery_taa_stabilize_motion", &settings.periphery_taa_stabilize_motion);
 					}
 				}
@@ -746,14 +741,11 @@ void Upscaling::DrawSettings()
 					ImGui::TextUnformatted("When enabled, the current spatial periphery pass is replaced so you can A/B directly against the existing implementation.");
 					ImGui::TextUnformatted("The center vendor upscaler path stays unchanged.");
 					ImGui::TextUnformatted("When debug is enabled, periphery history still advances so the debug views reflect live temporal behavior.");
+					ImGui::TextUnformatted("periphery_taa_center_blend_feather: final vendor-center blend feather for this TAA path only. Default is 0.050.");
 					ImGui::Separator();
 					ImGui::TextUnformatted("periphery_taa_hmd_reprojection: adds explicit per-eye HMD reprojection to temporal history lookup.");
-					ImGui::TextUnformatted("periphery_taa_hmd_motion_guard: suppresses history faster during strong HMD motion.");
 					ImGui::TextUnformatted("periphery_taa_separate_hmd_rejection: requires periphery_taa_hmd_reprojection. Uses HMD reprojection for lookup but excludes it from velocity-delta rejection/history storage.");
-					ImGui::TextUnformatted("periphery_taa_reduce_hmd_blend: requires periphery_taa_hmd_motion_guard. Lowers direct HMD-motion contribution to current-frame blending.");
-					ImGui::TextUnformatted("periphery_taa_anchor_hmd_reprojection: requires periphery_taa_hmd_reprojection. Uses output pixel UV anchor for reprojection lookup only.");
-					ImGui::TextUnformatted("periphery_taa_sharpen_fallback: uses a sharper current-frame fallback when history is weak.");
-					ImGui::TextUnformatted("periphery_taa_stabilize_motion: reduces motion-onset sensitivity to tame tiny periphery flicker.");
+					ImGui::TextUnformatted("periphery_taa_stabilize_motion: relaxes velocity-delta disocclusion during camera/HMD motion only in the outer periphery to avoid full current-frame fallback.");
 				}
 
 				const bool usingPeripheryTAA = settings.periphery_taa_enable;
@@ -1991,10 +1983,10 @@ void Upscaling::DispatchPeripheryTAAPass(ID3D11ShaderResourceView* currentColorS
 		settings.periphery_taa_show_debug ? 1.0f : 0.0f
 	};
 	cbData.tuning1 = {
-		settings.periphery_taa_disable_locks ? 1.0f : 0.0f,
-		settings.periphery_taa_disable_reactivity ? 1.0f : 0.0f,
-		settings.periphery_taa_disable_instability ? 1.0f : 0.0f,
-		peripheryTAAHistoryValid && !resetHistory ? 1.0f : 0.0f
+		peripheryTAAHistoryValid && !resetHistory ? 1.0f : 0.0f,
+		0.0f,
+		0.0f,
+		0.0f
 	};
 	cbData.tuning2 = {
 		1.0f,
@@ -2002,19 +1994,11 @@ void Upscaling::DispatchPeripheryTAAPass(ID3D11ShaderResourceView* currentColorS
 		0.10f,
 		0.92f
 	};
+	const bool effectiveSeparateHmdRejection = settings.periphery_taa_hmd_reprojection && settings.periphery_taa_separate_hmd_rejection;
 	cbData.tuning3 = {
 		settings.periphery_taa_hmd_reprojection ? 1.0f : 0.0f,
-		settings.periphery_taa_hmd_motion_guard ? 1.0f : 0.0f,
-		settings.periphery_taa_sharpen_fallback ? 1.0f : 0.0f,
-		settings.periphery_taa_stabilize_motion ? 1.0f : 0.0f
-	};
-	const bool effectiveSeparateHmdRejection = settings.periphery_taa_hmd_reprojection && settings.periphery_taa_separate_hmd_rejection;
-	const bool effectiveReduceHmdBlend = settings.periphery_taa_hmd_motion_guard && settings.periphery_taa_reduce_hmd_blend;
-	const bool effectiveAnchorHmdReprojection = settings.periphery_taa_hmd_reprojection && settings.periphery_taa_anchor_hmd_reprojection;
-	cbData.tuning4 = {
 		effectiveSeparateHmdRejection ? 1.0f : 0.0f,
-		effectiveReduceHmdBlend ? 1.0f : 0.0f,
-		effectiveAnchorHmdReprojection ? 1.0f : 0.0f,
+		settings.periphery_taa_stabilize_motion ? 1.0f : 0.0f,
 		0.0f
 	};
 	cbData.currentViewProjInverse = currentViewProjInverse;
@@ -2061,7 +2045,7 @@ void Upscaling::DispatchPeripheryTAAPass(ID3D11ShaderResourceView* currentColorS
 	context->CSSetShader(nullptr, nullptr, 0);
 }
 
-void Upscaling::DispatchFoveatedBlendPass(ID3D11ShaderResourceView* centerSRV, ID3D11UnorderedAccessView* outputUAV, uint32_t eyeIndex, uint32_t outputWidthPerEye, uint32_t outputHeight, const FoveatedDispatchRect& rect, uint32_t dispatchOffsetX, uint32_t dispatchOffsetY, uint32_t dispatchWidth, uint32_t dispatchHeight)
+void Upscaling::DispatchFoveatedBlendPass(ID3D11ShaderResourceView* centerSRV, ID3D11UnorderedAccessView* outputUAV, uint32_t eyeIndex, uint32_t outputWidthPerEye, uint32_t outputHeight, const FoveatedDispatchRect& rect, uint32_t dispatchOffsetX, uint32_t dispatchOffsetY, uint32_t dispatchWidth, uint32_t dispatchHeight, float centerFeather)
 {
 	if (!centerSRV || !outputUAV || rect.outputWidth == 0 || rect.outputHeight == 0 || !foveatedCenterBlendCB)
 		return;
@@ -2105,7 +2089,7 @@ void Upscaling::DispatchFoveatedBlendPass(ID3D11ShaderResourceView* centerSRV, I
 	};
 	const float2 centerOffset = GetResolvedFoveatedMaskCenterOffset(eyeIndex);
 	cbData.centerScale = ClampFoveatedCenterArea(settings.foveatedCenterArea);
-	cbData.centerFeather = FoveatedCommon::kCenterFeather;
+	cbData.centerFeather = std::isfinite(centerFeather) ? std::max(0.0f, centerFeather) : FoveatedCommon::kCenterFeather;
 	cbData.centerOffset = centerOffset;
 	cbData.outputOffset = { static_cast<float>(dispatchMinX), static_cast<float>(dispatchMinY) };
 	cbData.dispatchDim = { static_cast<float>(actualDispatchWidth), static_cast<float>(actualDispatchHeight) };
@@ -2297,6 +2281,7 @@ bool Upscaling::DispatchSingleFoveatedVendorEye(UpscaleMethod a_upscaleMethod, u
 
 	ID3D11UnorderedAccessView* outputUAV = vrIntermediateColorOut[eyeIndex]->uav.get();
 	ID3D11ShaderResourceView* centerSRV = foveatedCenterColorOut[eyeIndex]->srv.get();
+	const float centerBlendFeather = historyColorResource ? ClampPeripheryTAACenterBlendFeather(settings.periphery_taa_center_blend_feather) : FoveatedCommon::kCenterFeather;
 
 	bool dispatchedRingBlend = false;
 	auto dispatchBlendRing = [&](uint32_t offsetX, uint32_t offsetY, uint32_t width, uint32_t height) {
@@ -2313,7 +2298,8 @@ bool Upscaling::DispatchSingleFoveatedVendorEye(UpscaleMethod a_upscaleMethod, u
 			offsetX,
 			offsetY,
 			width,
-			height);
+			height,
+			centerBlendFeather);
 		if (historyColorUAV) {
 			DispatchFoveatedBlendPass(
 				centerSRV,
@@ -2325,7 +2311,8 @@ bool Upscaling::DispatchSingleFoveatedVendorEye(UpscaleMethod a_upscaleMethod, u
 				offsetX,
 				offsetY,
 				width,
-				height);
+				height,
+				centerBlendFeather);
 		}
 	};
 
@@ -2351,7 +2338,8 @@ bool Upscaling::DispatchSingleFoveatedVendorEye(UpscaleMethod a_upscaleMethod, u
 			rect.outputOffsetX,
 			rect.outputOffsetY,
 			rect.outputWidth,
-			rect.outputHeight);
+			rect.outputHeight,
+			centerBlendFeather);
 		if (historyColorUAV) {
 			DispatchFoveatedBlendPass(
 				centerSRV,
@@ -2363,7 +2351,8 @@ bool Upscaling::DispatchSingleFoveatedVendorEye(UpscaleMethod a_upscaleMethod, u
 				rect.outputOffsetX,
 				rect.outputOffsetY,
 				rect.outputWidth,
-				rect.outputHeight);
+				rect.outputHeight,
+				centerBlendFeather);
 		}
 	}
 
@@ -3343,8 +3332,6 @@ void Upscaling::UpdateHistoryResetState(UpscaleMethod a_upscaleMethod)
 			(compareFoveatedArea && std::abs(foveatedCenterArea - previousHistoryFoveatedCenterArea) > 1e-4f) ||
 			foveatedOffsetsChanged;
 		const bool effectiveSeparateHmdRejection = settings.periphery_taa_hmd_reprojection && settings.periphery_taa_separate_hmd_rejection;
-		const bool effectiveReduceHmdBlend = settings.periphery_taa_hmd_motion_guard && settings.periphery_taa_reduce_hmd_blend;
-		const bool effectiveAnchorHmdReprojection = settings.periphery_taa_hmd_reprojection && settings.periphery_taa_anchor_hmd_reprojection;
 		const bool longFrameGap = globals::game::deltaTime &&
 								  std::isfinite(*globals::game::deltaTime) &&
 								  *globals::game::deltaTime > 0.20f;
@@ -3354,15 +3341,8 @@ void Upscaling::UpdateHistoryResetState(UpscaleMethod a_upscaleMethod)
 			peripheryTAAEnabled != previousHistoryPeripheryTAA ||
 			peripheryTAAPathActive != previousHistoryPeripheryTAAPathActive ||
 			(peripheryTAAPathActive && (
-				settings.periphery_taa_disable_locks != previousHistoryPeripheryTAADisableLocks ||
-				settings.periphery_taa_disable_reactivity != previousHistoryPeripheryTAADisableReactivity ||
-				settings.periphery_taa_disable_instability != previousHistoryPeripheryTAADisableInstability ||
 				settings.periphery_taa_hmd_reprojection != previousHistoryPeripheryTAAHmdReprojection ||
-				settings.periphery_taa_hmd_motion_guard != previousHistoryPeripheryTAAHmdMotionGuard ||
 				effectiveSeparateHmdRejection != previousHistoryPeripheryTAASeparateHmdRejection ||
-				effectiveReduceHmdBlend != previousHistoryPeripheryTAAReduceHmdBlend ||
-				effectiveAnchorHmdReprojection != previousHistoryPeripheryTAAAnchorHmdReprojection ||
-				settings.periphery_taa_sharpen_fallback != previousHistoryPeripheryTAASharpenFallback ||
 				settings.periphery_taa_stabilize_motion != previousHistoryPeripheryTAAStabilizeMotion));
 
 		shouldReset = screenSizeChanged || scaleChanged || worldStateChanged || methodChanged || vrPipelineDedupChanged || fsrRuntimePathChanged || foveatedChanged || effectivePeripheryTAAChanged || longFrameGap || cameraCut;
@@ -3385,15 +3365,8 @@ void Upscaling::UpdateHistoryResetState(UpscaleMethod a_upscaleMethod)
 	previousHistoryFoveatedCenterOffsets = foveatedCenterOffsets;
 	previousHistoryPeripheryTAA = peripheryTAAEnabled;
 	previousHistoryPeripheryTAAPathActive = peripheryTAAPathActive;
-	previousHistoryPeripheryTAADisableLocks = settings.periphery_taa_disable_locks;
-	previousHistoryPeripheryTAADisableReactivity = settings.periphery_taa_disable_reactivity;
-	previousHistoryPeripheryTAADisableInstability = settings.periphery_taa_disable_instability;
 	previousHistoryPeripheryTAAHmdReprojection = settings.periphery_taa_hmd_reprojection;
-	previousHistoryPeripheryTAAHmdMotionGuard = settings.periphery_taa_hmd_motion_guard;
 	previousHistoryPeripheryTAASeparateHmdRejection = settings.periphery_taa_hmd_reprojection && settings.periphery_taa_separate_hmd_rejection;
-	previousHistoryPeripheryTAAReduceHmdBlend = settings.periphery_taa_hmd_motion_guard && settings.periphery_taa_reduce_hmd_blend;
-	previousHistoryPeripheryTAAAnchorHmdReprojection = settings.periphery_taa_hmd_reprojection && settings.periphery_taa_anchor_hmd_reprojection;
-	previousHistoryPeripheryTAASharpenFallback = settings.periphery_taa_sharpen_fallback;
 	previousHistoryPeripheryTAAStabilizeMotion = settings.periphery_taa_stabilize_motion;
 	previousHistoryFSRRuntimePathActive = fsrRuntimePathActive;
 }
