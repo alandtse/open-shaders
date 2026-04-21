@@ -9,7 +9,9 @@ namespace FoveatedCommon
 	constexpr float kCenterAreaMin = 0.30f;
 	constexpr float kCenterAreaMax = 1.0f;
 	constexpr float kCenterFeather = 0.05f;
-	constexpr float kEllipseInscribedRectScale = 0.70710678f;
+	constexpr float kCenterHorizontalScaleMin = 1.0f;
+	constexpr float kCenterHorizontalScaleMax = 2.0f;
+	constexpr float kMaskShapePower = 4.0f;
 	constexpr int kThreadGroupSize = 8;
 
 	struct DispatchBounds
@@ -25,6 +27,13 @@ namespace FoveatedCommon
 		return std::clamp(value, kCenterAreaMin, kCenterAreaMax);
 	}
 
+	inline float ClampCenterHorizontalScale(float value)
+	{
+		if (!std::isfinite(value))
+			return 1.0f;
+		return std::clamp(value, kCenterHorizontalScaleMin, kCenterHorizontalScaleMax);
+	}
+
 	inline int AlignDownToThreadGroup(int value)
 	{
 		return value & ~(kThreadGroupSize - 1);
@@ -35,7 +44,7 @@ namespace FoveatedCommon
 		return (value + (kThreadGroupSize - 1)) & ~(kThreadGroupSize - 1);
 	}
 
-	inline DispatchBounds BuildCenteredDispatchBounds(uint32_t eyeMinX, uint32_t eyeMaxX, uint32_t frameHeight, float centerScale, float centerOffsetX = 0.0f, float centerOffsetY = 0.0f)
+	inline DispatchBounds BuildCenteredDispatchBounds(uint32_t eyeMinX, uint32_t eyeMaxX, uint32_t frameHeight, float centerScale, float centerOffsetX = 0.0f, float centerOffsetY = 0.0f, float centerFeather = kCenterFeather, float centerHorizontalScale = 1.0f)
 	{
 		DispatchBounds bounds{};
 
@@ -46,6 +55,8 @@ namespace FoveatedCommon
 			return bounds;
 
 		centerScale = ClampCenterArea(centerScale);
+		centerHorizontalScale = ClampCenterHorizontalScale(centerHorizontalScale);
+		centerFeather = std::isfinite(centerFeather) ? std::max(0.0f, centerFeather) : kCenterFeather;
 
 		const float eyeWidth = static_cast<float>(eyeMaxX - eyeMinX);
 		const float frameHeightF = static_cast<float>(frameHeight);
@@ -53,8 +64,8 @@ namespace FoveatedCommon
 		const float centerYNormalized = std::clamp(0.5f + centerOffsetY, 0.0f, 1.0f);
 		const float centerX = static_cast<float>(eyeMinX) + eyeWidth * centerXNormalized;
 		const float centerY = frameHeightF * centerYNormalized;
-		const float extentX = centerScale * eyeWidth * 0.5f + kCenterFeather * eyeWidth;
-		const float extentY = centerScale * frameHeightF * 0.5f + kCenterFeather * frameHeightF;
+		const float extentX = centerScale * centerHorizontalScale * eyeWidth * 0.5f + centerFeather * eyeWidth;
+		const float extentY = centerScale * frameHeightF * 0.5f + centerFeather * frameHeightF;
 
 		int minX = static_cast<int>(centerX - extentX);
 		int maxX = static_cast<int>(centerX + extentX + 0.9999f);
@@ -81,22 +92,32 @@ namespace FoveatedCommon
 		return bounds;
 	}
 
-	inline DispatchBounds BuildCenteredInscribedEllipseRect(uint32_t width, uint32_t height, float centerScale, float centerOffsetX = 0.0f, float centerOffsetY = 0.0f)
+	inline float GetInscribedSuperellipseRectScale(float shapePower)
+	{
+		const float clampedPower = std::max(shapePower, 1.0f);
+		return std::pow(0.5f, 1.0f / clampedPower);
+	}
+
+	inline DispatchBounds BuildCenteredInscribedMaskRect(uint32_t width, uint32_t height, float centerScale, float centerOffsetX = 0.0f, float centerOffsetY = 0.0f, float centerHorizontalScale = 1.0f)
 	{
 		DispatchBounds bounds{};
 		if (width == 0 || height == 0)
 			return bounds;
 
-		const float inscribedHalfScale = ClampCenterArea(centerScale) * kEllipseInscribedRectScale * 0.5f;
+		const float clampedCenterScale = ClampCenterArea(centerScale);
+		const float clampedCenterHorizontalScale = ClampCenterHorizontalScale(centerHorizontalScale);
+		const float inscribedScale = GetInscribedSuperellipseRectScale(kMaskShapePower);
+		const float inscribedHalfScaleX = clampedCenterScale * clampedCenterHorizontalScale * inscribedScale * 0.5f;
+		const float inscribedHalfScaleY = clampedCenterScale * inscribedScale * 0.5f;
 		const float widthF = static_cast<float>(width);
 		const float heightF = static_cast<float>(height);
 		const float centerXNormalized = std::clamp(0.5f + centerOffsetX, 0.0f, 1.0f);
 		const float centerYNormalized = std::clamp(0.5f + centerOffsetY, 0.0f, 1.0f);
 
-		bounds.minX = std::clamp(static_cast<int>(std::ceil((centerXNormalized - inscribedHalfScale) * widthF - 0.5f)), 0, static_cast<int>(width));
-		bounds.maxX = std::clamp(static_cast<int>(std::floor((centerXNormalized + inscribedHalfScale) * widthF - 0.5f)) + 1, 0, static_cast<int>(width));
-		bounds.minY = std::clamp(static_cast<int>(std::ceil((centerYNormalized - inscribedHalfScale) * heightF - 0.5f)), 0, static_cast<int>(height));
-		bounds.maxY = std::clamp(static_cast<int>(std::floor((centerYNormalized + inscribedHalfScale) * heightF - 0.5f)) + 1, 0, static_cast<int>(height));
+		bounds.minX = std::clamp(static_cast<int>(std::ceil((centerXNormalized - inscribedHalfScaleX) * widthF - 0.5f)), 0, static_cast<int>(width));
+		bounds.maxX = std::clamp(static_cast<int>(std::floor((centerXNormalized + inscribedHalfScaleX) * widthF - 0.5f)) + 1, 0, static_cast<int>(width));
+		bounds.minY = std::clamp(static_cast<int>(std::ceil((centerYNormalized - inscribedHalfScaleY) * heightF - 0.5f)), 0, static_cast<int>(height));
+		bounds.maxY = std::clamp(static_cast<int>(std::floor((centerYNormalized + inscribedHalfScaleY) * heightF - 0.5f)) + 1, 0, static_cast<int>(height));
 		return bounds;
 	}
 }

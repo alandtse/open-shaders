@@ -68,6 +68,7 @@ public:
 		uint frameHeight = 0;
 		bool isVR = false;
 		float scale = -1.0f;
+		float horizontalScale = 1.0f;
 		std::array<float2, 2> centerOffsets{};
 		std::array<CenterDispatchRect, 2> rects{};
 	} centerRectCache;
@@ -161,12 +162,13 @@ public:
 		float VRCullDistance;
 		float CenterFullResMaskScale;
 		float4 CenterFullResMaskOffsets;
+		float CenterFullResMaskHorizontalScale;
 		float CenterFullResMaskFeather;
 		float CenterDispatchOffsetX;
 		float CenterDispatchOffsetY;
 		float CenterDispatchSizeX;
 		float CenterDispatchSizeY;
-		float pad[3];
+		float pad[2];
 	};
 	STATIC_ASSERT_ALIGNAS_16(SSGICB);
 	eastl::unique_ptr<ConstantBuffer> ssgiCB;

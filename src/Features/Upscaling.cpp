@@ -30,30 +30,17 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	sharpnessDLSS,
 	fsr4RuntimeEnable,
 	fsr4AllowNonRx90Amd,
-	fsr4AllowNvidia,
-	vrPipelineDeduplication,
 	foveatedVendorDispatch,
 	foveatedCenterArea,
+	foveatedCenterHorizontalScale,
 	foveatedLeftEyeMaskOffsetX,
 	foveatedLeftEyeMaskOffsetY,
 	foveatedRightEyeMaskOffsetX,
 	foveatedRightEyeMaskOffsetY,
-	foveatedPeripheryEdgeBlur,
-	foveatedPeripheryEdgeBlurStrength,
 	foveatedPeripheryMaskVisualization,
 	periphery_taa_enable,
-	periphery_taa_show_debug,
-	periphery_taa_debug_mode,
-	periphery_taa_disable_locks,
-	periphery_taa_disable_reactivity,
-	periphery_taa_disable_instability,
-	periphery_taa_hmd_reprojection,
-	periphery_taa_hmd_motion_guard,
-	periphery_taa_separate_hmd_rejection,
-	periphery_taa_reduce_hmd_blend,
-	periphery_taa_anchor_hmd_reprojection,
-	periphery_taa_sharpen_fallback,
-	periphery_taa_stabilize_motion,
+	periphery_taa_outer_scale,
+	periphery_taa_center_blend_feather,
 	linkFoveatedCenterAreaWithSSGI,
 	hasExplicitFoveatedCenterLinkPreference,
 	reflexLowLatencyMode,
@@ -66,9 +53,10 @@ decltype(&D3D11CreateDeviceAndSwapChain) ptrD3D11CreateDeviceAndSwapChainUpscali
 
 namespace
 {
-	constexpr float kPeripheryEdgeBlurStrengthMin = 1.0f;
-	constexpr float kPeripheryEdgeBlurStrengthMax = 10.0f;
-	constexpr uint32_t kPeripheryTAADebugModeMaxIndex = 7u;
+	constexpr float kPeripheryTAAOuterScaleMin = 0.30f;
+	constexpr float kPeripheryTAAOuterScaleMax = 1.0f;
+	constexpr float kPeripheryTAACenterBlendFeatherMin = 0.0f;
+	constexpr float kPeripheryTAACenterBlendFeatherMax = 0.10f;
 	constexpr float kFoveatedMaskOffsetAdjustMin = -0.15f;
 	constexpr float kFoveatedMaskOffsetAdjustMax = 0.15f;
 	constexpr float kFoveatedMaskOffsetResolvedMin = -0.25f;
@@ -79,14 +67,14 @@ namespace
 		return FoveatedCommon::ClampCenterArea(value);
 	}
 
+	float ClampFoveatedCenterHorizontalScale(float value)
+	{
+		return FoveatedCommon::ClampCenterHorizontalScale(value);
+	}
+
 	float ClampFoveatedMaskOffsetAdjustment(float value)
 	{
 		return std::clamp(value, kFoveatedMaskOffsetAdjustMin, kFoveatedMaskOffsetAdjustMax);
-	}
-
-	float ClampPeripheryEdgeBlurStrength(float value)
-	{
-		return std::clamp(value, kPeripheryEdgeBlurStrengthMin, kPeripheryEdgeBlurStrengthMax);
 	}
 
 	uint ClampToggleUInt(uint value)
@@ -104,9 +92,18 @@ namespace
 		return std::min<uint>(value, 2u);
 	}
 
-	uint ClampPeripheryTAADebugModeUInt(uint value)
+	float ClampPeripheryTAACenterBlendFeather(float value)
 	{
-		return std::min<uint>(value, kPeripheryTAADebugModeMaxIndex);
+		if (!std::isfinite(value))
+			return FoveatedCommon::kCenterFeather;
+		return std::clamp(value, kPeripheryTAACenterBlendFeatherMin, kPeripheryTAACenterBlendFeatherMax);
+	}
+
+	float ClampPeripheryTAAOuterScale(float value)
+	{
+		if (!std::isfinite(value))
+			return 1.0f;
+		return std::clamp(value, kPeripheryTAAOuterScaleMin, kPeripheryTAAOuterScaleMax);
 	}
 
 	float ClampFiniteUnitRange(float value, float fallback)
@@ -119,11 +116,11 @@ namespace
 	void SanitizeFoveatedSettings(Upscaling::Settings& settings)
 	{
 		settings.foveatedCenterArea = ClampFoveatedCenterArea(settings.foveatedCenterArea);
+		settings.foveatedCenterHorizontalScale = ClampFoveatedCenterHorizontalScale(settings.foveatedCenterHorizontalScale);
 		settings.foveatedLeftEyeMaskOffsetX = ClampFoveatedMaskOffsetAdjustment(settings.foveatedLeftEyeMaskOffsetX);
 		settings.foveatedLeftEyeMaskOffsetY = ClampFoveatedMaskOffsetAdjustment(settings.foveatedLeftEyeMaskOffsetY);
 		settings.foveatedRightEyeMaskOffsetX = ClampFoveatedMaskOffsetAdjustment(settings.foveatedRightEyeMaskOffsetX);
 		settings.foveatedRightEyeMaskOffsetY = ClampFoveatedMaskOffsetAdjustment(settings.foveatedRightEyeMaskOffsetY);
-		settings.foveatedPeripheryEdgeBlurStrength = ClampPeripheryEdgeBlurStrength(settings.foveatedPeripheryEdgeBlurStrength);
 	}
 
 	void SanitizeUpscalingSettings(Upscaling::Settings& settings)
@@ -138,64 +135,41 @@ namespace
 		settings.streamlineLogLevel = ClampStreamlineLogLevelUInt(settings.streamlineLogLevel);
 		settings.sharpnessFSR = ClampFiniteUnitRange(settings.sharpnessFSR, 0.0f);
 		settings.sharpnessDLSS = ClampFiniteUnitRange(settings.sharpnessDLSS, 0.1f);
-		settings.periphery_taa_debug_mode = ClampPeripheryTAADebugModeUInt(settings.periphery_taa_debug_mode);
+		settings.periphery_taa_outer_scale = ClampPeripheryTAAOuterScale(settings.periphery_taa_outer_scale);
+		settings.periphery_taa_center_blend_feather = ClampPeripheryTAACenterBlendFeather(settings.periphery_taa_center_blend_feather);
 		SanitizeFoveatedSettings(settings);
 	}
 
 	void ResetVRSpecificUpscalingSettings(Upscaling::Settings& settings)
 	{
-		settings.vrPipelineDeduplication = false;
 		settings.foveatedVendorDispatch = false;
 		settings.foveatedCenterArea = 0.6f;
+		settings.foveatedCenterHorizontalScale = 1.0f;
 		settings.foveatedLeftEyeMaskOffsetX = 0.0f;
 		settings.foveatedLeftEyeMaskOffsetY = 0.0f;
 		settings.foveatedRightEyeMaskOffsetX = 0.0f;
 		settings.foveatedRightEyeMaskOffsetY = 0.0f;
-		settings.foveatedPeripheryEdgeBlur = false;
-		settings.foveatedPeripheryEdgeBlurStrength = 1.0f;
 		settings.foveatedPeripheryMaskVisualization = false;
 		settings.periphery_taa_enable = false;
-		settings.periphery_taa_show_debug = false;
-		settings.periphery_taa_debug_mode = 0;
-		settings.periphery_taa_disable_locks = false;
-		settings.periphery_taa_disable_reactivity = false;
-		settings.periphery_taa_disable_instability = false;
-		settings.periphery_taa_hmd_reprojection = false;
-		settings.periphery_taa_hmd_motion_guard = false;
-		settings.periphery_taa_separate_hmd_rejection = false;
-		settings.periphery_taa_reduce_hmd_blend = false;
-		settings.periphery_taa_anchor_hmd_reprojection = false;
-		settings.periphery_taa_sharpen_fallback = false;
-		settings.periphery_taa_stabilize_motion = false;
+		settings.periphery_taa_outer_scale = 0.70f;
+		settings.periphery_taa_center_blend_feather = FoveatedCommon::kCenterFeather;
 		settings.linkFoveatedCenterAreaWithSSGI = true;
 		settings.hasExplicitFoveatedCenterLinkPreference = false;
 	}
 
 	void StripVRSpecificUpscalingSettings(json& o_json)
 	{
-		o_json.erase("vrPipelineDeduplication");
 		o_json.erase("foveatedVendorDispatch");
 		o_json.erase("foveatedCenterArea");
+		o_json.erase("foveatedCenterHorizontalScale");
 		o_json.erase("foveatedLeftEyeMaskOffsetX");
 		o_json.erase("foveatedLeftEyeMaskOffsetY");
 		o_json.erase("foveatedRightEyeMaskOffsetX");
 		o_json.erase("foveatedRightEyeMaskOffsetY");
-		o_json.erase("foveatedPeripheryEdgeBlur");
-		o_json.erase("foveatedPeripheryEdgeBlurStrength");
 		o_json.erase("foveatedPeripheryMaskVisualization");
 		o_json.erase("periphery_taa_enable");
-		o_json.erase("periphery_taa_show_debug");
-		o_json.erase("periphery_taa_debug_mode");
-		o_json.erase("periphery_taa_disable_locks");
-		o_json.erase("periphery_taa_disable_reactivity");
-		o_json.erase("periphery_taa_disable_instability");
-		o_json.erase("periphery_taa_hmd_reprojection");
-		o_json.erase("periphery_taa_hmd_motion_guard");
-		o_json.erase("periphery_taa_separate_hmd_rejection");
-		o_json.erase("periphery_taa_reduce_hmd_blend");
-		o_json.erase("periphery_taa_anchor_hmd_reprojection");
-		o_json.erase("periphery_taa_sharpen_fallback");
-		o_json.erase("periphery_taa_stabilize_motion");
+		o_json.erase("periphery_taa_outer_scale");
+		o_json.erase("periphery_taa_center_blend_feather");
 		o_json.erase("linkFoveatedCenterAreaWithSSGI");
 		o_json.erase("hasExplicitFoveatedCenterLinkPreference");
 	}
@@ -465,13 +439,6 @@ void Upscaling::DrawSettings()
 				ImGui::TextUnformatted("Keep this off unless your AMD card supports FSR4 and detection failed.");
 			}
 		}
-		if (runtimeFsr4Present && isNvidiaAdapter) {
-			ImGui::Checkbox("Allow FSR4 on NVIDIA GPUs (Experimental)", &settings.fsr4AllowNvidia);
-			if (auto _tt = Util::HoverTooltipWrapper()) {
-				ImGui::TextUnformatted("Experimental: exposes Runtime FSR4 method on NVIDIA adapters.");
-				ImGui::TextUnformatted("Use for testing only. Compatibility and image stability are not guaranteed.");
-			}
-		}
 		if (!runtimeFsr4Present && requestedRuntimeFsr4BeforeMethodSelection) {
 			ImGui::TextDisabled("Runtime FSR4 unavailable: missing FidelityFX upscaler runtime.");
 		}
@@ -575,29 +542,6 @@ void Upscaling::DrawSettings()
 		drawFsr4OverrideControls();
 
 		if (globals::game::isVR) {
-			const bool vrPipelineDedupMethodSupported = upscaleMethod == UpscaleMethod::kFSR || upscaleMethod == UpscaleMethod::kDLSS;
-			const bool vrPipelineDedupBlockedByFoveated = vrPipelineDedupMethodSupported && IsFoveatedVendorDispatchEnabled(upscaleMethod);
-			const bool vrPipelineDedupSupportedForMethod = vrPipelineDedupMethodSupported && !vrPipelineDedupBlockedByFoveated;
-			if (!vrPipelineDedupSupportedForMethod) {
-				if (!vrPipelineDedupMethodSupported) {
-					ImGui::TextDisabled("Per-Eye Deduplication is available for DLSS and FSR only.");
-				} else {
-					ImGui::TextDisabled("Disable Foveated Upscaling to enable Per-Eye Deduplication.");
-				}
-			}
-			ImGui::BeginDisabled(!vrPipelineDedupSupportedForMethod);
-			{
-				ImGui::Checkbox("Per-Eye Deduplication (Experimental)", &settings.vrPipelineDeduplication);
-			}
-			if (auto _tt = Util::HoverTooltipWrapper()) {
-				ImGui::TextUnformatted("VR-only. Reduces duplicate per-eye upscaling prep work by using a combined-stereo encode path where supported.");
-				ImGui::TextUnformatted("FSR benefits the most because it can also avoid split per-eye contexts. DLSS users can use it too, but the gain is smaller.");
-				ImGui::TextUnformatted("Stereo rendering stays intact and per-eye DLSS/FSR history ownership is preserved.");
-				ImGui::TextUnformatted("Experimental: if you observe seam artifacts, disable this option.");
-			}
-			ImGui::EndDisabled();
-
-			ImGui::Separator();
 			const bool foveatedDispatchSupportedForMethod = SupportsFoveatedVendorDispatch(upscaleMethod);
 			if (!foveatedDispatchSupportedForMethod) {
 				ImGui::TextDisabled("Foveated Upscaling is currently DLSS-only. FSR uses full-eye dispatch.");
@@ -610,28 +554,73 @@ void Upscaling::DrawSettings()
 			SanitizeFoveatedSettings(settings);
 			if (settings.foveatedVendorDispatch && foveatedDispatchSupportedForMethod) {
 				{
-					Util::BlueFrameStyleWrapper foveatedAreaStyle;
-					ImGui::SliderFloat("Foveated Area", &settings.foveatedCenterArea, FoveatedCommon::kCenterAreaMin, FoveatedCommon::kCenterAreaMax, "%.2f");
-				}
-				settings.foveatedCenterArea = ClampFoveatedCenterArea(settings.foveatedCenterArea);
-				if (auto _tt = Util::HoverTooltipWrapper()) {
-					ImGui::TextUnformatted("Major performance option. Controls how much of the view uses the vendor upscaler directly.");
-					ImGui::TextUnformatted("Runs vendor upscaling only in the center region and fills periphery with the periphery pass.");
-					ImGui::TextUnformatted("1.00 means full-center coverage (equivalent to full-frame vendor dispatch).");
-					if (settings.linkFoveatedCenterAreaWithSSGI)
-						ImGui::TextUnformatted("Shared with SSGI only while an SSGI foveated mode is active.");
-				}
-
-				{
-					Util::YellowFrameStyleWrapper maskStyle(true);
+					Util::BlueFrameStyleWrapper maskStyle(true);
 					ImGui::Checkbox("Foveated Mask Visualization", &settings.foveatedPeripheryMaskVisualization);
 				}
 				if (auto _tt = Util::HoverTooltipWrapper()) {
 					ImGui::TextUnformatted("Shows foveated and periphery regions for each eye in Upscaling and SSGI foveated modes.");
 					ImGui::TextUnformatted("X/Y sliders move the real per-eye masks, not just the debug view.");
-					ImGui::TextUnformatted("Lower Foveated Area until the full ellipse is visible in each eye.");
+					ImGui::TextUnformatted("Lower Foveated Area until the full center mask is visible in each eye.");
 					ImGui::TextUnformatted("Center each mask with the sliders, then raise Foveated Area until the periphery reaches the view edge.");
 					ImGui::TextUnformatted("X and Y offsets do not need to match between eyes.");
+					ImGui::TextUnformatted("With periphery TAA enabled, mask view colors are: center=green, TAA ring=gold, outer lightweight ring=blue.");
+				}
+
+				{
+					Util::BlueFrameStyleWrapper linkStyle;
+					if (ImGui::Checkbox("Link FOV Area With SSGI", &settings.linkFoveatedCenterAreaWithSSGI))
+						settings.hasExplicitFoveatedCenterLinkPreference = true;
+				}
+				if (auto _tt = Util::HoverTooltipWrapper()) {
+					ImGui::TextUnformatted("Enabled: one shared center-area value drives both SSGI foveation and Upscaling foveation.");
+					ImGui::TextUnformatted("Disable to tune only the area size independently, or to leave SSGI unfoveated while Upscaling stays foveated.");
+					ImGui::TextUnformatted("Mask placement always stays shared and is defined by Upscaling.");
+					ImGui::TextUnformatted("If SSGI is in AO only or another non-foveated mode, this shared area is ignored there.");
+				}
+
+				{
+					Util::BlueFrameStyleWrapper foveatedAreaStyle;
+					ImGui::SliderFloat("Foveated Area", &settings.foveatedCenterArea, FoveatedCommon::kCenterAreaMin, FoveatedCommon::kCenterAreaMax, "%.2f");
+				}
+				{
+					Util::YellowFrameStyleWrapper expandStyle;
+					ImGui::SliderFloat("Expand FOV Area R/L", &settings.foveatedCenterHorizontalScale, FoveatedCommon::kCenterHorizontalScaleMin, FoveatedCommon::kCenterHorizontalScaleMax, "%.2f");
+				}
+				settings.foveatedCenterArea = ClampFoveatedCenterArea(settings.foveatedCenterArea);
+				settings.foveatedCenterHorizontalScale = ClampFoveatedCenterHorizontalScale(settings.foveatedCenterHorizontalScale);
+				if (auto _tt = Util::HoverTooltipWrapper()) {
+					ImGui::TextUnformatted("Major performance option. Controls how much of the view uses the vendor upscaler directly.");
+					ImGui::TextUnformatted("Foveated Area sets the base center mask size.");
+					ImGui::TextUnformatted("Expand FOV Area R/L multiplies that base size in X only.");
+					ImGui::TextUnformatted("Horizontal Scale = 1.00 means no extra horizontal widening.");
+					ImGui::TextUnformatted("When Foveated Area reaches 1.00, foveated center dispatch is effectively bypassed and the regular full-frame vendor path is used.");
+					ImGui::TextUnformatted("In VR, added horizontal width is biased outward per eye (toward the lens outer side).");
+				}
+
+				ImGui::Separator();
+				ImGui::TextUnformatted("Foveated Upscaling with Peripheral TAA");
+				{
+					Util::YellowFrameStyleWrapper taaStyle;
+					ImGui::Checkbox("Peripheral TAA", &settings.periphery_taa_enable);
+					ImGui::SliderFloat(
+						"TAA Outer Range",
+						&settings.periphery_taa_outer_scale,
+						kPeripheryTAAOuterScaleMin,
+						kPeripheryTAAOuterScaleMax,
+						"%.2f");
+					settings.periphery_taa_outer_scale = ClampPeripheryTAAOuterScale(settings.periphery_taa_outer_scale);
+					ImGui::SliderFloat(
+						"Center Blend",
+						&settings.periphery_taa_center_blend_feather,
+						kPeripheryTAACenterBlendFeatherMin,
+						kPeripheryTAACenterBlendFeatherMax,
+						"%.3f");
+					settings.periphery_taa_center_blend_feather = ClampPeripheryTAACenterBlendFeather(settings.periphery_taa_center_blend_feather);
+				}
+				if (auto _tt = Util::HoverTooltipWrapper()) {
+					ImGui::TextUnformatted("Peripheral TAA replaces the old spatial periphery pass.");
+					ImGui::TextUnformatted("TAA Outer Range limits where TAA runs; outside uses lightweight non-TAA fill.");
+					ImGui::TextUnformatted("Center Blend controls the final center transition feather for this TAA path.");
 				}
 
 				if (settings.foveatedPeripheryMaskVisualization) {
@@ -685,93 +674,9 @@ void Upscaling::DrawSettings()
 
 					ImGui::TextDisabled("Mask alignment notes");
 					if (auto _tt = Util::HoverTooltipWrapper()) {
-						ImGui::TextUnformatted("Use the mask view to line the center ellipse up with the real headset image in each eye horizontally and vertically.");
+						ImGui::TextUnformatted("Use the mask view to line the center mask up with the real headset image in each eye horizontally and vertically.");
 						ImGui::TextUnformatted("These offsets also drive the actual foveated crop and blend placement.");
 						ImGui::TextUnformatted("When SSGI foveation is active, the same eye offsets are reused there.");
-					}
-				}
-
-				ImGui::Separator();
-				if (ImGui::Checkbox("Link Foveated Area With SSGI", &settings.linkFoveatedCenterAreaWithSSGI))
-					settings.hasExplicitFoveatedCenterLinkPreference = true;
-				if (auto _tt = Util::HoverTooltipWrapper()) {
-					ImGui::TextUnformatted("Enabled: one shared center-area value drives both SSGI foveation and Upscaling foveation.");
-					ImGui::TextUnformatted("Disable to tune only the area size independently, or to leave SSGI unfoveated while Upscaling stays foveated.");
-					ImGui::TextUnformatted("Mask placement always stays shared and is defined by Upscaling.");
-					ImGui::TextUnformatted("If SSGI is in AO only or another non-foveated mode, this shared area is ignored there.");
-				}
-
-				ImGui::Separator();
-				ImGui::TextDisabled("Periphery TAA (Experimental)");
-				{
-					Util::YellowFrameStyleWrapper expStyle;
-					ImGui::Checkbox("periphery_taa_enable", &settings.periphery_taa_enable);
-					if (settings.periphery_taa_enable) {
-						ImGui::Checkbox("periphery_taa_show_debug", &settings.periphery_taa_show_debug);
-						if (settings.periphery_taa_show_debug) {
-							const char* debugModes[] = {
-								"Composite",
-								"Reactivity",
-								"Lock",
-								"Disocclusion",
-								"Instability",
-								"HMD Motion",
-								"Motion Magnitude",
-								"Velocity Delta"
-							};
-							int debugMode = static_cast<int>(settings.periphery_taa_debug_mode);
-							ImGui::SliderInt("periphery_taa_debug_mode", &debugMode, 0, static_cast<int>(kPeripheryTAADebugModeMaxIndex), debugModes[debugMode]);
-							settings.periphery_taa_debug_mode = ClampPeripheryTAADebugModeUInt(static_cast<uint>(debugMode));
-						}
-						ImGui::Checkbox("periphery_taa_disable_locks", &settings.periphery_taa_disable_locks);
-						ImGui::Checkbox("periphery_taa_disable_reactivity", &settings.periphery_taa_disable_reactivity);
-						ImGui::Checkbox("periphery_taa_disable_instability", &settings.periphery_taa_disable_instability);
-						ImGui::Separator();
-						ImGui::Checkbox("periphery_taa_hmd_reprojection", &settings.periphery_taa_hmd_reprojection);
-						ImGui::Checkbox("periphery_taa_hmd_motion_guard", &settings.periphery_taa_hmd_motion_guard);
-						ImGui::Separator();
-						ImGui::BeginDisabled(!settings.periphery_taa_hmd_reprojection);
-						ImGui::Checkbox("periphery_taa_separate_hmd_rejection", &settings.periphery_taa_separate_hmd_rejection);
-						ImGui::Checkbox("periphery_taa_anchor_hmd_reprojection", &settings.periphery_taa_anchor_hmd_reprojection);
-						ImGui::EndDisabled();
-						ImGui::BeginDisabled(!settings.periphery_taa_hmd_motion_guard);
-						ImGui::Checkbox("periphery_taa_reduce_hmd_blend", &settings.periphery_taa_reduce_hmd_blend);
-						ImGui::EndDisabled();
-						ImGui::Checkbox("periphery_taa_sharpen_fallback", &settings.periphery_taa_sharpen_fallback);
-						ImGui::Checkbox("periphery_taa_stabilize_motion", &settings.periphery_taa_stabilize_motion);
-					}
-				}
-				if (auto _tt = Util::HoverTooltipWrapper()) {
-					ImGui::TextUnformatted("Masked periphery TAA replacement for the old spatial periphery path.");
-					ImGui::TextUnformatted("When enabled, the current spatial periphery pass is replaced so you can A/B directly against the existing implementation.");
-					ImGui::TextUnformatted("The center vendor upscaler path stays unchanged.");
-					ImGui::TextUnformatted("When debug is enabled, periphery history still advances so the debug views reflect live temporal behavior.");
-					ImGui::Separator();
-					ImGui::TextUnformatted("periphery_taa_hmd_reprojection: adds explicit per-eye HMD reprojection to temporal history lookup.");
-					ImGui::TextUnformatted("periphery_taa_hmd_motion_guard: suppresses history faster during strong HMD motion.");
-					ImGui::TextUnformatted("periphery_taa_separate_hmd_rejection: requires periphery_taa_hmd_reprojection. Uses HMD reprojection for lookup but excludes it from velocity-delta rejection/history storage.");
-					ImGui::TextUnformatted("periphery_taa_reduce_hmd_blend: requires periphery_taa_hmd_motion_guard. Lowers direct HMD-motion contribution to current-frame blending.");
-					ImGui::TextUnformatted("periphery_taa_anchor_hmd_reprojection: requires periphery_taa_hmd_reprojection. Uses output pixel UV anchor for reprojection lookup only.");
-					ImGui::TextUnformatted("periphery_taa_sharpen_fallback: uses a sharper current-frame fallback when history is weak.");
-					ImGui::TextUnformatted("periphery_taa_stabilize_motion: reduces motion-onset sensitivity to tame tiny periphery flicker.");
-				}
-
-				const bool usingPeripheryTAA = settings.periphery_taa_enable;
-				ImGui::BeginDisabled(usingPeripheryTAA);
-				{
-					ImGui::Checkbox("Edge Blur", &settings.foveatedPeripheryEdgeBlur);
-					if (settings.foveatedPeripheryEdgeBlur) {
-						ImGui::SliderFloat("Edge Blur Strength", &settings.foveatedPeripheryEdgeBlurStrength, kPeripheryEdgeBlurStrengthMin, kPeripheryEdgeBlurStrengthMax, "%.2f");
-						settings.foveatedPeripheryEdgeBlurStrength = ClampPeripheryEdgeBlurStrength(settings.foveatedPeripheryEdgeBlurStrength);
-					}
-				}
-				ImGui::EndDisabled();
-				if (auto _tt = Util::HoverTooltipWrapper()) {
-					if (usingPeripheryTAA) {
-						ImGui::TextUnformatted("Disabled while periphery_taa_enable is active so the old spatial periphery path is fully switched off for A/B testing.");
-					} else {
-						ImGui::TextUnformatted("Applies a lightweight edge-aware blur in periphery only at a low performance cost.");
-						ImGui::TextUnformatted("Stronger values reduce flicker but soften peripheral detail.");
 					}
 				}
 			}
@@ -1298,32 +1203,32 @@ void Upscaling::CheckResources(UpscaleMethod a_upscalemethod)
 {
 	static auto previousUpscaleMode = UpscaleMethod::kTAA;
 	static bool previousFrameGenMode = false;
-	static bool previousVRPipelineDedupActive = false;
 	static bool previousFoveatedDispatch = false;
 	static bool previousPeripheryTAA = false;
 	static bool previousFSRRuntimePathActive = false;
 	static uint32_t previousFoveatedCenterAreaMilli = static_cast<uint32_t>(std::round(ClampFoveatedCenterArea(settings.foveatedCenterArea) * 1000.0f));
+	static uint32_t previousFoveatedCenterHorizontalScaleMilli = static_cast<uint32_t>(std::round(ClampFoveatedCenterHorizontalScale(settings.foveatedCenterHorizontalScale) * 1000.0f));
 
 	bool frameGenModeCurrent = (settings.frameGenerationMode && d3d12SwapChainActive);
 	bool frameGenModeChanged = frameGenModeCurrent != previousFrameGenMode;
 	bool upscaleModeChanged = (previousUpscaleMode != a_upscalemethod);
-	const bool vrPipelineDedupCurrent = IsVRPipelineDedupActive(a_upscalemethod);
-	const bool vrPipelineDedupChanged = previousVRPipelineDedupActive != vrPipelineDedupCurrent;
 	const bool foveatedDispatchCurrent = IsFoveatedVendorDispatchEnabled(a_upscalemethod);
 	const bool peripheryTAACurrent = IsPeripheryTAAEnabled(a_upscalemethod);
 	const bool fsrRuntimePathCurrent = IsFSRRuntimePathActive(a_upscalemethod);
 	const uint32_t foveatedCenterAreaMilli = static_cast<uint32_t>(std::round(ClampFoveatedCenterArea(settings.foveatedCenterArea) * 1000.0f));
+	const uint32_t foveatedCenterHorizontalScaleMilli = static_cast<uint32_t>(std::round(ClampFoveatedCenterHorizontalScale(settings.foveatedCenterHorizontalScale) * 1000.0f));
 	const bool compareFoveatedArea = foveatedDispatchCurrent || previousFoveatedDispatch;
 	const bool foveatedDispatchChanged = previousFoveatedDispatch != foveatedDispatchCurrent ||
-	                                     (compareFoveatedArea && previousFoveatedCenterAreaMilli != foveatedCenterAreaMilli);
+	                                     (compareFoveatedArea && (previousFoveatedCenterAreaMilli != foveatedCenterAreaMilli ||
+	                                                              previousFoveatedCenterHorizontalScaleMilli != foveatedCenterHorizontalScaleMilli));
 	const bool peripheryTAAChanged = previousPeripheryTAA != peripheryTAACurrent;
 	const bool compareFSRRuntimePath = a_upscalemethod == UpscaleMethod::kFSR || previousUpscaleMode == UpscaleMethod::kFSR;
 	const bool fsrRuntimePathChanged = compareFSRRuntimePath && previousFSRRuntimePathActive != fsrRuntimePathCurrent;
 
-	if (upscaleModeChanged || frameGenModeChanged || vrPipelineDedupChanged || foveatedDispatchChanged || peripheryTAAChanged || fsrRuntimePathChanged) {
-		logger::debug("[Upscaling] Resource change detected - Upscale: {} ({}) -> {} ({}), FrameGen: {} -> {} (d3d12Active={}), VRPipelineDedup: {} -> {}, FSRRuntimePath: {} -> {}",
+	if (upscaleModeChanged || frameGenModeChanged || foveatedDispatchChanged || peripheryTAAChanged || fsrRuntimePathChanged) {
+		logger::debug("[Upscaling] Resource change detected - Upscale: {} ({}) -> {} ({}), FrameGen: {} -> {} (d3d12Active={}), FSRRuntimePath: {} -> {}",
 			static_cast<int>(previousUpscaleMode), magic_enum::enum_name(previousUpscaleMode), static_cast<int>(a_upscalemethod), magic_enum::enum_name(a_upscalemethod), previousFrameGenMode, frameGenModeCurrent, d3d12SwapChainActive,
-			previousVRPipelineDedupActive, vrPipelineDedupCurrent, previousFSRRuntimePathActive, fsrRuntimePathCurrent);
+			previousFSRRuntimePathActive, fsrRuntimePathCurrent);
 
 		// Destroy previous upscaling method resources (only if they were actually active)
 		if (upscaleModeChanged) {
@@ -1356,12 +1261,6 @@ void Upscaling::CheckResources(UpscaleMethod a_upscalemethod)
 			CreateUpscalingTextureResources(a_upscalemethod);
 		}
 
-		// Rebuild FSR resources when toggling VR pipeline dedup mode without changing method.
-		if (!upscaleModeChanged && vrPipelineDedupChanged && a_upscalemethod == UpscaleMethod::kFSR) {
-			fidelityFX.DestroyFSRResources();
-			fidelityFX.CreateFSRResources();
-		}
-
 		// Host FSR3.1 and runtime FSR4 keep separate temporal state; rebuild on path changes.
 		if (!upscaleModeChanged && fsrRuntimePathChanged && a_upscalemethod == UpscaleMethod::kFSR) {
 			fidelityFX.DestroyFSRResources();
@@ -1381,11 +1280,11 @@ void Upscaling::CheckResources(UpscaleMethod a_upscalemethod)
 		// Update tracking for next call
 		previousUpscaleMode = a_upscalemethod;
 		previousFrameGenMode = (settings.frameGenerationMode && d3d12SwapChainActive);
-		previousVRPipelineDedupActive = vrPipelineDedupCurrent;
 		previousFoveatedDispatch = foveatedDispatchCurrent;
 		previousPeripheryTAA = peripheryTAACurrent;
 		previousFSRRuntimePathActive = fsrRuntimePathCurrent;
 		previousFoveatedCenterAreaMilli = foveatedCenterAreaMilli;
+		previousFoveatedCenterHorizontalScaleMilli = foveatedCenterHorizontalScaleMilli;
 		previousUpscalingWasActive = IsUpscalingActive();
 	}
 }
@@ -1550,25 +1449,6 @@ bool Upscaling::IsPeripheryTAAPathActive(UpscaleMethod a_upscaleMethod) const
 	return IsPeripheryTAAEnabled(a_upscaleMethod) && !settings.foveatedPeripheryMaskVisualization;
 }
 
-bool Upscaling::IsVRPipelineDedupActive(UpscaleMethod a_upscaleMethod) const
-{
-	if (!globals::game::isVR)
-		return false;
-
-	if (!settings.vrPipelineDeduplication)
-		return false;
-
-	const bool supportsDedupForMethod = a_upscaleMethod == UpscaleMethod::kFSR || a_upscaleMethod == UpscaleMethod::kDLSS;
-	if (!supportsDedupForMethod)
-		return false;
-
-	// Keep the paths mutually exclusive with foveated vendor dispatch.
-	if (IsFoveatedVendorDispatchEnabled(a_upscaleMethod))
-		return false;
-
-	return true;
-}
-
 float2 Upscaling::GetDefaultFoveatedMaskCenterOffset(uint32_t eyeIndex) const
 {
 	(void)eyeIndex;
@@ -1586,8 +1466,18 @@ float2 Upscaling::GetResolvedFoveatedMaskCenterOffset(uint32_t eyeIndex) const
 	const bool isLeftEye = eyeIndex == 0;
 	const float userAdjustX = isLeftEye ? settings.foveatedLeftEyeMaskOffsetX : settings.foveatedRightEyeMaskOffsetX;
 	const float userAdjustY = isLeftEye ? settings.foveatedLeftEyeMaskOffsetY : settings.foveatedRightEyeMaskOffsetY;
-	resolved.x = std::clamp(resolved.x + ClampFoveatedMaskOffsetAdjustment(userAdjustX), kFoveatedMaskOffsetResolvedMin, kFoveatedMaskOffsetResolvedMax);
-	resolved.y = std::clamp(resolved.y + ClampFoveatedMaskOffsetAdjustment(userAdjustY), kFoveatedMaskOffsetResolvedMin, kFoveatedMaskOffsetResolvedMax);
+	resolved.x += ClampFoveatedMaskOffsetAdjustment(userAdjustX);
+	resolved.y += ClampFoveatedMaskOffsetAdjustment(userAdjustY);
+
+	if (globals::game::isVR) {
+		const float centerScale = ClampFoveatedCenterArea(settings.foveatedCenterArea);
+		const float centerHorizontalScale = ClampFoveatedCenterHorizontalScale(settings.foveatedCenterHorizontalScale);
+		const float outwardExpansion = centerScale * 0.5f * std::max(0.0f, centerHorizontalScale - 1.0f);
+		resolved.x += isLeftEye ? -outwardExpansion : outwardExpansion;
+	}
+
+	resolved.x = std::clamp(resolved.x, kFoveatedMaskOffsetResolvedMin, kFoveatedMaskOffsetResolvedMax);
+	resolved.y = std::clamp(resolved.y, kFoveatedMaskOffsetResolvedMin, kFoveatedMaskOffsetResolvedMax);
 	return resolved;
 }
 
@@ -1596,9 +1486,11 @@ std::array<float2, 2> Upscaling::GetResolvedFoveatedMaskCenterOffsets() const
 	return { GetResolvedFoveatedMaskCenterOffset(0), GetResolvedFoveatedMaskCenterOffset(1) };
 }
 
-bool Upscaling::BuildFoveatedDispatchRects(uint32_t inputWidthPerEye, uint32_t inputHeight, uint32_t outputWidthPerEye, uint32_t outputHeight, bool isVR, float centerScale)
+bool Upscaling::BuildFoveatedDispatchRects(uint32_t inputWidthPerEye, uint32_t inputHeight, uint32_t outputWidthPerEye, uint32_t outputHeight, bool isVR, float centerScale, float centerFeather, float centerHorizontalScale)
 {
 	centerScale = ClampFoveatedCenterArea(centerScale);
+	centerFeather = std::isfinite(centerFeather) ? std::max(0.0f, centerFeather) : FoveatedCommon::kCenterFeather;
+	centerHorizontalScale = ClampFoveatedCenterHorizontalScale(centerHorizontalScale);
 
 	auto& cache = foveatedRectCache;
 	auto centerOffsets = GetResolvedFoveatedMaskCenterOffsets();
@@ -1611,6 +1503,8 @@ bool Upscaling::BuildFoveatedDispatchRects(uint32_t inputWidthPerEye, uint32_t i
 		cache.outputHeight != outputHeight ||
 		cache.isVR != isVR ||
 		std::abs(cache.centerScale - centerScale) > 1e-6f ||
+		std::abs(cache.centerFeather - centerFeather) > 1e-6f ||
+		std::abs(cache.centerHorizontalScale - centerHorizontalScale) > 1e-6f ||
 		std::abs(cache.centerOffsets[0].x - centerOffsets[0].x) > 1e-6f ||
 		std::abs(cache.centerOffsets[0].y - centerOffsets[0].y) > 1e-6f ||
 		(isVR && (std::abs(cache.centerOffsets[1].x - centerOffsets[1].x) > 1e-6f ||
@@ -1625,6 +1519,8 @@ bool Upscaling::BuildFoveatedDispatchRects(uint32_t inputWidthPerEye, uint32_t i
 	cache.outputHeight = outputHeight;
 	cache.isVR = isVR;
 	cache.centerScale = centerScale;
+	cache.centerFeather = centerFeather;
+	cache.centerHorizontalScale = centerHorizontalScale;
 	cache.centerOffsets = centerOffsets;
 	cache.rects = {};
 
@@ -1634,7 +1530,7 @@ bool Upscaling::BuildFoveatedDispatchRects(uint32_t inputWidthPerEye, uint32_t i
 			return rect;
 
 		const float2 centerOffset = centerOffsets[eyeIndex];
-		const auto bounds = FoveatedCommon::BuildCenteredDispatchBounds(0, outputWidthPerEye, outputHeight, centerScale, centerOffset.x, centerOffset.y);
+		const auto bounds = FoveatedCommon::BuildCenteredDispatchBounds(0, outputWidthPerEye, outputHeight, centerScale, centerOffset.x, centerOffset.y, centerFeather, centerHorizontalScale);
 		const int minX = bounds.minX;
 		const int maxX = bounds.maxX;
 		const int minY = bounds.minY;
@@ -1884,23 +1780,27 @@ void Upscaling::DispatchFoveatedPeripheryPass(ID3D11ShaderResourceView* sourceSR
 	cbData.centerOffset = { centerOffsetX, centerOffsetY };
 	cbData.pad0 = { 0.0f, 0.0f };
 	const float centerArea = ClampFoveatedCenterArea(settings.foveatedCenterArea);
-	const float edgeBlurStrength = ClampPeripheryEdgeBlurStrength(settings.foveatedPeripheryEdgeBlurStrength);
+	const float centerHorizontalScale = ClampFoveatedCenterHorizontalScale(settings.foveatedCenterHorizontalScale);
+	const bool visualizeMask = settings.foveatedPeripheryMaskVisualization;
+	const bool showThreeZoneMask = visualizeMask && settings.periphery_taa_enable;
+	const float centerFeather = showThreeZoneMask ? ClampPeripheryTAACenterBlendFeather(settings.periphery_taa_center_blend_feather) : FoveatedCommon::kCenterFeather;
+	const float taaOuterScale = ClampPeripheryTAAOuterScale(settings.periphery_taa_outer_scale);
 	cbData.tuning0 = {
 		centerArea,
-		FoveatedCommon::kCenterFeather,
-		0.0f,
+		centerFeather,
+		centerHorizontalScale,
 		0.0f
 	};
 	cbData.tuning1 = {
-		settings.foveatedPeripheryEdgeBlur ? 1.0f : 0.0f,
-		edgeBlurStrength,
-		12.0f,
+		0.0f,
+		0.0f,
+		0.0f,
 		0.0f
 	};
 	cbData.tuning2 = {
-		settings.foveatedPeripheryMaskVisualization ? 1.0f : 0.0f,
-		0.0f,
-		0.0f,
+		visualizeMask ? 1.0f : 0.0f,
+		showThreeZoneMask ? 1.0f : 0.0f,
+		taaOuterScale,
 		0.0f
 	};
 	foveatedPeripheryCB->Update(cbData);
@@ -1986,15 +1886,15 @@ void Upscaling::DispatchPeripheryTAAPass(ID3D11ShaderResourceView* currentColorS
 	cbData.centerOffset = { centerOffsetX, centerOffsetY };
 	cbData.tuning0 = {
 		ClampFoveatedCenterArea(settings.foveatedCenterArea),
-		FoveatedCommon::kCenterFeather,
+		ClampPeripheryTAACenterBlendFeather(settings.periphery_taa_center_blend_feather),
 		resetHistory ? 1.0f : 0.0f,
-		settings.periphery_taa_show_debug ? 1.0f : 0.0f
+		0.0f
 	};
 	cbData.tuning1 = {
-		settings.periphery_taa_disable_locks ? 1.0f : 0.0f,
-		settings.periphery_taa_disable_reactivity ? 1.0f : 0.0f,
-		settings.periphery_taa_disable_instability ? 1.0f : 0.0f,
-		peripheryTAAHistoryValid && !resetHistory ? 1.0f : 0.0f
+		peripheryTAAHistoryValid && !resetHistory ? 1.0f : 0.0f,
+		ClampFoveatedCenterHorizontalScale(settings.foveatedCenterHorizontalScale),
+		0.0f,
+		0.0f
 	};
 	cbData.tuning2 = {
 		1.0f,
@@ -2003,30 +1903,15 @@ void Upscaling::DispatchPeripheryTAAPass(ID3D11ShaderResourceView* currentColorS
 		0.92f
 	};
 	cbData.tuning3 = {
-		settings.periphery_taa_hmd_reprojection ? 1.0f : 0.0f,
-		settings.periphery_taa_hmd_motion_guard ? 1.0f : 0.0f,
-		settings.periphery_taa_sharpen_fallback ? 1.0f : 0.0f,
-		settings.periphery_taa_stabilize_motion ? 1.0f : 0.0f
-	};
-	const bool effectiveSeparateHmdRejection = settings.periphery_taa_hmd_reprojection && settings.periphery_taa_separate_hmd_rejection;
-	const bool effectiveReduceHmdBlend = settings.periphery_taa_hmd_motion_guard && settings.periphery_taa_reduce_hmd_blend;
-	const bool effectiveAnchorHmdReprojection = settings.periphery_taa_hmd_reprojection && settings.periphery_taa_anchor_hmd_reprojection;
-	cbData.tuning4 = {
-		effectiveSeparateHmdRejection ? 1.0f : 0.0f,
-		effectiveReduceHmdBlend ? 1.0f : 0.0f,
-		effectiveAnchorHmdReprojection ? 1.0f : 0.0f,
+		1.0f,
+		1.0f,
+		1.0f,
 		0.0f
 	};
 	cbData.currentViewProjInverse = currentViewProjInverse;
 	cbData.previousViewProj = previousViewProj;
 	cbData.currentCameraPosAdjust = currentCameraPosAdjust;
 	cbData.previousCameraPosAdjust = previousCameraPosAdjust;
-	cbData.debugParams = {
-		static_cast<float>(ClampPeripheryTAADebugModeUInt(settings.periphery_taa_debug_mode)),
-		1.0f / 12.0f,
-		1.0f / 12.0f,
-		0.0f
-	};
 	peripheryTAACB->Update(cbData);
 
 	ID3D11Buffer* cb = peripheryTAACB->CB();
@@ -2061,7 +1946,7 @@ void Upscaling::DispatchPeripheryTAAPass(ID3D11ShaderResourceView* currentColorS
 	context->CSSetShader(nullptr, nullptr, 0);
 }
 
-void Upscaling::DispatchFoveatedBlendPass(ID3D11ShaderResourceView* centerSRV, ID3D11UnorderedAccessView* outputUAV, uint32_t eyeIndex, uint32_t outputWidthPerEye, uint32_t outputHeight, const FoveatedDispatchRect& rect, uint32_t dispatchOffsetX, uint32_t dispatchOffsetY, uint32_t dispatchWidth, uint32_t dispatchHeight)
+void Upscaling::DispatchFoveatedBlendPass(ID3D11ShaderResourceView* centerSRV, ID3D11UnorderedAccessView* outputUAV, uint32_t eyeIndex, uint32_t outputWidthPerEye, uint32_t outputHeight, const FoveatedDispatchRect& rect, uint32_t dispatchOffsetX, uint32_t dispatchOffsetY, uint32_t dispatchWidth, uint32_t dispatchHeight, float centerFeather)
 {
 	if (!centerSRV || !outputUAV || rect.outputWidth == 0 || rect.outputHeight == 0 || !foveatedCenterBlendCB)
 		return;
@@ -2105,7 +1990,7 @@ void Upscaling::DispatchFoveatedBlendPass(ID3D11ShaderResourceView* centerSRV, I
 	};
 	const float2 centerOffset = GetResolvedFoveatedMaskCenterOffset(eyeIndex);
 	cbData.centerScale = ClampFoveatedCenterArea(settings.foveatedCenterArea);
-	cbData.centerFeather = FoveatedCommon::kCenterFeather;
+	cbData.centerFeather = std::isfinite(centerFeather) ? std::max(0.0f, centerFeather) : FoveatedCommon::kCenterFeather;
 	cbData.centerOffset = centerOffset;
 	cbData.outputOffset = { static_cast<float>(dispatchMinX), static_cast<float>(dispatchMinY) };
 	cbData.dispatchDim = { static_cast<float>(actualDispatchWidth), static_cast<float>(actualDispatchHeight) };
@@ -2114,7 +1999,7 @@ void Upscaling::DispatchFoveatedBlendPass(ID3D11ShaderResourceView* centerSRV, I
 		rect.outputWidth > 0 ? 1.0f / static_cast<float>(rect.outputWidth) : 0.0f,
 		rect.outputHeight > 0 ? 1.0f / static_cast<float>(rect.outputHeight) : 0.0f
 	};
-	cbData.pad0 = { 0.0f, 0.0f };
+	cbData.pad0 = { ClampFoveatedCenterHorizontalScale(settings.foveatedCenterHorizontalScale), 0.0f };
 	foveatedCenterBlendCB->Update(cbData);
 
 	(void)eyeIndex;
@@ -2142,7 +2027,7 @@ void Upscaling::DispatchFoveatedBlendPass(ID3D11ShaderResourceView* centerSRV, I
 	context->CSSetShader(nullptr, nullptr, 0);
 }
 
-bool Upscaling::DispatchSingleFoveatedVendorEye(UpscaleMethod a_upscaleMethod, uint32_t eyeIndex, ID3D11Resource* colorIn, ID3D11Resource* depthIn, ID3D11Resource* motionVectorsIn, ID3D11Resource* reactiveMaskIn, ID3D11Resource* transparencyMaskIn, uint32_t outputWidthPerEye, uint32_t outputHeight, uint32_t innerMinX, uint32_t innerMinY, uint32_t innerMaxX, uint32_t innerMaxY, ID3D11Resource* historyColorResource, ID3D11UnorderedAccessView* historyColorUAV, uint32_t colorInputBaseOffsetX, uint32_t depthInputBaseOffsetX, uint32_t auxInputBaseOffsetX)
+bool Upscaling::DispatchSingleFoveatedVendorEye(UpscaleMethod a_upscaleMethod, uint32_t eyeIndex, ID3D11Resource* colorIn, ID3D11Resource* depthIn, ID3D11Resource* motionVectorsIn, ID3D11Resource* reactiveMaskIn, ID3D11Resource* transparencyMaskIn, uint32_t outputWidthPerEye, uint32_t outputHeight, ID3D11Resource* historyColorResource, ID3D11UnorderedAccessView* historyColorUAV, uint32_t colorInputBaseOffsetX, uint32_t depthInputBaseOffsetX, uint32_t auxInputBaseOffsetX)
 {
 	if (eyeIndex > 1)
 		return false;
@@ -2259,112 +2144,35 @@ bool Upscaling::DispatchSingleFoveatedVendorEye(UpscaleMethod a_upscaleMethod, u
 	const uint32_t rectMaxX = rect.outputOffsetX + rect.outputWidth;
 	const uint32_t rectMaxY = rect.outputOffsetY + rect.outputHeight;
 
-	uint32_t interiorMinX = std::max(innerMinX, rectMinX);
-	uint32_t interiorMinY = std::max(innerMinY, rectMinY);
-	uint32_t interiorMaxX = std::min(innerMaxX, rectMaxX);
-	uint32_t interiorMaxY = std::min(innerMaxY, rectMaxY);
-
-	if (interiorMaxX > interiorMinX && interiorMaxY > interiorMinY) {
-		D3D11_BOX centerInteriorBox{
-			interiorMinX - rectMinX,
-			interiorMinY - rectMinY,
-			0u,
-			interiorMaxX - rectMinX,
-			interiorMaxY - rectMinY,
-			1u
-		};
-		context->CopySubresourceRegion(
-			vrIntermediateColorOut[eyeIndex]->resource.get(),
-			0,
-			interiorMinX,
-			interiorMinY,
-			0,
-			foveatedCenterColorOut[eyeIndex]->resource.get(),
-			0,
-			&centerInteriorBox);
-		if (historyColorResource) {
-			context->CopySubresourceRegion(
-				historyColorResource,
-				0,
-				interiorMinX,
-				interiorMinY,
-				0,
-				foveatedCenterColorOut[eyeIndex]->resource.get(),
-				0,
-				&centerInteriorBox);
-		}
-	}
-
 	ID3D11UnorderedAccessView* outputUAV = vrIntermediateColorOut[eyeIndex]->uav.get();
 	ID3D11ShaderResourceView* centerSRV = foveatedCenterColorOut[eyeIndex]->srv.get();
+	const float centerBlendFeather = historyColorResource ? ClampPeripheryTAACenterBlendFeather(settings.periphery_taa_center_blend_feather) : FoveatedCommon::kCenterFeather;
 
-	bool dispatchedRingBlend = false;
-	auto dispatchBlendRing = [&](uint32_t offsetX, uint32_t offsetY, uint32_t width, uint32_t height) {
-		if (!width || !height)
-			return;
-		dispatchedRingBlend = true;
+	DispatchFoveatedBlendPass(
+		centerSRV,
+		outputUAV,
+		eyeIndex,
+		outputWidthPerEye,
+		outputHeight,
+		rect,
+		rectMinX,
+		rectMinY,
+		rectMaxX - rectMinX,
+		rectMaxY - rectMinY,
+		centerBlendFeather);
+	if (historyColorUAV) {
 		DispatchFoveatedBlendPass(
 			centerSRV,
-			outputUAV,
+			historyColorUAV,
 			eyeIndex,
 			outputWidthPerEye,
 			outputHeight,
 			rect,
-			offsetX,
-			offsetY,
-			width,
-			height);
-		if (historyColorUAV) {
-			DispatchFoveatedBlendPass(
-				centerSRV,
-				historyColorUAV,
-				eyeIndex,
-				outputWidthPerEye,
-				outputHeight,
-				rect,
-				offsetX,
-				offsetY,
-				width,
-				height);
-		}
-	};
-
-	if (interiorMaxX > interiorMinX && interiorMaxY > interiorMinY) {
-		const uint32_t middleMinY = interiorMinY;
-		const uint32_t middleMaxY = interiorMaxY;
-		const uint32_t middleHeight = middleMaxY - middleMinY;
-
-		dispatchBlendRing(rectMinX, rectMinY, rect.outputWidth, interiorMinY - rectMinY);
-		dispatchBlendRing(rectMinX, interiorMaxY, rect.outputWidth, rectMaxY - interiorMaxY);
-		dispatchBlendRing(rectMinX, middleMinY, interiorMinX - rectMinX, middleHeight);
-		dispatchBlendRing(interiorMaxX, middleMinY, rectMaxX - interiorMaxX, middleHeight);
-	}
-
-	if (!dispatchedRingBlend) {
-		DispatchFoveatedBlendPass(
-			centerSRV,
-			outputUAV,
-			eyeIndex,
-			outputWidthPerEye,
-			outputHeight,
-			rect,
-			rect.outputOffsetX,
-			rect.outputOffsetY,
-			rect.outputWidth,
-			rect.outputHeight);
-		if (historyColorUAV) {
-			DispatchFoveatedBlendPass(
-				centerSRV,
-				historyColorUAV,
-				eyeIndex,
-				outputWidthPerEye,
-				outputHeight,
-				rect,
-				rect.outputOffsetX,
-				rect.outputOffsetY,
-				rect.outputWidth,
-				rect.outputHeight);
-		}
+			rectMinX,
+			rectMinY,
+			rectMaxX - rectMinX,
+			rectMaxY - rectMinY,
+			centerBlendFeather);
 	}
 
 	return true;
@@ -2388,11 +2196,14 @@ bool Upscaling::DispatchFoveatedVendorUpscaling(UpscaleMethod a_upscaleMethod, I
 	const uint32_t inputWidthPerEye = static_cast<uint32_t>(renderSize.x / 2.0f);
 	const uint32_t inputHeight = static_cast<uint32_t>(renderSize.y);
 
-	if (!BuildFoveatedDispatchRects(inputWidthPerEye, inputHeight, outputWidthPerEye, outputHeight, true, settings.foveatedCenterArea))
-		return false;
-
 	const bool visualizeMask = settings.foveatedPeripheryMaskVisualization;
 	const bool usePeripheryTAA = IsPeripheryTAAPathActive(a_upscaleMethod);
+	const float centerScale = ClampFoveatedCenterArea(settings.foveatedCenterArea);
+	const float centerHorizontalScale = ClampFoveatedCenterHorizontalScale(settings.foveatedCenterHorizontalScale);
+	const float effectiveCenterBlendFeather = usePeripheryTAA ? ClampPeripheryTAACenterBlendFeather(settings.periphery_taa_center_blend_feather) : FoveatedCommon::kCenterFeather;
+	if (!BuildFoveatedDispatchRects(inputWidthPerEye, inputHeight, outputWidthPerEye, outputHeight, true, centerScale, effectiveCenterBlendFeather, centerHorizontalScale))
+		return false;
+
 	auto* peripheryCS = usePeripheryTAA ? nullptr : GetFoveatedPeripheryCS();
 	auto* peripheryTAA = usePeripheryTAA ? GetPeripheryTAACS() : nullptr;
 	auto* blendCS = visualizeMask ? nullptr : GetFoveatedCenterBlendCS();
@@ -2412,7 +2223,6 @@ bool Upscaling::DispatchFoveatedVendorUpscaling(UpscaleMethod a_upscaleMethod, I
 	if (usePeripheryTAA && !EnsurePeripheryTAAResources(outputWidthPerEye, outputHeight, colorTexture))
 		return false;
 
-	const float centerScale = ClampFoveatedCenterArea(settings.foveatedCenterArea);
 	const bool resetPeripheryTAA = usePeripheryTAA && (ShouldResetHistoryThisFrame() || !peripheryTAAHistoryValid);
 	const uint32_t peripheryTAAWriteIndex = 1u - peripheryTAAHistoryReadIndex;
 
@@ -2428,7 +2238,7 @@ bool Upscaling::DispatchFoveatedVendorUpscaling(UpscaleMethod a_upscaleMethod, I
 			previousCameraPosAdjust = globals::game::frameBufferCached.GetCameraPreviousPosAdjust(eye);
 		}
 		const float2 centerOffset = GetResolvedFoveatedMaskCenterOffset(eye);
-		const auto innerBounds = FoveatedCommon::BuildCenteredInscribedEllipseRect(outputWidthPerEye, outputHeight, centerScale, centerOffset.x, centerOffset.y);
+		const auto innerBounds = FoveatedCommon::BuildCenteredInscribedMaskRect(outputWidthPerEye, outputHeight, centerScale, centerOffset.x, centerOffset.y, centerHorizontalScale);
 		const uint32_t innerMinX = static_cast<uint32_t>(innerBounds.minX);
 		const uint32_t innerMaxX = static_cast<uint32_t>(innerBounds.maxX);
 		const uint32_t innerMinY = static_cast<uint32_t>(innerBounds.minY);
@@ -2449,8 +2259,19 @@ bool Upscaling::DispatchFoveatedVendorUpscaling(UpscaleMethod a_upscaleMethod, I
 			return false;
 		}
 
-		auto dispatchPeripheryBand = [&](uint32_t outputOffsetX, uint32_t outputOffsetY, uint32_t dispatchWidth, uint32_t dispatchHeight) {
-			if (usePeripheryTAA) {
+		ID3D11ShaderResourceView* peripherySourceSRV = useDirectSourcePath ? colorSRV : vrIntermediateColorIn[eye]->srv.get();
+		const uint32_t peripherySourceWidth = useDirectSourcePath ? (inputWidthPerEye * 2u) : inputWidthPerEye;
+		const uint32_t peripherySourceHeight = inputHeight;
+		const float peripherySourceScaleX = useDirectSourcePath ? 0.5f : 1.0f;
+		const float peripherySourceScaleY = 1.0f;
+		const float peripherySourceOffsetX = useDirectSourcePath ? (eye == 1 ? 0.5f : 0.0f) : 0.0f;
+		const float peripherySourceOffsetY = 0.0f;
+
+		auto dispatchPeripheryBand = [&](uint32_t outputOffsetX, uint32_t outputOffsetY, uint32_t dispatchWidth, uint32_t dispatchHeight, bool dispatchWithTAA) {
+			if (!dispatchWidth || !dispatchHeight)
+				return;
+
+			if (dispatchWithTAA) {
 				DispatchPeripheryTAAPass(
 					vrIntermediateColorIn[eye]->srv.get(),
 					vrIntermediateDepth[eye]->srv.get(),
@@ -2480,13 +2301,6 @@ bool Upscaling::DispatchFoveatedVendorUpscaling(UpscaleMethod a_upscaleMethod, I
 					centerOffset.x,
 					centerOffset.y);
 			} else {
-				ID3D11ShaderResourceView* peripherySourceSRV = useDirectSourcePath ? colorSRV : vrIntermediateColorIn[eye]->srv.get();
-				const uint32_t peripherySourceWidth = useDirectSourcePath ? (inputWidthPerEye * 2u) : inputWidthPerEye;
-				const uint32_t peripherySourceHeight = inputHeight;
-				const float peripherySourceScaleX = useDirectSourcePath ? 0.5f : 1.0f;
-				const float peripherySourceScaleY = 1.0f;
-				const float peripherySourceOffsetX = useDirectSourcePath ? (eye == 1 ? 0.5f : 0.0f) : 0.0f;
-				const float peripherySourceOffsetY = 0.0f;
 				DispatchFoveatedPeripheryPass(
 					peripherySourceSRV,
 					vrIntermediateColorOut[eye]->uav.get(),
@@ -2508,6 +2322,28 @@ bool Upscaling::DispatchFoveatedVendorUpscaling(UpscaleMethod a_upscaleMethod, I
 			}
 		};
 
+		auto dispatchRectMinusHole = [&](uint32_t outerMinX, uint32_t outerMinY, uint32_t outerMaxX, uint32_t outerMaxY, uint32_t holeMinX, uint32_t holeMinY, uint32_t holeMaxX, uint32_t holeMaxY, bool dispatchWithTAA) {
+			if (outerMaxX <= outerMinX || outerMaxY <= outerMinY)
+				return;
+
+			const uint32_t clampedHoleMinX = std::clamp(holeMinX, outerMinX, outerMaxX);
+			const uint32_t clampedHoleMaxX = std::clamp(holeMaxX, outerMinX, outerMaxX);
+			const uint32_t clampedHoleMinY = std::clamp(holeMinY, outerMinY, outerMaxY);
+			const uint32_t clampedHoleMaxY = std::clamp(holeMaxY, outerMinY, outerMaxY);
+			const bool hasHole = clampedHoleMaxX > clampedHoleMinX && clampedHoleMaxY > clampedHoleMinY;
+			if (!hasHole) {
+				dispatchPeripheryBand(outerMinX, outerMinY, outerMaxX - outerMinX, outerMaxY - outerMinY, dispatchWithTAA);
+				return;
+			}
+
+			const uint32_t outerWidth = outerMaxX - outerMinX;
+			const uint32_t middleHeight = clampedHoleMaxY - clampedHoleMinY;
+			dispatchPeripheryBand(outerMinX, outerMinY, outerWidth, clampedHoleMinY - outerMinY, dispatchWithTAA);
+			dispatchPeripheryBand(outerMinX, clampedHoleMaxY, outerWidth, outerMaxY - clampedHoleMaxY, dispatchWithTAA);
+			dispatchPeripheryBand(outerMinX, clampedHoleMinY, clampedHoleMinX - outerMinX, middleHeight, dispatchWithTAA);
+			dispatchPeripheryBand(clampedHoleMaxX, clampedHoleMinY, outerMaxX - clampedHoleMaxX, middleHeight, dispatchWithTAA);
+		};
+
 		if (usePeripheryTAA) {
 			if (!peripheryTAAHistoryColor[eye][peripheryTAAHistoryReadIndex] || !peripheryTAAHistoryColor[eye][peripheryTAAHistoryReadIndex]->srv ||
 				!peripheryTAAHistoryColor[eye][peripheryTAAWriteIndex] || !peripheryTAAHistoryColor[eye][peripheryTAAWriteIndex]->uav ||
@@ -2524,16 +2360,59 @@ bool Upscaling::DispatchFoveatedVendorUpscaling(UpscaleMethod a_upscaleMethod, I
 			context->ClearUnorderedAccessViewFloat(peripheryTAALockHistory[eye][peripheryTAAWriteIndex]->uav.get(), clearValue);
 		}
 
-		if (visualizeMask) {
-			dispatchPeripheryBand(0, 0, outputWidthPerEye, outputHeight);
+		if (usePeripheryTAA) {
+			const float taaOuterScale = std::clamp(ClampPeripheryTAAOuterScale(settings.periphery_taa_outer_scale), centerScale, 1.0f);
+			const auto taaOuterBounds = FoveatedCommon::BuildCenteredDispatchBounds(0, outputWidthPerEye, outputHeight, taaOuterScale, centerOffset.x, centerOffset.y, 0.0f, centerHorizontalScale);
+			const uint32_t taaOuterMinX = static_cast<uint32_t>(taaOuterBounds.minX);
+			const uint32_t taaOuterMaxX = static_cast<uint32_t>(taaOuterBounds.maxX);
+			const uint32_t taaOuterMinY = static_cast<uint32_t>(taaOuterBounds.minY);
+			const uint32_t taaOuterMaxY = static_cast<uint32_t>(taaOuterBounds.maxY);
+			const bool hasTaaOuterRegion = taaOuterMaxX > taaOuterMinX && taaOuterMaxY > taaOuterMinY;
+
+			if (hasTaaOuterRegion) {
+				if (hasCenterInterior) {
+					dispatchRectMinusHole(
+						taaOuterMinX,
+						taaOuterMinY,
+						taaOuterMaxX,
+						taaOuterMaxY,
+						innerMinX,
+						innerMinY,
+						innerMaxX,
+						innerMaxY,
+						true);
+				} else {
+					dispatchPeripheryBand(taaOuterMinX, taaOuterMinY, taaOuterMaxX - taaOuterMinX, taaOuterMaxY - taaOuterMinY, true);
+				}
+
+				dispatchRectMinusHole(
+					0,
+					0,
+					outputWidthPerEye,
+					outputHeight,
+					taaOuterMinX,
+					taaOuterMinY,
+					taaOuterMaxX,
+					taaOuterMaxY,
+					false);
+			} else {
+				dispatchPeripheryBand(0, 0, outputWidthPerEye, outputHeight, false);
+			}
+		} else if (visualizeMask) {
+			dispatchPeripheryBand(0, 0, outputWidthPerEye, outputHeight, false);
 		} else if (hasCenterInterior) {
-			const uint32_t innerHeight = innerMaxY - innerMinY;
-			dispatchPeripheryBand(0, 0, outputWidthPerEye, innerMinY);
-			dispatchPeripheryBand(0, innerMaxY, outputWidthPerEye, outputHeight - innerMaxY);
-			dispatchPeripheryBand(0, innerMinY, innerMinX, innerHeight);
-			dispatchPeripheryBand(innerMaxX, innerMinY, outputWidthPerEye - innerMaxX, innerHeight);
+			dispatchRectMinusHole(
+				0,
+				0,
+				outputWidthPerEye,
+				outputHeight,
+				innerMinX,
+				innerMinY,
+				innerMaxX,
+				innerMaxY,
+				false);
 		} else {
-			dispatchPeripheryBand(0, 0, outputWidthPerEye, outputHeight);
+			dispatchPeripheryBand(0, 0, outputWidthPerEye, outputHeight, false);
 		}
 
 		if (visualizeMask)
@@ -2553,10 +2432,6 @@ bool Upscaling::DispatchFoveatedVendorUpscaling(UpscaleMethod a_upscaleMethod, I
 				vrIntermediateTransparencyMask[eye]->resource.get(),
 				outputWidthPerEye,
 				outputHeight,
-				innerMinX,
-				innerMinY,
-				innerMaxX,
-				innerMaxY,
 				usePeripheryTAA ? peripheryTAAHistoryColor[eye][peripheryTAAWriteIndex]->resource.get() : nullptr,
 				usePeripheryTAA ? peripheryTAAHistoryColor[eye][peripheryTAAWriteIndex]->uav.get() : nullptr,
 				useDirectSourcePath ? combinedEyeInputOffsetX : 0u,
@@ -3288,12 +3163,14 @@ void Upscaling::UpdateHistoryResetState(UpscaleMethod a_upscaleMethod)
 	const bool inWorld = state->inWorld;
 	const bool inMapMenu = globals::game::ui ? globals::game::ui->IsMenuOpen(RE::MapMenu::MENU_NAME) : false;
 	const float2 screenSize = state->screenSize;
-	const bool vrPipelineDedupEnabled = IsVRPipelineDedupActive(a_upscaleMethod);
 	const bool foveatedDispatchEnabled = IsFoveatedVendorDispatchEnabled(a_upscaleMethod);
 	const bool peripheryTAAEnabled = IsPeripheryTAAEnabled(a_upscaleMethod);
 	const bool peripheryTAAPathActive = IsPeripheryTAAPathActive(a_upscaleMethod);
 	const bool fsrRuntimePathActive = IsFSRRuntimePathActive(a_upscaleMethod);
 	const float foveatedCenterArea = ClampFoveatedCenterArea(settings.foveatedCenterArea);
+	const float foveatedCenterHorizontalScale = ClampFoveatedCenterHorizontalScale(settings.foveatedCenterHorizontalScale);
+	const float peripheryTAAOuterScale = ClampPeripheryTAAOuterScale(settings.periphery_taa_outer_scale);
+	const float peripheryTAACenterBlendFeather = ClampPeripheryTAACenterBlendFeather(settings.periphery_taa_center_blend_feather);
 	const auto foveatedCenterOffsets = GetResolvedFoveatedMaskCenterOffsets();
 
 	auto cameraCutDetected = []() {
@@ -3329,7 +3206,6 @@ void Upscaling::UpdateHistoryResetState(UpscaleMethod a_upscaleMethod)
 			inWorld != previousHistoryInWorld ||
 			inMapMenu != previousHistoryInMapMenu;
 		const bool methodChanged = a_upscaleMethod != previousHistoryUpscaleMethod;
-		const bool vrPipelineDedupChanged = vrPipelineDedupEnabled != previousHistoryVRPipelineDedup;
 		const bool fsrRuntimePathChanged = fsrRuntimePathActive != previousHistoryFSRRuntimePathActive;
 		const bool compareFoveatedArea = foveatedDispatchEnabled || previousHistoryFoveatedDispatch;
 		const bool foveatedOffsetsChanged =
@@ -3341,10 +3217,8 @@ void Upscaling::UpdateHistoryResetState(UpscaleMethod a_upscaleMethod)
 		const bool foveatedChanged =
 			foveatedDispatchEnabled != previousHistoryFoveatedDispatch ||
 			(compareFoveatedArea && std::abs(foveatedCenterArea - previousHistoryFoveatedCenterArea) > 1e-4f) ||
+			(compareFoveatedArea && std::abs(foveatedCenterHorizontalScale - previousHistoryFoveatedCenterHorizontalScale) > 1e-4f) ||
 			foveatedOffsetsChanged;
-		const bool effectiveSeparateHmdRejection = settings.periphery_taa_hmd_reprojection && settings.periphery_taa_separate_hmd_rejection;
-		const bool effectiveReduceHmdBlend = settings.periphery_taa_hmd_motion_guard && settings.periphery_taa_reduce_hmd_blend;
-		const bool effectiveAnchorHmdReprojection = settings.periphery_taa_hmd_reprojection && settings.periphery_taa_anchor_hmd_reprojection;
 		const bool longFrameGap = globals::game::deltaTime &&
 								  std::isfinite(*globals::game::deltaTime) &&
 								  *globals::game::deltaTime > 0.20f;
@@ -3354,18 +3228,10 @@ void Upscaling::UpdateHistoryResetState(UpscaleMethod a_upscaleMethod)
 			peripheryTAAEnabled != previousHistoryPeripheryTAA ||
 			peripheryTAAPathActive != previousHistoryPeripheryTAAPathActive ||
 			(peripheryTAAPathActive && (
-				settings.periphery_taa_disable_locks != previousHistoryPeripheryTAADisableLocks ||
-				settings.periphery_taa_disable_reactivity != previousHistoryPeripheryTAADisableReactivity ||
-				settings.periphery_taa_disable_instability != previousHistoryPeripheryTAADisableInstability ||
-				settings.periphery_taa_hmd_reprojection != previousHistoryPeripheryTAAHmdReprojection ||
-				settings.periphery_taa_hmd_motion_guard != previousHistoryPeripheryTAAHmdMotionGuard ||
-				effectiveSeparateHmdRejection != previousHistoryPeripheryTAASeparateHmdRejection ||
-				effectiveReduceHmdBlend != previousHistoryPeripheryTAAReduceHmdBlend ||
-				effectiveAnchorHmdReprojection != previousHistoryPeripheryTAAAnchorHmdReprojection ||
-				settings.periphery_taa_sharpen_fallback != previousHistoryPeripheryTAASharpenFallback ||
-				settings.periphery_taa_stabilize_motion != previousHistoryPeripheryTAAStabilizeMotion));
+				std::abs(peripheryTAAOuterScale - previousHistoryPeripheryTAAOuterScale) > 1e-4f ||
+				std::abs(peripheryTAACenterBlendFeather - previousHistoryPeripheryTAACenterBlendFeather) > 1e-4f));
 
-		shouldReset = screenSizeChanged || scaleChanged || worldStateChanged || methodChanged || vrPipelineDedupChanged || fsrRuntimePathChanged || foveatedChanged || effectivePeripheryTAAChanged || longFrameGap || cameraCut;
+		shouldReset = screenSizeChanged || scaleChanged || worldStateChanged || methodChanged || fsrRuntimePathChanged || foveatedChanged || effectivePeripheryTAAChanged || longFrameGap || cameraCut;
 	}
 
 	if (state->pendingPostLoadRuntimeReset)
@@ -3379,22 +3245,14 @@ void Upscaling::UpdateHistoryResetState(UpscaleMethod a_upscaleMethod)
 	previousHistoryInWorld = inWorld;
 	previousHistoryInMapMenu = inMapMenu;
 	previousHistoryUpscaleMethod = a_upscaleMethod;
-	previousHistoryVRPipelineDedup = vrPipelineDedupEnabled;
 	previousHistoryFoveatedDispatch = foveatedDispatchEnabled;
 	previousHistoryFoveatedCenterArea = foveatedCenterArea;
+	previousHistoryFoveatedCenterHorizontalScale = foveatedCenterHorizontalScale;
 	previousHistoryFoveatedCenterOffsets = foveatedCenterOffsets;
 	previousHistoryPeripheryTAA = peripheryTAAEnabled;
 	previousHistoryPeripheryTAAPathActive = peripheryTAAPathActive;
-	previousHistoryPeripheryTAADisableLocks = settings.periphery_taa_disable_locks;
-	previousHistoryPeripheryTAADisableReactivity = settings.periphery_taa_disable_reactivity;
-	previousHistoryPeripheryTAADisableInstability = settings.periphery_taa_disable_instability;
-	previousHistoryPeripheryTAAHmdReprojection = settings.periphery_taa_hmd_reprojection;
-	previousHistoryPeripheryTAAHmdMotionGuard = settings.periphery_taa_hmd_motion_guard;
-	previousHistoryPeripheryTAASeparateHmdRejection = settings.periphery_taa_hmd_reprojection && settings.periphery_taa_separate_hmd_rejection;
-	previousHistoryPeripheryTAAReduceHmdBlend = settings.periphery_taa_hmd_motion_guard && settings.periphery_taa_reduce_hmd_blend;
-	previousHistoryPeripheryTAAAnchorHmdReprojection = settings.periphery_taa_hmd_reprojection && settings.periphery_taa_anchor_hmd_reprojection;
-	previousHistoryPeripheryTAASharpenFallback = settings.periphery_taa_sharpen_fallback;
-	previousHistoryPeripheryTAAStabilizeMotion = settings.periphery_taa_stabilize_motion;
+	previousHistoryPeripheryTAAOuterScale = peripheryTAAOuterScale;
+	previousHistoryPeripheryTAACenterBlendFeather = peripheryTAACenterBlendFeather;
 	previousHistoryFSRRuntimePathActive = fsrRuntimePathActive;
 }
 
@@ -3515,9 +3373,8 @@ void Upscaling::Upscale()
 
 	auto& main = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMAIN];
 	auto& motionVector = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMOTION_VECTOR];
-	const bool vrPipelineDedupActive = IsVRPipelineDedupActive(upscaleMethod);
 	const bool requiresEncodedMotionVectors = upscaleMethod == UpscaleMethod::kDLSS || upscaleMethod == UpscaleMethod::kFSR;
-	const bool requiresCombinedEncodedMotionVectors = requiresEncodedMotionVectors && (!globals::game::isVR || vrPipelineDedupActive);
+	const bool requiresCombinedEncodedMotionVectors = requiresEncodedMotionVectors && !globals::game::isVR;
 	if (requiresCombinedEncodedMotionVectors && (!motionVectorCopyTexture || !motionVectorCopyTexture->uav || !motionVectorCopyTexture->resource)) {
 		logger::error("[Upscaling] Missing encoded motion-vector resources for method {}", magic_enum::enum_name(upscaleMethod));
 		return;
@@ -3543,7 +3400,7 @@ void Upscaling::Upscale()
 			context->CSSetConstantBuffers(0, 1, &upscalingBuffer);
 			context->CSSetShader(GetEncodeTexturesCS(), nullptr, 0);
 
-			if (globals::game::isVR && !vrPipelineDedupActive) {
+			if (globals::game::isVR) {
 				uint32_t eyeWidthOut = (uint32_t)(state->screenSize.x / 2);
 				uint32_t eyeHeightOut = (uint32_t)state->screenSize.y;
 				uint32_t eyeWidthIn = (uint32_t)(renderSize.x / 2);
@@ -3615,7 +3472,7 @@ void Upscaling::Upscale()
 
 	{
 		state->BeginPerfEvent("Upscaling");
-		ID3D11Resource* motionVectorResource = (globals::game::isVR && !vrPipelineDedupActive) ? motionVector.texture : motionVectorCopyTexture->resource.get();
+		ID3D11Resource* motionVectorResource = globals::game::isVR ? motionVector.texture : motionVectorCopyTexture->resource.get();
 		const bool foveatedDispatchRequested = IsFoveatedVendorDispatchEnabled(upscaleMethod);
 		bool dispatched = false;
 		static bool loggedFoveatedFallback = false;

@@ -26,8 +26,7 @@ namespace
 
 	bool UseSplitPerEyeFSRContexts()
 	{
-		auto& upscaling = globals::features::upscaling;
-		return globals::game::isVR && !upscaling.IsVRPipelineDedupActive(Upscaling::UpscaleMethod::kFSR);
+		return globals::game::isVR;
 	}
 
 	bool TryGetTexture2DDesc(ID3D11Resource* a_resource, D3D11_TEXTURE2D_DESC& a_outDesc)
@@ -310,7 +309,6 @@ void FidelityFX::CreateFSRResources()
 	}
 
 	const bool splitPerEyeContexts = UseSplitPerEyeFSRContexts();
-	const bool vrPipelineDedupActive = globals::game::isVR && !splitPerEyeContexts;
 
 	DestroyRuntimeUpscalerContexts();
 	DestroyRuntimeUpscalerResources();
@@ -372,8 +370,8 @@ void FidelityFX::CreateFSRResources()
 	}
 
 	fsrContextCount = numContexts;
-	logger::info("[FidelityFX] Created {} FSR3 contexts (Display: {}x{}, Render: {}x{}, VRPipelineDedup={})",
-		numContexts, displayWidth, displayHeight, renderWidth, renderHeight, vrPipelineDedupActive);
+	logger::info("[FidelityFX] Created {} FSR3 contexts (Display: {}x{}, Render: {}x{}, SplitPerEye={})",
+		numContexts, displayWidth, displayHeight, renderWidth, renderHeight, splitPerEyeContexts);
 }
 
 void FidelityFX::DestroyRuntimeUpscalerContexts()
@@ -476,7 +474,7 @@ bool FidelityFX::IsRuntimeUpscalerAvailable() const
 		return globals::features::upscaling.settings.fsr4AllowNonRx90Amd;
 	}
 	if (adapterDesc.VendorId == kNvidiaVendorId)
-		return globals::features::upscaling.settings.fsr4AllowNvidia;
+		return false;
 
 	return false;
 }
