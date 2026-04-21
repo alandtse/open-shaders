@@ -22,7 +22,7 @@ cbuffer PeripheryTAACB : register(b0)
 	float2 OutputOffset;
 	float2 Jitter;
 	float2 CenterOffset;
-	float4 Tuning0;  // x=centerScale, y=centerFeather, z=resetHistory, w=showDebug
+	float4 Tuning0;  // x=centerScale, y=centerFeather, z=resetHistory, w reserved
 	float4 Tuning1;  // x=historyValid, y=centerHorizontalScale, z/w reserved
 	float4 Tuning2;  // x=reactivityScale, y=instabilityScale, z=velocityScale, w=lockDecay
 	float4 Tuning3;  // x=enableHmdReprojection, y=separateHmdRejection, z=enableMotionStabilization, w reserved
@@ -30,7 +30,6 @@ cbuffer PeripheryTAACB : register(b0)
 	row_major float4x4 PreviousViewProj;
 	float4 CurrentCameraPosAdjust;
 	float4 PreviousCameraPosAdjust;
-	float4 DebugParams;  // x=debugMode, y=motionMagnitudeScale, z=velocityDeltaScale, w reserved
 };
 
 Texture2D<float4> CurrentColor : register(t0);
@@ -64,19 +63,6 @@ static const float kHmdMotionBlendSuppression = 0.65;
 static const float kMotionInstabilitySuppression = 0.85;
 static const float kCameraVelocityRelaxThresholdPixels = 0.50;
 static const float kCameraVelocityRelaxScale = 0.10;
-static const int kDebugModeComposite = 0;
-static const int kDebugModeReactivity = 1;
-static const int kDebugModeLock = 2;
-static const int kDebugModeDisocclusion = 3;
-static const int kDebugModeInstability = 4;
-static const int kDebugModeMotionMagnitude = 5;
-static const int kDebugModeVelocityDelta = 6;
-static const int kDebugModeCurrentBlend = 7;
-static const int kDebugModePeripheryWeight = 8;
-static const int kDebugModeHistoryUvOutOfBounds = 9;
-static const int kDebugModeRawCurrentVelocity = 10;
-static const int kDebugModeHmdHistoryDelta = 11;
-static const int kDebugModeFinalHistoryVelocity = 12;
 
 float3 Reinhard(float3 color)
 {
@@ -278,15 +264,6 @@ float ComputeHmdRejectionRelaxation(float2 hmdDelta)
 	return saturate((hmdMotionPixels - kHmdVelocityDeltaRelaxThresholdPixels) * kHmdVelocityDeltaRelaxScale);
 }
 
-float3 VisualizeSignedVector(float2 value)
-{
-	float2 valuePixels = value * OutputDim;
-	float scale = DebugParams.y;
-	float2 signedColor = saturate(valuePixels * scale * 0.5 + 0.5);
-	float magnitude = saturate(length(valuePixels) * scale);
-	return float3(signedColor, magnitude);
-}
-
 [numthreads(8, 8, 1)]
 void main(uint3 dispatchID : SV_DispatchThreadID)
 {
@@ -305,16 +282,14 @@ void main(uint3 dispatchID : SV_DispatchThreadID)
 	float centerFeather = Tuning0.y;
 	float centerHorizontalScale = Tuning1.y;
 	bool resetHistory = Tuning0.z > 0.5;
-	bool showDebug = Tuning0.w > 0.5;
 	bool historyValid = Tuning1.x > 0.5 && !resetHistory;
 	bool enableHmdReprojection = Tuning3.x > 0.5;
 	bool separateHmdRejection = Tuning3.y > 0.5;
 	bool enableMotionStabilization = Tuning3.z > 0.5;
-	int debugMode = (int)(DebugParams.x + 0.5);
 
 	float centerWeight = FoveatedComputeCenterBlendWeight(outputUV, centerScale, centerFeather, centerHorizontalScale, CenterOffset);
 	float peripheryWeight = saturate(1.0 - centerWeight);
-	if (!showDebug && peripheryWeight <= 0.0)
+	if (peripheryWeight <= 0.0)
 		return;
 
 	float4 currentSample = CurrentColor.SampleLevel(LinearSampler, inputUV, 0.0);
@@ -331,7 +306,6 @@ void main(uint3 dispatchID : SV_DispatchThreadID)
 	float2 rejectionVelocity = separateHmdRejection ? currentVelocity : historyVelocity;
 	float velocityPixels = length(rejectionVelocity * OutputDim);
 	float2 historyUV = outputUV + historyVelocity;
-	bool historyUVOutOfBounds = any(historyUV < 0.0.xx) || any(historyUV > 1.0.xx);
 	float reactiveMask = CurrentReactiveMask.SampleLevel(LinearSampler, inputUV, 0.0);
 	float transparencyMask = CurrentTransparencyMask.SampleLevel(LinearSampler, inputUV, 0.0);
 	float reactivity = saturate(max(reactiveMask, transparencyMask) * Tuning2.x);
@@ -410,38 +384,5 @@ void main(uint3 dispatchID : SV_DispatchThreadID)
 	OutHistoryColor[outputPos] = float4(resolvedColor, currentAlpha);
 	OutVelocity[outputPos] = rejectionVelocity;
 	OutLock[outputPos] = newLock;
-
-	if (showDebug) {
-		float3 debugColor;
-		if (debugMode == kDebugModeReactivity) {
-			debugColor = reactivity.xxx;
-		} else if (debugMode == kDebugModeLock) {
-			debugColor = newLock.xxx;
-		} else if (debugMode == kDebugModeDisocclusion) {
-			debugColor = disocclusion.xxx;
-		} else if (debugMode == kDebugModeInstability) {
-			debugColor = instability.xxx;
-		} else if (debugMode == kDebugModeMotionMagnitude) {
-			debugColor = saturate(velocityPixels * DebugParams.y).xxx;
-		} else if (debugMode == kDebugModeVelocityDelta) {
-			debugColor = saturate(velocityDeltaPixels * DebugParams.z).xxx;
-		} else if (debugMode == kDebugModeCurrentBlend) {
-			debugColor = currentBlend.xxx;
-		} else if (debugMode == kDebugModePeripheryWeight) {
-			debugColor = peripheryWeight.xxx;
-		} else if (debugMode == kDebugModeHistoryUvOutOfBounds) {
-			debugColor = historyUVOutOfBounds ? float3(1.0, 0.0, 0.0) : float3(0.0, 0.35, 0.0);
-		} else if (debugMode == kDebugModeRawCurrentVelocity) {
-			debugColor = VisualizeSignedVector(currentVelocity);
-		} else if (debugMode == kDebugModeHmdHistoryDelta) {
-			debugColor = VisualizeSignedVector(hmdHistoryDeltaLookup);
-		} else if (debugMode == kDebugModeFinalHistoryVelocity) {
-			debugColor = VisualizeSignedVector(historyVelocity);
-		} else {
-			debugColor = float3(reactivity, newLock, max(max(disocclusion, instability), motionRejectionRelaxation));
-		}
-		OutColor[outputPos] = float4(debugColor, 1.0);
-	} else {
-		OutColor[outputPos] = float4(resolvedColor, currentAlpha);
-	}
+	OutColor[outputPos] = float4(resolvedColor, currentAlpha);
 }
