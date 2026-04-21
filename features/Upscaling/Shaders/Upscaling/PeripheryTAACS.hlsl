@@ -23,7 +23,7 @@ cbuffer PeripheryTAACB : register(b0)
 	float2 Jitter;
 	float2 CenterOffset;
 	float4 Tuning0;  // x=centerScale, y=centerFeather, z=resetHistory, w=showDebug
-	float4 Tuning1;  // x=historyValid, y/z/w reserved
+	float4 Tuning1;  // x=historyValid, y=centerHorizontalScale, z/w reserved
 	float4 Tuning2;  // x=reactivityScale, y=instabilityScale, z=velocityScale, w=lockDecay
 	float4 Tuning3;  // x=enableHmdReprojection, y=separateHmdRejection, z=enableMotionStabilization, w reserved
 	row_major float4x4 CurrentViewProjInverse;
@@ -303,6 +303,7 @@ void main(uint3 dispatchID : SV_DispatchThreadID)
 
 	float centerScale = Tuning0.x;
 	float centerFeather = Tuning0.y;
+	float centerHorizontalScale = Tuning1.y;
 	bool resetHistory = Tuning0.z > 0.5;
 	bool showDebug = Tuning0.w > 0.5;
 	bool historyValid = Tuning1.x > 0.5 && !resetHistory;
@@ -311,7 +312,7 @@ void main(uint3 dispatchID : SV_DispatchThreadID)
 	bool enableMotionStabilization = Tuning3.z > 0.5;
 	int debugMode = (int)(DebugParams.x + 0.5);
 
-	float centerWeight = FoveatedComputeCenterBlendWeight(outputUV, centerScale, centerFeather, CenterOffset);
+	float centerWeight = FoveatedComputeCenterBlendWeight(outputUV, centerScale, centerFeather, centerHorizontalScale, CenterOffset);
 	float peripheryWeight = saturate(1.0 - centerWeight);
 	if (!showDebug && peripheryWeight <= 0.0)
 		return;

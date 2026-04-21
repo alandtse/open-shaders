@@ -12,9 +12,9 @@ cbuffer FoveatedPeripheryCB : register(b0)
 	float2 Jitter;
 	float2 CenterOffset;
 	float2 Pad0;
-	float4 Tuning0;  // x=centerScale, y=centerFeather, z/w reserved
+	float4 Tuning0;  // x=centerScale, y=centerFeather, z=centerHorizontalScale, w reserved
 	float4 Tuning1;  // x=useEdgeBlur, y=edgeBlurStrength, z=edgeSensitivity, w reserved
-	float4 Tuning2;  // x=visualizeMask, y/z/w reserved
+	float4 Tuning2;  // x=visualizeMask, y=showThreeZoneMask, z=taaOuterScale, w reserved
 };
 
 Texture2D<float4> InputColor : register(t0);
@@ -45,28 +45,41 @@ float2 ClampToSourceRegion(float2 uv, float2 regionMin, float2 regionMax)
 
 	const float centerScale = Tuning0.x;
 	const float centerFeather = Tuning0.y;
+	const float centerHorizontalScale = Tuning0.z;
 	const float useEdgeBlur = Tuning1.x;
 	const float edgeBlurStrength = Tuning1.y;
 	const float edgeSensitivity = Tuning1.z;
 	const float visualizeMask = Tuning2.x;
+	const float showThreeZoneMask = Tuning2.y;
+	const float taaOuterScale = max(Tuning2.z, centerScale);
 
-	float centerWeight = FoveatedComputeCenterBlendWeight(uv, centerScale, centerFeather, CenterOffset);
+	float centerWeight = FoveatedComputeCenterBlendWeight(uv, centerScale, centerFeather, centerHorizontalScale, CenterOffset);
 	float peripheryWeight = saturate(1.0 - centerWeight);
 
 	if (visualizeMask > 0.5) {
-		const float centerRadius = max(FoveatedClampCenterArea(centerScale) * 0.5, FOVEATED_CENTER_FEATHER_MIN);
-		const float normalizedFeather = max(centerFeather, FOVEATED_CENTER_FEATHER_MIN) / centerRadius;
-		const float ellipseDistance = FoveatedComputeEllipseDistance(uv, centerScale, CenterOffset);
+		const float normalizedFeather = FoveatedComputeNormalizedFeather(centerScale, centerFeather, centerHorizontalScale);
+		const float centerDistance = FoveatedComputeMaskDistance(uv, centerScale, centerHorizontalScale, CenterOffset);
 
-		static const float3 kCenterColor = float3(0.20, 0.34, 0.28);
-		static const float3 kFeatherColor = float3(0.43, 0.35, 0.20);
-		static const float3 kPeripheryColor = float3(0.17, 0.22, 0.31);
+		static const float3 kCenterZoneColor = float3(0.22, 0.68, 0.53);
+		static const float3 kTaaZoneColor = float3(0.95, 0.76, 0.33);
+		static const float3 kOuterZoneColor = float3(0.36, 0.50, 0.86);
+		static const float3 kLegacyCenterColor = float3(0.20, 0.34, 0.28);
+		static const float3 kLegacyFeatherColor = float3(0.43, 0.35, 0.20);
+		static const float3 kLegacyPeripheryColor = float3(0.17, 0.22, 0.31);
 
-		float3 maskColor = kPeripheryColor;
-		if (ellipseDistance <= 1.0) {
-			maskColor = kCenterColor;
-		} else if (ellipseDistance <= (1.0 + normalizedFeather)) {
-			maskColor = kFeatherColor;
+		float3 maskColor;
+		if (showThreeZoneMask > 0.5) {
+			const bool inCenterZone = centerDistance <= (1.0 + normalizedFeather);
+			const float outerDistance = FoveatedComputeMaskDistance(uv, taaOuterScale, centerHorizontalScale, CenterOffset);
+			const bool inTaaZone = !inCenterZone && outerDistance <= 1.0;
+			maskColor = inCenterZone ? kCenterZoneColor : (inTaaZone ? kTaaZoneColor : kOuterZoneColor);
+		} else {
+			maskColor = kLegacyPeripheryColor;
+			if (centerDistance <= 1.0) {
+				maskColor = kLegacyCenterColor;
+			} else if (centerDistance <= (1.0 + normalizedFeather)) {
+				maskColor = kLegacyFeatherColor;
+			}
 		}
 
 		OutColor[outputPos] = float4(maskColor, 1.0);

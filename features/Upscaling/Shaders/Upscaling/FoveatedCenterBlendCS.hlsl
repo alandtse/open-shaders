@@ -10,6 +10,7 @@ cbuffer FoveatedCenterBlendCB : register(b0)
 	float2 DispatchDim;
 	float2 SourceOffset;
 	float2 InvSourceDim;
+	float2 Pad0;
 };
 
 Texture2D<float4> CenterColor : register(t0);
@@ -24,7 +25,7 @@ RWTexture2D<float4> OutputColor : register(u0);
 
 	uint2 outputPos = localPos + uint2(OutputOffset + 0.5);
 	float2 outputUV = (float2(outputPos) + 0.5) * InvOutputDim;
-	float blendWeight = FoveatedComputeCenterBlendWeight(outputUV, CenterScale, CenterFeather, CenterOffset);
+	float blendWeight = FoveatedComputeCenterBlendWeight(outputUV, CenterScale, CenterFeather, Pad0.x, CenterOffset);
 	if (blendWeight <= 0.0)
 		return;
 

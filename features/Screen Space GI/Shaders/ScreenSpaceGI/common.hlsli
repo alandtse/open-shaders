@@ -66,12 +66,13 @@ cbuffer SSGICB : register(b1)
 	float VRCullDistance;
 	float CenterFullResMaskScale;
 	float4 CenterFullResMaskOffsets;
+	float CenterFullResMaskHorizontalScale;
 	float CenterFullResMaskFeather;
 	float CenterDispatchOffsetX;
 	float CenterDispatchOffsetY;
 	float CenterDispatchSizeX;
 	float CenterDispatchSizeY;
-	float3 pad;
+	float2 pad;
 };
 
 SamplerState samplerPointClamp : register(s0);
@@ -183,7 +184,7 @@ float2 GetCenterFullMaskOffset(uint eyeIndex)
 float GetCenterFullMaskWeight(float2 stereoUv, uint eyeIndex)
 {
 	float2 eyeUv = Stereo::ConvertFromStereoUV(stereoUv, eyeIndex);
-	return FoveatedComputeCenterBlendWeight(eyeUv, CenterFullResMaskScale, CenterFullResMaskFeather, GetCenterFullMaskOffset(eyeIndex));
+	return FoveatedComputeCenterBlendWeight(eyeUv, CenterFullResMaskScale, CenterFullResMaskFeather, CenterFullResMaskHorizontalScale, GetCenterFullMaskOffset(eyeIndex));
 }
 
 ///////////////////////////////////////////////////////////////////////////////
