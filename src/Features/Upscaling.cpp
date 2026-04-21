@@ -837,6 +837,59 @@ void Upscaling::DrawSettings()
 			}
 			ImGui::EndDisabled();
 
+			if (!foveatedDispatchSupportedForMethod) {
+				ImGui::Separator();
+				ImGui::TextUnformatted("SSGI Base FOV (Fallback)");
+				ImGui::TextDisabled("DLSS foveated upscaling is unavailable on this backend.");
+				ImGui::TextDisabled("These controls still drive SSGI foveated presets.");
+
+				{
+					Util::BlueFrameStyleWrapper ssgiBaseAreaStyle;
+					ImGui::SliderFloat("SSGI Base FOV Area", &settings.foveatedCenterArea, FoveatedCommon::kCenterAreaMin, FoveatedCommon::kCenterAreaMax, "%.2f");
+				}
+				if (auto _tt = Util::HoverTooltipWrapper()) {
+					ImGui::TextUnformatted("Controls the SSGI center mask size used by SSGI foveated presets.");
+					ImGui::TextUnformatted("Lower values = smaller center and more performance.");
+					ImGui::TextUnformatted("Range: low 0.30 (smallest center) to high 1.00 (largest center).");
+				}
+
+				{
+					Util::YellowFrameStyleWrapper ssgiBaseExpandStyle;
+					ImGui::SliderFloat("SSGI Base Expand FOV Area R/L", &settings.foveatedCenterHorizontalScale, FoveatedCommon::kCenterHorizontalScaleMin, FoveatedCommon::kCenterHorizontalScaleMax, "%.2f");
+				}
+				if (auto _tt = Util::HoverTooltipWrapper()) {
+					ImGui::TextUnformatted("Widens SSGI center mask horizontally (left/right).");
+					ImGui::TextUnformatted("Range: low 1.00 (no extra width) to high 2.00 (maximum extra width).");
+				}
+
+				{
+					Util::YellowFrameStyleWrapper ssgiBaseOffsetStyle;
+					ImGui::SliderFloat("SSGI Base Left Eye Offset X", &settings.foveatedLeftEyeMaskOffsetX, kFoveatedMaskOffsetAdjustMin, kFoveatedMaskOffsetAdjustMax, "%.3f");
+					if (auto _tt = Util::HoverTooltipWrapper()) {
+						ImGui::TextUnformatted("Moves SSGI center mask horizontally for the left eye.");
+					}
+					ImGui::SliderFloat("SSGI Base Left Eye Offset Y", &settings.foveatedLeftEyeMaskOffsetY, kFoveatedMaskOffsetAdjustMin, kFoveatedMaskOffsetAdjustMax, "%.3f");
+					if (auto _tt = Util::HoverTooltipWrapper()) {
+						ImGui::TextUnformatted("Moves SSGI center mask vertically for the left eye.");
+					}
+					ImGui::SliderFloat("SSGI Base Right Eye Offset X", &settings.foveatedRightEyeMaskOffsetX, kFoveatedMaskOffsetAdjustMin, kFoveatedMaskOffsetAdjustMax, "%.3f");
+					if (auto _tt = Util::HoverTooltipWrapper()) {
+						ImGui::TextUnformatted("Moves SSGI center mask horizontally for the right eye.");
+					}
+					ImGui::SliderFloat("SSGI Base Right Eye Offset Y", &settings.foveatedRightEyeMaskOffsetY, kFoveatedMaskOffsetAdjustMin, kFoveatedMaskOffsetAdjustMax, "%.3f");
+					if (auto _tt = Util::HoverTooltipWrapper()) {
+						ImGui::TextUnformatted("Moves SSGI center mask vertically for the right eye.");
+					}
+				}
+
+				settings.foveatedCenterArea = ClampFoveatedCenterArea(settings.foveatedCenterArea);
+				settings.foveatedCenterHorizontalScale = ClampFoveatedCenterHorizontalScale(settings.foveatedCenterHorizontalScale);
+				settings.foveatedLeftEyeMaskOffsetX = ClampFoveatedMaskOffsetAdjustment(settings.foveatedLeftEyeMaskOffsetX);
+				settings.foveatedLeftEyeMaskOffsetY = ClampFoveatedMaskOffsetAdjustment(settings.foveatedLeftEyeMaskOffsetY);
+				settings.foveatedRightEyeMaskOffsetX = ClampFoveatedMaskOffsetAdjustment(settings.foveatedRightEyeMaskOffsetX);
+				settings.foveatedRightEyeMaskOffsetY = ClampFoveatedMaskOffsetAdjustment(settings.foveatedRightEyeMaskOffsetY);
+			}
+
 			if (streamline.reflexSupportedOnCurrentAdapter)
 				ImGui::Separator();
 		}
