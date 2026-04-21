@@ -62,8 +62,6 @@ static const float kHmdDisocclusionConfidenceFloor = 0.80;
 static const float kHmdDisocclusionCap = 0.22;
 static const float kHmdMotionBlendSuppression = 0.65;
 static const float kMotionInstabilitySuppression = 0.85;
-static const float kMotionRelaxationPeripheryStart = 0.95;
-static const float kMotionRelaxationPeripheryEnd = 1.0;
 static const float kCameraVelocityRelaxThresholdPixels = 0.50;
 static const float kCameraVelocityRelaxScale = 0.10;
 static const int kDebugModeComposite = 0;
@@ -315,9 +313,6 @@ void main(uint3 dispatchID : SV_DispatchThreadID)
 
 	float centerWeight = FoveatedComputeCenterBlendWeight(outputUV, centerScale, centerFeather, CenterOffset);
 	float peripheryWeight = saturate(1.0 - centerWeight);
-	float fullTaaCenterWeight = FoveatedComputeCenterBlendWeight(outputUV, centerScale, 0.0, CenterOffset);
-	float fullTaaWeight = saturate(1.0 - fullTaaCenterWeight);
-	float peripheryStabilizationWeight = smoothstep(kMotionRelaxationPeripheryStart, kMotionRelaxationPeripheryEnd, peripheryWeight);
 
 	float4 currentSample = CurrentColor.SampleLevel(LinearSampler, inputUV, 0.0);
 	float3 currentColor = currentSample.rgb;
@@ -362,7 +357,7 @@ void main(uint3 dispatchID : SV_DispatchThreadID)
 		if (enableMotionStabilization) {
 			float hmdRejectionRelaxation = ComputeHmdRejectionRelaxation(hmdHistoryDeltaLookup);
 			float cameraVelocityRelaxation = saturate((velocityPixels - kCameraVelocityRelaxThresholdPixels) * kCameraVelocityRelaxScale);
-			motionRejectionRelaxation = max(hmdRejectionRelaxation, cameraVelocityRelaxation) * peripheryStabilizationWeight;
+			motionRejectionRelaxation = max(hmdRejectionRelaxation, cameraVelocityRelaxation);
 			float hmdMotionPixels = length(hmdHistoryDeltaLookup * OutputDim);
 			disocclusionVelocityDeltaPixels = lerp(
 				velocityDeltaPixels,
@@ -400,7 +395,6 @@ void main(uint3 dispatchID : SV_DispatchThreadID)
 		currentBlend += instability * lerp(0.20, 0.14, stabilityBias);
 		currentBlend -= lockBoost * lerp(0.18, 0.24, stabilityBias);
 		currentBlend = clamp(currentBlend, 0.05, 1.0);
-		currentBlend = lerp(1.0, currentBlend, fullTaaWeight);
 
 		float3 resolvedTM = lerp(historyTM, currentTM, currentBlend);
 		resolvedColor = ReinhardInverse(resolvedTM);
