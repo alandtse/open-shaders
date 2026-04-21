@@ -313,6 +313,8 @@ void main(uint3 dispatchID : SV_DispatchThreadID)
 
 	float centerWeight = FoveatedComputeCenterBlendWeight(outputUV, centerScale, centerFeather, CenterOffset);
 	float peripheryWeight = saturate(1.0 - centerWeight);
+	if (!showDebug && peripheryWeight <= 0.0)
+		return;
 
 	float4 currentSample = CurrentColor.SampleLevel(LinearSampler, inputUV, 0.0);
 	float3 currentColor = currentSample.rgb;

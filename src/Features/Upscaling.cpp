@@ -2126,7 +2126,7 @@ void Upscaling::DispatchFoveatedBlendPass(ID3D11ShaderResourceView* centerSRV, I
 	context->CSSetShader(nullptr, nullptr, 0);
 }
 
-bool Upscaling::DispatchSingleFoveatedVendorEye(UpscaleMethod a_upscaleMethod, uint32_t eyeIndex, ID3D11Resource* colorIn, ID3D11Resource* depthIn, ID3D11Resource* motionVectorsIn, ID3D11Resource* reactiveMaskIn, ID3D11Resource* transparencyMaskIn, uint32_t outputWidthPerEye, uint32_t outputHeight, uint32_t innerMinX, uint32_t innerMinY, uint32_t innerMaxX, uint32_t innerMaxY, ID3D11Resource* historyColorResource, ID3D11UnorderedAccessView* historyColorUAV, uint32_t colorInputBaseOffsetX, uint32_t depthInputBaseOffsetX, uint32_t auxInputBaseOffsetX)
+bool Upscaling::DispatchSingleFoveatedVendorEye(UpscaleMethod a_upscaleMethod, uint32_t eyeIndex, ID3D11Resource* colorIn, ID3D11Resource* depthIn, ID3D11Resource* motionVectorsIn, ID3D11Resource* reactiveMaskIn, ID3D11Resource* transparencyMaskIn, uint32_t outputWidthPerEye, uint32_t outputHeight, ID3D11Resource* historyColorResource, ID3D11UnorderedAccessView* historyColorUAV, uint32_t colorInputBaseOffsetX, uint32_t depthInputBaseOffsetX, uint32_t auxInputBaseOffsetX)
 {
 	if (eyeIndex > 1)
 		return false;
@@ -2243,117 +2243,35 @@ bool Upscaling::DispatchSingleFoveatedVendorEye(UpscaleMethod a_upscaleMethod, u
 	const uint32_t rectMaxX = rect.outputOffsetX + rect.outputWidth;
 	const uint32_t rectMaxY = rect.outputOffsetY + rect.outputHeight;
 
-	uint32_t interiorMinX = std::max(innerMinX, rectMinX);
-	uint32_t interiorMinY = std::max(innerMinY, rectMinY);
-	uint32_t interiorMaxX = std::min(innerMaxX, rectMaxX);
-	uint32_t interiorMaxY = std::min(innerMaxY, rectMaxY);
-
-	if (interiorMaxX > interiorMinX && interiorMaxY > interiorMinY) {
-		D3D11_BOX centerInteriorBox{
-			interiorMinX - rectMinX,
-			interiorMinY - rectMinY,
-			0u,
-			interiorMaxX - rectMinX,
-			interiorMaxY - rectMinY,
-			1u
-		};
-		context->CopySubresourceRegion(
-			vrIntermediateColorOut[eyeIndex]->resource.get(),
-			0,
-			interiorMinX,
-			interiorMinY,
-			0,
-			foveatedCenterColorOut[eyeIndex]->resource.get(),
-			0,
-			&centerInteriorBox);
-		if (historyColorResource) {
-			context->CopySubresourceRegion(
-				historyColorResource,
-				0,
-				interiorMinX,
-				interiorMinY,
-				0,
-				foveatedCenterColorOut[eyeIndex]->resource.get(),
-				0,
-				&centerInteriorBox);
-		}
-	}
-
 	ID3D11UnorderedAccessView* outputUAV = vrIntermediateColorOut[eyeIndex]->uav.get();
 	ID3D11ShaderResourceView* centerSRV = foveatedCenterColorOut[eyeIndex]->srv.get();
 	const float centerBlendFeather = historyColorResource ? ClampPeripheryTAACenterBlendFeather(settings.periphery_taa_center_blend_feather) : FoveatedCommon::kCenterFeather;
 
-	bool dispatchedRingBlend = false;
-	auto dispatchBlendRing = [&](uint32_t offsetX, uint32_t offsetY, uint32_t width, uint32_t height) {
-		if (!width || !height)
-			return;
-		dispatchedRingBlend = true;
+	DispatchFoveatedBlendPass(
+		centerSRV,
+		outputUAV,
+		eyeIndex,
+		outputWidthPerEye,
+		outputHeight,
+		rect,
+		rectMinX,
+		rectMinY,
+		rectMaxX - rectMinX,
+		rectMaxY - rectMinY,
+		centerBlendFeather);
+	if (historyColorUAV) {
 		DispatchFoveatedBlendPass(
 			centerSRV,
-			outputUAV,
+			historyColorUAV,
 			eyeIndex,
 			outputWidthPerEye,
 			outputHeight,
 			rect,
-			offsetX,
-			offsetY,
-			width,
-			height,
+			rectMinX,
+			rectMinY,
+			rectMaxX - rectMinX,
+			rectMaxY - rectMinY,
 			centerBlendFeather);
-		if (historyColorUAV) {
-			DispatchFoveatedBlendPass(
-				centerSRV,
-				historyColorUAV,
-				eyeIndex,
-				outputWidthPerEye,
-				outputHeight,
-				rect,
-				offsetX,
-				offsetY,
-				width,
-				height,
-				centerBlendFeather);
-		}
-	};
-
-	if (interiorMaxX > interiorMinX && interiorMaxY > interiorMinY) {
-		const uint32_t middleMinY = interiorMinY;
-		const uint32_t middleMaxY = interiorMaxY;
-		const uint32_t middleHeight = middleMaxY - middleMinY;
-
-		dispatchBlendRing(rectMinX, rectMinY, rect.outputWidth, interiorMinY - rectMinY);
-		dispatchBlendRing(rectMinX, interiorMaxY, rect.outputWidth, rectMaxY - interiorMaxY);
-		dispatchBlendRing(rectMinX, middleMinY, interiorMinX - rectMinX, middleHeight);
-		dispatchBlendRing(interiorMaxX, middleMinY, rectMaxX - interiorMaxX, middleHeight);
-	}
-
-	if (!dispatchedRingBlend) {
-		DispatchFoveatedBlendPass(
-			centerSRV,
-			outputUAV,
-			eyeIndex,
-			outputWidthPerEye,
-			outputHeight,
-			rect,
-			rect.outputOffsetX,
-			rect.outputOffsetY,
-			rect.outputWidth,
-			rect.outputHeight,
-			centerBlendFeather);
-		if (historyColorUAV) {
-			DispatchFoveatedBlendPass(
-				centerSRV,
-				historyColorUAV,
-				eyeIndex,
-				outputWidthPerEye,
-				outputHeight,
-				rect,
-				rect.outputOffsetX,
-				rect.outputOffsetY,
-				rect.outputWidth,
-				rect.outputHeight,
-				centerBlendFeather);
-		}
 	}
 
 	return true;
@@ -2513,7 +2431,7 @@ bool Upscaling::DispatchFoveatedVendorUpscaling(UpscaleMethod a_upscaleMethod, I
 			context->ClearUnorderedAccessViewFloat(peripheryTAALockHistory[eye][peripheryTAAWriteIndex]->uav.get(), clearValue);
 		}
 
-		if (visualizeMask) {
+		if (usePeripheryTAA || visualizeMask) {
 			dispatchPeripheryBand(0, 0, outputWidthPerEye, outputHeight);
 		} else if (hasCenterInterior) {
 			const uint32_t innerHeight = innerMaxY - innerMinY;
@@ -2542,10 +2460,6 @@ bool Upscaling::DispatchFoveatedVendorUpscaling(UpscaleMethod a_upscaleMethod, I
 				vrIntermediateTransparencyMask[eye]->resource.get(),
 				outputWidthPerEye,
 				outputHeight,
-				innerMinX,
-				innerMinY,
-				innerMaxX,
-				innerMaxY,
 				usePeripheryTAA ? peripheryTAAHistoryColor[eye][peripheryTAAWriteIndex]->resource.get() : nullptr,
 				usePeripheryTAA ? peripheryTAAHistoryColor[eye][peripheryTAAWriteIndex]->uav.get() : nullptr,
 				useDirectSourcePath ? combinedEyeInputOffsetX : 0u,
