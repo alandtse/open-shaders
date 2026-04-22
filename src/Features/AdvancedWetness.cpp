@@ -438,6 +438,19 @@ namespace
 		return shaderSettings;
 	}
 
+	AdvancedWetness::PerFrame MakeDisabledPerFrameData()
+	{
+		AdvancedWetness::PerFrame data{};
+		data.settings.EnableWetnessEffects = 0u;
+		data.settings.EnableRaindropFx = 0u;
+		data.settings.EnableSplashes = 0u;
+		data.settings.EnableRipples = 0u;
+		data.settings.EnableModernWetReflection = 0u;
+		data.settings.EnableLegacyWetReflection = 0u;
+		data.settings.MaxShoreWetness = 0.0f;
+		return data;
+	}
+
 	void ApplyPostRainDepthEnvelope(float& depth, float startDepth, float maxDepth, float elapsedSeconds, float durationSeconds)
 	{
 		if (durationSeconds <= 0.0f) {
@@ -953,7 +966,7 @@ void AdvancedWetness::DisableOnWetnessEffectsConflict()
 	ResetRuntimeState();
 	InvalidateSanitizedSettingsCache();
 }
-void AdvancedWetness::ResetRuntimeState()
+void AdvancedWetness::ResetRuntimeState() const
 {
 	runtimeState = {};
 	g_lastFrameData = {};
@@ -1636,6 +1649,19 @@ AdvancedWetness::PerFrame AdvancedWetness::GetCommonBufferData() const
 	const uint32_t frameIndex = canUseFrameCache ? globals::state->frameCount : 0u;
 	if (canUseFrameCache && g_hasCachedCommonBufferData && g_cachedCommonBufferFrame == frameIndex) {
 		return g_cachedCommonBufferData;
+	}
+
+	if (!loaded || settings.EnableWetnessEffects == 0u) {
+		ResetRuntimeState();
+		PerFrame data = MakeDisabledPerFrameData();
+		g_lastFrameData = data;
+		g_hasLastFrameData = true;
+		if (canUseFrameCache) {
+			g_cachedCommonBufferData = data;
+			g_hasCachedCommonBufferData = true;
+			g_cachedCommonBufferFrame = frameIndex;
+		}
+		return data;
 	}
 
 	PerFrame data{};

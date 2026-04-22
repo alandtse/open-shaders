@@ -263,7 +263,7 @@ public:
 private:
 	void DisableOnWetnessEffectsConflict();
 	void DrawWeatherAnalysis() const;
-	void ResetRuntimeState();
+	void ResetRuntimeState() const;
 	void InvalidateSanitizedSettingsCache();
 	const Settings& GetSanitizedSettings() const;
 

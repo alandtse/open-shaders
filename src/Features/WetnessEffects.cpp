@@ -702,6 +702,16 @@ WetnessEffects::PerFrame WetnessEffects::GetCommonBufferData() const
 	data.Raining = 0.0f;
 	data.Wetness = 0.0f;
 	data.PuddleWetness = 0.0f;
+	data.settings = settings;
+
+	if (!loaded || !settings.EnableWetnessEffects) {
+		data.settings.EnableWetnessEffects = false;
+		data.settings.EnableRaindropFx = false;
+		data.settings.EnableSplashes = false;
+		data.settings.EnableRipples = false;
+		data.settings.MaxShoreWetness = 0.0f;
+		return data;
+	}
 
 	if (settings.EnableWetnessEffects) {
 		if (auto sky = globals::game::sky) {
