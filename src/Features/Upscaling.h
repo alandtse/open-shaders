@@ -72,18 +72,10 @@ public:
 		float foveatedRightEyeMaskOffsetX = 0.0f;
 		float foveatedRightEyeMaskOffsetY = 0.0f;
 		float periphery_taa_center_area = 0.6f;
-		float periphery_taa_center_horizontal_scale = 1.0f;
-		float periphery_taa_left_eye_mask_offset_x = 0.0f;
-		float periphery_taa_left_eye_mask_offset_y = 0.0f;
-		float periphery_taa_right_eye_mask_offset_x = 0.0f;
-		float periphery_taa_right_eye_mask_offset_y = 0.0f;
 		bool foveatedPeripheryMaskVisualization = false;
 		bool periphery_taa_enable = false;
 		float periphery_taa_outer_scale = 0.70f;
 		float periphery_taa_center_blend_feather = 0.05f;
-		uint foveatedSetupVersion = 0;
-		bool foveatedStep1Confirmed = false;
-		bool foveatedStep2Confirmed = false;
 		bool reflexLowLatencyMode = true;
 		bool reflexLowLatencyBoost = false;
 		bool reflexUseMarkersToOptimize = true;
@@ -123,10 +115,8 @@ public:
 		float2 dispatchDim;
 		float2 outputOffset;
 		float2 jitter;
-		float2 centerOffset;
-		float2 pad0;
-		float4 tuning0;  // x=centerScale, y=centerFeather, z=centerHorizontalScale, w reserved
-		float4 tuning1;  // x=visualizeMask, y=showThreeZoneMask, z=taaOuterScale, w reserved
+		float4 centerAndMask;  // xy=centerOffset, z=visualizeMask, w=showThreeZoneMask
+		float4 tuning0;        // x=centerScale, y=centerFeather, z=centerHorizontalScale, w=taaOuterScale
 	};
 
 	struct FoveatedCenterBlendCB
@@ -139,7 +129,8 @@ public:
 		float2 dispatchDim;
 		float2 sourceOffset;
 		float2 invSourceDim;
-		float2 pad0;  // x=centerHorizontalScale, y reserved
+		float centerHorizontalScale;
+		float centerHorizontalScalePadding;
 	};
 
 	struct PeripheryTAACB
@@ -162,7 +153,7 @@ public:
 		float4 previousCameraPosAdjust;
 	};
 
-	static_assert(sizeof(FoveatedPeripheryCB) == 112, "FoveatedPeripheryCB layout changed; update HLSL cbuffer.");
+	static_assert(sizeof(FoveatedPeripheryCB) == 96, "FoveatedPeripheryCB layout changed; update HLSL cbuffer.");
 	static_assert(sizeof(FoveatedCenterBlendCB) == 64, "FoveatedCenterBlendCB layout changed; update HLSL cbuffer.");
 	static_assert(sizeof(PeripheryTAACB) == 288, "PeripheryTAACB layout changed; update HLSL cbuffer.");
 
@@ -259,6 +250,10 @@ public:
 	virtual void SetupResources() override;
 
 	UpscaleMethod GetUpscaleMethod() const;
+	bool UseActiveFoveatedPeripheryTAAProfile() const;
+	float GetActiveFoveatedCenterArea() const;
+	float GetActiveFoveatedCenterHorizontalScale() const;
+	std::array<float2, 2> GetActiveResolvedFoveatedMaskCenterOffsets() const;
 
 	void CheckResources(UpscaleMethod a_upscalemethod);
 	void CreateUpscalingTextureResources(UpscaleMethod a_upscalemethod);

@@ -10,10 +10,8 @@ cbuffer FoveatedPeripheryCB : register(b0)
 	float2 DispatchDim;
 	float2 OutputOffset;
 	float2 Jitter;
-	float2 CenterOffset;
-	float2 Pad0;
-	float4 Tuning0;  // x=centerScale, y=centerFeather, z=centerHorizontalScale, w reserved
-	float4 Tuning1;  // x=visualizeMask, y=showThreeZoneMask, z=taaOuterScale, w reserved
+	float4 CenterAndMask;  // xy=centerOffset, z=visualizeMask, w=showThreeZoneMask
+	float4 Tuning0;        // x=centerScale, y=centerFeather, z=centerHorizontalScale, w=taaOuterScale
 };
 
 Texture2D<float4> InputColor : register(t0);
@@ -40,15 +38,16 @@ float2 ClampToSourceRegion(float2 uv, float2 regionMin, float2 regionMax)
 	const float centerScale = Tuning0.x;
 	const float centerFeather = Tuning0.y;
 	const float centerHorizontalScale = Tuning0.z;
-	const float visualizeMask = Tuning1.x;
-	const float showThreeZoneMask = Tuning1.y;
+	const float2 centerOffset = CenterAndMask.xy;
+	const float visualizeMask = CenterAndMask.z;
+	const float showThreeZoneMask = CenterAndMask.w;
 	const float taaNormalizedFeather = FoveatedComputeNormalizedFeather(centerScale, centerFeather, centerHorizontalScale);
 	const float minOuterScale = centerScale * (1.0 + taaNormalizedFeather);
-	const float taaOuterScale = min(max(Tuning1.z, minOuterScale), 1.0);
+	const float taaOuterScale = min(max(Tuning0.w, minOuterScale), 1.0);
 
 	if (visualizeMask > 0.5) {
 		const float normalizedFeather = FoveatedComputeNormalizedFeather(centerScale, centerFeather, centerHorizontalScale);
-		const float centerDistance = FoveatedComputeMaskDistance(uv, centerScale, centerHorizontalScale, CenterOffset);
+		const float centerDistance = FoveatedComputeMaskDistance(uv, centerScale, centerHorizontalScale, centerOffset);
 
 		static const float3 kCenterZoneColor = float3(0.22, 0.68, 0.53);
 		static const float3 kTaaZoneColor = float3(0.95, 0.76, 0.33);
@@ -58,7 +57,7 @@ float2 ClampToSourceRegion(float2 uv, float2 regionMin, float2 regionMax)
 		float3 maskColor;
 		if (showThreeZoneMask > 0.5) {
 			const bool inCenterZone = centerDistance <= (1.0 + normalizedFeather);
-			const float outerDistance = FoveatedComputeMaskDistance(uv, taaOuterScale, centerHorizontalScale, CenterOffset);
+			const float outerDistance = FoveatedComputeMaskDistance(uv, taaOuterScale, centerHorizontalScale, centerOffset);
 			const bool inTaaZone = !inCenterZone && outerDistance <= 1.0;
 			maskColor = inCenterZone ? kCenterZoneColor : (inTaaZone ? kTaaZoneColor : kOuterZoneColor);
 		} else {
