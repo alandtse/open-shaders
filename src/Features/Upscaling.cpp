@@ -826,23 +826,25 @@ void Upscaling::DrawSettings()
 					ImGui::TextUnformatted("Green = DLSS center mask.");
 					ImGui::TextUnformatted("With Peripheral TAA enabled: gold = TAA ring, blue = outer lightweight ring.");
 					ImGui::TextUnformatted("With Peripheral TAA disabled: only the green DLSS center mask is shown.");
-					ImGui::TextUnformatted("While setup is incomplete, visualization is forced ON.");
+					ImGui::TextUnformatted("Enable this to calibrate Step 1 and Step 2 masks.");
 					ImGui::TextUnformatted("Saved values from older versions do not bypass setup.");
-					ImGui::TextUnformatted("After Step 1 and Step 2 are confirmed, turn visualization OFF for normal runtime.");
+					ImGui::TextUnformatted("Step 2 confirmation closes visualization automatically.");
 				}
 
 				ImGui::Dummy(ImVec2(0.0f, 6.0f));
 				ImGui::Separator();
 				ImGui::Dummy(ImVec2(0.0f, 4.0f));
 				ImGui::TextColored(ImVec4(0.80f, 0.88f, 1.00f, 1.0f), "FOV Setup Order (Required)");
+				ImGui::TextUnformatted("0) Turn ON FOV Mask Visualization.");
 				ImGui::TextUnformatted("1) Step 1: Configure the DLSS-only FOV core region (non-TAA path).");
 				ImGui::TextUnformatted("2) Step 2: Configure Peripheral TAA extension outside that core.");
-				ImGui::TextUnformatted("Flow: visualization ON -> Step 1 confirm -> Step 2 confirm -> visualization OFF.");
+				ImGui::TextUnformatted("Flow: visualization ON -> Step 1 confirm -> Step 2 confirm (auto-closes visualization).");
 				ImGui::TextUnformatted("Requirement for this version: Step 1 and Step 2 must both be confirmed.");
 				const bool setupComplete = IsFoveatedSetupComplete(settings);
 				if (!setupComplete) {
-					settings.foveatedPeripheryMaskVisualization = true;
 					ImGui::TextColored(ImVec4(0.95f, 0.76f, 0.33f, 1.0f), "Required setup: complete and confirm both Step 1 and Step 2 for this version.");
+					if (!settings.foveatedPeripheryMaskVisualization)
+						ImGui::TextDisabled("Start setup by enabling FOV Mask Visualization.");
 					ImGui::TextDisabled("Normal foveated runtime stays disabled until setup is confirmed.");
 				}
 
@@ -921,7 +923,6 @@ void Upscaling::DrawSettings()
 						settings.foveatedStep2Confirmed = false;
 						settings.foveatedSetupVersion = 0u;
 						settings.periphery_taa_enable = false;
-						settings.foveatedPeripheryMaskVisualization = true;
 						if (globals::state)
 							globals::state->Save();
 					}
@@ -1078,13 +1079,14 @@ void Upscaling::DrawSettings()
 					if (ImGui::Button("Confirm Peripheral TAA (Step 2 Complete)")) {
 						settings.foveatedStep2Confirmed = true;
 						settings.foveatedSetupVersion = kRequiredFoveatedSetupVersion;
+						settings.foveatedPeripheryMaskVisualization = false;
 						if (globals::state)
 							globals::state->Save();
 					}
 					ImGui::EndDisabled();
 					if (auto _tt = Util::HoverTooltipWrapper()) {
 						ImGui::TextUnformatted("Marks Step 2 complete for this setup version and saves settings.");
-						ImGui::TextUnformatted("After Step 1 + Step 2 are confirmed, disable visualization and validate in gameplay.");
+						ImGui::TextUnformatted("Closes visualization and saves all FOV setup values to your profile.");
 					}
 				}
 				if (!IsFoveatedSetupComplete(settings))
@@ -1453,7 +1455,7 @@ void Upscaling::LoadSettings(json& o_json)
 			settings.foveatedStep1Confirmed = false;
 			settings.foveatedStep2Confirmed = false;
 			settings.periphery_taa_enable = false;
-			settings.foveatedPeripheryMaskVisualization = true;
+			settings.foveatedPeripheryMaskVisualization = false;
 		}
 		if (!settings.foveatedStep1Confirmed) {
 			settings.foveatedStep2Confirmed = false;
@@ -1488,9 +1490,6 @@ void Upscaling::LoadSettings(json& o_json)
 			clampedReflexFPSLimit);
 	}
 	settings.reflexFPSLimit = clampedReflexFPSLimit;
-	if (IsVRRuntimeActive() && !IsFoveatedSetupComplete(settings) && !settings.foveatedPeripheryMaskVisualization) {
-		settings.foveatedPeripheryMaskVisualization = true;
-	}
 	auto iniSettingCollection = globals::game::iniPrefSettingCollection;
 	if (iniSettingCollection) {
 		if (auto setting = iniSettingCollection->GetSetting("bUseTAA:Display"))
