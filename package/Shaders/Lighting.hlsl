@@ -2413,10 +2413,13 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 		float inRainSpecularBoostFromBalance = saturate((float)((packedRainReflectionControl >> 20) & 0x3FFu) * (1.0 / 1023.0));
 		float wetnessDistanceFadeRange = max(1.0, CS_WETNESS_SETTINGS.WetnessDistanceFadeRange);
 		float wetnessDistanceFade = lerp(1.0, 0.0, saturate(viewPosition.z / wetnessDistanceFadeRange));
-		const bool wetSurfaceAllowed = input.WorldPosition.z > (waterHeight + 0.5);
-		float wetnessDistToWater = abs(input.WorldPosition.z - waterHeight);
+		float shoreHeightDelta = input.WorldPosition.z - waterHeight;
+		const bool wetSurfaceAllowed = shoreHeightDelta > 0.5;
+		float wetnessDistToWater = abs(shoreHeightDelta);
 		float shoreRangeSafe = max(1.0, (float)CS_WETNESS_SETTINGS.ShoreRange);
-		float shoreFactor = wetSurfaceAllowed ? saturate(1.0 - (wetnessDistToWater / shoreRangeSafe)) : 0.0;
+		// Keep shore wetness continuous at the waterline. A hard height gate here creates
+		// a near-1 to 0 transition that shows up as a thin dark contour on shore geometry.
+		float shoreFactor = saturate(1.0 - (wetnessDistToWater / shoreRangeSafe));
 		float shoreFactorAlbedo = shoreFactor;
 
 	[branch] if (wetnessEnabled) {
@@ -2708,6 +2711,10 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	// instead of collapsing into a nearly uniform sheen with dark cutouts.
 	wetFilmSpecular *= lerp(1.0, 0.62, postRainBlend);
 	wetFilmSpecular *= lerp(1.0, 0.45, postRainBlend * saturate(postRainSpecBoostFromClarity));
+	// Shore wetness is persistent and should remain visible even when rain/puddle
+	// timelines are dry. Keep it as a damp film, not standing-water puddles.
+	float shoreWetSurfaceFade = smoothstep(-0.10, 0.50, shoreHeightDelta);
+	float shoreWetnessSpecular = saturate(shoreWetness * shoreWetSurfaceFade * wetnessDistanceFade * wetFilmSlopeMask * 0.55);
 	float deepPuddleMask = smoothstep(0.10, 0.80, puddleDepthSignal);
 	float rainPuddlePhase = saturate(inRainBlend * deepPuddleMask);
 	float postRainOverridePhaseCandidate = saturate(postRainBlend * smoothstep(0.30, 0.88, deepPuddleMask));
@@ -2759,8 +2766,8 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 		postRainPuddleReflectionOverrideScale = clamp(postRainClarityCubemapScale * postRainShineCubemapScale, 0.25, 1.6);
 	}
 
-	wetnessGlossinessSpecular = max(wetPuddleSpecular, wetFilmSpecular);
-	float wetFilmNonPuddleMask = wetFilmSpecular * (1.0 - deepPuddleMask);
+	wetnessGlossinessSpecular = max(max(wetPuddleSpecular, wetFilmSpecular), shoreWetnessSpecular);
+	float wetFilmNonPuddleMask = max(wetFilmSpecular * (1.0 - deepPuddleMask), shoreWetnessSpecular);
 	float wetFilmDominance = saturate(wetFilmNonPuddleMask / max(wetnessGlossinessSpecular, 1e-3));
 	// Keep wet-film looking like clear wetness (env reflection / darker surface) rather
 	// than milky white direct-light glare when puddle coverage is low.
@@ -3433,8 +3440,8 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	material.BaseColor = lerp(material.BaseColor, wetDarkenedBaseColor, wetDarkeningBlend);
 #			if !defined(SKIN) && !defined(HAIR)
 	[branch] if (shorePersistentDarkeningEnabled) {
-		float shoreDarkeningAmount = porosity * shorePersistentDarkeningMask * shorePersistentDarkeningStrength;
-		float shoreDarkeningBlend = saturate(0.80 * shorePersistentDarkeningStrength) * shorePersistentDarkeningMask;
+		float shoreDarkeningAmount = porosity * shorePersistentDarkeningMask * shorePersistentDarkeningStrength * 0.45;
+		float shoreDarkeningBlend = saturate(0.35 * shorePersistentDarkeningStrength) * shorePersistentDarkeningMask;
 		shoreDarkeningBlend *= lerp(0.75, 1.0, lodSafeWetDarkeningFade);
 		float3 shoreDarkenedBaseColor = pow(abs(material.BaseColor), 1.0 + shoreDarkeningAmount);
 		material.BaseColor = lerp(material.BaseColor, shoreDarkenedBaseColor, shoreDarkeningBlend);

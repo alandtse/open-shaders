@@ -76,7 +76,7 @@ namespace
 	constexpr float WET_FILM_SPECULAR_FLOOR_SCALE_MAX = 3.0f;
 	constexpr float SHORE_PERSISTENT_DARKENING_MIN = 0.0f;
 	constexpr float SHORE_PERSISTENT_DARKENING_MAX = 2.0f;
-	constexpr float SHORE_PERSISTENT_DARKENING_DEFAULT = 1.0f;
+	constexpr float SHORE_PERSISTENT_DARKENING_DEFAULT = 0.35f;
 	constexpr float DRYING_HOURS_MIN = 1.0f;
 	constexpr float DRYING_HOURS_MAX = 24.0f;
 	constexpr float DRYING_SECONDS_PER_HOUR = 3600.0f;
@@ -1421,7 +1421,7 @@ void Wetterness::DrawSettings()
 		ImGui::SliderFloat("Shore Wetness", &settings.MaxShoreWetness, 0.0f, 1.0f);
 		markPresetDirtyIfEdited();
 		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::TextUnformatted("Wetness near rivers, lakes, and shorelines. Higher = wetter banks, lower = drier edges.");
+			ImGui::TextUnformatted("Always-on wet sheen near rivers, lakes, and shorelines. Higher = wetter banks, lower = drier edges. Shore Persistent Darkening controls the separate darkening layer.");
 		}
 
 		int shoreRange = static_cast<int>(settings.ShoreRange);
@@ -1442,7 +1442,7 @@ void Wetterness::DrawSettings()
 
 		ImGui::SliderFloat("Shore Persistent Darkening", &shorePersistentDarkeningStrength, SHORE_PERSISTENT_DARKENING_MIN, SHORE_PERSISTENT_DARKENING_MAX, "%.2f");
 		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::TextUnformatted("Persistent shoreline darkening independent of rain runtime. Higher = darker shore band, lower = subtler darkening.");
+			ImGui::TextUnformatted("Persistent shoreline darkening independent of rain runtime. Higher = darker shore banks, lower = subtler darkening.");
 		}
 
 		ImGui::TreePop();
