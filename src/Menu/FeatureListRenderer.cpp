@@ -698,7 +698,7 @@ void FeatureListRenderer::DrawMenuVisitor::RenderFeatureSettings(Feature* feat, 
 			ImGui::Spacing();
 			ImGui::TextColored(
 				themeSettings.StatusPalette.Error,
-				"Wetterness is active. Wetness Effects must be de-installed or disabled at boot while Wetterness is activated.");
+				"Wetterness is active. Uninstall Wetness Effects or disable it at boot while Wetterness is activated.");
 		}
 	} else {
 		if (isLoaded) {
@@ -771,6 +771,8 @@ void FeatureListRenderer::DrawMenuVisitor::RenderFeatureSettings(Feature* feat, 
 		} else {
 			if (FeatureIssues::IsObsoleteFeature(feat->GetShortName())) {
 				feat->DrawUnloadedUI();
+			} else if (hasFailedMessage) {
+				// Conflict/version failures are rendered below. Do not present them as pending restart.
 			} else if (IsFeatureInstalled(feat->GetShortName())) {
 				ImGui::Text("This feature will be available after restart.");
 			} else {

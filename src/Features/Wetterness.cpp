@@ -960,7 +960,7 @@ void Wetterness::SetupResources()
 
 void Wetterness::DisableOnWetnessEffectsConflict()
 {
-	failedLoadedMessage = "Wetterness is disabled because Wetness Effects is installed. Wetness Effects must be de-installed or disabled at boot before Wetterness can be activated.";
+	failedLoadedMessage = "Wetterness is disabled because Wetness Effects is active. Uninstall Wetness Effects or disable it at boot before activating Wetterness.";
 	loaded = false;
 	settings.EnableWetnessEffects = 0u;
 	ResetRuntimeState();

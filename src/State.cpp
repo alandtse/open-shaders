@@ -27,8 +27,7 @@ namespace
 	void ApplyDefaultDisableAtBootSettings(json& a_disabledFeaturesJson)
 	{
 		static constexpr std::pair<std::string_view, bool> defaultDisableAtBootSettings[] = {
-			{ "WetnessEffects", false },
-			{ "Wetterness", true }
+			{ "WetnessEffects", false }
 		};
 
 		for (const auto& [featureName, isDisabled] : defaultDisableAtBootSettings) {
