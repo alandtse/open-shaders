@@ -162,6 +162,71 @@ namespace
 		return static_cast<uint32_t>(std::ceil(static_cast<double>(outputValue) * scale));
 	}
 
+	struct MappedRect
+	{
+		uint32_t minX = 0;
+		uint32_t minY = 0;
+		uint32_t maxX = 0;
+		uint32_t maxY = 0;
+
+		bool IsValid() const
+		{
+			return maxX > minX && maxY > minY;
+		}
+	};
+
+	MappedRect MapOutputRectToInputRect(
+		uint32_t outputMinX,
+		uint32_t outputMinY,
+		uint32_t outputMaxX,
+		uint32_t outputMaxY,
+		uint32_t outputWidth,
+		uint32_t outputHeight,
+		uint32_t inputWidth,
+		uint32_t inputHeight,
+		uint32_t padding = 0u)
+	{
+		MappedRect mapped{};
+		if (outputWidth == 0 || outputHeight == 0 || inputWidth == 0 || inputHeight == 0)
+			return mapped;
+
+		outputMinX = std::min(outputMinX, outputWidth);
+		outputMinY = std::min(outputMinY, outputHeight);
+		outputMaxX = std::min(outputMaxX, outputWidth);
+		outputMaxY = std::min(outputMaxY, outputHeight);
+		if (outputMaxX < outputMinX)
+			std::swap(outputMaxX, outputMinX);
+		if (outputMaxY < outputMinY)
+			std::swap(outputMaxY, outputMinY);
+		if (outputMaxX <= outputMinX || outputMaxY <= outputMinY)
+			return mapped;
+
+		uint32_t inputMinX = MapOutputToInputMin(outputMinX, outputWidth, inputWidth);
+		uint32_t inputMaxX = MapOutputToInputMax(outputMaxX, outputWidth, inputWidth);
+		uint32_t inputMinY = MapOutputToInputMin(outputMinY, outputHeight, inputHeight);
+		uint32_t inputMaxY = MapOutputToInputMax(outputMaxY, outputHeight, inputHeight);
+
+		if (padding > 0) {
+			inputMinX = inputMinX > padding ? inputMinX - padding : 0u;
+			inputMinY = inputMinY > padding ? inputMinY - padding : 0u;
+			inputMaxX = static_cast<uint32_t>(std::min<uint64_t>(inputWidth, static_cast<uint64_t>(inputMaxX) + padding));
+			inputMaxY = static_cast<uint32_t>(std::min<uint64_t>(inputHeight, static_cast<uint64_t>(inputMaxY) + padding));
+		}
+
+		inputMinX = std::min(inputMinX, inputWidth);
+		inputMinY = std::min(inputMinY, inputHeight);
+		inputMaxX = std::min(inputMaxX, inputWidth);
+		inputMaxY = std::min(inputMaxY, inputHeight);
+		if (inputMaxX <= inputMinX || inputMaxY <= inputMinY)
+			return mapped;
+
+		mapped.minX = inputMinX;
+		mapped.minY = inputMinY;
+		mapped.maxX = inputMaxX;
+		mapped.maxY = inputMaxY;
+		return mapped;
+	}
+
 	struct FoveatedMaskProfileParams
 	{
 		float centerArea = 0.6f;
@@ -1867,26 +1932,24 @@ bool Upscaling::BuildFoveatedDispatchRects(uint32_t inputWidthPerEye, uint32_t i
 		rect.outputWidth = static_cast<uint32_t>(maxX - minX);
 		rect.outputHeight = static_cast<uint32_t>(maxY - minY);
 
-		const float inputScaleX = static_cast<float>(inputWidthPerEye) / static_cast<float>(outputWidthPerEye);
-		const float inputScaleY = static_cast<float>(inputHeight) / static_cast<float>(outputHeight);
-
-		int inputMinX = static_cast<int>(std::floor(static_cast<float>(minX) * inputScaleX));
-		int inputMaxX = static_cast<int>(std::ceil(static_cast<float>(maxX) * inputScaleX));
-		int inputMinY = static_cast<int>(std::floor(static_cast<float>(minY) * inputScaleY));
-		int inputMaxY = static_cast<int>(std::ceil(static_cast<float>(maxY) * inputScaleY));
-
-		inputMinX = std::clamp(inputMinX, 0, static_cast<int>(inputWidthPerEye));
-		inputMaxX = std::clamp(inputMaxX, 0, static_cast<int>(inputWidthPerEye));
-		inputMinY = std::clamp(inputMinY, 0, static_cast<int>(inputHeight));
-		inputMaxY = std::clamp(inputMaxY, 0, static_cast<int>(inputHeight));
-
-		if (inputMaxX <= inputMinX || inputMaxY <= inputMinY)
+		const uint32_t outputRectMaxX = static_cast<uint32_t>(std::min<uint64_t>(outputWidthPerEye, static_cast<uint64_t>(rect.outputOffsetX) + rect.outputWidth));
+		const uint32_t outputRectMaxY = static_cast<uint32_t>(std::min<uint64_t>(outputHeight, static_cast<uint64_t>(rect.outputOffsetY) + rect.outputHeight));
+		const auto mappedInputRect = MapOutputRectToInputRect(
+			rect.outputOffsetX,
+			rect.outputOffsetY,
+			outputRectMaxX,
+			outputRectMaxY,
+			outputWidthPerEye,
+			outputHeight,
+			inputWidthPerEye,
+			inputHeight);
+		if (!mappedInputRect.IsValid())
 			return FoveatedDispatchRect{};
 
-		rect.inputOffsetX = static_cast<uint32_t>(inputMinX);
-		rect.inputOffsetY = static_cast<uint32_t>(inputMinY);
-		rect.inputWidth = static_cast<uint32_t>(inputMaxX - inputMinX);
-		rect.inputHeight = static_cast<uint32_t>(inputMaxY - inputMinY);
+		rect.inputOffsetX = mappedInputRect.minX;
+		rect.inputOffsetY = mappedInputRect.minY;
+		rect.inputWidth = mappedInputRect.maxX - mappedInputRect.minX;
+		rect.inputHeight = mappedInputRect.maxY - mappedInputRect.minY;
 
 		(void)eyeIndex;
 		return rect;
@@ -2043,6 +2106,8 @@ bool Upscaling::EnsurePeripheryTAATileBuffer(uint32_t eyeIndex, uint32_t tileCap
 {
 	if (eyeIndex >= 2 || tileCapacity == 0)
 		return false;
+	if (tileCapacity > std::numeric_limits<uint32_t>::max() / sizeof(PeripheryTAATile))
+		return false;
 
 	auto& tileBuffer = peripheryTAATileBuffer[eyeIndex];
 	auto& tileCapacityCurrent = peripheryTAATileCapacity[eyeIndex];
@@ -2055,7 +2120,7 @@ bool Upscaling::EnsurePeripheryTAATileBuffer(uint32_t eyeIndex, uint32_t tileCap
 	sbDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
 	sbDesc.MiscFlags = D3D11_RESOURCE_MISC_BUFFER_STRUCTURED;
 	sbDesc.StructureByteStride = sizeof(PeripheryTAATile);
-	sbDesc.ByteWidth = sizeof(PeripheryTAATile) * tileCapacity;
+	sbDesc.ByteWidth = static_cast<uint32_t>(sizeof(PeripheryTAATile) * tileCapacity);
 
 	tileBuffer = eastl::make_unique<Buffer>(sbDesc);
 	tileCapacityCurrent = tileCapacity;
@@ -2071,7 +2136,7 @@ bool Upscaling::EnsurePeripheryTAATileBuffer(uint32_t eyeIndex, uint32_t tileCap
 	return tileBuffer->srv != nullptr;
 }
 
-bool Upscaling::BuildPeripheryTAATileList(uint32_t eyeIndex, uint32_t outputWidth, uint32_t outputHeight, float centerScale, float taaOuterScale, float centerHorizontalScale, float centerOffsetX, float centerOffsetY, uint32_t coveragePadding, uint32_t& outTileCount)
+bool Upscaling::BuildPeripheryTAATileList(uint32_t eyeIndex, uint32_t outputWidth, uint32_t outputHeight, float centerScale, float taaOuterScale, float centerHorizontalScale, float centerFeather, float centerOffsetX, float centerOffsetY, uint32_t coveragePadding, uint32_t& outTileCount)
 {
 	outTileCount = 0;
 	if (eyeIndex >= 2 || outputWidth == 0 || outputHeight == 0)
@@ -2080,16 +2145,19 @@ bool Upscaling::BuildPeripheryTAATileList(uint32_t eyeIndex, uint32_t outputWidt
 	const uint32_t tileSize = static_cast<uint32_t>(FoveatedCommon::kThreadGroupSize);
 	const uint32_t tileColumns = (outputWidth + tileSize - 1u) / tileSize;
 	const uint32_t tileRows = (outputHeight + tileSize - 1u) / tileSize;
+	if (tileColumns != 0 && tileRows > (std::numeric_limits<uint32_t>::max() / tileColumns))
+		return false;
 	const uint32_t maxTileCount = tileColumns * tileRows;
 	if (!EnsurePeripheryTAATileBuffer(eyeIndex, maxTileCount))
 		return false;
 
 	centerScale = ClampFoveatedCenterArea(centerScale);
+	centerFeather = ClampPeripheryTAACenterBlendFeather(centerFeather);
 	taaOuterScale = ClampPeripheryTAAOuterScaleForCenter(
 		taaOuterScale,
 		centerScale,
 		centerHorizontalScale,
-		settings.periphery_taa_center_blend_feather);
+		centerFeather);
 	centerHorizontalScale = ClampFoveatedCenterHorizontalScale(centerHorizontalScale);
 
 	PeripheryTAATileCacheKey cacheKey{};
@@ -2322,6 +2390,8 @@ void Upscaling::DispatchPeripheryTAAPass(ID3D11ShaderResourceView* currentColorS
 	if (!historyColorSRV || !historyVelocitySRV || !historyLockSRV)
 		return;
 	if (!outputColorUAV || !outputHistoryColorUAV || !outputVelocityUAV || !outputLockUAV)
+		return;
+	if (!inputWidth || !inputHeight || !outputWidth || !outputHeight)
 		return;
 	const bool useTileList = tileListSRV && tileCount > 0;
 	if (!useTileList && (!dispatchWidth || !dispatchHeight))
@@ -2794,38 +2864,38 @@ bool Upscaling::DispatchFoveatedVendorUpscaling(UpscaleMethod a_upscaleMethod, I
 
 		if (usePeripheryTAA && !requireFullPerEyeInputs && hasTaaOuterRegion) {
 			const uint32_t eyeInputBaseX = eye * inputWidthPerEye;
-			uint32_t inputMinX = MapOutputToInputMin(taaDispatchMinX, outputWidthPerEye, inputWidthPerEye);
-			uint32_t inputMaxX = MapOutputToInputMax(taaDispatchMaxX, outputWidthPerEye, inputWidthPerEye);
-			uint32_t inputMinY = MapOutputToInputMin(taaDispatchMinY, outputHeight, inputHeight);
-			uint32_t inputMaxY = MapOutputToInputMax(taaDispatchMaxY, outputHeight, inputHeight);
+			const auto peripheryInputRect = MapOutputRectToInputRect(
+				taaDispatchMinX,
+				taaDispatchMinY,
+				taaDispatchMaxX,
+				taaDispatchMaxY,
+				outputWidthPerEye,
+				outputHeight,
+				inputWidthPerEye,
+				inputHeight,
+				kPeripheryCurrentInputPadding);
 
-			// 3x3 neighborhood and jitter sampling can read adjacent texels.
-			inputMinX = inputMinX > kPeripheryCurrentInputPadding ? inputMinX - kPeripheryCurrentInputPadding : 0u;
-			inputMinY = inputMinY > kPeripheryCurrentInputPadding ? inputMinY - kPeripheryCurrentInputPadding : 0u;
-			inputMaxX = std::min(inputWidthPerEye, inputMaxX + kPeripheryCurrentInputPadding);
-			inputMaxY = std::min(inputHeight, inputMaxY + kPeripheryCurrentInputPadding);
-
-			if (inputMaxX > inputMinX && inputMaxY > inputMinY) {
+			if (peripheryInputRect.IsValid()) {
 				const D3D11_BOX srcBox{
-					eyeInputBaseX + inputMinX,
-					inputMinY,
+					eyeInputBaseX + peripheryInputRect.minX,
+					peripheryInputRect.minY,
 					0u,
-					eyeInputBaseX + inputMaxX,
-					inputMaxY,
+					eyeInputBaseX + peripheryInputRect.maxX,
+					peripheryInputRect.maxY,
 					1u
 				};
-				context->CopySubresourceRegion(vrIntermediateColorIn[eye]->resource.get(), 0, inputMinX, inputMinY, 0, colorTexture, 0, &srcBox);
-				context->CopySubresourceRegion(vrIntermediateDepth[eye]->resource.get(), 0, inputMinX, inputMinY, 0, depthTexture, 0, &srcBox);
+				context->CopySubresourceRegion(vrIntermediateColorIn[eye]->resource.get(), 0, peripheryInputRect.minX, peripheryInputRect.minY, 0, colorTexture, 0, &srcBox);
+				context->CopySubresourceRegion(vrIntermediateDepth[eye]->resource.get(), 0, peripheryInputRect.minX, peripheryInputRect.minY, 0, depthTexture, 0, &srcBox);
 				if (mainDepthSRV && vrIntermediateColorIn[eye]->uav) {
 					ClearHMDMask(
 						vrIntermediateColorIn[eye]->uav.get(),
 						mainDepthSRV,
-						inputMaxX - inputMinX,
-						inputMaxY - inputMinY,
-						eyeInputBaseX + inputMinX,
-						inputMinX,
-						inputMinY,
-						inputMinY);
+						peripheryInputRect.maxX - peripheryInputRect.minX,
+						peripheryInputRect.maxY - peripheryInputRect.minY,
+						eyeInputBaseX + peripheryInputRect.minX,
+						peripheryInputRect.minX,
+						peripheryInputRect.minY,
+						peripheryInputRect.minY);
 				}
 			}
 		}
@@ -2983,7 +3053,7 @@ bool Upscaling::DispatchFoveatedVendorUpscaling(UpscaleMethod a_upscaleMethod, I
 		if (usePeripheryTAA) {
 			if (hasTaaOuterRegion) {
 				uint32_t tileCount = 0;
-				const bool tileListBuilt = BuildPeripheryTAATileList(eye, outputWidthPerEye, outputHeight, centerScale, taaOuterScale, centerHorizontalScale, centerOffset.x, centerOffset.y, kPeripheryHistoryPadding, tileCount);
+				const bool tileListBuilt = BuildPeripheryTAATileList(eye, outputWidthPerEye, outputHeight, centerScale, taaOuterScale, centerHorizontalScale, effectiveCenterBlendFeather, centerOffset.x, centerOffset.y, kPeripheryHistoryPadding, tileCount);
 				const bool hasTileListSRV = peripheryTAATileBuffer[eye] && peripheryTAATileBuffer[eye]->srv;
 				if (tileListBuilt && tileCount > 0 && hasTileListSRV) {
 					dispatchPeripheryTAA(peripheryTAATileBuffer[eye]->srv.get(), tileCount, 0, 0, outputWidthPerEye, outputHeight);
@@ -4145,15 +4215,19 @@ void Upscaling::Upscale()
 						const auto taaOuterBounds = FoveatedCommon::BuildCenteredDispatchBounds(0, eyeWidthOut, eyeHeightOut, taaOuterScale, centerOffset.x, centerOffset.y, 0.0f, centerHorizontalScale);
 						if (taaOuterBounds.maxX > taaOuterBounds.minX && taaOuterBounds.maxY > taaOuterBounds.minY) {
 							constexpr uint32_t kCopyPadding = 2u;
-							uint32_t inputMinX = MapOutputToInputMin(static_cast<uint32_t>(taaOuterBounds.minX), eyeWidthOut, eyeWidthIn);
-							uint32_t inputMaxX = MapOutputToInputMax(static_cast<uint32_t>(taaOuterBounds.maxX), eyeWidthOut, eyeWidthIn);
-							uint32_t inputMinY = MapOutputToInputMin(static_cast<uint32_t>(taaOuterBounds.minY), eyeHeightOut, eyeHeightIn);
-							uint32_t inputMaxY = MapOutputToInputMax(static_cast<uint32_t>(taaOuterBounds.maxY), eyeHeightOut, eyeHeightIn);
-							inputMinX = inputMinX > kCopyPadding ? inputMinX - kCopyPadding : 0u;
-							inputMinY = inputMinY > kCopyPadding ? inputMinY - kCopyPadding : 0u;
-							inputMaxX = std::min(eyeWidthIn, inputMaxX + kCopyPadding);
-							inputMaxY = std::min(eyeHeightIn, inputMaxY + kCopyPadding);
-							includeInputRect(regions[eye], inputMinX, inputMinY, inputMaxX, inputMaxY);
+							const auto mappedInputRect = MapOutputRectToInputRect(
+								static_cast<uint32_t>(taaOuterBounds.minX),
+								static_cast<uint32_t>(taaOuterBounds.minY),
+								static_cast<uint32_t>(taaOuterBounds.maxX),
+								static_cast<uint32_t>(taaOuterBounds.maxY),
+								eyeWidthOut,
+								eyeHeightOut,
+								eyeWidthIn,
+								eyeHeightIn,
+								kCopyPadding);
+							if (mappedInputRect.IsValid()) {
+								includeInputRect(regions[eye], mappedInputRect.minX, mappedInputRect.minY, mappedInputRect.maxX, mappedInputRect.maxY);
+							}
 						}
 
 						if (!regions[eye].valid) {
