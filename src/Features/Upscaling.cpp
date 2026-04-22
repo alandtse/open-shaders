@@ -825,7 +825,7 @@ void Upscaling::DrawSettings()
 						ImGui::TextUnformatted("Step 2 DLSS FOV Area is reset to 0.30 and DLSS Expand FOV Area R/L is reset to 1.00.");
 					}
 					{
-						Util::BlueFrameStyleWrapper step2DlssAreaStyle;
+						Util::YellowFrameStyleWrapper step2DlssAreaStyle;
 						ImGui::SliderFloat("DLSS FOV Area##Step2", &settings.periphery_taa_center_area, FoveatedCommon::kCenterAreaMin, FoveatedCommon::kCenterAreaMax, "%.2f");
 					}
 					if (auto _tt = Util::HoverTooltipWrapper()) {
@@ -835,7 +835,7 @@ void Upscaling::DrawSettings()
 						ImGui::TextUnformatted("Keep this as low as possible, then use TAA Peripheral Range to cover the visible field of view.");
 					}
 					{
-						Util::BlueFrameStyleWrapper step2DlssExpandStyle;
+						Util::YellowFrameStyleWrapper step2DlssExpandStyle;
 						ImGui::SliderFloat("DLSS Expand FOV Area R/L##Step2", &settings.periphery_taa_center_horizontal_scale, FoveatedCommon::kCenterHorizontalScaleMin, FoveatedCommon::kCenterHorizontalScaleMax, "%.2f");
 					}
 					if (auto _tt = Util::HoverTooltipWrapper()) {
@@ -863,7 +863,7 @@ void Upscaling::DrawSettings()
 						ImGui::TextUnformatted("Lower values are faster; expand until the TAA area reaches the edge of your visible field of view.");
 					}
 					{
-						Util::BlueFrameStyleWrapper step2DlssOffsetStyle;
+						Util::YellowFrameStyleWrapper step2DlssOffsetStyle;
 						ImGui::SliderFloat("DLSS Left Eye Offset X##Step2", &settings.periphery_taa_left_eye_mask_offset_x, kFoveatedMaskOffsetAdjustMin, kFoveatedMaskOffsetAdjustMax, "%.3f");
 						if (auto _tt = Util::HoverTooltipWrapper()) {
 							ImGui::TextUnformatted("Moves the Step 2 DLSS FOV and Peripheral TAA mask horizontally for the left eye.");
