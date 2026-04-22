@@ -780,17 +780,17 @@ void Upscaling::DrawSettings()
 					if (auto _tt = Util::HoverTooltipWrapper()) {
 						ImGui::TextUnformatted("Enables periphery-only TAA around the Step 1 DLSS FOV.");
 					}
-					ImGui::SliderFloat("Expand DLSS FOV R/L", &settings.periphery_taa_center_area, FoveatedCommon::kCenterAreaMin, FoveatedCommon::kCenterAreaMax, "%.2f");
+					ImGui::SliderFloat("TAA FOV Area", &settings.periphery_taa_center_area, FoveatedCommon::kCenterAreaMin, FoveatedCommon::kCenterAreaMax, "%.2f");
 					if (auto _tt = Util::HoverTooltipWrapper()) {
-						ImGui::TextUnformatted("Expands the Step 1 DLSS FOV region used before the outer peripheral range.");
-						ImGui::TextUnformatted("Lower values = more performance; keep this as low as possible.");
-						ImGui::TextUnformatted("Range: low 0.30 (smallest expanded area) to high 1.00 (largest expanded area).");
+						ImGui::TextUnformatted("Sets the Step 2 TAA FOV area around the Step 1 DLSS FOV.");
+						ImGui::TextUnformatted("Lower values = smaller TAA FOV area and more performance.");
+						ImGui::TextUnformatted("Range: low 0.30 (smallest TAA FOV area) to high 1.00 (largest TAA FOV area).");
 						ImGui::TextUnformatted("Then expand TAA area until the TAA region touches field-of-view borders.");
 						ImGui::TextUnformatted("Tune center + TAA area so most blue outer area is no longer visible in the HMD.");
 					}
-					ImGui::SliderFloat("TAA Area Scale R/L", &settings.periphery_taa_center_horizontal_scale, FoveatedCommon::kCenterHorizontalScaleMin, FoveatedCommon::kCenterHorizontalScaleMax, "%.2f");
+					ImGui::SliderFloat("Expand TAA FOV R/L", &settings.periphery_taa_center_horizontal_scale, FoveatedCommon::kCenterHorizontalScaleMin, FoveatedCommon::kCenterHorizontalScaleMax, "%.2f");
 					if (auto _tt = Util::HoverTooltipWrapper()) {
-						ImGui::TextUnformatted("Adds extra horizontal expansion (left/right) to the Step 2 TAA area.");
+						ImGui::TextUnformatted("Expands the TAA FOV Area horizontally (left/right).");
 						ImGui::TextUnformatted("Range: low 1.00 (no extra width) to high 2.00 (maximum extra width).");
 					}
 					settings.periphery_taa_center_area = ClampFoveatedCenterArea(settings.periphery_taa_center_area);
@@ -804,23 +804,23 @@ void Upscaling::DrawSettings()
 						"%.2f");
 					if (auto _tt = Util::HoverTooltipWrapper()) {
 						ImGui::TextUnformatted("Controls how far TAA extends from the center before lightweight non-TAA fill starts.");
-						ImGui::Text("Range: low %.2f (minimum allowed by current expansion area) to high %.2f (full range).", taaOuterRangeMin, kPeripheryTAAOuterScaleMax);
+						ImGui::Text("Range: low %.2f (minimum allowed by current TAA FOV Area) to high %.2f (full range).", taaOuterRangeMin, kPeripheryTAAOuterScaleMax);
 					}
-					ImGui::SliderFloat("Peripheral TAA Left Eye Offset X", &settings.periphery_taa_left_eye_mask_offset_x, kFoveatedMaskOffsetAdjustMin, kFoveatedMaskOffsetAdjustMax, "%.3f");
+					ImGui::SliderFloat("TAA Left Eye Offset X", &settings.periphery_taa_left_eye_mask_offset_x, kFoveatedMaskOffsetAdjustMin, kFoveatedMaskOffsetAdjustMax, "%.3f");
 					if (auto _tt = Util::HoverTooltipWrapper()) {
-						ImGui::TextUnformatted("Moves the Step 2 peripheral-TAA mask horizontally for the left eye.");
+						ImGui::TextUnformatted("Moves TAA mask horizontally for the left eye.");
 					}
-					ImGui::SliderFloat("Peripheral TAA Left Eye Offset Y", &settings.periphery_taa_left_eye_mask_offset_y, kFoveatedMaskOffsetAdjustMin, kFoveatedMaskOffsetAdjustMax, "%.3f");
+					ImGui::SliderFloat("TAA Left Eye Offset Y", &settings.periphery_taa_left_eye_mask_offset_y, kFoveatedMaskOffsetAdjustMin, kFoveatedMaskOffsetAdjustMax, "%.3f");
 					if (auto _tt = Util::HoverTooltipWrapper()) {
-						ImGui::TextUnformatted("Moves the Step 2 peripheral-TAA mask vertically for the left eye.");
+						ImGui::TextUnformatted("Moves TAA mask vertically for the left eye.");
 					}
-					ImGui::SliderFloat("Peripheral TAA Right Eye Offset X", &settings.periphery_taa_right_eye_mask_offset_x, kFoveatedMaskOffsetAdjustMin, kFoveatedMaskOffsetAdjustMax, "%.3f");
+					ImGui::SliderFloat("TAA Right Eye Offset X", &settings.periphery_taa_right_eye_mask_offset_x, kFoveatedMaskOffsetAdjustMin, kFoveatedMaskOffsetAdjustMax, "%.3f");
 					if (auto _tt = Util::HoverTooltipWrapper()) {
-						ImGui::TextUnformatted("Moves the Step 2 peripheral-TAA mask horizontally for the right eye.");
+						ImGui::TextUnformatted("Moves TAA mask horizontally for the right eye.");
 					}
-					ImGui::SliderFloat("Peripheral TAA Right Eye Offset Y", &settings.periphery_taa_right_eye_mask_offset_y, kFoveatedMaskOffsetAdjustMin, kFoveatedMaskOffsetAdjustMax, "%.3f");
+					ImGui::SliderFloat("TAA Right Eye Offset Y", &settings.periphery_taa_right_eye_mask_offset_y, kFoveatedMaskOffsetAdjustMin, kFoveatedMaskOffsetAdjustMax, "%.3f");
 					if (auto _tt = Util::HoverTooltipWrapper()) {
-						ImGui::TextUnformatted("Moves the Step 2 peripheral-TAA mask vertically for the right eye.");
+						ImGui::TextUnformatted("Moves TAA mask vertically for the right eye.");
 					}
 					settings.periphery_taa_outer_scale = ClampPeripheryTAAOuterScaleForCenter(settings.periphery_taa_outer_scale, settings.periphery_taa_center_area);
 					settings.periphery_taa_left_eye_mask_offset_x = ClampFoveatedMaskOffsetAdjustment(settings.periphery_taa_left_eye_mask_offset_x);
@@ -828,16 +828,20 @@ void Upscaling::DrawSettings()
 					settings.periphery_taa_right_eye_mask_offset_x = ClampFoveatedMaskOffsetAdjustment(settings.periphery_taa_right_eye_mask_offset_x);
 					settings.periphery_taa_right_eye_mask_offset_y = ClampFoveatedMaskOffsetAdjustment(settings.periphery_taa_right_eye_mask_offset_y);
 					ImGui::SliderFloat(
-						"Center Blend",
+						"Center Blend YX",
 						&settings.periphery_taa_center_blend_feather,
 						kPeripheryTAACenterBlendFeatherMin,
 						kPeripheryTAACenterBlendFeatherMax,
 						"%.3f");
 					if (auto _tt = Util::HoverTooltipWrapper()) {
-						ImGui::TextUnformatted("Controls softness of the center/periphery transition in the TAA path.");
+						ImGui::TextUnformatted("Controls YX blend feather softness at the center/periphery transition in the TAA path.");
 						ImGui::Text("Range: low %.2f (harder transition) to high %.2f (softer transition).", kPeripheryTAACenterBlendFeatherMin, kPeripheryTAACenterBlendFeatherMax);
 					}
 					settings.periphery_taa_center_blend_feather = ClampPeripheryTAACenterBlendFeather(settings.periphery_taa_center_blend_feather);
+				}
+				if (ImGui::Button("Confirm Peripheral TAA (Step 2 Complete)")) {
+					if (globals::state)
+						globals::state->Save();
 				}
 				ImGui::EndDisabled();
 			}
