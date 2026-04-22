@@ -81,6 +81,9 @@ public:
 		bool periphery_taa_enable = false;
 		float periphery_taa_outer_scale = 0.70f;
 		float periphery_taa_center_blend_feather = 0.05f;
+		uint foveatedSetupVersion = 0;
+		bool foveatedStep1Confirmed = false;
+		bool foveatedStep2Confirmed = false;
 		bool reflexLowLatencyMode = true;
 		bool reflexLowLatencyBoost = false;
 		bool reflexUseMarkersToOptimize = true;
