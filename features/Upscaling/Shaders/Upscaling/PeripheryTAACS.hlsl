@@ -25,7 +25,6 @@ cbuffer PeripheryTAACB : register(b0)
 	float4 Tuning0;  // x=centerScale, y=centerFeather, z=resetHistory, w=taaOuterScale
 	float4 Tuning1;  // x=historyValid, y=centerHorizontalScale, z=tileDispatch, w=tileDispatchWidth
 	float4 Tuning2;  // x=reactivityScale, y=instabilityScale, z=velocityScale, w=lockDecay
-	float4 Tuning3;  // x=outputColorWriteOffsetX, yzw reserved
 	row_major float4x4 CurrentViewProjInverse;
 	row_major float4x4 PreviousViewProj;
 	float4 CurrentCameraPosAdjust;
@@ -354,7 +353,6 @@ void main(uint3 dispatchID : SV_DispatchThreadID, uint3 groupID : SV_GroupID, ui
 	if (!pixelValid)
 		return;
 
-	uint2 outputColorPos = outputPos + uint2((uint)(Tuning3.x + 0.5), 0);
 	float2 outputUV = (float2(outputPos) + 0.5) * InvOutputDim;
 	float2 inputUV = ClampInputUV(outputUV - (Jitter * InvInputDim));
 
@@ -381,7 +379,7 @@ void main(uint3 dispatchID : SV_DispatchThreadID, uint3 groupID : SV_GroupID, ui
 		float2 passthroughVelocity = CurrentMotionVectors.SampleLevel(LinearSampler, inputUV, 0.0);
 		OutVelocity[outputPos] = passthroughVelocity;
 		OutLock[outputPos] = 0.0;
-		OutColor[outputColorPos] = currentSample;
+		OutColor[outputPos] = currentSample;
 		OutHistoryColor[outputPos] = currentSample;
 		return;
 	}
@@ -469,6 +467,6 @@ void main(uint3 dispatchID : SV_DispatchThreadID, uint3 groupID : SV_GroupID, ui
 
 	OutVelocity[outputPos] = rejectionVelocity;
 	OutLock[outputPos] = newLock;
-	OutColor[outputColorPos] = float4(resolvedColor, currentAlpha);
+	OutColor[outputPos] = float4(resolvedColor, currentAlpha);
 	OutHistoryColor[outputPos] = float4(resolvedColor, currentAlpha);
 }
