@@ -25,6 +25,7 @@ cbuffer PeripheryTAACB : register(b0)
 	float4 Tuning0;  // x=centerScale, y=centerFeather, z=resetHistory, w=taaOuterScale
 	float4 Tuning1;  // x=historyValid, y=centerHorizontalScale, z=tileDispatch, w=tileDispatchWidth
 	float4 Tuning2;  // x=reactivityScale, y=instabilityScale, z=velocityScale, w=lockDecay
+	float4 Tuning3;  // x=outputColorWriteOffsetX, yzw reserved
 	row_major float4x4 CurrentViewProjInverse;
 	row_major float4x4 PreviousViewProj;
 	float4 CurrentCameraPosAdjust;
@@ -260,6 +261,26 @@ float ComputeVelocityDeltaPixels(float2 historyUV, float2 historyVelocity)
 	return length((previousVelocity - historyVelocity) * OutputDim);
 }
 
+float ComputeVelocityDeltaPixelsAgainstClearedAux(float2 historyUV, float2 historyVelocity)
+{
+	if (any(historyUV < 0.0.xx) || any(historyUV > 1.0.xx))
+		return 4096.0;
+
+	return length(historyVelocity * OutputDim);
+}
+
+bool IsHistoryAuxValid(float2 historyUV, float centerScale, float centerFeather, float centerHorizontalScale, float taaOuterScale)
+{
+	if (any(historyUV < 0.0.xx) || any(historyUV > 1.0.xx))
+		return false;
+
+	float historyCenterWeight = FoveatedComputeCenterBlendWeight(historyUV, centerScale, centerFeather, centerHorizontalScale, CenterOffset);
+	if (historyCenterWeight >= 1.0)
+		return false;
+
+	return FoveatedComputeMaskDistance(historyUV, taaOuterScale, centerHorizontalScale, CenterOffset) <= 1.0 + 1e-4;
+}
+
 float ComputeDisocclusion(float velocityDeltaPixels, float stabilityBias)
 {
 	float threshold = lerp(0.75, 1.15, stabilityBias);
@@ -340,6 +361,7 @@ void main(uint3 dispatchID : SV_DispatchThreadID, uint3 groupID : SV_GroupID, ui
 	if (!pixelValid)
 		return;
 
+	uint2 outputColorPos = outputPos + uint2((uint)(Tuning3.x + 0.5), 0);
 	float2 outputUV = (float2(outputPos) + 0.5) * InvOutputDim;
 	float2 inputUV = ClampInputUV(outputUV - (Jitter * InvInputDim));
 
@@ -362,7 +384,7 @@ void main(uint3 dispatchID : SV_DispatchThreadID, uint3 groupID : SV_GroupID, ui
 		float2 passthroughVelocity = CurrentMotionVectors.SampleLevel(LinearSampler, inputUV, 0.0);
 		OutVelocity[outputPos] = passthroughVelocity;
 		OutLock[outputPos] = 0.0;
-		OutColor[outputPos] = currentSample;
+		OutColor[outputColorPos] = currentSample;
 		return;
 	}
 
@@ -394,11 +416,14 @@ void main(uint3 dispatchID : SV_DispatchThreadID, uint3 groupID : SV_GroupID, ui
 		float3 rawHistoryColor = SampleHistoryCatmullRom(historyUV);
 		float3 clippedHistory = VarianceClipHistory3x3(neighborhood, rawHistoryColor, rejectionVelocity);
 
-		previousLock = HistoryLock.Load(int3(ToHistoryPos(historyUV), 0));
+		bool historyAuxValid = IsHistoryAuxValid(historyUV, centerScale, centerFeather, centerHorizontalScale, taaOuterScale);
+		previousLock = historyAuxValid ? HistoryLock.Load(int3(ToHistoryPos(historyUV), 0)) : 0.0;
 		float stabilityBias = 0.0;
 		float lockBias = saturate(previousLock * 0.90 + 0.25);
 		stabilityBias = lockBias;
-		velocityDeltaPixels = ComputeVelocityDeltaPixels(historyUV, rejectionVelocity);
+		velocityDeltaPixels = historyAuxValid ?
+			ComputeVelocityDeltaPixels(historyUV, rejectionVelocity) :
+			ComputeVelocityDeltaPixelsAgainstClearedAux(historyUV, rejectionVelocity);
 		float disocclusionVelocityDeltaPixels = velocityDeltaPixels;
 		float hmdRejectionRelaxation = ComputeHmdRejectionRelaxation(hmdHistoryDeltaLookup);
 		float cameraVelocityRelaxation = saturate((velocityPixels - kCameraVelocityRelaxThresholdPixels) * kCameraVelocityRelaxScale);
@@ -446,5 +471,5 @@ void main(uint3 dispatchID : SV_DispatchThreadID, uint3 groupID : SV_GroupID, ui
 
 	OutVelocity[outputPos] = rejectionVelocity;
 	OutLock[outputPos] = newLock;
-	OutColor[outputPos] = float4(resolvedColor, currentAlpha);
+	OutColor[outputColorPos] = float4(resolvedColor, currentAlpha);
 }
