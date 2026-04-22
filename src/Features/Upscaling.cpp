@@ -2134,7 +2134,11 @@ bool Upscaling::BuildPeripheryTAATileList(uint32_t eyeIndex, uint32_t outputWidt
 						continue;
 				}
 
-				const float centerMaxDistance = FoveatedMaskTileMaxDistance(tileX, tileY, maxX, maxY, outputWidth, outputHeight, centerScale, centerHorizontalScale, centerOffsetX, centerOffsetY);
+				const uint32_t centerTestMinX = tileX > coveragePadding ? tileX - coveragePadding : 0u;
+				const uint32_t centerTestMinY = tileY > coveragePadding ? tileY - coveragePadding : 0u;
+				const uint32_t centerTestMaxX = std::min(outputWidth, maxX + coveragePadding);
+				const uint32_t centerTestMaxY = std::min(outputHeight, maxY + coveragePadding);
+				const float centerMaxDistance = FoveatedMaskTileMaxDistance(centerTestMinX, centerTestMinY, centerTestMaxX, centerTestMaxY, outputWidth, outputHeight, centerScale, centerHorizontalScale, centerOffsetX, centerOffsetY);
 				if (centerMaxDistance <= 1.0f - 1e-4f)
 					continue;
 
@@ -2295,7 +2299,7 @@ void Upscaling::DispatchFoveatedPeripheryPass(ID3D11ShaderResourceView* sourceSR
 
 void Upscaling::DispatchPeripheryTAAPass(ID3D11ShaderResourceView* currentColorSRV, ID3D11ShaderResourceView* currentDepthSRV, ID3D11ShaderResourceView* currentMotionVectorSRV,
 	ID3D11ShaderResourceView* currentReactiveSRV, ID3D11ShaderResourceView* currentTransparencySRV, ID3D11ShaderResourceView* historyColorSRV,
-	ID3D11ShaderResourceView* historyVelocitySRV, ID3D11ShaderResourceView* historyLockSRV, ID3D11UnorderedAccessView* outputColorUAV,
+	ID3D11ShaderResourceView* historyVelocitySRV, ID3D11ShaderResourceView* historyLockSRV, ID3D11UnorderedAccessView* outputColorUAV, ID3D11UnorderedAccessView* outputHistoryColorUAV,
 	ID3D11UnorderedAccessView* outputVelocityUAV, ID3D11UnorderedAccessView* outputLockUAV, ID3D11ShaderResourceView* tileListSRV, uint32_t tileCount,
 	uint32_t inputWidth, uint32_t inputHeight, uint32_t outputWidth,
 	uint32_t outputHeight, uint32_t outputOffsetX, uint32_t outputOffsetY, uint32_t dispatchWidth, uint32_t dispatchHeight, const float4x4& currentViewProjInverse,
@@ -2313,7 +2317,7 @@ void Upscaling::DispatchPeripheryTAAPass(ID3D11ShaderResourceView* currentColorS
 		return;
 	if (!historyColorSRV || !historyVelocitySRV || !historyLockSRV)
 		return;
-	if (!outputColorUAV || !outputVelocityUAV || !outputLockUAV)
+	if (!outputColorUAV || !outputHistoryColorUAV || !outputVelocityUAV || !outputLockUAV)
 		return;
 	const bool useTileList = tileListSRV && tileCount > 0;
 	if (!useTileList && (!dispatchWidth || !dispatchHeight))
@@ -2411,7 +2415,7 @@ void Upscaling::DispatchPeripheryTAAPass(ID3D11ShaderResourceView* currentColorS
 		historyLockSRV,
 		tileListSRV
 	};
-	ID3D11UnorderedAccessView* uavs[3] = { outputColorUAV, outputVelocityUAV, outputLockUAV };
+	ID3D11UnorderedAccessView* uavs[4] = { outputColorUAV, outputVelocityUAV, outputLockUAV, outputHistoryColorUAV };
 
 	context->CSSetShader(peripheryTAA, nullptr, 0);
 	context->CSSetConstantBuffers(0, 1, &cb);
@@ -2433,7 +2437,7 @@ void Upscaling::DispatchPeripheryTAAPass(ID3D11ShaderResourceView* currentColorS
 		state->EndPerfEvent();
 
 	ID3D11ShaderResourceView* nullSRV[9] = {};
-	ID3D11UnorderedAccessView* nullUAV[3] = {};
+	ID3D11UnorderedAccessView* nullUAV[4] = {};
 	ID3D11SamplerState* nullSampler[1] = { nullptr };
 	ID3D11Buffer* nullCB[1] = { nullptr };
 	context->CSSetShaderResources(0, ARRAYSIZE(nullSRV), nullSRV);
@@ -2526,7 +2530,7 @@ void Upscaling::DispatchFoveatedBlendPass(ID3D11ShaderResourceView* centerSRV, I
 	context->CSSetShader(nullptr, nullptr, 0);
 }
 
-bool Upscaling::DispatchSingleFoveatedVendorEye(UpscaleMethod a_upscaleMethod, uint32_t eyeIndex, ID3D11Resource* colorIn, ID3D11Resource* depthIn, ID3D11Resource* motionVectorsIn, ID3D11Resource* reactiveMaskIn, ID3D11Resource* transparencyMaskIn, uint32_t outputWidthPerEye, uint32_t outputHeight, float centerScale, float centerHorizontalScale, const float2& centerOffset, ID3D11UnorderedAccessView* historyColorUAV, uint32_t colorInputBaseOffsetX, uint32_t depthInputBaseOffsetX, uint32_t auxInputBaseOffsetX, ID3D11UnorderedAccessView* outputColorUAVOverride, uint32_t outputColorWriteOffsetX, bool blendOutput)
+bool Upscaling::DispatchSingleFoveatedVendorEye(UpscaleMethod a_upscaleMethod, uint32_t eyeIndex, ID3D11Resource* colorIn, ID3D11Resource* depthIn, ID3D11Resource* motionVectorsIn, ID3D11Resource* reactiveMaskIn, ID3D11Resource* transparencyMaskIn, uint32_t outputWidthPerEye, uint32_t outputHeight, float centerScale, float centerHorizontalScale, const float2& centerOffset, float centerFeather, uint32_t colorInputBaseOffsetX, uint32_t depthInputBaseOffsetX, uint32_t auxInputBaseOffsetX, ID3D11UnorderedAccessView* outputColorUAVOverride, uint32_t outputColorWriteOffsetX, bool blendOutput)
 {
 	if (a_upscaleMethod != UpscaleMethod::kDLSS)
 		return false;
@@ -2627,7 +2631,9 @@ bool Upscaling::DispatchSingleFoveatedVendorEye(UpscaleMethod a_upscaleMethod, u
 
 	ID3D11UnorderedAccessView* outputUAV = outputColorUAVOverride ? outputColorUAVOverride : vrIntermediateColorOut[eyeIndex]->uav.get();
 	ID3D11ShaderResourceView* centerSRV = foveatedCenterColorOut[eyeIndex]->srv.get();
-	const float centerBlendFeather = historyColorUAV ? ClampPeripheryTAACenterBlendFeather(settings.periphery_taa_center_blend_feather) : FoveatedCommon::kCenterFeather;
+	const float centerBlendFeather = std::isfinite(centerFeather) ?
+		ClampPeripheryTAACenterBlendFeather(centerFeather) :
+		ClampPeripheryTAACenterBlendFeather(FoveatedCommon::kCenterFeather);
 
 	DispatchFoveatedBlendPass(
 		centerSRV,
@@ -2746,7 +2752,7 @@ bool Upscaling::DispatchFoveatedVendorUpscaling(UpscaleMethod a_upscaleMethod, I
 					centerScale,
 					centerHorizontalScale,
 					centerOffset,
-					nullptr,
+					effectiveCenterBlendFeather,
 					combinedEyeInputOffsetX,
 					combinedEyeInputOffsetX,
 					0u,
@@ -2794,16 +2800,19 @@ bool Upscaling::DispatchFoveatedVendorUpscaling(UpscaleMethod a_upscaleMethod, I
 		const uint32_t taaOuterMinY = static_cast<uint32_t>(taaOuterBounds.minY);
 		const uint32_t taaOuterMaxY = static_cast<uint32_t>(taaOuterBounds.maxY);
 		const bool hasTaaOuterRegion = taaOuterMaxX > taaOuterMinX && taaOuterMaxY > taaOuterMinY;
+		// Catmull-Rom history taps and 3x3 neighborhood sampling need a small pad
+		// around the TAA outer region to keep transition-band history coherent.
 		constexpr uint32_t kPeripheryHistoryPadding = 2u;
+		constexpr uint32_t kPeripheryCurrentInputPadding = 2u;
 		const uint32_t taaHistoryMinX = hasTaaOuterRegion ? (taaOuterMinX > kPeripheryHistoryPadding ? taaOuterMinX - kPeripheryHistoryPadding : 0u) : 0u;
 		const uint32_t taaHistoryMinY = hasTaaOuterRegion ? (taaOuterMinY > kPeripheryHistoryPadding ? taaOuterMinY - kPeripheryHistoryPadding : 0u) : 0u;
 		const uint32_t taaHistoryMaxX = hasTaaOuterRegion ? std::min(outputWidthPerEye, taaOuterMaxX + kPeripheryHistoryPadding) : 0u;
 		const uint32_t taaHistoryMaxY = hasTaaOuterRegion ? std::min(outputHeight, taaOuterMaxY + kPeripheryHistoryPadding) : 0u;
 		const bool hasTaaHistoryRegion = taaHistoryMaxX > taaHistoryMinX && taaHistoryMaxY > taaHistoryMinY;
-		const uint32_t taaDispatchMinX = useDirectTAAOutput && hasTaaHistoryRegion ? taaHistoryMinX : taaOuterMinX;
-		const uint32_t taaDispatchMinY = useDirectTAAOutput && hasTaaHistoryRegion ? taaHistoryMinY : taaOuterMinY;
-		const uint32_t taaDispatchMaxX = useDirectTAAOutput && hasTaaHistoryRegion ? taaHistoryMaxX : taaOuterMaxX;
-		const uint32_t taaDispatchMaxY = useDirectTAAOutput && hasTaaHistoryRegion ? taaHistoryMaxY : taaOuterMaxY;
+		const uint32_t taaDispatchMinX = hasTaaHistoryRegion ? taaHistoryMinX : taaOuterMinX;
+		const uint32_t taaDispatchMinY = hasTaaHistoryRegion ? taaHistoryMinY : taaOuterMinY;
+		const uint32_t taaDispatchMaxX = hasTaaHistoryRegion ? taaHistoryMaxX : taaOuterMaxX;
+		const uint32_t taaDispatchMaxY = hasTaaHistoryRegion ? taaHistoryMaxY : taaOuterMaxY;
 
 		if (!vrIntermediateColorOut[eye] || !vrIntermediateColorOut[eye]->uav || !vrIntermediateColorOut[eye]->resource) {
 			return false;
@@ -2839,17 +2848,16 @@ bool Upscaling::DispatchFoveatedVendorUpscaling(UpscaleMethod a_upscaleMethod, I
 				return static_cast<uint32_t>(std::ceil(static_cast<double>(outputValue) * scale));
 			};
 
-			uint32_t inputMinX = mapOutputToInputMin(taaOuterMinX, outputWidthPerEye, inputWidthPerEye);
-			uint32_t inputMaxX = mapOutputToInputMax(taaOuterMaxX, outputWidthPerEye, inputWidthPerEye);
-			uint32_t inputMinY = mapOutputToInputMin(taaOuterMinY, outputHeight, inputHeight);
-			uint32_t inputMaxY = mapOutputToInputMax(taaOuterMaxY, outputHeight, inputHeight);
+			uint32_t inputMinX = mapOutputToInputMin(taaDispatchMinX, outputWidthPerEye, inputWidthPerEye);
+			uint32_t inputMaxX = mapOutputToInputMax(taaDispatchMaxX, outputWidthPerEye, inputWidthPerEye);
+			uint32_t inputMinY = mapOutputToInputMin(taaDispatchMinY, outputHeight, inputHeight);
+			uint32_t inputMaxY = mapOutputToInputMax(taaDispatchMaxY, outputHeight, inputHeight);
 
 			// 3x3 neighborhood and jitter sampling can read adjacent texels.
-			constexpr uint32_t kCopyPadding = 2u;
-			inputMinX = inputMinX > kCopyPadding ? inputMinX - kCopyPadding : 0u;
-			inputMinY = inputMinY > kCopyPadding ? inputMinY - kCopyPadding : 0u;
-			inputMaxX = std::min(inputWidthPerEye, inputMaxX + kCopyPadding);
-			inputMaxY = std::min(inputHeight, inputMaxY + kCopyPadding);
+			inputMinX = inputMinX > kPeripheryCurrentInputPadding ? inputMinX - kPeripheryCurrentInputPadding : 0u;
+			inputMinY = inputMinY > kPeripheryCurrentInputPadding ? inputMinY - kPeripheryCurrentInputPadding : 0u;
+			inputMaxX = std::min(inputWidthPerEye, inputMaxX + kPeripheryCurrentInputPadding);
+			inputMaxY = std::min(inputHeight, inputMaxY + kPeripheryCurrentInputPadding);
 
 			if (inputMaxX > inputMinX && inputMaxY > inputMinY) {
 				const D3D11_BOX srcBox{
@@ -2923,6 +2931,7 @@ bool Upscaling::DispatchFoveatedVendorUpscaling(UpscaleMethod a_upscaleMethod, I
 				peripheryTAAVelocityHistory[eye][peripheryTAAHistoryReadIndex]->srv.get(),
 				peripheryTAALockHistory[eye][peripheryTAAHistoryReadIndex]->srv.get(),
 				outputColorUAV,
+				peripheryTAAHistoryColor[eye][peripheryTAAWriteIndex]->uav.get(),
 				peripheryTAAVelocityHistory[eye][peripheryTAAWriteIndex]->uav.get(),
 				peripheryTAALockHistory[eye][peripheryTAAWriteIndex]->uav.get(),
 				tileListSRV,
@@ -2990,7 +2999,7 @@ bool Upscaling::DispatchFoveatedVendorUpscaling(UpscaleMethod a_upscaleMethod, I
 		if (usePeripheryTAA) {
 			if (hasTaaOuterRegion) {
 				uint32_t tileCount = 0;
-				const bool tileListBuilt = BuildPeripheryTAATileList(eye, outputWidthPerEye, outputHeight, centerScale, taaOuterScale, centerHorizontalScale, centerOffset.x, centerOffset.y, useDirectTAAOutput ? kPeripheryHistoryPadding : 0u, tileCount);
+				const bool tileListBuilt = BuildPeripheryTAATileList(eye, outputWidthPerEye, outputHeight, centerScale, taaOuterScale, centerHorizontalScale, centerOffset.x, centerOffset.y, kPeripheryHistoryPadding, tileCount);
 				const bool hasTileListSRV = peripheryTAATileBuffer[eye] && peripheryTAATileBuffer[eye]->srv;
 				if (tileListBuilt && tileCount > 0 && hasTileListSRV) {
 					dispatchPeripheryTAA(peripheryTAATileBuffer[eye]->srv.get(), tileCount, 0, 0, outputWidthPerEye, outputHeight);
@@ -3015,8 +3024,8 @@ bool Upscaling::DispatchFoveatedVendorUpscaling(UpscaleMethod a_upscaleMethod, I
 						state->EndPerfEvent();
 				}
 
-				// Direct TAA output intentionally leaves the invisible area outside the TAA
-				// outer range untouched, avoiding the non-TAA fill and full-eye copyback.
+				// Direct TAA output only touches the TAA range plus the small history
+				// padding, avoiding the non-TAA fill and full-eye copyback.
 				if (!useDirectTAAOutput) {
 					dispatchRectMinusHole(
 						0,
@@ -3056,7 +3065,6 @@ bool Upscaling::DispatchFoveatedVendorUpscaling(UpscaleMethod a_upscaleMethod, I
 		ID3D11Resource* centerColorInput = useCombinedCenterInputs ? colorTexture : vrIntermediateColorIn[eye]->resource.get();
 		ID3D11Resource* centerDepthInput = useCombinedCenterInputs ? depthTexture : vrIntermediateDepth[eye]->resource.get();
 		const uint32_t combinedEyeInputOffsetX = eye * inputWidthPerEye;
-		ID3D11UnorderedAccessView* historyColorUAV = usePeripheryTAA ? peripheryTAAHistoryColor[eye][peripheryTAAWriteIndex]->uav.get() : nullptr;
 
 		if (useDirectTAAOutput) {
 			const auto& rect = foveatedRectCache.rects[eye];
@@ -3092,40 +3100,13 @@ bool Upscaling::DispatchFoveatedVendorUpscaling(UpscaleMethod a_upscaleMethod, I
 					centerScale,
 					centerHorizontalScale,
 					centerOffset,
-					historyColorUAV,
+					effectiveCenterBlendFeather,
 					useCombinedCenterInputs ? combinedEyeInputOffsetX : 0u,
 					useCombinedCenterInputs ? combinedEyeInputOffsetX : 0u,
 					0u,
 					outputColorUAV,
 					outputColorWriteOffsetX)) {
 				return false;
-			}
-		}
-
-		if (usePeripheryTAA) {
-			if (hasTaaHistoryRegion) {
-				if (state->frameAnnotations)
-					state->BeginPerfEvent("Periphery TAA Color History Copy (Masked)");
-				const uint32_t historySourceOffsetX = useDirectTAAOutput ? eye * outputWidthPerEye : 0u;
-				D3D11_BOX historyCopyBox{
-					historySourceOffsetX + taaHistoryMinX,
-					taaHistoryMinY,
-					0u,
-					historySourceOffsetX + taaHistoryMaxX,
-					taaHistoryMaxY,
-					1u
-				};
-				context->CopySubresourceRegion(
-					peripheryTAAHistoryColor[eye][peripheryTAAWriteIndex]->resource.get(),
-					0,
-					taaHistoryMinX,
-					taaHistoryMinY,
-					0,
-					useDirectTAAOutput ? colorTexture : vrIntermediateColorOut[eye]->resource.get(),
-					0,
-					&historyCopyBox);
-				if (state->frameAnnotations)
-					state->EndPerfEvent();
 			}
 		}
 

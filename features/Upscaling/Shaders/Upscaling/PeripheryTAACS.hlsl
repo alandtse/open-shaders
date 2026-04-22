@@ -47,6 +47,7 @@ SamplerState LinearSampler : register(s0);
 RWTexture2D<float4> OutColor : register(u0);
 RWTexture2D<float2> OutVelocity : register(u1);
 RWTexture2D<float> OutLock : register(u2);
+RWTexture2D<float4> OutHistoryColor : register(u3);
 
 static const int2 kOffsets3x3[9] = {
 	int2(-1, -1), int2(0, -1), int2(1, -1),
@@ -261,14 +262,6 @@ float ComputeVelocityDeltaPixels(float2 historyUV, float2 historyVelocity)
 	return length((previousVelocity - historyVelocity) * OutputDim);
 }
 
-float ComputeVelocityDeltaPixelsAgainstClearedAux(float2 historyUV, float2 historyVelocity)
-{
-	if (any(historyUV < 0.0.xx) || any(historyUV > 1.0.xx))
-		return 4096.0;
-
-	return length(historyVelocity * OutputDim);
-}
-
 bool IsHistoryAuxValid(float2 historyUV, float centerScale, float centerFeather, float centerHorizontalScale, float taaOuterScale)
 {
 	if (any(historyUV < 0.0.xx) || any(historyUV > 1.0.xx))
@@ -376,15 +369,20 @@ void main(uint3 dispatchID : SV_DispatchThreadID, uint3 groupID : SV_GroupID, ui
 
 	float centerWeight = FoveatedComputeCenterBlendWeight(outputUV, centerScale, centerFeather, centerHorizontalScale, CenterOffset);
 	float peripheryWeight = saturate(1.0 - centerWeight);
-	if (peripheryWeight <= 0.0)
-		return;
-
 	float4 currentSample = CurrentColor.SampleLevel(LinearSampler, inputUV, 0.0);
+	if (peripheryWeight <= 0.0) {
+		OutVelocity[outputPos] = 0.0.xx;
+		OutLock[outputPos] = 0.0;
+		OutHistoryColor[outputPos] = currentSample;
+		return;
+	}
+
 	if (FoveatedComputeMaskDistance(outputUV, taaOuterScale, centerHorizontalScale, CenterOffset) > 1.0) {
 		float2 passthroughVelocity = CurrentMotionVectors.SampleLevel(LinearSampler, inputUV, 0.0);
 		OutVelocity[outputPos] = passthroughVelocity;
 		OutLock[outputPos] = 0.0;
 		OutColor[outputColorPos] = currentSample;
+		OutHistoryColor[outputPos] = currentSample;
 		return;
 	}
 
@@ -413,63 +411,64 @@ void main(uint3 dispatchID : SV_DispatchThreadID, uint3 groupID : SV_GroupID, ui
 	float motionRejectionRelaxation = 0.0;
 
 	if (historyValid) {
-		float3 rawHistoryColor = SampleHistoryCatmullRom(historyUV);
-		float3 clippedHistory = VarianceClipHistory3x3(neighborhood, rawHistoryColor, rejectionVelocity);
-
 		bool historyAuxValid = IsHistoryAuxValid(historyUV, centerScale, centerFeather, centerHorizontalScale, taaOuterScale);
-		previousLock = historyAuxValid ? HistoryLock.Load(int3(ToHistoryPos(historyUV), 0)) : 0.0;
-		float stabilityBias = 0.0;
-		float lockBias = saturate(previousLock * 0.90 + 0.25);
-		stabilityBias = lockBias;
-		velocityDeltaPixels = historyAuxValid ?
-			ComputeVelocityDeltaPixels(historyUV, rejectionVelocity) :
-			ComputeVelocityDeltaPixelsAgainstClearedAux(historyUV, rejectionVelocity);
-		float disocclusionVelocityDeltaPixels = velocityDeltaPixels;
-		float hmdRejectionRelaxation = ComputeHmdRejectionRelaxation(hmdHistoryDeltaLookup);
-		float cameraVelocityRelaxation = saturate((velocityPixels - kCameraVelocityRelaxThresholdPixels) * kCameraVelocityRelaxScale);
-		motionRejectionRelaxation = max(hmdRejectionRelaxation, cameraVelocityRelaxation);
-		float hmdMotionPixels = length(hmdHistoryDeltaLookup * OutputDim);
-		disocclusionVelocityDeltaPixels = lerp(
-			velocityDeltaPixels,
-			max(0.0, velocityDeltaPixels - hmdMotionPixels * kHmdVelocityDeltaRelaxStrength),
-			motionRejectionRelaxation);
-		disocclusion = ComputeDisocclusion(disocclusionVelocityDeltaPixels, stabilityBias);
-		float stableHistoryConfidence = max(kHmdDisocclusionConfidenceFloor, saturate(previousLock * 1.5 + 0.10));
-		float hmdDisocclusionSuppression = motionRejectionRelaxation * stableHistoryConfidence;
-		disocclusion *= 1.0 - hmdDisocclusionSuppression * kHmdDisocclusionSuppression;
-		disocclusion = min(disocclusion, lerp(1.0, kHmdDisocclusionCap, hmdDisocclusionSuppression));
+		if (historyAuxValid) {
+			float3 rawHistoryColor = SampleHistoryCatmullRom(historyUV);
+			float3 clippedHistory = VarianceClipHistory3x3(neighborhood, rawHistoryColor, rejectionVelocity);
 
-		float3 currentTM = Reinhard(currentColor);
-		float3 historyTM = Reinhard(clippedHistory);
-		float currentLuma = Luma(currentTM);
-		float historyLuma = Luma(historyTM);
+			previousLock = HistoryLock.Load(int3(ToHistoryPos(historyUV), 0));
+			float stabilityBias = 0.0;
+			float lockBias = saturate(previousLock * 0.90 + 0.25);
+			stabilityBias = lockBias;
+			velocityDeltaPixels = ComputeVelocityDeltaPixels(historyUV, rejectionVelocity);
+			float disocclusionVelocityDeltaPixels = velocityDeltaPixels;
+			float hmdRejectionRelaxation = ComputeHmdRejectionRelaxation(hmdHistoryDeltaLookup);
+			float cameraVelocityRelaxation = saturate((velocityPixels - kCameraVelocityRelaxThresholdPixels) * kCameraVelocityRelaxScale);
+			motionRejectionRelaxation = max(hmdRejectionRelaxation, cameraVelocityRelaxation);
+			float hmdMotionPixels = length(hmdHistoryDeltaLookup * OutputDim);
+			disocclusionVelocityDeltaPixels = lerp(
+				velocityDeltaPixels,
+				max(0.0, velocityDeltaPixels - hmdMotionPixels * kHmdVelocityDeltaRelaxStrength),
+				motionRejectionRelaxation);
+			disocclusion = ComputeDisocclusion(disocclusionVelocityDeltaPixels, stabilityBias);
+			float stableHistoryConfidence = max(kHmdDisocclusionConfidenceFloor, saturate(previousLock * 1.5 + 0.10));
+			float hmdDisocclusionSuppression = motionRejectionRelaxation * stableHistoryConfidence;
+			disocclusion *= 1.0 - hmdDisocclusionSuppression * kHmdDisocclusionSuppression;
+			disocclusion = min(disocclusion, lerp(1.0, kHmdDisocclusionCap, hmdDisocclusionSuppression));
 
-		float motionFactor = saturate(velocityPixels * Tuning2.z);
-		motionFactor *= 1.0 - motionRejectionRelaxation * kHmdMotionBlendSuppression;
+			float3 currentTM = Reinhard(currentColor);
+			float3 historyTM = Reinhard(clippedHistory);
+			float currentLuma = Luma(currentTM);
+			float historyLuma = Luma(historyTM);
 
-		float lumaDiff = abs(currentLuma - historyLuma) / max(max(currentLuma, historyLuma), 1e-3);
-		instability = saturate(lumaDiff * Tuning2.y);
-		instability *= (1.0 - motionFactor);
-		instability *= 1.0 - motionRejectionRelaxation * kMotionInstabilitySuppression;
+			float motionFactor = saturate(velocityPixels * Tuning2.z);
+			motionFactor *= 1.0 - motionRejectionRelaxation * kHmdMotionBlendSuppression;
 
-		float lockBoost = previousLock * (1.0 - reactivity) * (1.0 - disocclusion);
-		currentBlend = 0.08;
-		currentBlend += motionFactor * lerp(0.22, 0.16, stabilityBias);
-		currentBlend += disocclusion * lerp(0.62, 0.50, stabilityBias);
-		currentBlend += reactivity * lerp(0.35, 0.30, stabilityBias);
-		currentBlend += instability * lerp(0.20, 0.14, stabilityBias);
-		currentBlend -= lockBoost * lerp(0.18, 0.24, stabilityBias);
-		currentBlend = clamp(currentBlend, 0.05, 1.0);
+			float lumaDiff = abs(currentLuma - historyLuma) / max(max(currentLuma, historyLuma), 1e-3);
+			instability = saturate(lumaDiff * Tuning2.y);
+			instability *= (1.0 - motionFactor);
+			instability *= 1.0 - motionRejectionRelaxation * kMotionInstabilitySuppression;
 
-		float3 resolvedTM = lerp(historyTM, currentTM, currentBlend);
-		resolvedColor = ReinhardInverse(resolvedTM);
+			float lockBoost = previousLock * (1.0 - reactivity) * (1.0 - disocclusion);
+			currentBlend = 0.08;
+			currentBlend += motionFactor * lerp(0.22, 0.16, stabilityBias);
+			currentBlend += disocclusion * lerp(0.62, 0.50, stabilityBias);
+			currentBlend += reactivity * lerp(0.35, 0.30, stabilityBias);
+			currentBlend += instability * lerp(0.20, 0.14, stabilityBias);
+			currentBlend -= lockBoost * lerp(0.18, 0.24, stabilityBias);
+			currentBlend = clamp(currentBlend, 0.05, 1.0);
 
-		float trust = (1.0 - reactivity) * (1.0 - disocclusion) * (1.0 - instability);
-		float accumulation = 1.0 - currentBlend;
-		newLock = saturate(max(previousLock * Tuning2.w * trust, accumulation * trust));
+			float3 resolvedTM = lerp(historyTM, currentTM, currentBlend);
+			resolvedColor = ReinhardInverse(resolvedTM);
+
+			float trust = (1.0 - reactivity) * (1.0 - disocclusion) * (1.0 - instability);
+			float accumulation = 1.0 - currentBlend;
+			newLock = saturate(max(previousLock * Tuning2.w * trust, accumulation * trust));
+		}
 	}
 
 	OutVelocity[outputPos] = rejectionVelocity;
 	OutLock[outputPos] = newLock;
 	OutColor[outputColorPos] = float4(resolvedColor, currentAlpha);
+	OutHistoryColor[outputPos] = float4(resolvedColor, currentAlpha);
 }
