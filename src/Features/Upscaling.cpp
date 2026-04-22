@@ -786,29 +786,30 @@ void Upscaling::DrawSettings()
 				ImGui::Checkbox("Foveated Upscaling", &settings.foveatedVendorDispatch);
 			}
 			if (auto _tt = Util::HoverTooltipWrapper()) {
-				ImGui::TextUnformatted("Enables VR foveated upscaling.");
-				ImGui::TextUnformatted("On = center gets highest quality, periphery is cheaper for performance.");
+				ImGui::TextUnformatted("Master switch for VR FOV-mask upscaling.");
+				ImGui::TextUnformatted("On: enables Step 1 and Step 2 FOV mask controls.");
+				ImGui::TextUnformatted("Off: uses full-eye upscaler dispatch (no FOV masks).");
 			}
 			SanitizeFoveatedSettings(settings);
 			if (settings.foveatedVendorDispatch && foveatedDispatchSupportedForMethod) {
 				{
 					Util::BlueFrameStyleWrapper maskStyle(true);
-					ImGui::Checkbox("Foveated Mask Visualization", &settings.foveatedPeripheryMaskVisualization);
+					ImGui::Checkbox("FOV Mask Visualization - Activate first to set up FOV Masks", &settings.foveatedPeripheryMaskVisualization);
 				}
 				if (auto _tt = Util::HoverTooltipWrapper()) {
-					ImGui::TextUnformatted("Shows the active upscaler FOV masks for each eye.");
-					ImGui::TextUnformatted("When Peripheral TAA is enabled, the TAA profile is shown.");
-					ImGui::TextUnformatted("When Peripheral TAA is disabled, the DLSS FOV profile is shown.");
-					ImGui::TextUnformatted("Use this view while tuning offsets and area for each profile.");
-					ImGui::TextUnformatted("X and Y offsets do not need to match between eyes.");
-					ImGui::TextUnformatted("With Peripheral TAA disabled, only the DLSS center mask is highlighted (green).");
-					ImGui::TextUnformatted("Colors with Peripheral TAA enabled: center=green, TAA ring=gold, outer lightweight ring=blue.");
+					ImGui::TextUnformatted("Turn this on first while tuning FOV masks.");
+					ImGui::TextUnformatted("Green = DLSS center mask.");
+					ImGui::TextUnformatted("With Peripheral TAA enabled: gold = TAA ring, blue = outer lightweight ring.");
+					ImGui::TextUnformatted("With Peripheral TAA disabled: only the green DLSS center mask is shown.");
+					ImGui::TextUnformatted("When visualization is ON, periphery TAA processing is not active.");
+					ImGui::TextUnformatted("Turn visualization OFF after setup to use the normal runtime path.");
 				}
 
 				ImGui::Separator();
 				ImGui::TextUnformatted("FOV Setup Order");
 				ImGui::TextUnformatted("1) Configure DLSS FOV first (used by non-TAA path and SSGI).");
 				ImGui::TextUnformatted("2) Then configure Peripheral TAA extension.");
+				ImGui::TextUnformatted("Recommended flow: enable visualization -> tune Step 1 -> confirm Step 1 -> tune Step 2 -> disable visualization.");
 
 				static bool baseFovConfirmedForSession = false;
 				if (settings.periphery_taa_enable)
@@ -820,7 +821,8 @@ void Upscaling::DrawSettings()
 					ImGui::SliderFloat("DLSS FOV Area", &settings.foveatedCenterArea, FoveatedCommon::kCenterAreaMin, FoveatedCommon::kCenterAreaMax, "%.2f");
 				}
 				if (auto _tt = Util::HoverTooltipWrapper()) {
-					ImGui::TextUnformatted("Controls the DLSS center mask size used by non-TAA path and SSGI.");
+					ImGui::TextUnformatted("Step 1: size of the DLSS center mask.");
+					ImGui::TextUnformatted("This mask is used by non-Peripheral-TAA path and by SSGI foveation.");
 					ImGui::TextUnformatted("Lower values = smaller center mask and more performance.");
 					ImGui::TextUnformatted("Range: low 0.30 (smallest center) to high 1.00 (largest center).");
 					ImGui::TextUnformatted("Tune until the green center area touches the end of your visible field of view.");
@@ -830,7 +832,7 @@ void Upscaling::DrawSettings()
 					ImGui::SliderFloat("DLSS Expand FOV Area R/L", &settings.foveatedCenterHorizontalScale, FoveatedCommon::kCenterHorizontalScaleMin, FoveatedCommon::kCenterHorizontalScaleMax, "%.2f");
 				}
 				if (auto _tt = Util::HoverTooltipWrapper()) {
-					ImGui::TextUnformatted("Widens DLSS center mask horizontally (left/right) without increasing vertical size.");
+					ImGui::TextUnformatted("Step 1: widens the DLSS center mask horizontally (left/right) without changing vertical size.");
 					ImGui::TextUnformatted("Range: low 1.00 (no extra width) to high 2.00 (maximum extra width).");
 				}
 				settings.foveatedCenterArea = ClampFoveatedCenterArea(settings.foveatedCenterArea);
@@ -840,19 +842,23 @@ void Upscaling::DrawSettings()
 					Util::BlueFrameStyleWrapper maskSliderStyle;
 					ImGui::SliderFloat("DLSS Left Eye Offset X", &settings.foveatedLeftEyeMaskOffsetX, kFoveatedMaskOffsetAdjustMin, kFoveatedMaskOffsetAdjustMax, "%.3f");
 					if (auto _tt = Util::HoverTooltipWrapper()) {
-						ImGui::TextUnformatted("Moves DLSS center mask horizontally for the left eye.");
+						ImGui::TextUnformatted("Step 1 left-eye horizontal offset.");
+						ImGui::TextUnformatted("+X moves right, -X moves left.");
 					}
 					ImGui::SliderFloat("DLSS Left Eye Offset Y", &settings.foveatedLeftEyeMaskOffsetY, kFoveatedMaskOffsetAdjustMin, kFoveatedMaskOffsetAdjustMax, "%.3f");
 					if (auto _tt = Util::HoverTooltipWrapper()) {
-						ImGui::TextUnformatted("Moves DLSS center mask vertically for the left eye.");
+						ImGui::TextUnformatted("Step 1 left-eye vertical offset.");
+						ImGui::TextUnformatted("+Y moves down, -Y moves up.");
 					}
 					ImGui::SliderFloat("DLSS Right Eye Offset X", &settings.foveatedRightEyeMaskOffsetX, kFoveatedMaskOffsetAdjustMin, kFoveatedMaskOffsetAdjustMax, "%.3f");
 					if (auto _tt = Util::HoverTooltipWrapper()) {
-						ImGui::TextUnformatted("Moves DLSS center mask horizontally for the right eye.");
+						ImGui::TextUnformatted("Step 1 right-eye horizontal offset.");
+						ImGui::TextUnformatted("+X moves right, -X moves left.");
 					}
 					ImGui::SliderFloat("DLSS Right Eye Offset Y", &settings.foveatedRightEyeMaskOffsetY, kFoveatedMaskOffsetAdjustMin, kFoveatedMaskOffsetAdjustMax, "%.3f");
 					if (auto _tt = Util::HoverTooltipWrapper()) {
-						ImGui::TextUnformatted("Moves DLSS center mask vertically for the right eye.");
+						ImGui::TextUnformatted("Step 1 right-eye vertical offset.");
+						ImGui::TextUnformatted("+Y moves down, -Y moves up.");
 					}
 					settings.foveatedLeftEyeMaskOffsetX = ClampFoveatedMaskOffsetAdjustment(settings.foveatedLeftEyeMaskOffsetX);
 					settings.foveatedLeftEyeMaskOffsetY = ClampFoveatedMaskOffsetAdjustment(settings.foveatedLeftEyeMaskOffsetY);
@@ -867,6 +873,10 @@ void Upscaling::DrawSettings()
 						ImVec4(0.18f, 0.34f, 0.66f, 0.95f));
 					if (ImGui::Button("Confirm DLSS FOV (Step 1 Complete)"))
 						baseFovConfirmedForSession = true;
+					if (auto _tt = Util::HoverTooltipWrapper()) {
+						ImGui::TextUnformatted("Marks Step 1 as complete and unlocks Step 2 controls.");
+						ImGui::TextUnformatted("This button does not change mask values by itself.");
+					}
 				}
 				ImGui::EndDisabled();
 
@@ -884,7 +894,8 @@ void Upscaling::DrawSettings()
 						Util::YellowFrameStyleWrapper taaStyle;
 						ImGui::Checkbox("Peripheral TAA", &settings.periphery_taa_enable);
 						if (auto _tt = Util::HoverTooltipWrapper()) {
-							ImGui::TextUnformatted("Enables periphery-only TAA around the Step 2 DLSS FOV.");
+							ImGui::TextUnformatted("Enables periphery-only TAA around the Step 2 DLSS center mask.");
+							ImGui::TextUnformatted("When ON, Step 1 controls are locked until this is turned OFF.");
 						}
 					}
 					{
@@ -904,23 +915,24 @@ void Upscaling::DrawSettings()
 					if (auto _tt = Util::HoverTooltipWrapper()) {
 						ImGui::TextUnformatted("Copies only left/right eye X/Y mask offsets from Step 1.");
 						ImGui::TextUnformatted("Step 2 DLSS FOV Area is reset to 0.30 and DLSS Expand FOV Area R/L is reset to 1.00.");
+						ImGui::TextUnformatted("Does not enable Peripheral TAA automatically.");
 					}
 					{
 						Util::YellowFrameStyleWrapper step2DlssAreaStyle;
 						ImGui::SliderFloat("DLSS FOV Area##Step2", &settings.periphery_taa_center_area, FoveatedCommon::kCenterAreaMin, FoveatedCommon::kCenterAreaMax, "%.2f");
 					}
 					if (auto _tt = Util::HoverTooltipWrapper()) {
-						ImGui::TextUnformatted("Controls the Step 2 DLSS center mask used before Peripheral TAA.");
+						ImGui::TextUnformatted("Step 2: size of the DLSS center mask used before the TAA ring.");
 						ImGui::TextUnformatted("Lower values = smaller DLSS FOV area and more performance.");
 						ImGui::TextUnformatted("Range: low 0.30 (smallest DLSS FOV area) to high 1.00 (largest DLSS FOV area).");
-						ImGui::TextUnformatted("Keep this as low as possible, then use TAA Peripheral Range to cover the visible field of view.");
+						ImGui::TextUnformatted("Set this first, then expand TAA Peripheral Range until the gold ring reaches your visible FOV edge.");
 					}
 					{
 						Util::YellowFrameStyleWrapper step2DlssExpandStyle;
 						ImGui::SliderFloat("DLSS Expand FOV Area R/L##Step2", &settings.periphery_taa_center_horizontal_scale, FoveatedCommon::kCenterHorizontalScaleMin, FoveatedCommon::kCenterHorizontalScaleMax, "%.2f");
 					}
 					if (auto _tt = Util::HoverTooltipWrapper()) {
-						ImGui::TextUnformatted("Widens the Step 2 DLSS FOV horizontally (left/right) without increasing vertical size.");
+						ImGui::TextUnformatted("Step 2: widens the DLSS center mask horizontally (left/right) without changing vertical size.");
 						ImGui::TextUnformatted("Range: low 1.00 (no extra width) to high 2.00 (maximum extra width).");
 					}
 					settings.periphery_taa_center_area = ClampFoveatedCenterArea(settings.periphery_taa_center_area);
@@ -935,7 +947,8 @@ void Upscaling::DrawSettings()
 							"%.3f");
 					}
 					if (auto _tt = Util::HoverTooltipWrapper()) {
-						ImGui::TextUnformatted("Controls blend feather softness at the DLSS center and Peripheral TAA transition.");
+						ImGui::TextUnformatted("Controls softness of the center-to-TAA transition edge.");
+						ImGui::TextUnformatted("Lower = harder edge, higher = softer edge.");
 						ImGui::Text("Range: low %.2f (harder transition) to high %.2f (softer transition).", kPeripheryTAACenterBlendFeatherMin, kPeripheryTAACenterBlendFeatherMax);
 					}
 					settings.periphery_taa_center_blend_feather = ClampPeripheryTAACenterBlendFeather(settings.periphery_taa_center_blend_feather);
@@ -955,25 +968,30 @@ void Upscaling::DrawSettings()
 					if (auto _tt = Util::HoverTooltipWrapper()) {
 						ImGui::TextUnformatted("Controls how far Peripheral TAA extends outside the Step 2 DLSS FOV.");
 						ImGui::Text("Range: low %.2f (minimum allowed by current DLSS FOV Area) to high %.2f (full range).", taaOuterRangeMin, kPeripheryTAAOuterScaleMax);
-						ImGui::TextUnformatted("Lower values are faster; expand until the TAA area reaches the edge of your visible field of view.");
+						ImGui::TextUnformatted("Lower values are faster.");
+						ImGui::TextUnformatted("Increase until the gold ring reaches the edge of your visible field of view.");
 					}
 					{
 						Util::YellowFrameStyleWrapper step2DlssOffsetStyle;
 						ImGui::SliderFloat("DLSS Left Eye Offset X##Step2", &settings.periphery_taa_left_eye_mask_offset_x, kFoveatedMaskOffsetAdjustMin, kFoveatedMaskOffsetAdjustMax, "%.3f");
 						if (auto _tt = Util::HoverTooltipWrapper()) {
-							ImGui::TextUnformatted("Moves the Step 2 DLSS FOV and Peripheral TAA mask horizontally for the left eye.");
+							ImGui::TextUnformatted("Step 2 left-eye horizontal offset for both DLSS center and TAA ring.");
+							ImGui::TextUnformatted("+X moves right, -X moves left.");
 						}
 						ImGui::SliderFloat("DLSS Left Eye Offset Y##Step2", &settings.periphery_taa_left_eye_mask_offset_y, kFoveatedMaskOffsetAdjustMin, kFoveatedMaskOffsetAdjustMax, "%.3f");
 						if (auto _tt = Util::HoverTooltipWrapper()) {
-							ImGui::TextUnformatted("Moves the Step 2 DLSS FOV and Peripheral TAA mask vertically for the left eye.");
+							ImGui::TextUnformatted("Step 2 left-eye vertical offset for both DLSS center and TAA ring.");
+							ImGui::TextUnformatted("+Y moves down, -Y moves up.");
 						}
 						ImGui::SliderFloat("DLSS Right Eye Offset X##Step2", &settings.periphery_taa_right_eye_mask_offset_x, kFoveatedMaskOffsetAdjustMin, kFoveatedMaskOffsetAdjustMax, "%.3f");
 						if (auto _tt = Util::HoverTooltipWrapper()) {
-							ImGui::TextUnformatted("Moves the Step 2 DLSS FOV and Peripheral TAA mask horizontally for the right eye.");
+							ImGui::TextUnformatted("Step 2 right-eye horizontal offset for both DLSS center and TAA ring.");
+							ImGui::TextUnformatted("+X moves right, -X moves left.");
 						}
 						ImGui::SliderFloat("DLSS Right Eye Offset Y##Step2", &settings.periphery_taa_right_eye_mask_offset_y, kFoveatedMaskOffsetAdjustMin, kFoveatedMaskOffsetAdjustMax, "%.3f");
 						if (auto _tt = Util::HoverTooltipWrapper()) {
-							ImGui::TextUnformatted("Moves the Step 2 DLSS FOV and Peripheral TAA mask vertically for the right eye.");
+							ImGui::TextUnformatted("Step 2 right-eye vertical offset for both DLSS center and TAA ring.");
+							ImGui::TextUnformatted("+Y moves down, -Y moves up.");
 						}
 					}
 					settings.periphery_taa_outer_scale = ClampPeripheryTAAOuterScaleForCenter(
@@ -994,6 +1012,10 @@ void Upscaling::DrawSettings()
 					if (ImGui::Button("Confirm Peripheral TAA (Step 2 Complete)")) {
 						if (globals::state)
 							globals::state->Save();
+					}
+					if (auto _tt = Util::HoverTooltipWrapper()) {
+						ImGui::TextUnformatted("Marks Step 2 as complete and saves current settings.");
+						ImGui::TextUnformatted("After confirming, disable mask visualization and validate in gameplay.");
 					}
 				}
 				ImGui::EndDisabled();
@@ -2778,17 +2800,17 @@ bool Upscaling::DispatchFoveatedVendorUpscaling(UpscaleMethod a_upscaleMethod, I
 		return false;
 
 	const bool useDirectSourcePath = settings.qualityMode == 0 && colorSRV != nullptr && !usePeripheryTAA;
-	const bool useCombinedPeripherySource = colorSRV != nullptr;
-	const bool requireFullPerEyeInputs = (!usePeripheryTAA && !useDirectSourcePath) || (usePeripheryTAA && !useCombinedPeripherySource);
+	// In periphery-TAA mode the outside-ring fill must come from per-eye, HMD-cleared color,
+	// otherwise hidden-area clear color can leak as side/bottom bars when TAA range < 1.0.
+	// For non-TAA, keep combined-source sampling only on the direct-source (DLAA/native) path.
+	// DLSS quality modes should sample per-eye inputs so hidden-area data cannot leak into periphery fills.
+	const bool useCombinedPeripherySource = useDirectSourcePath;
+	const bool requireFullPerEyeInputs = usePeripheryTAA || (!usePeripheryTAA && !useDirectSourcePath);
 	if (requireFullPerEyeInputs) {
 		PreparePerEyeInputs(colorTexture, depthTexture, motionVectors, reactiveMask, transparencyMask, false, true);
 	}
 	if (usePeripheryTAA && !EnsurePeripheryTAAResources(outputWidthPerEye, outputHeight, colorTexture))
 		return false;
-	ID3D11ShaderResourceView* mainDepthSRV = nullptr;
-	if (usePeripheryTAA) {
-		mainDepthSRV = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kMAIN].depthSRV;
-	}
 
 	const bool resetPeripheryTAA = usePeripheryTAA && (ShouldResetHistoryThisFrame() || !peripheryTAAHistoryValid);
 	const uint32_t peripheryTAAWriteIndex = 1u - peripheryTAAHistoryReadIndex;
@@ -2832,7 +2854,6 @@ bool Upscaling::DispatchFoveatedVendorUpscaling(UpscaleMethod a_upscaleMethod, I
 		// Catmull-Rom history taps and 3x3 neighborhood sampling need a small pad
 		// around the TAA outer region to keep transition-band history coherent.
 		constexpr uint32_t kPeripheryHistoryPadding = 2u;
-		constexpr uint32_t kPeripheryCurrentInputPadding = 2u;
 		const uint32_t taaHistoryMinX = hasTaaOuterRegion ? (taaOuterMinX > kPeripheryHistoryPadding ? taaOuterMinX - kPeripheryHistoryPadding : 0u) : 0u;
 		const uint32_t taaHistoryMinY = hasTaaOuterRegion ? (taaOuterMinY > kPeripheryHistoryPadding ? taaOuterMinY - kPeripheryHistoryPadding : 0u) : 0u;
 		const uint32_t taaHistoryMaxX = hasTaaOuterRegion ? std::min(outputWidthPerEye, taaOuterMaxX + kPeripheryHistoryPadding) : 0u;
@@ -2860,44 +2881,6 @@ bool Upscaling::DispatchFoveatedVendorUpscaling(UpscaleMethod a_upscaleMethod, I
 				return false;
 			if (!visualizeMask && !useDirectSourcePath && (!vrIntermediateDepth[eye] || !vrIntermediateDepth[eye]->srv || !vrIntermediateDepth[eye]->resource))
 				return false;
-		}
-
-		if (usePeripheryTAA && !requireFullPerEyeInputs && hasTaaOuterRegion) {
-			const uint32_t eyeInputBaseX = eye * inputWidthPerEye;
-			const auto peripheryInputRect = MapOutputRectToInputRect(
-				taaDispatchMinX,
-				taaDispatchMinY,
-				taaDispatchMaxX,
-				taaDispatchMaxY,
-				outputWidthPerEye,
-				outputHeight,
-				inputWidthPerEye,
-				inputHeight,
-				kPeripheryCurrentInputPadding);
-
-			if (peripheryInputRect.IsValid()) {
-				const D3D11_BOX srcBox{
-					eyeInputBaseX + peripheryInputRect.minX,
-					peripheryInputRect.minY,
-					0u,
-					eyeInputBaseX + peripheryInputRect.maxX,
-					peripheryInputRect.maxY,
-					1u
-				};
-				context->CopySubresourceRegion(vrIntermediateColorIn[eye]->resource.get(), 0, peripheryInputRect.minX, peripheryInputRect.minY, 0, colorTexture, 0, &srcBox);
-				context->CopySubresourceRegion(vrIntermediateDepth[eye]->resource.get(), 0, peripheryInputRect.minX, peripheryInputRect.minY, 0, depthTexture, 0, &srcBox);
-				if (mainDepthSRV && vrIntermediateColorIn[eye]->uav) {
-					ClearHMDMask(
-						vrIntermediateColorIn[eye]->uav.get(),
-						mainDepthSRV,
-						peripheryInputRect.maxX - peripheryInputRect.minX,
-						peripheryInputRect.maxY - peripheryInputRect.minY,
-						eyeInputBaseX + peripheryInputRect.minX,
-						peripheryInputRect.minX,
-						peripheryInputRect.minY,
-						peripheryInputRect.minY);
-				}
-			}
 		}
 
 		ID3D11ShaderResourceView* peripherySourceSRV = useCombinedPeripherySource ? colorSRV : vrIntermediateColorIn[eye]->srv.get();
@@ -3057,7 +3040,7 @@ bool Upscaling::DispatchFoveatedVendorUpscaling(UpscaleMethod a_upscaleMethod, I
 				const bool hasTileListSRV = peripheryTAATileBuffer[eye] && peripheryTAATileBuffer[eye]->srv;
 				if (tileListBuilt && tileCount > 0 && hasTileListSRV) {
 					dispatchPeripheryTAA(peripheryTAATileBuffer[eye]->srv.get(), tileCount, 0, 0, outputWidthPerEye, outputHeight);
-				} else if (!tileListBuilt || (tileCount > 0 && !hasTileListSRV)) {
+				} else if (!tileListBuilt || tileCount == 0 || (tileCount > 0 && !hasTileListSRV)) {
 					if (state->frameAnnotations)
 						state->BeginPerfEvent("Periphery TAA Fallback Rect");
 					if (hasCenterUnderlayHole) {
