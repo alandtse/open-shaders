@@ -93,7 +93,14 @@ private:
 	// Flag to prevent spamming the log with FSR3 dispatch crash messages
 	bool fsrDispatchCrashLogged = false;
 
+	mutable bool runtimeUpscalerProviderCacheValid = false;
+	mutable bool runtimeUpscalerProviderSupportsRequestedVersion = false;
+	mutable LUID runtimeUpscalerProviderAdapterLuid{};
+	mutable uint64_t runtimeUpscalerProviderMatchedVersionId = 0;
+	mutable std::string runtimeUpscalerProviderMatchedVersionName;
+
 	bool CanUseRuntimeUpscalerPath() const;
+	bool QueryRuntimeUpscalerProviderSupport() const;
 	bool EnsureRuntimeUpscalerInterop();
 	bool EnsureRuntimeUpscalerContexts(uint32_t a_fullRenderWidth, uint32_t a_fullRenderHeight, uint32_t a_fullDisplayWidth, uint32_t a_fullDisplayHeight, uint32_t a_contextCount);
 	bool EnsureRuntimeUpscalerSharedResources(uint32_t a_contextCount, uint32_t a_fullRenderWidth, uint32_t a_fullRenderHeight, uint32_t a_fullDisplayWidth, uint32_t a_fullDisplayHeight,

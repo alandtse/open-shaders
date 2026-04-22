@@ -3,9 +3,11 @@
 #include <algorithm>
 #include <array>
 #include <cctype>
+#include <cstdlib>
 #include <directx/d3dx12.h>
 #include <filesystem>
 #include <string>
+#include <vector>
 
 #include "../../State.h"
 #include "../../Utils/FileSystem.h"
@@ -80,8 +82,72 @@ namespace
 		if (description.find("RADEON") == std::string::npos)
 			return false;
 
+		size_t searchPosition = 0;
+		while (searchPosition < description.length()) {
+			const size_t rxPosition = description.find("RX", searchPosition);
+			if (rxPosition == std::string::npos)
+				break;
+
+			size_t modelStart = rxPosition + 2;
+			while (modelStart < description.length() && !std::isdigit(static_cast<unsigned char>(description[modelStart])))
+				modelStart++;
+
+			size_t modelEnd = modelStart;
+			while (modelEnd < description.length() && std::isdigit(static_cast<unsigned char>(description[modelEnd])))
+				modelEnd++;
+
+			if (modelEnd > modelStart) {
+				const std::string modelText = description.substr(modelStart, modelEnd - modelStart);
+				if (!modelText.empty()) {
+					char* parseEnd = nullptr;
+					const unsigned long modelNumber = std::strtoul(modelText.c_str(), &parseEnd, 10);
+					if (parseEnd != modelText.c_str() && modelNumber >= 7000ul)
+						return true;
+				}
+			}
+
+			searchPosition = rxPosition + 2;
+		}
+
+		// Keep fallback for abbreviated naming variants that don't include full numeric model text.
 		return description.find("RX 90") != std::string::npos ||
 		       description.find("RX90") != std::string::npos;
+	}
+
+	bool AdapterLuidEquals(const LUID& a_left, const LUID& a_right)
+	{
+		return a_left.LowPart == a_right.LowPart &&
+		       a_left.HighPart == a_right.HighPart;
+	}
+
+	std::string UpscalerVersionToString(uint32_t a_version)
+	{
+		const uint32_t major = (a_version >> 22) & 0x3FFu;
+		const uint32_t minor = (a_version >> 12) & 0x3FFu;
+		const uint32_t patch = a_version & 0xFFFu;
+		return std::to_string(major) + "." + std::to_string(minor) + "." + std::to_string(patch);
+	}
+
+	bool TryGetFfxQueryDeviceDX12(winrt::com_ptr<ID3D12Device>& a_outDevice)
+	{
+		auto& swapChain = globals::features::upscaling.dx12SwapChain;
+		if (swapChain.d3d12Device) {
+			a_outDevice = swapChain.d3d12Device;
+			return true;
+		}
+
+		if (!globals::d3d::device)
+			return false;
+
+		winrt::com_ptr<IDXGIDevice> dxgiDevice;
+		if (FAILED(globals::d3d::device->QueryInterface(IID_PPV_ARGS(dxgiDevice.put()))))
+			return false;
+
+		winrt::com_ptr<IDXGIAdapter> adapter;
+		if (FAILED(dxgiDevice->GetAdapter(adapter.put())))
+			return false;
+
+		return SUCCEEDED(D3D12CreateDevice(adapter.get(), D3D_FEATURE_LEVEL_11_0, IID_PPV_ARGS(a_outDevice.put())));
 	}
 
 	void RuntimeFfxMessage(uint32_t a_type, const wchar_t* a_message)
@@ -153,6 +219,11 @@ namespace
 void FidelityFX::LoadFFX()
 {
 	const std::filesystem::path pluginDir = std::filesystem::path(FidelityFX::PluginDir);
+
+	runtimeUpscalerProviderCacheValid = false;
+	runtimeUpscalerProviderSupportsRequestedVersion = false;
+	runtimeUpscalerProviderMatchedVersionId = 0;
+	runtimeUpscalerProviderMatchedVersionName.clear();
 
 	const std::filesystem::path framegenPath = pluginDir / kFrameGenerationDllName;
 	const std::filesystem::path loaderPath = pluginDir / kLoaderDllName;
@@ -454,8 +525,97 @@ bool FidelityFX::IsRuntimeUpscalerPresent() const
 {
 	if (!featureFSR4Upscaler || !module)
 		return false;
-	if (!ffxModule.CreateContext || !ffxModule.DestroyContext || !ffxModule.Dispatch)
+	if (!ffxModule.CreateContext || !ffxModule.DestroyContext || !ffxModule.Dispatch || !ffxModule.Query)
 		return false;
+
+	return true;
+}
+
+bool FidelityFX::QueryRuntimeUpscalerProviderSupport() const
+{
+	if (!IsRuntimeUpscalerPresent())
+		return false;
+
+	DXGI_ADAPTER_DESC adapterDesc{};
+	if (!TryGetCurrentAdapterDesc(adapterDesc))
+		return false;
+
+	if (runtimeUpscalerProviderCacheValid &&
+	    AdapterLuidEquals(runtimeUpscalerProviderAdapterLuid, adapterDesc.AdapterLuid)) {
+		return runtimeUpscalerProviderSupportsRequestedVersion;
+	}
+
+	runtimeUpscalerProviderCacheValid = false;
+	runtimeUpscalerProviderSupportsRequestedVersion = false;
+	runtimeUpscalerProviderMatchedVersionId = 0;
+	runtimeUpscalerProviderMatchedVersionName.clear();
+	runtimeUpscalerProviderAdapterLuid = adapterDesc.AdapterLuid;
+
+	winrt::com_ptr<ID3D12Device> queryDevice;
+	if (!TryGetFfxQueryDeviceDX12(queryDevice))
+		return false;
+
+	ffx::QueryDescGetVersions versionsQuery{};
+	versionsQuery.createDescType = FFX_API_CREATE_CONTEXT_DESC_TYPE_UPSCALE;
+	versionsQuery.device = queryDevice.get();
+	uint64_t versionCount = 0;
+	versionsQuery.outputCount = &versionCount;
+	versionsQuery.versionIds = nullptr;
+	versionsQuery.versionNames = nullptr;
+
+	if (ffx::Query(versionsQuery) != ffx::ReturnCode::Ok || versionCount == 0) {
+		runtimeUpscalerProviderCacheValid = true;
+		logger::warn("[FidelityFX] Runtime upscaler provider query returned no available versions.");
+		return false;
+	}
+
+	std::vector<uint64_t> versionIds(versionCount);
+	std::vector<const char*> versionNames(versionCount, nullptr);
+	versionsQuery.versionIds = versionIds.data();
+	versionsQuery.versionNames = versionNames.data();
+	if (ffx::Query(versionsQuery) != ffx::ReturnCode::Ok) {
+		runtimeUpscalerProviderCacheValid = true;
+		logger::warn("[FidelityFX] Runtime upscaler provider version enumeration failed.");
+		return false;
+	}
+
+	const uint64_t requestedVersion = static_cast<uint64_t>(FFX_UPSCALER_VERSION);
+	for (uint64_t i = 0; i < versionCount; ++i) {
+		if (versionIds[i] == requestedVersion) {
+			runtimeUpscalerProviderSupportsRequestedVersion = true;
+			runtimeUpscalerProviderMatchedVersionId = versionIds[i];
+			if (versionNames[i])
+				runtimeUpscalerProviderMatchedVersionName = versionNames[i];
+			break;
+		}
+	}
+
+	runtimeUpscalerProviderCacheValid = true;
+
+	if (!runtimeUpscalerProviderSupportsRequestedVersion) {
+		logger::warn("[FidelityFX] Runtime upscaler provider does not expose requested FSR version {}.",
+			UpscalerVersionToString(FFX_UPSCALER_VERSION));
+		return false;
+	}
+
+	ffxQueryGetProviderVersion providerQuery{};
+	providerQuery.header.type = FFX_API_QUERY_DESC_TYPE_GET_PROVIDER_VERSION;
+	providerQuery.header.pNext = nullptr;
+	providerQuery.versionId = runtimeUpscalerProviderMatchedVersionId;
+	providerQuery.versionName = nullptr;
+
+	if (ffxModule.Query(nullptr, &providerQuery.header) == FFX_API_RETURN_OK &&
+	    providerQuery.versionName != nullptr) {
+		runtimeUpscalerProviderMatchedVersionName = providerQuery.versionName;
+	}
+
+	if (runtimeUpscalerProviderMatchedVersionName.empty()) {
+		logger::info("[FidelityFX] Runtime upscaler provider confirmed for FSR version {}.",
+			UpscalerVersionToString(FFX_UPSCALER_VERSION));
+	} else {
+		logger::info("[FidelityFX] Runtime upscaler provider '{}' confirmed for FSR version {}.",
+			runtimeUpscalerProviderMatchedVersionName, UpscalerVersionToString(FFX_UPSCALER_VERSION));
+	}
 
 	return true;
 }
@@ -469,9 +629,12 @@ bool FidelityFX::IsRuntimeUpscalerAvailable() const
 	if (!TryGetCurrentAdapterDesc(adapterDesc))
 		return false;
 	if (adapterDesc.VendorId == kAmdVendorId) {
-		if (IsLikelyRDNA4Adapter(adapterDesc))
-			return true;
-		return globals::features::upscaling.settings.fsr4AllowNonRx90Amd;
+		const bool autoDetectedFsr4ClassGpu = IsLikelyRDNA4Adapter(adapterDesc);
+		if (!autoDetectedFsr4ClassGpu &&
+		    !globals::features::upscaling.settings.fsr4AllowNonRx90Amd) {
+			return false;
+		}
+		return QueryRuntimeUpscalerProviderSupport();
 	}
 	if (adapterDesc.VendorId == kNvidiaVendorId)
 		return false;

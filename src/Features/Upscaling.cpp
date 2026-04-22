@@ -677,10 +677,10 @@ void Upscaling::DrawSettings()
 
 	auto drawFsr4OverrideControls = [&]() {
 		if (runtimeFsr4Present && isAmdAdapter) {
-			ImGui::Checkbox("Allow FSR4 on Non-RX90 AMD", &settings.fsr4AllowNonRx90Amd);
+			ImGui::Checkbox("Allow FSR4 on Other AMD GPUs", &settings.fsr4AllowNonRx90Amd);
 			if (auto _tt = Util::HoverTooltipWrapper()) {
-				ImGui::TextUnformatted("Enables Runtime FSR4 on AMD cards that are not auto-detected as RX 90.");
-				ImGui::TextUnformatted("Keep this off unless your AMD card supports FSR4 and detection failed.");
+				ImGui::TextUnformatted("Enables Runtime FSR4 on AMD cards that are not auto-detected as RX 7000-series or newer.");
+				ImGui::TextUnformatted("Keep this off unless your AMD card supports FSR4 and auto-detection failed.");
 			}
 		}
 		if (!runtimeFsr4Present && requestedRuntimeFsr4BeforeMethodSelection) {
