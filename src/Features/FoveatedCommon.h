@@ -66,8 +66,15 @@ namespace FoveatedCommon
 		const float centerYNormalized = std::clamp(0.5f + centerOffsetY, 0.0f, 1.0f);
 		const float centerX = static_cast<float>(eyeMinX) + eyeWidth * centerXNormalized;
 		const float centerY = frameHeightF * centerYNormalized;
-		const float extentX = centerScale * centerHorizontalScale * eyeWidth * 0.5f + centerFeather * eyeWidth;
-		const float extentY = centerScale * frameHeightF * 0.5f + centerFeather * frameHeightF;
+		// Match shader-space feather expansion:
+		// normalizedFeather = centerFeather / min(radiusX, radiusY),
+		// mask boundary = radius * (1 + normalizedFeather).
+		const float radiusX = centerScale * centerHorizontalScale * 0.5f;
+		const float radiusY = centerScale * 0.5f;
+		const float baseRadius = std::max(std::min(radiusX, radiusY), 1e-4f);
+		const float normalizedFeather = centerFeather / baseRadius;
+		const float extentX = radiusX * (1.0f + normalizedFeather) * eyeWidth;
+		const float extentY = radiusY * (1.0f + normalizedFeather) * frameHeightF;
 
 		int minX = static_cast<int>(centerX - extentX);
 		int maxX = static_cast<int>(centerX + extentX + 0.9999f);

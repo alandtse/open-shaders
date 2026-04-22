@@ -346,7 +346,9 @@ void main(uint3 dispatchID : SV_DispatchThreadID, uint3 groupID : SV_GroupID, ui
 	float centerScale = Tuning0.x;
 	float centerFeather = Tuning0.y;
 	float centerHorizontalScale = Tuning1.y;
-	float taaOuterScale = max(Tuning0.w, centerScale);
+	float normalizedFeather = FoveatedComputeNormalizedFeather(centerScale, centerFeather, centerHorizontalScale);
+	float minOuterScale = centerScale * (1.0 + normalizedFeather);
+	float taaOuterScale = min(max(Tuning0.w, minOuterScale), 1.0);
 	bool resetHistory = Tuning0.z > 0.5;
 	bool historyValid = Tuning1.x > 0.5 && !resetHistory;
 
@@ -354,10 +356,16 @@ void main(uint3 dispatchID : SV_DispatchThreadID, uint3 groupID : SV_GroupID, ui
 	float peripheryWeight = saturate(1.0 - centerWeight);
 	if (peripheryWeight <= 0.0)
 		return;
-	if (FoveatedComputeMaskDistance(outputUV, taaOuterScale, centerHorizontalScale, CenterOffset) > 1.0)
-		return;
 
 	float4 currentSample = CurrentColor.SampleLevel(LinearSampler, inputUV, 0.0);
+	if (FoveatedComputeMaskDistance(outputUV, taaOuterScale, centerHorizontalScale, CenterOffset) > 1.0) {
+		float2 passthroughVelocity = CurrentMotionVectors.SampleLevel(LinearSampler, inputUV, 0.0);
+		OutVelocity[outputPos] = passthroughVelocity;
+		OutLock[outputPos] = 0.0;
+		OutColor[outputPos] = currentSample;
+		return;
+	}
+
 	float3 currentColor = currentSample.rgb;
 	float currentAlpha = currentSample.a;
 	NeighborhoodStats neighborhood = GatherNeighborhoodStats3x3(inputUV);

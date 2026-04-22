@@ -42,7 +42,9 @@ float2 ClampToSourceRegion(float2 uv, float2 regionMin, float2 regionMax)
 	const float centerHorizontalScale = Tuning0.z;
 	const float visualizeMask = Tuning1.x;
 	const float showThreeZoneMask = Tuning1.y;
-	const float taaOuterScale = max(Tuning1.z, centerScale);
+	const float taaNormalizedFeather = FoveatedComputeNormalizedFeather(centerScale, centerFeather, centerHorizontalScale);
+	const float minOuterScale = centerScale * (1.0 + taaNormalizedFeather);
+	const float taaOuterScale = min(max(Tuning1.z, minOuterScale), 1.0);
 
 	if (visualizeMask > 0.5) {
 		const float normalizedFeather = FoveatedComputeNormalizedFeather(centerScale, centerFeather, centerHorizontalScale);
