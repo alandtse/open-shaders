@@ -1,7 +1,7 @@
 #include "Common/BRDF.hlsli"
 #include "AdvancedWetness/optimized-ggx.hlsli"
 
-namespace WetnessEffects
+namespace AdvancedWetness
 {
 	Texture2D<float4> TexPrecipOcclusion : register(t70);
 
@@ -43,30 +43,6 @@ namespace WetnessEffects
 		return n1 * dot(n1, n2) / n1.z - n2;
 	}
 
-	// Legacy chaotic ripple noise (CS 0.82 style)
-	float hash11(float p)
-	{
-		return frac(sin(p) * 1e4);
-	}
-
-	float noise(float3 pos)
-	{
-		const float3 step = float3(110.0, 241.0, 171.0);
-		float3 i = floor(pos);
-		float3 f = frac(pos);
-		float n = dot(i, step);
-
-		float3 u = f * f * (3.0 - 2.0 * f);
-		return lerp(
-			lerp(
-				lerp(hash11(n + dot(step, float3(0.0, 0.0, 0.0))), hash11(n + dot(step, float3(1.0, 0.0, 0.0))), u.x),
-				lerp(hash11(n + dot(step, float3(0.0, 1.0, 0.0))), hash11(n + dot(step, float3(1.0, 1.0, 0.0))), u.x), u.y),
-			lerp(
-				lerp(hash11(n + dot(step, float3(0.0, 0.0, 1.0))), hash11(n + dot(step, float3(1.0, 0.0, 1.0))), u.x),
-				lerp(hash11(n + dot(step, float3(0.0, 1.0, 1.0))), hash11(n + dot(step, float3(1.0, 1.0, 1.0))), u.x), u.y),
-			u.z);
-	}
-
 	// xyz - ripple normal, w - splotches
 	float4 GetRainDrops(float3 worldPos, float t, float3 normal, float rippleStrengthModifier = 1.0, float2 flowOffset = float2(0.0, 0.0))
 	{
@@ -81,7 +57,6 @@ namespace WetnessEffects
 		float raindropChance = saturate(SharedData::advancedWetnessSettings.RaindropChance);
 		bool enableSplashes = SharedData::advancedWetnessSettings.EnableSplashes;
 		bool enableRipples = SharedData::advancedWetnessSettings.EnableRipples;
-		bool useLegacyRainBehavior = SharedData::advancedWetnessSettings.EnableLegacyRainBehavior != 0;
 
 		// Calculate grid coordinates
 		float2 gridUV = worldPos.xy * SharedData::advancedWetnessSettings.RaindropGridSizeRcp + normal.xy;
@@ -166,20 +141,6 @@ namespace WetnessEffects
 			}
 		}
 
-		[branch] if (useLegacyRainBehavior && enableRipples) {
-			const float gridSize = rcp(max(SharedData::advancedWetnessSettings.RaindropGridSizeRcp, 1e-3));
-			const float chaoticScaleRcp = rcp(max(gridSize * 5.0, 1e-3));
-			const float chaoticSpeed = max(0.2, SharedData::advancedWetnessSettings.RaindropIntervalRcp * 0.5);
-			const float chaoticStrength = SharedData::advancedWetnessSettings.RippleStrength * rippleStrengthModifier * 0.25;
-
-			// noise() returns scalar; assigning to float3 replicates the legacy 0.82 behavior.
-			float3 turbulenceNormal = noise(float3(worldPos.xy * chaoticScaleRcp, t * chaoticSpeed));
-			turbulenceNormal.z = turbulenceNormal.z * 0.5 + 5.0;
-			turbulenceNormal = normalize(turbulenceNormal);
-
-			rippleNormal = normalize(rippleNormal + float3(turbulenceNormal.xy * chaoticStrength, 0.0));
-		}
-
 		return float4(rippleNormal, wetness * SharedData::advancedWetnessSettings.SplashesStrength);
 	}
 
@@ -188,8 +149,9 @@ namespace WetnessEffects
 		return LightingFuncGGX_OPT3(N, V, L, roughness, 0.02) * lightColor;
 	}
 
-// Debug visualization functions for DEBUG_WETNESS_EFFECTS
-#ifdef DEBUG_WETNESS_EFFECTS
+// Debug visualization functions for Advanced Wetness. Keep DEBUG_WETNESS_EFFECTS
+// accepted so existing shader debug toggles still work with the separate feature.
+#if defined(DEBUG_ADVANCED_WETNESS) || defined(DEBUG_WETNESS_EFFECTS)
 	/**
 	 * Calculates ripple and splash effect intensities from water ripple info
 	 *

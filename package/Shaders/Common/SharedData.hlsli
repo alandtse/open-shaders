@@ -147,7 +147,6 @@ namespace SharedData
 
 		uint ShoreRange;
 		float PuddleRadius;
-		float RunoffWidth;
 		float PuddleMaxAngle;
 		float PuddleMinWetness;
 
@@ -161,8 +160,6 @@ namespace SharedData
 
 		uint EnableSplashes;
 		uint EnableRipples;
-		uint EnableVanillaRipples;
-		uint EnableLegacyRainBehavior;
 		uint EnableModernWetReflection;
 		uint EnableLegacyWetReflection;
 		float WetIndirectSpecularScale;
@@ -183,14 +180,18 @@ namespace SharedData
 		float RippleLifetimeRcp;
 		float PostRainPuddleWaterStrength;
 
-		float CloseRangeWetnessBoost;
 		float RaindropTransitionFalloff;
-		uint EnableDualPuddleModel;
-		float PuddleDepthBlend;
 		float WetDarkeningStrength;
-		float WetColorSaturation;
 		float WetHighlightReduction;
-		float RunoffSpeed;
+		uint EnableForwardReflectionBias;
+		uint EnableVanillaReflectionCompensation;
+		float WetFilmSpecularFloorScale;
+		float ShorePersistentDarkeningStrength;
+		float PackedPostRainControl;
+		float PackedRainReflectionControl;
+		// View-depth fade/cull range for dev-style wetness distance fading, in game units.
+		float WetnessDistanceFadeRange;
+		float pad0;
 	};
 
 	struct SkylightingSettings

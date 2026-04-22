@@ -16,13 +16,11 @@ namespace DynamicCubemaps
 #if !defined(WATER)
 
 #	if defined(SKYLIGHTING)
-	float3 GetDynamicCubemapSpecularIrradiance(float2 uv, float3 N, float3 VN, float3 V, float roughness, sh2 skylighting)
+	float3 GetDynamicCubemapSpecularIrradianceInternal(float2 uv, float3 N, float3 VN, float3 V, float roughness, float3 R, sh2 skylighting)
 #	else
-	float3 GetDynamicCubemapSpecularIrradiance(float2 uv, float3 N, float3 VN, float3 V, float roughness)
+	float3 GetDynamicCubemapSpecularIrradianceInternal(float2 uv, float3 N, float3 VN, float3 V, float roughness, float3 R)
 #	endif
 	{
-		float3 R = reflect(-V, N);
-
 		// Horizon specular occlusion
 		// https://marmosetco.tumblr.com/post/81245981087
 		float horizon = min(1.0 + dot(R, VN), 1.0);
@@ -140,6 +138,28 @@ namespace DynamicCubemaps
 		return finalIrradiance;
 #	endif
 	}
+
+#	if defined(SKYLIGHTING)
+	float3 GetDynamicCubemapSpecularIrradiance(float2 uv, float3 N, float3 VN, float3 V, float roughness, sh2 skylighting)
+	{
+		return GetDynamicCubemapSpecularIrradianceInternal(uv, N, VN, V, roughness, reflect(-V, N), skylighting);
+	}
+
+	float3 GetDynamicCubemapSpecularIrradianceBiased(float2 uv, float3 N, float3 VN, float3 V, float roughness, float3 sampleDirection, sh2 skylighting)
+	{
+		return GetDynamicCubemapSpecularIrradianceInternal(uv, N, VN, V, roughness, normalize(sampleDirection), skylighting);
+	}
+#	else
+	float3 GetDynamicCubemapSpecularIrradiance(float2 uv, float3 N, float3 VN, float3 V, float roughness)
+	{
+		return GetDynamicCubemapSpecularIrradianceInternal(uv, N, VN, V, roughness, reflect(-V, N));
+	}
+
+	float3 GetDynamicCubemapSpecularIrradianceBiased(float2 uv, float3 N, float3 VN, float3 V, float roughness, float3 sampleDirection)
+	{
+		return GetDynamicCubemapSpecularIrradianceInternal(uv, N, VN, V, roughness, normalize(sampleDirection));
+	}
+#	endif
 
 #	if defined(SKYLIGHTING)
 	float3 GetDynamicCubemap(float3 N, float3 VN, float3 V, float roughness, float3 F0, sh2 skylighting)
