@@ -125,6 +125,13 @@ namespace
 		return std::clamp(value, 0.0f, 1.0f);
 	}
 
+	int32_t QuantizePeripheryTAATileParam(float value)
+	{
+		if (!std::isfinite(value))
+			value = 0.0f;
+		return static_cast<int32_t>(std::lround(value * 10000.0f));
+	}
+
 	struct FoveatedMaskProfileParams
 	{
 		float centerArea = 0.6f;
@@ -1962,12 +1969,14 @@ bool Upscaling::EnsurePeripheryTAAResources(uint32_t outputWidthPerEye, uint32_t
 	return true;
 }
 
-bool Upscaling::EnsurePeripheryTAATileBuffer(uint32_t tileCapacity)
+bool Upscaling::EnsurePeripheryTAATileBuffer(uint32_t eyeIndex, uint32_t tileCapacity)
 {
-	if (tileCapacity == 0)
+	if (eyeIndex >= 2 || tileCapacity == 0)
 		return false;
 
-	if (peripheryTAATileBuffer && peripheryTAATileCapacity >= tileCapacity && peripheryTAATileBuffer->srv)
+	auto& tileBuffer = peripheryTAATileBuffer[eyeIndex];
+	auto& tileCapacityCurrent = peripheryTAATileCapacity[eyeIndex];
+	if (tileBuffer && tileCapacityCurrent >= tileCapacity && tileBuffer->srv)
 		return true;
 
 	D3D11_BUFFER_DESC sbDesc{};
@@ -1978,68 +1987,102 @@ bool Upscaling::EnsurePeripheryTAATileBuffer(uint32_t tileCapacity)
 	sbDesc.StructureByteStride = sizeof(PeripheryTAATile);
 	sbDesc.ByteWidth = sizeof(PeripheryTAATile) * tileCapacity;
 
-	peripheryTAATileBuffer = eastl::make_unique<Buffer>(sbDesc);
-	peripheryTAATileCapacity = tileCapacity;
+	tileBuffer = eastl::make_unique<Buffer>(sbDesc);
+	tileCapacityCurrent = tileCapacity;
 
 	D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc{};
 	srvDesc.Format = DXGI_FORMAT_UNKNOWN;
 	srvDesc.ViewDimension = D3D11_SRV_DIMENSION_BUFFER;
 	srvDesc.Buffer.FirstElement = 0;
 	srvDesc.Buffer.NumElements = tileCapacity;
-	peripheryTAATileBuffer->CreateSRV(srvDesc);
-	return peripheryTAATileBuffer->srv != nullptr;
+	tileBuffer->CreateSRV(srvDesc);
+
+	peripheryTAATileCache[eyeIndex].uploaded = false;
+	return tileBuffer->srv != nullptr;
 }
 
-bool Upscaling::BuildPeripheryTAATileList(uint32_t outputWidth, uint32_t outputHeight, float centerScale, float taaOuterScale, float centerHorizontalScale, float centerOffsetX, float centerOffsetY, uint32_t& outTileCount)
+bool Upscaling::BuildPeripheryTAATileList(uint32_t eyeIndex, uint32_t outputWidth, uint32_t outputHeight, float centerScale, float taaOuterScale, float centerHorizontalScale, float centerOffsetX, float centerOffsetY, uint32_t& outTileCount)
 {
 	outTileCount = 0;
-	peripheryTAATileUpload.clear();
-	if (outputWidth == 0 || outputHeight == 0)
+	if (eyeIndex >= 2 || outputWidth == 0 || outputHeight == 0)
 		return false;
 
 	const uint32_t tileSize = static_cast<uint32_t>(FoveatedCommon::kThreadGroupSize);
 	const uint32_t tileColumns = (outputWidth + tileSize - 1u) / tileSize;
 	const uint32_t tileRows = (outputHeight + tileSize - 1u) / tileSize;
 	const uint32_t maxTileCount = tileColumns * tileRows;
-	if (!EnsurePeripheryTAATileBuffer(maxTileCount))
+	if (!EnsurePeripheryTAATileBuffer(eyeIndex, maxTileCount))
 		return false;
 
-	peripheryTAATileUpload.reserve(maxTileCount);
 	centerScale = ClampFoveatedCenterArea(centerScale);
 	taaOuterScale = ClampPeripheryTAAOuterScaleForCenter(taaOuterScale, centerScale);
 	centerHorizontalScale = ClampFoveatedCenterHorizontalScale(centerHorizontalScale);
 
-	for (uint32_t tileY = 0; tileY < outputHeight; tileY += tileSize) {
-		const uint32_t maxY = std::min(tileY + tileSize, outputHeight);
-		for (uint32_t tileX = 0; tileX < outputWidth; tileX += tileSize) {
-			const uint32_t maxX = std::min(tileX + tileSize, outputWidth);
-			const float outerMinDistance = FoveatedMaskTileMinDistance(tileX, tileY, maxX, maxY, outputWidth, outputHeight, taaOuterScale, centerHorizontalScale, centerOffsetX, centerOffsetY);
-			if (outerMinDistance > 1.0f + 1e-4f)
-				continue;
+	PeripheryTAATileCacheKey cacheKey{};
+	cacheKey.outputWidth = outputWidth;
+	cacheKey.outputHeight = outputHeight;
+	cacheKey.centerScaleQ = QuantizePeripheryTAATileParam(centerScale);
+	cacheKey.taaOuterScaleQ = QuantizePeripheryTAATileParam(taaOuterScale);
+	cacheKey.centerHorizontalScaleQ = QuantizePeripheryTAATileParam(centerHorizontalScale);
+	cacheKey.centerOffsetXQ = QuantizePeripheryTAATileParam(centerOffsetX);
+	cacheKey.centerOffsetYQ = QuantizePeripheryTAATileParam(centerOffsetY);
 
-			const float centerMaxDistance = FoveatedMaskTileMaxDistance(tileX, tileY, maxX, maxY, outputWidth, outputHeight, centerScale, centerHorizontalScale, centerOffsetX, centerOffsetY);
-			if (centerMaxDistance <= 1.0f - 1e-4f)
-				continue;
+	auto& cacheState = peripheryTAATileCache[eyeIndex];
+	const bool keyMatches =
+		cacheState.valid &&
+		cacheState.key.outputWidth == cacheKey.outputWidth &&
+		cacheState.key.outputHeight == cacheKey.outputHeight &&
+		cacheState.key.centerScaleQ == cacheKey.centerScaleQ &&
+		cacheState.key.taaOuterScaleQ == cacheKey.taaOuterScaleQ &&
+		cacheState.key.centerHorizontalScaleQ == cacheKey.centerHorizontalScaleQ &&
+		cacheState.key.centerOffsetXQ == cacheKey.centerOffsetXQ &&
+		cacheState.key.centerOffsetYQ == cacheKey.centerOffsetYQ;
 
-			peripheryTAATileUpload.push_back({ tileX, tileY });
+	if (!keyMatches) {
+		cacheState.tiles.clear();
+		cacheState.tiles.reserve(maxTileCount);
+
+		for (uint32_t tileY = 0; tileY < outputHeight; tileY += tileSize) {
+			const uint32_t maxY = std::min(tileY + tileSize, outputHeight);
+			for (uint32_t tileX = 0; tileX < outputWidth; tileX += tileSize) {
+				const uint32_t maxX = std::min(tileX + tileSize, outputWidth);
+				const float outerMinDistance = FoveatedMaskTileMinDistance(tileX, tileY, maxX, maxY, outputWidth, outputHeight, taaOuterScale, centerHorizontalScale, centerOffsetX, centerOffsetY);
+				if (outerMinDistance > 1.0f + 1e-4f)
+					continue;
+
+				const float centerMaxDistance = FoveatedMaskTileMaxDistance(tileX, tileY, maxX, maxY, outputWidth, outputHeight, centerScale, centerHorizontalScale, centerOffsetX, centerOffsetY);
+				if (centerMaxDistance <= 1.0f - 1e-4f)
+					continue;
+
+				cacheState.tiles.push_back({ tileX, tileY });
+			}
 		}
+
+		cacheState.key = cacheKey;
+		cacheState.tileCount = static_cast<uint32_t>(cacheState.tiles.size());
+		cacheState.valid = true;
+		cacheState.uploaded = false;
 	}
 
-	const uint32_t tileCount = static_cast<uint32_t>(peripheryTAATileUpload.size());
-	if (tileCount == 0)
+	outTileCount = cacheState.tileCount;
+	if (outTileCount == 0)
+		return true;
+	if (cacheState.uploaded)
 		return true;
 
 	auto context = globals::d3d::context;
-	if (!context || !peripheryTAATileBuffer || !peripheryTAATileBuffer->resource)
+	auto& tileBuffer = peripheryTAATileBuffer[eyeIndex];
+	const uint32_t tileCapacity = peripheryTAATileCapacity[eyeIndex];
+	if (!context || !tileBuffer || !tileBuffer->resource || tileCapacity < outTileCount)
 		return false;
 
 	D3D11_MAPPED_SUBRESOURCE mapped{};
-	if (FAILED(context->Map(peripheryTAATileBuffer->resource.get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped)))
+	if (FAILED(context->Map(tileBuffer->resource.get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped)))
 		return false;
-	const size_t bytes = sizeof(PeripheryTAATile) * tileCount;
-	memcpy_s(mapped.pData, sizeof(PeripheryTAATile) * peripheryTAATileCapacity, peripheryTAATileUpload.data(), bytes);
-	context->Unmap(peripheryTAATileBuffer->resource.get(), 0);
-	outTileCount = tileCount;
+	const size_t bytes = sizeof(PeripheryTAATile) * outTileCount;
+	memcpy_s(mapped.pData, sizeof(PeripheryTAATile) * tileCapacity, cacheState.tiles.data(), bytes);
+	context->Unmap(tileBuffer->resource.get(), 0);
+	cacheState.uploaded = true;
 	return true;
 }
 
@@ -2065,10 +2108,10 @@ void Upscaling::DestroyPeripheryTAAResources()
 			peripheryTAAVelocityHistory[eye][historySlot].reset();
 			peripheryTAALockHistory[eye][historySlot].reset();
 		}
+		peripheryTAATileBuffer[eye].reset();
+		peripheryTAATileCapacity[eye] = 0;
+		peripheryTAATileCache[eye] = {};
 	}
-	peripheryTAATileBuffer.reset();
-	peripheryTAATileCapacity = 0;
-	peripheryTAATileUpload.clear();
 	peripheryTAAHistoryReadIndex = 0;
 	peripheryTAAHistoryValid = false;
 }
@@ -2863,10 +2906,10 @@ bool Upscaling::DispatchFoveatedVendorUpscaling(UpscaleMethod a_upscaleMethod, I
 		if (usePeripheryTAA) {
 			if (hasTaaOuterRegion) {
 				uint32_t tileCount = 0;
-				const bool tileListBuilt = BuildPeripheryTAATileList(outputWidthPerEye, outputHeight, centerScale, taaOuterScale, centerHorizontalScale, centerOffset.x, centerOffset.y, tileCount);
-				const bool hasTileListSRV = peripheryTAATileBuffer && peripheryTAATileBuffer->srv;
+				const bool tileListBuilt = BuildPeripheryTAATileList(eye, outputWidthPerEye, outputHeight, centerScale, taaOuterScale, centerHorizontalScale, centerOffset.x, centerOffset.y, tileCount);
+				const bool hasTileListSRV = peripheryTAATileBuffer[eye] && peripheryTAATileBuffer[eye]->srv;
 				if (tileListBuilt && tileCount > 0 && hasTileListSRV) {
-					dispatchPeripheryTAA(peripheryTAATileBuffer->srv.get(), tileCount, 0, 0, outputWidthPerEye, outputHeight);
+					dispatchPeripheryTAA(peripheryTAATileBuffer[eye]->srv.get(), tileCount, 0, 0, outputWidthPerEye, outputHeight);
 				} else if (!tileListBuilt || (tileCount > 0 && !hasTileListSRV)) {
 					if (state->frameAnnotations)
 						state->BeginPerfEvent("Periphery TAA Fallback Rect");

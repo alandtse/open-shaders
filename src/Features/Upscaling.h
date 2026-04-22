@@ -180,6 +180,26 @@ public:
 		uint32_t y = 0;
 	};
 
+	struct PeripheryTAATileCacheKey
+	{
+		uint32_t outputWidth = 0;
+		uint32_t outputHeight = 0;
+		int32_t centerScaleQ = 0;
+		int32_t taaOuterScaleQ = 0;
+		int32_t centerHorizontalScaleQ = 0;
+		int32_t centerOffsetXQ = 0;
+		int32_t centerOffsetYQ = 0;
+	};
+
+	struct PeripheryTAATileCacheState
+	{
+		bool valid = false;
+		bool uploaded = false;
+		uint32_t tileCount = 0;
+		PeripheryTAATileCacheKey key{};
+		std::vector<PeripheryTAATile> tiles;
+	};
+
 	struct FoveatedRectCacheState
 	{
 		uint inputWidthPerEye = 0;
@@ -316,9 +336,9 @@ public:
 	eastl::unique_ptr<Texture2D> peripheryTAAHistoryColor[2][2];
 	eastl::unique_ptr<Texture2D> peripheryTAAVelocityHistory[2][2];
 	eastl::unique_ptr<Texture2D> peripheryTAALockHistory[2][2];
-	eastl::unique_ptr<Buffer> peripheryTAATileBuffer;
-	uint32_t peripheryTAATileCapacity = 0;
-	std::vector<PeripheryTAATile> peripheryTAATileUpload;
+	eastl::unique_ptr<Buffer> peripheryTAATileBuffer[2];
+	uint32_t peripheryTAATileCapacity[2] = {};
+	std::array<PeripheryTAATileCacheState, 2> peripheryTAATileCache{};
 	uint32_t peripheryTAAHistoryReadIndex = 0;
 	bool peripheryTAAHistoryValid = false;
 
@@ -379,8 +399,8 @@ public:
 	bool EnsureFoveatedTexture(eastl::unique_ptr<Texture2D>& texture, ID3D11Resource* source, uint32_t width, uint32_t height, bool copyBindFlags, bool createSRV, bool createUAV, bool createRTV, const char* name);
 	void DestroyFoveatedResources();
 	bool EnsurePeripheryTAAResources(uint32_t outputWidthPerEye, uint32_t outputHeight, ID3D11Resource* colorSource);
-	bool EnsurePeripheryTAATileBuffer(uint32_t tileCapacity);
-	bool BuildPeripheryTAATileList(uint32_t outputWidth, uint32_t outputHeight, float centerScale, float taaOuterScale, float centerHorizontalScale, float centerOffsetX, float centerOffsetY, uint32_t& outTileCount);
+	bool EnsurePeripheryTAATileBuffer(uint32_t eyeIndex, uint32_t tileCapacity);
+	bool BuildPeripheryTAATileList(uint32_t eyeIndex, uint32_t outputWidth, uint32_t outputHeight, float centerScale, float taaOuterScale, float centerHorizontalScale, float centerOffsetX, float centerOffsetY, uint32_t& outTileCount);
 	void DestroyPeripheryTAAResources();
 	bool DispatchFoveatedVendorUpscaling(UpscaleMethod a_upscaleMethod, ID3D11Resource* colorTexture, ID3D11Resource* depthTexture, ID3D11Resource* motionVectors, ID3D11Resource* reactiveMask, ID3D11Resource* transparencyMask, ID3D11ShaderResourceView* colorSRV);
 	bool DispatchSingleFoveatedVendorEye(UpscaleMethod a_upscaleMethod, uint32_t eyeIndex, ID3D11Resource* colorIn, ID3D11Resource* depthIn, ID3D11Resource* motionVectorsIn, ID3D11Resource* reactiveMaskIn, ID3D11Resource* transparencyMaskIn, uint32_t outputWidthPerEye, uint32_t outputHeight, float centerScale, float centerHorizontalScale, const float2& centerOffset, ID3D11UnorderedAccessView* historyColorUAV = nullptr, uint32_t colorInputBaseOffsetX = 0, uint32_t depthInputBaseOffsetX = 0, uint32_t auxInputBaseOffsetX = 0);
