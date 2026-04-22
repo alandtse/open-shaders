@@ -844,6 +844,20 @@ void Upscaling::DrawSettings()
 					}
 					settings.periphery_taa_center_area = ClampFoveatedCenterArea(settings.periphery_taa_center_area);
 					settings.periphery_taa_center_horizontal_scale = ClampFoveatedCenterHorizontalScale(settings.periphery_taa_center_horizontal_scale);
+					{
+						Util::YellowFrameStyleWrapper transitionStyle;
+						ImGui::SliderFloat(
+							"Center Blend/TAA Transition",
+							&settings.periphery_taa_center_blend_feather,
+							kPeripheryTAACenterBlendFeatherMin,
+							kPeripheryTAACenterBlendFeatherMax,
+							"%.3f");
+					}
+					if (auto _tt = Util::HoverTooltipWrapper()) {
+						ImGui::TextUnformatted("Controls blend feather softness at the DLSS center and Peripheral TAA transition.");
+						ImGui::Text("Range: low %.2f (harder transition) to high %.2f (softer transition).", kPeripheryTAACenterBlendFeatherMin, kPeripheryTAACenterBlendFeatherMax);
+					}
+					settings.periphery_taa_center_blend_feather = ClampPeripheryTAACenterBlendFeather(settings.periphery_taa_center_blend_feather);
 					const float taaOuterRangeMin = GetPeripheryTAAOuterScaleFloor(
 						settings.periphery_taa_center_area,
 						settings.periphery_taa_center_horizontal_scale,
@@ -890,20 +904,6 @@ void Upscaling::DrawSettings()
 					settings.periphery_taa_left_eye_mask_offset_y = ClampFoveatedMaskOffsetAdjustment(settings.periphery_taa_left_eye_mask_offset_y);
 					settings.periphery_taa_right_eye_mask_offset_x = ClampFoveatedMaskOffsetAdjustment(settings.periphery_taa_right_eye_mask_offset_x);
 					settings.periphery_taa_right_eye_mask_offset_y = ClampFoveatedMaskOffsetAdjustment(settings.periphery_taa_right_eye_mask_offset_y);
-					{
-						Util::YellowFrameStyleWrapper transitionStyle;
-						ImGui::SliderFloat(
-							"Center Blend/TAA Transition",
-							&settings.periphery_taa_center_blend_feather,
-							kPeripheryTAACenterBlendFeatherMin,
-							kPeripheryTAACenterBlendFeatherMax,
-							"%.3f");
-					}
-					if (auto _tt = Util::HoverTooltipWrapper()) {
-						ImGui::TextUnformatted("Controls blend feather softness at the DLSS center and Peripheral TAA transition.");
-						ImGui::Text("Range: low %.2f (harder transition) to high %.2f (softer transition).", kPeripheryTAACenterBlendFeatherMin, kPeripheryTAACenterBlendFeatherMax);
-					}
-					settings.periphery_taa_center_blend_feather = ClampPeripheryTAACenterBlendFeather(settings.periphery_taa_center_blend_feather);
 				}
 				{
 					Util::StyledButtonWrapper step2ConfirmButtonStyle(
