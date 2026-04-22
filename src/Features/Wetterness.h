@@ -3,16 +3,16 @@
 #include "Buffer.h"
 #include <cstddef>
 
-struct AdvancedWetness : Feature
+struct Wetterness : Feature
 {
 private:
 	static constexpr std::string_view MOD_ID = "112739";
 
 public:
-	virtual inline std::string GetName() override { return "Advanced Wetness"; }
-	virtual inline std::string GetShortName() override { return "AdvancedWetness"; }
+	virtual inline std::string GetName() override { return "Wetterness"; }
+	virtual inline std::string GetShortName() override { return "Wetterness"; }
 	virtual inline std::string GetFeatureModLink() override { return MakeNexusModURL(MOD_ID); }
-	virtual inline std::string_view GetShaderDefineName() override { return "ADVANCED_WETNESS"; }
+	virtual inline std::string_view GetShaderDefineName() override { return "WETTERNESS"; }
 	virtual std::string_view GetCategory() const override { return "Water"; }
 
 	virtual std::pair<std::string, std::vector<std::string>> GetFeatureSummary() override
@@ -79,16 +79,16 @@ public:
 		uint EnableVanillaReflectionCompensation = true;
 		float WetFilmSpecularFloorScale = 1.0f;
 	};
-	static_assert(sizeof(Settings) == 156, "AdvancedWetness::Settings layout changed; update wetness shader/CB contract.");
-	static_assert(offsetof(Settings, WeatherTransitionSpeed) == 40, "AdvancedWetness::Settings WeatherTransitionSpeed offset changed.");
-	static_assert(offsetof(Settings, EnableRaindropFx) == 56, "AdvancedWetness::Settings EnableRaindropFx offset changed.");
-	static_assert(offsetof(Settings, WetIndirectSpecularScale) == 76, "AdvancedWetness::Settings WetIndirectSpecularScale offset changed.");
-	static_assert(offsetof(Settings, RaindropGridSize) == 84, "AdvancedWetness::Settings RaindropGridSize offset changed.");
-	static_assert(offsetof(Settings, RippleLifetime) == 124, "AdvancedWetness::Settings RippleLifetime offset changed.");
-	static_assert(offsetof(Settings, WetHighlightReduction) == 140, "AdvancedWetness::Settings WetHighlightReduction offset changed.");
-	static_assert(offsetof(Settings, EnableForwardReflectionBias) == 144, "AdvancedWetness::Settings EnableForwardReflectionBias offset changed.");
-	static_assert(offsetof(Settings, EnableVanillaReflectionCompensation) == 148, "AdvancedWetness::Settings EnableVanillaReflectionCompensation offset changed.");
-	static_assert(offsetof(Settings, WetFilmSpecularFloorScale) == 152, "AdvancedWetness::Settings WetFilmSpecularFloorScale offset changed.");
+	static_assert(sizeof(Settings) == 156, "Wetterness::Settings layout changed; update wetness shader/CB contract.");
+	static_assert(offsetof(Settings, WeatherTransitionSpeed) == 40, "Wetterness::Settings WeatherTransitionSpeed offset changed.");
+	static_assert(offsetof(Settings, EnableRaindropFx) == 56, "Wetterness::Settings EnableRaindropFx offset changed.");
+	static_assert(offsetof(Settings, WetIndirectSpecularScale) == 76, "Wetterness::Settings WetIndirectSpecularScale offset changed.");
+	static_assert(offsetof(Settings, RaindropGridSize) == 84, "Wetterness::Settings RaindropGridSize offset changed.");
+	static_assert(offsetof(Settings, RippleLifetime) == 124, "Wetterness::Settings RippleLifetime offset changed.");
+	static_assert(offsetof(Settings, WetHighlightReduction) == 140, "Wetterness::Settings WetHighlightReduction offset changed.");
+	static_assert(offsetof(Settings, EnableForwardReflectionBias) == 144, "Wetterness::Settings EnableForwardReflectionBias offset changed.");
+	static_assert(offsetof(Settings, EnableVanillaReflectionCompensation) == 148, "Wetterness::Settings EnableVanillaReflectionCompensation offset changed.");
+	static_assert(offsetof(Settings, WetFilmSpecularFloorScale) == 152, "Wetterness::Settings WetFilmSpecularFloorScale offset changed.");
 
 	// Shader-facing wetness settings layout.
 	// Only the shader-consumed core settings live here; extra wetness controls are packed into the explicit tail lanes below.
@@ -139,21 +139,21 @@ public:
 		float WetFilmSpecularFloorScale = 1.0f;
 		float ShorePersistentDarkeningStrength = 0.0f;
 	};
-	static_assert(sizeof(ShaderSettings) == 160, "AdvancedWetness::ShaderSettings layout changed; update wetness shader/CB contract.");
+	static_assert(sizeof(ShaderSettings) == 160, "Wetterness::ShaderSettings layout changed; update wetness shader/CB contract.");
 	static_assert(offsetof(ShaderSettings, PuddleLayout) == offsetof(Settings, WeatherTransitionSpeed),
-		"AdvancedWetness::ShaderSettings::PuddleLayout must match Settings::WeatherTransitionSpeed offset.");
+		"Wetterness::ShaderSettings::PuddleLayout must match Settings::WeatherTransitionSpeed offset.");
 	static_assert(offsetof(ShaderSettings, EnableRaindropFx) == offsetof(Settings, EnableRaindropFx),
-		"AdvancedWetness::ShaderSettings toggle offsets must match Settings.");
+		"Wetterness::ShaderSettings toggle offsets must match Settings.");
 	static_assert(offsetof(ShaderSettings, WetIndirectSpecularScale) == offsetof(Settings, WetIndirectSpecularScale),
-		"AdvancedWetness::ShaderSettings reflection offsets must match Settings.");
+		"Wetterness::ShaderSettings reflection offsets must match Settings.");
 	static_assert(offsetof(ShaderSettings, EnableForwardReflectionBias) == offsetof(Settings, EnableForwardReflectionBias),
-		"AdvancedWetness::ShaderSettings forward reflection bias offsets must match Settings.");
+		"Wetterness::ShaderSettings forward reflection bias offsets must match Settings.");
 	static_assert(offsetof(ShaderSettings, EnableVanillaReflectionCompensation) == offsetof(Settings, EnableVanillaReflectionCompensation),
-		"AdvancedWetness::ShaderSettings vanilla reflection compensation offsets must match Settings.");
+		"Wetterness::ShaderSettings vanilla reflection compensation offsets must match Settings.");
 	static_assert(offsetof(ShaderSettings, WetFilmSpecularFloorScale) == offsetof(Settings, WetFilmSpecularFloorScale),
-		"AdvancedWetness::ShaderSettings wet-film specular floor offset must match Settings.");
+		"Wetterness::ShaderSettings wet-film specular floor offset must match Settings.");
 	static_assert(offsetof(ShaderSettings, ShorePersistentDarkeningStrength) == 156,
-		"AdvancedWetness::ShaderSettings shore darkening offset changed.");
+		"Wetterness::ShaderSettings shore darkening offset changed.");
 
 	struct PerFrame
 	{
@@ -170,10 +170,10 @@ public:
 		uint ReservedPerFramePadding0 = 0;
 	};
 	STATIC_ASSERT_ALIGNAS_16(PerFrame);
-	static_assert(offsetof(PerFrame, settings) == 80, "AdvancedWetness::PerFrame settings offset changed.");
-	static_assert(offsetof(PerFrame, PackedPostRainControl) == 240, "AdvancedWetness::PerFrame tail-control offset changed.");
-	static_assert(sizeof(PerFrame) == 256, "AdvancedWetness::PerFrame size changed; update wetness shader/CB contract.");
-	static_assert((sizeof(PerFrame) % 16) == 0, "AdvancedWetness::PerFrame must stay 16-byte sized");
+	static_assert(offsetof(PerFrame, settings) == 80, "Wetterness::PerFrame settings offset changed.");
+	static_assert(offsetof(PerFrame, PackedPostRainControl) == 240, "Wetterness::PerFrame tail-control offset changed.");
+	static_assert(sizeof(PerFrame) == 256, "Wetterness::PerFrame size changed; update wetness shader/CB contract.");
+	static_assert((sizeof(PerFrame) % 16) == 0, "Wetterness::PerFrame must stay 16-byte sized");
 
 	struct VRCubemapSettings
 	{

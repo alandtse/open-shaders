@@ -131,7 +131,7 @@ namespace SharedData
 		float pad0;
 	};
 
-	struct AdvancedWetnessSettings
+	struct WetternessSettings
 	{
 		row_major float4x4 OcclusionViewProj;
 
@@ -328,7 +328,7 @@ namespace SharedData
 		TerraOccSettings terraOccSettings;
 		LightLimitFixSettings lightLimitFixSettings;
 		WetnessEffectsSettings wetnessEffectsSettings;
-		AdvancedWetnessSettings advancedWetnessSettings;
+		WetternessSettings wetternessSettings;
 		SkylightingSettings skylightingSettings;
 		CloudShadowsSettings cloudShadowsSettings;
 		LODBlendingSettings lodBlendingSettings;

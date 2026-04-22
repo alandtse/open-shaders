@@ -1,7 +1,7 @@
 #include "Common/BRDF.hlsli"
-#include "AdvancedWetness/optimized-ggx.hlsli"
+#include "Wetterness/optimized-ggx.hlsli"
 
-namespace AdvancedWetness
+namespace Wetterness
 {
 	Texture2D<float4> TexPrecipOcclusion : register(t70);
 
@@ -51,15 +51,15 @@ namespace AdvancedWetness
 
 		// Precompute constants
 		float uintToFloat = rcp(4294967295.0);
-		float rippleBreadthRcp = rcp(max(SharedData::advancedWetnessSettings.RippleBreadth, 1e-3));
-		float intervalRcp = SharedData::advancedWetnessSettings.RaindropIntervalRcp;
-		float lifetimeRcp = SharedData::advancedWetnessSettings.RippleLifetimeRcp;
-		float raindropChance = saturate(SharedData::advancedWetnessSettings.RaindropChance);
-		bool enableSplashes = SharedData::advancedWetnessSettings.EnableSplashes;
-		bool enableRipples = SharedData::advancedWetnessSettings.EnableRipples;
+		float rippleBreadthRcp = rcp(max(SharedData::wetternessSettings.RippleBreadth, 1e-3));
+		float intervalRcp = SharedData::wetternessSettings.RaindropIntervalRcp;
+		float lifetimeRcp = SharedData::wetternessSettings.RippleLifetimeRcp;
+		float raindropChance = saturate(SharedData::wetternessSettings.RaindropChance);
+		bool enableSplashes = SharedData::wetternessSettings.EnableSplashes;
+		bool enableRipples = SharedData::wetternessSettings.EnableRipples;
 
 		// Calculate grid coordinates
-		float2 gridUV = worldPos.xy * SharedData::advancedWetnessSettings.RaindropGridSizeRcp + normal.xy;
+		float2 gridUV = worldPos.xy * SharedData::wetternessSettings.RaindropGridSizeRcp + normal.xy;
 		int2 grid = floor(gridUV);
 		gridUV -= grid;
 
@@ -70,7 +70,7 @@ namespace AdvancedWetness
 		// Early exit if no effects enabled
 		bool hasEffects = enableSplashes || enableRipples;
 		if (!hasEffects || raindropChance <= 0.0 || intervalRcp <= 0.0 || lifetimeRcp <= 0.0) {
-			return float4(rippleNormal, wetness * SharedData::advancedWetnessSettings.SplashesStrength);
+			return float4(rippleNormal, wetness * SharedData::wetternessSettings.SplashesStrength);
 		}
 
 		// Process surrounding grid cells
@@ -81,7 +81,7 @@ namespace AdvancedWetness
 
 				// Calculate splashes
 				if (enableSplashes) {
-					float residual = t * intervalRcp / SharedData::advancedWetnessSettings.SplashesLifetime + tOffset + worldPos.z * 0.001;
+					float residual = t * intervalRcp / SharedData::wetternessSettings.SplashesLifetime + tOffset + worldPos.z * 0.001;
 					uint timestep = uint(residual);
 					residual -= timestep;
 
@@ -91,8 +91,8 @@ namespace AdvancedWetness
 					if (floatHash.z < raindropChance) {
 						float2 vec2Centre = int2(i, j) + floatHash.xy - gridUV;
 						float distSqr = dot(vec2Centre, vec2Centre);
-						float dropRadius = lerp(SharedData::advancedWetnessSettings.SplashesMinRadius,
-						                      SharedData::advancedWetnessSettings.SplashesMaxRadius,
+						float dropRadius = lerp(SharedData::wetternessSettings.SplashesMinRadius,
+						                      SharedData::wetternessSettings.SplashesMaxRadius,
 						                      float(Random::iqint3(hash.yz)) * uintToFloat);
 						if (distSqr < dropRadius * dropRadius) {
 							wetness = max(wetness, RainFade(residual));
@@ -119,13 +119,13 @@ namespace AdvancedWetness
 							uint sizeHash = Random::iqint3(hash.xy);
 							float sizeVariation = lerp(0.7, 1.3, float(sizeHash) * uintToFloat);
 
-							float rippleRadius = SharedData::advancedWetnessSettings.RippleRadius * sizeVariation;
+							float rippleRadius = SharedData::wetternessSettings.RippleRadius * sizeVariation;
 							float rippleR = lerp(0.0, rippleRadius, rippleT);
-							float rippleInnerRadius = rippleR - SharedData::advancedWetnessSettings.RippleBreadth;
+							float rippleInnerRadius = rippleR - SharedData::wetternessSettings.RippleBreadth;
 
 							float bandLerp = (sqrt(distSqr) - rippleInnerRadius) * rippleBreadthRcp;
 							if (bandLerp > 0.0 && bandLerp < 1.0) {
-								float rippleStrength = SharedData::advancedWetnessSettings.RippleStrength * rippleStrengthModifier;
+								float rippleStrength = SharedData::wetternessSettings.RippleStrength * rippleStrengthModifier;
 								float deriv = (bandLerp < 0.5 ? SmoothstepDeriv(bandLerp * 2.0) : -SmoothstepDeriv(2.0 - bandLerp * 2.0)) *
 								              lerp(rippleStrength, 0.0, rippleT * rippleT);
 
@@ -141,7 +141,7 @@ namespace AdvancedWetness
 			}
 		}
 
-		return float4(rippleNormal, wetness * SharedData::advancedWetnessSettings.SplashesStrength);
+		return float4(rippleNormal, wetness * SharedData::wetternessSettings.SplashesStrength);
 	}
 
 	float3 GetWetnessSpecular(float3 N, float3 L, float3 V, float3 lightColor, float roughness)
@@ -149,9 +149,9 @@ namespace AdvancedWetness
 		return LightingFuncGGX_OPT3(N, V, L, roughness, 0.02) * lightColor;
 	}
 
-// Debug visualization functions for Advanced Wetness. Keep DEBUG_WETNESS_EFFECTS
+// Debug visualization functions for Wetterness. Keep DEBUG_WETNESS_EFFECTS
 // accepted so existing shader debug toggles still work with the separate feature.
-#if defined(DEBUG_ADVANCED_WETNESS) || defined(DEBUG_WETNESS_EFFECTS)
+#if defined(DEBUG_WETTERNESS) || defined(DEBUG_WETNESS_EFFECTS)
 	/**
 	 * Calculates ripple and splash effect intensities from water ripple info
 	 *

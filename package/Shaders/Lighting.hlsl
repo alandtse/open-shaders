@@ -935,12 +935,12 @@ float GetSnowParameterY(float texProjTmp, float alpha)
 #		undef WETNESS_EFFECTS
 #	endif
 
-#	if defined(ADVANCED_WETNESS)
-#		define CS_WETNESS_SETTINGS SharedData::advancedWetnessSettings
-#		include "AdvancedWetness/AdvancedWetness.hlsli"
-#		define CS_TEX_PRECIP_OCCLUSION AdvancedWetness::TexPrecipOcclusion
-#		define CS_GET_RAIN_DROPS(worldPos, time, normal, strength) AdvancedWetness::GetRainDrops(worldPos, time, normal, strength)
-#		define CS_REORIENT_NORMAL(n1, n2) AdvancedWetness::ReorientNormal(n1, n2)
+#	if defined(WETTERNESS)
+#		define CS_WETNESS_SETTINGS SharedData::wetternessSettings
+#		include "Wetterness/Wetterness.hlsli"
+#		define CS_TEX_PRECIP_OCCLUSION Wetterness::TexPrecipOcclusion
+#		define CS_GET_RAIN_DROPS(worldPos, time, normal, strength) Wetterness::GetRainDrops(worldPos, time, normal, strength)
+#		define CS_REORIENT_NORMAL(n1, n2) Wetterness::ReorientNormal(n1, n2)
 #	elif defined(WETNESS_EFFECTS)
 #		define CS_WETNESS_SETTINGS SharedData::wetnessEffectsSettings
 #		include "WetnessEffects/WetnessEffects.hlsli"
@@ -992,10 +992,10 @@ float GetSnowParameterY(float texProjTmp, float alpha)
 
 #	include "Common/LightingEval.hlsli"
 
-#	if defined(ADVANCED_WETNESS) || defined(WETNESS_EFFECTS)
-#		if defined(ADVANCED_WETNESS)
-#			define CS_EVALUATE_WETNESS_LIGHTING(wetnessNormal, lightContext, wetRoughness, lightOutput) EvaluateWetnessLighting(wetnessNormal, lightContext, wetRoughness, GetWetReflectionModeConfig(SharedData::advancedWetnessSettings.WetIndirectSpecularScale), lightOutput)
-#			define CS_GET_WETNESS_INDIRECT(lobeWeights, wetnessNormal, wetRoughness, indirectContext) GetWetnessIndirectLobeWeights(lobeWeights, wetnessNormal, wetRoughness, indirectContext, GetWetReflectionModeConfig(SharedData::advancedWetnessSettings.WetIndirectSpecularScale))
+#	if defined(WETTERNESS) || defined(WETNESS_EFFECTS)
+#		if defined(WETTERNESS)
+#			define CS_EVALUATE_WETNESS_LIGHTING(wetnessNormal, lightContext, wetRoughness, lightOutput) EvaluateWetnessLighting(wetnessNormal, lightContext, wetRoughness, GetWetReflectionModeConfig(SharedData::wetternessSettings.WetIndirectSpecularScale), lightOutput)
+#			define CS_GET_WETNESS_INDIRECT(lobeWeights, wetnessNormal, wetRoughness, indirectContext) GetWetnessIndirectLobeWeights(lobeWeights, wetnessNormal, wetRoughness, indirectContext, GetWetReflectionModeConfig(SharedData::wetternessSettings.WetIndirectSpecularScale))
 #		else
 #			define CS_EVALUATE_WETNESS_LIGHTING(wetnessNormal, lightContext, wetRoughness, lightOutput) EvaluateWetnessLighting(wetnessNormal, lightContext, wetRoughness, lightOutput)
 #			define CS_GET_WETNESS_INDIRECT(lobeWeights, wetnessNormal, wetRoughness, indirectContext) GetWetnessIndirectLobeWeights(lobeWeights, wetnessNormal, wetRoughness, indirectContext)
@@ -2384,7 +2384,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 
 	float waterRoughnessSpecular = 1;
 
-#	if defined(ADVANCED_WETNESS)
+#	if defined(WETTERNESS)
 	// Initialize wetness parameters
 	float wetness = 0.0;
 	float rainWetness = 0.0;
@@ -3031,7 +3031,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 
 	float3 lodLandDiffuseColor = 0;
 
-#	if defined(ADVANCED_WETNESS)
+#	if defined(WETTERNESS)
 	float3 wetReflectionModeConfig = 0.0.xxx;
 	float3 wetReflectionModeConfigDirect = 0.0.xxx;
 	const bool wetLightingVisible = wetSpecularEnabled && waterRoughnessSpecular < 0.999 && wetnessGlossinessSpecular > 1e-4;
@@ -3076,7 +3076,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 #	if defined(TRUE_PBR)
 	dirLightOutput.coatDiffuse = SanitizeFloat3(dirLightOutput.coatDiffuse);
 #	endif
-#	if defined(ADVANCED_WETNESS)
+#	if defined(WETTERNESS)
 		if (wetDirectLightingVisible)
 		EvaluateWetnessLighting(wetnessNormal, dirLightContext, waterRoughnessSpecular, wetReflectionModeConfigDirect, dirLightOutput);
 #	elif defined(WETNESS_EFFECTS)
@@ -3148,7 +3148,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 #			if defined(TRUE_PBR)
 		pointLightOutput.coatDiffuse = SanitizeFloat3(pointLightOutput.coatDiffuse);
 #			endif
-#			if defined(ADVANCED_WETNESS)
+#			if defined(WETTERNESS)
 			if (wetDirectLightingVisible)
 			EvaluateWetnessLighting(wetnessNormal, pointLightContext, waterRoughnessSpecular, wetReflectionModeConfigDirect, pointLightOutput);
 #			elif defined(WETNESS_EFFECTS)
@@ -3282,7 +3282,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 #			if defined(TRUE_PBR)
 		pointLightOutput.coatDiffuse = SanitizeFloat3(pointLightOutput.coatDiffuse);
 #			endif
-#			if defined(ADVANCED_WETNESS)
+#			if defined(WETTERNESS)
 			if (wetDirectLightingVisible)
 			EvaluateWetnessLighting(wetnessNormal, pointLightContext, waterRoughnessSpecular, wetReflectionModeConfigDirect, pointLightOutput);
 #			elif defined(WETNESS_EFFECTS)
@@ -3394,7 +3394,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 
 	float2 screenMotionVector = MotionBlur::GetSSMotionVector(input.WorldPosition, input.PreviousWorldPosition, eyeIndex);
 
-#	if defined(ADVANCED_WETNESS)
+#	if defined(WETTERNESS)
 #		if !(defined(FACEGEN) || defined(FACEGEN_RGB_TINT) || defined(EYE)) || defined(TREE_ANIM)
 	float shorePersistentDarkeningMask = saturate(shoreFactor);
 	shorePersistentDarkeningMask *= shorePersistentDarkeningMask;
@@ -3514,7 +3514,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 
 	GetIndirectLobeWeights(indirectLobeWeights, indirectContext, material, uvOriginal);
 
-#	if defined(ADVANCED_WETNESS)
+#	if defined(WETTERNESS)
 #		if defined(DYNAMIC_CUBEMAPS)
 	float3 wetnessReflectance = 0.0;
 	bool wetCubemapReflectanceVisible = false;
@@ -3630,7 +3630,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 
 #	if !defined(DEFERRED)
 	if (any(indirectLobeWeights.specular > 0)
-#		if defined(ADVANCED_WETNESS)
+#		if defined(WETTERNESS)
 #			if defined(DYNAMIC_CUBEMAPS)
 		|| wetCubemapReflectanceVisible
 #			else
@@ -3643,7 +3643,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 #		if defined(DYNAMIC_CUBEMAPS)
 #			if defined(SKYLIGHTING)
 		color.xyz += indirectLobeWeights.specular * SanitizeFloat3(DynamicCubemaps::GetDynamicCubemapSpecularIrradiance(screenUV, worldNormal, vertexNormal, viewDirection, material.Roughness, skylightingSH));
-#				if defined(ADVANCED_WETNESS)
+#				if defined(WETTERNESS)
 		if (wetCubemapReflectanceVisible)
 		{
 			float3 wetCubemapIrradiance = SanitizeFloat3(DynamicCubemaps::GetDynamicCubemapSpecularIrradianceBiased(screenUV, wetnessNormal, vertexNormal, viewDirection, waterRoughnessSpecular, wetCubemapSampleDirection, skylightingSH));
@@ -3665,7 +3665,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 #				endif
 #			else
 		color.xyz += indirectLobeWeights.specular * SanitizeFloat3(DynamicCubemaps::GetDynamicCubemapSpecularIrradiance(screenUV, worldNormal, vertexNormal, viewDirection, material.Roughness));
-#				if defined(ADVANCED_WETNESS)
+#				if defined(WETTERNESS)
 		if (wetCubemapReflectanceVisible)
 		{
 			float3 wetCubemapIrradiance = SanitizeFloat3(DynamicCubemaps::GetDynamicCubemapSpecularIrradianceBiased(screenUV, wetnessNormal, vertexNormal, viewDirection, waterRoughnessSpecular, wetCubemapSampleDirection));
@@ -3893,7 +3893,7 @@ if (alpha - AlphaTestRefRS < 0) {
 	psout.Specular = float4(specularColor, psout.Diffuse.w);
 	psout.Albedo = float4(outputAlbedo, psout.Diffuse.w);
 
-#		if defined(ADVANCED_WETNESS) || defined(WETNESS_EFFECTS)
+#		if defined(WETTERNESS) || defined(WETNESS_EFFECTS)
 	indirectLobeWeights.specular += wetnessReflectance;
 	if (waterRoughnessSpecular < 1) {
 		screenSpaceNormal = lerp(screenSpaceNormal, normalize(FrameBuffer::WorldToView(wetnessNormal, false, eyeIndex)), saturate(wetnessGlossinessSpecular));

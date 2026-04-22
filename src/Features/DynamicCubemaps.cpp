@@ -3,7 +3,7 @@
 #include <DDSTextureLoader.h>
 #include <DirectXTex.h>
 
-#include "AdvancedWetness.h"
+#include "Wetterness.h"
 #include "ShaderCache.h"
 #include "State.h"
 
@@ -16,16 +16,16 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 
 namespace
 {
-	const AdvancedWetness* GetActiveAdvancedWetness()
+	const Wetterness* GetActiveWetterness()
 	{
-		auto& advancedWetness = globals::features::advancedWetness;
-		return advancedWetness.IsRuntimeActive() ? &advancedWetness : nullptr;
+		auto& wetterness = globals::features::wetterness;
+		return wetterness.IsRuntimeActive() ? &wetterness : nullptr;
 	}
 
 	RE::NiPoint3 GetCubemapCaptureAnchorPosition()
 	{
-		const auto* advancedWetness = GetActiveAdvancedWetness();
-		if (!(REL::Module::IsVR() && advancedWetness && advancedWetness->vrCubemapSettings.UsePlayerRootCaptureAnchor)) {
+		const auto* wetterness = GetActiveWetterness();
+		if (!(REL::Module::IsVR() && wetterness && wetterness->vrCubemapSettings.UsePlayerRootCaptureAnchor)) {
 			return Util::GetAverageEyePosition();
 		}
 
@@ -41,16 +41,16 @@ namespace
 
 	uint GetVRCaptureFlags()
 	{
-		const auto* advancedWetness = GetActiveAdvancedWetness();
-		if (!(REL::Module::IsVR() && advancedWetness)) {
+		const auto* wetterness = GetActiveWetterness();
+		if (!(REL::Module::IsVR() && wetterness)) {
 			return 0u;
 		}
 
 		uint captureFlags = 0u;
-		if (advancedWetness->vrCubemapSettings.InactivateForwardCaptureGate) {
+		if (wetterness->vrCubemapSettings.InactivateForwardCaptureGate) {
 			captureFlags |= DynamicCubemaps::kCaptureFlagDisableForwardGate;
 		}
-		if (advancedWetness->vrCubemapSettings.SuppressSkyAndFrameEdgeCapture) {
+		if (wetterness->vrCubemapSettings.SuppressSkyAndFrameEdgeCapture) {
 			captureFlags |= DynamicCubemaps::kCaptureFlagSuppressSkyAndFrameEdge;
 		}
 		return captureFlags;

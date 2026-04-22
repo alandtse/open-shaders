@@ -1,4 +1,4 @@
-#include "AdvancedWetness.h"
+#include "Wetterness.h"
 #include "Menu.h"
 #include "State.h"
 #include "WeatherPicker.h"
@@ -92,7 +92,7 @@ namespace
 	bool IsLegacyWetnessEffectsLoaded()
 	{
 		for (auto* feature : Feature::GetFeatureList()) {
-			if (feature == nullptr || feature == &globals::features::advancedWetness) {
+			if (feature == nullptr || feature == &globals::features::wetterness) {
 				continue;
 			}
 			if (feature->GetShortName() == "WetnessEffects") {
@@ -146,10 +146,10 @@ namespace
 	} };
 
 	// Cached per-frame data for debug/weather analysis UI.
-	// Keep this outside AdvancedWetness object layout to avoid class-level alignment padding warnings.
-	AdvancedWetness::PerFrame g_lastFrameData{};
+	// Keep this outside Wetterness object layout to avoid class-level alignment padding warnings.
+	Wetterness::PerFrame g_lastFrameData{};
 	bool g_hasLastFrameData = false;
-	AdvancedWetness::PerFrame g_cachedCommonBufferData{};
+	Wetterness::PerFrame g_cachedCommonBufferData{};
 	bool g_hasCachedCommonBufferData = false;
 	uint32_t g_cachedCommonBufferFrame = 0;
 	REX::W32::XMFLOAT4X4 g_lastValidOcclusionViewProj{};
@@ -166,7 +166,7 @@ namespace
 			return 0.0f;
 		}
 
-		return std::clamp(maxDensity / AdvancedWetness::MAX_RAIN_PARTICLE_DENSITY, 0.0f, 1.0f);
+		return std::clamp(maxDensity / Wetterness::MAX_RAIN_PARTICLE_DENSITY, 0.0f, 1.0f);
 	}
 
 	float GetWeatherDepthDeltaPerSecond(RE::TESWeather* weather)
@@ -228,7 +228,7 @@ namespace
 		float puddleHours = DRYING_HOURS_MAX;
 	};
 
-	EffectiveDryingHours GetManualDryingHours(const AdvancedWetness::Settings& settings, float puddleDryingHours)
+	EffectiveDryingHours GetManualDryingHours(const Wetterness::Settings& settings, float puddleDryingHours)
 	{
 		EffectiveDryingHours result{};
 		result.stoneHours = ClampDryingHours(settings.StoneDryingMultiplier, DEFAULT_STONE_DRYING_HOURS);
@@ -392,9 +392,9 @@ namespace
 		return false;
 	}
 
-	AdvancedWetness::ShaderSettings MakeShaderSettings(const AdvancedWetness::Settings& settings)
+	Wetterness::ShaderSettings MakeShaderSettings(const Wetterness::Settings& settings)
 	{
-		AdvancedWetness::ShaderSettings shaderSettings{};
+		Wetterness::ShaderSettings shaderSettings{};
 		shaderSettings.EnableWetnessEffects = settings.EnableWetnessEffects;
 		shaderSettings.MaxRainWetness = settings.MaxRainWetness;
 		shaderSettings.MaxPuddleWetness = settings.MaxPuddleWetness;
@@ -438,9 +438,9 @@ namespace
 		return shaderSettings;
 	}
 
-	AdvancedWetness::PerFrame MakeDisabledPerFrameData()
+	Wetterness::PerFrame MakeDisabledPerFrameData()
 	{
-		AdvancedWetness::PerFrame data{};
+		Wetterness::PerFrame data{};
 		data.settings.EnableWetnessEffects = 0u;
 		data.settings.EnableRaindropFx = 0u;
 		data.settings.EnableSplashes = 0u;
@@ -532,7 +532,7 @@ namespace
 		return value != 0 ? 1u : 0u;
 	}
 
-	void SanitizeReflectionSettings(AdvancedWetness::Settings& settings)
+	void SanitizeReflectionSettings(Wetterness::Settings& settings)
 	{
 		settings.EnableModernWetReflection = SanitizeToggle(settings.EnableModernWetReflection);
 		settings.EnableLegacyWetReflection = SanitizeToggle(settings.EnableLegacyWetReflection);
@@ -575,7 +575,7 @@ namespace
 	}
 
 	void SanitizePersistentReflectionSettings(
-		AdvancedWetness::Settings& settings,
+		Wetterness::Settings& settings,
 		float& modernScale,
 		float& legacyScale)
 	{
@@ -618,7 +618,7 @@ namespace
 	}
 
 	void SanitizePersistentUiState(
-		AdvancedWetness::Settings& settings,
+		Wetterness::Settings& settings,
 		float& modernScale,
 		float& legacyScale,
 		float& puddleHours,
@@ -653,7 +653,7 @@ namespace
 	}
 
 	void ApplyWetnessUiPreset(
-		AdvancedWetness::Settings& settings,
+		Wetterness::Settings& settings,
 		float& wetnessFadeRange,
 		const WetnessUiPresetDefinition& preset)
 	{
@@ -664,14 +664,14 @@ namespace
 	constexpr size_t DEFAULT_WETNESS_UI_PRESET_INDEX = 2;  // Quality
 
 	void ApplyDefaultWetnessUiPreset(
-		AdvancedWetness::Settings& settings,
+		Wetterness::Settings& settings,
 		float& wetnessFadeRange)
 	{
 		static_assert(DEFAULT_WETNESS_UI_PRESET_INDEX < WETNESS_UI_PRESETS.size(), "Default wetness preset index out of range.");
 		ApplyWetnessUiPreset(settings, wetnessFadeRange, WETNESS_UI_PRESETS[DEFAULT_WETNESS_UI_PRESET_INDEX]);
 	}
 
-	void SanitizeToggleSettings(AdvancedWetness::Settings& settings)
+	void SanitizeToggleSettings(Wetterness::Settings& settings)
 	{
 		settings.EnableWetnessEffects = SanitizeToggle(settings.EnableWetnessEffects);
 		settings.EnableRaindropFx = SanitizeToggle(settings.EnableRaindropFx);
@@ -690,7 +690,7 @@ namespace
 		return std::clamp(value, minValue, maxValue);
 	}
 
-	void SanitizeShaderFacingSettings(AdvancedWetness::Settings& settings)
+	void SanitizeShaderFacingSettings(Wetterness::Settings& settings)
 	{
 		settings.WeatherTransitionSpeed = ClampFiniteOrDefault(settings.WeatherTransitionSpeed, MIN_TRANSITION_SPEED, MAX_TRANSITION_SPEED, 3.0f);
 		settings.ShoreRange = std::max(settings.ShoreRange, 1u);
@@ -748,7 +748,7 @@ namespace
 }
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
-	AdvancedWetness::Settings,
+	Wetterness::Settings,
 	EnableWetnessEffects,
 	MaxRainWetness,
 	MaxPuddleWetness,
@@ -789,7 +789,7 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	WetFilmSpecularFloorScale)
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
-	AdvancedWetness::DebugSettings,
+	Wetterness::DebugSettings,
 	EnableWetnessOverride,
 	EnablePuddleOverride,
 	EnableRainOverride,
@@ -799,7 +799,7 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	RainOverride)
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
-	AdvancedWetness::VRCubemapSettings,
+	Wetterness::VRCubemapSettings,
 	InactivateForwardCaptureGate,
 	UsePlayerRootCaptureAnchor,
 	SuppressSkyAndFrameEdgeCapture)
@@ -813,7 +813,7 @@ struct ClimatePresetInfo
 	const char* shortDescription;
 	const char* const* detailedDescription;
 	const char* const* effectDescription;
-	AdvancedWetness::ClimateSettings settings;
+	Wetterness::ClimateSettings settings;
 };
 
 // Climate preset detailed descriptions
@@ -943,7 +943,7 @@ static constexpr std::array<ClimatePresetInfo, 6> CLIMATE_PRESET_INFO = {
 };
 
 // Extract just the settings for the actual climate preset array
-static const std::array<AdvancedWetness::ClimateSettings, 6> CLIMATE_PRESETS = { {
+static const std::array<Wetterness::ClimateSettings, 6> CLIMATE_PRESETS = { {
 	CLIMATE_PRESET_INFO[0].settings,  // Custom
 	CLIMATE_PRESET_INFO[1].settings,  // Legacy
 	CLIMATE_PRESET_INFO[2].settings,  // Nordic Standard
@@ -952,21 +952,21 @@ static const std::array<AdvancedWetness::ClimateSettings, 6> CLIMATE_PRESETS = {
 	CLIMATE_PRESET_INFO[5].settings   // Monsoon/Extreme
 } };
 
-void AdvancedWetness::SetupResources()
+void Wetterness::SetupResources()
 {
 	// No authored puddle-mask resources are required.
 	// Puddle placement is generated procedurally in shader.
 }
 
-void AdvancedWetness::DisableOnWetnessEffectsConflict()
+void Wetterness::DisableOnWetnessEffectsConflict()
 {
-	failedLoadedMessage = "Advanced Wetness is disabled because Wetness Effects is installed. Wetness Effects must be de-installed or disabled at boot before Advanced Wetness can be activated.";
+	failedLoadedMessage = "Wetterness is disabled because Wetness Effects is installed. Wetness Effects must be de-installed or disabled at boot before Wetterness can be activated.";
 	loaded = false;
 	settings.EnableWetnessEffects = 0u;
 	ResetRuntimeState();
 	InvalidateSanitizedSettingsCache();
 }
-void AdvancedWetness::ResetRuntimeState() const
+void Wetterness::ResetRuntimeState() const
 {
 	runtimeState = {};
 	g_lastFrameData = {};
@@ -978,12 +978,12 @@ void AdvancedWetness::ResetRuntimeState() const
 	g_hasLastValidOcclusionViewProj = false;
 }
 
-void AdvancedWetness::InvalidateSanitizedSettingsCache()
+void Wetterness::InvalidateSanitizedSettingsCache()
 {
 	sanitizedSettingsCacheValid = false;
 }
 
-const AdvancedWetness::Settings& AdvancedWetness::GetSanitizedSettings() const
+const Wetterness::Settings& Wetterness::GetSanitizedSettings() const
 {
 	if (!sanitizedSettingsCacheValid) {
 		sanitizedSettingsCache = settings;
@@ -994,7 +994,7 @@ const AdvancedWetness::Settings& AdvancedWetness::GetSanitizedSettings() const
 	return sanitizedSettingsCache;
 }
 
-void AdvancedWetness::DrawSettings()
+void Wetterness::DrawSettings()
 {
 	InvalidateSanitizedSettingsCache();
 	const auto drawUintCheckbox = [](const char* label, uint& value) {
@@ -1342,7 +1342,7 @@ void AdvancedWetness::DrawSettings()
 			std::vector<std::string> tooltipLines = {
 				"View-depth fade range for dev-style wetness culling.",
 				"Higher = puddles, wet sheen, wet darkening, and wet-normal flattening stay visible farther away.",
-				"Lower = those Advanced Wetness fade sooner for performance.",
+				"Lower = these wetness effects fade sooner for performance.",
 				"Does not affect raindrop FX or water ripple range.",
 				std::format("{:.1f} units", wetnessDistanceFadeRange),
 				std::format("{:.2f} m", fadeRangeMeters)
@@ -1451,7 +1451,7 @@ void AdvancedWetness::DrawSettings()
 	drawSectionDivider();
 
 	if (REL::Module::IsVR() && ImGui::TreeNodeEx("Dynamic Cubemaps VR", ImGuiTreeNodeFlags_DefaultOpen)) {
-		ImGui::TextWrapped("These controls only affect Dynamic Cubemaps when both Advanced Wetness and Dynamic Cubemaps are active.");
+		ImGui::TextWrapped("These controls only affect Dynamic Cubemaps when both Wetterness and Dynamic Cubemaps are active.");
 		drawUintCheckbox("Inactivate Forward Capture Gate", vrCubemapSettings.InactivateForwardCaptureGate);
 		if (auto _tt = Util::HoverTooltipWrapper()) {
 			ImGui::TextUnformatted("Disables the forward-facing capture gate so dynamic cubemap updates are less tied to HMD orientation.");
@@ -1578,16 +1578,16 @@ static void DrawRainTypeLabel(const char* prefix, float rate)
 // =====================
 
 // Helper function to calculate precipitation rate from shader data and settings
-float AdvancedWetness::CalculatePrecipitationRate(float raindropChance, float raindropGridSizeGameUnits, float raindropIntervalSeconds, float mlPerDrop) const
+float Wetterness::CalculatePrecipitationRate(float raindropChance, float raindropGridSizeGameUnits, float raindropIntervalSeconds, float mlPerDrop) const
 {
 	// Validate inputs to prevent division by zero and invalid calculations
 	if (raindropGridSizeGameUnits <= 0.0f || raindropIntervalSeconds <= 0.0f) {
-		logger::warn("[AdvancedWetness] Invalid parameters: gridSize={}, interval={}", raindropGridSizeGameUnits, raindropIntervalSeconds);
+		logger::warn("[Wetterness] Invalid parameters: gridSize={}, interval={}", raindropGridSizeGameUnits, raindropIntervalSeconds);
 		return 0.0f;
 	}
 
 	if (raindropChance < 0.0f || raindropChance > 1.0f) {
-		logger::warn("[AdvancedWetness] Invalid raindrop chance: {}, clamping to [0,1]", raindropChance);
+		logger::warn("[Wetterness] Invalid raindrop chance: {}, clamping to [0,1]", raindropChance);
 		raindropChance = std::clamp(raindropChance, 0.0f, 1.0f);
 	}
 	// Use physically realistic default if not specified (10 microliters typical for large raindrop)
@@ -1610,7 +1610,7 @@ float AdvancedWetness::CalculatePrecipitationRate(float raindropChance, float ra
 // Preset/Configuration Helpers
 // =====================
 
-const AdvancedWetness::ClimateSettings& AdvancedWetness::GetClimateSettings(ClimatePreset preset)
+const Wetterness::ClimateSettings& Wetterness::GetClimateSettings(ClimatePreset preset)
 {
 	auto index = static_cast<size_t>(preset);
 	if (index >= CLIMATE_PRESETS.size()) {
@@ -1619,7 +1619,7 @@ const AdvancedWetness::ClimateSettings& AdvancedWetness::GetClimateSettings(Clim
 	return CLIMATE_PRESETS[index];
 }
 
-void AdvancedWetness::ApplyClimatePreset(ClimatePreset preset)
+void Wetterness::ApplyClimatePreset(ClimatePreset preset)
 {
 	const auto& climate = GetClimateSettings(preset);
 
@@ -1643,7 +1643,7 @@ void AdvancedWetness::ApplyClimatePreset(ClimatePreset preset)
 	InvalidateSanitizedSettingsCache();
 }
 
-AdvancedWetness::PerFrame AdvancedWetness::GetCommonBufferData() const
+Wetterness::PerFrame Wetterness::GetCommonBufferData() const
 {
 	const bool canUseFrameCache = globals::state != nullptr;
 	const uint32_t frameIndex = canUseFrameCache ? globals::state->frameCount : 0u;
@@ -2061,7 +2061,7 @@ AdvancedWetness::PerFrame AdvancedWetness::GetCommonBufferData() const
 	return data;
 }
 
-void AdvancedWetness::Prepass()
+void Wetterness::Prepass()
 {
 	auto renderer = globals::game::renderer;
 	auto context = globals::d3d::context;
@@ -2084,7 +2084,7 @@ void AdvancedWetness::Prepass()
 	context->PSSetShaderResources(kWetnessPsSrvPrecipOcclusionSlot, 1, &precipOcclusionSrv);
 }
 
-void AdvancedWetness::LoadSettings(json& o_json)
+void Wetterness::LoadSettings(json& o_json)
 {
 	const bool isObject = o_json.is_object();
 	const bool hasExplicitWetnessSettings = JsonHasAnyNonDebugKey(o_json);
@@ -2197,7 +2197,7 @@ void AdvancedWetness::LoadSettings(json& o_json)
 	DetectCurrentPreset();
 }
 
-void AdvancedWetness::SaveSettings(json& o_json)
+void Wetterness::SaveSettings(json& o_json)
 {
 	SanitizePersistentUiState(settings, modernWetIndirectSpecularScale, legacyWetIndirectSpecularScale, puddleDryingHours, puddleLayout, rainReflectionBalance, postRainWaterClarity, shorePersistentDarkeningStrength, wetnessDistanceFadeRange);
 	SanitizeToggleSettings(settings);
@@ -2219,7 +2219,7 @@ void AdvancedWetness::SaveSettings(json& o_json)
 	o_json["DebugSettings"] = debugSettings;
 }
 
-void AdvancedWetness::RestoreDefaultSettings()
+void Wetterness::RestoreDefaultSettings()
 {
 	settings = {};
 	enableWeatherDrivenDryingModel = true;
@@ -2244,9 +2244,9 @@ void AdvancedWetness::RestoreDefaultSettings()
 
 }
 
-void AdvancedWetness::DrawWeatherAnalysis() const
+void Wetterness::DrawWeatherAnalysis() const
 {
-	// Only show rain system analysis when it's raining and Advanced Wetness are enabled
+	// Only show rain system analysis when it's raining and Wetterness is enabled.
 	if (!settings.EnableWetnessEffects)
 		return;
 
@@ -2352,7 +2352,7 @@ void AdvancedWetness::DrawWeatherAnalysis() const
 }
 
 // Helper function to auto-detect which preset matches current settings
-void AdvancedWetness::DetectCurrentPreset()
+void Wetterness::DetectCurrentPreset()
 {
 	if (DoesCurrentSettingsMatchPreset(ClimatePreset::Legacy)) {
 		climatePreset = ClimatePreset::Legacy;
@@ -2369,7 +2369,7 @@ void AdvancedWetness::DetectCurrentPreset()
 	}
 }
 
-bool AdvancedWetness::DoesCurrentSettingsMatchPreset(ClimatePreset preset) const
+bool Wetterness::DoesCurrentSettingsMatchPreset(ClimatePreset preset) const
 {
 	// Custom preset never matches (it means user has customized settings)
 	if (preset == ClimatePreset::Custom) {

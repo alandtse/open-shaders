@@ -28,7 +28,7 @@ namespace
 	{
 		static constexpr std::pair<std::string_view, bool> defaultDisableAtBootSettings[] = {
 			{ "WetnessEffects", false },
-			{ "AdvancedWetness", true }
+			{ "Wetterness", true }
 		};
 
 		for (const auto& [featureName, isDisabled] : defaultDisableAtBootSettings) {

@@ -3,7 +3,7 @@
 class ParticleLights;
 
 struct CloudShadows;
-struct AdvancedWetness;
+struct Wetterness;
 struct DynamicCubemaps;
 struct ExtendedMaterials;
 struct GrassCollision;
@@ -60,7 +60,7 @@ namespace globals
 	namespace features
 	{
 		extern CloudShadows cloudShadows;
-		extern AdvancedWetness advancedWetness;
+		extern Wetterness wetterness;
 		extern DynamicCubemaps dynamicCubemaps;
 		extern ExtendedMaterials extendedMaterials;
 		extern GrassCollision grassCollision;
