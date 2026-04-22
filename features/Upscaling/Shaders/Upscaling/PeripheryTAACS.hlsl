@@ -25,6 +25,7 @@ cbuffer PeripheryTAACB : register(b0)
 	float4 Tuning0;  // x=centerScale, y=centerFeather, z=resetHistory, w=taaOuterScale
 	float4 Tuning1;  // x=historyValid, y=centerHorizontalScale, z=tileDispatch, w=tileDispatchWidth
 	float4 Tuning2;  // x=reactivityScale, y=instabilityScale, z=velocityScale, w=lockDecay
+	float4 Tuning3;  // xy=min output color-write bounds, zw=max output color-write bounds
 	row_major float4x4 CurrentViewProjInverse;
 	row_major float4x4 PreviousViewProj;
 	float4 CurrentCameraPosAdjust;
@@ -68,6 +69,11 @@ static const uint kCurrentCacheDim = 16;
 groupshared float4 gCurrentColorCache[kCurrentCacheDim * kCurrentCacheDim];
 groupshared float gCurrentDepthCache[kCurrentCacheDim * kCurrentCacheDim];
 groupshared int2 gCurrentCacheBase;
+groupshared uint gTileFastPathMode;
+
+static const uint kTileFastPathNone = 0;
+static const uint kTileFastPathOutsideTAA = 1;
+static const uint kTileFastPathCenter = 2;
 
 float3 Reinhard(float3 color)
 {
@@ -82,6 +88,32 @@ float3 ReinhardInverse(float3 color)
 float Luma(float3 color)
 {
 	return dot(color, float3(0.2126, 0.7152, 0.0722));
+}
+
+bool IsInsideTAAColorWriteBounds(uint2 outputPos)
+{
+	uint4 bounds = (uint4)(Tuning3 + 0.5);
+	return outputPos.x >= bounds.x && outputPos.y >= bounds.y && outputPos.x < bounds.z && outputPos.y < bounds.w;
+}
+
+float FoveatedTileMinDistance(uint2 minPos, uint2 maxPos, float centerScale, float centerHorizontalScale)
+{
+	float2 minUV = (float2(minPos) + 0.5) * InvOutputDim;
+	float2 maxUV = (float2(maxPos - 1u) + 0.5) * InvOutputDim;
+	float2 centerUV = FoveatedComputeCenterUV(CenterOffset);
+	return FoveatedComputeMaskDistance(clamp(centerUV, minUV, maxUV), centerScale, centerHorizontalScale, CenterOffset);
+}
+
+float FoveatedTileMaxDistance(uint2 minPos, uint2 maxPos, float centerScale, float centerHorizontalScale)
+{
+	uint2 maxPixel = maxPos - 1u;
+	return max(
+		max(
+			FoveatedComputeMaskDistance((float2(minPos.x, minPos.y) + 0.5) * InvOutputDim, centerScale, centerHorizontalScale, CenterOffset),
+			FoveatedComputeMaskDistance((float2(maxPixel.x, minPos.y) + 0.5) * InvOutputDim, centerScale, centerHorizontalScale, CenterOffset)),
+		max(
+			FoveatedComputeMaskDistance((float2(minPos.x, maxPixel.y) + 0.5) * InvOutputDim, centerScale, centerHorizontalScale, CenterOffset),
+			FoveatedComputeMaskDistance((float2(maxPixel.x, maxPixel.y) + 0.5) * InvOutputDim, centerScale, centerHorizontalScale, CenterOffset)));
 }
 
 float2 ClampInputUV(float2 uv)
@@ -144,7 +176,7 @@ bool TryGetCurrentCachePos(int2 pos, out int2 cachePos)
 
 float LoadCachedDepthClamped(int2 pos)
 {
-	int2 cachePos;
+	int2 cachePos = int2(0, 0);
 	if (TryGetCurrentCachePos(pos, cachePos))
 		return gCurrentDepthCache[FlattenCurrentCachePos(cachePos)];
 	return LoadDepthClamped(pos);
@@ -152,7 +184,7 @@ float LoadCachedDepthClamped(int2 pos)
 
 float3 LoadCachedCurrentColorClamped(int2 pos)
 {
-	int2 cachePos;
+	int2 cachePos = int2(0, 0);
 	if (TryGetCurrentCachePos(pos, cachePos))
 		return gCurrentColorCache[FlattenCurrentCachePos(cachePos)].rgb;
 	return LoadCurrentColorClamped(pos);
@@ -334,28 +366,6 @@ void main(uint3 dispatchID : SV_DispatchThreadID, uint3 groupID : SV_GroupID, ui
 		pixelValid = !any(localPos >= uint2(DispatchDim)) && !any(outputPos >= uint2(OutputDim));
 	}
 
-	if (groupThreadID.x == 0 && groupThreadID.y == 0) {
-		float2 tileOutputUV = (float2(tileOrigin) + 0.5) * InvOutputDim;
-		uint2 tileInputPos = ToInputPos(tileOutputUV - (Jitter * InvInputDim));
-		gCurrentCacheBase = int2(tileInputPos) - int2(4, 4);
-	}
-	GroupMemoryBarrierWithGroupSync();
-
-	const uint groupThreadIndex = groupThreadID.y * 8u + groupThreadID.x;
-	for (uint cacheIndex = groupThreadIndex; cacheIndex < kCurrentCacheDim * kCurrentCacheDim; cacheIndex += 64u) {
-		int2 cacheOffset = int2((int)(cacheIndex % kCurrentCacheDim), (int)(cacheIndex / kCurrentCacheDim));
-		int2 samplePos = gCurrentCacheBase + cacheOffset;
-		gCurrentColorCache[cacheIndex] = LoadCurrentSampleClamped(samplePos);
-		gCurrentDepthCache[cacheIndex] = LoadDepthClamped(samplePos);
-	}
-	GroupMemoryBarrierWithGroupSync();
-
-	if (!pixelValid)
-		return;
-
-	float2 outputUV = (float2(outputPos) + 0.5) * InvOutputDim;
-	float2 inputUV = ClampInputUV(outputUV - (Jitter * InvInputDim));
-
 	float centerScale = Tuning0.x;
 	float centerFeather = Tuning0.y;
 	float centerHorizontalScale = Tuning1.y;
@@ -364,6 +374,76 @@ void main(uint3 dispatchID : SV_DispatchThreadID, uint3 groupID : SV_GroupID, ui
 	float taaOuterScale = min(max(Tuning0.w, minOuterScale), 1.0);
 	bool resetHistory = Tuning0.z > 0.5;
 	bool historyValid = Tuning1.x > 0.5 && !resetHistory;
+
+	if (groupThreadID.x == 0 && groupThreadID.y == 0) {
+		uint2 tileMax = min(tileOrigin + 8u, uint2(OutputDim));
+		uint fastPathMode = kTileFastPathNone;
+		if (tileMax.x > tileOrigin.x && tileMax.y > tileOrigin.y) {
+			float outerMinDistance = FoveatedTileMinDistance(tileOrigin, tileMax, taaOuterScale, centerHorizontalScale);
+			if (outerMinDistance > 1.0 + 1e-4) {
+				fastPathMode = kTileFastPathOutsideTAA;
+			} else {
+				float centerMaxDistance = FoveatedTileMaxDistance(tileOrigin, tileMax, centerScale, centerHorizontalScale);
+				if (centerMaxDistance <= 1.0 - 1e-4)
+					fastPathMode = kTileFastPathCenter;
+			}
+		}
+
+		gTileFastPathMode = fastPathMode;
+		if (historyValid && fastPathMode == kTileFastPathNone) {
+			float2 tileOutputUV = (float2(tileOrigin) + 0.5) * InvOutputDim;
+			uint2 tileInputPos = ToInputPos(tileOutputUV - (Jitter * InvInputDim));
+			gCurrentCacheBase = int2(tileInputPos) - int2(4, 4);
+		}
+	}
+	GroupMemoryBarrierWithGroupSync();
+
+	float2 outputUV = (float2(outputPos) + 0.5) * InvOutputDim;
+	float2 inputUV = ClampInputUV(outputUV - (Jitter * InvInputDim));
+	const bool groupFastPath = !historyValid || gTileFastPathMode != kTileFastPathNone;
+
+	const uint groupThreadIndex = groupThreadID.y * 8u + groupThreadID.x;
+	for (uint cacheIndex = groupThreadIndex; cacheIndex < kCurrentCacheDim * kCurrentCacheDim; cacheIndex += 64u) {
+		if (!groupFastPath) {
+			int2 cacheOffset = int2((int)(cacheIndex % kCurrentCacheDim), (int)(cacheIndex / kCurrentCacheDim));
+			int2 samplePos = gCurrentCacheBase + cacheOffset;
+			gCurrentColorCache[cacheIndex] = LoadCurrentSampleClamped(samplePos);
+			gCurrentDepthCache[cacheIndex] = LoadDepthClamped(samplePos);
+		} else {
+			gCurrentColorCache[cacheIndex] = 0.0.xxxx;
+			gCurrentDepthCache[cacheIndex] = 1.0;
+		}
+	}
+	GroupMemoryBarrierWithGroupSync();
+
+	if (!pixelValid)
+		return;
+
+	if (groupFastPath) {
+		float4 currentSample = CurrentColor.SampleLevel(LinearSampler, inputUV, 0.0);
+		float centerWeight = FoveatedComputeCenterBlendWeight(outputUV, centerScale, centerFeather, centerHorizontalScale, CenterOffset);
+		if (centerWeight >= 1.0 || gTileFastPathMode == kTileFastPathCenter) {
+			OutVelocity[outputPos] = 0.0.xx;
+			OutLock[outputPos] = 0.0;
+			OutHistoryColor[outputPos] = currentSample;
+			return;
+		}
+
+		bool outsideTAA = gTileFastPathMode == kTileFastPathOutsideTAA ||
+			FoveatedComputeMaskDistance(outputUV, taaOuterScale, centerHorizontalScale, CenterOffset) > 1.0;
+		if (!historyValid || outsideTAA) {
+			float2 passthroughVelocity = CurrentMotionVectors.SampleLevel(LinearSampler, inputUV, 0.0);
+			OutVelocity[outputPos] = passthroughVelocity;
+			OutLock[outputPos] = 0.0;
+			// Only the history padding outside this rectangle is overwritten by
+			// the later periphery fill. Curved-mask edge pixels inside it still
+			// need a final-color passthrough here.
+			if (!outsideTAA || IsInsideTAAColorWriteBounds(outputPos))
+				OutColor[outputPos] = currentSample;
+			OutHistoryColor[outputPos] = currentSample;
+			return;
+		}
+	}
 
 	float centerWeight = FoveatedComputeCenterBlendWeight(outputUV, centerScale, centerFeather, centerHorizontalScale, CenterOffset);
 	float peripheryWeight = saturate(1.0 - centerWeight);
@@ -379,7 +459,8 @@ void main(uint3 dispatchID : SV_DispatchThreadID, uint3 groupID : SV_GroupID, ui
 		float2 passthroughVelocity = CurrentMotionVectors.SampleLevel(LinearSampler, inputUV, 0.0);
 		OutVelocity[outputPos] = passthroughVelocity;
 		OutLock[outputPos] = 0.0;
-		OutColor[outputPos] = currentSample;
+		if (IsInsideTAAColorWriteBounds(outputPos))
+			OutColor[outputPos] = currentSample;
 		OutHistoryColor[outputPos] = currentSample;
 		return;
 	}

@@ -152,6 +152,7 @@ public:
 		float4 tuning0;  // x=centerScale, y=centerFeather, z=resetHistory, w=taaOuterScale
 		float4 tuning1;  // x=historyValid, y=centerHorizontalScale, z=tileDispatch, w=tileDispatchWidth
 		float4 tuning2;  // x=reactivityScale, y=instabilityScale, z=velocityScale, w=lockDecay
+		float4 tuning3;  // xy=min output color-write bounds, zw=max output color-write bounds
 		float4x4 currentViewProjInverse;
 		float4x4 previousViewProj;
 		float4 currentCameraPosAdjust;
@@ -160,7 +161,7 @@ public:
 
 	static_assert(sizeof(FoveatedPeripheryCB) == 112, "FoveatedPeripheryCB layout changed; update HLSL cbuffer.");
 	static_assert(sizeof(FoveatedCenterBlendCB) == 64, "FoveatedCenterBlendCB layout changed; update HLSL cbuffer.");
-	static_assert(sizeof(PeripheryTAACB) == 272, "PeripheryTAACB layout changed; update HLSL cbuffer.");
+	static_assert(sizeof(PeripheryTAACB) == 288, "PeripheryTAACB layout changed; update HLSL cbuffer.");
 
 	struct FoveatedDispatchRect
 	{

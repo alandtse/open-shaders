@@ -2372,15 +2372,25 @@ void Upscaling::DispatchPeripheryTAAPass(ID3D11ShaderResourceView* currentColorS
 	centerScale = ClampFoveatedCenterArea(centerScale);
 	centerHorizontalScale = ClampFoveatedCenterHorizontalScale(centerHorizontalScale);
 	const float centerFeather = ClampPeripheryTAACenterBlendFeather(settings.periphery_taa_center_blend_feather);
+	const float taaOuterScale = ClampPeripheryTAAOuterScaleForCenter(
+		settings.periphery_taa_outer_scale,
+		centerScale,
+		centerHorizontalScale,
+		centerFeather);
+	const auto taaColorWriteBounds = FoveatedCommon::BuildCenteredDispatchBounds(
+		0,
+		outputWidth,
+		outputHeight,
+		taaOuterScale,
+		centerOffsetX,
+		centerOffsetY,
+		0.0f,
+		centerHorizontalScale);
 	cbData.tuning0 = {
 		centerScale,
 		centerFeather,
 		resetHistory ? 1.0f : 0.0f,
-		ClampPeripheryTAAOuterScaleForCenter(
-			settings.periphery_taa_outer_scale,
-			centerScale,
-			centerHorizontalScale,
-			centerFeather)
+		taaOuterScale
 	};
 	cbData.tuning1 = {
 		peripheryTAAHistoryValid && !resetHistory ? 1.0f : 0.0f,
@@ -2393,6 +2403,12 @@ void Upscaling::DispatchPeripheryTAAPass(ID3D11ShaderResourceView* currentColorS
 		1.25f,
 		0.10f,
 		0.92f
+	};
+	cbData.tuning3 = {
+		static_cast<float>(taaColorWriteBounds.minX),
+		static_cast<float>(taaColorWriteBounds.minY),
+		static_cast<float>(taaColorWriteBounds.maxX),
+		static_cast<float>(taaColorWriteBounds.maxY)
 	};
 	cbData.currentViewProjInverse = currentViewProjInverse;
 	cbData.previousViewProj = previousViewProj;
@@ -2823,8 +2839,48 @@ bool Upscaling::DispatchFoveatedVendorUpscaling(UpscaleMethod a_upscaleMethod, I
 		const float peripherySourceOffsetY = 0.0f;
 		ID3D11UnorderedAccessView* outputColorUAV = vrIntermediateColorOut[eye]->uav.get();
 
+		bool peripheryBindingsBound = false;
+		auto bindPeripheryBindings = [&]() -> bool {
+			if (peripheryBindingsBound)
+				return true;
+
+			auto* peripheryShader = GetFoveatedPeripheryCS();
+			if (!peripheryShader || !foveatedPeripheryCB || !deferred || !deferred->linearSampler || !peripherySourceSRV || !outputColorUAV)
+				return false;
+
+			ID3D11Buffer* cb = foveatedPeripheryCB->CB();
+			ID3D11SamplerState* samplers[1] = { deferred->linearSampler };
+			ID3D11ShaderResourceView* srvs[1] = { peripherySourceSRV };
+			ID3D11UnorderedAccessView* uavs[1] = { outputColorUAV };
+			context->CSSetShader(peripheryShader, nullptr, 0);
+			context->CSSetConstantBuffers(0, 1, &cb);
+			context->CSSetSamplers(0, 1, samplers);
+			context->CSSetShaderResources(0, 1, srvs);
+			context->CSSetUnorderedAccessViews(0, 1, uavs, nullptr);
+			peripheryBindingsBound = true;
+			return true;
+		};
+
+		auto unbindPeripheryBindings = [&]() {
+			if (!peripheryBindingsBound)
+				return;
+
+			ID3D11ShaderResourceView* nullSRV[1] = { nullptr };
+			ID3D11UnorderedAccessView* nullUAV[1] = { nullptr };
+			ID3D11SamplerState* nullSampler[1] = { nullptr };
+			ID3D11Buffer* nullCB[1] = { nullptr };
+			context->CSSetShaderResources(0, 1, nullSRV);
+			context->CSSetUnorderedAccessViews(0, 1, nullUAV, nullptr);
+			context->CSSetSamplers(0, 1, nullSampler);
+			context->CSSetConstantBuffers(0, 1, nullCB);
+			context->CSSetShader(nullptr, nullptr, 0);
+			peripheryBindingsBound = false;
+		};
+
 		auto dispatchPeripheryBand = [&](uint32_t outputOffsetX, uint32_t outputOffsetY, uint32_t dispatchWidth, uint32_t dispatchHeight) {
 			if (!dispatchWidth || !dispatchHeight)
+				return;
+			if (!bindPeripheryBindings())
 				return;
 
 			DispatchFoveatedPeripheryPass(
@@ -2840,7 +2896,7 @@ bool Upscaling::DispatchFoveatedVendorUpscaling(UpscaleMethod a_upscaleMethod, I
 				dispatchHeight,
 				centerScale,
 				centerHorizontalScale,
-				false,
+				true,
 				peripherySourceScaleX,
 				peripherySourceScaleY,
 				peripherySourceOffsetX,
@@ -2983,6 +3039,8 @@ bool Upscaling::DispatchFoveatedVendorUpscaling(UpscaleMethod a_upscaleMethod, I
 		} else {
 			dispatchPeripheryBand(0, 0, outputWidthPerEye, outputHeight);
 		}
+
+		unbindPeripheryBindings();
 
 		if (visualizeMask)
 			continue;
