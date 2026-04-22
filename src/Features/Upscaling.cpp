@@ -779,8 +779,14 @@ void Upscaling::DrawSettings()
 					settings.foveatedRightEyeMaskOffsetY = ClampFoveatedMaskOffsetAdjustment(settings.foveatedRightEyeMaskOffsetY);
 				}
 
-				if (ImGui::Button("Confirm DLSS FOV (Step 1 Complete)"))
-					baseFovConfirmedForSession = true;
+				{
+					Util::StyledButtonWrapper step1ConfirmButtonStyle(
+						ImVec4(0.10f, 0.20f, 0.45f, 0.85f),
+						ImVec4(0.14f, 0.28f, 0.58f, 0.90f),
+						ImVec4(0.18f, 0.34f, 0.66f, 0.95f));
+					if (ImGui::Button("Confirm DLSS FOV (Step 1 Complete)"))
+						baseFovConfirmedForSession = true;
+				}
 				ImGui::EndDisabled();
 
 				if (settings.periphery_taa_enable)
@@ -797,6 +803,24 @@ void Upscaling::DrawSettings()
 					ImGui::Checkbox("Peripheral TAA", &settings.periphery_taa_enable);
 					if (auto _tt = Util::HoverTooltipWrapper()) {
 						ImGui::TextUnformatted("Enables periphery-only TAA around the Step 1 DLSS FOV.");
+					}
+					{
+						Util::StyledButtonWrapper step2CopyButtonStyle(
+							ImVec4(0.46f, 0.34f, 0.08f, 0.85f),
+							ImVec4(0.58f, 0.43f, 0.10f, 0.90f),
+							ImVec4(0.68f, 0.51f, 0.12f, 0.95f));
+						if (ImGui::Button("Copy Mask Positions From Step 1")) {
+							settings.periphery_taa_left_eye_mask_offset_x = settings.foveatedLeftEyeMaskOffsetX;
+							settings.periphery_taa_left_eye_mask_offset_y = settings.foveatedLeftEyeMaskOffsetY;
+							settings.periphery_taa_right_eye_mask_offset_x = settings.foveatedRightEyeMaskOffsetX;
+							settings.periphery_taa_right_eye_mask_offset_y = settings.foveatedRightEyeMaskOffsetY;
+							settings.periphery_taa_center_area = FoveatedCommon::kCenterAreaMin;
+							settings.periphery_taa_center_horizontal_scale = 1.0f;
+						}
+					}
+					if (auto _tt = Util::HoverTooltipWrapper()) {
+						ImGui::TextUnformatted("Copies only left/right eye X/Y mask offsets from Step 1.");
+						ImGui::TextUnformatted("Step 2 TAA FOV Area is reset to 0.30 and Expand TAA FOV R/L is reset to 1.00.");
 					}
 					ImGui::SliderFloat("TAA FOV Area", &settings.periphery_taa_center_area, FoveatedCommon::kCenterAreaMin, FoveatedCommon::kCenterAreaMax, "%.2f");
 					if (auto _tt = Util::HoverTooltipWrapper()) {
@@ -864,9 +888,15 @@ void Upscaling::DrawSettings()
 					}
 					settings.periphery_taa_center_blend_feather = ClampPeripheryTAACenterBlendFeather(settings.periphery_taa_center_blend_feather);
 				}
-				if (ImGui::Button("Confirm Peripheral TAA (Step 2 Complete)")) {
-					if (globals::state)
-						globals::state->Save();
+				{
+					Util::StyledButtonWrapper step2ConfirmButtonStyle(
+						ImVec4(0.46f, 0.34f, 0.08f, 0.85f),
+						ImVec4(0.58f, 0.43f, 0.10f, 0.90f),
+						ImVec4(0.68f, 0.51f, 0.12f, 0.95f));
+					if (ImGui::Button("Confirm Peripheral TAA (Step 2 Complete)")) {
+						if (globals::state)
+							globals::state->Save();
+					}
 				}
 				ImGui::EndDisabled();
 			}
