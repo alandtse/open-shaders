@@ -795,28 +795,6 @@ if(AIO_ZIP_TO_DIST)
             COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_SOURCE_DIR}/dist
         )
     endif()
-
-    # Create a stamp-producing custom command for the AIO archive so CMake
-    # only rebuilds the archive when its inputs change. The archive filename
-    # keeps the UTC timestamp as before, but the command writes a stable
-    # stamp file that CMake can track as OUTPUT.
-    set(TARGET_AIO_ZIP "${PROJECT_NAME}_AIO-${UTC_NOW}.7z")
-    set(AIO_ARCHIVE "${CMAKE_SOURCE_DIR}/dist/${TARGET_AIO_ZIP}")
-    set(AIO_ZIP_STAMP "${CMAKE_CURRENT_BINARY_DIR}/aio_package.stamp")
-
-    message("Zipping ${AIO_DIR} to ${AIO_ARCHIVE}")
-
-    add_custom_command(
-        OUTPUT ${AIO_ZIP_STAMP}
-        COMMAND ${CMAKE_COMMAND} -E make_directory "${CMAKE_SOURCE_DIR}/dist"
-        COMMAND ${CMAKE_COMMAND} -E tar cf ${AIO_ARCHIVE} --format=7zip -- .
-        COMMAND ${CMAKE_COMMAND} -E touch ${AIO_ZIP_STAMP}
-        WORKING_DIRECTORY ${AIO_DIR}
-        DEPENDS PREPARE_AIO
-        COMMENT "Creating AIO archive ${AIO_ARCHIVE}"
-    )
-
-    add_custom_target(AIO_ZIP_PACKAGE ALL DEPENDS ${AIO_ZIP_STAMP})
 endif()
 
 if(NOT DEFINED ENV{CommunityShadersOutputDir})
@@ -919,13 +897,18 @@ add_custom_command(
     OUTPUT ${AIO_PACKAGE}
     DEPENDS ${CORE_SOURCES}
     COMMAND ${CMAKE_COMMAND} -E make_directory ${AIO_DIR}
-    COMMAND ${CMAKE_COMMAND} --install ${CMAKE_BINARY_DIR} --prefix ${AIO_DIR}
+    COMMAND ${CMAKE_COMMAND} --install ${CMAKE_BINARY_DIR} --prefix ${AIO_DIR} --config $<CONFIG>
     COMMAND
         ${CMAKE_COMMAND} -E chdir ${AIO_DIR} ${CMAKE_COMMAND} -E tar cfv
         ${AIO_PACKAGE} --format=7zip -- .
     COMMENT "Creating AIO zip package (manual)"
 )
 add_custom_target("Package-AIO-Manual" DEPENDS ${AIO_PACKAGE})
+
+if(AIO_ZIP_TO_DIST)
+    add_custom_target(AIO_ZIP_PACKAGE ALL)
+    add_dependencies(AIO_ZIP_PACKAGE Package-AIO-Manual)
+endif()
 
 # #######################################################################################################################
 # # Shader Unit Tests
