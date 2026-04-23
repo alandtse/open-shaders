@@ -38,6 +38,7 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	foveatedRightEyeMaskOffsetX,
 	foveatedRightEyeMaskOffsetY,
 	periphery_taa_center_area,
+	ssgiFovCenterArea,
 	foveatedPeripheryMaskVisualization,
 	periphery_taa_enable,
 	periphery_taa_outer_scale,
@@ -305,6 +306,7 @@ namespace
 		settings.foveatedRightEyeMaskOffsetX = ClampFoveatedMaskOffsetAdjustment(settings.foveatedRightEyeMaskOffsetX);
 		settings.foveatedRightEyeMaskOffsetY = ClampFoveatedMaskOffsetAdjustment(settings.foveatedRightEyeMaskOffsetY);
 		settings.periphery_taa_center_area = ClampFoveatedCenterArea(settings.periphery_taa_center_area);
+		settings.ssgiFovCenterArea = ClampFoveatedCenterArea(settings.ssgiFovCenterArea);
 	}
 
 	void SanitizeUpscalingSettings(Upscaling::Settings& settings)
@@ -338,6 +340,7 @@ namespace
 		settings.foveatedRightEyeMaskOffsetX = 0.0f;
 		settings.foveatedRightEyeMaskOffsetY = 0.0f;
 		settings.periphery_taa_center_area = 0.6f;
+		settings.ssgiFovCenterArea = 0.6f;
 		settings.foveatedPeripheryMaskVisualization = false;
 		settings.periphery_taa_enable = false;
 		settings.periphery_taa_outer_scale = 0.70f;
@@ -354,6 +357,7 @@ namespace
 		o_json.erase("foveatedRightEyeMaskOffsetX");
 		o_json.erase("foveatedRightEyeMaskOffsetY");
 		o_json.erase("periphery_taa_center_area");
+		o_json.erase("ssgiFovCenterArea");
 		o_json.erase("foveatedPeripheryMaskVisualization");
 		o_json.erase("periphery_taa_enable");
 		o_json.erase("periphery_taa_outer_scale");
@@ -566,6 +570,7 @@ void Upscaling::DrawSettings()
 	const bool isAmdAdapter = fidelityFX.IsAmdAdapterDetected();
 	const bool isNvidiaAdapter = fidelityFX.IsNvidiaAdapterDetected();
 	const bool runtimeFsr4Present = fidelityFX.IsRuntimeUpscalerPresent();
+	const bool runtimeFsr4AutoEligible = fidelityFX.IsRuntimeUpscalerAutoEligible();
 	const bool runtimeFsr4Available = fidelityFX.IsRuntimeUpscalerAvailable();
 	if (runtimeFsr4Available)
 		upscaleChoices.push_back({ UpscaleMethod::kFSR, true, "AMD FSR 4" });
@@ -622,7 +627,7 @@ void Upscaling::DrawSettings()
 	auto upscaleMethod = GetUpscaleMethod();
 
 	auto drawFsr4OverrideControls = [&]() {
-		if (runtimeFsr4Present && isAmdAdapter) {
+		if (runtimeFsr4Present && isAmdAdapter && !runtimeFsr4AutoEligible) {
 			ImGui::Checkbox("Allow FSR4 on Other AMD GPUs", &settings.fsr4AllowNonRx90Amd);
 			if (auto _tt = Util::HoverTooltipWrapper()) {
 				ImGui::TextUnformatted("Enables Runtime FSR4 on AMD cards that are not auto-detected as RX 7000-series or newer.");
@@ -901,19 +906,11 @@ void Upscaling::DrawSettings()
 
 			if (!foveatedDispatchSupportedForMethod) {
 				ImGui::Separator();
-				ImGui::TextUnformatted("SSGI FOV (Fallback)");
-				ImGui::TextDisabled("DLSS foveated upscaling is unavailable on this backend.");
-				ImGui::TextDisabled("SSGI still uses the active profile selected by Peripheral TAA.");
-				{
-					Util::YellowFrameStyleWrapper taaStyle(true);
-					ImGui::Checkbox("Peripheral TAA", &settings.periphery_taa_enable);
-				}
-				float& activeFovArea = settings.periphery_taa_enable ? settings.periphery_taa_center_area : settings.foveatedCenterArea;
 				{
 					Util::BlueFrameStyleWrapper ssgiAreaStyle;
-					ImGui::SliderFloat("SSGI FOV Area", &activeFovArea, FoveatedCommon::kCenterAreaMin, FoveatedCommon::kCenterAreaMax, "%.2f");
+					ImGui::SliderFloat("SSGI FOV Area", &settings.ssgiFovCenterArea, FoveatedCommon::kCenterAreaMin, FoveatedCommon::kCenterAreaMax, "%.2f");
 				}
-				activeFovArea = ClampFoveatedCenterArea(activeFovArea);
+				settings.ssgiFovCenterArea = ClampFoveatedCenterArea(settings.ssgiFovCenterArea);
 			}
 
 			if (streamline.reflexSupportedOnCurrentAdapter)
@@ -1703,18 +1700,22 @@ bool Upscaling::IsPeripheryTAAPathActive(UpscaleMethod a_upscaleMethod) const
 
 bool Upscaling::UseActiveFoveatedPeripheryTAAProfile() const
 {
-	return globals::game::isVR && settings.periphery_taa_enable;
+	return IsPeripheryTAAEnabled(GetUpscaleMethod());
 }
 
 float Upscaling::GetActiveFoveatedCenterArea() const
 {
+	if (globals::game::isVR && !SupportsFoveatedVendorDispatch(GetUpscaleMethod()))
+		return ClampFoveatedCenterArea(settings.ssgiFovCenterArea);
+
 	return GetFoveatedMaskProfileParams(settings, UseActiveFoveatedPeripheryTAAProfile()).centerArea;
 }
 
 float Upscaling::GetActiveFoveatedCenterHorizontalScale() const
 {
-	if (!globals::game::isVR)
+	if (!globals::game::isVR || !SupportsFoveatedVendorDispatch(GetUpscaleMethod()))
 		return 1.0f;
+
 	return GetFoveatedMaskProfileParams(settings, UseActiveFoveatedPeripheryTAAProfile()).centerHorizontalScale;
 }
 
@@ -1758,6 +1759,9 @@ std::array<float2, 2> Upscaling::GetResolvedFoveatedMaskCenterOffsets(bool usePe
 
 std::array<float2, 2> Upscaling::GetActiveResolvedFoveatedMaskCenterOffsets() const
 {
+	if (globals::game::isVR && !SupportsFoveatedVendorDispatch(GetUpscaleMethod()))
+		return GetDefaultFoveatedMaskCenterOffsets();
+
 	auto centerOffsets = GetResolvedFoveatedMaskCenterOffsets(UseActiveFoveatedPeripheryTAAProfile());
 	if (!globals::game::isVR)
 		centerOffsets[1] = { 0.0f, 0.0f };

@@ -531,6 +531,15 @@ bool FidelityFX::IsRuntimeUpscalerPresent() const
 	return true;
 }
 
+bool FidelityFX::IsRuntimeUpscalerAutoEligible() const
+{
+	DXGI_ADAPTER_DESC adapterDesc{};
+	if (!TryGetCurrentAdapterDesc(adapterDesc))
+		return false;
+
+	return adapterDesc.VendorId == kAmdVendorId && IsLikelyRDNA4Adapter(adapterDesc);
+}
+
 bool FidelityFX::QueryRuntimeUpscalerProviderSupport() const
 {
 	if (!IsRuntimeUpscalerPresent())
@@ -634,7 +643,7 @@ bool FidelityFX::IsRuntimeUpscalerAvailable() const
 		    !globals::features::upscaling.settings.fsr4AllowNonRx90Amd) {
 			return false;
 		}
-		return QueryRuntimeUpscalerProviderSupport();
+		return true;
 	}
 	if (adapterDesc.VendorId == kNvidiaVendorId)
 		return false;

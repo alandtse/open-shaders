@@ -72,6 +72,7 @@ public:
 		float foveatedRightEyeMaskOffsetX = 0.0f;
 		float foveatedRightEyeMaskOffsetY = 0.0f;
 		float periphery_taa_center_area = 0.6f;
+		float ssgiFovCenterArea = 0.6f;
 		bool foveatedPeripheryMaskVisualization = false;
 		bool periphery_taa_enable = false;
 		float periphery_taa_outer_scale = 0.70f;

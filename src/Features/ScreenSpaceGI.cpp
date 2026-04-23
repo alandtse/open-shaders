@@ -553,11 +553,12 @@ void ScreenSpaceGI::DrawSettings()
 			settings.ResolutionMode = 2;
 			const float centerArea = ResolveFoveatedCenterMaskScale(settings);
 			settings.CenterFullResMaskScale = centerArea;
-			ImGui::Text("Upscaling Active FOV Area: %.2f", centerArea);
+			ImGui::Text("Active SSGI FOV Area: %.2f", centerArea);
 			if (auto _tt = Util::HoverTooltipWrapper()) {
-				ImGui::TextUnformatted("SSGI uses the active Upscaling FOV profile.");
-				ImGui::TextUnformatted("Peripheral TAA OFF: DLSS FOV profile.");
-				ImGui::TextUnformatted("Peripheral TAA ON: reduced DLSS FOV area with shared expand and eye offsets.");
+				ImGui::TextUnformatted("SSGI uses the FOV area exposed in Upscaling.");
+				ImGui::TextUnformatted("Peripheral TAA OFF: uses DLSS FOV Area.");
+				ImGui::TextUnformatted("Peripheral TAA ON (DLSS/NVIDIA only): uses DLSS+TAA FOV Area.");
+				ImGui::TextUnformatted("Other backends: centered fallback mask with no R/L extension or eye offset.");
 			}
 		}
 	}
