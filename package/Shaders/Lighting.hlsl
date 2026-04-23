@@ -2715,7 +2715,8 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	// Shore wetness is persistent and should remain visible even when rain/puddle
 	// timelines are dry. Keep it as a damp film, not standing-water puddles.
 	float shoreWetSurfaceFade = smoothstep(-0.10, 0.50, shoreHeightDelta);
-	float shoreWetnessSpecular = saturate(shoreWetness * shoreWetSurfaceFade * wetnessDistanceFade * wetFilmSlopeMask * 0.55);
+	float shoreWetSlopeMask = smoothstep(0.08, 0.78, rainSurfaceUpness);
+	float shoreWetnessSpecular = saturate(shoreWetness * shoreWetSurfaceFade * wetnessDistanceFade * shoreWetSlopeMask * 0.85);
 	float deepPuddleMask = smoothstep(0.10, 0.80, puddleDepthSignal);
 	float rainPuddlePhase = saturate(inRainBlend * deepPuddleMask);
 	float postRainOverridePhaseCandidate = saturate(postRainBlend * smoothstep(0.30, 0.88, deepPuddleMask));
@@ -2835,6 +2836,9 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	float wetnessGrazingAttenuation = saturate(lerp(1.0, grazingMinAttenuation, grazingMask));
 	wetnessGrazingAttenuation = lerp(1.0, wetnessGrazingAttenuation, wetHighlightMask);
 	wetnessGlossinessSpecular *= wetnessGrazingAttenuation;
+	// Persistent shore wetness is a dry-weather damp film control. Keep it visible even
+	// when the generic wet-film grazing suppression removes rain/puddle glare.
+	wetnessGlossinessSpecular = max(wetnessGlossinessSpecular, shoreWetnessSpecular);
 	wetHighlightReflectanceScale = lerp(1.0, wetnessGrazingAttenuation, saturate(0.30 * wetHighlightMask + highlightReductionCurve));
 	float wetHighlightViewDistance = abs(viewPosition.z);
 	float farWhiteDistanceMask = smoothstep(2048.0, 8192.0, wetHighlightViewDistance);
