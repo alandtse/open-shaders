@@ -435,6 +435,7 @@ void ScreenSpaceGI::DrawSettings()
 				if (!isVR)
 					ImGui::Text("VR only.");
 				ImGui::Text("Quarter-res AO outside with Full Res AO in the center. Denoisers are disabled while active.");
+				ImGui::TextUnformatted("Foveated Area is set up in the Upscaling UI.");
 			}
 
 			ImGui::TableNextColumn();
@@ -461,7 +462,8 @@ void ScreenSpaceGI::DrawSettings()
 			if (auto _tt = Util::HoverTooltipWrapper()) {
 				if (!isVR)
 					ImGui::Text("VR only.");
-				ImGui::Text("Full Res AO in center only; AO is disabled outside center. Use the center-area slider to tune coverage.");
+				ImGui::Text("Full Res AO in center only; AO is disabled outside center. Tune coverage from the Upscaling UI.");
+				ImGui::TextUnformatted("Foveated Area is set up in the Upscaling UI.");
 			}
 
 			ImGui::TableNextColumn();
@@ -480,6 +482,10 @@ void ScreenSpaceGI::DrawSettings()
 				ImGui::Text("High-quality baseline: Full Res with GI and blur enabled, 8 slices and 10 steps.");
 
 			ImGui::EndTable();
+		}
+		if (isVR && settings.FoveatedPresetMode != kFoveatedPresetModeOff) {
+			const float centerArea = ResolveFoveatedCenterMaskScale(settings);
+			ImGui::TextColored(ImVec4(0.45f, 0.45f, 0.45f, 1.0f), "Selected SSGI Foveated Area: %.2f", centerArea);
 		}
 		if (!isVR) {
 			ImGui::TextDisabled("Foveated/QRes and Foveated/Only presets are VR only.");
@@ -553,7 +559,6 @@ void ScreenSpaceGI::DrawSettings()
 			settings.ResolutionMode = 2;
 			const float centerArea = ResolveFoveatedCenterMaskScale(settings);
 			settings.CenterFullResMaskScale = centerArea;
-			ImGui::Text("Active SSGI Foveated Area: %.2f", centerArea);
 		}
 	}
 

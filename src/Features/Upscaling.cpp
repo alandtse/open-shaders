@@ -840,6 +840,10 @@ void Upscaling::DrawSettings()
 				settings.foveatedRightEyeMaskOffsetX = ClampFoveatedMaskOffsetAdjustment(settings.foveatedRightEyeMaskOffsetX);
 				settings.foveatedRightEyeMaskOffsetY = ClampFoveatedMaskOffsetAdjustment(settings.foveatedRightEyeMaskOffsetY);
 
+				if (!settings.periphery_taa_enable) {
+					ImGui::TextDisabled("SSGI Foveated Area is linked to the active DLSS FOV area.");
+				}
+
 				ImGui::Dummy(ImVec2(0.0f, 4.0f));
 				ImGui::Separator();
 				ImGui::TextColored(ImVec4(0.96f, 0.82f, 0.40f, 1.0f), "Peripheral TAA Settings");
@@ -911,13 +915,13 @@ void Upscaling::DrawSettings()
 					settings.periphery_taa_center_area,
 					settings.foveatedCenterHorizontalScale,
 					settings.periphery_taa_center_blend_feather);
+
+				if (settings.periphery_taa_enable) {
+					ImGui::TextDisabled("SSGI Foveated Area is linked to the Peripheral TAA range.");
+				}
 			}
 
-			if (ssgiFovLinkedToUpscaling) {
-				ImGui::TextDisabled(settings.periphery_taa_enable ?
-					"SSGI Foveated Area is linked to the Peripheral TAA range." :
-					"SSGI Foveated Area is linked to the active upscaling FOV area.");
-			} else {
+			if (!ssgiFovLinkedToUpscaling) {
 				{
 					Util::BlueFrameStyleWrapper ssgiAreaStyle;
 					ImGui::SliderFloat("SSGI Foveated Area", &settings.ssgiFovCenterArea, FoveatedCommon::kCenterAreaMin, FoveatedCommon::kCenterAreaMax, "%.2f");
@@ -1268,6 +1272,12 @@ void Upscaling::LoadSettings(json& o_json)
 void Upscaling::RestoreDefaultSettings()
 {
 	settings = {};
+	settings.foveatedVendorDispatch = false;
+	settings.foveatedPeripheryMaskVisualization = false;
+	settings.reflexLowLatencyMode = true;
+	settings.reflexUseMarkersToOptimize = true;
+	settings.reflexLowLatencyBoost = false;
+	settings.reflexUseFPSLimit = false;
 	SanitizeUpscalingSettings(settings);
 }
 
