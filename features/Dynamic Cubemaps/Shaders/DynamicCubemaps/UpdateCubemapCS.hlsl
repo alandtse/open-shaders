@@ -61,7 +61,7 @@ float GetFrameEdgeMask(float2 uvMono)
 
 cbuffer UpdateData : register(b0)
 {
-	float3 CameraPreviousPosAdjust2;
+	float3 CameraPosAdjustDelta;
 	uint CaptureFlags;
 }
 
@@ -199,11 +199,9 @@ cbuffer UpdateData : register(b0)
 	}
 
 	float4 position = DynamicCubemapPosition[ThreadID];
-	float3 cameraPosAdjustCenter = FrameBuffer::CameraPosAdjust[0].xyz;
-#if defined(VR)
-	cameraPosAdjustCenter = 0.5 * (FrameBuffer::CameraPosAdjust[0].xyz + FrameBuffer::CameraPosAdjust[1].xyz);
-#endif
-	position.xyz = (position.xyz + (CameraPreviousPosAdjust2.xyz * 0.001)) - (cameraPosAdjustCenter * 0.001);  // Remove adjustment, add new adjustment
+	// CPU supplies previousAnchor - currentAnchor so history reprojection remains
+	// consistent whether VR capture is anchored to the eyes or to the player root.
+	position.xyz += CameraPosAdjustDelta.xyz * 0.001;
 	DynamicCubemapPosition[ThreadID] = position;
 
 	float4 color = DynamicCubemapRaw[ThreadID];

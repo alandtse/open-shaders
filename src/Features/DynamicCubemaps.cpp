@@ -389,12 +389,15 @@ void DynamicCubemaps::UpdateCubemapCapture(bool a_reflections)
 
 	UpdateCubemapCB updateData{};
 
-	static float3 cameraPreviousPosAdjust[2] = { { 0, 0, 0 }, { 0, 0, 0 } };
-	updateData.CameraPreviousPosAdjust = cameraPreviousPosAdjust[index];
+	static float3 previousCaptureAnchor[2] = { { 0, 0, 0 }, { 0, 0, 0 } };
+	auto captureAnchor = GetCubemapCaptureAnchorPosition();
+	float3 currentCaptureAnchor{ captureAnchor.x, captureAnchor.y, captureAnchor.z };
 
-	auto eyePosition = GetCubemapCaptureAnchorPosition();
-
-	cameraPreviousPosAdjust[index] = { eyePosition.x, eyePosition.y, eyePosition.z };
+	// Reproject stale cubemap texels using the same anchor used for capture history.
+	// Mixing player-root history with current eye-center reprojection makes VR reflections
+	// look attached to a small area around the player while moving.
+	updateData.CameraPosAdjustDelta = previousCaptureAnchor[index] - currentCaptureAnchor;
+	previousCaptureAnchor[index] = currentCaptureAnchor;
 	updateData.CaptureFlags = GetVRCaptureFlags();
 
 	updateCubemapCB->Update(updateData);
