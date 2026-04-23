@@ -374,9 +374,28 @@ void ScreenSpaceGI::DrawSettings()
 
 	{
 		auto presetsAndQualityGuard = Util::DisableGuard(!settings.Enabled);
+		auto brightenColor = [](ImVec4 a_color, float a_amount) {
+			a_color.x += (1.0f - a_color.x) * a_amount;
+			a_color.y += (1.0f - a_color.y) * a_amount;
+			a_color.z += (1.0f - a_color.z) * a_amount;
+			return a_color;
+		};
+		auto approximatelyEqual = [](float a_lhs, float a_rhs) {
+			return std::abs(a_lhs - a_rhs) <= 0.001f;
+		};
 		auto drawPresetButton = [](const char* a_label, const ImVec2& a_size, const ImVec4& a_normal, const ImVec4& a_hovered, const ImVec4& a_active) {
 			Util::StyledButtonWrapper style(a_normal, a_hovered, a_active);
 			return ImGui::Button(a_label, a_size);
+		};
+		auto drawThemePresetButton = [&](const char* a_label, bool a_active, const ImVec2& a_size) {
+			if (!a_active)
+				return ImGui::Button(a_label, a_size);
+			return drawPresetButton(
+				a_label,
+				a_size,
+				brightenColor(ImGui::GetStyleColorVec4(ImGuiCol_Button), 0.35f),
+				brightenColor(ImGui::GetStyleColorVec4(ImGuiCol_ButtonHovered), 0.25f),
+				brightenColor(ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive), 0.20f));
 		};
 		auto drawFoveatedToggleButton = [&](const char* a_label, bool a_active, const ImVec2& a_size) {
 			const ImVec4 normal = a_active ? ImVec4(0.88f, 0.74f, 0.22f, 1.0f) : ImVec4(0.62f, 0.49f, 0.12f, 1.0f);
@@ -392,7 +411,17 @@ void ScreenSpaceGI::DrawSettings()
 			ImGui::TableSetupColumn("PresetReference", ImGuiTableColumnFlags_WidthStretch, 1.0f);
 
 			ImGui::TableNextColumn();
-			if (ImGui::Button("AO only", { -1, 0 })) {
+			const bool aoOnlyActive =
+				settings.FoveatedPresetMode == kFoveatedPresetModeOff &&
+				settings.ResolutionMode == 0 &&
+				settings.NumSlices == 3 &&
+				settings.NumSteps == 6 &&
+				!settings.EnableGI &&
+				!settings.EnableBlur &&
+				!settings.EnableTemporalDenoiser &&
+				approximatelyEqual(settings.AOPower, 1.8f) &&
+				(!isVR || approximatelyEqual(settings.VRCullDistance, 1500.0f));
+			if (drawThemePresetButton("AO only", aoOnlyActive, { -1, 0 })) {
 				settings.NumSlices = 3;
 				settings.NumSteps = 6;
 				settings.ResolutionMode = 0;
@@ -467,7 +496,15 @@ void ScreenSpaceGI::DrawSettings()
 			}
 
 			ImGui::TableNextColumn();
-			if (ImGui::Button("Reference", { -1, 0 })) {
+			const bool referenceActive =
+				settings.FoveatedPresetMode == kFoveatedPresetModeOff &&
+				settings.ResolutionMode == 0 &&
+				settings.NumSlices == 8 &&
+				settings.NumSteps == 10 &&
+				settings.ResourceProfile == kResourceProfileFullGI &&
+				settings.EnableGI &&
+				settings.EnableBlur;
+			if (drawThemePresetButton("Reference", referenceActive, { -1, 0 })) {
 				settings.NumSlices = 8;
 				settings.NumSteps = 10;
 				settings.ResolutionMode = 0;

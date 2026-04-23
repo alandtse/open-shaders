@@ -789,6 +789,7 @@ void Upscaling::DrawSettings()
 
 				{
 					Util::BlueFrameStyleWrapper areaStyle;
+					auto areaGuard = Util::DisableGuard(settings.periphery_taa_enable);
 					ImGui::SliderFloat("DLSS FOV Area", &settings.foveatedCenterArea, FoveatedCommon::kCenterAreaMin, FoveatedCommon::kCenterAreaMax, "%.2f");
 				}
 				if (auto _tt = Util::HoverTooltipWrapper()) {
