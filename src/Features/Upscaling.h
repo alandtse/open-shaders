@@ -73,6 +73,7 @@ public:
 		float foveatedRightEyeMaskOffsetY = 0.0f;
 		float periphery_taa_center_area = 0.6f;
 		float ssgiFovCenterArea = 0.7f;
+		bool ssgiUseUpscalingFovProfile = true;
 		bool foveatedPeripheryMaskVisualization = false;
 		bool periphery_taa_enable = false;
 		float periphery_taa_outer_scale = 0.70f;
@@ -255,6 +256,8 @@ public:
 	float GetActiveFoveatedCenterArea() const;
 	float GetActiveFoveatedCenterHorizontalScale() const;
 	std::array<float2, 2> GetActiveResolvedFoveatedMaskCenterOffsets() const;
+	bool IsSsgiUpscalingFovLinkAvailable() const;
+	bool IsSsgiUsingUpscalingFovProfile() const;
 
 	void CheckResources(UpscaleMethod a_upscalemethod);
 	void CreateUpscalingTextureResources(UpscaleMethod a_upscalemethod);

@@ -240,6 +240,8 @@ void ScreenSpaceGI::DrawSettings()
 	static bool showAdvanced;
 	const bool isVR = REL::Module::IsVR();
 	const bool foveatedPresetActive = IsRuntimeFoveatedPresetActive(settings);
+	auto& upscaling = globals::features::upscaling;
+	const bool canLinkSsgiToUpscaling = isVR && upscaling.IsSsgiUpscalingFovLinkAvailable();
 
 	if (!ShadersOK())
 		ImGui::TextColored({ 1, 0, 0, 1 }, "Compute shaders failed to compile!");
@@ -464,7 +466,7 @@ void ScreenSpaceGI::DrawSettings()
 				if (!isVR)
 					ImGui::Text("VR only.");
 				ImGui::Text("Quarter-res AO outside with Full Res AO in the center. Denoisers are disabled while active.");
-				ImGui::TextUnformatted("Foveated Area is set up in the Upscaling UI.");
+				ImGui::TextUnformatted("Foveated Area is configured below.");
 			}
 
 			ImGui::TableNextColumn();
@@ -491,8 +493,8 @@ void ScreenSpaceGI::DrawSettings()
 			if (auto _tt = Util::HoverTooltipWrapper()) {
 				if (!isVR)
 					ImGui::Text("VR only.");
-				ImGui::Text("Full Res AO in center only; AO is disabled outside center. Tune coverage from the Upscaling UI.");
-				ImGui::TextUnformatted("Foveated Area is set up in the Upscaling UI.");
+				ImGui::Text("Full Res AO in center only; AO is disabled outside center. Tune coverage below.");
+				ImGui::TextUnformatted("Foveated Area is configured below.");
 			}
 
 			ImGui::TableNextColumn();
@@ -526,6 +528,38 @@ void ScreenSpaceGI::DrawSettings()
 		}
 		if (!isVR) {
 			ImGui::TextDisabled("Foveated/QRes and Foveated/Only presets are VR only.");
+		}
+
+		if (isVR) {
+			ImGui::SeparatorText("Foveated SSGI");
+
+			if (canLinkSsgiToUpscaling) {
+				Util::BlueFrameStyleWrapper linkStyle(true);
+				ImGui::Checkbox("Link Foveated SSGI to Foveated Upscaling", &upscaling.settings.ssgiUseUpscalingFovProfile);
+				if (auto _tt = Util::HoverTooltipWrapper()) {
+					ImGui::TextUnformatted("When enabled, SSGI inherits the active DLSS FOV area.");
+					ImGui::TextUnformatted("If Peripheral TAA is enabled, SSGI inherits the Peripheral TAA range instead.");
+					ImGui::TextUnformatted("Disable this to use the SSGI-only FOV area below.");
+				}
+			}
+
+			const bool ssgiFovLinkedToUpscaling = canLinkSsgiToUpscaling && upscaling.IsSsgiUsingUpscalingFovProfile();
+			if (ssgiFovLinkedToUpscaling) {
+				if (upscaling.settings.periphery_taa_enable)
+					ImGui::TextDisabled("SSGI Foveated Area is linked to the Peripheral TAA range.");
+				else
+					ImGui::TextDisabled("SSGI Foveated Area is linked to the active DLSS FOV area.");
+			} else {
+				Util::BlueFrameStyleWrapper ssgiAreaStyle;
+				ImGui::SliderFloat("SSGI Foveated Area", &upscaling.settings.ssgiFovCenterArea, FoveatedCommon::kCenterAreaMin, FoveatedCommon::kCenterAreaMax, "%.2f");
+				if (auto _tt = Util::HoverTooltipWrapper()) {
+					ImGui::TextUnformatted("Controls the SSGI foveated center area when it is not linked to DLSS FOV controls.");
+					ImGui::TextUnformatted("Used by the foveated presets in this SSGI UI.");
+					ImGui::TextUnformatted("Lower values shrink the full-res SSGI center for more performance.");
+					ImGui::TextUnformatted("Higher values widen full-res SSGI coverage.");
+				}
+				upscaling.settings.ssgiFovCenterArea = FoveatedCommon::ClampCenterArea(upscaling.settings.ssgiFovCenterArea);
+			}
 		}
 
 		ImGui::SeparatorText("Quality/Performance");

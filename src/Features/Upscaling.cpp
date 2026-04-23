@@ -39,6 +39,7 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	foveatedRightEyeMaskOffsetY,
 	periphery_taa_center_area,
 	ssgiFovCenterArea,
+	ssgiUseUpscalingFovProfile,
 	foveatedPeripheryMaskVisualization,
 	periphery_taa_enable,
 	periphery_taa_outer_scale,
@@ -341,6 +342,7 @@ namespace
 		settings.foveatedRightEyeMaskOffsetY = 0.0f;
 		settings.periphery_taa_center_area = 0.6f;
 		settings.ssgiFovCenterArea = 0.7f;
+		settings.ssgiUseUpscalingFovProfile = true;
 		settings.foveatedPeripheryMaskVisualization = false;
 		settings.periphery_taa_enable = false;
 		settings.periphery_taa_outer_scale = 0.70f;
@@ -358,6 +360,7 @@ namespace
 		o_json.erase("foveatedRightEyeMaskOffsetY");
 		o_json.erase("periphery_taa_center_area");
 		o_json.erase("ssgiFovCenterArea");
+		o_json.erase("ssgiUseUpscalingFovProfile");
 		o_json.erase("foveatedPeripheryMaskVisualization");
 		o_json.erase("periphery_taa_enable");
 		o_json.erase("periphery_taa_outer_scale");
@@ -370,9 +373,14 @@ namespace
 		return globals::game::isVR && a_upscaleMethod == Upscaling::UpscaleMethod::kDLSS;
 	}
 
+	bool IsFoveatedVendorDispatchRequested(const Upscaling::Settings& settings, Upscaling::UpscaleMethod a_upscaleMethod)
+	{
+		return SupportsFoveatedVendorDispatch(a_upscaleMethod) && settings.foveatedVendorDispatch;
+	}
+
 	bool UsesUpscalingFovProfileForSsgi(const Upscaling::Settings& settings, Upscaling::UpscaleMethod a_upscaleMethod)
 	{
-		return globals::game::isVR && SupportsFoveatedVendorDispatch(a_upscaleMethod) && settings.foveatedVendorDispatch;
+		return IsFoveatedVendorDispatchRequested(settings, a_upscaleMethod) && settings.ssgiUseUpscalingFovProfile;
 	}
 
 	bool IsVRRuntimeActive()
@@ -630,10 +638,13 @@ void Upscaling::DrawSettings()
 
 	// Check the current upscale method
 	auto upscaleMethod = GetUpscaleMethod();
+	const bool runtimeFsr4Requested = upscaleMethod == UpscaleMethod::kFSR && settings.fsr4RuntimeEnable;
+	if (runtimeFsr4Requested)
+		(void)fidelityFX.IsRuntimeUpscalerProviderValidated();
 
 	auto drawFsr4OverrideControls = [&]() {
 		if (runtimeFsr4Present && isAmdAdapter && !runtimeFsr4AutoEligible) {
-			ImGui::Checkbox("Allow FSR4 on Other AMD GPUs", &settings.fsr4AllowNonRx90Amd);
+			ImGui::Checkbox("Allow FSR4 on Other AMD GPUs (Experimental)", &settings.fsr4AllowNonRx90Amd);
 			if (auto _tt = Util::HoverTooltipWrapper()) {
 				ImGui::TextUnformatted("Enables Runtime FSR4 on AMD cards that are not auto-detected as RX 7000-series or newer.");
 				ImGui::TextUnformatted("Keep this off unless your AMD card supports FSR4 and auto-detection failed.");
@@ -643,6 +654,16 @@ void Upscaling::DrawSettings()
 			ImGui::TextDisabled("Runtime FSR4 unavailable: missing FidelityFX upscaler runtime.");
 		}
 	};
+
+	if (upscaleMethod == UpscaleMethod::kFSR && settings.fsr4RuntimeEnable) {
+		ImGui::TextDisabled("Current frame path: %s", fidelityFX.GetRuntimeUpscalerLastFramePathLabel());
+		if (fidelityFX.IsRuntimeUpscalerFailureLatched()) {
+			ImGui::TextDisabled("Runtime FSR4 is latched off after a runtime failure; using host FSR 3.1 fallback.");
+		} else if (fidelityFX.HasRuntimeUpscalerProviderValidationResult() &&
+		           !fidelityFX.DoesRuntimeUpscalerProviderMatchRequestedVersion()) {
+			ImGui::TextDisabled("Runtime FSR4 provider validation failed; using host FSR 3.1 fallback.");
+		}
+	}
 
 	// Display warning for DLSS resolution limits (non-VR only; VR handles this automatically)
 	if (!globals::game::isVR && upscaleMethod == UpscaleMethod::kDLSS) {
@@ -769,8 +790,8 @@ void Upscaling::DrawSettings()
 					ImGui::TextUnformatted("Off: SSGI uses its own FOV area.");
 				}
 			}
-			const bool ssgiFovLinkedToUpscaling = UsesUpscalingFovProfileForSsgi(settings, upscaleMethod);
-			if (ssgiFovLinkedToUpscaling) {
+			const bool foveatedDispatchRequestedForMethod = IsFoveatedVendorDispatchRequested(settings, upscaleMethod);
+			if (foveatedDispatchRequestedForMethod) {
 				{
 					Util::BlueFrameStyleWrapper maskStyle(true);
 					ImGui::Checkbox("FOV Mask Visualization", &settings.foveatedPeripheryMaskVisualization);
@@ -840,10 +861,6 @@ void Upscaling::DrawSettings()
 				settings.foveatedLeftEyeMaskOffsetY = ClampFoveatedMaskOffsetAdjustment(settings.foveatedLeftEyeMaskOffsetY);
 				settings.foveatedRightEyeMaskOffsetX = ClampFoveatedMaskOffsetAdjustment(settings.foveatedRightEyeMaskOffsetX);
 				settings.foveatedRightEyeMaskOffsetY = ClampFoveatedMaskOffsetAdjustment(settings.foveatedRightEyeMaskOffsetY);
-
-				if (!settings.periphery_taa_enable) {
-					ImGui::TextDisabled("SSGI Foveated Area is linked to the active DLSS FOV area.");
-				}
 
 				ImGui::Dummy(ImVec2(0.0f, 4.0f));
 				ImGui::Separator();
@@ -916,24 +933,6 @@ void Upscaling::DrawSettings()
 					settings.periphery_taa_center_area,
 					settings.foveatedCenterHorizontalScale,
 					settings.periphery_taa_center_blend_feather);
-
-				if (settings.periphery_taa_enable) {
-					ImGui::TextDisabled("SSGI Foveated Area is linked to the Peripheral TAA range.");
-				}
-			}
-
-			if (!ssgiFovLinkedToUpscaling) {
-				{
-					Util::BlueFrameStyleWrapper ssgiAreaStyle;
-					ImGui::SliderFloat("SSGI Foveated Area", &settings.ssgiFovCenterArea, FoveatedCommon::kCenterAreaMin, FoveatedCommon::kCenterAreaMax, "%.2f");
-				}
-				if (auto _tt = Util::HoverTooltipWrapper()) {
-					ImGui::TextUnformatted("Controls the SSGI foveated center area when it is not linked to DLSS FOV controls.");
-					ImGui::TextUnformatted("Used by the foveated presets in the SSGI UI.");
-					ImGui::TextUnformatted("Lower values shrink the full-res SSGI center for more performance.");
-					ImGui::TextUnformatted("Higher values widen full-res SSGI coverage.");
-				}
-				settings.ssgiFovCenterArea = ClampFoveatedCenterArea(settings.ssgiFovCenterArea);
 			}
 
 			if (streamline.reflexSupportedOnCurrentAdapter)
@@ -1120,6 +1119,22 @@ void Upscaling::DrawSettings()
 		ImGui::TextUnformatted("Changing this requires a restart to take effect.");
 		if (auto _tt = Util::HoverTooltipWrapper()) {
 			ImGui::Text("Streamline logging controls the verbosity of NVIDIA Streamline backend logs. Useful for debugging issues with DLSS/DLSS-G.");
+		}
+
+		if (upscaleMethod == UpscaleMethod::kFSR) {
+			ImGui::Separator();
+			ImGui::Text("AMD FSR Mode: %s", settings.fsr4RuntimeEnable ? "Runtime FSR 4 requested" : "FSR 3.1");
+			ImGui::Text("Current Frame Path: %s", fidelityFX.GetRuntimeUpscalerLastFramePathLabel());
+			if (settings.fsr4RuntimeEnable) {
+				const bool validationKnown = fidelityFX.HasRuntimeUpscalerProviderValidationResult();
+				const bool validationPassed = fidelityFX.DoesRuntimeUpscalerProviderMatchRequestedVersion();
+				const std::string requestedVersion = fidelityFX.GetRuntimeUpscalerRequestedVersionString();
+				const std::string providerName = fidelityFX.GetRuntimeUpscalerProviderName();
+				ImGui::Text("Runtime Validation: %s", validationKnown ? (validationPassed ? "Passed" : "Failed") : "Pending");
+				ImGui::Text("Failure Latch: %s", fidelityFX.IsRuntimeUpscalerFailureLatched() ? "Active" : "Clear");
+				ImGui::Text("Requested FSR Version: %s", requestedVersion.c_str());
+				ImGui::Text("Runtime Provider: %s", providerName.empty() ? "(not reported by SDK)" : providerName.c_str());
+			}
 		}
 
 		// VR Debug visualization -- per-eye buffers and native inputs
@@ -1698,10 +1713,7 @@ eastl::unique_ptr<Texture2D> Upscaling::CreateTextureFromSource(ID3D11Resource* 
 
 bool Upscaling::IsFoveatedVendorDispatchEnabled(UpscaleMethod a_upscaleMethod) const
 {
-	if (!SupportsFoveatedVendorDispatch(a_upscaleMethod))
-		return false;
-
-	if (!settings.foveatedVendorDispatch)
+	if (!IsFoveatedVendorDispatchRequested(settings, a_upscaleMethod))
 		return false;
 
 	const bool usePeripheryTAAProfile = settings.periphery_taa_enable;
@@ -1730,13 +1742,14 @@ bool Upscaling::IsPeripheryTAAPathActive(UpscaleMethod a_upscaleMethod) const
 bool Upscaling::UseActiveFoveatedPeripheryTAAProfile() const
 {
 	const auto upscaleMethod = GetUpscaleMethod();
-	return UsesUpscalingFovProfileForSsgi(settings, upscaleMethod) && settings.periphery_taa_enable;
+	return IsPeripheryTAAEnabled(upscaleMethod);
 }
 
 float Upscaling::GetActiveFoveatedCenterArea() const
 {
 	const auto upscaleMethod = GetUpscaleMethod();
-	if (globals::game::isVR && !UsesUpscalingFovProfileForSsgi(settings, upscaleMethod))
+	const bool useUpscalingFovForSsgi = UsesUpscalingFovProfileForSsgi(settings, upscaleMethod);
+	if (globals::game::isVR && !useUpscalingFovForSsgi)
 		return ClampFoveatedCenterArea(settings.ssgiFovCenterArea);
 
 	if (UseActiveFoveatedPeripheryTAAProfile()) {
@@ -1753,7 +1766,8 @@ float Upscaling::GetActiveFoveatedCenterArea() const
 float Upscaling::GetActiveFoveatedCenterHorizontalScale() const
 {
 	const auto upscaleMethod = GetUpscaleMethod();
-	if (!globals::game::isVR || !UsesUpscalingFovProfileForSsgi(settings, upscaleMethod))
+	const bool useUpscalingFovForSsgi = UsesUpscalingFovProfileForSsgi(settings, upscaleMethod);
+	if (!globals::game::isVR || !useUpscalingFovForSsgi)
 		return 1.0f;
 
 	return GetFoveatedMaskProfileParams(settings, UseActiveFoveatedPeripheryTAAProfile()).centerHorizontalScale;
@@ -1800,13 +1814,26 @@ std::array<float2, 2> Upscaling::GetResolvedFoveatedMaskCenterOffsets(bool usePe
 std::array<float2, 2> Upscaling::GetActiveResolvedFoveatedMaskCenterOffsets() const
 {
 	const auto upscaleMethod = GetUpscaleMethod();
-	if (globals::game::isVR && !UsesUpscalingFovProfileForSsgi(settings, upscaleMethod))
+	const bool useUpscalingFovForSsgi = UsesUpscalingFovProfileForSsgi(settings, upscaleMethod);
+	if (globals::game::isVR && !useUpscalingFovForSsgi)
 		return GetDefaultFoveatedMaskCenterOffsets();
 
 	auto centerOffsets = GetResolvedFoveatedMaskCenterOffsets(UseActiveFoveatedPeripheryTAAProfile());
 	if (!globals::game::isVR)
 		centerOffsets[1] = { 0.0f, 0.0f };
 	return centerOffsets;
+}
+
+bool Upscaling::IsSsgiUpscalingFovLinkAvailable() const
+{
+	const auto upscaleMethod = GetUpscaleMethod();
+	return fidelityFX.IsNvidiaAdapterDetected() && IsFoveatedVendorDispatchRequested(settings, upscaleMethod);
+}
+
+bool Upscaling::IsSsgiUsingUpscalingFovProfile() const
+{
+	const auto upscaleMethod = GetUpscaleMethod();
+	return UsesUpscalingFovProfileForSsgi(settings, upscaleMethod);
 }
 
 bool Upscaling::BuildFoveatedDispatchRects(uint32_t inputWidthPerEye, uint32_t inputHeight, uint32_t outputWidthPerEye, uint32_t outputHeight, bool isVR, float centerScale, float centerFeather, float centerHorizontalScale, bool usePeripheryTAAProfile)

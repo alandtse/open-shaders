@@ -4,6 +4,11 @@
 #include <directx/d3d12.h>
 #include <winrt/base.h>
 
+#include <cstdint>
+#include <string>
+#include <utility>
+#include <vector>
+
 #include <FidelityFX/host/backends/dx11/ffx_dx11.h>
 #include <FidelityFX/host/ffx_fsr3.h>
 #include <FidelityFX/host/ffx_interface.h>
@@ -54,6 +59,13 @@ public:
 	bool IsRuntimeUpscalerPresent() const;
 	bool IsRuntimeUpscalerAutoEligible() const;
 	bool IsRuntimeUpscalerAvailable() const;
+	bool IsRuntimeUpscalerProviderValidated() const;
+	bool HasRuntimeUpscalerProviderValidationResult() const;
+	bool DoesRuntimeUpscalerProviderMatchRequestedVersion() const;
+	bool IsRuntimeUpscalerFailureLatched() const;
+	const char* GetRuntimeUpscalerLastFramePathLabel() const;
+	std::string GetRuntimeUpscalerProviderName() const;
+	std::string GetRuntimeUpscalerRequestedVersionString() const;
 
 	void Upscale(ID3D11Resource* a_upscalingTexture, ID3D11Resource* a_reactiveMask, ID3D11Resource* a_transparencyCompositionMask, ID3D11Resource* a_motionVectors, float a_sharpness);
 	bool UpscaleRegion(uint32_t a_contextIndex, ID3D11Resource* a_color, ID3D11Resource* a_depth, ID3D11Resource* a_motionVectors,
@@ -94,6 +106,19 @@ private:
 	// Flag to prevent spamming the log with FSR3 dispatch crash messages
 	bool fsrDispatchCrashLogged = false;
 
+	enum class RuntimeUpscalerFramePath : uint8_t
+	{
+		kInactive = 0,
+		kHostFsr31 = 1,
+		kRuntimeFsr4 = 2,
+		kHostFsr31Fallback = 3
+	};
+
+	bool runtimeUpscalerFailureLatched = false;
+	bool runtimeUpscalerLastFramePathValid = false;
+	uint32_t runtimeUpscalerLastFrameIndex = 0;
+	RuntimeUpscalerFramePath runtimeUpscalerLastFramePath = RuntimeUpscalerFramePath::kInactive;
+
 	mutable bool runtimeUpscalerProviderCacheValid = false;
 	mutable bool runtimeUpscalerProviderSupportsRequestedVersion = false;
 	mutable LUID runtimeUpscalerProviderAdapterLuid{};
@@ -102,6 +127,9 @@ private:
 
 	bool CanUseRuntimeUpscalerPath() const;
 	bool QueryRuntimeUpscalerProviderSupport() const;
+	void ResetRuntimeUpscalerTracking(bool a_invalidateProviderCache);
+	void LatchRuntimeUpscalerFailure();
+	void RecordRuntimeUpscalerFramePath(RuntimeUpscalerFramePath a_path);
 	bool EnsureRuntimeUpscalerInterop();
 	bool EnsureRuntimeUpscalerContexts(uint32_t a_fullRenderWidth, uint32_t a_fullRenderHeight, uint32_t a_fullDisplayWidth, uint32_t a_fullDisplayHeight, uint32_t a_contextCount);
 	bool EnsureRuntimeUpscalerSharedResources(uint32_t a_contextCount, uint32_t a_fullRenderWidth, uint32_t a_fullRenderHeight, uint32_t a_fullDisplayWidth, uint32_t a_fullDisplayHeight,

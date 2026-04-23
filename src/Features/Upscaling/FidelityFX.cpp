@@ -220,10 +220,7 @@ void FidelityFX::LoadFFX()
 {
 	const std::filesystem::path pluginDir = std::filesystem::path(FidelityFX::PluginDir);
 
-	runtimeUpscalerProviderCacheValid = false;
-	runtimeUpscalerProviderSupportsRequestedVersion = false;
-	runtimeUpscalerProviderMatchedVersionId = 0;
-	runtimeUpscalerProviderMatchedVersionName.clear();
+	ResetRuntimeUpscalerTracking(true);
 
 	const std::filesystem::path framegenPath = pluginDir / kFrameGenerationDllName;
 	const std::filesystem::path loaderPath = pluginDir / kLoaderDllName;
@@ -254,6 +251,96 @@ void FidelityFX::LoadFFX()
 	} else {
 		logger::warn("[FidelityFX] Runtime upscaler DLL not found - FSR4 runtime path disabled");
 	}
+}
+
+bool FidelityFX::IsRuntimeUpscalerProviderValidated() const
+{
+	if (!IsRuntimeUpscalerAvailable())
+		return false;
+	return QueryRuntimeUpscalerProviderSupport();
+}
+
+bool FidelityFX::HasRuntimeUpscalerProviderValidationResult() const
+{
+	return runtimeUpscalerProviderCacheValid;
+}
+
+bool FidelityFX::DoesRuntimeUpscalerProviderMatchRequestedVersion() const
+{
+	return runtimeUpscalerProviderCacheValid && runtimeUpscalerProviderSupportsRequestedVersion;
+}
+
+bool FidelityFX::IsRuntimeUpscalerFailureLatched() const
+{
+	return runtimeUpscalerFailureLatched;
+}
+
+const char* FidelityFX::GetRuntimeUpscalerLastFramePathLabel() const
+{
+	if (!runtimeUpscalerLastFramePathValid)
+		return "Pending FSR dispatch";
+
+	switch (runtimeUpscalerLastFramePath) {
+	case RuntimeUpscalerFramePath::kHostFsr31:
+		return "Host FSR 3.1";
+	case RuntimeUpscalerFramePath::kRuntimeFsr4:
+		return "Runtime FSR4";
+	case RuntimeUpscalerFramePath::kHostFsr31Fallback:
+		return "Host FSR 3.1 fallback";
+	case RuntimeUpscalerFramePath::kInactive:
+	default:
+		return "Pending FSR dispatch";
+	}
+}
+
+std::string FidelityFX::GetRuntimeUpscalerProviderName() const
+{
+	return runtimeUpscalerProviderMatchedVersionName;
+}
+
+std::string FidelityFX::GetRuntimeUpscalerRequestedVersionString() const
+{
+	return UpscalerVersionToString(FFX_UPSCALER_VERSION);
+}
+
+void FidelityFX::ResetRuntimeUpscalerTracking(bool a_invalidateProviderCache)
+{
+	runtimeUpscalerFailureLatched = false;
+	runtimeUpscalerLastFramePathValid = false;
+	runtimeUpscalerLastFrameIndex = 0;
+	runtimeUpscalerLastFramePath = RuntimeUpscalerFramePath::kInactive;
+
+	if (!a_invalidateProviderCache)
+		return;
+
+	runtimeUpscalerProviderCacheValid = false;
+	runtimeUpscalerProviderSupportsRequestedVersion = false;
+	runtimeUpscalerProviderAdapterLuid = {};
+	runtimeUpscalerProviderMatchedVersionId = 0;
+	runtimeUpscalerProviderMatchedVersionName.clear();
+}
+
+void FidelityFX::LatchRuntimeUpscalerFailure()
+{
+	if (runtimeUpscalerFailureLatched)
+		return;
+
+	runtimeUpscalerFailureLatched = true;
+	logger::warn("[FidelityFX] Runtime upscaler path latched off after failure; using host FSR3.1 until FSR resources are rebuilt or the method changes.");
+}
+
+void FidelityFX::RecordRuntimeUpscalerFramePath(RuntimeUpscalerFramePath a_path)
+{
+	const uint32_t frame = globals::state ? globals::state->frameCount : 0;
+	if (!runtimeUpscalerLastFramePathValid || runtimeUpscalerLastFrameIndex != frame) {
+		runtimeUpscalerLastFramePathValid = true;
+		runtimeUpscalerLastFrameIndex = frame;
+		runtimeUpscalerLastFramePath = a_path;
+		return;
+	}
+
+	if (static_cast<uint8_t>(a_path) > static_cast<uint8_t>(runtimeUpscalerLastFramePath))
+		runtimeUpscalerLastFramePath = a_path;
 }
 
 void FidelityFX::SetupFrameGeneration()
@@ -389,6 +476,10 @@ void FidelityFX::CreateFSRResources()
 		return;
 	}
 
+	ResetRuntimeUpscalerTracking(true);
+	if (globals::features::upscaling.settings.fsr4RuntimeEnable && IsRuntimeUpscalerAvailable())
+		(void)QueryRuntimeUpscalerProviderSupport();
+
 	auto fsrDevice = ffxGetDeviceDX11(globals::d3d::device);
 
 	const uint32_t numContexts = splitPerEyeContexts ? 2u : 1u;
@@ -501,6 +592,7 @@ void FidelityFX::DestroyFSRResources()
 	runtimeFenceValue = 1;
 	runtimeCommandFrameIndex = 0;
 	fsrDispatchCrashLogged = false;
+	ResetRuntimeUpscalerTracking(true);
 }
 
 bool FidelityFX::IsAmdAdapterDetected() const
@@ -671,9 +763,13 @@ FfxResource ffxGetResource(ID3D11Resource* dx11Resource,
 
 bool FidelityFX::CanUseRuntimeUpscalerPath() const
 {
+	if (!globals::features::upscaling.settings.fsr4RuntimeEnable)
+		return false;
 	if (!IsRuntimeUpscalerAvailable())
 		return false;
-	return globals::features::upscaling.settings.fsr4RuntimeEnable;
+	if (runtimeUpscalerFailureLatched)
+		return false;
+	return QueryRuntimeUpscalerProviderSupport();
 }
 
 bool FidelityFX::EnsureRuntimeUpscalerInterop()
@@ -1116,11 +1212,11 @@ bool FidelityFX::UpscaleRegion(uint32_t a_contextIndex, ID3D11Resource* a_color,
 		return false;
 	}
 
-	static bool loggedRuntimeRegionFallback = false;
-	const bool runtimeSelected = CanUseRuntimeUpscalerPath();
-	bool runtimeFallbackUsed = false;
-	if (!runtimeSelected)
-		loggedRuntimeRegionFallback = false;
+	const bool runtimeRequested =
+		globals::features::upscaling.settings.fsr4RuntimeEnable &&
+		IsRuntimeUpscalerAvailable();
+	const bool runtimeSelected = runtimeRequested && CanUseRuntimeUpscalerPath();
+	bool runtimeFallbackTransitionUsed = false;
 
 	if (runtimeSelected) {
 		auto state = globals::state;
@@ -1152,7 +1248,7 @@ bool FidelityFX::UpscaleRegion(uint32_t a_contextIndex, ID3D11Resource* a_color,
 						a_motionVectorScaleX,
 						a_motionVectorScaleY,
 						a_sharpness)) {
-					loggedRuntimeRegionFallback = false;
+					RecordRuntimeUpscalerFramePath(RuntimeUpscalerFramePath::kRuntimeFsr4);
 					return true;
 				}
 			} catch (const std::exception& e) {
@@ -1162,11 +1258,8 @@ bool FidelityFX::UpscaleRegion(uint32_t a_contextIndex, ID3D11Resource* a_color,
 			}
 		}
 
-		if (!loggedRuntimeRegionFallback) {
-			logger::warn("[FidelityFX] Runtime upscaler dispatch failed, falling back to host FSR3.1 dispatch.");
-			loggedRuntimeRegionFallback = true;
-		}
-		runtimeFallbackUsed = true;
+		runtimeFallbackTransitionUsed = !runtimeUpscalerFailureLatched;
+		LatchRuntimeUpscalerFailure();
 	}
 
 	if (!fsrScratchBuffer || a_contextIndex >= fsrContextCount)
@@ -1179,6 +1272,9 @@ bool FidelityFX::UpscaleRegion(uint32_t a_contextIndex, ID3D11Resource* a_color,
 
 	auto& upscaling = globals::features::upscaling;
 	auto jitter = upscaling.jitter;
+	const auto fallbackFramePath =
+		runtimeRequested ? RuntimeUpscalerFramePath::kHostFsr31Fallback : RuntimeUpscalerFramePath::kHostFsr31;
+	RecordRuntimeUpscalerFramePath(fallbackFramePath);
 
 	if (state->frameAnnotations) {
 		if (globals::game::isVR) {
@@ -1212,7 +1308,7 @@ bool FidelityFX::UpscaleRegion(uint32_t a_contextIndex, ID3D11Resource* a_color,
 	dispatchParameters.sharpness = a_sharpness;
 	dispatchParameters.cameraFovAngleVertical = Util::GetVerticalFOVRad();
 	dispatchParameters.viewSpaceToMetersFactor = 0.01428222656f;
-	dispatchParameters.reset = globals::features::upscaling.ShouldResetHistoryThisFrame() || runtimeFallbackUsed;
+	dispatchParameters.reset = globals::features::upscaling.ShouldResetHistoryThisFrame() || runtimeFallbackTransitionUsed;
 	dispatchParameters.preExposure = 1.0f;
 	dispatchParameters.flags = 0;
 
