@@ -3155,7 +3155,8 @@ void Upscaling::PreparePerEyeInputs(ID3D11Resource* colorSrc, ID3D11Resource* de
 		}
 	}
 
-	// Zero color where depth == 0 (HMD hidden area) in each per-eye buffer.
+	// Zero color in the HMD hidden area, including a tiny mask-edge expansion,
+	// in each per-eye buffer before temporal reuse.
 	// Bind CS/SRV/CB once for both eyes to reduce per-frame CPU overhead.
 	auto& depthTexture = globals::game::renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kMAIN];
 	if (!vrClearHMDMaskCS) {
