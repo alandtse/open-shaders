@@ -62,7 +62,7 @@ namespace
 	constexpr float POST_RAIN_PUDDLE_SHINE_MAX = 5.0f;
 	constexpr float RAIN_REFLECTION_BALANCE_MIN = 0.0f;
 	constexpr float RAIN_REFLECTION_BALANCE_MAX = 1.0f;
-	constexpr float DEFAULT_RAIN_REFLECTION_BALANCE = 0.2f;
+	constexpr float DEFAULT_RAIN_REFLECTION_BALANCE = 1.0f;
 	constexpr float POST_RAIN_WATER_CLARITY_MIN = 0.0f;
 	constexpr float POST_RAIN_WATER_CLARITY_MAX = 1.0f;
 	constexpr float DEFAULT_POST_RAIN_WATER_CLARITY = 0.8f;
@@ -1396,7 +1396,7 @@ void Wetterness::DrawSettings()
 
 		ImGui::SliderFloat("Rain Reflection Balance", &rainReflectionBalance, RAIN_REFLECTION_BALANCE_MIN, RAIN_REFLECTION_BALANCE_MAX, "%.2f");
 		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::TextUnformatted("Balances rain puddle reflections. 0 = more cubemap reflection. Higher = less cubemap and more specular wet-film response. 1 = strongest shift.");
+			ImGui::TextUnformatted("Balances active-rain wet reflection. 0 = keeps a small cubemap contribution. Higher = suppresses sky/building cubemap mirror and relies more on direct wet-film/raindrop specular. 1 = no wet cubemap mirror during rain.");
 		}
 
 		ImGui::Dummy(ImVec2(0.0f, 12.0f));

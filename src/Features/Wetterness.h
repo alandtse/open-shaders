@@ -200,7 +200,7 @@ public:
 	float puddleLayout = 3.0f;
 	float modernWetIndirectSpecularScale = 0.80f;
 	float legacyWetIndirectSpecularScale = 0.40f;
-	float rainReflectionBalance = 0.2f;
+	float rainReflectionBalance = 1.0f;
 	float postRainWaterClarity = 0.8f;
 	float shorePersistentDarkeningStrength = 1.0f;
 	float wetnessDistanceFadeRange = 10000.0f;

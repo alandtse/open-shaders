@@ -2397,6 +2397,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 		float wetnessGlossinessSpecular = 0.0;
 		float wetHighlightReflectanceScale = 1.0;
 		float wetDirectSpecularScale = 1.0;
+		float wetRainCubemapSuppression = 0.0;
 		const bool wetnessEnabled = (CS_WETNESS_SETTINGS.EnableWetnessEffects != 0);
 		float postRainPuddleWaterStrength = max(0.0, CS_WETNESS_SETTINGS.PostRainPuddleWaterStrength);
 		float packedPostRainControl = CS_WETNESS_SETTINGS.PackedPostRainControl;
@@ -2842,12 +2843,15 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	wetDirectSpecularScale *= lerp(1.0, 0.18, farWhiteSuppression);
 	wetHighlightReflectanceScale *= lerp(1.0, 0.65, farWhiteSuppression);
 	// Reflection phase shaping:
-	// - During rain: smoothly suppress wet cubemap reflections to zero so
-	//   rain look is driven by direct/specular + raindrops, not sky cubemap.
-	// - After rain: puddle cubemap response is set through the single post-rain
-	//   reflection-scale override path below.
-	float rainCubemapSuppression = saturate(inRainBlend * inRainCubemapSuppressionFromBalance);
-	wetHighlightReflectanceScale *= (1.0 - rainCubemapSuppression);
+	// - During rain: suppress wet cubemap reflections on actually wet/puddled pixels,
+	//   so rain is driven by direct wet-film + raindrop specular instead of temporal
+	//   sky/building cubemaps.
+	// - After rain: puddle cubemap response is set through the post-rain reflection
+	//   scale override path below.
+	float rainWetSurfaceMask = smoothstep(0.02, 0.18, max(wetnessGlossinessAlbedo, wetnessGlossinessSpecular));
+	float rainCubemapSuppressionStrength = lerp(0.92, 1.0, inRainCubemapSuppressionFromBalance);
+	wetRainCubemapSuppression = saturate(inRainBlend * rainWetSurfaceMask * rainCubemapSuppressionStrength);
+	wetHighlightReflectanceScale *= (1.0 - wetRainCubemapSuppression);
 
 	float wetRoughnessScale = lerp(0.97, 0.995, postRainOverridePhase * postRainSpecBoostCurve);
 	waterRoughnessSpecular = 1.0 - wetnessGlossinessSpecular * wetRoughnessScale;
@@ -3900,7 +3904,19 @@ if (alpha - AlphaTestRefRS < 0) {
 	psout.Specular = float4(specularColor, psout.Diffuse.w);
 	psout.Albedo = float4(outputAlbedo, psout.Diffuse.w);
 
-#		if defined(WETTERNESS) || defined(WETNESS_EFFECTS)
+#		if defined(WETTERNESS)
+	// Match rain-time indirect cubemap suppression in the deferred output. Without
+	// this, the flattened wet normal/low roughness can still make the base material
+	// reflect temporal sky cubemaps even after the explicit Wetterness lobe is muted.
+	float wetDeferredCubemapScale = 1.0 - saturate(wetRainCubemapSuppression);
+	float wetDeferredBlend = saturate(wetnessGlossinessSpecular * wetDeferredCubemapScale);
+	indirectLobeWeights.specular *= lerp(1.0, wetDeferredCubemapScale, saturate(wetnessGlossinessSpecular));
+	indirectLobeWeights.specular += wetnessReflectance;
+	if (waterRoughnessSpecular < 1) {
+		screenSpaceNormal = lerp(screenSpaceNormal, normalize(FrameBuffer::WorldToView(wetnessNormal, false, eyeIndex)), wetDeferredBlend);
+		material.Roughness = lerp(material.Roughness, waterRoughnessSpecular, wetDeferredBlend);
+	}
+#		elif defined(WETNESS_EFFECTS)
 	indirectLobeWeights.specular += wetnessReflectance;
 	if (waterRoughnessSpecular < 1) {
 		screenSpaceNormal = lerp(screenSpaceNormal, normalize(FrameBuffer::WorldToView(wetnessNormal, false, eyeIndex)), saturate(wetnessGlossinessSpecular));
