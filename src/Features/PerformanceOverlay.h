@@ -125,6 +125,7 @@ struct PerformanceOverlay : OverlayFeature
 	virtual bool IsCore() const override { return true; }
 	virtual bool IsInMenu() const override { return true; }
 	bool IsOverlayVisible() const override { return settings.ShowInOverlay; }
+	bool RequiresGlobalOverlayToggle() const override { return true; }
 	virtual std::pair<std::string, std::vector<std::string>> GetFeatureSummary() override;
 	virtual void DrawSettings() override;
 	virtual void DataLoaded() override;

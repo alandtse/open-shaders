@@ -19,6 +19,7 @@
 
 #include "Features/PerformanceOverlay.h"
 #include "Features/PerformanceOverlay/ABTesting/ABTesting.h"
+#include "Features/OverlayFeature.h"
 #include "Features/VR.h"
 
 void OverlayRenderer::RenderOverlay(
@@ -36,10 +37,16 @@ void OverlayRenderer::RenderOverlay(
 		globals::features::vr.ProcessControllerInputForImGui();
 	}
 
-	if (ShouldSkipRendering()) {
+	auto drawableFeatureOverlays = CollectDrawableFeatureOverlays(menu);
+
+	if (ShouldSkipRendering(menu, !drawableFeatureOverlays.empty())) {
 		auto& io = ImGui::GetIO();
 		io.ClearInputKeys();
 		io.ClearEventsQueue();
+		if (globals::features::vr.IsOpenVRCompatible()) {
+			// Keep VR overlays in sync when the ImGui frame is skipped.
+			globals::features::vr.HideOverlaysIfPresent();
+		}
 		return;
 	}
 
@@ -59,7 +66,7 @@ void OverlayRenderer::RenderOverlay(
 		ImGui::GetIO().MouseDrawCursor = false;
 	}
 
-	RenderFeatureOverlays();
+	RenderFeatureOverlays(drawableFeatureOverlays);
 	HandleABTesting();
 	FinalizeImGuiFrame();
 }
@@ -71,20 +78,56 @@ void OverlayRenderer::HandleVRSetup()
 	}
 }
 
-bool OverlayRenderer::ShouldSkipRendering()
+bool OverlayRenderer::ShouldSkipRendering(const Menu& menu, bool hasDrawableFeatureOverlay)
 {
 	auto shaderCache = globals::shaderCache;
 	auto failed = shaderCache->GetCurrentFailedCount();
 	auto hide = shaderCache->IsHideErrors();
 	auto* abTestingManager = ABTestingManager::GetSingleton();
 	auto* renderDoc = RenderDoc::GetSingleton();
+	auto* state = globals::state;
+	const bool shaderBlockingVisible = state && state->IsDeveloperMode() && !shaderCache->blockedKey.empty();
 
 	return !(shaderCache->IsCompiling() ||
-			 Menu::GetSingleton()->IsEnabled ||
+			 menu.IsEnabled ||
+			 HomePageRenderer::ShouldShowFirstTimeSetup() ||
 			 abTestingManager->IsEnabled() ||
 			 (failed && !hide) ||
-			 globals::features::performanceOverlay.settings.ShowInOverlay ||
+			 shaderBlockingVisible ||
+			 hasDrawableFeatureOverlay ||
 			 renderDoc->IsAvailable());
+}
+
+std::vector<OverlayFeature*> OverlayRenderer::CollectDrawableFeatureOverlays(const Menu& menu)
+{
+	std::vector<OverlayFeature*> overlays;
+	overlays.reserve(Feature::GetFeatureList().size());
+
+	for (Feature* feat : Feature::GetFeatureList()) {
+		if (!feat || !feat->loaded) {
+			continue;
+		}
+
+		auto* overlay = dynamic_cast<OverlayFeature*>(feat);
+		if (!overlay) {
+			continue;
+		}
+
+		if (ShouldDrawFeatureOverlay(*overlay, menu)) {
+			overlays.push_back(overlay);
+		}
+	}
+
+	return overlays;
+}
+
+bool OverlayRenderer::ShouldDrawFeatureOverlay(const OverlayFeature& overlay, const Menu& menu)
+{
+	if (!overlay.IsOverlayVisible()) {
+		return false;
+	}
+
+	return !overlay.RequiresGlobalOverlayToggle() || menu.overlayVisible;
 }
 
 void OverlayRenderer::HandleFontReload(Menu& menu, float& cachedFontSize, float currentFontSize)
@@ -182,15 +225,10 @@ void OverlayRenderer::RenderShaderCompilationStatus(const std::function<const ch
 	}
 }
 
-void OverlayRenderer::RenderFeatureOverlays()
+void OverlayRenderer::RenderFeatureOverlays(const std::vector<OverlayFeature*>& overlays)
 {
-	// load overlays
-	for (Feature* feat : Feature::GetFeatureList()) {
-		if (feat && feat->loaded) {
-			if (auto* overlay = dynamic_cast<OverlayFeature*>(feat)) {
-				overlay->DrawOverlay();
-			}
-		}
+	for (OverlayFeature* overlay : overlays) {
+		overlay->DrawOverlay();
 	}
 }
 

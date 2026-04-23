@@ -115,4 +115,5 @@ private:
 	// Implement OverlayFeature interface
 	void DrawOverlay() override;
 	bool IsOverlayVisible() const override;
+	bool RequiresGlobalOverlayToggle() const override { return true; }
 };

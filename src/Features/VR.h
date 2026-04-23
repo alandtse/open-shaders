@@ -120,7 +120,7 @@ public:
 	//=============================================================================
 
 	virtual void DrawOverlay() override;
-	virtual bool IsOverlayVisible() const override { return openVRInfo.isCompatible && settings.kAutoHideSeconds > 0 && !globals::menu->IsEnabled; }
+	virtual bool IsOverlayVisible() const override;
 
 	//=============================================================================
 	// SETTINGS STRUCTURE
@@ -259,6 +259,7 @@ public:
 	void DestroyOverlay();
 	void RecreateOverlayTexturesIfNeeded();
 	void SubmitOverlayFrame();
+	void HideOverlaysIfPresent();
 
 	/**
 	 * @brief Context for rendering VR overlays with render target management
@@ -302,6 +303,7 @@ public:
 	void SubmitHMDOverlay(OverlayRenderContext& context);
 	void SubmitControllerOverlay(OverlayRenderContext& context);
 	void HideAllOverlays(vr::IVROverlay* gameOverlay);
+	bool ShouldShowAutoHideOverlay() const;
 
 	void UpdateOverlayDrag();
 	bool CanPerformDrag();
