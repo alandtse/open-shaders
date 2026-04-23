@@ -340,7 +340,7 @@ namespace
 		settings.foveatedRightEyeMaskOffsetX = 0.0f;
 		settings.foveatedRightEyeMaskOffsetY = 0.0f;
 		settings.periphery_taa_center_area = 0.6f;
-		settings.ssgiFovCenterArea = 0.6f;
+		settings.ssgiFovCenterArea = 0.7f;
 		settings.foveatedPeripheryMaskVisualization = false;
 		settings.periphery_taa_enable = false;
 		settings.periphery_taa_outer_scale = 0.70f;
@@ -368,6 +368,11 @@ namespace
 	{
 		// Foveated vendor dispatch is VR-only and currently DLSS-only.
 		return globals::game::isVR && a_upscaleMethod == Upscaling::UpscaleMethod::kDLSS;
+	}
+
+	bool UsesUpscalingFovProfileForSsgi(const Upscaling::Settings& settings, Upscaling::UpscaleMethod a_upscaleMethod)
+	{
+		return globals::game::isVR && SupportsFoveatedVendorDispatch(a_upscaleMethod) && settings.foveatedVendorDispatch;
 	}
 
 	bool IsVRRuntimeActive()
@@ -752,30 +757,29 @@ void Upscaling::DrawSettings()
 
 		if (globals::game::isVR) {
 			const bool foveatedDispatchSupportedForMethod = SupportsFoveatedVendorDispatch(upscaleMethod);
-			if (!foveatedDispatchSupportedForMethod) {
-				ImGui::TextDisabled("Foveated Upscaling is currently DLSS-only. FSR uses full-eye dispatch.");
-			}
-			ImGui::BeginDisabled(!foveatedDispatchSupportedForMethod);
-			{
-				Util::BlueFrameStyleWrapper foveatedStyle(true);
-				ImGui::Checkbox("Foveated Upscaling", &settings.foveatedVendorDispatch);
-			}
-			if (auto _tt = Util::HoverTooltipWrapper()) {
-				ImGui::TextUnformatted("Master switch for VR FOV-mask upscaling.");
-				ImGui::TextUnformatted("On: enables DLSS foveated rendering controls.");
-				ImGui::TextUnformatted("Off: uses full-eye upscaler dispatch (no FOV masks).");
-			}
 			SanitizeFoveatedSettings(settings);
-			if (settings.foveatedVendorDispatch && foveatedDispatchSupportedForMethod) {
+			if (foveatedDispatchSupportedForMethod) {
+				{
+					Util::BlueFrameStyleWrapper foveatedStyle(true);
+					ImGui::Checkbox("Foveated Upscaling", &settings.foveatedVendorDispatch);
+				}
+				if (auto _tt = Util::HoverTooltipWrapper()) {
+					ImGui::TextUnformatted("Master switch for VR FOV-mask upscaling.");
+					ImGui::TextUnformatted("On: enables foveated upscaling controls.");
+					ImGui::TextUnformatted("Off: SSGI uses its own FOV area.");
+				}
+			}
+			const bool ssgiFovLinkedToUpscaling = UsesUpscalingFovProfileForSsgi(settings, upscaleMethod);
+			if (ssgiFovLinkedToUpscaling) {
 				{
 					Util::BlueFrameStyleWrapper maskStyle(true);
 					ImGui::Checkbox("FOV Mask Visualization", &settings.foveatedPeripheryMaskVisualization);
 				}
 				if (auto _tt = Util::HoverTooltipWrapper()) {
 					ImGui::TextUnformatted("Use this while tuning FOV masks.");
-					ImGui::TextUnformatted("Green = DLSS center mask.");
-					ImGui::TextUnformatted("With Peripheral TAA enabled: gold = TAA ring, blue = outer lightweight ring.");
-					ImGui::TextUnformatted("With Peripheral TAA disabled: only the green DLSS center mask is shown.");
+					ImGui::TextUnformatted("Green = upscaling center mask.");
+					if (settings.periphery_taa_enable)
+						ImGui::TextUnformatted("Gold = TAA ring, blue = outer lightweight ring.");
 				}
 
 				ImGui::Dummy(ImVec2(0.0f, 6.0f));
@@ -788,10 +792,13 @@ void Upscaling::DrawSettings()
 					ImGui::SliderFloat("DLSS FOV Area", &settings.foveatedCenterArea, FoveatedCommon::kCenterAreaMin, FoveatedCommon::kCenterAreaMax, "%.2f");
 				}
 				if (auto _tt = Util::HoverTooltipWrapper()) {
-					ImGui::TextUnformatted("Size of the DLSS-only center mask.");
-					ImGui::TextUnformatted("Peripheral TAA uses its own reduced FOV area below.");
-					ImGui::TextUnformatted("Lower values = smaller center mask and more performance.");
-					ImGui::TextUnformatted("Range: low 0.30 (smallest center) to high 1.00 (largest center).");
+					if (settings.periphery_taa_enable) {
+						ImGui::TextUnformatted("Inactive while Peripheral TAA is enabled.");
+					} else {
+						ImGui::TextUnformatted("Active upscaling center mask size.");
+						ImGui::TextUnformatted("Lower values = smaller center mask and more performance.");
+						ImGui::TextUnformatted("Range: low 0.30 (smallest center) to high 1.00 (largest center).");
+					}
 				}
 				settings.foveatedCenterArea = ClampFoveatedCenterArea(settings.foveatedCenterArea);
 
@@ -800,33 +807,31 @@ void Upscaling::DrawSettings()
 					ImGui::SliderFloat("DLSS Expand FOV Area R/L", &settings.foveatedCenterHorizontalScale, FoveatedCommon::kCenterHorizontalScaleMin, FoveatedCommon::kCenterHorizontalScaleMax, "%.2f");
 				}
 				if (auto _tt = Util::HoverTooltipWrapper()) {
-					ImGui::TextUnformatted("Widens the DLSS center mask horizontally.");
-					ImGui::TextUnformatted("Peripheral TAA uses this shared horizontal expansion.");
+					ImGui::TextUnformatted("Widens the upscaling center mask horizontally.");
+					if (settings.periphery_taa_enable)
+						ImGui::TextUnformatted("Peripheral TAA uses this shared horizontal expansion.");
 					ImGui::TextUnformatted("Range: low 1.00 (no extra width) to high 2.00 (maximum extra width).");
 				}
 
+				auto drawEyeOffsetTooltip = [&](const char* eye, const char* axis, const char* direction) {
+					if (auto _tt = Util::HoverTooltipWrapper()) {
+						if (settings.periphery_taa_enable)
+							ImGui::Text("%s-eye %s offset shared by upscaling and Peripheral TAA.", eye, axis);
+						else
+							ImGui::Text("%s-eye %s offset for the upscaling center mask.", eye, axis);
+						ImGui::TextUnformatted(direction);
+					}
+				};
 				{
 					Util::BlueFrameStyleWrapper baseOffsetStyle;
 					ImGui::SliderFloat("DLSS Left Eye Offset X", &settings.foveatedLeftEyeMaskOffsetX, kFoveatedMaskOffsetAdjustMin, kFoveatedMaskOffsetAdjustMax, "%.3f");
-					if (auto _tt = Util::HoverTooltipWrapper()) {
-						ImGui::TextUnformatted("Left-eye horizontal offset shared by DLSS and Peripheral TAA.");
-						ImGui::TextUnformatted("+X moves right, -X moves left.");
-					}
+					drawEyeOffsetTooltip("Left", "horizontal", "+X moves right, -X moves left.");
 					ImGui::SliderFloat("DLSS Left Eye Offset Y", &settings.foveatedLeftEyeMaskOffsetY, kFoveatedMaskOffsetAdjustMin, kFoveatedMaskOffsetAdjustMax, "%.3f");
-					if (auto _tt = Util::HoverTooltipWrapper()) {
-						ImGui::TextUnformatted("Left-eye vertical offset shared by DLSS and Peripheral TAA.");
-						ImGui::TextUnformatted("+Y moves down, -Y moves up.");
-					}
+					drawEyeOffsetTooltip("Left", "vertical", "+Y moves down, -Y moves up.");
 					ImGui::SliderFloat("DLSS Right Eye Offset X", &settings.foveatedRightEyeMaskOffsetX, kFoveatedMaskOffsetAdjustMin, kFoveatedMaskOffsetAdjustMax, "%.3f");
-					if (auto _tt = Util::HoverTooltipWrapper()) {
-						ImGui::TextUnformatted("Right-eye horizontal offset shared by DLSS and Peripheral TAA.");
-						ImGui::TextUnformatted("+X moves right, -X moves left.");
-					}
+					drawEyeOffsetTooltip("Right", "horizontal", "+X moves right, -X moves left.");
 					ImGui::SliderFloat("DLSS Right Eye Offset Y", &settings.foveatedRightEyeMaskOffsetY, kFoveatedMaskOffsetAdjustMin, kFoveatedMaskOffsetAdjustMax, "%.3f");
-					if (auto _tt = Util::HoverTooltipWrapper()) {
-						ImGui::TextUnformatted("Right-eye vertical offset shared by DLSS and Peripheral TAA.");
-						ImGui::TextUnformatted("+Y moves down, -Y moves up.");
-					}
+					drawEyeOffsetTooltip("Right", "vertical", "+Y moves down, -Y moves up.");
 				}
 
 				settings.foveatedCenterHorizontalScale = ClampFoveatedCenterHorizontalScale(settings.foveatedCenterHorizontalScale);
@@ -843,9 +848,9 @@ void Upscaling::DrawSettings()
 					ImGui::Checkbox("Peripheral TAA", &settings.periphery_taa_enable);
 				}
 				if (auto _tt = Util::HoverTooltipWrapper()) {
-					ImGui::TextUnformatted("Enables periphery-only TAA outside the DLSS center region.");
-					ImGui::TextUnformatted("When ON, the reduced DLSS FOV Area below becomes the active center mask.");
-					ImGui::TextUnformatted("Expand and eye offsets are shared with the DLSS controls above.");
+					ImGui::TextUnformatted("Enables periphery-only TAA outside the upscaling center region.");
+					ImGui::TextUnformatted("When ON, the reduced FOV Area below becomes the active center mask.");
+					ImGui::TextUnformatted("Expand and eye offsets are shared with the upscaling controls above.");
 				}
 				ImGui::BeginDisabled(!settings.periphery_taa_enable);
 				if (!settings.periphery_taa_enable)
@@ -854,10 +859,11 @@ void Upscaling::DrawSettings()
 					Util::YellowFrameStyleWrapper taaAreaStyle;
 					ImGui::SliderFloat("DLSS FOV Area##PeripheralTAA", &settings.periphery_taa_center_area, FoveatedCommon::kCenterAreaMin, FoveatedCommon::kCenterAreaMax, "%.2f");
 				}
-				if (auto _tt = Util::HoverTooltipWrapper()) {
-					ImGui::TextUnformatted("Reduced DLSS center mask size used while Peripheral TAA is enabled.");
-					ImGui::TextUnformatted("Shared expand and eye-offset sliders above still apply.");
-					ImGui::TextUnformatted("Lower values = smaller DLSS center and more Peripheral TAA coverage.");
+				if (settings.periphery_taa_enable) {
+					if (auto _tt = Util::HoverTooltipWrapper()) {
+						ImGui::TextUnformatted("Reduced upscaling center mask size.");
+						ImGui::TextUnformatted("Lower values = smaller upscaling center and more Peripheral TAA coverage.");
+					}
 				}
 				settings.periphery_taa_center_area = ClampFoveatedCenterArea(settings.periphery_taa_center_area);
 				{
@@ -869,10 +875,12 @@ void Upscaling::DrawSettings()
 						kPeripheryTAACenterBlendFeatherMax,
 						"%.3f");
 				}
-				if (auto _tt = Util::HoverTooltipWrapper()) {
-					ImGui::TextUnformatted("Controls softness of the center-to-TAA transition edge.");
-					ImGui::TextUnformatted("Lower = harder edge, higher = softer edge.");
-					ImGui::Text("Range: low %.2f (harder transition) to high %.2f (softer transition).", kPeripheryTAACenterBlendFeatherMin, kPeripheryTAACenterBlendFeatherMax);
+				if (settings.periphery_taa_enable) {
+					if (auto _tt = Util::HoverTooltipWrapper()) {
+						ImGui::TextUnformatted("Controls softness of the center-to-TAA transition edge.");
+						ImGui::TextUnformatted("Lower = harder edge, higher = softer edge.");
+						ImGui::Text("Range: low %.2f (harder transition) to high %.2f (softer transition).", kPeripheryTAACenterBlendFeatherMin, kPeripheryTAACenterBlendFeatherMax);
+					}
 				}
 				settings.periphery_taa_center_blend_feather = ClampPeripheryTAACenterBlendFeather(settings.periphery_taa_center_blend_feather);
 				const float taaOuterRangeMin = GetPeripheryTAAOuterScaleFloor(
@@ -888,11 +896,13 @@ void Upscaling::DrawSettings()
 						kPeripheryTAAOuterScaleMax,
 						"%.2f");
 				}
-				if (auto _tt = Util::HoverTooltipWrapper()) {
-					ImGui::TextUnformatted("Controls how far Peripheral TAA extends outside the DLSS center mask.");
-					ImGui::Text("Range: low %.2f (minimum allowed by current DLSS FOV Area) to high %.2f (full range).", taaOuterRangeMin, kPeripheryTAAOuterScaleMax);
-					ImGui::TextUnformatted("Lower values are faster.");
-					ImGui::TextUnformatted("Increase until the gold ring reaches the edge of your visible field of view.");
+				if (settings.periphery_taa_enable) {
+					if (auto _tt = Util::HoverTooltipWrapper()) {
+						ImGui::TextUnformatted("Controls how far Peripheral TAA extends outside the upscaling center mask.");
+						ImGui::Text("Range: low %.2f (minimum allowed by current FOV Area) to high %.2f (full range).", taaOuterRangeMin, kPeripheryTAAOuterScaleMax);
+						ImGui::TextUnformatted("Lower values are faster.");
+						ImGui::TextUnformatted("Increase until the gold ring reaches the edge of your visible field of view.");
+					}
 				}
 				ImGui::EndDisabled();
 
@@ -902,13 +912,21 @@ void Upscaling::DrawSettings()
 					settings.foveatedCenterHorizontalScale,
 					settings.periphery_taa_center_blend_feather);
 			}
-			ImGui::EndDisabled();
 
-			if (!foveatedDispatchSupportedForMethod) {
-				ImGui::Separator();
+			if (ssgiFovLinkedToUpscaling) {
+				ImGui::TextDisabled(settings.periphery_taa_enable ?
+					"SSGI Foveated Area is linked to the Peripheral TAA range." :
+					"SSGI Foveated Area is linked to the active upscaling FOV area.");
+			} else {
 				{
 					Util::BlueFrameStyleWrapper ssgiAreaStyle;
-					ImGui::SliderFloat("SSGI FOV Area", &settings.ssgiFovCenterArea, FoveatedCommon::kCenterAreaMin, FoveatedCommon::kCenterAreaMax, "%.2f");
+					ImGui::SliderFloat("SSGI Foveated Area", &settings.ssgiFovCenterArea, FoveatedCommon::kCenterAreaMin, FoveatedCommon::kCenterAreaMax, "%.2f");
+				}
+				if (auto _tt = Util::HoverTooltipWrapper()) {
+					ImGui::TextUnformatted("Controls the SSGI foveated center area when it is not linked to DLSS FOV controls.");
+					ImGui::TextUnformatted("Used by the foveated presets in the SSGI UI.");
+					ImGui::TextUnformatted("Lower values shrink the full-res SSGI center for more performance.");
+					ImGui::TextUnformatted("Higher values widen full-res SSGI coverage.");
 				}
 				settings.ssgiFovCenterArea = ClampFoveatedCenterArea(settings.ssgiFovCenterArea);
 			}
@@ -1700,20 +1718,31 @@ bool Upscaling::IsPeripheryTAAPathActive(UpscaleMethod a_upscaleMethod) const
 
 bool Upscaling::UseActiveFoveatedPeripheryTAAProfile() const
 {
-	return IsPeripheryTAAEnabled(GetUpscaleMethod());
+	const auto upscaleMethod = GetUpscaleMethod();
+	return UsesUpscalingFovProfileForSsgi(settings, upscaleMethod) && settings.periphery_taa_enable;
 }
 
 float Upscaling::GetActiveFoveatedCenterArea() const
 {
-	if (globals::game::isVR && !SupportsFoveatedVendorDispatch(GetUpscaleMethod()))
+	const auto upscaleMethod = GetUpscaleMethod();
+	if (globals::game::isVR && !UsesUpscalingFovProfileForSsgi(settings, upscaleMethod))
 		return ClampFoveatedCenterArea(settings.ssgiFovCenterArea);
 
-	return GetFoveatedMaskProfileParams(settings, UseActiveFoveatedPeripheryTAAProfile()).centerArea;
+	if (UseActiveFoveatedPeripheryTAAProfile()) {
+		return ClampPeripheryTAAOuterScaleForCenter(
+			settings.periphery_taa_outer_scale,
+			settings.periphery_taa_center_area,
+			settings.foveatedCenterHorizontalScale,
+			settings.periphery_taa_center_blend_feather);
+	}
+
+	return GetFoveatedMaskProfileParams(settings, false).centerArea;
 }
 
 float Upscaling::GetActiveFoveatedCenterHorizontalScale() const
 {
-	if (!globals::game::isVR || !SupportsFoveatedVendorDispatch(GetUpscaleMethod()))
+	const auto upscaleMethod = GetUpscaleMethod();
+	if (!globals::game::isVR || !UsesUpscalingFovProfileForSsgi(settings, upscaleMethod))
 		return 1.0f;
 
 	return GetFoveatedMaskProfileParams(settings, UseActiveFoveatedPeripheryTAAProfile()).centerHorizontalScale;
@@ -1759,7 +1788,8 @@ std::array<float2, 2> Upscaling::GetResolvedFoveatedMaskCenterOffsets(bool usePe
 
 std::array<float2, 2> Upscaling::GetActiveResolvedFoveatedMaskCenterOffsets() const
 {
-	if (globals::game::isVR && !SupportsFoveatedVendorDispatch(GetUpscaleMethod()))
+	const auto upscaleMethod = GetUpscaleMethod();
+	if (globals::game::isVR && !UsesUpscalingFovProfileForSsgi(settings, upscaleMethod))
 		return GetDefaultFoveatedMaskCenterOffsets();
 
 	auto centerOffsets = GetResolvedFoveatedMaskCenterOffsets(UseActiveFoveatedPeripheryTAAProfile());
