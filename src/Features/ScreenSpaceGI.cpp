@@ -154,17 +154,16 @@ namespace
 		a_settings.ResolutionMode = ClampResolutionMode(a_settings.ResolutionMode);
 		a_settings.ResourceProfile = ClampResourceProfile(a_settings.ResourceProfile);
 		a_settings.VRCullDistance = ClampVRCullDistance(a_settings.VRCullDistance);
-		if (a_settings.ResourceProfile == ScreenSpaceGI::kResourceProfileAOOnly)
-			DisableGIEffects(a_settings);
 		if (!REL::Module::IsVR()) {
 			a_settings.CenterFullResMaskScale = 0.0f;
 		}
 		if (a_settings.FoveatedPresetMode != kFoveatedPresetModeOff) {
 			// Foveated presets run through the quarter-res base path; "Foveated" mode later suppresses periphery AO.
 			a_settings.ResolutionMode = 2;
+			a_settings.ResourceProfile = ScreenSpaceGI::kResourceProfileAOOnly;
 			a_settings.CenterFullResMaskScale = GetUpscalingActiveCenterMaskScale();
 			// Foveated presets are AO-only by design; IL must stay off while active.
-			a_settings.EnableGI = false;
+			DisableGIEffects(a_settings);
 			if (a_settings.FoveatedPresetMode == kFoveatedPresetModeStrict) {
 				// Strict mode hard-disables denoiser passes for stability/perf consistency.
 				a_settings.EnableTemporalDenoiser = false;
@@ -173,6 +172,8 @@ namespace
 		} else {
 			a_settings.CenterFullResMaskScale = 0.0f;  // no manual foveation path; foveation is preset-toggle only
 		}
+		if (a_settings.ResourceProfile == ScreenSpaceGI::kResourceProfileAOOnly)
+			DisableGIEffects(a_settings);
 	}
 
 	float2 GetHardenedSsgiFrameDim(float2 a_renderTexSize)
@@ -297,7 +298,7 @@ void ScreenSpaceGI::DrawSettings()
 
 		ImGui::TableNextColumn();
 		{
-			auto resourceProfileGuard = Util::DisableGuard(!settings.Enabled);
+			auto resourceProfileGuard = Util::DisableGuard(!settings.Enabled || foveatedPresetActive);
 			if (ImGui::RadioButton("AO-only Resources", settings.ResourceProfile == kResourceProfileAOOnly))
 				settings.ResourceProfile = kResourceProfileAOOnly;
 		}
@@ -330,7 +331,7 @@ void ScreenSpaceGI::DrawSettings()
 
 		ImGui::TableNextColumn();
 		{
-			auto resourceProfileGuard = Util::DisableGuard(!settings.Enabled);
+			auto resourceProfileGuard = Util::DisableGuard(!settings.Enabled || foveatedPresetActive);
 			if (ImGui::RadioButton("AO + GI Resources", settings.ResourceProfile == kResourceProfileFullGI))
 				settings.ResourceProfile = kResourceProfileFullGI;
 		}
@@ -418,6 +419,7 @@ void ScreenSpaceGI::DrawSettings()
 				settings.ResolutionMode == 0 &&
 				settings.NumSlices == 3 &&
 				settings.NumSteps == 6 &&
+				settings.ResourceProfile == kResourceProfileAOOnly &&
 				!settings.EnableGI &&
 				!settings.EnableBlur &&
 				!settings.EnableTemporalDenoiser &&
@@ -433,7 +435,8 @@ void ScreenSpaceGI::DrawSettings()
 				settings.AOPower = 1.8f;
 				settings.EnableBlur = false;
 				settings.EnableTemporalDenoiser = false;
-				settings.EnableGI = false;
+				settings.ResourceProfile = kResourceProfileAOOnly;
+				DisableGIEffects(settings);
 				recompileFlag = true;
 			}
 			if (auto _tt = Util::HoverTooltipWrapper())
@@ -455,9 +458,10 @@ void ScreenSpaceGI::DrawSettings()
 						settings.CenterFullResMaskScale = GetUpscalingActiveCenterMaskScale();
 						settings.VRCullDistance = 1500.0f;
 						settings.AOPower = 1.8f;
+						settings.ResourceProfile = kResourceProfileAOOnly;
 						settings.EnableBlur = false;
 						settings.EnableTemporalDenoiser = false;
-						settings.EnableGI = false;
+						DisableGIEffects(settings);
 					}
 					recompileFlag = true;
 				}
@@ -485,7 +489,8 @@ void ScreenSpaceGI::DrawSettings()
 						settings.CenterFullResMaskScale = GetUpscalingActiveCenterMaskScale();
 						settings.VRCullDistance = 1500.0f;
 						settings.AOPower = 1.8f;
-						settings.EnableGI = false;
+						settings.ResourceProfile = kResourceProfileAOOnly;
+						DisableGIEffects(settings);
 					}
 					recompileFlag = true;
 				}
