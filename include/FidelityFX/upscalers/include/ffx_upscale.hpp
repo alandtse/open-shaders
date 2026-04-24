@@ -46,10 +46,66 @@ struct DispatchDescUpscale : public InitHelper<ffxDispatchDescUpscale>
 {};
 
 template<>
+struct struct_type<ffxQueryDescUpscaleGetUpscaleRatioFromQualityMode> : std::integral_constant<uint64_t, FFX_API_QUERY_DESC_TYPE_UPSCALE_GETUPSCALERATIOFROMQUALITYMODE>
+{};
+
+struct QueryDescUpscaleGetUpscaleRatioFromQualityMode : public InitHelper<ffxQueryDescUpscaleGetUpscaleRatioFromQualityMode>
+{};
+
+template<>
+struct struct_type<ffxQueryDescUpscaleGetRenderResolutionFromQualityMode> : std::integral_constant<uint64_t, FFX_API_QUERY_DESC_TYPE_UPSCALE_GETRENDERRESOLUTIONFROMQUALITYMODE>
+{};
+
+struct QueryDescUpscaleGetRenderResolutionFromQualityMode : public InitHelper<ffxQueryDescUpscaleGetRenderResolutionFromQualityMode>
+{};
+
+template<>
+struct struct_type<ffxQueryDescUpscaleGetJitterPhaseCount> : std::integral_constant<uint64_t, FFX_API_QUERY_DESC_TYPE_UPSCALE_GETJITTERPHASECOUNT>
+{};
+
+struct QueryDescUpscaleGetJitterPhaseCount : public InitHelper<ffxQueryDescUpscaleGetJitterPhaseCount>
+{};
+
+template<>
+struct struct_type<ffxQueryDescUpscaleGetJitterOffset> : std::integral_constant<uint64_t, FFX_API_QUERY_DESC_TYPE_UPSCALE_GETJITTEROFFSET>
+{};
+
+struct QueryDescUpscaleGetJitterOffset : public InitHelper<ffxQueryDescUpscaleGetJitterOffset>
+{};
+
+template<>
+struct struct_type<ffxDispatchDescUpscaleGenerateReactiveMask> : std::integral_constant<uint64_t, FFX_API_DISPATCH_DESC_TYPE_UPSCALE_GENERATEREACTIVEMASK>
+{};
+
+struct DispatchDescUpscaleGenerateReactiveMask : public InitHelper<ffxDispatchDescUpscaleGenerateReactiveMask>
+{};
+
+template<>
 struct struct_type<ffxConfigureDescUpscaleKeyValue> : std::integral_constant<uint64_t, FFX_API_CONFIGURE_DESC_TYPE_UPSCALE_KEYVALUE>
 {};
 
 struct ConfigureDescUpscaleKeyValue : public InitHelper<ffxConfigureDescUpscaleKeyValue>
+{};
+
+template<>
+struct struct_type<ffxQueryDescUpscaleGetGPUMemoryUsage> : std::integral_constant<uint64_t, FFX_API_QUERY_DESC_TYPE_UPSCALE_GPU_MEMORY_USAGE>
+{};
+
+struct QueryDescUpscaleGetGPUMemoryUsage : public InitHelper<ffxQueryDescUpscaleGetGPUMemoryUsage>
+{};
+
+template<>
+struct struct_type<ffxQueryDescUpscaleGetGPUMemoryUsageV2> : std::integral_constant<uint64_t, FFX_API_QUERY_DESC_TYPE_UPSCALE_GPU_MEMORY_USAGE_V2>
+{};
+
+struct QueryDescUpscaleGetGPUMemoryUsageV2 : public InitHelper<ffxQueryDescUpscaleGetGPUMemoryUsageV2>
+{};
+
+template<>
+struct struct_type<ffxQueryDescUpscaleGetResourceRequirements> : std::integral_constant<uint64_t, FFX_API_QUERY_DESC_TYPE_UPSCALE_GET_RESOURCE_REQUIREMENTS>
+{};
+
+struct QueryDescUpscaleGetResourceRequirements : public InitHelper<ffxQueryDescUpscaleGetResourceRequirements>
 {};
 
 template<>

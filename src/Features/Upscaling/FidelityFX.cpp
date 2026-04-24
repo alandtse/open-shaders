@@ -6,6 +6,7 @@
 #include <cstdlib>
 #include <directx/d3dx12.h>
 #include <filesystem>
+#include <format>
 #include <string>
 #include <vector>
 
@@ -664,58 +665,86 @@ bool FidelityFX::QueryRuntimeUpscalerProviderSupport() const
 	versionsQuery.versionIds = nullptr;
 	versionsQuery.versionNames = nullptr;
 
-	if (ffx::Query(versionsQuery) != ffx::ReturnCode::Ok || versionCount == 0) {
-		runtimeUpscalerProviderCacheValid = true;
-		logger::warn("[FidelityFX] Runtime upscaler provider query returned no available versions.");
-		return false;
-	}
+	std::string availableVersionSummary;
+	if (ffx::Query(versionsQuery) == ffx::ReturnCode::Ok && versionCount != 0) {
+		std::vector<uint64_t> versionIds(versionCount);
+		std::vector<const char*> versionNames(versionCount, nullptr);
+		versionsQuery.versionIds = versionIds.data();
+		versionsQuery.versionNames = versionNames.data();
 
-	std::vector<uint64_t> versionIds(versionCount);
-	std::vector<const char*> versionNames(versionCount, nullptr);
-	versionsQuery.versionIds = versionIds.data();
-	versionsQuery.versionNames = versionNames.data();
-	if (ffx::Query(versionsQuery) != ffx::ReturnCode::Ok) {
-		runtimeUpscalerProviderCacheValid = true;
-		logger::warn("[FidelityFX] Runtime upscaler provider version enumeration failed.");
-		return false;
-	}
+		if (ffx::Query(versionsQuery) == ffx::ReturnCode::Ok) {
+			availableVersionSummary.reserve(static_cast<size_t>(versionCount) * 32);
+			for (uint64_t i = 0; i < versionCount; ++i) {
+				if (!availableVersionSummary.empty())
+					availableVersionSummary += ", ";
 
-	const uint64_t requestedVersion = static_cast<uint64_t>(FFX_UPSCALER_VERSION);
-	for (uint64_t i = 0; i < versionCount; ++i) {
-		if (versionIds[i] == requestedVersion) {
-			runtimeUpscalerProviderSupportsRequestedVersion = true;
-			runtimeUpscalerProviderMatchedVersionId = versionIds[i];
-			if (versionNames[i])
-				runtimeUpscalerProviderMatchedVersionName = versionNames[i];
-			break;
+				availableVersionSummary += std::format("0x{:X}", versionIds[i]);
+				if (versionNames[i] && versionNames[i][0] != '\0') {
+					availableVersionSummary += " (";
+					availableVersionSummary += versionNames[i];
+					availableVersionSummary += ")";
+				}
+			}
 		}
+	} else {
+		logger::warn("[FidelityFX] Runtime upscaler provider version enumeration was unavailable for the current device.");
 	}
 
+	ffx::CreateBackendDX12Desc backendDesc{};
+	backendDesc.device = queryDevice.get();
+
+	ffx::CreateContextDescUpscale probeCreateDesc{};
+	probeCreateDesc.flags = FFX_UPSCALE_ENABLE_HIGH_DYNAMIC_RANGE | FFX_UPSCALE_ENABLE_AUTO_EXPOSURE;
+	probeCreateDesc.maxRenderSize = { 16u, 16u };
+	probeCreateDesc.maxUpscaleSize = { 16u, 16u };
+	probeCreateDesc.fpMessage = RuntimeFfxMessage;
+
+	ffx::CreateContextDescUpscaleVersion probeVersionDesc{};
+	probeVersionDesc.version = FFX_UPSCALER_VERSION;
+
+	probeCreateDesc.header.pNext = &probeVersionDesc.header;
+	probeVersionDesc.header.pNext = &backendDesc.header;
+	backendDesc.header.pNext = nullptr;
+
+	ffx::Context probeContext{};
+	const auto probeResult = ffxModule.CreateContext(&probeContext, &probeCreateDesc.header, nullptr);
 	runtimeUpscalerProviderCacheValid = true;
 
-	if (!runtimeUpscalerProviderSupportsRequestedVersion) {
-		logger::warn("[FidelityFX] Runtime upscaler provider does not expose requested FSR version {}.",
-			UpscalerVersionToString(FFX_UPSCALER_VERSION));
+	if (probeResult != FFX_API_RETURN_OK) {
+		logger::warn("[FidelityFX] Runtime upscaler probe context creation for FSR version {} failed with code {}. Enumerated providers: {}",
+			UpscalerVersionToString(FFX_UPSCALER_VERSION),
+			static_cast<uint32_t>(probeResult),
+			availableVersionSummary.empty() ? "none reported" : availableVersionSummary);
 		return false;
 	}
+
+	runtimeUpscalerProviderSupportsRequestedVersion = true;
 
 	ffxQueryGetProviderVersion providerQuery{};
 	providerQuery.header.type = FFX_API_QUERY_DESC_TYPE_GET_PROVIDER_VERSION;
 	providerQuery.header.pNext = nullptr;
-	providerQuery.versionId = runtimeUpscalerProviderMatchedVersionId;
+	providerQuery.versionId = 0;
 	providerQuery.versionName = nullptr;
 
-	if (ffxModule.Query(nullptr, &providerQuery.header) == FFX_API_RETURN_OK &&
-	    providerQuery.versionName != nullptr) {
-		runtimeUpscalerProviderMatchedVersionName = providerQuery.versionName;
+	if (ffxModule.Query(&probeContext, &providerQuery.header) == FFX_API_RETURN_OK) {
+		runtimeUpscalerProviderMatchedVersionId = providerQuery.versionId;
+		if (providerQuery.versionName != nullptr)
+			runtimeUpscalerProviderMatchedVersionName = providerQuery.versionName;
 	}
 
+	if (ffxModule.DestroyContext)
+		(void)ffxModule.DestroyContext(&probeContext, nullptr);
+
 	if (runtimeUpscalerProviderMatchedVersionName.empty()) {
-		logger::info("[FidelityFX] Runtime upscaler provider confirmed for FSR version {}.",
-			UpscalerVersionToString(FFX_UPSCALER_VERSION));
+		logger::info("[FidelityFX] Runtime upscaler probe succeeded for FSR version {}. Enumerated providers: {}",
+			UpscalerVersionToString(FFX_UPSCALER_VERSION),
+			availableVersionSummary.empty() ? "none reported" : availableVersionSummary);
 	} else {
-		logger::info("[FidelityFX] Runtime upscaler provider '{}' confirmed for FSR version {}.",
-			runtimeUpscalerProviderMatchedVersionName, UpscalerVersionToString(FFX_UPSCALER_VERSION));
+		logger::info("[FidelityFX] Runtime upscaler provider '{}' (id 0x{:X}) accepted for FSR version {}. Enumerated providers: {}",
+			runtimeUpscalerProviderMatchedVersionName,
+			runtimeUpscalerProviderMatchedVersionId,
+			UpscalerVersionToString(FFX_UPSCALER_VERSION),
+			availableVersionSummary.empty() ? "none reported" : availableVersionSummary);
 	}
 
 	return true;

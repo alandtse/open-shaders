@@ -48,6 +48,15 @@ extern "C" {
 #define FFX_UPSCALER_MAKE_VERSION(major, minor, patch) (((major) << 22) | ((minor) << 12) | (patch))
 #define FFX_UPSCALER_VERSION FFX_UPSCALER_MAKE_VERSION(FFX_UPSCALER_VERSION_MAJOR, FFX_UPSCALER_VERSION_MINOR, FFX_UPSCALER_VERSION_PATCH)
 
+enum FfxApiUpscaleQualityMode
+{
+	FFX_UPSCALE_QUALITY_MODE_NATIVEAA = 0,
+	FFX_UPSCALE_QUALITY_MODE_QUALITY = 1,
+	FFX_UPSCALE_QUALITY_MODE_BALANCED = 2,
+	FFX_UPSCALE_QUALITY_MODE_PERFORMANCE = 3,
+	FFX_UPSCALE_QUALITY_MODE_ULTRA_PERFORMANCE = 4
+};
+
 enum FfxApiCreateContextUpscaleFlags
 {
 	FFX_UPSCALE_ENABLE_HIGH_DYNAMIC_RANGE = (1 << 0),
@@ -67,6 +76,14 @@ enum FfxApiDispatchFsrUpscaleFlags
 	FFX_UPSCALE_FLAG_DRAW_DEBUG_VIEW = (1 << 0),
 	FFX_UPSCALE_FLAG_NON_LINEAR_COLOR_SRGB = (1 << 1),
 	FFX_UPSCALE_FLAG_NON_LINEAR_COLOR_PQ = (1 << 2),
+};
+
+enum FfxApiDispatchUpscaleAutoreactiveFlags
+{
+	FFX_UPSCALE_AUTOREACTIVEFLAGS_APPLY_TONEMAP = (1 << 0),
+	FFX_UPSCALE_AUTOREACTIVEFLAGS_APPLY_INVERSETONEMAP = (1 << 1),
+	FFX_UPSCALE_AUTOREACTIVEFLAGS_APPLY_THRESHOLD = (1 << 2),
+	FFX_UPSCALE_AUTOREACTIVEFLAGS_USE_COMPONENTS_MAX = (1 << 3),
 };
 
 enum FfxApiConfigureUpscaleKey
@@ -116,6 +133,59 @@ struct ffxDispatchDescUpscale
 	uint32_t flags;
 };
 
+#define FFX_API_QUERY_DESC_TYPE_UPSCALE_GETUPSCALERATIOFROMQUALITYMODE FFX_API_MAKE_EFFECT_SUB_ID(FFX_API_EFFECT_ID_UPSCALE, 0x02)
+struct ffxQueryDescUpscaleGetUpscaleRatioFromQualityMode
+{
+	ffxQueryDescHeader header;
+	uint32_t qualityMode;
+	float* pOutUpscaleRatio;
+};
+
+#define FFX_API_QUERY_DESC_TYPE_UPSCALE_GETRENDERRESOLUTIONFROMQUALITYMODE FFX_API_MAKE_EFFECT_SUB_ID(FFX_API_EFFECT_ID_UPSCALE, 0x03)
+struct ffxQueryDescUpscaleGetRenderResolutionFromQualityMode
+{
+	ffxQueryDescHeader header;
+	uint32_t displayWidth;
+	uint32_t displayHeight;
+	uint32_t qualityMode;
+	uint32_t* pOutRenderWidth;
+	uint32_t* pOutRenderHeight;
+};
+
+#define FFX_API_QUERY_DESC_TYPE_UPSCALE_GETJITTERPHASECOUNT FFX_API_MAKE_EFFECT_SUB_ID(FFX_API_EFFECT_ID_UPSCALE, 0x04)
+struct ffxQueryDescUpscaleGetJitterPhaseCount
+{
+	ffxQueryDescHeader header;
+	uint32_t renderWidth;
+	uint32_t displayWidth;
+	int32_t* pOutPhaseCount;
+};
+
+#define FFX_API_QUERY_DESC_TYPE_UPSCALE_GETJITTEROFFSET FFX_API_MAKE_EFFECT_SUB_ID(FFX_API_EFFECT_ID_UPSCALE, 0x05)
+struct ffxQueryDescUpscaleGetJitterOffset
+{
+	ffxQueryDescHeader header;
+	int32_t index;
+	int32_t phaseCount;
+	float* pOutX;
+	float* pOutY;
+};
+
+#define FFX_API_DISPATCH_DESC_TYPE_UPSCALE_GENERATEREACTIVEMASK FFX_API_MAKE_EFFECT_SUB_ID(FFX_API_EFFECT_ID_UPSCALE, 0x06)
+struct ffxDispatchDescUpscaleGenerateReactiveMask
+{
+	ffxDispatchDescHeader header;
+	void* commandList;
+	struct FfxApiResource colorOpaqueOnly;
+	struct FfxApiResource colorPreUpscale;
+	struct FfxApiResource outReactive;
+	struct FfxApiDimensions2D renderSize;
+	float scale;
+	float cutoffThreshold;
+	float binaryValue;
+	uint32_t flags;
+};
+
 #define FFX_API_CONFIGURE_DESC_TYPE_UPSCALE_KEYVALUE FFX_API_MAKE_EFFECT_SUB_ID(FFX_API_EFFECT_ID_UPSCALE, 0x07)
 struct ffxConfigureDescUpscaleKeyValue
 {
@@ -123,6 +193,42 @@ struct ffxConfigureDescUpscaleKeyValue
 	uint64_t key;
 	uint64_t u64;
 	void* ptr;
+};
+
+#define FFX_API_QUERY_DESC_TYPE_UPSCALE_GPU_MEMORY_USAGE FFX_API_MAKE_EFFECT_SUB_ID(FFX_API_EFFECT_ID_UPSCALE, 0x08)
+struct ffxQueryDescUpscaleGetGPUMemoryUsage
+{
+	ffxQueryDescHeader header;
+	struct FfxApiEffectMemoryUsage* gpuMemoryUsageUpscaler;
+};
+
+#define FFX_API_QUERY_DESC_TYPE_UPSCALE_GPU_MEMORY_USAGE_V2 FFX_API_MAKE_EFFECT_SUB_ID(FFX_API_EFFECT_ID_UPSCALE, 0x09)
+struct ffxQueryDescUpscaleGetGPUMemoryUsageV2
+{
+	ffxQueryDescHeader header;
+	void* device;
+	struct FfxApiDimensions2D maxRenderSize;
+	struct FfxApiDimensions2D maxUpscaleSize;
+	uint32_t flags;
+	struct FfxApiEffectMemoryUsage* gpuMemoryUsageUpscaler;
+};
+
+enum FfxApiQueryResourceIdentifiers
+{
+	FFX_API_QUERY_RESOURCE_INPUT_COLOR = (1 << 0),
+	FFX_API_QUERY_RESOURCE_INPUT_DEPTH = (1 << 1),
+	FFX_API_QUERY_RESOURCE_INPUT_MV = (1 << 2),
+	FFX_API_QUERY_RESOURCE_INPUT_EXPOSURE = (1 << 3),
+	FFX_API_QUERY_RESOURCE_INPUT_REACTIVEMASK = (1 << 4),
+	FFX_API_QUERY_RESOURCE_INPUT_TRANSPARENCYCOMPOSITION = (1 << 5),
+};
+
+#define FFX_API_QUERY_DESC_TYPE_UPSCALE_GET_RESOURCE_REQUIREMENTS FFX_API_MAKE_EFFECT_SUB_ID(FFX_API_EFFECT_ID_UPSCALE, 0x0a)
+struct ffxQueryDescUpscaleGetResourceRequirements
+{
+	ffxQueryDescHeader header;
+	uint64_t required_resources;
+	uint64_t optional_resources;
 };
 
 #define FFX_API_CREATE_CONTEXT_DESC_TYPE_UPSCALE_VERSION FFX_API_MAKE_EFFECT_SUB_ID(FFX_API_EFFECT_ID_UPSCALE, 0x0b)
