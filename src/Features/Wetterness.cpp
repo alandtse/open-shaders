@@ -1344,7 +1344,7 @@ void Wetterness::DrawSettings()
 
 		ImGui::SliderFloat("Ground Wet-film", &settings.RainContactWetnessScale, RAIN_CONTACT_WETNESS_SCALE_MIN, RAIN_CONTACT_WETNESS_SCALE_MAX, "%.2f");
 		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::TextUnformatted("Controls the thin non-puddle wet film on exposed ground. Higher = more visible wet ground and raindrop read between puddles. Lower = ground stays drier between puddles. Does not increase real puddle depth or puddle size.");
+			ImGui::TextUnformatted("Controls the thin non-puddle reflection film on exposed ground. Higher = more visible wet sheen and raindrop read between puddles. Lower = drier reflection between puddles. Does not drive wet darkening, puddle depth, or puddle size.");
 		}
 
 		ImGui::SliderFloat("Wet Surface Darkening", &settings.WetDarkeningStrength, 0.0f, 2.0f, "%.2f");
@@ -1354,12 +1354,12 @@ void Wetterness::DrawSettings()
 
 		ImGui::SliderFloat("Wet Film Specular Floor", &settings.WetFilmSpecularFloorScale, WET_FILM_SPECULAR_FLOOR_SCALE_MIN, WET_FILM_SPECULAR_FLOOR_SCALE_MAX, "%.2f");
 		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::TextUnformatted("Controls subtle wet-film reflections outside standing puddles. Higher = stronger ground glitter between puddles.");
+			ImGui::TextUnformatted("Boosts thin wet-film reflections outside standing puddles. Higher = stronger ground sheen between puddles.");
 		}
 
 		ImGui::SliderFloat("Wet Highlight Reduction", &settings.WetHighlightReduction, WET_HIGHLIGHT_REDUCTION_MIN, WET_HIGHLIGHT_REDUCTION_MAX, "%.2f");
 		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::TextUnformatted("Reduces bright white wet highlights. Higher = less white glare, lower = brighter highlights.");
+			ImGui::TextUnformatted("Reduces bright white thin-film highlights. Higher = less white film glare, lower = brighter highlights. Deep puddles are not the target.");
 		}
 
 		ImGui::SliderFloat("Wetness Fade Range", &wetnessDistanceFadeRange, WETNESS_DISTANCE_FADE_RANGE_UI_MIN_GAME_UNITS, WETNESS_DISTANCE_FADE_RANGE_UI_MAX_GAME_UNITS, "%.0f units", ImGuiSliderFlags_AlwaysClamp);
@@ -1422,7 +1422,7 @@ void Wetterness::DrawSettings()
 
 		ImGui::SliderFloat("Rain Reflection Balance", &rainReflectionBalance, RAIN_REFLECTION_BALANCE_MIN, RAIN_REFLECTION_BALANCE_MAX, "%.2f");
 		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::TextUnformatted("Rain-only control for the thin rain-contact film. Higher = less sky/building cubemap mirror and more direct film sparkle on broad wet ground. Deep puddles are unchanged.");
+			ImGui::TextUnformatted("Rain-only balance for the thin ground wet-film. Lower = more cubemap/environment mirror; higher = more direct rain sparkle and less mirror. Deep puddles are unchanged.");
 		}
 
 		ImGui::Dummy(ImVec2(0.0f, 12.0f));
