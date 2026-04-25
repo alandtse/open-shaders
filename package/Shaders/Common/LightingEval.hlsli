@@ -202,6 +202,18 @@ float3 GetWetReflectionModeConfig(float wetReflectionScale)
 		effectiveScale);
 }
 
+float GetSkinWetnessOverdriveScale()
+{
+#	if defined(SKIN) || defined(HAIR)
+	// Preserve exact legacy output for SkinWetness <= 1.0 and only add extra intensity
+	// in the extended slider segment (1.0 .. 1.5).
+	const float skinWetnessOverdriveT = saturate((SharedData::wetternessSettings.SkinWetness - 1.0) / 0.5);
+	return lerp(1.0, 1.8, skinWetnessOverdriveT);
+#	else
+	return 1.0;
+#	endif
+}
+
 WetnessDirectLightingParams CreateWetnessDirectLightingParams(float3 wetnessNormal, float3 viewDir, float roughness, float3 wetReflectionModeConfig)
 {
 	WetnessDirectLightingParams params = (WetnessDirectLightingParams)0;
@@ -243,6 +255,7 @@ WetnessDirectLightingParams CreateWetnessDirectLightingParams(float3 wetnessNorm
 		params.wetnessFScale *= 1.1;
 	}
 #	endif
+	params.wetnessFScale *= GetSkinWetnessOverdriveScale();
 
 	return params;
 }
@@ -328,6 +341,7 @@ float3 GetWetnessIndirectLobeWeights(inout IndirectLobeWeights lobeWeights, floa
 		specularLobeWeight *= 1.12;
 	}
 #	endif
+	specularLobeWeight *= GetSkinWetnessOverdriveScale();
 	specularLobeWeight = saturate(specularLobeWeight);
 
 	lobeWeights.diffuse *= 1 - specularLobeWeight;

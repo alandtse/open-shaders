@@ -787,7 +787,7 @@ namespace
 		settings.PuddleMaxAngle = ClampFiniteOrDefault(settings.PuddleMaxAngle, 0.0f, 1.0f, 0.75f);
 		settings.PuddleMinWetness = ClampFiniteOrDefault(settings.PuddleMinWetness, 0.0f, 1.0f, 0.525f);
 		settings.MinRainWetness = ClampFiniteOrDefault(settings.MinRainWetness, 0.0f, 1.0f, 0.60f);
-		settings.SkinWetness = ClampFiniteOrDefault(settings.SkinWetness, 0.0f, 1.0f, 0.95f);
+		settings.SkinWetness = ClampFiniteOrDefault(settings.SkinWetness, 0.0f, 1.5f, 0.95f);
 
 		settings.StoneDryingMultiplier = ClampFiniteOrDefault(settings.StoneDryingMultiplier, DRYING_HOURS_MIN, DRYING_HOURS_MAX, DEFAULT_STONE_DRYING_HOURS);
 		settings.DirtDryingMultiplier = ClampFiniteOrDefault(settings.DirtDryingMultiplier, DRYING_HOURS_MIN, DRYING_HOURS_MAX, DEFAULT_DIRT_DRYING_HOURS);
@@ -1455,7 +1455,7 @@ void Wetterness::DrawSettings()
 			Util::DrawMultiLineTooltip(tooltipLines);
 		}
 
-		ImGui::SliderFloat("Skin Wetness", &settings.SkinWetness, 0.0f, 1.0f);
+		ImGui::SliderFloat("Skin Wetness", &settings.SkinWetness, 0.0f, 1.5f);
 		if (auto _tt = Util::HoverTooltipWrapper()) {
 			ImGui::TextUnformatted("How wet skin and hair look in rain. Higher = stronger wet look, lower = subtler wet look.");
 		}
