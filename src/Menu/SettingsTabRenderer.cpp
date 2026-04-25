@@ -206,6 +206,16 @@ void SettingsTabRenderer::RenderShadersTab()
 			ImGui::Text("Disables loading shaders from disk and prevents saving compiled shaders to disk cache.");
 		}
 
+		bool skipUnchanged = shaderCache->IsSkipUnchangedShaders();
+		ImGui::BeginDisabled(!useDiskCache);
+		if (ImGui::Checkbox("Skip Unchanged Shaders", &skipUnchanged)) {
+			shaderCache->SetSkipUnchangedShaders(skipUnchanged);
+		}
+		ImGui::EndDisabled();
+		if (auto _tt = Util::HoverTooltipWrapper()) {
+			ImGui::Text("Only rebuilds cached shaders when the source file is newer than the disk cache entry. Disable to rebuild cached shaders from source.");
+		}
+
 		bool useAsync = shaderCache->IsAsync();
 		if (ImGui::Checkbox("Enable Async", &useAsync)) {
 			shaderCache->SetAsync(useAsync);

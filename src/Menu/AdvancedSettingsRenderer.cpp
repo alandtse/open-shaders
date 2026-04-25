@@ -4,7 +4,6 @@
 #include <format>
 #include <imgui.h>
 #include <imgui_stdlib.h>
-#include <thread>
 
 #include "FeatureIssues.h"
 #include "Features/PerformanceOverlay/ABTesting/ABTesting.h"
@@ -17,6 +16,7 @@
 #include "Util.h"
 #include "Utils/Format.h"
 #include "Utils/UI.h"
+#include "Utils/WinApi.h"
 
 void AdvancedSettingsRenderer::RenderAdvancedSettings(
 	const std::function<void()>& drawTruePBRSettings,
@@ -123,19 +123,26 @@ void AdvancedSettingsRenderer::RenderLoggingSection()
 	ImGui::Spacing();
 
 	// Compiler Thread controls
-	ImGui::SliderInt("Compiler Threads", &shaderCache->compilationThreadCount, 1, static_cast<int32_t>(std::thread::hardware_concurrency()));
+	const auto maxCompilerThreads = static_cast<int32_t>(Util::GetLogicalCoreCount());
+	int compilerThreads = shaderCache->GetCompilationThreadCount();
+	if (ImGui::SliderInt("Compiler Threads", &compilerThreads, 1, maxCompilerThreads)) {
+		shaderCache->SetCompilationThreadCount(compilerThreads);
+	}
 	if (auto _tt = Util::HoverTooltipWrapper()) {
 		ImGui::Text(
 			"Number of threads to use to compile shaders. "
 			"The more threads the faster compilation will finish but may make the system unresponsive. ");
-		}
-		ImGui::SliderInt("Background Compiler Threads", &shaderCache->backgroundCompilationThreadCount, 1, static_cast<int32_t>(std::thread::hardware_concurrency()));
-		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::Text(
-				"Number of threads to use to compile shaders while playing game. "
-				"This is activated if the startup compilation is skipped. "
-				"The more threads the faster compilation will finish but may make the system unresponsive. ");
-		}
+	}
+	int backgroundThreads = shaderCache->GetBackgroundCompilationThreadCount();
+	if (ImGui::SliderInt("Background Compiler Threads", &backgroundThreads, 1, maxCompilerThreads)) {
+		shaderCache->SetBackgroundCompilationThreadCount(backgroundThreads);
+	}
+	if (auto _tt = Util::HoverTooltipWrapper()) {
+		ImGui::Text(
+			"Number of threads to use to compile shaders while playing game. "
+			"This is activated if the startup compilation is skipped. "
+			"The more threads the faster compilation will finish but may make the system unresponsive. ");
+	}
 
 	// Dump Ini Settings button
 	if (ImGui::Button("Dump Ini Settings", { -1, 0 })) {
@@ -539,6 +546,62 @@ void AdvancedSettingsRenderer::RenderDeveloperSection()
 	// Statistics section (moved from Advanced/Logging)
 	if (ImGui::TreeNodeEx("Statistics", ImGuiTreeNodeFlags_DefaultOpen)) {
 		ImGui::Text(std::format("Shader Compiler : {}", shaderCache->GetShaderStatsString()).c_str());
+
+		if (!shaderCache->IsCompiling()) {
+			auto parallelism = shaderCache->GetParallelismStats();
+			if (parallelism.has_value()) {
+				const auto& p = parallelism.value();
+				ImGui::Spacing();
+				ImGui::TextDisabled("Parallelism (derived from %zu compiled tasks)", p.sampleCount);
+				ImGui::Text("Work (W, sum of task wall times): %s", Util::FormatDuration(p.workMs).c_str());
+				ImGui::Text("Longest task (S): %s", Util::FormatDuration(p.spanMs).c_str());
+				ImGui::Text("Observed wall time (T_p): %s", Util::FormatDuration(p.makespanMs).c_str());
+				ImGui::Text("Queue wait (avg/max): %s / %s",
+					Util::FormatDuration(p.avgQueueWaitMs).c_str(),
+					Util::FormatDuration(p.maxQueueWaitMs).c_str());
+				ImGui::Text("Observed parallelism (W/T_p): %.2fx", p.avgParallelism);
+				ImGui::Text("Longest-task share (S/T_p): %.1f%%", 100.0 * p.longestTaskShare);
+				ImGui::Text("Queue/scheduling gap: %.1f%%", p.schedulingGapPercent);
+
+				ImGui::Spacing();
+				ImGui::TextDisabled("Longest-task share");
+				float efficiency = static_cast<float>(std::clamp(p.longestTaskShare, 0.0, 1.0));
+				ImGui::ProgressBar(efficiency, ImVec2(-1.0f, 0.0f), std::format("{:.1f}% longest task / {:.1f}% gap", 100.0 * p.longestTaskShare, p.schedulingGapPercent).c_str());
+
+				ImGui::Spacing();
+				ImGui::TextDisabled("Relative durations");
+				double maxMs = std::max({ p.workMs, p.spanMs, p.makespanMs, 1.0 });
+				auto drawRelativeBar = [maxMs](const char* label, double value) {
+					float ratio = static_cast<float>(std::clamp(value / maxMs, 0.0, 1.0));
+					ImGui::TextUnformatted(label);
+					ImGui::SameLine();
+					ImGui::ProgressBar(ratio, ImVec2(-1.0f, 0.0f), std::format("{} ({:.1f}%)", Util::FormatDuration(value), 100.0 * ratio).c_str());
+				};
+				drawRelativeBar("Longest task", p.spanMs);
+				drawRelativeBar("Wall time", p.makespanMs);
+				drawRelativeBar("Work (W)", p.workMs);
+			}
+		}
+
+		auto topSlow = shaderCache->GetTopSlowTasks(3);
+		if (!topSlow.empty()) {
+			ImGui::Spacing();
+			ImGui::TextDisabled("Top %zu Slowest Shaders (last build)", topSlow.size());
+			for (size_t i = 0; i < topSlow.size(); ++i) {
+				const auto& rec = topSlow[i];
+				ImGui::Text("#%zu  %s  (weight %d)", i + 1,
+					Util::FormatDuration(rec.elapsedMs).c_str(), rec.priority);
+				ImGui::SameLine();
+				ImGui::TextDisabled("%s", rec.key.c_str());
+				if (ImGui::BeginPopupContextItem(std::format("##slowcopy{}", i).c_str())) {
+					if (ImGui::MenuItem("Copy key")) {
+						ImGui::SetClipboardText(rec.key.c_str());
+					}
+					ImGui::EndPopup();
+				}
+			}
+		}
+
 		ImGui::TreePop();
 	}
 

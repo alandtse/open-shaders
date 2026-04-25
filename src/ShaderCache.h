@@ -2,8 +2,15 @@
 
 #include <BS_thread_pool.hpp>
 #include <efsw/efsw.hpp>
+#include <atomic>
+#include <bit>
 #include <condition_variable>
+#include <optional>
+#include <set>
+#include <thread>
 #include <vector>
+
+#include "Utils/WinApi.h"
 
 using namespace std::chrono;
 
@@ -219,12 +226,21 @@ namespace SIE
 		size_t GetId() const;
 		std::string GetString() const;
 
+		int GetPriority() const { return cachedPriority; }
+		void SetEnqueuedQpc(int64_t qpc) { enqueuedQpc = qpc; }
+		int64_t GetEnqueuedQpc() const { return enqueuedQpc; }
+
 		bool operator==(const ShaderCompilationTask& other) const;
 
 	protected:
 		ShaderClass shaderClass;
 		const RE::BSShader& shader;
 		uint32_t descriptor;
+
+	private:
+		static int ComputePriority(ShaderClass shaderClass, const RE::BSShader& shader, uint32_t descriptor);
+		int cachedPriority;
+		int64_t enqueuedQpc = 0;
 	};
 }
 
@@ -237,11 +253,22 @@ struct std::hash<SIE::ShaderCompilationTask>
 	}
 };
 
+struct TaskPriorityLess
+{
+	bool operator()(const SIE::ShaderCompilationTask& a, const SIE::ShaderCompilationTask& b) const
+	{
+		if (a.GetPriority() != b.GetPriority()) {
+			return a.GetPriority() < b.GetPriority();
+		}
+		return a.GetId() < b.GetId();
+	}
+};
+
 namespace SIE
 {
 	class CompilationSet
 	{
-	public:
+public:
 		LARGE_INTEGER lastReset;
 		LARGE_INTEGER lastCalculation;
 		std::atomic<int64_t> completionTime;  // When compilation completed (QuadPart equivalent)
@@ -260,19 +287,60 @@ namespace SIE
 		void Add(const ShaderCompilationTask& task);
 		void Complete(const ShaderCompilationTask& task);
 		void Clear();
+		void NotifyDispatcher();
 		std::string GetHumanTime(double a_totalMs);
-		double GetEta();
+		double GetEta(int64_t endQpc, int64_t lastResetQpc);
 		std::string GetStatsString(bool a_timeOnly = false, bool a_elapsedOnly = false);
 		std::atomic<uint64_t> completedTasks = 0;
 		std::atomic<uint64_t> totalTasks = 0;
 		std::atomic<uint64_t> failedTasks = 0;
-		std::atomic<uint64_t> cacheHitTasks = 0;  // number of compiles of a previously seen shader combo
+		std::atomic<uint64_t> cacheHitTasks = 0;         // number of compiles of a previously seen shader combo
+		std::atomic<uint64_t> diskHitTasks = 0;          // tasks resolved from disk cache instead of D3DCompile
+		std::atomic<uint64_t> diskHitPriorityWeight = 0;
+		std::atomic<int64_t> compilationPhaseStartQpc = 0;
+		std::atomic<bool> compilationPhaseStarted = false;
+		std::atomic<uint64_t> totalPriorityWeight = 0;
+		std::atomic<uint64_t> completedPriorityWeight = 0;
 		std::mutex compilationMutex;
 
+		struct SlowTaskRecord
+		{
+			std::string key;
+			double elapsedMs = 0.0;
+			double queueWaitMs = 0.0;
+			int priority = 0;
+			int defineCount = 0;
+			uintmax_t sourceSizeBytes = 0;
+			int64_t queuedQpc = 0;
+			int64_t startQpc = 0;
+			int64_t endQpc = 0;
+		};
+
+		struct ParallelismStats
+		{
+			double workMs = 0.0;
+			double spanMs = 0.0;
+			double makespanMs = 0.0;
+			double avgParallelism = 0.0;
+			double longestTaskShare = 0.0;
+			double schedulingGapPercent = 0.0;
+			double avgQueueWaitMs = 0.0;
+			double maxQueueWaitMs = 0.0;
+			size_t sampleCount = 0;
+		};
+
+		std::vector<SlowTaskRecord> slowTaskRecords;
+		mutable std::mutex slowTasksMutex;
+		mutable std::vector<SlowTaskRecord> sortedSlowTaskRecordsCache;
+		mutable bool slowTaskRecordsDirty = true;
+
+		std::vector<SlowTaskRecord> GetTopSlowTasks(size_t n = 3) const;
+		std::optional<ParallelismStats> GetParallelismStats() const;
+
 	private:
-		std::unordered_set<ShaderCompilationTask> availableTasks;
-		std::unordered_set<ShaderCompilationTask> tasksInProgress;
-		std::unordered_set<ShaderCompilationTask> processedTasks;  // completed or failed
+		std::set<ShaderCompilationTask, TaskPriorityLess> availableTasks;
+		std::set<ShaderCompilationTask, TaskPriorityLess> tasksInProgress;
+		std::set<ShaderCompilationTask, TaskPriorityLess> processedTasks;  // completed or failed
 		std::condition_variable_any conditionVariable;
 	};
 
@@ -281,6 +349,7 @@ namespace SIE
 		ID3DBlob* blob;
 		ShaderCompilationTask::Status status;
 		system_clock::time_point compileTime = system_clock::now();
+		bool loadedFromDisk = false;
 	};
 
 	class UpdateListener;
@@ -290,8 +359,12 @@ namespace SIE
 	public:
 		static ShaderCache& Instance()
 		{
-			static ShaderCache instance;
-			return instance;
+			// Intentionally process-lifetime: detached shader workers can still be
+			// inside D3DCompile/driver code during game shutdown. Destroying the
+			// cache would also destroy the thread pool, maps, mutexes, and D3D
+			// resources they may touch, so let the OS reclaim this on process exit.
+			static ShaderCache* instance = new ShaderCache();
+			return *instance;
 		}
 
 		inline static bool IsSupportedShader(const RE::BSShader::Type type)
@@ -336,6 +409,8 @@ namespace SIE
 
 		bool IsDiskCache() const;
 		void SetDiskCache(bool value);
+		bool IsSkipUnchangedShaders() const;
+		void SetSkipUnchangedShaders(bool value);
 		void DeleteDiskCache();
 		void ValidateDiskCache();
 		void WriteDiskCacheInfo();
@@ -344,6 +419,17 @@ namespace SIE
 
 		void StartFileWatcher();
 		void StopFileWatcher();
+		void StopCompilation();
+		int32_t GetCompilationThreadCount() const;
+		void SetCompilationThreadCount(int32_t value);
+		int32_t GetBackgroundCompilationThreadCount() const;
+		void SetBackgroundCompilationThreadCount(int32_t value);
+		int32_t GetActiveCompilationThreadCount() const;
+		std::size_t GetCompilationPoolTaskCount() const;
+		bool IsBackgroundCompilation() const;
+		bool TryEnableBackgroundCompilation();
+		void ResetBackgroundCompilation();
+		bool IsCompilationStopping() const;
 
 		/**
 		 * @brief Updates the shader modification time for the given shader type.
@@ -393,7 +479,7 @@ namespace SIE
 		*/
 		bool Clear(const std::string& a_path);
 
-		bool AddCompletedShader(ShaderClass shaderClass, const RE::BSShader& shader, uint32_t descriptor, ID3DBlob* a_blob, std::string_view variantKey = {});
+		bool AddCompletedShader(ShaderClass shaderClass, const RE::BSShader& shader, uint32_t descriptor, ID3DBlob* a_blob, std::string_view variantKey = {}, bool fromDisk = false);
 
 		enum class ClaimResult
 		{
@@ -406,6 +492,7 @@ namespace SIE
 		ID3DBlob* GetCompletedShader(const std::string& a_key);
 		ID3DBlob* GetCompletedShader(const SIE::ShaderCompilationTask& a_task);
 		ID3DBlob* GetCompletedShader(ShaderClass shaderClass, const RE::BSShader& shader, uint32_t descriptor);
+		bool IsShaderLoadedFromDisk(const std::string& a_key);
 		ShaderCompilationTask::Status GetShaderStatus(const std::string& a_key);
 		std::string GetShaderStatsString(bool a_timeOnly = false, bool a_elapsedOnly = false);
 
@@ -440,6 +527,8 @@ namespace SIE
 		void DisableShaderBlocking();
 		void IterateShaderBlock(bool a_forward = true);
 		bool IsHideErrors();
+		std::vector<CompilationSet::SlowTaskRecord> GetTopSlowTasks(size_t n = 3);
+		std::optional<CompilationSet::ParallelismStats> GetParallelismStats();
 
 		/**
 		 * @brief Clears all shaders of a specific type from the shader map.
@@ -453,11 +542,6 @@ namespace SIE
 		std::chrono::time_point<std::chrono::system_clock> GetModifiedShaderMapTime(const std::string& a_shader);
 
 		ShaderFileDependencyTracker* GetDependencyTracker() { return dependencyTracker.get(); }
-
-		int32_t compilationThreadCount = std::max({ static_cast<int32_t>(std::thread::hardware_concurrency()) - 4, static_cast<int32_t>(std::thread::hardware_concurrency()) * 3 / 4, 1 });
-		int32_t backgroundCompilationThreadCount = std::max(static_cast<int32_t>(std::thread::hardware_concurrency()) / 2, 1);
-		BS::thread_pool compilationPool{};
-		bool backgroundCompilation = false;
 		bool menuLoaded = false;
 
 		enum class LightingShaderTechniques
@@ -700,6 +784,8 @@ namespace SIE
 		ShaderCache();
 		void ManageCompilationSet(std::stop_token stoken);
 		void ProcessCompilationSet(std::stop_token stoken, SIE::ShaderCompilationTask task);
+		void FailPendingCompilations();
+		bool RequestCompilationStop(bool waitForWorkers);
 
 		~ShaderCache();
 
@@ -714,12 +800,19 @@ namespace SIE
 
 		bool isEnabled = true;
 		bool isDiskCache = true;
+		bool isSkipUnchangedShaders = true;
 		bool isAsync = true;
 		bool isDump = false;
 		bool hideError = false;
-		bool useFileWatcher = false;
+		std::atomic<bool> useFileWatcher = false;
+		// The pool is sized for the user-visible maximum; these atomics throttle actual dispatch.
+		std::atomic<int32_t> compilationThreadCount{ std::max(static_cast<int32_t>(Util::GetLogicalCoreCount()) - 1, 1) };
+		std::atomic<int32_t> backgroundCompilationThreadCount{ std::max(static_cast<int32_t>(Util::GetPerformanceCoreCount()) / 2, 1) };
+		std::atomic<bool> backgroundCompilation = false;
+		std::atomic<bool> compilationStopping = false;
+		BS::thread_pool<> compilationPool{ static_cast<std::size_t>(Util::GetLogicalCoreCount()) };
+		std::jthread managementJthread;
 
-		std::stop_source ssource;
 		std::mutex vertexShadersMutex;
 		std::mutex pixelShadersMutex;
 		std::mutex computeShadersMutex;
@@ -763,7 +856,9 @@ namespace SIE
 		 * @return Void. Updates internal state and modifies `clearCache` and `fileDone` by reference.
 		 */
 		void UpdateCache(const std::filesystem::path& filePath, SIE::ShaderCache* cache, bool& clearCache, bool& retFlag);
-		void processQueue();
+		void StartProcessing();
+		void StopProcessing();
+		void processQueue(std::stop_token stoken);
 		void handleFileAction(efsw::WatchID, const std::string& dir, const std::string& filename, efsw::Action action, std::string) override;
 
 	private:
@@ -778,5 +873,6 @@ namespace SIE
 		};
 		std::mutex actionMutex;
 		std::vector<fileAction> queue{};
+		std::jthread fileWatcherThread;
 	};
 }

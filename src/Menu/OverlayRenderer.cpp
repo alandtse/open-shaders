@@ -167,9 +167,10 @@ void OverlayRenderer::RenderShaderCompilationStatus(const std::function<const ch
 	auto* renderDoc = RenderDoc::GetSingleton();
 	bool renderDocAvailable = renderDoc->IsAvailable();
 	const auto renderDocInformation = renderDoc->GetOverlayWarningMessage();
+	const bool isBackgroundCompilation = shaderCache->IsBackgroundCompilation();
 
 	auto progressTitle = fmt::format("{}Compiling Shaders: {}",
-		shaderCache->backgroundCompilation ? "Background " : "",
+		isBackgroundCompilation ? "Background " : "",
 		shaderCache->GetShaderStatsString(!state->IsDeveloperMode()).c_str());
 	auto percent = (float)compiledShaders / (float)totalShaders;
 	auto progressOverlay = fmt::format("{}/{} ({:2.1f}%)", compiledShaders, totalShaders, 100 * percent);
@@ -182,7 +183,7 @@ void OverlayRenderer::RenderShaderCompilationStatus(const std::function<const ch
 		}
 		ImGui::TextUnformatted(progressTitle.c_str());
 		ImGui::ProgressBar(percent, ImVec2(0.0f, 0.0f), progressOverlay.c_str());
-		if (!shaderCache->backgroundCompilation && shaderCache->menuLoaded) {
+		if (!isBackgroundCompilation && shaderCache->menuLoaded) {
 			auto skipShadersText = fmt::format(
 				"Press {} to proceed without completing shader compilation. ",
 				keyIdToString(Menu::GetSingleton()->GetSettings().SkipCompilationKey));

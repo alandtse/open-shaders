@@ -110,6 +110,7 @@ namespace globals
 		RE::BSUtilityShader* utilityShader = nullptr;
 		RE::Sky* sky = nullptr;
 		RE::UI* ui = nullptr;
+		std::atomic<bool> quitGame{ false };
 
 		RE::BSGraphics::PixelShader** currentPixelShader = nullptr;
 		RE::BSGraphics::VertexShader** currentVertexShader = nullptr;
@@ -146,6 +147,7 @@ namespace globals
 
 	void OnInit()
 	{
+		game::quitGame = false;
 		shaderCache = &SIE::ShaderCache::Instance();
 		state = State::GetSingleton();
 		menu = Menu::GetSingleton();
@@ -208,6 +210,13 @@ namespace globals
 
 		bShadowsOnGrass = RE::GetINISetting("bShadowsOnGrass:Display");
 		shadowMaskQuarter = RE::GetINISetting("iShadowMaskQuarter:Display");
+	}
+
+	void OnGameWindowClose()
+	{
+		if (!game::quitGame.exchange(true, std::memory_order_acq_rel) && shaderCache) {
+			shaderCache->StopCompilation();
+		}
 	}
 
 	/**

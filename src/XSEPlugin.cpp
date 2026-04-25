@@ -15,6 +15,8 @@
 
 #include "ENB/ENBSeriesAPI.h"
 
+#include <atomic>
+
 #define DLLEXPORT __declspec(dllexport)
 
 std::list<std::string> errors;
@@ -28,6 +30,7 @@ namespace
 		if (globals::state) {
 			globals::state->pendingPostLoadRuntimeReset = true;
 		}
+		globals::game::quitGame.store(false, std::memory_order_release);
 		globals::OnDataLoaded();
 		WeatherManager::GetSingleton()->ClearCache();
 		globals::features::lightLimitFix.Reset();
@@ -131,8 +134,15 @@ void MessageHandler(SKSE::MessagingInterface::Message* message)
 
 				auto shaderCache = globals::shaderCache;
 				shaderCache->menuLoaded = true;
-				while (shaderCache->IsCompiling() && !shaderCache->backgroundCompilation) {
+				while (shaderCache->IsCompiling() &&
+				       !shaderCache->IsBackgroundCompilation() &&
+				       !globals::game::quitGame.load(std::memory_order_relaxed)) {
 					std::this_thread::sleep_for(100ms);
+				}
+
+				if (globals::game::quitGame.load(std::memory_order_relaxed)) {
+					logger::info("Game was closed, skipping feature DataLoaded methods");
+					break;
 				}
 
 				if (shaderCache->IsDiskCache()) {

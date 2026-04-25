@@ -65,6 +65,11 @@ namespace Util
 	std::string FormatTimeAgo(std::filesystem::file_time_type fileTime);
 
 	/**
+	 * Formats a duration in milliseconds as HH:MM:SS.
+	 */
+	std::string FormatDuration(double ms);
+
+	/**
 	 * Formats a delta value with percentage difference for A/B test comparisons.
 	 * Returns a string like "+0.45 ms (+12.3%)" or "-0.23 ms (-8.1%)".
 	 *

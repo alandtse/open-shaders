@@ -168,6 +168,19 @@ namespace Util
 		return std::to_string(diff / 3600) + "h";
 	}
 
+	std::string FormatDuration(double ms)
+	{
+		if (!std::isfinite(ms) || ms < 0.0) {
+			return "00:00:00";
+		}
+
+		int64_t totalSeconds = static_cast<int64_t>(ms) / 1000;
+		int64_t hours = totalSeconds / 3600;
+		int64_t minutes = (totalSeconds % 3600) / 60;
+		int64_t seconds = totalSeconds % 60;
+		return fmt::format("{:02}:{:02}:{:02}", hours, minutes, seconds);
+	}
+
 	std::string TimeAgoStringQPC(const LARGE_INTEGER& lastTime, const LARGE_INTEGER& frequency)
 	{
 		if (lastTime.QuadPart == 0) {

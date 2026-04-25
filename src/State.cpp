@@ -425,8 +425,8 @@ void State::SaveToJson(nlohmann::json& settings)
 	advanced["Dump Shaders"] = shaderCache->IsDump();
 	advanced["Log Level"] = logLevel;
 	advanced["Shader Defines"] = shaderDefinesString;
-	advanced["Compiler Threads"] = shaderCache->compilationThreadCount;
-	advanced["Background Compiler Threads"] = shaderCache->backgroundCompilationThreadCount;
+	advanced["Compiler Threads"] = shaderCache->GetCompilationThreadCount();
+	advanced["Background Compiler Threads"] = shaderCache->GetBackgroundCompilationThreadCount();
 	advanced["Use FileWatcher"] = shaderCache->UseFileWatcher();
 	advanced["Frame Annotations"] = frameAnnotations;
 	advanced["Refraction Scale"] = refractionScale;
@@ -437,6 +437,7 @@ void State::SaveToJson(nlohmann::json& settings)
 	json general;
 	general["Enable Shaders"] = shaderCache->IsEnabled();
 	general["Enable Disk Cache"] = shaderCache->IsDiskCache();
+	general["Skip Unchanged Shaders"] = shaderCache->IsSkipUnchangedShaders();
 	general["Enable Async"] = shaderCache->IsAsync();
 
 	settings["General"] = general;
@@ -499,9 +500,9 @@ void State::LoadFromJson(nlohmann::json& settings)
 		if (advanced.contains("Shader Defines") && advanced["Shader Defines"].is_string())
 			SetDefines(advanced["Shader Defines"]);
 		if (advanced.contains("Compiler Threads") && advanced["Compiler Threads"].is_number_integer())
-			shaderCache->compilationThreadCount = std::clamp(advanced["Compiler Threads"].get<int32_t>(), 1, static_cast<int32_t>(std::thread::hardware_concurrency()));
+			shaderCache->SetCompilationThreadCount(advanced["Compiler Threads"].get<int32_t>());
 		if (advanced.contains("Background Compiler Threads") && advanced["Background Compiler Threads"].is_number_integer())
-			shaderCache->backgroundCompilationThreadCount = std::clamp(advanced["Background Compiler Threads"].get<int32_t>(), 1, static_cast<int32_t>(std::thread::hardware_concurrency()));
+			shaderCache->SetBackgroundCompilationThreadCount(advanced["Background Compiler Threads"].get<int32_t>());
 		if (advanced.contains("Use FileWatcher") && advanced["Use FileWatcher"].is_boolean())
 			shaderCache->SetFileWatcher(advanced["Use FileWatcher"]);
 		if (advanced.contains("Frame Annotations") && advanced["Frame Annotations"].is_boolean())
@@ -520,6 +521,8 @@ void State::LoadFromJson(nlohmann::json& settings)
 			shaderCache->SetEnabled(general["Enable Shaders"]);
 		if (general.contains("Enable Disk Cache") && general["Enable Disk Cache"].is_boolean())
 			shaderCache->SetDiskCache(general["Enable Disk Cache"]);
+		if (general.contains("Skip Unchanged Shaders") && general["Skip Unchanged Shaders"].is_boolean())
+			shaderCache->SetSkipUnchangedShaders(general["Skip Unchanged Shaders"]);
 		if (general.contains("Enable Async") && general["Enable Async"].is_boolean())
 			shaderCache->SetAsync(general["Enable Async"]);
 	}

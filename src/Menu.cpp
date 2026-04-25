@@ -1042,7 +1042,7 @@ void Menu::ProcessInputEventQueue()
 					};
 					KeyAction keyActions[] = {
 						{ settings.ToggleKey, [this]() { if (!HomePageRenderer::ShouldShowFirstTimeSetup()) IsEnabled = !IsEnabled; } },
-						{ settings.SkipCompilationKey, [shaderCache]() { shaderCache->backgroundCompilation = true; } },
+						{ settings.SkipCompilationKey, [this, shaderCache]() { if (!ShouldSwallowInput()) shaderCache->TryEnableBackgroundCompilation(); } },
 						{ settings.EffectToggleKey, [shaderCache]() { shaderCache->SetEnabled(!shaderCache->IsEnabled()); } },
 						{ settings.ShaderBlockPrevKey, [this, shaderCache]() { if (settings.EnableShaderBlocking) shaderCache->IterateShaderBlock(); } },
 						{ settings.ShaderBlockNextKey, [this, shaderCache]() { if (settings.EnableShaderBlocking) shaderCache->IterateShaderBlock(false); } },
