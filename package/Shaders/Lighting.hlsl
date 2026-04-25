@@ -2409,12 +2409,14 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 		// Packed control lane layout:
 		// - PackedPostRainControl[0..9]: post-rain spec boost (derived from Post-Rain Water Clarity)
 		// - PackedPostRainControl[10..19]: puddle sky/cubemap reflection scale
+		// - PackedPostRainControl[20..29]: faster wet-film rain phase
 		// - PackedRainReflectionControl[0..9]: post-rain cubemap glare reduction (derived from Post-Rain Water Clarity)
 		// - PackedRainReflectionControl[10..19]: in-rain cubemap suppression (derived from Rain Reflection Balance)
 		// - PackedRainReflectionControl[20..29]: in-rain wet-film specular boost (derived from Rain Reflection Balance)
 		uint packedPostRainControl = asuint(CS_WETNESS_SETTINGS.PackedPostRainControl);
 		float postRainSpecBoostFromClarity = saturate((float)(packedPostRainControl & 0x3FFu) * (1.0 / 1023.0));
 		float puddleSkyReflectionScale = saturate((float)((packedPostRainControl >> 10) & 0x3FFu) * (1.0 / 1023.0));
+		float wetFilmRainingAmount = saturate((float)((packedPostRainControl >> 20) & 0x3FFu) * (1.0 / 1023.0));
 		uint packedRainReflectionControl = asuint(CS_WETNESS_SETTINGS.PackedRainReflectionControl);
 		float postRainCubemapGlareReductionFromClarity = saturate((float)(packedRainReflectionControl & 0x3FFu) * (1.0 / 1023.0));
 		float inRainCubemapSuppressionFromBalance = saturate((float)((packedRainReflectionControl >> 10) & 0x3FFu) * (1.0 / 1023.0));
@@ -2444,6 +2446,8 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 #		endif
 	const float rainingAmount = saturate(CS_WETNESS_SETTINGS.Raining);
 	const float inRainBlend = smoothstep(0.05, 0.35, rainingAmount);
+	const float wetFilmInRainBlend = max(inRainBlend, smoothstep(0.05, 0.35, wetFilmRainingAmount));
+	const float wetFilmPostRainBlend = 1.0 - smoothstep(0.02, 0.20, max(rainingAmount, wetFilmRainingAmount));
 
 	// Surface classification used for both in-rain response and post-rain drying.
 	float vegetationFactor = 0.0;
@@ -2703,13 +2707,13 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	float wetFilmSource = rainContactVisible;
 	float wetFilmFloorScale = max(0.0, CS_WETNESS_SETTINGS.WetFilmSpecularFloorScale);
 	float wetFilmFloorResponse = lerp(0.50, 1.45, saturate(wetFilmFloorScale * (1.0 / 3.0)));
-	float wetFilmRainExposure = lerp(1.0, puddleRainExposure, inRainBlend * 0.10 * rainContactSlopeMask);
-	wetFilmRainExposure = max(wetFilmRainExposure, lerp(1.0, 0.84, inRainBlend));
-	float wetFilmSpecular = saturate(wetFilmSource * lerp(0.42, 0.78, inRainBlend) * wetFilmRainExposure * wetFilmFloorResponse);
+	float wetFilmRainExposure = lerp(1.0, puddleRainExposure, wetFilmInRainBlend * 0.10 * rainContactSlopeMask);
+	wetFilmRainExposure = max(wetFilmRainExposure, lerp(1.0, 0.84, wetFilmInRainBlend));
+	float wetFilmSpecular = saturate(wetFilmSource * lerp(0.42, 0.78, wetFilmInRainBlend) * wetFilmRainExposure * wetFilmFloorResponse);
 	wetFilmSpecular *= rainContactSlopeMask;
-	wetFilmSpecular *= lerp(1.0, 1.25, inRainFilmSpecularBoostFromBalance * inRainBlend);
+	wetFilmSpecular *= lerp(1.0, 1.25, inRainFilmSpecularBoostFromBalance * wetFilmInRainBlend);
 	// Keep post-rain readability focused on puddles rather than a broad uniform sheen.
-	wetFilmSpecular *= lerp(1.0, 0.28, postRainBlend);
+	wetFilmSpecular *= lerp(1.0, 0.28, wetFilmPostRainBlend);
 	// Match the legacy Wetness Effects shore mask: no extra height or slope gate.
 	float shoreWetnessSpecular = saturate(shoreWetness);
 	float puddleWaterThreshold = lerp(CS_WETNESS_SETTINGS.PuddleMinWetness, CS_WETNESS_SETTINGS.PuddleMinWetness * 0.8, inRainBlend);
@@ -2810,7 +2814,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	float flatnessAmount = smoothstep(max(CS_WETNESS_SETTINGS.PuddleMaxAngle, 0.0), 1.0, minWetnessAngle);
 	float puddleMinWetness = puddleWaterThreshold;
 	float puddleFlatness = smoothstep(puddleMinWetness, 1.0, wetPuddleSpecular);
-	float rainFilmFlatness = smoothstep(0.04, 0.22, wetFilmSpecularNonPuddle) * inRainBlend * 0.16;
+	float rainFilmFlatness = smoothstep(0.04, 0.22, wetFilmSpecularNonPuddle) * wetFilmInRainBlend * 0.16;
 	float shoreFilmFlatness = shoreWetnessSpecularNonPuddle * 0.10;
 	flatnessAmount *= max(puddleFlatness, max(rainFilmFlatness, shoreFilmFlatness));
 	flatnessAmount = saturate(lerp(flatnessAmount, 1.0, deepPuddleMask * 0.92));
@@ -2854,7 +2858,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	float rainWetSurfaceMask = smoothstep(0.03, 0.20, max(rainContactVisible * nonPuddleFilmMask, shoreWetnessSpecularNonPuddle));
 	float rainReflectionBalanceCurve = inRainCubemapSuppressionFromBalance * inRainCubemapSuppressionFromBalance;
 	float rainCubemapSuppressionStrength = lerp(0.03, 0.32, rainReflectionBalanceCurve);
-	wetRainCubemapSuppression = saturate(inRainBlend * rainWetSurfaceMask * rainCubemapSuppressionStrength);
+	wetRainCubemapSuppression = saturate(wetFilmInRainBlend * rainWetSurfaceMask * rainCubemapSuppressionStrength);
 	wetHighlightReflectanceScale *= (1.0 - wetRainCubemapSuppression);
 
 	float wetRoughnessScale = lerp(0.97, 0.995, postRainOverridePhase * postRainSpecBoostCurve);

@@ -106,9 +106,9 @@ namespace
 
 		return false;
 	}
-	constexpr float WEATHER_DRIVEN_NON_PUDDLE_MAX_HOURS = 18.0f;
-	constexpr float WEATHER_DRIVEN_PUDDLE_MIN_HOURS = 12.0f;
-	constexpr float WEATHER_DRIVEN_PUDDLE_MAX_HOURS = 24.0f;
+	constexpr float WEATHER_DRIVEN_NON_PUDDLE_MAX_HOURS = 12.0f;
+	constexpr float WEATHER_DRIVEN_PUDDLE_MIN_HOURS = 6.0f;
+	constexpr float WEATHER_DRIVEN_PUDDLE_MAX_HOURS = 15.0f;
 	constexpr float SUNNY_DRYING_SPEED_MULT = 1.20f;
 	constexpr float CLEAR_DRYING_SPEED_MULT = 1.00f;
 	constexpr float OVERCAST_DRYING_SPEED_MULT = 0.80f;
@@ -120,8 +120,8 @@ namespace
 	constexpr float SURFACE_DRYING_WEIGHT_DIRT = 0.45f;
 	constexpr float SNOW_PUDDLE_DRY_SLOW_MULT = 0.35f;
 	// Persistence tuning:
-	// - Long/strong rain events should keep puddles for much longer than ground wetness.
-	// - With default transition speed, strong events can keep puddles around roughly half a day.
+	// - Long/strong rain events should keep puddles longer than ground wetness.
+	// - With default transition speed, strong events can keep puddles around most of a day.
 	constexpr float RAIN_EVENT_REFERENCE_SECONDS = 1800.0f;
 	constexpr float RAIN_EVENT_DECAY_SECONDS = 43200.0f;
 	constexpr float MIN_WETNESS_DRY_SCALE_AT_MAX_EVENT = 0.12f;
@@ -1223,7 +1223,7 @@ void Wetterness::DrawSettings()
 		ImGui::BeginDisabled(raindropAdvancedDisabled);
 		ImGui::SliderFloat("Rain Phase Fade", &settings.RaindropTransitionFalloff, 0.5f, 6.0f, "%.2f");
 		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::TextUnformatted("Shapes the shared rain-to-post-rain signal used by raindrops, wet film, puddles, and rain reflection response. Higher = faster fade, lower = slower fade.");
+			ImGui::TextUnformatted("Shapes the main rain-to-post-rain signal used by raindrops, puddles, and rain reflection response. Ground wet-film uses a faster onset derived from this signal so it appears earlier.");
 		}
 		ImGui::SliderFloat("Raindrop Effect Range", &settings.RaindropFxRangeWorldUnits, RAINDROP_FX_RANGE_UI_MIN_GAME_UNITS, RAINDROP_FX_RANGE_UI_MAX_GAME_UNITS, "%.0f units", ImGuiSliderFlags_AlwaysClamp);
 		if (auto _tt = Util::HoverTooltipWrapper()) {
@@ -1822,6 +1822,9 @@ Wetterness::PerFrame Wetterness::GetCommonBufferData() const
 	const float raindropTransitionFalloff = std::clamp(settings.RaindropTransitionFalloff, 0.5f, 6.0f);
 	const float blendedRainingVisualShaped = std::pow(std::clamp(blendedRainingVisual, 0.0f, 1.0f), raindropTransitionFalloff);
 	const float blendedRainingVisualSnapped = (weatherRainTransitionWeight > 0.005f && blendedRainingVisualShaped >= 0.0025f) ? blendedRainingVisualShaped : 0.0f;
+	const float wetFilmTransitionFalloff = std::min(raindropTransitionFalloff, 1.0f);
+	const float blendedWetFilmRainingVisualShaped = std::pow(std::clamp(blendedRainingVisual, 0.0f, 1.0f), wetFilmTransitionFalloff);
+	const float blendedWetFilmRainingVisualSnapped = (weatherRainTransitionWeight > 0.005f && blendedWetFilmRainingVisualShaped >= 0.0025f) ? blendedWetFilmRainingVisualShaped : 0.0f;
 	const bool hasPrecipitationFxSignal = (currentRainingFX > 0.0f) || (lastRainingFX > 0.0f);
 	const bool rainingByWeatherMetadata =
 		(engineRaining && blendedRainingAccum > 0.0f) ||
@@ -1953,12 +1956,12 @@ Wetterness::PerFrame Wetterness::GetCommonBufferData() const
 		if (!rainingNow && (runtimeState.wetnessDepth > 0.0f || runtimeState.puddleDepth > 0.0f)) {
 			const float elapsedSeconds = std::max(0.0f, runtimeState.postRainElapsedSeconds);
 			// Surface dry-out cap:
-			// - weather-driven model: non-puddles dry within 3..18h
+			// - weather-driven model: non-puddles dry within 3..12h
 			// - manual model: uses slider values
 			// Use weighted surface duration so each slider has visible influence.
 			const float wetnessDurationSeconds = DryingHoursToSeconds(wetnessDurationHours);
 			// Puddle dry-out cap:
-			// - weather-driven model: 12..24h
+			// - weather-driven model: 6..15h
 			// - manual model: explicit slider control
 			const float puddleDurationSeconds = DryingHoursToSeconds(puddleDurationHours);
 
@@ -2080,6 +2083,11 @@ Wetterness::PerFrame Wetterness::GetCommonBufferData() const
 	const float postRainSpecBoostFromClarity = activePostRainWaterClarity;
 	const float inRainCubemapSuppressionFromBalance = activeRainReflectionBalance;
 	const float inRainFilmSpecularBoostFromBalance = activeRainReflectionBalance;
+	const float wetFilmRainPhaseSource = debugSettings.EnableRainOverride ? data.Raining : blendedWetFilmRainingVisualSnapped;
+	const float activeWetFilmRainPhase =
+		(data.settings.EnableWetnessEffects != 0 && !(isInterior && !debugSettings.EnableRainOverride)) ?
+			ClampFiniteOrDefault(wetFilmRainPhaseSource, 0.0f, 1.0f, 0.0f) :
+			0.0f;
 	const float activePuddleSkyReflectionScale = masterWetnessEnabled ?
 		ClampFiniteOrDefault(
 			puddleSkyReflectionScale,
@@ -2098,7 +2106,8 @@ Wetterness::PerFrame Wetterness::GetCommonBufferData() const
 	// Pack derived [0..1] controls into one uint lane using UNORM10 triplet:
 	// bits  0.. 9 = post-rain spec boost (derived from Post-Rain Water Clarity)
 	// bits 10..19 = puddle sky/cubemap reflection scale
-	data.PackedPostRainControl = PackThreeUnorm10(postRainSpecBoostFromClarity, activePuddleSkyReflectionScale, 0.0f);
+	// bits 20..29 = faster wet-film rain phase
+	data.PackedPostRainControl = PackThreeUnorm10(postRainSpecBoostFromClarity, activePuddleSkyReflectionScale, activeWetFilmRainPhase);
 	// Pack derived [0..1] controls into one uint lane using UNORM10 triplet:
 	// bits  0.. 9 = post-rain cubemap glare reduction (derived from Post-Rain Water Clarity)
 	// bits 10..19 = in-rain cubemap suppression (derived from Rain Reflection Balance)
