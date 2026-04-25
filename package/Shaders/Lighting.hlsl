@@ -3055,6 +3055,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 #	if defined(WETTERNESS)
 	float3 wetReflectionModeConfig = 0.0.xxx;
 	float3 wetReflectionModeConfigDirect = 0.0.xxx;
+	WetnessDirectLightingParams wetDirectLightingParams = (WetnessDirectLightingParams)0;
 	const bool wetLightingVisible = wetSpecularEnabled && waterRoughnessSpecular < 0.999 && wetnessGlossinessSpecular > 1e-4;
 	bool wetDirectLightingVisible = false;
 	bool wetIndirectLightingVisible = false;
@@ -3090,6 +3091,13 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 #		endif
 #	endif
 
+#	if defined(WETTERNESS)
+	if (wetDirectLightingVisible) {
+		wetDirectLightingParams = CreateWetnessDirectLightingParams(wetnessNormal, dirLightContext.viewDir, waterRoughnessSpecular, wetReflectionModeConfigDirect);
+		wetDirectLightingVisible = wetDirectLightingParams.enabled > 0.0;
+	}
+#	endif
+
 	EvaluateLighting(dirLightContext, material, tbnTr, uvOriginal, dirLightOutput);
 	dirLightOutput.diffuse = SanitizeFloat3(dirLightOutput.diffuse);
 	dirLightOutput.specular = SanitizeFloat3(dirLightOutput.specular);
@@ -3099,7 +3107,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 #	endif
 #	if defined(WETTERNESS)
 		if (wetDirectLightingVisible)
-		EvaluateWetnessLighting(wetnessNormal, dirLightContext, waterRoughnessSpecular, wetReflectionModeConfigDirect, dirLightOutput);
+		EvaluateWetnessLighting(wetnessNormal, dirLightContext, waterRoughnessSpecular, wetDirectLightingParams, dirLightOutput);
 #	elif defined(WETNESS_EFFECTS)
 	if (waterRoughnessSpecular < 1)
 		CS_EVALUATE_WETNESS_LIGHTING(wetnessNormal, dirLightContext, waterRoughnessSpecular, dirLightOutput);
@@ -3171,7 +3179,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 #			endif
 #			if defined(WETTERNESS)
 			if (wetDirectLightingVisible)
-			EvaluateWetnessLighting(wetnessNormal, pointLightContext, waterRoughnessSpecular, wetReflectionModeConfigDirect, pointLightOutput);
+			EvaluateWetnessLighting(wetnessNormal, pointLightContext, waterRoughnessSpecular, wetDirectLightingParams, pointLightOutput);
 #			elif defined(WETNESS_EFFECTS)
 		if (waterRoughnessSpecular < 1)
 			CS_EVALUATE_WETNESS_LIGHTING(wetnessNormal, pointLightContext, waterRoughnessSpecular, pointLightOutput);
@@ -3305,7 +3313,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 #			endif
 #			if defined(WETTERNESS)
 			if (wetDirectLightingVisible)
-			EvaluateWetnessLighting(wetnessNormal, pointLightContext, waterRoughnessSpecular, wetReflectionModeConfigDirect, pointLightOutput);
+			EvaluateWetnessLighting(wetnessNormal, pointLightContext, waterRoughnessSpecular, wetDirectLightingParams, pointLightOutput);
 #			elif defined(WETNESS_EFFECTS)
 		if (waterRoughnessSpecular < 1)
 			CS_EVALUATE_WETNESS_LIGHTING(wetnessNormal, pointLightContext, waterRoughnessSpecular, pointLightOutput);

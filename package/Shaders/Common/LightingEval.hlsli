@@ -167,6 +167,15 @@ void GetIndirectLobeWeights(out IndirectLobeWeights lobeWeights, IndirectContext
 }
 
 #if defined(WETTERNESS)
+struct WetnessDirectLightingParams
+{
+	float enabled;
+	float wetnessF0;
+	float wetnessFScale;
+	float lightColorScale;
+	float NdotV;
+};
+
 float3 GetWetReflectionModeConfig(float wetReflectionScale)
 {
 	const float WET_REFLECTION_SCALE_MAX = 2.0;
@@ -193,17 +202,54 @@ float3 GetWetReflectionModeConfig(float wetReflectionScale)
 		effectiveScale);
 }
 
-void EvaluateWetnessLighting(float3 wetnessNormal, DirectContext context, float roughness, float3 wetReflectionModeConfig, inout DirectLightingOutput lightingOutput)
+WetnessDirectLightingParams CreateWetnessDirectLightingParams(float3 wetnessNormal, float3 viewDir, float roughness, float3 wetReflectionModeConfig)
 {
+	WetnessDirectLightingParams params = (WetnessDirectLightingParams)0;
 	const float wetnessStrength = saturate(1 - roughness);
 	if (wetnessStrength <= 0.0) {
-		return;
+		return params;
 	}
 
 	const float modernWeight = wetReflectionModeConfig.x;
 	const float legacyWeight = wetReflectionModeConfig.y;
 	const float wetReflectionScale = wetReflectionModeConfig.z;
 	if (wetReflectionScale <= 0.0 || (modernWeight + legacyWeight) <= 0.0) {
+		return params;
+	}
+
+	const bool forwardReflectionBiasEnabled = SharedData::wetternessSettings.EnableForwardReflectionBias != 0;
+	const bool vanillaReflectionCompensationEnabled = SharedData::wetternessSettings.EnableVanillaReflectionCompensation != 0;
+
+	float NdotV = saturate(abs(dot(wetnessNormal, viewDir)) + EPSILON_DOT_CLAMP);
+	if (forwardReflectionBiasEnabled) {
+		// Make forward/top-down wet reflections visibly stronger instead of only
+		// applying a subtle floor that is often imperceptible in gameplay.
+		float forwardBiasAmount = saturate((0.62 - NdotV) / 0.62);
+		float biasedNdotV = max(NdotV, 0.55);
+		NdotV = lerp(NdotV, biasedNdotV, forwardBiasAmount);
+	}
+
+	params.enabled = 1.0;
+	params.wetnessF0 = 0.02 * modernWeight + wetnessStrength * legacyWeight;
+	params.wetnessFScale = wetnessStrength * wetReflectionScale;
+	params.lightColorScale = modernWeight + legacyWeight * 0.1;
+	params.NdotV = NdotV;
+	if (forwardReflectionBiasEnabled) {
+		params.wetnessFScale *= 1.18;
+	}
+#	if !defined(TRUE_PBR)
+	if (vanillaReflectionCompensationEnabled) {
+		params.lightColorScale *= 1.1;
+		params.wetnessFScale *= 1.1;
+	}
+#	endif
+
+	return params;
+}
+
+void EvaluateWetnessLighting(float3 wetnessNormal, DirectContext context, float roughness, WetnessDirectLightingParams params, inout DirectLightingOutput lightingOutput)
+{
+	if (params.enabled <= 0.0) {
 		return;
 	}
 
@@ -212,43 +258,21 @@ void EvaluateWetnessLighting(float3 wetnessNormal, DirectContext context, float 
 #	else
 	float3 lightColor = context.lightColor;
 #	endif
-
-	const float wetnessF0 = 0.02 * modernWeight + saturate(1.0 - roughness) * legacyWeight;
-	lightColor *= modernWeight + legacyWeight * 0.1;
+	lightColor *= params.lightColorScale;
 
 	const float3 N = wetnessNormal;
-	const float3 V = context.viewDir;
 	const float3 L = context.lightDir;
 	const float3 H = context.halfVector;
-	const bool forwardReflectionBiasEnabled = SharedData::wetternessSettings.EnableForwardReflectionBias != 0;
-	const bool vanillaReflectionCompensationEnabled = SharedData::wetternessSettings.EnableVanillaReflectionCompensation != 0;
 
 	float NdotL = clamp(dot(N, L), EPSILON_DOT_CLAMP, 1);
-	float NdotV = saturate(abs(dot(N, V)) + EPSILON_DOT_CLAMP);
-	if (forwardReflectionBiasEnabled) {
-		// Make forward/top-down wet reflections visibly stronger instead of only
-		// applying a subtle floor that is often imperceptible in gameplay.
-		float forwardBiasAmount = saturate((0.62 - NdotV) / 0.62);
-		float biasedNdotV = max(NdotV, 0.55);
-		NdotV = lerp(NdotV, biasedNdotV, forwardBiasAmount);
-	}
 	float NdotH = saturate(dot(N, H));
-	float VdotH = saturate(dot(V, H));
+	float VdotH = saturate(dot(context.viewDir, H));
 
 	float D = BRDF::D_GGX(roughness, NdotH);
-	float G = BRDF::Vis_SmithJointApprox(roughness, NdotV, NdotL);
-	float3 F = BRDF::F_Schlick(wetnessF0, VdotH);
+	float G = BRDF::Vis_SmithJointApprox(roughness, params.NdotV, NdotL);
+	float3 F = BRDF::F_Schlick(params.wetnessF0, VdotH);
 
-	F *= wetnessStrength * wetReflectionScale;
-	if (forwardReflectionBiasEnabled) {
-		F *= 1.18;
-	}
-#	if !defined(TRUE_PBR)
-	if (vanillaReflectionCompensationEnabled) {
-		lightColor *= 1.1;
-		F *= 1.1;
-	}
-#	endif
+	F *= params.wetnessFScale;
 	F = saturate(F);
 
 	float3 wetnessSpecular = D * G * F * NdotL * lightColor;
@@ -256,6 +280,12 @@ void EvaluateWetnessLighting(float3 wetnessNormal, DirectContext context, float 
 	lightingOutput.diffuse *= 1 - F;
 	lightingOutput.specular *= 1 - F;
 	lightingOutput.specular += wetnessSpecular;
+}
+
+void EvaluateWetnessLighting(float3 wetnessNormal, DirectContext context, float roughness, float3 wetReflectionModeConfig, inout DirectLightingOutput lightingOutput)
+{
+	WetnessDirectLightingParams params = CreateWetnessDirectLightingParams(wetnessNormal, context.viewDir, roughness, wetReflectionModeConfig);
+	EvaluateWetnessLighting(wetnessNormal, context, roughness, params, lightingOutput);
 }
 
 float3 GetWetnessIndirectLobeWeights(inout IndirectLobeWeights lobeWeights, float3 wetnessNormal, float roughness, IndirectContext context, float3 wetReflectionModeConfig)
