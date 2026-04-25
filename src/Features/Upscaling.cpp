@@ -2785,16 +2785,14 @@ bool Upscaling::DispatchFoveatedVendorUpscaling(UpscaleMethod a_upscaleMethod, I
 	if (!context || !deferred || !deferred->linearSampler || !renderer)
 		return false;
 
-	const bool useDirectSourcePath = settings.qualityMode == 0 && colorSRV != nullptr && !usePeripheryTAA;
-	// In periphery-TAA mode the outside-ring fill must come from per-eye, HMD-cleared color,
-	// otherwise hidden-area clear color can leak as side/bottom bars when TAA range < 1.0.
-	// For non-TAA, keep combined-source sampling only on the direct-source (DLAA/native) path.
-	// DLSS quality modes should sample per-eye inputs so hidden-area data cannot leak into periphery fills.
-	const bool useCombinedPeripherySource = useDirectSourcePath;
-	const bool requireFullPerEyeInputs = usePeripheryTAA || (!usePeripheryTAA && !useDirectSourcePath);
-	if (requireFullPerEyeInputs) {
-		PreparePerEyeInputs(colorTexture, depthTexture, motionVectors, reactiveMask, transparencyMask, false, true);
-	}
+	// Keep all foveated VR paths on per-eye inputs. The old DLAA/direct-source
+	// shortcut, and the Peripheral TAA center pass, sampled kMAIN directly and
+	// bypassed the HMD hidden-area cleanup from PreparePerEyeInputs.
+	// Keep copyAuxiliaryInputs=false here: Encode Upscaling Textures has already
+	// written the per-eye motion/reactive/transparency resources used by
+	// Periphery TAA, and this pass must not overwrite them.
+	const bool useCombinedPeripherySource = false;
+	PreparePerEyeInputs(colorTexture, depthTexture, motionVectors, reactiveMask, transparencyMask, false, true);
 	if (usePeripheryTAA && !EnsurePeripheryTAAResources(outputWidthPerEye, outputHeight, colorTexture))
 		return false;
 
@@ -2863,9 +2861,9 @@ bool Upscaling::DispatchFoveatedVendorUpscaling(UpscaleMethod a_upscaleMethod, I
 				return false;
 			}
 		} else {
-			if (!useDirectSourcePath && (!vrIntermediateColorIn[eye] || !vrIntermediateColorIn[eye]->srv || !vrIntermediateColorIn[eye]->resource))
+			if (!vrIntermediateColorIn[eye] || !vrIntermediateColorIn[eye]->srv || !vrIntermediateColorIn[eye]->resource)
 				return false;
-			if (!visualizeMask && !useDirectSourcePath && (!vrIntermediateDepth[eye] || !vrIntermediateDepth[eye]->srv || !vrIntermediateDepth[eye]->resource))
+			if (!visualizeMask && (!vrIntermediateDepth[eye] || !vrIntermediateDepth[eye]->srv || !vrIntermediateDepth[eye]->resource))
 				return false;
 		}
 
@@ -3084,10 +3082,8 @@ bool Upscaling::DispatchFoveatedVendorUpscaling(UpscaleMethod a_upscaleMethod, I
 		if (visualizeMask)
 			continue;
 
-		const bool useCombinedCenterInputs = usePeripheryTAA || useDirectSourcePath;
-		ID3D11Resource* centerColorInput = useCombinedCenterInputs ? colorTexture : vrIntermediateColorIn[eye]->resource.get();
-		ID3D11Resource* centerDepthInput = useCombinedCenterInputs ? depthTexture : vrIntermediateDepth[eye]->resource.get();
-		const uint32_t combinedEyeInputOffsetX = eye * inputWidthPerEye;
+		ID3D11Resource* centerColorInput = vrIntermediateColorIn[eye]->resource.get();
+		ID3D11Resource* centerDepthInput = vrIntermediateDepth[eye]->resource.get();
 
 		if (!DispatchSingleFoveatedVendorEye(
 				a_upscaleMethod,
@@ -3103,8 +3099,8 @@ bool Upscaling::DispatchFoveatedVendorUpscaling(UpscaleMethod a_upscaleMethod, I
 				centerHorizontalScale,
 				centerOffset,
 				effectiveCenterBlendFeather,
-				useCombinedCenterInputs ? combinedEyeInputOffsetX : 0u,
-				useCombinedCenterInputs ? combinedEyeInputOffsetX : 0u,
+				0u,
+				0u,
 				0u)) {
 			return false;
 		}
@@ -3299,9 +3295,35 @@ void Upscaling::FinalizePerEyeOutputs(ID3D11Resource* colorDst)
 
 	auto context = globals::d3d::context;
 	auto screenSize = state->screenSize;
+	auto renderSize = Util::ConvertToDynamic(screenSize);
 
 	uint32_t eyeWidthOut = (uint32_t)(screenSize.x / 2);
 	uint32_t eyeHeightOut = (uint32_t)screenSize.y;
+	uint32_t eyeWidthIn = (uint32_t)(renderSize.x / 2);
+	uint32_t eyeHeightIn = (uint32_t)renderSize.y;
+
+	// Final display-color scrub only. Periphery TAA history, velocity, and lock
+	// resources are left untouched so the temporal path remains active.
+	auto renderer = globals::game::renderer;
+	if (renderer) {
+		auto& depthTexture = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kMAIN];
+		if (depthTexture.depthSRV) {
+			for (uint32_t i = 0; i < 2; ++i) {
+				if (!vrIntermediateColorOut[i] || !vrIntermediateColorOut[i]->uav)
+					continue;
+
+				ClearHMDMask(
+					vrIntermediateColorOut[i]->uav.get(),
+					depthTexture.depthSRV,
+					eyeWidthIn,
+					eyeHeightIn,
+					eyeWidthOut,
+					eyeHeightOut,
+					i == 1 ? eyeWidthIn : 0u,
+					0u);
+			}
+		}
+	}
 
 	// Write upscaled outputs back
 	for (uint32_t i = 0; i < 2; ++i) {
@@ -3315,14 +3337,18 @@ void Upscaling::FinalizePerEyeOutputs(ID3D11Resource* colorDst)
 }
 
 void Upscaling::ClearHMDMask(ID3D11UnorderedAccessView* colorUAV, ID3D11ShaderResourceView* depthSRV,
-	uint32_t eyeWidth, uint32_t eyeHeight, uint32_t depthOffsetX, uint32_t colorOffsetX, uint32_t depthOffsetY, uint32_t colorOffsetY)
+	uint32_t depthWidth, uint32_t depthHeight, uint32_t colorWidth, uint32_t colorHeight, uint32_t depthOffsetX, uint32_t colorOffsetX, uint32_t depthOffsetY, uint32_t colorOffsetY)
 {
 	if (!globals::game::isVR)
 		return;
+	if (!colorUAV || !depthSRV || !depthWidth || !depthHeight || !colorWidth || !colorHeight)
+		return;
 
 	auto context = globals::d3d::context;
+	if (!context)
+		return;
 
-	if (!vrClearHMDMaskCS) {
+	if (!vrClearHMDMaskCS || !vrClearHMDMaskCB) {
 		vrClearHMDMaskCS.attach((ID3D11ComputeShader*)Util::CompileShader(L"Data/Shaders/Upscaling/ClearHMDMaskCS.hlsl", {}, "cs_5_0"));
 
 		D3D11_BUFFER_DESC cbDesc = {};
@@ -3333,9 +3359,9 @@ void Upscaling::ClearHMDMask(ID3D11UnorderedAccessView* colorUAV, ID3D11ShaderRe
 		DX::ThrowIfFailed(globals::d3d::device->CreateBuffer(&cbDesc, nullptr, vrClearHMDMaskCB.put()));
 	}
 
-	if (vrClearHMDMaskCS) {
-		auto dispatchX = (eyeWidth + 7) / 8;
-		auto dispatchY = (eyeHeight + 7) / 8;
+	if (vrClearHMDMaskCS && vrClearHMDMaskCB) {
+		auto dispatchX = (colorWidth + 7) / 8;
+		auto dispatchY = (colorHeight + 7) / 8;
 
 		context->CSSetShader(vrClearHMDMaskCS.get(), nullptr, 0);
 
@@ -3350,10 +3376,10 @@ void Upscaling::ClearHMDMask(ID3D11UnorderedAccessView* colorUAV, ID3D11ShaderRe
 			colorOffsetX,
 			depthOffsetY,
 			colorOffsetY,
-			eyeWidth,
-			eyeHeight,
-			eyeWidth,
-			eyeHeight
+			depthWidth,
+			depthHeight,
+			colorWidth,
+			colorHeight
 		};
 		context->UpdateSubresource(vrClearHMDMaskCB.get(), 0, nullptr, clearMaskParams, 0, 0);
 

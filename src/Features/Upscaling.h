@@ -293,7 +293,8 @@ public:
 	winrt::com_ptr<ID3D11Buffer> vrClearHMDMaskCB;
 	// Helper to dispatch mask clearing for a single eye region
 	void ClearHMDMask(ID3D11UnorderedAccessView* colorUAV, ID3D11ShaderResourceView* depthSRV,
-		uint32_t eyeWidth, uint32_t eyeHeight, uint32_t depthOffsetX, uint32_t colorOffsetX, uint32_t depthOffsetY = 0, uint32_t colorOffsetY = 0);
+		uint32_t depthWidth, uint32_t depthHeight, uint32_t colorWidth, uint32_t colorHeight,
+		uint32_t depthOffsetX, uint32_t colorOffsetX, uint32_t depthOffsetY = 0, uint32_t colorOffsetY = 0);
 
 	// Shared VR Per-Eye Intermediate Buffers
 	// Owned here so both Streamline (DLSS) and FidelityFX (FSR) can use them.
