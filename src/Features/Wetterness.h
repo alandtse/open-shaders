@@ -32,10 +32,10 @@ public:
 	struct Settings
 	{
 		uint EnableWetnessEffects = true;
-		float MaxRainWetness = 1.05f;
+		float MaxRainWetness = 1.5f;
 		float MaxPuddleWetness = 2.5f;
 		float MaxShoreWetness = 0.75f;
-		uint ShoreRange = 32;
+		uint ShoreRange = 38;
 		// User/persisted value in game units.
 		float PuddleRadiusWorldUnits = 119.05f;
 		float PuddleMaxAngle = 0.75f;
@@ -74,11 +74,11 @@ public:
 		float PostRainPuddleWaterStrength = 2.5f;
 		float RaindropTransitionFalloff = 2.0f;
 		float WetDarkeningStrength = 0.85f;
-		float WetHighlightReduction = 5.0f;
-		uint EnableForwardReflectionBias = false;
+		float WetHighlightReduction = 2.5f;
+		uint EnableForwardReflectionBias = true;
 		uint EnableVanillaReflectionCompensation = true;
-		float WetFilmSpecularFloorScale = 1.0f;
-		float RainContactWetnessScale = 1.0f;
+		float WetFilmSpecularFloorScale = 2.0f;
+		float RainContactWetnessScale = 1.75f;
 	};
 	static_assert(sizeof(Settings) == 160, "Wetterness::Settings layout changed; update wetness shader/CB contract.");
 	static_assert(offsetof(Settings, WeatherTransitionSpeed) == 40, "Wetterness::Settings WeatherTransitionSpeed offset changed.");
@@ -97,10 +97,10 @@ public:
 	struct ShaderSettings
 	{
 		uint EnableWetnessEffects = true;
-		float MaxRainWetness = 1.05f;
+		float MaxRainWetness = 1.5f;
 		float MaxPuddleWetness = 2.5f;
 		float MaxShoreWetness = 0.75f;
-		uint ShoreRange = 32;
+		uint ShoreRange = 38;
 		// Shader/runtime value in game units.
 		float PuddleRadius = 119.05f;
 		float PuddleMaxAngle = 0.75f;
@@ -135,10 +135,10 @@ public:
 		float PostRainPuddleWaterStrength = 2.5f;
 		float RaindropTransitionFalloff = 2.0f;
 		float WetDarkeningStrength = 0.85f;
-		float WetHighlightReduction = 5.0f;
-		uint EnableForwardReflectionBias = false;
+		float WetHighlightReduction = 2.5f;
+		uint EnableForwardReflectionBias = true;
 		uint EnableVanillaReflectionCompensation = true;
-		float WetFilmSpecularFloorScale = 1.0f;
+		float WetFilmSpecularFloorScale = 2.0f;
 		float ShorePersistentDarkeningStrength = 0.0f;
 	};
 	static_assert(sizeof(ShaderSettings) == 160, "Wetterness::ShaderSettings layout changed; update wetness shader/CB contract.");
@@ -169,20 +169,13 @@ public:
 		uint PackedPostRainControl = 0;
 		uint PackedRainReflectionControl = 0;
 		uint WetnessDistanceFadeRangePacked = 0;
-		float RainContactWetnessScale = 1.0f;
+		float RainContactWetnessScale = 1.75f;
 	};
 	STATIC_ASSERT_ALIGNAS_16(PerFrame);
 	static_assert(offsetof(PerFrame, settings) == 80, "Wetterness::PerFrame settings offset changed.");
 	static_assert(offsetof(PerFrame, PackedPostRainControl) == 240, "Wetterness::PerFrame tail-control offset changed.");
 	static_assert(sizeof(PerFrame) == 256, "Wetterness::PerFrame size changed; update wetness shader/CB contract.");
 	static_assert((sizeof(PerFrame) % 16) == 0, "Wetterness::PerFrame must stay 16-byte sized");
-
-	struct VRCubemapSettings
-	{
-		uint InactivateForwardCaptureGate = true;
-		uint UsePlayerRootCaptureAnchor = true;
-		uint SuppressSkyAndFrameEdgeCapture = true;
-	};
 
 	struct DebugSettings
 	{
@@ -197,16 +190,15 @@ public:
 
 	Settings settings;
 	bool enableWeatherDrivenDryingModel = true;
-	float puddleDryingHours = 18.0f;
+	float puddleDryingHours = 15.0f;
 	float puddleLayout = 3.0f;
-	float modernWetIndirectSpecularScale = 0.80f;
-	float legacyWetIndirectSpecularScale = 0.40f;
-	float rainReflectionBalance = 1.0f;
-	uint reducePuddleSkyReflections = false;
-	float postRainWaterClarity = 0.8f;
-	float shorePersistentDarkeningStrength = 1.0f;
+	float modernWetIndirectSpecularScale = 0.75f;
+	float legacyWetIndirectSpecularScale = 0.50f;
+	float rainReflectionBalance = 0.5f;
+	float puddleSkyReflectionScale = 0.5f;
+	float postRainWaterClarity = 0.75f;
+	float shorePersistentDarkeningStrength = 1.1f;
 	float wetnessDistanceFadeRange = 10000.0f;
-	VRCubemapSettings vrCubemapSettings;
 	// Climate preset system
 	enum class ClimatePreset : uint32_t
 	{

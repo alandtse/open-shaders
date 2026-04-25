@@ -25,7 +25,7 @@ namespace
 	RE::NiPoint3 GetCubemapCaptureAnchorPosition()
 	{
 		const auto* wetterness = GetActiveWetterness();
-		if (!(REL::Module::IsVR() && wetterness && wetterness->vrCubemapSettings.UsePlayerRootCaptureAnchor)) {
+		if (!(REL::Module::IsVR() && wetterness)) {
 			return Util::GetAverageEyePosition();
 		}
 
@@ -46,14 +46,7 @@ namespace
 			return 0u;
 		}
 
-		uint captureFlags = 0u;
-		if (wetterness->vrCubemapSettings.InactivateForwardCaptureGate) {
-			captureFlags |= DynamicCubemaps::kCaptureFlagDisableForwardGate;
-		}
-		if (wetterness->vrCubemapSettings.SuppressSkyAndFrameEdgeCapture) {
-			captureFlags |= DynamicCubemaps::kCaptureFlagSuppressSkyAndFrameEdge;
-		}
-		return captureFlags;
+		return DynamicCubemaps::kCaptureFlagDisableForwardGate | DynamicCubemaps::kCaptureFlagSuppressSkyAndFrameEdge;
 	}
 }
 
