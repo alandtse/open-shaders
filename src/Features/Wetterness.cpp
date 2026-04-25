@@ -691,6 +691,15 @@ namespace
 		return std::clamp(value, minValue, maxValue);
 	}
 
+	void SanitizeSplashRadiusSettings(Wetterness::Settings& settings)
+	{
+		settings.SplashesMinRadius = ClampFiniteOrDefault(settings.SplashesMinRadius, 0.0f, 1.0f, 0.35f);
+		settings.SplashesMaxRadius = ClampFiniteOrDefault(settings.SplashesMaxRadius, 0.0f, 1.0f, 0.50f);
+		if (settings.SplashesMinRadius > settings.SplashesMaxRadius) {
+			std::swap(settings.SplashesMinRadius, settings.SplashesMaxRadius);
+		}
+	}
+
 	void SanitizeShaderFacingSettings(Wetterness::Settings& settings)
 	{
 		settings.WeatherTransitionSpeed = ClampFiniteOrDefault(settings.WeatherTransitionSpeed, MIN_TRANSITION_SPEED, MAX_TRANSITION_SPEED, 3.0f);
@@ -714,6 +723,7 @@ namespace
 		settings.RaindropInterval = ClampFiniteOrDefault(settings.RaindropInterval, MIN_RAINDROP_INTERVAL, 60.0f, 0.5f);
 		settings.RaindropChance = ClampFiniteOrDefault(settings.RaindropChance, 0.0f, 1.0f, 0.8f);
 		settings.SplashesLifetime = ClampFiniteOrDefault(settings.SplashesLifetime, MIN_SPLASH_LIFETIME, 120.0f, 6.0f);
+		SanitizeSplashRadiusSettings(settings);
 		settings.RippleLifetime = ClampFiniteOrDefault(settings.RippleLifetime, MIN_RIPPLE_LIFETIME, 60.0f, 0.30f);
 		settings.RippleBreadth = ClampFiniteOrDefault(settings.RippleBreadth, MIN_RIPPLE_BREADTH, 10.0f, 0.40f);
 		settings.PostRainPuddleWaterStrength = ClampFiniteOrDefault(
@@ -1142,9 +1152,9 @@ void Wetterness::DrawSettings()
 		ImGui::EndDisabled();
 
 		ImGui::BeginDisabled(raindropAdvancedDisabled);
-		ImGui::SliderFloat("Raindrop End Fade", &settings.RaindropTransitionFalloff, 0.5f, 6.0f, "%.2f");
+		ImGui::SliderFloat("Rain Phase Fade", &settings.RaindropTransitionFalloff, 0.5f, 6.0f, "%.2f");
 		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::TextUnformatted("How quickly raindrop effects fade when rain ends. Higher = faster fade, lower = slower fade.");
+			ImGui::TextUnformatted("Shapes the shared rain-to-post-rain signal used by raindrops, wet film, puddles, and rain reflection response. Higher = faster fade, lower = slower fade.");
 		}
 		ImGui::SliderFloat("Raindrop Effect Range", &settings.RaindropFxRangeWorldUnits, RAINDROP_FX_RANGE_UI_MIN_GAME_UNITS, RAINDROP_FX_RANGE_UI_MAX_GAME_UNITS, "%.0f units", ImGuiSliderFlags_AlwaysClamp);
 		if (auto _tt = Util::HoverTooltipWrapper()) {
@@ -1189,14 +1199,18 @@ void Wetterness::DrawSettings()
 			if (auto _tt = Util::HoverTooltipWrapper()) {
 				ImGui::TextUnformatted("How visible splash marks are. Higher = bolder splashes, lower = subtler splashes.");
 			}
-			ImGui::SliderFloat("Min Radius", &settings.SplashesMinRadius, 0.f, 1.f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+			if (ImGui::SliderFloat("Min Radius", &settings.SplashesMinRadius, 0.f, 1.f, "%.2f", ImGuiSliderFlags_AlwaysClamp)) {
+				settings.SplashesMaxRadius = std::max(settings.SplashesMaxRadius, settings.SplashesMinRadius);
+			}
 			if (auto _tt = Util::HoverTooltipWrapper()) {
-				ImGui::TextUnformatted("Minimum splash size. Higher = no tiny splashes, lower = allows smaller splashes.");
+				ImGui::TextUnformatted("Minimum splash size. Higher = no tiny splashes, lower = allows smaller splashes. Cannot exceed Max Radius.");
 			}
 
-			ImGui::SliderFloat("Max Radius", &settings.SplashesMaxRadius, 0.f, 1.f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+			if (ImGui::SliderFloat("Max Radius", &settings.SplashesMaxRadius, 0.f, 1.f, "%.2f", ImGuiSliderFlags_AlwaysClamp)) {
+				settings.SplashesMinRadius = std::min(settings.SplashesMinRadius, settings.SplashesMaxRadius);
+			}
 			if (auto _tt = Util::HoverTooltipWrapper()) {
-				ImGui::TextUnformatted("Maximum splash size. Higher = bigger possible splashes, lower = caps splash size.");
+				ImGui::TextUnformatted("Maximum splash size. Higher = bigger possible splashes, lower = caps splash size. Cannot go below Min Radius.");
 			}
 
 			ImGui::SliderFloat("Lifetime", &settings.SplashesLifetime, 0.1f, 20.f, "%.1f");
@@ -1386,9 +1400,10 @@ void Wetterness::DrawSettings()
 			const float puddleRadiusMeters = Util::Units::GameUnitsToMeters(settings.PuddleRadiusWorldUnits);
 			std::vector<std::string> tooltipLines = {
 				"Higher = larger individual puddles, lower = smaller individual puddles.",
+				"Grows or shrinks the existing puddle islands without moving the placement pattern.",
 				"Used directly during rain and after rain.",
 				"Does not control the thin rain-contact film.",
-				"Use Puddle Layout to change placement/pattern instead of size.",
+				"Use Puddle Layout to change placement/pattern.",
 				std::format("{:.1f} units", settings.PuddleRadiusWorldUnits),
 				std::format("{:.2f} m", puddleRadiusMeters)
 			};
@@ -1407,7 +1422,7 @@ void Wetterness::DrawSettings()
 
 		ImGui::SliderFloat("Rain Reflection Balance", &rainReflectionBalance, RAIN_REFLECTION_BALANCE_MIN, RAIN_REFLECTION_BALANCE_MAX, "%.2f");
 		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::TextUnformatted("Rain-only control for the thin rain-contact film. Higher = stronger suppression of sky/building cubemap mirror on broad wet ground. Deep puddles keep their normal cubemap response during rain.");
+			ImGui::TextUnformatted("Rain-only control for the thin rain-contact film. Higher = less sky/building cubemap mirror and more direct film sparkle on broad wet ground. Deep puddles are unchanged.");
 		}
 
 		ImGui::Dummy(ImVec2(0.0f, 12.0f));
@@ -1417,7 +1432,7 @@ void Wetterness::DrawSettings()
 		}
 		ImGui::SliderFloat("Post-Rain Water Clarity", &postRainWaterClarity, POST_RAIN_WATER_CLARITY_MIN, POST_RAIN_WATER_CLARITY_MAX, "%.2f");
 		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::TextUnformatted("Post-rain puddles only. Shapes puddle reflection/body response on top of Wet Reflection Shine. 0 = more cubemap mirror. Higher = less sky glare, deeper puddle body, and clearer water-like puddles.");
+			ImGui::TextUnformatted("Post-rain wet reflection clarity. Higher = less cubemap sky glare on post-rain wet reflections, with deeper/clearer body response on puddles. 0 = more mirror-like reflection.");
 		}
 
 		ImGui::Separator();
@@ -1426,7 +1441,7 @@ void Wetterness::DrawSettings()
 		ImGui::SliderFloat("Shore Wetness", &settings.MaxShoreWetness, 0.0f, 1.0f);
 		markPresetDirtyIfEdited();
 		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::TextUnformatted("Always-on wet sheen near rivers, lakes, and shorelines. Higher = wetter banks, lower = drier edges. Shore Persistent Darkening controls the separate darkening layer.");
+			ImGui::TextUnformatted("Wet sheen near rivers, lakes, and shorelines while rain/post-rain wetness is active. Higher = wetter banks, lower = drier edges. Shore Persistent Darkening controls the separate dry-weather darkening layer.");
 		}
 
 		int shoreRange = static_cast<int>(settings.ShoreRange);
@@ -1447,7 +1462,7 @@ void Wetterness::DrawSettings()
 
 		ImGui::SliderFloat("Shore Persistent Darkening", &shorePersistentDarkeningStrength, SHORE_PERSISTENT_DARKENING_MIN, SHORE_PERSISTENT_DARKENING_MAX, "%.2f");
 		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::TextUnformatted("Persistent shoreline darkening independent of rain runtime. Higher = darker shore banks, lower = subtler darkening.");
+			ImGui::TextUnformatted("Persistent shoreline darkening independent of rain runtime. This is the always-on dry-weather shoreline layer. Higher = darker shore banks, lower = subtler darkening.");
 		}
 
 		ImGui::TreePop();
@@ -1935,11 +1950,18 @@ Wetterness::PerFrame Wetterness::GetCommonBufferData() const
 		}
 	}
 
-	// Strict interior guard: never render rain/wetness indoors.
+	// Strict interior guard for normal runtime. Debug overrides intentionally bypass
+	// this per channel so interior/exterior override values can be tested.
 	if (isInterior) {
-		data.Raining = 0.0f;
-		data.Wetness = 0.0f;
-		data.PuddleWetness = 0.0f;
+		if (!debugSettings.EnableRainOverride) {
+			data.Raining = 0.0f;
+		}
+		if (!debugSettings.EnableWetnessOverride) {
+			data.Wetness = 0.0f;
+		}
+		if (!debugSettings.EnablePuddleOverride) {
+			data.PuddleWetness = 0.0f;
+		}
 	}
 
 	static size_t rainTimer = 0;  // size_t for precision
@@ -2001,7 +2023,7 @@ Wetterness::PerFrame Wetterness::GetCommonBufferData() const
 	const float postRainCubemapGlareReductionFromClarity = activePostRainWaterClarity;
 	const float postRainSpecBoostFromClarity = activePostRainWaterClarity;
 	const float inRainCubemapSuppressionFromBalance = activeRainReflectionBalance;
-	const float inRainSpecularBoostFromBalance = activeRainReflectionBalance;
+	const float inRainFilmSpecularBoostFromBalance = activeRainReflectionBalance;
 	const float activeRainContactWetnessScale = data.settings.EnableWetnessEffects ?
 		ClampFiniteOrDefault(
 			sanitizedSettings.RainContactWetnessScale,
@@ -2016,8 +2038,8 @@ Wetterness::PerFrame Wetterness::GetCommonBufferData() const
 	// Pack derived [0..1] controls into one uint lane using UNORM10 triplet:
 	// bits  0.. 9 = post-rain cubemap glare reduction (derived from Post-Rain Water Clarity)
 	// bits 10..19 = in-rain cubemap suppression (derived from Rain Reflection Balance)
-	// bits 20..29 = in-rain specular boost      (derived from Rain Reflection Balance)
-	data.PackedRainReflectionControl = PackThreeUnorm10(postRainCubemapGlareReductionFromClarity, inRainCubemapSuppressionFromBalance, inRainSpecularBoostFromBalance);
+	// bits 20..29 = in-rain film specular boost (derived from Rain Reflection Balance)
+	data.PackedRainReflectionControl = PackThreeUnorm10(postRainCubemapGlareReductionFromClarity, inRainCubemapSuppressionFromBalance, inRainFilmSpecularBoostFromBalance);
 	// Remaining wetness packed lane carries wetness distance fade in game units.
 	data.settings.PostRainPuddleWaterStrength = ClampFiniteOrDefault(
 		data.settings.PostRainPuddleWaterStrength,
