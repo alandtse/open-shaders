@@ -63,10 +63,22 @@ namespace
 	{
 		ImGui::SeparatorText(a_sectionTitle);
 		ImGui::PushID(a_sectionTitle);
-		ImGui::SliderFloat("SSS Intensity", &a_intensity, kHumanSkinControlMin, kHumanSkinControlMax, "%.2f");
-		ImGui::SliderFloat("SSS Saturation", &a_saturation, kHumanSkinControlMin, kHumanSkinControlMax, "%.2f");
-		ImGui::SliderFloat("Skin Brightness", &a_brightness, kHumanSkinControlMin, kHumanSkinControlMax, "%.2f");
-		ImGui::SliderFloat("Skin Saturation", &a_baseSaturation, kHumanSkinControlMin, kHumanSkinControlMax, "%.2f");
+		{
+			Util::BlueFrameStyleWrapper blueStyle;
+			ImGui::SliderFloat("SSS Intensity", &a_intensity, kHumanSkinControlMin, kHumanSkinControlMax, "%.2f");
+		}
+		{
+			Util::BlueFrameStyleWrapper blueStyle;
+			ImGui::SliderFloat("SSS Saturation", &a_saturation, kHumanSkinControlMin, kHumanSkinControlMax, "%.2f");
+		}
+		{
+			Util::BlueFrameStyleWrapper blueStyle;
+			ImGui::SliderFloat("Skin Brightness", &a_brightness, kHumanSkinControlMin, kHumanSkinControlMax, "%.2f");
+		}
+		{
+			Util::BlueFrameStyleWrapper blueStyle;
+			ImGui::SliderFloat("Skin Saturation", &a_baseSaturation, kHumanSkinControlMin, kHumanSkinControlMax, "%.2f");
+		}
 		ImGui::PopID();
 	}
 
@@ -134,7 +146,7 @@ void SubsurfaceScattering::DrawSettings()
 				ImGui::TreePop();
 			}
 
-			if (ImGui::TreeNodeEx("Human Profile", ImGuiTreeNodeFlags_DefaultOpen)) {
+			if (ImGui::TreeNodeEx("Humanoid Profile", ImGuiTreeNodeFlags_DefaultOpen)) {
 				ImGui::SliderFloat("Blur Radius", &settings.HumanProfile.BlurRadius, 0, 3, "%.2f");
 				if (auto _tt = Util::HoverTooltipWrapper()) {
 					ImGui::Text("Blur radius.");
@@ -164,7 +176,7 @@ void SubsurfaceScattering::DrawSettings()
 				ImGui::TreePop();
 			}
 
-			if (ImGui::TreeNodeEx("Human Profile", ImGuiTreeNodeFlags_DefaultOpen)) {
+			if (ImGui::TreeNodeEx("Humanoid Profile", ImGuiTreeNodeFlags_DefaultOpen)) {
 				ImGui::ColorEdit3("Mean Free Path Color", (float*)&settings.MeanFreePathHuman);
 				if (auto _tt = Util::HoverTooltipWrapper()) {
 					ImGui::Text("Controls how far light goes into the subsurface in the red, green, and blue channel. It is scaled by the Mean Free Path Distance.");
@@ -174,8 +186,8 @@ void SubsurfaceScattering::DrawSettings()
 					ImGui::Text("Controls the distance that Mean Free Path Color goes into subsurface.");
 				}
 
-				DrawHumanSkinControls("Human Skin (Male)", settings.HumanMaleSSSIntensity, settings.HumanMaleSSSSaturation, settings.HumanMaleSSSBrightness, settings.HumanMaleSSSBaseSaturation);
-				DrawHumanSkinControls("Human Skin (Female)", settings.HumanFemaleSSSIntensity, settings.HumanFemaleSSSSaturation, settings.HumanFemaleSSSBrightness, settings.HumanFemaleSSSBaseSaturation);
+				DrawHumanSkinControls("Humanoid Skin (Male)", settings.HumanMaleSSSIntensity, settings.HumanMaleSSSSaturation, settings.HumanMaleSSSBrightness, settings.HumanMaleSSSBaseSaturation);
+				DrawHumanSkinControls("Humanoid Skin (Female)", settings.HumanFemaleSSSIntensity, settings.HumanFemaleSSSSaturation, settings.HumanFemaleSSSBrightness, settings.HumanFemaleSSSBaseSaturation);
 
 				ImGui::TreePop();
 			}
