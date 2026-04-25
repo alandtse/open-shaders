@@ -240,7 +240,6 @@ void ScreenSpaceGI::DrawSettings()
 	SyncResolvedCenterMaskScale(settings);
 	static bool showAdvanced;
 	const bool isVR = REL::Module::IsVR();
-	const bool foveatedPresetActive = IsRuntimeFoveatedPresetActive(settings);
 	auto& upscaling = globals::features::upscaling;
 	const bool canLinkSsgiToUpscaling = isVR && upscaling.IsSsgiUpscalingFovLinkAvailable();
 
@@ -279,110 +278,13 @@ void ScreenSpaceGI::DrawSettings()
 	}
 
 	///////////////////////////////
-	ImGui::SeparatorText("SSGI Effects & Resources");
-
-	const int previousResourceProfile = settings.ResourceProfile;
-	if (ImGui::BeginTable("SSGIEffectsResources", 3, ImGuiTableFlags_SizingFixedFit)) {
-		ImGui::TableNextRow();
-		ImGui::TableNextColumn();
-		{
-			auto effectModeGuard = Util::DisableGuard(!settings.Enabled || foveatedPresetActive);
-			if (ImGui::RadioButton("AO-only", !settings.EnableGI)) {
-				DisableGIEffects(settings);
-				recompileFlag = true;
-			}
-		}
-		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::Text("AO-only mode disables GI/IL rendering.");
-		}
-
-		ImGui::TableNextColumn();
-		{
-			auto resourceProfileGuard = Util::DisableGuard(!settings.Enabled || foveatedPresetActive);
-			if (ImGui::RadioButton("AO-only Resources", settings.ResourceProfile == kResourceProfileAOOnly))
-				settings.ResourceProfile = kResourceProfileAOOnly;
-		}
-		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::Text("Keeps all AO modes available but does not allocate IL/GI/specular buffers.");
-		}
-
-		ImGui::TableNextColumn();
-		{
-			auto aoInteriorsGuard = Util::DisableGuard(!settings.Enabled);
-			ImGui::Checkbox("AO Interiors Only", &settings.AOInteriorsOnly);
-		}
-		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::Text("Run AO only in interiors to improve exterior performance.");
-		}
-
-		ImGui::TableNextRow();
-		ImGui::TableNextColumn();
-		{
-			auto effectModeGuard = Util::DisableGuard(!settings.Enabled || foveatedPresetActive);
-			if (ImGui::RadioButton("AO + GI", settings.EnableGI)) {
-				settings.ResourceProfile = kResourceProfileFullGI;
-				settings.EnableGI = true;
-				recompileFlag = true;
-			}
-		}
-		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::Text("AO + GI enables indirect lighting for global illumination.");
-		}
-
-		ImGui::TableNextColumn();
-		{
-			auto resourceProfileGuard = Util::DisableGuard(!settings.Enabled || foveatedPresetActive);
-			if (ImGui::RadioButton("AO + GI Resources", settings.ResourceProfile == kResourceProfileFullGI))
-				settings.ResourceProfile = kResourceProfileFullGI;
-		}
-		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::Text("Keeps IL/specular buffers resident so GI can be toggled at runtime.");
-		}
-
-		ImGui::TableNextColumn();
-		{
-			auto ilInteriorsGuard = Util::DisableGuard(!settings.Enabled || !settings.EnableGI || foveatedPresetActive);
-			ImGui::Checkbox("GI Interiors Only", &settings.ILInteriorsOnly);
-		}
-		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::Text("Run indirect lighting only in interiors to improve exterior performance.");
-		}
-
-		ImGui::EndTable();
-	}
-
-	if (showAdvanced) {
-		auto hqSpecGuard = Util::DisableGuard(!settings.Enabled || !settings.EnableGI || foveatedPresetActive);
-		recompileFlag |= ImGui::Checkbox("(Experimental) HQ Specular IL", &settings.EnableExperimentalSpecularGI);
-		if (auto _tt = Util::HoverTooltipWrapper())
-			ImGui::Text("An experimental specular GI that is more accurate but requires more samples. Won't be blurred.");
-	}
-
-	settings.ResourceProfile = ClampResourceProfile(settings.ResourceProfile);
-	if (settings.ResourceProfile != previousResourceProfile) {
-		if (settings.ResourceProfile == kResourceProfileAOOnly)
-			DisableGIEffects(settings);
-		recompileFlag = true;
-	}
-	if (foveatedPresetActive)
-		ImGui::TextDisabled("Foveated SSGI modes are AO-only; IL is disabled while foveated mode is active.");
-	if (settings.EnableGI && !HasGIResources())
-		ImGui::TextColored({ 1.0f, 0.75f, 0.25f, 1.0f }, "Full GI resources are not allocated in this session. Restart required.");
-	if (IsResourceProfileRestartPending()) {
-		ImGui::TextColored({ 1.0f, 0.75f, 0.25f, 1.0f }, "Resource profile changes require restart to change allocated VRAM.");
-	}
-
-	///////////////////////////////
 	ImGui::SeparatorText("Presets");
+	ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.45f, 0.45f, 0.45f, 1.0f));
+	ImGui::TextWrapped("Foveated/QRes keeps full-res AO in the FOV center and quarter-res AO outside; Foveated/Only disables AO outside the FOV center. Smaller FOV area is faster, but can reduce peripheral AO quality.");
+	ImGui::PopStyleColor();
 
 	{
 		auto presetsAndQualityGuard = Util::DisableGuard(!settings.Enabled);
-		auto brightenColor = [](ImVec4 a_color, float a_amount) {
-			a_color.x += (1.0f - a_color.x) * a_amount;
-			a_color.y += (1.0f - a_color.y) * a_amount;
-			a_color.z += (1.0f - a_color.z) * a_amount;
-			return a_color;
-		};
 		auto approximatelyEqual = [](float a_lhs, float a_rhs) {
 			return std::abs(a_lhs - a_rhs) <= 0.001f;
 		};
@@ -391,19 +293,15 @@ void ScreenSpaceGI::DrawSettings()
 			return ImGui::Button(a_label, a_size);
 		};
 		auto drawThemePresetButton = [&](const char* a_label, bool a_active, const ImVec2& a_size) {
-			if (!a_active)
-				return ImGui::Button(a_label, a_size);
-			return drawPresetButton(
-				a_label,
-				a_size,
-				brightenColor(ImGui::GetStyleColorVec4(ImGuiCol_Button), 0.35f),
-				brightenColor(ImGui::GetStyleColorVec4(ImGuiCol_ButtonHovered), 0.25f),
-				brightenColor(ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive), 0.20f));
+			const ImVec4 normal = a_active ? ImVec4(0.18f, 0.42f, 0.82f, 1.0f) : ImVec4(0.10f, 0.16f, 0.25f, 0.85f);
+			const ImVec4 hovered = a_active ? ImVec4(0.25f, 0.52f, 0.95f, 1.0f) : ImVec4(0.14f, 0.24f, 0.38f, 0.95f);
+			const ImVec4 pressed = a_active ? ImVec4(0.32f, 0.60f, 1.00f, 1.0f) : ImVec4(0.18f, 0.30f, 0.48f, 1.0f);
+			return drawPresetButton(a_label, a_size, normal, hovered, pressed);
 		};
 		auto drawFoveatedToggleButton = [&](const char* a_label, bool a_active, const ImVec2& a_size) {
-			const ImVec4 normal = a_active ? ImVec4(0.88f, 0.74f, 0.22f, 1.0f) : ImVec4(0.62f, 0.49f, 0.12f, 1.0f);
-			const ImVec4 hovered = a_active ? ImVec4(0.95f, 0.82f, 0.30f, 1.0f) : ImVec4(0.74f, 0.58f, 0.16f, 1.0f);
-			const ImVec4 pressed = a_active ? ImVec4(0.98f, 0.88f, 0.38f, 1.0f) : ImVec4(0.82f, 0.66f, 0.20f, 1.0f);
+			const ImVec4 normal = a_active ? ImVec4(0.92f, 0.72f, 0.16f, 1.0f) : ImVec4(0.25f, 0.21f, 0.12f, 0.85f);
+			const ImVec4 hovered = a_active ? ImVec4(1.00f, 0.82f, 0.24f, 1.0f) : ImVec4(0.40f, 0.32f, 0.16f, 0.95f);
+			const ImVec4 pressed = a_active ? ImVec4(1.00f, 0.90f, 0.36f, 1.0f) : ImVec4(0.52f, 0.40f, 0.18f, 1.0f);
 			return drawPresetButton(a_label, a_size, normal, hovered, pressed);
 		};
 
@@ -533,6 +431,101 @@ void ScreenSpaceGI::DrawSettings()
 		}
 		if (!isVR) {
 			ImGui::TextDisabled("Foveated/QRes and Foveated/Only presets are VR only.");
+		}
+
+		///////////////////////////////
+		ImGui::SeparatorText("SSGI Effects & Resources");
+
+		const bool foveatedPresetActive = IsRuntimeFoveatedPresetActive(settings);
+		const int previousResourceProfile = settings.ResourceProfile;
+		if (ImGui::BeginTable("SSGIEffectsResources", 3, ImGuiTableFlags_SizingFixedFit)) {
+			ImGui::TableNextRow();
+			ImGui::TableNextColumn();
+			{
+				auto effectModeGuard = Util::DisableGuard(!settings.Enabled || foveatedPresetActive);
+				if (ImGui::RadioButton("AO-only", !settings.EnableGI)) {
+					DisableGIEffects(settings);
+					recompileFlag = true;
+				}
+			}
+			if (auto _tt = Util::HoverTooltipWrapper()) {
+				ImGui::Text("AO-only mode disables GI/IL rendering.");
+			}
+
+			ImGui::TableNextColumn();
+			{
+				auto resourceProfileGuard = Util::DisableGuard(!settings.Enabled || foveatedPresetActive);
+				if (ImGui::RadioButton("AO-only Resources", settings.ResourceProfile == kResourceProfileAOOnly))
+					settings.ResourceProfile = kResourceProfileAOOnly;
+			}
+			if (auto _tt = Util::HoverTooltipWrapper()) {
+				ImGui::Text("Keeps all AO modes available but does not allocate IL/GI/specular buffers.");
+			}
+
+			ImGui::TableNextColumn();
+			{
+				auto aoInteriorsGuard = Util::DisableGuard(!settings.Enabled);
+				ImGui::Checkbox("AO Interiors Only", &settings.AOInteriorsOnly);
+			}
+			if (auto _tt = Util::HoverTooltipWrapper()) {
+				ImGui::Text("Run AO only in interiors to improve exterior performance.");
+			}
+
+			ImGui::TableNextRow();
+			ImGui::TableNextColumn();
+			{
+				auto effectModeGuard = Util::DisableGuard(!settings.Enabled || foveatedPresetActive);
+				if (ImGui::RadioButton("AO + GI", settings.EnableGI)) {
+					settings.ResourceProfile = kResourceProfileFullGI;
+					settings.EnableGI = true;
+					recompileFlag = true;
+				}
+			}
+			if (auto _tt = Util::HoverTooltipWrapper()) {
+				ImGui::Text("AO + GI enables indirect lighting for global illumination.");
+			}
+
+			ImGui::TableNextColumn();
+			{
+				auto resourceProfileGuard = Util::DisableGuard(!settings.Enabled || foveatedPresetActive);
+				if (ImGui::RadioButton("AO + GI Resources", settings.ResourceProfile == kResourceProfileFullGI))
+					settings.ResourceProfile = kResourceProfileFullGI;
+			}
+			if (auto _tt = Util::HoverTooltipWrapper()) {
+				ImGui::Text("Keeps IL/specular buffers resident so GI can be toggled at runtime.");
+			}
+
+			ImGui::TableNextColumn();
+			{
+				auto ilInteriorsGuard = Util::DisableGuard(!settings.Enabled || !settings.EnableGI || foveatedPresetActive);
+				ImGui::Checkbox("GI Interiors Only", &settings.ILInteriorsOnly);
+			}
+			if (auto _tt = Util::HoverTooltipWrapper()) {
+				ImGui::Text("Run indirect lighting only in interiors to improve exterior performance.");
+			}
+
+			ImGui::EndTable();
+		}
+
+		if (showAdvanced) {
+			auto hqSpecGuard = Util::DisableGuard(!settings.Enabled || !settings.EnableGI || foveatedPresetActive);
+			recompileFlag |= ImGui::Checkbox("(Experimental) HQ Specular IL", &settings.EnableExperimentalSpecularGI);
+			if (auto _tt = Util::HoverTooltipWrapper())
+				ImGui::Text("An experimental specular GI that is more accurate but requires more samples. Won't be blurred.");
+		}
+
+		settings.ResourceProfile = ClampResourceProfile(settings.ResourceProfile);
+		if (settings.ResourceProfile != previousResourceProfile) {
+			if (settings.ResourceProfile == kResourceProfileAOOnly)
+				DisableGIEffects(settings);
+			recompileFlag = true;
+		}
+		if (foveatedPresetActive)
+			ImGui::TextDisabled("Foveated SSGI modes are AO-only; IL is disabled while foveated mode is active.");
+		if (settings.EnableGI && !HasGIResources())
+			ImGui::TextColored({ 1.0f, 0.75f, 0.25f, 1.0f }, "Full GI resources are not allocated in this session. Restart required.");
+		if (IsResourceProfileRestartPending()) {
+			ImGui::TextColored({ 1.0f, 0.75f, 0.25f, 1.0f }, "Resource profile changes require restart to change allocated VRAM.");
 		}
 
 		if (isVR) {

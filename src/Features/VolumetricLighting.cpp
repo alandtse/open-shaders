@@ -238,13 +238,16 @@ void VolumetricLighting::DrawSettings()
 void VolumetricLighting::DrawGodrayTuningSettings()
 {
 	auto drawSlider = [](const char* label, float& value, float minValue, float maxValue, const char* tooltip) {
+		Util::YellowFrameStyleWrapper sliderStyle;
 		const bool changed = ImGui::SliderFloat(label, &value, minValue, maxValue, "%.2f", ImGuiSliderFlags_AlwaysClamp);
 		if (auto _tt = Util::HoverTooltipWrapper())
 			ImGui::TextUnformatted(tooltip);
 		return changed;
 	};
 
+	ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.96f, 0.82f, 0.40f, 1.0f));
 	ImGui::SeparatorText("Godray Tuning");
+	ImGui::PopStyleColor();
 	drawSlider("Godray Intensity", settings.GodrayShaftIntensity, 0.0f, kGodrayShaftIntensityMax, "Scales volumetric godray shaft brightness.");
 	drawSlider("Godray Opacity", settings.GodrayOpacity, 0.0f, kGodrayOpacityMax, "Controls shaft strength and visibility. 1.0 is default; values above 1.0 boost presence.");
 	drawSlider("Godray Saturation", settings.GodraySaturation, 0.0f, kGodraySaturationMax, "Adjusts weather-driven godray color richness. 1.0 is default.");

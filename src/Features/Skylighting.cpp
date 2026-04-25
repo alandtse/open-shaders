@@ -232,15 +232,18 @@ void Skylighting::DrawSettings()
 	settings.ProbeGridQuality = ClampProbeGridQuality(settings.ProbeGridQuality);
 
 	int probeGridQualityUI = static_cast<int>(settings.ProbeGridQuality);
-	if (ImGui::BeginCombo("Probe Grid Quality", GetProbeGridPreset(settings.ProbeGridQuality).Label)) {
-		for (uint quality = 0; quality < kProbeGridPresets.size(); quality++) {
-			const bool isSelected = (probeGridQualityUI == static_cast<int>(quality));
-			if (ImGui::Selectable(kProbeGridPresets[quality].Label, isSelected))
-				probeGridQualityUI = static_cast<int>(quality);
-			if (isSelected)
-				ImGui::SetItemDefaultFocus();
+	{
+		Util::BlueFrameStyleWrapper probeGridStyle;
+		if (ImGui::BeginCombo("Probe Grid Quality", GetProbeGridPreset(settings.ProbeGridQuality).Label)) {
+			for (uint quality = 0; quality < kProbeGridPresets.size(); quality++) {
+				const bool isSelected = (probeGridQualityUI == static_cast<int>(quality));
+				if (ImGui::Selectable(kProbeGridPresets[quality].Label, isSelected))
+					probeGridQualityUI = static_cast<int>(quality);
+				if (isSelected)
+					ImGui::SetItemDefaultFocus();
+			}
+			ImGui::EndCombo();
 		}
-		ImGui::EndCombo();
 	}
 	if (auto _tt = Util::HoverTooltipWrapper())
 		ImGui::Text("Main quality/performance switch. Performance is fastest, Quality is most detailed.");
@@ -254,7 +257,10 @@ void Skylighting::DrawSettings()
 	}
 	ImGui::Text("Active Probe Grid: %u x %u x %u", probeArrayDims[0], probeArrayDims[1], probeArrayDims[2]);
 
-	ImGui::Checkbox("Enable Reduced Update Frequency", &settings.EnableReducedUpdateFrequency);
+	{
+		Util::BlueFrameStyleWrapper reducedUpdateStyle(true);
+		ImGui::Checkbox("Enable Reduced Update Frequency", &settings.EnableReducedUpdateFrequency);
+	}
 	if (auto _tt = Util::HoverTooltipWrapper())
 		ImGui::Text("Updates skylighting less often for a bigger FPS gain. Higher values can react a bit slower.");
 
@@ -263,14 +269,20 @@ void Skylighting::DrawSettings()
 	ImGui::BeginDisabled(!settings.EnableReducedUpdateFrequency);
 	{
 		int occlusionIntervalUI = static_cast<int>(settings.OcclusionUpdateInterval);
-		if (ImGui::SliderInt("Occlusion Update Interval", &occlusionIntervalUI, 1, 16))
-			settings.OcclusionUpdateInterval = ClampUpdateInterval(static_cast<uint>(occlusionIntervalUI));
+		{
+			Util::BlueFrameStyleWrapper occlusionIntervalStyle;
+			if (ImGui::SliderInt("Occlusion Update Interval", &occlusionIntervalUI, 1, 16))
+				settings.OcclusionUpdateInterval = ClampUpdateInterval(static_cast<uint>(occlusionIntervalUI));
+		}
 		if (auto _tt = Util::HoverTooltipWrapper())
 			ImGui::Text("How often skylight shadowing refreshes. 1 = every frame. Higher = faster, but slower reaction.");
 
 		int probeIntervalUI = static_cast<int>(settings.ProbeUpdateInterval);
-		if (ImGui::SliderInt("Probe Update Interval", &probeIntervalUI, 1, 16))
-			settings.ProbeUpdateInterval = ClampUpdateInterval(static_cast<uint>(probeIntervalUI));
+		{
+			Util::BlueFrameStyleWrapper probeIntervalStyle;
+			if (ImGui::SliderInt("Probe Update Interval", &probeIntervalUI, 1, 16))
+				settings.ProbeUpdateInterval = ClampUpdateInterval(static_cast<uint>(probeIntervalUI));
+		}
 		if (auto _tt = Util::HoverTooltipWrapper())
 			ImGui::Text("How often skylight data refreshes. 1 = every frame. Higher = faster, but slower reaction.");
 	}
@@ -282,7 +294,10 @@ void Skylighting::DrawSettings()
 		ImGui::Text("Probe refresh cadence: every %u frame(s)", settings.ProbeUpdateInterval);
 	}
 
-	ImGui::Checkbox("Enable Incremental Probe Updates", &settings.EnableIncrementalProbeUpdates);
+	{
+		Util::BlueFrameStyleWrapper incrementalUpdateStyle(true);
+		ImGui::Checkbox("Enable Incremental Probe Updates", &settings.EnableIncrementalProbeUpdates);
+	}
 	if (auto _tt = Util::HoverTooltipWrapper())
 		ImGui::Text("Spreads skylighting work over multiple frames to smooth spikes.");
 
@@ -292,8 +307,11 @@ void Skylighting::DrawSettings()
 	ImGui::BeginDisabled(!settings.EnableIncrementalProbeUpdates);
 	{
 		int stableSliceCountUI = static_cast<int>(stableSliceCount);
-		if (ImGui::SliderInt("Stable Slice Count", &stableSliceCountUI, 1, static_cast<int>(probeArrayDims[2])))
-			settings.StableSliceCount = ClampStableSliceCount(static_cast<uint>(stableSliceCountUI), probeArrayDims[2]);
+		{
+			Util::BlueFrameStyleWrapper stableSliceStyle;
+			if (ImGui::SliderInt("Stable Slice Count", &stableSliceCountUI, 1, static_cast<int>(probeArrayDims[2])))
+				settings.StableSliceCount = ClampStableSliceCount(static_cast<uint>(stableSliceCountUI), probeArrayDims[2]);
+		}
 		if (auto _tt = Util::HoverTooltipWrapper())
 			ImGui::Text("Lower = smoother performance but takes longer to settle. Higher = reacts faster with more cost.");
 	}
@@ -301,7 +319,10 @@ void Skylighting::DrawSettings()
 	const uint stableRefreshFrames = (probeArrayDims[2] + settings.StableSliceCount - 1) / settings.StableSliceCount;
 	ImGui::Text("Stable probe field full refresh: ~%u frame(s)", stableRefreshFrames);
 
-	ImGui::Checkbox("Enable Fast Probe Sampling", &settings.EnableFastProbeSampling);
+	{
+		Util::BlueFrameStyleWrapper fastProbeStyle(true);
+		ImGui::Checkbox("Enable Fast Probe Sampling", &settings.EnableFastProbeSampling);
+	}
 	if (auto _tt = Util::HoverTooltipWrapper())
 		ImGui::Text("Uses a lighter sampling mode. Usually faster, with slightly softer lighting detail.");
 

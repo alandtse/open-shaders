@@ -62,6 +62,25 @@ namespace
 	constexpr float kFoveatedMaskOffsetAdjustMax = 0.15f;
 	constexpr float kFoveatedMaskOffsetResolvedMin = -0.25f;
 	constexpr float kFoveatedMaskOffsetResolvedMax = 0.25f;
+	const ImVec4 kFovControlTextColor(0.80f, 0.88f, 1.00f, 1.0f);
+	constexpr const char* kDlssFovSetupIntro = R"(- DLSS FOV renders the green center with DLSS/DLAA and uses a cheaper outer mask. Smaller green area means more performance, but more risk of peripheral shimmer.
+
+- DLSS FOV + Peripheral TAA adds a yellow TAA ring around the green center to reduce shimmer. It costs more than DLSS FOV alone, but can let you keep the green center smaller and thereby increase performance wins compared to DLSS FOV alone.
+
+- SSGI FOV is separate and only affects Screen Space GI. The principle is the same - high quality where you can actually see it, and lower quality at the outside or periphery of your view to save performance. It uses DLSS FOV settings when Foveated Upscaling is active. Otherwise, the FOV area is defined by its own slider in the SSGI UI; smaller SSGI FOV saves AO cost but can reduce peripheral AO quality.)";
+	constexpr const char* kDlssFovSetupInstructions = R"(1) Activate FOV Mask Visualization
+2) Use the blue DLSS FOV Area slider to decrease FOV Area to 0.20 and place the green center mask in the center of each eye. Per-eye positions do not have to be vertically or horizontally aligned.
+3) Expand DLSS FOV Area until the green mask touches the top and bottom view of your HMD. If needed, reposition right and left eye to get the best top and bottom fit.
+4) Use the blue DLSS Expand FOV Area R/L slider to horizontally expand the mask until the green part just touches the field of view.
+5) Ideally, you do not see the blue outer mask anymore, except in the corners, or only a tiny bit.
+6) The larger the green center area, the less performance savings you have.
+7) Test in game that you do not have strong peripheral shimmer. If yes, increase the green mask area. If not, reduce it to just before shimmer appears for best performance.)";
+	constexpr const char* kDlssFovPeripheralTaaSetupInstructions = R"(1) Activate FOV Mask Visualization
+2) Lower the yellow DLSS FOV Area slider to 0.30. You can later try lower values, e.g. 0.20 or 0.25, if these settings work for you for even more performance wins.
+3) Use the yellow TAA Peripheral Range slider until the yellow ring touches the top and bottom view of your HMD. If needed, reposition right and left eye to get the best top and bottom fit.
+4) Ideally, you do not see the blue outer ring anymore, except in the corners, or only a tiny bit.
+5) The larger the green center area, the less performance savings you have.
+6) Test in game that you do not have strong peripheral shimmer. If yes, increase the yellow mask area. If not, reduce it to just before shimmer appears for best performance.)";
 
 	float ClampFoveatedCenterArea(float value)
 	{
@@ -782,12 +801,12 @@ void Upscaling::DrawSettings()
 			if (foveatedDispatchSupportedForMethod) {
 				{
 					Util::BlueFrameStyleWrapper foveatedStyle(true);
-					ImGui::Checkbox("Foveated Upscaling", &settings.foveatedVendorDispatch);
+					ImGui::Checkbox("Foveated Upscaling (DLSS FOV)", &settings.foveatedVendorDispatch);
 				}
 				if (auto _tt = Util::HoverTooltipWrapper()) {
 					ImGui::TextUnformatted("Master switch for VR FOV-mask upscaling.");
 					ImGui::TextUnformatted("On: enables foveated upscaling controls.");
-					ImGui::TextUnformatted("Off: SSGI uses its own FOV area.");
+					ImGui::TextUnformatted("SSGI FOV slider is in the SSGI UI.");
 				}
 			}
 			const bool foveatedDispatchRequestedForMethod = IsFoveatedVendorDispatchRequested(settings, upscaleMethod);
@@ -801,12 +820,39 @@ void Upscaling::DrawSettings()
 					ImGui::TextUnformatted("Green = upscaling center mask.");
 					if (settings.periphery_taa_enable)
 						ImGui::TextUnformatted("Gold = TAA ring, blue = outer lightweight ring.");
+					else
+						ImGui::TextUnformatted("Dark = outside the DLSS FOV mask.");
+				}
+
+				ImGui::Dummy(ImVec2(0.0f, 4.0f));
+				ImGui::PushStyleColor(ImGuiCol_Text, kFovControlTextColor);
+				const bool showFovSetupInstructions = ImGui::CollapsingHeader("DLSS FOV Setup Instructions");
+				ImGui::PopStyleColor();
+				if (showFovSetupInstructions) {
+					const float lineHeight = ImGui::GetTextLineHeightWithSpacing();
+					const float availableHeight = ImGui::GetContentRegionAvail().y;
+					const float instructionHeight = std::clamp(availableHeight - (lineHeight * 2.0f), lineHeight * 5.0f, lineHeight * 14.0f);
+					ImGui::BeginChild("##DLSSFOVSetupInstructions", ImVec2(0.0f, instructionHeight), true, ImGuiWindowFlags_AlwaysVerticalScrollbar);
+					ImGui::PushTextWrapPos(0.0f);
+					auto drawInstructionHeadline = [](const char* a_label) {
+						MenuFonts::FontRoleGuard headingFont(Menu::FontRole::Subheading);
+						ImGui::SeparatorText(a_label);
+					};
+					ImGui::TextUnformatted(kDlssFovSetupIntro);
+					ImGui::Spacing();
+					drawInstructionHeadline("DLSS FOV setup");
+					ImGui::TextUnformatted(kDlssFovSetupInstructions);
+					ImGui::Spacing();
+					drawInstructionHeadline("DLSS FOV + Peripheral TAA setup");
+					ImGui::TextUnformatted(kDlssFovPeripheralTaaSetupInstructions);
+					ImGui::PopTextWrapPos();
+					ImGui::EndChild();
 				}
 
 				ImGui::Dummy(ImVec2(0.0f, 6.0f));
 				ImGui::Separator();
 				ImGui::Dummy(ImVec2(0.0f, 4.0f));
-				ImGui::TextColored(ImVec4(0.80f, 0.88f, 1.00f, 1.0f), "Foveated FOV Controls");
+				ImGui::TextColored(kFovControlTextColor, "FOV Controls");
 
 				{
 					Util::BlueFrameStyleWrapper areaStyle;
@@ -819,7 +865,7 @@ void Upscaling::DrawSettings()
 					} else {
 						ImGui::TextUnformatted("Active upscaling center mask size.");
 						ImGui::TextUnformatted("Lower values = smaller center mask and more performance.");
-						ImGui::TextUnformatted("Range: low 0.30 (smallest center) to high 1.00 (largest center).");
+						ImGui::TextUnformatted("Range: low 0.20 (smallest center) to high 1.00 (largest center).");
 					}
 				}
 				settings.foveatedCenterArea = ClampFoveatedCenterArea(settings.foveatedCenterArea);
@@ -864,10 +910,10 @@ void Upscaling::DrawSettings()
 
 				ImGui::Dummy(ImVec2(0.0f, 4.0f));
 				ImGui::Separator();
-				ImGui::TextColored(ImVec4(0.96f, 0.82f, 0.40f, 1.0f), "Peripheral TAA Settings");
+				ImGui::TextColored(ImVec4(0.96f, 0.82f, 0.40f, 1.0f), "DLSS + Peripheral TAA Settings");
 				{
 					Util::YellowFrameStyleWrapper taaStyle(true);
-					ImGui::Checkbox("Peripheral TAA", &settings.periphery_taa_enable);
+					ImGui::Checkbox("DLSS + Peripheral TAA", &settings.periphery_taa_enable);
 				}
 				if (auto _tt = Util::HoverTooltipWrapper()) {
 					ImGui::TextUnformatted("Enables periphery-only TAA outside the upscaling center region.");
@@ -885,6 +931,7 @@ void Upscaling::DrawSettings()
 					if (auto _tt = Util::HoverTooltipWrapper()) {
 						ImGui::TextUnformatted("Reduced upscaling center mask size.");
 						ImGui::TextUnformatted("Lower values = smaller upscaling center and more Peripheral TAA coverage.");
+						ImGui::TextUnformatted("Range: low 0.20 (smallest center) to high 1.00 (largest center).");
 					}
 				}
 				settings.periphery_taa_center_area = ClampFoveatedCenterArea(settings.periphery_taa_center_area);
