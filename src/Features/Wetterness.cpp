@@ -28,6 +28,9 @@ namespace
 	constexpr double SECONDS_IN_A_DAY = 86400.0;
 	// Accept large in-game waits/sleeps; clamp only extreme jumps (load anomalies, time rewinds).
 	constexpr double MAX_TIME_DELTA_SECONDS = SECONDS_IN_A_DAY * 7.0;
+	constexpr double RAIN_TIMER_WRAP_SECONDS = 65536.0;
+	constexpr uint32_t MAX_OCCLUSION_VIEW_PROJ_REUSE_FRAMES = 6u;
+	constexpr uint32_t RAIN_REFLECTION_CONTROL_OCCLUSION_VALID_BIT = (1u << 30);
 	constexpr float MIN_TRANSITION_SPEED = 0.2f;
 	constexpr float MAX_TRANSITION_SPEED = 8.0f;
 	constexpr float MIN_RAINDROP_GRID_SIZE = 1e-3f;
@@ -178,6 +181,7 @@ namespace
 	uint32_t g_cachedCommonBufferFrame = 0;
 	REX::W32::XMFLOAT4X4 g_lastValidOcclusionViewProj{};
 	bool g_hasLastValidOcclusionViewProj = false;
+	uint32_t g_lastValidOcclusionViewProjFrame = 0;
 
 	float GetWeatherRainIntensity(RE::TESWeather* weather)
 	{
@@ -1062,6 +1066,7 @@ void Wetterness::ResetRuntimeState() const
 	g_cachedCommonBufferFrame = 0;
 	g_lastValidOcclusionViewProj = {};
 	g_hasLastValidOcclusionViewProj = false;
+	g_lastValidOcclusionViewProjFrame = 0;
 }
 
 void Wetterness::InvalidateSanitizedSettingsCache()
@@ -1719,6 +1724,37 @@ void Wetterness::ApplyClimatePreset(ClimatePreset preset)
 	InvalidateSanitizedSettingsCache();
 }
 
+bool Wetterness::IsRuntimeProcessingActive() const
+{
+	if (!IsRuntimeActive()) {
+		return false;
+	}
+
+	const bool hasDebugOverrides =
+		debugSettings.EnableWetnessOverride ||
+		debugSettings.EnablePuddleOverride ||
+		debugSettings.EnableRainOverride;
+	if (hasDebugOverrides) {
+		return true;
+	}
+
+	const bool hasActiveTimeline =
+		runtimeState.wasRainingLastFrame ||
+		runtimeState.wetnessDepth > RUNTIME_DRY_EPSILON ||
+		runtimeState.puddleDepth > RUNTIME_DRY_EPSILON ||
+		runtimeState.rainEventExposure > RUNTIME_DRY_EPSILON ||
+		runtimeState.postRainEventWeight > RUNTIME_DRY_EPSILON;
+	if (hasActiveTimeline) {
+		return true;
+	}
+
+	if (const auto* sky = globals::game::sky) {
+		return sky->mode.get() == RE::Sky::Mode::kFull && sky->IsRaining();
+	}
+
+	return false;
+}
+
 Wetterness::PerFrame Wetterness::GetCommonBufferData() const
 {
 	const bool canUseFrameCache = globals::state != nullptr;
@@ -1756,6 +1792,7 @@ Wetterness::PerFrame Wetterness::GetCommonBufferData() const
 	RE::TESWeather* lastWeather = nullptr;
 	bool fullSkyMode = false;
 	bool engineRaining = false;
+	bool hasValidOcclusionProjection = false;
 
 	if (auto sky = globals::game::sky) {
 		currentWeather = sky->currentWeather;
@@ -1776,8 +1813,18 @@ Wetterness::PerFrame Wetterness::GetCommonBufferData() const
 				runtimeState.postRainEventWeight > RUNTIME_DRY_EPSILON ||
 				runtimeState.puddleDepth > RUNTIME_DRY_EPSILON ||
 				runtimeState.wetnessDepth > RUNTIME_DRY_EPSILON;
+
+			if (g_hasLastValidOcclusionViewProj &&
+			    canUseFrameCache &&
+			    frameIndex - g_lastValidOcclusionViewProjFrame > MAX_OCCLUSION_VIEW_PROJ_REUSE_FRAMES) {
+				g_lastValidOcclusionViewProj = {};
+				g_hasLastValidOcclusionViewProj = false;
+				g_lastValidOcclusionViewProjFrame = 0;
+			}
+
 			if (g_hasLastValidOcclusionViewProj && needsOcclusionProjection) {
 				data.OcclusionViewProj = g_lastValidOcclusionViewProj;
+				hasValidOcclusionProjection = true;
 			}
 			if (auto precip = sky->precip) {
 				RE::BSParticleShaderRainEmitter* currentRainEmitter = nullptr;
@@ -1794,6 +1841,8 @@ Wetterness::PerFrame Wetterness::GetCommonBufferData() const
 					data.OcclusionViewProj = rainEmitter->occlusionProjection;
 					g_lastValidOcclusionViewProj = data.OcclusionViewProj;
 					g_hasLastValidOcclusionViewProj = true;
+					g_lastValidOcclusionViewProjFrame = frameIndex;
+					hasValidOcclusionProjection = true;
 				}
 
 				if (currentRainEmitter && currentWeather) {
@@ -1843,14 +1892,21 @@ Wetterness::PerFrame Wetterness::GetCommonBufferData() const
 	const bool gamePaused = globals::game::ui && globals::game::ui->GameIsPaused();
 	const auto* calendar = RE::Calendar::GetSingleton();
 	if (calendar) {
+		bool detectedCalendarRewind = false;
 		const double currentGameSeconds = static_cast<double>(calendar->GetCurrentGameTime()) * SECONDS_IN_A_DAY;
 		if (runtimeState.hasLastGameTime) {
 			timelineDeltaGameSeconds = currentGameSeconds - runtimeState.lastGameTimeSeconds;
 			if (timelineDeltaGameSeconds < 0.0) {
+				detectedCalendarRewind = true;
 				timelineDeltaGameSeconds = 0.0;
 			} else if (timelineDeltaGameSeconds > MAX_TIME_DELTA_SECONDS) {
 				timelineDeltaGameSeconds = MAX_TIME_DELTA_SECONDS;
 			}
+		}
+		if (detectedCalendarRewind) {
+			ResetRuntimeState();
+			data.OcclusionViewProj = {};
+			hasValidOcclusionProjection = false;
 		}
 		runtimeState.lastGameTimeSeconds = currentGameSeconds;
 		runtimeState.hasLastGameTime = true;
@@ -2026,10 +2082,13 @@ Wetterness::PerFrame Wetterness::GetCommonBufferData() const
 		}
 	}
 
-	static size_t rainTimer = 0;  // size_t for precision
-	if (!gamePaused)
-		rainTimer += (size_t)(RE::GetSecondsSinceLastFrame() * 1000);  // BSTimer::delta is always 0 for some reason
-	data.Time = rainTimer / 1000.f;
+	if (canAdvanceWetnessTime) {
+		runtimeState.rainTimerSeconds += timelineDeltaGameSeconds;
+		if (runtimeState.rainTimerSeconds >= RAIN_TIMER_WRAP_SECONDS) {
+			runtimeState.rainTimerSeconds = std::fmod(runtimeState.rainTimerSeconds, RAIN_TIMER_WRAP_SECONDS);
+		}
+	}
+	data.Time = static_cast<float>(runtimeState.rainTimerSeconds);
 
 	if (!canAdvanceWetnessTime && !runtimeInactive) {
 		const float dryingEventWeight = rainingNow ? runtimeState.rainEventWeight : runtimeState.postRainEventWeight;
@@ -2116,6 +2175,9 @@ Wetterness::PerFrame Wetterness::GetCommonBufferData() const
 	// bits 10..19 = in-rain cubemap suppression (derived from Rain Reflection Balance)
 	// bits 20..29 = in-rain film specular boost (derived from Rain Reflection Balance)
 	uint32_t packedRainReflectionControl = PackThreeUnorm10(postRainCubemapGlareReductionFromClarity, inRainCubemapSuppressionFromBalance, inRainFilmSpecularBoostFromBalance);
+	if (hasValidOcclusionProjection) {
+		packedRainReflectionControl |= RAIN_REFLECTION_CONTROL_OCCLUSION_VALID_BIT;
+	}
 	data.PackedRainReflectionControl = packedRainReflectionControl;
 	// Remaining wetness packed lane carries wetness distance fade in game units.
 	data.settings.PostRainPuddleWaterStrength = ClampFiniteOrDefault(

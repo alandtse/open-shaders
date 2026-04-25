@@ -236,6 +236,7 @@ public:
 	virtual bool SupportsVR() override { return true; };
 	virtual bool IsCore() const override { return false; };
 	bool IsRuntimeActive() const { return loaded && settings.EnableWetnessEffects != 0; }
+	bool IsRuntimeProcessingActive() const;
 
 	// Override to provide weather analysis configuration
 	virtual WeatherAnalysisConfig GetWeatherAnalysisConfig() const override
@@ -271,6 +272,7 @@ private:
 		float postRainElapsedSeconds = 0.0f;
 		float postRainStartWetnessDepth = 0.0f;
 		float postRainStartPuddleDepth = 0.0f;
+		double rainTimerSeconds = 0.0;
 		double lastGameTimeSeconds = 0.0;
 		bool hasLastGameTime = false;
 		bool wasRainingLastFrame = false;

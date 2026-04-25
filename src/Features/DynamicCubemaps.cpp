@@ -19,7 +19,7 @@ namespace
 	const Wetterness* GetActiveWetterness()
 	{
 		auto& wetterness = globals::features::wetterness;
-		return wetterness.IsRuntimeActive() ? &wetterness : nullptr;
+		return wetterness.IsRuntimeProcessingActive() ? &wetterness : nullptr;
 	}
 
 	RE::NiPoint3 GetCubemapCaptureAnchorPosition()

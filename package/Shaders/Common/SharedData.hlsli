@@ -187,10 +187,10 @@ namespace SharedData
 		uint EnableVanillaReflectionCompensation;
 		float WetFilmSpecularFloorScale;
 		float ShorePersistentDarkeningStrength;
-		float PackedPostRainControl;
-		float PackedRainReflectionControl;
+		uint PackedPostRainControl;
+		uint PackedRainReflectionControl;
 		// View-depth fade/cull range for dev-style wetness distance fading, in game units.
-		float WetnessDistanceFadeRange;
+		uint WetnessDistanceFadeRangePacked;
 		float RainContactWetnessScale;
 	};
 

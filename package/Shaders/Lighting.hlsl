@@ -2413,15 +2413,17 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 		// - PackedRainReflectionControl[0..9]: post-rain cubemap glare reduction (derived from Post-Rain Water Clarity)
 		// - PackedRainReflectionControl[10..19]: in-rain cubemap suppression (derived from Rain Reflection Balance)
 		// - PackedRainReflectionControl[20..29]: in-rain wet-film specular boost (derived from Rain Reflection Balance)
-		uint packedPostRainControl = asuint(CS_WETNESS_SETTINGS.PackedPostRainControl);
+		// - PackedRainReflectionControl[30]: occlusion projection validity flag
+		uint packedPostRainControl = CS_WETNESS_SETTINGS.PackedPostRainControl;
 		float postRainSpecBoostFromClarity = saturate((float)(packedPostRainControl & 0x3FFu) * (1.0 / 1023.0));
 		float puddleSkyReflectionScale = saturate((float)((packedPostRainControl >> 10) & 0x3FFu) * (1.0 / 1023.0));
 		float wetFilmRainingAmount = saturate((float)((packedPostRainControl >> 20) & 0x3FFu) * (1.0 / 1023.0));
-		uint packedRainReflectionControl = asuint(CS_WETNESS_SETTINGS.PackedRainReflectionControl);
+		uint packedRainReflectionControl = CS_WETNESS_SETTINGS.PackedRainReflectionControl;
 		float postRainCubemapGlareReductionFromClarity = saturate((float)(packedRainReflectionControl & 0x3FFu) * (1.0 / 1023.0));
 		float inRainCubemapSuppressionFromBalance = saturate((float)((packedRainReflectionControl >> 10) & 0x3FFu) * (1.0 / 1023.0));
 		float inRainFilmSpecularBoostFromBalance = saturate((float)((packedRainReflectionControl >> 20) & 0x3FFu) * (1.0 / 1023.0));
-		float wetnessDistanceFadeRange = max(1.0, CS_WETNESS_SETTINGS.WetnessDistanceFadeRange);
+		const bool hasOcclusionViewProj = (packedRainReflectionControl & (1u << 30)) != 0;
+		float wetnessDistanceFadeRange = max(1.0, asfloat(CS_WETNESS_SETTINGS.WetnessDistanceFadeRangePacked));
 		float wetnessDistanceFade = lerp(1.0, 0.0, saturate(viewPosition.z / wetnessDistanceFadeRange));
 		float rainContactWetnessScale = max(0.0, CS_WETNESS_SETTINGS.RainContactWetnessScale);
 		float shoreHeightDelta = input.WorldPosition.z - waterHeight;
@@ -2556,7 +2558,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 		(rainDropDistance < maxRainDropDistance);
 	const bool raindropOcclusionNeeded = raindropFxActive && inRainBlend > 0.0;
 	const bool shelterOcclusionNeeded = puddleOcclusionPhase * roofLikeMask > 1e-3;
-	if (raindropOcclusionNeeded || shelterOcclusionNeeded) {
+	if ((raindropOcclusionNeeded || shelterOcclusionNeeded) && hasOcclusionViewProj) {
 		float4 precipOcclusionTexCoord = mul(CS_WETNESS_SETTINGS.OcclusionViewProj, float4(input.WorldPosition.xyz, 1));
 		precipOcclusionTexCoord.y = -precipOcclusionTexCoord.y;
 		float2 precipOcclusionUV = precipOcclusionTexCoord.xy * 0.5 + 0.5;
