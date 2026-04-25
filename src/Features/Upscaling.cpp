@@ -657,15 +657,12 @@ void Upscaling::DrawSettings()
 
 	// Check the current upscale method
 	auto upscaleMethod = GetUpscaleMethod();
-	const bool runtimeFsr4Requested = upscaleMethod == UpscaleMethod::kFSR && settings.fsr4RuntimeEnable;
-	if (runtimeFsr4Requested)
-		(void)fidelityFX.IsRuntimeUpscalerProviderValidated();
 
 	auto drawFsr4OverrideControls = [&]() {
 		if (runtimeFsr4Present && isAmdAdapter && !runtimeFsr4AutoEligible) {
 			ImGui::Checkbox("Allow FSR4 on Other AMD GPUs (Experimental)", &settings.fsr4AllowNonRx90Amd);
 			if (auto _tt = Util::HoverTooltipWrapper()) {
-				ImGui::TextUnformatted("Enables Runtime FSR4 on AMD cards that are not auto-detected as RX 7000-series or newer.");
+				ImGui::TextUnformatted("Enables Runtime FSR4 on AMD cards that are not auto-detected as RX 9000-series.");
 				ImGui::TextUnformatted("Keep this off unless your AMD card supports FSR4 and auto-detection failed.");
 			}
 		}
@@ -678,9 +675,9 @@ void Upscaling::DrawSettings()
 		ImGui::TextDisabled("Current frame path: %s", fidelityFX.GetRuntimeUpscalerLastFramePathLabel());
 		if (fidelityFX.IsRuntimeUpscalerFailureLatched()) {
 			ImGui::TextDisabled("Runtime FSR4 is latched off after a runtime failure; using host FSR 3.1 fallback.");
-		} else if (fidelityFX.HasRuntimeUpscalerProviderValidationResult() &&
-		           !fidelityFX.DoesRuntimeUpscalerProviderMatchRequestedVersion()) {
-			ImGui::TextDisabled("Runtime FSR4 provider validation failed; using host FSR 3.1 fallback.");
+		} else if (fidelityFX.HasRuntimeUpscalerSupportCheckResult() &&
+		           !fidelityFX.IsRuntimeUpscalerSupportConfirmed()) {
+			ImGui::TextDisabled("Runtime FSR4 context creation failed; using host FSR 3.1 fallback.");
 		}
 	}
 
@@ -1173,11 +1170,11 @@ void Upscaling::DrawSettings()
 			ImGui::Text("AMD FSR Mode: %s", settings.fsr4RuntimeEnable ? "Runtime FSR 4 requested" : "FSR 3.1");
 			ImGui::Text("Current Frame Path: %s", fidelityFX.GetRuntimeUpscalerLastFramePathLabel());
 			if (settings.fsr4RuntimeEnable) {
-				const bool validationKnown = fidelityFX.HasRuntimeUpscalerProviderValidationResult();
-				const bool validationPassed = fidelityFX.DoesRuntimeUpscalerProviderMatchRequestedVersion();
+				const bool supportKnown = fidelityFX.HasRuntimeUpscalerSupportCheckResult();
+				const bool supportConfirmed = fidelityFX.IsRuntimeUpscalerSupportConfirmed();
 				const std::string requestedVersion = fidelityFX.GetRuntimeUpscalerRequestedVersionString();
 				const std::string providerName = fidelityFX.GetRuntimeUpscalerProviderName();
-				ImGui::Text("Runtime Validation: %s", validationKnown ? (validationPassed ? "Passed" : "Failed") : "Pending");
+				ImGui::Text("Runtime Support: %s", supportKnown ? (supportConfirmed ? "Available" : "Unavailable") : "Pending");
 				ImGui::Text("Failure Latch: %s", fidelityFX.IsRuntimeUpscalerFailureLatched() ? "Active" : "Clear");
 				ImGui::Text("Requested FSR Version: %s", requestedVersion.c_str());
 				ImGui::Text("Runtime Provider: %s", providerName.empty() ? "(not reported by SDK)" : providerName.c_str());

@@ -102,7 +102,7 @@ namespace
 				if (!modelText.empty()) {
 					char* parseEnd = nullptr;
 					const unsigned long modelNumber = std::strtoul(modelText.c_str(), &parseEnd, 10);
-					if (parseEnd != modelText.c_str() && modelNumber >= 7000ul)
+					if (parseEnd != modelText.c_str() && modelNumber >= 9000ul)
 						return true;
 				}
 			}
@@ -115,76 +115,12 @@ namespace
 		       description.find("RX90") != std::string::npos;
 	}
 
-	bool AdapterLuidEquals(const LUID& a_left, const LUID& a_right)
-	{
-		return a_left.LowPart == a_right.LowPart &&
-		       a_left.HighPart == a_right.HighPart;
-	}
-
 	std::string UpscalerVersionToString(uint32_t a_version)
 	{
 		const uint32_t major = (a_version >> 22) & 0x3FFu;
 		const uint32_t minor = (a_version >> 12) & 0x3FFu;
 		const uint32_t patch = a_version & 0xFFFu;
 		return std::to_string(major) + "." + std::to_string(minor) + "." + std::to_string(patch);
-	}
-
-	bool TryGetFfxQueryDeviceDX12(winrt::com_ptr<ID3D12Device>& a_outDevice)
-	{
-		auto& swapChain = globals::features::upscaling.dx12SwapChain;
-		if (swapChain.d3d12Device) {
-			a_outDevice = swapChain.d3d12Device;
-			return true;
-		}
-
-		if (!globals::d3d::device)
-			return false;
-
-		winrt::com_ptr<IDXGIDevice> dxgiDevice;
-		if (FAILED(globals::d3d::device->QueryInterface(IID_PPV_ARGS(dxgiDevice.put()))))
-			return false;
-
-		winrt::com_ptr<IDXGIAdapter> adapter;
-		if (FAILED(dxgiDevice->GetAdapter(adapter.put())))
-			return false;
-
-		try {
-			swapChain.CreateD3D12Device(adapter.get());
-		} catch (...) {
-			return false;
-		}
-
-		if (!swapChain.d3d12Device)
-			return false;
-
-		a_outDevice = swapChain.d3d12Device;
-		return true;
-	}
-
-	bool TryGetRuntimeUpscalerContextDimensions(uint32_t& a_outRenderWidth, uint32_t& a_outRenderHeight, uint32_t& a_outDisplayWidth, uint32_t& a_outDisplayHeight)
-	{
-		a_outRenderWidth = 0;
-		a_outRenderHeight = 0;
-		a_outDisplayWidth = 0;
-		a_outDisplayHeight = 0;
-
-		auto state = globals::state;
-		if (state) {
-			const bool splitPerEyeContexts = UseSplitPerEyeFSRContexts();
-			const auto renderSize = Util::ConvertToDynamic(state->screenSize);
-			a_outRenderWidth = std::max(1u, static_cast<uint32_t>(splitPerEyeContexts ? renderSize.x / 2.0f : renderSize.x));
-			a_outRenderHeight = std::max(1u, static_cast<uint32_t>(renderSize.y));
-			a_outDisplayWidth = std::max(1u, static_cast<uint32_t>(splitPerEyeContexts ? state->screenSize.x / 2.0f : state->screenSize.x));
-			a_outDisplayHeight = std::max(1u, static_cast<uint32_t>(state->screenSize.y));
-			return true;
-		}
-
-		// Use a sane fallback when queried before the current frame dimensions are known.
-		a_outRenderWidth = 1280;
-		a_outRenderHeight = 720;
-		a_outDisplayWidth = 1280;
-		a_outDisplayHeight = 720;
-		return false;
 	}
 
 	void RuntimeFfxMessage(uint32_t a_type, const wchar_t* a_message)
@@ -290,21 +226,14 @@ void FidelityFX::LoadFFX()
 	}
 }
 
-bool FidelityFX::IsRuntimeUpscalerProviderValidated() const
+bool FidelityFX::HasRuntimeUpscalerSupportCheckResult() const
 {
-	if (!IsRuntimeUpscalerAvailable())
-		return false;
-	return QueryRuntimeUpscalerProviderSupport();
+	return runtimeUpscalerSupportCheckKnown;
 }
 
-bool FidelityFX::HasRuntimeUpscalerProviderValidationResult() const
+bool FidelityFX::IsRuntimeUpscalerSupportConfirmed() const
 {
-	return runtimeUpscalerProviderCacheValid;
-}
-
-bool FidelityFX::DoesRuntimeUpscalerProviderMatchRequestedVersion() const
-{
-	return runtimeUpscalerProviderCacheValid && runtimeUpscalerProviderSupportsRequestedVersion;
+	return runtimeUpscalerSupportCheckKnown && runtimeUpscalerSupportConfirmed;
 }
 
 bool FidelityFX::IsRuntimeUpscalerFailureLatched() const
@@ -343,6 +272,7 @@ std::string FidelityFX::GetRuntimeUpscalerRequestedVersionString() const
 void FidelityFX::ResetRuntimeUpscalerTracking(bool a_invalidateProviderCache)
 {
 	runtimeUpscalerFailureLatched = false;
+	runtimeFallbackResetDispatchesRemaining = 0;
 	runtimeUpscalerLastFramePathValid = false;
 	runtimeUpscalerLastFrameIndex = 0;
 	runtimeUpscalerLastFramePath = RuntimeUpscalerFramePath::kInactive;
@@ -350,9 +280,8 @@ void FidelityFX::ResetRuntimeUpscalerTracking(bool a_invalidateProviderCache)
 	if (!a_invalidateProviderCache)
 		return;
 
-	runtimeUpscalerProviderCacheValid = false;
-	runtimeUpscalerProviderSupportsRequestedVersion = false;
-	runtimeUpscalerProviderAdapterLuid = {};
+	runtimeUpscalerSupportCheckKnown = false;
+	runtimeUpscalerSupportConfirmed = false;
 	runtimeUpscalerProviderMatchedVersionId = 0;
 	runtimeUpscalerProviderMatchedVersionName.clear();
 }
@@ -514,8 +443,6 @@ void FidelityFX::CreateFSRResources()
 	}
 
 	ResetRuntimeUpscalerTracking(true);
-	if (globals::features::upscaling.settings.fsr4RuntimeEnable && IsRuntimeUpscalerAvailable())
-		(void)QueryRuntimeUpscalerProviderSupport();
 
 	auto fsrDevice = ffxGetDeviceDX11(globals::d3d::device);
 
@@ -669,145 +596,6 @@ bool FidelityFX::IsRuntimeUpscalerAutoEligible() const
 	return adapterDesc.VendorId == kAmdVendorId && IsLikelyRDNA4Adapter(adapterDesc);
 }
 
-bool FidelityFX::QueryRuntimeUpscalerProviderSupport() const
-{
-	if (!IsRuntimeUpscalerPresent())
-		return false;
-
-	DXGI_ADAPTER_DESC adapterDesc{};
-	if (!TryGetCurrentAdapterDesc(adapterDesc))
-		return false;
-
-	if (runtimeUpscalerProviderCacheValid &&
-	    AdapterLuidEquals(runtimeUpscalerProviderAdapterLuid, adapterDesc.AdapterLuid)) {
-		return runtimeUpscalerProviderSupportsRequestedVersion;
-	}
-
-	runtimeUpscalerProviderCacheValid = false;
-	runtimeUpscalerProviderSupportsRequestedVersion = false;
-	runtimeUpscalerProviderMatchedVersionId = 0;
-	runtimeUpscalerProviderMatchedVersionName.clear();
-	runtimeUpscalerProviderAdapterLuid = adapterDesc.AdapterLuid;
-
-	winrt::com_ptr<ID3D12Device> queryDevice;
-	if (!TryGetFfxQueryDeviceDX12(queryDevice))
-		return false;
-
-	uint32_t probeRenderWidth = 0;
-	uint32_t probeRenderHeight = 0;
-	uint32_t probeDisplayWidth = 0;
-	uint32_t probeDisplayHeight = 0;
-	const bool probeDimensionsFromState =
-		TryGetRuntimeUpscalerContextDimensions(probeRenderWidth, probeRenderHeight, probeDisplayWidth, probeDisplayHeight);
-
-	ffx::QueryDescGetVersions versionsQuery{};
-	versionsQuery.createDescType = FFX_API_CREATE_CONTEXT_DESC_TYPE_UPSCALE;
-	versionsQuery.device = queryDevice.get();
-	uint64_t versionCount = 0;
-	versionsQuery.outputCount = &versionCount;
-	versionsQuery.versionIds = nullptr;
-	versionsQuery.versionNames = nullptr;
-
-	std::string availableVersionSummary;
-	if (ffx::Query(versionsQuery) == ffx::ReturnCode::Ok && versionCount != 0) {
-		std::vector<uint64_t> versionIds(versionCount);
-		std::vector<const char*> versionNames(versionCount, nullptr);
-		versionsQuery.versionIds = versionIds.data();
-		versionsQuery.versionNames = versionNames.data();
-
-		if (ffx::Query(versionsQuery) == ffx::ReturnCode::Ok) {
-			availableVersionSummary.reserve(static_cast<size_t>(versionCount) * 32);
-			for (uint64_t i = 0; i < versionCount; ++i) {
-				if (!availableVersionSummary.empty())
-					availableVersionSummary += ", ";
-
-				availableVersionSummary += std::format("0x{:X}", versionIds[i]);
-				if (versionNames[i] && versionNames[i][0] != '\0') {
-					availableVersionSummary += " (";
-					availableVersionSummary += versionNames[i];
-					availableVersionSummary += ")";
-				}
-			}
-		}
-	} else {
-		logger::warn("[FidelityFX] Runtime upscaler provider version enumeration was unavailable for the current device.");
-	}
-
-	ffx::CreateBackendDX12Desc backendDesc{};
-	backendDesc.device = queryDevice.get();
-
-	ffx::CreateContextDescUpscale probeCreateDesc{};
-	probeCreateDesc.flags = FFX_UPSCALE_ENABLE_HIGH_DYNAMIC_RANGE | FFX_UPSCALE_ENABLE_AUTO_EXPOSURE;
-	probeCreateDesc.maxRenderSize = { probeRenderWidth, probeRenderHeight };
-	probeCreateDesc.maxUpscaleSize = { probeDisplayWidth, probeDisplayHeight };
-	probeCreateDesc.fpMessage = RuntimeFfxMessage;
-
-	ffx::CreateContextDescUpscaleVersion probeVersionDesc{};
-	probeVersionDesc.version = FFX_UPSCALER_VERSION;
-
-	probeCreateDesc.header.pNext = &probeVersionDesc.header;
-	probeVersionDesc.header.pNext = &backendDesc.header;
-	backendDesc.header.pNext = nullptr;
-
-	ffx::Context probeContext{};
-	const auto probeResult = ffxModule.CreateContext(&probeContext, &probeCreateDesc.header, nullptr);
-	runtimeUpscalerProviderCacheValid = true;
-
-	if (probeResult != FFX_API_RETURN_OK) {
-		logger::warn("[FidelityFX] Runtime upscaler probe context creation for FSR version {} failed with code {} using {} probe dimensions {}x{} -> {}x{}. Enumerated providers: {}",
-			UpscalerVersionToString(FFX_UPSCALER_VERSION),
-			static_cast<uint32_t>(probeResult),
-			probeDimensionsFromState ? "session" : "fallback",
-			probeRenderWidth,
-			probeRenderHeight,
-			probeDisplayWidth,
-			probeDisplayHeight,
-			availableVersionSummary.empty() ? "none reported" : availableVersionSummary);
-		return false;
-	}
-
-	runtimeUpscalerProviderSupportsRequestedVersion = true;
-
-	ffxQueryGetProviderVersion providerQuery{};
-	providerQuery.header.type = FFX_API_QUERY_DESC_TYPE_GET_PROVIDER_VERSION;
-	providerQuery.header.pNext = nullptr;
-	providerQuery.versionId = 0;
-	providerQuery.versionName = nullptr;
-
-	if (ffxModule.Query(&probeContext, &providerQuery.header) == FFX_API_RETURN_OK) {
-		runtimeUpscalerProviderMatchedVersionId = providerQuery.versionId;
-		if (providerQuery.versionName != nullptr)
-			runtimeUpscalerProviderMatchedVersionName = providerQuery.versionName;
-	}
-
-	if (ffxModule.DestroyContext)
-		(void)ffxModule.DestroyContext(&probeContext, nullptr);
-
-	if (runtimeUpscalerProviderMatchedVersionName.empty()) {
-		logger::info("[FidelityFX] Runtime upscaler probe succeeded for FSR version {} using {} probe dimensions {}x{} -> {}x{}. Enumerated providers: {}",
-			UpscalerVersionToString(FFX_UPSCALER_VERSION),
-			probeDimensionsFromState ? "session" : "fallback",
-			probeRenderWidth,
-			probeRenderHeight,
-			probeDisplayWidth,
-			probeDisplayHeight,
-			availableVersionSummary.empty() ? "none reported" : availableVersionSummary);
-	} else {
-		logger::info("[FidelityFX] Runtime upscaler provider '{}' (id 0x{:X}) accepted for FSR version {} using {} probe dimensions {}x{} -> {}x{}. Enumerated providers: {}",
-			runtimeUpscalerProviderMatchedVersionName,
-			runtimeUpscalerProviderMatchedVersionId,
-			UpscalerVersionToString(FFX_UPSCALER_VERSION),
-			probeDimensionsFromState ? "session" : "fallback",
-			probeRenderWidth,
-			probeRenderHeight,
-			probeDisplayWidth,
-			probeDisplayHeight,
-			availableVersionSummary.empty() ? "none reported" : availableVersionSummary);
-	}
-
-	return true;
-}
-
 bool FidelityFX::IsRuntimeUpscalerAvailable() const
 {
 	if (!IsRuntimeUpscalerPresent())
@@ -848,15 +636,13 @@ FfxResource ffxGetResource(ID3D11Resource* dx11Resource,
 	return resource;
 }
 
-bool FidelityFX::CanUseRuntimeUpscalerPath() const
+bool FidelityFX::CanUseRuntimeUpscalerPath()
 {
 	if (!globals::features::upscaling.settings.fsr4RuntimeEnable)
 		return false;
-	if (!IsRuntimeUpscalerAvailable())
-		return false;
 	if (runtimeUpscalerFailureLatched)
 		return false;
-	return QueryRuntimeUpscalerProviderSupport();
+	return true;
 }
 
 bool FidelityFX::EnsureRuntimeUpscalerInterop()
@@ -911,14 +697,44 @@ bool FidelityFX::EnsureRuntimeUpscalerInterop()
 
 bool FidelityFX::EnsureRuntimeUpscalerContexts(uint32_t a_fullRenderWidth, uint32_t a_fullRenderHeight, uint32_t a_fullDisplayWidth, uint32_t a_fullDisplayHeight, uint32_t a_contextCount)
 {
-	if (!a_fullRenderWidth || !a_fullRenderHeight || !a_fullDisplayWidth || !a_fullDisplayHeight)
+	auto recordRuntimeProviderResult = [&](bool a_supported) {
+		runtimeUpscalerSupportCheckKnown = true;
+		runtimeUpscalerSupportConfirmed = a_supported;
+		runtimeUpscalerProviderMatchedVersionId = 0;
+		runtimeUpscalerProviderMatchedVersionName.clear();
+
+		if (!a_supported || !runtimeUpscalerContexts[0] || !ffxModule.Query)
+			return;
+
+		ffxQueryGetProviderVersion providerQuery{};
+		providerQuery.header.type = FFX_API_QUERY_DESC_TYPE_GET_PROVIDER_VERSION;
+		providerQuery.header.pNext = nullptr;
+		providerQuery.versionId = 0;
+		providerQuery.versionName = nullptr;
+
+		if (ffxModule.Query(&runtimeUpscalerContexts[0], &providerQuery.header) == FFX_API_RETURN_OK) {
+			runtimeUpscalerProviderMatchedVersionId = providerQuery.versionId;
+			if (providerQuery.versionName)
+				runtimeUpscalerProviderMatchedVersionName = providerQuery.versionName;
+		}
+	};
+
+	if (!a_fullRenderWidth || !a_fullRenderHeight || !a_fullDisplayWidth || !a_fullDisplayHeight) {
+		recordRuntimeProviderResult(false);
 		return false;
-	if (a_contextCount == 0 || a_contextCount > std::size(runtimeUpscalerContexts))
+	}
+	if (a_contextCount == 0 || a_contextCount > std::size(runtimeUpscalerContexts)) {
+		recordRuntimeProviderResult(false);
 		return false;
-	if (!EnsureRuntimeUpscalerInterop())
+	}
+	if (!EnsureRuntimeUpscalerInterop()) {
+		recordRuntimeProviderResult(false);
 		return false;
-	if (!ffxModule.CreateContext)
+	}
+	if (!ffxModule.CreateContext) {
+		recordRuntimeProviderResult(false);
 		return false;
+	}
 
 	bool allContextsValid = true;
 	for (uint32_t i = 0; i < a_contextCount; ++i) {
@@ -946,6 +762,8 @@ bool FidelityFX::EnsureRuntimeUpscalerContexts(uint32_t a_fullRenderWidth, uint3
 	ffx::CreateBackendDX12Desc backendDesc{};
 	backendDesc.device = swapChain.d3d12Device.get();
 
+	bool createdContextWithoutVersionOverride = false;
+
 	for (uint32_t i = 0; i < a_contextCount; ++i) {
 		ffx::CreateContextDescUpscale createDesc{};
 		createDesc.flags = FFX_UPSCALE_ENABLE_HIGH_DYNAMIC_RANGE | FFX_UPSCALE_ENABLE_AUTO_EXPOSURE;
@@ -960,10 +778,30 @@ bool FidelityFX::EnsureRuntimeUpscalerContexts(uint32_t a_fullRenderWidth, uint3
 		versionDesc.header.pNext = &backendDesc.header;
 		backendDesc.header.pNext = nullptr;
 
-		if (ffxModule.CreateContext(&runtimeUpscalerContexts[i], &createDesc.header, nullptr) != FFX_API_RETURN_OK) {
-			logger::error("[FidelityFX] Failed to create runtime upscaler context {} for {}x{} -> {}x{}.",
-				i, a_fullRenderWidth, a_fullRenderHeight, a_fullDisplayWidth, a_fullDisplayHeight);
+		auto createResult = ffxModule.CreateContext(&runtimeUpscalerContexts[i], &createDesc.header, nullptr);
+		if (createResult == FFX_API_RETURN_ERROR_UNKNOWN_DESCTYPE ||
+		    createResult == FFX_API_RETURN_PROVIDER_NO_SUPPORT_NEW_DESCTYPE) {
+			createDesc.header.pNext = &backendDesc.header;
+			backendDesc.header.pNext = nullptr;
+
+			const auto retryResult = ffxModule.CreateContext(&runtimeUpscalerContexts[i], &createDesc.header, nullptr);
+			if (retryResult == FFX_API_RETURN_OK) {
+				createdContextWithoutVersionOverride = true;
+			}
+			createResult = retryResult;
+		}
+
+		if (createResult != FFX_API_RETURN_OK) {
+			logger::error("[FidelityFX] Failed to create runtime upscaler context {} for FSR version {} with code {} (Render: {}x{}, Display: {}x{}).",
+				i,
+				UpscalerVersionToString(FFX_UPSCALER_VERSION),
+				static_cast<uint32_t>(createResult),
+				a_fullRenderWidth,
+				a_fullRenderHeight,
+				a_fullDisplayWidth,
+				a_fullDisplayHeight);
 			DestroyRuntimeUpscalerContexts();
+			recordRuntimeProviderResult(false);
 			return false;
 		}
 	}
@@ -973,9 +811,31 @@ bool FidelityFX::EnsureRuntimeUpscalerContexts(uint32_t a_fullRenderWidth, uint3
 	runtimeUpscalerMaxRenderHeight = a_fullRenderHeight;
 	runtimeUpscalerMaxDisplayWidth = a_fullDisplayWidth;
 	runtimeUpscalerMaxDisplayHeight = a_fullDisplayHeight;
+	recordRuntimeProviderResult(true);
 
-	logger::info("[FidelityFX] Created {} runtime upscaler context(s) (Render: {}x{}, Display: {}x{}).",
-		a_contextCount, a_fullRenderWidth, a_fullRenderHeight, a_fullDisplayWidth, a_fullDisplayHeight);
+	if (createdContextWithoutVersionOverride) {
+		logger::warn("[FidelityFX] Runtime upscaler context creation succeeded only without the explicit FSR version descriptor; runtime SDK/provider ignored or does not support explicit version override.");
+	}
+
+	if (runtimeUpscalerProviderMatchedVersionName.empty()) {
+		logger::info("[FidelityFX] Created {} runtime upscaler context(s) for FSR version {} (Render: {}x{}, Display: {}x{}).",
+			a_contextCount,
+			UpscalerVersionToString(FFX_UPSCALER_VERSION),
+			a_fullRenderWidth,
+			a_fullRenderHeight,
+			a_fullDisplayWidth,
+			a_fullDisplayHeight);
+	} else {
+		logger::info("[FidelityFX] Created {} runtime upscaler context(s) using provider '{}' (id 0x{:X}) for FSR version {} (Render: {}x{}, Display: {}x{}).",
+			a_contextCount,
+			runtimeUpscalerProviderMatchedVersionName,
+			runtimeUpscalerProviderMatchedVersionId,
+			UpscalerVersionToString(FFX_UPSCALER_VERSION),
+			a_fullRenderWidth,
+			a_fullRenderHeight,
+			a_fullDisplayWidth,
+			a_fullDisplayHeight);
+	}
 	return true;
 }
 
@@ -1302,8 +1162,8 @@ bool FidelityFX::UpscaleRegion(uint32_t a_contextIndex, ID3D11Resource* a_color,
 	const bool runtimeRequested =
 		globals::features::upscaling.settings.fsr4RuntimeEnable &&
 		IsRuntimeUpscalerAvailable();
+	const uint32_t runtimeContextCount = UseSplitPerEyeFSRContexts() ? 2u : 1u;
 	const bool runtimeSelected = runtimeRequested && CanUseRuntimeUpscalerPath();
-	bool runtimeFallbackTransitionUsed = false;
 
 	if (runtimeSelected) {
 		auto state = globals::state;
@@ -1316,9 +1176,8 @@ bool FidelityFX::UpscaleRegion(uint32_t a_contextIndex, ID3D11Resource* a_color,
 		const uint32_t fullRenderHeight = static_cast<uint32_t>(renderSize.y);
 		const uint32_t fullDisplayWidth = static_cast<uint32_t>(splitPerEyeContexts ? state->screenSize.x / 2.0f : state->screenSize.x);
 		const uint32_t fullDisplayHeight = static_cast<uint32_t>(state->screenSize.y);
-		const uint32_t contextCount = splitPerEyeContexts ? 2u : 1u;
 
-		if (EnsureRuntimeUpscalerContexts(fullRenderWidth, fullRenderHeight, fullDisplayWidth, fullDisplayHeight, contextCount)) {
+		if (EnsureRuntimeUpscalerContexts(fullRenderWidth, fullRenderHeight, fullDisplayWidth, fullDisplayHeight, runtimeContextCount)) {
 			try {
 				if (DispatchRuntimeUpscalerSingle(
 						a_contextIndex,
@@ -1345,9 +1204,14 @@ bool FidelityFX::UpscaleRegion(uint32_t a_contextIndex, ID3D11Resource* a_color,
 			}
 		}
 
-		runtimeFallbackTransitionUsed = !runtimeUpscalerFailureLatched;
+		if (!runtimeUpscalerFailureLatched) {
+			runtimeFallbackResetDispatchesRemaining = std::max(runtimeFallbackResetDispatchesRemaining, runtimeContextCount);
+		}
 		LatchRuntimeUpscalerFailure();
 	}
+
+	if (!runtimeRequested)
+		runtimeFallbackResetDispatchesRemaining = 0;
 
 	if (!fsrScratchBuffer || a_contextIndex >= fsrContextCount)
 		return false;
@@ -1395,7 +1259,10 @@ bool FidelityFX::UpscaleRegion(uint32_t a_contextIndex, ID3D11Resource* a_color,
 	dispatchParameters.sharpness = a_sharpness;
 	dispatchParameters.cameraFovAngleVertical = Util::GetVerticalFOVRad();
 	dispatchParameters.viewSpaceToMetersFactor = 0.01428222656f;
-	dispatchParameters.reset = globals::features::upscaling.ShouldResetHistoryThisFrame() || runtimeFallbackTransitionUsed;
+	const bool runtimeFallbackReset = runtimeRequested && runtimeFallbackResetDispatchesRemaining > 0;
+	if (runtimeFallbackReset)
+		runtimeFallbackResetDispatchesRemaining--;
+	dispatchParameters.reset = globals::features::upscaling.ShouldResetHistoryThisFrame() || runtimeFallbackReset;
 	dispatchParameters.preExposure = 1.0f;
 	dispatchParameters.flags = 0;
 

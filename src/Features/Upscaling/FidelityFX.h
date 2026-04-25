@@ -59,9 +59,8 @@ public:
 	bool IsRuntimeUpscalerPresent() const;
 	bool IsRuntimeUpscalerAutoEligible() const;
 	bool IsRuntimeUpscalerAvailable() const;
-	bool IsRuntimeUpscalerProviderValidated() const;
-	bool HasRuntimeUpscalerProviderValidationResult() const;
-	bool DoesRuntimeUpscalerProviderMatchRequestedVersion() const;
+	bool HasRuntimeUpscalerSupportCheckResult() const;
+	bool IsRuntimeUpscalerSupportConfirmed() const;
 	bool IsRuntimeUpscalerFailureLatched() const;
 	const char* GetRuntimeUpscalerLastFramePathLabel() const;
 	std::string GetRuntimeUpscalerProviderName() const;
@@ -115,18 +114,17 @@ private:
 	};
 
 	bool runtimeUpscalerFailureLatched = false;
+	uint32_t runtimeFallbackResetDispatchesRemaining = 0;
 	bool runtimeUpscalerLastFramePathValid = false;
 	uint32_t runtimeUpscalerLastFrameIndex = 0;
 	RuntimeUpscalerFramePath runtimeUpscalerLastFramePath = RuntimeUpscalerFramePath::kInactive;
 
-	mutable bool runtimeUpscalerProviderCacheValid = false;
-	mutable bool runtimeUpscalerProviderSupportsRequestedVersion = false;
-	mutable LUID runtimeUpscalerProviderAdapterLuid{};
-	mutable uint64_t runtimeUpscalerProviderMatchedVersionId = 0;
-	mutable std::string runtimeUpscalerProviderMatchedVersionName;
+	bool runtimeUpscalerSupportCheckKnown = false;
+	bool runtimeUpscalerSupportConfirmed = false;
+	uint64_t runtimeUpscalerProviderMatchedVersionId = 0;
+	std::string runtimeUpscalerProviderMatchedVersionName;
 
-	bool CanUseRuntimeUpscalerPath() const;
-	bool QueryRuntimeUpscalerProviderSupport() const;
+	bool CanUseRuntimeUpscalerPath();
 	void ResetRuntimeUpscalerTracking(bool a_invalidateProviderCache);
 	void LatchRuntimeUpscalerFailure();
 	void RecordRuntimeUpscalerFramePath(RuntimeUpscalerFramePath a_path);
