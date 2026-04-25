@@ -1344,12 +1344,12 @@ void Wetterness::DrawSettings()
 
 		ImGui::SliderFloat("Ground Wet-film", &settings.RainContactWetnessScale, RAIN_CONTACT_WETNESS_SCALE_MIN, RAIN_CONTACT_WETNESS_SCALE_MAX, "%.2f");
 		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::TextUnformatted("Controls the thin non-puddle reflection film on exposed ground. Higher = more visible wet sheen and raindrop read between puddles. Lower = drier reflection between puddles. Does not drive wet darkening, puddle depth, or puddle size.");
+			ImGui::TextUnformatted("Controls the thin non-puddle reflection film on exposed ground, including raindrop read between puddles. Higher = wetter ground sheen. Lower = drier reflection between puddles. Does not drive puddle depth or puddle size.");
 		}
 
 		ImGui::SliderFloat("Wet Surface Darkening", &settings.WetDarkeningStrength, 0.0f, 2.0f, "%.2f");
 		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::TextUnformatted("How much wet ground darkens. Higher = darker wet patches, lower = closer to original brightness.");
+			ImGui::TextUnformatted("How much active wet surfaces darken. Applies continuously across wet ground and puddles so puddle edges do not get a separate dark band.");
 		}
 
 		ImGui::SliderFloat("Wet Film Specular Floor", &settings.WetFilmSpecularFloorScale, WET_FILM_SPECULAR_FLOOR_SCALE_MIN, WET_FILM_SPECULAR_FLOOR_SCALE_MAX, "%.2f");
