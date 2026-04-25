@@ -3456,16 +3456,20 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	float rainWetVisualMask = smoothstep(0.02, 0.08, rainDrivenWetness);
 	float wetDarkeningBlend = saturate(0.8 * wetDarkeningStrength) * rainWetVisualMask;
 	wetDarkeningBlend *= lerp(0.75, 1.0, lodSafeWetDarkeningFade);
-	float3 wetDarkenedBaseColor = pow(abs(material.BaseColor), 1.0 + wetnessDarkeningAmount);
-	material.BaseColor = lerp(material.BaseColor, wetDarkenedBaseColor, wetDarkeningBlend);
+	if (wetDarkeningBlend > 0.0 && (wetnessDarkeningAmount != 0.0 || any(material.BaseColor < 0.0))) {
+		float3 wetDarkenedBaseColor = pow(abs(material.BaseColor), 1.0 + wetnessDarkeningAmount);
+		material.BaseColor = lerp(material.BaseColor, wetDarkenedBaseColor, wetDarkeningBlend);
+	}
 #			if !defined(SKIN) && !defined(HAIR)
 	[branch] if (shorePersistentDarkeningEnabled) {
 		float shoreDarkeningMask = shorePersistentDarkeningMask;
 		float shoreDarkeningAmount = porosity * shoreDarkeningAbsorption * shoreDarkeningMask * shorePersistentDarkeningStrength;
 		float shoreDarkeningBlend = saturate(0.5 * shorePersistentDarkeningStrength) * shoreDarkeningMask;
 		shoreDarkeningBlend *= lerp(0.75, 1.0, lodSafeWetDarkeningFade);
-		float3 shoreDarkenedBaseColor = pow(abs(material.BaseColor), 1.0 + shoreDarkeningAmount);
-		material.BaseColor = lerp(material.BaseColor, shoreDarkenedBaseColor, shoreDarkeningBlend);
+		if (shoreDarkeningBlend > 0.0 && (shoreDarkeningAmount != 0.0 || any(material.BaseColor < 0.0))) {
+			float3 shoreDarkenedBaseColor = pow(abs(material.BaseColor), 1.0 + shoreDarkeningAmount);
+			material.BaseColor = lerp(material.BaseColor, shoreDarkenedBaseColor, shoreDarkeningBlend);
+		}
 	}
 #			endif
 	}
@@ -3662,19 +3666,9 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 #	endif
 
 #	if !defined(DEFERRED)
-	if (any(baseMaterialCubemapSpecular > 0)
-#		if defined(WETTERNESS)
-#			if defined(DYNAMIC_CUBEMAPS)
-		|| wetCubemapReflectanceVisible
-#			else
-		|| any(wetnessReflectance > 0)
-#			endif
-#		elif defined(WETNESS_EFFECTS)
-		|| any(wetnessReflectance > 0)
-#		endif
-	)
 #		if defined(DYNAMIC_CUBEMAPS)
 #			if defined(SKYLIGHTING)
+	if (any(baseMaterialCubemapSpecular > 0))
 		color.xyz += baseMaterialCubemapSpecular * SanitizeFloat3(DynamicCubemaps::GetDynamicCubemapSpecularIrradiance(screenUV, worldNormal, vertexNormal, viewDirection, material.Roughness, skylightingSH));
 #				if defined(WETTERNESS)
 		if (wetCubemapReflectanceVisible)
@@ -3693,10 +3687,11 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 			color.xyz += wetnessReflectance * wetCubemapIrradiance;
 		}
 #				elif defined(WETNESS_EFFECTS)
-		if (waterRoughnessSpecular < 1)
+		if (waterRoughnessSpecular < 1 && any(wetnessReflectance > 0))
 			color.xyz += wetnessReflectance * SanitizeFloat3(DynamicCubemaps::GetDynamicCubemapSpecularIrradiance(screenUV, wetnessNormal, vertexNormal, viewDirection, waterRoughnessSpecular, skylightingSH));
 #				endif
 #			else
+	if (any(baseMaterialCubemapSpecular > 0))
 		color.xyz += baseMaterialCubemapSpecular * SanitizeFloat3(DynamicCubemaps::GetDynamicCubemapSpecularIrradiance(screenUV, worldNormal, vertexNormal, viewDirection, material.Roughness));
 #				if defined(WETTERNESS)
 		if (wetCubemapReflectanceVisible)
@@ -3715,11 +3710,12 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 			color.xyz += wetnessReflectance * wetCubemapIrradiance;
 		}
 #				elif defined(WETNESS_EFFECTS)
-		if (waterRoughnessSpecular < 1)
+		if (waterRoughnessSpecular < 1 && any(wetnessReflectance > 0))
 			color.xyz += wetnessReflectance * SanitizeFloat3(DynamicCubemaps::GetDynamicCubemapSpecularIrradiance(screenUV, wetnessNormal, vertexNormal, viewDirection, waterRoughnessSpecular));
 #				endif
 #			endif
 #		else
+	if (any(baseMaterialCubemapSpecular > 0))
 		color.xyz += indirectLobeWeights.specular * directionalAmbientColor;
 #		endif
 #	endif
