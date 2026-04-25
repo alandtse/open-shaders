@@ -2401,6 +2401,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 		float wetHighlightReflectanceScale = 1.0;
 		float wetDirectSpecularScale = 1.0;
 		float wetRainCubemapSuppression = 0.0;
+		float wetPuddleSkyReflectionScale = 1.0;
 		float rainDarkeningAbsorption = 1.0;
 		float shoreDarkeningAbsorption = 1.0;
 		const bool wetnessEnabled = (CS_WETNESS_SETTINGS.EnableWetnessEffects != 0);
@@ -2411,11 +2412,13 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 		// - PackedRainReflectionControl[0..9]: post-rain cubemap glare reduction (derived from Post-Rain Water Clarity)
 		// - PackedRainReflectionControl[10..19]: in-rain cubemap suppression (derived from Rain Reflection Balance)
 		// - PackedRainReflectionControl[20..29]: in-rain wet-film specular boost (derived from Rain Reflection Balance)
+		// - PackedRainReflectionControl[30]: reduce puddle sky/cubemap reflection
 		float postRainSpecBoostFromClarity = saturate(frac(packedPostRainControl) / 0.999);
 		uint packedRainReflectionControl = asuint(CS_WETNESS_SETTINGS.PackedRainReflectionControl);
 		float postRainCubemapGlareReductionFromClarity = saturate((float)(packedRainReflectionControl & 0x3FFu) * (1.0 / 1023.0));
 		float inRainCubemapSuppressionFromBalance = saturate((float)((packedRainReflectionControl >> 10) & 0x3FFu) * (1.0 / 1023.0));
 		float inRainFilmSpecularBoostFromBalance = saturate((float)((packedRainReflectionControl >> 20) & 0x3FFu) * (1.0 / 1023.0));
+		float reducePuddleSkyReflection = (float)((packedRainReflectionControl >> 30) & 0x1u);
 		float wetnessDistanceFadeRange = max(1.0, CS_WETNESS_SETTINGS.WetnessDistanceFadeRange);
 		float wetnessDistanceFade = lerp(1.0, 0.0, saturate(viewPosition.z / wetnessDistanceFadeRange));
 		float rainContactWetnessScale = max(0.0, CS_WETNESS_SETTINGS.RainContactWetnessScale);
@@ -2628,7 +2631,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	// Trim residual low-end surface gloss after rain so ground does not look wet forever.
 	float postRainDryCut = lerp(0.0, 0.08, postRainBlend);
 	rainWetness = saturate((rainWetness - postRainDryCut) / max(1e-3, 1.0 - postRainDryCut));
-	float rainFilmWetness = saturate(rainWetness + raindropWetness * inRainBlend * 0.30);
+	float rainFilmWetness = saturate(max(rainWetness, raindropWetness * inRainBlend));
 	if (!wetSurfaceAllowed) {
 		rainWetness = 0.0;
 		rainFilmWetness = 0.0;
@@ -2718,6 +2721,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	wetSurfaceDarkeningMask = saturate(max(rainContactBase, puddleSpecularBaseSaturated));
 	float puddleCoverageMask = saturate(puddleFootprintMask * smoothstep(0.55, 0.85, puddleSpecularBaseSaturated));
 	nonPuddleFilmMask = 1.0 - puddleCoverageMask;
+	wetPuddleSkyReflectionScale = lerp(1.0, 0.35, reducePuddleSkyReflection * puddleCoverageMask);
 	float wetFilmSpecularNonPuddle = wetFilmSpecular * nonPuddleFilmMask;
 	float shoreWetnessSpecularNonPuddle = shoreWetnessSpecular * nonPuddleFilmMask;
 	wetnessGlossinessAlbedo = max(puddle, shoreFactorAlbedo * CS_WETNESS_SETTINGS.MaxShoreWetness);
@@ -3537,7 +3541,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	float3 wetCubemapSampleDirection = 0.0;
 	if (wetIndirectLightingVisible) {
 		wetnessReflectance = GetWetnessIndirectLobeWeights(indirectLobeWeights, wetnessNormal, waterRoughnessSpecular, indirectContext, wetReflectionModeConfig);
-		wetnessReflectance *= wetHighlightReflectanceScale;
+		wetnessReflectance *= wetHighlightReflectanceScale * wetPuddleSkyReflectionScale;
 		wetCubemapReflectanceVisible = any(wetnessReflectance > 0.0);
 		if (wetCubemapReflectanceVisible) {
 			wetCubemapSampleDirection = reflect(-viewDirection, wetnessNormal);

@@ -202,6 +202,7 @@ public:
 	float modernWetIndirectSpecularScale = 0.80f;
 	float legacyWetIndirectSpecularScale = 0.40f;
 	float rainReflectionBalance = 1.0f;
+	uint reducePuddleSkyReflections = false;
 	float postRainWaterClarity = 0.8f;
 	float shorePersistentDarkeningStrength = 1.0f;
 	float wetnessDistanceFadeRange = 10000.0f;

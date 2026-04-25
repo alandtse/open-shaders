@@ -618,6 +618,8 @@ namespace
 		return bits0 | (bits1 << 10) | (bits2 << 20);
 	}
 
+	constexpr uint32_t PUDDLE_SKY_REFLECTION_REDUCTION_BIT = 1u << 30;
+
 	void SanitizePersistentUiState(
 		Wetterness::Settings& settings,
 		float& modernScale,
@@ -1420,6 +1422,11 @@ void Wetterness::DrawSettings()
 			ImGui::TextUnformatted("Wetness threshold for puddles to look like standing water. Higher = only stronger puddles become flat/reflective; lower = watery look appears sooner.");
 		}
 
+		drawUintCheckbox("Reduce Puddle Sky Reflections", reducePuddleSkyReflections);
+		if (auto _tt = Util::HoverTooltipWrapper()) {
+			ImGui::TextUnformatted("Reduces sky/cubemap reflections only on puddle pixels. Direct wet highlights and non-puddle ground wet-film are unchanged.");
+		}
+
 		ImGui::SliderFloat("Rain Reflection Balance", &rainReflectionBalance, RAIN_REFLECTION_BALANCE_MIN, RAIN_REFLECTION_BALANCE_MAX, "%.2f");
 		if (auto _tt = Util::HoverTooltipWrapper()) {
 			ImGui::TextUnformatted("Rain-only balance for the thin ground wet-film. Lower = more cubemap/environment mirror; higher = more direct rain sparkle and less mirror. Deep puddles are unchanged.");
@@ -2024,6 +2031,7 @@ Wetterness::PerFrame Wetterness::GetCommonBufferData() const
 	const float postRainSpecBoostFromClarity = activePostRainWaterClarity;
 	const float inRainCubemapSuppressionFromBalance = activeRainReflectionBalance;
 	const float inRainFilmSpecularBoostFromBalance = activeRainReflectionBalance;
+	const uint activePuddleSkyReflectionReduction = masterWetnessEnabled ? SanitizeToggle(reducePuddleSkyReflections) : 0u;
 	const float activeRainContactWetnessScale = data.settings.EnableWetnessEffects ?
 		ClampFiniteOrDefault(
 			sanitizedSettings.RainContactWetnessScale,
@@ -2039,7 +2047,12 @@ Wetterness::PerFrame Wetterness::GetCommonBufferData() const
 	// bits  0.. 9 = post-rain cubemap glare reduction (derived from Post-Rain Water Clarity)
 	// bits 10..19 = in-rain cubemap suppression (derived from Rain Reflection Balance)
 	// bits 20..29 = in-rain film specular boost (derived from Rain Reflection Balance)
-	data.PackedRainReflectionControl = PackThreeUnorm10(postRainCubemapGlareReductionFromClarity, inRainCubemapSuppressionFromBalance, inRainFilmSpecularBoostFromBalance);
+	// bit      30 = reduce puddle sky/cubemap reflections
+	uint32_t packedRainReflectionControl = PackThreeUnorm10(postRainCubemapGlareReductionFromClarity, inRainCubemapSuppressionFromBalance, inRainFilmSpecularBoostFromBalance);
+	if (activePuddleSkyReflectionReduction != 0u) {
+		packedRainReflectionControl |= PUDDLE_SKY_REFLECTION_REDUCTION_BIT;
+	}
+	data.PackedRainReflectionControl = packedRainReflectionControl;
 	// Remaining wetness packed lane carries wetness distance fade in game units.
 	data.settings.PostRainPuddleWaterStrength = ClampFiniteOrDefault(
 		data.settings.PostRainPuddleWaterStrength,
@@ -2107,6 +2120,7 @@ void Wetterness::LoadSettings(json& o_json)
 	vrCubemapSettings = {};
 	puddleLayout = DEFAULT_PUDDLE_LAYOUT;
 	rainReflectionBalance = DEFAULT_RAIN_REFLECTION_BALANCE;
+	reducePuddleSkyReflections = false;
 	postRainWaterClarity = DEFAULT_POST_RAIN_WATER_CLARITY;
 	shorePersistentDarkeningStrength = SHORE_PERSISTENT_DARKENING_DEFAULT;
 	wetnessDistanceFadeRange = DEFAULT_WETNESS_DISTANCE_FADE_RANGE_GAME_UNITS;
@@ -2152,6 +2166,10 @@ void Wetterness::LoadSettings(json& o_json)
 	puddleLayout = JsonValueOr<float>(o_json, "PuddleLayout", DEFAULT_PUDDLE_LAYOUT);
 	puddleLayout = std::clamp(puddleLayout, PUDDLE_LAYOUT_MIN, PUDDLE_LAYOUT_MAX);
 	rainReflectionBalance = JsonValueOr<float>(o_json, "RainReflectionBalance", DEFAULT_RAIN_REFLECTION_BALANCE);
+	reducePuddleSkyReflections =
+		(isObject && o_json.contains("ReducePuddleSkyReflections")) ?
+			(JsonValueToBool(o_json["ReducePuddleSkyReflections"], false) ? 1u : 0u) :
+			0u;
 	postRainWaterClarity = JsonValueOr<float>(o_json, "PostRainWaterClarity", DEFAULT_POST_RAIN_WATER_CLARITY);
 	shorePersistentDarkeningStrength = JsonValueOr<float>(o_json, "ShorePersistentDarkeningStrength", SHORE_PERSISTENT_DARKENING_DEFAULT);
 	wetnessDistanceFadeRange = JsonValueOr<float>(o_json, "WetnessFadeRange", DEFAULT_WETNESS_DISTANCE_FADE_RANGE_GAME_UNITS);
@@ -2199,6 +2217,7 @@ void Wetterness::LoadSettings(json& o_json)
 
 	SanitizeToggleSettings(settings);
 	SanitizePersistentUiState(settings, modernWetIndirectSpecularScale, legacyWetIndirectSpecularScale, puddleDryingHours, puddleLayout, rainReflectionBalance, postRainWaterClarity, shorePersistentDarkeningStrength, wetnessDistanceFadeRange);
+	reducePuddleSkyReflections = SanitizeToggle(reducePuddleSkyReflections);
 	SanitizeShaderFacingSettings(settings);
 	InvalidateSanitizedSettingsCache();
 	ResetRuntimeState();
@@ -2211,6 +2230,7 @@ void Wetterness::SaveSettings(json& o_json)
 {
 	SanitizePersistentUiState(settings, modernWetIndirectSpecularScale, legacyWetIndirectSpecularScale, puddleDryingHours, puddleLayout, rainReflectionBalance, postRainWaterClarity, shorePersistentDarkeningStrength, wetnessDistanceFadeRange);
 	SanitizeToggleSettings(settings);
+	reducePuddleSkyReflections = SanitizeToggle(reducePuddleSkyReflections);
 	SanitizeShaderFacingSettings(settings);
 	InvalidateSanitizedSettingsCache();
 	o_json = settings;
@@ -2219,6 +2239,7 @@ void Wetterness::SaveSettings(json& o_json)
 	o_json["PuddleDryingHours"] = puddleDryingHours;
 	o_json["PuddleLayout"] = puddleLayout;
 	o_json["RainReflectionBalance"] = rainReflectionBalance;
+	o_json["ReducePuddleSkyReflections"] = reducePuddleSkyReflections != 0;
 	o_json["PostRainWaterClarity"] = postRainWaterClarity;
 	o_json["ShorePersistentDarkeningStrength"] = shorePersistentDarkeningStrength;
 	o_json["WetnessFadeRange"] = wetnessDistanceFadeRange;
@@ -2235,6 +2256,7 @@ void Wetterness::RestoreDefaultSettings()
 	puddleDryingHours = DEFAULT_PUDDLE_DRYING_HOURS;
 	puddleLayout = DEFAULT_PUDDLE_LAYOUT;
 	rainReflectionBalance = DEFAULT_RAIN_REFLECTION_BALANCE;
+	reducePuddleSkyReflections = false;
 	postRainWaterClarity = DEFAULT_POST_RAIN_WATER_CLARITY;
 	shorePersistentDarkeningStrength = SHORE_PERSISTENT_DARKENING_DEFAULT;
 	wetnessDistanceFadeRange = DEFAULT_WETNESS_DISTANCE_FADE_RANGE_GAME_UNITS;
