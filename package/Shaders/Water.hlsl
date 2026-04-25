@@ -869,8 +869,10 @@ WaterNormalData GetWaterNormal(PS_INPUT input, float distanceFactor, float norma
 		result.rippleInfo.xyz = raindropInfo.xyz * rippleIntensity;
 		result.rippleInfo.w = splashIntensity;
 	}
-	float3 rippleNormal = normalize(raindropInfo.xyz);
-	finalNormal = CS_REORIENT_NORMAL(rippleNormal, finalNormal);
+	if (any(raindropInfo.xyz != float3(0, 0, 1))) {
+		float3 rippleNormal = normalize(raindropInfo.xyz);
+		finalNormal = CS_REORIENT_NORMAL(rippleNormal, finalNormal);
+	}
 #			endif
 
 	result.normal = finalNormal;

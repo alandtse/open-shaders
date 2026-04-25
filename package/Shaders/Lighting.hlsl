@@ -2658,7 +2658,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	float puddle = 0.0;
 	float puddleFootprintMask = 0.0;
 	#		if !defined(SKINNED)
-		if (puddleAllowed && puddleWetness > 0.0) {
+		if (puddleAllowed && puddleWetness > 0.0 && wetnessDistanceFade > 0.0) {
 			float puddleMaxAngleSafe = max(CS_WETNESS_SETTINGS.PuddleMaxAngle, 1e-3);
 			float puddleRadiusSafe = max(CS_WETNESS_SETTINGS.PuddleRadius, 1e-3);
 			float puddleLayoutSafe = clamp(CS_WETNESS_SETTINGS.PuddleLayout, 0.3, 10.0);
@@ -2822,8 +2822,10 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	wetnessNormal = normalize(lerp(wetnessNormal, float3(0, 0, 1), flatnessAmount));
 
 		// Apply ripple normal effects
-		float3 rippleNormal = normalize(lerp(float3(0, 0, 1), raindropInfo.xyz, lerp(1.0, flatnessAmount, 0.8)));
-		wetnessNormal = CS_REORIENT_NORMAL(rippleNormal, wetnessNormal);
+		if (any(raindropInfo.xyz != float3(0, 0, 1))) {
+			float3 rippleNormal = normalize(lerp(float3(0, 0, 1), raindropInfo.xyz, lerp(1.0, flatnessAmount, 0.8)));
+			wetnessNormal = CS_REORIENT_NORMAL(rippleNormal, wetnessNormal);
+		}
 
 	// Suppress grazing-angle over-brightening: keep wet gloss from top-down views,
 	// but reduce "milky white" highlights when viewed close to horizontal.
