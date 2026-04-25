@@ -1839,28 +1839,29 @@ Wetterness::PerFrame Wetterness::GetCommonBufferData() const
 	};
 	EffectiveDryingHours effectiveDryingHours{};
 
-	double deltaGameSeconds = 0.0;
+	double timelineDeltaGameSeconds = 0.0;
 	const bool gamePaused = globals::game::ui && globals::game::ui->GameIsPaused();
 	const auto* calendar = RE::Calendar::GetSingleton();
 	if (calendar) {
 		const double currentGameSeconds = static_cast<double>(calendar->GetCurrentGameTime()) * SECONDS_IN_A_DAY;
 		if (runtimeState.hasLastGameTime) {
-			deltaGameSeconds = currentGameSeconds - runtimeState.lastGameTimeSeconds;
-			if (deltaGameSeconds < 0.0) {
-				deltaGameSeconds = 0.0;
-			} else if (deltaGameSeconds > MAX_TIME_DELTA_SECONDS) {
-				deltaGameSeconds = MAX_TIME_DELTA_SECONDS;
+			timelineDeltaGameSeconds = currentGameSeconds - runtimeState.lastGameTimeSeconds;
+			if (timelineDeltaGameSeconds < 0.0) {
+				timelineDeltaGameSeconds = 0.0;
+			} else if (timelineDeltaGameSeconds > MAX_TIME_DELTA_SECONDS) {
+				timelineDeltaGameSeconds = MAX_TIME_DELTA_SECONDS;
 			}
 		}
 		runtimeState.lastGameTimeSeconds = currentGameSeconds;
 		runtimeState.hasLastGameTime = true;
 	} else if (!gamePaused) {
-		deltaGameSeconds = RE::GetSecondsSinceLastFrame();
+		timelineDeltaGameSeconds = RE::GetSecondsSinceLastFrame();
 	}
 
 	// Allow wetness timelines to progress from calendar delta even while the game is paused
 	// (e.g. wait/sleep), but still avoid frame-time updates while paused without calendar data.
-	const bool canAdvanceWetnessTime = deltaGameSeconds > 0.0 && (calendar != nullptr || !gamePaused);
+	const float timelineDeltaSeconds = static_cast<float>(timelineDeltaGameSeconds);
+	const bool canAdvanceWetnessTime = timelineDeltaSeconds > 0.0f && (calendar != nullptr || !gamePaused);
 	const bool hasDebugOverrides =
 		debugSettings.EnableWetnessOverride ||
 		debugSettings.EnablePuddleOverride ||
@@ -1900,7 +1901,9 @@ Wetterness::PerFrame Wetterness::GetCommonBufferData() const
 		float blendedWetnessRate = wetnessCurrentRate * currentWeight + wetnessLastRate * lastWeight;
 		float blendedPuddleRate = puddleCurrentRate * currentWeight + puddleLastRate * lastWeight;
 		const float transitionSpeed = std::clamp(settings.WeatherTransitionSpeed, MIN_TRANSITION_SPEED, MAX_TRANSITION_SPEED);
-		const float scaledDeltaSeconds = static_cast<float>(deltaGameSeconds) * transitionSpeed;
+		// Keep calendar/frame timeline progression authoritative (including wait/sleep),
+		// while transition speed only scales response rates.
+		const float responseDeltaSeconds = timelineDeltaSeconds * transitionSpeed;
 
 		// Do not keep increasing wetness/puddles when rain is effectively off for the current render context.
 		if (!rainingNow) {
@@ -1915,7 +1918,7 @@ Wetterness::PerFrame Wetterness::GetCommonBufferData() const
 
 		// Track rain-event memory (duration-weighted intensity) for post-rain persistence.
 		if (rainingNow) {
-			runtimeState.rainEventExposure += rainExposureSource * scaledDeltaSeconds;
+			runtimeState.rainEventExposure += rainExposureSource * timelineDeltaSeconds;
 			runtimeState.rainEventExposure = std::min(runtimeState.rainEventExposure, RAIN_EVENT_REFERENCE_SECONDS * 4.0f);
 			runtimeState.rainEventWeight = std::clamp(runtimeState.rainEventExposure / RAIN_EVENT_REFERENCE_SECONDS, 0.0f, 1.0f);
 			runtimeState.postRainEventWeight = runtimeState.rainEventWeight;
@@ -1929,12 +1932,12 @@ Wetterness::PerFrame Wetterness::GetCommonBufferData() const
 				runtimeState.postRainStartWetnessDepth = runtimeState.wetnessDepth;
 				runtimeState.postRainStartPuddleDepth = runtimeState.puddleDepth;
 			} else {
-				runtimeState.postRainElapsedSeconds += static_cast<float>(deltaGameSeconds);
+				runtimeState.postRainElapsedSeconds += timelineDeltaSeconds;
 			}
 
 			if (runtimeState.rainEventExposure > 0.0f) {
 				const float memoryDecayPerSecond = RAIN_EVENT_REFERENCE_SECONDS / RAIN_EVENT_DECAY_SECONDS;
-				runtimeState.rainEventExposure = std::max(0.0f, runtimeState.rainEventExposure - memoryDecayPerSecond * scaledDeltaSeconds);
+				runtimeState.rainEventExposure = std::max(0.0f, runtimeState.rainEventExposure - memoryDecayPerSecond * timelineDeltaSeconds);
 			}
 
 			runtimeState.rainEventWeight = std::clamp(runtimeState.rainEventExposure / RAIN_EVENT_REFERENCE_SECONDS, 0.0f, 1.0f);
@@ -1951,7 +1954,7 @@ Wetterness::PerFrame Wetterness::GetCommonBufferData() const
 			const float wetnessRateScaleFromDuration = std::clamp(DRYING_HOURS_MAX / wetnessDurationHours, 0.25f, DRYING_HOURS_MAX);
 			blendedWetnessRate *= wetnessRateScaleFromDuration;
 		}
-		ApplyDepthDelta(scaledDeltaSeconds, blendedWetnessRate, blendedPuddleRate, runtimeState.wetnessDepth, runtimeState.puddleDepth);
+		ApplyDepthDelta(responseDeltaSeconds, blendedWetnessRate, blendedPuddleRate, runtimeState.wetnessDepth, runtimeState.puddleDepth);
 
 		if (!rainingNow && (runtimeState.wetnessDepth > 0.0f || runtimeState.puddleDepth > 0.0f)) {
 			const float elapsedSeconds = std::max(0.0f, runtimeState.postRainElapsedSeconds);

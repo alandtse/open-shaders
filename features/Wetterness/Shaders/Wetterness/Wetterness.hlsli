@@ -61,6 +61,17 @@ namespace Wetterness
 		float splashMaxRadiusSqr = splashMaxRadius * splashMaxRadius;
 		float rippleMaxRadius = max(SharedData::wetternessSettings.RippleRadius, 0.0) * 1.3;
 		float rippleMaxRadiusSqr = rippleMaxRadius * rippleMaxRadius;
+		float splashTime = 0.0;
+		if (enableSplashes) {
+			splashTime = t * intervalRcp / SharedData::wetternessSettings.SplashesLifetime;
+		}
+		float rippleTime = t * intervalRcp;
+		float worldPhase = worldPos.z * 0.001;
+		float splashStrength = SharedData::wetternessSettings.SplashesStrength;
+		float rippleStrength = SharedData::wetternessSettings.RippleStrength * rippleStrengthModifier;
+		bool splashesOnly = enableSplashes && !enableRipples;
+		bool ripplesOnly = enableRipples && !enableSplashes;
+		float activeMaxRadiusSqr = max(enableSplashes ? splashMaxRadiusSqr : 0.0, enableRipples ? rippleMaxRadiusSqr : 0.0);
 
 		// Calculate grid coordinates
 		float2 gridUV = worldPos.xy * SharedData::wetternessSettings.RaindropGridSizeRcp + normal.xy;
@@ -74,18 +85,28 @@ namespace Wetterness
 		// Early exit if no effects enabled
 		bool hasEffects = enableSplashes || enableRipples;
 		if (!hasEffects || raindropChance <= 0.0 || intervalRcp <= 0.0 || lifetimeRcp <= 0.0) {
-			return float4(rippleNormal, wetness * SharedData::wetternessSettings.SplashesStrength);
+			return float4(rippleNormal, wetness * splashStrength);
 		}
 
 		// Process surrounding grid cells
 		for (int i = -1; i <= 1; i++) {
 			for (int j = -1; j <= 1; j++) {
+				// Conservative exact reject: if the closest point in this cell is still outside
+				// every active effect radius, the cell cannot contribute.
+				float2 cellMin = float2(i, j) - gridUV;
+				float2 cellMax = cellMin + 1.0.xx;
+				float2 cellClosest = clamp(0.0.xx, cellMin, cellMax);
+				float minCellDistSqr = dot(cellClosest, cellClosest);
+				if (minCellDistSqr >= activeMaxRadiusSqr) {
+					continue;
+				}
+
 				int2 gridCurr = grid + int2(i, j);
 				float tOffset = float(Random::iqint3(gridCurr)) * uintToFloat;
 
-				// Calculate splashes
-				if (enableSplashes) {
-					float residual = t * intervalRcp / SharedData::wetternessSettings.SplashesLifetime + tOffset + worldPos.z * 0.001;
+				// Calculate splashes-only path
+				if (splashesOnly) {
+					float residual = splashTime + tOffset + worldPhase;
 					uint timestep = uint(residual);
 					residual -= timestep;
 
@@ -104,11 +125,12 @@ namespace Wetterness
 							}
 						}
 					}
+					continue;
 				}
 
-				// Calculate ripples
-				if (enableRipples) {
-					float residual = t * intervalRcp + tOffset + worldPos.z * 0.001;
+				// Calculate ripples-only path
+				if (ripplesOnly) {
+					float residual = rippleTime + tOffset + worldPhase;
 					uint timestep = uint(residual);
 					residual -= timestep;
 
@@ -134,16 +156,70 @@ namespace Wetterness
 							if (insideOuterRadius && outsideInnerRadius) {
 								float bandLerp = (sqrt(distSqr) - rippleInnerRadius) * rippleBreadthRcp;
 								if (bandLerp > 0.0 && bandLerp < 1.0) {
-									float rippleStrength = SharedData::wetternessSettings.RippleStrength * rippleStrengthModifier;
 									float deriv = (bandLerp < 0.5 ? SmoothstepDeriv(bandLerp * 2.0) : -SmoothstepDeriv(2.0 - bandLerp * 2.0)) *
 									              lerp(rippleStrength, 0.0, rippleT * rippleT);
 
 									float3 grad = float3(normalize(vec2Centre), -deriv);
 									float3 bitangent = float3(-grad.y, grad.x, 0.0);
-									float3 normal = normalize(cross(grad, bitangent));
+									float3 rippleSampleNormal = normalize(cross(grad, bitangent));
 
-									rippleNormal = ReorientNormal(normal, rippleNormal);
+									rippleNormal = ReorientNormal(rippleSampleNormal, rippleNormal);
 								}
+							}
+						}
+					}
+					continue;
+				}
+
+				// Calculate combined splash+ripple path
+				float splashResidual = splashTime + tOffset + worldPhase;
+				uint splashTimestep = uint(splashResidual);
+				splashResidual -= splashTimestep;
+				uint3 splashHash = Random::pcg3d(uint3(asuint(gridCurr), splashTimestep));
+				float3 splashFloatHash = float3(splashHash) * uintToFloat;
+				if (splashFloatHash.z < raindropChance) {
+					float2 vec2Centre = int2(i, j) + splashFloatHash.xy - gridUV;
+					float distSqr = dot(vec2Centre, vec2Centre);
+					if (distSqr < splashMaxRadiusSqr) {
+						float dropRadius = lerp(SharedData::wetternessSettings.SplashesMinRadius,
+						                      SharedData::wetternessSettings.SplashesMaxRadius,
+						                      float(Random::iqint3(splashHash.yz)) * uintToFloat);
+						if (distSqr < dropRadius * dropRadius) {
+							wetness = max(wetness, RainFade(splashResidual));
+						}
+					}
+				}
+
+				float rippleResidual = rippleTime + tOffset + worldPhase;
+				uint rippleTimestep = uint(rippleResidual);
+				rippleResidual -= rippleTimestep;
+				uint3 rippleHash = Random::pcg3d(uint3(asuint(gridCurr), rippleTimestep));
+				float3 rippleFloatHash = float3(rippleHash) * uintToFloat;
+				if (rippleFloatHash.z < raindropChance) {
+					float2 vec2Centre = int2(i, j) + rippleFloatHash.xy - gridUV;
+					float distSqr = dot(vec2Centre, vec2Centre);
+					float rippleT = rippleResidual * lifetimeRcp;
+
+					if (rippleT < 1.0 && distSqr < rippleMaxRadiusSqr) {
+						uint sizeHash = Random::iqint3(rippleHash.xy);
+						float sizeVariation = lerp(0.7, 1.3, float(sizeHash) * uintToFloat);
+						float rippleRadius = SharedData::wetternessSettings.RippleRadius * sizeVariation;
+						float rippleR = lerp(0.0, rippleRadius, rippleT);
+						float rippleInnerRadius = rippleR - SharedData::wetternessSettings.RippleBreadth;
+
+						bool insideOuterRadius = distSqr < rippleR * rippleR;
+						bool outsideInnerRadius = rippleInnerRadius <= 0.0 || distSqr > rippleInnerRadius * rippleInnerRadius;
+						if (insideOuterRadius && outsideInnerRadius) {
+							float bandLerp = (sqrt(distSqr) - rippleInnerRadius) * rippleBreadthRcp;
+							if (bandLerp > 0.0 && bandLerp < 1.0) {
+								float deriv = (bandLerp < 0.5 ? SmoothstepDeriv(bandLerp * 2.0) : -SmoothstepDeriv(2.0 - bandLerp * 2.0)) *
+								              lerp(rippleStrength, 0.0, rippleT * rippleT);
+
+								float3 grad = float3(normalize(vec2Centre), -deriv);
+								float3 bitangent = float3(-grad.y, grad.x, 0.0);
+								float3 rippleSampleNormal = normalize(cross(grad, bitangent));
+
+								rippleNormal = ReorientNormal(rippleSampleNormal, rippleNormal);
 							}
 						}
 					}
@@ -151,7 +227,7 @@ namespace Wetterness
 			}
 		}
 
-		return float4(rippleNormal, wetness * SharedData::wetternessSettings.SplashesStrength);
+		return float4(rippleNormal, wetness * splashStrength);
 	}
 
 	float3 GetWetnessSpecular(float3 N, float3 L, float3 V, float3 lightColor, float roughness)
