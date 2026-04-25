@@ -2389,6 +2389,8 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	float wetness = 0.0;
 	float rainWetness = 0.0;
 	float puddleWetness = 0.0;
+	float rainContactVisible = 0.0;
+	float nonPuddleFilmMask = 1.0;
 	float postRainBlend = 0.0;
 	float postRainOverridePhase = 0.0;
 	float postRainPuddleReflectionOverrideScale = 0.0;
@@ -2632,16 +2634,18 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 
 	float shoreWetness = shoreFactor * CS_WETNESS_SETTINGS.MaxShoreWetness;
 	wetness = max(shoreWetness, rainWetness);
-	float rainContactMask = saturate(rainWetness * wetnessDistanceFade * rainContactWetnessScale);
+	float rainContactFilmScale = max(0.0, rainContactWetnessScale);
+	float rainContactMask = saturate(rainWetness * wetnessDistanceFade);
 	float rainContactSlopeMask = smoothstep(0.10, 0.92, rainSurfaceUpness);
-	float rainContactVisible = rainContactMask * rainContactSlopeMask;
-	float rainContactAlbedo = saturate(rainContactVisible * lerp(0.24, 0.42, inRainBlend));
+	rainContactVisible = saturate(rainContactMask * rainContactSlopeMask * rainContactFilmScale);
+	float rainContactAlbedo = saturate(rainContactVisible * lerp(0.30, 0.55, inRainBlend));
 
 		// Calculate puddle effects
 		// Keep broad rain-contact wetness separate from standing-water puddle formation.
 		// Never form puddles on water surfaces.
-		const bool puddleAllowed = wetSurfaceAllowed;
-		float puddle = 0.0;
+	const bool puddleAllowed = wetSurfaceAllowed;
+	float puddle = 0.0;
+	float puddleFootprintMask = 0.0;
 	#		if !defined(SKINNED)
 		if (puddleAllowed && (wetness > 0.0 || puddleWetness > 0.0)) {
 			float puddleMaxAngleSafe = max(CS_WETNESS_SETTINGS.PuddleMaxAngle, 1e-3);
@@ -2670,7 +2674,10 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 				puddleFootprintThreshold - puddleFootprintSoftness,
 				puddleFootprintThreshold + puddleFootprintSoftness,
 				puddleNoiseSignal);
-			float puddleSlopeMask = smoothstep(puddleMaxAngleSafe * 0.60, 1.0, saturate(worldNormal.z));
+			float puddleSlopeStart = max(0.0, puddleMaxAngleSafe * 0.45);
+			float puddleSlopeEnd = min(1.0, max(puddleSlopeStart + 1e-3, puddleMaxAngleSafe));
+			float puddleSlopeMask = smoothstep(puddleSlopeStart, puddleSlopeEnd, saturate(worldNormal.z));
+			puddleFootprintMask = puddleRadiusGate * puddleSlopeMask;
 			puddle = puddleSignal * puddleBlend * puddleSlopeMask * puddleRadiusGate;
 		}
 	#		endif
@@ -2681,10 +2688,6 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 		float puddleDepthSignal = saturate(puddle);
 		float puddleSpecularBase = puddleDepthSignal;
 
-		// Calculate wetness glossiness factors
-	wetnessGlossinessAlbedo = max(max(puddle, rainContactAlbedo), shoreFactorAlbedo * CS_WETNESS_SETTINGS.MaxShoreWetness);
-	wetnessGlossinessAlbedo *= wetnessGlossinessAlbedo;
-
 	float puddleSpecularBaseSaturated = saturate(puddleSpecularBase);
 	float wetPuddleSpecular = puddleSpecularBaseSaturated;
 	wetPuddleSpecular = lerp(wetPuddleSpecular, wetPuddleSpecular * shoreFactor, input.WorldPosition.z < waterHeight);
@@ -2694,7 +2697,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	float wetFilmFloorScale = max(0.0, CS_WETNESS_SETTINGS.WetFilmSpecularFloorScale);
 	float wetFilmRainExposure = lerp(1.0, puddleRainExposure, inRainBlend * 0.10 * rainContactSlopeMask);
 	wetFilmRainExposure = max(wetFilmRainExposure, lerp(1.0, 0.84, inRainBlend));
-	float wetFilmSpecular = saturate(wetFilmSource * lerp(0.16, 0.28, inRainBlend) * wetFilmRainExposure * wetFilmFloorScale);
+	float wetFilmSpecular = saturate(wetFilmSource * lerp(0.24, 0.44, inRainBlend) * wetFilmRainExposure * wetFilmFloorScale * max(1.0, rainContactFilmScale));
 	wetFilmSpecular *= rainContactSlopeMask;
 	wetFilmSpecular *= lerp(1.0, 1.55, inRainFilmSpecularBoostFromBalance * inRainBlend);
 	// Keep post-rain readability focused on puddles rather than a broad uniform sheen.
@@ -2709,10 +2712,13 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	float puddleWaterFull = lerp(0.78, 0.88, inRainBlend);
 	puddleWaterFull = min(max(puddleWaterFull, puddleWaterStart + 0.08), 1.0);
 	float deepPuddleMask = smoothstep(puddleWaterStart, puddleWaterFull, puddleSpecularBaseSaturated);
-	float puddleCoverageMask = smoothstep(0.03, max(0.12, puddleWaterStart * 0.45), puddleSpecularBaseSaturated);
-	float nonPuddleFilmMask = 1.0 - puddleCoverageMask;
+	float puddleCoverageMask = saturate(puddleFootprintMask * smoothstep(0.08, 0.22, puddleSpecularBaseSaturated));
+	nonPuddleFilmMask = 1.0 - puddleCoverageMask;
+	float rainContactAlbedoNonPuddle = rainContactAlbedo * nonPuddleFilmMask;
 	float wetFilmSpecularNonPuddle = wetFilmSpecular * nonPuddleFilmMask;
 	float shoreWetnessSpecularNonPuddle = shoreWetnessSpecular * nonPuddleFilmMask;
+	wetnessGlossinessAlbedo = max(max(puddle, rainContactAlbedoNonPuddle), shoreFactorAlbedo * CS_WETNESS_SETTINGS.MaxShoreWetness);
+	wetnessGlossinessAlbedo *= wetnessGlossinessAlbedo;
 	float rainPuddlePhase = saturate(inRainBlend * deepPuddleMask);
 	float postRainOverridePhaseCandidate = saturate(postRainBlend * smoothstep(0.36, 0.88, puddleDepthSignal));
 	float puddleWaterBodyStart = max(0.08, puddleWaterStart * 0.55);
@@ -3438,7 +3444,8 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	// Darkening should follow active rain/post-rain wetness,
 	// not persistent shore wetness, so surfaces can visually dry out after rain.
 	float shorelineDarkeningFade = lerp(1.0, smoothstep(0.12, 0.90, shoreHeightDelta), shoreFactor);
-	float rainDrivenWetness = saturate(max(max(rainWetness, puddleWetness), wetnessGlossinessAlbedo)) * wetnessDistanceFade;
+	float rainFilmDrivenWetness = rainContactVisible * nonPuddleFilmMask;
+	float rainDrivenWetness = saturate(max(rainFilmDrivenWetness, wetnessGlossinessAlbedo)) * wetnessDistanceFade;
 	rainDrivenWetness *= shorelineDarkeningFade;
 	float wetnessDarkeningAmount = porosity * rainDarkeningAbsorption * rainDrivenWetness * wetDarkeningStrength;
 	float rainWetVisualMask = smoothstep(0.02, 0.08, rainDrivenWetness);

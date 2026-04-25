@@ -1342,9 +1342,9 @@ void Wetterness::DrawSettings()
 			ImGui::TextUnformatted("Minimum rain wetness floor on surfaces. Higher = more surfaces stay visibly wet, lower = wetness favors only more exposed/up-facing surfaces.");
 		}
 
-		ImGui::SliderFloat("Rain-Contact Wetness", &settings.RainContactWetnessScale, RAIN_CONTACT_WETNESS_SCALE_MIN, RAIN_CONTACT_WETNESS_SCALE_MAX, "%.2f");
+		ImGui::SliderFloat("Ground Wet-film", &settings.RainContactWetnessScale, RAIN_CONTACT_WETNESS_SCALE_MIN, RAIN_CONTACT_WETNESS_SCALE_MAX, "%.2f");
 		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::TextUnformatted("Controls the thin non-puddle rain film on exposed ground. Higher = more visible lightly-wet ground and raindrop read between puddles. Lower = ground stays drier between puddles. Does not increase real puddle depth or puddle size.");
+			ImGui::TextUnformatted("Controls the thin non-puddle wet film on exposed ground. Higher = more visible wet ground and raindrop read between puddles. Lower = ground stays drier between puddles. Does not increase real puddle depth or puddle size.");
 		}
 
 		ImGui::SliderFloat("Wet Surface Darkening", &settings.WetDarkeningStrength, 0.0f, 2.0f, "%.2f");
