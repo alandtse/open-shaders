@@ -304,127 +304,129 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	LightsVisualisationMode)
 void LightLimitFix::DrawSettings()
 {
-	// Heat warp / refraction strength (moved from Advanced Settings)
-	ImGui::Text("ImageSpace Refraction");
-	ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0.10f, 0.20f, 0.38f, 1.0f));
-	ImGui::PushStyleColor(ImGuiCol_FrameBgHovered, ImVec4(0.15f, 0.28f, 0.50f, 1.0f));
-	ImGui::PushStyleColor(ImGuiCol_FrameBgActive, ImVec4(0.18f, 0.33f, 0.58f, 1.0f));
-	ImGui::SliderFloat(
-		"Heat Warp Strength",
-		&globals::state->refractionScale,
-		0.0f,
-		2.0f,
-		"%.2f");
-	ImGui::PopStyleColor(3);
-	if (auto _tt = Util::HoverTooltipWrapper()) {
-		ImGui::Text(
-			"Scales ImageSpace refraction (heat shimmer around fire/heat sources).\n"
-			"Lower values reduce warping; 0 disables it.");
-	}
+	{
+		Util::BlueFrameStyleWrapper lightLimitBlueStyle(true);
+		ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.80f, 0.88f, 1.00f, 1.0f));
+		ImGui::PushStyleColor(ImGuiCol_Header, ImVec4(0.10f, 0.20f, 0.45f, 0.85f));
+		ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImVec4(0.14f, 0.28f, 0.58f, 0.90f));
+		ImGui::PushStyleColor(ImGuiCol_HeaderActive, ImVec4(0.18f, 0.34f, 0.66f, 0.95f));
 
-	ImGui::Separator();
-	ImGui::Spacing();
-
-	if (ImGui::TreeNodeEx("Particle Lights", ImGuiTreeNodeFlags_DefaultOpen)) {
-		{
-			Util::BlueFrameStyleWrapper particleLightsBlueStyle(true);
-			ImGui::Checkbox("Enable Particle Lights", &settings.EnableParticleLights);
-		}
+		// Heat warp / refraction strength (moved from Advanced Settings)
+		ImGui::Text("ImageSpace Refraction");
+		ImGui::SliderFloat(
+			"Heat Warp Strength",
+			&globals::state->refractionScale,
+			0.0f,
+			2.0f,
+			"%.2f");
 		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::Text("Enables Particle Lights.");
+			ImGui::Text(
+				"Scales ImageSpace refraction (heat shimmer around fire/heat sources).\n"
+				"Lower values reduce warping; 0 disables it.");
 		}
 
 		ImGui::Separator();
-		ImGui::TextWrapped("Particle Lights Performance");
-
-		ImGui::Checkbox("Enable Culling", &settings.EnableParticleLightsCulling);
-		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::Text("Significantly improves performance by not rendering empty textures. Only disable if you are encountering issues.");
-		}
-
-		ImGui::Checkbox("Enable Detection", &settings.EnableParticleLightsDetection);
-		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::Text("Adds particle lights to the player light level, so that NPCs can detect them for stealth and gameplay.");
-		}
-
-		ImGui::Checkbox("Enable Optimization", &settings.EnableParticleLightsOptimization);
-		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::Text("Merges vertices which are close enough to each other to improve performance.");
-		}
-
-		// NEW: clustering controls
-		ImGui::SliderFloat("Cluster Threshold", &settings.ParticleClusterThreshold, kParticleClusterThresholdMin, kParticleClusterThresholdMax, "%.1f");
-		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::Text(
-				"Distance+radius similarity threshold for merging particles into one light.\n"
-				"Higher = more merging, better performance, blurrier lights.\n"
-				"Lower = less merging, more precise, more expensive.");
-		}
-
-		ImGui::SliderInt("Max Particles per Emitter", &settings.MaxParticlesPerEmitter, kMaxParticlesPerEmitterMin, kMaxParticlesPerEmitterMax);
-		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::Text(
-				"Maximum number of particles sampled per emitter per frame.\n"
-				"Higher = closer to the real particle system but more CPU work.\n"
-				"Lower = faster, especially for very dense effects.");
-		}
-
-		// NEW: distance cutoff for particle lights
-		ImGui::SliderFloat("Max Particle Distance", &settings.MaxParticleDistance, 1000.0f, kMaxParticleDistanceMax, "%.0f");
-		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::Text(
-				"Particle lights beyond this distance from the camera are skipped entirely.\n"
-				"Lower = better performance, but distant effects won't contribute light.\n"
-				"Higher = more distant particle lighting, but more cost.");
-		}
-
-		ImGui::Spacing();
 		ImGui::Spacing();
 
-		ImGui::TextWrapped("Particle Lights Customisation");
-		ImGui::SliderFloat("Saturation", &settings.ParticleLightsSaturation, kParticleLightsSaturationMin, kParticleLightsSaturationMax, "%.2f");
-		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::Text("Particle light saturation.");
+		if (ImGui::TreeNodeEx("Particle Lights", ImGuiTreeNodeFlags_DefaultOpen)) {
+			ImGui::Checkbox("Enable Particle Lights", &settings.EnableParticleLights);
+			if (auto _tt = Util::HoverTooltipWrapper()) {
+				ImGui::Text("Enables Particle Lights.");
+			}
+
+			ImGui::Separator();
+			ImGui::TextWrapped("Particle Lights Performance");
+
+			ImGui::Checkbox("Enable Culling", &settings.EnableParticleLightsCulling);
+			if (auto _tt = Util::HoverTooltipWrapper()) {
+				ImGui::Text("Significantly improves performance by not rendering empty textures. Only disable if you are encountering issues.");
+			}
+
+			ImGui::Checkbox("Enable Detection", &settings.EnableParticleLightsDetection);
+			if (auto _tt = Util::HoverTooltipWrapper()) {
+				ImGui::Text("Adds particle lights to the player light level, so that NPCs can detect them for stealth and gameplay.");
+			}
+
+			ImGui::Checkbox("Enable Optimization", &settings.EnableParticleLightsOptimization);
+			if (auto _tt = Util::HoverTooltipWrapper()) {
+				ImGui::Text("Merges vertices which are close enough to each other to improve performance.");
+			}
+
+			// NEW: clustering controls
+			ImGui::SliderFloat("Cluster Threshold", &settings.ParticleClusterThreshold, kParticleClusterThresholdMin, kParticleClusterThresholdMax, "%.1f");
+			if (auto _tt = Util::HoverTooltipWrapper()) {
+				ImGui::Text(
+					"Distance+radius similarity threshold for merging particles into one light.\n"
+					"Higher = more merging, better performance, blurrier lights.\n"
+					"Lower = less merging, more precise, more expensive.");
+			}
+
+			ImGui::SliderInt("Max Particles per Emitter", &settings.MaxParticlesPerEmitter, kMaxParticlesPerEmitterMin, kMaxParticlesPerEmitterMax);
+			if (auto _tt = Util::HoverTooltipWrapper()) {
+				ImGui::Text(
+					"Maximum number of particles sampled per emitter per frame.\n"
+					"Higher = closer to the real particle system but more CPU work.\n"
+					"Lower = faster, especially for very dense effects.");
+			}
+
+			// NEW: distance cutoff for particle lights
+			ImGui::SliderFloat("Max Particle Distance", &settings.MaxParticleDistance, 1000.0f, kMaxParticleDistanceMax, "%.0f");
+			if (auto _tt = Util::HoverTooltipWrapper()) {
+				ImGui::Text(
+					"Particle lights beyond this distance from the camera are skipped entirely.\n"
+					"Lower = better performance, but distant effects won't contribute light.\n"
+					"Higher = more distant particle lighting, but more cost.");
+			}
+
+			ImGui::Spacing();
+			ImGui::Spacing();
+
+			ImGui::TextWrapped("Particle Lights Customisation");
+			ImGui::SliderFloat("Saturation", &settings.ParticleLightsSaturation, kParticleLightsSaturationMin, kParticleLightsSaturationMax, "%.2f");
+			if (auto _tt = Util::HoverTooltipWrapper()) {
+				ImGui::Text("Particle light saturation.");
+			}
+			ImGui::SliderFloat("Particle Brightness", &settings.ParticleBrightness, kParticleBrightnessMin, kParticleBrightnessMax, "%.2f");
+			ImGui::SliderFloat("Particle Radius", &settings.ParticleRadius, kParticleRadiusMin, kParticleRadiusMax, "%.2f");
+			ImGui::SliderFloat("Billboard Brightness", &settings.BillboardBrightness, kBillboardBrightnessMin, kBillboardBrightnessMax, "%.2f");
+			ImGui::SliderFloat("Billboard Radius", &settings.BillboardRadius, kBillboardRadiusMin, kBillboardRadiusMax, "%.2f");
+
+			ImGui::Spacing();
+			ImGui::Spacing();
+			ImGui::TreePop();
 		}
-		ImGui::SliderFloat("Particle Brightness", &settings.ParticleBrightness, kParticleBrightnessMin, kParticleBrightnessMax, "%.2f");
-		ImGui::SliderFloat("Particle Radius", &settings.ParticleRadius, kParticleRadiusMin, kParticleRadiusMax, "%.2f");
-		ImGui::SliderFloat("Billboard Brightness", &settings.BillboardBrightness, kBillboardBrightnessMin, kBillboardBrightnessMax, "%.2f");
-		ImGui::SliderFloat("Billboard Radius", &settings.BillboardRadius, kBillboardRadiusMin, kBillboardRadiusMax, "%.2f");
 
-		ImGui::Spacing();
-		ImGui::Spacing();
-		ImGui::TreePop();
-	}
+		if (ImGui::TreeNodeEx("Placed Lights (JSON)", ImGuiTreeNodeFlags_DefaultOpen)) {
+			const bool jsonPlacedLightsSupported = globals::features::inverseSquareLighting.loaded;
+			ImGui::BeginDisabled(!jsonPlacedLightsSupported);
+			ImGui::SliderFloat("Intensity Scale", &settings.JsonPlacedLightIntensity, kJsonPlacedLightIntensityMin, kJsonPlacedLightIntensityMax, "%.2f");
+			if (auto _tt = Util::HoverTooltipWrapper()) {
+				ImGui::Text(
+					"Scales intensity for attached runtime lights generated from light records.\n"
+					"This primarily targets Light Placer-style JSON lights.\n"
+					"Requires Inverse Square Lighting runtime metadata to identify those lights.");
+			}
 
-	if (ImGui::TreeNodeEx("Placed Lights (JSON)", ImGuiTreeNodeFlags_DefaultOpen)) {
-		const bool jsonPlacedLightsSupported = globals::features::inverseSquareLighting.loaded;
-		ImGui::BeginDisabled(!jsonPlacedLightsSupported);
-		ImGui::SliderFloat("Intensity Scale", &settings.JsonPlacedLightIntensity, kJsonPlacedLightIntensityMin, kJsonPlacedLightIntensityMax, "%.2f");
-		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::Text(
-				"Scales intensity for attached runtime lights generated from light records.\n"
-				"This primarily targets Light Placer-style JSON lights.\n"
-				"Requires Inverse Square Lighting runtime metadata to identify those lights.");
+			ImGui::Checkbox("Interiors Only", &settings.JsonPlacedLightsInteriorsOnly);
+			if (auto _tt = Util::HoverTooltipWrapper()) {
+				ImGui::Text("Only apply the intensity scale while in interiors.");
+			}
+
+			ImGui::Checkbox("Portal Strict Only", &settings.JsonPlacedLightsPortalStrictOnly);
+			if (auto _tt = Util::HoverTooltipWrapper()) {
+				ImGui::Text("Only apply the intensity scale to portal-strict lights.");
+			}
+			ImGui::EndDisabled();
+
+			if (!jsonPlacedLightsSupported) {
+				ImGui::TextDisabled("Requires Inverse Square Lighting to identify JSON-placed runtime lights.");
+			}
+
+			ImGui::Spacing();
+			ImGui::Spacing();
+			ImGui::TreePop();
 		}
-
-		ImGui::Checkbox("Interiors Only", &settings.JsonPlacedLightsInteriorsOnly);
-		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::Text("Only apply the intensity scale while in interiors.");
-		}
-
-		ImGui::Checkbox("Portal Strict Only", &settings.JsonPlacedLightsPortalStrictOnly);
-		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::Text("Only apply the intensity scale to portal-strict lights.");
-		}
-		ImGui::EndDisabled();
-
-		if (!jsonPlacedLightsSupported) {
-			ImGui::TextDisabled("Requires Inverse Square Lighting to identify JSON-placed runtime lights.");
-		}
-
-		ImGui::Spacing();
-		ImGui::Spacing();
-		ImGui::TreePop();
+		ImGui::PopStyleColor(4);
 	}
 	auto shaderCache = globals::shaderCache;
 
