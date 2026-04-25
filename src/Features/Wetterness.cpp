@@ -1448,7 +1448,7 @@ void Wetterness::DrawSettings()
 		ImGui::SliderFloat("Shore Wetness", &settings.MaxShoreWetness, 0.0f, 1.0f);
 		markPresetDirtyIfEdited();
 		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::TextUnformatted("Wet sheen near rivers, lakes, and shorelines while rain/post-rain wetness is active. Higher = wetter banks, lower = drier edges. Shore Persistent Darkening controls the separate dry-weather darkening layer.");
+			ImGui::TextUnformatted("Wetness amount near rivers, lakes, and shorelines. Matches the legacy shore mask and also shapes the persistent dry-weather darkening layer.");
 		}
 
 		int shoreRange = static_cast<int>(settings.ShoreRange);
@@ -2005,7 +2005,7 @@ Wetterness::PerFrame Wetterness::GetCommonBufferData() const
 	data.settings.StoneDryingMultiplier = effectiveDryingHours.stoneHours;
 	data.settings.GrassDryingMultiplier = effectiveDryingHours.grassHours;
 	data.settings.DirtDryingMultiplier = effectiveDryingHours.dirtHours;
-	data.settings.MaxShoreWetness = data.settings.EnableWetnessEffects ? data.settings.MaxShoreWetness : 0.0f;
+	data.settings.MaxShoreWetness = settings.EnableWetnessEffects != 0 ? data.settings.MaxShoreWetness : 0.0f;
 	const float clampedShorePersistentDarkeningStrength = ClampFiniteOrDefault(
 		shorePersistentDarkeningStrength,
 		SHORE_PERSISTENT_DARKENING_MIN,
