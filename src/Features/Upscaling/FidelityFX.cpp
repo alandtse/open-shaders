@@ -199,9 +199,30 @@ void FidelityFX::LoadFFX()
 	const std::filesystem::path loaderPath = pluginDir / kLoaderDllName;
 	const std::filesystem::path upscalerPath = pluginDir / kUpscalerDllName;
 
-	featureFSR3FG = LoadLibraryW(framegenPath.c_str()) != nullptr;
-	featureFSR4Upscaler = std::filesystem::exists(upscalerPath);
-	module = LoadLibraryW(loaderPath.c_str());
+	const bool framegenDllExists = std::filesystem::exists(framegenPath);
+	const bool upscalerDllExists = std::filesystem::exists(upscalerPath);
+	DWORD framegenLoadError = ERROR_SUCCESS;
+	DWORD upscalerLoadError = ERROR_SUCCESS;
+	DWORD loaderLoadError = ERROR_SUCCESS;
+
+	if (!module) {
+		module = LoadLibraryW(loaderPath.c_str());
+		if (!module)
+			loaderLoadError = GetLastError();
+	}
+	if (!frameGenerationModule && framegenDllExists) {
+		frameGenerationModule = LoadLibraryW(framegenPath.c_str());
+		if (!frameGenerationModule)
+			framegenLoadError = GetLastError();
+	}
+	if (!runtimeUpscalerModule && upscalerDllExists) {
+		runtimeUpscalerModule = LoadLibraryW(upscalerPath.c_str());
+		if (!runtimeUpscalerModule)
+			upscalerLoadError = GetLastError();
+	}
+
+	featureFSR3FG = frameGenerationModule != nullptr;
+	featureFSR4Upscaler = runtimeUpscalerModule != nullptr;
 
 	FidelityFX::dllVersions = Util::EnumerateDllVersions(pluginDir);
 
@@ -209,18 +230,25 @@ void FidelityFX::LoadFFX()
 		ffxLoadFunctions(&ffxModule, module);
 		logger::info("[FidelityFX] Loader DLL loaded successfully from plugin directory");
 	} else {
-		logger::error("[FidelityFX] Failed to load {} from plugin directory",
-			stl::utf16_to_utf8(kLoaderDllName).value_or("loader DLL"));
+		logger::error("[FidelityFX] Failed to load {} from plugin directory (Win32 error {})",
+			stl::utf16_to_utf8(kLoaderDllName).value_or("loader DLL"),
+			loaderLoadError);
 	}
 
 	if (featureFSR3FG) {
-		logger::info("[FidelityFX] Frame generation DLL found and available");
+		logger::info("[FidelityFX] Frame generation DLL loaded and available");
+	} else if (framegenDllExists) {
+		logger::warn("[FidelityFX] Frame generation DLL found but failed to load (Win32 error {}) - FSR3 frame generation disabled",
+			framegenLoadError);
 	} else {
 		logger::warn("[FidelityFX] Frame generation DLL not found - FSR3 frame generation disabled");
 	}
 
 	if (featureFSR4Upscaler) {
-		logger::info("[FidelityFX] Runtime upscaler DLL found and available for eligible hardware");
+		logger::info("[FidelityFX] Runtime upscaler DLL loaded; runtime availability will be verified during context creation");
+	} else if (upscalerDllExists) {
+		logger::warn("[FidelityFX] Runtime upscaler DLL found but failed to load (Win32 error {}) - FSR4 runtime path disabled",
+			upscalerLoadError);
 	} else {
 		logger::warn("[FidelityFX] Runtime upscaler DLL not found - FSR4 runtime path disabled");
 	}
@@ -579,7 +607,7 @@ bool FidelityFX::IsNvidiaAdapterDetected() const
 
 bool FidelityFX::IsRuntimeUpscalerPresent() const
 {
-	if (!featureFSR4Upscaler || !module)
+	if (!featureFSR4Upscaler || !runtimeUpscalerModule || !module)
 		return false;
 	if (!ffxModule.CreateContext || !ffxModule.DestroyContext || !ffxModule.Dispatch || !ffxModule.Query)
 		return false;
@@ -778,9 +806,12 @@ bool FidelityFX::EnsureRuntimeUpscalerContexts(uint32_t a_fullRenderWidth, uint3
 		versionDesc.header.pNext = &backendDesc.header;
 		backendDesc.header.pNext = nullptr;
 
-		auto createResult = ffxModule.CreateContext(&runtimeUpscalerContexts[i], &createDesc.header, nullptr);
+		const auto versionedCreateResult = ffxModule.CreateContext(&runtimeUpscalerContexts[i], &createDesc.header, nullptr);
+		auto createResult = versionedCreateResult;
+		bool retriedWithoutVersionOverride = false;
 		if (createResult == FFX_API_RETURN_ERROR_UNKNOWN_DESCTYPE ||
 		    createResult == FFX_API_RETURN_PROVIDER_NO_SUPPORT_NEW_DESCTYPE) {
+			retriedWithoutVersionOverride = true;
 			createDesc.header.pNext = &backendDesc.header;
 			backendDesc.header.pNext = nullptr;
 
@@ -792,14 +823,26 @@ bool FidelityFX::EnsureRuntimeUpscalerContexts(uint32_t a_fullRenderWidth, uint3
 		}
 
 		if (createResult != FFX_API_RETURN_OK) {
-			logger::error("[FidelityFX] Failed to create runtime upscaler context {} for FSR version {} with code {} (Render: {}x{}, Display: {}x{}).",
-				i,
-				UpscalerVersionToString(FFX_UPSCALER_VERSION),
-				static_cast<uint32_t>(createResult),
-				a_fullRenderWidth,
-				a_fullRenderHeight,
-				a_fullDisplayWidth,
-				a_fullDisplayHeight);
+			if (retriedWithoutVersionOverride) {
+				logger::error("[FidelityFX] Failed to create runtime upscaler context {} for FSR version {}. Explicit-version create code {}, no-version retry code {} (Render: {}x{}, Display: {}x{}).",
+					i,
+					UpscalerVersionToString(FFX_UPSCALER_VERSION),
+					static_cast<uint32_t>(versionedCreateResult),
+					static_cast<uint32_t>(createResult),
+					a_fullRenderWidth,
+					a_fullRenderHeight,
+					a_fullDisplayWidth,
+					a_fullDisplayHeight);
+			} else {
+				logger::error("[FidelityFX] Failed to create runtime upscaler context {} for FSR version {} with code {} (Render: {}x{}, Display: {}x{}).",
+					i,
+					UpscalerVersionToString(FFX_UPSCALER_VERSION),
+					static_cast<uint32_t>(createResult),
+					a_fullRenderWidth,
+					a_fullRenderHeight,
+					a_fullDisplayWidth,
+					a_fullDisplayHeight);
+			}
 			DestroyRuntimeUpscalerContexts();
 			recordRuntimeProviderResult(false);
 			return false;

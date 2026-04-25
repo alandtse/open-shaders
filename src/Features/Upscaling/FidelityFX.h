@@ -102,6 +102,9 @@ private:
 	WrappedResource* runtimeTransparencyShared[2]{};
 	WrappedResource* runtimeOutputShared[2]{};
 
+	HMODULE frameGenerationModule = nullptr;
+	HMODULE runtimeUpscalerModule = nullptr;
+
 	// Flag to prevent spamming the log with FSR3 dispatch crash messages
 	bool fsrDispatchCrashLogged = false;
 
