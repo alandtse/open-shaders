@@ -22,7 +22,7 @@ public:
 			"Screen Space Global Illumination adds realistic indirect lighting and ambient occlusion.";
 		if (REL::Module::IsVR()) {
 			desc +=
-				" In VR, use AO preset with Full Res for best quality at a cost of speed. For more performance use Foveated or Half/Quarter Res setting. Foveated is not compatible with IL.";
+				"\nIn VR, use AO preset with Full Res for best quality at a cost of speed. For more performance use Foveated or Half/Quarter Res setting. Foveated is not compatible with IL.";
 		}
 		return std::make_pair(
 			desc,
