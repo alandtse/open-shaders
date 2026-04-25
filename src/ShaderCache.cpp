@@ -3173,7 +3173,10 @@ namespace SIE
 
 		const auto taskKey = task.GetString();
 
-		SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL);
+		// Startup compilation stays normal for throughput; background compilation
+		// yields to foreground work.
+		SetThreadPriority(GetCurrentThread(),
+			IsBackgroundCompilation() ? THREAD_PRIORITY_BELOW_NORMAL : THREAD_PRIORITY_NORMAL);
 
 		LARGE_INTEGER start, end, freq;
 		QueryPerformanceFrequency(&freq);
