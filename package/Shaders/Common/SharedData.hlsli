@@ -191,7 +191,7 @@ namespace SharedData
 		float PackedRainReflectionControl;
 		// View-depth fade/cull range for dev-style wetness distance fading, in game units.
 		float WetnessDistanceFadeRange;
-		float pad0;
+		float RainContactWetnessScale;
 	};
 
 	struct SkylightingSettings

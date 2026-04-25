@@ -78,8 +78,9 @@ public:
 		uint EnableForwardReflectionBias = false;
 		uint EnableVanillaReflectionCompensation = true;
 		float WetFilmSpecularFloorScale = 1.0f;
+		float RainContactWetnessScale = 1.0f;
 	};
-	static_assert(sizeof(Settings) == 156, "Wetterness::Settings layout changed; update wetness shader/CB contract.");
+	static_assert(sizeof(Settings) == 160, "Wetterness::Settings layout changed; update wetness shader/CB contract.");
 	static_assert(offsetof(Settings, WeatherTransitionSpeed) == 40, "Wetterness::Settings WeatherTransitionSpeed offset changed.");
 	static_assert(offsetof(Settings, EnableRaindropFx) == 56, "Wetterness::Settings EnableRaindropFx offset changed.");
 	static_assert(offsetof(Settings, WetIndirectSpecularScale) == 76, "Wetterness::Settings WetIndirectSpecularScale offset changed.");
@@ -89,6 +90,7 @@ public:
 	static_assert(offsetof(Settings, EnableForwardReflectionBias) == 144, "Wetterness::Settings EnableForwardReflectionBias offset changed.");
 	static_assert(offsetof(Settings, EnableVanillaReflectionCompensation) == 148, "Wetterness::Settings EnableVanillaReflectionCompensation offset changed.");
 	static_assert(offsetof(Settings, WetFilmSpecularFloorScale) == 152, "Wetterness::Settings WetFilmSpecularFloorScale offset changed.");
+	static_assert(offsetof(Settings, RainContactWetnessScale) == 156, "Wetterness::Settings RainContactWetnessScale offset changed.");
 
 	// Shader-facing wetness settings layout.
 	// Only the shader-consumed core settings live here; extra wetness controls are packed into the explicit tail lanes below.
@@ -167,7 +169,7 @@ public:
 		uint PackedPostRainControl = 0;
 		uint PackedRainReflectionControl = 0;
 		uint WetnessDistanceFadeRangePacked = 0;
-		uint ReservedPerFramePadding0 = 0;
+		float RainContactWetnessScale = 1.0f;
 	};
 	STATIC_ASSERT_ALIGNAS_16(PerFrame);
 	static_assert(offsetof(PerFrame, settings) == 80, "Wetterness::PerFrame settings offset changed.");
@@ -195,7 +197,6 @@ public:
 
 	Settings settings;
 	bool enableWeatherDrivenDryingModel = true;
-	bool inactivateRainPuddleAutoExpansion = false;
 	float puddleDryingHours = 18.0f;
 	float puddleLayout = 3.0f;
 	float modernWetIndirectSpecularScale = 0.80f;
