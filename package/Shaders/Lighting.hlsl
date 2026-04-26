@@ -2428,6 +2428,10 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 		float rainContactWetnessScale = max(0.0, CS_WETNESS_SETTINGS.RainContactWetnessScale);
 		float shoreHeightDelta = input.WorldPosition.z - waterHeight;
 		const bool wetSurfaceAllowed = shoreHeightDelta > 0.5;
+		// Keep puddle spawning farther away from the waterline than generic wet film.
+		// This prevents standing-water puddle patterns from appearing on water surfaces.
+		const float puddleWaterlineExclusionHeight = 12.0;
+		const bool puddleSurfaceAllowed = shoreHeightDelta > puddleWaterlineExclusionHeight;
 		float wetnessDistToWater = abs(shoreHeightDelta);
 		float shoreRangeSafe = max(1.0, (float)CS_WETNESS_SETTINGS.ShoreRange);
 		// Keep shore wetness continuous at the waterline. A hard height gate here creates
@@ -2645,6 +2649,9 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 		rainFilmWetness = 0.0;
 		puddleWetness = 0.0;
 	}
+	if (!puddleSurfaceAllowed) {
+		puddleWetness = 0.0;
+	}
 
 	float shoreWetness = shoreFactor * CS_WETNESS_SETTINGS.MaxShoreWetness;
 	float rainContactFilmScale = sqrt(max(0.0, rainContactWetnessScale)) * 1.35;
@@ -2656,7 +2663,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	// Calculate puddle effects
 	// Keep broad rain-contact wetness separate from standing-water puddle formation.
 	// Never form puddles on water surfaces.
-	const bool puddleAllowed = wetSurfaceAllowed;
+	const bool puddleAllowed = puddleSurfaceAllowed;
 	float puddle = 0.0;
 	float puddleFootprintMask = 0.0;
 	const float gameUnitsPerMeter = (1.0 / 0.01428);
