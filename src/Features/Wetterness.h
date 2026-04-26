@@ -31,7 +31,7 @@ public:
 
 	struct Settings
 	{
-		uint EnableWetnessEffects = true;
+		uint EnableWetterness = true;
 		float MaxRainWetness = 1.5f;
 		float MaxPuddleWetness = 2.5f;
 		float MaxShoreWetness = 0.75f;
@@ -96,7 +96,7 @@ public:
 	// Only the shader-consumed core settings live here; extra wetness controls are packed into the explicit tail lanes below.
 	struct ShaderSettings
 	{
-		uint EnableWetnessEffects = true;
+		uint EnableWetterness = true;
 		float MaxRainWetness = 1.5f;
 		float MaxPuddleWetness = 2.5f;
 		float MaxShoreWetness = 0.75f;
@@ -235,14 +235,14 @@ public:
 
 	virtual bool SupportsVR() override { return true; };
 	virtual bool IsCore() const override { return false; };
-	bool IsRuntimeActive() const { return loaded && settings.EnableWetnessEffects != 0; }
+	bool IsRuntimeActive() const { return loaded && settings.EnableWetterness != 0; }
 	bool IsRuntimeProcessingActive() const;
 	void ResetRuntimeStateAfterGameLoad() const { ResetRuntimeState(); }
 
 	// Override to provide weather analysis configuration
 	virtual WeatherAnalysisConfig GetWeatherAnalysisConfig() const override
 	{
-		return WeatherAnalysisConfig("Rain & Wetness Analysis", [this]() {
+		return WeatherAnalysisConfig("Rain & Wetterness Analysis", [this]() {
 			this->DrawWeatherAnalysis();
 		});
 	}
@@ -257,7 +257,6 @@ public:
 	void DetectCurrentPreset();
 
 private:
-	void DisableOnWetnessEffectsConflict();
 	void DrawWeatherAnalysis() const;
 	void ResetRuntimeState() const;
 	void InvalidateSanitizedSettingsCache();

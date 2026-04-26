@@ -96,19 +96,6 @@ namespace
 	constexpr float DEFAULT_PUDDLE_LAYOUT = 3.0f;
 	constexpr float WEATHER_DRIVEN_NON_PUDDLE_MIN_HOURS = 3.0f;
 
-	bool IsLegacyWetnessEffectsLoaded()
-	{
-		for (auto* feature : Feature::GetFeatureList()) {
-			if (feature == nullptr || feature == &globals::features::wetterness) {
-				continue;
-			}
-			if (feature->GetShortName() == "WetnessEffects") {
-				return feature->loaded;
-			}
-		}
-
-		return false;
-	}
 	constexpr float WEATHER_DRIVEN_NON_PUDDLE_MAX_HOURS = 12.0f;
 	constexpr float WEATHER_DRIVEN_PUDDLE_MIN_HOURS = 6.0f;
 	constexpr float WEATHER_DRIVEN_PUDDLE_MAX_HOURS = 15.0f;
@@ -129,7 +116,7 @@ namespace
 	constexpr float RAIN_EVENT_DECAY_SECONDS = 43200.0f;
 	constexpr float MIN_WETNESS_DRY_SCALE_AT_MAX_EVENT = 0.12f;
 	constexpr float RUNTIME_DRY_EPSILON = 1e-4f;
-	struct WetnessUiPresetDefinition
+	struct WetternessUiPresetDefinition
 	{
 		const char* name;
 		const char* description;
@@ -142,7 +129,12 @@ namespace
 		float rippleLifetime;
 	};
 
-	constexpr std::array<WetnessUiPresetDefinition, 3> WETNESS_UI_PRESETS = { {
+	bool IsHoshipaWetternessPreset(const WetternessUiPresetDefinition& preset)
+	{
+		return std::strcmp(preset.name, "Hoshipa") == 0;
+	}
+
+	constexpr std::array<WetternessUiPresetDefinition, 4> WETTERNESS_UI_PRESETS = { {
 		{ "Performance",
 			"Cheapest wetness profile. Keeps the wet-ground look, but uses shorter ranges, sparser raindrops, and shorter splash/ripple lifetimes.",
 			1000.0f,
@@ -169,7 +161,16 @@ namespace
 			0.5f,
 			0.80f,
 			6.0f,
-			0.30f }
+			0.30f },
+		{ "Hoshipa",
+			"Hoshipa wetness profile. Keeps Quality baseline with custom ripple/drying/reflection tuning.",
+			2000.0f,
+			10000.0f,
+			3.0f,
+			0.5f,
+			0.80f,
+			6.0f,
+			0.35f }
 	} };
 
 	// Cached per-frame data for debug/weather analysis UI.
@@ -419,7 +420,7 @@ namespace
 	Wetterness::ShaderSettings MakeShaderSettings(const Wetterness::Settings& settings)
 	{
 		Wetterness::ShaderSettings shaderSettings{};
-		shaderSettings.EnableWetnessEffects = settings.EnableWetnessEffects;
+		shaderSettings.EnableWetterness = settings.EnableWetterness;
 		shaderSettings.MaxRainWetness = settings.MaxRainWetness;
 		shaderSettings.MaxPuddleWetness = settings.MaxPuddleWetness;
 		shaderSettings.MaxShoreWetness = settings.MaxShoreWetness;
@@ -464,7 +465,7 @@ namespace
 	Wetterness::PerFrame MakeDisabledPerFrameData()
 	{
 		Wetterness::PerFrame data{};
-		data.settings.EnableWetnessEffects = 0u;
+		data.settings.EnableWetterness = 0u;
 		data.settings.EnableRaindropFx = 0u;
 		data.settings.EnableSplashes = 0u;
 		data.settings.EnableRipples = 0u;
@@ -682,14 +683,14 @@ namespace
 		wetnessDistanceFadeRange = ClampWetnessDistanceFadeRange(wetnessDistanceFadeRange);
 	}
 
-	void ApplyWetnessUiPreset(
+	void ApplyWetternessUiPreset(
 		Wetterness& wetterness,
-		const WetnessUiPresetDefinition& preset)
+		const WetternessUiPresetDefinition& preset)
 	{
 		auto& settings = wetterness.settings;
 		Wetterness::Settings defaultSettings{};
 
-		settings.EnableWetnessEffects = defaultSettings.EnableWetnessEffects;
+		settings.EnableWetterness = defaultSettings.EnableWetterness;
 		settings.MaxRainWetness = defaultSettings.MaxRainWetness;
 		settings.MaxPuddleWetness = defaultSettings.MaxPuddleWetness;
 		settings.MaxShoreWetness = defaultSettings.MaxShoreWetness;
@@ -740,20 +741,33 @@ namespace
 		wetterness.wetnessDistanceFadeRange = preset.wetnessFadeRange;
 		wetterness.modernWetIndirectSpecularScale = DEFAULT_MODERN_WET_REFLECTION_UI;
 		wetterness.legacyWetIndirectSpecularScale = DEFAULT_LEGACY_WET_REFLECTION_UI;
+
+		if (IsHoshipaWetternessPreset(preset)) {
+			// Hoshipa preset: keep Quality-like baseline while applying the requested
+			// custom defaults for ripple response, manual drying, and wet reflection.
+			settings.RippleRadius = 0.75f;
+			settings.RippleBreadth = 0.25f;
+			settings.RippleLifetime = 0.35f;
+			settings.DirtDryingMultiplier = 7.0f;
+			settings.PuddleRadiusWorldUnits = 119.0f;
+			wetterness.enableWeatherDrivenDryingModel = false;
+			wetterness.puddleDryingHours = 12.0f;
+			wetterness.modernWetIndirectSpecularScale = 1.0f;
+		}
 		SanitizePersistentReflectionSettings(settings, wetterness.modernWetIndirectSpecularScale, wetterness.legacyWetIndirectSpecularScale);
 	}
 
-	constexpr size_t DEFAULT_WETNESS_UI_PRESET_INDEX = 2;  // Quality
+	constexpr size_t DEFAULT_WETTERNESS_UI_PRESET_INDEX = 2;  // Quality
 
-	void ApplyDefaultWetnessUiPreset(Wetterness& wetterness)
+	void ApplyDefaultWetternessUiPreset(Wetterness& wetterness)
 	{
-		static_assert(DEFAULT_WETNESS_UI_PRESET_INDEX < WETNESS_UI_PRESETS.size(), "Default wetness preset index out of range.");
-		ApplyWetnessUiPreset(wetterness, WETNESS_UI_PRESETS[DEFAULT_WETNESS_UI_PRESET_INDEX]);
+		static_assert(DEFAULT_WETTERNESS_UI_PRESET_INDEX < WETTERNESS_UI_PRESETS.size(), "Default Wetterness preset index out of range.");
+		ApplyWetternessUiPreset(wetterness, WETTERNESS_UI_PRESETS[DEFAULT_WETTERNESS_UI_PRESET_INDEX]);
 	}
 
 	void SanitizeToggleSettings(Wetterness::Settings& settings)
 	{
-		settings.EnableWetnessEffects = SanitizeToggle(settings.EnableWetnessEffects);
+		settings.EnableWetterness = SanitizeToggle(settings.EnableWetterness);
 		settings.EnableRaindropFx = SanitizeToggle(settings.EnableRaindropFx);
 		settings.EnableSplashes = SanitizeToggle(settings.EnableSplashes);
 		settings.EnableRipples = SanitizeToggle(settings.EnableRipples);
@@ -844,7 +858,7 @@ namespace
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	Wetterness::Settings,
-	EnableWetnessEffects,
+	EnableWetterness,
 	MaxRainWetness,
 	MaxPuddleWetness,
 	MaxShoreWetness,
@@ -1048,14 +1062,6 @@ void Wetterness::SetupResources()
 	// Puddle placement is generated procedurally in shader.
 }
 
-void Wetterness::DisableOnWetnessEffectsConflict()
-{
-	failedLoadedMessage = "Wetterness is disabled because Wetness Effects is active. Uninstall Wetness Effects or disable it at boot before activating Wetterness.";
-	loaded = false;
-	settings.EnableWetnessEffects = 0u;
-	ResetRuntimeState();
-	InvalidateSanitizedSettingsCache();
-}
 void Wetterness::ResetRuntimeState() const
 {
 	runtimeState = {};
@@ -1174,28 +1180,28 @@ void Wetterness::DrawSettings()
 
 	drawSectionDivider();
 
-	drawUintCheckbox("Enable Wetness", settings.EnableWetnessEffects);
+	drawUintCheckbox("Enable Wetterness", settings.EnableWetterness);
 	if (auto _tt = Util::HoverTooltipWrapper()) {
 		ImGui::TextUnformatted("Enables wetness visuals. Off = no rain film, puddles, or shore wetness.");
 	}
 
-	ImGui::TextUnformatted("Wetness Presets");
+	ImGui::TextUnformatted("Wetterness Preset");
 	if (auto _tt = Util::HoverTooltipWrapper()) {
-		ImGui::TextUnformatted("Quick profiles for wetness performance/quality balance.");
+		ImGui::TextUnformatted("Quick profiles for Wetterness performance/quality balance.");
 	}
 	ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.18f, 0.38f, 0.72f, 0.95f));
 	ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.24f, 0.48f, 0.86f, 0.95f));
 	ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.14f, 0.30f, 0.60f, 0.95f));
-	for (size_t i = 0; i < WETNESS_UI_PRESETS.size(); ++i) {
-		const auto& preset = WETNESS_UI_PRESETS[i];
+	for (size_t i = 0; i < WETTERNESS_UI_PRESETS.size(); ++i) {
+		const auto& preset = WETTERNESS_UI_PRESETS[i];
 		if (ImGui::Button(preset.name)) {
-			ApplyWetnessUiPreset(*this, preset);
+			ApplyWetternessUiPreset(*this, preset);
 			DetectCurrentPreset();
 		}
 		if (auto _tt = Util::HoverTooltipWrapper()) {
 			ImGui::TextUnformatted(preset.description);
 		}
-		if (i + 1 < WETNESS_UI_PRESETS.size()) {
+		if (i + 1 < WETTERNESS_UI_PRESETS.size()) {
 			ImGui::SameLine();
 		}
 	}
@@ -1210,7 +1216,7 @@ void Wetterness::DrawSettings()
 		}
 
 		const bool raindropSettingsDisabled = settings.EnableRaindropFx == 0;
-		const bool raindropAdvancedDisabled = raindropSettingsDisabled || settings.EnableWetnessEffects == 0;
+		const bool raindropAdvancedDisabled = raindropSettingsDisabled || settings.EnableWetterness == 0;
 
 		ImGui::BeginDisabled(raindropSettingsDisabled);
 
@@ -1707,7 +1713,7 @@ void Wetterness::ApplyClimatePreset(ClimatePreset preset)
 
 	// Start every concrete climate preset from the branch default wetness profile,
 	// then apply only the climate-specific density and timing differences.
-	ApplyDefaultWetnessUiPreset(*this);
+	ApplyDefaultWetternessUiPreset(*this);
 
 	Settings defaultSettings{};  // Get branch default values
 
@@ -1763,7 +1769,7 @@ Wetterness::PerFrame Wetterness::GetCommonBufferData() const
 		return g_cachedCommonBufferData;
 	}
 
-	if (!loaded || settings.EnableWetnessEffects == 0u) {
+	if (!loaded || settings.EnableWetterness == 0u) {
 		ResetRuntimeState();
 		PerFrame data = MakeDisabledPerFrameData();
 		g_lastFrameData = data;
@@ -1927,8 +1933,8 @@ Wetterness::PerFrame Wetterness::GetCommonBufferData() const
 		runtimeState.puddleDepth <= RUNTIME_DRY_EPSILON &&
 		runtimeState.rainEventExposure <= RUNTIME_DRY_EPSILON &&
 		runtimeState.postRainEventWeight <= RUNTIME_DRY_EPSILON;
-	bool runtimeInactive = settings.EnableWetnessEffects == 0 ||
-		(settings.EnableWetnessEffects != 0 &&
+	bool runtimeInactive = settings.EnableWetterness == 0 ||
+		(settings.EnableWetterness != 0 &&
 		!hasDebugOverrides &&
 		!rainingNow &&
 		dryTimelineSettled);
@@ -2041,7 +2047,7 @@ Wetterness::PerFrame Wetterness::GetCommonBufferData() const
 		runtimeState.wasRainingLastFrame = rainingNow;
 	}
 
-	if (settings.EnableWetnessEffects) {
+	if (settings.EnableWetterness) {
 		if (fullSkyMode) {
 			data.Raining = blendedRainingVisualSnapped;
 			data.Wetness = std::min(runtimeState.wetnessDepth, MAX_OUTPUT_WETNESS);
@@ -2104,7 +2110,7 @@ Wetterness::PerFrame Wetterness::GetCommonBufferData() const
 	const Settings& sanitizedSettings = GetSanitizedSettings();
 	data.settings = MakeShaderSettings(sanitizedSettings);
 	if (runtimeInactive) {
-		data.settings.EnableWetnessEffects = 0u;
+		data.settings.EnableWetterness = 0u;
 	}
 	// Raindrops should stop when rain weather transition is complete (weight reaches zero),
 	// not immediately when current weather pointer flips.
@@ -2125,13 +2131,13 @@ Wetterness::PerFrame Wetterness::GetCommonBufferData() const
 	data.settings.StoneDryingMultiplier = effectiveDryingHours.stoneHours;
 	data.settings.GrassDryingMultiplier = effectiveDryingHours.grassHours;
 	data.settings.DirtDryingMultiplier = effectiveDryingHours.dirtHours;
-	data.settings.MaxShoreWetness = settings.EnableWetnessEffects != 0 ? data.settings.MaxShoreWetness : 0.0f;
+	data.settings.MaxShoreWetness = settings.EnableWetterness != 0 ? data.settings.MaxShoreWetness : 0.0f;
 	const float clampedShorePersistentDarkeningStrength = ClampFiniteOrDefault(
 		shorePersistentDarkeningStrength,
 		SHORE_PERSISTENT_DARKENING_MIN,
 		SHORE_PERSISTENT_DARKENING_MAX,
 		SHORE_PERSISTENT_DARKENING_DEFAULT);
-	const bool masterWetnessEnabled = settings.EnableWetnessEffects != 0;
+	const bool masterWetnessEnabled = settings.EnableWetterness != 0;
 	const float activeShorePersistentDarkeningStrength = masterWetnessEnabled ? clampedShorePersistentDarkeningStrength : 0.0f;
 	const float activeRainReflectionBalance = masterWetnessEnabled ?
 		ClampFiniteOrDefault(
@@ -2153,7 +2159,7 @@ Wetterness::PerFrame Wetterness::GetCommonBufferData() const
 	const float inRainFilmSpecularBoostFromBalance = activeRainReflectionBalance;
 	const float wetFilmRainPhaseSource = debugSettings.EnableRainOverride ? data.Raining : blendedWetFilmRainingVisualSnapped;
 	const float activeWetFilmRainPhase =
-		(data.settings.EnableWetnessEffects != 0 && !(isInterior && !debugSettings.EnableRainOverride)) ?
+		(data.settings.EnableWetterness != 0 && !(isInterior && !debugSettings.EnableRainOverride)) ?
 			ClampFiniteOrDefault(wetFilmRainPhaseSource, 0.0f, 1.0f, 0.0f) :
 			0.0f;
 	const float activePuddleSkyReflectionScale = masterWetnessEnabled ?
@@ -2163,7 +2169,7 @@ Wetterness::PerFrame Wetterness::GetCommonBufferData() const
 			PUDDLE_SKY_REFLECTION_SCALE_MAX,
 			DEFAULT_PUDDLE_SKY_REFLECTION_SCALE) :
 		DEFAULT_PUDDLE_SKY_REFLECTION_SCALE;
-	const float activeRainContactWetnessScale = data.settings.EnableWetnessEffects ?
+	const float activeRainContactWetnessScale = data.settings.EnableWetterness ?
 		ClampFiniteOrDefault(
 			sanitizedSettings.RainContactWetnessScale,
 			RAIN_CONTACT_WETNESS_SCALE_MIN,
@@ -2229,7 +2235,7 @@ void Wetterness::Prepass()
 		return;
 	}
 
-	if (g_hasLastFrameData && g_lastFrameData.settings.EnableWetnessEffects == 0u) {
+	if (g_hasLastFrameData && g_lastFrameData.settings.EnableWetterness == 0u) {
 		ID3D11ShaderResourceView* nullSrv = nullptr;
 		context->PSSetShaderResources(kWetnessPsSrvPrecipOcclusionSlot, 1, &nullSrv);
 		return;
@@ -2247,7 +2253,7 @@ void Wetterness::Prepass()
 void Wetterness::LoadSettings(json& o_json)
 {
 	const bool isObject = o_json.is_object();
-	const bool hasExplicitWetnessSettings = JsonHasAnyNonDebugKey(o_json);
+	const bool hasExplicitWetternessSettings = JsonHasAnyNonDebugKey(o_json);
 	settings = {};
 	puddleLayout = DEFAULT_PUDDLE_LAYOUT;
 	rainReflectionBalance = DEFAULT_RAIN_REFLECTION_BALANCE;
@@ -2264,11 +2270,16 @@ void Wetterness::LoadSettings(json& o_json)
 		try {
 			settings = o_json.get<Settings>();
 		} catch (const std::exception& e) {
-			logger::warn("[{}] Failed to parse wetness settings object ({}); using defaults.", GetName(), e.what());
+			logger::warn("[{}] Failed to parse Wetterness settings object ({}); using defaults.", GetName(), e.what());
 			settings = {};
 		}
 	} else {
-		logger::warn("[{}] Wetness settings root is not an object; using defaults.", GetName());
+		logger::warn("[{}] Wetterness settings root is not an object; using defaults.", GetName());
+	}
+	if (isObject && !o_json.contains("EnableWetterness") && o_json.contains("EnableWetnessEffects")) {
+		// Backward compatibility: accept legacy key name from older Wetterness configs.
+		const bool fallbackEnabled = settings.EnableWetterness != 0;
+		settings.EnableWetterness = JsonValueToBool(o_json["EnableWetnessEffects"], fallbackEnabled) ? 1u : 0u;
 	}
 
 	puddleLayout = JsonValueOr<float>(o_json, "PuddleLayout", DEFAULT_PUDDLE_LAYOUT);
@@ -2277,7 +2288,10 @@ void Wetterness::LoadSettings(json& o_json)
 	puddleSkyReflectionScale = JsonValueOr<float>(o_json, "PuddleSkyReflectionScale", DEFAULT_PUDDLE_SKY_REFLECTION_SCALE);
 	postRainWaterClarity = JsonValueOr<float>(o_json, "PostRainWaterClarity", DEFAULT_POST_RAIN_WATER_CLARITY);
 	shorePersistentDarkeningStrength = JsonValueOr<float>(o_json, "ShorePersistentDarkeningStrength", SHORE_PERSISTENT_DARKENING_DEFAULT);
-	wetnessDistanceFadeRange = JsonValueOr<float>(o_json, "WetnessFadeRange", DEFAULT_WETNESS_DISTANCE_FADE_RANGE_GAME_UNITS);
+	wetnessDistanceFadeRange = JsonValueOr<float>(
+		o_json,
+		"WetternessFadeRange",
+		JsonValueOr<float>(o_json, "WetnessFadeRange", DEFAULT_WETNESS_DISTANCE_FADE_RANGE_GAME_UNITS));
 
 	const bool hasModernWetReflectionScale = isObject && o_json.contains("ModernWetIndirectSpecularScale");
 	if (hasModernWetReflectionScale && o_json["ModernWetIndirectSpecularScale"].is_number()) {
@@ -2300,17 +2314,12 @@ void Wetterness::LoadSettings(json& o_json)
 		try {
 			debugSettings = o_json["DebugSettings"].get<DebugSettings>();
 		} catch (const std::exception& e) {
-			logger::warn("[{}] Failed to parse wetness debug settings ({}); using defaults.", GetName(), e.what());
+			logger::warn("[{}] Failed to parse Wetterness debug settings ({}); using defaults.", GetName(), e.what());
 			debugSettings = {};
 		}
 	}
 
-	if (IsLegacyWetnessEffectsLoaded()) {
-		DisableOnWetnessEffectsConflict();
-		return;
-	}
-
-	if (!hasExplicitWetnessSettings) {
+	if (!hasExplicitWetternessSettings) {
 		climatePreset = defaultPreset;
 		ApplyClimatePreset(climatePreset);
 	}
@@ -2340,7 +2349,7 @@ void Wetterness::SaveSettings(json& o_json)
 	o_json["PuddleSkyReflectionScale"] = puddleSkyReflectionScale;
 	o_json["PostRainWaterClarity"] = postRainWaterClarity;
 	o_json["ShorePersistentDarkeningStrength"] = shorePersistentDarkeningStrength;
-	o_json["WetnessFadeRange"] = wetnessDistanceFadeRange;
+	o_json["WetternessFadeRange"] = wetnessDistanceFadeRange;
 	o_json["EnableWeatherDrivenDryingModel"] = enableWeatherDrivenDryingModel;
 
 	o_json["DebugSettings"] = debugSettings;
@@ -2372,7 +2381,7 @@ void Wetterness::RestoreDefaultSettings()
 void Wetterness::DrawWeatherAnalysis() const
 {
 	// Only show rain system analysis when it's raining and Wetterness is enabled.
-	if (!settings.EnableWetnessEffects)
+	if (!settings.EnableWetterness)
 		return;
 
 	auto sky = globals::game::sky;
