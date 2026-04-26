@@ -1,5 +1,6 @@
 #include "WetnessEffects.h"
 #include "Menu.h"
+#include "Wetterness.h"
 #include "WeatherPicker.h"
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
@@ -239,6 +240,16 @@ namespace Ripples
 
 void WetnessEffects::PostPostLoad()
 {
+	if (globals::features::wetterness.loaded) {
+		failedLoadedMessage =
+			"Wetness Effects was automatically disabled because Wetterness is active. "
+			"These features cannot run in parallel.";
+		settings.EnableWetnessEffects = false;
+		loaded = false;
+		logger::warn("[{}] {}", GetName(), failedLoadedMessage);
+		return;
+	}
+
 	splashesOfStormsLoaded = static_cast<bool>(GetModuleHandle(L"po3_SplashesOfStorms.dll"));
 	if (splashesOfStormsLoaded) {
 		logger::info("[{}] Splashes of Storms detected, compatibility enabled", GetName());

@@ -698,7 +698,7 @@ void FeatureListRenderer::DrawMenuVisitor::RenderFeatureSettings(Feature* feat, 
 			ImGui::Spacing();
 			ImGui::TextColored(
 				themeSettings.StatusPalette.Error,
-				"Wetterness is active. Uninstall Wetness Effects or disable it at boot while Wetterness is activated.");
+				"Wetness Effects and Wetterness cannot run together. Wetness Effects will be auto-disabled when Wetterness is active.");
 		}
 	} else {
 		if (isLoaded) {
