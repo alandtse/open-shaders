@@ -2082,10 +2082,16 @@ Wetterness::PerFrame Wetterness::GetCommonBufferData() const
 		}
 	}
 
-	if (canAdvanceWetnessTime) {
-		runtimeState.rainTimerSeconds += timelineDeltaGameSeconds;
-		if (runtimeState.rainTimerSeconds >= RAIN_TIMER_WRAP_SECONDS) {
-			runtimeState.rainTimerSeconds = std::fmod(runtimeState.rainTimerSeconds, RAIN_TIMER_WRAP_SECONDS);
+	// Keep raindrop animation cadence tied to real frame time, not game-time/calendar deltas.
+	// Calendar-based deltas (wait/sleep/timescale) are intentionally used for wetness timelines,
+	// but would make visual raindrop spawn timing run unnaturally fast.
+	if (!gamePaused) {
+		const double frameDeltaSeconds = static_cast<double>(RE::GetSecondsSinceLastFrame());
+		if (std::isfinite(frameDeltaSeconds) && frameDeltaSeconds > 0.0) {
+			runtimeState.rainTimerSeconds += frameDeltaSeconds;
+			if (runtimeState.rainTimerSeconds >= RAIN_TIMER_WRAP_SECONDS) {
+				runtimeState.rainTimerSeconds = std::fmod(runtimeState.rainTimerSeconds, RAIN_TIMER_WRAP_SECONDS);
+			}
 		}
 	}
 	data.Time = static_cast<float>(runtimeState.rainTimerSeconds);

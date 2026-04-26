@@ -13,6 +13,7 @@
 #include "Features/TerrainBlending.h"
 #include "Features/TerrainHelper.h"
 #include "Features/Upscaling.h"
+#include "Features/Wetterness.h"
 #include "Features/WeatherEditor.h"
 #include "Menu.h"
 #include "SettingsOverrideManager.h"
@@ -59,6 +60,7 @@ void State::Draw()
 			WeatherManager::GetSingleton()->ClearCache();
 			globals::features::lightLimitFix.Reset();
 			globals::features::interiorSun.isInteriorWithSun = false;
+			globals::features::wetterness.ResetRuntimeStateAfterGameLoad();
 			pendingPostLoadRuntimeReset = false;
 			logger::info("Applied deferred post-load runtime reset");
 		}

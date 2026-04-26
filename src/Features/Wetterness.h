@@ -237,6 +237,7 @@ public:
 	virtual bool IsCore() const override { return false; };
 	bool IsRuntimeActive() const { return loaded && settings.EnableWetnessEffects != 0; }
 	bool IsRuntimeProcessingActive() const;
+	void ResetRuntimeStateAfterGameLoad() const { ResetRuntimeState(); }
 
 	// Override to provide weather analysis configuration
 	virtual WeatherAnalysisConfig GetWeatherAnalysisConfig() const override
