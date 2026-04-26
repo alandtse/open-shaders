@@ -114,6 +114,20 @@ namespace
 		return std::min<uint>(value, 2u);
 	}
 
+	void DestroyTexture(Texture2D*& texture)
+	{
+		if (!texture)
+			return;
+
+		texture->srv = nullptr;
+		texture->uav = nullptr;
+		texture->rtv = nullptr;
+		texture->dsv = nullptr;
+		texture->resource = nullptr;
+		delete texture;
+		texture = nullptr;
+	}
+
 	float ClampPeripheryTAACenterBlendFeather(float value)
 	{
 		if (!std::isfinite(value))
@@ -1490,48 +1504,130 @@ void Upscaling::DestroyUpscalingTextureResources(UpscaleMethod a_upscalemethod)
 	// Clean up D3D11 textures that are no longer needed
 	// Only destroy textures when switching away from methods that use them
 	if (a_upscalemethod != UpscaleMethod::kDLSS && a_upscalemethod != UpscaleMethod::kFSR) {
-		if (reactiveMaskTexture) {
-			reactiveMaskTexture->srv = nullptr;
-			reactiveMaskTexture->uav = nullptr;
-			reactiveMaskTexture->resource = nullptr;
-
-			delete reactiveMaskTexture;
-			reactiveMaskTexture = nullptr;
-		}
-
-		if (transparencyCompositionMaskTexture) {
-			transparencyCompositionMaskTexture->srv = nullptr;
-			transparencyCompositionMaskTexture->uav = nullptr;
-			transparencyCompositionMaskTexture->resource = nullptr;
-
-			delete transparencyCompositionMaskTexture;
-			transparencyCompositionMaskTexture = nullptr;
-		}
+		DestroyTexture(reactiveMaskTexture);
+		DestroyTexture(transparencyCompositionMaskTexture);
 	}
 
 	// Motion vector copy texture is used by DLSS/FSR - destroy when switching away from both.
 	if (a_upscalemethod != UpscaleMethod::kDLSS && a_upscalemethod != UpscaleMethod::kFSR) {
-		if (motionVectorCopyTexture) {
-			motionVectorCopyTexture->srv = nullptr;
-			motionVectorCopyTexture->uav = nullptr;
-			motionVectorCopyTexture->resource = nullptr;
-
-			delete motionVectorCopyTexture;
-			motionVectorCopyTexture = nullptr;
-		}
+		DestroyTexture(motionVectorCopyTexture);
 	}
 
 	// RCAS sharpener texture is only needed for DLSS.
 	if (a_upscalemethod != UpscaleMethod::kDLSS) {
-		if (sharpenerTexture) {
-			sharpenerTexture->srv = nullptr;
-			sharpenerTexture->uav = nullptr;
-			sharpenerTexture->resource = nullptr;
-
-			delete sharpenerTexture;
-			sharpenerTexture = nullptr;
-		}
+		DestroyTexture(sharpenerTexture);
 	}
+}
+
+void Upscaling::DestroyCommonUpscalingTextures()
+{
+	DestroyTexture(reactiveMaskTexture);
+	DestroyTexture(transparencyCompositionMaskTexture);
+	DestroyTexture(motionVectorCopyTexture);
+	DestroyTexture(sharpenerTexture);
+}
+
+void Upscaling::DestroyVRIntermediateTextures()
+{
+	for (uint32_t i = 0; i < 2; ++i) {
+		vrIntermediateColorIn[i].reset();
+		vrIntermediateColorOut[i].reset();
+		vrIntermediateDepth[i].reset();
+		vrIntermediateMotionVectors[i].reset();
+		vrIntermediateReactiveMask[i].reset();
+		vrIntermediateTransparencyMask[i].reset();
+	}
+}
+
+void Upscaling::UnbindUpscalingResources()
+{
+	auto context = globals::d3d::context;
+	if (!context)
+		return;
+
+	context->OMSetRenderTargets(0, nullptr, nullptr);
+
+	ID3D11ShaderResourceView* nullSRVs[D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT] = {};
+	context->VSSetShaderResources(0, ARRAYSIZE(nullSRVs), nullSRVs);
+	context->PSSetShaderResources(0, ARRAYSIZE(nullSRVs), nullSRVs);
+	context->GSSetShaderResources(0, ARRAYSIZE(nullSRVs), nullSRVs);
+	context->HSSetShaderResources(0, ARRAYSIZE(nullSRVs), nullSRVs);
+	context->DSSetShaderResources(0, ARRAYSIZE(nullSRVs), nullSRVs);
+	context->CSSetShaderResources(0, ARRAYSIZE(nullSRVs), nullSRVs);
+
+	ID3D11UnorderedAccessView* nullUAVs[D3D11_PS_CS_UAV_REGISTER_COUNT] = {};
+	context->CSSetUnorderedAccessViews(0, ARRAYSIZE(nullUAVs), nullUAVs, nullptr);
+
+	ID3D11Buffer* nullCBs[D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT] = {};
+	context->VSSetConstantBuffers(0, ARRAYSIZE(nullCBs), nullCBs);
+	context->PSSetConstantBuffers(0, ARRAYSIZE(nullCBs), nullCBs);
+	context->GSSetConstantBuffers(0, ARRAYSIZE(nullCBs), nullCBs);
+	context->HSSetConstantBuffers(0, ARRAYSIZE(nullCBs), nullCBs);
+	context->DSSetConstantBuffers(0, ARRAYSIZE(nullCBs), nullCBs);
+	context->CSSetConstantBuffers(0, ARRAYSIZE(nullCBs), nullCBs);
+
+	context->CSSetShader(nullptr, nullptr, 0);
+}
+
+void Upscaling::RequestPostLoadRuntimeReset()
+{
+	if (!globals::game::isVR)
+		return;
+
+	postLoadRuntimeResetPending.store(true, std::memory_order_release);
+	logger::info("[Upscaling] Armed VR post-load runtime reset");
+}
+
+bool Upscaling::ApplyPendingPostLoadRuntimeReset(UpscaleMethod a_upscaleMethod)
+{
+	if (!postLoadRuntimeResetPending.exchange(false, std::memory_order_acq_rel))
+		return true;
+
+	if (!globals::game::isVR)
+		return true;
+
+	logger::info("[Upscaling] Applying VR post-load runtime reset for method {}",
+		magic_enum::enum_name(a_upscaleMethod));
+
+	try {
+		UnbindUpscalingResources();
+
+		if (streamline.initialized && streamline.featureDLSS && streamline.slDLSSSetOptions && streamline.slFreeResources) {
+			streamline.DestroyDLSSResources();
+		} else {
+			streamline.InvalidateDLSSOptionsCache();
+		}
+
+		fidelityFX.DestroyFSRResources();
+
+		DestroyVRIntermediateTextures();
+		DestroyCommonUpscalingTextures();
+		DestroyFoveatedResources();
+
+		historyResetTrackingInitialized = false;
+		historyResetLatchedFrame = std::numeric_limits<uint32_t>::max();
+		historyResetThisFrame = false;
+		RequestHistoryReset();
+
+		if (a_upscaleMethod == UpscaleMethod::kDLSS || a_upscaleMethod == UpscaleMethod::kFSR) {
+			CreateUpscalingTextureResources(a_upscaleMethod);
+		}
+
+		if (a_upscaleMethod == UpscaleMethod::kFSR) {
+			fidelityFX.CreateFSRResources();
+		}
+	} catch (const std::exception& e) {
+		logger::error("[Upscaling] VR post-load runtime reset failed: {}", e.what());
+		postLoadRuntimeResetPending.store(true, std::memory_order_release);
+		return false;
+	} catch (...) {
+		logger::error("[Upscaling] VR post-load runtime reset failed with an unknown exception");
+		postLoadRuntimeResetPending.store(true, std::memory_order_release);
+		return false;
+	}
+
+	logger::info("[Upscaling] Applied VR post-load runtime reset");
+	return true;
 }
 
 void Upscaling::CheckResources(UpscaleMethod a_upscalemethod)
@@ -1578,14 +1674,7 @@ void Upscaling::CheckResources(UpscaleMethod a_upscalemethod)
 					fidelityFX.DestroyFSRResources();
 
 				if (globals::game::isVR) {
-					for (int i = 0; i < 2; i++) {
-						vrIntermediateColorIn[i].reset();
-						vrIntermediateColorOut[i].reset();
-						vrIntermediateDepth[i].reset();
-						vrIntermediateMotionVectors[i].reset();
-						vrIntermediateReactiveMask[i].reset();
-						vrIntermediateTransparencyMask[i].reset();
-					}
+					DestroyVRIntermediateTextures();
 				}
 			}
 			if (a_upscalemethod == UpscaleMethod::kFSR)
@@ -4552,6 +4641,11 @@ void Upscaling::Main_PostProcessing::thunk(RE::ImageSpaceManager* a_this, uint32
 {
 	auto& upscaling = globals::features::upscaling;
 	auto upscaleMethod = upscaling.GetUpscaleMethod();
+
+	if (!upscaling.ApplyPendingPostLoadRuntimeReset(upscaleMethod)) {
+		func(a_this, a3, a_target, a_4, a_5);
+		return;
+	}
 
 	if (upscaling.d3d12SwapChainActive && upscaling.settings.frameGenerationMode)
 		upscaling.CopySharedD3D12Resources();

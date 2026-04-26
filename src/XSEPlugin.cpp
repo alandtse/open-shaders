@@ -35,6 +35,7 @@ namespace
 		WeatherManager::GetSingleton()->ClearCache();
 		globals::features::lightLimitFix.Reset();
 		globals::features::interiorSun.isInteriorWithSun = false;
+		globals::features::upscaling.RequestPostLoadRuntimeReset();
 	}
 }
 

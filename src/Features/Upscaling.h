@@ -5,6 +5,7 @@
 #include "Upscaling/FidelityFX.h"
 #include "Upscaling/RCAS/RCAS.h"
 #include "Upscaling/Streamline.h"
+#include <atomic>
 #include <array>
 #include <d3d11_4.h>
 #include <directx/d3d12.h>
@@ -323,6 +324,8 @@ public:
 	void ConfigureTAA();
 	void ConfigureUpscaling(RE::BSGraphics::State* a_state);
 	void Upscale();
+	void RequestPostLoadRuntimeReset();
+	bool ApplyPendingPostLoadRuntimeReset(UpscaleMethod a_upscaleMethod);
 
 	// D3D11 textures
 	Texture2D* reactiveMaskTexture = nullptr;
@@ -380,6 +383,7 @@ public:
 	float previousHistoryPeripheryTAAOuterScale = 0.70f;
 	float previousHistoryPeripheryTAACenterBlendFeather = 0.05f;
 	bool previousHistoryFSRRuntimePathActive = false;
+	std::atomic<bool> postLoadRuntimeResetPending{ false };
 
 	void CopySharedD3D12Resources();
 	void PostDisplay();
@@ -399,6 +403,9 @@ public:
 	std::array<float2, 2> GetResolvedFoveatedMaskCenterOffsets(bool usePeripheryTAAProfile = false) const;
 	bool BuildFoveatedDispatchRects(uint32_t inputWidthPerEye, uint32_t inputHeight, uint32_t outputWidthPerEye, uint32_t outputHeight, bool isVR, float centerScale, float centerFeather, float centerHorizontalScale, bool usePeripheryTAAProfile = false);
 	bool EnsureFoveatedTexture(eastl::unique_ptr<Texture2D>& texture, ID3D11Resource* source, uint32_t width, uint32_t height, bool copyBindFlags, bool createSRV, bool createUAV, bool createRTV, const char* name);
+	void DestroyCommonUpscalingTextures();
+	void DestroyVRIntermediateTextures();
+	void UnbindUpscalingResources();
 	void DestroyFoveatedResources();
 	bool EnsurePeripheryTAAResources(uint32_t outputWidthPerEye, uint32_t outputHeight, ID3D11Resource* colorSource);
 	bool EnsurePeripheryTAATileBuffer(uint32_t eyeIndex, uint32_t tileCapacity);
