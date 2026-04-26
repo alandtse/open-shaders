@@ -462,8 +462,9 @@ void FidelityFX::CreateFSRResources()
 
 	const bool splitPerEyeContexts = UseSplitPerEyeFSRContexts();
 
-	DestroyRuntimeUpscalerContexts();
-	DestroyRuntimeUpscalerResources();
+	WaitForRuntimeUpscalerIdle();
+	DestroyRuntimeUpscalerContexts(false);
+	DestroyRuntimeUpscalerResources(false);
 
 	if (fsrScratchBuffer) {
 		logger::warn("[FidelityFX] FSR resources already created, skipping allocation");
@@ -528,8 +529,11 @@ void FidelityFX::CreateFSRResources()
 		numContexts, displayWidth, displayHeight, renderWidth, renderHeight, splitPerEyeContexts);
 }
 
-void FidelityFX::DestroyRuntimeUpscalerContexts()
+void FidelityFX::DestroyRuntimeUpscalerContexts(bool a_waitForIdle)
 {
+	if (a_waitForIdle)
+		WaitForRuntimeUpscalerIdle();
+
 	for (uint32_t i = 0; i < std::size(runtimeUpscalerContexts); ++i) {
 		if (runtimeUpscalerContexts[i] && ffx::DestroyContext(runtimeUpscalerContexts[i]) != ffx::ReturnCode::Ok)
 			logger::warn("[FidelityFX] Failed to destroy runtime upscaler context {} cleanly.", i);
@@ -543,8 +547,56 @@ void FidelityFX::DestroyRuntimeUpscalerContexts()
 	runtimeUpscalerMaxDisplayHeight = 0;
 }
 
-void FidelityFX::DestroyRuntimeUpscalerResources()
+void FidelityFX::WaitForRuntimeUpscalerIdle()
 {
+	auto& swapChain = globals::features::upscaling.dx12SwapChain;
+	if (!runtimeD3D12Fence && !runtimeD3D11Fence)
+		return;
+
+	auto waitForFence = [&](uint64_t a_value) {
+		if (!runtimeD3D12Fence)
+			return true;
+		if (runtimeD3D12Fence->GetCompletedValue() >= a_value)
+			return true;
+
+		winrt::handle fenceEvent(CreateEventW(nullptr, FALSE, FALSE, nullptr));
+		if (!fenceEvent)
+			return false;
+		if (FAILED(runtimeD3D12Fence->SetEventOnCompletion(a_value, fenceEvent.get())))
+			return false;
+
+		return WaitForSingleObject(fenceEvent.get(), 5000) == WAIT_OBJECT_0;
+	};
+
+	try {
+		if (swapChain.d3d11Context && runtimeD3D11Fence && runtimeD3D12Fence) {
+			const uint64_t d3d11FenceValue = runtimeFenceValue++;
+			DX::ThrowIfFailed(swapChain.d3d11Context->Signal(runtimeD3D11Fence.get(), d3d11FenceValue));
+			swapChain.d3d11Context->Flush();
+			if (!waitForFence(d3d11FenceValue))
+				logger::warn("[FidelityFX] Timed out waiting for runtime upscaler D3D11 work before teardown.");
+		} else if (globals::d3d::context) {
+			globals::d3d::context->Flush();
+		}
+
+		if (swapChain.commandQueue && runtimeD3D12Fence) {
+			const uint64_t d3d12FenceValue = runtimeFenceValue++;
+			DX::ThrowIfFailed(swapChain.commandQueue->Signal(runtimeD3D12Fence.get(), d3d12FenceValue));
+			if (!waitForFence(d3d12FenceValue))
+				logger::warn("[FidelityFX] Timed out waiting for runtime upscaler D3D12 work before teardown.");
+		}
+	} catch (const std::exception& e) {
+		logger::warn("[FidelityFX] Failed to wait for runtime upscaler idle before teardown: {}", e.what());
+	} catch (...) {
+		logger::warn("[FidelityFX] Failed to wait for runtime upscaler idle before teardown.");
+	}
+}
+
+void FidelityFX::DestroyRuntimeUpscalerResources(bool a_waitForIdle)
+{
+	if (a_waitForIdle)
+		WaitForRuntimeUpscalerIdle();
+
 	DeleteWrappedResourceArray(runtimeColorShared);
 	DeleteWrappedResourceArray(runtimeDepthShared);
 	DeleteWrappedResourceArray(runtimeMotionShared);
@@ -576,8 +628,9 @@ void FidelityFX::DestroyFSRResources()
 		fsrScratchBuffer = nullptr;
 	}
 
-	DestroyRuntimeUpscalerContexts();
-	DestroyRuntimeUpscalerResources();
+	WaitForRuntimeUpscalerIdle();
+	DestroyRuntimeUpscalerContexts(false);
+	DestroyRuntimeUpscalerResources(false);
 
 	runtimeD3D11Fence = nullptr;
 	runtimeD3D12Fence = nullptr;

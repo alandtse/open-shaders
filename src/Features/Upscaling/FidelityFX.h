@@ -133,6 +133,7 @@ private:
 	void RecordRuntimeUpscalerFramePath(RuntimeUpscalerFramePath a_path);
 	bool EnsureRuntimeUpscalerInterop();
 	bool EnsureRuntimeUpscalerContexts(uint32_t a_fullRenderWidth, uint32_t a_fullRenderHeight, uint32_t a_fullDisplayWidth, uint32_t a_fullDisplayHeight, uint32_t a_contextCount);
+	void WaitForRuntimeUpscalerIdle();
 	bool EnsureRuntimeUpscalerSharedResources(uint32_t a_contextCount, uint32_t a_fullRenderWidth, uint32_t a_fullRenderHeight, uint32_t a_fullDisplayWidth, uint32_t a_fullDisplayHeight,
 		const D3D11_TEXTURE2D_DESC& a_colorDesc,
 		const D3D11_TEXTURE2D_DESC& a_depthDesc,
@@ -144,6 +145,6 @@ private:
 		ID3D11Resource* a_reactiveMask, ID3D11Resource* a_transparencyCompositionMask, ID3D11Resource* a_output,
 		uint32_t a_renderWidth, uint32_t a_renderHeight, uint32_t a_displayWidth, uint32_t a_displayHeight,
 		float a_motionVectorScaleX, float a_motionVectorScaleY, float a_sharpness);
-	void DestroyRuntimeUpscalerContexts();
-	void DestroyRuntimeUpscalerResources();
+	void DestroyRuntimeUpscalerContexts(bool a_waitForIdle = true);
+	void DestroyRuntimeUpscalerResources(bool a_waitForIdle = true);
 };

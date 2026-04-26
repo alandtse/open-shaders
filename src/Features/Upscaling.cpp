@@ -1662,10 +1662,12 @@ void Upscaling::CheckResources(UpscaleMethod a_upscalemethod)
 			static_cast<int>(previousUpscaleMode), magic_enum::enum_name(previousUpscaleMode), static_cast<int>(a_upscalemethod), magic_enum::enum_name(a_upscalemethod), previousFrameGenMode, frameGenModeCurrent, d3d12SwapChainActive,
 			previousFSRRuntimePathActive, fsrRuntimePathCurrent);
 
+		const bool requiresFullPipelineUnbind = upscaleModeChanged || frameGenModeChanged || fsrRuntimePathChanged;
+		if (requiresFullPipelineUnbind)
+			UnbindUpscalingResources();
+
 		// Destroy previous upscaling method resources (only if they were actually active)
 		if (upscaleModeChanged) {
-			DestroyUpscalingTextureResources(a_upscalemethod);
-
 			// Only destroy SDK resources if the previous method was actually performing upscaling
 			if (previousUpscalingWasActive) {
 				if (previousUpscaleMode == UpscaleMethod::kDLSS)
@@ -1677,6 +1679,8 @@ void Upscaling::CheckResources(UpscaleMethod a_upscalemethod)
 					DestroyVRIntermediateTextures();
 				}
 			}
+			DestroyUpscalingTextureResources(a_upscalemethod);
+
 			if (a_upscalemethod == UpscaleMethod::kFSR)
 				fidelityFX.CreateFSRResources();
 		}
