@@ -242,7 +242,7 @@ void WetnessEffects::PostPostLoad()
 {
 	if (globals::features::wetterness.loaded) {
 		failedLoadedMessage =
-			"Wetness Effects was automatically disabled because Wetterness is active. "
+			"Wetness Effects was automatically disabled because Wetterness is active.\n"
 			"These features cannot run in parallel.";
 		settings.EnableWetnessEffects = false;
 		loaded = false;
