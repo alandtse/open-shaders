@@ -329,7 +329,6 @@ namespace
 		// Tracks what we toggled so user-initiated changes aren't clobbered.
 		static bool s_weEnabledStereoBlend = false;
 		static bool s_weEnabledReproj = false;
-		static auto s_savedStereoMode = VRStereoOptimizations::StereoMode::Off;
 
 		const char* debugModes[] = { "Off", "Back-Check", "Blend Weight", "Edge Detection", "Overwrite", "Overwrite Eye1" };
 		if (ImGui::Combo("Debug View", &settings.StereoBlendDebugMode, debugModes, IM_ARRAYSIZE(debugModes))) {
@@ -349,11 +348,10 @@ namespace
 			// Auto-enable Reprojection for modes 4-5 (note: takes effect after restart)
 			auto& sm = vr.stereoOpt.settings.stereoMode;
 			if (needsReproj && sm == VRStereoOptimizations::StereoMode::Off) {
-				s_savedStereoMode = sm;
 				sm = VRStereoOptimizations::StereoMode::Enable;
 				s_weEnabledReproj = true;
 			} else if (!needsReproj && s_weEnabledReproj) {
-				sm = s_savedStereoMode;
+				sm = VRStereoOptimizations::StereoMode::Off;
 				s_weEnabledReproj = false;
 			}
 		}

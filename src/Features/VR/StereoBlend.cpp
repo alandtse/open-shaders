@@ -99,9 +99,10 @@ void VR::DrawStereoBlend()
 	cbData.MaxBlendFactor = settings.StereoBlendMaxFactor;
 	cbData.ColorDiffThreshold = settings.StereoBlendColorThreshold;
 
+	bool isOverwriteMode = vrStereoOptActive || overwriteVisualizationActive;
+
 	// Edge tint from reprojection debug visualization flag
-	bool isOverwriteOrVisualization = vrStereoOptActive || overwriteVisualizationActive;
-	if (isOverwriteOrVisualization && globals::features::vr.stereoOpt.settings.debugVisualization)
+	if (isOverwriteMode && globals::features::vr.stereoOpt.settings.debugVisualization)
 		cbData.DebugEdgeTint = 0.3f;
 	else
 		cbData.DebugEdgeTint = 0.0f;
@@ -112,11 +113,11 @@ void VR::DrawStereoBlend()
 		cbData.DebugMode = 1u;  // "Overwrite": mode texture classification heatmap
 	else if (settings.StereoBlendDebugMode == 5)
 		cbData.DebugMode = 3u;  // "Overwrite Eye1": POM depth heatmap
-	else if (isOverwriteOrVisualization && globals::features::vr.stereoOpt.settings.debugDepthMap)
+	else if (isOverwriteMode && globals::features::vr.stereoOpt.settings.debugDepthMap)
 		cbData.DebugMode = 1u;
-	else if (isOverwriteOrVisualization && globals::features::vr.stereoOpt.settings.debugFullBlendDepth)
+	else if (isOverwriteMode && globals::features::vr.stereoOpt.settings.debugFullBlendDepth)
 		cbData.DebugMode = 2u;
-	else if (isOverwriteOrVisualization && globals::features::vr.stereoOpt.settings.debugPOMDepth)
+	else if (isOverwriteMode && globals::features::vr.stereoOpt.settings.debugPOMDepth)
 		cbData.DebugMode = 3u;
 	else
 		cbData.DebugMode = 0u;
@@ -128,8 +129,6 @@ void VR::DrawStereoBlend()
 	auto cbPtr = stereoBlendCB->CB();
 
 	auto& motionVectors = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMOTION_VECTOR];
-
-	bool isOverwriteMode = vrStereoOptActive || overwriteVisualizationActive;
 
 	ID3D11ComputeShader* activeCS = stereoBlendCS.get();
 	if (isOverwriteMode) {

@@ -135,7 +135,6 @@ public:
 		       stereoBlendCopyTex &&
 		       stereoBlendCB;
 	}
-	bool HasOverwriteVisualization() const { return stereoBlendOverwriteCS && stereoBlendCopyTex && stereoBlendCB; }
 	static bool AnyScreenSpaceEffectLoaded();
 
 	virtual void LoadSettings(json& o_json) override;
