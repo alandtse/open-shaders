@@ -369,29 +369,30 @@ void CalculateGI(
 #ifdef TEMPORAL_DENOISER
 		float lerpFactor = rcp(srcAccumFrames[pxCoord] * 255);
 
-		// Clamp history to the local color neighborhood to prevent ghosting
-		// and reduce the magnitude of pops when disocclusion finally fires.
-		// Standard technique from SVGF (Schied et al. 2017).
 		float4 prevY = srcPrevY[pxCoord];
 		float2 prevCoCg = srcPrevCoCg[pxCoord];
+
+		// Clamp history to the local color neighbourhood to prevent ghosting
+		// and reduce pops when disocclusion fires (SVGF, Schied 2017).
+		// 5-tap cross pattern. Skipped on saturated history: by that point
+		// the temporal blend has self-stabilised via prior frames' clamps,
+		// so the marginal bounding effect doesn't justify the bandwidth.
+		[branch] if (lerpFactor >= 0.15)
 		{
-			float4 nMinY = currY, nMaxY = currY;
-			float2 nMinCoCg = currCoCg, nMaxCoCg = currCoCg;
-			[unroll] for (int dy = -1; dy <= 1; dy++)
-			{
-				[unroll] for (int dx = -1; dx <= 1; dx++)
-				{
-					if (dx == 0 && dy == 0)
-						continue;
-					int2 np = pxCoord + int2(dx, dy);
-					float4 nY = srcPrevY[np];
-					float2 nCC = srcPrevCoCg[np];
-					nMinY = min(nMinY, nY);
-					nMaxY = max(nMaxY, nY);
-					nMinCoCg = min(nMinCoCg, nCC);
-					nMaxCoCg = max(nMaxCoCg, nCC);
-				}
-			}
+			float4 yL = srcPrevY[pxCoord + int2(-1, 0)];
+			float4 yR = srcPrevY[pxCoord + int2(1, 0)];
+			float4 yU = srcPrevY[pxCoord + int2(0, -1)];
+			float4 yD = srcPrevY[pxCoord + int2(0, 1)];
+			float2 cL = srcPrevCoCg[pxCoord + int2(-1, 0)];
+			float2 cR = srcPrevCoCg[pxCoord + int2(1, 0)];
+			float2 cU = srcPrevCoCg[pxCoord + int2(0, -1)];
+			float2 cD = srcPrevCoCg[pxCoord + int2(0, 1)];
+
+			float4 nMinY = min(min(min(yL, yR), min(yU, yD)), currY);
+			float4 nMaxY = max(max(max(yL, yR), max(yU, yD)), currY);
+			float2 nMinCoCg = min(min(min(cL, cR), min(cU, cD)), currCoCg);
+			float2 nMaxCoCg = max(max(max(cL, cR), max(cU, cD)), currCoCg);
+
 			prevY = clamp(prevY, nMinY, nMaxY);
 			prevCoCg = clamp(prevCoCg, nMinCoCg, nMaxCoCg);
 		}
