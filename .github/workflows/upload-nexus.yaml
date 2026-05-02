@@ -211,7 +211,7 @@ jobs:
             - name: Download GitHub release assets
               run: |
                   mkdir -p release-assets
-                  gh release download "${{ needs.prepare-nexus-matrix.outputs.tag }}" --pattern "*.7z" --dir release-assets
+                  gh release download "${{ needs.prepare-nexus-matrix.outputs.tag }}" --repo "$GITHUB_REPOSITORY" --pattern "*.7z" --dir release-assets
                   ls -lah release-assets
               env:
                   GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
