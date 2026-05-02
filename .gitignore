@@ -21,3 +21,7 @@ tools/__pycache__/
 # clangd compile database (machine-specific absolute paths; regenerate with
 # tools/gen-clangd-db.ps1)
 /compile_commands.json
+
+# imgui-vr-helper now lives in its own git repo at extern/imgui-vr-helper.
+# It builds independently and produces its own SKSE plugin DLL.
+extern/imgui-vr-helper/
