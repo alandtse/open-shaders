@@ -146,6 +146,23 @@ target_include_directories(
         "${CMAKE_SOURCE_DIR}/extern/stb_image_write_hdr_png"
         ${DETOURS_INCLUDE_DIRS}
         ${EXPRTK_INCLUDE_DIRS}
+        # Vendored ImGuiVRHelper public API headers (LGPL-3.0).
+        # Pulled from extern/imgui-vr-helper/api/ at integration time.
+        # Independent of the helper plugin's GPL-licensed implementation —
+        # the API surface is intentionally tiny and stable to avoid
+        # linking the client to ImGui or OpenVR.
+        "${CMAKE_SOURCE_DIR}/extern/imgui-vr-helper-api"
+)
+
+# Compile the helper API client-side handshake stub into SCS. One TU
+# carrying GetImGuiVRHelperInterface001() — sends one SKSE messaging
+# Dispatch on first call, caches the returned vtable, returns it on
+# every subsequent call. No link dependency on the helper plugin
+# itself; resolves at runtime via SKSE messaging.
+target_sources(
+    ${PROJECT_NAME}
+    PRIVATE
+        "${CMAKE_SOURCE_DIR}/extern/imgui-vr-helper-api/ImGuiVRHelperAPI.cpp"
 )
 
 # stb_image_write impl (incl. ReShade's vendored HDR-PNG extension) builds as C, like

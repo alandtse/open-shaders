@@ -12,9 +12,26 @@
 
 #include "ENB/ENBSeriesAPI.h"
 
+#include "ImGuiVRHelperAPI.h"
+
 #define DLLEXPORT __declspec(dllexport)
 
 std::list<std::string> errors;
+
+// ImGuiVRHelper integration (Phase 1: handshake + client registration only).
+// Future phases will use this interface to surface SCS's menu through the
+// helper's shared VR panel rather than maintaining a separate overlay path.
+namespace
+{
+	ImGuiVRHelperPluginAPI::IImGuiVRHelperInterface001* g_imguiVRHelper = nullptr;
+	uint32_t g_imguiVRHelperClientId = 0;
+
+	void ImGuiVRHelperOnFrame(const ImGuiVRHelperPluginAPI::Frame*, void*)
+	{
+		// Phase 1: no-op. Phase 2 will render SCS's menu into the helper-owned
+		// panel render target here.
+	}
+}
 
 bool Load();
 
@@ -78,6 +95,27 @@ extern "C" DLLEXPORT bool SKSEAPI SKSEPlugin_Query(const SKSE::QueryInterface*, 
 void MessageHandler(SKSE::MessagingInterface::Message* message)
 {
 	switch (message->type) {
+	case SKSE::MessagingInterface::kPostLoad:
+		{
+			// Handshake with ImGuiVRHelper. Helper-required for VR menus: if
+			// the helper isn't installed, VR users will only see the menu on
+			// the desktop monitor (Phase 1 makes no other behavioral change).
+			if (REL::Module::IsVR()) {
+				g_imguiVRHelper = ImGuiVRHelperPluginAPI::GetImGuiVRHelperInterface001();
+				if (g_imguiVRHelper) {
+					g_imguiVRHelperClientId = g_imguiVRHelper->RegisterClient(
+						"CommunityShaders",
+						&ImGuiVRHelperOnFrame,
+						nullptr,
+						ImGuiVRHelperPluginAPI::kClientFlag_None);
+					logger::info("ImGuiVRHelper handshake successful (build {}), client_id={}",
+						g_imguiVRHelper->GetBuildNumber(), g_imguiVRHelperClientId);
+				} else {
+					logger::info("ImGuiVRHelper not detected; VR menus will only render on the desktop monitor");
+				}
+			}
+			break;
+		}
 	case SKSE::MessagingInterface::kPostPostLoad:
 		{
 			if (errors.empty()) {

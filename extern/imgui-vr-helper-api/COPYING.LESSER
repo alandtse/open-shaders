@@ -1,0 +1,8 @@
+Files in this directory (`api/`) are licensed under the GNU Lesser General
+Public License version 3 or any later version, so that non-GPL client mods
+can vendor and link against this header surface without becoming GPL.
+
+The full license text lives in `../COPYING.LESSER` at the repository root.
+
+The runtime helper itself (`src/`) is licensed under GPL-3.0-or-later with a
+modding linking exception. See `../COPYING` and `../EXCEPTIONS.md`.
