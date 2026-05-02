@@ -141,7 +141,9 @@ void OverlayRenderer::RenderOverlay(
 	HandleVRSetup();
 	processInputEventQueue();
 
-	if (globals::features::vr.IsOpenVRCompatible()) {
+	// Phase 3: helper drives wand pointing → ImGui mouse synthesis.
+	// Skip SCS's internal controller→ImGui pump when registered.
+	if (!ImGuiVRHelperClient::IsRegistered() && globals::features::vr.IsOpenVRCompatible()) {
 		globals::features::vr.ProcessControllerInputForImGui();
 	}
 
@@ -191,7 +193,9 @@ void OverlayRenderer::RenderOverlay(
 
 void OverlayRenderer::HandleVRSetup()
 {
-	if (globals::features::vr.IsOpenVRCompatible()) {
+	// Phase 3: helper owns the overlay texture. Skip SCS's
+	// menuTexture/menuRTV recreation when registered.
+	if (!ImGuiVRHelperClient::IsRegistered() && globals::features::vr.IsOpenVRCompatible()) {
 		globals::features::vr.RecreateOverlayTexturesIfNeeded();
 	}
 }
@@ -416,14 +420,17 @@ void OverlayRenderer::FinalizeImGuiFrame()
 
 	ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
 
-	// Phase 2: additionally render the same draw data into the
-	// ImGuiVRHelper's panel RTV so the helper can composite our menu
-	// as a 3D quad in the HMD. No-op if the helper isn't installed —
-	// in that case VR users fall back to the SCS-internal overlay
-	// path below (or just the desktop monitor on flatrim).
+	// Phase 2: render the same draw data into the ImGuiVRHelper's
+	// panel RTV so the helper can composite our menu as a 3D quad
+	// in the HMD.
 	ImGuiVRHelperClient::RenderToPanel();
 
-	if (globals::features::vr.IsOpenVRCompatible()) {
+	// Phase 3: when the helper is registered, it owns VR overlay
+	// compositing — skip SCS's internal SubmitOverlayFrame path.
+	// Per the helper-required policy, if the helper isn't present
+	// VR users get menus only on the desktop monitor (no fallback
+	// to SCS's own overlay).
+	if (!ImGuiVRHelperClient::IsRegistered() && globals::features::vr.IsOpenVRCompatible()) {
 		globals::features::vr.SubmitOverlayFrame();
 	}
 }

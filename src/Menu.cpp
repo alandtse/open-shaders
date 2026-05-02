@@ -25,6 +25,7 @@
 #include "Features/RenderDoc.h"
 #include "Features/Upscaling.h"
 #include "I18n/I18n.h"
+#include "ImGuiVRHelperClient.h"
 #include "Menu/AdvancedSettingsRenderer.h"
 #include "Menu/BackgroundBlur.h"
 #include "Menu/CursorLoader.h"
@@ -1070,10 +1071,28 @@ void Menu::ProcessInputEventQueue()
 			nonVREvents.push_back(event);
 		}
 	}
-	// Process VR events in VR
+	// Process VR events
 	if (!vrEvents.empty()) {
-		globals::features::vr.ProcessVREvents(vrEvents);
-		globals::features::vr.UpdateOverlayMenuStateFromInput();
+		// Phase 3: when the helper is registered, forward raw VR
+		// controller events to it. The helper drives wand pointing,
+		// combo matching, drag, and overlay focus — SCS no longer
+		// runs ProcessVREvents/UpdateOverlayMenuStateFromInput in
+		// that case. Without the helper (helper-required policy),
+		// SCS drops these events; VR users see menus only on the
+		// desktop monitor.
+		if (ImGuiVRHelperClient::IsRegistered()) {
+			for (const auto& event : vrEvents) {
+				ImGuiVRHelperClient::FeedVREvent(
+					static_cast<uint32_t>(event.device),
+					event.keyCode,
+					event.IsPressed(),
+					event.thumbstickX,
+					event.thumbstickY);
+			}
+		} else {
+			globals::features::vr.ProcessVREvents(vrEvents);
+			globals::features::vr.UpdateOverlayMenuStateFromInput();
+		}
 	}
 
 	// Process non-VR events in Menu

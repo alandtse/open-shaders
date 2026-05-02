@@ -5,6 +5,7 @@
 #include "Features/Upscaling.h"
 #include "Features/VR.h"
 #include "I18n/I18n.h"
+#include "ImGuiVRHelperClient.h"
 #include "Menu.h"
 #include "Menu/Fonts.h"
 #include "RE/B/BSOpenVR.h"
@@ -73,6 +74,10 @@ void VR::DrawOverlay()
 {
 	auto& vr = globals::features::vr;
 	if (!vr.IsOpenVRCompatible())
+		return;
+	// Phase 3: helper owns VR overlay UX, including the welcome
+	// banner. Skip SCS's internal welcome overlay when registered.
+	if (ImGuiVRHelperClient::IsRegistered())
 		return;
 	static LARGE_INTEGER overlayShowStart = { 0 };
 	static LARGE_INTEGER freq = { 0 };

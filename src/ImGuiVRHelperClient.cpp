@@ -126,4 +126,13 @@ namespace ImGuiVRHelperClient
 			prevDSV->Release();
 		}
 	}
+
+	void FeedVREvent(uint32_t device, uint32_t key_code, bool pressed,
+		float thumbstick_x, float thumbstick_y)
+	{
+		if (!IsRegistered()) {
+			return;
+		}
+		g_helper->FeedVREvent(device, key_code, pressed, thumbstick_x, thumbstick_y);
+	}
 }
