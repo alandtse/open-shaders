@@ -16,6 +16,7 @@
 #include "Features/RenderDoc.h"
 #include "Globals.h"
 #include "I18n/I18n.h"
+#include "ImGuiVRHelperClient.h"
 #include "Menu.h"
 #include "Menu/CursorLoader.h"
 #include "ShaderCache.h"
@@ -414,6 +415,13 @@ void OverlayRenderer::FinalizeImGuiFrame()
 	BackgroundBlur::RenderBackgroundBlur();
 
 	ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
+
+	// Phase 2: additionally render the same draw data into the
+	// ImGuiVRHelper's panel RTV so the helper can composite our menu
+	// as a 3D quad in the HMD. No-op if the helper isn't installed —
+	// in that case VR users fall back to the SCS-internal overlay
+	// path below (or just the desktop monitor on flatrim).
+	ImGuiVRHelperClient::RenderToPanel();
 
 	if (globals::features::vr.IsOpenVRCompatible()) {
 		globals::features::vr.SubmitOverlayFrame();
