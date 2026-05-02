@@ -16,8 +16,14 @@
 
 #if defined(IBL)
 #	include "IBL/IBL.hlsli"
+#elif defined(SKYLIGHTING)
+// sh2 type is needed for the ExtractLighting overload that accepts a visibility SH
+#	include "Common/Spherical Harmonics/SphericalHarmonics.hlsli"
 #endif
 
+// Populated once per frame by Deferred::CopyShadowLightData from BSShadowDirectionalLight.
+// Column-major float4x4 projections so HLSL `mul(proj, float4(pos, 1))` matches the
+// XMMATRIX layout written by XMStoreFloat4x4 on the C++ side.
 struct DirectionalShadowLightData
 {
 	column_major float4x4 ShadowProj[2];
@@ -27,7 +33,6 @@ struct DirectionalShadowLightData
 };
 
 StructuredBuffer<DirectionalShadowLightData> DirectionalShadowLights : register(t98);
-Texture2DArray<float> DirectionalShadowCascades : register(t99);
 
 #if defined(VOLUMETRIC_SHADOWS)
 #	include "VolumetricShadows/VolumetricShadows.hlsli"
@@ -35,9 +40,6 @@ Texture2DArray<float> DirectionalShadowCascades : register(t99);
 
 namespace ShadowSampling
 {
-	static const float ShadowRayLength = 128.0;
-	static const float ShadowRayStepSize = 32.0;
-
 	float GetWorldShadow(float3 positionWS, float3 offset, uint eyeIndex)
 	{
 		if (SharedData::InInterior || SharedData::HideSky || SharedData::InMapMenu)
@@ -62,18 +64,18 @@ namespace ShadowSampling
 		float3 startPosition = positionWS - viewDirection * viewRayLength;
 		float3 endPosition = positionWS + viewDirection * viewRayLength;
 #elif defined(UNDERWATER)
-		float viewRayLength = ShadowRayLength;
+		float viewRayLength = 128.0;
 		float3 startPosition = positionWS;
 		float3 endPosition = positionWS - viewDirection * viewRayLength;
 #else
-		float viewRayLength = ShadowRayLength;
+		float viewRayLength = 128.0;
 		float3 startPosition = positionWS;
 		float3 endPosition = positionWS + viewDirection * viewRayLength;
 #endif
 
 		float totalRayLength = distance(endPosition, startPosition);
 
-		const float stepSize = ShadowRayStepSize;
+		const float stepSize = 32.0;  // Fixed step size in world units
 
 		uint sampleCount = clamp(uint(totalRayLength / stepSize + 0.5), 1, 4);
 		float rcpSampleCount = rcp(sampleCount);
@@ -96,11 +98,22 @@ namespace ShadowSampling
 
 #if defined(VOLUMETRIC_SHADOWS)
 		float vsmSurfaceShadow;
-		float shadow = VolumetricShadows::GetVSMShadow3D(DirectionalShadowLights[0], startPosition, endPosition, noise, sampleCount, eyeIndex, vsmSurfaceShadow);
+		float shadow = VolumetricShadows::GetVSMShadow3D(startPosition, endPosition, noise, sampleCount, eyeIndex, vsmSurfaceShadow);
 		surfaceShadow *= vsmSurfaceShadow;
 		return worldShadow * shadow;
 #else
 		return worldShadow;
+#endif
+	}
+
+	float GetLightingShadow(float3 worldPosition, uint eyeIndex, out float detailedShadow)
+	{
+#if defined(VOLUMETRIC_SHADOWS)
+		float shadow = VolumetricShadows::GetVSMShadow2D(worldPosition, eyeIndex, detailedShadow);
+		return shadow;
+#else
+		detailedShadow = 1.0;
+		return 1.0;
 #endif
 	}
 
@@ -114,14 +127,11 @@ namespace ShadowSampling
 
 #if defined(IBL)
 		if (SharedData::iblSettings.EnableIBL) {
-			if (SharedData::iblSettings.DALCMode == 2) {
-				// Mode 2: keep vanilla DALC scaled by DALCAmount, add sky IBL overlay
-				ambientColorAmb = ambientColorAmb * SharedData::iblSettings.DALCAmount + Color::IrradianceToGamma(ImageBasedLighting::GetSkyIBLColor(float3(0, 0, -1)));
-			} else {
-				float3 envIBLColor = Color::IrradianceToGamma(ImageBasedLighting::GetEnvIBLColor(float3(0, 0, -1)));
-				float3 skyIBLColor = Color::IrradianceToGamma(ImageBasedLighting::GetSkyIBLColor(float3(0, 0, -1)));
-				ambientColorAmb = envIBLColor + skyIBLColor;
-			}
+#	if defined(SKYLIGHTING) && !defined(INTERIOR)
+			ambientColorAmb = ImageBasedLighting::GetDiffuseIBLOccluded(ambientColorAmb, float3(0, 0, -1), skylightingDiffuse);
+#	else
+			ambientColorAmb = ImageBasedLighting::GetDiffuseIBL(ambientColorAmb, float3(0, 0, -1));
+#	endif
 		}
 #endif
 

@@ -3,6 +3,7 @@
 #include <DirectXMath.h>
 
 #include "Buffer.h"
+#include "RE/B/BSShadowDirectionalLight.h"
 #include "RE/B/BSShadowLight.h"
 
 #define ALBEDO RE::RENDER_TARGETS::kINDIRECT
@@ -52,10 +53,11 @@ public:
 
 	void ClearShaderCache();
 
-	// Reads directional shadow parameters and uploads to structured buffers.
-	//   t98 — DirectionalShadowLightData  (cascade splits + world-to-shadow projections)
-	//   t99 — DirectionalShadowCascades  (Texture2DArray, game's kSHADOWMAPS_ESRAM depth SRV)
-	// Called during EarlyPrepasses immediately after shadow maps have been rendered.
+	// Reads directional shadow parameters from BSShadowDirectionalLight and uploads
+	// to the structured buffer at t98 (DirectionalShadowLightData — cascade splits +
+	// world-to-shadow projections). Called during EarlyPrepasses once shadow maps
+	// have been rendered. Replaces the previous compute-shader dispatch that copied
+	// constant-buffer fields into a UAV.
 	void CopyShadowLightData();
 
 	ID3D11ComputeShader* GetComputeMainComposite();

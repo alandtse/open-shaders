@@ -57,12 +57,15 @@ namespace VolumetricShadows
 		return shadow * rcpSampleCount;
 	}
 
-	float GetVSMShadow3D(DirectionalShadowLightData directionalShadowLightData, float3 startPosition, float3 endPosition, float noise, uint baseSampleCount, uint eyeIndex, out float surfaceShadow)
+	float GetVSMShadow3D(float3 startPosition, float3 endPosition, float noise, uint baseSampleCount, uint eyeIndex, out float surfaceShadow)
 	{
-		// Compute camera-relative distance before adjusting to world space.
+		DirectionalShadowLightData directionalShadowLightData = DirectionalShadowLights[0];
+
+		// View-space z — matches the linear cascade split distances from BSShadowDirectionalLight.
 		float3 midPosition = (startPosition + endPosition) * 0.5;
 		float shadowMapDepth = SharedData::GetScreenDepth(FrameBuffer::GetShadowDepth(midPosition, eyeIndex));
 
+		// Cascade projections are world-space; positions come in camera-relative.
 		startPosition += FrameBuffer::CameraPosAdjust[eyeIndex].xyz;
 		endPosition += FrameBuffer::CameraPosAdjust[eyeIndex].xyz;
 
@@ -127,26 +130,34 @@ namespace VolumetricShadows
 		return ComputeVSM(moments, positionLS.z);
 	}
 
-	float GetVSMShadow2D(float3 worldPosition, float3 worldPositionWS, uint eyeIndex, inout float detailedShadow)
+	float GetVSMShadow2D(float3 position, uint eyeIndex, out float detailedShadow)
 	{
-		DirectionalShadowLightData shadowLightData = DirectionalShadowLights[0];
+		DirectionalShadowLightData directionalShadowLightData = DirectionalShadowLights[0];
 
-		float shadowMapDepth = SharedData::GetScreenDepth(FrameBuffer::GetShadowDepth(worldPosition, eyeIndex));
+		float shadowMapDepth = SharedData::GetScreenDepth(FrameBuffer::GetShadowDepth(position, eyeIndex));
 
-		if (shadowMapDepth > shadowLightData.EndSplitDistances.y)
+		// Early out beyond cascade range
+		if (shadowMapDepth >= directionalShadowLightData.EndSplitDistances.y) {
+			detailedShadow = 1.0;
 			return 1.0;
+		}
 
-		float fadeFactor = 1.0 - pow(saturate(dot(worldPosition.xyz, worldPosition.xyz) / shadowLightData.EndSplitDistances.y), 8);
+		// Reduce over distance
+		float fade = saturate(shadowMapDepth / directionalShadowLightData.EndSplitDistances.y);
 
-		// Compute cascade blend factor
-		float cascadeSelect = smoothstep(shadowLightData.StartSplitDistances.y, shadowLightData.EndSplitDistances.x, shadowMapDepth);
+		// Cascade projections are world-space; position comes in camera-relative.
+		float3 positionWS = position + FrameBuffer::CameraPosAdjust[eyeIndex].xyz;
+
+		// Compute cascade blend factor with smoothstep
+		float cascadeSelect = saturate((shadowMapDepth - directionalShadowLightData.StartSplitDistances.y) / (directionalShadowLightData.EndSplitDistances.x - directionalShadowLightData.StartSplitDistances.y));
 
 		// Determine which cascade(s) to sample
-		uint primaryCascade = cascadeSelect;
+		uint primaryCascade = uint(cascadeSelect);
 		bool needsBlending = (cascadeSelect > 0.0) && (cascadeSelect < 1.0);
 
-		// Transform ray to light space for primary cascade
-		float3 positionLS = mul(shadowLightData.ShadowProj[primaryCascade], float4(worldPositionWS, 1)).xyz;
+		// Transform position to light space for primary cascade
+		float3 positionLS = mul(directionalShadowLightData.ShadowProj[primaryCascade], float4(positionWS, 1)).xyz;
+		positionLS.xy = saturate(positionLS.xy);
 
 		// Sample primary cascade
 		float shadow = SampleVSMCascade2D(primaryCascade, positionLS);
@@ -156,17 +167,17 @@ namespace VolumetricShadows
 		{
 			uint secondaryCascade = 1 - primaryCascade;
 
-			positionLS = mul(shadowLightData.ShadowProj[secondaryCascade], float4(worldPositionWS, 1)).xyz;
+			positionLS = mul(directionalShadowLightData.ShadowProj[secondaryCascade], float4(positionWS, 1)).xyz;
+			positionLS.xy = saturate(positionLS.xy);
 
 			float shadowBlend = SampleVSMCascade2D(secondaryCascade, positionLS);
-
 			shadow = lerp(shadow, shadowBlend, cascadeSelect);
 		}
 
-		// Sharper shadow
-		detailedShadow = lerp(ReduceBleeding(shadow, VSM_BLEEDING_REDUCTION), 1.0, fadeFactor);
-
-		return lerp(shadow, 1.0, 0);
+		// Apply distance fade
+		float fadeFactor = 1.0 - pow(fade * fade, 8);
+		detailedShadow = lerp(1.0, ReduceBleeding(shadow, VSM_BLEEDING_REDUCTION), fadeFactor);
+		return lerp(1.0, shadow, fadeFactor);
 	}
 }
 

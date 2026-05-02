@@ -5,6 +5,7 @@
 #include "FeatureVersions.h"
 #ifdef TRACY_ENABLE
 #	include <Tracy/Tracy.hpp>
+#	include <Tracy/TracyD3D11.hpp>
 #endif
 
 struct Feature
@@ -203,7 +204,7 @@ public:
 	 * @brief Execute a callable for each loaded feature with optional Tracy CPU profiling
 	 *
 	 * Iterates through all loaded features and calls the provided function with automatic
-	 * CPU profiling zones (ZoneScoped/ZoneText via Tracy) when TRACY_ENABLE is defined.
+	 * CPU profiling zones (ZoneScoped/ZoneName via Tracy) when TRACY_ENABLE is defined.
 	 * Thread-local string formatting is used to minimize per-call overhead.
 	 *
 	 * Usage:
@@ -213,18 +214,28 @@ public:
 	 * @param methodName Name of the method being called (used for Tracy zone naming)
 	 * @param callback Callable that receives (Feature*) and performs the operation
 	 */
+	// Called once from State after TracyD3D11Context is created so ForEachLoadedFeature
+	// can emit GPU timer zones without pulling in State headers here.
+#ifdef TRACY_ENABLE
+	inline static TracyD3D11Ctx s_tracyCtx = nullptr;
+	static void SetTracyCtx(TracyD3D11Ctx ctx) noexcept { s_tracyCtx = ctx; }
+#endif
+
 	template <typename Func>
-	static inline void ForEachLoadedFeature(std::string_view methodName, Func&& callback)
+	static inline void ForEachLoadedFeature(std::string_view methodName, Func&& callback, bool emitGpuZone = false)
 	{
 		for (auto* feature : GetFeatureList()) {
 			if (feature->loaded) {
 #ifdef TRACY_ENABLE
 				{
-					ZoneScoped;
-					static thread_local std::string zoneName;
-					zoneName = std::format("{}::{}", feature->GetShortName(), methodName);
-					ZoneText(zoneName.c_str(), zoneName.size());
-					callback(feature);
+					const auto zoneName = std::format("{}::{}", feature->GetShortName(), methodName);
+					ZoneTransientN(___tracy_feature_zone, zoneName.c_str(), true);
+					if (emitGpuZone) {
+						TracyD3D11ZoneTransientS(s_tracyCtx, ___tracy_d3d11_feature_zone, zoneName.c_str(), 0, s_tracyCtx != nullptr);
+						callback(feature);
+					} else {
+						callback(feature);
+					}
 				}
 #else
 				callback(feature);
