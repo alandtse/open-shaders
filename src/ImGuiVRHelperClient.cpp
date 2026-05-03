@@ -8,6 +8,8 @@
 
 namespace
 {
+	// Holds the highest revision returned by the helper. v002 inherits
+	// from v001, so a v002 pointer satisfies any v001 call site.
 	ImGuiVRHelperPluginAPI::IImGuiVRHelperInterface001* g_helper = nullptr;
 	uint32_t g_clientId = 0;
 
@@ -28,17 +30,31 @@ namespace ImGuiVRHelperClient
 			return;
 		}
 
-		g_helper = ImGuiVRHelperPluginAPI::GetImGuiVRHelperInterface001();
-		if (!g_helper) {
-			logger::info("ImGuiVRHelper not detected; VR menus will only render on the desktop monitor");
-			return;
+		// Try v002 first so we can register with our version string.
+		// Fall back to v001 against older helper builds — they show up
+		// in the helper's diagnostic table with empty version.
+		const auto version = Plugin::VERSION.string();
+		auto* helperV2 = ImGuiVRHelperPluginAPI::GetImGuiVRHelperInterface002();
+		if (helperV2) {
+			g_helper = helperV2;
+			g_clientId = helperV2->RegisterClientV2(
+				"CommunityShaders",
+				version.c_str(),
+				&OnFrame,
+				nullptr,
+				ImGuiVRHelperPluginAPI::kClientFlag_None);
+		} else {
+			g_helper = ImGuiVRHelperPluginAPI::GetImGuiVRHelperInterface001();
+			if (!g_helper) {
+				logger::info("ImGuiVRHelper not detected; VR menus will only render on the desktop monitor");
+				return;
+			}
+			g_clientId = g_helper->RegisterClient(
+				"CommunityShaders",
+				&OnFrame,
+				nullptr,
+				ImGuiVRHelperPluginAPI::kClientFlag_None);
 		}
-
-		g_clientId = g_helper->RegisterClient(
-			"CommunityShaders",
-			&OnFrame,
-			nullptr,
-			ImGuiVRHelperPluginAPI::kClientFlag_None);
 
 		if (g_clientId == 0) {
 			logger::warn("ImGuiVRHelper RegisterClient failed; VR menus will only render on the desktop monitor");
@@ -46,8 +62,8 @@ namespace ImGuiVRHelperClient
 			return;
 		}
 
-		logger::info("ImGuiVRHelper handshake successful (build {}), client_id={}",
-			g_helper->GetBuildNumber(), g_clientId);
+		logger::info("ImGuiVRHelper handshake successful (build {}, api_rev={}), client_id={}, reported_version={}",
+			g_helper->GetBuildNumber(), helperV2 ? 2 : 1, g_clientId, version);
 	}
 
 	bool IsRegistered()
