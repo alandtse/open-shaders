@@ -5,15 +5,9 @@
 //
 // Clients vendor api/ImGuiVRHelperAPI.h, api/ImGuiVRHelperAPI.cpp,
 // api/ImGuiVRHelperTypes.h, and api/ImGuiVRHelperInput.h. After SKSE's
-// kPostLoad fires, call GetImGuiVRHelperInterface002() (or 001 if your
-// client doesn't need the v002 additions) to obtain a pointer to the
-// helper's API. Subsequent calls go through the returned vtable —
+// kPostLoad fires, call GetImGuiVRHelperInterface001() to obtain a pointer
+// to the helper's API. Subsequent calls go through the returned vtable —
 // SKSE messaging is only used for the one-shot handshake.
-//
-// Forward-compatibility: GetImGuiVRHelperInterface002 returns nullptr
-// against helper builds older than the v002 introduction. Clients that
-// want to run against either should attempt v002 first, fall back to
-// v001, and only call methods present on the revision they got.
 //
 // Handshake pattern derived from
 //   https://github.com/alandtse/SkyrimVRESL/blob/master/src/SkyrimVRESLAPI.h
@@ -52,16 +46,10 @@ namespace ImGuiVRHelperPluginAPI
 	};
 
 	struct IImGuiVRHelperInterface001;
-	struct IImGuiVRHelperInterface002;
 
 	/// One-shot handshake. Call once after kPostLoad. Returns nullptr if
 	/// the helper isn't installed or is older than version 001.
 	IImGuiVRHelperInterface001* GetImGuiVRHelperInterface001();
-
-	/// One-shot handshake for revision 002. Returns nullptr if the
-	/// helper isn't installed or pre-dates v002. Inherits from v001 — a
-	/// non-null v002 pointer is also a valid v001 pointer.
-	IImGuiVRHelperInterface002* GetImGuiVRHelperInterface002();
 
 	/// Versioned interface. Future revisions extend by inheritance:
 	///   struct IImGuiVRHelperInterface002 : IImGuiVRHelperInterface001 { ... };
@@ -77,9 +65,15 @@ namespace ImGuiVRHelperPluginAPI
 
 		/// Register a client. Returns a non-zero client_id on success, 0 on
 		/// failure (e.g. helper not yet initialized, or name already taken).
-		/// `name` is copied internally. `flags` is a bitmask of ClientFlags.
-		virtual uint32_t RegisterClient(const char* name, OnFrameFn on_frame,
-			void* user, uint32_t flags) = 0;
+		/// `name` and `version` are copied internally; pass `nullptr` for
+		/// `version` to omit it. `flags` is a bitmask of ClientFlags.
+		///
+		/// Recommended `version` content: the calling mod's human-readable
+		/// version (e.g. SKSE PluginVersionData::string()). The helper does
+		/// not parse it — surfaced verbatim in the helper's "Registered
+		/// Clients" diagnostic table.
+		virtual uint32_t RegisterClient(const char* name, const char* version,
+			OnFrameFn on_frame, void* user, uint32_t flags) = 0;
 
 		/// Unregister a previously-registered client. Releases the panel
 		/// render target, cancels any combo recording, and stops invoking
@@ -176,26 +170,6 @@ namespace ImGuiVRHelperPluginAPI
 		/// directly so clients can drop their own input plumbing.
 		virtual void FeedVREvent(uint32_t device, uint32_t key_code, bool pressed,
 			float thumbstick_x, float thumbstick_y) = 0;
-	};
-
-	/// Interface revision 002. Adds RegisterClientV2 with a client-supplied
-	/// version string surfaced in diagnostic UI / crash dumps. v001's
-	/// RegisterClient remains callable for backwards compatibility — it's
-	/// equivalent to RegisterClientV2 with `version=nullptr`.
-	struct IImGuiVRHelperInterface002 : IImGuiVRHelperInterface001
-	{
-		/// Register a client with an explicit version string. Same
-		/// semantics as v001's RegisterClient — returns a non-zero
-		/// client_id on success, 0 on failure. `name` and `version` are
-		/// copied internally; pass nullptr for `version` to omit it.
-		///
-		/// Recommended `version` content: the calling mod's
-		/// human-readable version (e.g. SKSE PluginVersionData::string()).
-		/// The helper does not parse it — clients that want SemVer
-		/// ordering can format accordingly. Surfaced verbatim in the
-		/// helper's "Registered Clients" diagnostic table.
-		virtual uint32_t RegisterClientV2(const char* name, const char* version,
-			OnFrameFn on_frame, void* user, uint32_t flags) = 0;
 	};
 
 }  // namespace ImGuiVRHelperPluginAPI
