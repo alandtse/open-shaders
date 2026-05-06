@@ -1516,10 +1516,22 @@ namespace ShadowCasterManager
 
 			if (e.RedrawFrame && i < s_settings.ShadowLightCount) {
 				if (!isSunSlot) {
+					// Hold a strong reference across the EnableLight callbacks.
+					// EnableLight can transitively free the BSShadowLight via game-side
+					// scene mutations; without a keepalive, e.Light becomes dangling
+					// and s_budget.EndLight() below dereferences freed memory inside
+					// the unordered_map find() (observed crash: huge corrupted bucket
+					// index in mov rdx,[rdi+rbx*8]).
+					RE::NiPointer<RE::BSShadowLight> lightKeepalive(e.Light);
+					auto* lightSnapshot = e.Light;  // value snapshot for budget pairing
+
 					e.Light->UpdateCamera(camera);
-					s_budget.BeginLight(e.Light, 0);
+					s_budget.BeginLight(lightSnapshot, 0);
 					EnableLight(e.Light, camera, ssn, i);
-					s_budget.EndLight(e.Light, 0);
+					// EnableLight callbacks may have nulled e.Light (clear) or freed the
+					// underlying object (the keepalive prevents the latter). Pair the
+					// budget tracker on the snapshot regardless so timing stays balanced.
+					s_budget.EndLight(lightSnapshot, 0);
 
 					// e.Light may have been cleared by EnableLight callbacks or re-entrant
 					// scheduling; bail before touching it again.
