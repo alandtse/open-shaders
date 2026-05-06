@@ -558,6 +558,33 @@ void LightLimitFix::UpdateLights()
 		addLight(e);
 	}
 
+	// Converted shadow lights (shadow lights demoted to normal-light overflow handling
+	// via SCM's ConvertExcessToNormal) live in the engine's activeShadowLights list
+	// (offset 0x148) — verified via Ghidra against ShadowSceneNode AE 1.6.1170. They
+	// are NOT migrated to activeLights (0x130) when our Hook_IsShadowLight reports
+	// false, because the engine's AddLight just searches the existing wrappers and
+	// activates the matching one in-place rather than moving entries between lists.
+	//
+	// The shadowLightsAccum loop above already pulled in lights with active shadow-
+	// caster slots (and inserted them in shadowLightPtrs to dedupe). Anything in
+	// activeShadowLights but NOT in shadowLightsAccum is a BSShadowLight that the
+	// engine is tracking but isn't currently a shadow caster — i.e. a converted
+	// light. Add those via the non-shadow addLight path so they contribute diffuse
+	// lighting (no Shadow flag, no shadow map slot).
+	//
+	// Without this, ConvertExcessToNormal lights have no entry in the cluster
+	// lightsData[] and never render — the user-visible "converted lights are
+	// invisible" symptom of issue #2121 #3.
+	for (auto& e : shadowSceneNode->GetRuntimeData().activeShadowLights) {
+		auto bsLight = e.get();
+		if (!bsLight)
+			continue;
+		auto* asBs = static_cast<RE::BSLight*>(bsLight);
+		if (shadowLightPtrs.count(asBs))
+			continue;  // already added via shadowLightsAccum above
+		addLight(RE::NiPointer<RE::BSLight>(asBs));
+	}
+
 	auto context = globals::d3d::context;
 
 	lightCount = std::min((uint)lightsData.size(), MAX_LIGHTS);

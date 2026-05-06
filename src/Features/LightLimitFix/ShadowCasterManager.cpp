@@ -1906,6 +1906,40 @@ namespace ShadowCasterManager
 			lights[added++] = l;
 		}
 
+		// Step 4: Inject lights from s_normalConvert (shadow lights converted to
+		// normal-light overflow handling, issue #2121 #3).  These are skipped by
+		// Step 3 because their frustrumCull is still 0xFF (the engine's parabolic
+		// shadow-caster marker), and they are NOT in shadowLightsAccum either
+		// (ConvertLight removed them via ReturnShadowmaps), so Steps 1/2 also
+		// miss them.  Without this step the converted lights have nowhere to
+		// land in the per-surface lights array and never render.
+		//
+		// Intellightent's _CS mode does not call addFrameConvert in its scheduler,
+		// so this gap never manifests there. Our atomic refactor (option C) calls
+		// ConvertLight from the candidate-selection loop, exposing the gap.
+		for (auto& c : s_normalConvert) {
+			if (added >= maxCount)
+				break;
+			auto* l = reinterpret_cast<RE::BSLight*>(c.light);
+			if (!l || l == sunLight)
+				continue;
+			auto* ni = l->light.get();
+			if (!ni || ni->GetFlags().any(RE::NiAVObject::Flag::kHidden))
+				continue;
+
+			// Skip if already added in any prior step.
+			bool alreadyAdded = false;
+			for (int j = 1; j < added && !alreadyAdded; j++)
+				if (lights[j] == l)
+					alreadyAdded = true;
+			if (alreadyAdded)
+				continue;
+
+			if (GameIsLightAffectingSurface(shaderProp, l))
+				lights[added++] = l;
+			// Note: do NOT increment *shadowCount; this is a non-shadow contribution.
+		}
+
 		ctx.Rax = static_cast<uint64_t>(added);
 	}
 
