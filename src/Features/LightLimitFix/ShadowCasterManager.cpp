@@ -1556,6 +1556,15 @@ namespace ShadowCasterManager
 
 		auto* shadowSceneNodeRT = &ssn->GetRuntimeData();
 
+		// Two-stage validity check used before any virtual dispatch on a
+		// BSShadowLight from s_lights[] or candidates[]:
+		//   (1) Is the pointer still in the scene's activeShadowLights?
+		//       (catches "removed since last frame")
+		//   (2) Is the vtable non-zero?
+		//       (catches "freed and zeroed by tbbmalloc / EngineFixes via a path
+		//        that bypassed BSSmartPointer ref-counting" — the pointer is
+		//        still in activeShadowLights but the object is dead)
+		// Either failure → caller must skip the light.
 		auto isAliveNow = [shadowSceneNodeRT, sunLight](RE::BSShadowLight* l) -> bool {
 			if (!l)
 				return false;
@@ -1565,6 +1574,12 @@ namespace ShadowCasterManager
 				if (sp.get() == l)
 					return true;
 			return false;
+		};
+		auto isVtableValid = [](RE::BSShadowLight* l) -> bool {
+			return l && *reinterpret_cast<const uintptr_t*>(l) != 0;
+		};
+		auto isUsableLight = [&](RE::BSShadowLight* l) -> bool {
+			return isAliveNow(l) && isVtableValid(l);
 		};
 
 		auto findSlotForLight = [](RE::BSShadowLight* l) -> int {
@@ -1583,6 +1598,10 @@ namespace ShadowCasterManager
 
 		for (auto& c : candidates) {
 			if (c.invalid) {
+				// DisableLight only needs membership; it calls ReturnShadowmaps
+				// which is well-behaved on already-dereferenced objects. Skip
+				// the vtable check here so we don't drop work for objects whose
+				// vtable was zeroed mid-frame (rare but observed under EngineFixes).
 				if (isAliveNow(c.light))
 					DisableLight(c.light);
 				continue;
@@ -1598,19 +1617,11 @@ namespace ShadowCasterManager
 				auto& e = s_lights.Lights[slot];
 
 				if (e.RedrawFrame && slot < s_settings.ShadowLightCount) {
-					// Render-this-frame path.
-					// Re-validate alive: a previous iteration's EnableLight may have
-					// transitively freed this light via game-side scene mutations.
-					if (!isAliveNow(e.Light))
-						continue;
-					// tbbmalloc (EngineFixes) zeroes freed memory blocks, making the
-					// vtable pointer at offset 0 become 0.  The game sometimes frees
-					// BSShadowLight objects via a path that bypasses BSSmartPointer
-					// ref-counting (raw DecRefCount / direct delete), leaving a dangling
-					// non-null pointer in activeShadowLights — and therefore in aliveSet
-					// / isAliveNow.  Checking the vtable is the last-resort guard
-					// against that case.
-					if (*reinterpret_cast<const uintptr_t*>(e.Light) == 0) {
+					// Render-this-frame path. A previous iteration's EnableLight
+					// may have transitively freed this light via game-side scene
+					// mutations (membership change OR tbbmalloc-zeroed memory),
+					// so re-validate before any virtual dispatch.
+					if (!isUsableLight(e.Light)) {
 						e.Light = nullptr;
 						continue;
 					}
@@ -1639,19 +1650,25 @@ namespace ShadowCasterManager
 				// Calling DisableLight here would invoke ReturnShadowmaps, releasing the
 				// cached shadow data for one frame and producing visible flicker that
 				// worsens as the budget gets more constrained.
-				// Restored from 8176f95e2 (lost in May-1 reset).
 				continue;
 			}
 
 			if (c.excess) {
-				if (!isAliveNow(c.light))
+				// ConvertLight calls virtual methods (ReturnShadowmaps) so we
+				// need the full usability check (membership + vtable). DisableLight
+				// only calls ReturnShadowmaps which is itself non-virtual but the
+				// callee chain may dispatch virtually — same guard either way.
+				if (!isUsableLight(c.light))
 					continue;
 				if (s_settings.ConvertExcessToNormal) {
-					// Restores the conversion-on-overflow behaviour (issue #2121 #3).
-					// Safe in this position: all chosen lights above have completed
-					// their EnableLight pairing before we reach the excess range,
-					// so ConvertLight's ReturnShadowmaps side-effect cannot induce
-					// a dangling-pointer crash in our own pipeline.
+					// Atomic ordering: by the time we reach excess (rank
+					// >= ShadowLightCount), all chosen lights (rank <
+					// ShadowLightCount) have completed their Begin/EnableLight/
+					// End sequence. ConvertLight's ReturnShadowmaps side effect
+					// can only invalidate pointers we are no longer walking.
+					// LightLimitFix::UpdateLights then iterates the engine's
+					// activeShadowLights to pick up converted lights for the
+					// cluster pipeline (see Ghidra-confirmed comment there).
 					ConvertLight(c.light, ssn, false);
 				} else {
 					DisableLight(c.light);
@@ -1684,18 +1701,18 @@ namespace ShadowCasterManager
 			for (int i = 0; i < s_lights.Size; i++) {
 				auto& e = s_lights.Lights[i];
 				if (e.Light && (!e.RedrawFrame || i >= s_settings.ShadowLightCount)) {
+					// Membership check uses the snapshot built above (a
+					// game-mutation in the atomic loop may have invalidated
+					// pointers; aliveAfterAtomic captures the current scene
+					// state in O(N) for O(1) membership queries here).
 					if (aliveAfterAtomic.find(e.Light) == aliveAfterAtomic.end()) {
-						// Pointer was invalidated by a same-frame mutation
-						// (typically ConvertLight on an excess light). Drop
-						// the s_lights entry and skip.
 						e.Clear();
 						continue;
 					}
-					// Same vtable guard as the redrawn path: GameSetShadowCasterSlot
-					// calls Accumulate virtually and will crash if the object is freed
-					// by game code that bypasses ref-counting (tbbmalloc zeroes the
-					// vtable pointer at offset 0).
-					if (*reinterpret_cast<const uintptr_t*>(e.Light) == 0) {
+					// GameSetShadowCasterSlot calls Accumulate virtually; reuse
+					// isUsableLight's vtable guard to catch tbbmalloc-zeroed
+					// objects that are still in activeShadowLights but freed.
+					if (!isVtableValid(e.Light)) {
 						e.Light = nullptr;
 						continue;
 					}
@@ -1906,17 +1923,16 @@ namespace ShadowCasterManager
 			lights[added++] = l;
 		}
 
-		// Step 4: Inject lights from s_normalConvert (shadow lights converted to
-		// normal-light overflow handling, issue #2121 #3).  These are skipped by
-		// Step 3 because their frustrumCull is still 0xFF (the engine's parabolic
-		// shadow-caster marker), and they are NOT in shadowLightsAccum either
-		// (ConvertLight removed them via ReturnShadowmaps), so Steps 1/2 also
-		// miss them.  Without this step the converted lights have nowhere to
-		// land in the per-surface lights array and never render.
+		// Step 4: Inject converted shadow lights (s_normalConvert, issue #2121 #3)
+		// into the per-surface lights array. These lights have frustrumCull == 0xFF
+		// (parabolic shadow-caster marker) and are skipped by Step 3, while Steps
+		// 1/2 don't include them either (ReturnShadowmaps cleared shadowLightsAccum).
 		//
-		// Intellightent's _CS mode does not call addFrameConvert in its scheduler,
-		// so this gap never manifests there. Our atomic refactor (option C) calls
-		// ConvertLight from the candidate-selection loop, exposing the gap.
+		// The cluster pipeline picks them up separately via LightLimitFix::UpdateLights'
+		// activeShadowLights iteration; this Step 4 ensures the engine's vanilla
+		// strict-light loop (which consumes lights[] passed to this function) also
+		// sees them so non-LLF code paths and shaders without LIGHT_LIMIT_FIX still
+		// receive the diffuse contribution.
 		for (auto& c : s_normalConvert) {
 			if (added >= maxCount)
 				break;
