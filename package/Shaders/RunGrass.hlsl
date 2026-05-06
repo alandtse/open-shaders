@@ -420,6 +420,12 @@ cbuffer AlphaTestRefCB : register(b11)
 #		include "ScreenSpaceShadows/ScreenSpaceShadows.hlsli"
 #	endif
 
+// ShadowSampling.hlsli must be included before LightLimitFix.hlsli because
+// LightLimitFix.hlsli references DirectionalShadowLightData / DirectionalShadowLights
+// which are declared in ShadowSampling.hlsli.
+#	define LinearSampler SampBaseSampler
+#	include "Common/ShadowSampling.hlsli"
+
 #	if defined(LIGHT_LIMIT_FIX)
 #		include "LightLimitFix/LightLimitFix.hlsli"
 #	endif
@@ -445,10 +451,6 @@ cbuffer AlphaTestRefCB : register(b11)
 #	if defined(EXP_HEIGHT_FOG)
 #		include "ExponentialHeightFog/ExponentialHeightFog.hlsli"
 #	endif
-
-#	define LinearSampler SampBaseSampler
-
-#	include "Common/ShadowSampling.hlsli"
 
 #	ifdef GRASS_LIGHTING
 #		if defined(TRUE_PBR)
