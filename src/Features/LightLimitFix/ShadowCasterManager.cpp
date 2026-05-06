@@ -1516,27 +1516,27 @@ namespace ShadowCasterManager
 
 			if (e.RedrawFrame && i < s_settings.ShadowLightCount) {
 				if (!isSunSlot) {
-					// Hold a strong reference across the EnableLight callbacks.
-					// EnableLight can transitively free the BSShadowLight via game-side
-					// scene mutations; without a keepalive, e.Light becomes dangling
-					// and s_budget.EndLight() below dereferences freed memory inside
-					// the unordered_map find() (observed crash: huge corrupted bucket
-					// index in mov rdx,[rdi+rbx*8]).
-					RE::NiPointer<RE::BSShadowLight> lightKeepalive(e.Light);
-					auto* lightSnapshot = e.Light;  // value snapshot for budget pairing
+					// Snapshot the pointer for budget pairing. We do NOT take an
+					// NiPointer keepalive here: BSShadowLight is observed to be freed
+					// by game-side code that bypasses the refcount, so a keepalive
+					// cannot actually keep the memory alive — its destructor would
+					// then DecRefCount on a freed-and-reused block (corrupted vtable
+					// crash). The snapshot is a value copy, no dereference.
+					auto* lightSnapshot = e.Light;
 
 					e.Light->UpdateCamera(camera);
 					s_budget.BeginLight(lightSnapshot, 0);
 					EnableLight(e.Light, camera, ssn, i);
-					// EnableLight callbacks may have nulled e.Light (clear) or freed the
-					// underlying object (the keepalive prevents the latter). Pair the
-					// budget tracker on the snapshot regardless so timing stays balanced.
-					s_budget.EndLight(lightSnapshot, 0);
 
-					// e.Light may have been cleared by EnableLight callbacks or re-entrant
-					// scheduling; bail before touching it again.
+					// EnableLight callbacks can null e.Light (re-entrant scheduling /
+					// scene mutation). Bail BEFORE EndLight: the BudgetTracker uses
+					// the pointer as a hash key, and a dangling-but-non-null pointer
+					// can corrupt unordered_map::find via a garbage hash bucket index.
+					// Skipping EndLight loses one timing sample for this light, which
+					// is harmless — better than a crash.
 					if (!e.Light)
 						continue;
+					s_budget.EndLight(lightSnapshot, 0);
 
 					// Record position so displacement-based redraw priority is correct next cycle.
 					if (auto* nilight = e.Light->light.get())
