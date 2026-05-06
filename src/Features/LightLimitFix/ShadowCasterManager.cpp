@@ -1058,12 +1058,17 @@ namespace ShadowCasterManager
 	// =========================================================================
 
 	// Lightweight per-frame candidate entry used during scheduling.
+	//
+	// After the validation pass, exactly one of {chosen, excess, invalid}
+	// is true (or none if it's the sun, which is processed separately).
 	struct CandidateLight
 	{
 		RE::BSShadowLight* light{ nullptr };
 		double score{ 0.0 };
 		bool sun{ false };
-		bool chosen{ false };
+		bool chosen{ false };   // valid + within ShadowLightCount budget
+		bool excess{ false };   // valid but over budget (convert or disable)
+		bool invalid{ false };  // failed UpdateCamera / culling / portal
 	};
 
 	static void ScheduleShadowCasters()
@@ -1140,25 +1145,32 @@ namespace ShadowCasterManager
 				return a.score > b.score;
 			});
 
-		// ---- Select top N lights that pass portal culling ----
+		// ---- Validation pass (no game mutations) ----
+		//
+		// Mirrors Intellightent's per-iteration validation gates. Splitting
+		// validation from mutation lets us defer all game-state changes
+		// (DisableLight / ConvertLight / EnableLight) to a single atomic loop
+		// later, eliminating the dangling-pointer crash window where mutations
+		// in an earlier phase invalidated raw pointers held in s_lights[].
+		//
+		// Slot 0 is reserved for the sun; point lights fill slots 1..ShadowLightCount.
+		// Do not count the sun against ShadowLightCount -- it uses focus cascade DSV slots,
+		// not parabolic point-light slots.
 		auto* globalCull = *reinterpret_cast<RE::BSCullingProcess**>(
 			*reinterpret_cast<uintptr_t**>(
 				REL::RelocationID(528077, 415022).address()));
 
-		// Slot 0 is reserved for the sun; point lights fill slots 1..ShadowLightCount.
-		// Do not count the sun against ShadowLightCount -- it uses focus cascade DSV slots,
-		// not parabolic point-light slots.
 		int wantCount = 0;
 
 		for (auto& c : candidates) {
 			auto* l = c.light;
 			if (!l->UpdateCamera(camera)) {
-				DisableLight(l);
+				c.invalid = true;
 				continue;
 			}
 			auto* cull = GetLightCullingProcess(l);
 			if (!cull) {
-				DisableLight(l);
+				c.invalid = true;
 				continue;
 			}
 			// Portal culling only applies in interior cells where a portal graph exists.
@@ -1167,7 +1179,7 @@ namespace ShadowCasterManager
 			if (portal) {
 				auto* gPortal = globalCull ? reinterpret_cast<RE::BSPortalGraphEntry*>(globalCull->portalGraphEntry) : nullptr;
 				if (gPortal && !GamePortalHasSharedVisibility(gPortal, portal)) {
-					DisableLight(l);
+					c.invalid = true;
 					continue;
 				}
 			}
@@ -1176,13 +1188,34 @@ namespace ShadowCasterManager
 				c.chosen = true;
 				wantCount++;
 			} else {
-				DisableLight(l);
+				c.excess = true;
 			}
 		}
 
 		// ---- Sync s_lights (our active pool) ----
+		//
+		// First drop entries whose pointers are no longer in the scene's
+		// activeShadowLights (game-side may have freed them since last frame).
+		// This protects subsequent slot-stability lookups from dereferencing
+		// dangling pointers.
+		std::unordered_set<RE::BSShadowLight*> aliveSet;
+		{
+			auto& alive = ssn->GetRuntimeData().activeShadowLights;
+			aliveSet.reserve(alive.size() + 1);
+			if (sunLight)
+				aliveSet.insert(sunLight);
+			for (auto& sp : alive)
+				if (auto* l = sp.get())
+					aliveSet.insert(l);
+		}
+		for (int i = 0; i < s_lights.Size; i++) {
+			if (!s_lights.Lights[i].Light)
+				continue;
+			if (aliveSet.find(s_lights.Lights[i].Light) == aliveSet.end())
+				s_lights.Lights[i].Clear();
+		}
 
-		// Remove lights no longer chosen.
+		// Drop entries no longer chosen (preserves slot stability for re-chosen lights).
 		for (int i = 0; i < s_lights.Size; i++) {
 			if (!s_lights.Lights[i].Light)
 				continue;
@@ -1199,7 +1232,7 @@ namespace ShadowCasterManager
 				s_lights.Lights[i].Clear();
 		}
 
-		// Add newly chosen lights.
+		// Add newly chosen lights (assigned to first free slot; keeps existing chosen lights in place).
 		for (auto& c : candidates) {
 			if (!c.chosen)
 				continue;
@@ -1484,56 +1517,161 @@ namespace ShadowCasterManager
 		// Smooth the count for stable UI display (avoid flickering)
 		s_redrawnLightsSmoothed = 0.8f * s_redrawnLightsSmoothed + 0.2f * s_redrawnLightsThisFrame;
 
-		// ---- Activate selected lights ----
-		for (int i = 0; i < s_lights.Size; i++) {
-			auto& e = s_lights.Lights[i];
-			if (!e.Light)
-				continue;
-			bool isSunSlot = (i == 0 && s_lights.Sun);
+		// ---- ATOMIC PER-CANDIDATE LOOP ----
+		//
+		// Replaces the previous split selection / activation phases. For each
+		// candidate (in score order), perform its mutation immediately:
+		//
+		//   - chosen + RedrawFrame + slot < ShadowLightCount + !sun-slot:
+		//       Begin + EnableLight + End budget pair, render shadow map.
+		//   - chosen, otherwise: DisableLight (Phase 7 below re-adds it via
+		//       GameSetShadowCasterSlot at the cached-shadow tail).
+		//   - excess + ConvertExcessToNormal: ConvertLight (preserves diffuse
+		//       contribution as a normal non-shadow light).
+		//   - excess + !ConvertExcessToNormal: DisableLight (vanilla SLF behavior).
+		//   - invalid (failed UpdateCamera / culling / portal): DisableLight.
+		//
+		// Why this ordering matters:
+		//   Score-sorted candidates have all chosen entries (rank < ShadowLightCount)
+		//   processed BEFORE any excess (rank >= ShadowLightCount). When ConvertLight
+		//   on an excess light triggers ReturnShadowmaps (which mutates the scene's
+		//   activeShadowLights and may free other BSShadowLight objects), the chosen
+		//   lights have already completed their EnableLight + budget pairing
+		//   synchronously within their own iteration. There is no later phase
+		//   walking those pointers, so the ConvertLight side-effect cannot induce
+		//   the dangling-pointer crash that previously plagued the split design.
+		//
+		// Defense for chosen-light cross-invalidation: EnableLight on light A could
+		// in principle invalidate light B's pointer via game-side scene mutations.
+		// We rebuild a per-iteration alive check via aliveNow (cheap O(N) scan,
+		// N ~16) before each EnableLight / ConvertLight call so a dangling pointer
+		// is skipped rather than dereferenced.
 
-			if (e.RedrawFrame && i < s_settings.ShadowLightCount) {
-				if (!isSunSlot) {
-					// Snapshot the pointer for budget pairing. We do NOT take an
-					// NiPointer keepalive here: BSShadowLight is observed to be freed
-					// by game-side code that bypasses the refcount, so a keepalive
-					// cannot actually keep the memory alive — its destructor would
-					// then DecRefCount on a freed-and-reused block (corrupted vtable
-					// crash). The snapshot is a value copy, no dereference.
-					auto* lightSnapshot = e.Light;
+		auto* shadowSceneNodeRT = &ssn->GetRuntimeData();
+
+		auto isAliveNow = [shadowSceneNodeRT, sunLight](RE::BSShadowLight* l) -> bool {
+			if (!l)
+				return false;
+			if (l == sunLight)
+				return true;
+			for (auto& sp : shadowSceneNodeRT->activeShadowLights)
+				if (sp.get() == l)
+					return true;
+			return false;
+		};
+
+		auto findSlotForLight = [](RE::BSShadowLight* l) -> int {
+			for (int i = 0; i < s_lights.Size; i++)
+				if (s_lights.Lights[i].Light == l)
+					return i;
+			return -1;
+		};
+
+		// Sun slot (slot 0) is processed inline below — sun setup happened at the
+		// top of the function; we only need to mark its mask index here.
+		if (s_lights.Sun && s_lights.Lights[0].Light && s_lights.Lights[0].RedrawFrame) {
+			ShadowField(s_lights.Lights[0].Light, maskIndex) = 0;
+			doneLightCount++;
+		}
+
+		for (auto& c : candidates) {
+			if (c.invalid) {
+				if (isAliveNow(c.light))
+					DisableLight(c.light);
+				continue;
+			}
+
+			if (c.chosen) {
+				int slot = findSlotForLight(c.light);
+				if (slot < 0)
+					continue;  // matches old behaviour: chosen-but-no-slot is a no-op
+				if (slot == 0 && s_lights.Sun)
+					continue;  // sun handled above
+
+				auto& e = s_lights.Lights[slot];
+
+				if (e.RedrawFrame && slot < s_settings.ShadowLightCount) {
+					// Render-this-frame path.
+					// Re-validate alive: a previous iteration's EnableLight may have
+					// transitively freed this light via game-side scene mutations.
+					if (!isAliveNow(e.Light))
+						continue;
+
+					auto* lightSnapshot = e.Light;  // value snapshot for budget pairing
 
 					e.Light->UpdateCamera(camera);
 					s_budget.BeginLight(lightSnapshot, 0);
-					EnableLight(e.Light, camera, ssn, i);
+					EnableLight(e.Light, camera, ssn, slot);
 
 					// EnableLight callbacks can null e.Light (re-entrant scheduling /
-					// scene mutation). Bail BEFORE EndLight: the BudgetTracker uses
-					// the pointer as a hash key, and a dangling-but-non-null pointer
-					// can corrupt unordered_map::find via a garbage hash bucket index.
-					// Skipping EndLight loses one timing sample for this light, which
-					// is harmless — better than a crash.
+					// scene mutation).  Bail before further dereferences.
 					if (!e.Light)
 						continue;
 					s_budget.EndLight(lightSnapshot, 0);
 
-					// Record position so displacement-based redraw priority is correct next cycle.
 					if (auto* nilight = e.Light->light.get())
 						e.lastRenderedPos = nilight->world.translate;
+
+					ShadowField(e.Light, maskIndex) = static_cast<uint32_t>(slot);
+					doneLightCount++;
+				} else {
+					// Cached-shadow path: DisableLight here, GameSetShadowCasterSlot
+					// in Phase 7 re-adds at endIdx.  Matches the old activation-loop
+					// else branch + cached-slot loop pairing.
+					if (e.Light && isAliveNow(e.Light))
+						DisableLight(e.Light);
 				}
-				ShadowField(e.Light, maskIndex) = static_cast<uint32_t>(i);
-				doneLightCount++;
-			} else {
-				DisableLight(e.Light);
+				continue;
+			}
+
+			if (c.excess) {
+				if (!isAliveNow(c.light))
+					continue;
+				if (s_settings.ConvertExcessToNormal) {
+					// Restores the conversion-on-overflow behaviour (issue #2121 #3).
+					// Safe in this position: all chosen lights above have completed
+					// their EnableLight pairing before we reach the excess range,
+					// so ConvertLight's ReturnShadowmaps side-effect cannot induce
+					// a dangling-pointer crash in our own pipeline.
+					ConvertLight(c.light, ssn, false);
+				} else {
+					DisableLight(c.light);
+				}
+				continue;
 			}
 		}
 
 		// Non-redrawn chosen lights: insert at end of shadow caster array without rendering.
 		// GetAccumLightSlot() already advanced past all EnableLight()-rendered slots.
+		//
+		// Re-rebuild the alive set: the atomic loop above may have invalidated
+		// pointers (e.g. ConvertLight on excess removes from activeShadowLights).
+		// Skip s_lights entries whose pointer is no longer in the scene to avoid
+		// dereferencing freed BSShadowLight memory below.
 		{
+			std::unordered_set<RE::BSShadowLight*> aliveAfterAtomic;
+			{
+				auto& alive = ssn->GetRuntimeData().activeShadowLights;
+				aliveAfterAtomic.reserve(alive.size() + 1);
+				if (sunLight)
+					aliveAfterAtomic.insert(sunLight);
+				for (auto& sp : alive)
+					if (auto* l = sp.get())
+						aliveAfterAtomic.insert(l);
+			}
+
 			int endIdx = (int)*GetAccumLightSlot();
 
 			for (int i = 0; i < s_lights.Size; i++) {
 				auto& e = s_lights.Lights[i];
 				if (e.Light && (!e.RedrawFrame || i >= s_settings.ShadowLightCount)) {
+					if (aliveAfterAtomic.find(e.Light) == aliveAfterAtomic.end()) {
+						// Pointer was invalidated by a same-frame mutation
+						// (typically ConvertLight on an excess light). Drop
+						// the s_lights entry and skip.
+						e.Clear();
+						continue;
+					}
 					GameSetShadowCasterSlot(ssn, e.Light, endIdx, 1);
 					if (!e.Light)
 						continue;
