@@ -63,17 +63,24 @@ namespace
 		ssgi->recompileFlag = true;
 	}
 
-	// VR variants force AO-only (EnableGI=false) for performance; vrApply is null where
-	// the SE/AE tuning is acceptable on VR and ApplyPreset falls back to apply.
+	// Shared tier table — both the apply lambdas and DetectCurrentQuality read from here
+	// so a single edit keeps application and detection in sync.
+	// VR High intentionally mirrors flat (vrApply=nullptr -> ApplyPreset falls back to apply).
+	static constexpr std::array<std::pair<QualityTier, QualityTier>, 3> kTierValues = { {
+		{ { 10, 12, 2, true }, { 1, 6, 2, false } },  // Low  (flat / VR)
+		{ { 4, 8, 1, true }, { 3, 8, 1, false } },    // Medium
+		{ { 4, 8, 0, true }, { 4, 8, 0, true } },     // High (no VR variant — uses flat)
+	} };
+
 	static constexpr std::array<Feature::QualityPreset, 3> kQualityPresets = { {
 		{ Feature::QualityLevel::Low, "Low", "Quarter resolution, blurred. AO + basic GI.",
-			[](Feature* f, Feature::QualityLevel) { ApplyTier(f, { 10, 12, 2, true }); },
-			[](Feature* f, Feature::QualityLevel) { ApplyTier(f, { 1, 6, 2, false }); } },
+			[](Feature* f, Feature::QualityLevel) { ApplyTier(f, kTierValues[0].first); },
+			[](Feature* f, Feature::QualityLevel) { ApplyTier(f, kTierValues[0].second); } },
 		{ Feature::QualityLevel::Medium, "Medium", "Half resolution, balanced quality and performance.",
-			[](Feature* f, Feature::QualityLevel) { ApplyTier(f, { 4, 8, 1, true }); },
-			[](Feature* f, Feature::QualityLevel) { ApplyTier(f, { 3, 8, 1, false }); } },
+			[](Feature* f, Feature::QualityLevel) { ApplyTier(f, kTierValues[1].first); },
+			[](Feature* f, Feature::QualityLevel) { ApplyTier(f, kTierValues[1].second); } },
 		{ Feature::QualityLevel::High, "High", "Full resolution, clean output with full GI.",
-			[](Feature* f, Feature::QualityLevel) { ApplyTier(f, { 4, 8, 0, true }); },
+			[](Feature* f, Feature::QualityLevel) { ApplyTier(f, kTierValues[2].first); },
 			nullptr },
 	} };
 }
@@ -85,16 +92,9 @@ std::span<const Feature::QualityPreset> ScreenSpaceGI::GetQualityPresets() const
 
 int ScreenSpaceGI::DetectCurrentQuality() const
 {
-	// SSGI tiers vary by platform — VR uses AO-only variants. Each tier matches when
-	// its critical knobs (slices, steps, resolution mode, GI on/off) all match.
 	const bool isVR = REL::Module::IsVR();
-	static constexpr std::array<std::pair<QualityTier, QualityTier>, 3> tiers = { {
-		{ { 10, 12, 2, true }, { 1, 6, 2, false } },  // Low (flat / VR)
-		{ { 4, 8, 1, true }, { 3, 8, 1, false } },    // Medium
-		{ { 4, 8, 0, true }, { 4, 8, 0, true } },     // High (no VR variant — uses flat)
-	} };
-	for (size_t i = 0; i < tiers.size(); ++i) {
-		const auto& q = isVR ? tiers[i].second : tiers[i].first;
+	for (size_t i = 0; i < kTierValues.size(); ++i) {
+		const auto& q = isVR ? kTierValues[i].second : kTierValues[i].first;
 		if (settings.NumSlices == q.numSlices &&
 			settings.NumSteps == q.numSteps &&
 			settings.ResolutionMode == q.resolutionMode &&
