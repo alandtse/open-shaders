@@ -175,9 +175,16 @@ void OverlayRenderer::RenderOverlay(
 		if (flying)
 			io.MousePos = { -FLT_MAX, -FLT_MAX };  // prevent hover/tooltips during active flying
 		editorWindow->Draw();
-	} else if (menu.IsEnabled || HomePageRenderer::ShouldShowFirstTimeSetup()) {
+	} else if (menu.IsEnabled || HomePageRenderer::ShouldShowFirstTimeSetup() ||
+			   ImGuiVRHelperClient::HelperRequestsRender()) {
 		ImGui::GetIO().MouseDrawCursor = true;
-		if (menu.IsEnabled) {
+		// Helper-requested render: the user picked CommunityShaders in
+		// the helper's dashboard combo (or in-scene focus model
+		// routed focus here). Draw the settings UI even though
+		// Menu::IsEnabled hasn't been flipped by the local TAB
+		// hotkey. This honors the kClientFlag_RendersOnFocus contract
+		// we advertised at registration.
+		if (menu.IsEnabled || ImGuiVRHelperClient::HelperRequestsRender()) {
 			drawSettings();
 		}
 	} else {
