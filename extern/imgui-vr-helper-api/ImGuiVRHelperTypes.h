@@ -133,6 +133,39 @@ namespace ImGuiVRHelperPluginAPI
 		///   - Multiple HUD clients stack in registration order;
 		///     last-registered draws on top.
 		kClientFlag_HUDMode = 1u << 1,
+
+		/// Also surface this client as a SteamVR Dashboard overlay. The
+		/// client appears as an icon in the SteamVR dashboard's left rail;
+		/// clicking it pops out the client's panel as a 3D plane the user
+		/// can pin / move / resize through SteamVR's standard dashboard
+		/// gestures.
+		///
+		/// Orthogonal to kClientFlag_HUDMode and to the in-scene panel —
+		/// a dashboard client may also be an in-scene panel client (most
+		/// common case: same panel, two surfaces). HUD-mode + Dashboard
+		/// is allowed but unusual.
+		///
+		/// Behaviour:
+		///   - The panel RTV is reused; SteamVR makes its own copy on
+		///     SetOverlayTextureFromHandle, so one render produces both
+		///     the in-scene quad and the dashboard plane.
+		///   - SteamVR drives input via VREvent_Mouse* delivered to the
+		///     overlay; the helper translates those to ImGui mouse state
+		///     for the focused client. No wand pointing involved on this
+		///     path — the dashboard's own laser handles it.
+		///   - The dashboard plane renders only while the SteamVR
+		///     dashboard is open; the in-scene panel takes over when
+		///     it's closed.
+		///   - Set the thumbnail asset via SetDashboardThumbnail (PNG
+		///     path) after registration, or pass nullptr and accept the
+		///     default helper icon.
+		///
+		/// Compatibility note: dashboard overlays require the SteamVR
+		/// IVROverlay implementation. OpenComposite-based runtimes
+		/// implement this only partially; the helper detects this at
+		/// CreateDashboardOverlay time and gracefully degrades to the
+		/// in-scene-only path (logged once at registration).
+		kClientFlag_Dashboard = 1u << 2,
 	};
 
 }  // namespace ImGuiVRHelperPluginAPI
