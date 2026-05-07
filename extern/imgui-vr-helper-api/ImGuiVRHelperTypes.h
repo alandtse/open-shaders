@@ -166,6 +166,33 @@ namespace ImGuiVRHelperPluginAPI
 		/// CreateDashboardOverlay time and gracefully degrades to the
 		/// in-scene-only path (logged once at registration).
 		kClientFlag_Dashboard = 1u << 2,
+
+		/// Acknowledge the focus-render contract: when this client's
+		/// per-frame Frame.flags has bit0 (client_has_focus) set, the
+		/// client WILL render its menu UI into the panel RTV that
+		/// frame, regardless of whatever internal "is my menu open"
+		/// state the client tracks.
+		///
+		/// This is the wire signal the helper uses to tell a client
+		/// "you're being shown right now — please draw something."
+		/// Triggers include:
+		///   - User selected this client in the helper's dashboard
+		///     picker (SteamVR rail interaction).
+		///   - The helper's in-scene focus model picked this client
+		///     (e.g. user just dismissed another panel).
+		///
+		/// Without this flag, the helper still tracks focus on the
+		/// client (so RequestFocus / ReleaseFocus still work), but
+		/// assumes the client renders only when its own internal
+		/// trigger fires (e.g. a TAB hotkey). The dashboard picker
+		/// for such clients shows a "trigger this manually" banner
+		/// instead of trying to mirror a possibly-stale panel RTV.
+		///
+		/// New code SHOULD set this flag. Pre-existing clients that
+		/// can't easily move their render to focus-driven (legacy
+		/// menu state machines, etc.) can omit it and the helper
+		/// degrades gracefully.
+		kClientFlag_RendersOnFocus = 1u << 3,
 	};
 
 }  // namespace ImGuiVRHelperPluginAPI
