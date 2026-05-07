@@ -16,6 +16,7 @@
 #pragma once
 
 #include <d3d11.h>
+#include <functional>
 
 #include "RE/B/BSShadowLight.h"
 #include "RE/S/ShadowSceneNode.h"
@@ -432,6 +433,16 @@ namespace ShadowCasterManager
 	/// Uses the internal s_lights pool — does not read the descriptor's shadowmapIndex field,
 	/// which may be corrupted by ReturnShadowmaps().  Returns -1 if the light is not active.
 	int32_t GetShadowSlot(RE::BSShadowLight* light);
+
+	/// Visit every shadow light currently demoted to non-shadow rendering via
+	/// ConvertExcessToNormal.  These lights live in the engine's activeShadowLights
+	/// list (0x148) but are reported as non-shadow by Hook_IsShadowLight.  The
+	/// cluster pipeline (LightLimitFix::UpdateLights) needs to inject them into
+	/// lightsData[] without the Shadow flag so they still contribute diffuse light.
+	///
+	/// Visitor signature: void(RE::BSShadowLight* light).  Pointers are stable for
+	/// the duration of the call (no concurrent scheduler mutation).
+	void ForEachConvertedLight(const std::function<void(RE::BSShadowLight*)>& visitor);
 
 	/// Draw shadow-specific statistics lines (slot usage, importance count).
 	/// Call from LightLimitFix::DrawSettings() inside its Statistics tree node.

@@ -565,25 +565,22 @@ void LightLimitFix::UpdateLights()
 	// false, because the engine's AddLight just searches the existing wrappers and
 	// activates the matching one in-place rather than moving entries between lists.
 	//
-	// The shadowLightsAccum loop above already pulled in lights with active shadow-
-	// caster slots (and inserted them in shadowLightPtrs to dedupe). Anything in
-	// activeShadowLights but NOT in shadowLightsAccum is a BSShadowLight that the
-	// engine is tracking but isn't currently a shadow caster — i.e. a converted
-	// light. Add those via the non-shadow addLight path so they contribute diffuse
-	// lighting (no Shadow flag, no shadow map slot).
+	// Iterate SCM's s_normalConvert directly rather than scanning activeShadowLights:
+	// only lights actually in s_normalConvert are intended to render as non-shadow.
+	// activeShadowLights also contains BSShadowLights that are merely active shadow
+	// casters this frame (already handled via shadowLightsAccum above), and could in
+	// principle contain disabled-but-not-yet-removed entries. Iterating the convert
+	// list is both tighter (no false positives) and cheaper.
 	//
 	// Without this, ConvertExcessToNormal lights have no entry in the cluster
 	// lightsData[] and never render — the user-visible "converted lights are
 	// invisible" symptom of issue #2121 #3.
-	for (auto& e : shadowSceneNode->GetRuntimeData().activeShadowLights) {
-		auto bsLight = e.get();
-		if (!bsLight)
-			continue;
-		auto* asBs = static_cast<RE::BSLight*>(bsLight);
+	ShadowCasterManager::ForEachConvertedLight([&](RE::BSShadowLight* light) {
+		auto* asBs = static_cast<RE::BSLight*>(light);
 		if (shadowLightPtrs.count(asBs))
-			continue;  // already added via shadowLightsAccum above
+			return;  // simultaneously a shadow caster this frame; already added
 		addLight(RE::NiPointer<RE::BSLight>(asBs));
-	}
+	});
 
 	auto context = globals::d3d::context;
 

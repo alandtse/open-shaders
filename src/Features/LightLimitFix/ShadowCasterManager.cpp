@@ -1660,7 +1660,28 @@ namespace ShadowCasterManager
 				// callee chain may dispatch virtually — same guard either way.
 				if (!isUsableLight(c.light))
 					continue;
-				if (s_settings.ConvertExcessToNormal) {
+
+				// Skyrim's non-shadow light pipeline has no spot/cone primitive —
+				// `BSLight` only wraps `NiPointLight` (omni) or `NiDirectionalLight`,
+				// with no `NiSpotLight` equivalent. Converting a `BSShadowFrustumLight`
+				// (the spot-shadow class with semiWidth/semiHeight/falloff cone
+				// parameters) to "normal" via Hook_IsShadowLight makes the engine
+				// treat it as a 360° omni light, which is wrong: the cone-shaped
+				// illumination becomes spherical and bleeds through walls behind
+				// the original spot direction.
+				//
+				// Only `BSShadowParabolicLight` (omni / hemi-paraboloid) converts
+				// cleanly — its illumination is already approximately spherical so
+				// the engine's omni interpretation is acceptable.
+				//
+				// Spot lights (BSShadowFrustumLight) fall back to DisableLight —
+				// vanilla SLF behaviour for excess. They vanish rather than render
+				// incorrectly. A future improvement could store cone parameters in
+				// the cluster `LightData` and apply cone falloff in our cluster
+				// shader; until then, dropping spot excess is the honest answer.
+				const bool isSpotShadow = c.light->GetIsFrustumLight();
+
+				if (s_settings.ConvertExcessToNormal && !isSpotShadow) {
 					// Atomic ordering: by the time we reach excess (rank
 					// >= ShadowLightCount), all chosen lights (rank <
 					// ShadowLightCount) have completed their Begin/EnableLight/
@@ -2444,6 +2465,14 @@ namespace ShadowCasterManager
 	int32_t GetShadowSlot(RE::BSShadowLight* light)
 	{
 		return s_lights.FindLight(light, s_settings.ShadowLightCount);
+	}
+
+	void ForEachConvertedLight(const std::function<void(RE::BSShadowLight*)>& visitor)
+	{
+		for (auto& c : s_normalConvert) {
+			if (c.light)
+				visitor(c.light);
+		}
 	}
 
 	// =========================================================================
