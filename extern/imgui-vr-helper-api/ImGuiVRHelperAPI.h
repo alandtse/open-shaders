@@ -173,23 +173,17 @@ namespace ImGuiVRHelperPluginAPI
 
 		// ---- SteamVR Dashboard ------------------------------------------
 
-		/// Set the sidebar thumbnail icon for a client registered with
-		/// kClientFlag_Dashboard. `image_path` is an absolute or
-		/// game-root-relative PNG path; the helper loads it lazily on
-		/// first dashboard activation. Aspect doesn't have to be square,
-		/// but SteamVR shows it in a roughly 1:1 slot — 256×256 is a
-		/// safe default.
-		///
-		/// Pass nullptr to fall back to the helper's built-in default
-		/// icon. No-op for clients without kClientFlag_Dashboard.
-		///
-		/// Returns true on success (path stored; load is deferred), false
-		/// if the client doesn't exist or isn't a dashboard client.
-		virtual bool SetDashboardThumbnail(uint32_t client_id, const char* image_path) = 0;
-
 		/// True iff the SteamVR dashboard is currently open. Useful for
 		/// clients that want to suppress in-scene rendering while their
-		/// dashboard surface is the active presentation.
+		/// panel is the active dashboard surface (avoids double-paint
+		/// when the user is interacting with the dashboard).
+		///
+		/// The helper owns a single shared dashboard surface; a picker
+		/// inside the helper's settings panel chooses which
+		/// kClientFlag_Dashboard client's panel texture is mirrored.
+		/// Per-client thumbnails / individual rail entries are not part
+		/// of the v1 design — keeps the SteamVR rail uncluttered as the
+		/// helper picks up more clients.
 		virtual bool IsDashboardVisible() = 0;
 	};
 
