@@ -425,6 +425,7 @@ void LightLimitFix::ClearShaderCache()
 
 void LightLimitFix::UpdateLights()
 {
+	ZoneScopedN("LLF::UpdateLights");
 	auto smState = globals::game::smState;
 	auto& isl = globals::features::inverseSquareLighting;
 
