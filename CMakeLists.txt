@@ -352,13 +352,19 @@ string(TIMESTAMP UTC_NOW "%Y-%m-%dT%H-%MZ" UTC)
 # Set AIO directory path used by multiple targets below
 set(AIO_DIR "${CMAKE_CURRENT_BINARY_DIR}/aio")
 
-# Robocopy wrapper for Windows incremental file copy (used by deployment targets)
+# Robocopy wrapper for Windows incremental file copy (used by deployment targets).
+# We invoke through `cmd /c "<absolute-path>"` rather than the bare wrapper path because
+# modern Windows refuses to execute scripts from the current directory without an explicit
+# `.\` prefix, and CMake strips the absolute path on COMMAND args that live inside
+# CMAKE_BINARY_DIR (the custom-build CWD). Treating the wrapper as an argument to cmd
+# keeps the absolute path intact in the generated MSBuild command.
 if(WIN32)
-    set(ROBOCOPY_WRAPPER "${CMAKE_BINARY_DIR}/robocopy_wrapper.cmd")
+    set(ROBOCOPY_WRAPPER_PATH "${CMAKE_BINARY_DIR}/robocopy_wrapper.cmd")
     file(
-        WRITE ${ROBOCOPY_WRAPPER}
+        WRITE ${ROBOCOPY_WRAPPER_PATH}
         "@echo off\r\nrem Robocopy wrapper: forwards all args to robocopy and normalizes exit codes\r\nrobocopy %*\r\nset rc=%ERRORLEVEL%\r\nif %rc% GEQ 8 exit /b %rc%\r\nexit /b 0\r\n"
     )
+    set(ROBOCOPY_WRAPPER cmd /c "${ROBOCOPY_WRAPPER_PATH}")
 endif()
 
 # #######################################################################################################################
