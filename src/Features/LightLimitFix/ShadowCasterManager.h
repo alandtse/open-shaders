@@ -67,13 +67,28 @@ namespace ShadowCasterManager
 	template <typename Fn>
 	inline void ForEachShadowLight(const RE::BSTArray<RE::BSShadowLight*>& accum, Fn&& fn)
 	{
-		int idx = 0;
-		while (true) {
+		// Engine convention is "walk until null", but shadowLightsAccum can
+		// contain non-null garbage if some other hook corrupts the array
+		// between our prepass and this read. Bail on: out-of-capacity index,
+		// non-user-mode or unaligned ptr, zero step (spin), wraparound step
+		// (use uint64 advance).
+		const std::uint32_t capacity = accum.capacity();
+		std::uint32_t idx = 0;
+		while (idx < capacity) {
 			RE::BSShadowLight* light = accum[idx];
 			if (!light)
 				break;
+			const auto raw = reinterpret_cast<std::uintptr_t>(light);
+			if (raw >= 0x0000800000000000ull || (raw & 0x7) != 0)
+				break;
 			fn(light);
-			idx += light->shadowMapCount;
+			const std::uint32_t step = light->shadowMapCount;
+			if (step == 0)
+				break;
+			const std::uint64_t next = static_cast<std::uint64_t>(idx) + step;
+			if (next >= capacity)
+				break;
+			idx = static_cast<std::uint32_t>(next);
 		}
 	}
 
