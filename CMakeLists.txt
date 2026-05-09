@@ -424,14 +424,20 @@ if(AUTO_PLUGIN_DEPLOYMENT OR AIO_ZIP_TO_DIST)
 
     # Prepare AIO only when sources change. Gather package + feature files as
     # inputs so the prepare step runs only when something actually changed.
+    # Shader files are intentionally excluded - copy_shaders.stamp owns those,
+    # and including them here causes a race where two parallel custom-build
+    # rules call cmake -E copy_if_different on the same destination file
+    # (Permission denied on Windows when one process has it open for write).
     file(
         GLOB_RECURSE _AIO_PACKAGE_FILES
         LIST_DIRECTORIES FALSE
         "${CMAKE_SOURCE_DIR}/package/*"
     )
     list(FILTER _AIO_PACKAGE_FILES EXCLUDE REGEX "/Tests/")
+    list(FILTER _AIO_PACKAGE_FILES EXCLUDE REGEX "/Shaders/")
     foreach(_fpath IN LISTS FEATURE_PATHS)
         file(GLOB_RECURSE _tmp LIST_DIRECTORIES FALSE "${_fpath}/*")
+        list(FILTER _tmp EXCLUDE REGEX "/Shaders/")
         list(APPEND _AIO_PACKAGE_FILES ${_tmp})
     endforeach()
 
@@ -463,16 +469,21 @@ if(AUTO_PLUGIN_DEPLOYMENT OR AIO_ZIP_TO_DIST)
         "${CMAKE_SOURCE_DIR}/cmake/CleanupStaleEntries.cmake"
     )
 
-    # Copy package files (exclude test files from production packages)
+    # Copy package files (exclude test files from production packages, and
+    # exclude shaders since copy_shaders.stamp owns those - see input-tracking
+    # comment above for the race-condition rationale).
     file(
         GLOB_RECURSE _AIO_PACKAGE_SOURCE_FILES
         LIST_DIRECTORIES FALSE
         "${CMAKE_SOURCE_DIR}/package/*"
     )
     list(FILTER _AIO_PACKAGE_SOURCE_FILES EXCLUDE REGEX "/Tests/")
+    list(FILTER _AIO_PACKAGE_SOURCE_FILES EXCLUDE REGEX "/Shaders/")
     append_copy_if_different(_prepare_aio_cmds _AIO_PACKAGE_SOURCE_FILES "${CMAKE_SOURCE_DIR}/package" "${AIO_DIR}")
 
-    # Copy feature folders (only files, preserve existing files in AIO)
+    # Copy feature folders (only files, preserve existing files in AIO).
+    # Shader files are excluded - copy_shaders.stamp owns the Shaders/ subdir
+    # so the two custom-build rules don't race on the same destinations.
     foreach(_fpath IN LISTS FEATURE_PATHS)
         if(EXISTS "${_fpath}")
             file(
@@ -480,6 +491,7 @@ if(AUTO_PLUGIN_DEPLOYMENT OR AIO_ZIP_TO_DIST)
                 LIST_DIRECTORIES FALSE
                 "${_fpath}/*"
             )
+            list(FILTER _feature_files EXCLUDE REGEX "/Shaders/")
             append_copy_if_different(_prepare_aio_cmds _feature_files "${_fpath}" "${AIO_DIR}")
         endif()
     endforeach()
