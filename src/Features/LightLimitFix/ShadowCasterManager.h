@@ -67,41 +67,28 @@ namespace ShadowCasterManager
 	template <typename Fn>
 	inline void ForEachShadowLight(const RE::BSTArray<RE::BSShadowLight*>& accum, Fn&& fn)
 	{
-		// Hardened iteration: the engine convention is "walk until null", but
-		// shadowLightsAccum can contain non-null garbage pointers if a third
-		// party (ENB, other DirectX-hooking mods) has corrupted it between
-		// our hook firing and this read. The original code dereferenced any
-		// non-null entry and crashed reading shadowMapCount through the bad
-		// pointer (CrashLogger trace at ShadowRenderer.cpp:34, R15 holding
-		// non-pointer bytes "COORD..." instead of a BSShadowLight*).
-		//
-		// We add three guards:
-		//   * idx must stay strictly within capacity (hard upper bound, the
-		//     array is preallocated; capacity is what the engine actually
-		//     owns even when _size is unreliable).
-		//   * pointer must look like a valid user-mode address: aligned,
-		//     non-canonical-garbage, in the lower 47 bits (Windows user
-		//     space is 128 TB max). This rejects ASCII garbage like the
-		//     observed 0x4F430044524F4F43 without false-positiving real
-		//     pointers (which always have the top bits clear in user mode).
-		//   * shadowMapCount must be sane (1..16). If it's nonsense the
-		//     iteration would loop forever or skip into a bad index.
-		const auto capacity = accum.capacity();
-		int idx = 0;
-		while (idx >= 0 && static_cast<std::size_t>(idx) < capacity) {
+		// Engine convention is "walk until null", but shadowLightsAccum can
+		// contain non-null garbage if some other hook corrupts the array
+		// between our prepass and this read. Bail on: out-of-capacity index,
+		// non-user-mode or unaligned ptr, zero step (spin), wraparound step
+		// (use uint64 advance).
+		const std::uint32_t capacity = accum.capacity();
+		std::uint32_t idx = 0;
+		while (idx < capacity) {
 			RE::BSShadowLight* light = accum[idx];
 			if (!light)
 				break;
-			// Plausibility check: user-mode pointers are < 0x0000800000000000
-			// and at least 8-byte aligned. Reject anything else.
 			const auto raw = reinterpret_cast<std::uintptr_t>(light);
 			if (raw >= 0x0000800000000000ull || (raw & 0x7) != 0)
 				break;
 			fn(light);
 			const std::uint32_t step = light->shadowMapCount;
-			if (step == 0 || step > 16)
-				break;  // corrupt entry; stop rather than spin or run wild
-			idx += static_cast<int>(step);
+			if (step == 0)
+				break;
+			const std::uint64_t next = static_cast<std::uint64_t>(idx) + step;
+			if (next >= capacity)
+				break;
+			idx = static_cast<std::uint32_t>(next);
 		}
 	}
 
