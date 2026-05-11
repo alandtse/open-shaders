@@ -1485,7 +1485,21 @@ namespace ShadowCasterManager
 				c.sun = false;
 				c.score = CalculateLightScore(l, camera, tmpIndex++);
 			}
+#ifdef TRACY_ENABLE
+			char buf[32];
+			const int n = snprintf(buf, sizeof(buf), "candidates=%zu", candidates.size());
+			if (n > 0)
+				ZoneText(buf, static_cast<size_t>(n));
+#endif
 		}
+
+		// Validation, redraw-interval scoring, and RedrawFrame marking all
+		// happen before the atomic loop. Tracy capture analysis showed this
+		// block dominates SCM::ScheduleShadowCasters (98%+ of the function's
+		// runtime), so a dedicated zone scopes that cost separately from
+		// ScoreCandidates and ScheduleLoop. Named variant because the
+		// enclosing function already declares a ZoneScopedN.
+		ZoneNamedN(zoneValBudget, "SCM::ValidateAndScheduleBudget", true);
 
 		// Apply debug pins: bias scoring so pinned-shadow lights sort to the
 		// top (forced into the chosen pool up to ShadowLightCount) and
@@ -2926,11 +2940,6 @@ namespace ShadowCasterManager
 			s_lights.Size = newTotal;
 		}
 		s_settings = capped;
-
-		// Touch GetVRAMInfo here so its first-call log fires on the first
-		// scheduler tick even if the user never opens the menu. The log gate
-		// lives inside GetVRAMInfo so any caller can be the first one.
-		(void)GetVRAMInfo();
 	}
 
 	const LightContainer& GetLights()
