@@ -1,6 +1,12 @@
 name: "PR: Checks"
 
 on:
+    # `paths` is restricted to files that pr-checks can actually validate on
+    # this PR. Workflow definitions (.github/workflows/**) and composite
+    # actions (.github/actions/**) resolve from the BASE branch under
+    # pull_request_target, so they can never be tested by their own PR's
+    # run — keeping them in `paths` would only fire the unconditional
+    # feature-audit job for changes that have no validatable impact.
     pull_request_target:
         types: [opened, synchronize, reopened, ready_for_review]
         paths:
@@ -22,9 +28,7 @@ on:
             - "src/Features/**"
             - "package/Shaders/**"
             - "tests/shaders/**"
-            - ".github/workflows/**"
             - ".github/configs/**"
-            - ".github/actions/**"
 
 # Least-privilege defaults; individual jobs override where needed.
 permissions:
