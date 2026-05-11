@@ -9,6 +9,7 @@
 #include "ShadowCasterManager.h"
 #include "../../Deferred.h"
 #include "../../Globals.h"
+#include "../../State.h"
 #include "../../Utils/Game.h"
 #include "../../Utils/UI.h"
 #include "../Upscaling.h"
@@ -1232,17 +1233,25 @@ namespace ShadowCasterManager
 
 	// Activates a light as a normal (non-shadow) light by inserting it into
 	// the scene's active-light list without allocating a shadow slot.
+	//
+	// Two paths: "already-converted re-enable" (just GameEnableLight) and
+	// "first conversion this session" (ReturnShadowmaps + portal-clear +
+	// track in s_normalConvert + GameEnableLight). Tracy sub-zones split
+	// the cost so the next capture distinguishes the steady-state cost
+	// (re-enable only) from the cost of a fresh conversion.
 	static void ConvertLight(RE::BSShadowLight* light, RE::ShadowSceneNode* ssn, bool isNS)
 	{
 		// Already converted: just re-enable so geometry picks it up this frame.
 		for (auto& c : s_normalConvert) {
 			if (c.light == light) {
+				ZoneNamedN(zReEnable, "SCM::Engine::ConvertLight::ReEnable", true);
 				GameEnableLight(ssn, light);
 				return;
 			}
 		}
 
-		// Prepass: release shadow resources.
+		// First conversion this session: release shadow resources, register.
+		ZoneNamedN(zFirstConv, "SCM::Engine::ConvertLight::FirstConvert", true);
 		auto* cull = GetLightCullingProcess(light);
 		if (cull && cull->portalGraphEntry)
 			GameClearPortalVisibility(reinterpret_cast<RE::BSPortalGraphEntry*>(cull->portalGraphEntry));
@@ -1541,132 +1550,148 @@ namespace ShadowCasterManager
 
 		int wantCount = 0;
 
-		for (auto& c : candidates) {
-			auto* l = c.light;
-			// UpdateCamera (vfunc 16, +0x80) is the engine's type-aware visibility
-			// test and rejects lights that can't contribute to any visible pixel:
-			//   - BSShadowParabolicLight: BSMultiBoundSphere::Func41 — sphere vs
-			//     camera frustum (verified via Ghidra at 0x14151b620 / AE 1.6.1170)
-			//   - BSShadowFrustumLight:   FUN_14150aba0 (cone vs camera frustum)
-			//     -- cone-aware so a spot light positioned off-screen but pointing
-			//     INTO the camera frustum is correctly kept (sphere test would
-			//     wrongly reject such a spot since its bounding sphere stays
-			//     centered on the off-screen origin).
-			//   - BSShadowDirectionalLight: cascades, separate code path.
-			// Trusting UpdateCamera's verdict reuses the engine's own culling math
-			// per light type. An earlier revision added a redundant sphere test
-			// here via RE::NiCamera::BoundInFrustum — that under-approximated the
-			// reach of spots and produced regressions where off-screen-but-cone-in-
-			// frustum spots flickered on/off as the camera moved.
-			if (!l->UpdateCamera(camera)) {
-				c.invalidCamera = true;
-				c.invalid = true;
-				continue;
-			}
-			// Portal culling only applies in interior cells where a portal graph exists.
-			// Lights with no culling process (e.g. WSU spotlights outside cell bounds)
-			// or no portal are unconditionally visible; skip the check for them.
-			auto* cull = GetLightCullingProcess(l);
-			if (cull) {
-				auto* portal = reinterpret_cast<RE::BSPortalGraphEntry*>(cull->portalGraphEntry);
-				if (portal) {
-					auto* gPortal = globalCull ? reinterpret_cast<RE::BSPortalGraphEntry*>(globalCull->portalGraphEntry) : nullptr;
-					if (gPortal && !GamePortalHasSharedVisibility(gPortal, portal)) {
-						c.invalidPortal = true;
-						c.invalid = true;
-						continue;
-					}
-				}
-			}
-
-			if (wantCount < s_settings.ShadowLightCount) {
-				c.chosen = true;
-				wantCount++;
-			} else {
-				c.excess = true;
-			}
-		}
-
-		// ---- Sync s_lights (our active pool) ----
-		//
-		// First drop entries whose pointers are no longer in the scene's
-		// activeShadowLights (game-side may have freed them since last frame).
-		// This protects subsequent slot-stability lookups from dereferencing
-		// dangling pointers.
-		std::unordered_set<RE::BSShadowLight*> aliveSet;
+		// Per-candidate UpdateCamera vfunc + portal-graph visibility walk
+		// + chosen/excess tagging. Captured separately so memoization or
+		// caching of UpdateCamera/portal verdicts can be measured.
 		{
-			auto& alive = ssn->GetRuntimeData().activeShadowLights;
-			aliveSet.reserve(alive.size() + 1);
-			if (sunLight)
-				aliveSet.insert(sunLight);
-			for (auto& sp : alive)
-				if (auto* l = sp.get())
-					aliveSet.insert(l);
-		}
-		for (int i = 0; i < s_lights.Size; i++) {
-			if (!s_lights.Lights[i].Light)
-				continue;
-			if (aliveSet.find(s_lights.Lights[i].Light) == aliveSet.end())
-				s_lights.Lights[i].Clear();
-		}
-
-		// Drop entries no longer chosen (preserves slot stability for re-chosen lights).
-		for (int i = 0; i < s_lights.Size; i++) {
-			if (!s_lights.Lights[i].Light)
-				continue;
-			bool stillChosen = (i == 0 && s_lights.Sun);  // sun slot
-			if (!stillChosen) {
-				for (auto& c : candidates) {
-					if (c.light == s_lights.Lights[i].Light && c.chosen) {
-						stillChosen = true;
-						break;
+			ZoneNamedN(zoneCandVal, "SCM::CandidateValidation", true);
+			for (auto& c : candidates) {
+				auto* l = c.light;
+				// UpdateCamera (vfunc 16, +0x80) is the engine's type-aware visibility
+				// test and rejects lights that can't contribute to any visible pixel:
+				//   - BSShadowParabolicLight: BSMultiBoundSphere::Func41 — sphere vs
+				//     camera frustum (verified via Ghidra at 0x14151b620 / AE 1.6.1170)
+				//   - BSShadowFrustumLight:   FUN_14150aba0 (cone vs camera frustum)
+				//     -- cone-aware so a spot light positioned off-screen but pointing
+				//     INTO the camera frustum is correctly kept (sphere test would
+				//     wrongly reject such a spot since its bounding sphere stays
+				//     centered on the off-screen origin).
+				//   - BSShadowDirectionalLight: cascades, separate code path.
+				// Trusting UpdateCamera's verdict reuses the engine's own culling math
+				// per light type. An earlier revision added a redundant sphere test
+				// here via RE::NiCamera::BoundInFrustum — that under-approximated the
+				// reach of spots and produced regressions where off-screen-but-cone-in-
+				// frustum spots flickered on/off as the camera moved.
+				if (!l->UpdateCamera(camera)) {
+					c.invalidCamera = true;
+					c.invalid = true;
+					continue;
+				}
+				// Portal culling only applies in interior cells where a portal graph exists.
+				// Lights with no culling process (e.g. WSU spotlights outside cell bounds)
+				// or no portal are unconditionally visible; skip the check for them.
+				auto* cull = GetLightCullingProcess(l);
+				if (cull) {
+					auto* portal = reinterpret_cast<RE::BSPortalGraphEntry*>(cull->portalGraphEntry);
+					if (portal) {
+						auto* gPortal = globalCull ? reinterpret_cast<RE::BSPortalGraphEntry*>(globalCull->portalGraphEntry) : nullptr;
+						if (gPortal && !GamePortalHasSharedVisibility(gPortal, portal)) {
+							c.invalidPortal = true;
+							c.invalid = true;
+							continue;
+						}
 					}
 				}
+
+				if (wantCount < s_settings.ShadowLightCount) {
+					c.chosen = true;
+					wantCount++;
+				} else {
+					c.excess = true;
+				}
 			}
-			if (!stillChosen)
-				s_lights.Lights[i].Clear();
-		}
+		}  // end SCM::CandidateValidation
 
-		// Add newly chosen lights (assigned to first free slot; keeps existing chosen lights in place).
-		for (auto& c : candidates) {
-			if (!c.chosen)
-				continue;
-			bool alreadyIn = false;
-			for (int i = 0; i < s_lights.Size && !alreadyIn; i++)
-				if (s_lights.Lights[i].Light == c.light)
-					alreadyIn = true;
-			if (alreadyIn)
-				continue;
-
-			int idx = s_lights.FindFreeIndex(true, s_settings.ShadowLightCount, s_settings.ConvertedShadowSlots);
-			if (idx < 0)
-				continue;
-			s_lights.Lights[idx].Light = c.light;
-		}
-
-		// Update sun slot (slot 0).
-		if (sunLight) {
-			if (s_lights.Lights[0].Light != sunLight) {
-				s_lights.Lights[0].Clear();
-				s_lights.Lights[0].Light = sunLight;
+		// Pool membership update: drop expired pointers, drop unchosen,
+		// add newly chosen, sync sun slot.
+		{
+			ZoneNamedN(zonePoolMem, "SCM::UpdatePoolMembership", true);
+			// ---- Sync s_lights (our active pool) ----
+			//
+			// First drop entries whose pointers are no longer in the scene's
+			// activeShadowLights (game-side may have freed them since last frame).
+			// This protects subsequent slot-stability lookups from dereferencing
+			// dangling pointers.
+			std::unordered_set<RE::BSShadowLight*> aliveSet;
+			{
+				auto& alive = ssn->GetRuntimeData().activeShadowLights;
+				aliveSet.reserve(alive.size() + 1);
+				if (sunLight)
+					aliveSet.insert(sunLight);
+				for (auto& sp : alive)
+					if (auto* l = sp.get())
+						aliveSet.insert(l);
 			}
-			s_lights.Sun = true;
-		} else {
-			// Sun is gone. If slot 0 was tracking the sun, clear the stale
-			// pointer. If Sun was already false coming in, slot 0 holds a
-			// regular point light (sun-aware FindFreeIndex allocates point
-			// lights to slot 0 when Sun=false) -- do NOT wipe it. This
-			// matches Intellightent's reference behaviour (no unconditional
-			// slot-0 clear in the no-sun branch).
-			if (s_lights.Sun)
-				s_lights.Lights[0].Clear();
-			s_lights.Sun = false;
-		}
+			for (int i = 0; i < s_lights.Size; i++) {
+				if (!s_lights.Lights[i].Light)
+					continue;
+				if (aliveSet.find(s_lights.Lights[i].Light) == aliveSet.end())
+					s_lights.Lights[i].Clear();
+			}
+
+			// Drop entries no longer chosen (preserves slot stability for re-chosen lights).
+			for (int i = 0; i < s_lights.Size; i++) {
+				if (!s_lights.Lights[i].Light)
+					continue;
+				bool stillChosen = (i == 0 && s_lights.Sun);  // sun slot
+				if (!stillChosen) {
+					for (auto& c : candidates) {
+						if (c.light == s_lights.Lights[i].Light && c.chosen) {
+							stillChosen = true;
+							break;
+						}
+					}
+				}
+				if (!stillChosen)
+					s_lights.Lights[i].Clear();
+			}
+
+			// Add newly chosen lights (assigned to first free slot; keeps existing chosen lights in place).
+			for (auto& c : candidates) {
+				if (!c.chosen)
+					continue;
+				bool alreadyIn = false;
+				for (int i = 0; i < s_lights.Size && !alreadyIn; i++)
+					if (s_lights.Lights[i].Light == c.light)
+						alreadyIn = true;
+				if (alreadyIn)
+					continue;
+
+				int idx = s_lights.FindFreeIndex(true, s_settings.ShadowLightCount, s_settings.ConvertedShadowSlots);
+				if (idx < 0)
+					continue;
+				s_lights.Lights[idx].Light = c.light;
+			}
+
+			// Update sun slot (slot 0).
+			if (sunLight) {
+				if (s_lights.Lights[0].Light != sunLight) {
+					s_lights.Lights[0].Clear();
+					s_lights.Lights[0].Light = sunLight;
+				}
+				s_lights.Sun = true;
+			} else {
+				// Sun is gone. If slot 0 was tracking the sun, clear the stale
+				// pointer. If Sun was already false coming in, slot 0 holds a
+				// regular point light (sun-aware FindFreeIndex allocates point
+				// lights to slot 0 when Sun=false) -- do NOT wipe it. This
+				// matches Intellightent's reference behaviour (no unconditional
+				// slot-0 clear in the no-sun branch).
+				if (s_lights.Sun)
+					s_lights.Lights[0].Clear();
+				s_lights.Sun = false;
+			}
+		}  // end SCM::UpdatePoolMembership
 
 		// ---- Temporal budget: decide which lights redraw this frame ----
+		double budget = s_settings.RedrawBudgetMs;
 		{
-			// Update frame-time EMA and ring buffer (always, for formula params and UI).
+			// Frame-time EMA + budget formula evaluation. Scoped separately
+			// from ScheduleLoop so the once-per-frame budget cost is visible
+			// distinct from the per-light scheduling cost.
 			{
+				ZoneNamedN(zoneCompBud, "SCM::ComputeBudget", true);
+				// Update frame-time EMA and ring buffer (always, for formula params and UI).
 				const float dtMs = *globals::game::deltaTime * 1000.0f;
 				s_ftRing[s_ftHead] = dtMs;
 				s_ftHead = (s_ftHead + 1) % kFrameWindow;
@@ -1683,18 +1708,15 @@ namespace ShadowCasterManager
 				FormulaHelper::SetParam(kFormulaParam_FrameTime, static_cast<double>(s_ftEMA));
 				FormulaHelper::SetParam(kFormulaParam_FrameTarget, static_cast<double>(target_ms));
 				FormulaHelper::SetParam(kFormulaParam_StableFrames, static_cast<double>(s_stableFrames));
-			}
 
-			// Evaluate the budget for the whole frame.
-			//   Manual:  fixed slider value (RedrawBudgetMs).
-			//   Formula: user-editable exprtk expression.
-			// (Auto was a DRS-style controller — removed; the default Formula mirrors
-			// what the controller did, expressed transparently as a frametime expression.)
-			double budget = s_settings.RedrawBudgetMs;
-			if (s_settings.BudgetMode == BudgetModeEnum::Formula && s_formulaRedrawBudget) {
-				budget = s_formulaRedrawBudget->Calculate();
-			}
-			s_autoBudgetMs = static_cast<float>(budget);
+				// Evaluate the budget for the whole frame.
+				//   Manual:  fixed slider value (RedrawBudgetMs).
+				//   Formula: user-editable exprtk expression.
+				if (s_settings.BudgetMode == BudgetModeEnum::Formula && s_formulaRedrawBudget) {
+					budget = s_formulaRedrawBudget->Calculate();
+				}
+				s_autoBudgetMs = static_cast<float>(budget);
+			}  // end SCM::ComputeBudget
 
 			// Reset redraw counter (will be updated at end of scheduling)
 			s_redrawnLightsThisFrame = 0;
@@ -1943,160 +1965,176 @@ namespace ShadowCasterManager
 			doneLightCount++;
 		}
 
-		for (auto& c : candidates) {
-			if (c.invalid) {
-				if (!isAliveNow(c.light))
-					continue;
-
-				// Camera-fail invalid (UpdateCamera returned false) covers two
-				// cases: (1) light fully outside the camera frustum -- cluster
-				// builder will reject it anyway; (2) LOD-faded -- engine
-				// considers it too far for useful shadow rendering, but the
-				// light is still visible and should still illuminate via the
-				// cluster path. So for omnis (BSShadowParabolicLight), demote
-				// to non-shadow when ConvertExcessToNormal is on, mirroring
-				// excess-handling. Spot lights (BSShadowFrustumLight) drop
-				// because the engine has no NiSpotLight equivalent -- omni
-				// conversion would make them spherical and bleed light
-				// through walls behind the original cone direction.
-				//
-				// Portal-fail invalid always drops: the cluster lighting path
-				// has no portal-graph awareness, so converting a portal-culled
-				// light routes it through cluster lighting and the light bleeds
-				// into the camera's cell from a cell that should be invisible.
-				// User reports of "distant LightPlacer lights turn off instead
-				// of converting" track to camera-fail (LOD); this fix recovers
-				// their diffuse contribution.
-				const bool isSpotShadow = c.light->GetIsFrustumLight();
-				const bool forceConvert = s_pinConvert.count(reinterpret_cast<uintptr_t>(c.light)) > 0;
-				if (c.invalidCamera && !isSpotShadow &&
-					(s_settings.ConvertExcessToNormal || forceConvert) &&
-					isUsableLight(c.light)) {
-					// Same atomic ordering as the excess path: chosen lights
-					// have completed their Begin/EnableLight/End sequence by
-					// the time we reach invalid candidates, so ConvertLight's
-					// ReturnShadowmaps side effect can only touch pointers we
-					// are no longer walking.
-					ConvertLight(c.light, ssn, false);
-					// UpdateCamera (called in the validation pass above)
-					// zeros lodDimmer when LOD fade fires (engine sets
-					// lodDimmer=0 alongside frustrumCull=0xff). The cluster
-					// lighting builder multiplies light.fade by lodDimmer
-					// (LightLimitFix.cpp:497) and drops the light from
-					// lightsData if the product falls below 1e-4. So a
-					// LOD-faded light that we convert to non-shadow still
-					// disappears from cluster lighting. Restore lodDimmer
-					// to 1 so the converted light contributes its full
-					// non-shadow diffuse to clusters; the engine will set
-					// it back to 0 next frame if the light remains LOD-
-					// faded, and we'll restore again -- self-correcting
-					// across frames as the camera moves.
-					c.light->lodDimmer = 1.0f;
-				} else {
-					DisableLight(c.light);
-				}
-				continue;
-			}
-
-			if (c.chosen) {
-				int slot = findSlotForLight(c.light);
-				if (slot < 0)
-					continue;  // matches old behaviour: chosen-but-no-slot is a no-op
-				if (slot == 0 && s_lights.Sun)
-					continue;  // sun handled above
-
-				auto& e = s_lights.Lights[slot];
-
-				// Render-this-frame path is reserved for chosen point-light slots
-				// (excludes converted slots which start at PointLightEnd). Use
-				// the sun-aware bound so pool[ShadowLightCount] (the highest
-				// point-light slot when Sun=true) is included.
-				if (e.RedrawFrame && slot < s_lights.PointLightEnd(s_settings.ShadowLightCount)) {
-					// Render-this-frame path. A previous iteration's EnableLight
-					// may have transitively freed this light via game-side scene
-					// mutations (membership change OR tbbmalloc-zeroed memory),
-					// so re-validate before any virtual dispatch.
-					if (!isUsableLight(e.Light)) {
-						e.Light = nullptr;
+		// Per-candidate Begin/EnableLight/End mutation loop. EnableLight may
+		// trigger synchronous shadow render dispatches in the engine, so this
+		// zone captures both our scheduler work and any engine-side rendering
+		// it pulls in for chosen lights.
+		{
+			ZoneNamedN(zoneAtomic, "SCM::AtomicMutationLoop", true);
+			for (auto& c : candidates) {
+				if (c.invalid) {
+					if (!isAliveNow(c.light))
 						continue;
+
+					// Camera-fail invalid (UpdateCamera returned false) covers two
+					// cases: (1) light fully outside the camera frustum -- cluster
+					// builder will reject it anyway; (2) LOD-faded -- engine
+					// considers it too far for useful shadow rendering, but the
+					// light is still visible and should still illuminate via the
+					// cluster path. So for omnis (BSShadowParabolicLight), demote
+					// to non-shadow when ConvertExcessToNormal is on, mirroring
+					// excess-handling. Spot lights (BSShadowFrustumLight) drop
+					// because the engine has no NiSpotLight equivalent -- omni
+					// conversion would make them spherical and bleed light
+					// through walls behind the original cone direction.
+					//
+					// Portal-fail invalid always drops: the cluster lighting path
+					// has no portal-graph awareness, so converting a portal-culled
+					// light routes it through cluster lighting and the light bleeds
+					// into the camera's cell from a cell that should be invisible.
+					// User reports of "distant LightPlacer lights turn off instead
+					// of converting" track to camera-fail (LOD); this fix recovers
+					// their diffuse contribution.
+					const bool isSpotShadow = c.light->GetIsFrustumLight();
+					const bool forceConvert = s_pinConvert.count(reinterpret_cast<uintptr_t>(c.light)) > 0;
+					if (c.invalidCamera && !isSpotShadow &&
+						(s_settings.ConvertExcessToNormal || forceConvert) &&
+						isUsableLight(c.light)) {
+						// Same atomic ordering as the excess path: chosen lights
+						// have completed their Begin/EnableLight/End sequence by
+						// the time we reach invalid candidates, so ConvertLight's
+						// ReturnShadowmaps side effect can only touch pointers we
+						// are no longer walking.
+						{
+							ZoneNamedN(zCvtInv, "SCM::Engine::ConvertLight(invalidCamera)", true);
+							ConvertLight(c.light, ssn, false);
+						}
+						// UpdateCamera (called in the validation pass above)
+						// zeros lodDimmer when LOD fade fires (engine sets
+						// lodDimmer=0 alongside frustrumCull=0xff). The cluster
+						// lighting builder multiplies light.fade by lodDimmer
+						// (LightLimitFix.cpp:497) and drops the light from
+						// lightsData if the product falls below 1e-4. So a
+						// LOD-faded light that we convert to non-shadow still
+						// disappears from cluster lighting. Restore lodDimmer
+						// to 1 so the converted light contributes its full
+						// non-shadow diffuse to clusters; the engine will set
+						// it back to 0 next frame if the light remains LOD-
+						// faded, and we'll restore again -- self-correcting
+						// across frames as the camera moves.
+						c.light->lodDimmer = 1.0f;
+					} else {
+						ZoneNamedN(zDisInv, "SCM::Engine::DisableLight(invalid)", true);
+						DisableLight(c.light);
 					}
-
-					auto* lightSnapshot = e.Light;  // value snapshot for budget pairing
-
-					e.Light->UpdateCamera(camera);
-					s_budget.BeginLight(lightSnapshot, 0);
-					EnableLight(e.Light, camera, ssn, slot);
-
-					// EnableLight callbacks can null e.Light (re-entrant scheduling /
-					// scene mutation).  Bail before further dereferences.
-					if (!e.Light)
-						continue;
-					s_budget.EndLight(lightSnapshot, 0);
-
-					if (auto* nilight = e.Light->light.get())
-						e.lastRenderedPos = nilight->world.translate;
-
-					ShadowField(e.Light, maskIndex) = static_cast<uint32_t>(slot);
-					doneLightCount++;
-				}
-				// Cached-shadow path (chosen + !RedrawFrame, or i >= ShadowLightCount):
-				// do nothing here. The non-redrawn light keeps its stale shadow map and
-				// is re-inserted by the GameSetShadowCasterSlot loop below at endIdx.
-				// Calling DisableLight here would invoke ReturnShadowmaps, releasing the
-				// cached shadow data for one frame and producing visible flicker that
-				// worsens as the budget gets more constrained.
-				continue;
-			}
-
-			if (c.excess) {
-				// ConvertLight calls virtual methods (ReturnShadowmaps) so we
-				// need the full usability check (membership + vtable). DisableLight
-				// only calls ReturnShadowmaps which is itself non-virtual but the
-				// callee chain may dispatch virtually — same guard either way.
-				if (!isUsableLight(c.light))
 					continue;
-
-				// Skyrim's non-shadow light pipeline has no spot/cone primitive —
-				// `BSLight` only wraps `NiPointLight` (omni) or `NiDirectionalLight`,
-				// with no `NiSpotLight` equivalent. Converting a `BSShadowFrustumLight`
-				// (the spot-shadow class with semiWidth/semiHeight/falloff cone
-				// parameters) to "normal" via Hook_IsShadowLight makes the engine
-				// treat it as a 360° omni light, which is wrong: the cone-shaped
-				// illumination becomes spherical and bleeds through walls behind
-				// the original spot direction.
-				//
-				// Only `BSShadowParabolicLight` (omni / hemi-paraboloid) converts
-				// cleanly — its illumination is already approximately spherical so
-				// the engine's omni interpretation is acceptable.
-				//
-				// Spot lights (BSShadowFrustumLight) fall back to DisableLight —
-				// vanilla SLF behaviour for excess. They vanish rather than render
-				// incorrectly. A future improvement could store cone parameters in
-				// the cluster `LightData` and apply cone falloff in our cluster
-				// shader; until then, dropping spot excess is the honest answer.
-				const bool isSpotShadow = c.light->GetIsFrustumLight();
-				// Debug pin override: pin-convert forces conversion regardless
-				// of the user's ConvertExcessToNormal setting. Spot gate still
-				// applies — pin-converting a spot still falls through to
-				// DisableLight, since there's no NiSpotLight equivalent.
-				const bool forceConvert = s_pinConvert.count(reinterpret_cast<uintptr_t>(c.light)) > 0;
-
-				if ((s_settings.ConvertExcessToNormal || forceConvert) && !isSpotShadow) {
-					// Atomic ordering: by the time we reach excess (rank
-					// >= ShadowLightCount), all chosen lights (rank <
-					// ShadowLightCount) have completed their Begin/EnableLight/
-					// End sequence. ConvertLight's ReturnShadowmaps side effect
-					// can only invalidate pointers we are no longer walking.
-					// LightLimitFix::UpdateLights then iterates the engine's
-					// activeShadowLights to pick up converted lights for the
-					// cluster pipeline (see Ghidra-confirmed comment there).
-					ConvertLight(c.light, ssn, false);
-				} else {
-					DisableLight(c.light);
 				}
-				continue;
+
+				if (c.chosen) {
+					int slot = findSlotForLight(c.light);
+					if (slot < 0)
+						continue;  // matches old behaviour: chosen-but-no-slot is a no-op
+					if (slot == 0 && s_lights.Sun)
+						continue;  // sun handled above
+
+					auto& e = s_lights.Lights[slot];
+
+					// Render-this-frame path is reserved for chosen point-light slots
+					// (excludes converted slots which start at PointLightEnd). Use
+					// the sun-aware bound so pool[ShadowLightCount] (the highest
+					// point-light slot when Sun=true) is included.
+					if (e.RedrawFrame && slot < s_lights.PointLightEnd(s_settings.ShadowLightCount)) {
+						// Render-this-frame path. A previous iteration's EnableLight
+						// may have transitively freed this light via game-side scene
+						// mutations (membership change OR tbbmalloc-zeroed memory),
+						// so re-validate before any virtual dispatch.
+						if (!isUsableLight(e.Light)) {
+							e.Light = nullptr;
+							continue;
+						}
+
+						auto* lightSnapshot = e.Light;  // value snapshot for budget pairing
+
+						e.Light->UpdateCamera(camera);
+						s_budget.BeginLight(lightSnapshot, 0);
+						{
+							ZoneNamedN(zEnable, "SCM::Engine::EnableLight", true);
+							EnableLight(e.Light, camera, ssn, slot);
+						}
+
+						// EnableLight callbacks can null e.Light (re-entrant scheduling /
+						// scene mutation).  Bail before further dereferences.
+						if (!e.Light)
+							continue;
+						s_budget.EndLight(lightSnapshot, 0);
+
+						if (auto* nilight = e.Light->light.get())
+							e.lastRenderedPos = nilight->world.translate;
+
+						ShadowField(e.Light, maskIndex) = static_cast<uint32_t>(slot);
+						doneLightCount++;
+					}
+					// Cached-shadow path (chosen + !RedrawFrame, or i >= ShadowLightCount):
+					// do nothing here. The non-redrawn light keeps its stale shadow map and
+					// is re-inserted by the GameSetShadowCasterSlot loop below at endIdx.
+					// Calling DisableLight here would invoke ReturnShadowmaps, releasing the
+					// cached shadow data for one frame and producing visible flicker that
+					// worsens as the budget gets more constrained.
+					continue;
+				}
+
+				if (c.excess) {
+					// ConvertLight calls virtual methods (ReturnShadowmaps) so we
+					// need the full usability check (membership + vtable). DisableLight
+					// only calls ReturnShadowmaps which is itself non-virtual but the
+					// callee chain may dispatch virtually — same guard either way.
+					if (!isUsableLight(c.light))
+						continue;
+
+					// Skyrim's non-shadow light pipeline has no spot/cone primitive —
+					// `BSLight` only wraps `NiPointLight` (omni) or `NiDirectionalLight`,
+					// with no `NiSpotLight` equivalent. Converting a `BSShadowFrustumLight`
+					// (the spot-shadow class with semiWidth/semiHeight/falloff cone
+					// parameters) to "normal" via Hook_IsShadowLight makes the engine
+					// treat it as a 360° omni light, which is wrong: the cone-shaped
+					// illumination becomes spherical and bleeds through walls behind
+					// the original spot direction.
+					//
+					// Only `BSShadowParabolicLight` (omni / hemi-paraboloid) converts
+					// cleanly — its illumination is already approximately spherical so
+					// the engine's omni interpretation is acceptable.
+					//
+					// Spot lights (BSShadowFrustumLight) fall back to DisableLight —
+					// vanilla SLF behaviour for excess. They vanish rather than render
+					// incorrectly. A future improvement could store cone parameters in
+					// the cluster `LightData` and apply cone falloff in our cluster
+					// shader; until then, dropping spot excess is the honest answer.
+					const bool isSpotShadow = c.light->GetIsFrustumLight();
+					// Debug pin override: pin-convert forces conversion regardless
+					// of the user's ConvertExcessToNormal setting. Spot gate still
+					// applies — pin-converting a spot still falls through to
+					// DisableLight, since there's no NiSpotLight equivalent.
+					const bool forceConvert = s_pinConvert.count(reinterpret_cast<uintptr_t>(c.light)) > 0;
+
+					if ((s_settings.ConvertExcessToNormal || forceConvert) && !isSpotShadow) {
+						// Atomic ordering: by the time we reach excess (rank
+						// >= ShadowLightCount), all chosen lights (rank <
+						// ShadowLightCount) have completed their Begin/EnableLight/
+						// End sequence. ConvertLight's ReturnShadowmaps side effect
+						// can only invalidate pointers we are no longer walking.
+						// LightLimitFix::UpdateLights then iterates the engine's
+						// activeShadowLights to pick up converted lights for the
+						// cluster pipeline (see Ghidra-confirmed comment there).
+						ZoneNamedN(zCvtEx, "SCM::Engine::ConvertLight(excess)", true);
+						ConvertLight(c.light, ssn, false);
+					} else {
+						ZoneNamedN(zDisEx, "SCM::Engine::DisableLight(excess)", true);
+						DisableLight(c.light);
+					}
+					continue;
+				}
 			}
-		}
+		}  // end SCM::AtomicMutationLoop
 
 		// Non-redrawn chosen lights: insert at end of shadow caster array without rendering.
 		// GetAccumLightSlot() already advanced past all EnableLight()-rendered slots.
@@ -2106,6 +2144,7 @@ namespace ShadowCasterManager
 		// Skip s_lights entries whose pointer is no longer in the scene to avoid
 		// dereferencing freed BSShadowLight memory below.
 		{
+			ZoneNamedN(zonePostAtomic, "SCM::PostAtomicRevalidate", true);
 			std::unordered_set<RE::BSShadowLight*> aliveAfterAtomic;
 			{
 				auto& alive = ssn->GetRuntimeData().activeShadowLights;
@@ -2223,6 +2262,13 @@ namespace ShadowCasterManager
 			*globals::game::drawStereo = false;
 		}
 
+		ZoneScopedN("SCM::RenderScheduledShadowLights");
+		auto* state = globals::state;
+		state->BeginPerfEvent("SCM::RenderScheduledShadowLights");
+#ifdef TRACY_ENABLE
+		TracyD3D11Zone(state->tracyCtx, "SCM::RenderScheduledShadowLights");
+#endif
+
 		s_budget.Begin(1);
 
 		uint32_t tmp = 0;
@@ -2234,6 +2280,10 @@ namespace ShadowCasterManager
 		// explicitly. Without this, the directional cascade pass is skipped
 		// and exterior scenes render with no sun shadow.
 		if (s_lights.Sun && s_lights.Lights[0].Light) {
+			ZoneNamedN(zSun, "SCM::Render::Sun", true);
+#ifdef TRACY_ENABLE
+			TracyD3D11Zone(state->tracyCtx, "SCM::Render::Sun");
+#endif
 			s_budget.BeginLight(s_lights.Lights[0].Light, 1);
 			s_lights.Lights[0].Light->Render(tmp);
 			s_budget.EndLight(s_lights.Lights[0].Light, 1);
@@ -2242,14 +2292,22 @@ namespace ShadowCasterManager
 		// Point lights from PointLightFirst onwards. PointLightFirst skips
 		// slot 0 (handled above when Sun=true). PointLightEnd includes the
 		// highest point-light slot when Sun=true.
-		for (int i = s_lights.PointLightFirst(); i < s_lights.PointLightEnd(s_settings.ShadowLightCount); i++) {
-			auto& e = s_lights.Lights[i];
-			if (!e.Light || !e.RedrawFrame)
-				continue;
-			s_budget.BeginLight(e.Light, 1);
-			e.Light->Render(tmp);
-			s_budget.EndLight(e.Light, 1);
+		{
+			ZoneNamedN(zPoint, "SCM::Render::PointLights", true);
+#ifdef TRACY_ENABLE
+			TracyD3D11Zone(state->tracyCtx, "SCM::Render::PointLights");
+#endif
+			for (int i = s_lights.PointLightFirst(); i < s_lights.PointLightEnd(s_settings.ShadowLightCount); i++) {
+				auto& e = s_lights.Lights[i];
+				if (!e.Light || !e.RedrawFrame)
+					continue;
+				s_budget.BeginLight(e.Light, 1);
+				e.Light->Render(tmp);
+				s_budget.EndLight(e.Light, 1);
+			}
 		}
+
+		state->EndPerfEvent();
 
 		if (REL::Module::IsVR())
 			*globals::game::drawStereo = savedStereo;
