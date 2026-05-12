@@ -592,6 +592,20 @@ namespace ShadowCasterManager
 	void Update(const Settings& settings, RE::ShadowSceneNode* shadowSceneNode,
 		RE::NiCamera* worldCamera);
 
+	/// Clear all transient session state (pool entries, converted-light
+	/// tracking, debug overrides). Used by the LoadingMenu hook to drop
+	/// pointers to lights the engine is about to free during fast-travel
+	/// / cell change. The per-frame reconciliation in ScheduleShadowCasters
+	/// covers the same ground for incremental changes; this is the wholesale
+	/// reset for known scene boundaries so the UI counter and table read 0
+	/// during the loading screen instead of carrying stale entries forward.
+	void ResetSession();
+
+	/// Register the LoadingMenu open/close handler so ResetSession fires
+	/// when the user starts a fast-travel or cell transition. Call once
+	/// from SCM::Install after the rest of the hooks are in place.
+	void RegisterSceneTransitionEvents();
+
 	/// Returns a read-only view of the active light pool for UI/visualization.
 	const LightContainer& GetLights();
 
