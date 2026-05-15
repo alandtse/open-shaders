@@ -1913,7 +1913,44 @@ namespace ShadowCasterManager
 						            0.0722f * rtd.diffuse.blue;
 						float effectiveLum = lum * rtd.fade;
 
-						// Quadratic attenuation matching Skyrim's point-light falloff.
+						// Primary: screen-space projected solid angle.
+						// "How much of the view does this light's influence
+						// sphere occupy?" Industry standard for many-light
+						// shadow prioritisation -- see Olsson & Assarsson 2012,
+						// "Clustered Deferred and Forward Shading"; Wronski
+						// 2014, "Sample Distribution Shadow Maps"; CryEngine
+						// shadow LOD docs. Approximates angular radius from
+						// camera as radius/viewZ; solid angle ~ angularRadius^2.
+						// Constants (screenH / 2*tan(fovY/2))^2 drop out -- they're
+						// the same across all lights and don't affect ranking.
+						//
+						// Edge cases:
+						//   viewZ < -radius : light fully behind camera, coverage=0
+						//   |viewZ| < radius : light intersects camera plane;
+						//                      clamp effectiveZ to avoid blow-up.
+						float coverage = 0.0f;
+						if (camera) {
+							auto cp = camera->world.translate;
+							RE::NiPoint3 fwd = camera->world.rotate.GetVectorY();
+							float rx = lp.x - cp.x, ry = lp.y - cp.y, rz = lp.z - cp.z;
+							float viewZ = fwd.x * rx + fwd.y * ry + fwd.z * rz;
+							if (viewZ > -lightRadius) {
+								float effectiveZ = std::max(viewZ, lightRadius * 0.5f);
+								float angularRadius = lightRadius / effectiveZ;
+								coverage = angularRadius * angularRadius;
+							}
+						}
+
+						// Fallback: Skyrim-style quadratic distance falloff
+						// from camera/player. Covers two cases where coverage
+						// alone returns 0 but the user still sees shadows:
+						//   1. Light just outside the frustum (around a corner)
+						//      illuminating a visible wall.
+						//   2. Player-held torch behind the camera lighting
+						//      geometry ahead.
+						// Weighted at 0.3 -- coverage dominates when the light
+						// is in view, but out-of-view lights still get a floor
+						// proportional to their illumination at the viewer.
 						auto computeAtt = [&](const RE::NiPoint3& pos) -> float {
 							float dx = pos.x - lp.x, dy = pos.y - lp.y, dz = pos.z - lp.z;
 							float dist2 = dx * dx + dy * dy + dz * dz;
@@ -1922,13 +1959,14 @@ namespace ShadowCasterManager
 								return 0.0f;
 							float t = dist2 / r2;
 							float a = 1.0f - t;
-							return a * a;  // squared: matches (1-(d/r)^2)^2 falloff
+							return a * a;  // matches Skyrim (1-(d/r)^2)^2 falloff
 						};
-
 						auto* plr = RE::PlayerCharacter::GetSingleton();
 						float attCam = camera ? computeAtt(camera->world.translate) : 0.0f;
 						float attPlr = plr ? computeAtt(plr->GetPosition()) : attCam;
-						importance = effectiveLum * std::max(attCam, attPlr);
+						float distanceFallback = std::max(attCam, attPlr) * 0.3f;
+
+						importance = effectiveLum * std::max(coverage, distanceFallback);
 					}
 
 					// Exponential interval scaling: maxScale*(minScale/maxScale)^clamp(importance,0,1)
