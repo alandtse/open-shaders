@@ -989,19 +989,6 @@ namespace ShadowCasterManager
 		func(ssn, light);
 	}
 
-	// Engine ShadowSceneNode::RemoveLight -- the symmetric undo of
-	// GameEnableLight. Removes `light` from activeShadowLights / activeLights
-	// AND, critically, invalidates any BSRenderPass.sceneLights[] captures
-	// that reference it. Used during scene-transition teardown to clean up
-	// the converted lights we activated via GameEnableLight in ConvertLight
-	// before the engine's bulk teardown frees them.
-	static void GameRemoveLight(RE::ShadowSceneNode* ssn, RE::BSLight* light)
-	{
-		using F = void (*)(RE::ShadowSceneNode*, RE::BSLight*);
-		static REL::Relocation<F> func{ REL::RelocationID(99697, 106331) };
-		func(ssn, light);
-	}
-
 	static void GameSetShadowCasterSlot(RE::ShadowSceneNode* ssn, RE::BSLight* light, uint32_t index, uint32_t unk)
 	{
 		using F = void (*)(RE::ShadowSceneNode*, RE::BSLight*, uint32_t, uint32_t);
@@ -3199,35 +3186,14 @@ namespace ShadowCasterManager
 		// loading screen rather than displaying stale entries from the
 		// previous cell.
 		//
-		// Undo every GameEnableLight we did in ConvertLight before the
-		// engine's bulk cell teardown begins. The bulk path frees
-		// BSShadowLights without calling per-light RemoveLight, so any
-		// BSRenderPass.sceneLights[] captures built before the transition
-		// keep stale BSLight* entries -- BSEffectShader::Func6 (water
-		// ripples) then derefs bslight->light->fade and crashes with AV.
-		// Calling RemoveLight here triggers the engine's normal per-light
-		// cleanup (including pass-cache invalidation) while the lights
-		// are still alive, so the subsequent bulk free can't dangle them.
-		// MenuOpenCloseEvent for LoadingMenu opening fires before the
-		// engine starts tearing down the cell, so s_normalConvert still
-		// holds live pointers at this point.
-		std::size_t removedCount = 0;
-		std::size_t skippedCount = 0;
-		if (auto* smState = globals::game::smState) {
-			if (auto* ssn = smState->shadowSceneNode[0]) {
-				for (auto& c : s_normalConvert) {
-					const auto v = reinterpret_cast<std::uintptr_t>(c.light);
-					if (v >= 0x10000 && v < 0x800000000000ull && (v & 0x7) == 0) {
-						GameRemoveLight(ssn, static_cast<RE::BSLight*>(c.light));
-						++removedCount;
-					} else {
-						++skippedCount;
-					}
-				}
-			}
-		}
-		logger::info("[SCM] Session reset: removed {} converted lights, skipped {} stale",
-			removedCount, skippedCount);
+		// Stale BSRenderPass.sceneLights[] captures that would otherwise AV
+		// in BSEffectShader::SetupGeometry are handled by the defensive
+		// guard there (clamps numLights past the first stale entry), not by
+		// trying to drive engine-side cleanup from here. An earlier version
+		// tried calling ShadowSceneNode::RemoveLight to undo our
+		// ConvertLight -> GameEnableLight pinning, but the engine function
+		// takes NiLight* (not BSLight* as the wrapper assumed); the call
+		// was a silent no-op on every runtime and accomplished nothing.
 		s_normalConvert.clear();
 		s_shadowConvert.clear();
 		s_pinShadow.clear();
