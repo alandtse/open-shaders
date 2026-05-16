@@ -63,7 +63,7 @@ namespace DlssEnhancer
 					Core::vrIntermediateDepth[i]->resource.get(), Core::vrIntermediateMotionVectors[i]->resource.get(),
 					p.reactiveMask ? Core::vrIntermediateReactiveMask[i]->resource.get() : nullptr,
 					p.transparencyMask ? Core::vrIntermediateTransparencyMask[i]->resource.get() : nullptr,
-					extentIn, extentOut, p.eyeWidthOut, p.eyeHeightOut);
+					extentIn, extentOut, p.eyeWidthOut);
 			}
 
 			return FinalizePerEyeOutputs(p.colorDst, p.eyeWidthOut, p.eyeHeightOut);
@@ -123,7 +123,7 @@ namespace DlssEnhancer
 				Core::vrSubrectDepth[i]->resource.get(), Core::vrSubrectMotionVectors[i]->resource.get(),
 				p.reactiveMask ? Core::vrSubrectReactiveMask[i]->resource.get() : nullptr,
 				p.transparencyMask ? Core::vrSubrectTransparencyMask[i]->resource.get() : nullptr,
-				extentIn, extentOut, subOutW, subOutH);
+				extentIn, extentOut, subOutW);
 		}
 
 		// Write DLSS output back at subrect position (with optional blend)
@@ -186,7 +186,7 @@ namespace DlssEnhancer
 				p.colorSrc, Core::vrFasterColorOut[i]->resource.get(),
 				p.depthTexture, p.motionVectors,
 				p.reactiveMask, p.transparencyMask,
-				extentIn, extentOut, subOutW, subOutH);
+				extentIn, extentOut, subOutW);
 		}
 
 		// Step 3: Snapshot + Stretch DRS → kMAIN (subrect only)
