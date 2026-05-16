@@ -171,6 +171,16 @@ void DlssEnhancerFeature::DrawSettings()
 	if (ImGui::IsItemHovered())
 		ImGui::SetTooltip("Lower = higher render resolution (better quality, higher cost).\nUltra Performance recommended for maximum VRAM savings.");
 
+	// Quality mode is latched at boot (see Bridge::BootSequence) so the
+	// downstream RT-allocation decisions don't shift mid-game. Live changes
+	// don't take effect until restart — flag this so users don't think the
+	// slider is broken when they expect immediate visual change.
+	if (std::clamp(settings.qualityMode, 1u, 4u) != qualityModeAtBoot) {
+		ImGui::PushStyleColor(ImGuiCol_Text, Util::Colors::GetWarning());
+		ImGui::TextWrapped(">>> RESTART REQUIRED for this change to take effect. <<<");
+		ImGui::PopStyleColor();
+	}
+
 	ImGui::SliderFloat("Sharpness", &settings.sharpnessDLSS, 0.0f, 1.0f, "%.1f");
 	if (ImGui::IsItemHovered())
 		ImGui::SetTooltip("Post-DLSS RCAS sharpening intensity. 0 = off, 1 = maximum.");
