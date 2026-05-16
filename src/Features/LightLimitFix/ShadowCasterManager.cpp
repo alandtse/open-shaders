@@ -2507,9 +2507,18 @@ namespace ShadowCasterManager
 							EnableLight(e.Light, camera, ssn, slot);
 						}
 
-						// EnableLight callbacks can null e.Light (re-entrant scheduling /
-						// scene mutation).  Bail before further dereferences.
-						if (!e.Light)
+						// EnableLight callbacks can null e.Light (re-entrant scheduling
+						// / scene mutation), AND the engine can free the BSShadowLight
+						// during the call without nulling our pointer -- a third-party
+						// VR crash report (CommunityShaders.dll v1.5.1, file path
+						// D:\a\skyrim-community-shaders\... at EnableLight's
+						// `*GetAccumLightSlot() += light->shadowMapCount`) showed the
+						// engine reading shadowMapCount from a freed BSShadowLight,
+						// corrupting the global accumLightSlot counter, then a
+						// downstream `[base + corrupted*8]` AV. Bare null check passes
+						// for the freed-but-non-null case; isUsableLight rejects it
+						// via the activeShadowLights-membership and vtable checks.
+						if (!e.Light || !isUsableLight(e.Light))
 							continue;
 						s_budget.EndLight(lightSnapshot, 0);
 
@@ -2700,7 +2709,10 @@ namespace ShadowCasterManager
 						continue;
 					}
 					GameSetShadowCasterSlot(ssn, e.Light, endIdx, 1);
-					if (!e.Light)
+					// Same hazard as the post-EnableLight site: the engine can
+					// free the light during this call. Use isUsableLight, not
+					// just null check.
+					if (!e.Light || !isUsableLight(e.Light))
 						continue;
 					endIdx += e.Light->shadowMapCount;
 					ShadowField(e.Light, maskIndex) = static_cast<uint32_t>(i);
