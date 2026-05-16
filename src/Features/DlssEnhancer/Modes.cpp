@@ -136,7 +136,7 @@ namespace DlssEnhancer
 			uint32_t dstCropX = (uint32_t)(uv.x * p.eyeWidthOut);
 			uint32_t dstCropY = (uint32_t)(uv.y * p.eyeHeightOut);
 			uint32_t dstX = (i == 1 ? p.eyeWidthOut : 0) + dstCropX;
-			BlendSubrectToOutput(Core::vrSubrectColorOut[i]->resource.get(), p.colorDst,
+			BlendSubrectToOutput(Core::vrSubrectColorOut[i]->resource.get(), p.colorDst, p.colorDstUAV,
 				dstX, dstCropY, subOutW, subOutH);
 		}
 
@@ -205,7 +205,7 @@ namespace DlssEnhancer
 			uint32_t dstCropX = p.isFullEye ? 0 : (uint32_t)(uv.x * p.eyeWidthOut);
 			uint32_t dstCropY = p.isFullEye ? 0 : (uint32_t)(uv.y * p.eyeHeightOut);
 			uint32_t dstX = (i == 1 ? p.eyeWidthOut : 0) + dstCropX;
-			BlendSubrectToOutput(Core::vrFasterColorOut[i]->resource.get(), p.colorDst,
+			BlendSubrectToOutput(Core::vrFasterColorOut[i]->resource.get(), p.colorDst, p.colorDstUAV,
 				dstX, dstCropY, subOutW, subOutH);
 		}
 

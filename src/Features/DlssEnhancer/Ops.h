@@ -11,9 +11,8 @@ class Texture2D;
 // Primitive operations for the DlssEnhancer VR DLSS pipeline.
 //
 // Each function is a self-contained building block. Mode pipelines in
-// Modes.cpp compose these in different orders to form the Default and
-// Faster strategies. Extreme-strip and periphery temporal-smooth helpers
-// are deferred to PR-3b.
+// Modes.cpp compose these in different orders to form the Default, Faster,
+// and Extreme strategies.
 namespace DlssEnhancer::Ops
 {
 	// Texture creation helper.
@@ -28,6 +27,9 @@ namespace DlssEnhancer::Ops
 		ID3D11Resource* colorSrc, ID3D11Resource* mvecSrc, ID3D11Resource* reactiveSrc, ID3D11Resource* transparencySrc);
 
 	void EnsureFasterOutputTextures(uint32_t subOutW, uint32_t subOutH, ID3D11Resource* colorSrc);
+
+	void EnsureExtremeStripTextures(uint32_t stripInW, uint32_t stripInH, uint32_t stripOutW, uint32_t stripOutH,
+		ID3D11Resource* colorSrc, ID3D11Resource* mvecSrc, ID3D11Resource* reactiveSrc, ID3D11Resource* transparencySrc);
 
 	void EnsureVRRenderSBS(uint32_t renderW, uint32_t renderH, ID3D11Resource* colorSrc);
 
@@ -53,11 +55,19 @@ namespace DlssEnhancer::Ops
 		uint32_t eyeWidthIn, uint32_t eyeHeightIn, uint32_t renderW, uint32_t renderH,
 		ID3D11ShaderResourceView* srcOverride = nullptr);
 
-	// Hard-copy a DLSS subrect output onto the destination at (offsetX, offsetY).
-	// MVP-B has no feather/dither — the original PR's BlendSubrectToOutput is
-	// reduced to CopySubresourceRegion. Feather/dither + the buggy edge-distance
-	// math (the SubrectBlendCS shader) are deferred to PR-3b.
-	void BlendSubrectToOutput(ID3D11Resource* dlssSrc, ID3D11Resource* dst,
+	// Periphery temporal smooth: ensure ping-pong history textures and mvec
+	// SRV cache for the render-res SBS smoothing pass.
+	void EnsureTemporalResources(uint32_t renderW, uint32_t renderH, ID3D11Resource* colorSrc, ID3D11Resource* mvecSrc);
+
+	// Apply temporal smoothing on vrRenderSBS. Returns SRV of smoothed result
+	// (for use as srcOverride in StretchDRSBothEyes). SnapshotSBS must be
+	// called first.
+	ID3D11ShaderResourceView* TemporalSmoothSBS(uint32_t renderW, uint32_t renderH);
+
+	// Blend a DLSS subrect output onto the destination at (offsetX, offsetY).
+	// Falls back to CopySubresourceRegion when blend mode is kHardCopy;
+	// otherwise dispatches the feather/dither subrect-blend CS into dstUAV.
+	void BlendSubrectToOutput(ID3D11Resource* dlssSrc, ID3D11Resource* dst, ID3D11UnorderedAccessView* dstUAV,
 		uint32_t dstOffsetX, uint32_t dstOffsetY, uint32_t subWidth, uint32_t subHeight, uint32_t srcOffsetX = 0);
 
 	// Hash of UV + mode for change detection (forces SL DLSS resource recreation).
