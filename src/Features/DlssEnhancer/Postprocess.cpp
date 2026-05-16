@@ -16,7 +16,11 @@ namespace DlssEnhancer
 			return true;
 		}
 
-		const float sharpnessSetting = upscaling.GetActiveSharpnessDLSS();
+		// MVP-B reads sharpness directly from Upscaling::Settings. The PR's
+		// GetActiveSharpnessDLSS() helper consulted DlssEnhancer's own
+		// settings.sharpnessDLSS override; deferred to PR-3b along with the
+		// rest of the per-route override surface.
+		const float sharpnessSetting = upscaling.settings.sharpnessDLSS;
 		if (sharpnessSetting <= 0.0f) {
 			return true;
 		}
