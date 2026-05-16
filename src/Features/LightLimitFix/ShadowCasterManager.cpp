@@ -1985,6 +1985,25 @@ namespace ShadowCasterManager
 				int idx = s_lights.FindFreeIndex(true, s_settings.ShadowLightCount, s_settings.ConvertedShadowSlots);
 				if (idx < 0)
 					continue;
+				// Reset slot metadata before installing the new occupant.
+				// FindFreeIndex returns slots whose Light pointer is nullptr, but
+				// nothing guarantees the rest of the LightEntry was cleared when
+				// the previous owner was released -- several eviction paths
+				// historically did `e.Light = nullptr` without resetting
+				// LastDrawnFrame / lastGeomHash / lastRenderedPos. If we install
+				// a new light into a slot that still has the previous owner's
+				// metadata, the first_render_skips gate (which checks
+				// LastDrawnFrame < 0) will not fire on this slot, and the
+				// cluster pipeline will insert the new light with
+				// descriptor.shadowmapIndex pointing at a kSHADOWMAPS slice
+				// that still contains the previous owner's depth content --
+				// producing the wrong-shadow visual artifact reported in
+				// slf5.tracy. Clearing here is a small, scoped fix at the
+				// only place new occupants take slots; it avoids changing
+				// behaviour at any of the eviction sites (which 5da6245c4
+				// did, with disastrous consequences -- bisect confirmed
+				// that commit as the first introducer of CTDs since slf5).
+				s_lights.Lights[idx].Clear();
 				s_lights.Lights[idx].Light = c.light;
 			}
 
