@@ -27,6 +27,7 @@ public:
 	{
 		kDefault = 0,  // Per-eye isolation: 2 extra resource sets, 2 evaluates. Supports F/J/K/L/M.
 		kFaster = 1,   // SBS viewport: tell SL to read subrect from SBS directly, no extra resources, 2 evaluates. J/K incompatible, only L/M/F.
+		kExtreme = 2,  // Combined strip: both eyes' subrect merged into one long texture, 1 extra resource set, 1 evaluate. Supports F/J/K/L/M. (Not recommended)
 	};
 
 	// Stretch algorithm for DRS → full-eye background (used by SubrectStretchCS shader)
@@ -44,6 +45,21 @@ public:
 		kNone = 1,  // No post-DLSS sharpening
 	};
 
+	// Subrect blend mode when writing DLSS output back over stretched background
+	enum class SubrectBlendMode : uint
+	{
+		kHardCopy = 0,  // CopySubresourceRegion (no blending — sharp edge)
+		kFeather = 1,   // smoothstep alpha ramp over N pixels
+		kDither = 2,    // Blue-noise binary threshold in feather band
+	};
+
+	// Periphery AA algorithm applied after background stretch
+	enum class PeripheryAAMode : uint
+	{
+		kNone = 0,            // No dedicated periphery AA
+		kTemporalSmooth = 1,  // Motion-compensated temporal accumulation (anti-flicker)
+	};
+
 	struct Settings
 	{
 		uint enabled = 1;
@@ -53,10 +69,18 @@ public:
 		uint presetDLSS = 0;
 		uint dlssMode = (uint)DlssMode::kDefault;
 		uint stretchMode = (uint)StretchMode::kGaussianBlur;
+		float peripheryBlurRadius = 1.0f;
 		uint sharpenMode = (uint)SharpenMode::kRCAS;
 		uint enableMVDilation = 0;
 		uint enableReactiveMask = 0;
 		uint enableTransparencyMask = 0;
+		uint peripheryAAMode = (uint)PeripheryAAMode::kTemporalSmooth;
+		float peripheryTemporalAlpha = 0.16f;
+		uint subrectBlendMode = (uint)SubrectBlendMode::kDither;
+		float subrectFeatherWidth = 64.0f;
+		float subrectDitherStrength = 1.0f;
+		// NOTE: enablePerf is intentionally omitted — PR-2 owns DLSSperf via
+		// Upscaling::Settings::enableDLSSperf.
 	};
 
 	Settings settings;
@@ -75,7 +99,7 @@ public:
 		return {
 			"VR DLSS enhancer path with independent control surface.",
 			{ "Own DLSS quality/preset/sharpness settings",
-				"2 DLSS modes: Default / Faster",
+				"3 DLSS modes: Default / Faster / Extreme",
 				"Visual subrect cropping via drag editor",
 				"Direct settings source for Streamline" }
 		};
@@ -103,9 +127,11 @@ public:
 	/// Quality=1.5, Balanced=1.7, Performance=2.0, UltraPerformance=3.0.
 	static float GetRenderScaleForQuality(uint qualityMode);
 
-	DlssMode GetDlssMode() const { return (DlssMode)std::min(settings.dlssMode, 1u); }
+	DlssMode GetDlssMode() const { return (DlssMode)std::min(settings.dlssMode, 2u); }
 	StretchMode GetStretchMode() const { return (StretchMode)std::min(settings.stretchMode, 2u); }
 	SharpenMode GetSharpenMode() const { return (SharpenMode)std::min(settings.sharpenMode, 1u); }
+	PeripheryAAMode GetPeripheryAAMode() const { return (PeripheryAAMode)std::min(settings.peripheryAAMode, 1u); }
+	SubrectBlendMode GetSubrectBlendMode() const { return (SubrectBlendMode)std::min(settings.subrectBlendMode, 2u); }
 
 	// Active getters (snapshot of the current settings, for downstream consumers)
 	uint GetActiveQualityMode() const { return std::clamp(settings.qualityMode, 1u, 4u); }

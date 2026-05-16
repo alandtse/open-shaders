@@ -16,10 +16,17 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	presetDLSS,
 	dlssMode,
 	stretchMode,
+	peripheryBlurRadius,
 	sharpenMode,
 	enableMVDilation,
 	enableReactiveMask,
-	enableTransparencyMask);
+	enableTransparencyMask,
+	peripheryAAMode,
+	peripheryTemporalAlpha,
+	subrectBlendMode,
+	subrectFeatherWidth,
+	subrectDitherStrength);
+// NOTE: enablePerf intentionally omitted — PR-2 owns DLSSperf via Upscaling::Settings::enableDLSSperf.
 
 bool DlssEnhancerFeature::IsActive() const
 {
@@ -53,6 +60,10 @@ bool DlssEnhancerFeature::IsPresetCompatibleWithMode(uint presetIndex) const
 	// Faster mode: J(1) and K(2) are incompatible
 	if (GetDlssMode() == DlssMode::kFaster) {
 		return presetIndex != 1 && presetIndex != 2;
+	}
+	// Extreme mode: original PR allowed F/J/K/L/M (all supported).
+	if (GetDlssMode() == DlssMode::kExtreme) {
+		return true;
 	}
 	return true;
 }
@@ -88,9 +99,11 @@ void DlssEnhancerFeature::DrawSettings()
 	static const char* qualityModes[] = { "Native AA", "Quality", "Balanced", "Performance", "Ultra Performance" };
 	static const char* logLevels[] = { "Off", "Default", "Verbose" };
 	static const char* presets[] = { "Default", "Preset J", "Preset K", "Preset L", "Preset M", "Preset F" };
-	static const char* dlssModes[] = { "Default", "Faster" };
+	static const char* dlssModes[] = { "Default", "Faster", "Extreme (not recommended)" };
 	static const char* stretchModes[] = { "Bilinear", "Point (VRS-like)", "Gaussian Blur" };
 	static const char* sharpenModes[] = { "RCAS", "None" };
+	static const char* peripheryAAModes[] = { "None", "Temporal Smooth" };
+	static const char* blendModes[] = { "Hard Copy", "Feather", "Dither" };
 
 	ClampSettings();
 
@@ -203,10 +216,11 @@ void DlssEnhancerFeature::DrawSettings()
 		if (ImGui::IsItemHovered())
 			ImGui::SetTooltip(
 				"Default: per-eye isolation, highest quality, 2 extra resource sets.\n"
-				"Faster: SBS viewport trick, no extra resources, J/K presets unavailable.");
+				"Faster: SBS viewport trick, no extra resources, J/K presets unavailable.\n"
+				"Extreme: single strip for both eyes, lowest cost but not recommended.");
 
 		uint prevMode = settings.dlssMode;
-		ImGui::SliderInt("DLSS Mode", reinterpret_cast<int*>(&settings.dlssMode), 0, 1, dlssModes[settings.dlssMode]);
+		ImGui::SliderInt("DLSS Mode", reinterpret_cast<int*>(&settings.dlssMode), 0, 2, dlssModes[settings.dlssMode]);
 
 		if (settings.dlssMode != prevMode) {
 			ClampPresetToMode();
@@ -218,6 +232,11 @@ void DlssEnhancerFeature::DrawSettings()
 			break;
 		case DlssMode::kFaster:
 			ImGui::TextDisabled("SBS viewport: 0 extra resources, 2 evaluates. J/K unavailable.");
+			break;
+		case DlssMode::kExtreme:
+			ImGui::PushStyleColor(ImGuiCol_Text, Util::Colors::GetWarning());
+			ImGui::Text("Combined strip: 1 evaluate. Artifacts likely — not recommended.");
+			ImGui::PopStyleColor();
 			break;
 		}
 
@@ -236,6 +255,48 @@ void DlssEnhancerFeature::DrawSettings()
 			break;
 		case StretchMode::kGaussianBlur:
 			ImGui::TextDisabled("Gaussian blur: softens periphery for natural look.");
+			ImGui::SliderFloat("Blur Radius", &settings.peripheryBlurRadius, 0.5f, 4.0f, "%.1f texels");
+			break;
+		}
+
+		// ── Periphery AA ──
+		ImGui::Separator();
+		ImGui::Text("Periphery AA");
+		if (ImGui::IsItemHovered())
+			ImGui::SetTooltip("Anti-flicker for the stretched periphery.\nTemporal Smooth blends with motion-reprojected history to reduce shimmer.");
+		ImGui::SliderInt("AA Mode", reinterpret_cast<int*>(&settings.peripheryAAMode), 0, 1, peripheryAAModes[settings.peripheryAAMode]);
+		switch (GetPeripheryAAMode()) {
+		case PeripheryAAMode::kNone:
+			ImGui::TextDisabled("No periphery anti-aliasing.");
+			break;
+		case PeripheryAAMode::kTemporalSmooth:
+			ImGui::TextDisabled("Motion-compensated temporal accumulation.");
+			ImGui::SliderFloat("Temporal Alpha", &settings.peripheryTemporalAlpha, 0.05f, 0.5f, "%.2f");
+			if (ImGui::IsItemHovered())
+				ImGui::SetTooltip("Current-frame blend weight. Lower = smoother (more history). Higher = more responsive.");
+			break;
+		}
+
+		// ── Subrect Blend ──
+		ImGui::Separator();
+		ImGui::Text("Subrect Blend");
+		if (ImGui::IsItemHovered())
+			ImGui::SetTooltip("How the DLSS subrect is composited back onto the stretched background.\nFeather/Dither hide the seam at subrect edges.");
+		ImGui::SliderInt("Blend Mode", reinterpret_cast<int*>(&settings.subrectBlendMode), 0, 2, blendModes[std::min(settings.subrectBlendMode, 2u)]);
+		switch (GetSubrectBlendMode()) {
+		case SubrectBlendMode::kHardCopy:
+			ImGui::TextDisabled("Sharp edge copy (CopySubresourceRegion).");
+			break;
+		case SubrectBlendMode::kFeather:
+			ImGui::TextDisabled("Smoothstep alpha ramp at edges.");
+			ImGui::SliderFloat("Feather Width", &settings.subrectFeatherWidth, 2.0f, 128.0f, "%.0f px");
+			break;
+		case SubrectBlendMode::kDither:
+			ImGui::TextDisabled("Noise-perturbed gradient in feather band.");
+			ImGui::SliderFloat("Dither Band", &settings.subrectFeatherWidth, 2.0f, 128.0f, "%.0f px");
+			ImGui::SliderFloat("Dither Strength", &settings.subrectDitherStrength, 0.0f, 2.0f, "%.2f");
+			if (ImGui::IsItemHovered())
+				ImGui::SetTooltip("0 = pure smooth, 1 = natural noise, 2 = aggressive dither.");
 			break;
 		}
 
@@ -294,13 +355,19 @@ void DlssEnhancerFeature::ClampSettings()
 	settings.qualityMode = std::clamp(settings.qualityMode, 1u, 4u);
 	settings.streamlineLogLevel = std::min(settings.streamlineLogLevel, 2u);
 	settings.presetDLSS = std::min(settings.presetDLSS, 5u);
-	settings.dlssMode = std::min(settings.dlssMode, 1u);
+	settings.dlssMode = std::min(settings.dlssMode, 2u);
 	settings.stretchMode = std::min(settings.stretchMode, 2u);
 	settings.sharpenMode = std::min(settings.sharpenMode, 1u);
 	settings.enableMVDilation = std::min(settings.enableMVDilation, 1u);
 	settings.enableReactiveMask = std::min(settings.enableReactiveMask, 1u);
 	settings.enableTransparencyMask = std::min(settings.enableTransparencyMask, 1u);
+	settings.peripheryAAMode = std::min(settings.peripheryAAMode, 1u);
+	settings.subrectBlendMode = std::min(settings.subrectBlendMode, 2u);
 	settings.sharpnessDLSS = std::clamp(settings.sharpnessDLSS, 0.0f, 1.0f);
+	settings.peripheryBlurRadius = std::clamp(settings.peripheryBlurRadius, 0.5f, 4.0f);
+	settings.peripheryTemporalAlpha = std::clamp(settings.peripheryTemporalAlpha, 0.05f, 0.5f);
+	settings.subrectFeatherWidth = std::clamp(settings.subrectFeatherWidth, 2.0f, 128.0f);
+	settings.subrectDitherStrength = std::clamp(settings.subrectDitherStrength, 0.0f, 2.0f);
 
 	ClampPresetToMode();
 }
