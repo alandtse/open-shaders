@@ -70,11 +70,15 @@ void DlssEnhancerFeature::PostPostLoad()
 	// right-eye UV (HMD nose-side overlap symmetry).
 	subrectController.SetStereoEnabled(true);
 
-	// Seed sensible foveal presets. Empty-case only — user edits/deletions persist.
+	// Seed sensible foveal presets. Empty-case only — user edits/deletions
+	// persist. Right-eye is left as std::nullopt so the controller's
+	// auto-mirror handles it; for these symmetric centered crops the mirror
+	// around x=0.5 equals the original, so the result is identical to an
+	// explicit copy (and stays correct if a future preset is asymmetric).
 	subrectController.SeedDefaultPresets({
-		{ "Full Eye", { 0.0f, 0.0f, 1.0f, 1.0f }, { 0.0f, 0.0f, 1.0f, 1.0f } },
-		{ "Center 75%", { 0.125f, 0.125f, 0.75f, 0.75f }, { 0.125f, 0.125f, 0.75f, 0.75f } },
-		{ "Center 50%", { 0.25f, 0.25f, 0.5f, 0.5f }, { 0.25f, 0.25f, 0.5f, 0.5f } },
+		{ .name = "Full Eye", .uv = { 0.0f, 0.0f, 1.0f, 1.0f } },
+		{ .name = "Center 75%", .uv = { 0.125f, 0.125f, 0.75f, 0.75f } },
+		{ .name = "Center 50%", .uv = { 0.25f, 0.25f, 0.5f, 0.5f } },
 	});
 }
 

@@ -324,7 +324,11 @@ namespace DlssEnhancer::Ops
 			cb.data[6] = srcEyeWidth;
 			cb.data[7] = srcEyeHeight;
 			cb.stretchMode = enhSettings.stretchMode;
-			cb.blurRadius = enhSettings.peripheryBlurRadius;
+			// MVP-B uses a fixed 1.0 blur radius for the GaussianBlur stretch
+			// path. The PR's user-tunable peripheryBlurRadius slider is
+			// deferred to PR-3b along with the rest of the periphery quality
+			// surface.
+			cb.blurRadius = 1.0f;
 			std::memcpy(mapped.pData, &cb, sizeof(cb));
 			context->Unmap(Core::vrSubrectStretchCB.get(), 0);
 		}

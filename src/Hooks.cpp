@@ -10,6 +10,7 @@
 #include "State.h"
 #include "Util.h"
 
+#include "Features/DlssEnhancer/Bridge.h"
 #include "Features/HDRDisplay.h"
 #include "Features/InteriorSun.h"
 #include "Features/LightLimitFix.h"
@@ -401,6 +402,13 @@ struct BSShaderRenderTargets_Create
 		// upscaling toggle), so SetupResources runs here directly.
 		if (dlssPerf.IsHookActive())
 			dlssPerf.SetupResources();
+
+		// PR-3 MVP-B: latch DlssEnhancer enable + qualityMode at the moment
+		// the engine is fully initialized but before the first frame. After
+		// this point, live setting changes won't be honored mid-game (matches
+		// Streamline's DLSS option lifecycle — quality changes need a full
+		// resource recreate the user has to opt into).
+		DlssEnhancer::Bridge::BootSequence();
 	}
 	static inline REL::Relocation<decltype(thunk)> func;
 };

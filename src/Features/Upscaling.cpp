@@ -1,6 +1,11 @@
 #include "Upscaling.h"
 
 #include "Deferred.h"
+#include "DlssEnhancer/Bridge.h"
+#include "DlssEnhancer/Core.h"
+#include "DlssEnhancer/Postprocess.h"
+#include "DlssEnhancer/Preprocess.h"
+#include "DlssEnhancerFeature.h"
 #include "HDRDisplay.h"
 #include "Hooks.h"
 #include "State.h"
@@ -1905,7 +1910,29 @@ void Upscaling::Upscale()
 				logger::debug("[Upscaling] LoadingMenu close detected — rebuilding DLSS feature");
 				streamline.DestroyDLSSResources();
 			}
-			streamline.Upscale(main.texture, reactiveMaskTexture->resource.get(), transparencyCompositionMaskTexture->resource.get(), motionVectorCopyTexture->resource.get());
+
+			// PR-3 MVP-B: opt-in DlssEnhancer route. When active, runs the
+			// per-eye DLSS dispatch with optional foveal subrect through
+			// DlssEnhancer::Core; falls through to dev's standard path on
+			// any failure so users always see DLSS output (graceful
+			// degradation — no black frames if the enhancer preflights bad).
+			bool routeHandled = false;
+			if (DlssEnhancer::Bridge::IsRouteActive() && globals::game::isVR) {
+				if (DlssEnhancer::Preprocess::EncodeUpscalingTextures(*this)) {
+					routeHandled = DlssEnhancer::Core::ExecuteVRDlssCore(streamline,
+						main.texture,
+						globals::game::renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kMAIN].texture,
+						reactiveMaskTexture->resource.get(),
+						transparencyCompositionMaskTexture->resource.get(),
+						motionVectorCopyTexture->resource.get());
+					if (!routeHandled) {
+						logger::warn("[DLSSENHANCER] route preflight failed — falling through to standard DLSS path");
+					}
+				}
+			}
+			if (!routeHandled) {
+				streamline.Upscale(main.texture, reactiveMaskTexture->resource.get(), transparencyCompositionMaskTexture->resource.get(), motionVectorCopyTexture->resource.get());
+			}
 		} else if (upscaleMethod == UpscaleMethod::kFSR) {
 			fidelityFX.Upscale(main.texture, reactiveMaskTexture->resource.get(), transparencyCompositionMaskTexture->resource.get(), motionVector.texture, settings.sharpnessFSR);
 		}
@@ -2302,8 +2329,16 @@ void Upscaling::Main_PostProcessing::thunk(RE::ImageSpaceManager* a_this, uint32
 		upscaling.UpscaleDepth();
 	}
 
-	if (upscaleMethod == UpscaleMethod::kDLSS)
-		upscaling.ApplySharpening();
+	if (upscaleMethod == UpscaleMethod::kDLSS) {
+		// PR-3 MVP-B: when the DlssEnhancer route is active, route sharpening
+		// through Postprocess so the route can drive its own SharpenMode (None
+		// short-circuits, RCAS uses dev's RCAS instance). Otherwise dev's path.
+		if (DlssEnhancer::Bridge::IsRouteActive()) {
+			DlssEnhancer::Postprocess::ApplyDlssSharpening(upscaling);
+		} else {
+			upscaling.ApplySharpening();
+		}
+	}
 
 	auto imageSpaceManager = RE::ImageSpaceManager::GetSingleton();
 	GET_INSTANCE_MEMBER(BSImagespaceShaderISTemporalAA, imageSpaceManager);
