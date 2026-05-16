@@ -212,6 +212,9 @@ namespace ShadowCasterManager
 		int disabled_excess = 0;        // DisableLight from c.excess path (spot/no-convert)
 		int reconciliation_clears = 0;  // slot freed because light gone from activeShadowLights
 		int slots_in_use = 0;           // sampled at frame end
+		int retained_invalid = 0;       // c.invalid path skipped because slot still held (Option A)
+		int retained_excess = 0;        // c.excess path skipped because slot still held (Option A)
+		int lru_evictions = 0;          // slots evicted by LRU under chosen-slot pressure (Option A)
 	};
 	static SchedDiagCounters s_schedDiag;
 
@@ -1749,21 +1752,76 @@ namespace ShadowCasterManager
 				}
 			}
 
-			// Drop entries no longer chosen (preserves slot stability for re-chosen lights).
-			for (int i = 0; i < s_lights.Size; i++) {
-				if (!s_lights.Lights[i].Light)
-					continue;
-				bool stillChosen = (i == 0 && s_lights.Sun);  // sun slot
-				if (!stillChosen) {
-					for (auto& c : candidates) {
-						if (c.light == s_lights.Lights[i].Light && c.chosen) {
-							stillChosen = true;
+			// Slot retention with on-demand LRU eviction (Option A).
+			//
+			// Old behaviour: every slot whose light was not in c.chosen this
+			// frame got Clear()'d. A torch whose engine-side fade animation
+			// briefly dropped its rank below the chosen threshold -- or whose
+			// UpdateCamera blipped invalid for one frame -- lost its slot,
+			// causing the shadow to vanish that frame and a re-render churn
+			// the next. User report: "shadow disappears and reappears in a
+			// following frame" on flickering torches at rank << ShadowLightCount.
+			//
+			// New behaviour: the slot pool is treated as a cache. A slot is
+			// only released when (1) the engine has dropped the light from
+			// activeShadowLights (handled by the reconciliation loop above),
+			// or (2) a chosen light that doesn't already have a slot needs
+			// one AND no truly-empty slot is available -- in which case the
+			// least-recently-rendered retained slot is evicted. Retained-but-
+			// unchosen slots keep serving the cluster pipeline via their
+			// cached shadow content; the atomic mutation loop below skips
+			// convert/disable when an existing slot is held.
+			{
+				// Phase 1: how many chosen lights still need slot assignment?
+				int needSlot = 0;
+				const int pointFirst = s_lights.PointLightFirst();
+				const int pointEnd = s_lights.PointLightEnd(s_settings.ShadowLightCount);
+				for (auto& c : candidates) {
+					if (!c.chosen)
+						continue;
+					bool hasSlot = false;
+					for (int i = pointFirst; i < pointEnd; ++i) {
+						if (s_lights.Lights[i].Light == c.light) {
+							hasSlot = true;
 							break;
 						}
 					}
+					if (!hasSlot)
+						++needSlot;
 				}
-				if (!stillChosen)
-					s_lights.Lights[i].Clear();
+
+				// Phase 2: count truly-empty slots in the point-light range.
+				int freeSlots = 0;
+				for (int i = pointFirst; i < pointEnd; ++i)
+					if (!s_lights.Lights[i].Light)
+						++freeSlots;
+
+				// Phase 3: if pressure exceeds free supply, evict LRU
+				// retained slots (those whose lights are NOT in c.chosen
+				// this frame, sorted by oldest LastDrawnFrame first).
+				const int toEvict = std::max(0, needSlot - freeSlots);
+				if (toEvict > 0) {
+					std::vector<std::pair<int32_t, int>> evictable;  // (LastDrawnFrame, slot)
+					evictable.reserve(pointEnd - pointFirst);
+					for (int i = pointFirst; i < pointEnd; ++i) {
+						if (!s_lights.Lights[i].Light)
+							continue;
+						bool inChosen = false;
+						for (auto& c : candidates) {
+							if (c.light == s_lights.Lights[i].Light && c.chosen) {
+								inChosen = true;
+								break;
+							}
+						}
+						if (!inChosen)
+							evictable.emplace_back(s_lights.Lights[i].LastDrawnFrame, i);
+					}
+					std::sort(evictable.begin(), evictable.end());
+					for (int k = 0; k < toEvict && k < static_cast<int>(evictable.size()); ++k) {
+						s_lights.Lights[evictable[k].second].Clear();
+						s_schedDiag.lru_evictions++;
+					}
+				}
 			}
 
 			// Add newly chosen lights (assigned to first free slot; keeps existing chosen lights in place).
@@ -2152,6 +2210,26 @@ namespace ShadowCasterManager
 					if (!isAliveNow(c.light))
 						continue;
 
+					// Slot retention (Option A): if this light still has a
+					// kSHADOWMAPS slot from a previous frame, keep it.
+					// invalidCamera blips (engine LOD-fade flicker on
+					// animated torches) used to release the slot via
+					// ConvertLight, causing a one-frame shadow disappearance
+					// that re-promoted next frame produced a re-render churn
+					// = visible shadow flicker. Holding the slot means the
+					// cluster pipeline keeps sampling the cached shadow
+					// during the invalid blip, and the next valid frame
+					// resumes normal scheduling without any state churn.
+					{
+						const int retainedSlot = findSlotForLight(c.light);
+						if (retainedSlot >= 0 &&
+							retainedSlot < s_lights.PointLightEnd(s_settings.ShadowLightCount) &&
+							!(retainedSlot == 0 && s_lights.Sun)) {
+							s_schedDiag.retained_invalid++;
+							continue;
+						}
+					}
+
 					// Camera-fail invalid (UpdateCamera returned false) covers two
 					// cases: (1) light fully outside the camera frustum -- cluster
 					// builder will reject it anyway; (2) LOD-faded -- engine
@@ -2268,6 +2346,24 @@ namespace ShadowCasterManager
 					// callee chain may dispatch virtually — same guard either way.
 					if (!isUsableLight(c.light))
 						continue;
+
+					// Slot retention (Option A): if this light already holds a
+					// kSHADOWMAPS slot (from a previous frame when it was
+					// chosen), keep it. The LRU eviction pass above only
+					// freed slots when chosen lights needed them; remaining
+					// retained slots serve their cached shadow content. The
+					// rank-drift case (importance bobs across the chosen/
+					// excess boundary from one frame to the next) used to
+					// trigger ConvertLight churn here -- now it doesn't.
+					{
+						const int retainedSlot = findSlotForLight(c.light);
+						if (retainedSlot >= 0 &&
+							retainedSlot < s_lights.PointLightEnd(s_settings.ShadowLightCount) &&
+							!(retainedSlot == 0 && s_lights.Sun)) {
+							s_schedDiag.retained_excess++;
+							continue;
+						}
+					}
 
 					// Skyrim's non-shadow light pipeline has no spot/cone primitive —
 					// `BSLight` only wraps `NiPointLight` (omni) or `NiDirectionalLight`,
@@ -2448,6 +2544,9 @@ namespace ShadowCasterManager
 			TracyPlot("scm.disabled.excess", (int64_t)s_schedDiag.disabled_excess);
 			TracyPlot("scm.reconciliation.clears", (int64_t)s_schedDiag.reconciliation_clears);
 			TracyPlot("scm.slots.in_use", (int64_t)s_schedDiag.slots_in_use);
+			TracyPlot("scm.retained.invalid", (int64_t)s_schedDiag.retained_invalid);
+			TracyPlot("scm.retained.excess", (int64_t)s_schedDiag.retained_excess);
+			TracyPlot("scm.lru.evictions", (int64_t)s_schedDiag.lru_evictions);
 
 			// Live config plots — record the *current* settings on each frame so
 			// a single capture spanning a settings change captures both sides.
