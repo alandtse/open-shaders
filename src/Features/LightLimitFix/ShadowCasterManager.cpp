@@ -5046,15 +5046,17 @@ namespace ShadowCasterManager
 			// No artificial 64 cap -- if the user dialled in 128 lights, the
 			// redraw cap should be allowed to follow.
 			int maxRedraws = s_totalShadowLightsThisFrame > 0 ? s_totalShadowLightsThisFrame : settings.ShadowLightCount;
-			maxRedraws = std::max(maxRedraws, 1);
-			ImGui::SliderInt("Max Redraws Per Frame", &settings.MaxRedrawPerFrame, 1, maxRedraws);
+			maxRedraws = std::max(maxRedraws, Settings::kMinMaxRedrawPerFrame);
+			ImGui::SliderInt("Max Redraws Per Frame", &settings.MaxRedrawPerFrame,
+				Settings::kMinMaxRedrawPerFrame, maxRedraws);
 			if (ImGui::IsItemHovered())
 				ImGui::SetTooltip(
 					"Hard cap on how many shadow lights may re-render their shadow maps in one frame.\n"
 					"Acts as a safety valve regardless of budget -- the budget controls time spent,\n"
 					"this controls count. The sun directional light always counts as one redraw.\n"
+					"Minimum is %d (lower values cause shadow flicker as redraw rotation outpaces TAA).\n"
 					"Upper bound tracks the number of active shadow lights this frame (%d).",
-					maxRedraws);
+					Settings::kMinMaxRedrawPerFrame, maxRedraws);
 		}
 
 		// ---- Light conversion (requires restart for hooks) -----------------
