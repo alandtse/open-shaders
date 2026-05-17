@@ -206,6 +206,10 @@ void LightLimitFix::LoadSettings(json& o_json)
 	settings = o_json;
 	// iShadowMapResolution:Display is owned by Skyrim's INI, not our JSON.
 	ShadowCasterManager::LoadINISettings();
+
+	// Raise saved values below the current floor so older configs migrate.
+	if (settings.ShadowSettings.MaxRedrawPerFrame < ShadowCasterManager::Settings::kMinMaxRedrawPerFrame)
+		settings.ShadowSettings.MaxRedrawPerFrame = ShadowCasterManager::Settings::kMinMaxRedrawPerFrame;
 }
 
 void LightLimitFix::SaveSettings(json& o_json)

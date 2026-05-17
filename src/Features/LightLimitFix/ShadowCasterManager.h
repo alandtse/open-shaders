@@ -246,8 +246,16 @@ namespace ShadowCasterManager
 		/// Allow a newly-chosen light to draw even if it was not chosen last frame.
 		bool AllowDrawNewLight = true;
 
-		/// Hard cap on how many lights may re-render their shadow maps in one frame.
+		/// Hard cap on how many lights may re-render their shadow maps in one
+		/// frame. Floored at kMinMaxRedrawPerFrame.
 		int32_t MaxRedrawPerFrame = 16;
+
+		/// Lower bound for MaxRedrawPerFrame. Below this the per-slot redraw
+		/// rotation is slow enough that camera-relative jitter on the cluster
+		/// shadow lookup crosses occluder silhouettes between TAA frames,
+		/// producing visible shadow flicker on the nearest light's
+		/// contribution. Enforced in the ImGui slider and on JSON load.
+		static constexpr int32_t kMinMaxRedrawPerFrame = 4;
 
 		/// How the per-frame shadow redraw budget is determined.
 		/// Manual is the default — predictable, doesn't ping-pong, and matches
