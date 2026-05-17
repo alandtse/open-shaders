@@ -1488,20 +1488,12 @@ namespace ShadowCasterManager
 			*GetAccumLightSlot() += light->shadowMapCount;
 		}
 
-		// Extended mode: pre-set kNONE renderTarget so RenderCascade re-runs its
-		// slot-allocation block (where Hook_OverwriteShadowMapIndex overrides
-		// the global counter with our slot index). Without this, RenderCascade
-		// keeps the slot from a prior frame and lights not redrawn this frame
-		// would corrupt another light's shadow map.
-		//
-		// History note: a slot-reclaim attempt subtracted PointLightFirst() so
-		// pool[1..N] (Sun=true) would remap to texture[0..N-1], freeing slice 0
-		// for an extra point light. RenderDoc consistently showed slice 0 empty
-		// regardless of the pre-set / hook strategy — descriptor values were
-		// being overwritten somewhere between the pre-set and render dispatch
-		// that we couldn't trace via Ghidra. Reverted to identity (pool index
-		// = texture slot); slice 0 stays unused (the same as the pre-reclaim
-		// status quo).
+		// Extended mode: pre-set kNONE renderTarget so RenderCascade re-runs
+		// its slot-allocation block (where Hook_OverwriteShadowMapIndex
+		// overrides the global counter with our slot index). Without this,
+		// RenderCascade keeps the slot from a prior frame and lights not
+		// redrawn this frame would corrupt another light's shadow map.
+		// Pool index maps 1:1 to texture slot; slice 0 stays unused.
 		if (s_settings.ShadowLightCount > 4) {
 			int32_t idx = s_lights.FindLight(light, s_settings.ShadowLightCount);
 			if (idx < 0)
@@ -2067,18 +2059,10 @@ namespace ShadowCasterManager
 				s_lights.Lights[i].RedrawFrame = false;
 
 			// First pass: sun only. Point-light slots fall through to the
-			// importance-scored pending loop below where new lights compete
-			// fairly with existing redraws.
-			//
-			// Previously this loop also force-rendered new lights
-			// (LastDrawnFrame < 0 && AllowDrawNewLight). When many new lights
-			// streamed in at once (player entering populated area), pool
-			// iteration order picked the first N regardless of importance --
-			// dim background lights claimed budget over bright lights right
-			// next to the player. Letting them fall through to the pending
-			// loop sorts by importance, so the budget always covers the most
-			// visible new lights first. AllowDrawNewLight is now honoured by
-			// the pending loop's filter (gates new-light pending entry).
+			// importance-scored pending loop below so new lights compete
+			// fairly with existing redraws (sorted by importance, not pool
+			// order). AllowDrawNewLight is honoured by the pending loop's
+			// filter.
 			for (int i = 0; i < s_lights.Size; i++) {
 				auto& e = s_lights.Lights[i];
 				if (!e.Light) {
