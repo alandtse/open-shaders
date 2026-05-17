@@ -446,6 +446,13 @@ namespace ShadowCasterManager
 	// -------------------------------------------------------------------------
 	static void Hook_OverwriteShadowMapIndex(CONTEXT& ctx)
 	{
+		// Runtime disable: leave the engine's natural slot calculation in
+		// place. RenderCascade has already computed an index from its own
+		// global counter into the register we'd be overwriting; returning
+		// here preserves that vanilla value.
+		if (!s_settings.Enabled)
+			return;
+
 		auto* light = reinterpret_cast<RE::BSShadowLight*>(REL::Relocate(ctx.R15, ctx.R15, ctx.R14));
 		int32_t idx = s_lights.FindLight(light, s_settings.ShadowLightCount);
 		if (idx < 0)
@@ -2778,10 +2785,24 @@ namespace ShadowCasterManager
 		RenderScheduledShadowLights();
 	};
 
-	// Hook struct for stl::detour_thunk
+	// Hook struct for stl::detour_thunk.
+	//
+	// Runtime disable: when s_settings.Enabled is toggled off after boot,
+	// route to the original CalculateActiveShadowCasterLights captured by
+	// detour_thunk in `func`. This lets the engine run its vanilla shadow
+	// scheduler immediately without requiring a restart. The "Restart
+	// required" UX label remains for the inverse direction (off→on) because
+	// hooks not installed at boot can't be lazily installed later.
 	struct Hook_CalculateActiveShadowCasters
 	{
-		static void thunk() { ScheduleShadowCasters(); }
+		static void thunk()
+		{
+			if (!s_settings.Enabled) {
+				func();
+				return;
+			}
+			ScheduleShadowCasters();
+		}
 		static inline REL::Relocation<decltype(thunk)> func;
 	};
 
@@ -3529,7 +3550,48 @@ namespace ShadowCasterManager
 			s_lights.Lights = newLights;
 			s_lights.Size = newTotal;
 		}
+
+		// Snapshot the prior values of every flag whose true→false flip
+		// requires draining an internal tracking container. Conversion is a
+		// per-frame query (Hook_IsShadowLight reads s_normalConvert,
+		// schedulers consult s_lights and s_shadowConvert) so the engine
+		// reverts to vanilla behaviour on the next frame as soon as we drop
+		// our records. The user's saved settings are not mutated -- only
+		// our internal tracking is.
+		const bool wasEnabled = s_settings.Enabled;
+		const bool wasConvert = s_settings.ConvertExcessToNormal;
+		const bool wasPromote = s_settings.PromoteNormalToShadow;
+
 		s_settings = capped;
+
+		// ConvertExcessToNormal true→false: drop s_normalConvert so
+		// Hook_IsShadowLight returns the vanilla truth (always true) for
+		// previously-converted lights. The engine's per-frame shadow draw
+		// pass resumes rendering shadows for them on the next frame.
+		if (wasConvert && !capped.ConvertExcessToNormal)
+			s_normalConvert.clear();
+
+		// PromoteNormalToShadow true→false: drop s_shadowConvert so we
+		// stop tracking promoted lights. Existing promoted-shadow-lights
+		// were instantiated as BSShadowLight by the engine (Hook_ConvertLights_Add
+		// flipped LIGHT_CREATE_PARAMS::shadowLight at creation time), so
+		// they remain shadow casters until the engine removes them at cell
+		// unload -- at which point Hook_ConvertLights_Remove handles cleanup.
+		// This is the one non-trivially-reversible conversion direction;
+		// it self-heals across cell transitions.
+		if (wasPromote && !capped.PromoteNormalToShadow)
+			s_shadowConvert.clear();
+
+		// Enabled true→false: full drain via ResetSession. The per-frame
+		// thunk now routes to vanilla CalculateActiveShadowCasterLights
+		// (via Hook_CalculateActiveShadowCasters::func) and the slot-index
+		// hook no-ops; combined with empty tracking containers, the engine
+		// runs its vanilla shadow scheduler with no SCM influence. Extended
+		// kSHADOWMAPS atlas slots remain allocated for the process lifetime
+		// (ShadowLightCount is restart-only) but go unused on the vanilla
+		// path, which only references the first 4 slices.
+		if (wasEnabled && !capped.Enabled)
+			ResetSession();
 	}
 
 	void ResetSession()
@@ -4547,11 +4609,19 @@ namespace ShadowCasterManager
 				"distance, intensity, and a configurable priority formula.\n\n"
 				"Based on Intellightent by meh321.\n"
 				"https://www.nexusmods.com/skyrimspecialedition/mods/172423\n\n"
-				"Requires a game restart to take effect.");
-		if (settings.Enabled != s_settings.Enabled) {
+				"Disabling reverts to vanilla shadow behaviour on the next frame --\n"
+				"converted lights resume casting shadows and the engine's own\n"
+				"4-light scheduler takes over. Re-enabling requires a restart\n"
+				"because the extended atlas slots are allocated only at boot.");
+		// Re-enabling after a runtime disable requires a restart because the
+		// extended kSHADOWMAPS allocation and several patch sites only run
+		// at Init time. Going the other direction (enabled→disabled) is
+		// applied live by Update() draining the tracking containers and
+		// the per-frame thunk routing to the vanilla scheduler.
+		if (settings.Enabled != s_settings.Enabled && !s_settings.Enabled) {
 			const auto& theme = Menu::GetSingleton()->GetTheme();
 			ImGui::TextColored(theme.StatusPalette.RestartNeeded,
-				"Restart required -- currently %s.", s_settings.Enabled ? "enabled" : "disabled");
+				"Restart required to re-enable -- currently disabled.");
 		}
 
 		if (!settings.Enabled)
