@@ -217,7 +217,6 @@ namespace ShadowCasterManager
 		int reconciliation_clears = 0;       // slot freed because light gone from activeShadowLights
 		int slots_in_use = 0;                // sampled at frame end
 		int first_render_skips = 0;          // chosen lights deferred from shadow set: no valid slice yet
-		int dropped_frustum = 0;             // c.invalidFrustum: light off-screen, no engine call
 	};
 	static SchedDiagCounters s_schedDiag;
 
@@ -2380,39 +2379,42 @@ namespace ShadowCasterManager
 					if (!isUsableLight(c.light))
 						continue;
 
-					// Frustum-out fast path. UpdateCamera's bounding-sphere/
-					// cone test against the camera frustum means this light
-					// cannot contribute to any visible pixel -- not via the
-					// shadow pipeline, not via cluster lighting. ConvertLight
-					// would be wasted work (~6 us each); captures of heavy
-					// outdoor scenes show ~99% of invalidCamera fails are
-					// frustum-out. Drop: no engine call, light remains in
-					// activeShadowLights for next frame's re-evaluation.
-					if (c.invalidFrustum) {
-						s_schedDiag.dropped_frustum++;
-						continue;
-					}
-
-					// Remaining cases: invalidLod (engine thinks too far for
-					// useful shadow rendering, but light is still visible) and
-					// invalidPortal (cluster lighting has no portal-graph
-					// awareness). Convert is allowed for invalidCamera only --
-					// portal-occluded lights would leak across cells if
-					// promoted to non-shadow.
+					// UpdateCamera's three failure modes -- frustum cull, LOD
+					// fade, portal occlusion -- all route through Convert (for
+					// omni / hemi) or Disable (for spots / portal-occluded).
+					//
+					// Why frustum-out converts instead of dropping: an earlier
+					// optimization dropped invalidFrustum without an engine call
+					// on the theory that "bounding-sphere outside frustum = no
+					// visible pixel can be lit." That held geometrically only
+					// when UpdateCamera's test radius equalled the lighting
+					// radius; in practice the engine's frustum test uses a
+					// tighter bound, so distant omnis whose illumination still
+					// reaches visible pixels were silently disappearing from
+					// every cluster lighting source (not in shadowLightsAccum
+					// because the engine didn't render them, not in activeLights
+					// because they're BSShadowLights, not in s_normalConvert
+					// because we didn't convert). The cluster builder's own
+					// `(color * fade) > 1e-4 && radius > 1e-4` filter is the
+					// authoritative "does this light contribute" gate -- letting
+					// the convert happen and trusting that filter is correct;
+					// genuinely-out-of-range lights are still filtered, just on
+					// the right metric.
+					//
+					// allowConvert=c.invalidCamera so portal-occluded omnis fall
+					// to Disable (cluster lighting has no portal-graph awareness
+					// and would leak light across cells).
 					ZoneNamedN(zCvt, "SCM::Engine::convertOrDisable(invalid)", true);
 					if (convertOrDisable(c.light, /*allowConvert=*/c.invalidCamera)) {
 						s_schedDiag.converted_invalid++;
 						// UpdateCamera zeros lodDimmer alongside frustrumCull
 						// when LOD fade fires. The cluster lighting builder
 						// multiplies light.fade by lodDimmer and drops the
-						// light if the product falls below 1e-4 -- so a
-						// LOD-faded light that we convert would still
-						// disappear from clusters. Restore lodDimmer to 1
-						// so the converted light contributes its full
-						// non-shadow diffuse; the engine resets it back to 0
-						// next frame if the light is still LOD-faded, and
-						// we restore again -- self-correcting as the camera
-						// moves.
+						// light if the product falls below 1e-4. Restore
+						// lodDimmer to 1 so the converted light contributes
+						// its full non-shadow diffuse; the engine resets it
+						// next frame if still LOD-faded, and we restore
+						// again -- self-correcting as the camera moves.
 						c.light->lodDimmer = 1.0f;
 					} else {
 						s_schedDiag.disabled_invalid++;
@@ -2691,7 +2693,6 @@ namespace ShadowCasterManager
 			TracyPlot("scm.reconciliation.clears", (int64_t)s_schedDiag.reconciliation_clears);
 			TracyPlot("scm.slots.in_use", (int64_t)s_schedDiag.slots_in_use);
 			TracyPlot("scm.first_render_skips", (int64_t)s_schedDiag.first_render_skips);
-			TracyPlot("scm.dropped_frustum", (int64_t)s_schedDiag.dropped_frustum);
 
 			// Live config plots — record the *current* settings on each frame so
 			// a single capture spanning a settings change captures both sides.
