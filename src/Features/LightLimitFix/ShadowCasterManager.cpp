@@ -2793,40 +2793,39 @@ namespace ShadowCasterManager
 		RenderScheduledShadowLights();
 	};
 
-	// Set by Update() when Enabled transitions true→false. Consumed at the
-	// top of the per-frame thunk so the actual ResetSession() runs at a
-	// well-defined "between frames" point rather than mid-frame from
-	// Prepass(). A crash log (2026-05-17 20:01:12, deep engine stack with
-	// r14 = bool returned-as-pointer) tracked to performing the wholesale
-	// container drain while the engine was still iterating shadow state
-	// from earlier in the same frame -- the per-frame Prepass call site
-	// is render-thread, but it's not a quiescent point for the engine's
-	// own shadow-render bookkeeping.
-	static std::atomic<bool> s_pendingDisableReset{ false };
-
 	// Hook struct for stl::detour_thunk.
 	//
 	// Runtime disable: when s_settings.Enabled is toggled off after boot,
 	// route to the original CalculateActiveShadowCasterLights captured by
-	// detour_thunk in `func`. The disable-time ResetSession() is applied
-	// here at frame top (not from Update()) so engine state mid-frame
-	// stays consistent. "Restart required" UX label remains for the
-	// inverse direction -- hooks not installed at boot can't be lazily
-	// installed later.
+	// detour_thunk in `func`. This is a SOFT disable -- the flag flips
+	// only the gating (per-frame thunk + Hook_OverwriteShadowMapIndex),
+	// no internal containers are torn down on the toggle itself.
+	//
+	// Why soft: the engine's mid-frame shadow-accumulate path
+	// (BSShadowLight_AccumulateShadowMap in EngineFixes) iterates
+	// activeShadowLights and dispatches vfuncs on the BSShadowLight
+	// objects. Two consecutive crash logs (2026-05-17 20:01:12 and
+	// 20:31:12, identical AV at `mov rax, [r14+0x48]` with r14 = vfunc
+	// bool return treated as pointer) tracked back to wholesale-clearing
+	// s_normalConvert / s_lights mid-session: the engine has the
+	// converted lights in both activeLights and activeShadowLights, with
+	// shadowmapDescriptors that may already have been zeroed by
+	// Hook_DisableColorMask's ReturnShadowmaps call for this frame.
+	// Flipping Hook_IsShadowLight's verdict back to "yes shadow" mid-walk
+	// makes the engine re-treat ~50 BSShadowLights as renderable but with
+	// stale data, and the vanilla 4-light scheduler can't reconcile.
+	//
+	// Soft disable lets the engine drain converted/promoted lights at
+	// its own pace via cell unload -- Hook_ConvertLights_Remove fires
+	// per-light during teardown and the LoadingMenu event triggers
+	// ResetSession() as the explicit "scene gone" signal. Full revert
+	// after a runtime disable therefore takes effect on next cell
+	// change. The UX trade is: existing demoted/promoted lights stay
+	// where they are until you fast-travel.
 	struct Hook_CalculateActiveShadowCasters
 	{
 		static void thunk()
 		{
-			// Frame-top: apply any pending wholesale reset. This is the
-			// only call site that runs at the engine's natural
-			// "between frames" point (top of the shadow-caster pass);
-			// resetting elsewhere risks tearing state the engine is
-			// mid-way through walking.
-			if (s_pendingDisableReset.exchange(false, std::memory_order_acq_rel)) {
-				logger::info("[SCM] Runtime disable: applying ResetSession at frame top.");
-				ResetSession();
-			}
-
 			if (!s_settings.Enabled) {
 				func();
 				return;
@@ -3596,55 +3595,26 @@ namespace ShadowCasterManager
 			s_lights.Size = newTotal;
 		}
 
-		// Snapshot the prior values of every flag whose true→false flip
-		// requires draining an internal tracking container. Conversion is a
-		// per-frame query (Hook_IsShadowLight reads s_normalConvert,
-		// schedulers consult s_lights and s_shadowConvert) so the engine
-		// reverts to vanilla behaviour on the next frame as soon as we drop
-		// our records. The user's saved settings are not mutated -- only
-		// our internal tracking is.
-		const bool wasEnabled = s_settings.Enabled;
-		const bool wasConvert = s_settings.ConvertExcessToNormal;
-		const bool wasPromote = s_settings.PromoteNormalToShadow;
-
-		s_settings = capped;
-
-		// ConvertExcessToNormal true→false: drop s_normalConvert so
-		// Hook_IsShadowLight returns the vanilla truth (always true) for
-		// previously-converted lights. The engine's per-frame shadow draw
-		// pass resumes rendering shadows for them on the next frame.
-		if (wasConvert && !capped.ConvertExcessToNormal)
-			s_normalConvert.clear();
-
-		// PromoteNormalToShadow true→false: drop s_shadowConvert so we
-		// stop tracking promoted lights. Existing promoted-shadow-lights
-		// were instantiated as BSShadowLight by the engine (Hook_ConvertLights_Add
-		// flipped LIGHT_CREATE_PARAMS::shadowLight at creation time), so
-		// they remain shadow casters until the engine removes them at cell
-		// unload -- at which point Hook_ConvertLights_Remove handles cleanup.
-		// This is the one non-trivially-reversible conversion direction;
-		// it self-heals across cell transitions.
-		if (wasPromote && !capped.PromoteNormalToShadow)
-			s_shadowConvert.clear();
-
-		// Enabled true→false: defer the wholesale drain to the top of
-		// the next CalculateActiveShadowCasterLights call. Update()
-		// runs from Prepass() which is mid-frame on the render thread,
-		// so calling ResetSession() here destructively while the engine
-		// may still be iterating shadow state later in the same frame
-		// has crashed in the wild (crash 2026-05-17 20:01:12, engine
-		// stack with a vfunc bool return treated as pointer). The
-		// per-frame thunk applies the reset at the well-defined
-		// between-frames moment.
+		// Apply settings as a pure flag flip. Conversion-related state
+		// (s_normalConvert, s_shadowConvert, s_lights pool) is NOT
+		// drained on toggles -- it ages out at the next LoadingMenu
+		// via the natural ResetSession() in SceneTransitionEventHandler.
+		// See Hook_CalculateActiveShadowCasters::thunk for the rationale:
+		// wholesale clearing mid-session caused engine accumulate-shadow
+		// crashes (2026-05-17 crash logs) because the engine still had
+		// our converted/promoted lights in activeShadowLights with
+		// shadowmapDescriptors already cleared by Hook_DisableColorMask,
+		// and tearing our tracking left the engine walking half-state.
 		//
-		// The per-flag ConvertExcessToNormal / PromoteNormalToShadow
-		// clears above touch smaller containers that aren't walked by
-		// the engine's render bookkeeping path, so they apply live
-		// from here without the deferred-reset wrapper. If those turn
-		// out to cause similar engine-state tears we'd add them to
-		// the same pending-reset mechanism.
-		if (wasEnabled && !capped.Enabled)
-			s_pendingDisableReset.store(true, std::memory_order_release);
+		// Each setting's gating still takes effect immediately via the
+		// runtime checks in the relevant hook / scheduler branches:
+		//   - Enabled: per-frame thunk routes to vanilla; OverwriteShadowMapIndex no-ops.
+		//   - ConvertExcessToNormal: convertOrDisable routes excess omnis to DisableLight.
+		//   - PromoteNormalToShadow: Hook_ConvertLights_Add stops promoting.
+		// "Off = stop converting" is the documented semantic; existing
+		// converted/promoted lights persist in their current form until
+		// the engine itself drops them at cell change.
+		s_settings = capped;
 	}
 
 	void ResetSession()
@@ -4662,15 +4632,19 @@ namespace ShadowCasterManager
 				"distance, intensity, and a configurable priority formula.\n\n"
 				"Based on Intellightent by meh321.\n"
 				"https://www.nexusmods.com/skyrimspecialedition/mods/172423\n\n"
-				"Disabling reverts to vanilla shadow behaviour on the next frame --\n"
-				"converted lights resume casting shadows and the engine's own\n"
-				"4-light scheduler takes over. Re-enabling requires a restart\n"
-				"because the extended atlas slots are allocated only at boot.");
+				"Disabling stops new conversions immediately and routes the\n"
+				"per-frame shadow scheduler to the engine's vanilla 4-light\n"
+				"path. Existing converted/promoted lights persist until the\n"
+				"next cell change, when they drain naturally -- fast-travel\n"
+				"or load a save for a clean revert. Re-enabling requires a\n"
+				"restart because the extended atlas slots are allocated only\n"
+				"at boot.");
 		// Re-enabling after a runtime disable requires a restart because the
 		// extended kSHADOWMAPS allocation and several patch sites only run
-		// at Init time. Going the other direction (enabled→disabled) is
-		// applied live by Update() draining the tracking containers and
-		// the per-frame thunk routing to the vanilla scheduler.
+		// at Init time. Going the other direction (enabled→disabled) is a
+		// soft disable -- the per-frame thunk routes to vanilla and the
+		// gating flags stop new conversions, but no internal containers
+		// are torn down on the toggle.
 		if (settings.Enabled != s_settings.Enabled && !s_settings.Enabled) {
 			const auto& theme = Menu::GetSingleton()->GetTheme();
 			ImGui::TextColored(theme.StatusPalette.RestartNeeded,
