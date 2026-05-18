@@ -2793,18 +2793,40 @@ namespace ShadowCasterManager
 		RenderScheduledShadowLights();
 	};
 
+	// Set by Update() when Enabled transitions true→false. Consumed at the
+	// top of the per-frame thunk so the actual ResetSession() runs at a
+	// well-defined "between frames" point rather than mid-frame from
+	// Prepass(). A crash log (2026-05-17 20:01:12, deep engine stack with
+	// r14 = bool returned-as-pointer) tracked to performing the wholesale
+	// container drain while the engine was still iterating shadow state
+	// from earlier in the same frame -- the per-frame Prepass call site
+	// is render-thread, but it's not a quiescent point for the engine's
+	// own shadow-render bookkeeping.
+	static std::atomic<bool> s_pendingDisableReset{ false };
+
 	// Hook struct for stl::detour_thunk.
 	//
 	// Runtime disable: when s_settings.Enabled is toggled off after boot,
 	// route to the original CalculateActiveShadowCasterLights captured by
-	// detour_thunk in `func`. This lets the engine run its vanilla shadow
-	// scheduler immediately without requiring a restart. The "Restart
-	// required" UX label remains for the inverse direction (off→on) because
-	// hooks not installed at boot can't be lazily installed later.
+	// detour_thunk in `func`. The disable-time ResetSession() is applied
+	// here at frame top (not from Update()) so engine state mid-frame
+	// stays consistent. "Restart required" UX label remains for the
+	// inverse direction -- hooks not installed at boot can't be lazily
+	// installed later.
 	struct Hook_CalculateActiveShadowCasters
 	{
 		static void thunk()
 		{
+			// Frame-top: apply any pending wholesale reset. This is the
+			// only call site that runs at the engine's natural
+			// "between frames" point (top of the shadow-caster pass);
+			// resetting elsewhere risks tearing state the engine is
+			// mid-way through walking.
+			if (s_pendingDisableReset.exchange(false, std::memory_order_acq_rel)) {
+				logger::info("[SCM] Runtime disable: applying ResetSession at frame top.");
+				ResetSession();
+			}
+
 			if (!s_settings.Enabled) {
 				func();
 				return;
@@ -3605,16 +3627,24 @@ namespace ShadowCasterManager
 		if (wasPromote && !capped.PromoteNormalToShadow)
 			s_shadowConvert.clear();
 
-		// Enabled true→false: full drain via ResetSession. The per-frame
-		// thunk now routes to vanilla CalculateActiveShadowCasterLights
-		// (via Hook_CalculateActiveShadowCasters::func) and the slot-index
-		// hook no-ops; combined with empty tracking containers, the engine
-		// runs its vanilla shadow scheduler with no SCM influence. Extended
-		// kSHADOWMAPS atlas slots remain allocated for the process lifetime
-		// (ShadowLightCount is restart-only) but go unused on the vanilla
-		// path, which only references the first 4 slices.
+		// Enabled true→false: defer the wholesale drain to the top of
+		// the next CalculateActiveShadowCasterLights call. Update()
+		// runs from Prepass() which is mid-frame on the render thread,
+		// so calling ResetSession() here destructively while the engine
+		// may still be iterating shadow state later in the same frame
+		// has crashed in the wild (crash 2026-05-17 20:01:12, engine
+		// stack with a vfunc bool return treated as pointer). The
+		// per-frame thunk applies the reset at the well-defined
+		// between-frames moment.
+		//
+		// The per-flag ConvertExcessToNormal / PromoteNormalToShadow
+		// clears above touch smaller containers that aren't walked by
+		// the engine's render bookkeeping path, so they apply live
+		// from here without the deferred-reset wrapper. If those turn
+		// out to cause similar engine-state tears we'd add them to
+		// the same pending-reset mechanism.
 		if (wasEnabled && !capped.Enabled)
-			ResetSession();
+			s_pendingDisableReset.store(true, std::memory_order_release);
 	}
 
 	void ResetSession()
