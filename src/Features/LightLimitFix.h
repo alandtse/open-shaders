@@ -7,14 +7,12 @@
 struct LightLimitFix : OverlayFeature
 {
 private:
-	static constexpr std::string_view MOD_ID = "99548";
 	static constexpr uint32_t MAX_LIGHTS = 1024;
 	static constexpr uint32_t CLUSTER_MAX_LIGHTS = 128;
 
 public:
 	virtual inline std::string GetName() override { return "Light Limit Fix"; }
 	virtual inline std::string GetShortName() override { return "LightLimitFix"; }
-	virtual inline std::string GetFeatureModLink() override { return MakeNexusModURL(MOD_ID); }
 	virtual inline std::string_view GetShaderDefineName() override { return "LIGHT_LIMIT_FIX"; }
 	virtual std::string_view GetCategory() const override { return FeatureCategories::kLighting; }
 
