@@ -147,11 +147,34 @@ void LightLimitFix::CopyShadowLightData()
 	if (plCount != shadowLightCount || ShadowCasterManager::GetSlotUsage() != prevSlotUsage || unshadowedLights != shadowUnshadowedLightCount) {
 		shadowLightCount = plCount;
 		shadowUnshadowedLightCount = unshadowedLights;
-		if (unshadowedLights > 0)
-			logger::debug("[LLF] {} shadow lights, {} / {} slots used; {} lights dropped (no shadow)",
-				plCount, ShadowCasterManager::GetSlotUsage(), slots, unshadowedLights);
-		else
-			logger::debug("[LLF] {} shadow lights, {} / {} slots used", plCount, ShadowCasterManager::GetSlotUsage(), slots);
+
+		// Throttle the count-change log: this fires every time plCount or
+		// slot usage moves by even 1, which in busy outdoor scenes is
+		// effectively every frame. Earlier logs averaged ~10 entries/sec
+		// (25k lines over a 39-minute session, dwarfing every other
+		// signal). Two filters:
+		//   - Significance: only log when the count moves by >= 4 from
+		//     the last logged value, OR when the unshadowed-lights count
+		//     changes at all (rarer, more interesting).
+		//   - Rate: floor at 1 line/sec via a steady_clock comparator.
+		static int s_lastLoggedShadowCount = -1;
+		static uint32_t s_lastLoggedUnshadowed = 0;
+		static auto s_lastLogTime = std::chrono::steady_clock::time_point{};
+		const auto now = std::chrono::steady_clock::now();
+		const bool unshadowedChanged = unshadowedLights != s_lastLoggedUnshadowed;
+		const bool countSignificant = s_lastLoggedShadowCount < 0 ||
+		                              std::abs(static_cast<int>(plCount) - s_lastLoggedShadowCount) >= 4;
+		const bool rateOk = now - s_lastLogTime >= std::chrono::seconds(1);
+		if ((countSignificant || unshadowedChanged) && rateOk) {
+			s_lastLoggedShadowCount = static_cast<int>(plCount);
+			s_lastLoggedUnshadowed = unshadowedLights;
+			s_lastLogTime = now;
+			if (unshadowedLights > 0)
+				logger::debug("[LLF] {} shadow lights, {} / {} slots used; {} lights dropped (no shadow)",
+					plCount, ShadowCasterManager::GetSlotUsage(), slots, unshadowedLights);
+			else
+				logger::debug("[LLF] {} shadow lights, {} / {} slots used", plCount, ShadowCasterManager::GetSlotUsage(), slots);
+		}
 	}
 
 	{
