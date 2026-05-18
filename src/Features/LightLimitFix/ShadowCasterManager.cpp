@@ -1586,7 +1586,7 @@ namespace ShadowCasterManager
 		//
 		// Sub-reasons are not mutually exclusive at the bit level but action
 		// selection treats frustum-out as terminal.
-		bool invalidFrustum{ false };  // engine's frustum cull failed (BSMultiBoundSphere::Func41 / cone-frustum)
+		bool invalidFrustum{ false };  // engine's frustum cull failed (BSMultiBoundSphere::WithinFrustum / cone-frustum)
 		bool invalidLod{ false };      // engine's LOD-fade zeroed lodDimmer
 	};
 
@@ -1745,8 +1745,9 @@ namespace ShadowCasterManager
 				//
 				//   - BSShadowParabolicLight: TWO cull conditions, both setting
 				//     frustrumCull=0xff:
-				//       (1) BSMultiBoundSphere::Func41 -- sphere(niLight.pos,
-				//           niLight.Radius.x) vs camera frustum. Geometrically correct;
+				//       (1) BSMultiBoundSphere::WithinFrustum (BSMultiBoundShape
+				//           vfunc 0x29) -- sphere(niLight.pos, niLight.Radius.x)
+				//           vs camera frustum. Geometrically correct;
 				//           failure means no visible pixel can be lit because the
 				//           light's bounding sphere doesn't touch the camera frustum.
 				//           The radius source matches what the cluster builder reads
