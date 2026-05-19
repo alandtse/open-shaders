@@ -168,17 +168,21 @@ jobs:
                   # to dev during the release, exit with a warning instead of
                   # rewriting their work.
                   if ! git merge-base --is-ancestor origin/dev origin/main; then
-                    echo "::warning::dev moved during promotion; FF-reconcile skipped."
                     {
                       echo ""
-                      echo "## Dev reconcile skipped"
+                      echo "## ⚠️ Dev reconcile skipped — dev moved during promotion"
                       echo "Dev was pushed to during the release. To reconcile manually:"
                       echo ""
                       echo '```bash'
                       echo "git fetch && git checkout dev && git merge --ff-only origin/main && git push"
                       echo '```'
                     } >> "$GITHUB_STEP_SUMMARY"
-                    exit 0
+                    # Fail loudly: the release tag is already on main but
+                    # dev is unreconciled, so the lineage invariant is
+                    # broken. A green workflow would let it go unnoticed
+                    # and the next RC would miss the released changes.
+                    echo "::error::dev moved during promotion — dev is unreconciled. See job summary for manual remediation."
+                    exit 1
                   fi
                   NEW_MAIN=$(git rev-parse origin/main)
                   REMOTE="https://x-access-token:${TOKEN}@github.com/${{ github.repository }}.git"
@@ -243,8 +247,15 @@ jobs:
                       echo "git rebase origin/main && git push --force-with-lease origin dev"
                       echo '```'
                     } >> "$GITHUB_STEP_SUMMARY"
-                    echo "::warning::Dev moved during release — manual reconcile required."
-                    exit 0
+                    # Fail the job (not exit 0): the release commit and
+                    # tag have already been pushed by semantic-release at
+                    # this point, but dev is now unreconciled — the
+                    # lineage invariant is broken. A green workflow would
+                    # let that go unnoticed and the next RC on dev would
+                    # repeat the v1.5.2-style miss. A red workflow forces
+                    # a human to read the remediation block above.
+                    echo "::error::Dev moved during release — dev is unreconciled. See job summary for manual remediation."
+                    exit 1
                   fi
 
                   {
