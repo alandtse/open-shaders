@@ -227,8 +227,9 @@ jobs:
                       echo "git rebase origin/main && git push --force-with-lease origin dev"
                       echo '```'
                     } >> "$GITHUB_STEP_SUMMARY"
-                    # Fail loud: tag is on main but dev isn't reconciled,
-                    # so the next RC would repeat the v1.5.2-style miss.
+                    # Fail loud: tag is on main but dev's history doesn't
+                    # contain it, so the next RC would compute its floor
+                    # and changelog against the wrong prior tag.
                     echo "::error::Dev moved during release — dev is unreconciled. See job summary for manual remediation."
                     exit 1
                   fi

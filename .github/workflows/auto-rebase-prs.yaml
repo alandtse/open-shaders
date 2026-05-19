@@ -70,8 +70,8 @@ jobs:
 
             - name: Rebase open PRs against dev
               id: rebase
-              # Skip if pr_number was given but validation rejected it —
-              # empty `head` would otherwise default to "all open PRs".
+              # Single-PR dispatches without a valid head fall through to
+              # the all-PRs default; this guard keeps that from happening.
               if: inputs.pr_number == '' || steps.resolve_head.outputs.head != ''
               uses: peter-evans/rebase@v3
               with:
