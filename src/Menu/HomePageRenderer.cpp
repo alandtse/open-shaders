@@ -108,11 +108,11 @@ void HomePageRenderer::RenderQuickLinksSection()
 	ImGui::SetCursorPosX((windowSize.x - titleSize.x) * 0.5f);
 	ImGui::Text("Quick Links");
 
-	// Three columns: Nexus (upstream Community Shaders), GitHub (this
-	// fork), Developer Wiki (upstream GitHub wiki — still active). The
-	// old modding.wiki "User Wiki" link is intentionally removed; that
-	// page is not maintained against the fork. Switch the Nexus URL once
-	// the Open Shaders Nexus page exists.
+	// Three columns: Nexus (upstream Community Shaders for now —
+	// switch once the Open Shaders Nexus page exists), GitHub (this
+	// fork at alandtse/open-shaders), Developer Wiki (this fork's wiki
+	// at alandtse/open-shaders/wiki, which is the transferred copy of
+	// the upstream developer wiki).
 	ImGui::Columns(3, nullptr, false);
 
 	if (ImGui::Button("Nexus Mods", ImVec2(-1, 0))) {
@@ -121,12 +121,12 @@ void HomePageRenderer::RenderQuickLinksSection()
 
 	ImGui::NextColumn();
 	if (ImGui::Button("GitHub", ImVec2(-1, 0))) {
-		ShellExecuteA(NULL, "open", "https://github.com/alandtse/skyrim-community-shaders", NULL, NULL, SW_SHOWNORMAL);
+		ShellExecuteA(NULL, "open", "https://github.com/alandtse/open-shaders", NULL, NULL, SW_SHOWNORMAL);
 	}
 
 	ImGui::NextColumn();
 	if (ImGui::Button("Developer Wiki", ImVec2(-1, 0))) {
-		ShellExecuteA(NULL, "open", "https://github.com/community-shaders/skyrim-community-shaders/wiki", NULL, NULL, SW_SHOWNORMAL);
+		ShellExecuteA(NULL, "open", "https://github.com/alandtse/open-shaders/wiki", NULL, NULL, SW_SHOWNORMAL);
 	}
 
 	ImGui::Columns(1);

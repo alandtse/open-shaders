@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Fork identity
 
-This repository is **Open Shaders**, a fork of [Community Shaders](https://github.com/community-shaders/skyrim-community-shaders) ([Nexus mod 180419](https://www.nexusmods.com/skyrimspecialedition/mods/180419)). The public/display name is "Open Shaders"; the runtime identity is intentionally kept as upstream Community Shaders so user installs are drop-in compatible:
+This repository is **Open Shaders** ([alandtse/open-shaders](https://github.com/alandtse/open-shaders), renamed from `alandtse/skyrim-community-shaders` — GitHub redirects the old URL transparently). It is a fork of [Community Shaders](https://github.com/community-shaders/skyrim-community-shaders) ([Nexus mod 180419](https://www.nexusmods.com/skyrimspecialedition/mods/180419)). The public/display name is "Open Shaders"; the runtime identity is intentionally kept as upstream Community Shaders so user installs are drop-in compatible:
 
 -   **Keep as `CommunityShaders`** (do NOT rename): the CMake `PROJECT_NAME`, the DLL filename, the `SKSE/Plugins/CommunityShaders/` runtime directory, the `CommunityShaders.log` log file, the ImGui window ID after `###`, asset paths under `package/Interface/CommunityShaders/`, and any HLSL include paths.
 -   **Use "Open Shaders"**: in-game menu titles, README/AI-INSTRUCTIONS public-facing copy, the AIO Nexus mod filename, the GitHub release name, the in-game Welcome / FAQ / About text.
@@ -500,7 +500,7 @@ Conventional commits drive semantic-release. `feat:` triggers a minor bump, `fix
 -   PR a feature branch directly into `main`.
 -   Run `Release: Semantic Version` on `hotfix/X.Y.x` for the current line — it will fail with `cannot be published as it is out of range` because the maintenance contract requires the hotfix line to be strictly older than `main`. Use `ff_target` into `main` instead.
 
-Full details: [upstream Developers wiki — Patch Release Process](https://github.com/community-shaders/skyrim-community-shaders/wiki/Developers#patch-release-process-any-line). This fork does not maintain its own wiki — the upstream wiki is the documentation source of truth for the shared release flow.
+Full details: [Open Shaders developer wiki — Patch Release Process](https://github.com/alandtse/open-shaders/wiki/Developers#patch-release-process-any-line). The fork now maintains its own wiki (transferred from upstream) at `alandtse/open-shaders/wiki`; the `maint-update-wiki.yaml` workflow auto-publishes buffer documentation there on every push to `dev`. Upstream Community Shaders maintains its own copy at `community-shaders/skyrim-community-shaders/wiki` — link to whichever is appropriate for the audience.
 
 ### Code Organization and Refactoring Patterns
 

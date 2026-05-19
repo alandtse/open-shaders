@@ -17,11 +17,14 @@ permissions:
 jobs:
     update-wiki:
         name: Update Buffer Documentation
-        # Wiki content lives on upstream Community Shaders; forks should not
-        # publish their own wiki copies. The workflow no-ops on any fork —
-        # change the comparison to your fork's full repo name if you do
-        # want to mirror buffer docs to your fork's wiki.
-        if: github.repository == 'community-shaders/skyrim-community-shaders'
+        # Publish buffer documentation to the wiki of any repo that maintains
+        # its own copy. The fork (alandtse/open-shaders) maintains a wiki
+        # transferred from upstream; upstream (community-shaders/skyrim-
+        # community-shaders) also maintains one. Forks that don't want a
+        # wiki of their own should drop their entry from this list.
+        if: >
+            github.repository == 'alandtse/open-shaders' ||
+            github.repository == 'community-shaders/skyrim-community-shaders'
         runs-on: windows-2022
         steps:
             - name: Checkout code

@@ -317,10 +317,13 @@ jobs:
                       echo "Resolve by checking out \`${STAGING}\` locally, cherry-picking the conflicted commits manually, and pushing."
                     fi
                     echo ""
-                    # Wiki lives on upstream Community Shaders (this fork does not
-                    # mirror the wiki). Always link to upstream so PR readers reach
-                    # documentation regardless of which fork ran the workflow.
-                    echo "See: [Hotfix Release Process](https://github.com/community-shaders/skyrim-community-shaders/wiki/Developers#hotfix-release-process)"
+                    # Link to the running repo's own wiki. Both upstream
+                    # (community-shaders/skyrim-community-shaders) and the
+                    # Open Shaders fork (alandtse/open-shaders) maintain
+                    # wiki copies; `maint-update-wiki.yaml` keeps them in
+                    # sync from buffer scans, so `${{ github.repository }}`
+                    # resolves correctly in either context.
+                    echo "See: [Hotfix Release Process](${{ github.server_url }}/${{ github.repository }}/wiki/Developers#hotfix-release-process)"
                   } > /tmp/pr-body.md
 
                   # Best-effort: ensure the hotfix label exists so --label
