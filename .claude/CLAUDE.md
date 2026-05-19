@@ -468,7 +468,7 @@ Conventional commits drive semantic-release. `feat:` triggers a minor bump, `fix
 -   **dev → main promotion** (minor/major): main fast-forwards to the dev SHA, semantic-release appends a `chore(release):` commit on top, then dev fast-forwards to absorb that commit. No history rewrites on either branch.
 -   **hotfix-staging → main promotion** (current-line patch): main fast-forwards to the hotfix-staging SHA, semantic-release appends the `chore(release):` commit, then dev is **rebase-reconciled** onto the new main. `git rebase` drops dev's originals of the cherry-picked fixes (patch-id match) and replays any unique dev work on top. This is the only place the workflow force-pushes (`--force-with-lease`) — it is intentional and load-bearing.
 
-After a hotfix release, open PRs targeting `dev` are auto-rebased by the `Auto-rebase open PRs` workflow. PRs from forks need "Allow edits by maintainers" enabled; the workflow summary lists any that were skipped for missing access. Conflicting PRs get a `needs-rebase` label and a comment.
+After a hotfix release, open PRs targeting `dev` are auto-rebased by the `Auto-rebase open PRs` workflow (a thin wrapper around `peter-evans/rebase@v3`). PRs from forks need "Allow edits by maintainers" enabled or the action silently skips them; drafts and PRs labeled `no-auto-rebase` are also excluded. The workflow's job summary reports the rebased count and lists the buckets PRs can fall into; conflict-skipped PRs need a manual `git rebase origin/dev` by the author.
 
 **Patch flow (current line _or_ older line, same staging mechanism):**
 
