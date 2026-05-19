@@ -56,6 +56,6 @@ For full details about manual packaging targets (Package-Core, Package-AIO-Manua
 
 -   **Concise comments**: explain _why_, not _what_. Don't paraphrase the next 4 lines in 4 lines of comment.
 -   **Minimal churn**: PRs touch only what the change requires. Out-of-scope cleanups go in a follow-up, not the current diff.
--   **Present-tense comments**: describe what the code _is_, not what it used to be. No "previously", "the old version", or references to past incidents/PRs/SHAs in code. Exception: a load-bearing regression warning ("do not revert; absence caused X"). History belongs in commit messages, not comments.
+-   **No comments about absent code**: don't describe code that used to be in the file but isn't now ("X was removed", "Y was renamed from Z"). The deletion isn't visible. Past-tense framing of present behavior is fine. Exception: a regression-risk warning that names the removed code to prevent re-adding it.
 
 For detailed explanations, examples, and comprehensive guidance, refer to `.claude/CLAUDE.md`.
