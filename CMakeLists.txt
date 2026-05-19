@@ -421,14 +421,26 @@ endforeach()
 list(LENGTH AIO_INCLUDED_FEATURE_PATHS _aio_in_count)
 list(LENGTH AIO_EXCLUDED_FEATURE_PATHS _aio_out_count)
 message("\tAIO features included: ${_aio_in_count}")
+
+# Folder basenames of excluded features, used at archive-time to strip
+# them from the staged AIO before tar. Computed here (not at archive time)
+# so CMake regenerates archives if a feature toggles autoupload.
+set(AIO_EXCLUDED_FEATURE_NAMES "")
+foreach(_fpath IN LISTS AIO_EXCLUDED_FEATURE_PATHS)
+    get_filename_component(_fname "${_fpath}" NAME)
+    list(APPEND AIO_EXCLUDED_FEATURE_NAMES "${_fname}")
+endforeach()
+
 if(_aio_out_count GREATER 0)
     message(
-        "\tAIO features excluded (autoupload != true, set AIO_INCLUDE_NON_AUTOUPLOAD=ON to override): ${_aio_out_count}"
+        "\tAIO features excluded from release archive (autoupload != true, set AIO_INCLUDE_NON_AUTOUPLOAD=ON to override): ${_aio_out_count}"
     )
-    foreach(_fpath IN LISTS AIO_EXCLUDED_FEATURE_PATHS)
-        get_filename_component(_fname "${_fpath}" NAME)
+    foreach(_fname IN LISTS AIO_EXCLUDED_FEATURE_NAMES)
         message("\t\t- ${_fname}")
     endforeach()
+    message(
+        "\tNote: excluded features are still BUILT and shader-validated; they are stripped only when producing the AIO release archive (AIO_ZIP_PACKAGE / Package-AIO-Manual). Base shaders that #include feature shaders compile against the full tree."
+    )
 endif()
 
 # Robocopy wrapper for Windows incremental file copy (used by deployment targets).
@@ -451,11 +463,12 @@ endif()
 # #######################################################################################################################
 
 # Append a '/' to the end of each feature path for installation all its
-# contents but not itself. The AIO install() rule below copies these into
-# the AIO image, so use the same autoupload-filtered set as the AIO copy
-# loops — `cmake --install` and `Package-AIO-Manual` will then ship the
-# same feature set as the in-tree AIO build.
-set(FEATURE_PATHS_SLASH ${AIO_INCLUDED_FEATURE_PATHS})
+# contents but not itself. The full FEATURE_PATHS is used here (not the
+# autoupload-filtered set) because base shaders in `package/Shaders/`
+# cross-include feature shaders (e.g. DistantTree.hlsl includes
+# IBL/IBL.hlsli). Filtering at install time would break shader compilation.
+# The autoupload filter is applied later, at AIO archive time only.
+set(FEATURE_PATHS_SLASH ${FEATURE_PATHS})
 list(TRANSFORM FEATURE_PATHS_SLASH APPEND /)
 
 # Install logic for AIO package
@@ -568,12 +581,11 @@ if(AUTO_PLUGIN_DEPLOYMENT OR AIO_ZIP_TO_DIST)
     # Shader files are excluded - copy_shaders.stamp owns the Shaders/ subdir
     # so the two custom-build rules don't race on the same destinations.
     #
-    # AIO_INCLUDED_FEATURE_PATHS is pre-filtered by `autoupload = true` in
-    # each feature's .ini (computed near the top of this file). Features
-    # not marked autoupload are still built and shader-validated, but are
-    # excluded from the AIO bundle so the all-in-one archive ships only
-    # release-ready content. Set AIO_INCLUDE_NON_AUTOUPLOAD=ON to bypass.
-    foreach(_fpath IN LISTS AIO_INCLUDED_FEATURE_PATHS)
+    # All features are copied here regardless of autoupload status —
+    # base shaders cross-include feature shaders so the full tree must
+    # exist at build time. The autoupload filter is applied later, at
+    # AIO archive time only (see AIO_EXCLUDED_FEATURE_NAMES).
+    foreach(_fpath IN LISTS FEATURE_PATHS)
         if(EXISTS "${_fpath}")
             file(
                 GLOB_RECURSE _feature_files
@@ -658,11 +670,13 @@ if(AUTO_PLUGIN_DEPLOYMENT OR AIO_ZIP_TO_DIST)
     list(FILTER _package_shaders EXCLUDE REGEX "/Tests/")
     set(_shader_copy_cmds)
 
-    # Match the AIO's autoupload filter: only ship shaders for features
-    # that are actually in the AIO bundle. Filtering keeps the AIO's
-    # Shaders/ subtree consistent with the rest of the package.
+    # Copy shaders for ALL features regardless of autoupload status —
+    # base shaders in package/Shaders/ cross-include feature shaders
+    # (e.g. DistantTree.hlsl #includes IBL/IBL.hlsli). Filtering by
+    # autoupload here would break shader compilation. The autoupload
+    # filter applies only at AIO archive time.
     set(_feature_shader_paths)
-    foreach(_fpath IN LISTS AIO_INCLUDED_FEATURE_PATHS)
+    foreach(_fpath IN LISTS FEATURE_PATHS)
         if(EXISTS "${_fpath}/Shaders")
             list(APPEND _feature_shader_paths "${_fpath}/Shaders")
         endif()
@@ -688,8 +702,9 @@ if(AUTO_PLUGIN_DEPLOYMENT OR AIO_ZIP_TO_DIST)
 
     append_copy_if_different(_shader_copy_cmds _package_shaders "${CMAKE_SOURCE_DIR}/package/Shaders" "${AIO_DIR}/Shaders")
 
-    # Feature shader folders — same autoupload filter as the AIO file copy.
-    foreach(_fpath IN LISTS AIO_INCLUDED_FEATURE_PATHS)
+    # Feature shader folders — all features, see comment above on
+    # why autoupload filtering applies at archive time only.
+    foreach(_fpath IN LISTS FEATURE_PATHS)
         if(EXISTS "${_fpath}/Shaders")
             file(
                 GLOB_RECURSE _feat_shaders
@@ -1007,15 +1022,106 @@ if(AIO_ZIP_TO_DIST)
     set(TARGET_AIO_ZIP "${PROJECT_NAME}_AIO-${UTC_NOW}.7z")
     set(AIO_ARCHIVE "${CMAKE_SOURCE_DIR}/dist/${TARGET_AIO_ZIP}")
     set(AIO_ZIP_STAMP "${CMAKE_CURRENT_BINARY_DIR}/aio_package.stamp")
+    set(AIO_STAGE_DIR "${CMAKE_CURRENT_BINARY_DIR}/aio_stage")
 
     message("Zipping ${AIO_DIR} to ${AIO_ARCHIVE}")
 
+    # Build the archive command list. When no features are excluded, tar
+    # directly from AIO_DIR for speed. When features are excluded, copy
+    # AIO_DIR into a stage directory, delete the excluded feature
+    # subtrees from the stage (both top-level <Feature>/ and the
+    # corresponding Shaders/<Feature>/ subdirs), then tar the stage.
+    # AIO_DIR itself stays complete so AUTO_PLUGIN_DEPLOYMENT delivers
+    # the full feature tree to local dev installs.
+    #
+    # Each tar uses `cmake -E chdir <dir>` so the archive paths are
+    # relative to the staged tree, avoiding `WORKING_DIRECTORY` (which
+    # would fail to chdir into AIO_STAGE_DIR before it gets created).
+    set(_aio_zip_cmds
+        COMMAND
+        ${CMAKE_COMMAND}
+        -E
+        make_directory
+        "${CMAKE_SOURCE_DIR}/dist"
+    )
+    if(AIO_EXCLUDED_FEATURE_NAMES)
+        list(
+            APPEND _aio_zip_cmds
+            COMMAND
+            ${CMAKE_COMMAND}
+            -E
+            rm
+            -rf
+            "${AIO_STAGE_DIR}"
+            COMMAND
+            ${CMAKE_COMMAND}
+            -E
+            copy_directory
+            "${AIO_DIR}"
+            "${AIO_STAGE_DIR}"
+        )
+        foreach(_fname IN LISTS AIO_EXCLUDED_FEATURE_NAMES)
+            list(
+                APPEND _aio_zip_cmds
+                COMMAND
+                ${CMAKE_COMMAND}
+                -E
+                rm
+                -rf
+                "${AIO_STAGE_DIR}/${_fname}"
+                COMMAND
+                ${CMAKE_COMMAND}
+                -E
+                rm
+                -rf
+                "${AIO_STAGE_DIR}/Shaders/${_fname}"
+            )
+        endforeach()
+        list(
+            APPEND _aio_zip_cmds
+            COMMAND
+            ${CMAKE_COMMAND}
+            -E
+            chdir
+            "${AIO_STAGE_DIR}"
+            ${CMAKE_COMMAND}
+            -E
+            tar
+            cf
+            "${AIO_ARCHIVE}"
+            --format=7zip
+            --
+            .
+        )
+    else()
+        list(
+            APPEND _aio_zip_cmds
+            COMMAND
+            ${CMAKE_COMMAND}
+            -E
+            chdir
+            "${AIO_DIR}"
+            ${CMAKE_COMMAND}
+            -E
+            tar
+            cf
+            "${AIO_ARCHIVE}"
+            --format=7zip
+            --
+            .
+        )
+    endif()
+    list(
+        APPEND _aio_zip_cmds
+        COMMAND
+        ${CMAKE_COMMAND}
+        -E
+        touch
+        ${AIO_ZIP_STAMP}
+    )
+
     add_custom_command(
-        OUTPUT ${AIO_ZIP_STAMP}
-        COMMAND ${CMAKE_COMMAND} -E make_directory "${CMAKE_SOURCE_DIR}/dist"
-        COMMAND ${CMAKE_COMMAND} -E tar cf ${AIO_ARCHIVE} --format=7zip -- .
-        COMMAND ${CMAKE_COMMAND} -E touch ${AIO_ZIP_STAMP}
-        WORKING_DIRECTORY ${AIO_DIR}
+        OUTPUT ${AIO_ZIP_STAMP} ${_aio_zip_cmds}
         DEPENDS PREPARE_AIO ${CMAKE_CURRENT_BINARY_DIR}/copy_shaders.stamp
         COMMENT "Creating AIO archive ${AIO_ARCHIVE}"
     )
@@ -1113,16 +1219,95 @@ add_custom_command(
 )
 add_custom_target("AIO" DEPENDS ${AIO_DIR}/SKSE/Plugins/${PROJECT_NAME}.dll)
 
-# Manual AIO package target
+# Manual AIO package target. Strips non-autoupload features at archive
+# time (mirroring AIO_ZIP_PACKAGE) so the manual path produces the same
+# release-ready bundle as the automated path.
 set(AIO_PACKAGE "${DIST_PATH}/${PROJECT_NAME}_AIO-${UTC_NOW}.7z")
+set(AIO_MANUAL_STAGE_DIR "${CMAKE_CURRENT_BINARY_DIR}/aio_manual_stage")
+set(_aio_manual_cmds
+    COMMAND
+    ${CMAKE_COMMAND}
+    -E
+    make_directory
+    ${AIO_DIR}
+    COMMAND
+    ${CMAKE_COMMAND}
+    --install
+    ${CMAKE_BINARY_DIR}
+    --prefix
+    ${AIO_DIR}
+)
+if(AIO_EXCLUDED_FEATURE_NAMES)
+    list(
+        APPEND _aio_manual_cmds
+        COMMAND
+        ${CMAKE_COMMAND}
+        -E
+        rm
+        -rf
+        "${AIO_MANUAL_STAGE_DIR}"
+        COMMAND
+        ${CMAKE_COMMAND}
+        -E
+        copy_directory
+        "${AIO_DIR}"
+        "${AIO_MANUAL_STAGE_DIR}"
+    )
+    foreach(_fname IN LISTS AIO_EXCLUDED_FEATURE_NAMES)
+        list(
+            APPEND _aio_manual_cmds
+            COMMAND
+            ${CMAKE_COMMAND}
+            -E
+            rm
+            -rf
+            "${AIO_MANUAL_STAGE_DIR}/${_fname}"
+            COMMAND
+            ${CMAKE_COMMAND}
+            -E
+            rm
+            -rf
+            "${AIO_MANUAL_STAGE_DIR}/Shaders/${_fname}"
+        )
+    endforeach()
+    list(
+        APPEND _aio_manual_cmds
+        COMMAND
+        ${CMAKE_COMMAND}
+        -E
+        chdir
+        "${AIO_MANUAL_STAGE_DIR}"
+        ${CMAKE_COMMAND}
+        -E
+        tar
+        cfv
+        ${AIO_PACKAGE}
+        --format=7zip
+        --
+        .
+    )
+else()
+    list(
+        APPEND _aio_manual_cmds
+        COMMAND
+        ${CMAKE_COMMAND}
+        -E
+        chdir
+        ${AIO_DIR}
+        ${CMAKE_COMMAND}
+        -E
+        tar
+        cfv
+        ${AIO_PACKAGE}
+        --format=7zip
+        --
+        .
+    )
+endif()
+
 add_custom_command(
     OUTPUT ${AIO_PACKAGE}
-    DEPENDS ${CORE_SOURCES}
-    COMMAND ${CMAKE_COMMAND} -E make_directory ${AIO_DIR}
-    COMMAND ${CMAKE_COMMAND} --install ${CMAKE_BINARY_DIR} --prefix ${AIO_DIR}
-    COMMAND
-        ${CMAKE_COMMAND} -E chdir ${AIO_DIR} ${CMAKE_COMMAND} -E tar cfv
-        ${AIO_PACKAGE} --format=7zip -- .
+    DEPENDS ${CORE_SOURCES} ${_aio_manual_cmds}
     COMMENT "Creating AIO zip package (manual)"
 )
 add_custom_target("Package-AIO-Manual" DEPENDS ${AIO_PACKAGE})
