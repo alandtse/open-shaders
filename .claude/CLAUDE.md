@@ -447,6 +447,8 @@ Feature versions are automatically extracted from `.ini` files and compiled into
 -   **Complete Solutions**: Provide fully functional code with proper error handling and resource management
 -   **Performance Conscious**: Always consider GPU workload and user experience impact
 -   **Documentation**: Include Doxygen comments for public methods, especially graphics-related functions
+-   **Concise Comments**: Comments explain _why_, not _what_. Skip restating code in prose. A 1-line "why this hack" beats a 4-line block paraphrasing the next 4 lines. Block comments at the top of a function/section are fine when they capture non-obvious context (invariants, gotchas, history); avoid mid-function tutorial paragraphs.
+-   **Minimal Churn**: PRs touch only what the change requires. Don't reformat unrelated lines, rename adjacent variables, or "clean up" code outside the PR's scope. If you spot something worth fixing nearby, open a follow-up PR or surface it in the description rather than expanding the diff. Auto-format/lint touching unrelated lines is acceptable only when it's the linter's own commit; mixing with logic changes obscures review.
 
 ## Development Best Practices (Learned from Codebase)
 

@@ -52,4 +52,9 @@ For full details about manual packaging targets (Package-Core, Package-AIO-Manua
 
 **Key Focus**: Performance impact awareness, runtime compatibility (SE/AE/VR), complete working solutions, DirectX/HLSL best practices.
 
+**Style directives** (see `.claude/CLAUDE.md` "Code Quality Expectations" for full text):
+
+-   **Concise comments**: explain _why_, not _what_. Don't paraphrase the next 4 lines in 4 lines of comment.
+-   **Minimal churn**: PRs touch only what the change requires. Out-of-scope cleanups go in a follow-up, not the current diff.
+
 For detailed explanations, examples, and comprehensive guidance, refer to `.claude/CLAUDE.md`.
