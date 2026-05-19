@@ -28,7 +28,7 @@ SKSE core plugin for advanced graphics modifications for Skyrim. Open Shaders sh
 | Term                                                             | Refers to                                                                                                                                 |
 | ---------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
 | Community Shaders                                                | The upstream project (`community-shaders/skyrim-community-shaders`, Nexus mod 180419)                                                     |
-| Open Shaders                                                     | This fork (`alandtse/open-shaders`, renamed from `alandtse/skyrim-community-shaders`; GitHub redirects the old URL)                       |
+| Open Shaders                                                     | This fork (`alandtse/open-shaders`)                                                                                                       |
 | `CommunityShaders` (as a path / filename / identifier in source) | Runtime-compat identifier; intentionally kept identical to upstream so settings, themes, and SKSE plugin discovery work without migration |
 
 The upstream branding (logo, Nexus icon, typography) is non-GPL and not redistributed by this fork — see the "Icons" section under [License](#license) below.
@@ -80,7 +80,7 @@ git clone https://github.com/alandtse/open-shaders.git --recursive
 cd open-shaders
 ```
 
-> The repository is now named `open-shaders` (renamed from `skyrim-community-shaders`); GitHub redirects the old URL transparently. The **DLL filename remains `CommunityShaders.dll`** and the **SKSE plugin directory remains `SKSE/Plugins/CommunityShaders/`** so existing user settings, themes, and mod-manager profiles stay drop-in compatible. Only the public name and in-game branding are "Open Shaders".
+> The DLL filename is `CommunityShaders.dll` and the SKSE plugin directory is `SKSE/Plugins/CommunityShaders/` — identical to upstream Community Shaders, so user settings, themes, and mod-manager profiles are drop-in compatible. Only the public name and in-game branding are "Open Shaders".
 
 ### Visual Studio build
 

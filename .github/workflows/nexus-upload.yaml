@@ -1,7 +1,7 @@
 name: "Nexus: Upload Release"
 
 # `mode=aio` (default) uploads only the AIO to the fork's mod page.
-# `mode=matrix` is the upstream per-feature fan-out (preserved verbatim).
+# `mode=matrix` runs the upstream per-feature fan-out (`feature_version_audit.py` builds the matrix).
 # Only `prepare-nexus-matrix` branches on mode; downstream jobs are
 # matrix-shape-agnostic.
 

@@ -209,9 +209,6 @@ public:
 		UIIcon freeCamera;            // Free camera preview icon (weather editor)
 		UIIcon playMode;              // Play mode preview icon (weather editor)
 
-		// (Social-media icons removed — the fork doesn't ship Discord
-		// integration. Add fork-specific community icons here if needed.)
-
 		// Category icons
 		UIIcon characters;
 		UIIcon display;

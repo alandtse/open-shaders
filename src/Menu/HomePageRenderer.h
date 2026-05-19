@@ -21,10 +21,6 @@ public:
 	static constexpr float DIALOG_CORNER_ROUNDING = 6.0f;
 	static constexpr float DIALOG_LINE_TIGHTEN = 3.0f;
 
-	// (DISCORD_URL and DISCORD_BANNER_* constants removed — Discord
-	// integration was dropped in the Open Shaders fork because the
-	// upstream Discord invite isn't an Open Shaders channel.)
-
 	static void RenderHomePage();
 
 	// First-time setup management

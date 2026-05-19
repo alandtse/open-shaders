@@ -92,11 +92,6 @@ void HomePageRenderer::RenderWelcomeSection()
 
 	ImGui::Spacing();
 
-	// (Discord / community-link banner removed in the Open Shaders fork —
-	// upstream Discord and modding.wiki page are not affiliated with this
-	// fork. If a fork-specific community link is added later, render it
-	// here gated on a feature toggle and icon-availability check.)
-
 	ImGui::PopStyleVar();
 }
 
@@ -108,11 +103,8 @@ void HomePageRenderer::RenderQuickLinksSection()
 	ImGui::SetCursorPosX((windowSize.x - titleSize.x) * 0.5f);
 	ImGui::Text("Quick Links");
 
-	// Three columns: Nexus (upstream Community Shaders for now —
-	// switch once the Open Shaders Nexus page exists), GitHub (this
-	// fork at alandtse/open-shaders), Developer Wiki (this fork's wiki
-	// at alandtse/open-shaders/wiki, which is the transferred copy of
-	// the upstream developer wiki).
+	// The Nexus button points at upstream Community Shaders until the
+	// Open Shaders Nexus mod page exists; swap when ready.
 	ImGui::Columns(3, nullptr, false);
 
 	if (ImGui::Button("Nexus Mods", ImVec2(-1, 0))) {
