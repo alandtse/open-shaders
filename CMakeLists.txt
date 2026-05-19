@@ -358,13 +358,8 @@ string(TIMESTAMP UTC_NOW "%Y-%m-%dT%H-%MZ" UTC)
 # Set AIO directory path used by multiple targets below
 set(AIO_DIR "${CMAKE_CURRENT_BINARY_DIR}/aio")
 
-# Read the autoupload flag from a feature's primary .ini. Returns TRUE iff
-# the .ini contains `autoupload = true` (case-insensitive value match).
-# Used to filter the AIO bundle so only release-ready features ship inside
-# the all-in-one archive. CORE features (with a CORE marker file) bypass
-# this filter — the AIO must always include CORE.
-#
-# Sets `${out_var}` in the caller's scope to TRUE/FALSE.
+# TRUE iff the feature's .ini sets `autoupload = true` (case-insensitive)
+# or the feature is CORE (always included). Result in ${out_var}.
 function(feature_is_autoupload feature_path out_var)
     if(EXISTS "${feature_path}/CORE")
         set(${out_var} TRUE PARENT_SCOPE)
@@ -398,9 +393,8 @@ function(feature_is_autoupload feature_path out_var)
     set(${out_var} FALSE PARENT_SCOPE)
 endfunction()
 
-# Pre-compute the AIO inclusion set so log messages and the AIO copy loop
-# agree on which features ship. AIO_INCLUDE_NON_AUTOUPLOAD overrides the
-# filter for local dev builds.
+# Partition features into AIO-included / -excluded sets.
+# AIO_INCLUDE_NON_AUTOUPLOAD=ON includes everything (local dev override).
 set(AIO_INCLUDED_FEATURE_PATHS "")
 set(AIO_EXCLUDED_FEATURE_PATHS "")
 foreach(_fpath IN LISTS FEATURE_PATHS)
@@ -422,30 +416,17 @@ list(LENGTH AIO_INCLUDED_FEATURE_PATHS _aio_in_count)
 list(LENGTH AIO_EXCLUDED_FEATURE_PATHS _aio_out_count)
 message("\tAIO features included: ${_aio_in_count}")
 
-# Folder basenames of excluded features, used at archive-time to strip
-# them from the staged AIO before tar. Computed here (not at archive time)
-# so CMake regenerates archives if a feature toggles autoupload.
-#
-# A feature's *source* folder name (e.g. "Cloud Shadows") does NOT match
-# the names used inside the AIO Shaders/ tree, where:
-#   - the implementation subdir is named after the inner directory
-#     (e.g. "Shaders/CloudShadows" — no space)
-#   - the config .ini is named after its INI basename
-#     (e.g. "Shaders/Features/CloudShadows.ini"), which can differ from
-#     both the folder name (IBL → ImageBasedLighting.ini) and the inner
-#     shader dir name.
-# We therefore derive AIO_EXCLUDED_STAGE_RELPATHS by inspecting each
-# excluded feature's actual structure rather than relying on the folder
-# basename. The result is a flat list of paths (relative to AIO root)
-# that the archive step deletes from the stage directory.
+# Build the paths (relative to AIO root) that the archive step deletes
+# from the stage. We derive them from each feature's on-disk structure
+# because the source folder, inner shader dir, and .ini basename can
+# all differ (e.g. IBL ships ImageBasedLighting.ini under
+# Shaders/Features, with shader code under Shaders/IBL/).
 set(AIO_EXCLUDED_FEATURE_NAMES "")
 set(AIO_EXCLUDED_STAGE_RELPATHS "")
 foreach(_fpath IN LISTS AIO_EXCLUDED_FEATURE_PATHS)
     get_filename_component(_fname "${_fpath}" NAME)
     list(APPEND AIO_EXCLUDED_FEATURE_NAMES "${_fname}")
 
-    # Inner shader subdirectories under <feature>/Shaders/ (excluding
-    # the Features/ config directory which we handle below).
     if(EXISTS "${_fpath}/Shaders")
         file(
             GLOB _shader_subdirs
@@ -463,9 +444,6 @@ foreach(_fpath IN LISTS AIO_EXCLUDED_FEATURE_PATHS)
         endforeach()
     endif()
 
-    # Feature .ini files under <feature>/Shaders/Features/. The .ini
-    # basename can differ from both the source folder name and the
-    # inner shader dir name (IBL ships ImageBasedLighting.ini).
     if(EXISTS "${_fpath}/Shaders/Features")
         file(
             GLOB _ini_files
@@ -487,7 +465,7 @@ if(_aio_out_count GREATER 0)
         message("\t\t- ${_fname}")
     endforeach()
     message(
-        "\tNote: excluded features are still BUILT and shader-validated; they are stripped only when producing the AIO release archive (AIO_ZIP_PACKAGE / Package-AIO-Manual). Base shaders that #include feature shaders compile against the full tree."
+        "\tNote: excluded features still build and validate; they are stripped only at AIO archive time."
     )
 endif()
 
@@ -510,12 +488,9 @@ endif()
 # # CMake install() infrastructure for manual packaging
 # #######################################################################################################################
 
-# Append a '/' to the end of each feature path for installation all its
-# contents but not itself. The full FEATURE_PATHS is used here (not the
-# autoupload-filtered set) because base shaders in `package/Shaders/`
-# cross-include feature shaders (e.g. DistantTree.hlsl includes
-# IBL/IBL.hlsli). Filtering at install time would break shader compilation.
-# The autoupload filter is applied later, at AIO archive time only.
+# Append a '/' to install contents but not the directory itself. Uses
+# the full FEATURE_PATHS (not the autoupload filter) so cross-feature
+# shader #includes still resolve at build time.
 set(FEATURE_PATHS_SLASH ${FEATURE_PATHS})
 list(TRANSFORM FEATURE_PATHS_SLASH APPEND /)
 
@@ -625,14 +600,9 @@ if(AUTO_PLUGIN_DEPLOYMENT OR AIO_ZIP_TO_DIST)
     list(FILTER _AIO_PACKAGE_SOURCE_FILES EXCLUDE REGEX "/Shaders/")
     append_copy_if_different(_prepare_aio_cmds _AIO_PACKAGE_SOURCE_FILES "${CMAKE_SOURCE_DIR}/package" "${AIO_DIR}")
 
-    # Copy feature folders (only files, preserve existing files in AIO).
-    # Shader files are excluded - copy_shaders.stamp owns the Shaders/ subdir
-    # so the two custom-build rules don't race on the same destinations.
-    #
-    # All features are copied here regardless of autoupload status —
-    # base shaders cross-include feature shaders so the full tree must
-    # exist at build time. The autoupload filter is applied later, at
-    # AIO archive time only (see AIO_EXCLUDED_FEATURE_NAMES).
+    # Copy feature folders (files only; copy_shaders.stamp owns Shaders/
+    # to avoid racing). All features copied — autoupload filter applies
+    # only at archive time.
     foreach(_fpath IN LISTS FEATURE_PATHS)
         if(EXISTS "${_fpath}")
             file(
@@ -718,11 +688,8 @@ if(AUTO_PLUGIN_DEPLOYMENT OR AIO_ZIP_TO_DIST)
     list(FILTER _package_shaders EXCLUDE REGEX "/Tests/")
     set(_shader_copy_cmds)
 
-    # Copy shaders for ALL features regardless of autoupload status —
-    # base shaders in package/Shaders/ cross-include feature shaders
-    # (e.g. DistantTree.hlsl #includes IBL/IBL.hlsli). Filtering by
-    # autoupload here would break shader compilation. The autoupload
-    # filter applies only at AIO archive time.
+    # All features' shaders are copied — cross-feature #includes need the
+    # full tree at compile time (e.g. DistantTree.hlsl pulls IBL/IBL.hlsli).
     set(_feature_shader_paths)
     foreach(_fpath IN LISTS FEATURE_PATHS)
         if(EXISTS "${_fpath}/Shaders")
@@ -750,8 +717,6 @@ if(AUTO_PLUGIN_DEPLOYMENT OR AIO_ZIP_TO_DIST)
 
     append_copy_if_different(_shader_copy_cmds _package_shaders "${CMAKE_SOURCE_DIR}/package/Shaders" "${AIO_DIR}/Shaders")
 
-    # Feature shader folders — all features, see comment above on
-    # why autoupload filtering applies at archive time only.
     foreach(_fpath IN LISTS FEATURE_PATHS)
         if(EXISTS "${_fpath}/Shaders")
             file(
@@ -1074,17 +1039,9 @@ if(AIO_ZIP_TO_DIST)
 
     message("Zipping ${AIO_DIR} to ${AIO_ARCHIVE}")
 
-    # Build the archive command list. When no features are excluded, tar
-    # directly from AIO_DIR for speed. When features are excluded, copy
-    # AIO_DIR into a stage directory, delete the excluded feature
-    # subtrees from the stage (both top-level <Feature>/ and the
-    # corresponding Shaders/<Feature>/ subdirs), then tar the stage.
-    # AIO_DIR itself stays complete so AUTO_PLUGIN_DEPLOYMENT delivers
-    # the full feature tree to local dev installs.
-    #
-    # Each tar uses `cmake -E chdir <dir>` so the archive paths are
-    # relative to the staged tree, avoiding `WORKING_DIRECTORY` (which
-    # would fail to chdir into AIO_STAGE_DIR before it gets created).
+    # Fast path: tar AIO_DIR directly. Slow path (excluded features):
+    # copy → stage, strip excluded relpaths, tar the stage. AIO_DIR stays
+    # complete so AUTO_PLUGIN_DEPLOYMENT delivers the full tree.
     set(_aio_zip_cmds
         COMMAND
         ${CMAKE_COMMAND}
@@ -1108,10 +1065,6 @@ if(AIO_ZIP_TO_DIST)
             "${AIO_DIR}"
             "${AIO_STAGE_DIR}"
         )
-        # Delete each excluded feature's actual paths from the stage.
-        # AIO_EXCLUDED_STAGE_RELPATHS is precomputed (see top of file)
-        # and contains the real Shaders/<inner> dirs and Shaders/Features/<basename>.ini
-        # files, not the source folder basename which often differs.
         foreach(_relpath IN LISTS AIO_EXCLUDED_STAGE_RELPATHS)
             list(
                 APPEND _aio_zip_cmds
@@ -1299,8 +1252,6 @@ if(AIO_EXCLUDED_FEATURE_NAMES)
         "${AIO_DIR}"
         "${AIO_MANUAL_STAGE_DIR}"
     )
-    # Mirror the AIO_ZIP_PACKAGE strip — see comments there for why we
-    # use AIO_EXCLUDED_STAGE_RELPATHS rather than the source folder name.
     foreach(_relpath IN LISTS AIO_EXCLUDED_STAGE_RELPATHS)
         list(
             APPEND _aio_manual_cmds

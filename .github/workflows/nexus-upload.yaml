@@ -1,19 +1,9 @@
 name: "Nexus: Upload Release"
 
-# Two upload modes, selected by the `mode` input:
-#
-#   - `aio` (default): upload only the AIO archive to a single Nexus
-#     mod page (the fork's). No per-feature distribution.
-#
-#   - `matrix`: the upstream Community Shaders flow — feature_version_audit.py
-#     emits a per-feature upload matrix that fans out across many mod
-#     pages. Preserved as-is for parity with upstream so the fork can
-#     run matrix uploads when the per-feature mod IDs are configured.
-#
-# Most of the pipeline (`prepare-artifacts`, `check-nexus-versions`,
-# `upload-to-nexus`, `upload-summary`) is mode-agnostic; only the matrix
-# generation in `prepare-nexus-matrix` branches on mode. AIO mode emits
-# a single-row matrix; matrix mode emits the audit-tool matrix.
+# `mode=aio` (default) uploads only the AIO to the fork's mod page.
+# `mode=matrix` is the upstream per-feature fan-out (preserved verbatim).
+# Only `prepare-nexus-matrix` branches on mode; downstream jobs are
+# matrix-shape-agnostic.
 
 on:
     workflow_dispatch:
@@ -167,11 +157,8 @@ jobs:
                   set -euo pipefail
                   MODE='${{ steps.resolve.outputs.mode }}'
 
-                  # Mode-aware defaults for the CORE/AIO row. The workflow
-                  # inputs default to empty strings so we can apply mode-
-                  # appropriate fallbacks here without surprising matrix-
-                  # mode users who relied on the old upstream defaults
-                  # (86492 / "Community Shaders" / core .7z).
+                  # Workflow inputs default to empty so matrix mode keeps
+                  # its upstream defaults below; aio mode uses fork defaults.
                   if [ "$MODE" = "aio" ]; then
                     EFFECTIVE_MOD_ID="${INPUT_NEXUS_MOD_ID}"
                     EFFECTIVE_ARTIFACT="${INPUT_ARTIFACT_PATTERN:-CommunityShaders_AIO-*.7z}"
