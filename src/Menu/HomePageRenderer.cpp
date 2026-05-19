@@ -92,55 +92,10 @@ void HomePageRenderer::RenderWelcomeSection()
 
 	ImGui::Spacing();
 
-	// Discord banner - centered with proper error checking
-	auto menu = Menu::GetSingleton();
-	bool discordIconAvailable = false;
-
-	// Check if menu exists, has icons, and Discord icon is loaded
-	if (menu && menu->uiIcons.discord.texture != nullptr &&
-		menu->uiIcons.discord.size.x > 0 && menu->uiIcons.discord.size.y > 0) {
-		discordIconAvailable = true;
-	}
-
-	if (discordIconAvailable) {
-		// Calculate scaled icon size based on window width, with min/max constraints
-		ImVec2 originalSize = ImVec2(menu->uiIcons.discord.size.x, menu->uiIcons.discord.size.y);
-
-		// Compute width based on window size with constraints and padding (handles very small windows)
-		float ratioWidth = windowSize.x * DISCORD_BANNER_TARGET_WIDTH_RATIO;
-		float aspectRatio = originalSize.y / originalSize.x;
-		float maxAllowed = std::max(1.0f, windowSize.x - DISCORD_BANNER_PADDING_MARGIN);
-		float upperBound = std::min(DISCORD_BANNER_MAX_WIDTH, maxAllowed);
-		float lowerBound = std::min(DISCORD_BANNER_MIN_WIDTH, upperBound);
-		float targetWidth = std::clamp(ratioWidth, lowerBound, upperBound);
-
-		ImVec2 iconSize = ImVec2(targetWidth, targetWidth * aspectRatio);
-		ImGui::SetCursorPosX((windowSize.x - iconSize.x) * 0.5f);
-
-		// Push style to remove border
-		ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 0.0f);
-		ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0, 0, 0, 0));                     // Transparent background
-		ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.1f, 0.1f, 0.1f, 0.3f));  // Subtle hover
-		ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.2f, 0.2f, 0.2f, 0.5f));   // Subtle click
-
-		if (ImGui::ImageButton("##DiscordButton", menu->uiIcons.discord.texture, iconSize)) {
-			ShellExecuteA(NULL, "open", DISCORD_URL, NULL, NULL, SW_SHOWNORMAL);
-		}
-
-		// Pop the style changes
-		ImGui::PopStyleColor(3);
-		ImGui::PopStyleVar();
-
-		Util::AddTooltip("Join Open Shaders / Community Shaders Discord Server");
-	} else {
-		// Fallback button when Discord icon is not available
-		float buttonWidth = DISCORD_BANNER_MIN_WIDTH * scale;
-		ImGui::SetCursorPosX((windowSize.x - buttonWidth) * 0.5f);
-		if (ImGui::Button("Join Discord Server", ImVec2(buttonWidth, 0))) {
-			ShellExecuteA(NULL, "open", DISCORD_URL, NULL, NULL, SW_SHOWNORMAL);
-		}
-		Util::AddTooltip("Join Open Shaders / Community Shaders Discord Server");
-	}
+	// (Discord / community-link banner removed in the Open Shaders fork —
+	// upstream Discord and modding.wiki page are not affiliated with this
+	// fork. If a fork-specific community link is added later, render it
+	// here gated on a feature toggle and icon-availability check.)
 
 	ImGui::PopStyleVar();
 }
@@ -153,12 +108,13 @@ void HomePageRenderer::RenderQuickLinksSection()
 	ImGui::SetCursorPosX((windowSize.x - titleSize.x) * 0.5f);
 	ImGui::Text("Quick Links");
 
-	ImGui::Columns(4, nullptr, false);
+	// Three columns: Nexus (upstream Community Shaders), GitHub (this
+	// fork), Developer Wiki (upstream GitHub wiki — still active). The
+	// old modding.wiki "User Wiki" link is intentionally removed; that
+	// page is not maintained against the fork. Switch the Nexus URL once
+	// the Open Shaders Nexus page exists.
+	ImGui::Columns(3, nullptr, false);
 
-	// External links. Nexus + wikis point at upstream Community Shaders
-	// since this fork's mod page (TBD) does not exist yet; GitHub points
-	// at this fork. Switch the GitHub URL when releasing under a new repo
-	// name; switch the Nexus URL once the Open Shaders Nexus page exists.
 	if (ImGui::Button("Nexus Mods", ImVec2(-1, 0))) {
 		ShellExecuteA(NULL, "open", "https://www.nexusmods.com/skyrimspecialedition/mods/180419", NULL, NULL, SW_SHOWNORMAL);
 	}
@@ -166,11 +122,6 @@ void HomePageRenderer::RenderQuickLinksSection()
 	ImGui::NextColumn();
 	if (ImGui::Button("GitHub", ImVec2(-1, 0))) {
 		ShellExecuteA(NULL, "open", "https://github.com/alandtse/skyrim-community-shaders", NULL, NULL, SW_SHOWNORMAL);
-	}
-
-	ImGui::NextColumn();
-	if (ImGui::Button("Wiki", ImVec2(-1, 0))) {
-		ShellExecuteA(NULL, "open", "https://modding.wiki/en/skyrim/developers/community-shaders", NULL, NULL, SW_SHOWNORMAL);
 	}
 
 	ImGui::NextColumn();
@@ -244,11 +195,11 @@ void HomePageRenderer::RenderFAQSection()
 
 	if (ImGui::CollapsingHeader("I would like to help develop Open Shaders.")) {
 		ImGui::TextWrapped(
-			"We're always looking for talented developers to join the team! Check out the GitHub wiki "
-			"for contribution guidelines and join our Discord server to connect with the development team. "
-			"Whether you're interested in shader programming, C++ development, or documentation, there's "
-			"always something to contribute. Contributions can also be made directly to upstream "
-			"Community Shaders if appropriate.");
+			"Open Shaders is open source. Check out the upstream GitHub wiki for contribution "
+			"guidelines on the shared architecture; open issues and PRs against this repository for "
+			"fork-specific work, or against upstream Community Shaders for changes that benefit both "
+			"projects. Whether you're interested in shader programming, C++ development, or "
+			"documentation, there's always something to contribute.");
 	}
 
 	if (ImGui::CollapsingHeader("Is Open Shaders open source?")) {

@@ -2,7 +2,6 @@
 [![License](https://img.shields.io/github/license/alandtse/skyrim-community-shaders)](./LICENSE)
 [![Last Commit](https://img.shields.io/github/last-commit/alandtse/skyrim-community-shaders)](https://github.com/alandtse/skyrim-community-shaders/commits)
 [![Build Status](https://img.shields.io/github/actions/workflow/status/alandtse/skyrim-community-shaders/release-build.yaml?branch=dev)](https://github.com/alandtse/skyrim-community-shaders/actions)
-[![Discord](https://img.shields.io/discord/1080142797870485606?label=discord&logo=discord&color=5865F2)](https://discord.com/invite/nkrQybAsyy)
 [![Open Issues](https://img.shields.io/github/issues/alandtse/skyrim-community-shaders)](https://github.com/alandtse/skyrim-community-shaders/issues)
 [![Contributors](https://img.shields.io/github/contributors/alandtse/skyrim-community-shaders)](https://github.com/alandtse/skyrim-community-shaders/graphs/contributors)
 [![Stars](https://img.shields.io/github/stars/alandtse/skyrim-community-shaders?style=social)](https://github.com/alandtse/skyrim-community-shaders/stargazers)
@@ -16,7 +15,7 @@
 
 SKSE core plugin for advanced graphics modifications for Skyrim. Open Shaders ships features the upstream project has not yet released, while preserving the upstream developer experience and runtime layout so user settings, themes, and mod-organizer profiles are drop-in compatible.
 
-[Upstream Community Shaders on Nexus](https://www.nexusmods.com/skyrimspecialedition/mods/180419) · [Upstream source](https://github.com/community-shaders/skyrim-community-shaders) · [Upstream User Wiki](https://modding.wiki/en/skyrim/developers/community-shaders)
+[Upstream Community Shaders on Nexus](https://www.nexusmods.com/skyrimspecialedition/mods/180419) · [Upstream source](https://github.com/community-shaders/skyrim-community-shaders) · [Upstream developer wiki](https://github.com/community-shaders/skyrim-community-shaders/wiki)
 
 ## About this fork
 

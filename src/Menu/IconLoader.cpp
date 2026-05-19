@@ -104,7 +104,6 @@ namespace Util::IconLoader
 			{ std::string(iconFolder) + "\\delete.png", &menu->uiIcons.deleteSettings.texture, &menu->uiIcons.deleteSettings.size },
 			{ logoPath, &menu->uiIcons.logo.texture, &menu->uiIcons.logo.size },
 			{ std::string(iconFolder) + "\\restore-settings.png", &menu->uiIcons.featureSettingRevert.texture, &menu->uiIcons.featureSettingRevert.size },
-			{ std::string(iconFolder) + "\\discord.png", &menu->uiIcons.discord.texture, &menu->uiIcons.discord.size },
 			{ std::string(iconFolder) + "\\apply-to-game.png", &menu->uiIcons.applyToGame.texture, &menu->uiIcons.applyToGame.size },
 			{ std::string(iconFolder) + "\\pause.png", &menu->uiIcons.pauseTime.texture, &menu->uiIcons.pauseTime.size },
 			{ std::string(iconFolder) + "\\undo.png", &menu->uiIcons.undo.texture, &menu->uiIcons.undo.size },
