@@ -12,6 +12,8 @@ This repository is **Open Shaders**, a fork of [Community Shaders](https://githu
 
 The AIO bundle ships only features whose `Shaders/Features/*.ini` has `autoupload = true` (CORE features always included). The `AIO_INCLUDE_NON_AUTOUPLOAD=ON` CMake option overrides for local dev builds. The Nexus upload workflow ships only the AIO archive — there is no per-feature matrix distribution. See `.github/workflows/nexus-upload.yaml`.
 
+**Logo absence is intentional.** The upstream Community Shaders logo is non-GPL, not trademark-licensed, and may not be redistributed by forks — so `cs-logo.png` is not present in this repo. The icon loader's load path is null-safe at every consumer (`IconLoader.cpp` retries the colored fallback; `Menu.cpp` derives `showLogo` from `texture != nullptr`; `MenuHeaderRenderer` and `HomePageRenderer` gate all logo draws on the null check). Missing logo → one `logger::warn`, menu renders headers without the logo image, layout adjusts via the `showLogo` flag. Do not "fix" the missing file or restore the upstream asset.
+
 ## Build Commands
 
 ### WSL/Linux Environment Note
