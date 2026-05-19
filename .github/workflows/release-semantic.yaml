@@ -11,6 +11,17 @@ name: "Release: Semantic Version"
 #   fast-forwards main to that SHA, runs semantic-release to cut stable,
 #   then fast-forwards dev to absorb the chore(release) commit. One click,
 #   no PR, no merge commits, no force pushes.
+#
+# Promotion mode (hotfix-staging → main, current-line patch):
+#   Dispatch on main with `ff_target` set to a hotfix-staging SHA. The
+#   workflow fast-forwards main, cuts the patch release, then
+#   rebase-reconciles dev onto the new main so the release commit (and
+#   tag) enter dev's ancestry. `git rebase` drops commits whose patch-id
+#   already matches an upstream cherry-pick, so dev's history stays
+#   linear and free of duplicates. This requires a force-with-lease push
+#   to dev (the only force-push this workflow performs); see the
+#   `auto-rebase-prs.yaml` workflow which auto-rebases open PRs targeting
+#   dev after this happens.
 
 on:
     workflow_dispatch:
@@ -71,9 +82,13 @@ jobs:
                     echo "::error::main is not an ancestor of ff_target ${FF_TARGET} — fast-forward is not possible."
                     exit 1
                   fi
-                  # Identify the source branch for the promotion. dev → reconcile
-                  # dev afterward; hotfix/* → patch-id dedup handles it at the
-                  # next dev→main promotion, no reconcile.
+                  # Identify the source branch for the promotion.
+                  #   dev source     → FF-reconcile dev afterward (no rewrite).
+                  #   hotfix-staging → rebase-reconcile dev afterward so the
+                  #                    release commit + tag enter dev's
+                  #                    ancestry. Force-with-lease push; `git
+                  #                    rebase` drops patch-id duplicates of
+                  #                    the cherry-picks already on main.
                   SOURCE=""
                   if git merge-base --is-ancestor "${FF_TARGET}" origin/dev; then
                     SOURCE="dev"
@@ -171,12 +186,73 @@ jobs:
                   git push --force-with-lease="dev:${CURRENT_DEV}" "${REMOTE}" "${NEW_MAIN}:refs/heads/dev"
                   echo "::notice::Reconciled dev to main ($NEW_MAIN)."
 
-            - name: Note dev reconcile skipped (hotfix-staging source)
+            - name: Rebase-reconcile dev with release commit (promotion mode, hotfix-staging source)
               if: ${{ inputs.ff_target != '' && steps.semantic.outputs.new_release_published == 'true' && steps.validate.outputs.source != 'dev' && steps.validate.outputs.source != '' }}
+              env:
+                  TOKEN: ${{ secrets.RELEASE_PAT }}
               run: |
+                  set -euo pipefail
+                  git fetch origin main dev
+                  NEW_MAIN=$(git rev-parse origin/main)
+                  CURRENT_DEV=$(git rev-parse origin/dev)
+
+                  # A plain FF-reconcile won't work here: dev is not an
+                  # ancestor of new main (they share an older common
+                  # ancestor; main now has the hotfix cherry-picks + release
+                  # chore commit, dev has its own forward progress). Rebase
+                  # dev onto new main to preserve linear history. `git
+                  # rebase` automatically drops commits whose patch-id
+                  # matches an upstream commit (the cherry-picks).
+                  git checkout -B dev "${CURRENT_DEV}"
+                  if ! git rebase "${NEW_MAIN}"; then
+                    git rebase --abort || true
+                    {
+                      echo ""
+                      echo "## ⚠️ Dev reconcile FAILED — manual intervention required"
+                      echo ""
+                      echo "Rebasing \`dev\` onto the new \`main\` (\`$(git rev-parse --short=9 "${NEW_MAIN}")\`) hit a conflict."
+                      echo "The hotfix release is live on \`main\`, but \`dev\` has NOT absorbed it."
+                      echo "Until reconciled, the next RC cut on \`dev\` will compute the wrong version floor."
+                      echo ""
+                      echo "**Recover by running locally:**"
+                      echo ""
+                      echo '```bash'
+                      echo "git fetch origin"
+                      echo "git checkout dev && git reset --hard origin/dev"
+                      echo "git rebase origin/main      # resolve conflicts, git rebase --continue"
+                      echo "git push --force-with-lease origin dev"
+                      echo '```'
+                    } >> "$GITHUB_STEP_SUMMARY"
+                    echo "::error::Dev rebase-reconcile failed — see job summary for remediation."
+                    exit 1
+                  fi
+
+                  REMOTE="https://x-access-token:${TOKEN}@github.com/${{ github.repository }}.git"
+                  # --force-with-lease guards against a concurrent push to
+                  # dev: if someone landed a commit during the release,
+                  # abort instead of overwriting their work.
+                  if ! git push --force-with-lease="dev:${CURRENT_DEV}" "${REMOTE}" "HEAD:refs/heads/dev"; then
+                    {
+                      echo ""
+                      echo "## ⚠️ Dev push rejected (lease check failed)"
+                      echo ""
+                      echo "Dev was pushed to during the release. Reconcile manually:"
+                      echo ""
+                      echo '```bash'
+                      echo "git fetch origin && git checkout dev && git reset --hard origin/dev"
+                      echo "git rebase origin/main && git push --force-with-lease origin dev"
+                      echo '```'
+                    } >> "$GITHUB_STEP_SUMMARY"
+                    echo "::warning::Dev moved during release — manual reconcile required."
+                    exit 0
+                  fi
+
                   {
                     echo ""
-                    echo "## Dev reconcile not applicable"
-                    echo "Promotion source was \`${{ steps.validate.outputs.source }}\` (hotfix staging branch). The cherry-picked commits on main have different SHAs than their originals on dev — semantic-release's patch-id-dedup will collapse the duplicates at the next dev→main promotion, so no FF-reconcile is needed (and would not be possible)."
+                    echo "## Dev reconciled (rebase-forward)"
+                    echo "- Source: hotfix-staging \`${{ steps.validate.outputs.source }}\`"
+                    echo "- New main: \`$(git rev-parse --short=9 "${NEW_MAIN}")\`"
+                    echo "- Dev rebased linearly onto new main; identical-patch commits auto-dropped by \`git rebase\`."
+                    echo "- Open PRs against dev are auto-rebased by the \`Auto-rebase open PRs\` workflow."
                   } >> "$GITHUB_STEP_SUMMARY"
-                  echo "::notice::Hotfix-staging promotion — dev reconcile not applicable."
+                  echo "::notice::Reconciled dev onto main via rebase (linear history preserved)."

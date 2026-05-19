@@ -1,0 +1,218 @@
+name: "Auto-rebase open PRs"
+
+# Rebase open PRs against dev whenever dev moves. Triggered by:
+#   - Pushes to dev (including the rebase-forward push from
+#     release-semantic.yaml after a hotfix release).
+#   - Manual dispatch (recovery after a missed run).
+#
+# Behavior per PR targeting dev:
+#   - Skip drafts and PRs labeled `no-auto-rebase`.
+#   - `git rebase origin/dev` the PR head branch.
+#   - On clean rebase: force-with-lease push, GitHub recomputes PR diff,
+#     PR checks re-run on the new head SHA.
+#   - On conflict: abort, leave a comment, apply `needs-rebase` label.
+#
+# Permissions / forks: pushing to a PR head branch on a fork requires a
+# user PAT belonging to a maintainer of this repo AND the PR author to
+# have left "Allow edits by maintainers" checked. PRs that don't meet
+# both conditions are skipped and logged in the workflow summary so a
+# maintainer can ping the author. PRs whose head branch lives in this
+# repo (collaborators) work unconditionally.
+#
+# Token: RELEASE_PAT is reused here (same scopes the release workflows
+# need). Required PAT scopes (classic): `repo` + `workflow`. The
+# `workflow` scope is needed because a rebased PR may include
+# `.github/workflows/` changes; force-pushing those without it would
+# fail with "refusing to allow a Personal Access Token to create or
+# update workflow".
+
+on:
+    push:
+        branches: [dev]
+    workflow_dispatch:
+        inputs:
+            pr_number:
+                description: "Optional: rebase just this PR number. Leave empty to rebase all."
+                required: false
+                default: ""
+
+permissions:
+    contents: write
+    pull-requests: write
+
+concurrency:
+    # Serialize so two back-to-back pushes to dev don't race and produce
+    # interleaved force-pushes on the same PR.
+    group: auto-rebase-prs
+    cancel-in-progress: false
+
+jobs:
+    rebase:
+        runs-on: ubuntu-latest
+        steps:
+            - name: Checkout (for git CLI)
+              uses: actions/checkout@v6
+              with:
+                  fetch-depth: 0
+                  persist-credentials: false
+                  token: ${{ secrets.RELEASE_PAT }}
+
+            - name: Configure git identity
+              run: |
+                  git config user.name "github-actions[bot]"
+                  git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+            - name: Rebase open PRs against dev
+              env:
+                  GH_TOKEN: ${{ secrets.RELEASE_PAT }}
+                  ONLY_PR: ${{ inputs.pr_number }}
+              run: |
+                  set -euo pipefail
+
+                  # Best-effort: ensure the needs-rebase label exists.
+                  gh label create needs-rebase \
+                    --repo '${{ github.repository }}' \
+                    --color d93f0b \
+                    --description "Auto-rebase failed due to merge conflicts." 2>/dev/null || true
+
+                  git fetch origin dev:refs/remotes/origin/dev
+
+                  if [[ -n "${ONLY_PR}" ]]; then
+                    PR_JSON=$(gh pr view "${ONLY_PR}" --repo '${{ github.repository }}' \
+                              --json number,isDraft,headRefName,headRepository,headRepositoryOwner,maintainerCanModify,labels,state)
+                    PRS=$(echo "${PR_JSON}" | jq -c '[.]')
+                  else
+                    PRS=$(gh pr list --repo '${{ github.repository }}' --base dev --state open \
+                          --json number,isDraft,headRefName,headRepository,headRepositoryOwner,maintainerCanModify,labels)
+                  fi
+
+                  : > /tmp/summary.md
+                  REBASED=0; SKIPPED=0; CONFLICTS=0; UNPUSHABLE=0
+                  declare -a UNPUSHABLE_LIST
+
+                  for row in $(echo "${PRS}" | jq -r '.[] | @base64'); do
+                    _jq() { echo "${row}" | base64 -d | jq -r "$1"; }
+                    NUM=$(_jq '.number')
+                    DRAFT=$(_jq '.isDraft')
+                    HEAD_REF=$(_jq '.headRefName')
+                    HEAD_REPO=$(_jq '.headRepository.name // empty')
+                    HEAD_OWNER=$(_jq '.headRepositoryOwner.login // empty')
+                    MAINTAINER_CAN_MODIFY=$(_jq '.maintainerCanModify')
+                    LABELS=$(_jq '[.labels[].name] | join(",")')
+
+                    if [[ "${DRAFT}" == "true" ]]; then
+                      echo "- #${NUM}: skipped (draft)" >> /tmp/summary.md
+                      SKIPPED=$((SKIPPED+1)); continue
+                    fi
+                    if [[ ",${LABELS}," == *",no-auto-rebase,"* ]]; then
+                      echo "- #${NUM}: skipped (no-auto-rebase label)" >> /tmp/summary.md
+                      SKIPPED=$((SKIPPED+1)); continue
+                    fi
+
+                    SAME_REPO_OWNER='${{ github.repository_owner }}'
+                    IS_FORK="true"
+                    if [[ "${HEAD_OWNER}" == "${SAME_REPO_OWNER}" ]]; then
+                      IS_FORK="false"
+                    fi
+                    if [[ "${IS_FORK}" == "true" && "${MAINTAINER_CAN_MODIFY}" != "true" ]]; then
+                      echo "- #${NUM}: skipped (fork without maintainer-edit access — ask author to enable)" >> /tmp/summary.md
+                      UNPUSHABLE=$((UNPUSHABLE+1))
+                      UNPUSHABLE_LIST+=("#${NUM}")
+                      continue
+                    fi
+
+                    # Build the remote URL for the PR head repo. For
+                    # same-repo PRs HEAD_OWNER == repo owner. For forks
+                    # we use the fork's owner/name. The PAT must have
+                    # write access to both.
+                    PR_REMOTE="https://x-access-token:${GH_TOKEN}@github.com/${HEAD_OWNER}/${HEAD_REPO}.git"
+
+                    # Fetch the PR head into a detached local ref. Use a
+                    # unique local ref to avoid clobbering across loop
+                    # iterations.
+                    LOCAL_REF="refs/auto-rebase/pr-${NUM}"
+                    if ! git fetch "${PR_REMOTE}" "+refs/heads/${HEAD_REF}:${LOCAL_REF}" 2>/tmp/fetch.err; then
+                      echo "- #${NUM}: skipped (could not fetch head — see fetch error)" >> /tmp/summary.md
+                      cat /tmp/fetch.err >&2
+                      SKIPPED=$((SKIPPED+1)); continue
+                    fi
+
+                    HEAD_SHA=$(git rev-parse "${LOCAL_REF}")
+
+                    # Fast-path: PR head already contains origin/dev.
+                    if git merge-base --is-ancestor origin/dev "${HEAD_SHA}"; then
+                      echo "- #${NUM}: already up-to-date with dev" >> /tmp/summary.md
+                      SKIPPED=$((SKIPPED+1)); continue
+                    fi
+
+                    # Attempt the rebase in a worktree to keep the main
+                    # checkout clean.
+                    WORKTREE="/tmp/wt-pr-${NUM}"
+                    git worktree add --detach "${WORKTREE}" "${HEAD_SHA}" >/dev/null
+                    REBASE_OK=true
+                    (cd "${WORKTREE}" && git rebase origin/dev) || REBASE_OK=false
+
+                    if [[ "${REBASE_OK}" != "true" ]]; then
+                      (cd "${WORKTREE}" && git rebase --abort) || true
+                      git worktree remove --force "${WORKTREE}" || true
+                      echo "- #${NUM}: ⚠️ conflict during rebase" >> /tmp/summary.md
+                      CONFLICTS=$((CONFLICTS+1))
+                      gh pr edit "${NUM}" --repo '${{ github.repository }}' --add-label needs-rebase || true
+                      cat > /tmp/conflict-comment.md <<'COMMENT_EOF'
+                      🤖 Auto-rebase failed: `dev` moved and this PR has conflicts. Please rebase manually:
+
+                      ```bash
+                      git fetch origin
+                      git rebase origin/dev
+                      # resolve conflicts, git rebase --continue
+                      git push --force-with-lease
+                      ```
+
+                      I'll remove the `needs-rebase` label automatically when you push the rebased branch.
+                      COMMENT_EOF
+                      # Strip the YAML-required leading indent from the heredoc so
+                      # the comment renders correctly on the PR.
+                      sed -i 's/^                      //' /tmp/conflict-comment.md
+                      gh pr comment "${NUM}" --repo '${{ github.repository }}' \
+                        --body-file /tmp/conflict-comment.md || true
+                      continue
+                    fi
+
+                    NEW_SHA=$(cd "${WORKTREE}" && git rev-parse HEAD)
+                    if [[ "${NEW_SHA}" == "${HEAD_SHA}" ]]; then
+                      git worktree remove --force "${WORKTREE}" || true
+                      echo "- #${NUM}: no-op rebase (already linear on dev)" >> /tmp/summary.md
+                      SKIPPED=$((SKIPPED+1)); continue
+                    fi
+
+                    if (cd "${WORKTREE}" && git push --force-with-lease="${HEAD_REF}:${HEAD_SHA}" \
+                        "${PR_REMOTE}" "HEAD:refs/heads/${HEAD_REF}"); then
+                      REBASED=$((REBASED+1))
+                      echo "- #${NUM}: rebased ${HEAD_SHA:0:9} → ${NEW_SHA:0:9}" >> /tmp/summary.md
+                      # Remove needs-rebase label if present (post-recovery).
+                      gh pr edit "${NUM}" --repo '${{ github.repository }}' --remove-label needs-rebase 2>/dev/null || true
+                    else
+                      echo "- #${NUM}: ⚠️ push rejected (lease check failed — head moved during rebase)" >> /tmp/summary.md
+                      SKIPPED=$((SKIPPED+1))
+                    fi
+                    git worktree remove --force "${WORKTREE}" || true
+                  done
+
+                  {
+                    echo "## Auto-rebase summary"
+                    echo ""
+                    echo "| | |"
+                    echo "|-|-|"
+                    echo "| Rebased and pushed | ${REBASED} |"
+                    echo "| Skipped (up-to-date / draft / labeled / no-op) | ${SKIPPED} |"
+                    echo "| Conflicts (needs-rebase applied) | ${CONFLICTS} |"
+                    echo "| Skipped — fork without maintainer-edit access | ${UNPUSHABLE} |"
+                    if (( UNPUSHABLE > 0 )); then
+                      echo ""
+                      echo "### Forks needing maintainer-edit"
+                      for p in "${UNPUSHABLE_LIST[@]}"; do echo "- ${p}"; done
+                    fi
+                    echo ""
+                    echo "### Per-PR results"
+                    cat /tmp/summary.md
+                  } >> "$GITHUB_STEP_SUMMARY"
