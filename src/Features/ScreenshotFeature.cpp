@@ -66,6 +66,10 @@ namespace
 		if (FAILED(context->Map(stagingTexture, 0, D3D11_MAP_READ, 0, &mapped))) {
 			return false;
 		}
+		if (!mapped.pData || mapped.RowPitch == 0) {
+			context->Unmap(stagingTexture, 0);
+			return false;
+		}
 
 		const HRESULT initHr = image.Initialize2D(format, width, height, 1, 1);
 		if (FAILED(initHr)) {
@@ -79,12 +83,24 @@ namespace
 			return false;
 		}
 
+		// Driver-mapped region can be smaller than height * mapped.RowPitch
+		// (alignment quirks, partial mappings). Cap by mapped.DepthPitch and
+		// clamp each row's copy to whichever of source/dest pitches is smaller -
+		// stepping past either side hits unmapped memory and the worker crashes
+		// inside rep movsb (see crash 2026-05-19).
+		const size_t bytesPerRow = std::min<size_t>(destImage->rowPitch, mapped.RowPitch);
+		const size_t mappedDepth = mapped.DepthPitch != 0 ? mapped.DepthPitch :
+		                                                    mapped.RowPitch * destImage->height;
+		const size_t maxRowsBySize = mapped.RowPitch > 0 ? (mappedDepth / mapped.RowPitch) : 0;
+		const size_t rowsToCopy = std::min<size_t>(destImage->height, maxRowsBySize);
+
 		auto* destPixels = image.GetPixels();
-		for (size_t row = 0; row < destImage->height; ++row) {
+		const auto* srcPixels = static_cast<const uint8_t*>(mapped.pData);
+		for (size_t row = 0; row < rowsToCopy; ++row) {
 			memcpy(
 				destPixels + row * destImage->rowPitch,
-				static_cast<const uint8_t*>(mapped.pData) + row * mapped.RowPitch,
-				destImage->rowPitch);
+				srcPixels + row * mapped.RowPitch,
+				bytesPerRow);
 		}
 
 		context->Unmap(stagingTexture, 0);
