@@ -1,23 +1,15 @@
 name: "Auto-rebase open PRs"
 
-# Rebase open PRs targeting `dev` whenever `dev` moves. Wraps
-# peter-evans/rebase@v3 instead of hand-rolling the rebase loop. Triggered by:
-#   - Push to `dev` (including the rebase-forward push from
-#     release-semantic.yaml after a hotfix release).
-#   - Manual dispatch (recovery after a missed run, or to target a single PR).
+# Rebase open PRs against `dev` whenever it moves. Thin wrapper over
+# peter-evans/rebase@v3.
 #
-# Permissions / forks: pushing to a PR head branch on a fork requires a
-# user PAT belonging to a maintainer of this repo AND the PR author to
-# have left "Allow edits by maintainers" checked. peter-evans/rebase
-# silently skips PRs that don't meet both conditions; failed-conflict
-# PRs are skipped too (no force-push attempted). The `rebased-count`
-# output is surfaced in the job summary.
+# Forks: pushing to a fork PR head requires (a) a user PAT belonging to
+# a maintainer of this repo and (b) the PR author having "Allow edits
+# by maintainers" checked. The action silently skips PRs missing either,
+# and skips conflicts.
 #
-# Token: RELEASE_PAT is reused (same scopes the release workflows need).
-# Required PAT scopes (classic): `repo` + `workflow`. The `workflow`
-# scope matters because a rebased PR may include `.github/workflows/`
-# changes; force-pushing those without it would fail with "refusing to
-# allow a Personal Access Token to create or update workflow".
+# Token: RELEASE_PAT (classic PAT, `repo` + `workflow`). `workflow` is
+# required because rebased PRs may include `.github/workflows/` diffs.
 
 on:
     push:
@@ -57,10 +49,8 @@ jobs:
                   PR_NUMBER: ${{ inputs.pr_number }}
               run: |
                   set -euo pipefail
-                  # Validate the PR is open AND targets dev before
-                  # rebasing — manual mode could otherwise rewrite a
-                  # PR that targets a different base (e.g. a hotfix
-                  # staging branch) and silently corrupt it.
+                  # Guard against rebasing a closed PR or one targeting
+                  # a non-dev base (e.g. a hotfix staging branch).
                   PR_JSON=$(gh pr view "${PR_NUMBER}" --repo '${{ github.repository }}' \
                     --json state,baseRefName,headRepositoryOwner,headRefName)
                   PR_STATE=$(echo "${PR_JSON}" | jq -r '.state')
@@ -80,17 +70,11 @@ jobs:
 
             - name: Rebase open PRs against dev
               id: rebase
-              # Skip if pr_number was provided but validation rejected it
-              # (state != OPEN or base != dev). Without this guard an
-              # empty `head` would fall through to the all-PRs default,
-              # which is the opposite of what a single-PR caller wanted.
+              # Skip if pr_number was given but validation rejected it —
+              # empty `head` would otherwise default to "all open PRs".
               if: inputs.pr_number == '' || steps.resolve_head.outputs.head != ''
               uses: peter-evans/rebase@v3
               with:
-                  # RELEASE_PAT (not GITHUB_TOKEN): GITHUB_TOKEN can't
-                  # push to PR head branches on contributor forks, and
-                  # would also fail to force-push workflow file changes
-                  # without the `workflow` scope. See workflow header.
                   token: ${{ secrets.RELEASE_PAT }}
                   base: dev
                   head: ${{ steps.resolve_head.outputs.head }}

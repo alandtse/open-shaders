@@ -1,27 +1,13 @@
 name: "Release: Semantic Version"
 
-# Dispatch on:
-#   - dev           → cuts vX.Y.Z-rc.N (RC channel)
-#   - main          → cuts vX.Y.Z stable (current line)
-#   - hotfix/X.Y.x  → cuts vX.Y.Z+1 on the X.Y maintenance channel
-#                     (only valid when main has shipped a higher minor/major)
+# Dispatch on: dev (RC) | main (stable, current line) | hotfix/X.Y.x
+# (older line, only valid when main has shipped a newer minor/major).
 #
-# Promotion mode (dev → main):
-#   Dispatch on main with `ff_target` set to a dev SHA. The workflow
-#   fast-forwards main to that SHA, runs semantic-release to cut stable,
-#   then fast-forwards dev to absorb the chore(release) commit. One click,
-#   no PR, no merge commits, no force pushes.
-#
-# Promotion mode (hotfix-staging → main, current-line patch):
-#   Dispatch on main with `ff_target` set to a hotfix-staging SHA. The
-#   workflow fast-forwards main, cuts the patch release, then
-#   rebase-reconciles dev onto the new main so the release commit (and
-#   tag) enter dev's ancestry. `git rebase` drops commits whose patch-id
-#   already matches an upstream cherry-pick, so dev's history stays
-#   linear and free of duplicates. This requires a force-with-lease push
-#   to dev (the only force-push this workflow performs); see the
-#   `auto-rebase-prs.yaml` workflow which auto-rebases open PRs targeting
-#   dev after this happens.
+# Promotion (ff_target on main): FF main to ff_target, run semantic-
+# release, then reconcile dev. Dev-source reconciles FF-only; hotfix-
+# staging source rebases dev onto the new main so the release tag
+# enters dev's ancestry — the only force-push this workflow performs.
+# `auto-rebase-prs.yaml` then rebases open PRs targeting dev.
 
 on:
     workflow_dispatch:
@@ -177,10 +163,8 @@ jobs:
                       echo "git fetch && git checkout dev && git merge --ff-only origin/main && git push"
                       echo '```'
                     } >> "$GITHUB_STEP_SUMMARY"
-                    # Fail loudly: the release tag is already on main but
-                    # dev is unreconciled, so the lineage invariant is
-                    # broken. A green workflow would let it go unnoticed
-                    # and the next RC would miss the released changes.
+                    # Fail loud: tag is on main but dev isn't reconciled
+                    # (same invariant break as the hotfix-staging path).
                     echo "::error::dev moved during promotion — dev is unreconciled. See job summary for manual remediation."
                     exit 1
                   fi
@@ -200,13 +184,9 @@ jobs:
                   NEW_MAIN=$(git rev-parse origin/main)
                   CURRENT_DEV=$(git rev-parse origin/dev)
 
-                  # A plain FF-reconcile won't work here: dev is not an
-                  # ancestor of new main (they share an older common
-                  # ancestor; main now has the hotfix cherry-picks + release
-                  # chore commit, dev has its own forward progress). Rebase
-                  # dev onto new main to preserve linear history. `git
-                  # rebase` automatically drops commits whose patch-id
-                  # matches an upstream commit (the cherry-picks).
+                  # FF-only won't work: dev and main diverged. Rebase
+                  # preserves linear history; patch-id dedup drops the
+                  # cherry-picked-fix commits automatically.
                   git checkout -B dev "${CURRENT_DEV}"
                   if ! git rebase "${NEW_MAIN}"; then
                     git rebase --abort || true
@@ -247,13 +227,8 @@ jobs:
                       echo "git rebase origin/main && git push --force-with-lease origin dev"
                       echo '```'
                     } >> "$GITHUB_STEP_SUMMARY"
-                    # Fail the job (not exit 0): the release commit and
-                    # tag have already been pushed by semantic-release at
-                    # this point, but dev is now unreconciled — the
-                    # lineage invariant is broken. A green workflow would
-                    # let that go unnoticed and the next RC on dev would
-                    # repeat the v1.5.2-style miss. A red workflow forces
-                    # a human to read the remediation block above.
+                    # Fail loud: tag is on main but dev isn't reconciled,
+                    # so the next RC would repeat the v1.5.2-style miss.
                     echo "::error::Dev moved during release — dev is unreconciled. See job summary for manual remediation."
                     exit 1
                   fi
