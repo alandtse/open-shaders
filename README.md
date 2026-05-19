@@ -33,7 +33,7 @@ SKSE core plugin for advanced graphics modifications for Skyrim. Open Shaders sh
 
 The upstream branding (logo, Nexus icon, typography) is non-GPL and not redistributed by this fork — see the "Icons" section under [License](#license) below.
 
-[Open Shaders on Nexus (TBD)](https://github.com/alandtse/open-shaders)
+An Open Shaders Nexus mod page does not exist yet; for now, install from [GitHub releases](https://github.com/alandtse/open-shaders/releases) or build from source.
 
 ## Requirements
 
@@ -238,6 +238,6 @@ See LICENSE within each directory; if none, it's [Default](#default)
 
 ### Icons
 
-Open Shaders does not ship the upstream Community Shaders logo. The upstream logo is non-GPL, not trademark-licensed, and may only be used in unmodified form with the Community Shaders team's permission — none of which extends to forks. Action icons, category icons, and the Discord banner are bundled as before; the menu renders without a logo image when none is present (the load path is null-safe).
+Open Shaders does not ship the upstream Community Shaders logo. The upstream logo is non-GPL, not trademark-licensed, and may only be used in unmodified form with the Community Shaders team's permission — none of which extends to forks. Action icons and category icons are bundled as before; the upstream Discord banner has been removed since the fork has no affiliated Discord channel. The menu renders without a logo image when none is present (the load path is null-safe).
 
 If Open Shaders introduces its own logo in the future, drop a `cs-logo.png` (and optional `Monochrome/cs-logo.png`) into `package/Interface/CommunityShaders/Icons/Community Shaders Logo/` — the icon loader path is unchanged for compatibility with that filesystem layout.

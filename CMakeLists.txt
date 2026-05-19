@@ -425,11 +425,59 @@ message("\tAIO features included: ${_aio_in_count}")
 # Folder basenames of excluded features, used at archive-time to strip
 # them from the staged AIO before tar. Computed here (not at archive time)
 # so CMake regenerates archives if a feature toggles autoupload.
+#
+# A feature's *source* folder name (e.g. "Cloud Shadows") does NOT match
+# the names used inside the AIO Shaders/ tree, where:
+#   - the implementation subdir is named after the inner directory
+#     (e.g. "Shaders/CloudShadows" — no space)
+#   - the config .ini is named after its INI basename
+#     (e.g. "Shaders/Features/CloudShadows.ini"), which can differ from
+#     both the folder name (IBL → ImageBasedLighting.ini) and the inner
+#     shader dir name.
+# We therefore derive AIO_EXCLUDED_STAGE_RELPATHS by inspecting each
+# excluded feature's actual structure rather than relying on the folder
+# basename. The result is a flat list of paths (relative to AIO root)
+# that the archive step deletes from the stage directory.
 set(AIO_EXCLUDED_FEATURE_NAMES "")
+set(AIO_EXCLUDED_STAGE_RELPATHS "")
 foreach(_fpath IN LISTS AIO_EXCLUDED_FEATURE_PATHS)
     get_filename_component(_fname "${_fpath}" NAME)
     list(APPEND AIO_EXCLUDED_FEATURE_NAMES "${_fname}")
+
+    # Inner shader subdirectories under <feature>/Shaders/ (excluding
+    # the Features/ config directory which we handle below).
+    if(EXISTS "${_fpath}/Shaders")
+        file(
+            GLOB _shader_subdirs
+            LIST_DIRECTORIES TRUE
+            RELATIVE "${_fpath}/Shaders"
+            "${_fpath}/Shaders/*"
+        )
+        foreach(_sd IN LISTS _shader_subdirs)
+            if(_sd STREQUAL "Features")
+                continue()
+            endif()
+            if(IS_DIRECTORY "${_fpath}/Shaders/${_sd}")
+                list(APPEND AIO_EXCLUDED_STAGE_RELPATHS "Shaders/${_sd}")
+            endif()
+        endforeach()
+    endif()
+
+    # Feature .ini files under <feature>/Shaders/Features/. The .ini
+    # basename can differ from both the source folder name and the
+    # inner shader dir name (IBL ships ImageBasedLighting.ini).
+    if(EXISTS "${_fpath}/Shaders/Features")
+        file(
+            GLOB _ini_files
+            RELATIVE "${_fpath}/Shaders"
+            "${_fpath}/Shaders/Features/*.ini"
+        )
+        foreach(_ini IN LISTS _ini_files)
+            list(APPEND AIO_EXCLUDED_STAGE_RELPATHS "Shaders/${_ini}")
+        endforeach()
+    endif()
 endforeach()
+list(REMOVE_DUPLICATES AIO_EXCLUDED_STAGE_RELPATHS)
 
 if(_aio_out_count GREATER 0)
     message(
@@ -1060,7 +1108,11 @@ if(AIO_ZIP_TO_DIST)
             "${AIO_DIR}"
             "${AIO_STAGE_DIR}"
         )
-        foreach(_fname IN LISTS AIO_EXCLUDED_FEATURE_NAMES)
+        # Delete each excluded feature's actual paths from the stage.
+        # AIO_EXCLUDED_STAGE_RELPATHS is precomputed (see top of file)
+        # and contains the real Shaders/<inner> dirs and Shaders/Features/<basename>.ini
+        # files, not the source folder basename which often differs.
+        foreach(_relpath IN LISTS AIO_EXCLUDED_STAGE_RELPATHS)
             list(
                 APPEND _aio_zip_cmds
                 COMMAND
@@ -1068,13 +1120,7 @@ if(AIO_ZIP_TO_DIST)
                 -E
                 rm
                 -rf
-                "${AIO_STAGE_DIR}/${_fname}"
-                COMMAND
-                ${CMAKE_COMMAND}
-                -E
-                rm
-                -rf
-                "${AIO_STAGE_DIR}/Shaders/${_fname}"
+                "${AIO_STAGE_DIR}/${_relpath}"
             )
         endforeach()
         list(
@@ -1253,7 +1299,9 @@ if(AIO_EXCLUDED_FEATURE_NAMES)
         "${AIO_DIR}"
         "${AIO_MANUAL_STAGE_DIR}"
     )
-    foreach(_fname IN LISTS AIO_EXCLUDED_FEATURE_NAMES)
+    # Mirror the AIO_ZIP_PACKAGE strip — see comments there for why we
+    # use AIO_EXCLUDED_STAGE_RELPATHS rather than the source folder name.
+    foreach(_relpath IN LISTS AIO_EXCLUDED_STAGE_RELPATHS)
         list(
             APPEND _aio_manual_cmds
             COMMAND
@@ -1261,13 +1309,7 @@ if(AIO_EXCLUDED_FEATURE_NAMES)
             -E
             rm
             -rf
-            "${AIO_MANUAL_STAGE_DIR}/${_fname}"
-            COMMAND
-            ${CMAKE_COMMAND}
-            -E
-            rm
-            -rf
-            "${AIO_MANUAL_STAGE_DIR}/Shaders/${_fname}"
+            "${AIO_MANUAL_STAGE_DIR}/${_relpath}"
         )
     endforeach()
     list(
