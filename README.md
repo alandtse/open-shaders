@@ -1,23 +1,24 @@
-[![Latest Release](https://img.shields.io/github/v/release/doodlum/skyrim-community-shaders)](https://github.com/doodlum/skyrim-community-shaders/releases)
-[![License](https://img.shields.io/github/license/doodlum/skyrim-community-shaders)](./LICENSE)
-[![Last Commit](https://img.shields.io/github/last-commit/doodlum/skyrim-community-shaders)](https://github.com/doodlum/skyrim-community-shaders/commits)
-[![Build Status](https://img.shields.io/github/actions/workflow/status/doodlum/skyrim-community-shaders/release-build.yaml?branch=dev)](https://github.com/doodlum/skyrim-community-shaders/actions)
+[![Latest Release](https://img.shields.io/github/v/release/alandtse/skyrim-community-shaders)](https://github.com/alandtse/skyrim-community-shaders/releases)
+[![License](https://img.shields.io/github/license/alandtse/skyrim-community-shaders)](./LICENSE)
+[![Last Commit](https://img.shields.io/github/last-commit/alandtse/skyrim-community-shaders)](https://github.com/alandtse/skyrim-community-shaders/commits)
+[![Build Status](https://img.shields.io/github/actions/workflow/status/alandtse/skyrim-community-shaders/release-build.yaml?branch=dev)](https://github.com/alandtse/skyrim-community-shaders/actions)
 [![Discord](https://img.shields.io/discord/1080142797870485606?label=discord&logo=discord&color=5865F2)](https://discord.com/invite/nkrQybAsyy)
-[![Open Issues](https://img.shields.io/github/issues/doodlum/skyrim-community-shaders)](https://github.com/doodlum/skyrim-community-shaders/issues)
-[![Contributors](https://img.shields.io/github/contributors/doodlum/skyrim-community-shaders)](https://github.com/doodlum/skyrim-community-shaders/graphs/contributors)
-[![Stars](https://img.shields.io/github/stars/doodlum/skyrim-community-shaders?style=social)](https://github.com/doodlum/skyrim-community-shaders/stargazers)
+[![Open Issues](https://img.shields.io/github/issues/alandtse/skyrim-community-shaders)](https://github.com/alandtse/skyrim-community-shaders/issues)
+[![Contributors](https://img.shields.io/github/contributors/alandtse/skyrim-community-shaders)](https://github.com/alandtse/skyrim-community-shaders/graphs/contributors)
+[![Stars](https://img.shields.io/github/stars/alandtse/skyrim-community-shaders?style=social)](https://github.com/alandtse/skyrim-community-shaders/stargazers)
 
-[![Pre-commit CI](https://results.pre-commit.ci/badge/github/doodlum/skyrim-community-shaders/dev.svg)](https://results.pre-commit.ci/latest/github/doodlum/skyrim-community-shaders/dev)
-![CodeRabbit Pull Request Reviews](https://img.shields.io/coderabbit/prs/github/doodlum/skyrim-community-shaders?utm_source=oss&utm_medium=github&utm_campaign=doodlum%2Fskyrim-community-shaders&labelColor=171717&color=FF570A&link=https%3A%2F%2Fcoderabbit.ai&label=CodeRabbit+Reviews)
+[![Pre-commit CI](https://results.pre-commit.ci/badge/github/alandtse/skyrim-community-shaders/dev.svg)](https://results.pre-commit.ci/latest/github/alandtse/skyrim-community-shaders/dev)
+![CodeRabbit Pull Request Reviews](https://img.shields.io/coderabbit/prs/github/alandtse/skyrim-community-shaders?utm_source=oss&utm_medium=github&utm_campaign=alandtse%2Fskyrim-community-shaders&labelColor=171717&color=FF570A&link=https%3A%2F%2Fcoderabbit.ai&label=CodeRabbit+Reviews)
 
-[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/doodlum/skyrim-community-shaders)
+[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/alandtse/skyrim-community-shaders)
 
-# Skyrim Community Shaders
+# Open Shaders
 
-SKSE core plugin for community-driven advanced graphics modifications.
+SKSE core plugin for advanced graphics modifications. **Open Shaders is a fork of [Community Shaders](https://www.nexusmods.com/skyrimspecialedition/mods/180419)** ([source](https://github.com/community-shaders/skyrim-community-shaders)) that ships features the upstream project has not yet released, with the upstream developer experience and runtime layout preserved so that user settings and themes from Community Shaders work without migration.
 
-[Nexus](https://www.nexusmods.com/skyrimspecialedition/mods/86492)
-[User Wiki](https://modding.wiki/en/skyrim/developers/community-shaders)
+Where this README and the in-game UI refer to "Community Shaders", the reference is to the upstream project this fork builds on. Where they refer to "Open Shaders", the reference is to this fork.
+
+[Open Shaders on Nexus (TBD)](https://github.com/alandtse/skyrim-community-shaders) · [Upstream Community Shaders on Nexus](https://www.nexusmods.com/skyrimspecialedition/mods/180419) · [Upstream User Wiki](https://modding.wiki/en/skyrim/developers/community-shaders)
 
 ## Requirements
 
@@ -60,9 +61,11 @@ Install them manually only if you want them in everywhere.
 To clone the repository with all submodules, run the following command in your terminal:
 
 ```bash
-git clone https://github.com/doodlum/skyrim-community-shaders.git --recursive
+git clone https://github.com/alandtse/skyrim-community-shaders.git --recursive
 cd skyrim-community-shaders
 ```
+
+> The repository directory and DLL filename remain `skyrim-community-shaders` / `CommunityShaders.dll` to preserve drop-in compatibility with the upstream Community Shaders installation. Only the **public name and in-game branding** are "Open Shaders".
 
 ### Visual Studio build
 
@@ -117,6 +120,8 @@ cmake --build ./build/ALL --config Release --target Package-Core
 # Create a feature package in ./dist/ (example: GrassLighting)
 cmake --build ./build/ALL --config Release --target Package-GrassLighting
 ```
+
+The AIO bundles only features marked `autoupload = true` in their feature `.ini` — features not yet ready for release are built but excluded from the AIO. To include everything in a local build, see the `AIO_INCLUDE_NON_AUTOUPLOAD` CMake option.
 
 For more details about packaging targets, options, and the difference between automated and manual packaging, see the "Manual packaging targets (detailed)" section in `.claude/CLAUDE.md`.
 

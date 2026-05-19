@@ -150,7 +150,7 @@ jobs:
                           tag_name=$(echo "$line" | cut -d' ' -f1)
                           reason=$(echo "$line" | cut -d'(' -f2- | sed 's/)$//')
                           echo "  • $tag_name - $reason"
-                          echo "    🔗 https://github.com/doodlum/skyrim-community-shaders/releases/tag/$tag_name"
+                          echo "    🔗 ${{ github.server_url }}/${{ github.repository }}/releases/tag/$tag_name"
                         fi
                       done
                       echo ""

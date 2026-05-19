@@ -2,6 +2,16 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Fork identity
+
+This repository is **Open Shaders**, a fork of [Community Shaders](https://github.com/community-shaders/skyrim-community-shaders) ([Nexus mod 180419](https://www.nexusmods.com/skyrimspecialedition/mods/180419)). The public/display name is "Open Shaders"; the runtime identity is intentionally kept as upstream Community Shaders so user installs are drop-in compatible:
+
+-   **Keep as `CommunityShaders`** (do NOT rename): the CMake `PROJECT_NAME`, the DLL filename, the `SKSE/Plugins/CommunityShaders/` runtime directory, the `CommunityShaders.log` log file, the ImGui window ID after `###`, asset paths under `package/Interface/CommunityShaders/`, and any HLSL include paths.
+-   **Use "Open Shaders"**: in-game menu titles, README/AI-INSTRUCTIONS public-facing copy, the AIO Nexus mod filename, the GitHub release name, the in-game Welcome / FAQ / About text.
+-   **Link "Community Shaders" explicitly to upstream**: when the text or comment refers to the upstream project (its Nexus page is 180419, its repo is `community-shaders/skyrim-community-shaders`, its wiki lives on that repo). Never link `doodlum/skyrim-community-shaders` — that path is dead.
+
+The AIO bundle ships only features whose `Shaders/Features/*.ini` has `autoupload = true` (CORE features always included). The `AIO_INCLUDE_NON_AUTOUPLOAD=ON` CMake option overrides for local dev builds. The Nexus upload workflow ships only the AIO archive — there is no per-feature matrix distribution. See `.github/workflows/nexus-upload.yaml`.
+
 ## Build Commands
 
 ### WSL/Linux Environment Note
@@ -488,7 +498,7 @@ Conventional commits drive semantic-release. `feat:` triggers a minor bump, `fix
 -   PR a feature branch directly into `main`.
 -   Run `Release: Semantic Version` on `hotfix/X.Y.x` for the current line — it will fail with `cannot be published as it is out of range` because the maintenance contract requires the hotfix line to be strictly older than `main`. Use `ff_target` into `main` instead.
 
-Full details: [Developers wiki — Patch Release Process](https://github.com/community-shaders/skyrim-community-shaders/wiki/Developers#patch-release-process-any-line).
+Full details: [upstream Developers wiki — Patch Release Process](https://github.com/community-shaders/skyrim-community-shaders/wiki/Developers#patch-release-process-any-line). This fork does not maintain its own wiki — the upstream wiki is the documentation source of truth for the shared release flow.
 
 ### Code Organization and Refactoring Patterns
 

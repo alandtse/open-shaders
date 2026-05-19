@@ -44,11 +44,17 @@ option(
     "Build shader unit tests (runs automatically before packaging)"
     ON
 )
+option(
+    AIO_INCLUDE_NON_AUTOUPLOAD
+    "Include features whose .ini has autoupload != true in the AIO. Off by default — the AIO ships only release-ready features. Turn on for local dev builds that want every feature regardless of release status."
+    OFF
+)
 message("\tAuto plugin deployment: ${AUTO_PLUGIN_DEPLOYMENT}")
 message("\tZip to dist: ${ZIP_TO_DIST}")
 message("\tAIO Zip to dist: ${AIO_ZIP_TO_DIST}")
 message("\tTracy profiler: ${TRACY_SUPPORT}")
 message("\tShader tests: ${BUILD_SHADER_TESTS}")
+message("\tAIO include non-autoupload features: ${AIO_INCLUDE_NON_AUTOUPLOAD}")
 
 # #######################################################################################################################
 # # Build version info from git
@@ -352,6 +358,79 @@ string(TIMESTAMP UTC_NOW "%Y-%m-%dT%H-%MZ" UTC)
 # Set AIO directory path used by multiple targets below
 set(AIO_DIR "${CMAKE_CURRENT_BINARY_DIR}/aio")
 
+# Read the autoupload flag from a feature's primary .ini. Returns TRUE iff
+# the .ini contains `autoupload = true` (case-insensitive value match).
+# Used to filter the AIO bundle so only release-ready features ship inside
+# the all-in-one archive. CORE features (with a CORE marker file) bypass
+# this filter — the AIO must always include CORE.
+#
+# Sets `${out_var}` in the caller's scope to TRUE/FALSE.
+function(feature_is_autoupload feature_path out_var)
+    if(EXISTS "${feature_path}/CORE")
+        set(${out_var} TRUE PARENT_SCOPE)
+        return()
+    endif()
+    file(GLOB _ini_candidates "${feature_path}/Shaders/Features/*.ini")
+    foreach(_ini IN LISTS _ini_candidates)
+        file(STRINGS "${_ini}" _ini_lines REGEX "^[ \t]*autoupload[ \t]*=")
+        foreach(_line IN LISTS _ini_lines)
+            # Strip "key =" to extract the value, lowercase it.
+            string(
+                REGEX REPLACE "^[ \t]*autoupload[ \t]*=[ \t]*"
+                ""
+                _val
+                "${_line}"
+            )
+            string(STRIP "${_val}" _val)
+            string(TOLOWER "${_val}" _val)
+            # Treat unset / falsey values as off; only explicit truthy values count.
+            if(
+                _val STREQUAL "true"
+                OR _val STREQUAL "1"
+                OR _val STREQUAL "yes"
+                OR _val STREQUAL "on"
+            )
+                set(${out_var} TRUE PARENT_SCOPE)
+                return()
+            endif()
+        endforeach()
+    endforeach()
+    set(${out_var} FALSE PARENT_SCOPE)
+endfunction()
+
+# Pre-compute the AIO inclusion set so log messages and the AIO copy loop
+# agree on which features ship. AIO_INCLUDE_NON_AUTOUPLOAD overrides the
+# filter for local dev builds.
+set(AIO_INCLUDED_FEATURE_PATHS "")
+set(AIO_EXCLUDED_FEATURE_PATHS "")
+foreach(_fpath IN LISTS FEATURE_PATHS)
+    if(NOT IS_DIRECTORY "${_fpath}")
+        continue()
+    endif()
+    if(AIO_INCLUDE_NON_AUTOUPLOAD)
+        list(APPEND AIO_INCLUDED_FEATURE_PATHS "${_fpath}")
+    else()
+        feature_is_autoupload("${_fpath}" _ok)
+        if(_ok)
+            list(APPEND AIO_INCLUDED_FEATURE_PATHS "${_fpath}")
+        else()
+            list(APPEND AIO_EXCLUDED_FEATURE_PATHS "${_fpath}")
+        endif()
+    endif()
+endforeach()
+list(LENGTH AIO_INCLUDED_FEATURE_PATHS _aio_in_count)
+list(LENGTH AIO_EXCLUDED_FEATURE_PATHS _aio_out_count)
+message("\tAIO features included: ${_aio_in_count}")
+if(_aio_out_count GREATER 0)
+    message(
+        "\tAIO features excluded (autoupload != true, set AIO_INCLUDE_NON_AUTOUPLOAD=ON to override): ${_aio_out_count}"
+    )
+    foreach(_fpath IN LISTS AIO_EXCLUDED_FEATURE_PATHS)
+        get_filename_component(_fname "${_fpath}" NAME)
+        message("\t\t- ${_fname}")
+    endforeach()
+endif()
+
 # Robocopy wrapper for Windows incremental file copy (used by deployment targets).
 # We invoke through `cmd /c "<absolute-path>"` rather than the bare wrapper path because
 # modern Windows refuses to execute scripts from the current directory without an explicit
@@ -371,8 +450,12 @@ endif()
 # # CMake install() infrastructure for manual packaging
 # #######################################################################################################################
 
-# Append a '/' to the end of each feature path for installation all its contents but not itself
-set(FEATURE_PATHS_SLASH ${FEATURE_PATHS})
+# Append a '/' to the end of each feature path for installation all its
+# contents but not itself. The AIO install() rule below copies these into
+# the AIO image, so use the same autoupload-filtered set as the AIO copy
+# loops — `cmake --install` and `Package-AIO-Manual` will then ship the
+# same feature set as the in-tree AIO build.
+set(FEATURE_PATHS_SLASH ${AIO_INCLUDED_FEATURE_PATHS})
 list(TRANSFORM FEATURE_PATHS_SLASH APPEND /)
 
 # Install logic for AIO package
@@ -484,7 +567,13 @@ if(AUTO_PLUGIN_DEPLOYMENT OR AIO_ZIP_TO_DIST)
     # Copy feature folders (only files, preserve existing files in AIO).
     # Shader files are excluded - copy_shaders.stamp owns the Shaders/ subdir
     # so the two custom-build rules don't race on the same destinations.
-    foreach(_fpath IN LISTS FEATURE_PATHS)
+    #
+    # AIO_INCLUDED_FEATURE_PATHS is pre-filtered by `autoupload = true` in
+    # each feature's .ini (computed near the top of this file). Features
+    # not marked autoupload are still built and shader-validated, but are
+    # excluded from the AIO bundle so the all-in-one archive ships only
+    # release-ready content. Set AIO_INCLUDE_NON_AUTOUPLOAD=ON to bypass.
+    foreach(_fpath IN LISTS AIO_INCLUDED_FEATURE_PATHS)
         if(EXISTS "${_fpath}")
             file(
                 GLOB_RECURSE _feature_files
@@ -569,8 +658,11 @@ if(AUTO_PLUGIN_DEPLOYMENT OR AIO_ZIP_TO_DIST)
     list(FILTER _package_shaders EXCLUDE REGEX "/Tests/")
     set(_shader_copy_cmds)
 
+    # Match the AIO's autoupload filter: only ship shaders for features
+    # that are actually in the AIO bundle. Filtering keeps the AIO's
+    # Shaders/ subtree consistent with the rest of the package.
     set(_feature_shader_paths)
-    foreach(_fpath IN LISTS FEATURE_PATHS)
+    foreach(_fpath IN LISTS AIO_INCLUDED_FEATURE_PATHS)
         if(EXISTS "${_fpath}/Shaders")
             list(APPEND _feature_shader_paths "${_fpath}/Shaders")
         endif()
@@ -596,8 +688,8 @@ if(AUTO_PLUGIN_DEPLOYMENT OR AIO_ZIP_TO_DIST)
 
     append_copy_if_different(_shader_copy_cmds _package_shaders "${CMAKE_SOURCE_DIR}/package/Shaders" "${AIO_DIR}/Shaders")
 
-    # feature shader folders
-    foreach(_fpath IN LISTS FEATURE_PATHS)
+    # Feature shader folders — same autoupload filter as the AIO file copy.
+    foreach(_fpath IN LISTS AIO_INCLUDED_FEATURE_PATHS)
         if(EXISTS "${_fpath}/Shaders")
             file(
                 GLOB_RECURSE _feat_shaders
@@ -1082,7 +1174,7 @@ if(BUILD_SHADER_TESTS)
 endif()
 
 message("*************************************************************")
-message("Community Shaders configuration complete")
+message("Open Shaders configuration complete (fork of Community Shaders)")
 message("To prepare a ZIP package of AIO, Core, or Features")
 message("  Build cmake targets:")
 message("    - Package-Core: Core package")

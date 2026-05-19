@@ -1,6 +1,6 @@
 # AI Development Instructions
 
-This file provides guidance for AI assistants working with the Skyrim Community Shaders codebase.
+This file provides guidance for AI assistants working with the Open Shaders codebase — a fork of [Community Shaders](https://github.com/community-shaders/skyrim-community-shaders) ([Nexus](https://www.nexusmods.com/skyrimspecialedition/mods/180419)). The runtime layout (DLL name, settings path, log file) intentionally matches upstream Community Shaders so users can switch without losing settings; only the public display name and in-game branding are "Open Shaders".
 
 ## Primary Documentation
 

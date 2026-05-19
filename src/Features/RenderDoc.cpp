@@ -873,7 +873,7 @@ std::string RenderDoc::BuildAutomaticCaptureComments(const std::string& userComm
 
 	// Plugin version
 	auto pluginVersion = Util::GetFormattedVersion(Plugin::VERSION);
-	comments += std::format("Community Shaders {}\n", pluginVersion);
+	comments += std::format("Open Shaders {}\n", pluginVersion);
 
 	// Enabled features
 	const auto& features = Feature::GetFeatureList();

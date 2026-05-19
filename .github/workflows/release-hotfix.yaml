@@ -317,7 +317,10 @@ jobs:
                       echo "Resolve by checking out \`${STAGING}\` locally, cherry-picking the conflicted commits manually, and pushing."
                     fi
                     echo ""
-                    echo "See: [Hotfix Release Process](https://github.com/${{ github.repository }}/wiki/Developers#hotfix-release-process)"
+                    # Wiki lives on upstream Community Shaders (this fork does not
+                    # mirror the wiki). Always link to upstream so PR readers reach
+                    # documentation regardless of which fork ran the workflow.
+                    echo "See: [Hotfix Release Process](https://github.com/community-shaders/skyrim-community-shaders/wiki/Developers#hotfix-release-process)"
                   } > /tmp/pr-body.md
 
                   # Best-effort: ensure the hotfix label exists so --label
