@@ -228,6 +228,7 @@ void RemoteControl::RegisterTools()
 	RegisterGetStateTool();
 	RegisterListFeaturesTool();
 	RegisterGetFeatureSettingsTool();
+	RegisterToggleFeatureTool();
 }
 
 void RemoteControl::RegisterGetStateTool()
@@ -272,6 +273,59 @@ void RemoteControl::RegisterListFeaturesTool()
 				});
 			}
 			return TextResult(features.dump());
+		});
+}
+
+void RemoteControl::RegisterToggleFeatureTool()
+{
+	const auto tool = mcp::tool_builder("toggle_feature")
+	                      .with_description(
+							  "Enable or disable a feature at runtime by "
+							  "flipping its 'loaded' flag. Disabled features "
+							  "are skipped by Feature::ForEachLoadedFeature so "
+							  "their per-frame rendering work doesn't run. GPU "
+							  "resources are NOT freed — this is for A/B "
+							  "perf/quality comparisons, not memory reclaim. "
+							  "Reverting only requires another toggle_feature "
+							  "call.")
+	                      .with_string_param("shortName",
+							  "Feature shortName as returned by list_features.")
+	                      .with_boolean_param("enabled",
+							  "true to load (run), false to skip.")
+	                      .build();
+	server->register_tool(tool,
+		[](const mcp::json& params, const std::string& /*session_id*/) -> mcp::json {
+			const std::string shortName = params.value("shortName", std::string{});
+			if (shortName.empty()) {
+				return ErrorResult("missing required parameter 'shortName'");
+			}
+			if (!params.contains("enabled") || !params["enabled"].is_boolean()) {
+				return ErrorResult("missing required boolean parameter 'enabled'");
+			}
+			const bool desired = params["enabled"].get<bool>();
+			// FindFeatureByShortName filters on `loaded == true`, so it won't
+			// help us re-enable a feature. Walk the full list ourselves.
+			Feature* target = nullptr;
+			for (auto* f : Feature::GetFeatureList()) {
+				if (f->GetShortName() == shortName) {
+					target = f;
+					break;
+				}
+			}
+			if (!target) {
+				return ErrorResult("feature not found",
+					{ { "shortName", shortName } });
+			}
+			const bool previous = target->loaded;
+			target->loaded = desired;
+			logger::info("Remote Control: toggle_feature({}, {}) (was {})",
+				shortName, desired, previous);
+			return TextResult(mcp::json({
+											{ "shortName", shortName },
+											{ "previous", previous },
+											{ "current", desired },
+										})
+					.dump());
 		});
 }
 
