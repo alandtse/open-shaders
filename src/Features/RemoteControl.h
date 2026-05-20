@@ -73,6 +73,8 @@ private:
 	bool IsRunning() const noexcept { return server != nullptr; }
 	std::string BuildClientConfig() const;
 	void RegisterTools();
+	void RegisterGetStateTool();
+	void RegisterListFeaturesTool();
 
 	std::unique_ptr<mcp::server> server;
 	int activePort = 0;

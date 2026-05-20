@@ -198,25 +198,64 @@ void RemoteControl::StopServer()
 	logger::info("Remote Control: MCP server stopped");
 }
 
+// Helper: wrap a payload string in the MCP tool-result content envelope
+// (an array of typed content items). Tools return application data as the
+// "text" field of a single content item; consumers typically parse it as
+// JSON.
+static mcp::json TextResult(std::string text)
+{
+	return mcp::json::array({ mcp::json{
+		{ "type", "text" },
+		{ "text", std::move(text) } } });
+}
+
 void RemoteControl::RegisterTools()
 {
-	// Bootstrap tool — proves the wire-up is working end-to-end.
-	// Subsequent commits will add: list_features, get_feature, set_feature,
-	// toggle_feature, run_abtest, capture_renderdoc, capture_screenshot, etc.
-	const auto stateTool = mcp::tool_builder("get_state")
-	                           .with_description(
-								   "Return Community Shaders runtime state: "
-								   "frame counter, plugin version, VR mode.")
-	                           .build();
-	server->register_tool(stateTool,
+	RegisterGetStateTool();
+	RegisterListFeaturesTool();
+}
+
+void RemoteControl::RegisterGetStateTool()
+{
+	const auto tool = mcp::tool_builder("get_state")
+	                      .with_description(
+							  "Return Community Shaders runtime state: "
+							  "frame counter, plugin version, VR mode.")
+	                      .build();
+	server->register_tool(tool,
 		[](const mcp::json& /*params*/, const std::string& /*session_id*/) -> mcp::json {
 			const uint frames = globals::state ? globals::state->frameCount : 0;
 			const bool vr = REL::Module::IsVR();
-			const std::string payload = std::format(
+			return TextResult(std::format(
 				R"({{"frame_count":{},"vr":{},"plugin":"CommunityShaders"}})",
-				frames, vr ? "true" : "false");
-			return mcp::json::array({ mcp::json{
-				{ "type", "text" },
-				{ "text", payload } } });
+				frames, vr ? "true" : "false"));
+		});
+}
+
+void RemoteControl::RegisterListFeaturesTool()
+{
+	const auto tool = mcp::tool_builder("list_features")
+	                      .with_description(
+							  "Enumerate Community Shaders graphics features. "
+							  "Returns a JSON array with one entry per feature: "
+							  "name, shortName, loaded, version, category, "
+							  "isCore, supportsVR.")
+	                      .build();
+	server->register_tool(tool,
+		[](const mcp::json& /*params*/, const std::string& /*session_id*/) -> mcp::json {
+			mcp::json features = mcp::json::array();
+			for (auto* f : Feature::GetFeatureList()) {
+				features.push_back({
+					{ "name", f->GetName() },
+					{ "shortName", f->GetShortName() },
+					{ "loaded", f->loaded },
+					{ "version", f->version },
+					{ "category", std::string(f->GetCategory()) },
+					{ "isCore", f->IsCore() },
+					{ "supportsVR", f->SupportsVR() },
+					{ "inMenu", f->IsInMenu() },
+				});
+			}
+			return TextResult(features.dump());
 		});
 }
