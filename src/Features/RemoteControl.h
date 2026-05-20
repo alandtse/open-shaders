@@ -94,12 +94,8 @@ private:
 	bool IsRunning() const noexcept { return server != nullptr; }
 	std::string BuildClientConfig() const;
 	void RegisterTools();
-	void RegisterGetStateTool();
-	void RegisterListFeaturesTool();
-	void RegisterGetFeatureSettingsTool();
-	void RegisterSetFeatureSettingsTool();
-	void RegisterResetFeatureSettingsTool();
-	void RegisterToggleFeatureTool();
+	void RegisterInspectTool();
+	void RegisterFeatureTool();
 	void RegisterConsoleTool();
 	void RegisterCaptureTool();
 	void RegisterAbtestTool();

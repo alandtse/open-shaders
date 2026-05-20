@@ -383,115 +383,265 @@ static mcp::json ErrorResult(std::string_view message, mcp::json context = {})
 
 void RemoteControl::RegisterTools()
 {
-	RegisterGetStateTool();
-	RegisterListFeaturesTool();
-	RegisterGetFeatureSettingsTool();
-	RegisterToggleFeatureTool();
-	RegisterSetFeatureSettingsTool();
-	RegisterResetFeatureSettingsTool();
-	RegisterConsoleTool();
-	RegisterCaptureTool();
-	RegisterAbtestTool();
+	// Five tools, each semantically rich. Reads vs writes vs lifecycles are
+	// separated by tool; within each tool, kind/action discriminates the
+	// specific operation. See agentic-renderdoc's "Why this design" notes —
+	// fewer rich tools outperform expansive suites because the agent reads
+	// fewer descriptions and each description carries the operational
+	// expertise (timing, gotchas, verification routes).
+	RegisterInspectTool();  // reads (non-feature engine state)
+	RegisterFeatureTool();  // all feature ops (list/get/set/reset/toggle)
+	RegisterConsoleTool();  // Skyrim console passthrough
+	RegisterCaptureTool();  // frame capture (renderdoc/screenshot)
+	RegisterAbtestTool();   // A/B test lifecycle
 }
 
-void RemoteControl::RegisterGetStateTool()
+// Helper used by both inspect(kind="state") and (potentially) future tools.
+static mcp::json EngineStateBlob()
 {
-	const auto tool = mcp::tool_builder("get_state")
-	                      .with_description(
-							  "Return Community Shaders runtime state: "
-							  "frame counter, plugin version, VR mode.")
-	                      .build();
-	server->register_tool(tool,
-		[this](const mcp::json& /*params*/, const std::string& session_id) -> mcp::json {
-			RecordToolCall(session_id, "get_state");
-			const uint frames = globals::state ? globals::state->frameCount : 0;
-			const bool vr = REL::Module::IsVR();
-			return TextResult(std::format(
-				R"({{"frame_count":{},"vr":{},"plugin":"CommunityShaders"}})",
-				frames, vr ? "true" : "false"));
-		});
+	const uint frames = globals::state ? globals::state->frameCount : 0;
+	const bool vr = REL::Module::IsVR();
+	return mcp::json({
+		{ "plugin", "CommunityShaders" },
+		{ "frame_count", frames },
+		{ "vr", vr },
+	});
 }
 
-void RemoteControl::RegisterListFeaturesTool()
+// Helper used by feature(action="list") to build one entry per feature.
+static mcp::json FeatureEntry(Feature* f)
 {
-	const auto tool = mcp::tool_builder("list_features")
-	                      .with_description(
-							  "Enumerate Community Shaders graphics features. "
-							  "Returns a JSON array with one entry per feature: "
-							  "name, shortName, loaded, version, category, "
-							  "isCore, supportsVR.")
-	                      .build();
-	server->register_tool(tool,
-		[this](const mcp::json& /*params*/, const std::string& session_id) -> mcp::json {
-			RecordToolCall(session_id, "list_features");
-			mcp::json features = mcp::json::array();
-			for (auto* f : Feature::GetFeatureList()) {
-				features.push_back({
-					{ "name", f->GetName() },
-					{ "shortName", f->GetShortName() },
-					{ "loaded", f->loaded },
-					{ "version", f->version },
-					{ "category", std::string(f->GetCategory()) },
-					{ "isCore", f->IsCore() },
-					{ "supportsVR", f->SupportsVR() },
-					{ "inMenu", f->IsInMenu() },
-				});
-			}
-			return TextResult(features.dump());
-		});
+	return mcp::json({
+		{ "name", f->GetName() },
+		{ "shortName", f->GetShortName() },
+		{ "loaded", f->loaded },
+		{ "version", f->version },
+		{ "category", std::string(f->GetCategory()) },
+		{ "isCore", f->IsCore() },
+		{ "supportsVR", f->SupportsVR() },
+		{ "inMenu", f->IsInMenu() },
+	});
 }
 
-void RemoteControl::RegisterToggleFeatureTool()
+void RemoteControl::RegisterInspectTool()
 {
-	const auto tool = mcp::tool_builder("toggle_feature")
+	// Single read endpoint for non-feature engine state. Kind-discriminated
+	// so future engine reads (weather, cell, player, render targets) extend
+	// the same tool rather than spawning new top-level reads. For feature
+	// reads (list, get settings), use the `feature` tool with the
+	// corresponding action.
+	const auto tool = mcp::tool_builder("inspect")
 	                      .with_description(
-							  "Enable or disable a feature at runtime by "
-							  "flipping its 'loaded' flag. Disabled features "
-							  "are skipped by Feature::ForEachLoadedFeature so "
-							  "their per-frame rendering work doesn't run. GPU "
-							  "resources are NOT freed — this is for A/B "
-							  "perf/quality comparisons, not memory reclaim. "
-							  "Reverting only requires another toggle_feature "
-							  "call.")
-	                      .with_string_param("shortName",
-							  "Feature shortName as returned by list_features.")
-	                      .with_boolean_param("enabled",
-							  "true to load (run), false to skip.")
+							  "Read non-feature engine state. Kind-dispatched; the "
+							  "response is always a JSON object delivered as the "
+							  "text of a single content item.\n\n"
+							  "Kinds:\n"
+							  "  state — { plugin, frame_count, vr }. Frame counter "
+							  "monotonically increases each render tick; use as a "
+							  "ground truth for verifying that deferred operations "
+							  "(see `console`) have had time to run.\n\n"
+							  "For feature reads (enumerate / settings), use the "
+							  "`feature` tool with action='list' or 'get'.")
+	                      .with_string_param("kind",
+							  "Currently 'state'. New kinds will be added here "
+							  "rather than as new tools.")
 	                      .build();
 	server->register_tool(tool,
 		[this](const mcp::json& params, const std::string& session_id) -> mcp::json {
-			RecordToolCall(session_id, "toggle_feature");
+			RecordToolCall(session_id, "inspect");
+			const std::string kind = params.value("kind", std::string{});
+			if (kind.empty()) {
+				return ErrorResult("missing required parameter 'kind'");
+			}
+			if (kind == "state") {
+				return TextResult(EngineStateBlob().dump());
+			}
+			return ErrorResult("unknown kind",
+				{ { "kind", kind },
+					{ "supported", mcp::json::array({ "state" }) } });
+		});
+}
+
+void RemoteControl::RegisterFeatureTool()
+{
+	// One tool for all graphics-feature operations. Action-dispatched so the
+	// agent has a single description that documents the full feature
+	// vocabulary plus the gotchas across all five operations (silent no-op
+	// for missing overrides, listener-thread caveats, etc).
+	const auto tool = mcp::tool_builder("feature")
+	                      .with_description(
+							  "All graphics-feature operations — enumerate, "
+							  "inspect settings, mutate settings, restore defaults, "
+							  "toggle on/off. Action-dispatched; each action takes "
+							  "the parameters listed below.\n\n"
+							  "Actions:\n"
+							  "  list   — no other params. Returns a JSON array; "
+							  "each entry has { name, shortName, loaded, version, "
+							  "category, isCore, supportsVR, inMenu }.\n"
+							  "  get    — params: shortName. Returns the "
+							  "Feature::SaveSettings(json) blob. May return null "
+							  "if the feature has no SaveSettings/LoadSettings "
+							  "override (e.g. LightLimitFix); set/reset will "
+							  "silently no-op for these.\n"
+							  "  set    — params: shortName, settings (object). "
+							  "Calls Feature::LoadSettings on the listener thread. "
+							  "Safe for value-assigning LoadSettings (the common "
+							  "case) and for features that flip a recompileFlag "
+							  "(ScreenSpaceGI, DynamicCubemaps) — the render loop "
+							  "picks them up on the next frame. Settings that "
+							  "synchronously rebuild GPU resources would race; "
+							  "none in-tree currently do.\n"
+							  "  reset  — params: shortName. Calls "
+							  "Feature::RestoreDefaultSettings(). Distinct from "
+							  "set({}) because RestoreDefaultSettings is "
+							  "feature-specific reset logic (may release/recreate "
+							  "state).\n"
+							  "  toggle — params: shortName, enabled (boolean). "
+							  "Flips Feature::loaded. Disabled features are "
+							  "skipped by ForEachLoadedFeature so their per-frame "
+							  "rendering work doesn't run. GPU resources allocated "
+							  "in SetupResources are NOT freed — A/B perf/quality, "
+							  "not memory reclaim.\n\n"
+							  "A/B testing pattern:\n"
+							  "  1. feature(action='get', shortName='Skylighting')   → snapshot\n"
+							  "  2. feature(action='reset', shortName='Skylighting') → defaults\n"
+							  "  3. capture + tracy capture                          → measure\n"
+							  "  4. feature(action='set', shortName='Skylighting', settings=<snapshot>) → restore\n\n"
+							  "Gotchas:\n"
+							  "  • Some features have no SaveSettings/LoadSettings "
+							  "override. `get` returns null; `set` and `reset` "
+							  "claim success but don't change anything. Confirmed "
+							  "case: LightLimitFix.\n"
+							  "  • toggle keeps GPU resources alive. If a feature "
+							  "still affects rendering after `enabled=false`, it "
+							  "has a hook that isn't gated on `loaded` — file an "
+							  "issue with the shortName.")
+	                      .with_string_param("action",
+							  "One of: 'list', 'get', 'set', 'reset', 'toggle'.")
+	                      .with_string_param("shortName",
+							  "Required for all actions except 'list'. From the "
+							  "list response.",
+							  /*required=*/false)
+	                      .with_object_param("settings",
+							  "Required for action='set'. Shape that matches what "
+							  "action='get' returned for the same feature.",
+							  mcp::json::object(),
+							  /*required=*/false)
+	                      .with_boolean_param("enabled",
+							  "Required for action='toggle'.",
+							  /*required=*/false)
+	                      .build();
+	server->register_tool(tool,
+		[this](const mcp::json& params, const std::string& session_id) -> mcp::json {
+			RecordToolCall(session_id, "feature");
+			const std::string action = params.value("action", std::string{});
+			if (action.empty()) {
+				return ErrorResult("missing required parameter 'action'");
+			}
+
+			if (action == "list") {
+				mcp::json features = mcp::json::array();
+				for (auto* f : Feature::GetFeatureList()) {
+					features.push_back(FeatureEntry(f));
+				}
+				return TextResult(features.dump());
+			}
+
 			const std::string shortName = params.value("shortName", std::string{});
 			if (shortName.empty()) {
-				return ErrorResult("missing required parameter 'shortName'");
+				return ErrorResult("missing required parameter 'shortName'",
+					{ { "action", action } });
 			}
-			if (!params.contains("enabled") || !params["enabled"].is_boolean()) {
-				return ErrorResult("missing required boolean parameter 'enabled'");
-			}
-			const bool desired = params["enabled"].get<bool>();
-			// FindFeatureByShortName filters on `loaded == true`, so it won't
-			// help us re-enable a feature. Walk the full list ourselves.
-			Feature* target = nullptr;
-			for (auto* f : Feature::GetFeatureList()) {
-				if (f->GetShortName() == shortName) {
-					target = f;
-					break;
+
+			if (action == "toggle") {
+				if (!params.contains("enabled") || !params["enabled"].is_boolean()) {
+					return ErrorResult("missing required boolean parameter 'enabled'");
 				}
+				const bool desired = params["enabled"].get<bool>();
+				// FindFeatureByShortName filters on loaded==true so it can't
+				// help re-enable; walk the full list ourselves.
+				Feature* target = nullptr;
+				for (auto* f : Feature::GetFeatureList()) {
+					if (f->GetShortName() == shortName) {
+						target = f;
+						break;
+					}
+				}
+				if (!target) {
+					return ErrorResult("feature not found",
+						{ { "shortName", shortName } });
+				}
+				const bool previous = target->loaded;
+				target->loaded = desired;
+				logger::info("Remote Control: feature(toggle, {}, {}) (was {})",
+					shortName, desired, previous);
+				return TextResult(mcp::json({
+												{ "action", "toggle" },
+												{ "shortName", shortName },
+												{ "previous", previous },
+												{ "current", desired },
+											})
+						.dump());
 			}
-			if (!target) {
-				return ErrorResult("feature not found",
+
+			auto* feature = Feature::FindFeatureByShortName(shortName);
+			if (!feature) {
+				return ErrorResult("feature not found or not loaded",
 					{ { "shortName", shortName } });
 			}
-			const bool previous = target->loaded;
-			target->loaded = desired;
-			logger::info("Remote Control: toggle_feature({}, {}) (was {})",
-				shortName, desired, previous);
-			return TextResult(mcp::json({
-											{ "shortName", shortName },
-											{ "previous", previous },
-											{ "current", desired },
-										})
-					.dump());
+
+			if (action == "get") {
+				// SaveSettings uses nlohmann::json (unordered). Keep the
+				// intermediate value as plain json and dump as a string so
+				// we don't have to round-trip through mcp::json's ordered map.
+				::json blob;
+				feature->SaveSettings(blob);
+				return TextResult(blob.dump());
+			}
+			if (action == "set") {
+				if (!params.contains("settings") || !params["settings"].is_object()) {
+					return ErrorResult("missing required object parameter 'settings'");
+				}
+				::json blob;
+				try {
+					blob = ::json::parse(params["settings"].dump());
+				} catch (const std::exception& e) {
+					return ErrorResult("settings is not valid JSON",
+						{ { "detail", e.what() } });
+				}
+				try {
+					feature->LoadSettings(blob);
+				} catch (const std::exception& e) {
+					return ErrorResult("LoadSettings threw",
+						{ { "shortName", shortName }, { "detail", e.what() } });
+				}
+				logger::info("Remote Control: feature(set, {})", shortName);
+				return TextResult(mcp::json({
+												{ "action", "set" },
+												{ "shortName", shortName },
+												{ "applied", true },
+											})
+						.dump());
+			}
+			if (action == "reset") {
+				try {
+					feature->RestoreDefaultSettings();
+				} catch (const std::exception& e) {
+					return ErrorResult("RestoreDefaultSettings threw",
+						{ { "shortName", shortName }, { "detail", e.what() } });
+				}
+				logger::info("Remote Control: feature(reset, {})", shortName);
+				return TextResult(mcp::json({
+												{ "action", "reset" },
+												{ "shortName", shortName },
+												{ "reset", true },
+											})
+						.dump());
+			}
+
+			return ErrorResult("unknown action",
+				{ { "action", action },
+					{ "supported", mcp::json::array({ "list", "get", "set", "reset", "toggle" }) } });
 		});
 }
 
@@ -764,151 +914,5 @@ void RemoteControl::RegisterConsoleTool()
 											{ "enqueued_at_frame", enqueuedFrame },
 										})
 					.dump());
-		});
-}
-
-void RemoteControl::RegisterResetFeatureSettingsTool()
-{
-	const auto tool = mcp::tool_builder("reset_feature_settings")
-	                      .with_description(
-							  "Restore a feature's settings to their built-in "
-							  "defaults via Feature::RestoreDefaultSettings(). "
-							  "Distinct from set_feature_settings({}) because "
-							  "RestoreDefaultSettings is feature-specific reset "
-							  "logic (may release/recreate per-feature state in "
-							  "ways LoadSettings({}) does not).\n\n"
-							  "Useful as the 'B' side of an A/B test: capture "
-							  "current settings with get_feature_settings, run "
-							  "reset_feature_settings, observe via tracy + a "
-							  "renderdoc capture, then call set_feature_settings "
-							  "with the captured blob to return to the user's "
-							  "configuration. Same listener-thread caveats as "
-							  "set_feature_settings.")
-	                      .with_string_param("shortName",
-							  "Feature shortName as returned by list_features.")
-	                      .build();
-	server->register_tool(tool,
-		[this](const mcp::json& params, const std::string& session_id) -> mcp::json {
-			RecordToolCall(session_id, "reset_feature_settings");
-			const std::string shortName = params.value("shortName", std::string{});
-			if (shortName.empty()) {
-				return ErrorResult("missing required parameter 'shortName'");
-			}
-			auto* feature = Feature::FindFeatureByShortName(shortName);
-			if (!feature) {
-				return ErrorResult("feature not found or not loaded",
-					{ { "shortName", shortName } });
-			}
-			try {
-				feature->RestoreDefaultSettings();
-			} catch (const std::exception& e) {
-				return ErrorResult("RestoreDefaultSettings threw",
-					{ { "shortName", shortName }, { "detail", e.what() } });
-			}
-			logger::info("Remote Control: reset_feature_settings({})", shortName);
-			return TextResult(mcp::json({
-											{ "shortName", shortName },
-											{ "reset", true },
-										})
-					.dump());
-		});
-}
-
-void RemoteControl::RegisterSetFeatureSettingsTool()
-{
-	// Empty schema for the "settings" object means "any shape" — the actual
-	// schema is feature-specific and discoverable via get_feature_settings.
-	const auto tool = mcp::tool_builder("set_feature_settings")
-	                      .with_description(
-							  "Replace a feature's settings with the supplied "
-							  "JSON blob. Schema is feature-specific; use "
-							  "get_feature_settings to fetch the current "
-							  "shape, mutate the fields you care about, then "
-							  "send the whole object back. Changes take "
-							  "effect on the next frame.\n\n"
-							  "CAVEAT: handler runs on the cpp-mcp listener "
-							  "thread, NOT the render thread. Settings that "
-							  "merely deserialize into member variables are "
-							  "safe (the same pattern the ImGui menu uses on "
-							  "the input thread). Settings whose LoadSettings "
-							  "synchronously rebuilds GPU resources may "
-							  "race the renderer — to be tightened with a "
-							  "command queue in a follow-up commit.")
-	                      .with_string_param("shortName",
-							  "Feature shortName as returned by list_features.")
-	                      .with_object_param("settings",
-							  "Settings blob as returned by get_feature_settings.",
-							  mcp::json::object())
-	                      .build();
-	server->register_tool(tool,
-		[this](const mcp::json& params, const std::string& session_id) -> mcp::json {
-			RecordToolCall(session_id, "set_feature_settings");
-			const std::string shortName = params.value("shortName", std::string{});
-			if (shortName.empty()) {
-				return ErrorResult("missing required parameter 'shortName'");
-			}
-			if (!params.contains("settings") || !params["settings"].is_object()) {
-				return ErrorResult("missing required object parameter 'settings'");
-			}
-			auto* feature = Feature::FindFeatureByShortName(shortName);
-			if (!feature) {
-				return ErrorResult("feature not found or not loaded",
-					{ { "shortName", shortName } });
-			}
-			// Round-trip through dump/parse to convert from cpp-mcp's
-			// ordered_json (params) to the feature's plain nlohmann::json.
-			::json blob;
-			try {
-				blob = ::json::parse(params["settings"].dump());
-			} catch (const std::exception& e) {
-				return ErrorResult("settings is not valid JSON",
-					{ { "detail", e.what() } });
-			}
-			try {
-				feature->LoadSettings(blob);
-			} catch (const std::exception& e) {
-				return ErrorResult("LoadSettings threw",
-					{ { "shortName", shortName }, { "detail", e.what() } });
-			}
-			logger::info("Remote Control: set_feature_settings({})", shortName);
-			return TextResult(mcp::json({
-											{ "shortName", shortName },
-											{ "applied", true },
-										})
-					.dump());
-		});
-}
-
-void RemoteControl::RegisterGetFeatureSettingsTool()
-{
-	const auto tool = mcp::tool_builder("get_feature_settings")
-	                      .with_description(
-							  "Return the current JSON settings blob for a "
-							  "single feature. Use list_features to discover "
-							  "shortNames. The exact schema is feature-specific "
-							  "— it mirrors what Feature::SaveSettings emits to "
-							  "the on-disk config and what set_feature_settings "
-							  "expects back.")
-	                      .with_string_param("shortName",
-							  "Feature shortName as returned by list_features.")
-	                      .build();
-	server->register_tool(tool,
-		[this](const mcp::json& params, const std::string& session_id) -> mcp::json {
-			RecordToolCall(session_id, "get_feature_settings");
-			const std::string shortName = params.value("shortName", std::string{});
-			if (shortName.empty()) {
-				return ErrorResult("missing required parameter 'shortName'");
-			}
-			auto* feature = Feature::FindFeatureByShortName(shortName);
-			if (!feature) {
-				return ErrorResult("feature not found or not loaded",
-					{ { "shortName", shortName } });
-			}
-			// SaveSettings() uses nlohmann::json (unordered map). Keep the
-			// intermediate value as plain json and re-emit as a string so
-			// we don't have to round-trip through mcp::json's ordered map.
-			::json blob;
-			feature->SaveSettings(blob);
-			return TextResult(blob.dump());
 		});
 }
