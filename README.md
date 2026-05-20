@@ -13,15 +13,13 @@
 
 # Open Shaders
 
-SKSE core plugin for advanced graphics modifications for Skyrim. Open Shaders ships features the upstream project has not yet released, while preserving the upstream developer experience and runtime layout so user settings, themes, and mod-organizer profiles are drop-in compatible.
+SKSE core plugin for advanced graphics modifications for Skyrim and fork of Community Shaders.
 
 [Open Shaders developer wiki](https://github.com/alandtse/open-shaders/wiki) · [Upstream Community Shaders on Nexus](https://www.nexusmods.com/skyrimspecialedition/mods/180419) · [Upstream source](https://github.com/community-shaders/skyrim-community-shaders) · [Upstream developer wiki](https://github.com/community-shaders/skyrim-community-shaders/wiki)
 
 ## About this fork
 
 **Open Shaders is a fork of [Community Shaders](https://github.com/community-shaders/skyrim-community-shaders).** All of the architecture, the shader pipeline, the feature framework, and the vast majority of the code in this repository originated upstream and is the work of the upstream Community Shaders authors and contributors. This fork inherits the upstream [GPL-3.0-or-later license with the Modding and Linking exceptions](./COPYING) — copyrights, authorship, and the modding exceptions are preserved unchanged. See the upstream [contributors page](https://github.com/community-shaders/skyrim-community-shaders/graphs/contributors) for the team behind the project.
-
-**Why a fork:** to ship in-development features and changes that the upstream project hasn't released yet. Fixes and improvements that aren't fork-specific are sent upstream first; this repository hosts the work that is either staged for upstream or out of scope for it. If you're considering a contribution, prefer opening it against upstream Community Shaders unless the change is specifically about a fork-only feature — both projects benefit when fixes flow upstream.
 
 **Naming convention used throughout this repo and the in-game UI:**
 
@@ -239,5 +237,3 @@ See LICENSE within each directory; if none, it's [Default](#default)
 ### Icons
 
 Open Shaders does not ship the upstream Community Shaders logo. The upstream logo is non-GPL, not trademark-licensed, and may only be used in unmodified form with the Community Shaders team's permission — none of which extends to forks. Action icons and category icons are bundled as before; the upstream Discord banner has been removed since the fork has no affiliated Discord channel. The menu renders without a logo image when none is present (the load path is null-safe).
-
-If Open Shaders introduces its own logo in the future, drop a `cs-logo.png` (and optional `Monochrome/cs-logo.png`) into `package/Interface/CommunityShaders/Icons/Community Shaders Logo/` — the icon loader path is unchanged for compatibility with that filesystem layout.
