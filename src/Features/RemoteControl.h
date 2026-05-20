@@ -102,6 +102,7 @@ private:
 	void RegisterToggleFeatureTool();
 	void RegisterConsoleTool();
 	void RegisterCaptureTool();
+	void RegisterAbtestTool();
 
 	// Records a tool invocation against the per-session table.
 	// Safe to call from the cpp-mcp listener thread.

@@ -8,6 +8,7 @@
 
 #include "Features/RemoteControl.h"
 
+#include "Features/PerformanceOverlay/ABTesting/ABTesting.h"
 #include "Globals.h"
 #include "State.h"
 
@@ -388,6 +389,7 @@ void RemoteControl::RegisterTools()
 	RegisterResetFeatureSettingsTool();
 	RegisterConsoleTool();
 	RegisterCaptureTool();
+	RegisterAbtestTool();
 }
 
 void RemoteControl::RegisterGetStateTool()
@@ -488,6 +490,113 @@ void RemoteControl::RegisterToggleFeatureTool()
 											{ "current", desired },
 										})
 					.dump());
+		});
+}
+
+void RemoteControl::RegisterAbtestTool()
+{
+	// Single tool for the entire A/B testing lifecycle. Action-dispatched
+	// rather than spawning start_abtest / stop_abtest / get_abtest_results
+	// / clear_abtest_snapshots / set_abtest_interval — fewer richer tools.
+	const auto tool = mcp::tool_builder("abtest")
+	                      .with_description(
+							  "Drive the built-in A/B testing harness "
+							  "(features/Performance Overlay/ABTesting). The "
+							  "harness rotates between a USER configuration "
+							  "(your current settings) and a TEST configuration "
+							  "(typically a preset under test) on a fixed "
+							  "interval, snapshots both in memory to avoid disk "
+							  "I/O during swaps, and aggregates per-variant "
+							  "frame timing so you can compare quality and perf.\n\n"
+							  "Actions:\n"
+							  "  status   — return enabled, usingTestConfig, "
+							  "interval, hasCachedSnapshots.\n"
+							  "  start    — Enable() the manager (begin rotating). "
+							  "Optional `interval` parameter (seconds) is applied "
+							  "first if provided.\n"
+							  "  stop     — Disable() the manager. Snapshots are "
+							  "retained.\n"
+							  "  clear    — ClearCachedSnapshots(). Use to reset "
+							  "before a fresh comparison.\n"
+							  "  diff     — return the per-key diff list "
+							  "(GetConfigDiffEntries) so callers know which "
+							  "settings the rotation is actually toggling.\n\n"
+							  "Setup of the TEST config itself lives in the "
+							  "Performance Overlay UI — this tool only drives "
+							  "the lifecycle, not the test-config authoring.")
+	                      .with_string_param("action",
+							  "'status', 'start', 'stop', 'clear', or 'diff'.")
+	                      .with_number_param("interval",
+							  "Seconds per variant when action='start'. "
+							  "Default 0 (no change).",
+							  /*required=*/false)
+	                      .build();
+	server->register_tool(tool,
+		[this](const mcp::json& params, const std::string& session_id) -> mcp::json {
+			RecordToolCall(session_id, "abtest");
+			const std::string action = params.value("action", std::string{});
+			if (action.empty()) {
+				return ErrorResult("missing required parameter 'action'");
+			}
+			auto* mgr = ABTestingManager::GetSingleton();
+			if (!mgr) {
+				return ErrorResult("ABTestingManager singleton unavailable");
+			}
+
+			const auto statusBlob = [&]() {
+				return mcp::json({
+					{ "enabled", mgr->IsEnabled() },
+					{ "usingTestConfig", mgr->IsUsingTestConfig() },
+					{ "interval", mgr->GetTestInterval() },
+					{ "hasCachedSnapshots", mgr->HasCachedSnapshots() },
+				});
+			};
+
+			if (action == "status") {
+				return TextResult(statusBlob().dump());
+			}
+			if (action == "start") {
+				if (params.contains("interval") && params["interval"].is_number()) {
+					const auto secs = params["interval"].get<int>();
+					if (secs > 0) {
+						mgr->SetTestInterval(static_cast<uint32_t>(secs));
+					}
+				}
+				mgr->Enable();
+				logger::info("Remote Control: abtest(start)");
+				return TextResult(statusBlob().dump());
+			}
+			if (action == "stop") {
+				mgr->Disable();
+				logger::info("Remote Control: abtest(stop)");
+				return TextResult(statusBlob().dump());
+			}
+			if (action == "clear") {
+				mgr->ClearCachedSnapshots();
+				logger::info("Remote Control: abtest(clear)");
+				return TextResult(statusBlob().dump());
+			}
+			if (action == "diff") {
+				mcp::json entries = mcp::json::array();
+				for (const auto& entry : mgr->GetConfigDiffEntries()) {
+					// SettingsDiffEntry uses generic a/b labels (see
+					// Utils/FileSystem.h). For A/B testing semantics here,
+					// `a` is USER and `b` is TEST.
+					entries.push_back({
+						{ "path", entry.path },
+						{ "userValue", entry.aValue },
+						{ "testValue", entry.bValue },
+					});
+				}
+				return TextResult(mcp::json({
+												{ "hasCachedSnapshots", mgr->HasCachedSnapshots() },
+												{ "entries", std::move(entries) },
+											})
+						.dump());
+			}
+			return ErrorResult("unknown action",
+				{ { "action", action },
+					{ "supported", mcp::json::array({ "status", "start", "stop", "clear", "diff" }) } });
 		});
 }
 
