@@ -25,6 +25,29 @@
 #include "mcp_server.h"
 #include "mcp_tool.h"
 
+namespace
+{
+	// The control endpoint is intentionally loopback-only — exposing it off-host
+	// would let any networked client toggle features and dispatch captures.
+	bool IsLoopbackAddress(const std::string& host)
+	{
+		return host == "127.0.0.1" || host == "::1" || host == "localhost";
+	}
+
+	void NormalizeBindAddress(std::string& host)
+	{
+		if (!IsLoopbackAddress(host)) {
+			logger::warn("Remote Control: non-loopback bindAddress '{}' rejected; forcing 127.0.0.1", host);
+			host = "127.0.0.1";
+		}
+	}
+
+	int ClampPort(int port)
+	{
+		return std::clamp(port, 1024, 65535);
+	}
+}
+
 RemoteControl* RemoteControl::GetSingleton()
 {
 	return &globals::features::remoteControl;
@@ -53,8 +76,9 @@ void RemoteControl::Reset()
 void RemoteControl::LoadSettings(json& o_json)
 {
 	settings.enabled = o_json.value("enabled", false);
-	settings.port = o_json.value("port", 8910);
+	settings.port = ClampPort(o_json.value("port", 8910));
 	settings.bindAddress = o_json.value("bindAddress", std::string("127.0.0.1"));
+	NormalizeBindAddress(settings.bindAddress);
 }
 
 void RemoteControl::SaveSettings(json& o_json)
@@ -278,6 +302,11 @@ void RemoteControl::StartServer()
 	lastError.clear();
 
 	try {
+		// Re-validate at bind time — settings may have been touched via the UI
+		// or hot-reload since LoadSettings ran.
+		NormalizeBindAddress(settings.bindAddress);
+		settings.port = ClampPort(settings.port);
+
 		mcp::server::configuration cfg;
 		cfg.host = settings.bindAddress;
 		cfg.port = settings.port;
