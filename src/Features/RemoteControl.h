@@ -2,9 +2,13 @@
 
 #include "Feature.h"
 
+#include <chrono>
+#include <functional>
 #include <memory>
+#include <mutex>
 #include <nlohmann/json.hpp>
 #include <string>
+#include <unordered_map>
 
 using json = nlohmann::json;
 
@@ -13,6 +17,11 @@ using json = nlohmann::json;
 namespace mcp
 {
 	class server;
+	struct tool;
+	// cpp-mcp's tool_handler is std::function<json(const json&, const std::string&)>
+	// but json there is ordered_json, which we can't forward-declare cleanly.
+	// We type-erase via std::function<void()> in the tool-tracking layer and
+	// keep the real signature local to the .cpp file.
 }
 
 class RemoteControl : public Feature
@@ -67,6 +76,18 @@ public:
 	RemoteControl(RemoteControl&&) = delete;
 	RemoteControl& operator=(RemoteControl&&) = delete;
 
+	// Session bookkeeping for the ImGui "Connected clients" table.
+	// Updated on every tool invocation (listener thread) and on session
+	// cleanup (cpp-mcp callback). Read from the main thread when drawing.
+	struct SessionInfo
+	{
+		std::string id;
+		std::chrono::system_clock::time_point connected;
+		std::chrono::system_clock::time_point lastSeen;
+		uint64_t requestCount = 0;
+		std::string lastTool;
+	};
+
 private:
 	void StartServer();
 	void StopServer();
@@ -82,7 +103,18 @@ private:
 	void RegisterConsoleTool();
 	void RegisterCaptureTool();
 
+	// Records a tool invocation against the per-session table.
+	// Safe to call from the cpp-mcp listener thread.
+	void RecordToolCall(const std::string& sessionId, const std::string& toolName);
+	// Drops a session from the table on disconnect.
+	void DropSession(const std::string& sessionId);
+	// Draws the connected-clients ImGui table.
+	void DrawClientsTable();
+
 	std::unique_ptr<mcp::server> server;
 	int activePort = 0;
 	std::string lastError;
+
+	mutable std::mutex sessionMutex;
+	std::unordered_map<std::string, SessionInfo> sessions;
 };

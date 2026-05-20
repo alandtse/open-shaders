@@ -126,6 +126,129 @@ void RemoteControl::DrawSettings()
 		ImGui::TextUnformatted(preview.c_str());
 		ImGui::PopTextWrapPos();
 	}
+
+	ImGui::Separator();
+	DrawClientsTable();
+}
+
+void RemoteControl::DrawClientsTable()
+{
+	// Snapshot under the lock to keep the listener-thread updates from
+	// racing the draw. The snapshot is small (a handful of sessions at most).
+	std::vector<SessionInfo> rows;
+	{
+		std::lock_guard<std::mutex> lock(sessionMutex);
+		rows.reserve(sessions.size());
+		for (const auto& [_, info] : sessions) {
+			rows.push_back(info);
+		}
+	}
+
+	const std::string headerLabel = std::format("Connected clients ({})##rc-clients", rows.size());
+	if (!ImGui::CollapsingHeader(headerLabel.c_str(), ImGuiTreeNodeFlags_DefaultOpen)) {
+		return;
+	}
+
+	if (!IsRunning()) {
+		ImGui::TextDisabled("Server not running.");
+		return;
+	}
+	if (rows.empty()) {
+		ImGui::TextDisabled(
+			"No clients connected. Paste the config above into "
+			"your MCP host and run a tool to populate this table.");
+		return;
+	}
+
+	constexpr ImGuiTableFlags flags = ImGuiTableFlags_Borders | ImGuiTableFlags_Resizable |
+	                                  ImGuiTableFlags_RowBg | ImGuiTableFlags_Sortable |
+	                                  ImGuiTableFlags_SortMulti | ImGuiTableFlags_ScrollY;
+
+	enum ColumnId : ImGuiID
+	{
+		ColSession = 0,
+		ColConnected,
+		ColIdle,
+		ColRequests,
+		ColLastTool,
+	};
+
+	if (ImGui::BeginTable("##rc-clients-table", 5, flags, ImVec2(0.0f, 120.0f))) {
+		ImGui::TableSetupColumn("Session", ImGuiTableColumnFlags_DefaultSort, 0.0f, ColSession);
+		ImGui::TableSetupColumn("Connected", 0, 0.0f, ColConnected);
+		ImGui::TableSetupColumn("Idle for", 0, 0.0f, ColIdle);
+		ImGui::TableSetupColumn("Requests", 0, 0.0f, ColRequests);
+		ImGui::TableSetupColumn("Last tool", 0, 0.0f, ColLastTool);
+		ImGui::TableSetupScrollFreeze(0, 1);
+		ImGui::TableHeadersRow();
+
+		if (auto* sortSpecs = ImGui::TableGetSortSpecs(); sortSpecs && sortSpecs->SpecsCount > 0) {
+			std::sort(rows.begin(), rows.end(),
+				[&](const SessionInfo& a, const SessionInfo& b) {
+					for (int i = 0; i < sortSpecs->SpecsCount; ++i) {
+						const auto& spec = sortSpecs->Specs[i];
+						const bool desc = spec.SortDirection == ImGuiSortDirection_Descending;
+						int cmp = 0;
+						switch (static_cast<ColumnId>(spec.ColumnUserID)) {
+						case ColSession:
+							cmp = a.id.compare(b.id);
+							break;
+						case ColConnected:
+							cmp = a.connected < b.connected ? -1 : (a.connected > b.connected ? 1 : 0);
+							break;
+						case ColIdle:
+							cmp = a.lastSeen < b.lastSeen ? -1 : (a.lastSeen > b.lastSeen ? 1 : 0);
+							break;
+						case ColRequests:
+							cmp = a.requestCount < b.requestCount ? -1 : (a.requestCount > b.requestCount ? 1 : 0);
+							break;
+						case ColLastTool:
+							cmp = a.lastTool.compare(b.lastTool);
+							break;
+						}
+						if (cmp != 0) {
+							return desc ? cmp > 0 : cmp < 0;
+						}
+					}
+					return false;
+				});
+		}
+
+		const auto now = std::chrono::system_clock::now();
+		const auto formatRelative = [](std::chrono::seconds sec) -> std::string {
+			const auto s = sec.count();
+			if (s < 60) {
+				return std::format("{}s ago", s);
+			}
+			if (s < 3600) {
+				return std::format("{}m {}s ago", s / 60, s % 60);
+			}
+			return std::format("{}h {}m ago", s / 3600, (s % 3600) / 60);
+		};
+
+		for (const auto& info : rows) {
+			ImGui::TableNextRow();
+			const auto connectedSec = std::chrono::duration_cast<std::chrono::seconds>(now - info.connected);
+			const auto idleSec = std::chrono::duration_cast<std::chrono::seconds>(now - info.lastSeen);
+
+			ImGui::TableSetColumnIndex(0);
+			ImGui::TextUnformatted(info.id.c_str());
+			ImGui::TableSetColumnIndex(1);
+			ImGui::TextUnformatted(formatRelative(connectedSec).c_str());
+			ImGui::TableSetColumnIndex(2);
+			ImGui::TextUnformatted(formatRelative(idleSec).c_str());
+			ImGui::TableSetColumnIndex(3);
+			ImGui::Text("%llu", static_cast<unsigned long long>(info.requestCount));
+			ImGui::TableSetColumnIndex(4);
+			ImGui::TextUnformatted(info.lastTool.empty() ? "(none)" : info.lastTool.c_str());
+		}
+
+		ImGui::EndTable();
+	}
+
+	ImGui::TextDisabled(
+		"To force-disconnect all clients, toggle 'Enable MCP server' off and back on. "
+		"Per-session kick is not exposed by cpp-mcp's public API.");
 }
 
 std::string RemoteControl::BuildClientConfig() const
@@ -168,6 +291,14 @@ void RemoteControl::StartServer()
 
 		RegisterTools();
 
+		// Drop a session from the bookkeeping map on disconnect. cpp-mcp
+		// dispatches this from its listener thread when the SSE/HTTP
+		// connection tears down.
+		server->register_session_cleanup("remote-control-session-tracker",
+			[this](const std::string& sessionId) {
+				DropSession(sessionId);
+			});
+
 		if (!server->start(false)) {  // false = non-blocking
 			throw std::runtime_error("server.start() returned false");
 		}
@@ -195,7 +326,31 @@ void RemoteControl::StopServer()
 	}
 	server.reset();
 	activePort = 0;
+	{
+		std::lock_guard<std::mutex> lock(sessionMutex);
+		sessions.clear();
+	}
 	logger::info("Remote Control: MCP server stopped");
+}
+
+void RemoteControl::RecordToolCall(const std::string& sessionId, const std::string& toolName)
+{
+	const auto now = std::chrono::system_clock::now();
+	std::lock_guard<std::mutex> lock(sessionMutex);
+	auto& info = sessions[sessionId];
+	if (info.requestCount == 0) {
+		info.id = sessionId;
+		info.connected = now;
+	}
+	info.lastSeen = now;
+	info.requestCount += 1;
+	info.lastTool = toolName;
+}
+
+void RemoteControl::DropSession(const std::string& sessionId)
+{
+	std::lock_guard<std::mutex> lock(sessionMutex);
+	sessions.erase(sessionId);
 }
 
 // Helper: wrap a payload string in the MCP tool-result content envelope
@@ -243,7 +398,8 @@ void RemoteControl::RegisterGetStateTool()
 							  "frame counter, plugin version, VR mode.")
 	                      .build();
 	server->register_tool(tool,
-		[](const mcp::json& /*params*/, const std::string& /*session_id*/) -> mcp::json {
+		[this](const mcp::json& /*params*/, const std::string& session_id) -> mcp::json {
+			RecordToolCall(session_id, "get_state");
 			const uint frames = globals::state ? globals::state->frameCount : 0;
 			const bool vr = REL::Module::IsVR();
 			return TextResult(std::format(
@@ -262,7 +418,8 @@ void RemoteControl::RegisterListFeaturesTool()
 							  "isCore, supportsVR.")
 	                      .build();
 	server->register_tool(tool,
-		[](const mcp::json& /*params*/, const std::string& /*session_id*/) -> mcp::json {
+		[this](const mcp::json& /*params*/, const std::string& session_id) -> mcp::json {
+			RecordToolCall(session_id, "list_features");
 			mcp::json features = mcp::json::array();
 			for (auto* f : Feature::GetFeatureList()) {
 				features.push_back({
@@ -298,7 +455,8 @@ void RemoteControl::RegisterToggleFeatureTool()
 							  "true to load (run), false to skip.")
 	                      .build();
 	server->register_tool(tool,
-		[](const mcp::json& params, const std::string& /*session_id*/) -> mcp::json {
+		[this](const mcp::json& params, const std::string& session_id) -> mcp::json {
+			RecordToolCall(session_id, "toggle_feature");
 			const std::string shortName = params.value("shortName", std::string{});
 			if (shortName.empty()) {
 				return ErrorResult("missing required parameter 'shortName'");
@@ -369,7 +527,8 @@ void RemoteControl::RegisterCaptureTool()
 							  /*required=*/false)
 	                      .build();
 	server->register_tool(tool,
-		[](const mcp::json& params, const std::string& /*session_id*/) -> mcp::json {
+		[this](const mcp::json& params, const std::string& session_id) -> mcp::json {
+			RecordToolCall(session_id, "capture");
 			const std::string kind = params.value("kind", std::string{});
 			if (kind.empty()) {
 				return ErrorResult("missing required parameter 'kind'");
@@ -471,7 +630,8 @@ void RemoteControl::RegisterConsoleTool()
 							  "The console command, exactly as typed after the ~ key.")
 	                      .build();
 	server->register_tool(tool,
-		[](const mcp::json& params, const std::string& /*session_id*/) -> mcp::json {
+		[this](const mcp::json& params, const std::string& session_id) -> mcp::json {
+			RecordToolCall(session_id, "console");
 			std::string command = params.value("command", std::string{});
 			if (command.empty()) {
 				return ErrorResult("missing required parameter 'command'");
@@ -517,7 +677,8 @@ void RemoteControl::RegisterResetFeatureSettingsTool()
 							  "Feature shortName as returned by list_features.")
 	                      .build();
 	server->register_tool(tool,
-		[](const mcp::json& params, const std::string& /*session_id*/) -> mcp::json {
+		[this](const mcp::json& params, const std::string& session_id) -> mcp::json {
+			RecordToolCall(session_id, "reset_feature_settings");
 			const std::string shortName = params.value("shortName", std::string{});
 			if (shortName.empty()) {
 				return ErrorResult("missing required parameter 'shortName'");
@@ -569,7 +730,8 @@ void RemoteControl::RegisterSetFeatureSettingsTool()
 							  mcp::json::object())
 	                      .build();
 	server->register_tool(tool,
-		[](const mcp::json& params, const std::string& /*session_id*/) -> mcp::json {
+		[this](const mcp::json& params, const std::string& session_id) -> mcp::json {
+			RecordToolCall(session_id, "set_feature_settings");
 			const std::string shortName = params.value("shortName", std::string{});
 			if (shortName.empty()) {
 				return ErrorResult("missing required parameter 'shortName'");
@@ -620,7 +782,8 @@ void RemoteControl::RegisterGetFeatureSettingsTool()
 							  "Feature shortName as returned by list_features.")
 	                      .build();
 	server->register_tool(tool,
-		[](const mcp::json& params, const std::string& /*session_id*/) -> mcp::json {
+		[this](const mcp::json& params, const std::string& session_id) -> mcp::json {
+			RecordToolCall(session_id, "get_feature_settings");
 			const std::string shortName = params.value("shortName", std::string{});
 			if (shortName.empty()) {
 				return ErrorResult("missing required parameter 'shortName'");
