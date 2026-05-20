@@ -265,7 +265,7 @@ void AdvancedSettingsRenderer::RenderShaderCompileStatistics()
 		return;
 	}
 
-	ImGui::Text(std::format("Shader Compiler : {}", shaderCache->GetShaderStatsString()).c_str());
+	ImGui::Text("Shader Compiler : %s", shaderCache->GetShaderStatsString().c_str());
 
 	// Derived parallelism metrics are computed lazily on demand and only shown
 	// once compilation has completed to avoid per-frame analysis while compiling.
@@ -407,7 +407,6 @@ void AdvancedSettingsRenderer::RenderLoggingControls()
 	};
 	static int item_current = static_cast<int>(logLevel);
 	if (ImGui::Combo("Log Level", &item_current, items, IM_ARRAYSIZE(items))) {
-		ImGui::SameLine();
 		globals::state->SetLogLevel(static_cast<spdlog::level::level_enum>(item_current));
 	}
 	if (auto _tt = Util::HoverTooltipWrapper()) {
