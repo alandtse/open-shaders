@@ -229,6 +229,7 @@ void RemoteControl::RegisterTools()
 	RegisterListFeaturesTool();
 	RegisterGetFeatureSettingsTool();
 	RegisterToggleFeatureTool();
+	RegisterSetFeatureSettingsTool();
 }
 
 void RemoteControl::RegisterGetStateTool()
@@ -324,6 +325,70 @@ void RemoteControl::RegisterToggleFeatureTool()
 											{ "shortName", shortName },
 											{ "previous", previous },
 											{ "current", desired },
+										})
+					.dump());
+		});
+}
+
+void RemoteControl::RegisterSetFeatureSettingsTool()
+{
+	// Empty schema for the "settings" object means "any shape" — the actual
+	// schema is feature-specific and discoverable via get_feature_settings.
+	const auto tool = mcp::tool_builder("set_feature_settings")
+	                      .with_description(
+							  "Replace a feature's settings with the supplied "
+							  "JSON blob. Schema is feature-specific; use "
+							  "get_feature_settings to fetch the current "
+							  "shape, mutate the fields you care about, then "
+							  "send the whole object back. Changes take "
+							  "effect on the next frame.\n\n"
+							  "CAVEAT: handler runs on the cpp-mcp listener "
+							  "thread, NOT the render thread. Settings that "
+							  "merely deserialize into member variables are "
+							  "safe (the same pattern the ImGui menu uses on "
+							  "the input thread). Settings whose LoadSettings "
+							  "synchronously rebuilds GPU resources may "
+							  "race the renderer — to be tightened with a "
+							  "command queue in a follow-up commit.")
+	                      .with_string_param("shortName",
+							  "Feature shortName as returned by list_features.")
+	                      .with_object_param("settings",
+							  "Settings blob as returned by get_feature_settings.",
+							  mcp::json::object())
+	                      .build();
+	server->register_tool(tool,
+		[](const mcp::json& params, const std::string& /*session_id*/) -> mcp::json {
+			const std::string shortName = params.value("shortName", std::string{});
+			if (shortName.empty()) {
+				return ErrorResult("missing required parameter 'shortName'");
+			}
+			if (!params.contains("settings") || !params["settings"].is_object()) {
+				return ErrorResult("missing required object parameter 'settings'");
+			}
+			auto* feature = Feature::FindFeatureByShortName(shortName);
+			if (!feature) {
+				return ErrorResult("feature not found or not loaded",
+					{ { "shortName", shortName } });
+			}
+			// Round-trip through dump/parse to convert from cpp-mcp's
+			// ordered_json (params) to the feature's plain nlohmann::json.
+			::json blob;
+			try {
+				blob = ::json::parse(params["settings"].dump());
+			} catch (const std::exception& e) {
+				return ErrorResult("settings is not valid JSON",
+					{ { "detail", e.what() } });
+			}
+			try {
+				feature->LoadSettings(blob);
+			} catch (const std::exception& e) {
+				return ErrorResult("LoadSettings threw",
+					{ { "shortName", shortName }, { "detail", e.what() } });
+			}
+			logger::info("Remote Control: set_feature_settings({})", shortName);
+			return TextResult(mcp::json({
+											{ "shortName", shortName },
+											{ "applied", true },
 										})
 					.dump());
 		});
