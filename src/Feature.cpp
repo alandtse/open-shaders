@@ -18,6 +18,7 @@
 #include "Features/LightLimitFix.h"
 #include "Features/LinearLighting.h"
 #include "Features/PerformanceOverlay.h"
+#include "Features/RemoteControl.h"
 #include "Features/RenderDoc.h"
 #include "Features/ScreenSpaceGI.h"
 #include "Features/ScreenSpaceShadows.h"
@@ -240,6 +241,7 @@ const std::vector<Feature*>& Feature::GetFeatureList()
 		&globals::features::extendedTranslucency,
 		&globals::features::upscaling,
 		&globals::features::renderDoc,
+		&globals::features::remoteControl,
 		&globals::features::weatherEditor,
 		&globals::features::screenshotFeature,
 		&globals::features::linearLighting,
