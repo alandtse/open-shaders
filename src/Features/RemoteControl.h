@@ -77,6 +77,7 @@ private:
 	void RegisterListFeaturesTool();
 	void RegisterGetFeatureSettingsTool();
 	void RegisterSetFeatureSettingsTool();
+	void RegisterResetFeatureSettingsTool();
 	void RegisterToggleFeatureTool();
 
 	std::unique_ptr<mcp::server> server;

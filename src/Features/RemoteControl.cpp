@@ -230,6 +230,7 @@ void RemoteControl::RegisterTools()
 	RegisterGetFeatureSettingsTool();
 	RegisterToggleFeatureTool();
 	RegisterSetFeatureSettingsTool();
+	RegisterResetFeatureSettingsTool();
 }
 
 void RemoteControl::RegisterGetStateTool()
@@ -325,6 +326,52 @@ void RemoteControl::RegisterToggleFeatureTool()
 											{ "shortName", shortName },
 											{ "previous", previous },
 											{ "current", desired },
+										})
+					.dump());
+		});
+}
+
+void RemoteControl::RegisterResetFeatureSettingsTool()
+{
+	const auto tool = mcp::tool_builder("reset_feature_settings")
+	                      .with_description(
+							  "Restore a feature's settings to their built-in "
+							  "defaults via Feature::RestoreDefaultSettings(). "
+							  "Distinct from set_feature_settings({}) because "
+							  "RestoreDefaultSettings is feature-specific reset "
+							  "logic (may release/recreate per-feature state in "
+							  "ways LoadSettings({}) does not).\n\n"
+							  "Useful as the 'B' side of an A/B test: capture "
+							  "current settings with get_feature_settings, run "
+							  "reset_feature_settings, observe via tracy + a "
+							  "renderdoc capture, then call set_feature_settings "
+							  "with the captured blob to return to the user's "
+							  "configuration. Same listener-thread caveats as "
+							  "set_feature_settings.")
+	                      .with_string_param("shortName",
+							  "Feature shortName as returned by list_features.")
+	                      .build();
+	server->register_tool(tool,
+		[](const mcp::json& params, const std::string& /*session_id*/) -> mcp::json {
+			const std::string shortName = params.value("shortName", std::string{});
+			if (shortName.empty()) {
+				return ErrorResult("missing required parameter 'shortName'");
+			}
+			auto* feature = Feature::FindFeatureByShortName(shortName);
+			if (!feature) {
+				return ErrorResult("feature not found or not loaded",
+					{ { "shortName", shortName } });
+			}
+			try {
+				feature->RestoreDefaultSettings();
+			} catch (const std::exception& e) {
+				return ErrorResult("RestoreDefaultSettings threw",
+					{ { "shortName", shortName }, { "detail", e.what() } });
+			}
+			logger::info("Remote Control: reset_feature_settings({})", shortName);
+			return TextResult(mcp::json({
+											{ "shortName", shortName },
+											{ "reset", true },
 										})
 					.dump());
 		});
