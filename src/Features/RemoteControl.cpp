@@ -209,10 +209,25 @@ static mcp::json TextResult(std::string text)
 		{ "text", std::move(text) } } });
 }
 
+// Helper: emit an error result. Convention: a single text content item
+// containing a JSON object with "error" + optional context fields, so
+// callers always get parseable JSON whether the call succeeded or not.
+static mcp::json ErrorResult(std::string_view message, mcp::json context = {})
+{
+	mcp::json obj = { { "error", message } };
+	if (!context.is_null()) {
+		obj.update(context);
+	}
+	return mcp::json::array({ mcp::json{
+		{ "type", "text" },
+		{ "text", obj.dump() } } });
+}
+
 void RemoteControl::RegisterTools()
 {
 	RegisterGetStateTool();
 	RegisterListFeaturesTool();
+	RegisterGetFeatureSettingsTool();
 }
 
 void RemoteControl::RegisterGetStateTool()
@@ -257,5 +272,38 @@ void RemoteControl::RegisterListFeaturesTool()
 				});
 			}
 			return TextResult(features.dump());
+		});
+}
+
+void RemoteControl::RegisterGetFeatureSettingsTool()
+{
+	const auto tool = mcp::tool_builder("get_feature_settings")
+	                      .with_description(
+							  "Return the current JSON settings blob for a "
+							  "single feature. Use list_features to discover "
+							  "shortNames. The exact schema is feature-specific "
+							  "— it mirrors what Feature::SaveSettings emits to "
+							  "the on-disk config and what set_feature_settings "
+							  "expects back.")
+	                      .with_string_param("shortName",
+							  "Feature shortName as returned by list_features.")
+	                      .build();
+	server->register_tool(tool,
+		[](const mcp::json& params, const std::string& /*session_id*/) -> mcp::json {
+			const std::string shortName = params.value("shortName", std::string{});
+			if (shortName.empty()) {
+				return ErrorResult("missing required parameter 'shortName'");
+			}
+			auto* feature = Feature::FindFeatureByShortName(shortName);
+			if (!feature) {
+				return ErrorResult("feature not found or not loaded",
+					{ { "shortName", shortName } });
+			}
+			// SaveSettings() uses nlohmann::json (unordered map). Keep the
+			// intermediate value as plain json and re-emit as a string so
+			// we don't have to round-trip through mcp::json's ordered map.
+			::json blob;
+			feature->SaveSettings(blob);
+			return TextResult(blob.dump());
 		});
 }

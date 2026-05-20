@@ -75,6 +75,7 @@ private:
 	void RegisterTools();
 	void RegisterGetStateTool();
 	void RegisterListFeaturesTool();
+	void RegisterGetFeatureSettingsTool();
 
 	std::unique_ptr<mcp::server> server;
 	int activePort = 0;
