@@ -9,6 +9,8 @@
 #include "Features/RemoteControl.h"
 
 #include "Features/PerformanceOverlay/ABTesting/ABTesting.h"
+#include "Features/RenderDoc.h"
+#include "Features/ScreenshotFeature.h"
 #include "Globals.h"
 #include "State.h"
 
