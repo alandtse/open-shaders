@@ -231,6 +231,7 @@ void RemoteControl::RegisterTools()
 	RegisterToggleFeatureTool();
 	RegisterSetFeatureSettingsTool();
 	RegisterResetFeatureSettingsTool();
+	RegisterConsoleTool();
 }
 
 void RemoteControl::RegisterGetStateTool()
@@ -326,6 +327,72 @@ void RemoteControl::RegisterToggleFeatureTool()
 											{ "shortName", shortName },
 											{ "previous", previous },
 											{ "current", desired },
+										})
+					.dump());
+		});
+}
+
+void RemoteControl::RegisterConsoleTool()
+{
+	// Singular tool for the entire console concern. Future console-related
+	// capabilities (history readout, command lookup, etc.) get added as
+	// optional parameters / additional response fields here rather than as
+	// separate tools — per the "fewer, semantically rich tools" philosophy.
+	const auto tool = mcp::tool_builder("console")
+	                      .with_description(
+							  "Execute a Skyrim console command. Fire-and-forget: "
+							  "the command is queued onto the main game thread via "
+							  "SKSE's TaskInterface and runs on the next tick. "
+							  "Returns immediately with the frame counter at the "
+							  "moment of enqueue.\n\n"
+							  "RE::Console::ExecuteCommand is `void` — there is "
+							  "no per-command return value. RE::ConsoleLog is a "
+							  "shared sink (engine + every SKSE plugin) with no "
+							  "command-to-output correlation, and many useful "
+							  "commands are silent (tcl, tfc, tg, tm, tlb…), so "
+							  "scraping console output is unreliable and "
+							  "intentionally NOT exposed.\n\n"
+							  "To verify a state change, poll get_state until "
+							  "frame_count > enqueued_at_frame (at least one tick "
+							  "elapsed), then observe via side channels: tracy "
+							  "captures for perf-affecting changes, "
+							  "capture(kind='renderdoc'|'screenshot') for visual "
+							  "confirmation, or future feature-specific get_* "
+							  "tools that read RE:: state directly.\n\n"
+							  "Common A/B-relevant commands:\n"
+							  "  tcl                — toggle player collision\n"
+							  "  tfc [1]            — free camera (1 = pause game)\n"
+							  "  tg                 — toggle grass\n"
+							  "  tm                 — toggle menus / HUD\n"
+							  "  tll <0..15>        — toggle land LOD level\n"
+							  "  setweather <FormID>— force weather (persistent)\n"
+							  "  fw <FormID>        — force weather (temporary)\n"
+							  "  coc <CellName>     — teleport to cell\n"
+							  "  set timescale to N — game-time multiplier\n")
+	                      .with_string_param("command",
+							  "The console command, exactly as typed after the ~ key.")
+	                      .build();
+	server->register_tool(tool,
+		[](const mcp::json& params, const std::string& /*session_id*/) -> mcp::json {
+			std::string command = params.value("command", std::string{});
+			if (command.empty()) {
+				return ErrorResult("missing required parameter 'command'");
+			}
+			auto* task = SKSE::GetTaskInterface();
+			if (!task) {
+				return ErrorResult("SKSE TaskInterface unavailable");
+			}
+			const uint enqueuedFrame = globals::state ? globals::state->frameCount : 0;
+			// Capture by value so the string outlives this lambda's scope.
+			task->AddTask([command]() {
+				RE::Console::ExecuteCommand(command.c_str());
+			});
+			logger::info("Remote Control: console({}) queued at frame {}",
+				command, enqueuedFrame);
+			return TextResult(mcp::json({
+											{ "queued", true },
+											{ "command", std::move(command) },
+											{ "enqueued_at_frame", enqueuedFrame },
 										})
 					.dump());
 		});

@@ -79,6 +79,7 @@ private:
 	void RegisterSetFeatureSettingsTool();
 	void RegisterResetFeatureSettingsTool();
 	void RegisterToggleFeatureTool();
+	void RegisterConsoleTool();
 
 	std::unique_ptr<mcp::server> server;
 	int activePort = 0;
