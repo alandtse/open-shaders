@@ -10,7 +10,7 @@
 using json = nlohmann::json;
 
 /**
- * @brief Manages layered JSON override system for Community Shaders features
+ * @brief Manages layered JSON override system for Open Shaders features
  *
  * This class handles discovery and application of feature setting overrides
  * from external mod files without requiring changes to existing feature code.

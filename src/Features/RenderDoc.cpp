@@ -144,7 +144,7 @@ void RenderDoc::DrawSettings()
 	}
 
 	if (auto _tt = Util::HoverTooltipWrapper()) {
-		ImGui::Text("Enable RenderDoc frame capture for providing debug captures to the Community Shaders team.");
+		ImGui::Text("Enable RenderDoc frame capture for providing debug captures to the Open Shaders team (or upstream Community Shaders for upstream-relevant issues).");
 		ImGui::Text("Enabling capture will force-enable frame annotations for easier debugging and will restore the previous setting when disabled.");
 	}
 

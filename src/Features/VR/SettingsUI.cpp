@@ -109,7 +109,7 @@ void VR::DrawOverlay()
 	ImGui::Begin("HowToUseOverlay", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNav);
 
 	ImGui::PushTextWrapPos(ImGui::GetCursorPos().x + 500.0f * scale);
-	ImGui::TextWrapped("How to Use VR Community Shaders Menu:");
+	ImGui::TextWrapped("How to Use VR Open Shaders Menu:");
 	ImGui::Separator();
 	ImGui::TextWrapped("You must open the Main Menu or Tween Menu before VR controls work.");
 	ImGui::Spacing();
@@ -158,12 +158,12 @@ namespace
 			if (ImGui::BeginTable("MenuInstructionsTable", 2, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg)) {
 				ImGui::TableNextRow();
 				ImGui::TableSetColumnIndex(0);
-				ImGui::Text("Open Community Shaders Menu:");
+				ImGui::Text("Open the Open Shaders Menu:");
 				ImGui::TableSetColumnIndex(1);
 				Util::DrawButtonCombo(settings.VRMenuOpenKeys, true);
 				ImGui::TableNextRow();
 				ImGui::TableSetColumnIndex(0);
-				ImGui::Text("Close Community Shaders Menu:");
+				ImGui::Text("Close the Open Shaders Menu:");
 				ImGui::TableSetColumnIndex(1);
 				Util::DrawButtonCombo(settings.VRMenuCloseKeys, true);
 				ImGui::EndTable();
@@ -530,8 +530,8 @@ namespace
 		}
 		ImGui::Separator();
 		const char* comboTypes[] = {
-			"Open Community Shaders Menu",
-			"Close Community Shaders Menu",
+			"Open the Open Shaders Menu",
+			"Close the Open Shaders Menu",
 			"Open VR Overlay",
 			"Close VR Overlay"
 		};
@@ -587,8 +587,8 @@ namespace
 				const char* controllerRequirement;
 			};
 			std::vector<VRKeyBindingConfig> keyBindingConfigs = {
-				{ "Open Community Shaders Menu", settings.VRMenuOpenKeys, "Button combination to open the Community Shaders menu", "Primary" },
-				{ "Close Community Shaders Menu", settings.VRMenuCloseKeys, "Button combination to close the Community Shaders menu", "Both" },
+				{ "Open the Open Shaders Menu", settings.VRMenuOpenKeys, "Button combination to open the Open Shaders menu", "Primary" },
+				{ "Close the Open Shaders Menu", settings.VRMenuCloseKeys, "Button combination to close the Open Shaders menu", "Both" },
 				{ "Open VR Overlay", settings.VROverlayOpenKeys, "Button combination to open the VR overlay", "Primary" },
 				{ "Close VR Overlay", settings.VROverlayCloseKeys, "Button combination to close the VR overlay", "Secondary" }
 			};

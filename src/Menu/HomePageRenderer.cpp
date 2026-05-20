@@ -395,7 +395,7 @@ void HomePageRenderer::RenderFirstTimeSetupDialog()
 
 	// Version text - two lines, both centered (reduced spacing between lines)
 	const char* versionLine1 = "This appears to be a new install, update, or";
-	const char* versionLine2 = "reinstallation of Community Shaders.";
+	const char* versionLine2 = "reinstallation of Open Shaders.";
 
 	centerText(versionLine1);
 	ImGui::Text("%s", versionLine1);
