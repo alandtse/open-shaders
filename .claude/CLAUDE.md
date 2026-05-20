@@ -2,6 +2,18 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Fork identity
+
+This repository is **Open Shaders** ([alandtse/open-shaders](https://github.com/alandtse/open-shaders)), a fork of [Community Shaders](https://github.com/community-shaders/skyrim-community-shaders) ([Nexus mod 180419](https://www.nexusmods.com/skyrimspecialedition/mods/180419)). The public/display name is "Open Shaders"; the runtime identity is intentionally kept as upstream Community Shaders so user installs are drop-in compatible:
+
+-   **Keep as `CommunityShaders`** (do NOT rename): the CMake `PROJECT_NAME`, the DLL filename, the `SKSE/Plugins/CommunityShaders/` runtime directory, the `CommunityShaders.log` log file, the ImGui window ID after `###`, asset paths under `package/Interface/CommunityShaders/`, and any HLSL include paths.
+-   **Use "Open Shaders"**: in-game menu titles, README/AI-INSTRUCTIONS public-facing copy, the AIO Nexus mod filename, the GitHub release name, the in-game Welcome / FAQ / About text.
+-   **Link "Community Shaders" explicitly to upstream**: when the text or comment refers to the upstream project (its Nexus page is 180419, its repo is `community-shaders/skyrim-community-shaders`, its wiki lives on that repo). Never link `doodlum/skyrim-community-shaders` — that path is dead.
+
+The AIO bundle ships only features whose `Shaders/Features/*.ini` has `autoupload = true` (CORE features always included). The `AIO_INCLUDE_NON_AUTOUPLOAD=ON` CMake option overrides for local dev builds. The Nexus upload workflow ships only the AIO archive — there is no per-feature matrix distribution. See `.github/workflows/nexus-upload.yaml`.
+
+**Logo absence is intentional.** The upstream Community Shaders logo is non-GPL, not trademark-licensed, and may not be redistributed by forks — so `cs-logo.png` is not present in this repo. The icon loader's load path is null-safe at every consumer (`IconLoader.cpp` retries the colored fallback; `Menu.cpp` derives `showLogo` from `texture != nullptr`; `MenuHeaderRenderer` and `HomePageRenderer` gate all logo draws on the null check). Missing logo → one `logger::warn`, menu renders headers without the logo image, layout adjusts via the `showLogo` flag. Do not "fix" the missing file or restore the upstream asset.
+
 ## Build Commands
 
 ### WSL/Linux Environment Note
@@ -435,6 +447,9 @@ Feature versions are automatically extracted from `.ini` files and compiled into
 -   **Complete Solutions**: Provide fully functional code with proper error handling and resource management
 -   **Performance Conscious**: Always consider GPU workload and user experience impact
 -   **Documentation**: Include Doxygen comments for public methods, especially graphics-related functions
+-   **Concise Comments**: Comments explain _why_, not _what_. Skip restating code in prose. A 1-line "why this hack" beats a 4-line block paraphrasing the next 4 lines. Block comments at the top of a function/section are fine when they capture non-obvious context (invariants, gotchas, history); avoid mid-function tutorial paragraphs.
+-   **Minimal Churn**: PRs touch only what the change requires. Don't reformat unrelated lines, rename adjacent variables, or "clean up" code outside the PR's scope. If you spot something worth fixing nearby, open a follow-up PR or surface it in the description rather than expanding the diff. Auto-format/lint touching unrelated lines is acceptable only when it's the linter's own commit; mixing with logic changes obscures review.
+-   **Comments describe present code, not absent code**: Don't add comments that describe code that used to be in the file but isn't now ("the Discord banner was removed", "this constant was renamed from X"). The reader sees only the present file; the deletion isn't visible. Past-tense framing of present behavior is fine ("if someone landed a commit during the release, abort"); the rule is specifically about describing code that no longer exists. Exception: a regression-risk warning that names the removed code so a future maintainer doesn't restore it ("do not re-add the Discord banner — the upstream invite isn't a fork channel") is load-bearing and stays. Commit messages, PR descriptions, and CHANGELOG entries are the right place for "what changed" — code comments are not.
 
 ## Development Best Practices (Learned from Codebase)
 
@@ -488,7 +503,7 @@ Conventional commits drive semantic-release. `feat:` triggers a minor bump, `fix
 -   PR a feature branch directly into `main`.
 -   Run `Release: Semantic Version` on `hotfix/X.Y.x` for the current line — it will fail with `cannot be published as it is out of range` because the maintenance contract requires the hotfix line to be strictly older than `main`. Use `ff_target` into `main` instead.
 
-Full details: [Developers wiki — Patch Release Process](https://github.com/community-shaders/skyrim-community-shaders/wiki/Developers#patch-release-process-any-line).
+Full details: [Open Shaders developer wiki — Patch Release Process](https://github.com/alandtse/open-shaders/wiki/Developers#patch-release-process-any-line). The fork now maintains its own wiki (transferred from upstream) at `alandtse/open-shaders/wiki`; the `maint-update-wiki.yaml` workflow auto-publishes buffer documentation there on every push to `dev`. Upstream Community Shaders maintains its own copy at `community-shaders/skyrim-community-shaders/wiki` — link to whichever is appropriate for the audience.
 
 ### Code Organization and Refactoring Patterns
 

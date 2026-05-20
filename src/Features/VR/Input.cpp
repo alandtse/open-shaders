@@ -74,13 +74,13 @@ void VR::UpdateOverlayMenuStateFromInput()
 	};
 
 	std::vector<MenuStateMapping> mappings = {
-		// Open Community Shaders menu when closed
+		// Open Open Shaders menu when closed
 		{ [&]() {
 			 return CheckCombo(settings.VRMenuOpenKeys) && !isEnabled;
 		 },
 			[&]() { isEnabled = true; } },
 
-		// Close Community Shaders menu when open
+		// Close Open Shaders menu when open
 		{ [&]() {
 			 return CheckCombo(settings.VRMenuCloseKeys) && isEnabled;
 		 },

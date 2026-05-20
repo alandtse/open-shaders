@@ -66,7 +66,7 @@ void HomePageRenderer::RenderWelcomeSection()
 	ImVec2 windowSize = ImGui::GetWindowSize();
 	auto versionStr = Util::GetFormattedVersion(Plugin::VERSION);
 	auto expectedTag = std::format("v{}", versionStr);
-	std::string titleWithVersion = Plugin::BUILD_DESCRIBE == expectedTag ? std::format("Welcome to Community Shaders {}", versionStr) : std::format("Welcome to Community Shaders {} [{}]", versionStr, Plugin::BUILD_DESCRIBE);
+	std::string titleWithVersion = Plugin::BUILD_DESCRIBE == expectedTag ? std::format("Welcome to Open Shaders {}", versionStr) : std::format("Welcome to Open Shaders {} [{}]", versionStr, Plugin::BUILD_DESCRIBE);
 	ImVec2 titleSize = ImGui::CalcTextSize(titleWithVersion.c_str());
 	ImGui::SetCursorPosX((windowSize.x - titleSize.x) * 0.5f);
 	ImGui::Text("%s", titleWithVersion.c_str());
@@ -83,7 +83,7 @@ void HomePageRenderer::RenderWelcomeSection()
 
 	// Intro text - centered
 	const char* introText =
-		"Community Shaders provides advanced graphics enhancements for Skyrim.\n"
+		"Open Shaders is a fork of Community Shaders providing advanced graphics enhancements for Skyrim.\n"
 		"This comprehensive collection of features brings modern rendering techniques\n"
 		"to enhance your visual experience.";
 	ImVec2 introSize = ImGui::CalcTextSize(introText);
@@ -91,56 +91,6 @@ void HomePageRenderer::RenderWelcomeSection()
 	ImGui::TextWrapped("%s", introText);
 
 	ImGui::Spacing();
-
-	// Discord banner - centered with proper error checking
-	auto menu = Menu::GetSingleton();
-	bool discordIconAvailable = false;
-
-	// Check if menu exists, has icons, and Discord icon is loaded
-	if (menu && menu->uiIcons.discord.texture != nullptr &&
-		menu->uiIcons.discord.size.x > 0 && menu->uiIcons.discord.size.y > 0) {
-		discordIconAvailable = true;
-	}
-
-	if (discordIconAvailable) {
-		// Calculate scaled icon size based on window width, with min/max constraints
-		ImVec2 originalSize = ImVec2(menu->uiIcons.discord.size.x, menu->uiIcons.discord.size.y);
-
-		// Compute width based on window size with constraints and padding (handles very small windows)
-		float ratioWidth = windowSize.x * DISCORD_BANNER_TARGET_WIDTH_RATIO;
-		float aspectRatio = originalSize.y / originalSize.x;
-		float maxAllowed = std::max(1.0f, windowSize.x - DISCORD_BANNER_PADDING_MARGIN);
-		float upperBound = std::min(DISCORD_BANNER_MAX_WIDTH, maxAllowed);
-		float lowerBound = std::min(DISCORD_BANNER_MIN_WIDTH, upperBound);
-		float targetWidth = std::clamp(ratioWidth, lowerBound, upperBound);
-
-		ImVec2 iconSize = ImVec2(targetWidth, targetWidth * aspectRatio);
-		ImGui::SetCursorPosX((windowSize.x - iconSize.x) * 0.5f);
-
-		// Push style to remove border
-		ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 0.0f);
-		ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0, 0, 0, 0));                     // Transparent background
-		ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.1f, 0.1f, 0.1f, 0.3f));  // Subtle hover
-		ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.2f, 0.2f, 0.2f, 0.5f));   // Subtle click
-
-		if (ImGui::ImageButton("##DiscordButton", menu->uiIcons.discord.texture, iconSize)) {
-			ShellExecuteA(NULL, "open", DISCORD_URL, NULL, NULL, SW_SHOWNORMAL);
-		}
-
-		// Pop the style changes
-		ImGui::PopStyleColor(3);
-		ImGui::PopStyleVar();
-
-		Util::AddTooltip("Join Community Shaders Discord Server");
-	} else {
-		// Fallback button when Discord icon is not available
-		float buttonWidth = DISCORD_BANNER_MIN_WIDTH * scale;
-		ImGui::SetCursorPosX((windowSize.x - buttonWidth) * 0.5f);
-		if (ImGui::Button("Join Discord Server", ImVec2(buttonWidth, 0))) {
-			ShellExecuteA(NULL, "open", DISCORD_URL, NULL, NULL, SW_SHOWNORMAL);
-		}
-		Util::AddTooltip("Join Community Shaders Discord Server");
-	}
 
 	ImGui::PopStyleVar();
 }
@@ -153,26 +103,22 @@ void HomePageRenderer::RenderQuickLinksSection()
 	ImGui::SetCursorPosX((windowSize.x - titleSize.x) * 0.5f);
 	ImGui::Text("Quick Links");
 
-	ImGui::Columns(4, nullptr, false);
+	// The Nexus button points at upstream Community Shaders until the
+	// Open Shaders Nexus mod page exists; swap when ready.
+	ImGui::Columns(3, nullptr, false);
 
-	// External links in a row
 	if (ImGui::Button("Nexus Mods", ImVec2(-1, 0))) {
-		ShellExecuteA(NULL, "open", "https://www.nexusmods.com/skyrimspecialedition/mods/86492", NULL, NULL, SW_SHOWNORMAL);
+		ShellExecuteA(NULL, "open", "https://www.nexusmods.com/skyrimspecialedition/mods/180419", NULL, NULL, SW_SHOWNORMAL);
 	}
 
 	ImGui::NextColumn();
 	if (ImGui::Button("GitHub", ImVec2(-1, 0))) {
-		ShellExecuteA(NULL, "open", "https://github.com/doodlum/skyrim-community-shaders", NULL, NULL, SW_SHOWNORMAL);
-	}
-
-	ImGui::NextColumn();
-	if (ImGui::Button("Wiki", ImVec2(-1, 0))) {
-		ShellExecuteA(NULL, "open", "https://modding.wiki/en/skyrim/developers/community-shaders", NULL, NULL, SW_SHOWNORMAL);
+		ShellExecuteA(NULL, "open", "https://github.com/alandtse/open-shaders", NULL, NULL, SW_SHOWNORMAL);
 	}
 
 	ImGui::NextColumn();
 	if (ImGui::Button("Developer Wiki", ImVec2(-1, 0))) {
-		ShellExecuteA(NULL, "open", "https://github.com/doodlum/skyrim-community-shaders/wiki", NULL, NULL, SW_SHOWNORMAL);
+		ShellExecuteA(NULL, "open", "https://github.com/alandtse/open-shaders/wiki", NULL, NULL, SW_SHOWNORMAL);
 	}
 
 	ImGui::Columns(1);
@@ -188,11 +134,14 @@ void HomePageRenderer::RenderFAQSection()
 	ImGui::Separator();
 
 	// FAQ items with collapsible headers
-	if (ImGui::CollapsingHeader("What is Community Shaders?")) {
+	if (ImGui::CollapsingHeader("What is Open Shaders?")) {
 		ImGui::TextWrapped(
-			"Community Shaders is a comprehensive graphics enhancement framework for Skyrim that "
-			"provides advanced lighting, materials, and visual effects. It's designed to be modular, "
-			"allowing you to enable only the features you want while maintaining good performance.");
+			"Open Shaders is a fork of Community Shaders that ships features the upstream project "
+			"has not yet released. Both projects are comprehensive graphics enhancement frameworks "
+			"for Skyrim that provide advanced lighting, materials, and visual effects. They're "
+			"designed to be modular, letting you enable only the features you want while "
+			"maintaining good performance. This fork preserves the upstream runtime layout so user "
+			"settings and themes are compatible.");
 	}
 
 	if (ImGui::CollapsingHeader("How do I configure features?")) {
@@ -223,34 +172,36 @@ void HomePageRenderer::RenderFAQSection()
 			"tab also includes upscaling options that can improve performance.");
 	}
 
-	if (ImGui::CollapsingHeader("Is Community Shaders compatible with ENB?")) {
+	if (ImGui::CollapsingHeader("Is Open Shaders compatible with ENB?")) {
 		ImGui::TextWrapped(
-			"No, Community Shaders is not compatible with ENB. Community Shaders will automatically "
-			"disable itself if ENB is detected.");
+			"No, Open Shaders (like upstream Community Shaders) is not compatible with ENB. The "
+			"plugin will automatically disable itself if ENB is detected.");
 	}
 
 	if (ImGui::CollapsingHeader("The menu hotkey isn't working!")) {
 		ImGui::TextWrapped(
-			"By default, Community Shaders uses the END key to open this menu. If your keyboard "
+			"By default, Open Shaders uses the END key to open this menu. If your keyboard "
 			"doesn't have an END key or it's not working, you can change it in the General > Keybindings tab. "
 			"You can also edit the hotkey in the JSON configuration files.");
 	}
 
-	if (ImGui::CollapsingHeader("I would like to help develop Community Shaders.")) {
+	if (ImGui::CollapsingHeader("I would like to help develop Open Shaders.")) {
 		ImGui::TextWrapped(
-			"We're always looking for talented developers to join the team! Check out our GitHub wiki "
-			"for contribution guidelines and join our Discord server to connect with the development team. "
-			"Whether you're interested in shader programming, C++ development, or documentation, there's "
-			"always something to contribute.");
+			"Open Shaders is open source. Check out the upstream GitHub wiki for contribution "
+			"guidelines on the shared architecture; open issues and PRs against this repository for "
+			"fork-specific work, or against upstream Community Shaders for changes that benefit both "
+			"projects. Whether you're interested in shader programming, C++ development, or "
+			"documentation, there's always something to contribute.");
 	}
 
-	if (ImGui::CollapsingHeader("Is Community Shaders open source?")) {
+	if (ImGui::CollapsingHeader("Is Open Shaders open source?")) {
 		ImGui::TextWrapped(
-			"Yes! Community Shaders is completely open source and available on GitHub. You can view "
-			"the source code, report issues, suggest features, and contribute to the project. "
-			"The project is licensed under GPL, ensuring it remains free and open for everyone."
-			" Branding materials and assets (icons, nexus branding, typography, etc) are not covered by the GPL Licence."
-			" Any included assets may not be used without explicit permission.");
+			"Yes! Open Shaders is completely open source and available on GitHub, as is upstream "
+			"Community Shaders. You can view the source code, report issues, suggest features, and "
+			"contribute to either project. Both are licensed under GPL, ensuring they remain free and "
+			"open for everyone. Branding materials and assets (icons, Nexus branding, typography, etc.) "
+			"are not covered by the GPL Licence. Any included assets may not be used without explicit "
+			"permission.");
 	}
 }
 
@@ -444,7 +395,7 @@ void HomePageRenderer::RenderFirstTimeSetupDialog()
 
 	// Version text - two lines, both centered (reduced spacing between lines)
 	const char* versionLine1 = "This appears to be a new install, update, or";
-	const char* versionLine2 = "reinstallation of Community Shaders.";
+	const char* versionLine2 = "reinstallation of Open Shaders.";
 
 	centerText(versionLine1);
 	ImGui::Text("%s", versionLine1);

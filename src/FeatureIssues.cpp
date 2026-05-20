@@ -48,7 +48,7 @@ namespace FeatureIssues
 										  .displayName = "Complex Parallax Materials",
 										  .rejectionReason = "Integrated into ExtendedMaterials feature",
 										  .replacementFeature = "ExtendedMaterials",
-										  .userMessage = "This functionality is now built into Community Shaders. Remove the old feature as it's no longer needed.",
+										  .userMessage = "This functionality is now built into Open Shaders. Remove the old feature as it's no longer needed.",
 										  .removedInVersion = { 1, 0, 0 },
 										  .modifiedShaderDirectory = false,
 										  .issueType = FeatureIssueInfo::IssueType::OBSOLETE } },
@@ -56,7 +56,7 @@ namespace FeatureIssues
 								 .displayName = "Tree LOD Lighting",
 								 .rejectionReason = "Functionality integrated into base CS lighting system",
 								 .replacementFeature = "",
-								 .userMessage = "This functionality is now built into Community Shaders. Remove the old feature as it's no longer needed.",
+								 .userMessage = "This functionality is now built into Open Shaders. Remove the old feature as it's no longer needed.",
 								 .removedInVersion = { 1, 0, 0 },
 								 .modifiedShaderDirectory = true,
 								 .issueType = FeatureIssueInfo::IssueType::OBSOLETE } },
@@ -88,7 +88,7 @@ namespace FeatureIssues
 									 .displayName = "Distant Tree Lighting",
 									 .rejectionReason = "Replaced by TreeLODLighting, which was later integrated into CS core",
 									 .replacementFeature = "",
-									 .userMessage = "This functionality is now built into Community Shaders. Remove the old feature as it's no longer needed.",
+									 .userMessage = "This functionality is now built into Open Shaders. Remove the old feature as it's no longer needed.",
 									 .removedInVersion = { 0, 8, 0 },
 									 .modifiedShaderDirectory = true,
 									 .issueType = FeatureIssueInfo::IssueType::OBSOLETE } }
@@ -591,7 +591,7 @@ namespace FeatureIssues
 			ImGui::SameLine();
 			ImGui::Text("Core feature already installed");
 			if (auto _tt = Util::HoverTooltipWrapper()) {
-				ImGui::TextWrapped("This feature is already included as part of the core Community Shaders installation. Uninstall this feature with your mod manager.");
+				ImGui::TextWrapped("This feature is already included as part of the core Open Shaders installation. Uninstall this feature with your mod manager.");
 			}
 		} else if (issue.IsVersionMismatch()) {
 			ImGui::SameLine();
@@ -676,7 +676,7 @@ namespace FeatureIssues
 					ImGui::TextColored(theme.StatusPalette.Warning, "If compilation issues persist after deletion:");
 					ImGui::BulletText("Completely uninstall the feature via your mod manager");
 					ImGui::BulletText("Check for modified files in Data/Shaders/ (not in feature subfolders)");
-					ImGui::BulletText("Consider reinstalling Community Shaders if issues persist");
+					ImGui::BulletText("Consider reinstalling Open Shaders if issues persist");
 					ImGui::Spacing();
 					ImGui::Separator();
 					ImGui::Spacing();

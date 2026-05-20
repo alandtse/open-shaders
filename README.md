@@ -1,23 +1,37 @@
-[![Latest Release](https://img.shields.io/github/v/release/doodlum/skyrim-community-shaders)](https://github.com/doodlum/skyrim-community-shaders/releases)
-[![License](https://img.shields.io/github/license/doodlum/skyrim-community-shaders)](./LICENSE)
-[![Last Commit](https://img.shields.io/github/last-commit/doodlum/skyrim-community-shaders)](https://github.com/doodlum/skyrim-community-shaders/commits)
-[![Build Status](https://img.shields.io/github/actions/workflow/status/doodlum/skyrim-community-shaders/release-build.yaml?branch=dev)](https://github.com/doodlum/skyrim-community-shaders/actions)
-[![Discord](https://img.shields.io/discord/1080142797870485606?label=discord&logo=discord&color=5865F2)](https://discord.com/invite/nkrQybAsyy)
-[![Open Issues](https://img.shields.io/github/issues/doodlum/skyrim-community-shaders)](https://github.com/doodlum/skyrim-community-shaders/issues)
-[![Contributors](https://img.shields.io/github/contributors/doodlum/skyrim-community-shaders)](https://github.com/doodlum/skyrim-community-shaders/graphs/contributors)
-[![Stars](https://img.shields.io/github/stars/doodlum/skyrim-community-shaders?style=social)](https://github.com/doodlum/skyrim-community-shaders/stargazers)
+[![Latest Release](https://img.shields.io/github/v/release/alandtse/open-shaders)](https://github.com/alandtse/open-shaders/releases)
+[![License](https://img.shields.io/github/license/alandtse/open-shaders)](./LICENSE)
+[![Last Commit](https://img.shields.io/github/last-commit/alandtse/open-shaders)](https://github.com/alandtse/open-shaders/commits)
+[![Build Status](https://img.shields.io/github/actions/workflow/status/alandtse/open-shaders/release-build.yaml?branch=dev)](https://github.com/alandtse/open-shaders/actions)
+[![Open Issues](https://img.shields.io/github/issues/alandtse/open-shaders)](https://github.com/alandtse/open-shaders/issues)
+[![Contributors](https://img.shields.io/github/contributors/alandtse/open-shaders)](https://github.com/alandtse/open-shaders/graphs/contributors)
+[![Stars](https://img.shields.io/github/stars/alandtse/open-shaders?style=social)](https://github.com/alandtse/open-shaders/stargazers)
 
-[![Pre-commit CI](https://results.pre-commit.ci/badge/github/doodlum/skyrim-community-shaders/dev.svg)](https://results.pre-commit.ci/latest/github/doodlum/skyrim-community-shaders/dev)
-![CodeRabbit Pull Request Reviews](https://img.shields.io/coderabbit/prs/github/doodlum/skyrim-community-shaders?utm_source=oss&utm_medium=github&utm_campaign=doodlum%2Fskyrim-community-shaders&labelColor=171717&color=FF570A&link=https%3A%2F%2Fcoderabbit.ai&label=CodeRabbit+Reviews)
+[![Pre-commit CI](https://results.pre-commit.ci/badge/github/alandtse/open-shaders/dev.svg)](https://results.pre-commit.ci/latest/github/alandtse/open-shaders/dev)
+![CodeRabbit Pull Request Reviews](https://img.shields.io/coderabbit/prs/github/alandtse/open-shaders?utm_source=oss&utm_medium=github&utm_campaign=alandtse%2Fopen-shaders&labelColor=171717&color=FF570A&link=https%3A%2F%2Fcoderabbit.ai&label=CodeRabbit+Reviews)
 
-[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/doodlum/skyrim-community-shaders)
+[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/alandtse/open-shaders)
 
-# Skyrim Community Shaders
+# Open Shaders
 
-SKSE core plugin for community-driven advanced graphics modifications.
+SKSE core plugin for advanced graphics modifications for Skyrim and fork of Community Shaders.
 
-[Nexus](https://www.nexusmods.com/skyrimspecialedition/mods/86492)
-[User Wiki](https://modding.wiki/en/skyrim/developers/community-shaders)
+[Open Shaders developer wiki](https://github.com/alandtse/open-shaders/wiki) · [Upstream Community Shaders on Nexus](https://www.nexusmods.com/skyrimspecialedition/mods/180419) · [Upstream source](https://github.com/community-shaders/skyrim-community-shaders) · [Upstream developer wiki](https://github.com/community-shaders/skyrim-community-shaders/wiki)
+
+## About this fork
+
+**Open Shaders is a fork of [Community Shaders](https://github.com/community-shaders/skyrim-community-shaders).** All of the architecture, the shader pipeline, the feature framework, and the vast majority of the code in this repository originated upstream and is the work of the upstream Community Shaders authors and contributors. This fork inherits the upstream [GPL-3.0-or-later license with the Modding and Linking exceptions](./COPYING) — copyrights, authorship, and the modding exceptions are preserved unchanged. See the upstream [contributors page](https://github.com/community-shaders/skyrim-community-shaders/graphs/contributors) for the team behind the project.
+
+**Naming convention used throughout this repo and the in-game UI:**
+
+| Term                                                             | Refers to                                                                                                                                 |
+| ---------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| Community Shaders                                                | The upstream project (`community-shaders/skyrim-community-shaders`, Nexus mod 180419)                                                     |
+| Open Shaders                                                     | This fork (`alandtse/open-shaders`)                                                                                                       |
+| `CommunityShaders` (as a path / filename / identifier in source) | Runtime-compat identifier; intentionally kept identical to upstream so settings, themes, and SKSE plugin discovery work without migration |
+
+The upstream branding (logo, Nexus icon, typography) is non-GPL and not redistributed by this fork — see the "Icons" section under [License](#license) below.
+
+An Open Shaders Nexus mod page does not exist yet; for now, install from [GitHub releases](https://github.com/alandtse/open-shaders/releases) or build from source.
 
 ## Requirements
 
@@ -60,13 +74,15 @@ Install them manually only if you want them in everywhere.
 To clone the repository with all submodules, run the following command in your terminal:
 
 ```bash
-git clone https://github.com/doodlum/skyrim-community-shaders.git --recursive
-cd skyrim-community-shaders
+git clone https://github.com/alandtse/open-shaders.git --recursive
+cd open-shaders
 ```
+
+> The DLL filename is `CommunityShaders.dll` and the SKSE plugin directory is `SKSE/Plugins/CommunityShaders/` — identical to upstream Community Shaders, so user settings, themes, and mod-manager profiles are drop-in compatible. Only the public name and in-game branding are "Open Shaders".
 
 ### Visual Studio build
 
-To build the project, just open `./skyrim-community-shaders` with Visual Studio's "Open Folder" feature. (Ensure you have `CMake Tools for Windows` selected when installing VS)
+To build the project, just open `./open-shaders` with Visual Studio's "Open Folder" feature. (Ensure you have `CMake Tools for Windows` selected when installing VS)
 
 Follow the prompts to `Configure` and `Build` the project.
 It should generate the AIO package in the `./build/ALL/aio` folder by default.
@@ -118,6 +134,8 @@ cmake --build ./build/ALL --config Release --target Package-Core
 cmake --build ./build/ALL --config Release --target Package-GrassLighting
 ```
 
+The AIO bundles only features marked `autoupload = true` in their feature `.ini` — features not yet ready for release are built but excluded from the AIO. To include everything in a local build, see the `AIO_INCLUDE_NON_AUTOUPLOAD` CMake option.
+
 For more details about packaging targets, options, and the difference between automated and manual packaging, see the "Manual packaging targets (detailed)" section in `.claude/CLAUDE.md`.
 
 #### CMAKE Options (optional)
@@ -149,13 +167,13 @@ For those who prefer to not install Visual Studio or other build dependencies on
 
 ```pwsh
 & 'C:\Program Files\Docker\Docker\DockerCli.exe' -SwitchWindowsEngine; `
-docker build -t skyrim-community-shaders .
+docker build -t open-shaders .
 ```
 
 3. Then run the build:
 
 ```pwsh
-docker run -it --rm -v .:C:/skyrim-community-shaders skyrim-community-shaders:latest
+docker run -it --rm -v .:C:/open-shaders open-shaders:latest
 ```
 
 4. Retrieve the generated build files from the `build/aio` folder.
@@ -166,7 +184,7 @@ docker run -it --rm -v .:C:/skyrim-community-shaders skyrim-community-shaders:la
 If you run into `Access violation` build errors during step 3, you can try adding [`--isolation=process`](https://learn.microsoft.com/en-us/virtualization/windowscontainers/manage-containers/hyperv-container):
 
 ```pwsh
-docker run -it --rm --isolation=process -v .:C:/skyrim-community-shaders skyrim-community-shaders:latest
+docker run -it --rm --isolation=process -v .:C:/open-shaders open-shaders:latest
 ```
 
 ## Debugging
@@ -218,4 +236,4 @@ See LICENSE within each directory; if none, it's [Default](#default)
 
 ### Icons
 
--   [Community Shaders Logo](package/Interface/CommunityShaders/Icons/Community%20Shaders%20Logo/) is not covered by the GPL-3.0 license. It is provided solely for personal use (e.g., building from source) and may only be used in unmodified form. There is no license for any other purpose or to distribute the logo. No trademark license is granted for the logo. Any use not expressly permitted is prohibited without the express written consent of the Community Shaders team.
+Open Shaders does not ship the upstream Community Shaders logo. The upstream logo is non-GPL, not trademark-licensed, and may only be used in unmodified form with the Community Shaders team's permission — none of which extends to forks. Action icons and category icons are bundled as before; the upstream Discord banner has been removed since the fork has no affiliated Discord channel. The menu renders without a logo image when none is present (the load path is null-safe).

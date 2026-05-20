@@ -29,7 +29,11 @@ namespace
 	std::unordered_map<ImGuiID, float> s_windowOverlapAlpha;
 
 	constexpr ImGuiWindowFlags SKIP_WINDOW_FLAGS = ImGuiWindowFlags_Tooltip | ImGuiWindowFlags_NoBackground | ImGuiWindowFlags_NoMove;
-	constexpr const char* MAIN_WINDOW_PREFIX = "Community Shaders";
+	// Prefix-match against the display title set by Menu.cpp ("Open Shaders <ver>").
+	// Must track that title — if the display name changes the prefix here must
+	// change too, or IsMainWindow() will silently start returning false and
+	// overlay-alpha logic loses its anchor.
+	constexpr const char* MAIN_WINDOW_PREFIX = "Open Shaders";
 
 	bool IsMainWindow(ImGuiWindow* win) { return win->Name && strncmp(win->Name, MAIN_WINDOW_PREFIX, strlen(MAIN_WINDOW_PREFIX)) == 0; }
 

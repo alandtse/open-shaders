@@ -102,7 +102,7 @@ public:
 	std::vector<std::pair<std::string, std::string>>* GetDefines();
 
 	/*
-     * Whether a_type is currently enabled in Community Shaders
+     * Whether a_type is currently enabled in Open Shaders
      *
      * @param a_type The type of shader to check
      * @return Whether the shader has been enabled.
@@ -110,7 +110,7 @@ public:
 	bool ShaderEnabled(const RE::BSShader::Type a_type);
 
 	/*
-     * Whether a_shader is currently enabled in Community Shaders
+     * Whether a_shader is currently enabled in Open Shaders
      *
      * @param a_shader The shader to check
      * @return Whether the shader has been enabled.

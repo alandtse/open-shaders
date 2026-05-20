@@ -106,7 +106,7 @@ void MessageHandler(SKSE::MessagingInterface::Message* message)
 		{
 			for (auto it = errors.begin(); it != errors.end(); ++it) {
 				auto& errorMessage = *it;
-				RE::DebugMessageBox(std::format("Community Shaders\n{}, will disable all hooks and features", errorMessage).c_str());
+				RE::DebugMessageBox(std::format("Open Shaders\n{}, will disable all hooks and features", errorMessage).c_str());
 			}
 
 			if (errors.empty()) {

@@ -187,7 +187,7 @@ jobs:
               if: steps.gen_notes.outputs.notes_generated == 'true'
               uses: ncipollo/release-action@339a81892b84b4eeb0f6e744e4574d79d0d9b8dd # v1
               with:
-                  name: "Community Shaders ${{ needs.build.outputs.version }} PR #${{ github.event.pull_request.number }}"
+                  name: "Open Shaders ${{ needs.build.outputs.version }} PR #${{ github.event.pull_request.number }}"
                   tag: v${{ needs.build.outputs.version }}-pr${{ github.event.pull_request.number }}
                   prerelease: true
                   artifacts: "${{ github.workspace }}/dist/CommunityShaders_AIO-*.7z"
@@ -200,7 +200,7 @@ jobs:
               if: steps.gen_notes.outputs.notes_generated != 'true'
               uses: ncipollo/release-action@339a81892b84b4eeb0f6e744e4574d79d0d9b8dd # v1
               with:
-                  name: "Community Shaders ${{ needs.build.outputs.version }} PR #${{ github.event.pull_request.number }}"
+                  name: "Open Shaders ${{ needs.build.outputs.version }} PR #${{ github.event.pull_request.number }}"
                   tag: v${{ needs.build.outputs.version }}-pr${{ github.event.pull_request.number }}
                   prerelease: true
                   artifacts: "${{ github.workspace }}/dist/CommunityShaders_AIO-*.7z"
