@@ -98,8 +98,9 @@ void RemoteControl::DrawSettings()
 	ImGui::TextWrapped(
 		"Exposes Community Shaders over Model Context Protocol (MCP) so AI "
 		"assistants such as Claude Code can drive A/B testing, toggle "
-		"features, and trigger captures. Off by default. Bound to 127.0.0.1 "
-		"unless explicitly changed.");
+		"features, and trigger captures. Off by default. The endpoint is "
+		"loopback-only — any non-loopback bind address is rejected at load "
+		"and bind time.");
 	ImGui::Spacing();
 
 	const bool wasEnabled = settings.enabled;

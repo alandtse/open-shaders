@@ -46,6 +46,17 @@ foreach(_hdr IN LISTS _cpp_mcp_headers)
     get_filename_component(_name "${_hdr}" NAME)
     file(READ "${_hdr}" _content)
     if(_name STREQUAL "mcp_message.h")
+        # Fail fast if the expected include vanishes upstream — otherwise the
+        # ABI mismatch would silently come back and only surface as an LNK2001
+        # well into the link step.
+        string(FIND "${_content}" "#include \"json.hpp\"" _json_inc_pos)
+        if(_json_inc_pos EQUAL -1)
+            message(FATAL_ERROR
+                "cpp-mcp: expected `#include \"json.hpp\"` in mcp_message.h "
+                "but did not find it. Upstream may have changed the include; "
+                "review cmake/cpp-mcp.cmake and adjust the patch (see header "
+                "comment for the ABI-alignment rationale).")
+        endif()
         string(REPLACE
             "#include \"json.hpp\""
             "#include <nlohmann/json.hpp>"
