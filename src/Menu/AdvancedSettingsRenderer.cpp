@@ -394,7 +394,9 @@ void AdvancedSettingsRenderer::RenderLoggingControls()
 {
 	Util::DrawSectionHeader("Logging");
 
-	// Log Level selection
+	// Log Level selection. Resync from state every frame so external changes
+	// (config reload, console command, another caller of SetLogLevel) don't
+	// leave the combo displaying a stale selection.
 	spdlog::level::level_enum logLevel = globals::state->GetLogLevel();
 	const char* items[] = {
 		"trace",
@@ -405,7 +407,7 @@ void AdvancedSettingsRenderer::RenderLoggingControls()
 		"critical",
 		"off"
 	};
-	static int item_current = static_cast<int>(logLevel);
+	int item_current = static_cast<int>(logLevel);
 	if (ImGui::Combo("Log Level", &item_current, items, IM_ARRAYSIZE(items))) {
 		globals::state->SetLogLevel(static_cast<spdlog::level::level_enum>(item_current));
 	}
