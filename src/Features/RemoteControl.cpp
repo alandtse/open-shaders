@@ -232,6 +232,7 @@ void RemoteControl::RegisterTools()
 	RegisterSetFeatureSettingsTool();
 	RegisterResetFeatureSettingsTool();
 	RegisterConsoleTool();
+	RegisterCaptureTool();
 }
 
 void RemoteControl::RegisterGetStateTool()
@@ -329,6 +330,103 @@ void RemoteControl::RegisterToggleFeatureTool()
 											{ "current", desired },
 										})
 					.dump());
+		});
+}
+
+void RemoteControl::RegisterCaptureTool()
+{
+	// One tool for all frame-capture kinds, kind-dispatched. Adding new
+	// capture types later (e.g. tracy snapshot, video clip) extends this
+	// tool's `kind` enum rather than spawning new top-level tools.
+	const auto tool = mcp::tool_builder("capture")
+	                      .with_description(
+							  "Trigger a frame capture on the next render. Kind-"
+							  "dispatched so all capture flavors live behind one "
+							  "tool — see the agentic-renderdoc design notes.\n\n"
+							  "Supported kinds:\n"
+							  "  renderdoc  — RenderDoc multi-frame capture via "
+							  "the in-application API. Honors the `frames` "
+							  "parameter (default 1, max 120). RenderDoc must "
+							  "be attached or the in-app DLL loaded; check "
+							  "list_features for RenderDoc loaded=true. Output "
+							  "lands in RenderDoc's configured captures dir.\n"
+							  "  screenshot — Lossless screenshot via the "
+							  "Screenshot feature's non-blocking capture path. "
+							  "The `frames` parameter is ignored. Output lands "
+							  "in the game's Screenshots/ folder.\n\n"
+							  "Fire-and-forget: the trigger flag is set "
+							  "immediately and the render loop consumes it on "
+							  "the next frame. No artifact path is returned "
+							  "synchronously — for renderdoc, inspect the "
+							  "captures directory; for screenshots, watch the "
+							  "Screenshots folder.")
+	                      .with_string_param("kind",
+							  "'renderdoc' or 'screenshot'.")
+	                      .with_number_param("frames",
+							  "RenderDoc only: number of consecutive frames to "
+							  "capture (1-120). Default 1. Ignored for "
+							  "screenshot.",
+							  /*required=*/false)
+	                      .build();
+	server->register_tool(tool,
+		[](const mcp::json& params, const std::string& /*session_id*/) -> mcp::json {
+			const std::string kind = params.value("kind", std::string{});
+			if (kind.empty()) {
+				return ErrorResult("missing required parameter 'kind'");
+			}
+			const uint enqueuedFrame = globals::state ? globals::state->frameCount : 0;
+
+			if (kind == "renderdoc") {
+				auto* renderDoc = &globals::features::renderDoc;
+				if (!renderDoc->loaded) {
+					return ErrorResult("RenderDoc feature is not loaded",
+						{ { "hint", "list_features shows RenderDoc.loaded" } });
+				}
+				if (!renderDoc->IsAvailable()) {
+					return ErrorResult(
+						"RenderDoc API not available — attach RenderDoc or "
+						"load the in-app DLL");
+				}
+				uint32_t frameCount = 1;
+				if (params.contains("frames") && params["frames"].is_number()) {
+					const auto raw = params["frames"].get<int>();
+					frameCount = static_cast<uint32_t>(std::clamp(raw, 1, 120));
+				}
+				if (frameCount == 1) {
+					renderDoc->TriggerCapture();
+				} else {
+					renderDoc->TriggerMultiFrameCapture(frameCount);
+				}
+				logger::info("Remote Control: capture(renderdoc, {}) at frame {}",
+					frameCount, enqueuedFrame);
+				return TextResult(mcp::json({
+												{ "queued", true },
+												{ "kind", "renderdoc" },
+												{ "frames", frameCount },
+												{ "enqueued_at_frame", enqueuedFrame },
+											})
+						.dump());
+			}
+
+			if (kind == "screenshot") {
+				auto* shot = &globals::features::screenshotFeature;
+				if (!shot->loaded) {
+					return ErrorResult("Screenshot feature is not loaded");
+				}
+				shot->captureRequested.store(true, std::memory_order_release);
+				logger::info("Remote Control: capture(screenshot) at frame {}",
+					enqueuedFrame);
+				return TextResult(mcp::json({
+												{ "queued", true },
+												{ "kind", "screenshot" },
+												{ "enqueued_at_frame", enqueuedFrame },
+											})
+						.dump());
+			}
+
+			return ErrorResult("unknown kind",
+				{ { "kind", kind },
+					{ "supported", mcp::json::array({ "renderdoc", "screenshot" }) } });
 		});
 }
 
