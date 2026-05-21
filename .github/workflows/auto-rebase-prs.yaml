@@ -26,15 +26,31 @@ permissions:
     pull-requests: write
 
 concurrency:
-    # Serialize so two back-to-back pushes to dev don't race and produce
-    # interleaved force-pushes on the same PR.
+    # Debounce window: pair with the `Debounce dev-push storms` sleep below.
+    # `cancel-in-progress: true` means a new push to dev kills the still-sleeping
+    # run and the fresh push starts its own 30-minute timer. End state: one
+    # rebase pass per quiet 30-minute window, regardless of how many merges
+    # land in that window. Manual `workflow_dispatch` runs share the same group
+    # but skip the sleep step, so a maintainer who needs an urgent rebase isn't
+    # blocked by the debounce.
     group: auto-rebase-prs
-    cancel-in-progress: false
+    cancel-in-progress: true
 
 jobs:
     rebase:
         runs-on: ubuntu-latest
         steps:
+            - name: Debounce dev-push storms
+              # Only debounce when fired by a push to dev. Manual dispatches run
+              # immediately. If another push lands during this sleep, the
+              # concurrency policy above cancels this run before it does any
+              # work, and the new push gets its own debounce. Coalesces a
+              # burst of PR merges into a single rebase pass per PR, keeping
+              # the PR-build CI load proportional to landings/half-hour rather
+              # than landings × open-PR-count.
+              if: github.event_name == 'push'
+              run: sleep 1800
+
             - name: Checkout
               uses: actions/checkout@v6
               with:
