@@ -1487,7 +1487,7 @@ namespace FeatureIssues
 						themeSettings.StatusPalette.RestartNeeded,
 						themeSettings.StatusPalette.CurrentHotkey);
 
-					if (ImGui::Button("Create Test Inis", { -1, 0 })) {
+					if (ImGui::Button("Create Test INIs", { -1, 0 })) {
 						auto testInis = CreateTestInis();
 						logger::info("Created {} test INI files for feature issue testing", testInis.size());
 					}
@@ -1523,7 +1523,7 @@ namespace FeatureIssues
 				if (auto _tt = Util::HoverTooltipWrapper()) {
 					ImGui::Text(
 						"Removes all test INI files and restores any modified INI files to their original state.\n"
-						"This undoes all changes made by 'Create Test Inis'.\n"
+						"This undoes all changes made by 'Create Test INIs'.\n"
 						"Restart CS after restoring to see normal operation.");
 				}
 			}
