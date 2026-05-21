@@ -10,6 +10,7 @@
 #include "Utils/FileSystem.h"
 #include <DirectXTex.h>
 #include <PCH.h>
+#include <algorithm>
 #include <cstring>
 #include <filesystem>
 #include <format>
@@ -96,6 +97,14 @@ namespace
 
 		auto* destPixels = image.GetPixels();
 		const auto* srcPixels = static_cast<const uint8_t*>(mapped.pData);
+
+		// Initialize2D leaves the pixel buffer uninitialized. If the mapped
+		// region is short (rowsToCopy < height) or narrow (bytesPerRow <
+		// destImage->rowPitch), the gaps would otherwise read back as
+		// undefined memory and SaveToWICFile would encode garbage. Zero-fill
+		// up front so any uncopied bytes encode as deterministic black.
+		std::memset(destPixels, 0, image.GetPixelsSize());
+
 		for (size_t row = 0; row < rowsToCopy; ++row) {
 			memcpy(
 				destPixels + row * destImage->rowPitch,
