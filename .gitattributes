@@ -3,3 +3,47 @@
 
 # Ensure patch files always use LF line endings
 *.patch text eol=lf
+
+# -----------------------------------------------------------------------------
+# Fork-owned paths — `merge=ours` during 3-way merges
+# -----------------------------------------------------------------------------
+# These files are policy- or branding-owned by the fork. When the scheduled
+# upstream-merge-sync workflow merges upstream/dev into dev, the `ours` driver
+# preserves the fork's version of each path verbatim, ignoring whatever
+# upstream did to the same file. This is what prevents the silent-revert
+# class of bug (upstream cherry-picks our commit, then later deletes the
+# file in a follow-up: a vanilla merge would honor the delete; `merge=ours`
+# discards it).
+#
+# Prerequisites for the driver to fire:
+#   1. Each clone (including CI runners) must define the `ours` driver:
+#        git config merge.ours.driver true
+#      The scheduled sync workflow does this in a setup step. Local
+#      contributors who run `git merge upstream/dev` by hand should run
+#      the same command once. See docs/development/upstream-sync.md.
+#   2. The merge must be a true 3-way merge (i.e., `git merge`, not
+#      `git rebase` — rebase replays patches via `git apply` and never
+#      invokes merge drivers).
+#
+# When adding a path here, also add a one-line note in
+# docs/development/upstream-sync.md explaining why the fork owns it. If a
+# path stops being fork-owned (e.g., we converge with upstream's behavior),
+# remove the entry so upstream's improvements flow back in.
+# -----------------------------------------------------------------------------
+
+# CI workflows the fork owns end-to-end (auto-rebase machinery, the
+# release pipeline calibrated to RELEASE_PAT rather than upstream's
+# GitHub App setup, hotfix flow, nexus upload, etc.).
+.github/workflows/auto-rebase-prs.yaml          merge=ours
+.github/workflows/release-semantic.yaml         merge=ours
+.github/workflows/release-hotfix.yaml           merge=ours
+.github/workflows/nexus-upload.yaml             merge=ours
+.github/workflows/maint-cleanup-releases.yaml   merge=ours
+.github/workflows/maint-upstream-sync.yaml      merge=ours
+
+# Semantic-release config — fork has independent versioning and may
+# diverge from upstream's release rules.
+.releaserc                                      merge=ours
+
+# Branding-owned: rebrand commit established these as fork-specific.
+README.md                                       merge=ours

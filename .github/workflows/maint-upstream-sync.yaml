@@ -1,0 +1,168 @@
+name: "Maint: Sync upstream/dev"
+
+# Scheduled merge sync from community-shaders/skyrim-community-shaders into our
+# dev. Combined with the `merge=ours` attributes in .gitattributes (see the
+# `Fork-owned paths` section there), this pulls upstream's code changes while
+# leaving the fork's CI/branding files untouched.
+#
+# Why merge and not rebase: rebase replays patches via `git apply` and never
+# invokes merge drivers. Worse, when upstream cherry-picks one of our commits
+# and then later modifies the same file, rebase's patch-id detection skips
+# our original commit as "already applied" — and upstream's follow-up edit
+# then silently lands as a regression. A 3-way merge consults both branches
+# at every path and lets the `merge=ours` driver fire for fork-owned files,
+# eliminating that whole class of bug.
+#
+# Versioning: we deliberately do NOT skip this merge commit in
+# semantic-release's commit analysis. The DAG walk picks up upstream's
+# `feat:`/`fix:` commits transitively, so our version reflects everything
+# we actually ship to users (including upstream fixes that arrived via this
+# merge).
+
+on:
+    schedule:
+        # Monday 08:00 UTC. Weekly cadence keeps drift small without
+        # spamming PR rebases — pair this with auto-rebase-prs.yaml's
+        # debounce (PR #29) so the post-sync PR rebases coalesce.
+        - cron: "0 8 * * 1"
+    workflow_dispatch:
+        inputs:
+            dry_run:
+                description: "Dry run — fetch and merge locally, but don't push"
+                type: boolean
+                default: false
+
+permissions:
+    contents: write
+    pull-requests: write
+
+concurrency:
+    # Serialize — two overlapping syncs would race on the dev push.
+    group: maint-upstream-sync
+    cancel-in-progress: false
+
+jobs:
+    sync:
+        runs-on: ubuntu-latest
+        steps:
+            - name: Checkout dev
+              uses: actions/checkout@v6
+              with:
+                  fetch-depth: 0
+                  ref: dev
+                  # RELEASE_PAT so the merge push can bypass branch protection
+                  # and trigger downstream workflows (auto-rebase of open PRs).
+                  token: ${{ secrets.RELEASE_PAT }}
+
+            - name: Configure git identity + merge driver
+              # The `ours` driver is referenced by .gitattributes and is not
+              # built into git; it must be defined locally. We define it as
+              # a no-op (driver = true) which means "keep the version on the
+              # current branch unchanged" — the standard recipe.
+              run: |
+                  git config user.name 'github-actions[bot]'
+                  git config user.email 'github-actions[bot]@users.noreply.github.com'
+                  git config merge.ours.driver true
+
+            - name: Fetch upstream/dev
+              id: fetch
+              run: |
+                  git remote add upstream https://github.com/community-shaders/skyrim-community-shaders.git || \
+                      git remote set-url upstream https://github.com/community-shaders/skyrim-community-shaders.git
+                  git fetch upstream dev
+                  UPSTREAM_SHA=$(git rev-parse upstream/dev)
+                  echo "upstream_sha=${UPSTREAM_SHA}" >> "$GITHUB_OUTPUT"
+                  echo "upstream_short=${UPSTREAM_SHA:0:9}" >> "$GITHUB_OUTPUT"
+
+                  # If we're already at or ahead of upstream's tip, exit early.
+                  if git merge-base --is-ancestor "${UPSTREAM_SHA}" HEAD; then
+                      echo "already_synced=true" >> "$GITHUB_OUTPUT"
+                  else
+                      echo "already_synced=false" >> "$GITHUB_OUTPUT"
+                  fi
+
+            - name: Already synced — nothing to do
+              if: steps.fetch.outputs.already_synced == 'true'
+              run: |
+                  {
+                      echo "## ✅ Already synced"
+                      echo ""
+                      echo "Upstream tip \`${{ steps.fetch.outputs.upstream_short }}\` is already an ancestor of \`dev\`. Nothing to merge."
+                  } >> "$GITHUB_STEP_SUMMARY"
+
+            - name: Merge upstream/dev
+              id: merge
+              if: steps.fetch.outputs.already_synced != 'true'
+              run: |
+                  set +e
+                  git merge --no-ff --no-edit \
+                      -m "chore(sync): merge upstream/dev as of ${{ steps.fetch.outputs.upstream_short }}" \
+                      upstream/dev
+                  merge_status=$?
+                  set -e
+
+                  if [[ $merge_status -ne 0 ]]; then
+                      # The merge=ours driver should have handled everything
+                      # in the fork-owned list. A conflict here means upstream
+                      # touched a non-fork-owned file in a way that genuinely
+                      # collides with our changes — needs human eyes.
+                      echo "::error::Upstream sync conflicted on non-fork-owned paths."
+                      {
+                          echo "## ❌ Conflict during sync"
+                          echo ""
+                          echo "Upstream tip: \`${{ steps.fetch.outputs.upstream_short }}\`"
+                          echo ""
+                          echo "Conflicted files (resolve manually, then push):"
+                          echo ""
+                          echo '```'
+                          git diff --name-only --diff-filter=U
+                          echo '```'
+                          echo ""
+                          echo "Resolution: clone, run the same merge locally, resolve, push."
+                          echo ""
+                          echo '```bash'
+                          echo "git fetch upstream dev"
+                          echo "git config merge.ours.driver true"
+                          echo "git merge --no-ff --no-edit \\"
+                          echo "    -m 'chore(sync): merge upstream/dev as of ${{ steps.fetch.outputs.upstream_short }}' \\"
+                          echo "    upstream/dev"
+                          echo "# resolve conflicts, git add, git commit"
+                          echo "git push origin dev"
+                          echo '```'
+                      } >> "$GITHUB_STEP_SUMMARY"
+                      git merge --abort
+                      exit 1
+                  fi
+
+            - name: Summarize merge
+              if: steps.fetch.outputs.already_synced != 'true' && success()
+              run: |
+                  {
+                      echo "## ✅ Merged upstream/dev"
+                      echo ""
+                      echo "Upstream tip: \`${{ steps.fetch.outputs.upstream_short }}\`"
+                      echo ""
+                      echo "Files changed:"
+                      echo ""
+                      echo '```'
+                      git diff --stat HEAD~1..HEAD | head -40
+                      echo '```'
+                      echo ""
+                      echo "Commits brought in:"
+                      echo ""
+                      echo '```'
+                      git log --oneline HEAD~1..HEAD --first-parent=false | head -30
+                      echo '```'
+                  } >> "$GITHUB_STEP_SUMMARY"
+
+            - name: Push to origin/dev
+              if: steps.fetch.outputs.already_synced != 'true' && inputs.dry_run != true
+              run: git push origin dev
+
+            - name: Dry-run notice
+              if: steps.fetch.outputs.already_synced != 'true' && inputs.dry_run == true
+              run: |
+                  {
+                      echo ""
+                      echo "**Dry run** — merge completed locally but not pushed."
+                  } >> "$GITHUB_STEP_SUMMARY"
