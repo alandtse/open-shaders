@@ -33,8 +33,9 @@ on:
                 default: false
 
 permissions:
+    # `contents: write` is the only scope we need — the merge push to
+    # `dev` is the only mutation. No PR API calls, no issue API calls.
     contents: write
-    pull-requests: write
 
 concurrency:
     # Serialize — two overlapping syncs would race on the dev push.
@@ -148,10 +149,15 @@ jobs:
                       git diff --stat HEAD~1..HEAD | head -40
                       echo '```'
                       echo ""
-                      echo "Commits brought in:"
+                      echo "Commits brought in from upstream:"
                       echo ""
                       echo '```'
-                      git log --oneline HEAD~1..HEAD --first-parent=false | head -30
+                      # The merge commit has two parents: HEAD^1 = previous
+                      # fork tip, HEAD^2 = upstream tip. The range
+                      # `HEAD^1..HEAD^2` enumerates the upstream commits
+                      # reachable through the merge that weren't already in
+                      # our history — exactly what we want to surface.
+                      git log --oneline 'HEAD^1..HEAD^2' | head -30
                       echo '```'
                   } >> "$GITHUB_STEP_SUMMARY"
 

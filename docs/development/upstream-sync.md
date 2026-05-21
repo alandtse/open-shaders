@@ -57,7 +57,16 @@ A real conflict (in a file _not_ on the fork-owned list) means upstream and the 
 -   We add a method to a class upstream also modified.
 -   We rename a function upstream also renamed.
 
-The workflow `git merge --abort`s, posts the conflicted file list to the workflow summary, and exits non-zero. Resolution is manual: clone, run the same merge locally, resolve, push. `git rerere` (which we have enabled in repo defaults) will remember the resolution so the next sync of the same files replays it automatically — but rerere caches are per-clone, not pushed. The maintainer doing recurring syncs builds up a useful cache; CI runners do not.
+The workflow `git merge --abort`s, posts the conflicted file list to the workflow summary, and exits non-zero. Resolution is manual: clone, run the same merge locally, resolve, push.
+
+If you do recurring syncs, enabling `git rerere` is worth the one-time setup — it caches each conflict resolution and replays it the next time the same hunks conflict. Per-clone setting, not repo-wide:
+
+```bash
+git config rerere.enabled true
+git config rerere.autoupdate true
+```
+
+Caches live in `.git/rr-cache/` and aren't pushed, so each maintainer builds their own. CI runners start with empty caches every run and benefit nothing from rerere — only the maintainers doing the merges locally see the time savings.
 
 ## Inspecting what a sync did
 
