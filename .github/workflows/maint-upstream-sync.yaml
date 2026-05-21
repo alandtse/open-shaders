@@ -45,6 +45,12 @@ concurrency:
 jobs:
     sync:
         runs-on: ubuntu-latest
+        # Guard against downstream forks running this on schedule: they
+        # don't have RELEASE_PAT, don't want to merge community-shaders/dev
+        # into their own dev, and the resulting failure would spam their
+        # Actions tab with red runs. Other maint workflows in this repo
+        # use the same pattern.
+        if: github.repository == 'alandtse/open-shaders'
         steps:
             - name: Checkout dev
               uses: actions/checkout@v6

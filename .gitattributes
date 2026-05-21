@@ -25,6 +25,16 @@
 #      `git rebase` — rebase replays patches via `git apply` and never
 #      invokes merge drivers).
 #
+# Important: `merge=ours` fires on ANY 3-way merge that touches these
+# paths, not just the scheduled upstream sync. If a PR is landed via
+# GitHub's "Create a merge commit" button (or via a local `git merge`
+# between fork branches), and the incoming branch changed one of these
+# files, those changes are silently discarded. **Edits to fork-owned
+# paths must land via squash-merge or rebase-merge** so the diff lands
+# as a plain commit on dev rather than through a merge-driver-affected
+# merge commit. The default PR merge methods on `dev` are configured
+# to squash/rebase only to enforce this.
+#
 # When adding a path here, also add a one-line note in
 # docs/development/upstream-sync.md explaining why the fork owns it. If a
 # path stops being fork-owned (e.g., we converge with upstream's behavior),

@@ -23,15 +23,20 @@ See `.gitattributes` for the current fork-owned list. When a file should join or
 git config merge.ours.driver true
 ```
 
-That's it. The `ours` driver is intentionally not git-builtin (for security — driver definitions can run arbitrary commands), so each clone declares it locally. The sync CI does this in its own setup step.
+That's it. The `ours` driver is intentionally not built into git (for security — driver definitions can run arbitrary commands), so each clone declares it locally. The sync CI does this in its own setup step.
 
 If you've already run an upstream merge without this config, git would have raised an "unknown merge driver 'ours'" warning and used the default 3-way merge for those files, potentially producing surprising conflicts in fork-owned paths. Re-run with the driver configured and the conflicts disappear.
 
 ## Running a sync manually
 
 ```bash
-git fetch upstream dev
+# Make sure local dev matches origin/dev before merging upstream.
+# A stale local dev would either reject the push as non-fast-forward
+# or have you re-resolving conflicts already resolved by a prior run.
+git fetch origin dev upstream/dev
 git switch dev
+git reset --hard origin/dev
+
 git merge --no-ff --no-edit \
     -m "chore(sync): merge upstream/dev as of $(git rev-parse --short upstream/dev)" \
     upstream/dev
