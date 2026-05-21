@@ -96,6 +96,9 @@ namespace Util::Subrect
 			currentRightUV.w = a_json["CropRightW"];
 		if (a_json.contains("CropRightH"))
 			currentRightUV.h = a_json["CropRightH"];
+		if (hasExplicitRight) {
+			rightUVLoadedFromJson = true;
+		}
 
 		if (a_json.contains("CropPresets") && a_json["CropPresets"].is_array()) {
 			presets.clear();
@@ -176,7 +179,11 @@ namespace Util::Subrect
 			return;
 		}
 		stereoEnabled = enabled;
-		if (stereoEnabled) {
+		// Only auto-mirror left→right when the right-eye UV hasn't been
+		// explicitly loaded from JSON. Otherwise a caller that does
+		// `LoadSettings` (stereo off) then `SetStereoEnabled(true)` would
+		// silently overwrite a deliberate persisted right-eye crop.
+		if (stereoEnabled && !rightUVLoadedFromJson) {
 			SyncRightUV();
 		}
 	}

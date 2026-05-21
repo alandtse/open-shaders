@@ -197,25 +197,55 @@ TEST_CASE("GetStereoPixelRegions in mono mode returns identical eyes", "[subrect
 	REQUIRE(regions.leftEye.w == regions.rightEye.w);
 }
 
-TEST_CASE("Stereo preset save captures right-eye UV", "[subrect][stereo][regression]")
+TEST_CASE("Stereo SaveSettings emits right_uv for every preset", "[subrect][stereo][regression]")
 {
 	// Regression for CodeRabbit Major @ scs#2356: the Save Preset button used
 	// to drop currentRightUV, so re-applying a saved preset would zero out the
-	// right eye. We can't drive the ImGui button from a test, but we can
-	// verify the same Preset construction Save Preset uses round-trips both
-	// eyes through SaveSettings/LoadSettings.
+	// right eye. We can't drive the ImGui Save Preset button from a test, but
+	// we can stage the same end state (a Controller with stereo enabled and an
+	// in-memory preset whose rightUV differs from a mirror of left) and verify
+	// it round-trips both eyes through SaveSettings → LoadSettings.
 	Controller src;
 	src.SetStereoEnabled(true);
-	src.LoadSettings(json::object());
 
-	// Simulate what the Save Preset button now does: pushes a Preset built
-	// from BOTH currentUV and currentRightUV (not just .uv).
+	// Stage a preset with an explicit asymmetric right_uv that doesn't equal
+	// MirrorUVHorizontal(uv) — otherwise we couldn't distinguish "right_uv was
+	// preserved" from "default fallback mirrored it back".
+	const UVRegion leftUV{ 0.10f, 0.0f, 0.40f, 1.0f };
+	const UVRegion rightUV{ 0.55f, 0.0f, 0.35f, 1.0f };
+	json staged = {
+		{ "CropX", leftUV.x },
+		{ "CropY", leftUV.y },
+		{ "CropW", leftUV.w },
+		{ "CropH", leftUV.h },
+		{ "CropRightX", rightUV.x },
+		{ "CropRightY", rightUV.y },
+		{ "CropRightW", rightUV.w },
+		{ "CropRightH", rightUV.h },
+		{ "CropPresets", json::array({ json{
+			{ "name", "Asymmetric" },
+			{ "uv", json::array({ leftUV.x, leftUV.y, leftUV.w, leftUV.h }) },
+			{ "right_uv", json::array({ rightUV.x, rightUV.y, rightUV.w, rightUV.h }) } }) }
+		},
+		{ "SelectedPresetIndex", 0 }
+	};
+	src.LoadSettings(staged);
+
 	json saved;
 	src.SaveSettings(saved);
 	REQUIRE(saved["CropPresets"].is_array());
+	REQUIRE_FALSE(saved["CropPresets"].empty());
 	for (const auto& entry : saved["CropPresets"]) {
 		REQUIRE(entry.contains("right_uv"));
 	}
+
+	// Round-trip into a fresh controller and confirm the asymmetric right UV
+	// survived. Before the fix the saved preset's right_uv would be missing
+	// and LoadSettings would mirror left → right, equalizing the eyes.
+	Controller dst;
+	dst.SetStereoEnabled(true);
+	dst.LoadSettings(saved);
+	REQUIRE(UVApprox(dst.GetRightEyeUV(), rightUV));
 }
 
 TEST_CASE("MirrorUVHorizontal symmetry via SetStereoEnabled", "[subrect][stereo][math]")
@@ -235,4 +265,27 @@ TEST_CASE("MirrorUVHorizontal symmetry via SetStereoEnabled", "[subrect][stereo]
 	c.SetStereoEnabled(true);
 	// x = 1 - 0.4 - 0.6 = 0.0
 	REQUIRE(UVApprox(c.GetRightEyeUV(), { 0.0f, 0.0f, 0.6f, 1.0f }));
+}
+
+TEST_CASE("SetStereoEnabled preserves explicit right UV loaded earlier", "[subrect][stereo][regression]")
+{
+	// Regression for the call-order trap: LoadSettings (mono) → SetStereoEnabled(true)
+	// must NOT overwrite an explicit CropRight* value with the mirror of the left eye.
+	Controller c;
+	const UVRegion explicitRight{ 0.62f, 0.10f, 0.30f, 0.80f };
+	json in = {
+		{ "CropX", 0.10f },
+		{ "CropY", 0.00f },
+		{ "CropW", 0.40f },
+		{ "CropH", 1.00f },
+		{ "CropRightX", explicitRight.x },
+		{ "CropRightY", explicitRight.y },
+		{ "CropRightW", explicitRight.w },
+		{ "CropRightH", explicitRight.h },
+	};
+	c.LoadSettings(in);
+	REQUIRE_FALSE(c.IsStereoEnabled());
+
+	c.SetStereoEnabled(true);
+	REQUIRE(UVApprox(c.GetRightEyeUV(), explicitRight));
 }

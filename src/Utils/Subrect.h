@@ -85,6 +85,11 @@ namespace Util::Subrect
 
 		// In stereo mode, resolves both eyes' UVs against an SBS texture by
 		// dividing width by 2. In mono mode, both eyes resolve from currentUV.
+		//
+		// Coordinate space: both leftEye.x and rightEye.x are in PER-EYE
+		// space (i.e. x in [0, fullWidth/2)) — the right eye is NOT
+		// pre-offset by eyeWidth. Callers that draw into the full SBS
+		// texture must add `fullWidth / 2` to rightEye.x themselves.
 		StereoPixelRegions GetStereoPixelRegions(uint32_t fullWidth, uint32_t fullHeight) const;
 
 		const UVRegion& GetUV() const { return currentUV; }
@@ -99,6 +104,11 @@ namespace Util::Subrect
 		UVRegion currentUV{};
 		UVRegion currentRightUV{};
 		bool stereoEnabled = false;
+		// True once LoadSettings sees an explicit CropRight* key. Suppresses
+		// the auto-mirror in SetStereoEnabled(true) so a deliberate JSON
+		// right-eye crop survives a mono→stereo transition that happens
+		// after the load.
+		bool rightUVLoadedFromJson = false;
 
 		bool isDraggingCrop = false;
 		float dragStartUV[2] = { 0.0f, 0.0f };
