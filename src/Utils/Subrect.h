@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <imgui.h>
 #include <nlohmann/json.hpp>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -43,8 +44,14 @@ namespace Util::Subrect
 	struct Preset
 	{
 		std::string name;
-		UVRegion uv;         // Left-eye UV when stereo is enabled; sole UV otherwise.
-		UVRegion rightUV{};  // Only consulted when the host enables stereo.
+		UVRegion uv;  // Left-eye UV when stereo is enabled; sole UV otherwise.
+		// Right-eye UV. `std::nullopt` means "no explicit right eye — auto-mirror
+		// left around x=0.5 when stereo is enabled". A default-constructed
+		// `UVRegion{}` (full frame) would otherwise be ambiguous: it could mean
+		// "the user wants full frame" or "the caller didn't supply one", and
+		// the silent-full-frame case bites SeedDefaultPresets callers that only
+		// fill `.name` and `.uv`.
+		std::optional<UVRegion> rightUV{};
 	};
 
 	// "User picks a sub-rectangle of an image" controller. Crop UV is in [0,1]

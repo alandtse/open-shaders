@@ -14,6 +14,8 @@ using json = nlohmann::json;
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 
+#include <cmath>  // std::abs
+
 using Catch::Matchers::WithinAbs;
 using Util::Subrect::Controller;
 using Util::Subrect::Preset;
@@ -111,7 +113,7 @@ TEST_CASE("Stereo save then load round-trips right-eye keys", "[subrect][stereo]
 	Controller src;
 	src.SetStereoEnabled(true);
 	src.SeedDefaultPresets({
-		Preset{ .name = "Asym", .uv = { 0.1f, 0.0f, 0.5f, 1.0f }, .rightUV = { 0.3f, 0.0f, 0.4f, 0.9f } },
+		Preset{ .name = "Asym", .uv = { 0.1f, 0.0f, 0.5f, 1.0f }, .rightUV = UVRegion{ 0.3f, 0.0f, 0.4f, 0.9f } },
 	});
 	// Realize the seed and copy it into currentUV/currentRightUV.
 	src.LoadSettings(json::object());
@@ -163,8 +165,8 @@ TEST_CASE("GetStereoPixelRegions splits SBS width per eye", "[subrect][stereo]")
 	c.SeedDefaultPresets({
 		Preset{
 			.name = "Asym",
-			.uv = { 0.0f, 0.0f, 1.0f, 1.0f },       // full left eye
-			.rightUV = { 0.0f, 0.0f, 0.5f, 1.0f },  // left half of right eye
+			.uv = { 0.0f, 0.0f, 1.0f, 1.0f },               // full left eye
+			.rightUV = UVRegion{ 0.0f, 0.0f, 0.5f, 1.0f },  // left half of right eye
 		},
 	});
 	// Realize the seed so currentUV/currentRightUV pick up the preset values.
@@ -288,4 +290,77 @@ TEST_CASE("SetStereoEnabled preserves explicit right UV loaded earlier", "[subre
 
 	c.SetStereoEnabled(true);
 	REQUIRE(UVApprox(c.GetRightEyeUV(), explicitRight));
+}
+
+TEST_CASE("Reload without CropRight* re-enables auto-mirror", "[subrect][stereo][regression]")
+{
+	// The rightUVLoadedFromJson flag must reset every LoadSettings — otherwise
+	// once a config with CropRight* was loaded, later loads without those
+	// keys would keep suppressing the mirror.
+	Controller c;
+	const UVRegion explicitRight{ 0.62f, 0.10f, 0.30f, 0.80f };
+	json withRight = {
+		{ "CropX", 0.10f }, { "CropY", 0.00f }, { "CropW", 0.40f }, { "CropH", 1.00f },
+		{ "CropRightX", explicitRight.x }, { "CropRightY", explicitRight.y },
+		{ "CropRightW", explicitRight.w }, { "CropRightH", explicitRight.h }
+	};
+	c.LoadSettings(withRight);
+
+	// Now load a fresh config WITHOUT CropRight*. The flag should reset to
+	// false so a subsequent SetStereoEnabled(true) auto-mirrors.
+	json withoutRight = {
+		{ "CropX", 0.20f }, { "CropY", 0.00f }, { "CropW", 0.60f }, { "CropH", 1.00f }
+	};
+	c.LoadSettings(withoutRight);
+	c.SetStereoEnabled(true);
+	// Mirror of {0.20, 0, 0.60, 1.0} is {1 - 0.20 - 0.60, *, 0.60, *} = {0.20, *, 0.60, *}.
+	REQUIRE(UVApprox(c.GetRightEyeUV(), { 0.20f, 0.0f, 0.60f, 1.0f }));
+}
+
+TEST_CASE("SaveSettings erases stale CropRight* in mono mode", "[subrect][stereo][regression]")
+{
+	// When a host re-uses an in-memory JSON object that previously held
+	// stereo keys, the mono save must clear them or the next load looks
+	// like it still had explicit stereo data.
+	json carry = {
+		{ "CropRightX", 0.5f }, { "CropRightY", 0.0f },
+		{ "CropRightW", 0.5f }, { "CropRightH", 1.0f }
+	};
+	Controller c;
+	REQUIRE_FALSE(c.IsStereoEnabled());
+	c.SaveSettings(carry);
+	REQUIRE_FALSE(carry.contains("CropRightX"));
+	REQUIRE_FALSE(carry.contains("CropRightY"));
+	REQUIRE_FALSE(carry.contains("CropRightW"));
+	REQUIRE_FALSE(carry.contains("CropRightH"));
+}
+
+TEST_CASE("GetStereoPixelRegions returns empty for degenerate dimensions", "[subrect][stereo][edge]")
+{
+	// fullWidth/2 == 0 for widths 0 or 1; UVToPixelRegion's `width - 1`
+	// would underflow into a huge coord without the guard.
+	Controller c;
+	c.SetStereoEnabled(true);
+	for (auto [w, h] : std::vector<std::pair<uint32_t, uint32_t>>{ { 0, 100 }, { 1, 100 }, { 100, 0 } }) {
+		const auto regions = c.GetStereoPixelRegions(w, h);
+		REQUIRE(regions.leftEye.w == 0);
+		REQUIRE(regions.rightEye.w == 0);
+	}
+}
+
+TEST_CASE("Seeded preset without explicit rightUV auto-mirrors in stereo", "[subrect][stereo][regression]")
+{
+	// Regression for the silent-full-frame bug: a Preset built with only
+	// .name + .uv (rightUV omitted, defaulting to std::nullopt) should
+	// auto-mirror the left eye when stereo is enabled, NOT show full frame
+	// for the right eye.
+	Controller c;
+	c.SetStereoEnabled(true);
+	c.SeedDefaultPresets({
+		Preset{ .name = "Left Half", .uv = { 0.0f, 0.0f, 0.5f, 1.0f } },
+	});
+	c.LoadSettings(json::object());
+
+	// Mirror of {0, 0, 0.5, 1.0} around x=0.5 is {0.5, 0, 0.5, 1.0}.
+	REQUIRE(UVApprox(c.GetRightEyeUV(), { 0.5f, 0.0f, 0.5f, 1.0f }));
 }

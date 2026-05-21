@@ -96,9 +96,10 @@ namespace Util::Subrect
 			currentRightUV.w = a_json["CropRightW"];
 		if (a_json.contains("CropRightH"))
 			currentRightUV.h = a_json["CropRightH"];
-		if (hasExplicitRight) {
-			rightUVLoadedFromJson = true;
-		}
+		// Reset every load — a later LoadSettings without CropRight* keys
+		// should let SetStereoEnabled(true) auto-mirror again rather than
+		// preserving stale state from a prior load.
+		rightUVLoadedFromJson = hasExplicitRight;
 
 		if (a_json.contains("CropPresets") && a_json["CropPresets"].is_array()) {
 			presets.clear();
@@ -108,12 +109,11 @@ namespace Util::Subrect
 				if (entry.contains("uv")) {
 					preset.uv = LoadUVArray(entry["uv"]);
 				}
-				// Right-eye UV is optional. If absent, callers in stereo mode
-				// fall back to the mirrored left-eye via ApplyPreset.
+				// Right-eye UV is optional in JSON; leave nullopt when absent so
+				// ApplyPreset auto-mirrors the left eye on demand. Explicit
+				// right_uv in JSON wins over any mirror.
 				if (entry.contains("right_uv")) {
 					preset.rightUV = LoadUVArray(entry["right_uv"]);
-				} else {
-					preset.rightUV = MirrorUVHorizontal(preset.uv);
 				}
 				presets.push_back(std::move(preset));
 			}
@@ -152,6 +152,14 @@ namespace Util::Subrect
 			a_json["CropRightY"] = currentRightUV.y;
 			a_json["CropRightW"] = currentRightUV.w;
 			a_json["CropRightH"] = currentRightUV.h;
+		} else {
+			// Caller may pass a JSON object with prior stereo keys (e.g. a
+			// host that re-saves into the same in-memory config). Drop them
+			// so the next load doesn't look like it had explicit stereo data.
+			a_json.erase("CropRightX");
+			a_json.erase("CropRightY");
+			a_json.erase("CropRightW");
+			a_json.erase("CropRightH");
 		}
 
 		json presetsJson = json::array();
@@ -159,8 +167,11 @@ namespace Util::Subrect
 			json entry;
 			entry["name"] = preset.name;
 			entry["uv"] = SaveUVToJson(preset.uv);
-			if (stereoEnabled) {
-				entry["right_uv"] = SaveUVToJson(preset.rightUV);
+			// Only serialize right_uv when stereo is enabled AND we have an
+			// explicit value to persist. A nullopt preset implicitly means
+			// "auto-mirror at apply time" and shouldn't be locked into JSON.
+			if (stereoEnabled && preset.rightUV.has_value()) {
+				entry["right_uv"] = SaveUVToJson(*preset.rightUV);
 			}
 			presetsJson.push_back(std::move(entry));
 		}
@@ -335,6 +346,12 @@ namespace Util::Subrect
 
 	StereoPixelRegions Controller::GetStereoPixelRegions(uint32_t fullWidth, uint32_t fullHeight) const
 	{
+		// Degenerate inputs would underflow UVToPixelRegion's `width - 1` /
+		// `height - 1` computations into huge values. Fail safe with empty
+		// regions so callers can detect the bad-input case via .w == 0.
+		if (fullWidth < 2 || fullHeight == 0) {
+			return { PixelRegion{ 0, 0, 0, 0 }, PixelRegion{ 0, 0, 0, 0 } };
+		}
 		// Each eye occupies half the SBS texture width. In mono mode, both
 		// eyes report the same region so callers don't need to branch.
 		const uint32_t eyeWidth = fullWidth / 2;
@@ -354,7 +371,9 @@ namespace Util::Subrect
 			// currentUV must match what the combo shows as selected; otherwise
 			// the first preset appears chosen but the crop region stays full-frame.
 			currentUV = presets[0].uv;
-			currentRightUV = presets[0].rightUV;
+			// nullopt rightUV means "auto-mirror" — match the same fallback
+			// ApplyPreset uses below.
+			currentRightUV = presets[0].rightUV.value_or(MirrorUVHorizontal(currentUV));
 			selectedPresetIndex = 0;
 		} else {
 			presets.push_back(Preset{ .name = "Full Frame", .uv = DefaultUV() });
@@ -372,7 +391,10 @@ namespace Util::Subrect
 		EnsureDefaultPreset();
 		selectedPresetIndex = std::clamp(index, 0, static_cast<int>(presets.size()) - 1);
 		currentUV = presets[selectedPresetIndex].uv;
-		currentRightUV = presets[selectedPresetIndex].rightUV;
+		// Nullopt right-UV → mirror left around x=0.5. This is the safe default
+		// for presets created without a stereo-specific intent (e.g. via
+		// SeedDefaultPresets with only .name + .uv specified).
+		currentRightUV = presets[selectedPresetIndex].rightUV.value_or(MirrorUVHorizontal(currentUV));
 		ClampCurrentUV();
 	}
 
