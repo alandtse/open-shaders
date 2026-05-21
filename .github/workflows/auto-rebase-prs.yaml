@@ -25,15 +25,52 @@ permissions:
     contents: write
     pull-requests: write
 
-concurrency:
-    # Serialize so two back-to-back pushes to dev don't race and produce
-    # interleaved force-pushes on the same PR.
-    group: auto-rebase-prs
-    cancel-in-progress: false
+# Two jobs by design:
+#
+# 1. `debounce` — sleeps for 30 minutes on push events. Has
+#    `cancel-in-progress: true` so a fresh push during the sleep
+#    kills the still-sleeping run and the new push starts its own
+#    timer. Workflow-dispatch runs skip the sleep entirely.
+# 2. `rebase` — depends on `debounce` and runs `peter-evans/rebase`.
+#    Has `cancel-in-progress: false` so once it starts force-pushing
+#    PR heads, it can't be interrupted mid-flight by a subsequent
+#    push. The downside is a small window (the rebase duration)
+#    where an additional push has to queue rather than supersede —
+#    but interrupting force-pushes mid-rebase leaves PRs in an
+#    inconsistent half-rebased state, which is worse.
+#
+# End state: one rebase pass per quiet 30-min window, no half-done
+# rebases.
 
 jobs:
+    debounce:
+        runs-on: ubuntu-latest
+        # The debounce job alone is cancellable — a new push restarts
+        # its 30-minute timer, dropping the prior queued run.
+        concurrency:
+            group: auto-rebase-prs-debounce
+            cancel-in-progress: true
+        steps:
+            - name: Debounce dev-push storms
+              # Only debounce when fired by a push to dev. Manual dispatches
+              # run immediately (the next job has no dependency wait when
+              # this step is skipped). Coalesces a burst of PR merges into
+              # a single rebase pass, keeping PR-build CI load proportional
+              # to landings/half-hour rather than landings × open-PR-count.
+              if: github.event_name == 'push'
+              run: sleep 1800
+
     rebase:
         runs-on: ubuntu-latest
+        needs: debounce
+        # The rebase job is NOT cancellable — once peter-evans/rebase
+        # starts force-pushing PR heads, interrupting it mid-flight could
+        # leave some PRs rebased and others not, or interrupt a push
+        # mid-operation. A subsequent dev push queues behind this run
+        # instead.
+        concurrency:
+            group: auto-rebase-prs-rebase
+            cancel-in-progress: false
         steps:
             - name: Checkout
               uses: actions/checkout@v6
