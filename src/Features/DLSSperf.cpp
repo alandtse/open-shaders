@@ -386,7 +386,11 @@ void DLSSperf::RefractionRender_Hook::thunk(void* imageSpaceShader, RE::BSTriSha
 
 	// --- Restore D3D state so engine continues normally ---
 	context->OMSetRenderTargets(1, &savedRTV, savedDSV);
-	context->RSSetViewports(1, &savedVP);
+	// RSGetViewports may have returned 0 if the prior pass left no viewport
+	// bound; skip the restore in that case rather than pushing a zero-init VP.
+	if (numVP > 0) {
+		context->RSSetViewports(numVP, &savedVP);
+	}
 	context->PSSetShaderResources(0, 1, &savedSRV0);
 
 	// Release COM refs from Get calls
@@ -604,6 +608,31 @@ void DLSSperf::DownscaleToKMain()
 	ID3D11SamplerState* savedPSSampler0 = nullptr;
 	context->PSGetSamplers(0, 1, &savedPSSampler0);
 
+	// Save IA state before we replace it with fullscreen-triangle bindings.
+	// Earlier revisions only restored OM/RS/VS/PS but left IA dangling, which
+	// could leak our null layout / TRIANGLELIST topology into subsequent
+	// engine passes that don't fully rebind IA (CodeRabbit/Copilot finding).
+	ID3D11InputLayout* savedIL = nullptr;
+	context->IAGetInputLayout(&savedIL);
+	ID3D11Buffer* savedVB[D3D11_IA_VERTEX_INPUT_RESOURCE_SLOT_COUNT] = {};
+	UINT savedVBStride[D3D11_IA_VERTEX_INPUT_RESOURCE_SLOT_COUNT] = {};
+	UINT savedVBOffset[D3D11_IA_VERTEX_INPUT_RESOURCE_SLOT_COUNT] = {};
+	context->IAGetVertexBuffers(0, D3D11_IA_VERTEX_INPUT_RESOURCE_SLOT_COUNT, savedVB, savedVBStride, savedVBOffset);
+	ID3D11Buffer* savedIB = nullptr;
+	DXGI_FORMAT savedIBFormat = DXGI_FORMAT_UNKNOWN;
+	UINT savedIBOffset = 0;
+	context->IAGetIndexBuffer(&savedIB, &savedIBFormat, &savedIBOffset);
+	D3D11_PRIMITIVE_TOPOLOGY savedTopology = D3D11_PRIMITIVE_TOPOLOGY_UNDEFINED;
+	context->IAGetPrimitiveTopology(&savedTopology);
+
+	// Save PS SRV slot 0 (we overwrite it with testTextureSRV). Restoring the
+	// prior binding at the end is safer than the earlier null-out, which
+	// risked breaking engine passes that expected the previous SRV to still
+	// be there. If the prior SRV happens to alias the RTV we render into,
+	// we explicitly null it below before binding the RTV to avoid the hazard.
+	ID3D11ShaderResourceView* savedPSSRV0 = nullptr;
+	context->PSGetShaderResources(0, 1, &savedPSSRV0);
+
 	// IA: fullscreen triangle (no vertex/index buffers)
 	context->IASetInputLayout(nullptr);
 	context->IASetVertexBuffers(0, 0, nullptr, nullptr, nullptr);
@@ -642,13 +671,18 @@ void DLSSperf::DownscaleToKMain()
 	context->OMSetRenderTargets(1, &rtv, nullptr);
 	context->Draw(3, 0);
 
-	// Unbind SRV to prevent SRV↔RT hazard in subsequent engine passes
+	// Unbind our SRV before re-binding the prior one — if the saved SRV0 aliases
+	// any RTV we just used or the engine binds next, the explicit null pass
+	// breaks the hazard cleanly. Then restore the prior SRV at slot 0.
 	ID3D11ShaderResourceView* nullSRV[] = { nullptr };
 	context->PSSetShaderResources(0, 1, nullSRV);
+	context->PSSetShaderResources(0, 1, &savedPSSRV0);
 
 	// Restore
 	context->OMSetRenderTargets(1, &savedRTV, savedDSV);
-	context->RSSetViewports(1, &savedVP);
+	if (numVP > 0) {
+		context->RSSetViewports(numVP, &savedVP);
+	}
 	context->OMSetBlendState(savedBlend, savedBlendFactor, savedSampleMask);
 	context->OMSetDepthStencilState(savedDSState, savedStencilRef);
 	context->VSSetShader(savedVS, nullptr, 0);
@@ -658,6 +692,11 @@ void DLSSperf::DownscaleToKMain()
 	context->HSSetShader(savedHS, nullptr, 0);
 	context->DSSetShader(savedDS, nullptr, 0);
 	context->RSSetState(savedRS);
+	// IA restore — pair with the IAGet calls above.
+	context->IASetInputLayout(savedIL);
+	context->IASetVertexBuffers(0, D3D11_IA_VERTEX_INPUT_RESOURCE_SLOT_COUNT, savedVB, savedVBStride, savedVBOffset);
+	context->IASetIndexBuffer(savedIB, savedIBFormat, savedIBOffset);
+	context->IASetPrimitiveTopology(savedTopology);
 	if (savedRTV)
 		savedRTV->Release();
 	if (savedDSV)
@@ -680,6 +719,16 @@ void DLSSperf::DownscaleToKMain()
 		savedPS->Release();
 	if (savedPSSampler0)
 		savedPSSampler0->Release();
+	if (savedIL)
+		savedIL->Release();
+	for (auto*& vb : savedVB) {
+		if (vb)
+			vb->Release();
+	}
+	if (savedIB)
+		savedIB->Release();
+	if (savedPSSRV0)
+		savedPSSRV0->Release();
 }
 
 void DLSSperf::HandlePostProcessing(const std::function<void()>& enginePost)

@@ -429,8 +429,10 @@ void Upscaling::DrawSettings()
 		// to the quality-mode scale ratio.
 		if (globals::game::isVR && upscaleMethod == UpscaleMethod::kDLSS) {
 			ImGui::Separator();
-			if (ImGui::Checkbox("Render engine at upscaled resolution (experimental)", &settings.enableDLSSperf)) {
-			}
+			// Toggle is restart-gated (the engine reads it during InstallRenderTargetSizeHook
+			// at startup), so the change handler has nothing useful to run here — let ImGui
+			// just update the bound setting and rely on the user restarting.
+			ImGui::Checkbox("Render engine at upscaled resolution (experimental)", &settings.enableDLSSperf);
 			ImGui::TextUnformatted("Changing this requires a restart to take effect.");
 			if (auto _tt = Util::HoverTooltipWrapper()) {
 				ImGui::Text(

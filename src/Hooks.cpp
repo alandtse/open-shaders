@@ -432,6 +432,13 @@ struct BSShaderRenderTargets_Create
 	static inline uint32_t s_enlargeRTWidth = 0;
 	static inline uint32_t s_enlargeRTHeight = 0;
 	static inline int s_rtCallSitesPatched = 0;
+	// Tracks only the call sites the runtime E8 scan patched (not the 6 we
+	// install statically via write_thunk_call). If the scan finds zero —
+	// e.g. an upstream change moved the call sites outside the 0x2500 scan
+	// window — the post-chain RTs (kIMAGESPACE_TEMP_COPY, kTOTAL, kMENUBG)
+	// stay at renderRes and DLSSperf would fail silently. The gate below
+	// requires this to be nonzero so the failure is loud.
+	static inline int s_rtCallSitesScanned = 0;
 
 	// Conditionally enlarges a Color RT — whitelist of post-chain pyramids.
 	// Called by both pre-hooked CreateRenderTarget_* thunks and the runtime
@@ -473,8 +480,12 @@ struct BSShaderRenderTargets_Create
 			globals::features::dlssPerf.InstallRenderTargetSizeHook();
 		}
 
-		// Pre-creation Color RT enlargement gate.
-		if (globals::features::dlssPerf.IsHookActive() && engineCreateRT && s_rtCallSitesPatched > 0) {
+		// Pre-creation Color RT enlargement gate. Requires the runtime scan to
+		// have patched at least one unhooked call site — without that, the RTs
+		// outside the statically-hooked set stay at renderRes and DLSSperf is
+		// effectively broken. Better to leave enlargement off and log loudly
+		// than enable it with a half-patched call graph.
+		if (globals::features::dlssPerf.IsHookActive() && engineCreateRT && s_rtCallSitesScanned > 0) {
 			s_enlargeRTWidth = globals::features::dlssPerf.GetDisplayEyeWidth() * 2;
 			s_enlargeRTHeight = globals::features::dlssPerf.GetDisplayEyeHeight();
 			s_enlargeRT = true;
@@ -1025,10 +1036,22 @@ namespace Hooks
 					if (target == createRTAddr) {
 						trampoline.write_call<5>(callAddr, BSShaderRenderTargets_Create::DLSSperf_CreateRT_Thunk);
 						BSShaderRenderTargets_Create::s_rtCallSitesPatched++;
+						BSShaderRenderTargets_Create::s_rtCallSitesScanned++;
 					}
 				}
 			}
+			// Count the 6 statically-hooked call sites in the total — useful
+			// for diagnostics — but the enlargement gate keys on the scanned
+			// count alone (see s_rtCallSitesScanned).
 			BSShaderRenderTargets_Create::s_rtCallSitesPatched += 6;
+			if (BSShaderRenderTargets_Create::s_rtCallSitesScanned == 0) {
+				logger::warn(
+					"DLSSperf: 0 unhooked CreateRenderTarget call sites found in "
+					"BSShaderRenderTargets::Create's 0x2500-byte window. The "
+					"post-chain RTs will stay at renderRes — feature will be "
+					"left dormant. Verify the scan window or update the static "
+					"write_thunk_call list.");
+			}
 		}
 
 #ifdef TRACY_ENABLE
