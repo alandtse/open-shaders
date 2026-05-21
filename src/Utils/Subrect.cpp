@@ -85,9 +85,14 @@ namespace Util::Subrect
 		const bool hasExplicitLeft =
 			a_json.contains("CropX") || a_json.contains("CropY") ||
 			a_json.contains("CropW") || a_json.contains("CropH");
+		// Require the full quartet before declaring the right-eye UV explicit.
+		// A partial config (e.g. only CropRightW present) would otherwise reuse
+		// stale values for the missing components and silently suppress the
+		// left→right auto-mirror fallback. With AND semantics, partial keys
+		// behave as "not explicit" and the mirror still runs.
 		const bool hasExplicitRight =
-			a_json.contains("CropRightX") || a_json.contains("CropRightY") ||
-			a_json.contains("CropRightW") || a_json.contains("CropRightH");
+			a_json.contains("CropRightX") && a_json.contains("CropRightY") &&
+			a_json.contains("CropRightW") && a_json.contains("CropRightH");
 		if (a_json.contains("CropRightX"))
 			currentRightUV.x = a_json["CropRightX"];
 		if (a_json.contains("CropRightY"))
@@ -111,8 +116,15 @@ namespace Util::Subrect
 				}
 				// Right-eye UV is optional in JSON; leave nullopt when absent so
 				// ApplyPreset auto-mirrors the left eye on demand. Explicit
-				// right_uv in JSON wins over any mirror.
-				if (entry.contains("right_uv")) {
+				// right_uv in JSON wins over any mirror — but only when it
+				// looks structurally valid. LoadUVArray falls back to a
+				// full-frame UV on malformed input, so without this guard a
+				// bad `right_uv` payload would suppress auto-mirroring AND
+				// land the right eye as full-frame, which is the worst of
+				// both worlds.
+				if (entry.contains("right_uv") &&
+					entry["right_uv"].is_array() &&
+					entry["right_uv"].size() == 4) {
 					preset.rightUV = LoadUVArray(entry["right_uv"]);
 				}
 				presets.push_back(std::move(preset));
@@ -229,11 +241,18 @@ namespace Util::Subrect
 		if (ImGui::Button("Save Preset")) {
 			std::string presetName = newPresetName;
 			if (!presetName.empty()) {
-				// Preserve the right-eye UV when stereo is on; otherwise rightUV
-				// is unused and value-init is fine. Without this, saving a
-				// preset in stereo mode loses the right-eye crop on re-apply
-				// (CodeRabbit Major @ scs#2356).
-				presets.push_back(Preset{ .name = presetName, .uv = currentUV, .rightUV = currentRightUV });
+				// Preserve the right-eye UV only when stereo is on. In mono
+				// mode currentRightUV is not tracked against currentUV, so
+				// snapshotting it would falsely mark the preset as having an
+				// explicit right eye and disable the auto-mirror fallback
+				// once stereo is later enabled. Leave rightUV as nullopt in
+				// mono — ApplyPreset will mirror left at apply time.
+				// (CodeRabbit Major @ scs#2356 for the stereo-side fix.)
+				Preset newPreset{ .name = presetName, .uv = currentUV };
+				if (stereoEnabled) {
+					newPreset.rightUV = currentRightUV;
+				}
+				presets.push_back(std::move(newPreset));
 				selectedPresetIndex = static_cast<int>(presets.size()) - 1;
 				newPresetName[0] = '\0';
 			}

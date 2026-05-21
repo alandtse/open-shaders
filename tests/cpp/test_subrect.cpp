@@ -364,3 +364,43 @@ TEST_CASE("Seeded preset without explicit rightUV auto-mirrors in stereo", "[sub
 	// Mirror of {0, 0, 0.5, 1.0} around x=0.5 is {0.5, 0, 0.5, 1.0}.
 	REQUIRE(UVApprox(c.GetRightEyeUV(), { 0.5f, 0.0f, 0.5f, 1.0f }));
 }
+
+TEST_CASE("Partial CropRight* keys still allow auto-mirror", "[subrect][stereo][regression]")
+{
+	// Only one of the four right-eye keys was provided. The old OR semantics
+	// would mark this as "explicit right eye" and suppress the mirror on
+	// SetStereoEnabled(true), leaving currentRightUV with mixed stale + loaded
+	// components. The fixed AND semantics treat partial as not-explicit so
+	// the mirror still runs.
+	Controller c;
+	json partial = {
+		{ "CropX", 0.20f }, { "CropY", 0.00f }, { "CropW", 0.60f }, { "CropH", 1.00f },
+		{ "CropRightW", 0.50f }  // a single right-eye key — incomplete quartet
+	};
+	c.LoadSettings(partial);
+	c.SetStereoEnabled(true);
+	// Mirror of {0.20, 0, 0.60, 1.0} is {0.20, 0, 0.60, 1.0} — confirms the
+	// mirror ran rather than landing the half-loaded right UV.
+	REQUIRE(UVApprox(c.GetRightEyeUV(), { 0.20f, 0.0f, 0.60f, 1.0f }));
+}
+
+TEST_CASE("Malformed preset right_uv falls back to auto-mirror", "[subrect][stereo][regression]")
+{
+	// LoadUVArray returns a default full-frame UV on malformed input. Without
+	// shape validation, a bad `right_uv` payload would land the right eye as
+	// full-frame AND suppress the auto-mirror — the worst of both worlds.
+	// With validation, malformed input is ignored and the mirror takes over.
+	Controller c;
+	c.SetStereoEnabled(true);
+	json bad = {
+		{ "CropPresets", json::array({ json{
+							 { "name", "Bad" },
+							 { "uv", { 0.10f, 0.0f, 0.40f, 1.0f } },
+							 { "right_uv", "not an array" }  // malformed
+						 } }) },
+		{ "SelectedPresetIndex", 0 }
+	};
+	c.LoadSettings(bad);
+	// Auto-mirror of {0.10, 0, 0.40, 1.0} = {0.50, 0, 0.40, 1.0}, NOT {0,0,1,1}.
+	REQUIRE(UVApprox(c.GetRightEyeUV(), { 0.50f, 0.0f, 0.40f, 1.0f }));
+}
