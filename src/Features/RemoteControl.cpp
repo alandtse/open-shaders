@@ -283,13 +283,17 @@ std::string RemoteControl::BuildClientConfig() const
 {
 	// Streamable HTTP transport per the MCP 2025-03-26 spec. Same shape works
 	// for Claude Code, Cursor, Continue, and other MCP hosts.
+	// IPv6 literals must be bracketed in a URL authority (RFC 3986 §3.2.2),
+	// so the IPv6 loopback "::1" becomes "[::1]". IPv4 / hostnames pass
+	// through verbatim.
+	const std::string hostInUrl = (settings.bindAddress.find(':') != std::string::npos) ? "[" + settings.bindAddress + "]" : settings.bindAddress;
 	const json cfg = {
 		{ "mcpServers",
 			{ { "community-shaders",
 				{
 					{ "type", "http" },
 					{ "url", std::format("http://{}:{}/mcp",
-								 settings.bindAddress, settings.port) },
+								 hostInUrl, settings.port) },
 				} } } }
 	};
 	return cfg.dump(4);
@@ -429,7 +433,7 @@ void RemoteControl::RegisterTools()
 // Helper used by both inspect(kind="state") and (potentially) future tools.
 static mcp::json EngineStateBlob()
 {
-	const uint frames = globals::state ? globals::state->frameCount : 0;
+	const uint frames = globals::state ? globals::state->frameCountAtomic.load(std::memory_order_relaxed) : 0u;
 	const bool vr = REL::Module::IsVR();
 	return mcp::json({
 		{ "plugin", "CommunityShaders" },
@@ -824,7 +828,7 @@ void RemoteControl::RegisterCaptureTool()
 			if (kind.empty()) {
 				return ErrorResult("missing required parameter 'kind'");
 			}
-			const uint enqueuedFrame = globals::state ? globals::state->frameCount : 0;
+			const uint enqueuedFrame = globals::state ? globals::state->frameCountAtomic.load(std::memory_order_relaxed) : 0u;
 
 			if (kind == "renderdoc") {
 				auto* renderDoc = &globals::features::renderDoc;
@@ -900,8 +904,8 @@ void RemoteControl::RegisterConsoleTool()
 							  "commands are silent (tcl, tfc, tg, tm, tlb…), so "
 							  "scraping console output is unreliable and "
 							  "intentionally NOT exposed.\n\n"
-							  "To verify a state change, poll get_state until "
-							  "frame_count > enqueued_at_frame (at least one tick "
+							  "To verify a state change, poll inspect(kind='state') "
+							  "until frame_count > enqueued_at_frame (at least one tick "
 							  "elapsed), then observe via side channels: tracy "
 							  "captures for perf-affecting changes, "
 							  "capture(kind='renderdoc'|'screenshot') for visual "
@@ -931,7 +935,7 @@ void RemoteControl::RegisterConsoleTool()
 			if (!task) {
 				return ErrorResult("SKSE TaskInterface unavailable");
 			}
-			const uint enqueuedFrame = globals::state ? globals::state->frameCount : 0;
+			const uint enqueuedFrame = globals::state ? globals::state->frameCountAtomic.load(std::memory_order_relaxed) : 0u;
 			// Capture by value so the string outlives this lambda's scope.
 			task->AddTask([command]() {
 				RE::Console::ExecuteCommand(command.c_str());

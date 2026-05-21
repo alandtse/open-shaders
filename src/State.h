@@ -268,6 +268,10 @@ public:
 
 	Util::FrameChecker frameChecker;
 	uint frameCount = 0;
+	// Thread-safe mirror of frameCount maintained by the render thread.
+	// Off-thread readers (MCP listener, future telemetry) must read this
+	// instead of touching frameCount directly to avoid a data race.
+	std::atomic<uint32_t> frameCountAtomic{ 0 };
 
 	// Skyrim constants
 	float2 screenSize = {};
