@@ -121,7 +121,7 @@ void AdvancedSettingsRenderer::RenderShaderCompileFlags()
 	if (ImGui::Checkbox("Half Precision (Partial Precision)", &partialPrecision)) {
 		globals::state->enablePartialPrecision.store(partialPrecision, std::memory_order_relaxed);
 		// Force a recompile so the flag actually takes effect on subsequent shader builds.
-		globals::shaderCache->Clear();
+		shaderCache->Clear();
 	}
 	if (auto _tt = Util::HoverTooltipWrapper()) {
 		ImGui::Text(
@@ -140,7 +140,7 @@ void AdvancedSettingsRenderer::RenderShaderCompileFlags()
 	if (ImGui::Checkbox("Avoid Flow Control", &avoidFlowControl)) {
 		globals::state->enableAvoidFlowControl.store(avoidFlowControl, std::memory_order_relaxed);
 		// Force a recompile so the flag actually takes effect on subsequent shader builds.
-		globals::shaderCache->Clear();
+		shaderCache->Clear();
 	}
 	if (auto _tt = Util::HoverTooltipWrapper()) {
 		ImGui::Text(
@@ -160,14 +160,19 @@ void AdvancedSettingsRenderer::RenderShaderThreading()
 
 	Util::DrawSectionHeader("Threading");
 
-	ImGui::SliderInt("Compiler Threads", &shaderCache->compilationThreadCount, 1, static_cast<int32_t>(std::thread::hardware_concurrency()));
+	// hardware_concurrency() is permitted to return 0 if the implementation can't
+	// detect it; clamp to at least 1 so the slider range (min=1, max=N) stays valid
+	// and ImGui doesn't assert.
+	const int32_t maxThreads = static_cast<int32_t>(std::max(1u, std::thread::hardware_concurrency()));
+
+	ImGui::SliderInt("Compiler Threads", &shaderCache->compilationThreadCount, 1, maxThreads);
 	if (auto _tt = Util::HoverTooltipWrapper()) {
 		ImGui::Text(
 			"Number of threads used to compile shaders at startup. "
 			"Defaults to all logical cores minus one for OS headroom (E-cores included). "
 			"Higher values finish compilation faster but may make the system less responsive.");
 	}
-	ImGui::SliderInt("Background Compiler Threads", &shaderCache->backgroundCompilationThreadCount, 1, static_cast<int32_t>(std::thread::hardware_concurrency()));
+	ImGui::SliderInt("Background Compiler Threads", &shaderCache->backgroundCompilationThreadCount, 1, maxThreads);
 	if (auto _tt = Util::HoverTooltipWrapper()) {
 		ImGui::Text(
 			"Number of threads used to compile shaders during gameplay. "
