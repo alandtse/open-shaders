@@ -41,7 +41,7 @@ find_package(nlohmann_json CONFIG REQUIRED)
 # All other cpp-mcp headers are copied verbatim into the patched mirror
 # so they live next to the patched header and find each other.
 file(MAKE_DIRECTORY "${CPP_MCP_PATCHED_INC}")
-file(GLOB _cpp_mcp_headers "${CPP_MCP_DIR}/include/*.h")
+file(GLOB _cpp_mcp_headers CONFIGURE_DEPENDS "${CPP_MCP_DIR}/include/*.h")
 foreach(_hdr IN LISTS _cpp_mcp_headers)
     get_filename_component(_name "${_hdr}" NAME)
     file(READ "${_hdr}" _content)

@@ -17,8 +17,10 @@
 #include <imgui.h>
 #include <imgui_stdlib.h>
 
+#include <algorithm>
 #include <format>
 #include <stdexcept>
+#include <vector>
 
 // cpp-mcp headers. Kept inside the .cpp only so the vendored httplib/json
 // in extern/cpp-mcp/common don't leak into other translation units.
