@@ -14,11 +14,16 @@
 //   - UpscaleRT is no longer needed.
 //   - Game menus are no longer occluded by the upscaler output.
 //
-//  Current limitation:
-//   Post-processing still runs on 1k kMAIN via a bilinear downsample of
-//   testTexture.  Performance is good and visual loss is minimal.  Once the
-//   post chain is rewritten to consume testTexture natively, the downsample
-//   can be removed.
+//  Current limitations:
+//   - Post-processing still runs on renderRes kMAIN via a 3x3-box downscale
+//     of testTexture (see BilinearCopyPS.hlsl — the filename is historical;
+//     the actual filter is a 9-tap box). Performance is good and visual
+//     loss is minimal. Once the post chain is rewritten to consume
+//     testTexture natively the downscale can be removed.
+//   - Main menu / pause backgrounds render through a path that doesn't pass
+//     through Main_PostProcessing, so HandlePostProcessing's two-layer swap
+//     doesn't wrap them. The 3D background shows at renderRes stretched
+//     over displayRes; the UI itself draws correctly at displayRes.
 //
 // ============================================================================
 
@@ -90,9 +95,10 @@ private:
 	bool postInterceptActive = false;
 
 	// Post-chain-done flag: set true after EndPostIntercept, cleared at
-	// PlayerView end by PlayerViewRender_Hook.  When true, UpdateViewPort
+	// PlayerView end by PlayerViewRender_Hook. When true, UpdateViewPort
 	// hook expands VP to displayRes so draws after the Post chain
-	// (UI合成, scene fade, submit prep) use correct 3k VP.
+	// (UI composition, scene fade, submit prep) use the correct
+	// display-res VP.
 	bool postChainDone = false;
 
 	uint32_t displayEyeWidth = 0;

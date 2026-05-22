@@ -279,6 +279,9 @@ void DLSSperf::TonemapRender_Hook::thunk(void* imageSpaceShader, RE::BSTriShape*
 		return;
 	}
 
+	ZoneScoped;
+	TracyD3D11Zone(globals::state->tracyCtx, "DLSSperf::TonemapRender");
+
 	auto renderer = RE::BSGraphics::Renderer::GetSingleton();
 	auto& rtData = renderer->GetRuntimeData();
 	auto& dsData = renderer->GetDepthStencilData();
@@ -339,6 +342,9 @@ void DLSSperf::RefractionRender_Hook::thunk(void* imageSpaceShader, RE::BSTriSha
 		func(imageSpaceShader, shape, param);
 		return;
 	}
+
+	ZoneScoped;
+	TracyD3D11Zone(globals::state->tracyCtx, "DLSSperf::RefractionRender");
 
 	// --- Pass 1: engine's normal 1k refraction (untouched) ---
 	func(imageSpaceShader, shape, param);
@@ -505,6 +511,10 @@ void DLSSperf::BeginPostIntercept()
 	if (!hookActive || !fakeDSV)
 		return;
 
+	ZoneScoped;
+	auto state = globals::state;
+	state->BeginPerfEvent("DLSSperf::BeginPostIntercept");
+
 	auto renderer = RE::BSGraphics::Renderer::GetSingleton();
 	auto& dsData = renderer->GetDepthStencilData();
 	auto& kmainCopyDS = dsData.depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kMAIN_COPY];
@@ -522,12 +532,18 @@ void DLSSperf::BeginPostIntercept()
 		if (kmainCopyDS.readOnlyViews[i])
 			kmainCopyDS.readOnlyViews[i] = fakeDSV.get();
 	}
+
+	state->EndPerfEvent();
 }
 
 void DLSSperf::EndPostIntercept()
 {
 	if (!hookActive || !fakeDSV)
 		return;
+
+	ZoneScoped;
+	auto state = globals::state;
+	state->BeginPerfEvent("DLSSperf::EndPostIntercept");
 
 	auto renderer = RE::BSGraphics::Renderer::GetSingleton();
 	auto& dsData = renderer->GetDepthStencilData();
@@ -541,6 +557,8 @@ void DLSSperf::EndPostIntercept()
 		kmainCopyDS.views[i] = savedKMainCopyViews[i];
 	for (int i = 0; i < 8; i++)
 		kmainCopyDS.readOnlyViews[i] = savedKMainCopyReadOnlyViews[i];
+
+	state->EndPerfEvent();
 }
 
 // ============================================================================
@@ -556,6 +574,11 @@ void DLSSperf::DownscaleToKMain()
 {
 	if (!hookActive || !testTextureSRV || !bilinearCopyPS || !bilinearCopyVS || !linearSampler)
 		return;
+
+	ZoneScoped;
+	auto state = globals::state;
+	state->BeginPerfEvent("DLSSperf::DownscaleToKMain");
+	TracyD3D11Zone(state->tracyCtx, "DLSSperf::DownscaleToKMain");
 
 	auto renderer = globals::game::renderer;
 	auto context = globals::d3d::context;
@@ -729,10 +752,16 @@ void DLSSperf::DownscaleToKMain()
 		savedIB->Release();
 	if (savedPSSRV0)
 		savedPSSRV0->Release();
+
+	state->EndPerfEvent();
 }
 
 void DLSSperf::HandlePostProcessing(const std::function<void()>& enginePost)
 {
+	ZoneScoped;
+	auto state = globals::state;
+	state->BeginPerfEvent("DLSSperf::HandlePostProcessing");
+
 	// Copy testTexture → refraTempTex before Post, so ISRefraction can read 3k scene
 	if (refraTempTex) {
 		globals::d3d::context->CopyResource(refraTempTex.get(), testTexture.get());
@@ -750,6 +779,8 @@ void DLSSperf::HandlePostProcessing(const std::function<void()>& enginePost)
 
 	// Restore kMAIN_COPY DS
 	EndPostIntercept();
+
+	state->EndPerfEvent();
 }
 
 void DLSSperf::DrawSettings()
