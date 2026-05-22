@@ -161,9 +161,19 @@ void AdvancedSettingsRenderer::RenderShaderThreading()
 	Util::DrawSectionHeader("Threading");
 
 	// hardware_concurrency() is permitted to return 0 if the implementation can't
-	// detect it; clamp to at least 1 so the slider range (min=1, max=N) stays valid
-	// and ImGui doesn't assert.
-	const int32_t maxThreads = static_cast<int32_t>(std::max(1u, std::thread::hardware_concurrency()));
+	// detect it. Fall back to the actual compile-pool thread count we ended up
+	// using at startup (which itself defaults to a sensible value when the OS
+	// query fails), then clamp to at least 1 so the slider range (min=1, max=N)
+	// stays valid and ImGui doesn't assert.
+	const uint32_t hwThreads = std::thread::hardware_concurrency();
+	const int32_t poolThreads = static_cast<int32_t>(shaderCache->compilationPool.get_thread_count());
+	const int32_t maxThreads = std::max({ 1, poolThreads, static_cast<int32_t>(hwThreads) });
+
+	// Snap the persisted values back into the valid range — a stale config can
+	// otherwise leave compilationThreadCount above maxThreads, which would
+	// render the slider in an out-of-range state.
+	shaderCache->compilationThreadCount = std::clamp(shaderCache->compilationThreadCount, 1, maxThreads);
+	shaderCache->backgroundCompilationThreadCount = std::clamp(shaderCache->backgroundCompilationThreadCount, 1, maxThreads);
 
 	ImGui::SliderInt("Compiler Threads", &shaderCache->compilationThreadCount, 1, maxThreads);
 	if (auto _tt = Util::HoverTooltipWrapper()) {
@@ -195,7 +205,7 @@ void AdvancedSettingsRenderer::RenderShaderCacheControls()
 	if (auto _tt = Util::HoverTooltipWrapper()) {
 		ImGui::Text(
 			"Automatically recompile shaders on file change. "
-			"Intended for developing.");
+			"Intended for development.");
 	}
 
 	// Dump Shaders option
