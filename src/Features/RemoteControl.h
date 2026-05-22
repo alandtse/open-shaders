@@ -19,9 +19,10 @@ namespace mcp
 	class server;
 	struct tool;
 	// cpp-mcp's tool_handler is std::function<json(const json&, const std::string&)>
-	// but json there is ordered_json, which we can't forward-declare cleanly.
-	// We type-erase via std::function<void()> in the tool-tracking layer and
-	// keep the real signature local to the .cpp file.
+	// where `json` is an alias for ordered_json — that can't be forward-declared
+	// cleanly without dragging the full vendored nlohmann/json header into this
+	// public header. Tool registration therefore stays in the .cpp where the
+	// real signature is in scope; only opaque pointers are exposed here.
 }
 
 class RemoteControl : public Feature

@@ -19,6 +19,7 @@
 
 #include <algorithm>
 #include <format>
+#include <optional>
 #include <stdexcept>
 #include <vector>
 
@@ -31,9 +32,12 @@ namespace
 {
 	// The control endpoint is intentionally loopback-only — exposing it off-host
 	// would let any networked client toggle features and dispatch captures.
+	// Only accept literal loopback IPs: on Windows the hosts file (or a
+	// hijacked resolver) can map "localhost" to a routable address, which would
+	// silently break the loopback-only contract.
 	bool IsLoopbackAddress(const std::string& host)
 	{
-		return host == "127.0.0.1" || host == "::1" || host == "localhost";
+		return host == "127.0.0.1" || host == "::1";
 	}
 
 	void NormalizeBindAddress(std::string& host)
@@ -607,15 +611,29 @@ void RemoteControl::RegisterFeatureTool()
 					return ErrorResult("feature not found",
 						{ { "shortName", shortName } });
 				}
+				// Marshal the write onto the main/render thread. Feature::loaded
+				// is read every frame by Feature::ForEachLoadedFeature without
+				// synchronization, so writing it directly from the MCP listener
+				// thread is a data race. AddTask runs the closure on the next
+				// tick.
+				auto* task = SKSE::GetTaskInterface();
+				if (!task) {
+					return ErrorResult("SKSE TaskInterface unavailable");
+				}
 				const bool previous = target->loaded;
-				target->loaded = desired;
-				logger::info("Remote Control: feature(toggle, {}, {}) (was {})",
-					shortName, desired, previous);
+				const uint enqueuedFrame = globals::state ? globals::state->frameCountAtomic.load(std::memory_order_relaxed) : 0u;
+				task->AddTask([target, desired, shortName]() {
+					target->loaded = desired;
+					logger::info("Remote Control: feature(toggle, {}, {}) applied",
+						shortName, desired);
+				});
 				return TextResult(mcp::json({
 												{ "action", "toggle" },
 												{ "shortName", shortName },
 												{ "previous", previous },
-												{ "current", desired },
+												{ "requested", desired },
+												{ "queued", true },
+												{ "enqueued_at_frame", enqueuedFrame },
 											})
 						.dump());
 			}
@@ -645,32 +663,54 @@ void RemoteControl::RegisterFeatureTool()
 					return ErrorResult("settings is not valid JSON",
 						{ { "detail", e.what() } });
 				}
-				try {
-					feature->LoadSettings(blob);
-				} catch (const std::exception& e) {
-					return ErrorResult("LoadSettings threw",
-						{ { "shortName", shortName }, { "detail", e.what() } });
+				// Marshal LoadSettings onto the main thread. Many features
+				// mutate UI/render-thread-visible state inside LoadSettings
+				// (palettes, cached textures, settings JSON read elsewhere),
+				// so calling it from the MCP listener thread is racy.
+				auto* task = SKSE::GetTaskInterface();
+				if (!task) {
+					return ErrorResult("SKSE TaskInterface unavailable");
 				}
-				logger::info("Remote Control: feature(set, {})", shortName);
+				const uint enqueuedFrame = globals::state ? globals::state->frameCountAtomic.load(std::memory_order_relaxed) : 0u;
+				task->AddTask([feature, blob, shortName]() mutable {
+					try {
+						feature->LoadSettings(blob);
+						logger::info("Remote Control: feature(set, {}) applied", shortName);
+					} catch (const std::exception& e) {
+						logger::error("Remote Control: feature(set, {}) LoadSettings threw: {}",
+							shortName, e.what());
+					}
+				});
 				return TextResult(mcp::json({
 												{ "action", "set" },
 												{ "shortName", shortName },
-												{ "applied", true },
+												{ "queued", true },
+												{ "enqueued_at_frame", enqueuedFrame },
 											})
 						.dump());
 			}
 			if (action == "reset") {
-				try {
-					feature->RestoreDefaultSettings();
-				} catch (const std::exception& e) {
-					return ErrorResult("RestoreDefaultSettings threw",
-						{ { "shortName", shortName }, { "detail", e.what() } });
+				// Same marshaling rationale as feature(set): RestoreDefaultSettings
+				// touches state that the render/UI threads read concurrently.
+				auto* task = SKSE::GetTaskInterface();
+				if (!task) {
+					return ErrorResult("SKSE TaskInterface unavailable");
 				}
-				logger::info("Remote Control: feature(reset, {})", shortName);
+				const uint enqueuedFrame = globals::state ? globals::state->frameCountAtomic.load(std::memory_order_relaxed) : 0u;
+				task->AddTask([feature, shortName]() {
+					try {
+						feature->RestoreDefaultSettings();
+						logger::info("Remote Control: feature(reset, {}) applied", shortName);
+					} catch (const std::exception& e) {
+						logger::error("Remote Control: feature(reset, {}) RestoreDefaultSettings threw: {}",
+							shortName, e.what());
+					}
+				});
 				return TextResult(mcp::json({
 												{ "action", "reset" },
 												{ "shortName", shortName },
-												{ "reset", true },
+												{ "queued", true },
+												{ "enqueued_at_frame", enqueuedFrame },
 											})
 						.dump());
 			}
@@ -741,28 +781,58 @@ void RemoteControl::RegisterAbtestTool()
 			};
 
 			if (action == "status") {
+				// Read-only — safe from the listener thread; the only state we
+				// touch is the manager's atomic-ish status getters.
 				return TextResult(statusBlob().dump());
 			}
+
+			// Lifecycle actions (start/stop/clear) marshal onto the main thread:
+			// Enable/Disable swap configs via State::Load → JSON, and Menu::Load
+			// touches settings the menu/render thread also reads. Doing that
+			// from the listener thread is a race against the next frame's UI.
+			auto* task = SKSE::GetTaskInterface();
+			if (!task) {
+				return ErrorResult("SKSE TaskInterface unavailable");
+			}
+			const uint enqueuedFrame = globals::state ? globals::state->frameCountAtomic.load(std::memory_order_relaxed) : 0u;
+			const auto queuedResult = [&](const std::string& act) {
+				auto blob = statusBlob();
+				blob["action"] = act;
+				blob["queued"] = true;
+				blob["enqueued_at_frame"] = enqueuedFrame;
+				return TextResult(blob.dump());
+			};
+
 			if (action == "start") {
+				std::optional<uint32_t> interval;
 				if (params.contains("interval") && params["interval"].is_number()) {
 					const auto secs = params["interval"].get<int>();
 					if (secs > 0) {
-						mgr->SetTestInterval(static_cast<uint32_t>(secs));
+						interval = static_cast<uint32_t>(secs);
 					}
 				}
-				mgr->Enable();
-				logger::info("Remote Control: abtest(start)");
-				return TextResult(statusBlob().dump());
+				task->AddTask([mgr, interval]() {
+					if (interval) {
+						mgr->SetTestInterval(*interval);
+					}
+					mgr->Enable();
+					logger::info("Remote Control: abtest(start) applied");
+				});
+				return queuedResult("start");
 			}
 			if (action == "stop") {
-				mgr->Disable();
-				logger::info("Remote Control: abtest(stop)");
-				return TextResult(statusBlob().dump());
+				task->AddTask([mgr]() {
+					mgr->Disable();
+					logger::info("Remote Control: abtest(stop) applied");
+				});
+				return queuedResult("stop");
 			}
 			if (action == "clear") {
-				mgr->ClearCachedSnapshots();
-				logger::info("Remote Control: abtest(clear)");
-				return TextResult(statusBlob().dump());
+				task->AddTask([mgr]() {
+					mgr->ClearCachedSnapshots();
+					logger::info("Remote Control: abtest(clear) applied");
+				});
+				return queuedResult("clear");
 			}
 			if (action == "diff") {
 				mcp::json entries = mcp::json::array();
@@ -803,7 +873,7 @@ void RemoteControl::RegisterCaptureTool()
 							  "the in-application API. Honors the `frames` "
 							  "parameter (default 1, max 120). RenderDoc must "
 							  "be attached or the in-app DLL loaded; check "
-							  "list_features for RenderDoc loaded=true. Output "
+							  "feature(action='list') for RenderDoc loaded=true. Output "
 							  "lands in RenderDoc's configured captures dir.\n"
 							  "  screenshot — Lossless screenshot via the "
 							  "Screenshot feature's non-blocking capture path. "
@@ -836,7 +906,7 @@ void RemoteControl::RegisterCaptureTool()
 				auto* renderDoc = &globals::features::renderDoc;
 				if (!renderDoc->loaded) {
 					return ErrorResult("RenderDoc feature is not loaded",
-						{ { "hint", "list_features shows RenderDoc.loaded" } });
+						{ { "hint", "feature(action='list') shows RenderDoc.loaded" } });
 				}
 				if (!renderDoc->IsAvailable()) {
 					return ErrorResult(
