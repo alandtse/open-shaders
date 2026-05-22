@@ -16,9 +16,8 @@
 //
 //  Current limitations:
 //   - Post-processing still runs on renderRes kMAIN via a 3x3-box downscale
-//     of testTexture (see BilinearCopyPS.hlsl — the filename is historical;
-//     the actual filter is a 9-tap box). Performance is good and visual
-//     loss is minimal. Once the post chain is rewritten to consume
+//     of testTexture (see BoxDownscalePS.hlsl). Performance is good and
+//     visual loss is minimal. Once the post chain is rewritten to consume
 //     testTexture natively the downscale can be removed.
 //   - Main menu / pause backgrounds render through a path that doesn't pass
 //     through Main_PostProcessing, so HandlePostProcessing's two-layer swap
@@ -75,7 +74,12 @@ struct DLSSperf
 
 	// Post hybrid entry point: called from Upscaling's Main_PostProcessing::thunk.
 	// Wraps the engine Post chain with DLSSperf's two-layer struct swap.
-	bool ShouldHandlePost() const { return hookActive && testTexture; }
+	// Keyed on postPipelineReady (set at the end of SetupResources) so a
+	// partial-init state can't slip past the gate into a null deref. The
+	// runtime upscaler-method gate is enforced separately by callers (the
+	// engine's BSOpenVR hook is install-time, so a mid-session DLSS→FSR swap
+	// would leave hookActive=true but testTexture stale — see Upscaling.cpp).
+	bool ShouldHandlePost() const { return postPipelineReady; }
 	void HandlePostProcessing(const std::function<void()>& enginePost);
 
 	// Fake 3k DepthStencil for Post pass DS swap
@@ -89,6 +93,14 @@ private:
 
 	// Phase 2: resolution hook state
 	bool hookActive = false;
+
+	// Set at the end of SetupResources after every critical Post resource
+	// (textures, views, fake DS, downscale shaders, sampler) successfully
+	// initialized. ShouldHandlePost() returns this — a partial-init state
+	// (e.g., refraTempTex OOM after testTexture succeeds) flips this to false
+	// and the engine Post chain runs unwrapped on the small kMAIN, which is
+	// visually degraded but stable. (CodeRabbit scs#2357 fail-closed.)
+	bool postPipelineReady = false;
 
 	// Post intercept phase flag: when true, VP post-correction is skipped
 	// so enlarged kTEMP/kTOTAL get correct 3k VP from engine.
@@ -132,6 +144,23 @@ private:
 	};
 	bool refractionHookInstalled = false;
 
+	// IS shader hook: ISCopy (Render vfunc 0x1 on vtable[3]).
+	// The VR main menu / pause compositor uses a single ISCopy draw from kMAIN
+	// (RenderRes when DLSSperf is active) into kPROJECTEDMENU (fixed 2048²) or
+	// kMENUBG (DisplayRes via enlargement). With a 1:1 viewport the small
+	// source gets stamped into the top-left of the larger dest — that's the
+	// "main menu looks downscaled" bug. Strategy: let func() draw normally,
+	// then if dest > VP, replay the draw with the viewport stretched to the
+	// dest's full dims so the sampler-clamped source is rescaled across the
+	// whole panel. ISCopy's PS/CB/IA stay sticky on the context after func(),
+	// so the replay only needs a VP change + a DrawIndexed.
+	struct ISCopyRender_Hook
+	{
+		static void thunk(void* imageSpaceShader, RE::BSTriShape* shape, RE::ImageSpaceEffectParam* param);
+		static inline REL::Relocation<decltype(thunk)> func;
+	};
+	bool isCopyHookInstalled = false;
+
 	// UI pass hook: FinishAccumulatingDispatch (vfunc 0x2A on BSShaderAccumulator)
 	// When renderMode==24 (UI pass), swaps KMAIN DS → fakeDS so 3k kMENUBG gets 3k depth.
 	struct UIPassDispatch_Hook
@@ -157,12 +186,19 @@ private:
 	// Refraction: RTV for testTexture (ISRefraction 3k output target)
 	winrt::com_ptr<ID3D11RenderTargetView> testTextureRTV;
 
-	// Two-layer swap: saved pointers for restore
-	// Outer layer (BeginPost/EndPost): kMAIN_COPY DS + SRV
+	// Two-layer swap: saved pointers for restore.
+	// Outer layer (BeginPostIntercept/EndPostIntercept): kMAIN_COPY DS views
+	//   only — the engine writes the post chain's DS through kMAIN_COPY's
+	//   depth slot, so we redirect it at the start/end of Post.
+	// Inner layer (TonemapRender_Hook): kMAIN + kMAIN_COPY SRVs and kMAIN DS
+	//   views — the tonemap shader reads from kMAIN SRV (and the refraction
+	//   path reads from kMAIN_COPY SRV); both need to point at testTextureSRV
+	//   so the tonemap consumes the AA'd 3k DLSS output instead of the small
+	//   kMAIN. savedKMainCopySRV is captured/restored by the inner layer, not
+	//   the outer one (Copilot scs#2357 — comment used to claim outer).
 	ID3D11DepthStencilView* savedKMainCopyViews[8] = {};
 	ID3D11DepthStencilView* savedKMainCopyReadOnlyViews[8] = {};
 	ID3D11ShaderResourceView* savedKMainCopySRV = nullptr;
-	// Inner layer (tonemap hook): kMAIN DS + kMAIN SRV
 	ID3D11DepthStencilView* savedKMainViews[8] = {};
 	ID3D11DepthStencilView* savedKMainReadOnlyViews[8] = {};
 	ID3D11ShaderResourceView* savedKMainSRV = nullptr;
@@ -171,8 +207,11 @@ private:
 	winrt::com_ptr<ID3D11Texture2D> fakeDS;
 	winrt::com_ptr<ID3D11DepthStencilView> fakeDSV;
 
-	// Downscale pass: Box 3×3 downscale testTexture (3k) → kMAIN (1k)
-	winrt::com_ptr<ID3D11PixelShader> bilinearCopyPS;
-	winrt::com_ptr<ID3D11VertexShader> bilinearCopyVS;
+	// Downscale pass: Box 3×3 downscale testTexture (3k) → kMAIN (1k).
+	// (Named "boxDownscale" — earlier revisions called this "bilinearCopy"
+	// when the implementation was a true bilinear sample. It became a 9-tap
+	// box during development; the rename happened pre-release.)
+	winrt::com_ptr<ID3D11PixelShader> boxDownscalePS;
+	winrt::com_ptr<ID3D11VertexShader> boxDownscaleVS;
 	winrt::com_ptr<ID3D11SamplerState> linearSampler;
 };

@@ -1038,20 +1038,54 @@ namespace Hooks
 		// CreateRenderTarget call. Without this, enlargement only applies to
 		// the 6 hooked targets and other RTs (kIMAGESPACE_TEMP_COPY etc.)
 		// stay at renderRes, breaking the post-chain assumption.
-		if (BSShaderRenderTargets_Create::engineCreateRT) {
+		//
+		// Gated on IsVR — DLSSperf is VR-only, so the scan is wasted work
+		// on flatrim and (worse) pollutes the executable-memory neighborhood
+		// pattern-match for no purpose (Copilot scs#2357).
+		if (REL::Module::IsVR() && BSShaderRenderTargets_Create::engineCreateRT) {
+			constexpr size_t kScanWindow = 0x2500;
+			// Reserve 5 bytes for the E8+rel32 operand so we never read past
+			// the end of the scan window when a 0xE8 is matched at the tail
+			// (Copilot scs#2357 — original loop ran offset<0x2500 and could
+			// read 4 bytes of rel32 past the window).
+			constexpr size_t kScanLimit = kScanWindow - 5;
+
 			auto funcBase = REL::RelocationID(100458, 107175).address();
 			auto createRTAddr = reinterpret_cast<uintptr_t>(BSShaderRenderTargets_Create::engineCreateRT);
 			auto& trampoline = SKSE::GetTrampoline();
 
-			for (size_t offset = 0; offset < 0x2500; offset++) {
+			// Emit a runtime tag so the logged offsets are immediately
+			// attributable to a Skyrim build without a maintainer having to
+			// cross-reference module version separately. The scanner is the
+			// runtime fallback for unhooked CreateRenderTarget call sites;
+			// once enough offsets have been captured across SE/AE/VR builds,
+			// the scanner can be retired in favor of static
+			// `write_thunk_call`s like the 6 above (and like FrameAnnotations
+			// uses everywhere). Until then, every matched offset is dumped
+			// at info level so a maintainer can grep CommunityShaders.log
+			// after a single run on each runtime variant and migrate them
+			// to a literal `REL::Relocate(SE, AE, VR)` table.
+			const char* runtimeTag = REL::Module::IsVR() ? "VR" : (REL::Module::IsAE() ? "AE" : "SE");
+
+			for (size_t offset = 0; offset < kScanLimit; offset++) {
 				auto callAddr = funcBase + offset;
-				if (*reinterpret_cast<uint8_t*>(callAddr) == 0xE8) {
-					int32_t rel = *reinterpret_cast<int32_t*>(callAddr + 1);
+				if (*reinterpret_cast<const uint8_t*>(callAddr) == 0xE8) {
+					// Use memcpy for the 4-byte rel32 read: the operand is at
+					// an unaligned address (callAddr+1, where callAddr is the
+					// 0xE8 byte). A direct int32_t* deref is technically UB
+					// for unaligned access; memcpy lowers to the same MOV on
+					// x86 without the UB tag (CodeRabbit scs#2357).
+					int32_t rel = 0;
+					std::memcpy(&rel, reinterpret_cast<const void*>(callAddr + 1), sizeof(rel));
 					uintptr_t target = callAddr + 5 + rel;
 					if (target == createRTAddr) {
 						trampoline.write_call<5>(callAddr, BSShaderRenderTargets_Create::DLSSperf_CreateRT_Thunk);
 						BSShaderRenderTargets_Create::s_rtCallSitesPatched++;
 						BSShaderRenderTargets_Create::s_rtCallSitesScanned++;
+						logger::info(
+							"DLSSperf scan match: {} offset {:#x} -> CreateRenderTarget "
+							"(promote to write_thunk_call to retire the scanner)",
+							runtimeTag, offset);
 					}
 				}
 			}

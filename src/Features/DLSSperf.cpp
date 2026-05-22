@@ -225,6 +225,16 @@ void DLSSperf::SetupResources()
 		refractionHookInstalled = true;
 	}
 
+	// Menu-background fix: ISCopy is the entire menu post-chain (verified via
+	// RenderDoc on a baseline frame — single ISCopy draw, source → kPROJECTED-
+	// MENU 2048² / kMENUBG). Hook the same vtable slot FrameAnnotations uses
+	// for its passthrough annotation, then replay with a stretched VP when
+	// dest > source. No resource dependencies — pure VP/Draw replay.
+	if (hookActive && !isCopyHookInstalled) {
+		stl::write_vfunc<0x1, ISCopyRender_Hook>(RE::VTABLE_BSImagespaceShaderCopy[3]);
+		isCopyHookInstalled = true;
+	}
+
 	if (hookActive && !uiPassHookInstalled && fakeDSV) {
 		stl::write_vfunc<0x2A, UIPassDispatch_Hook>(RE::VTABLE_BSShaderAccumulator[0]);
 		uiPassHookInstalled = true;
@@ -238,17 +248,17 @@ void DLSSperf::SetupResources()
 	}
 
 	// Downscale shaders
-	if (hookActive && !bilinearCopyPS) {
-		bilinearCopyPS.attach(static_cast<ID3D11PixelShader*>(
-			Util::CompileShader(L"Data/Shaders/DLSSperf/BilinearCopyPS.hlsl", { { "PSHADER", "" } }, "ps_5_0")));
-		if (!bilinearCopyPS)
-			logger::error("[DLSSperf] Failed to compile BilinearCopyPS");
+	if (hookActive && !boxDownscalePS) {
+		boxDownscalePS.attach(static_cast<ID3D11PixelShader*>(
+			Util::CompileShader(L"Data/Shaders/DLSSperf/BoxDownscalePS.hlsl", { { "PSHADER", "" } }, "ps_5_0")));
+		if (!boxDownscalePS)
+			logger::error("[DLSSperf] Failed to compile BoxDownscalePS");
 	}
-	if (hookActive && !bilinearCopyVS) {
-		bilinearCopyVS.attach(static_cast<ID3D11VertexShader*>(
+	if (hookActive && !boxDownscaleVS) {
+		boxDownscaleVS.attach(static_cast<ID3D11VertexShader*>(
 			Util::CompileShader(L"Data/Shaders/Upscaling/UpscaleVS.hlsl", { { "VSHADER", "" } }, "vs_5_0")));
-		if (!bilinearCopyVS)
-			logger::error("[DLSSperf] Failed to compile BilinearCopyVS");
+		if (!boxDownscaleVS)
+			logger::error("[DLSSperf] Failed to compile BoxDownscale VS");
 	}
 	if (hookActive && !linearSampler) {
 		D3D11_SAMPLER_DESC sd{};
@@ -260,6 +270,33 @@ void DLSSperf::SetupResources()
 		sd.MaxLOD = D3D11_FLOAT32_MAX;
 		if (FAILED(device->CreateSamplerState(&sd, linearSampler.put())))
 			logger::error("[DLSSperf] Failed to create linear sampler");
+	}
+
+	// Fail-closed pipeline-ready gate (CodeRabbit scs#2357).
+	// hookActive only means "BSOpenVR size hook is live + the engine has been
+	// sized at RenderRes." If any of the downstream resources we depend on at
+	// Post time failed to create, we'd previously still claim ShouldHandlePost
+	// and walk into a null deref inside HandlePostProcessing/Tonemap/Refraction.
+	// Compute the readiness flag once, here — every consumer keys off it.
+	//
+	// The minimum viable set for Post wrapping:
+	//   testTexture + testTextureSRV  — read by tonemap inner-swap (always)
+	//   fakeDS + fakeDSV              — bound as the 3k DS during Post
+	//   boxDownscaleVS/PS + linearSampler — DownscaleToKMain needs these
+	// Refraction (refraTempTex/SRV + testTextureRTV) is optional: its hook
+	// gates on those resources at install time, so absence just means the
+	// refraction draw runs on the engine's 1k path — degraded but stable.
+	postPipelineReady =
+		hookActive &&
+		testTexture && testTextureSRV &&
+		fakeDS && fakeDSV &&
+		boxDownscaleVS && boxDownscalePS && linearSampler;
+
+	if (hookActive && !postPipelineReady) {
+		logger::error(
+			"[DLSSperf] Post pipeline failed to initialize fully — Post wrap "
+			"disabled, engine RTs remain at RenderRes. Check upstream resource "
+			"creation errors above.");
 	}
 }
 
@@ -360,10 +397,13 @@ void DLSSperf::RefractionRender_Hook::thunk(void* imageSpaceShader, RE::BSTriSha
 	ID3D11DepthStencilView* savedDSV = nullptr;
 	context->OMGetRenderTargets(1, &savedRTV, &savedDSV);
 
-	// Save current VP
-	D3D11_VIEWPORT savedVP = {};
-	UINT numVP = 1;
-	context->RSGetViewports(&numVP, &savedVP);
+	// Save the full viewport stack rather than a single VP — RSSetViewports/
+	// RSGetViewports work on arrays sized up to D3D11_VIEWPORT_AND_SCISSORRECT_
+	// OBJECT_COUNT_PER_PIPELINE (16). Truncating to one would silently drop
+	// extra bound viewports if a later engine pass relied on multi-VP.
+	UINT numVP = D3D11_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE;
+	D3D11_VIEWPORT savedVP[D3D11_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE] = {};
+	context->RSGetViewports(&numVP, savedVP);
 
 	// Save current t0 SRV (kMAIN.SRV used by ISRefraction as scene input)
 	ID3D11ShaderResourceView* savedSRV0 = nullptr;
@@ -395,7 +435,7 @@ void DLSSperf::RefractionRender_Hook::thunk(void* imageSpaceShader, RE::BSTriSha
 	// RSGetViewports may have returned 0 if the prior pass left no viewport
 	// bound; skip the restore in that case rather than pushing a zero-init VP.
 	if (numVP > 0) {
-		context->RSSetViewports(numVP, &savedVP);
+		context->RSSetViewports(numVP, savedVP);
 	}
 	context->PSSetShaderResources(0, 1, &savedSRV0);
 
@@ -406,6 +446,105 @@ void DLSSperf::RefractionRender_Hook::thunk(void* imageSpaceShader, RE::BSTriSha
 		savedDSV->Release();
 	if (savedSRV0)
 		savedSRV0->Release();
+}
+
+// ============================================================================
+// ISCopyRender_Hook: stretch ISCopy when source < dest (menu compositor fix)
+// ============================================================================
+// The VR menu compositor uses a single ISCopy draw to blit the rendered scene
+// (kMAIN — RenderRes under DLSSperf) into a fixed-size projection surface
+// (kPROJECTEDMENU 2048², or kMENUBG which DLSSperf enlarges to DisplayRes).
+// Engine ISCopy uses a 1:1 viewport sized to the source, so the small source
+// is stamped into the top-left of the larger dest. Symptom: "main menu image
+// looks downscaled."
+//
+// Fix: after func() runs, if dest > current VP we replay the draw with the
+// VP expanded to the dest's full dims. ISCopy's PS/CB/IA/sampler are sticky
+// on the D3D context after func() returns (same pattern RefractionRender_Hook
+// relies on), so the replay needs only a viewport change + DrawIndexed and
+// the engine's clamp-sampler stretches the source naturally.
+//
+// In-game ISCopy (where source.w == dest.w under DLSSperf — kMAIN renderRes
+// → kMAIN_COPY renderRes) takes the early-out branch and the engine's draw
+// is the final pixel.
+
+void DLSSperf::ISCopyRender_Hook::thunk(void* imageSpaceShader, RE::BSTriShape* shape, RE::ImageSpaceEffectParam* param)
+{
+	auto& dlssPerf = globals::features::dlssPerf;
+
+	// Inactive / non-VR: passthrough.
+	if (!dlssPerf.hookActive) {
+		func(imageSpaceShader, shape, param);
+		return;
+	}
+
+	// Let the engine draw first. After func() returns the IS shader's PS, CB,
+	// sampler, IA layout, vertex/index buffers, and topology are all still
+	// bound on the context (sticky D3D11 state). We only need to override the
+	// viewport for the replay draw.
+	func(imageSpaceShader, shape, param);
+
+	auto* context = globals::d3d::context;
+
+	// Inspect the current RTV's dest dimensions.
+	ID3D11RenderTargetView* curRTV = nullptr;
+	ID3D11DepthStencilView* curDSV = nullptr;
+	context->OMGetRenderTargets(1, &curRTV, &curDSV);
+	if (!curRTV) {
+		if (curDSV)
+			curDSV->Release();
+		return;
+	}
+
+	ID3D11Resource* rtRes = nullptr;
+	curRTV->GetResource(&rtRes);
+	if (!rtRes) {
+		curRTV->Release();
+		if (curDSV)
+			curDSV->Release();
+		return;
+	}
+
+	D3D11_TEXTURE2D_DESC rtDesc{};
+	static_cast<ID3D11Texture2D*>(rtRes)->GetDesc(&rtDesc);
+	rtRes->Release();
+
+	// Current VP (the one func() used) — full array so we can restore exactly.
+	UINT numVP = D3D11_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE;
+	D3D11_VIEWPORT savedVP[D3D11_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE] = {};
+	context->RSGetViewports(&numVP, savedVP);
+
+	// Only intervene when the engine's VP is smaller than the dest. The +1
+	// guard avoids float-equality issues (VPs are floats, RT dims are uint32).
+	bool needsStretch = numVP > 0 && rtDesc.Width > static_cast<UINT>(savedVP[0].Width + 1.0f);
+
+	if (needsStretch) {
+		ZoneScoped;
+		TracyD3D11Zone(globals::state->tracyCtx, "DLSSperf::ISCopyStretch");
+
+		// Replay viewport: full dest extent, preserve depth range from the
+		// original so anything sampling depth (unlikely for ISCopy but safe)
+		// keeps the same Z behavior.
+		D3D11_VIEWPORT stretchVP = savedVP[0];
+		stretchVP.TopLeftX = 0.0f;
+		stretchVP.TopLeftY = 0.0f;
+		stretchVP.Width = static_cast<float>(rtDesc.Width);
+		stretchVP.Height = static_cast<float>(rtDesc.Height);
+		context->RSSetViewports(1, &stretchVP);
+
+		// ISCopy is a fullscreen quad drawn as a triangle list (6 indices).
+		// Same index count RefractionRender_Hook uses for the same reason —
+		// both replay the IS shader's standard fullscreen geometry.
+		context->DrawIndexed(6, 0, 0);
+
+		// Restore engine's VP so any state inspector downstream sees what it
+		// expects. numVP guaranteed > 0 inside this branch.
+		context->RSSetViewports(numVP, savedVP);
+	}
+
+	curRTV->Release();
+	if (curDSV)
+		curDSV->Release();
 }
 
 // ============================================================================
@@ -572,22 +711,25 @@ void DLSSperf::EndPostIntercept()
 
 void DLSSperf::DownscaleToKMain()
 {
-	if (!hookActive || !testTextureSRV || !bilinearCopyPS || !bilinearCopyVS || !linearSampler)
+	if (!hookActive || !testTextureSRV || !boxDownscalePS || !boxDownscaleVS || !linearSampler)
 		return;
 
 	ZoneScoped;
 	auto state = globals::state;
-	state->BeginPerfEvent("DLSSperf::DownscaleToKMain");
-	TracyD3D11Zone(state->tracyCtx, "DLSSperf::DownscaleToKMain");
-
 	auto renderer = globals::game::renderer;
 	auto context = globals::d3d::context;
 	auto& rtData = renderer->GetRuntimeData();
 
 	auto& kmain = rtData.renderTargets[RE::RENDER_TARGETS::kMAIN];
 
+	// Bail before opening the perf event so we don't leave a dangling
+	// Begin without End (Copilot scs#2357 — earlier revision started the
+	// event, then early-returned on null RTV, leaking the Tracy zone).
 	if (!kmain.RTV)
 		return;
+
+	state->BeginPerfEvent("DLSSperf::DownscaleToKMain");
+	TracyD3D11Zone(state->tracyCtx, "DLSSperf::DownscaleToKMain");
 
 	// Save all D3D state that we overwrite
 	ID3D11RenderTargetView* savedRTV = nullptr;
@@ -663,8 +805,8 @@ void DLSSperf::DownscaleToKMain()
 	context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 
 	// Shaders — clear GS/HS/DS to prevent pipeline interference
-	context->VSSetShader(bilinearCopyVS.get(), nullptr, 0);
-	context->PSSetShader(bilinearCopyPS.get(), nullptr, 0);
+	context->VSSetShader(boxDownscaleVS.get(), nullptr, 0);
+	context->PSSetShader(boxDownscalePS.get(), nullptr, 0);
 	context->GSSetShader(nullptr, nullptr, 0);
 	context->HSSetShader(nullptr, nullptr, 0);
 	context->DSSetShader(nullptr, nullptr, 0);

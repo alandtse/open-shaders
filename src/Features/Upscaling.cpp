@@ -427,13 +427,21 @@ void Upscaling::DrawSettings()
 		// render resolution instead of display resolution; the upscaler writes
 		// to a private DisplayRes texture. Saves VRAM/bandwidth proportional
 		// to the quality-mode scale ratio.
-		if (globals::game::isVR && upscaleMethod == UpscaleMethod::kDLSS) {
+		//
+		// Gated to developer mode for this release: the menu/pause 3D backgrounds
+		// still render at renderRes stretched over displayRes because their path
+		// bypasses Main_PostProcessing. Once that path is wrapped, drop this gate
+		// and flip enableDLSSperf to default-on — the in-game win (~18% frame p50
+		// at typical quality presets) is large enough to justify it for all VR
+		// users on a DLSS-capable GPU.
+		if (globals::game::isVR && upscaleMethod == UpscaleMethod::kDLSS &&
+			globals::state && globals::state->IsDeveloperMode()) {
 			ImGui::Separator();
 			// Toggle is restart-gated (the engine reads it during InstallRenderTargetSizeHook
 			// at startup), so the change handler has nothing useful to run here — let ImGui
 			// just update the bound setting and rely on the user restarting.
-			ImGui::Checkbox("Render engine at upscaled resolution (experimental)", &settings.enableDLSSperf);
-			ImGui::TextUnformatted("Changing this requires a restart to take effect.");
+			ImGui::Checkbox("Render engine at upscaled resolution (developer)", &settings.enableDLSSperf);
+			ImGui::TextUnformatted("Developer-only. Changing this requires a restart to take effect.");
 			if (auto _tt = Util::HoverTooltipWrapper()) {
 				ImGui::Text(
 					"VR DLSSperf: when enabled, the entire engine pipeline allocates render targets at\n"
@@ -1257,8 +1265,16 @@ void Upscaling::ConfigureUpscaling(RE::BSGraphics::State* a_viewport)
 		// already allocated at RenderRes — so the DRS-style scale is identity.
 		// Jitter is still computed at the real DisplayRes phase ratio so DLSS
 		// has enough sub-pixel diversity for the upscale.
+		//
+		// The runtime upscaleMethod gate matters: the BSOpenVR hook installs
+		// once at startup if the user had DLSS + DLSSperf checked, but the
+		// user can still pick FSR/XeSS this session. In that case engine RTs
+		// are RenderRes (irreversible — the hook can't un-allocate them) but
+		// our upscale target (testTexture) is only populated by DLSS's path.
+		// Falling back to the standard jitter math keeps FSR's resolution
+		// scaling consistent with the engine's RT sizes. (CodeRabbit scs#2357.)
 		auto& dlssPerf = globals::features::dlssPerf;
-		if (dlssPerf.IsHookActive()) {
+		if (dlssPerf.IsHookActive() && upscaleMethod == UpscaleMethod::kDLSS) {
 			resolutionScale = { 1.0f, 1.0f };
 
 			auto renderWidth = static_cast<int>(dlssPerf.GetRenderEyeWidth());
@@ -2161,7 +2177,13 @@ void Upscaling::Main_PostProcessing::thunk(RE::ImageSpaceManager* a_this, uint32
 	// struct swap around the engine's func() so tonemap + refraction read
 	// the DisplayRes testTexture instead of the small kMAIN. The supplied
 	// lambda is the engine call we'd normally make directly.
-	if (globals::features::dlssPerf.ShouldHandlePost()) {
+	//
+	// Runtime upscaler gate: testTexture is only populated by DLSS's evaluate
+	// path (Streamline routes its colorOut there when DLSSperf is active). If
+	// the user picked FSR/XeSS this session, the texture is stale/black —
+	// wrapping Post around it would produce a dark frame. ShouldHandlePost()
+	// catches the partial-init case; this gate catches the runtime swap.
+	if (upscaleMethod == UpscaleMethod::kDLSS && globals::features::dlssPerf.ShouldHandlePost()) {
 		globals::features::dlssPerf.HandlePostProcessing([&]() {
 			func(a_this, a3, a_target, a_4, a_5);
 		});

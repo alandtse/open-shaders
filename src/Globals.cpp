@@ -405,13 +405,13 @@ namespace globals
 			if (VertexCount == 30 && globals::game::isVR) {
 				auto& dlssPerf = globals::features::dlssPerf;
 				if (dlssPerf.IsHookActive() && dlssPerf.IsPostChainDone()) {
-					// Save the current viewport so we can restore it after the
+					// Save the full viewport array so we can restore it after the
 					// fade-overlay draw. RSGetViewports may return numVP=0 if no
 					// viewport was previously set; zero-init defends against
 					// reading uninitialized memory in that case.
-					UINT numVP = 1;
-					D3D11_VIEWPORT savedVP{};
-					This->RSGetViewports(&numVP, &savedVP);
+					UINT numVP = D3D11_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE;
+					D3D11_VIEWPORT savedVP[D3D11_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE] = {};
+					This->RSGetViewports(&numVP, savedVP);
 
 					// Inject displayRes VP for this draw only.
 					D3D11_VIEWPORT vp{};
@@ -425,10 +425,10 @@ namespace globals
 
 					func(This, VertexCount, StartVertexLocation);
 
-					// Restore the original viewport only if we actually captured
-					// one — otherwise we'd push undefined state.
+					// Restore the original viewport array only if we actually captured
+					// any — otherwise we'd push undefined state.
 					if (numVP > 0) {
-						This->RSSetViewports(1, &savedVP);
+						This->RSSetViewports(numVP, savedVP);
 					}
 					return;
 				}
