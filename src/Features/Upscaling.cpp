@@ -1038,8 +1038,16 @@ void Upscaling::EnsureVRIntermediateTextures()
 	auto screenSize = globals::state->screenSize;
 	auto renderSize = Util::ConvertToDynamic(screenSize);
 
-	uint32_t eyeWidthOut = (uint32_t)(screenSize.x / 2);
-	uint32_t eyeHeightOut = (uint32_t)screenSize.y;
+	// DLSSperf: state->screenSize is polluted to RenderRes (the BSOpenVR size
+	// hook spoofs HMD-recommended size). DLSS output needs to land at real
+	// DisplayRes, so size the OUTPUT intermediates from dlssPerf's snapshot
+	// of the true HMD resolution. Input intermediates stay at renderSize.
+	auto& dlssPerf = globals::features::dlssPerf;
+	const bool dlssperfActive = dlssPerf.IsHookActive() && dlssPerf.GetTestTexture();
+	const float2 outputSize = dlssperfActive ? dlssPerf.GetDisplayScreenSize() : screenSize;
+
+	uint32_t eyeWidthOut = (uint32_t)(outputSize.x / 2);
+	uint32_t eyeHeightOut = (uint32_t)outputSize.y;
 	uint32_t eyeWidthIn = (uint32_t)(renderSize.x / 2);
 	uint32_t eyeHeightIn = (uint32_t)renderSize.y;
 
