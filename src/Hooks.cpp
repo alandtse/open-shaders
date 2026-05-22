@@ -475,8 +475,17 @@ struct BSShaderRenderTargets_Create
 		// DLSSperf: install the BSOpenVR render-target-size hook before the
 		// engine creates its render targets. This is the only place where
 		// BSOpenVR is guaranteed available AND we can still influence RT
-		// allocation. Gated on user opt-in via Upscaling::Settings.
-		if (globals::game::isVR && globals::features::upscaling.settings.enableDLSSperf) {
+		// allocation. Gated on user opt-in via Upscaling::Settings AND on
+		// DLSS actually being the resolved upscale path — a stale config can
+		// leave enableDLSSperf=true while the active method is FSR/TAA or
+		// DLSS is unsupported on this GPU, and the rest of DLSSperf only
+		// makes sense for the DLSS output path.
+		const bool dlssperfShouldRun =
+			globals::game::isVR &&
+			globals::features::upscaling.settings.enableDLSSperf &&
+			globals::features::upscaling.GetUpscaleMethod() == Upscaling::UpscaleMethod::kDLSS;
+
+		if (dlssperfShouldRun) {
 			globals::features::dlssPerf.InstallRenderTargetSizeHook();
 		}
 
@@ -485,7 +494,10 @@ struct BSShaderRenderTargets_Create
 		// outside the statically-hooked set stay at renderRes and DLSSperf is
 		// effectively broken. Better to leave enlargement off and log loudly
 		// than enable it with a half-patched call graph.
-		if (globals::features::dlssPerf.IsHookActive() && engineCreateRT && s_rtCallSitesScanned > 0) {
+		const bool dlssperfCanEnable =
+			globals::features::dlssPerf.IsHookActive() && s_rtCallSitesScanned > 0;
+
+		if (dlssperfCanEnable && engineCreateRT) {
 			s_enlargeRTWidth = globals::features::dlssPerf.GetDisplayEyeWidth() * 2;
 			s_enlargeRTHeight = globals::features::dlssPerf.GetDisplayEyeHeight();
 			s_enlargeRT = true;
@@ -498,8 +510,11 @@ struct BSShaderRenderTargets_Create
 		globals::state->Setup();
 
 		// DLSSperf is not in the Feature list (it's a worker driven by the
-		// upscaling toggle), so SetupResources runs here directly.
-		if (globals::features::dlssPerf.IsHookActive()) {
+		// upscaling toggle), so SetupResources runs here directly. Gated on
+		// the same scan-success check as enlargement: if the call-site scan
+		// found nothing, the post path would come up against a half-patched
+		// render-target graph, which is worse than staying dormant.
+		if (dlssperfCanEnable) {
 			globals::features::dlssPerf.SetupResources();
 		}
 	}

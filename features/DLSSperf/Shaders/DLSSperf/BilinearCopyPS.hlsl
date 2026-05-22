@@ -19,10 +19,16 @@ float4 main(PS_INPUT input) : SV_Target
 	SourceTex.GetDimensions(srcSize.x, srcSize.y);
 	float2 texelSize = 1.0 / srcSize;
 
+	// Clamp tap UVs to [0,1] so border pixels don't read across edges if the
+	// sampler ever gets created with wrap/mirror addressing instead of clamp.
+	// On clamp samplers this saturate() is a no-op the compiler can elide.
 	float4 sum = 0;
 	[unroll] for (int y = -1; y <= 1; y++)
 		[unroll] for (int x = -1; x <= 1; x++)
-			sum += SourceTex.SampleLevel(LinearSampler, input.TexCoord + float2(x, y) * texelSize, 0);
+	{
+		float2 uv = saturate(input.TexCoord + float2(x, y) * texelSize);
+		sum += SourceTex.SampleLevel(LinearSampler, uv, 0);
+	}
 	return sum * (1.0 / 9.0);
 }
 
