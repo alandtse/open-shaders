@@ -41,6 +41,7 @@ class State;
 class Deferred;
 struct TruePBR;
 class RenderDoc;
+class RemoteControl;
 class Menu;
 
 namespace SIE
@@ -92,6 +93,7 @@ namespace globals
 		extern Upscaling upscaling;
 		extern HDRDisplay hdrDisplay;
 		extern RenderDoc renderDoc;
+		extern RemoteControl remoteControl;
 		extern ScreenshotFeature screenshotFeature;
 		extern WeatherEditor weatherEditor;
 		extern ExponentialHeightFog exponentialHeightFog;
