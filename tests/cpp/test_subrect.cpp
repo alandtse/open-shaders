@@ -12,11 +12,11 @@ using json = nlohmann::json;
 #include "Utils/Subrect.h"
 
 #include <catch2/catch_test_macros.hpp>
-#include <catch2/matchers/catch_matchers_floating_point.hpp>
 
-#include <cmath>  // std::abs
+#include <cmath>    // std::abs
+#include <utility>  // std::pair
+#include <vector>   // std::vector — degenerate-dimensions cases enumerate (w,h) pairs
 
-using Catch::Matchers::WithinAbs;
 using Util::Subrect::Controller;
 using Util::Subrect::Preset;
 using Util::Subrect::UVRegion;
