@@ -605,6 +605,12 @@ if(AUTO_PLUGIN_DEPLOYMENT OR AIO_ZIP_TO_DIST)
     # Copy feature folders (files only; copy_shaders.stamp owns Shaders/
     # to avoid racing). All features copied — autoupload filter applies
     # only at archive time.
+    #
+    # The CORE marker is excluded from the per-feature copy: every feature
+    # that has one would write to the same `${AIO_DIR}/CORE` path, and the
+    # trailing `remove` below deletes it anyway. When MSBuild runs the copy
+    # commands in parallel two features can race for the write and one
+    # fails with "Permission denied", taking PREPARE_AIO down with it.
     foreach(_fpath IN LISTS FEATURE_PATHS)
         if(EXISTS "${_fpath}")
             file(
@@ -613,11 +619,13 @@ if(AUTO_PLUGIN_DEPLOYMENT OR AIO_ZIP_TO_DIST)
                 "${_fpath}/*"
             )
             list(FILTER _feature_files EXCLUDE REGEX "/Shaders/")
+            list(FILTER _feature_files EXCLUDE REGEX "/CORE$")
             append_copy_if_different(_prepare_aio_cmds _feature_files "${_fpath}" "${AIO_DIR}")
         endif()
     endforeach()
 
-    # Remove CORE from AIO if it exists (keep rest intact)
+    # Remove CORE from AIO if it left over from a previous build that pre-
+    # dated the per-feature exclusion above. Cheap, idempotent.
     list(
         APPEND _prepare_aio_cmds
         COMMAND
