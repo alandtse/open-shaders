@@ -215,6 +215,18 @@ TEST_CASE("Stereo SaveSettings emits right_uv for every preset", "[subrect][ster
 	// preserved" from "default fallback mirrored it back".
 	const UVRegion leftUV{ 0.10f, 0.0f, 0.40f, 1.0f };
 	const UVRegion rightUV{ 0.55f, 0.0f, 0.35f, 1.0f };
+
+	// Build the preset object via direct mutation rather than a single nested
+	// initializer list. MSVC's C++23 module-aware parse cannot disambiguate
+	// `json::array({ json{ {k,v}, {k,v} } })` from the
+	// `initializer_list<initializer_list<json>>` overload of `json`'s
+	// constructor, producing a misleading C3329 at the inner closing `)`.
+	// Building element-by-element sidesteps the ambiguity entirely.
+	json preset = json::object();
+	preset["name"] = "Asymmetric";
+	preset["uv"] = json::array({ leftUV.x, leftUV.y, leftUV.w, leftUV.h });
+	preset["right_uv"] = json::array({ rightUV.x, rightUV.y, rightUV.w, rightUV.h });
+
 	json staged = {
 		{ "CropX", leftUV.x },
 		{ "CropY", leftUV.y },
@@ -224,11 +236,7 @@ TEST_CASE("Stereo SaveSettings emits right_uv for every preset", "[subrect][ster
 		{ "CropRightY", rightUV.y },
 		{ "CropRightW", rightUV.w },
 		{ "CropRightH", rightUV.h },
-		{ "CropPresets", json::array({ json{
-			{ "name", "Asymmetric" },
-			{ "uv", json::array({ leftUV.x, leftUV.y, leftUV.w, leftUV.h }) },
-			{ "right_uv", json::array({ rightUV.x, rightUV.y, rightUV.w, rightUV.h }) } }) }
-		},
+		{ "CropPresets", json::array({ preset }) },
 		{ "SelectedPresetIndex", 0 }
 	};
 	src.LoadSettings(staged);
@@ -392,12 +400,16 @@ TEST_CASE("Malformed preset right_uv falls back to auto-mirror", "[subrect][ster
 	// With validation, malformed input is ignored and the mirror takes over.
 	Controller c;
 	c.SetStereoEnabled(true);
+
+	// Same C++23-modules-friendly construction as above (see the regression
+	// test for the rationale).
+	json badPreset = json::object();
+	badPreset["name"] = "Bad";
+	badPreset["uv"] = json::array({ 0.10f, 0.0f, 0.40f, 1.0f });
+	badPreset["right_uv"] = "not an array";  // malformed
+
 	json bad = {
-		{ "CropPresets", json::array({ json{
-							 { "name", "Bad" },
-							 { "uv", { 0.10f, 0.0f, 0.40f, 1.0f } },
-							 { "right_uv", "not an array" }  // malformed
-						 } }) },
+		{ "CropPresets", json::array({ badPreset }) },
 		{ "SelectedPresetIndex", 0 }
 	};
 	c.LoadSettings(bad);

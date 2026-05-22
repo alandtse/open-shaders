@@ -23,12 +23,20 @@ on:
                 description: "Run shader unit tests"
                 type: boolean
                 default: true
+            run-cpp-tests:
+                description: "Run C++ unit tests (tests/cpp)"
+                type: boolean
+                default: true
             hlsl-should-build:
                 description: "Passed to check-hlsl-changes; 'true' forces shader steps to run"
                 type: string
                 default: "true"
             shader-tests-should-build:
                 description: "Passed to check-hlsl-changes for unit tests"
+                type: string
+                default: "true"
+            cpp-tests-should-build:
+                description: "Forces cpp_tests build+run when 'true'; lets PR-checks skip it otherwise"
                 type: string
                 default: "true"
             cache-key-suffix:
@@ -255,6 +263,70 @@ jobs:
               uses: actions/upload-artifact@v7
               with:
                   name: shader-test-results
+                  path: |
+                      build/ALL/Testing/**
+                  retention-days: 7
+                  if-no-files-found: ignore
+
+    cpp-unit-tests:
+        name: Run C++ Unit Tests
+        if: inputs.run-cpp-tests
+        runs-on: windows-2025
+        permissions:
+            contents: read
+        steps:
+            - name: Checkout code
+              uses: actions/checkout@v6
+              with:
+                  ref: ${{ inputs.ref }}
+                  repository: ${{ inputs.repository }}
+                  submodules: recursive
+
+            # Inline gate (no composite action — the logic is one branch).
+            # PR events skip when no relevant files changed; push / dispatch /
+            # release always run.
+            - name: Check if cpp_tests should run
+              id: check-cpp
+              shell: bash
+              run: |
+                  if [ "${{ github.event_name }}" != "pull_request_target" ]; then
+                    echo "Non-PR event, proceeding."
+                    echo "skip=false" >> $GITHUB_OUTPUT
+                  elif [ "${{ inputs.cpp-tests-should-build }}" != "true" ]; then
+                    echo "No cpp_tests-related changes detected, skipping."
+                    echo "skip=true" >> $GITHUB_OUTPUT
+                  else
+                    echo "cpp_tests-related changes detected, proceeding."
+                    echo "skip=false" >> $GITHUB_OUTPUT
+                  fi
+
+            - name: Setup Build Environment
+              id: setup
+              if: steps.check-cpp.outputs.skip != 'true'
+              uses: ./.github/actions/setup-build-environment
+              with:
+                  cache-key-suffix: "cpp-tests${{ inputs.cache-key-suffix }}"
+                  cmake-preset: "ALL"
+                  build-dir: "build/ALL"
+
+            - name: Build cpp_tests
+              if: steps.check-cpp.outputs.skip != 'true'
+              uses: lukka/run-cmake@v10
+              with:
+                  configurePreset: ALL
+                  buildPreset: ALL
+                  buildPresetAdditionalArgs: "['--target cpp_tests']"
+
+            - name: Run C++ unit tests
+              if: steps.check-cpp.outputs.skip != 'true'
+              run: |
+                  ctest --test-dir build/ALL -C Release --output-on-failure -R CppUtilTests --timeout 60
+
+            - name: Upload test results on failure
+              if: failure() && steps.check-cpp.outputs.skip != 'true'
+              uses: actions/upload-artifact@v7
+              with:
+                  name: cpp-test-results
                   path: |
                       build/ALL/Testing/**
                   retention-days: 7
