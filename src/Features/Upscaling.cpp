@@ -439,7 +439,11 @@ void Upscaling::DrawSettings()
 					"VR DLSSperf: when enabled, the entire engine pipeline allocates render targets at\n"
 					"the upscaled-render resolution instead of display resolution. DLSS writes to a\n"
 					"private DisplayRes texture. Substantial VRAM and bandwidth savings, especially\n"
-					"at high HMD resolutions. Restart required.");
+					"at high HMD resolutions. Restart required.\n"
+					"\n"
+					"Known limitation: the main menu / pause backgrounds render through a path that\n"
+					"bypasses Main_PostProcessing, so they show at renderRes stretched over displayRes.\n"
+					"The menu UI itself draws at full displayRes. In-game rendering is unaffected.");
 			}
 			Util::Text::Warning("Warning: Requires restart");
 		}
