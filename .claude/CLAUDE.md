@@ -460,13 +460,40 @@ Follow conventional commit format for consistency:
 -   **Format**: `type(scope): description`
 -   **Title Limit**: 50 characters maximum
 -   **Body Wrap**: 72 characters per line
--   **Types**: `feat`, `fix`, `refactor`, `docs`, `style`, `test`, `chore`
 -   **Examples**:
     -   `feat(menu): extract DrawMenuVisitor helper methods`
     -   `fix(imgui): resolve orphaned TableNextColumn calls`
     -   `refactor(constants): centralize UI constants in ThemeManager`
+    -   `ci: gate cpp_tests build on changed files`
+    -   `build: drop CORE marker from per-feature AIO copy`
+    -   `test: fix cpp_tests build under MSVC C++23 modules`
 
-Conventional commits drive semantic-release. `feat:` triggers a minor bump, `fix:` triggers a patch bump, `feat!:` or `BREAKING CHANGE:` triggers a major bump. `chore:`, `docs:`, `style:`, `test:`, `refactor:` produce no release on their own. Pick the type with the version impact in mind — a refactor mislabeled `feat:` will force a minor bump on the next release.
+**Squash-merge note.** PRs are squash-merged, so the **PR title** becomes the commit message that semantic-release reads. Getting the title's type right matters more than per-commit messages on the PR branch — those get discarded. Use `gh pr edit <num> --title "..."` to fix a stale title before merge.
+
+**Type → release impact** (the full set accepted by `amannn/action-semantic-pull-request@v5` + `@semantic-release/commit-analyzer` defaults):
+
+| Type       | Use for                                                   | Release impact          |
+| ---------- | --------------------------------------------------------- | ----------------------- |
+| `feat`     | New user-facing feature or capability                     | **minor** (1.X.0)       |
+| `fix`      | Bug fix to user-facing behavior                           | **patch** (1.5.X)       |
+| `perf`     | Performance improvement to user-facing behavior           | **patch** (1.5.X)       |
+| `revert`   | Revert of a prior commit                                  | follows reverted commit |
+| `build`    | Build system, packaging, dependencies (CMake, vcpkg, AIO) | none                    |
+| `chore`    | Maintenance, misc tooling, repo hygiene                   | none                    |
+| `ci`       | CI workflows, GitHub Actions, lint configs                | none                    |
+| `docs`     | Documentation, comments, READMEs, CLAUDE.md               | none                    |
+| `refactor` | Code restructuring with no behavior change                | none                    |
+| `style`    | Formatting, whitespace, missing semicolons                | none                    |
+| `test`     | Tests, test fixtures, test infrastructure                 | none                    |
+
+Append `!` to the type (or add a `BREAKING CHANGE:` footer) for **major** (X.0.0).
+
+**Pick the type with version impact in mind.** Common traps:
+
+-   A pure build/CI/test change mislabeled `fix:` will burn a patch release on a non-user-visible change. Use `build:`, `ci:`, or `test:` instead.
+-   A refactor mislabeled `feat:` will force a minor bump.
+-   A perf win on internal code (not exposed to users) is `refactor:`, not `perf:`.
+-   `chore:` is a catch-all; prefer the specific type when one fits.
 
 ### Release Branch Model
 
