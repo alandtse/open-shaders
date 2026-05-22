@@ -624,7 +624,7 @@ if(AUTO_PLUGIN_DEPLOYMENT OR AIO_ZIP_TO_DIST)
         endif()
     endforeach()
 
-    # Remove CORE from AIO if it left over from a previous build that pre-
+    # Remove CORE from AIO if it's left over from a previous build that pre-
     # dated the per-feature exclusion above. Cheap, idempotent.
     list(
         APPEND _prepare_aio_cmds
