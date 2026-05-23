@@ -312,8 +312,19 @@ void Upscaling::DrawSettings()
 		// alongside the rest of the upscaler controls. Restart-gated —
 		// the BSOpenVR size hook reads this at world load and sizes every
 		// engine RT off the boot value.
-		if (globals::game::isVR && upscaleMethod == UpscaleMethod::kDLSS) {
+		//
+		// The setting persists across method switches (we don't auto-flip
+		// it when the user picks FSR/TAA), but the checkbox itself is
+		// disabled outside the DLSS context since the install path triple-
+		// gates on DLSS being the resolved method. Keep visible-but-greyed
+		// so users see the option exists and understand why it isn't live.
+		if (globals::game::isVR) {
+			const bool dlssAvailable = upscaleMethod == UpscaleMethod::kDLSS;
+			if (!dlssAvailable)
+				ImGui::BeginDisabled();
 			ImGui::Checkbox("Render engine at upscaled resolution (DLSSperf)", &settings.enableDLSSperf);
+			if (!dlssAvailable)
+				ImGui::EndDisabled();
 			if (auto _tt = Util::HoverTooltipWrapper()) {
 				ImGui::Text(
 					"When enabled, the engine pipeline allocates render targets at the upscaled-render\n"
@@ -321,10 +332,13 @@ void Upscaling::DrawSettings()
 					"DisplayRes texture. Substantial VRAM and bandwidth savings, especially at high HMD\n"
 					"resolutions.\n"
 					"\n"
-					"Restart required to enable/disable. Method and Upscale Preset changes also require a\n"
-					"restart while this is active; sharpness / model preset / Reflex remain live.");
+					"Requires the DLSS upscaler. Restart required to enable/disable. Method and Upscale\n"
+					"Preset changes also require a restart while this is active; sharpness / model preset\n"
+					"/ Reflex remain live.");
 			}
-			if (settings.enableDLSSperf != globals::features::dlssPerf.IsHookActive())
+			if (!dlssAvailable && settings.enableDLSSperf)
+				Util::Text::Disabled("DLSSperf requires DLSS — switch upscaler Method to DLSS to activate.");
+			if (dlssAvailable && settings.enableDLSSperf != globals::features::dlssPerf.IsHookActive())
 				Util::Text::RestartNeeded("Pending restart: DLSSperf will %s on next launch.",
 					settings.enableDLSSperf ? "enable" : "disable");
 		}

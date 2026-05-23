@@ -265,10 +265,10 @@ void DLSSperf::SetupResources()
 		playerViewHookInstalled = true;
 	}
 
-	// Downscale shaders
+	// Downscale + blit shaders
 	if (hookActive && !boxDownscalePS) {
 		boxDownscalePS.attach(static_cast<ID3D11PixelShader*>(
-			Util::CompileShader(L"Data/Shaders/DLSSperf/BoxDownscalePS.hlsl", { { "PSHADER", "" } }, "ps_5_0")));
+			Util::CompileShader(L"Data/Shaders/Upscaling/DLSSperf/BoxDownscalePS.hlsl", { { "PSHADER", "" } }, "ps_5_0")));
 		if (!boxDownscalePS)
 			logger::error("[DLSSperf] Failed to compile BoxDownscalePS");
 	}
@@ -278,11 +278,11 @@ void DLSSperf::SetupResources()
 		if (!boxDownscaleVS)
 			logger::error("[DLSSperf] Failed to compile BoxDownscale VS");
 	}
-	if (hookActive && !menuStretchPS) {
-		menuStretchPS.attach(static_cast<ID3D11PixelShader*>(
-			Util::CompileShader(L"Data/Shaders/DLSSperf/MenuBGStretchPS.hlsl", { { "PSHADER", "" } }, "ps_5_0")));
-		if (!menuStretchPS)
-			logger::error("[DLSSperf] Failed to compile MenuBGStretchPS");
+	if (hookActive && !menuBlitPS) {
+		menuBlitPS.attach(static_cast<ID3D11PixelShader*>(
+			Util::CompileShader(L"Data/Shaders/Upscaling/DLSSperf/MenuBGBlitPS.hlsl", { { "PSHADER", "" } }, "ps_5_0")));
+		if (!menuBlitPS)
+			logger::error("[DLSSperf] Failed to compile MenuBGBlitPS");
 	}
 	if (hookActive && !linearSampler) {
 		D3D11_SAMPLER_DESC sd{};
@@ -350,7 +350,7 @@ void DLSSperf::TonemapRender_Hook::thunk(void* imageSpaceShader, RE::BSTriShape*
 	// guaranteed regardless of tonemap's UV behavior.
 	if (globals::state && globals::state->IsMainOrLoadingMenuOpen()) {
 		func(imageSpaceShader, shape, param);
-		dlssPerf.MaybeStretchMenuBG(RE::RENDER_TARGETS::kTOTAL);
+		dlssPerf.MaybeBlitMenuBG(RE::RENDER_TARGETS::kTOTAL);
 		return;
 	}
 
@@ -1019,17 +1019,21 @@ void DLSSperf::DownscaleToKMain()
 	state->EndPerfEvent();
 }
 
-// Bridge menu BG into kTOTAL/kMENUBG. Driven from TonemapRender_Hook post-
-// func in menu/loading state: the engine's tonemap shader's UV math assumes
-// RT.size == kMAIN.size (true for DLAA, broken under DLSS), so we overwrite
-// its output with our own bridge of real kMAIN. Prefers a DLSS-upscaled
-// testTexture for crisp results; falls back to a plain bilinear stretch of
-// raw renderRes kMAIN when DLSS isn't usable. One-shot per frame; flag reset
-// at Present (PlayerView doesn't fire in main menu).
-void DLSSperf::MaybeStretchMenuBG(uint32_t boundRTIdx)
+// Bridge the DLSS-reconstructed menu BG into kTOTAL/kMENUBG. Driven from
+// TonemapRender_Hook post-func in menu/loading state: the engine's tonemap
+// shader's UV math assumes RT.size == kMAIN.size (true for DLAA, broken
+// under DLSS), so we run our own DLSS evaluate against the engine's
+// menu-state inputs (jitter via Main_UpdateJitter, depth via menu BG pre-
+// pass, motion vectors as ISTemporalAA reads them) and blit testTexture →
+// dest. One-shot per frame via blittedFrameId (Present doesn't fire here
+// and PlayerView doesn't fire in main-menu, so the frame-id guard is the
+// only reliable per-frame boundary).
+void DLSSperf::MaybeBlitMenuBG(uint32_t boundRTIdx)
 {
 	const uint32_t currentFrame = globals::state ? globals::state->frameCount : 0;
-	if (!hookActive || stretchedFrameId == currentFrame || !menuStretchPS || !boxDownscaleVS || !linearSampler)
+	if (!hookActive || blittedFrameId == currentFrame || !menuBlitPS || !boxDownscaleVS || !linearSampler)
+		return;
+	if (!testTexture || !testTextureSRV)
 		return;
 	if (!globals::state || !globals::state->IsMainOrLoadingMenuOpen())
 		return;
@@ -1039,27 +1043,18 @@ void DLSSperf::MaybeStretchMenuBG(uint32_t boundRTIdx)
 
 	auto renderer = globals::game::renderer;
 	auto& rtData = renderer->GetRuntimeData();
-	auto& kmain = rtData.renderTargets[RE::RENDER_TARGETS::kMAIN];
 	auto& dest = rtData.renderTargets[boundRTIdx];
-	if (!kmain.SRV || !dest.RTV || !dest.texture)
+	if (!dest.RTV || !dest.texture)
 		return;
 
 	ZoneScoped;
 	auto state = globals::state;
 	auto* context = globals::d3d::context;
-	state->BeginPerfEvent("DLSSperf::MenuBGStretch");
-	TracyD3D11Zone(state->tracyCtx, "DLSSperf::MenuBGStretch");
+	state->BeginPerfEvent("DLSSperf::MenuBGBlit");
+	TracyD3D11Zone(state->tracyCtx, "DLSSperf::MenuBGBlit");
 
-	// DLSS upscale: kMAIN (renderRes) → testTexture (displayRes). Inputs
-	// (jitter, kMAIN depth, kMOTION_VECTOR) are the same engine-maintained
-	// buffers ISTemporalAA reads, so menu state — where TAA already works —
-	// gives DLSS coherent reconstruction without any sentinel/clear hacks.
-	// Falls back to raw kMAIN bilinear if testTexture is missing.
-	ID3D11ShaderResourceView* srcSRV = kmain.SRV;
-	if (testTexture && testTextureSRV) {
-		globals::features::upscaling.Upscale();
-		srcSRV = testTextureSRV.get();
-	}
+	globals::features::upscaling.Upscale();
+	ID3D11ShaderResourceView* srcSRV = testTextureSRV.get();
 
 	// Save/restore matches DownscaleToKMain — we're inside SetDirtyStates
 	// before the engine's flush, so the engine's bind picks up the right
@@ -1119,7 +1114,7 @@ void DLSSperf::MaybeStretchMenuBG(uint32_t boundRTIdx)
 	context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 
 	context->VSSetShader(boxDownscaleVS.get(), nullptr, 0);
-	context->PSSetShader(menuStretchPS.get(), nullptr, 0);
+	context->PSSetShader(menuBlitPS.get(), nullptr, 0);
 	context->GSSetShader(nullptr, nullptr, 0);
 	context->HSSetShader(nullptr, nullptr, 0);
 	context->DSSetShader(nullptr, nullptr, 0);
@@ -1198,7 +1193,7 @@ void DLSSperf::MaybeStretchMenuBG(uint32_t boundRTIdx)
 	if (savedIB)
 		savedIB->Release();
 
-	stretchedFrameId = currentFrame;
+	blittedFrameId = currentFrame;
 	state->EndPerfEvent();
 }
 

@@ -92,10 +92,10 @@ struct DLSSperf
 	// Fake 3k DepthStencil for Post pass DS swap
 	ID3D11DepthStencilView* GetFakeDSV() const { return fakeDSV.get(); }
 
-	// Bridge renderRes kMAIN (where the engine drew menu BG) into the bound
-	// enlarged RT so OpenVR submit sees both BG + UI compositor output.
-	// One-shot per frame, reset at PlayerView end.
-	void MaybeStretchMenuBG(uint32_t boundRTIdx);
+	// Bridge the DLSS-reconstructed menu BG (testTexture, displayRes) into
+	// the bound enlarged RT so OpenVR submit sees both BG + UI compositor
+	// output. One-shot per frame; gated via blittedFrameId.
+	void MaybeBlitMenuBG(uint32_t boundRTIdx);
 
 	// Generic DS swap for draws binding an enlarged RT against kMAIN/kMAIN
 	// _COPY DS — without this the rasterizer clips to the smaller DS and
@@ -230,9 +230,8 @@ private:
 	};
 	bool setDirtyStatesHookInstalled = false;
 
-	// Replaces the legacy DLSSperf logic that lived in Hooks.cpp. Post-
-	// corrects the engine viewport whenever it differs from our enlarged
-	// RTs. Chains via stl::detour_thunk.
+	// Post-corrects the engine viewport whenever it differs from our
+	// enlarged RTs. Chains via stl::detour_thunk.
 	struct BSGraphics_Renderer_UpdateViewPort_Hook
 	{
 		static void thunk(RE::BSGraphics::Renderer* a_this, uint32_t a_width, uint32_t a_height, bool a_forceMatchRT);
@@ -282,13 +281,14 @@ private:
 	winrt::com_ptr<ID3D11VertexShader> boxDownscaleVS;
 	winrt::com_ptr<ID3D11SamplerState> linearSampler;
 
-	// Menu BG bilinear stretch — reuses boxDownscaleVS + linearSampler.
-	// stretchedFrameId tracks the frame the stretch last ran in; sentinel
-	// UINT32_MAX means "never." The one-shot guard compares against
-	// state->frameCount, so no per-frame Reset call is needed (PlayerView
-	// doesn't fire in main menu, Present-time reset wouldn't either).
-	winrt::com_ptr<ID3D11PixelShader> menuStretchPS;
-	uint32_t stretchedFrameId = UINT32_MAX;
+	// Menu BG blit — fullscreen sample of testTexture into kTOTAL/kMENUBG
+	// with format conversion (R16G16B16A16_FLOAT → R8G8B8A8_UNORM via the
+	// RTV view). Reuses boxDownscaleVS + linearSampler. blittedFrameId is
+	// the per-frame one-shot guard, compared against state->frameCount
+	// (PlayerView doesn't fire in main menu, so a flag-clear hook wouldn't
+	// reliably reset across all states).
+	winrt::com_ptr<ID3D11PixelShader> menuBlitPS;
+	uint32_t blittedFrameId = UINT32_MAX;
 
 	// CreateRenderTarget enlarge window — see BeginCreateRTEnlarge.
 	bool enlargeActive = false;

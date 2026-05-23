@@ -1,9 +1,10 @@
-// MenuBGStretchPS.hlsl — DLSSperf main-menu / loading-screen BG stretch.
-// Bilinear upscale of kMAIN (renderRes) into kTOTAL/kMENUBG (displayRes)
-// so the menu background — drawn by the engine into the small kMAIN that
-// the BSOpenVR size hook caused — survives to the OpenVR submit. Without
-// this, kTOTAL gets only the menu UI compositor's output and the BG
-// (Skyrim logo, mist sprites, loading screen art) is missing.
+// MenuBGBlitPS.hlsl — DLSSperf main-menu / loading-screen BG blit.
+// Fullscreen 1:1 sample of the source texture into kTOTAL/kMENUBG. The
+// caller (MaybeBlitMenuBG) feeds DLSS-reconstructed testTexture (R16G16
+// B16A16_FLOAT, displayRes) and the destination kTOTAL is R8G8B8A8_UNORM
+// at the same dims — CopyResource can't do this because the formats
+// differ, so a draw-based blit handles the implicit float→unorm
+// conversion via the RTV format.
 //
 // Reuses UpscaleVS.hlsl for the fullscreen triangle and a linear clamp
 // sampler. saturate() on UV is defense-in-depth for callers binding non-
