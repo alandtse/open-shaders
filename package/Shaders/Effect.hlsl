@@ -757,7 +757,8 @@ PS_OUTPUT main(PS_INPUT input)
 		float shadowMul = 1.0;
 		if (inWorld && (light.lightFlags & LightLimitFix::LightFlags::Shadow)) {
 			bool shadowCoverage;
-			shadowMul = LightLimitFix::GetShadowLightShadow(light.shadowMapIndex, input.WorldPosition.xyz, rotationMatrix, shadowCoverage);
+			float3 worldPositionWS = input.WorldPosition.xyz + FrameBuffer::CameraPosAdjust[eyeIndex].xyz;
+			shadowMul = LightLimitFix::GetShadowLightShadow(light.shadowMapIndex, worldPositionWS, rotationMatrix, shadowCoverage);
 		}
 
 		const bool isPointLightLinear = light.lightFlags & LightLimitFix::LightFlags::Linear;
