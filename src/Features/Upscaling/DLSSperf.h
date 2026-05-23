@@ -131,6 +131,48 @@ struct DLSSperf
 	uint32_t GetEnlargeHeight() const { return enlargeHeight; }
 
 private:
+	// RAII snapshot of the D3D11 pipeline state our fullscreen passes
+	// (DownscaleToKMain, MaybeBlitMenuBG) overwrite: OM RT/DS, viewport array,
+	// blend, depth-stencil, VS/PS/GS/HS/DS/RS, PS sampler+SRV slot 0, IA
+	// layout/VB/IB/topology. Captured on ctor, restored + Released on dtor.
+	// We're sandwiched between engine passes that don't fully rebind, so any
+	// leaked binding shows up as corruption downstream.
+	struct FullscreenPassScope
+	{
+		explicit FullscreenPassScope(ID3D11DeviceContext* a_context);
+		~FullscreenPassScope();
+		FullscreenPassScope(const FullscreenPassScope&) = delete;
+		FullscreenPassScope& operator=(const FullscreenPassScope&) = delete;
+
+	private:
+		ID3D11DeviceContext* ctx = nullptr;
+		ID3D11RenderTargetView* savedRTV = nullptr;
+		ID3D11DepthStencilView* savedDSV = nullptr;
+		UINT numVP = D3D11_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE;
+		D3D11_VIEWPORT savedVP[D3D11_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE] = {};
+		ID3D11BlendState* savedBlend = nullptr;
+		FLOAT savedBlendFactor[4] = {};
+		UINT savedSampleMask = 0;
+		ID3D11DepthStencilState* savedDSState = nullptr;
+		UINT savedStencilRef = 0;
+		ID3D11VertexShader* savedVS = nullptr;
+		ID3D11PixelShader* savedPS = nullptr;
+		ID3D11GeometryShader* savedGS = nullptr;
+		ID3D11HullShader* savedHS = nullptr;
+		ID3D11DomainShader* savedDS = nullptr;
+		ID3D11RasterizerState* savedRS = nullptr;
+		ID3D11SamplerState* savedSampler0 = nullptr;
+		ID3D11ShaderResourceView* savedSRV0 = nullptr;
+		ID3D11InputLayout* savedIL = nullptr;
+		ID3D11Buffer* savedVB[D3D11_IA_VERTEX_INPUT_RESOURCE_SLOT_COUNT] = {};
+		UINT savedVBStride[D3D11_IA_VERTEX_INPUT_RESOURCE_SLOT_COUNT] = {};
+		UINT savedVBOffset[D3D11_IA_VERTEX_INPUT_RESOURCE_SLOT_COUNT] = {};
+		ID3D11Buffer* savedIB = nullptr;
+		DXGI_FORMAT savedIBFormat = DXGI_FORMAT_UNKNOWN;
+		UINT savedIBOffset = 0;
+		D3D11_PRIMITIVE_TOPOLOGY savedTopology = D3D11_PRIMITIVE_TOPOLOGY_UNDEFINED;
+	};
+
 	// Phase 1
 	winrt::com_ptr<ID3D11Texture2D> testTexture;
 	winrt::com_ptr<ID3D11ShaderResourceView> testTextureSRV;
