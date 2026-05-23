@@ -619,8 +619,8 @@ void Streamline::Upscale(ID3D11Resource* a_upscalingTexture, ID3D11Resource* a_r
 	const auto displaySize = dlssperfActive ? dlssPerf.GetDisplayScreenSize() : screenSize;
 
 	// When RCAS sharpening is active, direct DLSS output to sharpenerTexture so RCAS can
-	// sharpen directly into kMAIN.UAV without a CopyResource round-trip.
-	// (DLSSperf path bypasses sharpener; RCAS-on-testTexture is a follow-up.)
+	// sharpen directly into kMAIN.UAV without a CopyResource round-trip. DLSSperf
+	// bypasses the sharpener entirely (writes DLSS output straight into testTexture).
 	ID3D11Resource* colorOut =
 		dlssperfActive ? static_cast<ID3D11Resource*>(dlssPerf.GetTestTexture()) :
 						 ((upscaling.settings.sharpnessDLSS > 0.0f && upscaling.sharpenerTexture) ? upscaling.sharpenerTexture->resource.get() : a_upscalingTexture);

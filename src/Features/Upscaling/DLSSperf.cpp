@@ -1,4 +1,8 @@
 #include "DLSSperf.h"
+
+#include <algorithm>
+#include <cmath>
+
 #include "../../State.h"
 #include "../Upscaling.h"
 

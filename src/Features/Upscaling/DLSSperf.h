@@ -26,7 +26,10 @@
 //
 // ============================================================================
 
+#include <cstdint>
+#include <d3d11.h>
 #include <functional>
+#include <winrt/base.h>
 
 struct DLSSperf
 {
