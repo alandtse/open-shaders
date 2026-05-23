@@ -1,10 +1,10 @@
 #include "Upscaling.h"
 
-#include "DLSSperf.h"
 #include "Deferred.h"
 #include "HDRDisplay.h"
 #include "Hooks.h"
 #include "State.h"
+#include "Upscaling/DLSSperf.h"
 #include "Upscaling/DX12SwapChain.h"
 #include "Upscaling/FidelityFX.h"
 #include "Upscaling/Streamline.h"

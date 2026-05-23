@@ -1,6 +1,6 @@
 #include "DLSSperf.h"
-#include "State.h"
-#include "Upscaling.h"
+#include "../../State.h"
+#include "../Upscaling.h"
 
 // Quality mode → render-scale resolution is supplied by the FFX SDK helper
 // (same one Upscaling.cpp uses at ConfigureUpscaling), avoiding a duplicate
@@ -60,6 +60,19 @@ void DLSSperf::InstallRenderTargetSizeHook()
 	bootQualityMode = qualityMode;
 
 	stl::write_vfunc<0x12, GetRenderTargetSize_Hook>(RE::VTABLE_BSOpenVR[0]);
+
+	// Per-frame detours that used to live in Hooks.cpp. Both addresses are
+	// already detoured by core/other features; stl::detour_thunk chains
+	// (each new install wraps the prior thunk via its static func ptr).
+	if (!setDirtyStatesHookInstalled) {
+		stl::detour_thunk<BSGraphics_SetDirtyStates_Hook>(REL::RelocationID(75580, 77386));
+		setDirtyStatesHookInstalled = true;
+	}
+	if (!updateViewPortHookInstalled) {
+		stl::detour_thunk<BSGraphics_Renderer_UpdateViewPort_Hook>(REL::RelocationID(75455, 77240));
+		updateViewPortHookInstalled = true;
+	}
+
 	hookActive = true;
 }
 
@@ -661,7 +674,86 @@ void DLSSperf::PlayerViewRender_Hook::thunk(void* a1, bool a2, bool a3)
 	func(a1, a2, a3);
 
 	globals::features::dlssPerf.ClearPostChainDone();
-	globals::features::dlssPerf.ClearStretchedThisFrame();
+}
+
+// ============================================================================
+// BSGraphics_SetDirtyStates_Hook
+// ============================================================================
+// Wraps DS swap around the engine's RT/DS flush so enlarged-RT draws don't
+// rasterizer-clip to the smaller kMAIN DS bounds.
+void DLSSperf::BSGraphics_SetDirtyStates_Hook::thunk(bool isCompute)
+{
+	bool swapped = false;
+	if (!isCompute)
+		swapped = globals::features::dlssPerf.MaybeSwapDSForEnlargedRT();
+	func(isCompute);
+	if (swapped)
+		globals::features::dlssPerf.RestoreSwappedDS();
+}
+
+// ============================================================================
+// BSGraphics_Renderer_UpdateViewPort_Hook
+// ============================================================================
+// Post-corrects the engine viewport when the bound RT and the requested VP
+// don't agree about render-vs-display extent. Was originally in Hooks.cpp.
+void DLSSperf::BSGraphics_Renderer_UpdateViewPort_Hook::thunk(RE::BSGraphics::Renderer* a_this, uint32_t a_width, uint32_t a_height, bool a_forceMatchRT)
+{
+	func(a_this, a_width, a_height, a_forceMatchRT);
+
+	auto& dlssPerf = globals::features::dlssPerf;
+	if (!dlssPerf.IsHookActive())
+		return;
+
+	// During Post intercept enlarged kTEMP/kTOTAL already get the right VP
+	// from func() because of their inflated RT dims — don't second-guess it.
+	if (dlssPerf.IsPostInterceptActive())
+		return;
+
+	auto* ss = globals::game::shadowState;
+	if (!ss)
+		return;
+	auto& vp = ss->GetVRRuntimeData().viewPort;
+	const uint32_t displayW = dlssPerf.GetDisplayEyeWidth() * 2;
+	const uint32_t displayH = dlssPerf.GetDisplayEyeHeight();
+	const uint32_t renderW = dlssPerf.GetRenderEyeWidth() * 2;
+	const uint32_t renderH = dlssPerf.GetRenderEyeHeight();
+
+	// After the Post chain, UI / submit-prep draws target enlarged kTOTAL
+	// at displayRes — expand any renderRes VP the engine sets back up.
+	// The fade Draw(30) bypasses this path entirely (direct D3D RSSet-
+	// Viewports) and is handled by the Draw vfunc hook in Globals.cpp.
+	if (dlssPerf.IsPostChainDone()) {
+		if (static_cast<uint32_t>(vp.Width) == renderW &&
+			static_cast<uint32_t>(vp.Height) == renderH) {
+			vp.Width = static_cast<float>(displayW);
+			vp.Height = static_cast<float>(displayH);
+		}
+		return;
+	}
+
+	// Honor forceMatchRT for displayRes-enlarged RTs — shrinking VP there
+	// leaves menu content in a renderRes corner of kTOTAL.
+	if (a_forceMatchRT)
+		return;
+
+	// Same risk on the non-forceMatchRT path: the menu compositor calls
+	// UpdateViewPort(displayW, displayH, false) directly with screen-space
+	// dims, and compressing those would clip the BG.
+	{
+		const uint32_t rtIdx = static_cast<uint32_t>(ss->GetVRRuntimeData().renderTargets[0]);
+		if (rtIdx == RE::RENDER_TARGETS::kTOTAL ||
+			rtIdx == RE::RENDER_TARGETS::kMENUBG ||
+			rtIdx == RE::RENDER_TARGETS::kIMAGESPACE_TEMP_COPY)
+			return;
+	}
+
+	// Normal world/depth path: compress displayRes → renderRes so draws
+	// stay inside the renderRes-sized kMAIN family.
+	if (static_cast<uint32_t>(vp.Width) == displayW &&
+		static_cast<uint32_t>(vp.Height) == displayH) {
+		vp.Width = static_cast<float>(renderW);
+		vp.Height = static_cast<float>(renderH);
+	}
 }
 
 // ============================================================================
@@ -933,7 +1025,8 @@ void DLSSperf::DownscaleToKMain()
 // at Present (PlayerView doesn't fire in main menu).
 void DLSSperf::MaybeStretchMenuBG(uint32_t boundRTIdx)
 {
-	if (!hookActive || stretchedThisFrame || !menuStretchPS || !boxDownscaleVS || !linearSampler)
+	const uint32_t currentFrame = globals::state ? globals::state->frameCount : 0;
+	if (!hookActive || stretchedFrameId == currentFrame || !menuStretchPS || !boxDownscaleVS || !linearSampler)
 		return;
 	if (!globals::state || !globals::state->IsMainOrLoadingMenuOpen())
 		return;
@@ -1099,7 +1192,7 @@ void DLSSperf::MaybeStretchMenuBG(uint32_t boundRTIdx)
 	if (savedIB)
 		savedIB->Release();
 
-	stretchedThisFrame = true;
+	stretchedFrameId = currentFrame;
 	state->EndPerfEvent();
 }
 
@@ -1192,6 +1285,68 @@ void DLSSperf::RestoreSwappedDS()
 	for (int i = 0; i < 8; ++i)
 		bound.readOnlyViews[i] = autoSwapSavedReadOnlyViews[i];
 	autoSwapDSIdx = UINT32_MAX;
+}
+
+// ============================================================================
+// CreateRenderTarget enlarge — install + per-site thunks
+// ============================================================================
+// Three specific call sites inside BSShaderRenderTargets::Create produce the
+// displayRes-enlarged RTs (kMENUBG, kIMAGESPACE_TEMP_COPY, kTOTAL). Offsets
+// identified in Ghidra (see CreateRT_k* labels inside the renamed
+// BSShaderRenderTargets__Create function in SkyrimVR.exe). VR-only.
+
+void DLSSperf::InstallCreateRTThunks()
+{
+	if (!REL::Module::IsVR())
+		return;
+	auto vrBase = REL::RelocationID(100458, 107175).address();
+	stl::write_thunk_call<CreateRT_MenuBG_Hook>(vrBase + 0x6cc);
+	stl::write_thunk_call<CreateRT_ImagespaceTempCopy_Hook>(vrBase + 0x7a3);
+	stl::write_thunk_call<CreateRT_Total_Hook>(vrBase + 0x1547);
+}
+
+void DLSSperf::BeginCreateRTEnlarge()
+{
+	if (!hookActive)
+		return;
+	enlargeWidth = displayEyeWidth * 2;
+	enlargeHeight = displayEyeHeight;
+	enlargeActive = true;
+}
+
+void DLSSperf::EndCreateRTEnlarge()
+{
+	enlargeActive = false;
+}
+
+namespace
+{
+	void EnlargeProps(RE::BSGraphics::RenderTargetProperties* a_props)
+	{
+		auto& dp = globals::features::dlssPerf;
+		if (!dp.IsCreateRTEnlargeActive())
+			return;
+		a_props->width = dp.GetEnlargeWidth();
+		a_props->height = dp.GetEnlargeHeight();
+	}
+}
+
+void DLSSperf::CreateRT_MenuBG_Hook::thunk(RE::BSGraphics::Renderer* a_this, RE::RENDER_TARGETS::RENDER_TARGET a_target, RE::BSGraphics::RenderTargetProperties* a_properties)
+{
+	EnlargeProps(a_properties);
+	func(a_this, a_target, a_properties);
+}
+
+void DLSSperf::CreateRT_ImagespaceTempCopy_Hook::thunk(RE::BSGraphics::Renderer* a_this, RE::RENDER_TARGETS::RENDER_TARGET a_target, RE::BSGraphics::RenderTargetProperties* a_properties)
+{
+	EnlargeProps(a_properties);
+	func(a_this, a_target, a_properties);
+}
+
+void DLSSperf::CreateRT_Total_Hook::thunk(RE::BSGraphics::Renderer* a_this, RE::RENDER_TARGETS::RENDER_TARGET a_target, RE::BSGraphics::RenderTargetProperties* a_properties)
+{
+	EnlargeProps(a_properties);
+	func(a_this, a_target, a_properties);
 }
 
 void DLSSperf::DrawSettings()

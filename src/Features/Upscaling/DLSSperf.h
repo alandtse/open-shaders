@@ -96,7 +96,6 @@ struct DLSSperf
 	// enlarged RT so OpenVR submit sees both BG + UI compositor output.
 	// One-shot per frame, reset at PlayerView end.
 	void MaybeStretchMenuBG(uint32_t boundRTIdx);
-	void ClearStretchedThisFrame() { stretchedThisFrame = false; }
 
 	// Generic DS swap for draws binding an enlarged RT against kMAIN/kMAIN
 	// _COPY DS — without this the rasterizer clips to the smaller DS and
@@ -104,6 +103,22 @@ struct DLSSperf
 	// postInterceptActive (HandlePostProcessing already redirects DS).
 	bool MaybeSwapDSForEnlargedRT();
 	void RestoreSwappedDS();
+
+	// Install the 3 named per-site CreateRenderTarget thunks (kMENUBG,
+	// kIMAGESPACE_TEMP_COPY, kTOTAL — VR-only) at startup. Called from
+	// Hooks::Install in the BSShaderRenderTargets::Create install sequence.
+	// Thunks are no-ops outside the BeginEnlarge/EndEnlarge window so flat
+	// Skyrim is unaffected.
+	void InstallCreateRTThunks();
+
+	// Enlarge window — set true around the engine's BSShaderRenderTargets::
+	// Create call from Hooks.cpp's wrapper. The 3 installed thunks read
+	// enlargeActive/Width/Height directly.
+	void BeginCreateRTEnlarge();
+	void EndCreateRTEnlarge();
+	bool IsCreateRTEnlargeActive() const { return enlargeActive; }
+	uint32_t GetEnlargeWidth() const { return enlargeWidth; }
+	uint32_t GetEnlargeHeight() const { return enlargeHeight; }
 
 private:
 	// Phase 1
@@ -204,6 +219,27 @@ private:
 	};
 	bool playerViewHookInstalled = false;
 
+	// Chains via stl::detour_thunk on the same address Hooks.cpp + Terrain-
+	// Blending already detour. Wraps MaybeSwapDSForEnlargedRT around the
+	// engine's RT/DS flush; runs after the prior thunk so DLSSperf's swap
+	// is the innermost wrap.
+	struct BSGraphics_SetDirtyStates_Hook
+	{
+		static void thunk(bool isCompute);
+		static inline REL::Relocation<decltype(thunk)> func;
+	};
+	bool setDirtyStatesHookInstalled = false;
+
+	// Replaces the legacy DLSSperf logic that lived in Hooks.cpp. Post-
+	// corrects the engine viewport whenever it differs from our enlarged
+	// RTs. Chains via stl::detour_thunk.
+	struct BSGraphics_Renderer_UpdateViewPort_Hook
+	{
+		static void thunk(RE::BSGraphics::Renderer* a_this, uint32_t a_width, uint32_t a_height, bool a_forceMatchRT);
+		static inline REL::Relocation<decltype(thunk)> func;
+	};
+	bool updateViewPortHookInstalled = false;
+
 	// Refraction: 3k temp texture (copy of testTexture) for ISRefraction input
 	winrt::com_ptr<ID3D11Texture2D> refraTempTex;
 	winrt::com_ptr<ID3D11ShaderResourceView> refraTempSRV;
@@ -247,7 +283,36 @@ private:
 	winrt::com_ptr<ID3D11SamplerState> linearSampler;
 
 	// Menu BG bilinear stretch — reuses boxDownscaleVS + linearSampler.
-	// stretchedThisFrame is the one-shot guard, reset at PlayerView end.
+	// stretchedFrameId tracks the frame the stretch last ran in; sentinel
+	// UINT32_MAX means "never." The one-shot guard compares against
+	// state->frameCount, so no per-frame Reset call is needed (PlayerView
+	// doesn't fire in main menu, Present-time reset wouldn't either).
 	winrt::com_ptr<ID3D11PixelShader> menuStretchPS;
-	bool stretchedThisFrame = false;
+	uint32_t stretchedFrameId = UINT32_MAX;
+
+	// CreateRenderTarget enlarge window — see BeginCreateRTEnlarge.
+	bool enlargeActive = false;
+	uint32_t enlargeWidth = 0;
+	uint32_t enlargeHeight = 0;
+
+	// Per-site CreateRenderTarget thunks. Each fires from a single
+	// installed call site within BSShaderRenderTargets::Create and overrides
+	// the RT's allocation dimensions when the enlarge window is active.
+	// Static `func` ptrs are per-struct so each chains the original
+	// CreateRenderTarget call independently.
+	struct CreateRT_MenuBG_Hook
+	{
+		static void thunk(RE::BSGraphics::Renderer* a_this, RE::RENDER_TARGETS::RENDER_TARGET a_target, RE::BSGraphics::RenderTargetProperties* a_properties);
+		static inline REL::Relocation<decltype(thunk)> func;
+	};
+	struct CreateRT_ImagespaceTempCopy_Hook
+	{
+		static void thunk(RE::BSGraphics::Renderer* a_this, RE::RENDER_TARGETS::RENDER_TARGET a_target, RE::BSGraphics::RenderTargetProperties* a_properties);
+		static inline REL::Relocation<decltype(thunk)> func;
+	};
+	struct CreateRT_Total_Hook
+	{
+		static void thunk(RE::BSGraphics::Renderer* a_this, RE::RENDER_TARGETS::RENDER_TARGET a_target, RE::BSGraphics::RenderTargetProperties* a_properties);
+		static inline REL::Relocation<decltype(thunk)> func;
+	};
 };

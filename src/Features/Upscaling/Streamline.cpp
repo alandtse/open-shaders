@@ -9,8 +9,8 @@
 #include "../../Hooks.h"
 #include "../../State.h"
 #include "../../Util.h"
-#include "../DLSSperf.h"
 #include "../Upscaling.h"
+#include "DLSSperf.h"
 #include "DX12SwapChain.h"
 
 namespace
