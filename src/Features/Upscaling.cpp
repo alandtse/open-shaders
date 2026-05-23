@@ -1998,8 +1998,10 @@ void Upscaling::UpscaleDepth()
 		context->Draw(3, 0);
 	}
 
-	// Now propagate the upscaled depth to kMAIN_COPY so downstream VR passes see it.
-	if (globals::game::isVR) {
+	// Propagate the upscaled depth to kMAIN_COPY so downstream VR passes see
+	// it. Skipped on the full-resolution path because the else branch above
+	// already refreshed depthCopy from depth and nothing has touched it since.
+	if (globals::game::isVR && depthUpscaleActive) {
 		TracyD3D11Zone(globals::state->tracyCtx, "Upscaling - Depth VR Propagate");
 		copyIfNonAliased(depthCopy.texture, depth.texture);
 	}
