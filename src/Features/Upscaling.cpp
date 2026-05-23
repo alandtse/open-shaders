@@ -1864,10 +1864,11 @@ void Upscaling::UpscaleDepth()
 		(!depth.views[0] || !refractionNormals.texture || !refractionNormals.textureCopy || !refractionNormals.SRVCopy || !refractionNormals.RTV || !saoCameraZ.RTV)) {
 		return;
 	}
-	if (isVR && !depthCopy.stencilSRV) {
-		return;
-	}
-	if (depthUpscaleActive && isVR && !depthCopy.views[0]) {
+	// stencilSRV + views[0] are both upscale-path-only: the depth-upscale
+	// draw binds depthCopy as a stencil SRV input and depth.views[0] as DSV.
+	// The full-resolution mask repair never touches either, so don't disable
+	// the VR fix on setups where stencil SRV creation is unavailable.
+	if (depthUpscaleActive && isVR && (!depthCopy.stencilSRV || !depthCopy.views[0])) {
 		return;
 	}
 
