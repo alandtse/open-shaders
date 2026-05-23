@@ -327,6 +327,20 @@ void DLSSperf::TonemapRender_Hook::thunk(void* imageSpaceShader, RE::BSTriShape*
 		return;
 	}
 
+	// Menu/loading-screen path: DLSS never runs here, so testTexture is
+	// stale/empty and tonemap's UV math assumes RT.size==kMAIN.size (true
+	// for DLAA, not for DLSS presets — the engine's bridge writes a
+	// wrong-sized sample into kTOTAL, leaving BG missing and OpenVR
+	// reprojecting stale content as movement smears). Skip the gameplay
+	// SRV/DS hijack, let tonemap run untouched, then overwrite kTOTAL
+	// with our own bilinear stretch of real kMAIN so BG content is
+	// guaranteed regardless of tonemap's UV behavior.
+	if (globals::state && globals::state->IsMainOrLoadingMenuOpen()) {
+		func(imageSpaceShader, shape, param);
+		dlssPerf.MaybeStretchMenuBG(RE::RENDER_TARGETS::kTOTAL);
+		return;
+	}
+
 	ZoneScoped;
 	TracyD3D11Zone(globals::state->tracyCtx, "DLSSperf::TonemapRender");
 
@@ -910,11 +924,11 @@ void DLSSperf::DownscaleToKMain()
 	state->EndPerfEvent();
 }
 
-// Bilinear upscale kMAIN → kTOTAL/kMENUBG, one-shot per frame, only in main/
-// loading-menu state. The post chain's DownscaleToKMain handles the in-game
-// case; this exists because the menu compositor never wraps Main_PostProcess-
-// ing, so the engine's BG draws into renderRes kMAIN otherwise strand there
-// while the UI compositor writes the enlarged RT alone.
+// Bilinear upscale kMAIN → kTOTAL/kMENUBG. Driven from TonemapRender_Hook
+// post-func in menu/loading state: the engine's tonemap shader's UV math
+// assumes RT.size == kMAIN.size (true for DLAA, broken under DLSS), so we
+// overwrite its output with a clean stretch of real kMAIN. One-shot per
+// frame; flag reset at Present (PlayerView doesn't fire in main menu).
 void DLSSperf::MaybeStretchMenuBG(uint32_t boundRTIdx)
 {
 	if (!hookActive || stretchedThisFrame || !menuStretchPS || !boxDownscaleVS || !linearSampler)
@@ -1105,9 +1119,7 @@ void DLSSperf::HandlePostProcessing(const std::function<void()>& enginePost)
 
 bool DLSSperf::MaybeSwapDSForEnlargedRT()
 {
-	// Fast path / gates. postInterceptActive means HandlePostProcessing's
-	// outer wrap already redirected kMAIN_COPY DS — don't double-swap.
-	if (!hookActive || !fakeDSV || postInterceptActive)
+	if (!hookActive || postInterceptActive)
 		return false;
 	if (autoSwapDSIdx != UINT32_MAX)
 		return false;  // re-entry guard
@@ -1117,7 +1129,7 @@ bool DLSSperf::MaybeSwapDSForEnlargedRT()
 		return false;
 	auto& srd = ss->GetVRRuntimeData();
 
-	// Whitelist: the three RTs DLSSperf_MaybeEnlargeRT inflates to displayRes.
+	// Only the three RTs DLSSperf_MaybeEnlargeRT inflates to displayRes.
 	const uint32_t rtIdx = static_cast<uint32_t>(srd.renderTargets[0]);
 	if (rtIdx != RE::RENDER_TARGETS::kTOTAL &&
 		rtIdx != RE::RENDER_TARGETS::kMENUBG &&
@@ -1133,18 +1145,23 @@ bool DLSSperf::MaybeSwapDSForEnlargedRT()
 	auto& dsData = renderer->GetDepthStencilData();
 	auto& bound = dsData.depthStencils[dsIdx];
 
-	// Swap all 8 view slots — engine indexes views[depthStencilSlice +
-	// stencilMode] and we don't know which combo this draw will use, so
-	// match the pattern UIPassDispatch_Hook already established.
+	// Unbind DS entirely rather than rebind to fakeDSV. fakeDSV is cleared
+	// once at init with stencil=0; ISHDRTonemapBlendCinematic (the menu's
+	// kMAIN→kTOTAL bridge at event 931 in the baseline capture) reads
+	// stencil to mask sky vs. world, so a wrong stencil value discards every
+	// pixel and the BG never reaches kTOTAL. Fullscreen IS shaders and the
+	// menu UI quad don't actually depth-test, so nullptr DS is safe and
+	// sidesteps the stencil-content mismatch. Swap pattern matches UIPass-
+	// Dispatch_Hook (all 8 view slots).
 	for (int i = 0; i < 8; ++i) {
 		autoSwapSavedViews[i] = bound.views[i];
 		if (bound.views[i])
-			bound.views[i] = fakeDSV.get();
+			bound.views[i] = nullptr;
 	}
 	for (int i = 0; i < 8; ++i) {
 		autoSwapSavedReadOnlyViews[i] = bound.readOnlyViews[i];
 		if (bound.readOnlyViews[i])
-			bound.readOnlyViews[i] = fakeDSV.get();
+			bound.readOnlyViews[i] = nullptr;
 	}
 	autoSwapDSIdx = dsIdx;
 	return true;

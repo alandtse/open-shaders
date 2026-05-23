@@ -312,18 +312,13 @@ HRESULT WINAPI hk_D3D11CreateDeviceAndSwapChain(
 
 void Hooks::BSGraphics_SetDirtyStates::thunk(bool isCompute)
 {
-	// DLSSperf hooks: run before the engine's RT/DS flush so enlarged RTs
-	// (kTOTAL / kMENUBG / kIMAGESPACE_TEMP_COPY at displayRes) get matched
-	// against displayRes DS instead of renderRes kMAIN, and the menu/
-	// loading-screen BG gets bridged from kMAIN into the bound enlarged
-	// RT before the engine's UI draw paints over it.
+	// DLSSperf: when an enlarged RT (kTOTAL / kMENUBG / kIMAGESPACE_TEMP_
+	// COPY at displayRes) is bound against renderRes kMAIN DS, null the
+	// DS so the rasterizer can fill the whole enlarged RT instead of
+	// clipping to renderRes DS bounds.
 	bool swapped = false;
-	if (!isCompute) {
-		auto& dlssPerf = globals::features::dlssPerf;
-		if (auto* ss = globals::game::shadowState)
-			dlssPerf.MaybeStretchMenuBG(static_cast<uint32_t>(ss->GetVRRuntimeData().renderTargets[0]));
-		swapped = dlssPerf.MaybeSwapDSForEnlargedRT();
-	}
+	if (!isCompute)
+		swapped = globals::features::dlssPerf.MaybeSwapDSForEnlargedRT();
 	func(isCompute);
 	if (swapped)
 		globals::features::dlssPerf.RestoreSwappedDS();

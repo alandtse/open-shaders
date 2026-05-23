@@ -215,11 +215,13 @@ void Upscaling::DrawSettings()
 	auto upscaleMethod = GetUpscaleMethod();
 
 	// DLSSperf: BSOpenVR size hook + RT::Create run once at world load, so
-	// runtime upscaler reads route through the boot snapshot. Surface that
-	// so changes that staged for next restart aren't mistaken for no-ops.
+	// runtime reads of method/qualityMode route through the boot snapshot.
+	// The always-present explanation is plain text — only the staged-change
+	// diff uses the RestartNeeded color so users learn the cue means "you
+	// changed something that won't apply yet."
 	if (globals::features::dlssPerf.IsHookActive()) {
-		Util::Text::RestartNeeded(
-			"DLSSperf active: Method and Upscale Preset changes require a game restart.\n"
+		ImGui::TextWrapped(
+			"DLSSperf is active: Method and Upscale Preset changes only take effect after a game restart. "
 			"Sharpness / model preset / Reflex remain live.");
 
 		// Method pending-diff. Only fires when the user is editing the DLSS-
@@ -303,6 +305,28 @@ void Upscaling::DrawSettings()
 				ImGui::Text("Set to 'Default' for automatic selection based on your Upscale Preset and hardware.");
 				ImGui::Text("Changing this setting requires a restart to take effect.");
 			}
+		}
+
+		// VR DLSSperf: opt-in performance feature. Lives in the main
+		// upscaler section (not Backend Diagnostics) so users discover it
+		// alongside the rest of the upscaler controls. Restart-gated —
+		// the BSOpenVR size hook reads this at world load and sizes every
+		// engine RT off the boot value.
+		if (globals::game::isVR && upscaleMethod == UpscaleMethod::kDLSS) {
+			ImGui::Checkbox("Render engine at upscaled resolution (DLSSperf)", &settings.enableDLSSperf);
+			if (auto _tt = Util::HoverTooltipWrapper()) {
+				ImGui::Text(
+					"When enabled, the engine pipeline allocates render targets at the upscaled-render\n"
+					"resolution instead of the HMD display resolution. DLSS writes its output to a private\n"
+					"DisplayRes texture. Substantial VRAM and bandwidth savings, especially at high HMD\n"
+					"resolutions.\n"
+					"\n"
+					"Restart required to enable/disable. Method and Upscale Preset changes also require a\n"
+					"restart while this is active; sharpness / model preset / Reflex remain live.");
+			}
+			if (settings.enableDLSSperf != globals::features::dlssPerf.IsHookActive())
+				Util::Text::RestartNeeded("Pending restart: DLSSperf will %s on next launch.",
+					settings.enableDLSSperf ? "enable" : "disable");
 		}
 	}
 
@@ -459,39 +483,6 @@ void Upscaling::DrawSettings()
 		ImGui::TextUnformatted("Changing this requires a restart to take effect.");
 		if (auto _tt = Util::HoverTooltipWrapper()) {
 			ImGui::Text("Streamline logging controls the verbosity of NVIDIA Streamline backend logs. Useful for debugging issues with DLSS/DLSS-G.");
-		}
-
-		// VR DLSSperf: opt-in performance feature. Engine renders at upscaled-
-		// render resolution instead of display resolution; the upscaler writes
-		// to a private DisplayRes texture. Saves VRAM/bandwidth proportional
-		// to the quality-mode scale ratio.
-		//
-		// Gated to developer mode for this release: the menu/pause 3D backgrounds
-		// still render at renderRes stretched over displayRes because their path
-		// bypasses Main_PostProcessing. Once that path is wrapped, drop this gate
-		// and flip enableDLSSperf to default-on — the in-game win (~18% frame p50
-		// at typical quality presets) is large enough to justify it for all VR
-		// users on a DLSS-capable GPU.
-		if (globals::game::isVR && upscaleMethod == UpscaleMethod::kDLSS &&
-			globals::state && globals::state->IsDeveloperMode()) {
-			ImGui::Separator();
-			// Toggle is restart-gated (the engine reads it during InstallRenderTargetSizeHook
-			// at startup), so the change handler has nothing useful to run here — let ImGui
-			// just update the bound setting and rely on the user restarting.
-			ImGui::Checkbox("Render engine at upscaled resolution (developer)", &settings.enableDLSSperf);
-			ImGui::TextUnformatted("Developer-only. Changing this requires a restart to take effect.");
-			if (auto _tt = Util::HoverTooltipWrapper()) {
-				ImGui::Text(
-					"VR DLSSperf: when enabled, the entire engine pipeline allocates render targets at\n"
-					"the upscaled-render resolution instead of display resolution. DLSS writes to a\n"
-					"private DisplayRes texture. Substantial VRAM and bandwidth savings, especially\n"
-					"at high HMD resolutions. Restart required.\n"
-					"\n"
-					"Known limitation: the main menu / pause backgrounds render through a path that\n"
-					"bypasses Main_PostProcessing, so they show at renderRes stretched over displayRes.\n"
-					"The menu UI itself draws at full displayRes. In-game rendering is unaffected.");
-			}
-			Util::Text::Warning("Warning: Requires restart");
 		}
 
 		// VR Debug visualization -- per-eye buffers and native inputs
