@@ -111,6 +111,13 @@ struct DLSSperf
 	// Skyrim is unaffected.
 	void InstallCreateRTThunks();
 
+	// Install the Draw vfunc detour (D3D11DeviceContext vtable index 13)
+	// that fixes the scene-fade overlay viewport. Called from Globals::
+	// InstallD3DHooks. VR-only; thunk early-outs unless VertexCount==30
+	// and the hook is live, so cost is one comparison per Draw call when
+	// DLSSperf isn't active.
+	void InstallFadeOverlayHook(ID3D11DeviceContext* context);
+
 	// Enlarge window — set true around the engine's BSShaderRenderTargets::
 	// Create call from Hooks.cpp's wrapper. The 3 installed thunks read
 	// enlargeActive/Width/Height directly.
@@ -134,7 +141,7 @@ private:
 	// initialized. ShouldHandlePost() returns this — a partial-init state
 	// (e.g., refraTempTex OOM after testTexture succeeds) flips this to false
 	// and the engine Post chain runs unwrapped on the small kMAIN, which is
-	// visually degraded but stable. (CodeRabbit scs#2357 fail-closed.)
+	// visually degraded but stable.
 	bool postPipelineReady = false;
 
 	// Post intercept phase flag: when true, VP post-correction is skipped
@@ -230,6 +237,17 @@ private:
 	};
 	bool setDirtyStatesHookInstalled = false;
 
+	// D3D11 Draw vfunc detour. Engine's scene-fade overlay is a Draw(30)
+	// that fires after the Post chain and before Submit. Under DLSSperf
+	// the draw's VP/vertices are computed at renderRes while the RT
+	// (kTOTAL) is displayRes — produces a partial-screen "black stamp"
+	// without this swap.
+	struct ID3D11DeviceContext_Draw_Hook
+	{
+		static void thunk(ID3D11DeviceContext* This, UINT VertexCount, UINT StartVertexLocation);
+		static inline REL::Relocation<decltype(thunk)> func;
+	};
+
 	// Post-corrects the engine viewport whenever it differs from our
 	// enlarged RTs. Chains via stl::detour_thunk.
 	struct BSGraphics_Renderer_UpdateViewPort_Hook
@@ -254,7 +272,7 @@ private:
 	//   path reads from kMAIN_COPY SRV); both need to point at testTextureSRV
 	//   so the tonemap consumes the AA'd 3k DLSS output instead of the small
 	//   kMAIN. savedKMainCopySRV is captured/restored by the inner layer, not
-	//   the outer one (Copilot scs#2357 — comment used to claim outer).
+	//   the outer one
 	ID3D11DepthStencilView* savedKMainCopyViews[8] = {};
 	ID3D11DepthStencilView* savedKMainCopyReadOnlyViews[8] = {};
 	ID3D11ShaderResourceView* savedKMainCopySRV = nullptr;

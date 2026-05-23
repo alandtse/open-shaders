@@ -14,7 +14,6 @@
 #include "Features/InteriorSun.h"
 #include "Features/LightLimitFix.h"
 #include "Features/Upscaling.h"
-#include "Features/Upscaling/DLSSperf.h"
 #include "Features/VR.h"
 #include "Features/VolumetricLighting.h"
 
@@ -385,12 +384,12 @@ struct BSShaderRenderTargets_Create
 			globals::features::upscaling.GetUpscaleMethod() == Upscaling::UpscaleMethod::kDLSS;
 
 		if (dlssperfShouldRun) {
-			globals::features::dlssPerf.InstallRenderTargetSizeHook();
+			globals::features::upscaling.dlssPerf.InstallRenderTargetSizeHook();
 		}
 
 		// Open DLSSperf's enlarge window across the engine's Create() so
 		// its 3 per-site thunks override props for the displayRes RTs.
-		auto& dlssPerf = globals::features::dlssPerf;
+		auto& dlssPerf = globals::features::upscaling.dlssPerf;
 		dlssPerf.BeginCreateRTEnlarge();
 		func();
 		dlssPerf.EndCreateRTEnlarge();
@@ -897,7 +896,7 @@ namespace Hooks
 		stl::write_thunk_call<CreateCubemapRenderTarget_Reflections>(REL::RelocationID(100458, 107175).address() + REL::Relocate(0xA25, 0xA25, 0xCD2));
 		stl::write_thunk_call<CreateDepthStencil_Reflections>(REL::RelocationID(100458, 107175).address() + REL::Relocate(0xA59, 0xA59, 0xD13));
 
-		globals::features::dlssPerf.InstallCreateRTThunks();
+		globals::features::upscaling.dlssPerf.InstallCreateRTThunks();
 
 #ifdef TRACY_ENABLE
 		stl::write_thunk_call<Main_Update>(REL::RelocationID(35551, 36544).address() + REL::Relocate(0x11F, 0x160));

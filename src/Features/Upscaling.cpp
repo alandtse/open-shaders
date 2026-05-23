@@ -219,7 +219,7 @@ void Upscaling::DrawSettings()
 	// The always-present explanation is plain text — only the staged-change
 	// diff uses the RestartNeeded color so users learn the cue means "you
 	// changed something that won't apply yet."
-	if (globals::features::dlssPerf.IsHookActive()) {
+	if (globals::features::upscaling.dlssPerf.IsHookActive()) {
 		ImGui::TextWrapped(
 			"DLSSperf is active: Method and Upscale Preset changes only take effect after a game restart. "
 			"Sharpness / model preset / Reflex remain live.");
@@ -227,7 +227,6 @@ void Upscaling::DrawSettings()
 		// Method pending-diff. Only fires when the user is editing the DLSS-
 		// path mode slot (upscaleMethod, not upscaleMethodNoDLSS), since
 		// that's the one the boot snapshot locked.
-		auto& dlssPerf = globals::features::dlssPerf;
 		if (currentUpscaleMode == &settings.upscaleMethod &&
 			settings.upscaleMethod != dlssPerf.GetBootUpscaleMethod()) {
 			const uint live = std::clamp<uint>(settings.upscaleMethod, 0u, availableModes);
@@ -281,7 +280,6 @@ void Upscaling::DrawSettings()
 			// Pending-diff vs the boot snapshot the runtime upscaler is
 			// actually using. Without this the slider change looks like a
 			// no-op.
-			auto& dlssPerf = globals::features::dlssPerf;
 			if (dlssPerf.HasBootSnapshot() &&
 				settings.qualityMode != dlssPerf.GetBootQualityMode()) {
 				const uint bm = std::clamp<uint>(dlssPerf.GetBootQualityMode(), 0u, 4u);
@@ -338,7 +336,7 @@ void Upscaling::DrawSettings()
 			}
 			if (!dlssAvailable && settings.enableDLSSperf)
 				Util::Text::Disabled("DLSSperf requires DLSS — switch upscaler Method to DLSS to activate.");
-			if (dlssAvailable && settings.enableDLSSperf != globals::features::dlssPerf.IsHookActive())
+			if (dlssAvailable && settings.enableDLSSperf != globals::features::upscaling.dlssPerf.IsHookActive())
 				Util::Text::RestartNeeded("Pending restart: DLSSperf will %s on next launch.",
 					settings.enableDLSSperf ? "enable" : "disable");
 		}
@@ -717,8 +715,8 @@ Upscaling::UpscaleMethod Upscaling::GetUpscaleMethod() const
 	// Lock runtime to the boot upscaler under DLSSperf — engine RTs are
 	// sized for it, and routing a different method through testTexture/
 	// renderRes paths breaks the HMD.
-	if (globals::features::dlssPerf.HasBootSnapshot())
-		return (UpscaleMethod)globals::features::dlssPerf.GetBootUpscaleMethod();
+	if (globals::features::upscaling.dlssPerf.HasBootSnapshot())
+		return (UpscaleMethod)globals::features::upscaling.dlssPerf.GetBootUpscaleMethod();
 	if (streamline.featureDLSS)
 		return (UpscaleMethod)settings.upscaleMethod;
 	return (UpscaleMethod)settings.upscaleMethodNoDLSS;
@@ -1102,7 +1100,6 @@ void Upscaling::EnsureVRIntermediateTextures()
 	// hook spoofs HMD-recommended size). DLSS output needs to land at real
 	// DisplayRes, so size the OUTPUT intermediates from dlssPerf's snapshot
 	// of the true HMD resolution. Input intermediates stay at renderSize.
-	auto& dlssPerf = globals::features::dlssPerf;
 	const bool dlssperfActive = dlssPerf.IsHookActive() && dlssPerf.GetTestTexture();
 	const float2 outputSize = dlssperfActive ? dlssPerf.GetDisplayScreenSize() : screenSize;
 
@@ -1320,8 +1317,7 @@ void Upscaling::ConfigureUpscaling(RE::BSGraphics::State* a_viewport)
 		// are RenderRes (irreversible — the hook can't un-allocate them) but
 		// our upscale target (testTexture) is only populated by DLSS's path.
 		// Falling back to the standard jitter math keeps FSR's resolution
-		// scaling consistent with the engine's RT sizes. (CodeRabbit scs#2357.)
-		auto& dlssPerf = globals::features::dlssPerf;
+		// scaling consistent with the engine's RT sizes.
 		if (dlssPerf.IsHookActive() && upscaleMethod == UpscaleMethod::kDLSS) {
 			resolutionScale = { 1.0f, 1.0f };
 
@@ -1340,7 +1336,7 @@ void Upscaling::ConfigureUpscaling(RE::BSGraphics::State* a_viewport)
 		} else {
 			// Boot qualityMode under DLSSperf so projection stays coherent
 			// with the engine RTs sized at install.
-			const uint32_t qm = globals::features::dlssPerf.HasBootSnapshot() ? globals::features::dlssPerf.GetBootQualityMode() : settings.qualityMode;
+			const uint32_t qm = globals::features::upscaling.dlssPerf.HasBootSnapshot() ? globals::features::upscaling.dlssPerf.GetBootQualityMode() : settings.qualityMode;
 			float resolutionScaleBase = 1.0f / ffxFsr3GetUpscaleRatioFromQualityMode((FfxFsr3QualityMode)qm);
 
 			auto renderWidth = static_cast<int>(screenWidth * resolutionScaleBase);
@@ -2234,8 +2230,8 @@ void Upscaling::Main_PostProcessing::thunk(RE::ImageSpaceManager* a_this, uint32
 	// the user picked FSR/XeSS this session, the texture is stale/black —
 	// wrapping Post around it would produce a dark frame. ShouldHandlePost()
 	// catches the partial-init case; this gate catches the runtime swap.
-	if (upscaleMethod == UpscaleMethod::kDLSS && globals::features::dlssPerf.ShouldHandlePost()) {
-		globals::features::dlssPerf.HandlePostProcessing([&]() {
+	if (upscaleMethod == UpscaleMethod::kDLSS && globals::features::upscaling.dlssPerf.ShouldHandlePost()) {
+		globals::features::upscaling.dlssPerf.HandlePostProcessing([&]() {
 			func(a_this, a3, a_target, a_4, a_5);
 		});
 	} else {

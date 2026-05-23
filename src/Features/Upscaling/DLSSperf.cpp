@@ -43,7 +43,7 @@ void DLSSperf::InstallRenderTargetSizeHook()
 	// outside FFX's range, returning 0/inf/NaN; that would propagate to bogus
 	// renderEye dimensions and silently mis-size every engine RT. Fail closed
 	// — leave hookActive=false so the rest of DLSSperf is dormant and DLSS
-	// runs on dev's standard path. (CodeRabbit Major @ scs#2357.)
+	// runs on dev's standard path.
 	const uint32_t qualityModeRaw = globals::features::upscaling.settings.qualityMode;
 	const uint32_t qualityMode = std::clamp<uint32_t>(qualityModeRaw, 0, 4);  // FfxFsr3QualityMode range
 	const float scale = ffxFsr3GetUpscaleRatioFromQualityMode(static_cast<FfxFsr3QualityMode>(qualityMode));
@@ -81,7 +81,7 @@ void DLSSperf::GetRenderTargetSize_Hook::thunk(RE::BSOpenVR* a_this, uint32_t* a
 	// Call original to get real HMD resolution
 	func(a_this, a_width, a_height);
 
-	auto& dlssPerf = globals::features::dlssPerf;
+	auto& dlssPerf = globals::features::upscaling.dlssPerf;
 
 	*a_width = dlssPerf.renderEyeWidth;
 	*a_height = dlssPerf.renderEyeHeight;
@@ -296,7 +296,7 @@ void DLSSperf::SetupResources()
 			logger::error("[DLSSperf] Failed to create linear sampler");
 	}
 
-	// Fail-closed pipeline-ready gate (CodeRabbit scs#2357).
+	// Fail-closed pipeline-ready gate
 	// hookActive only means "BSOpenVR size hook is live + the engine has been
 	// sized at RenderRes." If any of the downstream resources we depend on at
 	// Post time failed to create, we'd previously still claim ShouldHandlePost
@@ -333,7 +333,7 @@ void DLSSperf::SetupResources()
 
 void DLSSperf::TonemapRender_Hook::thunk(void* imageSpaceShader, RE::BSTriShape* shape, RE::ImageSpaceEffectParam* param)
 {
-	auto& dlssPerf = globals::features::dlssPerf;
+	auto& dlssPerf = globals::features::upscaling.dlssPerf;
 
 	if (!dlssPerf.hookActive || !dlssPerf.testTextureSRV || !dlssPerf.fakeDSV) {
 		func(imageSpaceShader, shape, param);
@@ -411,7 +411,7 @@ void DLSSperf::TonemapRender_Hook::thunk(void* imageSpaceShader, RE::BSTriShape*
 
 void DLSSperf::RefractionRender_Hook::thunk(void* imageSpaceShader, RE::BSTriShape* shape, RE::ImageSpaceEffectParam* param)
 {
-	auto& dlssPerf = globals::features::dlssPerf;
+	auto& dlssPerf = globals::features::upscaling.dlssPerf;
 
 	if (!dlssPerf.hookActive || !dlssPerf.testTextureRTV || !dlssPerf.refraTempSRV) {
 		func(imageSpaceShader, shape, param);
@@ -508,7 +508,7 @@ void DLSSperf::RefractionRender_Hook::thunk(void* imageSpaceShader, RE::BSTriSha
 
 void DLSSperf::ISCopyRender_Hook::thunk(void* imageSpaceShader, RE::BSTriShape* shape, RE::ImageSpaceEffectParam* param)
 {
-	auto& dlssPerf = globals::features::dlssPerf;
+	auto& dlssPerf = globals::features::upscaling.dlssPerf;
 
 	// Inactive / non-VR: passthrough.
 	if (!dlssPerf.hookActive) {
@@ -593,7 +593,7 @@ void DLSSperf::ISCopyRender_Hook::thunk(void* imageSpaceShader, RE::BSTriShape* 
 
 void DLSSperf::UIPassDispatch_Hook::thunk(RE::BSGraphics::BSShaderAccumulator* shaderAccumulator, uint32_t renderFlags)
 {
-	auto& dlssPerf = globals::features::dlssPerf;
+	auto& dlssPerf = globals::features::upscaling.dlssPerf;
 
 	// Only intercept renderMode==24 (UI pass) when hook is active
 	auto& rtData = shaderAccumulator->GetRuntimeData();
@@ -673,7 +673,7 @@ void DLSSperf::PlayerViewRender_Hook::thunk(void* a1, bool a2, bool a3)
 {
 	func(a1, a2, a3);
 
-	globals::features::dlssPerf.ClearPostChainDone();
+	globals::features::upscaling.dlssPerf.ClearPostChainDone();
 }
 
 // ============================================================================
@@ -685,10 +685,10 @@ void DLSSperf::BSGraphics_SetDirtyStates_Hook::thunk(bool isCompute)
 {
 	bool swapped = false;
 	if (!isCompute)
-		swapped = globals::features::dlssPerf.MaybeSwapDSForEnlargedRT();
+		swapped = globals::features::upscaling.dlssPerf.MaybeSwapDSForEnlargedRT();
 	func(isCompute);
 	if (swapped)
-		globals::features::dlssPerf.RestoreSwappedDS();
+		globals::features::upscaling.dlssPerf.RestoreSwappedDS();
 }
 
 // ============================================================================
@@ -700,7 +700,7 @@ void DLSSperf::BSGraphics_Renderer_UpdateViewPort_Hook::thunk(RE::BSGraphics::Re
 {
 	func(a_this, a_width, a_height, a_forceMatchRT);
 
-	auto& dlssPerf = globals::features::dlssPerf;
+	auto& dlssPerf = globals::features::upscaling.dlssPerf;
 	if (!dlssPerf.IsHookActive())
 		return;
 
@@ -840,9 +840,8 @@ void DLSSperf::DownscaleToKMain()
 
 	auto& kmain = rtData.renderTargets[RE::RENDER_TARGETS::kMAIN];
 
-	// Bail before opening the perf event so we don't leave a dangling
-	// Begin without End (Copilot scs#2357 — earlier revision started the
-	// event, then early-returned on null RTV, leaking the Tracy zone).
+	// Bail before opening the perf event so we don't leak a dangling
+	// Begin without End on the null-RTV early-return path.
 	if (!kmain.RTV)
 		return;
 
@@ -856,7 +855,7 @@ void DLSSperf::DownscaleToKMain()
 
 	// Full viewport array — RSGetViewports truncates to the count we pass in,
 	// so a single-element save would drop any extra viewports the engine
-	// had bound and corrupt subsequent passes (Copilot scs#24).
+	// had bound and corrupt subsequent passes
 	UINT numVP = D3D11_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE;
 	D3D11_VIEWPORT savedVP[D3D11_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE] = {};
 	context->RSGetViewports(&numVP, savedVP);
@@ -882,10 +881,10 @@ void DLSSperf::DownscaleToKMain()
 	ID3D11RasterizerState* savedRS = nullptr;
 	context->RSGetState(&savedRS);
 
-	// VS / PS / sampler save (CodeRabbit Major @ scs#2357 — DownscaleToKMain
-	// runs immediately before enginePost(); leaving our shader/sampler bound
-	// risks subsequent engine passes silently inheriting them if those passes
-	// don't explicitly set every slot. Pattern matches VRStereoOptimizations.
+	// Save VS / PS / sampler — runs immediately before enginePost(), so a
+	// leaked shader/sampler binding would leak into subsequent engine
+	// passes that don't fully rebind every slot. Pattern matches
+	// VRStereoOptimizations.
 	ID3D11VertexShader* savedVS = nullptr;
 	ID3D11PixelShader* savedPS = nullptr;
 	context->VSGetShader(&savedVS, nullptr, nullptr);
@@ -897,7 +896,7 @@ void DLSSperf::DownscaleToKMain()
 	// Save IA state before we replace it with fullscreen-triangle bindings.
 	// Earlier revisions only restored OM/RS/VS/PS but left IA dangling, which
 	// could leak our null layout / TRIANGLELIST topology into subsequent
-	// engine passes that don't fully rebind IA (CodeRabbit/Copilot finding).
+	// engine passes that don't fully rebind IA
 	ID3D11InputLayout* savedIL = nullptr;
 	context->IAGetInputLayout(&savedIL);
 	ID3D11Buffer* savedVB[D3D11_IA_VERTEX_INPUT_RESOURCE_SLOT_COUNT] = {};
@@ -1065,7 +1064,7 @@ void DLSSperf::MaybeBlitMenuBG(uint32_t boundRTIdx)
 
 	// Full viewport array — RSGetViewports truncates to the count we pass in,
 	// so a single-element save would drop any extra viewports the engine
-	// had bound and corrupt subsequent passes (Copilot scs#24).
+	// had bound and corrupt subsequent passes
 	UINT numVP = D3D11_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE;
 	D3D11_VIEWPORT savedVP[D3D11_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE] = {};
 	context->RSGetViewports(&numVP, savedVP);
@@ -1296,6 +1295,47 @@ void DLSSperf::RestoreSwappedDS()
 // identified in Ghidra (see CreateRT_k* labels inside the renamed
 // BSShaderRenderTargets__Create function in SkyrimVR.exe). VR-only.
 
+// ============================================================================
+// ID3D11DeviceContext_Draw_Hook (vtable index 13)
+// ============================================================================
+// Engine fade-overlay Draw(30) fires after the Post chain and before Submit.
+// Under DLSSperf the draw's VP is computed at renderRes while the RT (kTOTAL)
+// is displayRes — partial-screen "black stamp" without this swap. Gate on
+// VertexCount==30 + isVR keeps the cost a single comparison on flat / non-
+// fade draws.
+void DLSSperf::ID3D11DeviceContext_Draw_Hook::thunk(ID3D11DeviceContext* This, UINT VertexCount, UINT StartVertexLocation)
+{
+	if (VertexCount == 30 && globals::game::isVR) {
+		auto& dlssPerf = globals::features::upscaling.dlssPerf;
+		if (dlssPerf.IsHookActive() && dlssPerf.IsPostChainDone()) {
+			UINT numVP = D3D11_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE;
+			D3D11_VIEWPORT savedVP[D3D11_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE] = {};
+			This->RSGetViewports(&numVP, savedVP);
+
+			D3D11_VIEWPORT vp{};
+			vp.Width = static_cast<float>(dlssPerf.GetDisplayEyeWidth() * 2);
+			vp.Height = static_cast<float>(dlssPerf.GetDisplayEyeHeight());
+			vp.MinDepth = 0.0f;
+			vp.MaxDepth = 1.0f;
+			This->RSSetViewports(1, &vp);
+
+			func(This, VertexCount, StartVertexLocation);
+
+			if (numVP > 0)
+				This->RSSetViewports(numVP, savedVP);
+			return;
+		}
+	}
+	func(This, VertexCount, StartVertexLocation);
+}
+
+void DLSSperf::InstallFadeOverlayHook(ID3D11DeviceContext* context)
+{
+	if (!globals::game::isVR || !context)
+		return;
+	stl::detour_vfunc<13, ID3D11DeviceContext_Draw_Hook>(context);
+}
+
 void DLSSperf::InstallCreateRTThunks()
 {
 	if (!REL::Module::IsVR())
@@ -1324,7 +1364,7 @@ namespace
 {
 	void EnlargeProps(RE::BSGraphics::RenderTargetProperties* a_props)
 	{
-		auto& dp = globals::features::dlssPerf;
+		auto& dp = globals::features::upscaling.dlssPerf;
 		if (!dp.IsCreateRTEnlargeActive())
 			return;
 		a_props->width = dp.GetEnlargeWidth();

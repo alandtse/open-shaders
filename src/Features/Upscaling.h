@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Feature.h"
+#include "Upscaling/DLSSperf.h"
 #include "Upscaling/DX12SwapChain.h"
 #include "Upscaling/FidelityFX.h"
 #include "Upscaling/RCAS/RCAS.h"
@@ -206,7 +207,8 @@ public:
 	static inline Streamline streamline;
 	static inline FidelityFX fidelityFX;  ///< Only for frame generation
 	static inline DX12SwapChain dx12SwapChain;
-	static inline RCAS rcas;  ///< Standalone RCAS sharpening for DLSS
+	static inline RCAS rcas;          ///< Standalone RCAS sharpening for DLSS
+	static inline DLSSperf dlssPerf;  ///< VR-only: render engine at upscaled-render res
 
 	winrt::com_ptr<ID3D11PixelShader> copyDepthToSharedBufferPS;
 

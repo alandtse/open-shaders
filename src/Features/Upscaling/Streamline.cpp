@@ -423,7 +423,7 @@ void Streamline::SetDLSSOptions(sl::ViewportHandle p_viewport, uint32_t width)
 
 	// Boot qualityMode under DLSSperf — DLSS dispatch must match the
 	// renderRes the engine was sized for at install.
-	uint32_t qualityMode = globals::features::dlssPerf.HasBootSnapshot() ? globals::features::dlssPerf.GetBootQualityMode() : globals::features::upscaling.settings.qualityMode;
+	uint32_t qualityMode = globals::features::upscaling.dlssPerf.HasBootSnapshot() ? globals::features::upscaling.dlssPerf.GetBootQualityMode() : globals::features::upscaling.settings.qualityMode;
 	switch (qualityMode) {
 	case 1:
 		dlssOptions.mode = sl::DLSSMode::eMaxQuality;
@@ -448,7 +448,7 @@ void Streamline::SetDLSSOptions(sl::ViewportHandle p_viewport, uint32_t width)
 	// BSOpenVR size hook; use dlssPerf's snapshot of the real DisplayRes when
 	// the hook is live so DLSS is created at the right scale. The width arg
 	// is already display-correct (caller computes from displaySize).
-	auto& dlssPerf = globals::features::dlssPerf;
+	auto& dlssPerf = globals::features::upscaling.dlssPerf;
 	const bool dlssperfActive = dlssPerf.IsHookActive() && dlssPerf.GetTestTexture();
 
 	dlssOptions.outputWidth = width;
@@ -614,7 +614,7 @@ void Streamline::Upscale(ID3D11Resource* a_upscalingTexture, ID3D11Resource* a_r
 	// has to write into dlssPerf's private DisplayRes testTexture instead of
 	// the now-RenderRes kMAIN.
 	auto& upscaling = globals::features::upscaling;
-	auto& dlssPerf = globals::features::dlssPerf;
+	auto& dlssPerf = globals::features::upscaling.dlssPerf;
 	const bool dlssperfActive = dlssPerf.IsHookActive() && dlssPerf.GetTestTexture();
 	const auto displaySize = dlssperfActive ? dlssPerf.GetDisplayScreenSize() : screenSize;
 

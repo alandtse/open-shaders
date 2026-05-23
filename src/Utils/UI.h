@@ -953,9 +953,6 @@ namespace Util
 		void WrappedInfo(const char* fmt, ...) IM_FMTARGS(1);
 		void Disabled(const char* fmt, ...) IM_FMTARGS(1);
 		void WrappedDisabled(const char* fmt, ...) IM_FMTARGS(1);
-		// Theme StatusPalette.RestartNeeded — matches existing "Requires
-		// restart" inline indicators (e.g. RenderDoc.cpp, FeatureIssues
-		// rename markers). Use for any "pending until restart" diff.
 		void RestartNeeded(const char* fmt, ...) IM_FMTARGS(1);
 		void WrappedRestartNeeded(const char* fmt, ...) IM_FMTARGS(1);
 	}
