@@ -854,9 +854,12 @@ void DLSSperf::DownscaleToKMain()
 	ID3D11DepthStencilView* savedDSV = nullptr;
 	context->OMGetRenderTargets(1, &savedRTV, &savedDSV);
 
-	D3D11_VIEWPORT savedVP = {};
-	UINT numVP = 1;
-	context->RSGetViewports(&numVP, &savedVP);
+	// Full viewport array — RSGetViewports truncates to the count we pass in,
+	// so a single-element save would drop any extra viewports the engine
+	// had bound and corrupt subsequent passes (Copilot scs#24).
+	UINT numVP = D3D11_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE;
+	D3D11_VIEWPORT savedVP[D3D11_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE] = {};
+	context->RSGetViewports(&numVP, savedVP);
 
 	ID3D11BlendState* savedBlend = nullptr;
 	FLOAT savedBlendFactor[4] = {};
@@ -964,7 +967,7 @@ void DLSSperf::DownscaleToKMain()
 	// Restore
 	context->OMSetRenderTargets(1, &savedRTV, savedDSV);
 	if (numVP > 0) {
-		context->RSSetViewports(numVP, &savedVP);
+		context->RSSetViewports(numVP, savedVP);
 	}
 	context->OMSetBlendState(savedBlend, savedBlendFactor, savedSampleMask);
 	context->OMSetDepthStencilState(savedDSState, savedStencilRef);
@@ -1065,9 +1068,12 @@ void DLSSperf::MaybeStretchMenuBG(uint32_t boundRTIdx)
 	ID3D11DepthStencilView* savedDSV = nullptr;
 	context->OMGetRenderTargets(1, &savedRTV, &savedDSV);
 
-	D3D11_VIEWPORT savedVP = {};
-	UINT numVP = 1;
-	context->RSGetViewports(&numVP, &savedVP);
+	// Full viewport array — RSGetViewports truncates to the count we pass in,
+	// so a single-element save would drop any extra viewports the engine
+	// had bound and corrupt subsequent passes (Copilot scs#24).
+	UINT numVP = D3D11_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE;
+	D3D11_VIEWPORT savedVP[D3D11_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE] = {};
+	context->RSGetViewports(&numVP, savedVP);
 
 	ID3D11BlendState* savedBlend = nullptr;
 	FLOAT savedBlendFactor[4] = {};
@@ -1150,7 +1156,7 @@ void DLSSperf::MaybeStretchMenuBG(uint32_t boundRTIdx)
 	// Restore
 	context->OMSetRenderTargets(1, &savedRTV, savedDSV);
 	if (numVP > 0)
-		context->RSSetViewports(numVP, &savedVP);
+		context->RSSetViewports(numVP, savedVP);
 	context->OMSetBlendState(savedBlend, savedBlendFactor, savedSampleMask);
 	context->OMSetDepthStencilState(savedDSState, savedStencilRef);
 	context->VSSetShader(savedVS, nullptr, 0);
