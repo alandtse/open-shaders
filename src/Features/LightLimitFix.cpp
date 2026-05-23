@@ -3,10 +3,10 @@
 #include "LinearLighting.h"
 
 #include "Menu/ThemeManager.h"
-#include "Utils/ExternalEmittance.h"
 #include "Shadercache.h"
 #include "State.h"
 #include "Util.h"
+#include "Utils/ExternalEmittance.h"
 
 static constexpr uint CLUSTER_MAX_LIGHTS = 128;
 static constexpr uint MAX_LIGHTS = 1024;
@@ -19,6 +19,14 @@ void LightLimitFix::DrawSettings()
 		ImGui::Text(std::format("Clustered Light Count : {}", lightCount).c_str());
 
 		ImGui::TreePop();
+	}
+
+	///////////////////////////////
+	ImGui::SeparatorText("Shadows");
+
+	ImGui::Checkbox("Enable Contact Shadows", &settings.EnableContactShadows);
+	if (auto _tt = Util::HoverTooltipWrapper()) {
+		ImGui::Text("All point lights (strict and clustered, except simple lights) cast short screen-space shadows. Performance impact.");
 	}
 
 	///////////////////////////////
@@ -66,6 +74,7 @@ void LightLimitFix::DrawOverlay()
 LightLimitFix::PerFrame LightLimitFix::GetCommonBufferData()
 {
 	PerFrame perFrame{};
+	perFrame.EnableContactShadows = settings.EnableContactShadows;
 	perFrame.EnableLightsVisualisation = settings.EnableLightsVisualisation;
 	perFrame.LightsVisualisationMode = settings.LightsVisualisationMode;
 	std::copy(clusterSize, clusterSize + 3, perFrame.ClusterSize);

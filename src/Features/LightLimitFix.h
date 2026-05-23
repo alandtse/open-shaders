@@ -94,9 +94,10 @@ public:
 
 	struct alignas(16) PerFrame
 	{
+		uint EnableContactShadows;
 		uint EnableLightsVisualisation;
 		uint LightsVisualisationMode;
-		float pad0[2];
+		float pad0;
 		uint ClusterSize[4];
 	};
 	STATIC_ASSERT_ALIGNAS_16(PerFrame);
@@ -169,6 +170,7 @@ public:
 
 	struct Settings
 	{
+		bool EnableContactShadows = false;
 		bool EnableLightsVisualisation = false;
 		uint LightsVisualisationMode = 0;
 	};
