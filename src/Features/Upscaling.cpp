@@ -1881,6 +1881,14 @@ void Upscaling::UpscaleDepth()
 
 	state->BeginPerfEvent("Render Target Upscaling");
 
+	// Unbind any prior render targets before issuing CopyResource on depth/
+	// depthCopy. Upscale() does this for the standard upscale path, but
+	// UpscaleDepth() can now be invoked standalone from Main_PostProcessing
+	// (kNONE/kTAA VR path) without going through Upscale() first — match the
+	// same precondition here to avoid a debug-layer hazard when depth happens
+	// to still be bound as a DSV from a prior pass.
+	context->OMSetRenderTargets(0, nullptr, nullptr);
+
 	// Set up Input Assembler for fullscreen triangle (no vertex/index buffers needed)
 	context->IASetInputLayout(nullptr);
 	context->IASetVertexBuffers(0, 0, nullptr, nullptr, nullptr);
@@ -2002,7 +2010,7 @@ void Upscaling::UpscaleDepth()
 	// Propagate the upscaled depth to kMAIN_COPY so downstream VR passes see
 	// it. Skipped on the full-resolution path because the else branch above
 	// already refreshed depthCopy from depth and nothing has touched it since.
-	if (globals::game::isVR && depthUpscaleActive) {
+	if (isVR && depthUpscaleActive) {
 		TracyD3D11Zone(globals::state->tracyCtx, "Upscaling - Depth VR Propagate");
 		copyIfNonAliased(depthCopy.texture, depth.texture);
 	}
