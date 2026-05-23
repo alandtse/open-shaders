@@ -1943,17 +1943,10 @@ void Upscaling::UpscaleDepth()
 	const auto upscaleMethod = GetUpscaleMethod();
 	const bool isVR = globals::game::isVR;
 	const bool vendorUpscaler = upscaleMethod == UpscaleMethod::kDLSS || upscaleMethod == UpscaleMethod::kFSR;
-	// DLSSperf: engine RTs (including depth and the underwater mask) are
-	// pre-shrunk to renderRes via the BSOpenVR hook, so the renderer is
-	// running 1:1 against its own pipeline even when a vendor upscaler is
-	// selected and qualityMode != DLAA. The depth-upscale half of this pass
-	// is unnecessary, but the analytical mask repair still needs to run —
-	// route through the same fullres branch.
 	const bool fullResolutionMaskPath =
 		upscaleMethod == UpscaleMethod::kNONE ||
 		upscaleMethod == UpscaleMethod::kTAA ||
-		(vendorUpscaler && settings.qualityMode == 0) ||
-		dlssPerf.HasBootSnapshot();
+		(vendorUpscaler && settings.qualityMode == 0);
 	const bool repairVRFullResolutionMask =
 		isVR &&
 		fullResolutionMaskPath &&
