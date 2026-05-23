@@ -924,11 +924,13 @@ void DLSSperf::DownscaleToKMain()
 	state->EndPerfEvent();
 }
 
-// Bilinear upscale kMAIN → kTOTAL/kMENUBG. Driven from TonemapRender_Hook
-// post-func in menu/loading state: the engine's tonemap shader's UV math
-// assumes RT.size == kMAIN.size (true for DLAA, broken under DLSS), so we
-// overwrite its output with a clean stretch of real kMAIN. One-shot per
-// frame; flag reset at Present (PlayerView doesn't fire in main menu).
+// Bridge menu BG into kTOTAL/kMENUBG. Driven from TonemapRender_Hook post-
+// func in menu/loading state: the engine's tonemap shader's UV math assumes
+// RT.size == kMAIN.size (true for DLAA, broken under DLSS), so we overwrite
+// its output with our own bridge of real kMAIN. Prefers a DLSS-upscaled
+// testTexture for crisp results; falls back to a plain bilinear stretch of
+// raw renderRes kMAIN when DLSS isn't usable. One-shot per frame; flag reset
+// at Present (PlayerView doesn't fire in main menu).
 void DLSSperf::MaybeStretchMenuBG(uint32_t boundRTIdx)
 {
 	if (!hookActive || stretchedThisFrame || !menuStretchPS || !boxDownscaleVS || !linearSampler)
@@ -951,6 +953,17 @@ void DLSSperf::MaybeStretchMenuBG(uint32_t boundRTIdx)
 	auto* context = globals::d3d::context;
 	state->BeginPerfEvent("DLSSperf::MenuBGStretch");
 	TracyD3D11Zone(state->tracyCtx, "DLSSperf::MenuBGStretch");
+
+	// DLSS upscale: kMAIN (renderRes) → testTexture (displayRes). Inputs
+	// (jitter, kMAIN depth, kMOTION_VECTOR) are the same engine-maintained
+	// buffers ISTemporalAA reads, so menu state — where TAA already works —
+	// gives DLSS coherent reconstruction without any sentinel/clear hacks.
+	// Falls back to raw kMAIN bilinear if testTexture is missing.
+	ID3D11ShaderResourceView* srcSRV = kmain.SRV;
+	if (testTexture && testTextureSRV) {
+		globals::features::upscaling.Upscale();
+		srcSRV = testTextureSRV.get();
+	}
 
 	// Save/restore matches DownscaleToKMain — we're inside SetDirtyStates
 	// before the engine's flush, so the engine's bind picks up the right
@@ -1012,7 +1025,7 @@ void DLSSperf::MaybeStretchMenuBG(uint32_t boundRTIdx)
 	context->HSSetShader(nullptr, nullptr, 0);
 	context->DSSetShader(nullptr, nullptr, 0);
 
-	ID3D11ShaderResourceView* srvs[] = { kmain.SRV };
+	ID3D11ShaderResourceView* srvs[] = { srcSRV };
 	context->PSSetShaderResources(0, 1, srvs);
 	ID3D11SamplerState* samplers[] = { linearSampler.get() };
 	context->PSSetSamplers(0, 1, samplers);
