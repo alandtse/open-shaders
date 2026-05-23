@@ -18,6 +18,7 @@
 #include "Features/LightLimitFix.h"
 #include "Features/LinearLighting.h"
 #include "Features/PerformanceOverlay.h"
+#include "Features/RemoteControl.h"
 #include "Features/RenderDoc.h"
 #include "Features/ScreenSpaceGI.h"
 #include "Features/ScreenSpaceShadows.h"
@@ -101,7 +102,7 @@ void Feature::Load(json& o_json)
 					std::string minimalVersionString = Util::GetFormattedVersion(minimalFeatureVersion);
 
 					if (IsCore()) {
-						failedLoadedMessage = std::format("This feature is already included as part of the core Community Shaders installation. Uninstall this feature with your mod manager.");
+						failedLoadedMessage = std::format("This feature is already included as part of the core Open Shaders / Community Shaders installation. Uninstall this feature with your mod manager.");
 					} else if (majorVersionMismatch) {
 						failedLoadedMessage = std::format("{} {} is too old, major version incompatibility detected. Required: {}", GetShortName(), value, minimalVersionString);
 					} else {
@@ -240,6 +241,7 @@ const std::vector<Feature*>& Feature::GetFeatureList()
 		&globals::features::extendedTranslucency,
 		&globals::features::upscaling,
 		&globals::features::renderDoc,
+		&globals::features::remoteControl,
 		&globals::features::weatherEditor,
 		&globals::features::screenshotFeature,
 		&globals::features::linearLighting,

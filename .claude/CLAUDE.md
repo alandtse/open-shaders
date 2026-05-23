@@ -2,6 +2,18 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Fork identity
+
+This repository is **Open Shaders** ([alandtse/open-shaders](https://github.com/alandtse/open-shaders)), a fork of [Community Shaders](https://github.com/community-shaders/skyrim-community-shaders) ([Nexus mod 180419](https://www.nexusmods.com/skyrimspecialedition/mods/180419)). The public/display name is "Open Shaders"; the runtime identity is intentionally kept as upstream Community Shaders so user installs are drop-in compatible:
+
+-   **Keep as `CommunityShaders`** (do NOT rename): the CMake `PROJECT_NAME`, the DLL filename, the `SKSE/Plugins/CommunityShaders/` runtime directory, the `CommunityShaders.log` log file, the ImGui window ID after `###`, asset paths under `package/Interface/CommunityShaders/`, and any HLSL include paths.
+-   **Use "Open Shaders"**: in-game menu titles, README/AI-INSTRUCTIONS public-facing copy, the AIO Nexus mod filename, the GitHub release name, the in-game Welcome / FAQ / About text.
+-   **Link "Community Shaders" explicitly to upstream**: when the text or comment refers to the upstream project (its Nexus page is 180419, its repo is `community-shaders/skyrim-community-shaders`, its wiki lives on that repo). Never link `doodlum/skyrim-community-shaders` — that path is dead.
+
+The AIO bundle ships only features whose `Shaders/Features/*.ini` has `autoupload = true` (CORE features always included). The `AIO_INCLUDE_NON_AUTOUPLOAD=ON` CMake option overrides for local dev builds. The Nexus upload workflow ships only the AIO archive — there is no per-feature matrix distribution. See `.github/workflows/nexus-upload.yaml`.
+
+**Logo absence is intentional.** The upstream Community Shaders logo is non-GPL, not trademark-licensed, and may not be redistributed by forks — so `cs-logo.png` is not present in this repo. The icon loader's load path is null-safe at every consumer (`IconLoader.cpp` retries the colored fallback; `Menu.cpp` derives `showLogo` from `texture != nullptr`; `MenuHeaderRenderer` and `HomePageRenderer` gate all logo draws on the null check). Missing logo → one `logger::warn`, menu renders headers without the logo image, layout adjusts via the `showLogo` flag. Do not "fix" the missing file or restore the upstream asset.
+
 ## Build Commands
 
 ### WSL/Linux Environment Note
@@ -435,6 +447,9 @@ Feature versions are automatically extracted from `.ini` files and compiled into
 -   **Complete Solutions**: Provide fully functional code with proper error handling and resource management
 -   **Performance Conscious**: Always consider GPU workload and user experience impact
 -   **Documentation**: Include Doxygen comments for public methods, especially graphics-related functions
+-   **Concise Comments**: Comments explain _why_, not _what_. Skip restating code in prose. A 1-line "why this hack" beats a 4-line block paraphrasing the next 4 lines. Block comments at the top of a function/section are fine when they capture non-obvious context (invariants, gotchas, history); avoid mid-function tutorial paragraphs.
+-   **Minimal Churn**: PRs touch only what the change requires. Don't reformat unrelated lines, rename adjacent variables, or "clean up" code outside the PR's scope. If you spot something worth fixing nearby, open a follow-up PR or surface it in the description rather than expanding the diff. Auto-format/lint touching unrelated lines is acceptable only when it's the linter's own commit; mixing with logic changes obscures review.
+-   **Comments describe present code, not absent code**: Don't add comments that describe code that used to be in the file but isn't now ("the Discord banner was removed", "this constant was renamed from X"). The reader sees only the present file; the deletion isn't visible. Past-tense framing of present behavior is fine ("if someone landed a commit during the release, abort"); the rule is specifically about describing code that no longer exists. Exception: a regression-risk warning that names the removed code so a future maintainer doesn't restore it ("do not re-add the Discord banner — the upstream invite isn't a fork channel") is load-bearing and stays. Commit messages, PR descriptions, and CHANGELOG entries are the right place for "what changed" — code comments are not.
 
 ## Development Best Practices (Learned from Codebase)
 
@@ -445,13 +460,40 @@ Follow conventional commit format for consistency:
 -   **Format**: `type(scope): description`
 -   **Title Limit**: 50 characters maximum
 -   **Body Wrap**: 72 characters per line
--   **Types**: `feat`, `fix`, `refactor`, `docs`, `style`, `test`, `chore`
 -   **Examples**:
     -   `feat(menu): extract DrawMenuVisitor helper methods`
     -   `fix(imgui): resolve orphaned TableNextColumn calls`
     -   `refactor(constants): centralize UI constants in ThemeManager`
+    -   `ci: gate cpp_tests build on changed files`
+    -   `build: drop CORE marker from per-feature AIO copy`
+    -   `test: fix cpp_tests build under MSVC C++23 modules`
 
-Conventional commits drive semantic-release. `feat:` triggers a minor bump, `fix:` triggers a patch bump, `feat!:` or `BREAKING CHANGE:` triggers a major bump. `chore:`, `docs:`, `style:`, `test:`, `refactor:` produce no release on their own. Pick the type with the version impact in mind — a refactor mislabeled `feat:` will force a minor bump on the next release.
+**Squash-merge note.** PRs are squash-merged, so the **PR title** becomes the commit message that semantic-release reads. Getting the title's type right matters more than per-commit messages on the PR branch — those get discarded. Use `gh pr edit <num> --title "..."` to fix a stale title before merge.
+
+**Type → release impact** (the full set accepted by `amannn/action-semantic-pull-request@v5` + `@semantic-release/commit-analyzer` defaults):
+
+| Type       | Use for                                                   | Release impact          |
+| ---------- | --------------------------------------------------------- | ----------------------- |
+| `feat`     | New user-facing feature or capability                     | **minor** (1.X.0)       |
+| `fix`      | Bug fix to user-facing behavior                           | **patch** (1.5.X)       |
+| `perf`     | Performance improvement to user-facing behavior           | **patch** (1.5.X)       |
+| `revert`   | Revert of a prior commit                                  | follows reverted commit |
+| `build`    | Build system, packaging, dependencies (CMake, vcpkg, AIO) | none                    |
+| `chore`    | Maintenance, misc tooling, repo hygiene                   | none                    |
+| `ci`       | CI workflows, GitHub Actions, lint configs                | none                    |
+| `docs`     | Documentation, comments, READMEs, CLAUDE.md               | none                    |
+| `refactor` | Code restructuring with no behavior change                | none                    |
+| `style`    | Formatting, whitespace, missing semicolons                | none                    |
+| `test`     | Tests, test fixtures, test infrastructure                 | none                    |
+
+Append `!` to the type (or add a `BREAKING CHANGE:` footer) for **major** (X.0.0).
+
+**Pick the type with version impact in mind.** Common traps:
+
+-   A pure build/CI/test change mislabeled `fix:` will burn a patch release on a non-user-visible change. Use `build:`, `ci:`, or `test:` instead.
+-   A refactor mislabeled `feat:` will force a minor bump.
+-   A perf win on internal code (not exposed to users) is `refactor:`, not `perf:`.
+-   `chore:` is a catch-all; prefer the specific type when one fits.
 
 ### Release Branch Model
 
@@ -463,7 +505,12 @@ Conventional commits drive semantic-release. `feat:` triggers a minor bump, `fix
 
 **Default branch for PRs is `dev`.** Feature work, fixes, and refactors all land there via normal PRs. `main` is updated only through the release workflows — never PR a feature branch directly into `main`.
 
-**Branch lineage invariant:** `main` is always an ancestor of `dev`, and `dev` is always an ancestor of `main` after a release reconciles. The `Release: Semantic Version` workflow's `ff_target` promotion mode and the auto dev-FF-reconcile keep this invariant — do not break it by force-pushing or merging shared branches manually.
+**Branch lineage invariant:** after every release reconciles, `main` is an ancestor of `dev`, so every tag on `main` is reachable from `dev`. The `Release: Semantic Version` workflow keeps this invariant in two ways depending on the promotion source:
+
+-   **dev → main promotion** (minor/major): main fast-forwards to the dev SHA, semantic-release appends a `chore(release):` commit on top, then dev fast-forwards to absorb that commit. No history rewrites on either branch.
+-   **hotfix-staging → main promotion** (current-line patch): main fast-forwards to the hotfix-staging SHA, semantic-release appends the `chore(release):` commit, then dev is **rebase-reconciled** onto the new main. `git rebase` drops dev's originals of the cherry-picked fixes (patch-id match) and replays any unique dev work on top. This is the only place the workflow force-pushes (`--force-with-lease`) — it is intentional and load-bearing.
+
+After a hotfix release, open PRs targeting `dev` are auto-rebased by the `Auto-rebase open PRs` workflow (a thin wrapper around `peter-evans/rebase@v3`). PRs from forks need "Allow edits by maintainers" enabled or the action silently skips them; drafts and PRs labeled `no-auto-rebase` are also excluded. The workflow's job summary reports the rebased count and lists the buckets PRs can fall into; conflict-skipped PRs need a manual `git rebase origin/dev` by the author.
 
 **Patch flow (current line _or_ older line, same staging mechanism):**
 
@@ -482,13 +529,13 @@ Conventional commits drive semantic-release. `feat:` triggers a minor bump, `fix
 
 **Things agents should not do without explicit user direction:**
 
--   Force-push or rebase `main`, `dev`, or any `hotfix/*` branch.
+-   Force-push or rebase `main`, `dev`, or any `hotfix/*` branch. (The release workflow's rebase-reconcile of `dev` after a hotfix-staging promotion is the one sanctioned exception; humans should not replicate it manually unless the workflow's remediation block explicitly instructs them to.)
 -   Manually create tags matching `v*` (semantic-release owns these).
 -   Bump `CMakeLists.txt`'s `VERSION` field outside the release workflow.
 -   PR a feature branch directly into `main`.
 -   Run `Release: Semantic Version` on `hotfix/X.Y.x` for the current line — it will fail with `cannot be published as it is out of range` because the maintenance contract requires the hotfix line to be strictly older than `main`. Use `ff_target` into `main` instead.
 
-Full details: [Developers wiki — Patch Release Process](https://github.com/community-shaders/skyrim-community-shaders/wiki/Developers#patch-release-process-any-line).
+Full details: [Open Shaders developer wiki — Patch Release Process](https://github.com/alandtse/open-shaders/wiki/Developers#patch-release-process-any-line). The fork now maintains its own wiki (transferred from upstream) at `alandtse/open-shaders/wiki`; the `maint-update-wiki.yaml` workflow auto-publishes buffer documentation there on every push to `dev`. Upstream Community Shaders maintains its own copy at `community-shaders/skyrim-community-shaders/wiki` — link to whichever is appropriate for the audience.
 
 ### Code Organization and Refactoring Patterns
 

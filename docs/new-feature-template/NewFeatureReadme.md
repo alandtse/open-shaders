@@ -1,6 +1,6 @@
 # New Feature Development Reference
 
-Quick reference for creating new graphics features in Community Shaders.
+Quick reference for creating new graphics features in Open Shaders (and upstream Community Shaders — the feature model is shared).
 
 ## File Structure
 

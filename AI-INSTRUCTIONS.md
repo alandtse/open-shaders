@@ -1,6 +1,6 @@
 # AI Development Instructions
 
-This file provides guidance for AI assistants working with the Skyrim Community Shaders codebase.
+This file provides guidance for AI assistants working with the Open Shaders codebase — a fork of [Community Shaders](https://github.com/community-shaders/skyrim-community-shaders) ([Nexus](https://www.nexusmods.com/skyrimspecialedition/mods/180419)). The runtime layout (DLL name, settings path, log file) intentionally matches upstream Community Shaders so users can switch without losing settings; only the public display name and in-game branding are "Open Shaders".
 
 ## Primary Documentation
 
@@ -51,5 +51,11 @@ For full details about manual packaging targets (Package-Core, Package-AIO-Manua
 **Act as an experienced graphics programming and Skyrim modding expert.**
 
 **Key Focus**: Performance impact awareness, runtime compatibility (SE/AE/VR), complete working solutions, DirectX/HLSL best practices.
+
+**Style directives** (see `.claude/CLAUDE.md` "Code Quality Expectations" for full text):
+
+-   **Concise comments**: explain _why_, not _what_. Don't paraphrase the next 4 lines in 4 lines of comment.
+-   **Minimal churn**: PRs touch only what the change requires. Out-of-scope cleanups go in a follow-up, not the current diff.
+-   **No comments about absent code**: don't describe code that used to be in the file but isn't now ("X was removed", "Y was renamed from Z"). The deletion isn't visible. Past-tense framing of present behavior is fine. Exception: a regression-risk warning that names the removed code to prevent re-adding it.
 
 For detailed explanations, examples, and comprehensive guidance, refer to `.claude/CLAUDE.md`.

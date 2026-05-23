@@ -1,6 +1,8 @@
 #include "Utils/Subrect.h"
 
 #include <algorithm>
+#include <cmath>
+#include <d3d11.h>
 #include <imgui.h>
 
 namespace
@@ -39,6 +41,16 @@ namespace
 		return ClampUV(uv);
 	}
 
+	Util::Subrect::UVRegion MirrorUVHorizontal(const Util::Subrect::UVRegion& uv)
+	{
+		// HMD nose-side overlap: left-eye nose-side region is on the right
+		// half of the eye texture; mirror around x=0.5 maps it to the
+		// right-eye's left half.
+		Util::Subrect::UVRegion mirrored = uv;
+		mirrored.x = 1.0f - uv.x - uv.w;
+		return ClampUV(mirrored);
+	}
+
 	json SaveUVToJson(const Util::Subrect::UVRegion& uv)
 	{
 		return { uv.x, uv.y, uv.w, uv.h };
@@ -70,6 +82,30 @@ namespace Util::Subrect
 		if (a_json.contains("CropH"))
 			currentUV.h = a_json["CropH"];
 
+		const bool hasExplicitLeft =
+			a_json.contains("CropX") || a_json.contains("CropY") ||
+			a_json.contains("CropW") || a_json.contains("CropH");
+		// Require the full quartet before declaring the right-eye UV explicit.
+		// A partial config (e.g. only CropRightW present) would otherwise reuse
+		// stale values for the missing components and silently suppress the
+		// left→right auto-mirror fallback. With AND semantics, partial keys
+		// behave as "not explicit" and the mirror still runs.
+		const bool hasExplicitRight =
+			a_json.contains("CropRightX") && a_json.contains("CropRightY") &&
+			a_json.contains("CropRightW") && a_json.contains("CropRightH");
+		if (a_json.contains("CropRightX"))
+			currentRightUV.x = a_json["CropRightX"];
+		if (a_json.contains("CropRightY"))
+			currentRightUV.y = a_json["CropRightY"];
+		if (a_json.contains("CropRightW"))
+			currentRightUV.w = a_json["CropRightW"];
+		if (a_json.contains("CropRightH"))
+			currentRightUV.h = a_json["CropRightH"];
+		// Reset every load — a later LoadSettings without CropRight* keys
+		// should let SetStereoEnabled(true) auto-mirror again rather than
+		// preserving stale state from a prior load.
+		rightUVLoadedFromJson = hasExplicitRight;
+
 		if (a_json.contains("CropPresets") && a_json["CropPresets"].is_array()) {
 			presets.clear();
 			for (auto& entry : a_json["CropPresets"]) {
@@ -78,12 +114,33 @@ namespace Util::Subrect
 				if (entry.contains("uv")) {
 					preset.uv = LoadUVArray(entry["uv"]);
 				}
+				// Right-eye UV is optional in JSON; leave nullopt when absent so
+				// ApplyPreset auto-mirrors the left eye on demand. Explicit
+				// right_uv in JSON wins over any mirror — but only when it
+				// looks structurally valid. LoadUVArray falls back to a
+				// full-frame UV on malformed input, so without this guard a
+				// bad `right_uv` payload would suppress auto-mirroring AND
+				// land the right eye as full-frame, which is the worst of
+				// both worlds.
+				if (entry.contains("right_uv") &&
+					entry["right_uv"].is_array() &&
+					entry["right_uv"].size() == 4) {
+					preset.rightUV = LoadUVArray(entry["right_uv"]);
+				}
 				presets.push_back(std::move(preset));
 			}
 		}
 
 		EnsureDefaultPreset();
 		ClampCurrentUV();
+
+		// Legacy upgrade: if the JSON has the mono crop keys but no right-eye
+		// keys, mirror left → right so existing user settings transition
+		// cleanly. If neither side is present, leave currentRightUV alone so
+		// EnsureDefaultPreset's seeded right-eye value survives.
+		if (stereoEnabled && hasExplicitLeft && !hasExplicitRight) {
+			SyncRightUV();
+		}
 
 		if (a_json.contains("SelectedPresetIndex")) {
 			selectedPresetIndex = a_json["SelectedPresetIndex"];
@@ -102,11 +159,32 @@ namespace Util::Subrect
 		a_json["CropW"] = currentUV.w;
 		a_json["CropH"] = currentUV.h;
 
+		if (stereoEnabled) {
+			a_json["CropRightX"] = currentRightUV.x;
+			a_json["CropRightY"] = currentRightUV.y;
+			a_json["CropRightW"] = currentRightUV.w;
+			a_json["CropRightH"] = currentRightUV.h;
+		} else {
+			// Caller may pass a JSON object with prior stereo keys (e.g. a
+			// host that re-saves into the same in-memory config). Drop them
+			// so the next load doesn't look like it had explicit stereo data.
+			a_json.erase("CropRightX");
+			a_json.erase("CropRightY");
+			a_json.erase("CropRightW");
+			a_json.erase("CropRightH");
+		}
+
 		json presetsJson = json::array();
 		for (const auto& preset : presets) {
 			json entry;
 			entry["name"] = preset.name;
 			entry["uv"] = SaveUVToJson(preset.uv);
+			// Only serialize right_uv when stereo is enabled AND we have an
+			// explicit value to persist. A nullopt preset implicitly means
+			// "auto-mirror at apply time" and shouldn't be locked into JSON.
+			if (stereoEnabled && preset.rightUV.has_value()) {
+				entry["right_uv"] = SaveUVToJson(*preset.rightUV);
+			}
 			presetsJson.push_back(std::move(entry));
 		}
 		a_json["CropPresets"] = presetsJson;
@@ -116,6 +194,21 @@ namespace Util::Subrect
 	void Controller::SeedDefaultPresets(std::vector<Preset> defaults)
 	{
 		seededDefaults = std::move(defaults);
+	}
+
+	void Controller::SetStereoEnabled(bool enabled)
+	{
+		if (stereoEnabled == enabled) {
+			return;
+		}
+		stereoEnabled = enabled;
+		// Only auto-mirror left→right when the right-eye UV hasn't been
+		// explicitly loaded from JSON. Otherwise a caller that does
+		// `LoadSettings` (stereo off) then `SetStereoEnabled(true)` would
+		// silently overwrite a deliberate persisted right-eye crop.
+		if (stereoEnabled && !rightUVLoadedFromJson) {
+			SyncRightUV();
+		}
 	}
 
 	void Controller::DrawEditor(ID3D11ShaderResourceView* previewSrv, ID3D11Texture2D* previewTexture, float uvVisibleWidth, float uvStartX, ImDrawCallback imageRenderCallback)
@@ -148,7 +241,18 @@ namespace Util::Subrect
 		if (ImGui::Button("Save Preset")) {
 			std::string presetName = newPresetName;
 			if (!presetName.empty()) {
-				presets.push_back(Preset{ .name = presetName, .uv = currentUV });
+				// Preserve the right-eye UV only when stereo is on. In mono
+				// mode currentRightUV is not tracked against currentUV, so
+				// snapshotting it would falsely mark the preset as having an
+				// explicit right eye and disable the auto-mirror fallback
+				// once stereo is later enabled. Leave rightUV as nullopt in
+				// mono — ApplyPreset will mirror left at apply time.
+				// (CodeRabbit Major @ scs#2356 for the stereo-side fix.)
+				Preset newPreset{ .name = presetName, .uv = currentUV };
+				if (stereoEnabled) {
+					newPreset.rightUV = currentRightUV;
+				}
+				presets.push_back(std::move(newPreset));
 				selectedPresetIndex = static_cast<int>(presets.size()) - 1;
 				newPresetName[0] = '\0';
 			}
@@ -177,6 +281,9 @@ namespace Util::Subrect
 		if (changed) {
 			selectedPresetIndex = -1;
 			ClampCurrentUV();
+			if (stereoEnabled) {
+				SyncRightUV();
+			}
 		}
 
 		ImGui::Spacing();
@@ -235,6 +342,9 @@ namespace Util::Subrect
 			currentUV.w = maxX - minX;
 			currentUV.h = maxY - minY;
 			ClampCurrentUV();
+			if (stereoEnabled) {
+				SyncRightUV();
+			}
 
 			if (!ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
 				isDraggingCrop = false;
@@ -253,6 +363,23 @@ namespace Util::Subrect
 		return UVToPixelRegion(currentUV, width, height);
 	}
 
+	StereoPixelRegions Controller::GetStereoPixelRegions(uint32_t fullWidth, uint32_t fullHeight) const
+	{
+		// Degenerate inputs would underflow UVToPixelRegion's `width - 1` /
+		// `height - 1` computations into huge values. Fail safe with empty
+		// regions so callers can detect the bad-input case via .w == 0.
+		if (fullWidth < 2 || fullHeight == 0) {
+			return { PixelRegion{ 0, 0, 0, 0 }, PixelRegion{ 0, 0, 0, 0 } };
+		}
+		// Each eye occupies half the SBS texture width. In mono mode, both
+		// eyes report the same region so callers don't need to branch.
+		const uint32_t eyeWidth = fullWidth / 2;
+		StereoPixelRegions regions;
+		regions.leftEye = UVToPixelRegion(currentUV, eyeWidth, fullHeight);
+		regions.rightEye = UVToPixelRegion(stereoEnabled ? currentRightUV : currentUV, eyeWidth, fullHeight);
+		return regions;
+	}
+
 	void Controller::EnsureDefaultPreset()
 	{
 		if (!presets.empty()) {
@@ -263,6 +390,9 @@ namespace Util::Subrect
 			// currentUV must match what the combo shows as selected; otherwise
 			// the first preset appears chosen but the crop region stays full-frame.
 			currentUV = presets[0].uv;
+			// nullopt rightUV means "auto-mirror" — match the same fallback
+			// ApplyPreset uses below.
+			currentRightUV = presets[0].rightUV.value_or(MirrorUVHorizontal(currentUV));
 			selectedPresetIndex = 0;
 		} else {
 			presets.push_back(Preset{ .name = "Full Frame", .uv = DefaultUV() });
@@ -272,6 +402,7 @@ namespace Util::Subrect
 	void Controller::ClampCurrentUV()
 	{
 		currentUV = ClampUV(currentUV);
+		currentRightUV = ClampUV(currentRightUV);
 	}
 
 	void Controller::ApplyPreset(int index)
@@ -279,6 +410,15 @@ namespace Util::Subrect
 		EnsureDefaultPreset();
 		selectedPresetIndex = std::clamp(index, 0, static_cast<int>(presets.size()) - 1);
 		currentUV = presets[selectedPresetIndex].uv;
+		// Nullopt right-UV → mirror left around x=0.5. This is the safe default
+		// for presets created without a stereo-specific intent (e.g. via
+		// SeedDefaultPresets with only .name + .uv specified).
+		currentRightUV = presets[selectedPresetIndex].rightUV.value_or(MirrorUVHorizontal(currentUV));
 		ClampCurrentUV();
+	}
+
+	void Controller::SyncRightUV()
+	{
+		currentRightUV = MirrorUVHorizontal(currentUV);
 	}
 }  // namespace Util::Subrect

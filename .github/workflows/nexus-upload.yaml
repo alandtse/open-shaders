@@ -1,8 +1,21 @@
 name: "Nexus: Upload Release"
 
+# `mode=aio` (default) uploads only the AIO to the fork's mod page.
+# `mode=matrix` runs the upstream per-feature fan-out (`feature_version_audit.py` builds the matrix).
+# Only `prepare-nexus-matrix` branches on mode; downstream jobs are
+# matrix-shape-agnostic.
+
 on:
     workflow_dispatch:
         inputs:
+            mode:
+                description: "Upload mode: 'aio' uploads only the AIO to a single mod page (fork default); 'matrix' fans out per-feature to their respective Nexus pages (upstream behavior)."
+                required: false
+                type: choice
+                default: "aio"
+                options:
+                    - "aio"
+                    - "matrix"
             tag:
                 description: "Release tag to upload to Nexus"
                 required: true
@@ -11,17 +24,17 @@ on:
                 required: false
                 default: "skyrimspecialedition"
             nexus_mod_id:
-                description: "Nexus mod ID"
+                description: "Target Nexus mod ID. In `aio` mode this is the fork's single mod page. In `matrix` mode this seeds the CORE row of the upstream matrix (defaults to 86492 if empty)."
                 required: false
-                default: "86492"
+                default: ""
             artifact_pattern:
-                description: "Artifact glob pattern to select the package to upload"
+                description: "Artifact glob pattern. Defaults: `CommunityShaders_AIO-*.7z` in aio mode, `CommunityShaders-*.7z` (core .7z) in matrix mode."
                 required: false
-                default: "CommunityShaders-*.7z"
+                default: ""
             mod_filename:
-                description: "Filename used for the Nexus mod upload"
+                description: "Nexus mod filename. Defaults: `Open Shaders` in aio mode, `Community Shaders` in matrix mode."
                 required: false
-                default: "Community Shaders"
+                default: ""
             dry_run:
                 description: "If true, do not upload to Nexus; only report the planned upload"
                 required: false
@@ -35,6 +48,10 @@ on:
                 required: false
     workflow_call:
         inputs:
+            mode:
+                required: false
+                type: string
+                default: "aio"
             tag:
                 description: "Release tag to upload to Nexus"
                 required: true
@@ -46,15 +63,15 @@ on:
             nexus_mod_id:
                 required: false
                 type: string
-                default: "86492"
+                default: ""
             artifact_pattern:
                 required: false
                 type: string
-                default: "CommunityShaders-*.7z"
+                default: ""
             mod_filename:
                 required: false
                 type: string
-                default: "Community Shaders"
+                default: ""
             dry_run:
                 required: false
                 type: string
@@ -69,6 +86,13 @@ on:
             UNEX_APIKEY:
                 required: false
 
+# Least-privilege for the whole workflow: every job here only reads from
+# GitHub (release listing via `gh api`, asset download via `gh release
+# download`) and writes only to Nexus via the UNEX_* secrets. No mutation
+# of repo state.
+permissions:
+    contents: read
+
 jobs:
     prepare-nexus-matrix:
         runs-on: ubuntu-latest
@@ -79,6 +103,7 @@ jobs:
             version: ${{ steps.resolve.outputs.version }}
             dry_run: ${{ steps.dryrun.outputs.dry_run }}
             has_uploads: ${{ steps.generate.outputs.has_uploads }}
+            mode: ${{ steps.resolve.outputs.mode }}
         steps:
             - name: Checkout repository
               uses: actions/checkout@v6
@@ -90,7 +115,7 @@ jobs:
               with:
                   python-version: "3.11"
 
-            - name: Resolve release tag
+            - name: Resolve release tag and mode
               id: resolve
               run: |
                   TAG="$INPUT_TAG"
@@ -109,10 +134,17 @@ jobs:
                     exit 1
                   fi
                   VERSION="${TAG#v}"
-                  echo "tag=$TAG" >> $GITHUB_OUTPUT
+                  MODE="${INPUT_MODE:-aio}"
+                  if [[ "$MODE" != "aio" && "$MODE" != "matrix" ]]; then
+                    echo "ERROR: mode must be 'aio' or 'matrix' (got '$MODE')" >&2
+                    exit 1
+                  fi
+                  echo "tag=$TAG"        >> $GITHUB_OUTPUT
                   echo "version=$VERSION" >> $GITHUB_OUTPUT
+                  echo "mode=$MODE"      >> $GITHUB_OUTPUT
               env:
                   INPUT_TAG: ${{ inputs.tag || '' }}
+                  INPUT_MODE: ${{ inputs.mode || '' }}
                   GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
             - name: Compute dry-run mode
@@ -129,44 +161,86 @@ jobs:
             - name: Generate Nexus upload matrix
               id: generate
               run: |
-                  ARGS=( --export-nexus-matrix --matrix-output nexus-matrix-raw.json )
-                  PREVIOUS_TAG=$(git tag --merged "$RELEASE_TAG" --list 'v*.*.*' --sort=-v:refname 2>/dev/null \
-                    | grep -v -- '-' \
-                    | awk -v current="$RELEASE_TAG" '$0 != current { print; exit }')
-                  if [ -n "$PREVIOUS_TAG" ]; then
-                    ARGS+=( --base "$PREVIOUS_TAG" )
-                  else
-                    ARGS+=( --all-features )
-                  fi
-                  if [ -n "$INPUT_NEXUS_MOD_ID" ]; then
-                    ARGS+=( --core-mod-id "$INPUT_NEXUS_MOD_ID" )
-                  fi
-                  if [ -n "$INPUT_MOD_FILENAME" ]; then
-                    ARGS+=( --core-filename "$INPUT_MOD_FILENAME" )
-                  fi
-                  if [ -n "$INPUT_ARTIFACT_PATTERN" ]; then
-                    ARGS+=( --core-artifact-pattern "$INPUT_ARTIFACT_PATTERN" )
-                  fi
-                  # Strip the leading 'v' so we get e.g. "1.5.2" — the value
-                  # is rendered into Nexus file descriptions, where the
-                  # bare semver is what users see in the UI.
-                  RELEASE_VER="${RELEASE_TAG#v}"
-                  ARGS+=( --release-version "$RELEASE_VER" )
-                  python tools/feature_version_audit.py "${ARGS[@]}"
+                  set -euo pipefail
+                  MODE='${{ steps.resolve.outputs.mode }}'
 
-                  # Fetch the specific release by tag — avoids pagination issues with
-                  # the releases list endpoint (default page size is 30).
+                  # Workflow inputs default to empty so matrix mode keeps
+                  # its upstream defaults below; aio mode uses fork defaults.
+                  if [ "$MODE" = "aio" ]; then
+                    EFFECTIVE_MOD_ID="${INPUT_NEXUS_MOD_ID}"
+                    EFFECTIVE_ARTIFACT="${INPUT_ARTIFACT_PATTERN:-CommunityShaders_AIO-*.7z}"
+                    EFFECTIVE_FILENAME="${INPUT_MOD_FILENAME:-Open Shaders}"
+                  else
+                    EFFECTIVE_MOD_ID="${INPUT_NEXUS_MOD_ID:-86492}"
+                    EFFECTIVE_ARTIFACT="${INPUT_ARTIFACT_PATTERN:-CommunityShaders-*.7z}"
+                    EFFECTIVE_FILENAME="${INPUT_MOD_FILENAME:-Community Shaders}"
+                  fi
+                  export EFFECTIVE_MOD_ID EFFECTIVE_ARTIFACT EFFECTIVE_FILENAME
+
+                  # Fetch the release body once — both modes use it as the
+                  # changelog for the CORE/AIO row.
                   gh api "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG" \
                     2>/dev/null > release.json || echo '{}' > release.json
-                  python -c "
+
+                  if [ "$MODE" = "aio" ]; then
+                    if [ -z "$EFFECTIVE_MOD_ID" ] && [ "$DRY_RUN" != "true" ]; then
+                      echo "::error::aio mode requires nexus_mod_id for a real upload. Set it via the workflow input or update the default once the Open Shaders Nexus page exists."
+                      exit 1
+                    fi
+                    if [ -z "$EFFECTIVE_MOD_ID" ]; then
+                      echo "::warning::nexus_mod_id is empty — dry-run continues, but a real upload would fail."
+                    fi
+                    RELEASE_VER="${RELEASE_TAG#v}"
+                    export RELEASE_VER
+                    python3 << 'PYEOF'
                   import json, os, re
                   with open('release.json') as f:
                       release = json.load(f)
                   if not isinstance(release, dict):
                       release = {}
                   body = release.get('body') or ''
-                  # Strip feature audit appendix — Nexus changelog should only
-                  # contain human-readable release notes, not the audit table.
+                  body = re.sub(r'\n---\n+# Feature Version Audit\b.*', '', body, flags=re.DOTALL).strip()
+                  release_ver = os.environ['RELEASE_VER']
+                  row = {
+                      'name': 'core',
+                      'is_core': True,
+                      'nexus_mod_id': os.environ['EFFECTIVE_MOD_ID'],
+                      'artifact_pattern': os.environ['EFFECTIVE_ARTIFACT'],
+                      'mod_filename': os.environ['EFFECTIVE_FILENAME'],
+                      'auto_upload': True,
+                      'changelog': body,
+                      'file_description': f'Open Shaders {release_ver} AIO. See changelog for included features.',
+                  }
+                  with open('nexus-matrix-raw.json', 'w') as f:
+                      json.dump([row], f)
+                  PYEOF
+                  else
+                    # Matrix mode: upstream behavior — the audit tool emits
+                    # the full per-feature matrix.
+                    ARGS=( --export-nexus-matrix --matrix-output nexus-matrix-raw.json )
+                    PREVIOUS_TAG=$(git tag --merged "$RELEASE_TAG" --list 'v*.*.*' --sort=-v:refname 2>/dev/null \
+                      | grep -v -- '-' \
+                      | awk -v current="$RELEASE_TAG" '$0 != current { print; exit }')
+                    if [ -n "$PREVIOUS_TAG" ]; then
+                      ARGS+=( --base "$PREVIOUS_TAG" )
+                    else
+                      ARGS+=( --all-features )
+                    fi
+                    ARGS+=( --core-mod-id "$EFFECTIVE_MOD_ID" )
+                    ARGS+=( --core-filename "$EFFECTIVE_FILENAME" )
+                    ARGS+=( --core-artifact-pattern "$EFFECTIVE_ARTIFACT" )
+                    RELEASE_VER="${RELEASE_TAG#v}"
+                    ARGS+=( --release-version "$RELEASE_VER" )
+                    python tools/feature_version_audit.py "${ARGS[@]}"
+
+                    # Splice the GitHub release body into the CORE row's changelog.
+                    python3 << 'PYEOF'
+                  import json, os, re
+                  with open('release.json') as f:
+                      release = json.load(f)
+                  if not isinstance(release, dict):
+                      release = {}
+                  body = release.get('body') or ''
                   body = re.sub(r'\n---\n+# Feature Version Audit\b.*', '', body, flags=re.DOTALL).strip()
                   with open('nexus-matrix-raw.json') as f:
                       data = json.load(f)
@@ -176,14 +250,16 @@ jobs:
                           break
                   with open('nexus-matrix-raw.json', 'w') as f:
                       json.dump(data, f)
-                  "
+                  PYEOF
+                  fi
 
-                  python -c "
+                  # Common post-processing: build the upload-eligible matrix
+                  # (filter on auto_upload + artifact presence in the release).
+                  # Single-row AIO matrix trivially passes this filter.
+                  python3 << 'PYEOF'
                   import json, os, fnmatch
                   with open('nexus-matrix-raw.json') as f:
                       data = json.load(f)
-                  # Load asset names from the release to skip uploads where the
-                  # artifact was not included — applies to all rows including core.
                   try:
                       with open('release.json') as f:
                           release = json.load(f)
@@ -195,16 +271,8 @@ jobs:
                   def artifact_in_release(row):
                       pat = row.get('artifact_pattern', '')
                       return bool(pat) and any(fnmatch.fnmatch(n, pat) for n in asset_names)
-                  # Full matrix for artifact prep; upload matrix excludes auto_upload=false
-                  # and features whose standalone artifact is absent from the release.
                   upload_data = [row for row in data
                                  if row.get('auto_upload', True) and artifact_in_release(row)]
-                  # Drift detector: a feature opted in to auto_upload but its
-                  # artifact pattern doesn't match anything on the release.
-                  # This is almost always a metadata bug (folder name vs
-                  # nexusfilename mismatch — see HDR Display in v1.5.2).
-                  # Surface it loudly via GHA warning + step summary so it
-                  # cannot silently drop a feature from a release again.
                   missing = [row for row in data
                              if row.get('auto_upload') is True
                              and not row.get('is_core')
@@ -219,7 +287,6 @@ jobs:
                           pat = row.get('artifact_pattern', '?')
                           mod_id = row.get('nexus_mod_id', '?')
                           lines.append(f'| `{name}` | `{pat}` | {mod_id} |')
-                          # Annotation appears inline in the run UI.
                           print(f'::warning title=Nexus auto-upload missing artifact::'
                                 f'{name} (mod {mod_id}) marked autoupload=true but no '
                                 f'release asset matches pattern {pat!r}. Likely cause: '
@@ -241,7 +308,8 @@ jobs:
                       json.dump({'include': upload_data or [{'name': '_empty', 'skip': True}]}, f)
                   with open('nexus-upload-state.json', 'w') as f:
                       json.dump({'has_uploads': has_uploads}, f)
-                  "
+                  PYEOF
+
                   DELIM=$(openssl rand -hex 8)
                   {
                     printf 'matrix<<%s\n' "$DELIM"
@@ -251,13 +319,14 @@ jobs:
                     cat nexus-upload-matrix.json
                     printf '\n%s\n' "$DELIM"
                   } >> "$GITHUB_OUTPUT"
-                  HAS_UPLOADS=$(python -c 'import json; d=json.load(open("nexus-upload-state.json")); print("true" if d.get("has_uploads") else "false")')
+                  HAS_UPLOADS=$(python3 -c 'import json; d=json.load(open("nexus-upload-state.json")); print("true" if d.get("has_uploads") else "false")')
                   echo "has_uploads=${HAS_UPLOADS}" >> "$GITHUB_OUTPUT"
               env:
                   RELEASE_TAG: ${{ steps.resolve.outputs.tag }}
                   INPUT_NEXUS_MOD_ID: ${{ inputs.nexus_mod_id || '' }}
                   INPUT_MOD_FILENAME: ${{ inputs.mod_filename || '' }}
                   INPUT_ARTIFACT_PATTERN: ${{ inputs.artifact_pattern || '' }}
+                  DRY_RUN: ${{ steps.dryrun.outputs.dry_run }}
                   GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
     prepare-artifacts:
@@ -339,6 +408,7 @@ jobs:
                   version = os.environ.get('VERSION', '')
                   game_id = os.environ.get('NEXUS_GAME_ID', 'skyrimspecialedition')
                   api_key = os.environ.get('UNEX_APIKEY', '')
+                  ua = 'open-shaders-ci/1.0' if os.environ.get('MODE') == 'aio' else 'community-shaders-ci/1.0'
                   summary = open(os.environ['GITHUB_STEP_SUMMARY'], 'a')
 
                   def w(line=''):
@@ -359,8 +429,8 @@ jobs:
                       mod_id = str(row.get('nexus_mod_id', ''))
                       planned = row.get('mod_version') or version
                       label = row.get('mod_filename', name)
-                      url = f'https://www.nexusmods.com/{game_id}/mods/{mod_id}'
-                      link = f'[{label}]({url})'
+                      url = f'https://www.nexusmods.com/{game_id}/mods/{mod_id}' if mod_id else ''
+                      link = f'[{label}]({url})' if url else label
 
                       if not api_key or not mod_id:
                           w(f'| {link} | `{planned}` | ⚠️ skipped | — |')
@@ -369,7 +439,7 @@ jobs:
                       api_url = f'https://api.nexusmods.com/v1/games/{game_id}/mods/{mod_id}/files.json'
                       req = urllib.request.Request(api_url, headers={
                           'apikey': api_key,
-                          'User-Agent': 'community-shaders-ci/1.0',
+                          'User-Agent': ua,
                           'Accept': 'application/json',
                       })
                       try:
@@ -405,6 +475,7 @@ jobs:
                   UPLOAD_MATRIX: ${{ needs.prepare-nexus-matrix.outputs.upload_matrix }}
                   VERSION: ${{ needs.prepare-nexus-matrix.outputs.version }}
                   NEXUS_GAME_ID: ${{ inputs.nexus_game_id || 'skyrimspecialedition' }}
+                  MODE: ${{ needs.prepare-nexus-matrix.outputs.mode }}
                   UNEX_APIKEY: ${{ secrets.UNEX_APIKEY }}
 
     upload-to-nexus:
@@ -428,10 +499,7 @@ jobs:
             mod_version: ${{ matrix.mod_version || needs.prepare-nexus-matrix.outputs.version }}
             mod_filename: ${{ matrix.mod_filename }}
             changelog: ${{ inputs.changelog || matrix.changelog || '' }}
-            # file_description anchors each .7z to the CS release it shipped
-            # with. Empty string falls back to the upstream default
-            # ("See mod description for details.") so non-release dispatches
-            # without an audit-tool-built matrix still work.
+            # file_description anchors each .7z to the release it shipped with.
             file_description: ${{ matrix.file_description || '' }}
             check_existing: true
         secrets:
@@ -450,6 +518,7 @@ jobs:
                   echo "" >> $GITHUB_STEP_SUMMARY
                   echo "**Workflow:** ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" >> $GITHUB_STEP_SUMMARY
                   echo "**Tag:** ${{ needs.prepare-nexus-matrix.outputs.tag }}" >> $GITHUB_STEP_SUMMARY
+                  echo "**Mode:** ${{ needs.prepare-nexus-matrix.outputs.mode }}" >> $GITHUB_STEP_SUMMARY
                   echo "**Dry run:** ${{ needs.prepare-nexus-matrix.outputs.dry_run }}" >> $GITHUB_STEP_SUMMARY
                   echo "" >> $GITHUB_STEP_SUMMARY
 
@@ -473,6 +542,7 @@ jobs:
                   version = os.environ.get('VERSION', '')
                   game_id = os.environ.get('NEXUS_GAME_ID', 'skyrimspecialedition')
                   api_key = os.environ.get('UNEX_APIKEY', '')
+                  ua = 'open-shaders-ci/1.0' if os.environ.get('MODE') == 'aio' else 'community-shaders-ci/1.0'
                   summary = open(os.environ['GITHUB_STEP_SUMMARY'], 'a')
 
                   def w(line=''):
@@ -484,7 +554,7 @@ jobs:
                       url = f'https://api.nexusmods.com/v1/games/{game_id}/mods/{mod_id}/files.json'
                       req = urllib.request.Request(url, headers={
                           'apikey': api_key,
-                          'User-Agent': 'community-shaders-ci/1.0',
+                          'User-Agent': ua,
                           'Accept': 'application/json',
                       })
                       try:
@@ -508,7 +578,7 @@ jobs:
                       mod_id = str(row.get('nexus_mod_id', ''))
                       planned = row.get('mod_version') or version
                       label = row.get('mod_filename', name)
-                      url = f'https://www.nexusmods.com/{game_id}/mods/{mod_id}'
+                      url = f'https://www.nexusmods.com/{game_id}/mods/{mod_id}' if mod_id else ''
                       artifact = f'nexus-upload-{name}'
                       versions = nexus_versions(mod_id)
                       if versions is None:
@@ -536,7 +606,9 @@ jobs:
                   w('|--------|---------|---------|-------|----------|')
                   for icon, label, planned, url, artifact, status in rows_status:
                       art = f'`{artifact}`' if status in ('failed', 'unknown') else '—'
-                      w(f'| {icon} | [{label}]({url}) | `{planned}` | [View]({url}) | {art} |')
+                      link = f'[{label}]({url})' if url else label
+                      view = f'[View]({url})' if url else '—'
+                      w(f'| {icon} | {link} | `{planned}` | {view} | {art} |')
                   if failed or unknowns:
                       w()
                       w('Re-run is safe: already-uploaded versions will be automatically skipped.')
@@ -547,4 +619,5 @@ jobs:
                   UPLOAD_MATRIX: ${{ needs.prepare-nexus-matrix.outputs.upload_matrix }}
                   VERSION: ${{ needs.prepare-nexus-matrix.outputs.version }}
                   NEXUS_GAME_ID: ${{ inputs.nexus_game_id || 'skyrimspecialedition' }}
+                  MODE: ${{ needs.prepare-nexus-matrix.outputs.mode }}
                   UNEX_APIKEY: ${{ secrets.UNEX_APIKEY }}

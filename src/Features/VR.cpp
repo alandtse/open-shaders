@@ -126,7 +126,7 @@ void VR::SetupResources()
 			if (globals::state->IsDeveloperMode()) {
 				logger::info("OpenVR not natively compatible, but developer mode is active - VR menus enabled");
 			} else {
-				logger::info("OpenVR version is incompatible. Community Shaders VR menus will be disabled for stability");
+				logger::info("OpenVR version is incompatible. Open Shaders VR menus will be disabled for stability");
 			}
 		}
 	} else {

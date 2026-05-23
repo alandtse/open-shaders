@@ -56,7 +56,7 @@ public:
 	enum class FontRole : std::uint8_t
 	{
 		Body = 0,    // Default UI text
-		Title,       // Large title text (e.g., "Community Shaders" header)
+		Title,       // Large title text (e.g., "Open Shaders" header)
 		Heading,     // Section headers (tabs, category labels)
 		Subheading,  // Subsection headers (feature names, separators)
 		Subtext,     // Smaller secondary text (descriptions, about content)
@@ -208,9 +208,6 @@ public:
 		UIIcon undo;                  // Undo icon (weather editor)
 		UIIcon freeCamera;            // Free camera preview icon (weather editor)
 		UIIcon playMode;              // Play mode preview icon (weather editor)
-
-		// Social media/external link icons
-		UIIcon discord;
 
 		// Category icons
 		UIIcon characters;
@@ -401,19 +398,19 @@ public:
 	{
 		std::vector<InputCombo> ToggleKey = { InputCombo::Keyboard(VK_END) };
 		std::vector<InputCombo> SkipCompilationKey = { InputCombo::Keyboard(VK_ESCAPE) };
-		std::vector<InputCombo> EffectToggleKey = { InputCombo::Keyboard(VK_MULTIPLY) };    // toggle all effects
-		std::vector<InputCombo> OverlayToggleKey = { InputCombo::Keyboard(VK_F10) };        // Global overlay toggle key for all overlays
-		std::vector<InputCombo> ShaderBlockPrevKey = { InputCombo::Keyboard(VK_PRIOR) };    // Debug: cycle backward through shaders (PageUp)
-		std::vector<InputCombo> ShaderBlockNextKey = { InputCombo::Keyboard(VK_NEXT) };     // Debug: cycle forward through shaders (PageDown)
+		std::vector<InputCombo> EffectToggleKey = { InputCombo::Keyboard(VK_MULTIPLY) };                                    // toggle all effects
+		std::vector<InputCombo> OverlayToggleKey = { InputCombo::Keyboard(VK_F10) };                                        // Global overlay toggle key for all overlays
+		std::vector<InputCombo> ShaderBlockPrevKey = { InputCombo::Keyboard(VK_PRIOR) };                                    // Debug: cycle backward through shaders (PageUp)
+		std::vector<InputCombo> ShaderBlockNextKey = { InputCombo::Keyboard(VK_NEXT) };                                     // Debug: cycle forward through shaders (PageDown)
 		std::vector<InputCombo> WeatherEditorToggleKey = { InputCombo::Keyboard(VK_SHIFT), InputCombo::Keyboard(VK_END) };  // Weather Editor toggle key
-		std::vector<InputCombo> ScreenshotKey = { InputCombo::Keyboard(VK_SNAPSHOT) };                                    // Screenshot capture key
-		bool EnableShaderBlocking = false;                                                  // Enable shader blocking hotkeys for debugging
-		bool FirstTimeSetupCompleted = false;                                               // Track if first-time setup has been completed
-		bool SkipClearCacheConfirmation = false;                                            // Skip confirmation dialog when clearing shader cache
-		bool AutoHideFeatureList = false;                                                   // Auto-hide left feature list panel, show on hover
-		bool SkipConstraintWarning = false;                                                 // Skip popup when a setting change creates new constraints
-		bool RequireShiftToDock = true;                                                     // Require holding Shift to dock windows
-		bool UseResolutionFont = true;                                                      // When true, runtime font size scales with screen resolution; when persisted to theme files, FontSize is zeroed for backward compatibility
+		std::vector<InputCombo> ScreenshotKey = { InputCombo::Keyboard(VK_SNAPSHOT) };                                      // Screenshot capture key
+		bool EnableShaderBlocking = false;                                                                                  // Enable shader blocking hotkeys for debugging
+		bool FirstTimeSetupCompleted = false;                                                                               // Track if first-time setup has been completed
+		bool SkipClearCacheConfirmation = false;                                                                            // Skip confirmation dialog when clearing shader cache
+		bool AutoHideFeatureList = false;                                                                                   // Auto-hide left feature list panel, show on hover
+		bool SkipConstraintWarning = false;                                                                                 // Skip popup when a setting change creates new constraints
+		bool RequireShiftToDock = true;                                                                                     // Require holding Shift to dock windows
+		bool UseResolutionFont = true;                                                                                      // When true, runtime font size scales with screen resolution; when persisted to theme files, FontSize is zeroed for backward compatibility
 		ThemeSettings Theme;
 		std::string SelectedThemePreset = "";  // Currently selected theme preset (empty = custom/user theme)
 	};

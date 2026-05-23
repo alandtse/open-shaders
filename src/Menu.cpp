@@ -22,6 +22,7 @@
 #include "Feature.h"
 #include "FeatureIssues.h"
 #include "FeatureVersions.h"
+#include "Features/RenderDoc.h"
 #include "Features/Upscaling.h"
 #include "Menu/AdvancedSettingsRenderer.h"
 #include "Menu/BackgroundBlur.h"
@@ -290,7 +291,6 @@ Menu::~Menu()
 	uiIcons.applyToGame.Release();
 	uiIcons.pauseTime.Release();
 	uiIcons.undo.Release();
-	uiIcons.discord.Release();
 	uiIcons.characters.Release();
 	uiIcons.display.Release();
 	uiIcons.grass.Release();
@@ -638,7 +638,7 @@ void Menu::Init()
 }
 
 /**
- * @brief Main UI rendering coordinator for the Community Shaders menu
+ * @brief Main UI rendering coordinator for the Open Shaders menu
  *
  * This method serves as the primary entry point for rendering the entire menu interface.
  * It handles window setup, docking configuration, and delegates rendering to specialized
@@ -668,8 +668,10 @@ void Menu::DrawSettings()
 	resetLayout = false;
 	auto versionStr = Util::GetFormattedVersion(Plugin::VERSION);
 	auto expectedTag = std::format("v{}", versionStr);
-	auto displayTitle = Plugin::BUILD_DESCRIBE == expectedTag ? std::format("Community Shaders {}", versionStr) : std::format("Community Shaders {} [{}]", versionStr, Plugin::BUILD_DESCRIBE);
-	// Use ### to keep a stable window ID regardless of build suffix, preserving docking state
+	auto displayTitle = Plugin::BUILD_DESCRIBE == expectedTag ? std::format("Open Shaders {}", versionStr) : std::format("Open Shaders {} [{}]", versionStr, Plugin::BUILD_DESCRIBE);
+	// Use ### to keep a stable window ID regardless of build suffix or display
+	// branding, preserving docking state. The literal "CommunityShaders" ID is
+	// load-bearing: changing it would discard users' existing docking layouts.
 	auto title = std::format("{}###CommunityShaders", displayTitle);
 
 	// Determine window flags based on docking state
@@ -894,7 +896,7 @@ static std::vector<InputCombo> DeriveWeatherEditorKey(const std::vector<InputCom
 		if (vk == VK_SHIFT || vk == VK_LSHIFT || vk == VK_RSHIFT) {
 			hasShift = true;
 		} else if (vk != VK_CONTROL && vk != VK_LCONTROL && vk != VK_RCONTROL &&
-		           vk != VK_MENU && vk != VK_LMENU && vk != VK_RMENU) {
+				   vk != VK_MENU && vk != VK_LMENU && vk != VK_RMENU) {
 			baseKey = vk;
 		}
 	}
@@ -977,11 +979,11 @@ void Menu::ProcessInputEventQueue()
 				auto shaderCache = globals::shaderCache;
 				HotkeyAction hotkeyActions[] = {
 					{ &settings.ToggleKey, &settingToggleKey, [this](std::vector<InputCombo> keys) {
-						settings.ToggleKey = keys;
-						settingToggleKey = false;
-						if (!settings.FirstTimeSetupCompleted)
-							settings.WeatherEditorToggleKey = DeriveWeatherEditorKey(keys);
-					} },
+						 settings.ToggleKey = keys;
+						 settingToggleKey = false;
+						 if (!settings.FirstTimeSetupCompleted)
+							 settings.WeatherEditorToggleKey = DeriveWeatherEditorKey(keys);
+					 } },
 					{ &settings.SkipCompilationKey, &settingSkipCompilationKey, [this](std::vector<InputCombo> keys) { settings.SkipCompilationKey = keys; settingSkipCompilationKey = false; } },
 					{ &settings.EffectToggleKey, &settingsEffectsToggle, [this](std::vector<InputCombo> keys) { settings.EffectToggleKey = keys; settingsEffectsToggle = false; } },
 					{ &settings.OverlayToggleKey, &settingOverlayToggleKey, [this](std::vector<InputCombo> keys) { settings.OverlayToggleKey = keys; settingOverlayToggleKey = false; } },
@@ -1072,10 +1074,12 @@ void Menu::ProcessInputEventQueue()
 								 globals::features::screenshotFeature.captureRequested = true;
 						 } },
 					};
-					for (const auto& ka : keyActions) {
-						if (InputCombo::MatchesKeyboardCombo(ka.settingKey, key)) {
-							ka.action();
-							break;
+					if (!globals::features::renderDoc.HandleCaptureHotkey(key)) {
+						for (const auto& ka : keyActions) {
+							if (InputCombo::MatchesKeyboardCombo(ka.settingKey, key)) {
+								ka.action();
+								break;
+							}
 						}
 					}
 				}

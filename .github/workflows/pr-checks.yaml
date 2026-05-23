@@ -54,6 +54,10 @@ jobs:
             should-build: ${{ steps.changed-files.outputs.build_any_changed == 'true' || steps.changed-files.outputs.cpp_any_changed == 'true' || steps.changed-files.outputs.build_ci_any_changed == 'true' || steps.changed-files.outcome == 'failure' }}
             hlsl-should-build: ${{ steps.changed-files.outputs.hlsl_any_changed == 'true' || steps.changed-files.outputs.cmake_any_changed == 'true' || steps.changed-files.outputs.build_ci_any_changed == 'true' || steps.changed-files.outcome == 'failure' }}
             shader-tests-should-build: ${{ steps.changed-files.outputs.shader_tests_any_changed == 'true' || steps.changed-files.outputs.hlsl_any_changed == 'true' || steps.changed-files.outputs.cmake_any_changed == 'true' || steps.changed-files.outputs.build_ci_any_changed == 'true' || steps.changed-files.outcome == 'failure' }}
+            # cpp_tests target compiles src/Utils/Subrect.cpp directly (see tests/cpp/CMakeLists.txt),
+            # so any cpp_any change is conservative-but-correct. cpp_tests_any catches changes to
+            # the test sources themselves. cmake/build_ci cover CMake + CI plumbing.
+            cpp-tests-should-build: ${{ steps.changed-files.outputs.cpp_tests_any_changed == 'true' || steps.changed-files.outputs.cpp_any_changed == 'true' || steps.changed-files.outputs.cmake_any_changed == 'true' || steps.changed-files.outputs.build_ci_any_changed == 'true' || steps.changed-files.outcome == 'failure' }}
         steps:
             - uses: actions/checkout@v6
               with:
@@ -104,6 +108,8 @@ jobs:
                         - 'features/**/Shaders/**'
                       shader_tests:
                         - 'tests/shaders/**'
+                      cpp_tests:
+                        - 'tests/cpp/**'
                   base_sha: ${{ github.event.pull_request.base.sha }}
                   sha: ${{ github.event.pull_request.head.sha }}
 
@@ -125,8 +131,10 @@ jobs:
             run-cpp: ${{ needs.check-changes.outputs.should-build != 'false' }}
             run-shader-validation: ${{ needs.check-changes.outputs.hlsl-should-build != 'false' }}
             run-shader-tests: ${{ needs.check-changes.outputs.shader-tests-should-build != 'false' }}
+            run-cpp-tests: ${{ needs.check-changes.outputs.cpp-tests-should-build != 'false' }}
             hlsl-should-build: ${{ needs.check-changes.outputs.hlsl-should-build || 'true' }}
             shader-tests-should-build: ${{ needs.check-changes.outputs.shader-tests-should-build || 'true' }}
+            cpp-tests-should-build: ${{ needs.check-changes.outputs.cpp-tests-should-build || 'true' }}
 
     # Security: this job uses GITHUB_TOKEN with write permissions but does NOT execute
     # fork code — it only downloads pre-built artifacts from the build job above.
@@ -187,7 +195,7 @@ jobs:
               if: steps.gen_notes.outputs.notes_generated == 'true'
               uses: ncipollo/release-action@339a81892b84b4eeb0f6e744e4574d79d0d9b8dd # v1
               with:
-                  name: "Community Shaders ${{ needs.build.outputs.version }} PR #${{ github.event.pull_request.number }}"
+                  name: "Open Shaders ${{ needs.build.outputs.version }} PR #${{ github.event.pull_request.number }}"
                   tag: v${{ needs.build.outputs.version }}-pr${{ github.event.pull_request.number }}
                   prerelease: true
                   artifacts: "${{ github.workspace }}/dist/CommunityShaders_AIO-*.7z"
@@ -200,7 +208,7 @@ jobs:
               if: steps.gen_notes.outputs.notes_generated != 'true'
               uses: ncipollo/release-action@339a81892b84b4eeb0f6e744e4574d79d0d9b8dd # v1
               with:
-                  name: "Community Shaders ${{ needs.build.outputs.version }} PR #${{ github.event.pull_request.number }}"
+                  name: "Open Shaders ${{ needs.build.outputs.version }} PR #${{ github.event.pull_request.number }}"
                   tag: v${{ needs.build.outputs.version }}-pr${{ github.event.pull_request.number }}
                   prerelease: true
                   artifacts: "${{ github.workspace }}/dist/CommunityShaders_AIO-*.7z"

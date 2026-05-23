@@ -1,6 +1,6 @@
-# Community Shaders - Settings Override System
+# Open Shaders - Settings Override System
 
-The Settings Override System allows mods to provide custom configuration overrides for Community Shaders features without modifying the main settings file. This enables better mod compatibility and allows multiple mods to adjust different settings independently.
+The Settings Override System allows mods to provide custom configuration overrides for Open Shaders features without modifying the main settings file. This enables better mod compatibility and allows multiple mods to adjust different settings independently.
 
 ## Directory Structure
 
@@ -121,7 +121,7 @@ To create feature-specific overrides, you need to use the correct feature short 
 
 ## How It Works
 
-1. **Discovery**: Override files are automatically discovered when Community Shaders loads
+1. **Discovery**: Override files are automatically discovered when Open Shaders loads
 2. **Priority**: Overrides are applied after the main settings are loaded but before features initialize
 3. **Merging**: Override values are merged into the existing settings, overwriting only the specified values
 4. **Global vs Feature**: Global overrides affect the main settings structure, while feature-specific overrides only affect individual features
@@ -130,7 +130,7 @@ To create feature-specific overrides, you need to use the correct feature short 
 
 ### In-Game UI
 
--   Navigate to the "Overrides" tab in the Community Shaders menu
+-   Navigate to the "Overrides" tab in the Open Shaders menu
 -   View all discovered override files
 -   Enable/disable individual overrides
 -   Refresh to discover new override files
@@ -159,7 +159,7 @@ To create feature-specific overrides, you need to use the correct feature short 
 -   Verify JSON syntax is valid
 -   Ensure feature short name is correct
 -   Check that override system is enabled in the UI
--   Look for errors in the Community Shaders log
+-   Look for errors in the Open Shaders log (CommunityShaders.log)
 
 ### JSON Validation
 
@@ -171,7 +171,7 @@ Use a JSON validator to ensure your override files have valid syntax:
 
 ### Log Messages
 
-Community Shaders logs override discovery and application:
+Open Shaders logs override discovery and application:
 
 -   Check `CommunityShaders.log` for override-related messages
 -   Look for "Discovered X override files" and "Applied X override(s)" messages

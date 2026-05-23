@@ -4,6 +4,7 @@
 
 -   **[VSCode Setup](./vscode-setup.md)** - IDE configuration, extensions, and auto-deploy
 -   **[Shader Workflow](./shader-workflow.md)** - Fast shader iteration and deployment
+-   **[Upstream Sync](./upstream-sync.md)** - How Open Shaders merges with upstream community-shaders
 
 ## Quick Links
 

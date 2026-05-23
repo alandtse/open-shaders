@@ -31,7 +31,7 @@ using ButtonCombo = InputCombo;
  * - Drag-and-drop overlay repositioning
  *
  * The VR class follows the singleton pattern and integrates with the OpenVR API
- * to provide seamless VR experience within the Community Shaders framework.
+ * to provide seamless VR experience within the Open Shaders framework.
  *
  * @example
  * ```cpp
@@ -100,7 +100,7 @@ public:
 	virtual std::pair<std::string, std::vector<std::string>> GetFeatureSummary() override
 	{
 		return {
-			"Provides VR-specific optimizations and enhancements for Community Shaders, improving performance and visual quality in virtual reality environments.",
+			"Provides VR-specific optimizations and enhancements for Open Shaders, improving performance and visual quality in virtual reality environments.",
 			{ "Depth buffer culling optimization for VR performance",
 				"In-scene overlay menu with HMD/Controller/Fixed World attach modes",
 				"VR controller input with customizable button mappings",
