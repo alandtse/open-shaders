@@ -54,6 +54,11 @@ void DLSSperf::InstallRenderTargetSizeHook()
 	renderEyeWidth = std::max<uint32_t>(1, (uint32_t)(w / scale));
 	renderEyeHeight = std::max<uint32_t>(1, (uint32_t)(h / scale));
 
+	// Boot snapshot — runtime upscaler paths read these; UI keeps editing
+	// live `settings` for JSON persistence.
+	bootUpscaleMethod = globals::features::upscaling.settings.upscaleMethod;
+	bootQualityMode = qualityMode;
+
 	stl::write_vfunc<0x12, GetRenderTargetSize_Hook>(RE::VTABLE_BSOpenVR[0]);
 	hookActive = true;
 }
@@ -259,6 +264,12 @@ void DLSSperf::SetupResources()
 			Util::CompileShader(L"Data/Shaders/Upscaling/UpscaleVS.hlsl", { { "VSHADER", "" } }, "vs_5_0")));
 		if (!boxDownscaleVS)
 			logger::error("[DLSSperf] Failed to compile BoxDownscale VS");
+	}
+	if (hookActive && !menuStretchPS) {
+		menuStretchPS.attach(static_cast<ID3D11PixelShader*>(
+			Util::CompileShader(L"Data/Shaders/DLSSperf/MenuBGStretchPS.hlsl", { { "PSHADER", "" } }, "ps_5_0")));
+		if (!menuStretchPS)
+			logger::error("[DLSSperf] Failed to compile MenuBGStretchPS");
 	}
 	if (hookActive && !linearSampler) {
 		D3D11_SAMPLER_DESC sd{};
@@ -636,6 +647,7 @@ void DLSSperf::PlayerViewRender_Hook::thunk(void* a1, bool a2, bool a3)
 	func(a1, a2, a3);
 
 	globals::features::dlssPerf.ClearPostChainDone();
+	globals::features::dlssPerf.ClearStretchedThisFrame();
 }
 
 // ============================================================================
@@ -898,6 +910,172 @@ void DLSSperf::DownscaleToKMain()
 	state->EndPerfEvent();
 }
 
+// Bilinear upscale kMAIN → kTOTAL/kMENUBG, one-shot per frame, only in main/
+// loading-menu state. The post chain's DownscaleToKMain handles the in-game
+// case; this exists because the menu compositor never wraps Main_PostProcess-
+// ing, so the engine's BG draws into renderRes kMAIN otherwise strand there
+// while the UI compositor writes the enlarged RT alone.
+void DLSSperf::MaybeStretchMenuBG(uint32_t boundRTIdx)
+{
+	if (!hookActive || stretchedThisFrame || !menuStretchPS || !boxDownscaleVS || !linearSampler)
+		return;
+	if (!globals::state || !globals::state->IsMainOrLoadingMenuOpen())
+		return;
+	if (boundRTIdx != RE::RENDER_TARGETS::kTOTAL &&
+		boundRTIdx != RE::RENDER_TARGETS::kMENUBG)
+		return;
+
+	auto renderer = globals::game::renderer;
+	auto& rtData = renderer->GetRuntimeData();
+	auto& kmain = rtData.renderTargets[RE::RENDER_TARGETS::kMAIN];
+	auto& dest = rtData.renderTargets[boundRTIdx];
+	if (!kmain.SRV || !dest.RTV || !dest.texture)
+		return;
+
+	ZoneScoped;
+	auto state = globals::state;
+	auto* context = globals::d3d::context;
+	state->BeginPerfEvent("DLSSperf::MenuBGStretch");
+	TracyD3D11Zone(state->tracyCtx, "DLSSperf::MenuBGStretch");
+
+	// Save/restore matches DownscaleToKMain — we're inside SetDirtyStates
+	// before the engine's flush, so the engine's bind picks up the right
+	// state afterward.
+	ID3D11RenderTargetView* savedRTV = nullptr;
+	ID3D11DepthStencilView* savedDSV = nullptr;
+	context->OMGetRenderTargets(1, &savedRTV, &savedDSV);
+
+	D3D11_VIEWPORT savedVP = {};
+	UINT numVP = 1;
+	context->RSGetViewports(&numVP, &savedVP);
+
+	ID3D11BlendState* savedBlend = nullptr;
+	FLOAT savedBlendFactor[4] = {};
+	UINT savedSampleMask = 0;
+	context->OMGetBlendState(&savedBlend, savedBlendFactor, &savedSampleMask);
+
+	ID3D11DepthStencilState* savedDSState = nullptr;
+	UINT savedStencilRef = 0;
+	context->OMGetDepthStencilState(&savedDSState, &savedStencilRef);
+
+	ID3D11VertexShader* savedVS = nullptr;
+	ID3D11PixelShader* savedPS = nullptr;
+	ID3D11GeometryShader* savedGS = nullptr;
+	context->VSGetShader(&savedVS, nullptr, nullptr);
+	context->PSGetShader(&savedPS, nullptr, nullptr);
+	context->GSGetShader(&savedGS, nullptr, nullptr);
+
+	ID3D11RasterizerState* savedRS = nullptr;
+	context->RSGetState(&savedRS);
+
+	ID3D11SamplerState* savedSampler0 = nullptr;
+	context->PSGetSamplers(0, 1, &savedSampler0);
+	ID3D11ShaderResourceView* savedSRV0 = nullptr;
+	context->PSGetShaderResources(0, 1, &savedSRV0);
+
+	ID3D11InputLayout* savedIL = nullptr;
+	context->IAGetInputLayout(&savedIL);
+	ID3D11Buffer* savedVB[D3D11_IA_VERTEX_INPUT_RESOURCE_SLOT_COUNT] = {};
+	UINT savedVBStride[D3D11_IA_VERTEX_INPUT_RESOURCE_SLOT_COUNT] = {};
+	UINT savedVBOffset[D3D11_IA_VERTEX_INPUT_RESOURCE_SLOT_COUNT] = {};
+	context->IAGetVertexBuffers(0, D3D11_IA_VERTEX_INPUT_RESOURCE_SLOT_COUNT, savedVB, savedVBStride, savedVBOffset);
+	ID3D11Buffer* savedIB = nullptr;
+	DXGI_FORMAT savedIBFormat = DXGI_FORMAT_UNKNOWN;
+	UINT savedIBOffset = 0;
+	context->IAGetIndexBuffer(&savedIB, &savedIBFormat, &savedIBOffset);
+	D3D11_PRIMITIVE_TOPOLOGY savedTopology = D3D11_PRIMITIVE_TOPOLOGY_UNDEFINED;
+	context->IAGetPrimitiveTopology(&savedTopology);
+
+	// IA: fullscreen triangle, no VB/IB
+	context->IASetInputLayout(nullptr);
+	context->IASetVertexBuffers(0, 0, nullptr, nullptr, nullptr);
+	context->IASetIndexBuffer(nullptr, DXGI_FORMAT_UNKNOWN, 0);
+	context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+
+	context->VSSetShader(boxDownscaleVS.get(), nullptr, 0);
+	context->PSSetShader(menuStretchPS.get(), nullptr, 0);
+	context->GSSetShader(nullptr, nullptr, 0);
+	context->HSSetShader(nullptr, nullptr, 0);
+	context->DSSetShader(nullptr, nullptr, 0);
+
+	ID3D11ShaderResourceView* srvs[] = { kmain.SRV };
+	context->PSSetShaderResources(0, 1, srvs);
+	ID3D11SamplerState* samplers[] = { linearSampler.get() };
+	context->PSSetSamplers(0, 1, samplers);
+
+	context->OMSetBlendState(nullptr, nullptr, 0xffffffff);
+	context->OMSetDepthStencilState(nullptr, 0);
+	context->RSSetState(nullptr);
+
+	D3D11_TEXTURE2D_DESC destDesc{};
+	static_cast<ID3D11Texture2D*>(dest.texture)->GetDesc(&destDesc);
+	D3D11_VIEWPORT vp = {};
+	vp.Width = static_cast<float>(destDesc.Width);
+	vp.Height = static_cast<float>(destDesc.Height);
+	vp.MinDepth = 0.0f;
+	vp.MaxDepth = 1.0f;
+	context->RSSetViewports(1, &vp);
+
+	ID3D11RenderTargetView* rtv = dest.RTV;
+	context->OMSetRenderTargets(1, &rtv, nullptr);
+	context->Draw(3, 0);
+
+	// Unbind SRV before restoring saved binding to break any potential
+	// SRV-vs-RTV hazard (kmain.SRV aliases what the engine may bind as
+	// an RT shortly).
+	ID3D11ShaderResourceView* nullSRV[] = { nullptr };
+	context->PSSetShaderResources(0, 1, nullSRV);
+	context->PSSetShaderResources(0, 1, &savedSRV0);
+
+	// Restore
+	context->OMSetRenderTargets(1, &savedRTV, savedDSV);
+	if (numVP > 0)
+		context->RSSetViewports(numVP, &savedVP);
+	context->OMSetBlendState(savedBlend, savedBlendFactor, savedSampleMask);
+	context->OMSetDepthStencilState(savedDSState, savedStencilRef);
+	context->VSSetShader(savedVS, nullptr, 0);
+	context->PSSetShader(savedPS, nullptr, 0);
+	context->GSSetShader(savedGS, nullptr, 0);
+	context->RSSetState(savedRS);
+	context->PSSetSamplers(0, 1, &savedSampler0);
+	context->IASetInputLayout(savedIL);
+	context->IASetVertexBuffers(0, D3D11_IA_VERTEX_INPUT_RESOURCE_SLOT_COUNT, savedVB, savedVBStride, savedVBOffset);
+	context->IASetIndexBuffer(savedIB, savedIBFormat, savedIBOffset);
+	context->IASetPrimitiveTopology(savedTopology);
+
+	if (savedRTV)
+		savedRTV->Release();
+	if (savedDSV)
+		savedDSV->Release();
+	if (savedBlend)
+		savedBlend->Release();
+	if (savedDSState)
+		savedDSState->Release();
+	if (savedVS)
+		savedVS->Release();
+	if (savedPS)
+		savedPS->Release();
+	if (savedGS)
+		savedGS->Release();
+	if (savedRS)
+		savedRS->Release();
+	if (savedSampler0)
+		savedSampler0->Release();
+	if (savedSRV0)
+		savedSRV0->Release();
+	if (savedIL)
+		savedIL->Release();
+	for (auto*& vb : savedVB) {
+		if (vb)
+			vb->Release();
+	}
+	if (savedIB)
+		savedIB->Release();
+
+	stretchedThisFrame = true;
+	state->EndPerfEvent();
+}
+
 void DLSSperf::HandlePostProcessing(const std::function<void()>& enginePost)
 {
 	ZoneScoped;
@@ -923,6 +1101,67 @@ void DLSSperf::HandlePostProcessing(const std::function<void()>& enginePost)
 	EndPostIntercept();
 
 	state->EndPerfEvent();
+}
+
+bool DLSSperf::MaybeSwapDSForEnlargedRT()
+{
+	// Fast path / gates. postInterceptActive means HandlePostProcessing's
+	// outer wrap already redirected kMAIN_COPY DS — don't double-swap.
+	if (!hookActive || !fakeDSV || postInterceptActive)
+		return false;
+	if (autoSwapDSIdx != UINT32_MAX)
+		return false;  // re-entry guard
+
+	auto* ss = globals::game::shadowState;
+	if (!ss)
+		return false;
+	auto& srd = ss->GetVRRuntimeData();
+
+	// Whitelist: the three RTs DLSSperf_MaybeEnlargeRT inflates to displayRes.
+	const uint32_t rtIdx = static_cast<uint32_t>(srd.renderTargets[0]);
+	if (rtIdx != RE::RENDER_TARGETS::kTOTAL &&
+		rtIdx != RE::RENDER_TARGETS::kMENUBG &&
+		rtIdx != RE::RENDER_TARGETS::kIMAGESPACE_TEMP_COPY)
+		return false;
+
+	const uint32_t dsIdx = static_cast<uint32_t>(srd.depthStencil);
+	if (dsIdx != RE::RENDER_TARGETS_DEPTHSTENCIL::kMAIN &&
+		dsIdx != RE::RENDER_TARGETS_DEPTHSTENCIL::kMAIN_COPY)
+		return false;
+
+	auto renderer = globals::game::renderer;
+	auto& dsData = renderer->GetDepthStencilData();
+	auto& bound = dsData.depthStencils[dsIdx];
+
+	// Swap all 8 view slots — engine indexes views[depthStencilSlice +
+	// stencilMode] and we don't know which combo this draw will use, so
+	// match the pattern UIPassDispatch_Hook already established.
+	for (int i = 0; i < 8; ++i) {
+		autoSwapSavedViews[i] = bound.views[i];
+		if (bound.views[i])
+			bound.views[i] = fakeDSV.get();
+	}
+	for (int i = 0; i < 8; ++i) {
+		autoSwapSavedReadOnlyViews[i] = bound.readOnlyViews[i];
+		if (bound.readOnlyViews[i])
+			bound.readOnlyViews[i] = fakeDSV.get();
+	}
+	autoSwapDSIdx = dsIdx;
+	return true;
+}
+
+void DLSSperf::RestoreSwappedDS()
+{
+	if (autoSwapDSIdx == UINT32_MAX)
+		return;
+	auto renderer = globals::game::renderer;
+	auto& dsData = renderer->GetDepthStencilData();
+	auto& bound = dsData.depthStencils[autoSwapDSIdx];
+	for (int i = 0; i < 8; ++i)
+		bound.views[i] = autoSwapSavedViews[i];
+	for (int i = 0; i < 8; ++i)
+		bound.readOnlyViews[i] = autoSwapSavedReadOnlyViews[i];
+	autoSwapDSIdx = UINT32_MAX;
 }
 
 void DLSSperf::DrawSettings()

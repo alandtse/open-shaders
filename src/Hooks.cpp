@@ -312,7 +312,21 @@ HRESULT WINAPI hk_D3D11CreateDeviceAndSwapChain(
 
 void Hooks::BSGraphics_SetDirtyStates::thunk(bool isCompute)
 {
+	// DLSSperf hooks: run before the engine's RT/DS flush so enlarged RTs
+	// (kTOTAL / kMENUBG / kIMAGESPACE_TEMP_COPY at displayRes) get matched
+	// against displayRes DS instead of renderRes kMAIN, and the menu/
+	// loading-screen BG gets bridged from kMAIN into the bound enlarged
+	// RT before the engine's UI draw paints over it.
+	bool swapped = false;
+	if (!isCompute) {
+		auto& dlssPerf = globals::features::dlssPerf;
+		if (auto* ss = globals::game::shadowState)
+			dlssPerf.MaybeStretchMenuBG(static_cast<uint32_t>(ss->GetVRRuntimeData().renderTargets[0]));
+		swapped = dlssPerf.MaybeSwapDSForEnlargedRT();
+	}
 	func(isCompute);
+	if (swapped)
+		globals::features::dlssPerf.RestoreSwappedDS();
 	globals::state->Draw();
 }
 
@@ -397,7 +411,25 @@ struct BSGraphics_Renderer_UpdateViewPort
 			return;
 		}
 
-		// Normal world/depth draws: compress displayRes → renderRes
+		// Honor the engine's forceMatchRT for displayRes-enlarged RTs:
+		// shrinking VP there leaves menu content in a renderRes corner of
+		// kTOTAL, which OpenVR submits as-is.
+		if (a_forceMatchRT)
+			return;
+
+		// Same risk on the non-forceMatchRT path — the menu compositor can
+		// call UpdateViewPort(displayW, displayH, false) directly, and a
+		// blind compress to renderRes would clip the menu BG.
+		{
+			const uint32_t rtIdx = static_cast<uint32_t>(ss->GetVRRuntimeData().renderTargets[0]);
+			if (rtIdx == RE::RENDER_TARGETS::kTOTAL ||
+				rtIdx == RE::RENDER_TARGETS::kMENUBG ||
+				rtIdx == RE::RENDER_TARGETS::kIMAGESPACE_TEMP_COPY)
+				return;
+		}
+
+		// Normal world/depth path: compress displayRes → renderRes so draws
+		// stay inside the renderRes-sized kMAIN family.
 		if (static_cast<uint32_t>(vp.Width) == displayW &&
 			static_cast<uint32_t>(vp.Height) == displayH) {
 			vp.Width = static_cast<float>(renderW);

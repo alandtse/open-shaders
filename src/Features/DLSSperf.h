@@ -51,6 +51,13 @@ struct DLSSperf
 	uint32_t GetRenderEyeWidth() const { return renderEyeWidth; }
 	uint32_t GetRenderEyeHeight() const { return renderEyeHeight; }
 
+	// Boot snapshots — engine RTs are sized once against these, so runtime
+	// upscaler reads must route through here instead of live `Upscaling::
+	// settings` (mid-session UI changes would otherwise break the HMD).
+	bool HasBootSnapshot() const { return hookActive; }
+	uint32_t GetBootUpscaleMethod() const { return bootUpscaleMethod; }
+	uint32_t GetBootQualityMode() const { return bootQualityMode; }
+
 	// Phase 3: real HMD display resolution in SBS format (e.g. 3072×1632)
 	// Used by Upscaling pipeline to override polluted screenSize (which equals RenderRes after hook)
 	float2 GetDisplayScreenSize() const
@@ -85,6 +92,19 @@ struct DLSSperf
 	// Fake 3k DepthStencil for Post pass DS swap
 	ID3D11DepthStencilView* GetFakeDSV() const { return fakeDSV.get(); }
 
+	// Bridge renderRes kMAIN (where the engine drew menu BG) into the bound
+	// enlarged RT so OpenVR submit sees both BG + UI compositor output.
+	// One-shot per frame, reset at PlayerView end.
+	void MaybeStretchMenuBG(uint32_t boundRTIdx);
+	void ClearStretchedThisFrame() { stretchedThisFrame = false; }
+
+	// Generic DS swap for draws binding an enlarged RT against kMAIN/kMAIN
+	// _COPY DS — without this the rasterizer clips to the smaller DS and
+	// fills only the renderRes corner of the enlarged RT. Skipped when
+	// postInterceptActive (HandlePostProcessing already redirects DS).
+	bool MaybeSwapDSForEnlargedRT();
+	void RestoreSwappedDS();
+
 private:
 	// Phase 1
 	winrt::com_ptr<ID3D11Texture2D> testTexture;
@@ -117,6 +137,10 @@ private:
 	uint32_t displayEyeHeight = 0;
 	uint32_t renderEyeWidth = 0;
 	uint32_t renderEyeHeight = 0;
+
+	// Boot snapshot — see HasBootSnapshot() accessor above.
+	uint32_t bootUpscaleMethod = 0;
+	uint32_t bootQualityMode = 0;
 
 	// Phase 2: vtable hook for BSOpenVR::GetRenderTargetSize (vfunc 0x12)
 	struct GetRenderTargetSize_Hook
@@ -207,6 +231,13 @@ private:
 	winrt::com_ptr<ID3D11Texture2D> fakeDS;
 	winrt::com_ptr<ID3D11DepthStencilView> fakeDSV;
 
+	// autoSwapDSIdx == UINT32_MAX → no active swap; otherwise it's the
+	// kMAIN/kMAIN_COPY slot whose views[] were rewritten and must be
+	// restored on the matching RestoreSwappedDS().
+	ID3D11DepthStencilView* autoSwapSavedViews[8] = {};
+	ID3D11DepthStencilView* autoSwapSavedReadOnlyViews[8] = {};
+	uint32_t autoSwapDSIdx = UINT32_MAX;
+
 	// Downscale pass: Box 3×3 downscale testTexture (3k) → kMAIN (1k).
 	// (Named "boxDownscale" — earlier revisions called this "bilinearCopy"
 	// when the implementation was a true bilinear sample. It became a 9-tap
@@ -214,4 +245,9 @@ private:
 	winrt::com_ptr<ID3D11PixelShader> boxDownscalePS;
 	winrt::com_ptr<ID3D11VertexShader> boxDownscaleVS;
 	winrt::com_ptr<ID3D11SamplerState> linearSampler;
+
+	// Menu BG bilinear stretch — reuses boxDownscaleVS + linearSampler.
+	// stretchedThisFrame is the one-shot guard, reset at PlayerView end.
+	winrt::com_ptr<ID3D11PixelShader> menuStretchPS;
+	bool stretchedThisFrame = false;
 };

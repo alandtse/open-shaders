@@ -214,6 +214,28 @@ void Upscaling::DrawSettings()
 	// Check the current upscale method
 	auto upscaleMethod = GetUpscaleMethod();
 
+	// DLSSperf: BSOpenVR size hook + RT::Create run once at world load, so
+	// runtime upscaler reads route through the boot snapshot. Surface that
+	// so changes that staged for next restart aren't mistaken for no-ops.
+	if (globals::features::dlssPerf.IsHookActive()) {
+		Util::Text::RestartNeeded(
+			"DLSSperf active: Method and Upscale Preset changes require a game restart.\n"
+			"Sharpness / model preset / Reflex remain live.");
+
+		// Method pending-diff. Only fires when the user is editing the DLSS-
+		// path mode slot (upscaleMethod, not upscaleMethodNoDLSS), since
+		// that's the one the boot snapshot locked.
+		auto& dlssPerf = globals::features::dlssPerf;
+		if (currentUpscaleMode == &settings.upscaleMethod &&
+			settings.upscaleMethod != dlssPerf.GetBootUpscaleMethod()) {
+			const uint live = std::clamp<uint>(settings.upscaleMethod, 0u, availableModes);
+			const uint boot = std::clamp<uint>(dlssPerf.GetBootUpscaleMethod(), 0u, availableModes);
+			Util::Text::RestartNeeded(
+				"Pending restart: currently active method = %s (selected = %s).",
+				upscaleModes[boot].c_str(), upscaleModes[live].c_str());
+		}
+	}
+
 	// Display warning for DLSS resolution limits (non-VR only; VR handles this automatically)
 	if (!globals::game::isVR && upscaleMethod == UpscaleMethod::kDLSS) {
 		auto screenSize = globals::state->screenSize;
@@ -246,10 +268,26 @@ void Upscaling::DrawSettings()
 		}
 
 		if (baseLabel) {
-			// Format the label with preset name and resolution scale
-			std::string labelWithScale = std::format("{} ( {:.2f}x )", baseLabel, (resolutionScale.x + resolutionScale.y) * 0.5f);
+			// Derive scale from live `settings.qualityMode` — `resolution-
+			// Scale` is locked to the DLSSperf boot snapshot, so reusing it
+			// here would mismatch the slider position the user sees.
+			const float displayScale = 1.0f / ffxFsr3GetUpscaleRatioFromQualityMode((FfxFsr3QualityMode)std::clamp<uint>(settings.qualityMode, 0u, 4u));
+			std::string labelWithScale = std::format("{} ( {:.2f}x )", baseLabel, displayScale);
 
 			ImGui::SliderInt("Upscale Preset", (int*)&settings.qualityMode, 0, 4, labelWithScale.c_str());
+
+			// Pending-diff vs the boot snapshot the runtime upscaler is
+			// actually using. Without this the slider change looks like a
+			// no-op.
+			auto& dlssPerf = globals::features::dlssPerf;
+			if (dlssPerf.HasBootSnapshot() &&
+				settings.qualityMode != dlssPerf.GetBootQualityMode()) {
+				const uint bm = std::clamp<uint>(dlssPerf.GetBootQualityMode(), 0u, 4u);
+				const char* bootLabel = (upscaleMethod == UpscaleMethod::kDLSS) ? upscalePresetsDLSS[std::clamp<int>(4 - (int)bm, 0, 4)] : upscalePresets[std::clamp<int>(4 - (int)bm, 0, 4)];
+				Util::Text::RestartNeeded(
+					"Pending restart: currently active = %s ( %.2fx ). Change applies after game restart.",
+					bootLabel, 1.0f / ffxFsr3GetUpscaleRatioFromQualityMode((FfxFsr3QualityMode)bm));
+			}
 		}
 
 		if (upscaleMethod == UpscaleMethod::kFSR) {
@@ -671,6 +709,11 @@ void Upscaling::PostPostLoad()
 
 Upscaling::UpscaleMethod Upscaling::GetUpscaleMethod() const
 {
+	// Lock runtime to the boot upscaler under DLSSperf — engine RTs are
+	// sized for it, and routing a different method through testTexture/
+	// renderRes paths breaks the HMD.
+	if (globals::features::dlssPerf.HasBootSnapshot())
+		return (UpscaleMethod)globals::features::dlssPerf.GetBootUpscaleMethod();
 	if (streamline.featureDLSS)
 		return (UpscaleMethod)settings.upscaleMethod;
 	return (UpscaleMethod)settings.upscaleMethodNoDLSS;
@@ -1290,7 +1333,10 @@ void Upscaling::ConfigureUpscaling(RE::BSGraphics::State* a_viewport)
 
 			a_viewport->projectionPosScaleY = 2.0f * jitter.y / static_cast<int>(dlssPerf.GetRenderEyeHeight());
 		} else {
-			float resolutionScaleBase = 1.0f / ffxFsr3GetUpscaleRatioFromQualityMode((FfxFsr3QualityMode)settings.qualityMode);
+			// Boot qualityMode under DLSSperf so projection stays coherent
+			// with the engine RTs sized at install.
+			const uint32_t qm = globals::features::dlssPerf.HasBootSnapshot() ? globals::features::dlssPerf.GetBootQualityMode() : settings.qualityMode;
+			float resolutionScaleBase = 1.0f / ffxFsr3GetUpscaleRatioFromQualityMode((FfxFsr3QualityMode)qm);
 
 			auto renderWidth = static_cast<int>(screenWidth * resolutionScaleBase);
 			auto renderHeight = static_cast<int>(screenHeight * resolutionScaleBase);
