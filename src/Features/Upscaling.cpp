@@ -1706,14 +1706,6 @@ bool Upscaling::IsUpscalingActive() const
 	}
 
 	// resolutionScale.x represents renderWidth / displayWidth.
-	// DLSSperf deliberately keeps resolutionScale at identity so DLSS's jitter
-	// math stays correct (engine RTs are pre-shrunk via the BSOpenVR hook
-	// instead). The renderer is still effectively upscaling render→display, so
-	// passes that gate on this (notably UpscaleDepth → underwater mask repair)
-	// must still run. Treat the boot snapshot as authoritative.
-	if (dlssPerf.HasBootSnapshot()) {
-		return true;
-	}
 	return resolutionScale.x < .99f;
 }
 
