@@ -81,14 +81,13 @@ namespace ShadowCasterManager
 	template <typename Fn>
 	inline void ForEachShadowLight(const RE::BSTArray<RE::BSShadowLight*>& accum, Fn&& fn)
 	{
-		// Engine convention is "walk until null". The engine writes via
-		// SetShadowCasterLightArrayEntry which bypasses BSTArray::push_back,
-		// so _capacity stays at the initial preallocation -- using capacity
-		// as the bound silently caps SLF at vanilla shadow counts. We use
-		// the null sentinel instead, with a setting-derived safety cap
-		// (ShadowLightCount + sun cascades, with a small margin). Per-pointer
-		// plausibility (alignment + user-mode range) handles non-null
-		// garbage between our prepass and this read.
+		// Engine writes via SetShadowCasterLightArrayEntry which bypasses
+		// BSTArray::push_back, so _capacity stays at the initial preallocation
+		// -- using capacity as the bound silently caps SLF at vanilla shadow
+		// counts. Use the null sentinel instead, with a setting-derived
+		// safety cap (ShadowLightCount + sun cascades, with a small margin).
+		// Per-pointer plausibility (alignment + user-mode range) handles
+		// non-null garbage between our prepass and this read.
 		const std::uint32_t maxIdx = MaxShadowAccumIterationBound();
 		std::uint32_t idx = 0;
 		while (idx < maxIdx) {
