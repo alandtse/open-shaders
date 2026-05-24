@@ -156,19 +156,26 @@ void LightLimitFix::CopyShadowLightData()
 		//   - Significance: only log when the count moves by >= 4 from
 		//     the last logged value, OR when the unshadowed-lights count
 		//     changes at all (rarer, more interesting).
-		//   - Rate: floor at 1 line/sec via a steady_clock comparator.
+		//   - Rate: floor at 1 line/sec via QueryPerformanceCounter
+		//     (project convention; State.h uses QPC, std::chrono is disfavored).
 		static int s_lastLoggedShadowCount = -1;
 		static uint32_t s_lastLoggedUnshadowed = 0;
-		static auto s_lastLogTime = std::chrono::steady_clock::time_point{};
-		const auto now = std::chrono::steady_clock::now();
+		static LARGE_INTEGER s_lastLogQpc = { .QuadPart = 0 };
+		static LARGE_INTEGER s_qpcFrequency = []() {
+			LARGE_INTEGER f{};
+			QueryPerformanceFrequency(&f);
+			return f;
+		}();
+		LARGE_INTEGER now;
+		QueryPerformanceCounter(&now);
 		const bool unshadowedChanged = unshadowedLights != s_lastLoggedUnshadowed;
 		const bool countSignificant = s_lastLoggedShadowCount < 0 ||
 		                              std::abs(static_cast<int>(plCount) - s_lastLoggedShadowCount) >= 4;
-		const bool rateOk = now - s_lastLogTime >= std::chrono::seconds(1);
+		const bool rateOk = (now.QuadPart - s_lastLogQpc.QuadPart) >= s_qpcFrequency.QuadPart;
 		if ((countSignificant || unshadowedChanged) && rateOk) {
 			s_lastLoggedShadowCount = static_cast<int>(plCount);
 			s_lastLoggedUnshadowed = unshadowedLights;
-			s_lastLogTime = now;
+			s_lastLogQpc = now;
 			if (unshadowedLights > 0)
 				logger::debug("[LLF] {} shadow lights, {} / {} slots used; {} lights dropped (no shadow)",
 					plCount, ShadowCasterManager::GetSlotUsage(), slots, unshadowedLights);
