@@ -555,9 +555,25 @@ namespace ShadowCasterManager
 			return -1;
 		};
 		if (shadowSlot) {
+			// First pass: skip the entire focus-reservable range so a focus
+			// actor appearance ideally finds those slots already empty.
 			if (int32_t i = scanShadow([](int32_t k) { return IsFocusShadowReservableSlot(k); }); i >= 0)
 				return i;
-			return scanShadow([](int32_t) { return false; });
+			// Fallback: fill the unclaimed focus-reservable slots from the
+			// top down. Engine packs FocusShadowActors densely from slot
+			// kFocusShadowBaseSlotIndex upward (player first, then tracked
+			// NPCs in priority order), so slot 7 is the LAST to be claimed
+			// as focus count grows. Placing a point light there has the
+			// lowest probability of being evicted later.
+			for (int32_t i = kFocusShadowBaseSlotIndex + kFocusShadowMaxSlots - 1; i >= kFocusShadowBaseSlotIndex; --i) {
+				if (i >= shadowEnd)
+					continue;
+				if (IsFocusShadowSlot(i))
+					continue;
+				if (!Lights[i].Light)
+					return i;
+			}
+			return -1;
 		}
 		// Converted lights live past the shadow range and never collide with
 		// focus slots (focus base is 4, converted base is >= sunOff + shadowCount > 4).
@@ -3877,9 +3893,10 @@ namespace ShadowCasterManager
 
 		struct SlotRow
 		{
-			uint32_t idx;    // shadow slot index; only meaningful when inScene=true
-			bool inScene;    // currently occupies a shadow slot this frame
-			bool converted;  // demoted to non-shadow rendering via ConvertExcessToNormal
+			uint32_t idx;           // shadow slot index; only meaningful when inScene=true
+			bool inScene;           // currently occupies a shadow slot this frame
+			bool converted;         // demoted to non-shadow rendering via ConvertExcessToNormal
+			bool isFocus{ false };  // engine-owned focus shadow slot (read-only row)
 			ShadowSlotInfo info;
 			float importance{ 0.0f };  // contribution-weighted importance (luminance × fade × attenuation²)
 			bool highImp{ false };     // importance > 0.1 — light meaningfully illuminates the viewer area
@@ -3928,7 +3945,7 @@ namespace ShadowCasterManager
 			for (uintptr_t key : convertedKeys) {
 				if (sceneSlot.count(key))
 					continue;  // simultaneously a shadow caster this frame
-				SlotRow r{ 0, false, true, {} };
+				SlotRow r{ 0, false, true, false, {} };
 				auto it = s_knownLights.find(key);
 				if (it != s_knownLights.end()) {
 					r.info = it->second;
@@ -3945,7 +3962,7 @@ namespace ShadowCasterManager
 		if (sceneOnly) {
 			rows.reserve(sceneSlot.size() + convertedKeys.size());
 			for (auto& [key, idx] : sceneSlot) {
-				SlotRow r{ idx, true, false, s_shadowSlotInfos[idx] };
+				SlotRow r{ idx, true, false, false, s_shadowSlotInfos[idx] };
 				applyEntryDebug(r);
 				rows.push_back(r);
 			}
@@ -3955,7 +3972,7 @@ namespace ShadowCasterManager
 			// not currently in scene at all.
 			rows.reserve(sceneSlot.size() + convertedKeys.size() + s_suppressedLights.size());
 			for (auto& [key, idx] : sceneSlot) {
-				SlotRow r{ idx, true, false, s_shadowSlotInfos[idx] };
+				SlotRow r{ idx, true, false, false, s_shadowSlotInfos[idx] };
 				applyEntryDebug(r);
 				rows.push_back(r);
 			}
@@ -3965,11 +3982,26 @@ namespace ShadowCasterManager
 					continue;
 				auto it = s_knownLights.find(key);
 				if (it != s_knownLights.end()) {
-					SlotRow r{ 0, false, false, it->second };
+					SlotRow r{ 0, false, false, false, it->second };
 					applyEntryDebug(r);
 					rows.push_back(r);
 				}
 			}
+		}
+
+		// Engine-owned focus shadow rows. One per active focus actor at the
+		// matching kSHADOWMAPS slot. Synthetic lightKey encodes the slot index
+		// so each row is unique without colliding with real BSShadowLight
+		// pointers (top-half-set is impossible for user-mode allocations).
+		for (int32_t i = 0; i < s_focusShadowSlots; ++i) {
+			SlotRow r{};
+			r.idx = static_cast<uint32_t>(kFocusShadowBaseSlotIndex + i);
+			r.inScene = true;
+			r.isFocus = true;
+			r.info.valid = true;
+			r.info.lightKey = 0xFEFE'0000ULL | static_cast<uint64_t>(r.idx);
+			r.info.type = 0;  // surfaced as "Focus" in the type column override below
+			rows.push_back(r);
 		}
 
 		if (rows.empty()) {
@@ -4233,6 +4265,17 @@ namespace ShadowCasterManager
 				// Cycle: Auto (·) -> PinShadow (S) -> PinConvert (C) -> Suppress (X) -> Auto
 				// Mutually exclusive (SetPinned* / suppressed.erase enforce that).
 				// Hidden in readOnly mode (overlay with menu closed).
+				// Focus rows skip Mode/Solo entirely -- engine owns the slot.
+				if (row.isFocus && col == modeColIdx) {
+					ImGui::TextDisabled("eng");
+					if (ImGui::IsItemHovered())
+						ImGui::SetTooltip("Engine-controlled focus shadow; not pinnable/suppressible.");
+					return;
+				}
+				if (row.isFocus && col == soloColIdx) {
+					ImGui::TextDisabled("--");
+					return;
+				}
 				if (showButtons && col == modeColIdx) {
 					ImGui::PushID(static_cast<int>(key & 0xFFFFFFFF));
 					const char* label = "·";
@@ -4328,14 +4371,18 @@ namespace ShadowCasterManager
 							ImGui::SetTooltip("Out of range / not active in the current frame.");
 					}
 				} else if (col == addrColIdx) {
-					char addrFull[20];
-					snprintf(addrFull, sizeof(addrFull), "0x%016llX", static_cast<unsigned long long>(row.info.lightKey));
-					ImGui::Selectable(addrFull + 10, false, ImGuiSelectableFlags_None);
-					if (ImGui::IsItemClicked())
-						ImGui::SetClipboardText(addrFull);
-					noteHover();
-					if (ImGui::IsItemHovered())
-						ImGui::SetTooltip("Click to copy: %s", addrFull);
+					if (row.isFocus) {
+						ImGui::TextDisabled("focus[%u]", row.idx - static_cast<uint32_t>(kFocusShadowBaseSlotIndex));
+					} else {
+						char addrFull[20];
+						snprintf(addrFull, sizeof(addrFull), "0x%016llX", static_cast<unsigned long long>(row.info.lightKey));
+						ImGui::Selectable(addrFull + 10, false, ImGuiSelectableFlags_None);
+						if (ImGui::IsItemClicked())
+							ImGui::SetClipboardText(addrFull);
+						noteHover();
+						if (ImGui::IsItemHovered())
+							ImGui::SetTooltip("Click to copy: %s", addrFull);
+					}
 				} else if (showColor && col == addrColIdx + 1) {
 					ImVec4 c = ShadowSlotHueColor(row.idx);
 					auto ri = static_cast<uint8_t>(c.x * 255.0f);
@@ -4346,13 +4393,29 @@ namespace ShadowCasterManager
 					if (ImGui::IsItemHovered())
 						ImGui::SetTooltip("#%02X%02X%02X", ri, gi, bi);
 				} else if (col == typeColIdx) {
-					ImGui::TextUnformatted(kShadowTypeNames[std::min(row.info.type, 2u)]);
-					noteHover();
+					if (row.isFocus) {
+						ImGui::TextColored(ImVec4(0.55f, 0.75f, 1.0f, 1.0f), "Focus");
+						if (ImGui::IsItemHovered())
+							ImGui::SetTooltip(
+								"Engine-owned focus shadow slot.\n"
+								"FocusShadowActors[%u] = high-res shadow for a tracked\n"
+								"actor (player + dialog/combat NPCs). SCM reserves\n"
+								"this slot so the engine's focus render isn't trampled\n"
+								"by point/spot lights.",
+								row.idx - static_cast<uint32_t>(kFocusShadowBaseSlotIndex));
+					} else {
+						ImGui::TextUnformatted(kShadowTypeNames[std::min(row.info.type, 2u)]);
+						noteHover();
+					}
 				} else if (col == radColIdx) {
-					ImGui::Text("%.0f u", row.info.range);
-					noteHover();
-					if (ImGui::IsItemHovered())
-						ImGui::SetTooltip("%s", Util::Units::FormatDistance(row.info.range).c_str());
+					if (row.isFocus) {
+						ImGui::TextDisabled("--");
+					} else {
+						ImGui::Text("%.0f u", row.info.range);
+						noteHover();
+						if (ImGui::IsItemHovered())
+							ImGui::SetTooltip("%s", Util::Units::FormatDistance(row.info.range).c_str());
+					}
 				} else if (col == centrColIdx) {
 					// Importance score: luminance × fade × attenuation² at viewer.
 					// White (0) → bright green (1+) as contribution increases.
