@@ -1066,6 +1066,17 @@ void DLSSperf::HandlePostProcessing(const std::function<void()>& enginePost)
 	// bloom compute from anti-aliased content instead of raw 1k render.
 	DownscaleToKMain();
 
+	// Underwater mask analytical repair. Engine RTs (depth, mask) are at
+	// renderRes under DLSSperf, so the full-resolution path of UpscaleDepth
+	// would apply — but routing through UpscaleDepth here leaves pipeline
+	// state dirty and the trailing enginePost() loses kMAIN. Drive the
+	// mask-only draw directly inside our own FullscreenPassScope so the
+	// inbound engine state is restored on exit.
+	{
+		FullscreenPassScope scope(globals::d3d::context);
+		globals::features::upscaling.RunUnderwaterMaskRepair();
+	}
+
 	// Outer layer: swap kMAIN_COPY DS + SRV for refraction path coverage
 	BeginPostIntercept();
 

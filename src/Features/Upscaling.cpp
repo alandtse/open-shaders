@@ -2141,6 +2141,95 @@ void Upscaling::UpscaleDepth()
 	state->EndPerfEvent();
 }
 
+void Upscaling::RunUnderwaterMaskRepair()
+{
+	ZoneScoped;
+	TracyD3D11Zone(globals::state->tracyCtx, "Upscaling - Underwater Mask (Standalone)");
+
+	if (!globals::game::isVR)
+		return;
+
+	auto state = globals::state;
+	auto renderer = globals::game::renderer;
+	auto context = globals::d3d::context;
+	auto deferred = globals::deferred;
+	if (!state || !renderer || !context || !deferred || !deferred->linearSampler || !jitterCB) {
+		return;
+	}
+
+	auto screenSize = state->screenSize;
+	if (screenSize.x <= 0.0f || screenSize.y <= 0.0f) {
+		return;
+	}
+
+	auto& depth = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kMAIN];
+	auto& depthCopy = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kMAIN_COPY];
+	auto& underwaterMask = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGET::kUNDERWATER_MASK];
+	if (!depth.texture || !depthCopy.texture || !depthCopy.depthSRV ||
+		!underwaterMask.texture || !underwaterMask.textureCopy || !underwaterMask.SRVCopy || !underwaterMask.RTV) {
+		return;
+	}
+
+	auto* fullscreenVS = GetUpscaleVS();
+	auto* underwaterMaskPS = GetUnderwaterMaskUpscalePS();
+	if (!fullscreenVS || !underwaterMaskPS) {
+		return;
+	}
+
+	state->BeginPerfEvent("Underwater Mask Repair (Standalone)");
+
+	// Fullscreen triangle setup — pipeline state is the caller's
+	// responsibility to save/restore; we do not touch the existing OM
+	// bindings beyond the explicit binds below.
+	context->IASetInputLayout(nullptr);
+	context->IASetVertexBuffers(0, 0, nullptr, nullptr, nullptr);
+	context->IASetIndexBuffer(nullptr, DXGI_FORMAT_UNKNOWN, 0);
+	context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+	context->VSSetShader(fullscreenVS, nullptr, 0);
+	context->GSSetShader(nullptr, nullptr, 0);
+	context->HSSetShader(nullptr, nullptr, 0);
+	context->DSSetShader(nullptr, nullptr, 0);
+
+	context->RSSetState(nullptr);
+	context->OMSetBlendState(nullptr, nullptr, 0xffffffff);
+	context->OMSetDepthStencilState(nullptr, 0x00);
+
+	ID3D11SamplerState* samplers[] = { deferred->linearSampler };
+	context->PSSetSamplers(0, ARRAYSIZE(samplers), samplers);
+
+	// jitterCB is shared with the depth-upscale path; the mask shader only
+	// reads .jitter (de-jitter sampling). useWideKernel is depth-only.
+	JitterCB jitterData{};
+	jitterData.jitter = jitter;
+	jitterCB->Update(jitterData);
+	auto bufferArray = jitterCB->CB();
+	context->PSSetConstantBuffers(0, 1, &bufferArray);
+
+	// Refresh depthCopy + underwater mask copy before sampling.
+	if (depthCopy.texture != depth.texture)
+		context->CopyResource(depthCopy.texture, depth.texture);
+	if (underwaterMask.textureCopy != underwaterMask.texture)
+		context->CopyResource(underwaterMask.textureCopy, underwaterMask.texture);
+
+	D3D11_VIEWPORT viewport = {};
+	viewport.Width = screenSize.x * 0.5f;
+	viewport.Height = screenSize.y * 0.5f;
+	viewport.MaxDepth = 1.0f;
+	context->RSSetViewports(1, &viewport);
+
+	ID3D11ShaderResourceView* srvs[] = { underwaterMask.SRVCopy, depthCopy.depthSRV };
+	context->PSSetShaderResources(0, ARRAYSIZE(srvs), srvs);
+	ID3D11RenderTargetView* rtvs[] = { underwaterMask.RTV };
+	context->OMSetRenderTargets(ARRAYSIZE(rtvs), rtvs, nullptr);
+	context->PSSetShader(underwaterMaskPS, nullptr, 0);
+	context->Draw(3, 0);
+
+	ID3D11ShaderResourceView* nullPSResources[2] = { nullptr, nullptr };
+	context->PSSetShaderResources(0, ARRAYSIZE(nullPSResources), nullPSResources);
+
+	state->EndPerfEvent();
+}
+
 void Upscaling::ApplySharpening()
 {
 	ZoneScoped;

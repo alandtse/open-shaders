@@ -234,6 +234,19 @@ public:
 	void UpscaleDepth();
 
 	/**
+	 * @brief Standalone full-resolution underwater mask repair (VR).
+	 *
+	 * Same draw as UpscaleDepth's mask branch on the full-resolution path,
+	 * extracted so callers that bypass the standard upscale flow (notably
+	 * DLSSperf::HandlePostProcessing, where engine RTs are pre-shrunk to
+	 * renderRes and DLSS targets a private displayRes texture) can drive
+	 * the repair without going through UpscaleDepth's wider envelope.
+	 * Sets and leaves D3D11 pipeline state dirty on exit — wrap in your
+	 * own save/restore (DLSSperf uses its FullscreenPassScope).
+	 */
+	void RunUnderwaterMaskRepair();
+
+	/**
 	 * @brief Applies RCAS sharpening to the main render target after DLSS upscaling.
 	 *
 	 * Runs in HDR space before tonemapping. Only called when DLSS is active and sharpness > 0.
