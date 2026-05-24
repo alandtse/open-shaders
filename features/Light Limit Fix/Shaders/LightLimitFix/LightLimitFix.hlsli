@@ -158,7 +158,7 @@ namespace LightLimitFix
 		// - SharedData::lightLimitFixSettings.ShadowMapSlots bounds the slice
 		//   index so we never sample past the texture's allocated array size
 		//   (a real concern with ShadowLightCount < 8 in extended mode).
-		// - focusClip.w > epsilon avoids div-by-zero NaN when the focus
+		// - focusClip.w > EPSILON_DIVISION avoids div-by-zero NaN when the focus
 		//   matrix hasn't been populated yet (first frame of a scene load
 		//   before the engine's RenderShadowmaps has run the focus loop).
 		[unroll] for (uint fi = 0; fi < 4; fi++)
@@ -167,7 +167,7 @@ namespace LightLimitFix
 			const uint focusSlice = 4 + fi;  // kFocusShadowBaseSlotIndex
 			[branch] if (focusSlice >= SharedData::lightLimitFixSettings.ShadowMapSlots) break;
 			float4 focusClip = mul(shadowLightData.FocusShadowProj[fi], float4(worldPositionWS, 1));
-			[branch] if (focusClip.w <= 1e-6) continue;
+			[branch] if (focusClip.w <= EPSILON_DIVISION) continue;
 			focusClip.xyz /= focusClip.w;
 			float2 focusUV = focusClip.xy * 0.5 + 0.5;
 			[branch] if (all(focusUV >= 0.0) && all(focusUV <= 1.0) && focusClip.z >= 0.0 && focusClip.z <= 1.0)
