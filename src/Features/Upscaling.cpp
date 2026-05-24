@@ -219,7 +219,7 @@ void Upscaling::DrawSettings()
 	// The always-present explanation is plain text — only the staged-change
 	// diff uses the RestartNeeded color so users learn the cue means "you
 	// changed something that won't apply yet."
-	if (globals::features::upscaling.dlssPerf.IsHookActive()) {
+	if (dlssPerf.IsHookActive()) {
 		ImGui::TextWrapped(
 			"DLSSperf is active: Method and Upscale Preset changes only take effect after a game restart. "
 			"Sharpness / model preset / Reflex remain live.");
