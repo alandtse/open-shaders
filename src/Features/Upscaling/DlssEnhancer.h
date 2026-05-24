@@ -1,25 +1,26 @@
 #pragma once
 
 // ============================================================================
-// DlssEnhancerFeature — VR DLSS enhancement feature (settings, GUI, persistence)
+// DlssEnhancer — VR DLSS enhancement mode of Upscaling
 // ============================================================================
 //
-// Currently VR + DLSS only. Non-VR / FSR users will see this disabled.
-// Future contributors: extend IsRuntimeSupported() and the Streamline path
-// for flat-screen or FSR support.
+// Foveated subrect-DLSS path: only the user-selected region gets full DLSS
+// upscaling; the periphery is cheaply stretched via SubrectStretchCS. Halves
+// (or more) the DLSS workload. Composes with VRS, Screenshot, and the lossless
+// recording feature through the shared Util::Subrect module — use the same
+// preset for consistent results across them.
 //
-//  Key advantage: Subrect DLSS — only the user-selected region gets full DLSS;
-//  periphery is cheaply stretched. Halves (or more) the DLSS workload. Works
-//  with VRS, Screenshot, and the upcoming lossless recording feature via the
-//  shared Subrect module — use the same preset for best results.
+// Architecturally a mode inside Upscaling (mirroring DLSSperf): a static-
+// inline member, not a peer Feature. Settings that overlap with Upscaling's
+// (quality mode, sharpness, DLSS preset, Streamline log level) read directly
+// from `globals::features::upscaling.settings` rather than being duplicated.
+// VR + DLSS only at present; non-VR / FSR extension is left to future work.
 //
 // ============================================================================
 
-#include "Feature.h"
-#include "FeatureCategories.h"
-#include "Utils/Subrect.h"
+#include "../../Utils/Subrect.h"
 
-struct DlssEnhancerFeature : Feature
+struct DlssEnhancer
 {
 public:
 	// DLSS execution mode for VR
@@ -44,13 +45,12 @@ public:
 		kNone = 1,  // No post-DLSS sharpening
 	};
 
+	// DlssEnhancer-specific settings. Quality mode / sharpness / DLSS preset /
+	// Streamline log level live on Upscaling::Settings and are read through
+	// the accessors below — do not duplicate them here.
 	struct Settings
 	{
 		uint enabled = 1;
-		uint qualityMode = 4;  // Ultra Performance (maximum VRAM saving)
-		uint streamlineLogLevel = 0;
-		float sharpnessDLSS = 1.0f;
-		uint presetDLSS = 0;
 		uint dlssMode = (uint)DlssMode::kDefault;
 		uint stretchMode = (uint)StretchMode::kGaussianBlur;
 		uint sharpenMode = (uint)SharpenMode::kRCAS;
@@ -62,31 +62,15 @@ public:
 	Settings settings;
 	Util::Subrect::Controller subrectController;
 
-	std::string GetName() override { return "DLSS Enhancer"; }
-	// Matches features/DLSS Enhancer/Shaders/Features/DLSSENHANCER.ini —
-	// FindFeatureByShortName + version-issue lookup are filename-keyed.
-	std::string GetShortName() override { return "DLSSENHANCER"; }
-	bool SupportsVR() override { return true; }
-	bool IsCore() const override { return false; }
-	std::string_view GetCategory() const override { return FeatureCategories::kDisplay; }
-
-	std::pair<std::string, std::vector<std::string>> GetFeatureSummary() override
-	{
-		return {
-			"VR DLSS enhancer path with independent control surface.",
-			{ "Own DLSS quality/preset/sharpness settings",
-				"2 DLSS modes: Default / Faster",
-				"Visual subrect cropping via drag editor",
-				"Direct settings source for Streamline" }
-		};
-	}
-
-	void DrawSettings() override;
-	void SaveSettings(json& o_json) override;
-	void LoadSettings(json& o_json) override;
-	void RestoreDefaultSettings() override;
-	void PostPostLoad() override;
-	void ClearShaderCache() override;
+	// Called from Upscaling::DrawSettings under a TreeNode.
+	void DrawSettings();
+	// Called from Upscaling::SaveSettings / LoadSettings to round-trip JSON.
+	void SaveSettings(json& o_json);
+	void LoadSettings(const json& o_json);
+	void RestoreDefaultSettings();
+	void ClearShaderCache();
+	// Called from Upscaling::PostPostLoad to seed subrect presets.
+	void PostPostLoad();
 
 	bool IsRuntimeSupported() const;
 	bool IsActive() const;
@@ -95,8 +79,9 @@ public:
 	// Main enable: latched at boot, change requires restart
 	void LatchEnabled() { enabledAtBoot = (settings.enabled != 0); }
 
-	// Quality mode: latched at boot for resolution calculation
-	void LatchQualityMode() { qualityModeAtBoot = std::clamp(settings.qualityMode, 1u, 4u); }
+	// Quality mode reads through Upscaling::Settings — latch the boot value so
+	// downstream RT allocations stay coherent if the user moves the slider.
+	void LatchQualityMode();
 	uint GetQualityModeAtBoot() const { return qualityModeAtBoot; }
 
 	/// Render-to-display scale denominator for a given quality mode.
@@ -107,10 +92,10 @@ public:
 	StretchMode GetStretchMode() const { return (StretchMode)std::min(settings.stretchMode, 2u); }
 	SharpenMode GetSharpenMode() const { return (SharpenMode)std::min(settings.sharpenMode, 1u); }
 
-	// Active getters (snapshot of the current settings, for downstream consumers)
-	uint GetActiveQualityMode() const { return std::clamp(settings.qualityMode, 1u, 4u); }
-	uint GetActivePresetDLSS() const { return std::min(settings.presetDLSS, 5u); }
-	float GetActiveSharpnessDLSS() const { return std::clamp(settings.sharpnessDLSS, 0.0f, 1.0f); }
+	// Active getters: clamp + route shared fields through Upscaling::Settings.
+	uint GetActiveQualityMode() const;
+	uint GetActivePresetDLSS() const;
+	float GetActiveSharpnessDLSS() const;
 
 	bool IsEncodeMVDilation() const { return settings.enableMVDilation != 0; }
 	bool IsEncodeReactiveMask() const { return settings.enableReactiveMask != 0; }
@@ -119,12 +104,9 @@ public:
 
 private:
 	bool enabledAtBoot = false;  // latched from settings.enabled at boot
-	uint qualityModeAtBoot = 4;  // latched from settings.qualityMode at boot (default: UltraPerf)
+	uint qualityModeAtBoot = 4;  // latched from Upscaling::Settings::qualityMode at boot
 
-	// Returns true if the current preset is compatible with the active DlssMode
 	bool IsPresetCompatibleWithMode(uint presetIndex) const;
-	// Clamp preset to a compatible value for the active mode
 	void ClampPresetToMode();
-	// Clamp all settings to valid ranges
 	void ClampSettings();
 };

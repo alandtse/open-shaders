@@ -1,18 +1,18 @@
 #include "Postprocess.h"
 
-#include "../../Globals.h"
-#include "../../State.h"
-#include "../DlssEnhancerFeature.h"
-#include "../Upscaling.h"
+#include "../../../Globals.h"
+#include "../../../State.h"
+#include "../../Upscaling.h"
+#include "../DlssEnhancer.h"
 
 #include <cmath>
 
-namespace DlssEnhancer
+namespace DlssEnhancerImpl
 {
 	bool Postprocess::ApplyDlssSharpening(Upscaling& upscaling)
 	{
-		auto& enhancer = globals::features::dlssEnhancer;
-		if (enhancer.GetSharpenMode() == DlssEnhancerFeature::SharpenMode::kNone) {
+		auto& enhancer = globals::features::upscaling.dlssEnhancer;
+		if (enhancer.GetSharpenMode() == DlssEnhancer::SharpenMode::kNone) {
 			return true;
 		}
 

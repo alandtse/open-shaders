@@ -10,11 +10,11 @@
 #include "State.h"
 #include "Util.h"
 
-#include "Features/DlssEnhancer/Bridge.h"
 #include "Features/HDRDisplay.h"
 #include "Features/InteriorSun.h"
 #include "Features/LightLimitFix.h"
 #include "Features/Upscaling.h"
+#include "Features/Upscaling/DlssEnhancer/Bridge.h"
 #include "Features/VR.h"
 #include "Features/VolumetricLighting.h"
 
@@ -418,7 +418,7 @@ struct BSShaderRenderTargets_Create
 		// this point, live setting changes won't be honored mid-game (matches
 		// Streamline's DLSS option lifecycle — quality changes need a full
 		// resource recreate the user has to opt into).
-		DlssEnhancer::Bridge::BootSequence();
+		DlssEnhancerImpl::Bridge::BootSequence();
 	}
 	static inline REL::Relocation<decltype(thunk)> func;
 };

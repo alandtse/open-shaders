@@ -1,11 +1,11 @@
 #pragma once
 
-// DlssEnhancer::Bridge — single point of contact between the DlssEnhancer
+// DlssEnhancerImpl::Bridge — single point of contact between the DlssEnhancer
 // subsystem and the rest of Community Shaders (Upscaling, Streamline).
 //
 // All "is DlssEnhancer active?", "what settings should DLSS use?", and
 // "what happened at boot?" questions are answered here, so consumers never
-// need to #include DlssEnhancerFeature.h or poke globals::features::dlssEnhancer
+// need to #include DlssEnhancer.h or poke globals::features::upscaling.dlssEnhancer
 // directly.
 //
 // IMPORTANT: when the DlssEnhancer route is inactive every query returns a
@@ -14,7 +14,7 @@
 
 #include <cstdint>
 
-namespace DlssEnhancer::Bridge
+namespace DlssEnhancerImpl::Bridge
 {
 	// True when VR + DLSS available + DlssEnhancer enabled-at-boot.
 	bool IsRouteActive();

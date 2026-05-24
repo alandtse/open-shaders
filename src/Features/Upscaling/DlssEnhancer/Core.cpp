@@ -1,14 +1,14 @@
 #include "Core.h"
 #include "Ops.h"
 
-#include "../../State.h"
-#include "../../Util.h"
-#include "../DlssEnhancerFeature.h"
-#include "../Upscaling.h"
+#include "../../../State.h"
+#include "../../../Util.h"
+#include "../../Upscaling.h"
+#include "../DlssEnhancer.h"
 
 #include <cstring>
 
-namespace DlssEnhancer::Ops
+namespace DlssEnhancerImpl::Ops
 {
 	eastl::unique_ptr<Texture2D> CreateTextureFromSource(ID3D11Resource* src, uint32_t width, uint32_t height,
 		bool copyBindFlags, bool createSRV, bool createUAV, const char* name)
@@ -307,7 +307,7 @@ namespace DlssEnhancer::Ops
 
 		D3D11_MAPPED_SUBRESOURCE mapped{};
 		if (SUCCEEDED(context->Map(Core::vrSubrectStretchCB.get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped))) {
-			auto& enhSettings = globals::features::dlssEnhancer.settings;
+			auto& enhSettings = globals::features::upscaling.dlssEnhancer.settings;
 			struct
 			{
 				uint32_t data[8];
@@ -423,9 +423,9 @@ namespace DlssEnhancer::Ops
 		context->CopySubresourceRegion(dst, 0, dstOffsetX, dstOffsetY, 0, dlssSrc, 0, &srcBox);
 	}
 
-}  // namespace DlssEnhancer::Ops
+}  // namespace DlssEnhancerImpl::Ops
 
-namespace DlssEnhancer
+namespace DlssEnhancerImpl
 {
 	bool Core::PrepareVRPerEyeInputs(
 		ID3D11Resource* colorSrc,

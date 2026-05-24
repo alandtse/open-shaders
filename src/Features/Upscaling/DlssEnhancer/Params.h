@@ -1,10 +1,10 @@
 #pragma once
 
-#include "../DlssEnhancerFeature.h"
+#include "../DlssEnhancer.h"
 #include "Utils/Subrect.h"
 #include <d3d11.h>
 
-namespace DlssEnhancer
+namespace DlssEnhancerImpl
 {
 	// Unified parameter block consumed by Mode functions.
 	//
@@ -32,7 +32,7 @@ namespace DlssEnhancer
 		ID3D11Resource* motionVectors;
 
 		// Mode & subrect (MVP-B mode set: kDefault, kFaster only — kExtreme deferred)
-		DlssEnhancerFeature::DlssMode mode;
+		DlssEnhancer::DlssMode mode;
 		Util::Subrect::UVRegion leftUV;
 		Util::Subrect::UVRegion rightUV;
 		bool isFullEye;

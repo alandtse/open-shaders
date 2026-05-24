@@ -1,9 +1,9 @@
 #include "Preprocess.h"
 
-#include "../../Deferred.h"
-#include "../../State.h"
-#include "../../Util.h"
-#include "../Upscaling.h"
+#include "../../../Deferred.h"
+#include "../../../State.h"
+#include "../../../Util.h"
+#include "../../Upscaling.h"
 
 namespace
 {
@@ -22,7 +22,7 @@ namespace
 	}
 }
 
-namespace DlssEnhancer
+namespace DlssEnhancerImpl
 {
 	bool Preprocess::EncodeUpscalingTextures(Upscaling& upscaling)
 	{

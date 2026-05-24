@@ -2,7 +2,7 @@
 
 struct Upscaling;
 
-namespace DlssEnhancer
+namespace DlssEnhancerImpl
 {
 	class Postprocess
 	{

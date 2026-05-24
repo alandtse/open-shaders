@@ -35,7 +35,6 @@ struct Upscaling;
 struct WeatherEditor;
 struct ExponentialHeightFog;
 struct HDRDisplay;
-struct DlssEnhancerFeature;
 struct ScreenshotFeature;
 
 class State;
@@ -93,7 +92,6 @@ namespace globals
 		extern ExtendedTranslucency extendedTranslucency;
 		extern Upscaling upscaling;
 		extern HDRDisplay hdrDisplay;
-		extern DlssEnhancerFeature dlssEnhancer;
 		extern RenderDoc renderDoc;
 		extern RemoteControl remoteControl;
 		extern ScreenshotFeature screenshotFeature;

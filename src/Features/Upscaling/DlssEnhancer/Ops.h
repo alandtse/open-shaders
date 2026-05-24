@@ -14,7 +14,7 @@ class Texture2D;
 // Modes.cpp compose these in different orders to form the Default and
 // Faster strategies. Extreme-strip and periphery temporal-smooth helpers
 // are deferred to PR-3b.
-namespace DlssEnhancer::Ops
+namespace DlssEnhancerImpl::Ops
 {
 	// Texture creation helper.
 	eastl::unique_ptr<Texture2D> CreateTextureFromSource(ID3D11Resource* src, uint32_t width, uint32_t height,

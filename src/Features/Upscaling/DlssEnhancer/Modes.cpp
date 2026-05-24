@@ -11,11 +11,11 @@
 #include "Ops.h"
 #include "Params.h"
 
-#include "../../Globals.h"
-#include "../../Utils/Subrect.h"
-#include "../Upscaling/Streamline.h"
+#include "../../../Globals.h"
+#include "../../../Utils/Subrect.h"
+#include "../Streamline.h"
 
-namespace DlssEnhancer
+namespace DlssEnhancerImpl
 {
 	using namespace Ops;
 
@@ -36,7 +36,7 @@ namespace DlssEnhancer
 		}
 
 		switch (p.mode) {
-		case DlssEnhancerFeature::DlssMode::kFaster:
+		case DlssEnhancer::DlssMode::kFaster:
 			return ExecuteFasterMode(streamline, p);
 		default:
 			return ExecuteDefaultMode(streamline, p);

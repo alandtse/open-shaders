@@ -8,7 +8,7 @@
 
 // Quality mode → render-scale resolution is supplied by the FFX SDK helper
 // (same one Upscaling.cpp uses at ConfigureUpscaling), avoiding a duplicate
-// scale table here. Decoupled from the original PR's DlssEnhancer::Bridge so
+// scale table here. Decoupled from the original PR's DlssEnhancerImpl::Bridge so
 // PerfMode can ship without the larger enhancer framework.
 #include <FidelityFX/host/ffx_fsr3.h>
 

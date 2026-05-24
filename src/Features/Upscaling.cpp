@@ -1,16 +1,16 @@
 #include "Upscaling.h"
 
 #include "Deferred.h"
-#include "DlssEnhancer/Bridge.h"
-#include "DlssEnhancer/Core.h"
-#include "DlssEnhancer/Postprocess.h"
-#include "DlssEnhancer/Preprocess.h"
-#include "DlssEnhancerFeature.h"
 #include "HDRDisplay.h"
 #include "Hooks.h"
 #include "State.h"
 #include "Upscaling/PerfMode.h"
 #include "Upscaling/DX12SwapChain.h"
+#include "Upscaling/DlssEnhancer.h"
+#include "Upscaling/DlssEnhancer/Bridge.h"
+#include "Upscaling/DlssEnhancer/Core.h"
+#include "Upscaling/DlssEnhancer/Postprocess.h"
+#include "Upscaling/DlssEnhancer/Preprocess.h"
 #include "Upscaling/FidelityFX.h"
 #include "Upscaling/Streamline.h"
 #include "Utils/UI.h"
@@ -477,6 +477,14 @@ void Upscaling::DrawSettings()
 		ImGui::TreePop();
 	}
 
+	// DlssEnhancer: foveated subrect DLSS — VR-only, opt-in mode of this
+	// feature. Like DLSSperf, lives here rather than as a peer Feature so
+	// all DLSS surfaces share one settings panel.
+	if (globals::game::isVR && ImGui::TreeNodeEx("Foveated DLSS (DlssEnhancer)")) {
+		dlssEnhancer.DrawSettings();
+		ImGui::TreePop();
+	}
+
 	if (ImGui::TreeNodeEx("Backend Diagnostics")) {
 		// Streamline log level selection
 		const char* logLevels[] = { "Off", "Default", "Verbose" };
@@ -561,6 +569,11 @@ void Upscaling::DrawSettings()
 void Upscaling::SaveSettings(json& o_json)
 {
 	o_json = settings;
+	// Nest DlssEnhancer's settings under a sub-key so they round-trip alongside
+	// Upscaling's own. Subrect controller persistence is owned by DlssEnhancer.
+	json dlssEnhancerJson;
+	dlssEnhancer.SaveSettings(dlssEnhancerJson);
+	o_json["dlssEnhancer"] = dlssEnhancerJson;
 	auto iniSettingCollection = globals::game::iniPrefSettingCollection;
 	if (iniSettingCollection) {
 		auto setting = iniSettingCollection->GetSetting("bUseTAA:Display");
@@ -572,6 +585,12 @@ void Upscaling::SaveSettings(json& o_json)
 
 void Upscaling::LoadSettings(json& o_json)
 {
+	// Pull DlssEnhancer's nested block first so its absence doesn't fail the
+	// outer settings deserialize.
+	if (o_json.contains("dlssEnhancer")) {
+		dlssEnhancer.LoadSettings(o_json["dlssEnhancer"]);
+		o_json.erase("dlssEnhancer");
+	}
 	settings = o_json;
 
 	// Sanitize loaded settings to ensure enum indices are valid
@@ -620,6 +639,7 @@ void Upscaling::LoadSettings(json& o_json)
 void Upscaling::RestoreDefaultSettings()
 {
 	settings = {};
+	dlssEnhancer.RestoreDefaultSettings();
 }
 
 void Upscaling::DataLoaded()
@@ -677,6 +697,10 @@ struct BSImageSpace_Init_FXAA
 };
 void Upscaling::PostPostLoad()
 {
+	// Subrect controller defaults + stereo flag (DlssEnhancer is no longer a
+	// Feature subclass so we drive its lifecycle from here).
+	dlssEnhancer.PostPostLoad();
+
 	bool isGOG = !GetModuleHandle(L"steam_api64.dll");
 	stl::detour_thunk<MenuManagerDrawInterfaceStartHook>(REL::RelocationID(79947, 82084));
 
@@ -1485,6 +1509,7 @@ void Upscaling::SetupResources()
 
 void Upscaling::ClearShaderCache()
 {
+	dlssEnhancer.ClearShaderCache();
 	for (int i = 0; i < 5; ++i) {
 		encodeTexturesCS[i] = nullptr;  // com_ptr automatically releases
 	}
@@ -1917,13 +1942,13 @@ void Upscaling::Upscale()
 
 			// PR-3 MVP-B: opt-in DlssEnhancer route. When active, runs the
 			// per-eye DLSS dispatch with optional foveal subrect through
-			// DlssEnhancer::Core; falls through to dev's standard path on
+			// DlssEnhancerImpl::Core; falls through to dev's standard path on
 			// any failure so users always see DLSS output (graceful
 			// degradation — no black frames if the enhancer preflights bad).
 			bool routeHandled = false;
-			if (DlssEnhancer::Bridge::IsRouteActive() && globals::game::isVR) {
-				if (DlssEnhancer::Preprocess::EncodeUpscalingTextures(*this)) {
-					routeHandled = DlssEnhancer::Core::ExecuteVRDlssCore(streamline,
+			if (DlssEnhancerImpl::Bridge::IsRouteActive() && globals::game::isVR) {
+				if (DlssEnhancerImpl::Preprocess::EncodeUpscalingTextures(*this)) {
+					routeHandled = DlssEnhancerImpl::Core::ExecuteVRDlssCore(streamline,
 						main.texture,
 						globals::game::renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kMAIN].texture,
 						reactiveMaskTexture->resource.get(),
@@ -2344,8 +2369,8 @@ void Upscaling::Main_PostProcessing::thunk(RE::ImageSpaceManager* a_this, uint32
 		// PR-3 MVP-B: when the DlssEnhancer route is active, route sharpening
 		// through Postprocess so the route can drive its own SharpenMode (None
 		// short-circuits, RCAS uses dev's RCAS instance). Otherwise dev's path.
-		if (DlssEnhancer::Bridge::IsRouteActive()) {
-			DlssEnhancer::Postprocess::ApplyDlssSharpening(upscaling);
+		if (DlssEnhancerImpl::Bridge::IsRouteActive()) {
+			DlssEnhancerImpl::Postprocess::ApplyDlssSharpening(upscaling);
 		} else {
 			upscaling.ApplySharpening();
 		}

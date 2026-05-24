@@ -1,11 +1,11 @@
 #include "Params.h"
 
-#include "../../State.h"
-#include "../../Utils/Game.h"
-#include "../DlssEnhancerFeature.h"
-#include "../Upscaling.h"
+#include "../../../State.h"
+#include "../../../Utils/Game.h"
+#include "../../Upscaling.h"
+#include "../DlssEnhancer.h"
 
-namespace DlssEnhancer
+namespace DlssEnhancerImpl
 {
 	VRDlssParams VRDlssParams::Resolve(
 		ID3D11Resource* upscalingTexture,
@@ -42,7 +42,7 @@ namespace DlssEnhancer
 		// Mode & subrect. PR-1's stereo Subrect API: GetUV() returns the
 		// primary UV (= left-eye in stereo mode); GetRightEyeUV() returns
 		// the mirrored right-eye UV.
-		auto& enhancer = globals::features::dlssEnhancer;
+		auto& enhancer = globals::features::upscaling.dlssEnhancer;
 		p.mode = enhancer.GetDlssMode();
 		p.leftUV = enhancer.subrectController.GetUV();
 		p.rightUV = enhancer.subrectController.GetRightEyeUV();
