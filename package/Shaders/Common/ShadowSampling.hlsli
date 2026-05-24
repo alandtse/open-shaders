@@ -30,6 +30,12 @@ struct DirectionalShadowLightData
 	column_major float4x4 InvShadowProj[2];
 	float2 EndSplitDistances;
 	float2 StartSplitDistances;
+	// Focus shadow projections (per FocusShadowActor, max 4). Sample at
+	// kSHADOWMAPS slice (4 + i) using FocusShadowProj[i]; only entries with
+	// index < FocusShadowCount are valid.
+	column_major float4x4 FocusShadowProj[4];
+	uint FocusShadowCount;
+	uint3 _pad0;
 };
 
 StructuredBuffer<DirectionalShadowLightData> DirectionalShadowLights : register(t98);

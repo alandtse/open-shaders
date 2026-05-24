@@ -565,6 +565,23 @@ void Deferred::SetShadowCascadeParameters(T& lightData, DirectionalShadowLightDa
 		DirectX::XMMATRIX invProj = DirectX::XMMatrixInverse(nullptr, proj);
 		DirectX::XMStoreFloat4x4(&dd.InvShadowProj[i], invProj);
 	}
+
+	// Focus shadow matrices (one per active focus actor; engine writes them
+	// to focusShadowmapDescriptors[i].lightTransform during its per-cascade
+	// render). The shader samples kSHADOWMAPS slice (4 + i) for each entry
+	// to recover the player/NPC high-resolution shadow.
+	const auto focusCount = std::min(
+		static_cast<uint32_t>(std::size(lightData.focusShadowmapDescriptors)),
+		static_cast<uint32_t>(std::size(dd.FocusShadowProj)));
+	dd.FocusShadowCount = 0;
+	for (uint32_t i = 0; i < focusCount; i++) {
+		const auto& desc = lightData.focusShadowmapDescriptors[i];
+		if (!desc.isEnabled)
+			continue;  // descriptor unused this frame
+		auto proj = DirectX::XMLoadFloat4x4(reinterpret_cast<const DirectX::XMFLOAT4X4*>(&desc.lightTransform));
+		DirectX::XMStoreFloat4x4(&dd.FocusShadowProj[dd.FocusShadowCount], proj);
+		dd.FocusShadowCount++;
+	}
 }
 
 void Deferred::CopyShadowLightData()

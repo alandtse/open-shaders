@@ -144,7 +144,38 @@ namespace LightLimitFix
 			shadow = lerp(shadow, shadowBlend, cascadeSelect);
 		}
 
-		return lerp(shadow, 1.0, fadeFactor);
+		shadow = lerp(shadow, 1.0, fadeFactor);
+
+		// Focus shadows: high-resolution actor shadows the engine renders to
+		// kSHADOWMAPS slices [kFocusShadowBaseSlotIndex .. +FocusShadowCount).
+		// Each focus matrix projects worldPositionWS into the actor's clip
+		// space; pixels outside [0,1] UV or [0,1] depth aren't covered and
+		// contribute no occlusion. Combine via min() so any occluding actor
+		// wins. Without this, the player's own shadow vanishes when LLF is
+		// on (the cascade has it at lower resolution; focus made it visible).
+		[unroll] for (uint fi = 0; fi < 4; fi++)
+		{
+			[branch] if (fi >= shadowLightData.FocusShadowCount) break;
+			float4 focusClip = mul(shadowLightData.FocusShadowProj[fi], float4(worldPositionWS, 1));
+			focusClip.xyz /= focusClip.w;
+			float2 focusUV = focusClip.xy * 0.5 + 0.5;
+			[branch] if (all(focusUV >= 0.0) && all(focusUV <= 1.0) && focusClip.z >= 0.0 && focusClip.z <= 1.0)
+			{
+				const uint focusSlice = 4 + fi;  // kFocusShadowBaseSlotIndex
+				float focusDepth = focusClip.z - DirectionalBias;
+				float focusVis = 0.0;
+				[unroll] for (int fs = 0; fs < 8; fs++)
+				{
+					float2 fsOffset = mul(Random::SpiralSampleOffsets8[fs], rotationMatrix);
+					float2 fsUV = focusUV + fsOffset * PCFRadius2D;
+					focusVis += dot(float4(ShadowMaps.GatherRed(LinearSampler, float3(saturate(fsUV), focusSlice)) > focusDepth), 0.25);
+				}
+				focusVis /= 8.0;
+				shadow = min(shadow, focusVis);
+			}
+		}
+
+		return shadow;
 	}
 
 	float GetDirectionalShadow(float3 worldPosition, float3 worldPositionWS, float2x2 rotationMatrix)

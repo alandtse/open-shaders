@@ -28,6 +28,14 @@ public:
 		float4x4 InvShadowProj[2];
 		float2 EndSplitDistances;
 		float2 StartSplitDistances;
+		// Focus shadow projection matrices, written by SCM each frame for the
+		// active FocusShadowActors (player + tracked NPCs, max 4). Each matrix
+		// projects world-space to the focus shadow's clip space; HLSL samples
+		// kSHADOWMAPS slice (4 + i) for matrix i to get the per-actor high-res
+		// shadow. FocusShadowCount in [0..4]; entries beyond it are ignored.
+		float4x4 FocusShadowProj[4];
+		uint FocusShadowCount;
+		uint pad0[3];
 	};
 	STATIC_ASSERT_ALIGNAS_16(DirectionalShadowLightData);
 
