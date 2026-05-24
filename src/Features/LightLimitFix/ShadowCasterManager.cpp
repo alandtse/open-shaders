@@ -1502,8 +1502,14 @@ namespace ShadowCasterManager
 		// Remove from conversion list if it was previously converted to normal.
 		EraseFromConvertList(light);
 
-		// Focus shadow handling (only when not in extended mode).
-		if (s_settings.ShadowLightCount <= 4) {
+		// Focus shadow handling. Gated on s_focusShadowSlots so we only run
+		// the engine's focus accumulate when ScheduleShadowCasters has
+		// reserved [kFocusShadowBaseSlotIndex .. +s_focusShadowSlots) this
+		// frame -- without that reservation the engine would write focus
+		// depth into texture slices currently held by point lights. With
+		// it, extended mode (ShadowLightCount > 4) is safe; the previous
+		// blanket `<= 4` gate is replaced by the reservation contract.
+		if (s_focusShadowSlots > 0) {
 			bool drawFocus = ShadowField(light, drawFocusShadows);
 			if (drawFocus || (!*GetFocusShadowSelected() && light->GetIsFrustumOrDirectionalLight())) {
 				GameSetupDirectionalLight(light, camera);
