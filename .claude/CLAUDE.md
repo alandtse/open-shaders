@@ -373,6 +373,7 @@ Feature versions are automatically extracted from `.ini` files and compiled into
 -   JSON-based settings with nlohmann_json
 -   Hot-reload capability through ImGui interface
 -   Versioned feature configurations for compatibility
+-   Restart-gated fields use `Util::Settings::BootSnapshot` + `kRestartFields` metadata to diff boot-latched vs selected values (drives `Util::Text::RestartNeeded` banners and MCP introspection)
 
 ### Error Handling
 

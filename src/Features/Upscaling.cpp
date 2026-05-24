@@ -228,9 +228,9 @@ void Upscaling::DrawSettings()
 		// path mode slot (upscaleMethod, not upscaleMethodNoDLSS), since
 		// that's the one the boot snapshot locked.
 		if (currentUpscaleMode == &settings.upscaleMethod &&
-			settings.upscaleMethod != dlssPerf.GetBootUpscaleMethod()) {
+			bootSnapshot.HasPendingChange(settings, &Settings::upscaleMethod)) {
 			const uint live = std::clamp<uint>(settings.upscaleMethod, 0u, availableModes);
-			const uint boot = std::clamp<uint>(dlssPerf.GetBootUpscaleMethod(), 0u, availableModes);
+			const uint boot = std::clamp<uint>(bootSnapshot.Boot(&Settings::upscaleMethod), 0u, availableModes);
 			Util::Text::RestartNeeded(
 				"Pending restart: currently active method = %s (selected = %s).",
 				upscaleModes[boot].c_str(), upscaleModes[live].c_str());
@@ -280,9 +280,9 @@ void Upscaling::DrawSettings()
 			// Pending-diff vs the boot snapshot the runtime upscaler is
 			// actually using. Without this the slider change looks like a
 			// no-op.
-			if (dlssPerf.HasBootSnapshot() &&
-				settings.qualityMode != dlssPerf.GetBootQualityMode()) {
-				const uint bm = std::clamp<uint>(dlssPerf.GetBootQualityMode(), 0u, 4u);
+			if (dlssPerf.IsHookActive() &&
+				bootSnapshot.HasPendingChange(settings, &Settings::qualityMode)) {
+				const uint bm = std::clamp<uint>(bootSnapshot.Boot(&Settings::qualityMode), 0u, 4u);
 				const char* bootLabel = (upscaleMethod == UpscaleMethod::kDLSS) ? upscalePresetsDLSS[std::clamp<int>(4 - (int)bm, 0, 4)] : upscalePresets[std::clamp<int>(4 - (int)bm, 0, 4)];
 				Util::Text::RestartNeeded(
 					"Pending restart: currently active = %s ( %.2fx ). Change applies after game restart.",
@@ -336,9 +336,8 @@ void Upscaling::DrawSettings()
 			}
 			if (!dlssAvailable && settings.enableDLSSperf)
 				Util::Text::Disabled("DLSSperf requires DLSS — switch upscaler Method to DLSS to activate.");
-			if (dlssAvailable && settings.enableDLSSperf != globals::features::upscaling.dlssPerf.IsHookActive())
-				Util::Text::RestartNeeded("Pending restart: DLSSperf will %s on next launch.",
-					settings.enableDLSSperf ? "enable" : "disable");
+			if (dlssAvailable)
+				Util::UI::DrawSettingDiff(bootSnapshot, settings, &Settings::enableDLSSperf);
 		}
 	}
 
@@ -351,37 +350,23 @@ void Upscaling::DrawSettings()
 			if (HasFrameGenModule())
 				ImGui::Text("AMD FSR Frame Generation is available.");
 			ImGui::Text("Requires a D3D11 to D3D12 proxy which can create compatibility issues");
-			ImGui::Text("Toggling this setting requires a restart to work correctly");
-
-			bool onlyRequiresRestart = true;
 
 			if (!isWindowed) {
 				Util::Text::Warning("Warning: Requires windowed mode");
-
-				onlyRequiresRestart = false;
 			}
 
 			if (lowRefreshRate && !settings.frameGenerationForceEnable) {
 				Util::Text::Warning("Warning: Requires a high refresh rate monitor or Force Enable Frame Generation");
-
-				onlyRequiresRestart = false;
 			}
 
 			if (fidelityFXMissing) {
 				Util::Text::Warning("Warning: FidelityFX DLLs are not loaded");
-
-				onlyRequiresRestart = false;
 			}
-
-			if (onlyRequiresRestart && settings.frameGenerationMode && !frameGenerationDx12PathActive)
-				Util::Text::Warning("Warning: Requires restart");
-
-			if (!settings.frameGenerationMode && frameGenerationDx12PathActive)
-				Util::Text::Warning("Warning: Requires restart");
 
 			bool fgEnabled = settings.frameGenerationMode != 0;
 			if (ImGui::Checkbox("Frame Generation", &fgEnabled))
 				settings.frameGenerationMode = fgEnabled ? 1 : 0;
+			Util::UI::DrawSettingDiff(bootSnapshot, settings, &Settings::frameGenerationMode);
 
 			if (!frameGenerationDx12PathActive)
 				ImGui::BeginDisabled();
@@ -397,6 +382,7 @@ void Upscaling::DrawSettings()
 			bool fgForce = settings.frameGenerationForceEnable != 0;
 			if (ImGui::Checkbox("Force Enable Frame Generation", &fgForce))
 				settings.frameGenerationForceEnable = fgForce ? 1 : 0;
+			Util::UI::DrawSettingDiff(bootSnapshot, settings, &Settings::frameGenerationForceEnable);
 
 			ImGui::Checkbox("Frame Generation in Menus", &settings.frameGenerationAllowInMenus);
 			if (auto _tt = Util::HoverTooltipWrapper()) {
@@ -592,6 +578,10 @@ void Upscaling::LoadSettings(json& o_json)
 		logger::warn("[Upscaling] Loaded upscaleMethodNoDLSS {} out of range, clamping to {}", settings.upscaleMethodNoDLSS, enumCount ? enumCount - 1 : 0);
 		settings.upscaleMethodNoDLSS = enumCount ? enumCount - 1 : 0;
 	}
+	if (settings.qualityMode > 4) {
+		logger::warn("[Upscaling] Loaded qualityMode {} out of range, clamping to 4", settings.qualityMode);
+		settings.qualityMode = 4;
+	}
 	if (settings.presetDLSS > 4) {
 		logger::warn("[Upscaling] Loaded presetDLSS {} out of range, resetting to 0 (Default)", settings.presetDLSS);
 		settings.presetDLSS = 0;
@@ -715,8 +705,8 @@ Upscaling::UpscaleMethod Upscaling::GetUpscaleMethod() const
 	// Lock runtime to the boot upscaler under DLSSperf — engine RTs are
 	// sized for it, and routing a different method through testTexture/
 	// renderRes paths breaks the HMD.
-	if (globals::features::upscaling.dlssPerf.HasBootSnapshot())
-		return (UpscaleMethod)globals::features::upscaling.dlssPerf.GetBootUpscaleMethod();
+	if (globals::features::upscaling.dlssPerf.IsHookActive())
+		return static_cast<UpscaleMethod>(bootSnapshot.Boot(&Settings::upscaleMethod));
 	if (streamline.featureDLSS)
 		return (UpscaleMethod)settings.upscaleMethod;
 	return (UpscaleMethod)settings.upscaleMethodNoDLSS;
@@ -1337,7 +1327,7 @@ void Upscaling::ConfigureUpscaling(RE::BSGraphics::State* a_viewport)
 		} else {
 			// Boot qualityMode under DLSSperf so projection stays coherent
 			// with the engine RTs sized at install.
-			const uint32_t qm = globals::features::upscaling.dlssPerf.HasBootSnapshot() ? globals::features::upscaling.dlssPerf.GetBootQualityMode() : settings.qualityMode;
+			const uint32_t qm = globals::features::upscaling.dlssPerf.IsHookActive() ? bootSnapshot.Boot(&Settings::qualityMode) : settings.qualityMode;
 			float resolutionScaleBase = 1.0f / ffxFsr3GetUpscaleRatioFromQualityMode((FfxFsr3QualityMode)qm);
 
 			auto renderWidth = static_cast<int>(screenWidth * resolutionScaleBase);

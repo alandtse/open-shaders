@@ -5,11 +5,14 @@
 #include <functional>
 #include <imgui.h>
 #include <string>
+#include <span>
+#include <type_traits>
 #include <vector>
 #include <windows.h>  // For WPARAM and virtual key constants
 
 #include "../FeatureConstraints.h"
 #include "../Menu/Fonts.h"
+#include "Utils/BootSnapshot.h"
 #include "Utils/Input.h"
 
 // Forward declarations
@@ -955,6 +958,72 @@ namespace Util
 		void WrappedDisabled(const char* fmt, ...) IM_FMTARGS(1);
 		void RestartNeeded(const char* fmt, ...) IM_FMTARGS(1);
 		void WrappedRestartNeeded(const char* fmt, ...) IM_FMTARGS(1);
+	}
+
+	// Restart-required settings UI helpers.
+	namespace UI
+	{
+		template <typename SettingsT, typename T>
+		inline void DrawSettingDiff(const Util::Settings::BootSnapshot<SettingsT>& snapshot, const SettingsT& live, T SettingsT::*field)
+		{
+			if (!snapshot.IsLatched()) {
+				return;
+			}
+			const auto* info = snapshot.FindField(field);
+			if (!info) {
+				return;
+			}
+			if (!snapshot.HasPendingChange(live, field)) {
+				return;
+			}
+
+			if constexpr (std::is_same_v<T, bool>) {
+				const bool boot = snapshot.Boot(field);
+				Util::Text::RestartNeeded(
+					"Pending restart: %s changed (active = %s, selected = %s).",
+					info->label,
+					boot ? "on" : "off",
+					(live.*field) ? "on" : "off");
+				return;
+			}
+			if constexpr (std::is_integral_v<T>) {
+				const auto boot = static_cast<long long>(snapshot.Boot(field));
+				const auto selected = static_cast<long long>(live.*field);
+				Util::Text::RestartNeeded(
+					"Pending restart: %s changed (active = %lld, selected = %lld).",
+					info->label,
+					boot,
+					selected);
+				return;
+			}
+			if constexpr (std::is_floating_point_v<T>) {
+				const double boot = static_cast<double>(snapshot.Boot(field));
+				const double selected = static_cast<double>(live.*field);
+				Util::Text::RestartNeeded(
+					"Pending restart: %s changed (active = %.3f, selected = %.3f).",
+					info->label,
+					boot,
+					selected);
+				return;
+			}
+
+			Util::Text::RestartNeeded("Pending restart: %s changed.", info->label);
+		}
+
+		template <typename SettingsT>
+		inline void DrawPendingBanners(const Util::Settings::BootSnapshot<SettingsT>& snapshot,
+			const SettingsT& live,
+			std::span<const Util::Settings::RestartFieldInfo> fields)
+		{
+			if (!snapshot.IsLatched()) {
+				return;
+			}
+			for (const auto& field : fields) {
+				if (snapshot.HasPendingChange(live, field)) {
+					Util::Text::RestartNeeded("Pending restart: %s changed.", field.label);
+				}
+			}
+		}
 	}
 
 	/**

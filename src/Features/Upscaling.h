@@ -6,6 +6,7 @@
 #include "Upscaling/FidelityFX.h"
 #include "Upscaling/RCAS/RCAS.h"
 #include "Upscaling/Streamline.h"
+#include "Utils/BootSnapshot.h"
 #include <d3d11_4.h>
 #include <d3d12.h>
 #include <winrt/base.h>
@@ -80,6 +81,16 @@ public:
 
 	Settings settings;
 
+	inline static constexpr Util::Settings::RestartTable<Settings, 5> kRestartFields{ {
+		UTIL_RESTART_FIELD(Settings, frameGenerationMode, "Frame Generation"),
+		UTIL_RESTART_FIELD(Settings, frameGenerationForceEnable, "Force Enable Frame Generation"),
+		UTIL_RESTART_FIELD(Settings, enableDLSSperf, "DLSSperf"),
+		UTIL_RESTART_FIELD(Settings, upscaleMethod, "Upscaling Method"),
+		UTIL_RESTART_FIELD(Settings, qualityMode, "Upscale Preset"),
+	} };
+
+	Util::Settings::BootSnapshot<Settings> bootSnapshot{ kRestartFields };
+
 	struct JitterCB
 	{
 		float2 jitter;
@@ -116,6 +127,18 @@ public:
 	bool IsUpscalingActive() const;
 
 	// Feature interface overrides
+	std::span<const Util::Settings::RestartFieldInfo> GetRestartRequiredFields() const override
+	{
+		// Frame generation + DLSSperf enable are always restart-gated.
+		// Method/preset are restart-gated only while DLSSperf's VR hook is active.
+		const size_t baseCount = 3;
+		const size_t extra = dlssPerf.IsHookActive() ? 2 : 0;
+		return { kRestartFields.data(), baseCount + extra };
+	}
+	const void* GetBootValue(std::string_view jsonKey) const override { return bootSnapshot.RawBoot(jsonKey); }
+	const void* GetSettingsBlob() const override { return &settings; }
+	size_t GetSettingsBlobSize() const override { return sizeof(settings); }
+
 	virtual void DrawSettings() override;
 	virtual void SaveSettings(json& o_json) override;
 	virtual void LoadSettings(json& o_json) override;

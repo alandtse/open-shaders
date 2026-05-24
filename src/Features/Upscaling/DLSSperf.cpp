@@ -139,10 +139,9 @@ void DLSSperf::InstallRenderTargetSizeHook()
 	renderEyeWidth = std::max<uint32_t>(1, (uint32_t)(w / scale));
 	renderEyeHeight = std::max<uint32_t>(1, (uint32_t)(h / scale));
 
-	// Boot snapshot — runtime upscaler paths read these; UI keeps editing
-	// live `settings` for JSON persistence.
-	bootUpscaleMethod = globals::features::upscaling.settings.upscaleMethod;
-	bootQualityMode = qualityMode;
+	// Restart-required settings snapshot is latched by the render-target
+	// creation hook, but keep this robust to call-order changes.
+	globals::features::upscaling.bootSnapshot.LatchIfNeeded(globals::features::upscaling.settings);
 
 	stl::write_vfunc<0x12, GetRenderTargetSize_Hook>(RE::VTABLE_BSOpenVR[0]);
 

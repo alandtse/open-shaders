@@ -18,6 +18,7 @@
 #include <imgui_stdlib.h>
 
 #include <algorithm>
+#include <cstring>
 #include <format>
 #include <optional>
 #include <stdexcept>
@@ -463,6 +464,19 @@ static mcp::json FeatureEntry(Feature* f)
 	});
 }
 
+static std::string BytesToHex(const void* data, size_t size)
+{
+	static constexpr char kHex[] = "0123456789abcdef";
+	std::string out;
+	out.reserve(size * 2);
+	const auto* bytes = reinterpret_cast<const unsigned char*>(data);
+	for (size_t i = 0; i < size; ++i) {
+		out.push_back(kHex[(bytes[i] >> 4) & 0xF]);
+		out.push_back(kHex[bytes[i] & 0xF]);
+	}
+	return out;
+}
+
 void RemoteControl::RegisterInspectTool()
 {
 	// Single read endpoint for non-feature engine state. Kind-discriminated
@@ -518,6 +532,14 @@ void RemoteControl::RegisterFeatureTool()
 							  "  list   — no other params. Returns a JSON array; "
 							  "each entry has { name, shortName, loaded, version, "
 							  "category, isCore, supportsVR, inMenu }.\n"
+							  "  list_restart_required — params: shortName (optional). "
+							  "Returns a JSON array of restart-gated setting keys. "
+							  "If shortName is omitted, returns entries for all "
+							  "features.\n"
+							  "  list_pending_restart — params: shortName (optional). "
+							  "Returns a JSON array of restart-gated keys whose "
+							  "live value differs from the boot-latched value. "
+							  "Entries include boot/live bytes as hex.\n"
 							  "  get    — params: shortName. Returns the "
 							  "Feature::SaveSettings(json) blob. May return null "
 							  "if the feature has no SaveSettings/LoadSettings "
@@ -557,7 +579,8 @@ void RemoteControl::RegisterFeatureTool()
 							  "has a hook that isn't gated on `loaded` — file an "
 							  "issue with the shortName.")
 	                      .with_string_param("action",
-							  "One of: 'list', 'get', 'set', 'reset', 'toggle'.")
+							  "One of: 'list', 'list_restart_required', "
+							  "'list_pending_restart', 'get', 'set', 'reset', 'toggle'.")
 	                      .with_string_param("shortName",
 							  "Required for all actions except 'list'. From the "
 							  "list response.",
@@ -588,6 +611,97 @@ void RemoteControl::RegisterFeatureTool()
 			}
 
 			const std::string shortName = params.value("shortName", std::string{});
+
+			const auto findFeatureAnyState = [&](const std::string& name) -> Feature* {
+				for (auto* f : Feature::GetFeatureList()) {
+					if (f->GetShortName() == name) {
+						return f;
+					}
+				}
+				return nullptr;
+			};
+
+			if (action == "list_restart_required") {
+				mcp::json out = mcp::json::array();
+				if (!shortName.empty()) {
+					auto* f = findFeatureAnyState(shortName);
+					if (!f) {
+						return ErrorResult("feature not found", { { "shortName", shortName } });
+					}
+					for (const auto& field : f->GetRestartRequiredFields()) {
+						out.push_back(mcp::json({
+							{ "feature", f->GetShortName() },
+							{ "key", field.jsonKey },
+							{ "label", field.label },
+						}));
+					}
+					return TextResult(out.dump());
+				}
+
+				for (auto* f : Feature::GetFeatureList()) {
+					for (const auto& field : f->GetRestartRequiredFields()) {
+						out.push_back(mcp::json({
+							{ "feature", f->GetShortName() },
+							{ "key", field.jsonKey },
+							{ "label", field.label },
+						}));
+					}
+				}
+				return TextResult(out.dump());
+			}
+
+			if (action == "list_pending_restart") {
+				mcp::json out = mcp::json::array();
+				const auto emitPending = [&](Feature* f) {
+					const auto fields = f->GetRestartRequiredFields();
+					if (fields.empty()) {
+						return;
+					}
+					const auto* liveBase = reinterpret_cast<const unsigned char*>(f->GetSettingsBlob());
+					const size_t liveSize = f->GetSettingsBlobSize();
+					if (!liveBase || liveSize == 0) {
+						return;
+					}
+					for (const auto& field : fields) {
+						if (!field.jsonKey || field.size == 0) {
+							continue;
+						}
+						if (field.offset + field.size > liveSize) {
+							continue;
+						}
+						const void* boot = f->GetBootValue(field.jsonKey);
+						if (!boot) {
+							continue;
+						}
+						const void* live = liveBase + field.offset;
+						if (std::memcmp(boot, live, field.size) != 0) {
+							out.push_back(mcp::json({
+								{ "feature", f->GetShortName() },
+								{ "key", field.jsonKey },
+								{ "label", field.label },
+								{ "size", field.size },
+								{ "boot_hex", BytesToHex(boot, field.size) },
+								{ "live_hex", BytesToHex(live, field.size) },
+							}));
+						}
+					}
+				};
+
+				if (!shortName.empty()) {
+					auto* f = Feature::FindFeatureByShortName(shortName);
+					if (!f) {
+						return ErrorResult("feature not found or not loaded", { { "shortName", shortName } });
+					}
+					emitPending(f);
+					return TextResult(out.dump());
+				}
+
+				Feature::ForEachLoadedFeature("RemoteControlPendingRestart", [&](Feature* f) {
+					emitPending(f);
+				});
+				return TextResult(out.dump());
+			}
+
 			if (shortName.empty()) {
 				return ErrorResult("missing required parameter 'shortName'",
 					{ { "action", action } });
@@ -717,7 +831,7 @@ void RemoteControl::RegisterFeatureTool()
 
 			return ErrorResult("unknown action",
 				{ { "action", action },
-					{ "supported", mcp::json::array({ "list", "get", "set", "reset", "toggle" }) } });
+					{ "supported", mcp::json::array({ "list", "list_restart_required", "list_pending_restart", "get", "set", "reset", "toggle" }) } });
 		});
 }
 
