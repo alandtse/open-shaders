@@ -78,7 +78,7 @@ void LightLimitFix::CopyShadowLightData()
 		srvDesc.Buffer.FirstElement = 0;
 		srvDesc.Buffer.NumElements = slots;
 
-		shadowLights = new Buffer(sbDesc);
+		shadowLights = new Buffer(sbDesc, nullptr, "LLF::ShadowLights");
 		shadowLights->CreateSRV(srvDesc);
 		shadowLightsCapacity = slots;
 	}
