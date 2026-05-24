@@ -405,6 +405,15 @@ namespace globals
 			stl::detour_vfunc<53, ID3D11DeviceContext_ClearDepthStencilView>(a_context);
 		}
 
-		globals::features::upscaling.dlssPerf.InstallFadeOverlayHook(a_context);
+		// Scene-fade overlay Draw(30) detour — only useful when DLSSperf will
+		// actually go active. The hook's thunk already early-outs on
+		// VertexCount != 30 || !hookActive, but skipping the vtable patch
+		// entirely when the user has DLSSperf off avoids a foreign-interop
+		// surface other context-vfunc hookers could trip on. Gated by the
+		// persisted intent, not IsHookActive(), because the hook is installed
+		// here at D3D init time while IsHookActive() only flips true later
+		// inside BSShaderRenderTargets::Create.
+		if (globals::game::isVR && globals::features::upscaling.settings.enableDLSSperf)
+			globals::features::upscaling.dlssPerf.InstallFadeOverlayHook(a_context);
 	}
 }

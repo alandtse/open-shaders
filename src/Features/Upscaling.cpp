@@ -1311,13 +1311,14 @@ void Upscaling::ConfigureUpscaling(RE::BSGraphics::State* a_viewport)
 		// Jitter is still computed at the real DisplayRes phase ratio so DLSS
 		// has enough sub-pixel diversity for the upscale.
 		//
-		// The runtime upscaleMethod gate matters: the BSOpenVR hook installs
-		// once at startup if the user had DLSS + DLSSperf checked, but the
-		// user can still pick FSR/XeSS this session. In that case engine RTs
-		// are RenderRes (irreversible — the hook can't un-allocate them) but
-		// our upscale target (testTexture) is only populated by DLSS's path.
-		// Falling back to the standard jitter math keeps FSR's resolution
-		// scaling consistent with the engine's RT sizes.
+		// The upscaleMethod here comes from GetUpscaleMethod(), which under
+		// DLSSperf+hookActive is locked to the boot snapshot — so this gate
+		// reads the value the user had selected at game start, not what they
+		// later moved the slider to. Engine RTs were sized off that boot
+		// choice (irreversible — the size hook can't un-allocate them); the
+		// boot-snapshot lock keeps the runtime DLSS evaluate consistent with
+		// those allocations. UI staged-change banners explain the restart
+		// requirement for method/quality edits.
 		if (dlssPerf.IsHookActive() && upscaleMethod == UpscaleMethod::kDLSS) {
 			resolutionScale = { 1.0f, 1.0f };
 
@@ -2320,11 +2321,12 @@ void Upscaling::Main_PostProcessing::thunk(RE::ImageSpaceManager* a_this, uint32
 	// the DisplayRes testTexture instead of the small kMAIN. The supplied
 	// lambda is the engine call we'd normally make directly.
 	//
-	// Runtime upscaler gate: testTexture is only populated by DLSS's evaluate
-	// path (Streamline routes its colorOut there when DLSSperf is active). If
-	// the user picked FSR/XeSS this session, the texture is stale/black —
-	// wrapping Post around it would produce a dark frame. ShouldHandlePost()
-	// catches the partial-init case; this gate catches the runtime swap.
+	// Upscaler gate: testTexture is only populated by DLSS's evaluate path
+	// (Streamline routes its colorOut there when DLSSperf is active). Under
+	// DLSSperf+hookActive, GetUpscaleMethod() returns the boot snapshot so
+	// this kDLSS check evaluates against the install-time choice — staged
+	// UI method changes don't reach here until restart. ShouldHandlePost()
+	// covers the partial-init case (post resources missing).
 	if (upscaleMethod == UpscaleMethod::kDLSS && globals::features::upscaling.dlssPerf.ShouldHandlePost()) {
 		globals::features::upscaling.dlssPerf.HandlePostProcessing([&]() {
 			func(a_this, a3, a_target, a_4, a_5);

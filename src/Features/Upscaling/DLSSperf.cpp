@@ -425,14 +425,14 @@ void DLSSperf::TonemapRender_Hook::thunk(void* imageSpaceShader, RE::BSTriShape*
 		return;
 	}
 
-	// Menu/loading-screen path: DLSS never runs here, so testTexture is
-	// stale/empty and tonemap's UV math assumes RT.size==kMAIN.size (true
-	// for DLAA, not for DLSS presets — the engine's bridge writes a
-	// wrong-sized sample into kTOTAL, leaving BG missing and OpenVR
-	// reprojecting stale content as movement smears). Skip the gameplay
-	// SRV/DS hijack, let tonemap run untouched, then overwrite kTOTAL
-	// with our own bilinear stretch of real kMAIN so BG content is
-	// guaranteed regardless of tonemap's UV behavior.
+	// Menu/loading-screen path: the engine's bridge into kTOTAL assumes
+	// RT.size == kMAIN.size (true for DLAA, broken under DLSS presets where
+	// kMAIN is renderRes), so the BG ends up missing and OpenVR reprojects
+	// stale content as movement smears. Skip the gameplay SRV/DS hijack and
+	// let tonemap run untouched, then call MaybeBlitMenuBG to drive a
+	// one-shot Upscaling::Upscale() + MenuBGBlitPS blit of the resulting
+	// DLSS-reconstructed testTexture into kTOTAL. Per-frame guarded so it
+	// runs at most once per frame regardless of how many menu redraws fire.
 	if (globals::state && globals::state->IsMainOrLoadingMenuOpen()) {
 		func(imageSpaceShader, shape, param);
 		dlssPerf.MaybeBlitMenuBG(RE::RENDER_TARGETS::kTOTAL);

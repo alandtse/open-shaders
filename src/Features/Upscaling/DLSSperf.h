@@ -20,9 +20,12 @@
 //     visual loss is minimal. Once the post chain is rewritten to consume
 //     testTexture natively the downscale can be removed.
 //   - Main menu / pause backgrounds render through a path that doesn't pass
-//     through Main_PostProcessing, so HandlePostProcessing's two-layer swap
-//     doesn't wrap them. The 3D background shows at renderRes stretched
-//     over displayRes; the UI itself draws correctly at displayRes.
+//     through Main_PostProcessing. We bridge them via ISCopyRender_Hook +
+//     MaybeBlitMenuBG: ISCopy's destination viewport is stretched to the
+//     full dest dims so the source covers the panel, and MaybeBlitMenuBG
+//     drives a one-shot Upscaling::Upscale() + MenuBGBlitPS into the bound
+//     menu RT so the BG sees a DLSS-reconstructed image instead of a raw
+//     renderRes stretch. Both paths are one-shot per frame.
 //
 // ============================================================================
 
