@@ -73,14 +73,22 @@ namespace LightLimitFix
 	Texture2DArray<float> ShadowMaps : register(t101);
 	Texture2DArray<float> DirectionalShadowCascades : register(t99);
 
-	float GetDirectionalShadow(float3 worldPosition, float3 worldPositionWS, float2x2 rotationMatrix, uint eyeIndex)
+	// engineMaskShadow: the engine's pre-rendered 4-cascade shadow mask sample
+	// at this pixel (TexShadowMaskSampler.Load(int3(Position.xy, 0)).x). LLF's
+	// DirectionalShadowLightData carries only cascades 0/1 (ShadowProj[2] /
+	// EndSplitDistances.xy); past EndSplitDistances.y we have no LLF data and
+	// must fall through to the engine mask. Returning 1.0 there leaves distant
+	// pixels fully lit -- visible as global scene brightening with shadows
+	// disappearing past a depth that varies with camera position.
+	float GetDirectionalShadow(float3 worldPosition, float3 worldPositionWS, float2x2 rotationMatrix, uint eyeIndex, float engineMaskShadow)
 	{
 		DirectionalShadowLightData shadowLightData = DirectionalShadowLights[0];
 
 		float shadowMapDepth = SharedData::GetScreenDepth(FrameBuffer::GetShadowDepth(worldPosition, eyeIndex));
 
+		// Past cascade 1 -- defer to the engine's 4-cascade mask.
 		if (shadowMapDepth > shadowLightData.EndSplitDistances.y)
-			return 1.0;
+			return engineMaskShadow;
 
 		// Blend from LLF PCF deep in cascade 1 toward the engine mask as we
 		// approach cascade 1's far edge, avoiding a hard discontinuity at the
@@ -144,7 +152,10 @@ namespace LightLimitFix
 			shadow = lerp(shadow, shadowBlend, cascadeSelect);
 		}
 
-		shadow = lerp(shadow, 1.0, fadeFactor);
+		// Within cascade 1's far edge, blend LLF's PCF toward the engine
+		// mask instead of fading to fully-lit -- avoids a hard brightness
+		// discontinuity at the cascade boundary.
+		shadow = lerp(shadow, engineMaskShadow, fadeFactor);
 
 		// Focus shadows: high-resolution actor shadows the engine renders to
 		// kSHADOWMAPS slices [kFocusShadowBaseSlotIndex .. +FocusShadowCount).
@@ -188,9 +199,17 @@ namespace LightLimitFix
 		return shadow;
 	}
 
+	// Convenience overload: callers without TexShadowMaskSampler bound
+	// (e.g. Particle.hlsl) get the lit-fallback behaviour (1.0) past
+	// cascade 1, matching the pre-engine-mask behaviour for those paths.
+	float GetDirectionalShadow(float3 worldPosition, float3 worldPositionWS, float2x2 rotationMatrix, uint eyeIndex)
+	{
+		return GetDirectionalShadow(worldPosition, worldPositionWS, rotationMatrix, eyeIndex, 1.0);
+	}
+
 	float GetDirectionalShadow(float3 worldPosition, float3 worldPositionWS, float2x2 rotationMatrix)
 	{
-		return GetDirectionalShadow(worldPosition, worldPositionWS, rotationMatrix, 0);
+		return GetDirectionalShadow(worldPosition, worldPositionWS, rotationMatrix, 0, 1.0);
 	}
 
 	float SampleShadowGather(uint shadowIndex, float2 uv, float receiverDepth)
