@@ -1720,6 +1720,22 @@ namespace ShadowCasterManager
 			}
 		}
 
+		// Extended mode: scrub drawFocusShadows on every active light and the
+		// sun. A stale flag on a parabolic (point/spot) light occupying a
+		// kSHADOWMAPS slot in [4..7] sends BSShadowParabolicLight::Render
+		// into its focus-shadow loop on a non-directional light and CTDs.
+		// Mirrors Intellightent's mitigation (see main.cpp:1411-1420); the
+		// byte patches at SetupResources are belt-and-braces for the engine's
+		// global gate, this is belt-and-braces for the per-light flag.
+		if (s_settings.ShadowLightCount > 4) {
+			for (auto& sp : ssn->GetRuntimeData().activeShadowLights) {
+				if (auto* l = sp.get())
+					ShadowField(l, drawFocusShadows) = false;
+			}
+			if (auto* sun2 = ssn->GetRuntimeData().sunShadowDirLight)
+				ShadowField(sun2, drawFocusShadows) = false;
+		}
+
 		*GetSunPtr() = 0;
 
 		// ---- Score all candidate lights ----
@@ -3450,10 +3466,30 @@ namespace ShadowCasterManager
 				logger::error("[SCM] Failed to install Hook_OverwriteShadowMapIndex");
 		}
 
-		// Focus shadows are handled per-frame: ScheduleShadowCasters reads
-		// FocusShadowActors.size and reserves the matching count of pool
-		// slots starting at kFocusShadowBaseSlotIndex. Nothing to install
-		// here; the engine's focus path runs unmodified.
+		// Suppress the engine's focus shadow path in extended mode (matches
+		// Intellightent's mitigation). In extended mode parabolic lights
+		// occupy kSHADOWMAPS slots [4..7] -- the same range g_focusShadow-
+		// BaseSlotIndex (=4) reserves for focus rendering. If the engine
+		// enters BSShadowParabolicLight::Render's focus loop on a parabolic
+		// light in those slots it CTDs without a crashlog. Two layers of
+		// defense: these byte patches zero the engine's global gate, and
+		// ScheduleShadowCasters scrubs drawFocusShadows on every light
+		// per-frame to clear stale flags. The per-frame scrub alone would
+		// suffice; the patches make the suppression robust against any
+		// engine path that bypasses the per-light flag.
+		if (extended) {
+			const uint8_t xorRax[6] = { 0x48, 0x31, 0xC0, 0x90, 0x90, 0x90 };
+
+			static REL::RelocationID uid1(10209, 10247);
+			REL::safe_write(uid1.address(), xorRax, 6);
+
+			static REL::RelocationID uid2(10207, 10245);
+			REL::safe_write(uid2.address(), xorRax, 6);
+
+			static REL::RelocationID uid3(513201, 390932);
+			const uint8_t zero = 0;
+			REL::safe_write(uid3.address(), &zero, 1);
+		}
 
 		// ---- Color mask pass: skip it and fix out-of-bounds array access -----
 		// Installed unconditionally: our scheduler changes light/slot state in a way
