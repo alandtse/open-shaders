@@ -572,8 +572,9 @@ void Deferred::CopyShadowLightData()
 	ZoneScoped;
 	TracyD3D11Zone(globals::state->tracyCtx, "CopyShadowLightData");
 
-	if (ShadowCasterManager::GetInstalledSlotCount() == 0)
-		return;
+	// Note: directional/sun shadow upload (t98/t99) runs unconditionally --
+	// the sun lives in kSHADOWMAPS_ESRAM (target 2), independent of the
+	// point/spot shadow allocation governed by GetInstalledSlotCount().
 
 	auto* shadowSceneNode = globals::game::smState->shadowSceneNode[0];
 	if (!shadowSceneNode)
