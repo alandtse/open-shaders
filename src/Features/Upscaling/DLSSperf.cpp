@@ -637,9 +637,14 @@ void DLSSperf::ISCopyRender_Hook::thunk(void* imageSpaceShader, RE::BSTriShape* 
 	D3D11_VIEWPORT savedVP[D3D11_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE] = {};
 	context->RSGetViewports(&numVP, savedVP);
 
-	// Only intervene when the engine's VP is smaller than the dest. The +1
-	// guard avoids float-equality issues (VPs are floats, RT dims are uint32).
-	bool needsStretch = numVP > 0 && rtDesc.Width > static_cast<UINT>(savedVP[0].Width + 1.0f);
+	// Only intervene when either axis of the engine's VP is smaller than the
+	// dest. The +1 guard avoids float-equality issues (VPs are floats, RT
+	// dims are uint32). Width-only would miss the case where the engine
+	// binds a taller-than-VP RT (e.g., a square 2048² panel against a
+	// renderRes-height VP).
+	bool needsStretch = numVP > 0 &&
+	                    (rtDesc.Width > static_cast<UINT>(savedVP[0].Width + 1.0f) ||
+							rtDesc.Height > static_cast<UINT>(savedVP[0].Height + 1.0f));
 
 	if (needsStretch) {
 		ZoneScoped;

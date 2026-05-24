@@ -2178,6 +2178,12 @@ void Upscaling::RunUnderwaterMaskRepair()
 
 	state->BeginPerfEvent("Underwater Mask Repair (Standalone)");
 
+	// Unbind RTs/DSV before the CopyResource calls below — if the caller
+	// still has depth bound as a DSV the copy is a debug-layer hazard.
+	// Mirrors UpscaleDepth's entry-time precondition. The caller's save/
+	// restore (FullscreenPassScope) restores the original binding on exit.
+	context->OMSetRenderTargets(0, nullptr, nullptr);
+
 	// Fullscreen triangle setup — pipeline state is the caller's
 	// responsibility to save/restore; we do not touch the existing OM
 	// bindings beyond the explicit binds below.
