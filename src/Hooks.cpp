@@ -369,9 +369,38 @@ struct BSShaderRenderTargets_Create
 	static void thunk()
 	{
 		Util::SetGameSettingValue<std::int32_t>("iNumFocusShadow:Display", iNumFocusShadow, 0);
+
+		// DLSSperf: install the BSOpenVR render-target-size hook before the
+		// engine creates its render targets. This is the only place where
+		// BSOpenVR is guaranteed available AND we can still influence RT
+		// allocation. Gated on user opt-in via Upscaling::Settings AND on
+		// DLSS actually being the resolved upscale path — a stale config can
+		// leave enableDLSSperf=true while the active method is FSR/TAA or
+		// DLSS is unsupported on this GPU, and the rest of DLSSperf only
+		// makes sense for the DLSS output path.
+		const bool dlssperfShouldRun =
+			globals::game::isVR &&
+			globals::features::upscaling.settings.enableDLSSperf &&
+			globals::features::upscaling.GetUpscaleMethod() == Upscaling::UpscaleMethod::kDLSS;
+
+		if (dlssperfShouldRun) {
+			globals::features::upscaling.dlssPerf.InstallRenderTargetSizeHook();
+		}
+
+		// Open DLSSperf's enlarge window across the engine's Create() so
+		// its 3 per-site thunks override props for the displayRes RTs.
+		auto& dlssPerf = globals::features::upscaling.dlssPerf;
+		dlssPerf.BeginCreateRTEnlarge();
 		func();
+		dlssPerf.EndCreateRTEnlarge();
+
 		globals::ReInit();
 		globals::state->Setup();
+
+		// DLSSperf is not in the Feature list (it's a worker driven by the
+		// upscaling toggle), so SetupResources runs here directly.
+		if (dlssPerf.IsHookActive())
+			dlssPerf.SetupResources();
 	}
 	static inline REL::Relocation<decltype(thunk)> func;
 };
@@ -866,6 +895,8 @@ namespace Hooks
 		stl::write_thunk_call<CreateDepthStencil_PrecipitationMask>(REL::RelocationID(100458, 107175).address() + REL::Relocate(0x1245, 0x123B, 0x1917));
 		stl::write_thunk_call<CreateCubemapRenderTarget_Reflections>(REL::RelocationID(100458, 107175).address() + REL::Relocate(0xA25, 0xA25, 0xCD2));
 		stl::write_thunk_call<CreateDepthStencil_Reflections>(REL::RelocationID(100458, 107175).address() + REL::Relocate(0xA59, 0xA59, 0xD13));
+
+		globals::features::upscaling.dlssPerf.InstallCreateRTThunks();
 
 #ifdef TRACY_ENABLE
 		stl::write_thunk_call<Main_Update>(REL::RelocationID(35551, 36544).address() + REL::Relocate(0x11F, 0x160));

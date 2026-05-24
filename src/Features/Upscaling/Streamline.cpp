@@ -10,6 +10,7 @@
 #include "../../State.h"
 #include "../../Util.h"
 #include "../Upscaling.h"
+#include "DLSSperf.h"
 #include "DX12SwapChain.h"
 
 namespace
@@ -420,8 +421,9 @@ void Streamline::SetDLSSOptions(sl::ViewportHandle p_viewport, uint32_t width)
 {
 	sl::DLSSOptions dlssOptions{};
 
-	// Map quality mode to DLSS mode
-	uint32_t qualityMode = globals::features::upscaling.settings.qualityMode;
+	// Boot qualityMode under DLSSperf — DLSS dispatch must match the
+	// renderRes the engine was sized for at install.
+	uint32_t qualityMode = globals::features::upscaling.dlssPerf.HasBootSnapshot() ? globals::features::upscaling.dlssPerf.GetBootQualityMode() : globals::features::upscaling.settings.qualityMode;
 	switch (qualityMode) {
 	case 1:
 		dlssOptions.mode = sl::DLSSMode::eMaxQuality;
@@ -442,8 +444,15 @@ void Streamline::SetDLSSOptions(sl::ViewportHandle p_viewport, uint32_t width)
 
 	auto state = globals::state;
 
+	// DLSSperf bridge: state->screenSize.y is polluted to RenderRes by the
+	// BSOpenVR size hook; use dlssPerf's snapshot of the real DisplayRes when
+	// the hook is live so DLSS is created at the right scale. The width arg
+	// is already display-correct (caller computes from displaySize).
+	auto& dlssPerf = globals::features::upscaling.dlssPerf;
+	const bool dlssperfActive = dlssPerf.IsHookActive() && dlssPerf.GetTestTexture();
+
 	dlssOptions.outputWidth = width;
-	dlssOptions.outputHeight = (uint)state->screenSize.y;
+	dlssOptions.outputHeight = dlssperfActive ? (uint)dlssPerf.GetDisplayScreenSize().y : (uint)state->screenSize.y;
 
 	// Detect HDR from kMAIN format at runtime -- VR kMAIN may be 8-bit while SE is FP16
 	{
@@ -597,11 +606,24 @@ void Streamline::Upscale(ID3D11Resource* a_upscalingTexture, ID3D11Resource* a_r
 	auto screenSize = state->screenSize;
 	auto renderSize = Util::ConvertToDynamic(screenSize);
 
-	// When RCAS sharpening is active, direct DLSS output to sharpenerTexture so RCAS can
-	// sharpen directly into kMAIN.UAV without a CopyResource round-trip.
+	// DLSSperf bridge: when the BSOpenVR size hook is live, state->screenSize
+	// is polluted to RenderRes (the spoofed HMD recommended size). DLSS must
+	// be told the TRUE DisplayRes for its output extent, otherwise NGX rejects
+	// the evaluate as InvalidParameter (0xbad00005) because the configured
+	// quality-scale doesn't match the actual extent ratio. The upscale also
+	// has to write into dlssPerf's private DisplayRes testTexture instead of
+	// the now-RenderRes kMAIN.
 	auto& upscaling = globals::features::upscaling;
+	auto& dlssPerf = globals::features::upscaling.dlssPerf;
+	const bool dlssperfActive = dlssPerf.IsHookActive() && dlssPerf.GetTestTexture();
+	const auto displaySize = dlssperfActive ? dlssPerf.GetDisplayScreenSize() : screenSize;
+
+	// When RCAS sharpening is active, direct DLSS output to sharpenerTexture so RCAS can
+	// sharpen directly into kMAIN.UAV without a CopyResource round-trip. DLSSperf
+	// bypasses the sharpener entirely (writes DLSS output straight into testTexture).
 	ID3D11Resource* colorOut =
-		(upscaling.settings.sharpnessDLSS > 0.0f && upscaling.sharpenerTexture) ? upscaling.sharpenerTexture->resource.get() : a_upscalingTexture;
+		dlssperfActive ? static_cast<ID3D11Resource*>(dlssPerf.GetTestTexture()) :
+						 ((upscaling.settings.sharpnessDLSS > 0.0f && upscaling.sharpenerTexture) ? upscaling.sharpenerTexture->resource.get() : a_upscalingTexture);
 
 	// VR stereo DLSS: NGX D3D11 only accepts zero-offset subrects. Non-zero offsets return
 	// FAIL_InvalidParameter because Streamline's dlssEntry.cpp never sets
@@ -617,8 +639,8 @@ void Streamline::Upscale(ID3D11Resource* a_upscalingTexture, ID3D11Resource* a_r
 	if (globals::game::isVR) {
 		auto context = globals::d3d::context;
 
-		uint32_t eyeWidthOut = (uint32_t)(screenSize.x / 2);
-		uint32_t eyeHeightOut = (uint32_t)screenSize.y;
+		uint32_t eyeWidthOut = (uint32_t)(displaySize.x / 2);
+		uint32_t eyeHeightOut = (uint32_t)displaySize.y;
 		uint32_t eyeWidthIn = (uint32_t)(renderSize.x / 2);
 		uint32_t eyeHeightIn = (uint32_t)renderSize.y;
 
@@ -676,12 +698,12 @@ void Streamline::Upscale(ID3D11Resource* a_upscalingTexture, ID3D11Resource* a_r
 	} else {
 		// Non-VR: Simple full-texture upscale.
 		sl::Extent extentIn{ 0, 0, (uint)renderSize.x, (uint)renderSize.y };
-		sl::Extent extentOut{ 0, 0, (uint)screenSize.x, (uint)screenSize.y };
+		sl::Extent extentOut{ 0, 0, (uint)displaySize.x, (uint)displaySize.y };
 
 		EvaluateDLSS(viewport, 0,
 			a_upscalingTexture, colorOut,
 			depthTexture.texture, a_motionVectors, a_reactiveMask, a_transparencyCompositionMask,
-			extentIn, extentOut, (uint)screenSize.x);
+			extentIn, extentOut, (uint)displaySize.x);
 	}
 }
 

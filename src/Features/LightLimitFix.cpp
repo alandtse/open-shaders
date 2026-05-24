@@ -7,6 +7,7 @@
 #include "Menu/ThemeManager.h"
 #include "Shadercache.h"
 #include "State.h"
+#include "Util.h"
 #include "Utils/ExternalEmittance.h"
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
@@ -42,6 +43,15 @@ void LightLimitFix::DrawSettings()
 	ImGui::Separator();
 	ShadowCasterManager::DrawShadowLightTable(true, false);
 
+	///////////////////////////////
+	ImGui::SeparatorText("Shadows");
+
+	ImGui::Checkbox("Enable Contact Shadows", &settings.EnableContactShadows);
+	if (auto _tt = Util::HoverTooltipWrapper()) {
+		ImGui::Text("All point lights (strict and clustered, except simple lights) cast short screen-space shadows. Performance impact.");
+	}
+
+	///////////////////////////////
 	ImGui::SeparatorText("Debug");
 
 	if (ImGui::TreeNode("Light Limit Visualization")) {
@@ -89,6 +99,7 @@ void LightLimitFix::DrawSettings()
 LightLimitFix::PerFrame LightLimitFix::GetCommonBufferData()
 {
 	PerFrame perFrame{};
+	perFrame.EnableContactShadows = settings.EnableContactShadows;
 	perFrame.ShadowMapSlots = ShadowCasterManager::GetInstalledSlotCount();
 	std::copy(clusterSize, clusterSize + 3, perFrame.ClusterSize);
 	perFrame.EnableLightsVisualisation = settings.EnableLightsVisualisation;

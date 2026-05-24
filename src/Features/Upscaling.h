@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Feature.h"
+#include "Upscaling/DLSSperf.h"
 #include "Upscaling/DX12SwapChain.h"
 #include "Upscaling/FidelityFX.h"
 #include "Upscaling/RCAS/RCAS.h"
@@ -68,6 +69,13 @@ public:
 		bool reflexUseMarkersToOptimize = false;
 		bool reflexUseFPSLimit = false;
 		float reflexFPSLimit = 60.0f;
+
+		// VR DLSSperf: opt-in. When set, BSShaderRenderTargets::Create installs
+		// the BSOpenVR render-target-size hook at engine init so the entire
+		// engine pipeline allocates render targets at upscaled-render resolution
+		// instead of display resolution. Saves VRAM/bandwidth proportional to
+		// the quality-mode scale ratio. Requires a game restart to take effect.
+		bool enableDLSSperf = false;
 	};
 
 	Settings settings;
@@ -199,7 +207,8 @@ public:
 	static inline Streamline streamline;
 	static inline FidelityFX fidelityFX;  ///< Only for frame generation
 	static inline DX12SwapChain dx12SwapChain;
-	static inline RCAS rcas;  ///< Standalone RCAS sharpening for DLSS
+	static inline RCAS rcas;          ///< Standalone RCAS sharpening for DLSS
+	static inline DLSSperf dlssPerf;  ///< VR-only: render engine at upscaled-render res
 
 	winrt::com_ptr<ID3D11PixelShader> copyDepthToSharedBufferPS;
 
@@ -223,6 +232,19 @@ public:
 	void PostDisplay();
 	void PerformUpscaling();
 	void UpscaleDepth();
+
+	/**
+	 * @brief Standalone full-resolution underwater mask repair (VR).
+	 *
+	 * Same draw as UpscaleDepth's mask branch on the full-resolution path,
+	 * extracted so callers that bypass the standard upscale flow (notably
+	 * DLSSperf::HandlePostProcessing, where engine RTs are pre-shrunk to
+	 * renderRes and DLSS targets a private displayRes texture) can drive
+	 * the repair without going through UpscaleDepth's wider envelope.
+	 * Sets and leaves D3D11 pipeline state dirty on exit — wrap in your
+	 * own save/restore (DLSSperf uses its FullscreenPassScope).
+	 */
+	void RunUnderwaterMaskRepair();
 
 	/**
 	 * @brief Applies RCAS sharpening to the main render target after DLSS upscaling.

@@ -75,7 +75,8 @@ namespace SharedData
 
 	struct LightLimitFixSettings
 	{
-		uint3 pad0;           // aligns ShadowMapSlots to offset 12 (mirrors removed FilterMode/KernelScale/LightSize)
+		uint EnableContactShadows;
+		uint2 pad0;
 		uint ShadowMapSlots;  // total shadow map texture-array capacity
 		// Cluster config (computed)
 		uint4 ClusterSize;

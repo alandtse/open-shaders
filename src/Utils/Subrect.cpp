@@ -247,7 +247,6 @@ namespace Util::Subrect
 				// explicit right eye and disable the auto-mirror fallback
 				// once stereo is later enabled. Leave rightUV as nullopt in
 				// mono — ApplyPreset will mirror left at apply time.
-				// (CodeRabbit Major @ scs#2356 for the stereo-side fix.)
 				Preset newPreset{ .name = presetName, .uv = currentUV };
 				if (stereoEnabled) {
 					newPreset.rightUV = currentRightUV;

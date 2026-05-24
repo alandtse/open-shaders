@@ -4,6 +4,7 @@
 #include "HDRDisplay.h"
 #include "Hooks.h"
 #include "State.h"
+#include "Upscaling/DLSSperf.h"
 #include "Upscaling/DX12SwapChain.h"
 #include "Upscaling/FidelityFX.h"
 #include "Upscaling/Streamline.h"
@@ -32,7 +33,8 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	reflexLowLatencyBoost,
 	reflexUseMarkersToOptimize,
 	reflexUseFPSLimit,
-	reflexFPSLimit);
+	reflexFPSLimit,
+	enableDLSSperf);
 
 decltype(&D3D11CreateDeviceAndSwapChain) ptrD3D11CreateDeviceAndSwapChainUpscaling;
 
@@ -212,6 +214,29 @@ void Upscaling::DrawSettings()
 	// Check the current upscale method
 	auto upscaleMethod = GetUpscaleMethod();
 
+	// DLSSperf: BSOpenVR size hook + RT::Create run once at world load, so
+	// runtime reads of method/qualityMode route through the boot snapshot.
+	// The always-present explanation is plain text — only the staged-change
+	// diff uses the RestartNeeded color so users learn the cue means "you
+	// changed something that won't apply yet."
+	if (dlssPerf.IsHookActive()) {
+		ImGui::TextWrapped(
+			"DLSSperf is active: Method and Upscale Preset changes only take effect after a game restart. "
+			"Sharpness / model preset / Reflex remain live.");
+
+		// Method pending-diff. Only fires when the user is editing the DLSS-
+		// path mode slot (upscaleMethod, not upscaleMethodNoDLSS), since
+		// that's the one the boot snapshot locked.
+		if (currentUpscaleMode == &settings.upscaleMethod &&
+			settings.upscaleMethod != dlssPerf.GetBootUpscaleMethod()) {
+			const uint live = std::clamp<uint>(settings.upscaleMethod, 0u, availableModes);
+			const uint boot = std::clamp<uint>(dlssPerf.GetBootUpscaleMethod(), 0u, availableModes);
+			Util::Text::RestartNeeded(
+				"Pending restart: currently active method = %s (selected = %s).",
+				upscaleModes[boot].c_str(), upscaleModes[live].c_str());
+		}
+	}
+
 	// Display warning for DLSS resolution limits (non-VR only; VR handles this automatically)
 	if (!globals::game::isVR && upscaleMethod == UpscaleMethod::kDLSS) {
 		auto screenSize = globals::state->screenSize;
@@ -244,10 +269,25 @@ void Upscaling::DrawSettings()
 		}
 
 		if (baseLabel) {
-			// Format the label with preset name and resolution scale
-			std::string labelWithScale = std::format("{} ( {:.2f}x )", baseLabel, (resolutionScale.x + resolutionScale.y) * 0.5f);
+			// Derive scale from live `settings.qualityMode` — `resolution-
+			// Scale` is locked to the DLSSperf boot snapshot, so reusing it
+			// here would mismatch the slider position the user sees.
+			const float displayScale = 1.0f / ffxFsr3GetUpscaleRatioFromQualityMode((FfxFsr3QualityMode)std::clamp<uint>(settings.qualityMode, 0u, 4u));
+			std::string labelWithScale = std::format("{} ( {:.2f}x )", baseLabel, displayScale);
 
 			ImGui::SliderInt("Upscale Preset", (int*)&settings.qualityMode, 0, 4, labelWithScale.c_str());
+
+			// Pending-diff vs the boot snapshot the runtime upscaler is
+			// actually using. Without this the slider change looks like a
+			// no-op.
+			if (dlssPerf.HasBootSnapshot() &&
+				settings.qualityMode != dlssPerf.GetBootQualityMode()) {
+				const uint bm = std::clamp<uint>(dlssPerf.GetBootQualityMode(), 0u, 4u);
+				const char* bootLabel = (upscaleMethod == UpscaleMethod::kDLSS) ? upscalePresetsDLSS[std::clamp<int>(4 - (int)bm, 0, 4)] : upscalePresets[std::clamp<int>(4 - (int)bm, 0, 4)];
+				Util::Text::RestartNeeded(
+					"Pending restart: currently active = %s ( %.2fx ). Change applies after game restart.",
+					bootLabel, 1.0f / ffxFsr3GetUpscaleRatioFromQualityMode((FfxFsr3QualityMode)bm));
+			}
 		}
 
 		if (upscaleMethod == UpscaleMethod::kFSR) {
@@ -263,6 +303,42 @@ void Upscaling::DrawSettings()
 				ImGui::Text("Set to 'Default' for automatic selection based on your Upscale Preset and hardware.");
 				ImGui::Text("Changing this setting requires a restart to take effect.");
 			}
+		}
+
+		// VR DLSSperf: opt-in performance feature. Lives in the main
+		// upscaler section (not Backend Diagnostics) so users discover it
+		// alongside the rest of the upscaler controls. Restart-gated —
+		// the BSOpenVR size hook reads this at world load and sizes every
+		// engine RT off the boot value.
+		//
+		// The setting persists across method switches (we don't auto-flip
+		// it when the user picks FSR/TAA), but the checkbox itself is
+		// disabled outside the DLSS context since the install path triple-
+		// gates on DLSS being the resolved method. Keep visible-but-greyed
+		// so users see the option exists and understand why it isn't live.
+		if (globals::game::isVR) {
+			const bool dlssAvailable = upscaleMethod == UpscaleMethod::kDLSS;
+			if (!dlssAvailable)
+				ImGui::BeginDisabled();
+			ImGui::Checkbox("Render engine at upscaled resolution (DLSSperf)", &settings.enableDLSSperf);
+			if (!dlssAvailable)
+				ImGui::EndDisabled();
+			if (auto _tt = Util::HoverTooltipWrapper()) {
+				ImGui::Text(
+					"When enabled, the engine pipeline allocates render targets at the upscaled-render\n"
+					"resolution instead of the HMD display resolution. DLSS writes its output to a private\n"
+					"DisplayRes texture. Substantial VRAM and bandwidth savings, especially at high HMD\n"
+					"resolutions.\n"
+					"\n"
+					"Requires the DLSS upscaler. Restart required to enable/disable. Method and Upscale\n"
+					"Preset changes also require a restart while this is active; sharpness / model preset\n"
+					"/ Reflex remain live.");
+			}
+			if (!dlssAvailable && settings.enableDLSSperf)
+				Util::Text::Disabled("DLSSperf requires DLSS — switch upscaler Method to DLSS to activate.");
+			if (dlssAvailable && settings.enableDLSSperf != globals::features::upscaling.dlssPerf.IsHookActive())
+				Util::Text::RestartNeeded("Pending restart: DLSSperf will %s on next launch.",
+					settings.enableDLSSperf ? "enable" : "disable");
 		}
 	}
 
@@ -636,6 +712,11 @@ void Upscaling::PostPostLoad()
 
 Upscaling::UpscaleMethod Upscaling::GetUpscaleMethod() const
 {
+	// Lock runtime to the boot upscaler under DLSSperf — engine RTs are
+	// sized for it, and routing a different method through testTexture/
+	// renderRes paths breaks the HMD.
+	if (globals::features::upscaling.dlssPerf.HasBootSnapshot())
+		return (UpscaleMethod)globals::features::upscaling.dlssPerf.GetBootUpscaleMethod();
 	if (streamline.featureDLSS)
 		return (UpscaleMethod)settings.upscaleMethod;
 	return (UpscaleMethod)settings.upscaleMethodNoDLSS;
@@ -1015,8 +1096,15 @@ void Upscaling::EnsureVRIntermediateTextures()
 	auto screenSize = globals::state->screenSize;
 	auto renderSize = Util::ConvertToDynamic(screenSize);
 
-	uint32_t eyeWidthOut = (uint32_t)(screenSize.x / 2);
-	uint32_t eyeHeightOut = (uint32_t)screenSize.y;
+	// DLSSperf: state->screenSize is polluted to RenderRes (the BSOpenVR size
+	// hook spoofs HMD-recommended size). DLSS output needs to land at real
+	// DisplayRes, so size the OUTPUT intermediates from dlssPerf's snapshot
+	// of the true HMD resolution. Input intermediates stay at renderSize.
+	const bool dlssperfActive = dlssPerf.IsHookActive() && dlssPerf.GetTestTexture();
+	const float2 outputSize = dlssperfActive ? dlssPerf.GetDisplayScreenSize() : screenSize;
+
+	uint32_t eyeWidthOut = (uint32_t)(outputSize.x / 2);
+	uint32_t eyeHeightOut = (uint32_t)outputSize.y;
 	uint32_t eyeWidthIn = (uint32_t)(renderSize.x / 2);
 	uint32_t eyeHeightIn = (uint32_t)renderSize.y;
 
@@ -1218,24 +1306,57 @@ void Upscaling::ConfigureUpscaling(RE::BSGraphics::State* a_viewport)
 	auto screenHeight = static_cast<int>(screenSize.y);
 
 	if (upscaleMethod != UpscaleMethod::kNONE && upscaleMethod != UpscaleMethod::kTAA) {
-		float resolutionScaleBase = 1.0f / ffxFsr3GetUpscaleRatioFromQualityMode((FfxFsr3QualityMode)settings.qualityMode);
+		// DLSSperf: when the BSOpenVR size hook is live, every engine RT was
+		// already allocated at RenderRes — so the DRS-style scale is identity.
+		// Jitter is still computed at the real DisplayRes phase ratio so DLSS
+		// has enough sub-pixel diversity for the upscale.
+		//
+		// The upscaleMethod here comes from GetUpscaleMethod(), which under
+		// DLSSperf+hookActive is locked to the boot snapshot — so this gate
+		// reads the value the user had selected at game start, not what they
+		// later moved the slider to. Engine RTs were sized off that boot
+		// choice (irreversible — the size hook can't un-allocate them); the
+		// boot-snapshot lock keeps the runtime DLSS evaluate consistent with
+		// those allocations. UI staged-change banners explain the restart
+		// requirement for method/quality edits.
+		if (dlssPerf.IsHookActive() && upscaleMethod == UpscaleMethod::kDLSS) {
+			resolutionScale = { 1.0f, 1.0f };
 
-		auto renderWidth = static_cast<int>(screenWidth * resolutionScaleBase);
-		auto renderHeight = static_cast<int>(screenHeight * resolutionScaleBase);
+			auto renderWidth = static_cast<int>(dlssPerf.GetRenderEyeWidth());
+			auto displayWidth = static_cast<int>(dlssPerf.GetDisplayEyeWidth());
 
-		resolutionScale.x = static_cast<float>(renderWidth) / static_cast<float>(screenWidth);
-		resolutionScale.y = static_cast<float>(renderHeight) / static_cast<float>(screenHeight);
+			auto phaseCount = GetJitterPhaseCount(renderWidth, displayWidth);
+			GetJitterOffset(&jitter.x, &jitter.y, state->frameCount, phaseCount);
 
-		auto phaseCount = GetJitterPhaseCount(renderWidth, screenWidth);
+			if (globals::game::isVR)
+				a_viewport->projectionPosScaleX = -jitter.x / renderWidth;
+			else
+				a_viewport->projectionPosScaleX = -2.0f * jitter.x / renderWidth;
 
-		GetJitterOffset(&jitter.x, &jitter.y, state->frameCount, phaseCount);
+			a_viewport->projectionPosScaleY = 2.0f * jitter.y / static_cast<int>(dlssPerf.GetRenderEyeHeight());
+		} else {
+			// Boot qualityMode under DLSSperf so projection stays coherent
+			// with the engine RTs sized at install.
+			const uint32_t qm = globals::features::upscaling.dlssPerf.HasBootSnapshot() ? globals::features::upscaling.dlssPerf.GetBootQualityMode() : settings.qualityMode;
+			float resolutionScaleBase = 1.0f / ffxFsr3GetUpscaleRatioFromQualityMode((FfxFsr3QualityMode)qm);
 
-		if (globals::game::isVR)
-			a_viewport->projectionPosScaleX = -jitter.x / renderWidth;
-		else
-			a_viewport->projectionPosScaleX = -2.0f * jitter.x / renderWidth;
+			auto renderWidth = static_cast<int>(screenWidth * resolutionScaleBase);
+			auto renderHeight = static_cast<int>(screenHeight * resolutionScaleBase);
 
-		a_viewport->projectionPosScaleY = 2.0f * jitter.y / renderHeight;
+			resolutionScale.x = static_cast<float>(renderWidth) / static_cast<float>(screenWidth);
+			resolutionScale.y = static_cast<float>(renderHeight) / static_cast<float>(screenHeight);
+
+			auto phaseCount = GetJitterPhaseCount(renderWidth, screenWidth);
+
+			GetJitterOffset(&jitter.x, &jitter.y, state->frameCount, phaseCount);
+
+			if (globals::game::isVR)
+				a_viewport->projectionPosScaleX = -jitter.x / renderWidth;
+			else
+				a_viewport->projectionPosScaleX = -2.0f * jitter.x / renderWidth;
+
+			a_viewport->projectionPosScaleY = 2.0f * jitter.y / renderHeight;
+		}
 	} else {
 		resolutionScale = { 1.0f, 1.0f };
 
@@ -2021,6 +2142,101 @@ void Upscaling::UpscaleDepth()
 	state->EndPerfEvent();
 }
 
+void Upscaling::RunUnderwaterMaskRepair()
+{
+	ZoneScoped;
+	TracyD3D11Zone(globals::state->tracyCtx, "Upscaling - Underwater Mask (Standalone)");
+
+	if (!globals::game::isVR)
+		return;
+
+	auto state = globals::state;
+	auto renderer = globals::game::renderer;
+	auto context = globals::d3d::context;
+	auto deferred = globals::deferred;
+	if (!state || !renderer || !context || !deferred || !deferred->linearSampler || !jitterCB) {
+		return;
+	}
+
+	auto screenSize = state->screenSize;
+	if (screenSize.x <= 0.0f || screenSize.y <= 0.0f) {
+		return;
+	}
+
+	auto& depth = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kMAIN];
+	auto& depthCopy = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kMAIN_COPY];
+	auto& underwaterMask = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGET::kUNDERWATER_MASK];
+	if (!depth.texture || !depthCopy.texture || !depthCopy.depthSRV ||
+		!underwaterMask.texture || !underwaterMask.textureCopy || !underwaterMask.SRVCopy || !underwaterMask.RTV) {
+		return;
+	}
+
+	auto* fullscreenVS = GetUpscaleVS();
+	auto* underwaterMaskPS = GetUnderwaterMaskUpscalePS();
+	if (!fullscreenVS || !underwaterMaskPS) {
+		return;
+	}
+
+	state->BeginPerfEvent("Underwater Mask Repair (Standalone)");
+
+	// Unbind RTs/DSV before the CopyResource calls below — if the caller
+	// still has depth bound as a DSV the copy is a debug-layer hazard.
+	// Mirrors UpscaleDepth's entry-time precondition. The caller's save/
+	// restore (FullscreenPassScope) restores the original binding on exit.
+	context->OMSetRenderTargets(0, nullptr, nullptr);
+
+	// Fullscreen triangle setup — pipeline state is the caller's
+	// responsibility to save/restore; we do not touch the existing OM
+	// bindings beyond the explicit binds below.
+	context->IASetInputLayout(nullptr);
+	context->IASetVertexBuffers(0, 0, nullptr, nullptr, nullptr);
+	context->IASetIndexBuffer(nullptr, DXGI_FORMAT_UNKNOWN, 0);
+	context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+	context->VSSetShader(fullscreenVS, nullptr, 0);
+	context->GSSetShader(nullptr, nullptr, 0);
+	context->HSSetShader(nullptr, nullptr, 0);
+	context->DSSetShader(nullptr, nullptr, 0);
+
+	context->RSSetState(nullptr);
+	context->OMSetBlendState(nullptr, nullptr, 0xffffffff);
+	context->OMSetDepthStencilState(nullptr, 0x00);
+
+	ID3D11SamplerState* samplers[] = { deferred->linearSampler };
+	context->PSSetSamplers(0, ARRAYSIZE(samplers), samplers);
+
+	// jitterCB is shared with the depth-upscale path; the mask shader only
+	// reads .jitter (de-jitter sampling). useWideKernel is depth-only.
+	JitterCB jitterData{};
+	jitterData.jitter = jitter;
+	jitterCB->Update(jitterData);
+	auto bufferArray = jitterCB->CB();
+	context->PSSetConstantBuffers(0, 1, &bufferArray);
+
+	// Refresh depthCopy + underwater mask copy before sampling.
+	if (depthCopy.texture != depth.texture)
+		context->CopyResource(depthCopy.texture, depth.texture);
+	if (underwaterMask.textureCopy != underwaterMask.texture)
+		context->CopyResource(underwaterMask.textureCopy, underwaterMask.texture);
+
+	D3D11_VIEWPORT viewport = {};
+	viewport.Width = screenSize.x * 0.5f;
+	viewport.Height = screenSize.y * 0.5f;
+	viewport.MaxDepth = 1.0f;
+	context->RSSetViewports(1, &viewport);
+
+	ID3D11ShaderResourceView* srvs[] = { underwaterMask.SRVCopy, depthCopy.depthSRV };
+	context->PSSetShaderResources(0, ARRAYSIZE(srvs), srvs);
+	ID3D11RenderTargetView* rtvs[] = { underwaterMask.RTV };
+	context->OMSetRenderTargets(ARRAYSIZE(rtvs), rtvs, nullptr);
+	context->PSSetShader(underwaterMaskPS, nullptr, 0);
+	context->Draw(3, 0);
+
+	ID3D11ShaderResourceView* nullPSResources[2] = { nullptr, nullptr };
+	context->PSSetShaderResources(0, ARRAYSIZE(nullPSResources), nullPSResources);
+
+	state->EndPerfEvent();
+}
+
 void Upscaling::ApplySharpening()
 {
 	ZoneScoped;
@@ -2100,7 +2316,24 @@ void Upscaling::Main_PostProcessing::thunk(RE::ImageSpaceManager* a_this, uint32
 	if (hdrLoaded)
 		globals::features::hdrDisplay.RedirectFramebuffer();
 
-	func(a_this, a3, a_target, a_4, a_5);
+	// DLSSperf: hybrid Post — HandlePostProcessing performs a two-layer
+	// struct swap around the engine's func() so tonemap + refraction read
+	// the DisplayRes testTexture instead of the small kMAIN. The supplied
+	// lambda is the engine call we'd normally make directly.
+	//
+	// Upscaler gate: testTexture is only populated by DLSS's evaluate path
+	// (Streamline routes its colorOut there when DLSSperf is active). Under
+	// DLSSperf+hookActive, GetUpscaleMethod() returns the boot snapshot so
+	// this kDLSS check evaluates against the install-time choice — staged
+	// UI method changes don't reach here until restart. ShouldHandlePost()
+	// covers the partial-init case (post resources missing).
+	if (upscaleMethod == UpscaleMethod::kDLSS && globals::features::upscaling.dlssPerf.ShouldHandlePost()) {
+		globals::features::upscaling.dlssPerf.HandlePostProcessing([&]() {
+			func(a_this, a3, a_target, a_4, a_5);
+		});
+	} else {
+		func(a_this, a3, a_target, a_4, a_5);
+	}
 
 	// Restore kFRAMEBUFFER after ISHDR — hdrTexture now has the HDR scene
 	if (hdrLoaded)

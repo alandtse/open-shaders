@@ -42,6 +42,77 @@ namespace LightLimitFix
 		return true;
 	}
 
+	bool IsSaturated(float value)
+	{
+		return value == saturate(value);
+	}
+
+	bool IsSaturated(float2 value)
+	{
+		return IsSaturated(value.x) && IsSaturated(value.y);
+	}
+
+	// Chooses the contact-shadow noise sample coordinate. In VR we derive it
+	// from screenUV (which FrameBuffer::ViewToUV already returns per-eye via
+	// CameraProj[eye]) so both eyes sample the same noise pattern at the same
+	// world position — using the raw rasterized pixel position in VR makes
+	// each eye hash a different value, producing per-eye jitter that reads as
+	// flicker on contact-shadow recipients.
+	//
+	// BufferDim.x is the full packed stereo width (State::UpdateSharedData
+	// reads it from the kMAIN texture, which spans both eyes side-by-side),
+	// so we halve X in VR to match the per-eye pixel grid. Without the
+	// halving, the per-eye sample steps by ~2 pixels in X — still stereo-
+	// consistent, but at half the effective noise resolution. Flat keeps the
+	// raw pixel position to match the original implementation byte-for-byte.
+	float2 GetContactShadowNoiseCoord(float2 screenPosition, float2 screenUV)
+	{
+#if defined(VR)
+		return screenUV * float2(SharedData::BufferDim.x * 0.5, SharedData::BufferDim.y);
+#else
+		return screenPosition;
+#endif
+	}
+
+	float ContactShadows(float3 viewPosition, float noise2D, float3 lightDirectionVS, uint contactShadowSteps, uint a_eyeIndex = 0)
+	{
+		if (contactShadowSteps == 0)
+			return 1.0;
+
+		float2 depthDeltaMult = float2(0.20, 0.05);
+
+		// Extend contact shadow distance
+		lightDirectionVS *= 2.0;
+
+		// Offset starting position with interleaved gradient noise
+		viewPosition += lightDirectionVS * noise2D;
+
+		// Accumulate samples
+		float contactShadow = 0.0;
+		for (uint i = 0; i < contactShadowSteps; i++) {
+			// Step the ray
+			viewPosition += lightDirectionVS;
+
+			float2 rayUV = FrameBuffer::ViewToUV(viewPosition, true, a_eyeIndex);
+
+			// Ensure the UV coordinates are inside the screen
+			if (!IsSaturated(rayUV))
+				break;
+
+			// Compute the difference between the ray's and the camera's depth
+			float rayDepth = SharedData::GetScreenDepth(rayUV, a_eyeIndex);
+
+			// Difference between the current ray distance and the marched light
+			float depthDelta = viewPosition.z - rayDepth;
+			if (rayDepth > 16.5)  // First person
+				contactShadow = max(contactShadow, saturate(depthDelta * depthDeltaMult.x) - saturate(depthDelta * depthDeltaMult.y));
+			if (contactShadow == 1.0)
+				break;
+		}
+
+		return 1.0 - saturate(contactShadow);
+	}
+
 	bool IsLightIgnored(Light light)
 	{
 		bool lightIgnored = false;
