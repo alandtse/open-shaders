@@ -2678,6 +2678,24 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 		lightOffset = LightLimitFix::lightGrid[clusterIndex].offset;
 	}
 
+#			if defined(DEFERRED)
+	// Contact-shadow setup, gated on the runtime toggle so we don't pay the
+	// noise hash + step-count math for every pixel when the feature is off
+	// (it defaults off). The step count and noise are reused across every
+	// clustered light in this pixel so we hoist them out of the per-light loop.
+	uint contactShadowSteps = 0;
+	float contactShadowNoise = 0.0;
+	[branch] if (SharedData::lightLimitFixSettings.EnableContactShadows)
+	{
+		contactShadowSteps = round(4.0 * (1.0 - saturate(viewPosition.z / 1024.0)));
+		// The helper stays stereo-stable in VR — see
+		// LightLimitFix::GetContactShadowNoiseCoord for the eye-buffer math.
+		contactShadowNoise = Random::InterleavedGradientNoise(
+			LightLimitFix::GetContactShadowNoiseCoord(input.Position.xy, screenUV),
+			SharedData::FrameCount);
+	}
+#			endif
+
 	[loop] for (uint lightIndex = 0; lightIndex < totalLightCount; lightIndex++)
 	{
 		LightLimitFix::Light light;
@@ -2720,6 +2738,25 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 		float3 normalizedLightDirection = normalize(lightDirection);
 		float lightAngle = dot(worldNormal.xyz, normalizedLightDirection.xyz);
 
+		float contactShadow = 1.0;
+
+#			if defined(DEFERRED)
+		[branch] if (
+			SharedData::lightLimitFixSettings.EnableContactShadows &&
+			!(light.lightFlags & LightLimitFix::LightFlags::Simple) &&
+			shadowComponent != 0.0 &&
+			lightAngle > 0.0)
+		{
+			// The current LightLimitFix Light struct stores positionWS only; derive view-space
+			// from CameraView so the raymarch direction matches viewPosition. The pre-removal
+			// call site referenced light.positionVS, but that field did not exist on the Light
+			// struct even then — the original code was commented out and unreachable.
+			float3 lightPositionVS = mul(FrameBuffer::CameraView[eyeIndex], float4(light.positionWS[eyeIndex].xyz, 1)).xyz;
+			float3 normalizedLightDirectionVS = normalize(lightPositionVS - viewPosition.xyz);
+			contactShadow = LightLimitFix::ContactShadows(viewPosition, contactShadowNoise, normalizedLightDirectionVS, contactShadowSteps, eyeIndex);
+		}
+#			endif
+
 		float3 refractedLightDirection = normalizedLightDirection;
 #			if defined(TRUE_PBR) && !defined(LANDSCAPE) && !defined(LODLANDSCAPE)
 		[branch] if ((PBRFlags & PBR::Flags::InterlayerParallax) != 0)
@@ -2736,7 +2773,8 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 			SharedData::extendedMaterialSettings.EnableShadows &&
 			!(light.lightFlags & LightLimitFix::LightFlags::Simple) &&
 			lightAngle > 0.0 &&
-			shadowComponent != 0.0)
+			shadowComponent != 0.0 &&
+			contactShadow != 0.0)
 		{
 			float3 lightDirectionTS = normalize(mul(refractedLightDirection, tbn).xyz);
 #				if defined(PARALLAX)
@@ -2765,7 +2803,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 
 		DirectContext pointLightContext;
 		DirectLightingOutput pointLightOutput;
-		float pointLightShadow = lightShadow * parallaxShadow;
+		float pointLightShadow = lightShadow * parallaxShadow * contactShadow;
 #			if defined(TRUE_PBR)
 		pointLightContext = CreateDirectLightingContext(worldNormal.xyz, coatWorldNormal, vertexNormal.xyz, refractedViewDirection, viewDirection, refractedLightDirection, normalizedLightDirection, lightColor, pointLightShadow, pointLightShadow);
 #			else
