@@ -160,6 +160,17 @@ namespace ShadowCasterManager
 	static bool s_externalConflict = false;
 	static std::string s_conflictMessage;
 
+	// Per-frame count of kSHADOWMAPS slots claimed by the engine's focus
+	// shadow renderer (player + tracked NPCs, max 4). Read from
+	// FocusShadowActors.size each frame; values clamp to [0, 4]. Reserves
+	// the slot range [g_focusShadowBaseSlotIndex .. +s_focusShadowSlots) =
+	// [4 .. 4+count) from the point-light pool dynamically: zero focus
+	// actors means the full pool is available, four means slots 4-7 are
+	// off-limits. Point lights occupying a freshly-claimed slot are
+	// ejected at scheduling time and re-allocated to a free slot or
+	// converted as excess.
+	static int s_focusShadowSlots = 0;
+
 	// Rolling redraw history (128-frame window) for DrawSettings statistics.
 	static constexpr int kRedrawHistorySize = 128;
 	static int32_t s_redrawHistory[kRedrawHistorySize] = {};
@@ -492,42 +503,78 @@ namespace ShadowCasterManager
 	// LightContainer methods
 	// =========================================================================
 
+	// Engine writes focus shadows to kSHADOWMAPS slots
+	// [kFocusShadowBaseSlotIndex .. +s_focusShadowSlots) (DAT_141867188 = 4
+	// in vanilla, max 4 actors). Two predicates separate "could be claimed"
+	// from "currently claimed":
+	//   IsFocusShadowReservableSlot(i) -- in the full [4..8) range that
+	//     focus might use. FindFreeIndex treats these as last-resort so an
+	//     actor appearance rarely needs to evict anything.
+	//   IsFocusShadowSlot(i) -- currently held by an active focus actor;
+	//     never allocated, and any point light here gets ejected at
+	//     scheduling time.
+	static constexpr int32_t kFocusShadowBaseSlotIndex = 4;
+	static constexpr int32_t kFocusShadowMaxSlots = 4;
+
+	static inline bool IsFocusShadowReservableSlot(int32_t i)
+	{
+		return i >= kFocusShadowBaseSlotIndex && i < kFocusShadowBaseSlotIndex + kFocusShadowMaxSlots;
+	}
+
+	static inline bool IsFocusShadowSlot(int32_t i)
+	{
+		return i >= kFocusShadowBaseSlotIndex && i < kFocusShadowBaseSlotIndex + s_focusShadowSlots;
+	}
+
 	int32_t LightContainer::FindFreeIndex(bool shadowSlot, int32_t shadowCount, int32_t convertCount) const
 	{
 		// Pool layout when Sun=true:  [0]=sun, [1..shadowCount]=point lights, [shadowCount+1..]=converted
 		//                  Sun=false: [0..shadowCount-1]=point lights,        [shadowCount..]=converted
 		//
-		// Slot 0 of the pool is reserved for the sun pointer when present
-		// (sunOff=1); point lights occupy slots 1..ShadowLightCount. This
-		// is a bookkeeping reservation for FindLight lookup -- the sun
-		// itself does not write kSHADOWMAPS (target 4), it writes
-		// kSHADOWMAPS_ESRAM (target 2). Keep the reservation: changing it
-		// requires re-verifying FindLight's range matches FindFreeIndex's
-		// range; a mismatch silently corrupts shadows by returning 0 from
-		// the FindLight fallback for any out-of-range light.
+		// Slot 0 is reserved for the sun pointer when present (sunOff=1) so
+		// FindLight can locate the sun. The sun renders to kSHADOWMAPS_ESRAM
+		// (target 2), not kSHADOWMAPS (target 4), so slot 0 in our pool maps
+		// to a kSHADOWMAPS slice the sun never writes -- safe to leave as a
+		// bookkeeping placeholder.
+		//
+		// Slots 4..7 are the engine's focus shadow range. Two-pass allocation:
+		// preferred slots first (avoiding 4..7 entirely so an actor appearance
+		// rarely needs to evict), then 4..7 as fallback for slots not
+		// currently claimed by an active focus actor.
 		const int32_t sunOff = Sun ? 1 : 0;
+		const int32_t shadowEnd = sunOff + shadowCount;
+		auto scanShadow = [&](auto reservablePolicy) -> int32_t {
+			for (int i = sunOff; i < shadowEnd; i++) {
+				if (reservablePolicy(i))
+					continue;
+				if (IsFocusShadowSlot(i))
+					continue;  // actively held by focus right now
+				if (!Lights[i].Light)
+					return i;
+			}
+			return -1;
+		};
 		if (shadowSlot) {
-			for (int i = sunOff; i < sunOff + shadowCount; i++)
-				if (!Lights[i].Light)
-					return i;
-		} else {
-			const int32_t base = sunOff + shadowCount;
-			for (int i = base; i < base + convertCount; i++)
-				if (!Lights[i].Light)
-					return i;
+			if (int32_t i = scanShadow([](int32_t k) { return IsFocusShadowReservableSlot(k); }); i >= 0)
+				return i;
+			return scanShadow([](int32_t) { return false; });
+		}
+		// Converted lights live past the shadow range and never collide with
+		// focus slots (focus base is 4, converted base is >= sunOff + shadowCount > 4).
+		const int32_t convBase = shadowEnd;
+		for (int i = convBase; i < convBase + convertCount; i++) {
+			if (!Lights[i].Light)
+				return i;
 		}
 		return -1;
 	}
 
 	int32_t LightContainer::FindLight(RE::BSShadowLight* light, int32_t shadowCount) const
 	{
-		// Search both the sun slot (when Sun=true) and the point-light range.
-		// Hook_OverwriteShadowMapIndex is called for the sun too, so it must
-		// be findable here. Range matches FindFreeIndex's allocation range to
-		// fix a long-standing off-by-one (FindFreeIndex assigned to slots
-		// 1..shadowCount but FindLight searched 0..shadowCount-1, so a light
-		// at slot shadowCount was unfindable and its shadowmapIndex fell back
-		// to 0, corrupting the sun's slot).
+		// Search the full allocation range. Hook_OverwriteShadowMapIndex calls
+		// in for the sun too, so the sun pointer (in slot 0 when Sun=true) must
+		// be findable. The fallback to idx=0 on -1 silently corrupts slot 0,
+		// so the search range must match FindFreeIndex's allocation range.
 		const int32_t sunOff = Sun ? 1 : 0;
 		const int32_t maxIdx = sunOff + shadowCount;
 		for (int i = 0; i < maxIdx; i++)
@@ -943,7 +990,12 @@ namespace ShadowCasterManager
 		static REL::RelocationID uid(513201, 390932);
 		return *reinterpret_cast<bool*>(uid.address());
 	}
-	static int GetSunInt1()
+	// Engine's per-frame count of focus shadow actors (player + tracked NPCs);
+	// max is iNumFocusShadow:Display (default 4). The engine renders one
+	// high-resolution shadow per entry into kSHADOWMAPS slots
+	// [g_focusShadowBaseSlotIndex .. +count). Used by the scheduler to
+	// dynamically reserve that range out of the point-light pool.
+	static int GetFocusShadowActorCount()
 	{
 		static REL::RelocationID uid(527703, 414625);
 		return *reinterpret_cast<int*>(uid.address());
@@ -1601,6 +1653,18 @@ namespace ShadowCasterManager
 		if (!ssn || !camera)
 			return;
 
+		// Read the engine's per-frame focus-shadow actor count and reserve
+		// matching pool slots. Eject any point lights that occupy a slot the
+		// engine now claims for focus rendering -- the displaced lights are
+		// reassigned to a free slot or fall through to the existing excess
+		// path. When the count drops, the slots naturally rejoin the pool's
+		// FindFreeIndex range on the next allocation.
+		s_focusShadowSlots = std::clamp(GetFocusShadowActorCount(), 0, kFocusShadowMaxSlots);
+		for (int i = kFocusShadowBaseSlotIndex; i < kFocusShadowBaseSlotIndex + s_focusShadowSlots && i < s_lights.Size; ++i) {
+			if (s_lights.Lights[i].Light)
+				s_lights.Lights[i].Clear();
+		}
+
 		// Do NOT clear shadowLightsAccum or reset the slot counter here. The
 		// outer CalculateAndDrawShadowCasterLights calls ResetCalculatedShadow-
 		// CasterLights before our hook fires, and that function clears the
@@ -1786,7 +1850,10 @@ namespace ShadowCasterManager
 					}
 				}
 
-				if (wantCount < s_settings.ShadowLightCount) {
+				// Effective point-light capacity excludes the engine-claimed
+				// focus shadow slots; excess candidates fall through to the
+				// existing convert/disable path.
+				if (wantCount < s_settings.ShadowLightCount - s_focusShadowSlots) {
 					c.chosen = true;
 					wantCount++;
 				} else {
@@ -3361,24 +3428,10 @@ namespace ShadowCasterManager
 				logger::error("[SCM] Failed to install Hook_OverwriteShadowMapIndex");
 		}
 
-		// ---- Focus shadow disable (slots 4-7 conflict with extended lights) --
-		if (extended) {
-			// Patch two "get selected focus shadows" thunks to always return 0.
-			// IDs 10209/10247 and 10207/10245 (SE/AE).  VR shares the same IDs.
-			// Pattern "8B 05 xx xx xx xx" (MOV EAX, [rip+N]) -> "48 31 C0 90 90 90" (XOR RAX,RAX + NOPs)
-			const uint8_t xorRax[6] = { 0x48, 0x31, 0xC0, 0x90, 0x90, 0x90 };
-
-			static REL::RelocationID uid1(10209, 10247);
-			REL::safe_write(uid1.address(), xorRax, 6);
-
-			static REL::RelocationID uid2(10207, 10245);
-			REL::safe_write(uid2.address(), xorRax, 6);
-
-			// Zero the focus-shadow enable byte: SE 141E33EB3 / AE 141E33EB3
-			static REL::RelocationID uid3(513201, 390932);
-			const uint8_t zero = 0;
-			REL::safe_write(uid3.address(), &zero, 1);
-		}
+		// Focus shadows are handled per-frame: ScheduleShadowCasters reads
+		// FocusShadowActors.size and reserves the matching count of pool
+		// slots starting at kFocusShadowBaseSlotIndex. Nothing to install
+		// here; the engine's focus path runs unmodified.
 
 		// ---- Color mask pass: skip it and fix out-of-bounds array access -----
 		// Installed unconditionally: our scheduler changes light/slot state in a way
