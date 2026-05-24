@@ -155,7 +155,7 @@ void RenderDoc::DrawSettings()
 	const auto& themeSettings = Menu::GetSingleton()->GetTheme();
 
 	if (renderDocCaptureEnabled && !renderDocActive) {
-		ImGui::TextColored(themeSettings.StatusPalette.RestartNeeded, "Requires restart to enable RenderDoc capture.");
+		Util::Text::RestartNeeded("Requires restart to enable RenderDoc capture.");
 		return;
 	}
 

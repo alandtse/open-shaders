@@ -1,5 +1,7 @@
 #pragma once
 
+#include "Utils/BootSnapshot.h"
+
 struct VolumetricLighting : Feature
 {
 public:
@@ -22,7 +24,20 @@ public:
 
 	Settings settings;
 
-	bool enabledAtBoot = false;
+	inline static constexpr Util::Settings::RestartTable<Settings, 2> kRestartFields{ {
+		UTIL_RESTART_FIELD(Settings, ExteriorEnabled, "Volumetric Lighting (Exterior)"),
+		UTIL_RESTART_FIELD(Settings, InteriorEnabled, "Volumetric Lighting (Interior)"),
+	} };
+	Util::Settings::BootSnapshot<Settings> bootSnapshot{ kRestartFields };
+
+	std::span<const Util::Settings::RestartFieldInfo> GetRestartRequiredFields() const override
+	{
+		// VR-only: enabling VL relies on startup-only game setting initialization.
+		return REL::Module::IsVR() ? std::span<const Util::Settings::RestartFieldInfo>{ kRestartFields.data(), kRestartFields.size() } : std::span<const Util::Settings::RestartFieldInfo>{};
+	}
+	const void* GetBootValue(std::string_view jsonKey) const override { return bootSnapshot.RawBoot(jsonKey); }
+	const void* GetSettingsBlob() const override { return &settings; }
+	size_t GetSettingsBlobSize() const override { return sizeof(settings); }
 
 	virtual inline std::string GetName() override { return "Volumetric Lighting"; }
 	virtual inline std::string GetShortName() override { return "VolumetricLighting"; }

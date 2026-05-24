@@ -81,15 +81,30 @@ public:
 
 	Settings settings;
 
-	inline static constexpr Util::Settings::RestartTable<Settings, 5> kRestartFields{ {
+	inline static constexpr Util::Settings::RestartTable<Settings, 7> kBootSnapshotFields{ {
 		UTIL_RESTART_FIELD(Settings, frameGenerationMode, "Frame Generation"),
 		UTIL_RESTART_FIELD(Settings, frameGenerationForceEnable, "Force Enable Frame Generation"),
 		UTIL_RESTART_FIELD(Settings, enableDLSSperf, "DLSSperf"),
+		UTIL_RESTART_FIELD(Settings, streamlineLogLevel, "Streamline Logging"),
+		UTIL_RESTART_FIELD(Settings, presetDLSS, "DLSS Model Preset"),
+		UTIL_RESTART_FIELD(Settings, upscaleMethod, "Upscaling Method"),
+		UTIL_RESTART_FIELD(Settings, qualityMode, "Upscale Preset"),
+	} };
+	Util::Settings::BootSnapshot<Settings> bootSnapshot{ kBootSnapshotFields };
+
+	inline static constexpr Util::Settings::RestartTable<Settings, 5> kAlwaysRestartFields{ {
+		UTIL_RESTART_FIELD(Settings, frameGenerationMode, "Frame Generation"),
+		UTIL_RESTART_FIELD(Settings, frameGenerationForceEnable, "Force Enable Frame Generation"),
+		UTIL_RESTART_FIELD(Settings, enableDLSSperf, "DLSSperf"),
+		UTIL_RESTART_FIELD(Settings, streamlineLogLevel, "Streamline Logging"),
+		UTIL_RESTART_FIELD(Settings, presetDLSS, "DLSS Model Preset"),
+	} };
+	inline static constexpr Util::Settings::RestartTable<Settings, 2> kDlssPerfRestartFields{ {
 		UTIL_RESTART_FIELD(Settings, upscaleMethod, "Upscaling Method"),
 		UTIL_RESTART_FIELD(Settings, qualityMode, "Upscale Preset"),
 	} };
 
-	Util::Settings::BootSnapshot<Settings> bootSnapshot{ kRestartFields };
+	mutable std::array<Util::Settings::RestartFieldInfo, kAlwaysRestartFields.size() + kDlssPerfRestartFields.size()> restartFieldsRuntime{};
 
 	struct JitterCB
 	{
@@ -129,11 +144,17 @@ public:
 	// Feature interface overrides
 	std::span<const Util::Settings::RestartFieldInfo> GetRestartRequiredFields() const override
 	{
-		// Frame generation + DLSSperf enable are always restart-gated.
-		// Method/preset are restart-gated only while DLSSperf's VR hook is active.
-		const size_t baseCount = 3;
-		const size_t extra = dlssPerf.IsHookActive() ? 2 : 0;
-		return { kRestartFields.data(), baseCount + extra };
+		if (!dlssPerf.IsHookActive()) {
+			return { kAlwaysRestartFields.data(), kAlwaysRestartFields.size() };
+		}
+		size_t idx = 0;
+		for (const auto& field : kAlwaysRestartFields) {
+			restartFieldsRuntime[idx++] = field;
+		}
+		for (const auto& field : kDlssPerfRestartFields) {
+			restartFieldsRuntime[idx++] = field;
+		}
+		return { restartFieldsRuntime.data(), idx };
 	}
 	const void* GetBootValue(std::string_view jsonKey) const override { return bootSnapshot.RawBoot(jsonKey); }
 	const void* GetSettingsBlob() const override { return &settings; }

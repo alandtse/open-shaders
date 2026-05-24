@@ -3,6 +3,7 @@
 #include "InteriorSun.h"
 #include "ShaderCache.h"
 #include "State.h"
+#include "Utils/UI.h"
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	VolumetricLighting::TextureSize,
@@ -23,12 +24,16 @@ void VolumetricLighting::DrawSettings()
 {
 	if (ImGui::Checkbox("Enable Volumetric Lighting in Exteriors", &settings.ExteriorEnabled))
 		SetupVL();
+	if (REL::Module::IsVR())
+		Util::UI::DrawSettingDiff(bootSnapshot, settings, &Settings::ExteriorEnabled);
 
 	if (settings.ExteriorEnabled)
 		DrawVolumetricLightingSettings(settings.ExteriorQuality, settings.ExteriorCustomSize, false, !inInterior);
 
 	if (ImGui::Checkbox("Enable Volumetric Lighting in Interiors", &settings.InteriorEnabled))
 		SetupVL();
+	if (REL::Module::IsVR())
+		Util::UI::DrawSettingDiff(bootSnapshot, settings, &Settings::InteriorEnabled);
 
 	if (settings.InteriorEnabled)
 		DrawVolumetricLightingSettings(settings.InteriorQuality, settings.InteriorCustomSize, true, inInterior);
@@ -156,6 +161,7 @@ void VolumetricLighting::DataLoaded()
 
 void VolumetricLighting::PostPostLoad()
 {
+	bootSnapshot.LatchIfNeeded(settings);
 	if (REL::Module::IsVR()) {
 		if (settings.ExteriorEnabled || settings.InteriorEnabled)
 			EnableBooleanSettings(hiddenVRSettings, GetName());

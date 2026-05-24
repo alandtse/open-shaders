@@ -603,7 +603,7 @@ void WeatherEditor::DisplayWindInfo(RE::TESWeather* weather)
 			windRelation = "Left crosswind";
 		}
 		ImGui::SameLine();
-		ImGui::TextColored(theme.StatusPalette.RestartNeeded, "(%s)", windRelation);
+		Util::Text::RestartNeeded("(%s)", windRelation);
 		if (auto _tt = Util::HoverTooltipWrapper()) {
 			Util::DrawMultiLineTooltip({
 				"Wind relative to player direction:",

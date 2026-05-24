@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Buffer.h"
+#include "Utils/BootSnapshot.h"
 
 class MenuOpenCloseEventHandler : public RE::BSTEventSink<RE::MenuOpenCloseEvent>
 {
@@ -119,7 +120,21 @@ public:
 	};
 
 	Settings settings;
-	bool enabledAtBoot = false;
+
+	inline static constexpr Util::Settings::RestartTable<Settings, 1> kRestartFields{ {
+		UTIL_RESTART_FIELD(Settings, EnabledSSR, "Screen Space Reflections"),
+	} };
+	Util::Settings::BootSnapshot<Settings> bootSnapshot{ kRestartFields };
+
+	std::span<const Util::Settings::RestartFieldInfo> GetRestartRequiredFields() const override
+	{
+		// VR-only: enabling SSR needs game-setting initialization at startup.
+		return REL::Module::IsVR() ? std::span<const Util::Settings::RestartFieldInfo>{ kRestartFields.data(), kRestartFields.size() } : std::span<const Util::Settings::RestartFieldInfo>{};
+	}
+	const void* GetBootValue(std::string_view jsonKey) const override { return bootSnapshot.RawBoot(jsonKey); }
+	const void* GetSettingsBlob() const override { return &settings; }
+	size_t GetSettingsBlobSize() const override { return sizeof(settings); }
+
 	void UpdateCubemap();
 
 	void PostDeferred();

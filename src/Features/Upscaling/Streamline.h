@@ -28,7 +28,6 @@ public:
 
 	inline std::string GetShortName() { return "Streamline"; }
 
-	bool enabledAtBoot = false;
 	bool initialized = false;
 	bool triedInitialization = false;
 

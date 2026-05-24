@@ -357,11 +357,7 @@ void EditorWindow::ShowObjectsWindow()
 				activeRecords.resize(4);
 
 			if (!activeRecords.empty()) {
-				const auto& theme = Menu::GetSingleton()->GetTheme();
-
-				ImGui::PushStyleColor(ImGuiCol_Text, theme.StatusPalette.RestartNeeded);
-				ImGui::Text("Active:");
-				ImGui::PopStyleColor();
+				Util::Text::RestartNeeded("Active:");
 				ImGui::SameLine();
 				const float recordX = ImGui::GetCursorPosX();
 
