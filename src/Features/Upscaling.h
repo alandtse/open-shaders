@@ -81,7 +81,12 @@ public:
 
 	Settings settings;
 
-	inline static constexpr Util::Settings::RestartTable<Settings, 7> kBootSnapshotFields{ {
+	// Single source of truth for restart-gated fields. Order is not load-bearing
+	// — the call-site `DrawSettingDiff` invocations in DrawSettings() handle any
+	// per-field conditional gating (e.g., qualityMode/upscaleMethod banners only
+	// render while DLSSperf's render-target hook is active). MCP discovery
+	// reports the full set; clients can check feature state themselves.
+	inline static constexpr Util::Settings::RestartTable<Settings, 7> kRestartFields{ {
 		UTIL_RESTART_FIELD(Settings, frameGenerationMode, "Frame Generation"),
 		UTIL_RESTART_FIELD(Settings, frameGenerationForceEnable, "Force Enable Frame Generation"),
 		UTIL_RESTART_FIELD(Settings, enableDLSSperf, "DLSSperf"),
@@ -90,21 +95,7 @@ public:
 		UTIL_RESTART_FIELD(Settings, upscaleMethod, "Upscaling Method"),
 		UTIL_RESTART_FIELD(Settings, qualityMode, "Upscale Preset"),
 	} };
-	Util::Settings::BootSnapshot<Settings> bootSnapshot{ kBootSnapshotFields };
-
-	inline static constexpr Util::Settings::RestartTable<Settings, 5> kAlwaysRestartFields{ {
-		UTIL_RESTART_FIELD(Settings, frameGenerationMode, "Frame Generation"),
-		UTIL_RESTART_FIELD(Settings, frameGenerationForceEnable, "Force Enable Frame Generation"),
-		UTIL_RESTART_FIELD(Settings, enableDLSSperf, "DLSSperf"),
-		UTIL_RESTART_FIELD(Settings, streamlineLogLevel, "Streamline Logging"),
-		UTIL_RESTART_FIELD(Settings, presetDLSS, "DLSS Model Preset"),
-	} };
-	inline static constexpr Util::Settings::RestartTable<Settings, 2> kDlssPerfRestartFields{ {
-		UTIL_RESTART_FIELD(Settings, upscaleMethod, "Upscaling Method"),
-		UTIL_RESTART_FIELD(Settings, qualityMode, "Upscale Preset"),
-	} };
-
-	mutable std::array<Util::Settings::RestartFieldInfo, kAlwaysRestartFields.size() + kDlssPerfRestartFields.size()> restartFieldsRuntime{};
+	Util::Settings::BootSnapshot<Settings> bootSnapshot{ kRestartFields };
 
 	struct JitterCB
 	{
@@ -144,17 +135,7 @@ public:
 	// Feature interface overrides
 	std::span<const Util::Settings::RestartFieldInfo> GetRestartRequiredFields() const override
 	{
-		if (!dlssPerf.IsHookActive()) {
-			return { kAlwaysRestartFields.data(), kAlwaysRestartFields.size() };
-		}
-		size_t idx = 0;
-		for (const auto& field : kAlwaysRestartFields) {
-			restartFieldsRuntime[idx++] = field;
-		}
-		for (const auto& field : kDlssPerfRestartFields) {
-			restartFieldsRuntime[idx++] = field;
-		}
-		return { restartFieldsRuntime.data(), idx };
+		return { kRestartFields.data(), kRestartFields.size() };
 	}
 	const void* GetBootValue(std::string_view jsonKey) const override { return bootSnapshot.RawBoot(jsonKey); }
 	const void* GetSettingsBlob() const override { return &settings; }
