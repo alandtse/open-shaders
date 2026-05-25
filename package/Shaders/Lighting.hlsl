@@ -2508,7 +2508,11 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	// EndSplitDistances.y instead of returning fully-lit.
 	float4 shadowColor = (Permutation::PixelShaderDescriptor & Permutation::LightingFlags::DefShadow) ? TexShadowMaskSampler.Load(int3(input.Position.xy, 0)) : 1.0;
 
-	if (inWorld && !inReflection && !SharedData::InInterior) {
+	// Mirrors #2319 for VOLUMETRIC_SHADOWS: use HasDirectionalShadows() (= !IsInterior() ||
+	// InteriorSun::IsActive) instead of the bare !InInterior gate, so Interior Sun cells
+	// reach the LLF cascade + engine-mask sampling path. Without this, interior scenes
+	// with active Interior Sun render with zero directional contribution and no sun shadow.
+	if (inWorld && !inReflection && ShadowSampling::HasDirectionalShadows()) {
 #	if !defined(LOD)
 		// On non-deferred passes, use the cheaper VSM shadows if available
 #		if defined(LIGHT_LIMIT_FIX) && (defined(DEFERRED) || !defined(VOLUMETRIC_SHADOWS))

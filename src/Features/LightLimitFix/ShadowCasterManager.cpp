@@ -481,22 +481,97 @@ namespace ShadowCasterManager
 	}
 
 	// -------------------------------------------------------------------------
-	// Color-mask pass skip and overflow fix
+	// Screen-space shadow-mask pass wrapper
 	// -------------------------------------------------------------------------
-
-	// Replaces the DrawColorMask call in 107140.
-	// Must use install_context_hook (not write_thunk_call) so RtlRestoreContext preserves
-	// all volatile registers (rdx, r8, etc.) for the call at 107140+0x83 that
-	// immediately follows and passes them directly into 107141.
-	static void Hook_DisableColorMask(CONTEXT& /*ctx*/)
+	//
+	// Vanilla wires Main::RenderShadowmasks (100422/107140) to call
+	// RenderShadowLightsWithUtilityShader (100423/107141) which:
+	//   - binds kSHADOW_MASK as RT, clears it,
+	//   - walks ssn->shadowLightsAccum[] and for each entry emits a full-screen
+	//     BSUtilityShader pass that samples the cascade / parabolic depth maps
+	//     and writes the mask.
+	//
+	// The inner loop indexes a hard-coded 4-entry table (DAT_141861380,
+	// per-slot m_AlphaBlendWriteMode) by BSShadowLight::maskIndex (offset 0x520
+	// SE/AE, 0x580 VR -- see CommonLib BSShadowLight.h). Vanilla only ever
+	// populates 4 kSHADOWMAPS slices so maskIndex stays in [0..3] and the index
+	// is safe.
+	//
+	// SLF's extended scheduler assigns maskIndex up to ShadowLightCount-1
+	// (LightContainer / EnableLight; see ShadowField(e.Light, maskIndex) =
+	// static_cast<uint32_t>(slot) below). For any slot >= 4, the engine's
+	// MOV [R15 + RDX*0x4] OOB-reads garbage out of DAT_141861380 (next dword is
+	// 0x3F7FFFDE, a float bit pattern) which lands in
+	// g_RendererShadowState.m_AlphaBlendWriteMode -> undefined D3D state.
+	//
+	// Previous fix nopped out the CALL site entirely ("Hook_DisableColorMask",
+	// misnamed: the patched call IS RenderShadowLightsWithUtilityShader, NOT a
+	// color-mask call -- verified via Ghidra on SE 1.5.97 (+0x90 -> 0x1412e3b80)
+	// and SkyrimVR (+0x9E -> 0x141323740), matching RelocationID 100423/107141).
+	// That killed the screen-space mask globally, removing sun shadows and
+	// brightening the scene because deferred lighting sampled an undisturbed
+	// (effectively fully-lit) mask RT. RenderDoc evidence: empty "Shadowmasks"
+	// engine marker; cascade depth maps still rendered upstream but never
+	// consumed.
+	//
+	// This wrapper restores vanilla behaviour for the first 4 cascade slices
+	// and silently elides any extended-slot entries by writing a null sentinel
+	// into shadowLightsAccum at the cutoff. The engine's
+	// GetShadowCasterLightArrayEntry terminates when the slot pointer is null,
+	// so the loop stops cleanly without ever indexing DAT_141861380 for slot
+	// >= 4. The saved pointer is restored after the call.
+	//
+	// Under LIGHT_LIMIT_FIX only the mask's R channel (sun cascades) is read by
+	// the lighting shader (Lighting.hlsl:2516 shadowColor.x); G/B/A and any
+	// slot >= 4 are handled by LLF's cluster pipeline sampling kSHADOWMAPS
+	// directly. Restoring the mask therefore fixes the sun-shadow regression
+	// without interfering with extended shadow casters.
+	struct Hook_RenderShadowLightsWithUtilityShader
 	{
-		// ReturnShadowmaps (ClearShadowMapData) on all current shadow casters
-		// so the game doesn't try to draw a color mask into our extended slots.
-		auto* ssn = RE::BSShaderManager::State::GetSingleton().shadowSceneNode[0];
-		if (!ssn)
-			return;
-		ForEachShadowLight(ssn->GetRuntimeData().shadowLightsAccum,
-			[](RE::BSShadowLight* l) { l->ReturnShadowmaps(); });
+		static void thunk()
+		{
+			auto* ssn = RE::BSShaderManager::State::GetSingleton().shadowSceneNode[0];
+			if (!ssn) {
+				func();
+				return;
+			}
+
+			auto& accum = ssn->GetRuntimeData().shadowLightsAccum;
+			constexpr uint32_t kVanillaSliceCap = 4;  // kSHADOWMAPS = 4 slices in vanilla
+
+			// Walk shadowLightsAccum summing shadowMapCount per entry (the same
+			// stride the engine's loop uses). Find the first entry whose start
+			// slice index would be >= kVanillaSliceCap; null that slot for the
+			// duration of the call so the engine stops there.
+			//
+			// Sun is always at index 0 occupying its cascade slices contiguously,
+			// so the cutoff never splits the sun.
+			uint32_t accumulatedSlice = 0;
+			const uint32_t arrSize = accum.size();
+			uint32_t cutoffIndex = arrSize;
+			for (uint32_t i = 0; i < arrSize; ++i) {
+				if (accumulatedSlice >= kVanillaSliceCap) {
+					cutoffIndex = i;
+					break;
+				}
+				auto* l = accum[i];
+				if (!l)
+					break;  // already-null entry naturally terminates iteration
+				accumulatedSlice += l->shadowMapCount;
+			}
+
+			RE::BSShadowLight* saved = nullptr;
+			if (cutoffIndex < arrSize) {
+				saved = accum[cutoffIndex];
+				accum[cutoffIndex] = nullptr;
+			}
+
+			func();
+
+			if (saved)
+				accum[cutoffIndex] = saved;
+		}
+		static inline REL::Relocation<decltype(thunk)> func;
 	};
 
 	// =========================================================================
@@ -2874,8 +2949,9 @@ namespace ShadowCasterManager
 	// The crash is in the vanilla scheduler itself. SCM's boot-time
 	// modifications (kSHADOWMAPS texture sized to ShadowLightCount,
 	// depth-buffer creation loop redirected via Hook_CreateNormalDepthBuffer
-	// and Hook_CreateReadOnlyDepthBuffer, color-mask pass replaced by
-	// Hook_DisableColorMask) make the engine state incompatible with
+	// and Hook_CreateReadOnlyDepthBuffer, screen-space mask pass wrapped
+	// by Hook_RenderShadowLightsWithUtilityShader) make the engine state
+	// incompatible with
 	// the vanilla traversal even when our runtime tracking is left
 	// untouched (soft-disable still crashed). The deep engine hooking
 	// is not safely reversible at runtime; restart is the only safe
@@ -3491,19 +3567,19 @@ namespace ShadowCasterManager
 			REL::safe_write(uid3.address(), &zero, 1);
 		}
 
-		// ---- Color mask pass: skip it and fix out-of-bounds array access -----
-		// Installed unconditionally: our scheduler changes light/slot state in a way
-		// that makes the vanilla color-mask pass crash even at ShadowLightCount=4.
-		{
-			// Replace the call to DrawColorMask with our thunk that calls
-			// ReturnShadowmaps on each light instead.
-			{
-				static REL::RelocationID uid(100422, 107140);
-				uintptr_t addr = uid.address() + REL::Relocate(0xF20 - 0xE90, 0x67E - 0x600, 0x9e);
-				if (!SKSE::stl::install_context_hook(addr, 5, Hook_DisableColorMask))
-					logger::error("[SCM] Failed to install Hook_DisableColorMask");
-			}
-		}
+		// ---- Screen-space shadow-mask pass: clamp to vanilla 4 slices ---------
+		// Detour RenderShadowLightsWithUtilityShader (100423/107141). The wrapper
+		// runs vanilla but writes a null sentinel into shadowLightsAccum at the
+		// 4-slice cutoff so the engine's loop never OOB-reads the 4-entry
+		// per-slot blend-mode table for any extended-mode slot. The mask's R
+		// channel (sun cascades) is the only channel LIGHT_LIMIT_FIX consumes;
+		// extended shadow casters are served by LLF's cluster pipeline reading
+		// kSHADOWMAPS directly. See the Hook_RenderShadowLightsWithUtilityShader
+		// definition above for the full rationale, including the previous
+		// Hook_DisableColorMask's misread (it patched out the inner call, not a
+		// color-mask call -- verified via Ghidra).
+		stl::detour_thunk<Hook_RenderShadowLightsWithUtilityShader>(
+			REL::RelocationID(100423, 107141));
 
 		// ---- Shadow caster selection -----------------------------------------
 
@@ -3674,8 +3750,8 @@ namespace ShadowCasterManager
 		// wholesale clearing mid-session caused engine accumulate-shadow
 		// crashes (2026-05-17 crash logs) because the engine still had
 		// our converted/promoted lights in activeShadowLights with
-		// shadowmapDescriptors already cleared by Hook_DisableColorMask,
-		// and tearing our tracking left the engine walking half-state.
+		// half-populated shadowmapDescriptors, and tearing our tracking left
+		// the engine walking that half-state.
 		//
 		// Each setting's gating still takes effect immediately via the
 		// runtime checks in the relevant hook / scheduler branches:

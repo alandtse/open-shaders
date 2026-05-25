@@ -582,10 +582,10 @@ void LightLimitFix::UpdateLights()
 				}
 
 				if (castsShadow) {
-					// Use the caller-provided stable slot index from s_lights rather than
-					// shadowmapDescriptors[0].shadowmapIndex, which may be corrupted by
-					// ReturnShadowmaps() called via Hook_DisableColorMask after
-					// ScheduleShadowCasters was run this frame.
+					// Use the caller-provided stable slot index from s_lights
+					// rather than shadowmapDescriptors[0].shadowmapIndex, which
+					// can drift relative to our scheduler-assigned slot when
+					// ReturnShadowmaps fires between scheduling and lighting.
 					light.shadowMapIndex = shadowSlot;
 					light.lightFlags.set(LightFlags::Shadow);
 				}

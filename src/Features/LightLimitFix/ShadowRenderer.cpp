@@ -114,10 +114,10 @@ void LightLimitFix::CopyShadowLightData()
 	uint32_t unshadowedLights = 0;
 	ShadowCasterManager::ForEachShadowLight(shadowSceneNode->GetRuntimeData().shadowLightsAccum,
 		[&](RE::BSShadowLight* light) {
-			// Use the stable container-slot index from s_lights rather than reading
-			// shadowmapDescriptors[0].shadowmapIndex, which may have been corrupted by
-			// ReturnShadowmaps() (called via Hook_DisableColorMask) after ScheduleShadowCasters
-			// fixed it but before this function runs.
+			// Use the stable container-slot index from s_lights rather than
+			// reading shadowmapDescriptors[0].shadowmapIndex, which can drift
+			// relative to our scheduler-assigned slot when ReturnShadowmaps
+			// fires between ScheduleShadowCasters and this function.
 			int32_t stableSlot = ShadowCasterManager::GetShadowSlot(light);
 			if (stableSlot < 0) {
 				// Sun (BSShadowDirectionalLight) — no kSHADOWMAPS slice. Its
