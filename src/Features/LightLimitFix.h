@@ -107,6 +107,15 @@ public:
 		uint ClusterSize[4];
 	};
 	STATIC_ASSERT_ALIGNAS_16(PerFrame);
+	// Compile-time size lock catches CPU/GPU cbuffer layout drift. STATIC_ASSERT_ALIGNAS_16
+	// only enforces the 16-byte alignment / multiple-of-16 contract that HLSL constant
+	// buffers require; it doesn't notice if a field is added, removed, or resized in a
+	// way that still happens to land on a 16-byte boundary. The shader's PerFrameLLF
+	// cbuffer declaration must mirror this layout exactly, so any change here without
+	// the corresponding shader update is a silent bug. Update both sides when the layout
+	// changes, then bump this constant.
+	static_assert(sizeof(PerFrame) == 64,
+		"LightLimitFix::PerFrame layout drifted -- update the shader-side PerFrameLLF cbuffer to match, then update this assert.");
 
 	PerFrame GetCommonBufferData();
 

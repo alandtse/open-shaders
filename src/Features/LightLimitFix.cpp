@@ -30,7 +30,13 @@ void LightLimitFix::DrawSettings()
 	}
 
 	if (settings.EnableContactShadows && ImGui::TreeNode("Contact Shadow Tuning")) {
-		ImGui::SliderInt("Max Steps", (int*)&settings.ContactShadowMaxSteps, 1, 16, "%d", ImGuiSliderFlags_AlwaysClamp);
+		// SliderScalar with ImGuiDataType_U32 instead of `SliderInt + (int*)cast`:
+		// the cast violates strict aliasing (UB) and would also misinterpret any
+		// transient negative value inside ImGui before clamp. SliderScalar
+		// reads/writes the uint storage directly with explicit min/max bounds.
+		constexpr uint32_t kMinSteps = 1, kMaxSteps = 16;
+		ImGui::SliderScalar("Max Steps", ImGuiDataType_U32, &settings.ContactShadowMaxSteps,
+			&kMinSteps, &kMaxSteps, "%u", ImGuiSliderFlags_AlwaysClamp);
 		if (auto _tt = Util::HoverTooltipWrapper()) {
 			ImGui::Text("Raymarch steps at zero depth. Higher = longer / more accurate contact shadows, linearly more cost.\nVR users should consider 2 to halve per-eye cost.");
 		}
@@ -57,7 +63,11 @@ void LightLimitFix::DrawSettings()
 
 		ImGui::SliderFloat("Min Light Intensity", &settings.ContactShadowMinIntensity, 0.0f, 1.0f, "%.2f");
 		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::Text("Skip contact shadows for clustered lights whose normalized intensity at the pixel is below this threshold. Higher = larger perf win, may drop subtle shadows from weak lights at their reach edge.");
+			ImGui::Text(
+				"Skip contact shadows for CLUSTERED lights whose normalized distance falloff "
+				"`1 - (lightDist/radius)^2` at the pixel is below this threshold. "
+				"Strict lights are always raymarched regardless of this threshold. "
+				"Higher = larger perf win, may drop subtle shadows from weak lights at their reach edge.");
 		}
 
 		ImGui::TreePop();
@@ -107,14 +117,23 @@ void LightLimitFix::DrawOverlay()
 
 LightLimitFix::PerFrame LightLimitFix::GetCommonBufferData()
 {
+	// Clamp contact-shadow settings to the slider ranges before they hit the
+	// constant buffer. The sliders enforce ImGuiSliderFlags_AlwaysClamp, but a
+	// malformed JSON config (hand-edited, mod conflict, or migration from a
+	// previous schema) can still arrive here with out-of-range values that
+	// would break shader math -- in particular ContactShadowMaxDistance is
+	// compared against a view-space depth, ContactShadowStride scales the
+	// raymarch length, and ContactShadowMaxSteps gates the loop count.
+	// Negative / NaN / wildly large values produce divisions, infinite loops,
+	// or visual corruption; clamp here so the shader can assume sane inputs.
 	PerFrame perFrame{};
 	perFrame.EnableContactShadows = settings.EnableContactShadows;
-	perFrame.ContactShadowMaxSteps = settings.ContactShadowMaxSteps;
-	perFrame.ContactShadowMaxDistance = settings.ContactShadowMaxDistance;
-	perFrame.ContactShadowStride = settings.ContactShadowStride;
-	perFrame.ContactShadowThickness = settings.ContactShadowThickness;
-	perFrame.ContactShadowDepthFade = settings.ContactShadowDepthFade;
-	perFrame.ContactShadowMinIntensity = settings.ContactShadowMinIntensity;
+	perFrame.ContactShadowMaxSteps = std::clamp<uint32_t>(settings.ContactShadowMaxSteps, 1u, 16u);
+	perFrame.ContactShadowMaxDistance = std::clamp(settings.ContactShadowMaxDistance, 64.0f, 4096.0f);
+	perFrame.ContactShadowStride = std::clamp(settings.ContactShadowStride, 0.5f, 8.0f);
+	perFrame.ContactShadowThickness = std::clamp(settings.ContactShadowThickness, 0.0f, 1.0f);
+	perFrame.ContactShadowDepthFade = std::clamp(settings.ContactShadowDepthFade, 0.0f, 1.0f);
+	perFrame.ContactShadowMinIntensity = std::clamp(settings.ContactShadowMinIntensity, 0.0f, 1.0f);
 	perFrame.EnableLightsVisualisation = settings.EnableLightsVisualisation;
 	perFrame.LightsVisualisationMode = settings.LightsVisualisationMode;
 	std::copy(clusterSize, clusterSize + 3, perFrame.ClusterSize);

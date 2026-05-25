@@ -2688,7 +2688,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	[branch] if (SharedData::lightLimitFixSettings.EnableContactShadows)
 	{
 		contactShadowSteps = round(SharedData::lightLimitFixSettings.ContactShadowMaxSteps *
-		                           (1.0 - saturate(viewPosition.z / SharedData::lightLimitFixSettings.ContactShadowMaxDistance)));
+								   (1.0 - saturate(viewPosition.z / SharedData::lightLimitFixSettings.ContactShadowMaxDistance)));
 		// The helper stays stereo-stable in VR — see
 		// LightLimitFix::GetContactShadowNoiseCoord for the eye-buffer math.
 		contactShadowNoise = Random::InterleavedGradientNoise(
@@ -2743,14 +2743,32 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 
 #			if defined(DEFERRED)
 		// contactShadowSteps > 0 implies the feature is on AND viewPosition is closer than
-		// MaxDistance; the MinIntensity gate skips weak lights whose shadow contribution is
-		// already dimmed past visibility, avoiding the matrix multiply + raymarch for them.
+		// MaxDistance. The MinIntensity gate skips weak clustered lights whose shadow
+		// contribution is already dimmed past visibility, avoiding the matrix multiply +
+		// raymarch for them.
+		//
+		// Use a SEPARATE normalized falloff for the cutoff -- intensityMultiplier above
+		// is path-dependent (ISL returns a non-normalized GetAttenuation() while non-ISL
+		// returns a normalized 1-(d/r)^2). Comparing intensityMultiplier against a 0..1
+		// threshold would mean different things in the two permutations. The normalized
+		// falloff below is the same `1 - (lightDist/radius)^2` clamped to [0,1] across
+		// both paths, so the threshold's semantics stay consistent.
+		//
+		// Gating is scoped to CLUSTERED lights (lightIndex >= NumStrictLights) -- strict
+		// lights should always raymarch regardless of falloff to preserve close, weak
+		// strict-light contact under bias.
+		const bool isClusteredLight = lightIndex >= LightLimitFix::NumStrictLights;
+		float normalizedFalloff = saturate(1.0 - lightDist * light.invRadius);
+		normalizedFalloff *= normalizedFalloff;
+		const bool passesIntensityGate = !isClusteredLight ||
+		                                 (normalizedFalloff > SharedData::lightLimitFixSettings.ContactShadowMinIntensity);
+
 		[branch] if (
 			contactShadowSteps > 0 &&
 			!(light.lightFlags & LightLimitFix::LightFlags::Simple) &&
 			shadowComponent != 0.0 &&
 			lightAngle > 0.0 &&
-			intensityMultiplier > SharedData::lightLimitFixSettings.ContactShadowMinIntensity)
+			passesIntensityGate)
 		{
 			// Derive view-space position via CameraView; the Light struct only carries positionWS
 			// (camera-relative) so the matrix multiply here is the cheapest path until positionVS
