@@ -95,7 +95,14 @@ void LightLimitFix::CopyShadowLightData()
 		shadowLightsCapacity = slots;
 	}
 
-	std::vector<Deferred::ShadowLightData> sd(slots);
+	// Static reusable buffer for per-frame shadow light data. The previous
+	// `std::vector(slots)` ctor heap-allocated every frame in this render
+	// hot path -- avoidable churn given the slot count only changes on
+	// resolution / settings reconfigures (matched by the shadowLights
+	// buffer reallocation block above). assign(slots, {}) reuses the
+	// backing storage when slot count is stable and zero-fills entries.
+	static std::vector<Deferred::ShadowLightData> sd;
+	sd.assign(slots, {});
 	uint32_t prevSlotUsage = ShadowCasterManager::GetSlotUsage();
 	ShadowCasterManager::BeginSlotFrame(slots);
 	auto context = globals::d3d::context;

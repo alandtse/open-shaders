@@ -722,19 +722,30 @@ PS_OUTPUT main(PS_INPUT input)
 	uint numClusteredLights = 0;
 	uint lightOffset = 0;
 	uint clusterIndex = 0;
-	if (inWorld && LightLimitFix::GetClusterIndex(screenUV, viewPosition.z, clusterIndex)) {
-		numClusteredLights = LightLimitFix::lightGrid[clusterIndex].lightCount;
-		lightOffset = LightLimitFix::lightGrid[clusterIndex].offset;
+	uint numStrictLights = 0;
+	if (inWorld) {
+		// Gate strict lights behind inWorld too -- they live in
+		// LightLimitFix::StrictLights which is populated from world-space
+		// CB data. Including them on non-world passes (UI overlays, blood
+		// splatter on screen-space surfaces, etc.) leaks world lighting
+		// into effects that shouldn't be lit by point/spot lights at all.
+		// Clustered lights are already inWorld-gated below; strict needs
+		// the same treatment for symmetry.
+		numStrictLights = LightLimitFix::NumStrictLights;
+		if (LightLimitFix::GetClusterIndex(screenUV, viewPosition.z, clusterIndex)) {
+			numClusteredLights = LightLimitFix::lightGrid[clusterIndex].lightCount;
+			lightOffset = LightLimitFix::lightGrid[clusterIndex].offset;
+		}
 	}
-	uint totalLightCount = LightLimitFix::NumStrictLights + numClusteredLights;
+	uint totalLightCount = numStrictLights + numClusteredLights;
 
 	[loop] for (uint i = 0; i < totalLightCount; i++)
 	{
 		LightLimitFix::Light light;
-		if (i < LightLimitFix::NumStrictLights) {
+		if (i < numStrictLights) {
 			light = LightLimitFix::StrictLights[i];
 		} else {
-			uint clusteredLightIndex = LightLimitFix::lightList[lightOffset + (i - LightLimitFix::NumStrictLights)];
+			uint clusteredLightIndex = LightLimitFix::lightList[lightOffset + (i - numStrictLights)];
 			light = LightLimitFix::lights[clusteredLightIndex];
 			if (LightLimitFix::IsLightIgnored(light))
 				continue;

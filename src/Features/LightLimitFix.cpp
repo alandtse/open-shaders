@@ -616,7 +616,14 @@ void LightLimitFix::UpdateLights()
 	// EnableLight calls both GameEnableLight (→ activeLights) and
 	// GameSetShadowCasterSlot (→ shadowLightsAccum) for redrawn lights, so without
 	// the skip below each redrawn shadow light would be added twice.
+	//
+	// Reserve buckets up front to avoid rehash allocations during inserts.
+	// Upper bound is the configured kSHADOWMAPS slot count -- shadowLightsAccum
+	// is sized to hold at most that many distinct point/spot lights (the sun
+	// occupies one logical entry but no kSHADOWMAPS slice, so the +1 is
+	// belt-and-braces).
 	std::unordered_set<RE::BSLight*> shadowLightPtrs;
+	shadowLightPtrs.reserve(ShadowCasterManager::GetInstalledSlotCount() + 1);
 	ShadowCasterManager::ForEachShadowLight(shadowSceneNode->GetRuntimeData().shadowLightsAccum,
 		[&](RE::BSShadowLight* light) {
 			shadowLightPtrs.insert(light);
