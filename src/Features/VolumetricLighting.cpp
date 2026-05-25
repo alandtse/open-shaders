@@ -24,7 +24,7 @@ void VolumetricLighting::DrawSettings()
 {
 	if (ImGui::Checkbox("Enable Volumetric Lighting in Exteriors", &settings.ExteriorEnabled))
 		SetupVL();
-	if (REL::Module::IsVR())
+	if (globals::game::isVR)
 		Util::UI::DrawSettingDiff(bootSnapshot, settings, &Settings::ExteriorEnabled);
 
 	if (settings.ExteriorEnabled)
@@ -32,7 +32,7 @@ void VolumetricLighting::DrawSettings()
 
 	if (ImGui::Checkbox("Enable Volumetric Lighting in Interiors", &settings.InteriorEnabled))
 		SetupVL();
-	if (REL::Module::IsVR())
+	if (globals::game::isVR)
 		Util::UI::DrawSettingDiff(bootSnapshot, settings, &Settings::InteriorEnabled);
 
 	if (settings.InteriorEnabled)
@@ -152,7 +152,7 @@ void VolumetricLighting::DataLoaded()
 	const static auto address = REL::Offset{ 0x1ec6b88 }.address();
 	bool& bDepthBufferCulling = *reinterpret_cast<bool*>(address);
 
-	if (REL::Module::IsVR() && bDepthBufferCulling && shaderCache->IsDiskCache()) {
+	if (globals::game::isVR && bDepthBufferCulling && shaderCache->IsDiskCache()) {
 		// clear cache to fix bug caused by bDepthBufferCulling
 		logger::info("Force clearing cache due to bDepthBufferCulling");
 		shaderCache->Clear();
@@ -162,7 +162,7 @@ void VolumetricLighting::DataLoaded()
 void VolumetricLighting::PostPostLoad()
 {
 	bootSnapshot.LatchIfNeeded(settings);
-	if (REL::Module::IsVR()) {
+	if (globals::game::isVR) {
 		if (settings.ExteriorEnabled || settings.InteriorEnabled)
 			EnableBooleanSettings(hiddenVRSettings, GetName());
 		auto address = REL::RelocationID(100475, 0).address() + 0x45b;  // AE not needed, VR only hook

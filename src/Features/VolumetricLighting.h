@@ -33,7 +33,7 @@ public:
 	std::span<const Util::Settings::RestartFieldInfo> GetRestartRequiredFields() const override
 	{
 		// VR-only: enabling VL relies on startup-only game setting initialization.
-		return REL::Module::IsVR() ? std::span<const Util::Settings::RestartFieldInfo>{ kRestartFields.data(), kRestartFields.size() } : std::span<const Util::Settings::RestartFieldInfo>{};
+		return globals::game::isVR ? std::span<const Util::Settings::RestartFieldInfo>{ kRestartFields.data(), kRestartFields.size() } : std::span<const Util::Settings::RestartFieldInfo>{};
 	}
 	const void* GetBootValue(std::string_view jsonKey) const override { return bootSnapshot.RawBoot(jsonKey); }
 	const void* GetSettingsBlob() const override { return &settings; }

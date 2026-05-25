@@ -6,6 +6,7 @@
 #include "ShaderCache.h"
 #include "State.h"
 #include "Utils/D3D.h"
+#include "Utils/UI.h"
 
 constexpr auto MIPLEVELS = 8;
 
@@ -31,16 +32,8 @@ void DynamicCubemaps::DrawSettings()
 		if (auto _tt = Util::HoverTooltipWrapper()) {
 			ImGui::Text("Enable Screen Space Reflections on Water");
 		}
-		if (REL::Module::IsVR() &&
-			bootSnapshot.IsLatched() &&
-			bootSnapshot.HasPendingChange(settings, &Settings::EnabledSSR)) {
-			const bool active = bootSnapshot.Boot(&Settings::EnabledSSR) != 0;
-			const bool selected = settings.EnabledSSR != 0;
-			Util::Text::RestartNeeded(
-				"Pending restart: Screen Space Reflections changed (active = %s, selected = %s).",
-				active ? "on" : "off",
-				selected ? "on" : "off");
-		}
+		if (globals::game::isVR)
+			Util::UI::DrawSettingDiff(bootSnapshot, settings, &Settings::EnabledSSR);
 		ImGui::TreePop();
 	}
 
@@ -122,7 +115,7 @@ void DynamicCubemaps::DrawSettings()
 		}
 		ImGui::TreePop();
 	}
-	if (REL::Module::IsVR()) {
+	if (globals::game::isVR) {
 		if (ImGui::TreeNodeEx("Advanced VR Settings", ImGuiTreeNodeFlags_DefaultOpen)) {
 			Util::RenderImGuiSettingsTree(iniVRCubeMapSettings, "VR");
 			Util::RenderImGuiSettingsTree(hiddenVRCubeMapSettings, "hiddenVR");
@@ -134,7 +127,7 @@ void DynamicCubemaps::DrawSettings()
 void DynamicCubemaps::LoadSettings(json& o_json)
 {
 	settings = o_json;
-	if (REL::Module::IsVR()) {
+	if (globals::game::isVR) {
 		Util::LoadGameSettings(iniVRCubeMapSettings);
 	}
 	recompileFlag = true;
@@ -143,7 +136,7 @@ void DynamicCubemaps::LoadSettings(json& o_json)
 void DynamicCubemaps::SaveSettings(json& o_json)
 {
 	o_json = settings;
-	if (REL::Module::IsVR()) {
+	if (globals::game::isVR) {
 		Util::SaveGameSettings(iniVRCubeMapSettings);
 	}
 }
@@ -151,7 +144,7 @@ void DynamicCubemaps::SaveSettings(json& o_json)
 void DynamicCubemaps::RestoreDefaultSettings()
 {
 	settings = {};
-	if (REL::Module::IsVR()) {
+	if (globals::game::isVR) {
 		Util::ResetGameSettingsToDefaults(iniVRCubeMapSettings);
 		Util::ResetGameSettingsToDefaults(hiddenVRCubeMapSettings);
 	}
@@ -160,7 +153,7 @@ void DynamicCubemaps::RestoreDefaultSettings()
 
 void DynamicCubemaps::DataLoaded()
 {
-	if (REL::Module::IsVR()) {
+	if (globals::game::isVR) {
 		// enable cubemap settings in VR
 		Util::EnableBooleanSettings(iniVRCubeMapSettings, GetName());
 		Util::EnableBooleanSettings(hiddenVRCubeMapSettings, GetName());
@@ -171,7 +164,7 @@ void DynamicCubemaps::DataLoaded()
 void DynamicCubemaps::PostPostLoad()
 {
 	bootSnapshot.LatchIfNeeded(settings);
-	if (REL::Module::IsVR() && settings.EnabledSSR) {
+	if (globals::game::isVR && settings.EnabledSSR) {
 		std::map<std::string, uintptr_t> earlyhiddenVRCubeMapSettings{
 			{ "bScreenSpaceReflectionEnabled:Display", 0x1ED5BC0 },
 		};
