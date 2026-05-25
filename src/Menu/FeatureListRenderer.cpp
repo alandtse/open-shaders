@@ -509,7 +509,11 @@ void FeatureListRenderer::ListMenuVisitor::operator()(Feature* feat)
 	if (isDisabled) {
 		textColor = themeSettings.StatusPalette.Disable;
 	} else if (isLoaded) {
-		textColor = ImGui::GetStyleColorVec4(ImGuiCol_Text);
+		// Loaded feature with staged but-not-yet-applied restart-gated
+		// settings tints the same green as a feature pending re-enable.
+		// Same semantic from the user's POV: "this feature has unmade
+		// changes that take effect on restart."
+		textColor = feat->HasAnyPendingRestart() ? themeSettings.StatusPalette.RestartNeeded : ImGui::GetStyleColorVec4(ImGuiCol_Text);
 	} else if (hasFailedMessage) {
 		textColor = feat->version.empty() ? themeSettings.StatusPalette.Disable : themeSettings.StatusPalette.Error;
 	} else {

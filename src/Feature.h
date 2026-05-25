@@ -5,6 +5,7 @@
 #include "FeatureVersions.h"
 #include "Utils/RestartSettings.h"
 
+#include <cstring>
 #include <span>
 #include <string_view>
 #ifdef TRACY_ENABLE
@@ -32,6 +33,30 @@ struct Feature
 	virtual const void* GetBootValue(std::string_view /*jsonKey*/) const { return nullptr; }
 	virtual const void* GetSettingsBlob() const { return nullptr; }
 	virtual size_t GetSettingsBlobSize() const { return 0; }
+
+	// True if any restart-gated setting's live value differs from the
+	// boot-latched value. Drives the green "RestartNeeded" tint in the
+	// feature list and the `pending` flag in MCP's `list` response.
+	bool HasAnyPendingRestart() const
+	{
+		const auto fields = GetRestartRequiredFields();
+		if (fields.empty())
+			return false;
+		const auto* live = reinterpret_cast<const unsigned char*>(GetSettingsBlob());
+		const size_t liveSize = GetSettingsBlobSize();
+		if (!live || liveSize == 0)
+			return false;
+		for (const auto& field : fields) {
+			if (!field.jsonKey || field.size == 0)
+				continue;
+			if (field.offset + field.size > liveSize)
+				continue;
+			const void* boot = GetBootValue(field.jsonKey);
+			if (boot && std::memcmp(boot, live + field.offset, field.size) != 0)
+				return true;
+		}
+		return false;
+	}
 
 	// Nexus Mods base URL for Skyrim Special Edition
 	static constexpr std::string_view NEXUS_BASE_URL = "https://www.nexusmods.com/skyrimspecialedition/mods/";
