@@ -378,6 +378,20 @@ namespace LightLimitFix
 	{
 		hasCoverage = true;  // default: paraboloid lights always sample
 
+		// Guard against shadowMapIndex values that exceed the installed
+		// kSHADOWMAPS slice count. The CPU scheduler explicitly models
+		// `shadowMapIndex >= ShadowMapSlots` as overflow (e.g. when a light
+		// was promoted to shadow on a frame where the texture-array
+		// allocation hadn't extended to cover it yet), and a raw
+		// `Shadows[shadowIndex]` here would read an invalid record or slice.
+		// Fall back cleanly to "unshadowed + no coverage" so the caller
+		// stops blending this light's contribution.
+		[branch] if (shadowIndex >= SharedData::lightLimitFixSettings.ShadowMapSlots)
+		{
+			hasCoverage = false;
+			return 1.0;
+		}
+
 		ShadowLightData shadowLightData = Shadows[shadowIndex];
 
 		[flatten] if (shadowLightData.ShadowLightParam.y == 0) return 1.0;

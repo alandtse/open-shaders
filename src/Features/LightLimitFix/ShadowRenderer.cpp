@@ -52,8 +52,20 @@ void LightLimitFix::CopyShadowLightData()
 #endif
 
 	uint32_t slots = ShadowCasterManager::GetInstalledSlotCount();
-	if (slots == 0)
+	if (slots == 0) {
+		// Clean degradation when SCM hasn't published a usable slot count yet
+		// (e.g. before SetupResources finishes, or after a transient
+		// reallocation failure). Without this clear, the previous frame's
+		// slot metadata, counters, and PS bindings at t100/t101 stay live --
+		// the overlay shows stale shadow rows and shaders keep sampling
+		// stale shadow records instead of degrading cleanly to unshadowed.
+		ShadowCasterManager::BeginSlotFrame(0);
+		shadowLightCount = 0;
+		shadowUnshadowedLightCount = 0;
+		ID3D11ShaderResourceView* nullSRVs[2]{ nullptr, nullptr };
+		globals::d3d::context->PSSetShaderResources(100, ARRAYSIZE(nullSRVs), nullSRVs);
 		return;
+	}
 
 	auto* shadowSceneNode = globals::game::smState->shadowSceneNode[0];
 	if (!shadowSceneNode)

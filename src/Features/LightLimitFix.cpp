@@ -12,6 +12,9 @@
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	LightLimitFix::Settings,
+	EnableContactShadows,
+	EnableLightsVisualisation,
+	LightsVisualisationMode,
 	ShowShadowOverlay,
 	ShadowSettings)
 
@@ -304,10 +307,22 @@ void LightLimitFix::BSLightingShader_SetupGeometry_GeometrySetupConstantPointLig
 
 		if (i < a_pass->numShadowLights) {
 			auto* shadowLight = static_cast<RE::BSShadowLight*>(bsLight);
+			// Only set LightFlags::Shadow when the descriptor's slice index
+			// falls inside the installed kSHADOWMAPS array. A stale/corrupted
+			// descriptor (possible mid-frame between SCM scheduling and the
+			// engine consuming activeShadowLights) can carry a value past the
+			// allocated slice count -- the shader's Shadows[]/ShadowMaps[]
+			// reads would then sample out-of-bounds (UB, GPU crash on some
+			// drivers). Falling through with no Shadow flag is correct: the
+			// light still contributes diffuse but no shadow sampling occurs.
+			const uint32_t installedSlots = ShadowCasterManager::GetInstalledSlotCount();
 			auto checkDescs = [&](auto& runtimeData) {
 				if (!runtimeData.shadowmapDescriptors.empty()) {
-					light.shadowMapIndex = runtimeData.shadowmapDescriptors[0].shadowmapIndex;
-					light.lightFlags.set(LightFlags::Shadow);
+					const auto idx = runtimeData.shadowmapDescriptors[0].shadowmapIndex;
+					if (idx > 0 && idx < installedSlots) {
+						light.shadowMapIndex = idx;
+						light.lightFlags.set(LightFlags::Shadow);
+					}
 				}
 			};
 			if (globals::game::isVR)

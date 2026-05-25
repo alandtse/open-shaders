@@ -606,9 +606,14 @@ namespace ShadowCasterManager
 	/// Returns a read-only view of the active light pool for UI/visualization.
 	const LightContainer& GetLights();
 
-	/// Returns the stable container-slot index i for a shadow light (0 = sun, 1+ = point lights).
-	/// Uses the internal s_lights pool — does not read the descriptor's shadowmapIndex field,
-	/// which may be corrupted by ReturnShadowmaps().  Returns -1 if the light is not active.
+	/// Returns the kSHADOWMAPS texture-array slot for a point/spot shadow light
+	/// (1..ShadowLightCount-1), or -1 if the light is either not active in the
+	/// SCM pool OR is the sun. The sun renders to kSHADOWMAPS_ESRAM, a separate
+	/// texture from kSHADOWMAPS, so it has no slot in the point-light array --
+	/// callers in ShadowRenderer upload and LightLimitFix cluster builder skip
+	/// the sun via the -1 sentinel.
+	/// Uses the internal s_lights pool -- does not read the descriptor's
+	/// shadowmapIndex field, which may be corrupted by ReturnShadowmaps().
 	int32_t GetShadowSlot(RE::BSShadowLight* light);
 
 	/// Visit every shadow light currently demoted to non-shadow rendering via
