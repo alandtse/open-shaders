@@ -604,11 +604,13 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 
 	float dirDetailedShadow = 1.0;
 
-	if (!SharedData::InInterior)
+	// HasDirectionalShadows() admits Interior Sun cells; mirrors the
+	// same swap in Lighting.hlsl / Particle.hlsl.
+	if (ShadowSampling::HasDirectionalShadows())
 		dirDetailedShadow *= shadowColor.x;
 
 #			if defined(SCREEN_SPACE_SHADOWS)
-	if (!SharedData::InInterior && dirLightAngle >= 0.0)
+	if (ShadowSampling::HasDirectionalShadows() && dirLightAngle >= 0.0)
 		dirDetailedShadow *= ScreenSpaceShadows::GetScreenSpaceShadow(input.HPosition.xyz, screenUV, screenNoise, eyeIndex);
 #			endif  // SCREEN_SPACE_SHADOWS
 
@@ -848,11 +850,13 @@ PS_OUTPUT main(PS_INPUT input)
 
 	float dirDetailedShadow = 1.0;
 
-	if (!SharedData::InInterior)
+	// HasDirectionalShadows() admits Interior Sun cells; mirrors the
+	// same swap in Lighting.hlsl / Particle.hlsl.
+	if (ShadowSampling::HasDirectionalShadows())
 		dirDetailedShadow = shadowColor.x;
 
 #			if defined(SCREEN_SPACE_SHADOWS)
-	if (!SharedData::InInterior)
+	if (ShadowSampling::HasDirectionalShadows())
 		dirDetailedShadow *= ScreenSpaceShadows::GetScreenSpaceShadow(input.HPosition.xyz, screenUV, screenNoise, eyeIndex);
 #			endif  // SCREEN_SPACE_SHADOWS
 

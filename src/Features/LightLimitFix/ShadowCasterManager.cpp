@@ -528,48 +528,51 @@ namespace ShadowCasterManager
 	// without interfering with extended shadow casters.
 	struct Hook_RenderShadowLightsWithUtilityShader
 	{
+		// Skip vanilla entirely.
+		//
+		// Vanilla's RenderShadowLightsWithUtilityShader iterates
+		// shadowLightsAccum and emits a full-screen pass per entry, indexing
+		// a 4-entry per-slot blend-mode table (DAT_141861380) by each light's
+		// maskIndex (BSShadowLight+0x520). Three failure modes were observed
+		// with SLF's scheduling:
+		//   1. Extended slots (maskIndex >= 4) OOB-read the table.
+		//   2. Vanilla advances `uVar7 += light->shadowMapCount` and reads
+		//      `shadowLightsAccum[uVar7]`; with a 3-cascade sun and
+		//      accum.size() < 4, the next read is past the array buffer.
+		//      Heap garbage that looks like a BSShadowLight* gets
+		//      dereferenced on [+0x520]. Verified crashes:
+		//        crash-2026-05-25-15-16-25.log RDX=0x3B1F3023
+		//        crash-2026-05-25-15-26-59.log RDX=0x3AA96F53
+		//        crash-2026-05-25-15-28-04.log RDX=0x3A4A3190
+		//        crash-2026-05-25-15-36-15.log RDX=0x3A4B11F5
+		//      all at 107141+0x319.
+		//   3. shadowLightsAccum entries created by GameAccumulate() (engine
+		//      focus path) bypass SLF's maskIndex assignment in EnableLight,
+		//      so maskIndex stays at uninitialized memory.
+		//
+		// Trying to bound vanilla's iteration safely required defending all
+		// three modes (BSTArray padding, maskIndex clamp, slice-count cap)
+		// and one of them kept slipping through. The simplest robust answer
+		// is to skip vanilla entirely.
+		//
+		// Under LIGHT_LIMIT_FIX (this fork's shipping configuration) the
+		// screen-space mask is not on the sun-shadow consumer path:
+		//   - Lighting.hlsl:2515 uses LightLimitFix::GetDirectionalShadow,
+		//     which samples DirectionalShadowCascades (t99) directly.
+		//   - The cluster loop uses LightLimitFix::GetShadowLightShadow,
+		//     which samples kSHADOWMAPS slices directly.
+		// shadowColor.x is consulted only as a fallback past the cascade
+		// range and during the !LIGHT_LIMIT_FIX vanilla path. Dropping the
+		// mask therefore loses no functionality LLF provides.
+		//
+		// Critically, unlike the previous Hook_DisableColorMask, we do NOT
+		// call ReturnShadowmaps. That side-effect cleared shadowmap-
+		// Descriptors and broke Deferred::CopyShadowLightData's cascade
+		// matrix upload, which is what produced the original "no sun
+		// shadow + scene brighter" symptom.
 		static void thunk()
 		{
-			auto* ssn = RE::BSShaderManager::State::GetSingleton().shadowSceneNode[0];
-			if (!ssn) {
-				func();
-				return;
-			}
-
-			auto& accum = ssn->GetRuntimeData().shadowLightsAccum;
-			constexpr uint32_t kVanillaSliceCap = 4;  // kSHADOWMAPS = 4 slices in vanilla
-
-			// Walk shadowLightsAccum summing shadowMapCount per entry (the same
-			// stride the engine's loop uses). Find the first entry whose start
-			// slice index would be >= kVanillaSliceCap; null that slot for the
-			// duration of the call so the engine stops there.
-			//
-			// Sun is always at index 0 occupying its cascade slices contiguously,
-			// so the cutoff never splits the sun.
-			uint32_t accumulatedSlice = 0;
-			const uint32_t arrSize = accum.size();
-			uint32_t cutoffIndex = arrSize;
-			for (uint32_t i = 0; i < arrSize; ++i) {
-				if (accumulatedSlice >= kVanillaSliceCap) {
-					cutoffIndex = i;
-					break;
-				}
-				auto* l = accum[i];
-				if (!l)
-					break;  // already-null entry naturally terminates iteration
-				accumulatedSlice += l->shadowMapCount;
-			}
-
-			RE::BSShadowLight* saved = nullptr;
-			if (cutoffIndex < arrSize) {
-				saved = accum[cutoffIndex];
-				accum[cutoffIndex] = nullptr;
-			}
-
-			func();
-
-			if (saved)
-				accum[cutoffIndex] = saved;
+			(void)func;  // suppress "unused" warning while keeping the relocation
 		}
 		static inline REL::Relocation<decltype(thunk)> func;
 	};
