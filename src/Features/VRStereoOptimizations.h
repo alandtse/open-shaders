@@ -3,6 +3,7 @@
 #include <nlohmann/json.hpp>
 using json = nlohmann::json;
 
+#include "Utils/BootSnapshot.h"
 #include <d3d11.h>
 #include <unordered_map>
 #include <winrt/base.h>
@@ -94,6 +95,16 @@ struct VRStereoOptimizations
 		bool debugPOMDepth = false;  ///< Show POM depth data (texPomOffset) as heatmap overlay
 
 	} settings;
+
+	// stereoMode is restart-gated: the stencil/CS resources are only set up
+	// when `loaded` is true at boot, and toggling mid-session can't install
+	// them. Latched from VR::PostPostLoad.
+	inline static constexpr Util::Settings::RestartTable<Settings, 1> kRestartFields{ {
+		UTIL_RESTART_FIELD(Settings, stereoMode, "VR Stereo Reprojection"),
+	} };
+	Util::Settings::BootSnapshot<Settings> bootSnapshot{ kRestartFields };
+
+	void LatchBootSnapshot() { bootSnapshot.LatchIfNeeded(settings); }
 
 	//=============================================================================
 	// GPU CONSTANT BUFFER (must match HLSL cbuffer layout exactly)

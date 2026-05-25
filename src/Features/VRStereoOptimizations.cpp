@@ -259,9 +259,8 @@ void VRStereoOptimizations::DrawSettings()
 		settings.stereoMode = static_cast<StereoMode>(currentMode);
 	Util::AddTooltip("Reprojects Eye 0 (left) pixels into Eye 1 (right) using depth and motion data,\nskipping redundant full shading where the views overlap.\nReduces GPU cost in VR by shading each pixel fewer times per frame.");
 
-	if (globals::game::isVR && settings.stereoMode == StereoMode::Enable && !loaded) {
-		Util::Text::RestartNeeded("Restart is required to enable VR stereo reprojection.");
-	}
+	if (globals::game::isVR)
+		Util::UI::DrawSettingDiff(bootSnapshot, settings, &Settings::stereoMode);
 	if (settings.stereoMode == StereoMode::Off)
 		return;
 
