@@ -379,14 +379,19 @@ struct BSShaderRenderTargets_Create
 		// engine creates its render targets. This is the only place where
 		// BSOpenVR is guaranteed available AND we can still influence RT
 		// allocation. Gated on user opt-in via Upscaling::Settings AND on
-		// DLSS actually being the resolved upscale path — a stale config can
-		// leave enableDLSSperf=true while the active method is FSR/TAA or
-		// DLSS is unsupported on this GPU, and the rest of DLSSperf only
-		// makes sense for the DLSS output path.
+		// the resolved upscale path being one that can write its output to
+		// a separate displayRes target (DLSS via Streamline, FSR via
+		// FidelityFX). TAA/NONE have no upscale output to redirect, and a
+		// stale config can leave enableDLSSperf=true after the user
+		// switched methods or after DLSS becomes unsupported on this GPU.
+		const auto resolvedUpscaleMethod = globals::features::upscaling.GetUpscaleMethod();
+		const bool methodSupportsPerfMode =
+			resolvedUpscaleMethod == Upscaling::UpscaleMethod::kDLSS ||
+			resolvedUpscaleMethod == Upscaling::UpscaleMethod::kFSR;
 		const bool dlssperfShouldRun =
 			globals::game::isVR &&
 			globals::features::upscaling.settings.enableDLSSperf &&
-			globals::features::upscaling.GetUpscaleMethod() == Upscaling::UpscaleMethod::kDLSS;
+			methodSupportsPerfMode;
 
 		if (dlssperfShouldRun) {
 			globals::features::upscaling.dlssPerf.InstallRenderTargetSizeHook();

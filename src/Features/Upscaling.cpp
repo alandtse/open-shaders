@@ -311,31 +311,33 @@ void Upscaling::DrawSettings()
 		// engine RT off the boot value.
 		//
 		// The setting persists across method switches (we don't auto-flip
-		// it when the user picks FSR/TAA), but the checkbox itself is
-		// disabled outside the DLSS context since the install path triple-
-		// gates on DLSS being the resolved method. Keep visible-but-greyed
-		// so users see the option exists and understand why it isn't live.
+		// it when the user picks TAA/NONE), but the checkbox itself is
+		// disabled outside upscalers that can target a separate displayRes
+		// output (DLSS, FSR). Keep visible-but-greyed so users see the
+		// option exists and understand why it isn't live.
 		if (globals::game::isVR) {
-			const bool dlssAvailable = upscaleMethod == UpscaleMethod::kDLSS;
-			if (!dlssAvailable)
+			const bool methodSupportsPerf =
+				upscaleMethod == UpscaleMethod::kDLSS ||
+				upscaleMethod == UpscaleMethod::kFSR;
+			if (!methodSupportsPerf)
 				ImGui::BeginDisabled();
 			ImGui::Checkbox("Render engine at upscaled resolution (DLSSperf)", &settings.enableDLSSperf);
-			if (!dlssAvailable)
+			if (!methodSupportsPerf)
 				ImGui::EndDisabled();
 			if (auto _tt = Util::HoverTooltipWrapper()) {
 				ImGui::Text(
 					"When enabled, the engine pipeline allocates render targets at the upscaled-render\n"
-					"resolution instead of the HMD display resolution. DLSS writes its output to a private\n"
-					"DisplayRes texture. Substantial VRAM and bandwidth savings, especially at high HMD\n"
-					"resolutions.\n"
+					"resolution instead of the HMD display resolution. The upscaler (DLSS or FSR) writes\n"
+					"its output to a private DisplayRes texture. Substantial VRAM and bandwidth savings,\n"
+					"especially at high HMD resolutions.\n"
 					"\n"
-					"Requires the DLSS upscaler. Restart required to enable/disable. Method and Upscale\n"
+					"Requires DLSS or FSR. Restart required to enable/disable. Method and Upscale\n"
 					"Preset changes also require a restart while this is active; sharpness / model preset\n"
 					"/ Reflex remain live.");
 			}
-			if (!dlssAvailable && settings.enableDLSSperf)
-				Util::Text::Disabled("DLSSperf requires DLSS — switch upscaler Method to DLSS to activate.");
-			if (dlssAvailable)
+			if (!methodSupportsPerf && settings.enableDLSSperf)
+				Util::Text::Disabled("DLSSperf requires DLSS or FSR — switch upscaler Method to activate.");
+			if (methodSupportsPerf)
 				Util::UI::DrawSettingDiff(bootSnapshot, settings, &Settings::enableDLSSperf);
 		}
 	}
@@ -1164,10 +1166,18 @@ void Upscaling::FinalizePerEyeOutputs(ID3D11Resource* colorDst)
 		state->BeginPerfEvent("VR Upscaling Finalize");
 
 	auto context = globals::d3d::context;
-	auto screenSize = state->screenSize;
 
-	uint32_t eyeWidthOut = (uint32_t)(screenSize.x / 2);
-	uint32_t eyeHeightOut = (uint32_t)screenSize.y;
+	// Drive output dims from the per-eye intermediate desc, not state->screenSize.
+	// Under DLSSperf the state value is polluted to renderRes while the intermediates
+	// were allocated at displayRes via EnsureVRIntermediateTextures' size bridge.
+	if (!vrIntermediateColorOut[0]) {
+		if (state->frameAnnotations)
+			state->EndPerfEvent();
+		return;
+	}
+
+	uint32_t eyeWidthOut = vrIntermediateColorOut[0]->desc.Width;
+	uint32_t eyeHeightOut = vrIntermediateColorOut[0]->desc.Height;
 
 	// Write upscaled outputs back
 	for (uint32_t i = 0; i < 2; ++i) {
@@ -1297,18 +1307,23 @@ void Upscaling::ConfigureUpscaling(RE::BSGraphics::State* a_viewport)
 	if (upscaleMethod != UpscaleMethod::kNONE && upscaleMethod != UpscaleMethod::kTAA) {
 		// DLSSperf: when the BSOpenVR size hook is live, every engine RT was
 		// already allocated at RenderRes — so the DRS-style scale is identity.
-		// Jitter is still computed at the real DisplayRes phase ratio so DLSS
-		// has enough sub-pixel diversity for the upscale.
+		// Jitter is still computed at the real DisplayRes phase ratio so the
+		// upscaler has enough sub-pixel diversity for reconstruction.
 		//
 		// The upscaleMethod here comes from GetUpscaleMethod(), which under
 		// DLSSperf+hookActive is locked to the boot snapshot — so this gate
 		// reads the value the user had selected at game start, not what they
 		// later moved the slider to. Engine RTs were sized off that boot
 		// choice (irreversible — the size hook can't un-allocate them); the
-		// boot-snapshot lock keeps the runtime DLSS evaluate consistent with
-		// those allocations. UI staged-change banners explain the restart
-		// requirement for method/quality edits.
-		if (dlssPerf.IsHookActive() && upscaleMethod == UpscaleMethod::kDLSS) {
+		// boot-snapshot lock keeps the runtime evaluate consistent with those
+		// allocations. UI staged-change banners explain the restart
+		// requirement for method/quality edits. Branch fires for both DLSS
+		// and FSR since both consume the renderRes engine RTs and write to
+		// dlssPerf.testTexture.
+		const bool dlssperfRenderResPath =
+			dlssPerf.IsHookActive() &&
+			(upscaleMethod == UpscaleMethod::kDLSS || upscaleMethod == UpscaleMethod::kFSR);
+		if (dlssperfRenderResPath) {
 			resolutionScale = { 1.0f, 1.0f };
 
 			auto renderWidth = static_cast<int>(dlssPerf.GetRenderEyeWidth());
@@ -1896,7 +1911,14 @@ void Upscaling::Upscale()
 			}
 			streamline.Upscale(main.texture, reactiveMaskTexture->resource.get(), transparencyCompositionMaskTexture->resource.get(), motionVectorCopyTexture->resource.get());
 		} else if (upscaleMethod == UpscaleMethod::kFSR) {
-			fidelityFX.Upscale(main.texture, reactiveMaskTexture->resource.get(), transparencyCompositionMaskTexture->resource.get(), motionVector.texture, settings.sharpnessFSR);
+			// DLSSperf bridge: when the engine RTs are shrunk to renderRes, FSR's displayRes
+			// output must land in dlssPerf.testTexture (the private displayRes target used for
+			// OpenVR submit), not back in the now-small kMAIN. Mirrors Streamline's colorOut
+			// routing for DLSS.
+			ID3D11Resource* fsrColorOut = (dlssPerf.IsHookActive() && dlssPerf.GetTestTexture()) ?
+			                                  static_cast<ID3D11Resource*>(dlssPerf.GetTestTexture()) :
+			                                  nullptr;
+			fidelityFX.Upscale(main.texture, reactiveMaskTexture->resource.get(), transparencyCompositionMaskTexture->resource.get(), motionVector.texture, settings.sharpnessFSR, fsrColorOut);
 		}
 
 		state->EndPerfEvent();
@@ -2310,13 +2332,17 @@ void Upscaling::Main_PostProcessing::thunk(RE::ImageSpaceManager* a_this, uint32
 	// the DisplayRes testTexture instead of the small kMAIN. The supplied
 	// lambda is the engine call we'd normally make directly.
 	//
-	// Upscaler gate: testTexture is only populated by DLSS's evaluate path
-	// (Streamline routes its colorOut there when DLSSperf is active). Under
-	// DLSSperf+hookActive, GetUpscaleMethod() returns the boot snapshot so
-	// this kDLSS check evaluates against the install-time choice — staged
-	// UI method changes don't reach here until restart. ShouldHandlePost()
-	// covers the partial-init case (post resources missing).
-	if (upscaleMethod == UpscaleMethod::kDLSS && globals::features::upscaling.dlssPerf.ShouldHandlePost()) {
+	// Upscaler gate: testTexture is populated by whichever upscaler ran
+	// (Streamline routes DLSS colorOut there, FidelityFX routes FSR
+	// colorOut there). Under DLSSperf+hookActive, GetUpscaleMethod() returns
+	// the boot snapshot so this check evaluates against the install-time
+	// choice — staged UI method changes don't reach here until restart.
+	// ShouldHandlePost() covers the partial-init case (post resources
+	// missing).
+	const bool upscalerWritesTestTexture =
+		upscaleMethod == UpscaleMethod::kDLSS ||
+		upscaleMethod == UpscaleMethod::kFSR;
+	if (upscalerWritesTestTexture && globals::features::upscaling.dlssPerf.ShouldHandlePost()) {
 		globals::features::upscaling.dlssPerf.HandlePostProcessing([&]() {
 			func(a_this, a3, a_target, a_4, a_5);
 		});

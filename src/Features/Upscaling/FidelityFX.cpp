@@ -273,8 +273,17 @@ void FidelityFX::CreateFSRResources()
 	auto screenSize = state->screenSize;
 	auto renderSize = Util::ConvertToDynamic(screenSize);
 
-	uint32_t displayWidth = (uint32_t)(globals::game::isVR ? screenSize.x / 2 : screenSize.x);
-	uint32_t displayHeight = (uint32_t)screenSize.y;
+	// DLSSperf bridge: when the BSOpenVR size hook is live, state->screenSize is polluted
+	// to renderRes (engine RTs were allocated small). FSR3 still needs to upscale to the
+	// real HMD display resolution, so use dlssPerf's snapshot for displaySize/maxUpscaleSize.
+	// maxRenderSize stays at screenSize (which IS renderRes under the hook — that's FSR's
+	// expected input extent).
+	auto& dlssPerf = globals::features::upscaling.dlssPerf;
+	const bool dlssperfActive = dlssPerf.IsHookActive();
+	const auto displaySize = dlssperfActive ? dlssPerf.GetDisplayScreenSize() : screenSize;
+
+	uint32_t displayWidth = (uint32_t)(globals::game::isVR ? displaySize.x / 2 : displaySize.x);
+	uint32_t displayHeight = (uint32_t)displaySize.y;
 	uint32_t renderWidth = (uint32_t)(globals::game::isVR ? renderSize.x / 2 : renderSize.x);
 	uint32_t renderHeight = (uint32_t)renderSize.y;
 
@@ -344,7 +353,7 @@ FfxResource ffxGetResource(ID3D11Resource* dx11Resource,
 	return resource;
 }
 
-void FidelityFX::Upscale(ID3D11Resource* a_upscalingTexture, ID3D11Resource* a_reactiveMask, ID3D11Resource* a_transparencyCompositionMask, ID3D11Resource* a_motionVectors, float a_sharpness)
+void FidelityFX::Upscale(ID3D11Resource* a_upscalingTexture, ID3D11Resource* a_reactiveMask, ID3D11Resource* a_transparencyCompositionMask, ID3D11Resource* a_motionVectors, float a_sharpness, ID3D11Resource* a_colorOut)
 {
 	auto renderer = globals::game::renderer;
 	auto context = globals::d3d::context;
@@ -356,6 +365,10 @@ void FidelityFX::Upscale(ID3D11Resource* a_upscalingTexture, ID3D11Resource* a_r
 
 	auto& upscaling = globals::features::upscaling;
 	auto jitter = upscaling.jitter;
+
+	// Default to in-place output when caller didn't supply a separate destination.
+	if (!a_colorOut)
+		a_colorOut = a_upscalingTexture;
 
 	auto DispatchFSR = [&](uint32_t contextIndex, ID3D11Resource* r_color, ID3D11Resource* r_depth, ID3D11Resource* r_mvec,
 						   ID3D11Resource* r_reactive, ID3D11Resource* r_trans, ID3D11Resource* r_output,
@@ -431,8 +444,9 @@ void FidelityFX::Upscale(ID3D11Resource* a_upscalingTexture, ID3D11Resource* a_r
 				renderSize.x / 2.0f);
 		}
 
-		// Merge outputs back to kMAIN
-		upscaling.FinalizePerEyeOutputs(a_upscalingTexture);
+		// Merge outputs into the supplied displayRes destination (kMAIN by default;
+		// dlssPerf.testTexture when DLSSperf has shrunk the engine RTs).
+		upscaling.FinalizePerEyeOutputs(a_colorOut);
 	} else {
 		DispatchFSR(0,
 			a_upscalingTexture,
@@ -440,7 +454,7 @@ void FidelityFX::Upscale(ID3D11Resource* a_upscalingTexture, ID3D11Resource* a_r
 			a_motionVectors,
 			a_reactiveMask,
 			a_transparencyCompositionMask,
-			a_upscalingTexture,  // Output to same texture
+			a_colorOut,
 			(uint)renderSize.x,
 			renderSize.x);
 	}
