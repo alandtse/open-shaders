@@ -366,6 +366,8 @@ void EditorWindow::ShowObjectsWindow()
 				activeRecords.resize(4);
 
 			if (!activeRecords.empty()) {
+				const auto& theme = Menu::GetSingleton()->GetTheme();
+
 				Util::Text::RestartNeeded("Active:");
 				ImGui::SameLine();
 				const float recordX = ImGui::GetCursorPosX();
