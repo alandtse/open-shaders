@@ -278,7 +278,7 @@ namespace DlssEnhancerImpl::Ops
 		auto context = globals::d3d::context;
 
 		if (!Core::vrSubrectStretchCS) {
-			Core::vrSubrectStretchCS.attach((ID3D11ComputeShader*)Util::CompileShader(L"Data/Shaders/Features/SubrectStretchCS.hlsl", {}, "cs_5_0"));
+			Core::vrSubrectStretchCS.attach((ID3D11ComputeShader*)Util::CompileShader(L"Data/Shaders/Upscaling/DlssEnhancer/SubrectStretchCS.hlsl", {}, "cs_5_0"));
 
 			D3D11_BUFFER_DESC cbDesc = {};
 			cbDesc.ByteWidth = 48;
