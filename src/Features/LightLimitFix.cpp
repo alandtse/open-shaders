@@ -10,11 +10,13 @@
 #include "Util.h"
 #include "Utils/ExternalEmittance.h"
 
+// EnableLightsVisualisation and LightsVisualisationMode are intentionally NOT
+// serialized -- they're debug visualisations that should reset on each session
+// so users don't accidentally ship debug overlays in their persistent config.
+// EnableContactShadows is a real user setting and persists.
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	LightLimitFix::Settings,
 	EnableContactShadows,
-	EnableLightsVisualisation,
-	LightsVisualisationMode,
 	ShowShadowOverlay,
 	ShadowSettings)
 
