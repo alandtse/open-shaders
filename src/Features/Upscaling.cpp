@@ -329,6 +329,10 @@ void Upscaling::DrawSettings()
 			ImGui::Checkbox("Render engine at upscaled resolution", &settings.renderAtUpscaleRes);
 			if (!methodSupportsPerf)
 				ImGui::EndDisabled();
+			// Hover tooltip always renders (so users learn what the option does
+			// even when greyed out). The pending-restart banner only fires when
+			// DLSS is the active upscaler -- the feature can't take effect
+			// otherwise, so a "pending restart" hint there would mislead.
 			if (auto _tt = Util::HoverTooltipWrapper()) {
 				ImGui::Text(
 					"When enabled, the engine pipeline allocates render targets at the upscaled-render\n"
@@ -336,9 +340,8 @@ void Upscaling::DrawSettings()
 					"its output to a private DisplayRes texture. Substantial VRAM and bandwidth savings,\n"
 					"especially at high HMD resolutions.\n"
 					"\n"
-					"Requires DLSS or FSR. Restart required to enable/disable. Method and Upscale\n"
-					"Preset changes also require a restart while this is active; sharpness / model preset\n"
-					"/ Reflex remain live.");
+					"Requires DLSS or FSR. Method and Upscale Preset changes also require a restart\n"
+					"while this is active; sharpness / model preset / Reflex remain live.");
 			}
 			if (!methodSupportsPerf && settings.renderAtUpscaleRes)
 				Util::Text::Disabled("Render-at-upscaled-resolution requires DLSS or FSR — switch upscaler Method to activate.");
@@ -372,7 +375,10 @@ void Upscaling::DrawSettings()
 			bool fgEnabled = settings.frameGenerationMode != 0;
 			if (ImGui::Checkbox("Frame Generation", &fgEnabled))
 				settings.frameGenerationMode = fgEnabled ? 1 : 0;
-			Util::UI::DrawSettingDiff(bootSnapshot, settings, &Settings::frameGenerationMode);
+			Util::UI::RestartGatedAnnotate(bootSnapshot, settings, &Settings::frameGenerationMode,
+				"Interpolate real frames with generated ones for a smoother experience. Uses AMD FSR Frame\n"
+				"Generation. Requires a D3D11-to-D3D12 proxy swapchain which can introduce compatibility\n"
+				"issues; in particular, frame generation works only in windowed mode.");
 
 			if (!frameGenerationDx12PathActive)
 				ImGui::BeginDisabled();
@@ -388,7 +394,10 @@ void Upscaling::DrawSettings()
 			bool fgForce = settings.frameGenerationForceEnable != 0;
 			if (ImGui::Checkbox("Force Enable Frame Generation", &fgForce))
 				settings.frameGenerationForceEnable = fgForce ? 1 : 0;
-			Util::UI::DrawSettingDiff(bootSnapshot, settings, &Settings::frameGenerationForceEnable);
+			Util::UI::RestartGatedAnnotate(bootSnapshot, settings, &Settings::frameGenerationForceEnable,
+				"Bypass the high-refresh-rate monitor check so Frame Generation can run on lower-Hz\n"
+				"displays. Useful for laptops and older monitors at the cost of less headroom for the\n"
+				"generated frames.");
 
 			ImGui::Checkbox("Frame Generation in Menus", &settings.frameGenerationAllowInMenus);
 			if (auto _tt = Util::HoverTooltipWrapper()) {
@@ -503,10 +512,9 @@ void Upscaling::DrawSettings()
 		if (ImGui::Combo("Streamline Logging", &logLevelIdx, logLevels, IM_ARRAYSIZE(logLevels))) {
 			settings.streamlineLogLevel = static_cast<uint>(logLevelIdx);
 		}
-		Util::UI::DrawSettingDiff(bootSnapshot, settings, &Settings::streamlineLogLevel);
-		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::Text("Streamline logging controls the verbosity of NVIDIA Streamline backend logs. Useful for debugging issues with DLSS/DLSS-G.");
-		}
+		Util::UI::RestartGatedAnnotate(bootSnapshot, settings, &Settings::streamlineLogLevel,
+			"Verbosity of the NVIDIA Streamline backend logs. Useful for debugging issues with DLSS / "
+			"DLSS-G.");
 
 		// VR Debug visualization -- per-eye buffers and native inputs
 		if (globals::game::isVR) {

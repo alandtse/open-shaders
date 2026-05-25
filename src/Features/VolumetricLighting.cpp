@@ -22,10 +22,15 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 
 void VolumetricLighting::DrawSettings()
 {
+	// VR pre-allocates the volumetric lighting render targets once at boot, so
+	// toggling at runtime won't size them correctly -- the restart-gating
+	// applies only in VR. The non-VR path resizes resources live on toggle.
 	if (ImGui::Checkbox("Enable Volumetric Lighting in Exteriors", &settings.ExteriorEnabled))
 		SetupVL();
 	if (globals::game::isVR)
-		Util::UI::DrawSettingDiff(bootSnapshot, settings, &Settings::ExteriorEnabled);
+		Util::UI::RestartGatedAnnotate(bootSnapshot, settings, &Settings::ExteriorEnabled,
+			"Volumetric god-rays / fog scattering in exterior cells. In VR the render targets are\n"
+			"sized at boot, so toggling this requires a restart to take effect.");
 
 	if (settings.ExteriorEnabled)
 		DrawVolumetricLightingSettings(settings.ExteriorQuality, settings.ExteriorCustomSize, false, !inInterior);
@@ -33,7 +38,9 @@ void VolumetricLighting::DrawSettings()
 	if (ImGui::Checkbox("Enable Volumetric Lighting in Interiors", &settings.InteriorEnabled))
 		SetupVL();
 	if (globals::game::isVR)
-		Util::UI::DrawSettingDiff(bootSnapshot, settings, &Settings::InteriorEnabled);
+		Util::UI::RestartGatedAnnotate(bootSnapshot, settings, &Settings::InteriorEnabled,
+			"Volumetric god-rays / fog scattering in interior cells. In VR the render targets are\n"
+			"sized at boot, so toggling this requires a restart to take effect.");
 
 	if (settings.InteriorEnabled)
 		DrawVolumetricLightingSettings(settings.InteriorQuality, settings.InteriorCustomSize, true, inInterior);
