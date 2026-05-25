@@ -2687,7 +2687,8 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	float contactShadowNoise = 0.0;
 	[branch] if (SharedData::lightLimitFixSettings.EnableContactShadows)
 	{
-		contactShadowSteps = round(4.0 * (1.0 - saturate(viewPosition.z / 1024.0)));
+		contactShadowSteps = round(SharedData::lightLimitFixSettings.ContactShadowMaxSteps *
+		                           (1.0 - saturate(viewPosition.z / SharedData::lightLimitFixSettings.ContactShadowMaxDistance)));
 		// The helper stays stereo-stable in VR — see
 		// LightLimitFix::GetContactShadowNoiseCoord for the eye-buffer math.
 		contactShadowNoise = Random::InterleavedGradientNoise(
@@ -2741,11 +2742,17 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 		float contactShadow = 1.0;
 
 #			if defined(DEFERRED)
+		// Skip contact-shadow raymarch for lights too weak at this pixel to produce a visible
+		// shadow. intensityMultiplier already captures (1 - (lightDist/radius)^2); when it
+		// drops below MinIntensity, the shadow contribution is dominated by the dimming and
+		// not worth the per-step depth fetches. Typical clustered scenes have many lights at
+		// their reach edge — this cutoff skips them before the matrix multiply and raymarch.
 		[branch] if (
 			SharedData::lightLimitFixSettings.EnableContactShadows &&
 			!(light.lightFlags & LightLimitFix::LightFlags::Simple) &&
 			shadowComponent != 0.0 &&
-			lightAngle > 0.0)
+			lightAngle > 0.0 &&
+			intensityMultiplier > SharedData::lightLimitFixSettings.ContactShadowMinIntensity)
 		{
 			// The current LightLimitFix Light struct stores positionWS only; derive view-space
 			// from CameraView so the raymarch direction matches viewPosition. The pre-removal

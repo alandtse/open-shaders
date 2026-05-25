@@ -69,15 +69,24 @@ namespace LightLimitFix
 #endif
 	}
 
+	// Skyrim's first-person viewmodel is rendered in a compressed depth range
+	// (linearized depth < this value). Contact shadows against viewmodel geometry
+	// produce wrong results (the viewmodel doesn't sit in the world), so we reject
+	// occluders whose depth falls in that range. A proper viewmodel stencil pass
+	// would be more robust but is out of scope here.
+	static const float CONTACT_SHADOW_FIRST_PERSON_MAX_DEPTH = 16.5;
+
 	float ContactShadows(float3 viewPosition, float noise2D, float3 lightDirectionVS, uint contactShadowSteps, uint a_eyeIndex = 0)
 	{
 		if (contactShadowSteps == 0)
 			return 1.0;
 
-		float2 depthDeltaMult = float2(0.20, 0.05);
+		float depthDeltaThickness = SharedData::lightLimitFixSettings.ContactShadowThickness;
+		float depthDeltaFade = SharedData::lightLimitFixSettings.ContactShadowDepthFade;
 
-		// Extend contact shadow distance
-		lightDirectionVS *= 2.0;
+		// Scale per-step march length in view-space units. Larger -> longer shadow reach,
+		// coarser detail. Tunable so users can trade reach vs. precision.
+		lightDirectionVS *= SharedData::lightLimitFixSettings.ContactShadowStride;
 
 		// Offset starting position with interleaved gradient noise
 		viewPosition += lightDirectionVS * noise2D;
@@ -99,8 +108,8 @@ namespace LightLimitFix
 
 			// Difference between the current ray distance and the marched light
 			float depthDelta = viewPosition.z - rayDepth;
-			if (rayDepth > 16.5)  // First person
-				contactShadow = max(contactShadow, saturate(depthDelta * depthDeltaMult.x) - saturate(depthDelta * depthDeltaMult.y));
+			if (rayDepth > CONTACT_SHADOW_FIRST_PERSON_MAX_DEPTH)
+				contactShadow = max(contactShadow, saturate(depthDelta * depthDeltaThickness) - saturate(depthDelta * depthDeltaFade));
 			if (contactShadow == 1.0)
 				break;
 		}

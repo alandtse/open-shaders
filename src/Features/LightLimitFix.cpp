@@ -29,6 +29,40 @@ void LightLimitFix::DrawSettings()
 		ImGui::Text("All point lights (strict and clustered, except simple lights) cast short screen-space shadows. Performance impact.");
 	}
 
+	if (settings.EnableContactShadows && ImGui::TreeNode("Contact Shadow Tuning")) {
+		ImGui::SliderInt("Max Steps", (int*)&settings.ContactShadowMaxSteps, 1, 16, "%d", ImGuiSliderFlags_AlwaysClamp);
+		if (auto _tt = Util::HoverTooltipWrapper()) {
+			ImGui::Text("Raymarch steps at zero depth. Higher = longer / more accurate contact shadows, linearly more cost.\nVR users should consider 2 to halve per-eye cost.");
+		}
+
+		ImGui::SliderFloat("Max Distance", &settings.ContactShadowMaxDistance, 64.0f, 4096.0f, "%.0f");
+		if (auto _tt = Util::HoverTooltipWrapper()) {
+			ImGui::Text("View-space depth at which contact shadows fade to zero steps. Avoids paying for shadows on distant surfaces where they don't read.");
+		}
+
+		ImGui::SliderFloat("Stride", &settings.ContactShadowStride, 0.5f, 8.0f, "%.2f");
+		if (auto _tt = Util::HoverTooltipWrapper()) {
+			ImGui::Text("Per-step march length in view-space units. Larger = longer shadow reach with coarser detail; smaller = tighter contact, shorter reach.");
+		}
+
+		ImGui::SliderFloat("Thickness", &settings.ContactShadowThickness, 0.0f, 1.0f, "%.3f");
+		if (auto _tt = Util::HoverTooltipWrapper()) {
+			ImGui::Text("Depth-delta multiplier for shadow onset. Larger = darker contact at occluder edges.");
+		}
+
+		ImGui::SliderFloat("Depth Fade", &settings.ContactShadowDepthFade, 0.0f, 1.0f, "%.3f");
+		if (auto _tt = Util::HoverTooltipWrapper()) {
+			ImGui::Text("Depth-delta multiplier for shadow falloff. Larger = shadows truncate sooner behind thick occluders.");
+		}
+
+		ImGui::SliderFloat("Min Light Intensity", &settings.ContactShadowMinIntensity, 0.0f, 1.0f, "%.2f");
+		if (auto _tt = Util::HoverTooltipWrapper()) {
+			ImGui::Text("Skip contact shadows for clustered lights whose normalized intensity at the pixel is below this threshold. Higher = larger perf win, may drop subtle shadows from weak lights at their reach edge.");
+		}
+
+		ImGui::TreePop();
+	}
+
 	///////////////////////////////
 	ImGui::SeparatorText("Debug");
 
@@ -75,6 +109,12 @@ LightLimitFix::PerFrame LightLimitFix::GetCommonBufferData()
 {
 	PerFrame perFrame{};
 	perFrame.EnableContactShadows = settings.EnableContactShadows;
+	perFrame.ContactShadowMaxSteps = settings.ContactShadowMaxSteps;
+	perFrame.ContactShadowMaxDistance = settings.ContactShadowMaxDistance;
+	perFrame.ContactShadowStride = settings.ContactShadowStride;
+	perFrame.ContactShadowThickness = settings.ContactShadowThickness;
+	perFrame.ContactShadowDepthFade = settings.ContactShadowDepthFade;
+	perFrame.ContactShadowMinIntensity = settings.ContactShadowMinIntensity;
 	perFrame.EnableLightsVisualisation = settings.EnableLightsVisualisation;
 	perFrame.LightsVisualisationMode = settings.LightsVisualisationMode;
 	std::copy(clusterSize, clusterSize + 3, perFrame.ClusterSize);

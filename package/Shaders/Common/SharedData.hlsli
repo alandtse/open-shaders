@@ -76,9 +76,17 @@ namespace SharedData
 	struct LightLimitFixSettings
 	{
 		uint EnableContactShadows;
+		uint ContactShadowMaxSteps;
+		float ContactShadowMaxDistance;
+		float ContactShadowStride;
+		float ContactShadowThickness;
+		float ContactShadowDepthFade;
+		float ContactShadowMinIntensity;
 		uint EnableLightsVisualisation;
 		uint LightsVisualisationMode;
 		float pad0;
+		float pad1;
+		float pad2;
 		uint4 ClusterSize;
 	};
 

@@ -95,9 +95,15 @@ public:
 	struct alignas(16) PerFrame
 	{
 		uint EnableContactShadows;
+		uint ContactShadowMaxSteps;
+		float ContactShadowMaxDistance;
+		float ContactShadowStride;
+		float ContactShadowThickness;
+		float ContactShadowDepthFade;
+		float ContactShadowMinIntensity;
 		uint EnableLightsVisualisation;
 		uint LightsVisualisationMode;
-		float pad0;
+		float pad0[3];
 		uint ClusterSize[4];
 	};
 	STATIC_ASSERT_ALIGNAS_16(PerFrame);
@@ -171,6 +177,19 @@ public:
 	struct Settings
 	{
 		bool EnableContactShadows = false;
+		// Max raymarch steps at zero depth; linearly ramps to 0 at MaxDistance.
+		uint ContactShadowMaxSteps = 4;
+		// View-space depth at which contact shadows fade fully off.
+		float ContactShadowMaxDistance = 1024.0f;
+		// Per-step march length in view-space units. Larger -> longer shadows, coarser detail.
+		float ContactShadowStride = 2.0f;
+		// Depth-delta multiplier for shadow onset (higher -> darker contact).
+		float ContactShadowThickness = 0.20f;
+		// Depth-delta multiplier for shadow falloff (higher -> shorter shadow).
+		float ContactShadowDepthFade = 0.05f;
+		// Skip contact shadows for lights below this normalized intensity at the pixel
+		// (intensityMultiplier = 1 - (lightDist/radius)^2). 0 = never skip; 1 = always skip.
+		float ContactShadowMinIntensity = 0.25f;
 		bool EnableLightsVisualisation = false;
 		uint LightsVisualisationMode = 0;
 	};
