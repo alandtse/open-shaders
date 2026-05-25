@@ -1070,7 +1070,12 @@ namespace Util
 		}
 
 		template <typename SettingsT, typename T, typename Body>
-			requires std::invocable<Body>
+		// body is invoked as an lvalue (`body()` below). Constrain on
+		// `Body&` so a non-const-callable, move-only, or otherwise
+		// lvalue-only invocable is not falsely rejected -- the prior
+		// `std::invocable<Body>` form tested invocation on a forwarded-as
+		// expression that may decay to rvalue and reject lvalue-only types.
+			requires std::invocable<Body&>
 		inline void RestartGatedAnnotate(const Util::Settings::BootSnapshot<SettingsT>& snapshot,
 			const SettingsT& live,
 			T SettingsT::* field,

@@ -98,6 +98,20 @@ namespace Util::Settings
 			return *reinterpret_cast<const T*>(reinterpret_cast<const std::byte*>(&bootCopy_) + offset);
 		}
 
+		// Contract: `T` (the type of the registered restart field, NOT
+		// `SettingsT`) is expected to be POD-shaped -- bool, integral, float,
+		// scoped enum, or a struct whose object representation has no
+		// uninitialised padding. The per-field memcmp compares
+		// `sizeof(T)` raw bytes; a `T` with padding inside its layout could
+		// see false-positive diffs if the boot copy and live copy have
+		// different padding bytes (the standard doesn't require copy
+		// assignment to copy padding). In practice the registered fields
+		// across the codebase are bool/uint32_t/float/enum -- none of which
+		// have meaningful padding -- and the trivially-copyable Settings
+		// path in Latch uses memcpy that DOES preserve padding bytes
+		// verbatim, sidestepping the issue entirely. If a future field is a
+		// padded struct, document it here or constrain via
+		// `std::has_unique_object_representations_v<T>`.
 		template <typename T>
 		bool HasPendingChange(const SettingsT& live, T SettingsT::* member) const noexcept
 		{
