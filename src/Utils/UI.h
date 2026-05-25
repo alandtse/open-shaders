@@ -1,6 +1,7 @@
 #pragma once
 #include <algorithm>
 #include <cfloat>  // For FLT_MAX
+#include <concepts>
 #include <cstdio>
 #include <functional>
 #include <imgui.h>
@@ -1026,31 +1027,53 @@ namespace Util
 		}
 
 		// One-call wrapper for a restart-gated ImGui control. Call IMMEDIATELY
-		// AFTER the control (Checkbox / SliderInt / Combo / etc.) so
-		// ImGui::IsItemHovered targets that control. Does two things:
-		//   1. If hovered, sets a tooltip with the standard
-		//      "Requires a game restart to change." suffix appended to
-		//      `tooltipBody` (pass nullptr/empty for suffix-only).
-		//   2. Calls DrawSettingDiff to render the "Pending restart" banner
-		//      when the live value diverges from the boot snapshot.
+		// AFTER the control (Checkbox / SliderInt / Combo / etc.) so the
+		// HoverTooltipWrapper attaches to that control. Does two things:
+		//   1. If hovered, renders a tooltip via HoverTooltipWrapper (the
+		//      codebase's dominant tooltip pattern, used 296+ times -- gives
+		//      a consistent Subtext font role and viewport-clamped placement)
+		//      with the standard "Requires a game restart to change." suffix
+		//      appended after the caller-supplied body.
+		//   2. Calls DrawSettingDiff outside the hover scope to render the
+		//      "Pending restart" banner when the live value diverges from
+		//      the boot snapshot.
 		//
-		// Saves three lines of boilerplate per call site and prevents the
-		// standard suffix or the diff-banner call from being forgotten /
-		// drifting in wording. Use plain DrawSettingDiff for controls whose
-		// tooltip needs custom formatting (e.g. dynamic VRAM projections)
-		// where the standard suffix doesn't fit cleanly.
+		// Two overloads:
+		//   - `const char* body` for the simple single-string case.
+		//   - Callable `body` for multi-line tooltips that already use
+		//     HoverTooltipWrapper-style content (multiple ImGui::Text /
+		//     TextWrapped calls). The callable runs inside the
+		//     HoverTooltipWrapper RAII scope so callers can use any ImGui
+		//     text primitive.
+		//
+		// Pass nullptr / empty body to render just the suffix.
 		template <typename SettingsT, typename T>
 		inline void RestartGatedAnnotate(const Util::Settings::BootSnapshot<SettingsT>& snapshot,
 			const SettingsT& live,
 			T SettingsT::* field,
 			const char* tooltipBody = nullptr)
 		{
-			if (ImGui::IsItemHovered()) {
+			if (auto _tt = Util::HoverTooltipWrapper()) {
 				if (tooltipBody && tooltipBody[0]) {
-					ImGui::SetTooltip("%s\nRequires a game restart to change.", tooltipBody);
-				} else {
-					ImGui::SetTooltip("Requires a game restart to change.");
+					ImGui::TextUnformatted(tooltipBody);
+					ImGui::Spacing();
 				}
+				ImGui::TextUnformatted("Requires a game restart to change.");
+			}
+			DrawSettingDiff(snapshot, live, field);
+		}
+
+		template <typename SettingsT, typename T, typename Body>
+			requires std::invocable<Body>
+		inline void RestartGatedAnnotate(const Util::Settings::BootSnapshot<SettingsT>& snapshot,
+			const SettingsT& live,
+			T SettingsT::* field,
+			Body&& body)
+		{
+			if (auto _tt = Util::HoverTooltipWrapper()) {
+				body();
+				ImGui::Spacing();
+				ImGui::TextUnformatted("Requires a game restart to change.");
 			}
 			DrawSettingDiff(snapshot, live, field);
 		}
