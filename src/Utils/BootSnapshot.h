@@ -7,6 +7,7 @@
 #include <span>
 #include <string_view>
 #include <type_traits>
+#include <utility>
 
 namespace Util::Settings
 {
@@ -33,23 +34,31 @@ namespace Util::Settings
 		{
 			static_assert(std::is_standard_layout_v<SettingsT>, "BootSnapshot requires standard-layout Settings for offsetof-based tables.");
 			static_assert(std::is_copy_assignable_v<SettingsT>, "BootSnapshot requires copy-assignable Settings.");
+			static_assert(std::is_default_constructible_v<SettingsT>,
+				"BootSnapshot requires default-constructible Settings (bootCopy_ default-inits and detail::MemberOffset constructs a temporary).");
 		}
 
-		void Latch(const SettingsT& live)
+		void Latch(const SettingsT& live) noexcept(std::is_nothrow_copy_assignable_v<SettingsT>)
 		{
-			// Copy-assign so non-trivial members (e.g. std::string formula
-			// fields in ShadowCasterManager::Settings) deep-copy correctly.
-			// Trivially-copyable Settings work the same way -- the compiler
-			// emits memcpy-equivalent code for trivially-copyable assignment.
-			// Registered RESTART fields are still expected to be trivially
-			// comparable (the per-field HasPendingChange uses memcmp on the
-			// offset+size slice), but unregistered non-trivial members are
-			// free to live alongside them in the outer Settings struct.
-			bootCopy_ = live;
+			if constexpr (std::is_trivially_copyable_v<SettingsT>) {
+				// Trivially-copyable fast path: memcpy preserves padding bytes
+				// verbatim. Matters when a registered restart field's *type*
+				// contains padding -- HasPendingChange's memcmp would otherwise
+				// see false-positive diffs from uninitialized padding bytes.
+				std::memcpy(&bootCopy_, &live, sizeof(SettingsT));
+			} else {
+				// Copy-assign for Settings with non-trivial members (e.g. the
+				// std::string formula fields in ShadowCasterManager::Settings).
+				// Registered restart fields must still be trivially comparable
+				// for HasPendingChange's per-field memcmp to be meaningful;
+				// std::string in the outer struct is fine as long as it isn't
+				// registered (it isn't -- formulas are runtime-tunable).
+				bootCopy_ = live;
+			}
 			latched_ = true;
 		}
 
-		void LatchIfNeeded(const SettingsT& live) noexcept
+		void LatchIfNeeded(const SettingsT& live) noexcept(noexcept(std::declval<BootSnapshot&>().Latch(live)))
 		{
 			if (!latched_) {
 				Latch(live);

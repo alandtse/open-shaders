@@ -94,23 +94,34 @@ TEST_CASE("BootSnapshot deep-copies non-trivial members on Latch", "[bootsnapsho
 	SettingsWithString boot{};
 	boot.shadowLightCount = 16;
 	boot.enabled = true;
-	boot.formula = "lightradius * lightintensity";
+	const std::string originalFormula = "lightradius * lightintensity";
+	boot.formula = originalFormula;
 
 	snap.Latch(boot);
 	REQUIRE(snap.IsLatched());
 	REQUIRE(snap.Boot(&SettingsWithString::shadowLightCount) == 16);
 	REQUIRE(snap.Boot(&SettingsWithString::enabled) == true);
+	// Read the snapshot's std::string directly. Catches shallow-copy
+	// regressions: if Latch were still doing a memcpy of SettingsWithString,
+	// the boot copy would hold a stale pointer into live.formula's heap
+	// buffer, and reading it (especially after live.formula reallocates)
+	// would crash or return garbage. The POD-only assertions don't cover
+	// this on their own.
+	REQUIRE(snap.Boot(&SettingsWithString::formula) == originalFormula);
 
 	// Mutating the live struct (including reallocating its string) must NOT
 	// disturb the boot copy or produce false-positive diffs for unregistered
-	// fields. Force a string reallocation by growing it well past SSO size.
+	// fields. Force a string reallocation by growing it well past SSO size,
+	// then verify the boot copy's string is unchanged.
 	SettingsWithString live = boot;
 	live.formula = std::string(256, 'x');
 	REQUIRE_FALSE(snap.HasPendingChange(live, &SettingsWithString::shadowLightCount));
 	REQUIRE_FALSE(snap.HasPendingChange(live, &SettingsWithString::enabled));
+	REQUIRE(snap.Boot(&SettingsWithString::formula) == originalFormula);
 
 	// Now flip a registered POD field; the diff fires.
 	live.shadowLightCount = 32;
 	REQUIRE(snap.HasPendingChange(live, &SettingsWithString::shadowLightCount));
 	REQUIRE_FALSE(snap.HasPendingChange(live, &SettingsWithString::enabled));
+	REQUIRE(snap.Boot(&SettingsWithString::formula) == originalFormula);
 }
