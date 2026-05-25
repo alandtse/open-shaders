@@ -297,12 +297,10 @@ void Upscaling::DrawSettings()
 
 			const char* presets[] = { "Default", "Preset J", "Preset K", "Preset L", "Preset M" };
 			ImGui::Combo("DLSS Model Preset", (int*)&settings.presetDLSS, presets, 5);
-			Util::UI::DrawSettingDiff(bootSnapshot, settings, &Settings::presetDLSS);
 			if (auto _tt = Util::HoverTooltipWrapper()) {
 				ImGui::Text("Choose which DLSS AI model preset to use.");
 				ImGui::Text("Each model offers different visual quality, performance, and motion stability.");
 				ImGui::Text("Set to 'Default' for automatic selection based on your Upscale Preset and hardware.");
-				ImGui::Text("Changing this setting requires a restart to take effect.");
 			}
 		}
 
@@ -480,7 +478,6 @@ void Upscaling::DrawSettings()
 			settings.streamlineLogLevel = static_cast<uint>(logLevelIdx);
 		}
 		Util::UI::DrawSettingDiff(bootSnapshot, settings, &Settings::streamlineLogLevel);
-		ImGui::TextUnformatted("Changing this requires a restart to take effect.");
 		if (auto _tt = Util::HoverTooltipWrapper()) {
 			ImGui::Text("Streamline logging controls the verbosity of NVIDIA Streamline backend logs. Useful for debugging issues with DLSS/DLSS-G.");
 		}

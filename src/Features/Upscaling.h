@@ -86,12 +86,14 @@ public:
 	// per-field conditional gating (e.g., qualityMode/upscaleMethod banners only
 	// render while DLSSperf's render-target hook is active). MCP discovery
 	// reports the full set; clients can check feature state themselves.
-	inline static constexpr Util::Settings::RestartTable<Settings, 7> kRestartFields{ {
+	// presetDLSS is deliberately NOT here: Streamline::SetDLSSOptions reads
+	// settings.presetDLSS per-frame and applies it via slDLSSSetOptions, so
+	// it's already runtime-effective.
+	inline static constexpr Util::Settings::RestartTable<Settings, 6> kRestartFields{ {
 		UTIL_RESTART_FIELD(Settings, frameGenerationMode, "Frame Generation"),
 		UTIL_RESTART_FIELD(Settings, frameGenerationForceEnable, "Force Enable Frame Generation"),
 		UTIL_RESTART_FIELD(Settings, enableDLSSperf, "DLSSperf"),
 		UTIL_RESTART_FIELD(Settings, streamlineLogLevel, "Streamline Logging"),
-		UTIL_RESTART_FIELD(Settings, presetDLSS, "DLSS Model Preset"),
 		UTIL_RESTART_FIELD(Settings, upscaleMethod, "Upscaling Method"),
 		UTIL_RESTART_FIELD(Settings, qualityMode, "Upscale Preset"),
 	} };
