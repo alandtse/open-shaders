@@ -321,7 +321,11 @@ void LightLimitFix::BSLightingShader_SetupGeometry_GeometrySetupConstantPointLig
 			auto checkDescs = [&](auto& runtimeData) {
 				if (!runtimeData.shadowmapDescriptors.empty()) {
 					const auto idx = runtimeData.shadowmapDescriptors[0].shadowmapIndex;
-					if (idx > 0 && idx < installedSlots) {
+					// Upper-bound only -- slot 0 is a legitimate kSHADOWMAPS
+					// slice for a point/spot light when the sun isn't in the
+					// SCM pool. The OOB risk this guard addresses is
+					// `idx >= installedSlots`, not `idx == 0`.
+					if (idx < installedSlots) {
 						light.shadowMapIndex = idx;
 						light.lightFlags.set(LightFlags::Shadow);
 					}
