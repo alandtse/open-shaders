@@ -38,6 +38,7 @@ find_package(imgui CONFIG REQUIRED)
 
 add_executable(cpp_tests
     test_main.cpp
+    test_bootsnapshot.cpp
     test_subrect.cpp
     # Compile the unit-under-test directly into the test binary so we don't
     # depend on the plugin DLL build (which pulls in FFX/Streamline/etc.).

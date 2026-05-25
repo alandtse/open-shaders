@@ -370,6 +370,11 @@ struct BSShaderRenderTargets_Create
 	{
 		Util::SetGameSettingValue<std::int32_t>("iNumFocusShadow:Display", iNumFocusShadow, 0);
 
+		// Restart-required settings snapshot. Latch once as soon as engine
+		// rendering state begins initializing (pre-RT allocation) so UI/MCP
+		// can diff "active at boot" vs "selected".
+		globals::features::upscaling.bootSnapshot.LatchIfNeeded(globals::features::upscaling.settings);
+
 		// DLSSperf: install the BSOpenVR render-target-size hook before the
 		// engine creates its render targets. This is the only place where
 		// BSOpenVR is guaranteed available AND we can still influence RT

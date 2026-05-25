@@ -559,7 +559,6 @@ void WeatherEditor::DisplayWindInfo(RE::TESWeather* weather)
 	auto sky = globals::game::sky;
 	if (!weather || (weather->data.windSpeed <= 0 && (!sky || sky->windSpeed <= 0.0f)))
 		return;
-	const auto& theme = Menu::GetSingleton()->GetTheme();
 	float windSpeedDisplay = weather->data.windSpeed / 255.0f;
 	ImGui::BulletText("Weather Wind Speed: %.2f (raw %d)", windSpeedDisplay, weather->data.windSpeed);
 	if (auto _tt = Util::HoverTooltipWrapper()) {
@@ -603,7 +602,7 @@ void WeatherEditor::DisplayWindInfo(RE::TESWeather* weather)
 			windRelation = "Left crosswind";
 		}
 		ImGui::SameLine();
-		ImGui::TextColored(theme.StatusPalette.RestartNeeded, "(%s)", windRelation);
+		Util::Text::RestartNeeded("(%s)", windRelation);
 		if (auto _tt = Util::HoverTooltipWrapper()) {
 			Util::DrawMultiLineTooltip({
 				"Wind relative to player direction:",

@@ -18,6 +18,7 @@
 #include <imgui_stdlib.h>
 
 #include <algorithm>
+#include <cstring>
 #include <format>
 #include <optional>
 #include <stdexcept>
@@ -451,7 +452,7 @@ static mcp::json EngineStateBlob()
 // Helper used by feature(action="list") to build one entry per feature.
 static mcp::json FeatureEntry(Feature* f)
 {
-	return mcp::json({
+	mcp::json entry({
 		{ "name", f->GetName() },
 		{ "shortName", f->GetShortName() },
 		{ "loaded", f->loaded },
@@ -461,6 +462,36 @@ static mcp::json FeatureEntry(Feature* f)
 		{ "supportsVR", f->SupportsVR() },
 		{ "inMenu", f->IsInMenu() },
 	});
+
+	// Inline restart-gated metadata so `list` is the single tool that answers
+	// "what features exist", "which fields need a restart to apply", and
+	// "is anything currently pending". Each entry's `pending` is true when
+	// the live setting differs from the boot-latched value.
+	const auto fields = f->GetRestartRequiredFields();
+	if (!fields.empty()) {
+		mcp::json restartFields = mcp::json::array();
+		const auto* liveBase = reinterpret_cast<const unsigned char*>(f->GetSettingsBlob());
+		const size_t liveSize = f->GetSettingsBlobSize();
+		for (const auto& field : fields) {
+			bool pending = false;
+			if (liveBase && field.jsonKey && field.size != 0 &&
+				field.offset + field.size <= liveSize) {
+				const void* boot = f->GetBootValue(field.jsonKey);
+				if (boot &&
+					std::memcmp(boot, liveBase + field.offset, field.size) != 0) {
+					pending = true;
+				}
+			}
+			restartFields.push_back(mcp::json({
+				{ "key", field.jsonKey ? field.jsonKey : "" },
+				{ "label", field.label ? field.label : "" },
+				{ "pending", pending },
+			}));
+		}
+		entry["restartFields"] = restartFields;
+	}
+
+	return entry;
 }
 
 void RemoteControl::RegisterInspectTool()
@@ -517,7 +548,11 @@ void RemoteControl::RegisterFeatureTool()
 							  "Actions:\n"
 							  "  list   — no other params. Returns a JSON array; "
 							  "each entry has { name, shortName, loaded, version, "
-							  "category, isCore, supportsVR, inMenu }.\n"
+							  "category, isCore, supportsVR, inMenu }. Features "
+							  "with restart-gated settings also include "
+							  "`restartFields: [{ key, label, pending }]` — "
+							  "`pending=true` means the user has staged a change "
+							  "that won't take effect until the next launch.\n"
 							  "  get    — params: shortName. Returns the "
 							  "Feature::SaveSettings(json) blob. May return null "
 							  "if the feature has no SaveSettings/LoadSettings "
@@ -588,6 +623,7 @@ void RemoteControl::RegisterFeatureTool()
 			}
 
 			const std::string shortName = params.value("shortName", std::string{});
+
 			if (shortName.empty()) {
 				return ErrorResult("missing required parameter 'shortName'",
 					{ { "action", action } });

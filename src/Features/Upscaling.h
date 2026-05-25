@@ -6,6 +6,7 @@
 #include "Upscaling/FidelityFX.h"
 #include "Upscaling/RCAS/RCAS.h"
 #include "Upscaling/Streamline.h"
+#include "Utils/BootSnapshot.h"
 #include <d3d11_4.h>
 #include <d3d12.h>
 #include <winrt/base.h>
@@ -80,6 +81,24 @@ public:
 
 	Settings settings;
 
+	// Single source of truth for restart-gated fields. Order is not load-bearing
+	// — the call-site `DrawSettingDiff` invocations in DrawSettings() handle any
+	// per-field conditional gating (e.g., qualityMode/upscaleMethod banners only
+	// render while DLSSperf's render-target hook is active). MCP discovery
+	// reports the full set; clients can check feature state themselves.
+	// presetDLSS is deliberately NOT here: Streamline::SetDLSSOptions reads
+	// settings.presetDLSS per-frame and applies it via slDLSSSetOptions, so
+	// it's already runtime-effective.
+	inline static constexpr Util::Settings::RestartTable<Settings, 6> kRestartFields{ {
+		UTIL_RESTART_FIELD(Settings, frameGenerationMode, "Frame Generation"),
+		UTIL_RESTART_FIELD(Settings, frameGenerationForceEnable, "Force Enable Frame Generation"),
+		UTIL_RESTART_FIELD(Settings, enableDLSSperf, "DLSSperf"),
+		UTIL_RESTART_FIELD(Settings, streamlineLogLevel, "Streamline Logging"),
+		UTIL_RESTART_FIELD(Settings, upscaleMethod, "Upscaling Method"),
+		UTIL_RESTART_FIELD(Settings, qualityMode, "Upscale Preset"),
+	} };
+	Util::Settings::BootSnapshot<Settings> bootSnapshot{ kRestartFields };
+
 	struct JitterCB
 	{
 		float2 jitter;
@@ -116,6 +135,14 @@ public:
 	bool IsUpscalingActive() const;
 
 	// Feature interface overrides
+	std::span<const Util::Settings::RestartFieldInfo> GetRestartRequiredFields() const override
+	{
+		return { kRestartFields.data(), kRestartFields.size() };
+	}
+	const void* GetBootValue(std::string_view jsonKey) const override { return bootSnapshot.RawBoot(jsonKey); }
+	const void* GetSettingsBlob() const override { return &settings; }
+	size_t GetSettingsBlobSize() const override { return sizeof(settings); }
+
 	virtual void DrawSettings() override;
 	virtual void SaveSettings(json& o_json) override;
 	virtual void LoadSettings(json& o_json) override;
