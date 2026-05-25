@@ -31,8 +31,13 @@ RenderDoc* RenderDoc::GetSingleton()
 
 void RenderDoc::Load()
 {
+	// Latch the boot-time value of restart-gated fields so the menu can
+	// surface pending diffs even though the renderdoc.dll injection itself
+	// only runs once per launch.
+	bootSnapshot.LatchIfNeeded(settings);
+
 	// Only load RenderDoc if the user has enabled capture
-	if (!enableRenderDocCapture) {
+	if (!settings.enableCapture) {
 		logger::debug("[RenderDoc] RenderDoc capture disabled, skipping initialization");
 		return;
 	}
@@ -132,16 +137,17 @@ void RenderDoc::DrawSettings()
 	bool isSectionVisible = false;
 
 	// Include enable toggle and annotation forcing logic here
-	bool prevRenderDocCapture = enableRenderDocCapture;
-	if (ImGui::Checkbox("Enable RenderDoc Capture", &enableRenderDocCapture)) {
-		if (enableRenderDocCapture && !prevRenderDocCapture) {
+	bool prevRenderDocCapture = settings.enableCapture;
+	if (ImGui::Checkbox("Enable RenderDoc Capture", &settings.enableCapture)) {
+		if (settings.enableCapture && !prevRenderDocCapture) {
 			globals::state->useFrameAnnotations = globals::state->frameAnnotations;
 			globals::state->frameAnnotations = true;
 		}
-		if (!enableRenderDocCapture && prevRenderDocCapture) {
+		if (!settings.enableCapture && prevRenderDocCapture) {
 			globals::state->frameAnnotations = globals::state->useFrameAnnotations;
 		}
 	}
+	Util::UI::DrawSettingDiff(bootSnapshot, settings, &Settings::enableCapture);
 
 	if (auto _tt = Util::HoverTooltipWrapper()) {
 		ImGui::Text("Enable RenderDoc frame capture for providing debug captures to the Open Shaders team (or upstream Community Shaders for upstream-relevant issues).");
@@ -149,18 +155,17 @@ void RenderDoc::DrawSettings()
 	}
 
 	// The rest of the UI renders only when capture is active
-	bool renderDocCaptureEnabled = enableRenderDocCapture;
+	bool renderDocCaptureEnabled = settings.enableCapture;
 	bool renderDocActive = IsAvailable();
 
 	const auto& themeSettings = Menu::GetSingleton()->GetTheme();
 
 	if (renderDocCaptureEnabled && !renderDocActive) {
-		Util::Text::RestartNeeded("Requires restart to enable RenderDoc capture.");
 		return;
 	}
 
 	if (!renderDocCaptureEnabled && renderDocActive) {
-		ImGui::TextColored(themeSettings.StatusPalette.Warning, "Requires restart to disable RenderDoc capture, performance will be severely impacted.");
+		ImGui::TextColored(themeSettings.StatusPalette.Warning, "Performance will be severely impacted until the game is restarted.");
 		return;
 	}
 
@@ -539,36 +544,34 @@ void RenderDoc::SetupResources()
 
 void RenderDoc::SaveSettings(json& o_json)
 {
-	o_json["Enable RenderDoc Capture"] = enableRenderDocCapture;
+	o_json["Enable RenderDoc Capture"] = settings.enableCapture;
 	o_json["Capture Frame Count"] = GetCaptureFrameCount();
 }
 
 void RenderDoc::LoadSettings(json& o_json)
 {
 	if (o_json.contains("Enable RenderDoc Capture") && o_json["Enable RenderDoc Capture"].is_boolean()) {
-		enableRenderDocCapture = o_json["Enable RenderDoc Capture"];
+		settings.enableCapture = o_json["Enable RenderDoc Capture"];
 	}
-	if (!o_json.contains("Capture Frame Count")) {
-		return;
+	if (o_json.contains("Capture Frame Count")) {
+		const auto& frameCountJson = o_json["Capture Frame Count"];
+		if (frameCountJson.is_number_unsigned()) {
+			const auto frameCount = std::min(frameCountJson.get<uint64_t>(), static_cast<uint64_t>(kMaxCaptureFrameCount));
+			SetCaptureFrameCount(static_cast<uint32_t>(frameCount));
+		} else if (frameCountJson.is_number_integer()) {
+			const auto frameCount = std::clamp(
+				frameCountJson.get<int64_t>(),
+				static_cast<int64_t>(kMinCaptureFrameCount),
+				static_cast<int64_t>(kMaxCaptureFrameCount));
+			SetCaptureFrameCount(static_cast<uint32_t>(frameCount));
+		}
 	}
-
-	const auto& frameCountJson = o_json["Capture Frame Count"];
-	if (frameCountJson.is_number_unsigned()) {
-		const auto frameCount = std::min(frameCountJson.get<uint64_t>(), static_cast<uint64_t>(kMaxCaptureFrameCount));
-		SetCaptureFrameCount(static_cast<uint32_t>(frameCount));
-	} else if (frameCountJson.is_number_integer()) {
-		const auto frameCount = std::clamp(
-			frameCountJson.get<int64_t>(),
-			static_cast<int64_t>(kMinCaptureFrameCount),
-			static_cast<int64_t>(kMaxCaptureFrameCount));
-		SetCaptureFrameCount(static_cast<uint32_t>(frameCount));
-	}
+	bootSnapshot.LatchIfNeeded(settings);
 }
 
 void RenderDoc::RestoreDefaultSettings()
 {
-	enableRenderDocCapture = false;
-	SetCaptureFrameCount(1);
+	settings = {};
 }
 
 void RenderDoc::ClearShaderCache()
@@ -726,12 +729,12 @@ bool RenderDoc::HandleCaptureHotkey(uint32_t a_vkKey)
 
 uint32_t RenderDoc::GetCaptureFrameCount() const
 {
-	return std::clamp(captureFrameCount, kMinCaptureFrameCount, kMaxCaptureFrameCount);
+	return std::clamp(settings.captureFrameCount, kMinCaptureFrameCount, kMaxCaptureFrameCount);
 }
 
 void RenderDoc::SetCaptureFrameCount(uint32_t a_frameCount)
 {
-	captureFrameCount = std::clamp(a_frameCount, kMinCaptureFrameCount, kMaxCaptureFrameCount);
+	settings.captureFrameCount = std::clamp(a_frameCount, kMinCaptureFrameCount, kMaxCaptureFrameCount);
 }
 
 uint64_t RenderDoc::GetRequiredCaptureSpaceBytes() const
@@ -780,7 +783,7 @@ bool RenderDoc::IsCapturing() const
 		return false;
 
 	// RenderDoc API doesn't have a direct IsCapturing method, but we can check if captures are enabled
-	return enableRenderDocCapture && renderDocApi != nullptr;
+	return settings.enableCapture && renderDocApi != nullptr;
 }
 
 std::string RenderDoc::GetCapturePath(uint32_t a_index)
