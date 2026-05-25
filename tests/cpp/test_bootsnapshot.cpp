@@ -58,6 +58,6 @@ TEST_CASE("BootSnapshot exposes field metadata by member", "[bootsnapshot]")
 	Util::Settings::BootSnapshot<TestSettings> snap{ kFields };
 	const auto* info = snap.FindField(&TestSettings::enabled);
 	REQUIRE(info != nullptr);
-	REQUIRE(std::string_view(info->jsonKey) == "enabled");
-	REQUIRE(std::string_view(info->label) == "Enabled");
+	REQUIRE(std::string(info->jsonKey) == "enabled");
+	REQUIRE(std::string(info->label) == "Enabled");
 }
