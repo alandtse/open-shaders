@@ -69,11 +69,8 @@ namespace LightLimitFix
 #endif
 	}
 
-	// Skyrim's first-person viewmodel is rendered in a compressed depth range
-	// (linearized depth < this value). Contact shadows against viewmodel geometry
-	// produce wrong results (the viewmodel doesn't sit in the world), so we reject
-	// occluders whose depth falls in that range. A proper viewmodel stencil pass
-	// would be more robust but is out of scope here.
+	// Skyrim's first-person viewmodel renders in a compressed depth range below this
+	// linearized value; reject occluders there since the viewmodel isn't in the world.
 	static const float CONTACT_SHADOW_FIRST_PERSON_MAX_DEPTH = 16.5;
 
 	float ContactShadows(float3 viewPosition, float noise2D, float3 lightDirectionVS, uint contactShadowSteps, uint a_eyeIndex = 0)

@@ -2742,22 +2742,19 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 		float contactShadow = 1.0;
 
 #			if defined(DEFERRED)
-		// Skip contact-shadow raymarch for lights too weak at this pixel to produce a visible
-		// shadow. intensityMultiplier already captures (1 - (lightDist/radius)^2); when it
-		// drops below MinIntensity, the shadow contribution is dominated by the dimming and
-		// not worth the per-step depth fetches. Typical clustered scenes have many lights at
-		// their reach edge — this cutoff skips them before the matrix multiply and raymarch.
+		// contactShadowSteps > 0 implies the feature is on AND viewPosition is closer than
+		// MaxDistance; the MinIntensity gate skips weak lights whose shadow contribution is
+		// already dimmed past visibility, avoiding the matrix multiply + raymarch for them.
 		[branch] if (
-			SharedData::lightLimitFixSettings.EnableContactShadows &&
+			contactShadowSteps > 0 &&
 			!(light.lightFlags & LightLimitFix::LightFlags::Simple) &&
 			shadowComponent != 0.0 &&
 			lightAngle > 0.0 &&
 			intensityMultiplier > SharedData::lightLimitFixSettings.ContactShadowMinIntensity)
 		{
-			// The current LightLimitFix Light struct stores positionWS only; derive view-space
-			// from CameraView so the raymarch direction matches viewPosition. The pre-removal
-			// call site referenced light.positionVS, but that field did not exist on the Light
-			// struct even then — the original code was commented out and unreachable.
+			// Derive view-space position via CameraView; the Light struct only carries positionWS
+			// (camera-relative) so the matrix multiply here is the cheapest path until positionVS
+			// is added to the struct + populated CPU-side.
 			float3 lightPositionVS = mul(FrameBuffer::CameraView[eyeIndex], float4(light.positionWS[eyeIndex].xyz, 1)).xyz;
 			float3 normalizedLightDirectionVS = normalize(lightPositionVS - viewPosition.xyz);
 			contactShadow = LightLimitFix::ContactShadows(viewPosition, contactShadowNoise, normalizedLightDirectionVS, contactShadowSteps, eyeIndex);
