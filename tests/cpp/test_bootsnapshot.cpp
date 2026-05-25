@@ -21,7 +21,7 @@ namespace
 	} };
 }
 
-TEST_CASE("BootSnapshot starts unlatching and ignores diffs", "[bootsnapshot]")
+TEST_CASE("BootSnapshot starts unlatched and ignores diffs", "[bootsnapshot]")
 {
 	Util::Settings::BootSnapshot<TestSettings> snap{ kFields };
 	TestSettings live{};
@@ -61,4 +61,3 @@ TEST_CASE("BootSnapshot exposes field metadata by member", "[bootsnapshot]")
 	REQUIRE(std::string_view(info->jsonKey) == "enabled");
 	REQUIRE(std::string_view(info->label) == "Enabled");
 }
-

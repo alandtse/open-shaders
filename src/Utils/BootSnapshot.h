@@ -13,7 +13,7 @@ namespace Util::Settings
 	namespace detail
 	{
 		template <typename SettingsT, typename T>
-		size_t MemberOffset(T SettingsT::*member) noexcept
+		size_t MemberOffset(T SettingsT::* member) noexcept
 		{
 			static_assert(std::is_default_constructible_v<SettingsT>);
 			SettingsT tmp{};
@@ -37,7 +37,14 @@ namespace Util::Settings
 
 		void Latch(const SettingsT& live) noexcept
 		{
-			bootCopy_ = live;
+			// Byte-wise copy so padding bytes are reproduced verbatim. Assignment
+			// of a trivially-copyable struct copies the object representation
+			// (which the C++ standard guarantees for trivially-copyable types),
+			// but memcpy makes that intent explicit and removes any compiler
+			// latitude that might leave padding indeterminate — `HasPendingChange`
+			// uses memcmp on field slices, so any padding-byte drift would
+			// surface as a false-positive diff.
+			std::memcpy(&bootCopy_, &live, sizeof(SettingsT));
 			latched_ = true;
 		}
 
@@ -68,7 +75,7 @@ namespace Util::Settings
 		}
 
 		template <typename T>
-		const T& Boot(T SettingsT::*member) const noexcept
+		const T& Boot(T SettingsT::* member) const noexcept
 		{
 			static const T kZero{};
 			if (!latched_) {
@@ -79,7 +86,7 @@ namespace Util::Settings
 		}
 
 		template <typename T>
-		bool HasPendingChange(const SettingsT& live, T SettingsT::*member) const noexcept
+		bool HasPendingChange(const SettingsT& live, T SettingsT::* member) const noexcept
 		{
 			if (!latched_) {
 				return false;
@@ -101,7 +108,7 @@ namespace Util::Settings
 		}
 
 		template <typename T>
-		const RestartFieldInfo* FindField(T SettingsT::*member) const noexcept
+		const RestartFieldInfo* FindField(T SettingsT::* member) const noexcept
 		{
 			const size_t offset = detail::MemberOffset(member);
 			const size_t size = sizeof(T);
@@ -120,4 +127,3 @@ namespace Util::Settings
 		bool latched_ = false;
 	};
 }
-
