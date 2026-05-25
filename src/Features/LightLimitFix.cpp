@@ -42,7 +42,7 @@ void LightLimitFix::DrawSettings()
 
 		ImGui::SliderFloat("Stride", &settings.ContactShadowStride, 0.5f, 8.0f, "%.2f");
 		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::Text("Per-step march length in view-space units. Larger = longer shadow reach with coarser detail; smaller = tighter contact, shorter reach.");
+			ImGui::Text("Per-step march length in view-space units at near depth (auto-scales linearly past ~100 units so far surfaces don't undersample). Larger = longer screen-space reach with coarser detail.");
 		}
 
 		ImGui::SliderFloat("Thickness", &settings.ContactShadowThickness, 0.0f, 1.0f, "%.3f");

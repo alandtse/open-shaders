@@ -73,17 +73,24 @@ namespace LightLimitFix
 	// linearized value; reject occluders there since the viewmodel isn't in the world.
 	static const float CONTACT_SHADOW_FIRST_PERSON_MAX_DEPTH = 16.5;
 
+	// Reference view-space depth for perspective-correct stride. At/below this depth,
+	// stride matches its prior view-space meaning; beyond it, stride and the depth-delta
+	// band scale linearly with depth so each step covers ~constant screen-space distance
+	// and the shadow-thickness band tracks the same screen-space extent.
+	static const float CONTACT_SHADOW_REFERENCE_DEPTH = 100.0;
+
 	float ContactShadows(float3 viewPosition, float noise2D, float3 lightDirectionVS, uint contactShadowSteps, uint a_eyeIndex = 0)
 	{
 		if (contactShadowSteps == 0)
 			return 1.0;
 
-		float depthDeltaThickness = SharedData::lightLimitFixSettings.ContactShadowThickness;
-		float depthDeltaFade = SharedData::lightLimitFixSettings.ContactShadowDepthFade;
-
-		// Scale per-step march length in view-space units. Larger -> longer shadow reach,
-		// coarser detail. Tunable so users can trade reach vs. precision.
-		lightDirectionVS *= SharedData::lightLimitFixSettings.ContactShadowStride;
+		// Perspective-correct stride: scale view-space step length with depth so each step
+		// covers ~constant screen-space distance. Inverse-scale the thickness/fade band so
+		// the depth-delta window tracks the same screen-space extent across depths.
+		float perspectiveScale = max(viewPosition.z, CONTACT_SHADOW_REFERENCE_DEPTH) / CONTACT_SHADOW_REFERENCE_DEPTH;
+		float depthDeltaThickness = SharedData::lightLimitFixSettings.ContactShadowThickness / perspectiveScale;
+		float depthDeltaFade = SharedData::lightLimitFixSettings.ContactShadowDepthFade / perspectiveScale;
+		lightDirectionVS *= SharedData::lightLimitFixSettings.ContactShadowStride * perspectiveScale;
 
 		// Offset starting position with interleaved gradient noise
 		viewPosition += lightDirectionVS * noise2D;
