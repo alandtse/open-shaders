@@ -136,6 +136,8 @@ void VR::SetupResources()
 
 void VR::PostPostLoad()
 {
+	stereoOpt.LatchBootSnapshot();
+
 	gDepthBufferCulling = reinterpret_cast<bool*>(REL::Offset(0x1EC6B88).address());
 	if (!gDepthBufferCulling) {
 		static bool s_defaultDepthBufferCulling = false;

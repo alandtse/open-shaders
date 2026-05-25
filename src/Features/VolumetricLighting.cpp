@@ -3,6 +3,7 @@
 #include "InteriorSun.h"
 #include "ShaderCache.h"
 #include "State.h"
+#include "Utils/UI.h"
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	VolumetricLighting::TextureSize,
@@ -23,12 +24,16 @@ void VolumetricLighting::DrawSettings()
 {
 	if (ImGui::Checkbox("Enable Volumetric Lighting in Exteriors", &settings.ExteriorEnabled))
 		SetupVL();
+	if (globals::game::isVR)
+		Util::UI::DrawSettingDiff(bootSnapshot, settings, &Settings::ExteriorEnabled);
 
 	if (settings.ExteriorEnabled)
 		DrawVolumetricLightingSettings(settings.ExteriorQuality, settings.ExteriorCustomSize, false, !inInterior);
 
 	if (ImGui::Checkbox("Enable Volumetric Lighting in Interiors", &settings.InteriorEnabled))
 		SetupVL();
+	if (globals::game::isVR)
+		Util::UI::DrawSettingDiff(bootSnapshot, settings, &Settings::InteriorEnabled);
 
 	if (settings.InteriorEnabled)
 		DrawVolumetricLightingSettings(settings.InteriorQuality, settings.InteriorCustomSize, true, inInterior);
@@ -147,7 +152,7 @@ void VolumetricLighting::DataLoaded()
 	const static auto address = REL::Offset{ 0x1ec6b88 }.address();
 	bool& bDepthBufferCulling = *reinterpret_cast<bool*>(address);
 
-	if (REL::Module::IsVR() && bDepthBufferCulling && shaderCache->IsDiskCache()) {
+	if (globals::game::isVR && bDepthBufferCulling && shaderCache->IsDiskCache()) {
 		// clear cache to fix bug caused by bDepthBufferCulling
 		logger::info("Force clearing cache due to bDepthBufferCulling");
 		shaderCache->Clear();
@@ -156,7 +161,8 @@ void VolumetricLighting::DataLoaded()
 
 void VolumetricLighting::PostPostLoad()
 {
-	if (REL::Module::IsVR()) {
+	bootSnapshot.LatchIfNeeded(settings);
+	if (globals::game::isVR) {
 		if (settings.ExteriorEnabled || settings.InteriorEnabled)
 			EnableBooleanSettings(hiddenVRSettings, GetName());
 		auto address = REL::RelocationID(100475, 0).address() + 0x45b;  // AE not needed, VR only hook

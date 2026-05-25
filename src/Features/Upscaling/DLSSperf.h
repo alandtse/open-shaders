@@ -57,13 +57,6 @@ struct DLSSperf
 	uint32_t GetRenderEyeWidth() const { return renderEyeWidth; }
 	uint32_t GetRenderEyeHeight() const { return renderEyeHeight; }
 
-	// Boot snapshots — engine RTs are sized once against these, so runtime
-	// upscaler reads must route through here instead of live `Upscaling::
-	// settings` (mid-session UI changes would otherwise break the HMD).
-	bool HasBootSnapshot() const { return hookActive; }
-	uint32_t GetBootUpscaleMethod() const { return bootUpscaleMethod; }
-	uint32_t GetBootQualityMode() const { return bootQualityMode; }
-
 	// Phase 3: real HMD display resolution in SBS format (e.g. 3072×1632)
 	// Used by Upscaling pipeline to override polluted screenSize (which equals RenderRes after hook)
 	float2 GetDisplayScreenSize() const
@@ -207,10 +200,6 @@ private:
 	uint32_t displayEyeHeight = 0;
 	uint32_t renderEyeWidth = 0;
 	uint32_t renderEyeHeight = 0;
-
-	// Boot snapshot — see HasBootSnapshot() accessor above.
-	uint32_t bootUpscaleMethod = 0;
-	uint32_t bootQualityMode = 0;
 
 	// Phase 2: vtable hook for BSOpenVR::GetRenderTargetSize (vfunc 0x12)
 	struct GetRenderTargetSize_Hook

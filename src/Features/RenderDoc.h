@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Feature.h"
+#include "Utils/BootSnapshot.h"
 #include <filesystem>
 #include <mutex>
 #include <nlohmann/json.hpp>
@@ -118,9 +119,28 @@ public:
 	std::string pendingCaptureComments;
 	mutable std::mutex pendingCommentsMutex;
 
-	// RenderDoc capture enable setting
-	bool enableRenderDocCapture = false;
-	uint32_t captureFrameCount = 1;
+	struct Settings
+	{
+		bool enableCapture = false;
+		uint32_t captureFrameCount = 1;
+	};
+	Settings settings;
+
+	// `enableCapture` is restart-gated: the renderdoc.dll only gets injected
+	// at Load(); toggling the checkbox mid-session stages the change for next
+	// launch but doesn't install/uninstall the API.
+	inline static constexpr Util::Settings::RestartTable<Settings, 1> kRestartFields{ {
+		UTIL_RESTART_FIELD(Settings, enableCapture, "RenderDoc Capture"),
+	} };
+	Util::Settings::BootSnapshot<Settings> bootSnapshot{ kRestartFields };
+
+	std::span<const Util::Settings::RestartFieldInfo> GetRestartRequiredFields() const override
+	{
+		return { kRestartFields.data(), kRestartFields.size() };
+	}
+	const void* GetBootValue(std::string_view jsonKey) const override { return bootSnapshot.RawBoot(jsonKey); }
+	const void* GetSettingsBlob() const override { return &settings; }
+	size_t GetSettingsBlobSize() const override { return sizeof(settings); }
 
 	// Track the last capture count we've processed for automatic comments
 	uint32_t lastCaptureCount = 0;

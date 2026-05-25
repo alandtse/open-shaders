@@ -423,7 +423,7 @@ void Streamline::SetDLSSOptions(sl::ViewportHandle p_viewport, uint32_t width)
 
 	// Boot qualityMode under DLSSperf — DLSS dispatch must match the
 	// renderRes the engine was sized for at install.
-	uint32_t qualityMode = globals::features::upscaling.dlssPerf.HasBootSnapshot() ? globals::features::upscaling.dlssPerf.GetBootQualityMode() : globals::features::upscaling.settings.qualityMode;
+	uint32_t qualityMode = globals::features::upscaling.dlssPerf.IsHookActive() ? globals::features::upscaling.bootSnapshot.Boot(&Upscaling::Settings::qualityMode) : globals::features::upscaling.settings.qualityMode;
 	switch (qualityMode) {
 	case 1:
 		dlssOptions.mode = sl::DLSSMode::eMaxQuality;
