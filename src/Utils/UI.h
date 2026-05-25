@@ -4,8 +4,8 @@
 #include <cstdio>
 #include <functional>
 #include <imgui.h>
-#include <string>
 #include <span>
+#include <string>
 #include <type_traits>
 #include <vector>
 #include <windows.h>  // For WPARAM and virtual key constants
@@ -964,7 +964,7 @@ namespace Util
 	namespace UI
 	{
 		template <typename SettingsT, typename T>
-		inline void DrawSettingDiff(const Util::Settings::BootSnapshot<SettingsT>& snapshot, const SettingsT& live, T SettingsT::*field)
+		inline void DrawSettingDiff(const Util::Settings::BootSnapshot<SettingsT>& snapshot, const SettingsT& live, T SettingsT::* field)
 		{
 			if (!snapshot.IsLatched()) {
 				return;
@@ -1023,6 +1023,36 @@ namespace Util
 					Util::Text::RestartNeeded("Pending restart: %s changed.", field.label);
 				}
 			}
+		}
+
+		// One-call wrapper for a restart-gated ImGui control. Call IMMEDIATELY
+		// AFTER the control (Checkbox / SliderInt / Combo / etc.) so
+		// ImGui::IsItemHovered targets that control. Does two things:
+		//   1. If hovered, sets a tooltip with the standard
+		//      "Requires a game restart to change." suffix appended to
+		//      `tooltipBody` (pass nullptr/empty for suffix-only).
+		//   2. Calls DrawSettingDiff to render the "Pending restart" banner
+		//      when the live value diverges from the boot snapshot.
+		//
+		// Saves three lines of boilerplate per call site and prevents the
+		// standard suffix or the diff-banner call from being forgotten /
+		// drifting in wording. Use plain DrawSettingDiff for controls whose
+		// tooltip needs custom formatting (e.g. dynamic VRAM projections)
+		// where the standard suffix doesn't fit cleanly.
+		template <typename SettingsT, typename T>
+		inline void RestartGatedAnnotate(const Util::Settings::BootSnapshot<SettingsT>& snapshot,
+			const SettingsT& live,
+			T SettingsT::* field,
+			const char* tooltipBody = nullptr)
+		{
+			if (ImGui::IsItemHovered()) {
+				if (tooltipBody && tooltipBody[0]) {
+					ImGui::SetTooltip("%s\nRequires a game restart to change.", tooltipBody);
+				} else {
+					ImGui::SetTooltip("Requires a game restart to change.");
+				}
+			}
+			DrawSettingDiff(snapshot, live, field);
 		}
 	}
 
