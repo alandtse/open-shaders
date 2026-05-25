@@ -260,7 +260,8 @@ void EditorWindow::ShowObjectsWindow()
 			};
 
 			// Build active records for the current category tab
-			struct ActiveRecord {
+			struct ActiveRecord
+			{
 				std::string label;
 				std::string suffix;
 				RE::FormID formId;
@@ -285,15 +286,17 @@ void EditorWindow::ShowObjectsWindow()
 				};
 
 				auto addSingle = [&](RE::TESForm* form, const WidgetVec& widgets, std::string suffix = "") {
-					if (!form) return;
+					if (!form)
+						return;
 					auto id = form->GetFormID();
 					activeRecords.push_back({ ResolveEditorId(form, widgets), std::move(suffix), id, openByFormId(id, &widgets) });
 				};
 
-				auto addTOD = [&](auto* (&fields)[RE::TESWeather::ColorTimes::kTotal], const WidgetVec& widgets) {
+				auto addTOD = [&](auto*(&fields)[RE::TESWeather::ColorTimes::kTotal], const WidgetVec& widgets) {
 					for (int tod = 0; tod < RE::TESWeather::ColorTimes::kTotal; ++tod) {
 						auto* form = fields[tod];
-						if (!form) continue;
+						if (!form)
+							continue;
 						auto id = form->GetFormID();
 						bool already = std::any_of(activeRecords.begin(), activeRecords.end(),
 							[&](const ActiveRecord& r) { return r.formId == id; });
@@ -303,7 +306,8 @@ void EditorWindow::ShowObjectsWindow()
 				};
 
 				auto addWeather = [&](RE::TESWeather* weatherRecord, std::string suffix = "") {
-					if (!weatherRecord) return;
+					if (!weatherRecord)
+						return;
 					auto id = weatherRecord->GetFormID();
 					activeRecords.push_back({ ResolveEditorId(weatherRecord, weatherWidgets), std::move(suffix), id, openByFormId(id, &weatherWidgets) });
 				};
@@ -313,7 +317,8 @@ void EditorWindow::ShowObjectsWindow()
 					if (sky && sky->lastWeather != weather)
 						addWeather(sky->lastWeather, "transitioning");
 				} else if (m_selectedCategory == "ImageSpace") {
-					if (weather) addTOD(weather->imageSpaces, imageSpaceWidgets);
+					if (weather)
+						addTOD(weather->imageSpaces, imageSpaceWidgets);
 				} else if (m_selectedCategory == "Lighting Template") {
 					auto* player = RE::PlayerCharacter::GetSingleton();
 					if (player && player->parentCell)
@@ -339,13 +344,17 @@ void EditorWindow::ShowObjectsWindow()
 							} });
 					}
 				} else if (m_selectedCategory == "Volumetric Lighting") {
-					if (weather) addTOD(weather->volumetricLighting, volumetricLightingWidgets);
+					if (weather)
+						addTOD(weather->volumetricLighting, volumetricLightingWidgets);
 				} else if (m_selectedCategory == "Shader Particle Geometry") {
-					if (weather) addSingle(weather->precipitationData, precipitationWidgets);
+					if (weather)
+						addSingle(weather->precipitationData, precipitationWidgets);
 				} else if (m_selectedCategory == "Lens Flare") {
-					if (weather) addSingle(weather->sunGlareLensFlare, lensFlareWidgets);
+					if (weather)
+						addSingle(weather->sunGlareLensFlare, lensFlareWidgets);
 				} else if (m_selectedCategory == "Visual Effect") {
-					if (weather) addSingle(weather->referenceEffect, referenceEffectWidgets);
+					if (weather)
+						addSingle(weather->referenceEffect, referenceEffectWidgets);
 				}
 
 				// Fall back to current weather when the active category has no active record
@@ -1855,8 +1864,8 @@ void EditorWindow::DrawTimeControls()
 
 	const float framePadX = ImGui::GetStyle().FramePadding.x * 2.0f;
 	const float buttonWidth = std::max({ ImGui::CalcTextSize("Resume Time").x,
-							   ImGui::CalcTextSize("Pause Time").x,
-							   ImGui::CalcTextSize("Reset Speed").x }) +
+								  ImGui::CalcTextSize("Pause Time").x,
+								  ImGui::CalcTextSize("Reset Speed").x }) +
 	                          framePadX;
 	if (ImGui::Button(timePaused ? "Resume Time" : "Pause Time", ImVec2(buttonWidth, 0)))
 		TogglePause();
