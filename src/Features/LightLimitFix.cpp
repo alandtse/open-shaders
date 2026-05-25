@@ -309,32 +309,23 @@ void LightLimitFix::BSLightingShader_SetupGeometry_GeometrySetupConstantPointLig
 
 		if (i < a_pass->numShadowLights) {
 			auto* shadowLight = static_cast<RE::BSShadowLight*>(bsLight);
-			// Only set LightFlags::Shadow when the descriptor's slice index
-			// falls inside the installed kSHADOWMAPS array. A stale/corrupted
-			// descriptor (possible mid-frame between SCM scheduling and the
-			// engine consuming activeShadowLights) can carry a value past the
-			// allocated slice count -- the shader's Shadows[]/ShadowMaps[]
-			// reads would then sample out-of-bounds (UB, GPU crash on some
-			// drivers). Falling through with no Shadow flag is correct: the
-			// light still contributes diffuse but no shadow sampling occurs.
-			const uint32_t installedSlots = ShadowCasterManager::GetInstalledSlotCount();
-			auto checkDescs = [&](auto& runtimeData) {
-				if (!runtimeData.shadowmapDescriptors.empty()) {
-					const auto idx = runtimeData.shadowmapDescriptors[0].shadowmapIndex;
-					// Upper-bound only -- slot 0 is a legitimate kSHADOWMAPS
-					// slice for a point/spot light when the sun isn't in the
-					// SCM pool. The OOB risk this guard addresses is
-					// `idx >= installedSlots`, not `idx == 0`.
-					if (idx < installedSlots) {
-						light.shadowMapIndex = idx;
-						light.lightFlags.set(LightFlags::Shadow);
-					}
-				}
-			};
-			if (globals::game::isVR)
-				checkDescs(shadowLight->GetVRRuntimeData());
-			else
-				checkDescs(shadowLight->GetRuntimeData());
+			// Use SCM's stable container-slot index instead of reading the
+			// live `shadowmapDescriptors[0].shadowmapIndex`. The descriptor
+			// field can be corrupted mid-frame by ReturnShadowmaps() (called
+			// via Hook_DisableColorMask) after ScheduleShadowCasters fixed
+			// it but before this strict-light setup runs -- a stale-but-in
+			// -range index would still pass an upper-bound check yet point
+			// strict-light shader sampling at the wrong kSHADOWMAPS slice.
+			// GetShadowSlot reads from the SCM's own pool (s_lights, set in
+			// ScheduleShadowCasters and never touched by ReturnShadowmaps),
+			// so it stays consistent with CopyShadowLightData and
+			// UpdateLights, which also key off it. Returns -1 for the sun
+			// or inactive lights; both cases skip setting the Shadow flag.
+			const int32_t slot = ShadowCasterManager::GetShadowSlot(shadowLight);
+			if (slot >= 0 && static_cast<uint32_t>(slot) < ShadowCasterManager::GetInstalledSlotCount()) {
+				light.shadowMapIndex = static_cast<uint32_t>(slot);
+				light.lightFlags.set(LightFlags::Shadow);
+			}
 		}
 
 		strictLightDataTemp.StrictLights[writeIdx++] = light;

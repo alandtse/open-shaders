@@ -573,14 +573,24 @@ void Deferred::SetShadowCascadeParameters(T& lightData, DirectionalShadowLightDa
 	const auto focusCount = std::min(
 		static_cast<uint32_t>(std::size(lightData.focusShadowmapDescriptors)),
 		static_cast<uint32_t>(std::size(dd.FocusShadowProj)));
+	// Preserve descriptor->slice correspondence by writing FocusShadowProj[i]
+	// for descriptor[i] -- the LLF shader samples kSHADOWMAPS slice (4 + fi)
+	// using fi as the matrix index, so packing densely (e.g. via a separate
+	// counter) would pair matrix N with the wrong shadow slice when there are
+	// disabled holes between descriptors. Disabled descriptors leave their
+	// FocusShadowProj slot at the default-zero matrix; the shader's existing
+	// `focusClip.w <= EPSILON_DIVISION` guard treats that as "no actor in
+	// this slice" and skips sampling. FocusShadowCount is the upper iteration
+	// bound (last enabled index + 1) so the shader still exits early when
+	// trailing slots are empty.
 	dd.FocusShadowCount = 0;
 	for (uint32_t i = 0; i < focusCount; i++) {
 		const auto& desc = lightData.focusShadowmapDescriptors[i];
 		if (!desc.isEnabled)
-			continue;  // descriptor unused this frame
+			continue;  // descriptor unused this frame -- leave FocusShadowProj[i] at zero
 		auto proj = DirectX::XMLoadFloat4x4(reinterpret_cast<const DirectX::XMFLOAT4X4*>(&desc.lightTransform));
-		DirectX::XMStoreFloat4x4(&dd.FocusShadowProj[dd.FocusShadowCount], proj);
-		dd.FocusShadowCount++;
+		DirectX::XMStoreFloat4x4(&dd.FocusShadowProj[i], proj);
+		dd.FocusShadowCount = i + 1;
 	}
 }
 
