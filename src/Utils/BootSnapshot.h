@@ -32,19 +32,20 @@ namespace Util::Settings
 			table_(table.data()), tableSize_(N)
 		{
 			static_assert(std::is_standard_layout_v<SettingsT>, "BootSnapshot requires standard-layout Settings for offsetof-based tables.");
-			static_assert(std::is_trivially_copyable_v<SettingsT>, "BootSnapshot requires trivially-copyable Settings.");
+			static_assert(std::is_copy_assignable_v<SettingsT>, "BootSnapshot requires copy-assignable Settings.");
 		}
 
-		void Latch(const SettingsT& live) noexcept
+		void Latch(const SettingsT& live)
 		{
-			// Byte-wise copy so padding bytes are reproduced verbatim. Assignment
-			// of a trivially-copyable struct copies the object representation
-			// (which the C++ standard guarantees for trivially-copyable types),
-			// but memcpy makes that intent explicit and removes any compiler
-			// latitude that might leave padding indeterminate — `HasPendingChange`
-			// uses memcmp on field slices, so any padding-byte drift would
-			// surface as a false-positive diff.
-			std::memcpy(&bootCopy_, &live, sizeof(SettingsT));
+			// Copy-assign so non-trivial members (e.g. std::string formula
+			// fields in ShadowCasterManager::Settings) deep-copy correctly.
+			// Trivially-copyable Settings work the same way -- the compiler
+			// emits memcpy-equivalent code for trivially-copyable assignment.
+			// Registered RESTART fields are still expected to be trivially
+			// comparable (the per-field HasPendingChange uses memcmp on the
+			// offset+size slice), but unregistered non-trivial members are
+			// free to live alongside them in the outer Settings struct.
+			bootCopy_ = live;
 			latched_ = true;
 		}
 

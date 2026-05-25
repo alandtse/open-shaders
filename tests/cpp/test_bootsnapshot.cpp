@@ -5,6 +5,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <cstdint>
+#include <string>
 
 namespace
 {
@@ -60,4 +61,56 @@ TEST_CASE("BootSnapshot exposes field metadata by member", "[bootsnapshot]")
 	REQUIRE(info != nullptr);
 	REQUIRE(std::string(info->jsonKey) == "enabled");
 	REQUIRE(std::string(info->label) == "Enabled");
+}
+
+namespace
+{
+	// Settings with a non-trivial member (std::string) -- not trivially-
+	// copyable but still copy-assignable. Mirrors real cases like
+	// ShadowCasterManager::Settings which carries exprtk formula strings
+	// alongside the POD restart-gated fields.
+	struct SettingsWithString
+	{
+		int32_t shadowLightCount = 0;
+		bool enabled = false;
+		std::string formula = "default";  // not registered as restart-gated
+	};
+
+	inline constexpr Util::Settings::RestartTable<SettingsWithString, 2> kStringFields{ {
+		UTIL_RESTART_FIELD(SettingsWithString, shadowLightCount, "Shadow Light Count"),
+		UTIL_RESTART_FIELD(SettingsWithString, enabled, "Enabled"),
+	} };
+}
+
+TEST_CASE("BootSnapshot deep-copies non-trivial members on Latch", "[bootsnapshot]")
+{
+	// Regression: the original BootSnapshot static_asserted trivially-copyable
+	// and Latch() used memcpy, which would shallow-copy std::string internals
+	// (corrupting the boot snapshot's string when the live string later
+	// reallocated). After the relaxation, Latch uses copy-assign so the
+	// non-trivial member is deep-copied. The POD restart-gated fields still
+	// drive HasPendingChange via memcmp.
+	Util::Settings::BootSnapshot<SettingsWithString> snap{ kStringFields };
+	SettingsWithString boot{};
+	boot.shadowLightCount = 16;
+	boot.enabled = true;
+	boot.formula = "lightradius * lightintensity";
+
+	snap.Latch(boot);
+	REQUIRE(snap.IsLatched());
+	REQUIRE(snap.Boot(&SettingsWithString::shadowLightCount) == 16);
+	REQUIRE(snap.Boot(&SettingsWithString::enabled) == true);
+
+	// Mutating the live struct (including reallocating its string) must NOT
+	// disturb the boot copy or produce false-positive diffs for unregistered
+	// fields. Force a string reallocation by growing it well past SSO size.
+	SettingsWithString live = boot;
+	live.formula = std::string(256, 'x');
+	REQUIRE_FALSE(snap.HasPendingChange(live, &SettingsWithString::shadowLightCount));
+	REQUIRE_FALSE(snap.HasPendingChange(live, &SettingsWithString::enabled));
+
+	// Now flip a registered POD field; the diff fires.
+	live.shadowLightCount = 32;
+	REQUIRE(snap.HasPendingChange(live, &SettingsWithString::shadowLightCount));
+	REQUIRE_FALSE(snap.HasPendingChange(live, &SettingsWithString::enabled));
 }
