@@ -57,7 +57,7 @@ public:
 
 	// a_colorOut is the destination for the upscaled result. When nullptr, output is written
 	// back into a_upscalingTexture (legacy in-place behavior). Callers route a separate output
-	// when the engine's kMAIN is renderRes (e.g., DLSSperf VR mode) and the upscaled result
+	// when the engine's kMAIN is renderRes (e.g., PerfMode VR mode) and the upscaled result
 	// must land in a displayRes target.
 	void Upscale(ID3D11Resource* a_upscalingTexture, ID3D11Resource* a_reactiveMask, ID3D11Resource* a_transparencyCompositionMask, ID3D11Resource* a_motionVectors, float a_sharpness, ID3D11Resource* a_colorOut = nullptr);
 

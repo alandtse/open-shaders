@@ -273,14 +273,14 @@ void FidelityFX::CreateFSRResources()
 	auto screenSize = state->screenSize;
 	auto renderSize = Util::ConvertToDynamic(screenSize);
 
-	// DLSSperf bridge: when the BSOpenVR size hook is live, state->screenSize is polluted
+	// PerfMode bridge: when the BSOpenVR size hook is live, state->screenSize is polluted
 	// to renderRes (engine RTs were allocated small). FSR3 still needs to upscale to the
-	// real HMD display resolution, so use dlssPerf's snapshot for displaySize/maxUpscaleSize.
+	// real HMD display resolution, so use perfMode's snapshot for displaySize/maxUpscaleSize.
 	// maxRenderSize stays at screenSize (which IS renderRes under the hook — that's FSR's
 	// expected input extent).
-	auto& dlssPerf = globals::features::upscaling.dlssPerf;
-	const bool dlssperfActive = dlssPerf.IsHookActive();
-	const auto displaySize = dlssperfActive ? dlssPerf.GetDisplayScreenSize() : screenSize;
+	auto& perfMode = globals::features::upscaling.perfMode;
+	const bool dlssperfActive = perfMode.IsHookActive();
+	const auto displaySize = dlssperfActive ? perfMode.GetDisplayScreenSize() : screenSize;
 
 	uint32_t displayWidth = (uint32_t)(globals::game::isVR ? displaySize.x / 2 : displaySize.x);
 	uint32_t displayHeight = (uint32_t)displaySize.y;
@@ -445,7 +445,7 @@ void FidelityFX::Upscale(ID3D11Resource* a_upscalingTexture, ID3D11Resource* a_r
 		}
 
 		// Merge outputs into the supplied displayRes destination (kMAIN by default;
-		// dlssPerf.testTexture when DLSSperf has shrunk the engine RTs).
+		// perfMode.testTexture when PerfMode has shrunk the engine RTs).
 		upscaling.FinalizePerEyeOutputs(a_colorOut);
 	} else {
 		DispatchFSR(0,

@@ -1,7 +1,7 @@
 #pragma once
 
 // ============================================================================
-// DLSSperf — render-target size hook + post-processing interception
+// PerfMode — render-target size hook + post-processing interception
 // ============================================================================
 //
 // Opt-in VR upscaling feature. Hooks BSOpenVR::GetRenderTargetSize so all
@@ -34,7 +34,7 @@
 #include <functional>
 #include <winrt/base.h>
 
-struct DLSSperf
+struct PerfMode
 {
 	void SetupResources();
 	void DrawSettings();
@@ -79,7 +79,7 @@ struct DLSSperf
 	void DownscaleToKMain();
 
 	// Post hybrid entry point: called from Upscaling's Main_PostProcessing::thunk.
-	// Wraps the engine Post chain with DLSSperf's two-layer struct swap.
+	// Wraps the engine Post chain with PerfMode's two-layer struct swap.
 	// Keyed on postPipelineReady (set at the end of SetupResources) so a
 	// partial-init state can't slip past the gate into a null deref. The
 	// runtime upscaler-method gate is enforced separately by callers (the
@@ -114,7 +114,7 @@ struct DLSSperf
 	// that fixes the scene-fade overlay viewport. Called from Globals::
 	// InstallD3DHooks. VR-only; thunk early-outs unless VertexCount==30
 	// and the hook is live, so cost is one comparison per Draw call when
-	// DLSSperf isn't active.
+	// PerfMode isn't active.
 	void InstallFadeOverlayHook(ID3D11DeviceContext* context);
 
 	// Enlarge window — set true around the engine's BSShaderRenderTargets::
@@ -229,7 +229,7 @@ private:
 
 	// IS shader hook: ISCopy (Render vfunc 0x1 on vtable[3]).
 	// The VR main menu / pause compositor uses a single ISCopy draw from kMAIN
-	// (RenderRes when DLSSperf is active) into kPROJECTEDMENU (fixed 2048²) or
+	// (RenderRes when PerfMode is active) into kPROJECTEDMENU (fixed 2048²) or
 	// kMENUBG (DisplayRes via enlargement). With a 1:1 viewport the small
 	// source gets stamped into the top-left of the larger dest — that's the
 	// "main menu looks downscaled" bug. Strategy: let func() draw normally,
@@ -265,7 +265,7 @@ private:
 
 	// Chains via stl::detour_thunk on the same address Hooks.cpp + Terrain-
 	// Blending already detour. Wraps MaybeSwapDSForEnlargedRT around the
-	// engine's RT/DS flush; runs after the prior thunk so DLSSperf's swap
+	// engine's RT/DS flush; runs after the prior thunk so PerfMode's swap
 	// is the innermost wrap.
 	struct BSGraphics_SetDirtyStates_Hook
 	{
@@ -275,7 +275,7 @@ private:
 	bool setDirtyStatesHookInstalled = false;
 
 	// D3D11 Draw vfunc detour. Engine's scene-fade overlay is a Draw(30)
-	// that fires after the Post chain and before Submit. Under DLSSperf
+	// that fires after the Post chain and before Submit. Under PerfMode
 	// the draw's VP/vertices are computed at renderRes while the RT
 	// (kTOTAL) is displayRes — produces a partial-screen "black stamp"
 	// without this swap.

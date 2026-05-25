@@ -1,7 +1,7 @@
 #pragma once
 
 #include "Feature.h"
-#include "Upscaling/DLSSperf.h"
+#include "Upscaling/PerfMode.h"
 #include "Upscaling/DX12SwapChain.h"
 #include "Upscaling/FidelityFX.h"
 #include "Upscaling/RCAS/RCAS.h"
@@ -71,12 +71,12 @@ public:
 		bool reflexUseFPSLimit = false;
 		float reflexFPSLimit = 60.0f;
 
-		// VR DLSSperf: opt-in. When set, BSShaderRenderTargets::Create installs
+		// VR PerfMode: opt-in. When set, BSShaderRenderTargets::Create installs
 		// the BSOpenVR render-target-size hook at engine init so the entire
 		// engine pipeline allocates render targets at upscaled-render resolution
 		// instead of display resolution. Saves VRAM/bandwidth proportional to
 		// the quality-mode scale ratio. Requires a game restart to take effect.
-		bool enableDLSSperf = false;
+		bool renderAtUpscaleRes = false;
 	};
 
 	Settings settings;
@@ -84,7 +84,7 @@ public:
 	// Single source of truth for restart-gated fields. Order is not load-bearing
 	// — the call-site `DrawSettingDiff` invocations in DrawSettings() handle any
 	// per-field conditional gating (e.g., qualityMode/upscaleMethod banners only
-	// render while DLSSperf's render-target hook is active). MCP discovery
+	// render while PerfMode's render-target hook is active). MCP discovery
 	// reports the full set; clients can check feature state themselves.
 	// presetDLSS is deliberately NOT here: Streamline::SetDLSSOptions reads
 	// settings.presetDLSS per-frame and applies it via slDLSSSetOptions, so
@@ -92,7 +92,7 @@ public:
 	inline static constexpr Util::Settings::RestartTable<Settings, 6> kRestartFields{ {
 		UTIL_RESTART_FIELD(Settings, frameGenerationMode, "Frame Generation"),
 		UTIL_RESTART_FIELD(Settings, frameGenerationForceEnable, "Force Enable Frame Generation"),
-		UTIL_RESTART_FIELD(Settings, enableDLSSperf, "DLSSperf"),
+		UTIL_RESTART_FIELD(Settings, renderAtUpscaleRes, "Render at Upscaled Resolution"),
 		UTIL_RESTART_FIELD(Settings, streamlineLogLevel, "Streamline Logging"),
 		UTIL_RESTART_FIELD(Settings, upscaleMethod, "Upscaling Method"),
 		UTIL_RESTART_FIELD(Settings, qualityMode, "Upscale Preset"),
@@ -235,7 +235,7 @@ public:
 	static inline FidelityFX fidelityFX;  ///< Only for frame generation
 	static inline DX12SwapChain dx12SwapChain;
 	static inline RCAS rcas;          ///< Standalone RCAS sharpening for DLSS
-	static inline DLSSperf dlssPerf;  ///< VR-only: render engine at upscaled-render res
+	static inline PerfMode perfMode;  ///< VR-only: render engine at upscaled-render res
 
 	winrt::com_ptr<ID3D11PixelShader> copyDepthToSharedBufferPS;
 
@@ -265,11 +265,11 @@ public:
 	 *
 	 * Same draw as UpscaleDepth's mask branch on the full-resolution path,
 	 * extracted so callers that bypass the standard upscale flow (notably
-	 * DLSSperf::HandlePostProcessing, where engine RTs are pre-shrunk to
+	 * PerfMode::HandlePostProcessing, where engine RTs are pre-shrunk to
 	 * renderRes and DLSS targets a private displayRes texture) can drive
 	 * the repair without going through UpscaleDepth's wider envelope.
 	 * Sets and leaves D3D11 pipeline state dirty on exit — wrap in your
-	 * own save/restore (DLSSperf uses its FullscreenPassScope).
+	 * own save/restore (PerfMode uses its FullscreenPassScope).
 	 */
 	void RunUnderwaterMaskRepair();
 
