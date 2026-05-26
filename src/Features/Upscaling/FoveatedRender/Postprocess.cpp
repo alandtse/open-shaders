@@ -11,15 +11,12 @@ namespace FoveatedRenderImpl
 {
 	bool Postprocess::ApplyDlssSharpening(Upscaling& upscaling)
 	{
-		auto& enhancer = globals::features::upscaling.foveatedRender;
-		if (enhancer.GetSharpenMode() == FoveatedRender::SharpenMode::kNone) {
-			return true;
-		}
-
 		// MVP-B reads sharpness directly from Upscaling::Settings. The PR's
 		// GetActiveSharpnessDLSS() helper consulted FoveatedRender's own
 		// settings.sharpnessDLSS override; deferred to PR-3b along with the
 		// rest of the per-route override surface.
+		// sharpnessDLSS <= 0 is the single disable signal — the original
+		// per-route SharpenMode toggle was redundant with this slider.
 		const float sharpnessSetting = upscaling.settings.sharpnessDLSS;
 		if (sharpnessSetting <= 0.0f) {
 			return true;
