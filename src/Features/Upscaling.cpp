@@ -277,7 +277,7 @@ void Upscaling::DrawSettings()
 			// Derive scale from live `settings.qualityMode` — `resolution-
 			// Scale` is locked to the PerfMode boot snapshot, so reusing it
 			// here would mismatch the slider position the user sees.
-			const float displayScale = 1.0f / ffxFsr3GetUpscaleRatioFromQualityMode((FfxFsr3QualityMode)std::clamp<uint>(settings.qualityMode, 0u, 4u));
+			const float displayScale = 1.0f / GetQualityModeRatio(settings.qualityMode);
 			std::string labelWithScale = std::format("{} ( {:.2f}x )", baseLabel, displayScale);
 
 			ImGui::SliderInt("Upscale Preset", (int*)&settings.qualityMode, 0, 4, labelWithScale.c_str());
@@ -291,7 +291,7 @@ void Upscaling::DrawSettings()
 				const char* bootLabel = (upscaleMethod == UpscaleMethod::kDLSS) ? upscalePresetsDLSS[std::clamp<int>(4 - (int)bm, 0, 4)] : upscalePresets[std::clamp<int>(4 - (int)bm, 0, 4)];
 				Util::Text::RestartNeeded(
 					"Pending restart: currently active = %s ( %.2fx ). Change applies after game restart.",
-					bootLabel, 1.0f / ffxFsr3GetUpscaleRatioFromQualityMode((FfxFsr3QualityMode)bm));
+					bootLabel, 1.0f / GetQualityModeRatio(bm));
 			}
 		}
 
@@ -748,6 +748,13 @@ void Upscaling::PostPostLoad()
 	stl::detour_thunk<BSImageSpace_Init_FXAA>(REL::RelocationID(98974, 105626));
 
 	logger::info("[Upscaling] Installed hooks");
+}
+
+float Upscaling::GetQualityModeRatio(uint qualityMode)
+{
+	const float ratio = ffxFsr3GetUpscaleRatioFromQualityMode(
+		static_cast<FfxFsr3QualityMode>(std::clamp<uint>(qualityMode, 1u, 4u)));
+	return std::isfinite(ratio) && ratio > 0.0f ? ratio : 3.0f;
 }
 
 Upscaling::UpscaleMethod Upscaling::GetUpscaleMethod() const
@@ -1391,7 +1398,7 @@ void Upscaling::ConfigureUpscaling(RE::BSGraphics::State* a_viewport)
 			// Boot qualityMode under PerfMode so projection stays coherent
 			// with the engine RTs sized at install.
 			const uint32_t qm = globals::features::upscaling.perfMode.IsHookActive() ? bootSnapshot.Boot(&Settings::qualityMode) : settings.qualityMode;
-			float resolutionScaleBase = 1.0f / ffxFsr3GetUpscaleRatioFromQualityMode((FfxFsr3QualityMode)qm);
+			float resolutionScaleBase = 1.0f / GetQualityModeRatio(qm);
 
 			auto renderWidth = static_cast<int>(screenWidth * resolutionScaleBase);
 			auto renderHeight = static_cast<int>(screenHeight * resolutionScaleBase);

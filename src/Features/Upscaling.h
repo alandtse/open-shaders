@@ -161,6 +161,16 @@ public:
 
 	UpscaleMethod GetUpscaleMethod() const;
 
+	/// Render-to-display scale ratio for a quality mode index
+	/// (1=Quality, 2=Balanced, 3=Performance, 4=UltraPerformance).
+	/// Single source of truth across DLSS, FSR, and FoveatedRender paths:
+	/// the four "quality preset" ratios (1.5/1.7/2.0/3.0) are aligned across
+	/// DLSS and FSR3 by NVIDIA's DLSS Programming Guide and FFX's
+	/// FfxFsr3QualityMode enum, so all upscalers in this plugin route their
+	/// quality lookups through here rather than duplicating the table. Returns
+	/// 3.0 (UltraPerformance) on out-of-range input.
+	static float GetQualityModeRatio(uint qualityMode);
+
 	void CheckResources(UpscaleMethod a_upscalemethod);
 	void CreateUpscalingTextureResources(UpscaleMethod a_upscalemethod);
 	void DestroyUpscalingTextureResources(UpscaleMethod a_upscalemethod);
