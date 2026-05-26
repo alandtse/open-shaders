@@ -332,15 +332,11 @@ void LightLimitFix::BSLightingShader_SetupGeometry_GeometrySetupConstantPointLig
 	}
 	strictLightDataTemp.NumStrictLights = writeIdx;
 
-	for (uint32_t i = 0; i < a_pass->numShadowLights; i++) {
-		auto bsLight = a_pass->sceneLights[i + 1];
-		if (!bsLight)
-			continue;
-		auto* shadowLight = static_cast<RE::BSShadowLight*>(bsLight);
-		GET_INSTANCE_MEMBER(maskIndex, shadowLight);
-		if (maskIndex < 32)
-			strictLightDataTemp.ShadowBitMask |= (1u << maskIndex);
-	}
+	// ShadowBitMask is no longer consumed by any shader -- the bit-mask path in
+	// LightLimitFix::IsLightIgnored was removed when the per-light shadowMapIndex
+	// sampling replaced it. The struct member stays for cbuffer ABI stability and
+	// is reset to 0 above; building the mask here was a per-pass hot-loop cost
+	// (plus extra cbuffer updates via previousShadowBitMask) for data nobody read.
 }
 
 void LightLimitFix::BSLightingShader_SetupGeometry_After(RE::BSRenderPass*)
@@ -359,14 +355,12 @@ void LightLimitFix::BSLightingShader_SetupGeometry_After(RE::BSRenderPass*)
 	const auto isEmpty = strictLightDataTemp.NumStrictLights == 0;
 	const bool isWorld = accumulator->GetRuntimeData().activeShadowSceneNode == shadowSceneNode;
 	const auto roomIndex = strictLightDataTemp.RoomIndex;
-	const auto shadowBitMask = strictLightDataTemp.ShadowBitMask;
 
-	if (!isEmpty || (isEmpty && !wasEmpty) || isWorld != wasWorld || previousRoomIndex != roomIndex || shadowBitMask != previousShadowBitMask) {
+	if (!isEmpty || (isEmpty && !wasEmpty) || isWorld != wasWorld || previousRoomIndex != roomIndex) {
 		strictLightDataCB->Update(strictLightDataTemp);
 		wasEmpty = isEmpty;
 		wasWorld = isWorld;
 		previousRoomIndex = roomIndex;
-		previousShadowBitMask = shadowBitMask;
 	}
 
 	if (frameChecker.IsNewFrame()) {

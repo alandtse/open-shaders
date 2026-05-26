@@ -103,9 +103,17 @@ namespace ShadowCasterManager
 		if (_ptr)
 			return false;
 		auto* w = new FormulaWrapper();
-		_ptr = w;
 		w->expression.register_symbol_table(s_symbolTable);
-		return w->parser.compile(input, w->expression);
+		// Defer the _ptr assignment until compile succeeds. Otherwise a
+		// failed compile leaves the helper in a "parsed" state (Calculate
+		// would evaluate an uncompiled expression and the early-return
+		// guard above would block subsequent Parse retries).
+		if (!w->parser.compile(input, w->expression)) {
+			delete w;
+			return false;
+		}
+		_ptr = w;
+		return true;
 	}
 
 	double FormulaHelper::Calculate()
