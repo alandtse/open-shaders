@@ -682,14 +682,15 @@ void LightLimitFix::UpdateLights()
 	// GameSetShadowCasterSlot (→ shadowLightsAccum) for redrawn lights, so without
 	// the skip below each redrawn shadow light would be added twice.
 	//
-	// Reserve buckets up front to avoid rehash allocations during inserts.
-	// Upper bound is the configured kSHADOWMAPS slot count -- shadowLightsAccum
-	// is sized to hold at most that many distinct point/spot lights (the sun
-	// occupies one logical entry but no kSHADOWMAPS slice, so the +1 is
-	// belt-and-braces).
-	// Dense set avoids the per-insert node allocation that std::unordered_set
-	// would incur on every frame in this hot path.
-	ankerl::unordered_dense::set<RE::BSLight*> shadowLightPtrs;
+	// Static reuses the bucket array across frames -- a local set would
+	// destroy + recreate its buckets every frame, defeating the reserve().
+	// Dense layout avoids the per-insert node allocation a std::unordered_set
+	// would incur. Upper bound is the configured kSHADOWMAPS slot count;
+	// shadowLightsAccum is sized to hold at most that many distinct point/spot
+	// lights (sun occupies one logical entry but no kSHADOWMAPS slice, hence
+	// the belt-and-braces +1).
+	static ankerl::unordered_dense::set<RE::BSLight*> shadowLightPtrs;
+	shadowLightPtrs.clear();
 	shadowLightPtrs.reserve(ShadowCasterManager::GetInstalledSlotCount() + 1);
 	ShadowCasterManager::ForEachShadowLight(shadowSceneNode->GetRuntimeData().shadowLightsAccum,
 		[&](RE::BSShadowLight* light) {
