@@ -56,27 +56,30 @@ void LightLimitFix::DrawSettings()
 			ImGui::Text("Raymarch steps at zero depth. Higher = longer / more accurate contact shadows, linearly more cost.\nVR users should consider 2 to halve per-eye cost.");
 		}
 
-		ImGui::SliderFloat("Max Distance", &settings.ContactShadowMaxDistance, 64.0f, 4096.0f, "%.0f");
+		// AlwaysClamp on every float slider too: without it, Ctrl+Click text entry can
+		// land arbitrary out-of-range values in settings before GetCommonBufferData's
+		// boundary clamp catches them at the GPU side.
+		ImGui::SliderFloat("Max Distance", &settings.ContactShadowMaxDistance, 64.0f, 4096.0f, "%.0f", ImGuiSliderFlags_AlwaysClamp);
 		if (auto _tt = Util::HoverTooltipWrapper()) {
 			ImGui::Text("View-space depth at which contact shadows fade to zero steps. Avoids paying for shadows on distant surfaces where they don't read.");
 		}
 
-		ImGui::SliderFloat("Stride", &settings.ContactShadowStride, 0.5f, 8.0f, "%.2f");
+		ImGui::SliderFloat("Stride", &settings.ContactShadowStride, 0.5f, 8.0f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
 		if (auto _tt = Util::HoverTooltipWrapper()) {
 			ImGui::Text("Per-step march length in view-space units at near depth (auto-scales linearly past ~100 units so far surfaces don't undersample). Larger = longer screen-space reach with coarser detail.");
 		}
 
-		ImGui::SliderFloat("Thickness", &settings.ContactShadowThickness, 0.0f, 1.0f, "%.3f");
+		ImGui::SliderFloat("Thickness", &settings.ContactShadowThickness, 0.0f, 1.0f, "%.3f", ImGuiSliderFlags_AlwaysClamp);
 		if (auto _tt = Util::HoverTooltipWrapper()) {
 			ImGui::Text("Depth-delta multiplier for shadow onset. Larger = darker contact at occluder edges.");
 		}
 
-		ImGui::SliderFloat("Depth Fade", &settings.ContactShadowDepthFade, 0.0f, 1.0f, "%.3f");
+		ImGui::SliderFloat("Depth Fade", &settings.ContactShadowDepthFade, 0.0f, 1.0f, "%.3f", ImGuiSliderFlags_AlwaysClamp);
 		if (auto _tt = Util::HoverTooltipWrapper()) {
 			ImGui::Text("Depth-delta multiplier for shadow falloff. Larger = shadows truncate sooner behind thick occluders.");
 		}
 
-		ImGui::SliderFloat("Min Light Intensity", &settings.ContactShadowMinIntensity, 0.0f, 1.0f, "%.2f");
+		ImGui::SliderFloat("Min Light Intensity", &settings.ContactShadowMinIntensity, 0.0f, 1.0f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
 		if (auto _tt = Util::HoverTooltipWrapper()) {
 			ImGui::Text(
 				"Skip contact shadows for CLUSTERED lights whose normalized distance falloff "
