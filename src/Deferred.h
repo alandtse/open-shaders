@@ -38,6 +38,12 @@ public:
 		uint pad0[3];
 	};
 	STATIC_ASSERT_ALIGNAS_16(DirectionalShadowLightData);
+	// Size guard catches silent layout drift between this and the HLSL mirror
+	// in ShadowSampling.hlsli; any size change here corrupts every uploaded
+	// directional shadow record so we want it to fail at compile time.
+	// 8 float4x4 (Shadow + Inv + Focus) + 2 float4 (splits + FocusCount/pad).
+	static_assert(sizeof(DirectionalShadowLightData) == 8 * sizeof(float4x4) + 2 * sizeof(float4),
+		"DirectionalShadowLightData layout drifted from ShadowSampling.hlsli mirror");
 
 	struct alignas(16) ShadowLightData
 	{
@@ -47,6 +53,9 @@ public:
 	};
 
 	STATIC_ASSERT_ALIGNAS_16(ShadowLightData);
+	// Same guard for the per-slot point/spot shadow record (LightLimitFix.hlsli).
+	static_assert(sizeof(ShadowLightData) == 2 * sizeof(float4x4) + sizeof(float4),
+		"ShadowLightData layout drifted from LightLimitFix.hlsli mirror");
 
 	void SetupResources();
 	void ReflectionsPrepasses();

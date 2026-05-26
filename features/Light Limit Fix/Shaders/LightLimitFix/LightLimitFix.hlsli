@@ -264,6 +264,9 @@ namespace LightLimitFix
 				}
 				focusVis /= 8.0;
 				shadow = min(shadow, focusVis);
+				// Fully occluded -- remaining focus actors can only multiply
+				// by zero, so skip their 8-tap GatherRed work on this pixel.
+				[branch] if (shadow <= 0.0) break;
 			}
 		}
 

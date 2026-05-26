@@ -323,7 +323,12 @@ void LightLimitFix::DrawOverlay()
 	// when many lights are present (the table scrolls internally instead
 	// of pushing the window past its max-height constraint).
 	bool shadowRelatedMode = !vizOn || (mode >= 4);
-	if (hasSuppressed || shadowRelatedMode) {
+	// Also show the table when the user explicitly opened the overlay
+	// (Show Shadow Overlay toggle) or has any per-light overrides -- the
+	// tooltip promises the table's debug controls are reachable any time
+	// once the overlay is open, but viz modes 0-3 leave shadowRelatedMode
+	// false so without these extra terms the user gets an empty window.
+	if (showOverlay || hasOverrides || hasSuppressed || shadowRelatedMode) {
 		ImGui::Separator();
 		// compact=false in the overlay: the table fills the remaining
 		// content region of the user-sized window and scrolls internally
