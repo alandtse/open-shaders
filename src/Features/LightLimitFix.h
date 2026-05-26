@@ -174,7 +174,7 @@ public:
 
 	Util::FrameChecker frameChecker;
 
-	// Point/spot shadow resources (t100, t101)
+	// Point/spot shadow resources (t102, t103 -- t100/t101 reserved for Grass Collision)
 	// shadowLights is lazily allocated in CopyShadowLightData() since shadowMapSlots
 	// is not known until Deferred::SetupResources() runs (after Feature::SetupResources()).
 	Buffer* shadowLights = nullptr;

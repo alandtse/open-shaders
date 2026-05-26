@@ -56,28 +56,28 @@ void LightLimitFix::CopyShadowLightData()
 		// Clean degradation when SCM hasn't published a usable slot count yet
 		// (e.g. before SetupResources finishes, or after a transient
 		// reallocation failure). Without this clear, the previous frame's
-		// slot metadata, counters, and PS bindings at t100/t101 stay live --
+		// slot metadata, counters, and PS bindings at t102/t103 stay live --
 		// the overlay shows stale shadow rows and shaders keep sampling
 		// stale shadow records instead of degrading cleanly to unshadowed.
 		ShadowCasterManager::BeginSlotFrame(0);
 		shadowLightCount = 0;
 		shadowUnshadowedLightCount = 0;
 		ID3D11ShaderResourceView* nullSRVs[2]{ nullptr, nullptr };
-		globals::d3d::context->PSSetShaderResources(100, ARRAYSIZE(nullSRVs), nullSRVs);
+		globals::d3d::context->PSSetShaderResources(102, ARRAYSIZE(nullSRVs), nullSRVs);
 		return;
 	}
 
 	auto* shadowSceneNode = globals::game::smState->shadowSceneNode[0];
 	if (!shadowSceneNode) {
 		// Same cleanup contract as the slots==0 path above: clear slot
-		// metadata + counters and unbind t100/t101 so the overlay doesn't
+		// metadata + counters and unbind t102/t103 so the overlay doesn't
 		// show stale rows and shaders degrade to unshadowed instead of
 		// sampling a previous frame's records.
 		ShadowCasterManager::BeginSlotFrame(0);
 		shadowLightCount = 0;
 		shadowUnshadowedLightCount = 0;
 		ID3D11ShaderResourceView* nullSRVs[2]{ nullptr, nullptr };
-		globals::d3d::context->PSSetShaderResources(100, ARRAYSIZE(nullSRVs), nullSRVs);
+		globals::d3d::context->PSSetShaderResources(102, ARRAYSIZE(nullSRVs), nullSRVs);
 		return;
 	}
 
@@ -219,10 +219,10 @@ void LightLimitFix::CopyShadowLightData()
 		memcpy(mapped.pData, sd.data(), slots * sizeof(Deferred::ShadowLightData));
 		context->Unmap(shadowLights->resource.get(), 0);
 		ID3D11ShaderResourceView* srv = shadowLights->srv.get();
-		context->PSSetShaderResources(100, 1, &srv);
+		context->PSSetShaderResources(102, 1, &srv);
 	}
 
-	context->PSSetShaderResources(101, 1, &shadowMapsSRV);
+	context->PSSetShaderResources(103, 1, &shadowMapsSRV);
 }
 
 // ─── Debug helpers ────────────────────────────────────────────────────────────

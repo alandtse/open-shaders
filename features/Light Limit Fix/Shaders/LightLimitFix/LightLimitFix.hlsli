@@ -151,8 +151,12 @@ namespace LightLimitFix
 		float4 ShadowLightParam;
 	};
 
-	StructuredBuffer<ShadowLightData> Shadows : register(t100);
-	Texture2DArray<float> ShadowMaps : register(t101);
+	// t100/t101 are reserved for Grass Collision (its Collision texture binds at
+	// t100, and shaders like RunGrass include both features). LLF shadow data
+	// uses t102/t103 to avoid the collision; keep the C++ PSSetShaderResources
+	// slots in src/Features/LightLimitFix/ShadowRenderer.cpp in sync.
+	StructuredBuffer<ShadowLightData> Shadows : register(t102);
+	Texture2DArray<float> ShadowMaps : register(t103);
 	Texture2DArray<float> DirectionalShadowCascades : register(t99);
 
 	// engineMaskShadow: the engine's pre-rendered 4-cascade shadow mask sample
