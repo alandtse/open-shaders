@@ -10,12 +10,11 @@
 #include "Util.h"
 #include "Utils/ExternalEmittance.h"
 
-// EnableLightsVisualisation / LightsVisualisationMode are intentionally NOT
-// persisted -- they're debug toggles that should reset on each session so
-// users don't accidentally ship debug overlays in their persistent config.
-// EnableContactShadows + ContactShadow* tuning are real user settings and
-// persist; ShowShadowOverlay and ShadowSettings drive the shadow caster
-// scheduler UI and also persist.
+// Debug visualisation state (EnableLightsVisualisation / LightsVisualisationMode)
+// is intentionally NOT in Settings -- it lives as instance members on the
+// LightLimitFix class so it resets per session and can't accidentally end
+// up in a shipped JSON config that would force every load to compile the
+// heavier LLFDEBUG shader permutation.
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	LightLimitFix::Settings,
 	EnableContactShadows,
@@ -115,7 +114,7 @@ void LightLimitFix::DrawSettings()
 	ImGui::SeparatorText("Debug");
 
 	if (ImGui::TreeNode("Light Limit Visualization")) {
-		ImGui::Checkbox("Enable Lights Visualisation", &settings.EnableLightsVisualisation);
+		ImGui::Checkbox("Enable Lights Visualisation", &EnableLightsVisualisation);
 		if (auto _tt = Util::HoverTooltipWrapper()) {
 			ImGui::Text("Enables visualization of the light limit\n");
 		}
@@ -133,15 +132,13 @@ void LightLimitFix::DrawSettings()
 				"Shadow Slot Index Color",
 				"Light Type Visualization",
 			};
-			// Round-trip through int instead of `(int*)&uint` to avoid the strict-aliasing
-			// UB the contact-shadow sliders explicitly call out (ImGui has no ComboScalar).
-			// Clamp on the way in so a corrupted persisted value can't read past the combo
-			// option array; clamp on the way back so the cbuffer never holds an out-of-range
-			// mode that the shader's switch would treat as "0".
-			int visMode = std::clamp(static_cast<int>(settings.LightsVisualisationMode),
+			// Round-trip through int instead of `(int*)&uint` to avoid strict-aliasing UB
+			// (ImGui has no ComboScalar). Clamp on the way in defends against any stale
+			// persisted value that might still exist from older builds.
+			int visMode = std::clamp(static_cast<int>(LightsVisualisationMode),
 				0, IM_ARRAYSIZE(comboOptions) - 1);
 			ImGui::Combo("Lights Visualisation Mode", &visMode, comboOptions, IM_ARRAYSIZE(comboOptions));
-			settings.LightsVisualisationMode = static_cast<uint>(visMode);
+			LightsVisualisationMode = static_cast<uint>(visMode);
 			if (auto _tt = Util::HoverTooltipWrapper()) {
 				ImGui::Text(
 					"Light Limit: Red when the strict light limit is reached (>=7 portal-strict lights).\n"
@@ -153,9 +150,9 @@ void LightLimitFix::DrawSettings()
 			}
 		}
 
-		currentEnableLightsVisualisation = settings.EnableLightsVisualisation;
+		currentEnableLightsVisualisation = EnableLightsVisualisation;
 		if (previousEnableLightsVisualisation != currentEnableLightsVisualisation) {
-			globals::state->SetDefines(settings.EnableLightsVisualisation ? "LLFDEBUG" : "");
+			globals::state->SetDefines(EnableLightsVisualisation ? "LLFDEBUG" : "");
 			shaderCache->Clear(RE::BSShader::Type::Lighting);
 			previousEnableLightsVisualisation = currentEnableLightsVisualisation;
 		}
@@ -191,12 +188,8 @@ LightLimitFix::PerFrame LightLimitFix::GetCommonBufferData()
 	perFrame.ContactShadowMinIntensity = sanitizeFloat(settings.ContactShadowMinIntensity, 0.0f, 1.0f);
 	perFrame.ShadowMapSlots = ShadowCasterManager::GetInstalledSlotCount();
 	std::copy(clusterSize, clusterSize + 3, perFrame.ClusterSize);
-	perFrame.EnableLightsVisualisation = settings.EnableLightsVisualisation;
-	// Clamp the visualization mode at the cbuffer boundary too -- the DrawSettings
-	// combo clamps on UI roundtrip, but persisted JSON or remote-control writes
-	// can land out-of-range and the shader's switch would treat that as mode 0
-	// silently. Keep the range in sync with the combo option list above.
-	perFrame.LightsVisualisationMode = std::min<uint32_t>(settings.LightsVisualisationMode, 9u);
+	perFrame.EnableLightsVisualisation = EnableLightsVisualisation;
+	perFrame.LightsVisualisationMode = LightsVisualisationMode;
 	return perFrame;
 }
 

@@ -263,7 +263,7 @@ void LightLimitFix::DrawOverlay()
 	//   - the user explicitly opted in via Show Shadow Overlay (lets the table's
 	//     debug controls — cycle button, solo, hover-pulse — be reachable in
 	//     the default state without first triggering a side-effect).
-	bool vizOn = settings.EnableLightsVisualisation;
+	bool vizOn = EnableLightsVisualisation;
 	bool hasSuppressed = ShadowCasterManager::HasSuppressedLights();
 	bool hasOverrides = ShadowCasterManager::HasAnyOverrides();
 	bool showOverlay = settings.ShowShadowOverlay;
@@ -298,14 +298,14 @@ void LightLimitFix::DrawOverlay()
 			"Unshadowed Point Lights", "Shadow Caster Density",
 			"Shadow Slot Index Color", "Light Type Visualization"
 		};
-		uint32_t m = settings.LightsVisualisationMode;
+		uint32_t m = LightsVisualisationMode;
 		const char* vizName = (m < IM_ARRAYSIZE(kVizNames)) ? kVizNames[m] : "Unknown";
 		ImGui::TextColored(ImVec4(1.0f, 0.3f, 0.3f, 1.0f), "LLF DEBUG - %s", vizName);
 	} else
 		ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.2f, 1.0f), "LLF - Shadow Suppression");
 	ImGui::Separator();
 
-	uint32_t mode = vizOn ? settings.LightsVisualisationMode : UINT32_MAX;
+	uint32_t mode = vizOn ? LightsVisualisationMode : UINT32_MAX;
 
 	// ── All stats grouped above the table (same order as menu) ─────────
 	// Summary always visible. Scheduler stats only when not in a viz mode
