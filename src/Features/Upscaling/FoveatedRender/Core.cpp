@@ -10,6 +10,18 @@
 
 namespace FoveatedRenderImpl::Ops
 {
+	// Mirrors the StretchCB layout in SubrectStretchCS.hlsl — 8 dims + mode +
+	// blur radius + debug flag + pad. Kept at namespace scope so the create-CB
+	// path can size against sizeof(StretchCB) instead of a magic number.
+	struct StretchCB
+	{
+		uint32_t data[8];
+		uint32_t stretchMode;
+		float blurRadius;
+		uint32_t debugVisualize;
+		uint32_t pad;
+	};
+
 	eastl::unique_ptr<Texture2D> CreateTextureFromSource(ID3D11Resource* src, uint32_t width, uint32_t height,
 		bool copyBindFlags, bool createSRV, bool createUAV, const char* name)
 	{
@@ -112,8 +124,8 @@ namespace FoveatedRenderImpl::Ops
 		for (int i = 0; i < 2; i++) {
 			std::string suffix = (i == 0) ? "Left" : "Right";
 
-			Core::vrIntermediateColorIn[i] = CreateTextureFromSource(colorSrc, inWidth, inHeight, false, true, true, ("Enh_ColorIn_" + suffix).c_str());
-			Core::vrIntermediateColorOut[i] = CreateTextureFromSource(colorSrc, outWidth, outHeight, false, true, false, ("Enh_ColorOut_" + suffix).c_str());
+			Core::vrIntermediateColorIn[i] = CreateTextureFromSource(colorSrc, inWidth, inHeight, false, true, true, ("FoveatedRender_ColorIn_" + suffix).c_str());
+			Core::vrIntermediateColorOut[i] = CreateTextureFromSource(colorSrc, outWidth, outHeight, false, true, false, ("FoveatedRender_ColorOut_" + suffix).c_str());
 
 			D3D11_TEXTURE2D_DESC depthDesc = {};
 			depthDesc.Width = inWidth;
@@ -125,7 +137,7 @@ namespace FoveatedRenderImpl::Ops
 			depthDesc.Usage = D3D11_USAGE_DEFAULT;
 			depthDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
 			Core::vrIntermediateDepth[i] = eastl::make_unique<Texture2D>(depthDesc);
-			Util::SetResourceName(Core::vrIntermediateDepth[i]->resource.get(), ("Enh_Depth_" + suffix).c_str());
+			Util::SetResourceName(Core::vrIntermediateDepth[i]->resource.get(), ("FoveatedRender_Depth_" + suffix).c_str());
 
 			D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
 			srvDesc.Format = DXGI_FORMAT_R32_FLOAT;
@@ -133,13 +145,13 @@ namespace FoveatedRenderImpl::Ops
 			srvDesc.Texture2D.MipLevels = 1;
 			Core::vrIntermediateDepth[i]->CreateSRV(srvDesc);
 
-			Core::vrIntermediateMotionVectors[i] = CreateTextureFromSource(mvecSrc, inWidth, inHeight, false, true, false, ("Enh_MVec_" + suffix).c_str());
+			Core::vrIntermediateMotionVectors[i] = CreateTextureFromSource(mvecSrc, inWidth, inHeight, false, true, false, ("FoveatedRender_MVec_" + suffix).c_str());
 			if (reactiveSrc)
-				Core::vrIntermediateReactiveMask[i] = CreateTextureFromSource(reactiveSrc, inWidth, inHeight, false, true, false, ("Enh_Reactive_" + suffix).c_str());
+				Core::vrIntermediateReactiveMask[i] = CreateTextureFromSource(reactiveSrc, inWidth, inHeight, false, true, false, ("FoveatedRender_Reactive_" + suffix).c_str());
 			else
 				Core::vrIntermediateReactiveMask[i].reset();
 			if (transparencySrc)
-				Core::vrIntermediateTransparencyMask[i] = CreateTextureFromSource(transparencySrc, inWidth, inHeight, false, true, false, ("Enh_Transparency_" + suffix).c_str());
+				Core::vrIntermediateTransparencyMask[i] = CreateTextureFromSource(transparencySrc, inWidth, inHeight, false, true, false, ("FoveatedRender_Transparency_" + suffix).c_str());
 			else
 				Core::vrIntermediateTransparencyMask[i].reset();
 		}
@@ -167,8 +179,8 @@ namespace FoveatedRenderImpl::Ops
 		if (needsRecreate) {
 			for (int i = 0; i < 2; i++) {
 				std::string suffix = (i == 0) ? "Left" : "Right";
-				Core::vrSubrectColorIn[i] = CreateTextureFromSource(colorSrc, subInW, subInH, false, true, true, ("Enh_Subrect_ColorIn_" + suffix).c_str());
-				Core::vrSubrectColorOut[i] = CreateTextureFromSource(colorSrc, subOutW, subOutH, false, true, false, ("Enh_Subrect_ColorOut_" + suffix).c_str());
+				Core::vrSubrectColorIn[i] = CreateTextureFromSource(colorSrc, subInW, subInH, false, true, true, ("FoveatedRender_Subrect_ColorIn_" + suffix).c_str());
+				Core::vrSubrectColorOut[i] = CreateTextureFromSource(colorSrc, subOutW, subOutH, false, true, false, ("FoveatedRender_Subrect_ColorOut_" + suffix).c_str());
 
 				D3D11_TEXTURE2D_DESC depthDesc = {};
 				depthDesc.Width = subInW;
@@ -180,7 +192,7 @@ namespace FoveatedRenderImpl::Ops
 				depthDesc.Usage = D3D11_USAGE_DEFAULT;
 				depthDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
 				Core::vrSubrectDepth[i] = eastl::make_unique<Texture2D>(depthDesc);
-				Util::SetResourceName(Core::vrSubrectDepth[i]->resource.get(), ("Enh_Subrect_Depth_" + suffix).c_str());
+				Util::SetResourceName(Core::vrSubrectDepth[i]->resource.get(), ("FoveatedRender_Subrect_Depth_" + suffix).c_str());
 
 				D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
 				srvDesc.Format = DXGI_FORMAT_R32_FLOAT;
@@ -188,13 +200,13 @@ namespace FoveatedRenderImpl::Ops
 				srvDesc.Texture2D.MipLevels = 1;
 				Core::vrSubrectDepth[i]->CreateSRV(srvDesc);
 
-				Core::vrSubrectMotionVectors[i] = CreateTextureFromSource(mvecSrc, subInW, subInH, false, true, false, ("Enh_Subrect_MVec_" + suffix).c_str());
+				Core::vrSubrectMotionVectors[i] = CreateTextureFromSource(mvecSrc, subInW, subInH, false, true, false, ("FoveatedRender_Subrect_MVec_" + suffix).c_str());
 				if (reactiveSrc)
-					Core::vrSubrectReactiveMask[i] = CreateTextureFromSource(reactiveSrc, subInW, subInH, false, true, false, ("Enh_Subrect_Reactive_" + suffix).c_str());
+					Core::vrSubrectReactiveMask[i] = CreateTextureFromSource(reactiveSrc, subInW, subInH, false, true, false, ("FoveatedRender_Subrect_Reactive_" + suffix).c_str());
 				else
 					Core::vrSubrectReactiveMask[i].reset();
 				if (transparencySrc)
-					Core::vrSubrectTransparencyMask[i] = CreateTextureFromSource(transparencySrc, subInW, subInH, false, true, false, ("Enh_Subrect_Transparency_" + suffix).c_str());
+					Core::vrSubrectTransparencyMask[i] = CreateTextureFromSource(transparencySrc, subInW, subInH, false, true, false, ("FoveatedRender_Subrect_Transparency_" + suffix).c_str());
 				else
 					Core::vrSubrectTransparencyMask[i].reset();
 			}
@@ -217,6 +229,14 @@ namespace FoveatedRenderImpl::Ops
 		uint32_t eyeWidthOut,
 		uint32_t eyeHeightOut)
 	{
+		// Required sources are dereferenced unconditionally below; bail
+		// rather than null-deref CopySubresourceRegion. Reactive/transparency
+		// are optional and already conditionally copied.
+		if (!colorSrc || !depthSrc || !mvecSrc) {
+			logger::error("[FOVEATED] PreparePerEyeInputs missing required source textures");
+			return false;
+		}
+
 		EnsureVRIntermediateTextures(
 			eyeWidthIn,
 			eyeHeightIn,
@@ -309,9 +329,10 @@ namespace FoveatedRenderImpl::Ops
 
 		if (!Core::vrSubrectStretchCS) {
 			Core::vrSubrectStretchCS.attach((ID3D11ComputeShader*)Util::CompileShader(L"Data/Shaders/Upscaling/FoveatedRender/SubrectStretchCS.hlsl", {}, "cs_5_0"));
+			Util::SetResourceName(Core::vrSubrectStretchCS.get(), "FoveatedRender::SubrectStretchCS");
 
 			D3D11_BUFFER_DESC cbDesc = {};
-			cbDesc.ByteWidth = 48;
+			cbDesc.ByteWidth = sizeof(StretchCB);
 			cbDesc.Usage = D3D11_USAGE_DYNAMIC;
 			cbDesc.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
 			cbDesc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
@@ -319,6 +340,7 @@ namespace FoveatedRenderImpl::Ops
 				logger::error("[FOVEATED] Failed to create SubrectStretch constant buffer");
 				return;
 			}
+			Util::SetResourceName(Core::vrSubrectStretchCB.get(), "FoveatedRender::SubrectStretchCB");
 
 			D3D11_SAMPLER_DESC sampDesc = {};
 			sampDesc.Filter = D3D11_FILTER_MIN_MAG_LINEAR_MIP_POINT;
@@ -329,6 +351,7 @@ namespace FoveatedRenderImpl::Ops
 				logger::error("[FOVEATED] Failed to create SubrectStretch sampler");
 				return;
 			}
+			Util::SetResourceName(Core::vrSubrectStretchSampler.get(), "FoveatedRender::SubrectStretchSampler");
 		}
 
 		if (!Core::vrSubrectStretchCS || !Core::vrSubrectStretchCB || !Core::vrSubrectStretchSampler) {
@@ -357,14 +380,7 @@ namespace FoveatedRenderImpl::Ops
 		}
 		{
 			auto& enhSettings = globals::features::upscaling.foveatedRender.settings;
-			struct
-			{
-				uint32_t data[8];
-				uint32_t stretchMode;
-				float blurRadius;
-				uint32_t debugVisualize;
-				uint32_t pad;
-			} cb = {};
+			StretchCB cb = {};
 			cb.data[0] = dstOffsetX;
 			cb.data[1] = dstWidth;
 			cb.data[2] = dstHeight;
@@ -410,7 +426,7 @@ namespace FoveatedRenderImpl::Ops
 	void EnsureVRRenderSBS(uint32_t renderW, uint32_t renderH, ID3D11Resource* colorSrc)
 	{
 		if (!Core::vrRenderSBS || Core::vrRenderSBSW != renderW || Core::vrRenderSBSH != renderH) {
-			Core::vrRenderSBS = CreateTextureFromSource(colorSrc, renderW, renderH, false, true, false, "Enh_RenderSBS");
+			Core::vrRenderSBS = CreateTextureFromSource(colorSrc, renderW, renderH, false, true, false, "FoveatedRender_RenderSBS");
 			Core::vrRenderSBSW = renderW;
 			Core::vrRenderSBSH = renderH;
 		}
@@ -424,7 +440,7 @@ namespace FoveatedRenderImpl::Ops
 			return;
 		for (int i = 0; i < 2; i++) {
 			std::string suffix = (i == 0) ? "Left" : "Right";
-			Core::vrFasterColorOut[i] = CreateTextureFromSource(colorSrc, subOutW, subOutH, false, true, false, ("Enh_Faster_ColorOut_" + suffix).c_str());
+			Core::vrFasterColorOut[i] = CreateTextureFromSource(colorSrc, subOutW, subOutH, false, true, false, ("FoveatedRender_Faster_ColorOut_" + suffix).c_str());
 		}
 		Core::vrFasterOutW = subOutW;
 		Core::vrFasterOutH = subOutH;
@@ -454,7 +470,14 @@ namespace FoveatedRenderImpl::Ops
 		uint32_t eyeWidthIn, uint32_t eyeHeightIn, uint32_t renderW, uint32_t renderH,
 		ID3D11ShaderResourceView* srcOverride)
 	{
-		auto* src = srcOverride ? srcOverride : Core::vrRenderSBS->srv.get();
+		// Snapshot creation can fail or be skipped on a fresh frame; degrade
+		// rather than dereference vrRenderSBS->srv on the null path.
+		auto* src = srcOverride ? srcOverride :
+		                          (Core::vrRenderSBS ? Core::vrRenderSBS->srv.get() : nullptr);
+		if (!src) {
+			logger::error("[FOVEATED] StretchDRSBothEyes missing source SRV");
+			return;
+		}
 		for (uint32_t i = 0; i < 2; ++i) {
 			uint32_t dstX = (i == 1) ? eyeWidthOut : 0;
 			uint32_t srcX = (i == 1) ? eyeWidthIn : 0;

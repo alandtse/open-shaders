@@ -53,6 +53,16 @@ namespace FoveatedRenderImpl
 		auto& temporalAAMask = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kTEMPORAL_AA_MASK];
 		auto& normals = renderer->GetRuntimeData().renderTargets[globals::deferred->forwardRenderTargets[2]];
 		auto& depth = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kMAIN];
+
+		// Bail before BeginPerfEvent so the perf-event lifecycle stays balanced.
+		// CSSetShaderResources with a null view in the array doesn't crash, but
+		// the encode shader reads all four — a null among them silently corrupts
+		// the reactive/transparency masks DLSS will sample next.
+		if (!temporalAAMask.SRV || !normals.SRV || !motionVector.SRV || !depth.depthSRV) {
+			logger::error("[FOVEATED] Missing preprocess SRV inputs");
+			return false;
+		}
+
 		auto dispatchCount = Util::GetScreenDispatchCount(true);
 
 		state->BeginPerfEvent("FOVEATED Encode Upscaling Textures");

@@ -29,6 +29,10 @@ namespace FoveatedRenderImpl
 
 		auto context = globals::d3d::context;
 		auto renderer = globals::game::renderer;
+		if (!context || !renderer) {
+			logger::error("[FOVEATED] Missing D3D context or renderer for sharpening");
+			return false;
+		}
 		auto& main = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMAIN];
 
 		if (!main.SRV) {
@@ -58,7 +62,9 @@ namespace FoveatedRenderImpl
 		context->CopyResource(mainResource, upscaling.sharpenerTexture->resource.get());
 		mainResource->Release();
 
-		globals::game::stateUpdateFlags->set(RE::BSGraphics::ShaderFlags::DIRTY_RENDERTARGET);
+		if (globals::game::stateUpdateFlags) {
+			globals::game::stateUpdateFlags->set(RE::BSGraphics::ShaderFlags::DIRTY_RENDERTARGET);
+		}
 		return true;
 	}
 }

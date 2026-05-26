@@ -26,6 +26,13 @@ SamplerState BilinearSampler : register(s0);
 RWTexture2D<float4> DstTex : register(u0);
 
 [numthreads(8, 8, 1)] void main(uint3 tid : SV_DispatchThreadID) {
+	// Zero-dim guard: a misconfigured dispatch with any zero extent would
+	// divide-by-zero into NaN UVs and underflow point-mode coords into
+	// huge uint values. Bail before any math.
+	if (DstWidth == 0 || DstHeight == 0 || SrcWidth == 0 || SrcHeight == 0 ||
+		SrcEyeWidth == 0 || SrcEyeHeight == 0)
+		return;
+
 	if (tid.x >= DstWidth || tid.y >= DstHeight)
 		return;
 
@@ -38,13 +45,22 @@ RWTexture2D<float4> DstTex : register(u0);
 	float srcU = (u * (float)SrcEyeWidth + (float)SrcOffsetX) / (float)SrcWidth;
 	float srcV = (v * (float)SrcEyeHeight) / (float)SrcHeight;
 
+	// Clamp sample UVs to per-eye texel bounds so the bilinear footprint and
+	// blur kernel can't reach across the SBS midline into the neighboring
+	// eye's pixels.
+	float2 eyeMinUV = float2(((float)SrcOffsetX + 0.5) / (float)SrcWidth,
+		0.5 / (float)SrcHeight);
+	float2 eyeMaxUV = float2(((float)(SrcOffsetX + SrcEyeWidth) - 0.5) / (float)SrcWidth,
+		((float)SrcEyeHeight - 0.5) / (float)SrcHeight);
+
 	float4 color;
 
 	if (StretchMode == 1) {
-		// Point / Nearest: integer texel lookup, cheapest
+		// Point / Nearest: integer texel lookup, cheapest. min() keeps us
+		// inside [0, SrcEyeWidth-1] / [0, SrcEyeHeight-1] when u/v == 1.
 		uint2 srcPixel = uint2(
-			(uint)(u * (float)SrcEyeWidth) + SrcOffsetX,
-			(uint)(v * (float)SrcEyeHeight));
+			min((uint)(u * (float)SrcEyeWidth), SrcEyeWidth - 1) + SrcOffsetX,
+			min((uint)(v * (float)SrcEyeHeight), SrcEyeHeight - 1));
 		color = SrcTex.Load(int3(srcPixel, 0));
 	} else if (StretchMode == 2) {
 		// Gaussian blur 3x3: 9-tap weighted average around center
@@ -54,19 +70,19 @@ RWTexture2D<float4> DstTex : register(u0);
 
 		// Gaussian weights for 3x3 kernel (sigma ~ 0.85 * radius)
 		// Center=4, Edge=2, Corner=1, sum=16
-		float4 sum = SrcTex.SampleLevel(BilinearSampler, center, 0) * 4.0;
-		sum += SrcTex.SampleLevel(BilinearSampler, center + float2(-step.x, 0), 0) * 2.0;
-		sum += SrcTex.SampleLevel(BilinearSampler, center + float2(step.x, 0), 0) * 2.0;
-		sum += SrcTex.SampleLevel(BilinearSampler, center + float2(0, -step.y), 0) * 2.0;
-		sum += SrcTex.SampleLevel(BilinearSampler, center + float2(0, step.y), 0) * 2.0;
-		sum += SrcTex.SampleLevel(BilinearSampler, center + float2(-step.x, -step.y), 0);
-		sum += SrcTex.SampleLevel(BilinearSampler, center + float2(step.x, -step.y), 0);
-		sum += SrcTex.SampleLevel(BilinearSampler, center + float2(-step.x, step.y), 0);
-		sum += SrcTex.SampleLevel(BilinearSampler, center + float2(step.x, step.y), 0);
+		float4 sum = SrcTex.SampleLevel(BilinearSampler, clamp(center, eyeMinUV, eyeMaxUV), 0) * 4.0;
+		sum += SrcTex.SampleLevel(BilinearSampler, clamp(center + float2(-step.x, 0), eyeMinUV, eyeMaxUV), 0) * 2.0;
+		sum += SrcTex.SampleLevel(BilinearSampler, clamp(center + float2(step.x, 0), eyeMinUV, eyeMaxUV), 0) * 2.0;
+		sum += SrcTex.SampleLevel(BilinearSampler, clamp(center + float2(0, -step.y), eyeMinUV, eyeMaxUV), 0) * 2.0;
+		sum += SrcTex.SampleLevel(BilinearSampler, clamp(center + float2(0, step.y), eyeMinUV, eyeMaxUV), 0) * 2.0;
+		sum += SrcTex.SampleLevel(BilinearSampler, clamp(center + float2(-step.x, -step.y), eyeMinUV, eyeMaxUV), 0);
+		sum += SrcTex.SampleLevel(BilinearSampler, clamp(center + float2(step.x, -step.y), eyeMinUV, eyeMaxUV), 0);
+		sum += SrcTex.SampleLevel(BilinearSampler, clamp(center + float2(-step.x, step.y), eyeMinUV, eyeMaxUV), 0);
+		sum += SrcTex.SampleLevel(BilinearSampler, clamp(center + float2(step.x, step.y), eyeMinUV, eyeMaxUV), 0);
 		color = sum * (1.0 / 16.0);
 	} else {
 		// Bilinear (default): single hardware-filtered sample
-		color = SrcTex.SampleLevel(BilinearSampler, float2(srcU, srcV), 0);
+		color = SrcTex.SampleLevel(BilinearSampler, clamp(float2(srcU, srcV), eyeMinUV, eyeMaxUV), 0);
 	}
 
 	// Debug visualizer: tint the cheap-stretched periphery red so the DLSS
