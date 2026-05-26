@@ -1,15 +1,15 @@
 #pragma once
 
-#include "../DlssEnhancer.h"
+#include "../FoveatedRender.h"
 #include "Utils/Subrect.h"
 #include <d3d11.h>
 
-namespace DlssEnhancerImpl
+namespace FoveatedRenderImpl
 {
 	// Unified parameter block consumed by Mode functions.
 	//
 	// MVP-B: derived from current global state with no DLSSperf awareness
-	// (PR-2 ships DLSSperf separately; integration with DlssEnhancer is
+	// (PR-2 ships DLSSperf separately; integration with FoveatedRender is
 	// deferred). When PR-2 + PR-3 are both enabled, a follow-up will reroute
 	// `colorDst` / `colorDstUAV` and `eyeWidthOut`/`eyeHeightOut` here.
 	struct VRDlssParams
@@ -32,7 +32,7 @@ namespace DlssEnhancerImpl
 		ID3D11Resource* motionVectors;
 
 		// Mode & subrect (MVP-B mode set: kDefault, kFaster only — kExtreme deferred)
-		DlssEnhancer::DlssMode mode;
+		FoveatedRender::DlssMode mode;
 		Util::Subrect::UVRegion leftUV;
 		Util::Subrect::UVRegion rightUV;
 		bool isFullEye;

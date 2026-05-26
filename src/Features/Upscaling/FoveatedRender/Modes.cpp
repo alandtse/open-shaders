@@ -15,7 +15,7 @@
 #include "../../../Utils/Subrect.h"
 #include "../Streamline.h"
 
-namespace DlssEnhancerImpl
+namespace FoveatedRenderImpl
 {
 	using namespace Ops;
 
@@ -30,13 +30,13 @@ namespace DlssEnhancerImpl
 		// Detect UV/mode change → destroy DLSS resources so SL recreates them at the new size
 		uint64_t uvHash = ComputeSubrectUVHash(p.leftUV, (uint32_t)p.mode);
 		if (uvHash != Core::activeSubrectUVHash) {
-			logger::info("[DLSSENHANCER] Subrect UV or mode changed, recreating DLSS resources");
+			logger::info("[FOVEATED] Subrect UV or mode changed, recreating DLSS resources");
 			streamline.DestroyDLSSResources();
 			Core::activeSubrectUVHash = uvHash;
 		}
 
 		switch (p.mode) {
-		case DlssEnhancer::DlssMode::kFaster:
+		case FoveatedRender::DlssMode::kFaster:
 			return ExecuteFasterMode(streamline, p);
 		default:
 			return ExecuteDefaultMode(streamline, p);

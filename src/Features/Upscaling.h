@@ -1,10 +1,10 @@
 #pragma once
 
 #include "Feature.h"
-#include "Upscaling/PerfMode.h"
 #include "Upscaling/DX12SwapChain.h"
-#include "Upscaling/DlssEnhancer.h"
 #include "Upscaling/FidelityFX.h"
+#include "Upscaling/FoveatedRender.h"
+#include "Upscaling/PerfMode.h"
 #include "Upscaling/RCAS/RCAS.h"
 #include "Upscaling/Streamline.h"
 #include "Utils/BootSnapshot.h"
@@ -235,9 +235,9 @@ public:
 	static inline Streamline streamline;
 	static inline FidelityFX fidelityFX;  ///< Only for frame generation
 	static inline DX12SwapChain dx12SwapChain;
-	static inline RCAS rcas;                  ///< Standalone RCAS sharpening for DLSS
-	static inline PerfMode perfMode;          ///< VR-only: render engine at upscaled-render res
-	static inline DlssEnhancer dlssEnhancer;  ///< VR-only: foveated subrect DLSS
+	static inline RCAS rcas;                      ///< Standalone RCAS sharpening for DLSS
+	static inline PerfMode perfMode;              ///< VR-only: render engine at upscaled-render res
+	static inline FoveatedRender foveatedRender;  ///< VR-only: foveated subrect DLSS
 
 	winrt::com_ptr<ID3D11PixelShader> copyDepthToSharedBufferPS;
 

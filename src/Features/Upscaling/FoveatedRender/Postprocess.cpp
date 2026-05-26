@@ -3,21 +3,21 @@
 #include "../../../Globals.h"
 #include "../../../State.h"
 #include "../../Upscaling.h"
-#include "../DlssEnhancer.h"
+#include "../FoveatedRender.h"
 
 #include <cmath>
 
-namespace DlssEnhancerImpl
+namespace FoveatedRenderImpl
 {
 	bool Postprocess::ApplyDlssSharpening(Upscaling& upscaling)
 	{
-		auto& enhancer = globals::features::upscaling.dlssEnhancer;
-		if (enhancer.GetSharpenMode() == DlssEnhancer::SharpenMode::kNone) {
+		auto& enhancer = globals::features::upscaling.foveatedRender;
+		if (enhancer.GetSharpenMode() == FoveatedRender::SharpenMode::kNone) {
 			return true;
 		}
 
 		// MVP-B reads sharpness directly from Upscaling::Settings. The PR's
-		// GetActiveSharpnessDLSS() helper consulted DlssEnhancer's own
+		// GetActiveSharpnessDLSS() helper consulted FoveatedRender's own
 		// settings.sharpnessDLSS override; deferred to PR-3b along with the
 		// rest of the per-route override surface.
 		const float sharpnessSetting = upscaling.settings.sharpnessDLSS;
@@ -26,7 +26,7 @@ namespace DlssEnhancerImpl
 		}
 
 		if (!upscaling.sharpenerTexture || !upscaling.sharpenerTexture->uav || !upscaling.sharpenerTexture->resource) {
-			logger::error("[DLSSENHANCER] Missing sharpener resources");
+			logger::error("[FOVEATED] Missing sharpener resources");
 			return false;
 		}
 
@@ -35,7 +35,7 @@ namespace DlssEnhancerImpl
 		auto& main = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMAIN];
 
 		if (!main.SRV) {
-			logger::error("[DLSSENHANCER] Missing main SRV for sharpening");
+			logger::error("[FOVEATED] Missing main SRV for sharpening");
 			return false;
 		}
 
@@ -52,7 +52,7 @@ namespace DlssEnhancerImpl
 		ID3D11Resource* mainResource = nullptr;
 		main.SRV->GetResource(&mainResource);
 		if (!mainResource) {
-			logger::error("[DLSSENHANCER] Failed to acquire main resource for sharpening");
+			logger::error("[FOVEATED] Failed to acquire main resource for sharpening");
 			return false;
 		}
 

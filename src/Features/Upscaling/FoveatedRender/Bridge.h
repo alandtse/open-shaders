@@ -1,25 +1,25 @@
 #pragma once
 
-// DlssEnhancerImpl::Bridge — single point of contact between the DlssEnhancer
+// FoveatedRenderImpl::Bridge — single point of contact between the FoveatedRender
 // subsystem and the rest of Community Shaders (Upscaling, Streamline).
 //
-// All "is DlssEnhancer active?", "what settings should DLSS use?", and
+// All "is FoveatedRender active?", "what settings should DLSS use?", and
 // "what happened at boot?" questions are answered here, so consumers never
-// need to #include DlssEnhancer.h or poke globals::features::upscaling.dlssEnhancer
+// need to #include FoveatedRender.h or poke globals::features::upscaling.foveatedRender
 // directly.
 //
-// IMPORTANT: when the DlssEnhancer route is inactive every query returns a
+// IMPORTANT: when the FoveatedRender route is inactive every query returns a
 // neutral / identity value — callers must still check IsRouteActive() and
 // fall back to their own settings when it returns false.
 
 #include <cstdint>
 
-namespace DlssEnhancerImpl::Bridge
+namespace FoveatedRenderImpl::Bridge
 {
-	// True when VR + DLSS available + DlssEnhancer enabled-at-boot.
+	// True when VR + DLSS available + FoveatedRender enabled-at-boot.
 	bool IsRouteActive();
 
-	// Settings forwarding (live values from DlssEnhancer GUI).
+	// Settings forwarding (live values from FoveatedRender GUI).
 	uint32_t GetQualityMode();
 	uint32_t GetPresetDLSS();
 	float GetSharpnessDLSS();

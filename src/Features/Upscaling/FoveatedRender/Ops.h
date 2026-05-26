@@ -8,13 +8,13 @@
 
 class Texture2D;
 
-// Primitive operations for the DlssEnhancer VR DLSS pipeline.
+// Primitive operations for the FoveatedRender VR DLSS pipeline.
 //
 // Each function is a self-contained building block. Mode pipelines in
 // Modes.cpp compose these in different orders to form the Default and
 // Faster strategies. Extreme-strip and periphery temporal-smooth helpers
 // are deferred to PR-3b.
-namespace DlssEnhancerImpl::Ops
+namespace FoveatedRenderImpl::Ops
 {
 	// Texture creation helper.
 	eastl::unique_ptr<Texture2D> CreateTextureFromSource(ID3D11Resource* src, uint32_t width, uint32_t height,

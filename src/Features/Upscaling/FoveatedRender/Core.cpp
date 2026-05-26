@@ -4,11 +4,11 @@
 #include "../../../State.h"
 #include "../../../Util.h"
 #include "../../Upscaling.h"
-#include "../DlssEnhancer.h"
+#include "../FoveatedRender.h"
 
 #include <cstring>
 
-namespace DlssEnhancerImpl::Ops
+namespace FoveatedRenderImpl::Ops
 {
 	eastl::unique_ptr<Texture2D> CreateTextureFromSource(ID3D11Resource* src, uint32_t width, uint32_t height,
 		bool copyBindFlags, bool createSRV, bool createUAV, const char* name)
@@ -202,7 +202,7 @@ namespace DlssEnhancerImpl::Ops
 				!Core::vrIntermediateDepth[i] || !Core::vrIntermediateMotionVectors[i] ||
 				(reactiveSrc && !Core::vrIntermediateReactiveMask[i]) ||
 				(transparencySrc && !Core::vrIntermediateTransparencyMask[i])) {
-				logger::error("[DLSSENHANCER] Missing per-eye intermediate resources for eye {}", i);
+				logger::error("[FOVEATED] Missing per-eye intermediate resources for eye {}", i);
 				return false;
 			}
 		}
@@ -242,13 +242,13 @@ namespace DlssEnhancerImpl::Ops
 	bool FinalizePerEyeOutputs(ID3D11Resource* colorDst, uint32_t eyeWidthOut, uint32_t eyeHeightOut)
 	{
 		if (!colorDst) {
-			logger::error("[DLSSENHANCER] FinalizePerEyeOutputs received null destination color resource");
+			logger::error("[FOVEATED] FinalizePerEyeOutputs received null destination color resource");
 			return false;
 		}
 
 		for (uint32_t i = 0; i < 2; ++i) {
 			if (!Core::vrIntermediateColorOut[i]) {
-				logger::error("[DLSSENHANCER] Missing per-eye output resource for eye {}", i);
+				logger::error("[FOVEATED] Missing per-eye output resource for eye {}", i);
 				return false;
 			}
 		}
@@ -278,7 +278,7 @@ namespace DlssEnhancerImpl::Ops
 		auto context = globals::d3d::context;
 
 		if (!Core::vrSubrectStretchCS) {
-			Core::vrSubrectStretchCS.attach((ID3D11ComputeShader*)Util::CompileShader(L"Data/Shaders/Upscaling/DlssEnhancer/SubrectStretchCS.hlsl", {}, "cs_5_0"));
+			Core::vrSubrectStretchCS.attach((ID3D11ComputeShader*)Util::CompileShader(L"Data/Shaders/Upscaling/FoveatedRender/SubrectStretchCS.hlsl", {}, "cs_5_0"));
 
 			D3D11_BUFFER_DESC cbDesc = {};
 			cbDesc.ByteWidth = 48;
@@ -286,7 +286,7 @@ namespace DlssEnhancerImpl::Ops
 			cbDesc.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
 			cbDesc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
 			if (FAILED(globals::d3d::device->CreateBuffer(&cbDesc, nullptr, Core::vrSubrectStretchCB.put()))) {
-				logger::error("[DLSSENHANCER] Failed to create SubrectStretch constant buffer");
+				logger::error("[FOVEATED] Failed to create SubrectStretch constant buffer");
 				return;
 			}
 
@@ -296,7 +296,7 @@ namespace DlssEnhancerImpl::Ops
 			sampDesc.AddressV = D3D11_TEXTURE_ADDRESS_CLAMP;
 			sampDesc.AddressW = D3D11_TEXTURE_ADDRESS_CLAMP;
 			if (FAILED(globals::d3d::device->CreateSamplerState(&sampDesc, Core::vrSubrectStretchSampler.put()))) {
-				logger::error("[DLSSENHANCER] Failed to create SubrectStretch sampler");
+				logger::error("[FOVEATED] Failed to create SubrectStretch sampler");
 				return;
 			}
 		}
@@ -307,7 +307,7 @@ namespace DlssEnhancerImpl::Ops
 
 		D3D11_MAPPED_SUBRESOURCE mapped{};
 		if (SUCCEEDED(context->Map(Core::vrSubrectStretchCB.get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped))) {
-			auto& enhSettings = globals::features::upscaling.dlssEnhancer.settings;
+			auto& enhSettings = globals::features::upscaling.foveatedRender.settings;
 			struct
 			{
 				uint32_t data[8];
@@ -423,9 +423,9 @@ namespace DlssEnhancerImpl::Ops
 		context->CopySubresourceRegion(dst, 0, dstOffsetX, dstOffsetY, 0, dlssSrc, 0, &srcBox);
 	}
 
-}  // namespace DlssEnhancerImpl::Ops
+}  // namespace FoveatedRenderImpl::Ops
 
-namespace DlssEnhancerImpl
+namespace FoveatedRenderImpl
 {
 	bool Core::PrepareVRPerEyeInputs(
 		ID3D11Resource* colorSrc,

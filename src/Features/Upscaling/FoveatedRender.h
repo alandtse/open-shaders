@@ -1,7 +1,7 @@
 #pragma once
 
 // ============================================================================
-// DlssEnhancer — VR DLSS enhancement mode of Upscaling
+// FoveatedRender — VR DLSS enhancement mode of Upscaling
 // ============================================================================
 //
 // Foveated subrect-DLSS path: only the user-selected region gets full DLSS
@@ -20,7 +20,7 @@
 
 #include "../../Utils/Subrect.h"
 
-struct DlssEnhancer
+struct FoveatedRender
 {
 public:
 	// DLSS execution mode for VR
@@ -45,7 +45,7 @@ public:
 		kNone = 1,  // No post-DLSS sharpening
 	};
 
-	// DlssEnhancer-specific settings. Quality mode / sharpness / DLSS preset /
+	// FoveatedRender-specific settings. Quality mode / sharpness / DLSS preset /
 	// Streamline log level live on Upscaling::Settings and are read through
 	// the accessors below — do not duplicate them here.
 	struct Settings

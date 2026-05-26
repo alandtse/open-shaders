@@ -7,7 +7,7 @@
 // Opt-in VR upscaling feature. Hooks BSOpenVR::GetRenderTargetSize so all
 // engine render targets are allocated at a small RenderRes while DLSS writes
 // its output to a private DisplayRes testTexture. Ships standalone — the
-// "DlssEnhancer" prerequisite from earlier drafts no longer applies.
+// "FoveatedRender" prerequisite from earlier drafts no longer applies.
 //
 //  Benefits:
 //   - VRAM and bandwidth savings proportional to the quality-mode scale ratio.

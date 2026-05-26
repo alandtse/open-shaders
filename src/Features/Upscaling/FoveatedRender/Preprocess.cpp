@@ -22,13 +22,13 @@ namespace
 	}
 }
 
-namespace DlssEnhancerImpl
+namespace FoveatedRenderImpl
 {
 	bool Preprocess::EncodeUpscalingTextures(Upscaling& upscaling)
 	{
 		auto upscaleMethod = upscaling.GetUpscaleMethod();
 		if (upscaleMethod != Upscaling::UpscaleMethod::kDLSS) {
-			logger::error("[DLSSENHANCER] Non-DLSS preprocess path is disabled; method={}", (int)upscaleMethod);
+			logger::error("[FOVEATED] Non-DLSS preprocess path is disabled; method={}", (int)upscaleMethod);
 			return false;
 		}
 
@@ -37,7 +37,7 @@ namespace DlssEnhancerImpl
 		auto renderer = globals::game::renderer;
 
 		if (!upscaling.upscalingDataCB || !upscaling.reactiveMaskTexture || !upscaling.transparencyCompositionMaskTexture) {
-			logger::error("[DLSSENHANCER] Missing preprocess resources");
+			logger::error("[FOVEATED] Missing preprocess resources");
 			return false;
 		}
 
@@ -47,7 +47,7 @@ namespace DlssEnhancerImpl
 		auto& depth = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kMAIN];
 		auto dispatchCount = Util::GetScreenDispatchCount(true);
 
-		state->BeginPerfEvent("DLSSENHANCER Encode Upscaling Textures");
+		state->BeginPerfEvent("FOVEATED Encode Upscaling Textures");
 
 		auto renderSize = Util::ConvertToDynamic(globals::state->screenSize);
 		Upscaling::UpscalingDataCB upscalingData{};
@@ -70,7 +70,7 @@ namespace DlssEnhancerImpl
 		ID3D11ComputeShader* cs = GetEnhancerEncodeTexturesCS(upscaling, upscaleMethod);
 		if (!cs) {
 			state->EndPerfEvent();
-			logger::error("[DLSSENHANCER] Failed to get encode compute shader");
+			logger::error("[FOVEATED] Failed to get encode compute shader");
 			return false;
 		}
 

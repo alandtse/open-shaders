@@ -1,7 +1,7 @@
 #pragma once
 
 // ============================================================================
-// DlssEnhancerImpl::Core — GPU resource pool & mode-dispatch entry point
+// FoveatedRenderImpl::Core — GPU resource pool & mode-dispatch entry point
 // ============================================================================
 //
 // Owns all per-mode intermediate textures (Default / Faster), compute-shader
@@ -17,7 +17,7 @@
 
 class Streamline;
 
-namespace DlssEnhancerImpl
+namespace FoveatedRenderImpl
 {
 	class Core
 	{

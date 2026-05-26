@@ -1,14 +1,14 @@
-#include "DlssEnhancer.h"
+#include "FoveatedRender.h"
 
 #include "../../Globals.h"
 #include "../../Utils/UI.h"
 #include "../Upscaling.h"
-#include "DlssEnhancer/Core.h"
+#include "FoveatedRender/Core.h"
 
 #include <algorithm>
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
-	DlssEnhancer::Settings,
+	FoveatedRender::Settings,
 	enabled,
 	dlssMode,
 	stretchMode,
@@ -21,7 +21,7 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 // Lifecycle
 // ============================================================================
 
-void DlssEnhancer::PostPostLoad()
+void FoveatedRender::PostPostLoad()
 {
 	// Opt into PR-1's stereo extension so the controller tracks a separate
 	// right-eye UV (HMD nose-side overlap symmetry).
@@ -35,35 +35,35 @@ void DlssEnhancer::PostPostLoad()
 	});
 }
 
-void DlssEnhancer::ClearShaderCache()
+void FoveatedRender::ClearShaderCache()
 {
-	DlssEnhancerImpl::Core::ClearShaderCache();
+	FoveatedRenderImpl::Core::ClearShaderCache();
 }
 
 // ============================================================================
 // Settings I/O — driven from Upscaling::Save/LoadSettings under a nested key
 // ============================================================================
 
-void DlssEnhancer::SaveSettings(json& o_json)
+void FoveatedRender::SaveSettings(json& o_json)
 {
 	o_json = settings;
 	subrectController.SaveSettings(o_json);
 }
 
-void DlssEnhancer::LoadSettings(const json& o_json)
+void FoveatedRender::LoadSettings(const json& o_json)
 {
 	settings = o_json;
 	subrectController.LoadSettings(const_cast<json&>(o_json));
 	ClampSettings();
 }
 
-void DlssEnhancer::RestoreDefaultSettings()
+void FoveatedRender::RestoreDefaultSettings()
 {
 	settings = {};
 	ClampSettings();
 }
 
-void DlssEnhancer::ClampSettings()
+void FoveatedRender::ClampSettings()
 {
 	settings.enabled = std::min(settings.enabled, 1u);
 	settings.dlssMode = std::min(settings.dlssMode, 1u);
@@ -84,37 +84,37 @@ void DlssEnhancer::ClampSettings()
 // Activation + accessors
 // ============================================================================
 
-bool DlssEnhancer::IsActive() const
+bool FoveatedRender::IsActive() const
 {
 	return enabledAtBoot && IsRuntimeSupported();
 }
 
-bool DlssEnhancer::IsRuntimeSupported() const
+bool FoveatedRender::IsRuntimeSupported() const
 {
 	return globals::game::isVR && globals::features::upscaling.streamline.featureDLSS;
 }
 
-void DlssEnhancer::LatchQualityMode()
+void FoveatedRender::LatchQualityMode()
 {
 	qualityModeAtBoot = std::clamp(globals::features::upscaling.settings.qualityMode, 1u, 4u);
 }
 
-uint DlssEnhancer::GetActiveQualityMode() const
+uint FoveatedRender::GetActiveQualityMode() const
 {
 	return std::clamp(globals::features::upscaling.settings.qualityMode, 1u, 4u);
 }
 
-uint DlssEnhancer::GetActivePresetDLSS() const
+uint FoveatedRender::GetActivePresetDLSS() const
 {
 	return std::min(globals::features::upscaling.settings.presetDLSS, 5u);
 }
 
-float DlssEnhancer::GetActiveSharpnessDLSS() const
+float FoveatedRender::GetActiveSharpnessDLSS() const
 {
 	return std::clamp(globals::features::upscaling.settings.sharpnessDLSS, 0.0f, 1.0f);
 }
 
-float DlssEnhancer::GetRenderScaleForQuality(uint qualityMode)
+float FoveatedRender::GetRenderScaleForQuality(uint qualityMode)
 {
 	switch (qualityMode) {
 	case 1:
@@ -130,7 +130,7 @@ float DlssEnhancer::GetRenderScaleForQuality(uint qualityMode)
 	}
 }
 
-bool DlssEnhancer::IsPresetCompatibleWithMode(uint presetIndex) const
+bool FoveatedRender::IsPresetCompatibleWithMode(uint presetIndex) const
 {
 	// Preset indices: 0=Default, 1=J, 2=K, 3=L, 4=M, 5=F
 	// Faster mode: J(1) and K(2) are incompatible.
@@ -140,7 +140,7 @@ bool DlssEnhancer::IsPresetCompatibleWithMode(uint presetIndex) const
 	return true;
 }
 
-void DlssEnhancer::ClampPresetToMode()
+void FoveatedRender::ClampPresetToMode()
 {
 	auto& sharedPreset = globals::features::upscaling.settings.presetDLSS;
 	if (!IsPresetCompatibleWithMode(sharedPreset)) {
@@ -149,12 +149,12 @@ void DlssEnhancer::ClampPresetToMode()
 }
 
 // ============================================================================
-// UI — DlssEnhancer-specific knobs only. Quality / sharpness / preset /
+// UI — FoveatedRender-specific knobs only. Quality / sharpness / preset /
 // Streamline log level live on Upscaling's panel and apply to both DLSS paths.
 // Called from Upscaling::DrawSettings inside a TreeNode.
 // ============================================================================
 
-void DlssEnhancer::DrawSettings()
+void FoveatedRender::DrawSettings()
 {
 	static const char* toggleModes[] = { "Off", "On" };
 	static const char* dlssModes[] = { "Default", "Faster" };
@@ -187,7 +187,7 @@ void DlssEnhancer::DrawSettings()
 		ImGui::EndDisabled();
 
 	if ((settings.enabled != 0) != enabledAtBoot) {
-		Util::Text::RestartNeeded("Pending restart: DlssEnhancer will %s on next launch.",
+		Util::Text::RestartNeeded("Pending restart: FoveatedRender will %s on next launch.",
 			settings.enabled ? "enable" : "disable");
 	}
 

@@ -14,7 +14,7 @@
 #include "Features/InteriorSun.h"
 #include "Features/LightLimitFix.h"
 #include "Features/Upscaling.h"
-#include "Features/Upscaling/DlssEnhancer/Bridge.h"
+#include "Features/Upscaling/FoveatedRender/Bridge.h"
 #include "Features/VR.h"
 #include "Features/VolumetricLighting.h"
 
@@ -413,12 +413,12 @@ struct BSShaderRenderTargets_Create
 		if (perfMode.IsHookActive())
 			perfMode.SetupResources();
 
-		// PR-3 MVP-B: latch DlssEnhancer enable + qualityMode at the moment
+		// PR-3 MVP-B: latch FoveatedRender enable + qualityMode at the moment
 		// the engine is fully initialized but before the first frame. After
 		// this point, live setting changes won't be honored mid-game (matches
 		// Streamline's DLSS option lifecycle — quality changes need a full
 		// resource recreate the user has to opt into).
-		DlssEnhancerImpl::Bridge::BootSequence();
+		FoveatedRenderImpl::Bridge::BootSequence();
 	}
 	static inline REL::Relocation<decltype(thunk)> func;
 };
