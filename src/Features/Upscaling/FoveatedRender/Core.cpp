@@ -362,7 +362,8 @@ namespace FoveatedRenderImpl::Ops
 				uint32_t data[8];
 				uint32_t stretchMode;
 				float blurRadius;
-				uint32_t pad[2];
+				uint32_t debugVisualize;
+				uint32_t pad;
 			} cb = {};
 			cb.data[0] = dstOffsetX;
 			cb.data[1] = dstWidth;
@@ -378,6 +379,7 @@ namespace FoveatedRenderImpl::Ops
 			// deferred to PR-3b along with the rest of the periphery quality
 			// surface.
 			cb.blurRadius = 1.0f;
+			cb.debugVisualize = enhSettings.debugVisualize;
 			std::memcpy(mapped.pData, &cb, sizeof(cb));
 			context->Unmap(Core::vrSubrectStretchCB.get(), 0);
 		}

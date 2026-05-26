@@ -7,17 +7,18 @@
 
 cbuffer StretchCB : register(b0)
 {
-	uint DstOffsetX;    // SBS destination X offset for this eye (0 or eyeWidthOut)
-	uint DstWidth;      // display-resolution eye width
-	uint DstHeight;     // display-resolution eye height
-	uint SrcOffsetX;    // SBS source X offset for this eye (0 or renderEyeW)
-	uint SrcWidth;      // render-resolution SBS total width (for UV normalisation)
-	uint SrcHeight;     // render-resolution SBS total height
-	uint SrcEyeWidth;   // render-resolution per-eye width
-	uint SrcEyeHeight;  // render-resolution per-eye height
-	uint StretchMode;   // 0=Bilinear, 1=Point, 2=GaussianBlur
-	float BlurRadius;   // Texel-space radius for Gaussian blur (typical 0.5-4.0)
-	uint2 _pad;
+	uint DstOffsetX;      // SBS destination X offset for this eye (0 or eyeWidthOut)
+	uint DstWidth;        // display-resolution eye width
+	uint DstHeight;       // display-resolution eye height
+	uint SrcOffsetX;      // SBS source X offset for this eye (0 or renderEyeW)
+	uint SrcWidth;        // render-resolution SBS total width (for UV normalisation)
+	uint SrcHeight;       // render-resolution SBS total height
+	uint SrcEyeWidth;     // render-resolution per-eye width
+	uint SrcEyeHeight;    // render-resolution per-eye height
+	uint StretchMode;     // 0=Bilinear, 1=Point, 2=GaussianBlur
+	float BlurRadius;     // Texel-space radius for Gaussian blur (typical 0.5-4.0)
+	uint DebugVisualize;  // 0=off, 1=tint stretched periphery red so the DLSS region pops
+	uint _pad;
 };
 
 Texture2D<float4> SrcTex : register(t0);
@@ -66,6 +67,14 @@ RWTexture2D<float4> DstTex : register(u0);
 	} else {
 		// Bilinear (default): single hardware-filtered sample
 		color = SrcTex.SampleLevel(BilinearSampler, float2(srcU, srcV), 0);
+	}
+
+	// Debug visualizer: tint the cheap-stretched periphery red so the DLSS
+	// subrect (which BlendSubrectToOutput overwrites on top of us) reads as
+	// the un-tinted region. Lets users see at a glance where DLSS is actually
+	// reconstructing vs where the cheap stretch is filling.
+	if (DebugVisualize != 0) {
+		color.rgb = lerp(color.rgb, color.rgb * float3(1.6, 0.35, 0.35), 0.6);
 	}
 
 	DstTex[uint2(tid.x + DstOffsetX, tid.y)] = color;

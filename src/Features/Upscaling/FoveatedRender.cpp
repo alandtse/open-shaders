@@ -1,6 +1,7 @@
 #include "FoveatedRender.h"
 
 #include "../../Globals.h"
+#include "../../Utils/Subrect.h"
 #include "../../Utils/UI.h"
 #include "../Upscaling.h"
 #include "FoveatedRender/Core.h"
@@ -12,10 +13,7 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	enabled,
 	dlssMode,
 	stretchMode,
-	sharpenMode,
-	enableMVDilation,
-	enableReactiveMask,
-	enableTransparencyMask);
+	debugVisualize);
 
 // ============================================================================
 // Lifecycle
@@ -28,10 +26,19 @@ void FoveatedRender::PostPostLoad()
 	subrectController.SetStereoEnabled(true);
 
 	// Seed sensible foveal presets. Empty-case only — user edits persist.
+	// "Center N%" presets are symmetric per eye (no rightUV → auto-mirror, which
+	// for centered UVs produces an identical right-eye UV). "Nasal Convergence"
+	// is asymmetric: left eye biased toward its right edge, right eye biased
+	// toward its left edge — both targeting the nose-side region where HMD
+	// binocular fusion is strongest, so DLSS reconstruction lands in the actual
+	// stereo overlap zone rather than diverging left/right fields.
 	subrectController.SeedDefaultPresets({
 		{ .name = "Full Eye", .uv = { 0.0f, 0.0f, 1.0f, 1.0f } },
 		{ .name = "Center 75%", .uv = { 0.125f, 0.125f, 0.75f, 0.75f } },
 		{ .name = "Center 50%", .uv = { 0.25f, 0.25f, 0.5f, 0.5f } },
+		{ .name = "Nasal Convergence 50%",
+			.uv = { 0.5f, 0.25f, 0.5f, 0.5f },
+			.rightUV = Util::Subrect::UVRegion{ 0.0f, 0.25f, 0.5f, 0.5f } },
 	});
 }
 
@@ -71,10 +78,7 @@ void FoveatedRender::ClampSettings()
 	settings.enabled = std::min(settings.enabled, 1u);
 	settings.dlssMode = std::min(settings.dlssMode, 1u);
 	settings.stretchMode = std::min(settings.stretchMode, 2u);
-	settings.sharpenMode = std::min(settings.sharpenMode, 1u);
-	settings.enableMVDilation = std::min(settings.enableMVDilation, 1u);
-	settings.enableReactiveMask = std::min(settings.enableReactiveMask, 1u);
-	settings.enableTransparencyMask = std::min(settings.enableTransparencyMask, 1u);
+	settings.debugVisualize = std::min(settings.debugVisualize, 1u);
 	// Preset clamping reads from Upscaling::Settings now.
 	auto& sharedPreset = globals::features::upscaling.settings.presetDLSS;
 	sharedPreset = std::min(sharedPreset, 5u);
@@ -157,35 +161,25 @@ void FoveatedRender::ClampPresetToMode()
 // Called from Upscaling::DrawSettings inside a TreeNode.
 // ============================================================================
 
-void FoveatedRender::DrawSettings()
+void FoveatedRender::DrawEnable()
 {
-	static const char* toggleModes[] = { "Off", "On" };
-	static const char* dlssModes[] = { "Default", "Faster" };
-	static const char* stretchModes[] = { "Bilinear", "Point (VRS-like)", "Gaussian Blur" };
-	static const char* sharpenModes[] = { "RCAS", "None" };
-
 	ClampSettings();
 
 	ImGui::TextWrapped(
 		"Foveated subrect DLSS: only the user-selected region gets full DLSS upscaling, "
 		"the periphery is cheaply stretched. Significant DLSS cost reduction at the cost "
 		"of peripheral sharpness. VR + DLSS only.");
-	if (auto _tt = Util::HoverTooltipWrapper()) {
-		ImGui::Text(
-			"Subrect DLSS only upscales the region you select; the periphery is cheaply stretched.\n"
-			"Composes with VRS, Screenshot, and lossless recording via the shared Subrect module.\n"
-			"Quality / Sharpness / DLSS Preset / Streamline log level are shared with the standard DLSS path above.");
-	}
 
 	const bool runtimeSupported = IsRuntimeSupported();
 	if (!runtimeSupported) {
 		settings.enabled = 0;
 	}
 
-	ImGui::Separator();
 	if (!runtimeSupported)
 		ImGui::BeginDisabled();
-	ImGui::SliderInt("Enable", reinterpret_cast<int*>(&settings.enabled), 0, 1, toggleModes[settings.enabled]);
+	bool enabledBool = settings.enabled != 0;
+	if (ImGui::Checkbox("Enable Foveated DLSS", &enabledBool))
+		settings.enabled = enabledBool ? 1u : 0u;
 	if (!runtimeSupported)
 		ImGui::EndDisabled();
 
@@ -204,6 +198,16 @@ void FoveatedRender::DrawSettings()
 	if (globals::game::isVR && !globals::features::upscaling.streamline.featureDLSS) {
 		Util::Text::Warning("DLSS runtime not available. Enable is blocked.");
 	}
+}
+
+void FoveatedRender::DrawSettings()
+{
+	static const char* dlssModes[] = { "Default", "Faster" };
+	static const char* stretchModes[] = { "Bilinear", "Point", "Gaussian Blur" };
+
+	ClampSettings();
+
+	ImGui::TextDisabled("Quality / Sharpness / DLSS Preset / Streamline log level are shared with the standard DLSS path above.");
 
 	// ── VR-only knobs ──
 	if (globals::game::isVR) {
@@ -232,51 +236,79 @@ void FoveatedRender::DrawSettings()
 		ImGui::Separator();
 		ImGui::Text("Background Stretch");
 		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::Text("How the low-res periphery is upscaled to fill the full eye.\nOnly affects the area outside the DLSS subrect.");
+			ImGui::Text(
+				"How the cheap periphery is reconstructed to fill the area outside the DLSS subrect.\n"
+				"This is the cost-saving step — DLSS only runs on the subrect, the rest is filled by\n"
+				"this cheaper pass. Only affects pixels outside your selected region.");
 		}
 		ImGui::SliderInt("Stretch Mode", reinterpret_cast<int*>(&settings.stretchMode), 0, 2, stretchModes[settings.stretchMode]);
 		switch (GetStretchMode()) {
 		case StretchMode::kBilinear:
-			ImGui::TextDisabled("Standard bilinear (clean upscale).");
+			ImGui::TextDisabled("Bilinear: clean linear upscale. Looks like a soft DLSS-Performance result.");
+			if (auto _tt = Util::HoverTooltipWrapper()) {
+				ImGui::Text(
+					"Use when: you want the periphery to look like a sensible low-quality reconstruction,\n"
+					"close to how DLSS-Performance would look. Default-ish choice.\n"
+					"\n"
+					"Visual artifact: typical bilinear softness — fine geometry in the periphery looks\n"
+					"slightly out of focus but not visibly stretched.");
+			}
 			break;
 		case StretchMode::kPoint:
-			ImGui::TextDisabled("Nearest-neighbor: cheapest, VRS-like broadcast.");
+			ImGui::TextDisabled("Point (nearest-neighbor): cheapest. Visibly pixelated periphery.");
+			if (auto _tt = Util::HoverTooltipWrapper()) {
+				ImGui::Text(
+					"Use when: you want the smallest possible cost in the periphery and don't mind\n"
+					"obvious pixelation outside your gaze region. Useful for benchmarking the upper\n"
+					"bound of foveated savings.\n"
+					"\n"
+					"Visual artifact: chunky pixel blocks in the periphery, very visible if you look\n"
+					"away from the subrect center.");
+			}
 			break;
 		case StretchMode::kGaussianBlur:
-			ImGui::TextDisabled("Gaussian blur: softens periphery for natural look.");
+			ImGui::TextDisabled("Gaussian blur: softens periphery further. Hides upscale artifacts behind blur.");
+			if (auto _tt = Util::HoverTooltipWrapper()) {
+				ImGui::Text(
+					"Use when: you want the periphery to fall away into soft focus — closer to how\n"
+					"natural human peripheral vision feels. Good default for actual foveated use.\n"
+					"\n"
+					"Visual artifact: noticeable blur in the periphery. If your subrect is large this\n"
+					"is barely visible; if small, the blur is the dominant visual signal.");
+			}
 			break;
 		}
-
-		ImGui::Separator();
-		ImGui::Text("Post-DLSS Sharpening");
-		ImGui::SliderInt("Sharpen Mode", reinterpret_cast<int*>(&settings.sharpenMode), 0, 1, sharpenModes[settings.sharpenMode]);
-		if (GetSharpenMode() == SharpenMode::kRCAS) {
-			ImGui::TextDisabled("AMD FidelityFX RCAS (contrast-adaptive sharpening).");
-		} else {
-			ImGui::TextDisabled("No post-DLSS sharpening.");
-		}
-
-		ImGui::Separator();
-		ImGui::Text("Encode Textures");
-		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::Text("Optional input preprocessing for DLSS.\nGenerally not needed — disable all three for lower overhead.");
-		}
-		ImGui::SliderInt("MV Dilation", reinterpret_cast<int*>(&settings.enableMVDilation), 0, 1, toggleModes[settings.enableMVDilation]);
-		ImGui::SliderInt("Reactive Mask", reinterpret_cast<int*>(&settings.enableReactiveMask), 0, 1, toggleModes[settings.enableReactiveMask]);
-		ImGui::SliderInt("Transparency Mask", reinterpret_cast<int*>(&settings.enableTransparencyMask), 0, 1, toggleModes[settings.enableTransparencyMask]);
 
 		ImGui::Separator();
 		ImGui::Text("Subrect Region");
 		ImGui::TextWrapped(
 			"Drag in the preview below to select the region that gets full DLSS upscaling. "
 			"The rest is cheaply stretched — saves significant DLSS cost.");
-		Util::Text::Warning("If you also use VRS or Screenshot, set them to the same subrect preset for consistent results.");
+		ImGui::TextDisabled("Screenshot has its own subrect; align them only if you want pixel-matched captures.");
 
+		bool debugBool = settings.debugVisualize != 0;
+		if (ImGui::Checkbox("Visualize regions", &debugBool))
+			settings.debugVisualize = debugBool ? 1u : 0u;
+		if (auto _tt = Util::HoverTooltipWrapper()) {
+			ImGui::Text(
+				"Diagnostic: tint the cheap-stretched periphery red so the DLSS-reconstructed\n"
+				"subrect (un-tinted) pops visually in-game. Lets you confirm at a glance where\n"
+				"DLSS is actually running vs where the cheap stretch is filling. No perf impact;\n"
+				"runtime toggle, no restart needed.");
+		}
+
+		// Preview off kVR_FRAMEBUFFER (the final composed SBS image the headset
+		// sees) rather than kMAIN. kMAIN is mid-pipeline and carries non-1
+		// alpha where Skyrim composited UI plates, so even with the opaque
+		// blend callback you see the menu mask outline instead of the rendered
+		// world. ScreenshotFeature picks the same RT for the same reason
+		// (ScreenshotFeature.cpp:243). Foveated is VR-only so kVR_FRAMEBUFFER
+		// is always populated when we get here.
 		auto renderer = globals::game::renderer;
 		if (renderer) {
-			auto& main = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMAIN];
-			auto* tex = static_cast<ID3D11Texture2D*>(main.texture);
-			subrectController.DrawEditor(main.SRV, tex, 0.5f);
+			auto& fb = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kVR_FRAMEBUFFER];
+			auto* tex = static_cast<ID3D11Texture2D*>(fb.texture);
+			subrectController.DrawEditor(fb.SRV, tex, 0.5f, 0.0f, Util::Subrect::OpaquePreviewBlendCallback);
 		} else {
 			subrectController.DrawEditor(nullptr, nullptr, 0.5f);
 		}

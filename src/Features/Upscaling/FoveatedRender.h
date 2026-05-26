@@ -38,31 +38,34 @@ public:
 		kGaussianBlur = 2,  // 3x3 Gaussian blur (soft periphery)
 	};
 
-	// Sharpening algorithm selection (extensible)
-	enum class SharpenMode : uint
-	{
-		kRCAS = 0,  // AMD FidelityFX RCAS (current default)
-		kNone = 1,  // No post-DLSS sharpening
-	};
-
 	// FoveatedRender-specific settings. Quality mode / sharpness / DLSS preset /
 	// Streamline log level live on Upscaling::Settings and are read through
-	// the accessors below — do not duplicate them here.
+	// the accessors below — do not duplicate them here. Sharpening on/off is
+	// controlled by the shared sharpnessDLSS slider (0 disables RCAS).
+	//
+	// Deferred to PR-3b: per-input DLSS hint toggles (MV dilation, reactive mask,
+	// transparency mask). The original PR #2096 declared the Settings fields and
+	// UI sliders but never plumbed them to EncodeTexturesCS or to the EvaluateDLSS
+	// arg list, so they were no-ops there too. Bringing them back in PR-3b means
+	// shader permutations (per-toggle defines), conditional encode-pass skip when
+	// all are off, and per-toggle DLSS arg gating — ship the implementation and
+	// the UI together so the knobs don't lie.
 	struct Settings
 	{
-		uint enabled = 1;
+		uint enabled = 0;  // opt-in: requires restart to take effect via LatchEnabled()
 		uint dlssMode = (uint)DlssMode::kDefault;
 		uint stretchMode = (uint)StretchMode::kGaussianBlur;
-		uint sharpenMode = (uint)SharpenMode::kRCAS;
-		uint enableMVDilation = 0;
-		uint enableReactiveMask = 0;
-		uint enableTransparencyMask = 0;
+		uint debugVisualize = 0;  // tint cheap-stretched periphery red; runtime toggle
 	};
 
 	Settings settings;
 	Util::Subrect::Controller subrectController;
 
-	// Called from Upscaling::DrawSettings under a TreeNode.
+	// Called from Upscaling::DrawSettings. DrawEnable renders the always-visible
+	// header + Enable checkbox at the parent's top level; DrawSettings renders
+	// the body knobs inside a collapsible TreeNode (Upscaling wraps it in
+	// BeginDisabled when settings.enabled == 0).
+	void DrawEnable();
 	void DrawSettings();
 	// Called from Upscaling::SaveSettings / LoadSettings to round-trip JSON.
 	void SaveSettings(json& o_json);
@@ -90,17 +93,15 @@ public:
 
 	DlssMode GetDlssMode() const { return (DlssMode)std::min(settings.dlssMode, 1u); }
 	StretchMode GetStretchMode() const { return (StretchMode)std::min(settings.stretchMode, 2u); }
-	SharpenMode GetSharpenMode() const { return (SharpenMode)std::min(settings.sharpenMode, 1u); }
 
 	// Active getters: clamp + route shared fields through Upscaling::Settings.
 	uint GetActiveQualityMode() const;
 	uint GetActivePresetDLSS() const;
 	float GetActiveSharpnessDLSS() const;
 
-	bool IsEncodeMVDilation() const { return settings.enableMVDilation != 0; }
-	bool IsEncodeReactiveMask() const { return settings.enableReactiveMask != 0; }
-	bool IsEncodeTransparencyMask() const { return settings.enableTransparencyMask != 0; }
-	bool IsAnyEncodeEnabled() const { return IsEncodeMVDilation() || IsEncodeReactiveMask() || IsEncodeTransparencyMask(); }
+	// Re-clamp cross-feature settings (preset vs DLSS mode). Idempotent; safe to call
+	// from Upscaling::LoadSettings after JSON has overwritten shared fields.
+	void ClampSettings();
 
 private:
 	bool enabledAtBoot = false;  // latched from settings.enabled at boot
@@ -108,5 +109,4 @@ private:
 
 	bool IsPresetCompatibleWithMode(uint presetIndex) const;
 	void ClampPresetToMode();
-	void ClampSettings();
 };
