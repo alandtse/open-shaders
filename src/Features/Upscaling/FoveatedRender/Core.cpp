@@ -390,10 +390,7 @@ namespace FoveatedRenderImpl::Ops
 			cb.data[6] = srcEyeWidth;
 			cb.data[7] = srcEyeHeight;
 			cb.stretchMode = enhSettings.stretchMode;
-			// MVP-B uses a fixed 1.0 blur radius for the GaussianBlur stretch
-			// path. The PR's user-tunable peripheryBlurRadius slider is
-			// deferred to PR-3b along with the rest of the periphery quality
-			// surface.
+			// Fixed 1.0 blur radius for the GaussianBlur stretch path.
 			cb.blurRadius = 1.0f;
 			cb.debugVisualize = enhSettings.debugVisualize;
 			std::memcpy(mapped.pData, &cb, sizeof(cb));

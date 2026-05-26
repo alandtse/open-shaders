@@ -6,7 +6,9 @@
 #include "../Upscaling.h"
 #include "FoveatedRender/Core.h"
 
+#include <FidelityFX/host/ffx_fsr3.h>
 #include <algorithm>
+#include <cmath>
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	FoveatedRender::Settings,
@@ -123,18 +125,12 @@ float FoveatedRender::GetActiveSharpnessDLSS() const
 
 float FoveatedRender::GetRenderScaleForQuality(uint qualityMode)
 {
-	switch (qualityMode) {
-	case 1:
-		return 1.5f;  // Quality
-	case 2:
-		return 1.7f;  // Balanced
-	case 3:
-		return 2.0f;  // Performance
-	case 4:
-		return 3.0f;  // Ultra Performance
-	default:
-		return 3.0f;
-	}
+	// Single source of truth for the quality→scale table — the FFX SDK
+	// helper Upscaling.cpp/PerfMode.cpp already query. Falls back to
+	// UltraPerformance (3.0) if the helper returns a non-finite value.
+	const float scale = ffxFsr3GetUpscaleRatioFromQualityMode(
+		static_cast<FfxFsr3QualityMode>(std::clamp<uint>(qualityMode, 1u, 4u)));
+	return std::isfinite(scale) && scale > 0.0f ? scale : 3.0f;
 }
 
 bool FoveatedRender::IsPresetCompatibleWithMode(uint presetIndex) const

@@ -12,8 +12,7 @@ class Texture2D;
 //
 // Each function is a self-contained building block. Mode pipelines in
 // Modes.cpp compose these in different orders to form the Default and
-// Faster strategies. Extreme-strip and periphery temporal-smooth helpers
-// are deferred to PR-3b.
+// Faster strategies.
 namespace FoveatedRenderImpl::Ops
 {
 	// Texture creation helper.
@@ -54,9 +53,7 @@ namespace FoveatedRenderImpl::Ops
 		ID3D11ShaderResourceView* srcOverride = nullptr);
 
 	// Hard-copy a DLSS subrect output onto the destination at (offsetX, offsetY).
-	// MVP-B has no feather/dither — the original PR's BlendSubrectToOutput is
-	// reduced to CopySubresourceRegion. Feather/dither + the buggy edge-distance
-	// math (the SubrectBlendCS shader) are deferred to PR-3b.
+	// No feather/dither — straight CopySubresourceRegion.
 	void BlendSubrectToOutput(ID3D11Resource* dlssSrc, ID3D11Resource* dst,
 		uint32_t dstOffsetX, uint32_t dstOffsetY, uint32_t subWidth, uint32_t subHeight, uint32_t srcOffsetX = 0);
 

@@ -84,10 +84,9 @@ namespace FoveatedRenderImpl
 		const Util::Subrect::UVRegion* eyeUVs[2] = { &p.leftUV, &p.rightUV };
 
 		// NOTE: EnsureVRSubrectTextures allocates a single shared per-eye texture
-		// set sized to LEFT-eye subrect dimensions. This is correct as long as
-		// Util::Subrect's auto-mirror keeps leftUV.w == rightUV.w and
-		// leftUV.h == rightUV.h. Per-eye sizing inside the loop below computes
-		// real per-eye extents (CodeRabbit Major @ original PR Modes.cpp:80).
+		// set sized to LEFT-eye subrect dimensions. Correct only while
+		// Util::Subrect's auto-mirror keeps leftUV.w/h == rightUV.w/h — the
+		// per-eye loop below uses the eye's own uv for the real extents.
 		uint32_t allocSubInW = std::max<uint32_t>(1, (uint32_t)(p.eyeWidthIn * p.leftUV.w));
 		uint32_t allocSubInH = std::max<uint32_t>(1, (uint32_t)(p.eyeHeightIn * p.leftUV.h));
 		uint32_t allocSubOutW = std::max<uint32_t>(1, (uint32_t)(p.eyeWidthOut * p.leftUV.w));
@@ -105,8 +104,7 @@ namespace FoveatedRenderImpl
 		auto context = globals::d3d::context;
 		for (uint32_t i = 0; i < 2; ++i) {
 			const auto& uv = *eyeUVs[i];
-			// Per-eye sizing: fixes CodeRabbit Major @ original PR Modes.cpp:80
-			// (right-eye must use rightUV.w/h, not leftUV's).
+			// Per-eye sizing — right eye uses rightUV.w/h, not leftUV.
 			uint32_t subInW = std::max<uint32_t>(1, (uint32_t)(p.eyeWidthIn * uv.w));
 			uint32_t subInH = std::max<uint32_t>(1, (uint32_t)(p.eyeHeightIn * uv.h));
 			uint32_t subOutW = std::max<uint32_t>(1, (uint32_t)(p.eyeWidthOut * uv.w));
@@ -139,7 +137,7 @@ namespace FoveatedRenderImpl
 		// Write DLSS output back at subrect position (with optional blend)
 		for (uint32_t i = 0; i < 2; ++i) {
 			const auto& uv = *eyeUVs[i];
-			// Per-eye sizing: fixes CodeRabbit Major @ original PR Modes.cpp:80
+			// Per-eye sizing.
 			uint32_t subOutW = std::max<uint32_t>(1, (uint32_t)(p.eyeWidthOut * uv.w));
 			uint32_t subOutH = std::max<uint32_t>(1, (uint32_t)(p.eyeHeightOut * uv.h));
 
@@ -170,10 +168,9 @@ namespace FoveatedRenderImpl
 		const Util::Subrect::UVRegion* eyeUVs[2] = { &p.leftUV, &p.rightUV };
 
 		// NOTE: EnsureFasterOutputTextures allocates one per-eye texture set
-		// sized to LEFT-eye subrect dimensions. Correct as long as Util::Subrect
-		// auto-mirror keeps leftUV.w == rightUV.w / leftUV.h == rightUV.h.
-		// Per-eye DLSS extents are recomputed inside the loop below to fix
-		// CodeRabbit Major @ original PR Modes.cpp:146 (right-eye must use rightUV).
+		// sized to LEFT-eye subrect dimensions. Correct only while Util::Subrect
+		// auto-mirror keeps leftUV.w/h == rightUV.w/h. Per-eye DLSS extents
+		// below use the eye's own uv.
 		uint32_t allocSubOutW = p.isFullEye ? p.eyeWidthOut : std::max<uint32_t>(1, (uint32_t)(p.eyeWidthOut * p.leftUV.w));
 		uint32_t allocSubOutH = p.isFullEye ? p.eyeHeightOut : std::max<uint32_t>(1, (uint32_t)(p.eyeHeightOut * p.leftUV.h));
 
@@ -184,7 +181,7 @@ namespace FoveatedRenderImpl
 		// sl::Extent field order is {top, left, width, height} — Y before X
 		for (uint32_t i = 0; i < 2; ++i) {
 			const auto& uv = *eyeUVs[i];
-			// Per-eye sizing: fixes CodeRabbit Major @ original PR Modes.cpp:146
+			// Per-eye sizing.
 			uint32_t subInW = p.isFullEye ? p.eyeWidthIn : std::max<uint32_t>(1, (uint32_t)(p.eyeWidthIn * uv.w));
 			uint32_t subInH = p.isFullEye ? p.eyeHeightIn : std::max<uint32_t>(1, (uint32_t)(p.eyeHeightIn * uv.h));
 			uint32_t subOutW = p.isFullEye ? p.eyeWidthOut : std::max<uint32_t>(1, (uint32_t)(p.eyeWidthOut * uv.w));
@@ -215,7 +212,7 @@ namespace FoveatedRenderImpl
 		// Step 4: Copy DLSS output back (with optional blend)
 		for (uint32_t i = 0; i < 2; ++i) {
 			const auto& uv = *eyeUVs[i];
-			// Per-eye sizing: fixes CodeRabbit Major @ original PR Modes.cpp:146
+			// Per-eye sizing.
 			uint32_t subOutW = p.isFullEye ? p.eyeWidthOut : std::max<uint32_t>(1, (uint32_t)(p.eyeWidthOut * uv.w));
 			uint32_t subOutH = p.isFullEye ? p.eyeHeightOut : std::max<uint32_t>(1, (uint32_t)(p.eyeHeightOut * uv.h));
 

@@ -86,8 +86,8 @@ struct FoveatedRender
 	void LatchQualityMode();
 	uint GetQualityModeAtBoot() const { return qualityModeAtBoot; }
 
-	/// Render-to-display scale denominator for a given quality mode.
-	/// Quality=1.5, Balanced=1.7, Performance=2.0, UltraPerformance=3.0.
+	/// Render-to-display scale denominator for a quality mode index
+	/// (1=Quality .. 4=UltraPerformance). Delegates to the FFX SDK ratio table.
 	static float GetRenderScaleForQuality(uint qualityMode);
 
 	DlssMode GetDlssMode() const { return (DlssMode)std::min(settings.dlssMode, 1u); }

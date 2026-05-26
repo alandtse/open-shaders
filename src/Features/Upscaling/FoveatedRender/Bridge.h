@@ -26,15 +26,14 @@ namespace FoveatedRenderImpl::Bridge
 
 	// Boot-time latches. Run once during BSShaderRenderTargets::Create.
 	// Latches enable + qualityMode so settings cannot drift mid-frame.
-	// (DLSSperf install moved out of MVP-B; see PR-2 for the dedicated path.)
 	void BootSequence();
 
 	// Compute motion-vector scale for Streamline constants.
 	// Returns {1,1} when route is inactive or subrect is full-eye.
 	void ComputeMvecScale(float& outX, float& outY);
 
-	// Render-to-display scale for a quality mode index.
-	// Quality(1)=1.5, Balanced(2)=1.7, Performance(3)=2.0, UltraPerf(4)=3.0.
+	// Render-to-display scale for a quality mode index (1=Quality .. 4=UltraPerf).
+	// Delegates to the FFX SDK ratio table.
 	float GetRenderScaleForQuality(uint32_t qualityMode);
 
 	// Quality mode latched at boot (resource sizing decisions consult this so

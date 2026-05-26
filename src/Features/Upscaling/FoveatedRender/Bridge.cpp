@@ -12,12 +12,9 @@ bool FoveatedRenderImpl::Bridge::IsRouteActive()
 	return globals::features::upscaling.foveatedRender.IsActive();
 }
 
-// Bridge.h's contract: when the route is inactive, getters return a neutral /
-// identity value. Previously these returned raw shared settings unconditionally
-// — callers that forgot to check IsRouteActive() would silently get FoveatedRender
-// values even when it wasn't running. Gate on IsRouteActive() so the contract
-// is enforced at the source; active path returns the clamped active getter.
-// (CodeRabbit on PR #44.)
+// Bridge.h contract: when the route is inactive, getters return a neutral /
+// identity value so callers that forget to check IsRouteActive() don't
+// silently pick up FoveatedRender values.
 
 uint32_t FoveatedRenderImpl::Bridge::GetQualityMode()
 {
@@ -63,9 +60,8 @@ void FoveatedRenderImpl::Bridge::ComputeMvecScale(float& outX, float& outY)
 	if (isFullEye)
 		return;
 
-	// MVP-B has only Default + Faster modes. Both use per-eye DLSS calls
-	// (not strip-merged), so motion vectors scale by 1/UV.w on x. Extreme
-	// mode's 1/(2·w) factor is deferred to PR-3b along with Modes::Extreme.
+	// Default + Faster both use per-eye DLSS calls (not strip-merged), so
+	// motion vectors scale by 1/UV.w on x.
 	outX = (uv.w > 0.0f) ? (1.0f / uv.w) : 1.0f;
 	outY = (uv.h > 0.0f) ? (1.0f / uv.h) : 1.0f;
 }

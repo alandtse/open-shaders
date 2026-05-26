@@ -6,12 +6,10 @@
 
 namespace FoveatedRenderImpl
 {
-	// Unified parameter block consumed by Mode functions.
-	//
-	// MVP-B: derived from current global state with no DLSSperf awareness
-	// (PR-2 ships DLSSperf separately; integration with FoveatedRender is
-	// deferred). When PR-2 + PR-3 are both enabled, a follow-up will reroute
-	// `colorDst` / `colorDstUAV` and `eyeWidthOut`/`eyeHeightOut` here.
+	// Unified parameter block consumed by Mode functions. Resolved from
+	// current global state — when DLSSperf is active, Params::Resolve routes
+	// `colorDst`/`colorDstUAV` and the output extents through PerfMode's
+	// testTexture (see Params.cpp).
 	struct VRDlssParams
 	{
 		// Dimensions
@@ -24,14 +22,14 @@ namespace FoveatedRenderImpl
 
 		// Textures
 		ID3D11Resource* colorSrc;                // input color  (kMAIN)
-		ID3D11Resource* colorDst;                // output color (kMAIN in MVP-B)
+		ID3D11Resource* colorDst;                // output color (kMAIN, or PerfMode's testTexture when DLSSperf is active)
 		ID3D11UnorderedAccessView* colorDstUAV;  // UAV for stretch output target
 		ID3D11Resource* depthTexture;
 		ID3D11Resource* reactiveMask;
 		ID3D11Resource* transparencyMask;
 		ID3D11Resource* motionVectors;
 
-		// Mode & subrect (MVP-B mode set: kDefault, kFaster only — kExtreme deferred)
+		// Mode & subrect (mode set: kDefault, kFaster).
 		FoveatedRender::DlssMode mode;
 		Util::Subrect::UVRegion leftUV;
 		Util::Subrect::UVRegion rightUV;
