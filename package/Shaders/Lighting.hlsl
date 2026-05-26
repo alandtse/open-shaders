@@ -2758,8 +2758,8 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 		// lights should always raymarch regardless of falloff to preserve close, weak
 		// strict-light contact under bias.
 		const bool isClusteredLight = lightIndex >= LightLimitFix::NumStrictLights;
-		float normalizedFalloff = saturate(1.0 - lightDist * light.invRadius);
-		normalizedFalloff *= normalizedFalloff;
+		float falloffFactor = saturate(lightDist * light.invRadius);
+		float normalizedFalloff = 1.0 - falloffFactor * falloffFactor;
 		const bool passesIntensityGate = !isClusteredLight ||
 		                                 (normalizedFalloff > SharedData::lightLimitFixSettings.ContactShadowMinIntensity);
 

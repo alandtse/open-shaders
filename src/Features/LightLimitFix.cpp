@@ -117,23 +117,30 @@ void LightLimitFix::DrawOverlay()
 
 LightLimitFix::PerFrame LightLimitFix::GetCommonBufferData()
 {
-	// Clamp contact-shadow settings to the slider ranges before they hit the
-	// constant buffer. The sliders enforce ImGuiSliderFlags_AlwaysClamp, but a
-	// malformed JSON config (hand-edited, mod conflict, or migration from a
-	// previous schema) can still arrive here with out-of-range values that
-	// would break shader math -- in particular ContactShadowMaxDistance is
-	// compared against a view-space depth, ContactShadowStride scales the
-	// raymarch length, and ContactShadowMaxSteps gates the loop count.
-	// Negative / NaN / wildly large values produce divisions, infinite loops,
-	// or visual corruption; clamp here so the shader can assume sane inputs.
+	// Sanitize contact-shadow settings before they hit the constant buffer. The
+	// sliders enforce ImGuiSliderFlags_AlwaysClamp, but a malformed JSON config
+	// (hand-edited, mod conflict, or migration from a previous schema) can still
+	// arrive here with out-of-range values that would break shader math --
+	// ContactShadowMaxDistance is compared against view-space depth,
+	// ContactShadowStride scales the raymarch length, and ContactShadowMaxSteps
+	// gates the loop count.
+	//
+	// std::clamp passes NaN through unchanged (every NaN comparison is false),
+	// so a NaN in the config would still poison the cbuffer. Reject non-finite
+	// values explicitly first; fall back to the lower bound on NaN/inf -- a
+	// corrupt config produces degraded but stable behavior rather than UB.
+	auto sanitizeFloat = [](float v, float lo, float hi) {
+		return std::isfinite(v) ? std::clamp(v, lo, hi) : lo;
+	};
+
 	PerFrame perFrame{};
 	perFrame.EnableContactShadows = settings.EnableContactShadows;
 	perFrame.ContactShadowMaxSteps = std::clamp<uint32_t>(settings.ContactShadowMaxSteps, 1u, 16u);
-	perFrame.ContactShadowMaxDistance = std::clamp(settings.ContactShadowMaxDistance, 64.0f, 4096.0f);
-	perFrame.ContactShadowStride = std::clamp(settings.ContactShadowStride, 0.5f, 8.0f);
-	perFrame.ContactShadowThickness = std::clamp(settings.ContactShadowThickness, 0.0f, 1.0f);
-	perFrame.ContactShadowDepthFade = std::clamp(settings.ContactShadowDepthFade, 0.0f, 1.0f);
-	perFrame.ContactShadowMinIntensity = std::clamp(settings.ContactShadowMinIntensity, 0.0f, 1.0f);
+	perFrame.ContactShadowMaxDistance = sanitizeFloat(settings.ContactShadowMaxDistance, 64.0f, 4096.0f);
+	perFrame.ContactShadowStride = sanitizeFloat(settings.ContactShadowStride, 0.5f, 8.0f);
+	perFrame.ContactShadowThickness = sanitizeFloat(settings.ContactShadowThickness, 0.0f, 1.0f);
+	perFrame.ContactShadowDepthFade = sanitizeFloat(settings.ContactShadowDepthFade, 0.0f, 1.0f);
+	perFrame.ContactShadowMinIntensity = sanitizeFloat(settings.ContactShadowMinIntensity, 0.0f, 1.0f);
 	perFrame.EnableLightsVisualisation = settings.EnableLightsVisualisation;
 	perFrame.LightsVisualisationMode = settings.LightsVisualisationMode;
 	std::copy(clusterSize, clusterSize + 3, perFrame.ClusterSize);
