@@ -10,7 +10,7 @@
 #include "../../State.h"
 #include "../../Util.h"
 #include "../Upscaling.h"
-#include "DLSSperf.h"
+#include "PerfMode.h"
 #include "DX12SwapChain.h"
 
 namespace
@@ -421,9 +421,9 @@ void Streamline::SetDLSSOptions(sl::ViewportHandle p_viewport, uint32_t width)
 {
 	sl::DLSSOptions dlssOptions{};
 
-	// Boot qualityMode under DLSSperf — DLSS dispatch must match the
+	// Boot qualityMode under PerfMode — DLSS dispatch must match the
 	// renderRes the engine was sized for at install.
-	uint32_t qualityMode = globals::features::upscaling.dlssPerf.IsHookActive() ? globals::features::upscaling.bootSnapshot.Boot(&Upscaling::Settings::qualityMode) : globals::features::upscaling.settings.qualityMode;
+	uint32_t qualityMode = globals::features::upscaling.perfMode.IsHookActive() ? globals::features::upscaling.bootSnapshot.Boot(&Upscaling::Settings::qualityMode) : globals::features::upscaling.settings.qualityMode;
 	switch (qualityMode) {
 	case 1:
 		dlssOptions.mode = sl::DLSSMode::eMaxQuality;
@@ -444,15 +444,15 @@ void Streamline::SetDLSSOptions(sl::ViewportHandle p_viewport, uint32_t width)
 
 	auto state = globals::state;
 
-	// DLSSperf bridge: state->screenSize.y is polluted to RenderRes by the
-	// BSOpenVR size hook; use dlssPerf's snapshot of the real DisplayRes when
+	// PerfMode bridge: state->screenSize.y is polluted to RenderRes by the
+	// BSOpenVR size hook; use perfMode's snapshot of the real DisplayRes when
 	// the hook is live so DLSS is created at the right scale. The width arg
 	// is already display-correct (caller computes from displaySize).
-	auto& dlssPerf = globals::features::upscaling.dlssPerf;
-	const bool dlssperfActive = dlssPerf.IsHookActive() && dlssPerf.GetTestTexture();
+	auto& perfMode = globals::features::upscaling.perfMode;
+	const bool dlssperfActive = perfMode.IsHookActive() && perfMode.GetTestTexture();
 
 	dlssOptions.outputWidth = width;
-	dlssOptions.outputHeight = dlssperfActive ? (uint)dlssPerf.GetDisplayScreenSize().y : (uint)state->screenSize.y;
+	dlssOptions.outputHeight = dlssperfActive ? (uint)perfMode.GetDisplayScreenSize().y : (uint)state->screenSize.y;
 
 	// Detect HDR from kMAIN format at runtime -- VR kMAIN may be 8-bit while SE is FP16
 	{
@@ -606,23 +606,23 @@ void Streamline::Upscale(ID3D11Resource* a_upscalingTexture, ID3D11Resource* a_r
 	auto screenSize = state->screenSize;
 	auto renderSize = Util::ConvertToDynamic(screenSize);
 
-	// DLSSperf bridge: when the BSOpenVR size hook is live, state->screenSize
+	// PerfMode bridge: when the BSOpenVR size hook is live, state->screenSize
 	// is polluted to RenderRes (the spoofed HMD recommended size). DLSS must
 	// be told the TRUE DisplayRes for its output extent, otherwise NGX rejects
 	// the evaluate as InvalidParameter (0xbad00005) because the configured
 	// quality-scale doesn't match the actual extent ratio. The upscale also
-	// has to write into dlssPerf's private DisplayRes testTexture instead of
+	// has to write into perfMode's private DisplayRes testTexture instead of
 	// the now-RenderRes kMAIN.
 	auto& upscaling = globals::features::upscaling;
-	auto& dlssPerf = globals::features::upscaling.dlssPerf;
-	const bool dlssperfActive = dlssPerf.IsHookActive() && dlssPerf.GetTestTexture();
-	const auto displaySize = dlssperfActive ? dlssPerf.GetDisplayScreenSize() : screenSize;
+	auto& perfMode = globals::features::upscaling.perfMode;
+	const bool dlssperfActive = perfMode.IsHookActive() && perfMode.GetTestTexture();
+	const auto displaySize = dlssperfActive ? perfMode.GetDisplayScreenSize() : screenSize;
 
 	// When RCAS sharpening is active, direct DLSS output to sharpenerTexture so RCAS can
-	// sharpen directly into kMAIN.UAV without a CopyResource round-trip. DLSSperf
+	// sharpen directly into kMAIN.UAV without a CopyResource round-trip. PerfMode
 	// bypasses the sharpener entirely (writes DLSS output straight into testTexture).
 	ID3D11Resource* colorOut =
-		dlssperfActive ? static_cast<ID3D11Resource*>(dlssPerf.GetTestTexture()) :
+		dlssperfActive ? static_cast<ID3D11Resource*>(perfMode.GetTestTexture()) :
 						 ((upscaling.settings.sharpnessDLSS > 0.0f && upscaling.sharpenerTexture) ? upscaling.sharpenerTexture->resource.get() : a_upscalingTexture);
 
 	// VR stereo DLSS: NGX D3D11 only accepts zero-offset subrects. Non-zero offsets return

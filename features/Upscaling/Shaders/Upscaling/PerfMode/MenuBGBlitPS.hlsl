@@ -1,4 +1,4 @@
-// MenuBGBlitPS.hlsl — DLSSperf main-menu / loading-screen BG blit.
+// MenuBGBlitPS.hlsl — PerfMode main-menu / loading-screen BG blit.
 // Fullscreen 1:1 sample of the source texture into kTOTAL/kMENUBG. The
 // caller (MaybeBlitMenuBG) feeds DLSS-reconstructed testTexture (R16G16
 // B16A16_FLOAT, displayRes) and the destination kTOTAL is R8G8B8A8_UNORM

@@ -1,4 +1,4 @@
-#include "DLSSperf.h"
+#include "PerfMode.h"
 
 #include <algorithm>
 #include <cmath>
@@ -9,10 +9,10 @@
 // Quality mode → render-scale resolution is supplied by the FFX SDK helper
 // (same one Upscaling.cpp uses at ConfigureUpscaling), avoiding a duplicate
 // scale table here. Decoupled from the original PR's DlssEnhancer::Bridge so
-// DLSSperf can ship without the larger enhancer framework.
+// PerfMode can ship without the larger enhancer framework.
 #include <FidelityFX/host/ffx_fsr3.h>
 
-DLSSperf::FullscreenPassScope::FullscreenPassScope(ID3D11DeviceContext* a_context) :
+PerfMode::FullscreenPassScope::FullscreenPassScope(ID3D11DeviceContext* a_context) :
 	ctx(a_context)
 {
 	ctx->OMGetRenderTargets(1, &savedRTV, &savedDSV);
@@ -33,7 +33,7 @@ DLSSperf::FullscreenPassScope::FullscreenPassScope(ID3D11DeviceContext* a_contex
 	ctx->IAGetPrimitiveTopology(&savedTopology);
 }
 
-DLSSperf::FullscreenPassScope::~FullscreenPassScope()
+PerfMode::FullscreenPassScope::~FullscreenPassScope()
 {
 	// Null the SRV slot before restoring to break any potential SRV-vs-RTV
 	// hazard from the pass we just ran (matches the explicit null-pass the
@@ -93,7 +93,7 @@ DLSSperf::FullscreenPassScope::~FullscreenPassScope()
 		savedIB->Release();
 }
 
-void DLSSperf::InstallRenderTargetSizeHook()
+void PerfMode::InstallRenderTargetSizeHook()
 {
 	if (!globals::game::isVR)
 		return;
@@ -104,14 +104,14 @@ void DLSSperf::InstallRenderTargetSizeHook()
 	// Eager capture — get real HMD resolution BEFORE installing hook
 	auto* openvr = RE::BSOpenVR::GetSingleton();
 	if (!openvr || !openvr->vrSystem) {
-		logger::error("[DLSSperf] BSOpenVR or vrSystem not available — hook NOT installed");
+		logger::error("[PerfMode] BSOpenVR or vrSystem not available — hook NOT installed");
 		return;
 	}
 
 	uint32_t w = 0, h = 0;
 	openvr->vrSystem->GetRecommendedRenderTargetSize(&w, &h);
 	if (w == 0 || h == 0) {
-		logger::error("[DLSSperf] GetRecommendedRenderTargetSize returned {}x{} — hook NOT installed", w, h);
+		logger::error("[PerfMode] GetRecommendedRenderTargetSize returned {}x{} — hook NOT installed", w, h);
 		return;
 	}
 
@@ -127,13 +127,13 @@ void DLSSperf::InstallRenderTargetSizeHook()
 	// Validate before division: a bad/corrupt JSON could put qualityMode
 	// outside FFX's range, returning 0/inf/NaN; that would propagate to bogus
 	// renderEye dimensions and silently mis-size every engine RT. Fail closed
-	// — leave hookActive=false so the rest of DLSSperf is dormant and DLSS
+	// — leave hookActive=false so the rest of PerfMode is dormant and DLSS
 	// runs on dev's standard path.
 	const uint32_t qualityModeRaw = globals::features::upscaling.settings.qualityMode;
 	const uint32_t qualityMode = std::clamp<uint32_t>(qualityModeRaw, 0, 4);  // FfxFsr3QualityMode range
 	const float scale = ffxFsr3GetUpscaleRatioFromQualityMode(static_cast<FfxFsr3QualityMode>(qualityMode));
 	if (!std::isfinite(scale) || scale <= 0.0f) {
-		logger::error("[DLSSperf] FFX returned invalid upscale ratio {} for qualityMode {} (raw {}); hook NOT installed", scale, qualityMode, qualityModeRaw);
+		logger::error("[PerfMode] FFX returned invalid upscale ratio {} for qualityMode {} (raw {}); hook NOT installed", scale, qualityMode, qualityModeRaw);
 		return;
 	}
 	renderEyeWidth = std::max<uint32_t>(1, (uint32_t)(w / scale));
@@ -160,18 +160,18 @@ void DLSSperf::InstallRenderTargetSizeHook()
 	hookActive = true;
 }
 
-void DLSSperf::GetRenderTargetSize_Hook::thunk(RE::BSOpenVR* a_this, uint32_t* a_width, uint32_t* a_height)
+void PerfMode::GetRenderTargetSize_Hook::thunk(RE::BSOpenVR* a_this, uint32_t* a_width, uint32_t* a_height)
 {
 	// Call original to get real HMD resolution
 	func(a_this, a_width, a_height);
 
-	auto& dlssPerf = globals::features::upscaling.dlssPerf;
+	auto& perfMode = globals::features::upscaling.perfMode;
 
-	*a_width = dlssPerf.renderEyeWidth;
-	*a_height = dlssPerf.renderEyeHeight;
+	*a_width = perfMode.renderEyeWidth;
+	*a_height = perfMode.renderEyeHeight;
 }
 
-void DLSSperf::SetupResources()
+void PerfMode::SetupResources()
 {
 	if (!globals::game::isVR)
 		return;
@@ -179,7 +179,7 @@ void DLSSperf::SetupResources()
 	auto renderer = globals::game::renderer;
 	auto& mainRT = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMAIN];
 	if (!mainRT.texture) {
-		logger::error("[DLSSperf] kMAIN texture not available in SetupResources");
+		logger::error("[PerfMode] kMAIN texture not available in SetupResources");
 		return;
 	}
 
@@ -204,7 +204,7 @@ void DLSSperf::SetupResources()
 	auto device = globals::d3d::device;
 	HRESULT hr = device->CreateTexture2D(&desc, nullptr, testTexture.put());
 	if (FAILED(hr)) {
-		logger::error("[DLSSperf] Failed to create test texture: {:#x}", (uint32_t)hr);
+		logger::error("[PerfMode] Failed to create test texture: {:#x}", (uint32_t)hr);
 		return;
 	}
 
@@ -215,7 +215,7 @@ void DLSSperf::SetupResources()
 	srvDesc.Texture2D.MostDetailedMip = 0;
 	hr = device->CreateShaderResourceView(testTexture.get(), &srvDesc, testTextureSRV.put());
 	if (FAILED(hr)) {
-		logger::error("[DLSSperf] Failed to create test texture SRV: {:#x}", (uint32_t)hr);
+		logger::error("[PerfMode] Failed to create test texture SRV: {:#x}", (uint32_t)hr);
 		testTexture = nullptr;
 		testTextureUAV = nullptr;
 		return;
@@ -229,7 +229,7 @@ void DLSSperf::SetupResources()
 		uavDesc.Texture2D.MipSlice = 0;
 		hr = device->CreateUnorderedAccessView(testTexture.get(), &uavDesc, testTextureUAV.put());
 		if (FAILED(hr)) {
-			logger::error("[DLSSperf] Failed to create testTexture UAV: {:#x}", (uint32_t)hr);
+			logger::error("[PerfMode] Failed to create testTexture UAV: {:#x}", (uint32_t)hr);
 		}
 	}
 
@@ -241,7 +241,7 @@ void DLSSperf::SetupResources()
 		rtvDesc.Texture2D.MipSlice = 0;
 		hr = device->CreateRenderTargetView(testTexture.get(), &rtvDesc, testTextureRTV.put());
 		if (FAILED(hr)) {
-			logger::error("[DLSSperf] Failed to create testTexture RTV: {:#x}", (uint32_t)hr);
+			logger::error("[PerfMode] Failed to create testTexture RTV: {:#x}", (uint32_t)hr);
 		}
 	}
 
@@ -252,7 +252,7 @@ void DLSSperf::SetupResources()
 
 		hr = device->CreateTexture2D(&refraDesc, nullptr, refraTempTex.put());
 		if (FAILED(hr)) {
-			logger::error("[DLSSperf] Failed to create refraTempTex: {:#x}", (uint32_t)hr);
+			logger::error("[PerfMode] Failed to create refraTempTex: {:#x}", (uint32_t)hr);
 		} else {
 			D3D11_SHADER_RESOURCE_VIEW_DESC refraSrvDesc{};
 			refraSrvDesc.Format = refraDesc.Format;
@@ -261,7 +261,7 @@ void DLSSperf::SetupResources()
 			refraSrvDesc.Texture2D.MostDetailedMip = 0;
 			hr = device->CreateShaderResourceView(refraTempTex.get(), &refraSrvDesc, refraTempSRV.put());
 			if (FAILED(hr)) {
-				logger::error("[DLSSperf] Failed to create refraTempSRV: {:#x}", (uint32_t)hr);
+				logger::error("[PerfMode] Failed to create refraTempSRV: {:#x}", (uint32_t)hr);
 				refraTempTex = nullptr;
 			}
 		}
@@ -281,7 +281,7 @@ void DLSSperf::SetupResources()
 
 			HRESULT hr2 = device->CreateTexture2D(&fakeDesc, nullptr, fakeDS.put());
 			if (FAILED(hr2)) {
-				logger::error("[DLSSperf] Failed to create fake DS texture: {:#x}", (uint32_t)hr2);
+				logger::error("[PerfMode] Failed to create fake DS texture: {:#x}", (uint32_t)hr2);
 			} else {
 				// Create DSV — format depends on typeless base format
 				D3D11_DEPTH_STENCIL_VIEW_DESC dsvDesc{};
@@ -302,12 +302,12 @@ void DLSSperf::SetupResources()
 
 				hr2 = device->CreateDepthStencilView(fakeDS.get(), &dsvDesc, fakeDSV.put());
 				if (FAILED(hr2)) {
-					logger::error("[DLSSperf] Failed to create fake DSV: {:#x}", (uint32_t)hr2);
+					logger::error("[PerfMode] Failed to create fake DSV: {:#x}", (uint32_t)hr2);
 					fakeDS = nullptr;
 				}
 			}
 		} else {
-			logger::warn("[DLSSperf] kMAIN DS texture not available, skipping fake DS creation");
+			logger::warn("[PerfMode] kMAIN DS texture not available, skipping fake DS creation");
 		}
 	}
 
@@ -352,21 +352,21 @@ void DLSSperf::SetupResources()
 	// Downscale + blit shaders
 	if (hookActive && !boxDownscalePS) {
 		boxDownscalePS.attach(static_cast<ID3D11PixelShader*>(
-			Util::CompileShader(L"Data/Shaders/Upscaling/DLSSperf/BoxDownscalePS.hlsl", { { "PSHADER", "" } }, "ps_5_0")));
+			Util::CompileShader(L"Data/Shaders/Upscaling/PerfMode/BoxDownscalePS.hlsl", { { "PSHADER", "" } }, "ps_5_0")));
 		if (!boxDownscalePS)
-			logger::error("[DLSSperf] Failed to compile BoxDownscalePS");
+			logger::error("[PerfMode] Failed to compile BoxDownscalePS");
 	}
 	if (hookActive && !boxDownscaleVS) {
 		boxDownscaleVS.attach(static_cast<ID3D11VertexShader*>(
 			Util::CompileShader(L"Data/Shaders/Upscaling/UpscaleVS.hlsl", { { "VSHADER", "" } }, "vs_5_0")));
 		if (!boxDownscaleVS)
-			logger::error("[DLSSperf] Failed to compile BoxDownscale VS");
+			logger::error("[PerfMode] Failed to compile BoxDownscale VS");
 	}
 	if (hookActive && !menuBlitPS) {
 		menuBlitPS.attach(static_cast<ID3D11PixelShader*>(
-			Util::CompileShader(L"Data/Shaders/Upscaling/DLSSperf/MenuBGBlitPS.hlsl", { { "PSHADER", "" } }, "ps_5_0")));
+			Util::CompileShader(L"Data/Shaders/Upscaling/PerfMode/MenuBGBlitPS.hlsl", { { "PSHADER", "" } }, "ps_5_0")));
 		if (!menuBlitPS)
-			logger::error("[DLSSperf] Failed to compile MenuBGBlitPS");
+			logger::error("[PerfMode] Failed to compile MenuBGBlitPS");
 	}
 	if (hookActive && !linearSampler) {
 		D3D11_SAMPLER_DESC sd{};
@@ -377,7 +377,7 @@ void DLSSperf::SetupResources()
 		sd.MaxAnisotropy = 1;
 		sd.MaxLOD = D3D11_FLOAT32_MAX;
 		if (FAILED(device->CreateSamplerState(&sd, linearSampler.put())))
-			logger::error("[DLSSperf] Failed to create linear sampler");
+			logger::error("[PerfMode] Failed to create linear sampler");
 	}
 
 	// Fail-closed pipeline-ready gate
@@ -402,7 +402,7 @@ void DLSSperf::SetupResources()
 
 	if (hookActive && !postPipelineReady) {
 		logger::error(
-			"[DLSSperf] Post pipeline failed to initialize fully — Post wrap "
+			"[PerfMode] Post pipeline failed to initialize fully — Post wrap "
 			"disabled, engine RTs remain at RenderRes. Check upstream resource "
 			"creation errors above.");
 	}
@@ -415,11 +415,11 @@ void DLSSperf::SetupResources()
 // Inner layer of two-layer swap: swaps kMAIN SRV → testTextureSRV and
 // kMAIN DS → fakeDS before tonemap Render(), restores after.
 
-void DLSSperf::TonemapRender_Hook::thunk(void* imageSpaceShader, RE::BSTriShape* shape, RE::ImageSpaceEffectParam* param)
+void PerfMode::TonemapRender_Hook::thunk(void* imageSpaceShader, RE::BSTriShape* shape, RE::ImageSpaceEffectParam* param)
 {
-	auto& dlssPerf = globals::features::upscaling.dlssPerf;
+	auto& perfMode = globals::features::upscaling.perfMode;
 
-	if (!dlssPerf.hookActive || !dlssPerf.testTextureSRV || !dlssPerf.fakeDSV) {
+	if (!perfMode.hookActive || !perfMode.testTextureSRV || !perfMode.fakeDSV) {
 		func(imageSpaceShader, shape, param);
 		return;
 	}
@@ -434,12 +434,12 @@ void DLSSperf::TonemapRender_Hook::thunk(void* imageSpaceShader, RE::BSTriShape*
 	// runs at most once per frame regardless of how many menu redraws fire.
 	if (globals::state && globals::state->IsMainOrLoadingMenuOpen()) {
 		func(imageSpaceShader, shape, param);
-		dlssPerf.MaybeBlitMenuBG(RE::RENDER_TARGETS::kTOTAL);
+		perfMode.MaybeBlitMenuBG(RE::RENDER_TARGETS::kTOTAL);
 		return;
 	}
 
 	ZoneScoped;
-	TracyD3D11Zone(globals::state->tracyCtx, "DLSSperf::TonemapRender");
+	TracyD3D11Zone(globals::state->tracyCtx, "PerfMode::TonemapRender");
 
 	auto renderer = RE::BSGraphics::Renderer::GetSingleton();
 	auto& rtData = renderer->GetRuntimeData();
@@ -447,43 +447,43 @@ void DLSSperf::TonemapRender_Hook::thunk(void* imageSpaceShader, RE::BSTriShape*
 
 	// --- Swap kMAIN SRV → testTextureSRV (so tonemap reads 3k upscaled color) ---
 	auto& kmainRT = rtData.renderTargets[RE::RENDER_TARGETS::kMAIN];
-	dlssPerf.savedKMainSRV = kmainRT.SRV;
-	kmainRT.SRV = dlssPerf.testTextureSRV.get();
+	perfMode.savedKMainSRV = kmainRT.SRV;
+	kmainRT.SRV = perfMode.testTextureSRV.get();
 
 	// --- Also swap kMAIN_COPY SRV (refraction path reads this instead of kMAIN) ---
 	auto& kmainCopyRT = rtData.renderTargets[RE::RENDER_TARGETS::kMAIN_COPY];
-	dlssPerf.savedKMainCopySRV = kmainCopyRT.SRV;
-	kmainCopyRT.SRV = dlssPerf.testTextureSRV.get();
+	perfMode.savedKMainCopySRV = kmainCopyRT.SRV;
+	kmainCopyRT.SRV = perfMode.testTextureSRV.get();
 
 	// --- Swap kMAIN DS views → fakeDS (so 3k RT doesn't mismatch 1k DS) ---
 	auto& kmainDS = dsData.depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kMAIN];
 	for (int i = 0; i < 8; i++) {
-		dlssPerf.savedKMainViews[i] = kmainDS.views[i];
+		perfMode.savedKMainViews[i] = kmainDS.views[i];
 		if (kmainDS.views[i])
-			kmainDS.views[i] = dlssPerf.fakeDSV.get();
+			kmainDS.views[i] = perfMode.fakeDSV.get();
 	}
 	for (int i = 0; i < 8; i++) {
-		dlssPerf.savedKMainReadOnlyViews[i] = kmainDS.readOnlyViews[i];
+		perfMode.savedKMainReadOnlyViews[i] = kmainDS.readOnlyViews[i];
 		if (kmainDS.readOnlyViews[i])
-			kmainDS.readOnlyViews[i] = dlssPerf.fakeDSV.get();
+			kmainDS.readOnlyViews[i] = perfMode.fakeDSV.get();
 	}
 
 	// --- Call original (or FrameAnnotations chain) ---
 	func(imageSpaceShader, shape, param);
 
 	// --- Restore kMAIN SRV ---
-	kmainRT.SRV = dlssPerf.savedKMainSRV;
-	dlssPerf.savedKMainSRV = nullptr;
+	kmainRT.SRV = perfMode.savedKMainSRV;
+	perfMode.savedKMainSRV = nullptr;
 
 	// --- Restore kMAIN_COPY SRV ---
-	kmainCopyRT.SRV = dlssPerf.savedKMainCopySRV;
-	dlssPerf.savedKMainCopySRV = nullptr;
+	kmainCopyRT.SRV = perfMode.savedKMainCopySRV;
+	perfMode.savedKMainCopySRV = nullptr;
 
 	// --- Restore kMAIN DS views ---
 	for (int i = 0; i < 8; i++)
-		kmainDS.views[i] = dlssPerf.savedKMainViews[i];
+		kmainDS.views[i] = perfMode.savedKMainViews[i];
 	for (int i = 0; i < 8; i++)
-		kmainDS.readOnlyViews[i] = dlssPerf.savedKMainReadOnlyViews[i];
+		kmainDS.readOnlyViews[i] = perfMode.savedKMainReadOnlyViews[i];
 }
 
 // ============================================================================
@@ -493,17 +493,17 @@ void DLSSperf::TonemapRender_Hook::thunk(void* imageSpaceShader, RE::BSTriShape*
 // After func() returns, D3D11 state is sticky (PS/CB/sampler/IA all still bound).
 // We replay the draw with our own RT (testTexture 3k), VP (3k), and SRV (refraTempTex 3k).
 
-void DLSSperf::RefractionRender_Hook::thunk(void* imageSpaceShader, RE::BSTriShape* shape, RE::ImageSpaceEffectParam* param)
+void PerfMode::RefractionRender_Hook::thunk(void* imageSpaceShader, RE::BSTriShape* shape, RE::ImageSpaceEffectParam* param)
 {
-	auto& dlssPerf = globals::features::upscaling.dlssPerf;
+	auto& perfMode = globals::features::upscaling.perfMode;
 
-	if (!dlssPerf.hookActive || !dlssPerf.testTextureRTV || !dlssPerf.refraTempSRV) {
+	if (!perfMode.hookActive || !perfMode.testTextureRTV || !perfMode.refraTempSRV) {
 		func(imageSpaceShader, shape, param);
 		return;
 	}
 
 	ZoneScoped;
-	TracyD3D11Zone(globals::state->tracyCtx, "DLSSperf::RefractionRender");
+	TracyD3D11Zone(globals::state->tracyCtx, "PerfMode::RefractionRender");
 
 	// --- Pass 1: engine's normal 1k refraction (untouched) ---
 	func(imageSpaceShader, shape, param);
@@ -532,21 +532,21 @@ void DLSSperf::RefractionRender_Hook::thunk(void* imageSpaceShader, RE::BSTriSha
 	context->PSGetShaderResources(0, 1, &savedSRV0);
 
 	// Set 3k output: testTexture RTV, no DS needed for fullscreen IS shader
-	ID3D11RenderTargetView* rtv3k = dlssPerf.testTextureRTV.get();
+	ID3D11RenderTargetView* rtv3k = perfMode.testTextureRTV.get();
 	context->OMSetRenderTargets(1, &rtv3k, nullptr);
 
 	// Set 3k VP
 	D3D11_VIEWPORT vp3k = {};
 	vp3k.TopLeftX = 0.0f;
 	vp3k.TopLeftY = 0.0f;
-	vp3k.Width = static_cast<float>(dlssPerf.displayEyeWidth * 2);
-	vp3k.Height = static_cast<float>(dlssPerf.displayEyeHeight);
+	vp3k.Width = static_cast<float>(perfMode.displayEyeWidth * 2);
+	vp3k.Height = static_cast<float>(perfMode.displayEyeHeight);
 	vp3k.MinDepth = 0.0f;
 	vp3k.MaxDepth = 1.0f;
 	context->RSSetViewports(1, &vp3k);
 
 	// Set 3k input: refraTempTex as t0 (scene color for refraction sampling)
-	ID3D11ShaderResourceView* srv3k = dlssPerf.refraTempSRV.get();
+	ID3D11ShaderResourceView* srv3k = perfMode.refraTempSRV.get();
 	context->PSSetShaderResources(0, 1, &srv3k);
 
 	// Draw with the same geometry (BSTriShape fullscreen quad, IA still bound)
@@ -574,8 +574,8 @@ void DLSSperf::RefractionRender_Hook::thunk(void* imageSpaceShader, RE::BSTriSha
 // ISCopyRender_Hook: stretch ISCopy when source < dest (menu compositor fix)
 // ============================================================================
 // The VR menu compositor uses a single ISCopy draw to blit the rendered scene
-// (kMAIN — RenderRes under DLSSperf) into a fixed-size projection surface
-// (kPROJECTEDMENU 2048², or kMENUBG which DLSSperf enlarges to DisplayRes).
+// (kMAIN — RenderRes under PerfMode) into a fixed-size projection surface
+// (kPROJECTEDMENU 2048², or kMENUBG which PerfMode enlarges to DisplayRes).
 // Engine ISCopy uses a 1:1 viewport sized to the source, so the small source
 // is stamped into the top-left of the larger dest. Symptom: "main menu image
 // looks downscaled."
@@ -586,16 +586,16 @@ void DLSSperf::RefractionRender_Hook::thunk(void* imageSpaceShader, RE::BSTriSha
 // relies on), so the replay needs only a viewport change + DrawIndexed and
 // the engine's clamp-sampler stretches the source naturally.
 //
-// In-game ISCopy (where source.w == dest.w under DLSSperf — kMAIN renderRes
+// In-game ISCopy (where source.w == dest.w under PerfMode — kMAIN renderRes
 // → kMAIN_COPY renderRes) takes the early-out branch and the engine's draw
 // is the final pixel.
 
-void DLSSperf::ISCopyRender_Hook::thunk(void* imageSpaceShader, RE::BSTriShape* shape, RE::ImageSpaceEffectParam* param)
+void PerfMode::ISCopyRender_Hook::thunk(void* imageSpaceShader, RE::BSTriShape* shape, RE::ImageSpaceEffectParam* param)
 {
-	auto& dlssPerf = globals::features::upscaling.dlssPerf;
+	auto& perfMode = globals::features::upscaling.perfMode;
 
 	// Inactive / non-VR: passthrough.
-	if (!dlssPerf.hookActive) {
+	if (!perfMode.hookActive) {
 		func(imageSpaceShader, shape, param);
 		return;
 	}
@@ -647,7 +647,7 @@ void DLSSperf::ISCopyRender_Hook::thunk(void* imageSpaceShader, RE::BSTriShape* 
 
 	if (needsStretch) {
 		ZoneScoped;
-		TracyD3D11Zone(globals::state->tracyCtx, "DLSSperf::ISCopyStretch");
+		TracyD3D11Zone(globals::state->tracyCtx, "PerfMode::ISCopyStretch");
 
 		// Replay viewport: full dest extent, preserve depth range from the
 		// original so anything sampling depth (unlikely for ISCopy but safe)
@@ -680,13 +680,13 @@ void DLSSperf::ISCopyRender_Hook::thunk(void* imageSpaceShader, RE::BSTriShape* 
 // UI pass draws VR HUD to kMENUBG (now 3k). Engine binds KMAIN(DS) as DS,
 // which is still 1k → size mismatch. Swap to fakeDS (3k) before, restore after.
 
-void DLSSperf::UIPassDispatch_Hook::thunk(RE::BSGraphics::BSShaderAccumulator* shaderAccumulator, uint32_t renderFlags)
+void PerfMode::UIPassDispatch_Hook::thunk(RE::BSGraphics::BSShaderAccumulator* shaderAccumulator, uint32_t renderFlags)
 {
-	auto& dlssPerf = globals::features::upscaling.dlssPerf;
+	auto& perfMode = globals::features::upscaling.perfMode;
 
 	// Only intercept renderMode==24 (UI pass) when hook is active
 	auto& rtData = shaderAccumulator->GetRuntimeData();
-	if (!dlssPerf.hookActive || !dlssPerf.fakeDSV || rtData.renderMode != 24) {
+	if (!perfMode.hookActive || !perfMode.fakeDSV || rtData.renderMode != 24) {
 		func(shaderAccumulator, renderFlags);
 		return;
 	}
@@ -701,12 +701,12 @@ void DLSSperf::UIPassDispatch_Hook::thunk(RE::BSGraphics::BSShaderAccumulator* s
 	for (int i = 0; i < 8; i++) {
 		savedViews[i] = kmainDS.views[i];
 		if (kmainDS.views[i])
-			kmainDS.views[i] = dlssPerf.fakeDSV.get();
+			kmainDS.views[i] = perfMode.fakeDSV.get();
 	}
 	for (int i = 0; i < 8; i++) {
 		savedReadOnlyViews[i] = kmainDS.readOnlyViews[i];
 		if (kmainDS.readOnlyViews[i])
-			kmainDS.readOnlyViews[i] = dlssPerf.fakeDSV.get();
+			kmainDS.readOnlyViews[i] = perfMode.fakeDSV.get();
 	}
 
 	// Force engine to re-bind DS from struct
@@ -721,19 +721,19 @@ void DLSSperf::UIPassDispatch_Hook::thunk(RE::BSGraphics::BSShaderAccumulator* s
 		savedVP = vp;
 		vp.TopLeftX = 0.0f;
 		vp.TopLeftY = 0.0f;
-		vp.Width = static_cast<float>(dlssPerf.displayEyeWidth * 2);
-		vp.Height = static_cast<float>(dlssPerf.displayEyeHeight);
+		vp.Width = static_cast<float>(perfMode.displayEyeWidth * 2);
+		vp.Height = static_cast<float>(perfMode.displayEyeHeight);
 		vp.MinDepth = 0.0f;
 		vp.MaxDepth = 1.0f;
 		globals::game::stateUpdateFlags->set(RE::BSGraphics::ShaderFlags::DIRTY_VIEWPORT);
 	}
 
 	// Skip VP compression in UpdateViewPort hook during UI pass
-	dlssPerf.postInterceptActive = true;
+	perfMode.postInterceptActive = true;
 
 	func(shaderAccumulator, renderFlags);
 
-	dlssPerf.postInterceptActive = false;
+	perfMode.postInterceptActive = false;
 
 	// Restore viewport
 	if (ss) {
@@ -758,11 +758,11 @@ void DLSSperf::UIPassDispatch_Hook::thunk(RE::BSGraphics::BSShaderAccumulator* s
 // After func() returns, clear postChainDone so the Present-前 UI chain
 // and the next frame use normal VP compression.
 
-void DLSSperf::PlayerViewRender_Hook::thunk(void* a1, bool a2, bool a3)
+void PerfMode::PlayerViewRender_Hook::thunk(void* a1, bool a2, bool a3)
 {
 	func(a1, a2, a3);
 
-	globals::features::upscaling.dlssPerf.ClearPostChainDone();
+	globals::features::upscaling.perfMode.ClearPostChainDone();
 }
 
 // ============================================================================
@@ -770,14 +770,14 @@ void DLSSperf::PlayerViewRender_Hook::thunk(void* a1, bool a2, bool a3)
 // ============================================================================
 // Wraps DS swap around the engine's RT/DS flush so enlarged-RT draws don't
 // rasterizer-clip to the smaller kMAIN DS bounds.
-void DLSSperf::BSGraphics_SetDirtyStates_Hook::thunk(bool isCompute)
+void PerfMode::BSGraphics_SetDirtyStates_Hook::thunk(bool isCompute)
 {
 	bool swapped = false;
 	if (!isCompute)
-		swapped = globals::features::upscaling.dlssPerf.MaybeSwapDSForEnlargedRT();
+		swapped = globals::features::upscaling.perfMode.MaybeSwapDSForEnlargedRT();
 	func(isCompute);
 	if (swapped)
-		globals::features::upscaling.dlssPerf.RestoreSwappedDS();
+		globals::features::upscaling.perfMode.RestoreSwappedDS();
 }
 
 // ============================================================================
@@ -785,33 +785,33 @@ void DLSSperf::BSGraphics_SetDirtyStates_Hook::thunk(bool isCompute)
 // ============================================================================
 // Post-corrects the engine viewport when the bound RT and the requested VP
 // don't agree about render-vs-display extent. Was originally in Hooks.cpp.
-void DLSSperf::BSGraphics_Renderer_UpdateViewPort_Hook::thunk(RE::BSGraphics::Renderer* a_this, uint32_t a_width, uint32_t a_height, bool a_forceMatchRT)
+void PerfMode::BSGraphics_Renderer_UpdateViewPort_Hook::thunk(RE::BSGraphics::Renderer* a_this, uint32_t a_width, uint32_t a_height, bool a_forceMatchRT)
 {
 	func(a_this, a_width, a_height, a_forceMatchRT);
 
-	auto& dlssPerf = globals::features::upscaling.dlssPerf;
-	if (!dlssPerf.IsHookActive())
+	auto& perfMode = globals::features::upscaling.perfMode;
+	if (!perfMode.IsHookActive())
 		return;
 
 	// During Post intercept enlarged kTEMP/kTOTAL already get the right VP
 	// from func() because of their inflated RT dims — don't second-guess it.
-	if (dlssPerf.IsPostInterceptActive())
+	if (perfMode.IsPostInterceptActive())
 		return;
 
 	auto* ss = globals::game::shadowState;
 	if (!ss)
 		return;
 	auto& vp = ss->GetVRRuntimeData().viewPort;
-	const uint32_t displayW = dlssPerf.GetDisplayEyeWidth() * 2;
-	const uint32_t displayH = dlssPerf.GetDisplayEyeHeight();
-	const uint32_t renderW = dlssPerf.GetRenderEyeWidth() * 2;
-	const uint32_t renderH = dlssPerf.GetRenderEyeHeight();
+	const uint32_t displayW = perfMode.GetDisplayEyeWidth() * 2;
+	const uint32_t displayH = perfMode.GetDisplayEyeHeight();
+	const uint32_t renderW = perfMode.GetRenderEyeWidth() * 2;
+	const uint32_t renderH = perfMode.GetRenderEyeHeight();
 
 	// After the Post chain, UI / submit-prep draws target enlarged kTOTAL
 	// at displayRes — expand any renderRes VP the engine sets back up.
 	// The fade Draw(30) bypasses this path entirely (direct D3D RSSet-
 	// Viewports) and is handled by the Draw vfunc hook in Globals.cpp.
-	if (dlssPerf.IsPostChainDone()) {
+	if (perfMode.IsPostChainDone()) {
 		if (static_cast<uint32_t>(vp.Width) == renderW &&
 			static_cast<uint32_t>(vp.Height) == renderH) {
 			vp.Width = static_cast<float>(displayW);
@@ -852,14 +852,14 @@ void DLSSperf::BSGraphics_Renderer_UpdateViewPort_Hook::thunk(RE::BSGraphics::Re
 // entire Post chain (covers the copy step #10 which binds kMAIN_COPY DS).
 // Inner layer (tonemap hook) handles kMAIN DS + kMAIN SRV for step #9.
 
-void DLSSperf::BeginPostIntercept()
+void PerfMode::BeginPostIntercept()
 {
 	if (!hookActive || !fakeDSV)
 		return;
 
 	ZoneScoped;
 	auto state = globals::state;
-	state->BeginPerfEvent("DLSSperf::BeginPostIntercept");
+	state->BeginPerfEvent("PerfMode::BeginPostIntercept");
 
 	auto renderer = RE::BSGraphics::Renderer::GetSingleton();
 	auto& dsData = renderer->GetDepthStencilData();
@@ -882,14 +882,14 @@ void DLSSperf::BeginPostIntercept()
 	state->EndPerfEvent();
 }
 
-void DLSSperf::EndPostIntercept()
+void PerfMode::EndPostIntercept()
 {
 	if (!hookActive || !fakeDSV)
 		return;
 
 	ZoneScoped;
 	auto state = globals::state;
-	state->BeginPerfEvent("DLSSperf::EndPostIntercept");
+	state->BeginPerfEvent("PerfMode::EndPostIntercept");
 
 	auto renderer = RE::BSGraphics::Renderer::GetSingleton();
 	auto& dsData = renderer->GetDepthStencilData();
@@ -916,7 +916,7 @@ void DLSSperf::EndPostIntercept()
 //   - No refraction: kMAIN is the pyramid input directly.
 //   - With refraction: engine composites kMAIN → kMAIN_COPY, which enters pyramid.
 
-void DLSSperf::DownscaleToKMain()
+void PerfMode::DownscaleToKMain()
 {
 	if (!hookActive || !testTextureSRV || !boxDownscalePS || !boxDownscaleVS || !linearSampler)
 		return;
@@ -934,8 +934,8 @@ void DLSSperf::DownscaleToKMain()
 	if (!kmain.RTV)
 		return;
 
-	state->BeginPerfEvent("DLSSperf::DownscaleToKMain");
-	TracyD3D11Zone(state->tracyCtx, "DLSSperf::DownscaleToKMain");
+	state->BeginPerfEvent("PerfMode::DownscaleToKMain");
+	TracyD3D11Zone(state->tracyCtx, "PerfMode::DownscaleToKMain");
 
 	{
 		FullscreenPassScope stateScope(context);
@@ -987,7 +987,7 @@ void DLSSperf::DownscaleToKMain()
 // dest. One-shot per frame via blittedFrameId (Present doesn't fire here
 // and PlayerView doesn't fire in main-menu, so the frame-id guard is the
 // only reliable per-frame boundary).
-void DLSSperf::MaybeBlitMenuBG(uint32_t boundRTIdx)
+void PerfMode::MaybeBlitMenuBG(uint32_t boundRTIdx)
 {
 	const uint32_t currentFrame = globals::state ? globals::state->frameCount : 0;
 	if (!hookActive || blittedFrameId == currentFrame || !menuBlitPS || !boxDownscaleVS || !linearSampler)
@@ -1009,8 +1009,8 @@ void DLSSperf::MaybeBlitMenuBG(uint32_t boundRTIdx)
 	ZoneScoped;
 	auto state = globals::state;
 	auto* context = globals::d3d::context;
-	state->BeginPerfEvent("DLSSperf::MenuBGBlit");
-	TracyD3D11Zone(state->tracyCtx, "DLSSperf::MenuBGBlit");
+	state->BeginPerfEvent("PerfMode::MenuBGBlit");
+	TracyD3D11Zone(state->tracyCtx, "PerfMode::MenuBGBlit");
 
 	globals::features::upscaling.Upscale();
 
@@ -1055,11 +1055,11 @@ void DLSSperf::MaybeBlitMenuBG(uint32_t boundRTIdx)
 	state->EndPerfEvent();
 }
 
-void DLSSperf::HandlePostProcessing(const std::function<void()>& enginePost)
+void PerfMode::HandlePostProcessing(const std::function<void()>& enginePost)
 {
 	ZoneScoped;
 	auto state = globals::state;
-	state->BeginPerfEvent("DLSSperf::HandlePostProcessing");
+	state->BeginPerfEvent("PerfMode::HandlePostProcessing");
 
 	// Copy testTexture → refraTempTex before Post, so ISRefraction can read 3k scene
 	if (refraTempTex) {
@@ -1071,7 +1071,7 @@ void DLSSperf::HandlePostProcessing(const std::function<void()>& enginePost)
 	DownscaleToKMain();
 
 	// Underwater mask analytical repair. Engine RTs (depth, mask) are at
-	// renderRes under DLSSperf, so the full-resolution path of UpscaleDepth
+	// renderRes under PerfMode, so the full-resolution path of UpscaleDepth
 	// would apply — but routing through UpscaleDepth here leaves pipeline
 	// state dirty and the trailing enginePost() loses kMAIN. Drive the
 	// mask-only draw directly inside our own FullscreenPassScope so the
@@ -1093,7 +1093,7 @@ void DLSSperf::HandlePostProcessing(const std::function<void()>& enginePost)
 	state->EndPerfEvent();
 }
 
-bool DLSSperf::MaybeSwapDSForEnlargedRT()
+bool PerfMode::MaybeSwapDSForEnlargedRT()
 {
 	if (!hookActive || postInterceptActive)
 		return false;
@@ -1105,7 +1105,7 @@ bool DLSSperf::MaybeSwapDSForEnlargedRT()
 		return false;
 	auto& srd = ss->GetVRRuntimeData();
 
-	// Only the three RTs DLSSperf_MaybeEnlargeRT inflates to displayRes.
+	// Only the three RTs PerfMode_MaybeEnlargeRT inflates to displayRes.
 	const uint32_t rtIdx = static_cast<uint32_t>(srd.renderTargets[0]);
 	if (rtIdx != RE::RENDER_TARGETS::kTOTAL &&
 		rtIdx != RE::RENDER_TARGETS::kMENUBG &&
@@ -1143,7 +1143,7 @@ bool DLSSperf::MaybeSwapDSForEnlargedRT()
 	return true;
 }
 
-void DLSSperf::RestoreSwappedDS()
+void PerfMode::RestoreSwappedDS()
 {
 	if (autoSwapDSIdx == UINT32_MAX)
 		return;
@@ -1169,22 +1169,22 @@ void DLSSperf::RestoreSwappedDS()
 // ID3D11DeviceContext_Draw_Hook (vtable index 13)
 // ============================================================================
 // Engine fade-overlay Draw(30) fires after the Post chain and before Submit.
-// Under DLSSperf the draw's VP is computed at renderRes while the RT (kTOTAL)
+// Under PerfMode the draw's VP is computed at renderRes while the RT (kTOTAL)
 // is displayRes — partial-screen "black stamp" without this swap. Gate on
 // VertexCount==30 + isVR keeps the cost a single comparison on flat / non-
 // fade draws.
-void DLSSperf::ID3D11DeviceContext_Draw_Hook::thunk(ID3D11DeviceContext* This, UINT VertexCount, UINT StartVertexLocation)
+void PerfMode::ID3D11DeviceContext_Draw_Hook::thunk(ID3D11DeviceContext* This, UINT VertexCount, UINT StartVertexLocation)
 {
 	if (VertexCount == 30 && globals::game::isVR) {
-		auto& dlssPerf = globals::features::upscaling.dlssPerf;
-		if (dlssPerf.IsHookActive() && dlssPerf.IsPostChainDone()) {
+		auto& perfMode = globals::features::upscaling.perfMode;
+		if (perfMode.IsHookActive() && perfMode.IsPostChainDone()) {
 			UINT numVP = D3D11_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE;
 			D3D11_VIEWPORT savedVP[D3D11_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE] = {};
 			This->RSGetViewports(&numVP, savedVP);
 
 			D3D11_VIEWPORT vp{};
-			vp.Width = static_cast<float>(dlssPerf.GetDisplayEyeWidth() * 2);
-			vp.Height = static_cast<float>(dlssPerf.GetDisplayEyeHeight());
+			vp.Width = static_cast<float>(perfMode.GetDisplayEyeWidth() * 2);
+			vp.Height = static_cast<float>(perfMode.GetDisplayEyeHeight());
 			vp.MinDepth = 0.0f;
 			vp.MaxDepth = 1.0f;
 			This->RSSetViewports(1, &vp);
@@ -1199,14 +1199,14 @@ void DLSSperf::ID3D11DeviceContext_Draw_Hook::thunk(ID3D11DeviceContext* This, U
 	func(This, VertexCount, StartVertexLocation);
 }
 
-void DLSSperf::InstallFadeOverlayHook(ID3D11DeviceContext* context)
+void PerfMode::InstallFadeOverlayHook(ID3D11DeviceContext* context)
 {
 	if (!globals::game::isVR || !context)
 		return;
 	stl::detour_vfunc<13, ID3D11DeviceContext_Draw_Hook>(context);
 }
 
-void DLSSperf::InstallCreateRTThunks()
+void PerfMode::InstallCreateRTThunks()
 {
 	if (!REL::Module::IsVR())
 		return;
@@ -1216,7 +1216,7 @@ void DLSSperf::InstallCreateRTThunks()
 	stl::write_thunk_call<CreateRT_Total_Hook>(vrBase + 0x1547);
 }
 
-void DLSSperf::BeginCreateRTEnlarge()
+void PerfMode::BeginCreateRTEnlarge()
 {
 	if (!hookActive)
 		return;
@@ -1225,7 +1225,7 @@ void DLSSperf::BeginCreateRTEnlarge()
 	enlargeActive = true;
 }
 
-void DLSSperf::EndCreateRTEnlarge()
+void PerfMode::EndCreateRTEnlarge()
 {
 	enlargeActive = false;
 }
@@ -1234,7 +1234,7 @@ namespace
 {
 	void EnlargeProps(RE::BSGraphics::RenderTargetProperties* a_props)
 	{
-		auto& dp = globals::features::upscaling.dlssPerf;
+		auto& dp = globals::features::upscaling.perfMode;
 		if (!dp.IsCreateRTEnlargeActive())
 			return;
 		a_props->width = dp.GetEnlargeWidth();
@@ -1242,27 +1242,27 @@ namespace
 	}
 }
 
-void DLSSperf::CreateRT_MenuBG_Hook::thunk(RE::BSGraphics::Renderer* a_this, RE::RENDER_TARGETS::RENDER_TARGET a_target, RE::BSGraphics::RenderTargetProperties* a_properties)
+void PerfMode::CreateRT_MenuBG_Hook::thunk(RE::BSGraphics::Renderer* a_this, RE::RENDER_TARGETS::RENDER_TARGET a_target, RE::BSGraphics::RenderTargetProperties* a_properties)
 {
 	EnlargeProps(a_properties);
 	func(a_this, a_target, a_properties);
 }
 
-void DLSSperf::CreateRT_ImagespaceTempCopy_Hook::thunk(RE::BSGraphics::Renderer* a_this, RE::RENDER_TARGETS::RENDER_TARGET a_target, RE::BSGraphics::RenderTargetProperties* a_properties)
+void PerfMode::CreateRT_ImagespaceTempCopy_Hook::thunk(RE::BSGraphics::Renderer* a_this, RE::RENDER_TARGETS::RENDER_TARGET a_target, RE::BSGraphics::RenderTargetProperties* a_properties)
 {
 	EnlargeProps(a_properties);
 	func(a_this, a_target, a_properties);
 }
 
-void DLSSperf::CreateRT_Total_Hook::thunk(RE::BSGraphics::Renderer* a_this, RE::RENDER_TARGETS::RENDER_TARGET a_target, RE::BSGraphics::RenderTargetProperties* a_properties)
+void PerfMode::CreateRT_Total_Hook::thunk(RE::BSGraphics::Renderer* a_this, RE::RENDER_TARGETS::RENDER_TARGET a_target, RE::BSGraphics::RenderTargetProperties* a_properties)
 {
 	EnlargeProps(a_properties);
 	func(a_this, a_target, a_properties);
 }
 
-void DLSSperf::DrawSettings()
+void PerfMode::DrawSettings()
 {
-	// DLSSperf has no user-facing settings of its own — enablement is gated
+	// PerfMode has no user-facing settings of its own — enablement is gated
 	// at install time by whether the BSShaderRenderTargets::Create hook ran
 	// successfully. A future PR may surface diagnostic info here.
 }
