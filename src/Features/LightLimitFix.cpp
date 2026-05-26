@@ -133,7 +133,15 @@ void LightLimitFix::DrawSettings()
 				"Shadow Slot Index Color",
 				"Light Type Visualization",
 			};
-			ImGui::Combo("Lights Visualisation Mode", (int*)&settings.LightsVisualisationMode, comboOptions, IM_ARRAYSIZE(comboOptions));
+			// Round-trip through int instead of `(int*)&uint` to avoid the strict-aliasing
+			// UB the contact-shadow sliders explicitly call out (ImGui has no ComboScalar).
+			// Clamp on the way in so a corrupted persisted value can't read past the combo
+			// option array; clamp on the way back so the cbuffer never holds an out-of-range
+			// mode that the shader's switch would treat as "0".
+			int visMode = std::clamp(static_cast<int>(settings.LightsVisualisationMode),
+				0, IM_ARRAYSIZE(comboOptions) - 1);
+			ImGui::Combo("Lights Visualisation Mode", &visMode, comboOptions, IM_ARRAYSIZE(comboOptions));
+			settings.LightsVisualisationMode = static_cast<uint>(visMode);
 			if (auto _tt = Util::HoverTooltipWrapper()) {
 				ImGui::Text(
 					"Light Limit: Red when the strict light limit is reached (>=7 portal-strict lights).\n"
@@ -184,7 +192,11 @@ LightLimitFix::PerFrame LightLimitFix::GetCommonBufferData()
 	perFrame.ShadowMapSlots = ShadowCasterManager::GetInstalledSlotCount();
 	std::copy(clusterSize, clusterSize + 3, perFrame.ClusterSize);
 	perFrame.EnableLightsVisualisation = settings.EnableLightsVisualisation;
-	perFrame.LightsVisualisationMode = settings.LightsVisualisationMode;
+	// Clamp the visualization mode at the cbuffer boundary too -- the DrawSettings
+	// combo clamps on UI roundtrip, but persisted JSON or remote-control writes
+	// can land out-of-range and the shader's switch would treat that as mode 0
+	// silently. Keep the range in sync with the combo option list above.
+	perFrame.LightsVisualisationMode = std::min<uint32_t>(settings.LightsVisualisationMode, 9u);
 	return perFrame;
 }
 

@@ -118,10 +118,7 @@ namespace ShadowSampling
 			surfaceShadow *= vsmSurfaceShadow;
 			return worldShadow * shadow;
 		}
-#else
-		return worldShadow;
 #endif
-
 		return worldShadow;
 	}
 
