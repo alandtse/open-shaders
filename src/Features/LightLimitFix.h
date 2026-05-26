@@ -196,8 +196,9 @@ public:
 		float ContactShadowThickness = 0.20f;
 		// Depth-delta multiplier for shadow falloff (higher -> shorter shadow).
 		float ContactShadowDepthFade = 0.05f;
-		// Skip contact shadows for lights below this normalized intensity at the pixel
-		// (intensityMultiplier = 1 - (lightDist/radius)^2). 0 = never skip; 1 = always skip.
+		// Skip contact shadows for CLUSTERED lights whose normalized distance falloff
+		// (1 - (lightDist/radius)^2) at the pixel is below this threshold. Strict
+		// lights always raymarch. 0 = never skip; 1 = always skip.
 		float ContactShadowMinIntensity = 0.25f;
 		bool EnableLightsVisualisation = false;
 		uint LightsVisualisationMode = 0;
