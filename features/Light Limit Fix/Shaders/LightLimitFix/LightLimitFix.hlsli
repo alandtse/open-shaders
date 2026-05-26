@@ -379,8 +379,6 @@ namespace LightLimitFix
 
 	float GetShadowLightShadow(uint shadowIndex, float3 worldPositionWS, float2x2 rotationMatrix, out bool hasCoverage)
 	{
-		hasCoverage = true;  // default: paraboloid lights always sample
-
 		// Guard against shadowMapIndex values that exceed the installed
 		// kSHADOWMAPS slice count. The CPU scheduler explicitly models
 		// `shadowMapIndex >= ShadowMapSlots` as overflow (e.g. when a light
@@ -389,11 +387,19 @@ namespace LightLimitFix
 		// `Shadows[shadowIndex]` here would read an invalid record or slice.
 		// Fall back cleanly to "unshadowed + no coverage" so the caller
 		// stops blending this light's contribution.
+		//
+		// Every return path explicitly writes hasCoverage. FXC's X4000
+		// dataflow analysis flagged the previous "default-true then
+		// overwrite to false in the overflow branch" pattern as potentially
+		// uninitialized at the post-if merge point, even though the entry-
+		// point assignment dominated. Single-init-per-path keeps it quiet.
 		[branch] if (shadowIndex >= SharedData::lightLimitFixSettings.ShadowMapSlots)
 		{
 			hasCoverage = false;
 			return 1.0;
 		}
+
+		hasCoverage = true;  // paraboloid lights below always sample
 
 		ShadowLightData shadowLightData = Shadows[shadowIndex];
 

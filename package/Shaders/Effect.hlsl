@@ -767,7 +767,7 @@ PS_OUTPUT main(PS_INPUT input)
 
 		float shadowMul = 1.0;
 		if (inWorld && (light.lightFlags & LightLimitFix::LightFlags::Shadow)) {
-			bool shadowCoverage;
+			bool shadowCoverage = false;  // out-param init for parity with Lighting.hlsl / RunGrass.hlsl
 			float3 worldPositionWS = input.WorldPosition.xyz + FrameBuffer::CameraPosAdjust[eyeIndex].xyz;
 			shadowMul = LightLimitFix::GetShadowLightShadow(light.shadowMapIndex, worldPositionWS, rotationMatrix, shadowCoverage);
 		}
