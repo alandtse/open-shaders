@@ -10,13 +10,21 @@
 #include "Util.h"
 #include "Utils/ExternalEmittance.h"
 
-// EnableLightsVisualisation and LightsVisualisationMode are intentionally NOT
-// serialized -- they're debug visualisations that should reset on each session
-// so users don't accidentally ship debug overlays in their persistent config.
-// EnableContactShadows is a real user setting and persists.
+// EnableLightsVisualisation / LightsVisualisationMode are intentionally NOT
+// persisted -- they're debug toggles that should reset on each session so
+// users don't accidentally ship debug overlays in their persistent config.
+// EnableContactShadows + ContactShadow* tuning are real user settings and
+// persist; ShowShadowOverlay and ShadowSettings drive the shadow caster
+// scheduler UI and also persist.
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	LightLimitFix::Settings,
 	EnableContactShadows,
+	ContactShadowMaxSteps,
+	ContactShadowMaxDistance,
+	ContactShadowStride,
+	ContactShadowThickness,
+	ContactShadowDepthFade,
+	ContactShadowMinIntensity,
 	ShowShadowOverlay,
 	ShadowSettings)
 
@@ -54,6 +62,53 @@ void LightLimitFix::DrawSettings()
 	ImGui::Checkbox("Enable Contact Shadows", &settings.EnableContactShadows);
 	if (auto _tt = Util::HoverTooltipWrapper()) {
 		ImGui::Text("All point lights (strict and clustered, except simple lights) cast short screen-space shadows. Performance impact.");
+	}
+
+	if (settings.EnableContactShadows && ImGui::TreeNode("Contact Shadow Tuning")) {
+		// SliderScalar with ImGuiDataType_U32 instead of `SliderInt + (int*)cast`:
+		// the cast violates strict aliasing (UB) and would also misinterpret any
+		// transient negative value inside ImGui before clamp. SliderScalar
+		// reads/writes the uint storage directly with explicit min/max bounds.
+		constexpr uint32_t kMinSteps = 1, kMaxSteps = 16;
+		ImGui::SliderScalar("Max Steps", ImGuiDataType_U32, &settings.ContactShadowMaxSteps,
+			&kMinSteps, &kMaxSteps, "%u", ImGuiSliderFlags_AlwaysClamp);
+		if (auto _tt = Util::HoverTooltipWrapper()) {
+			ImGui::Text("Raymarch steps at zero depth. Higher = longer / more accurate contact shadows, linearly more cost.\nVR users should consider 2 to halve per-eye cost.");
+		}
+
+		// AlwaysClamp on every float slider too: without it, Ctrl+Click text entry can
+		// land arbitrary out-of-range values in settings before GetCommonBufferData's
+		// boundary clamp catches them at the GPU side.
+		ImGui::SliderFloat("Max Distance", &settings.ContactShadowMaxDistance, 64.0f, 4096.0f, "%.0f", ImGuiSliderFlags_AlwaysClamp);
+		if (auto _tt = Util::HoverTooltipWrapper()) {
+			ImGui::Text("View-space depth at which contact shadows fade to zero steps. Avoids paying for shadows on distant surfaces where they don't read.");
+		}
+
+		ImGui::SliderFloat("Stride", &settings.ContactShadowStride, 0.5f, 8.0f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+		if (auto _tt = Util::HoverTooltipWrapper()) {
+			ImGui::Text("Per-step march length in view-space units at near depth (auto-scales linearly past ~100 units so far surfaces don't undersample). Larger = longer screen-space reach with coarser detail.");
+		}
+
+		ImGui::SliderFloat("Thickness", &settings.ContactShadowThickness, 0.0f, 1.0f, "%.3f", ImGuiSliderFlags_AlwaysClamp);
+		if (auto _tt = Util::HoverTooltipWrapper()) {
+			ImGui::Text("Depth-delta multiplier for shadow onset. Larger = darker contact at occluder edges.");
+		}
+
+		ImGui::SliderFloat("Depth Fade", &settings.ContactShadowDepthFade, 0.0f, 1.0f, "%.3f", ImGuiSliderFlags_AlwaysClamp);
+		if (auto _tt = Util::HoverTooltipWrapper()) {
+			ImGui::Text("Depth-delta multiplier for shadow falloff. Larger = shadows truncate sooner behind thick occluders.");
+		}
+
+		ImGui::SliderFloat("Min Light Intensity", &settings.ContactShadowMinIntensity, 0.0f, 1.0f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+		if (auto _tt = Util::HoverTooltipWrapper()) {
+			ImGui::Text(
+				"Skip contact shadows for CLUSTERED lights whose normalized distance falloff "
+				"`1 - (lightDist/radius)^2` at the pixel is below this threshold. "
+				"Strict lights are always raymarched regardless of this threshold. "
+				"Higher = larger perf win, may drop subtle shadows from weak lights at their reach edge.");
+		}
+
+		ImGui::TreePop();
 	}
 
 	///////////////////////////////
@@ -103,8 +158,29 @@ void LightLimitFix::DrawSettings()
 
 LightLimitFix::PerFrame LightLimitFix::GetCommonBufferData()
 {
+	// Defensive sanitization before the values hit the constant buffer. The
+	// sliders enforce ImGuiSliderFlags_AlwaysClamp at the UI, but Settings
+	// can be mutated through other paths (JSON persistence, mod overrides,
+	// remote-control / MCP server, or just an internal logic bug) -- a few
+	// of these fields will produce divisions, infinite loops, or visual
+	// corruption if they arrive non-finite or out-of-range, so we re-validate
+	// at the shader boundary rather than trusting upstream callers.
+	//
+	// std::clamp passes NaN through unchanged (every NaN comparison is false),
+	// so reject non-finite values explicitly first; fall back to the lower
+	// bound on NaN/inf to produce degraded but stable behavior.
+	auto sanitizeFloat = [](float v, float lo, float hi) {
+		return std::isfinite(v) ? std::clamp(v, lo, hi) : lo;
+	};
+
 	PerFrame perFrame{};
 	perFrame.EnableContactShadows = settings.EnableContactShadows;
+	perFrame.ContactShadowMaxSteps = std::clamp<uint32_t>(settings.ContactShadowMaxSteps, 1u, 16u);
+	perFrame.ContactShadowMaxDistance = sanitizeFloat(settings.ContactShadowMaxDistance, 64.0f, 4096.0f);
+	perFrame.ContactShadowStride = sanitizeFloat(settings.ContactShadowStride, 0.5f, 8.0f);
+	perFrame.ContactShadowThickness = sanitizeFloat(settings.ContactShadowThickness, 0.0f, 1.0f);
+	perFrame.ContactShadowDepthFade = sanitizeFloat(settings.ContactShadowDepthFade, 0.0f, 1.0f);
+	perFrame.ContactShadowMinIntensity = sanitizeFloat(settings.ContactShadowMinIntensity, 0.0f, 1.0f);
 	perFrame.ShadowMapSlots = ShadowCasterManager::GetInstalledSlotCount();
 	std::copy(clusterSize, clusterSize + 3, perFrame.ClusterSize);
 	perFrame.EnableLightsVisualisation = settings.EnableLightsVisualisation;

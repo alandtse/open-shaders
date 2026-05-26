@@ -1,4 +1,4 @@
-// BoxDownscalePS.hlsl — DLSSperf downscale pass
+// BoxDownscalePS.hlsl — PerfMode downscale pass
 // Box 3×3 filter: testTexture (3k) → kMAIN (1k).
 // For 3:1 downscale, each output pixel averages the 3×3 source region,
 // ensuring all DLSS output pixels contribute (vs bilinear's 2×2 coverage).

@@ -7,6 +7,7 @@
 #include <span>
 #include <string_view>
 #include <type_traits>
+#include <utility>
 
 namespace Util::Settings
 {
@@ -32,23 +33,32 @@ namespace Util::Settings
 			table_(table.data()), tableSize_(N)
 		{
 			static_assert(std::is_standard_layout_v<SettingsT>, "BootSnapshot requires standard-layout Settings for offsetof-based tables.");
-			static_assert(std::is_trivially_copyable_v<SettingsT>, "BootSnapshot requires trivially-copyable Settings.");
+			static_assert(std::is_copy_assignable_v<SettingsT>, "BootSnapshot requires copy-assignable Settings.");
+			static_assert(std::is_default_constructible_v<SettingsT>,
+				"BootSnapshot requires default-constructible Settings (bootCopy_ default-inits and detail::MemberOffset constructs a temporary).");
 		}
 
-		void Latch(const SettingsT& live) noexcept
+		void Latch(const SettingsT& live) noexcept(std::is_nothrow_copy_assignable_v<SettingsT>)
 		{
-			// Byte-wise copy so padding bytes are reproduced verbatim. Assignment
-			// of a trivially-copyable struct copies the object representation
-			// (which the C++ standard guarantees for trivially-copyable types),
-			// but memcpy makes that intent explicit and removes any compiler
-			// latitude that might leave padding indeterminate — `HasPendingChange`
-			// uses memcmp on field slices, so any padding-byte drift would
-			// surface as a false-positive diff.
-			std::memcpy(&bootCopy_, &live, sizeof(SettingsT));
+			if constexpr (std::is_trivially_copyable_v<SettingsT>) {
+				// Trivially-copyable fast path: memcpy preserves padding bytes
+				// verbatim. Matters when a registered restart field's *type*
+				// contains padding -- HasPendingChange's memcmp would otherwise
+				// see false-positive diffs from uninitialized padding bytes.
+				std::memcpy(&bootCopy_, &live, sizeof(SettingsT));
+			} else {
+				// Copy-assign for Settings with non-trivial members (e.g. the
+				// std::string formula fields in ShadowCasterManager::Settings).
+				// Registered restart fields must still be trivially comparable
+				// for HasPendingChange's per-field memcmp to be meaningful;
+				// std::string in the outer struct is fine as long as it isn't
+				// registered (it isn't -- formulas are runtime-tunable).
+				bootCopy_ = live;
+			}
 			latched_ = true;
 		}
 
-		void LatchIfNeeded(const SettingsT& live) noexcept
+		void LatchIfNeeded(const SettingsT& live) noexcept(noexcept(std::declval<BootSnapshot&>().Latch(live)))
 		{
 			if (!latched_) {
 				Latch(live);

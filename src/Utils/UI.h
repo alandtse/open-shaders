@@ -1,6 +1,7 @@
 #pragma once
 #include <algorithm>
 #include <cfloat>  // For FLT_MAX
+#include <concepts>
 #include <cstdio>
 #include <functional>
 #include <imgui.h>
@@ -1029,6 +1030,58 @@ namespace Util
 					Util::Text::RestartNeeded("Pending restart: %s changed.", field.label);
 				}
 			}
+		}
+
+		// One-call wrapper for a restart-gated ImGui control. Call IMMEDIATELY
+		// AFTER the control (Checkbox / SliderInt / Combo / etc.) so the
+		// HoverTooltipWrapper attaches to that control. Does two things:
+		//   1. If hovered, renders a tooltip via HoverTooltipWrapper (the
+		//      codebase's dominant tooltip pattern, used 296+ times -- gives
+		//      a consistent Subtext font role and viewport-clamped placement)
+		//      with the standard "Requires a game restart to change." suffix
+		//      appended after the caller-supplied body.
+		//   2. Calls DrawSettingDiff outside the hover scope to render the
+		//      "Pending restart" banner when the live value diverges from
+		//      the boot snapshot.
+		//
+		// Two overloads:
+		//   - `const char* body` for the simple single-string case.
+		//   - Callable `body` for multi-line tooltips that already use
+		//     HoverTooltipWrapper-style content (multiple ImGui::Text /
+		//     TextWrapped calls). The callable runs inside the
+		//     HoverTooltipWrapper RAII scope so callers can use any ImGui
+		//     text primitive.
+		//
+		// Pass nullptr / empty body to render just the suffix.
+		template <typename SettingsT, typename T>
+		inline void RestartGatedAnnotate(const Util::Settings::BootSnapshot<SettingsT>& snapshot,
+			const SettingsT& live,
+			T SettingsT::* field,
+			const char* tooltipBody = nullptr)
+		{
+			if (auto _tt = Util::HoverTooltipWrapper()) {
+				if (tooltipBody && tooltipBody[0]) {
+					ImGui::TextUnformatted(tooltipBody);
+					ImGui::Spacing();
+				}
+				ImGui::TextUnformatted("Requires a game restart to change.");
+			}
+			DrawSettingDiff(snapshot, live, field);
+		}
+
+		template <typename SettingsT, typename T, typename Body>
+			requires std::invocable<Body>
+		inline void RestartGatedAnnotate(const Util::Settings::BootSnapshot<SettingsT>& snapshot,
+			const SettingsT& live,
+			T SettingsT::* field,
+			Body&& body)
+		{
+			if (auto _tt = Util::HoverTooltipWrapper()) {
+				body();
+				ImGui::Spacing();
+				ImGui::TextUnformatted("Requires a game restart to change.");
+			}
+			DrawSettingDiff(snapshot, live, field);
 		}
 	}
 
