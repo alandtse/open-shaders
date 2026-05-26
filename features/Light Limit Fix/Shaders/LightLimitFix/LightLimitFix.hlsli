@@ -377,7 +377,14 @@ namespace LightLimitFix
 		return SampleParaboloidShadow(shadowIndex, sampleUV, depth, rotationMatrix, isOmni);
 	}
 
-	float GetShadowLightShadow(uint shadowIndex, float3 worldPositionWS, float2x2 rotationMatrix, out bool hasCoverage)
+	// hasCoverage is inout (not out) by design: callers always initialise
+	// the bool to false at the declaration site (Lighting.hlsl /
+	// RunGrass.hlsl / Effect.hlsl), and inout silences FXC's X4000 false
+	// positive at the overflow-guard merge point (CI ran 360 occurrences
+	// across shader permutations before the signature change). The
+	// function still treats it semantically as an output -- pre-call value
+	// is overwritten on every path.
+	float GetShadowLightShadow(uint shadowIndex, float3 worldPositionWS, float2x2 rotationMatrix, inout bool hasCoverage)
 	{
 		// Guard against shadowMapIndex values that exceed the installed
 		// kSHADOWMAPS slice count. The CPU scheduler explicitly models
@@ -387,12 +394,6 @@ namespace LightLimitFix
 		// `Shadows[shadowIndex]` here would read an invalid record or slice.
 		// Fall back cleanly to "unshadowed + no coverage" so the caller
 		// stops blending this light's contribution.
-		//
-		// Every return path explicitly writes hasCoverage. FXC's X4000
-		// dataflow analysis flagged the previous "default-true then
-		// overwrite to false in the overflow branch" pattern as potentially
-		// uninitialized at the post-if merge point, even though the entry-
-		// point assignment dominated. Single-init-per-path keeps it quiet.
 		[branch] if (shadowIndex >= SharedData::lightLimitFixSettings.ShadowMapSlots)
 		{
 			hasCoverage = false;
