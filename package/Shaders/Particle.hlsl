@@ -321,7 +321,10 @@ PS_OUTPUT main(PS_INPUT input)
 
 	float3 ambientColor = max(0, SharedData::GetAmbient(float3(0, 0, 1)));
 
-	propertyColor += dirLightColor;
+	// dirSoftShadow and dirDetailedShadow are computed above; only one path
+	// (VOLUMETRIC_SHADOWS or LIGHT_LIMIT_FIX) writes a value other than 1.0,
+	// so multiplying both is equivalent to applying whichever fired.
+	propertyColor += dirLightColor * dirSoftShadow * dirDetailedShadow;
 	propertyColor += ambientColor;
 
 #	if defined(LIGHT_LIMIT_FIX)
