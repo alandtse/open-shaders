@@ -82,11 +82,13 @@ namespace SharedData
 		float ContactShadowThickness;
 		float ContactShadowDepthFade;
 		float ContactShadowMinIntensity;
+		uint ShadowMapSlots;  // total shadow map texture-array capacity
+		// Cluster config (computed)
+		uint4 ClusterSize;
+		// Debug (last)
 		uint EnableLightsVisualisation;
 		uint LightsVisualisationMode;
-		uint ShadowMapSlots;  // total shadow map texture-array capacity
 		uint2 pad0;
-		uint4 ClusterSize;
 	};
 
 	struct WetnessEffectsSettings

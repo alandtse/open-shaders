@@ -104,11 +104,13 @@ public:
 		float ContactShadowThickness;
 		float ContactShadowDepthFade;
 		float ContactShadowMinIntensity;
+		uint32_t ShadowMapSlots;  // total shadow map texture-array capacity
+		// Cluster config (computed)
+		uint ClusterSize[4];
+		// Debug (last)
 		uint EnableLightsVisualisation;
 		uint LightsVisualisationMode;
-		uint32_t ShadowMapSlots;  // total shadow map texture-array capacity
 		uint pad0[2];
-		uint ClusterSize[4];
 	};
 	STATIC_ASSERT_ALIGNAS_16(PerFrame);
 	// Compile-time size lock catches CPU/GPU cbuffer layout drift. STATIC_ASSERT_ALIGNAS_16
