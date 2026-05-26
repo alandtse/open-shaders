@@ -47,19 +47,17 @@ namespace LightLimitFix
 		return IsSaturated(value.x) && IsSaturated(value.y);
 	}
 
-	// Chooses the contact-shadow noise sample coordinate. In VR we derive it
-	// from screenUV (which FrameBuffer::ViewToUV already returns per-eye via
-	// CameraProj[eye]) so both eyes sample the same noise pattern at the same
-	// world position — using the raw rasterized pixel position in VR makes
-	// each eye hash a different value, producing per-eye jitter that reads as
-	// flicker on contact-shadow recipients.
+	// Per-eye stereo-stable IGN coord. In VR we use screenUV (per-eye via
+	// CameraProj[eye]) instead of SV_Position so both eyes hash the same
+	// value at the same world pixel — SV_Position differs between eyes in
+	// a packed stereo buffer, producing per-eye jitter that reads as flicker
+	// on contact-shadow recipients.
 	//
-	// BufferDim.x is the full packed stereo width (State::UpdateSharedData
-	// reads it from the kMAIN texture, which spans both eyes side-by-side),
-	// so we halve X in VR to match the per-eye pixel grid. Without the
-	// halving, the per-eye sample steps by ~2 pixels in X — still stereo-
-	// consistent, but at half the effective noise resolution. Flat keeps the
-	// raw pixel position to match the original implementation byte-for-byte.
+	// BufferDim.x is the full packed stereo width (kMAIN spans both eyes
+	// side-by-side), so the 0.5 factor lands us on the per-eye integer
+	// pixel grid — same IGN frequency as flat mode for a buffer sized
+	// (BufferDim.x/2, BufferDim.y). Do not drop the 0.5: that over-samples
+	// IGN by ~2x in X, giving a higher-frequency noise pattern, not lower.
 	float2 GetContactShadowNoiseCoord(float2 screenPosition, float2 screenUV)
 	{
 #if defined(VR)
@@ -69,15 +67,28 @@ namespace LightLimitFix
 #endif
 	}
 
+	// Skyrim's first-person viewmodel renders in a compressed depth range below this
+	// linearized value; reject occluders there since the viewmodel isn't in the world.
+	static const float CONTACT_SHADOW_FIRST_PERSON_MAX_DEPTH = 16.5;
+
+	// Reference view-space depth for perspective-correct stride. At/below this depth,
+	// stride matches its prior view-space meaning; beyond it, stride and the depth-delta
+	// band scale linearly with depth so each step covers ~constant screen-space distance
+	// and the shadow-thickness band tracks the same screen-space extent.
+	static const float CONTACT_SHADOW_REFERENCE_DEPTH = 100.0;
+
 	float ContactShadows(float3 viewPosition, float noise2D, float3 lightDirectionVS, uint contactShadowSteps, uint a_eyeIndex = 0)
 	{
 		if (contactShadowSteps == 0)
 			return 1.0;
 
-		float2 depthDeltaMult = float2(0.20, 0.05);
-
-		// Extend contact shadow distance
-		lightDirectionVS *= 2.0;
+		// Perspective-correct stride: scale view-space step length with depth so each step
+		// covers ~constant screen-space distance. Inverse-scale the thickness/fade band so
+		// the depth-delta window tracks the same screen-space extent across depths.
+		float perspectiveScale = max(viewPosition.z, CONTACT_SHADOW_REFERENCE_DEPTH) / CONTACT_SHADOW_REFERENCE_DEPTH;
+		float depthDeltaThickness = SharedData::lightLimitFixSettings.ContactShadowThickness / perspectiveScale;
+		float depthDeltaFade = SharedData::lightLimitFixSettings.ContactShadowDepthFade / perspectiveScale;
+		lightDirectionVS *= SharedData::lightLimitFixSettings.ContactShadowStride * perspectiveScale;
 
 		// Offset starting position with interleaved gradient noise
 		viewPosition += lightDirectionVS * noise2D;
@@ -99,8 +110,8 @@ namespace LightLimitFix
 
 			// Difference between the current ray distance and the marched light
 			float depthDelta = viewPosition.z - rayDepth;
-			if (rayDepth > 16.5)  // First person
-				contactShadow = max(contactShadow, saturate(depthDelta * depthDeltaMult.x) - saturate(depthDelta * depthDeltaMult.y));
+			if (rayDepth > CONTACT_SHADOW_FIRST_PERSON_MAX_DEPTH)
+				contactShadow = max(contactShadow, saturate(depthDelta * depthDeltaThickness) - saturate(depthDelta * depthDeltaFade));
 			if (contactShadow == 1.0)
 				break;
 		}

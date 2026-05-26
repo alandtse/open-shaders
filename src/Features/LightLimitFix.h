@@ -95,12 +95,27 @@ public:
 	struct alignas(16) PerFrame
 	{
 		uint EnableContactShadows;
+		uint ContactShadowMaxSteps;
+		float ContactShadowMaxDistance;
+		float ContactShadowStride;
+		float ContactShadowThickness;
+		float ContactShadowDepthFade;
+		float ContactShadowMinIntensity;
 		uint EnableLightsVisualisation;
 		uint LightsVisualisationMode;
-		float pad0;
+		float pad0[3];
 		uint ClusterSize[4];
 	};
 	STATIC_ASSERT_ALIGNAS_16(PerFrame);
+	// Compile-time size lock catches CPU/GPU cbuffer layout drift. STATIC_ASSERT_ALIGNAS_16
+	// only enforces the 16-byte alignment / multiple-of-16 contract that HLSL constant
+	// buffers require; it doesn't notice if a field is added, removed, or resized in a
+	// way that still happens to land on a 16-byte boundary. The shader-side mirror is
+	// SharedData::LightLimitFixSettings in package/Shaders/Common/SharedData.hlsli
+	// (embedded in the shared FeatureData cbuffer at b6), and must match this layout
+	// field-for-field. Update both sides when the layout changes, then bump this constant.
+	static_assert(sizeof(PerFrame) == 64,
+		"LightLimitFix::PerFrame layout drifted -- update SharedData::LightLimitFixSettings in package/Shaders/Common/SharedData.hlsli to match, then update this assert.");
 
 	PerFrame GetCommonBufferData();
 
@@ -149,6 +164,8 @@ public:
 	virtual void SetupResources() override;
 
 	virtual void RestoreDefaultSettings() override;
+	virtual void LoadSettings(json& o_json) override;
+	virtual void SaveSettings(json& o_json) override;
 
 	virtual void DrawSettings() override;
 	virtual void DrawOverlay() override;
@@ -171,6 +188,20 @@ public:
 	struct Settings
 	{
 		bool EnableContactShadows = false;
+		// Max raymarch steps at zero depth; linearly ramps to 0 at MaxDistance.
+		uint ContactShadowMaxSteps = 4;
+		// View-space depth at which contact shadows fade fully off.
+		float ContactShadowMaxDistance = 1024.0f;
+		// Per-step march length in view-space units. Larger -> longer shadows, coarser detail.
+		float ContactShadowStride = 2.0f;
+		// Depth-delta multiplier for shadow onset (higher -> darker contact).
+		float ContactShadowThickness = 0.20f;
+		// Depth-delta multiplier for shadow falloff (higher -> shorter shadow).
+		float ContactShadowDepthFade = 0.05f;
+		// Skip contact shadows for CLUSTERED lights whose normalized distance falloff
+		// (1 - (lightDist/radius)^2) at the pixel is below this threshold. Strict
+		// lights always raymarch. 0 = never skip; 1 = always skip.
+		float ContactShadowMinIntensity = 0.25f;
 		bool EnableLightsVisualisation = false;
 		uint LightsVisualisationMode = 0;
 	};
