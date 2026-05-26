@@ -117,18 +117,17 @@ void LightLimitFix::DrawOverlay()
 
 LightLimitFix::PerFrame LightLimitFix::GetCommonBufferData()
 {
-	// Sanitize contact-shadow settings before they hit the constant buffer. The
-	// sliders enforce ImGuiSliderFlags_AlwaysClamp, but a malformed JSON config
-	// (hand-edited, mod conflict, or migration from a previous schema) can still
-	// arrive here with out-of-range values that would break shader math --
-	// ContactShadowMaxDistance is compared against view-space depth,
-	// ContactShadowStride scales the raymarch length, and ContactShadowMaxSteps
-	// gates the loop count.
+	// Defensive sanitization before the values hit the constant buffer. The
+	// sliders enforce ImGuiSliderFlags_AlwaysClamp at the UI, but Settings
+	// can be mutated through other paths (future persistence, mod overrides,
+	// remote-control / MCP server, or just an internal logic bug) -- a few
+	// of these fields will produce divisions, infinite loops, or visual
+	// corruption if they arrive non-finite or out-of-range, so we re-validate
+	// at the shader boundary rather than trusting upstream callers.
 	//
 	// std::clamp passes NaN through unchanged (every NaN comparison is false),
-	// so a NaN in the config would still poison the cbuffer. Reject non-finite
-	// values explicitly first; fall back to the lower bound on NaN/inf -- a
-	// corrupt config produces degraded but stable behavior rather than UB.
+	// so reject non-finite values explicitly first; fall back to the lower
+	// bound on NaN/inf to produce degraded but stable behavior.
 	auto sanitizeFloat = [](float v, float lo, float hi) {
 		return std::isfinite(v) ? std::clamp(v, lo, hi) : lo;
 	};
