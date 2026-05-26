@@ -8,6 +8,11 @@
 #include "Util.h"
 #include "Utils/ExternalEmittance.h"
 
+// EnableLightsVisualisation / LightsVisualisationMode are intentionally NOT
+// persisted -- they're debug toggles, and a user who enabled visualization
+// to inspect something shouldn't get stuck with it on after restart. The
+// _WITH_DEFAULT variant of the macro means omitted fields fall back to the
+// struct's default-member-initializers on load, which is the desired reset.
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	LightLimitFix::Settings,
 	EnableContactShadows,
@@ -16,9 +21,7 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	ContactShadowStride,
 	ContactShadowThickness,
 	ContactShadowDepthFade,
-	ContactShadowMinIntensity,
-	EnableLightsVisualisation,
-	LightsVisualisationMode)
+	ContactShadowMinIntensity)
 
 static constexpr uint CLUSTER_MAX_LIGHTS = 128;
 static constexpr uint MAX_LIGHTS = 1024;
