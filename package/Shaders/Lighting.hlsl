@@ -2742,48 +2742,43 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 		float contactShadow = 1.0;
 
 #			if defined(DEFERRED)
-		// contactShadowSteps > 0 implies the feature is on AND viewPosition is closer than
-		// MaxDistance. The MinIntensity gate skips weak clustered lights whose shadow
-		// contribution is already dimmed past visibility, avoiding the matrix multiply +
-		// raymarch for them.
-		//
-		// Use a SEPARATE normalized falloff for the cutoff -- intensityMultiplier above
-		// is path-dependent (ISL returns a non-normalized GetAttenuation() while non-ISL
-		// returns a normalized 1-(d/r)^2). Comparing intensityMultiplier against a 0..1
-		// threshold would mean different things in the two permutations. The normalized
-		// falloff below is the same `1 - (lightDist/radius)^2` clamped to [0,1] across
-		// both paths, so the threshold's semantics stay consistent.
-		//
-		// Gating is scoped to CLUSTERED lights (lightIndex >= NumStrictLights) -- strict
-		// lights should always raymarch regardless of falloff to preserve close, weak
-		// strict-light contact under bias.
-		const bool isClusteredLight = lightIndex >= LightLimitFix::NumStrictLights;
-#			if defined(ISL)
-		// ISL's GetAttenuation isn't [0,1]-normalized; derive a matching normalized
-		// 1 - (d/r)^2 falloff just for the MinIntensity gate so the threshold has
-		// the same semantics as the non-ISL path.
-		float falloffFactor = saturate(lightDist * light.invRadius);
-		float normalizedFalloff = 1.0 - falloffFactor * falloffFactor;
-#			else
-		// Non-ISL intensityMultiplier above already IS the normalized 1 - (d/r)^2.
-		float normalizedFalloff = intensityMultiplier;
-#			endif
-		const bool passesIntensityGate = !isClusteredLight ||
-		                                 (normalizedFalloff > SharedData::lightLimitFixSettings.ContactShadowMinIntensity);
-
-		[branch] if (
-			contactShadowSteps > 0 &&
-			!(light.lightFlags & LightLimitFix::LightFlags::Simple) &&
-			shadowComponent != 0.0 &&
-			lightAngle > 0.0 &&
-			passesIntensityGate)
+		// Outer guard: contactShadowSteps > 0 covers both "feature off" and "pixel past
+		// MaxDistance", so all per-light intensity-gate math is paid only when a raymarch
+		// is actually possible. Without this, the falloff math fires for every clustered
+		// light even in the default-off case.
+		[branch] if (contactShadowSteps > 0)
 		{
-			// Derive view-space position via CameraView; the Light struct only carries positionWS
-			// (camera-relative) so the matrix multiply here is the cheapest path until positionVS
-			// is added to the struct + populated CPU-side.
-			float3 lightPositionVS = mul(FrameBuffer::CameraView[eyeIndex], float4(light.positionWS[eyeIndex].xyz, 1)).xyz;
-			float3 normalizedLightDirectionVS = normalize(lightPositionVS - viewPosition.xyz);
-			contactShadow = LightLimitFix::ContactShadows(viewPosition, contactShadowNoise, normalizedLightDirectionVS, contactShadowSteps, eyeIndex);
+			// Strict lights always raymarch -- skip the falloff math for them entirely.
+			// Clustered lights need a normalized falloff to compare against MinIntensity;
+			// derive it from intensityMultiplier on the non-ISL path (where it IS already
+			// 1 - (d/r)^2) and re-compute on the ISL path (where GetAttenuation isn't
+			// [0,1]-normalized, so the threshold would mean different things otherwise).
+			const bool isClusteredLight = lightIndex >= LightLimitFix::NumStrictLights;
+			bool passesIntensityGate = !isClusteredLight;
+			if (isClusteredLight) {
+#			if defined(ISL)
+				float falloffFactor = saturate(lightDist * light.invRadius);
+				passesIntensityGate = (1.0 - falloffFactor * falloffFactor) >
+				                      SharedData::lightLimitFixSettings.ContactShadowMinIntensity;
+#			else
+				passesIntensityGate = intensityMultiplier >
+				                      SharedData::lightLimitFixSettings.ContactShadowMinIntensity;
+#			endif
+			}
+
+			[branch] if (
+				!(light.lightFlags & LightLimitFix::LightFlags::Simple) &&
+				shadowComponent != 0.0 &&
+				lightAngle > 0.0 &&
+				passesIntensityGate)
+			{
+				// Derive view-space position via CameraView; the Light struct only carries positionWS
+				// (camera-relative) so the matrix multiply here is the cheapest path until positionVS
+				// is added to the struct + populated CPU-side.
+				float3 lightPositionVS = mul(FrameBuffer::CameraView[eyeIndex], float4(light.positionWS[eyeIndex].xyz, 1)).xyz;
+				float3 normalizedLightDirectionVS = normalize(lightPositionVS - viewPosition.xyz);
+				contactShadow = LightLimitFix::ContactShadows(viewPosition, contactShadowNoise, normalizedLightDirectionVS, contactShadowSteps, eyeIndex);
+			}
 		}
 #			endif
 
