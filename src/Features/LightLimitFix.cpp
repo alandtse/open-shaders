@@ -8,6 +8,18 @@
 #include "Util.h"
 #include "Utils/ExternalEmittance.h"
 
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
+	LightLimitFix::Settings,
+	EnableContactShadows,
+	ContactShadowMaxSteps,
+	ContactShadowMaxDistance,
+	ContactShadowStride,
+	ContactShadowThickness,
+	ContactShadowDepthFade,
+	ContactShadowMinIntensity,
+	EnableLightsVisualisation,
+	LightsVisualisationMode)
+
 static constexpr uint CLUSTER_MAX_LIGHTS = 128;
 static constexpr uint MAX_LIGHTS = 1024;
 
@@ -119,7 +131,7 @@ LightLimitFix::PerFrame LightLimitFix::GetCommonBufferData()
 {
 	// Defensive sanitization before the values hit the constant buffer. The
 	// sliders enforce ImGuiSliderFlags_AlwaysClamp at the UI, but Settings
-	// can be mutated through other paths (future persistence, mod overrides,
+	// can be mutated through other paths (JSON persistence, mod overrides,
 	// remote-control / MCP server, or just an internal logic bug) -- a few
 	// of these fields will produce divisions, infinite loops, or visual
 	// corruption if they arrive non-finite or out-of-range, so we re-validate
@@ -249,6 +261,16 @@ void LightLimitFix::SetupResources()
 void LightLimitFix::RestoreDefaultSettings()
 {
 	settings = {};
+}
+
+void LightLimitFix::LoadSettings(json& o_json)
+{
+	settings = o_json;
+}
+
+void LightLimitFix::SaveSettings(json& o_json)
+{
+	o_json = settings;
 }
 
 RE::NiNode* GetParentRoomNode(RE::NiAVObject* object)

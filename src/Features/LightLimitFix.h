@@ -164,6 +164,8 @@ public:
 	virtual void SetupResources() override;
 
 	virtual void RestoreDefaultSettings() override;
+	virtual void LoadSettings(json& o_json) override;
+	virtual void SaveSettings(json& o_json) override;
 
 	virtual void DrawSettings() override;
 	virtual void DrawOverlay() override;
