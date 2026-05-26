@@ -479,10 +479,21 @@ void Upscaling::DrawSettings()
 
 	// FoveatedRender: foveated subrect DLSS — VR-only, opt-in mode of this
 	// feature. Like DLSSperf, lives here rather than as a peer Feature so
-	// all DLSS surfaces share one settings panel.
-	if (globals::game::isVR && ImGui::TreeNodeEx("Foveated DLSS (FoveatedRender)")) {
-		foveatedRender.DrawSettings();
-		ImGui::TreePop();
+	// all DLSS surfaces share one settings panel. Enable lives at the top
+	// level for discoverability; the body knobs are collapsed by default and
+	// greyed out until the user opts in.
+	if (globals::game::isVR) {
+		ImGui::Separator();
+		foveatedRender.DrawEnable();
+		const bool enabled = foveatedRender.settings.enabled != 0;
+		if (!enabled)
+			ImGui::BeginDisabled();
+		if (ImGui::TreeNodeEx("Foveated DLSS — Tuning")) {
+			foveatedRender.DrawSettings();
+			ImGui::TreePop();
+		}
+		if (!enabled)
+			ImGui::EndDisabled();
 	}
 
 	if (ImGui::TreeNodeEx("Backend Diagnostics")) {
@@ -1954,8 +1965,21 @@ void Upscaling::Upscale()
 			// FoveatedRenderImpl::Core; falls through to dev's standard path on
 			// any failure so users always see DLSS output (graceful
 			// degradation — no black frames if the enhancer preflights bad).
+			//
+			// Menu-skip: in menus the world stops producing fresh motion
+			// vectors and depth, but kMAIN keeps changing (UI plate composites).
+			// The route's subrect DLSS evaluate then accumulates temporal
+			// history against stale neighbourhood data and the subrect region
+			// renders as visible reconstruction garbage. Standard full-eye DLSS
+			// (the fall-through below) is robust to this because it reconstructs
+			// across the whole image — the foveated crop is what makes the
+			// stale-history bleed visible. Same menu-open predicate dev uses
+			// at Upscaling.cpp:1748 for ShouldUseFrameGenerationThisFrame.
+			auto* ui = globals::game::ui;
+			auto* st = globals::state;
+			const bool menuOpen = (ui && ui->GameIsPaused()) || (st && st->IsMainOrLoadingMenuOpen(ui));
 			bool routeHandled = false;
-			if (FoveatedRenderImpl::Bridge::IsRouteActive() && globals::game::isVR) {
+			if (FoveatedRenderImpl::Bridge::IsRouteActive() && globals::game::isVR && !menuOpen) {
 				if (FoveatedRenderImpl::Preprocess::EncodeUpscalingTextures(*this)) {
 					routeHandled = FoveatedRenderImpl::Core::ExecuteVRDlssCore(streamline,
 						main.texture,
@@ -2375,9 +2399,12 @@ void Upscaling::Main_PostProcessing::thunk(RE::ImageSpaceManager* a_this, uint32
 	}
 
 	if (upscaleMethod == UpscaleMethod::kDLSS) {
-		// PR-3 MVP-B: when the FoveatedRender route is active, route sharpening
-		// through Postprocess so the route can drive its own SharpenMode (None
-		// short-circuits, RCAS uses dev's RCAS instance). Otherwise dev's path.
+		// FoveatedRender's DLSS output doesn't land in sharpenerTexture the
+		// way dev's path does (the route writes to its own per-eye intermediates
+		// and copies back to kMAIN/testTexture), so dev's zero-copy
+		// ApplySharpening can't read sharpenerTexture. Route through
+		// Postprocess::ApplyDlssSharpening which does the kMAIN → sharpener →
+		// kMAIN round-trip. Both paths honor sharpnessDLSS=0 to disable RCAS.
 		if (FoveatedRenderImpl::Bridge::IsRouteActive()) {
 			FoveatedRenderImpl::Postprocess::ApplyDlssSharpening(upscaling);
 		} else {

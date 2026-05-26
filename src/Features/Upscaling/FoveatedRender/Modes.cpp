@@ -131,7 +131,7 @@ namespace FoveatedRenderImpl
 				Core::vrSubrectDepth[i]->resource.get(), Core::vrSubrectMotionVectors[i]->resource.get(),
 				p.reactiveMask ? Core::vrSubrectReactiveMask[i]->resource.get() : nullptr,
 				p.transparencyMask ? Core::vrSubrectTransparencyMask[i]->resource.get() : nullptr,
-				extentIn, extentOut, subOutW);
+				extentIn, extentOut, subOutW, subOutH);
 		}
 
 		// Write DLSS output back at subrect position (with optional blend)
@@ -201,7 +201,7 @@ namespace FoveatedRenderImpl
 				p.colorSrc, Core::vrFasterColorOut[i]->resource.get(),
 				p.depthTexture, p.motionVectors,
 				p.reactiveMask, p.transparencyMask,
-				extentIn, extentOut, subOutW);
+				extentIn, extentOut, subOutW, subOutH);
 		}
 
 		// Step 3: Snapshot + Stretch DRS → kMAIN (subrect only)
