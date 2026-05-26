@@ -332,11 +332,10 @@ void LightLimitFix::BSLightingShader_SetupGeometry_GeometrySetupConstantPointLig
 	}
 	strictLightDataTemp.NumStrictLights = writeIdx;
 
-	// ShadowBitMask is no longer consumed by any shader -- the bit-mask path in
-	// LightLimitFix::IsLightIgnored was removed when the per-light shadowMapIndex
-	// sampling replaced it. The struct member stays for cbuffer ABI stability and
-	// is reset to 0 above; building the mask here was a per-pass hot-loop cost
-	// (plus extra cbuffer updates via previousShadowBitMask) for data nobody read.
+	// Don't reinstate a build loop for strictLightDataTemp.ShadowBitMask:
+	// no shader reads it (the IsLightIgnored bit-mask branch was replaced by
+	// per-light shadowMapIndex sampling). The field stays for cbuffer ABI
+	// stability and is zero-initialised above.
 }
 
 void LightLimitFix::BSLightingShader_SetupGeometry_After(RE::BSRenderPass*)
