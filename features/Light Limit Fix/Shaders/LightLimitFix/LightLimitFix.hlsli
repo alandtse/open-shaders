@@ -47,19 +47,17 @@ namespace LightLimitFix
 		return IsSaturated(value.x) && IsSaturated(value.y);
 	}
 
-	// Chooses the contact-shadow noise sample coordinate. In VR we derive it
-	// from screenUV (which FrameBuffer::ViewToUV already returns per-eye via
-	// CameraProj[eye]) so both eyes sample the same noise pattern at the same
-	// world position — using the raw rasterized pixel position in VR makes
-	// each eye hash a different value, producing per-eye jitter that reads as
-	// flicker on contact-shadow recipients.
+	// Per-eye stereo-stable IGN coord. In VR we use screenUV (per-eye via
+	// CameraProj[eye]) instead of SV_Position so both eyes hash the same
+	// value at the same world pixel — SV_Position differs between eyes in
+	// a packed stereo buffer, producing per-eye jitter that reads as flicker
+	// on contact-shadow recipients.
 	//
-	// BufferDim.x is the full packed stereo width (State::UpdateSharedData
-	// reads it from the kMAIN texture, which spans both eyes side-by-side),
-	// so we halve X in VR to match the per-eye pixel grid. Without the
-	// halving, the per-eye sample steps by ~2 pixels in X — still stereo-
-	// consistent, but at half the effective noise resolution. Flat keeps the
-	// raw pixel position to match the original implementation byte-for-byte.
+	// BufferDim.x is the full packed stereo width (kMAIN spans both eyes
+	// side-by-side), so the 0.5 factor lands us on the per-eye integer
+	// pixel grid — same IGN frequency as flat mode for a buffer sized
+	// (BufferDim.x/2, BufferDim.y). Do not drop the 0.5: that over-samples
+	// IGN by ~2x in X, giving a higher-frequency noise pattern, not lower.
 	float2 GetContactShadowNoiseCoord(float2 screenPosition, float2 screenUV)
 	{
 #if defined(VR)
