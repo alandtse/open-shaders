@@ -586,7 +586,10 @@ void Upscaling::SaveSettings(json& o_json)
 void Upscaling::LoadSettings(json& o_json)
 {
 	// Pull FoveatedRender's nested block first so its absence doesn't fail the
-	// outer settings deserialize.
+	// outer settings deserialize. FoveatedRender::ClampSettings touches sibling
+	// presetDLSS (cross-feature compat), so re-run it after `settings = o_json`
+	// below — otherwise the JSON re-assign overwrites the clamp and an
+	// incompatible preset slips through. (Copilot on PR #44.)
 	if (o_json.contains("foveatedRender")) {
 		foveatedRender.LoadSettings(o_json["foveatedRender"]);
 		o_json.erase("foveatedRender");
@@ -611,6 +614,12 @@ void Upscaling::LoadSettings(json& o_json)
 		logger::warn("[Upscaling] Loaded presetDLSS {} out of range, resetting to 0 (Default)", settings.presetDLSS);
 		settings.presetDLSS = 0;
 	}
+	// Re-apply FoveatedRender's cross-feature clamp now that the JSON
+	// re-assign above has overwritten anything it set during its own
+	// LoadSettings (which fired before this block ran). Idempotent — no-op
+	// if FoveatedRender is inactive or the preset is already compatible.
+	// (Copilot on PR #44.)
+	foveatedRender.ClampSettings();
 	const float originalReflexFPSLimit = settings.reflexFPSLimit;
 	if (!std::isfinite(settings.reflexFPSLimit)) {
 		settings.reflexFPSLimit = 60.0f;

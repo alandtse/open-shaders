@@ -41,6 +41,14 @@ namespace FoveatedRenderImpl
 			return false;
 		}
 
+		// motionVectorCopyTexture is dereferenced unconditionally in the UAV
+		// array below when method == kDLSS. The above resource check did not
+		// cover it. Fail closed rather than null-deref. (CodeRabbit on PR #44.)
+		if (upscaleMethod == Upscaling::UpscaleMethod::kDLSS && !upscaling.motionVectorCopyTexture) {
+			logger::error("[FOVEATED] Missing motionVectorCopyTexture for DLSS preprocess");
+			return false;
+		}
+
 		auto& motionVector = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMOTION_VECTOR];
 		auto& temporalAAMask = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kTEMPORAL_AA_MASK];
 		auto& normals = renderer->GetRuntimeData().renderTargets[globals::deferred->forwardRenderTargets[2]];

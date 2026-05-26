@@ -13,8 +13,22 @@ namespace FoveatedRenderImpl::Ops
 	eastl::unique_ptr<Texture2D> CreateTextureFromSource(ID3D11Resource* src, uint32_t width, uint32_t height,
 		bool copyBindFlags, bool createSRV, bool createUAV, const char* name)
 	{
+		if (!src) {
+			logger::error("[FOVEATED] CreateTextureFromSource called with null src ({})", name ? name : "<unnamed>");
+			return nullptr;
+		}
+
+		// QueryInterface for ID3D11Texture2D rather than blind static_cast — a
+		// non-texture resource passed here would crash GetDesc otherwise.
+		// (CodeRabbit on PR #44.)
+		winrt::com_ptr<ID3D11Texture2D> srcTex;
+		if (FAILED(src->QueryInterface(IID_PPV_ARGS(srcTex.put())))) {
+			logger::error("[FOVEATED] CreateTextureFromSource src is not an ID3D11Texture2D ({})", name ? name : "<unnamed>");
+			return nullptr;
+		}
+
 		D3D11_TEXTURE2D_DESC srcDesc;
-		static_cast<ID3D11Texture2D*>(src)->GetDesc(&srcDesc);
+		srcTex->GetDesc(&srcDesc);
 
 		D3D11_TEXTURE2D_DESC desc = {};
 		desc.Width = width;
@@ -73,6 +87,22 @@ namespace FoveatedRenderImpl::Ops
 		if (!needsRecreate) {
 			needsRecreate = (reactiveSrc && !Core::vrIntermediateReactiveMask[0]) ||
 			                (transparencySrc && !Core::vrIntermediateTransparencyMask[0]);
+		}
+
+		// Also reset stale intermediates when a source DISAPPEARED. Otherwise
+		// the per-eye reactive/transparency intermediates keep their last-known
+		// data and PreparePerEyeInputs's null-source branch skips the copy —
+		// DLSS then samples stale masks. Drop the intermediate so subsequent
+		// frames don't read it. Independent of the recreate path: shrinking is
+		// cheap and the next non-null source will trigger recreate above.
+		// (Copilot on PR #44.)
+		if (!reactiveSrc && Core::vrIntermediateReactiveMask[0]) {
+			Core::vrIntermediateReactiveMask[0].reset();
+			Core::vrIntermediateReactiveMask[1].reset();
+		}
+		if (!transparencySrc && Core::vrIntermediateTransparencyMask[0]) {
+			Core::vrIntermediateTransparencyMask[0].reset();
+			Core::vrIntermediateTransparencyMask[1].reset();
 		}
 
 		if (!needsRecreate) {
@@ -305,8 +335,27 @@ namespace FoveatedRenderImpl::Ops
 			return;
 		}
 
+		// Guard against a null destination UAV — CSSetUnorderedAccessViews +
+		// Dispatch with nullptr would either no-op silently or assert in
+		// debug builds. Returning lets the route's `routeHandled=false` path
+		// fall back to standard DLSS so users still see output. (CodeRabbit
+		// on PR #44.)
+		if (!kMainUAV) {
+			logger::error("[FOVEATED] StretchDRSToFullEye called with null kMainUAV");
+			return;
+		}
+
 		D3D11_MAPPED_SUBRESOURCE mapped{};
-		if (SUCCEEDED(context->Map(Core::vrSubrectStretchCB.get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped))) {
+		// If Map fails the constant buffer keeps stale data from a prior
+		// dispatch. CSSetConstantBuffers + Dispatch would then run the
+		// shader against stale geometry/scale parameters, producing wrong
+		// pixels rather than no pixels. Early-return preserves the prior
+		// frame's output. (CodeRabbit on PR #44.)
+		if (FAILED(context->Map(Core::vrSubrectStretchCB.get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped))) {
+			logger::error("[FOVEATED] StretchDRSToFullEye Map(vrSubrectStretchCB) failed; skipping dispatch");
+			return;
+		}
+		{
 			auto& enhSettings = globals::features::upscaling.foveatedRender.settings;
 			struct
 			{

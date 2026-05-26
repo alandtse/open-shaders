@@ -12,19 +12,32 @@ bool FoveatedRenderImpl::Bridge::IsRouteActive()
 	return globals::features::upscaling.foveatedRender.IsActive();
 }
 
+// Bridge.h's contract: when the route is inactive, getters return a neutral /
+// identity value. Previously these returned raw shared settings unconditionally
+// — callers that forgot to check IsRouteActive() would silently get FoveatedRender
+// values even when it wasn't running. Gate on IsRouteActive() so the contract
+// is enforced at the source; active path returns the clamped active getter.
+// (CodeRabbit on PR #44.)
+
 uint32_t FoveatedRenderImpl::Bridge::GetQualityMode()
 {
-	return globals::features::upscaling.settings.qualityMode;
+	if (!IsRouteActive())
+		return 0u;
+	return globals::features::upscaling.foveatedRender.GetActiveQualityMode();
 }
 
 uint32_t FoveatedRenderImpl::Bridge::GetPresetDLSS()
 {
-	return globals::features::upscaling.settings.presetDLSS;
+	if (!IsRouteActive())
+		return 0u;
+	return globals::features::upscaling.foveatedRender.GetActivePresetDLSS();
 }
 
 float FoveatedRenderImpl::Bridge::GetSharpnessDLSS()
 {
-	return globals::features::upscaling.settings.sharpnessDLSS;
+	if (!IsRouteActive())
+		return 0.0f;
+	return globals::features::upscaling.foveatedRender.GetActiveSharpnessDLSS();
 }
 
 void FoveatedRenderImpl::Bridge::BootSequence()

@@ -47,6 +47,14 @@ namespace FoveatedRenderImpl
 
 	bool Core::ExecuteDefaultMode(Streamline& streamline, const VRDlssParams& p)
 	{
+		// Subrect path needs colorDstUAV (StretchDRSBothEyes writes through it).
+		// Full-eye path doesn't touch it. Return false on the subrect path so
+		// the router falls back to standard DLSS rather than hitting the null
+		// guard inside StretchDRSToFullEye every frame. (CodeRabbit on PR #44.)
+		if (!p.isFullEye && !p.colorDstUAV) {
+			logger::error("[FOVEATED] ExecuteDefaultMode subrect path missing colorDstUAV — falling back");
+			return false;
+		}
 		if (p.isFullEye) {
 			// Full-eye path: same as standard VR DLSS
 			if (!PreparePerEyeInputs(
@@ -150,6 +158,13 @@ namespace FoveatedRenderImpl
 
 	bool Core::ExecuteFasterMode(Streamline& streamline, const VRDlssParams& p)
 	{
+		// Faster mode always takes the subrect+stretch path → colorDstUAV is
+		// always required. Bail early so the router falls back to standard
+		// DLSS rather than silently no-op'ing the dispatch. (CodeRabbit on PR #44.)
+		if (!p.colorDstUAV) {
+			logger::error("[FOVEATED] ExecuteFasterMode missing colorDstUAV — falling back");
+			return false;
+		}
 		const Util::Subrect::UVRegion* eyeUVs[2] = { &p.leftUV, &p.rightUV };
 
 		// NOTE: EnsureFasterOutputTextures allocates one per-eye texture set
