@@ -82,7 +82,9 @@ namespace Util::Subrect
 		// texture; crop UV stays in [0,1] of that window. imageRenderCallback,
 		// when non-null, is queued via ImDrawList::AddCallback around the
 		// preview Image draw (paired with ImDrawCallback_ResetRenderState) so
-		// hosts can override blend state for the image specifically.
+		// hosts can override blend state for the image specifically. Pass
+		// OpaquePreviewBlendCallback when the preview texture is an RT with
+		// non-1 alpha (kMAIN, etc.) to suppress menu-background bleed-through.
 		void DrawEditor(ID3D11ShaderResourceView* previewSrv, ID3D11Texture2D* previewTexture,
 			float uvVisibleWidth = 1.0f, float uvStartX = 0.0f,
 			ImDrawCallback imageRenderCallback = nullptr);
@@ -125,4 +127,21 @@ namespace Util::Subrect
 		void ApplyPreset(int index);
 		void SyncRightUV();
 	};
+
+	// Opaque-RGB blend state callback for Controller::DrawEditor. Pass when the
+	// preview SRV is a render target with non-1 alpha (kMAIN, kTOTAL, etc.).
+	// ImGui's default SRC_ALPHA blend would let the menu background bleed
+	// through where the source alpha is < 1, making the preview look like a
+	// transparency mask. This callback switches to opaque RGB-only writes
+	// around the Image draw; DrawEditor queues ImDrawCallback_ResetRenderState
+	// immediately after to restore default state.
+	//
+	// Two non-obvious regression risks if reimplemented:
+	//   1. BlendEnable must stay FALSE — SRC_ALPHA causes the bleed-through.
+	//   2. WriteMask must exclude alpha (RGB only). In VR, Skyrim's menu UI
+	//      shader recomposites the menu plate over the SBS framebuffer with
+	//      alpha blending; writing texture alpha into the menu plate RT
+	//      produces a cutout visible only through the HMD. RGB-only writes
+	//      leave the plate's pre-cleared alpha=1 in place.
+	void OpaquePreviewBlendCallback(const ImDrawList*, const ImDrawCmd*);
 }  // namespace Util::Subrect
