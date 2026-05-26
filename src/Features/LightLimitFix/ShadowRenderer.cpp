@@ -68,8 +68,18 @@ void LightLimitFix::CopyShadowLightData()
 	}
 
 	auto* shadowSceneNode = globals::game::smState->shadowSceneNode[0];
-	if (!shadowSceneNode)
+	if (!shadowSceneNode) {
+		// Same cleanup contract as the slots==0 path above: clear slot
+		// metadata + counters and unbind t100/t101 so the overlay doesn't
+		// show stale rows and shaders degrade to unshadowed instead of
+		// sampling a previous frame's records.
+		ShadowCasterManager::BeginSlotFrame(0);
+		shadowLightCount = 0;
+		shadowUnshadowedLightCount = 0;
+		ID3D11ShaderResourceView* nullSRVs[2]{ nullptr, nullptr };
+		globals::d3d::context->PSSetShaderResources(100, ARRAYSIZE(nullSRVs), nullSRVs);
 		return;
+	}
 
 	// Lazy (re)allocation when slot count changes (e.g. on resolution change).
 	if (!shadowLights || shadowLightsCapacity != slots) {

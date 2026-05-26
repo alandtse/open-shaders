@@ -585,7 +585,11 @@ namespace ShadowCasterManager
 	/// Install all game hooks.  Call from LightLimitFix::PostPostLoad().
 	void Install(const Settings& settings);
 
-	/// Per-frame update: runs the scheduler.  Call from LightLimitFix::Prepass().
+	/// Per-frame update: refreshes installed slot count from the texture-array
+	/// capacity and applies settings changes (pool resize, etc.). The actual
+	/// scheduling -- choosing which lights cast shadows this frame -- happens
+	/// in the hooked `CalculateActiveShadowCasters` path via ScheduleShadowCasters.
+	/// Call from LightLimitFix::Prepass().
 	void Update(const Settings& settings, RE::ShadowSceneNode* shadowSceneNode,
 		RE::NiCamera* worldCamera);
 

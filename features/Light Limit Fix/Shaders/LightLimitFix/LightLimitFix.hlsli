@@ -377,30 +377,22 @@ namespace LightLimitFix
 		return SampleParaboloidShadow(shadowIndex, sampleUV, depth, rotationMatrix, isOmni);
 	}
 
-	// hasCoverage is inout (not out) by design: callers always initialise
-	// the bool to false at the declaration site (Lighting.hlsl /
-	// RunGrass.hlsl / Effect.hlsl), and inout silences FXC's X4000 false
-	// positive at the overflow-guard merge point (CI ran 360 occurrences
-	// across shader permutations before the signature change). The
-	// function still treats it semantically as an output -- pre-call value
-	// is overwritten on every path.
-	float GetShadowLightShadow(uint shadowIndex, float3 worldPositionWS, float2x2 rotationMatrix, inout bool hasCoverage)
+	// Single-assignment of hasCoverage at function entry keeps FXC's flow
+	// analyser quiet: prior versions used an early-return overflow guard
+	// that wrote hasCoverage on two paths, which tripped X4000 "potentially
+	// uninitialized" warnings at the post-merge point across 360 permutations
+	// (both `out` and `inout` signatures hit the same false positive).
+	//
+	// Overflow handling: `shadowIndex >= ShadowMapSlots` can occur transiently
+	// when a light was promoted to shadow on a frame where the texture-array
+	// allocation hadn't extended to cover it yet. StructuredBuffer reads beyond
+	// declared bounds return zero per the D3D11 spec, so the Shadows[shadowIndex]
+	// read is safe -- it falls into the `ShadowLightParam.y == 0` branch below
+	// and returns 1.0. The `hasCoverage` flag tells the caller whether the
+	// sample was real, so suppression still works correctly upstream.
+	float GetShadowLightShadow(uint shadowIndex, float3 worldPositionWS, float2x2 rotationMatrix, out bool hasCoverage)
 	{
-		// Guard against shadowMapIndex values that exceed the installed
-		// kSHADOWMAPS slice count. The CPU scheduler explicitly models
-		// `shadowMapIndex >= ShadowMapSlots` as overflow (e.g. when a light
-		// was promoted to shadow on a frame where the texture-array
-		// allocation hadn't extended to cover it yet), and a raw
-		// `Shadows[shadowIndex]` here would read an invalid record or slice.
-		// Fall back cleanly to "unshadowed + no coverage" so the caller
-		// stops blending this light's contribution.
-		[branch] if (shadowIndex >= SharedData::lightLimitFixSettings.ShadowMapSlots)
-		{
-			hasCoverage = false;
-			return 1.0;
-		}
-
-		hasCoverage = true;  // paraboloid lights below always sample
+		hasCoverage = shadowIndex < SharedData::lightLimitFixSettings.ShadowMapSlots;
 
 		ShadowLightData shadowLightData = Shadows[shadowIndex];
 

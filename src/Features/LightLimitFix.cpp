@@ -606,7 +606,9 @@ void LightLimitFix::UpdateLights()
 	// is sized to hold at most that many distinct point/spot lights (the sun
 	// occupies one logical entry but no kSHADOWMAPS slice, so the +1 is
 	// belt-and-braces).
-	std::unordered_set<RE::BSLight*> shadowLightPtrs;
+	// Dense set avoids the per-insert node allocation that std::unordered_set
+	// would incur on every frame in this hot path.
+	ankerl::unordered_dense::set<RE::BSLight*> shadowLightPtrs;
 	shadowLightPtrs.reserve(ShadowCasterManager::GetInstalledSlotCount() + 1);
 	ShadowCasterManager::ForEachShadowLight(shadowSceneNode->GetRuntimeData().shadowLightsAccum,
 		[&](RE::BSShadowLight* light) {
