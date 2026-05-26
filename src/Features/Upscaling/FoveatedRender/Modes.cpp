@@ -27,8 +27,10 @@ namespace FoveatedRenderImpl
 	{
 		auto p = VRDlssParams::Resolve(upscalingTexture, depthTexture, reactiveMask, transparencyMask, motionVectors);
 
-		// Detect UV/mode change → destroy DLSS resources so SL recreates them at the new size
-		uint64_t uvHash = ComputeSubrectUVHash(p.leftUV, (uint32_t)p.mode);
+		// Detect UV/mode change → destroy DLSS resources so SL recreates them at
+		// the new size. Both eye UVs feed the hash; asymmetric presets (e.g.
+		// Nasal Convergence) can change rightUV while leftUV stays put.
+		uint64_t uvHash = ComputeSubrectUVHash(p.leftUV, p.rightUV, (uint32_t)p.mode);
 		if (uvHash != Core::activeSubrectUVHash) {
 			logger::info("[FOVEATED] Subrect UV or mode changed, recreating DLSS resources");
 			streamline.DestroyDLSSResources();
@@ -158,11 +160,11 @@ namespace FoveatedRenderImpl
 
 	bool Core::ExecuteFasterMode(Streamline& streamline, const VRDlssParams& p)
 	{
-		// Faster mode always takes the subrect+stretch path → colorDstUAV is
-		// always required. Bail early so the router falls back to standard
-		// DLSS rather than silently no-op'ing the dispatch. (CodeRabbit on PR #44.)
-		if (!p.colorDstUAV) {
-			logger::error("[FOVEATED] ExecuteFasterMode missing colorDstUAV — falling back");
+		// Subrect path needs colorDstUAV (StretchDRSBothEyes writes through it
+		// in Step 3). Full-eye Faster skips Step 3 — don't reject it here just
+		// because the UAV isn't bound.
+		if (!p.isFullEye && !p.colorDstUAV) {
+			logger::error("[FOVEATED] ExecuteFasterMode subrect path missing colorDstUAV — falling back");
 			return false;
 		}
 		const Util::Subrect::UVRegion* eyeUVs[2] = { &p.leftUV, &p.rightUV };

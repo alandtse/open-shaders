@@ -446,14 +446,19 @@ namespace FoveatedRenderImpl::Ops
 		Core::vrFasterOutH = subOutH;
 	}
 
-	uint64_t ComputeSubrectUVHash(const Util::Subrect::UVRegion& uv, uint32_t mode)
+	uint64_t ComputeSubrectUVHash(const Util::Subrect::UVRegion& leftUV,
+		const Util::Subrect::UVRegion& rightUV, uint32_t mode)
 	{
 		uint64_t h = 0;
 		auto mix = [&](uint64_t v) { h ^= v + 0x9e3779b97f4a7c15ULL + (h << 12) + (h >> 4); };
-		mix(std::hash<float>{}(uv.x));
-		mix(std::hash<float>{}(uv.y));
-		mix(std::hash<float>{}(uv.w));
-		mix(std::hash<float>{}(uv.h));
+		auto mixUV = [&](const Util::Subrect::UVRegion& uv) {
+			mix(std::hash<float>{}(uv.x));
+			mix(std::hash<float>{}(uv.y));
+			mix(std::hash<float>{}(uv.w));
+			mix(std::hash<float>{}(uv.h));
+		};
+		mixUV(leftUV);
+		mixUV(rightUV);
 		mix(std::hash<uint32_t>{}(mode));
 		return h;
 	}

@@ -5,6 +5,7 @@
 // Plugin builds pick this up automatically via the src/*.cpp GLOB_RECURSE.
 
 #include "Globals.h"
+#include "Utils/D3D.h"
 #include "Utils/Subrect.h"
 
 #include <PCH.h>
@@ -15,6 +16,12 @@ namespace Util::Subrect
 {
 	void OpaquePreviewBlendCallback(const ImDrawList*, const ImDrawCmd*)
 	{
+		auto* device = globals::d3d::device;
+		auto* context = globals::d3d::context;
+		if (!device || !context) {
+			return;
+		}
+
 		static winrt::com_ptr<ID3D11BlendState> opaqueBlend;
 		if (!opaqueBlend) {
 			D3D11_BLEND_DESC desc{};
@@ -23,10 +30,13 @@ namespace Util::Subrect
 				D3D11_COLOR_WRITE_ENABLE_RED |
 				D3D11_COLOR_WRITE_ENABLE_GREEN |
 				D3D11_COLOR_WRITE_ENABLE_BLUE;
-			globals::d3d::device->CreateBlendState(&desc, opaqueBlend.put());
+			if (FAILED(device->CreateBlendState(&desc, opaqueBlend.put()))) {
+				return;
+			}
+			Util::SetResourceName(opaqueBlend.get(), "Subrect::OpaquePreviewBlend");
 		}
 		if (opaqueBlend) {
-			globals::d3d::context->OMSetBlendState(opaqueBlend.get(), nullptr, 0xFFFFFFFF);
+			context->OMSetBlendState(opaqueBlend.get(), nullptr, 0xFFFFFFFF);
 		}
 	}
 }  // namespace Util::Subrect

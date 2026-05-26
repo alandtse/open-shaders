@@ -22,7 +22,6 @@
 
 struct FoveatedRender
 {
-public:
 	// DLSS execution mode for VR
 	enum class DlssMode : uint
 	{

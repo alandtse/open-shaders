@@ -60,6 +60,10 @@ namespace FoveatedRenderImpl::Ops
 	void BlendSubrectToOutput(ID3D11Resource* dlssSrc, ID3D11Resource* dst,
 		uint32_t dstOffsetX, uint32_t dstOffsetY, uint32_t subWidth, uint32_t subHeight, uint32_t srcOffsetX = 0);
 
-	// Hash of UV + mode for change detection (forces SL DLSS resource recreation).
-	uint64_t ComputeSubrectUVHash(const Util::Subrect::UVRegion& uv, uint32_t mode);
+	// Hash of per-eye UVs + mode for change detection (forces SL DLSS resource
+	// recreation). Both eyes are mixed in so asymmetric presets — e.g. Nasal
+	// Convergence, where rightUV differs from leftUV — don't collide on a
+	// left-eye-only hash and skip SL recreation.
+	uint64_t ComputeSubrectUVHash(const Util::Subrect::UVRegion& leftUV,
+		const Util::Subrect::UVRegion& rightUV, uint32_t mode);
 }
