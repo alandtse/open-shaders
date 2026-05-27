@@ -3579,18 +3579,53 @@ namespace ShadowCasterManager
 		}
 
 		// ---- Screen-space shadow-mask pass: clamp to vanilla 4 slices ---------
-		// Detour RenderShadowLightsWithUtilityShader (100423/107141). The wrapper
-		// runs vanilla but writes a null sentinel into shadowLightsAccum at the
-		// 4-slice cutoff so the engine's loop never OOB-reads the 4-entry
-		// per-slot blend-mode table for any extended-mode slot. The mask's R
-		// channel (sun cascades) is the only channel LIGHT_LIMIT_FIX consumes;
-		// extended shadow casters are served by LLF's cluster pipeline reading
-		// kSHADOWMAPS directly. See the Hook_RenderShadowLightsWithUtilityShader
-		// definition above for the full rationale, including the previous
-		// Hook_DisableColorMask's misread (it patched out the inner call, not a
-		// color-mask call -- verified via Ghidra).
-		stl::detour_thunk<Hook_RenderShadowLightsWithUtilityShader>(
-			REL::RelocationID(100423, 107141));
+		// Suppress the engine's screen-space shadow-mask inner loop. With
+		// extended slot counts SLF can produce maskIndex >= 4, which makes
+		// the loop OOB-read the 4-entry per-slot blend-mode table
+		// (DAT_141861380); the mask's R channel (sun cascades) is the only
+		// channel LIGHT_LIMIT_FIX consumes anyway -- extended shadow casters
+		// are served by LLF's cluster pipeline reading kSHADOWMAPS directly.
+		// See Hook_RenderShadowLightsWithUtilityShader above for the full
+		// rationale, including the previous Hook_DisableColorMask's misread
+		// (it patched out the inner call, not a color-mask call -- verified
+		// via Ghidra).
+		if (globals::game::isVR) {
+			// VR's Main::RenderShadowmasks (100422) inlines the inner loop
+			// instead of calling the standalone 100423, so the detour below
+			// would never fire. NOP the near-CALL at +0x9E directly. Only
+			// needed when extended slot counts can produce maskIndex >= 4;
+			// vanilla 4-slice VR doesn't trip the OOB.
+			if (settings.ShadowLightCount > 4) {
+				// Site verification: the call at +0x9E must be `E8 rel32`
+				// targeting the inlined helper at +0xC0 (rel32 = 0xC0 -
+				// next-instruction-addr = 0xC0 - 0xA3 = 0x1D). If either the
+				// opcode or the target drifts, fail closed -- clamp the
+				// scheduler back to vanilla 4 slots so a drifted binary
+				// degrades to "no extended shadows" rather than the original
+				// CTD path this patch protects.
+				static REL::RelocationID renderShadowmasks(100422, 107140);
+				constexpr std::uint8_t kCallOffset = 0x9E;
+				constexpr std::uint8_t kCallOpcode = 0xE8;  // near CALL rel32
+				constexpr std::int32_t kExpectedRel32 = 0x1D;
+				const auto site = renderShadowmasks.address() + kCallOffset;
+				const auto opcode = *reinterpret_cast<const std::uint8_t*>(site);
+				const auto rel32 = *reinterpret_cast<const std::int32_t*>(site + 1);
+				if (opcode != kCallOpcode || rel32 != kExpectedRel32) {
+					logger::warn("[SCM] VR shadow-mask site drift: expected E8 rel32=0x{:X} at RenderShadowmasks+0x{:X}, "
+								 "found 0x{:02X} rel32=0x{:X}. Clamping ShadowLightCount to 4 (vanilla) to avoid OOB CTD.",
+						kExpectedRel32, kCallOffset, opcode, rel32);
+					s_installedShadowLightCount = 4;
+				} else {
+					REL::safe_fill(site, REL::NOP, 5);
+					logger::info("[SCM] VR: NOPed inner shadow-mask call at RenderShadowmasks+0x{:X}", kCallOffset);
+				}
+			}
+		} else {
+			// Flat (SE/AE): RenderShadowmasks calls the standalone 100423,
+			// so detour that function to a no-op.
+			stl::detour_thunk<Hook_RenderShadowLightsWithUtilityShader>(
+				REL::RelocationID(100423, 107141));
+		}
 
 		// ---- Shadow caster selection -----------------------------------------
 
