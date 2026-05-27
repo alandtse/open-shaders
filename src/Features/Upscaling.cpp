@@ -752,8 +752,14 @@ void Upscaling::PostPostLoad()
 
 float Upscaling::GetQualityModeRatio(uint qualityMode)
 {
+	// Lower bound is 0, not 1: qualityMode=0 is DLAA / NATIVEAA (1.0x —
+	// render at display resolution). The FfxFsr3QualityMode enum header
+	// doesn't *declare* a 0 value, but the implementation delegates to
+	// FfxFsr3UpscalerQualityMode which has NATIVEAA=0 → 1.0f. Clamping to
+	// 1 would force DLAA into Quality (1.5x) and shrink the rendered
+	// region of kMAIN to 67%.
 	const float ratio = ffxFsr3GetUpscaleRatioFromQualityMode(
-		static_cast<FfxFsr3QualityMode>(std::clamp<uint>(qualityMode, 1u, 4u)));
+		static_cast<FfxFsr3QualityMode>(std::clamp<uint>(qualityMode, 0u, 4u)));
 	return std::isfinite(ratio) && ratio > 0.0f ? ratio : 3.0f;
 }
 
