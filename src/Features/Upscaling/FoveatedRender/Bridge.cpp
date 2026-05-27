@@ -73,5 +73,7 @@ float FoveatedRenderImpl::Bridge::GetRenderScaleForQuality(uint32_t qualityMode)
 
 uint32_t FoveatedRenderImpl::Bridge::GetQualityModeAtBoot()
 {
+	if (!IsRouteActive())
+		return 0u;
 	return globals::features::upscaling.foveatedRender.GetQualityModeAtBoot();
 }

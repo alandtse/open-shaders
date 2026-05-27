@@ -338,6 +338,11 @@ namespace FoveatedRenderImpl::Ops
 			cbDesc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
 			if (FAILED(globals::d3d::device->CreateBuffer(&cbDesc, nullptr, Core::vrSubrectStretchCB.put()))) {
 				logger::error("[FOVEATED] Failed to create SubrectStretch constant buffer");
+				// Drop the partially-attached CS so the next frame retries the
+				// whole init block — otherwise the outer !vrSubrectStretchCS
+				// guard above stays false forever and Faster mode is dead for
+				// the rest of the session.
+				Core::vrSubrectStretchCS = nullptr;
 				return;
 			}
 			Util::SetResourceName(Core::vrSubrectStretchCB.get(), "FoveatedRender::SubrectStretchCB");
@@ -349,6 +354,8 @@ namespace FoveatedRenderImpl::Ops
 			sampDesc.AddressW = D3D11_TEXTURE_ADDRESS_CLAMP;
 			if (FAILED(globals::d3d::device->CreateSamplerState(&sampDesc, Core::vrSubrectStretchSampler.put()))) {
 				logger::error("[FOVEATED] Failed to create SubrectStretch sampler");
+				Core::vrSubrectStretchCS = nullptr;
+				Core::vrSubrectStretchCB = nullptr;
 				return;
 			}
 			Util::SetResourceName(Core::vrSubrectStretchSampler.get(), "FoveatedRender::SubrectStretchSampler");
