@@ -1,10 +1,15 @@
 #pragma once
 
 #include "Buffer.h"
+#include "LightLimitFix/ShadowCasterManager.h"
 #include "OverlayFeature.h"
 
 struct LightLimitFix : OverlayFeature
 {
+private:
+	static constexpr uint32_t MAX_LIGHTS = 1024;
+	static constexpr uint32_t CLUSTER_MAX_LIGHTS = 128;
+
 public:
 	virtual inline std::string GetName() override { return "Light Limit Fix"; }
 	virtual inline std::string GetShortName() override { return "LightLimitFix"; }
@@ -14,13 +19,12 @@ public:
 	virtual std::pair<std::string, std::vector<std::string>> GetFeatureSummary() override
 	{
 		return {
-			"Light Limit Fix removes the vanilla game's 4-light limit, allowing unlimited dynamic lights in scenes.\n"
-			"This dramatically improves lighting quality and enables more realistic illumination scenarios.",
+			"Light Limit Fix removes the vanilla game's 4-light limit, allowing unlimited dynamic lights in scenes. "
+			"It also extends shadow support to all point and spot lights.",
 			{ "Removes 4-light limit",
 				"Unlimited dynamic lights",
-				"Improved lighting quality",
-				"Enhanced visual realism",
-				"Enhanced visual realism" }
+				"Shadow support for point and spot lights",
+				"Improved lighting quality" }
 		};
 	}
 
@@ -55,9 +59,8 @@ public:
 		PositionOpt positionWS[2];
 		uint128_t roomFlags = uint32_t(0);
 		stl::enumeration<LightFlags> lightFlags;
-		uint32_t shadowMaskIndex = 0;
-		uint pad0;
-		uint pad1;
+		uint32_t shadowMapIndex = 0;
+		float2 pad0;
 	};
 	STATIC_ASSERT_ALIGNAS_16(LightData);
 
@@ -101,10 +104,13 @@ public:
 		float ContactShadowThickness;
 		float ContactShadowDepthFade;
 		float ContactShadowMinIntensity;
+		uint32_t ShadowMapSlots;  // total shadow map texture-array capacity
+		// Cluster config (computed)
+		uint ClusterSize[4];
+		// Debug (last)
 		uint EnableLightsVisualisation;
 		uint LightsVisualisationMode;
-		float pad0[3];
-		uint ClusterSize[4];
+		uint pad0[2];
 	};
 	STATIC_ASSERT_ALIGNAS_16(PerFrame);
 	// Compile-time size lock catches CPU/GPU cbuffer layout drift. STATIC_ASSERT_ALIGNAS_16
@@ -134,8 +140,16 @@ public:
 	ConstantBuffer* strictLightDataCB = nullptr;
 
 	int eyeCount = !REL::Module::IsVR() ? 1 : 2;
-	bool previousEnableLightsVisualisation = settings.EnableLightsVisualisation;
-	bool currentEnableLightsVisualisation = settings.EnableLightsVisualisation;
+
+	// Debug-only visualization state. Lives on the instance rather than in
+	// Settings so it can't accidentally persist into a user's config: a
+	// shipped JSON with `EnableLightsVisualisation = true` would force every
+	// load to compile the heavier LLFDEBUG shader permutation. These reset to
+	// off on each session.
+	bool EnableLightsVisualisation = false;
+	uint LightsVisualisationMode = 0;
+	bool previousEnableLightsVisualisation = false;
+	bool currentEnableLightsVisualisation = false;
 
 	ID3D11ComputeShader* clusterBuildingCS = nullptr;
 	ID3D11ComputeShader* clusterCullingCS = nullptr;
@@ -157,9 +171,22 @@ public:
 	bool wasEmpty = false;
 	bool wasWorld = false;
 	int previousRoomIndex = -1;
-	uint previousShadowBitMask = 0;
 
 	Util::FrameChecker frameChecker;
+
+	// Point/spot shadow resources (t102, t103 -- t100/t101 reserved for Grass Collision)
+	// shadowLights is lazily allocated in CopyShadowLightData() since shadowMapSlots
+	// is not known until Deferred::SetupResources() runs (after Feature::SetupResources()).
+	Buffer* shadowLights = nullptr;
+	uint32_t shadowLightsCapacity = 0;
+
+	// Per-frame shadow accounting (displayed in DrawSettings Statistics tree).
+	uint32_t shadowLightCount = 0;            // distinct lights processed (including dropped)
+	uint32_t shadowUnshadowedLightCount = 0;  // lights that exceeded slot capacity
+
+	/// Generate a text legend mapping each shadow-map slot index to its golden-ratio hue
+	/// and light type.  Used for RenderDoc capture comments when mode 8 is active.
+	std::string BuildShadowSlotColorLegend() const;
 
 	virtual void SetupResources() override;
 
@@ -169,7 +196,11 @@ public:
 
 	virtual void DrawSettings() override;
 	virtual void DrawOverlay() override;
-	virtual bool IsOverlayVisible() const override { return settings.EnableLightsVisualisation; }
+	virtual bool IsOverlayVisible() const override
+	{
+		return EnableLightsVisualisation || settings.ShowShadowOverlay ||
+		       ShadowCasterManager::HasSuppressedLights() || ShadowCasterManager::HasAnyOverrides();
+	}
 
 	virtual void PostPostLoad() override;
 	virtual void DataLoaded() override;
@@ -179,7 +210,11 @@ public:
 	void SetLightPosition(LightLimitFix::LightData& a_light, RE::NiPoint3 a_initialPosition, bool a_cached = true);
 	void UpdateLights();
 	void UpdateStructure();
+	virtual void EarlyPrepass() override;
 	virtual void Prepass() override;
+	void CopyShadowLightData();
+
+	// Shadow rendering helpers (implemented in LightLimitFix/ShadowRenderer.cpp)
 
 	static inline float3 Saturation(float3 color, float saturation);
 	static inline bool IsValidLight(RE::BSLight* a_light);
@@ -202,8 +237,16 @@ public:
 		// (1 - (lightDist/radius)^2) at the pixel is below this threshold. Strict
 		// lights always raymarch. 0 = never skip; 1 = always skip.
 		float ContactShadowMinIntensity = 0.25f;
-		bool EnableLightsVisualisation = false;
-		uint LightsVisualisationMode = 0;
+
+		/// Show the shadow caster overlay (suppression / debug-override table)
+		/// independently of the visualization mode and suppression state.
+		/// Without this, the overlay only appeared when a light was suppressed
+		/// or visualisation was active — making it hard to access the overlay's
+		/// debug controls (cycle button, solo, hover-pulse) in the default state.
+		bool ShowShadowOverlay = false;
+
+		// Shadow caster scheduling (ShadowCasterManager)
+		ShadowCasterManager::Settings ShadowSettings;
 	};
 
 	uint clusterSize[3] = { 16 };

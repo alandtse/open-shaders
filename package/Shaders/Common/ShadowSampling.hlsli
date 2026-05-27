@@ -30,6 +30,12 @@ struct DirectionalShadowLightData
 	column_major float4x4 InvShadowProj[2];
 	float2 EndSplitDistances;
 	float2 StartSplitDistances;
+	// Focus shadow projections (per FocusShadowActor, max 4). Sample at
+	// kSHADOWMAPS slice (4 + i) using FocusShadowProj[i]; only entries with
+	// index < FocusShadowCount are valid.
+	column_major float4x4 FocusShadowProj[4];
+	uint FocusShadowCount;
+	uint3 _pad0;
 };
 
 StructuredBuffer<DirectionalShadowLightData> DirectionalShadowLights : register(t98);
@@ -112,10 +118,7 @@ namespace ShadowSampling
 			surfaceShadow *= vsmSurfaceShadow;
 			return worldShadow * shadow;
 		}
-#else
-		return worldShadow;
 #endif
-
 		return worldShadow;
 	}
 
@@ -127,7 +130,7 @@ namespace ShadowSampling
 		}
 
 #if defined(VOLUMETRIC_SHADOWS)
-		float shadow = VolumetricShadows::GetVSMShadow2D(worldPosition, eyeIndex, detailedShadow);
+		float shadow = VolumetricShadows::GetVSMShadow2D(worldPosition, worldPosition + FrameBuffer::CameraPosAdjust[eyeIndex].xyz, eyeIndex, detailedShadow);
 		return shadow;
 #else
 		detailedShadow = 1.0;

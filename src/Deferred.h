@@ -4,6 +4,7 @@
 
 #include "Buffer.h"
 #include "RE/B/BSShadowDirectionalLight.h"
+#include "RE/B/BSShadowLight.h"
 
 #define ALBEDO RE::RENDER_TARGETS::kINDIRECT
 #define SPECULAR RE::RENDER_TARGETS::kINDIRECT_DOWNSCALED
@@ -27,8 +28,34 @@ public:
 		float4x4 InvShadowProj[2];
 		float2 EndSplitDistances;
 		float2 StartSplitDistances;
+		// Focus shadow projection matrices, written by SCM each frame for the
+		// active FocusShadowActors (player + tracked NPCs, max 4). Each matrix
+		// projects world-space to the focus shadow's clip space; HLSL samples
+		// kSHADOWMAPS slice (4 + i) for matrix i to get the per-actor high-res
+		// shadow. FocusShadowCount in [0..4]; entries beyond it are ignored.
+		float4x4 FocusShadowProj[4];
+		uint FocusShadowCount;
+		uint pad0[3];
 	};
 	STATIC_ASSERT_ALIGNAS_16(DirectionalShadowLightData);
+	// Size guard catches silent layout drift between this and the HLSL mirror
+	// in ShadowSampling.hlsli; any size change here corrupts every uploaded
+	// directional shadow record so we want it to fail at compile time.
+	// 8 float4x4 (Shadow + Inv + Focus) + 2 float4 (splits + FocusCount/pad).
+	static_assert(sizeof(DirectionalShadowLightData) == 8 * sizeof(float4x4) + 2 * sizeof(float4),
+		"DirectionalShadowLightData layout drifted from ShadowSampling.hlsli mirror");
+
+	struct alignas(16) ShadowLightData
+	{
+		float4x4 ShadowProj;
+		float4x4 InvShadowProj;
+		float4 ShadowParam;
+	};
+
+	STATIC_ASSERT_ALIGNAS_16(ShadowLightData);
+	// Same guard for the per-slot point/spot shadow record (LightLimitFix.hlsli).
+	static_assert(sizeof(ShadowLightData) == 2 * sizeof(float4x4) + sizeof(float4),
+		"ShadowLightData layout drifted from LightLimitFix.hlsli mirror");
 
 	void SetupResources();
 	void ReflectionsPrepasses();
@@ -43,15 +70,15 @@ public:
 
 	void ClearShaderCache();
 
-	ID3D11ComputeShader* GetComputeMainComposite();
-	ID3D11ComputeShader* GetComputeMainCompositeInterior();
-
 	// Reads directional shadow parameters from BSShadowDirectionalLight and uploads
 	// to the structured buffer at t98 (DirectionalShadowLightData — cascade splits +
 	// world-to-shadow projections). Called during EarlyPrepasses once shadow maps
 	// have been rendered. Replaces the previous compute-shader dispatch that copied
 	// constant-buffer fields into a UAV.
 	void CopyShadowLightData();
+
+	ID3D11ComputeShader* GetComputeMainComposite();
+	ID3D11ComputeShader* GetComputeMainCompositeInterior();
 
 	ID3D11BlendState* deferredBlendStates[7][2][13][2];
 	ID3D11BlendState* forwardBlendStates[7][2][13][2];

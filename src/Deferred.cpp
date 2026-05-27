@@ -8,6 +8,7 @@
 
 #include "Features/DynamicCubemaps.h"
 #include "Features/IBL.h"
+#include "Features/LightLimitFix/ShadowCasterManager.h"
 #include "Features/ScreenSpaceGI.h"
 #include "Features/Skylighting.h"
 #include "Features/SubsurfaceScattering.h"
@@ -564,6 +565,33 @@ void Deferred::SetShadowCascadeParameters(T& lightData, DirectionalShadowLightDa
 		DirectX::XMMATRIX invProj = DirectX::XMMatrixInverse(nullptr, proj);
 		DirectX::XMStoreFloat4x4(&dd.InvShadowProj[i], invProj);
 	}
+
+	// Focus shadow matrices (one per active focus actor; engine writes them
+	// to focusShadowmapDescriptors[i].lightTransform during its per-cascade
+	// render). The shader samples kSHADOWMAPS slice (4 + i) for each entry
+	// to recover the player/NPC high-resolution shadow.
+	const auto focusCount = std::min(
+		static_cast<uint32_t>(std::size(lightData.focusShadowmapDescriptors)),
+		static_cast<uint32_t>(std::size(dd.FocusShadowProj)));
+	// Preserve descriptor->slice correspondence by writing FocusShadowProj[i]
+	// for descriptor[i] -- the LLF shader samples kSHADOWMAPS slice (4 + fi)
+	// using fi as the matrix index, so packing densely (e.g. via a separate
+	// counter) would pair matrix N with the wrong shadow slice when there are
+	// disabled holes between descriptors. Disabled descriptors leave their
+	// FocusShadowProj slot at the default-zero matrix; the shader's existing
+	// `focusClip.w <= EPSILON_DIVISION` guard treats that as "no actor in
+	// this slice" and skips sampling. FocusShadowCount is the upper iteration
+	// bound (last enabled index + 1) so the shader still exits early when
+	// trailing slots are empty.
+	dd.FocusShadowCount = 0;
+	for (uint32_t i = 0; i < focusCount; i++) {
+		const auto& desc = lightData.focusShadowmapDescriptors[i];
+		if (!desc.isEnabled)
+			continue;  // descriptor unused this frame -- leave FocusShadowProj[i] at zero
+		auto proj = DirectX::XMLoadFloat4x4(reinterpret_cast<const DirectX::XMFLOAT4X4*>(&desc.lightTransform));
+		DirectX::XMStoreFloat4x4(&dd.FocusShadowProj[i], proj);
+		dd.FocusShadowCount = i + 1;
+	}
 }
 
 void Deferred::CopyShadowLightData()
@@ -598,6 +626,10 @@ void Deferred::CopyShadowLightData()
 
 	ID3D11ShaderResourceView* srv = directionalShadowLights->srv.get();
 	context->PSSetShaderResources(98, 1, &srv);
+
+	// t99: cascade depth array used by LightLimitFix::GetDirectionalShadow for PCF sampling.
+	ID3D11ShaderResourceView* cascadeSRV = globals::game::renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGET_DEPTHSTENCIL::kSHADOWMAPS_ESRAM].depthSRV;
+	context->PSSetShaderResources(99, 1, &cascadeSRV);
 }
 
 void Deferred::ClearShaderCache()
