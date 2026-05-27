@@ -340,8 +340,9 @@ void Upscaling::DrawSettings()
 					"its output to a private DisplayRes texture. Substantial VRAM and bandwidth savings,\n"
 					"especially at high HMD resolutions.\n"
 					"\n"
-					"Requires DLSS or FSR. Method and Upscale Preset changes also require a restart\n"
-					"while this is active; sharpness / model preset / Reflex remain live.");
+					"Requires DLSS or FSR. Toggling this option requires a game restart to take effect.\n"
+					"While active, Method and Upscale Preset changes also require a restart;\n"
+					"sharpness / model preset / Reflex remain live.");
 			}
 			if (!methodSupportsPerf && settings.renderAtUpscaleRes)
 				Util::Text::Disabled("Render-at-upscaled-resolution requires DLSS or FSR — switch upscaler Method to activate.");

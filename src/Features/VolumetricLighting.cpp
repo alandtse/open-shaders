@@ -22,12 +22,8 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 
 void VolumetricLighting::DrawSettings()
 {
-	// VR pre-allocates the volumetric lighting render targets once at boot, so
-	// toggling at runtime won't size them correctly -- the restart-gating
-	// applies only in VR. The non-VR path resizes resources live on toggle.
-	// RestartGatedAnnotate appends the standard "Requires a game restart to
-	// change." suffix, so the tooltip bodies stay focused on what the option
-	// does -- they don't repeat the restart claim.
+	// VR pre-allocates VL render targets at boot, so a runtime toggle can't
+	// resize them -- gate only in VR. Non-VR resizes live.
 	if (ImGui::Checkbox("Enable Volumetric Lighting in Exteriors", &settings.ExteriorEnabled))
 		SetupVL();
 	if (globals::game::isVR)
