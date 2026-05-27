@@ -423,7 +423,9 @@ namespace FoveatedRenderImpl::Ops
 	void EnsureVRRenderSBS(uint32_t renderW, uint32_t renderH, ID3D11Resource* colorSrc)
 	{
 		if (!Core::vrRenderSBS || Core::vrRenderSBSW != renderW || Core::vrRenderSBSH != renderH) {
-			Core::vrRenderSBS = CreateTextureFromSource(colorSrc, renderW, renderH, false, true, false, "FoveatedRender_RenderSBS");
+			// UAV is required for the Faster-mode HMD mask clear pass (ClearHMDMask
+			// writes through the UAV before DLSS reads the SBS via extent offsets).
+			Core::vrRenderSBS = CreateTextureFromSource(colorSrc, renderW, renderH, false, true, true, "FoveatedRender_RenderSBS");
 			Core::vrRenderSBSW = renderW;
 			Core::vrRenderSBSH = renderH;
 		}

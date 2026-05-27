@@ -178,7 +178,7 @@ void FoveatedRender::DrawEnable()
 	}
 
 	if (enabledAtBoot) {
-		ImGui::TextDisabled("Active: upscaling is forced to DLSS while enabled.");
+		Util::Text::WrappedInfo("Active: upscaling is forced to DLSS while enabled.");
 	}
 
 	if (!globals::game::isVR) {
@@ -196,7 +196,7 @@ void FoveatedRender::DrawSettings()
 
 	ClampSettings();
 
-	ImGui::TextDisabled("Quality / Sharpness / DLSS Preset / Streamline log level are shared with the standard DLSS path above.");
+	Util::Text::WrappedInfo("Quality / Sharpness / DLSS Preset / Streamline log level are shared with the standard DLSS path above.");
 
 	// ── VR-only knobs ──
 	if (globals::game::isVR) {
@@ -204,21 +204,39 @@ void FoveatedRender::DrawSettings()
 		ImGui::Text("VR DLSS Mode");
 		if (auto _tt = Util::HoverTooltipWrapper()) {
 			ImGui::Text(
-				"Default: per-eye isolation, highest quality, 2 extra resource sets.\n"
-				"Faster: SBS viewport trick, no extra resources, J/K presets unavailable.");
+				"Default vs Faster: trade per-eye image quality for setup cost. Switch only when you\n"
+				"can see a difference in your scene — otherwise prefer Faster.\n"
+				"\n"
+				"Default — use when: image quality matters more than the small overhead — cinematic\n"
+				"scenes, screenshot/recording, or if you notice ghosting/edge artifacts in Faster.\n"
+				"Each eye gets isolated per-eye intermediates for color/depth/MV/reactive/transparency\n"
+				"so DLSS can't sample across the SBS midline. Costs five per-eye copies per frame.\n"
+				"All DLSS presets (Default, J, K, L, M, F) supported.\n"
+				"\n"
+				"Faster — use when: you want the cheapest foveated path and aren't seeing artifacts —\n"
+				"fast-motion gameplay, exploration, anywhere small quality losses go unnoticed.\n"
+				"DLSS reads kMAIN directly via extent offsets, so bilinear sampling can touch 1-2\n"
+				"texels of the neighboring eye near the SBS midline. We snapshot kMAIN once and\n"
+				"clear the HMD hidden-area ring to prevent sky-blue bleed on fast head motion.\n"
+				"Presets J and K are unavailable — switching here auto-clamps preset to L.");
 		}
 
 		uint prevMode = settings.dlssMode;
 		ImGui::SliderInt("DLSS Mode", reinterpret_cast<int*>(&settings.dlssMode), 0, 1, dlssModes[settings.dlssMode]);
 		if (settings.dlssMode != prevMode) {
+			const uint prevPreset = globals::features::upscaling.settings.presetDLSS;
 			ClampPresetToMode();
+			if (globals::features::upscaling.settings.presetDLSS != prevPreset) {
+				logger::info("[FOVEATED] DLSS preset clamped from {} to {} after Faster switch (J/K incompatible)",
+					prevPreset, globals::features::upscaling.settings.presetDLSS);
+			}
 		}
 		switch (GetDlssMode()) {
 		case DlssMode::kDefault:
-			ImGui::TextDisabled("Per-eye isolation: 2 resource sets, 2 DLSS evaluates.");
+			ImGui::TextWrapped("Per-eye isolation: 2 resource sets, 2 DLSS evaluates.");
 			break;
 		case DlssMode::kFaster:
-			ImGui::TextDisabled("SBS viewport: 0 extra resources, 2 evaluates. J/K unavailable.");
+			ImGui::TextWrapped("SBS viewport: 1 snapshot + 2 mask clears, 2 evaluates. Presets J/K unavailable.");
 			break;
 		}
 
@@ -233,7 +251,7 @@ void FoveatedRender::DrawSettings()
 		ImGui::SliderInt("Stretch Mode", reinterpret_cast<int*>(&settings.stretchMode), 0, 2, stretchModes[settings.stretchMode]);
 		switch (GetStretchMode()) {
 		case StretchMode::kBilinear:
-			ImGui::TextDisabled("Bilinear: clean linear upscale. Looks like a soft DLSS-Performance result.");
+			ImGui::TextWrapped("Bilinear: clean linear upscale. Looks like a soft DLSS-Performance result.");
 			if (auto _tt = Util::HoverTooltipWrapper()) {
 				ImGui::Text(
 					"Use when: you want the periphery to look like a sensible low-quality reconstruction,\n"
@@ -244,7 +262,7 @@ void FoveatedRender::DrawSettings()
 			}
 			break;
 		case StretchMode::kPoint:
-			ImGui::TextDisabled("Point (nearest-neighbor): cheapest. Visibly pixelated periphery.");
+			ImGui::TextWrapped("Point (nearest-neighbor): cheapest. Visibly pixelated periphery.");
 			if (auto _tt = Util::HoverTooltipWrapper()) {
 				ImGui::Text(
 					"Use when: you want the smallest possible cost in the periphery and don't mind\n"
@@ -256,7 +274,7 @@ void FoveatedRender::DrawSettings()
 			}
 			break;
 		case StretchMode::kGaussianBlur:
-			ImGui::TextDisabled("Gaussian blur: softens periphery further. Hides upscale artifacts behind blur.");
+			ImGui::TextWrapped("Gaussian blur: softens periphery further. Hides upscale artifacts behind blur.");
 			if (auto _tt = Util::HoverTooltipWrapper()) {
 				ImGui::Text(
 					"Use when: you want the periphery to fall away into soft focus — closer to how\n"
@@ -273,7 +291,7 @@ void FoveatedRender::DrawSettings()
 		ImGui::TextWrapped(
 			"Drag in the preview below to select the region that gets full DLSS upscaling. "
 			"The rest is cheaply stretched — saves significant DLSS cost.");
-		ImGui::TextDisabled("Screenshot has its own subrect; align them only if you want pixel-matched captures.");
+		Util::Text::WrappedInfo("Screenshot has its own subrect; align them only if you want pixel-matched captures.");
 
 		bool debugBool = settings.debugVisualize != 0;
 		if (ImGui::Checkbox("Visualize regions", &debugBool))

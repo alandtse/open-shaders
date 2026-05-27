@@ -13,6 +13,7 @@
 
 #include "../../../Globals.h"
 #include "../../../Utils/Subrect.h"
+#include "../../Upscaling.h"
 #include "../Streamline.h"
 
 namespace FoveatedRenderImpl
@@ -177,8 +178,34 @@ namespace FoveatedRenderImpl
 		// Step 1: Ensure per-eye output textures
 		EnsureFasterOutputTextures(allocSubOutW, allocSubOutH, p.colorSrc);
 
-		// Step 2: DLSS reads directly from kMAIN via extent offsets → per-eye output
-		// sl::Extent field order is {top, left, width, height} — Y before X
+		// Step 2a: Snapshot kMAIN into vrRenderSBS so we can clear the HMD
+		// hidden-area ring without writing to kMAIN itself. Without this clear
+		// DLSS's temporal accumulation drags Skyrim's default sky clear from
+		// the masked-out edge into the visible region on fast head motion —
+		// the standard Streamline path (Streamline.cpp) and Default mode both
+		// pre-clear via per-eye intermediates.
+		SnapshotSBS(p.colorSrc, p.renderW, p.renderH);
+		auto& upscaling = globals::features::upscaling;
+		auto* depthSRV = globals::game::renderer->GetDepthStencilData()
+		                     .depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kMAIN]
+		                     .depthSRV;
+		if (Core::vrRenderSBS && Core::vrRenderSBS->uav && depthSRV) {
+			// Color target IS the SBS snapshot (not a per-eye buffer), so
+			// colorOffsetX must select the eye's half — same as depthOffsetX.
+			// ClearHMDMaskCS's default contract assumes the color target is
+			// per-eye (colorOffsetX = 0) and was written for Streamline's
+			// per-eye intermediates; here we're routing both eyes through one
+			// SBS texture so we override both offsets together.
+			for (uint32_t i = 0; i < 2; ++i) {
+				const uint32_t eyeOffsetX = i * p.eyeWidthIn;
+				upscaling.ClearHMDMask(Core::vrRenderSBS->uav.get(), depthSRV,
+					p.eyeWidthIn, p.eyeHeightIn, eyeOffsetX, eyeOffsetX);
+			}
+		}
+		ID3D11Resource* dlssColorSrc = (Core::vrRenderSBS ? Core::vrRenderSBS->resource.get() : p.colorSrc);
+
+		// Step 2b: DLSS reads from the mask-cleared SBS snapshot via extent offsets
+		// → per-eye output. sl::Extent field order is {top, left, width, height}.
 		for (uint32_t i = 0; i < 2; ++i) {
 			const auto& uv = *eyeUVs[i];
 			// Per-eye sizing.
@@ -197,15 +224,14 @@ namespace FoveatedRenderImpl
 			sl::Extent extentOut{ 0, 0, subOutW, subOutH };
 
 			streamline.EvaluateDLSS(vp, i,
-				p.colorSrc, Core::vrFasterColorOut[i]->resource.get(),
+				dlssColorSrc, Core::vrFasterColorOut[i]->resource.get(),
 				p.depthTexture, p.motionVectors,
 				p.reactiveMask, p.transparencyMask,
 				extentIn, extentOut, subOutW, subOutH);
 		}
 
-		// Step 3: Snapshot + Stretch DRS → kMAIN (subrect only)
+		// Step 3: Stretch DRS → kMAIN (subrect only) — snapshot reused from Step 2a.
 		if (!p.isFullEye) {
-			SnapshotSBS(p.colorSrc, p.renderW, p.renderH);
 			StretchDRSBothEyes(p.colorDstUAV, p.eyeWidthOut, p.eyeHeightOut, p.eyeWidthIn, p.eyeHeightIn, p.renderW, p.renderH);
 		}
 
