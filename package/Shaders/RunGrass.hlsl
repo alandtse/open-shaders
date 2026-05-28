@@ -606,8 +606,21 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 
 	// HasDirectionalShadows() admits Interior Sun cells; mirrors the
 	// same swap in Lighting.hlsl / Particle.hlsl.
-	if (ShadowSampling::HasDirectionalShadows())
+	if (ShadowSampling::HasDirectionalShadows()) {
+#			if defined(LIGHT_LIMIT_FIX)
+		// SLF suppresses the engine's screen-space shadow-mask pass, so
+		// shadowColor.x is no longer a valid directional shadow signal under
+		// LIGHT_LIMIT_FIX. Sample LLF's cascades directly, matching
+		// Lighting.hlsl / Particle.hlsl.
+		float2 rotation;
+		sincos(Math::TAU * screenNoise, rotation.y, rotation.x);
+		float2x2 rotationMatrix = float2x2(rotation.x, rotation.y, -rotation.y, rotation.x);
+		float3 worldPositionWS = input.WorldPosition.xyz + FrameBuffer::CameraPosAdjust[eyeIndex].xyz;
+		dirDetailedShadow *= LightLimitFix::GetDirectionalShadow(input.WorldPosition.xyz, worldPositionWS, rotationMatrix, eyeIndex);
+#			else
 		dirDetailedShadow *= shadowColor.x;
+#			endif
+	}
 
 #			if defined(SCREEN_SPACE_SHADOWS)
 	if (ShadowSampling::HasDirectionalShadows() && dirLightAngle >= 0.0)
@@ -852,8 +865,21 @@ PS_OUTPUT main(PS_INPUT input)
 
 	// HasDirectionalShadows() admits Interior Sun cells; mirrors the
 	// same swap in Lighting.hlsl / Particle.hlsl.
-	if (ShadowSampling::HasDirectionalShadows())
+	if (ShadowSampling::HasDirectionalShadows()) {
+#			if defined(LIGHT_LIMIT_FIX)
+		// SLF suppresses the engine's screen-space shadow-mask pass, so
+		// shadowColor.x is no longer a valid directional shadow signal under
+		// LIGHT_LIMIT_FIX. Sample LLF's cascades directly, matching
+		// Lighting.hlsl / Particle.hlsl.
+		float2 rotation;
+		sincos(Math::TAU * screenNoise, rotation.y, rotation.x);
+		float2x2 rotationMatrix = float2x2(rotation.x, rotation.y, -rotation.y, rotation.x);
+		float3 worldPositionWS = input.WorldPosition.xyz + FrameBuffer::CameraPosAdjust[eyeIndex].xyz;
+		dirDetailedShadow = LightLimitFix::GetDirectionalShadow(input.WorldPosition.xyz, worldPositionWS, rotationMatrix, eyeIndex);
+#			else
 		dirDetailedShadow = shadowColor.x;
+#			endif
+	}
 
 #			if defined(SCREEN_SPACE_SHADOWS)
 	if (ShadowSampling::HasDirectionalShadows())

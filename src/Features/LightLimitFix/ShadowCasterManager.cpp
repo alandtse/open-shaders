@@ -569,13 +569,17 @@ namespace ShadowCasterManager
 		//
 		// Under LIGHT_LIMIT_FIX (this fork's shipping configuration) the
 		// screen-space mask is not on the sun-shadow consumer path:
-		//   - Lighting.hlsl:2515 uses LightLimitFix::GetDirectionalShadow,
-		//     which samples DirectionalShadowCascades (t99) directly.
+		//   - Lighting.hlsl, Particle.hlsl, and RunGrass.hlsl all sample
+		//     LightLimitFix::GetDirectionalShadow, which reads
+		//     DirectionalShadowCascades (t99) directly.
 		//   - The cluster loop uses LightLimitFix::GetShadowLightShadow,
 		//     which samples kSHADOWMAPS slices directly.
 		// shadowColor.x is consulted only as a fallback past the cascade
 		// range and during the !LIGHT_LIMIT_FIX vanilla path. Dropping the
-		// mask therefore loses no functionality LLF provides.
+		// mask therefore loses no functionality LLF provides -- but every
+		// shader that reads shadowColor.x for directional shadow MUST route
+		// through GetDirectionalShadow under LIGHT_LIMIT_FIX, or it samples
+		// the stale/cleared mask and decouples from the sun shadow.
 		//
 		// Critically, unlike the previous Hook_DisableColorMask, we do NOT
 		// call ReturnShadowmaps. That side-effect cleared shadowmap-

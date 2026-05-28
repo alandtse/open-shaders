@@ -796,6 +796,15 @@ PS_OUTPUT main(PS_INPUT input)
 				continue;
 		}
 
+		// Effect meshes are alpha-blended and lack reliable occluder depth
+		// at their visible surface, so sampling LLF's shadow atlas with the
+		// effect's world position produces incorrect dark imprints from
+		// nearby shadow-casting bulbs. Shadow-flagged lights still contribute
+		// lighting through the other passes; only the effect-mesh shadow
+		// attenuation is skipped here.
+		if (light.lightFlags & LightLimitFix::LightFlags::Shadow)
+			continue;
+
 		float3 lightDirection = light.positionWS[eyeIndex].xyz - input.WorldPosition.xyz;
 		float lightDist = length(lightDirection);
 
@@ -810,15 +819,8 @@ PS_OUTPUT main(PS_INPUT input)
 		float intensityMultiplier = 1 - intensityFactor * intensityFactor;
 #			endif
 
-		float shadowMul = 1.0;
-		if (inWorld && (light.lightFlags & LightLimitFix::LightFlags::Shadow)) {
-			bool shadowCoverage = false;
-			float3 worldPositionWS = input.WorldPosition.xyz + FrameBuffer::CameraPosAdjust[eyeIndex].xyz;
-			shadowMul = LightLimitFix::GetShadowLightShadow(light.shadowMapIndex, worldPositionWS, rotationMatrix, shadowCoverage);
-		}
-
 		const bool isPointLightLinear = light.lightFlags & LightLimitFix::LightFlags::Linear;
-		float3 lightColor = Color::PointLight(light.color.xyz, isPointLightLinear) * intensityMultiplier * 0.5 * light.fade * Color::EffectLightingMult() * shadowMul;
+		float3 lightColor = Color::PointLight(light.color.xyz, isPointLightLinear) * intensityMultiplier * 0.5 * light.fade * Color::EffectLightingMult();
 		propertyColor += lightColor;
 	}
 
