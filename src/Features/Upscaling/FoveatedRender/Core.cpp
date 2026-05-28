@@ -473,8 +473,13 @@ namespace FoveatedRenderImpl::Ops
 		// Cache an SRV on the game's mvec resource (no copy needed)
 		if (Core::vrMvecSRVOwner != mvecSrc) {
 			Core::vrMvecSRV = nullptr;
+			winrt::com_ptr<ID3D11Texture2D> mvecTex;
+			if (FAILED(mvecSrc->QueryInterface(IID_PPV_ARGS(mvecTex.put())))) {
+				logger::error("[FOVEATED] EnsureTemporalResources: mvecSrc is not an ID3D11Texture2D");
+				return;
+			}
 			D3D11_TEXTURE2D_DESC desc;
-			static_cast<ID3D11Texture2D*>(mvecSrc)->GetDesc(&desc);
+			mvecTex->GetDesc(&desc);
 			D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
 			srvDesc.Format = desc.Format;
 			srvDesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
@@ -714,6 +719,8 @@ namespace FoveatedRenderImpl::Ops
 			cbDesc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
 			if (FAILED(device->CreateBuffer(&cbDesc, nullptr, Core::vrSubrectBlendCB.put()))) {
 				logger::error("[FOVEATED] Failed to create SubrectBlend constant buffer");
+				// Drop the CS so the next frame retries the full init block.
+				Core::vrSubrectBlendCS = nullptr;
 				D3D11_BOX srcBox = { srcOffsetX, 0, 0, srcOffsetX + subWidth, subHeight, 1 };
 				context->CopySubresourceRegion(dst, 0, dstOffsetX, dstOffsetY, 0, dlssSrc, 0, &srcBox);
 				return;
@@ -727,8 +734,14 @@ namespace FoveatedRenderImpl::Ops
 		// Get or create cached SRV on the DLSS output
 		if (Core::vrBlendSrcSRVOwner != dlssSrc) {
 			Core::vrBlendSrcSRV = nullptr;
+			winrt::com_ptr<ID3D11Texture2D> dlssTex;
+			if (FAILED(dlssSrc->QueryInterface(IID_PPV_ARGS(dlssTex.put())))) {
+				D3D11_BOX srcBox = { srcOffsetX, 0, 0, srcOffsetX + subWidth, subHeight, 1 };
+				context->CopySubresourceRegion(dst, 0, dstOffsetX, dstOffsetY, 0, dlssSrc, 0, &srcBox);
+				return;
+			}
 			D3D11_TEXTURE2D_DESC desc;
-			static_cast<ID3D11Texture2D*>(dlssSrc)->GetDesc(&desc);
+			dlssTex->GetDesc(&desc);
 			D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
 			srvDesc.Format = desc.Format;
 			srvDesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;

@@ -38,8 +38,9 @@ RWTexture2D<float4> OutputTex : register(u0);  // New history (ping-pong write)
 	float eyeMinX = (currentUV.x < halfW) ? 0.0 : halfW;
 	float eyeMaxX = eyeMinX + halfW;
 	float texelHalfX = 0.5 / (float)TexWidth;
+	float texelHalfY = 0.5 / (float)TexHeight;
 	reprojUV.x = clamp(reprojUV.x, eyeMinX + texelHalfX, eyeMaxX - texelHalfX);
-	reprojUV.y = clamp(reprojUV.y, 0.0, 1.0);
+	reprojUV.y = clamp(reprojUV.y, texelHalfY, 1.0 - texelHalfY);
 
 	// Bilinear sample history at reprojected position
 	float4 history = HistoryTex.SampleLevel(BilinearSampler, reprojUV, 0);
