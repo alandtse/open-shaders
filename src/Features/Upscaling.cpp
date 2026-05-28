@@ -4,9 +4,14 @@
 #include "HDRDisplay.h"
 #include "Hooks.h"
 #include "State.h"
-#include "Upscaling/PerfMode.h"
 #include "Upscaling/DX12SwapChain.h"
 #include "Upscaling/FidelityFX.h"
+#include "Upscaling/FoveatedRender.h"
+#include "Upscaling/FoveatedRender/Bridge.h"
+#include "Upscaling/FoveatedRender/Core.h"
+#include "Upscaling/FoveatedRender/Postprocess.h"
+#include "Upscaling/FoveatedRender/Preprocess.h"
+#include "Upscaling/PerfMode.h"
 #include "Upscaling/Streamline.h"
 #include "Utils/UI.h"
 #include <Windows.h>
@@ -272,7 +277,7 @@ void Upscaling::DrawSettings()
 			// Derive scale from live `settings.qualityMode` — `resolution-
 			// Scale` is locked to the PerfMode boot snapshot, so reusing it
 			// here would mismatch the slider position the user sees.
-			const float displayScale = 1.0f / ffxFsr3GetUpscaleRatioFromQualityMode((FfxFsr3QualityMode)std::clamp<uint>(settings.qualityMode, 0u, 4u));
+			const float displayScale = 1.0f / GetQualityModeRatio(settings.qualityMode);
 			std::string labelWithScale = std::format("{} ( {:.2f}x )", baseLabel, displayScale);
 
 			ImGui::SliderInt("Upscale Preset", (int*)&settings.qualityMode, 0, 4, labelWithScale.c_str());
@@ -286,7 +291,7 @@ void Upscaling::DrawSettings()
 				const char* bootLabel = (upscaleMethod == UpscaleMethod::kDLSS) ? upscalePresetsDLSS[std::clamp<int>(4 - (int)bm, 0, 4)] : upscalePresets[std::clamp<int>(4 - (int)bm, 0, 4)];
 				Util::Text::RestartNeeded(
 					"Pending restart: currently active = %s ( %.2fx ). Change applies after game restart.",
-					bootLabel, 1.0f / ffxFsr3GetUpscaleRatioFromQualityMode((FfxFsr3QualityMode)bm));
+					bootLabel, 1.0f / GetQualityModeRatio(bm));
 			}
 		}
 
@@ -472,6 +477,25 @@ void Upscaling::DrawSettings()
 		ImGui::TreePop();
 	}
 
+	// FoveatedRender: foveated subrect DLSS — VR-only, opt-in mode of this
+	// feature. Like DLSSperf, lives here rather than as a peer Feature so
+	// all DLSS surfaces share one settings panel. Enable lives at the top
+	// level for discoverability; the body knobs are collapsed by default and
+	// greyed out until the user opts in.
+	if (globals::game::isVR) {
+		ImGui::Separator();
+		foveatedRender.DrawEnable();
+		const bool enabled = foveatedRender.settings.enabled != 0;
+		if (!enabled)
+			ImGui::BeginDisabled();
+		if (ImGui::TreeNodeEx("Foveated DLSS — Tuning")) {
+			foveatedRender.DrawSettings();
+			ImGui::TreePop();
+		}
+		if (!enabled)
+			ImGui::EndDisabled();
+	}
+
 	if (ImGui::TreeNodeEx("Backend Diagnostics")) {
 		// Streamline log level selection
 		const char* logLevels[] = { "Off", "Default", "Verbose" };
@@ -556,6 +580,11 @@ void Upscaling::DrawSettings()
 void Upscaling::SaveSettings(json& o_json)
 {
 	o_json = settings;
+	// Nest FoveatedRender's settings under a sub-key so they round-trip alongside
+	// Upscaling's own. Subrect controller persistence is owned by FoveatedRender.
+	json foveatedRenderJson;
+	foveatedRender.SaveSettings(foveatedRenderJson);
+	o_json["foveatedRender"] = foveatedRenderJson;
 	auto iniSettingCollection = globals::game::iniPrefSettingCollection;
 	if (iniSettingCollection) {
 		auto setting = iniSettingCollection->GetSetting("bUseTAA:Display");
@@ -567,6 +596,15 @@ void Upscaling::SaveSettings(json& o_json)
 
 void Upscaling::LoadSettings(json& o_json)
 {
+	// Pull FoveatedRender's nested block first so its absence doesn't fail the
+	// outer settings deserialize. FoveatedRender::ClampSettings touches sibling
+	// presetDLSS (cross-feature compat), so re-run it after `settings = o_json`
+	// below — otherwise the JSON re-assign overwrites the clamp and an
+	// incompatible preset slips through. (Copilot on PR #44.)
+	if (o_json.contains("foveatedRender")) {
+		foveatedRender.LoadSettings(o_json["foveatedRender"]);
+		o_json.erase("foveatedRender");
+	}
 	settings = o_json;
 
 	// Sanitize loaded settings to ensure enum indices are valid
@@ -587,6 +625,12 @@ void Upscaling::LoadSettings(json& o_json)
 		logger::warn("[Upscaling] Loaded presetDLSS {} out of range, resetting to 0 (Default)", settings.presetDLSS);
 		settings.presetDLSS = 0;
 	}
+	// Re-apply FoveatedRender's cross-feature clamp now that the JSON
+	// re-assign above has overwritten anything it set during its own
+	// LoadSettings (which fired before this block ran). Idempotent — no-op
+	// if FoveatedRender is inactive or the preset is already compatible.
+	// (Copilot on PR #44.)
+	foveatedRender.ClampSettings();
 	const float originalReflexFPSLimit = settings.reflexFPSLimit;
 	if (!std::isfinite(settings.reflexFPSLimit)) {
 		settings.reflexFPSLimit = 60.0f;
@@ -615,6 +659,7 @@ void Upscaling::LoadSettings(json& o_json)
 void Upscaling::RestoreDefaultSettings()
 {
 	settings = {};
+	foveatedRender.RestoreDefaultSettings();
 }
 
 void Upscaling::DataLoaded()
@@ -672,6 +717,10 @@ struct BSImageSpace_Init_FXAA
 };
 void Upscaling::PostPostLoad()
 {
+	// Subrect controller defaults + stereo flag (FoveatedRender is no longer a
+	// Feature subclass so we drive its lifecycle from here).
+	foveatedRender.PostPostLoad();
+
 	bool isGOG = !GetModuleHandle(L"steam_api64.dll");
 	stl::detour_thunk<MenuManagerDrawInterfaceStartHook>(REL::RelocationID(79947, 82084));
 
@@ -699,6 +748,19 @@ void Upscaling::PostPostLoad()
 	stl::detour_thunk<BSImageSpace_Init_FXAA>(REL::RelocationID(98974, 105626));
 
 	logger::info("[Upscaling] Installed hooks");
+}
+
+float Upscaling::GetQualityModeRatio(uint qualityMode)
+{
+	// Lower bound is 0, not 1: qualityMode=0 is DLAA / NATIVEAA (1.0x —
+	// render at display resolution). The FfxFsr3QualityMode enum header
+	// doesn't *declare* a 0 value, but the implementation delegates to
+	// FfxFsr3UpscalerQualityMode which has NATIVEAA=0 → 1.0f. Clamping to
+	// 1 would force DLAA into Quality (1.5x) and shrink the rendered
+	// region of kMAIN to 67%.
+	const float ratio = ffxFsr3GetUpscaleRatioFromQualityMode(
+		static_cast<FfxFsr3QualityMode>(std::clamp<uint>(qualityMode, 0u, 4u)));
+	return std::isfinite(ratio) && ratio > 0.0f ? ratio : 3.0f;
 }
 
 Upscaling::UpscaleMethod Upscaling::GetUpscaleMethod() const
@@ -1342,7 +1404,7 @@ void Upscaling::ConfigureUpscaling(RE::BSGraphics::State* a_viewport)
 			// Boot qualityMode under PerfMode so projection stays coherent
 			// with the engine RTs sized at install.
 			const uint32_t qm = globals::features::upscaling.perfMode.IsHookActive() ? bootSnapshot.Boot(&Settings::qualityMode) : settings.qualityMode;
-			float resolutionScaleBase = 1.0f / ffxFsr3GetUpscaleRatioFromQualityMode((FfxFsr3QualityMode)qm);
+			float resolutionScaleBase = 1.0f / GetQualityModeRatio(qm);
 
 			auto renderWidth = static_cast<int>(screenWidth * resolutionScaleBase);
 			auto renderHeight = static_cast<int>(screenHeight * resolutionScaleBase);
@@ -1480,6 +1542,7 @@ void Upscaling::SetupResources()
 
 void Upscaling::ClearShaderCache()
 {
+	foveatedRender.ClearShaderCache();
 	for (int i = 0; i < 5; ++i) {
 		encodeTexturesCS[i] = nullptr;  // com_ptr automatically releases
 	}
@@ -1909,7 +1972,42 @@ void Upscaling::Upscale()
 				logger::debug("[Upscaling] LoadingMenu close detected — rebuilding DLSS feature");
 				streamline.DestroyDLSSResources();
 			}
-			streamline.Upscale(main.texture, reactiveMaskTexture->resource.get(), transparencyCompositionMaskTexture->resource.get(), motionVectorCopyTexture->resource.get());
+
+			// PR-3 MVP-B: opt-in FoveatedRender route. When active, runs the
+			// per-eye DLSS dispatch with optional foveal subrect through
+			// FoveatedRenderImpl::Core; falls through to dev's standard path on
+			// any failure so users always see DLSS output (graceful
+			// degradation — no black frames if the enhancer preflights bad).
+			//
+			// Menu-skip: in menus the world stops producing fresh motion
+			// vectors and depth, but kMAIN keeps changing (UI plate composites).
+			// The route's subrect DLSS evaluate then accumulates temporal
+			// history against stale neighbourhood data and the subrect region
+			// renders as visible reconstruction garbage. Standard full-eye DLSS
+			// (the fall-through below) is robust to this because it reconstructs
+			// across the whole image — the foveated crop is what makes the
+			// stale-history bleed visible. Same menu-open predicate dev uses
+			// at Upscaling.cpp:1748 for ShouldUseFrameGenerationThisFrame.
+			auto* ui = globals::game::ui;
+			auto* st = globals::state;
+			const bool menuOpen = (ui && ui->GameIsPaused()) || (st && st->IsMainOrLoadingMenuOpen(ui));
+			bool routeHandled = false;
+			if (FoveatedRenderImpl::Bridge::IsRouteActive() && globals::game::isVR && !menuOpen) {
+				if (FoveatedRenderImpl::Preprocess::EncodeUpscalingTextures(*this)) {
+					routeHandled = FoveatedRenderImpl::Core::ExecuteVRDlssCore(streamline,
+						main.texture,
+						globals::game::renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kMAIN].texture,
+						reactiveMaskTexture->resource.get(),
+						transparencyCompositionMaskTexture->resource.get(),
+						motionVectorCopyTexture->resource.get());
+					if (!routeHandled) {
+						logger::warn("[FOVEATED] route preflight failed — falling through to standard DLSS path");
+					}
+				}
+			}
+			if (!routeHandled) {
+				streamline.Upscale(main.texture, reactiveMaskTexture->resource.get(), transparencyCompositionMaskTexture->resource.get(), motionVectorCopyTexture->resource.get());
+			}
 		} else if (upscaleMethod == UpscaleMethod::kFSR) {
 			// PerfMode bridge: when the engine RTs are shrunk to renderRes, FSR's displayRes
 			// output must land in perfMode.testTexture (the private displayRes target used for
@@ -2313,8 +2411,19 @@ void Upscaling::Main_PostProcessing::thunk(RE::ImageSpaceManager* a_this, uint32
 		upscaling.UpscaleDepth();
 	}
 
-	if (upscaleMethod == UpscaleMethod::kDLSS)
-		upscaling.ApplySharpening();
+	if (upscaleMethod == UpscaleMethod::kDLSS) {
+		// FoveatedRender's DLSS output doesn't land in sharpenerTexture the
+		// way dev's path does (the route writes to its own per-eye intermediates
+		// and copies back to kMAIN/testTexture), so dev's zero-copy
+		// ApplySharpening can't read sharpenerTexture. Route through
+		// Postprocess::ApplyDlssSharpening which does the kMAIN → sharpener →
+		// kMAIN round-trip. Both paths honor sharpnessDLSS=0 to disable RCAS.
+		if (FoveatedRenderImpl::Bridge::IsRouteActive()) {
+			FoveatedRenderImpl::Postprocess::ApplyDlssSharpening(upscaling);
+		} else {
+			upscaling.ApplySharpening();
+		}
+	}
 
 	auto imageSpaceManager = RE::ImageSpaceManager::GetSingleton();
 	GET_INSTANCE_MEMBER(BSImagespaceShaderISTemporalAA, imageSpaceManager);

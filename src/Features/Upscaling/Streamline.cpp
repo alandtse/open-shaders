@@ -10,8 +10,8 @@
 #include "../../State.h"
 #include "../../Util.h"
 #include "../Upscaling.h"
-#include "PerfMode.h"
 #include "DX12SwapChain.h"
+#include "PerfMode.h"
 
 namespace
 {
@@ -417,7 +417,7 @@ bool Streamline::IsRTXAndBelow40Series(IDXGIAdapter* a_adapter)
 	return false;
 }
 
-void Streamline::SetDLSSOptions(sl::ViewportHandle p_viewport, uint32_t width)
+void Streamline::SetDLSSOptions(sl::ViewportHandle p_viewport, uint32_t width, uint32_t height)
 {
 	sl::DLSSOptions dlssOptions{};
 
@@ -452,7 +452,10 @@ void Streamline::SetDLSSOptions(sl::ViewportHandle p_viewport, uint32_t width)
 	const bool dlssperfActive = perfMode.IsHookActive() && perfMode.GetTestTexture();
 
 	dlssOptions.outputWidth = width;
-	dlssOptions.outputHeight = dlssperfActive ? (uint)perfMode.GetDisplayScreenSize().y : (uint)state->screenSize.y;
+	// height==0 → caller is the standard upscale path; use full per-eye DisplayRes height.
+	// Non-zero is the FoveatedRender subrect height — must match extentOut.height or NGX
+	// produces zeroed output. See SetDLSSOptions decl in Streamline.h for the rationale.
+	dlssOptions.outputHeight = height != 0 ? height : (dlssperfActive ? (uint)perfMode.GetDisplayScreenSize().y : (uint)state->screenSize.y);
 
 	// Detect HDR from kMAIN format at runtime -- VR kMAIN may be 8-bit while SE is FP16
 	{
@@ -515,7 +518,8 @@ void Streamline::SetDLSSOptions(sl::ViewportHandle p_viewport, uint32_t width)
 void Streamline::EvaluateDLSS(sl::ViewportHandle vp, uint32_t eyeIndex,
 	ID3D11Resource* colorIn, ID3D11Resource* colorOut, ID3D11Resource* depth,
 	ID3D11Resource* mvec, ID3D11Resource* reactiveMask, ID3D11Resource* transparencyMask,
-	const sl::Extent& extentIn, const sl::Extent& extentOut, uint32_t outputWidth)
+	const sl::Extent& extentIn, const sl::Extent& extentOut, uint32_t outputWidth,
+	uint32_t outputHeight)
 {
 	auto context = globals::d3d::context;
 
@@ -552,7 +556,7 @@ void Streamline::EvaluateDLSS(sl::ViewportHandle vp, uint32_t eyeIndex,
 		}
 	};
 
-	SetDLSSOptions(vp, outputWidth);
+	SetDLSSOptions(vp, outputWidth, outputHeight);
 
 	sl::ResourceTag tags[] = {
 		{ &colorInRes, sl::kBufferTypeScalingInputColor, sl::ResourceLifecycle::eOnlyValidNow, &extentIn },

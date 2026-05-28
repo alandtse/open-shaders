@@ -86,11 +86,17 @@ public:
 	ReflexOptionsCache reflexOptionsCache{};
 	uint32_t lastReflexSleepFrame = UINT32_MAX;
 
-	// Helper: Execute DLSS for a single viewport with given resources
+	// Helper: Execute DLSS for a single viewport with given resources.
+	// outputHeight defaults to 0 → SetDLSSOptions uses full per-eye DisplayRes height
+	// (matches the standard upscale path where every eval is full eye). FoveatedRender's
+	// subrect path must pass the actual subrect height so DLSS isn't configured for
+	// `subOutW × eyeHeightOut` while extentOut says `subOutW × subOutH` — that mismatch
+	// makes NGX return zeroed output and the subrect region renders black.
 	void EvaluateDLSS(sl::ViewportHandle vp, uint32_t eyeIndex,
 		ID3D11Resource* colorIn, ID3D11Resource* colorOut, ID3D11Resource* depth,
 		ID3D11Resource* mvec, ID3D11Resource* reactiveMask, ID3D11Resource* transparencyMask,
-		const sl::Extent& extentIn, const sl::Extent& extentOut, uint32_t outputWidth);
+		const sl::Extent& extentIn, const sl::Extent& extentOut, uint32_t outputWidth,
+		uint32_t outputHeight = 0);
 
 	// Cached DLL version info for Streamline plugin directory
 	static std::vector<std::pair<std::string, std::string>> dllVersions;
@@ -106,7 +112,9 @@ public:
 
 	bool IsRTXAndBelow40Series(IDXGIAdapter* a_adapter);
 
-	void SetDLSSOptions(sl::ViewportHandle p_viewport, uint32_t width);
+	// height = 0 → use full per-eye DisplayRes height (default for the standard
+	// upscale path). Non-zero is the subrect height the FoveatedRender route needs.
+	void SetDLSSOptions(sl::ViewportHandle p_viewport, uint32_t width, uint32_t height = 0);
 
 	void Upscale(ID3D11Resource* a_upscalingTexture, ID3D11Resource* a_reactiveMask, ID3D11Resource* a_transparencyCompositionMask, ID3D11Resource* a_motionVectors);
 	void UpdateReflex();

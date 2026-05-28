@@ -8,6 +8,7 @@
 #include "Globals.h"
 #include "Menu.h"
 #include "Utils/FileSystem.h"
+#include "Utils/Subrect.h"
 #include <DirectXTex.h>
 #include <PCH.h>
 #include <algorithm>
@@ -273,35 +274,6 @@ namespace
 		       combo[0].GetKey() == VK_SNAPSHOT;
 	}
 
-	// Blend state used around the preview's ImGui::Image draw. Two regression
-	// risks if this is changed:
-	//   1. BlendEnable must stay FALSE - the source texture carries non-1 alpha
-	//      where Skyrim composited UI plates; default SRC_ALPHA blend lets the
-	//      host window background show through (visible on the desktop mirror).
-	//   2. WriteMask must exclude alpha (RGB only). In VR, Skyrim's menu UI
-	//      shader recomposites our menu plate over the SBS framebuffer with
-	//      alpha blending; writing texture alpha into the menu plate RT
-	//      produces a cutout visible only through the HMD. RGB-only writes
-	//      leave the plate's pre-cleared alpha=1 in place.
-	// Paired with ImDrawCallback_ResetRenderState queued by Subrect::DrawEditor
-	// immediately after the image draw.
-	void OpaquePreviewBlendCallback(const ImDrawList*, const ImDrawCmd*)
-	{
-		static winrt::com_ptr<ID3D11BlendState> opaqueBlend;
-		if (!opaqueBlend) {
-			D3D11_BLEND_DESC desc{};
-			desc.RenderTarget[0].BlendEnable = FALSE;
-			desc.RenderTarget[0].RenderTargetWriteMask =
-				D3D11_COLOR_WRITE_ENABLE_RED |
-				D3D11_COLOR_WRITE_ENABLE_GREEN |
-				D3D11_COLOR_WRITE_ENABLE_BLUE;
-			globals::d3d::device->CreateBlendState(&desc, opaqueBlend.put());
-		}
-		if (opaqueBlend) {
-			globals::d3d::context->OMSetBlendState(opaqueBlend.get(), nullptr, 0xFFFFFFFF);
-		}
-	}
-
 	std::filesystem::path BuildScreenshotPath(const std::string& screenshotPath)
 	{
 		SYSTEMTIME st;
@@ -429,7 +401,7 @@ void ScreenshotFeature::DrawSettings()
 		}
 	}
 
-	subrect.DrawEditor(previewView, src.texture, 1.0f, 0.0f, OpaquePreviewBlendCallback);
+	subrect.DrawEditor(previewView, src.texture, 1.0f, 0.0f, Util::Subrect::OpaquePreviewBlendCallback);
 }
 
 void ScreenshotFeature::EnsurePreviewCache(ID3D11Texture2D* sourceTexture)

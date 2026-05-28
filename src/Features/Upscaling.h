@@ -1,9 +1,10 @@
 #pragma once
 
 #include "Feature.h"
-#include "Upscaling/PerfMode.h"
 #include "Upscaling/DX12SwapChain.h"
 #include "Upscaling/FidelityFX.h"
+#include "Upscaling/FoveatedRender.h"
+#include "Upscaling/PerfMode.h"
 #include "Upscaling/RCAS/RCAS.h"
 #include "Upscaling/Streamline.h"
 #include "Utils/BootSnapshot.h"
@@ -160,6 +161,16 @@ public:
 
 	UpscaleMethod GetUpscaleMethod() const;
 
+	/// Render-to-display scale ratio for a quality mode index
+	/// (1=Quality, 2=Balanced, 3=Performance, 4=UltraPerformance).
+	/// Single source of truth across DLSS, FSR, and FoveatedRender paths:
+	/// the four "quality preset" ratios (1.5/1.7/2.0/3.0) are aligned across
+	/// DLSS and FSR3 by NVIDIA's DLSS Programming Guide and FFX's
+	/// FfxFsr3QualityMode enum, so all upscalers in this plugin route their
+	/// quality lookups through here rather than duplicating the table. Returns
+	/// 3.0 (UltraPerformance) on out-of-range input.
+	static float GetQualityModeRatio(uint qualityMode);
+
 	void CheckResources(UpscaleMethod a_upscalemethod);
 	void CreateUpscalingTextureResources(UpscaleMethod a_upscalemethod);
 	void DestroyUpscalingTextureResources(UpscaleMethod a_upscalemethod);
@@ -234,8 +245,9 @@ public:
 	static inline Streamline streamline;
 	static inline FidelityFX fidelityFX;  ///< Only for frame generation
 	static inline DX12SwapChain dx12SwapChain;
-	static inline RCAS rcas;          ///< Standalone RCAS sharpening for DLSS
-	static inline PerfMode perfMode;  ///< VR-only: render engine at upscaled-render res
+	static inline RCAS rcas;                      ///< Standalone RCAS sharpening for DLSS
+	static inline PerfMode perfMode;              ///< VR-only: render engine at upscaled-render res
+	static inline FoveatedRender foveatedRender;  ///< VR-only: foveated subrect DLSS
 
 	winrt::com_ptr<ID3D11PixelShader> copyDepthToSharedBufferPS;
 

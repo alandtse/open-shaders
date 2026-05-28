@@ -5,6 +5,10 @@
 #include <d3d11.h>
 #include <imgui.h>
 
+// OpaquePreviewBlendCallback lives in Subrect_PreviewBlend.cpp — that TU
+// reaches into the plugin's d3d singletons, which the unit-test target
+// (tests/cpp pulls Subrect.cpp standalone) can't link against.
+
 namespace
 {
 	Util::Subrect::UVRegion ClampUV(Util::Subrect::UVRegion uv)
