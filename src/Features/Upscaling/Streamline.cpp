@@ -11,6 +11,7 @@
 #include "../../Util.h"
 #include "../Upscaling.h"
 #include "DX12SwapChain.h"
+#include "FoveatedRender/Bridge.h"
 #include "PerfMode.h"
 
 namespace
@@ -378,7 +379,12 @@ bool Streamline::CheckFrameConstants(sl::ViewportHandle p_viewport, uint32_t eye
 	slConstants.jitterOffset = { -jitter.x, -jitter.y };
 	slConstants.reset = sl::Boolean::eFalse;
 
-	slConstants.mvecScale = { 1.0f, 1.0f };
+	// Foveated subrect: motion vectors are authored at full-eye scale but DLSS
+	// processes a sub-region. Scale up so DLSS interprets them as subrect-local.
+	// Returns identity when foveated is inactive or subrect covers the full eye.
+	float mvecX = 1.0f, mvecY = 1.0f;
+	FoveatedRenderImpl::Bridge::ComputeMvecScale(mvecX, mvecY);
+	slConstants.mvecScale = { mvecX, mvecY };
 	slConstants.motionVectors3D = sl::Boolean::eFalse;
 	slConstants.motionVectorsInvalidValue = FLT_MIN;
 	slConstants.orthographicProjection = sl::Boolean::eFalse;
