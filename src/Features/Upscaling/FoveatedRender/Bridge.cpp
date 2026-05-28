@@ -54,15 +54,22 @@ void FoveatedRenderImpl::Bridge::ComputeMvecScale(float& outX, float& outY)
 		return;
 
 	auto& enhancer = globals::features::upscaling.foveatedRender;
+	const auto mode = enhancer.GetDlssMode();
 	const auto& uv = enhancer.subrectController.GetUV();  // PR-1 stereo Subrect: GetUV() == left-eye in stereo mode
 	const bool isFullEye = (uv.w >= 0.999f && uv.h >= 0.999f);
 
 	if (isFullEye)
 		return;
 
-	// Default + Faster both use per-eye DLSS calls (not strip-merged), so
-	// motion vectors scale by 1/UV.w on x.
-	outX = (uv.w > 0.0f) ? (1.0f / uv.w) : 1.0f;
+	// Extreme mode merges both eyes into one strip of width 2*subOutW;
+	// motion vectors authored at full-eye resolution must shrink by 1/(2·w)
+	// on x to land in strip space. Default and Faster keep per-eye sets, so
+	// x-scale is 1/UV.w.
+	if (mode == FoveatedRender::DlssMode::kExtreme) {
+		outX = (uv.w > 0.0f) ? (1.0f / (2.0f * uv.w)) : 1.0f;
+	} else {
+		outX = (uv.w > 0.0f) ? (1.0f / uv.w) : 1.0f;
+	}
 	outY = (uv.h > 0.0f) ? (1.0f / uv.h) : 1.0f;
 }
 

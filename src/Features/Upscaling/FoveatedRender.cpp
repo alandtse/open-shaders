@@ -13,7 +13,13 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	enabled,
 	dlssMode,
 	stretchMode,
-	debugVisualize);
+	peripheryBlurRadius,
+	debugVisualize,
+	peripheryAAMode,
+	peripheryTemporalAlpha,
+	subrectBlendMode,
+	subrectFeatherWidth,
+	subrectDitherStrength);
 
 // ============================================================================
 // Lifecycle
@@ -76,9 +82,15 @@ void FoveatedRender::RestoreDefaultSettings()
 void FoveatedRender::ClampSettings()
 {
 	settings.enabled = std::min(settings.enabled, 1u);
-	settings.dlssMode = std::min(settings.dlssMode, 1u);
+	settings.dlssMode = std::min(settings.dlssMode, 2u);
 	settings.stretchMode = std::min(settings.stretchMode, 2u);
 	settings.debugVisualize = std::min(settings.debugVisualize, 1u);
+	settings.peripheryAAMode = std::min(settings.peripheryAAMode, 1u);
+	settings.subrectBlendMode = std::min(settings.subrectBlendMode, 2u);
+	settings.peripheryBlurRadius = std::clamp(settings.peripheryBlurRadius, 0.5f, 4.0f);
+	settings.peripheryTemporalAlpha = std::clamp(settings.peripheryTemporalAlpha, 0.05f, 0.5f);
+	settings.subrectFeatherWidth = std::clamp(settings.subrectFeatherWidth, 2.0f, 128.0f);
+	settings.subrectDitherStrength = std::clamp(settings.subrectDitherStrength, 0.0f, 2.0f);
 	// Preset clamping reads from Upscaling::Settings now.
 	auto& sharedPreset = globals::features::upscaling.settings.presetDLSS;
 	sharedPreset = std::min(sharedPreset, 5u);
@@ -130,6 +142,7 @@ bool FoveatedRender::IsPresetCompatibleWithMode(uint presetIndex) const
 {
 	// Preset indices: 0=Default, 1=J, 2=K, 3=L, 4=M, 5=F
 	// Faster mode: J(1) and K(2) are incompatible.
+	// Extreme mode: all presets allowed (matches original PR's permissive stance).
 	if (GetDlssMode() == DlssMode::kFaster) {
 		return presetIndex != 1 && presetIndex != 2;
 	}
@@ -191,7 +204,6 @@ void FoveatedRender::DrawEnable()
 
 void FoveatedRender::DrawSettings()
 {
-	static const char* dlssModes[] = { "Default", "Faster" };
 	static const char* stretchModes[] = { "Bilinear", "Point", "Gaussian Blur" };
 
 	ClampSettings();
@@ -218,16 +230,20 @@ void FoveatedRender::DrawSettings()
 				"DLSS reads kMAIN directly via extent offsets, so bilinear sampling can touch 1-2\n"
 				"texels of the neighboring eye near the SBS midline. We snapshot kMAIN once and\n"
 				"clear the HMD hidden-area ring to prevent sky-blue bleed on fast head motion.\n"
-				"Presets J and K are unavailable — switching here auto-clamps preset to L.");
+				"Presets J and K are unavailable — switching here auto-clamps preset to L.\n"
+				"\n"
+				"Extreme — experimental: both eyes merged into one strip texture, 1 DLSS evaluate.\n"
+				"Saves DLSS dispatch overhead but artifacts are likely. Not recommended for regular use.");
 		}
 
+		static const char* dlssModes[] = { "Default", "Faster", "Extreme (not recommended)" };
 		uint prevMode = settings.dlssMode;
-		ImGui::SliderInt("DLSS Mode", reinterpret_cast<int*>(&settings.dlssMode), 0, 1, dlssModes[settings.dlssMode]);
+		ImGui::SliderInt("DLSS Mode", reinterpret_cast<int*>(&settings.dlssMode), 0, 2, dlssModes[std::min(settings.dlssMode, 2u)]);
 		if (settings.dlssMode != prevMode) {
 			const uint prevPreset = globals::features::upscaling.settings.presetDLSS;
 			ClampPresetToMode();
 			if (globals::features::upscaling.settings.presetDLSS != prevPreset) {
-				logger::info("[FOVEATED] DLSS preset clamped from {} to {} after Faster switch (J/K incompatible)",
+				logger::info("[FOVEATED] DLSS preset clamped from {} to {} after mode switch (J/K incompatible with Faster)",
 					prevPreset, globals::features::upscaling.settings.presetDLSS);
 			}
 		}
@@ -237,6 +253,11 @@ void FoveatedRender::DrawSettings()
 			break;
 		case DlssMode::kFaster:
 			ImGui::TextWrapped("SBS viewport: 1 snapshot + 2 mask clears, 2 evaluates. Presets J/K unavailable.");
+			break;
+		case DlssMode::kExtreme:
+			ImGui::PushStyleColor(ImGuiCol_Text, Util::Colors::GetWarning());
+			ImGui::TextWrapped("Combined strip: 1 evaluate. Artifacts likely — not recommended.");
+			ImGui::PopStyleColor();
 			break;
 		}
 
@@ -282,6 +303,62 @@ void FoveatedRender::DrawSettings()
 					"\n"
 					"Visual artifact: noticeable blur in the periphery. If your subrect is large this\n"
 					"is barely visible; if small, the blur is the dominant visual signal.");
+			}
+			ImGui::SliderFloat("Blur Radius", &settings.peripheryBlurRadius, 0.5f, 4.0f, "%.1f texels");
+			break;
+		}
+
+		// ── Periphery AA ──
+		ImGui::Separator();
+		ImGui::Text("Periphery AA");
+		if (auto _tt = Util::HoverTooltipWrapper()) {
+			ImGui::Text(
+				"Anti-flicker for the stretched periphery.\n"
+				"Temporal Smooth blends with motion-reprojected history to reduce shimmer.");
+		}
+		{
+			static const char* peripheryAAModes[] = { "None", "Temporal Smooth" };
+			ImGui::SliderInt("AA Mode", reinterpret_cast<int*>(&settings.peripheryAAMode), 0, 1, peripheryAAModes[settings.peripheryAAMode]);
+		}
+		switch (GetPeripheryAAMode()) {
+		case PeripheryAAMode::kNone:
+			ImGui::TextWrapped("No periphery anti-aliasing.");
+			break;
+		case PeripheryAAMode::kTemporalSmooth:
+			ImGui::TextWrapped("Motion-compensated temporal accumulation.");
+			ImGui::SliderFloat("Temporal Alpha", &settings.peripheryTemporalAlpha, 0.05f, 0.5f, "%.2f");
+			if (auto _tt = Util::HoverTooltipWrapper()) {
+				ImGui::Text("Current-frame blend weight. Lower = smoother (more history). Higher = more responsive.");
+			}
+			break;
+		}
+
+		// ── Subrect Blend ──
+		ImGui::Separator();
+		ImGui::Text("Subrect Blend");
+		if (auto _tt = Util::HoverTooltipWrapper()) {
+			ImGui::Text(
+				"How the DLSS subrect is composited back onto the stretched background.\n"
+				"Feather/Dither hide the seam at subrect edges.");
+		}
+		{
+			static const char* blendModes[] = { "Hard Copy", "Feather", "Dither" };
+			ImGui::SliderInt("Blend Mode", reinterpret_cast<int*>(&settings.subrectBlendMode), 0, 2, blendModes[std::min(settings.subrectBlendMode, 2u)]);
+		}
+		switch (GetSubrectBlendMode()) {
+		case SubrectBlendMode::kHardCopy:
+			ImGui::TextWrapped("Sharp edge copy (CopySubresourceRegion).");
+			break;
+		case SubrectBlendMode::kFeather:
+			ImGui::TextWrapped("Smoothstep alpha ramp at edges.");
+			ImGui::SliderFloat("Feather Width", &settings.subrectFeatherWidth, 2.0f, 128.0f, "%.0f px");
+			break;
+		case SubrectBlendMode::kDither:
+			ImGui::TextWrapped("Noise-perturbed gradient in feather band.");
+			ImGui::SliderFloat("Dither Band", &settings.subrectFeatherWidth, 2.0f, 128.0f, "%.0f px");
+			ImGui::SliderFloat("Dither Strength", &settings.subrectDitherStrength, 0.0f, 2.0f, "%.2f");
+			if (auto _tt = Util::HoverTooltipWrapper()) {
+				ImGui::Text("0 = pure smooth, 1 = natural noise, 2 = aggressive dither.");
 			}
 			break;
 		}

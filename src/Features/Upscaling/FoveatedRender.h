@@ -27,6 +27,22 @@ struct FoveatedRender
 	{
 		kDefault = 0,  // Per-eye isolation: 2 extra resource sets, 2 evaluates. Supports F/J/K/L/M.
 		kFaster = 1,   // SBS viewport: tell SL to read subrect from SBS directly, no extra resources, 2 evaluates. J/K incompatible, only L/M/F.
+		kExtreme = 2,  // Combined strip: both eyes' subrect merged into one long texture, 1 extra resource set, 1 evaluate. Supports F/J/K/L/M. (Not recommended)
+	};
+
+	// Subrect blend mode when writing DLSS output back over stretched background
+	enum class SubrectBlendMode : uint
+	{
+		kHardCopy = 0,  // CopySubresourceRegion (no blending — sharp edge)
+		kFeather = 1,   // smoothstep alpha ramp over N pixels
+		kDither = 2,    // Blue-noise binary threshold in feather band
+	};
+
+	// Periphery AA algorithm applied after background stretch
+	enum class PeripheryAAMode : uint
+	{
+		kNone = 0,            // No dedicated periphery AA
+		kTemporalSmooth = 1,  // Motion-compensated temporal accumulation (anti-flicker)
 	};
 
 	// Stretch algorithm for DRS → full-eye background (used by SubrectStretchCS shader)
@@ -54,7 +70,13 @@ struct FoveatedRender
 		uint enabled = 0;  // opt-in: requires restart to take effect via LatchEnabled()
 		uint dlssMode = (uint)DlssMode::kDefault;
 		uint stretchMode = (uint)StretchMode::kGaussianBlur;
+		float peripheryBlurRadius = 1.0f;
 		uint debugVisualize = 0;  // tint cheap-stretched periphery red; runtime toggle
+		uint peripheryAAMode = (uint)PeripheryAAMode::kTemporalSmooth;
+		float peripheryTemporalAlpha = 0.16f;
+		uint subrectBlendMode = (uint)SubrectBlendMode::kDither;
+		float subrectFeatherWidth = 64.0f;
+		float subrectDitherStrength = 1.0f;
 	};
 
 	Settings settings;
@@ -90,8 +112,10 @@ struct FoveatedRender
 	/// (1=Quality .. 4=UltraPerformance). Delegates to the FFX SDK ratio table.
 	static float GetRenderScaleForQuality(uint qualityMode);
 
-	DlssMode GetDlssMode() const { return (DlssMode)std::min(settings.dlssMode, 1u); }
+	DlssMode GetDlssMode() const { return (DlssMode)std::min(settings.dlssMode, 2u); }
 	StretchMode GetStretchMode() const { return (StretchMode)std::min(settings.stretchMode, 2u); }
+	PeripheryAAMode GetPeripheryAAMode() const { return (PeripheryAAMode)std::min(settings.peripheryAAMode, 1u); }
+	SubrectBlendMode GetSubrectBlendMode() const { return (SubrectBlendMode)std::min(settings.subrectBlendMode, 2u); }
 
 	// Active getters: clamp + route shared fields through Upscaling::Settings.
 	uint GetActiveQualityMode() const;

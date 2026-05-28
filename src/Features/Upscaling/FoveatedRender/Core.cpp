@@ -397,8 +397,7 @@ namespace FoveatedRenderImpl::Ops
 			cb.data[6] = srcEyeWidth;
 			cb.data[7] = srcEyeHeight;
 			cb.stretchMode = enhSettings.stretchMode;
-			// Fixed 1.0 blur radius for the GaussianBlur stretch path.
-			cb.blurRadius = 1.0f;
+			cb.blurRadius = enhSettings.peripheryBlurRadius;
 			cb.debugVisualize = enhSettings.debugVisualize;
 			std::memcpy(mapped.pData, &cb, sizeof(cb));
 			context->Unmap(Core::vrSubrectStretchCB.get(), 0);
@@ -452,6 +451,206 @@ namespace FoveatedRenderImpl::Ops
 		Core::vrFasterOutH = subOutH;
 	}
 
+	void EnsureExtremeStripTextures(
+		uint32_t stripInW, uint32_t stripInH,
+		uint32_t stripOutW, uint32_t stripOutH,
+		ID3D11Resource* colorSrc, ID3D11Resource* mvecSrc,
+		ID3D11Resource* reactiveSrc, ID3D11Resource* transparencySrc)
+	{
+		bool needsRecreate = !Core::vrExtremeStripColorIn ||
+		                     Core::vrExtremeStripW != stripInW || Core::vrExtremeStripH != stripInH ||
+		                     Core::vrExtremeStripOutW != stripOutW || Core::vrExtremeStripOutH != stripOutH;
+		if (!needsRecreate) {
+			needsRecreate = (reactiveSrc && !Core::vrExtremeStripReactiveMask) ||
+			                (transparencySrc && !Core::vrExtremeStripTransparencyMask);
+		}
+		if (!needsRecreate)
+			return;
+
+		Core::vrExtremeStripColorIn = CreateTextureFromSource(colorSrc, stripInW, stripInH, false, true, true, "FoveatedRender::Strip_ColorIn");
+		Core::vrExtremeStripColorOut = CreateTextureFromSource(colorSrc, stripOutW, stripOutH, false, true, false, "FoveatedRender::Strip_ColorOut");
+
+		D3D11_TEXTURE2D_DESC depthDesc = {};
+		depthDesc.Width = stripInW;
+		depthDesc.Height = stripInH;
+		depthDesc.MipLevels = 1;
+		depthDesc.ArraySize = 1;
+		depthDesc.Format = DXGI_FORMAT_R32_TYPELESS;
+		depthDesc.SampleDesc.Count = 1;
+		depthDesc.Usage = D3D11_USAGE_DEFAULT;
+		depthDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+		Core::vrExtremeStripDepth = eastl::make_unique<Texture2D>(depthDesc);
+		Util::SetResourceName(Core::vrExtremeStripDepth->resource.get(), "FoveatedRender::Strip_Depth");
+		D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
+		srvDesc.Format = DXGI_FORMAT_R32_FLOAT;
+		srvDesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
+		srvDesc.Texture2D.MipLevels = 1;
+		Core::vrExtremeStripDepth->CreateSRV(srvDesc);
+
+		Core::vrExtremeStripMotionVectors = CreateTextureFromSource(mvecSrc, stripInW, stripInH, false, true, false, "FoveatedRender::Strip_MVec");
+		if (reactiveSrc)
+			Core::vrExtremeStripReactiveMask = CreateTextureFromSource(reactiveSrc, stripInW, stripInH, false, true, false, "FoveatedRender::Strip_Reactive");
+		else
+			Core::vrExtremeStripReactiveMask.reset();
+		if (transparencySrc)
+			Core::vrExtremeStripTransparencyMask = CreateTextureFromSource(transparencySrc, stripInW, stripInH, false, true, false, "FoveatedRender::Strip_Transparency");
+		else
+			Core::vrExtremeStripTransparencyMask.reset();
+
+		Core::vrExtremeStripW = stripInW;
+		Core::vrExtremeStripH = stripInH;
+		Core::vrExtremeStripOutW = stripOutW;
+		Core::vrExtremeStripOutH = stripOutH;
+	}
+
+	// ── Periphery Temporal Smooth ──
+	// Ping-pong between two history buffers at render-res SBS.
+	// Blends current frame with motion-reprojected history to reduce flicker
+	// in the stretched periphery region.
+	void EnsureTemporalResources(uint32_t renderW, uint32_t renderH, ID3D11Resource* colorSrc, ID3D11Resource* mvecSrc)
+	{
+		if (!Core::vrTemporalHistory[0] || Core::vrTemporalHistoryW != renderW || Core::vrTemporalHistoryH != renderH) {
+			for (int i = 0; i < 2; i++) {
+				Core::vrTemporalHistory[i] = CreateTextureFromSource(colorSrc, renderW, renderH, false, true, true,
+					i == 0 ? "FoveatedRender::TemporalHistA" : "FoveatedRender::TemporalHistB");
+			}
+			Core::vrTemporalHistoryW = renderW;
+			Core::vrTemporalHistoryH = renderH;
+			Core::vrTemporalHistoryValid = false;
+			Core::vrTemporalFrameIdx = 0;
+			Core::vrMvecSRV = nullptr;
+			Core::vrMvecSRVOwner = nullptr;
+		}
+
+		// Cache an SRV on the game's mvec resource (no copy needed)
+		if (Core::vrMvecSRVOwner != mvecSrc) {
+			Core::vrMvecSRV = nullptr;
+			D3D11_TEXTURE2D_DESC desc;
+			static_cast<ID3D11Texture2D*>(mvecSrc)->GetDesc(&desc);
+			D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
+			srvDesc.Format = desc.Format;
+			srvDesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
+			srvDesc.Texture2D.MostDetailedMip = 0;
+			srvDesc.Texture2D.MipLevels = 1;
+			if (FAILED(globals::d3d::device->CreateShaderResourceView(mvecSrc, &srvDesc, Core::vrMvecSRV.put()))) {
+				logger::error("[FOVEATED] Failed to create SRV on mvec resource for temporal smooth");
+			}
+			Core::vrMvecSRVOwner = mvecSrc;
+		}
+	}
+
+	ID3D11ShaderResourceView* TemporalSmoothSBS(uint32_t renderW, uint32_t renderH)
+	{
+		auto context = globals::d3d::context;
+
+		uint32_t readIdx = Core::vrTemporalFrameIdx & 1;
+		uint32_t writeIdx = readIdx ^ 1;
+
+		if (!Core::vrTemporalHistoryValid) {
+			// First frame: copy snapshot as seed history
+			context->CopyResource(Core::vrTemporalHistory[writeIdx]->resource.get(), Core::vrRenderSBS->resource.get());
+			Core::vrTemporalHistoryValid = true;
+			Core::vrTemporalFrameIdx++;
+			return Core::vrTemporalHistory[writeIdx]->srv.get();
+		}
+
+		// Lazy-create CS resources
+		if (!Core::vrTemporalSmoothCS) {
+			Core::vrTemporalSmoothCS.attach((ID3D11ComputeShader*)Util::CompileShader(
+				L"Data/Shaders/Upscaling/FoveatedRender/PeripheryTemporalSmoothCS.hlsl", {}, "cs_5_0"));
+			Util::SetResourceName(Core::vrTemporalSmoothCS.get(), "FoveatedRender::TemporalSmoothCS");
+
+			D3D11_BUFFER_DESC cbDesc = {};
+			cbDesc.ByteWidth = 16;  // 2 uint + 1 float + 1 uint pad
+			cbDesc.Usage = D3D11_USAGE_DYNAMIC;
+			cbDesc.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
+			cbDesc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
+			if (FAILED(globals::d3d::device->CreateBuffer(&cbDesc, nullptr, Core::vrTemporalSmoothCB.put()))) {
+				logger::error("[FOVEATED] Failed to create TemporalSmooth constant buffer");
+				return Core::vrRenderSBS->srv.get();
+			}
+			Util::SetResourceName(Core::vrTemporalSmoothCB.get(), "FoveatedRender::TemporalSmoothCB");
+
+			D3D11_SAMPLER_DESC sampDesc = {};
+			sampDesc.Filter = D3D11_FILTER_MIN_MAG_LINEAR_MIP_POINT;
+			sampDesc.AddressU = D3D11_TEXTURE_ADDRESS_CLAMP;
+			sampDesc.AddressV = D3D11_TEXTURE_ADDRESS_CLAMP;
+			sampDesc.AddressW = D3D11_TEXTURE_ADDRESS_CLAMP;
+			if (FAILED(globals::d3d::device->CreateSamplerState(&sampDesc, Core::vrTemporalSmoothSampler.put()))) {
+				logger::error("[FOVEATED] Failed to create TemporalSmooth sampler");
+				return Core::vrRenderSBS->srv.get();
+			}
+			Util::SetResourceName(Core::vrTemporalSmoothSampler.get(), "FoveatedRender::TemporalSmoothSampler");
+		}
+
+		if (!Core::vrTemporalSmoothCS || !Core::vrTemporalSmoothCB || !Core::vrTemporalSmoothSampler)
+			return Core::vrRenderSBS->srv.get();
+
+		D3D11_MAPPED_SUBRESOURCE mapped{};
+		if (SUCCEEDED(context->Map(Core::vrTemporalSmoothCB.get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped))) {
+			struct
+			{
+				uint32_t w;
+				uint32_t h;
+				float alpha;
+				uint32_t pad;
+			} cb;
+			cb.w = renderW;
+			cb.h = renderH;
+			cb.alpha = globals::features::upscaling.foveatedRender.settings.peripheryTemporalAlpha;
+			cb.pad = 0;
+			std::memcpy(mapped.pData, &cb, sizeof(cb));
+			context->Unmap(Core::vrTemporalSmoothCB.get(), 0);
+		}
+
+		context->CSSetShader(Core::vrTemporalSmoothCS.get(), nullptr, 0);
+		ID3D11Buffer* cbs[] = { Core::vrTemporalSmoothCB.get() };
+		context->CSSetConstantBuffers(0, 1, cbs);
+		ID3D11ShaderResourceView* srvs[] = {
+			Core::vrRenderSBS->srv.get(),
+			Core::vrTemporalHistory[readIdx]->srv.get(),
+			Core::vrMvecSRV.get()
+		};
+		context->CSSetShaderResources(0, 3, srvs);
+		ID3D11SamplerState* samplers[] = { Core::vrTemporalSmoothSampler.get() };
+		context->CSSetSamplers(0, 1, samplers);
+		ID3D11UnorderedAccessView* uavs[] = { Core::vrTemporalHistory[writeIdx]->uav.get() };
+		context->CSSetUnorderedAccessViews(0, 1, uavs, nullptr);
+
+		context->Dispatch((renderW + 7) / 8, (renderH + 7) / 8, 1);
+
+		ID3D11ShaderResourceView* nullSRVs[3] = {};
+		ID3D11UnorderedAccessView* nullUAV[1] = {};
+		ID3D11Buffer* nullCB[1] = {};
+		ID3D11SamplerState* nullSampler[1] = {};
+		context->CSSetShaderResources(0, 3, nullSRVs);
+		context->CSSetUnorderedAccessViews(0, 1, nullUAV, nullptr);
+		context->CSSetConstantBuffers(0, 1, nullCB);
+		context->CSSetSamplers(0, 1, nullSampler);
+		context->CSSetShader(nullptr, nullptr, 0);
+
+		Core::vrTemporalFrameIdx++;
+		return Core::vrTemporalHistory[writeIdx]->srv.get();
+	}
+
+	// ── Subrect Blend (feathered / dithered copy-back) ──
+
+	struct alignas(16) BlendCB
+	{
+		uint32_t DstOffsetX;
+		uint32_t DstOffsetY;
+		uint32_t SubWidth;
+		uint32_t SubHeight;
+		uint32_t BlendMode;
+		float FeatherWidth;
+		uint32_t FrameIndex;
+		uint32_t SrcOffsetX;
+		float DitherStrength;
+		uint32_t _pad0, _pad1, _pad2;
+	};
+
+	static uint32_t s_blendFrameIdx = 0;
+
 	uint64_t ComputeSubrectUVHash(const Util::Subrect::UVRegion& leftUV,
 		const Util::Subrect::UVRegion& rightUV, uint32_t mode)
 	{
@@ -500,12 +699,104 @@ namespace FoveatedRenderImpl::Ops
 		}
 	}
 
-	void BlendSubrectToOutput(ID3D11Resource* dlssSrc, ID3D11Resource* dst,
+	void BlendSubrectToOutput(ID3D11Resource* dlssSrc, ID3D11Resource* dst, ID3D11UnorderedAccessView* dstUAV,
 		uint32_t dstOffsetX, uint32_t dstOffsetY, uint32_t subWidth, uint32_t subHeight, uint32_t srcOffsetX)
 	{
 		auto context = globals::d3d::context;
-		D3D11_BOX srcBox = { srcOffsetX, 0, 0, srcOffsetX + subWidth, subHeight, 1 };
-		context->CopySubresourceRegion(dst, 0, dstOffsetX, dstOffsetY, 0, dlssSrc, 0, &srcBox);
+		auto& foveated = globals::features::upscaling.foveatedRender;
+		auto blendMode = foveated.GetSubrectBlendMode();
+
+		// Fast path: hard copy (original behaviour)
+		if (blendMode == FoveatedRender::SubrectBlendMode::kHardCopy) {
+			D3D11_BOX srcBox = { srcOffsetX, 0, 0, srcOffsetX + subWidth, subHeight, 1 };
+			context->CopySubresourceRegion(dst, 0, dstOffsetX, dstOffsetY, 0, dlssSrc, 0, &srcBox);
+			return;
+		}
+
+		if (!dstUAV) {
+			// No UAV available — fall back to hard copy
+			D3D11_BOX srcBox = { srcOffsetX, 0, 0, srcOffsetX + subWidth, subHeight, 1 };
+			context->CopySubresourceRegion(dst, 0, dstOffsetX, dstOffsetY, 0, dlssSrc, 0, &srcBox);
+			return;
+		}
+
+		auto device = globals::d3d::device;
+
+		// Lazy-create CS resources
+		if (!Core::vrSubrectBlendCS) {
+			Core::vrSubrectBlendCS.attach((ID3D11ComputeShader*)Util::CompileShader(
+				L"Data/Shaders/Upscaling/FoveatedRender/SubrectBlendCS.hlsl", {}, "cs_5_0"));
+			Util::SetResourceName(Core::vrSubrectBlendCS.get(), "FoveatedRender::SubrectBlendCS");
+
+			D3D11_BUFFER_DESC cbDesc = {};
+			cbDesc.ByteWidth = sizeof(BlendCB);
+			cbDesc.Usage = D3D11_USAGE_DYNAMIC;
+			cbDesc.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
+			cbDesc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
+			if (FAILED(device->CreateBuffer(&cbDesc, nullptr, Core::vrSubrectBlendCB.put()))) {
+				logger::error("[FOVEATED] Failed to create SubrectBlend constant buffer");
+				D3D11_BOX srcBox = { srcOffsetX, 0, 0, srcOffsetX + subWidth, subHeight, 1 };
+				context->CopySubresourceRegion(dst, 0, dstOffsetX, dstOffsetY, 0, dlssSrc, 0, &srcBox);
+				return;
+			}
+			Util::SetResourceName(Core::vrSubrectBlendCB.get(), "FoveatedRender::SubrectBlendCB");
+		}
+
+		if (!Core::vrSubrectBlendCS || !Core::vrSubrectBlendCB)
+			return;
+
+		// Get or create cached SRV on the DLSS output
+		if (Core::vrBlendSrcSRVOwner != dlssSrc) {
+			Core::vrBlendSrcSRV = nullptr;
+			D3D11_TEXTURE2D_DESC desc;
+			static_cast<ID3D11Texture2D*>(dlssSrc)->GetDesc(&desc);
+			D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
+			srvDesc.Format = desc.Format;
+			srvDesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
+			srvDesc.Texture2D.MostDetailedMip = 0;
+			srvDesc.Texture2D.MipLevels = 1;
+			if (FAILED(device->CreateShaderResourceView(dlssSrc, &srvDesc, Core::vrBlendSrcSRV.put()))) {
+				D3D11_BOX srcBox = { srcOffsetX, 0, 0, srcOffsetX + subWidth, subHeight, 1 };
+				context->CopySubresourceRegion(dst, 0, dstOffsetX, dstOffsetY, 0, dlssSrc, 0, &srcBox);
+				return;
+			}
+			Core::vrBlendSrcSRVOwner = dlssSrc;
+		}
+
+		{
+			D3D11_MAPPED_SUBRESOURCE mapped;
+			context->Map(Core::vrSubrectBlendCB.get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped);
+			BlendCB* cb = (BlendCB*)mapped.pData;
+			cb->DstOffsetX = dstOffsetX;
+			cb->DstOffsetY = dstOffsetY;
+			cb->SubWidth = subWidth;
+			cb->SubHeight = subHeight;
+			cb->BlendMode = (blendMode == FoveatedRender::SubrectBlendMode::kDither) ? 1 : 0;
+			cb->FeatherWidth = foveated.settings.subrectFeatherWidth;
+			cb->FrameIndex = s_blendFrameIdx++;
+			cb->SrcOffsetX = srcOffsetX;
+			cb->DitherStrength = foveated.settings.subrectDitherStrength;
+			cb->_pad0 = cb->_pad1 = cb->_pad2 = 0;
+			context->Unmap(Core::vrSubrectBlendCB.get(), 0);
+		}
+
+		context->CSSetShader(Core::vrSubrectBlendCS.get(), nullptr, 0);
+		ID3D11Buffer* cbs[] = { Core::vrSubrectBlendCB.get() };
+		context->CSSetConstantBuffers(0, 1, cbs);
+		ID3D11ShaderResourceView* srvs[] = { Core::vrBlendSrcSRV.get() };
+		context->CSSetShaderResources(0, 1, srvs);
+		ID3D11UnorderedAccessView* uavs[] = { dstUAV };
+		context->CSSetUnorderedAccessViews(0, 1, uavs, nullptr);
+
+		context->Dispatch((subWidth + 7) / 8, (subHeight + 7) / 8, 1);
+
+		ID3D11ShaderResourceView* nullSRV[1] = {};
+		ID3D11UnorderedAccessView* nullUAV[1] = {};
+		ID3D11Buffer* nullCB[1] = {};
+		context->CSSetShaderResources(0, 1, nullSRV);
+		context->CSSetUnorderedAccessViews(0, 1, nullUAV, nullptr);
+		context->CSSetConstantBuffers(0, 1, nullCB);
+		context->CSSetShader(nullptr, nullptr, 0);
 	}
 
 }  // namespace FoveatedRenderImpl::Ops
@@ -559,15 +850,33 @@ namespace FoveatedRenderImpl
 			vrSubrectMotionVectors[i].reset();
 			vrSubrectReactiveMask[i].reset();
 			vrSubrectTransparencyMask[i].reset();
+
+			vrTemporalHistory[i].reset();
+			vrFasterColorOut[i].reset();
 		}
 		vrSubrectInW = vrSubrectInH = vrSubrectOutW = vrSubrectOutH = 0;
+
+		vrExtremeStripColorIn.reset();
+		vrExtremeStripColorOut.reset();
+		vrExtremeStripDepth.reset();
+		vrExtremeStripMotionVectors.reset();
+		vrExtremeStripReactiveMask.reset();
+		vrExtremeStripTransparencyMask.reset();
+		vrExtremeStripW = vrExtremeStripH = vrExtremeStripOutW = vrExtremeStripOutH = 0;
 
 		vrRenderSBS.reset();
 		vrRenderSBSW = vrRenderSBSH = 0;
 
-		vrFasterColorOut[0].reset();
-		vrFasterColorOut[1].reset();
 		vrFasterOutW = vrFasterOutH = 0;
+
+		vrMvecSRV = nullptr;
+		vrMvecSRVOwner = nullptr;
+		vrTemporalHistoryW = vrTemporalHistoryH = 0;
+		vrTemporalFrameIdx = 0;
+		vrTemporalHistoryValid = false;
+
+		vrBlendSrcSRV = nullptr;
+		vrBlendSrcSRVOwner = nullptr;
 
 		activeSubrectUVHash = 0;
 	}
@@ -577,5 +886,12 @@ namespace FoveatedRenderImpl
 		vrSubrectStretchCS = nullptr;
 		vrSubrectStretchCB = nullptr;
 		vrSubrectStretchSampler = nullptr;
+
+		vrTemporalSmoothCS = nullptr;
+		vrTemporalSmoothCB = nullptr;
+		vrTemporalSmoothSampler = nullptr;
+
+		vrSubrectBlendCS = nullptr;
+		vrSubrectBlendCB = nullptr;
 	}
 }

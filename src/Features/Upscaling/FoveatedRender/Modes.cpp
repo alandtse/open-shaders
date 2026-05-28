@@ -1,5 +1,5 @@
 // ============================================================================
-// Modes.cpp — Default / Faster DLSS execution strategies
+// Modes.cpp — Default / Faster / Extreme DLSS execution strategies
 // ============================================================================
 //
 // Each mode composes Ops primitives (snapshot, stretch, crop, blend…) in a
@@ -41,6 +41,8 @@ namespace FoveatedRenderImpl
 		switch (p.mode) {
 		case FoveatedRender::DlssMode::kFaster:
 			return ExecuteFasterMode(streamline, p);
+		case FoveatedRender::DlssMode::kExtreme:
+			return ExecuteExtremeMode(streamline, p);
 		default:
 			return ExecuteDefaultMode(streamline, p);
 		}
@@ -99,7 +101,15 @@ namespace FoveatedRenderImpl
 		// Snapshot + Stretch DRS → kMAIN (fill full-eye background)
 		SnapshotSBS(p.colorSrc, p.renderW, p.renderH);
 
-		StretchDRSBothEyes(p.colorDstUAV, p.eyeWidthOut, p.eyeHeightOut, p.eyeWidthIn, p.eyeHeightIn, p.renderW, p.renderH);
+		// Periphery temporal smooth: blend with reprojected history before stretch
+		// so the periphery gets temporal AA that DLSS doesn't cover for the cropped area.
+		ID3D11ShaderResourceView* stretchSrc = nullptr;
+		if (globals::features::upscaling.foveatedRender.GetPeripheryAAMode() == FoveatedRender::PeripheryAAMode::kTemporalSmooth) {
+			EnsureTemporalResources(p.renderW, p.renderH, p.colorSrc, p.motionVectors);
+			stretchSrc = TemporalSmoothSBS(p.renderW, p.renderH);
+		}
+
+		StretchDRSBothEyes(p.colorDstUAV, p.eyeWidthOut, p.eyeHeightOut, p.eyeWidthIn, p.eyeHeightIn, p.renderW, p.renderH, stretchSrc);
 
 		// Crop subrect per-eye from snapshot (not kMAIN which was overwritten by stretch)
 		auto context = globals::d3d::context;
@@ -145,7 +155,7 @@ namespace FoveatedRenderImpl
 			uint32_t dstCropX = (uint32_t)(uv.x * p.eyeWidthOut);
 			uint32_t dstCropY = (uint32_t)(uv.y * p.eyeHeightOut);
 			uint32_t dstX = (i == 1 ? p.eyeWidthOut : 0) + dstCropX;
-			BlendSubrectToOutput(Core::vrSubrectColorOut[i]->resource.get(), p.colorDst,
+			BlendSubrectToOutput(Core::vrSubrectColorOut[i]->resource.get(), p.colorDst, p.colorDstUAV,
 				dstX, dstCropY, subOutW, subOutH);
 		}
 
@@ -232,7 +242,13 @@ namespace FoveatedRenderImpl
 
 		// Step 3: Stretch DRS → kMAIN (subrect only) — snapshot reused from Step 2a.
 		if (!p.isFullEye) {
-			StretchDRSBothEyes(p.colorDstUAV, p.eyeWidthOut, p.eyeHeightOut, p.eyeWidthIn, p.eyeHeightIn, p.renderW, p.renderH);
+			// Periphery temporal smooth for the stretched periphery.
+			ID3D11ShaderResourceView* stretchSrc = nullptr;
+			if (globals::features::upscaling.foveatedRender.GetPeripheryAAMode() == FoveatedRender::PeripheryAAMode::kTemporalSmooth) {
+				EnsureTemporalResources(p.renderW, p.renderH, p.colorSrc, p.motionVectors);
+				stretchSrc = TemporalSmoothSBS(p.renderW, p.renderH);
+			}
+			StretchDRSBothEyes(p.colorDstUAV, p.eyeWidthOut, p.eyeHeightOut, p.eyeWidthIn, p.eyeHeightIn, p.renderW, p.renderH, stretchSrc);
 		}
 
 		// Step 4: Copy DLSS output back (with optional blend)
@@ -245,8 +261,96 @@ namespace FoveatedRenderImpl
 			uint32_t dstCropX = p.isFullEye ? 0 : (uint32_t)(uv.x * p.eyeWidthOut);
 			uint32_t dstCropY = p.isFullEye ? 0 : (uint32_t)(uv.y * p.eyeHeightOut);
 			uint32_t dstX = (i == 1 ? p.eyeWidthOut : 0) + dstCropX;
-			BlendSubrectToOutput(Core::vrFasterColorOut[i]->resource.get(), p.colorDst,
+			BlendSubrectToOutput(Core::vrFasterColorOut[i]->resource.get(), p.colorDst, p.colorDstUAV,
 				dstX, dstCropY, subOutW, subOutH);
+		}
+
+		return true;
+	}
+
+	// ── Extreme mode: combined strip, 1 resource set, 1 evaluate ──
+	// Both eyes' subrects merged horizontally into one long texture. Trades a
+	// pre-DLSS copy for a single Streamline evaluate (vs Default/Faster's two).
+
+	bool Core::ExecuteExtremeMode(Streamline& streamline, const VRDlssParams& p)
+	{
+		const Util::Subrect::UVRegion* eyeUVs[2] = { &p.leftUV, &p.rightUV };
+
+		// Strip allocation uses left-eye dims (auto-mirror constraint, same as
+		// Default/Faster). Per-eye loop uses real per-eye sizes.
+		uint32_t allocSubInW = p.isFullEye ? p.eyeWidthIn : std::max<uint32_t>(1, (uint32_t)(p.eyeWidthIn * p.leftUV.w));
+		uint32_t allocSubInH = p.isFullEye ? p.eyeHeightIn : std::max<uint32_t>(1, (uint32_t)(p.eyeHeightIn * p.leftUV.h));
+		uint32_t allocSubOutW = p.isFullEye ? p.eyeWidthOut : std::max<uint32_t>(1, (uint32_t)(p.eyeWidthOut * p.leftUV.w));
+		uint32_t allocSubOutH = p.isFullEye ? p.eyeHeightOut : std::max<uint32_t>(1, (uint32_t)(p.eyeHeightOut * p.leftUV.h));
+		uint32_t stripInW = allocSubInW * 2;
+		uint32_t stripOutW = allocSubOutW * 2;
+
+		EnsureExtremeStripTextures(stripInW, allocSubInH, stripOutW, allocSubOutH,
+			p.colorSrc, p.motionVectors, p.reactiveMask, p.transparencyMask);
+
+		auto context = globals::d3d::context;
+
+		// Snapshot + Stretch DRS → kMAIN if subrect (fills periphery).
+		if (!p.isFullEye) {
+			SnapshotSBS(p.colorSrc, p.renderW, p.renderH);
+
+			ID3D11ShaderResourceView* stretchSrc = nullptr;
+			if (globals::features::upscaling.foveatedRender.GetPeripheryAAMode() == FoveatedRender::PeripheryAAMode::kTemporalSmooth) {
+				EnsureTemporalResources(p.renderW, p.renderH, p.colorSrc, p.motionVectors);
+				stretchSrc = TemporalSmoothSBS(p.renderW, p.renderH);
+			}
+
+			StretchDRSBothEyes(p.colorDstUAV, p.eyeWidthOut, p.eyeHeightOut, p.eyeWidthIn, p.eyeHeightIn, p.renderW, p.renderH, stretchSrc);
+		}
+
+		// Copy both eyes' subrects into the strip. Color reads from the
+		// pre-stretch snapshot when available so we don't read kMAIN after stretch.
+		ID3D11Resource* colorReadSrc = (!p.isFullEye && Core::vrRenderSBS) ? Core::vrRenderSBS->resource.get() : p.colorSrc;
+		for (uint32_t i = 0; i < 2; ++i) {
+			const auto& uv = *eyeUVs[i];
+			// Per-eye sizing — same fix as Default/Faster (CodeRabbit Major @ original PR).
+			uint32_t subInW = p.isFullEye ? p.eyeWidthIn : std::max<uint32_t>(1, (uint32_t)(p.eyeWidthIn * uv.w));
+			uint32_t subInH = p.isFullEye ? p.eyeHeightIn : std::max<uint32_t>(1, (uint32_t)(p.eyeHeightIn * uv.h));
+
+			uint32_t cropX = p.isFullEye ? 0 : (uint32_t)(uv.x * p.eyeWidthIn);
+			uint32_t cropY = p.isFullEye ? 0 : (uint32_t)(uv.y * p.eyeHeightIn);
+			uint32_t sbsX = (i == 1 ? p.eyeWidthIn : 0) + cropX;
+			D3D11_BOX box = { sbsX, cropY, 0, sbsX + subInW, cropY + subInH, 1 };
+			uint32_t stripDstX = i * allocSubInW;
+
+			context->CopySubresourceRegion(Core::vrExtremeStripColorIn->resource.get(), 0, stripDstX, 0, 0, colorReadSrc, 0, &box);
+			context->CopySubresourceRegion(Core::vrExtremeStripDepth->resource.get(), 0, stripDstX, 0, 0, p.depthTexture, 0, &box);
+			context->CopySubresourceRegion(Core::vrExtremeStripMotionVectors->resource.get(), 0, stripDstX, 0, 0, p.motionVectors, 0, &box);
+			if (p.reactiveMask)
+				context->CopySubresourceRegion(Core::vrExtremeStripReactiveMask->resource.get(), 0, stripDstX, 0, 0, p.reactiveMask, 0, &box);
+			if (p.transparencyMask)
+				context->CopySubresourceRegion(Core::vrExtremeStripTransparencyMask->resource.get(), 0, stripDstX, 0, 0, p.transparencyMask, 0, &box);
+		}
+
+		// Single DLSS evaluate on the entire strip.
+		sl::Extent extentIn{ 0, 0, stripInW, allocSubInH };
+		sl::Extent extentOut{ 0, 0, stripOutW, allocSubOutH };
+		streamline.EvaluateDLSS(streamline.viewport, 0,
+			Core::vrExtremeStripColorIn->resource.get(), Core::vrExtremeStripColorOut->resource.get(),
+			Core::vrExtremeStripDepth->resource.get(), Core::vrExtremeStripMotionVectors->resource.get(),
+			p.reactiveMask ? Core::vrExtremeStripReactiveMask->resource.get() : nullptr,
+			p.transparencyMask ? Core::vrExtremeStripTransparencyMask->resource.get() : nullptr,
+			extentIn, extentOut, stripOutW);
+
+		// Write each eye's output back using srcOffsetX = i*allocSubOutW.
+		// SubrectBlendCS feather edge math uses tid.xy local coords (PR-3b shader fix)
+		// so the strip offset doesn't break the feather band.
+		for (uint32_t i = 0; i < 2; ++i) {
+			const auto& uv = *eyeUVs[i];
+			uint32_t subOutW = p.isFullEye ? p.eyeWidthOut : std::max<uint32_t>(1, (uint32_t)(p.eyeWidthOut * uv.w));
+			uint32_t subOutH = p.isFullEye ? p.eyeHeightOut : std::max<uint32_t>(1, (uint32_t)(p.eyeHeightOut * uv.h));
+
+			uint32_t dstCropX = p.isFullEye ? 0 : (uint32_t)(uv.x * p.eyeWidthOut);
+			uint32_t dstCropY = p.isFullEye ? 0 : (uint32_t)(uv.y * p.eyeHeightOut);
+			uint32_t dstX = (i == 1 ? p.eyeWidthOut : 0) + dstCropX;
+			uint32_t stripSrcX = i * allocSubOutW;
+			BlendSubrectToOutput(Core::vrExtremeStripColorOut->resource.get(), p.colorDst, p.colorDstUAV,
+				dstX, dstCropY, subOutW, subOutH, stripSrcX);
 		}
 
 		return true;
