@@ -106,23 +106,9 @@ namespace FoveatedRenderImpl
 		EnsureVRSubrectTextures(allocSubInW, allocSubInH, allocSubOutW, allocSubOutH,
 			p.colorSrc, p.motionVectors, p.reactiveMask, p.transparencyMask);
 
-		// Snapshot + clear HMD mask on snapshot before cropping. Without this,
-		// the HMD lens-ring sky color is cropped into vrSubrectColorIn and
-		// temporally accumulated by DLSS, bleeding color into the subrect edges.
+		// Snapshot + clear HMD hidden-area ring before cropping into subrect inputs.
 		SnapshotSBS(p.colorSrc, p.renderW, p.renderH);
-		{
-			auto* depthSRV = globals::game::renderer->GetDepthStencilData()
-			                     .depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kMAIN]
-			                     .depthSRV;
-			if (Core::vrRenderSBS && Core::vrRenderSBS->uav && depthSRV) {
-				auto& upscaling = globals::features::upscaling;
-				for (uint32_t i = 0; i < 2; ++i) {
-					const uint32_t eyeOffsetX = i * p.eyeWidthIn;
-					upscaling.ClearHMDMask(Core::vrRenderSBS->uav.get(), depthSRV,
-						p.eyeWidthIn, p.eyeHeightIn, eyeOffsetX, eyeOffsetX);
-				}
-			}
-		}
+		ClearHMDMaskOnSnapshot(p);
 		StretchDRSBothEyes(p.colorDstUAV, p.eyeWidthOut, p.eyeHeightOut, p.eyeWidthIn, p.eyeHeightIn, p.renderW, p.renderH, MaybeTemporalSmooth(p));
 
 		// Crop subrect per-eye from mask-cleared snapshot (not kMAIN which was overwritten by stretch)
@@ -209,23 +195,7 @@ namespace FoveatedRenderImpl
 		// the standard Streamline path (Streamline.cpp) and Default mode both
 		// pre-clear via per-eye intermediates.
 		SnapshotSBS(p.colorSrc, p.renderW, p.renderH);
-		auto& upscaling = globals::features::upscaling;
-		auto* depthSRV = globals::game::renderer->GetDepthStencilData()
-		                     .depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kMAIN]
-		                     .depthSRV;
-		if (Core::vrRenderSBS && Core::vrRenderSBS->uav && depthSRV) {
-			// Color target IS the SBS snapshot (not a per-eye buffer), so
-			// colorOffsetX must select the eye's half — same as depthOffsetX.
-			// ClearHMDMaskCS's default contract assumes the color target is
-			// per-eye (colorOffsetX = 0) and was written for Streamline's
-			// per-eye intermediates; here we're routing both eyes through one
-			// SBS texture so we override both offsets together.
-			for (uint32_t i = 0; i < 2; ++i) {
-				const uint32_t eyeOffsetX = i * p.eyeWidthIn;
-				upscaling.ClearHMDMask(Core::vrRenderSBS->uav.get(), depthSRV,
-					p.eyeWidthIn, p.eyeHeightIn, eyeOffsetX, eyeOffsetX);
-			}
-		}
+		ClearHMDMaskOnSnapshot(p);
 		ID3D11Resource* dlssColorSrc = (Core::vrRenderSBS ? Core::vrRenderSBS->resource.get() : p.colorSrc);
 
 		// Step 2b: DLSS reads from the mask-cleared SBS snapshot via extent offsets
@@ -298,21 +268,10 @@ namespace FoveatedRenderImpl
 
 		auto context = globals::d3d::context;
 
-		// Snapshot + clear HMD mask on snapshot (same contract as Faster mode).
-		// The strip copy below reads from vrRenderSBS, so the mask must be cleared
-		// before the copy — otherwise sky-color bleeds into the subrect DLSS input.
+		// Snapshot + clear HMD hidden-area ring before strip copy.
 		SnapshotSBS(p.colorSrc, p.renderW, p.renderH);
-		auto* depthSRV = globals::game::renderer->GetDepthStencilData()
-		                     .depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kMAIN]
-		                     .depthSRV;
-		if (!p.isFullEye && Core::vrRenderSBS && Core::vrRenderSBS->uav && depthSRV) {
-			auto& upscaling = globals::features::upscaling;
-			for (uint32_t i = 0; i < 2; ++i) {
-				const uint32_t eyeOffsetX = i * p.eyeWidthIn;
-				upscaling.ClearHMDMask(Core::vrRenderSBS->uav.get(), depthSRV,
-					p.eyeWidthIn, p.eyeHeightIn, eyeOffsetX, eyeOffsetX);
-			}
-		}
+		if (!p.isFullEye)
+			ClearHMDMaskOnSnapshot(p);
 
 		// Stretch DRS → kMAIN if subrect (fills periphery).
 		if (!p.isFullEye) {

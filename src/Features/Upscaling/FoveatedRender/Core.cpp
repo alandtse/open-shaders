@@ -534,7 +534,9 @@ namespace FoveatedRenderImpl::Ops
 			srvDesc.Texture2D.MipLevels = 1;
 			if (FAILED(globals::d3d::device->CreateShaderResourceView(mvecSrc, &srvDesc, Core::vrMvecSRV.put()))) {
 				logger::error("[FOVEATED] Failed to create SRV on mvec resource for temporal smooth");
+				return;
 			}
+			Util::SetResourceName(Core::vrMvecSRV.get(), "FoveatedRender::MVecSRV");
 			Core::vrMvecSRVOwner = mvecSrc;
 		}
 	}
@@ -640,6 +642,21 @@ namespace FoveatedRenderImpl::Ops
 			return TemporalSmoothSBS(p.renderW, p.renderH);
 		}
 		return nullptr;
+	}
+
+	void ClearHMDMaskOnSnapshot(const VRDlssParams& p)
+	{
+		auto* depthSRV = globals::game::renderer->GetDepthStencilData()
+		                     .depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kMAIN]
+		                     .depthSRV;
+		if (!Core::vrRenderSBS || !Core::vrRenderSBS->uav || !depthSRV)
+			return;
+		auto& upscaling = globals::features::upscaling;
+		for (uint32_t i = 0; i < 2; ++i) {
+			const uint32_t eyeOffsetX = i * p.eyeWidthIn;
+			upscaling.ClearHMDMask(Core::vrRenderSBS->uav.get(), depthSRV,
+				p.eyeWidthIn, p.eyeHeightIn, eyeOffsetX, eyeOffsetX);
+		}
 	}
 
 	// ── Subrect Blend (feathered / dithered copy-back) ──
@@ -769,12 +786,16 @@ namespace FoveatedRenderImpl::Ops
 				context->CopySubresourceRegion(dst, 0, dstOffsetX, dstOffsetY, 0, dlssSrc, 0, &srcBox);
 				return;
 			}
+			Util::SetResourceName(Core::vrBlendSrcSRV.get(), "FoveatedRender::BlendSrcSRV");
 			Core::vrBlendSrcSRVOwner = dlssSrc;
 		}
 
 		{
 			D3D11_MAPPED_SUBRESOURCE mapped;
-			context->Map(Core::vrSubrectBlendCB.get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped);
+			if (FAILED(context->Map(Core::vrSubrectBlendCB.get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped))) {
+				logger::error("[FOVEATED] BlendSubrectToOutput Map(vrSubrectBlendCB) failed; skipping dispatch");
+				return;
+			}
 			BlendCB* cb = (BlendCB*)mapped.pData;
 			cb->DstOffsetX = dstOffsetX;
 			cb->DstOffsetY = dstOffsetY;

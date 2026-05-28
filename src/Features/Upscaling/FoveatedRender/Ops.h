@@ -68,6 +68,11 @@ namespace FoveatedRenderImpl::Ops
 	// SnapshotSBS must have been called on this frame before invoking this.
 	ID3D11ShaderResourceView* MaybeTemporalSmooth(const VRDlssParams& p);
 
+	// Clear HMD hidden-area mask on both eye halves of vrRenderSBS.
+	// Must be called after SnapshotSBS. Prevents sky-blue temporal bleed into
+	// pixels the HMD lens never shows, which DLSS would otherwise accumulate.
+	void ClearHMDMaskOnSnapshot(const VRDlssParams& p);
+
 	// Blend a DLSS subrect output onto the destination at (offsetX, offsetY).
 	// kHardCopy fast-paths to CopySubresourceRegion; Feather/Dither dispatch
 	// SubrectBlendCS into dstUAV.
