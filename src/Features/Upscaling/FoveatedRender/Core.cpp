@@ -451,58 +451,6 @@ namespace FoveatedRenderImpl::Ops
 		Core::vrFasterOutH = subOutH;
 	}
 
-	void EnsureExtremeStripTextures(
-		uint32_t stripInW, uint32_t stripInH,
-		uint32_t stripOutW, uint32_t stripOutH,
-		ID3D11Resource* colorSrc, ID3D11Resource* mvecSrc,
-		ID3D11Resource* reactiveSrc, ID3D11Resource* transparencySrc)
-	{
-		bool needsRecreate = !Core::vrExtremeStripColorIn ||
-		                     Core::vrExtremeStripW != stripInW || Core::vrExtremeStripH != stripInH ||
-		                     Core::vrExtremeStripOutW != stripOutW || Core::vrExtremeStripOutH != stripOutH;
-		if (!needsRecreate) {
-			needsRecreate = (reactiveSrc && !Core::vrExtremeStripReactiveMask) ||
-			                (transparencySrc && !Core::vrExtremeStripTransparencyMask);
-		}
-		if (!needsRecreate)
-			return;
-
-		Core::vrExtremeStripColorIn = CreateTextureFromSource(colorSrc, stripInW, stripInH, false, true, true, "FoveatedRender::Strip_ColorIn");
-		Core::vrExtremeStripColorOut = CreateTextureFromSource(colorSrc, stripOutW, stripOutH, false, true, false, "FoveatedRender::Strip_ColorOut");
-
-		D3D11_TEXTURE2D_DESC depthDesc = {};
-		depthDesc.Width = stripInW;
-		depthDesc.Height = stripInH;
-		depthDesc.MipLevels = 1;
-		depthDesc.ArraySize = 1;
-		depthDesc.Format = DXGI_FORMAT_R32_TYPELESS;
-		depthDesc.SampleDesc.Count = 1;
-		depthDesc.Usage = D3D11_USAGE_DEFAULT;
-		depthDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
-		Core::vrExtremeStripDepth = eastl::make_unique<Texture2D>(depthDesc);
-		Util::SetResourceName(Core::vrExtremeStripDepth->resource.get(), "FoveatedRender::Strip_Depth");
-		D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
-		srvDesc.Format = DXGI_FORMAT_R32_FLOAT;
-		srvDesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
-		srvDesc.Texture2D.MipLevels = 1;
-		Core::vrExtremeStripDepth->CreateSRV(srvDesc);
-
-		Core::vrExtremeStripMotionVectors = CreateTextureFromSource(mvecSrc, stripInW, stripInH, false, true, false, "FoveatedRender::Strip_MVec");
-		if (reactiveSrc)
-			Core::vrExtremeStripReactiveMask = CreateTextureFromSource(reactiveSrc, stripInW, stripInH, false, true, false, "FoveatedRender::Strip_Reactive");
-		else
-			Core::vrExtremeStripReactiveMask.reset();
-		if (transparencySrc)
-			Core::vrExtremeStripTransparencyMask = CreateTextureFromSource(transparencySrc, stripInW, stripInH, false, true, false, "FoveatedRender::Strip_Transparency");
-		else
-			Core::vrExtremeStripTransparencyMask.reset();
-
-		Core::vrExtremeStripW = stripInW;
-		Core::vrExtremeStripH = stripInH;
-		Core::vrExtremeStripOutW = stripOutW;
-		Core::vrExtremeStripOutH = stripOutH;
-	}
-
 	// ── Periphery Temporal Smooth ──
 	// Ping-pong between two history buffers at render-res SBS.
 	// Blends current frame with motion-reprojected history to reduce flicker
@@ -558,8 +506,8 @@ namespace FoveatedRenderImpl::Ops
 
 		// Lazy-create CS resources
 		if (!Core::vrTemporalSmoothCS) {
-			Core::vrTemporalSmoothCS.attach((ID3D11ComputeShader*)Util::CompileShader(
-				L"Data/Shaders/Upscaling/FoveatedRender/PeripheryTemporalSmoothCS.hlsl", {}, "cs_5_0"));
+			Core::vrTemporalSmoothCS.attach(static_cast<ID3D11ComputeShader*>(Util::CompileShader(
+				L"Data/Shaders/Upscaling/FoveatedRender/PeripheryTemporalSmoothCS.hlsl", {}, "cs_5_0")));
 			Util::SetResourceName(Core::vrTemporalSmoothCS.get(), "FoveatedRender::TemporalSmoothCS");
 
 			D3D11_BUFFER_DESC cbDesc = {};
@@ -750,8 +698,8 @@ namespace FoveatedRenderImpl::Ops
 
 		// Lazy-create CS resources
 		if (!Core::vrSubrectBlendCS) {
-			Core::vrSubrectBlendCS.attach((ID3D11ComputeShader*)Util::CompileShader(
-				L"Data/Shaders/Upscaling/FoveatedRender/SubrectBlendCS.hlsl", {}, "cs_5_0"));
+			Core::vrSubrectBlendCS.attach(static_cast<ID3D11ComputeShader*>(Util::CompileShader(
+				L"Data/Shaders/Upscaling/FoveatedRender/SubrectBlendCS.hlsl", {}, "cs_5_0")));
 			Util::SetResourceName(Core::vrSubrectBlendCS.get(), "FoveatedRender::SubrectBlendCS");
 
 			D3D11_BUFFER_DESC cbDesc = {};
@@ -796,7 +744,7 @@ namespace FoveatedRenderImpl::Ops
 				logger::error("[FOVEATED] BlendSubrectToOutput Map(vrSubrectBlendCB) failed; skipping dispatch");
 				return;
 			}
-			BlendCB* cb = (BlendCB*)mapped.pData;
+			BlendCB* cb = reinterpret_cast<BlendCB*>(mapped.pData);
 			cb->DstOffsetX = dstOffsetX;
 			cb->DstOffsetY = dstOffsetY;
 			cb->SubWidth = subWidth;
@@ -885,14 +833,6 @@ namespace FoveatedRenderImpl
 			vrFasterColorOut[i].reset();
 		}
 		vrSubrectInW = vrSubrectInH = vrSubrectOutW = vrSubrectOutH = 0;
-
-		vrExtremeStripColorIn.reset();
-		vrExtremeStripColorOut.reset();
-		vrExtremeStripDepth.reset();
-		vrExtremeStripMotionVectors.reset();
-		vrExtremeStripReactiveMask.reset();
-		vrExtremeStripTransparencyMask.reset();
-		vrExtremeStripW = vrExtremeStripH = vrExtremeStripOutW = vrExtremeStripOutH = 0;
 
 		vrRenderSBS.reset();
 		vrRenderSBSW = vrRenderSBSH = 0;

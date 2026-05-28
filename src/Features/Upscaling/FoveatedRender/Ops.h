@@ -28,9 +28,6 @@ namespace FoveatedRenderImpl::Ops
 
 	void EnsureFasterOutputTextures(uint32_t subOutW, uint32_t subOutH, ID3D11Resource* colorSrc);
 
-	void EnsureExtremeStripTextures(uint32_t stripInW, uint32_t stripInH, uint32_t stripOutW, uint32_t stripOutH,
-		ID3D11Resource* colorSrc, ID3D11Resource* mvecSrc, ID3D11Resource* reactiveSrc, ID3D11Resource* transparencySrc);
-
 	void EnsureVRRenderSBS(uint32_t renderW, uint32_t renderH, ID3D11Resource* colorSrc);
 
 	// Copy full-eye slices from SBS textures into per-eye intermediates.

@@ -82,7 +82,7 @@ void FoveatedRender::RestoreDefaultSettings()
 void FoveatedRender::ClampSettings()
 {
 	settings.enabled = std::min(settings.enabled, 1u);
-	settings.dlssMode = std::min(settings.dlssMode, 2u);
+	settings.dlssMode = std::min(settings.dlssMode, 1u);
 	settings.stretchMode = std::min(settings.stretchMode, 2u);
 	settings.debugVisualize = std::min(settings.debugVisualize, 1u);
 	settings.peripheryAAMode = std::min(settings.peripheryAAMode, 1u);
@@ -142,7 +142,6 @@ bool FoveatedRender::IsPresetCompatibleWithMode(uint presetIndex) const
 {
 	// Preset indices: 0=Default, 1=J, 2=K, 3=L, 4=M, 5=F
 	// Faster mode: J(1) and K(2) are incompatible.
-	// Extreme mode: all presets allowed (matches original PR's permissive stance).
 	if (GetDlssMode() == DlssMode::kFaster) {
 		return presetIndex != 1 && presetIndex != 2;
 	}
@@ -228,10 +227,7 @@ void FoveatedRender::DrawSettings()
 
 		static const char* dlssModes[] = { "Default", "Faster" };
 		uint prevMode = settings.dlssMode;
-		// Clamp to 1 in the slider — kExtreme (2) is reserved for future work.
-		uint sliderMode = std::min(settings.dlssMode, 1u);
-		if (ImGui::SliderInt("DLSS Mode", reinterpret_cast<int*>(&sliderMode), 0, 1, dlssModes[sliderMode]))
-			settings.dlssMode = sliderMode;
+		ImGui::SliderInt("DLSS Mode", reinterpret_cast<int*>(&settings.dlssMode), 0, 1, dlssModes[std::min(settings.dlssMode, 1u)]);
 		if (settings.dlssMode != prevMode) {
 			const uint prevPreset = globals::features::upscaling.settings.presetDLSS;
 			ClampPresetToMode();

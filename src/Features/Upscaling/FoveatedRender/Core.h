@@ -70,16 +70,6 @@ namespace FoveatedRenderImpl
 		static inline eastl::unique_ptr<Texture2D> vrSubrectTransparencyMask[2];
 		static inline uint32_t vrSubrectInW = 0, vrSubrectInH = 0, vrSubrectOutW = 0, vrSubrectOutH = 0;
 
-		// Extreme mode: combined strip texture (both eyes' subrects side by side)
-		static inline eastl::unique_ptr<Texture2D> vrExtremeStripColorIn;
-		static inline eastl::unique_ptr<Texture2D> vrExtremeStripColorOut;
-		static inline eastl::unique_ptr<Texture2D> vrExtremeStripDepth;
-		static inline eastl::unique_ptr<Texture2D> vrExtremeStripMotionVectors;
-		static inline eastl::unique_ptr<Texture2D> vrExtremeStripReactiveMask;
-		static inline eastl::unique_ptr<Texture2D> vrExtremeStripTransparencyMask;
-		static inline uint32_t vrExtremeStripW = 0, vrExtremeStripH = 0;
-		static inline uint32_t vrExtremeStripOutW = 0, vrExtremeStripOutH = 0;
-
 		// Faster mode per-eye output textures (subOutW × subOutH)
 		static inline eastl::unique_ptr<Texture2D> vrFasterColorOut[2];
 		static inline uint32_t vrFasterOutW = 0, vrFasterOutH = 0;
@@ -118,6 +108,5 @@ namespace FoveatedRenderImpl
 	private:
 		static bool ExecuteDefaultMode(Streamline& streamline, const VRDlssParams& p);
 		static bool ExecuteFasterMode(Streamline& streamline, const VRDlssParams& p);
-		static bool ExecuteExtremeMode(Streamline& streamline, const VRDlssParams& p);
 	};
 }
