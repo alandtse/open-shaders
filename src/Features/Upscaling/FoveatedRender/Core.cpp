@@ -633,6 +633,15 @@ namespace FoveatedRenderImpl::Ops
 		return Core::vrTemporalHistory[writeIdx]->srv.get();
 	}
 
+	ID3D11ShaderResourceView* MaybeTemporalSmooth(const VRDlssParams& p)
+	{
+		if (globals::features::upscaling.foveatedRender.GetPeripheryAAMode() == FoveatedRender::PeripheryAAMode::kTemporalSmooth) {
+			EnsureTemporalResources(p.renderW, p.renderH, p.colorSrc, p.motionVectors);
+			return TemporalSmoothSBS(p.renderW, p.renderH);
+		}
+		return nullptr;
+	}
+
 	// ── Subrect Blend (feathered / dithered copy-back) ──
 
 	struct alignas(16) BlendCB

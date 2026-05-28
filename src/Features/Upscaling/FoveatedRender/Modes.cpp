@@ -100,16 +100,7 @@ namespace FoveatedRenderImpl
 
 		// Snapshot + Stretch DRS → kMAIN (fill full-eye background)
 		SnapshotSBS(p.colorSrc, p.renderW, p.renderH);
-
-		// Periphery temporal smooth: blend with reprojected history before stretch
-		// so the periphery gets temporal AA that DLSS doesn't cover for the cropped area.
-		ID3D11ShaderResourceView* stretchSrc = nullptr;
-		if (globals::features::upscaling.foveatedRender.GetPeripheryAAMode() == FoveatedRender::PeripheryAAMode::kTemporalSmooth) {
-			EnsureTemporalResources(p.renderW, p.renderH, p.colorSrc, p.motionVectors);
-			stretchSrc = TemporalSmoothSBS(p.renderW, p.renderH);
-		}
-
-		StretchDRSBothEyes(p.colorDstUAV, p.eyeWidthOut, p.eyeHeightOut, p.eyeWidthIn, p.eyeHeightIn, p.renderW, p.renderH, stretchSrc);
+		StretchDRSBothEyes(p.colorDstUAV, p.eyeWidthOut, p.eyeHeightOut, p.eyeWidthIn, p.eyeHeightIn, p.renderW, p.renderH, MaybeTemporalSmooth(p));
 
 		// Crop subrect per-eye from snapshot (not kMAIN which was overwritten by stretch)
 		auto context = globals::d3d::context;
@@ -242,13 +233,7 @@ namespace FoveatedRenderImpl
 
 		// Step 3: Stretch DRS → kMAIN (subrect only) — snapshot reused from Step 2a.
 		if (!p.isFullEye) {
-			// Periphery temporal smooth for the stretched periphery.
-			ID3D11ShaderResourceView* stretchSrc = nullptr;
-			if (globals::features::upscaling.foveatedRender.GetPeripheryAAMode() == FoveatedRender::PeripheryAAMode::kTemporalSmooth) {
-				EnsureTemporalResources(p.renderW, p.renderH, p.colorSrc, p.motionVectors);
-				stretchSrc = TemporalSmoothSBS(p.renderW, p.renderH);
-			}
-			StretchDRSBothEyes(p.colorDstUAV, p.eyeWidthOut, p.eyeHeightOut, p.eyeWidthIn, p.eyeHeightIn, p.renderW, p.renderH, stretchSrc);
+			StretchDRSBothEyes(p.colorDstUAV, p.eyeWidthOut, p.eyeHeightOut, p.eyeWidthIn, p.eyeHeightIn, p.renderW, p.renderH, MaybeTemporalSmooth(p));
 		}
 
 		// Step 4: Copy DLSS output back (with optional blend)
@@ -294,13 +279,7 @@ namespace FoveatedRenderImpl
 		if (!p.isFullEye) {
 			SnapshotSBS(p.colorSrc, p.renderW, p.renderH);
 
-			ID3D11ShaderResourceView* stretchSrc = nullptr;
-			if (globals::features::upscaling.foveatedRender.GetPeripheryAAMode() == FoveatedRender::PeripheryAAMode::kTemporalSmooth) {
-				EnsureTemporalResources(p.renderW, p.renderH, p.colorSrc, p.motionVectors);
-				stretchSrc = TemporalSmoothSBS(p.renderW, p.renderH);
-			}
-
-			StretchDRSBothEyes(p.colorDstUAV, p.eyeWidthOut, p.eyeHeightOut, p.eyeWidthIn, p.eyeHeightIn, p.renderW, p.renderH, stretchSrc);
+			StretchDRSBothEyes(p.colorDstUAV, p.eyeWidthOut, p.eyeHeightOut, p.eyeWidthIn, p.eyeHeightIn, p.renderW, p.renderH, MaybeTemporalSmooth(p));
 		}
 
 		// Copy both eyes' subrects into the strip. Color reads from the
@@ -308,7 +287,8 @@ namespace FoveatedRenderImpl
 		ID3D11Resource* colorReadSrc = (!p.isFullEye && Core::vrRenderSBS) ? Core::vrRenderSBS->resource.get() : p.colorSrc;
 		for (uint32_t i = 0; i < 2; ++i) {
 			const auto& uv = *eyeUVs[i];
-			// Per-eye sizing — same fix as Default/Faster (CodeRabbit Major @ original PR).
+			// Per-eye sizing uses each eye's own UV; right-eye UV.w/h can differ
+			// from left-eye in asymmetric presets (e.g. Nasal Convergence).
 			uint32_t subInW = p.isFullEye ? p.eyeWidthIn : std::max<uint32_t>(1, (uint32_t)(p.eyeWidthIn * uv.w));
 			uint32_t subInH = p.isFullEye ? p.eyeHeightIn : std::max<uint32_t>(1, (uint32_t)(p.eyeHeightIn * uv.h));
 

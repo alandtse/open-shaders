@@ -63,6 +63,11 @@ namespace FoveatedRenderImpl::Ops
 	// (pass as srcOverride to StretchDRSBothEyes). SnapshotSBS must be called first.
 	ID3D11ShaderResourceView* TemporalSmoothSBS(uint32_t renderW, uint32_t renderH);
 
+	// If PeripheryAAMode is kTemporalSmooth, ensures resources and returns the
+	// smoothed SRV; otherwise returns nullptr (StretchDRSBothEyes uses vrRenderSBS).
+	// SnapshotSBS must have been called on this frame before invoking this.
+	ID3D11ShaderResourceView* MaybeTemporalSmooth(const VRDlssParams& p);
+
 	// Blend a DLSS subrect output onto the destination at (offsetX, offsetY).
 	// kHardCopy fast-paths to CopySubresourceRegion; Feather/Dither dispatch
 	// SubrectBlendCS into dstUAV.
