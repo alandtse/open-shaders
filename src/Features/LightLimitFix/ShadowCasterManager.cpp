@@ -3681,9 +3681,8 @@ namespace ShadowCasterManager
 			const uint8_t jmp = 0xEB;
 			REL::safe_write(uid.address() + off2, &jmp, 1);
 		}
-		// Per-light check (ID 99725/106362): not yet confirmed in VR address library,
-		// so guard VR until addresses are found.
-		if (!REL::Module::IsVR()) {
+		// Per-light check inside ShadowSceneNode::GetLuminanceAtPoint (ID 99725/106362).
+		{
 			static REL::RelocationID uid(99725, 106362);
 			uintptr_t off = REL::Relocate(0x648 - 0x560, 0xB49 - 0xA60, 0x648 - 0x560);
 			if (!SKSE::stl::install_context_hook(uid.address() + off, 5, Hook_CheckLightLevelPlayer))
