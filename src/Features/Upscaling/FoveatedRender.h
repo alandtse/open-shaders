@@ -72,7 +72,7 @@ struct FoveatedRender
 		uint debugVisualize = 0;  // tint cheap-stretched periphery red; runtime toggle
 		uint peripheryAAMode = (uint)PeripheryAAMode::kTemporalSmooth;
 		float peripheryTemporalAlpha = 0.16f;
-		uint subrectBlendMode = (uint)SubrectBlendMode::kDither;
+		uint subrectBlendMode = (uint)SubrectBlendMode::kHardCopy;
 		float subrectFeatherWidth = 64.0f;
 		float subrectDitherStrength = 1.0f;
 	};

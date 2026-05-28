@@ -275,16 +275,30 @@ namespace FoveatedRenderImpl
 
 		auto context = globals::d3d::context;
 
-		// Snapshot + Stretch DRS → kMAIN if subrect (fills periphery).
-		if (!p.isFullEye) {
-			SnapshotSBS(p.colorSrc, p.renderW, p.renderH);
+		// Snapshot + clear HMD mask on snapshot (same contract as Faster mode).
+		// The strip copy below reads from vrRenderSBS, so the mask must be cleared
+		// before the copy — otherwise sky-color bleeds into the subrect DLSS input.
+		SnapshotSBS(p.colorSrc, p.renderW, p.renderH);
+		auto* depthSRV = globals::game::renderer->GetDepthStencilData()
+		                     .depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kMAIN]
+		                     .depthSRV;
+		if (!p.isFullEye && Core::vrRenderSBS && Core::vrRenderSBS->uav && depthSRV) {
+			auto& upscaling = globals::features::upscaling;
+			for (uint32_t i = 0; i < 2; ++i) {
+				const uint32_t eyeOffsetX = i * p.eyeWidthIn;
+				upscaling.ClearHMDMask(Core::vrRenderSBS->uav.get(), depthSRV,
+					p.eyeWidthIn, p.eyeHeightIn, eyeOffsetX, eyeOffsetX);
+			}
+		}
 
+		// Stretch DRS → kMAIN if subrect (fills periphery).
+		if (!p.isFullEye) {
 			StretchDRSBothEyes(p.colorDstUAV, p.eyeWidthOut, p.eyeHeightOut, p.eyeWidthIn, p.eyeHeightIn, p.renderW, p.renderH, MaybeTemporalSmooth(p));
 		}
 
 		// Copy both eyes' subrects into the strip. Color reads from the
-		// pre-stretch snapshot when available so we don't read kMAIN after stretch.
-		ID3D11Resource* colorReadSrc = (!p.isFullEye && Core::vrRenderSBS) ? Core::vrRenderSBS->resource.get() : p.colorSrc;
+		// mask-cleared snapshot so we don't read kMAIN after stretch.
+		ID3D11Resource* colorReadSrc = (Core::vrRenderSBS) ? Core::vrRenderSBS->resource.get() : p.colorSrc;
 		for (uint32_t i = 0; i < 2; ++i) {
 			const auto& uv = *eyeUVs[i];
 			// Per-eye sizing uses each eye's own UV; right-eye UV.w/h can differ
