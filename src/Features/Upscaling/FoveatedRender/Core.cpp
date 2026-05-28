@@ -496,6 +496,9 @@ namespace FoveatedRenderImpl::Ops
 
 	ID3D11ShaderResourceView* TemporalSmoothSBS(uint32_t renderW, uint32_t renderH)
 	{
+		if (!Core::vrRenderSBS || !Core::vrRenderSBS->srv)
+			return nullptr;
+
 		auto context = globals::d3d::context;
 
 		uint32_t readIdx = Core::vrTemporalFrameIdx & 1;
@@ -633,8 +636,6 @@ namespace FoveatedRenderImpl::Ops
 		uint32_t _pad0, _pad1, _pad2;
 	};
 
-	static uint32_t s_blendFrameIdx = 0;
-
 	uint64_t ComputeSubrectUVHash(const Util::Subrect::UVRegion& leftUV,
 		const Util::Subrect::UVRegion& rightUV, uint32_t mode)
 	{
@@ -769,7 +770,7 @@ namespace FoveatedRenderImpl::Ops
 			cb->SubHeight = subHeight;
 			cb->BlendMode = (blendMode == FoveatedRender::SubrectBlendMode::kDither) ? 1 : 0;
 			cb->FeatherWidth = foveated.settings.subrectFeatherWidth;
-			cb->FrameIndex = s_blendFrameIdx++;
+			cb->FrameIndex = globals::state->frameCount;
 			cb->SrcOffsetX = srcOffsetX;
 			cb->DitherStrength = foveated.settings.subrectDitherStrength;
 			cb->_pad0 = cb->_pad1 = cb->_pad2 = 0;
