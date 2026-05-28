@@ -577,11 +577,9 @@ namespace ShadowCasterManager
 		// shadowColor.x is consulted only as a fallback past the cascade
 		// range and during the !LIGHT_LIMIT_FIX vanilla path. Dropping the
 		// mask therefore loses no functionality LLF provides -- but every
-		// shader that previously read shadowColor.x for directional shadow
-		// MUST be migrated to GetDirectionalShadow under LIGHT_LIMIT_FIX,
-		// or it will sample the stale/cleared mask and decouple from sun
-		// shadows (issue #48 was RunGrass.hlsl being missed in the
-		// original SLF merge).
+		// shader that reads shadowColor.x for directional shadow MUST route
+		// through GetDirectionalShadow under LIGHT_LIMIT_FIX, or it samples
+		// the stale/cleared mask and decouples from the sun shadow.
 		//
 		// Critically, unlike the previous Hook_DisableColorMask, we do NOT
 		// call ReturnShadowmaps. That side-effect cleared shadowmap-

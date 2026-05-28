@@ -799,9 +799,9 @@ PS_OUTPUT main(PS_INPUT input)
 		// Effect meshes are alpha-blended and lack reliable occluder depth
 		// at their visible surface, so sampling LLF's shadow atlas with the
 		// effect's world position produces incorrect dark imprints from
-		// nearby shadow-casting bulbs (see #47). Matches pre-SLF behaviour:
-		// shadow-flagged lights still contribute lighting through other
-		// passes but skip the effect-mesh contribution entirely.
+		// nearby shadow-casting bulbs. Shadow-flagged lights still contribute
+		// lighting through the other passes; only the effect-mesh shadow
+		// attenuation is skipped here.
 		if (light.lightFlags & LightLimitFix::LightFlags::Shadow)
 			continue;
 
