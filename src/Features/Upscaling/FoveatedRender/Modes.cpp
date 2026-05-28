@@ -338,8 +338,8 @@ namespace FoveatedRenderImpl
 			extentIn, extentOut, stripOutW);
 
 		// Write each eye's output back using srcOffsetX = i*allocSubOutW.
-		// SubrectBlendCS feather edge math uses tid.xy local coords (PR-3b shader fix)
-		// so the strip offset doesn't break the feather band.
+		// SubrectBlendCS feather edge math uses tid.xy local coords so the strip
+		// source offset (SrcOffsetX != 0) doesn't drive distR negative.
 		for (uint32_t i = 0; i < 2; ++i) {
 			const auto& uv = *eyeUVs[i];
 			uint32_t subOutW = p.isFullEye ? p.eyeWidthOut : std::max<uint32_t>(1, (uint32_t)(p.eyeWidthOut * uv.w));

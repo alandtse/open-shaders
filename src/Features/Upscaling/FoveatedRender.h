@@ -58,13 +58,13 @@ struct FoveatedRender
 	// the accessors below — do not duplicate them here. Sharpening on/off is
 	// controlled by the shared sharpnessDLSS slider (0 disables RCAS).
 	//
-	// Deferred to PR-3b: per-input DLSS hint toggles (MV dilation, reactive mask,
+	// Not yet implemented: per-input DLSS hint toggles (MV dilation, reactive mask,
 	// transparency mask). The original PR #2096 declared the Settings fields and
 	// UI sliders but never plumbed them to EncodeTexturesCS or to the EvaluateDLSS
-	// arg list, so they were no-ops there too. Bringing them back in PR-3b means
-	// shader permutations (per-toggle defines), conditional encode-pass skip when
-	// all are off, and per-toggle DLSS arg gating — ship the implementation and
-	// the UI together so the knobs don't lie.
+	// arg list, so they were no-ops there too. Implementing requires shader
+	// permutations (per-toggle defines), conditional encode-pass skip when all are
+	// off, and per-toggle DLSS arg gating — ship the implementation and the UI
+	// together so the knobs don't lie.
 	struct Settings
 	{
 		uint enabled = 0;  // opt-in: requires restart to take effect via LatchEnabled()
