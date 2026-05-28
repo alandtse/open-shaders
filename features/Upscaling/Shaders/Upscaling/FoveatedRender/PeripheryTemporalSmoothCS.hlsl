@@ -1,8 +1,8 @@
 // Temporal accumulation filter for the periphery background.
 // Runs on render-resolution SBS layout. Blends current frame with reprojected
-// history using motion vectors. EMA with motion-adaptive alpha and luma
-// rejection to suppress ghosting during movement while keeping strong
-// flicker reduction in the non-focal periphery when stationary.
+// history using motion vectors. EMA with motion-adaptive alpha to suppress
+// ghosting during movement while keeping strong flicker reduction in the
+// non-focal periphery when stationary.
 
 cbuffer TemporalSmoothCB : register(b0)
 {

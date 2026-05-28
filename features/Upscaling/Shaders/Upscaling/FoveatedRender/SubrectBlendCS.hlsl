@@ -11,7 +11,7 @@ cbuffer BlendCB : register(b0)
 	uint SubWidth;         // DLSS output width  (subrect)
 	uint SubHeight;        // DLSS output height (subrect)
 	uint BlendMode;        // 0 = Feather, 1 = Dither
-	float FeatherWidth;    // Feather band in pixels (default ~8)
+	float FeatherWidth;    // Feather band in pixels (default ~64)
 	uint FrameIndex;       // For dither noise animation
 	uint SrcOffsetX;       // Source X offset (0 for most modes, non-zero for Extreme strip)
 	float DitherStrength;  // 0 = pure smooth gradient, 1 = natural noise, 2 = aggressive dither

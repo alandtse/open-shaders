@@ -1,5 +1,5 @@
 // ============================================================================
-// Modes.cpp — Default / Faster / Extreme DLSS execution strategies
+// Modes.cpp — Default / Faster DLSS execution strategies
 // ============================================================================
 //
 // Each mode composes Ops primitives (snapshot, stretch, crop, blend…) in a

@@ -587,6 +587,11 @@ namespace FoveatedRenderImpl::Ops
 	{
 		if (globals::features::upscaling.foveatedRender.GetPeripheryAAMode() == FoveatedRender::PeripheryAAMode::kTemporalSmooth) {
 			EnsureTemporalResources(p.renderW, p.renderH, p.colorSrc, p.motionVectors);
+			// Bail if the mvec SRV couldn't be created (EnsureTemporalResources logs
+			// the failure). TemporalSmoothSBS would otherwise dispatch the CS with a
+			// null SRV bound at t2, reading undefined data.
+			if (!Core::vrMvecSRV)
+				return nullptr;
 			return TemporalSmoothSBS(p.renderW, p.renderH);
 		}
 		return nullptr;

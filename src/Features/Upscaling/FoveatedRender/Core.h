@@ -4,7 +4,7 @@
 // FoveatedRenderImpl::Core — GPU resource pool & mode-dispatch entry point
 // ============================================================================
 //
-// Owns all per-mode intermediate textures (Default / Faster / Extreme),
+// Owns all per-mode intermediate textures (Default / Faster),
 // compute-shader objects (stretch, temporal smooth, subrect blend), and the
 // public entry points consumed by Upscaling.cpp.
 //
