@@ -7,6 +7,7 @@
 //
 // ============================================================================
 
+#include "Bridge.h"
 #include "Core.h"
 #include "Ops.h"
 #include "Params.h"
@@ -38,14 +39,21 @@ namespace FoveatedRenderImpl
 			Core::activeSubrectUVHash = uvHash;
 		}
 
+		Bridge::foveatedEvaluating = true;
+		bool result = false;
 		switch (p.mode) {
 		case FoveatedRender::DlssMode::kFaster:
-			return ExecuteFasterMode(streamline, p);
+			result = ExecuteFasterMode(streamline, p);
+			break;
 		case FoveatedRender::DlssMode::kExtreme:
-			return ExecuteExtremeMode(streamline, p);
+			result = ExecuteExtremeMode(streamline, p);
+			break;
 		default:
-			return ExecuteDefaultMode(streamline, p);
+			result = ExecuteDefaultMode(streamline, p);
+			break;
 		}
+		Bridge::foveatedEvaluating = false;
+		return result;
 	}
 
 	// ── Default mode: per-eye isolation, 2 resource sets, 2 evaluates ──
@@ -98,11 +106,26 @@ namespace FoveatedRenderImpl
 		EnsureVRSubrectTextures(allocSubInW, allocSubInH, allocSubOutW, allocSubOutH,
 			p.colorSrc, p.motionVectors, p.reactiveMask, p.transparencyMask);
 
-		// Snapshot + Stretch DRS → kMAIN (fill full-eye background)
+		// Snapshot + clear HMD mask on snapshot before cropping. Without this,
+		// the HMD lens-ring sky color is cropped into vrSubrectColorIn and
+		// temporally accumulated by DLSS, bleeding color into the subrect edges.
 		SnapshotSBS(p.colorSrc, p.renderW, p.renderH);
+		{
+			auto* depthSRV = globals::game::renderer->GetDepthStencilData()
+			                     .depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kMAIN]
+			                     .depthSRV;
+			if (Core::vrRenderSBS && Core::vrRenderSBS->uav && depthSRV) {
+				auto& upscaling = globals::features::upscaling;
+				for (uint32_t i = 0; i < 2; ++i) {
+					const uint32_t eyeOffsetX = i * p.eyeWidthIn;
+					upscaling.ClearHMDMask(Core::vrRenderSBS->uav.get(), depthSRV,
+						p.eyeWidthIn, p.eyeHeightIn, eyeOffsetX, eyeOffsetX);
+				}
+			}
+		}
 		StretchDRSBothEyes(p.colorDstUAV, p.eyeWidthOut, p.eyeHeightOut, p.eyeWidthIn, p.eyeHeightIn, p.renderW, p.renderH, MaybeTemporalSmooth(p));
 
-		// Crop subrect per-eye from snapshot (not kMAIN which was overwritten by stretch)
+		// Crop subrect per-eye from mask-cleared snapshot (not kMAIN which was overwritten by stretch)
 		auto context = globals::d3d::context;
 		for (uint32_t i = 0; i < 2; ++i) {
 			const auto& uv = *eyeUVs[i];

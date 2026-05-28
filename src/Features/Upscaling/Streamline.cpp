@@ -379,11 +379,13 @@ bool Streamline::CheckFrameConstants(sl::ViewportHandle p_viewport, uint32_t eye
 	slConstants.jitterOffset = { -jitter.x, -jitter.y };
 	slConstants.reset = sl::Boolean::eFalse;
 
-	// Foveated subrect: motion vectors are authored at full-eye scale but DLSS
-	// processes a sub-region. Scale up so DLSS interprets them as subrect-local.
-	// Returns identity when foveated is inactive or subrect covers the full eye.
+	// Apply foveated mvec scale only when the subrect execute path is actually
+	// running this frame (flag set by ExecuteVRDlssCore). The standard full-frame
+	// DLSS path — including menus and frames where foveated is skipped — must
+	// keep mvecScale at identity or DLSS massively over-estimates motion.
 	float mvecX = 1.0f, mvecY = 1.0f;
-	FoveatedRenderImpl::Bridge::ComputeMvecScale(mvecX, mvecY);
+	if (FoveatedRenderImpl::Bridge::foveatedEvaluating)
+		FoveatedRenderImpl::Bridge::ComputeMvecScale(mvecX, mvecY);
 	slConstants.mvecScale = { mvecX, mvecY };
 	slConstants.motionVectors3D = sl::Boolean::eFalse;
 	slConstants.motionVectorsInvalidValue = FLT_MIN;

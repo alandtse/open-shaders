@@ -32,6 +32,12 @@ namespace FoveatedRenderImpl::Bridge
 	// Returns {1,1} when route is inactive or subrect is full-eye.
 	void ComputeMvecScale(float& outX, float& outY);
 
+	// Set/cleared by ExecuteVRDlssCore to indicate that the foveated subrect
+	// execute path is actually running this frame. SetConstants checks this so
+	// mvecScale correction is not applied to the standard full-frame DLSS path
+	// (e.g. menus, frames where foveated is skipped).
+	inline bool foveatedEvaluating = false;
+
 	// Render-to-display scale for a quality mode index (1=Quality .. 4=UltraPerf).
 	// Delegates to the FFX SDK ratio table.
 	float GetRenderScaleForQuality(uint32_t qualityMode);
