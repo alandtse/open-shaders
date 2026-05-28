@@ -52,9 +52,28 @@ namespace FoveatedRenderImpl::Ops
 		uint32_t eyeWidthIn, uint32_t eyeHeightIn, uint32_t renderW, uint32_t renderH,
 		ID3D11ShaderResourceView* srcOverride = nullptr);
 
-	// Hard-copy a DLSS subrect output onto the destination at (offsetX, offsetY).
-	// No feather/dither — straight CopySubresourceRegion.
-	void BlendSubrectToOutput(ID3D11Resource* dlssSrc, ID3D11Resource* dst,
+	// Periphery temporal smooth: ensure ping-pong history textures and mvec SRV
+	// cache for the render-res SBS smoothing pass.
+	void EnsureTemporalResources(uint32_t renderW, uint32_t renderH, ID3D11Resource* colorSrc, ID3D11Resource* mvecSrc);
+
+	// Apply temporal smoothing on vrRenderSBS. Returns SRV of the smoothed result
+	// (pass as srcOverride to StretchDRSBothEyes). SnapshotSBS must be called first.
+	ID3D11ShaderResourceView* TemporalSmoothSBS(uint32_t renderW, uint32_t renderH);
+
+	// If PeripheryAAMode is kTemporalSmooth, ensures resources and returns the
+	// smoothed SRV; otherwise returns nullptr (StretchDRSBothEyes uses vrRenderSBS).
+	// SnapshotSBS must have been called on this frame before invoking this.
+	ID3D11ShaderResourceView* MaybeTemporalSmooth(const VRDlssParams& p);
+
+	// Clear HMD hidden-area mask on both eye halves of vrRenderSBS.
+	// Must be called after SnapshotSBS. Prevents sky-blue temporal bleed into
+	// pixels the HMD lens never shows, which DLSS would otherwise accumulate.
+	void ClearHMDMaskOnSnapshot(const VRDlssParams& p);
+
+	// Blend a DLSS subrect output onto the destination at (offsetX, offsetY).
+	// kHardCopy fast-paths to CopySubresourceRegion; Feather/Dither dispatch
+	// SubrectBlendCS into dstUAV.
+	void BlendSubrectToOutput(ID3D11Resource* dlssSrc, ID3D11Resource* dst, ID3D11UnorderedAccessView* dstUAV,
 		uint32_t dstOffsetX, uint32_t dstOffsetY, uint32_t subWidth, uint32_t subHeight, uint32_t srcOffsetX = 0);
 
 	// Hash of per-eye UVs + mode for change detection (forces SL DLSS resource

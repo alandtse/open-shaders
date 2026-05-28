@@ -4,9 +4,9 @@
 // FoveatedRenderImpl::Core — GPU resource pool & mode-dispatch entry point
 // ============================================================================
 //
-// Owns all per-mode intermediate textures (Default / Faster), compute-shader
-// objects (subrect stretch), and the public entry points consumed by
-// Upscaling.cpp.
+// Owns all per-mode intermediate textures (Default / Faster),
+// compute-shader objects (stretch, temporal smooth, subrect blend), and the
+// public entry points consumed by Upscaling.cpp.
 //
 // ============================================================================
 
@@ -82,6 +82,25 @@ namespace FoveatedRenderImpl
 		static inline winrt::com_ptr<ID3D11ComputeShader> vrSubrectStretchCS;
 		static inline winrt::com_ptr<ID3D11Buffer> vrSubrectStretchCB;
 		static inline winrt::com_ptr<ID3D11SamplerState> vrSubrectStretchSampler;
+
+		// Periphery temporal smooth (ping-pong history at render-res SBS)
+		static inline eastl::unique_ptr<Texture2D> vrTemporalHistory[2];   // SRV+UAV ping-pong
+		static inline winrt::com_ptr<ID3D11ShaderResourceView> vrMvecSRV;  // cached SRV on game's mvec resource
+		static inline ID3D11Resource* vrMvecSRVOwner = nullptr;            // track which resource the SRV was created from
+		static inline uint32_t vrTemporalHistoryW = 0, vrTemporalHistoryH = 0;
+		static inline uint32_t vrTemporalFrameIdx = 0;
+		static inline bool vrTemporalHistoryValid = false;
+
+		// Temporal smooth compute shader resources
+		static inline winrt::com_ptr<ID3D11ComputeShader> vrTemporalSmoothCS;
+		static inline winrt::com_ptr<ID3D11Buffer> vrTemporalSmoothCB;
+		static inline winrt::com_ptr<ID3D11SamplerState> vrTemporalSmoothSampler;
+
+		// Subrect blend compute shader resources (feather / dither copy-back)
+		static inline winrt::com_ptr<ID3D11ComputeShader> vrSubrectBlendCS;
+		static inline winrt::com_ptr<ID3D11Buffer> vrSubrectBlendCB;
+		static inline winrt::com_ptr<ID3D11ShaderResourceView> vrBlendSrcSRV;
+		static inline ID3D11Resource* vrBlendSrcSRVOwner = nullptr;
 
 		// Subrect UV hash for resource recreation detection
 		static inline uint64_t activeSubrectUVHash = 0;

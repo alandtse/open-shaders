@@ -11,6 +11,7 @@
 #include "../../Util.h"
 #include "../Upscaling.h"
 #include "DX12SwapChain.h"
+#include "FoveatedRender/Bridge.h"
 #include "PerfMode.h"
 
 namespace
@@ -378,7 +379,14 @@ bool Streamline::CheckFrameConstants(sl::ViewportHandle p_viewport, uint32_t eye
 	slConstants.jitterOffset = { -jitter.x, -jitter.y };
 	slConstants.reset = sl::Boolean::eFalse;
 
-	slConstants.mvecScale = { 1.0f, 1.0f };
+	// Apply foveated mvec scale only when the subrect execute path is actually
+	// running this frame (flag set by ExecuteVRDlssCore). The standard full-frame
+	// DLSS path — including menus and frames where foveated is skipped — must
+	// keep mvecScale at identity or DLSS massively over-estimates motion.
+	float mvecX = 1.0f, mvecY = 1.0f;
+	if (FoveatedRenderImpl::Bridge::foveatedEvaluating)
+		FoveatedRenderImpl::Bridge::ComputeMvecScale(mvecX, mvecY);
+	slConstants.mvecScale = { mvecX, mvecY };
 	slConstants.motionVectors3D = sl::Boolean::eFalse;
 	slConstants.motionVectorsInvalidValue = FLT_MIN;
 	slConstants.orthographicProjection = sl::Boolean::eFalse;

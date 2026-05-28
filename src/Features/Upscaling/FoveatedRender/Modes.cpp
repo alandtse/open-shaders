@@ -7,6 +7,7 @@
 //
 // ============================================================================
 
+#include "Bridge.h"
 #include "Core.h"
 #include "Ops.h"
 #include "Params.h"
@@ -38,12 +39,12 @@ namespace FoveatedRenderImpl
 			Core::activeSubrectUVHash = uvHash;
 		}
 
-		switch (p.mode) {
-		case FoveatedRender::DlssMode::kFaster:
-			return ExecuteFasterMode(streamline, p);
-		default:
-			return ExecuteDefaultMode(streamline, p);
-		}
+		Bridge::foveatedEvaluating = true;
+		bool result = (p.mode == FoveatedRender::DlssMode::kFaster) ?
+		                  ExecuteFasterMode(streamline, p) :
+		                  ExecuteDefaultMode(streamline, p);
+		Bridge::foveatedEvaluating = false;
+		return result;
 	}
 
 	// ── Default mode: per-eye isolation, 2 resource sets, 2 evaluates ──
@@ -96,12 +97,12 @@ namespace FoveatedRenderImpl
 		EnsureVRSubrectTextures(allocSubInW, allocSubInH, allocSubOutW, allocSubOutH,
 			p.colorSrc, p.motionVectors, p.reactiveMask, p.transparencyMask);
 
-		// Snapshot + Stretch DRS → kMAIN (fill full-eye background)
+		// Snapshot + clear HMD hidden-area ring before cropping into subrect inputs.
 		SnapshotSBS(p.colorSrc, p.renderW, p.renderH);
+		ClearHMDMaskOnSnapshot(p);
+		StretchDRSBothEyes(p.colorDstUAV, p.eyeWidthOut, p.eyeHeightOut, p.eyeWidthIn, p.eyeHeightIn, p.renderW, p.renderH, MaybeTemporalSmooth(p));
 
-		StretchDRSBothEyes(p.colorDstUAV, p.eyeWidthOut, p.eyeHeightOut, p.eyeWidthIn, p.eyeHeightIn, p.renderW, p.renderH);
-
-		// Crop subrect per-eye from snapshot (not kMAIN which was overwritten by stretch)
+		// Crop subrect per-eye from mask-cleared snapshot (not kMAIN which was overwritten by stretch)
 		auto context = globals::d3d::context;
 		for (uint32_t i = 0; i < 2; ++i) {
 			const auto& uv = *eyeUVs[i];
@@ -145,7 +146,7 @@ namespace FoveatedRenderImpl
 			uint32_t dstCropX = (uint32_t)(uv.x * p.eyeWidthOut);
 			uint32_t dstCropY = (uint32_t)(uv.y * p.eyeHeightOut);
 			uint32_t dstX = (i == 1 ? p.eyeWidthOut : 0) + dstCropX;
-			BlendSubrectToOutput(Core::vrSubrectColorOut[i]->resource.get(), p.colorDst,
+			BlendSubrectToOutput(Core::vrSubrectColorOut[i]->resource.get(), p.colorDst, p.colorDstUAV,
 				dstX, dstCropY, subOutW, subOutH);
 		}
 
@@ -185,23 +186,7 @@ namespace FoveatedRenderImpl
 		// the standard Streamline path (Streamline.cpp) and Default mode both
 		// pre-clear via per-eye intermediates.
 		SnapshotSBS(p.colorSrc, p.renderW, p.renderH);
-		auto& upscaling = globals::features::upscaling;
-		auto* depthSRV = globals::game::renderer->GetDepthStencilData()
-		                     .depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kMAIN]
-		                     .depthSRV;
-		if (Core::vrRenderSBS && Core::vrRenderSBS->uav && depthSRV) {
-			// Color target IS the SBS snapshot (not a per-eye buffer), so
-			// colorOffsetX must select the eye's half — same as depthOffsetX.
-			// ClearHMDMaskCS's default contract assumes the color target is
-			// per-eye (colorOffsetX = 0) and was written for Streamline's
-			// per-eye intermediates; here we're routing both eyes through one
-			// SBS texture so we override both offsets together.
-			for (uint32_t i = 0; i < 2; ++i) {
-				const uint32_t eyeOffsetX = i * p.eyeWidthIn;
-				upscaling.ClearHMDMask(Core::vrRenderSBS->uav.get(), depthSRV,
-					p.eyeWidthIn, p.eyeHeightIn, eyeOffsetX, eyeOffsetX);
-			}
-		}
+		ClearHMDMaskOnSnapshot(p);
 		ID3D11Resource* dlssColorSrc = (Core::vrRenderSBS ? Core::vrRenderSBS->resource.get() : p.colorSrc);
 
 		// Step 2b: DLSS reads from the mask-cleared SBS snapshot via extent offsets
@@ -232,7 +217,7 @@ namespace FoveatedRenderImpl
 
 		// Step 3: Stretch DRS → kMAIN (subrect only) — snapshot reused from Step 2a.
 		if (!p.isFullEye) {
-			StretchDRSBothEyes(p.colorDstUAV, p.eyeWidthOut, p.eyeHeightOut, p.eyeWidthIn, p.eyeHeightIn, p.renderW, p.renderH);
+			StretchDRSBothEyes(p.colorDstUAV, p.eyeWidthOut, p.eyeHeightOut, p.eyeWidthIn, p.eyeHeightIn, p.renderW, p.renderH, MaybeTemporalSmooth(p));
 		}
 
 		// Step 4: Copy DLSS output back (with optional blend)
@@ -245,10 +230,11 @@ namespace FoveatedRenderImpl
 			uint32_t dstCropX = p.isFullEye ? 0 : (uint32_t)(uv.x * p.eyeWidthOut);
 			uint32_t dstCropY = p.isFullEye ? 0 : (uint32_t)(uv.y * p.eyeHeightOut);
 			uint32_t dstX = (i == 1 ? p.eyeWidthOut : 0) + dstCropX;
-			BlendSubrectToOutput(Core::vrFasterColorOut[i]->resource.get(), p.colorDst,
+			BlendSubrectToOutput(Core::vrFasterColorOut[i]->resource.get(), p.colorDst, p.colorDstUAV,
 				dstX, dstCropY, subOutW, subOutH);
 		}
 
 		return true;
 	}
+
 }

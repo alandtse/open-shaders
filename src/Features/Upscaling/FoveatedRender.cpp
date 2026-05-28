@@ -13,7 +13,13 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	enabled,
 	dlssMode,
 	stretchMode,
-	debugVisualize);
+	peripheryBlurRadius,
+	debugVisualize,
+	peripheryAAMode,
+	peripheryTemporalAlpha,
+	subrectBlendMode,
+	subrectFeatherWidth,
+	subrectDitherStrength);
 
 // ============================================================================
 // Lifecycle
@@ -79,6 +85,12 @@ void FoveatedRender::ClampSettings()
 	settings.dlssMode = std::min(settings.dlssMode, 1u);
 	settings.stretchMode = std::min(settings.stretchMode, 2u);
 	settings.debugVisualize = std::min(settings.debugVisualize, 1u);
+	settings.peripheryAAMode = std::min(settings.peripheryAAMode, 1u);
+	settings.subrectBlendMode = std::min(settings.subrectBlendMode, 2u);
+	settings.peripheryBlurRadius = std::clamp(settings.peripheryBlurRadius, 0.5f, 4.0f);
+	settings.peripheryTemporalAlpha = std::clamp(settings.peripheryTemporalAlpha, 0.05f, 0.5f);
+	settings.subrectFeatherWidth = std::clamp(settings.subrectFeatherWidth, 2.0f, 128.0f);
+	settings.subrectDitherStrength = std::clamp(settings.subrectDitherStrength, 0.0f, 2.0f);
 	// Preset clamping reads from Upscaling::Settings now.
 	auto& sharedPreset = globals::features::upscaling.settings.presetDLSS;
 	sharedPreset = std::min(sharedPreset, 5u);
@@ -191,12 +203,11 @@ void FoveatedRender::DrawEnable()
 
 void FoveatedRender::DrawSettings()
 {
-	static const char* dlssModes[] = { "Default", "Faster" };
 	static const char* stretchModes[] = { "Bilinear", "Point", "Gaussian Blur" };
 
 	ClampSettings();
 
-	Util::Text::WrappedInfo("Quality / Sharpness / DLSS Preset / Streamline log level are shared with the standard DLSS path above.");
+	Util::Text::WrappedInfo("Quality, Sharpness, and DLSS Preset are on the main Upscaling panel — changes there apply to foveated rendering too.");
 
 	// ── VR-only knobs ──
 	if (globals::game::isVR) {
@@ -204,85 +215,97 @@ void FoveatedRender::DrawSettings()
 		ImGui::Text("VR DLSS Mode");
 		if (auto _tt = Util::HoverTooltipWrapper()) {
 			ImGui::Text(
-				"Default vs Faster: trade per-eye image quality for setup cost. Switch only when you\n"
-				"can see a difference in your scene — otherwise prefer Faster.\n"
+				"Default — highest quality. Each eye gets its own isolated copy of color/depth/motion\n"
+				"vectors so DLSS can't sample across the stereo midline. 5 copies per eye per frame.\n"
+				"All DLSS presets supported. Best for screenshots or when Faster shows edge artifacts.\n"
 				"\n"
-				"Default — use when: image quality matters more than the small overhead — cinematic\n"
-				"scenes, screenshot/recording, or if you notice ghosting/edge artifacts in Faster.\n"
-				"Each eye gets isolated per-eye intermediates for color/depth/MV/reactive/transparency\n"
-				"so DLSS can't sample across the SBS midline. Costs five per-eye copies per frame.\n"
-				"All DLSS presets (Default, J, K, L, M, F) supported.\n"
-				"\n"
-				"Faster — use when: you want the cheapest foveated path and aren't seeing artifacts —\n"
-				"fast-motion gameplay, exploration, anywhere small quality losses go unnoticed.\n"
-				"DLSS reads kMAIN directly via extent offsets, so bilinear sampling can touch 1-2\n"
-				"texels of the neighboring eye near the SBS midline. We snapshot kMAIN once and\n"
-				"clear the HMD hidden-area ring to prevent sky-blue bleed on fast head motion.\n"
-				"Presets J and K are unavailable — switching here auto-clamps preset to L.");
+				"Faster — lower overhead. DLSS reads directly from the frame buffer using a viewport\n"
+				"offset instead of isolating each eye. 1 snapshot + 2 mask clears per frame.\n"
+				"DLSS may sample 1-2 pixels from the neighboring eye near the stereo center — usually\n"
+				"invisible in motion. Presets J and K are incompatible and auto-clamp to L.");
 		}
 
+		static const char* dlssModes[] = { "Default", "Faster" };
 		uint prevMode = settings.dlssMode;
-		ImGui::SliderInt("DLSS Mode", reinterpret_cast<int*>(&settings.dlssMode), 0, 1, dlssModes[settings.dlssMode]);
+		ImGui::SliderInt("DLSS Mode", reinterpret_cast<int*>(&settings.dlssMode), 0, 1, dlssModes[std::min(settings.dlssMode, 1u)]);
 		if (settings.dlssMode != prevMode) {
 			const uint prevPreset = globals::features::upscaling.settings.presetDLSS;
 			ClampPresetToMode();
 			if (globals::features::upscaling.settings.presetDLSS != prevPreset) {
-				logger::info("[FOVEATED] DLSS preset clamped from {} to {} after Faster switch (J/K incompatible)",
+				logger::info("[FOVEATED] DLSS preset clamped from {} to {} after mode switch (J/K incompatible with Faster)",
 					prevPreset, globals::features::upscaling.settings.presetDLSS);
 			}
 		}
 		switch (GetDlssMode()) {
 		case DlssMode::kDefault:
-			ImGui::TextWrapped("Per-eye isolation: 2 resource sets, 2 DLSS evaluates.");
+			ImGui::TextWrapped("Per-eye isolation: 5 copies per frame, 2 DLSS evaluates. All presets.");
 			break;
 		case DlssMode::kFaster:
-			ImGui::TextWrapped("SBS viewport: 1 snapshot + 2 mask clears, 2 evaluates. Presets J/K unavailable.");
+			ImGui::TextWrapped("Viewport offset: 1 snapshot, 2 mask clears, 2 DLSS evaluates. Presets J/K unavailable.");
+			break;
+		default:
 			break;
 		}
 
 		ImGui::Separator();
-		ImGui::Text("Background Stretch");
+		ImGui::Text("Periphery Rendering");
 		if (auto _tt = Util::HoverTooltipWrapper()) {
 			ImGui::Text(
-				"How the cheap periphery is reconstructed to fill the area outside the DLSS subrect.\n"
-				"This is the cost-saving step — DLSS only runs on the subrect, the rest is filled by\n"
-				"this cheaper pass. Only affects pixels outside your selected region.");
+				"The area outside your selected subrect is filled cheaply rather than running DLSS.\n"
+				"These settings control how that cheap fill looks and whether it flickers.\n"
+				"\n"
+				"Stretch method: how pixels outside the subrect are reconstructed from the lower-res\n"
+				"render buffer. Does not affect the DLSS subrect region at all.\n"
+				"\n"
+				"Periphery AA: reduces temporal flicker in the stretched area using motion-compensated\n"
+				"history blending. Independent of the DLSS subrect.\n"
+				"\n"
+				"Edge Blend: controls how the DLSS subrect edge meets the stretched periphery.\n"
+				"Hard Copy leaves a sharp seam; Feather/Dither soften it. Only affects the boundary.");
 		}
-		ImGui::SliderInt("Stretch Mode", reinterpret_cast<int*>(&settings.stretchMode), 0, 2, stretchModes[settings.stretchMode]);
+
+		ImGui::SliderInt("Stretch", reinterpret_cast<int*>(&settings.stretchMode), 0, 2, stretchModes[settings.stretchMode]);
 		switch (GetStretchMode()) {
 		case StretchMode::kBilinear:
-			ImGui::TextWrapped("Bilinear: clean linear upscale. Looks like a soft DLSS-Performance result.");
-			if (auto _tt = Util::HoverTooltipWrapper()) {
-				ImGui::Text(
-					"Use when: you want the periphery to look like a sensible low-quality reconstruction,\n"
-					"close to how DLSS-Performance would look. Default-ish choice.\n"
-					"\n"
-					"Visual artifact: typical bilinear softness — fine geometry in the periphery looks\n"
-					"slightly out of focus but not visibly stretched.");
-			}
+			ImGui::TextWrapped("Bilinear: smooth upscale of the render buffer. Looks soft but clean.");
 			break;
 		case StretchMode::kPoint:
-			ImGui::TextWrapped("Point (nearest-neighbor): cheapest. Visibly pixelated periphery.");
-			if (auto _tt = Util::HoverTooltipWrapper()) {
-				ImGui::Text(
-					"Use when: you want the smallest possible cost in the periphery and don't mind\n"
-					"obvious pixelation outside your gaze region. Useful for benchmarking the upper\n"
-					"bound of foveated savings.\n"
-					"\n"
-					"Visual artifact: chunky pixel blocks in the periphery, very visible if you look\n"
-					"away from the subrect center.");
-			}
+			ImGui::TextWrapped("Point: cheapest, visibly pixelated. Good for benchmarking foveated savings.");
 			break;
 		case StretchMode::kGaussianBlur:
-			ImGui::TextWrapped("Gaussian blur: softens periphery further. Hides upscale artifacts behind blur.");
+			ImGui::TextWrapped("Gaussian: blurs the periphery further into soft focus. Good default for foveated use.");
+			ImGui::SliderFloat("Blur Radius", &settings.peripheryBlurRadius, 0.5f, 4.0f, "%.1f px");
+			break;
+		}
+
+		{
+			static const char* peripheryAAModes[] = { "None", "Temporal Smooth" };
+			ImGui::SliderInt("Periphery AA", reinterpret_cast<int*>(&settings.peripheryAAMode), 0, 1, peripheryAAModes[settings.peripheryAAMode]);
+		}
+		if (GetPeripheryAAMode() == PeripheryAAMode::kTemporalSmooth) {
+			ImGui::TextWrapped("Blends the stretched periphery with motion-reprojected history to reduce flicker.");
+			ImGui::SliderFloat("Smoothing", &settings.peripheryTemporalAlpha, 0.05f, 0.5f, "%.2f");
 			if (auto _tt = Util::HoverTooltipWrapper()) {
-				ImGui::Text(
-					"Use when: you want the periphery to fall away into soft focus — closer to how\n"
-					"natural human peripheral vision feels. Good default for actual foveated use.\n"
-					"\n"
-					"Visual artifact: noticeable blur in the periphery. If your subrect is large this\n"
-					"is barely visible; if small, the blur is the dominant visual signal.");
+				ImGui::Text("Lower = more temporal history (smoother but may ghost). Higher = more responsive.");
 			}
+		}
+
+		{
+			static const char* blendModes[] = { "Hard Copy", "Feather", "Dither" };
+			ImGui::SliderInt("Edge Blend", reinterpret_cast<int*>(&settings.subrectBlendMode), 0, 2, blendModes[std::min(settings.subrectBlendMode, 2u)]);
+		}
+		switch (GetSubrectBlendMode()) {
+		case SubrectBlendMode::kHardCopy:
+			ImGui::TextWrapped("Sharp seam at the subrect boundary. Lowest cost.");
+			break;
+		case SubrectBlendMode::kFeather:
+			ImGui::TextWrapped("Smoothstep fade over N pixels at the boundary. Hides the seam.");
+			ImGui::SliderFloat("Feather Width", &settings.subrectFeatherWidth, 2.0f, 128.0f, "%.0f px");
+			break;
+		case SubrectBlendMode::kDither:
+			ImGui::TextWrapped("Noise-dithered fade — more natural-looking than feather at large subrects.");
+			ImGui::SliderFloat("Band Width", &settings.subrectFeatherWidth, 2.0f, 128.0f, "%.0f px");
+			ImGui::SliderFloat("Noise Amount", &settings.subrectDitherStrength, 0.0f, 2.0f, "%.2f");
 			break;
 		}
 
