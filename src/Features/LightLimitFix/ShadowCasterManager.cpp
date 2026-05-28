@@ -337,8 +337,12 @@ namespace ShadowCasterManager
 		int extra = needed - have;
 		if (extra > 0) {
 			ctx.Rdi += extra;
-			// SE only: RDX is a second counter in the same loop.
-			if (!REL::Module::IsVR() && REL::Module::GetRuntime() != REL::Module::Runtime::AE)
+			// SE/VR latch EDX from EDI inside the patched 5 bytes (before the
+			// stub captures CONTEXT), so BSTArray::resize runs with the un-
+			// bumped count while the fill loop runs with the bumped one --
+			// OOB heap write scaling with ShadowLightCount. AE inlines the
+			// resize and re-reads EDI after the stub, so RDX is dead here.
+			if (!REL::Module::IsAE())
 				ctx.Rdx += extra;
 		}
 	}
@@ -3611,8 +3615,9 @@ namespace ShadowCasterManager
 				const auto opcode = *reinterpret_cast<const std::uint8_t*>(site);
 				const auto rel32 = *reinterpret_cast<const std::int32_t*>(site + 1);
 				if (opcode != kCallOpcode || rel32 != kExpectedRel32) {
-					logger::warn("[SCM] VR shadow-mask site drift: expected E8 rel32=0x{:X} at RenderShadowmasks+0x{:X}, "
-								 "found 0x{:02X} rel32=0x{:X}. Clamping ShadowLightCount to 4 (vanilla) to avoid OOB CTD.",
+					logger::warn(
+						"[SCM] VR shadow-mask site drift: expected E8 rel32=0x{:X} at RenderShadowmasks+0x{:X}, "
+						"found 0x{:02X} rel32=0x{:X}. Clamping ShadowLightCount to 4 (vanilla) to avoid OOB CTD.",
 						kExpectedRel32, kCallOffset, opcode, rel32);
 					s_installedShadowLightCount = 4;
 				} else {
