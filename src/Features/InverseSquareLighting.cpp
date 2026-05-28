@@ -68,7 +68,7 @@ void InverseSquareLighting::ProcessLight(LightLimitFix::LightData& light, RE::BS
 		const float intensity = runtimeData->fade * 4;
 		// Use the type-based helper rather than the virtual IsShadowLight():
 		// SCM's Hook_IsShadowLight reports false for shadow lights converted
-		// to normal-light overflow handling (issue #2121 #3). If we followed
+		// to normal-light overflow handling. If we followed
 		// that hook here the cutoff would flip from DefaultShadowCasterCutoff
 		// (0.022) to DefaultCutoff (0.05) when a light is converted, shrinking
 		// its effective radius by ~33% and visibly reducing its lit area.

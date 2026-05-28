@@ -730,7 +730,7 @@ void LightLimitFix::UpdateLights()
 	//
 	// Without this, ConvertExcessToNormal lights have no entry in the cluster
 	// lightsData[] and never render — the user-visible "converted lights are
-	// invisible" symptom of issue #2121 #3.
+	// invisible" symptom.
 	ShadowCasterManager::ForEachConvertedLight([&](RE::BSShadowLight* light) {
 		auto* asBs = static_cast<RE::BSLight*>(light);
 		if (shadowLightPtrs.count(asBs))

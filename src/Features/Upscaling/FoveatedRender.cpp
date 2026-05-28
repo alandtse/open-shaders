@@ -68,7 +68,7 @@ void FoveatedRender::LoadSettings(const json& o_json)
 	settings = o_json;
 	// Util::Subrect::Controller::LoadSettings takes `const json&` (Subrect.h:68)
 	// so no const_cast is needed — keeping it would imply mutation that never
-	// happens. (Copilot + CodeRabbit on PR #44.)
+	// happens.
 	subrectController.LoadSettings(o_json);
 	ClampSettings();
 }
