@@ -32,7 +32,6 @@ namespace FoveatedRenderImpl::Ops
 
 		// QueryInterface for ID3D11Texture2D rather than blind static_cast — a
 		// non-texture resource passed here would crash GetDesc otherwise.
-		// (CodeRabbit on PR #44.)
 		winrt::com_ptr<ID3D11Texture2D> srcTex;
 		if (FAILED(src->QueryInterface(IID_PPV_ARGS(srcTex.put())))) {
 			logger::error("[FOVEATED] CreateTextureFromSource src is not an ID3D11Texture2D ({})", name ? name : "<unnamed>");
@@ -107,7 +106,6 @@ namespace FoveatedRenderImpl::Ops
 		// DLSS then samples stale masks. Drop the intermediate so subsequent
 		// frames don't read it. Independent of the recreate path: shrinking is
 		// cheap and the next non-null source will trigger recreate above.
-		// (Copilot on PR #44.)
 		if (!reactiveSrc && Core::vrIntermediateReactiveMask[0]) {
 			Core::vrIntermediateReactiveMask[0].reset();
 			Core::vrIntermediateReactiveMask[1].reset();
@@ -368,8 +366,7 @@ namespace FoveatedRenderImpl::Ops
 		// Guard against a null destination UAV — CSSetUnorderedAccessViews +
 		// Dispatch with nullptr would either no-op silently or assert in
 		// debug builds. Returning lets the route's `routeHandled=false` path
-		// fall back to standard DLSS so users still see output. (CodeRabbit
-		// on PR #44.)
+		// fall back to standard DLSS so users still see output.
 		if (!kMainUAV) {
 			logger::error("[FOVEATED] StretchDRSToFullEye called with null kMainUAV");
 			return;
@@ -380,7 +377,7 @@ namespace FoveatedRenderImpl::Ops
 		// dispatch. CSSetConstantBuffers + Dispatch would then run the
 		// shader against stale geometry/scale parameters, producing wrong
 		// pixels rather than no pixels. Early-return preserves the prior
-		// frame's output. (CodeRabbit on PR #44.)
+		// frame's output.
 		if (FAILED(context->Map(Core::vrSubrectStretchCB.get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped))) {
 			logger::error("[FOVEATED] StretchDRSToFullEye Map(vrSubrectStretchCB) failed; skipping dispatch");
 			return;

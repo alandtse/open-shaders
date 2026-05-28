@@ -54,7 +54,7 @@ namespace FoveatedRenderImpl
 		// Subrect path needs colorDstUAV (StretchDRSBothEyes writes through it).
 		// Full-eye path doesn't touch it. Return false on the subrect path so
 		// the router falls back to standard DLSS rather than hitting the null
-		// guard inside StretchDRSToFullEye every frame. (CodeRabbit on PR #44.)
+		// guard inside StretchDRSToFullEye every frame.
 		if (!p.isFullEye && !p.colorDstUAV) {
 			logger::error("[FOVEATED] ExecuteDefaultMode subrect path missing colorDstUAV — falling back");
 			return false;

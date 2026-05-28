@@ -3081,7 +3081,7 @@ namespace ShadowCasterManager
 			lights[added++] = l;
 		}
 
-		// Step 4: Inject converted shadow lights (s_normalConvert, issue #2121 #3)
+		// Step 4: Inject converted shadow lights (s_normalConvert)
 		// into the per-surface lights array. These lights have frustrumCull == 0xFF
 		// (parabolic shadow-caster marker) and are skipped by Step 3, while Steps
 		// 1/2 don't include them either (ReturnShadowmaps cleared shadowLightsAccum).

@@ -308,8 +308,8 @@ PS_OUTPUT main(PS_INPUT input)
 
 	float3 dirLightColor = SharedData::DirLightColor.xyz;
 
-	// Mirrors #2319 / Lighting.hlsl: HasDirectionalShadows() admits Interior Sun cells
-	// to the directional shadow sampling path.
+	// HasDirectionalShadows() admits Interior Sun cells to the directional shadow
+	// sampling path (matching Lighting.hlsl).
 	if (ShadowSampling::HasDirectionalShadows()) {
 		// Use the cheaper VSM shadows if available
 #	if defined(VOLUMETRIC_SHADOWS)

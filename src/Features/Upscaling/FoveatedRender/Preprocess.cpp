@@ -43,7 +43,7 @@ namespace FoveatedRenderImpl
 
 		// motionVectorCopyTexture is dereferenced unconditionally in the UAV
 		// array below when method == kDLSS. The above resource check did not
-		// cover it. Fail closed rather than null-deref. (CodeRabbit on PR #44.)
+		// cover it. Fail closed rather than null-deref.
 		if (upscaleMethod == Upscaling::UpscaleMethod::kDLSS && !upscaling.motionVectorCopyTexture) {
 			logger::error("[FOVEATED] Missing motionVectorCopyTexture for DLSS preprocess");
 			return false;
