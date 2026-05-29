@@ -1,5 +1,7 @@
 #include "LightLimitFix.h"
+#include "Globals.h"
 #include "InverseSquareLighting.h"
+#include "Features/InverseSquareLighting/Common.h"
 #include "LinearLighting.h"
 #include "Utils/UI.h"
 
@@ -10,11 +12,74 @@
 #include "Util.h"
 #include "Utils/ExternalEmittance.h"
 
+#include <algorithm>
+#include <cctype>
+#include <cmath>
+#include <limits>
+
+namespace
+{
+	constexpr float kParticleLightsSaturationMin = 1.0f;
+	constexpr float kParticleLightsSaturationMax = 2.0f;
+	constexpr float kParticleBrightnessMin = 0.0f;
+	constexpr float kParticleBrightnessMax = 10.0f;
+	constexpr float kParticleRadiusMin = 0.0f;
+	constexpr float kParticleRadiusMax = 10.0f;
+	constexpr float kBillboardBrightnessMin = 0.0f;
+	constexpr float kBillboardBrightnessMax = 10.0f;
+	constexpr float kBillboardRadiusMin = 0.0f;
+	constexpr float kBillboardRadiusMax = 10.0f;
+	constexpr float kParticleClusterThresholdMin = 8.0f;
+	constexpr float kParticleClusterThresholdMax = 128.0f;
+	constexpr int kMaxParticlesPerEmitterMin = 32;
+	constexpr int kMaxParticlesPerEmitterMax = 2048;
+	constexpr float kMaxParticleDistanceMin = 0.0f;
+	constexpr float kMaxParticleDistanceMax = 20000.0f;
+	constexpr float kJsonPlacedLightIntensityMin = 0.0f;
+	constexpr float kJsonPlacedLightIntensityMax = 8.0f;
+
+	float ClampFiniteOrDefault(float a_value, float a_min, float a_max, float a_default)
+	{
+		if (!std::isfinite(a_value))
+			return a_default;
+		return std::clamp(a_value, a_min, a_max);
+	}
+
+	void SanitizeSettings(LightLimitFix::Settings& a_settings)
+	{
+		a_settings.ParticleLightsSaturation =
+			ClampFiniteOrDefault(a_settings.ParticleLightsSaturation, kParticleLightsSaturationMin, kParticleLightsSaturationMax, 1.0f);
+		a_settings.ParticleBrightness =
+			ClampFiniteOrDefault(a_settings.ParticleBrightness, kParticleBrightnessMin, kParticleBrightnessMax, 1.0f);
+		a_settings.ParticleRadius =
+			ClampFiniteOrDefault(a_settings.ParticleRadius, kParticleRadiusMin, kParticleRadiusMax, 1.0f);
+		a_settings.BillboardBrightness =
+			ClampFiniteOrDefault(a_settings.BillboardBrightness, kBillboardBrightnessMin, kBillboardBrightnessMax, 1.0f);
+		a_settings.BillboardRadius =
+			ClampFiniteOrDefault(a_settings.BillboardRadius, kBillboardRadiusMin, kBillboardRadiusMax, 1.0f);
+		a_settings.ParticleClusterThreshold =
+			ClampFiniteOrDefault(a_settings.ParticleClusterThreshold, kParticleClusterThresholdMin, kParticleClusterThresholdMax, 32.0f);
+		a_settings.MaxParticlesPerEmitter = std::clamp(a_settings.MaxParticlesPerEmitter, kMaxParticlesPerEmitterMin, kMaxParticlesPerEmitterMax);
+		a_settings.MaxParticleDistance =
+			ClampFiniteOrDefault(a_settings.MaxParticleDistance, kMaxParticleDistanceMin, kMaxParticleDistanceMax, 6000.0f);
+		a_settings.JsonPlacedLightIntensity =
+			ClampFiniteOrDefault(a_settings.JsonPlacedLightIntensity, kJsonPlacedLightIntensityMin, kJsonPlacedLightIntensityMax, 1.0f);
+	}
+
+	void ClearStrictLightData(LightLimitFix::StrictLightDataCB& a_data, bool a_resetRoomIndex) noexcept
+	{
+		a_data.NumStrictLights = 0;
+		a_data.ShadowBitMask = 0;
+		if (a_resetRoomIndex)
+			a_data.RoomIndex = -1;
+	}
+}
+
 // Debug visualisation state (EnableLightsVisualisation / LightsVisualisationMode)
-// is intentionally NOT in Settings -- it lives as instance members on the
-// LightLimitFix class so it resets per session and can't accidentally end
-// up in a shipped JSON config that would force every load to compile the
-// heavier LLFDEBUG shader permutation.
+// is intentionally NOT serialized -- it lives as instance members on the
+// LightLimitFix class so it resets per session and can't accidentally end up in
+// a shipped JSON config that would force every load to compile the heavier
+// LLFDEBUG shader permutation.
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	LightLimitFix::Settings,
 	EnableContactShadows,
@@ -25,13 +90,35 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	ContactShadowDepthFade,
 	ContactShadowMinIntensity,
 	ShowShadowOverlay,
-	ShadowSettings)
+	ShadowSettings,
+	EnableParticleContactShadows,
+	EnableParticleLights,
+	EnableParticleLightsCulling,
+	EnableParticleLightsDetection,
+	EnableParticleLightsOptimization,
+	ParticleLightsSaturation,
+	ParticleBrightness,
+	ParticleRadius,
+	BillboardBrightness,
+	BillboardRadius,
+	ParticleClusterThreshold,
+	MaxParticlesPerEmitter,
+	MaxParticleDistance,
+	JsonPlacedLightIntensity,
+	JsonPlacedLightsInteriorsOnly,
+	JsonPlacedLightsPortalStrictOnly)
 
 void LightLimitFix::DrawSettings()
 {
 	auto shaderCache = globals::shaderCache;
 
 	ShadowCasterManager::DrawSettings(settings.ShadowSettings);
+
+	if (ImGui::TreeNodeEx("Statistics", ImGuiTreeNodeFlags_DefaultOpen)) {
+		ImGui::Text(std::format("Clustered Light Count : {}", lightCount).c_str());
+		ImGui::Text(std::format("Particle Lights Count : {}", currentParticleLights.size()).c_str());
+		ImGui::TreePop();
+	}
 
 	// ---- Active Shadow Casters --------------------------------------
 	// One cohesive section: overlay toggle, then ALL the stats grouped
@@ -56,7 +143,7 @@ void LightLimitFix::DrawSettings()
 	ShadowCasterManager::DrawShadowLightTable(true, false);
 
 	///////////////////////////////
-	ImGui::SeparatorText("Shadows");
+	ImGui::SeparatorText("Contact Shadows");
 
 	ImGui::Checkbox("Enable Contact Shadows", &settings.EnableContactShadows);
 	if (auto _tt = Util::HoverTooltipWrapper()) {
@@ -106,6 +193,98 @@ void LightLimitFix::DrawSettings()
 				"Strict lights are always raymarched regardless of this threshold. "
 				"Higher = larger perf win, may drop subtle shadows from weak lights at their reach edge.");
 		}
+
+		ImGui::TreePop();
+	}
+
+	ImGui::BeginDisabled(!settings.EnableContactShadows);
+	ImGui::Checkbox("Enable Particle Contact Shadows", &settings.EnableParticleContactShadows);
+	if (auto _tt = Util::HoverTooltipWrapper()) {
+		ImGui::Text("Also cast contact shadows from particle lights. Larger performance impact in fire/magic-heavy scenes.");
+	}
+	ImGui::EndDisabled();
+
+	ImGui::SeparatorText("Particle Lights");
+
+	if (ImGui::TreeNodeEx("Particle Lights##particles", ImGuiTreeNodeFlags_DefaultOpen)) {
+		ImGui::Checkbox("Enable Particle Lights", &settings.EnableParticleLights);
+		if (auto _tt = Util::HoverTooltipWrapper()) {
+			ImGui::Text("Treat configured particle effects as dynamic light sources.");
+		}
+
+		ImGui::Separator();
+		ImGui::TextWrapped("Particle Lights Performance");
+
+		ImGui::Checkbox("Enable Culling", &settings.EnableParticleLightsCulling);
+		if (auto _tt = Util::HoverTooltipWrapper()) {
+			ImGui::Text("Significantly improves performance by not rendering empty textures. Only disable if you are encountering issues.");
+		}
+
+		ImGui::Checkbox("Enable Detection", &settings.EnableParticleLightsDetection);
+		if (auto _tt = Util::HoverTooltipWrapper()) {
+			ImGui::Text("Adds particle lights to the player light level so that NPCs detect them for stealth and gameplay.");
+		}
+
+		ImGui::Checkbox("Enable Optimization", &settings.EnableParticleLightsOptimization);
+		if (auto _tt = Util::HoverTooltipWrapper()) {
+			ImGui::Text("Merges vertices which are close enough to each other to improve performance.");
+		}
+
+		ImGui::SliderFloat("Cluster Threshold", &settings.ParticleClusterThreshold, kParticleClusterThresholdMin, kParticleClusterThresholdMax, "%.1f");
+		if (auto _tt = Util::HoverTooltipWrapper()) {
+			ImGui::Text(
+				"Distance+radius similarity threshold for merging particles into one light.\n"
+				"Higher = more merging, better performance, blurrier lights.\n"
+				"Lower = less merging, more precise, more expensive.");
+		}
+
+		ImGui::SliderInt("Max Particles per Emitter", &settings.MaxParticlesPerEmitter, kMaxParticlesPerEmitterMin, kMaxParticlesPerEmitterMax);
+		if (auto _tt = Util::HoverTooltipWrapper()) {
+			ImGui::Text(
+				"Maximum number of particles sampled per emitter per frame.\n"
+				"Higher = closer to the real particle system but more CPU work.\n"
+				"Lower = faster, especially for very dense effects.");
+		}
+
+		ImGui::SliderFloat("Max Particle Distance", &settings.MaxParticleDistance, 1000.0f, kMaxParticleDistanceMax, "%.0f");
+		if (auto _tt = Util::HoverTooltipWrapper()) {
+			ImGui::Text(
+				"Particle lights beyond this distance from the camera are skipped entirely.\n"
+				"Lower = better performance, but distant effects won't contribute light.\n"
+				"Higher = more distant particle lighting, but more cost.");
+		}
+
+		ImGui::Spacing();
+		ImGui::TextWrapped("Particle Lights Customisation");
+		ImGui::SliderFloat("Saturation", &settings.ParticleLightsSaturation, kParticleLightsSaturationMin, kParticleLightsSaturationMax, "%.2f");
+		if (auto _tt = Util::HoverTooltipWrapper()) {
+			ImGui::Text("Particle light saturation.");
+		}
+		ImGui::SliderFloat("Particle Brightness", &settings.ParticleBrightness, kParticleBrightnessMin, kParticleBrightnessMax, "%.2f");
+		ImGui::SliderFloat("Particle Radius", &settings.ParticleRadius, kParticleRadiusMin, kParticleRadiusMax, "%.2f");
+		ImGui::SliderFloat("Billboard Brightness", &settings.BillboardBrightness, kBillboardBrightnessMin, kBillboardBrightnessMax, "%.2f");
+		ImGui::SliderFloat("Billboard Radius", &settings.BillboardRadius, kBillboardRadiusMin, kBillboardRadiusMax, "%.2f");
+
+		ImGui::TreePop();
+	}
+
+	if (ImGui::TreeNodeEx("Placed Lights (JSON)", ImGuiTreeNodeFlags_DefaultOpen)) {
+		const bool jsonPlacedLightsSupported = globals::features::inverseSquareLighting.loaded;
+		ImGui::BeginDisabled(!jsonPlacedLightsSupported);
+		ImGui::SliderFloat("Intensity Scale", &settings.JsonPlacedLightIntensity, kJsonPlacedLightIntensityMin, kJsonPlacedLightIntensityMax, "%.2f");
+		if (auto _tt = Util::HoverTooltipWrapper()) {
+			ImGui::Text(
+				"Scales intensity for attached runtime lights generated from Light records.\n"
+				"Primarily targets Light Placer-style JSON lights.\n"
+				"Requires Inverse Square Lighting runtime metadata.");
+		}
+
+		ImGui::Checkbox("Interiors Only", &settings.JsonPlacedLightsInteriorsOnly);
+		ImGui::Checkbox("Portal Strict Only", &settings.JsonPlacedLightsPortalStrictOnly);
+		ImGui::EndDisabled();
+
+		if (!jsonPlacedLightsSupported)
+			ImGui::TextDisabled("Requires Inverse Square Lighting to identify JSON-placed runtime lights.");
 
 		ImGui::TreePop();
 	}
@@ -179,7 +358,6 @@ LightLimitFix::PerFrame LightLimitFix::GetCommonBufferData()
 	};
 
 	PerFrame perFrame{};
-	perFrame.EnableContactShadows = settings.EnableContactShadows;
 	perFrame.ContactShadowMaxSteps = std::clamp<uint32_t>(settings.ContactShadowMaxSteps, 1u, 16u);
 	perFrame.ContactShadowMaxDistance = sanitizeFloat(settings.ContactShadowMaxDistance, 64.0f, 4096.0f);
 	perFrame.ContactShadowStride = sanitizeFloat(settings.ContactShadowStride, 0.5f, 8.0f);
@@ -187,6 +365,7 @@ LightLimitFix::PerFrame LightLimitFix::GetCommonBufferData()
 	perFrame.ContactShadowDepthFade = sanitizeFloat(settings.ContactShadowDepthFade, 0.0f, 1.0f);
 	perFrame.ContactShadowMinIntensity = sanitizeFloat(settings.ContactShadowMinIntensity, 0.0f, 1.0f);
 	perFrame.ShadowMapSlots = ShadowCasterManager::GetInstalledSlotCount();
+	perFrame.EnableParticleContactShadows = settings.EnableContactShadows && settings.EnableParticleContactShadows;
 	std::copy(clusterSize, clusterSize + 3, perFrame.ClusterSize);
 	perFrame.EnableLightsVisualisation = EnableLightsVisualisation;
 	perFrame.LightsVisualisationMode = LightsVisualisationMode;
@@ -293,14 +472,33 @@ void LightLimitFix::SetupResources()
 	}
 }
 
-void LightLimitFix::RestoreDefaultSettings()
+void LightLimitFix::Reset()
 {
-	settings = {};
+	std::lock_guard<std::mutex> queueLock{ particleLightsQueueMutex };
+
+	for (auto& particleLight : currentParticleLights) {
+		if (!particleLight.node)
+			continue;
+
+		if (!particleLight.billboard) {
+			if (const auto particleSystem = static_cast<RE::NiParticleSystem*>(particleLight.node)) {
+				if (auto particleData = particleSystem->GetParticlesRuntimeData().particleData.get())
+					particleData->DecRefCount();
+			}
+		}
+		particleLight.node->DecRefCount();
+	}
+	currentParticleLights.clear();
+	std::swap(currentParticleLights, queuedParticleLights);
+	// References are keyed by transient pass geometry pointers; rebuild every frame to avoid stale entries.
+	particleLightsReferences.clear();
+	jsonPlacedLightCache.clear();
 }
 
 void LightLimitFix::LoadSettings(json& o_json)
 {
 	settings = o_json;
+	SanitizeSettings(settings);
 	// iShadowMapResolution:Display is owned by Skyrim's INI, not our JSON.
 	ShadowCasterManager::LoadINISettings();
 
@@ -311,23 +509,28 @@ void LightLimitFix::LoadSettings(json& o_json)
 
 void LightLimitFix::SaveSettings(json& o_json)
 {
+	SanitizeSettings(settings);
 	o_json = settings;
 	ShadowCasterManager::SaveINISettings();
 }
 
+void LightLimitFix::RestoreDefaultSettings()
+{
+	settings = {};
+	SanitizeSettings(settings);
+}
+
 RE::NiNode* GetParentRoomNode(RE::NiAVObject* object)
 {
-	if (object == nullptr) {
+	if (object == nullptr)
 		return nullptr;
-	}
 
 	static const auto* roomRtti = REL::Relocation<const RE::NiRTTI*>{ RE::NiRTTI_BSMultiBoundRoom }.get();
 	static const auto* portalRtti = REL::Relocation<const RE::NiRTTI*>{ RE::NiRTTI_BSPortalSharedNode }.get();
 
 	const auto* rtti = object->GetRTTI();
-	if (rtti == roomRtti || rtti == portalRtti) {
+	if (rtti == roomRtti || rtti == portalRtti)
 		return static_cast<RE::NiNode*>(object);
-	}
 
 	return GetParentRoomNode(object->parent);
 }
@@ -339,84 +542,120 @@ void LightLimitFix::BSLightingShader_SetupGeometry_Before(RE::BSRenderPass* a_pa
 	if (!shaderCache->IsEnabled())
 		return;
 
-	strictLightDataTemp.NumStrictLights = 0;
-	strictLightDataTemp.ShadowBitMask = 0;
+	ClearStrictLightData(strictLightDataTemp, true);
 
-	strictLightDataTemp.RoomIndex = -1;
+	if (!a_pass || !a_pass->geometry)
+		return;
+
 	if (!roomNodes.empty()) {
 		if (RE::NiNode* roomNode = GetParentRoomNode(a_pass->geometry)) {
-			if (auto it = roomNodes.find(roomNode); it != roomNodes.cend()) {
+			if (auto it = roomNodes.find(roomNode); it != roomNodes.cend())
 				strictLightDataTemp.RoomIndex = it->second;
-			}
 		}
 	}
 }
 
 void LightLimitFix::BSLightingShader_SetupGeometry_GeometrySetupConstantPointLights(RE::BSRenderPass* a_pass)
 {
+	if (!a_pass || !a_pass->sceneLights) {
+		ClearStrictLightData(strictLightDataTemp, false);
+		return;
+	}
+
+	auto smState = globals::game::smState;
+	if (!smState) {
+		ClearStrictLightData(strictLightDataTemp, false);
+		return;
+	}
+
 	auto& isl = globals::features::inverseSquareLighting;
 
 	auto accumulator = *globals::game::currentAccumulator.get();
-	bool inWorld = accumulator->GetRuntimeData().activeShadowSceneNode == globals::game::smState->shadowSceneNode[0];
-
-	strictLightDataTemp.NumStrictLights = inWorld ? 0 : (a_pass->numLights - 1);
-
-	uint32_t writeIdx = 0;
-	for (uint32_t i = 0; i < strictLightDataTemp.NumStrictLights; i++) {
-		auto bsLight = a_pass->sceneLights[i + 1];
-		if (!bsLight)
-			continue;
-		auto niLight = bsLight->light.get();
-		if (!niLight)
-			continue;
-
-		auto& runtimeData = niLight->GetLightRuntimeData();
-
-		LightData light{};
-		light.color = { runtimeData.diffuse.red, runtimeData.diffuse.green, runtimeData.diffuse.blue };
-		light.lightFlags = std::bit_cast<LightFlags>(runtimeData.ambient.red);
-
-		if (isl.loaded) {
-			isl.ProcessLight(light, bsLight, niLight);
-		} else {
-			light.radius = runtimeData.radius.x;
-			// light.color *= runtimeData.fade;
-			light.fade = runtimeData.fade;
-		}
-
-		light.fade *= bsLight->lodDimmer;
-
-		SetLightPosition(light, niLight->world.translate, inWorld);
-
-		if (i < a_pass->numShadowLights) {
-			auto* shadowLight = static_cast<RE::BSShadowLight*>(bsLight);
-			// Use SCM's stable container-slot index instead of reading the
-			// live `shadowmapDescriptors[0].shadowmapIndex`. The descriptor
-			// field can be corrupted mid-frame by ReturnShadowmaps() (called
-			// via Hook_DisableColorMask) after ScheduleShadowCasters fixed
-			// it but before this strict-light setup runs -- a stale-but-in
-			// -range index would still pass an upper-bound check yet point
-			// strict-light shader sampling at the wrong kSHADOWMAPS slice.
-			// GetShadowSlot reads from the SCM's own pool (s_lights, set in
-			// ScheduleShadowCasters and never touched by ReturnShadowmaps),
-			// so it stays consistent with CopyShadowLightData and
-			// UpdateLights, which also key off it. Returns -1 for the sun
-			// or inactive lights; both cases skip setting the Shadow flag.
-			const int32_t slot = ShadowCasterManager::GetShadowSlot(shadowLight);
-			if (slot >= 0 && static_cast<uint32_t>(slot) < ShadowCasterManager::GetInstalledSlotCount()) {
-				light.shadowMapIndex = static_cast<uint32_t>(slot);
-				light.lightFlags.set(LightFlags::Shadow);
-			}
-		}
-
-		strictLightDataTemp.StrictLights[writeIdx++] = light;
+	if (!accumulator) {
+		ClearStrictLightData(strictLightDataTemp, false);
+		return;
 	}
-	strictLightDataTemp.NumStrictLights = writeIdx;
 
-	// Don't reinstate a build loop for strictLightDataTemp.ShadowBitMask:
-	// no shader reads it (the IsLightIgnored bit-mask branch was replaced by
-	// per-light shadowMapIndex sampling). The field stays for cbuffer ABI
-	// stability and is zero-initialised above.
+	bool inWorld = accumulator->GetRuntimeData().activeShadowSceneNode == smState->shadowSceneNode[0];
+	const bool isInterior = Util::IsInterior();
+
+	constexpr uint32_t kStrictLightCapacity = 15;
+	const uint32_t availableSceneLights = a_pass->numLights > 0 ? (a_pass->numLights - 1) : 0;
+	const uint32_t requestedStrictLights = inWorld ? 0u : availableSceneLights;
+	const uint32_t strictLightCount = std::min(requestedStrictLights, kStrictLightCapacity);
+	const uint32_t strictShadowLightCount = std::min(static_cast<uint32_t>(a_pass->numShadowLights), availableSceneLights);
+	RefreshJsonPlacedLightCacheFrame();
+
+	ClearStrictLightData(strictLightDataTemp, false);
+
+	uint32_t outIndex = 0;
+#if defined(_MSC_VER)
+	__try
+#endif
+	{
+		for (uint32_t i = 0; i < strictLightCount; i++) {
+			auto bsLight = a_pass->sceneLights[i + 1];
+			if (!bsLight)
+				continue;
+			auto niLight = bsLight->light.get();
+			if (!niLight)
+				continue;
+
+			auto& runtimeData = niLight->GetLightRuntimeData();
+
+			LightData light{};
+			light.color = { runtimeData.diffuse.red, runtimeData.diffuse.green, runtimeData.diffuse.blue };
+			light.lightFlags = std::bit_cast<LightFlags>(runtimeData.ambient.red);
+
+			if (isl.loaded) {
+				isl.ProcessLight(light, bsLight, niLight);
+			} else {
+				light.radius = runtimeData.radius.x;
+				light.fade = runtimeData.fade;
+			}
+
+			light.fade *= bsLight->lodDimmer;
+			const bool isPortalStrict = !IsGlobalLight(bsLight);
+			ApplyJsonPlacedLightIntensityScale(light, bsLight, niLight, isPortalStrict, isInterior);
+
+			SetLightPosition(light, niLight->world.translate, inWorld);
+
+			if (i < strictShadowLightCount && bsLight->IsShadowLight()) {
+				auto* shadowLight = static_cast<RE::BSShadowLight*>(bsLight);
+				// Use SCM's stable container-slot index instead of reading the
+				// live `shadowmapDescriptors[0].shadowmapIndex`. The descriptor
+				// field can be corrupted mid-frame by ReturnShadowmaps() (called
+				// via Hook_DisableColorMask) after ScheduleShadowCasters fixed
+				// it but before this strict-light setup runs -- a stale-but-in
+				// -range index would still pass an upper-bound check yet point
+				// strict-light shader sampling at the wrong kSHADOWMAPS slice.
+				// GetShadowSlot reads from the SCM's own pool (s_lights, set in
+				// ScheduleShadowCasters and never touched by ReturnShadowmaps),
+				// so it stays consistent with CopyShadowLightData and
+				// UpdateLights, which also key off it. Returns -1 for the sun
+				// or inactive lights; both cases skip setting the Shadow flag.
+				const int32_t slot = ShadowCasterManager::GetShadowSlot(shadowLight);
+				if (slot >= 0 && static_cast<uint32_t>(slot) < ShadowCasterManager::GetInstalledSlotCount()) {
+					light.shadowMapIndex = static_cast<uint32_t>(slot);
+					light.lightFlags.set(LightFlags::Shadow);
+				}
+			}
+
+			strictLightDataTemp.StrictLights[outIndex++] = light;
+		}
+		strictLightDataTemp.NumStrictLights = outIndex;
+
+		// Don't build strictLightDataTemp.ShadowBitMask: no shader reads it (the
+		// IsLightIgnored bit-mask branch was replaced by per-light shadowMapIndex
+		// sampling, set inline above). The field stays for cbuffer ABI stability
+		// and is zero-initialised by ClearStrictLightData.
+	}
+#if defined(_MSC_VER)
+	__except (1)
+	{
+		ClearStrictLightData(strictLightDataTemp, false);
+	}
+#endif
 }
 
 void LightLimitFix::BSLightingShader_SetupGeometry_After(RE::BSRenderPass*)
@@ -428,7 +667,12 @@ void LightLimitFix::BSLightingShader_SetupGeometry_After(RE::BSRenderPass*)
 	if (!shaderCache->IsEnabled())
 		return;
 
+	if (!smState || !strictLightDataCB)
+		return;
+
 	auto accumulator = *globals::game::currentAccumulator.get();
+	if (!accumulator)
+		return;
 
 	auto shadowSceneNode = smState->shadowSceneNode[0];
 
@@ -454,17 +698,65 @@ void LightLimitFix::SetLightPosition(LightLimitFix::LightData& a_light, RE::NiPo
 	for (int eyeIndex = 0; eyeIndex < eyeCount; eyeIndex++) {
 		RE::NiPoint3 eyePosition;
 
-		if (a_cached) {
+		if (a_cached)
 			eyePosition = eyePositionCached[eyeIndex];
-		} else {
+		else
 			eyePosition = Util::GetEyePosition(eyeIndex);
-		}
 
 		auto worldPos = a_initialPosition - eyePosition;
 		a_light.positionWS[eyeIndex].data.x = worldPos.x;
 		a_light.positionWS[eyeIndex].data.y = worldPos.y;
 		a_light.positionWS[eyeIndex].data.z = worldPos.z;
 	}
+}
+
+void LightLimitFix::RefreshJsonPlacedLightCacheFrame()
+{
+	if (jsonPlacedLightCacheFrameChecker.IsNewFrame())
+		jsonPlacedLightCache.clear();
+}
+
+bool LightLimitFix::IsJsonPlacedLight(RE::BSLight* a_bsLight, RE::NiLight* a_niLight)
+{
+	if (!a_bsLight || !a_niLight || !a_bsLight->pointLight)
+		return false;
+	if (!globals::features::inverseSquareLighting.loaded)
+		return false;
+	if (const auto it = jsonPlacedLightCache.find(a_niLight); it != jsonPlacedLightCache.end())
+		return it->second;
+
+	bool isJsonPlacedLight = false;
+	if (const auto ownerRef = a_niLight->GetUserData()) {
+		if (const auto ownerBase = ownerRef->GetObjectReference(); ownerBase && ownerBase->GetFormType() != RE::FormType::Light) {
+			const auto runtimeData = ISLCommon::RuntimeLightDataExt::Get(a_niLight);
+			if (runtimeData && runtimeData->lighFormId != 0) {
+				const auto lighForm = RE::TESForm::LookupByID(runtimeData->lighFormId);
+				isJsonPlacedLight = lighForm && lighForm->GetFormType() == RE::FormType::Light;
+			}
+		}
+	}
+
+	jsonPlacedLightCache.insert_or_assign(a_niLight, isJsonPlacedLight);
+	return isJsonPlacedLight;
+}
+
+void LightLimitFix::ApplyJsonPlacedLightIntensityScale(
+	LightData& a_light,
+	RE::BSLight* a_bsLight,
+	RE::NiLight* a_niLight,
+	bool a_isPortalStrict,
+	bool a_isInterior)
+{
+	if (std::abs(settings.JsonPlacedLightIntensity - 1.0f) <= 1e-4f)
+		return;
+	if (settings.JsonPlacedLightsInteriorsOnly && !a_isInterior)
+		return;
+	if (settings.JsonPlacedLightsPortalStrictOnly && !a_isPortalStrict)
+		return;
+	if (!IsJsonPlacedLight(a_bsLight, a_niLight))
+		return;
+
+	a_light.fade *= settings.JsonPlacedLightIntensity;
 }
 
 void LightLimitFix::Prepass()
@@ -495,11 +787,12 @@ bool LightLimitFix::IsValidLight(RE::BSLight* a_light)
 
 bool LightLimitFix::IsGlobalLight(RE::BSLight* a_light)
 {
-	return !(a_light->portalStrict || !a_light->portalGraph);
+	return a_light && !(a_light->portalStrict || !a_light->portalGraph);
 }
 
 void LightLimitFix::PostPostLoad()
 {
+	globals::features::llf::particleLights.GetConfigs();
 	Hooks::Install();
 	ShadowCasterManager::Init(settings.ShadowSettings);
 	ShadowCasterManager::Install(settings.ShadowSettings);
@@ -507,9 +800,12 @@ void LightLimitFix::PostPostLoad()
 
 void LightLimitFix::DataLoaded()
 {
-	auto iMagicLightMaxCount = globals::game::gameSettingCollection->GetSetting("iMagicLightMaxCount");
-	iMagicLightMaxCount->data.i = MAXINT32;
-	logger::info("[LLF] Unlocked magic light limit");
+	if (auto gameSettings = globals::game::gameSettingCollection) {
+		if (auto iMagicLightMaxCount = gameSettings->GetSetting("iMagicLightMaxCount")) {
+			iMagicLightMaxCount->data.i = MAXINT32;
+			logger::info("[LLF] Unlocked magic light limit");
+		}
+	}
 }
 
 void LightLimitFix::ClearShaderCache()
@@ -532,13 +828,37 @@ void LightLimitFix::ClearShaderCache()
 void LightLimitFix::UpdateLights()
 {
 	ZoneScopedN("LLF::UpdateLights");
+
+	auto context = globals::d3d::context;
+	if (!context || !lights || !lights->resource)
+		return;
+
 	auto smState = globals::game::smState;
 	auto& isl = globals::features::inverseSquareLighting;
+	auto clearAndUpdate = [&]() {
+		lightCount = 0;
+		// Drop last frame's particle lights too: AddParticleLightLuminance reads
+		// cachedParticleLights on the gameplay thread, so a bare early-return here
+		// would leave stale lights contributing to NPC light-level detection.
+		{
+			std::lock_guard<std::shared_mutex> lk{ cachedParticleLightsMutex };
+			cachedParticleLights.clear();
+		}
+		UpdateStructure();
+	};
+
+	if (!smState) {
+		clearAndUpdate();
+		return;
+	}
 
 	auto shadowSceneNode = smState->shadowSceneNode[0];
+	if (!shadowSceneNode) {
+		clearAndUpdate();
+		return;
+	}
 
 	// Cache data since cameraData can become invalid in first-person
-
 	for (int eyeIndex = 0; eyeIndex < eyeCount; eyeIndex++) {
 		auto eyePosition = globals::game::frameBufferCached.GetCameraPosAdjust(eyeIndex);
 		eyePositionCached[eyeIndex] = { eyePosition.x, eyePosition.y, eyePosition.z };
@@ -546,14 +866,22 @@ void LightLimitFix::UpdateLights()
 
 	eastl::vector<LightData> lightsData{};
 	lightsData.reserve(MAX_LIGHTS);
+	const bool isInterior = Util::IsInterior();
+	RefreshJsonPlacedLightCacheFrame();
 
 	// Process point lights
 
 	roomNodes.clear();
 
 	auto addRoom = [&](RE::NiNode* node, LightData& light) {
+		if (!node)
+			return;
+
+		constexpr std::size_t kMaxRoomFlags = 128;
 		uint8_t roomIndex = 0;
 		if (auto it = roomNodes.find(node); it == roomNodes.cend()) {
+			if (roomNodes.size() >= kMaxRoomFlags)
+				return;
 			roomIndex = static_cast<uint8_t>(roomNodes.size());
 			roomNodes.insert_or_assign(node, roomIndex);
 		} else {
@@ -594,23 +922,24 @@ void LightLimitFix::UpdateLights()
 						isl.ProcessLight(light, bsLight, niLight);
 					} else {
 						light.radius = runtimeData.radius.x;
-						// light.color *= runtimeData.fade;
 						light.fade = runtimeData.fade;
 					}
 
 					light.fade *= bsLight->lodDimmer;
+					const bool isPortalStrict = !IsGlobalLight(bsLight);
 
-					if (!IsGlobalLight(bsLight)) {
-						// List of BSMultiBoundRooms affected by a light
+					if (isPortalStrict) {
 						for (const auto& roomPtr : bsLight->rooms) {
-							addRoom(roomPtr, light);
+							if (roomPtr)
+								addRoom(static_cast<RE::NiNode*>(roomPtr), light);
 						}
-						// List of BSPortals affected by a light
 						for (const auto& portalPtr : bsLight->portals) {
-							addRoom(portalPtr->portalSharedNode.get(), light);
+							if (portalPtr && portalPtr->portalSharedNode)
+								addRoom(static_cast<RE::NiNode*>(portalPtr->portalSharedNode.get()), light);
 						}
 						light.lightFlags.set(LightFlags::PortalStrict);
 					}
+					ApplyJsonPlacedLightIntensityScale(light, bsLight, niLight, isPortalStrict, isInterior);
 
 					SetLightPosition(light, niLight->world.translate);
 
@@ -759,14 +1088,15 @@ void LightLimitFix::UpdateLights()
 		addLight(RE::NiPointer<RE::BSLight>(asBs));
 	});
 
-	auto context = globals::d3d::context;
+	ProcessQueuedParticleLights(lightsData);
 
 	lightCount = std::min((uint)lightsData.size(), MAX_LIGHTS);
 
 	D3D11_MAPPED_SUBRESOURCE mapped;
 	DX::ThrowIfFailed(context->Map(lights->resource.get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped));
 	size_t bytes = sizeof(LightData) * lightCount;
-	memcpy_s(mapped.pData, bytes, lightsData.data(), bytes);
+	if (bytes > 0)
+		memcpy_s(mapped.pData, bytes, lightsData.data(), bytes);
 	context->Unmap(lights->resource.get(), 0);
 
 	UpdateStructure();
@@ -922,7 +1252,7 @@ void LightLimitFix::Hooks::BSEffectShader_SetupGeometry::thunk(RE::BSShader* Thi
 	auto& singleton = globals::features::lightLimitFix;
 	singleton.BSLightingShader_SetupGeometry_Before(Pass);
 	singleton.BSLightingShader_SetupGeometry_After(Pass);
-};
+}
 
 void LightLimitFix::Hooks::BSWaterShader_SetupGeometry::thunk(RE::BSShader* This, RE::BSRenderPass* Pass, uint32_t RenderFlags)
 {
@@ -930,4 +1260,5 @@ void LightLimitFix::Hooks::BSWaterShader_SetupGeometry::thunk(RE::BSShader* This
 	auto& singleton = globals::features::lightLimitFix;
 	singleton.BSLightingShader_SetupGeometry_Before(Pass);
 	singleton.BSLightingShader_SetupGeometry_After(Pass);
-};
+}
+

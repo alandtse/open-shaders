@@ -2801,8 +2801,15 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 #			endif
 			}
 
+			// Particle lights carry both Simple and Particle bits. Simple-only lights are
+			// clustered fallbacks (no real emitter) and never trace; particle lights trace
+			// only when the user opted in via EnableParticleContactShadows.
+			const bool isParticleLight = (light.lightFlags & LightLimitFix::LightFlags::Particle) != 0;
+			const bool canShadow = isParticleLight ?
+			                           SharedData::lightLimitFixSettings.EnableParticleContactShadows :
+			                           !(light.lightFlags & LightLimitFix::LightFlags::Simple);
 			[branch] if (
-				!(light.lightFlags & LightLimitFix::LightFlags::Simple) &&
+				canShadow &&
 				shadowComponent != 0.0 &&
 				lightAngle > 0.0 &&
 				passesIntensityGate)

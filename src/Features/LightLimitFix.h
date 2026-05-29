@@ -1,8 +1,12 @@
 #pragma once
 
 #include "Buffer.h"
+#include "Features/LightLimitFix/ParticleLights.h"
 #include "LightLimitFix/ShadowCasterManager.h"
 #include "OverlayFeature.h"
+
+#include <mutex>
+#include <shared_mutex>
 
 struct LightLimitFix : OverlayFeature
 {
@@ -24,7 +28,8 @@ public:
 			{ "Removes 4-light limit",
 				"Unlimited dynamic lights",
 				"Shadow support for point and spot lights",
-				"Improved lighting quality" }
+				"Improved lighting quality",
+				"Particle lights from configurable INI" }
 		};
 	}
 
@@ -40,6 +45,7 @@ public:
 		Disabled = (1 << 9),
 		InverseSquare = (1 << 10),
 		Linear = (1 << 11),
+		Particle = (1 << 12),
 	};
 
 	struct PositionOpt
@@ -110,7 +116,8 @@ public:
 		// Debug (last)
 		uint EnableLightsVisualisation;
 		uint LightsVisualisationMode;
-		uint pad0[2];
+		uint EnableParticleContactShadows;
+		uint pad0;
 	};
 	STATIC_ASSERT_ALIGNAS_16(PerFrame);
 	// Compile-time size lock catches CPU/GPU cbuffer layout drift. STATIC_ASSERT_ALIGNAS_16
@@ -136,6 +143,46 @@ public:
 	STATIC_ASSERT_ALIGNAS_16(StrictLightDataCB);
 
 	StrictLightDataCB strictLightDataTemp;
+
+	struct CachedParticleLight
+	{
+		float grey;
+		RE::NiPoint3 position;
+		float radius;
+	};
+
+	struct ParticleLightInfo
+	{
+		bool billboard;
+		RE::BSGeometry* node;
+		RE::NiColorA color;
+		float radiusMult = 1.0f;
+	};
+
+	struct ParticleLightReference
+	{
+		bool valid = false;
+		bool billboard = false;
+		// keeps billboard effect-material/emittance tint after detection
+		bool applyEffectMaterialTint = true;
+		ParticleLights::Config config{};
+		bool hasGradientConfig = false;
+		ParticleLights::GradientConfig gradientConfig{};
+		RE::NiColorA baseColor{ 1.0f, 1.0f, 1.0f, 1.0f };
+		std::uint64_t configVersion = 0;
+	};
+
+	eastl::hash_map<RE::BSGeometry*, ParticleLightReference> particleLightsReferences;
+	eastl::vector<ParticleLightInfo> queuedParticleLights;
+	eastl::vector<ParticleLightInfo> currentParticleLights;
+	std::mutex particleLightsQueueMutex;
+
+	std::shared_mutex cachedParticleLightsMutex;
+	eastl::vector<CachedParticleLight> cachedParticleLights;
+
+	// JSON-placed light cache (rebuilt per frame); paired with InverseSquareLighting metadata.
+	eastl::hash_map<RE::NiLight*, bool> jsonPlacedLightCache;
+	Util::FrameChecker jsonPlacedLightCacheFrameChecker;
 
 	ConstantBuffer* strictLightDataCB = nullptr;
 
@@ -189,10 +236,12 @@ public:
 	std::string BuildShadowSlotColorLegend() const;
 
 	virtual void SetupResources() override;
+	virtual void Reset() override;
 
-	virtual void RestoreDefaultSettings() override;
 	virtual void LoadSettings(json& o_json) override;
 	virtual void SaveSettings(json& o_json) override;
+
+	virtual void RestoreDefaultSettings() override;
 
 	virtual void DrawSettings() override;
 	virtual void DrawOverlay() override;
@@ -207,7 +256,16 @@ public:
 	virtual void ClearShaderCache() override;
 
 	float CalculateLightDistance(float3 a_lightPosition, float a_radius);
+	void AddCachedParticleLights(eastl::vector<LightData>& lightsData, LightLimitFix::LightData& light);
 	void SetLightPosition(LightLimitFix::LightData& a_light, RE::NiPoint3 a_initialPosition, bool a_cached = true);
+	void RefreshJsonPlacedLightCacheFrame();
+	bool IsJsonPlacedLight(RE::BSLight* a_bsLight, RE::NiLight* a_niLight);
+	void ApplyJsonPlacedLightIntensityScale(
+		LightData& a_light,
+		RE::BSLight* a_bsLight,
+		RE::NiLight* a_niLight,
+		bool a_isPortalStrict,
+		bool a_isInterior);
 	void UpdateLights();
 	void UpdateStructure();
 	virtual void EarlyPrepass() override;
@@ -216,7 +274,24 @@ public:
 
 	// Shadow rendering helpers (implemented in LightLimitFix/ShadowRenderer.cpp)
 
-	static inline float3 Saturation(float3 color, float saturation);
+	float CalculateLuminance(CachedParticleLight& light, RE::NiPoint3& point);
+	void AddParticleLightLuminance(RE::NiPoint3& targetPosition, int& numHits, float& lightLevel);
+
+	ParticleLightReference GetParticleLightConfigs(RE::BSRenderPass* a_pass);
+	bool AddParticleLight(RE::BSRenderPass* a_pass, ParticleLightReference a_reference);
+	bool CheckParticleLights(RE::BSRenderPass* a_pass, uint32_t a_technique);
+	void ProcessQueuedParticleLights(eastl::vector<LightData>& lightsData);
+
+	// Inline-defined because Particle.cpp calls this; static-inline class-scope helpers must have
+	// the body visible in every translation unit that uses them.
+	static inline float3 Saturation(float3 color, float saturation)
+	{
+		const float grey = color.Dot(float3(0.3f, 0.59f, 0.11f));
+		color.x = std::max(std::lerp(grey, color.x, saturation), 0.0f);
+		color.y = std::max(std::lerp(grey, color.y, saturation), 0.0f);
+		color.z = std::max(std::lerp(grey, color.z, saturation), 0.0f);
+		return color;
+	}
 	static inline bool IsValidLight(RE::BSLight* a_light);
 	static inline bool IsGlobalLight(RE::BSLight* a_light);
 
@@ -247,6 +322,27 @@ public:
 
 		// Shadow caster scheduling (ShadowCasterManager)
 		ShadowCasterManager::Settings ShadowSettings;
+
+		bool EnableParticleContactShadows = false;
+
+		// Particle Lights.
+		bool EnableParticleLights = true;
+		bool EnableParticleLightsCulling = true;
+		bool EnableParticleLightsDetection = true;
+		bool EnableParticleLightsOptimization = true;
+		float ParticleLightsSaturation = 1.0f;
+		float ParticleBrightness = 1.0f;
+		float ParticleRadius = 1.0f;
+		float BillboardBrightness = 1.0f;
+		float BillboardRadius = 1.0f;
+		float ParticleClusterThreshold = 32.0f;
+		int MaxParticlesPerEmitter = 256;
+		float MaxParticleDistance = 6000.0f;
+
+		// JSON-placed light intensity (requires Inverse Square Lighting runtime metadata).
+		float JsonPlacedLightIntensity = 1.0f;
+		bool JsonPlacedLightsInteriorsOnly = false;
+		bool JsonPlacedLightsPortalStrictOnly = false;
 	};
 
 	uint clusterSize[3] = { 16 };
@@ -281,6 +377,18 @@ public:
 			static inline REL::Relocation<decltype(thunk)> func;
 		};
 
+		struct AIProcess_CalculateLightValue_GetLuminance
+		{
+			static float thunk(RE::ShadowSceneNode* shadowSceneNode,
+				RE::NiPoint3& targetPosition,
+				int& numHits,
+				float& sunLightLevel,
+				float& lightLevel,
+				RE::NiLight& refLight,
+				int32_t shadowBitMask);
+			static inline REL::Relocation<decltype(thunk)> func;
+		};
+
 		template <int N>
 		struct ValidLight
 		{
@@ -297,6 +405,8 @@ public:
 
 		static void Install()
 		{
+			stl::write_thunk_call<AIProcess_CalculateLightValue_GetLuminance>(
+				REL::RelocationID(38900, 39946).address() + REL::Relocate(0x1C9, 0x1D3));
 			stl::write_vfunc<0x6, BSLightingShader_SetupGeometry>(RE::VTABLE_BSLightingShader[0]);
 			stl::write_vfunc<0x6, BSEffectShader_SetupGeometry>(RE::VTABLE_BSEffectShader[0]);
 			stl::write_vfunc<0x6, BSWaterShader_SetupGeometry>(RE::VTABLE_BSWaterShader[0]);
