@@ -183,11 +183,9 @@ namespace
 			a_material->baseColor.blue * a_material->baseColorScale,
 			1.0f
 		};
-		// unk88 is the runtime ExtraEmittanceSource color override (NiColor* at offset 0x88; see
-		// CommonLibSSE-NG BSEffectShaderProperty and Utils/ExternalEmittance.cpp). The game writes
-		// it for effects with kExternalEmittance — fold it in so the particle light matches the
-		// tint vanilla would render with.
-		if (auto emittance = a_shaderProperty->unk88) {
+		// Fold in the runtime external-emittance override (set for kExternalEmittance effects)
+		// so the particle light matches the tint vanilla renders. See Utils/ExternalEmittance.cpp.
+		if (auto emittance = a_shaderProperty->emittanceColor) {
 			materialEmissiveTint.red *= emittance->red;
 			materialEmissiveTint.green *= emittance->green;
 			materialEmissiveTint.blue *= emittance->blue;
@@ -499,8 +497,7 @@ bool LightLimitFix::AddParticleLight(RE::BSRenderPass* a_pass, ParticleLightRefe
 		color.green *= material->baseColor.green * material->baseColorScale;
 		color.blue *= material->baseColor.blue * material->baseColorScale;
 
-		// unk88 is the ExtraEmittanceSource override; see Utils/ExternalEmittance.cpp.
-		if (auto emittance = shaderProperty->unk88) {
+		if (auto emittance = shaderProperty->emittanceColor) {
 			color.red *= emittance->red;
 			color.green *= emittance->green;
 			color.blue *= emittance->blue;

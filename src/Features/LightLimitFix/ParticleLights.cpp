@@ -17,10 +17,7 @@ namespace
 			return a_default;
 		return std::clamp(f, a_min, a_max);
 	}
-}
 
-namespace
-{
 	std::optional<std::string> ExtractIniStem(const std::string& path)
 	{
 		auto lastSeparatorPos = path.find_last_of("\\/");
