@@ -148,8 +148,10 @@ jobs:
                       echo "### Changes since ${BASE} (${TOTAL} commits)"
                       echo
                       # Cap the rendered list so a large cumulative range can't
-                      # blow past GitHub's release-body size limit.
-                      git log --no-merges --pretty='- %s (%h)' "${BASE}..${BUILD_SHA}" | head -400
+                      # blow past GitHub's release-body size limit. `-n` (not a
+                      # `| head` pipe) avoids a SIGPIPE failing the step under
+                      # `set -o pipefail` when the range exceeds the cap.
+                      git log --no-merges -n 400 --pretty='- %s (%h)' "${BASE}..${BUILD_SHA}"
                       if [ "${TOTAL}" -gt 400 ]; then
                         echo
                         echo "_…and $((TOTAL - 400)) more. Full list: \`git log ${BASE}..dev\`._"
