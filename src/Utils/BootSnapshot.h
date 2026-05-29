@@ -32,7 +32,15 @@ namespace Util::Settings
 		explicit constexpr BootSnapshot(const RestartTable<SettingsT, N>& table) noexcept :
 			table_(table.data()), tableSize_(N)
 		{
-			static_assert(std::is_standard_layout_v<SettingsT>, "BootSnapshot requires standard-layout Settings for offsetof-based tables.");
+			// Member offsets must be stable. detail::MemberOffset uses
+			// layout-agnostic pointer subtraction, and offsetof (in
+			// UTIL_RESTART_FIELD) is conditionally-supported on non-standard-layout
+			// types -- MSVC computes correct offsets for the scalar registered
+			// fields. So Settings carrying a non-standard-layout member (e.g. a
+			// std::string formula field; std::string is not standard-layout under
+			// MSVC's STL) are supported. Only polymorphic types are rejected,
+			// where a vtable pointer makes member offsets genuinely unstable.
+			static_assert(!std::is_polymorphic_v<SettingsT>, "BootSnapshot does not support polymorphic Settings (member offsets are not stable).");
 			static_assert(std::is_copy_assignable_v<SettingsT>, "BootSnapshot requires copy-assignable Settings.");
 			static_assert(std::is_default_constructible_v<SettingsT>,
 				"BootSnapshot requires default-constructible Settings (bootCopy_ default-inits and detail::MemberOffset constructs a temporary).");
