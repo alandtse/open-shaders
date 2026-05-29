@@ -1,4 +1,5 @@
 #include "LightLimitFix.h"
+#include "Features/LightLimitFix/SettingsSanitize.h"
 #include "InverseSquareLighting.h"
 #include "LinearLighting.h"
 #include "Utils/UI.h"
@@ -175,7 +176,7 @@ LightLimitFix::PerFrame LightLimitFix::GetCommonBufferData()
 	// so reject non-finite values explicitly first; fall back to the lower
 	// bound on NaN/inf to produce degraded but stable behavior.
 	auto sanitizeFloat = [](float v, float lo, float hi) {
-		return std::isfinite(v) ? std::clamp(v, lo, hi) : lo;
+		return LightLimitFixSanitize::SanitizeFloat(v, lo, hi);
 	};
 
 	PerFrame perFrame{};
