@@ -206,15 +206,22 @@ void LightLimitFix::DrawSettings()
 
 	ImGui::SeparatorText("Particle Lights");
 
-	if (ImGui::TreeNodeEx("Particle Lights##particles", ImGuiTreeNodeFlags_DefaultOpen)) {
-		ImGui::Checkbox("Enable Particle Lights", &settings.EnableParticleLights);
-		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::Text("Treat configured particle effects as dynamic light sources.");
-		}
+	ImGui::TextWrapped(
+		"Turns configured particle effects (candles, braziers, torches, magic) into dynamic lights. "
+		"Requires a particle-light config pack shipping Data\\ParticleLights\\*.ini (e.g. Embers HD, "
+		"Lanterns of Skyrim); with no pack installed this section has no effect.");
+	ImGui::TextWrapped(
+		"Particle lights are additive emitters and do NOT cast shadow-map shadows, so they never appear "
+		"in the shadow caster table above. Turn on \"Enable Particle Contact Shadows\" in the Contact "
+		"Shadows section for short screen-space contact shadows.");
+	ImGui::Spacing();
 
-		ImGui::Separator();
-		ImGui::TextWrapped("Particle Lights Performance");
+	ImGui::Checkbox("Enable Particle Lights", &settings.EnableParticleLights);
+	if (auto _tt = Util::HoverTooltipWrapper()) {
+		ImGui::Text("Master toggle for the particle-light feature.");
+	}
 
+	if (ImGui::TreeNode("Performance##particles")) {
 		ImGui::Checkbox("Enable Culling", &settings.EnableParticleLightsCulling);
 		if (auto _tt = Util::HoverTooltipWrapper()) {
 			ImGui::Text("Significantly improves performance by not rendering empty textures. Only disable if you are encountering issues.");
@@ -254,21 +261,42 @@ void LightLimitFix::DrawSettings()
 				"Higher = more distant particle lighting, but more cost.");
 		}
 
-		ImGui::Spacing();
-		ImGui::TextWrapped("Particle Lights Customisation");
+		ImGui::TreePop();
+	}
+
+	if (ImGui::TreeNode("Appearance##particles")) {
 		ImGui::SliderFloat("Saturation", &settings.ParticleLightsSaturation, kParticleLightsSaturationMin, kParticleLightsSaturationMax, "%.2f");
 		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::Text("Particle light saturation.");
+			ImGui::Text("Color saturation of particle/billboard lights. 1.0 = source color; higher = more vivid.");
 		}
 		ImGui::SliderFloat("Particle Brightness", &settings.ParticleBrightness, kParticleBrightnessMin, kParticleBrightnessMax, "%.2f");
+		if (auto _tt = Util::HoverTooltipWrapper()) {
+			ImGui::Text("Intensity multiplier for particle-system emitters (fire, sparks, magic).");
+		}
 		ImGui::SliderFloat("Particle Radius", &settings.ParticleRadius, kParticleRadiusMin, kParticleRadiusMax, "%.2f");
+		if (auto _tt = Util::HoverTooltipWrapper()) {
+			ImGui::Text("Radius multiplier for particle-system emitters. Larger = light reaches further.");
+		}
 		ImGui::SliderFloat("Billboard Brightness", &settings.BillboardBrightness, kBillboardBrightnessMin, kBillboardBrightnessMax, "%.2f");
+		if (auto _tt = Util::HoverTooltipWrapper()) {
+			ImGui::Text("Intensity multiplier for billboard (single-quad) emitters such as candle flames.");
+		}
 		ImGui::SliderFloat("Billboard Radius", &settings.BillboardRadius, kBillboardRadiusMin, kBillboardRadiusMax, "%.2f");
+		if (auto _tt = Util::HoverTooltipWrapper()) {
+			ImGui::Text("Radius multiplier for billboard emitters. Larger = light reaches further.");
+		}
 
 		ImGui::TreePop();
 	}
 
-	if (ImGui::TreeNodeEx("Placed Lights (JSON)", ImGuiTreeNodeFlags_DefaultOpen)) {
+	ImGui::SeparatorText("Placed Lights (JSON)");
+
+	ImGui::TextWrapped(
+		"Scales the intensity of runtime lights attached from Light records by Light Placer-style mods. "
+		"Separate from particle lights; requires Inverse Square Lighting for the runtime metadata.");
+	ImGui::Spacing();
+
+	{
 		const bool jsonPlacedLightsSupported = globals::features::inverseSquareLighting.loaded;
 		ImGui::BeginDisabled(!jsonPlacedLightsSupported);
 		ImGui::SliderFloat("Intensity Scale", &settings.JsonPlacedLightIntensity, kJsonPlacedLightIntensityMin, kJsonPlacedLightIntensityMax, "%.2f");
@@ -285,8 +313,6 @@ void LightLimitFix::DrawSettings()
 
 		if (!jsonPlacedLightsSupported)
 			ImGui::TextDisabled("Requires Inverse Square Lighting to identify JSON-placed runtime lights.");
-
-		ImGui::TreePop();
 	}
 
 	///////////////////////////////
