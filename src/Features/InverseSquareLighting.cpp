@@ -1,5 +1,6 @@
 #include "InverseSquareLighting.h"
 #include "Features/InverseSquareLighting/Common.h"
+#include "Features/InverseSquareLighting/RadiusMath.h"
 #include "LightLimitFix.h"
 #include <numbers>
 
@@ -75,8 +76,8 @@ void InverseSquareLighting::ProcessLight(LightLimitFix::LightData& light, RE::BS
 		light.radius = CalculateRadius(intensity, ShadowCasterManager::IsShadowLightType(bsLight), runtimeData->cutoffOverride, runtimeData->size);
 		runtimeData->radius = light.radius;
 		light.invRadius = 1.f / light.radius;
-		light.fadeZone = 1.f / (light.radius * std::clamp(FadeZoneBase * light.invRadius, 0.f, 1.f));
-		light.sizeBias = ScaledUnitsSq * runtimeData->size * runtimeData->size * 0.5f;
+		light.fadeZone = 1.f / (light.radius * std::clamp(ISLMath::FadeZoneBase * light.invRadius, 0.f, 1.f));
+		light.sizeBias = ISLMath::ScaledUnitsSq * runtimeData->size * runtimeData->size * 0.5f;
 		// light.color *= intensity;
 		light.fade = intensity;
 	} else {
@@ -89,28 +90,12 @@ void InverseSquareLighting::ProcessLight(LightLimitFix::LightData& light, RE::BS
 
 float InverseSquareLighting::CalculateRadius(const float intensity, const bool shadowCaster, const float cutoffOverride, const float size)
 {
-	float cutoff = shadowCaster ? DefaultShadowCasterCutoff : DefaultCutoff;
-	cutoff = cutoffOverride == 1.f ? cutoff : cutoffOverride;
-	const float radius = std::sqrt(ScaledUnitsSq * ((2 * intensity - cutoff * size * size) / (2 * cutoff)));
-	// Clamp any degenerate result to 1.0 so callers never divide by a bad radius:
-	// a negative sqrt argument yields NaN, an exact-zero argument yields 0 (which
-	// would drive a 0/0 attenuation fade), and a zero cutoffOverride yields +inf
-	// (sqrt(+inf) is not NaN, so the old isnan-only check let it through).
-	return std::isfinite(radius) && radius > 0.f ? radius : 1.f;
-}
-
-inline float InverseSquareLighting::SmoothStep(const float edge0, const float edge1, const float x)
-{
-	const float t = std::clamp((x - edge0) / (edge1 - edge0), 0.0f, 1.0f);
-	return t * t * (3.0f - 2.0f * t);
+	return ISLMath::CalculateRadius(intensity, shadowCaster, cutoffOverride, size);
 }
 
 float InverseSquareLighting::GetAttenuation(const float distance, const float radius, const float size)
 {
-	const float attenuation = ScaledUnitsSq / (distance * distance + ScaledUnitsSq * size * size / 2);
-	const float fadeZone = std::clamp(FadeZoneBase / radius, 0.0f, 1.0f);
-	const float fade = SmoothStep(0, radius * fadeZone, radius - distance);
-	return attenuation * fade;
+	return ISLMath::GetAttenuation(distance, radius, size);
 }
 
 float InverseSquareLighting::BSLight_GetLuminance::thunk(RE::BSLight* bsLight, RE::NiPoint3* targetPosition, RE::NiLight* refLight)

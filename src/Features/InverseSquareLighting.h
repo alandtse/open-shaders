@@ -58,16 +58,8 @@ public:
 private:
 	LightEditor editor = LightEditor();
 
-	static constexpr float DefaultCutoff = 0.05f;
-	static constexpr float DefaultShadowCasterCutoff = 0.022f;
-
-	static constexpr float Scale = 0.8f;
-	static constexpr float MetresToUnits = 70.f;
-	static constexpr float MetresToUnitsSq = MetresToUnits * MetresToUnits;
-	static constexpr float ScaledUnitsSq = Scale * MetresToUnitsSq;
-	static constexpr float FadeZoneBase = 4.5f * Scale * MetresToUnits;
+	// Radius/attenuation constants and math live in InverseSquareLighting/RadiusMath.h
+	// (namespace ISLMath) so they can be unit-tested without the engine.
 
 	static void SetExtLightData(RE::NiLight* niLight, const RE::TESObjectLIGH* ligh);
-
-	static inline float SmoothStep(float edge0, float edge1, float x);
 };
