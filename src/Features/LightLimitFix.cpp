@@ -384,6 +384,7 @@ LightLimitFix::PerFrame LightLimitFix::GetCommonBufferData()
 	};
 
 	PerFrame perFrame{};
+	perFrame.EnableContactShadows = settings.EnableContactShadows;
 	perFrame.ContactShadowMaxSteps = std::clamp<uint32_t>(settings.ContactShadowMaxSteps, 1u, 16u);
 	perFrame.ContactShadowMaxDistance = sanitizeFloat(settings.ContactShadowMaxDistance, 64.0f, 4096.0f);
 	perFrame.ContactShadowStride = sanitizeFloat(settings.ContactShadowStride, 0.5f, 8.0f);
@@ -856,8 +857,13 @@ void LightLimitFix::UpdateLights()
 	ZoneScopedN("LLF::UpdateLights");
 
 	auto context = globals::d3d::context;
-	if (!context || !lights || !lights->resource)
+	if (!context || !lights || !lights->resource) {
+		// Drop last frame's particle lights so AddParticleLightLuminance (gameplay
+		// thread) can't keep feeding stale lights into NPC detection on this early-out.
+		std::lock_guard<std::shared_mutex> lk{ cachedParticleLightsMutex };
+		cachedParticleLights.clear();
 		return;
+	}
 
 	auto smState = globals::game::smState;
 	auto& isl = globals::features::inverseSquareLighting;
