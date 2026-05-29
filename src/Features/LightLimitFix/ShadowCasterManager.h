@@ -22,6 +22,7 @@
 #include "RE/S/ShadowSceneNode.h"
 
 #include "Features/LightLimitFix/ShadowCasterMath.h"
+#include "Features/LightLimitFix/FormulaHelper.h"
 
 struct ImVec4;
 
@@ -108,81 +109,11 @@ namespace ShadowCasterManager
 		}
 	}
 
-	// -------------------------------------------------------------------------
-	// Formula parameter indices
-	// -------------------------------------------------------------------------
-	enum FormulaParams
-	{
-		kFormulaParam_LightIndex,
-		kFormulaParam_LightIntensity,
-		kFormulaParam_LightDistance,
-		kFormulaParam_LightRadius,
-		kFormulaParam_LightX,
-		kFormulaParam_LightY,
-		kFormulaParam_LightZ,
-		kFormulaParam_LightR,
-		kFormulaParam_LightG,
-		kFormulaParam_LightB,
-		kFormulaParam_LightAmbientR,
-		kFormulaParam_LightAmbientG,
-		kFormulaParam_LightAmbientB,
-		kFormulaParam_LightChosenLastFrame,
-		kFormulaParam_LightFramesSinceRender,  ///< frames since this light's slot was last rendered; large sentinel if never rendered or no slot
-		kFormulaParam_LightNeverFades,
-		kFormulaParam_LightPortalStrict,
-		kFormulaParam_LightNS,
-		kFormulaParam_LightConverted,
-		kFormulaParam_LightDisplacement,    ///< distance moved since last shadow map render (game units)
-		kFormulaParam_PlayerLightDistance,  ///< distance from the player character to the light (game units)
-		kFormulaParam_LightImportance,      ///< contribution importance: lum(diffuse*fade) * max(att_cam, att_plr); set in interval loop only
-		kFormulaParam_LightIsSpot,          ///< 1 if light is a spot (BSShadowFrustumLight), 0 otherwise
-		kFormulaParam_LightSpotVisible,     ///< 1 if a spot's cone is plausibly visible to the camera (cone-aimed-at-frustum). Always 1 for non-spots so omni-only formulas aren't affected.
+	// FormulaParams enum, kFormulaVars, and FormulaHelper now live in
+	// Features/LightLimitFix/FormulaHelper.h (included above) so the exprtk
+	// dependency is isolated to FormulaHelper.cpp and the formula logic is
+	// unit-testable.
 
-		kFormulaParam_CameraX,
-		kFormulaParam_CameraY,
-		kFormulaParam_CameraZ,
-		kFormulaParam_IsInterior,
-		kFormulaParam_TimeOfDay,
-
-		kFormulaParam_FrameTime,     ///< EMA-smoothed frame time (ms)
-		kFormulaParam_FrameTarget,   ///< 90th-percentile frame time (ms) — target budget ceiling
-		kFormulaParam_StableFrames,  ///< consecutive frames the EMA has been below FrameTarget
-
-		kFormulaParam_Max
-	};
-
-	// -------------------------------------------------------------------------
-	// Expression-based formula evaluator (wraps exprtk)
-	// -------------------------------------------------------------------------
-	struct FormulaHelper
-	{
-		FormulaHelper();
-		~FormulaHelper();
-
-		FormulaHelper(const FormulaHelper&) = delete;
-		FormulaHelper& operator=(const FormulaHelper&) = delete;
-		FormulaHelper(FormulaHelper&&) = delete;
-		FormulaHelper& operator=(FormulaHelper&&) = delete;
-
-		bool Parse(const std::string& input);
-		double Calculate();
-
-		/// Re-parse with a new expression, replacing any previously compiled formula.
-		/// Returns true on success. On failure the old formula remains active.
-		bool Reparse(const std::string& input);
-
-		/// Compile `input` into a temporary expression and return true if it succeeds.
-		/// On failure, `errorOut` receives the first parser error message.
-		/// Does NOT affect the active formula.
-		static bool Validate(const std::string& input, std::string& errorOut);
-
-		static void SetParam(int32_t index, double value);
-		static double GetParam(int32_t index);
-
-	private:
-		void* _ptr;
-	};
-	// -------------------------------------------------------------------------
 	// -------------------------------------------------------------------------
 	// Budget mode enum
 	// -------------------------------------------------------------------------

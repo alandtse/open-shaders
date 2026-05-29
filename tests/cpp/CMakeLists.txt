@@ -100,4 +100,47 @@ set_tests_properties(CppUtilTests PROPERTIES
     LABELS "Cpp;UnitTests"
 )
 
+# -----------------------------------------------------------------------------
+# Opt-in slow tests. FormulaHelper pulls in the very large exprtk header, whose
+# compile time (minutes) is too costly for the default fast suite / PR gate.
+# Enable with -DBUILD_CPP_SLOW_TESTS=ON to build + run these locally.
+# -----------------------------------------------------------------------------
+option(BUILD_CPP_SLOW_TESTS "Build slow C++ unit tests (exprtk-backed FormulaHelper)" OFF)
+if(BUILD_CPP_SLOW_TESTS)
+    find_path(EXPRTK_INCLUDE_DIRS "exprtk.hpp" REQUIRED)
+
+    add_executable(cpp_tests_slow
+        test_main.cpp
+        test_formulahelper.cpp
+        "${CMAKE_SOURCE_DIR}/src/Features/LightLimitFix/FormulaHelper.cpp"
+    )
+    set_property(TARGET cpp_tests_slow PROPERTY CXX_STANDARD 23)
+    set_property(TARGET cpp_tests_slow PROPERTY CXX_STANDARD_REQUIRED ON)
+    target_include_directories(cpp_tests_slow PRIVATE
+        "${CMAKE_SOURCE_DIR}/src"
+        ${EXPRTK_INCLUDE_DIRS}
+    )
+    target_link_libraries(cpp_tests_slow PRIVATE
+        Catch2::Catch2
+    )
+    target_compile_definitions(cpp_tests_slow PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
+    if(MSVC)
+        # /bigobj: exprtk overflows the COFF section limit. /W0: exprtk is
+        # third-party and emits warnings (e.g. C4702) that a global /WX turns
+        # into errors -- same treatment cpp-mcp gives its exprtk-like code.
+        target_compile_options(cpp_tests_slow PRIVATE /bigobj /W0)
+    endif()
+
+    add_test(
+        NAME CppSlowTests
+        COMMAND cpp_tests_slow --reporter compact
+        WORKING_DIRECTORY $<TARGET_FILE_DIR:cpp_tests_slow>
+    )
+    set_tests_properties(CppSlowTests PROPERTIES
+        TIMEOUT 120
+        LABELS "Cpp;SlowTests"
+    )
+    message(STATUS "C++ slow unit tests (exprtk) configured")
+endif()
+
 message(STATUS "C++ unit tests configured successfully")
