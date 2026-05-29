@@ -114,10 +114,51 @@ jobs:
             contents: write
         steps:
             # Local composite actions need the repo in the workspace.
+            # fetch-depth: 0 pulls full history + tags so the changelog step can
+            # diff against the last stable tag (sparse-checkout still limits the
+            # working tree to the composite action).
             - name: Check out composite action
               uses: actions/checkout@v6
               with:
                   sparse-checkout: .github/actions
+                  fetch-depth: 0
+
+            - name: Generate changelog since last stable release
+              id: changelog
+              shell: bash
+              env:
+                  BUILD_SHA: ${{ github.sha }}
+              run: |
+                  set -euo pipefail
+                  # Last stable (non-prerelease) tag; fall back to v1.5.2 since
+                  # Open Shaders has no official release yet — v1.5.2 is the
+                  # inherited upstream baseline and the changelog floor.
+                  BASE=$(git tag --list 'v*.*.*' --sort=-v:refname | grep -v -- '-' | head -1 || true)
+                  BASE=${BASE:-v1.5.2}
+                  git rev-parse -q --verify "refs/tags/${BASE}^{commit}" >/dev/null 2>&1 || BASE=v1.5.2
+                  FILE="${RUNNER_TEMP}/dev-changelog.md"
+                  {
+                    echo "Rolling build of \`dev\` at commit ${BUILD_SHA}."
+                    echo
+                    echo "⚠️ Unstable integration build for testing — not a release."
+                    echo "For stable builds see the latest non-prerelease."
+                    echo
+                    if git rev-parse -q --verify "refs/tags/${BASE}^{commit}" >/dev/null 2>&1; then
+                      TOTAL=$(git rev-list --no-merges --count "${BASE}..${BUILD_SHA}")
+                      echo "### Changes since ${BASE} (${TOTAL} commits)"
+                      echo
+                      # Cap the rendered list so a large cumulative range can't
+                      # blow past GitHub's release-body size limit.
+                      git log --no-merges --pretty='- %s (%h)' "${BASE}..${BUILD_SHA}" | head -400
+                      if [ "${TOTAL}" -gt 400 ]; then
+                        echo
+                        echo "_…and $((TOTAL - 400)) more. Full list: \`git log ${BASE}..dev\`._"
+                      fi
+                    else
+                      echo "_Base tag ${BASE} not found — changelog unavailable._"
+                    fi
+                  } > "${FILE}"
+                  echo "body-file=${FILE}" >> "$GITHUB_OUTPUT"
 
             - name: Refresh dev-latest prerelease
               uses: ./.github/actions/publish-release
@@ -131,8 +172,4 @@ jobs:
                   name: "Open Shaders (dev) — latest build ${{ needs.build.outputs.version }}"
                   prerelease: "true"
                   artifacts: "${{ github.workspace }}/dist/CommunityShaders_AIO-*.7z"
-                  body: |
-                      Rolling build of `dev` at commit ${{ github.sha }}.
-
-                      ⚠️ Unstable integration build for testing — not a release.
-                      For stable builds see the latest non-prerelease.
+                  body-file: ${{ steps.changelog.outputs.body-file }}
