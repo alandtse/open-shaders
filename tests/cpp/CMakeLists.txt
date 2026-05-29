@@ -35,15 +35,33 @@ endif()
 
 find_package(nlohmann_json CONFIG REQUIRED)
 find_package(imgui CONFIG REQUIRED)
+# SphericalHarmonics uses the float2/3/4 = DirectX::SimpleMath::* aliases.
+find_package(directxtk CONFIG REQUIRED)
+# Input.h uses magic_enum for device enum handling.
+find_package(magic_enum CONFIG REQUIRED)
 
 add_executable(cpp_tests
     test_main.cpp
     test_bootsnapshot.cpp
     test_subrect.cpp
+    test_perfutils.cpp
+    test_restartsettings.cpp
+    test_sphericalharmonics.cpp
+    test_input.cpp
     # Compile the unit-under-test directly into the test binary so we don't
     # depend on the plugin DLL build (which pulls in FFX/Streamline/etc.).
     "${CMAKE_SOURCE_DIR}/src/Utils/Subrect.cpp"
+    "${CMAKE_SOURCE_DIR}/src/Utils/SphericalHarmonics.cpp"
 )
+
+# The plugin defines the float2/3/4 = SimpleMath aliases in its PCH, which the
+# test target does not use. Force-include a tiny prelude so SphericalHarmonics
+# (and its .cpp) see those aliases without the heavy RE/SKSE PCH.
+if(MSVC)
+    target_compile_options(cpp_tests PRIVATE "/FI${CMAKE_CURRENT_SOURCE_DIR}/test_prelude.h")
+else()
+    target_compile_options(cpp_tests PRIVATE -include "${CMAKE_CURRENT_SOURCE_DIR}/test_prelude.h")
+endif()
 
 set_property(TARGET cpp_tests PROPERTY CXX_STANDARD 23)
 set_property(TARGET cpp_tests PROPERTY CXX_STANDARD_REQUIRED ON)
@@ -56,6 +74,8 @@ target_link_libraries(cpp_tests PRIVATE
     Catch2::Catch2
     nlohmann_json::nlohmann_json
     imgui::imgui
+    Microsoft::DirectXTK
+    magic_enum::magic_enum
 )
 
 # windows.h (pulled in via d3d11.h) defines min/max macros that break the
