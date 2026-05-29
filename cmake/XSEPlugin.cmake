@@ -65,6 +65,8 @@ if(CMAKE_GENERATOR MATCHES "Visual Studio")
 		"${PROJECT_NAME}"
 		PRIVATE
 		/MP
+		/bigobj # ShadowCasterManager.cpp (exprtk-heavy) exceeds the object-file
+		        # section limit under MSVC 14.50 without this (C1128).
 		/W4
 		/WX
 		/permissive-
