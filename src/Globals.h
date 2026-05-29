@@ -37,8 +37,6 @@ struct ExponentialHeightFog;
 struct HDRDisplay;
 struct ScreenshotFeature;
 
-class ParticleLights;
-
 class State;
 class Deferred;
 struct TruePBR;
@@ -105,7 +103,6 @@ namespace globals
 		{
 			extern void** normalDepthBuffer;
 			extern void** readOnlyDepthBuffer;
-			extern ParticleLights particleLights;
 		}
 	}
 

@@ -172,6 +172,10 @@ public:
 		std::uint64_t configVersion = 0;
 	};
 
+	// INI-driven particle-light configs (loaded in PostPostLoad). Lives on the feature
+	// rather than in globals since only LightLimitFix code consumes it.
+	ParticleLights particleLights;
+
 	eastl::hash_map<RE::BSGeometry*, ParticleLightReference> particleLightsReferences;
 	eastl::vector<ParticleLightInfo> queuedParticleLights;
 	eastl::vector<ParticleLightInfo> currentParticleLights;

@@ -15,7 +15,6 @@
 #include "Features/InverseSquareLighting.h"
 #include "Features/LODBlending.h"
 #include "Features/LightLimitFix.h"
-#include "Features/LightLimitFix/ParticleLights.h"
 #include "Features/LinearLighting.h"
 #include "Features/PerformanceOverlay.h"
 #include "Features/RemoteControl.h"
@@ -97,7 +96,6 @@ namespace globals
 		{
 			void** normalDepthBuffer = nullptr;
 			void** readOnlyDepthBuffer = nullptr;
-			ParticleLights particleLights{};
 		}
 	}
 

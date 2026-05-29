@@ -818,7 +818,7 @@ bool LightLimitFix::IsGlobalLight(RE::BSLight* a_light)
 
 void LightLimitFix::PostPostLoad()
 {
-	globals::features::llf::particleLights.GetConfigs();
+	particleLights.GetConfigs();
 	Hooks::Install();
 	ShadowCasterManager::Init(settings.ShadowSettings);
 	ShadowCasterManager::Install(settings.ShadowSettings);

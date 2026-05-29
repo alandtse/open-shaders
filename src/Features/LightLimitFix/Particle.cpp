@@ -305,8 +305,6 @@ LightLimitFix::ParticleLightReference LightLimitFix::GetParticleLightConfigs(RE:
 	if (!a_pass || !a_pass->geometry || !a_pass->shaderProperty)
 		return {};
 
-	auto& particleLights = globals::features::llf::particleLights;
-
 	auto cacheInvalidReference = [&](RE::BSGeometry* node) {
 		ParticleLightReference invalidReference{};
 		invalidReference.valid = false;
