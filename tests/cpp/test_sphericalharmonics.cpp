@@ -41,7 +41,6 @@ TEST_CASE("Dot is symmetric and matches the closed form", "[sh]")
 {
 	const SH2 a(1.0f, 2.0f, 3.0f, 4.0f);
 	const SH2 b(0.5f, -1.0f, 2.0f, 0.0f);
-	// 1*0.5 + 2*-1 + 3*2 + 4*0 = 0.5 - 2 + 6 = 4.5
 	REQUIRE(SphericalHarmonics::Dot(a, b) == Approx(4.5f));
 	REQUIRE(SphericalHarmonics::Dot(a, b) == Approx(SphericalHarmonics::Dot(b, a)));
 }

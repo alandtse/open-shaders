@@ -41,8 +41,8 @@ TEST_CASE("Device factories select the right device", "[input]")
 TEST_CASE("IsValid requires an in-range device and a non-zero key", "[input]")
 {
 	REQUIRE(InputCombo::Keyboard(0x41).IsValid());
-	REQUIRE_FALSE(InputCombo{}.IsValid());            // default: key 0
-	REQUIRE_FALSE(InputCombo::Keyboard(0).IsValid());  // explicit zero key
+	REQUIRE_FALSE(InputCombo{}.IsValid());                                        // default: key 0
+	REQUIRE_FALSE(InputCombo::Keyboard(0).IsValid());                             // explicit zero key
 	REQUIRE_FALSE(InputCombo(static_cast<InputDeviceType>(99), 0x41).IsValid());  // bad device
 }
 
@@ -69,7 +69,6 @@ TEST_CASE("InputCombo serializes as its packed integer and round-trips", "[input
 {
 	const auto kb = InputCombo::Keyboard(0x41);
 	const json j = kb;
-	// device 3 (Keyboard) << 16 | 0x41 == 0x30041.
 	REQUIRE(j.get<uint32_t>() == 0x30041u);
 
 	const auto back = j.get<InputCombo>();
