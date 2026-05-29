@@ -1,6 +1,4 @@
-// Unit tests for inverse-square-lighting radius/attenuation math
-// (src/Features/InverseSquareLighting/RadiusMath.h). Pure float math extracted
-// from InverseSquareLighting so it tests without the game/RE runtime.
+// Unit tests for ISL radius/attenuation math (RadiusMath.h).
 
 #include "Features/InverseSquareLighting/RadiusMath.h"
 

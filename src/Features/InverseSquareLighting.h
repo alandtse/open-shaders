@@ -58,8 +58,7 @@ public:
 private:
 	LightEditor editor = LightEditor();
 
-	// Radius/attenuation constants and math live in InverseSquareLighting/RadiusMath.h
-	// (namespace ISLMath) so they can be unit-tested without the engine.
+	// Constants + math live in RadiusMath.h (ISLMath) for unit testing.
 
 	static void SetExtLightData(RE::NiLight* niLight, const RE::TESObjectLIGH* ligh);
 };

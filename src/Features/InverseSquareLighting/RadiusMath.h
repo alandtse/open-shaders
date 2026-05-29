@@ -3,11 +3,8 @@
 #include <algorithm>
 #include <cmath>
 
-// Pure inverse-square-lighting radius / attenuation math, extracted from
-// InverseSquareLighting so it can be unit-tested without the game/RE runtime.
-// All inputs and outputs are plain floats -- no engine types -- so this header
-// compiles standalone into the cpp_tests binary. InverseSquareLighting's static
-// methods delegate here.
+// Pure ISL radius/attenuation math, extracted so it can be unit-tested without
+// the game/RE runtime. InverseSquareLighting's static methods delegate here.
 namespace ISLMath
 {
 	inline constexpr float DefaultCutoff = 0.05f;

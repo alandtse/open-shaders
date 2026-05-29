@@ -4,7 +4,7 @@
 #include <cstdint>
 
 // Pure helpers extracted from ShadowCasterManager so they can be unit-tested
-// without the game/RE runtime. No engine types in any signature.
+// without the game/RE runtime.
 namespace ShadowCasterManager
 {
 	// A shadow-light accumulator slot can hold heap garbage between our prepass
