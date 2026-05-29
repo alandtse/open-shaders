@@ -87,6 +87,15 @@ jobs:
         permissions:
             contents: write
         steps:
+            # Sparse-checkout the composite action FIRST: actions/checkout's
+            # default clean would wipe the artifacts downloaded below if it ran
+            # after them. Only .github/actions is fetched; gh still resolves the
+            # repo via GH_REPO in the notes step.
+            - name: Check out composite action
+              uses: actions/checkout@v6
+              with:
+                  sparse-checkout: .github/actions
+
             - name: Ensure ref is a tag
               if: github.event_name == 'workflow_dispatch' || github.event_name == 'push'
               shell: bash
@@ -112,17 +121,13 @@ jobs:
             - name: Generate combined release notes
               id: combined_notes
               shell: bash
-              # GH_TOKEN is required for `gh release view` — without it the
-              # call silently failed and the `||` fallback wrote an empty
-              # file, which then clobbered the existing release body when
-              # ncipollo updated it (this happened on v1.5.1).
-              #
-              # GH_REPO is required because this job downloads artifacts but
-              # never runs actions/checkout. Without it `gh` falls back to
-              # `git remote` to infer the repo and dies with "fatal: not a
-              # git repository" — which then mismatches the `release not
-              # found` fallback grep and aborts the whole step (this
-              # happened on v1.5.2: run 25871339509).
+              # GH_TOKEN: required for `gh release view`; without it the `||`
+              # fallback wrote an empty file that clobbered the release body on
+              # update (v1.5.1).
+              # GH_REPO: pinned so `gh` never infers the repo from git remotes.
+              # The checkout above is sparse (actions-only), so don't rely on its
+              # remote config -- inference once died "fatal: not a git repository"
+              # and aborted the step (v1.5.2 run 25871339509).
               env:
                   GH_TOKEN: ${{ github.token }}
                   GH_REPO: ${{ github.repository }}
@@ -172,19 +177,16 @@ jobs:
                   echo "release_tag=$RELEASE_TAG" >> $GITHUB_OUTPUT
 
             - name: Create or Update Release
-              id: create_release
-              uses: ncipollo/release-action@v1
+              uses: ./.github/actions/publish-release
               with:
+                  token: ${{ github.token }}
                   name: "Open Shaders ${{ steps.combined_notes.outputs.release_tag }}"
-                  draft: true
-                  omitDraftDuringUpdate: true
                   tag: ${{ steps.combined_notes.outputs.release_tag }}
+                  draft: "true"
+                  omit-draft-during-update: "true"
                   artifacts: "${{ github.workspace }}/dist/*.7z"
-                  bodyFile: ${{ steps.combined_notes.outputs.body_file }}
-                  generateReleaseNotes: false
-                  replacesArtifacts: true
-                  removeArtifacts: true
-                  allowUpdates: true
+                  body-file: ${{ steps.combined_notes.outputs.body_file }}
+                  download-artifact: "false"
 
     nexus-dry-run:
         # Chained from `release` to avoid the artifact-attachment race a

@@ -136,8 +136,9 @@ jobs:
             shader-tests-should-build: ${{ needs.check-changes.outputs.shader-tests-should-build || 'true' }}
             cpp-tests-should-build: ${{ needs.check-changes.outputs.cpp-tests-should-build || 'true' }}
 
-    # Security: this job uses GITHUB_TOKEN with write permissions but does NOT execute
-    # fork code — it only downloads pre-built artifacts from the build job above.
+    # Security: this job has GITHUB_TOKEN write permissions but executes no fork
+    # code. It sparse-checks-out the BASE branch (trusted) for the
+    # publish-release composite and downloads the build job's pre-built artifacts.
     prerelease:
         name: Post Prerelease from PR
         needs: [build]
@@ -149,6 +150,14 @@ jobs:
             contents: write
             pull-requests: write
         steps:
+            # Sparse-checkout only the composite action. Under
+            # pull_request_target the default ref is the BASE branch, so this
+            # introduces no fork code into this write-token job.
+            - name: Check out composite action
+              uses: actions/checkout@v6
+              with:
+                  sparse-checkout: .github/actions
+
             - name: Download dist artifacts
               uses: actions/download-artifact@v7
               with:
@@ -193,29 +202,27 @@ jobs:
 
             - name: Upload prerelease (custom notes)
               if: steps.gen_notes.outputs.notes_generated == 'true'
-              uses: ncipollo/release-action@339a81892b84b4eeb0f6e744e4574d79d0d9b8dd # v1
+              uses: ./.github/actions/publish-release
               with:
+                  token: ${{ secrets.GITHUB_TOKEN }}
                   name: "Open Shaders ${{ needs.build.outputs.version }} PR #${{ github.event.pull_request.number }}"
                   tag: v${{ needs.build.outputs.version }}-pr${{ github.event.pull_request.number }}
-                  prerelease: true
+                  prerelease: "true"
                   artifacts: "${{ github.workspace }}/dist/CommunityShaders_AIO-*.7z"
-                  bodyFile: release-notes.md
-                  allowUpdates: true
-                  replacesArtifacts: true
-                  removeArtifacts: true
+                  body-file: release-notes.md
+                  download-artifact: "false"
 
             - name: Upload prerelease (auto-generated notes)
               if: steps.gen_notes.outputs.notes_generated != 'true'
-              uses: ncipollo/release-action@339a81892b84b4eeb0f6e744e4574d79d0d9b8dd # v1
+              uses: ./.github/actions/publish-release
               with:
+                  token: ${{ secrets.GITHUB_TOKEN }}
                   name: "Open Shaders ${{ needs.build.outputs.version }} PR #${{ github.event.pull_request.number }}"
                   tag: v${{ needs.build.outputs.version }}-pr${{ github.event.pull_request.number }}
-                  prerelease: true
+                  prerelease: "true"
                   artifacts: "${{ github.workspace }}/dist/CommunityShaders_AIO-*.7z"
-                  generateReleaseNotes: true
-                  allowUpdates: true
-                  replacesArtifacts: true
-                  removeArtifacts: true
+                  generate-release-notes: "true"
+                  download-artifact: "false"
 
             - name: Comment on PR
               if: success()

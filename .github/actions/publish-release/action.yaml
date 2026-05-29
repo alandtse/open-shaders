@@ -1,0 +1,106 @@
+name: "Publish Release"
+description: "Download the dist artifact and create-or-update a GitHub release via ncipollo. Shared by pr-checks, release-dev, and release-build so the ncipollo pin and the allowUpdates/replaces/removeArtifacts invariants live in one place."
+
+inputs:
+    token:
+        description: >
+            Token for the release API. Pass GITHUB_TOKEN (not a PAT) for
+            prereleases that must NOT re-trigger release-build.yaml's
+            `release: created` — releases created with GITHUB_TOKEN do not
+            trigger other workflows.
+        required: true
+    tag:
+        description: "Release tag."
+        required: true
+    name:
+        description: "Release display name."
+        required: true
+    commit:
+        description: "Commit the tag should point at (ncipollo `commit`). Empty == ncipollo default."
+        required: false
+        default: ""
+    artifacts:
+        description: "Glob of artifact files to attach."
+        required: false
+        default: "${{ github.workspace }}/dist/*.7z"
+    body:
+        description: "Inline release body (markdown). Used only when body-file is empty."
+        required: false
+        default: ""
+    body-file:
+        description: "Path to a release-body file. When set, `body` is ignored."
+        required: false
+        default: ""
+    prerelease:
+        description: "Mark as a prerelease."
+        required: false
+        default: "false"
+    draft:
+        description: "Create as a draft."
+        required: false
+        default: "false"
+    omit-draft-during-update:
+        description: "ncipollo omitDraftDuringUpdate — keep an already-published release published on update."
+        required: false
+        default: "false"
+    generate-release-notes:
+        description: "Let GitHub auto-generate release notes."
+        required: false
+        default: "false"
+    download-artifact:
+        description: "Download the workflow artifact into ./dist first. Set false if the caller already downloaded it."
+        required: false
+        default: "true"
+    artifact-name:
+        description: "Workflow artifact to download when download-artifact is true."
+        required: false
+        default: "dist-artifacts"
+
+runs:
+    using: "composite"
+    steps:
+        - name: Download dist artifact
+          if: inputs.download-artifact == 'true'
+          uses: actions/download-artifact@v7
+          with:
+              name: ${{ inputs.artifact-name }}
+              path: dist/
+
+        # Two gated invocations so `body` and `bodyFile` are NEVER passed
+        # together: ncipollo does not reliably defer an empty `body` to
+        # `bodyFile`, so passing both could blank a file-based caller's body.
+        - name: Create or update release (body file)
+          if: inputs.body-file != ''
+          uses: ncipollo/release-action@339a81892b84b4eeb0f6e744e4574d79d0d9b8dd # v1
+          with:
+              token: ${{ inputs.token }}
+              tag: ${{ inputs.tag }}
+              commit: ${{ inputs.commit }}
+              name: ${{ inputs.name }}
+              artifacts: ${{ inputs.artifacts }}
+              bodyFile: ${{ inputs.body-file }}
+              prerelease: ${{ inputs.prerelease }}
+              draft: ${{ inputs.draft }}
+              omitDraftDuringUpdate: ${{ inputs.omit-draft-during-update }}
+              generateReleaseNotes: ${{ inputs.generate-release-notes }}
+              allowUpdates: true
+              replacesArtifacts: true
+              removeArtifacts: true
+
+        - name: Create or update release (inline / generated body)
+          if: inputs.body-file == ''
+          uses: ncipollo/release-action@339a81892b84b4eeb0f6e744e4574d79d0d9b8dd # v1
+          with:
+              token: ${{ inputs.token }}
+              tag: ${{ inputs.tag }}
+              commit: ${{ inputs.commit }}
+              name: ${{ inputs.name }}
+              artifacts: ${{ inputs.artifacts }}
+              body: ${{ inputs.body }}
+              prerelease: ${{ inputs.prerelease }}
+              draft: ${{ inputs.draft }}
+              omitDraftDuringUpdate: ${{ inputs.omit-draft-during-update }}
+              generateReleaseNotes: ${{ inputs.generate-release-notes }}
+              allowUpdates: true
+              replacesArtifacts: true
+              removeArtifacts: true

@@ -1,0 +1,138 @@
+name: "Release: Dev Rolling Prerelease"
+
+# Builds dev-HEAD and refreshes one rolling `dev-latest` prerelease so the
+# post-merge integration state is always testable without manually cutting an
+# RC -- per-PR builds validate the PR branch, not the squash-merge result, and
+# RCs are manual (release-semantic). Trigger/step rationale is inline below.
+
+on:
+    push:
+        branches: [dev]
+        # Skip docs-only / non-buildable pushes: the rolling release still
+        # reflects the latest *binary* state from the prior build.
+        paths:
+            - "**.cpp"
+            - "**.h"
+            - "**.hpp"
+            - "**.c"
+            - "**.hlsl"
+            - "**.hlsli"
+            - "**.ini"
+            - "src/**"
+            - "include/**"
+            - "features/**"
+            - "package/Shaders/**"
+            - "tests/**"
+            - "CMakeLists.txt"
+            - "CMakePresets.json"
+            - "vcpkg.json"
+            - "vcpkg-configuration.json"
+            - ".gitmodules"
+            - "extern/**"
+            - "cmake/**"
+            - ".github/workflows/release-dev.yaml"
+            - ".github/workflows/_shared-build.yaml"
+            - ".github/actions/**"
+            - ".github/configs/**"
+    schedule:
+        # Nightly floor: the push path is a reset-debounce (below), so a fast
+        # push cadence could starve it -- this guarantees >=1 build/day and
+        # self-skips quiet days. 06:00 UTC clears maint-cleanup (02:00) and
+        # maint-upstream-sync (Mon 08:00).
+        - cron: "0 6 * * *"
+    workflow_dispatch:
+
+permissions:
+    contents: read
+
+# Newest-wins: a new push cancels any in-flight run. Safe as one group (vs
+# auto-rebase's split jobs) because publishing is idempotent (ncipollo
+# allowUpdates), so a cancelled publish just re-runs.
+concurrency:
+    group: release-dev
+    cancel-in-progress: true
+
+jobs:
+    debounce:
+        name: Debounce / nightly-floor gate
+        runs-on: ubuntu-latest
+        outputs:
+            should-build: ${{ steps.gate.outputs.should-build }}
+        steps:
+            - name: Decide whether to build
+              id: gate
+              env:
+                  GH_TOKEN: ${{ github.token }}
+              run: |
+                  set -euo pipefail
+                  if [ "${{ github.event_name }}" != "schedule" ]; then
+                    echo "should-build=true" >> "$GITHUB_OUTPUT"
+                    exit 0
+                  fi
+                  # Nightly floor: only rebuild if dev actually moved, so quiet
+                  # days don't burn a runner re-publishing an identical build.
+                  since=$(date -u -d '25 hours ago' +%Y-%m-%dT%H:%M:%SZ)
+                  count=$(gh api "repos/${{ github.repository }}/commits?sha=dev&since=${since}" --jq 'length' 2>/dev/null || echo 0)
+                  if [ "${count:-0}" -gt 0 ]; then
+                    echo "Nightly floor: ${count} dev commit(s) since ${since} — building."
+                    echo "should-build=true" >> "$GITHUB_OUTPUT"
+                  else
+                    echo "Nightly floor: no dev commits since ${since} — skipping."
+                    echo "should-build=false" >> "$GITHUB_OUTPUT"
+                  fi
+
+            - name: Coalesce a burst of merges
+              # 30 min reset-debounce: folds a merge storm into one build and
+              # matches auto-rebase's cadence. The nightly cron is the floor.
+              if: github.event_name == 'push'
+              run: sleep 1800
+
+    build:
+        name: Build dev-HEAD
+        needs: debounce
+        if: needs.debounce.outputs.should-build == 'true'
+        # Trusted (own-repo) build — full suite is the dev integration gate.
+        # Build github.sha for every event: the pushed commit on push, dev tip
+        # on the nightly cron (dev is the default branch), or the dispatched
+        # ref. The body + dev-latest tag reference the same SHA, so testers are
+        # always pointed at the exact commit that was built.
+        uses: ./.github/workflows/_shared-build.yaml
+        with:
+            ref: ${{ github.sha }}
+            repository: ${{ github.repository }}
+            run-cpp: true
+            run-shader-validation: true
+            run-shader-tests: true
+            run-cpp-tests: true
+
+    prerelease:
+        name: Publish rolling dev-latest prerelease
+        needs: build
+        if: needs.build.outputs.cpp-built == 'true'
+        runs-on: ubuntu-latest
+        permissions:
+            contents: write
+        steps:
+            # Local composite actions need the repo in the workspace.
+            - name: Check out composite action
+              uses: actions/checkout@v6
+              with:
+                  sparse-checkout: .github/actions
+
+            - name: Refresh dev-latest prerelease
+              uses: ./.github/actions/publish-release
+              with:
+                  # GITHUB_TOKEN (not a PAT) so this can't trigger release-build.
+                  token: ${{ secrets.GITHUB_TOKEN }}
+                  # Non-semver tag: dodges maint-cleanup and the dev branch name.
+                  tag: dev-latest
+                  # Point the rolling tag at the built commit (matches the body).
+                  commit: ${{ github.sha }}
+                  name: "Open Shaders (dev) — latest build ${{ needs.build.outputs.version }}"
+                  prerelease: "true"
+                  artifacts: "${{ github.workspace }}/dist/CommunityShaders_AIO-*.7z"
+                  body: |
+                      Rolling build of `dev` at commit ${{ github.sha }}.
+
+                      ⚠️ Unstable integration build for testing — not a release.
+                      For stable builds see the latest non-prerelease.
