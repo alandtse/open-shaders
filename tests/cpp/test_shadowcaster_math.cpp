@@ -50,3 +50,11 @@ TEST_CASE("FrameTimePercentile90 honors count below the window size", "[scm]")
 	// n = 5, idx = int(5*0.9) = 4 -> the largest of {10..50} = 50.
 	REQUIRE(FrameTimePercentile90(ring, 5) == Approx(50.0f));
 }
+
+TEST_CASE("FrameTimePercentile90 clamps count above the window size", "[scm]")
+{
+	// count > Window: std::min clamps n to Window (10) so the copy stays in
+	// bounds; all slots are sampled. Pins the clamp against a regression.
+	float ring[10] = { 5, 2, 9, 1, 7, 3, 10, 4, 8, 6 };
+	REQUIRE(FrameTimePercentile90(ring, 99) == Approx(10.0f));
+}
