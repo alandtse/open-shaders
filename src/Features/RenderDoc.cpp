@@ -147,12 +147,14 @@ void RenderDoc::DrawSettings()
 			globals::state->frameAnnotations = globals::state->useFrameAnnotations;
 		}
 	}
-	Util::UI::DrawSettingDiff(bootSnapshot, settings, &Settings::enableCapture);
-
-	if (auto _tt = Util::HoverTooltipWrapper()) {
-		ImGui::Text("Enable RenderDoc frame capture for providing debug captures to the Open Shaders team (or upstream Community Shaders for upstream-relevant issues).");
-		ImGui::Text("Enabling capture will force-enable frame annotations for easier debugging and will restore the previous setting when disabled.");
-	}
+	// enableCapture is restart-gated (renderdoc.dll only injects at boot). The
+	// helper renders the tooltip first so it attaches to the checkbox, then the
+	// pending banner below it -- the previous ordering drew the banner between
+	// the checkbox and the tooltip, so a pending banner would steal the hover.
+	Util::UI::RestartGatedAnnotate(bootSnapshot, settings, &Settings::enableCapture, [] {
+		ImGui::TextUnformatted("Enable RenderDoc frame capture for providing debug captures to the Open Shaders team (or upstream Community Shaders for upstream-relevant issues).");
+		ImGui::TextUnformatted("Enabling capture will force-enable frame annotations for easier debugging and will restore the previous setting when disabled.");
+	});
 
 	// The rest of the UI renders only when capture is active
 	bool renderDocCaptureEnabled = settings.enableCapture;
