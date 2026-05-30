@@ -540,7 +540,7 @@ void RemoteControl::RegisterInspectTool()
 							  "monotonically increases each render tick; use as a "
 							  "ground truth for verifying that deferred operations "
 							  "(see `console`) have had time to run.\n"
-							  "  shadercache — { compiling, completedTasks, "
+							  "  shadercache — { plugin, compiling, completedTasks, "
 							  "totalTasks, failedTasks, currentFailedCount, "
 							  "frame_count }. Poll completedTasks against a "
 							  "pre-deploy snapshot to confirm a hot-reloaded "

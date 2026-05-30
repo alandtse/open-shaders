@@ -23,14 +23,19 @@ namespace SIE
 		auto* cache = globals::shaderCache;
 		if (!cache)
 			return {};
-		return ShaderCompileStatus{
-			true,
-			cache->IsCompiling(),
-			cache->GetCompletedTasks(),
-			cache->GetTotalTasks(),
-			cache->GetFailedTasks(),
-			cache->GetCurrentFailedCount(),
-		};
+		// Read the task counters once and derive `compiling` from the same
+		// snapshot, so callers never observe compiling=false with work still
+		// outstanding. Named-field init avoids depending on member order.
+		const uint64_t completed = cache->GetCompletedTasks();
+		const uint64_t total = cache->GetTotalTasks();
+		ShaderCompileStatus status{};
+		status.valid = true;
+		status.compiling = completed < total;
+		status.completedTasks = completed;
+		status.totalTasks = total;
+		status.failedTasks = cache->GetFailedTasks();
+		status.currentFailedCount = cache->GetCurrentFailedCount();
+		return status;
 	}
 
 	// Custom include handler to track all includes during shader compilation
