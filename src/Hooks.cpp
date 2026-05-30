@@ -877,8 +877,7 @@ namespace Hooks
 			       !globals::features::lightLimitFix.CheckParticleLights(a_pass, a_technique);
 		}
 #if defined(_MSC_VER)
-		__except (1)
-		{
+		__except (1) {
 			return false;
 		}
 #endif

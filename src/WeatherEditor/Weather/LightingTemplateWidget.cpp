@@ -322,13 +322,13 @@ std::vector<Widget::SearchResult> LightingTemplateWidget::CollectSearchableSetti
 {
 	const std::vector<std::pair<std::string, std::vector<std::string>>> entries = {
 		{ LightingTemplateTab::kBasic, { LightingTemplateSetting::kAmbientColor, LightingTemplateSetting::kDirectionalColor,
-											LightingTemplateSetting::kDirectionalXY, LightingTemplateSetting::kDirectionalZ, LightingTemplateSetting::kDirectionalFade,
-											LightingTemplateSetting::kLightFadeStart, LightingTemplateSetting::kLightFadeEnd, LightingTemplateSetting::kClipDistance } },
+										   LightingTemplateSetting::kDirectionalXY, LightingTemplateSetting::kDirectionalZ, LightingTemplateSetting::kDirectionalFade,
+										   LightingTemplateSetting::kLightFadeStart, LightingTemplateSetting::kLightFadeEnd, LightingTemplateSetting::kClipDistance } },
 		{ LightingTemplateTab::kFog, { LightingTemplateSetting::kFogColorNear, LightingTemplateSetting::kFogColorFar,
-										  LightingTemplateSetting::kFogNear, LightingTemplateSetting::kFogFar, LightingTemplateSetting::kFogPower, LightingTemplateSetting::kFogClamp } },
+										 LightingTemplateSetting::kFogNear, LightingTemplateSetting::kFogFar, LightingTemplateSetting::kFogPower, LightingTemplateSetting::kFogClamp } },
 		{ LightingTemplateTab::kDalc, { LightingTemplateSetting::kSpecular, LightingTemplateSetting::kFresnelPower,
-										   LightingTemplateSetting::kXPlus, LightingTemplateSetting::kXMinus, LightingTemplateSetting::kYPlus, LightingTemplateSetting::kYMinus,
-										   LightingTemplateSetting::kZPlus, LightingTemplateSetting::kZMinus } },
+										  LightingTemplateSetting::kXPlus, LightingTemplateSetting::kXMinus, LightingTemplateSetting::kYPlus, LightingTemplateSetting::kYMinus,
+										  LightingTemplateSetting::kZPlus, LightingTemplateSetting::kZMinus } },
 	};
 
 	std::vector<SearchResult> results;
