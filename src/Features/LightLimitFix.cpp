@@ -1,7 +1,7 @@
 #include "LightLimitFix.h"
+#include "Features/InverseSquareLighting/Common.h"
 #include "Globals.h"
 #include "InverseSquareLighting.h"
-#include "Features/InverseSquareLighting/Common.h"
 #include "LinearLighting.h"
 #include "Utils/UI.h"
 
@@ -678,8 +678,7 @@ void LightLimitFix::BSLightingShader_SetupGeometry_GeometrySetupConstantPointLig
 		// and is zero-initialised by ClearStrictLightData.
 	}
 #if defined(_MSC_VER)
-	__except (1)
-	{
+	__except (1) {
 		ClearStrictLightData(strictLightDataTemp, false);
 	}
 #endif
@@ -1293,4 +1292,3 @@ void LightLimitFix::Hooks::BSWaterShader_SetupGeometry::thunk(RE::BSShader* This
 	singleton.BSLightingShader_SetupGeometry_Before(Pass);
 	singleton.BSLightingShader_SetupGeometry_After(Pass);
 }
-

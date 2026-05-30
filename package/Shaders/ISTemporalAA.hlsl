@@ -7,8 +7,8 @@ typedef VS_OUTPUT PS_INPUT;
 
 struct PS_OUTPUT
 {
-	float4 Color : SV_Target0;
-	float4 Feedback : SV_Target1;
+	float4 Color: SV_Target0;
+	float4 Feedback: SV_Target1;
 };
 
 #if defined(PSHADER)
@@ -38,9 +38,9 @@ cbuffer PerGeometry : register(b2)
 };
 
 // Decompiler comparison idiom: cmp(expr) => -(expr), used as a truthy mask in ?: selects.
-#define cmp -
+#	define cmp -
 
-#ifdef HDR_OUTPUT
+#	ifdef HDR_OUTPUT
 // Internal working space for TAA is PQ/BT2020.
 // PQ maps [0, 10000 nits] to [0, 1], so the vanilla 1.001 bracket ceiling is correct —
 // nothing in the scene legitimately exceeds 1.0 PQ. This is why PQ avoids the bracket
@@ -69,7 +69,7 @@ float DecodeFeedbackLuma(float gammaLuma)
 	float linearLuma = Color::GammaToLinearSafe(gammaLuma);
 	return DisplayMapping::LinearToPQ(linearLuma.xxx, 10000.0).x;
 }
-#endif
+#	endif
 
 static const float3 kLumaWeights = float3(0.5, 0.25, 0.25);
 
@@ -243,9 +243,9 @@ PS_OUTPUT main(PS_INPUT input)
 	float4 colorOut, feedbackOut;
 
 	// float4 packs — component reuse matches vanilla decompile (see header comment).
-	float4 motionReject, sampleUV, history, corner, tapMin; // was r0–r4
-	float4 tapA0, tapA1, tapB0, tapB1, tapC0, tapC1;       // was r6–r13
-	float4 center, centerMeta, bracketMax, weightedColor, mergeScratch, bracketMinReg; // was r14–r19
+	float4 motionReject, sampleUV, history, corner, tapMin;                             // was r0–r4
+	float4 tapA0, tapA1, tapB0, tapB1, tapC0, tapC1;                                    // was r6–r13
+	float4 center, centerMeta, bracketMax, weightedColor, mergeScratch, bracketMinReg;  // was r14–r19
 
 	float2 drMax = GetDynamicResolutionMax(), drUVMin, drUVMax, drCenter;
 	float4 drNeighborsA, drNeighborsB, drNeighborsC;
