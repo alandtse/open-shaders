@@ -22,10 +22,13 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 
 void VolumetricLighting::DrawSettings()
 {
+	// VR pre-allocates VL render targets at boot, so a runtime toggle can't
+	// resize them -- gate only in VR. Non-VR resizes live.
 	if (ImGui::Checkbox("Enable Volumetric Lighting in Exteriors", &settings.ExteriorEnabled))
 		SetupVL();
 	if (globals::game::isVR)
-		Util::UI::DrawSettingDiff(bootSnapshot, settings, &Settings::ExteriorEnabled);
+		Util::UI::RestartGatedAnnotate(bootSnapshot, settings, &Settings::ExteriorEnabled,
+			"Volumetric god-rays / fog scattering in exterior cells.");
 
 	if (settings.ExteriorEnabled)
 		DrawVolumetricLightingSettings(settings.ExteriorQuality, settings.ExteriorCustomSize, false, !inInterior);
@@ -33,7 +36,8 @@ void VolumetricLighting::DrawSettings()
 	if (ImGui::Checkbox("Enable Volumetric Lighting in Interiors", &settings.InteriorEnabled))
 		SetupVL();
 	if (globals::game::isVR)
-		Util::UI::DrawSettingDiff(bootSnapshot, settings, &Settings::InteriorEnabled);
+		Util::UI::RestartGatedAnnotate(bootSnapshot, settings, &Settings::InteriorEnabled,
+			"Volumetric god-rays / fog scattering in interior cells.");
 
 	if (settings.InteriorEnabled)
 		DrawVolumetricLightingSettings(settings.InteriorQuality, settings.InteriorCustomSize, true, inInterior);

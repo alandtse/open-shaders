@@ -98,9 +98,17 @@ namespace Util::Settings
 			return *reinterpret_cast<const T*>(reinterpret_cast<const std::byte*>(&bootCopy_) + offset);
 		}
 
+		// T's bytes are memcmp'd, so a padded struct could false-positive on
+		// compare. All registered restart fields are bool/uint/float/enum (no
+		// padding); constrain with has_unique_object_representations_v if that changes.
 		template <typename T>
 		bool HasPendingChange(const SettingsT& live, T SettingsT::* member) const noexcept
 		{
+			// SettingsT may hold std::string, but a registered restart field must be
+			// trivially copyable -- memcmp on a std::string compares control blocks, not text.
+			static_assert(std::is_trivially_copyable_v<T>,
+				"BootSnapshot::HasPendingChange requires a trivially-copyable field type "
+				"(memcmp on non-trivial types is not a meaningful equality check).");
 			if (!latched_) {
 				return false;
 			}
@@ -113,6 +121,16 @@ namespace Util::Settings
 		bool HasPendingChange(const SettingsT& live, const RestartFieldInfo& field) const noexcept
 		{
 			if (!latched_ || !field.jsonKey) {
+				return false;
+			}
+			// Defensive bounds check on the runtime-supplied descriptor: a
+			// malformed RestartFieldInfo (size zero, offset past the end, or
+			// offset+size extending beyond sizeof(SettingsT)) would otherwise
+			// drive memcmp out of bounds. Subtract instead of add to avoid
+			// overflow when offset+size would wrap size_t.
+			if (field.size == 0 ||
+				field.offset > sizeof(SettingsT) ||
+				field.size > sizeof(SettingsT) - field.offset) {
 				return false;
 			}
 			return std::memcmp(reinterpret_cast<const std::byte*>(&bootCopy_) + field.offset,
