@@ -251,6 +251,8 @@ cbuffer PerGeometry : register(b2)
 #		include "InverseSquareLighting/InverseSquareLighting.hlsli"
 #	endif
 
+#	include "Common/DirectionalShadow.hlsli"
+
 PS_OUTPUT main(PS_INPUT input)
 {
 	PS_OUTPUT psout;
@@ -297,9 +299,6 @@ PS_OUTPUT main(PS_INPUT input)
 	positionWS.xyz = positionWS.xyz / positionWS.w;
 
 	float screenNoise = Random::InterleavedGradientNoise(input.Position.xy, SharedData::FrameCount);
-	float2 rotation;
-	sincos(Math::TAU * screenNoise, rotation.y, rotation.x);
-	float2x2 rotationMatrix = float2x2(rotation.x, rotation.y, -rotation.y, rotation.x);
 
 	float3 worldPositionWS = positionWS.xyz + FrameBuffer::CameraPosAdjust[eyeIndex].xyz;
 
@@ -311,11 +310,12 @@ PS_OUTPUT main(PS_INPUT input)
 	// HasDirectionalShadows() admits Interior Sun cells to the directional shadow
 	// sampling path (matching Lighting.hlsl).
 	if (ShadowSampling::HasDirectionalShadows()) {
-		// Use the cheaper VSM shadows if available
+		// Use the cheaper VSM shadows if available; otherwise route through the
+		// shared SLF-vs-vanilla helper (LLF cascades under SLF, else lit).
 #	if defined(VOLUMETRIC_SHADOWS)
 		dirSoftShadow = VolumetricShadows::GetVSMShadow2D(positionWS.xyz, worldPositionWS, eyeIndex, dirDetailedShadow);
-#	elif defined(LIGHT_LIMIT_FIX)
-		dirDetailedShadow = LightLimitFix::GetDirectionalShadow(positionWS.xyz, worldPositionWS, rotationMatrix, eyeIndex);
+#	else
+		dirDetailedShadow = DirectionalShadow::GetSceneDirectionalShadow(positionWS.xyz, worldPositionWS, eyeIndex, screenNoise, 1.0);
 #	endif
 	}
 
