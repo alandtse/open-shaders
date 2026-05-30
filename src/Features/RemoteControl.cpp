@@ -12,6 +12,7 @@
 #include "Features/RenderDoc.h"
 #include "Features/ScreenshotFeature.h"
 #include "Globals.h"
+#include "ShaderCompileStatus.h"
 #include "State.h"
 
 #include <imgui.h>
@@ -449,6 +450,34 @@ static mcp::json EngineStateBlob()
 	});
 }
 
+// Helper used by inspect(kind="shadercache"): runtime shader (re)compile
+// status, built entirely from existing thread-safe ShaderCache accessors (no
+// added state). Hot-reloading an .hlsl clears its variants and requeues them,
+// so completedTasks advances once the recompile lands — poll it against a
+// pre-deploy snapshot to know the new shader is live. A rising failedTasks /
+// currentFailedCount means a (re)compile failed (otherwise invisible).
+static mcp::json ShaderCacheBlob()
+{
+	const uint frames = globals::state ? globals::state->frameCountAtomic.load(std::memory_order_relaxed) : 0u;
+	const SIE::ShaderCompileStatus s = SIE::GetShaderCompileStatus();
+	if (!s.valid) {
+		return mcp::json({
+			{ "plugin", "CommunityShaders" },
+			{ "frame_count", frames },
+			{ "error", "shaderCache unavailable" },
+		});
+	}
+	return mcp::json({
+		{ "plugin", "CommunityShaders" },
+		{ "frame_count", frames },
+		{ "compiling", s.compiling },
+		{ "completedTasks", s.completedTasks },
+		{ "totalTasks", s.totalTasks },
+		{ "failedTasks", s.failedTasks },
+		{ "currentFailedCount", s.currentFailedCount },
+	});
+}
+
 // Helper used by feature(action="list") to build one entry per feature.
 static mcp::json FeatureEntry(Feature* f)
 {
@@ -510,11 +539,17 @@ void RemoteControl::RegisterInspectTool()
 							  "  state — { plugin, frame_count, vr }. Frame counter "
 							  "monotonically increases each render tick; use as a "
 							  "ground truth for verifying that deferred operations "
-							  "(see `console`) have had time to run.\n\n"
+							  "(see `console`) have had time to run.\n"
+							  "  shadercache — { plugin, compiling, completedTasks, "
+							  "totalTasks, failedTasks, currentFailedCount, "
+							  "frame_count }. Poll completedTasks against a "
+							  "pre-deploy snapshot to confirm a hot-reloaded "
+							  "shader finished recompiling; a rising failedTasks "
+							  "/ currentFailedCount means a compile failed.\n\n"
 							  "For feature reads (enumerate / settings), use the "
 							  "`feature` tool with action='list' or 'get'.")
 	                      .with_string_param("kind",
-							  "Currently 'state'. New kinds will be added here "
+							  "'state' or 'shadercache'. New kinds will be added here "
 							  "rather than as new tools.")
 	                      .build();
 	server->register_tool(tool,
@@ -527,9 +562,12 @@ void RemoteControl::RegisterInspectTool()
 			if (kind == "state") {
 				return TextResult(EngineStateBlob().dump());
 			}
+			if (kind == "shadercache") {
+				return TextResult(ShaderCacheBlob().dump());
+			}
 			return ErrorResult("unknown kind",
 				{ { "kind", kind },
-					{ "supported", mcp::json::array({ "state" }) } });
+					{ "supported", mcp::json::array({ "state", "shadercache" }) } });
 		});
 }
 
