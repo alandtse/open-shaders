@@ -6,31 +6,15 @@
 #include "Globals.h"
 #include "Shadercache.h"
 #include "Util.h"
+#include "Utils/StringUtils.h"
 
 #include <algorithm>
-#include <cctype>
 #include <cmath>
 #include <limits>
 
 namespace
 {
 	constexpr uint MAX_LIGHTS = 1024;
-
-	char ToLowerAscii(char a_char)
-	{
-		return static_cast<char>(std::tolower(static_cast<unsigned char>(a_char)));
-	}
-
-	bool EndsWithDdsInsensitive(std::string_view a_filename)
-	{
-		if (a_filename.size() < 4)
-			return false;
-		const std::string_view ext = a_filename.substr(a_filename.size() - 4);
-		return ToLowerAscii(ext[0]) == '.' &&
-		       ToLowerAscii(ext[1]) == 'd' &&
-		       ToLowerAscii(ext[2]) == 'd' &&
-		       ToLowerAscii(ext[3]) == 's';
-	}
 
 	bool IsNearWhiteTint(const RE::NiColorA& a_color)
 	{
@@ -200,28 +184,6 @@ namespace
 		       std::max(a_tint.blue, 0.0f);
 	}
 
-	std::string ExtractTextureStem(std::string_view a_path)
-	{
-		if (a_path.empty())
-			return {};
-
-		auto lastSeparatorPos = a_path.find_last_of("\\/");
-		std::string_view filename = (lastSeparatorPos == std::string::npos) ? a_path : a_path.substr(lastSeparatorPos + 1);
-		if (filename.empty() || !EndsWithDdsInsensitive(filename))
-			return {};
-
-		filename.remove_suffix(4);  // Remove ".dds"
-		if (filename.empty())
-			return {};
-
-		std::string textureName{};
-		textureName.reserve(filename.size());
-		for (char c : filename)
-			textureName.push_back(ToLowerAscii(c));
-
-		return textureName;
-	}
-
 	struct VertexColor
 	{
 		std::uint8_t data[4];
@@ -254,8 +216,7 @@ namespace
 			}
 		}
 #if defined(_MSC_VER)
-		__except (1)
-		{
+		__except (1) {
 			return false;
 		}
 #endif
@@ -350,12 +311,12 @@ LightLimitFix::ParticleLightReference LightLimitFix::GetParticleLightConfigs(RE:
 	if (material->sourceTexturePath.empty())
 		return {};
 
-	std::string textureName = ExtractTextureStem(material->sourceTexturePath.c_str());
-	if (textureName.empty())
+	auto textureName = Util::GetLowercaseStem(material->sourceTexturePath.c_str(), ".dds");
+	if (!textureName)
 		return cacheInvalidReference(node);
 
 	auto& configs = particleLights.particleLightConfigs;
-	auto it = configs.find(textureName);
+	auto it = configs.find(*textureName);
 	if (it == configs.end())
 		return cacheInvalidReference(node);
 
@@ -365,10 +326,10 @@ LightLimitFix::ParticleLightReference LightLimitFix::GetParticleLightConfigs(RE:
 	if (!material->greyscaleTexturePath.empty()) {
 		// Gradients are an optional override: a missing entry falls back to the base
 		// config rather than disabling the particle light entirely.
-		const std::string gradientName = ExtractTextureStem(material->greyscaleTexturePath.c_str());
-		if (!gradientName.empty()) {
+		const auto gradientName = Util::GetLowercaseStem(material->greyscaleTexturePath.c_str(), ".dds");
+		if (gradientName) {
 			auto& gradientConfigs = particleLights.particleLightGradientConfigs;
-			if (auto itGradient = gradientConfigs.find(gradientName); itGradient != gradientConfigs.end()) {
+			if (auto itGradient = gradientConfigs.find(*gradientName); itGradient != gradientConfigs.end()) {
 				hasGradientConfig = true;
 				gradientConfig = itGradient->second;
 			}

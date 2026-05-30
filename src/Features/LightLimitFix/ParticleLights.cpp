@@ -1,10 +1,10 @@
 #include "Features/LightLimitFix/ParticleLights.h"
 
+#include "Utils/StringUtils.h"
+
 #include <algorithm>
-#include <cctype>
 #include <cmath>
 #include <exception>
-#include <optional>
 
 namespace
 {
@@ -16,26 +16,6 @@ namespace
 		if (!std::isfinite(f))
 			return a_default;
 		return std::clamp(f, a_min, a_max);
-	}
-
-	std::optional<std::string> ExtractIniStem(const std::string& path)
-	{
-		auto lastSeparatorPos = path.find_last_of("\\/");
-		if (lastSeparatorPos == std::string::npos) {
-			logger::error("[LLF] Path incomplete");
-			return std::nullopt;
-		}
-
-		std::string filename = path.substr(lastSeparatorPos + 1);
-		if (filename.size() < 4) {
-			logger::error("[LLF] Path too short");
-			return std::nullopt;
-		}
-
-		filename.erase(filename.length() - 4);  // Remove ".ini"
-		std::transform(filename.begin(), filename.end(), filename.begin(),
-			[](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-		return filename;
 	}
 }
 
@@ -77,7 +57,7 @@ void ParticleLights::GetConfigs()
 				data.colorMult.blue = SanitizeIniFloat(ini.GetDoubleValue("Light", "ColorMultBlue", 1.0), 0.0f, 16.0f, 1.0f);
 				data.radiusMult = SanitizeIniFloat(ini.GetDoubleValue("Light", "RadiusMult", 1.0), 0.0f, 16.0f, 1.0f);
 
-				const auto filename = ExtractIniStem(path);
+				const auto filename = Util::GetLowercaseStem(path, ".ini");
 				if (!filename) {
 					continue;
 				}
@@ -151,7 +131,7 @@ void ParticleLights::GetConfigs()
 				continue;
 			}
 
-			const auto filename = ExtractIniStem(path);
+			const auto filename = Util::GetLowercaseStem(path, ".ini");
 			if (!filename) {
 				continue;
 			}
