@@ -241,7 +241,9 @@ namespace ShadowCasterManager
 
 	static float ComputeFrameTimePercentile90()
 	{
-		if (s_ftCount == 0)
+		// <= 0 (not just == 0): a negative count would drive a negative n into
+		// std::copy / std::nth_element below (out-of-bounds / UB).
+		if (s_ftCount <= 0)
 			return 16.67f;  // fallback: 60 fps target
 		const int n = std::min(s_ftCount, kFrameWindow);
 		float tmp[kFrameWindow];
