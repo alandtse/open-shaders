@@ -17,7 +17,7 @@ TEST_CASE("SanitizeFloat clamps in-range, low, and high inputs", "[llf]")
 	REQUIRE(SanitizeFloat(0.5f, 0.0f, 1.0f) == Approx(0.5f));
 	REQUIRE(SanitizeFloat(-1.0f, 0.0f, 1.0f) == Approx(0.0f));
 	REQUIRE(SanitizeFloat(2.0f, 0.0f, 1.0f) == Approx(1.0f));
-	REQUIRE(SanitizeFloat(64.0f, 64.0f, 4096.0f) == Approx(64.0f));   // exact lower bound
+	REQUIRE(SanitizeFloat(64.0f, 64.0f, 4096.0f) == Approx(64.0f));      // exact lower bound
 	REQUIRE(SanitizeFloat(4096.0f, 64.0f, 4096.0f) == Approx(4096.0f));  // exact upper bound
 }
 

@@ -14,10 +14,10 @@ using ShadowCasterManager::IsPlausibleShadowLightPtr;
 TEST_CASE("IsPlausibleShadowLightPtr rejects null, misaligned, and non-canonical", "[scm]")
 {
 	REQUIRE_FALSE(IsPlausibleShadowLightPtr(0));                      // null
-	REQUIRE(IsPlausibleShadowLightPtr(0x8));                         // aligned, in range
-	REQUIRE(IsPlausibleShadowLightPtr(0x00007FFFFFFFFFF8ull));       // top of user-mode range
-	REQUIRE_FALSE(IsPlausibleShadowLightPtr(0x0000800000000000ull)); // first non-canonical
-	REQUIRE_FALSE(IsPlausibleShadowLightPtr(0xFFFFF80000000000ull)); // kernel-space garbage
+	REQUIRE(IsPlausibleShadowLightPtr(0x8));                          // aligned, in range
+	REQUIRE(IsPlausibleShadowLightPtr(0x00007FFFFFFFFFF8ull));        // top of user-mode range
+	REQUIRE_FALSE(IsPlausibleShadowLightPtr(0x0000800000000000ull));  // first non-canonical
+	REQUIRE_FALSE(IsPlausibleShadowLightPtr(0xFFFFF80000000000ull));  // kernel-space garbage
 
 	// Any non-8-byte alignment is rejected.
 	for (std::uintptr_t off = 1; off < 8; ++off)
