@@ -1155,6 +1155,7 @@ void LightLimitFix::UpdateStructure()
 	clusterSize[2] = 32;
 
 	{
+		TracyD3D11Zone(globals::state->tracyCtx, "LightLimitFix Cluster Build");
 		LightBuildingCB updateData{};
 		updateData.LightsNear = lightsNear;
 		updateData.LightsFar = lightsFar;
@@ -1176,6 +1177,7 @@ void LightLimitFix::UpdateStructure()
 	}
 
 	{
+		TracyD3D11Zone(globals::state->tracyCtx, "LightLimitFix Cluster Cull");
 		LightCullingCB updateData{};
 		updateData.LightCount = lightCount;
 		std::copy(clusterSize, clusterSize + 3, updateData.ClusterSize);
