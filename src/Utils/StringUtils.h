@@ -41,21 +41,30 @@ namespace Util
 	 * extension case-insensitively, then lowercases the stem. Used to match asset
 	 * filenames (e.g. a `.dds` texture or `.ini` config) against keyed lookup tables.
 	 *
-	 * @param a_path Path to a file, absolute or relative.
+	 * @param a_path Path to a file, absolute or relative. Both `\` and `/` separators
+	 *               are accepted on every platform.
 	 * @param a_extension Required extension including the leading dot, e.g. ".dds" or ".ini".
 	 * @return The lowercased stem, or std::nullopt when the extension doesn't match or
 	 *         the stem is empty. Note std::filesystem treats a leading-dot-only name
 	 *         (e.g. ".dds") as a stem with no extension, so those are rejected here too.
 	 */
-	inline std::optional<std::string> GetLowercaseStem(const std::filesystem::path& a_path, std::string_view a_extension)
+	inline std::optional<std::string> GetLowercaseStem(std::string_view a_path, std::string_view a_extension)
 	{
-		const std::string extension = a_path.extension().string();
+		// Normalize `\` to `/` before parsing: game asset paths use backslashes, but
+		// std::filesystem only treats them as separators on Windows. This keeps the
+		// helper separator-agnostic on every platform (matching the hand-rolled code
+		// it replaced) so the unit tests aren't Windows-only.
+		std::string normalized(a_path);
+		std::replace(normalized.begin(), normalized.end(), '\\', '/');
+		const std::filesystem::path path = normalized;
+
+		const std::string extension = path.extension().string();
 		if (extension.size() != a_extension.size() ||
 			!std::equal(extension.begin(), extension.end(), a_extension.begin(),
 				[](unsigned char x, unsigned char y) { return std::tolower(x) == std::tolower(y); }))
 			return std::nullopt;
 
-		const std::string stem = a_path.stem().string();
+		const std::string stem = path.stem().string();
 		if (stem.empty())
 			return std::nullopt;
 
