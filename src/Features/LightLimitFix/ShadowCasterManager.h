@@ -86,8 +86,8 @@ namespace ShadowCasterManager
 		// -- using capacity as the bound silently caps SLF at vanilla shadow
 		// counts. Use the null sentinel instead, with a setting-derived
 		// safety cap (ShadowLightCount + sun cascades, with a small margin).
-		// Per-pointer plausibility (alignment + user-mode range) handles
-		// non-null garbage between our prepass and this read.
+		// Per-pointer plausibility (low-address floor + alignment + user-mode
+		// range) handles non-null garbage between our prepass and this read.
 		const std::uint32_t maxIdx = MaxShadowAccumIterationBound();
 		std::uint32_t idx = 0;
 		while (idx < maxIdx) {
@@ -95,7 +95,10 @@ namespace ShadowCasterManager
 			if (!light)
 				break;
 			const auto raw = reinterpret_cast<std::uintptr_t>(light);
-			if (raw >= 0x0000800000000000ull || (raw & 0x7) != 0)
+			// Reject the low 64 KiB too: the Windows x64 null-guard region is
+			// never a valid user mapping, so a near-null garbage value (e.g.
+			// 0x8) would otherwise pass and get dereferenced (AV/CTD).
+			if (raw < 0x10000ull || raw >= 0x0000800000000000ull || (raw & 0x7) != 0)
 				break;
 			fn(light);
 			const std::uint32_t step = light->shadowMapCount;
