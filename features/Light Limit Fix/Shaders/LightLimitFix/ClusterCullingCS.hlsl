@@ -18,8 +18,6 @@ RWStructuredBuffer<uint> lightIndexCounter : register(u0);
 RWStructuredBuffer<uint> lightIndexList : register(u1);
 RWStructuredBuffer<LightGrid> lightGrid : register(u2);
 
-groupshared Light sharedLights[GROUP_SIZE];
-
 bool LightIntersectsCluster(float3 position, float radiusSquared, ClusterAABB cluster)
 {
 	float3 closest = max(cluster.minPoint.xyz, min(position, cluster.maxPoint.xyz));
@@ -42,14 +40,10 @@ bool LightIntersectsCluster(float3 position, float radiusSquared, ClusterAABB cl
 
 	ClusterAABB cluster = clusters[clusterIndex];
 
-	if (groupIndex < LightCount) {
-		uint lightIndex = groupIndex;
-		Light light = lights[lightIndex];
-		sharedLights[groupIndex] = light;
-	}
-
-	GroupMemoryBarrierWithGroupSync();
-
+	// Threads read the global lights buffer directly (cached); with no
+	// inter-thread sharing there is nothing to synchronize, so no barriers. Dead
+	// groupshared staging was removed here -- do not re-add: Light[GROUP_SIZE] is
+	// 96 KB, over the 32 KB LDS limit, so a live read would not compile.
 	for (uint i = 0; i < LightCount; i++) {
 		Light light = lights[i];
 
@@ -73,8 +67,6 @@ bool LightIntersectsCluster(float3 position, float radiusSquared, ClusterAABB cl
 				break;
 		}
 	}
-
-	GroupMemoryBarrierWithGroupSync();
 
 	uint offset = 0;
 	InterlockedAdd(lightIndexCounter[0], visibleLightCount, offset);

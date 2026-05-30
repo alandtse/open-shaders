@@ -5,7 +5,10 @@
 #define NUMTHREAD_Y 16
 #define NUMTHREAD_Z 4
 #define GROUP_SIZE (NUMTHREAD_X * NUMTHREAD_Y * NUMTHREAD_Z)
-#define MAX_CLUSTER_LIGHTS 256
+// Per-cluster light cap. MUST match LightLimitFix::CLUSTER_MAX_LIGHTS: the C++
+// side sizes the global lightIndexList pool as clusterCount * that value, so a
+// larger cap here can overrun the pool.
+#define MAX_CLUSTER_LIGHTS 128
 
 namespace LightFlags
 {
