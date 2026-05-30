@@ -11,24 +11,29 @@ using Catch::Approx;
 using ShadowCasterManager::FrameTimePercentile90;
 using ShadowCasterManager::IsPlausibleShadowLightPtr;
 
-TEST_CASE("IsPlausibleShadowLightPtr rejects null, misaligned, and non-canonical", "[scm]")
+TEST_CASE("IsPlausibleShadowLightPtr rejects null, near-null, misaligned, and non-canonical", "[scm]")
 {
 	REQUIRE_FALSE(IsPlausibleShadowLightPtr(0));                      // null
-	REQUIRE(IsPlausibleShadowLightPtr(0x8));                          // aligned, in range
+	REQUIRE_FALSE(IsPlausibleShadowLightPtr(0x8));                    // near-null: below the 64 KiB floor
+	REQUIRE_FALSE(IsPlausibleShadowLightPtr(0xFFF8ull));              // aligned but still below the floor
+	REQUIRE(IsPlausibleShadowLightPtr(0x10000ull));                   // at the floor, aligned -> plausible
 	REQUIRE(IsPlausibleShadowLightPtr(0x00007FFFFFFFFFF8ull));        // top of user-mode range
 	REQUIRE_FALSE(IsPlausibleShadowLightPtr(0x0000800000000000ull));  // first non-canonical
 	REQUIRE_FALSE(IsPlausibleShadowLightPtr(0xFFFFF80000000000ull));  // kernel-space garbage
 
-	// Any non-8-byte alignment is rejected.
+	// Any non-8-byte alignment is rejected (use a base above the floor so the
+	// alignment check is what fails, not the minimum-address check).
 	for (std::uintptr_t off = 1; off < 8; ++off)
-		REQUIRE_FALSE(IsPlausibleShadowLightPtr(0x1000 + off));
-	REQUIRE(IsPlausibleShadowLightPtr(0x1000));
+		REQUIRE_FALSE(IsPlausibleShadowLightPtr(0x10000 + off));
 }
 
 TEST_CASE("FrameTimePercentile90 returns the 60fps fallback with no samples", "[scm]")
 {
 	float ring[8]{};
 	REQUIRE(FrameTimePercentile90(ring, 0) == Approx(16.67f));
+	// A negative count (corruption / future refactor) must not drive a negative
+	// n into std::copy / std::nth_element -- it takes the fallback too.
+	REQUIRE(FrameTimePercentile90(ring, -1) == Approx(16.67f));
 }
 
 TEST_CASE("FrameTimePercentile90 picks the P90 element", "[scm]")

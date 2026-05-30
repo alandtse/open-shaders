@@ -37,10 +37,19 @@ TEST_CASE("cutoffOverride replaces the default regardless of shadow flag", "[isl
 	REQUIRE(ISLMath::CalculateRadius(1.0f, true, 0.05f, 0.0f) == Approx(280.0f));
 }
 
-TEST_CASE("CalculateRadius clamps a NaN (negative-sqrt) result to 1", "[isl]")
+TEST_CASE("CalculateRadius clamps degenerate results to 1", "[isl]")
 {
-	// intensity 0 with a large size makes the sqrt argument negative -> NaN -> 1.
+	// NaN: intensity 0 with a large size makes the sqrt argument negative.
 	REQUIRE(ISLMath::CalculateRadius(0.0f, false, 1.0f, 10.0f) == Approx(1.0f));
+	// Exact zero: 2*intensity == cutoff*size^2 (0.05 * 2^2 = 0.2, intensity 0.1)
+	// makes the sqrt argument 0. A 0 radius would drive a 0/0 SmoothStep downstream.
+	REQUIRE(ISLMath::CalculateRadius(0.1f, false, 1.0f, 2.0f) == Approx(1.0f));
+	// +inf: a zero cutoffOverride divides by 2*cutoff == 0. isnan() alone misses
+	// this (sqrt(+inf) is +inf, not NaN); the finite check catches it. The cutoff
+	// is read through a volatile so MSVC can't constant-fold the literal /0 into a
+	// compile-time C4723 -- at runtime the float divide yields +inf as intended.
+	volatile float zeroCutoff = 0.0f;
+	REQUIRE(ISLMath::CalculateRadius(1.0f, false, zeroCutoff, 0.0f) == Approx(1.0f));
 }
 
 TEST_CASE("GetAttenuation peaks at the source and vanishes past the radius", "[isl]")
