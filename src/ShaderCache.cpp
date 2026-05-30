@@ -1,5 +1,6 @@
 #include "ShaderCache.h"
 #include "Globals.h"
+#include "ShaderCompileStatus.h"
 #include "ShaderFileWatcher.h"
 #include "Util.h"
 
@@ -14,6 +15,23 @@
 
 namespace SIE
 {
+	// Chrono-free snapshot of compile counters for consumers that can't include
+	// ShaderCache.h (see ShaderCompileStatus.h). Thread-safe: atomics + the
+	// shader-map lock inside GetCurrentFailedCount.
+	ShaderCompileStatus GetShaderCompileStatus()
+	{
+		auto* cache = globals::shaderCache;
+		if (!cache)
+			return {};
+		return ShaderCompileStatus{
+			true,
+			cache->IsCompiling(),
+			cache->GetCompletedTasks(),
+			cache->GetTotalTasks(),
+			cache->GetFailedTasks(),
+			cache->GetCurrentFailedCount(),
+		};
+	}
 
 	// Custom include handler to track all includes during shader compilation
 	class TrackingIncludeHandler : public ID3DInclude
@@ -1488,12 +1506,34 @@ namespace SIE
 					shaderBlob->Release();
 				}
 
+#ifdef TRACY_ENABLE
+				{
+					// Timeline annotation: a (re)compile failed. Pairs with the
+					// MCP shadercache status (failedTasks) for build-agnostic
+					// detection; this gives the exact frame for perf correlation.
+					const auto tracyMsg = std::format("Shader compile FAILED: {} {} {:X}",
+						magic_enum::enum_name(type), magic_enum::enum_name(shaderClass), descriptor);
+					TracyMessageC(tracyMsg.c_str(), tracyMsg.size(), 0xFF4444);
+				}
+#endif
+
 				cache.AddCompletedShader(shaderClass, shader, descriptor, nullptr);
 				return nullptr;
 			}
 			if (errorBlob)
 				logger::debug("Shader logs:\n{}", static_cast<char*>(errorBlob->GetBufferPointer()));
 			logger::debug("Compiled shader {}:{}:{:X}", magic_enum::enum_name(type), magic_enum::enum_name(shaderClass), descriptor);
+
+#ifdef TRACY_ENABLE
+			{
+				// Timeline annotation: a shader (re)compiled successfully. During
+				// a hot-reload this marks the exact frame the new shader went
+				// live, so A/B perf windows split precisely on it.
+				const auto tracyMsg = std::format("Shader compiled: {} {} {:X}",
+					magic_enum::enum_name(type), magic_enum::enum_name(shaderClass), descriptor);
+				TracyMessage(tracyMsg.c_str(), tracyMsg.size());
+			}
+#endif
 
 			// strip debug info
 			if (!globals::state->IsDeveloperMode()) {
