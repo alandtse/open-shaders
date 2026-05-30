@@ -88,7 +88,8 @@ namespace SharedData
 		// Debug (last)
 		uint EnableLightsVisualisation;
 		uint LightsVisualisationMode;
-		uint2 pad0;
+		uint EnableParticleContactShadows;
+		uint pad0;
 	};
 
 	struct WetnessEffectsSettings
