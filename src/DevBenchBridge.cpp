@@ -431,6 +431,34 @@ namespace
 			});
 		}
 
+		// results: the aggregated per-variant timing — the benchmark output. Marshaled (the
+		// aggregator is written on the main thread during Update/OnFrame).
+		if (action == "results") {
+			return RunReadOnMainThread([mgr]() {
+				auto& agg = mgr->GetAggregator();
+				json calls = json::array();
+				for (const auto& s : agg.GetAggregatedResults()) {
+					calls.push_back(json{
+						{ "label", s.label },
+						{ "shaderType", s.shaderType },
+						{ "meanA", s.meanA },
+						{ "meanB", s.meanB },
+						{ "delta", s.delta },
+						{ "medianA", s.medianA },
+						{ "medianB", s.medianB },
+						{ "frameCountA", s.frameCountA },
+						{ "frameCountB", s.frameCountB },
+					});
+				}
+				return json{
+					{ "hasResults", agg.HasResults() },
+					{ "totalFrames", agg.GetTotalFrameCount() },
+					{ "totalDurationSec", agg.GetTotalTestDuration() },
+					{ "drawCalls", std::move(calls) },
+				};
+			});
+		}
+
 		// Lifecycle actions marshal onto the main thread: Enable/Disable swap configs via
 		// State::Load → JSON and Menu::Load touches settings the menu/render thread reads.
 		auto* task = SKSE::GetTaskInterface();
@@ -485,7 +513,7 @@ namespace
 			});
 			return queued("switch");
 		}
-		return json{ { "error", "unknown action (status|start|stop|clear|diff|switch)" }, { "action", action } };
+		return json{ { "error", "unknown action (status|start|stop|clear|diff|switch|results)" }, { "action", action } };
 	}
 
 	void AbtestToolHandler(void*, const char* a_argsJson, void* a_sink, DevBenchAPI::WriteFn a_write)
@@ -603,7 +631,7 @@ namespace DevBenchBridge
 		dvb->RegisterTool("openshaders.capture", captureDesc, &CaptureToolHandler, nullptr);
 
 		static constexpr const char* abtestDesc =
-			R"({"description":"Drive the built-in A/B testing harness (Performance Overlay/ABTesting), which swaps between the USER config (current settings) and a TEST config and aggregates per-variant frame timing. Action-dispatched. status: {enabled,usingTestConfig,interval,hasCachedSnapshots}. start: Enable(), optional interval (seconds); pass manual=true to suppress the timer and drive swaps yourself with action=switch (align swaps to whole benchmark passes — start manual, replay path under A, switch, replay under B, diff). switch: swap USER<->TEST now (manual sessions). stop: Disable(), snapshots retained. clear: ClearCachedSnapshots(). diff: per-key diff list {path,userValue,testValue}. Authoring the TEST config lives in the Performance Overlay UI.","inputSchema":{"type":"object","properties":{"action":{"type":"string","enum":["status","start","stop","clear","diff","switch"]},"interval":{"type":"number"},"manual":{"type":"boolean"}},"required":["action"]}})";
+			R"({"description":"Drive the built-in A/B testing harness (Performance Overlay/ABTesting), which swaps between the USER config (current settings) and a TEST config and aggregates per-variant frame timing. Action-dispatched. status: {enabled,usingTestConfig,interval,hasCachedSnapshots}. start: Enable(), optional interval (seconds); pass manual=true to suppress the timer and drive swaps yourself with action=switch (align swaps to whole benchmark passes — start manual, replay path under A, switch, replay under B, diff). switch: swap USER<->TEST now (manual sessions). stop: Disable(), snapshots retained. clear: ClearCachedSnapshots(). diff: per-key config diff {path,userValue,testValue}. results: the benchmark output — aggregated per-variant per-draw-call timing {hasResults,totalFrames,totalDurationSec,drawCalls:[{label,shaderType,meanA,meanB,delta,...}]}. Authoring the TEST config lives in the Performance Overlay UI.","inputSchema":{"type":"object","properties":{"action":{"type":"string","enum":["status","start","stop","clear","diff","switch","results"]},"interval":{"type":"number"},"manual":{"type":"boolean"}},"required":["action"]}})";
 		dvb->RegisterTool("openshaders.abtest", abtestDesc, &AbtestToolHandler, nullptr);
 
 		static constexpr const char* settingsDesc =
