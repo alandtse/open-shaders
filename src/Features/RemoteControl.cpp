@@ -112,9 +112,10 @@ void RemoteControl::DrawSettings()
 	}
 
 	ImGui::Separator();
-	ImGui::TextUnformatted("Tools registered by Open Shaders:");
+	ImGui::TextUnformatted("Tools Open Shaders exposes through devbench:");
 	ImGui::BulletText("openshaders.feature — list / get / set / reset / toggle features");
 	ImGui::BulletText("openshaders.inspect — engine state and shader-cache status");
+	ImGui::BulletText("openshaders.shadercache — clear / delete the compiled cache");
 	ImGui::BulletText("openshaders.capture — RenderDoc / screenshot capture");
 	ImGui::BulletText("openshaders.abtest — A/B test lifecycle");
 	ImGui::BulletText("openshaders.settings — save / load / reset the global config");

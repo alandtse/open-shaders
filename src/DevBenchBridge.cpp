@@ -262,6 +262,38 @@ namespace
 		RunHandler(&BuildInspectResult, a_argsJson, a_sink, a_write);
 	}
 
+	// ---- shadercache: clear / delete the compiled cache -------------------------------
+
+	json BuildShadercacheResult(const json& a_args)
+	{
+		const std::string action = a_args.value("action", std::string{});
+		auto* cache = globals::shaderCache;
+		if (!cache)
+			return json{ { "error", "shader cache unavailable" } };
+		auto* task = SKSE::GetTaskInterface();
+		if (!task)
+			return json{ { "error", "SKSE task interface unavailable" } };
+		const uint frame = EnqueuedFrame();
+
+		// Mutating cache ops touch the live ShaderCache (and, for deleteDisk, the filesystem)
+		// — marshal to the main thread. Both force a recompile, observable via
+		// inspect(kind=shadercache) + the openshaders.shaderRecompiled event.
+		if (action == "clear") {
+			task->AddTask([cache]() { cache->Clear(); });
+			return json{ { "action", "clear" }, { "queued", true }, { "enqueued_at_frame", frame }, { "note", "in-memory cache cleared; shaders requeue for recompile" } };
+		}
+		if (action == "deleteDisk") {
+			task->AddTask([cache]() { cache->DeleteDiskCache(); });
+			return json{ { "action", "deleteDisk" }, { "queued", true }, { "enqueued_at_frame", frame }, { "note", "on-disk shader cache deleted; a full recompile follows (cold-compile benchmark)" } };
+		}
+		return json{ { "error", "unknown action (clear|deleteDisk)" }, { "action", action } };
+	}
+
+	void ShadercacheToolHandler(void*, const char* a_argsJson, void* a_sink, DevBenchAPI::WriteFn a_write)
+	{
+		RunHandler(&BuildShadercacheResult, a_argsJson, a_sink, a_write);
+	}
+
 	// ---- capture: renderdoc / screenshot ----------------------------------------------
 
 	json BuildCaptureResult(const json& a_args)
@@ -466,12 +498,16 @@ namespace DevBenchBridge
 		// so existing MCP clients keep working under the new prefix.
 
 		static constexpr const char* featureDesc =
-			R"({"description":"All Open Shaders graphics-feature operations — enumerate, inspect settings, mutate settings, restore defaults, toggle on/off. Action-dispatched. list: returns an array of {name,shortName,loaded,version,category,isCore,supportsVR,inMenu}; features with restart-gated settings also include restartFields:[{key,label,pending}]. get: params shortName, returns the SaveSettings blob (null if the feature has no override; set/reset then no-op). set: params shortName, settings (object). reset: params shortName, calls RestoreDefaultSettings. toggle: params shortName, enabled (boolean), flips Feature::loaded.","inputSchema":{"type":"object","properties":{"action":{"type":"string","enum":["list","get","set","reset","toggle"]},"shortName":{"type":"string"},"settings":{"type":"object"},"enabled":{"type":"boolean"}}}})";
+			R"({"description":"All Open Shaders graphics-feature operations — enumerate, inspect settings, mutate settings, restore defaults, toggle on/off. Action-dispatched. list: returns an array of {name,shortName,loaded,version,category,isCore,supportsVR,inMenu}; features with restart-gated settings also include restartFields:[{key,label,pending}]. get: params shortName, returns the SaveSettings blob (null if the feature has no override; set/reset then no-op). set: params shortName, settings (object). reset: params shortName, calls RestoreDefaultSettings. toggle: params shortName, enabled (boolean, OPTIONAL — omit to flip the current loaded state); flips Feature::loaded.","inputSchema":{"type":"object","properties":{"action":{"type":"string","enum":["list","get","set","reset","toggle"]},"shortName":{"type":"string"},"settings":{"type":"object"},"enabled":{"type":"boolean"}}}})";
 		dvb->RegisterTool("openshaders.feature", featureDesc, &FeatureToolHandler, nullptr);
 
 		static constexpr const char* inspectDesc =
 			R"({"description":"Read non-feature Open Shaders engine state. Kind-dispatched; response is a JSON object. kind=state -> {plugin,frame_count,vr}; frame_count increases each render tick, use it as ground truth that a queued operation has had time to run. kind=shadercache -> {compiling,completedTasks,totalTasks,failedTasks,currentFailedCount,frame_count}; poll completedTasks against a pre-deploy snapshot to know a hot-reloaded shader finished, and watch failedTasks/currentFailedCount for failed compiles. For feature reads use openshaders.feature(action=list|get).","readOnly":true,"inputSchema":{"type":"object","properties":{"kind":{"type":"string","enum":["state","shadercache"]}},"required":["kind"]}})";
 		dvb->RegisterTool("openshaders.inspect", inspectDesc, &InspectToolHandler, nullptr);
+
+		static constexpr const char* shadercacheDesc =
+			R"({"description":"Manage Open Shaders' compiled shader cache. Action-dispatched, fire-and-forget on the main thread. clear: drop the in-memory cache so shaders requeue for recompile. deleteDisk: delete the on-disk cache, forcing a full recompile (cold-compile benchmark). Watch progress via openshaders.inspect kind=shadercache and the openshaders.shaderRecompiled event. Read-only status is openshaders.inspect kind=shadercache.","inputSchema":{"type":"object","properties":{"action":{"type":"string","enum":["clear","deleteDisk"]}},"required":["action"]}})";
+		dvb->RegisterTool("openshaders.shadercache", shadercacheDesc, &ShadercacheToolHandler, nullptr);
 
 		static constexpr const char* captureDesc =
 			R"({"description":"Trigger a frame capture on the next render. Kind-dispatched. kind=renderdoc: RenderDoc multi-frame capture via the in-app API, honors frames (1-120, default 1); RenderDoc must be attached/loaded (check openshaders.feature list for RenderDoc.loaded). kind=screenshot: lossless screenshot via the Screenshot feature; frames is ignored. Fire-and-forget — no artifact path is returned synchronously.","inputSchema":{"type":"object","properties":{"kind":{"type":"string","enum":["renderdoc","screenshot"]},"frames":{"type":"number"}},"required":["kind"]}})";
