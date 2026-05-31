@@ -115,8 +115,8 @@ void MessageHandler(SKSE::MessagingInterface::Message* message)
 				EngineFix::InstallOnDataLoadedFixes();
 				FrameAnnotations::OnDataLoaded();
 
-				// Register CS tools into the devbench host if present (no-op unless built
-				// with DEVBENCH_BRIDGE_ENABLED). devbench provides its interface by now.
+				// Register our tools into the devbench host if one is present (runtime
+				// no-op otherwise). devbench has provided its interface by kPostLoad.
 				DevBenchBridge::Install();
 
 				auto shaderCache = globals::shaderCache;

@@ -8,11 +8,11 @@
 
 #include "Features/RemoteControl.h"
 
-#include "ConsoleLogCapture.h"
 #include "Features/PerformanceOverlay/ABTesting/ABTesting.h"
 #include "Features/RenderDoc.h"
 #include "Features/ScreenshotFeature.h"
 #include "Globals.h"
+#include "ShaderCompileStatus.h"
 #include "State.h"
 
 #include <imgui.h>
@@ -314,10 +314,6 @@ void RemoteControl::StartServer()
 	}
 	lastError.clear();
 
-	// Capture console output so the `console` tool's read action has data.
-	// Idempotent: installs the ConsoleLog::VPrint detour exactly once.
-	ConsoleLogCapture::Install();
-
 	try {
 		// Re-validate at bind time — settings may have been touched via the UI
 		// or hot-reload since LoadSettings ran.
@@ -454,6 +450,34 @@ static mcp::json EngineStateBlob()
 	});
 }
 
+// Helper used by inspect(kind="shadercache"): runtime shader (re)compile
+// status, built entirely from existing thread-safe ShaderCache accessors (no
+// added state). Hot-reloading an .hlsl clears its variants and requeues them,
+// so completedTasks advances once the recompile lands — poll it against a
+// pre-deploy snapshot to know the new shader is live. A rising failedTasks /
+// currentFailedCount means a (re)compile failed (otherwise invisible).
+static mcp::json ShaderCacheBlob()
+{
+	const uint frames = globals::state ? globals::state->frameCountAtomic.load(std::memory_order_relaxed) : 0u;
+	const SIE::ShaderCompileStatus s = SIE::GetShaderCompileStatus();
+	if (!s.valid) {
+		return mcp::json({
+			{ "plugin", "CommunityShaders" },
+			{ "frame_count", frames },
+			{ "error", "shaderCache unavailable" },
+		});
+	}
+	return mcp::json({
+		{ "plugin", "CommunityShaders" },
+		{ "frame_count", frames },
+		{ "compiling", s.compiling },
+		{ "completedTasks", s.completedTasks },
+		{ "totalTasks", s.totalTasks },
+		{ "failedTasks", s.failedTasks },
+		{ "currentFailedCount", s.currentFailedCount },
+	});
+}
+
 // Helper used by feature(action="list") to build one entry per feature.
 static mcp::json FeatureEntry(Feature* f)
 {
@@ -515,11 +539,17 @@ void RemoteControl::RegisterInspectTool()
 							  "  state — { plugin, frame_count, vr }. Frame counter "
 							  "monotonically increases each render tick; use as a "
 							  "ground truth for verifying that deferred operations "
-							  "(see `console`) have had time to run.\n\n"
+							  "(see `console`) have had time to run.\n"
+							  "  shadercache — { plugin, compiling, completedTasks, "
+							  "totalTasks, failedTasks, currentFailedCount, "
+							  "frame_count }. Poll completedTasks against a "
+							  "pre-deploy snapshot to confirm a hot-reloaded "
+							  "shader finished recompiling; a rising failedTasks "
+							  "/ currentFailedCount means a compile failed.\n\n"
 							  "For feature reads (enumerate / settings), use the "
 							  "`feature` tool with action='list' or 'get'.")
 	                      .with_string_param("kind",
-							  "Currently 'state'. New kinds will be added here "
+							  "'state' or 'shadercache'. New kinds will be added here "
 							  "rather than as new tools.")
 	                      .build();
 	server->register_tool(tool,
@@ -532,9 +562,12 @@ void RemoteControl::RegisterInspectTool()
 			if (kind == "state") {
 				return TextResult(EngineStateBlob().dump());
 			}
+			if (kind == "shadercache") {
+				return TextResult(ShaderCacheBlob().dump());
+			}
 			return ErrorResult("unknown kind",
 				{ { "kind", kind },
-					{ "supported", mcp::json::array({ "state" }) } });
+					{ "supported", mcp::json::array({ "state", "shadercache" }) } });
 		});
 }
 
@@ -1015,11 +1048,8 @@ void RemoteControl::RegisterConsoleTool()
 							  "shared sink (engine + every SKSE plugin) with no "
 							  "command-to-output correlation, and many useful "
 							  "commands are silent (tcl, tfc, tg, tm, tlb…), so "
-							  "per-command attribution is imperfect, but output IS "
-							  "captured: action='read' returns recent "
-							  "{ seq, frame, text } lines. Set capture='true' on the "
-							  "exec to open the window first (off by default — this "
-							  "sink is flooded during cell load).\n\n"
+							  "scraping console output is unreliable and "
+							  "intentionally NOT exposed.\n\n"
 							  "To verify a state change, poll inspect(kind='state') "
 							  "until frame_count > enqueued_at_frame (at least one tick "
 							  "elapsed), then observe via side channels: tracy "
@@ -1038,37 +1068,11 @@ void RemoteControl::RegisterConsoleTool()
 							  "  coc <CellName>     — teleport to cell\n"
 							  "  set timescale to N — game-time multiplier\n")
 	                      .with_string_param("command",
-							  "The console command, exactly as typed after the ~ key. Required for action='exec'.")
-	                      .with_string_param("action",
-							  "'exec' (default) runs `command`; 'read' returns captured output and closes the window.")
-	                      .with_string_param("capture",
-							  "On exec, 'true' captures this command's output: opens a window that the next action='read' returns and closes. Default 'false' is fire-and-forget with zero overhead. Use for printing commands (help, getav, getpos).")
+							  "The console command, exactly as typed after the ~ key.")
 	                      .build();
 	server->register_tool(tool,
 		[this](const mcp::json& params, const std::string& session_id) -> mcp::json {
 			RecordToolCall(session_id, "console");
-			const std::string action = params.value("action", std::string("exec"));
-			if (action == "read") {
-				const auto captured = ConsoleLogCapture::Snapshot(200);
-				const bool wasCapturing = ConsoleLogCapture::IsCapturing();
-				ConsoleLogCapture::EndCapture();  // close the window opened by exec(capture='true')
-				mcp::json lines = mcp::json::array();
-				for (const auto& line : captured) {
-					lines.push_back(mcp::json({ { "seq", line.seq }, { "frame", line.frame }, { "text", line.text } }));
-				}
-				return TextResult(mcp::json({
-												{ "capturing", wasCapturing },
-												{ "headSeq", ConsoleLogCapture::HeadSeq() },
-												{ "count", lines.size() },
-												{ "lines", std::move(lines) },
-											})
-						.dump());
-			}
-			if (action != "exec") {
-				return ErrorResult("unknown action",
-					{ { "action", action },
-						{ "supported", mcp::json::array({ "exec", "read" }) } });
-			}
 			std::string command = params.value("command", std::string{});
 			if (command.empty()) {
 				return ErrorResult("missing required parameter 'command'");
@@ -1078,11 +1082,6 @@ void RemoteControl::RegisterConsoleTool()
 				return ErrorResult("SKSE TaskInterface unavailable");
 			}
 			const uint enqueuedFrame = globals::state ? globals::state->frameCountAtomic.load(std::memory_order_relaxed) : 0u;
-			const std::string captureStr = params.value("capture", std::string("false"));
-			const bool capture = (captureStr == "true" || captureStr == "1");
-			if (capture) {
-				ConsoleLogCapture::BeginCapture();  // window stays open until action='read'
-			}
 			// Capture by value so the string outlives this lambda's scope.
 			task->AddTask([command]() {
 				RE::Console::ExecuteCommand(command.c_str());
@@ -1092,7 +1091,6 @@ void RemoteControl::RegisterConsoleTool()
 			return TextResult(mcp::json({
 											{ "queued", true },
 											{ "command", std::move(command) },
-											{ "capturing", capture },
 											{ "enqueued_at_frame", enqueuedFrame },
 										})
 					.dump());
