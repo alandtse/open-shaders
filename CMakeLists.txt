@@ -49,6 +49,11 @@ option(
     "Include features whose .ini has autoupload != true in the AIO. Off by default — the AIO ships only release-ready features. Turn on for local dev builds that want every feature regardless of release status."
     OFF
 )
+option(
+    DEVBENCH_BRIDGE
+    "Register Open Shaders tools into the devbench test bench (requires the devbench-api port; runtime no-op when no devbench host is present)"
+    ON
+)
 message("\tAuto plugin deployment: ${AUTO_PLUGIN_DEPLOYMENT}")
 message("\tZip to dist: ${ZIP_TO_DIST}")
 message("\tAIO Zip to dist: ${AIO_ZIP_TO_DIST}")
@@ -97,7 +102,9 @@ find_package(efsw CONFIG REQUIRED)
 find_path(EXPRTK_INCLUDE_DIRS "exprtk.hpp" REQUIRED)
 find_package(Tracy CONFIG REQUIRED)
 find_package(directx-headers CONFIG REQUIRED)
-find_package(devbench-api CONFIG REQUIRED)
+if(DEVBENCH_BRIDGE)
+    find_package(devbench-api CONFIG REQUIRED)
+endif()
 add_subdirectory(${CMAKE_SOURCE_DIR}/cmake/Streamline)
 
 find_path(DETOURS_INCLUDE_DIRS "detours/detours.h")
@@ -153,10 +160,14 @@ target_link_libraries(
         d3d12.lib
         Microsoft::DirectX-Headers
         ${DETOURS_LIBRARY}
-        DevBench::API
 )
 
-target_compile_definitions(${PROJECT_NAME} PRIVATE DEVBENCH_BRIDGE_ENABLED)
+# devbench bridge: opt-out via -DDEVBENCH_BRIDGE=OFF. When off, the port isn't required
+# and DevBenchBridge.cpp compiles to an empty Install().
+if(DEVBENCH_BRIDGE)
+    target_link_libraries(${PROJECT_NAME} PRIVATE DevBench::API)
+    target_compile_definitions(${PROJECT_NAME} PRIVATE DEVBENCH_BRIDGE_ENABLED)
+endif()
 
 # Some third-party libs (e.g. FFX backend) are built with /GL.
 # In RelWithDebInfo, align linker options to avoid LNK4075/LNK1218 when warnings are treated as errors.
