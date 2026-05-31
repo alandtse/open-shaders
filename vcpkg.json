@@ -8,7 +8,7 @@
             "dependencies": ["catch2", "fmt", "directxtk", "rapidcsv", "spdlog"]
         },
         "devbench-bridge": {
-            "description": "Register Open Shaders tools into the devbench test bench (selected by the DEVBENCH_BRIDGE CMake option).",
+            "description": "Register the plugin's tools into the devbench test bench (selected by the DEVBENCH_BRIDGE CMake option).",
             "dependencies": ["devbench-api"]
         }
     },

@@ -52,12 +52,12 @@ RemoteControl* RemoteControl::GetSingleton()
 	return &globals::features::remoteControl;
 }
 
-void RemoteControl::Load()
+void RemoteControl::DataLoaded()
 {
-	// Register CS's tools into the devbench host if one is present. DevBenchBridge::Install
-	// is idempotent on the devbench side (re-registering replaces) and a no-op when no host
-	// is present or the bridge was built disabled, so calling it here is safe even though
-	// XSEPlugin's kDataLoaded also calls it — whichever runs first wins, the other is inert.
+	// Register CS's tools into the devbench host. This feature owns the install; it runs at
+	// DataLoaded rather than Load because devbench publishes its cross-plugin interface at
+	// kPostLoad — by DataLoaded it's ready. Inert (logged) when no host is present or the
+	// bridge was built disabled; idempotent on the devbench side (re-registering replaces).
 	DevBenchBridge::Install();
 }
 

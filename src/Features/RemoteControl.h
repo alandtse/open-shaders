@@ -38,8 +38,9 @@ public:
 		};
 	}
 
-	// Lifecycle
-	void Load() override;
+	// Lifecycle. The bridge installs at DataLoaded (not Load): Load runs during
+	// SKSEPluginLoad, before devbench's kPostLoad init, so its interface isn't ready yet.
+	void DataLoaded() override;
 	void Reset() override;
 
 	// Settings persistence — no configurable settings remain; the overrides are

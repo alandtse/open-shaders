@@ -8,7 +8,7 @@ set(CMAKE_POLICY_WARNING_CMP0116 OFF)
 # find_package/link/define below).
 option(
     DEVBENCH_BRIDGE
-    "Register Open Shaders tools into the devbench test bench (requires the devbench-api port; runtime no-op when no devbench host is present)"
+    "Register the plugin's tools into the devbench test bench (requires the devbench-api port; runtime no-op when no devbench host is present)"
     ON
 )
 if(DEVBENCH_BRIDGE)
