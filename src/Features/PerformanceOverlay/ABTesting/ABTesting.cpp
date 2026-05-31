@@ -58,6 +58,14 @@ void ABTestingManager::Enable()
 		// Restore overlay enabled state after config operations
 		performanceOverlay.settings.ShowInOverlay = overlayWasEnabled;
 
+		// Manual/benchmark mode needs the draw-call profiling running so the aggregator
+		// collects per-variant timing — that only happens while the overlay is shown. Force it
+		// on (remembering we did) and restore on Disable.
+		if (manualMode && !performanceOverlay.settings.ShowInOverlay) {
+			overlayForcedByManual = true;
+			performanceOverlay.settings.ShowInOverlay = true;
+		}
+
 		logger::info("A/B Testing enabled - starting with Variant B (TEST). Both variants cached in memory for unbiased swapping.");
 	}
 }
@@ -84,6 +92,12 @@ void ABTestingManager::Disable()
 		manualMode = false;  // reset so a later UI-driven test rotates on the timer again
 
 		performanceOverlay.settings.ShowInOverlay = overlayWasEnabled;
+
+		// Undo a manual-mode overlay force so we don't leave it on for the user.
+		if (overlayForcedByManual) {
+			performanceOverlay.settings.ShowInOverlay = false;
+			overlayForcedByManual = false;
+		}
 	}
 }
 
