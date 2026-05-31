@@ -5,11 +5,11 @@
 // otherwise this file compiles to an empty Install(). Inert at runtime when no
 // devbench plugin is present (GetDevBenchInterface001() returns null).
 //
-// These tools were originally CS's own embedded MCP server (RemoteControl). They
-// are re-expressed here under the `openshaders.*` namespace so the single devbench
-// host drives them over both MCP and REST, and CS no longer ships a server of its
-// own. The semantics (actions / kinds / inputSchema) are preserved so existing
-// MCP clients keep working — only the namespace prefix changed.
+// The openshaders.* tools below expose Open Shaders' graphics-feature, inspect,
+// capture, abtest, shadercache, and settings operations through the single devbench
+// host over both MCP and REST. Each is namespaced to avoid collisions in devbench's
+// shared registry; the action / kind / inputSchema shapes are stable so clients can
+// rely on them.
 
 #ifdef DEVBENCH_BRIDGE_ENABLED
 

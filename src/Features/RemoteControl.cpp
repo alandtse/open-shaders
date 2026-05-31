@@ -1,12 +1,10 @@
 // Remote Control: status panel for the devbench bridge.
 //
-// CS used to embed its own Model Context Protocol server here. That server has
-// been removed — its tools now register into the external devbench host (the
+// CS's Model Context Protocol tools register into the external devbench host (the
 // devbench SKSE plugin, https://github.com/alandtse/devbench) via DevBenchBridge
-// (src/DevBenchBridge.cpp), exposed over both MCP and REST. This feature is now a
-// read-only panel: it reports whether devbench is present, what CS registered, and
-// the port devbench bound, so users can confirm the integration without leaving the
-// game.
+// (src/DevBenchBridge.cpp), exposed over both MCP and REST. This feature is a read-only
+// panel: it reports whether devbench is present, what CS registered, and the port
+// devbench bound, so users can confirm the integration without leaving the game.
 
 #include "Features/RemoteControl.h"
 

@@ -7,11 +7,10 @@
 
 using json = nlohmann::json;
 
-// Status panel for the devbench bridge. CS no longer hosts its own MCP server;
-// its tools are registered into the external devbench host via DevBenchBridge
-// (see src/DevBenchBridge.cpp). This feature exists only to surface, in the
-// in-game menu, whether devbench is present, what CS registered, and which port
-// the host bound — there is no server, port, or bind address to configure here.
+// Status panel for the devbench bridge. CS's tools are registered into the external
+// devbench host via DevBenchBridge (see src/DevBenchBridge.cpp); this feature surfaces,
+// in the in-game menu, whether devbench is present, what CS registered, and which port
+// the host bound. There is no server, port, or bind address to configure here.
 class RemoteControl : public Feature
 {
 public:
