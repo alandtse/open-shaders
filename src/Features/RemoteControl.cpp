@@ -13,6 +13,7 @@
 
 #include <imgui.h>
 
+#include <chrono>
 #include <filesystem>
 #include <fstream>
 
@@ -96,8 +97,18 @@ void RemoteControl::DrawSettings()
 		ImGui::TextColored(ImVec4(0.4f, 0.9f, 0.5f, 1.0f),
 			"devbench host present (build %u)", dvb->GetBuildNumber());
 
-		if (const int port = ReadDevBenchPort(); port > 0) {
-			ImGui::Text("Host bound on port %d (from %s)", port, kRuntimeJsonPath);
+		// Cache the port — runtime.json I/O + JSON parse every frame would hitch the UI while
+		// the panel is open. Refresh on a coarse interval (devbench may bind after the panel
+		// first opens, so re-read periodically rather than only once).
+		static int cachedPort = -1;  // -1 = not yet read
+		static std::chrono::steady_clock::time_point lastPortRead{};
+		const auto now = std::chrono::steady_clock::now();
+		if (cachedPort < 0 || now - lastPortRead > std::chrono::seconds(2)) {
+			cachedPort = ReadDevBenchPort();
+			lastPortRead = now;
+		}
+		if (cachedPort > 0) {
+			ImGui::Text("Host bound on port %d (from %s)", cachedPort, kRuntimeJsonPath);
 		} else {
 			ImGui::TextDisabled(
 				"Port unknown — devbench writes it to %s once it binds.",

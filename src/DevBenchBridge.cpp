@@ -25,7 +25,11 @@
 #	include <nlohmann/json.hpp>
 
 #	include <algorithm>
+#	include <chrono>
 #	include <cstring>
+#	include <functional>
+#	include <future>
+#	include <memory>
 #	include <optional>
 #	include <stdexcept>
 
@@ -64,6 +68,30 @@ namespace
 		a_write(a_sink, dumped.c_str());
 	}
 
+	// Run a READ on the main thread and return its result. Bridge handlers run on devbench's
+	// listener thread; reads that touch state the render/UI thread mutates (A/B fields + JSON
+	// snapshots) must marshal or they race. Blocks the handler briefly, bounded so a stalled
+	// main thread (e.g. mid-load) can't hang it. shared_ptr promise so a timed-out task that
+	// runs later doesn't dangle.
+	json RunReadOnMainThread(std::function<json()> a_read)
+	{
+		auto* task = SKSE::GetTaskInterface();
+		if (!task)
+			return json{ { "error", "SKSE task interface unavailable" } };
+		auto prom = std::make_shared<std::promise<json>>();
+		auto fut = prom->get_future();
+		task->AddTask([prom, read = std::move(a_read)]() {
+			try {
+				prom->set_value(read());
+			} catch (const std::exception& e) {
+				prom->set_value(json{ { "error", "read threw on main thread" }, { "detail", e.what() } });
+			}
+		});
+		if (fut.wait_for(std::chrono::milliseconds(5000)) != std::future_status::ready)
+			return json{ { "error", "main thread did not run within 5000ms (mid-load?)" } };
+		return fut.get();
+	}
+
 	// ---- feature: list / get / set / reset / toggle -----------------------------------
 
 	// Build one feature entry, including restart-gated metadata so `list` answers
@@ -88,8 +116,10 @@ namespace
 			const size_t liveSize = f->GetSettingsBlobSize();
 			for (const auto& field : fields) {
 				bool pending = false;
+				// Compare against remaining bytes (not offset+size, which can overflow and turn
+				// a bad metadata entry into an out-of-bounds memcmp).
 				if (liveBase && field.jsonKey && field.size != 0 &&
-					field.offset + field.size <= liveSize) {
+					field.offset <= liveSize && field.size <= liveSize - field.offset) {
 					const void* boot = f->GetBootValue(field.jsonKey);
 					if (boot && std::memcmp(boot, liveBase + field.offset, field.size) != 0)
 						pending = true;
@@ -150,6 +180,17 @@ namespace
 			const bool explicitVal = a_args.value("enabled", false);
 			task->AddTask([target, hasExplicit, explicitVal, shortName]() {
 				const bool applied = hasExplicit ? explicitVal : !target->loaded;
+				// Don't let a remote caller enable a VR-incompatible feature on a VR runtime:
+				// it bypasses the SupportsVR() gate and can destabilize the renderer. Reject +
+				// report (covers both an explicit enable and an implicit flip resolving to true).
+				if (applied && REL::Module::IsVR() && !target->SupportsVR()) {
+					if (auto* dvb = DevBenchAPI::GetDevBenchInterface001()) {
+						const std::string payload = json{ { "shortName", shortName }, { "error", "feature does not support VR; enable rejected" } }.dump();
+						dvb->EmitEvent("openshaders.feature.changed", payload.c_str());
+					}
+					logger::warn("DevBenchBridge: refused to enable VR-unsupported feature '{}' on a VR runtime", shortName);
+					return;
+				}
 				target->loaded = applied;
 				if (auto* dvb = DevBenchAPI::GetDevBenchInterface001()) {
 					const std::string payload = json{ { "shortName", shortName }, { "enabled", applied } }.dump();
@@ -283,8 +324,14 @@ namespace
 			return json{ { "action", "clear" }, { "queued", true }, { "enqueued_at_frame", frame }, { "note", "in-memory cache cleared; shaders requeue for recompile" } };
 		}
 		if (action == "deleteDisk") {
-			task->AddTask([cache]() { cache->DeleteDiskCache(); });
-			return json{ { "action", "deleteDisk" }, { "queued", true }, { "enqueued_at_frame", frame }, { "note", "on-disk shader cache deleted; a full recompile follows (cold-compile benchmark)" } };
+			// Delete on disk AND drop the in-memory cache — otherwise existing variants keep
+			// serving from memory and the promised full recompile never happens (mirrors
+			// PerformClearShaderCache and the ShaderCache invalidation path).
+			task->AddTask([cache]() {
+				cache->DeleteDiskCache();
+				cache->Clear();
+			});
+			return json{ { "action", "deleteDisk" }, { "queued", true }, { "enqueued_at_frame", frame }, { "note", "on-disk + in-memory shader cache cleared; a full recompile follows (cold-compile benchmark)" } };
 		}
 		return json{ { "error", "unknown action (clear|deleteDisk)" }, { "action", action } };
 	}
@@ -312,12 +359,18 @@ namespace
 			uint32_t frameCount = 1;
 			if (a_args.contains("frames") && a_args["frames"].is_number())
 				frameCount = static_cast<uint32_t>(std::clamp(a_args["frames"].get<int>(), 1, 120));
-			// Fire-and-forget: the trigger flag is consumed by the render loop next frame.
-			// TriggerCapture/TriggerMultiFrameCapture only set atomics, safe off-thread.
-			if (frameCount == 1)
-				renderDoc->TriggerCapture();
-			else
-				renderDoc->TriggerMultiFrameCapture(frameCount);
+			auto* task = SKSE::GetTaskInterface();
+			if (!task)
+				return json{ { "error", "SKSE task interface unavailable" } };
+			// Marshal the trigger to the main thread: TriggerCapture/TriggerMultiFrameCapture
+			// call the RenderDoc API and invalidate RenderDoc's (non-atomic) capture-list cache,
+			// which the UI/render thread reads — running it off-thread would race.
+			task->AddTask([renderDoc, frameCount]() {
+				if (frameCount == 1)
+					renderDoc->TriggerCapture();
+				else
+					renderDoc->TriggerMultiFrameCapture(frameCount);
+			});
 			return json{ { "queued", true }, { "kind", "renderdoc" }, { "frames", frameCount }, { "enqueued_at_frame", frame } };
 		}
 
@@ -358,20 +411,24 @@ namespace
 		if (!mgr)
 			return json{ { "error", "ABTestingManager singleton unavailable" } };
 
+		// status/diff read ABTestingManager's plain fields + JSON snapshots, which the main
+		// thread mutates in Enable/Disable/Update/Clear — marshal the reads so they don't race.
 		if (action == "status")
-			return AbtestStatusBlob(mgr);  // read-only — safe off the main thread
+			return RunReadOnMainThread([mgr]() { return AbtestStatusBlob(mgr); });
 
 		if (action == "diff") {
-			json entries = json::array();
-			for (const auto& entry : mgr->GetConfigDiffEntries()) {
-				// SettingsDiffEntry uses generic a/b labels; here `a` is USER, `b` is TEST.
-				entries.push_back(json{
-					{ "path", entry.path },
-					{ "userValue", entry.aValue },
-					{ "testValue", entry.bValue },
-				});
-			}
-			return json{ { "hasCachedSnapshots", mgr->HasCachedSnapshots() }, { "entries", std::move(entries) } };
+			return RunReadOnMainThread([mgr]() {
+				json entries = json::array();
+				for (const auto& entry : mgr->GetConfigDiffEntries()) {
+					// SettingsDiffEntry uses generic a/b labels; here `a` is USER, `b` is TEST.
+					entries.push_back(json{
+						{ "path", entry.path },
+						{ "userValue", entry.aValue },
+						{ "testValue", entry.bValue },
+					});
+				}
+				return json{ { "hasCachedSnapshots", mgr->HasCachedSnapshots() }, { "entries", std::move(entries) } };
+			});
 		}
 
 		// Lifecycle actions marshal onto the main thread: Enable/Disable swap configs via
@@ -442,17 +499,32 @@ namespace
 
 		// State::Save/Load read and write the on-disk USER config and touch every feature's
 		// settings; both must run on the main thread for the same reason feature(set) does.
+		// Contain failures inside the task: RunHandler's guard no longer applies once this runs
+		// on SKSE's queue, so a malformed config / Save|Load throw would unwind on the game
+		// thread after we already replied "queued". Degrade to a logged error instead.
 		if (action == "save") {
 			task->AddTask([state]() {
-				state->Save(State::ConfigMode::USER);
-				logger::info("DevBenchBridge: settings(save) applied");
+				try {
+					state->Save(State::ConfigMode::USER);
+					logger::info("DevBenchBridge: settings(save) applied");
+				} catch (const std::exception& e) {
+					logger::error("DevBenchBridge: settings(save) failed: {}", e.what());
+				} catch (...) {
+					logger::error("DevBenchBridge: settings(save) failed (unknown)");
+				}
 			});
 			return json{ { "action", "save" }, { "queued", true }, { "enqueued_at_frame", frame } };
 		}
 		if (action == "load") {
 			task->AddTask([state]() {
-				state->Load(State::ConfigMode::USER, /*allowReload=*/true);
-				logger::info("DevBenchBridge: settings(load) applied");
+				try {
+					state->Load(State::ConfigMode::USER, /*allowReload=*/true);
+					logger::info("DevBenchBridge: settings(load) applied");
+				} catch (const std::exception& e) {
+					logger::error("DevBenchBridge: settings(load) failed: {}", e.what());
+				} catch (...) {
+					logger::error("DevBenchBridge: settings(load) failed (unknown)");
+				}
 			});
 			return json{ { "action", "load" }, { "queued", true }, { "enqueued_at_frame", frame } };
 		}
