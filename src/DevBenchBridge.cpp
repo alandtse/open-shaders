@@ -56,9 +56,13 @@ namespace
 			auto* task = SKSE::GetTaskInterface();
 			if (!task)
 				return json{ { "error", "SKSE task interface unavailable" }, { "shortName", shortName } };
-			// Apply on the main thread, then emit a namespaced event so listeners (and a
-			// benchmark scenario) can observe the change. EmitEvent accepts any topic; the
-			// `openshaders.` prefix marks origin in devbench's shared bus.
+			// Threading contract: Feature::loaded is a public flag the render pipeline reads
+			// per-frame; it is hot-toggled by direct assignment and must be touched ONLY on
+			// the main thread — so we marshal via TaskInterface. This mirrors CS's own
+			// RemoteControl feature tool (there is no Feature::SetEnabled; a flag flip is the
+			// engine's enable/disable). After applying, emit a namespaced event so listeners /
+			// a benchmark scenario can observe the change (EmitEvent accepts any topic; the
+			// `openshaders.` prefix marks origin in devbench's shared bus).
 			task->AddTask([target, desired, shortName]() {
 				target->loaded = desired;
 				if (auto* dvb = DevBenchAPI::GetDevBenchInterface001()) {
