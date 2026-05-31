@@ -118,7 +118,6 @@ add_subdirectory(${CMAKE_SOURCE_DIR}/cmake/Streamline)
 find_path(DETOURS_INCLUDE_DIRS "detours/detours.h")
 find_library(DETOURS_LIBRARY detours REQUIRED)
 include(FidelityFX-SDK)
-include(cpp-mcp)
 
 target_compile_definitions(
     ${PROJECT_NAME}
@@ -163,7 +162,6 @@ target_link_libraries(
         unordered_dense::unordered_dense
         efsw::efsw
         Tracy::TracyClient
-        cpp-mcp
         Streamline
         d3d12.lib
         Microsoft::DirectX-Headers
