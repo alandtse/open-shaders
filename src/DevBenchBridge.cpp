@@ -140,10 +140,14 @@ namespace
 		const std::string action = a_args.value("action", std::string("list"));
 
 		if (action == "list") {
-			json out = json::array();
-			for (auto* f : Feature::GetFeatureList())
-				out.push_back(FeatureEntry(f));
-			return out;
+			// Marshal: FeatureEntry reads Feature::loaded and restart-gated settings bytes that
+			// main-thread toggles / settings-loads mutate.
+			return RunReadOnMainThread([]() {
+				json out = json::array();
+				for (auto* f : Feature::GetFeatureList())
+					out.push_back(FeatureEntry(f));
+				return out;
+			});
 		}
 
 		const std::string shortName = a_args.value("shortName", std::string{});
@@ -214,9 +218,13 @@ namespace
 			return json{ { "error", "feature not found or not loaded" }, { "shortName", shortName } };
 
 		if (action == "get") {
-			json blob;
-			feature->SaveSettings(blob);
-			return blob;
+			// Marshal: SaveSettings reads the feature's mutable settings that queued
+			// LoadSettings / RestoreDefaultSettings tasks mutate on the main thread.
+			return RunReadOnMainThread([feature]() {
+				json blob;
+				feature->SaveSettings(blob);
+				return blob;
+			});
 		}
 
 		auto* task = SKSE::GetTaskInterface();
@@ -465,12 +473,11 @@ namespace
 		if (!task)
 			return json{ { "error", "SKSE task interface unavailable" } };
 		const uint frame = EnqueuedFrame();
+		// Enqueue metadata only — NOT a status blob: reading ABTestingManager's fields here (on
+		// the listener thread) would race the main thread that mutates them. Callers query
+		// status separately (status/diff marshal the read).
 		const auto queued = [&](const char* act) {
-			json blob = AbtestStatusBlob(mgr);
-			blob["action"] = act;
-			blob["queued"] = true;
-			blob["enqueued_at_frame"] = frame;
-			return blob;
+			return json{ { "action", act }, { "queued", true }, { "enqueued_at_frame", frame } };
 		};
 
 		if (action == "start") {
