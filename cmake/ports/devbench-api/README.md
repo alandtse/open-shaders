@@ -1,8 +1,7 @@
 # devbench-api vcpkg port
 
 Vendor the devbench cross-plugin API (`DevBenchAPI.h` + `.cpp`) into your SKSE plugin
-via vcpkg — **do not copy the files into your tree** (they drift). Mirrors the
-SkyrimVRESL port.
+via vcpkg — **do not copy the files into your tree** (they drift).
 
 ## Consume (once devbench is published)
 

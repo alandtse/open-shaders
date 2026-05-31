@@ -1,6 +1,6 @@
 # devbench-api — header-only cross-plugin API for SKSE consumers.
-# Mirrors the SkyrimVRESL port: installs the MIT API header + its companion .cpp
-# (compiled into the consumer via the config's INTERFACE_SOURCES).
+# Installs the MIT API header + its companion .cpp (compiled into the consumer via the
+# config's INTERFACE_SOURCES).
 #
 # Pinned to a published commit. devbench-api isn't in the official vcpkg registry, so
 # consumers add this directory to VCPKG_OVERLAY_PORTS (see README). To ship a newer API

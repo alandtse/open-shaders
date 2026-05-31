@@ -13,9 +13,12 @@
 #include "Menu.h"
 
 #include <imgui.h>
+#include <nlohmann/json.hpp>
 
 #include <filesystem>
 #include <fstream>
+
+using json = nlohmann::json;
 
 #ifdef DEVBENCH_BRIDGE_ENABLED
 #	include <DevBenchAPI.h>
@@ -59,26 +62,6 @@ void RemoteControl::DataLoaded()
 	// kPostLoad — by DataLoaded it's ready. Inert (logged) when no host is present or the
 	// bridge was built disabled; idempotent on the devbench side (re-registering replaces).
 	DevBenchBridge::Install();
-}
-
-void RemoteControl::Reset()
-{
-	// No per-frame state.
-}
-
-void RemoteControl::LoadSettings(json&)
-{
-	// No configurable settings — the bridge has no server, port, or bind address.
-}
-
-void RemoteControl::SaveSettings(json&)
-{
-	// No configurable settings.
-}
-
-void RemoteControl::RestoreDefaultSettings()
-{
-	// No configurable settings.
 }
 
 void RemoteControl::DrawSettings()
