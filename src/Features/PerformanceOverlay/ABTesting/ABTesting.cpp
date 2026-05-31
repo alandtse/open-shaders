@@ -81,6 +81,7 @@ void ABTestingManager::Disable()
 		}
 
 		abTestingEnabled = false;
+		manualMode = false;  // reset so a later UI-driven test rotates on the timer again
 
 		performanceOverlay.settings.ShowInOverlay = overlayWasEnabled;
 	}

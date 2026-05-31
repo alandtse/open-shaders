@@ -550,8 +550,14 @@ namespace
 						logger::error("DevBenchBridge: settings(reset) {} threw: {}", f->GetShortName(), e.what());
 					}
 				}
-				state->Save(State::ConfigMode::USER);
-				logger::info("DevBenchBridge: settings(reset) applied");
+				try {
+					state->Save(State::ConfigMode::USER);
+					logger::info("DevBenchBridge: settings(reset) applied");
+				} catch (const std::exception& e) {
+					logger::error("DevBenchBridge: settings(reset) save failed: {}", e.what());
+				} catch (...) {
+					logger::error("DevBenchBridge: settings(reset) save failed (unknown)");
+				}
 			});
 			return json{ { "action", "reset" }, { "queued", true }, { "enqueued_at_frame", frame } };
 		}
