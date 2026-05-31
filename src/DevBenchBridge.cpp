@@ -452,11 +452,13 @@ namespace
 				if (secs > 0)
 					interval = static_cast<uint32_t>(secs);
 			}
-			task->AddTask([mgr, interval]() {
+			const bool manual = a_args.value("manual", false);
+			task->AddTask([mgr, interval, manual]() {
 				if (interval)
 					mgr->SetTestInterval(*interval);
+				mgr->SetManualMode(manual);  // manual → caller drives swaps via action=switch
 				mgr->Enable();
-				logger::info("DevBenchBridge: abtest(start) applied");
+				logger::info("DevBenchBridge: abtest(start) applied (manual={})", manual);
 			});
 			return queued("start");
 		}
@@ -474,7 +476,16 @@ namespace
 			});
 			return queued("clear");
 		}
-		return json{ { "error", "unknown action (status|start|stop|clear|diff)" }, { "action", action } };
+		if (action == "switch") {
+			// Manual swap (USER<->TEST) for a started manual-mode session — lets a driver align
+			// switches to whole benchmark passes instead of the timer. No-op if not enabled.
+			task->AddTask([mgr]() {
+				mgr->SwitchVariant();
+				logger::info("DevBenchBridge: abtest(switch) applied");
+			});
+			return queued("switch");
+		}
+		return json{ { "error", "unknown action (status|start|stop|clear|diff|switch)" }, { "action", action } };
 	}
 
 	void AbtestToolHandler(void*, const char* a_argsJson, void* a_sink, DevBenchAPI::WriteFn a_write)
@@ -586,7 +597,7 @@ namespace DevBenchBridge
 		dvb->RegisterTool("openshaders.capture", captureDesc, &CaptureToolHandler, nullptr);
 
 		static constexpr const char* abtestDesc =
-			R"({"description":"Drive the built-in A/B testing harness (Performance Overlay/ABTesting), which rotates between the USER config (current settings) and a TEST config on a fixed interval and aggregates per-variant frame timing. Action-dispatched. status: {enabled,usingTestConfig,interval,hasCachedSnapshots}. start: Enable() rotation, optional interval (seconds) applied first. stop: Disable(), snapshots retained. clear: ClearCachedSnapshots(). diff: per-key diff list {path,userValue,testValue}. Authoring the TEST config lives in the Performance Overlay UI.","inputSchema":{"type":"object","properties":{"action":{"type":"string","enum":["status","start","stop","clear","diff"]},"interval":{"type":"number"}},"required":["action"]}})";
+			R"({"description":"Drive the built-in A/B testing harness (Performance Overlay/ABTesting), which swaps between the USER config (current settings) and a TEST config and aggregates per-variant frame timing. Action-dispatched. status: {enabled,usingTestConfig,interval,hasCachedSnapshots}. start: Enable(), optional interval (seconds); pass manual=true to suppress the timer and drive swaps yourself with action=switch (align swaps to whole benchmark passes — start manual, replay path under A, switch, replay under B, diff). switch: swap USER<->TEST now (manual sessions). stop: Disable(), snapshots retained. clear: ClearCachedSnapshots(). diff: per-key diff list {path,userValue,testValue}. Authoring the TEST config lives in the Performance Overlay UI.","inputSchema":{"type":"object","properties":{"action":{"type":"string","enum":["status","start","stop","clear","diff","switch"]},"interval":{"type":"number"},"manual":{"type":"boolean"}},"required":["action"]}})";
 		dvb->RegisterTool("openshaders.abtest", abtestDesc, &AbtestToolHandler, nullptr);
 
 		static constexpr const char* settingsDesc =

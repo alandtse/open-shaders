@@ -21,6 +21,14 @@ public:
 	void Disable();
 	void Update();  // Called each frame to handle timing and switching
 
+	// Manual switching: in manual mode Update() does not auto-swap on the timer; the caller
+	// drives swaps via SwitchVariant(). Lets an external driver (devbench) align variant
+	// switches to whole benchmark passes instead of a fixed interval. Must run on the main
+	// thread (SwitchVariant loads config the render thread reads).
+	void SetManualMode(bool a_manual) { manualMode = a_manual; }
+	bool IsManualMode() const { return manualMode; }
+	void SwitchVariant();
+
 	// UI
 	void DrawSettingsUI();  // The A/B test interval slider
 	void DrawOverlayUI();   // The "Variant X: Y seconds left" overlay
@@ -42,6 +50,7 @@ private:
 	uint32_t testInterval = 0;
 	bool abTestingEnabled = false;
 	bool usingTestConfig = false;
+	bool manualMode = false;  // when true, Update() skips the timer swap (caller drives it)
 	LARGE_INTEGER timingFrequency = { 0 };
 	LARGE_INTEGER lastTestSwitch = { 0 };
 	ABTestAggregator aggregator;
@@ -54,4 +63,8 @@ private:
 
 	// Track what changed between USER and TEST configs
 	std::vector<std::string> GetConfigDifferences() const;
+
+	// The variant swap (load the other snapshot + notify the aggregator), shared by the
+	// timer path in Update() and the manual SwitchVariant(). Must run on the main thread.
+	void SwapVariant();
 };
