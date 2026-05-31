@@ -31,7 +31,7 @@ public:
 		return {
 			"Expose Open Shaders to AI assistants through the external devbench host.",
 			{
-				"Registers feature, inspect, capture, abtest, and settings tools",
+				"Registers feature, inspect, shadercache, capture, and settings tools",
 				"Drivable over MCP and REST from the shared devbench bench",
 				"No in-game server — install the devbench plugin to enable",
 			}
