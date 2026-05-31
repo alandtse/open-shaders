@@ -1,4 +1,5 @@
 #include "Deferred.h"
+#include "DevBenchBridge.h"
 #include "Features/Upscaling.h"
 #include "FrameAnnotations.h"
 #include "Globals.h"
@@ -113,6 +114,10 @@ void MessageHandler(SKSE::MessagingInterface::Message* message)
 				globals::OnDataLoaded();
 				EngineFix::InstallOnDataLoadedFixes();
 				FrameAnnotations::OnDataLoaded();
+
+				// Register CS tools into the devbench host if present (no-op unless built
+				// with DEVBENCH_BRIDGE_ENABLED). devbench provides its interface by now.
+				DevBenchBridge::Install();
 
 				auto shaderCache = globals::shaderCache;
 				shaderCache->menuLoaded = true;
