@@ -74,7 +74,8 @@ void CellLightingWidget::DrawWidget()
 			const ImGuiTabItemFlags inheritFlags = GetTabFlagsForOverride(CellLightingTab::kInheritance);
 
 			auto drawInherited = [](bool inherited, auto draw) -> bool {
-				if (inherited) PushInheritedStyle();
+				if (inherited)
+					PushInheritedStyle();
 				const bool result = draw();
 				if (inherited) {
 					Util::AddTooltip("Inherited from lighting template");
@@ -112,23 +113,23 @@ void CellLightingWidget::DrawWidget()
 					int xyDegrees = settings.directionalXY;
 					int zDegrees = settings.directionalZ;
 					if (DrawIfMatchesSearch(CellLightingSetting::kXYRotation, [&](const char* label) {
-						    return drawInherited(settings.inheritDirectionalRotation, [&]() {
-							    return DrawWithHighlight(label, [&]() {
-								    return ImGui::SliderInt(label, &xyDegrees, 0, 360);
-							    });
-						    });
-					    })) {
+							return drawInherited(settings.inheritDirectionalRotation, [&]() {
+								return DrawWithHighlight(label, [&]() {
+									return ImGui::SliderInt(label, &xyDegrees, 0, 360);
+								});
+							});
+						})) {
 						settings.directionalXY = static_cast<uint32_t>(xyDegrees);
 						changed = true;
 					}
 					ImGui::Spacing();
 					if (DrawIfMatchesSearch(CellLightingSetting::kZRotation, [&](const char* label) {
-						    return drawInherited(settings.inheritDirectionalRotation, [&]() {
-							    return DrawWithHighlight(label, [&]() {
-								    return ImGui::SliderInt(label, &zDegrees, 0, 360);
-							    });
-						    });
-					    })) {
+							return drawInherited(settings.inheritDirectionalRotation, [&]() {
+								return DrawWithHighlight(label, [&]() {
+									return ImGui::SliderInt(label, &zDegrees, 0, 360);
+								});
+							});
+						})) {
 						settings.directionalZ = static_cast<uint32_t>(zDegrees);
 						changed = true;
 					}
@@ -570,17 +571,17 @@ std::vector<Widget::SearchResult> CellLightingWidget::CollectSearchableSettings(
 {
 	const std::vector<std::pair<std::string, std::vector<std::string>>> entries = {
 		{ CellLightingTab::kBasic, { CellLightingSetting::kAmbientColor, CellLightingSetting::kDirectionalColor,
-									    CellLightingSetting::kXYRotation, CellLightingSetting::kZRotation, CellLightingSetting::kDirectionalFade,
-									    CellLightingSetting::kLightFadeStart, CellLightingSetting::kLightFadeEnd, CellLightingSetting::kClipDistance } },
+									   CellLightingSetting::kXYRotation, CellLightingSetting::kZRotation, CellLightingSetting::kDirectionalFade,
+									   CellLightingSetting::kLightFadeStart, CellLightingSetting::kLightFadeEnd, CellLightingSetting::kClipDistance } },
 		{ CellLightingTab::kFog, { CellLightingSetting::kFogNearColor, CellLightingSetting::kFogFarColor,
-									  CellLightingSetting::kFogNear, CellLightingSetting::kFogFar, CellLightingSetting::kFogPower, CellLightingSetting::kFogClampMax } },
+									 CellLightingSetting::kFogNear, CellLightingSetting::kFogFar, CellLightingSetting::kFogPower, CellLightingSetting::kFogClampMax } },
 		{ CellLightingTab::kDalc, { CellLightingSetting::kSpecular, CellLightingSetting::kFresnelPower,
-									   CellLightingSetting::kXPlus, CellLightingSetting::kXMinus, CellLightingSetting::kYPlus, CellLightingSetting::kYMinus,
-									   CellLightingSetting::kZPlus, CellLightingSetting::kZMinus } },
+									  CellLightingSetting::kXPlus, CellLightingSetting::kXMinus, CellLightingSetting::kYPlus, CellLightingSetting::kYMinus,
+									  CellLightingSetting::kZPlus, CellLightingSetting::kZMinus } },
 		{ CellLightingTab::kInheritance, { CellLightingSetting::kInheritAmbientColor, CellLightingSetting::kInheritDirectionalColor, CellLightingSetting::kInheritFogColor,
-											  CellLightingSetting::kInheritFogNear, CellLightingSetting::kInheritFogFar, CellLightingSetting::kInheritDirectionalRotation,
-											  CellLightingSetting::kInheritDirectionalFade, CellLightingSetting::kInheritClipDistance, CellLightingSetting::kInheritFogPower,
-											  CellLightingSetting::kInheritFogMaxClamp, CellLightingSetting::kInheritLightFadeDistances } },
+											 CellLightingSetting::kInheritFogNear, CellLightingSetting::kInheritFogFar, CellLightingSetting::kInheritDirectionalRotation,
+											 CellLightingSetting::kInheritDirectionalFade, CellLightingSetting::kInheritClipDistance, CellLightingSetting::kInheritFogPower,
+											 CellLightingSetting::kInheritFogMaxClamp, CellLightingSetting::kInheritLightFadeDistances } },
 	};
 
 	std::vector<SearchResult> results;

@@ -92,7 +92,11 @@ float InverseSquareLighting::CalculateRadius(const float intensity, const bool s
 	float cutoff = shadowCaster ? DefaultShadowCasterCutoff : DefaultCutoff;
 	cutoff = cutoffOverride == 1.f ? cutoff : cutoffOverride;
 	const float radius = std::sqrt(ScaledUnitsSq * ((2 * intensity - cutoff * size * size) / (2 * cutoff)));
-	return isnan(radius) ? 1.f : radius;
+	// Clamp any degenerate result to 1.0 so callers never divide by a bad radius:
+	// a negative sqrt argument yields NaN, an exact-zero argument yields 0 (which
+	// would drive a 0/0 attenuation fade), and a zero cutoffOverride yields +inf
+	// (sqrt(+inf) is not NaN, so the old isnan-only check let it through).
+	return std::isfinite(radius) && radius > 0.f ? radius : 1.f;
 }
 
 inline float InverseSquareLighting::SmoothStep(const float edge0, const float edge1, const float x)

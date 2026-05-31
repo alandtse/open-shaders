@@ -50,18 +50,18 @@ void PrecipitationWidget::DrawWidget()
 			if (ImGui::BeginTabItem(PrecipitationTab::kParticle, nullptr, particleFlags)) {
 				BeginScrollableContent("##ParticleScroll");
 				if (DrawIfMatchesSearch(PrecipitationSetting::kType, [&](const char* label) {
-					ImGui::SeparatorText("Particle Type");
-					const char* types[] = { "Rain", "Snow" };
-					int currentType = static_cast<int>(settings.particleType);
-					bool comboChanged = DrawWithHighlight(label, [&]() {
-						return ImGui::Combo(label, &currentType, types, IM_ARRAYSIZE(types));
-					});
-					if (comboChanged) {
-						settings.particleType = static_cast<uint32_t>(currentType);
-						return true;
-					}
-					return false;
-				}))
+						ImGui::SeparatorText("Particle Type");
+						const char* types[] = { "Rain", "Snow" };
+						int currentType = static_cast<int>(settings.particleType);
+						bool comboChanged = DrawWithHighlight(label, [&]() {
+							return ImGui::Combo(label, &currentType, types, IM_ARRAYSIZE(types));
+						});
+						if (comboChanged) {
+							settings.particleType = static_cast<uint32_t>(currentType);
+							return true;
+						}
+						return false;
+					}))
 					changed = true;
 				if (MatchesAnySearch({ PrecipitationSetting::kSizeX, PrecipitationSetting::kSizeY })) {
 					ImGui::SeparatorText("Particle Size");
@@ -101,18 +101,18 @@ void PrecipitationWidget::DrawWidget()
 					int numX = static_cast<int>(settings.numSubtexturesX);
 					int numY = static_cast<int>(settings.numSubtexturesY);
 					if (DrawIfMatchesSearch(PrecipitationSetting::kNumSubtexturesX, [&](const char* label) {
-						    return DrawWithHighlight(label, [&]() {
-							    return ImGui::InputInt(label, &numX);
-						    });
-					    })) {
+							return DrawWithHighlight(label, [&]() {
+								return ImGui::InputInt(label, &numX);
+							});
+						})) {
 						settings.numSubtexturesX = std::max(1, numX);
 						changed = true;
 					}
 					if (DrawIfMatchesSearch(PrecipitationSetting::kNumSubtexturesY, [&](const char* label) {
-						    return DrawWithHighlight(label, [&]() {
-							    return ImGui::InputInt(label, &numY);
-						    });
-					    })) {
+							return DrawWithHighlight(label, [&]() {
+								return ImGui::InputInt(label, &numY);
+							});
+						})) {
 						settings.numSubtexturesY = std::max(1, numY);
 						changed = true;
 					}

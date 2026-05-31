@@ -36,5 +36,4 @@ namespace Util::Settings
 // Convenience macro for building a RestartFieldInfo entry without duplicating
 // the member name string. Requires SettingsT to be standard-layout.
 #define UTIL_RESTART_FIELD(SettingsT, member, userLabel) \
-	Util::Settings::RestartFieldInfo{ #member, userLabel, offsetof(SettingsT, member), sizeof(decltype(SettingsT::member)) }
-
+	Util::Settings::RestartFieldInfo { #member, userLabel, offsetof(SettingsT, member), sizeof(decltype(SettingsT::member)) }

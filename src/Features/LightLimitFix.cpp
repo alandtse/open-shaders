@@ -1,7 +1,7 @@
 #include "LightLimitFix.h"
+#include "Features/InverseSquareLighting/Common.h"
 #include "Globals.h"
 #include "InverseSquareLighting.h"
-#include "Features/InverseSquareLighting/Common.h"
 #include "LinearLighting.h"
 #include "Utils/UI.h"
 
@@ -678,8 +678,7 @@ void LightLimitFix::BSLightingShader_SetupGeometry_GeometrySetupConstantPointLig
 		// and is zero-initialised by ClearStrictLightData.
 	}
 #if defined(_MSC_VER)
-	__except (1)
-	{
+	__except (1) {
 		ClearStrictLightData(strictLightDataTemp, false);
 	}
 #endif
@@ -1156,6 +1155,7 @@ void LightLimitFix::UpdateStructure()
 	clusterSize[2] = 32;
 
 	{
+		TracyD3D11Zone(globals::state->tracyCtx, "LightLimitFix Cluster Build");
 		LightBuildingCB updateData{};
 		updateData.LightsNear = lightsNear;
 		updateData.LightsFar = lightsFar;
@@ -1177,6 +1177,7 @@ void LightLimitFix::UpdateStructure()
 	}
 
 	{
+		TracyD3D11Zone(globals::state->tracyCtx, "LightLimitFix Cluster Cull");
 		LightCullingCB updateData{};
 		updateData.LightCount = lightCount;
 		std::copy(clusterSize, clusterSize + 3, updateData.ClusterSize);
@@ -1293,4 +1294,3 @@ void LightLimitFix::Hooks::BSWaterShader_SetupGeometry::thunk(RE::BSShader* This
 	singleton.BSLightingShader_SetupGeometry_Before(Pass);
 	singleton.BSLightingShader_SetupGeometry_After(Pass);
 }
-

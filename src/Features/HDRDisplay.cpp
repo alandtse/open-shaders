@@ -877,7 +877,7 @@ void HDRDisplay::SetUIBuffer()
 		ID3D11RenderTargetView* targetRTV = uiBufferMode.useUIBuffer ?
 		                                        upscaling.dx12SwapChain.uiBufferWrapped->rtv :
 		                                    uiBufferMode.useFallbackCopy ? fb.RTV :
-		                                                                  upscaling.dx12SwapChain.swapChainBufferWrapped->rtv;
+		                                                                   upscaling.dx12SwapChain.swapChainBufferWrapped->rtv;
 
 		if (uiBufferMode.useUIBuffer) {
 			float clearColor[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
@@ -991,9 +991,9 @@ ID3D11BlendState* HDRDisplay::GetPatchedAlphaBlendState(ID3D11BlendState* origin
 	for (int i = 0; i < slotCount; i++) {
 		const auto& rt = desc.RenderTarget[i];
 		if (rt.BlendEnable &&
-		    (rt.SrcBlendAlpha != D3D11_BLEND_ONE ||
-		     rt.DestBlendAlpha != D3D11_BLEND_INV_SRC_ALPHA ||
-		     rt.BlendOpAlpha != D3D11_BLEND_OP_ADD)) {
+			(rt.SrcBlendAlpha != D3D11_BLEND_ONE ||
+				rt.DestBlendAlpha != D3D11_BLEND_INV_SRC_ALPHA ||
+				rt.BlendOpAlpha != D3D11_BLEND_OP_ADD)) {
 			needsPatch = true;
 			break;
 		}

@@ -2791,14 +2791,14 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 			const bool isClusteredLight = lightIndex >= LightLimitFix::NumStrictLights;
 			bool passesIntensityGate = !isClusteredLight;
 			if (isClusteredLight) {
-#			if defined(ISL)
+#				if defined(ISL)
 				float falloffFactor = saturate(lightDist * light.invRadius);
 				passesIntensityGate = (1.0 - falloffFactor * falloffFactor) >
 				                      SharedData::lightLimitFixSettings.ContactShadowMinIntensity;
-#			else
+#				else
 				passesIntensityGate = intensityMultiplier >
 				                      SharedData::lightLimitFixSettings.ContactShadowMinIntensity;
-#			endif
+#				endif
 			}
 
 			// Particle lights carry both Simple and Particle bits. Simple-only lights are
