@@ -97,6 +97,7 @@ find_package(efsw CONFIG REQUIRED)
 find_path(EXPRTK_INCLUDE_DIRS "exprtk.hpp" REQUIRED)
 find_package(Tracy CONFIG REQUIRED)
 find_package(directx-headers CONFIG REQUIRED)
+find_package(devbench-api CONFIG REQUIRED)
 add_subdirectory(${CMAKE_SOURCE_DIR}/cmake/Streamline)
 
 find_path(DETOURS_INCLUDE_DIRS "detours/detours.h")
@@ -152,7 +153,10 @@ target_link_libraries(
         d3d12.lib
         Microsoft::DirectX-Headers
         ${DETOURS_LIBRARY}
+        DevBench::API
 )
+
+target_compile_definitions(${PROJECT_NAME} PRIVATE DEVBENCH_BRIDGE_ENABLED)
 
 # Some third-party libs (e.g. FFX backend) are built with /GL.
 # In RelWithDebInfo, align linker options to avoid LNK4075/LNK1218 when warnings are treated as errors.

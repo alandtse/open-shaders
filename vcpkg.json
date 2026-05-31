@@ -12,6 +12,7 @@
     "dependencies": [
         "bshoshany-thread-pool",
         "clib-util",
+        "devbench-api",
         "cppwinrt",
         "directx-headers",
         "directxtex",
