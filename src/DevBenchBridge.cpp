@@ -48,7 +48,18 @@ namespace
 			}
 		} else if (action == "toggle") {
 			const std::string shortName = args.value("shortName", std::string{});
-			auto* target = shortName.empty() ? nullptr : Feature::FindFeatureByShortName(shortName);
+			// Match over the full feature list (NOT Feature::FindFeatureByShortName,
+			// which only matches *loaded* features — that makes toggle one-way: you could
+			// disable a feature but never re-enable it). Mirrors the 'list' branch.
+			Feature* target = nullptr;
+			if (!shortName.empty()) {
+				for (auto* f : Feature::GetFeatureList()) {
+					if (f->GetShortName() == shortName) {
+						target = f;
+						break;
+					}
+				}
+			}
 			if (!target) {
 				out = json{ { "error", "unknown or missing shortName" }, { "shortName", shortName } };
 			} else {
