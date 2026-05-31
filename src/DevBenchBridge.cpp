@@ -29,7 +29,11 @@ namespace
 		if (a_argsJson && *a_argsJson) {
 			try {
 				args = json::parse(a_argsJson);
-			} catch (...) {
+			} catch (const std::exception& e) {
+				// Surface malformed input rather than silently defaulting to 'list'.
+				const std::string err = json{ { "error", "invalid JSON arguments" }, { "detail", e.what() } }.dump();
+				a_write(a_sink, err.c_str());
+				return;
 			}
 		}
 		const std::string action = args.value("action", std::string("list"));
@@ -64,9 +68,13 @@ namespace
 				out = json{ { "error", "unknown or missing shortName" }, { "shortName", shortName } };
 			} else {
 				const bool desired = args.value("enabled", !target->loaded);
-				if (auto* task = SKSE::GetTaskInterface())
+				auto* task = SKSE::GetTaskInterface();
+				if (!task) {
+					out = json{ { "error", "SKSE task interface unavailable" }, { "shortName", shortName } };
+				} else {
 					task->AddTask([target, desired]() { target->loaded = desired; });
-				out = json{ { "queued", true }, { "shortName", shortName }, { "requested", desired } };
+					out = json{ { "queued", true }, { "shortName", shortName }, { "requested", desired } };
+				}
 			}
 		} else {
 			out = json{ { "error", "unknown action (list|toggle)" }, { "action", action } };
