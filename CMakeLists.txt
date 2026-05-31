@@ -2,6 +2,19 @@ cmake_minimum_required(VERSION 4.2)
 cmake_policy(SET CMP0116 NEW)
 set(CMAKE_POLICY_WARNING_CMP0116 OFF)
 
+# devbench bridge — declared before project() so the vcpkg toolchain (loaded at project())
+# sees the manifest-feature selection. The devbench-api dependency lives behind the
+# `devbench-bridge` vcpkg feature, so -DDEVBENCH_BRIDGE=OFF actually drops it (not just the
+# find_package/link/define below).
+option(
+    DEVBENCH_BRIDGE
+    "Register Open Shaders tools into the devbench test bench (requires the devbench-api port; runtime no-op when no devbench host is present)"
+    ON
+)
+if(DEVBENCH_BRIDGE)
+    list(APPEND VCPKG_MANIFEST_FEATURES "devbench-bridge")
+endif()
+
 project(
     # gersemi: ignore
     CommunityShaders
@@ -48,11 +61,6 @@ option(
     AIO_INCLUDE_NON_AUTOUPLOAD
     "Include features whose .ini has autoupload != true in the AIO. Off by default — the AIO ships only release-ready features. Turn on for local dev builds that want every feature regardless of release status."
     OFF
-)
-option(
-    DEVBENCH_BRIDGE
-    "Register Open Shaders tools into the devbench test bench (requires the devbench-api port; runtime no-op when no devbench host is present)"
-    ON
 )
 message("\tAuto plugin deployment: ${AUTO_PLUGIN_DEPLOYMENT}")
 message("\tZip to dist: ${ZIP_TO_DIST}")

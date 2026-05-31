@@ -56,7 +56,16 @@ namespace
 			auto* task = SKSE::GetTaskInterface();
 			if (!task)
 				return json{ { "error", "SKSE task interface unavailable" }, { "shortName", shortName } };
-			task->AddTask([target, desired]() { target->loaded = desired; });
+			// Apply on the main thread, then emit a namespaced event so listeners (and a
+			// benchmark scenario) can observe the change. EmitEvent accepts any topic; the
+			// `openshaders.` prefix marks origin in devbench's shared bus.
+			task->AddTask([target, desired, shortName]() {
+				target->loaded = desired;
+				if (auto* dvb = DevBenchAPI::GetDevBenchInterface001()) {
+					const std::string payload = json{ { "shortName", shortName }, { "enabled", desired } }.dump();
+					dvb->EmitEvent("openshaders.feature.changed", payload.c_str());
+				}
+			});
 			return json{ { "queued", true }, { "shortName", shortName }, { "requested", desired } };
 		}
 		return json{ { "error", "unknown action (list|toggle)" }, { "action", action } };
