@@ -58,14 +58,6 @@ void ABTestingManager::Enable()
 		// Restore overlay enabled state after config operations
 		performanceOverlay.settings.ShowInOverlay = overlayWasEnabled;
 
-		// Manual/benchmark mode needs the draw-call profiling running so the aggregator
-		// collects per-variant timing — that only happens while the overlay is shown. Force it
-		// on (remembering we did) and restore on Disable.
-		if (manualMode && !performanceOverlay.settings.ShowInOverlay) {
-			overlayForcedByManual = true;
-			performanceOverlay.settings.ShowInOverlay = true;
-		}
-
 		logger::info("A/B Testing enabled - starting with Variant B (TEST). Both variants cached in memory for unbiased swapping.");
 	}
 }
@@ -92,12 +84,6 @@ void ABTestingManager::Disable()
 		manualMode = false;  // reset so a later UI-driven test rotates on the timer again
 
 		performanceOverlay.settings.ShowInOverlay = overlayWasEnabled;
-
-		// Undo a manual-mode overlay force so we don't leave it on for the user.
-		if (overlayForcedByManual) {
-			performanceOverlay.settings.ShowInOverlay = false;
-			overlayForcedByManual = false;
-		}
 	}
 }
 
@@ -138,8 +124,9 @@ void ABTestingManager::SwapVariant()
 void ABTestingManager::Update()
 {
 	// Manual mode: the caller (e.g. devbench) drives swaps via SwitchVariant() so they align
-	// to whole benchmark passes — skip the timer swap.
-	if (!abTestingEnabled || manualMode)
+	// to whole benchmark passes — skip the timer swap. testInterval==0 also means no timed
+	// swapping (matches the UI's "0 disables") — otherwise 0-seconds elapsed swaps every frame.
+	if (!abTestingEnabled || manualMode || testInterval == 0)
 		return;
 
 	LARGE_INTEGER currentTime;
@@ -271,10 +258,14 @@ void ABTestingManager::DrawOverlayUI()
 
 	remaining = std::max(0.0f, remaining);
 
-	// Show current variant and time
-	ImGui::Text(fmt::format("{} : {:.1f}s left",
-		usingTestConfig ? "Variant B (TEST)" : "Variant A (USER)", remaining)
-			.c_str());
+	// Show current variant. In manual mode there is no timer countdown (swaps are driven
+	// externally), so label it instead of showing a countdown that ticks to 0 and never swaps.
+	const char* variant = usingTestConfig ? "Variant B (TEST)" : "Variant A (USER)";
+	if (manualMode) {
+		ImGui::Text(fmt::format("{} : manual swap", variant).c_str());
+	} else {
+		ImGui::Text(fmt::format("{} : {:.1f}s left", variant, remaining).c_str());
+	}
 
 	// Show what changed (for both variants)
 	if (hasTestSnapshot) {

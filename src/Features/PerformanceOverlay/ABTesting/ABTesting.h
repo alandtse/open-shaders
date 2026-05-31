@@ -50,8 +50,7 @@ private:
 	uint32_t testInterval = 0;
 	bool abTestingEnabled = false;
 	bool usingTestConfig = false;
-	bool manualMode = false;             // when true, Update() skips the timer swap (caller drives it)
-	bool overlayForcedByManual = false;  // manual start forced the overlay on for profiling; undo on Disable
+	bool manualMode = false;  // when true, Update() skips the timer swap (caller drives it)
 	LARGE_INTEGER timingFrequency = { 0 };
 	LARGE_INTEGER lastTestSwitch = { 0 };
 	ABTestAggregator aggregator;

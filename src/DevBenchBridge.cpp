@@ -210,17 +210,15 @@ namespace
 		if (shortName.empty())
 			return json{ { "error", "missing required parameter 'shortName'" }, { "action", action } };
 
-		// get / set / reset operate on a loaded feature (mirrors RemoteControl, which used
-		// FindFeatureByShortName here). Features without a SaveSettings/LoadSettings override
-		// return null on get and silently no-op on set/reset.
-		auto* feature = Feature::FindFeatureByShortName(shortName);
-		if (!feature)
-			return json{ { "error", "feature not found or not loaded" }, { "shortName", shortName } };
+		// get / set / reset operate on a loaded feature. FindFeatureByShortName filters on
+		// Feature::loaded, which queued toggle tasks mutate on the main thread — so resolve the
+		// target INSIDE the main-thread path for each action, never on the listener thread.
 
 		if (action == "get") {
-			// Marshal: SaveSettings reads the feature's mutable settings that queued
-			// LoadSettings / RestoreDefaultSettings tasks mutate on the main thread.
-			return RunReadOnMainThread([feature]() {
+			return RunReadOnMainThread([shortName]() -> json {
+				auto* feature = Feature::FindFeatureByShortName(shortName);
+				if (!feature)
+					return json{ { "error", "feature not found or not loaded" }, { "shortName", shortName } };
 				json blob;
 				feature->SaveSettings(blob);
 				return blob;
@@ -236,10 +234,14 @@ namespace
 			if (!a_args.contains("settings") || !a_args["settings"].is_object())
 				return json{ { "error", "missing required object parameter 'settings'" } };
 			json blob = a_args["settings"];
-			// Marshal LoadSettings onto the main thread: many features mutate UI/render-thread
-			// state inside it (palettes, cached textures, recompile flags), so calling it from
-			// the listener thread is racy. Direct assignment mirrors RemoteControl.
-			task->AddTask([feature, blob, shortName]() mutable {
+			// Resolve + apply on the main thread (LoadSettings mutates UI/render state and the
+			// lookup reads loaded). Not-found degrades to a logged warning (fire-and-forget).
+			task->AddTask([blob, shortName]() mutable {
+				auto* feature = Feature::FindFeatureByShortName(shortName);
+				if (!feature) {
+					logger::warn("DevBenchBridge: feature(set, {}) not found or not loaded", shortName);
+					return;
+				}
 				try {
 					feature->LoadSettings(blob);
 					logger::info("DevBenchBridge: feature(set, {}) applied", shortName);
@@ -251,9 +253,12 @@ namespace
 		}
 
 		if (action == "reset") {
-			// Same marshaling rationale: RestoreDefaultSettings touches state the render/UI
-			// threads read concurrently.
-			task->AddTask([feature, shortName]() {
+			task->AddTask([shortName]() {
+				auto* feature = Feature::FindFeatureByShortName(shortName);
+				if (!feature) {
+					logger::warn("DevBenchBridge: feature(reset, {}) not found or not loaded", shortName);
+					return;
+				}
 				try {
 					feature->RestoreDefaultSettings();
 					logger::info("DevBenchBridge: feature(reset, {}) applied", shortName);
@@ -359,35 +364,35 @@ namespace
 		const uint frame = EnqueuedFrame();
 
 		if (kind == "renderdoc") {
-			auto* renderDoc = &globals::features::renderDoc;
-			if (!renderDoc->loaded)
-				return json{ { "error", "RenderDoc feature is not loaded" }, { "hint", "openshaders.feature(action='list') shows RenderDoc.loaded" } };
-			if (!renderDoc->IsAvailable())
-				return json{ { "error", "RenderDoc API not available — attach RenderDoc or load the in-app DLL" } };
 			uint32_t frameCount = 1;
 			if (a_args.contains("frames") && a_args["frames"].is_number())
 				frameCount = static_cast<uint32_t>(std::clamp(a_args["frames"].get<int>(), 1, 120));
-			auto* task = SKSE::GetTaskInterface();
-			if (!task)
-				return json{ { "error", "SKSE task interface unavailable" } };
-			// Marshal the trigger to the main thread: TriggerCapture/TriggerMultiFrameCapture
-			// call the RenderDoc API and invalidate RenderDoc's (non-atomic) capture-list cache,
-			// which the UI/render thread reads — running it off-thread would race.
-			task->AddTask([renderDoc, frameCount]() {
+			// All on the main thread: Feature::loaded is mutated by queued toggle tasks there,
+			// and TriggerCapture invalidates RenderDoc's non-atomic capture-list cache the
+			// UI/render thread reads.
+			return RunReadOnMainThread([frameCount, frame]() -> json {
+				auto* renderDoc = &globals::features::renderDoc;
+				if (!renderDoc->loaded)
+					return json{ { "error", "RenderDoc feature is not loaded" }, { "hint", "openshaders.feature(action='list') shows RenderDoc.loaded" } };
+				if (!renderDoc->IsAvailable())
+					return json{ { "error", "RenderDoc API not available — attach RenderDoc or load the in-app DLL" } };
 				if (frameCount == 1)
 					renderDoc->TriggerCapture();
 				else
 					renderDoc->TriggerMultiFrameCapture(frameCount);
+				return json{ { "queued", true }, { "kind", "renderdoc" }, { "frames", frameCount }, { "enqueued_at_frame", frame } };
 			});
-			return json{ { "queued", true }, { "kind", "renderdoc" }, { "frames", frameCount }, { "enqueued_at_frame", frame } };
 		}
 
 		if (kind == "screenshot") {
-			auto* shot = &globals::features::screenshotFeature;
-			if (!shot->loaded)
-				return json{ { "error", "Screenshot feature is not loaded" } };
-			shot->captureRequested.store(true, std::memory_order_release);
-			return json{ { "queued", true }, { "kind", "screenshot" }, { "enqueued_at_frame", frame } };
+			// loaded read on the main thread (toggle tasks mutate it); the request flag is atomic.
+			return RunReadOnMainThread([frame]() -> json {
+				auto* shot = &globals::features::screenshotFeature;
+				if (!shot->loaded)
+					return json{ { "error", "Screenshot feature is not loaded" } };
+				shot->captureRequested.store(true, std::memory_order_release);
+				return json{ { "queued", true }, { "kind", "screenshot" }, { "enqueued_at_frame", frame } };
+			});
 		}
 
 		return json{ { "error", "unknown kind" }, { "kind", kind }, { "supported", json::array({ "renderdoc", "screenshot" }) } };
@@ -488,26 +493,46 @@ namespace
 					interval = static_cast<uint32_t>(secs);
 			}
 			const bool manual = a_args.value("manual", false);
+			// Contain throws: Enable/Disable invoke State::Load (can throw on a malformed config)
+			// and would otherwise unwind on the game thread after we already replied "queued".
 			task->AddTask([mgr, interval, manual]() {
-				if (interval)
-					mgr->SetTestInterval(*interval);
-				mgr->SetManualMode(manual);  // manual → caller drives swaps via action=switch
-				mgr->Enable();
-				logger::info("DevBenchBridge: abtest(start) applied (manual={})", manual);
+				try {
+					if (interval)
+						mgr->SetTestInterval(*interval);
+					mgr->SetManualMode(manual);  // manual → caller drives swaps via action=switch
+					mgr->Enable();
+					logger::info("DevBenchBridge: abtest(start) applied (manual={})", manual);
+				} catch (const std::exception& e) {
+					logger::error("DevBenchBridge: abtest(start) failed: {}", e.what());
+				} catch (...) {
+					logger::error("DevBenchBridge: abtest(start) failed (unknown)");
+				}
 			});
 			return queued("start");
 		}
 		if (action == "stop") {
 			task->AddTask([mgr]() {
-				mgr->Disable();
-				logger::info("DevBenchBridge: abtest(stop) applied");
+				try {
+					mgr->Disable();
+					logger::info("DevBenchBridge: abtest(stop) applied");
+				} catch (const std::exception& e) {
+					logger::error("DevBenchBridge: abtest(stop) failed: {}", e.what());
+				} catch (...) {
+					logger::error("DevBenchBridge: abtest(stop) failed (unknown)");
+				}
 			});
 			return queued("stop");
 		}
 		if (action == "clear") {
 			task->AddTask([mgr]() {
-				mgr->ClearCachedSnapshots();
-				logger::info("DevBenchBridge: abtest(clear) applied");
+				try {
+					mgr->ClearCachedSnapshots();
+					logger::info("DevBenchBridge: abtest(clear) applied");
+				} catch (const std::exception& e) {
+					logger::error("DevBenchBridge: abtest(clear) failed: {}", e.what());
+				} catch (...) {
+					logger::error("DevBenchBridge: abtest(clear) failed (unknown)");
+				}
 			});
 			return queued("clear");
 		}
@@ -515,8 +540,14 @@ namespace
 			// Manual swap (USER<->TEST) for a started manual-mode session — lets a driver align
 			// switches to whole benchmark passes instead of the timer. No-op if not enabled.
 			task->AddTask([mgr]() {
-				mgr->SwitchVariant();
-				logger::info("DevBenchBridge: abtest(switch) applied");
+				try {
+					mgr->SwitchVariant();
+					logger::info("DevBenchBridge: abtest(switch) applied");
+				} catch (const std::exception& e) {
+					logger::error("DevBenchBridge: abtest(switch) failed: {}", e.what());
+				} catch (...) {
+					logger::error("DevBenchBridge: abtest(switch) failed (unknown)");
+				}
 			});
 			return queued("switch");
 		}
