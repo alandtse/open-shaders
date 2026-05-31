@@ -6,7 +6,7 @@
 // devbench plugin is present (GetDevBenchInterface001() returns null).
 //
 // The openshaders.* tools below expose Open Shaders' graphics-feature, inspect,
-// capture, abtest, shadercache, and settings operations through the single devbench
+// capture, shadercache, and settings operations through the single devbench
 // host over both MCP and REST. Each is namespaced to avoid collisions in devbench's
 // shared registry; the action / kind / inputSchema shapes are stable so clients can
 // rely on them.
@@ -14,7 +14,6 @@
 #ifdef DEVBENCH_BRIDGE_ENABLED
 
 #	include "Feature.h"
-#	include "Features/PerformanceOverlay/ABTesting/ABTesting.h"
 #	include "Features/RenderDoc.h"
 #	include "Features/ScreenshotFeature.h"
 #	include "Globals.h"
@@ -403,162 +402,6 @@ namespace
 		RunHandler(&BuildCaptureResult, a_argsJson, a_sink, a_write);
 	}
 
-	// ---- abtest: status / start / stop / clear / diff ---------------------------------
-
-	json AbtestStatusBlob(ABTestingManager* a_mgr)
-	{
-		return json{
-			{ "enabled", a_mgr->IsEnabled() },
-			{ "usingTestConfig", a_mgr->IsUsingTestConfig() },
-			{ "interval", a_mgr->GetTestInterval() },
-			{ "hasCachedSnapshots", a_mgr->HasCachedSnapshots() },
-		};
-	}
-
-	json BuildAbtestResult(const json& a_args)
-	{
-		const std::string action = a_args.value("action", std::string{});
-		if (action.empty())
-			return json{ { "error", "missing required parameter 'action'" } };
-		auto* mgr = ABTestingManager::GetSingleton();
-		if (!mgr)
-			return json{ { "error", "ABTestingManager singleton unavailable" } };
-
-		// status/diff read ABTestingManager's plain fields + JSON snapshots, which the main
-		// thread mutates in Enable/Disable/Update/Clear — marshal the reads so they don't race.
-		if (action == "status")
-			return RunReadOnMainThread([mgr]() { return AbtestStatusBlob(mgr); });
-
-		if (action == "diff") {
-			return RunReadOnMainThread([mgr]() {
-				json entries = json::array();
-				for (const auto& entry : mgr->GetConfigDiffEntries()) {
-					// SettingsDiffEntry uses generic a/b labels; here `a` is USER, `b` is TEST.
-					entries.push_back(json{
-						{ "path", entry.path },
-						{ "userValue", entry.aValue },
-						{ "testValue", entry.bValue },
-					});
-				}
-				return json{ { "hasCachedSnapshots", mgr->HasCachedSnapshots() }, { "entries", std::move(entries) } };
-			});
-		}
-
-		// results: the aggregated per-variant timing — the benchmark output. Marshaled (the
-		// aggregator is written on the main thread during Update/OnFrame).
-		if (action == "results") {
-			return RunReadOnMainThread([mgr]() {
-				auto& agg = mgr->GetAggregator();
-				json calls = json::array();
-				for (const auto& s : agg.GetAggregatedResults()) {
-					calls.push_back(json{
-						{ "label", s.label },
-						{ "shaderType", s.shaderType },
-						{ "meanA", s.meanA },
-						{ "meanB", s.meanB },
-						{ "delta", s.delta },
-						{ "medianA", s.medianA },
-						{ "medianB", s.medianB },
-						{ "frameCountA", s.frameCountA },
-						{ "frameCountB", s.frameCountB },
-					});
-				}
-				return json{
-					{ "hasResults", agg.HasResults() },
-					{ "totalFrames", agg.GetTotalFrameCount() },
-					{ "totalDurationSec", agg.GetTotalTestDuration() },
-					{ "drawCalls", std::move(calls) },
-				};
-			});
-		}
-
-		// Lifecycle actions marshal onto the main thread: Enable/Disable swap configs via
-		// State::Load → JSON and Menu::Load touches settings the menu/render thread reads.
-		auto* task = SKSE::GetTaskInterface();
-		if (!task)
-			return json{ { "error", "SKSE task interface unavailable" } };
-		const uint frame = EnqueuedFrame();
-		// Enqueue metadata only — NOT a status blob: reading ABTestingManager's fields here (on
-		// the listener thread) would race the main thread that mutates them. Callers query
-		// status separately (status/diff marshal the read).
-		const auto queued = [&](const char* act) {
-			return json{ { "action", act }, { "queued", true }, { "enqueued_at_frame", frame } };
-		};
-
-		if (action == "start") {
-			std::optional<uint32_t> interval;
-			if (a_args.contains("interval") && a_args["interval"].is_number()) {
-				const auto secs = a_args["interval"].get<int>();
-				if (secs > 0)
-					interval = static_cast<uint32_t>(secs);
-			}
-			const bool manual = a_args.value("manual", false);
-			// Contain throws: Enable/Disable invoke State::Load (can throw on a malformed config)
-			// and would otherwise unwind on the game thread after we already replied "queued".
-			task->AddTask([mgr, interval, manual]() {
-				try {
-					if (interval)
-						mgr->SetTestInterval(*interval);
-					mgr->SetManualMode(manual);  // manual → caller drives swaps via action=switch
-					mgr->Enable();
-					logger::info("DevBenchBridge: abtest(start) applied (manual={})", manual);
-				} catch (const std::exception& e) {
-					logger::error("DevBenchBridge: abtest(start) failed: {}", e.what());
-				} catch (...) {
-					logger::error("DevBenchBridge: abtest(start) failed (unknown)");
-				}
-			});
-			return queued("start");
-		}
-		if (action == "stop") {
-			task->AddTask([mgr]() {
-				try {
-					mgr->Disable();
-					logger::info("DevBenchBridge: abtest(stop) applied");
-				} catch (const std::exception& e) {
-					logger::error("DevBenchBridge: abtest(stop) failed: {}", e.what());
-				} catch (...) {
-					logger::error("DevBenchBridge: abtest(stop) failed (unknown)");
-				}
-			});
-			return queued("stop");
-		}
-		if (action == "clear") {
-			task->AddTask([mgr]() {
-				try {
-					mgr->ClearCachedSnapshots();
-					logger::info("DevBenchBridge: abtest(clear) applied");
-				} catch (const std::exception& e) {
-					logger::error("DevBenchBridge: abtest(clear) failed: {}", e.what());
-				} catch (...) {
-					logger::error("DevBenchBridge: abtest(clear) failed (unknown)");
-				}
-			});
-			return queued("clear");
-		}
-		if (action == "switch") {
-			// Manual swap (USER<->TEST) for a started manual-mode session — lets a driver align
-			// switches to whole benchmark passes instead of the timer. No-op if not enabled.
-			task->AddTask([mgr]() {
-				try {
-					mgr->SwitchVariant();
-					logger::info("DevBenchBridge: abtest(switch) applied");
-				} catch (const std::exception& e) {
-					logger::error("DevBenchBridge: abtest(switch) failed: {}", e.what());
-				} catch (...) {
-					logger::error("DevBenchBridge: abtest(switch) failed (unknown)");
-				}
-			});
-			return queued("switch");
-		}
-		return json{ { "error", "unknown action (status|start|stop|clear|diff|switch|results)" }, { "action", action } };
-	}
-
-	void AbtestToolHandler(void*, const char* a_argsJson, void* a_sink, DevBenchAPI::WriteFn a_write)
-	{
-		RunHandler(&BuildAbtestResult, a_argsJson, a_sink, a_write);
-	}
-
 	// ---- settings: save / load / reset the GLOBAL CS config ---------------------------
 
 	json BuildSettingsResult(const json& a_args)
@@ -667,10 +510,6 @@ namespace DevBenchBridge
 		static constexpr const char* captureDesc =
 			R"({"description":"Trigger a frame capture on the next render. Kind-dispatched. kind=renderdoc: RenderDoc multi-frame capture via the in-app API, honors frames (1-120, default 1); RenderDoc must be attached/loaded (check openshaders.feature list for RenderDoc.loaded). kind=screenshot: lossless screenshot via the Screenshot feature; frames is ignored. Fire-and-forget — no artifact path is returned synchronously.","inputSchema":{"type":"object","properties":{"kind":{"type":"string","enum":["renderdoc","screenshot"]},"frames":{"type":"number"}},"required":["kind"]}})";
 		dvb->RegisterTool("openshaders.capture", captureDesc, &CaptureToolHandler, nullptr);
-
-		static constexpr const char* abtestDesc =
-			R"({"description":"Drive the built-in A/B testing harness (Performance Overlay/ABTesting), which swaps between the USER config (current settings) and a TEST config and aggregates per-variant frame timing. Action-dispatched. status: {enabled,usingTestConfig,interval,hasCachedSnapshots}. start: Enable(), optional interval (seconds); pass manual=true to suppress the timer and drive swaps yourself with action=switch (align swaps to whole benchmark passes — start manual, replay path under A, switch, replay under B, diff). switch: swap USER<->TEST now (manual sessions). stop: Disable(), snapshots retained. clear: ClearCachedSnapshots(). diff: per-key config diff {path,userValue,testValue}. results: the benchmark output — aggregated per-variant per-draw-call timing {hasResults,totalFrames,totalDurationSec,drawCalls:[{label,shaderType,meanA,meanB,delta,...}]}. Authoring the TEST config lives in the Performance Overlay UI.","inputSchema":{"type":"object","properties":{"action":{"type":"string","enum":["status","start","stop","clear","diff","switch","results"]},"interval":{"type":"number"},"manual":{"type":"boolean"}},"required":["action"]}})";
-		dvb->RegisterTool("openshaders.abtest", abtestDesc, &AbtestToolHandler, nullptr);
 
 		static constexpr const char* settingsDesc =
 			R"({"description":"Save, load, or reset the GLOBAL Open Shaders user configuration (Data/SKSE/Plugins/CommunityShaders/*.json). Action-dispatched, all fire-and-forget on the main thread. save: persist current settings (State::Save). load: re-read settings from disk and apply (State::Load). reset: restore every feature to its defaults then persist. Use after openshaders.feature set/reset to make changes durable, or to roll an A/B session back to the saved baseline.","inputSchema":{"type":"object","properties":{"action":{"type":"string","enum":["save","load","reset"]}},"required":["action"]}})";

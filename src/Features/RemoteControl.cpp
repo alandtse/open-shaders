@@ -85,10 +85,9 @@ void RemoteControl::DrawSettings()
 {
 	ImGui::TextWrapped(
 		"Open Shaders registers its tools into the external devbench host so AI "
-		"assistants (Claude Code, Cursor, etc.) can drive A/B testing, toggle "
-		"features, inspect engine state, trigger captures, and save/load settings "
-		"over MCP and REST. There is no in-game server — install the devbench SKSE "
-		"plugin to enable the integration.");
+		"assistants (Claude Code, Cursor, etc.) can toggle features, inspect engine "
+		"state, trigger captures, and save/load settings over MCP and REST. There is "
+		"no in-game server — install the devbench SKSE plugin to enable the integration.");
 	ImGui::Spacing();
 
 #ifdef DEVBENCH_BRIDGE_ENABLED
@@ -126,7 +125,6 @@ void RemoteControl::DrawSettings()
 	ImGui::BulletText("openshaders.inspect — engine state and shader-cache status");
 	ImGui::BulletText("openshaders.shadercache — clear / delete the compiled cache");
 	ImGui::BulletText("openshaders.capture — RenderDoc / screenshot capture");
-	ImGui::BulletText("openshaders.abtest — A/B test lifecycle");
 	ImGui::BulletText("openshaders.settings — save / load / reset the global config");
 	ImGui::TextDisabled(
 		"Note: the console tool is provided by devbench itself, not Open Shaders.");

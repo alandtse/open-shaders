@@ -81,68 +81,57 @@ void ABTestingManager::Disable()
 		}
 
 		abTestingEnabled = false;
-		manualMode = false;  // reset so a later UI-driven test rotates on the timer again
 
 		performanceOverlay.settings.ShowInOverlay = overlayWasEnabled;
 	}
 }
 
-void ABTestingManager::SwapVariant()
-{
-	auto* state = globals::state;
-	auto& performanceOverlay = globals::features::performanceOverlay;
-	bool overlayWasEnabled = performanceOverlay.settings.ShowInOverlay;
-
-	// Swap between variants (in-memory snapshots, no disk I/O)
-	usingTestConfig = !usingTestConfig;
-	logger::info("A/B Test swap to {} (from memory snapshot)",
-		usingTestConfig ? "Variant B (TEST)" : "Variant A (USER)");
-
-	if (usingTestConfig) {
-		if (hasTestSnapshot) {
-			state->LoadFromJson(testConfigSnapshot);
-		} else {
-			logger::error("TEST snapshot missing! Cannot swap to Variant B.");
-			usingTestConfig = false;  // Stay on USER
-		}
-	} else {
-		if (hasUserSnapshot) {
-			state->LoadFromJson(userConfigSnapshot);
-		} else {
-			logger::error("USER snapshot missing! Cannot swap to Variant A.");
-			usingTestConfig = true;  // Stay on TEST
-		}
-	}
-
-	performanceOverlay.settings.ShowInOverlay = overlayWasEnabled;
-	QueryPerformanceCounter(&lastTestSwitch);
-
-	// Notify the A/B test aggregator of the variant switch
-	aggregator.OnABSwitch(usingTestConfig ? ABVariant::B : ABVariant::A);
-}
-
 void ABTestingManager::Update()
 {
-	// Manual mode: the caller (e.g. devbench) drives swaps via SwitchVariant() so they align
-	// to whole benchmark passes — skip the timer swap. testInterval==0 also means no timed
-	// swapping (matches the UI's "0 disables") — otherwise 0-seconds elapsed swaps every frame.
-	if (!abTestingEnabled || manualMode || testInterval == 0)
+	if (!abTestingEnabled)
 		return;
 
+	auto* state = globals::state;
+	auto& performanceOverlay = globals::features::performanceOverlay;
+
+	// Check if it's time to swap
 	LARGE_INTEGER currentTime;
 	QueryPerformanceCounter(&currentTime);
 	float seconds = (currentTime.QuadPart - lastTestSwitch.QuadPart) / static_cast<float>(timingFrequency.QuadPart);
-	if (static_cast<float>(testInterval) - seconds < 0.0f)
-		SwapVariant();
-}
+	auto remaining = static_cast<float>(testInterval) - seconds;
 
-void ABTestingManager::SwitchVariant()
-{
-	if (!abTestingEnabled) {
-		logger::warn("A/B SwitchVariant ignored — A/B testing is not enabled.");
-		return;
+	if (remaining < 0.0f) {
+		bool overlayWasEnabled = performanceOverlay.settings.ShowInOverlay;
+
+		// Swap between variants
+		usingTestConfig = !usingTestConfig;
+		logger::info("A/B Test swap to {} (from memory snapshot)",
+			usingTestConfig ? "Variant B (TEST)" : "Variant A (USER)");
+
+		if (usingTestConfig) {
+			// Swap to TEST - load from memory snapshot (no disk I/O)
+			if (hasTestSnapshot) {
+				state->LoadFromJson(testConfigSnapshot);
+			} else {
+				logger::error("TEST snapshot missing! Cannot swap to Variant B.");
+				usingTestConfig = false;  // Stay on USER
+			}
+		} else {
+			// Swap to USER - load from memory snapshot (no disk I/O)
+			if (hasUserSnapshot) {
+				state->LoadFromJson(userConfigSnapshot);
+			} else {
+				logger::error("USER snapshot missing! Cannot swap to Variant A.");
+				usingTestConfig = true;  // Stay on TEST
+			}
+		}
+
+		performanceOverlay.settings.ShowInOverlay = overlayWasEnabled;
+		QueryPerformanceCounter(&lastTestSwitch);
+
+		// Notify the A/B test aggregator of the variant switch
+		aggregator.OnABSwitch(usingTestConfig ? ABVariant::B : ABVariant::A);
 	}
-	SwapVariant();
 }
 
 void ABTestingManager::DrawSettingsUI()
@@ -258,14 +247,10 @@ void ABTestingManager::DrawOverlayUI()
 
 	remaining = std::max(0.0f, remaining);
 
-	// Show current variant. In manual mode there is no timer countdown (swaps are driven
-	// externally), so label it instead of showing a countdown that ticks to 0 and never swaps.
-	const char* variant = usingTestConfig ? "Variant B (TEST)" : "Variant A (USER)";
-	if (manualMode) {
-		ImGui::Text(fmt::format("{} : manual swap", variant).c_str());
-	} else {
-		ImGui::Text(fmt::format("{} : {:.1f}s left", variant, remaining).c_str());
-	}
+	// Show current variant and time
+	ImGui::Text(fmt::format("{} : {:.1f}s left",
+		usingTestConfig ? "Variant B (TEST)" : "Variant A (USER)", remaining)
+			.c_str());
 
 	// Show what changed (for both variants)
 	if (hasTestSnapshot) {
