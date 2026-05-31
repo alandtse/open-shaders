@@ -1,19 +1,19 @@
 // Remote Control: status panel for the devbench bridge.
 //
-// CS's Model Context Protocol tools register into the external devbench host (the
+// The plugin's Model Context Protocol tools register into the external devbench host (the
 // devbench SKSE plugin, https://github.com/alandtse/devbench) via DevBenchBridge
 // (src/DevBenchBridge.cpp), exposed over both MCP and REST. This feature is a read-only
-// panel: it reports whether devbench is present, what CS registered, and the port
+// panel: it reports whether devbench is present, what was registered, and the port
 // devbench bound, so users can confirm the integration without leaving the game.
 
 #include "Features/RemoteControl.h"
 
 #include "DevBenchBridge.h"
 #include "Globals.h"
+#include "Menu.h"
 
 #include <imgui.h>
 
-#include <chrono>
 #include <filesystem>
 #include <fstream>
 
@@ -54,7 +54,7 @@ RemoteControl* RemoteControl::GetSingleton()
 
 void RemoteControl::DataLoaded()
 {
-	// Register CS's tools into the devbench host. This feature owns the install; it runs at
+	// Register the plugin's tools into the devbench host. This feature owns the install; it runs at
 	// DataLoaded rather than Load because devbench publishes its cross-plugin interface at
 	// kPostLoad — by DataLoaded it's ready. Inert (logged) when no host is present or the
 	// bridge was built disabled; idempotent on the devbench side (re-registering replaces).
@@ -83,28 +83,32 @@ void RemoteControl::RestoreDefaultSettings()
 
 void RemoteControl::DrawSettings()
 {
+	const auto& theme = Menu::GetSingleton()->GetTheme().StatusPalette;
+
 	ImGui::TextWrapped(
-		"Open Shaders registers its tools into the external devbench host so AI "
-		"assistants (Claude Code, Cursor, etc.) can toggle features, inspect engine "
-		"state, trigger captures, and save/load settings over MCP and REST. There is "
-		"no in-game server — install the devbench SKSE plugin to enable the integration.");
+		"Registers graphics-feature, inspect, capture, shader-cache, and settings tools "
+		"into the external devbench host so AI assistants (Claude Code, Cursor, etc.) can "
+		"toggle features, inspect engine state, trigger captures, and save/load settings "
+		"over MCP and REST. There is no in-game server — install the devbench SKSE plugin "
+		"to enable the integration.");
 	ImGui::Spacing();
 
 #ifdef DEVBENCH_BRIDGE_ENABLED
 	auto* dvb = DevBenchAPI::GetDevBenchInterface001();
 	if (dvb) {
-		ImGui::TextColored(ImVec4(0.4f, 0.9f, 0.5f, 1.0f),
-			"devbench host present (build %u)", dvb->GetBuildNumber());
+		ImGui::TextColored(theme.SuccessColor, "devbench host present (build %u)", dvb->GetBuildNumber());
 
 		// Cache the port — runtime.json I/O + JSON parse every frame would hitch the UI while
 		// the panel is open. Refresh on a coarse interval (devbench may bind after the panel
-		// first opens, so re-read periodically rather than only once).
-		static int cachedPort = -1;  // -1 = not yet read
-		static std::chrono::steady_clock::time_point lastPortRead{};
-		const auto now = std::chrono::steady_clock::now();
-		if (cachedPort < 0 || now - lastPortRead > std::chrono::seconds(2)) {
+		// first opens, so re-read periodically rather than only once). QPC, not std::chrono.
+		static int cachedPort = -1;       // -1 = not yet read
+		static LONGLONG lastReadQpc = 0;  // ticks at last read
+		LARGE_INTEGER freq, nowQpc;
+		QueryPerformanceFrequency(&freq);
+		QueryPerformanceCounter(&nowQpc);
+		if (cachedPort < 0 || nowQpc.QuadPart - lastReadQpc > 2 * freq.QuadPart) {  // > 2s
 			cachedPort = ReadDevBenchPort();
-			lastPortRead = now;
+			lastReadQpc = nowQpc.QuadPart;
 		}
 		if (cachedPort > 0) {
 			ImGui::Text("Host bound on port %d (from %s)", cachedPort, kRuntimeJsonPath);
@@ -114,22 +118,22 @@ void RemoteControl::DrawSettings()
 				kRuntimeJsonPath);
 		}
 	} else {
-		ImGui::TextColored(ImVec4(1.0f, 0.7f, 0.3f, 1.0f),
+		ImGui::TextColored(theme.Warning,
 			"devbench host not detected. Install the devbench SKSE plugin; "
-			"Open Shaders' tools register automatically once it is present.");
+			"the tools register automatically once it is present.");
 	}
 
 	ImGui::Separator();
-	ImGui::TextUnformatted("Tools Open Shaders exposes through devbench:");
+	ImGui::TextUnformatted("Tools exposed through devbench:");
 	ImGui::BulletText("openshaders.feature — list / get / set / reset / toggle features");
 	ImGui::BulletText("openshaders.inspect — engine state and shader-cache status");
 	ImGui::BulletText("openshaders.shadercache — clear / delete the compiled cache");
 	ImGui::BulletText("openshaders.capture — RenderDoc / screenshot capture");
 	ImGui::BulletText("openshaders.settings — save / load / reset the global config");
 	ImGui::TextDisabled(
-		"Note: the console tool is provided by devbench itself, not Open Shaders.");
+		"Note: the console tool is provided by devbench itself, not this plugin.");
 #else
-	ImGui::TextColored(ImVec4(1.0f, 0.7f, 0.3f, 1.0f),
+	ImGui::TextColored(theme.Warning,
 		"This build was compiled without the devbench bridge "
 		"(DEVBENCH_BRIDGE=OFF). No tools are registered.");
 #endif
