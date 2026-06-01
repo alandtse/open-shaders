@@ -15,7 +15,7 @@
 
 SKSE core plugin for advanced graphics modifications for Skyrim and fork of Community Shaders.
 
-[Open Shaders developer wiki](https://github.com/alandtse/open-shaders/wiki) · [Upstream Community Shaders on Nexus](https://www.nexusmods.com/skyrimspecialedition/mods/180419) · [Upstream source](https://github.com/community-shaders/skyrim-community-shaders) · [Upstream developer wiki](https://github.com/community-shaders/skyrim-community-shaders/wiki)
+[Open Shaders developer wiki](https://github.com/alandtse/open-shaders/wiki) · [Upstream Community Shaders on Nexus](https://www.nexusmods.com/skyrimspecialedition/mods/86492) · [Upstream source](https://github.com/community-shaders/skyrim-community-shaders) · [Upstream developer wiki](https://github.com/community-shaders/skyrim-community-shaders/wiki)
 
 ## About this fork
 
@@ -25,8 +25,8 @@ SKSE core plugin for advanced graphics modifications for Skyrim and fork of Comm
 
 | Term                                                             | Refers to                                                                                                                                 |
 | ---------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
-| Community Shaders                                                | The upstream project (`community-shaders/skyrim-community-shaders`, Nexus mod 180419)                                                     |
-| Open Shaders                                                     | This fork (`alandtse/open-shaders`)                                                                                                       |
+| Community Shaders                                                | The upstream project (`community-shaders/skyrim-community-shaders`, Nexus mod 86492)                                                      |
+| Open Shaders                                                     | This fork (`alandtse/open-shaders`, Nexus mod 180419)                                                                                     |
 | `CommunityShaders` (as a path / filename / identifier in source) | Runtime-compat identifier; intentionally kept identical to upstream so settings, themes, and SKSE plugin discovery work without migration |
 
 The upstream branding (logo, Nexus icon, typography) is non-GPL and not redistributed by this fork — see the "Icons" section under [License](#license) below.
