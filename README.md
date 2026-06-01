@@ -31,7 +31,7 @@ SKSE core plugin for advanced graphics modifications for Skyrim and fork of Comm
 
 The upstream branding (logo, Nexus icon, typography) is non-GPL and not redistributed by this fork — see the "Icons" section under [License](#license) below.
 
-An Open Shaders Nexus mod page does not exist yet; for now, install from [GitHub releases](https://github.com/alandtse/open-shaders/releases) or build from source.
+Install from the [Open Shaders Nexus page](https://www.nexusmods.com/skyrimspecialedition/mods/180419), from [GitHub releases](https://github.com/alandtse/open-shaders/releases), or build from source.
 
 ## Requirements
 
