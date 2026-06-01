@@ -67,27 +67,39 @@ namespace
 		a_write(a_sink, dumped.c_str());
 	}
 
-	// Run a READ on the main thread and return its result. Bridge handlers run on devbench's
-	// listener thread; reads that touch state the render/UI thread mutates (A/B fields + JSON
-	// snapshots) must marshal or they race. Blocks the handler briefly, bounded so a stalled
-	// main thread (e.g. mid-load) can't hang it. shared_ptr promise so a timed-out task that
-	// runs later doesn't dangle.
-	json RunReadOnMainThread(std::function<json()> a_read)
+	// Run a task on the main thread and return its result. Bridge handlers run on devbench's
+	// listener thread; work that touches state the render/UI thread mutates (A/B fields, JSON
+	// snapshots, feature settings, capture triggers) must marshal or it races. Blocks the
+	// handler briefly, bounded so a stalled main thread (e.g. mid-load) can't hang it.
+	//
+	// The body may have SIDE EFFECTS (set/reset apply settings; capture triggers a frame), so a
+	// `cancelled` flag is checked at task entry: if we already gave up waiting, the task skips
+	// the body rather than mutating state after we reported a timeout. shared_ptr state so a
+	// task that runs after we return doesn't dangle. (Best-effort: a task that starts exactly at
+	// the timeout boundary can still run — the flag eliminates the common stalled-thread case.)
+	json RunOnMainThread(std::function<json()> a_run)
 	{
 		auto* task = SKSE::GetTaskInterface();
 		if (!task)
 			return json{ { "error", "SKSE task interface unavailable" } };
 		auto prom = std::make_shared<std::promise<json>>();
+		auto cancelled = std::make_shared<std::atomic<bool>>(false);
 		auto fut = prom->get_future();
-		task->AddTask([prom, read = std::move(a_read)]() {
+		task->AddTask([prom, cancelled, run = std::move(a_run)]() {
+			if (cancelled->load(std::memory_order_acquire))
+				return;  // handler already timed out and returned — don't run a side-effecting body late
 			try {
-				prom->set_value(read());
+				prom->set_value(run());
 			} catch (const std::exception& e) {
-				prom->set_value(json{ { "error", "read threw on main thread" }, { "detail", e.what() } });
+				prom->set_value(json{ { "error", "task threw on main thread" }, { "detail", e.what() } });
+			} catch (...) {
+				prom->set_value(json{ { "error", "task threw on main thread" }, { "detail", "non-std exception" } });
 			}
 		});
-		if (fut.wait_for(std::chrono::milliseconds(5000)) != std::future_status::ready)
+		if (fut.wait_for(std::chrono::milliseconds(5000)) != std::future_status::ready) {
+			cancelled->store(true, std::memory_order_release);
 			return json{ { "error", "main thread did not run within 5000ms (mid-load?)" } };
+		}
 		return fut.get();
 	}
 
@@ -141,7 +153,7 @@ namespace
 		if (action == "list") {
 			// Marshal: FeatureEntry reads Feature::loaded and restart-gated settings bytes that
 			// main-thread toggles / settings-loads mutate.
-			return RunReadOnMainThread([]() {
+			return RunOnMainThread([]() {
 				json out = json::array();
 				for (auto* f : Feature::GetFeatureList())
 					out.push_back(FeatureEntry(f));
@@ -214,7 +226,7 @@ namespace
 		// target INSIDE the main-thread path for each action, never on the listener thread.
 
 		if (action == "get") {
-			return RunReadOnMainThread([shortName]() -> json {
+			return RunOnMainThread([shortName]() -> json {
 				auto* feature = Feature::FindFeatureByShortName(shortName);
 				if (!feature)
 					return json{ { "error", "feature not found or not loaded" }, { "shortName", shortName } };
@@ -224,48 +236,40 @@ namespace
 			});
 		}
 
-		auto* task = SKSE::GetTaskInterface();
-		if (!task)
-			return json{ { "error", "SKSE task interface unavailable" }, { "shortName", shortName } };
-		const uint frame = EnqueuedFrame();
-
+		// set / reset resolve + apply on the main thread and report the real outcome: an invalid
+		// shortName must NOT come back as a fake success. Synchronous (LoadSettings is fast), so
+		// the lookup race is avoided AND the caller learns whether the mutation actually applied.
 		if (action == "set") {
 			if (!a_args.contains("settings") || !a_args["settings"].is_object())
 				return json{ { "error", "missing required object parameter 'settings'" } };
 			json blob = a_args["settings"];
-			// Resolve + apply on the main thread (LoadSettings mutates UI/render state and the
-			// lookup reads loaded). Not-found degrades to a logged warning (fire-and-forget).
-			task->AddTask([blob, shortName]() mutable {
+			return RunOnMainThread([blob, shortName]() mutable -> json {
 				auto* feature = Feature::FindFeatureByShortName(shortName);
-				if (!feature) {
-					logger::warn("DevBenchBridge: feature(set, {}) not found or not loaded", shortName);
-					return;
-				}
+				if (!feature)
+					return json{ { "error", "feature not found or not loaded" }, { "shortName", shortName } };
 				try {
 					feature->LoadSettings(blob);
 					logger::info("DevBenchBridge: feature(set, {}) applied", shortName);
+					return json{ { "action", "set" }, { "shortName", shortName }, { "applied", true } };
 				} catch (const std::exception& e) {
-					logger::error("DevBenchBridge: feature(set, {}) LoadSettings threw: {}", shortName, e.what());
+					return json{ { "error", "LoadSettings threw" }, { "shortName", shortName }, { "detail", e.what() } };
 				}
 			});
-			return json{ { "action", "set" }, { "shortName", shortName }, { "queued", true }, { "enqueued_at_frame", frame } };
 		}
 
 		if (action == "reset") {
-			task->AddTask([shortName]() {
+			return RunOnMainThread([shortName]() -> json {
 				auto* feature = Feature::FindFeatureByShortName(shortName);
-				if (!feature) {
-					logger::warn("DevBenchBridge: feature(reset, {}) not found or not loaded", shortName);
-					return;
-				}
+				if (!feature)
+					return json{ { "error", "feature not found or not loaded" }, { "shortName", shortName } };
 				try {
 					feature->RestoreDefaultSettings();
 					logger::info("DevBenchBridge: feature(reset, {}) applied", shortName);
+					return json{ { "action", "reset" }, { "shortName", shortName }, { "applied", true } };
 				} catch (const std::exception& e) {
-					logger::error("DevBenchBridge: feature(reset, {}) RestoreDefaultSettings threw: {}", shortName, e.what());
+					return json{ { "error", "RestoreDefaultSettings threw" }, { "shortName", shortName }, { "detail", e.what() } };
 				}
 			});
-			return json{ { "action", "reset" }, { "shortName", shortName }, { "queued", true }, { "enqueued_at_frame", frame } };
 		}
 
 		return json{ { "error", "unknown action (list|get|set|reset|toggle)" }, { "action", action } };
@@ -369,7 +373,7 @@ namespace
 			// All on the main thread: Feature::loaded is mutated by queued toggle tasks there,
 			// and TriggerCapture invalidates RenderDoc's non-atomic capture-list cache the
 			// UI/render thread reads.
-			return RunReadOnMainThread([frameCount, frame]() -> json {
+			return RunOnMainThread([frameCount, frame]() -> json {
 				auto* renderDoc = &globals::features::renderDoc;
 				if (!renderDoc->loaded)
 					return json{ { "error", "RenderDoc feature is not loaded" }, { "hint", "openshaders.feature(action='list') shows RenderDoc.loaded" } };
@@ -385,7 +389,7 @@ namespace
 
 		if (kind == "screenshot") {
 			// loaded read on the main thread (toggle tasks mutate it); the request flag is atomic.
-			return RunReadOnMainThread([frame]() -> json {
+			return RunOnMainThread([frame]() -> json {
 				auto* shot = &globals::features::screenshotFeature;
 				if (!shot->loaded)
 					return json{ { "error", "Screenshot feature is not loaded" } };
