@@ -4,6 +4,10 @@
 #include "ShaderFileWatcher.h"
 #include "Util.h"
 
+#ifdef DEVBENCH_BRIDGE_ENABLED
+#	include <DevBenchAPI.h>
+#endif
+
 #include <d3dcompiler.h>
 
 #include "Deferred.h"
@@ -3347,6 +3351,23 @@ namespace SIE
 		// Log completion outside the lock
 		if (shouldLogCompletion) {
 			logger::debug("Compilation completed in {} ms", GetHumanTime(completionTimeMs));
+
+#ifdef DEVBENCH_BRIDGE_ENABLED
+			// A compilation batch finished (initial build OR a hot-reload recompile).
+			// Emit one summary event so a benchmark scenario can split its A/B window
+			// precisely on the moment a recompiled shader went live, and detect failures
+			// without polling. Guarded on the devbench host being present.
+			if (auto* dvb = DevBenchAPI::GetDevBenchInterface001()) {
+				const nlohmann::json payload{
+					{ "completedTasks", completedTasks.load(std::memory_order_relaxed) },
+					{ "failedTasks", failedTasks.load(std::memory_order_relaxed) },
+					{ "totalTasks", totalTasks.load(std::memory_order_relaxed) },
+					{ "durationMs", completionTimeMs },
+				};
+				const std::string dumped = payload.dump();
+				dvb->EmitEvent("openshaders.shaderRecompiled", dumped.c_str());
+			}
+#endif
 		}
 
 		conditionVariable.notify_one();
