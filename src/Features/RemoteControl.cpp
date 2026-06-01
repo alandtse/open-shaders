@@ -2,13 +2,13 @@
 //
 // The plugin's Model Context Protocol tools register into the external devbench host (the
 // devbench SKSE plugin, https://github.com/alandtse/devbench) via DevBenchBridge
-// (src/DevBenchBridge.cpp), exposed over both MCP and REST. This feature is a read-only
+// (src/Features/RemoteControl/DevBenchBridge.cpp), exposed over both MCP and REST. This feature is a read-only
 // panel: it reports whether devbench is present, what was registered, and the port
 // devbench bound, so users can confirm the integration without leaving the game.
 
 #include "Features/RemoteControl.h"
 
-#include "DevBenchBridge.h"
+#include "Features/RemoteControl/DevBenchBridge.h"
 #include "Globals.h"
 #include "Menu.h"
 

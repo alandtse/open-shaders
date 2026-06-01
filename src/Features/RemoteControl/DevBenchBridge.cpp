@@ -1,4 +1,4 @@
-#include "DevBenchBridge.h"
+#include "Features/RemoteControl/DevBenchBridge.h"
 
 // Registers our tools into the devbench test bench over its C-ABI. Gated by
 // DEVBENCH_BRIDGE_ENABLED (set by CMake when the devbench-api port is available);

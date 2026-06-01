@@ -5,7 +5,7 @@
 #include <string>
 
 // Status panel for the devbench bridge. The plugin's tools are registered into the external
-// devbench host via DevBenchBridge (see src/DevBenchBridge.cpp); this feature surfaces, in the
+// devbench host via DevBenchBridge (see src/Features/RemoteControl/DevBenchBridge.cpp); this feature surfaces, in the
 // in-game menu, whether devbench is present, what was registered, and which port the host bound.
 class RemoteControl : public Feature
 {
