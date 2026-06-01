@@ -24,7 +24,7 @@ on:
                 required: false
                 default: "skyrimspecialedition"
             nexus_mod_id:
-                description: "Target Nexus mod ID. In `aio` mode this is the fork's single mod page. In `matrix` mode this seeds the CORE row of the upstream matrix (defaults to 86492 if empty)."
+                description: "Target Nexus mod ID. In `aio` mode this is the fork's single mod page (defaults to 180419 if empty). In `matrix` mode this seeds the CORE row of the upstream matrix (defaults to 86492 if empty)."
                 required: false
                 default: ""
             artifact_pattern:
@@ -167,7 +167,7 @@ jobs:
                   # Workflow inputs default to empty so matrix mode keeps
                   # its upstream defaults below; aio mode uses fork defaults.
                   if [ "$MODE" = "aio" ]; then
-                    EFFECTIVE_MOD_ID="${INPUT_NEXUS_MOD_ID}"
+                    EFFECTIVE_MOD_ID="${INPUT_NEXUS_MOD_ID:-180419}"
                     EFFECTIVE_ARTIFACT="${INPUT_ARTIFACT_PATTERN:-CommunityShaders_AIO-*.7z}"
                     EFFECTIVE_FILENAME="${INPUT_MOD_FILENAME:-Open Shaders}"
                   else
