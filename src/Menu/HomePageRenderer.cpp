@@ -103,8 +103,7 @@ void HomePageRenderer::RenderQuickLinksSection()
 	ImGui::SetCursorPosX((windowSize.x - titleSize.x) * 0.5f);
 	ImGui::Text("Quick Links");
 
-	// The Nexus button points at upstream Community Shaders until the
-	// Open Shaders Nexus mod page exists; swap when ready.
+	// Nexus button → the Open Shaders fork page (mod 180419).
 	ImGui::Columns(3, nullptr, false);
 
 	if (ImGui::Button("Nexus Mods", ImVec2(-1, 0))) {
