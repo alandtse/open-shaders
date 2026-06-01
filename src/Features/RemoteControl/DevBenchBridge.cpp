@@ -333,11 +333,13 @@ namespace
 		const uint frame = EnqueuedFrame();
 
 		// Mutating cache ops touch the live ShaderCache (and, for deleteDisk, the filesystem)
-		// — marshal to the main thread. Both force a recompile, observable via
-		// inspect(kind=shadercache) + the openshaders.shaderRecompiled event.
+		// — marshal to the main thread. Recompiles are observable via inspect(kind=shadercache)
+		// + the openshaders.shaderRecompiled event. NOTE clear vs deleteDisk: clear only drops
+		// the in-memory maps, so with the disk cache enabled shaders reload from Data/ShaderCache
+		// rather than recompiling — only deleteDisk guarantees a cold recompile.
 		if (action == "clear") {
 			task->AddTask([cache]() { cache->Clear(); });
-			return json{ { "action", "clear" }, { "queued", true }, { "enqueued_at_frame", frame }, { "note", "in-memory cache cleared; shaders requeue for recompile" } };
+			return json{ { "action", "clear" }, { "queued", true }, { "enqueued_at_frame", frame }, { "note", "in-memory cache dropped; shaders reload from the disk cache if present, else recompile (use deleteDisk to force a cold recompile)" } };
 		}
 		if (action == "deleteDisk") {
 			// Delete on disk AND drop the in-memory cache — otherwise existing variants keep
@@ -508,7 +510,7 @@ namespace DevBenchBridge
 		dvb->RegisterTool("openshaders.inspect", inspectDesc, &InspectToolHandler, nullptr);
 
 		static constexpr const char* shadercacheDesc =
-			R"({"description":"Manage Open Shaders' compiled shader cache. Action-dispatched, fire-and-forget on the main thread. clear: drop the in-memory cache so shaders requeue for recompile. deleteDisk: delete the on-disk cache, forcing a full recompile (cold-compile benchmark). Watch progress via openshaders.inspect kind=shadercache and the openshaders.shaderRecompiled event. Read-only status is openshaders.inspect kind=shadercache.","inputSchema":{"type":"object","properties":{"action":{"type":"string","enum":["clear","deleteDisk"]}},"required":["action"]}})";
+			R"({"description":"Manage Open Shaders' compiled shader cache. Action-dispatched, fire-and-forget on the main thread. clear: drop the IN-MEMORY cache only; with the disk cache enabled shaders reload from Data/ShaderCache rather than recompiling, so this does NOT guarantee a recompile. deleteDisk: delete the on-disk cache AND drop the in-memory cache, forcing a full cold recompile (use this for compile benchmarks). Watch progress via openshaders.inspect kind=shadercache and the openshaders.shaderRecompiled event. Read-only status is openshaders.inspect kind=shadercache.","inputSchema":{"type":"object","properties":{"action":{"type":"string","enum":["clear","deleteDisk"]}},"required":["action"]}})";
 		dvb->RegisterTool("openshaders.shadercache", shadercacheDesc, &ShadercacheToolHandler, nullptr);
 
 		static constexpr const char* captureDesc =
