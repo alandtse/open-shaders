@@ -14,7 +14,7 @@ the baseline bar for a release.
     (the devbench bridge) present — it registers the `openshaders.*` tools.
 -   Build environment: the worktree `subst`'d to a short drive (e.g. `X:`) to dodge
     `MAX_PATH` (FidelityFX permutation headers blow past 260 chars from deep worktree
-    paths). See `project-worktree-build-maxpath` in the developer notes.
+    paths).
 
 ## 1. Build + deploy
 
@@ -52,6 +52,13 @@ until curl -s -m10 http://127.0.0.1:8920/api/tool/inspect -XPOST \
 ## 3. devbench MCP validation
 
 All calls are `POST http://127.0.0.1:<port>/api/tool/<name>`.
+
+> **Two `inspect` tools — not interchangeable.** `inspect` is devbench's own state
+> tool and reports `playerLoaded`/`vr` — use it for the compile/load polling above.
+> `openshaders.inspect` is the OS bridge's tool for CS `state`/`shadercache` (the
+> `failedTasks`/`currentFailedCount` fields) — use it for the shader gate.
+> `openshaders.inspect {"kind":"state"}` does **not** report `playerLoaded`, so don't
+> use it for load polling.
 
 | Step            | Call                                                             | Pass criteria                                                              |
 | --------------- | ---------------------------------------------------------------- | -------------------------------------------------------------------------- |
