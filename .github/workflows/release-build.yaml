@@ -188,7 +188,7 @@ jobs:
                   body-file: ${{ steps.combined_notes.outputs.body_file }}
                   download-artifact: "false"
 
-    nexus-dry-run:
+    nexus-upload:
         # Chained from `release` to avoid the artifact-attachment race a
         # parallel `release: published` trigger on a separate workflow had:
         # the prior release-nexus-trigger.yaml fired in parallel with this
