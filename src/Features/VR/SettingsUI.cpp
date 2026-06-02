@@ -2,6 +2,7 @@
 #include "Features/DynamicCubemaps.h"
 #include "Features/ScreenSpaceGI.h"
 #include "Features/ScreenSpaceShadows.h"
+#include "Features/Upscaling.h"
 #include "Features/VR.h"
 #include "Menu.h"
 #include "Menu/Fonts.h"
@@ -367,6 +368,37 @@ namespace
 					"  Green=edge  Pink=edge neighbour  Blue=disoccluded  Orange=full blend\n"
 					"Overwrite Eye1: POM depth heatmap for Eye 1 (auto-enables Reprojection -- restart required)");
 			}
+		}
+
+		if (ImGui::CollapsingHeader("Foveated Effects")) {
+			auto& upscaling = globals::features::upscaling;
+			auto& dynamicCubemaps = globals::features::dynamicCubemaps;
+			const bool foveatedDLSSActive = upscaling.foveatedRender.IsActive();
+			const bool ssrEnabled = dynamicCubemaps.loaded && dynamicCubemaps.settings.EnabledSSR;
+
+			if (!foveatedDLSSActive)
+				ImGui::TextColored(ImVec4(1.0f, 0.7f, 0.3f, 1.0f), "Requires Foveated DLSS to be active (Upscaling settings).");
+			if (!ssrEnabled)
+				ImGui::TextColored(ImVec4(1.0f, 0.7f, 0.3f, 1.0f), "Requires Screen Space Reflections (Dynamic Cubemaps).");
+
+			ImGui::BeginDisabled(!foveatedDLSSActive || !ssrEnabled);
+			ImGui::Checkbox("Foveate SSR Raymarching", &settings.EnableSSRFoveation);
+			if (auto _tt = Util::HoverTooltipWrapper()) {
+				ImGui::Text(
+					"Reduces screen-space reflection raymarching toward the periphery, using the\n"
+					"active Foveated DLSS region. Central reflections stay full quality; peripheral\n"
+					"pixels fall back to the cubemap / water reflection. VR only.");
+			}
+
+			ImGui::BeginDisabled(!settings.EnableSSRFoveation);
+			ImGui::Checkbox("Hard Cutoff Outside Center##SSRFoveation", &settings.EnableSSRFoveationHardCutoff);
+			if (auto _tt = Util::HoverTooltipWrapper()) {
+				ImGui::Text(
+					"Hard-skip SSR outside the center region instead of a feathered falloff.\n"
+					"Cheaper, but the transition edge may be visible. Default off (feathered).");
+			}
+			ImGui::EndDisabled();
+			ImGui::EndDisabled();
 		}
 	}
 

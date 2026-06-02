@@ -46,7 +46,9 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	StereoBlendDepthSigma,
 	StereoBlendMaxFactor,
 	StereoBlendColorThreshold,
-	StereoBlendDebugMode)
+	StereoBlendDebugMode,
+	EnableSSRFoveation,
+	EnableSSRFoveationHardCutoff)
 
 //=============================================================================
 // FEATURE BASE CLASS OVERRIDES

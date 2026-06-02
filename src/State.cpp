@@ -7,12 +7,15 @@
 #include "Deferred.h"
 #include "FeatureIssues.h"
 #include "Features/CloudShadows.h"
+#include "Features/DynamicCubemaps.h"
+#include "Features/FoveatedCommon.h"
 #include "Features/HDRDisplay.h"
 #include "Features/InteriorSun.h"
 #include "Features/PerformanceOverlay.h"
 #include "Features/TerrainBlending.h"
 #include "Features/TerrainHelper.h"
 #include "Features/Upscaling.h"
+#include "Features/VR.h"
 #include "Features/VRStereoOptimizations.h"
 #include "Features/VolumetricShadows.h"
 #include "Features/WeatherEditor.h"
@@ -1007,6 +1010,33 @@ void State::UpdateSharedData([[maybe_unused]] bool a_inWorld, [[maybe_unused]] b
 		data.AmbientSHB = { dalcSH.b.c0, dalcSH.b.c1[0], dalcSH.b.c1[1], dalcSH.b.c1[2] };
 
 		data.HDRData = globals::features::hdrDisplay.GetSharedDataHDR();
+
+		// VR foveated shader detail (consumed by foveated SSR). Default to off;
+		// populate from the active foveation region when SSR foveation is enabled
+		// and SSR is running. If SSR isn't running the SSR pass never executes, so
+		// these constants are simply ignored.
+		data.VRFoveationData0 = { FoveatedCommon::kCenterAreaMax, FoveatedCommon::kCenterFeather, 1.0f,
+			FoveatedCommon::GetShaderMode(FoveatedCommon::DetailMode::Off) };
+		data.VRFoveationCenterOffsets = { 0.0f, 0.0f, 0.0f, 0.0f };
+		if (globals::game::isVR) {
+			const auto& vr = globals::features::vr;
+			const auto& dynamicCubemaps = globals::features::dynamicCubemaps;
+			const bool ssrFoveationEnabled = vr.loaded && vr.settings.EnableSSRFoveation &&
+			                                 dynamicCubemaps.loaded && dynamicCubemaps.settings.EnabledSSR;
+			if (ssrFoveationEnabled) {
+				const auto profile = upscaling.foveatedRender.GetFoveationProfile();
+				if (profile.available && FoveatedCommon::IsActiveCoverage(profile.coverageArea)) {
+					const float ssrMode = FoveatedCommon::GetShaderMode(FoveatedCommon::GetDetailMode(
+						true, vr.settings.EnableSSRFoveationHardCutoff));
+					data.VRFoveationData0 = { profile.coverageArea, FoveatedCommon::kCenterFeather,
+						profile.centerHorizontalScale, ssrMode };
+					data.VRFoveationCenterOffsets = {
+						profile.centerOffsets[0].x, profile.centerOffsets[0].y,
+						profile.centerOffsets[1].x, profile.centerOffsets[1].y
+					};
+				}
+			}
+		}
 
 		sharedDataCB->Update(data);
 	}

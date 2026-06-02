@@ -3,6 +3,7 @@
 #include "../../Globals.h"
 #include "../../Utils/Subrect.h"
 #include "../../Utils/UI.h"
+#include "../FoveatedCommon.h"
 #include "../Upscaling.h"
 #include "FoveatedRender/Core.h"
 
@@ -116,6 +117,34 @@ bool FoveatedRender::IsActive() const
 bool FoveatedRender::IsRuntimeSupported() const
 {
 	return globals::game::isVR && globals::features::upscaling.streamline.featureDLSS;
+}
+
+FoveatedRender::FoveationProfile FoveatedRender::GetFoveationProfile() const
+{
+	FoveationProfile profile;
+	if (!IsActive())
+		return profile;
+
+	const auto& leftUV = subrectController.GetUV();
+	const auto& rightUV = subrectController.GetRightEyeUV();
+
+	// A full-eye region means no foveation is in effect — nothing to gate on.
+	if (leftUV.w >= 0.999f && leftUV.h >= 0.999f)
+		return profile;
+
+	// Map the rectangular subrect onto the centered-superellipse the mask helper
+	// expects: vertical extent drives coverageArea (radiusY = coverageArea/2),
+	// the rect aspect drives the horizontal stretch (radiusX = coverageArea *
+	// hScale / 2), and rect-center minus screen-center gives the per-eye offset.
+	// Feather is the framework constant. Approximate (rect vs superellipse) but
+	// sufficient for the per-pixel center/periphery weight.
+	profile.available = true;
+	profile.coverageArea = FoveatedCommon::ClampCenterArea(leftUV.h);
+	profile.centerHorizontalScale = FoveatedCommon::ClampCenterHorizontalScale(
+		leftUV.h > 1e-4f ? leftUV.w / leftUV.h : 1.0f);
+	profile.centerOffsets[0] = { (leftUV.x + leftUV.w * 0.5f) - 0.5f, (leftUV.y + leftUV.h * 0.5f) - 0.5f };
+	profile.centerOffsets[1] = { (rightUV.x + rightUV.w * 0.5f) - 0.5f, (rightUV.y + rightUV.h * 0.5f) - 0.5f };
+	return profile;
 }
 
 void FoveatedRender::LatchQualityMode()
