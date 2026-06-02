@@ -8,6 +8,7 @@
 #include "Upscaling/RCAS/RCAS.h"
 #include "Upscaling/Streamline.h"
 #include "Utils/BootSnapshot.h"
+#include "VR/OpenVRDetection.h"
 #include <d3d11_4.h>
 #include <d3d12.h>
 #include <winrt/base.h>
@@ -328,20 +329,16 @@ public:
 private:
 	// OpenComposite conflict guard: when the OpenComposite VR shim runs its own
 	// DLSS/FSR/DLAA upscaling, ours must stand down to avoid double upscaling.
-	struct OpenCompositeUpscalingBlocker
-	{
-		bool active = false;
-		std::string settingName;
-		std::string configPath;
-	};
-
-	// forceRefresh re-probes opencomposite.ini; otherwise the cached result is
-	// returned so per-frame callers stay cheap.
-	const OpenCompositeUpscalingBlocker& GetOpenCompositeUpscalingBlocker(bool a_forceRefresh = false) const;
+	// Detection lives in VRDetection; this class owns only the force-to-None
+	// policy and the lifecycle/UI gating.
+	//
+	// forceRefresh re-probes the OpenComposite config; otherwise the cached
+	// result is returned so per-frame callers stay cheap.
+	const VRDetection::OpenCompositeUpscalingState& GetOpenCompositeUpscalingBlocker(bool a_forceRefresh = false) const;
 	// Forces upscaleMethod/upscaleMethodNoDLSS to None when the guard is active.
 	void ApplyOpenCompositeUpscalingBlocker(bool a_forceRefresh = false);
 
-	mutable OpenCompositeUpscalingBlocker openCompositeUpscalingBlocker;
+	mutable VRDetection::OpenCompositeUpscalingState openCompositeUpscalingBlocker;
 	mutable bool openCompositeUpscalingBlockerCacheValid = false;
 	bool openCompositeUpscalingBackendSkipLogged = false;
 
