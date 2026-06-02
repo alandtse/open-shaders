@@ -16,10 +16,14 @@
 #include "Utils/UI.h"
 #include <Windows.h>
 #include <algorithm>
+#include <cctype>
 #include <cfloat>
 #include <cmath>
+#include <cwctype>
 #include <directx/d3dx12.h>
+#include <filesystem>
 #include <format>
+#include <string_view>
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	Upscaling::Settings,
@@ -184,8 +188,240 @@ HRESULT WINAPI hk_D3D11CreateDeviceAndSwapChainUpscaling(
 	return ret;
 }
 
+namespace
+{
+	// OpenComposite (OpenXR-over-OpenVR shim) can run its own DLSS/FSR/DLAA
+	// upscaling. If our upscaler also runs, the two stack — double jitter,
+	// double upscale, conflicting dynamic-resolution sizing — which wrecks the
+	// VR image. We detect OpenComposite's upscaling from its config and stand
+	// down so it owns the upscale. VR-only; SteamVR users are unaffected.
+	struct OpenCompositeSettingValue
+	{
+		bool value = false;
+		std::string configPath;
+	};
+
+	struct OpenCompositeUpscalingSettings
+	{
+		OpenCompositeSettingValue dlssEnabled;
+		OpenCompositeSettingValue fsrEnabled;
+		OpenCompositeSettingValue dlaaEnabled;
+		OpenCompositeSettingValue fsrNativeAA;
+		OpenCompositeSettingValue fsr3PostAAEnabled;
+	};
+
+	struct DetectedOpenCompositeUpscalingBlocker
+	{
+		bool active = false;
+		std::string settingName;
+		std::string configPath;
+	};
+
+	std::string_view TrimAsciiWhitespace(std::string_view value)
+	{
+		while (!value.empty() && std::isspace(static_cast<unsigned char>(value.front())))
+			value.remove_prefix(1);
+		while (!value.empty() && std::isspace(static_cast<unsigned char>(value.back())))
+			value.remove_suffix(1);
+		return value;
+	}
+
+	std::string ToLowerAscii(std::string_view value)
+	{
+		std::string result(value);
+		std::ranges::transform(result, result.begin(), [](unsigned char c) {
+			return static_cast<char>(std::tolower(c));
+		});
+		return result;
+	}
+
+	bool TryParseOpenCompositeBool(std::string value, bool& outValue)
+	{
+		value = ToLowerAscii(TrimAsciiWhitespace(value));
+		if (value == "true" || value == "on" || value == "enabled" || value == "1") {
+			outValue = true;
+			return true;
+		}
+		if (value == "false" || value == "off" || value == "disabled" || value == "0") {
+			outValue = false;
+			return true;
+		}
+		return false;
+	}
+
+	void AddUniquePath(std::vector<std::filesystem::path>& paths, const std::filesystem::path& path)
+	{
+		if (path.empty())
+			return;
+
+		auto normalized = path.lexically_normal().wstring();
+		std::ranges::transform(normalized, normalized.begin(), [](wchar_t c) {
+			return static_cast<wchar_t>(std::towlower(c));
+		});
+
+		const bool alreadyAdded = std::ranges::any_of(paths, [&](const std::filesystem::path& existing) {
+			auto existingNormalized = existing.lexically_normal().wstring();
+			std::ranges::transform(existingNormalized, existingNormalized.begin(), [](wchar_t c) {
+				return static_cast<wchar_t>(std::towlower(c));
+			});
+			return existingNormalized == normalized;
+		});
+		if (!alreadyAdded)
+			paths.push_back(path);
+	}
+
+	std::filesystem::path GetCurrentDirectoryPath()
+	{
+		std::wstring buffer(MAX_PATH, L'\0');
+		const DWORD length = GetCurrentDirectoryW(static_cast<DWORD>(buffer.size()), buffer.data());
+		if (length == 0)
+			return {};
+
+		if (length >= buffer.size()) {
+			buffer.resize(length + 1);
+			const DWORD retryLength = GetCurrentDirectoryW(static_cast<DWORD>(buffer.size()), buffer.data());
+			if (retryLength == 0 || retryLength >= buffer.size())
+				return {};
+			buffer.resize(retryLength);
+		} else {
+			buffer.resize(length);
+		}
+
+		return std::filesystem::path(buffer);
+	}
+
+	// Resolves the directory of the already-loaded openvr_api.dll. Self-contained
+	// rather than reusing VRDetection::GatherDLLInfo, which also parses version
+	// info and enumerates the file — more work than the directory lookup needs.
+	std::filesystem::path GetLoadedOpenVRDirectory()
+	{
+		HMODULE openVRModule = GetModuleHandleW(L"openvr_api.dll");
+		if (!openVRModule)
+			return {};
+
+		std::wstring buffer(MAX_PATH, L'\0');
+		const DWORD length = GetModuleFileNameW(openVRModule, buffer.data(), static_cast<DWORD>(buffer.size()));
+		if (length == 0 || length >= buffer.size())
+			return {};
+
+		buffer.resize(length);
+		return std::filesystem::path(buffer).parent_path();
+	}
+
+	std::vector<std::filesystem::path> GetOpenCompositeConfigCandidates()
+	{
+		std::vector<std::filesystem::path> candidates;
+
+		const auto loadedOpenVRDirectory = GetLoadedOpenVRDirectory();
+		if (!loadedOpenVRDirectory.empty())
+			AddUniquePath(candidates, loadedOpenVRDirectory / L"opencomposite.ini");
+
+		const auto currentDirectory = GetCurrentDirectoryPath();
+		if (!currentDirectory.empty()) {
+			AddUniquePath(candidates, currentDirectory / L"opencomposite.ini");
+			AddUniquePath(candidates, currentDirectory / L"opencomposite_ext.ini");
+		}
+
+		return candidates;
+	}
+
+	// OpenComposite writes upscaling keys at top level or under a section
+	// depending on build, so probe the unnamed section first then every named
+	// one.
+	bool TryReadIniBoolSetting(const CSimpleIniA& ini, const char* key, bool& outValue)
+	{
+		auto tryReadSection = [&](const char* section) {
+			const char* rawValue = ini.GetValue(section, key, nullptr);
+			return rawValue && TryParseOpenCompositeBool(rawValue, outValue);
+		};
+
+		if (tryReadSection(""))
+			return true;
+
+		CSimpleIniA::TNamesDepend sections;
+		ini.GetAllSections(sections);
+		for (const auto& section : sections) {
+			if (section.pItem && tryReadSection(section.pItem))
+				return true;
+		}
+
+		return false;
+	}
+
+	void UpdateOpenCompositeSettingValue(OpenCompositeSettingValue& setting, const CSimpleIniA& ini, const char* key, const std::filesystem::path& path)
+	{
+		bool parsedValue = false;
+		if (!TryReadIniBoolSetting(ini, key, parsedValue))
+			return;
+
+		setting.value = parsedValue;
+		setting.configPath = path.string();
+	}
+
+	OpenCompositeUpscalingSettings ReadOpenCompositeUpscalingSettings()
+	{
+		OpenCompositeUpscalingSettings settings;
+
+		std::error_code ec;
+		for (const auto& path : GetOpenCompositeConfigCandidates()) {
+			if (!std::filesystem::exists(path, ec))
+				continue;
+			ec.clear();
+
+			CSimpleIniA ini;
+			ini.SetUnicode();
+			const SI_Error rc = ini.LoadFile(path.c_str());
+			if (rc < 0) {
+				logger::warn("[Upscaling] Failed to read OpenComposite config '{}': {}", path.string(), static_cast<int>(rc));
+				continue;
+			}
+
+			UpdateOpenCompositeSettingValue(settings.dlssEnabled, ini, "dlssEnabled", path);
+			UpdateOpenCompositeSettingValue(settings.fsrEnabled, ini, "fsrEnabled", path);
+			UpdateOpenCompositeSettingValue(settings.dlaaEnabled, ini, "dlaaEnabled", path);
+			UpdateOpenCompositeSettingValue(settings.fsrNativeAA, ini, "fsrNativeAA", path);
+			UpdateOpenCompositeSettingValue(settings.fsr3PostAAEnabled, ini, "fsr3PostAAEnabled", path);
+		}
+
+		return settings;
+	}
+
+	DetectedOpenCompositeUpscalingBlocker FindOpenCompositeUpscalingBlocker()
+	{
+		DetectedOpenCompositeUpscalingBlocker blocker;
+		if (!globals::game::isVR)
+			return blocker;
+
+		const auto settings = ReadOpenCompositeUpscalingSettings();
+		auto setBlocker = [&](const char* settingName, const OpenCompositeSettingValue& setting) {
+			blocker.active = true;
+			blocker.settingName = settingName;
+			blocker.configPath = setting.configPath;
+		};
+
+		if (settings.dlaaEnabled.value)
+			setBlocker("dlaaEnabled", settings.dlaaEnabled);
+		else if (settings.fsrNativeAA.value)
+			setBlocker("fsrNativeAA", settings.fsrNativeAA);
+		else if (settings.fsr3PostAAEnabled.value)
+			setBlocker("fsr3PostAAEnabled", settings.fsr3PostAAEnabled);
+		else if (settings.dlssEnabled.value)
+			setBlocker("dlssEnabled", settings.dlssEnabled);
+		else if (settings.fsrEnabled.value)
+			setBlocker("fsrEnabled", settings.fsrEnabled);
+
+		return blocker;
+	}
+}
+
 void Upscaling::DrawSettings()
 {
+	// When OpenComposite owns upscaling, force our method to None up front so
+	// the picker below reflects the locked state.
+	ApplyOpenCompositeUpscalingBlocker();
+	const auto& openCompositeBlocker = GetOpenCompositeUpscalingBlocker();
+	const bool openCompositeBlocksUpscaling = openCompositeBlocker.active;
+
 	// Display upscaling options in the UI
 	std::vector<std::string> upscaleModes = { "None", "TAA" };
 
@@ -212,9 +448,34 @@ void Upscaling::DrawSettings()
 	std::vector<const char*> modeLabels;
 	for (uint32_t i = 0; i <= availableModes; ++i)
 		modeLabels.push_back(upscaleModes[i].c_str());
+	if (openCompositeBlocksUpscaling)
+		ImGui::BeginDisabled();
 	ImGui::Combo("Method", (int*)currentUpscaleMode, modeLabels.data(), (int)modeLabels.size());
+	if (openCompositeBlocksUpscaling)
+		ImGui::EndDisabled();
+	if (auto _tt = Util::HoverTooltipWrapper()) {
+		if (openCompositeBlocksUpscaling)
+			ImGui::Text("Locked to None while OpenComposite has %s=true.", openCompositeBlocker.settingName.c_str());
+		else
+			ImGui::TextUnformatted("Selects the upscaling backend.");
+	}
 
 	*currentUpscaleMode = std::min(availableModes, *currentUpscaleMode);
+
+	if (openCompositeBlocksUpscaling) {
+		// Re-assert None in case the combo above was somehow edited, then
+		// explain why the control is locked.
+		ApplyOpenCompositeUpscalingBlocker();
+		if (openCompositeBlocker.configPath.empty())
+			Util::Text::WrappedWarning(
+				"Upscaling is locked to None because OpenComposite has %s=true.",
+				openCompositeBlocker.settingName.c_str());
+		else
+			Util::Text::WrappedWarning(
+				"Upscaling is locked to None because OpenComposite has %s=true in %s.",
+				openCompositeBlocker.settingName.c_str(),
+				openCompositeBlocker.configPath.c_str());
+	}
 
 	// Check the current upscale method
 	auto upscaleMethod = GetUpscaleMethod();
@@ -590,8 +851,46 @@ void Upscaling::DrawSettings()
 	}
 }
 
+const Upscaling::OpenCompositeUpscalingBlocker& Upscaling::GetOpenCompositeUpscalingBlocker(bool a_forceRefresh) const
+{
+	// Cached after the first probe; lifecycle entry points pass forceRefresh so
+	// per-frame callers (GetUpscaleMethod, DrawSettings) only read the bool.
+	if (!a_forceRefresh && openCompositeUpscalingBlockerCacheValid)
+		return openCompositeUpscalingBlocker;
+
+	const auto detected = FindOpenCompositeUpscalingBlocker();
+	openCompositeUpscalingBlocker.active = detected.active;
+	openCompositeUpscalingBlocker.settingName = detected.settingName;
+	openCompositeUpscalingBlocker.configPath = detected.configPath;
+	openCompositeUpscalingBlockerCacheValid = true;
+
+	return openCompositeUpscalingBlocker;
+}
+
+void Upscaling::ApplyOpenCompositeUpscalingBlocker(bool a_forceRefresh)
+{
+	const auto& blocker = GetOpenCompositeUpscalingBlocker(a_forceRefresh);
+	if (!blocker.active)
+		return;
+
+	const bool wasOverriding =
+		settings.upscaleMethod != static_cast<uint>(UpscaleMethod::kNONE) ||
+		settings.upscaleMethodNoDLSS != static_cast<uint>(UpscaleMethod::kNONE);
+	if (wasOverriding) {
+		if (blocker.configPath.empty())
+			logger::warn("[Upscaling] Forcing upscaling to None because OpenComposite has {}=true.", blocker.settingName);
+		else
+			logger::warn("[Upscaling] Forcing upscaling to None because OpenComposite has {}=true in {}.", blocker.settingName, blocker.configPath);
+	}
+
+	settings.upscaleMethod = static_cast<uint>(UpscaleMethod::kNONE);
+	settings.upscaleMethodNoDLSS = static_cast<uint>(UpscaleMethod::kNONE);
+}
+
 void Upscaling::SaveSettings(json& o_json)
 {
+	// Persist None, not the user's prior method, while OpenComposite owns upscaling.
+	ApplyOpenCompositeUpscalingBlocker(true);
 	o_json = settings;
 	// Nest FoveatedRender's settings under a sub-key so they round-trip alongside
 	// Upscaling's own. Subrect controller persistence is owned by FoveatedRender.
@@ -643,6 +942,8 @@ void Upscaling::LoadSettings(json& o_json)
 	// LoadSettings (which fired before this block ran). Idempotent — no-op
 	// if FoveatedRender is inactive or the preset is already compatible.
 	foveatedRender.ClampSettings();
+	// Override a loaded method with None when OpenComposite owns upscaling.
+	ApplyOpenCompositeUpscalingBlocker(true);
 	const float originalReflexFPSLimit = settings.reflexFPSLimit;
 	if (!std::isfinite(settings.reflexFPSLimit)) {
 		settings.reflexFPSLimit = 60.0f;
@@ -672,10 +973,17 @@ void Upscaling::RestoreDefaultSettings()
 {
 	settings = {};
 	foveatedRender.RestoreDefaultSettings();
+	ApplyOpenCompositeUpscalingBlocker(true);
 }
 
 void Upscaling::DataLoaded()
 {
+	ApplyOpenCompositeUpscalingBlocker(true);
+	if (const auto& blocker = GetOpenCompositeUpscalingBlocker(); blocker.active) {
+		logger::warn("[Upscaling] Skipping data-loaded upscaling adjustments because OpenComposite has {}=true.", blocker.settingName);
+		return;
+	}
+
 	// Fix screenshots fix from Engine Fixes
 	RE::GetINISetting("bUseTAA:Display")->data.b = false;
 
@@ -712,6 +1020,12 @@ bool Upscaling::MenuOpenCloseEventHandler::Register()
 
 void Upscaling::Load()
 {
+	ApplyOpenCompositeUpscalingBlocker(true);
+	if (const auto& blocker = GetOpenCompositeUpscalingBlocker(); blocker.active) {
+		logger::warn("[Upscaling] Skipping D3D11 device hook because OpenComposite has {}=true.", blocker.settingName);
+		return;
+	}
+
 	*(uintptr_t*)&ptrD3D11CreateDeviceAndSwapChainUpscaling = SKSE::PatchIAT(hk_D3D11CreateDeviceAndSwapChainUpscaling, "d3d11.dll", "D3D11CreateDeviceAndSwapChain");
 }
 
@@ -729,6 +1043,15 @@ struct BSImageSpace_Init_FXAA
 };
 void Upscaling::PostPostLoad()
 {
+	// Stand down entirely when OpenComposite owns upscaling — this also skips
+	// FoveatedRender, whose subrect/jitter hooks ride on our upscaling path and
+	// would conflict just the same.
+	ApplyOpenCompositeUpscalingBlocker(true);
+	if (const auto& blocker = GetOpenCompositeUpscalingBlocker(); blocker.active) {
+		logger::warn("[Upscaling] Skipping upscaling render hooks because OpenComposite has {}=true.", blocker.settingName);
+		return;
+	}
+
 	// Subrect controller defaults + stereo flag (FoveatedRender is no longer a
 	// Feature subclass so we drive its lifecycle from here).
 	foveatedRender.PostPostLoad();
@@ -777,6 +1100,10 @@ float Upscaling::GetQualityModeRatio(uint qualityMode)
 
 Upscaling::UpscaleMethod Upscaling::GetUpscaleMethod() const
 {
+	// OpenComposite owning upscaling wins over everything else (incl. PerfMode).
+	if (GetOpenCompositeUpscalingBlocker().active)
+		return UpscaleMethod::kNONE;
+
 	// Lock runtime to the boot upscaler under PerfMode — engine RTs are
 	// sized for it, and routing a different method through testTexture/
 	// renderRes paths breaks the HMD.
@@ -1463,6 +1790,12 @@ void Upscaling::ConfigureUpscaling(RE::BSGraphics::State* a_viewport)
 
 void Upscaling::SetupResources()
 {
+	ApplyOpenCompositeUpscalingBlocker(true);
+	if (const auto& blocker = GetOpenCompositeUpscalingBlocker(); blocker.active) {
+		logger::warn("[Upscaling] Skipping upscaling resource setup because OpenComposite has {}=true.", blocker.settingName);
+		return;
+	}
+
 	QueryPerformanceFrequency(&qpf);
 
 	auto renderer = globals::game::renderer;
@@ -1813,6 +2146,20 @@ float Upscaling::GetFrameGenerationFrameTime() const
 // Unified interface methods
 void Upscaling::LoadUpscalingSDKs()
 {
+	// Hooked into device creation, so this can fire repeatedly — log the skip once.
+	ApplyOpenCompositeUpscalingBlocker(true);
+	const auto& blocker = GetOpenCompositeUpscalingBlocker();
+	if (blocker.active) {
+		if (!openCompositeUpscalingBackendSkipLogged) {
+			if (blocker.configPath.empty())
+				logger::warn("[Upscaling] Skipping Streamline/FidelityFX backend init because OpenComposite has {}=true.", blocker.settingName);
+			else
+				logger::warn("[Upscaling] Skipping Streamline/FidelityFX backend init because OpenComposite has {}=true in {}.", blocker.settingName, blocker.configPath);
+			openCompositeUpscalingBackendSkipLogged = true;
+		}
+		return;
+	}
+
 	// Initialize upscaling SDK components during plugin startup
 	// This ensures all SDKs are available before any D3D device creation
 	streamline.LoadInterposer();
