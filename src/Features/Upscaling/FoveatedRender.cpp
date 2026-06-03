@@ -105,13 +105,10 @@ void FoveatedRender::ClampSettings()
 
 bool FoveatedRender::IsActive() const
 {
-	// Activity requires DLSS to be the *selected* upscaler, not merely available.
-	// IsRuntimeSupported() (availability) only gates the Enable checkbox; if we
-	// keyed activity off it too, foveation — and its SSR consumer — would run
-	// while the user has TAA/FSR/None selected. It also fails closed under
-	// RenderDoc, whose DX12-interop swapchain disables DLSS: GetUpscaleMethod()
-	// then returns a non-DLSS method, so the route stands down instead of
-	// dereferencing uninitialised DLSS resources.
+	// Gate on DLSS being the *selected* method, not just available
+	// (IsRuntimeSupported): otherwise foveation and its SSR consumer run under
+	// TAA/FSR/None and the route derefs unallocated DLSS resources — the crash
+	// seen under RenderDoc, whose DX12 swapchain disables DLSS.
 	return enabledAtBoot && IsRuntimeSupported() &&
 	       globals::features::upscaling.GetUpscaleMethod() == Upscaling::UpscaleMethod::kDLSS;
 }
@@ -199,9 +196,9 @@ void FoveatedRender::DrawEnable()
 
 	if (enabledAtBoot) {
 		if (globals::features::upscaling.GetUpscaleMethod() == Upscaling::UpscaleMethod::kDLSS)
-			Util::Text::WrappedInfo("Active: foveated subrect DLSS is running.");
+			Util::Text::WrappedInfo("Active: foveated subrect DLSS is enabled (skipped in menus / on preflight failure).");
 		else
-			Util::Text::Warning("Standing by: only runs while the Upscaling Method is DLSS. Inactive right now.");
+			Util::Text::Warning("Standing by: only active while the Upscaling Method is DLSS. Inactive right now.");
 	}
 
 	if (!globals::game::isVR) {
