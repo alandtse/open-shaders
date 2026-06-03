@@ -2,6 +2,7 @@
 #include "Common/DisplayMapping.hlsli"
 #include "Common/DummyVSTexCoord.hlsl"
 #include "Common/FrameBuffer.hlsli"
+#include "Common/VR.hlsli"
 
 typedef VS_OUTPUT PS_INPUT;
 
@@ -264,9 +265,20 @@ PS_OUTPUT main(PS_INPUT input)
 	// --- motion vector and history sample ---
 	history.xy = drMax;
 	motionReject.xy = velocityTex.Sample(velocitySampler, ClampScreenUV(motionReject.xy, history.xy)).xy;
+#	ifdef VR
+	// Both eyes share one render target in VR, so reprojection must stay within the current
+	// eye: Stereo::ApplyVelocityToUV converts to mono, applies velocity, clamps per-eye, and
+	// maps back. Plain texCoord+velocity (the SE path) lets a pixel near the x=0.5 seam sample
+	// the other eye's history (cross-eye ghosting). GetPreviousDynamicResolutionAdjustedScreen-
+	// Position keeps the DR history clamp per-eye too; prevUVOutOfBounds drives rejection below.
+	bool prevUVOutOfBounds;
+	float2 prevUV = Stereo::ApplyVelocityToUV(texCoord.xy, motionReject.xy, prevUVOutOfBounds);
+	tapMin.xy = FrameBuffer::GetPreviousDynamicResolutionAdjustedScreenPosition(prevUV);
+#	else
 	motionReject.zw = texCoord.xy + motionReject.xy;
-	motionReject.x = sqrt(dot(motionReject.xy, motionReject.xy));
 	tapMin.xy = ClampHistoryUV(motionReject.zw);
+#	endif
+	motionReject.x = sqrt(dot(motionReject.xy, motionReject.xy));
 	history.xyw = historyTex.Sample(historySampler, tapMin.xy).xyz;
 #	ifdef HDR_OUTPUT
 	// history.x is stored as game-gamma luma (see EncodeFeedbackLuma on write).
@@ -418,12 +430,18 @@ PS_OUTPUT main(PS_INPUT input)
 	corner.xyz = history.yyy * corner.xyz + tapMin.xyz;
 
 	// --- disocclusion / mask rejection ---
-	// motionReject.zw still holds reprojected UV from motion pass; motionReject.x = motion length
+	// motionReject.x = motion length (motionReject.zw held the reprojected UV on the SE path).
+#	ifdef VR
+	// Out-of-bounds was already resolved per-eye in mono space (Stereo::ApplyVelocityToUV); the
+	// stereo-space [0,1] test used on the SE path would miss the x=0.5 eye seam.
+	motionReject.z = prevUVOutOfBounds ? 1 : 0;
+#	else
 	sampleUV.w = min(motionReject.z, motionReject.w);
 	motionReject.zw = cmp(motionReject.zw >= float2(1, 1));
 	sampleUV.w = cmp(0 >= sampleUV.w);
 	motionReject.z = (int)motionReject.z | (int)sampleUV.w;
 	motionReject.z = (int)motionReject.w | (int)motionReject.z;
+#	endif
 	history.yz = maskTex.Sample(maskSampler, sampleUV.xy).xy;
 	motionReject.w = AlphaCoverageMask(sampleUV.xy);
 	sampleUV.x = cmp(ThresholdParams.w < history.z);
@@ -513,11 +531,8 @@ PS_OUTPUT main(PS_INPUT input)
 #	else
 	feedbackOut.x = saturate(sampleUV.x * motionReject.z);
 #	endif
-#	if defined(VR)
-	colorOut.w = motionReject.x ? 1 : 0;
-#	else
+	// Vanilla writes opaque alpha unconditionally on both SE and VR (decompile o0.w = 1).
 	colorOut.w = 1;
-#	endif
 	feedbackOut.w = 1;
 
 #	ifdef HDR_OUTPUT
