@@ -283,9 +283,9 @@ PS_OUTPUT main(PS_INPUT input)
 	float4 colorOut, feedbackOut;
 
 	// float4 packs — component reuse matches vanilla decompile (see header comment).
-	float4 motionReject, history, corner, tapMin;     // was r0–r4
-	float4 tapA0, tapA1, tapB0, tapB1, tapC0, tapC1;  // was r6–r13
-	float belowHistC1;                                // C1 tap below-history mask (was center.x, r14)
+	float4 motionReject, history, corner, tapMin;     // decompile r0–r4
+	float4 tapA0, tapA1, tapB0, tapB1, tapC0, tapC1;  // decompile r6–r13
+	float belowHistC1;                                // C1 tap below-history mask (decompile r14.x)
 
 	float2 drMax = GetDynamicResolutionMax(), drUVMin, drUVMax, drCenter;
 	float4 drNeighborsA, drNeighborsB, drNeighborsC;
@@ -342,7 +342,7 @@ PS_OUTPUT main(PS_INPUT input)
 	AssignPackedNeighbor(drNeighborsC.zw, history.x, tapC1, belowHistC1);
 	float3 centerColor = SampleCenterRGB(drCenter);  // centre RGB (belowHistC1 holds the C1 mask)
 
-	// --- centre bracket seed, neighbourhood bracket, flicker, temporal blend (verbatim math) ---
+	// --- centre bracket seed, neighbourhood bracket, flicker, temporal blend ---
 	float centerLuma = dot(centerColor.yzx, kLumaWeights);
 	float belowHistCentre = cmp(centerLuma < history.x);
 	// Centre colour packed as (R, B, luma) — the bracket seeds clamp this against the luma caps.
@@ -394,10 +394,9 @@ PS_OUTPUT main(PS_INPUT input)
 	float fcCorner = FlickerLumaContribution(centerLuma, corner.w);
 
 	// --- neighbourhood MAX-luma colour bracket (complement to the min bracket above) ---
-	// Running max folded over the taps, each committed when its belowHist gate is set (see
-	// MergeMaxBracket — gate is inverted vs the min fold). Seed = the clamped centre/C1 colour;
-	// result handed back to tapA0.yzw for the bespoke min/max-select tail below.
-	// Same six folds as the min bracket (foldTaps/foldGates), max rule, seeded from the low-clamped C1.
+	// Same six folds as the min bracket (foldTaps/foldGates), but the max rule commits a tap when its
+	// belowHist gate is SET — inverted vs the min fold (see MergeMaxBracket). Seeded from the
+	// low-clamped C1 colour.
 	float3 maxBracket = tapC1.xyz;
 	[unroll] for (int maxFold = 0; maxFold < 6; maxFold++)
 		maxBracket = MergeMaxBracket(foldTaps[maxFold], maxBracket, foldGates[maxFold]);
@@ -442,7 +441,6 @@ PS_OUTPUT main(PS_INPUT input)
 	corner.xyz = lerp(rectifyLo, rectifyHi, history.yyy);
 
 	// --- disocclusion / mask rejection ---
-	// motionLength holds the motion length (motionReject.zw held the reprojected UV on the SE path).
 	float reject;  // disocclusion / OOB / mask rejection flag
 #	ifdef VR
 	// VR resolves out-of-bounds per-eye in mono space; the SE stereo-space test misses the seam.
