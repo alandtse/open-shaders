@@ -490,21 +490,21 @@ PS_OUTPUT main(PS_INPUT input)
 	similarity = max(float2(0, 0), similarity);
 	tapMin.yzw = similarity.xxx * tapMin.xyz + corner.xyz;
 	sampleUV.xyw = -tapMin.yzw + sampleUV.xyw;
-	motionReject.x = BlendParams.x + -BlendParams.y;
-	motionReject.x = motionConfidence * motionReject.x + BlendParams.y;
-	motionReject.x = min(motionReject.x, similarity.x);
-	tapA0.y = similarity.y * historyBlend;
-	motionReject.y = kFeedbackBlendMax + -motionReject.x;
-	motionReject.x = tapA0.y * motionReject.y + motionReject.x;
-	feedbackOut.yz = float2(tapA0.y, motionConfidence);
+	float blendWeight = BlendParams.x + -BlendParams.y;
+	blendWeight = motionConfidence * blendWeight + BlendParams.y;
+	blendWeight = min(blendWeight, similarity.x);
+	float historyFeedback = similarity.y * historyBlend;
+	float feedbackComplement = kFeedbackBlendMax + -blendWeight;
+	blendWeight = historyFeedback * feedbackComplement + blendWeight;
+	feedbackOut.yz = float2(historyFeedback, motionConfidence);
 #	ifdef HDR_OUTPUT
 	tapMin.yzw = max(tapMin.yzw, 0);
-	sampleUV.xyw = saturate(motionReject.xxx * sampleUV.xyw + tapMin.yzw);
+	sampleUV.xyw = saturate(blendWeight.xxx * sampleUV.xyw + tapMin.yzw);
 	// Skip vanilla BlendParams.z/w detail recovery — neighbourhood delta blows up in linear HDR
 	// and causes dark bezels / halos on the alpha-aware corner.yzw output path.
 	corner.yzw = sampleUV.xyw;
 #	else
-	sampleUV.xyw = saturate(motionReject.xxx * sampleUV.xyw + tapMin.yzw);
+	sampleUV.xyw = saturate(blendWeight.xxx * sampleUV.xyw + tapMin.yzw);
 
 	tapA0.xyz = sampleUV.xyw + -corner.xyz;
 	sampleUV.xyw = saturate(tapA0.xyz * BlendParams.zzz + sampleUV.xyw);
@@ -513,10 +513,11 @@ PS_OUTPUT main(PS_INPUT input)
 	corner.yzw = saturate(BlendParams.www * corner.xyz + sampleUV.xyw);
 #	endif
 
-	motionReject.y = motionReject.x * lumaDiff + centerLuma;
-	motionReject.x = motionReject.x * lumaDiff;
-	motionReject.x = cmp(abs(motionReject.x) < kLumaEpsilon);
-	corner.x = motionReject.x ? centerLuma : motionReject.y;
+	// Feedback luma: nudge centre luma by the blend-weighted luma diff, unless that nudge is negligible.
+	float feedbackLuma = blendWeight * lumaDiff + centerLuma;
+	float lumaNudge = blendWeight * lumaDiff;
+	float lumaNudgeTiny = cmp(abs(lumaNudge) < kLumaEpsilon);
+	corner.x = lumaNudgeTiny ? centerLuma : feedbackLuma;
 	float outputLuma = dot(tapMin.zwy, kLumaWeights);
 
 	// --- alpha-aware output ---
