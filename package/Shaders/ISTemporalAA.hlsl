@@ -374,12 +374,11 @@ PS_OUTPUT main(PS_INPUT input)
 	mergeScratch.yzw = MergeLumaBracket(tapMin, minBracket, uvMinBelowHist);
 	// Final fold: corner tap, ungated (gate 0 → always take the lower-luma colour).
 	bracketMinReg.yzw = MergeLumaBracket(corner, mergeScratch.yzw, 0);
-	tapB1.x = cmp(kMinLumaCap < centerLuma);
-	bracketMax.yzw = tapB1.xxx ? centerMeta.yzx : kMinLumaCap.xxx;
-	bracketMax.xyz = bracketMax.xxx ? bracketMax.yzw : kMinLumaCap.xxx;
-	tapB1.x = cmp(bracketMax.z < tapC1.w);
-	tapC1.xyz = tapB1.xxx ? tapC1.yzw : bracketMax.xyz;
-	tapC1.xyz = center.xxx ? tapC1.xyz : bracketMax.xyz;
+	// Low-clamp the (max-bracketed) tapC1 to the kMinLumaCap floor: build the centre-vs-floor bound
+	// (gated by belowHistCentre), then fold tapC1 toward it (MergeMaxBracket, gated by tapC1's belowHist).
+	float3 lowClamp = cmp(kMinLumaCap < centerLuma) ? centerMeta.yzx : kMinLumaCap.xxx;
+	lowClamp = bracketMax.x ? lowClamp : kMinLumaCap.xxx;
+	tapC1.xyz = MergeMaxBracket(tapC1, lowClamp, center.x);
 
 	// --- flicker contributions, one per neighbourhood tap ---
 	// Lifted out of the colour sort below: each reads a tap's ORIGINAL .w luma, and the sort only
