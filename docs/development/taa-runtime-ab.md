@@ -54,8 +54,8 @@ $defs = @("/D","PSHADER=1")            # add "/D","VR=1" and/or "/D","HDR_OUTPUT
 
 ### 2. Capture a frame
 
-Launch SkyrimVR to the main menu with RenderDoc attached and capture one frame. Confirm with
-`Instance list` (the `renderdoc` MCP) that an instance shows `capture_loaded: true`.
+Launch SkyrimSE or SkyrimVR to the main menu with RenderDoc attached and capture one frame.
+Confirm with `Instance list` (the `renderdoc` MCP) that an instance shows `capture_loaded: true`.
 
 ### 3. Load the harness and run the A/B (via the `renderdoc` MCP `Eval`)
 
