@@ -21,6 +21,8 @@
 #include "RE/B/BSShadowLight.h"
 #include "RE/S/ShadowSceneNode.h"
 
+#include "Features/LightLimitFix/ShadowCasterMath.h"
+
 struct ImVec4;
 
 namespace ShadowCasterManager
@@ -92,13 +94,8 @@ namespace ShadowCasterManager
 		std::uint32_t idx = 0;
 		while (idx < maxIdx) {
 			RE::BSShadowLight* light = accum[idx];
-			if (!light)
-				break;
 			const auto raw = reinterpret_cast<std::uintptr_t>(light);
-			// Reject the low 64 KiB too: the Windows x64 null-guard region is
-			// never a valid user mapping, so a near-null garbage value (e.g.
-			// 0x8) would otherwise pass and get dereferenced (AV/CTD).
-			if (raw < 0x10000ull || raw >= 0x0000800000000000ull || (raw & 0x7) != 0)
+			if (!IsPlausibleShadowLightPtr(raw))  // null / misaligned / non-canonical
 				break;
 			fn(light);
 			const std::uint32_t step = light->shadowMapCount;

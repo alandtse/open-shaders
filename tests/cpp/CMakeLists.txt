@@ -49,6 +49,9 @@ add_executable(cpp_tests
     test_sphericalharmonics.cpp
     test_input.cpp
     test_stringutils.cpp
+    test_isl_radiusmath.cpp
+    test_shadowcaster_math.cpp
+    test_llf_sanitize.cpp
     # Compile the unit-under-test directly into the test binary so we don't
     # depend on the plugin DLL build (which pulls in FFX/Streamline/etc.).
     "${CMAKE_SOURCE_DIR}/src/Utils/Subrect.cpp"

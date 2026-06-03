@@ -241,16 +241,7 @@ namespace ShadowCasterManager
 
 	static float ComputeFrameTimePercentile90()
 	{
-		// <= 0 (not just == 0): a negative count would drive a negative n into
-		// std::copy / std::nth_element below (out-of-bounds / UB).
-		if (s_ftCount <= 0)
-			return 16.67f;  // fallback: 60 fps target
-		const int n = std::min(s_ftCount, kFrameWindow);
-		float tmp[kFrameWindow];
-		std::copy(s_ftRing, s_ftRing + n, tmp);
-		const int idx = static_cast<int>(n * 0.9f);
-		std::nth_element(tmp, tmp + idx, tmp + n);
-		return tmp[idx];
+		return FrameTimePercentile90(s_ftRing, s_ftCount);
 	}
 
 	// Maximum ShadowLightCount the installed infrastructure supports.
