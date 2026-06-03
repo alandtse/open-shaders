@@ -162,6 +162,23 @@ jobs:
                   } > "${FILE}"
                   echo "body-file=${FILE}" >> "$GITHUB_OUTPUT"
 
+            # Force-roll the rolling tag to the built commit BEFORE publishing.
+            # ncipollo honors `commit:` only when it *creates* a tag — on an
+            # update (allowUpdates) it leaves an existing tag pinned to its
+            # original commit. Without this, dev-latest froze at the commit where
+            # this workflow first published (the tag, release "target", and
+            # checkout source all stuck days behind dev while only the body/asset
+            # advanced). Move the ref ourselves so the release tracks dev-HEAD.
+            - name: Roll dev-latest tag to the built commit
+              env:
+                  GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+              run: |
+                  set -euo pipefail
+                  ref="repos/${{ github.repository }}/git/refs/tags/dev-latest"
+                  gh api -X PATCH "$ref" -f sha="${{ github.sha }}" -F force=true \
+                    || gh api -X POST "repos/${{ github.repository }}/git/refs" \
+                         -f ref="refs/tags/dev-latest" -f sha="${{ github.sha }}"
+
             - name: Refresh dev-latest prerelease
               uses: ./.github/actions/publish-release
               with:
@@ -169,7 +186,8 @@ jobs:
                   token: ${{ secrets.GITHUB_TOKEN }}
                   # Non-semver tag: dodges maint-cleanup and the dev branch name.
                   tag: dev-latest
-                  # Point the rolling tag at the built commit (matches the body).
+                  # First-publish only (ncipollo ignores this on update); the
+                  # Roll step above keeps the existing tag tracking dev-HEAD.
                   commit: ${{ github.sha }}
                   name: "Open Shaders (dev) — latest build ${{ needs.build.outputs.version }}"
                   prerelease: "true"
