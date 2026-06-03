@@ -414,6 +414,12 @@ PS_OUTPUT main(PS_INPUT input)
 	float flickerScore = saturate(4 - fcCorner - fcMin - fcA0 - fcA1 - fcB0 - fcB1 - fcC0 - fcC1);
 
 	// --- temporal blend, clamp, and sharpen ---
+	// Builds two blend candidates and lerps between them by a flicker/motion weight:
+	//  - sharpened vs unsharpened neighbourhood colour (SharpenDelta adds back centre detail), and
+	//  - luma triples for the neighbourhood min/max bracket (tapA1) vs the history sample (tapB0).
+	// historyBlend sets how much history to keep; when it is low, clampToNeighborhood pulls the
+	// result toward the bracket. The final corner.xyz is the resulting lerp. (Dense per-line packing
+	// kept as-is — no repeating structure to factor without re-deriving the decompile.)
 	sampleUV.w = cmp(1 < tapC1.w);
 	// Sharpen deltas for the two blend candidates (centre minus quarter-weighted neighbour pair).
 	corner.y = SharpenDelta(tapC1.w, tapC1.y, tapC1.z);
