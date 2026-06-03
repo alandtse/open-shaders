@@ -82,6 +82,7 @@ static const float2 kSimilarityScale = float2(20, 100);   // motion-diff converg
 static const float kHistoryLumaDecay = 0.949999988;       // 0.95 decay applied to history motion luma
 static const float kHistoryBlendThreshold = 0.902499974;  // below this blend weight, clamp to neighbourhood
 static const float kFeedbackBlendMax = 0.99000001;        // ~1.0 ceiling for the feedback blend weight
+static const float kFlickerThreshold = 0.200000003;       // luma-spread below this counts as flicker
 
 /*
  * Channel layout (vanilla decompile — swizzles are load-bearing):
@@ -173,7 +174,7 @@ float AlphaCoverageMask(float2 uv)
 float FlickerLumaContribution(float centerLuma, float neighborLuma)
 {
 	float d = centerLuma + -neighborLuma;
-	d = 0.200000003 + -abs(d);
+	d = kFlickerThreshold + -abs(d);
 	return ceil(d);
 }
 
