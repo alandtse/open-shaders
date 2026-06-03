@@ -20,9 +20,9 @@ Two ways to supply the change set:
 Safety: validation is only narrowed when it is provably safe. Any of the
 following forces a FULL run:
 
-* a validation config (``.github/configs/**``), CMake, or submodule change —
-  these can alter the entry-point/define set itself, so the graph is no longer
-  authoritative;
+* a validation config (``.github/configs/**``), CMake, or submodule change
+  (``.gitmodules`` or a gitlink bump under ``extern/``) — these can alter the
+  entry-point/define set itself, so the graph is no longer authoritative;
 * a changed shader path that doesn't map into the AIO shader tree (an
   unexpected location we can't reason about).
 
@@ -62,6 +62,9 @@ _FULL_TRIGGERS = (
     re.compile(r"^CMakePresets\.json$"),
     re.compile(r"^cmake/"),
     re.compile(r"^\.gitmodules$"),
+    # Submodule pointer bumps surface as a gitlink change under extern/ without
+    # touching .gitmodules; treat both as a full-validation trigger.
+    re.compile(r"^extern/"),
 )
 
 
@@ -241,7 +244,9 @@ def main(argv: list[str]) -> int:
     for f in aio_files:
         print(f"[validate-changed]   changed shader: {f}")
 
-    # Write the AIO-relative list and hand it to hlslkit via @file.
+    # Write the AIO-relative list and hand it to hlslkit via @file. The real run
+    # blocks until hlslkit has read the file, so it is safe to remove afterward;
+    # always clean up (including --dry-run) so no stray temp files accumulate.
     fd, list_path = tempfile.mkstemp(prefix="changed_shaders_", suffix=".txt", text=True)
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as f:
@@ -249,11 +254,10 @@ def main(argv: list[str]) -> int:
         full_command = [*command, "--changed-files", f"@{list_path}"]
         return _run(full_command, args.dry_run)
     finally:
-        if not args.dry_run:
-            try:
-                os.remove(list_path)
-            except OSError:
-                pass
+        try:
+            os.remove(list_path)
+        except OSError:
+            pass
 
 
 def _run(command: list[str], dry_run: bool) -> int:

@@ -212,10 +212,14 @@ jobs:
                   # Materialize the changed-file list (one path per line). An empty
                   # or absent JSON yields an empty file, which the wrapper treats
                   # as "unknown change set" and validates everything (push/release).
+                  # If the JSON is malformed/truncated, fall back to an empty file
+                  # (=> full validation) rather than aborting the job.
+                  : > changed_files.txt
                   if [ -n "$CHANGED_FILES_JSON" ]; then
-                    echo "$CHANGED_FILES_JSON" | jq -r '.[]' > changed_files.txt
-                  else
-                    : > changed_files.txt
+                    if ! printf '%s' "$CHANGED_FILES_JSON" | jq -r '.[]' > changed_files.txt 2>/dev/null; then
+                      echo "WARNING: could not parse changed-files JSON; running FULL validation."
+                      : > changed_files.txt
+                    fi
                   fi
                   echo "Changed files for incremental validation:"
                   cat changed_files.txt || true
