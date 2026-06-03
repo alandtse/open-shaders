@@ -8,6 +8,7 @@
 #include "Upscaling/RCAS/RCAS.h"
 #include "Upscaling/Streamline.h"
 #include "Utils/BootSnapshot.h"
+#include "VR/OpenVRDetection.h"
 #include <d3d11_4.h>
 #include <d3d12.h>
 #include <winrt/base.h>
@@ -326,6 +327,17 @@ public:
 	BlurResources GetBlurResources() const;
 
 private:
+	// OpenComposite conflict guard: when the OpenComposite VR shim runs its own
+	// DLSS/FSR/DLAA upscaling, ours stands down to avoid double upscaling.
+	// Detection lives in VRDetection; this class owns the force-to-None policy.
+	// forceRefresh re-probes the config; otherwise the cached result is returned.
+	const VRDetection::OpenCompositeUpscalingState& GetOpenCompositeUpscalingBlocker(bool a_forceRefresh = false) const;
+	void ApplyOpenCompositeUpscalingBlocker(bool a_forceRefresh = false);
+
+	mutable VRDetection::OpenCompositeUpscalingState openCompositeUpscalingBlocker;
+	mutable bool openCompositeUpscalingBlockerCacheValid = false;
+	bool openCompositeUpscalingBackendSkipLogged = false;
+
 	struct Main_UpdateJitter
 	{
 		static void thunk(RE::BSGraphics::State* a_state);

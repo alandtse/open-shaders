@@ -186,6 +186,11 @@ HRESULT WINAPI hk_D3D11CreateDeviceAndSwapChainUpscaling(
 
 void Upscaling::DrawSettings()
 {
+	// Force method to None up front so the picker reflects the locked state.
+	ApplyOpenCompositeUpscalingBlocker();
+	const auto& openCompositeBlocker = GetOpenCompositeUpscalingBlocker();
+	const bool openCompositeBlocksUpscaling = openCompositeBlocker.active;
+
 	// Display upscaling options in the UI
 	std::vector<std::string> upscaleModes = { "None", "TAA" };
 
@@ -212,9 +217,31 @@ void Upscaling::DrawSettings()
 	std::vector<const char*> modeLabels;
 	for (uint32_t i = 0; i <= availableModes; ++i)
 		modeLabels.push_back(upscaleModes[i].c_str());
+	if (openCompositeBlocksUpscaling)
+		ImGui::BeginDisabled();
 	ImGui::Combo("Method", (int*)currentUpscaleMode, modeLabels.data(), (int)modeLabels.size());
+	if (openCompositeBlocksUpscaling)
+		ImGui::EndDisabled();
+	if (auto _tt = Util::HoverTooltipWrapper()) {
+		if (openCompositeBlocksUpscaling)
+			ImGui::Text("Locked to None while OpenComposite has %s=true.", openCompositeBlocker.settingName.c_str());
+		else
+			ImGui::TextUnformatted("Selects the upscaling backend.");
+	}
 
 	*currentUpscaleMode = std::min(availableModes, *currentUpscaleMode);
+
+	if (openCompositeBlocksUpscaling) {
+		if (openCompositeBlocker.configPath.empty())
+			Util::Text::WrappedWarning(
+				"Upscaling is locked to None because OpenComposite has %s=true.",
+				openCompositeBlocker.settingName.c_str());
+		else
+			Util::Text::WrappedWarning(
+				"Upscaling is locked to None because OpenComposite has %s=true in %s.",
+				openCompositeBlocker.settingName.c_str(),
+				openCompositeBlocker.configPath.c_str());
+	}
 
 	// Check the current upscale method
 	auto upscaleMethod = GetUpscaleMethod();
@@ -590,8 +617,45 @@ void Upscaling::DrawSettings()
 	}
 }
 
+const VRDetection::OpenCompositeUpscalingState& Upscaling::GetOpenCompositeUpscalingBlocker(bool a_forceRefresh) const
+{
+	// Cached after first probe; lifecycle entry points force a refresh.
+	if (!a_forceRefresh && openCompositeUpscalingBlockerCacheValid)
+		return openCompositeUpscalingBlocker;
+
+	// VR-only; non-VR never probes the filesystem.
+	openCompositeUpscalingBlocker = globals::game::isVR ?
+	                                    VRDetection::DetectOpenCompositeUpscaling() :
+	                                    VRDetection::OpenCompositeUpscalingState{};
+	openCompositeUpscalingBlockerCacheValid = true;
+
+	return openCompositeUpscalingBlocker;
+}
+
+void Upscaling::ApplyOpenCompositeUpscalingBlocker(bool a_forceRefresh)
+{
+	const auto& blocker = GetOpenCompositeUpscalingBlocker(a_forceRefresh);
+	if (!blocker.active)
+		return;
+
+	const bool wasOverriding =
+		settings.upscaleMethod != static_cast<uint>(UpscaleMethod::kNONE) ||
+		settings.upscaleMethodNoDLSS != static_cast<uint>(UpscaleMethod::kNONE);
+	if (wasOverriding) {
+		if (blocker.configPath.empty())
+			logger::warn("[Upscaling] Forcing upscaling to None because OpenComposite has {}=true.", blocker.settingName);
+		else
+			logger::warn("[Upscaling] Forcing upscaling to None because OpenComposite has {}=true in {}.", blocker.settingName, blocker.configPath);
+	}
+
+	settings.upscaleMethod = static_cast<uint>(UpscaleMethod::kNONE);
+	settings.upscaleMethodNoDLSS = static_cast<uint>(UpscaleMethod::kNONE);
+}
+
 void Upscaling::SaveSettings(json& o_json)
 {
+	// Persist None, not the user's prior method, while OpenComposite owns upscaling.
+	ApplyOpenCompositeUpscalingBlocker(true);
 	o_json = settings;
 	// Nest FoveatedRender's settings under a sub-key so they round-trip alongside
 	// Upscaling's own. Subrect controller persistence is owned by FoveatedRender.
@@ -643,6 +707,8 @@ void Upscaling::LoadSettings(json& o_json)
 	// LoadSettings (which fired before this block ran). Idempotent — no-op
 	// if FoveatedRender is inactive or the preset is already compatible.
 	foveatedRender.ClampSettings();
+	// Override a loaded method with None when OpenComposite owns upscaling.
+	ApplyOpenCompositeUpscalingBlocker(true);
 	const float originalReflexFPSLimit = settings.reflexFPSLimit;
 	if (!std::isfinite(settings.reflexFPSLimit)) {
 		settings.reflexFPSLimit = 60.0f;
@@ -672,10 +738,17 @@ void Upscaling::RestoreDefaultSettings()
 {
 	settings = {};
 	foveatedRender.RestoreDefaultSettings();
+	ApplyOpenCompositeUpscalingBlocker(true);
 }
 
 void Upscaling::DataLoaded()
 {
+	ApplyOpenCompositeUpscalingBlocker(true);
+	if (const auto& blocker = GetOpenCompositeUpscalingBlocker(); blocker.active) {
+		logger::warn("[Upscaling] Skipping data-loaded upscaling adjustments because OpenComposite has {}=true.", blocker.settingName);
+		return;
+	}
+
 	// Fix screenshots fix from Engine Fixes
 	RE::GetINISetting("bUseTAA:Display")->data.b = false;
 
@@ -712,6 +785,12 @@ bool Upscaling::MenuOpenCloseEventHandler::Register()
 
 void Upscaling::Load()
 {
+	ApplyOpenCompositeUpscalingBlocker(true);
+	if (const auto& blocker = GetOpenCompositeUpscalingBlocker(); blocker.active) {
+		logger::warn("[Upscaling] Skipping D3D11 device hook because OpenComposite has {}=true.", blocker.settingName);
+		return;
+	}
+
 	*(uintptr_t*)&ptrD3D11CreateDeviceAndSwapChainUpscaling = SKSE::PatchIAT(hk_D3D11CreateDeviceAndSwapChainUpscaling, "d3d11.dll", "D3D11CreateDeviceAndSwapChain");
 }
 
@@ -729,6 +808,13 @@ struct BSImageSpace_Init_FXAA
 };
 void Upscaling::PostPostLoad()
 {
+	// Guard before foveatedRender.PostPostLoad() so its hooks also stand down.
+	ApplyOpenCompositeUpscalingBlocker(true);
+	if (const auto& blocker = GetOpenCompositeUpscalingBlocker(); blocker.active) {
+		logger::warn("[Upscaling] Skipping upscaling render hooks because OpenComposite has {}=true.", blocker.settingName);
+		return;
+	}
+
 	// Subrect controller defaults + stereo flag (FoveatedRender is no longer a
 	// Feature subclass so we drive its lifecycle from here).
 	foveatedRender.PostPostLoad();
@@ -777,6 +863,10 @@ float Upscaling::GetQualityModeRatio(uint qualityMode)
 
 Upscaling::UpscaleMethod Upscaling::GetUpscaleMethod() const
 {
+	// OpenComposite owning upscaling wins over everything (incl. PerfMode); VR-only.
+	if (globals::game::isVR && GetOpenCompositeUpscalingBlocker().active)
+		return UpscaleMethod::kNONE;
+
 	// Lock runtime to the boot upscaler under PerfMode — engine RTs are
 	// sized for it, and routing a different method through testTexture/
 	// renderRes paths breaks the HMD.
@@ -1463,6 +1553,12 @@ void Upscaling::ConfigureUpscaling(RE::BSGraphics::State* a_viewport)
 
 void Upscaling::SetupResources()
 {
+	ApplyOpenCompositeUpscalingBlocker(true);
+	if (const auto& blocker = GetOpenCompositeUpscalingBlocker(); blocker.active) {
+		logger::warn("[Upscaling] Skipping upscaling resource setup because OpenComposite has {}=true.", blocker.settingName);
+		return;
+	}
+
 	QueryPerformanceFrequency(&qpf);
 
 	auto renderer = globals::game::renderer;
@@ -1813,6 +1909,20 @@ float Upscaling::GetFrameGenerationFrameTime() const
 // Unified interface methods
 void Upscaling::LoadUpscalingSDKs()
 {
+	// Hooked into device creation, so this can fire repeatedly — log the skip once.
+	ApplyOpenCompositeUpscalingBlocker(true);
+	const auto& blocker = GetOpenCompositeUpscalingBlocker();
+	if (blocker.active) {
+		if (!openCompositeUpscalingBackendSkipLogged) {
+			if (blocker.configPath.empty())
+				logger::warn("[Upscaling] Skipping Streamline/FidelityFX backend init because OpenComposite has {}=true.", blocker.settingName);
+			else
+				logger::warn("[Upscaling] Skipping Streamline/FidelityFX backend init because OpenComposite has {}=true in {}.", blocker.settingName, blocker.configPath);
+			openCompositeUpscalingBackendSkipLogged = true;
+		}
+		return;
+	}
+
 	// Initialize upscaling SDK components during plugin startup
 	// This ensures all SDKs are available before any D3D device creation
 	streamline.LoadInterposer();
