@@ -9,9 +9,9 @@
     Tier 1 (this script): identical SHA-256 of the compiled .cso == provably identical
     GPU program. fxc emits no timestamps without /Zi, so same source -> same bytes.
 
-    Tier 2 (this script, on mismatch): dumps /Fc assembly for both revisions and prints
-    a unified diff, so a legitimate-but-non-identical refactor (e.g. register reorder)
-    can be eyeballed.
+    Tier 2 (this script, on mismatch): dumps /Fc assembly for both revisions and lists
+    the differing lines (base/work markers), so a legitimate-but-non-identical refactor
+    (e.g. register reorder) can be eyeballed.
 
     A refactor that is Tier-1 IDENTICAL on the swept permutations needs no further proof.
     Note: the default sweep (VR x HDR_OUTPUT) is strong evidence, not the full build
@@ -78,6 +78,7 @@ function Resolve-Fxc {
 $repoRoot = (git rev-parse --show-toplevel 2>$null)
 if (-not $repoRoot) { throw "Not inside a git repository." }
 Push-Location $repoRoot
+$work = $null
 try {
     $fxcPath = Resolve-Fxc
 
@@ -123,7 +124,12 @@ try {
     [IO.File]::WriteAllLines($baseFile, $baseContent)
 
     function Compile([string]$src, [string]$defs, [string]$outFile, [switch]$Asm) {
-        $defArgs = @(); foreach ($d in ($defs -split '\s+' | Where-Object { $_ })) { $defArgs += "/D"; $defArgs += "$d=1" }
+        # Preserve explicit-valued defines (e.g. SHADOWFILTER=0); only bare names get =1.
+        $defArgs = @()
+        foreach ($d in ($defs -split '\s+' | Where-Object { $_ })) {
+            $defArgs += "/D"
+            $defArgs += $(if ($d -like '*=*') { $d } else { "$d=1" })
+        }
         $fmt = if ($Asm) { "/Fc" } else { "/Fo" }
         $out = & $fxcPath /nologo /T $Profile /E $Entry @defArgs /I $IncludeDir $src $fmt $outFile 2>&1
         return @{ Code = $LASTEXITCODE; Out = $out }
@@ -181,9 +187,10 @@ try {
     elseif ($allIdentical) { Write-Host "RESULT: behavior-preserving (all permutations identical)" -ForegroundColor Green; $exit = 0 }
     else { Write-Host "RESULT: bytecode differs - inspect asm diff above" -ForegroundColor Yellow; $exit = 2 }
 
-    Remove-Item -Recurse -Force $work -ErrorAction SilentlyContinue
     exit $exit
 }
 finally {
+    # Runs on normal exit and on throw, so the temp dir never leaks.
+    if ($work -and (Test-Path $work)) { Remove-Item -Recurse -Force $work -ErrorAction SilentlyContinue }
     Pop-Location
 }
