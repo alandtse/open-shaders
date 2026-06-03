@@ -425,15 +425,15 @@ PS_OUTPUT main(PS_INPUT input)
 	// historyBlend sets how much history to keep; when it is low, clampToNeighborhood pulls the
 	// result toward the bracket. The final corner.xyz is the resulting lerp. (Dense per-line packing
 	// kept as-is — no repeating structure to factor without re-deriving the decompile.)
-	sampleUV.w = cmp(1 < tapC1.w);
-	// Sharpen deltas for the two blend candidates (centre minus quarter-weighted neighbour pair).
-	corner.y = SharpenDelta(tapC1.w, tapC1.y, tapC1.z);
-	tapC0.z = tapC1.x;
-	corner.xzw = tapC1.yzw;
-	tapC0.y = SharpenDelta(tapC0.w, tapC0.x, tapC1.x);
-	tapMin.x = cmp(tapC0.w < 0);
-	tapMin.xyzw = tapMin.xxxx ? corner.xyzw : tapC0.xyzw;
-	tapA0.xyzw = sampleUV.wwww ? tapMin.xyzw : corner.xyzw;
+	// Two history-clip candidates from the min/max AABB bounds, each packed (R, sharpenDelta, B, luma)
+	// — the decompile stashes the RCAS sharpen in the G slot. corner = min bound, tapC0 = max bound.
+	float minOverbright = cmp(1 < tapC1.w);
+	corner = float4(tapC1.y, SharpenDelta(tapC1.w, tapC1.y, tapC1.z), tapC1.z, tapC1.w);
+	tapC0 = float4(tapC0.x, SharpenDelta(tapC0.w, tapC0.x, tapC1.x), tapC1.x, tapC0.w);
+	// Prefer the max bound; fall back to the min bound when the max luma is degenerate (<0), then to
+	// that result vs the min bound when the min luma is overbright (>1).
+	tapMin.xyzw = cmp(tapC0.w < 0) ? corner : tapC0;
+	tapA0.xyzw = minOverbright ? tapMin.xyzw : corner;
 	// Clamp history luma into the two sharpened candidates' luma range; tapA1 = (clamped, lo, hi).
 	tapA1.x = clamp(history.x, tapMin.w, tapA0.w);
 	tapA1.y = tapMin.w;
