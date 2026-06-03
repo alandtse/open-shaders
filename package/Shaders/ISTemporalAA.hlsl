@@ -363,8 +363,8 @@ PS_OUTPUT main(PS_INPUT input)
 	bracketMax.yzw = MergeLumaBracket(tapA1, bracketMax.yzw, tapMin.x);
 	bracketMax.yzw = MergeLumaBracket(tapA0, bracketMax.yzw, corner.x);
 	mergeScratch.yzw = MergeLumaBracket(tapMin, bracketMax.yzw, uvMinBelowHist);
-	tapB1.x = cmp(corner.w < mergeScratch.w);
-	bracketMinReg.yzw = tapB1.xxx ? corner.yzw : mergeScratch.yzw;
+	// Final fold: corner tap, ungated (gate 0 → always take the lower-luma colour).
+	bracketMinReg.yzw = MergeLumaBracket(corner, mergeScratch.yzw, 0);
 	tapB1.x = cmp(kMinLumaCap < centerLuma);
 	bracketMax.yzw = tapB1.xxx ? centerMeta.yzx : kMinLumaCap.xxx;
 	bracketMax.xyz = bracketMax.xxx ? bracketMax.yzw : kMinLumaCap.xxx;
