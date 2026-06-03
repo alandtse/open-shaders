@@ -146,11 +146,11 @@ target_include_directories(
         "${CMAKE_SOURCE_DIR}/extern/stb_image_write_hdr_png"
         ${DETOURS_INCLUDE_DIRS}
         ${EXPRTK_INCLUDE_DIRS}
-        # Vendored ImGuiVRHelper public API headers (LGPL-3.0).
-        # Pulled from extern/imgui-vr-helper/api/ at integration time.
-        # Independent of the helper plugin's GPL-licensed implementation —
-        # the API surface is intentionally tiny and stable to avoid
-        # linking the client to ImGui or OpenVR.
+        # Vendored ImGuiVRHelper public API headers (LGPL-3.0). Copied from
+        # the standalone imgui-vr-helper repo's api/ directory at integration
+        # time. Independent of the helper plugin's GPL-licensed implementation —
+        # the API surface is intentionally tiny and stable to avoid linking
+        # the client to ImGui or OpenVR.
         "${CMAKE_SOURCE_DIR}/extern/imgui-vr-helper-api"
 )
 
