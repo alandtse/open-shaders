@@ -9,10 +9,10 @@ compiles only the entry-point shaders that transitively include a changed file.
 
 Two ways to supply the change set:
 
-* ``--changed-list-file FILE`` — a precomputed list (one path per line, or
-  whitespace/space separated). CI passes the list produced by
-  ``tj-actions/changed-files``. An *empty* file means "unknown change set" and
-  triggers FULL validation (used for push/release runs).
+* ``--changed-list-file FILE`` — a precomputed list, one path per line (not
+  whitespace-separated, so feature directory names with spaces survive). CI
+  passes the list produced by ``tj-actions/changed-files``. An *empty* file
+  means "unknown change set" and triggers FULL validation (push/release runs).
 * git diff (default when no list file is given) — compares the working tree
   against ``--base`` (default ``HEAD``). An empty diff means "nothing changed"
   and exits 0 without compiling. This is the local-dev path.
@@ -110,11 +110,21 @@ def find_full_trigger(changed: list[str]) -> str | None:
     return None
 
 
-def translate_to_aio(path: str) -> str | None:
-    """Map a repo-relative shader path to its AIO-relative form, or None.
+class _Unmappable:
+    """Sentinel type: a shader file outside the known AIO shader roots."""
 
-    Returns None for non-shader files. Raises nothing: an unmappable shader
-    path is reported via the sentinel below so the caller can fall back to full.
+
+# A shader file we can't map to the AIO layout (e.g. tests/shaders/**). Distinct
+# from None (not a shader at all) so the caller widens to full validation rather
+# than silently dropping it.
+UNMAPPABLE = _Unmappable()
+
+
+def translate_to_aio(path: str) -> "str | None | _Unmappable":
+    """Map a repo-relative shader path to its AIO-relative form.
+
+    Returns the AIO-relative path for a mappable shader, ``None`` for a
+    non-shader file, or :data:`UNMAPPABLE` for a shader outside the known roots.
     """
     norm = _normalize(path)
     if not norm.lower().endswith(SHADER_EXTENSIONS):
@@ -123,13 +133,7 @@ def translate_to_aio(path: str) -> str | None:
         m = pattern.match(norm)
         if m:
             return m.group(1)
-    # A shader file outside the known shader roots (e.g. tests/shaders/**) —
-    # signal "unmappable" so validation widens to full rather than silently
-    # dropping it.
-    return _UNMAPPABLE
-
-
-_UNMAPPABLE = object()
+    return UNMAPPABLE
 
 
 def classify_changes(changed: list[str]) -> tuple[list[str] | None, str]:
@@ -148,7 +152,7 @@ def classify_changes(changed: list[str]) -> tuple[list[str] | None, str]:
         mapped = translate_to_aio(path)
         if mapped is None:
             continue  # not a shader file
-        if mapped is _UNMAPPABLE:
+        if mapped is UNMAPPABLE:
             return None, f"full validation: shader path '{_normalize(path)}' is outside the AIO shader tree"
         aio_files.append(mapped)
 
@@ -208,7 +212,8 @@ def main(argv: list[str]) -> int:
     else:
         try:
             changed = git_changed_files(args.base, args.repo_root)
-        except subprocess.CalledProcessError as e:
+        except (subprocess.CalledProcessError, OSError) as e:
+            # CalledProcessError: not a git repo / bad ref. OSError: git not on PATH.
             print(f"[validate-changed] git diff failed ({e}); running FULL validation.", file=sys.stderr)
             changed = []
             empty_means_full = True
