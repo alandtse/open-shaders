@@ -75,10 +75,13 @@ float DecodeFeedbackLuma(float gammaLuma)
 static const float3 kLumaWeights = float3(0.5, 0.25, 0.25);
 
 // Named magic constants from the vanilla decompile (values unchanged).
-static const float kMaxLumaCap = 1.00100005;             // bracket ceiling (just above 1.0 PQ)
-static const float kMinLumaCap = -0.00100000005;         // bracket floor (just below 0)
-static const float kLumaEpsilon = 0.00999999978;         // negligible-luma threshold
-static const float2 kSimilarityScale = float2(20, 100);  // motion-diff convergence decay (x), strict (y)
+static const float kMaxLumaCap = 1.00100005;              // bracket ceiling (just above 1.0 PQ)
+static const float kMinLumaCap = -0.00100000005;          // bracket floor (just below 0)
+static const float kLumaEpsilon = 0.00999999978;          // negligible-luma threshold
+static const float2 kSimilarityScale = float2(20, 100);   // motion-diff convergence decay (x), strict (y)
+static const float kHistoryLumaDecay = 0.949999988;       // 0.95 decay applied to history motion luma
+static const float kHistoryBlendThreshold = 0.902499974;  // below this blend weight, clamp to neighbourhood
+static const float kFeedbackBlendMax = 0.99000001;        // ~1.0 ceiling for the feedback blend weight
 
 /*
  * Channel layout (vanilla decompile — swizzles are load-bearing):
@@ -436,9 +439,9 @@ PS_OUTPUT main(PS_INPUT input)
 	tapB0.z = corner.w;
 	tapB0.x = history.x;
 	tapB0.y = tapC0.w;
-	sampleUV.w = 0.949999988 * history.y;
+	sampleUV.w = kHistoryLumaDecay * history.y;
 	float historyBlend = saturate(flickerScore * 0.25 + sampleUV.w);
-	float clampToNeighborhood = cmp(historyBlend < 0.902499974);
+	float clampToNeighborhood = cmp(historyBlend < kHistoryBlendThreshold);
 	history.xyz = clampToNeighborhood.xxx ? tapA1.xyz : tapB0.xyz;
 	history.yz = history.zx + -history.yy;
 	corner.w = cmp(kLumaEpsilon < history.y);
@@ -496,7 +499,7 @@ PS_OUTPUT main(PS_INPUT input)
 	motionReject.x = motionConfidence * motionReject.x + BlendParams.y;
 	motionReject.x = min(motionReject.x, history.x);
 	tapA0.y = history.w * historyBlend;
-	motionReject.y = 0.99000001 + -motionReject.x;
+	motionReject.y = kFeedbackBlendMax + -motionReject.x;
 	motionReject.x = tapA0.y * motionReject.y + motionReject.x;
 	feedbackOut.yz = float2(tapA0.y, motionConfidence);
 #	ifdef HDR_OUTPUT
