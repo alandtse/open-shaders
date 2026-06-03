@@ -174,6 +174,16 @@ float FlickerLumaContribution(float centerLuma, float neighborLuma)
 	return ceil(d);
 }
 
+// Fold one neighbour tap into the running min-luma colour bracket. Vanilla decompile pack:
+// a tap is float4(GRB.xyz, luma.w); the bracket is a float3 (R, B, luma) whose .z is the luma.
+// The lower-luma colour is committed unless `gate` (the tap's belowHist mask) is set — matching
+// the decompile's cmp/select/select order exactly.
+float3 MergeLumaBracket(float4 tap, float3 bracket, float gate)
+{
+	float3 cand = cmp(tap.w < bracket.z) ? tap.yzw : bracket;
+	return gate ? bracket : cand;
+}
+
 // shallowestDepth must already include depth before calling.
 float2 PickIfShallowestUV(float2 selectedUV, float shallowestDepth, float depth, float2 uvIfMatch)
 {
@@ -334,24 +344,14 @@ PS_OUTPUT main(PS_INPUT input)
 	neighborColor = tapB1.yxz * NeighborWeights.www + neighborColor;
 	neighborColor = tapC1.yxz * NeighborWeights.yyy + neighborColor;
 	neighborColor = centerColor * NeighborWeights.xxx + neighborColor;
-	tapB1.x = cmp(tapC0.w < bracketMax.w);
-	mergeScratch.xyz = tapB1.xxx ? tapC0.yzw : bracketMax.yzw;
-	bracketMax.yzw = tapB0.xxx ? bracketMax.yzw : mergeScratch.xyz;
-	tapB1.x = cmp(tapB1.w < bracketMax.w);
-	mergeScratch.xyz = tapB1.xxx ? tapB1.yzw : bracketMax.yzw;
-	bracketMax.yzw = tapA1.xxx ? bracketMax.yzw : mergeScratch.xyz;
-	tapB1.x = cmp(tapB0.w < bracketMax.w);
-	mergeScratch.xyz = tapB1.xxx ? tapB0.yzw : bracketMax.yzw;
-	bracketMax.yzw = tapA0.xxx ? bracketMax.yzw : mergeScratch.xyz;
-	tapB1.x = cmp(tapA1.w < bracketMax.w);
-	mergeScratch.xyz = tapB1.xxx ? tapA1.yzw : bracketMax.yzw;
-	bracketMax.yzw = tapMin.xxx ? bracketMax.yzw : mergeScratch.xyz;
-	tapB1.x = cmp(tapA0.w < bracketMax.w);
-	mergeScratch.xyz = tapB1.xxx ? tapA0.yzw : bracketMax.yzw;
-	bracketMax.yzw = corner.xxx ? bracketMax.yzw : mergeScratch.xyz;
-	tapB1.x = cmp(tapMin.w < bracketMax.w);
-	mergeScratch.xyz = tapB1.xxx ? tapMin.yzw : bracketMax.yzw;
-	mergeScratch.yzw = uvMinBelowHist.xxx ? bracketMax.yzw : mergeScratch.xyz;
+	// Running min-luma colour bracket folded over the neighbourhood taps, each committed unless its
+	// belowHist gate is set (see MergeLumaBracket). The final tap lands in mergeScratch.yzw.
+	bracketMax.yzw = MergeLumaBracket(tapC0, bracketMax.yzw, tapB0.x);
+	bracketMax.yzw = MergeLumaBracket(tapB1, bracketMax.yzw, tapA1.x);
+	bracketMax.yzw = MergeLumaBracket(tapB0, bracketMax.yzw, tapA0.x);
+	bracketMax.yzw = MergeLumaBracket(tapA1, bracketMax.yzw, tapMin.x);
+	bracketMax.yzw = MergeLumaBracket(tapA0, bracketMax.yzw, corner.x);
+	mergeScratch.yzw = MergeLumaBracket(tapMin, bracketMax.yzw, uvMinBelowHist);
 	tapB1.x = cmp(corner.w < mergeScratch.w);
 	bracketMinReg.yzw = tapB1.xxx ? corner.yzw : mergeScratch.yzw;
 	tapB1.x = cmp(kMinLumaCap < centerLuma);
