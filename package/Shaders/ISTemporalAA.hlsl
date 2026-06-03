@@ -74,6 +74,12 @@ float DecodeFeedbackLuma(float gammaLuma)
 
 static const float3 kLumaWeights = float3(0.5, 0.25, 0.25);
 
+// Named magic constants from the vanilla decompile (values unchanged).
+static const float kMaxLumaCap = 1.00100005;             // bracket ceiling (just above 1.0 PQ)
+static const float kMinLumaCap = -0.00100000005;         // bracket floor (just below 0)
+static const float kLumaEpsilon = 0.00999999978;         // negligible-luma threshold
+static const float2 kSimilarityScale = float2(20, 100);  // motion-diff convergence decay (x), strict (y)
+
 /*
  * Channel layout (vanilla decompile — swizzles are load-bearing):
  * - Neighbour taps: .yxz sample; luma via dot(.xzy, kLumaWeights); stored as float4(.xyz=GRB, .w=luma).
@@ -275,7 +281,7 @@ PS_OUTPUT main(PS_INPUT input)
 	motionReject.zw = texCoord.xy + motionReject.xy;
 	tapMin.xy = ClampHistoryUV(motionReject.zw);
 #	endif
-	motionReject.x = sqrt(dot(motionReject.xy, motionReject.xy));
+	float motionLength = sqrt(dot(motionReject.xy, motionReject.xy));
 	history.xyw = historyTex.Sample(historySampler, tapMin.xy).xyz;
 #	ifdef HDR_OUTPUT
 	// history.x is stored as game-gamma luma (see EncodeFeedbackLuma on write).
@@ -289,12 +295,14 @@ PS_OUTPUT main(PS_INPUT input)
 	// --- neighbour colour / luma samples ---
 	sampleUV.zw = drUVMin;
 	sampleUV.xy = drCenter;
+	float uvMinCoverage;   // uvMin alpha coverage; seeds the allTransparent test far below
+	float uvMinBelowHist;  // uvMin tap below-history mask; consumed in the bracket/flicker cascade
 	{
 		ISTAA_NeighborTap tap = SampleNeighborGRB(sampleUV.zw, history.x);
 		tapMin.xyz = tap.grb;
-		sampleUV.z = AlphaCoverageMask(sampleUV.zw);
+		uvMinCoverage = AlphaCoverageMask(sampleUV.zw);
 		tapMin.w = tap.luma;
-		sampleUV.w = tap.belowHist;
+		uvMinBelowHist = tap.belowHist;
 	}
 	AssignPackedNeighbor(drNeighborsA.xy, history.x, tapA0, corner.x);
 	AssignPackedNeighbor(drNeighborsA.zw, history.x, tapA1, tapMin.x);
@@ -302,28 +310,30 @@ PS_OUTPUT main(PS_INPUT input)
 	AssignPackedNeighbor(drNeighborsB.zw, history.x, tapB1, tapA1.x);
 	AssignPackedNeighbor(drNeighborsC.xy, history.x, tapC0, tapB0.x);
 	AssignPackedNeighbor(drNeighborsC.zw, history.x, tapC1, center.x);
-	center.yzw = SampleCenterRGB(sampleUV.xy);
+	float3 centerColor = SampleCenterRGB(sampleUV.xy);  // centre RGB; center.x stays the belowHist mask
 
 	// --- centre bracket seed, neighbourhood bracket, flicker, temporal blend (verbatim math) ---
-	centerMeta.x = dot(center.zwy, kLumaWeights);
-	bracketMax.x = cmp(centerMeta.x < history.x);
-	centerMeta.yz = center.yw;
+	float centerLuma = dot(centerColor.yzx, kLumaWeights);
+	centerMeta.x = centerLuma;  // .yzx swizzle in the bracket cascade still reads this slot
+	bracketMax.x = cmp(centerLuma < history.x);
+	centerMeta.yz = centerColor.xz;
 	// Bracket ceiling: 1.001 is just above the maximum PQ value (1.0 = 10000 nits).
 	// Nothing in the scene exceeds this, so the ceiling works correctly in PQ working space.
 	// (In linear BT2020 this would be wrong — sky/specular exceed 1.0 linear — but PQ is bounded.)
-	bracketMax.y = cmp(centerMeta.x < 1.00100005);
-	bracketMax.yzw = bracketMax.yyy ? centerMeta.yzx : float3(1.00100005, 1.00100005, 1.00100005);
-	bracketMax.yzw = bracketMax.xxx ? float3(1.00100005, 1.00100005, 1.00100005) : bracketMax.yzw;
+	bracketMax.y = cmp(centerLuma < kMaxLumaCap);
+	bracketMax.yzw = bracketMax.yyy ? centerMeta.yzx : kMaxLumaCap.xxx;
+	bracketMax.yzw = bracketMax.xxx ? kMaxLumaCap.xxx : bracketMax.yzw;
 
 	weightedColor.x = cmp(tapC1.w < bracketMax.w);
 	weightedColor.xyz = weightedColor.xxx ? tapC1.yzw : bracketMax.yzw;
 	bracketMax.yzw = center.xxx ? bracketMax.yzw : weightedColor.xyz;
 
 	// --- neighborhood min/max color bracket ---
-	weightedColor.xyz = NeighborWeights.zzz * tapC0.yxz;
-	weightedColor.xyz = tapB1.yxz * NeighborWeights.www + weightedColor.xyz;
-	weightedColor.xyz = tapC1.yxz * NeighborWeights.yyy + weightedColor.xyz;
-	weightedColor.xyz = center.yzw * NeighborWeights.xxx + weightedColor.xyz;
+	// 4-tap weighted neighbour colour (C + D + L + LD); consumed by the non-reject output path.
+	float3 neighborColor = NeighborWeights.zzz * tapC0.yxz;
+	neighborColor = tapB1.yxz * NeighborWeights.www + neighborColor;
+	neighborColor = tapC1.yxz * NeighborWeights.yyy + neighborColor;
+	neighborColor = centerColor * NeighborWeights.xxx + neighborColor;
 	tapB1.x = cmp(tapC0.w < bracketMax.w);
 	mergeScratch.xyz = tapB1.xxx ? tapC0.yzw : bracketMax.yzw;
 	bracketMax.yzw = tapB0.xxx ? bracketMax.yzw : mergeScratch.xyz;
@@ -341,57 +351,57 @@ PS_OUTPUT main(PS_INPUT input)
 	bracketMax.yzw = corner.xxx ? bracketMax.yzw : mergeScratch.xyz;
 	tapB1.x = cmp(tapMin.w < bracketMax.w);
 	mergeScratch.xyz = tapB1.xxx ? tapMin.yzw : bracketMax.yzw;
-	mergeScratch.yzw = sampleUV.www ? bracketMax.yzw : mergeScratch.xyz;
+	mergeScratch.yzw = uvMinBelowHist.xxx ? bracketMax.yzw : mergeScratch.xyz;
 	tapB1.x = cmp(corner.w < mergeScratch.w);
 	bracketMinReg.yzw = tapB1.xxx ? corner.yzw : mergeScratch.yzw;
-	tapB1.x = cmp(-0.00100000005 < centerMeta.x);
-	bracketMax.yzw = tapB1.xxx ? centerMeta.yzx : float3(-0.00100000005, -0.00100000005, -0.00100000005);
-	bracketMax.xyz = bracketMax.xxx ? bracketMax.yzw : float3(-0.00100000005, -0.00100000005, -0.00100000005);
+	tapB1.x = cmp(kMinLumaCap < centerLuma);
+	bracketMax.yzw = tapB1.xxx ? centerMeta.yzx : kMinLumaCap.xxx;
+	bracketMax.xyz = bracketMax.xxx ? bracketMax.yzw : kMinLumaCap.xxx;
 	tapB1.x = cmp(bracketMax.z < tapC1.w);
 	tapC1.xyz = tapB1.xxx ? tapC1.yzw : bracketMax.xyz;
 	tapC1.xyz = center.xxx ? tapC1.xyz : bracketMax.xyz;
 
 	// --- flicker score from neighbor luma spread ---
-	tapB1.x = FlickerLumaContribution(centerMeta.x, tapC1.w);
+	tapB1.x = FlickerLumaContribution(centerLuma, tapC1.w);
 	tapC0.x = cmp(tapC1.z < tapC0.w);
 	tapC0.xyz = tapC0.xxx ? tapC0.yzw : tapC1.xyz;
 	tapC0.xyz = tapB0.xxx ? tapC0.xyz : tapC1.xyz;
-	tapB0.x = FlickerLumaContribution(centerMeta.x, tapC0.w);
+	tapB0.x = FlickerLumaContribution(centerLuma, tapC0.w);
 	tapC0.w = cmp(tapC0.z < tapB1.w);
 	tapC1.xyz = tapC0.www ? tapB1.yzw : tapC0.xyz;
 	tapC0.xyz = tapA1.xxx ? tapC1.xyz : tapC0.xyz;
-	tapA1.x = FlickerLumaContribution(centerMeta.x, tapB1.w);
+	tapA1.x = FlickerLumaContribution(centerLuma, tapB1.w);
 	tapB1.y = cmp(tapC0.z < tapB0.w);
 	tapB1.yzw = tapB1.yyy ? tapB0.yzw : tapC0.xyz;
 	tapB1.yzw = tapA0.xxx ? tapB1.yzw : tapC0.xyz;
-	tapA0.x = FlickerLumaContribution(centerMeta.x, tapB0.w);
+	tapA0.x = FlickerLumaContribution(centerLuma, tapB0.w);
 	tapB0.y = cmp(tapB1.w < tapA1.w);
 	tapB0.yzw = tapB0.yyy ? tapA1.yzw : tapB1.yzw;
 	tapB0.yzw = tapMin.xxx ? tapB0.yzw : tapB1.yzw;
-	tapMin.x = FlickerLumaContribution(centerMeta.x, tapA1.w);
+	tapMin.x = FlickerLumaContribution(centerLuma, tapA1.w);
 	tapA1.y = cmp(tapB0.w < tapA0.w);
 	tapA1.yzw = tapA1.yyy ? tapA0.yzw : tapB0.yzw;
 	tapA1.yzw = corner.xxx ? tapA1.yzw : tapB0.yzw;
-	corner.x = FlickerLumaContribution(centerMeta.x, tapA0.w);
+	corner.x = FlickerLumaContribution(centerLuma, tapA0.w);
 	tapA0.y = cmp(tapA1.w < tapMin.w);
 	tapA0.yzw = tapA0.yyy ? tapMin.yzw : tapA1.yzw;
-	tapA0.yzw = sampleUV.www ? tapA0.yzw : tapA1.yzw;
-	sampleUV.w = FlickerLumaContribution(centerMeta.x, tapMin.w);
+	tapA0.yzw = uvMinBelowHist.xxx ? tapA0.yzw : tapA1.yzw;
+	sampleUV.w = FlickerLumaContribution(centerLuma, tapMin.w);
 	bracketMinReg.x = tapA0.z;
 	tapMin.y = cmp(tapA0.w < corner.w);
 	tapMin.yzw = tapMin.yyy ? corner.yzw : tapA0.yzw;
 	tapC0.xw = motionReject.yy ? tapMin.yw : tapA0.yw;
 	mergeScratch.x = tapMin.z;
 	tapC1.xyzw = motionReject.yyyy ? mergeScratch.xyzw : bracketMinReg.xyzw;
-	motionReject.y = FlickerLumaContribution(centerMeta.x, corner.w);
-	motionReject.y = 4 + -motionReject.y;
-	motionReject.y = motionReject.y + -sampleUV.w;
-	motionReject.y = motionReject.y + -corner.x;
-	motionReject.y = motionReject.y + -tapMin.x;
-	motionReject.y = motionReject.y + -tapA0.x;
-	motionReject.y = motionReject.y + -tapA1.x;
-	motionReject.y = motionReject.y + -tapB0.x;
-	motionReject.y = saturate(motionReject.y + -tapB1.x);
+	float flickerScore = FlickerLumaContribution(centerLuma, corner.w);
+	flickerScore = 4 + -flickerScore;
+	flickerScore = flickerScore + -sampleUV.w;
+	flickerScore = flickerScore + -corner.x;
+	flickerScore = flickerScore + -tapMin.x;
+	flickerScore = flickerScore + -tapA0.x;
+	flickerScore = flickerScore + -tapA1.x;
+	flickerScore = flickerScore + -tapB0.x;
+	flickerScore = saturate(flickerScore + -tapB1.x);
 
 	// --- temporal blend, clamp, and sharpen ---
 	sampleUV.w = cmp(1 < tapC1.w);
@@ -414,20 +424,20 @@ PS_OUTPUT main(PS_INPUT input)
 	tapB0.x = history.x;
 	tapB0.y = tapC0.w;
 	sampleUV.w = 0.949999988 * history.y;
-	motionReject.y = saturate(motionReject.y * 0.25 + sampleUV.w);
-	sampleUV.w = cmp(motionReject.y < 0.902499974);
-	history.xyz = sampleUV.www ? tapA1.xyz : tapB0.xyz;
+	float historyBlend = saturate(flickerScore * 0.25 + sampleUV.w);
+	float clampToNeighborhood = cmp(historyBlend < 0.902499974);
+	history.xyz = clampToNeighborhood.xxx ? tapA1.xyz : tapB0.xyz;
 	history.yz = history.zx + -history.yy;
-	corner.w = cmp(0.00999999978 < history.y);
+	corner.w = cmp(kLumaEpsilon < history.y);
 	history.y = history.z / history.y;
 	history.y = corner.w ? history.y : 0.5;
-	tapMin.xyz = sampleUV.www ? tapMin.xyz : tapC0.xyz;
-	corner.xyz = sampleUV.www ? tapA0.xyz : corner.xyz;
+	tapMin.xyz = clampToNeighborhood.xxx ? tapMin.xyz : tapC0.xyz;
+	corner.xyz = clampToNeighborhood.xxx ? tapA0.xyz : corner.xyz;
 	corner.xyz = corner.xyz + -tapMin.xyz;
 	corner.xyz = history.yyy * corner.xyz + tapMin.xyz;
 
 	// --- disocclusion / mask rejection ---
-	// motionReject.x = motion length (motionReject.zw held the reprojected UV on the SE path).
+	// motionLength holds the motion length (motionReject.zw held the reprojected UV on the SE path).
 #	ifdef VR
 	// VR resolves out-of-bounds per-eye in mono space; the SE stereo-space test misses the seam.
 	motionReject.z = prevUVOutOfBounds ? 1 : 0;
@@ -439,42 +449,43 @@ PS_OUTPUT main(PS_INPUT input)
 	motionReject.z = (int)motionReject.w | (int)motionReject.z;
 #	endif
 	history.yz = maskTex.Sample(maskSampler, sampleUV.xy).xy;
-	motionReject.w = AlphaCoverageMask(sampleUV.xy);
+	float centerCoverage = AlphaCoverageMask(sampleUV.xy);
 	sampleUV.x = cmp(ThresholdParams.w < history.z);
 	motionReject.z = (int)motionReject.z | (int)sampleUV.x;
-	sampleUV.xyw = motionReject.zzz ? center.yzw : corner.xyz;
+	float reject = motionReject.z;  // disocclusion / OOB / mask rejection flag
+	sampleUV.xyw = reject.xxx ? centerColor : corner.xyz;
 	centerMeta.w = 0;
-	history.xw = motionReject.zz ? centerMeta.xw : history.xw;
-	corner.xyz = motionReject.zzz ? center.yzw : weightedColor.xyz;
-	tapMin.xyz = center.yzw + -corner.xyz;
-	motionReject.z = 128 * TexelSizeParams.x;
-	tapA0.z = saturate(motionReject.x / motionReject.z);
-	motionReject.x = tapA0.z + -history.w;
+	history.xw = reject.xx ? centerMeta.xw : history.xw;
+	corner.xyz = reject.xxx ? centerColor : neighborColor;
+	tapMin.xyz = centerColor + -corner.xyz;
+	float motionNormScale = 128 * TexelSizeParams.x;  // 128-texel span used to normalize motion length
+	float motionConfidence = saturate(motionLength / motionNormScale);
+	motionReject.x = motionConfidence + -history.w;
 	// Luma convergence decay: the *20 and *100 constants were tuned for gamma-space luma.
 	// PQ is perceptually uniform — a single linear rescale of the PQ diff is accurate
 	// across all luminance levels (unlike converting through gamma, which has a varying
 	// derivative and overcorrects at bright and dark extremes).
 	// Scale factor: 0.05 gamma ≈ 0.020 PQ at mid-scene luminance → factor ≈ 2.5.
 #	ifdef HDR_OUTPUT
-	motionReject.z = history.x + -centerMeta.x;
+	motionReject.z = history.x + -centerLuma;
 	{
 		float lumaDiffScaled = abs(motionReject.z) * 0.05;
-		history.xw = -lumaDiffScaled.xx * float2(20, 100) + float2(1, 1);
+		history.xw = -lumaDiffScaled.xx * kSimilarityScale + float2(1, 1);
 	}
 #	else
-	motionReject.z = history.x + -centerMeta.x;
-	history.xw = -abs(motionReject.xx) * float2(20, 100) + float2(1, 1);
+	motionReject.z = history.x + -centerLuma;
+	history.xw = -abs(motionReject.xx) * kSimilarityScale + float2(1, 1);
 #	endif
 	history.xw = max(float2(0, 0), history.xw);
 	tapMin.yzw = history.xxx * tapMin.xyz + corner.xyz;
 	sampleUV.xyw = -tapMin.yzw + sampleUV.xyw;
 	motionReject.x = BlendParams.x + -BlendParams.y;
-	motionReject.x = tapA0.z * motionReject.x + BlendParams.y;
+	motionReject.x = motionConfidence * motionReject.x + BlendParams.y;
 	motionReject.x = min(motionReject.x, history.x);
-	tapA0.y = history.w * motionReject.y;
+	tapA0.y = history.w * historyBlend;
 	motionReject.y = 0.99000001 + -motionReject.x;
 	motionReject.x = tapA0.y * motionReject.y + motionReject.x;
-	feedbackOut.yz = tapA0.yz;
+	feedbackOut.yz = float2(tapA0.y, motionConfidence);
 #	ifdef HDR_OUTPUT
 	tapMin.yzw = max(tapMin.yzw, 0);
 	sampleUV.xyw = saturate(motionReject.xxx * sampleUV.xyw + tapMin.yzw);
@@ -491,41 +502,37 @@ PS_OUTPUT main(PS_INPUT input)
 	corner.yzw = saturate(BlendParams.www * corner.xyz + sampleUV.xyw);
 #	endif
 
-	motionReject.y = motionReject.x * motionReject.z + centerMeta.x;
+	motionReject.y = motionReject.x * motionReject.z + centerLuma;
 	motionReject.x = motionReject.x * motionReject.z;
-	motionReject.x = cmp(abs(motionReject.x) < 0.00999999978);
-	corner.x = motionReject.x ? centerMeta.x : motionReject.y;
-	tapMin.x = dot(tapMin.zwy, kLumaWeights);
+	motionReject.x = cmp(abs(motionReject.x) < kLumaEpsilon);
+	corner.x = motionReject.x ? centerLuma : motionReject.y;
+	float outputLuma = dot(tapMin.zwy, kLumaWeights);
 
 	// --- alpha-aware output ---
-	motionReject.x = AlphaCoverageMask(drNeighborsA.xy);
-	motionReject.y = AlphaCoverageMask(drNeighborsA.zw);
-	motionReject.x = motionReject.x ? sampleUV.z : 0;
-	motionReject.x = motionReject.y ? motionReject.x : 0;
-	motionReject.y = AlphaCoverageMask(drNeighborsB.xy);
-	motionReject.z = AlphaCoverageMask(drNeighborsB.zw);
-	motionReject.x = motionReject.y ? motionReject.x : 0;
-	motionReject.x = motionReject.z ? motionReject.x : 0;
-	motionReject.y = AlphaCoverageMask(drNeighborsC.xy);
-	motionReject.z = AlphaCoverageMask(drNeighborsC.zw);
-	motionReject.x = motionReject.y ? motionReject.x : 0;
-	motionReject.x = motionReject.z ? motionReject.x : 0;
-	motionReject.y = AlphaCoverageMask(drUVMax);
-	motionReject.x = motionReject.y ? motionReject.x : 0;
-	motionReject.x = motionReject.w ? motionReject.x : 0;
-	motionReject.y = cmp(ThresholdParams.w >= history.y);
-	motionReject.z = 1 + -history.z;
-	motionReject.x = motionReject.y ? motionReject.x : 0;
-	sampleUV.xyzw = motionReject.xxxx ? tapMin.xyzw : corner.xyzw;
-	colorOut.xyz = sampleUV.yzw;
+	// allTransparent: every 3x3 tap covered by alpha. Seed = uvMin coverage (uvMinCoverage),
+	// gated by the 8 remaining taps (centerCoverage already holds the centre tap's coverage).
+	const float2 alphaUVs[7] = {
+		drNeighborsA.xy, drNeighborsA.zw, drNeighborsB.xy, drNeighborsB.zw,
+		drNeighborsC.xy, drNeighborsC.zw, drUVMax
+	};
+	float allTransparent = uvMinCoverage;
+	[unroll] for (int alphaTap = 0; alphaTap < 7; alphaTap++)
+		allTransparent = AlphaCoverageMask(alphaUVs[alphaTap]) ? allTransparent : 0;
+	allTransparent = centerCoverage ? allTransparent : 0;
+	float depthMaskPass = cmp(ThresholdParams.w >= history.y);
+	float feedbackWeight = 1 + -history.z;
+	allTransparent = depthMaskPass ? allTransparent : 0;
+	// .x = feedback luma, .yzw = resolved colour
+	float4 resolved = allTransparent.xxxx ? float4(outputLuma, tapMin.yzw) : corner.xyzw;
+	colorOut.xyz = resolved.yzw;
 #	ifdef HDR_OUTPUT
 	// Encode PQ luma to game-gamma for feedback RT storage.
 	// Storing raw PQ [0,1] in a low-precision RT causes highlight banding because
 	// PQ packs high-nit values into the upper range where RT quantization is visible.
 	// Game-gamma encoding spreads precision evenly — symmetric with DecodeFeedbackLuma on read.
-	feedbackOut.x = EncodeFeedbackLuma(saturate(sampleUV.x * motionReject.z));
+	feedbackOut.x = EncodeFeedbackLuma(saturate(resolved.x * feedbackWeight));
 #	else
-	feedbackOut.x = saturate(sampleUV.x * motionReject.z);
+	feedbackOut.x = saturate(resolved.x * feedbackWeight);
 #	endif
 	// Vanilla writes opaque alpha unconditionally on both SE and VR (decompile o0.w = 1).
 	colorOut.w = 1;
