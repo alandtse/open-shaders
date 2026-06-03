@@ -282,9 +282,9 @@ PS_OUTPUT main(PS_INPUT input)
 	float4 colorOut, feedbackOut;
 
 	// float4 packs — component reuse matches vanilla decompile (see header comment).
-	float4 motionReject, sampleUV, history, corner, tapMin;  // was r0–r4
-	float4 tapA0, tapA1, tapB0, tapB1, tapC0, tapC1;         // was r6–r13
-	float belowHistC1;                                       // C1 tap below-history mask (was center.x, r14)
+	float4 motionReject, history, corner, tapMin;     // was r0–r4
+	float4 tapA0, tapA1, tapB0, tapB1, tapC0, tapC1;  // was r6–r13
+	float belowHistC1;                                // C1 tap below-history mask (was center.x, r14)
 
 	float2 drMax = GetDynamicResolutionMax(), drUVMin, drUVMax, drCenter;
 	float4 drNeighborsA, drNeighborsB, drNeighborsC;
@@ -301,8 +301,7 @@ PS_OUTPUT main(PS_INPUT input)
 		corner.xyz);
 
 	// --- motion vector and history sample ---
-	history.xy = drMax;
-	motionReject.xy = velocityTex.Sample(velocitySampler, ClampScreenUV(motionReject.xy, history.xy)).xy;
+	motionReject.xy = velocityTex.Sample(velocitySampler, ClampScreenUV(motionReject.xy, drMax)).xy;
 #	ifdef VR
 	// Eyes share one RT in VR; reproject within the current eye (mono-space velocity, per-eye
 	// clamp) so a pixel near the x=0.5 seam never samples the other eye's history. OOB feeds reject.
@@ -325,14 +324,12 @@ PS_OUTPUT main(PS_INPUT input)
 	motionReject.y = cmp(corner.w < history.x);
 
 	// --- neighbour colour / luma samples ---
-	sampleUV.zw = drUVMin;
-	sampleUV.xy = drCenter;
 	float uvMinCoverage;   // uvMin alpha coverage; seeds the allTransparent test far below
 	float uvMinBelowHist;  // uvMin tap below-history mask; consumed in the bracket/flicker cascade
 	{
-		ISTAA_NeighborTap tap = SampleNeighborGRB(sampleUV.zw, history.x);
+		ISTAA_NeighborTap tap = SampleNeighborGRB(drUVMin, history.x);
 		tapMin.xyz = tap.grb;
-		uvMinCoverage = AlphaCoverageMask(sampleUV.zw);
+		uvMinCoverage = AlphaCoverageMask(drUVMin);
 		tapMin.w = tap.luma;
 		uvMinBelowHist = tap.belowHist;
 	}
@@ -342,7 +339,7 @@ PS_OUTPUT main(PS_INPUT input)
 	AssignPackedNeighbor(drNeighborsB.zw, history.x, tapB1, tapA1.x);
 	AssignPackedNeighbor(drNeighborsC.xy, history.x, tapC0, tapB0.x);
 	AssignPackedNeighbor(drNeighborsC.zw, history.x, tapC1, belowHistC1);
-	float3 centerColor = SampleCenterRGB(sampleUV.xy);  // centre RGB (belowHistC1 holds the C1 mask)
+	float3 centerColor = SampleCenterRGB(drCenter);  // centre RGB (belowHistC1 holds the C1 mask)
 
 	// --- centre bracket seed, neighbourhood bracket, flicker, temporal blend (verbatim math) ---
 	float centerLuma = dot(centerColor.yzx, kLumaWeights);
@@ -433,8 +430,8 @@ PS_OUTPUT main(PS_INPUT input)
 	// Clamp history luma into the candidates' luma range: (clamped, lo, hi).
 	float3 clampedHistory = float3(clamp(history.x, clipPick.w, clipFinal.w), clipPick.w, clipFinal.w);
 	float3 historyLumaPack = float3(history.x, clipHi.w, clipLo.w);  // (history luma, max luma, min luma)
-	sampleUV.w = kHistoryLumaDecay * history.y;
-	float historyBlend = saturate(flickerScore * 0.25 + sampleUV.w);
+	float historyMotionDecay = kHistoryLumaDecay * history.y;
+	float historyBlend = saturate(flickerScore * 0.25 + historyMotionDecay);
 	float clampToNeighborhood = cmp(historyBlend < kHistoryBlendThreshold);
 	history.xyz = clampToNeighborhood.xxx ? clampedHistory : historyLumaPack;
 	// Clip ratio: where the selected candidate's luma sits within its [lo, hi] range
@@ -459,8 +456,8 @@ PS_OUTPUT main(PS_INPUT input)
 	reject = (int)uvHigh.x | (int)uvLow;
 	reject = (int)uvHigh.y | (int)reject;
 #	endif
-	float2 maskValues = maskTex.Sample(maskSampler, sampleUV.xy).xy;  // .x depth-mask, .y coverage
-	float centerCoverage = AlphaCoverageMask(sampleUV.xy);
+	float2 maskValues = maskTex.Sample(maskSampler, drCenter).xy;  // .x depth-mask, .y coverage
+	float centerCoverage = AlphaCoverageMask(drCenter);
 	float maskReject = cmp(ThresholdParams.w < maskValues.y);
 	reject = (int)reject | (int)maskReject;
 	// Two colour candidates: the rectified history colour and the neighbourhood-weighted colour
