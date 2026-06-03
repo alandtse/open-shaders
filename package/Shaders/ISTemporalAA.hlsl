@@ -418,13 +418,10 @@ PS_OUTPUT main(PS_INPUT input)
 	// of grouping (each is a ceil() integer).
 	float flickerScore = saturate(4 - fcCorner - fcMin - fcA0 - fcA1 - fcB0 - fcB1 - fcC0 - fcC1);
 
-	// --- temporal blend, clamp, and sharpen ---
-	// Builds two blend candidates and lerps between them by a flicker/motion weight:
-	//  - sharpened vs unsharpened neighbourhood colour (SharpenDelta adds back centre detail), and
-	//  - luma triples for the neighbourhood min/max bracket (tapA1) vs the history sample (tapB0).
-	// historyBlend sets how much history to keep; when it is low, clampToNeighborhood pulls the
-	// result toward the bracket. The final corner.xyz is the resulting lerp. (Dense per-line packing
-	// kept as-is — no repeating structure to factor without re-deriving the decompile.)
+	// --- temporal blend, clamp, and sharpen (history rectification toward the neighbourhood AABB) ---
+	// Build two clip candidates (min/max bound, RCAS-sharpened), clamp history luma into their range,
+	// compute the clip ratio, and lerp the colour toward the rectified value by it. historyBlend sets
+	// how much history to keep; when low, clampToNeighborhood pulls the result toward the bracket.
 	// Two history-clip candidates from the min/max AABB bounds, each packed (R, sharpenDelta, B, luma)
 	// — the decompile stashes the RCAS sharpen in the G slot. corner = min bound, tapC0 = max bound.
 	float minOverbright = cmp(1 < tapC1.w);
