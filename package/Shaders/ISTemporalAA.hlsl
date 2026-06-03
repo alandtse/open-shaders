@@ -352,12 +352,11 @@ PS_OUTPUT main(PS_INPUT input)
 	// Bracket ceiling: 1.001 is just above the maximum PQ value (1.0 = 10000 nits).
 	// Nothing in the scene exceeds this, so the ceiling works correctly in PQ working space.
 	// (In linear BT2020 this would be wrong — sky/specular exceed 1.0 linear — but PQ is bounded.)
-	bracketMax.y = cmp(centerLuma < kMaxLumaCap);
-	bracketMax.yzw = bracketMax.yyy ? centerMeta.yzx : kMaxLumaCap.xxx;
-	bracketMax.yzw = bracketMax.xxx ? kMaxLumaCap.xxx : bracketMax.yzw;
-
-	// First (tapC1) fold into the max bracket — same merge as the cascade below, gated by belowHistC1.
-	bracketMax.yzw = MergeLumaBracket(tapC1, bracketMax.yzw, center.x);
+	// Seed the min bracket: centre colour (as R,B,luma) clamped to the 1.001 ceiling; if the centre is
+	// below history (bracketMax.x = belowHistCentre), start at the ceiling. Then fold tapC1 (its belowHist).
+	float3 minBracket = cmp(centerLuma < kMaxLumaCap) ? centerMeta.yzx : kMaxLumaCap.xxx;
+	minBracket = bracketMax.x ? kMaxLumaCap.xxx : minBracket;
+	minBracket = MergeLumaBracket(tapC1, minBracket, center.x);
 
 	// --- neighborhood min/max color bracket ---
 	// 4-tap weighted neighbour colour (C + D + L + LD); consumed by the non-reject output path.
@@ -367,12 +366,12 @@ PS_OUTPUT main(PS_INPUT input)
 	neighborColor = centerColor * NeighborWeights.xxx + neighborColor;
 	// Running min-luma colour bracket folded over the neighbourhood taps, each committed unless its
 	// belowHist gate is set (see MergeLumaBracket). The final tap lands in mergeScratch.yzw.
-	bracketMax.yzw = MergeLumaBracket(tapC0, bracketMax.yzw, tapB0.x);
-	bracketMax.yzw = MergeLumaBracket(tapB1, bracketMax.yzw, tapA1.x);
-	bracketMax.yzw = MergeLumaBracket(tapB0, bracketMax.yzw, tapA0.x);
-	bracketMax.yzw = MergeLumaBracket(tapA1, bracketMax.yzw, tapMin.x);
-	bracketMax.yzw = MergeLumaBracket(tapA0, bracketMax.yzw, corner.x);
-	mergeScratch.yzw = MergeLumaBracket(tapMin, bracketMax.yzw, uvMinBelowHist);
+	minBracket = MergeLumaBracket(tapC0, minBracket, tapB0.x);
+	minBracket = MergeLumaBracket(tapB1, minBracket, tapA1.x);
+	minBracket = MergeLumaBracket(tapB0, minBracket, tapA0.x);
+	minBracket = MergeLumaBracket(tapA1, minBracket, tapMin.x);
+	minBracket = MergeLumaBracket(tapA0, minBracket, corner.x);
+	mergeScratch.yzw = MergeLumaBracket(tapMin, minBracket, uvMinBelowHist);
 	// Final fold: corner tap, ungated (gate 0 → always take the lower-luma colour).
 	bracketMinReg.yzw = MergeLumaBracket(corner, mergeScratch.yzw, 0);
 	tapB1.x = cmp(kMinLumaCap < centerLuma);
