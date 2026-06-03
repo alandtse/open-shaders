@@ -536,12 +536,8 @@ void Upscaling::DrawSettings()
 	if (ImGui::TreeNodeEx("Backend Diagnostics")) {
 		// Streamline log level selection
 		const char* logLevels[] = { "Off", "Default", "Verbose" };
-		// Clamp the stored value (not just the index): streamlineLogLevel is
-		// JSON-persisted and could be out of range on a stale/hand-edited config.
-		// Sanitizing only the local index would let the bad value persist through
-		// the save / restart-diff paths even if the user never opens this combo.
-		settings.streamlineLogLevel = std::min(settings.streamlineLogLevel,
-			static_cast<uint>(IM_ARRAYSIZE(logLevels) - 1));
+		// streamlineLogLevel is sanitized in LoadSettings (runs on every load,
+		// not gated on this node being expanded), so the stored value is in range.
 		int logLevelIdx = static_cast<int>(settings.streamlineLogLevel);
 		if (ImGui::Combo("Streamline Logging", &logLevelIdx, logLevels, IM_ARRAYSIZE(logLevels))) {
 			settings.streamlineLogLevel = static_cast<uint>(logLevelIdx);
@@ -703,6 +699,10 @@ void Upscaling::LoadSettings(json& o_json)
 	if (settings.presetDLSS > 4) {
 		logger::warn("[Upscaling] Loaded presetDLSS {} out of range, resetting to 0 (Default)", settings.presetDLSS);
 		settings.presetDLSS = 0;
+	}
+	if (settings.streamlineLogLevel > 2) {  // Off, Default, Verbose
+		logger::warn("[Upscaling] Loaded streamlineLogLevel {} out of range, clamping to 2", settings.streamlineLogLevel);
+		settings.streamlineLogLevel = 2;
 	}
 	// Re-apply FoveatedRender's cross-feature clamp now that the JSON
 	// re-assign above has overwritten anything it set during its own

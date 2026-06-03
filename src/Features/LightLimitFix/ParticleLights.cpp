@@ -119,8 +119,10 @@ void ParticleLights::GetConfigs()
 
 				// Require exactly 6 (RRGGBB) or 8 (AARRGGBB) hex digits so malformed
 				// widths like "#1" / "#12345" fail closed instead of packing a garbage color.
+				// find_first_not_of is bounded to the view; strspn would rely on
+				// str.data() being NUL-terminated, which string_view doesn't guarantee.
 				bool matches = (str.size() == 6 || str.size() == 8) &&
-				               std::strspn(str.data(), cset.data()) == str.size();
+				               str.find_first_not_of(cset) == std::string_view::npos;
 
 				if (matches) {
 					try {
