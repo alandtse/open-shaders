@@ -266,11 +266,8 @@ PS_OUTPUT main(PS_INPUT input)
 	history.xy = drMax;
 	motionReject.xy = velocityTex.Sample(velocitySampler, ClampScreenUV(motionReject.xy, history.xy)).xy;
 #	ifdef VR
-	// Both eyes share one render target in VR, so reprojection must stay within the current
-	// eye: Stereo::ApplyVelocityToUV converts to mono, applies velocity, clamps per-eye, and
-	// maps back. Plain texCoord+velocity (the SE path) lets a pixel near the x=0.5 seam sample
-	// the other eye's history (cross-eye ghosting). GetPreviousDynamicResolutionAdjustedScreen-
-	// Position keeps the DR history clamp per-eye too; prevUVOutOfBounds drives rejection below.
+	// Eyes share one RT in VR; reproject within the current eye (mono-space velocity, per-eye
+	// clamp) so a pixel near the x=0.5 seam never samples the other eye's history. OOB feeds reject.
 	bool prevUVOutOfBounds;
 	float2 prevUV = Stereo::ApplyVelocityToUV(texCoord.xy, motionReject.xy, prevUVOutOfBounds);
 	tapMin.xy = FrameBuffer::GetPreviousDynamicResolutionAdjustedScreenPosition(prevUV);
@@ -432,8 +429,7 @@ PS_OUTPUT main(PS_INPUT input)
 	// --- disocclusion / mask rejection ---
 	// motionReject.x = motion length (motionReject.zw held the reprojected UV on the SE path).
 #	ifdef VR
-	// Out-of-bounds was already resolved per-eye in mono space (Stereo::ApplyVelocityToUV); the
-	// stereo-space [0,1] test used on the SE path would miss the x=0.5 eye seam.
+	// VR resolves out-of-bounds per-eye in mono space; the SE stereo-space test misses the seam.
 	motionReject.z = prevUVOutOfBounds ? 1 : 0;
 #	else
 	sampleUV.w = min(motionReject.z, motionReject.w);
