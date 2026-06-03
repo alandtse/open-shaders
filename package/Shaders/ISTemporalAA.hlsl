@@ -282,9 +282,9 @@ PS_OUTPUT main(PS_INPUT input)
 	float4 colorOut, feedbackOut;
 
 	// float4 packs — component reuse matches vanilla decompile (see header comment).
-	float4 motionReject, sampleUV, history, corner, tapMin;                 // was r0–r4
-	float4 tapA0, tapA1, tapB0, tapB1, tapC0, tapC1;                        // was r6–r13
-	float4 center, centerMeta, weightedColor, mergeScratch, bracketMinReg;  // was r14–r19
+	float4 motionReject, sampleUV, history, corner, tapMin;  // was r0–r4
+	float4 tapA0, tapA1, tapB0, tapB1, tapC0, tapC1;         // was r6–r13
+	float4 center, centerMeta, mergeScratch, bracketMinReg;  // was r14–r19
 
 	float2 drMax = GetDynamicResolutionMax(), drUVMin, drUVMax, drCenter;
 	float4 drNeighborsA, drNeighborsB, drNeighborsC;
