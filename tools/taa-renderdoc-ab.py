@@ -193,7 +193,7 @@ def _diff(a, b, meta):
     n = len(a)
     total = n // esz
     stride = max(1, total // 100000)  # cap ~100k samples across the image
-    maxabs = sse = 0.0
+    maxabs = absSum = 0.0  # absSum = sum of |Δ| (L1), not squared error — mean_abs = absSum/cnt
     cnt = ndiff = 0
     A2 = ((0, 1023, 1023.0), (10, 1023, 1023.0), (20, 1023, 1023.0), (30, 3, 3.0))
     for i in range(0, total, stride):
@@ -217,13 +217,13 @@ def _diff(a, b, meta):
             ndiff += 1
         if dlt > maxabs:
             maxabs = dlt
-        sse += dlt
+        absSum += dlt
         cnt += 1
 
     out["sampled_elems"] = cnt
     out["sample_frac_differing"] = (ndiff / cnt) if cnt else 0.0
     out["max_abs"] = maxabs
-    out["mean_abs"] = (sse / cnt) if cnt else 0.0
+    out["mean_abs"] = (absSum / cnt) if cnt else 0.0
     out["verdict"] = "COMPARED"  # metrics present; ab() assigns the final baseline-relative verdict
     return out
 
