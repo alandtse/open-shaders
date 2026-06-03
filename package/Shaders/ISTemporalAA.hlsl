@@ -346,9 +346,8 @@ PS_OUTPUT main(PS_INPUT input)
 	bracketMax.yzw = bracketMax.yyy ? centerMeta.yzx : kMaxLumaCap.xxx;
 	bracketMax.yzw = bracketMax.xxx ? kMaxLumaCap.xxx : bracketMax.yzw;
 
-	weightedColor.x = cmp(tapC1.w < bracketMax.w);
-	weightedColor.xyz = weightedColor.xxx ? tapC1.yzw : bracketMax.yzw;
-	bracketMax.yzw = center.xxx ? bracketMax.yzw : weightedColor.xyz;
+	// First (tapC1) fold into the max bracket — same merge as the cascade below, gated by belowHistC1.
+	bracketMax.yzw = MergeLumaBracket(tapC1, bracketMax.yzw, center.x);
 
 	// --- neighborhood min/max color bracket ---
 	// 4-tap weighted neighbour colour (C + D + L + LD); consumed by the non-reject output path.
