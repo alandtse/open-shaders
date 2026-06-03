@@ -422,33 +422,29 @@ PS_OUTPUT main(PS_INPUT input)
 	// compute the clip ratio, and lerp the colour toward the rectified value by it. historyBlend sets
 	// how much history to keep; when low, clampToNeighborhood pulls the result toward the bracket.
 	// Two history-clip candidates from the min/max AABB bounds, each packed (R, sharpenDelta, B, luma)
-	// — the decompile stashes the RCAS sharpen in the G slot. corner = min bound, tapC0 = max bound.
+	// — the decompile stashes the RCAS sharpen in the G slot.
 	float minOverbright = cmp(1 < tapC1.w);
-	corner = float4(tapC1.y, SharpenDelta(tapC1.w, tapC1.y, tapC1.z), tapC1.z, tapC1.w);
-	tapC0 = float4(tapC0.x, SharpenDelta(tapC0.w, tapC0.x, tapC1.x), tapC1.x, tapC0.w);
+	float4 clipLo = float4(tapC1.y, SharpenDelta(tapC1.w, tapC1.y, tapC1.z), tapC1.z, tapC1.w);  // min bound
+	float4 clipHi = float4(tapC0.x, SharpenDelta(tapC0.w, tapC0.x, tapC1.x), tapC1.x, tapC0.w);  // max bound
 	// Prefer the max bound; fall back to the min bound when the max luma is degenerate (<0), then to
 	// that result vs the min bound when the min luma is overbright (>1).
-	tapMin.xyzw = cmp(tapC0.w < 0) ? corner : tapC0;
-	tapA0.xyzw = minOverbright ? tapMin.xyzw : corner;
-	// Clamp history luma into the two sharpened candidates' luma range; tapA1 = (clamped, lo, hi).
-	tapA1.x = clamp(history.x, tapMin.w, tapA0.w);
-	tapA1.y = tapMin.w;
-	tapA1.z = tapA0.w;
-	tapB0.z = corner.w;
-	tapB0.x = history.x;
-	tapB0.y = tapC0.w;
+	float4 clipPick = cmp(clipHi.w < 0) ? clipLo : clipHi;
+	float4 clipFinal = minOverbright ? clipPick : clipLo;
+	// Clamp history luma into the candidates' luma range: (clamped, lo, hi).
+	float3 clampedHistory = float3(clamp(history.x, clipPick.w, clipFinal.w), clipPick.w, clipFinal.w);
+	float3 historyLumaPack = float3(history.x, clipHi.w, clipLo.w);  // (history luma, max luma, min luma)
 	sampleUV.w = kHistoryLumaDecay * history.y;
 	float historyBlend = saturate(flickerScore * 0.25 + sampleUV.w);
 	float clampToNeighborhood = cmp(historyBlend < kHistoryBlendThreshold);
-	history.xyz = clampToNeighborhood.xxx ? tapA1.xyz : tapB0.xyz;
+	history.xyz = clampToNeighborhood.xxx ? clampedHistory : historyLumaPack;
 	// Clip ratio: where the selected candidate's luma sits within its [lo, hi] range
 	// (history = (luma, lo, hi)); 0.5 fallback when the range is negligible.
 	float clipRange = history.z - history.y;
 	history.y = cmp(kLumaEpsilon < clipRange) ? (history.x - history.y) / clipRange : 0.5;
-	tapMin.xyz = clampToNeighborhood.xxx ? tapMin.xyz : tapC0.xyz;
-	corner.xyz = clampToNeighborhood.xxx ? tapA0.xyz : corner.xyz;
+	float3 rectifyLo = clampToNeighborhood.xxx ? clipPick.xyz : clipHi.xyz;
+	float3 rectifyHi = clampToNeighborhood.xxx ? clipFinal.xyz : clipLo.xyz;
 	// Rectified colour: lerp from the low candidate toward the high one by the clip ratio (history.y).
-	corner.xyz = lerp(tapMin.xyz, corner.xyz, history.yyy);
+	corner.xyz = lerp(rectifyLo, rectifyHi, history.yyy);
 
 	// --- disocclusion / mask rejection ---
 	// motionLength holds the motion length (motionReject.zw held the reprojected UV on the SE path).
