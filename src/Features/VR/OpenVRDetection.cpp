@@ -168,11 +168,14 @@ namespace
 
 	void UpdateOpenCompositeSettingValue(OpenCompositeSettingValue& setting, const CSimpleIniA& ini, const char* key, const std::filesystem::path& path)
 	{
+		// Enabled-by-any-config wins: only an explicit true updates the setting, so
+		// a later file's false can't clobber an earlier file's true. configPath
+		// then names the file that enabled it (for the UI/log message).
 		bool parsedValue = false;
-		if (!TryReadIniBoolSetting(ini, key, parsedValue))
+		if (!TryReadIniBoolSetting(ini, key, parsedValue) || !parsedValue)
 			return;
 
-		setting.value = parsedValue;
+		setting.value = true;
 		setting.configPath = path.string();
 	}
 
