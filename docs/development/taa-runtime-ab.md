@@ -63,7 +63,7 @@ The embedded interpreter persists across `Eval` calls, so load the module once:
 
 ```python
 exec(open(r"f:/Worktrees/.../tools/taa-renderdoc-ab.py").read())
-taa_candidates()          # find the ISTemporalAA draw: 2 outputs (Color+Feedback), >=5 SRVs
+taa_candidates()          # find ISTemporalAA by its 6-SRV fingerprint (t0..t5: current/history/velocity/depth/mask/alpha)
 ```
 
 Pick the `eventId` of the TAA draw from the candidate list, then:

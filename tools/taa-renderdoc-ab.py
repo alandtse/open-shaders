@@ -83,7 +83,14 @@ def grab_rt(eid, target_index=0):
     """Return (resourceId_str, raw_bytes, (width, height, format_name)) for an output RT."""
     def work(ctrl):
         ctrl.SetFrameEvent(eid, True)
-        rid = _desc_res(ctrl.GetPipelineState().GetOutputTargets()[target_index])
+        outs = ctrl.GetPipelineState().GetOutputTargets()
+        # Fail soft on an out-of-range or empty (ResourceId::0) slot rather than letting
+        # GetTextureData raise and abort the whole Eval session.
+        if target_index >= len(outs):
+            return (None, b"", (0, 0, "none"))
+        rid = _desc_res(outs[target_index])
+        if str(rid) == "ResourceId::0":
+            return (str(rid), b"", (0, 0, "none"))
         data = bytes(ctrl.GetTextureData(rid, rd.Subresource(0, 0, 0)))
         td = _tex_desc(ctrl, rid)
         meta = (td.width, td.height, str(td.format.Name())) if td else (0, 0, "?")
@@ -157,11 +164,13 @@ def _diff(a, b, meta):
         out["note"] = "size mismatch"
         return out
 
-    # Decode to normalized [0,1] channel values. Packed formats (R10G10B10A2) MUST be unpacked
-    # by channel, not byte — a 1-LSB 10-bit delta spans byte boundaries and a byte-diff hugely
-    # overstates it. No verdict here: ab() judges relative to the baseline noise floor, because
-    # the game's runtime compile differs from offline fxc by a few LSBs even for an identical
-    # shader (that residue is the floor, not a behavior change).
+    # Per-sample delta units by format: UNORM8 and packed R10G10B10A2 are normalized to [0,1]
+    # (the packed format MUST be unpacked by channel, not byte — a 1-LSB 10-bit delta spans byte
+    # boundaries and a byte-diff hugely overstates it); float16/float32 are compared in their
+    # native units (abs(x-y)). mean_abs is therefore only comparable within one format, which is
+    # fine here since baseline and candidate always share the live RT's format. No verdict here:
+    # ab() judges relative to the baseline noise floor, because the game's runtime compile differs
+    # from offline fxc by a few LSBs even for an identical shader (that residue is the floor).
     fmt = meta[2].lower()
     packed = "10g10b10a2" in fmt
     if packed:
@@ -223,17 +232,24 @@ def ab(eid, candidate_dxbc, baseline_dxbc=None, entry="main"):
         if not r["ok"]:
             report["baseline_vs_live"] = {"verdict": "BUILD-FAILED", "errors": r["errors"]}
         else:
-            _, a_prime, _ = grab_rt(eid)
-            report["baseline_vs_live"] = _diff(a_real, a_prime, meta)
-            restore(eid)
+            # finally: guarantee the replacement is undone even if grab/diff raises, so a stale
+            # shader can't contaminate later replays.
+            try:
+                _, a_prime, _ = grab_rt(eid)
+                report["baseline_vs_live"] = _diff(a_real, a_prime, meta)
+            finally:
+                restore(eid)
 
     r = replace_ps_with_dxbc(eid, candidate_dxbc, entry)
     if not r["ok"]:
         report["candidate_vs_live"] = {"verdict": "BUILD-FAILED", "errors": r["errors"]}
         report["verdict"] = "BUILD-FAILED"
         return report
-    _, b, _ = grab_rt(eid)
-    report["candidate_vs_live"] = _diff(a_real, b, meta)
+    try:
+        _, b, _ = grab_rt(eid)
+        report["candidate_vs_live"] = _diff(a_real, b, meta)
+    finally:
+        restore(eid)
 
     # Verdict: judge the candidate's mean_abs against the baseline noise floor (runtime-vs-fxc
     # compile residue). EQUIVALENT if within 3x the floor; DIFFERS otherwise.
@@ -251,5 +267,4 @@ def ab(eid, candidate_dxbc, baseline_dxbc=None, entry="main"):
     else:
         # No baseline requested: best-effort absolute tolerance only.
         report["verdict"] = "EQUIVALENT" if cand_mean <= 1e-3 else "DIFFERS"
-    restore(eid)
     return report
