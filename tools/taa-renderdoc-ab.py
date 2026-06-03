@@ -104,6 +104,11 @@ def replace_ps_with_dxbc(eid, dxbc_path, entry="main"):
     except OSError as e:
         return {"ok": False, "errors": "cannot read %s: %r" % (p, e)}
 
+    # Undo any prior replacement on this event first, so repeated swaps don't leak target
+    # resources or stack replacements (orig would otherwise capture an already-replaced shader).
+    if eid in _replacements:
+        restore(eid)
+
     def work(ctrl):
         ctrl.SetFrameEvent(eid, True)
         orig = _as_resid(ctrl.GetPipelineState().GetShader(rd.ShaderStage.Pixel))
@@ -231,15 +236,20 @@ def ab(eid, candidate_dxbc, baseline_dxbc=None, entry="main"):
     report["candidate_vs_live"] = _diff(a_real, b, meta)
 
     # Verdict: judge the candidate's mean_abs against the baseline noise floor (runtime-vs-fxc
-    # compile residue). EQUIVALENT if within 3x the floor; DIFFERS otherwise. Without a baseline
-    # we can only fall back to a small absolute mean tolerance.
+    # compile residue). EQUIVALENT if within 3x the floor; DIFFERS otherwise.
     base = report.get("baseline_vs_live") or {}
     floor = base.get("mean_abs")
     cand_mean = report["candidate_vs_live"]["mean_abs"]
     if floor is not None:
         report["noise_floor_mean"] = floor
         report["verdict"] = "EQUIVALENT" if cand_mean <= max(floor * 3.0, 1e-4) else "DIFFERS"
+    elif baseline_dxbc:
+        # A baseline was requested but did not yield a usable floor (build failed or size
+        # mismatch). Do NOT silently fall back to the absolute path — the floor is the whole
+        # point of passing a baseline, so the candidate is unjudged.
+        report["verdict"] = "UNVERIFIED-BASELINE"
     else:
+        # No baseline requested: best-effort absolute tolerance only.
         report["verdict"] = "EQUIVALENT" if cand_mean <= 1e-3 else "DIFFERS"
     restore(eid)
     return report

@@ -20,26 +20,36 @@ defines Standard B.
 ## Prerequisites
 
 -   RenderDoc, reachable via the `renderdoc` MCP (`Eval`, `Get-Texture`, `Instance`).
--   SkyrimVR launchable with RenderDoc injected (devbench MCP when available, or launch+inject
-    from the RenderDoc GUI). The original VR TAA artifact is visible at the **main menu**, so the
-    menu is a valid capture surface.
+-   SkyrimSE or SkyrimVR launchable with RenderDoc injected (`rd.ExecuteAndInject(skse64_loader.exe,
+…, hookIntoChildren=True)`, or launch from the RenderDoc GUI). The **main menu** already runs
+    the TAA pass, so it is a valid capture surface on either edition.
+-   The build must be in **TAA upscaling mode** (DLSS/FSR replace `ISTemporalAA`) and ideally with
+    **HDR and frame-generation off** — otherwise Open Shaders presents through a DX12 interop
+    swapchain and RenderDoc captures only the D3D12 present (Copy/Present, no draws), not the
+    D3D11 TAA pass.
 -   `fxc.exe` (Windows SDK) — same compiler the offline verifier uses.
 
 ## Steps
 
 ### 1. Compile A' (current) and B (candidate) to DXBC — match the build's permutation
 
-Use the SAME defines as the running build (SkyrimVR ⇒ `VR`; add `HDR_OUTPUT` only if the user
-runs the HDR path) and `/I package/Shaders` so includes resolve. Feeding DXBC sidesteps
+Use the SAME defines as the running build (SkyrimSE ⇒ no `VR`; SkyrimVR ⇒ `VR`; add `HDR_OUTPUT`
+only if HDR is on) and `/I package/Shaders` so includes resolve. Feeding DXBC sidesteps
 RenderDoc's HLSL include/define handling.
+
+**A′ and B must come from different sources** — A′ from the **deployed/shipping** shader (so its
+diff vs the live RT establishes the noise floor), B from your **candidate**. Pull A′ from a git
+ref and B from the working tree so they can't accidentally be the same file:
 
 ```powershell
 $fxc = (Get-Command fxc.exe).Source
 $inc = "package/Shaders"; $sh = "package/Shaders/ISTemporalAA.hlsl"
-# Baseline A' = the shipping shader at this permutation (validates our define set)
-& $fxc /nologo /T ps_5_0 /E main /D PSHADER=1 /D VR=1 /I $inc $sh /Fo "$env:TEMP\taa_A.dxbc"
-# Candidate B = the Standard-B working tree (or a ref checked out first)
-& $fxc /nologo /T ps_5_0 /E main /D PSHADER=1 /D VR=1 /I $inc $sh /Fo "$env:TEMP\taa_B.dxbc"
+$defs = @("/D","PSHADER=1")            # add "/D","VR=1" and/or "/D","HDR_OUTPUT=1" to match the build
+# Baseline A' = the DEPLOYED shader (extract the shipping ref to a temp file; UTF-8, not PS UTF-16)
+[IO.File]::WriteAllLines("$env:TEMP\taa_A.hlsl", (git show origin/dev:$sh))
+& $fxc /nologo /T ps_5_0 /E main @defs /I $inc "$env:TEMP\taa_A.hlsl" /Fo "$env:TEMP\taa_A.dxbc"
+# Candidate B = the Standard-B working tree
+& $fxc /nologo /T ps_5_0 /E main @defs /I $inc $sh /Fo "$env:TEMP\taa_B.dxbc"
 ```
 
 ### 2. Capture a frame
