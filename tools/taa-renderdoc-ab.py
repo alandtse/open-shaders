@@ -205,9 +205,12 @@ def _diff(a, b, meta):
         elif code:
             x = struct.unpack_from(code, a, off)[0]
             y = struct.unpack_from(code, b, off)[0]
-            # NaN-safe: abs(NaN) silently fails comparisons and could fake EQUIVALENT.
-            xn, yn = math.isnan(x), math.isnan(y)
-            dlt = (0.0 if (xn and yn) else float("inf")) if (xn or yn) else abs(x - y)
+            # NaN/inf-safe: abs(NaN) AND inf-inf both yield NaN, which silently fails every
+            # comparison below and could fake EQUIVALENT. Treat equal values (incl. both-NaN and
+            # both-inf) as 0; any NaN/inf-vs-finite mismatch as a max difference.
+            dlt = abs(x - y)
+            if math.isnan(dlt):
+                dlt = 0.0 if (x == y or (math.isnan(x) and math.isnan(y))) else float("inf")
         else:
             dlt = abs(a[off] - b[off]) / 255.0
         if dlt > 0:
@@ -221,6 +224,7 @@ def _diff(a, b, meta):
     out["sample_frac_differing"] = (ndiff / cnt) if cnt else 0.0
     out["max_abs"] = maxabs
     out["mean_abs"] = (sse / cnt) if cnt else 0.0
+    out["verdict"] = "COMPARED"  # metrics present; ab() assigns the final baseline-relative verdict
     return out
 
 
