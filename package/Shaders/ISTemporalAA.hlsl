@@ -87,7 +87,7 @@ static const float kFlickerThreshold = 0.200000003;       // luma-spread below t
 /*
  * Channel layout (vanilla decompile — swizzles are load-bearing):
  * - Neighbour taps: .yxz sample; luma via dot(.xzy, kLumaWeights); stored as float4(.xyz=GRB, .w=luma).
- * - center: float4 .x=belowHistC1, .yzw=centre RGB; luma via dot(center.zwy, kLumaWeights).
+ * - centre: centerColor float3 = RGB; belowHistC1 scalar = C1 mask; luma via dot(centerColor.yzx, kLumaWeights).
  * - corner: float4 .xyz=corner GRB, .w=corner luma (depth-guided); .x reused for belowHistA0 mask.
  * - Bracket colours: .yzw holds (R, B, G); .w = luma.
  * - Output colour lives in .yzw (vanilla r3.yzw after blend; colorOut = sampleUV.yzw), not .xyz.
@@ -284,7 +284,7 @@ PS_OUTPUT main(PS_INPUT input)
 	// float4 packs — component reuse matches vanilla decompile (see header comment).
 	float4 motionReject, sampleUV, history, corner, tapMin;  // was r0–r4
 	float4 tapA0, tapA1, tapB0, tapB1, tapC0, tapC1;         // was r6–r13
-	float4 center;                                           // belowHistC1 mask carrier (was r14)
+	float belowHistC1;                                       // C1 tap below-history mask (was center.x, r14)
 
 	float2 drMax = GetDynamicResolutionMax(), drUVMin, drUVMax, drCenter;
 	float4 drNeighborsA, drNeighborsB, drNeighborsC;
@@ -341,8 +341,8 @@ PS_OUTPUT main(PS_INPUT input)
 	AssignPackedNeighbor(drNeighborsB.xy, history.x, tapB0, tapA0.x);
 	AssignPackedNeighbor(drNeighborsB.zw, history.x, tapB1, tapA1.x);
 	AssignPackedNeighbor(drNeighborsC.xy, history.x, tapC0, tapB0.x);
-	AssignPackedNeighbor(drNeighborsC.zw, history.x, tapC1, center.x);
-	float3 centerColor = SampleCenterRGB(sampleUV.xy);  // centre RGB; center.x stays the belowHist mask
+	AssignPackedNeighbor(drNeighborsC.zw, history.x, tapC1, belowHistC1);
+	float3 centerColor = SampleCenterRGB(sampleUV.xy);  // centre RGB (belowHistC1 holds the C1 mask)
 
 	// --- centre bracket seed, neighbourhood bracket, flicker, temporal blend (verbatim math) ---
 	float centerLuma = dot(centerColor.yzx, kLumaWeights);
@@ -356,7 +356,7 @@ PS_OUTPUT main(PS_INPUT input)
 	// below history (belowHistCentre), start at the ceiling. Then fold tapC1 (its belowHist).
 	float3 minBracket = cmp(centerLuma < kMaxLumaCap) ? centerRBL : kMaxLumaCap.xxx;
 	minBracket = belowHistCentre ? kMaxLumaCap.xxx : minBracket;
-	minBracket = MergeLumaBracket(tapC1, minBracket, center.x);
+	minBracket = MergeLumaBracket(tapC1, minBracket, belowHistC1);
 
 	// --- neighborhood min/max color bracket ---
 	// 4-tap weighted neighbour colour (C + D + L + LD); consumed by the non-reject output path.
@@ -380,7 +380,7 @@ PS_OUTPUT main(PS_INPUT input)
 	// (gated by belowHistCentre), then fold tapC1 toward it (MergeMaxBracket, gated by tapC1's belowHist).
 	float3 lowClamp = cmp(kMinLumaCap < centerLuma) ? centerRBL : kMinLumaCap.xxx;
 	lowClamp = belowHistCentre ? lowClamp : kMinLumaCap.xxx;
-	tapC1.xyz = MergeMaxBracket(tapC1, lowClamp, center.x);
+	tapC1.xyz = MergeMaxBracket(tapC1, lowClamp, belowHistC1);
 
 	// --- flicker contributions, one per neighbourhood tap ---
 	// Lifted out of the colour sort below: each reads a tap's ORIGINAL .w luma, and the sort only
