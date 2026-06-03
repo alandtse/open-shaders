@@ -52,10 +52,41 @@ $defs = @("/D","PSHADER=1")            # add "/D","VR=1" and/or "/D","HDR_OUTPUT
 & $fxc /nologo /T ps_5_0 /E main @defs /I $inc $sh /Fo "$env:TEMP\taa_B.dxbc"
 ```
 
-### 2. Capture a frame
+**Baseline = the refactor's BASE, not blindly `origin/dev`.** If your refactor is _stacked_ on a
+fix/feature not yet on `dev` (e.g. a VR fix the restructure sits on top of), compiling A′ from
+`dev` makes `baseline_vs_live` measure _that fix's effect_, not the compiler noise floor — you'll
+see a huge "floor" (e.g. ~0.22 instead of ~0.001) and a meaningless `EQUIVALENT`. Use the
+refactor's **parent commit** (`git show <refactor-base>:$sh`) so A′ and B differ only by the
+restructure.
 
-Launch SkyrimSE or SkyrimVR to the main menu with RenderDoc attached and capture one frame.
-Confirm with `Instance list` (the `renderdoc` MCP) that an instance shows `capture_loaded: true`.
+**Confirm `git branch` before compiling B.** A wrong-branch compile silently builds the deployed
+shader as the "candidate" and reports a meaningless `EQUIVALENT`.
+
+### 2. Capture a frame — MOTION matters
+
+Confirm with `Instance list` (the `renderdoc` MCP) that an instance shows `capture_loaded: true`
+after capturing.
+
+-   The **main menu** runs the TAA pass, but its history rectification is near-passthrough on a
+    static image. **A menu frame does NOT validate any change that flows through the motion-
+    dependent path** (reject / history reproject / clip-to-AABB) — it reads a false `EQUIVALENT`.
+    Use a menu frame only for changes you already know are motion-independent. _(This is how a
+    gate-inversion bug once slipped through: byte-for-byte `EQUIVALENT` on the menu, ~4× off under
+    motion — caught only by re-running on an in-game motion frame and bisecting the commits.)_
+-   For anything touching the blend/reject core, capture an **in-game frame with real motion**.
+    Via `dev-bench` + `renderdoc`: load a light **interior** save, then `record replay` a movement
+    recording (continuous teleport along a path = sustained motion vectors) and fire
+    `TargetControl.TriggerCapture(1)` ~3 s into the replay from a **concurrent** `Eval` (the replay
+    call blocks for its whole duration, so the trigger must run in parallel). `camera setPov vanity`
+    gives orbiting motion on SE; in VR the HMD drives the camera, so **player translation is the
+    reliable VR motion source**.
+-   **Capture size is the gate.** SE in-game ≈ 1.5 GB; VR interior ≈ 0.5–5.5 GB (loads fine); VR
+    **exterior ≈ 14 GB and wedges/crashes RenderDoc** — stay indoors (e.g. Dragonsreach). A
+    corrupt/oversized `.rdc` needs a full RenderDoc relaunch, not an MCP reconnect.
+-   `TargetControl` sometimes returns a **stale** `NewCapture` path — verify the new `.rdc` by
+    timestamp/size on disk, don't trust the returned string.
+-   On a huge frame, find the TAA pass by scanning drawcalls **in reverse** (post-process is near
+    the end) — a full-frame `SetFrameEvent` sweep times out the eval worker.
 
 ### 3. Load the harness and run the A/B (via the `renderdoc` MCP `Eval`)
 
@@ -94,11 +125,24 @@ Use the `Get-Texture` MCP tool on the output RT before vs after replacement (and
 `x≈0.5` eye-seam region where the original VR bug showed) with `diff_amplify` for a diff image
 in the report.
 
-## Caveats
+## Caveats & lessons learned
 
--   One frame proves equivalence on that frame; loop over a few captured frames (different menu
-    animation phases) for confidence.
--   The `HDR_OUTPUT` define must match the user's actual HDR setting, or `baseline_vs_live` will
-    flag it.
--   This is a regression check against a known-good baseline, not a formal proof; pair it with
-    the offline verifier (which formally covers every part that stays bytecode-identical).
+-   **Reach for the offline verifier first.** Far more refactoring stays bytecode-identical than
+    you'd expect — even destructuring deeply-aliased decompile scratch (where one float4 component
+    means different things at different points) compiles **byte-identically**, because the compiler
+    already SSA's it. Go one small step at a time and run `verify-shader-refactor.ps1` (or a per-
+    permutation `fxc` byte-compare) after each. Byte-identity is a _stronger_ proof than this
+    runtime A/B and needs no game/RenderDoc. Reserve this harness for the genuine op-reordering
+    core (the bracket/flicker/blend restructure) where fxc legitimately emits different code.
+-   One frame proves equivalence on that frame; loop over a few captured frames for confidence.
+-   The `HDR_OUTPUT` define must match the user's actual HDR setting, or `baseline_vs_live` flags it.
+-   **The HDR permutation can't be captured at all** — with HDR on, Open Shaders presents through a
+    DX12 interop swapchain and the D3D11 TAA pass isn't in the frame. Validate the `HDR_OUTPUT`
+    path by byte-identity + static analysis instead (the SDR path's runtime A/B covers the shared
+    math; HDR-only blocks are usually value-identical renames).
+-   **MCP `Eval` quirks (vary by server/version):** (1) if `ab`/`taa_candidates` are undefined on a
+    later call, your server uses a **fresh namespace per `Eval`** — `exec` the harness _and_ call it
+    in the **same** `Eval` (`g = dict(globals()); exec(src, g); g["ab"](...)`). (2) Output can lag
+    **one call behind** (you get the _previous_ call's stdout); poll again to drain it.
+-   This is a regression check against a known-good baseline, not a formal proof; pair it with the
+    offline verifier (which formally covers every part that stays bytecode-identical).
