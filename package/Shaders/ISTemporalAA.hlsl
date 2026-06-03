@@ -364,14 +364,16 @@ PS_OUTPUT main(PS_INPUT input)
 	neighborColor = tapB1.yxz * NeighborWeights.www + neighborColor;
 	neighborColor = tapC1.yxz * NeighborWeights.yyy + neighborColor;
 	neighborColor = centerColor * NeighborWeights.xxx + neighborColor;
+	// Shared neighbourhood fold sequence (tap + its belowHist gate), in vanilla tap order. The min and
+	// max colour brackets fold the same six taps with the same gates — only the merge rule (lower- vs
+	// higher-luma) and seed differ.
+	const float4 foldTaps[6] = { tapC0, tapB1, tapB0, tapA1, tapA0, tapMin };
+	const float foldGates[6] = { tapB0.x, tapA1.x, tapA0.x, tapMin.x, corner.x, uvMinBelowHist };
 	// Running min-luma colour bracket folded over the neighbourhood taps, each committed unless its
-	// belowHist gate is set (see MergeLumaBracket). The final tap lands in mergeScratch.yzw.
-	minBracket = MergeLumaBracket(tapC0, minBracket, tapB0.x);
-	minBracket = MergeLumaBracket(tapB1, minBracket, tapA1.x);
-	minBracket = MergeLumaBracket(tapB0, minBracket, tapA0.x);
-	minBracket = MergeLumaBracket(tapA1, minBracket, tapMin.x);
-	minBracket = MergeLumaBracket(tapA0, minBracket, corner.x);
-	mergeScratch.yzw = MergeLumaBracket(tapMin, minBracket, uvMinBelowHist);
+	// belowHist gate is set (see MergeLumaBracket). Result is the without-corner min bound.
+	[unroll] for (int fold = 0; fold < 6; fold++)
+		minBracket = MergeLumaBracket(foldTaps[fold], minBracket, foldGates[fold]);
+	mergeScratch.yzw = minBracket;
 	// Final fold: corner tap, ungated (gate 0 → always take the lower-luma colour).
 	bracketMinReg.yzw = MergeLumaBracket(corner, mergeScratch.yzw, 0);
 	// Low-clamp the (max-bracketed) tapC1 to the kMinLumaCap floor: build the centre-vs-floor bound
@@ -397,13 +399,10 @@ PS_OUTPUT main(PS_INPUT input)
 	// Running max folded over the taps, each committed when its belowHist gate is set (see
 	// MergeMaxBracket — gate is inverted vs the min fold). Seed = the clamped centre/C1 colour;
 	// result handed back to tapA0.yzw for the bespoke min/max-select tail below.
+	// Same six folds as the min bracket (foldTaps/foldGates), max rule, seeded from the low-clamped C1.
 	float3 maxBracket = tapC1.xyz;
-	maxBracket = MergeMaxBracket(tapC0, maxBracket, tapB0.x);
-	maxBracket = MergeMaxBracket(tapB1, maxBracket, tapA1.x);
-	maxBracket = MergeMaxBracket(tapB0, maxBracket, tapA0.x);
-	maxBracket = MergeMaxBracket(tapA1, maxBracket, tapMin.x);
-	maxBracket = MergeMaxBracket(tapA0, maxBracket, corner.x);
-	maxBracket = MergeMaxBracket(tapMin, maxBracket, uvMinBelowHist);
+	[unroll] for (int maxFold = 0; maxFold < 6; maxFold++)
+		maxBracket = MergeMaxBracket(foldTaps[maxFold], maxBracket, foldGates[maxFold]);
 	// Complete the max bracket (ungated corner fold), then select the neighbourhood AABB bounds for
 	// history clamping. motionReject.y toggles whether the corner tap is included: when set, max uses
 	// the with-corner bracket and min the without-corner one (opposite when clear). Packed into
