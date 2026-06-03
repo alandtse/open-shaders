@@ -66,10 +66,17 @@ ab(<eventId>,
 
 ### 4. Interpret
 
--   `baseline_vs_live` should be `IDENTICAL`/`EQUIVALENT`. If not, the define set or permutation
-    is wrong (e.g. HDR mismatch) — fix step 1 before trusting the candidate.
--   `candidate_vs_live` is the result: `EQUIVALENT` (`max_abs < 1e-3`) ⇒ Standard B preserves
-    behavior on this frame. `DIFFERS` with a structured `max_abs` ⇒ a real regression.
+**Always pass `baseline_dxbc`** — the verdict is _relative to it_. The game compiles the live
+shader with slightly different optimization than offline fxc, so even an identical shader leaves
+a small **noise floor** (`baseline_vs_live.mean_abs`, e.g. ~2e-4 on a 10-bit RT). `ab()` reports:
+
+-   `noise_floor_mean` — the baseline residue.
+-   `verdict`: `EQUIVALENT` if `candidate_vs_live.mean_abs ≤ 3× the floor`, else `DIFFERS`.
+
+Validated on the SE main menu (TAA on, HDR/frame-gen off): the pre-rename `dev` shader read
+`EQUIVALENT` (mean = floor), a deliberately ×0.5 shader read `DIFFERS` (mean ≈ 83× floor, 61%
+of samples). If `baseline_vs_live.mean_abs` is _large_ (not a tiny floor), the permutation is
+wrong (e.g. `HDR_OUTPUT` mismatch) — fix step 1 before trusting the candidate.
 
 ### 5. (Optional) visual evidence
 

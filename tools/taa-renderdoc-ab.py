@@ -46,9 +46,15 @@ def _as_resid(x):
     return x[0] if isinstance(x, tuple) else x
 
 
+# ISTemporalAA's pixel shader binds exactly these t0..t5 textures — a reliable fingerprint.
+# (Output-slot counting is unreliable: D3D11 returns 8 RTV slots and empty ones read as
+# "ResourceId::0", which does NOT compare equal to rd.ResourceId.Null.)
+_TAA_TEX = {"currentframetex", "historytex", "velocitytex", "depthtex", "masktex", "alphatex"}
+
+
 def taa_candidates():
-    """List draws that look like ISTemporalAA: 2 colour outputs (Color+Feedback) and
-    >=5 pixel-stage SRVs (t0..t5). Operator confirms the eventId before swapping."""
+    """Find ISTemporalAA draws by their pixel-shader SRV fingerprint (t0..t5). Returns
+    [{eventId, name}]; pass the eventId to ab()."""
     def work(ctrl):
         sdfile = ctrl.GetStructuredFile()
         res = []
@@ -56,14 +62,12 @@ def taa_candidates():
             if not (a.flags & rd.ActionFlags.Drawcall):
                 continue
             ctrl.SetFrameEvent(a.eventId, True)
-            ps = ctrl.GetPipelineState()
-            outs = [o for o in ps.GetOutputTargets() if _desc_res(o) != rd.ResourceId.Null]
-            srvs = ps.GetReadOnlyResources(rd.ShaderStage.Pixel)
-            nsrv = sum(1 for s in srvs
-                       if _desc_res(s.descriptor if hasattr(s, "descriptor") else s) != rd.ResourceId.Null)
-            if len(outs) == 2 and nsrv >= 5:
-                res.append({"eventId": a.eventId, "name": a.GetName(sdfile),
-                            "outputs": len(outs), "srvs": nsrv})
+            refl = ctrl.GetPipelineState().GetShaderReflection(rd.ShaderStage.Pixel)
+            if not refl:
+                continue
+            names = {r.name.lower() for r in refl.readOnlyResources}
+            if _TAA_TEX.issubset(names):
+                res.append({"eventId": a.eventId, "name": a.GetName(sdfile)})
         return res
     return ctx.replay(work)
 
@@ -148,34 +152,40 @@ def _diff(a, b, meta):
         out["note"] = "size mismatch"
         return out
 
+    # Decode to normalized [0,1] channel values. Packed formats (R10G10B10A2) MUST be unpacked
+    # by channel, not byte — a 1-LSB 10-bit delta spans byte boundaries and a byte-diff hugely
+    # overstates it. No verdict here: ab() judges relative to the baseline noise floor, because
+    # the game's runtime compile differs from offline fxc by a few LSBs even for an identical
+    # shader (that residue is the floor, not a behavior change).
     fmt = meta[2].lower()
-    if "16_float" in fmt:
-        code, esz = "<e", 2
+    packed = "10g10b10a2" in fmt
+    if packed:
+        esz, code = 4, None
+    elif "16_float" in fmt:
+        esz, code = 2, "<e"
     elif "32_float" in fmt:
-        code, esz = "<f", 4
+        esz, code = 4, "<f"
     else:
-        code, esz = None, 1  # 8-bit UNORM fallback
+        esz, code = 1, None  # 8-bit UNORM per byte
 
     n = len(a)
     total = n // esz
-    stride = max(1, total // 100000)  # cap ~100k samples across the whole image
-    maxabs = 0.0
-    sse = 0.0
-    cnt = 0
-    ndiff = 0
+    stride = max(1, total // 100000)  # cap ~100k samples across the image
+    maxabs = sse = 0.0
+    cnt = ndiff = 0
+    A2 = ((0, 1023, 1023.0), (10, 1023, 1023.0), (20, 1023, 1023.0), (30, 3, 3.0))
     for i in range(0, total, stride):
         off = i * esz
-        if code:
+        if packed:
+            px = struct.unpack_from("<I", a, off)[0]
+            py = struct.unpack_from("<I", b, off)[0]
+            dlt = max(abs(((px >> s) & m) / d - ((py >> s) & m) / d) for (s, m, d) in A2)
+        elif code:
             x = struct.unpack_from(code, a, off)[0]
             y = struct.unpack_from(code, b, off)[0]
-            # NaN-safe: abs(NaN) is NaN and silently fails every comparison below, which would
-            # let a clearly-different output read as EQUIVALENT. Treat NaN-vs-number as a max
-            # difference; both-NaN as equal (identical bits already hit the a == b fast path).
+            # NaN-safe: abs(NaN) silently fails comparisons and could fake EQUIVALENT.
             xn, yn = math.isnan(x), math.isnan(y)
-            if xn or yn:
-                dlt = 0.0 if (xn and yn) else float("inf")
-            else:
-                dlt = abs(x - y)
+            dlt = (0.0 if (xn and yn) else float("inf")) if (xn or yn) else abs(x - y)
         else:
             dlt = abs(a[off] - b[off]) / 255.0
         if dlt > 0:
@@ -189,8 +199,6 @@ def _diff(a, b, meta):
     out["sample_frac_differing"] = (ndiff / cnt) if cnt else 0.0
     out["max_abs"] = maxabs
     out["mean_abs"] = (sse / cnt) if cnt else 0.0
-    # Tiny residue from FP reassociation is OK; a structured artifact is not.
-    out["verdict"] = "EQUIVALENT" if maxabs < 1e-3 else "DIFFERS"
     return out
 
 
@@ -217,8 +225,21 @@ def ab(eid, candidate_dxbc, baseline_dxbc=None, entry="main"):
     r = replace_ps_with_dxbc(eid, candidate_dxbc, entry)
     if not r["ok"]:
         report["candidate_vs_live"] = {"verdict": "BUILD-FAILED", "errors": r["errors"]}
+        report["verdict"] = "BUILD-FAILED"
         return report
     _, b, _ = grab_rt(eid)
     report["candidate_vs_live"] = _diff(a_real, b, meta)
+
+    # Verdict: judge the candidate's mean_abs against the baseline noise floor (runtime-vs-fxc
+    # compile residue). EQUIVALENT if within 3x the floor; DIFFERS otherwise. Without a baseline
+    # we can only fall back to a small absolute mean tolerance.
+    base = report.get("baseline_vs_live") or {}
+    floor = base.get("mean_abs")
+    cand_mean = report["candidate_vs_live"]["mean_abs"]
+    if floor is not None:
+        report["noise_floor_mean"] = floor
+        report["verdict"] = "EQUIVALENT" if cand_mean <= max(floor * 3.0, 1e-4) else "DIFFERS"
+    else:
+        report["verdict"] = "EQUIVALENT" if cand_mean <= 1e-3 else "DIFFERS"
     restore(eid)
     return report
