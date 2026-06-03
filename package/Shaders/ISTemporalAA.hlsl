@@ -74,6 +74,12 @@ float DecodeFeedbackLuma(float gammaLuma)
 
 static const float3 kLumaWeights = float3(0.5, 0.25, 0.25);
 
+// Named magic constants from the vanilla decompile (values unchanged).
+static const float kMaxLumaCap = 1.00100005;             // bracket ceiling (just above 1.0 PQ)
+static const float kMinLumaCap = -0.00100000005;         // bracket floor (just below 0)
+static const float kLumaEpsilon = 0.00999999978;         // negligible-luma threshold
+static const float2 kSimilarityScale = float2(20, 100);  // motion-diff convergence decay (x), strict (y)
+
 /*
  * Channel layout (vanilla decompile — swizzles are load-bearing):
  * - Neighbour taps: .yxz sample; luma via dot(.xzy, kLumaWeights); stored as float4(.xyz=GRB, .w=luma).
@@ -311,9 +317,9 @@ PS_OUTPUT main(PS_INPUT input)
 	// Bracket ceiling: 1.001 is just above the maximum PQ value (1.0 = 10000 nits).
 	// Nothing in the scene exceeds this, so the ceiling works correctly in PQ working space.
 	// (In linear BT2020 this would be wrong — sky/specular exceed 1.0 linear — but PQ is bounded.)
-	bracketMax.y = cmp(centerMeta.x < 1.00100005);
-	bracketMax.yzw = bracketMax.yyy ? centerMeta.yzx : float3(1.00100005, 1.00100005, 1.00100005);
-	bracketMax.yzw = bracketMax.xxx ? float3(1.00100005, 1.00100005, 1.00100005) : bracketMax.yzw;
+	bracketMax.y = cmp(centerMeta.x < kMaxLumaCap);
+	bracketMax.yzw = bracketMax.yyy ? centerMeta.yzx : kMaxLumaCap.xxx;
+	bracketMax.yzw = bracketMax.xxx ? kMaxLumaCap.xxx : bracketMax.yzw;
 
 	weightedColor.x = cmp(tapC1.w < bracketMax.w);
 	weightedColor.xyz = weightedColor.xxx ? tapC1.yzw : bracketMax.yzw;
@@ -344,9 +350,9 @@ PS_OUTPUT main(PS_INPUT input)
 	mergeScratch.yzw = sampleUV.www ? bracketMax.yzw : mergeScratch.xyz;
 	tapB1.x = cmp(corner.w < mergeScratch.w);
 	bracketMinReg.yzw = tapB1.xxx ? corner.yzw : mergeScratch.yzw;
-	tapB1.x = cmp(-0.00100000005 < centerMeta.x);
-	bracketMax.yzw = tapB1.xxx ? centerMeta.yzx : float3(-0.00100000005, -0.00100000005, -0.00100000005);
-	bracketMax.xyz = bracketMax.xxx ? bracketMax.yzw : float3(-0.00100000005, -0.00100000005, -0.00100000005);
+	tapB1.x = cmp(kMinLumaCap < centerMeta.x);
+	bracketMax.yzw = tapB1.xxx ? centerMeta.yzx : kMinLumaCap.xxx;
+	bracketMax.xyz = bracketMax.xxx ? bracketMax.yzw : kMinLumaCap.xxx;
 	tapB1.x = cmp(bracketMax.z < tapC1.w);
 	tapC1.xyz = tapB1.xxx ? tapC1.yzw : bracketMax.xyz;
 	tapC1.xyz = center.xxx ? tapC1.xyz : bracketMax.xyz;
@@ -418,7 +424,7 @@ PS_OUTPUT main(PS_INPUT input)
 	sampleUV.w = cmp(motionReject.y < 0.902499974);
 	history.xyz = sampleUV.www ? tapA1.xyz : tapB0.xyz;
 	history.yz = history.zx + -history.yy;
-	corner.w = cmp(0.00999999978 < history.y);
+	corner.w = cmp(kLumaEpsilon < history.y);
 	history.y = history.z / history.y;
 	history.y = corner.w ? history.y : 0.5;
 	tapMin.xyz = sampleUV.www ? tapMin.xyz : tapC0.xyz;
@@ -459,11 +465,11 @@ PS_OUTPUT main(PS_INPUT input)
 	motionReject.z = history.x + -centerMeta.x;
 	{
 		float lumaDiffScaled = abs(motionReject.z) * 0.05;
-		history.xw = -lumaDiffScaled.xx * float2(20, 100) + float2(1, 1);
+		history.xw = -lumaDiffScaled.xx * kSimilarityScale + float2(1, 1);
 	}
 #	else
 	motionReject.z = history.x + -centerMeta.x;
-	history.xw = -abs(motionReject.xx) * float2(20, 100) + float2(1, 1);
+	history.xw = -abs(motionReject.xx) * kSimilarityScale + float2(1, 1);
 #	endif
 	history.xw = max(float2(0, 0), history.xw);
 	tapMin.yzw = history.xxx * tapMin.xyz + corner.xyz;
@@ -493,25 +499,20 @@ PS_OUTPUT main(PS_INPUT input)
 
 	motionReject.y = motionReject.x * motionReject.z + centerMeta.x;
 	motionReject.x = motionReject.x * motionReject.z;
-	motionReject.x = cmp(abs(motionReject.x) < 0.00999999978);
+	motionReject.x = cmp(abs(motionReject.x) < kLumaEpsilon);
 	corner.x = motionReject.x ? centerMeta.x : motionReject.y;
 	tapMin.x = dot(tapMin.zwy, kLumaWeights);
 
 	// --- alpha-aware output ---
-	motionReject.x = AlphaCoverageMask(drNeighborsA.xy);
-	motionReject.y = AlphaCoverageMask(drNeighborsA.zw);
-	motionReject.x = motionReject.x ? sampleUV.z : 0;
-	motionReject.x = motionReject.y ? motionReject.x : 0;
-	motionReject.y = AlphaCoverageMask(drNeighborsB.xy);
-	motionReject.z = AlphaCoverageMask(drNeighborsB.zw);
-	motionReject.x = motionReject.y ? motionReject.x : 0;
-	motionReject.x = motionReject.z ? motionReject.x : 0;
-	motionReject.y = AlphaCoverageMask(drNeighborsC.xy);
-	motionReject.z = AlphaCoverageMask(drNeighborsC.zw);
-	motionReject.x = motionReject.y ? motionReject.x : 0;
-	motionReject.x = motionReject.z ? motionReject.x : 0;
-	motionReject.y = AlphaCoverageMask(drUVMax);
-	motionReject.x = motionReject.y ? motionReject.x : 0;
+	// allTransparent: every 3x3 tap covered by alpha. Seed = uvMin coverage (sampleUV.z),
+	// gated by the 8 remaining taps (motionReject.w already holds the centre tap's coverage).
+	const float2 alphaUVs[7] = {
+		drNeighborsA.xy, drNeighborsA.zw, drNeighborsB.xy, drNeighborsB.zw,
+		drNeighborsC.xy, drNeighborsC.zw, drUVMax
+	};
+	motionReject.x = sampleUV.z;
+	[unroll] for (int alphaTap = 0; alphaTap < 7; alphaTap++)
+		motionReject.x = AlphaCoverageMask(alphaUVs[alphaTap]) ? motionReject.x : 0;
 	motionReject.x = motionReject.w ? motionReject.x : 0;
 	motionReject.y = cmp(ThresholdParams.w >= history.y);
 	motionReject.z = 1 + -history.z;
