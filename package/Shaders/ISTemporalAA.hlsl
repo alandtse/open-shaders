@@ -361,42 +361,49 @@ PS_OUTPUT main(PS_INPUT input)
 	tapC1.xyz = tapB1.xxx ? tapC1.yzw : bracketMax.xyz;
 	tapC1.xyz = center.xxx ? tapC1.xyz : bracketMax.xyz;
 
-	// --- flicker score from neighbor luma spread ---
-	tapB1.x = FlickerLumaContribution(centerLuma, tapC1.w);
+	// --- flicker contributions, one per neighbourhood tap ---
+	// Lifted out of the colour sort below: each reads a tap's ORIGINAL .w luma, and the sort only
+	// mutates .w/.yzw after that read, so hoisting them here is behavior-preserving. (In the vanilla
+	// decompile these were stashed into the taps' .x belowHist slots once those gates were spent.)
+	float fcC1 = FlickerLumaContribution(centerLuma, tapC1.w);
+	float fcC0 = FlickerLumaContribution(centerLuma, tapC0.w);
+	float fcB1 = FlickerLumaContribution(centerLuma, tapB1.w);
+	float fcB0 = FlickerLumaContribution(centerLuma, tapB0.w);
+	float fcA1 = FlickerLumaContribution(centerLuma, tapA1.w);
+	float fcA0 = FlickerLumaContribution(centerLuma, tapA0.w);
+	float fcMin = FlickerLumaContribution(centerLuma, tapMin.w);
+	float fcCorner = FlickerLumaContribution(centerLuma, corner.w);
+
+	// --- min-luma colour sort: bubble the lowest-luma neighbour colour through the tap chain,
+	// gated per step by the belowHist masks (.x slots). Irreducible decompile packing — left as-is.
 	tapC0.x = cmp(tapC1.z < tapC0.w);
 	tapC0.xyz = tapC0.xxx ? tapC0.yzw : tapC1.xyz;
 	tapC0.xyz = tapB0.xxx ? tapC0.xyz : tapC1.xyz;
-	tapB0.x = FlickerLumaContribution(centerLuma, tapC0.w);
 	tapC0.w = cmp(tapC0.z < tapB1.w);
 	tapC1.xyz = tapC0.www ? tapB1.yzw : tapC0.xyz;
 	tapC0.xyz = tapA1.xxx ? tapC1.xyz : tapC0.xyz;
-	tapA1.x = FlickerLumaContribution(centerLuma, tapB1.w);
 	tapB1.y = cmp(tapC0.z < tapB0.w);
 	tapB1.yzw = tapB1.yyy ? tapB0.yzw : tapC0.xyz;
 	tapB1.yzw = tapA0.xxx ? tapB1.yzw : tapC0.xyz;
-	tapA0.x = FlickerLumaContribution(centerLuma, tapB0.w);
 	tapB0.y = cmp(tapB1.w < tapA1.w);
 	tapB0.yzw = tapB0.yyy ? tapA1.yzw : tapB1.yzw;
 	tapB0.yzw = tapMin.xxx ? tapB0.yzw : tapB1.yzw;
-	tapMin.x = FlickerLumaContribution(centerLuma, tapA1.w);
 	tapA1.y = cmp(tapB0.w < tapA0.w);
 	tapA1.yzw = tapA1.yyy ? tapA0.yzw : tapB0.yzw;
 	tapA1.yzw = corner.xxx ? tapA1.yzw : tapB0.yzw;
-	corner.x = FlickerLumaContribution(centerLuma, tapA0.w);
 	tapA0.y = cmp(tapA1.w < tapMin.w);
 	tapA0.yzw = tapA0.yyy ? tapMin.yzw : tapA1.yzw;
 	tapA0.yzw = uvMinBelowHist.xxx ? tapA0.yzw : tapA1.yzw;
-	sampleUV.w = FlickerLumaContribution(centerLuma, tapMin.w);
 	bracketMinReg.x = tapA0.z;
 	tapMin.y = cmp(tapA0.w < corner.w);
 	tapMin.yzw = tapMin.yyy ? corner.yzw : tapA0.yzw;
 	tapC0.xw = motionReject.yy ? tapMin.yw : tapA0.yw;
 	mergeScratch.x = tapMin.z;
 	tapC1.xyzw = motionReject.yyyy ? mergeScratch.xyzw : bracketMinReg.xyzw;
-	// Flicker score = saturate(4 - sum of the 9 neighbourhood FlickerLumaContributions).
-	// Each contribution is an integer ceil() result, so the sum is exact regardless of grouping.
-	float flickerScore = saturate(4 - FlickerLumaContribution(centerLuma, corner.w) - sampleUV.w -
-								  corner.x - tapMin.x - tapA0.x - tapA1.x - tapB0.x - tapB1.x);
+
+	// Flicker score = saturate(4 - sum of the 8 integer flicker contributions). Exact regardless
+	// of grouping (each is a ceil() integer).
+	float flickerScore = saturate(4 - fcCorner - fcMin - fcA0 - fcA1 - fcB0 - fcB1 - fcC0 - fcC1);
 
 	// --- temporal blend, clamp, and sharpen ---
 	sampleUV.w = cmp(1 < tapC1.w);
