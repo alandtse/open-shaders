@@ -403,13 +403,10 @@ PS_OUTPUT main(PS_INPUT input)
 		maxBracket = MergeMaxBracket(foldTaps[maxFold], maxBracket, foldGates[maxFold]);
 	// Complete the max bracket (ungated corner fold), then select the neighbourhood AABB bounds for
 	// history clamping. cornerBelowHist toggles whether the corner tap is included: when set, max uses
-	// the with-corner bracket and min the without-corner one (opposite when clear). Packed into
-	// tapC0 (max bound) and tapC1 (max.y, then min bound) in the layout the blend below reads.
+	// the with-corner bracket and min the without-corner one (opposite when clear).
 	float3 maxWithCorner = MergeMaxBracket(corner, maxBracket, 1);
-	float3 maxBoundSel = cornerBelowHist.xxx ? maxWithCorner : maxBracket;
-	float3 minBoundSel = cornerBelowHist.xxx ? minBoundNoCorner : minBoundWithCorner;
-	tapC0.xw = maxBoundSel.xz;
-	tapC1.xyzw = float4(maxBoundSel.y, minBoundSel);
+	float3 maxBoundSel = cornerBelowHist.xxx ? maxWithCorner : maxBracket;             // (R, B, luma)
+	float3 minBoundSel = cornerBelowHist.xxx ? minBoundNoCorner : minBoundWithCorner;  // (R, B, luma)
 
 	// Flicker score = saturate(4 - sum of the 8 integer flicker contributions). Exact regardless
 	// of grouping (each is a ceil() integer).
@@ -421,9 +418,9 @@ PS_OUTPUT main(PS_INPUT input)
 	// how much history to keep; when low, clampToNeighborhood pulls the result toward the bracket.
 	// Two history-clip candidates from the min/max AABB bounds, each packed (R, sharpenDelta, B, luma)
 	// — the decompile stashes the RCAS sharpen in the G slot.
-	float minOverbright = cmp(1 < tapC1.w);
-	float4 clipLo = float4(tapC1.y, SharpenDelta(tapC1.w, tapC1.y, tapC1.z), tapC1.z, tapC1.w);  // min bound
-	float4 clipHi = float4(tapC0.x, SharpenDelta(tapC0.w, tapC0.x, tapC1.x), tapC1.x, tapC0.w);  // max bound
+	float minOverbright = cmp(1 < minBoundSel.z);
+	float4 clipLo = float4(minBoundSel.x, SharpenDelta(minBoundSel.z, minBoundSel.x, minBoundSel.y), minBoundSel.y, minBoundSel.z);  // min bound
+	float4 clipHi = float4(maxBoundSel.x, SharpenDelta(maxBoundSel.z, maxBoundSel.x, maxBoundSel.y), maxBoundSel.y, maxBoundSel.z);  // max bound
 	// Prefer the max bound; fall back to the min bound when the max luma is degenerate (<0), then to
 	// that result vs the min bound when the min luma is overbright (>1).
 	float4 clipPick = cmp(clipHi.w < 0) ? clipLo : clipHi;
