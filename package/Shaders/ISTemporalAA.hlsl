@@ -463,10 +463,12 @@ PS_OUTPUT main(PS_INPUT input)
 	float centerCoverage = AlphaCoverageMask(sampleUV.xy);
 	float maskReject = cmp(ThresholdParams.w < history.z);
 	reject = (int)reject | (int)maskReject;
-	sampleUV.xyw = reject.xxx ? centerColor : corner.xyz;
+	// Two colour candidates: the rectified history colour and the neighbourhood-weighted colour
+	// (both collapse to the centre tap when the pixel is rejected).
+	float3 workColor = reject.xxx ? centerColor : corner.xyz;  // history/rectified colour, evolves below
 	history.xw = reject.xx ? float2(centerLuma, 0) : history.xw;
-	corner.xyz = reject.xxx ? centerColor : neighborColor;
-	tapMin.xyz = centerColor + -corner.xyz;
+	float3 neighborBlend = reject.xxx ? centerColor : neighborColor;
+	float3 centerVsNeighbor = centerColor + -neighborBlend;
 	float motionNormScale = 128 * TexelSizeParams.x;  // 128-texel span used to normalize motion length
 	float motionConfidence = saturate(motionLength / motionNormScale);
 	float motionVsHistory = motionConfidence + -history.w;
@@ -488,8 +490,8 @@ PS_OUTPUT main(PS_INPUT input)
 	float2 similarity = -abs(motionVsHistory.xx) * kSimilarityScale + float2(1, 1);
 #	endif
 	similarity = max(float2(0, 0), similarity);
-	tapMin.yzw = similarity.xxx * tapMin.xyz + corner.xyz;
-	sampleUV.xyw = -tapMin.yzw + sampleUV.xyw;
+	float3 targetColor = similarity.xxx * centerVsNeighbor + neighborBlend;
+	workColor = -targetColor + workColor;
 	float blendWeight = BlendParams.x + -BlendParams.y;
 	blendWeight = motionConfidence * blendWeight + BlendParams.y;
 	blendWeight = min(blendWeight, similarity.x);
@@ -498,19 +500,19 @@ PS_OUTPUT main(PS_INPUT input)
 	blendWeight = historyFeedback * feedbackComplement + blendWeight;
 	feedbackOut.yz = float2(historyFeedback, motionConfidence);
 #	ifdef HDR_OUTPUT
-	tapMin.yzw = max(tapMin.yzw, 0);
-	sampleUV.xyw = saturate(blendWeight.xxx * sampleUV.xyw + tapMin.yzw);
+	targetColor = max(targetColor, 0);
+	workColor = saturate(blendWeight.xxx * workColor + targetColor);
 	// Skip vanilla BlendParams.z/w detail recovery — neighbourhood delta blows up in linear HDR
 	// and causes dark bezels / halos on the alpha-aware corner.yzw output path.
-	corner.yzw = sampleUV.xyw;
+	corner.yzw = workColor;
 #	else
-	sampleUV.xyw = saturate(blendWeight.xxx * sampleUV.xyw + tapMin.yzw);
+	workColor = saturate(blendWeight.xxx * workColor + targetColor);
 
-	tapA0.xyz = sampleUV.xyw + -corner.xyz;
-	sampleUV.xyw = saturate(tapA0.xyz * BlendParams.zzz + sampleUV.xyw);
+	float3 detailDelta = workColor + -neighborBlend;
+	workColor = saturate(detailDelta * BlendParams.zzz + workColor);
 
-	corner.xyz = corner.xyz + -sampleUV.xyw;
-	corner.yzw = saturate(BlendParams.www * corner.xyz + sampleUV.xyw);
+	corner.xyz = neighborBlend + -workColor;
+	corner.yzw = saturate(BlendParams.www * corner.xyz + workColor);
 #	endif
 
 	// Feedback luma: nudge centre luma by the blend-weighted luma diff, unless that nudge is negligible.
@@ -518,7 +520,7 @@ PS_OUTPUT main(PS_INPUT input)
 	float lumaNudge = blendWeight * lumaDiff;
 	float lumaNudgeTiny = cmp(abs(lumaNudge) < kLumaEpsilon);
 	corner.x = lumaNudgeTiny ? centerLuma : feedbackLuma;
-	float outputLuma = dot(tapMin.zwy, kLumaWeights);
+	float outputLuma = dot(targetColor.yzx, kLumaWeights);
 
 	// --- alpha-aware output ---
 	// allTransparent: every 3x3 tap covered by alpha. Seed = uvMin coverage (uvMinCoverage),
@@ -535,7 +537,7 @@ PS_OUTPUT main(PS_INPUT input)
 	float feedbackWeight = 1 + -history.z;
 	allTransparent = depthMaskPass ? allTransparent : 0;
 	// .x = feedback luma, .yzw = resolved colour
-	float4 resolved = allTransparent.xxxx ? float4(outputLuma, tapMin.yzw) : corner.xyzw;
+	float4 resolved = allTransparent.xxxx ? float4(outputLuma, targetColor) : corner.xyzw;
 	colorOut.xyz = resolved.yzw;
 #	ifdef HDR_OUTPUT
 	// Encode PQ luma to game-gamma for feedback RT storage.
