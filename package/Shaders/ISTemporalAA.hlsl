@@ -459,9 +459,9 @@ PS_OUTPUT main(PS_INPUT input)
 	reject = (int)uvHigh.x | (int)uvLow;
 	reject = (int)uvHigh.y | (int)reject;
 #	endif
-	history.yz = maskTex.Sample(maskSampler, sampleUV.xy).xy;
+	float2 maskValues = maskTex.Sample(maskSampler, sampleUV.xy).xy;  // .x depth-mask, .y coverage
 	float centerCoverage = AlphaCoverageMask(sampleUV.xy);
-	float maskReject = cmp(ThresholdParams.w < history.z);
+	float maskReject = cmp(ThresholdParams.w < maskValues.y);
 	reject = (int)reject | (int)maskReject;
 	// Two colour candidates: the rectified history colour and the neighbourhood-weighted colour
 	// (both collapse to the centre tap when the pixel is rejected).
@@ -499,27 +499,29 @@ PS_OUTPUT main(PS_INPUT input)
 	float feedbackComplement = kFeedbackBlendMax + -blendWeight;
 	blendWeight = historyFeedback * feedbackComplement + blendWeight;
 	feedbackOut.yz = float2(historyFeedback, motionConfidence);
+	// outPacked.yzw = resolved colour; .x = feedback luma (set just below).
+	float4 outPacked;
 #	ifdef HDR_OUTPUT
 	targetColor = max(targetColor, 0);
 	workColor = saturate(blendWeight.xxx * workColor + targetColor);
 	// Skip vanilla BlendParams.z/w detail recovery — neighbourhood delta blows up in linear HDR
-	// and causes dark bezels / halos on the alpha-aware corner.yzw output path.
-	corner.yzw = workColor;
+	// and causes dark bezels / halos on the alpha-aware outPacked.yzw output path.
+	outPacked.yzw = workColor;
 #	else
 	workColor = saturate(blendWeight.xxx * workColor + targetColor);
 
 	float3 detailDelta = workColor + -neighborBlend;
 	workColor = saturate(detailDelta * BlendParams.zzz + workColor);
 
-	corner.xyz = neighborBlend + -workColor;
-	corner.yzw = saturate(BlendParams.www * corner.xyz + workColor);
+	outPacked.xyz = neighborBlend + -workColor;
+	outPacked.yzw = saturate(BlendParams.www * outPacked.xyz + workColor);
 #	endif
 
 	// Feedback luma: nudge centre luma by the blend-weighted luma diff, unless that nudge is negligible.
 	float feedbackLuma = blendWeight * lumaDiff + centerLuma;
 	float lumaNudge = blendWeight * lumaDiff;
 	float lumaNudgeTiny = cmp(abs(lumaNudge) < kLumaEpsilon);
-	corner.x = lumaNudgeTiny ? centerLuma : feedbackLuma;
+	outPacked.x = lumaNudgeTiny ? centerLuma : feedbackLuma;
 	float outputLuma = dot(targetColor.yzx, kLumaWeights);
 
 	// --- alpha-aware output ---
@@ -533,11 +535,11 @@ PS_OUTPUT main(PS_INPUT input)
 	[unroll] for (int alphaTap = 0; alphaTap < 7; alphaTap++)
 		allTransparent = AlphaCoverageMask(alphaUVs[alphaTap]) ? allTransparent : 0;
 	allTransparent = centerCoverage ? allTransparent : 0;
-	float depthMaskPass = cmp(ThresholdParams.w >= history.y);
-	float feedbackWeight = 1 + -history.z;
+	float depthMaskPass = cmp(ThresholdParams.w >= maskValues.x);
+	float feedbackWeight = 1 + -maskValues.y;
 	allTransparent = depthMaskPass ? allTransparent : 0;
 	// .x = feedback luma, .yzw = resolved colour
-	float4 resolved = allTransparent.xxxx ? float4(outputLuma, targetColor) : corner.xyzw;
+	float4 resolved = allTransparent.xxxx ? float4(outputLuma, targetColor) : outPacked.xyzw;
 	colorOut.xyz = resolved.yzw;
 #	ifdef HDR_OUTPUT
 	// Encode PQ luma to game-gamma for feedback RT storage.
