@@ -184,6 +184,14 @@ float3 MergeLumaBracket(float4 tap, float3 bracket, float gate)
 	return gate ? bracket : cand;
 }
 
+// RCAS-style sharpen delta: 2 * (center - 0.25*a - 0.25*b), in the decompile's exact op order.
+float SharpenDelta(float center, float a, float b)
+{
+	float d = -a * 0.25 + center;
+	d = -b * 0.25 + d;
+	return d + d;
+}
+
 // shallowestDepth must already include depth before calling.
 float2 PickIfShallowestUV(float2 selectedUV, float shallowestDepth, float depth, float2 uvIfMatch)
 {
@@ -407,14 +415,11 @@ PS_OUTPUT main(PS_INPUT input)
 
 	// --- temporal blend, clamp, and sharpen ---
 	sampleUV.w = cmp(1 < tapC1.w);
-	corner.x = -tapC1.y * 0.25 + tapC1.w;
-	corner.x = -tapC1.z * 0.25 + corner.x;
-	corner.y = corner.x + corner.x;
+	// Sharpen deltas for the two blend candidates (centre minus quarter-weighted neighbour pair).
+	corner.y = SharpenDelta(tapC1.w, tapC1.y, tapC1.z);
 	tapC0.z = tapC1.x;
 	corner.xzw = tapC1.yzw;
-	tapMin.x = -tapC0.x * 0.25 + tapC0.w;
-	tapMin.x = -tapC1.x * 0.25 + tapMin.x;
-	tapC0.y = tapMin.x + tapMin.x;
+	tapC0.y = SharpenDelta(tapC0.w, tapC0.x, tapC1.x);
 	tapMin.x = cmp(tapC0.w < 0);
 	tapMin.xyzw = tapMin.xxxx ? corner.xyzw : tapC0.xyzw;
 	tapA0.xyzw = sampleUV.wwww ? tapMin.xyzw : corner.xyzw;
