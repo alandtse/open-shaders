@@ -89,10 +89,11 @@ static const float kFlickerThreshold = 0.200000003;       // luma-spread below t
  * - Neighbour taps: .yxz sample; luma via dot(.xzy, kLumaWeights); stored as float4(.xyz=GRB, .w=luma).
  * - centre: centerColor float3 = RGB; belowHistC1 scalar = C1 mask; luma via dot(centerColor.yzx, kLumaWeights).
  * - corner: float4 .xyz=corner GRB, .w=corner luma (depth-guided); .x reused for belowHistA0 mask.
- * - Bracket colours: .yzw holds (R, B, G); .w = luma.
- * - Output colour lives in .yzw (vanilla r3.yzw after blend; colorOut = sampleUV.yzw), not .xyz.
+ * - Bracket colours (float3): (R, B, luma) with .z = luma — see MergeLumaBracket/MergeMaxBracket.
+ * - Output colour lives in .yzw (vanilla r3.yzw after blend; resolved/outPacked .yzw), not .xyz.
  *
- * Registers are float4 packs — names are semantic but components reuse like the decompile.
+ * The few remaining float4 packs (motionReject, history, corner, taps) are semantic but reuse
+ * components like the decompile; the blend-math packs have been split into named locals.
  */
 
 float2 ClampScreenUV(float2 screenUV, float2 drMax)
@@ -321,7 +322,7 @@ PS_OUTPUT main(PS_INPUT input)
 	history.x = DecodeFeedbackLuma(history.x);
 #	endif
 	corner.w = dot(corner.xzy, kLumaWeights);
-	motionReject.y = cmp(corner.w < history.x);
+	float cornerBelowHist = cmp(corner.w < history.x);  // toggles corner-tap inclusion in the AABB
 
 	// --- neighbour colour / luma samples ---
 	float uvMinCoverage;   // uvMin alpha coverage; seeds the allTransparent test far below
@@ -401,12 +402,12 @@ PS_OUTPUT main(PS_INPUT input)
 	[unroll] for (int maxFold = 0; maxFold < 6; maxFold++)
 		maxBracket = MergeMaxBracket(foldTaps[maxFold], maxBracket, foldGates[maxFold]);
 	// Complete the max bracket (ungated corner fold), then select the neighbourhood AABB bounds for
-	// history clamping. motionReject.y toggles whether the corner tap is included: when set, max uses
+	// history clamping. cornerBelowHist toggles whether the corner tap is included: when set, max uses
 	// the with-corner bracket and min the without-corner one (opposite when clear). Packed into
 	// tapC0 (max bound) and tapC1 (max.y, then min bound) in the layout the blend below reads.
 	float3 maxWithCorner = MergeMaxBracket(corner, maxBracket, 1);
-	float3 maxBoundSel = motionReject.yyy ? maxWithCorner : maxBracket;
-	float3 minBoundSel = motionReject.yyy ? minBoundNoCorner : minBoundWithCorner;
+	float3 maxBoundSel = cornerBelowHist.xxx ? maxWithCorner : maxBracket;
+	float3 minBoundSel = cornerBelowHist.xxx ? minBoundNoCorner : minBoundWithCorner;
 	tapC0.xw = maxBoundSel.xz;
 	tapC1.xyzw = float4(maxBoundSel.y, minBoundSel);
 
