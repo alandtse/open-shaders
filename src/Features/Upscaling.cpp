@@ -186,8 +186,7 @@ HRESULT WINAPI hk_D3D11CreateDeviceAndSwapChainUpscaling(
 
 void Upscaling::DrawSettings()
 {
-	// When OpenComposite owns upscaling, force our method to None up front so
-	// the picker below reflects the locked state.
+	// Force method to None up front so the picker reflects the locked state.
 	ApplyOpenCompositeUpscalingBlocker();
 	const auto& openCompositeBlocker = GetOpenCompositeUpscalingBlocker();
 	const bool openCompositeBlocksUpscaling = openCompositeBlocker.active;
@@ -233,9 +232,6 @@ void Upscaling::DrawSettings()
 	*currentUpscaleMode = std::min(availableModes, *currentUpscaleMode);
 
 	if (openCompositeBlocksUpscaling) {
-		// Re-assert None in case the combo above was somehow edited, then
-		// explain why the control is locked.
-		ApplyOpenCompositeUpscalingBlocker();
 		if (openCompositeBlocker.configPath.empty())
 			Util::Text::WrappedWarning(
 				"Upscaling is locked to None because OpenComposite has %s=true.",
@@ -623,12 +619,11 @@ void Upscaling::DrawSettings()
 
 const VRDetection::OpenCompositeUpscalingState& Upscaling::GetOpenCompositeUpscalingBlocker(bool a_forceRefresh) const
 {
-	// Cached after the first probe; lifecycle entry points pass forceRefresh so
-	// per-frame callers (GetUpscaleMethod, DrawSettings) only read the bool.
+	// Cached after first probe; lifecycle entry points force a refresh.
 	if (!a_forceRefresh && openCompositeUpscalingBlockerCacheValid)
 		return openCompositeUpscalingBlocker;
 
-	// Only OpenComposite VR users can hit this conflict — skip the probe otherwise.
+	// VR-only; non-VR never probes the filesystem.
 	openCompositeUpscalingBlocker = globals::game::isVR ?
 	                                    VRDetection::DetectOpenCompositeUpscaling() :
 	                                    VRDetection::OpenCompositeUpscalingState{};
@@ -813,9 +808,7 @@ struct BSImageSpace_Init_FXAA
 };
 void Upscaling::PostPostLoad()
 {
-	// Stand down entirely when OpenComposite owns upscaling — this also skips
-	// FoveatedRender, whose subrect/jitter hooks ride on our upscaling path and
-	// would conflict just the same.
+	// Guard before foveatedRender.PostPostLoad() so its hooks also stand down.
 	ApplyOpenCompositeUpscalingBlocker(true);
 	if (const auto& blocker = GetOpenCompositeUpscalingBlocker(); blocker.active) {
 		logger::warn("[Upscaling] Skipping upscaling render hooks because OpenComposite has {}=true.", blocker.settingName);
@@ -870,8 +863,8 @@ float Upscaling::GetQualityModeRatio(uint qualityMode)
 
 Upscaling::UpscaleMethod Upscaling::GetUpscaleMethod() const
 {
-	// OpenComposite owning upscaling wins over everything else (incl. PerfMode).
-	if (GetOpenCompositeUpscalingBlocker().active)
+	// OpenComposite owning upscaling wins over everything (incl. PerfMode); VR-only.
+	if (globals::game::isVR && GetOpenCompositeUpscalingBlocker().active)
 		return UpscaleMethod::kNONE;
 
 	// Lock runtime to the boot upscaler under PerfMode — engine RTs are

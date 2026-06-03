@@ -328,14 +328,10 @@ public:
 
 private:
 	// OpenComposite conflict guard: when the OpenComposite VR shim runs its own
-	// DLSS/FSR/DLAA upscaling, ours must stand down to avoid double upscaling.
-	// Detection lives in VRDetection; this class owns only the force-to-None
-	// policy and the lifecycle/UI gating.
-	//
-	// forceRefresh re-probes the OpenComposite config; otherwise the cached
-	// result is returned so per-frame callers stay cheap.
+	// DLSS/FSR/DLAA upscaling, ours stands down to avoid double upscaling.
+	// Detection lives in VRDetection; this class owns the force-to-None policy.
+	// forceRefresh re-probes the config; otherwise the cached result is returned.
 	const VRDetection::OpenCompositeUpscalingState& GetOpenCompositeUpscalingBlocker(bool a_forceRefresh = false) const;
-	// Forces upscaleMethod/upscaleMethodNoDLSS to None when the guard is active.
 	void ApplyOpenCompositeUpscalingBlocker(bool a_forceRefresh = false);
 
 	mutable VRDetection::OpenCompositeUpscalingState openCompositeUpscalingBlocker;
