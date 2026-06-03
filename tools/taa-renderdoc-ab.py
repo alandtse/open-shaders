@@ -19,6 +19,8 @@
 
 import renderdoc as rd
 import struct
+import os
+import math
 
 # eid -> (origPS ResourceId, replacement ResourceId). Persists across Eval calls so restore()
 # uses the real objects instead of round-tripping through strings.
@@ -88,8 +90,15 @@ def grab_rt(eid, target_index=0):
 def replace_ps_with_dxbc(eid, dxbc_path, entry="main"):
     """Build a replacement PS from a pre-compiled DXBC file and bind it at the event.
     Returns {ok, errors}. On success the (orig, new) ResourceIds are stored for restore(eid)."""
-    with open(dxbc_path, "rb") as f:
-        blob = f.read()
+    # Expand %TEMP%/~ and fail soft on a missing file — a raw open() would abort the whole Eval.
+    p = os.path.expandvars(os.path.expanduser(dxbc_path))
+    if not os.path.isfile(p):
+        return {"ok": False, "errors": "DXBC not found: " + p}
+    try:
+        with open(p, "rb") as f:
+            blob = f.read()
+    except OSError as e:
+        return {"ok": False, "errors": "cannot read %s: %r" % (p, e)}
 
     def work(ctrl):
         ctrl.SetFrameEvent(eid, True)
@@ -159,7 +168,14 @@ def _diff(a, b, meta):
         if code:
             x = struct.unpack_from(code, a, off)[0]
             y = struct.unpack_from(code, b, off)[0]
-            dlt = abs(x - y)
+            # NaN-safe: abs(NaN) is NaN and silently fails every comparison below, which would
+            # let a clearly-different output read as EQUIVALENT. Treat NaN-vs-number as a max
+            # difference; both-NaN as equal (identical bits already hit the a == b fast path).
+            xn, yn = math.isnan(x), math.isnan(y)
+            if xn or yn:
+                dlt = 0.0 if (xn and yn) else float("inf")
+            else:
+                dlt = abs(x - y)
         else:
             dlt = abs(a[off] - b[off]) / 255.0
         if dlt > 0:
