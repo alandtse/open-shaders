@@ -129,15 +129,16 @@ FoveatedRender::FoveationProfile FoveatedRender::GetFoveationProfile() const
 	const auto& rightUV = subrectController.GetRightEyeUV();
 
 	// A full-eye region means no foveation is in effect — nothing to gate on.
-	if (leftUV.w >= 0.999f && leftUV.h >= 0.999f)
+	if (leftUV.w >= FoveatedCommon::kFullCoverageThreshold && leftUV.h >= FoveatedCommon::kFullCoverageThreshold)
 		return profile;
 
 	// Map the rectangular subrect onto the centered-superellipse the mask helper
 	// expects: vertical extent drives coverageArea (radiusY = coverageArea/2),
 	// the rect aspect drives the horizontal stretch (radiusX = coverageArea *
-	// hScale / 2), and rect-center minus screen-center gives the per-eye offset.
-	// Feather is the framework constant. Approximate (rect vs superellipse) but
-	// sufficient for the per-pixel center/periphery weight.
+	// hScale / 2). The mask carries a single scale for both eyes, so size is taken
+	// from the left eye — seeded presets are symmetric in size and only the
+	// per-eye center offset differs (applied below). Approximate (rect vs
+	// superellipse) but sufficient for the per-pixel center/periphery weight.
 	profile.available = true;
 	profile.coverageArea = FoveatedCommon::ClampCenterArea(leftUV.h);
 	profile.centerHorizontalScale = FoveatedCommon::ClampCenterHorizontalScale(
