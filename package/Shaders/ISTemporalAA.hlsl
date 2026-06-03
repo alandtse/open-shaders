@@ -445,10 +445,10 @@ PS_OUTPUT main(PS_INPUT input)
 	float historyBlend = saturate(flickerScore * 0.25 + sampleUV.w);
 	float clampToNeighborhood = cmp(historyBlend < kHistoryBlendThreshold);
 	history.xyz = clampToNeighborhood.xxx ? tapA1.xyz : tapB0.xyz;
-	history.yz = history.zx + -history.yy;
-	corner.w = cmp(kLumaEpsilon < history.y);
-	history.y = history.z / history.y;
-	history.y = corner.w ? history.y : 0.5;
+	// Clip ratio: where the selected candidate's luma sits within its [lo, hi] range
+	// (history = (luma, lo, hi)); 0.5 fallback when the range is negligible.
+	float clipRange = history.z - history.y;
+	history.y = cmp(kLumaEpsilon < clipRange) ? (history.x - history.y) / clipRange : 0.5;
 	tapMin.xyz = clampToNeighborhood.xxx ? tapMin.xyz : tapC0.xyz;
 	corner.xyz = clampToNeighborhood.xxx ? tapA0.xyz : corner.xyz;
 	// Rectified colour: lerp from the low candidate toward the high one by the clip ratio (history.y).
