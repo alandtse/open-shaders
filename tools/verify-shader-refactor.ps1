@@ -5,6 +5,9 @@
 .DESCRIPTION
     Compiles a shader from a base git revision and from the current working tree
     across a set of preprocessor permutations, then compares the resulting DXBC.
+    The base ref's entire include tree (-IncludeDir) is materialized via git archive,
+    so the base compiles against base-ref headers and the working tree against working
+    headers -- a refactor that also edits a shared .hlsli is therefore compared correctly.
 
     Tier 1 (this script): identical SHA-256 of the compiled .cso == provably identical
     GPU program. fxc emits no timestamps without /Zi, so same source -> same bytes.
@@ -82,10 +85,13 @@ $work = $null
 try {
     $fxcPath = Resolve-Fxc
 
-    # Normalize the shader path to repo-relative (forward slashes) for `git show`.
+    # Normalize the shader path to repo-relative (forward slashes) for git.
     # (Path.GetRelativePath is unavailable in Windows PowerShell 5.1 / .NET Framework.)
     $shaderFull = (Resolve-Path $Shader).Path
     $rootFull = (Resolve-Path $repoRoot).Path
+    if (-not $shaderFull.StartsWith($rootFull, [StringComparison]::OrdinalIgnoreCase)) {
+        throw "Shader '$Shader' resolves outside the repo root '$rootFull'."
+    }
     $relPath = $shaderFull.Substring($rootFull.Length).TrimStart('\', '/').Replace('\', '/')
 
     if (-not $BaseRef) {
@@ -111,19 +117,25 @@ try {
         )
     }
 
-    # Materialize the base revision of the file.
+    # Materialize the base revision's FULL include tree (not just the target shader) so a
+    # refactor that also touches a shared .hlsli is compared correctly: base compiles against
+    # base-ref headers, work compiles against working-tree headers. git archive -> tar (via a
+    # file, never a PS pipeline, which would corrupt the binary tar).
     $work = Join-Path ([IO.Path]::GetTempPath()) ("shaderverify_" + [Guid]::NewGuid().ToString("N"))
-    New-Item -ItemType Directory -Force $work | Out-Null
-    $baseFile = Join-Path $work "base.hlsl"
-    $baseBlob = "${BaseRef}:${relPath}"
-    # Capture and write as UTF-8 (no BOM); PS 5.1 `>` redirection emits UTF-16, which fxc misreads.
-    $baseContent = git show $baseBlob 2>$null
-    if ($LASTEXITCODE -ne 0 -or -not $baseContent) {
-        throw "Could not read '$relPath' at '$BaseRef' (git show $baseBlob)."
+    $baseRoot = Join-Path $work "base"
+    New-Item -ItemType Directory -Force $baseRoot | Out-Null
+    $tar = Join-Path $work "base.tar"
+    git archive --format=tar -o $tar $BaseRef -- $IncludeDir $relPath 2>$null
+    if ($LASTEXITCODE -ne 0 -or -not (Test-Path $tar)) {
+        throw "git archive failed for '$BaseRef' (paths: $IncludeDir, $relPath)."
     }
-    [IO.File]::WriteAllLines($baseFile, $baseContent)
+    tar -xf $tar -C $baseRoot
+    if ($LASTEXITCODE -ne 0) { throw "Failed to extract base archive." }
+    $baseFile = Join-Path $baseRoot $relPath
+    $baseInclude = Join-Path $baseRoot $IncludeDir
+    if (-not (Test-Path $baseFile)) { throw "'$relPath' not found at '$BaseRef'." }
 
-    function Compile([string]$src, [string]$defs, [string]$outFile, [switch]$Asm) {
+    function Compile([string]$src, [string]$incDir, [string]$defs, [string]$outFile, [switch]$Asm) {
         # Preserve explicit-valued defines (e.g. SHADOWFILTER=0); only bare names get =1.
         $defArgs = @()
         foreach ($d in ($defs -split '\s+' | Where-Object { $_ })) {
@@ -131,12 +143,12 @@ try {
             $defArgs += $(if ($d -like '*=*') { $d } else { "$d=1" })
         }
         $fmt = if ($Asm) { "/Fc" } else { "/Fo" }
-        $out = & $fxcPath /nologo /T $Profile /E $Entry @defArgs /I $IncludeDir $src $fmt $outFile 2>&1
+        $out = & $fxcPath /nologo /T $Profile /E $Entry @defArgs /I $incDir $src $fmt $outFile 2>&1
         return @{ Code = $LASTEXITCODE; Out = $out }
     }
 
     Write-Host "Shader   : $relPath"
-    Write-Host "Base ref : $BaseRef"
+    Write-Host "Base ref : $BaseRef  (full include tree materialized)"
     Write-Host "Profile  : $Profile  (entry $Entry)"
     Write-Host "Include  : $IncludeDir"
     Write-Host ("-" * 60)
@@ -148,8 +160,8 @@ try {
         $tag = $perm
         $baseCso = Join-Path $work "base.cso"
         $workCso = Join-Path $work "work.cso"
-        $rb = Compile $baseFile $perm $baseCso
-        $rw = Compile $shaderFull $perm $workCso
+        $rb = Compile $baseFile $baseInclude $perm $baseCso
+        $rw = Compile $shaderFull $IncludeDir $perm $workCso
 
         if ($rb.Code -ne 0 -or $rw.Code -ne 0) {
             $anyError = $true
@@ -169,8 +181,8 @@ try {
             Write-Host "[$tag] DIFFERS  base=$($hb.Substring(0,12)) work=$($hw.Substring(0,12))" -ForegroundColor Yellow
             # Tier 2: assembly diff for inspection (Compare-Object avoids git's CRLF/exit noise).
             $baseAsm = Join-Path $work "base.asm"; $workAsm = Join-Path $work "work.asm"
-            Compile $baseFile $perm $baseAsm -Asm | Out-Null
-            Compile $shaderFull $perm $workAsm -Asm | Out-Null
+            Compile $baseFile $baseInclude $perm $baseAsm -Asm | Out-Null
+            Compile $shaderFull $IncludeDir $perm $workAsm -Asm | Out-Null
             $d = Compare-Object (Get-Content $baseAsm) (Get-Content $workAsm)
             if ($d) {
                 $d | Select-Object -First 40 | ForEach-Object {
