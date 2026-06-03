@@ -393,15 +393,10 @@ PS_OUTPUT main(PS_INPUT input)
 	tapC0.xw = motionReject.yy ? tapMin.yw : tapA0.yw;
 	mergeScratch.x = tapMin.z;
 	tapC1.xyzw = motionReject.yyyy ? mergeScratch.xyzw : bracketMinReg.xyzw;
-	float flickerScore = FlickerLumaContribution(centerLuma, corner.w);
-	flickerScore = 4 + -flickerScore;
-	flickerScore = flickerScore + -sampleUV.w;
-	flickerScore = flickerScore + -corner.x;
-	flickerScore = flickerScore + -tapMin.x;
-	flickerScore = flickerScore + -tapA0.x;
-	flickerScore = flickerScore + -tapA1.x;
-	flickerScore = flickerScore + -tapB0.x;
-	flickerScore = saturate(flickerScore + -tapB1.x);
+	// Flicker score = saturate(4 - sum of the 9 neighbourhood FlickerLumaContributions).
+	// Each contribution is an integer ceil() result, so the sum is exact regardless of grouping.
+	float flickerScore = saturate(4 - FlickerLumaContribution(centerLuma, corner.w) - sampleUV.w -
+								  corner.x - tapMin.x - tapA0.x - tapA1.x - tapB0.x - tapB1.x);
 
 	// --- temporal blend, clamp, and sharpen ---
 	sampleUV.w = cmp(1 < tapC1.w);
