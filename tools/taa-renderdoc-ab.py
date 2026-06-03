@@ -154,14 +154,22 @@ def restore(eid):
 def _diff(a, b, meta):
     """Byte-identity fast path + a SAMPLED float-magnitude estimate (no numpy in RenderDoc,
     and full-res TAA RTs are tens of MB — never materialize the whole thing)."""
-    out = {"size_a": len(a), "size_b": len(b), "format": meta[2], "dims": [meta[0], meta[1]]}
+    # Always populate mean_abs/max_abs so callers (ab) can read them unconditionally.
+    out = {"size_a": len(a), "size_b": len(b), "format": meta[2], "dims": [meta[0], meta[1]],
+           "mean_abs": None, "max_abs": None}
+    if not a or not b:  # fail-soft grab_rt returned empty bytes — not comparable
+        out["verdict"] = "NO-DATA"
+        return out
     if a == b:  # C-level compare — instant
         out["verdict"] = "IDENTICAL"
         out["bytes_differing"] = 0
+        out["mean_abs"] = 0.0
+        out["max_abs"] = 0.0
+        out["sample_frac_differing"] = 0.0
         return out
     if len(a) != len(b):
         out["verdict"] = "DIFFERS"
-        out["note"] = "size mismatch"
+        out["note"] = "size mismatch"  # mean_abs stays None -> ab() treats as not-comparable
         return out
 
     # Per-sample delta units by format: UNORM8 and packed R10G10B10A2 are normalized to [0,1]
@@ -255,8 +263,11 @@ def ab(eid, candidate_dxbc, baseline_dxbc=None, entry="main"):
     # compile residue). EQUIVALENT if within 3x the floor; DIFFERS otherwise.
     base = report.get("baseline_vs_live") or {}
     floor = base.get("mean_abs")
-    cand_mean = report["candidate_vs_live"]["mean_abs"]
-    if floor is not None:
+    cand_mean = report["candidate_vs_live"].get("mean_abs")
+    if cand_mean is None:
+        # candidate output not comparable (empty RT / size mismatch) — surface, don't crash.
+        report["verdict"] = "NOT-COMPARABLE"
+    elif floor is not None:
         report["noise_floor_mean"] = floor
         report["verdict"] = "EQUIVALENT" if cand_mean <= max(floor * 3.0, 1e-4) else "DIFFERS"
     elif baseline_dxbc:
