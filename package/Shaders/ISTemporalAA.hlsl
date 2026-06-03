@@ -448,21 +448,21 @@ PS_OUTPUT main(PS_INPUT input)
 
 	// --- disocclusion / mask rejection ---
 	// motionLength holds the motion length (motionReject.zw held the reprojected UV on the SE path).
+	float reject;  // disocclusion / OOB / mask rejection flag
 #	ifdef VR
 	// VR resolves out-of-bounds per-eye in mono space; the SE stereo-space test misses the seam.
-	motionReject.z = prevUVOutOfBounds ? 1 : 0;
+	reject = prevUVOutOfBounds ? 1 : 0;
 #	else
-	sampleUV.w = min(motionReject.z, motionReject.w);
-	motionReject.zw = cmp(motionReject.zw >= float2(1, 1));
-	sampleUV.w = cmp(0 >= sampleUV.w);
-	motionReject.z = (int)motionReject.z | (int)sampleUV.w;
-	motionReject.z = (int)motionReject.w | (int)motionReject.z;
+	float2 prevUV = motionReject.zw;  // reprojected UV from the SE path
+	float uvLow = cmp(0 >= min(prevUV.x, prevUV.y));
+	float2 uvHigh = cmp(prevUV >= float2(1, 1));
+	reject = (int)uvHigh.x | (int)uvLow;
+	reject = (int)uvHigh.y | (int)reject;
 #	endif
 	history.yz = maskTex.Sample(maskSampler, sampleUV.xy).xy;
 	float centerCoverage = AlphaCoverageMask(sampleUV.xy);
-	sampleUV.x = cmp(ThresholdParams.w < history.z);
-	motionReject.z = (int)motionReject.z | (int)sampleUV.x;
-	float reject = motionReject.z;  // disocclusion / OOB / mask rejection flag
+	float maskReject = cmp(ThresholdParams.w < history.z);
+	reject = (int)reject | (int)maskReject;
 	sampleUV.xyw = reject.xxx ? centerColor : corner.xyz;
 	history.xw = reject.xx ? float2(centerLuma, 0) : history.xw;
 	corner.xyz = reject.xxx ? centerColor : neighborColor;
