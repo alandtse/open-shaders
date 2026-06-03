@@ -408,8 +408,8 @@ PS_OUTPUT main(PS_INPUT input)
 	maxBracket = MergeMaxBracket(tapMin, maxBracket, uvMinBelowHist);
 	tapA0.yzw = maxBracket;
 	bracketMinReg.x = tapA0.z;
-	tapMin.y = cmp(tapA0.w < corner.w);
-	tapMin.yzw = tapMin.yyy ? corner.yzw : tapA0.yzw;
+	// Final ungated corner fold completes the max bracket (gate 1 -> always take the brighter pick).
+	tapMin.yzw = MergeMaxBracket(corner, maxBracket, 1);
 	tapC0.xw = motionReject.yy ? tapMin.yw : tapA0.yw;
 	mergeScratch.x = tapMin.z;
 	tapC1.xyzw = motionReject.yyyy ? mergeScratch.xyzw : bracketMinReg.xyzw;
