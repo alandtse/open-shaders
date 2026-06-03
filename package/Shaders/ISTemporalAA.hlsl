@@ -404,13 +404,15 @@ PS_OUTPUT main(PS_INPUT input)
 	maxBracket = MergeMaxBracket(tapA1, maxBracket, tapMin.x);
 	maxBracket = MergeMaxBracket(tapA0, maxBracket, corner.x);
 	maxBracket = MergeMaxBracket(tapMin, maxBracket, uvMinBelowHist);
-	tapA0.yzw = maxBracket;
-	bracketMinReg.x = tapA0.z;
-	// Final ungated corner fold completes the max bracket (gate 1 -> always take the brighter pick).
-	tapMin.yzw = MergeMaxBracket(corner, maxBracket, 1);
-	tapC0.xw = motionReject.yy ? tapMin.yw : tapA0.yw;
-	mergeScratch.x = tapMin.z;
-	tapC1.xyzw = motionReject.yyyy ? mergeScratch.xyzw : bracketMinReg.xyzw;
+	// Complete the max bracket (ungated corner fold), then select the neighbourhood AABB bounds for
+	// history clamping. motionReject.y toggles whether the corner tap is included: when set, max uses
+	// the with-corner bracket and min the without-corner one (opposite when clear). Packed into
+	// tapC0 (max bound) and tapC1 (max.y, then min bound) in the layout the blend below reads.
+	float3 maxWithCorner = MergeMaxBracket(corner, maxBracket, 1);
+	float3 maxBoundSel = motionReject.yyy ? maxWithCorner : maxBracket;
+	float3 minBoundSel = motionReject.yyy ? mergeScratch.yzw : bracketMinReg.yzw;
+	tapC0.xw = maxBoundSel.xz;
+	tapC1.xyzw = float4(maxBoundSel.y, minBoundSel);
 
 	// Flicker score = saturate(4 - sum of the 8 integer flicker contributions). Exact regardless
 	// of grouping (each is a ceil() integer).
