@@ -128,21 +128,29 @@ FoveatedRender::FoveationProfile FoveatedRender::GetFoveationProfile() const
 	const auto& leftUV = subrectController.GetUV();
 	const auto& rightUV = subrectController.GetRightEyeUV();
 
-	// A full-eye region means no foveation is in effect — nothing to gate on.
-	if (leftUV.w >= FoveatedCommon::kFullCoverageThreshold && leftUV.h >= FoveatedCommon::kFullCoverageThreshold)
+	// Disable only when BOTH eyes cover the full eye — if either eye is foveated
+	// we still build a profile.
+	const auto isFullEye = [](const Util::Subrect::UVRegion& uv) {
+		return uv.w >= FoveatedCommon::kFullCoverageThreshold && uv.h >= FoveatedCommon::kFullCoverageThreshold;
+	};
+	if (isFullEye(leftUV) && isFullEye(rightUV))
 		return profile;
 
 	// Map the rectangular subrect onto the centered-superellipse the mask helper
 	// expects: vertical extent drives coverageArea (radiusY = coverageArea/2),
 	// the rect aspect drives the horizontal stretch (radiusX = coverageArea *
-	// hScale / 2). The mask carries a single scale for both eyes, so size is taken
-	// from the left eye — seeded presets are symmetric in size and only the
-	// per-eye center offset differs (applied below). Approximate (rect vs
+	// hScale / 2). The mask carries one scale for both eyes (only the center
+	// offset is per-eye), so size comes from the less-foveated (larger) extent of
+	// the two eyes — the mask then stays inside each eye's full-quality region and
+	// never foveates a sharp zone. Seeded presets are symmetric in size, so
+	// left == right and this is a no-op for them. Approximate (rect vs
 	// superellipse) but sufficient for the per-pixel center/periphery weight.
+	const float coverageH = std::max(leftUV.h, rightUV.h);
+	const float coverageW = std::max(leftUV.w, rightUV.w);
 	profile.available = true;
-	profile.coverageArea = FoveatedCommon::ClampCenterArea(leftUV.h);
+	profile.coverageArea = FoveatedCommon::ClampCenterArea(coverageH);
 	profile.centerHorizontalScale = FoveatedCommon::ClampCenterHorizontalScale(
-		leftUV.h > 1e-4f ? leftUV.w / leftUV.h : 1.0f);
+		coverageH > 1e-4f ? coverageW / coverageH : 1.0f);
 	profile.centerOffsets[0] = { (leftUV.x + leftUV.w * 0.5f) - 0.5f, (leftUV.y + leftUV.h * 0.5f) - 0.5f };
 	profile.centerOffsets[1] = { (rightUV.x + rightUV.w * 0.5f) - 0.5f, (rightUV.y + rightUV.h * 0.5f) - 0.5f };
 	return profile;
