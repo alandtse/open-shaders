@@ -86,3 +86,43 @@ You can configure VSCode to automatically deploy shaders when you save `.hlsl` o
 | `COPY_SHADERS`    | ❌         | ❌         | ✅             | Fast shader iteration |
 | `DEPLOY_ALL`      | ✅         | ✅         | ✅             | Full deployment       |
 | `prepare_shaders` | ❌         | ✅         | ✅ (AIO only)  | CI validation         |
+
+## Incremental shader validation
+
+Validating the full shader suite recompiles ~3,300 variants per config, which is
+slow for a one-line change. Incremental validation compiles **only the
+entry-point shaders that transitively `#include` a changed file**, derived from
+an `#include` dependency graph. A leaf shader used by one entry point validates
+in seconds; a shared `Common/*.hlsli` fans out to every shader that includes it.
+
+### Local
+
+```bash
+# Compile only shaders affected by your working-tree changes (vs HEAD)
+cmake --build ./build/ALL --target validate_changed
+
+# Override the config (defaults to Flatrim / shader-validation.yaml)
+cmake -DVALIDATE_CHANGED_CONFIG=.github/configs/shader-validation-vr.yaml -S . -B build/ALL
+cmake --build ./build/ALL --target validate_changed
+```
+
+The target depends on `prepare_shaders`, so the AIO shader tree is assembled
+first. Under the hood it runs `tools/validate_changed_shaders.py`, which maps
+your changed `package/Shaders/**` and `features/**/Shaders/**` paths into the
+AIO layout and passes them to `hlslkit-compile --changed-files`.
+
+### CI
+
+The PR shader-validation job feeds the PR's changed-file list (from
+`tj-actions/changed-files`) into the same wrapper. Validation is **only**
+narrowed when provably safe — any of these forces a full run:
+
+-   a change to a validation config (`.github/configs/**`), CMake, or a submodule
+    (these can redefine the entry-point/define set itself);
+-   a changed shader path outside the known shader roots;
+-   push/release builds (no PR change set), which always validate in full.
+
+`hlslkit` applies the same safety net independently: any changed path it can't
+find in the shader tree falls back to full validation. Preprocessor guards are
+ignored when scanning `#include`s, so the affected set is always a conservative
+superset — over-validating costs time, never correctness.

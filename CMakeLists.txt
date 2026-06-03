@@ -781,6 +781,29 @@ if(AUTO_PLUGIN_DEPLOYMENT OR AIO_ZIP_TO_DIST)
         DEPENDS copy_shaders.stamp
         COMMENT "Preparing shaders for validation"
     )
+
+    # Incremental local validation: compile only the shaders affected by the
+    # current working-tree diff (vs HEAD). Mirrors the CI incremental path but
+    # derives the change set from git instead of a precomputed list. Override
+    # the config with -DVALIDATE_CHANGED_CONFIG=... (defaults to Flatrim).
+    set(VALIDATE_CHANGED_CONFIG
+        "${CMAKE_SOURCE_DIR}/.github/configs/shader-validation.yaml"
+        CACHE FILEPATH
+        "hlslkit config used by the validate_changed target"
+    )
+    add_custom_target(
+        validate_changed
+        COMMAND
+            ${CMAKE_COMMAND} -E env python
+            "${CMAKE_SOURCE_DIR}/tools/validate_changed_shaders.py" --repo-root
+            "${CMAKE_SOURCE_DIR}" -- hlslkit-compile --shader-dir
+            "${AIO_DIR}/Shaders" --output-dir "${CMAKE_BINARY_DIR}/ShaderCache"
+            --config "${VALIDATE_CHANGED_CONFIG}" --max-warnings 0
+            --suppress-warnings X1519
+        DEPENDS prepare_shaders
+        USES_TERMINAL
+        COMMENT "Validating only shaders affected by working-tree changes"
+    )
 endif()
 
 # Automatic deployment to CommunityShaders output directory.
