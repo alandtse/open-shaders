@@ -451,8 +451,8 @@ PS_OUTPUT main(PS_INPUT input)
 	history.y = corner.w ? history.y : 0.5;
 	tapMin.xyz = clampToNeighborhood.xxx ? tapMin.xyz : tapC0.xyz;
 	corner.xyz = clampToNeighborhood.xxx ? tapA0.xyz : corner.xyz;
-	corner.xyz = corner.xyz + -tapMin.xyz;
-	corner.xyz = history.yyy * corner.xyz + tapMin.xyz;
+	// Rectified colour: lerp from the low candidate toward the high one by the clip ratio (history.y).
+	corner.xyz = lerp(tapMin.xyz, corner.xyz, history.yyy);
 
 	// --- disocclusion / mask rejection ---
 	// motionLength holds the motion length (motionReject.zw held the reprojected UV on the SE path).
