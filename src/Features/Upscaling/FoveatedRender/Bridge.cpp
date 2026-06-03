@@ -6,9 +6,8 @@
 
 bool FoveatedRenderImpl::Bridge::IsRouteActive()
 {
-	// IsActive() already checks: globals::game::isVR
-	//                            && globals::features::upscaling.streamline.featureDLSS
-	//                            && enabledAtBoot
+	// IsActive() already checks: enabledAtBoot && isVR && featureDLSS
+	//                            && GetUpscaleMethod() == kDLSS (selected, not just available)
 	return globals::features::upscaling.foveatedRender.IsActive();
 }
 
