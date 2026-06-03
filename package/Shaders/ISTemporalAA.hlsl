@@ -188,6 +188,16 @@ float3 MergeLumaBracket(float4 tap, float3 bracket, float gate)
 	return gate ? bracket : cand;
 }
 
+// MAX-luma counterpart: commit the tap's colour when it is BRIGHTER than the running bracket.
+// NOTE the gate is INVERTED vs MergeLumaBracket — the decompile's max pass commits the new pick
+// when the belowHist gate is SET (gate ? cand : bracket), the opposite of the min pass. (Getting
+// this backwards reads EQUIVALENT on a static menu but diverges under motion.)
+float3 MergeMaxBracket(float4 tap, float3 bracket, float gate)
+{
+	float3 cand = cmp(bracket.z < tap.w) ? tap.yzw : bracket;
+	return gate ? cand : bracket;
+}
+
 // RCAS-style sharpen delta: 2 * (center - 0.25*a - 0.25*b), in the decompile's exact op order.
 float SharpenDelta(float center, float a, float b)
 {
@@ -385,26 +395,18 @@ PS_OUTPUT main(PS_INPUT input)
 	float fcMin = FlickerLumaContribution(centerLuma, tapMin.w);
 	float fcCorner = FlickerLumaContribution(centerLuma, corner.w);
 
-	// --- min-luma colour sort: bubble the lowest-luma neighbour colour through the tap chain,
-	// gated per step by the belowHist masks (.x slots). Irreducible decompile packing — left as-is.
-	tapC0.x = cmp(tapC1.z < tapC0.w);
-	tapC0.xyz = tapC0.xxx ? tapC0.yzw : tapC1.xyz;
-	tapC0.xyz = tapB0.xxx ? tapC0.xyz : tapC1.xyz;
-	tapC0.w = cmp(tapC0.z < tapB1.w);
-	tapC1.xyz = tapC0.www ? tapB1.yzw : tapC0.xyz;
-	tapC0.xyz = tapA1.xxx ? tapC1.xyz : tapC0.xyz;
-	tapB1.y = cmp(tapC0.z < tapB0.w);
-	tapB1.yzw = tapB1.yyy ? tapB0.yzw : tapC0.xyz;
-	tapB1.yzw = tapA0.xxx ? tapB1.yzw : tapC0.xyz;
-	tapB0.y = cmp(tapB1.w < tapA1.w);
-	tapB0.yzw = tapB0.yyy ? tapA1.yzw : tapB1.yzw;
-	tapB0.yzw = tapMin.xxx ? tapB0.yzw : tapB1.yzw;
-	tapA1.y = cmp(tapB0.w < tapA0.w);
-	tapA1.yzw = tapA1.yyy ? tapA0.yzw : tapB0.yzw;
-	tapA1.yzw = corner.xxx ? tapA1.yzw : tapB0.yzw;
-	tapA0.y = cmp(tapA1.w < tapMin.w);
-	tapA0.yzw = tapA0.yyy ? tapMin.yzw : tapA1.yzw;
-	tapA0.yzw = uvMinBelowHist.xxx ? tapA0.yzw : tapA1.yzw;
+	// --- neighbourhood MAX-luma colour bracket (complement to the min bracket above) ---
+	// Running max folded over the taps, each committed when its belowHist gate is set (see
+	// MergeMaxBracket — gate is inverted vs the min fold). Seed = the clamped centre/C1 colour;
+	// result handed back to tapA0.yzw for the bespoke min/max-select tail below.
+	float3 maxBracket = tapC1.xyz;
+	maxBracket = MergeMaxBracket(tapC0, maxBracket, tapB0.x);
+	maxBracket = MergeMaxBracket(tapB1, maxBracket, tapA1.x);
+	maxBracket = MergeMaxBracket(tapB0, maxBracket, tapA0.x);
+	maxBracket = MergeMaxBracket(tapA1, maxBracket, tapMin.x);
+	maxBracket = MergeMaxBracket(tapA0, maxBracket, corner.x);
+	maxBracket = MergeMaxBracket(tapMin, maxBracket, uvMinBelowHist);
+	tapA0.yzw = maxBracket;
 	bracketMinReg.x = tapA0.z;
 	tapMin.y = cmp(tapA0.w < corner.w);
 	tapMin.yzw = tapMin.yyy ? corner.yzw : tapA0.yzw;
