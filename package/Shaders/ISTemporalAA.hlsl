@@ -469,29 +469,31 @@ PS_OUTPUT main(PS_INPUT input)
 	tapMin.xyz = centerColor + -corner.xyz;
 	float motionNormScale = 128 * TexelSizeParams.x;  // 128-texel span used to normalize motion length
 	float motionConfidence = saturate(motionLength / motionNormScale);
-	motionReject.x = motionConfidence + -history.w;
+	float motionVsHistory = motionConfidence + -history.w;
 	// Luma convergence decay: the *20 and *100 constants were tuned for gamma-space luma.
 	// PQ is perceptually uniform — a single linear rescale of the PQ diff is accurate
 	// across all luminance levels (unlike converting through gamma, which has a varying
 	// derivative and overcorrects at bright and dark extremes).
 	// Scale factor: 0.05 gamma ≈ 0.020 PQ at mid-scene luminance → factor ≈ 2.5.
+	// luma diff drives the history similarity weights (and the final luma fixup at blend end).
+	float lumaDiff = history.x + -centerLuma;
+	// similarity = (1 - scale*diff) per channel, clamped >= 0: .x weights colour, .y the feedback luma.
 #	ifdef HDR_OUTPUT
-	motionReject.z = history.x + -centerLuma;
+	float2 similarity;
 	{
-		float lumaDiffScaled = abs(motionReject.z) * 0.05;
-		history.xw = -lumaDiffScaled.xx * kSimilarityScale + float2(1, 1);
+		float lumaDiffScaled = abs(lumaDiff) * 0.05;
+		similarity = -lumaDiffScaled.xx * kSimilarityScale + float2(1, 1);
 	}
 #	else
-	motionReject.z = history.x + -centerLuma;
-	history.xw = -abs(motionReject.xx) * kSimilarityScale + float2(1, 1);
+	float2 similarity = -abs(motionVsHistory.xx) * kSimilarityScale + float2(1, 1);
 #	endif
-	history.xw = max(float2(0, 0), history.xw);
-	tapMin.yzw = history.xxx * tapMin.xyz + corner.xyz;
+	similarity = max(float2(0, 0), similarity);
+	tapMin.yzw = similarity.xxx * tapMin.xyz + corner.xyz;
 	sampleUV.xyw = -tapMin.yzw + sampleUV.xyw;
 	motionReject.x = BlendParams.x + -BlendParams.y;
 	motionReject.x = motionConfidence * motionReject.x + BlendParams.y;
-	motionReject.x = min(motionReject.x, history.x);
-	tapA0.y = history.w * historyBlend;
+	motionReject.x = min(motionReject.x, similarity.x);
+	tapA0.y = similarity.y * historyBlend;
 	motionReject.y = kFeedbackBlendMax + -motionReject.x;
 	motionReject.x = tapA0.y * motionReject.y + motionReject.x;
 	feedbackOut.yz = float2(tapA0.y, motionConfidence);
@@ -511,8 +513,8 @@ PS_OUTPUT main(PS_INPUT input)
 	corner.yzw = saturate(BlendParams.www * corner.xyz + sampleUV.xyw);
 #	endif
 
-	motionReject.y = motionReject.x * motionReject.z + centerLuma;
-	motionReject.x = motionReject.x * motionReject.z;
+	motionReject.y = motionReject.x * lumaDiff + centerLuma;
+	motionReject.x = motionReject.x * lumaDiff;
 	motionReject.x = cmp(abs(motionReject.x) < kLumaEpsilon);
 	corner.x = motionReject.x ? centerLuma : motionReject.y;
 	float outputLuma = dot(tapMin.zwy, kLumaWeights);
