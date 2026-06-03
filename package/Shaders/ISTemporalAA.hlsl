@@ -284,7 +284,7 @@ PS_OUTPUT main(PS_INPUT input)
 	// float4 packs — component reuse matches vanilla decompile (see header comment).
 	float4 motionReject, sampleUV, history, corner, tapMin;  // was r0–r4
 	float4 tapA0, tapA1, tapB0, tapB1, tapC0, tapC1;         // was r6–r13
-	float4 center, centerMeta, mergeScratch, bracketMinReg;  // was r14–r19
+	float4 center;                                           // belowHistC1 mask carrier (was r14)
 
 	float2 drMax = GetDynamicResolutionMax(), drUVMin, drUVMax, drCenter;
 	float4 drNeighborsA, drNeighborsB, drNeighborsC;
@@ -346,15 +346,15 @@ PS_OUTPUT main(PS_INPUT input)
 
 	// --- centre bracket seed, neighbourhood bracket, flicker, temporal blend (verbatim math) ---
 	float centerLuma = dot(centerColor.yzx, kLumaWeights);
-	centerMeta.x = centerLuma;  // .yzx swizzle in the bracket cascade still reads this slot
 	float belowHistCentre = cmp(centerLuma < history.x);
-	centerMeta.yz = centerColor.xz;
+	// Centre colour packed as (R, B, luma) — the bracket seeds clamp this against the luma caps.
+	float3 centerRBL = float3(centerColor.x, centerColor.z, centerLuma);
 	// Bracket ceiling: 1.001 is just above the maximum PQ value (1.0 = 10000 nits).
 	// Nothing in the scene exceeds this, so the ceiling works correctly in PQ working space.
 	// (In linear BT2020 this would be wrong — sky/specular exceed 1.0 linear — but PQ is bounded.)
 	// Seed the min bracket: centre colour (as R,B,luma) clamped to the 1.001 ceiling; if the centre is
 	// below history (belowHistCentre), start at the ceiling. Then fold tapC1 (its belowHist).
-	float3 minBracket = cmp(centerLuma < kMaxLumaCap) ? centerMeta.yzx : kMaxLumaCap.xxx;
+	float3 minBracket = cmp(centerLuma < kMaxLumaCap) ? centerRBL : kMaxLumaCap.xxx;
 	minBracket = belowHistCentre ? kMaxLumaCap.xxx : minBracket;
 	minBracket = MergeLumaBracket(tapC1, minBracket, center.x);
 
@@ -373,12 +373,12 @@ PS_OUTPUT main(PS_INPUT input)
 	// belowHist gate is set (see MergeLumaBracket). Result is the without-corner min bound.
 	[unroll] for (int fold = 0; fold < 6; fold++)
 		minBracket = MergeLumaBracket(foldTaps[fold], minBracket, foldGates[fold]);
-	mergeScratch.yzw = minBracket;
+	float3 minBoundNoCorner = minBracket;
 	// Final fold: corner tap, ungated (gate 0 → always take the lower-luma colour).
-	bracketMinReg.yzw = MergeLumaBracket(corner, mergeScratch.yzw, 0);
+	float3 minBoundWithCorner = MergeLumaBracket(corner, minBoundNoCorner, 0);
 	// Low-clamp the (max-bracketed) tapC1 to the kMinLumaCap floor: build the centre-vs-floor bound
 	// (gated by belowHistCentre), then fold tapC1 toward it (MergeMaxBracket, gated by tapC1's belowHist).
-	float3 lowClamp = cmp(kMinLumaCap < centerLuma) ? centerMeta.yzx : kMinLumaCap.xxx;
+	float3 lowClamp = cmp(kMinLumaCap < centerLuma) ? centerRBL : kMinLumaCap.xxx;
 	lowClamp = belowHistCentre ? lowClamp : kMinLumaCap.xxx;
 	tapC1.xyz = MergeMaxBracket(tapC1, lowClamp, center.x);
 
@@ -409,7 +409,7 @@ PS_OUTPUT main(PS_INPUT input)
 	// tapC0 (max bound) and tapC1 (max.y, then min bound) in the layout the blend below reads.
 	float3 maxWithCorner = MergeMaxBracket(corner, maxBracket, 1);
 	float3 maxBoundSel = motionReject.yyy ? maxWithCorner : maxBracket;
-	float3 minBoundSel = motionReject.yyy ? mergeScratch.yzw : bracketMinReg.yzw;
+	float3 minBoundSel = motionReject.yyy ? minBoundNoCorner : minBoundWithCorner;
 	tapC0.xw = maxBoundSel.xz;
 	tapC1.xyzw = float4(maxBoundSel.y, minBoundSel);
 
@@ -468,8 +468,7 @@ PS_OUTPUT main(PS_INPUT input)
 	motionReject.z = (int)motionReject.z | (int)sampleUV.x;
 	float reject = motionReject.z;  // disocclusion / OOB / mask rejection flag
 	sampleUV.xyw = reject.xxx ? centerColor : corner.xyz;
-	centerMeta.w = 0;
-	history.xw = reject.xx ? centerMeta.xw : history.xw;
+	history.xw = reject.xx ? float2(centerLuma, 0) : history.xw;
 	corner.xyz = reject.xxx ? centerColor : neighborColor;
 	tapMin.xyz = centerColor + -corner.xyz;
 	float motionNormScale = 128 * TexelSizeParams.x;  // 128-texel span used to normalize motion length
