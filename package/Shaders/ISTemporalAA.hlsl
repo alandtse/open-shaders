@@ -282,9 +282,9 @@ PS_OUTPUT main(PS_INPUT input)
 	float4 colorOut, feedbackOut;
 
 	// float4 packs — component reuse matches vanilla decompile (see header comment).
-	float4 motionReject, sampleUV, history, corner, tapMin;                             // was r0–r4
-	float4 tapA0, tapA1, tapB0, tapB1, tapC0, tapC1;                                    // was r6–r13
-	float4 center, centerMeta, bracketMax, weightedColor, mergeScratch, bracketMinReg;  // was r14–r19
+	float4 motionReject, sampleUV, history, corner, tapMin;                 // was r0–r4
+	float4 tapA0, tapA1, tapB0, tapB1, tapC0, tapC1;                        // was r6–r13
+	float4 center, centerMeta, weightedColor, mergeScratch, bracketMinReg;  // was r14–r19
 
 	float2 drMax = GetDynamicResolutionMax(), drUVMin, drUVMax, drCenter;
 	float4 drNeighborsA, drNeighborsB, drNeighborsC;
@@ -347,15 +347,15 @@ PS_OUTPUT main(PS_INPUT input)
 	// --- centre bracket seed, neighbourhood bracket, flicker, temporal blend (verbatim math) ---
 	float centerLuma = dot(centerColor.yzx, kLumaWeights);
 	centerMeta.x = centerLuma;  // .yzx swizzle in the bracket cascade still reads this slot
-	bracketMax.x = cmp(centerLuma < history.x);
+	float belowHistCentre = cmp(centerLuma < history.x);
 	centerMeta.yz = centerColor.xz;
 	// Bracket ceiling: 1.001 is just above the maximum PQ value (1.0 = 10000 nits).
 	// Nothing in the scene exceeds this, so the ceiling works correctly in PQ working space.
 	// (In linear BT2020 this would be wrong — sky/specular exceed 1.0 linear — but PQ is bounded.)
 	// Seed the min bracket: centre colour (as R,B,luma) clamped to the 1.001 ceiling; if the centre is
-	// below history (bracketMax.x = belowHistCentre), start at the ceiling. Then fold tapC1 (its belowHist).
+	// below history (belowHistCentre), start at the ceiling. Then fold tapC1 (its belowHist).
 	float3 minBracket = cmp(centerLuma < kMaxLumaCap) ? centerMeta.yzx : kMaxLumaCap.xxx;
-	minBracket = bracketMax.x ? kMaxLumaCap.xxx : minBracket;
+	minBracket = belowHistCentre ? kMaxLumaCap.xxx : minBracket;
 	minBracket = MergeLumaBracket(tapC1, minBracket, center.x);
 
 	// --- neighborhood min/max color bracket ---
@@ -377,7 +377,7 @@ PS_OUTPUT main(PS_INPUT input)
 	// Low-clamp the (max-bracketed) tapC1 to the kMinLumaCap floor: build the centre-vs-floor bound
 	// (gated by belowHistCentre), then fold tapC1 toward it (MergeMaxBracket, gated by tapC1's belowHist).
 	float3 lowClamp = cmp(kMinLumaCap < centerLuma) ? centerMeta.yzx : kMinLumaCap.xxx;
-	lowClamp = bracketMax.x ? lowClamp : kMinLumaCap.xxx;
+	lowClamp = belowHistCentre ? lowClamp : kMinLumaCap.xxx;
 	tapC1.xyz = MergeMaxBracket(tapC1, lowClamp, center.x);
 
 	// --- flicker contributions, one per neighbourhood tap ---
