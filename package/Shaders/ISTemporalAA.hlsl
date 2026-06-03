@@ -434,10 +434,10 @@ PS_OUTPUT main(PS_INPUT input)
 	tapMin.x = cmp(tapC0.w < 0);
 	tapMin.xyzw = tapMin.xxxx ? corner.xyzw : tapC0.xyzw;
 	tapA0.xyzw = sampleUV.wwww ? tapMin.xyzw : corner.xyzw;
-	sampleUV.w = max(tapMin.w, history.x);
-	tapA1.x = min(sampleUV.w, tapA0.w);
-	tapA1.z = tapA0.w;
+	// Clamp history luma into the two sharpened candidates' luma range; tapA1 = (clamped, lo, hi).
+	tapA1.x = clamp(history.x, tapMin.w, tapA0.w);
 	tapA1.y = tapMin.w;
+	tapA1.z = tapA0.w;
 	tapB0.z = corner.w;
 	tapB0.x = history.x;
 	tapB0.y = tapC0.w;
