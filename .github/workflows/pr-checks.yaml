@@ -58,6 +58,10 @@ jobs:
             # so any cpp_any change is conservative-but-correct. cpp_tests_any catches changes to
             # the test sources themselves. cmake/build_ci cover CMake + CI plumbing.
             cpp-tests-should-build: ${{ steps.changed-files.outputs.cpp_tests_any_changed == 'true' || steps.changed-files.outputs.cpp_any_changed == 'true' || steps.changed-files.outputs.cmake_any_changed == 'true' || steps.changed-files.outputs.build_ci_any_changed == 'true' || steps.changed-files.outcome == 'failure' }}
+            # JSON array of every changed path, used to drive incremental shader
+            # validation. Empty (or absent on detection failure) => shader
+            # validation runs in full. JSON tolerates spaces in feature paths.
+            changed-files-json: ${{ steps.changed-files-json.outcome == 'success' && steps.changed-files-json.outputs.all_changed_files || '' }}
         steps:
             - uses: actions/checkout@v6
               with:
@@ -113,6 +117,20 @@ jobs:
                   base_sha: ${{ github.event.pull_request.base.sha }}
                   sha: ${{ github.event.pull_request.head.sha }}
 
+            # Separate JSON view of the full changed set for incremental shader
+            # validation. Kept distinct from the grouped step above so its
+            # carefully-tuned boolean outputs are untouched. JSON encoding
+            # preserves paths with spaces (e.g. "features/Light Limit Fix/...").
+            - name: Get changed files (JSON)
+              id: changed-files-json
+              uses: tj-actions/changed-files@v46
+              continue-on-error: true
+              with:
+                  json: true
+                  escape_json: false
+                  base_sha: ${{ github.event.pull_request.base.sha }}
+                  sha: ${{ github.event.pull_request.head.sha }}
+
     # Security: this job compiles untrusted fork code.
     # It uses _shared-build.yaml which enforces permissions: contents: read and receives NO secrets.
     # The absence of a `secrets:` block here is intentional — passing secrets to a reusable
@@ -135,6 +153,7 @@ jobs:
             hlsl-should-build: ${{ needs.check-changes.outputs.hlsl-should-build || 'true' }}
             shader-tests-should-build: ${{ needs.check-changes.outputs.shader-tests-should-build || 'true' }}
             cpp-tests-should-build: ${{ needs.check-changes.outputs.cpp-tests-should-build || 'true' }}
+            changed-files-json: ${{ needs.check-changes.outputs.changed-files-json }}
 
     # Security: this job has GITHUB_TOKEN write permissions but executes no fork
     # code. It sparse-checks-out the BASE branch (trusted) for the

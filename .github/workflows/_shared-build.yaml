@@ -43,6 +43,10 @@ on:
                 description: "Optional suffix to invalidate the build cache"
                 type: string
                 default: ""
+            changed-files-json:
+                description: "JSON array of changed paths for incremental shader validation; empty => full validation"
+                type: string
+                default: ""
         outputs:
             version:
                 description: "CMake project version extracted from the build"
@@ -198,12 +202,29 @@ jobs:
             - name: Validate shader compilation (${{ matrix.config.name }})
               if: steps.check-hlsl.outputs.skip != 'true'
               shell: bash
+              env:
+                  CHANGED_FILES_JSON: ${{ inputs.changed-files-json }}
               run: |
                   if [ -z "${{ steps.find_fxc.outputs.fxc_path }}" ]; then
                     echo "fxc.exe not found - shader validation requires fxc.exe. Set --fxc to a valid path or ensure fxc.exe is in PATH." >&2
                     exit 1
                   fi
-                  hlslkit-compile --fxc "${{ steps.find_fxc.outputs.fxc_path }}" --shader-dir build/ALL/aio/Shaders --output-dir build/ShaderCache --config ${{ matrix.config.file }} --max-warnings 0 --suppress-warnings X1519
+                  # Materialize the changed-file list (one path per line). An empty
+                  # or absent JSON yields an empty file, which the wrapper treats
+                  # as "unknown change set" and validates everything (push/release).
+                  # If the JSON is malformed/truncated, fall back to an empty file
+                  # (=> full validation) rather than aborting the job.
+                  : > changed_files.txt
+                  if [ -n "$CHANGED_FILES_JSON" ]; then
+                    if ! printf '%s' "$CHANGED_FILES_JSON" | jq -r '.[]' > changed_files.txt 2>/dev/null; then
+                      echo "WARNING: could not parse changed-files JSON; running FULL validation."
+                      : > changed_files.txt
+                    fi
+                  fi
+                  echo "Changed files for incremental validation:"
+                  cat changed_files.txt || true
+                  python tools/validate_changed_shaders.py --changed-list-file changed_files.txt -- \
+                    hlslkit-compile --fxc "${{ steps.find_fxc.outputs.fxc_path }}" --shader-dir build/ALL/aio/Shaders --output-dir build/ShaderCache --config ${{ matrix.config.file }} --max-warnings 0 --suppress-warnings X1519
 
             - name: Upload shader validation logs
               if: failure() && steps.check-hlsl.outputs.skip != 'true'
