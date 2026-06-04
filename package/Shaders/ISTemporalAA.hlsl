@@ -270,21 +270,20 @@ float2 SelectDepthGuidedUV(
 	return selectedUV;
 }
 
-// Reproject the history-sample UV from velocity. VR reprojects within the current eye (mono-space
-// velocity, per-eye clamp; see Stereo::ApplyVelocityToUV) so a pixel near the x=0.5 seam never
-// samples the other eye's history, and reports out-of-bounds via `outOfBounds`. SE adds velocity in
-// screen space and returns the raw reprojected UV in `rawReprojUV` (the SE disocclusion test reads
-// it later). Both paths write both out-params.
-float2 ReprojectHistoryUV(float2 texCoord, float2 velocity, out bool outOfBounds, out float2 rawReprojUV)
+// Reproject the history-sample UV from velocity and report whether the reprojection left the frame
+// (disocclusion → reject). VR reprojects within the current eye (mono-space velocity, per-eye clamp;
+// see Stereo::ApplyVelocityToUV) so a pixel near the x=0.5 seam never samples the other eye's
+// history; SE adds velocity in screen space and tests the raw UV against [0,1] (the same boolean the
+// decompile computed inline). Folding the SE test in here lets main() treat both paths uniformly.
+float2 ReprojectHistoryUV(float2 texCoord, float2 velocity, out bool outOfBounds)
 {
 #	ifdef VR
 	float2 prevUV = Stereo::ApplyVelocityToUV(texCoord, velocity, outOfBounds);
-	rawReprojUV = prevUV;
 	return FrameBuffer::GetPreviousDynamicResolutionAdjustedScreenPosition(prevUV);
 #	else
-	rawReprojUV = texCoord + velocity;
-	outOfBounds = false;
-	return ClampHistoryUV(rawReprojUV);
+	float2 prevUV = texCoord + velocity;
+	outOfBounds = any(prevUV >= 1.0) || any(prevUV <= 0.0);
+	return ClampHistoryUV(prevUV);
 #	endif
 }
 
@@ -313,10 +312,9 @@ PS_OUTPUT main(PS_INPUT input)
 
 	// --- motion vector and history sample ---
 	motionReject.xy = velocityTex.Sample(velocitySampler, ClampScreenUV(motionReject.xy, drMax)).xy;
-	// Reproject history: VR sets prevUVOutOfBounds (feeds reject); SE writes the raw reprojected UV
-	// into motionReject.zw (the SE disocclusion test reads it later).
+	// Reproject history; prevUVOutOfBounds feeds the disocclusion reject below (both VR and SE).
 	bool prevUVOutOfBounds;
-	float2 historyUV = ReprojectHistoryUV(texCoord.xy, motionReject.xy, prevUVOutOfBounds, motionReject.zw);
+	float2 historyUV = ReprojectHistoryUV(texCoord.xy, motionReject.xy, prevUVOutOfBounds);
 	float motionLength = sqrt(dot(motionReject.xy, motionReject.xy));
 	// Feedback RT round-trip: .x = prev feedback luma, .y = prev historyFeedback weight, .z = prev
 	// motionConfidence (see feedbackOut writes at the end). The two weights are NOT colour/luma.
@@ -444,17 +442,9 @@ PS_OUTPUT main(PS_INPUT input)
 	float3 rectifiedColor = lerp(rectifyLo, rectifyHi, clipRatio.xxx);
 
 	// --- disocclusion / mask rejection ---
-	float reject;  // disocclusion / OOB / mask rejection flag
-#	ifdef VR
-	// VR resolves out-of-bounds per-eye in mono space; the SE stereo-space test misses the seam.
-	reject = prevUVOutOfBounds ? 1 : 0;
-#	else
-	float2 prevUV = motionReject.zw;  // reprojected UV from the SE path
-	float uvLow = cmp(0 >= min(prevUV.x, prevUV.y));
-	float2 uvHigh = cmp(prevUV >= float2(1, 1));
-	reject = (int)uvHigh.x | (int)uvLow;
-	reject = (int)uvHigh.y | (int)reject;
-#	endif
+	// Reproject OOB (computed per-eye in VR / screen-space in SE inside ReprojectHistoryUV), then
+	// OR in the mask reject below.
+	float reject = prevUVOutOfBounds ? 1 : 0;                      // disocclusion / OOB / mask rejection flag
 	float2 maskValues = maskTex.Sample(maskSampler, drCenter).xy;  // .x depth-mask, .y coverage
 	float centerCoverage = AlphaCoverageMask(drCenter);
 	float maskReject = cmp(ThresholdParams.w < maskValues.y);
