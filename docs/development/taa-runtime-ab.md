@@ -88,17 +88,24 @@ after capturing.
     corrupt/oversized `.rdc` needs a full RenderDoc relaunch, not an MCP reconnect.
 -   `TargetControl` sometimes returns a **stale** `NewCapture` path — verify the new `.rdc` by
     timestamp/size on disk, don't trust the returned string.
--   On a huge frame, find the TAA pass by scanning drawcalls **in reverse** (post-process is near
-    the end) — a full-frame `SetFrameEvent` sweep times out the eval worker.
+-   On a huge frame, a full-frame `SetFrameEvent` sweep times out the eval worker — use
+    `taa_candidates(reverse=True, stop_after=1)` (or `max_scan_drawcalls=N`) to scan from the end
+    (post-process is near there) and stop at the first match.
 
 ### 3. Load the harness and run the A/B (via the `renderdoc` MCP `Eval`)
 
-The embedded interpreter persists across `Eval` calls, so load the module once:
+Load the harness, then run the A/B. (If a later call reports the functions undefined, your MCP
+uses a fresh namespace per `Eval` — see Lessons; `exec` and call in the same `Eval`.)
 
 ```python
 exec(open(r"f:/Worktrees/.../tools/taa-renderdoc-ab.py").read())
-taa_candidates()          # find ISTemporalAA by its 6-SRV fingerprint (t0..t5: current/history/velocity/depth/mask/alpha)
+taa_candidates()          # exhaustive forward scan — fine for menu / small captures
+# On a multi-GB in-game capture, scan from the end and stop at the first hit so the worker
+# doesn't time out (the TAA pass is post-process, near the end):
+taa_candidates(reverse=True, stop_after=1)   # or max_scan_drawcalls=N to cap the probe
 ```
+
+(Finds ISTemporalAA by its 6-SRV fingerprint — `t0..t5`: current/history/velocity/depth/mask/alpha.)
 
 Pick the `eventId` of the TAA draw from the candidate list, then:
 

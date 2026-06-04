@@ -52,15 +52,24 @@ def _as_resid(x):
 _TAA_TEX = {"currentframetex", "historytex", "velocitytex", "depthtex", "masktex", "alphatex"}
 
 
-def taa_candidates():
+def taa_candidates(reverse=False, max_scan_drawcalls=0, stop_after=0):
     """Find ISTemporalAA draws by their pixel-shader SRV fingerprint (t0..t5). Returns
-    [{eventId, name}]; pass the eventId to ab()."""
+    [{eventId, name}]; pass the eventId to ab().
+
+    A full forward scan calls SetFrameEvent() once per drawcall, which can time out the replay
+    worker on a multi-GB capture. The TAA pass is post-process (near frame end), so on a huge
+    frame pass reverse=True to scan from the end and/or max_scan_drawcalls=N to cap how many
+    drawcalls are probed; stop_after=N returns as soon as N matches are found. Defaults keep the
+    exhaustive forward scan."""
     def work(ctrl):
         sdfile = ctrl.GetStructuredFile()
+        draws = [a for a in _walk(ctrl.GetRootActions()) if (a.flags & rd.ActionFlags.Drawcall)]
+        if reverse:
+            draws = draws[::-1]
+        if max_scan_drawcalls > 0:
+            draws = draws[:max_scan_drawcalls]
         res = []
-        for a in _walk(ctrl.GetRootActions()):
-            if not (a.flags & rd.ActionFlags.Drawcall):
-                continue
+        for a in draws:
             ctrl.SetFrameEvent(a.eventId, True)
             refl = ctrl.GetPipelineState().GetShaderReflection(rd.ShaderStage.Pixel)
             if not refl:
@@ -68,6 +77,8 @@ def taa_candidates():
             names = {r.name.lower() for r in refl.readOnlyResources}
             if _TAA_TEX.issubset(names):
                 res.append({"eventId": a.eventId, "name": a.GetName(sdfile)})
+                if stop_after > 0 and len(res) >= stop_after:
+                    break
         return res
     return ctx.replay(work)
 
