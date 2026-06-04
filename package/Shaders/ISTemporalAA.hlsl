@@ -276,6 +276,24 @@ float2 SelectDepthGuidedUV(
 	return selectedUV;
 }
 
+// Reproject the history-sample UV from velocity. VR reprojects within the current eye (mono-space
+// velocity, per-eye clamp; see Stereo::ApplyVelocityToUV) so a pixel near the x=0.5 seam never
+// samples the other eye's history, and reports out-of-bounds via `outOfBounds`. SE adds velocity in
+// screen space and returns the raw reprojected UV in `rawReprojUV` (the SE disocclusion test reads
+// it later). Both paths write both out-params.
+float2 ReprojectHistoryUV(float2 texCoord, float2 velocity, out bool outOfBounds, out float2 rawReprojUV)
+{
+#	ifdef VR
+	float2 prevUV = Stereo::ApplyVelocityToUV(texCoord, velocity, outOfBounds);
+	rawReprojUV = prevUV;
+	return FrameBuffer::GetPreviousDynamicResolutionAdjustedScreenPosition(prevUV);
+#	else
+	rawReprojUV = texCoord + velocity;
+	outOfBounds = false;
+	return ClampHistoryUV(rawReprojUV);
+#	endif
+}
+
 PS_OUTPUT main(PS_INPUT input)
 {
 	PS_OUTPUT psout;
@@ -303,16 +321,10 @@ PS_OUTPUT main(PS_INPUT input)
 
 	// --- motion vector and history sample ---
 	motionReject.xy = velocityTex.Sample(velocitySampler, ClampScreenUV(motionReject.xy, drMax)).xy;
-#	ifdef VR
-	// Eyes share one RT in VR; reproject within the current eye (mono-space velocity, per-eye
-	// clamp) so a pixel near the x=0.5 seam never samples the other eye's history. OOB feeds reject.
+	// Reproject history: VR sets prevUVOutOfBounds (feeds reject); SE writes the raw reprojected UV
+	// into motionReject.zw (the SE disocclusion test reads it later).
 	bool prevUVOutOfBounds;
-	float2 prevUV = Stereo::ApplyVelocityToUV(texCoord.xy, motionReject.xy, prevUVOutOfBounds);
-	tapMin.xy = FrameBuffer::GetPreviousDynamicResolutionAdjustedScreenPosition(prevUV);
-#	else
-	motionReject.zw = texCoord.xy + motionReject.xy;
-	tapMin.xy = ClampHistoryUV(motionReject.zw);
-#	endif
+	tapMin.xy = ReprojectHistoryUV(texCoord.xy, motionReject.xy, prevUVOutOfBounds, motionReject.zw);
 	float motionLength = sqrt(dot(motionReject.xy, motionReject.xy));
 	history.xyw = historyTex.Sample(historySampler, tapMin.xy).xyz;
 #	ifdef HDR_OUTPUT
