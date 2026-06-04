@@ -477,17 +477,15 @@ PS_OUTPUT main(PS_INPUT input)
 	// Scale factor: 0.05 gamma ≈ 0.020 PQ at mid-scene luminance → factor ≈ 2.5.
 	// luma diff drives the history similarity weights (and the final luma fixup at blend end).
 	float lumaDiff = blendLumaMotion.x + -centerLuma;
-	// similarity = (1 - scale*diff) per channel, clamped >= 0: .x weights colour, .y the feedback luma.
+	// similarity = max(0, 1 - scale*diff) per channel: .x weights colour, .y the feedback luma.
+	// Only the diff term differs by permutation: HDR keys off the luma diff (scaled to PQ), SDR off
+	// the motion-vs-history delta.
 #	ifdef HDR_OUTPUT
-	float2 similarity;
-	{
-		float lumaDiffScaled = abs(lumaDiff) * 0.05;
-		similarity = -lumaDiffScaled.xx * kSimilarityScale + float2(1, 1);
-	}
+	float similarityDiff = abs(lumaDiff) * 0.05;
 #	else
-	float2 similarity = -abs(motionVsHistory.xx) * kSimilarityScale + float2(1, 1);
+	float similarityDiff = abs(motionVsHistory);
 #	endif
-	similarity = max(float2(0, 0), similarity);
+	float2 similarity = max(float2(0, 0), -similarityDiff.xx * kSimilarityScale + float2(1, 1));
 	float3 targetColor = similarity.xxx * centerVsNeighbor + neighborBlend;
 	workColor = -targetColor + workColor;
 	float blendWeight = BlendParams.x + -BlendParams.y;
@@ -539,15 +537,14 @@ PS_OUTPUT main(PS_INPUT input)
 	// .x = feedback luma, .yzw = resolved colour
 	float4 resolved = allTransparent.xxxx ? float4(outputLuma, targetColor) : outPacked.xyzw;
 	colorOut.xyz = resolved.yzw;
+	float feedbackLumaOut = saturate(resolved.x * feedbackWeight);
 #	ifdef HDR_OUTPUT
-	// Encode PQ luma to game-gamma for feedback RT storage.
-	// Storing raw PQ [0,1] in a low-precision RT causes highlight banding because
-	// PQ packs high-nit values into the upper range where RT quantization is visible.
-	// Game-gamma encoding spreads precision evenly — symmetric with DecodeFeedbackLuma on read.
-	feedbackOut.x = EncodeFeedbackLuma(saturate(resolved.x * feedbackWeight));
-#	else
-	feedbackOut.x = saturate(resolved.x * feedbackWeight);
+	// Encode PQ luma to game-gamma for feedback RT storage: raw PQ in a low-precision RT bands in
+	// highlights (PQ packs high-nit values where quantization shows); game-gamma spreads precision
+	// evenly — symmetric with DecodeFeedbackLuma on read.
+	feedbackLumaOut = EncodeFeedbackLuma(feedbackLumaOut);
 #	endif
+	feedbackOut.x = feedbackLumaOut;
 	// Vanilla writes opaque alpha unconditionally on both SE and VR (decompile o0.w = 1).
 	colorOut.w = 1;
 	feedbackOut.w = 1;
