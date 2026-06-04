@@ -3878,6 +3878,40 @@ namespace ShadowCasterManager
 		return s_lights;
 	}
 
+	bool IsActive()
+	{
+		// Boot-latched: Install() captures s_bootEnabled once and wires the
+		// scheduler hooks only when it was set. Runtime toggles of
+		// s_settings.Enabled are restart-gated (see Hook_CalculateActiveShadowCasters)
+		// so the live flag is the wrong thing to test here. Before Install()
+		// runs, s_bootEnabled is false, which is the safe answer -- the engine's
+		// vanilla pipeline is what's live until our hooks land.
+		return s_bootEnabled && !s_externalConflict;
+	}
+
+	// Reads the engine's own kSHADOWMAPS slice for `light` from the live
+	// shadowmap descriptor. Used only when SCM is inactive (disabled at boot /
+	// external conflict): the SCM pool is empty in that case, but the engine
+	// still renders up to its vanilla 4 casters and stamps each one's slice
+	// into shadowmapDescriptors[0].shadowmapIndex. Directional sun returns -1
+	// (kSHADOWMAPS_ESRAM, no kSHADOWMAPS slice); a light with no descriptor
+	// yet (mid-population) also returns -1 so the caller skips it cleanly.
+	static int32_t GetEngineShadowSlot(RE::BSShadowLight* light)
+	{
+		if (!light || light->GetIsDirectionalLight())
+			return -1;
+		if (globals::game::isVR) {
+			auto& rd = light->GetVRRuntimeData();
+			if (rd.shadowmapDescriptors.empty())
+				return -1;
+			return static_cast<int32_t>(rd.shadowmapDescriptors[0].shadowmapIndex);
+		}
+		auto& rd = light->GetRuntimeData();
+		if (rd.shadowmapDescriptors.empty())
+			return -1;
+		return static_cast<int32_t>(rd.shadowmapDescriptors[0].shadowmapIndex);
+	}
+
 	int32_t GetShadowSlot(RE::BSShadowLight* light)
 	{
 		// Returns the kSHADOWMAPS texture-array slot for `light`, or -1 if the
@@ -3885,6 +3919,16 @@ namespace ShadowCasterManager
 		// lights (1:1). Sun's pool slot returns -1 since the sun renders to
 		// kSHADOWMAPS_ESRAM (a separate texture) — callers in ShadowRenderer
 		// upload and LightLimitFix cluster builder must skip it.
+		//
+		// When SCM is disabled at boot the pool is never populated, so the
+		// lookup below would return -1 for every light. The cluster builder
+		// treats -1 as "already handled, no slot" and drops the light entirely
+		// (it was added to shadowLightPtrs first), which blacked out every
+		// shadow caster. Fall back to the engine's own descriptor slice so LLF
+		// lights and shadows the casters exactly as vanilla would without SLF.
+		if (!IsActive())
+			return GetEngineShadowSlot(light);
+
 		const int32_t poolIdx = s_lights.FindLight(light, s_settings.ShadowLightCount);
 		if (poolIdx < 0)
 			return -1;

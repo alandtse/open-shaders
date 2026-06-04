@@ -610,6 +610,14 @@ namespace ShadowCasterManager
 	/// Returns a read-only view of the active light pool for UI/visualization.
 	const LightContainer& GetLights();
 
+	/// True when SCM is the active shadow manager this session: it was enabled
+	/// at boot (so Install() wired up the scheduler hooks) and no conflicting
+	/// external plugin was detected. False means the engine's vanilla shadow
+	/// pipeline is running untouched -- callers that depend on SCM's pool
+	/// (slot assignment, scheduling) must fall back to the engine's own data.
+	/// Boot-latched, like ShadowLightCount: runtime toggles don't flip it.
+	bool IsActive();
+
 	/// Returns the kSHADOWMAPS texture-array slot for an active point/spot
 	/// shadow light as a raw slice index 0..GetInstalledSlotCount()-1, or -1
 	/// when the light is either not active in the SCM pool OR is the sun.
@@ -617,8 +625,14 @@ namespace ShadowCasterManager
 	/// strict-light shadow-flag setup) treat the -1 sentinel as "skip" --
 	/// the sun renders to kSHADOWMAPS_ESRAM (a separate texture) and has no
 	/// kSHADOWMAPS slice; inactive lights have no slot at all.
-	/// Uses the internal s_lights pool -- does not read the descriptor's
-	/// shadowmapIndex field, which may be corrupted by ReturnShadowmaps().
+	///
+	/// When SCM is active this reads the internal s_lights pool -- it does NOT
+	/// read the descriptor's shadowmapIndex field, which can be corrupted by
+	/// ReturnShadowmaps(). When SCM is NOT active (disabled at boot or an
+	/// external conflict), the pool is never populated, so this falls back to
+	/// the engine's own shadowmapDescriptors[0].shadowmapIndex -- exactly the
+	/// vanilla slice the engine rendered into -- so LLF keeps lighting and
+	/// shadowing point/spot casters as it would without Shadow Limit Fix.
 	int32_t GetShadowSlot(RE::BSShadowLight* light);
 
 	/// Visit every shadow light currently demoted to non-shadow rendering via
