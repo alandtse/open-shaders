@@ -138,18 +138,23 @@ in the report.
 
 ## Generalizing to other shaders
 
-TAA is just the worked example — the harness is a template for validating **any** shader refactor
-or reverse-engineered transcription. The reusable core (freeze a real frame, swap one shader, diff
-its output against a baseline noise floor) is shader-agnostic. To point it at a different shader you
-change only three things:
+TAA is just the worked example — `grab_rt()`, `replace_ps_with_dxbc()`, `restore()`, `_diff()`, and
+`ab(eid, …)` are all **shader-agnostic** (give `ab()` an event ID and it validates any pass). The
+only TAA-specific piece is the fingerprint used to _find_ the pass, and that's a parameter:
 
--   **The pass fingerprint.** `taa_candidates()` locates the draw by its **bound-resource
-    signature** (the `t0..t5` SRV set), not by draw index. For another shader, match on its own
-    distinctive SRV/UAV/RT bindings.
--   **The permutation defines.** Compile A′/B with the exact `/D` set the running build used.
--   **The capture state.** Pick a frame that actually exercises the code path (see lessons).
+```python
+# Generic finder — match a pass by the SRV names its pixel shader binds (case-insensitive):
+cands = find_candidates({"mycolortex", "mydepthtex", "myhistorytex"}, reverse=True, stop_after=1)
+ab(cands[0]["eventId"], candidate_dxbc=..., baseline_dxbc=...)
+# taa_candidates() is just find_candidates(_TAA_TEX) — copy that one-liner for your own preset.
+```
 
-`ab()`, the baseline-floor verdict, the channel-aware decode, and restore-on-exit are unchanged.
+So to point it at a different shader you change only:
+
+-   **The pass fingerprint** — pass your shader's distinctive SRV names to `find_candidates()` (no
+    source edit needed). Match by bound resources, not draw index (indices shift frame to frame).
+-   **The permutation defines** — compile A′/B with the exact `/D` set the running build used.
+-   **The capture state** — pick a frame that actually exercises the code path (see lessons).
 
 ## Lessons (generalizable RE technique)
 

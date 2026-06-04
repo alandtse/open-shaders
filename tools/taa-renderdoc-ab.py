@@ -58,15 +58,18 @@ def _as_resid(x):
 _TAA_TEX = {"currentframetex", "historytex", "velocitytex", "depthtex", "masktex", "alphatex"}
 
 
-def taa_candidates(reverse=False, max_scan_drawcalls=0, stop_after=0):
-    """Find ISTemporalAA draws by their pixel-shader SRV fingerprint (t0..t5). Returns
-    [{eventId, name}]; pass the eventId to ab().
+def find_candidates(srv_names, reverse=False, max_scan_drawcalls=0, stop_after=0):
+    """Find draws whose pixel shader binds ALL of `srv_names` — a resource-fingerprint match that
+    is robust across frames/versions (unlike a draw index, which shifts). `srv_names` is any
+    iterable of SRV names (case-insensitive). Returns [{eventId, name}]; pass an eventId to ab().
+    This is the shader-agnostic finder — `ab()`/`grab_rt()`/`replace_ps_with_dxbc()` are already
+    generic, so this plus your shader's fingerprint is all you need to validate a different pass.
 
     A full forward scan calls SetFrameEvent() once per drawcall, which can time out the replay
-    worker on a multi-GB capture. The TAA pass is post-process (near frame end), so on a huge
-    frame pass reverse=True to scan from the end and/or max_scan_drawcalls=N to cap how many
-    drawcalls are probed; stop_after=N returns as soon as N matches are found. Defaults keep the
-    exhaustive forward scan."""
+    worker on a multi-GB capture. Post-process passes sit near frame end, so pass reverse=True to
+    scan from the end and/or max_scan_drawcalls=N to cap how many drawcalls are probed; stop_after=N
+    returns as soon as N matches are found. Defaults keep the exhaustive forward scan."""
+    want = {s.lower() for s in srv_names}
     def work(ctrl):
         sdfile = ctrl.GetStructuredFile()
         draws = [a for a in _walk(ctrl.GetRootActions()) if (a.flags & rd.ActionFlags.Drawcall)]
@@ -81,12 +84,18 @@ def taa_candidates(reverse=False, max_scan_drawcalls=0, stop_after=0):
             if not refl:
                 continue
             names = {r.name.lower() for r in refl.readOnlyResources}
-            if _TAA_TEX.issubset(names):
+            if want.issubset(names):
                 res.append({"eventId": a.eventId, "name": a.GetName(sdfile)})
                 if stop_after > 0 and len(res) >= stop_after:
                     break
         return res
     return ctx.replay(work)
+
+
+def taa_candidates(reverse=False, max_scan_drawcalls=0, stop_after=0):
+    """TAA preset: find_candidates() with ISTemporalAA's t0..t5 SRV fingerprint (_TAA_TEX)."""
+    return find_candidates(_TAA_TEX, reverse=reverse,
+                           max_scan_drawcalls=max_scan_drawcalls, stop_after=stop_after)
 
 
 def _tex_desc(ctrl, rid):
