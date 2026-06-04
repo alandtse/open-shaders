@@ -27,6 +27,11 @@ import math
 # your MCP gives a fresh namespace per Eval, do the replace and its restore in the SAME Eval.
 _replacements = {}
 
+# Above this baseline-vs-live mean_abs, the floor is implausible (an honest one is a few LSBs):
+# the baseline diverged from live, so ab() reports UNVERIFIED-BASELINE instead of judging against
+# it. Tune to the observed runtime-vs-fxc residue for your RT format.
+FLOOR_SANITY_LIMIT = 1e-2
+
 
 def _walk(actions):
     for a in actions:
@@ -199,8 +204,15 @@ def _diff(a, b, meta):
         esz, code = 2, "<e"
     elif "32_float" in fmt:
         esz, code = 4, "<f"
-    else:
+    elif "8_unorm" in fmt:
         esz, code = 1, None  # 8-bit UNORM per byte
+    else:
+        # Unknown RT format — refuse to guess. A byte-wise diff on an unhandled packed/sRGB/typeless
+        # format would be meaningless; leave mean_abs None so ab() reports NOT-COMPARABLE rather than
+        # a misleading EQUIVALENT/DIFFERS.
+        out["verdict"] = "NOT-COMPARABLE"
+        out["note"] = "unrecognized format: " + meta[2]
+        return out
 
     n = len(a)
     total = n // esz
@@ -285,7 +297,16 @@ def ab(eid, candidate_dxbc, baseline_dxbc=None, entry="main"):
         report["verdict"] = "NOT-COMPARABLE"
     elif floor is not None:
         report["noise_floor_mean"] = floor
-        report["verdict"] = "EQUIVALENT" if cand_mean <= max(floor * 3.0, 1e-4) else "DIFFERS"
+        if floor > FLOOR_SANITY_LIMIT:
+            # An honest floor is a few LSBs of runtime-vs-fxc residue. A large floor means the
+            # baseline diverged from live — wrong defines/permutation, or a baseline compiled from
+            # the wrong ref (e.g. dev when the refactor is stacked on an unmerged fix). Judging
+            # against it would rubber-stamp almost any candidate EQUIVALENT, so refuse to judge.
+            report["verdict"] = "UNVERIFIED-BASELINE"
+            report["note"] = ("baseline noise floor %.4g exceeds %.4g — verify defines/permutation "
+                              "and that the baseline is the refactor's parent" % (floor, FLOOR_SANITY_LIMIT))
+        else:
+            report["verdict"] = "EQUIVALENT" if cand_mean <= max(floor * 3.0, 1e-4) else "DIFFERS"
     elif baseline_dxbc:
         # A baseline was requested but did not yield a usable floor (build failed or size
         # mismatch). Do NOT silently fall back to the absolute path — the floor is the whole

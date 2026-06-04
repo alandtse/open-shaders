@@ -98,7 +98,7 @@ Load the harness, then run the A/B. (If a later call reports the functions undef
 uses a fresh namespace per `Eval` — see Lessons; `exec` and call in the same `Eval`.)
 
 ```python
-exec(open(r"f:/Worktrees/.../tools/taa-renderdoc-ab.py").read())
+exec(open(r"<repo>/tools/taa-renderdoc-ab.py").read())   # <repo> = your local checkout path
 taa_candidates()          # exhaustive forward scan — fine for menu / small captures
 # On a multi-GB in-game capture, scan from the end and stop at the first hit so the worker
 # doesn't time out (the TAA pass is post-process, near the end):
