@@ -151,13 +151,6 @@ float4 PackNeighborTap(ISTAA_NeighborTap tap)
 	return float4(tap.grb, tap.luma);
 }
 
-void AssignPackedNeighbor(float2 uv, float historyLuma, out float4 packed, out float belowHist)
-{
-	ISTAA_NeighborTap tap = SampleNeighborGRB(uv, historyLuma);
-	packed = PackNeighborTap(tap);
-	belowHist = tap.belowHist;
-}
-
 // Centre tap: .xyz sample into .yzw layout; luma via dot(.zwy, kLumaWeights).
 float3 SampleCenterRGB(float2 uv)
 {
