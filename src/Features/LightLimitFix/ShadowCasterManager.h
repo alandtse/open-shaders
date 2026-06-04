@@ -610,6 +610,10 @@ namespace ShadowCasterManager
 	/// Returns a read-only view of the active light pool for UI/visualization.
 	const LightContainer& GetLights();
 
+	/// True when SCM owns shadow scheduling this session (enabled at boot, no
+	/// external conflict). False = engine's vanilla pipeline. Boot-latched.
+	bool IsActive();
+
 	/// Returns the kSHADOWMAPS texture-array slot for an active point/spot
 	/// shadow light as a raw slice index 0..GetInstalledSlotCount()-1, or -1
 	/// when the light is either not active in the SCM pool OR is the sun.
@@ -617,8 +621,10 @@ namespace ShadowCasterManager
 	/// strict-light shadow-flag setup) treat the -1 sentinel as "skip" --
 	/// the sun renders to kSHADOWMAPS_ESRAM (a separate texture) and has no
 	/// kSHADOWMAPS slice; inactive lights have no slot at all.
-	/// Uses the internal s_lights pool -- does not read the descriptor's
-	/// shadowmapIndex field, which may be corrupted by ReturnShadowmaps().
+	/// When SCM is active, reads the s_lights pool (not the descriptor's
+	/// shadowmapIndex, which ReturnShadowmaps() can corrupt). When inactive the
+	/// pool is empty, so it falls back to the engine's own
+	/// shadowmapDescriptors[0].shadowmapIndex (the vanilla slice).
 	int32_t GetShadowSlot(RE::BSShadowLight* light);
 
 	/// Visit every shadow light currently demoted to non-shadow rendering via

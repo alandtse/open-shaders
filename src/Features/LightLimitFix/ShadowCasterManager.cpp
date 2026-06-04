@@ -3878,6 +3878,32 @@ namespace ShadowCasterManager
 		return s_lights;
 	}
 
+	bool IsActive()
+	{
+		// Boot-latched, not the live s_settings.Enabled: hooks install only when
+		// enabled at boot, and runtime toggles are restart-gated.
+		return s_bootEnabled && !s_externalConflict;
+	}
+
+	// Engine's native kSHADOWMAPS slice from the live descriptor, for when SCM
+	// is inactive and its pool is empty. Sun (-> kSHADOWMAPS_ESRAM) and lights
+	// without a descriptor return -1 so callers skip them.
+	static int32_t GetEngineShadowSlot(RE::BSShadowLight* light)
+	{
+		if (!light || light->GetIsDirectionalLight())
+			return -1;
+		if (globals::game::isVR) {
+			auto& rd = light->GetVRRuntimeData();
+			if (rd.shadowmapDescriptors.empty())
+				return -1;
+			return static_cast<int32_t>(rd.shadowmapDescriptors[0].shadowmapIndex);
+		}
+		auto& rd = light->GetRuntimeData();
+		if (rd.shadowmapDescriptors.empty())
+			return -1;
+		return static_cast<int32_t>(rd.shadowmapDescriptors[0].shadowmapIndex);
+	}
+
 	int32_t GetShadowSlot(RE::BSShadowLight* light)
 	{
 		// Returns the kSHADOWMAPS texture-array slot for `light`, or -1 if the
@@ -3885,6 +3911,12 @@ namespace ShadowCasterManager
 		// lights (1:1). Sun's pool slot returns -1 since the sun renders to
 		// kSHADOWMAPS_ESRAM (a separate texture) — callers in ShadowRenderer
 		// upload and LightLimitFix cluster builder must skip it.
+		//
+		// With SCM disabled at boot the pool is empty; without this fallback
+		// every caster returns -1 and the cluster builder drops it (#97).
+		if (!IsActive())
+			return GetEngineShadowSlot(light);
+
 		const int32_t poolIdx = s_lights.FindLight(light, s_settings.ShadowLightCount);
 		if (poolIdx < 0)
 			return -1;
