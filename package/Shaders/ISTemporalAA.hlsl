@@ -295,7 +295,7 @@ PS_OUTPUT main(PS_INPUT input)
 	float4 colorOut, feedbackOut;
 
 	// float4 packs — component reuse matches vanilla decompile (see header comment).
-	float4 motionReject, history, corner, tapMin;  // decompile r0–r4 (tapMin = history UV here)
+	float4 motionReject, history, corner;  // decompile r0–r4
 
 	float2 drMax = GetDynamicResolutionMax(), drUVMin, drUVMax, drCenter;
 	float4 drNeighborsA, drNeighborsB, drNeighborsC;
@@ -316,9 +316,9 @@ PS_OUTPUT main(PS_INPUT input)
 	// Reproject history: VR sets prevUVOutOfBounds (feeds reject); SE writes the raw reprojected UV
 	// into motionReject.zw (the SE disocclusion test reads it later).
 	bool prevUVOutOfBounds;
-	tapMin.xy = ReprojectHistoryUV(texCoord.xy, motionReject.xy, prevUVOutOfBounds, motionReject.zw);
+	float2 historyUV = ReprojectHistoryUV(texCoord.xy, motionReject.xy, prevUVOutOfBounds, motionReject.zw);
 	float motionLength = sqrt(dot(motionReject.xy, motionReject.xy));
-	history.xyw = historyTex.Sample(historySampler, tapMin.xy).xyz;
+	history.xyw = historyTex.Sample(historySampler, historyUV).xyz;
 #	ifdef HDR_OUTPUT
 	// history.x is stored as game-gamma luma (see EncodeFeedbackLuma on write).
 	// Decode to PQ luma to match the working space of all neighbour taps.
@@ -437,7 +437,7 @@ PS_OUTPUT main(PS_INPUT input)
 	float3 rectifyLo = clampToNeighborhood.xxx ? clipPick.xyz : clipHi.xyz;
 	float3 rectifyHi = clampToNeighborhood.xxx ? clipFinal.xyz : clipLo.xyz;
 	// Rectified colour: lerp from the low candidate toward the high one by the clip ratio (history.y).
-	corner.xyz = lerp(rectifyLo, rectifyHi, history.yyy);
+	float3 rectifiedColor = lerp(rectifyLo, rectifyHi, history.yyy);
 
 	// --- disocclusion / mask rejection ---
 	float reject;  // disocclusion / OOB / mask rejection flag
@@ -457,7 +457,7 @@ PS_OUTPUT main(PS_INPUT input)
 	reject = (int)reject | (int)maskReject;
 	// Two colour candidates: the rectified history colour and the neighbourhood-weighted colour
 	// (both collapse to the centre tap when the pixel is rejected).
-	float3 workColor = reject.xxx ? centerColor : corner.xyz;  // history/rectified colour, evolves below
+	float3 workColor = reject.xxx ? centerColor : rectifiedColor;  // history/rectified colour, evolves below
 	history.xw = reject.xx ? float2(centerLuma, 0) : history.xw;
 	float3 neighborBlend = reject.xxx ? centerColor : neighborColor;
 	float3 centerVsNeighbor = centerColor + -neighborBlend;
