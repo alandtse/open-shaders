@@ -1215,6 +1215,45 @@ void LightLimitFix::UpdateStructure()
 
 void LightLimitFix::Hooks::BSLightingShader_SetupGeometry::thunk(RE::BSShader* This, RE::BSRenderPass* Pass, uint32_t RenderFlags)
 {
+	// Defensive pre-call guard for the engine's directional-light setup.
+	// BSLightingShader::SetupGeometry unconditionally calls
+	// GeometrySetupConstantDirectionalLight, which reads sceneLights[0], then
+	// sceneLights[0]->light (NiLight, BSLight+0x48), then dereferences
+	// NiLight+0x15C with NO validation. Verified via Ghidra on SkyrimVR 1.4.15
+	// (SetupGeometry 0x141338f60 -> 0x1412f4500): numLights==0 makes it read
+	// sceneLights[0] off a null array; numLights>=1 with a null/stale
+	// sceneLights[0].light derefs a bad NiLight at +0x15C.
+	//
+	// PBR books rendered in the UI 3D scene (UI3DSceneManager) reach this path
+	// with a sceneLights[0] whose NiLight is null or stale, producing a
+	// reproducible CTD (issue #92: rdx=0 reads [0x15C], stale rdx reads
+	// [rdx+0x15C]). The BSLight* itself is valid (the crash is past the BSLight
+	// read), so the unsafe field is specifically sceneLights[0]->light. The
+	// engine reads slot 0 regardless of numLights and there is no safe
+	// substitute light, so clamping numLights (as the BSEffectShader guard
+	// below does) would only move the crash -- the only safe action is to skip
+	// the engine call for this geometry: one mis-lit frame instead of a crash.
+	if (Pass) {
+		const auto isPlausible = [](const void* p) {
+			const auto v = reinterpret_cast<std::uintptr_t>(p);
+			return v >= 0x10000 && v < 0x800000000000ull && (v & 0x7) == 0;
+		};
+		RE::BSLight* dirLight = (Pass->numLights > 0 && Pass->sceneLights) ? Pass->sceneLights[0] : nullptr;
+		if (Pass->numLights == 0 || !isPlausible(dirLight) || !isPlausible(dirLight->light.get())) {
+			static int logged = 0;
+			if (logged++ < 10) {
+				logger::warn(
+					"[LLF] BSLightingShader_SetupGeometry: directional sceneLights[0] unsafe "
+					"(numLights={} BSLight=0x{:x} NiLight=0x{:x}); skipping engine SetupGeometry "
+					"to avoid GeometrySetupConstantDirectionalLight null-deref (#92)",
+					Pass->numLights,
+					reinterpret_cast<std::uintptr_t>(dirLight),
+					reinterpret_cast<std::uintptr_t>(isPlausible(dirLight) ? dirLight->light.get() : nullptr));
+			}
+			return;
+		}
+	}
+
 	auto& singleton = globals::features::lightLimitFix;
 	singleton.BSLightingShader_SetupGeometry_Before(Pass);
 	func(This, Pass, RenderFlags);
