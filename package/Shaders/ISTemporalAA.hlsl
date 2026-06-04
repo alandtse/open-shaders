@@ -74,7 +74,7 @@ float DecodeFeedbackLuma(float gammaLuma)
 
 static const float3 kLumaWeights = float3(0.5, 0.25, 0.25);
 
-// Named magic constants from the vanilla decompile (values unchanged).
+// Tuning constants from the vanilla TAA decompile, named for readability; each role noted inline.
 static const float kMaxLumaCap = 1.00100005;              // bracket ceiling (just above 1.0 PQ)
 static const float kMinLumaCap = -0.00100000005;          // bracket floor (just below 0)
 static const float kLumaEpsilon = 0.00999999978;          // negligible-luma threshold
@@ -93,8 +93,8 @@ static const float kFlickerThreshold = 0.200000003;       // luma-spread below t
  * - Bracket colours (float3): (R, B, luma) with .z = luma — see MergeLumaBracket/MergeMaxBracket.
  * - Output colour lives in .yzw (vanilla r3.yzw after blend; resolved/outPacked .yzw), not .xyz.
  *
- * The few remaining float4 packs (motionReject, corner, the neighbour taps) are semantic but reuse
- * components like the decompile; the blend-math and history packs have been split into named locals.
+ * motionReject, corner, and the neighbour taps stay packed float4s whose components carry distinct
+ * quantities (as in the decompile); other intermediates (blend math, history fields) are named scalars.
  */
 
 float2 ClampScreenUV(float2 screenUV, float2 drMax)
@@ -382,16 +382,16 @@ PS_OUTPUT main(PS_INPUT input)
 	float3 minBoundNoCorner = minBracket;
 	// Final fold: corner tap, ungated (gate 0 → always take the lower-luma colour).
 	float3 minBoundWithCorner = MergeLumaBracket(corner, minBoundNoCorner, 0);
-	// Low-clamp the (max-bracketed) C1 tap to the kMinLumaCap floor: build the centre-vs-floor bound
-	// (gated by belowHistCentre), then fold C1 toward it (MergeMaxBracket, gated by C1's belowHist).
+	// Low-clamp C1 to the kMinLumaCap floor, into its own seed so neighbors[] stays an immutable tap
+	// array: build the centre-vs-floor bound (gated by belowHistCentre), then fold C1's colour toward
+	// it (MergeMaxBracket, gated by C1's belowHist). This seeds the max bracket below.
 	float3 lowClamp = cmp(kMinLumaCap < centerLuma) ? centerRBL : kMinLumaCap.xxx;
 	lowClamp = belowHistCentre ? lowClamp : kMinLumaCap.xxx;
-	neighbors[6].xyz = MergeMaxBracket(neighbors[6], lowClamp, neighborBelowHist[6]);
+	float3 lowClampedC1 = MergeMaxBracket(neighbors[6], lowClamp, neighborBelowHist[6]);
 
 	// --- flicker score: 4 minus one integer contribution per neighbourhood tap ---
-	// Each contribution reads a tap's ORIGINAL .w luma; the colour sort below only mutates .w/.yzw
-	// after this, so computing them here is behaviour-preserving. The sum is order-independent (each
-	// contribution is a ceil() integer); tap order matches the original 8-term sum.
+	// Each contribution reads a tap's .w luma; the sum is order-independent (each is a ceil() integer)
+	// and the tap order matches the original 8-term sum.
 	const float4 flickerTaps[8] = { corner, neighbors[0], neighbors[1], neighbors[2], neighbors[3], neighbors[4], neighbors[5], neighbors[6] };
 	float flickerScore = 4;
 	[unroll] for (int flick = 0; flick < 8; flick++)
@@ -402,7 +402,7 @@ PS_OUTPUT main(PS_INPUT input)
 	// Same six taps/order as the min fold (neighbors[5..0]), but the max rule commits a tap when its
 	// belowHist gate is SET — inverted vs the min fold (see MergeMaxBracket). Seeded from the
 	// low-clamped C1 colour.
-	float3 maxBracket = neighbors[6].xyz;
+	float3 maxBracket = lowClampedC1;
 	[unroll] for (int maxFold = 5; maxFold >= 0; maxFold--)
 		maxBracket = MergeMaxBracket(neighbors[maxFold], maxBracket, neighborBelowHist[maxFold]);
 	// Complete the max bracket (ungated corner fold), then select the neighbourhood AABB bounds for
