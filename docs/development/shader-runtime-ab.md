@@ -23,9 +23,10 @@ op-reordering restructure produces.
 ## Prerequisites
 
 -   RenderDoc, reachable via the `renderdoc` MCP (`Eval`, `Get-Texture`, `Instance`).
--   SkyrimSE or SkyrimVR launchable with RenderDoc injected (`rd.ExecuteAndInject(skse64_loader.exe,
-…, hookIntoChildren=True)`, or launch from the RenderDoc GUI). The **main menu** already runs
-    the TAA pass, so it is a valid capture surface on either edition.
+-   SkyrimSE or SkyrimVR launchable with RenderDoc injected (`rd.ExecuteAndInject(<loader>, …,
+hookIntoChildren=True)`, or launch from the RenderDoc GUI) — `<loader>` is `skse64_loader.exe`
+    for SE/AE and `sksevr_loader.exe` for VR. The **main menu** already runs the TAA pass, so it is
+    a valid capture surface on either edition.
 -   The build must be in **TAA upscaling mode** (DLSS/FSR replace `ISTemporalAA`) and ideally with
     **HDR and frame-generation off** — otherwise Open Shaders presents through a DX12 interop
     swapchain and RenderDoc captures only the D3D12 present (Copy/Present, no draws), not the
