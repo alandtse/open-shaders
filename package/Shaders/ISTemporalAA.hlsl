@@ -86,9 +86,10 @@ static const float kFlickerThreshold = 0.200000003;       // luma-spread below t
 
 /*
  * Channel layout (vanilla decompile — swizzles are load-bearing):
- * - Neighbour taps: .yxz sample; luma via dot(.xzy, kLumaWeights); stored as float4(.xyz=GRB, .w=luma).
- * - centre: centerColor float3 = RGB; belowHistC1 scalar = C1 mask; luma via dot(centerColor.yzx, kLumaWeights).
- * - corner: float4 .xyz=corner GRB, .w=corner luma (depth-guided); .x reused for belowHistA0 mask.
+ * - Neighbour taps: .yxz sample; luma via dot(.xzy, kLumaWeights); stored as float4(.xyz=GRB, .w=luma)
+ *   in neighbors[0..6] (uvMin,A0,A1,B0,B1,C0,C1), with masks in neighborBelowHist[].
+ * - centre: centerColor float3 = RGB; luma via dot(centerColor.yzx, kLumaWeights).
+ * - corner: float4 .xyz=corner GRB, .w=corner luma (depth-guided).
  * - Bracket colours (float3): (R, B, luma) with .z = luma — see MergeLumaBracket/MergeMaxBracket.
  * - Output colour lives in .yzw (vanilla r3.yzw after blend; resolved/outPacked .yzw), not .xyz.
  *
@@ -301,9 +302,7 @@ PS_OUTPUT main(PS_INPUT input)
 	float4 colorOut, feedbackOut;
 
 	// float4 packs — component reuse matches vanilla decompile (see header comment).
-	float4 motionReject, history, corner, tapMin;     // decompile r0–r4
-	float4 tapA0, tapA1, tapB0, tapB1, tapC0, tapC1;  // decompile r6–r13
-	float belowHistC1;                                // C1 tap below-history mask (decompile r14.x)
+	float4 motionReject, history, corner, tapMin;  // decompile r0–r4 (tapMin = history UV here)
 
 	float2 drMax = GetDynamicResolutionMax(), drUVMin, drUVMax, drCenter;
 	float4 drNeighborsA, drNeighborsB, drNeighborsC;
@@ -337,22 +336,28 @@ PS_OUTPUT main(PS_INPUT input)
 	float cornerBelowHist = cmp(corner.w < history.x);  // toggles corner-tap inclusion in the AABB
 
 	// --- neighbour colour / luma samples ---
-	float uvMinCoverage;   // uvMin alpha coverage; seeds the allTransparent test far below
-	float uvMinBelowHist;  // uvMin tap below-history mask; consumed in the bracket/flicker cascade
+	// Sample the 9-tap neighbourhood (packed GRB.xyz + luma.w) plus each tap's below-history mask,
+	// in the vanilla sample order so behaviour is bit-exact. Index map (also used by the brackets
+	// and flicker below): [0]=uvMin, [1]=A0, [2]=A1, [3]=B0, [4]=B1, [5]=C0, [6]=C1. The decompile
+	// scattered the masks through reused .x slots; here they live in a parallel array.
+	const float2 neighborUVs[7] = {
+		drUVMin, drNeighborsA.xy, drNeighborsA.zw, drNeighborsB.xy, drNeighborsB.zw, drNeighborsC.xy, drNeighborsC.zw
+	};
+	float4 neighbors[7];
+	float neighborBelowHist[7];
 	{
 		ISTAA_NeighborTap tap = SampleNeighborGRB(drUVMin, history.x);
-		tapMin.xyz = tap.grb;
-		uvMinCoverage = AlphaCoverageMask(drUVMin);
-		tapMin.w = tap.luma;
-		uvMinBelowHist = tap.belowHist;
+		neighbors[0] = PackNeighborTap(tap);
+		neighborBelowHist[0] = tap.belowHist;
 	}
-	AssignPackedNeighbor(drNeighborsA.xy, history.x, tapA0, corner.x);
-	AssignPackedNeighbor(drNeighborsA.zw, history.x, tapA1, tapMin.x);
-	AssignPackedNeighbor(drNeighborsB.xy, history.x, tapB0, tapA0.x);
-	AssignPackedNeighbor(drNeighborsB.zw, history.x, tapB1, tapA1.x);
-	AssignPackedNeighbor(drNeighborsC.xy, history.x, tapC0, tapB0.x);
-	AssignPackedNeighbor(drNeighborsC.zw, history.x, tapC1, belowHistC1);
-	float3 centerColor = SampleCenterRGB(drCenter);  // centre RGB (belowHistC1 holds the C1 mask)
+	float uvMinCoverage = AlphaCoverageMask(drUVMin);  // seeds the allTransparent test far below
+	[unroll] for (int n = 1; n < 7; n++)
+	{
+		ISTAA_NeighborTap tap = SampleNeighborGRB(neighborUVs[n], history.x);
+		neighbors[n] = PackNeighborTap(tap);
+		neighborBelowHist[n] = tap.belowHist;
+	}
+	float3 centerColor = SampleCenterRGB(drCenter);  // centre RGB
 
 	// --- centre bracket seed, neighbourhood bracket, flicker, temporal blend ---
 	float centerLuma = dot(centerColor.yzx, kLumaWeights);
@@ -363,52 +368,48 @@ PS_OUTPUT main(PS_INPUT input)
 	// Nothing in the scene exceeds this, so the ceiling works correctly in PQ working space.
 	// (In linear BT2020 this would be wrong — sky/specular exceed 1.0 linear — but PQ is bounded.)
 	// Seed the min bracket: centre colour (as R,B,luma) clamped to the 1.001 ceiling; if the centre is
-	// below history (belowHistCentre), start at the ceiling. Then fold tapC1 (its belowHist).
+	// below history (belowHistCentre), start at the ceiling. Then fold C1 (neighbors[6]).
 	float3 minBracket = cmp(centerLuma < kMaxLumaCap) ? centerRBL : kMaxLumaCap.xxx;
 	minBracket = belowHistCentre ? kMaxLumaCap.xxx : minBracket;
-	minBracket = MergeLumaBracket(tapC1, minBracket, belowHistC1);
+	minBracket = MergeLumaBracket(neighbors[6], minBracket, neighborBelowHist[6]);
 
 	// --- neighborhood min/max color bracket ---
 	// 4-tap weighted neighbour colour (C + D + L + LD); consumed by the non-reject output path.
-	float3 neighborColor = NeighborWeights.zzz * tapC0.yxz;
-	neighborColor = tapB1.yxz * NeighborWeights.www + neighborColor;
-	neighborColor = tapC1.yxz * NeighborWeights.yyy + neighborColor;
+	float3 neighborColor = NeighborWeights.zzz * neighbors[5].yxz;           // C0
+	neighborColor = neighbors[4].yxz * NeighborWeights.www + neighborColor;  // B1
+	neighborColor = neighbors[6].yxz * NeighborWeights.yyy + neighborColor;  // C1
 	neighborColor = centerColor * NeighborWeights.xxx + neighborColor;
-	// Shared neighbourhood fold sequence (tap + its belowHist gate), in vanilla tap order. The min and
-	// max colour brackets fold the same six taps with the same gates — only the merge rule (lower- vs
-	// higher-luma) and seed differ.
-	const float4 foldTaps[6] = { tapC0, tapB1, tapB0, tapA1, tapA0, tapMin };
-	const float foldGates[6] = { tapB0.x, tapA1.x, tapA0.x, tapMin.x, corner.x, uvMinBelowHist };
-	// Running min-luma colour bracket folded over the neighbourhood taps, each committed unless its
-	// belowHist gate is set (see MergeLumaBracket). Result is the without-corner min bound.
-	[unroll] for (int fold = 0; fold < 6; fold++)
-		minBracket = MergeLumaBracket(foldTaps[fold], minBracket, foldGates[fold]);
+	// Both the min and max colour brackets fold the same six taps in vanilla order — C0,B1,B0,A1,A0,
+	// uvMin = neighbors[5..0] — gated by each tap's belowHist; only the merge rule and seed differ.
+	// Running min-luma bracket: each tap committed unless its gate is set (see MergeLumaBracket).
+	[unroll] for (int fold = 5; fold >= 0; fold--)
+		minBracket = MergeLumaBracket(neighbors[fold], minBracket, neighborBelowHist[fold]);
 	float3 minBoundNoCorner = minBracket;
 	// Final fold: corner tap, ungated (gate 0 → always take the lower-luma colour).
 	float3 minBoundWithCorner = MergeLumaBracket(corner, minBoundNoCorner, 0);
-	// Low-clamp the (max-bracketed) tapC1 to the kMinLumaCap floor: build the centre-vs-floor bound
-	// (gated by belowHistCentre), then fold tapC1 toward it (MergeMaxBracket, gated by tapC1's belowHist).
+	// Low-clamp the (max-bracketed) C1 tap to the kMinLumaCap floor: build the centre-vs-floor bound
+	// (gated by belowHistCentre), then fold C1 toward it (MergeMaxBracket, gated by C1's belowHist).
 	float3 lowClamp = cmp(kMinLumaCap < centerLuma) ? centerRBL : kMinLumaCap.xxx;
 	lowClamp = belowHistCentre ? lowClamp : kMinLumaCap.xxx;
-	tapC1.xyz = MergeMaxBracket(tapC1, lowClamp, belowHistC1);
+	neighbors[6].xyz = MergeMaxBracket(neighbors[6], lowClamp, neighborBelowHist[6]);
 
 	// --- flicker score: 4 minus one integer contribution per neighbourhood tap ---
 	// Each contribution reads a tap's ORIGINAL .w luma; the colour sort below only mutates .w/.yzw
 	// after this, so computing them here is behaviour-preserving. The sum is order-independent (each
 	// contribution is a ceil() integer); tap order matches the original 8-term sum.
-	const float4 flickerTaps[8] = { corner, tapMin, tapA0, tapA1, tapB0, tapB1, tapC0, tapC1 };
+	const float4 flickerTaps[8] = { corner, neighbors[0], neighbors[1], neighbors[2], neighbors[3], neighbors[4], neighbors[5], neighbors[6] };
 	float flickerScore = 4;
 	[unroll] for (int flick = 0; flick < 8; flick++)
 		flickerScore -= FlickerLumaContribution(centerLuma, flickerTaps[flick].w);
 	flickerScore = saturate(flickerScore);
 
 	// --- neighbourhood MAX-luma colour bracket (complement to the min bracket above) ---
-	// Same six folds as the min bracket (foldTaps/foldGates), but the max rule commits a tap when its
+	// Same six taps/order as the min fold (neighbors[5..0]), but the max rule commits a tap when its
 	// belowHist gate is SET — inverted vs the min fold (see MergeMaxBracket). Seeded from the
 	// low-clamped C1 colour.
-	float3 maxBracket = tapC1.xyz;
-	[unroll] for (int maxFold = 0; maxFold < 6; maxFold++)
-		maxBracket = MergeMaxBracket(foldTaps[maxFold], maxBracket, foldGates[maxFold]);
+	float3 maxBracket = neighbors[6].xyz;
+	[unroll] for (int maxFold = 5; maxFold >= 0; maxFold--)
+		maxBracket = MergeMaxBracket(neighbors[maxFold], maxBracket, neighborBelowHist[maxFold]);
 	// Complete the max bracket (ungated corner fold), then select the neighbourhood AABB bounds for
 	// history clamping. cornerBelowHist toggles whether the corner tap is included: when set, max uses
 	// the with-corner bracket and min the without-corner one (opposite when clear).
