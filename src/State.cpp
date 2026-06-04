@@ -1015,7 +1015,7 @@ void State::UpdateSharedData([[maybe_unused]] bool a_inWorld, [[maybe_unused]] b
 		// populate from the active foveation region when SSR foveation is enabled
 		// and SSR is running. If SSR isn't running the SSR pass never executes, so
 		// these constants are simply ignored.
-		data.VRFoveationData0 = { FoveatedCommon::kCenterAreaMax, FoveatedCommon::kCenterFeather, 1.0f,
+		data.VRFoveationData0 = { FoveatedCommon::kCenterScaleMax, FoveatedCommon::kCenterFeather, 1.0f,
 			FoveatedCommon::GetShaderMode(FoveatedCommon::DetailMode::Off) };
 		data.VRFoveationCenterOffsets = { 0.0f, 0.0f, 0.0f, 0.0f };
 		if (globals::game::isVR) {
@@ -1025,10 +1025,10 @@ void State::UpdateSharedData([[maybe_unused]] bool a_inWorld, [[maybe_unused]] b
 			                                 dynamicCubemaps.loaded && dynamicCubemaps.settings.EnabledSSR;
 			if (ssrFoveationEnabled) {
 				const auto profile = upscaling.foveatedRender.GetFoveationProfile();
-				if (profile.available && FoveatedCommon::IsActiveCoverage(profile.coverageArea)) {
+				if (profile.available && FoveatedCommon::IsActiveCoverage(profile.coverageScale)) {
 					const float ssrMode = FoveatedCommon::GetShaderMode(FoveatedCommon::GetDetailMode(
 						true, vr.settings.EnableSSRFoveationHardCutoff));
-					data.VRFoveationData0 = { profile.coverageArea, FoveatedCommon::kCenterFeather,
+					data.VRFoveationData0 = { profile.coverageScale, FoveatedCommon::kCenterFeather,
 						profile.centerHorizontalScale, ssrMode };
 					data.VRFoveationCenterOffsets = {
 						profile.centerOffsets[0].x, profile.centerOffsets[0].y,

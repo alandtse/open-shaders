@@ -137,8 +137,8 @@ FoveatedRender::FoveationProfile FoveatedRender::GetFoveationProfile() const
 		return profile;
 
 	// Map the rectangular subrect onto the centered-superellipse the mask helper
-	// expects: vertical extent drives coverageArea (radiusY = coverageArea/2),
-	// the rect aspect drives the horizontal stretch (radiusX = coverageArea *
+	// expects: vertical extent drives coverageScale (radiusY = coverageScale/2),
+	// the rect aspect drives the horizontal stretch (radiusX = coverageScale *
 	// hScale / 2). The mask carries one scale for both eyes (only the center
 	// offset is per-eye), so size comes from the less-foveated (larger) extent of
 	// the two eyes — the mask then stays inside each eye's full-quality region and
@@ -148,7 +148,7 @@ FoveatedRender::FoveationProfile FoveatedRender::GetFoveationProfile() const
 	const float coverageH = std::max(leftUV.h, rightUV.h);
 	const float coverageW = std::max(leftUV.w, rightUV.w);
 	profile.available = true;
-	profile.coverageArea = FoveatedCommon::ClampCenterArea(coverageH);
+	profile.coverageScale = FoveatedCommon::ClampCenterScale(coverageH);
 	profile.centerHorizontalScale = FoveatedCommon::ClampCenterHorizontalScale(
 		coverageH > 1e-4f ? coverageW / coverageH : 1.0f);
 	profile.centerOffsets[0] = { (leftUV.x + leftUV.w * 0.5f) - 0.5f, (leftUV.y + leftUV.h * 0.5f) - 0.5f };

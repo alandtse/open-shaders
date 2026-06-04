@@ -13,8 +13,8 @@
 // foveation effect needs them.
 namespace FoveatedCommon
 {
-	constexpr float kCenterAreaMin = 0.25f;
-	constexpr float kCenterAreaMax = 1.0f;
+	constexpr float kCenterScaleMin = 0.25f;
+	constexpr float kCenterScaleMax = 1.0f;
 	constexpr float kCenterFeather = 0.05f;
 	constexpr float kCenterHorizontalScaleMin = 1.0f;
 	constexpr float kCenterHorizontalScaleMax = 2.0f;
@@ -49,18 +49,18 @@ namespace FoveatedCommon
 		}
 	}
 
-	inline float ClampCenterArea(float a_value)
+	inline float ClampCenterScale(float a_value)
 	{
 		if (!std::isfinite(a_value))
-			return kCenterAreaMax;
-		return std::clamp(a_value, kCenterAreaMin, kCenterAreaMax);
+			return kCenterScaleMax;
+		return std::clamp(a_value, kCenterScaleMin, kCenterScaleMax);
 	}
 
 	// A near-full center means foveation does nothing useful — callers skip the
 	// per-pixel mask in that case to avoid paying its cost for no saving.
-	inline bool IsActiveCoverage(float a_centerArea)
+	inline bool IsActiveCoverage(float a_centerScale)
 	{
-		return ClampCenterArea(a_centerArea) < kFullCoverageThreshold;
+		return ClampCenterScale(a_centerScale) < kFullCoverageThreshold;
 	}
 
 	inline float ClampCenterHorizontalScale(float a_value)

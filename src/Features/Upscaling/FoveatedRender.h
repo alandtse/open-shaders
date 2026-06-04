@@ -104,7 +104,7 @@ struct FoveatedRender
 	struct FoveationProfile
 	{
 		bool available = false;
-		float coverageArea = 1.0f;           // [0.25, 1.0]
+		float coverageScale = 1.0f;          // linear center coverage scale [0.25, 1.0]
 		float centerHorizontalScale = 1.0f;  // [1.0, 2.0]
 		float2 centerOffsets[2] = {};        // [0]=left eye, [1]=right eye
 	};
