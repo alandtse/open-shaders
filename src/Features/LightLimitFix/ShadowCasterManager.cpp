@@ -3880,22 +3880,14 @@ namespace ShadowCasterManager
 
 	bool IsActive()
 	{
-		// Boot-latched: Install() captures s_bootEnabled once and wires the
-		// scheduler hooks only when it was set. Runtime toggles of
-		// s_settings.Enabled are restart-gated (see Hook_CalculateActiveShadowCasters)
-		// so the live flag is the wrong thing to test here. Before Install()
-		// runs, s_bootEnabled is false, which is the safe answer -- the engine's
-		// vanilla pipeline is what's live until our hooks land.
+		// Boot-latched, not the live s_settings.Enabled: hooks install only when
+		// enabled at boot, and runtime toggles are restart-gated.
 		return s_bootEnabled && !s_externalConflict;
 	}
 
-	// Reads the engine's own kSHADOWMAPS slice for `light` from the live
-	// shadowmap descriptor. Used only when SCM is inactive (disabled at boot /
-	// external conflict): the SCM pool is empty in that case, but the engine
-	// still renders up to its vanilla 4 casters and stamps each one's slice
-	// into shadowmapDescriptors[0].shadowmapIndex. Directional sun returns -1
-	// (kSHADOWMAPS_ESRAM, no kSHADOWMAPS slice); a light with no descriptor
-	// yet (mid-population) also returns -1 so the caller skips it cleanly.
+	// Engine's native kSHADOWMAPS slice from the live descriptor, for when SCM
+	// is inactive and its pool is empty. Sun (-> kSHADOWMAPS_ESRAM) and lights
+	// without a descriptor return -1 so callers skip them.
 	static int32_t GetEngineShadowSlot(RE::BSShadowLight* light)
 	{
 		if (!light || light->GetIsDirectionalLight())
@@ -3920,12 +3912,8 @@ namespace ShadowCasterManager
 		// kSHADOWMAPS_ESRAM (a separate texture) — callers in ShadowRenderer
 		// upload and LightLimitFix cluster builder must skip it.
 		//
-		// When SCM is disabled at boot the pool is never populated, so the
-		// lookup below would return -1 for every light. The cluster builder
-		// treats -1 as "already handled, no slot" and drops the light entirely
-		// (it was added to shadowLightPtrs first), which blacked out every
-		// shadow caster. Fall back to the engine's own descriptor slice so LLF
-		// lights and shadows the casters exactly as vanilla would without SLF.
+		// With SCM disabled at boot the pool is empty; without this fallback
+		// every caster returns -1 and the cluster builder drops it (#97).
 		if (!IsActive())
 			return GetEngineShadowSlot(light);
 
