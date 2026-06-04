@@ -1,7 +1,7 @@
-# taa-renderdoc-ab.py — Tier-3 runtime A/B check for TAA shader refactors.
+# taa-renderdoc-ab.py — runtime A/B check for TAA shader refactors.
 #
-# Purpose: prove a behavior-preserving claim that bytecode-identity CANNOT (Standard B,
-# where fxc legitimately emits different-but-equivalent code). It swaps the ISTemporalAA
+# Purpose: prove a behavior-preserving claim that bytecode-identity CANNOT (an op-reordering
+# restructure, where fxc legitimately emits different-but-equivalent code). It swaps the ISTemporalAA
 # pixel shader on a SINGLE captured frame and diffs the output render target. Because the
 # inputs (history t1, velocity t2, depth t3, mask t4, alpha t5, cbuffer b2) are frozen from
 # that one frame, A (shipping shader) and B (candidate) run on byte-identical inputs — so a

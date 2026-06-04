@@ -1,9 +1,9 @@
-# TAA runtime A/B check (Tier-3)
+# Shader runtime A/B check
 
-A same-frame, GPU-level equivalence check for `ISTemporalAA.hlsl` refactors whose compiled
-bytecode legitimately diverges (the **Standard B** restructure of the bracket/flicker/blend
-core). For refactors that stay bytecode-identical, use `tools/verify-shader-refactor.ps1`
-instead — it is a hard offline proof and needs no game.
+A same-frame, GPU-level equivalence check for a shader refactor whose compiled bytecode
+legitimately diverges — an op-reordering / algebraic restructure (e.g. the TAA bracket/flicker/
+blend core). For refactors that stay **bytecode-identical**, use `tools/verify-shader-refactor.ps1`
+instead — a hard offline proof that needs no game.
 
 TAA is the worked example here, but the technique and the [Lessons](#lessons-generalizable-re-technique)
 generalize to any shader RE/refactor — see [Generalizing to other shaders](#generalizing-to-other-shaders).
@@ -17,8 +17,8 @@ TAA pixel shader on that captured frame. The inputs (history `t1`, velocity `t2`
 mask `t4`, alpha `t5`, cbuffer `b2`) are frozen, so A (shipping) and B (candidate) run on
 byte-identical inputs — a near-zero output diff means equivalent behavior on a real frame.
 
-This is the runtime analog of the offline verifier, tolerant of the bytecode divergence that
-defines Standard B.
+This is the runtime analog of the offline verifier, tolerant of the bytecode divergence an
+op-reordering restructure produces.
 
 ## Prerequisites
 
@@ -51,7 +51,7 @@ $defs = @("/D","PSHADER=1")            # add "/D","VR=1" and/or "/D","HDR_OUTPUT
 # Baseline A' = the DEPLOYED shader (extract the shipping ref to a temp file; UTF-8, not PS UTF-16)
 [IO.File]::WriteAllLines("$env:TEMP\taa_A.hlsl", (git show origin/dev:$sh))
 & $fxc /nologo /T ps_5_0 /E main @defs /I $inc "$env:TEMP\taa_A.hlsl" /Fo "$env:TEMP\taa_A.dxbc"
-# Candidate B = the Standard-B working tree
+# Candidate B = the refactored working tree
 & $fxc /nologo /T ps_5_0 /E main @defs /I $inc $sh /Fo "$env:TEMP\taa_B.dxbc"
 ```
 
