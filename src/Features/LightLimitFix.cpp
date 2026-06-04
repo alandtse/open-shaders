@@ -1215,14 +1215,9 @@ void LightLimitFix::UpdateStructure()
 
 void LightLimitFix::Hooks::BSLightingShader_SetupGeometry::thunk(RE::BSShader* This, RE::BSRenderPass* Pass, uint32_t RenderFlags)
 {
-	// The engine's BSLightingShader::SetupGeometry unconditionally derefs
-	// sceneLights[0]->light (the directional slot) with no null check, so a
-	// null/stale entry CTDs -- reproducible with PBR books in the UI 3D scene
-	// (#92). The sibling BSEffectShader guard below clamps numLights, but that
-	// can't help here: slot 0 is read regardless of count and there's no
-	// substitute light. So validate the slot and skip only the engine call when
-	// it isn't safely dereferenceable -- one mis-lit frame instead of a crash.
-	// Full disassembly / crash signature in PR #102.
+	// Engine derefs sceneLights[0]->light with no null check -> CTD on a null/
+	// stale directional slot (#92). Skip the engine call when it isn't safe;
+	// clamping numLights (sibling guard) can't help -- slot 0 is always read.
 	bool directionalSlotSafe = true;
 	if (Pass) {
 		const auto isPlausible = [](const void* p) {
@@ -1245,9 +1240,7 @@ void LightLimitFix::Hooks::BSLightingShader_SetupGeometry::thunk(RE::BSShader* T
 		}
 	}
 
-	// Run the before/after callbacks even when skipping the engine call, so the
-	// strict-light constant buffer is reset (empty) for this pass rather than
-	// leaving the previous geometry's data bound for subsequent draws.
+	// Run before/after even on skip so the strict-light CB is reset, not stale.
 	auto& singleton = globals::features::lightLimitFix;
 	singleton.BSLightingShader_SetupGeometry_Before(Pass);
 	if (directionalSlotSafe)
