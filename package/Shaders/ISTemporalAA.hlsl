@@ -380,18 +380,15 @@ PS_OUTPUT main(PS_INPUT input)
 	lowClamp = belowHistCentre ? lowClamp : kMinLumaCap.xxx;
 	tapC1.xyz = MergeMaxBracket(tapC1, lowClamp, belowHistC1);
 
-	// --- flicker contributions, one per neighbourhood tap ---
-	// Lifted out of the colour sort below: each reads a tap's ORIGINAL .w luma, and the sort only
-	// mutates .w/.yzw after that read, so hoisting them here is behavior-preserving. (In the vanilla
-	// decompile these were stashed into the taps' .x belowHist slots once those gates were spent.)
-	float fcC1 = FlickerLumaContribution(centerLuma, tapC1.w);
-	float fcC0 = FlickerLumaContribution(centerLuma, tapC0.w);
-	float fcB1 = FlickerLumaContribution(centerLuma, tapB1.w);
-	float fcB0 = FlickerLumaContribution(centerLuma, tapB0.w);
-	float fcA1 = FlickerLumaContribution(centerLuma, tapA1.w);
-	float fcA0 = FlickerLumaContribution(centerLuma, tapA0.w);
-	float fcMin = FlickerLumaContribution(centerLuma, tapMin.w);
-	float fcCorner = FlickerLumaContribution(centerLuma, corner.w);
+	// --- flicker score: 4 minus one integer contribution per neighbourhood tap ---
+	// Each contribution reads a tap's ORIGINAL .w luma; the colour sort below only mutates .w/.yzw
+	// after this, so computing them here is behaviour-preserving. The sum is order-independent (each
+	// contribution is a ceil() integer); tap order matches the original 8-term sum.
+	const float4 flickerTaps[8] = { corner, tapMin, tapA0, tapA1, tapB0, tapB1, tapC0, tapC1 };
+	float flickerScore = 4;
+	[unroll] for (int flick = 0; flick < 8; flick++)
+		flickerScore -= FlickerLumaContribution(centerLuma, flickerTaps[flick].w);
+	flickerScore = saturate(flickerScore);
 
 	// --- neighbourhood MAX-luma colour bracket (complement to the min bracket above) ---
 	// Same six folds as the min bracket (foldTaps/foldGates), but the max rule commits a tap when its
@@ -406,10 +403,6 @@ PS_OUTPUT main(PS_INPUT input)
 	float3 maxWithCorner = MergeMaxBracket(corner, maxBracket, 1);
 	float3 maxBoundSel = cornerBelowHist.xxx ? maxWithCorner : maxBracket;             // (R, B, luma)
 	float3 minBoundSel = cornerBelowHist.xxx ? minBoundNoCorner : minBoundWithCorner;  // (R, B, luma)
-
-	// Flicker score = saturate(4 - sum of the 8 integer flicker contributions). Exact regardless
-	// of grouping (each is a ceil() integer).
-	float flickerScore = saturate(4 - fcCorner - fcMin - fcA0 - fcA1 - fcB0 - fcB1 - fcC0 - fcC1);
 
 	// --- temporal blend, clamp, and sharpen (history rectification toward the neighbourhood AABB) ---
 	// Build two clip candidates (min/max bound, RCAS-sharpened), clamp history luma into their range,
