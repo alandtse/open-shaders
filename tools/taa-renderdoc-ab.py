@@ -10,7 +10,7 @@
 #
 # HOW TO RUN: this is executed *inside RenderDoc's embedded Python* via the renderdoc MCP
 # `Eval` tool (the global `ctx` HandlerContext must be in scope). It is NOT a standalone
-# script. See docs/development/taa-runtime-ab.md for the full operator runbook.
+# script. See docs/development/shader-runtime-ab.md for the full operator runbook.
 #
 # Candidate B (and a baseline A') are supplied as pre-compiled DXBC built with fxc using the
 # SAME defines/permutation as the captured build (e.g. PSHADER VR [HDR_OUTPUT]) and with
@@ -22,8 +22,9 @@ import struct
 import os
 import math
 
-# eid -> (origPS ResourceId, replacement ResourceId). Persists across Eval calls so restore()
-# uses the real objects instead of round-tripping through strings.
+# eid -> (origPS ResourceId, replacement ResourceId), kept so restore() uses the real objects
+# instead of round-tripping through strings. Lives as long as this module's namespace does — if
+# your MCP gives a fresh namespace per Eval, do the replace and its restore in the SAME Eval.
 _replacements = {}
 
 
