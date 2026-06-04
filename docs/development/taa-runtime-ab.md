@@ -5,6 +5,9 @@ bytecode legitimately diverges (the **Standard B** restructure of the bracket/fl
 core). For refactors that stay bytecode-identical, use `tools/verify-shader-refactor.ps1`
 instead — it is a hard offline proof and needs no game.
 
+TAA is the worked example here, but the technique and the [Lessons](#lessons-generalizable-re-technique)
+generalize to any shader RE/refactor — see [Generalizing to other shaders](#generalizing-to-other-shaders).
+
 ## Why same-frame swap (not two-launch screenshots)
 
 TAA is temporal: its output depends on accumulated history. Two separate game launches never
@@ -125,24 +128,60 @@ Use the `Get-Texture` MCP tool on the output RT before vs after replacement (and
 `x≈0.5` eye-seam region where the original VR bug showed) with `diff_amplify` for a diff image
 in the report.
 
-## Caveats & lessons learned
+## Generalizing to other shaders
 
--   **Reach for the offline verifier first.** Far more refactoring stays bytecode-identical than
-    you'd expect — even destructuring deeply-aliased decompile scratch (where one float4 component
-    means different things at different points) compiles **byte-identically**, because the compiler
-    already SSA's it. Go one small step at a time and run `verify-shader-refactor.ps1` (or a per-
-    permutation `fxc` byte-compare) after each. Byte-identity is a _stronger_ proof than this
-    runtime A/B and needs no game/RenderDoc. Reserve this harness for the genuine op-reordering
-    core (the bracket/flicker/blend restructure) where fxc legitimately emits different code.
--   One frame proves equivalence on that frame; loop over a few captured frames for confidence.
--   The `HDR_OUTPUT` define must match the user's actual HDR setting, or `baseline_vs_live` flags it.
--   **The HDR permutation can't be captured at all** — with HDR on, Open Shaders presents through a
-    DX12 interop swapchain and the D3D11 TAA pass isn't in the frame. Validate the `HDR_OUTPUT`
-    path by byte-identity + static analysis instead (the SDR path's runtime A/B covers the shared
-    math; HDR-only blocks are usually value-identical renames).
--   **MCP `Eval` quirks (vary by server/version):** (1) if `ab`/`taa_candidates` are undefined on a
-    later call, your server uses a **fresh namespace per `Eval`** — `exec` the harness _and_ call it
-    in the **same** `Eval` (`g = dict(globals()); exec(src, g); g["ab"](...)`). (2) Output can lag
-    **one call behind** (you get the _previous_ call's stdout); poll again to drain it.
--   This is a regression check against a known-good baseline, not a formal proof; pair it with the
-    offline verifier (which formally covers every part that stays bytecode-identical).
+TAA is just the worked example — the harness is a template for validating **any** shader refactor
+or reverse-engineered transcription. The reusable core (freeze a real frame, swap one shader, diff
+its output against a baseline noise floor) is shader-agnostic. To point it at a different shader you
+change only three things:
+
+-   **The pass fingerprint.** `taa_candidates()` locates the draw by its **bound-resource
+    signature** (the `t0..t5` SRV set), not by draw index. For another shader, match on its own
+    distinctive SRV/UAV/RT bindings.
+-   **The permutation defines.** Compile A′/B with the exact `/D` set the running build used.
+-   **The capture state.** Pick a frame that actually exercises the code path (see lessons).
+
+`ab()`, the baseline-floor verdict, the channel-aware decode, and restore-on-exit are unchanged.
+
+## Lessons (generalizable RE technique)
+
+These transfer to any GPU-shader RE/validation work, not just TAA:
+
+-   **Offline byte-identity beats any runtime check — try it first.** Far more refactoring stays
+    bytecode-identical than you'd expect (even destructuring deeply-aliased decompile scratch, since
+    the compiler already SSA's it). Prove those with an `fxc` byte-compare
+    (`verify-shader-refactor.ps1`), one small step at a time — no game needed. Reserve a runtime swap
+    for changes where the compiler legitimately emits different-but-equivalent code (op reordering,
+    algebraic rewrites).
+-   **Freeze inputs with a same-frame swap.** Any pass whose inputs are bound resources can be
+    validated by replacing only that shader on one captured frame: A and B then run on byte-identical
+    inputs, so the output diff is pure shader behaviour — no cross-launch timing/RNG/pose noise.
+-   **Judge against a baseline noise floor, not zero.** The runtime compiler differs from offline
+    `fxc` by a few LSBs, so even an identical shader isn't bit-exact vs the live RT. Always swap the
+    _shipping_ shader in too and measure the candidate relative to that floor.
+-   **Capture a state that exercises the path under test.** A degenerate frame (idle menu, static
+    camera, untaken branch) gives a false pass for any state-dependent code — temporal history,
+    motion vectors, conditionally-enabled features. Identify what state your code depends on and
+    capture a frame in it. _(TAA: a static menu read `EQUIVALENT` even with a real motion-path bug;
+    only an in-game motion frame exposed it.)_
+-   **Baseline against the change's true parent, not a distant branch.** If your work is stacked on
+    an unmerged fix, diffing against `dev` folds that fix into the "floor" → a huge bogus residue and
+    a meaningless verdict. Compile the baseline from the immediate parent commit.
+-   **Confirm which source you compiled.** A wrong-branch/ref compile silently validates the deployed
+    shader against itself and always reports `EQUIVALENT`. Check `git branch`/the ref first.
+-   **Find the pass by its resource fingerprint, and reverse-scan.** Match a draw by its bound
+    textures/buffers, not its index (indices shift frame to frame). Post-process sits near frame end,
+    so scan drawcalls in reverse — a full-frame state sweep can time out on a large capture.
+-   **Interop swapchains hide the inner API.** When an app presents D3D11 work through a DX12 interop
+    swapchain (here: HDR / frame-gen / upscaler paths), RenderDoc hooks the D3D12 present and the
+    D3D11 draws aren't in the frame at all. Disable the feature that triggers interop to capture the
+    inner API; if you can't, fall back to offline byte-identity for that permutation.
+-   **Captures scale with scene complexity.** A heavy scene (especially stereo/VR) can produce a
+    multi-GB capture that wedges the tools; shrink the scene (interior, lower res) to keep captures
+    loadable. Verify a new capture by file timestamp/size — capture APIs sometimes return a stale path.
+-   **Know your tooling's quirks.** (Here, the `renderdoc` MCP `Eval`: a fresh namespace per call can
+    drop your defs — `exec` the harness and call it in the _same_ `Eval`; and stdout may lag one call
+    behind, so poll again to drain it.)
+-   One frame proves equivalence on that frame; loop over a few representative frames for confidence.
+    This is a regression check against a known-good baseline, not a formal proof — pair it with the
+    offline verifier, which formally covers everything that stays bytecode-identical.
