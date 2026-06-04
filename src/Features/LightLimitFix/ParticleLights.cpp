@@ -31,6 +31,9 @@ void ParticleLights::GetConfigs()
 		logger::info("[LLF] Loading particle lights configs");
 
 		auto configs = clib_util::distribution::get_configs("Data\\ParticleLights", "", ".ini");
+		// get_configs order is filesystem-dependent; sort so the "first wins"
+		// duplicate policy below is deterministic across installs.
+		std::sort(configs.begin(), configs.end());
 
 		if (configs.empty()) {
 			logger::warn("[LLF] No .ini files were found within the Data\\ParticleLights folder, aborting...");
@@ -78,6 +81,8 @@ void ParticleLights::GetConfigs()
 		logger::info("[LLF] Loading particle lights gradients configs");
 
 		auto configs = clib_util::distribution::get_configs("Data\\ParticleLights\\Gradients", "", ".ini");
+		// Deterministic "first wins" across installs (see above).
+		std::sort(configs.begin(), configs.end());
 
 		if (configs.empty()) {
 			logger::warn("[LLF] No .ini files were found within the Data\\ParticleLights\\Gradients folder, aborting...");
@@ -112,7 +117,12 @@ void ParticleLights::GetConfigs()
 				if (str.starts_with(prefix2))
 					str.remove_prefix(prefix2.size());
 
-				bool matches = std::strspn(str.data(), cset.data()) == str.size();
+				// Require exactly 6 (RRGGBB) or 8 (AARRGGBB) hex digits so malformed
+				// widths like "#1" / "#12345" fail closed instead of packing a garbage color.
+				// find_first_not_of is bounded to the view; strspn would rely on
+				// str.data() being NUL-terminated, which string_view doesn't guarantee.
+				bool matches = (str.size() == 6 || str.size() == 8) &&
+				               str.find_first_not_of(cset) == std::string_view::npos;
 
 				if (matches) {
 					try {
