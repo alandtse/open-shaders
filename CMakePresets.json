@@ -57,7 +57,8 @@
                 "ENABLE_SKYRIM_AE": "ON",
                 "ENABLE_SKYRIM_SE": "ON",
                 "ENABLE_SKYRIM_VR": "ON",
-                "AUTO_PLUGIN_DEPLOYMENT": "OFF"
+                "AUTO_PLUGIN_DEPLOYMENT": "OFF",
+                "COMMONLIB_PREBUILT_MULTICONFIG": "ON"
             },
             "inherits": "skyrim"
         },
@@ -68,7 +69,8 @@
                 "ENABLE_SKYRIM_AE": "ON",
                 "ENABLE_SKYRIM_SE": "ON",
                 "ENABLE_SKYRIM_VR": "ON",
-                "AUTO_PLUGIN_DEPLOYMENT": "OFF"
+                "AUTO_PLUGIN_DEPLOYMENT": "OFF",
+                "COMMONLIB_PREBUILT_MULTICONFIG": "ON"
             },
             "inherits": "skyrim"
         }
