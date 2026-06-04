@@ -93,8 +93,8 @@ static const float kFlickerThreshold = 0.200000003;       // luma-spread below t
  * - Bracket colours (float3): (R, B, luma) with .z = luma — see MergeLumaBracket/MergeMaxBracket.
  * - Output colour lives in .yzw (vanilla r3.yzw after blend; resolved/outPacked .yzw), not .xyz.
  *
- * The few remaining float4 packs (motionReject, history, corner, taps) are semantic but reuse
- * components like the decompile; the blend-math packs have been split into named locals.
+ * The few remaining float4 packs (motionReject, corner, the neighbour taps) are semantic but reuse
+ * components like the decompile; the blend-math and history packs have been split into named locals.
  */
 
 float2 ClampScreenUV(float2 screenUV, float2 drMax)
@@ -295,7 +295,7 @@ PS_OUTPUT main(PS_INPUT input)
 	float4 colorOut, feedbackOut;
 
 	// float4 packs — component reuse matches vanilla decompile (see header comment).
-	float4 motionReject, history, corner;  // decompile r0–r4
+	float4 motionReject, corner;  // decompile r0–r4 (corner = depth-guided tap; motionReject = velocity/UV)
 
 	float2 drMax = GetDynamicResolutionMax(), drUVMin, drUVMax, drCenter;
 	float4 drNeighborsA, drNeighborsB, drNeighborsC;
@@ -318,15 +318,19 @@ PS_OUTPUT main(PS_INPUT input)
 	bool prevUVOutOfBounds;
 	float2 historyUV = ReprojectHistoryUV(texCoord.xy, motionReject.xy, prevUVOutOfBounds, motionReject.zw);
 	float motionLength = sqrt(dot(motionReject.xy, motionReject.xy));
-	history.xyw = historyTex.Sample(historySampler, historyUV).xyz;
+	// Feedback RT round-trip: .x = prev feedback luma, .y = prev historyFeedback weight, .z = prev
+	// motionConfidence (see feedbackOut writes at the end). The two weights are NOT colour/luma.
+	float3 historySample = historyTex.Sample(historySampler, historyUV).xyz;
+	float historyLuma = historySample.x;
+	float historyFeedbackPrev = historySample.y;
+	float prevMotionConfidence = historySample.z;
 #	ifdef HDR_OUTPUT
-	// history.x is stored as game-gamma luma (see EncodeFeedbackLuma on write).
-	// Decode to PQ luma to match the working space of all neighbour taps.
-	// history.y and history.w are motion scalars — do NOT convert them.
-	history.x = DecodeFeedbackLuma(history.x);
+	// historyLuma is stored as game-gamma (see EncodeFeedbackLuma on write); decode to PQ to match
+	// the working space of all neighbour taps. The two weights are not luma — do NOT convert them.
+	historyLuma = DecodeFeedbackLuma(historyLuma);
 #	endif
 	corner.w = dot(corner.xzy, kLumaWeights);
-	float cornerBelowHist = cmp(corner.w < history.x);  // toggles corner-tap inclusion in the AABB
+	float cornerBelowHist = cmp(corner.w < historyLuma);  // toggles corner-tap inclusion in the AABB
 
 	// --- neighbour colour / luma samples ---
 	// Sample the 9-tap neighbourhood (packed GRB.xyz + luma.w) plus each tap's below-history mask,
@@ -339,14 +343,14 @@ PS_OUTPUT main(PS_INPUT input)
 	float4 neighbors[7];
 	float neighborBelowHist[7];
 	{
-		ISTAA_NeighborTap tap = SampleNeighborGRB(drUVMin, history.x);
+		ISTAA_NeighborTap tap = SampleNeighborGRB(drUVMin, historyLuma);
 		neighbors[0] = PackNeighborTap(tap);
 		neighborBelowHist[0] = tap.belowHist;
 	}
 	float uvMinCoverage = AlphaCoverageMask(drUVMin);  // seeds the allTransparent test far below
 	[unroll] for (int n = 1; n < 7; n++)
 	{
-		ISTAA_NeighborTap tap = SampleNeighborGRB(neighborUVs[n], history.x);
+		ISTAA_NeighborTap tap = SampleNeighborGRB(neighborUVs[n], historyLuma);
 		neighbors[n] = PackNeighborTap(tap);
 		neighborBelowHist[n] = tap.belowHist;
 	}
@@ -354,7 +358,7 @@ PS_OUTPUT main(PS_INPUT input)
 
 	// --- centre bracket seed, neighbourhood bracket, flicker, temporal blend ---
 	float centerLuma = dot(centerColor.yzx, kLumaWeights);
-	float belowHistCentre = cmp(centerLuma < history.x);
+	float belowHistCentre = cmp(centerLuma < historyLuma);
 	// Centre colour packed as (R, B, luma) — the bracket seeds clamp this against the luma caps.
 	float3 centerRBL = float3(centerColor.x, centerColor.z, centerLuma);
 	// Bracket ceiling: 1.001 is just above the maximum PQ value (1.0 = 10000 nits).
@@ -424,20 +428,20 @@ PS_OUTPUT main(PS_INPUT input)
 	float4 clipPick = cmp(clipHi.w < 0) ? clipLo : clipHi;
 	float4 clipFinal = minOverbright ? clipPick : clipLo;
 	// Clamp history luma into the candidates' luma range: (clamped, lo, hi).
-	float3 clampedHistory = float3(clamp(history.x, clipPick.w, clipFinal.w), clipPick.w, clipFinal.w);
-	float3 historyLumaPack = float3(history.x, clipHi.w, clipLo.w);  // (history luma, max luma, min luma)
-	float historyMotionDecay = kHistoryLumaDecay * history.y;
+	float3 clampedHistory = float3(clamp(historyLuma, clipPick.w, clipFinal.w), clipPick.w, clipFinal.w);
+	float3 historyLumaPack = float3(historyLuma, clipHi.w, clipLo.w);  // (history luma, max luma, min luma)
+	float historyMotionDecay = kHistoryLumaDecay * historyFeedbackPrev;
 	float historyBlend = saturate(flickerScore * 0.25 + historyMotionDecay);
 	float clampToNeighborhood = cmp(historyBlend < kHistoryBlendThreshold);
-	history.xyz = clampToNeighborhood.xxx ? clampedHistory : historyLumaPack;
-	// Clip ratio: where the selected candidate's luma sits within its [lo, hi] range
-	// (history = (luma, lo, hi)); 0.5 fallback when the range is negligible.
-	float clipRange = history.z - history.y;
-	history.y = cmp(kLumaEpsilon < clipRange) ? (history.x - history.y) / clipRange : 0.5;
+	// clipState = (selected luma, lo, hi) — the candidate whose colour we'll rectify toward.
+	float3 clipState = clampToNeighborhood.xxx ? clampedHistory : historyLumaPack;
+	// Clip ratio: where the selected luma sits within its [lo, hi] range; 0.5 fallback when negligible.
+	float clipRange = clipState.z - clipState.y;
+	float clipRatio = cmp(kLumaEpsilon < clipRange) ? (clipState.x - clipState.y) / clipRange : 0.5;
 	float3 rectifyLo = clampToNeighborhood.xxx ? clipPick.xyz : clipHi.xyz;
 	float3 rectifyHi = clampToNeighborhood.xxx ? clipFinal.xyz : clipLo.xyz;
-	// Rectified colour: lerp from the low candidate toward the high one by the clip ratio (history.y).
-	float3 rectifiedColor = lerp(rectifyLo, rectifyHi, history.yyy);
+	// Rectified colour: lerp from the low candidate toward the high one by the clip ratio.
+	float3 rectifiedColor = lerp(rectifyLo, rectifyHi, clipRatio.xxx);
 
 	// --- disocclusion / mask rejection ---
 	float reject;  // disocclusion / OOB / mask rejection flag
@@ -458,19 +462,21 @@ PS_OUTPUT main(PS_INPUT input)
 	// Two colour candidates: the rectified history colour and the neighbourhood-weighted colour
 	// (both collapse to the centre tap when the pixel is rejected).
 	float3 workColor = reject.xxx ? centerColor : rectifiedColor;  // history/rectified colour, evolves below
-	history.xw = reject.xx ? float2(centerLuma, 0) : history.xw;
+	// On reject the history luma/motion collapse to the current frame (centre luma, zero motion).
+	// Kept as one float2 select (.x luma, .y motion) to match the decompile's single movc.
+	float2 blendLumaMotion = reject.xx ? float2(centerLuma, 0) : float2(clipState.x, prevMotionConfidence);
 	float3 neighborBlend = reject.xxx ? centerColor : neighborColor;
 	float3 centerVsNeighbor = centerColor + -neighborBlend;
 	float motionNormScale = 128 * TexelSizeParams.x;  // 128-texel span used to normalize motion length
 	float motionConfidence = saturate(motionLength / motionNormScale);
-	float motionVsHistory = motionConfidence + -history.w;
+	float motionVsHistory = motionConfidence + -blendLumaMotion.y;
 	// Luma convergence decay: the *20 and *100 constants were tuned for gamma-space luma.
 	// PQ is perceptually uniform — a single linear rescale of the PQ diff is accurate
 	// across all luminance levels (unlike converting through gamma, which has a varying
 	// derivative and overcorrects at bright and dark extremes).
 	// Scale factor: 0.05 gamma ≈ 0.020 PQ at mid-scene luminance → factor ≈ 2.5.
 	// luma diff drives the history similarity weights (and the final luma fixup at blend end).
-	float lumaDiff = history.x + -centerLuma;
+	float lumaDiff = blendLumaMotion.x + -centerLuma;
 	// similarity = (1 - scale*diff) per channel, clamped >= 0: .x weights colour, .y the feedback luma.
 #	ifdef HDR_OUTPUT
 	float2 similarity;
