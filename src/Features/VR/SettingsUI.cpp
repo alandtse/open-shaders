@@ -1,4 +1,5 @@
 #include "FeatureConstraints.h"
+#include "EngineFixes/ShadowmapCascadeRasterizerFix.h"
 #include "Features/DynamicCubemaps.h"
 #include "Features/ScreenSpaceGI.h"
 #include "Features/ScreenSpaceShadows.h"
@@ -965,6 +966,30 @@ namespace
 			ADDRESS_NODE(vrSystem)
 		}
 	}
+	void DrawShadowmapRasterizerSettings()
+	{
+		if (!globals::state || !globals::state->IsDeveloperMode())
+			return;
+
+		auto& settings = globals::features::vr.settings;
+
+		if (ImGui::CollapsingHeader("Shadowmap Rasterizer")) {
+			if (ImGui::Checkbox("Apply Outer Cascade Caster Bias", &settings.EnableOuterCascadeCasterBias) &&
+				settings.EnableOuterCascadeCasterBias) {
+				ShadowmapRasterizerFix::InstallD3DHooks(globals::d3d::context);
+			}
+			if (auto _tt = Util::HoverTooltipWrapper()) {
+				ImGui::Text(
+					"Developer-only. Leave off unless distant or outer-cascade surfaces still show shadow acne.\n"
+					"Applies a tiny caster-side rasterizer bias to outer cascades without globally swapping VR rasterizer tables.");
+				ImGui::Text(
+					"Values: DepthBias %d, Clamp %.4f, SlopeScaledDepthBias %.2f.",
+					ShadowmapRasterizerFix::vrOuterCascadeDepthBias,
+					ShadowmapRasterizerFix::vrOuterCascadeDepthBiasClamp,
+					ShadowmapRasterizerFix::vrOuterCascadeSlopeScaleBias);
+			}
+		}
+	}
 }  // namespace
 
 //=============================================================================
@@ -1009,6 +1034,7 @@ void VR::DrawSettings()
 
 		if (BeginTabItemWithFont("Debug", Menu::FontRole::Subheading)) {
 			if (ImGui::BeginChild("##VRDebugFrame", { 0, 0 }, true)) {
+				DrawShadowmapRasterizerSettings();
 				DrawDebugSection();
 			}
 			ImGui::EndChild();
