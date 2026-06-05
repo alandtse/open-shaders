@@ -6,8 +6,8 @@
 #include <array>
 #include <limits>
 
-// Flat keeps the v1.5.2 shadowmap rasterizer table behavior.
-// VR always bypasses that global table swap; the optional caster bias is developer-mode only.
+// This overrides the shadow cascade rasterizers to fix issues with peter panning and self shadowing.
+// Flat keeps the v1.5.2 shadowmap rasterizer table behavior; VR always bypasses that global table swap.
 struct ShadowmapRasterizerFix : EngineFix
 {
 	std::string GetName() override { return "Shadowmap Cascade Rasterizer Fix"; }

@@ -6,12 +6,13 @@
 namespace DirectionalShadow
 {
 	// Single owner of the directional-shadow routing decision, so new consumers
-	// can't read the stale engine mask under SLF. VR keeps the engine mask path
-	// because the LLF two-cascade directional sampler can introduce receiver
-	// banding after the rasterizer safety split; non-VR still samples LLF cascades
-	// directly. Also owns the PCF noise-rotation so callers skip the sincos
-	// boilerplate. Lighting.hlsl deliberately bypasses this helper and feeds the
-	// mask into LLF directly. Needs LightLimitFix.hlsli first.
+	// can't read the stale engine mask under SLF. Under LIGHT_LIMIT_FIX the engine
+	// mask is a no-op, so sample LLF cascades directly (fully lit past range);
+	// VR is the exception and keeps the engine mask path to avoid receiver
+	// banding after the rasterizer safety split.
+	// Also owns the PCF noise-rotation so callers skip the sincos boilerplate.
+	// Lighting.hlsl deliberately bypasses this helper (feeds the mask into LLF
+	// as the past-cascade fallback). Needs LightLimitFix.hlsli first.
 	float GetSceneDirectionalShadow(float3 worldPosition, float3 worldPositionWS, uint eyeIndex, float a_screenNoise, float a_engineMaskShadow)
 	{
 #if defined(LIGHT_LIMIT_FIX)

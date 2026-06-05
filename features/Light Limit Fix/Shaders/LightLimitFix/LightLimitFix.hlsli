@@ -159,14 +159,15 @@ namespace LightLimitFix
 	Texture2DArray<float> ShadowMaps : register(t103);
 	Texture2DArray<float> DirectionalShadowCascades : register(t99);
 
-	// engineMaskShadow: usually the engine's pre-rendered 4-cascade shadow mask
-	// sample at this pixel (TexShadowMaskSampler.Load(int3(Position.xy, 0)).x).
-	// In VR it becomes the source of truth for all cascades; outside VR LLF's
-	// DirectionalShadowLightData still carries only cascades 0/1 (ShadowProj[2]
-	// / EndSplitDistances.xy), so this value remains the fallback after
-	// EndSplitDistances.y. Returning 1.0 there leaves distant pixels fully lit
-	// -- visible as global scene brightening with shadows disappearing past a
-	// depth that varies with camera position.
+	// engineMaskShadow: the engine's pre-rendered 4-cascade shadow mask sample
+	// at this pixel (TexShadowMaskSampler.Load(int3(Position.xy, 0)).x). LLF's
+	// DirectionalShadowLightData carries only cascades 0/1 (ShadowProj[2] /
+	// EndSplitDistances.xy); past EndSplitDistances.y we have no LLF data and
+	// must fall through to the engine mask. In VR this same value also becomes
+	// the source of truth for all cascades.
+	// Returning 1.0 there leaves distant pixels fully lit -- visible as global
+	// scene brightening with shadows disappearing past a depth that varies with
+	// camera position.
 	float GetDirectionalShadow(float3 worldPosition, float3 worldPositionWS, float2x2 rotationMatrix, uint eyeIndex, float engineMaskShadow)
 	{
 #if defined(VR)
@@ -298,10 +299,9 @@ namespace LightLimitFix
 		return shadow;
 	}
 
-	// Convenience overloads: in VR the 5-arg overload returns its
-	// engineMaskShadow directly. Callers without TexShadowMaskSampler bound
-	// intentionally stay fully lit instead of re-entering the LLF two-cascade
-	// sampler that caused receiver-side banding.
+	// Convenience overload: callers without TexShadowMaskSampler bound
+	// (e.g. Particle.hlsl) pass the default 1.0 engine-mask value through the
+	// 5-arg path. In VR that avoids re-entering LLF's direct sampler.
 	float GetDirectionalShadow(float3 worldPosition, float3 worldPositionWS, float2x2 rotationMatrix, uint eyeIndex)
 	{
 		return GetDirectionalShadow(worldPosition, worldPositionWS, rotationMatrix, eyeIndex, 1.0);
