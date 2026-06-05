@@ -1213,6 +1213,28 @@ void LightLimitFix::UpdateStructure()
 	context->CSSetUnorderedAccessViews(0, 3, null_uavs, nullptr);
 }
 
+namespace
+{
+	// SEH-guarded read of sceneLights[0]->light. The pointer-value plausibility
+	// check can't distinguish a live BSLight from a stale-but-canonical one, so
+	// reading dirLight->light can itself AV (#92). Treat any fault as "no NiLight"
+	// so the caller skips the engine's null-deref path instead of crashing in the
+	// guard. Kept in its own function (no C++ unwinding objects) per MSVC's __try
+	// restriction. Matches the __except(1) AV-guard pattern used elsewhere here.
+	RE::NiLight* SafeReadDirectionalNiLight(RE::BSLight* dirLight)
+	{
+#if defined(_MSC_VER)
+		__try {
+			return dirLight->light.get();
+		} __except (1) {
+			return nullptr;
+		}
+#else
+		return dirLight->light.get();
+#endif
+	}
+}
+
 void LightLimitFix::Hooks::BSLightingShader_SetupGeometry::thunk(RE::BSShader* This, RE::BSRenderPass* Pass, uint32_t RenderFlags)
 {
 	// Engine derefs sceneLights[0]->light with no null check -> CTD on a null/
@@ -1225,7 +1247,11 @@ void LightLimitFix::Hooks::BSLightingShader_SetupGeometry::thunk(RE::BSShader* T
 			return v >= 0x10000 && v < 0x800000000000ull && (v & 0x7) == 0;
 		};
 		RE::BSLight* dirLight = (Pass->numLights > 0 && Pass->sceneLights) ? Pass->sceneLights[0] : nullptr;
-		if (Pass->numLights == 0 || !isPlausible(dirLight) || !isPlausible(dirLight->light.get())) {
+		// isPlausible only validates the pointer VALUE; a stale-but-canonical
+		// dirLight still AVs when we read dirLight->light, so capture the NiLight
+		// under SEH and reuse it below (no second deref).
+		RE::NiLight* niLight = isPlausible(dirLight) ? SafeReadDirectionalNiLight(dirLight) : nullptr;
+		if (Pass->numLights == 0 || !isPlausible(niLight)) {
 			directionalSlotSafe = false;
 			static int logged = 0;
 			if (logged++ < 10) {
@@ -1235,7 +1261,7 @@ void LightLimitFix::Hooks::BSLightingShader_SetupGeometry::thunk(RE::BSShader* T
 					"to avoid GeometrySetupConstantDirectionalLight null-deref (#92)",
 					Pass->numLights,
 					reinterpret_cast<std::uintptr_t>(dirLight),
-					reinterpret_cast<std::uintptr_t>(isPlausible(dirLight) ? dirLight->light.get() : nullptr));
+					reinterpret_cast<std::uintptr_t>(niLight));
 			}
 		}
 	}
