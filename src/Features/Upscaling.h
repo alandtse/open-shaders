@@ -141,9 +141,21 @@ public:
 	bool IsUpscalingActive() const;
 
 	// Feature interface overrides
+	mutable std::vector<Util::Settings::RestartFieldInfo> restartFieldsScratch;
 	std::span<const Util::Settings::RestartFieldInfo> GetRestartRequiredFields() const override
 	{
-		return { kRestartFields.data(), kRestartFields.size() };
+		// qualityMode/upscaleMethod are boot-locked ONLY while PerfMode is engaged
+		// (the engine RTs are sized for them). When PerfMode is off — TAA, Native AA
+		// (1x), or render-at-upscaled-res disabled — they switch live, so don't
+		// report them as restart-gated to the menu tint / MCP. renderAtUpscaleRes
+		// itself is always boot-time (it installs the size hook at world load).
+		if (perfMode.IsHookActive())
+			return { kRestartFields.data(), kRestartFields.size() };
+		restartFieldsScratch.clear();
+		for (const auto& f : kRestartFields)
+			if (f.offset != offsetof(Settings, qualityMode) && f.offset != offsetof(Settings, upscaleMethod))
+				restartFieldsScratch.push_back(f);
+		return { restartFieldsScratch.data(), restartFieldsScratch.size() };
 	}
 	const void* GetBootValue(std::string_view jsonKey) const override { return bootSnapshot.RawBoot(jsonKey); }
 	const void* GetSettingsBlob() const override { return &settings; }

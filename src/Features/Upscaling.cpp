@@ -336,7 +336,7 @@ void Upscaling::DrawSettings()
 			}
 		}
 
-		// VR PerfMode: opt-in performance feature. Lives in the main
+		// VR PerfMode: on-by-default performance feature. Lives in the main
 		// upscaler section (not Backend Diagnostics) so users discover it
 		// alongside the rest of the upscaler controls. Restart-gated —
 		// the BSOpenVR size hook reads this at world load and sizes every
@@ -375,6 +375,12 @@ void Upscaling::DrawSettings()
 			}
 			if (!methodSupportsPerf && settings.renderAtUpscaleRes)
 				Util::Text::Disabled("Render-at-upscaled-resolution requires DLSS or FSR — switch upscaler Method to activate.");
+			// At Native AA (1x) there's no render-res reduction to bank, so the
+			// BSOpenVR size hook stays dormant even while checked. Surface the
+			// no-op rather than implying the toggle is doing something.
+			if (methodSupportsPerf && settings.renderAtUpscaleRes &&
+				GetQualityModeRatio(settings.qualityMode) <= 1.0f)
+				Util::Text::Disabled("No effect at Native AA (1x) — renders at full resolution; raise the Upscale Preset to engage.");
 			if (methodSupportsPerf)
 				Util::UI::DrawSettingDiff(bootSnapshot, settings, &Settings::renderAtUpscaleRes);
 		}
