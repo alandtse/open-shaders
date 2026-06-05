@@ -399,9 +399,10 @@ namespace globals
 	};
 
 	/**
- * @brief Installs hooks on the Map and Unmap methods of the provided D3D11 device context.
+ * @brief Installs baseline D3D hooks plus any feature-gated context hooks.
  *
- * This enables interception of resource mapping and unmapping operations for frame buffer caching.
+ * Map/Unmap are always intercepted for frame buffer caching. Additional
+ * hooks are installed only when the owning feature has opted into them.
  */
 	void InstallD3DHooks(ID3D11DeviceContext* a_context)
 	{

@@ -177,6 +177,7 @@ public:
 		float StereoBlendMaxFactor = 0.1f;        ///< Maximum blend factor; keep low to preserve stereo parallax
 		float StereoBlendColorThreshold = 0.02f;  ///< Minimum color difference to trigger blending (luminance)
 		int StereoBlendDebugMode = 0;             ///< 0=off, 1=back-check, 2=blend weight, 3=edge detection, 4=overwrite, 5=overwrite Eye1
+		// Developer-only: optional outer-cascade caster bias for residual distant shadow acne.
 		bool EnableOuterCascadeCasterBias = false;
 
 		// VR Menu Overlay positioning settings

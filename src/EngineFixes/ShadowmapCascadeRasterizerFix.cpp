@@ -46,9 +46,11 @@ namespace
 			if (!MatchDescriptorArguments(arg1, arg2, descriptor))
 				continue;
 
-			if (descriptor.shadowmapIndex < ShadowmapRasterizerFix::maxCascades)
-				return descriptor.shadowmapIndex;
-
+			// In this branch the directional shadow data path consumes
+			// shadowmapDescriptors[i] in descriptor order (see
+			// Deferred::SetShadowCascadeParameters). Keep the rasterizer bias
+			// keyed to that same stable ordering instead of following the live
+			// shadowmapIndex field, which other shadow paths may rewrite.
 			return descriptorIndex;
 		}
 
@@ -79,6 +81,9 @@ namespace
 		if (!currentState)
 			return;
 
+		// The RSSetState hook swaps specific game raster states to biased
+		// clones during the active cascade. Restore the original state after
+		// the cascade render so later non-shadow work sees the engine's state.
 		const auto iter = originalRasterStateLookup.find(currentState);
 		if (iter != originalRasterStateLookup.end()) {
 			ShadowmapRasterizerFix::ID3D11DeviceContext_RSSetState::func(context, iter->second);

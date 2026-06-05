@@ -58,7 +58,7 @@ void VR::LoadSettings(json& o_json)
 {
 	settings = o_json.get<Settings>();
 	settings.ClampToValidRanges();
-	if (settings.EnableOuterCascadeCasterBias) {
+	if (ShadowmapRasterizerFix::IsVROuterCascadeCasterBiasEnabled()) {
 		ShadowmapRasterizerFix::InstallD3DHooks(globals::d3d::context);
 	}
 	if (o_json.contains("StereoOptimizations")) {

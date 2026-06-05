@@ -975,13 +975,13 @@ namespace
 
 		if (ImGui::CollapsingHeader("Shadowmap Rasterizer")) {
 			if (ImGui::Checkbox("Apply Outer Cascade Caster Bias", &settings.EnableOuterCascadeCasterBias) &&
-				settings.EnableOuterCascadeCasterBias) {
+				ShadowmapRasterizerFix::IsVROuterCascadeCasterBiasEnabled()) {
 				ShadowmapRasterizerFix::InstallD3DHooks(globals::d3d::context);
 			}
 			if (auto _tt = Util::HoverTooltipWrapper()) {
 				ImGui::Text(
-					"Developer-only. Leave off unless distant or outer-cascade surfaces still show shadow acne.\n"
-					"Applies a tiny caster-side rasterizer bias to outer cascades without globally swapping VR rasterizer tables.");
+					"The VR rasterizer flicker safety path is always active.\n"
+					"This developer-only toggle only applies a tiny caster-side bias to outer cascades.");
 				ImGui::Text(
 					"Values: DepthBias %d, Clamp %.4f, SlopeScaledDepthBias %.2f.",
 					ShadowmapRasterizerFix::vrOuterCascadeDepthBias,
