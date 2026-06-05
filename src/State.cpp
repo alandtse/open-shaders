@@ -1025,7 +1025,7 @@ void State::UpdateSharedData([[maybe_unused]] bool a_inWorld, [[maybe_unused]] b
 			                                 dynamicCubemaps.loaded && dynamicCubemaps.settings.EnabledSSR;
 			if (ssrFoveationEnabled) {
 				const auto profile = upscaling.foveatedRender.GetFoveationProfile();
-				if (profile.available && FoveatedCommon::IsActiveCoverage(profile.coverageScale)) {
+				if (profile.available) {  // available already implies an active (non-full) coverage scale
 					const float ssrMode = FoveatedCommon::GetShaderMode(FoveatedCommon::GetDetailMode(
 						true, vr.settings.EnableSSRFoveationHardCutoff));
 					data.VRFoveationData0 = { profile.coverageScale, FoveatedCommon::kCenterFeather,

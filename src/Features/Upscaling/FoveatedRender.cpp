@@ -128,27 +128,28 @@ FoveatedRender::FoveationProfile FoveatedRender::GetFoveationProfile() const
 	const auto& leftUV = subrectController.GetUV();
 	const auto& rightUV = subrectController.GetRightEyeUV();
 
-	// Disable only when BOTH eyes cover the full eye — if either eye is foveated
-	// we still build a profile.
-	const auto isFullEye = [](const Util::Subrect::UVRegion& uv) {
-		return uv.w >= FoveatedCommon::kFullCoverageThreshold && uv.h >= FoveatedCommon::kFullCoverageThreshold;
-	};
-	if (isFullEye(leftUV) && isFullEye(rightUV))
-		return profile;
-
 	// Map the rectangular subrect onto the centered-superellipse the mask helper
 	// expects: vertical extent drives coverageScale (radiusY = coverageScale/2),
 	// the rect aspect drives the horizontal stretch (radiusX = coverageScale *
 	// hScale / 2). The mask carries one scale for both eyes (only the center
 	// offset is per-eye), so size comes from the less-foveated (larger) extent of
 	// the two eyes — the mask then stays inside each eye's full-quality region and
-	// never foveates a sharp zone. Seeded presets are symmetric in size, so
-	// left == right and this is a no-op for them. Approximate (rect vs
+	// never foveates a sharp zone. A full eye therefore yields full coverage and
+	// disables foveation entirely (the gate below). Seeded presets are symmetric
+	// in size, so left == right and this is a no-op for them. Approximate (rect vs
 	// superellipse) but sufficient for the per-pixel center/periphery weight.
 	const float coverageH = std::max(leftUV.h, rightUV.h);
 	const float coverageW = std::max(leftUV.w, rightUV.w);
+	const float coverageScale = FoveatedCommon::ClampCenterScale(coverageH);
+
+	// Decide availability from the final clamped scale so the contract holds: if
+	// the larger eye rounds up to full coverage there is nothing to foveate, so
+	// leave the default (available == false) and callers need no separate check.
+	if (!FoveatedCommon::IsActiveCoverage(coverageScale))
+		return profile;
+
 	profile.available = true;
-	profile.coverageScale = FoveatedCommon::ClampCenterScale(coverageH);
+	profile.coverageScale = coverageScale;
 	profile.centerHorizontalScale = FoveatedCommon::ClampCenterHorizontalScale(
 		coverageH > 1e-4f ? coverageW / coverageH : 1.0f);
 	profile.centerOffsets[0] = { (leftUV.x + leftUV.w * 0.5f) - 0.5f, (leftUV.y + leftUV.h * 0.5f) - 0.5f };
