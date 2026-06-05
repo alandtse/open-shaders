@@ -73,6 +73,14 @@
                 "COMMONLIB_PREBUILT_MULTICONFIG": "ON"
             },
             "inherits": "skyrim"
+        },
+        {
+            "name": "ALL-DEBUG",
+            "description": "Like ALL but builds CommonLib from source. The prebuilt package is Release-only (Debug maps to no imported location), so a Debug build off ALL fails to link — this preset keeps Debug-from-source working in its own build/ALL-DEBUG dir.",
+            "inherits": "ALL",
+            "cacheVariables": {
+                "COMMONLIB_PREBUILT_MULTICONFIG": "OFF"
+            }
         }
     ],
     "buildPresets": [
@@ -114,7 +122,7 @@
         {
             "name": "Debug",
             "description": "Debug build for CS SKSE plugin, generate an AIO folder thats ready to copy",
-            "configurePreset": "ALL",
+            "configurePreset": "ALL-DEBUG",
             "configuration": "Debug",
             "targets": ["CommunityShaders", "AIO"]
         }
