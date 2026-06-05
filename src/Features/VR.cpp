@@ -1,9 +1,9 @@
 ﻿#include "VR.h"
+#include "EngineFixes/ShadowmapCascadeRasterizerFix.h"
 #include "Menu.h"
 #include "RE/B/BSOpenVR.h"
 #include "RE/P/PlayerCharacter.h"
 #include "Upscaling.h"
-#include "EngineFixes/ShadowmapCascadeRasterizerFix.h"
 #include "VR/OpenVRDetection.h"
 
 #include "State.h"
