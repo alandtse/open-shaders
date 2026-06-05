@@ -3,6 +3,7 @@
 #include "RE/B/BSOpenVR.h"
 #include "RE/P/PlayerCharacter.h"
 #include "Upscaling.h"
+#include "EngineFixes/ShadowmapCascadeRasterizerFix.h"
 #include "VR/OpenVRDetection.h"
 
 #include "State.h"
@@ -46,7 +47,8 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	StereoBlendDepthSigma,
 	StereoBlendMaxFactor,
 	StereoBlendColorThreshold,
-	StereoBlendDebugMode)
+	StereoBlendDebugMode,
+	EnableOuterCascadeCasterBias)
 
 //=============================================================================
 // FEATURE BASE CLASS OVERRIDES
@@ -56,6 +58,9 @@ void VR::LoadSettings(json& o_json)
 {
 	settings = o_json.get<Settings>();
 	settings.ClampToValidRanges();
+	if (settings.EnableOuterCascadeCasterBias) {
+		ShadowmapRasterizerFix::InstallD3DHooks(globals::d3d::context);
+	}
 	if (o_json.contains("StereoOptimizations")) {
 		json stereoOptJson = o_json["StereoOptimizations"];
 		stereoOpt.LoadSettings(stereoOptJson);
