@@ -411,10 +411,17 @@ struct BSShaderRenderTargets_Create
 		const bool methodSupportsPerfMode =
 			resolvedUpscaleMethod == Upscaling::UpscaleMethod::kDLSS ||
 			resolvedUpscaleMethod == Upscaling::UpscaleMethod::kFSR;
+		// Native AA (1.0x) shrinks nothing — engaging the hook there runs all the
+		// menu/post compensation machinery for zero VRAM/perf gain, while the
+		// stock display-res path would switch presets live. Require a preset that
+		// actually reduces render res before locking in.
+		const bool qualityReducesRenderRes =
+			Upscaling::GetQualityModeRatio(globals::features::upscaling.settings.qualityMode) > 1.0f;
 		const bool dlssperfShouldRun =
 			globals::game::isVR &&
 			globals::features::upscaling.settings.renderAtUpscaleRes &&
-			methodSupportsPerfMode;
+			methodSupportsPerfMode &&
+			qualityReducesRenderRes;
 
 		if (dlssperfShouldRun) {
 			globals::features::upscaling.perfMode.InstallRenderTargetSizeHook();

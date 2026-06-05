@@ -73,12 +73,16 @@ public:
 		bool reflexUseFPSLimit = false;
 		float reflexFPSLimit = 60.0f;
 
-		// VR PerfMode: opt-in. When set, BSShaderRenderTargets::Create installs
-		// the BSOpenVR render-target-size hook at engine init so the entire
+		// VR PerfMode: on by default ("auto-lock"). When set, BSShaderRenderTargets::Create
+		// installs the BSOpenVR render-target-size hook at engine init so the entire
 		// engine pipeline allocates render targets at upscaled-render resolution
-		// instead of display resolution. Saves VRAM/bandwidth proportional to
-		// the quality-mode scale ratio. Requires a game restart to take effect.
-		bool renderAtUpscaleRes = false;
+		// instead of display resolution. Saves VRAM/bandwidth proportional to the
+		// quality-mode scale ratio. Locked to the boot Upscale Preset; changing the
+		// preset (or turning this off) needs a restart to re-allocate the RTs. No
+		// effect at Native AA (1.0x): with no render-res reduction to bank, the hook
+		// stays off and the upscaler runs on the stock display-res path (where preset
+		// changes apply live). Requires DLSS or FSR.
+		bool renderAtUpscaleRes = true;
 	};
 
 	Settings settings;

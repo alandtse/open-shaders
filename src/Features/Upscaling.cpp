@@ -362,14 +362,16 @@ void Upscaling::DrawSettings()
 			// otherwise, so a "pending restart" hint there would mislead.
 			if (auto _tt = Util::HoverTooltipWrapper()) {
 				ImGui::Text(
-					"When enabled, the engine pipeline allocates render targets at the upscaled-render\n"
-					"resolution instead of the HMD display resolution. The upscaler (DLSS or FSR) writes\n"
+					"On by default. The engine pipeline allocates render targets at the upscaled-render\n"
+					"resolution instead of the HMD display resolution; the upscaler (DLSS or FSR) writes\n"
 					"its output to a private DisplayRes texture. Substantial VRAM and bandwidth savings,\n"
 					"especially at high HMD resolutions.\n"
 					"\n"
-					"Requires DLSS or FSR. Toggling this option requires a game restart to take effect.\n"
-					"While active, Method and Upscale Preset changes also require a restart;\n"
-					"sharpness / model preset / Reflex remain live.");
+					"Locked to the Upscale Preset selected at launch: changing the preset (or this\n"
+					"toggle) takes effect after a game restart. At Native AA (1.0x) there is no\n"
+					"render-res reduction, so the lock stays off and preset changes apply live.\n"
+					"\n"
+					"Requires DLSS or FSR. Sharpness / model preset / Reflex remain live.");
 			}
 			if (!methodSupportsPerf && settings.renderAtUpscaleRes)
 				Util::Text::Disabled("Render-at-upscaled-resolution requires DLSS or FSR — switch upscaler Method to activate.");
