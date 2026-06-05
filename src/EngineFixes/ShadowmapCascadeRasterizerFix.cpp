@@ -105,7 +105,7 @@ void ShadowmapRasterizerFix::Install()
 
 void ShadowmapRasterizerFix::InstallD3DHooks(ID3D11DeviceContext* context)
 {
-	if (!IsVRCasterBiasEnabled())
+	if (!IsVROuterCascadeCasterBiasEnabled())
 		return;
 
 	if (!context || d3dHooksInstalled)
@@ -116,7 +116,7 @@ void ShadowmapRasterizerFix::InstallD3DHooks(ID3D11DeviceContext* context)
 	d3dHooksInstalled = true;
 }
 
-bool ShadowmapRasterizerFix::IsVRCasterBiasEnabled()
+bool ShadowmapRasterizerFix::IsVROuterCascadeCasterBiasEnabled()
 {
 	return REL::Module::IsVR() &&
 	       globals::state &&
@@ -160,7 +160,9 @@ void ShadowmapRasterizerFix::BSShadowDirectionalLight_RenderShadowmaps_RenderCas
 		return;
 	}
 
-	if (!IsVRCasterBiasEnabled()) {
+	// The VR flicker fix is always active: VR never uses the flat global rasterizer table swap.
+	// Only this optional outer-cascade caster bias is controlled by the developer-mode toggle.
+	if (!IsVROuterCascadeCasterBiasEnabled()) {
 		func(light, arg1, arg2, flags);
 		return;
 	}
@@ -263,7 +265,7 @@ void ShadowmapRasterizerFix::RebuildBiasedRasterStateLookup()
 
 ID3D11RasterizerState* ShadowmapRasterizerFix::GetBiasedRasterState(ID3D11RasterizerState* state)
 {
-	if (!IsVRCasterBiasEnabled())
+	if (!IsVROuterCascadeCasterBiasEnabled())
 		return nullptr;
 
 	if (!state || !initialized || activeCascade >= numCascades)

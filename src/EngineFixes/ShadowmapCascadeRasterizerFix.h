@@ -30,7 +30,7 @@ struct ShadowmapRasterizerFix : EngineFix
 	static void ReleaseClonedRasterStates();
 	static void RebuildBiasedRasterStateLookup();
 	static ID3D11RasterizerState* GetBiasedRasterState(ID3D11RasterizerState* state);
-	static bool IsVRCasterBiasEnabled();
+	static bool IsVROuterCascadeCasterBiasEnabled();
 
 	static inline std::uint32_t numCascades = 0;
 	static inline std::uint32_t currentCascade = 0;
