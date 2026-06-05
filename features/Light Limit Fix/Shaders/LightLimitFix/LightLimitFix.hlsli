@@ -163,20 +163,22 @@ namespace LightLimitFix
 	// at this pixel (TexShadowMaskSampler.Load(int3(Position.xy, 0)).x). LLF's
 	// DirectionalShadowLightData carries only cascades 0/1 (ShadowProj[2] /
 	// EndSplitDistances.xy); past EndSplitDistances.y we have no LLF data and
-	// must fall through to the engine mask. In VR this same value also becomes
-	// the source of truth for all cascades.
+	// must fall through to the engine mask. For mask-backed VR callers this same
+	// value also becomes the source of truth for all cascades.
 	// Returning 1.0 there leaves distant pixels fully lit -- visible as global
 	// scene brightening with shadows disappearing past a depth that varies with
 	// camera position.
-	float GetDirectionalShadow(float3 worldPosition, float3 worldPositionWS, float2x2 rotationMatrix, uint eyeIndex, float engineMaskShadow)
+	float GetDirectionalShadow(float3 worldPosition, float3 worldPositionWS, float2x2 rotationMatrix, uint eyeIndex, float engineMaskShadow, bool useEngineMaskShadow)
 	{
 #if defined(VR)
-		// VR keeps the engine shadowmask as the source of truth. The LLF
-		// two-cascade PCF path only carries cascades 0/1 and can introduce
-		// broad receiver banding after the rasterizer safety path removes the
-		// old caster-side global rasterizer swap. Utility.hlsl still applies
-		// the VR-only receiver bias while producing this mask.
-		return engineMaskShadow;
+		if (useEngineMaskShadow) {
+			// VR keeps the engine shadowmask as the source of truth. The LLF
+			// two-cascade PCF path only carries cascades 0/1 and can introduce
+			// broad receiver banding after the rasterizer safety path removes the
+			// old caster-side global rasterizer swap. Utility.hlsl still applies
+			// the VR-only receiver bias while producing this mask.
+			return engineMaskShadow;
+		}
 #endif
 
 		DirectionalShadowLightData shadowLightData = DirectionalShadowLights[0];
@@ -299,17 +301,22 @@ namespace LightLimitFix
 		return shadow;
 	}
 
+	float GetDirectionalShadow(float3 worldPosition, float3 worldPositionWS, float2x2 rotationMatrix, uint eyeIndex, float engineMaskShadow)
+	{
+		return GetDirectionalShadow(worldPosition, worldPositionWS, rotationMatrix, eyeIndex, engineMaskShadow, true);
+	}
+
 	// Convenience overload: callers without TexShadowMaskSampler bound
-	// (e.g. Particle.hlsl) pass the default 1.0 engine-mask value through the
-	// 5-arg path. In VR that avoids re-entering LLF's direct sampler.
+	// can still route through the direct LLF sampler without an engine-mask
+	// sample.
 	float GetDirectionalShadow(float3 worldPosition, float3 worldPositionWS, float2x2 rotationMatrix, uint eyeIndex)
 	{
-		return GetDirectionalShadow(worldPosition, worldPositionWS, rotationMatrix, eyeIndex, 1.0);
+		return GetDirectionalShadow(worldPosition, worldPositionWS, rotationMatrix, eyeIndex, 1.0, false);
 	}
 
 	float GetDirectionalShadow(float3 worldPosition, float3 worldPositionWS, float2x2 rotationMatrix)
 	{
-		return GetDirectionalShadow(worldPosition, worldPositionWS, rotationMatrix, 0, 1.0);
+		return GetDirectionalShadow(worldPosition, worldPositionWS, rotationMatrix, 0, 1.0, false);
 	}
 
 	float SampleShadowGather(uint shadowIndex, float2 uv, float receiverDepth)

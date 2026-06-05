@@ -224,7 +224,13 @@ void ShadowmapRasterizerFix::CloneRasterStates(const RasterStateArray& inputArra
 
 			GetUpdatedRasterDesc(desc, descriptors[cascade]);
 
-			DX::ThrowIfFailed(globals::d3d::device->CreateRasterizerState(&desc, &clonedRaster));
+			if (const auto hr = globals::d3d::device->CreateRasterizerState(&desc, &clonedRaster); FAILED(hr)) {
+				logger::warn(
+					"ShadowmapRasterizerFix: failed to clone rasterizer state for cascade {} (hr=0x{:08X}); using original state",
+					cascade,
+					static_cast<std::uint32_t>(hr));
+				clonedRaster = nullptr;
+			}
 		}
 	});
 }
