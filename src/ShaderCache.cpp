@@ -1847,9 +1847,7 @@ namespace SIE
 				// { "BSImagespaceShaderCopyDepthBuffer", RE::ImageSpaceManager::GetCurrentIndex(ISCopyDepthBuffer) },
 				// { "BSImagespaceShaderCopyDepthBuffer_DR", RE::ImageSpaceManager::GetCurrentIndex(ISCopyDepthBuffer_DR) },
 				// { "BSImagespaceShaderCopyDepthBufferTargetSize", RE::ImageSpaceManager::GetCurrentIndex(ISCopyDepthBufferTargetSize) },
-				// Removed: BSImagespaceShaderGraphicsTextureFilterMode was a phantom IS effect — VR index 111
-				// is actually ISReflectionBlurHCS, so the enum entry was dropped in CommonLibVR (#178).
-				// { "BSImagespaceShaderGraphicsTextureFilterMode", RE::ImageSpaceManager::GetCurrentIndex(ISGraphicsTextureFilterMode) },
+				// BSImagespaceShaderGraphicsTextureFilterMode is intentionally omitted because VR index 111 is ISReflectionBlurHCS.
 				{ "BSImagespaceShaderISDownsampleHierarchicalDepthBufferCS", RE::ImageSpaceManager::GetCurrentIndex(ISDownsampleHierarchicalDepthBufferCS) },
 				{ "BSImagespaceShaderISDiffScaleDownsampleDepthBufferCS", RE::ImageSpaceManager::GetCurrentIndex(ISDiffScaleDownsampleDepthBufferCS) },
 				{ "BSImagespaceShaderISFullScreenVR", RE::ImageSpaceManager::GetCurrentIndex(ISFullScreenVR) },
