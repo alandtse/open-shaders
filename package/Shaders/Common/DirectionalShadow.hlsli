@@ -5,14 +5,12 @@
 
 namespace DirectionalShadow
 {
-	// Single owner of the directional-shadow routing decision, so new consumers
-	// can't read the stale engine mask under SLF. Routing under LIGHT_LIMIT_FIX:
-	// non-VR samples LLF cascades directly (fully lit past range); VR masked
-	// callers return the engine mask (stays aligned with Utility.hlsl's receiver
-	// bias, avoids banding after the rasterizer split). Without LLF, returns the
-	// engine mask as-is. Also owns the PCF noise-rotation so callers skip the
-	// sincos boilerplate. Lighting.hlsl deliberately bypasses this helper (feeds
-	// the mask into LLF as the past-cascade fallback). Needs LightLimitFix.hlsli first.
+	// Single owner of the directional-shadow routing so new consumers can't read the
+	// stale engine mask under SLF. Under LIGHT_LIMIT_FIX: non-VR samples LLF directly
+	// (lit past range); VR masked returns the engine mask (avoids banding after VR's
+	// rasterizer split); without LLF, returns the mask as-is. Also owns the PCF
+	// noise-rotation. Lighting.hlsl bypasses this (feeds the mask into LLF as the
+	// past-cascade fallback). Needs LightLimitFix.hlsli first.
 #if defined(LIGHT_LIMIT_FIX)
 	float SampleLightLimitFixDirectionalShadow(float3 worldPosition, float3 worldPositionWS, uint eyeIndex, float a_screenNoise)
 	{
@@ -27,8 +25,6 @@ namespace DirectionalShadow
 	{
 #if defined(LIGHT_LIMIT_FIX)
 #	if defined(VR)
-		// Keep masked VR callers on the engine-produced mask so they stay
-		// aligned with Utility.hlsl's receiver bias.
 		return a_engineMaskShadow;
 #	else
 		return SampleLightLimitFixDirectionalShadow(worldPosition, worldPositionWS, eyeIndex, a_screenNoise);
