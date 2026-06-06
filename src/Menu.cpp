@@ -1073,13 +1073,12 @@ void Menu::ProcessInputEventQueue()
 	}
 	// Process VR events
 	if (!vrEvents.empty()) {
-		// Phase 3: when the helper is registered, forward raw VR
-		// controller events to it. The helper drives wand pointing,
-		// combo matching, drag, and overlay focus — SCS no longer
-		// runs ProcessVREvents/UpdateOverlayMenuStateFromInput in
-		// that case. Without the helper (helper-required policy),
-		// SCS drops these events; VR users see menus only on the
-		// desktop monitor.
+		// When the helper is registered it drives wand pointing, combo
+		// matching, drag, and overlay focus, so forward raw VR controller
+		// events to it instead of SCS's own ProcessVREvents/
+		// UpdateOverlayMenuStateFromInput. Without the helper
+		// (helper-required policy) SCS drops these events; VR users see
+		// menus only on the desktop monitor.
 		if (ImGuiVRHelperClient::IsRegistered()) {
 			for (const auto& event : vrEvents) {
 				ImGuiVRHelperClient::FeedVREvent(

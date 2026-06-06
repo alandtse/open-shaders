@@ -75,8 +75,8 @@ void VR::DrawOverlay()
 	auto& vr = globals::features::vr;
 	if (!vr.IsOpenVRCompatible())
 		return;
-	// Phase 3: helper owns VR overlay UX, including the welcome
-	// banner. Skip SCS's internal welcome overlay when registered.
+	// The helper owns VR overlay UX, including the welcome banner, so
+	// skip SCS's internal welcome overlay when registered.
 	if (ImGuiVRHelperClient::IsRegistered())
 		return;
 	static LARGE_INTEGER overlayShowStart = { 0 };

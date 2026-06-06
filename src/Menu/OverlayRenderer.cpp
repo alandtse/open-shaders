@@ -141,8 +141,8 @@ void OverlayRenderer::RenderOverlay(
 	HandleVRSetup();
 	processInputEventQueue();
 
-	// Phase 3: helper drives wand pointing → ImGui mouse synthesis.
-	// Skip SCS's internal controller→ImGui pump when registered.
+	// The helper drives wand pointing → ImGui mouse synthesis, so skip
+	// SCS's internal controller→ImGui pump when registered.
 	if (!ImGuiVRHelperClient::IsRegistered() && globals::features::vr.IsOpenVRCompatible()) {
 		globals::features::vr.ProcessControllerInputForImGui();
 	}
@@ -200,7 +200,7 @@ void OverlayRenderer::RenderOverlay(
 
 void OverlayRenderer::HandleVRSetup()
 {
-	// Phase 3: helper owns the overlay texture. Skip SCS's
+	// The helper owns the overlay texture, so skip SCS's
 	// menuTexture/menuRTV recreation when registered.
 	if (!ImGuiVRHelperClient::IsRegistered() && globals::features::vr.IsOpenVRCompatible()) {
 		globals::features::vr.RecreateOverlayTexturesIfNeeded();
@@ -427,16 +427,14 @@ void OverlayRenderer::FinalizeImGuiFrame()
 
 	ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
 
-	// Phase 2: render the same draw data into the ImGuiVRHelper's
-	// panel RTV so the helper can composite our menu as a 3D quad
-	// in the HMD.
+	// Render the same draw data into the ImGuiVRHelper's panel RTV so
+	// the helper can composite our menu as a 3D quad in the HMD.
 	ImGuiVRHelperClient::RenderToPanel();
 
-	// Phase 3: when the helper is registered, it owns VR overlay
-	// compositing — skip SCS's internal SubmitOverlayFrame path.
-	// Per the helper-required policy, if the helper isn't present
-	// VR users get menus only on the desktop monitor (no fallback
-	// to SCS's own overlay).
+	// When the helper is registered it owns VR overlay compositing, so
+	// skip SCS's internal SubmitOverlayFrame path. Per the
+	// helper-required policy, without the helper VR users get menus only
+	// on the desktop monitor (no fallback to SCS's own overlay).
 	if (!ImGuiVRHelperClient::IsRegistered() && globals::features::vr.IsOpenVRCompatible()) {
 		globals::features::vr.SubmitOverlayFrame();
 	}

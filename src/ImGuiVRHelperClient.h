@@ -4,23 +4,22 @@
 
 // SCS-side adapter for the standalone ImGuiVRHelper SKSE plugin.
 //
-// Phases 1-2: handshake, client registration, render the SCS ImGui
-// draw data into the helper-owned panel RTV from
+// Handles the SKSE-messaging handshake, registers SCS as a client, and
+// renders the SCS ImGui draw data into the helper-owned panel RTV from
 // OverlayRenderer::FinalizeImGuiFrame.
 //
-// Phases 3-4: when the helper is registered, the SCS-internal VR
-// overlay pipeline (SubmitOverlayFrame, ProcessVREvents, wand
-// pointing, drag, combo recording, OpenVR overlay handles) is
-// gated off. SCS forwards raw VR controller events into the helper
-// via FeedVREvent so the helper drives wand pointing, combos, and
-// overlay focus. The dead SCS code is left in place behind the
-// gate for now — a follow-up will excise it once the migration is
-// verified end-to-end.
+// When the helper is registered, the SCS-internal VR overlay pipeline
+// (SubmitOverlayFrame, ProcessVREvents, wand pointing, drag, combo
+// recording, OpenVR overlay handles) is gated off; SCS instead forwards
+// raw VR controller events into the helper via FeedVREvent so the helper
+// drives wand pointing, combos, and overlay focus. The now-unused SCS
+// overlay code is left behind the gate for now — a follow-up excises it
+// once the migration is verified end-to-end.
 //
-// Helper-required policy: if the helper isn't installed, SCS does
-// NOT fall back to its own VR overlay. VR users without the helper
-// see menus only on the desktop monitor. (See vr-imgui-helper-plan
-// in docs/development/.)
+// Helper-required policy: if the helper isn't installed, SCS does NOT
+// fall back to its own VR overlay. VR users without the helper see menus
+// only on the desktop monitor. (See vr-imgui-helper-plan in
+// docs/development/.)
 
 namespace ImGuiVRHelperClient
 {
