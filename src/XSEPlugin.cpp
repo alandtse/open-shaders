@@ -145,7 +145,7 @@ bool Load()
 		return true;
 	}
 
-	if (REL::Module::IsVR()) {
+	if (REL::Module::IsVR()) {  // Pre-ReInit check; globals::game::isVR not populated yet
 		REL::IDDatabase::get().IsVRAddressLibraryAtLeastVersion("0.207.0", true);
 	}
 
@@ -199,7 +199,7 @@ bool Load()
 	};
 
 	// Engine Fixes: VR accepts either EngineFixesVR.dll or the EngineFixes.dll NG
-	if (REL::Module::IsVR()) {
+	if (globals::game::isVR) {
 		if (!LoadLibrary(L"Data/SKSE/Plugins/EngineFixesVR.dll") && !LoadLibrary(L"Data/SKSE/Plugins/EngineFixes.dll")) {
 			pushMissingDllError("EngineFixesVR.dll or EngineFixes.dll");
 		}

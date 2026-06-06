@@ -304,7 +304,7 @@ void ScreenshotFeature::PostPostLoad()
 	// only dispatches to LoadSettings when the JSON already has a settings
 	// block, so a fresh install would skip a seed placed there. Left first so
 	// it's the initial selection (matches vanilla Skyrim VR's left-eye save).
-	if (REL::Module::IsVR()) {
+	if (globals::game::isVR) {
 		subrect.SeedDefaultPresets({
 			{ .name = "Left Eye", .uv = { 0.0f, 0.0f, 0.5f, 1.0f } },
 			{ .name = "Right Eye", .uv = { 0.5f, 0.0f, 0.5f, 1.0f } },

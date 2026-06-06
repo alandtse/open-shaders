@@ -267,7 +267,7 @@ void Deferred::StartDeferred()
 
 		ID3D11Buffer* vrBuffer = nullptr;
 
-		if (REL::Module::IsVR()) {
+		if (globals::game::isVR) {
 			static REL::Relocation<ID3D11Buffer**> VRValues{ REL::Offset(0x3180688) };
 			vrBuffer = *VRValues.get();
 		}
@@ -302,7 +302,7 @@ void Deferred::DeferredPasses()
 		ID3D11Buffer* buffers[1] = { *globals::game::perFrame };
 		ID3D11Buffer* vrBuffer = nullptr;
 
-		if (REL::Module::IsVR()) {
+		if (globals::game::isVR) {
 			static REL::Relocation<ID3D11Buffer**> VRValues{ REL::Offset(0x3180688) };
 			vrBuffer = *VRValues.get();
 		}
@@ -357,7 +357,7 @@ void Deferred::DeferredPasses()
 			albedo.SRV,                                                                                      // t1  AlbedoTexture
 			normalRoughness.SRV,                                                                             // t2  NormalRoughnessTexture
 			masks.SRV,                                                                                       // t3  MasksTexture
-			dynamicCubemaps.loaded || REL::Module::IsVR() ? Util::GetCurrentSceneDepthSRV(false) : nullptr,  // t4  DepthTexture (24/32-bit; HLSL type baked at compile via TERRAIN_BLENDING)
+			dynamicCubemaps.loaded || globals::game::isVR ? Util::GetCurrentSceneDepthSRV(false) : nullptr,  // t4  DepthTexture (24/32-bit; HLSL type baked at compile via TERRAIN_BLENDING)
 			dynamicCubemaps.loaded ? reflectance.SRV : nullptr,                                              // t5  ReflectanceTexture
 			dynamicCubemaps.loaded ? dynamicCubemaps.envTexture->srv.get() : nullptr,                        // t6  EnvTexture
 			dynamicCubemaps.loaded ? dynamicCubemaps.envReflectionsTexture->srv.get() : nullptr,             // t7  EnvReflectionsTexture
@@ -663,10 +663,10 @@ ID3D11ComputeShader* Deferred::GetComputeMainComposite()
 		if (globals::features::ibl.loaded)
 			defines.push_back({ "IBL", nullptr });
 
-		if (REL::Module::IsVR())
+		if (globals::game::isVR)
 			defines.push_back({ "FRAMEBUFFER", nullptr });
 
-		if (REL::Module::IsVR())
+		if (globals::game::isVR)
 			defines.push_back({ "VR_STEREO_OPT", nullptr });
 
 		// TERRAIN_BLENDING flips DepthTexture's HLSL type from `Texture2D<unorm float>`
@@ -696,10 +696,10 @@ ID3D11ComputeShader* Deferred::GetComputeMainCompositeInterior()
 		if (globals::features::ibl.loaded)
 			defines.push_back({ "IBL", nullptr });
 
-		if (REL::Module::IsVR())
+		if (globals::game::isVR)
 			defines.push_back({ "FRAMEBUFFER", nullptr });
 
-		if (REL::Module::IsVR())
+		if (globals::game::isVR)
 			defines.push_back({ "VR_STEREO_OPT", nullptr });
 
 		// TERRAIN_BLENDING flips DepthTexture's HLSL type from `Texture2D<unorm float>`

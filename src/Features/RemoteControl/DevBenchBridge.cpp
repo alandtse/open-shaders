@@ -198,7 +198,7 @@ namespace
 				// Don't let a remote caller enable a VR-incompatible feature on a VR runtime:
 				// it bypasses the SupportsVR() gate and can destabilize the renderer. Reject +
 				// report (covers both an explicit enable and an implicit flip resolving to true).
-				if (applied && REL::Module::IsVR() && !target->SupportsVR()) {
+				if (applied && globals::game::isVR && !target->SupportsVR()) {
 					if (auto* dvb = DevBenchAPI::GetDevBenchInterface001()) {
 						const std::string payload = json{ { "shortName", shortName }, { "error", "feature does not support VR; enable rejected" } }.dump();
 						dvb->EmitEvent("openshaders.feature.changed", payload.c_str());
@@ -292,7 +292,7 @@ namespace
 			return json{
 				{ "plugin", "CommunityShaders" },
 				{ "frame_count", EnqueuedFrame() },
-				{ "vr", REL::Module::IsVR() },
+				{ "vr", globals::game::isVR },
 			};
 		}
 		if (kind == "shadercache") {

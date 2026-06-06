@@ -59,7 +59,7 @@ void VR::DrawStereoBlend()
 {
 	bool vrStereoOptActive = IsStereoOptimizationCullingReady();
 
-	if (!REL::Module::IsVR() || !stereoBlendCopyTex || !stereoBlendCB)
+	if (!globals::game::isVR || !stereoBlendCopyTex || !stereoBlendCB)
 		return;
 
 	// Modes 4/5 visualize the overwrite path (mode classification, POM depth) without requiring

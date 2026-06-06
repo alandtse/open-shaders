@@ -613,10 +613,10 @@ void ScreenSpaceGI::CompileComputeShaders()
 			{ &upsampleCompute, "upsample.cs.hlsl", {} },
 		};
 
-	if (REL::Module::IsVR())
+	if (globals::game::isVR)
 		shaderInfos.push_back({ &stereoSyncCompute, "stereoSync.cs.hlsl", { { "FRAMEBUFFER", "" } } });
 	for (auto& info : shaderInfos) {
-		if (REL::Module::IsVR())
+		if (globals::game::isVR)
 			info.defines.push_back({ "VR", "" });
 		if (settings.ResolutionMode == 1)
 			info.defines.push_back({ "HALF_RES", "" });
@@ -654,13 +654,13 @@ void ScreenSpaceGI::UpdateSB()
 
 	SSGICB data;
 	{
-		for (int eyeIndex = 0; eyeIndex < (1 + REL::Module::IsVR()); ++eyeIndex) {
+		for (int eyeIndex = 0; eyeIndex < (1 + globals::game::isVR); ++eyeIndex) {
 			auto eye = Util::GetCameraData(eyeIndex);
 
 			data.PrevInvViewMat[eyeIndex] = prevInvView[eyeIndex];
 			data.NDCToViewMul[eyeIndex] = { 2.0f / eye.projMat(0, 0), -2.0f / eye.projMat(1, 1) };
 			data.NDCToViewAdd[eyeIndex] = { -1.0f / eye.projMat(0, 0), 1.0f / eye.projMat(1, 1) };
-			if (REL::Module::IsVR())
+			if (globals::game::isVR)
 				data.NDCToViewMul[eyeIndex].x *= 2;
 
 			prevInvView[eyeIndex] = eye.viewMat.Invert();
@@ -913,7 +913,7 @@ void ScreenSpaceGI::DrawSSGI()
 
 	// VR stereo sync: bilateral blend of SSGI buffers between eyes
 	// Shi, Billeter, Eisemann 2022, "Stereo-consistent screen-space ambient occlusion"
-	if (REL::Module::IsVR() && stereoSyncCompute) {
+	if (globals::game::isVR && stereoSyncCompute) {
 		TracyD3D11Zone(globals::state->tracyCtx, "SSGI - Stereo Sync");
 
 		if (globals::state->frameAnnotations)

@@ -404,7 +404,7 @@ LightLimitFix::PerFrame LightLimitFix::GetCommonBufferData()
 void LightLimitFix::SetupResources()
 {
 	auto screenSize = globals::state->screenSize;
-	if (REL::Module::IsVR())
+	if (globals::game::isVR)
 		screenSize.x *= .5;
 	clusterSize[0] = ((uint)screenSize.x + 63) / 64;
 	clusterSize[1] = ((uint)screenSize.y + 63) / 64;
@@ -413,7 +413,7 @@ void LightLimitFix::SetupResources()
 
 	{
 		std::vector<std::pair<const char*, const char*>> clusterDefines;
-		if (REL::Module::IsVR())
+		if (globals::game::isVR)
 			clusterDefines = { { "VR", "" } };
 		clusterBuildingCS = (ID3D11ComputeShader*)Util::CompileShader(L"Data\\Shaders\\LightLimitFix\\ClusterBuildingCS.hlsl", clusterDefines, "cs_5_0");
 		clusterCullingCS = (ID3D11ComputeShader*)Util::CompileShader(L"Data\\Shaders\\LightLimitFix\\ClusterCullingCS.hlsl", clusterDefines, "cs_5_0");
@@ -847,7 +847,7 @@ void LightLimitFix::ClearShaderCache()
 		clusterCullingCS = nullptr;
 	}
 	std::vector<std::pair<const char*, const char*>> clusterDefines;
-	if (REL::Module::IsVR())
+	if (globals::game::isVR)
 		clusterDefines = { { "VR", "" } };
 	clusterBuildingCS = (ID3D11ComputeShader*)Util::CompileShader(L"Data\\Shaders\\LightLimitFix\\ClusterBuildingCS.hlsl", clusterDefines, "cs_5_0");
 	clusterCullingCS = (ID3D11ComputeShader*)Util::CompileShader(L"Data\\Shaders\\LightLimitFix\\ClusterCullingCS.hlsl", clusterDefines, "cs_5_0");
@@ -1150,7 +1150,7 @@ void LightLimitFix::UpdateStructure()
 	lightsFar = *globals::game::cameraFar;
 
 	auto renderSize = Util::ConvertToDynamic(globals::state->screenSize);
-	if (REL::Module::IsVR())
+	if (globals::game::isVR)
 		renderSize.x *= .5;
 	clusterSize[0] = ((uint)renderSize.x + 63) / 64;
 	clusterSize[1] = ((uint)renderSize.y + 63) / 64;

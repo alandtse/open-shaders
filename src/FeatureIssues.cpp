@@ -787,7 +787,7 @@ namespace FeatureIssues
 					}
 
 					// Skip VR feature when not in VR mode (it's a core feature)
-					if (featureName == "VR" && !REL::Module::IsVR()) {
+					if (featureName == "VR" && !globals::game::isVR) {
 						logger::info("Ignoring VR.ini in non-VR mode");
 						continue;
 					}

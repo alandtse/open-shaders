@@ -166,7 +166,7 @@ void PerfMode::MaybeBlitMenuBG(uint32_t boundRTIdx)
 
 void PerfMode::InstallCreateRTThunks()
 {
-	if (!REL::Module::IsVR())
+	if (!globals::game::isVR)
 		return;
 	auto vrBase = REL::RelocationID(100458, 107175).address();
 	stl::write_thunk_call<CreateRT_MenuBG_Hook>(vrBase + 0x6cc);

@@ -954,7 +954,7 @@ namespace Hooks
 	 */
 	void Install()
 	{
-		if (!REL::Module::IsVR()) {
+		if (!globals::game::isVR) {
 			logger::info("Hooking BSImageSpace::Init::IBLF");
 			stl::detour_thunk<BSImageSpace_Init_IBLF>(REL::RelocationID(100480, 107198));
 		}
@@ -1034,7 +1034,7 @@ namespace Hooks
 			if (REL::Module::IsAE()) {
 				std::uint8_t patch[] = { 0x41, 0x83, 0xE7, 0x00 };  // and r15d, 0
 				REL::safe_write(setupGeometryUpdateRenderSpace + 0x71, patch, sizeof(patch));
-			} else if (REL::Module::IsVR()) {
+			} else if (globals::game::isVR) {
 				std::uint8_t patch[] = { 0x41, 0x83, 0xE4, 0x00 };  // and r12d, 0
 				REL::safe_write(setupGeometryUpdateRenderSpace + 0x65, patch, sizeof(patch));
 			} else {
@@ -1068,6 +1068,6 @@ namespace Hooks
 		}
 
 		logger::info("Hooking CreateDXGIFactory");
-		*(uintptr_t*)&ptrCreateDXGIFactory = SKSE::PatchIAT(hk_CreateDXGIFactory, "dxgi.dll", !REL::Module::IsVR() ? "CreateDXGIFactory" : "CreateDXGIFactory1");
+		*(uintptr_t*)&ptrCreateDXGIFactory = SKSE::PatchIAT(hk_CreateDXGIFactory, "dxgi.dll", !globals::game::isVR ? "CreateDXGIFactory" : "CreateDXGIFactory1");
 	}
 }

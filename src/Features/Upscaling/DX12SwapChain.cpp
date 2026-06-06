@@ -37,7 +37,7 @@ void DX12SwapChain::CreateSwapChain(IDXGIAdapter* adapter, DXGI_SWAP_CHAIN_DESC 
 	// Runtime format negotiation for swap chain
 	DXGI_FORMAT attemptedFormat = DXGI_FORMAT_R10G10B10A2_UNORM;
 	DXGI_FORMAT negotiatedFormat = DXGI_FORMAT_R10G10B10A2_UNORM;
-	bool isVR = REL::Module::IsVR();
+	bool isVR = globals::game::isVR;
 	bool fallbackUsed = false;
 
 	// Test R10G10B10A2 support (applies to both VR and non-VR for HDR capability)

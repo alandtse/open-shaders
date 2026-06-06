@@ -234,6 +234,7 @@ public:
 
 		float FontSize = ThemeManager::Constants::DEFAULT_FONT_SIZE;
 		std::string FontName = "Jost/Jost-Regular.ttf";         // Default font file name (legacy)
+		// Keep raw runtime check for ctor-time default before globals::ReInit().
 		float GlobalScale = REL::Module::IsVR() ? -0.5f : 0.f;  // exponential
 		std::array<FontRoleSettings, static_cast<size_t>(FontRole::Count)> FontRoles = []() {
 			std::array<FontRoleSettings, static_cast<size_t>(FontRole::Count)> roles{};
