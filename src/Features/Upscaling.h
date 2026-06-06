@@ -73,12 +73,10 @@ public:
 		bool reflexUseFPSLimit = false;
 		float reflexFPSLimit = 60.0f;
 
-		// VR PerfMode: opt-in. When set, BSShaderRenderTargets::Create installs
-		// the BSOpenVR render-target-size hook at engine init so the entire
-		// engine pipeline allocates render targets at upscaled-render resolution
-		// instead of display resolution. Saves VRAM/bandwidth proportional to
-		// the quality-mode scale ratio. Requires a game restart to take effect.
-		bool renderAtUpscaleRes = false;
+		// VR PerfMode auto-lock (default on): allocate engine render targets at upscaled-render
+		// resolution to bank VRAM/bandwidth. Boot-locked (changing it re-allocates RTs at world load).
+		// Engages only when ShouldEngagePerfMode() holds; a no-op otherwise (see GetUpscaleMethod area).
+		bool renderAtUpscaleRes = true;
 	};
 
 	Settings settings;
@@ -139,7 +137,24 @@ public:
 	// Feature interface overrides
 	std::span<const Util::Settings::RestartFieldInfo> GetRestartRequiredFields() const override
 	{
-		return { kRestartFields.data(), kRestartFields.size() };
+		// While PerfMode is engaged the engine RTs are sized for qualityMode/upscaleMethod, so both
+		// are boot-locked; off, they switch live. renderAtUpscaleRes is boot-locked only when the
+		// other prerequisites could make toggling it engage PerfMode (else it's a no-op).
+		if (perfMode.IsHookActive())
+			return { kRestartFields.data(), kRestartFields.size() };
+		const bool gateRenderAtUpscaleRes = PerfModePrerequisitesMet();
+		// static thread_local: storage must outlive the returned span; callers consume it on the
+		// same thread before the next call.
+		static thread_local std::vector<Util::Settings::RestartFieldInfo> scratch;
+		scratch.clear();
+		for (const auto& f : kRestartFields) {
+			if (f.offset == offsetof(Settings, qualityMode) || f.offset == offsetof(Settings, upscaleMethod))
+				continue;
+			if (f.offset == offsetof(Settings, renderAtUpscaleRes) && !gateRenderAtUpscaleRes)
+				continue;
+			scratch.push_back(f);
+		}
+		return { scratch.data(), scratch.size() };
 	}
 	const void* GetBootValue(std::string_view jsonKey) const override { return bootSnapshot.RawBoot(jsonKey); }
 	const void* GetSettingsBlob() const override { return &settings; }
@@ -161,6 +176,15 @@ public:
 	virtual void SetupResources() override;
 
 	UpscaleMethod GetUpscaleMethod() const;
+
+	// PerfMode can bank render resolution only in VR, with an upscale method that redirects its
+	// output to a separate display-res target (DLSS/FSR — TAA/None can't), and a preset below 1.0x
+	// (Native AA banks nothing). Prerequisites = everything except the renderAtUpscaleRes opt-in;
+	// ShouldEngagePerfMode = prerequisites AND the opt-in. Read from persisted settings, so both are
+	// valid at hook-install time (before perfMode.IsHookActive() flips). Single gate for Hooks.cpp,
+	// Globals.cpp, and restart-field reporting — keep callers from re-deriving and drifting.
+	bool PerfModePrerequisitesMet() const;
+	bool ShouldEngagePerfMode() const;
 
 	/// Render-to-display scale ratio for a quality mode index
 	/// (1=Quality, 2=Balanced, 3=Performance, 4=UltraPerformance).

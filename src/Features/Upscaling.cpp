@@ -336,7 +336,7 @@ void Upscaling::DrawSettings()
 			}
 		}
 
-		// VR PerfMode: opt-in performance feature. Lives in the main
+		// VR PerfMode: on-by-default performance feature. Lives in the main
 		// upscaler section (not Backend Diagnostics) so users discover it
 		// alongside the rest of the upscaler controls. Restart-gated —
 		// the BSOpenVR size hook reads this at world load and sizes every
@@ -356,23 +356,29 @@ void Upscaling::DrawSettings()
 			ImGui::Checkbox("Render engine at upscaled resolution", &settings.renderAtUpscaleRes);
 			if (!methodSupportsPerf)
 				ImGui::EndDisabled();
-			// Hover tooltip always renders (so users learn what the option does
-			// even when greyed out). The pending-restart banner only fires when
-			// DLSS is the active upscaler -- the feature can't take effect
-			// otherwise, so a "pending restart" hint there would mislead.
+			// Hover tooltip always renders (so users learn what the option does even when greyed out).
+			// The pending-restart banner fires only when DLSS or FSR is the active upscaler — the
+			// feature can't take effect otherwise, so a "pending restart" hint there would mislead.
 			if (auto _tt = Util::HoverTooltipWrapper()) {
 				ImGui::Text(
-					"When enabled, the engine pipeline allocates render targets at the upscaled-render\n"
-					"resolution instead of the HMD display resolution. The upscaler (DLSS or FSR) writes\n"
+					"On by default. The engine pipeline allocates render targets at the upscaled-render\n"
+					"resolution instead of the HMD display resolution; the upscaler (DLSS or FSR) writes\n"
 					"its output to a private DisplayRes texture. Substantial VRAM and bandwidth savings,\n"
 					"especially at high HMD resolutions.\n"
 					"\n"
-					"Requires DLSS or FSR. Toggling this option requires a game restart to take effect.\n"
-					"While active, Method and Upscale Preset changes also require a restart;\n"
-					"sharpness / model preset / Reflex remain live.");
+					"Locked to the Upscale Preset selected at launch: changing the preset (or this\n"
+					"toggle) takes effect after a game restart. At Native AA (1.0x) there is no\n"
+					"render-res reduction, so the lock stays off and preset changes apply live.\n"
+					"\n"
+					"Requires DLSS or FSR. Sharpness / model preset / Reflex remain live.");
 			}
 			if (!methodSupportsPerf && settings.renderAtUpscaleRes)
 				Util::Text::Disabled("Render-at-upscaled-resolution requires DLSS or FSR — switch upscaler Method to activate.");
+			// At Native AA (1x) there's nothing to bank, so the size hook stays dormant even while
+			// checked — surface the no-op rather than implying the toggle does something.
+			if (methodSupportsPerf && settings.renderAtUpscaleRes &&
+				GetQualityModeRatio(settings.qualityMode) <= 1.0f)
+				Util::Text::Disabled("No effect at Native AA (1x) — renders at full resolution; raise the Upscale Preset to engage.");
 			if (methodSupportsPerf)
 				Util::UI::DrawSettingDiff(bootSnapshot, settings, &Settings::renderAtUpscaleRes);
 		}
@@ -917,6 +923,20 @@ Upscaling::UpscaleMethod Upscaling::GetUpscaleMethod() const
 	if (streamline.featureDLSS)
 		return (UpscaleMethod)settings.upscaleMethod;
 	return (UpscaleMethod)settings.upscaleMethodNoDLSS;
+}
+
+bool Upscaling::PerfModePrerequisitesMet() const
+{
+	const auto method = GetUpscaleMethod();
+	const bool methodRedirectsOutput = method == UpscaleMethod::kDLSS || method == UpscaleMethod::kFSR;
+	// >1.0x: a sub-display render res to bank. Native AA (1.0x) banks nothing.
+	return globals::game::isVR && methodRedirectsOutput &&
+	       GetQualityModeRatio(settings.qualityMode) > 1.0f;
+}
+
+bool Upscaling::ShouldEngagePerfMode() const
+{
+	return settings.renderAtUpscaleRes && PerfModePrerequisitesMet();
 }
 
 void Upscaling::CreateUpscalingTextureResources(UpscaleMethod a_upscalemethod)

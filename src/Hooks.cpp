@@ -398,27 +398,10 @@ struct BSShaderRenderTargets_Create
 		// can diff "active at boot" vs "selected".
 		globals::features::upscaling.bootSnapshot.LatchIfNeeded(globals::features::upscaling.settings);
 
-		// PerfMode: install the BSOpenVR render-target-size hook before the
-		// engine creates its render targets. This is the only place where
-		// BSOpenVR is guaranteed available AND we can still influence RT
-		// allocation. Gated on user opt-in via Upscaling::Settings AND on
-		// the resolved upscale path being one that can write its output to
-		// a separate displayRes target (DLSS via Streamline, FSR via
-		// FidelityFX). TAA/NONE have no upscale output to redirect, and a
-		// stale config can leave renderAtUpscaleRes=true after the user
-		// switched methods or after DLSS becomes unsupported on this GPU.
-		const auto resolvedUpscaleMethod = globals::features::upscaling.GetUpscaleMethod();
-		const bool methodSupportsPerfMode =
-			resolvedUpscaleMethod == Upscaling::UpscaleMethod::kDLSS ||
-			resolvedUpscaleMethod == Upscaling::UpscaleMethod::kFSR;
-		const bool dlssperfShouldRun =
-			globals::game::isVR &&
-			globals::features::upscaling.settings.renderAtUpscaleRes &&
-			methodSupportsPerfMode;
-
-		if (dlssperfShouldRun) {
+		// PerfMode: install the BSOpenVR render-target-size hook before the engine creates its render
+		// targets — the one place BSOpenVR is available and we can still influence RT allocation.
+		if (globals::features::upscaling.ShouldEngagePerfMode())
 			globals::features::upscaling.perfMode.InstallRenderTargetSizeHook();
-		}
 
 		// Open PerfMode's enlarge window across the engine's Create() so
 		// its 3 per-site thunks override props for the displayRes RTs.

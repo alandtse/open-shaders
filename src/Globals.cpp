@@ -415,15 +415,10 @@ namespace globals
 			stl::detour_vfunc<53, ID3D11DeviceContext_ClearDepthStencilView>(a_context);
 		}
 
-		// Scene-fade overlay Draw(30) detour — only useful when PerfMode will
-		// actually go active. The hook's thunk already early-outs on
-		// VertexCount != 30 || !hookActive, but skipping the vtable patch
-		// entirely when the user has PerfMode off avoids a foreign-interop
-		// surface other context-vfunc hookers could trip on. Gated by the
-		// persisted intent, not IsHookActive(), because the hook is installed
-		// here at D3D init time while IsHookActive() only flips true later
-		// inside BSShaderRenderTargets::Create.
-		if (globals::game::isVR && globals::features::upscaling.settings.renderAtUpscaleRes)
+		// Scene-fade overlay Draw(30) detour — skip the vtable patch unless PerfMode will actually
+		// engage, to avoid a foreign-interop surface for other context-vfunc hookers. Same gate as the
+		// size hook (ShouldEngagePerfMode), evaluated here at D3D init before IsHookActive() flips.
+		if (globals::features::upscaling.ShouldEngagePerfMode())
 			globals::features::upscaling.perfMode.InstallFadeOverlayHook(a_context);
 	}
 }
