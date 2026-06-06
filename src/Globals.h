@@ -151,7 +151,7 @@ namespace globals
 		FrameBufferVR vr;
 
 		// Helper functions for VR-agnostic access to eye 0 (or single eye).
-		// Keep REL::Module::IsVR() in this header block to avoid relying on game::isVR declaration order.
+		// Keep raw module VR checks in this header block to avoid relying on game::isVR declaration order.
 		const Matrix& GetCameraView(uint32_t eyeIndex = 0) const
 		{
 			return REL::Module::IsVR() ? vr.CameraView[eyeIndex] : nonVR.CameraView;
