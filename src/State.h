@@ -261,6 +261,11 @@ public:
 		float4 HDRData;                   // xyz + menu scene encoding in w — see HDRDisplay::GetSharedDataHDR
 	};
 	STATIC_ASSERT_ALIGNAS_16(SharedDataCB);
+	// Each float4 cbuffer field must start on a 16-byte boundary to match the HLSL SharedData
+	// layout — a stray scalar inserted above would silently shift these and corrupt shader reads.
+	static_assert(offsetof(SharedDataCB, VRFoveationData0) % 16 == 0);
+	static_assert(offsetof(SharedDataCB, VRFoveationCenterOffsets) % 16 == 0);
+	static_assert(offsetof(SharedDataCB, HDRData) % 16 == 0);
 
 	ConstantBuffer* sharedDataCB = nullptr;
 	ConstantBuffer* featureDataCB = nullptr;
