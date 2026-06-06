@@ -3,13 +3,6 @@
 #include "Buffer.h"
 #include "Utils/BootSnapshot.h"
 
-class MenuOpenCloseEventHandler : public RE::BSTEventSink<RE::MenuOpenCloseEvent>
-{
-public:
-	virtual RE::BSEventNotifyControl ProcessEvent(const RE::MenuOpenCloseEvent* a_event, RE::BSTEventSource<RE::MenuOpenCloseEvent>* a_eventSource);
-	static bool Register();
-};
-
 struct DynamicCubemaps : Feature
 {
 public:
@@ -160,6 +153,7 @@ public:
 
 	virtual void SetupResources() override;
 	virtual void Reset() override;
+	virtual void OnSceneTransitionReset(bool opening) override;
 
 	virtual void SaveSettings(json&) override;
 	virtual void LoadSettings(json&) override;

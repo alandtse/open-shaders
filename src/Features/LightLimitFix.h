@@ -245,6 +245,7 @@ public:
 
 	virtual void SetupResources() override;
 	virtual void Reset() override;
+	virtual void OnSceneTransitionReset(bool opening) override;
 
 	virtual void LoadSettings(json& o_json) override;
 	virtual void SaveSettings(json& o_json) override;
