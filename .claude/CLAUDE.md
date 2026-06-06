@@ -39,7 +39,7 @@ powershell.exe -Command "./BuildRelease.bat [PRESET_NAME]"
 -   `VR` - Skyrim VR only (compile-time targeting)
 -   `PRE-AE` - SE + VR (excludes AE)
 -   `FLATRIM` - SE + AE (excludes VR)
--   `ALL-TRACY` - Universal binary with Tracy profiler support enabled
+-   Tracy profiling is not a separate preset — add `-DTRACY_SUPPORT=ON` to any preset (e.g. `ALL`)
 
 **User Preset Template**:
 
@@ -423,7 +423,7 @@ Feature versions are automatically extracted from `.ini` files and compiled into
 
 -   **Justify at the PR level, not per commit.** A PR whose point is a speedup — shipped as `perf:`, or a `feat:`/`refactor:` justified by performance — states the measured before/after in its description. The PR as a whole earns the claim; individual commits don't each need a number.
 -   **Normalize to the frame budget; don't quote raw deltas.** Express cost/saving as a percent of the target frame (90 fps ≈ 11.1 ms; flatrim 60 fps ≈ 16.7 ms). A percent stays meaningful even when the present rate is throttled — SteamVR drops to ~10 fps with the HMD off, so wall-clock frame time is unreliable, but per-pass GPU cost and its share of the budget are not. A raw "−2 ms" doesn't say whether it mattered.
--   **GPU per-pass cost (primary signal):** build the `ALL-TRACY` preset (`TRACY_SUPPORT=ON`), connect Tracy (server port 8086), and read the pass's GPU zone; wrap a new pass in `tracy::D3D11ZoneScope` if it isn't already instrumented.
+-   **GPU per-pass cost (primary signal):** configure any preset with `-DTRACY_SUPPORT=ON` (e.g. `cmake --preset ALL -DTRACY_SUPPORT=ON`), connect Tracy (server port 8086), and read the pass's GPU zone; wrap a new pass in `tracy::D3D11ZoneScope` if it isn't already instrumented.
 -   **A/B a feature:** toggle it (in-game menu, or devbench `openshaders.feature`), capture the same scene and camera both ways, and diff the zone times with scene, resolution, and upscaler held fixed.
 -   **No-op shader refactors:** prove with `tools/verify-shader-refactor.ps1` (bytecode-identical = provable no-op); for legitimate op-reordering use the runtime A/B harness `tools/taa-renderdoc-ab.py`.
 -   A micro-optimization you can't isolate on the bench → label it `refactor:`, not `perf:`.
