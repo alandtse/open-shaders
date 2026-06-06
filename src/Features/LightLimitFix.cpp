@@ -1,6 +1,7 @@
 #include "LightLimitFix.h"
 #include "Features/InverseSquareLighting/Common.h"
 #include "Features/LightLimitFix/SettingsSanitize.h"
+#include "Features/LightLimitFix/ShadowCasterMath.h"
 #include "Globals.h"
 #include "InverseSquareLighting.h"
 #include "LinearLighting.h"
@@ -1213,11 +1214,60 @@ void LightLimitFix::UpdateStructure()
 	context->CSSetUnorderedAccessViews(0, 3, null_uavs, nullptr);
 }
 
+namespace
+{
+	// SEH-guarded read of sceneLights[0]->light. The pointer-value plausibility
+	// check can't distinguish a live BSLight from a stale-but-canonical one, so
+	// reading dirLight->light can itself AV (#92). Treat any fault as "no NiLight"
+	// so the caller skips the engine's null-deref path instead of crashing in the
+	// guard. Kept in its own function (no C++ unwinding objects) per MSVC's __try
+	// restriction. Matches the __except(1) AV-guard pattern used elsewhere here.
+	RE::NiLight* SafeReadDirectionalNiLight(RE::BSLight* dirLight)
+	{
+#if defined(_MSC_VER)
+		__try {
+			return dirLight->light.get();
+		} __except (1) {
+			return nullptr;
+		}
+#else
+		return dirLight->light.get();
+#endif
+	}
+}
+
 void LightLimitFix::Hooks::BSLightingShader_SetupGeometry::thunk(RE::BSShader* This, RE::BSRenderPass* Pass, uint32_t RenderFlags)
 {
+	// Engine derefs sceneLights[0]->light with no null check -> CTD on a null/
+	// stale directional slot (#92). Skip the engine call when it isn't safe;
+	// clamping numLights (sibling guard) can't help -- slot 0 is always read.
+	bool directionalSlotSafe = true;
+	if (Pass) {
+		using ShadowCasterManager::IsPlausibleShadowLightPtr;
+		RE::BSLight* dirLight = (Pass->numLights > 0 && Pass->sceneLights) ? Pass->sceneLights[0] : nullptr;
+		// A stale-but-canonical dirLight passes the pointer-value check yet still AVs on
+		// dirLight->light, so capture the NiLight under SEH and reuse it below (no second deref).
+		RE::NiLight* niLight = IsPlausibleShadowLightPtr(reinterpret_cast<std::uintptr_t>(dirLight)) ? SafeReadDirectionalNiLight(dirLight) : nullptr;
+		if (Pass->numLights == 0 || !IsPlausibleShadowLightPtr(reinterpret_cast<std::uintptr_t>(niLight))) {
+			directionalSlotSafe = false;
+			static int logged = 0;
+			if (logged++ < 10) {
+				logger::warn(
+					"[LLF] BSLightingShader_SetupGeometry: directional sceneLights[0] unsafe "
+					"(numLights={} BSLight=0x{:x} NiLight=0x{:x}); skipping engine SetupGeometry "
+					"to avoid GeometrySetupConstantDirectionalLight null-deref (#92)",
+					Pass->numLights,
+					reinterpret_cast<std::uintptr_t>(dirLight),
+					reinterpret_cast<std::uintptr_t>(niLight));
+			}
+		}
+	}
+
+	// Run before/after even on skip so the strict-light CB is reset, not stale.
 	auto& singleton = globals::features::lightLimitFix;
 	singleton.BSLightingShader_SetupGeometry_Before(Pass);
-	func(This, Pass, RenderFlags);
+	if (directionalSlotSafe)
+		func(This, Pass, RenderFlags);
 	singleton.BSLightingShader_SetupGeometry_After(Pass);
 }
 
@@ -1240,14 +1290,11 @@ void LightLimitFix::Hooks::BSEffectShader_SetupGeometry::thunk(RE::BSShader* Thi
 	// Entries failing either check stop the loop; the engine's own loop
 	// bails on the first bad entry too, so clamping matches its contract.
 	if (Pass && Pass->sceneLights && Pass->numLights > 0) {
-		const auto isPlausible = [](const void* p) {
-			const auto v = reinterpret_cast<std::uintptr_t>(p);
-			return v >= 0x10000 && v < 0x800000000000ull && (v & 0x7) == 0;
-		};
+		using ShadowCasterManager::IsPlausibleShadowLightPtr;
 		std::uint8_t validCount = 0;
 		for (std::uint8_t i = 0; i < Pass->numLights; ++i) {
 			RE::BSLight* bsLight = Pass->sceneLights[i];
-			if (!isPlausible(bsLight)) {
+			if (!IsPlausibleShadowLightPtr(reinterpret_cast<std::uintptr_t>(bsLight))) {
 				static int loggedBsLight = 0;
 				if (loggedBsLight++ < 10) {
 					logger::warn(
@@ -1258,7 +1305,7 @@ void LightLimitFix::Hooks::BSEffectShader_SetupGeometry::thunk(RE::BSShader* Thi
 				break;
 			}
 			RE::NiLight* niLight = bsLight->light.get();
-			if (!isPlausible(niLight)) {
+			if (!IsPlausibleShadowLightPtr(reinterpret_cast<std::uintptr_t>(niLight))) {
 				// Catches both NULL (engine cleared the NiPointer) and
 				// garbage (BSLight memory recycled). NULL is the more common
 				// observed failure -- the engine's loop has no null check
