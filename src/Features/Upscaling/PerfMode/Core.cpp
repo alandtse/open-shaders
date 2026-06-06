@@ -15,6 +15,19 @@ void PerfMode::SetupResources()
 	if (!globals::game::isVR)
 		return;
 
+	// Fail closed: drop prior resolution-dependent resources before (re)allocating, so an early
+	// return below leaves clean nulls, not stale handles that no longer match the new RT layout.
+	// Persistent layout-independent resources (downscale/blit shaders, sampler) are left intact.
+	postPipelineReady = false;
+	testTexture = nullptr;
+	testTextureSRV = nullptr;
+	testTextureUAV = nullptr;
+	testTextureRTV = nullptr;
+	refraTempTex = nullptr;
+	refraTempSRV = nullptr;
+	fakeDS = nullptr;
+	fakeDSV = nullptr;
+
 	auto renderer = globals::game::renderer;
 	auto& mainRT = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMAIN];
 	if (!mainRT.texture) {

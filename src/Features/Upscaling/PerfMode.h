@@ -141,7 +141,7 @@ private:
 
 	private:
 		ID3D11DeviceContext* ctx = nullptr;
-		ID3D11RenderTargetView* savedRTV = nullptr;
+		ID3D11RenderTargetView* savedRTV[D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT] = {};
 		ID3D11DepthStencilView* savedDSV = nullptr;
 		UINT numVP = D3D11_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE;
 		D3D11_VIEWPORT savedVP[D3D11_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE] = {};

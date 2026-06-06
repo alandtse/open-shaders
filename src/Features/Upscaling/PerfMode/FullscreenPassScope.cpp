@@ -1,19 +1,10 @@
 #include "../PerfMode.h"
 
-#include <algorithm>
-#include <cmath>
-
-#include "../../../State.h"
-#include "../../Upscaling.h"
-
-// Quality mode -> render-scale resolution is supplied by the FFX SDK helper
-// (same one Upscaling.cpp uses), avoiding a duplicate scale table here.
-#include <FidelityFX/host/ffx_fsr3.h>
-
 PerfMode::FullscreenPassScope::FullscreenPassScope(ID3D11DeviceContext* a_context) :
 	ctx(a_context)
 {
-	ctx->OMGetRenderTargets(1, &savedRTV, &savedDSV);
+	// Save all MRT slots, not just slot 0 — a caller may enter with multiple RTVs bound.
+	ctx->OMGetRenderTargets(D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT, savedRTV, &savedDSV);
 	ctx->RSGetViewports(&numVP, savedVP);
 	ctx->OMGetBlendState(&savedBlend, savedBlendFactor, &savedSampleMask);
 	ctx->OMGetDepthStencilState(&savedDSState, &savedStencilRef);
@@ -40,7 +31,7 @@ PerfMode::FullscreenPassScope::~FullscreenPassScope()
 	ctx->PSSetShaderResources(0, 1, nullSRV);
 	ctx->PSSetShaderResources(0, 1, &savedSRV0);
 
-	ctx->OMSetRenderTargets(1, &savedRTV, savedDSV);
+	ctx->OMSetRenderTargets(D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT, savedRTV, savedDSV);
 	if (numVP > 0)
 		ctx->RSSetViewports(numVP, savedVP);
 	ctx->OMSetBlendState(savedBlend, savedBlendFactor, savedSampleMask);
@@ -57,8 +48,10 @@ PerfMode::FullscreenPassScope::~FullscreenPassScope()
 	ctx->IASetIndexBuffer(savedIB, savedIBFormat, savedIBOffset);
 	ctx->IASetPrimitiveTopology(savedTopology);
 
-	if (savedRTV)
-		savedRTV->Release();
+	for (auto*& rtv : savedRTV) {
+		if (rtv)
+			rtv->Release();
+	}
 	if (savedDSV)
 		savedDSV->Release();
 	if (savedBlend)

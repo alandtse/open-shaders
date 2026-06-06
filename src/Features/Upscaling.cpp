@@ -356,10 +356,9 @@ void Upscaling::DrawSettings()
 			ImGui::Checkbox("Render engine at upscaled resolution", &settings.renderAtUpscaleRes);
 			if (!methodSupportsPerf)
 				ImGui::EndDisabled();
-			// Hover tooltip always renders (so users learn what the option does
-			// even when greyed out). The pending-restart banner only fires when
-			// DLSS is the active upscaler -- the feature can't take effect
-			// otherwise, so a "pending restart" hint there would mislead.
+			// Hover tooltip always renders (so users learn what the option does even when greyed out).
+			// The pending-restart banner fires only when DLSS or FSR is the active upscaler — the
+			// feature can't take effect otherwise, so a "pending restart" hint there would mislead.
 			if (auto _tt = Util::HoverTooltipWrapper()) {
 				ImGui::Text(
 					"On by default. The engine pipeline allocates render targets at the upscaled-render\n"
