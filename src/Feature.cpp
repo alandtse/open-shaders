@@ -314,8 +314,12 @@ void Feature::DrainSceneTransitions()
 	static std::atomic<bool> registered{ false };
 	if (!registered.load(std::memory_order_acquire)) {
 		if (auto* ui = globals::game::ui) {
-			ui->GetEventSource<RE::MenuOpenCloseEvent>()->AddEventSink(SceneTransitionSink::GetSingleton());
-			registered.store(true, std::memory_order_release);
+			// GetEventSource can be null before the UI is fully up; leave registered=false and retry
+			// next frame rather than dereferencing it.
+			if (auto* source = ui->GetEventSource<RE::MenuOpenCloseEvent>()) {
+				source->AddEventSink(SceneTransitionSink::GetSingleton());
+				registered.store(true, std::memory_order_release);
+			}
 		}
 	}
 
