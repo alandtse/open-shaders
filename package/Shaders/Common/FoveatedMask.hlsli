@@ -61,10 +61,19 @@ float FoveatedComputeMaskDistance(float2 eyeUv, float centerScale, float centerH
 	float2 centerUv = FoveatedComputeCenterUV(centerOffset);
 	float2 normalized = (eyeUv - centerUv) / radii;
 	float2 absoluteNormalized = abs(normalized);
+#if FOVEATED_MASK_SHAPE_POWER == 4
+	// Squircle fast path: pow(t,4) == (t*t)^2 and pow(sum,1/4) == sqrt(sqrt(sum)),
+	// so the default shape avoids three transcendental pow() calls per pixel in
+	// the SSR path that is explicitly trying to save GPU time.
+	float2 sq = absoluteNormalized * absoluteNormalized;
+	float pNorm = sq.x * sq.x + sq.y * sq.y;
+	return sqrt(sqrt(max(pNorm, 0.0)));
+#else
 	float shapePower = max((float)FOVEATED_MASK_SHAPE_POWER, 1.0);
 	float invShapePower = 1.0 / shapePower;
 	float pNorm = pow(absoluteNormalized.x, shapePower) + pow(absoluteNormalized.y, shapePower);
 	return pow(max(pNorm, 0.0), invShapePower);
+#endif
 }
 
 float FoveatedComputeCenterBlendWeight(float2 eyeUv, float centerScale, float centerFeather, float centerHorizontalScale, float2 centerOffset)
