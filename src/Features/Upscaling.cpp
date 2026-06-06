@@ -810,12 +810,13 @@ struct BSImageSpace_Init_FXAA
 };
 
 #ifdef TRACY_ENABLE
+#	include <optional>
 // Diagnostic GPU zone around the engine SSR raymarch DRAW, bracketed by the shader's PreRender
 // (0x0A) / PostRender (0x0B) vfuncs — the correct hook points, stable on SE/AE/VR (see commit message).
 static constexpr tracy::SourceLocationData kSSRZoneSrcLoc{ "SSR ReflectionsRayTracing", "ISReflectionsRayTracing::Render", __FILE__, (uint32_t)__LINE__, 0 };
-// Single raw holder is safe: opened on PreRender, closed on PostRender, render-thread only and
-// non-nested for this shader.
-static tracy::D3D11ZoneScope* g_ssrGpuZone = nullptr;
+// In-place holder (no per-frame heap): opened on PreRender, closed on PostRender, render-thread only
+// and non-nested for this shader.
+static std::optional<tracy::D3D11ZoneScope> g_ssrGpuZone;
 
 struct SSRPreRender_Hook
 {
@@ -823,8 +824,8 @@ struct SSRPreRender_Hook
 	{
 		func(a_this);  // original PreRender (engine SSR render-state setup)
 		if (globals::state->tracyCtx) {
-			delete g_ssrGpuZone;  // defensive: close a prior zone if PostRender was ever skipped (no-op on nullptr)
-			g_ssrGpuZone = new tracy::D3D11ZoneScope(globals::state->tracyCtx, &kSSRZoneSrcLoc, true);
+			g_ssrGpuZone.reset();  // defensive: close a prior zone if PostRender was ever skipped
+			g_ssrGpuZone.emplace(globals::state->tracyCtx, &kSSRZoneSrcLoc, true);
 		}
 	}
 	static inline REL::Relocation<decltype(thunk)> func;
@@ -833,11 +834,8 @@ struct SSRPostRender_Hook
 {
 	static void thunk(void* a_this)
 	{
-		if (g_ssrGpuZone) {  // close the GPU zone right after the draw
-			delete g_ssrGpuZone;
-			g_ssrGpuZone = nullptr;
-		}
-		func(a_this);  // original PostRender
+		g_ssrGpuZone.reset();  // close the GPU zone right after the draw
+		func(a_this);          // original PostRender
 	}
 	static inline REL::Relocation<decltype(thunk)> func;
 };
