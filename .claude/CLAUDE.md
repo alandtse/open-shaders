@@ -39,7 +39,7 @@ powershell.exe -Command "./BuildRelease.bat [PRESET_NAME]"
 -   `VR` - Skyrim VR only (compile-time targeting)
 -   `PRE-AE` - SE + VR (excludes AE)
 -   `FLATRIM` - SE + AE (excludes VR)
--   `ALL-TRACY` - Universal binary with Tracy profiler support enabled
+-   Tracy profiling is not a separate preset — add `-DTRACY_SUPPORT=ON` to any preset (e.g. `ALL`)
 
 **User Preset Template**:
 
@@ -419,6 +419,15 @@ Feature versions are automatically extracted from `.ini` files and compiled into
 -   **Feature Isolation**: Test features individually to identify performance bottlenecks
 -   **Cross-Edition Impact**: SE/AE/VR may have different performance characteristics for the same feature
 
+**Justifying `perf:` PRs** (every speedup carries a measured number):
+
+-   **Justify at the PR level, not per commit.** A PR whose point is a speedup — shipped as `perf:`, or a `feat:`/`refactor:` justified by performance — states the measured before/after in its description. The PR as a whole earns the claim; individual commits don't each need a number.
+-   **Normalize to the frame budget; don't quote raw deltas.** Express cost/saving as a percent of the target frame (90 fps ≈ 11.1 ms; flatrim 60 fps ≈ 16.7 ms). A percent stays meaningful even when the present rate is throttled — SteamVR drops to ~10 fps with the HMD off, so wall-clock frame time is unreliable, but per-pass GPU cost and its share of the budget are not. A raw "−2 ms" doesn't say whether it mattered.
+-   **GPU per-pass cost (primary signal):** configure any preset with `-DTRACY_SUPPORT=ON` (e.g. `cmake --preset ALL -DTRACY_SUPPORT=ON`), connect Tracy (server port 8086), and read the pass's GPU zone; wrap a new pass with the `TracyD3D11Zone(ctx, "Name")` macro (or `tracy::D3D11ZoneScope` directly when the zone must span calls, as the SSR PreRender/PostRender hook does) if it isn't already instrumented.
+-   **A/B a feature:** toggle it (in-game menu, or devbench `openshaders.feature`), capture the same scene and camera both ways, and diff the zone times with scene, resolution, and upscaler held fixed.
+-   **No-op shader refactors:** prove with `tools/verify-shader-refactor.ps1` (bytecode-identical = provable no-op); for legitimate op-reordering use the runtime A/B harness `tools/taa-renderdoc-ab.py`.
+-   A micro-optimization you can't isolate on the bench → label it `refactor:`, not `perf:`.
+
 ### Development Performance
 
 -   **Shader Testing**: Full validation suite can be time-consuming; use targeted testing during development
@@ -460,7 +469,7 @@ Feature versions are automatically extracted from `.ini` files and compiled into
 -   **Complete Solutions**: Provide fully functional code with proper error handling and resource management
 -   **Performance Conscious**: Always consider GPU workload and user experience impact
 -   **Documentation**: Include Doxygen comments for public methods, especially graphics-related functions
--   **Concise Comments**: Comments explain _why_, not _what_. Skip restating code in prose. A 1-line "why this hack" beats a 4-line block paraphrasing the next 4 lines. Block comments at the top of a function/section are fine when they capture non-obvious context (invariants, gotchas, history); avoid mid-function tutorial paragraphs.
+-   **Concise Comments (1–2 lines max)**: Comments explain _why_, not _what_. Keep an inline/body comment to **1–2 lines**; go longer only for an extraordinary reason — a load-bearing invariant, gotcha, or "don't revert this" warning that genuinely needs the space. The long version (RE narrative, design rationale, the journey to the answer) belongs in the commit message / PR description; point to it from a one-liner ("…; see commit message for why"). Doxygen/API doc comments on public declarations are exempt from the limit but stay concise. No mid-function tutorial paragraphs.
 -   **Minimal Churn**: PRs touch only what the change requires. Don't reformat unrelated lines, rename adjacent variables, or "clean up" code outside the PR's scope. If you spot something worth fixing nearby, open a follow-up PR or surface it in the description rather than expanding the diff. Auto-format/lint touching unrelated lines is acceptable only when it's the linter's own commit; mixing with logic changes obscures review.
 -   **Comments describe present code, not absent code**: Don't add comments that describe code that used to be in the file but isn't now ("the Discord banner was removed", "this constant was renamed from X"). The reader sees only the present file; the deletion isn't visible. Past-tense framing of present behavior is fine ("if someone landed a commit during the release, abort"); the rule is specifically about describing code that no longer exists. Exception: a regression-risk warning that names the removed code so a future maintainer doesn't restore it ("do not re-add the Discord banner — the upstream invite isn't a fork channel") is load-bearing and stays. Commit messages, PR descriptions, and CHANGELOG entries are the right place for "what changed" — code comments are not.
 
