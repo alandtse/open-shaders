@@ -33,6 +33,40 @@ static const int binaryIterations = ceil(log2(iterations));
 
 static const float rayLength = 1.0;
 
+#	if defined(VR)
+#		include "Common/FoveatedShaderDetail.hlsli"
+
+static const int minFoveatedIterations = 16;
+
+// Per-pixel SSR foveation weight from the active foveation mask (VRFoveationData0
+// + per-eye center offset). 1 in the center, falling to 0 in the periphery.
+float GetVRSSRFoveationWeight(float ssrFoveationMode, float2 eyeUv, uint eyeIndex)
+{
+	float2 centerOffset = eyeIndex == 0 ? SharedData::VRFoveationCenterOffsets.xy : SharedData::VRFoveationCenterOffsets.zw;
+	return FoveatedEvaluateShaderDetailWeight(
+		ssrFoveationMode,
+		eyeUv,
+		SharedData::VRFoveationData0.x,
+		SharedData::VRFoveationData0.y,
+		SharedData::VRFoveationData0.z,
+		centerOffset);
+}
+
+// Scale the raymarch count by the foveation weight: full in the center, down to
+// minFoveatedIterations toward the periphery.
+int GetSSRRaymarchIterations(float foveationWeight)
+{
+	int iterationCount = (int)ceil(lerp((float)minFoveatedIterations, (float)iterations, saturate(foveationWeight)));
+	return min(max(iterationCount, minFoveatedIterations), iterations);
+}
+
+int GetSSRBinaryIterations(int raymarchIterations)
+{
+	int iterationCount = (int)ceil(log2((float)raymarchIterations));
+	return min(max(iterationCount, 1), binaryIterations);
+}
+#	endif
+
 float2 ConvertRaySample(float2 raySample, uint eyeIndex)
 {
 	return FrameBuffer::GetDynamicResolutionAdjustedScreenPosition(Stereo::ConvertToStereoUV(raySample, eyeIndex));
@@ -46,14 +80,34 @@ float2 ConvertRaySamplePrevious(float2 raySample, uint eyeIndex)
 float4 GetReflectionColor(
 	float3 projReflectionDirection,
 	float3 projPosition,
-	uint eyeIndex)
+	uint eyeIndex
+#	if defined(VR)
+	,
+	int raymarchIterations,
+	int binaryIterationsCount,
+	float foveationWeight
+#	endif
+)
 {
 	float3 prevRaySample;
 	float3 raySample = projPosition;
 
-	for (int i = 0; i < iterations; i++) {
+	// VR scales the raymarch/binary counts by the foveation weight and fades the result; non-VR uses
+	// full counts. Bounds are runtime in VR, so [loop] is required (cannot unroll).
+#	if defined(VR)
+	int rayCount = raymarchIterations;
+	int binCount = binaryIterationsCount;
+	float fovWeight = foveationWeight;
+	[loop] for (int i = 0; i < rayCount; i++)
+	{
+#	else
+	int rayCount = iterations;
+	int binCount = binaryIterations;
+	float fovWeight = 1.0;
+	for (int i = 0; i < rayCount; i++) {
+#	endif
 		prevRaySample = raySample;
-		raySample = projPosition + (float(i) / float(iterations)) * projReflectionDirection;
+		raySample = projPosition + (float(i) / float(rayCount)) * projReflectionDirection;
 
 		float2 sampleUV;
 		uint sampleEyeIndex;
@@ -71,7 +125,12 @@ float4 GetReflectionColor(
 			float depthThicknessFactor;
 			uint hitEyeIndex = sampleEyeIndex;
 
-			for (int k = 0; k < binaryIterations; k++) {
+#	if defined(VR)
+			[loop] for (int k = 0; k < binCount; k++)
+			{
+#	else
+			for (int k = 0; k < binCount; k++) {
+#	endif
 				binaryRaySample = lerp(binaryMinRaySample, binaryMaxRaySample, 0.5);
 
 				Stereo::ResolveMonoUVForEye(binaryRaySample, eyeIndex, sampleUV, hitEyeIndex);
@@ -134,7 +193,7 @@ float4 GetReflectionColor(
 					alpha = float4(AlphaTex.SampleLevel(AlphaSampler, ConvertRaySamplePrevious(reprojectedRaySample.xy, finalEyeIndex), 0).xyz, 1.0);
 
 				float3 reflectionColor = color + SSRParams.z * alpha.xyz * alpha.w;
-				return float4(reflectionColor, fadeFactor);
+				return float4(reflectionColor, fadeFactor * fovWeight);
 			}
 
 			return 0.0;
@@ -159,6 +218,18 @@ PS_OUTPUT main(PS_INPUT input)
 	float2 screenPosition = FrameBuffer::GetDynamicResolutionAdjustedScreenPosition(uv);
 
 	uv = Stereo::ConvertFromStereoUV(uv, eyeIndex);
+
+#	if defined(VR)
+	float ssrFoveationWeight = 1.0;
+	float ssrFoveationMode = SharedData::VRFoveationData0.w;
+	[branch] if (ssrFoveationMode >= FOVEATED_SHADER_DETAIL_MODE_FEATHERED)
+	{
+		ssrFoveationWeight = GetVRSSRFoveationWeight(ssrFoveationMode, uv, eyeIndex);
+		// Outside the foveation mask: skip SSR entirely. The cubemap/water
+		// reflection fallback already covers these pixels.
+		[branch] if (!FoveatedIsShaderDetailActive(ssrFoveationWeight)) return psout;
+	}
+#	endif
 
 	[branch] if (NormalTex.Sample(NormalSampler, screenPosition).z <= 0)
 	{
@@ -191,7 +262,18 @@ PS_OUTPUT main(PS_INPUT input)
 	float3 projPosition = float3(uv, depth);
 	float3 projReflectionDirection = normalize(projReflectionPosition.xyz - projPosition) * rayLength;
 
+#	if defined(VR)
+	int raymarchIterations = iterations;
+	int binaryIterationsCount = binaryIterations;
+	[branch] if (ssrFoveationWeight < 0.9999)
+	{
+		raymarchIterations = GetSSRRaymarchIterations(ssrFoveationWeight);
+		binaryIterationsCount = GetSSRBinaryIterations(raymarchIterations);
+	}
+	psout.Color = GetReflectionColor(projReflectionDirection, projPosition, eyeIndex, raymarchIterations, binaryIterationsCount, ssrFoveationWeight);
+#	else
 	psout.Color = GetReflectionColor(projReflectionDirection, projPosition, eyeIndex);
+#	endif
 
 	return psout;
 }

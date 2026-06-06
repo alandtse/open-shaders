@@ -3,6 +3,7 @@
 #include "../../Globals.h"
 #include "../../Utils/Subrect.h"
 #include "../../Utils/UI.h"
+#include "../FoveatedCommon.h"
 #include "../Upscaling.h"
 #include "FoveatedRender/Core.h"
 
@@ -116,6 +117,40 @@ bool FoveatedRender::IsActive() const
 bool FoveatedRender::IsRuntimeSupported() const
 {
 	return globals::game::isVR && globals::features::upscaling.streamline.featureDLSS;
+}
+
+FoveatedRender::FoveationProfile FoveatedRender::GetFoveationProfile() const
+{
+	FoveationProfile profile;
+	if (!IsActive())
+		return profile;
+
+	const auto& leftUV = subrectController.GetUV();
+	const auto& rightUV = subrectController.GetRightEyeUV();
+
+	// Map the rectangular subrect onto the centered superellipse the mask helper expects: vertical
+	// extent drives coverageScale (radiusY = coverageScale/2), the rect aspect drives the horizontal
+	// stretch (radiusX = coverageScale * hScale/2). The mask carries one scale for both eyes (only
+	// the center offset is per-eye), so size comes from the less-foveated (larger) extent of the two:
+	// the center is the superset enclosing both eyes' full-quality regions, so neither eye's sharp
+	// zone is ever foveated (min would shrink it below an eye's sharp region and foveate it). A
+	// full eye therefore yields full coverage and disables foveation (the gate below).
+	const float coverageH = std::max(leftUV.h, rightUV.h);
+	const float coverageW = std::max(leftUV.w, rightUV.w);
+	const float coverageScale = FoveatedCommon::ClampCenterScale(coverageH);
+
+	// Availability keys off the clamped scale: if the larger eye rounds up to full coverage there is
+	// nothing to foveate, leave the default (available == false).
+	if (!FoveatedCommon::IsActiveCoverage(coverageScale))
+		return profile;
+
+	profile.available = true;
+	profile.coverageScale = coverageScale;
+	profile.centerHorizontalScale = FoveatedCommon::ClampCenterHorizontalScale(
+		coverageH > 1e-4f ? coverageW / coverageH : 1.0f);
+	profile.centerOffsets[0] = { (leftUV.x + leftUV.w * 0.5f) - 0.5f, (leftUV.y + leftUV.h * 0.5f) - 0.5f };
+	profile.centerOffsets[1] = { (rightUV.x + rightUV.w * 0.5f) - 0.5f, (rightUV.y + rightUV.h * 0.5f) - 0.5f };
+	return profile;
 }
 
 void FoveatedRender::LatchQualityMode()

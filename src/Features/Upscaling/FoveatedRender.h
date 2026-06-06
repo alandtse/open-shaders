@@ -97,6 +97,17 @@ struct FoveatedRender
 	bool IsActive() const;
 	bool IsLoaded() const { return enabledAtBoot; }
 
+	// Foveation region for per-pixel foveated effects (e.g. SSR): the rectangular DLSS subrect mapped
+	// to centered-superellipse params. available is false when foveation is inactive or full-eye.
+	struct FoveationProfile
+	{
+		bool available = false;
+		float coverageScale = 1.0f;          // linear center coverage scale [0.25, 1.0]
+		float centerHorizontalScale = 1.0f;  // [1.0, 2.0]
+		float2 centerOffsets[2] = {};        // [0]=left eye, [1]=right eye
+	};
+	FoveationProfile GetFoveationProfile() const;
+
 	// Main enable: latched at boot, change requires restart
 	void LatchEnabled() { enabledAtBoot = (settings.enabled != 0); }
 

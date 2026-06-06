@@ -256,9 +256,16 @@ public:
 		float4 AmbientSHR;
 		float4 AmbientSHG;
 		float4 AmbientSHB;
-		float4 HDRData;  // xyz + menu scene encoding in w — see HDRDisplay::GetSharedDataHDR
+		float4 VRFoveationData0;          // x=center coverage scale, y=feather, z=horizontal scale, w=SSR raymarch mode (0 off, 1 feathered, 2 hard cutoff)
+		float4 VRFoveationCenterOffsets;  // xy=left eye center offset, zw=right eye center offset
+		float4 HDRData;                   // xyz + menu scene encoding in w — see HDRDisplay::GetSharedDataHDR
 	};
 	STATIC_ASSERT_ALIGNAS_16(SharedDataCB);
+	// Each float4 cbuffer field must start on a 16-byte boundary to match the HLSL SharedData
+	// layout — a stray scalar inserted above would silently shift these and corrupt shader reads.
+	static_assert(offsetof(SharedDataCB, VRFoveationData0) % 16 == 0);
+	static_assert(offsetof(SharedDataCB, VRFoveationCenterOffsets) % 16 == 0);
+	static_assert(offsetof(SharedDataCB, HDRData) % 16 == 0);
 
 	ConstantBuffer* sharedDataCB = nullptr;
 	ConstantBuffer* featureDataCB = nullptr;
