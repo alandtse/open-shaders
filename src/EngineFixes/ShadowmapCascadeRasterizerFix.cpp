@@ -67,7 +67,12 @@ void ShadowmapRasterizerFix::CloneRasterStates(RasterStateArray* inputArray, int
 
 						GetUpdatedRasterDesc(desc, cascadeDescriptors[cascade]);
 
-						DX::ThrowIfFailed(globals::d3d::device->CreateRasterizerState(&desc, &shadowmapRasterStates[cascade][fill][cull][depth][scissor]));
+						// Degrade instead of crashing: a null slot binds the engine's default rasterizer for that draw.
+						auto*& clonedRaster = shadowmapRasterStates[cascade][fill][cull][depth][scissor];
+						if (const auto hr = globals::d3d::device->CreateRasterizerState(&desc, &clonedRaster); FAILED(hr)) {
+							logger::warn("ShadowmapRasterizerFix: failed to clone cascade {} rasterizer state (hr=0x{:08X}); using engine default", cascade, static_cast<std::uint32_t>(hr));
+							clonedRaster = nullptr;
+						}
 					}
 				}
 			}
