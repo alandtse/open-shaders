@@ -128,16 +128,12 @@ FoveatedRender::FoveationProfile FoveatedRender::GetFoveationProfile() const
 	const auto& leftUV = subrectController.GetUV();
 	const auto& rightUV = subrectController.GetRightEyeUV();
 
-	// Map the rectangular subrect onto the centered-superellipse the mask helper
-	// expects: vertical extent drives coverageScale (radiusY = coverageScale/2),
-	// the rect aspect drives the horizontal stretch (radiusX = coverageScale *
-	// hScale / 2). The mask carries one scale for both eyes (only the center
-	// offset is per-eye), so size comes from the less-foveated (larger) extent of
-	// the two eyes — the mask then stays inside each eye's full-quality region and
-	// never foveates a sharp zone. A full eye therefore yields full coverage and
-	// disables foveation entirely (the gate below). Seeded presets are symmetric
-	// in size, so left == right and this is a no-op for them. Approximate (rect vs
-	// superellipse) but sufficient for the per-pixel center/periphery weight.
+	// Map the rectangular subrect onto the centered superellipse the mask helper expects: vertical
+	// extent drives coverageScale (radiusY = coverageScale/2), the rect aspect drives the horizontal
+	// stretch (radiusX = coverageScale * hScale/2). The mask carries one scale for both eyes (only
+	// the center offset is per-eye), so size comes from the less-foveated (larger) extent of the two,
+	// keeping the mask inside each eye's full-quality region so it never foveates a sharp zone. A
+	// full eye therefore yields full coverage and disables foveation (the gate below).
 	const float coverageH = std::max(leftUV.h, rightUV.h);
 	const float coverageW = std::max(leftUV.w, rightUV.w);
 	const float coverageScale = FoveatedCommon::ClampCenterScale(coverageH);

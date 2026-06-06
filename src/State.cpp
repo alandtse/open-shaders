@@ -1011,10 +1011,8 @@ void State::UpdateSharedData([[maybe_unused]] bool a_inWorld, [[maybe_unused]] b
 
 		data.HDRData = globals::features::hdrDisplay.GetSharedDataHDR();
 
-		// VR foveated shader detail (consumed by foveated SSR). Default to off;
-		// populate from the active foveation region when SSR foveation is enabled
-		// and SSR is running. If SSR isn't running the SSR pass never executes, so
-		// these constants are simply ignored.
+		// VR foveated shader detail (consumed by foveated SSR). Default to off; populate from the
+		// active foveation region only when SSR foveation is enabled and SSR is actually running.
 		data.VRFoveationData0 = { FoveatedCommon::kCenterScaleMax, FoveatedCommon::kCenterFeather, 1.0f,
 			FoveatedCommon::GetShaderMode(FoveatedCommon::DetailMode::Off) };
 		data.VRFoveationCenterOffsets = { 0.0f, 0.0f, 0.0f, 0.0f };
