@@ -12,7 +12,7 @@
  @param a_source The instance of the class (e.g., state).
  @result The a_value will be set as a variable in the current namespace. (e.g., auto& renderTargets = state->renderTargets;)
  */
-#define GET_INSTANCE_MEMBER(a_value, a_source) \
+#define GET_INSTANCE_MEMBER(a_value, a_source)                                     \
 	/* Keep raw runtime check: this macro can be used before globals::ReInit(). */ \
 	auto& a_value = !REL::Module::IsVR() ? a_source->GetRuntimeData().a_value : a_source->GetVRRuntimeData().a_value;
 
@@ -26,7 +26,7 @@
  @param a_source The instance of the class (e.g., state).
  @result The a_value will be returned as a refptr. (e.g., &state->renderTargets;)
  */
-#define GET_INSTANCE_MEMBER_PTR(a_value, a_source) \
+#define GET_INSTANCE_MEMBER_PTR(a_value, a_source)                                 \
 	/* Keep raw runtime check: this macro can be used before globals::ReInit(). */ \
 	&(!REL::Module::IsVR() ? a_source->GetRuntimeData().a_value : a_source->GetVRRuntimeData().a_value)
 
