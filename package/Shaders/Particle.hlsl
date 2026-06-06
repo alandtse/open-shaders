@@ -315,7 +315,7 @@ PS_OUTPUT main(PS_INPUT input)
 #	if defined(VOLUMETRIC_SHADOWS)
 		dirSoftShadow = VolumetricShadows::GetVSMShadow2D(positionWS.xyz, worldPositionWS, eyeIndex, dirDetailedShadow);
 #	else
-		dirDetailedShadow = DirectionalShadow::GetSceneDirectionalShadow(positionWS.xyz, worldPositionWS, eyeIndex, screenNoise);
+		dirDetailedShadow = DirectionalShadow::GetSceneDirectionalShadow(positionWS.xyz, worldPositionWS, eyeIndex, screenNoise, 1.0);
 #	endif
 	}
 

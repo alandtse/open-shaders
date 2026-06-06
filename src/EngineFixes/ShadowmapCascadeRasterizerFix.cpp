@@ -110,7 +110,7 @@ void ShadowmapRasterizerFix::Install()
 
 void ShadowmapRasterizerFix::InstallD3DHooks(ID3D11DeviceContext* context)
 {
-	if (!IsVROuterCascadeCasterBiasEnabled())
+	if (!IsVRCasterBiasEnabled())
 		return;
 
 	if (!context || d3dHooksInstalled)
@@ -121,12 +121,13 @@ void ShadowmapRasterizerFix::InstallD3DHooks(ID3D11DeviceContext* context)
 	d3dHooksInstalled = true;
 }
 
-bool ShadowmapRasterizerFix::IsVROuterCascadeCasterBiasEnabled()
+bool ShadowmapRasterizerFix::IsVRCasterBiasEnabled()
 {
-	return REL::Module::IsVR() &&
-	       globals::state &&
-	       globals::state->IsDeveloperMode() &&
-	       globals::features::vr.settings.EnableOuterCascadeCasterBias;
+	// EXPERIMENT (experiment/vr-caster-bias-always-on): always-on in VR. The
+	// per-cascade caster bias now carries the flat/vanilla magnitudes, so it is
+	// the VR shadow correctness path (replacing #104's receiver-side (b)+(c)
+	// shader compensation) rather than an opt-in developer tweak.
+	return REL::Module::IsVR();
 }
 
 void ShadowmapRasterizerFix::BSShadowDirectionalLight_RenderShadowmaps_RenderCascade::thunk(RE::BSShadowDirectionalLight* light, void* arg1, void* arg2, std::uint32_t flags)
@@ -165,9 +166,9 @@ void ShadowmapRasterizerFix::BSShadowDirectionalLight_RenderShadowmaps_RenderCas
 		return;
 	}
 
-	// The VR flicker fix is always active: VR never uses the flat global rasterizer table swap.
-	// Only this optional outer-cascade caster bias is controlled by the developer-mode toggle.
-	if (!IsVROuterCascadeCasterBiasEnabled()) {
+	// VR never uses the flat global rasterizer table swap; instead the per-cascade
+	// caster bias is applied through the RSSetState hook (covers both eye sub-passes).
+	if (!IsVRCasterBiasEnabled()) {
 		func(light, arg1, arg2, flags);
 		return;
 	}
@@ -276,12 +277,15 @@ void ShadowmapRasterizerFix::RebuildBiasedRasterStateLookup()
 
 ID3D11RasterizerState* ShadowmapRasterizerFix::GetBiasedRasterState(ID3D11RasterizerState* state)
 {
-	if (!IsVROuterCascadeCasterBiasEnabled())
+	if (!IsVRCasterBiasEnabled())
 		return nullptr;
 
 	if (!state || !initialized || activeCascade >= numCascades)
 		return nullptr;
 
+	// All-zero descriptor means "no bias for this cascade"; skip the swap so the
+	// engine state stays bound. With flat magnitudes none are zero, but keep the
+	// guard so a future per-cascade tweak that zeros a cascade still no-ops cleanly.
 	const auto desc = vrCascadeDescriptors[activeCascade];
 	if (desc.rasterDepthBias == 0 && desc.rasterDepthBiasClamp == 0.0f && desc.rasterSlopeScaleBias == 0.0f)
 		return nullptr;

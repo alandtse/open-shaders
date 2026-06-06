@@ -1,5 +1,4 @@
 ﻿#include "VR.h"
-#include "EngineFixes/ShadowmapCascadeRasterizerFix.h"
 #include "Menu.h"
 #include "RE/B/BSOpenVR.h"
 #include "RE/P/PlayerCharacter.h"
@@ -47,8 +46,7 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	StereoBlendDepthSigma,
 	StereoBlendMaxFactor,
 	StereoBlendColorThreshold,
-	StereoBlendDebugMode,
-	EnableOuterCascadeCasterBias)
+	StereoBlendDebugMode)
 
 //=============================================================================
 // FEATURE BASE CLASS OVERRIDES
@@ -58,9 +56,9 @@ void VR::LoadSettings(json& o_json)
 {
 	settings = o_json.get<Settings>();
 	settings.ClampToValidRanges();
-	if (ShadowmapRasterizerFix::IsVROuterCascadeCasterBiasEnabled()) {
-		ShadowmapRasterizerFix::InstallD3DHooks(globals::d3d::context);
-	}
+	// The VR caster-bias RSSetState hook is installed unconditionally for VR from
+	// globals::InstallD3DHooks (self-guarded by IsVRCasterBiasEnabled + idempotent),
+	// so no per-LoadSettings install is needed here.
 	if (o_json.contains("StereoOptimizations")) {
 		json stereoOptJson = o_json["StereoOptimizations"];
 		stereoOpt.LoadSettings(stereoOptJson);

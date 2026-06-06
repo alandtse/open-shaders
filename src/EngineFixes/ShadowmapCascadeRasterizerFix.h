@@ -30,7 +30,7 @@ struct ShadowmapRasterizerFix : EngineFix
 	static void ReleaseClonedRasterStates();
 	static void RebuildBiasedRasterStateLookup();
 	static ID3D11RasterizerState* GetBiasedRasterState(ID3D11RasterizerState* state);
-	static bool IsVROuterCascadeCasterBiasEnabled();
+	static bool IsVRCasterBiasEnabled();
 
 	static inline std::uint32_t numCascades = 0;
 	static inline std::uint32_t currentCascade = 0;
@@ -62,21 +62,14 @@ struct ShadowmapRasterizerFix : EngineFix
 		ShadowMapRasterizerDescriptor{ flatThirdCascadeDepthBias, flatThirdCascadeDepthBiasClamp, flatThirdCascadeSlopeScaleBias }
 	};
 
-	// Keep close-range casters unshifted; even small first-cascade bias can make nearby meshes lose contact shadows.
-	static constexpr int vrNearCascadeDepthBias = 0;
-	static constexpr float vrNearCascadeDepthBiasClamp = 0.0f;
-	static constexpr float vrNearCascadeSlopeScaleBias = 0.0f;
-
-	// Developer option only: a tiny outer-cascade caster offset for distant directional shadow acne.
-	static constexpr int vrOuterCascadeDepthBias = 8;
-	static constexpr float vrOuterCascadeDepthBiasClamp = 0.0001f;
-	static constexpr float vrOuterCascadeSlopeScaleBias = 0.05f;
-
-	static constexpr std::array<ShadowMapRasterizerDescriptor, maxCascades> vrCascadeDescriptors = {
-		ShadowMapRasterizerDescriptor{ vrNearCascadeDepthBias, vrNearCascadeDepthBiasClamp, vrNearCascadeSlopeScaleBias },
-		ShadowMapRasterizerDescriptor{ vrOuterCascadeDepthBias, vrOuterCascadeDepthBiasClamp, vrOuterCascadeSlopeScaleBias },
-		ShadowMapRasterizerDescriptor{ vrOuterCascadeDepthBias, vrOuterCascadeDepthBiasClamp, vrOuterCascadeSlopeScaleBias }
-	};
+	// EXPERIMENT (experiment/vr-caster-bias-always-on): VR now applies the SAME
+	// caster-side bias the flat/non-VR vanilla path uses, per-cascade, via the
+	// RSSetState hook (which covers both eye sub-passes). This replaces #104's
+	// receiver-side compensation (the #if VR shader divergence in
+	// DirectionalShadow.hlsli / LightLimitFix.hlsli / Utility.hlsl), so VR can
+	// share the non-VR sampler path. The previous {0,0,0}/{8,0.0001,0.05} values
+	// were ~20x too small to be visually effective; these mirror flatCascadeDescriptors.
+	static constexpr std::array<ShadowMapRasterizerDescriptor, maxCascades> vrCascadeDescriptors = flatCascadeDescriptors;
 
 	struct ScopedCascadeBias
 	{

@@ -971,22 +971,22 @@ namespace
 		if (!globals::state || !globals::state->IsDeveloperMode())
 			return;
 
-		auto& settings = globals::features::vr.settings;
-
+		// EXPERIMENT (experiment/vr-caster-bias-always-on): the per-cascade VR
+		// caster bias is now always-on and carries the flat/vanilla magnitudes,
+		// so this panel is informational only (no runtime toggle).
 		if (ImGui::CollapsingHeader("Shadowmap Rasterizer")) {
-			if (ImGui::Checkbox("Apply Outer Cascade Caster Bias", &settings.EnableOuterCascadeCasterBias) &&
-				ShadowmapRasterizerFix::IsVROuterCascadeCasterBiasEnabled()) {
-				ShadowmapRasterizerFix::InstallD3DHooks(globals::d3d::context);
-			}
-			if (auto _tt = Util::HoverTooltipWrapper()) {
+			ImGui::TextWrapped(
+				"VR applies the vanilla flat-path caster-side bias per cascade via the "
+				"RSSetState hook (covers both eye sub-passes). Receiver-side shader "
+				"compensation is disabled in this build.");
+			for (std::uint32_t cascade = 0; cascade < ShadowmapRasterizerFix::maxCascades; cascade++) {
+				const auto& desc = ShadowmapRasterizerFix::vrCascadeDescriptors[cascade];
 				ImGui::Text(
-					"The VR rasterizer flicker safety path is always active.\n"
-					"This developer-only toggle only applies a tiny caster-side bias to outer cascades.");
-				ImGui::Text(
-					"Values: DepthBias %d, Clamp %.4f, SlopeScaledDepthBias %.2f.",
-					ShadowmapRasterizerFix::vrOuterCascadeDepthBias,
-					ShadowmapRasterizerFix::vrOuterCascadeDepthBiasClamp,
-					ShadowmapRasterizerFix::vrOuterCascadeSlopeScaleBias);
+					"Cascade %u: DepthBias %d, Clamp %.4f, SlopeScaledDepthBias %.2f.",
+					cascade,
+					desc.rasterDepthBias,
+					desc.rasterDepthBiasClamp,
+					desc.rasterSlopeScaleBias);
 			}
 		}
 	}
