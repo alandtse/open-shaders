@@ -166,8 +166,15 @@ namespace LightLimitFix
 	// must fall through to the engine mask. Returning 1.0 there leaves distant
 	// pixels fully lit -- visible as global scene brightening with shadows
 	// disappearing past a depth that varies with camera position.
-	float GetDirectionalShadow(float3 worldPosition, float3 worldPositionWS, float2x2 rotationMatrix, uint eyeIndex, float engineMaskShadow)
+	float GetDirectionalShadow(float3 worldPosition, float3 worldPositionWS, float2x2 rotationMatrix, uint eyeIndex, float engineMaskShadow, bool useEngineMaskShadow)
 	{
+#if defined(VR)
+		// VR returns the engine mask for all cascades: the LLF two-cascade PCF
+		// path bands once VR drops the caster-side global rasterizer swap.
+		if (useEngineMaskShadow)
+			return engineMaskShadow;
+#endif
+
 		DirectionalShadowLightData shadowLightData = DirectionalShadowLights[0];
 
 		float shadowMapDepth = SharedData::GetScreenDepth(FrameBuffer::GetShadowDepth(worldPosition, eyeIndex));
@@ -288,17 +295,21 @@ namespace LightLimitFix
 		return shadow;
 	}
 
-	// Convenience overload: callers without TexShadowMaskSampler bound
-	// (e.g. Particle.hlsl) get the lit-fallback behaviour (1.0) past
-	// cascade 1, matching the pre-engine-mask behaviour for those paths.
+	float GetDirectionalShadow(float3 worldPosition, float3 worldPositionWS, float2x2 rotationMatrix, uint eyeIndex, float engineMaskShadow)
+	{
+		return GetDirectionalShadow(worldPosition, worldPositionWS, rotationMatrix, eyeIndex, engineMaskShadow, true);
+	}
+
+	// Convenience overload for callers without TexShadowMaskSampler bound
+	// (e.g. particles): route through the direct LLF sampler, no engine mask.
 	float GetDirectionalShadow(float3 worldPosition, float3 worldPositionWS, float2x2 rotationMatrix, uint eyeIndex)
 	{
-		return GetDirectionalShadow(worldPosition, worldPositionWS, rotationMatrix, eyeIndex, 1.0);
+		return GetDirectionalShadow(worldPosition, worldPositionWS, rotationMatrix, eyeIndex, 1.0, false);
 	}
 
 	float GetDirectionalShadow(float3 worldPosition, float3 worldPositionWS, float2x2 rotationMatrix)
 	{
-		return GetDirectionalShadow(worldPosition, worldPositionWS, rotationMatrix, 0, 1.0);
+		return GetDirectionalShadow(worldPosition, worldPositionWS, rotationMatrix, 0, 1.0, false);
 	}
 
 	float SampleShadowGather(uint shadowIndex, float2 uv, float receiverDepth)

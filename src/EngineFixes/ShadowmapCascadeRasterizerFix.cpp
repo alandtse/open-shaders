@@ -12,6 +12,13 @@ void ShadowmapRasterizerFix::Install()
 
 void ShadowmapRasterizerFix::BSShadowDirectionalLight_RenderShadowmaps_RenderCascade::thunk(RE::BSShadowDirectionalLight* light, void* arg1, void* arg2, uint32_t flags)
 {
+	// VR bypasses the flat global rasterizer-table swap: swapping the shared global table per
+	// cascade is not stereo-safe and flickers; VR routes directional shadows via the engine mask.
+	if (globals::game::isVR) {
+		func(light, arg1, arg2, flags);
+		return;
+	}
+
 	static uint cascade = 0;
 
 	static bool initialized = false;
@@ -60,7 +67,13 @@ void ShadowmapRasterizerFix::CloneRasterStates(RasterStateArray* inputArray, int
 
 						GetUpdatedRasterDesc(desc, cascadeDescriptors[cascade]);
 
-						DX::ThrowIfFailed(globals::d3d::device->CreateRasterizerState(&desc, &shadowmapRasterStates[cascade][fill][cull][depth][scissor]));
+						// Degrade instead of crashing: on failure keep the engine's own state for this slot
+						// (loses only our added bias, not its cull/fill/scissor) rather than D3D defaults.
+						auto*& clonedRaster = shadowmapRasterStates[cascade][fill][cull][depth][scissor];
+						if (const auto hr = globals::d3d::device->CreateRasterizerState(&desc, &clonedRaster); FAILED(hr)) {
+							logger::warn("ShadowmapRasterizerFix: failed to clone cascade {} rasterizer state (hr=0x{:08X}); keeping engine state", cascade, static_cast<std::uint32_t>(hr));
+							clonedRaster = gRasterizer;
+						}
 					}
 				}
 			}
