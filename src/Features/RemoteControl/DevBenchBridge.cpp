@@ -17,6 +17,7 @@
 #	include "Features/RenderDoc.h"
 #	include "Features/ScreenshotFeature.h"
 #	include "Globals.h"
+#	include "Menu.h"
 #	include "ShaderCache.h"
 #	include "State.h"
 
@@ -483,6 +484,29 @@ namespace
 	{
 		RunHandler(&BuildSettingsResult, a_argsJson, a_sink, a_write);
 	}
+
+	// ---- menu handler: open / close / toggle the Community Shaders settings menu -------
+
+	json BuildMenuResult(const json& a_args)
+	{
+		const std::string op = a_args.value("op", std::string("toggle"));
+		if (op != "open" && op != "close" && op != "toggle")
+			return json{ { "error", "unknown op (open|close|toggle)" }, { "op", op } };
+
+		// Menu::IsEnabled is a plain flag the render thread reads each frame and SetVisible calls
+		// ImGui — marshal to the main thread and report the resulting visibility synchronously.
+		return RunOnMainThread([op]() -> json {
+			auto* menu = Menu::GetSingleton();
+			const bool want = (op == "toggle") ? !menu->IsEnabled : (op == "open");
+			const bool visible = menu->SetVisible(want);
+			return json{ { "op", op }, { "visible", visible } };
+		});
+	}
+
+	void MenuHandler(void*, const char* a_argsJson, void* a_sink, DevBenchAPI::WriteFn a_write)
+	{
+		RunHandler(&BuildMenuResult, a_argsJson, a_sink, a_write);
+	}
 }
 
 namespace DevBenchBridge
@@ -520,6 +544,17 @@ namespace DevBenchBridge
 		static constexpr const char* settingsDesc =
 			R"({"description":"Save, load, or reset the GLOBAL Open Shaders user configuration (Data/SKSE/Plugins/CommunityShaders/*.json). Action-dispatched, all fire-and-forget on the main thread. save: persist current settings (State::Save). load: re-read settings from disk and apply (State::Load). reset: restore every feature to its defaults then persist. Use after openshaders.feature set/reset to make changes durable, or to roll an A/B session back to the saved baseline.","inputSchema":{"type":"object","properties":{"action":{"type":"string","enum":["save","load","reset"]}},"required":["action"]}})";
 		dvb->RegisterTool("openshaders.settings", settingsDesc, &SettingsToolHandler, nullptr);
+
+		// Menu-extension handler: route the CS settings menu under the base `menu` tool as
+		// `menu invoke name='CommunityShaders'` instead of a top-level tool. The vtable slot
+		// only exists on devbench >= 1.4.0 (build 10400) — gate so older hosts are unaffected.
+		// "CommunityShaders" matches the ImGui window id after `###` (the load-bearing runtime
+		// identity), so the menu name lines up with the on-screen window.
+		if (dvb->GetBuildNumber() >= 10400) {
+			static constexpr const char* menuDesc =
+				R"({"description":"Open, close, or toggle the Community Shaders (Open Shaders) in-game settings menu headlessly — the same window the ToggleKey (default End) shows. op: open|close|toggle (default toggle). Returns {op,visible} with the resulting visibility (open is a no-op while first-time setup is pending). Marshaled to the render thread.","inputSchema":{"type":"object","properties":{"op":{"type":"string","enum":["open","close","toggle"]}}}})";
+			dvb->RegisterMenuHandler("CommunityShaders", menuDesc, &MenuHandler, nullptr);
+		}
 	}
 }
 

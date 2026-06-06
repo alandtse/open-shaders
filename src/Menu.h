@@ -122,6 +122,18 @@ public:
 	void Init();
 	void DrawSettings();
 
+	/**
+	 * @brief Programmatically set the settings menu visibility (open/close/toggle).
+	 *
+	 * Mirrors the ToggleKey hotkey: honours the first-time-setup guard and clears
+	 * stale ImGui input on open. `IsEnabled` is a plain flag the render thread reads
+	 * each frame, so callers must invoke this on the main/render thread (e.g. via the
+	 * SKSE task queue) — see DevBenchBridge's RunOnMainThread.
+	 * @param a_visible Desired visibility.
+	 * @return The resulting visibility (may stay false if first-time setup is pending).
+	 */
+	bool SetVisible(bool a_visible);
+
 	// Search bar state
 	std::string featureSearch;  // For left pane feature search
 	void DrawOverlay();

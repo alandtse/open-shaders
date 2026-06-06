@@ -1043,13 +1043,7 @@ void Menu::ProcessInputEventQueue()
 						std::function<void()> action;
 					};
 					KeyAction keyActions[] = {
-						{ settings.ToggleKey, [this]() {
-							 if (!HomePageRenderer::ShouldShowFirstTimeSetup()) {
-								 IsEnabled = !IsEnabled;
-								 if (IsEnabled)
-									 ImGui::GetIO().ClearInputKeys();  // Prevent toggle key from remaining "held" in ImGui after open.
-							 }
-						 } },
+						{ settings.ToggleKey, [this]() { SetVisible(!IsEnabled); } },
 						{ settings.SkipCompilationKey, [this, shaderCache]() { if (!ShouldSwallowInput() && shaderCache->IsCompiling()) shaderCache->backgroundCompilation = true; } },
 						{ settings.EffectToggleKey, [shaderCache]() { shaderCache->SetEnabled(!shaderCache->IsEnabled()); } },
 						{ settings.ShaderBlockPrevKey, [this, shaderCache]() { if (settings.EnableShaderBlocking) shaderCache->IterateShaderBlock(); } },
@@ -1175,6 +1169,18 @@ void Menu::ProcessInputEvents(RE::InputEvent* const* a_events)
 			addToEventQueue(KeyEvent(static_cast<RE::ThumbstickEvent*>(it)));
 		}
 	}
+}
+
+bool Menu::SetVisible(bool a_visible)
+{
+	// Match the ToggleKey path: never open over first-time setup, and clear ImGui's
+	// held keys on open so a programmatic open doesn't leave a phantom key down.
+	if (a_visible && HomePageRenderer::ShouldShowFirstTimeSetup())
+		return IsEnabled;
+	IsEnabled = a_visible;
+	if (IsEnabled)
+		ImGui::GetIO().ClearInputKeys();
+	return IsEnabled;
 }
 
 bool Menu::ShouldSwallowInput()
