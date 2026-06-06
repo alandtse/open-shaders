@@ -1,10 +1,8 @@
 #ifndef FOVEATED_MASK_HLSLI
 #define FOVEATED_MASK_HLSLI
 
-// Superellipse (shape power 4 = squircle) foveation mask. Produces a smooth
-// radial center->periphery weight that matches peripheral-vision falloff and
-// avoids the hard rectangular seam a rect mask would show. CPU mirror of the
-// parameter clamping lives in src/Features/FoveatedCommon.h.
+// Superellipse (shape power 4 = squircle) foveation mask: a smooth center->periphery weight that
+// avoids the hard seam of a rect mask. CPU mirror of the clamping is in src/Features/FoveatedCommon.h.
 
 #ifndef FOVEATED_CENTER_SCALE_MIN
 #	define FOVEATED_CENTER_SCALE_MIN 0.25

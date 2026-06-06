@@ -92,9 +92,8 @@ float4 GetReflectionColor(
 	float3 prevRaySample;
 	float3 raySample = projPosition;
 
-	// VR foveation reduces the raymarch/binary counts toward the periphery and
-	// fades the result; non-VR uses the full counts and no fade. The loop bounds
-	// are runtime values in VR, so [loop] is required (cannot unroll).
+	// VR scales the raymarch/binary counts by the foveation weight and fades the result; non-VR uses
+	// full counts. Bounds are runtime in VR, so [loop] is required (cannot unroll).
 #	if defined(VR)
 	int rayCount = raymarchIterations;
 	int binCount = binaryIterationsCount;

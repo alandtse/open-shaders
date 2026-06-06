@@ -139,9 +139,8 @@ FoveatedRender::FoveationProfile FoveatedRender::GetFoveationProfile() const
 	const float coverageW = std::max(leftUV.w, rightUV.w);
 	const float coverageScale = FoveatedCommon::ClampCenterScale(coverageH);
 
-	// Decide availability from the final clamped scale so the contract holds: if
-	// the larger eye rounds up to full coverage there is nothing to foveate, so
-	// leave the default (available == false) and callers need no separate check.
+	// Availability keys off the clamped scale: if the larger eye rounds up to full coverage there is
+	// nothing to foveate, leave the default (available == false).
 	if (!FoveatedCommon::IsActiveCoverage(coverageScale))
 		return profile;
 

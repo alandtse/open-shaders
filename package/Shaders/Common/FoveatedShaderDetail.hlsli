@@ -1,10 +1,8 @@
 #ifndef FOVEATED_SHADER_DETAIL_HLSLI
 #define FOVEATED_SHADER_DETAIL_HLSLI
 
-// Per-pixel detail weight for foveated effects. Effects pass their mode
-// (0=off, 1=feathered, 2=hard cutoff; see FoveatedCommon::GetShaderMode) plus
-// the active foveation mask params, and get back a 0..1 weight to scale their
-// work by. Outside the mask the weight is 0, letting the effect skip entirely.
+// Per-pixel detail weight for foveated effects: pass the mode (0=off/1=feathered/2=hard, see
+// FoveatedCommon::GetShaderMode) + mask params, get a 0..1 weight (0 outside the mask = skip).
 
 #include "Common/FoveatedMask.hlsli"
 

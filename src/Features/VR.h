@@ -178,9 +178,8 @@ public:
 		float StereoBlendColorThreshold = 0.02f;  ///< Minimum color difference to trigger blending (luminance)
 		int StereoBlendDebugMode = 0;             ///< 0=off, 1=back-check, 2=blend weight, 3=edge detection, 4=overwrite, 5=overwrite Eye1
 
-		// VR foveated shader detail — render expensive screen-space effects at
-		// reduced detail in the periphery, driven by the active Foveated DLSS
-		// region. Currently consumed by foveated SSR.
+		// VR foveated shader detail: render expensive screen-space effects at reduced detail in the
+		// periphery, driven by the active Foveated DLSS region. Consumed by foveated SSR.
 		bool EnableSSRFoveation = false;            ///< Foveate screen-space reflection raymarching in the periphery
 		bool EnableSSRFoveationHardCutoff = false;  ///< Hard-skip SSR outside the center (vs feathered falloff)
 
