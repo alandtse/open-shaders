@@ -73,15 +73,9 @@ public:
 		bool reflexUseFPSLimit = false;
 		float reflexFPSLimit = 60.0f;
 
-		// VR PerfMode: on by default ("auto-lock"). When set, BSShaderRenderTargets::Create
-		// installs the BSOpenVR render-target-size hook at engine init so the entire
-		// engine pipeline allocates render targets at upscaled-render resolution
-		// instead of display resolution. Saves VRAM/bandwidth proportional to the
-		// quality-mode scale ratio. Locked to the boot Upscale Preset; changing the
-		// preset (or turning this off) needs a restart to re-allocate the RTs. No
-		// effect at Native AA (1.0x): with no render-res reduction to bank, the hook
-		// stays off and the upscaler runs on the stock display-res path (where preset
-		// changes apply live). Requires DLSS or FSR.
+		// VR PerfMode auto-lock (default on): allocate engine render targets at upscaled-render
+		// resolution to bank VRAM/bandwidth. Boot-locked (changing it re-allocates RTs at world load).
+		// Engages only when ShouldEngagePerfMode() holds; a no-op otherwise (see GetUpscaleMethod area).
 		bool renderAtUpscaleRes = true;
 	};
 
@@ -141,21 +135,26 @@ public:
 	bool IsUpscalingActive() const;
 
 	// Feature interface overrides
-	mutable std::vector<Util::Settings::RestartFieldInfo> restartFieldsScratch;
 	std::span<const Util::Settings::RestartFieldInfo> GetRestartRequiredFields() const override
 	{
-		// qualityMode/upscaleMethod are boot-locked ONLY while PerfMode is engaged
-		// (the engine RTs are sized for them). When PerfMode is off — TAA, Native AA
-		// (1x), or render-at-upscaled-res disabled — they switch live, so don't
-		// report them as restart-gated to the menu tint / MCP. renderAtUpscaleRes
-		// itself is always boot-time (it installs the size hook at world load).
+		// While PerfMode is engaged the engine RTs are sized for qualityMode/upscaleMethod, so both
+		// are boot-locked; off, they switch live. renderAtUpscaleRes is boot-locked only when the
+		// other prerequisites could make toggling it engage PerfMode (else it's a no-op).
 		if (perfMode.IsHookActive())
 			return { kRestartFields.data(), kRestartFields.size() };
-		restartFieldsScratch.clear();
-		for (const auto& f : kRestartFields)
-			if (f.offset != offsetof(Settings, qualityMode) && f.offset != offsetof(Settings, upscaleMethod))
-				restartFieldsScratch.push_back(f);
-		return { restartFieldsScratch.data(), restartFieldsScratch.size() };
+		const bool gateRenderAtUpscaleRes = PerfModePrerequisitesMet();
+		// static thread_local: storage must outlive the returned span; callers consume it on the
+		// same thread before the next call.
+		static thread_local std::vector<Util::Settings::RestartFieldInfo> scratch;
+		scratch.clear();
+		for (const auto& f : kRestartFields) {
+			if (f.offset == offsetof(Settings, qualityMode) || f.offset == offsetof(Settings, upscaleMethod))
+				continue;
+			if (f.offset == offsetof(Settings, renderAtUpscaleRes) && !gateRenderAtUpscaleRes)
+				continue;
+			scratch.push_back(f);
+		}
+		return { scratch.data(), scratch.size() };
 	}
 	const void* GetBootValue(std::string_view jsonKey) const override { return bootSnapshot.RawBoot(jsonKey); }
 	const void* GetSettingsBlob() const override { return &settings; }
@@ -177,6 +176,15 @@ public:
 	virtual void SetupResources() override;
 
 	UpscaleMethod GetUpscaleMethod() const;
+
+	// PerfMode can bank render resolution only in VR, with an upscale method that redirects its
+	// output to a separate display-res target (DLSS/FSR — TAA/None can't), and a preset below 1.0x
+	// (Native AA banks nothing). Prerequisites = everything except the renderAtUpscaleRes opt-in;
+	// ShouldEngagePerfMode = prerequisites AND the opt-in. Read from persisted settings, so both are
+	// valid at hook-install time (before perfMode.IsHookActive() flips). Single gate for Hooks.cpp,
+	// Globals.cpp, and restart-field reporting — keep callers from re-deriving and drifting.
+	bool PerfModePrerequisitesMet() const;
+	bool ShouldEngagePerfMode() const;
 
 	/// Render-to-display scale ratio for a quality mode index
 	/// (1=Quality, 2=Balanced, 3=Performance, 4=UltraPerformance).

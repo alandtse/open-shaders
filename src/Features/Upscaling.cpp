@@ -375,9 +375,8 @@ void Upscaling::DrawSettings()
 			}
 			if (!methodSupportsPerf && settings.renderAtUpscaleRes)
 				Util::Text::Disabled("Render-at-upscaled-resolution requires DLSS or FSR — switch upscaler Method to activate.");
-			// At Native AA (1x) there's no render-res reduction to bank, so the
-			// BSOpenVR size hook stays dormant even while checked. Surface the
-			// no-op rather than implying the toggle is doing something.
+			// At Native AA (1x) there's nothing to bank, so the size hook stays dormant even while
+			// checked — surface the no-op rather than implying the toggle does something.
 			if (methodSupportsPerf && settings.renderAtUpscaleRes &&
 				GetQualityModeRatio(settings.qualityMode) <= 1.0f)
 				Util::Text::Disabled("No effect at Native AA (1x) — renders at full resolution; raise the Upscale Preset to engage.");
@@ -885,6 +884,20 @@ Upscaling::UpscaleMethod Upscaling::GetUpscaleMethod() const
 	if (streamline.featureDLSS)
 		return (UpscaleMethod)settings.upscaleMethod;
 	return (UpscaleMethod)settings.upscaleMethodNoDLSS;
+}
+
+bool Upscaling::PerfModePrerequisitesMet() const
+{
+	const auto method = GetUpscaleMethod();
+	const bool methodRedirectsOutput = method == UpscaleMethod::kDLSS || method == UpscaleMethod::kFSR;
+	// >1.0x: a sub-display render res to bank. Native AA (1.0x) banks nothing.
+	return globals::game::isVR && methodRedirectsOutput &&
+	       GetQualityModeRatio(settings.qualityMode) > 1.0f;
+}
+
+bool Upscaling::ShouldEngagePerfMode() const
+{
+	return settings.renderAtUpscaleRes && PerfModePrerequisitesMet();
 }
 
 void Upscaling::CreateUpscalingTextureResources(UpscaleMethod a_upscalemethod)
