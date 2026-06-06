@@ -1,6 +1,7 @@
 #include "LightLimitFix.h"
 #include "Features/InverseSquareLighting/Common.h"
 #include "Features/LightLimitFix/SettingsSanitize.h"
+#include "Features/LightLimitFix/ShadowCasterMath.h"
 #include "Globals.h"
 #include "InverseSquareLighting.h"
 #include "LinearLighting.h"
@@ -1242,16 +1243,12 @@ void LightLimitFix::Hooks::BSLightingShader_SetupGeometry::thunk(RE::BSShader* T
 	// clamping numLights (sibling guard) can't help -- slot 0 is always read.
 	bool directionalSlotSafe = true;
 	if (Pass) {
-		const auto isPlausible = [](const void* p) {
-			const auto v = reinterpret_cast<std::uintptr_t>(p);
-			return v >= 0x10000 && v < 0x800000000000ull && (v & 0x7) == 0;
-		};
+		using ShadowCasterManager::IsPlausibleShadowLightPtr;
 		RE::BSLight* dirLight = (Pass->numLights > 0 && Pass->sceneLights) ? Pass->sceneLights[0] : nullptr;
-		// isPlausible only validates the pointer VALUE; a stale-but-canonical
-		// dirLight still AVs when we read dirLight->light, so capture the NiLight
-		// under SEH and reuse it below (no second deref).
-		RE::NiLight* niLight = isPlausible(dirLight) ? SafeReadDirectionalNiLight(dirLight) : nullptr;
-		if (Pass->numLights == 0 || !isPlausible(niLight)) {
+		// A stale-but-canonical dirLight passes the pointer-value check yet still AVs on
+		// dirLight->light, so capture the NiLight under SEH and reuse it below (no second deref).
+		RE::NiLight* niLight = IsPlausibleShadowLightPtr(reinterpret_cast<std::uintptr_t>(dirLight)) ? SafeReadDirectionalNiLight(dirLight) : nullptr;
+		if (Pass->numLights == 0 || !IsPlausibleShadowLightPtr(reinterpret_cast<std::uintptr_t>(niLight))) {
 			directionalSlotSafe = false;
 			static int logged = 0;
 			if (logged++ < 10) {
@@ -1293,14 +1290,11 @@ void LightLimitFix::Hooks::BSEffectShader_SetupGeometry::thunk(RE::BSShader* Thi
 	// Entries failing either check stop the loop; the engine's own loop
 	// bails on the first bad entry too, so clamping matches its contract.
 	if (Pass && Pass->sceneLights && Pass->numLights > 0) {
-		const auto isPlausible = [](const void* p) {
-			const auto v = reinterpret_cast<std::uintptr_t>(p);
-			return v >= 0x10000 && v < 0x800000000000ull && (v & 0x7) == 0;
-		};
+		using ShadowCasterManager::IsPlausibleShadowLightPtr;
 		std::uint8_t validCount = 0;
 		for (std::uint8_t i = 0; i < Pass->numLights; ++i) {
 			RE::BSLight* bsLight = Pass->sceneLights[i];
-			if (!isPlausible(bsLight)) {
+			if (!IsPlausibleShadowLightPtr(reinterpret_cast<std::uintptr_t>(bsLight))) {
 				static int loggedBsLight = 0;
 				if (loggedBsLight++ < 10) {
 					logger::warn(
@@ -1311,7 +1305,7 @@ void LightLimitFix::Hooks::BSEffectShader_SetupGeometry::thunk(RE::BSShader* Thi
 				break;
 			}
 			RE::NiLight* niLight = bsLight->light.get();
-			if (!isPlausible(niLight)) {
+			if (!IsPlausibleShadowLightPtr(reinterpret_cast<std::uintptr_t>(niLight))) {
 				// Catches both NULL (engine cleared the NiPointer) and
 				// garbage (BSLight memory recycled). NULL is the more common
 				// observed failure -- the engine's loop has no null check
