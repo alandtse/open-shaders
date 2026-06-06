@@ -964,7 +964,7 @@ namespace FrameAnnotations
 				RE::VTABLE_BSImagespaceShaderCopyDepthBuffer[3]);
 			stl::write_vfunc<0x1, BSImagespaceShader_Render<RE::ImageSpaceManager::ISCopyDepthBuffer_DR>>(
 				RE::VTABLE_BSImagespaceShaderCopyDepthBuffer_DR[3]);
-			stl::write_vfunc<0x1, BSImagespaceShader_Render<RE::ImageSpaceManager::ISCopyDepthBuffer_DR>>(
+			stl::write_vfunc<0x1, BSImagespaceShader_Render<RE::ImageSpaceManager::ISCopyDepthBufferTargetSize>>(
 				RE::VTABLE_BSImagespaceShaderDepthBuffer4xDownscale[3]);
 			stl::write_vfunc<0x1, BSImagespaceShader_Render<RE::ImageSpaceManager::ISDownsampleHierarchicalDepthBufferCS>>(
 				RE::VTABLE_BSImagespaceShaderISDownsampleHierarchicalDepthBufferCS[3]);
@@ -995,7 +995,7 @@ namespace FrameAnnotations
 				RE::VTABLE_BSImagespaceShaderCopyDepthBuffer[0]);
 			stl::write_vfunc<0xC, BSImagespaceShader_Dispatch<RE::ImageSpaceManager::ISCopyDepthBuffer_DR>>(
 				RE::VTABLE_BSImagespaceShaderCopyDepthBuffer_DR[0]);
-			stl::write_vfunc<0xC, BSImagespaceShader_Dispatch<RE::ImageSpaceManager::ISCopyDepthBuffer_DR>>(
+			stl::write_vfunc<0xC, BSImagespaceShader_Dispatch<RE::ImageSpaceManager::ISCopyDepthBufferTargetSize>>(
 				RE::VTABLE_BSImagespaceShaderDepthBuffer4xDownscale[0]);
 			stl::write_vfunc<0xC, BSImagespaceShader_Dispatch<RE::ImageSpaceManager::ISDownsampleHierarchicalDepthBufferCS>>(
 				RE::VTABLE_BSImagespaceShaderISDownsampleHierarchicalDepthBufferCS[0]);
