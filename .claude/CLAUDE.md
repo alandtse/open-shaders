@@ -216,6 +216,8 @@ Each feature follows consistent structure:
 **VR Adaptations**: Specialized rendering paths in `src/Features/VR/`
 **API Abstraction**: Dual DirectX 11 support with feature-specific rendering strategies
 
+**Non-VR is primary; VR is a minimal divergence**: Treat non-VR (flatrim: SE/AE) as the primary code path. VR is a divergence kept to the **minimum necessary** — fork the code (`#if defined(VR)` / `REL::Module::IsVR()`) only where behavior is genuinely VR-specific (different engine data paths, stereo/per-eye projection, VR-only resources or RE structs). Don't add VR branches for convenience or to paper over a side-effect of another change; prefer a single shared path and diverge only when truly required, keeping any VR branch small and localized. **Why**: maximum accessibility for contributors to support both ecosystems — shared core code keeps the project approachable, so the same people can maintain both paths. When reviewing a change that adds VR branches, ask whether the divergence is intrinsic VR behavior or a workaround that could be unified.
+
 ## Critical Dependencies
 
 ### CommonLibSSE-NG (`extern/CommonLibSSE-NG`)
