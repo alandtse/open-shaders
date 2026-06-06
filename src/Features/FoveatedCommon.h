@@ -3,9 +3,8 @@
 #include <algorithm>
 #include <cmath>
 
-// Shared CPU-side helpers for VR foveated shader detail; GPU mirror in
-// package/Shaders/Common/FoveatedMask.hlsli, with GetShaderMode's 0/1/2 encoding as the contract.
-// Only the SSR-consumed pieces exist; compute-dispatch helpers are omitted until a CS effect needs them.
+// Shared CPU-side helpers for VR foveated shader detail; GPU mirror in FoveatedMask.hlsli, with
+// GetShaderMode's 0/1/2 encoding as the contract. Only SSR-consumed pieces exist (compute helpers omitted).
 namespace FoveatedCommon
 {
 	constexpr float kCenterScaleMin = 0.25f;
