@@ -1181,11 +1181,14 @@ void Menu::ProcessInputEvents(RE::InputEvent* const* a_events)
 bool Menu::SetVisible(bool a_visible)
 {
 	// Match the ToggleKey path: never open over first-time setup, and clear ImGui's
-	// held keys on open so a programmatic open doesn't leave a phantom key down.
+	// held keys only on the closed->open transition so a programmatic open doesn't
+	// leave a phantom key down -- and a repeated open while already visible doesn't
+	// drop in-progress input.
 	if (a_visible && HomePageRenderer::ShouldShowFirstTimeSetup())
 		return IsEnabled;
+	const bool wasEnabled = IsEnabled;
 	IsEnabled = a_visible;
-	if (IsEnabled)
+	if (IsEnabled && !wasEnabled)
 		ImGui::GetIO().ClearInputKeys();
 	return IsEnabled;
 }
