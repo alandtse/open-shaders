@@ -195,7 +195,7 @@ void AdvancedSettingsRenderer::RenderShaderThreading()
 	ImGui::Checkbox("Background Compile on Boot", &menuSettings.BackgroundShaderCompilationOnBoot);
 	if (auto _tt = Util::HoverTooltipWrapper()) {
 		ImGui::Text(
-			"Load the menu immediately and compile shaders in the background on first boot "
+			"Load the menu immediately and compile shaders in the background on boot "
 			"(same as the Skip Compilation key). Shaders still compile - only the startup wait "
 			"is skipped. Takes effect on the next launch. Default off.");
 	}
