@@ -2479,8 +2479,28 @@ namespace SIE
 		logger::info("Saved disk cache info (plugin version: {})", Plugin::VERSION.string());
 	}
 
+	/// True when an env var is set to a truthy value ("1" or "true", case-insensitive).
+	static bool IsEnvVarTruthy(const char* a_name)
+	{
+		char buffer[16] = {};
+		const DWORD len = GetEnvironmentVariableA(a_name, buffer, sizeof(buffer));
+		if (len == 0 || len >= sizeof(buffer))
+			return false;
+		std::string value(buffer, len);
+		std::transform(value.begin(), value.end(), value.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+		return value == "1" || value == "true";
+	}
+
 	ShaderCache::ShaderCache()
 	{
+		// Env var is available at process start, so it works even when the saved
+		// menu setting loads after the first compile would begin (headless/CI). It
+		// ORs with BackgroundShaderCompilationOnBoot (applied later in Menu::Load).
+		if (IsEnvVarTruthy("OPENSHADERS_BACKGROUND_COMPILE")) {
+			backgroundCompilation = true;
+			logger::info("OPENSHADERS_BACKGROUND_COMPILE set; starting shaders in background compilation mode");
+		}
+
 		dependencyTracker = std::make_unique<ShaderFileDependencyTracker>();
 		logger::debug("ShaderCache initialized: {} startup threads, {} background threads, {} pool threads",
 			(int)compilationThreadCount, (int)backgroundCompilationThreadCount, (int)compilationPool.get_thread_count());

@@ -189,6 +189,16 @@ void AdvancedSettingsRenderer::RenderShaderThreading()
 			"Defaults to half of performance cores to avoid impacting the render thread. "
 			"Higher values finish compilation faster but may cause stuttering.");
 	}
+
+	// Persisted in Menu::Settings (not ShaderCache); applied to backgroundCompilation at boot in Menu::Load.
+	auto& menuSettings = globals::menu->GetSettings();
+	ImGui::Checkbox("Background Compile on Boot", &menuSettings.BackgroundShaderCompilationOnBoot);
+	if (auto _tt = Util::HoverTooltipWrapper()) {
+		ImGui::Text(
+			"Load the menu immediately and compile shaders in the background on first boot "
+			"(same as the Skip Compilation key). Shaders still compile - only the startup wait "
+			"is skipped. Takes effect on the next launch. Default off.");
+	}
 }
 
 void AdvancedSettingsRenderer::RenderShaderCacheControls()
