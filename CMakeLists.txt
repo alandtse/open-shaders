@@ -191,6 +191,9 @@ if(MSVC)
             "$<$<CONFIG:RelWithDebInfo>:/LTCG>"
             "$<$<CONFIG:RelWithDebInfo>:/INCREMENTAL:NO>"
     )
+    # Large translation units (e.g. LightLimitFix/ShadowCasterManager.cpp pulling the
+    # full feature + editor headers) exceed the default COFF section limit; /bigobj.
+    target_compile_options(${PROJECT_NAME} PRIVATE "/bigobj")
 endif()
 
 # https://gitlab.kitware.com/cmake/cmake/-/issues/24922#note_1371990

@@ -1034,9 +1034,9 @@ namespace Hooks
 		stl::write_thunk_call<CreateRenderTarget_Water1>(REL::RelocationID(100458, 107175).address() + REL::Relocate(0xF4F, 0xF51));
 		stl::write_thunk_call<CreateRenderTarget_Water2>(REL::RelocationID(100458, 107175).address() + REL::Relocate(0xF65, 0xF67));
 
-		stl::write_thunk_call<CreateDepthStencil_PrecipitationMask>(REL::RelocationID(100458, 107175).address() + REL::Relocate(0x1245, 0x123B));
-		stl::write_thunk_call<CreateCubemapRenderTarget_Reflections>(REL::RelocationID(100458, 107175).address() + REL::Relocate(0xA25, 0xA25));
-		stl::write_thunk_call<CreateDepthStencil_Reflections>(REL::RelocationID(100458, 107175).address() + REL::Relocate(0xA59, 0xA59));
+		stl::write_thunk_call<CreateDepthStencil_PrecipitationMask>(REL::RelocationID(100458, 107175).address() + REL::Relocate(0x1245, 0x123B, 0x1917));
+		stl::write_thunk_call<CreateCubemapRenderTarget_Reflections>(REL::RelocationID(100458, 107175).address() + REL::Relocate(0xA25, 0xA25, 0xCD2));
+		stl::write_thunk_call<CreateDepthStencil_Reflections>(REL::RelocationID(100458, 107175).address() + REL::Relocate(0xA59, 0xA59, 0xD13));
 
 		globals::features::upscaling.perfMode.InstallCreateRTThunks();
 
