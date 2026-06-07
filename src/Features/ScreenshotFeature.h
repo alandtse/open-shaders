@@ -28,8 +28,6 @@ struct ScreenshotFeature : public Feature
 	virtual void PostPostLoad() override;
 
 	void Capture();
-	// Runs after HDR Present processing so the back buffer matches what's on screen.
-	void ProcessCaptureRequest();
 	bool applyCropToScreenshot = true;
 
 	// Settings

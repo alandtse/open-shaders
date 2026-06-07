@@ -1,4 +1,5 @@
 #pragma once
+#include "CSEditor/LightEditor.h"
 #include "LightLimitFix.h"
 
 struct InverseSquareLighting : Feature

@@ -86,7 +86,7 @@ void HomePageRenderer::RenderWelcomeSection()
 	const char* introText =
 		"Open Shaders is a fork of Community Shaders providing advanced graphics enhancements for Skyrim.\n"
 		"This comprehensive collection of features brings modern rendering techniques\n"
-		"to enhance your visual experience.");
+		"to enhance your visual experience.";
 	ImVec2 introSize = ImGui::CalcTextSize(introText);
 	ImGui::SetCursorPosX((windowSize.x - introSize.x) * 0.5f);
 	ImGui::TextWrapped("%s", introText);

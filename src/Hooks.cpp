@@ -268,8 +268,6 @@ struct IDXGISwapChain_Present
 				return func(swapChain, syncInterval, presentFlags);
 			});
 
-		globals::features::screenshotFeature.ProcessCaptureRequest();
-
 		TracyD3D11Collect(globals::state->tracyCtx);
 
 		return retval;
@@ -571,28 +569,6 @@ namespace Hooks
 	// kSNOW / kSNOW_SWAP are created at R8G8B8A8_UNORM by vanilla; the snow shader
 	// writes accumulated wetness/sparkle values that exceed the 8-bit range and
 	// quantize into visible banding on tessellated snow. Promote to fp16 for headroom.
-	struct CreateRenderTarget_Snow
-	{
-		static void thunk(RE::BSGraphics::Renderer* This, RE::RENDER_TARGETS::RENDER_TARGET a_target, RE::BSGraphics::RenderTargetProperties* a_properties)
-		{
-			auto properties = *a_properties;
-			properties.format.set(RE::BSGraphics::Format::kR16G16B16A16_FLOAT);
-			func(This, a_target, &properties);
-		}
-		static inline REL::Relocation<decltype(thunk)> func;
-	};
-
-	struct CreateRenderTarget_SnowSwap
-	{
-		static void thunk(RE::BSGraphics::Renderer* This, RE::RENDER_TARGETS::RENDER_TARGET a_target, RE::BSGraphics::RenderTargetProperties* a_properties)
-		{
-			auto properties = *a_properties;
-			properties.format.set(RE::BSGraphics::Format::kR16G16B16A16_FLOAT);
-			func(This, a_target, &properties);
-		}
-		static inline REL::Relocation<decltype(thunk)> func;
-	};
-
 	// kSNOW / kSNOW_SWAP are created at R8G8B8A8_UNORM by vanilla; the snow shader
 	// writes accumulated wetness/sparkle values that exceed the 8-bit range and
 	// quantize into visible banding on tessellated snow. Promote to fp16 for headroom.

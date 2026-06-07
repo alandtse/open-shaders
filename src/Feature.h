@@ -68,9 +68,6 @@ struct Feature
 	virtual std::string GetName() = 0;
 	virtual std::string GetShortName() = 0;
 	virtual std::string GetDisplayName() { return GetName(); }
-	// Restored after upstream #2475 removed it: VR features (and the SupportsVR gate in
-	// Feature.cpp / RemoteControl) rely on this; this fork keeps VR.
-	virtual bool SupportsVR() { return false; }
 	std::string GetDisplayCategory() const;
 	virtual std::string GetFeatureModLink() { return ""; }
 	virtual std::string_view GetShaderDefineName() { return ""; }
