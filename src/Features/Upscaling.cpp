@@ -927,6 +927,8 @@ Upscaling::UpscaleMethod Upscaling::GetUpscaleMethod() const
 
 bool Upscaling::PerfModePrerequisitesMet() const
 {
+	if (!loaded)
+		return false;
 	const auto method = GetUpscaleMethod();
 	const bool methodRedirectsOutput = method == UpscaleMethod::kDLSS || method == UpscaleMethod::kFSR;
 	// >1.0x: a sub-display render res to bank. Native AA (1.0x) banks nothing.
