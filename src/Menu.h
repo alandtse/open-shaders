@@ -147,12 +147,20 @@ public:
 	/**
 	 * @brief Thread-safe entry point for off-thread callers to change menu visibility.
 	 *
-	 * Stores an atomic request that the render loop (ProcessInputEventQueue) consumes
+	 * Records an atomic request that the render loop (ProcessInputEventQueue) consumes
 	 * and applies via SetVisible on the render thread — so the ImGui access stays on
 	 * the thread that owns the context. Safe to call from any thread (e.g. devbench's
-	 * listener thread); the change takes effect on the next rendered frame.
+	 * listener thread); the change takes effect on the next rendered frame. Absolute
+	 * open/close is last-writer-wins; toggles accumulate (count) so rapid sub-frame
+	 * toggles aren't collapsed.
 	 */
-	void RequestVisibility(VisibilityRequest a_request) { pendingVisibilityRequest.store(a_request, std::memory_order_relaxed); }
+	void RequestVisibility(VisibilityRequest a_request)
+	{
+		if (a_request == VisibilityRequest::Toggle)
+			pendingToggleCount.fetch_add(1, std::memory_order_relaxed);
+		else if (a_request != VisibilityRequest::None)
+			pendingAbsolute.store(a_request, std::memory_order_relaxed);  // Open or Close
+	}
 
 	// Search bar state
 	std::string featureSearch;  // For left pane feature search
@@ -199,9 +207,15 @@ public:
 	bool pendingFontReload = false;
 	bool pendingIconReload = false;
 
-	// Off-thread visibility request consumed on the render thread (see RequestVisibility).
-	std::atomic<VisibilityRequest> pendingVisibilityRequest{ VisibilityRequest::None };
+private:
+	// Off-thread visibility requests, consumed on the render thread in
+	// ProcessInputEventQueue (see RequestVisibility). Private so callers go through the
+	// thread-safe API rather than writing these directly. Absolute open/close is
+	// last-writer-wins; toggles accumulate so rapid sub-frame toggles aren't dropped.
+	std::atomic<VisibilityRequest> pendingAbsolute{ VisibilityRequest::None };  // None/Open/Close
+	std::atomic<unsigned int> pendingToggleCount{ 0 };
 
+public:
 	// Display size tracking for cross-session resolution change detection
 	float2 lastDisplaySize{};
 	bool resetLayout = false;

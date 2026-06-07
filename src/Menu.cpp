@@ -909,11 +909,22 @@ static std::vector<InputCombo> DeriveWeatherEditorKey(const std::vector<InputCom
 
 void Menu::ProcessInputEventQueue()
 {
-	// Apply any off-thread visibility request (e.g. devbench) here on the render thread,
+	// Apply any off-thread visibility requests (e.g. devbench) here on the render thread,
 	// mirroring the ToggleKey path, so SetVisible's ImGui access stays on the owning thread.
-	if (auto req = pendingVisibilityRequest.exchange(VisibilityRequest::None, std::memory_order_relaxed);
-		req != VisibilityRequest::None) {
-		SetVisible(req == VisibilityRequest::Toggle ? !IsEnabled : req == VisibilityRequest::Open);
+	// Absolute open/close first, then toggle parity, so rapid sub-frame toggles aren't dropped.
+	{
+		const auto abs = pendingAbsolute.exchange(VisibilityRequest::None, std::memory_order_relaxed);
+		const unsigned int toggles = pendingToggleCount.exchange(0, std::memory_order_relaxed);
+		if (abs != VisibilityRequest::None || toggles != 0u) {
+			bool target = IsEnabled;
+			if (abs == VisibilityRequest::Open)
+				target = true;
+			else if (abs == VisibilityRequest::Close)
+				target = false;
+			if (toggles % 2u == 1u)
+				target = !target;
+			SetVisible(target);
+		}
 	}
 
 	std::unique_lock<std::shared_mutex> mutex(_inputEventMutex);
