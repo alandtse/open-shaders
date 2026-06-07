@@ -600,12 +600,9 @@ namespace ShadowCasterManager
 	/// covers the same ground for incremental changes; this is the wholesale
 	/// reset for known scene boundaries so the UI counter and table read 0
 	/// during the loading screen instead of carrying stale entries forward.
+	/// Driven by LightLimitFix::OnSceneTransitionReset on the render thread (LoadingMenu open),
+	/// so the clear serializes with the settings-menu table iteration instead of racing it.
 	void ResetSession();
-
-	/// Register the LoadingMenu open/close handler so ResetSession fires
-	/// when the user starts a fast-travel or cell transition. Call once
-	/// from SCM::Install after the rest of the hooks are in place.
-	void RegisterSceneTransitionEvents();
 
 	/// Returns a read-only view of the active light pool for UI/visualization.
 	const LightContainer& GetLights();

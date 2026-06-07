@@ -158,7 +158,6 @@ void DynamicCubemaps::DataLoaded()
 		Util::EnableBooleanSettings(iniVRCubeMapSettings, GetName());
 		Util::EnableBooleanSettings(hiddenVRCubeMapSettings, GetName());
 	}
-	MenuOpenCloseEventHandler::Register();
 }
 
 void DynamicCubemaps::PostPostLoad()
@@ -180,34 +179,14 @@ void DynamicCubemaps::PostPostLoad()
 	}
 }
 
-RE::BSEventNotifyControl MenuOpenCloseEventHandler::ProcessEvent(const RE::MenuOpenCloseEvent* a_event, RE::BSTEventSource<RE::MenuOpenCloseEvent>*)
+void DynamicCubemaps::OnSceneTransitionReset(bool opening)
 {
-	// When entering a new cell, reset the capture
-	if (a_event->menuName == RE::LoadingMenu::MENU_NAME) {
-		if (!a_event->opening) {
-			auto& dynamicCubemaps = globals::features::dynamicCubemaps;
-			dynamicCubemaps.resetCapture[0] = true;
-			dynamicCubemaps.resetCapture[1] = true;
-		}
+	// On LoadingMenu close (new cell loaded) re-trigger the cubemap capture. Dispatched on the
+	// render thread by Feature::DrainSceneTransitions; resetCapture is consumed there too.
+	if (!opening) {
+		resetCapture[0] = true;
+		resetCapture[1] = true;
 	}
-	return RE::BSEventNotifyControl::kContinue;
-}
-
-bool MenuOpenCloseEventHandler::Register()
-{
-	static MenuOpenCloseEventHandler singleton;
-	auto ui = globals::game::ui;
-
-	if (!ui) {
-		logger::error("UI event source not found");
-		return false;
-	}
-
-	ui->GetEventSource<RE::MenuOpenCloseEvent>()->AddEventSink(&singleton);
-
-	logger::info("Registered {}", typeid(singleton).name());
-
-	return true;
 }
 
 void DynamicCubemaps::ClearShaderCache()

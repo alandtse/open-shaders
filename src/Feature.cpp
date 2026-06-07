@@ -280,6 +280,55 @@ const std::vector<Feature*>& Feature::GetFeatureList()
 	}
 }
 
+namespace
+{
+	// LoadingMenu fires on the main thread; latch the transition here and let the render thread run
+	// the resets, so feature caches the menu/Prepass iterates aren't cleared mid-iteration.
+	std::atomic<bool> g_loadingMenuOpenPending{ false };
+	std::atomic<bool> g_loadingMenuClosePending{ false };
+
+	class SceneTransitionSink : public RE::BSTEventSink<RE::MenuOpenCloseEvent>
+	{
+	public:
+		RE::BSEventNotifyControl ProcessEvent(const RE::MenuOpenCloseEvent* a_event,
+			RE::BSTEventSource<RE::MenuOpenCloseEvent>*) override
+		{
+			if (a_event && a_event->menuName == RE::LoadingMenu::MENU_NAME) {
+				if (a_event->opening)
+					g_loadingMenuOpenPending.store(true, std::memory_order_release);
+				else
+					g_loadingMenuClosePending.store(true, std::memory_order_release);
+			}
+			return RE::BSEventNotifyControl::kContinue;
+		}
+		static SceneTransitionSink* GetSingleton()
+		{
+			static SceneTransitionSink singleton;
+			return &singleton;
+		}
+	};
+}
+
+void Feature::DrainSceneTransitions()
+{
+	static std::atomic<bool> registered{ false };
+	if (!registered.load(std::memory_order_acquire)) {
+		if (auto* ui = globals::game::ui) {
+			// GetEventSource can be null before the UI is fully up; leave registered=false and retry
+			// next frame rather than dereferencing it.
+			if (auto* source = ui->GetEventSource<RE::MenuOpenCloseEvent>()) {
+				source->AddEventSink(SceneTransitionSink::GetSingleton());
+				registered.store(true, std::memory_order_release);
+			}
+		}
+	}
+
+	if (g_loadingMenuOpenPending.exchange(false, std::memory_order_acq_rel))
+		ForEachLoadedFeature("OnSceneTransitionReset(open)", [](Feature* f) { f->OnSceneTransitionReset(true); });
+	if (g_loadingMenuClosePending.exchange(false, std::memory_order_acq_rel))
+		ForEachLoadedFeature("OnSceneTransitionReset(close)", [](Feature* f) { f->OnSceneTransitionReset(false); });
+}
+
 Feature* Feature::FindFeatureByShortName(const std::string& shortName)
 {
 	for (auto* feature : GetFeatureList()) {

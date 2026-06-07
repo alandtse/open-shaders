@@ -3737,12 +3737,9 @@ namespace ShadowCasterManager
 
 		logger::info("[SCM] Hooks installed (ShadowLightCount={})", settings.ShadowLightCount);
 
-		// Wholesale reset on LoadingMenu open so transient session state
-		// (s_normalConvert, s_lights pool, debug pins) drops the previous
-		// cell's pointers before the engine tears them down. Mirrors the
-		// pattern in DynamicCubemaps for similar reset-on-scene-transition
-		// behaviour.
-		RegisterSceneTransitionEvents();
+		// The LoadingMenu reset is driven via LightLimitFix::OnSceneTransitionReset (render thread)
+		// rather than a local main-thread sink, so ResetSession can't race the settings-menu table
+		// iteration. See Feature::DrainSceneTransitions.
 
 		// DXGI budget snapshot at install. Per-slice geometry follows once
 		// Update() sees a non-null kSHADOWMAPS SRV.
@@ -3814,8 +3811,8 @@ namespace ShadowCasterManager
 	void ResetSession()
 	{
 		// Wholesale drop of pointers the engine is about to free during
-		// a scene transition. Called by RegisterSceneTransitionEvents
-		// when the LoadingMenu opens. The per-frame reconciliation in
+		// a scene transition. Called from LightLimitFix::OnSceneTransitionReset
+		// on the render thread when the LoadingMenu opens. The per-frame reconciliation in
 		// ScheduleShadowCasters keeps these caches honest during normal
 		// play; this is the explicit "scene is gone" signal so the UI
 		// counter, debug pins, and tracking sets read empty during the
@@ -3843,34 +3840,6 @@ namespace ShadowCasterManager
 				s_lights.Lights[i].Clear();
 			s_lights.Sun = false;
 		}
-	}
-
-	class SceneTransitionEventHandler : public RE::BSTEventSink<RE::MenuOpenCloseEvent>
-	{
-	public:
-		RE::BSEventNotifyControl ProcessEvent(const RE::MenuOpenCloseEvent* a_event,
-			RE::BSTEventSource<RE::MenuOpenCloseEvent>*) override
-		{
-			if (a_event && a_event->menuName == RE::LoadingMenu::MENU_NAME && a_event->opening)
-				ResetSession();
-			return RE::BSEventNotifyControl::kContinue;
-		}
-		static SceneTransitionEventHandler* GetSingleton()
-		{
-			static SceneTransitionEventHandler singleton;
-			return &singleton;
-		}
-	};
-
-	void RegisterSceneTransitionEvents()
-	{
-		auto* ui = globals::game::ui;
-		if (!ui) {
-			logger::error("[SCM] No UI singleton; cannot register LoadingMenu handler");
-			return;
-		}
-		ui->AddEventSink(SceneTransitionEventHandler::GetSingleton());
-		logger::info("[SCM] LoadingMenu event handler registered");
 	}
 
 	const LightContainer& GetLights()

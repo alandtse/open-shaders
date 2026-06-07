@@ -125,6 +125,17 @@ public:
 	virtual std::pair<std::string, std::vector<std::string>> GetFeatureSummary() { return {}; }
 	virtual void SetupResources() {}
 	virtual void Reset() {}
+
+	/**
+	 * @brief Render-thread scene-transition reset (driven by LoadingMenu open/close).
+	 *
+	 * Dispatched by DrainSceneTransitions() on the render thread, so a feature can clear caches
+	 * its menu or Prepass iterates without racing the main-thread LoadingMenu event. Prefer this
+	 * over a direct MenuOpenCloseEvent sink whenever the reset touches render-thread-iterated state.
+	 * @param opening true when the LoadingMenu is opening (old cell teardown), false when closing.
+	 */
+	virtual void OnSceneTransitionReset(bool /*opening*/) {}
+
 	virtual void DrawSettings() {}
 	virtual void DrawUnloadedUI();
 
@@ -211,6 +222,15 @@ public:
 	virtual void ClearShaderCache() {}
 
 	static const std::vector<Feature*>& GetFeatureList();
+
+	/**
+	 * @brief Drains pending LoadingMenu transitions and dispatches OnSceneTransitionReset.
+	 *
+	 * Lazily registers a single LoadingMenu MenuOpenCloseEvent sink. The sink (main thread) only
+	 * latches a flag; this drain runs the resets on the calling thread. Call once per frame from
+	 * the render path so feature resets serialize with render-thread menu/Prepass iteration.
+	 */
+	static void DrainSceneTransitions();
 
 	/**
 	 * @brief Finds a loaded feature by its short name.

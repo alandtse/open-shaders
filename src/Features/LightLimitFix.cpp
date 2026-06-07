@@ -524,6 +524,15 @@ void LightLimitFix::Reset()
 	jsonPlacedLightCache.clear();
 }
 
+void LightLimitFix::OnSceneTransitionReset(bool opening)
+{
+	// LoadingMenu open: drop the shadow-caster session caches before the engine tears down the old
+	// cell. Dispatched on the render thread (Feature::DrainSceneTransitions), so it serializes with
+	// the settings-menu table iteration that reads the same caches instead of racing it.
+	if (opening)
+		ShadowCasterManager::ResetSession();
+}
+
 void LightLimitFix::LoadSettings(json& o_json)
 {
 	settings = o_json;

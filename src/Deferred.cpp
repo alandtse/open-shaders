@@ -217,6 +217,10 @@ void Deferred::PrepassPasses()
 	auto context = globals::d3d::context;
 	context->OMSetRenderTargets(0, nullptr, nullptr);  // Unbind all bound render targets
 
+	// Run any pending LoadingMenu scene-transition resets on this (render) thread before features
+	// iterate their caches, so the clear can't race the menu/Prepass iteration.
+	Feature::DrainSceneTransitions();
+
 	Feature::ForEachLoadedFeature("Prepass", [](Feature* feature) { feature->Prepass(); }, true);
 }
 
