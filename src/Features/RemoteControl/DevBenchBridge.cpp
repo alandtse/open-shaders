@@ -490,17 +490,24 @@ namespace
 	json BuildMenuResult(const json& a_args)
 	{
 		const std::string op = a_args.value("op", std::string("toggle"));
-		if (op != "open" && op != "close" && op != "toggle")
+		Menu::VisibilityRequest req;
+		if (op == "open")
+			req = Menu::VisibilityRequest::Open;
+		else if (op == "close")
+			req = Menu::VisibilityRequest::Close;
+		else if (op == "toggle")
+			req = Menu::VisibilityRequest::Toggle;
+		else
 			return json{ { "error", "unknown op (open|close|toggle)" }, { "op", op } };
 
-		// Menu::IsEnabled is a plain flag the render thread reads each frame and SetVisible calls
-		// ImGui — marshal to the main thread and report the resulting visibility synchronously.
-		return RunOnMainThread([op]() -> json {
-			auto* menu = Menu::GetSingleton();
-			const bool want = (op == "toggle") ? !menu->IsEnabled : (op == "open");
-			const bool visible = menu->SetVisible(want);
-			return json{ { "op", op }, { "visible", visible } };
-		});
+		// SetVisible touches the ImGui context and the IsEnabled flag the render thread owns, so
+		// it can't run on this listener thread (nor on the SKSE main thread). Enqueue an atomic
+		// request the render loop consumes next frame, mirroring the ToggleKey path.
+		auto* menu = Menu::GetSingleton();
+		if (!menu)
+			return json{ { "error", "menu unavailable" }, { "op", op } };
+		menu->RequestVisibility(req);
+		return json{ { "op", op }, { "queued", true } };
 	}
 
 	void MenuHandler(void*, const char* a_argsJson, void* a_sink, DevBenchAPI::WriteFn a_write)
@@ -552,7 +559,7 @@ namespace DevBenchBridge
 		// identity), so the menu name lines up with the on-screen window.
 		if (dvb->GetBuildNumber() >= 10400) {
 			static constexpr const char* menuDesc =
-				R"({"description":"Open, close, or toggle the Community Shaders (Open Shaders) in-game settings menu headlessly — the same window the ToggleKey (default End) shows. op: open|close|toggle (default toggle). Returns {op,visible} with the resulting visibility (open is a no-op while first-time setup is pending). Marshaled to the render thread.","inputSchema":{"type":"object","properties":{"op":{"type":"string","enum":["open","close","toggle"]}}}})";
+				R"({"description":"Open, close, or toggle the Community Shaders (Open Shaders) in-game settings menu headlessly — the same window the ToggleKey (default End) shows. op: open|close|toggle (default toggle). Returns {op,queued:true}; the change is applied on the render thread on the next frame (open is a no-op while first-time setup is pending).","inputSchema":{"type":"object","properties":{"op":{"type":"string","enum":["open","close","toggle"]}}}})";
 			dvb->RegisterMenuHandler("CommunityShaders", menuDesc, &MenuHandler, nullptr);
 		}
 	}

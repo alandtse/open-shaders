@@ -909,6 +909,13 @@ static std::vector<InputCombo> DeriveWeatherEditorKey(const std::vector<InputCom
 
 void Menu::ProcessInputEventQueue()
 {
+	// Apply any off-thread visibility request (e.g. devbench) here on the render thread,
+	// mirroring the ToggleKey path, so SetVisible's ImGui access stays on the owning thread.
+	if (auto req = pendingVisibilityRequest.exchange(VisibilityRequest::None, std::memory_order_relaxed);
+		req != VisibilityRequest::None) {
+		SetVisible(req == VisibilityRequest::Toggle ? !IsEnabled : req == VisibilityRequest::Open);
+	}
+
 	std::unique_lock<std::shared_mutex> mutex(_inputEventMutex);
 	ImGuiIO& io = ImGui::GetIO();
 	// Split the queue into VR and non-VR events

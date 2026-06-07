@@ -126,13 +126,33 @@ public:
 	 * @brief Programmatically set the settings menu visibility (open/close/toggle).
 	 *
 	 * Mirrors the ToggleKey hotkey: honours the first-time-setup guard and clears
-	 * stale ImGui input on open. `IsEnabled` is a plain flag the render thread reads
-	 * each frame, so callers must invoke this on the main/render thread (e.g. via the
-	 * SKSE task queue) — see DevBenchBridge's RunOnMainThread.
+	 * stale ImGui input on open. Touches the ImGui context and the `IsEnabled` flag
+	 * the render thread owns, so it is **render/UI thread only** — call it from the
+	 * render loop (as the ToggleKey path does), not the game/main thread. Off-thread
+	 * callers (e.g. devbench) must use RequestVisibility instead.
 	 * @param a_visible Desired visibility.
 	 * @return The resulting visibility (may stay false if first-time setup is pending).
 	 */
 	bool SetVisible(bool a_visible);
+
+	/// Off-thread visibility request, applied on the render thread next frame (see RequestVisibility).
+	enum class VisibilityRequest : int
+	{
+		None = 0,
+		Open,
+		Close,
+		Toggle
+	};
+
+	/**
+	 * @brief Thread-safe entry point for off-thread callers to change menu visibility.
+	 *
+	 * Stores an atomic request that the render loop (ProcessInputEventQueue) consumes
+	 * and applies via SetVisible on the render thread — so the ImGui access stays on
+	 * the thread that owns the context. Safe to call from any thread (e.g. devbench's
+	 * listener thread); the change takes effect on the next rendered frame.
+	 */
+	void RequestVisibility(VisibilityRequest a_request) { pendingVisibilityRequest.store(a_request, std::memory_order_relaxed); }
 
 	// Search bar state
 	std::string featureSearch;  // For left pane feature search
@@ -178,6 +198,9 @@ public:
 	// Deferred reload systems (public for SettingsTabRenderer access)
 	bool pendingFontReload = false;
 	bool pendingIconReload = false;
+
+	// Off-thread visibility request consumed on the render thread (see RequestVisibility).
+	std::atomic<VisibilityRequest> pendingVisibilityRequest{ VisibilityRequest::None };
 
 	// Display size tracking for cross-session resolution change detection
 	float2 lastDisplaySize{};
