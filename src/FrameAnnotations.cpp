@@ -16,8 +16,7 @@ namespace FrameAnnotations
 			if (globals::state && globals::state->IsDeveloperMode()) {
 				uint16_t packed = static_cast<uint16_t>(EffectType);
 				uint16_t se = RE::ImageSpaceManager::GetSEIndex(EffectType);
-				uint16_t vr = RE::ImageSpaceManager::GetVRIndex(EffectType);
-				std::string packedString = std::format(" (packed: 0x{:X}, SE: {}, VR: {})", packed, se, vr);
+				std::string packedString = std::format(" (packed: 0x{:X}, SE: {})", packed, se);
 				return enumName + packedString;
 			} else {
 				return enumName;
@@ -215,39 +214,6 @@ namespace FrameAnnotations
 
 			func(a1);
 
-			globals::state->EndPerfEvent();
-		};
-		static inline REL::Relocation<decltype(thunk)> func;
-	};
-
-	struct VR_RenderDepth_DownscaleDepthBuffer
-	{
-		static void thunk(RE::BSSceneGraph* a1)
-		{
-			globals::state->BeginPerfEvent("DownscaleDepthBuffer");
-			func(a1);
-			globals::state->EndPerfEvent();
-		};
-		static inline REL::Relocation<decltype(thunk)> func;
-	};
-
-	struct VR_RenderDepth_BSOBBOcclusionTestingShader
-	{
-		static void thunk(RE::BSImagespaceShader* a_this, RE::ImageSpaceEffectParam* a_param)
-		{
-			globals::state->BeginPerfEvent("BSOBBOcclusionTestingShader");
-			func(a_this, a_param);
-			globals::state->EndPerfEvent();
-		};
-		static inline REL::Relocation<decltype(thunk)> func;
-	};
-
-	struct VR_UpscaleDepthBuffer
-	{
-		static void thunk(RE::ImageSpaceManager* a_this, unsigned int a2, RE::RENDER_TARGET a_target, RE::RENDER_TARGET a_target2, __int64 a5, bool a6)
-		{
-			globals::state->BeginPerfEvent("UpscaleDepthBuffer");
-			func(a_this, a2, a_target, a_target2, a5, a6);
 			globals::state->EndPerfEvent();
 		};
 		static inline REL::Relocation<decltype(thunk)> func;
@@ -1057,7 +1023,7 @@ namespace FrameAnnotations
 		auto renderer = globals::game::renderer;
 
 		for (size_t renderTargetIndex = 0;
-			renderTargetIndex < Util::GetRenderTargetCount(); ++renderTargetIndex) {
+			renderTargetIndex < RE::RENDER_TARGETS::kTOTAL; ++renderTargetIndex) {
 			const auto renderTargetName = magic_enum::enum_name(
 				static_cast<RE::RENDER_TARGETS::RENDER_TARGET>(renderTargetIndex));
 			if (auto texture = renderer->GetRuntimeData().renderTargets[renderTargetIndex].texture) {
@@ -1078,7 +1044,7 @@ namespace FrameAnnotations
 		}
 
 		for (size_t renderTargetIndex = 0;
-			renderTargetIndex < Util::GetDepthStencilCount();
+			renderTargetIndex < RE::RENDER_TARGETS_DEPTHSTENCIL::kTOTAL;
 			++renderTargetIndex) {
 			const auto renderTargetName = magic_enum::enum_name(
 				static_cast<RE::RENDER_TARGETS_DEPTHSTENCIL::RENDER_TARGET_DEPTHSTENCIL>(

@@ -152,9 +152,7 @@ void FidelityFX::Present(bool a_useFrameGeneration, bool a_isHDR)
 	configParameters.flags = 0;
 	configParameters.allowAsyncWorkloads = true;
 
-	auto state = globals::state;
-
-	auto renderSize = state->screenSize * upscaling.resolutionScale;
+	auto renderSize = float2{ (float)globals::game::graphicsState->screenWidth, (float)globals::game::graphicsState->screenHeight } * upscaling.resolutionScale;
 
 	configParameters.generationRect.left = (swapChain.swapChainDesc.Width - swapChain.swapChainDesc.Width) / 2;
 	configParameters.generationRect.top = (swapChain.swapChainDesc.Height - swapChain.swapChainDesc.Height) / 2;
@@ -243,8 +241,6 @@ void FidelityFX::Present(bool a_useFrameGeneration, bool a_isHDR)
 
 void FidelityFX::CreateFSRResources()
 {
-	auto state = globals::state;
-
 	// Prevent multiple allocations
 	if (fsrScratchBuffer) {
 		logger::warn("[FidelityFX] FSR resources already created, skipping allocation");
@@ -253,7 +249,7 @@ void FidelityFX::CreateFSRResources()
 
 	auto fsrDevice = ffxGetDeviceDX11_Fsr31(globals::d3d::device);
 
-	uint32_t numContexts = globals::game::isVR ? 2 : 1;
+	uint32_t numContexts = 1;
 	size_t scratchBufferSize = ffxGetScratchMemorySizeDX11(numContexts);
 	fsrScratchBuffer = calloc(scratchBufferSize, 1);
 	if (!fsrScratchBuffer) {
@@ -270,7 +266,7 @@ void FidelityFX::CreateFSRResources()
 		return;
 	}
 
-	auto screenSize = state->screenSize;
+	float2 screenSize{ (float)globals::game::graphicsState->screenWidth, (float)globals::game::graphicsState->screenHeight };
 	auto renderSize = Util::ConvertToDynamic(screenSize);
 
 	// PerfMode bridge: when the BSOpenVR size hook is live, state->screenSize is polluted
@@ -287,43 +283,36 @@ void FidelityFX::CreateFSRResources()
 	uint32_t renderWidth = (uint32_t)(globals::game::isVR ? renderSize.x / 2 : renderSize.x);
 	uint32_t renderHeight = (uint32_t)renderSize.y;
 
-	for (uint32_t i = 0; i < numContexts; ++i) {
-		FfxFsr3ContextDescription contextDescription;
-		contextDescription.maxRenderSize.width = renderWidth;
-		contextDescription.maxRenderSize.height = renderHeight;
-		contextDescription.maxUpscaleSize.width = displayWidth;
-		contextDescription.maxUpscaleSize.height = displayHeight;
-		contextDescription.displaySize.width = displayWidth;
-		contextDescription.displaySize.height = displayHeight;
-		contextDescription.flags = FFX_FSR3_ENABLE_UPSCALING_ONLY | FFX_FSR3_ENABLE_AUTO_EXPOSURE;
-		if (globals::features::hdrDisplay.loaded) {
-			contextDescription.flags |= FFX_FSR3_ENABLE_HIGH_DYNAMIC_RANGE;
-			contextDescription.backBufferFormat = FFX_SURFACE_FORMAT_R10G10B10A2_UNORM;
-		} else {
-			contextDescription.backBufferFormat = FFX_SURFACE_FORMAT_R8G8B8A8_UNORM;
-		}
-		contextDescription.backendInterfaceUpscaling = fsrInterface;
-
-		if (ffxFsr3ContextCreate(&fsrContext[i], &contextDescription) != FFX_OK) {
-			logger::critical("[FidelityFX] Failed to initialize FSR3 context for eye {}!", i);
-			for (uint32_t j = 0; j < i; ++j)
-				ffxFsr3ContextDestroy(&fsrContext[j]);
-			free(fsrScratchBuffer);
-			fsrScratchBuffer = nullptr;
-			return;
-		}
+	FfxFsr3ContextDescription contextDescription;
+	contextDescription.maxRenderSize.width = renderWidth;
+	contextDescription.maxRenderSize.height = renderHeight;
+	contextDescription.maxUpscaleSize.width = displayWidth;
+	contextDescription.maxUpscaleSize.height = displayHeight;
+	contextDescription.displaySize.width = displayWidth;
+	contextDescription.displaySize.height = displayHeight;
+	contextDescription.flags = FFX_FSR3_ENABLE_UPSCALING_ONLY | FFX_FSR3_ENABLE_AUTO_EXPOSURE;
+	if (globals::features::hdrDisplay.loaded) {
+		contextDescription.flags |= FFX_FSR3_ENABLE_HIGH_DYNAMIC_RANGE;
+		contextDescription.backBufferFormat = FFX_SURFACE_FORMAT_R10G10B10A2_UNORM;
+	} else {
+		contextDescription.backBufferFormat = FFX_SURFACE_FORMAT_R8G8B8A8_UNORM;
 	}
-	logger::info("[FidelityFX] Created {} FSR3 contexts (Display: {}x{}, Render: {}x{})",
-		numContexts, displayWidth, displayHeight, renderWidth, renderHeight);
+	contextDescription.backendInterfaceUpscaling = fsrInterface;
+
+	if (ffxFsr3ContextCreate(&fsrContext[0], &contextDescription) != FFX_OK) {
+		logger::critical("[FidelityFX] Failed to initialize FSR3 context!");
+		free(fsrScratchBuffer);
+		fsrScratchBuffer = nullptr;
+		return;
+	}
+	logger::info("[FidelityFX] Created FSR3 context (Display: {}x{}, Render: {}x{})",
+		displayWidth, displayHeight, renderWidth, renderHeight);
 }
 
 void FidelityFX::DestroyFSRResources()
 {
-	uint32_t numContexts = globals::game::isVR ? 2 : 1;
-	for (uint32_t i = 0; i < numContexts; ++i) {
-		if (ffxFsr3ContextDestroy(&fsrContext[i]) != FFX_OK)
-			logger::critical("[FidelityFX] Failed to destroy FSR3 context for eye {}!", i);
-	}
+	if (ffxFsr3ContextDestroy(&fsrContext[0]) != FFX_OK)
+		logger::critical("[FidelityFX] Failed to destroy FSR3 context!");
 
 	// Free the scratch buffer to prevent memory leak
 	if (fsrScratchBuffer) {
@@ -360,7 +349,7 @@ void FidelityFX::Upscale(ID3D11Resource* a_upscalingTexture, ID3D11Resource* a_r
 	auto state = globals::state;
 	auto& depthTexture = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kMAIN];
 
-	auto screenSize = state->screenSize;
+	float2 screenSize{ (float)globals::game::graphicsState->screenWidth, (float)globals::game::graphicsState->screenHeight };
 	auto renderSize = Util::ConvertToDynamic(screenSize);
 
 	auto& upscaling = globals::features::upscaling;
@@ -458,4 +447,7 @@ void FidelityFX::Upscale(ID3D11Resource* a_upscalingTexture, ID3D11Resource* a_r
 			(uint)renderSize.x,
 			renderSize.x);
 	}
+
+	if (state->frameAnnotations)
+		state->EndPerfEvent();
 }

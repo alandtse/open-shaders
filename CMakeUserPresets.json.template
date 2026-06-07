@@ -9,7 +9,7 @@
 				"DEVBENCH_BRIDGE": "ON"
 			},
 			"environment": {
-				"CommunityShadersOutputDir": "F:/MySkyrimModpack/mods/CommunityShaders;F:/SteamLibrary/steamapps/common/SkyrimVR/Data;F:/SteamLibrary/steamapps/common/Skyrim Special Edition/Data"
+				"CommunityShadersOutputDir": "F:/MySkyrimModpack/mods/CommunityShaders;F:/SteamLibrary/steamapps/common/Skyrim Special Edition/Data"
 			},
 			"inherits": "ALL"
 		}

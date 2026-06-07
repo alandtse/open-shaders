@@ -3,6 +3,7 @@
 #include "FeatureCategories.h"
 #include "FeatureConstraints.h"
 #include "FeatureVersions.h"
+#include "I18n/I18n.h"
 #include "Utils/RestartSettings.h"
 
 #include <cstring>
@@ -66,6 +67,11 @@ struct Feature
 
 	virtual std::string GetName() = 0;
 	virtual std::string GetShortName() = 0;
+	virtual std::string GetDisplayName() { return GetName(); }
+	// Restored after upstream #2475 removed it: VR features (and the SupportsVR gate in
+	// Feature.cpp / RemoteControl) rely on this; this fork keeps VR.
+	virtual bool SupportsVR() { return false; }
+	std::string GetDisplayCategory() const;
 	virtual std::string GetFeatureModLink() { return ""; }
 	virtual std::string_view GetShaderDefineName() { return ""; }
 	virtual std::vector<std::pair<std::string_view, std::string_view>> GetShaderDefineOptions() { return {}; }
@@ -83,12 +89,6 @@ protected:
 
 public:
 	virtual bool HasShaderDefine(RE::BSShader::Type) { return false; }
-	/**
-	 * Whether the feature supports VR.
-	 *
-	 * \return true if VR supported; else false
-	 */
-	virtual bool SupportsVR() { return false; }
 
 	/**
 	 * Whether the feature is a CORE feature
@@ -106,6 +106,13 @@ public:
 	 * Core features will be distributed to their respective categories
 	 */
 	virtual std::string_view GetCategory() const { return FeatureCategories::kOther; }
+
+	/**
+	 * Whether the feature is disabled at boot by default (before any user override).
+	 * Features that override this to return true will start disabled on first install;
+	 * users can still enable them via the "Disable at Boot" menu.
+	 */
+	virtual bool IsDisabledByDefault() const { return false; }
 
 	/**
 	 * Whether the feature will show up in the GUI menu

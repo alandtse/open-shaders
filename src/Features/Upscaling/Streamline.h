@@ -37,7 +37,6 @@ public:
 	bool reflexSupportedOnCurrentAdapter = false;
 
 	sl::ViewportHandle viewport{ 0 };
-	sl::ViewportHandle viewportRight{ 1 };
 	static constexpr uint32_t MAX_RESOLUTION = 8192;
 	HMODULE interposer = NULL;
 
@@ -108,7 +107,7 @@ public:
 	void PostDevice();
 
 	bool EnsureFrameToken();
-	bool CheckFrameConstants(sl::ViewportHandle p_viewport, uint32_t eyeIndex = 0);
+	bool CheckFrameConstants(sl::ViewportHandle p_viewport);
 
 	bool IsRTXAndBelow40Series(IDXGIAdapter* a_adapter);
 

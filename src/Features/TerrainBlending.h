@@ -7,23 +7,22 @@ private:
 
 public:
 	virtual inline std::string GetName() override { return "Terrain Blending"; }
+	virtual std::string GetDisplayName() override { return T("feature.terrain_blending.name", "Terrain Blending"); }
 	virtual inline std::string GetShortName() override { return "TerrainBlending"; }
 	virtual inline std::string GetFeatureModLink() override { return MakeNexusModURL(MOD_ID); }
 	virtual inline std::string_view GetShaderDefineName() override { return "TERRAIN_BLENDING"; }
 	virtual std::string_view GetCategory() const override { return FeatureCategories::kLandscapeAndTextures; }
 	virtual std::pair<std::string, std::vector<std::string>> GetFeatureSummary() override
 	{
-		return {
-			"Provides seamless blending between terrain and objects, eliminating harsh transitions where objects meet the ground for more natural-looking landscapes.",
-			{ "Seamless terrain-to-object blending transitions",
-				"Advanced depth buffer manipulation for smooth integration",
-				"Support for alternative terrain rendering modes",
-				"Multi-pass rendering optimization for complex scenes",
-				"Enhanced visual continuity in landscape interactions" }
-		};
-	}
+		return { T("feature.terrain_blending.description", "Provides seamless blending between terrain and objects, eliminating harsh transitions where objects meet the ground for more natural-looking landscapes."),
+			{ T("feature.terrain_blending.key_feature_1", "Seamless terrain-to-object blending transitions"),
+				T("feature.terrain_blending.key_feature_2", "Advanced depth buffer manipulation for smooth integration"),
+				T("feature.terrain_blending.key_feature_3", "Support for alternative terrain rendering modes"),
+				T("feature.terrain_blending.key_feature_4", "Multi-pass rendering optimization for complex scenes"),
+				T("feature.terrain_blending.key_feature_5", "Enhanced visual continuity in landscape interactions") } };
+	};
+
 	virtual inline bool HasShaderDefine(RE::BSShader::Type) override { return true; }
-	virtual bool SupportsVR() override { return true; }
 
 	struct Settings
 	{
@@ -55,7 +54,7 @@ public:
 	bool renderTerrainDepth = false;
 	bool renderAltTerrain = false;
 
-	RE::NiPoint3 averageEyePosition;
+	RE::NiPoint3 eyePosition;
 
 	struct RenderPass
 	{
@@ -150,7 +149,7 @@ public:
 		static void Install()
 		{
 			// To know when we are rendering z-prepass depth vs shadows depth
-			stl::write_thunk_call<Main_RenderDepth>(REL::RelocationID(35560, 36559).address() + REL::Relocate(0x395, 0x395, 0x2EE));
+			stl::write_thunk_call<Main_RenderDepth>(REL::RelocationID(35560, 36559).address() + REL::Relocate(0x395, 0x395));
 
 			// To know when shadowmask phase ends (for releasing engine hook overrides)
 			stl::detour_thunk<Main_RenderShadowmasks>(REL::RelocationID(100422, 107140));

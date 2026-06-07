@@ -12,13 +12,14 @@
 
 #include "Features/HDRDisplay.h"
 #include "Features/InteriorSun.h"
+#include "Features/ScreenshotFeature.h"
 #include "Features/LightLimitFix.h"
+#include "Features/Skin.h"
+#include "Features/SkySync.h"
 #include "Features/Upscaling.h"
 #include "Features/Upscaling/FoveatedRender/Bridge.h"
 #include "Features/VR.h"
 #include "Features/VolumetricLighting.h"
-
-#include "ShaderTools/BSShaderHooks.h"
 
 std::unordered_map<void*, std::pair<std::unique_ptr<uint8_t[]>, size_t>> ShaderBytecodeMap;
 
@@ -267,6 +268,8 @@ struct IDXGISwapChain_Present
 				return func(swapChain, syncInterval, presentFlags);
 			});
 
+		globals::features::screenshotFeature.ProcessCaptureRequest();
+
 		TracyD3D11Collect(globals::state->tracyCtx);
 
 		return retval;
@@ -387,7 +390,7 @@ struct BSShaderRenderTargets_Create
 	 */
 	static inline Util::GameSetting iNumFocusShadow{ "Number of Focus Shadows (INI)",
 		"Controls the number of focus shadows.",
-		REL::Relocate<uintptr_t>(0, 0, 0x1ed6368), 4, 0, 4 };
+		static_cast<uintptr_t>(0), 4, 0, 4 };
 
 	static void thunk()
 	{
@@ -445,33 +448,8 @@ struct BSInputDeviceManager_PollInputDevices
 
 			if (*a_events) {
 				if (auto device = (*a_events)->GetDevice()) {
-					if (globals::game::isVR) {
-						// In VR, block mouse/keyboard input when menu is open (like Flatrim)
-						// Allow gamepad input to pass through
-						// Also handle VR controller devices based on OpenVR compatibility
-						bool isVRController = ((device == RE::INPUT_DEVICES::INPUT_DEVICE::kVivePrimary) ||
-											   (device == RE::INPUT_DEVICES::INPUT_DEVICE::kViveSecondary) ||
-											   (device == RE::INPUT_DEVICES::INPUT_DEVICE::kOculusPrimary) ||
-											   (device == RE::INPUT_DEVICES::INPUT_DEVICE::kOculusSecondary) ||
-											   (device == RE::INPUT_DEVICES::INPUT_DEVICE::kWMRPrimary) ||
-											   (device == RE::INPUT_DEVICES::INPUT_DEVICE::kWMRSecondary));
-
-						// Allow gamepad input to pass through always
-						if (device == RE::INPUT_DEVICES::INPUT_DEVICE::kGamepad) {
-							blockedDevice = false;
-						}
-						// For VR controllers, only block if OpenVR is compatible
-						else if (isVRController) {
-							blockedDevice = globals::features::vr.IsOpenVRCompatible();
-						}
-						// For mouse/keyboard and other devices, block them (like Flatrim)
-						else {
-							blockedDevice = true;
-						}
-					} else {
 						// Block all devices except gamepad when menu is open
 						blockedDevice = (device != RE::INPUT_DEVICES::INPUT_DEVICE::kGamepad);
-					}
 				}
 			}
 		}
@@ -558,8 +536,34 @@ namespace Hooks
 	{
 		static void thunk(RE::BSGraphics::Renderer* This, RE::RENDER_TARGETS::RENDER_TARGET a_target, RE::BSGraphics::RenderTargetProperties* a_properties)
 		{
-			globals::state->ModifyRenderTarget(a_target, a_properties);
-			func(This, a_target, a_properties);
+			auto properties = *a_properties;
+			globals::state->ModifyRenderTarget(a_target, properties);
+			func(This, a_target, &properties);
+		}
+		static inline REL::Relocation<decltype(thunk)> func;
+	};
+
+	// kSNOW / kSNOW_SWAP are created at R8G8B8A8_UNORM by vanilla; the snow shader
+	// writes accumulated wetness/sparkle values that exceed the 8-bit range and
+	// quantize into visible banding on tessellated snow. Promote to fp16 for headroom.
+	struct CreateRenderTarget_Snow
+	{
+		static void thunk(RE::BSGraphics::Renderer* This, RE::RENDER_TARGETS::RENDER_TARGET a_target, RE::BSGraphics::RenderTargetProperties* a_properties)
+		{
+			auto properties = *a_properties;
+			properties.format.set(RE::BSGraphics::Format::kR16G16B16A16_FLOAT);
+			func(This, a_target, &properties);
+		}
+		static inline REL::Relocation<decltype(thunk)> func;
+	};
+
+	struct CreateRenderTarget_SnowSwap
+	{
+		static void thunk(RE::BSGraphics::Renderer* This, RE::RENDER_TARGETS::RENDER_TARGET a_target, RE::BSGraphics::RenderTargetProperties* a_properties)
+		{
+			auto properties = *a_properties;
+			properties.format.set(RE::BSGraphics::Format::kR16G16B16A16_FLOAT);
+			func(This, a_target, &properties);
 		}
 		static inline REL::Relocation<decltype(thunk)> func;
 	};
@@ -596,8 +600,9 @@ namespace Hooks
 	{
 		static void thunk(RE::BSGraphics::Renderer* This, RE::RENDER_TARGETS::RENDER_TARGET a_target, RE::BSGraphics::RenderTargetProperties* a_properties)
 		{
-			globals::state->ModifyRenderTarget(a_target, a_properties);
-			func(This, a_target, a_properties);
+			auto properties = *a_properties;
+			globals::state->ModifyRenderTarget(a_target, properties);
+			func(This, a_target, &properties);
 		}
 		static inline REL::Relocation<decltype(thunk)> func;
 	};
@@ -606,8 +611,9 @@ namespace Hooks
 	{
 		static void thunk(RE::BSGraphics::Renderer* This, RE::RENDER_TARGETS::RENDER_TARGET a_target, RE::BSGraphics::RenderTargetProperties* a_properties)
 		{
-			globals::state->ModifyRenderTarget(a_target, a_properties);
-			func(This, a_target, a_properties);
+			auto properties = *a_properties;
+			globals::state->ModifyRenderTarget(a_target, properties);
+			func(This, a_target, &properties);
 		}
 		static inline REL::Relocation<decltype(thunk)> func;
 	};
@@ -616,8 +622,9 @@ namespace Hooks
 	{
 		static void thunk(RE::BSGraphics::Renderer* This, RE::RENDER_TARGETS::RENDER_TARGET a_target, RE::BSGraphics::RenderTargetProperties* a_properties)
 		{
-			globals::state->ModifyRenderTarget(a_target, a_properties);
-			func(This, a_target, a_properties);
+			auto properties = *a_properties;
+			globals::state->ModifyRenderTarget(a_target, properties);
+			func(This, a_target, &properties);
 		}
 		static inline REL::Relocation<decltype(thunk)> func;
 	};
@@ -639,6 +646,28 @@ namespace Hooks
 		{
 			auto properties = *a_properties;
 			properties.copyable = true;
+			func(This, a_target, &properties);
+		}
+		static inline REL::Relocation<decltype(thunk)> func;
+	};
+
+	struct CreateRenderTarget_Water1
+	{
+		static void thunk(RE::BSGraphics::Renderer* This, RE::RENDER_TARGETS::RENDER_TARGET a_target, RE::BSGraphics::RenderTargetProperties* a_properties)
+		{
+			auto properties = *a_properties;
+			properties.format.set(RE::BSGraphics::Format::kR16G16B16A16_FLOAT);
+			func(This, a_target, &properties);
+		}
+		static inline REL::Relocation<decltype(thunk)> func;
+	};
+
+	struct CreateRenderTarget_Water2
+	{
+		static void thunk(RE::BSGraphics::Renderer* This, RE::RENDER_TARGETS::RENDER_TARGET a_target, RE::BSGraphics::RenderTargetProperties* a_properties)
+		{
+			auto properties = *a_properties;
+			properties.format.set(RE::BSGraphics::Format::kR16G16B16A16_FLOAT);
 			func(This, a_target, &properties);
 		}
 		static inline REL::Relocation<decltype(thunk)> func;
@@ -947,6 +976,12 @@ namespace Hooks
 		func(a_pass, a_technique, a_alphaTest, a_renderFlags);
 	}
 
+	void Sky_UpdateColors::thunk(RE::Sky* sky, float a_delta)
+	{
+		func(sky, a_delta);
+		globals::features::skySync.OnSkyUpdateColors(sky);
+	}
+
 	/**
 	 * @brief Installs hooks, detours, and memory patches for graphics, input, and rendering subsystems.
 	 *
@@ -961,7 +996,7 @@ namespace Hooks
 
 		// This input hook also drives per-frame Reflex update (see BSInputDeviceManager_PollInputDevices::thunk).
 		logger::info("Hooking BSInputDeviceManager::PollInputDevices");
-		stl::write_thunk_call<BSInputDeviceManager_PollInputDevices>(REL::RelocationID(67315, 68617).address() + REL::Relocate(0x7B, 0x7B, 0x81));
+		stl::write_thunk_call<BSInputDeviceManager_PollInputDevices>(REL::RelocationID(67315, 68617).address() + REL::Relocate(0x7B, 0x7B));
 
 		logger::info("Hooking BSShader::LoadShaders");
 		stl::detour_thunk<BSShader_LoadShaders>(REL::RelocationID(101339, 108326));
@@ -992,12 +1027,15 @@ namespace Hooks
 		stl::write_thunk_call<CreateRenderTarget_NormalsSwap>(REL::RelocationID(100458, 107175).address() + REL::Relocate(0x46B, 0x46E, 0x5C3));
 		stl::write_thunk_call<CreateRenderTarget_MotionVectors>(REL::RelocationID(100458, 107175).address() + REL::Relocate(0x4F0, 0x4EF, 0x64E));
 
-		stl::write_thunk_call<CreateRenderTarget_RefractionNormals>(REL::RelocationID(100458, 107175).address() + REL::Relocate(0x503, 0x502, 0x661));
-		stl::write_thunk_call<CreateRenderTarget_UnderwaterMask>(REL::RelocationID(100458, 107175).address() + REL::Relocate(0xB19, 0xB19, 0xE06));
+		stl::write_thunk_call<CreateRenderTarget_RefractionNormals>(REL::RelocationID(100458, 107175).address() + REL::Relocate(0x503, 0x502));
+		stl::write_thunk_call<CreateRenderTarget_UnderwaterMask>(REL::RelocationID(100458, 107175).address() + REL::Relocate(0xB19, 0xB19));
 
-		stl::write_thunk_call<CreateDepthStencil_PrecipitationMask>(REL::RelocationID(100458, 107175).address() + REL::Relocate(0x1245, 0x123B, 0x1917));
-		stl::write_thunk_call<CreateCubemapRenderTarget_Reflections>(REL::RelocationID(100458, 107175).address() + REL::Relocate(0xA25, 0xA25, 0xCD2));
-		stl::write_thunk_call<CreateDepthStencil_Reflections>(REL::RelocationID(100458, 107175).address() + REL::Relocate(0xA59, 0xA59, 0xD13));
+		stl::write_thunk_call<CreateRenderTarget_Water1>(REL::RelocationID(100458, 107175).address() + REL::Relocate(0xF4F, 0xF51));
+		stl::write_thunk_call<CreateRenderTarget_Water2>(REL::RelocationID(100458, 107175).address() + REL::Relocate(0xF65, 0xF67));
+
+		stl::write_thunk_call<CreateDepthStencil_PrecipitationMask>(REL::RelocationID(100458, 107175).address() + REL::Relocate(0x1245, 0x123B));
+		stl::write_thunk_call<CreateCubemapRenderTarget_Reflections>(REL::RelocationID(100458, 107175).address() + REL::Relocate(0xA25, 0xA25));
+		stl::write_thunk_call<CreateDepthStencil_Reflections>(REL::RelocationID(100458, 107175).address() + REL::Relocate(0xA59, 0xA59));
 
 		globals::features::upscaling.perfMode.InstallCreateRTThunks();
 
@@ -1016,7 +1054,10 @@ namespace Hooks
 		stl::detour_thunk<CSShadersSupport::Renderer_DispatchCSShader>(REL::RelocationID(75532, 77329));
 
 		logger::info("Hooking TESWaterReflections::Update_Actor::GetLOSPosition for Sky Reflection Fix");
-		stl::write_thunk_call<TESWaterReflections_Update_Actor_GetLOSPosition>(REL::RelocationID(31373, 32160).address() + REL::Relocate(0x1AD, 0x1CA, 0x1ed));
+		stl::write_thunk_call<TESWaterReflections_Update_Actor_GetLOSPosition>(REL::RelocationID(31373, 32160).address() + REL::Relocate(0x1AD, 0x1CA));
+
+		logger::info("Hooking Sky::UpdateColors");
+		stl::detour_thunk<Sky_UpdateColors>(REL::RelocationID(25686, 26233));
 
 		logger::info("Installing SetupGeometry hooks");
 		stl::write_vfunc<0x6, EffectExtensions::BSEffectShader_SetupGeometry>(RE::VTABLE_BSEffectShader[0]);

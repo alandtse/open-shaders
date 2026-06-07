@@ -5,6 +5,7 @@
 
 #include "FeatureConstraints.h"
 #include "Globals.h"
+#include "I18n/I18n.h"
 #include "Menu.h"
 #include "Plugin.h"
 #include "State.h"
@@ -85,7 +86,7 @@ void HomePageRenderer::RenderWelcomeSection()
 	const char* introText =
 		"Open Shaders is a fork of Community Shaders providing advanced graphics enhancements for Skyrim.\n"
 		"This comprehensive collection of features brings modern rendering techniques\n"
-		"to enhance your visual experience.";
+		"to enhance your visual experience.");
 	ImVec2 introSize = ImGui::CalcTextSize(introText);
 	ImGui::SetCursorPosX((windowSize.x - introSize.x) * 0.5f);
 	ImGui::TextWrapped("%s", introText);
@@ -99,9 +100,10 @@ void HomePageRenderer::RenderQuickLinksSection()
 {
 	// Quick Links title - centered
 	ImVec2 windowSize = ImGui::GetWindowSize();
-	ImVec2 titleSize = ImGui::CalcTextSize("Quick Links");
+	const char* quickLinksTitle = T("menu.home.quick_links", "Quick Links");
+	ImVec2 titleSize = ImGui::CalcTextSize(quickLinksTitle);
 	ImGui::SetCursorPosX((windowSize.x - titleSize.x) * 0.5f);
-	ImGui::Text("Quick Links");
+	ImGui::Text("%s", quickLinksTitle);
 
 	// Nexus button → the Open Shaders fork page (mod 180419).
 	ImGui::Columns(3, nullptr, false);
@@ -127,9 +129,10 @@ void HomePageRenderer::RenderFAQSection()
 {
 	// FAQ title - centered
 	ImVec2 windowSize = ImGui::GetWindowSize();
-	ImVec2 titleSize = ImGui::CalcTextSize("Frequently Asked Questions");
+	const char* faqTitle = T("menu.faq.title", "Frequently Asked Questions");
+	ImVec2 titleSize = ImGui::CalcTextSize(faqTitle);
 	ImGui::SetCursorPosX((windowSize.x - titleSize.x) * 0.5f);
-	ImGui::Text("Frequently Asked Questions");
+	ImGui::Text("%s", faqTitle);
 	ImGui::Separator();
 
 	// FAQ items with collapsible headers
@@ -143,32 +146,32 @@ void HomePageRenderer::RenderFAQSection()
 			"settings and themes are compatible.");
 	}
 
-	if (ImGui::CollapsingHeader("How do I configure features?")) {
-		ImGui::TextWrapped(
-			"Each feature can be found in the left sidebar menu. Click on any feature to access its "
-			"settings. Most features include presets and detailed tooltips to help you understand "
-			"what each setting does.");
+	if (ImGui::CollapsingHeader(T("menu.faq.q2", "How do I configure features?"))) {
+		ImGui::TextWrapped("%s", T("menu.faq.a2",
+									 "Each feature can be found in the left sidebar menu. Click on any feature to access its "
+									 "settings. Most features include presets and detailed tooltips to help you understand "
+									 "what each setting does."));
 	}
 
-	if (ImGui::CollapsingHeader("Why are some features not loading?")) {
-		ImGui::TextWrapped(
-			"Features may fail to load due to hardware incompatibility, missing dependencies, or "
-			"conflicts with other mods. Check the 'Feature Issues' tab for detailed information "
-			"about any problematic features.");
+	if (ImGui::CollapsingHeader(T("menu.faq.q3", "Why are some features not loading?"))) {
+		ImGui::TextWrapped("%s", T("menu.faq.a3",
+									 "Features may fail to load due to hardware incompatibility, missing dependencies, or "
+									 "conflicts with other mods. Check the 'Feature Issues' tab for detailed information "
+									 "about any problematic features."));
 	}
 
-	if (ImGui::CollapsingHeader("I have \"Failed Shaders\" when compiling?")) {
-		ImGui::TextWrapped(
-			"Failed shaders are usually caused by mixed file versions. Ensure all features are up to date "
-			"and avoid mixing files from test builds or outdated versions. Please review the 'Feature Issues' tab "
-			"and/or Wiki for more information. Update your features and remove any obsolete features.");
+	if (ImGui::CollapsingHeader(T("menu.faq.q4", "I have \"Failed Shaders\" when compiling?"))) {
+		ImGui::TextWrapped("%s", T("menu.faq.a4",
+									 "Failed shaders are usually caused by mixed file versions. Ensure all features are up to date "
+									 "and avoid mixing files from test builds or outdated versions. Please review the 'Feature Issues' tab "
+									 "and/or Wiki for more information. Update your features and remove any obsolete features."));
 	}
 
-	if (ImGui::CollapsingHeader("How do I improve performance?")) {
-		ImGui::TextWrapped(
-			"Start by enabling the Performance Overlay to monitor your FPS. Consider disabling "
-			"expensive features like Screen Space GI or reducing quality settings. The 'Display' "
-			"tab also includes upscaling options that can improve performance.");
+	if (ImGui::CollapsingHeader(T("menu.faq.q5", "How do I improve performance?"))) {
+		ImGui::TextWrapped("%s", T("menu.faq.a5",
+									 "Start by enabling the Performance Overlay to monitor your FPS. Consider disabling "
+									 "expensive features like Screen Space GI or reducing quality settings. The 'Display' "
+									 "tab also includes upscaling options that can improve performance."));
 	}
 
 	if (ImGui::CollapsingHeader("Is Open Shaders compatible with ENB?")) {
@@ -218,12 +221,11 @@ void HomePageRenderer::RenderActiveConstraintsSection()
 	ImVec4 warningColor = menu ? menu->GetTheme().StatusPalette.Warning : ImVec4(1.0f, 0.8f, 0.2f, 1.0f);
 
 	ImGui::PushStyleColor(ImGuiCol_Text, warningColor);
-	bool headerOpen = ImGui::CollapsingHeader("Active Setting Constraints", ImGuiTreeNodeFlags_None);
+	bool headerOpen = ImGui::CollapsingHeader(T("menu.home.active_constraints", "Active Setting Constraints"), ImGuiTreeNodeFlags_None);
 	ImGui::PopStyleColor();
 
 	if (headerOpen) {
-		ImGui::TextWrapped(
-			"Some settings are constrained by other features. Hover over rows for details.");
+		ImGui::TextWrapped("%s", T("menu.home.constraints_desc", "Some settings are constrained by other features. Hover over rows for details."));
 
 		ImGui::Spacing();
 
@@ -256,14 +258,14 @@ void HomePageRenderer::RenderActiveConstraintsSection()
 					row.tooltip += "\n";
 				row.tooltip += std::format("{}: {}", src.featureName, src.reason);
 				if (src.recommendDisableAtBoot) {
-					row.tooltip += "\nConsider disabling at boot.";
+					row.tooltip += std::string("\n") + T("menu.home.consider_disabling_at_boot", "Consider disabling at boot.");
 				}
 			}
 			rows.push_back(row);
 		}
 
 		// Define headers
-		std::vector<std::string> headers = { "Setting", "Forced To", "Constrained By" };
+		std::vector<std::string> headers = { T("menu.home.constraint_header_setting", "Setting"), T("menu.home.constraint_header_forced_to", "Forced To"), T("menu.home.constraint_header_constrained_by", "Constrained By") };
 
 		// Custom sorts (string comparators for each column)
 		std::vector<std::function<bool(const ConstraintRow&, const ConstraintRow&, bool)>> customSorts = {
@@ -287,7 +289,10 @@ void HomePageRenderer::RenderActiveConstraintsSection()
 						}
 					}
 					if (auto _tt = Util::HoverTooltipWrapper()) {
-						ImGui::Text("Click to navigate to %s", row.constrainedBy.c_str());
+						ImGui::Text("%s", I18n::GetSingleton()->Format("menu.home.click_to_navigate",
+																  { { "feature", row.constrainedBy } },
+																  "Click to navigate to {feature}")
+											  .c_str());
 						if (!row.tooltip.empty()) {
 							ImGui::Separator();
 							ImGui::Text("%s", row.tooltip.c_str());
@@ -405,7 +410,7 @@ void HomePageRenderer::RenderFirstTimeSetupDialog()
 	ImGui::Spacing();
 
 	// Description - centered
-	const char* description = "Please choose a hotkey to access the menu:";
+	const char* description = T("menu.setup.choose_hotkey", "Please choose a hotkey to access the menu:");
 	centerText(description);
 	ImGui::Text("%s", description);
 
@@ -468,20 +473,22 @@ void HomePageRenderer::RenderFirstTimeSetupDialog()
 
 	// Show hotkey capture message when in capture mode
 	if (isCapturing) {
-		const char* pressKeyText = "Press any key to set as toggle key...";
+		const char* pressKeyText = T("menu.setup.press_any_key", "Press any key to set as toggle key...");
 		centerText(pressKeyText);
 		ImGui::TextDisabled("%s", pressKeyText);
 	}
 
-	// Weather Editor hotkey status — updates live as user picks keys
+	// CS Editor hotkey status — updates live as user picks keys
 	{
-		auto& weatherKey = menu->GetSettings().WeatherEditorToggleKey;
-		if (weatherKey.empty()) {
-			const char* warnText = "Weather Editor hotkey unbound \xe2\x80\x94 chosen key uses Shift";
+		auto& csEditorKey = menu->GetSettings().CSEditorToggleKey;
+		if (csEditorKey.empty()) {
+			const char* warnText = T("menu.setup.cs_editor_unbound", "CS Editor hotkey unbound - chosen key uses Shift");
 			centerText(warnText);
 			ImGui::TextColored(ImVec4(1.0f, 0.75f, 0.0f, 1.0f), "%s", warnText);
 		} else {
-			std::string infoStr = "Weather Editor hotkey will be: " + Util::Input::KeyIdToString(weatherKey);
+			std::string infoStr = I18n::GetSingleton()->Format("menu.setup.cs_editor_will_be",
+				{ { "key", Util::Input::KeyIdToString(csEditorKey) } },
+				"CS Editor hotkey will be: {key}");
 			centerText(infoStr.c_str());
 			ImGui::TextDisabled("%s", infoStr.c_str());
 		}
@@ -489,7 +496,7 @@ void HomePageRenderer::RenderFirstTimeSetupDialog()
 
 	ImGui::Spacing();
 
-	const char* laterText = "You can change this later in General > Keybindings.";
+	const char* laterText = T("menu.setup.change_later", "You can change this later in General > Keybindings.");
 	centerText(laterText);
 	ImGui::Text("%s", laterText);
 
@@ -502,7 +509,7 @@ void HomePageRenderer::RenderFirstTimeSetupDialog()
 	}
 
 	// Help text with breathing animation
-	const char* helpText = "Press Escape or Enter to continue";
+	const char* helpText = T("menu.setup.press_to_close", "Press Escape or Enter to continue");
 
 	ImGui::SetWindowFontScale(HELP_TEXT_SCALE);
 	centerText(helpText);

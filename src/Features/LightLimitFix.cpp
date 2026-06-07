@@ -732,8 +732,7 @@ void LightLimitFix::BSLightingShader_SetupGeometry_After(RE::BSRenderPass*)
 
 void LightLimitFix::SetLightPosition(LightLimitFix::LightData& a_light, RE::NiPoint3 a_initialPosition, bool a_cached)
 {
-	for (int eyeIndex = 0; eyeIndex < eyeCount; eyeIndex++) {
-		RE::NiPoint3 eyePosition;
+	RE::NiPoint3 eyePosition;
 
 		if (a_cached)
 			eyePosition = eyePositionCached[eyeIndex];
@@ -745,6 +744,11 @@ void LightLimitFix::SetLightPosition(LightLimitFix::LightData& a_light, RE::NiPo
 		a_light.positionWS[eyeIndex].data.y = worldPos.y;
 		a_light.positionWS[eyeIndex].data.z = worldPos.z;
 	}
+
+	auto worldPos = a_initialPosition - eyePosition;
+	a_light.positionWS.data.x = worldPos.x;
+	a_light.positionWS.data.y = worldPos.y;
+	a_light.positionWS.data.z = worldPos.z;
 }
 
 void LightLimitFix::RefreshJsonPlacedLightCacheFrame()
@@ -1181,7 +1185,9 @@ void LightLimitFix::UpdateStructure()
 		context->CSSetUnorderedAccessViews(0, 1, &clusters_uav, nullptr);
 
 		context->CSSetShader(clusterBuildingCS, nullptr, 0);
+		globals::profiler->BeginPass("LightLimitFix::ClusterBuild");
 		context->Dispatch(clusterSize[0], clusterSize[1], clusterSize[2]);
+		globals::profiler->EndPass();
 
 		ID3D11UnorderedAccessView* null_uav = nullptr;
 		context->CSSetUnorderedAccessViews(0, 1, &null_uav, nullptr);
@@ -1208,7 +1214,9 @@ void LightLimitFix::UpdateStructure()
 		context->CSSetUnorderedAccessViews(0, ARRAYSIZE(uavs), uavs, nullptr);
 
 		context->CSSetShader(clusterCullingCS, nullptr, 0);
+		globals::profiler->BeginPass("LightLimitFix::ClusterCull");
 		context->Dispatch((clusterSize[0] + 15) / 16, (clusterSize[1] + 15) / 16, (clusterSize[2] + 3) / 4);
+		globals::profiler->EndPass();
 	}
 
 	context->CSSetShader(nullptr, nullptr, 0);

@@ -10,6 +10,7 @@
 #include "Features/PerformanceOverlay/ABTesting/ABTesting.h"
 #include "Fonts.h"
 #include "Globals.h"
+#include "I18n/I18n.h"
 #include "Menu.h"
 #include "ShaderCache.h"
 #include "State.h"
@@ -103,7 +104,7 @@ void AdvancedSettingsRenderer::RenderShaderCompileFlags()
 
 	// Shader Defines input
 	auto& shaderDefines = globals::state->shaderDefinesString;
-	if (ImGui::InputText("Shader Defines", &shaderDefines)) {
+	if (ImGui::InputText(T("menu.advanced.shader_defines", "Shader Defines"), &shaderDefines)) {
 		globals::state->SetDefines(shaderDefines);
 	}
 	if (ImGui::IsItemDeactivatedAfterEdit() || (ImGui::IsItemActive() &&
@@ -113,7 +114,7 @@ void AdvancedSettingsRenderer::RenderShaderCompileFlags()
 		shaderCache->Clear();
 	}
 	if (auto _tt = Util::HoverTooltipWrapper()) {
-		ImGui::Text("Defines for Shader Compiler. Semicolon \";\" separated. Clear with space. Rebuild shaders after making change. Compute Shaders require a restart to recompile.");
+		ImGui::Text("%s", T("menu.advanced.shader_defines_tooltip", "Defines for Shader Compiler. Semicolon \";\" separated. Clear with space. Rebuild shaders after making change. Compute Shaders require a restart to recompile."));
 	}
 
 	// Half-precision (partial precision) shader compile flag
@@ -177,17 +178,17 @@ void AdvancedSettingsRenderer::RenderShaderThreading()
 
 	ImGui::SliderInt("Compiler Threads", &shaderCache->compilationThreadCount, 1, maxThreads);
 	if (auto _tt = Util::HoverTooltipWrapper()) {
-		ImGui::Text(
-			"Number of threads used to compile shaders at startup. "
-			"Defaults to all logical cores minus one for OS headroom (E-cores included). "
-			"Higher values finish compilation faster but may make the system less responsive.");
+		ImGui::Text("%s", T("menu.advanced.compiler_threads_tooltip",
+							  "Number of threads used to compile shaders at startup. "
+							  "Defaults to all logical cores minus one for OS headroom (E-cores included). "
+							  "Higher values finish compilation faster but may make the system less responsive."));
 	}
 	ImGui::SliderInt("Background Compiler Threads", &shaderCache->backgroundCompilationThreadCount, 1, maxThreads);
 	if (auto _tt = Util::HoverTooltipWrapper()) {
-		ImGui::Text(
-			"Number of threads used to compile shaders during gameplay. "
-			"Defaults to half of performance cores to avoid impacting the render thread. "
-			"Higher values finish compilation faster but may cause stuttering.");
+		ImGui::Text("%s", T("menu.advanced.background_compiler_threads_tooltip",
+							  "Number of threads used to compile shaders during gameplay. "
+							  "Defaults to half of performance cores to avoid impacting the render thread. "
+							  "Higher values finish compilation faster but may cause stuttering."));
 	}
 }
 
@@ -210,19 +211,19 @@ void AdvancedSettingsRenderer::RenderShaderCacheControls()
 
 	// Dump Shaders option
 	bool useDump = shaderCache->IsDump();
-	if (ImGui::Checkbox("Dump Shaders", &useDump)) {
+	if (ImGui::Checkbox(T("menu.advanced.dump_shaders", "Dump Shaders"), &useDump)) {
 		shaderCache->SetDump(useDump);
 	}
 	if (auto _tt = Util::HoverTooltipWrapper()) {
-		ImGui::Text("Dump shaders at startup. This should be used only when reversing shaders. Normal users don't need this.");
+		ImGui::Text("%s", T("menu.advanced.dump_shaders_tooltip", "Dump shaders at startup. This should be used only when reversing shaders. Normal users don't need this."));
 	}
 
 	// Clear Shader Cache button
-	if (ImGui::Button("Clear Shader Cache", { -1, 0 })) {
+	if (ImGui::Button(T("menu.advanced.clear_shader_cache", "Clear Shader Cache"), { -1, 0 })) {
 		shaderCache->Clear();
 	}
 	if (auto _tt = Util::HoverTooltipWrapper()) {
-		ImGui::Text("Clear all compiled shaders from memory. Forces recompilation of all shaders on next use.");
+		ImGui::Text("%s", T("menu.advanced.clear_shader_cache_tooltip", "Clear all compiled shaders from memory. Forces recompilation of all shaders on next use."));
 	}
 }
 
@@ -244,28 +245,28 @@ void AdvancedSettingsRenderer::RenderShaderReplacementTable()
 				ImGui::Checkbox(std::format("{}", magic_enum::enum_name(type)).c_str(), &state->enabledClasses[classIndex]);
 		});
 		if (state->IsDeveloperMode()) {
-			ImGui::Checkbox("Vertex", &state->enableVShaders);
+			ImGui::Checkbox(T("menu.advanced.vertex", "Vertex"), &state->enableVShaders);
 			if (auto _tt = Util::HoverTooltipWrapper()) {
-				ImGui::Text(
-					"Replace Vertex Shaders. "
-					"When false, will disable the custom Vertex Shaders for the types above. "
-					"For developers to test whether CS shaders match vanilla behavior. ");
+				ImGui::Text("%s", T("menu.advanced.vertex_tooltip",
+									  "Replace Vertex Shaders. "
+									  "When false, will disable the custom Vertex Shaders for the types above. "
+									  "For developers to test whether CS shaders match vanilla behavior. "));
 			}
 
-			ImGui::Checkbox("Pixel", &state->enablePShaders);
+			ImGui::Checkbox(T("menu.advanced.pixel", "Pixel"), &state->enablePShaders);
 			if (auto _tt = Util::HoverTooltipWrapper()) {
-				ImGui::Text(
-					"Replace Pixel Shaders. "
-					"When false, will disable the custom Pixel Shaders for the types above. "
-					"For developers to test whether CS shaders match vanilla behavior. ");
+				ImGui::Text("%s", T("menu.advanced.pixel_tooltip",
+									  "Replace Pixel Shaders. "
+									  "When false, will disable the custom Pixel Shaders for the types above. "
+									  "For developers to test whether CS shaders match vanilla behavior. "));
 			}
 
-			ImGui::Checkbox("Compute", &state->enableCShaders);
+			ImGui::Checkbox(T("menu.advanced.compute", "Compute"), &state->enableCShaders);
 			if (auto _tt = Util::HoverTooltipWrapper()) {
-				ImGui::Text(
-					"Replace Compute Shaders. "
-					"When false, will disable the custom Compute Shaders for the types above. "
-					"For developers to test whether CS shaders match vanilla behavior. ");
+				ImGui::Text("%s", T("menu.advanced.compute_tooltip",
+									  "Replace Compute Shaders. "
+									  "When false, will disable the custom Compute Shaders for the types above. "
+									  "For developers to test whether CS shaders match vanilla behavior. "));
 			}
 		}
 		ImGui::EndTable();
@@ -488,25 +489,26 @@ void AdvancedSettingsRenderer::RenderShaderBlockingPanel()
 
 		float maxHeight = ImGui::GetContentRegionAvail().y * 0.3f;  // Limit to 30% to keep Active Shaders visible
 		if (ImGui::BeginChild("##BlockedShaderInfo", ImVec2(0, maxHeight), true, ImGuiChildFlags_AutoResizeY)) {
-			Util::Text::Error("Shader Blocking Active");
+			Util::Text::Error(T("menu.advanced.shader_blocking_active", "Shader Blocking Active"));
 			ImGui::SameLine();
-			if (ImGui::SmallButton("Stop Blocking##Section")) {
+			if (ImGui::SmallButton(T("menu.advanced.stop_blocking", "Stop Blocking##Section"))) {
 				shaderCache->DisableShaderBlocking();
 			}
 
-			ImGui::Text("Blocked: %s", shaderCache->blockedKey.c_str());
+			ImGui::Text(T("menu.advanced.blocked_shader", "Blocked: %s"), shaderCache->blockedKey.c_str());
 
 			// Try to get more details from active shaders
 			auto activeShaders = shaderCache->GetActiveShaders();
 			for (const auto& shader : activeShaders) {
 				if (shader.key == shaderCache->blockedKey) {
-					ImGui::Text("Type: %s", magic_enum::enum_name(shader.shaderType).data());
-					ImGui::Text("Class: %s", magic_enum::enum_name(shader.shaderClass).data());
-					ImGui::Text("Descriptor: 0x%X", shader.descriptor);
+					ImGui::Text(T("menu.advanced.shader_type_label", "Type: %s"), magic_enum::enum_name(shader.shaderType).data());
+					ImGui::Text(T("menu.advanced.shader_class_label", "Class: %s"), magic_enum::enum_name(shader.shaderClass).data());
+					ImGui::Text(T("menu.advanced.shader_descriptor", "Descriptor: 0x%X"), shader.descriptor);
 
 					// Add button to copy shader info to clipboard
 					ImGui::PushID(shader.key.c_str());
-					if (ImGui::SmallButton("Copy Info##BlockedShader")) {
+					auto copyInfoLabel = std::format("{}##BlockedShader", T("menu.advanced.copy_info", "Copy Info"));
+					if (ImGui::SmallButton(copyInfoLabel.c_str())) {
 						std::string diskPathStr;
 						diskPathStr.reserve(shader.diskPath.size());
 						for (wchar_t wc : shader.diskPath) {
@@ -524,7 +526,7 @@ void AdvancedSettingsRenderer::RenderShaderBlockingPanel()
 					ImGui::PopID();
 					if (ImGui::IsItemHovered()) {
 						if (auto _tt = Util::HoverTooltipWrapper()) {
-							ImGui::Text("Copy complete shader information including cache path to clipboard");
+							ImGui::Text("%s", T("menu.advanced.copy_info_tooltip", "Copy complete shader information including cache path to clipboard"));
 						}
 					}
 
@@ -545,11 +547,11 @@ void AdvancedSettingsRenderer::RenderShaderBlockingPanel()
 		auto& menuSettings = menu->GetSettings();
 		auto& themeSettings = menuSettings.Theme;
 
-		if (ImGui::Checkbox("Enable Shader Blocking", &menuSettings.EnableShaderBlocking)) {
+		if (ImGui::Checkbox(T("menu.advanced.enable_shader_blocking", "Enable Shader Blocking"), &menuSettings.EnableShaderBlocking)) {
 			// Setting saved automatically on next save
 		}
 		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::Text("Enables hotkeys to cycle through and block individual shaders for debugging purposes.");
+			ImGui::Text("%s", T("menu.advanced.enable_shader_blocking_tooltip", "Enables hotkeys to cycle through and block individual shaders for debugging purposes."));
 		}
 
 		if (menuSettings.EnableShaderBlocking) {
@@ -557,32 +559,32 @@ void AdvancedSettingsRenderer::RenderShaderBlockingPanel()
 
 			// Shader Block Previous Key
 			if (menu->settingShaderBlockPrevKey) {
-				ImGui::Text("Press any key for Shader Block Previous...");
+				ImGui::Text("%s", T("menu.advanced.press_key_shader_block_prev", "Press any key for Shader Block Previous..."));
 			} else {
 				ImGui::AlignTextToFramePadding();
-				ImGui::Text("Block Previous:");
+				ImGui::Text("%s", T("menu.advanced.block_previous", "Block Previous:"));
 				ImGui::SameLine();
 				ImGui::AlignTextToFramePadding();
 				ImGui::TextColored(themeSettings.StatusPalette.CurrentHotkey, "%s",
 					Util::Input::KeyIdToString(menuSettings.ShaderBlockPrevKey).c_str());
 				ImGui::SameLine();
-				if (ImGui::Button("Change##ShaderBlockPrev")) {
+				if (ImGui::Button(T("menu.advanced.change_shader_block_prev", "Change##ShaderBlockPrev"))) {
 					menu->settingShaderBlockPrevKey = true;
 				}
 			}
 
 			// Shader Block Next Key
 			if (menu->settingShaderBlockNextKey) {
-				ImGui::Text("Press any key for Shader Block Next...");
+				ImGui::Text("%s", T("menu.advanced.press_key_shader_block_next", "Press any key for Shader Block Next..."));
 			} else {
 				ImGui::AlignTextToFramePadding();
-				ImGui::Text("Block Next:");
+				ImGui::Text("%s", T("menu.advanced.block_next", "Block Next:"));
 				ImGui::SameLine();
 				ImGui::AlignTextToFramePadding();
 				ImGui::TextColored(themeSettings.StatusPalette.CurrentHotkey, "%s",
 					Util::Input::KeyIdToString(menuSettings.ShaderBlockNextKey).c_str());
 				ImGui::SameLine();
-				if (ImGui::Button("Change##ShaderBlockNext")) {
+				if (ImGui::Button(T("menu.advanced.change_shader_block_next", "Change##ShaderBlockNext"))) {
 					menu->settingShaderBlockNextKey = true;
 				}
 			}
@@ -597,10 +599,10 @@ void AdvancedSettingsRenderer::RenderShaderBlockingPanel()
 		ImGui::Spacing();
 		Util::DrawSectionHeader("Active Shaders (Used Recently)");
 		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::Text(
-				"List of shaders that have been used in recent frames. "
-				"Enable Shader Blocking above to use hotkeys to cycle through and block shaders for debugging. "
-				"Shaders not used for ~1 second are removed from this list.");
+			ImGui::Text("%s", T("menu.advanced.active_shaders_tooltip",
+								  "List of shaders that have been used in recent frames. "
+								  "Enable Shader Blocking above to use hotkeys to cycle through and block shaders for debugging. "
+								  "Shaders not used for ~1 second are removed from this list."));
 		}
 
 		// Get fresh active shaders data for accurate count and table
@@ -628,20 +630,20 @@ void AdvancedSettingsRenderer::RenderShaderBlockingPanel()
 
 		// Build column configurations
 		std::vector<Util::TableColumnConfig<ShaderRow>> columns = {
-			{ "Type", "Shader type", [](const ShaderRow& row) {
+			{ T("menu.advanced.column_type", "Type"), T("menu.advanced.column_type_tooltip", "Shader type"), [](const ShaderRow& row) {
 				 return std::string(magic_enum::enum_name(row.shader.shaderType));
 			 } },
-			{ "Class", "Shader class", [](const ShaderRow& row) {
+			{ T("menu.advanced.column_class", "Class"), T("menu.advanced.column_class_tooltip", "Shader class"), [](const ShaderRow& row) {
 				 return std::string(magic_enum::enum_name(row.shader.shaderClass));
 			 } },
-			{ "Descriptor", "Shader descriptor", [](const ShaderRow& row) {
+			{ T("menu.advanced.column_descriptor", "Descriptor"), T("menu.advanced.column_descriptor_tooltip", "Shader descriptor"), [](const ShaderRow& row) {
 				 return std::format("0x{:X}", row.shader.descriptor);
 			 } },
-			{ "Frame %", "Percentage of draw calls this frame", [](const ShaderRow& row) {
+			{ T("menu.advanced.column_frame_pct", "Frame %"), T("menu.advanced.column_frame_pct_tooltip", "Percentage of draw calls this frame"), [](const ShaderRow& row) {
 				 float percentage = Util::CalculatePercentage(static_cast<float>(row.shader.drawCalls), static_cast<float>(row.totalDrawCalls));
 				 return Util::FormatPercent(percentage);
 			 } },
-			{ "Key", "Shader key", [](const ShaderRow& row) {
+			{ T("menu.advanced.column_key", "Key"), T("menu.advanced.column_key_tooltip", "Shader key"), [](const ShaderRow& row) {
 				 return row.shader.key;
 			 } }
 		};
@@ -674,14 +676,16 @@ void AdvancedSettingsRenderer::RenderShaderBlockingPanel()
 			ImGui::SetClipboardText(fullInfo.c_str());
 		};
 		auto getRowTooltip = [shaderCache](const ShaderRow& row) {
-			std::string clickAction = (row.shader.key == shaderCache->blockedKey) ? "Left-click to unblock this shader" : "Left-click to block this shader";
+			std::string clickAction = (row.shader.key == shaderCache->blockedKey) ? T("menu.advanced.click_to_unblock", "Left-click to unblock this shader") : T("menu.advanced.click_to_block", "Left-click to block this shader");
+			auto shaderType = magic_enum::enum_name(row.shader.shaderType);
+			auto shaderClass = magic_enum::enum_name(row.shader.shaderClass);
 
-			return std::format("Type: {}\nClass: {}\nDescriptor: 0x{:X}\nKey: {}\n\n{}",
-				magic_enum::enum_name(row.shader.shaderType).data(),
-				magic_enum::enum_name(row.shader.shaderClass).data(),
-				row.shader.descriptor,
-				row.shader.key,
-				clickAction);
+			return std::vformat(T("menu.advanced.shader_row_tooltip", "Type: {}\nClass: {}\nDescriptor: 0x{:X}\nKey: {}\n\n{}"), std::make_format_args(
+																																	 shaderType,
+																																	 shaderClass,
+																																	 row.shader.descriptor,
+																																	 row.shader.key,
+																																	 clickAction));
 		};
 
 		// Define function to extract filterable fields (for TableFilterState)
@@ -737,7 +741,7 @@ void AdvancedSettingsRenderer::RenderShaderBlockingPanel()
 			// Left-click to block/unblock shader
 			{ Util::TableInputEventType::MouseClick, onRowLeftClick, "", 0 },
 			// Right-click context menu for copying info
-			{ Util::TableInputEventType::ContextMenu, onRowRightClick, "Copy Info", 1 }
+			{ Util::TableInputEventType::ContextMenu, onRowRightClick, T("menu.advanced.copy_info", "Copy Info"), 1 }
 		};
 
 		// Render the table with all configurations
@@ -788,7 +792,7 @@ void AdvancedSettingsRenderer::RenderTestingSection()
 
 		ImGui::Spacing();
 		// Test Conditions button - runs a set of console commands to prepare the player for testing
-		if (ImGui::Button("Test Conditions", { -1, 0 })) {
+		if (ImGui::Button(T("menu.advanced.test_conditions", "Test Conditions"), { -1, 0 })) {
 			if (auto ui = RE::UI::GetSingleton(); ui && !ui->menuStack.empty() && RE::PlayerCharacter::GetSingleton()) {
 				RE::Console::ExecuteCommand("player.setav speedmult 1000");
 				RE::Console::ExecuteCommand("tgm");

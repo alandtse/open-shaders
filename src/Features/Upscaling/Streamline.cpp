@@ -321,7 +321,7 @@ bool Streamline::EnsureFrameToken()
 	return frameToken != nullptr;
 }
 
-bool Streamline::CheckFrameConstants(sl::ViewportHandle p_viewport, uint32_t eyeIndex)
+bool Streamline::CheckFrameConstants(sl::ViewportHandle p_viewport)
 {
 	if (!globals::features::upscaling.streamline.initialized)
 		return false;
@@ -329,50 +329,27 @@ bool Streamline::CheckFrameConstants(sl::ViewportHandle p_viewport, uint32_t eye
 	if (!EnsureFrameToken())
 		return false;
 
-	// In VR, we need to set constants for each viewport/eye separately
-	// In non-VR, this is called once per frame
-	auto state = globals::state;
-
 	sl::Constants slConstants = {};
 
-	// Calculate aspect ratio for the SINGLE EYE
-	float eyeWidth = state->screenSize.x * (globals::game::isVR ? 0.5f : 1.0f);
-	slConstants.cameraAspectRatio = eyeWidth / state->screenSize.y;
+	slConstants.cameraAspectRatio = (float)globals::game::graphicsState->screenWidth / (float)globals::game::graphicsState->screenHeight;
 
 	slConstants.cameraFOV = Util::GetVerticalFOVRad();
 	slConstants.cameraNear = *globals::game::cameraNear;
 	slConstants.cameraFar = *globals::game::cameraFar;
 
-	auto viewMatrix = globals::game::frameBufferCached.GetCameraViewInverse(eyeIndex).Transpose();
-	auto cameraViewToClip = globals::game::frameBufferCached.GetCameraProjUnjittered(eyeIndex).Transpose();
+	auto viewMatrix = globals::game::frameBufferCached.GetCameraViewInverse().Transpose();
+	auto cameraViewToClip = globals::game::frameBufferCached.GetCameraProjUnjittered().Transpose();
 
 	slConstants.cameraMotionIncluded = sl::Boolean::eTrue;
 	slConstants.cameraPinholeOffset = { 0.f, 0.f };
 	slConstants.cameraRight = { viewMatrix._11, viewMatrix._12, viewMatrix._13 };
 	slConstants.cameraUp = { viewMatrix._21, viewMatrix._22, viewMatrix._23 };
 	slConstants.cameraFwd = { viewMatrix._31, viewMatrix._32, viewMatrix._33 };
-	slConstants.cameraPos = *(sl::float3*)&globals::game::frameBufferCached.GetCameraPosAdjust(eyeIndex);
+	slConstants.cameraPos = *(sl::float3*)&globals::game::frameBufferCached.GetCameraPosAdjust();
 	slConstants.cameraViewToClip = *(sl::float4x4*)&cameraViewToClip;
 	slConstants.depthInverted = sl::Boolean::eFalse;
 
-	if (globals::game::isVR) {
-		// VR: compute clipToCameraView / clipToPrevClip / prevClipToClip from Skyrim's per-eye matrices.
-		// recalculateCameraMatrices() uses a single static prev-frame slot -- unusable for two viewports.
-		sl::matrixFullInvert(slConstants.clipToCameraView, slConstants.cameraViewToClip);
-
-		auto currViewProj = globals::game::frameBufferCached.GetCameraViewProjUnjittered(eyeIndex).Transpose();
-		auto prevViewProj = globals::game::frameBufferCached.GetCameraPreviousViewProjUnjittered(eyeIndex).Transpose();
-
-		sl::float4x4 currViewProjSL = *(sl::float4x4*)&currViewProj;
-		sl::float4x4 prevViewProjSL = *(sl::float4x4*)&prevViewProj;
-
-		sl::float4x4 invCurrViewProj;
-		sl::matrixFullInvert(invCurrViewProj, currViewProjSL);
-		sl::matrixMul(slConstants.clipToPrevClip, invCurrViewProj, prevViewProjSL);
-		sl::matrixFullInvert(slConstants.prevClipToClip, slConstants.clipToPrevClip);
-	} else {
-		recalculateCameraMatrices(slConstants);
-	}
+	recalculateCameraMatrices(slConstants);
 
 	auto& upscaling = globals::features::upscaling;
 	auto jitter = upscaling.jitter;
@@ -394,7 +371,7 @@ bool Streamline::CheckFrameConstants(sl::ViewportHandle p_viewport, uint32_t eye
 	slConstants.motionVectorsJittered = sl::Boolean::eFalse;
 
 	if (SL_FAILED(res, slSetConstants(slConstants, *frameToken, p_viewport))) {
-		logger::error("[Streamline] Could not set constants for eye {}", eyeIndex);
+		logger::error("[Streamline] Could not set constants");
 		return false;
 	}
 
@@ -465,7 +442,7 @@ void Streamline::SetDLSSOptions(sl::ViewportHandle p_viewport, uint32_t width, u
 	// produces zeroed output. See SetDLSSOptions decl in Streamline.h for the rationale.
 	dlssOptions.outputHeight = height != 0 ? height : (dlssperfActive ? (uint)perfMode.GetDisplayScreenSize().y : (uint)state->screenSize.y);
 
-	// Detect HDR from kMAIN format at runtime -- VR kMAIN may be 8-bit while SE is FP16
+	// Detect HDR from kMAIN format at runtime
 	{
 		auto renderer = globals::game::renderer;
 		auto& main = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMAIN];
@@ -523,7 +500,7 @@ void Streamline::SetDLSSOptions(sl::ViewportHandle p_viewport, uint32_t width, u
 	}
 }
 
-void Streamline::EvaluateDLSS(sl::ViewportHandle vp, uint32_t eyeIndex,
+void Streamline::EvaluateDLSS(sl::ViewportHandle vp,
 	ID3D11Resource* colorIn, ID3D11Resource* colorOut, ID3D11Resource* depth,
 	ID3D11Resource* mvec, ID3D11Resource* reactiveMask, ID3D11Resource* transparencyMask,
 	const sl::Extent& extentIn, const sl::Extent& extentOut, uint32_t outputWidth,
@@ -538,7 +515,7 @@ void Streamline::EvaluateDLSS(sl::ViewportHandle vp, uint32_t eyeIndex,
 	sl::Resource reactiveMaskRes = { sl::ResourceType::eTex2d, reactiveMask, 0 };
 	sl::Resource transparencyMaskRes = { sl::ResourceType::eTex2d, transparencyMask, 0 };
 
-	if (!CheckFrameConstants(vp, eyeIndex))
+	if (!CheckFrameConstants(vp))
 		return;
 
 	const bool emitPCLMarkers =
@@ -550,16 +527,14 @@ void Streamline::EvaluateDLSS(sl::ViewportHandle vp, uint32_t eyeIndex,
 			return;
 		const sl::Result markerResult = slPCLSetMarker(marker, *frameToken);
 		if (markerResult != sl::Result::eOk) {
-			static bool markerErrorLogged[2][2] = { { false, false }, { false, false } };
-			const uint32_t logIdx = globals::game::isVR ? std::min(eyeIndex, 1u) : 0u;
+			static bool markerErrorLogged[2] = { false, false };
 			const uint32_t boundedStageIndex = std::min(stageIndex, 1u);
-			if (markerErrorLogged[logIdx][boundedStageIndex])
+			if (markerErrorLogged[boundedStageIndex])
 				return;
-			markerErrorLogged[logIdx][boundedStageIndex] = true;
+			markerErrorLogged[boundedStageIndex] = true;
 			logger::warn(
-				"[Streamline] slPCLSetMarker({}) failed{}: {}",
+				"[Streamline] slPCLSetMarker({}) failed: {}",
 				stageName,
-				globals::game::isVR ? std::format(" for eye {}", eyeIndex) : "",
 				magic_enum::enum_name(markerResult));
 		}
 	};
@@ -581,15 +556,8 @@ void Streamline::EvaluateDLSS(sl::ViewportHandle vp, uint32_t eyeIndex,
 	const sl::BaseStructure* inputs[] = { &view };
 
 	auto state = globals::state;
-	if (state->frameAnnotations) {
-		if (globals::game::isVR) {
-			char buf[32];
-			snprintf(buf, sizeof(buf), "DLSS Evaluate Eye %u", eyeIndex);
-			state->BeginPerfEvent(buf);
-		} else {
-			state->BeginPerfEvent("DLSS Evaluate");
-		}
-	}
+	if (state->frameAnnotations)
+		state->BeginPerfEvent("DLSS Evaluate");
 
 	emitPCLMarker(sl::PCLMarker::eRenderSubmitStart, "DLSS-EvaluateStart", 0);
 	sl::Result evalResult = slEvaluateFeature(sl::kFeatureDLSS, *frameToken, inputs, _countof(inputs), context);
@@ -599,23 +567,20 @@ void Streamline::EvaluateDLSS(sl::ViewportHandle vp, uint32_t eyeIndex,
 		state->EndPerfEvent();
 
 	if (evalResult != sl::Result::eOk) {
-		static bool evalErrorLogged[2] = { false, false };
-		uint32_t logIdx = globals::game::isVR ? eyeIndex : 0;
-		if (!evalErrorLogged[logIdx]) {
-			evalErrorLogged[logIdx] = true;
-			logger::error("[Streamline] slEvaluateFeature failed{} result={}", globals::game::isVR ? std::format(" for eye {}", eyeIndex) : "", (int)evalResult);
+		static bool evalErrorLogged = false;
+		if (!evalErrorLogged) {
+			evalErrorLogged = true;
+			logger::error("[Streamline] slEvaluateFeature failed result={}", (int)evalResult);
 		}
 	}
 }
 
 void Streamline::Upscale(ID3D11Resource* a_upscalingTexture, ID3D11Resource* a_reactiveMask, ID3D11Resource* a_transparencyCompositionMask, ID3D11Resource* a_motionVectors)
 {
-	auto state = globals::state;
-
 	auto renderer = globals::game::renderer;
 	auto& depthTexture = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kMAIN];
 
-	auto screenSize = state->screenSize;
+	float2 screenSize{ (float)globals::game::graphicsState->screenWidth, (float)globals::game::graphicsState->screenHeight };
 	auto renderSize = Util::ConvertToDynamic(screenSize);
 
 	// PerfMode bridge: when the BSOpenVR size hook is live, state->screenSize
@@ -637,19 +602,8 @@ void Streamline::Upscale(ID3D11Resource* a_upscalingTexture, ID3D11Resource* a_r
 		dlssperfActive ? static_cast<ID3D11Resource*>(perfMode.GetTestTexture()) :
 						 ((upscaling.settings.sharpnessDLSS > 0.0f && upscaling.sharpenerTexture) ? upscaling.sharpenerTexture->resource.get() : a_upscalingTexture);
 
-	// VR stereo DLSS: NGX D3D11 only accepts zero-offset subrects. Non-zero offsets return
-	// FAIL_InvalidParameter because Streamline's dlssEntry.cpp never sets
-	// NVSDK_NGX_Parameter_DLSS_Enable_Output_Subrects during context creation.
-	//
-	// Both eyes copy their color slice into per-eye intermediates so ClearHMDMask can zero
-	// outside-mask regions before DLSS sees them (prevents temporal bleed into visible pixels).
-	// Eye 0 outputs directly to colorOut (zero-offset) — no intermediate output buffer needed.
-	// Eye 1 outputs to vrIntermediateColorOut[1] then copies back to kMAIN at eyeWidthOut.
-	//
-	// Eye 1 is pre-copied before eye 0 runs: at non-DLAA scales eye 0's upscaled output
-	// extends past eyeWidthIn into eye 1's input region of kMAIN.
-	if (globals::game::isVR) {
-		auto context = globals::d3d::context;
+	sl::Extent extentIn{ 0, 0, (uint)renderSize.x, (uint)renderSize.y };
+	sl::Extent extentOut{ 0, 0, (uint)screenSize.x, (uint)screenSize.y };
 
 		uint32_t eyeWidthOut = (uint32_t)(displaySize.x / 2);
 		uint32_t eyeHeightOut = (uint32_t)displaySize.y;
@@ -808,9 +762,4 @@ void Streamline::DestroyDLSSResources()
 
 	slDLSSSetOptions(viewport, dlssOptions);
 	slFreeResources(sl::kFeatureDLSS, viewport);
-
-	if (globals::game::isVR) {
-		slDLSSSetOptions(viewportRight, dlssOptions);
-		slFreeResources(sl::kFeatureDLSS, viewportRight);
-	}
 }

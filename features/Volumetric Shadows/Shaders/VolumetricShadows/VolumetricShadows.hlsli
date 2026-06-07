@@ -57,17 +57,17 @@ namespace VolumetricShadows
 		return shadow * rcpSampleCount;
 	}
 
-	float GetVSMShadow3D(float3 startPosition, float3 endPosition, float noise, uint baseSampleCount, uint eyeIndex, out float surfaceShadow)
+	float GetVSMShadow3D(float3 startPosition, float3 endPosition, float noise, uint baseSampleCount, out float surfaceShadow)
 	{
 		DirectionalShadowLightData directionalShadowLightData = DirectionalShadowLights[0];
 
 		// View-space z — matches the linear cascade split distances from BSShadowDirectionalLight.
 		float3 midPosition = (startPosition + endPosition) * 0.5;
-		float shadowMapDepth = SharedData::GetScreenDepth(FrameBuffer::GetShadowDepth(midPosition, eyeIndex));
+		float shadowMapDepth = SharedData::GetScreenDepth(FrameBuffer::GetShadowDepth(midPosition));
 
 		// Cascade projections are world-space; positions come in camera-relative.
-		startPosition += FrameBuffer::CameraPosAdjust[eyeIndex].xyz;
-		endPosition += FrameBuffer::CameraPosAdjust[eyeIndex].xyz;
+		startPosition += FrameBuffer::CameraPosAdjust.xyz;
+		endPosition += FrameBuffer::CameraPosAdjust.xyz;
 
 		// Early out beyond cascade range
 		if (shadowMapDepth >= directionalShadowLightData.EndSplitDistances.y) {
@@ -134,7 +134,7 @@ namespace VolumetricShadows
 	{
 		DirectionalShadowLightData directionalShadowLightData = DirectionalShadowLights[0];
 
-		float shadowMapDepth = SharedData::GetScreenDepth(FrameBuffer::GetShadowDepth(position, eyeIndex));
+		float shadowMapDepth = SharedData::GetScreenDepth(FrameBuffer::GetShadowDepth(position));
 
 		// Early out beyond cascade range
 		if (shadowMapDepth >= directionalShadowLightData.EndSplitDistances.y) {

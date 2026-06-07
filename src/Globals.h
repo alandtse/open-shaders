@@ -26,16 +26,17 @@ struct TerrainHelper;
 struct TerrainShadows;
 struct UnifiedWater;
 struct VolumetricLighting;
-struct VR;
 struct WaterEffects;
 struct PerformanceOverlay;
 struct WetnessEffects;
 struct ExtendedTranslucency;
 struct Upscaling;
-struct WeatherEditor;
+class Profiler;
+struct CSEditor;
 struct ExponentialHeightFog;
 struct HDRDisplay;
 struct ScreenshotFeature;
+struct Skin;
 
 class State;
 class Deferred;
@@ -85,7 +86,6 @@ namespace globals
 		extern TerrainShadows terrainShadows;
 		extern UnifiedWater unifiedWater;
 		extern VolumetricLighting volumetricLighting;
-		extern VR vr;
 		extern WaterEffects waterEffects;
 		extern PerformanceOverlay performanceOverlay;
 		extern WetnessEffects wetnessEffects;
@@ -95,9 +95,10 @@ namespace globals
 		extern RenderDoc renderDoc;
 		extern RemoteControl remoteControl;
 		extern ScreenshotFeature screenshotFeature;
-		extern WeatherEditor weatherEditor;
+		extern CSEditor csEditor;
 		extern ExponentialHeightFog exponentialHeightFog;
 		extern TruePBR truePBR;
+		extern Skin skin;
 
 		namespace llf
 		{
@@ -128,21 +129,21 @@ namespace globals
 	struct FrameBufferVR
 	{
 		// Must match HLSL VR layout exactly - packoffsets c0 to c86
-		Matrix CameraView[2];                        // packoffset(c0) - 8 registers
-		Matrix CameraProj[2];                        // packoffset(c8) - 8 registers
-		Matrix CameraViewProj[2];                    // packoffset(c16) - 8 registers
-		Matrix CameraViewProjUnjittered[2];          // packoffset(c24) - 8 registers
-		Matrix CameraPreviousViewProjUnjittered[2];  // packoffset(c32) - 8 registers
-		Matrix CameraProjUnjittered[2];              // packoffset(c40) - 8 registers
-		Matrix CameraProjUnjitteredInverse[2];       // packoffset(c48) - 8 registers
-		Matrix CameraViewInverse[2];                 // packoffset(c56) - 8 registers
-		Matrix CameraViewProjInverse[2];             // packoffset(c64) - 8 registers
-		Matrix CameraProjInverse[2];                 // packoffset(c72) - 8 registers
-		float4 CameraPosAdjust[2];                   // packoffset(c80) - 2 registers
-		float4 CameraPreviousPosAdjust[2];           // packoffset(c82) - 2 registers
-		float4 FrameParams;                          // packoffset(c84) - 1 register
-		float4 DynamicResolutionParams1;             // packoffset(c85) - 1 register
-		float4 DynamicResolutionParams2;             // packoffset(c86) - 1 register
+		Matrix CameraView[2];
+		Matrix CameraProj[2];
+		Matrix CameraViewProj[2];
+		Matrix CameraViewProjUnjittered[2];
+		Matrix CameraPreviousViewProjUnjittered[2];
+		Matrix CameraProjUnjittered[2];
+		Matrix CameraProjUnjitteredInverse[2];
+		Matrix CameraViewInverse[2];
+		Matrix CameraViewProjInverse[2];
+		Matrix CameraProjInverse[2];
+		float4 CameraPosAdjust[2];
+		float4 CameraPreviousPosAdjust[2];
+		float4 FrameParams;
+		float4 DynamicResolutionParams1;
+		float4 DynamicResolutionParams2;
 	};
 
 	union FrameBufferCache
@@ -221,7 +222,6 @@ namespace globals
 		extern RE::BSGraphics::Renderer* renderer;
 		extern RE::BSShaderManager::State* smState;
 		extern RE::TES* tes;
-		extern bool isVR;
 		extern RE::MemoryManager* memoryManager;
 		extern RE::INISettingCollection* iniSettingCollection;
 		extern RE::INIPrefSettingCollection* iniPrefSettingCollection;
@@ -271,6 +271,7 @@ namespace globals
 	extern Deferred* deferred;
 	extern Menu* menu;
 	extern SIE::ShaderCache* shaderCache;
+	extern Profiler* profiler;
 
 	void OnInit();
 	void ReInit();

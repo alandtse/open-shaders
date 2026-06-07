@@ -8,9 +8,9 @@ private:
 	static constexpr std::string_view MOD_ID = "130375";
 
 public:
-	bool inline SupportsVR() override { return true; }
 
 	virtual inline std::string GetName() override { return "Screen Space GI"; }
+	virtual std::string GetDisplayName() override { return T("feature.screen_space_gi.name", "Screen Space GI"); }
 	virtual inline std::string GetShortName() override { return "ScreenSpaceGI"; }
 	virtual inline std::string GetFeatureModLink() override { return MakeNexusModURL(MOD_ID); }
 	virtual std::string_view GetCategory() const override { return FeatureCategories::kLighting; }
@@ -65,8 +65,8 @@ public:
 		bool EnableExperimentalSpecularGI = false;
 		bool EnableVanillaSSAO = false;
 		// performance/quality
-		uint NumSlices = REL::Module::IsVR() ? 3u : 4u;  // AO preset for VR
-		uint NumSteps = REL::Module::IsVR() ? 6u : 8u;
+		uint NumSlices = 4u;
+		uint NumSteps = 8u;
 		int ResolutionMode = 1;  // 0-full, 1-half, 2-quarter - DBF default
 		// visual
 		float MinScreenRadius = 0.01f;
@@ -92,9 +92,9 @@ public:
 
 	struct alignas(16) SSGICB
 	{
-		float4x4 PrevInvViewMat[2];
-		float2 NDCToViewMul[2];
-		float2 NDCToViewAdd[2];
+		float4x4 PrevInvViewMat;
+		float4 NDCToViewMul;
+		float4 NDCToViewAdd;
 
 		float2 TexDim;
 		float2 RcpTexDim;  //
@@ -168,6 +168,5 @@ public:
 	winrt::com_ptr<ID3D11ComputeShader> radianceDisoccCompute = nullptr;
 	winrt::com_ptr<ID3D11ComputeShader> giCompute = nullptr;
 	winrt::com_ptr<ID3D11ComputeShader> blurCompute = nullptr;
-	winrt::com_ptr<ID3D11ComputeShader> stereoSyncCompute = nullptr;
 	winrt::com_ptr<ID3D11ComputeShader> upsampleCompute = nullptr;
 };
