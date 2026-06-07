@@ -789,12 +789,12 @@ namespace SIE
 				{ "SplitDistance", lightingPSConstants.SplitDistance },
 				{ "SSRParams", lightingPSConstants.SSRParams },
 				{ "WorldMapOverlayParametersPS", lightingPSConstants.WorldMapOverlayParametersPS },
-				{ "ShadowSampleParam", lightingPSConstants.ShadowSampleParam },
-				{ "EndSplitDistances", lightingPSConstants.EndSplitDistances },
-				{ "StartSplitDistances", lightingPSConstants.StartSplitDistances },
-				{ "DephBiasParam", lightingPSConstants.DephBiasParam },
-				{ "ShadowLightParam", lightingPSConstants.ShadowLightParam },
-				{ "ShadowMapProj", lightingPSConstants.ShadowMapProj },
+				{ "ShadowSampleParam", lightingPSConstants.ShadowSampleParam },      // VR only
+				{ "EndSplitDistances", lightingPSConstants.EndSplitDistances },      // VR only
+				{ "StartSplitDistances", lightingPSConstants.StartSplitDistances },  // VR only
+				{ "DephBiasParam", lightingPSConstants.DephBiasParam },              // VR only
+				{ "ShadowLightParam", lightingPSConstants.ShadowLightParam },        // VR only
+				{ "ShadowMapProj", lightingPSConstants.ShadowMapProj },              // VR only
 				{ "AmbientColor", lightingPSConstants.AmbientColor },
 				{ "FogColor", lightingPSConstants.FogColor },
 				{ "ColourOutputClamp", lightingPSConstants.ColourOutputClamp },
@@ -813,8 +813,8 @@ namespace SIE
 				{ "LandscapeTexture5to6IsSpecPower", lightingPSConstants.LandscapeTexture5to6IsSpecPower },
 				{ "SnowRimLightParameters", lightingPSConstants.SnowRimLightParameters },
 				{ "CharacterLightParams", lightingPSConstants.CharacterLightParams },
-				{ "InvWorldMat", lightingPSConstants.InvWorldMat },
-				{ "PreviousWorldMat", lightingPSConstants.PreviousWorldMat },
+				{ "InvWorldMat", lightingPSConstants.InvWorldMat },            // VR only
+				{ "PreviousWorldMat", lightingPSConstants.PreviousWorldMat },  // VR only
 
 				{ "PBRFlags", lightingPSConstants.PBRFlags },
 				{ "PBRParams1", lightingPSConstants.PBRParams1 },
@@ -1850,6 +1850,7 @@ namespace SIE
 				// BSImagespaceShaderGraphicsTextureFilterMode is intentionally omitted because VR index 111 is ISReflectionBlurHCS.
 				{ "BSImagespaceShaderISDownsampleHierarchicalDepthBufferCS", RE::ImageSpaceManager::GetCurrentIndex(ISDownsampleHierarchicalDepthBufferCS) },
 				{ "BSImagespaceShaderISDiffScaleDownsampleDepthBufferCS", RE::ImageSpaceManager::GetCurrentIndex(ISDiffScaleDownsampleDepthBufferCS) },
+				{ "BSImagespaceShaderISFullScreenVR", RE::ImageSpaceManager::GetCurrentIndex(ISFullScreenVR) },
 				{ "BSImagespaceShaderISTransformLvl7PreTest", RE::ImageSpaceManager::GetCurrentIndex(ISTransformLvl7PreTest) },
 				{ "BSImagespaceShaderISLvl6PreTest", RE::ImageSpaceManager::GetCurrentIndex(ISLvl6PreTest) },
 				{ "BSImagespaceShaderISLvl5PreTest", RE::ImageSpaceManager::GetCurrentIndex(ISLvl5PreTest) },
@@ -1887,6 +1888,9 @@ namespace SIE
 		}
 
 		auto state = globals::state;
+		if (globals::game::isVR && strcmp(shader.fxpFilename, "OBBOcclusionTesting") == 0)
+			// use vanilla shader
+			return nullptr;
 
 		if (!((ShaderCache::IsSupportedShader(shader) || state->IsDeveloperMode() && state->IsShaderEnabled(shader)) && state->enableVShaders)) {
 			return nullptr;
@@ -1928,6 +1932,9 @@ namespace SIE
 		uint32_t descriptor)
 	{
 		auto state = globals::state;
+		if (globals::game::isVR && strcmp(shader.fxpFilename, "OBBOcclusionTesting") == 0)
+			// use vanilla shader
+			return nullptr;
 
 		if (!((ShaderCache::IsSupportedShader(shader) || state->IsDeveloperMode() && state->IsShaderEnabled(shader)) && state->enablePShaders)) {
 			return nullptr;

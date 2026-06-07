@@ -339,7 +339,7 @@ void DynamicCubemaps::UpdateCubemapCapture(bool a_reflections)
 	static float3 cameraPreviousPosAdjust[2] = { { 0, 0, 0 }, { 0, 0, 0 } };
 	updateData.CameraPreviousPosAdjust = cameraPreviousPosAdjust[index];
 
-	auto eyePosition = Util::GetEyePosition();
+	auto eyePosition = Util::GetEyePosition(0);
 
 	cameraPreviousPosAdjust[index] = { eyePosition.x, eyePosition.y, eyePosition.z };
 

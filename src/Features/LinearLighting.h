@@ -20,6 +20,7 @@ struct LinearLighting : Feature
 				T("feature.linear_lighting.key_feature_3", "Makes PBR really work") } };
 	};
 
+	virtual bool SupportsVR() override { return true; };
 	virtual bool IsCore() const override { return true; };
 
 	struct Settings

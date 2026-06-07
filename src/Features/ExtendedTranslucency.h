@@ -25,6 +25,7 @@ struct ExtendedTranslucency final : Feature
 	virtual void LoadSettings(json& o_json) override;
 	virtual void SaveSettings(json& o_json) override;
 	virtual void RestoreDefaultSettings() override;
+	virtual bool SupportsVR() override { return true; };
 
 	static void BSLightingShader_SetupGeometry(RE::BSRenderPass* pass);
 

@@ -60,6 +60,13 @@ YourFeature yourFeature{};
 -   Customize `DrawSettings()` UI controls
 -   Update shader compilation paths in `CompileShaders()`
 
+### VR Support
+
+Set `SupportsVR()` return value:
+
+-   `return true;` - Feature works in VR
+-   `return false;` - Feature disabled in VR builds
+
 ## Naming Conventions
 
 | Component          | Convention | Example                 |
@@ -79,7 +86,7 @@ The build system automatically handles:
 -   Settings persistence (JSON serialization)
 -   UI menu integration
 -   Feature lifecycle management
--   Cross-platform builds (SE/AE)
+-   Cross-platform builds (SE/AE/VR)
 
 Build with: `./BuildRelease.bat ALL`
 
@@ -89,4 +96,5 @@ Build with: `./BuildRelease.bat ALL`
 -   [ ] Settings save/load correctly
 -   [ ] Shaders compile without errors
 -   [ ] Feature works in-game
+-   [ ] VR compatibility (if enabled)
 -   [ ] No build errors

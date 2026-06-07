@@ -1,6 +1,7 @@
 #include "Common/Color.hlsli"
 #include "Common/FrameBuffer.hlsli"
 #include "Common/SharedData.hlsli"
+#include "Common/VR.hlsli"
 
 RWTexture2DArray<float4> DynamicCubemap : register(u0);
 RWTexture2DArray<float4> DynamicCubemapRaw : register(u1);
@@ -72,6 +73,7 @@ float smoothbumpstep(float edge0, float edge1, float x)
 		float weight = 0.0;
 
 		uv = FrameBuffer::GetDynamicResolutionAdjustedScreenPosition(uv);
+		uv = Stereo::ConvertToStereoUV(uv, 0);
 
 		float depth = DepthTexture.SampleLevel(LinearSampler, uv, 0);
 		float linearDepth = SharedData::GetScreenDepth(depth);
@@ -82,7 +84,7 @@ float smoothbumpstep(float edge0, float edge1, float x)
 		if (linearDepth > 16.5 && depth != 1.0) {  // Ignore objects which are too close or the sky
 #endif
 			half4 positionCS = half4(2 * half2(uv.x, -uv.y + 1) - 1, depth, 1);
-			positionCS = mul(FrameBuffer::CameraViewProjInverse, positionCS);
+			positionCS = mul(FrameBuffer::CameraViewProjInverse[0], positionCS);
 			positionCS.xyz = positionCS.xyz / positionCS.w;
 
 			position += positionCS.xyz;
@@ -112,7 +114,7 @@ float smoothbumpstep(float edge0, float edge1, float x)
 	}
 
 	float4 position = DynamicCubemapPosition[ThreadID];
-	position.xyz = (position.xyz + (CameraPreviousPosAdjust2.xyz * 0.001)) - (FrameBuffer::CameraPosAdjust.xyz * 0.001);  // Remove adjustment, add new adjustment
+	position.xyz = (position.xyz + (CameraPreviousPosAdjust2.xyz * 0.001)) - (FrameBuffer::CameraPosAdjust[0].xyz * 0.001);  // Remove adjustment, add new adjustment
 	DynamicCubemapPosition[ThreadID] = position;
 
 	float4 color = DynamicCubemapRaw[ThreadID];

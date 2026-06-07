@@ -261,7 +261,7 @@ namespace Hair
 		return saturate(lerp(float3(luminance, luminance, luminance), color, saturation));
 	}
 
-	float HairSelfShadow(float3 positionWS, float3 lightDirWS, float noise)
+	float HairSelfShadow(float3 positionWS, float3 lightDirWS, float noise, uint eyeIndex)
 	{
 		if (!SharedData::hairSpecularSettings.EnableSelfShadow) {
 			return 1.0;
@@ -270,8 +270,8 @@ namespace Hair
 		// Simple raymarch
 		const int stepCount = 4;
 
-		float3 positionVS = FrameBuffer::WorldToView(positionWS);
-		float3 lightDirVS = FrameBuffer::WorldToView(lightDirWS, false);
+		float3 positionVS = FrameBuffer::WorldToView(positionWS, true, eyeIndex);
+		float3 lightDirVS = FrameBuffer::WorldToView(lightDirWS, false, eyeIndex);
 		lightDirVS *= max(SharedData::hairSpecularSettings.SelfShadowScale * GAME_UNIT_TO_CM, 0.05);
 		float stepSize = 1.0 / stepCount;
 
@@ -282,11 +282,11 @@ namespace Hair
 		[unroll(stepCount)] for (int i = 0; i < stepCount; ++i)
 		{
 			ray += lightDirVS * stepSize;
-			float2 rayUV = FrameBuffer::ViewToUV(ray);
+			float2 rayUV = FrameBuffer::ViewToUV(ray, true, eyeIndex);
 			if (FrameBuffer::IsOutsideFrame(rayUV))
 				continue;
 			float rayDepth = ray.z;
-			float sampleDepth = SharedData::GetScreenDepth(rayUV);
+			float sampleDepth = SharedData::GetScreenDepth(rayUV, eyeIndex);
 			if (sampleDepth < rayDepth) {
 				hitCount++;
 			}

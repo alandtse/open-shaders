@@ -7,6 +7,7 @@
 
 #include "BackgroundBlur.h"
 #include "Features/ScreenshotFeature.h"
+#include "Features/VR.h"
 #include "Fonts.h"
 #include "Globals.h"
 #include "I18n/I18n.h"

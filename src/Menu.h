@@ -546,6 +546,8 @@ public:
 		[[nodiscard]] constexpr bool IsHeld() const noexcept { return IsPressed() && IsRepeating(); }
 		[[nodiscard]] constexpr bool IsUp() const noexcept { return (value == 0.0F) && IsRepeating(); }
 	};
+	// VR overlay input and cursor helpers
+	void ProcessVROverlayInput();
 
 private:
 	Settings settings;

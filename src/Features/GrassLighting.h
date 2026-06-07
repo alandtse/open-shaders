@@ -43,4 +43,5 @@ public:
 
 	virtual void RestoreDefaultSettings() override;
 
+	virtual bool SupportsVR() override { return true; };
 };

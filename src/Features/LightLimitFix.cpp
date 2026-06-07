@@ -732,7 +732,8 @@ void LightLimitFix::BSLightingShader_SetupGeometry_After(RE::BSRenderPass*)
 
 void LightLimitFix::SetLightPosition(LightLimitFix::LightData& a_light, RE::NiPoint3 a_initialPosition, bool a_cached)
 {
-	RE::NiPoint3 eyePosition;
+	for (int eyeIndex = 0; eyeIndex < eyeCount; eyeIndex++) {
+		RE::NiPoint3 eyePosition;
 
 		if (a_cached)
 			eyePosition = eyePositionCached[eyeIndex];
@@ -744,11 +745,6 @@ void LightLimitFix::SetLightPosition(LightLimitFix::LightData& a_light, RE::NiPo
 		a_light.positionWS[eyeIndex].data.y = worldPos.y;
 		a_light.positionWS[eyeIndex].data.z = worldPos.z;
 	}
-
-	auto worldPos = a_initialPosition - eyePosition;
-	a_light.positionWS.data.x = worldPos.x;
-	a_light.positionWS.data.y = worldPos.y;
-	a_light.positionWS.data.z = worldPos.z;
 }
 
 void LightLimitFix::RefreshJsonPlacedLightCacheFrame()

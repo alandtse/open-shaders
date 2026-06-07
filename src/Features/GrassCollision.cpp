@@ -40,7 +40,7 @@ void GrassCollision::QueueCollisions()
 		return;
 
 	eastl::vector<GrassCollisionActorCandidate> actorCandidates{};
-	RE::NiPoint3 cameraPosition = Util::GetEyePosition();
+	RE::NiPoint3 cameraPosition = Util::GetEyePosition(0);
 
 	auto addActorCandidate = [&](RE::ActorHandle a_handle) {
 		auto actor = a_handle.get();
@@ -160,7 +160,7 @@ void GrassCollision::Update()
 
 		static float2 prevCellID = { 0, 0 };
 
-		auto eyePosNI = Util::GetEyePosition();
+		auto eyePosNI = Util::GetEyePosition(0);
 		static auto prevEyePosNI = eyePosNI;
 
 		auto eyePos = float2{ eyePosNI.x, eyePosNI.y };

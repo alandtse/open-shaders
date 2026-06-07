@@ -69,9 +69,13 @@ void ScreenSpaceGI::DrawSettings()
 		}
 		ImGui::TableNextColumn();
 		{
+			auto vanillaSSAOGuard = Util::DisableGuard(globals::game::isVR);
 			ImGui::Checkbox(T(TKEY("vanilla_ssao"), "Vanilla SSAO"), &settings.EnableVanillaSSAO);
 			if (auto _tt = Util::HoverTooltipWrapper()) {
-				ImGui::Text("%s", T(TKEY("vanilla_ssao_tooltip"), "Enable Skyrim's built-in SSAO. Usually disabled when using SSGI to avoid double-darkening."));
+				if (globals::game::isVR)
+					ImGui::Text("%s", T(TKEY("vanilla_ssao_tooltip_vr"), "Vanilla SSAO is not supported in VR."));
+				else
+					ImGui::Text("%s", T(TKEY("vanilla_ssao_tooltip"), "Enable Skyrim's built-in SSAO. Usually disabled when using SSGI to avoid double-darkening."));
 			}
 		}
 		ImGui::TableNextColumn();
@@ -91,16 +95,18 @@ void ScreenSpaceGI::DrawSettings()
 		auto qualityGuard = Util::DisableGuard(!settings.Enabled);
 
 		if (ImGui::BeginTable("Presets", 5)) {
+			auto select = [](auto flatVal, auto vrVal) { return globals::game::isVR ? vrVal : flatVal; };
+
 			ImGui::TableNextColumn();
 			if (ImGui::Button(T(TKEY("ao_only"), "AO only"), { -1, 0 })) {
-				settings.NumSlices = 1;
-				settings.NumSteps = 6;
+				settings.NumSlices = select(1, 3);
+				settings.NumSteps = select(6, 8);
 				settings.EnableBlur = true;
 				settings.EnableGI = false;
 				recompileFlag = true;
 			}
 			if (auto _tt = Util::HoverTooltipWrapper()) {
-				ImGui::Text("1 Slice, 6 Steps, blur enabled, no GI\n");
+				ImGui::Text(select("1 Slice, 6 Steps, blur enabled, no GI\n", "3 Slices, 8 Steps, blur enabled, no GI\n"));
 			}
 
 			ImGui::TableNextColumn();
@@ -581,7 +587,7 @@ void ScreenSpaceGI::SetupResources()
 void ScreenSpaceGI::ClearShaderCache()
 {
 	static const std::vector<winrt::com_ptr<ID3D11ComputeShader>*> shaderPtrs = {
-		&prefilterDepthsCompute, &prefilterRadianceCompute, &prefilterNormalCompute, &radianceDisoccCompute, &giCompute, &blurCompute, &upsampleCompute
+		&prefilterDepthsCompute, &prefilterRadianceCompute, &prefilterNormalCompute, &radianceDisoccCompute, &giCompute, &blurCompute, &stereoSyncCompute, &upsampleCompute
 	};
 
 	for (auto shader : shaderPtrs)
@@ -647,7 +653,7 @@ void ScreenSpaceGI::UpdateSB()
 	float2 dynres = Util::ConvertToDynamic(res);
 	dynres = { floor(dynres.x), floor(dynres.y) };
 
-	static float4x4 prevInvView = {};
+	static float4x4 prevInvView[2] = {};
 
 	SSGICB data;
 	{
@@ -660,7 +666,7 @@ void ScreenSpaceGI::UpdateSB()
 			if (globals::game::isVR)
 				data.NDCToViewMul[eyeIndex].x *= 2;
 
-			prevInvView = eye.viewMat.Invert();
+			prevInvView[eyeIndex] = eye.viewMat.Invert();
 		}
 
 		data.TexDim = res;
@@ -702,7 +708,7 @@ void ScreenSpaceGI::DrawSSGI()
 	auto context = globals::d3d::context;
 
 	auto imageSpaceManager = RE::ImageSpaceManager::GetSingleton();
-	auto& BSImagespaceShaderISSAOBlurH = imageSpaceManager->GetRuntimeData().BSImagespaceShaderISSAOBlurH;
+	GET_INSTANCE_MEMBER(BSImagespaceShaderISSAOBlurH, imageSpaceManager);
 
 	// Toggle vanilla SSAO
 	static bool* enableSSAO = reinterpret_cast<bool*>(reinterpret_cast<uintptr_t>(BSImagespaceShaderISSAOBlurH.get()) + 0x50LL);
@@ -738,7 +744,7 @@ void ScreenSpaceGI::DrawSSGI()
 	auto rts = renderer->GetRuntimeData().renderTargets;
 	auto deferred = globals::deferred;
 
-	float2 size = Util::ConvertToDynamic(float2{ (float)globals::game::graphicsState->screenWidth, (float)globals::game::graphicsState->screenHeight });
+	float2 size = Util::ConvertToDynamic(globals::state->screenSize);
 	auto resolution = std::array{ (uint)size.x, (uint)size.y };
 	auto resChoices = std::array{
 		resolution, std::array{ resolution[0] >> 1, resolution[1] >> 1 }, std::array{ resolution[0] >> 2, resolution[1] >> 2 }

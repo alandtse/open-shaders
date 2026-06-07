@@ -32,7 +32,7 @@ namespace Util
 	{
 		if (globals::game::shadowState) {
 			if (auto tes = RE::TES::GetSingleton()) {
-				auto position = GetEyePosition();
+				auto position = GetEyePosition(0);
 				position.x += offsetX;
 				position.y += offsetY;
 				if (auto cell = tes->GetCell(position)) {
@@ -93,7 +93,7 @@ namespace Util
 		return float4(1.0f, 1.0f, 1.0f, -FLT_MAX);
 	}
 
-	RE::NiPoint3 GetEyePosition()
+	RE::NiPoint3 GetAverageEyePosition()
 	{
 		auto shadowState = globals::game::shadowState;
 		if (!globals::game::isVR)
@@ -143,7 +143,7 @@ namespace Util
 		static float& cameraFOVDeg = (*(float*)(REL::RelocationID(513786, 388785).address()));  // FOV degrees
 		float hFOVRad = cameraFOVDeg * (3.14159265359f / 180.0f);
 		float unitHalfWidth = tan(hFOVRad / 2);                                                                // This is same as camera frustum RL
-		float unitHalfHeight = unitHalfWidth / ((float)globals::game::graphicsState->screenWidth / (float)globals::game::graphicsState->screenHeight);  // frustum TB
+		float unitHalfHeight = unitHalfWidth / (globals::state->screenSize.x / globals::state->screenSize.y);  // frustum TB
 		float vFOVRad = 2.0f * atan(unitHalfHeight);
 		return vFOVRad;
 	}
@@ -163,7 +163,7 @@ namespace Util
 
 	DispatchCount GetScreenDispatchCount(bool a_dynamic)
 	{
-		float2 resolution{ (float)globals::game::graphicsState->screenWidth, (float)globals::game::graphicsState->screenHeight };
+		float2 resolution = globals::state->screenSize;
 
 		if (a_dynamic)
 			ConvertToDynamic(resolution);

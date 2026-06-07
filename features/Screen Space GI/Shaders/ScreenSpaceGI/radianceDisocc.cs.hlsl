@@ -2,6 +2,7 @@
 #include "Common/FrameBuffer.hlsli"
 #include "Common/GBuffer.hlsli"
 #include "Common/Math.hlsli"
+#include "Common/VR.hlsli"
 #include "ScreenSpaceGI/common.hlsli"
 
 Texture2D<half4> srcDiffuse : register(t0);
@@ -27,11 +28,11 @@ RWTexture2D<float4> outRemappedPrevGISpecular : register(u5);
 #endif
 
 void readHistory(
-	float curr_depth, float3 curr_pos, int2 pixCoord, float bilinear_weight,
+	uint eyeIndex, float curr_depth, float3 curr_pos, int2 pixCoord, float bilinear_weight,
 	inout half prev_ao, inout half4 prev_y, inout half2 prev_co_cg, inout half3 prev_ambient, inout float accum_frames, inout half4 prev_gi_specular, inout float wsum)
 {
 	const float2 uv = (pixCoord + .5) * RCP_OUT_FRAME_DIM;
-	const float2 screen_pos = uv;
+	const float2 screen_pos = Stereo::ConvertFromStereoUV(uv, eyeIndex);
 	if (any(screen_pos < 0) || any(screen_pos > 1))
 		return;
 
@@ -42,12 +43,12 @@ void readHistory(
 	// Early reject: skip bilinear taps on a different surface before the
 	// expensive world-space reconstruction.  Use a wider threshold than the
 	// world-space check to avoid rejecting valid taps displaced by parallax
-	// (e.g. camera rotation).
+	// (e.g. VR head rotation).
 	if (abs(curr_depth - prev_depth) > curr_depth * DepthDisocclusion * 3)
 		return;
 
-	float3 prev_pos = ScreenToViewPosition(screen_pos, prev_depth);
-	prev_pos = ViewToWorldPosition(prev_pos, PrevInvViewMat) + FrameBuffer::CameraPreviousPosAdjust.xyz;
+	float3 prev_pos = ScreenToViewPosition(screen_pos, prev_depth, eyeIndex);
+	prev_pos = ViewToWorldPosition(prev_pos, PrevInvViewMat[eyeIndex]) + FrameBuffer::CameraPreviousPosAdjust[eyeIndex].xyz;
 
 	float3 delta_pos = curr_pos - prev_pos;
 	// float normal_prod = dot(curr_normal, prev_normal);
@@ -74,13 +75,14 @@ void readHistory(
 	const float2 frameScale = FrameDim * RcpTexDim;
 
 	const float2 uv = (pixCoord + .5) * RCP_OUT_FRAME_DIM;
-	const float2 screen_pos = uv;
+	const uint eyeIndex = Stereo::GetEyeIndexFromTexCoord(uv);
+	const float2 screen_pos = Stereo::ConvertFromStereoUV(uv, eyeIndex);
 
 	float2 prev_screen_pos = screen_pos;
 #ifdef REPROJECTION
 	prev_screen_pos += FULLRES_LOAD(srcMotionVec, pixCoord, uv * frameScale, samplerLinearClamp).xy;
 #endif
-	float2 prev_uv = prev_screen_pos;
+	float2 prev_uv = Stereo::ConvertToStereoUV(prev_screen_pos, eyeIndex);
 
 	half3 prev_ambient = 0;
 	half prev_ao = 0;
@@ -103,24 +105,24 @@ void readHistory(
 #ifdef REPROJECTION
 	if ((curr_depth <= DepthFadeRange.y) && !(any(prev_screen_pos < 0) || any(prev_screen_pos > 1))) {
 		// float3 curr_normal = GBuffer::DecodeNormal(srcCurrNormal[pixCoord]);
-		// curr_normal = ViewToWorldVector(curr_normal, FrameBuffer::CameraViewInverse);
-		float3 curr_pos = ScreenToViewPosition(screen_pos, curr_depth);
-		curr_pos = ViewToWorldPosition(curr_pos, FrameBuffer::CameraViewInverse) + FrameBuffer::CameraPosAdjust.xyz;
+		// curr_normal = ViewToWorldVector(curr_normal, FrameBuffer::CameraViewInverse[eyeIndex]);
+		float3 curr_pos = ScreenToViewPosition(screen_pos, curr_depth, eyeIndex);
+		curr_pos = ViewToWorldPosition(curr_pos, FrameBuffer::CameraViewInverse[eyeIndex]) + FrameBuffer::CameraPosAdjust[eyeIndex].xyz;
 
 		float2 prev_px_coord = prev_uv * OUT_FRAME_DIM;
 		int2 prev_px_lu = floor(prev_px_coord - 0.5);
 		float2 bilinear_weights = prev_px_coord - 0.5 - prev_px_lu;
 
-		readHistory(curr_depth, curr_pos,
+		readHistory(eyeIndex, curr_depth, curr_pos,
 			prev_px_lu, (1 - bilinear_weights.x) * (1 - bilinear_weights.y),
 			prev_ao, prev_y, prev_co_cg, prev_ambient, accum_frames, prev_gi_specular, wsum);
-		readHistory(curr_depth, curr_pos,
+		readHistory(eyeIndex, curr_depth, curr_pos,
 			prev_px_lu + int2(1, 0), bilinear_weights.x * (1 - bilinear_weights.y),
 			prev_ao, prev_y, prev_co_cg, prev_ambient, accum_frames, prev_gi_specular, wsum);
-		readHistory(curr_depth, curr_pos,
+		readHistory(eyeIndex, curr_depth, curr_pos,
 			prev_px_lu + int2(0, 1), (1 - bilinear_weights.x) * bilinear_weights.y,
 			prev_ao, prev_y, prev_co_cg, prev_ambient, accum_frames, prev_gi_specular, wsum);
-		readHistory(curr_depth, curr_pos,
+		readHistory(eyeIndex, curr_depth, curr_pos,
 			prev_px_lu + int2(1, 1), bilinear_weights.x * bilinear_weights.y,
 			prev_ao, prev_y, prev_co_cg, prev_ambient, accum_frames, prev_gi_specular, wsum);
 

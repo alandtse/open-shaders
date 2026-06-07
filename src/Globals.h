@@ -26,6 +26,7 @@ struct TerrainHelper;
 struct TerrainShadows;
 struct UnifiedWater;
 struct VolumetricLighting;
+struct VR;
 struct WaterEffects;
 struct PerformanceOverlay;
 struct WetnessEffects;
@@ -86,6 +87,7 @@ namespace globals
 		extern TerrainShadows terrainShadows;
 		extern UnifiedWater unifiedWater;
 		extern VolumetricLighting volumetricLighting;
+		extern VR vr;
 		extern WaterEffects waterEffects;
 		extern PerformanceOverlay performanceOverlay;
 		extern WetnessEffects wetnessEffects;
@@ -222,6 +224,7 @@ namespace globals
 		extern RE::BSGraphics::Renderer* renderer;
 		extern RE::BSShaderManager::State* smState;
 		extern RE::TES* tes;
+		extern bool isVR;
 		extern RE::MemoryManager* memoryManager;
 		extern RE::INISettingCollection* iniSettingCollection;
 		extern RE::INIPrefSettingCollection* iniPrefSettingCollection;

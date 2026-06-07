@@ -390,7 +390,7 @@ struct BSShaderRenderTargets_Create
 	 */
 	static inline Util::GameSetting iNumFocusShadow{ "Number of Focus Shadows (INI)",
 		"Controls the number of focus shadows.",
-		static_cast<uintptr_t>(0), 4, 0, 4 };
+		REL::Relocate<uintptr_t>(0, 0, 0x1ed6368), 4, 0, 4 };
 
 	static void thunk()
 	{
@@ -448,8 +448,33 @@ struct BSInputDeviceManager_PollInputDevices
 
 			if (*a_events) {
 				if (auto device = (*a_events)->GetDevice()) {
+					if (globals::game::isVR) {
+						// In VR, block mouse/keyboard input when menu is open (like Flatrim)
+						// Allow gamepad input to pass through
+						// Also handle VR controller devices based on OpenVR compatibility
+						bool isVRController = ((device == RE::INPUT_DEVICES::INPUT_DEVICE::kVivePrimary) ||
+											   (device == RE::INPUT_DEVICES::INPUT_DEVICE::kViveSecondary) ||
+											   (device == RE::INPUT_DEVICES::INPUT_DEVICE::kOculusPrimary) ||
+											   (device == RE::INPUT_DEVICES::INPUT_DEVICE::kOculusSecondary) ||
+											   (device == RE::INPUT_DEVICES::INPUT_DEVICE::kWMRPrimary) ||
+											   (device == RE::INPUT_DEVICES::INPUT_DEVICE::kWMRSecondary));
+
+						// Allow gamepad input to pass through always
+						if (device == RE::INPUT_DEVICES::INPUT_DEVICE::kGamepad) {
+							blockedDevice = false;
+						}
+						// For VR controllers, only block if OpenVR is compatible
+						else if (isVRController) {
+							blockedDevice = globals::features::vr.IsOpenVRCompatible();
+						}
+						// For mouse/keyboard and other devices, block them (like Flatrim)
+						else {
+							blockedDevice = true;
+						}
+					} else {
 						// Block all devices except gamepad when menu is open
 						blockedDevice = (device != RE::INPUT_DEVICES::INPUT_DEVICE::kGamepad);
+					}
 				}
 			}
 		}
@@ -996,7 +1021,7 @@ namespace Hooks
 
 		// This input hook also drives per-frame Reflex update (see BSInputDeviceManager_PollInputDevices::thunk).
 		logger::info("Hooking BSInputDeviceManager::PollInputDevices");
-		stl::write_thunk_call<BSInputDeviceManager_PollInputDevices>(REL::RelocationID(67315, 68617).address() + REL::Relocate(0x7B, 0x7B));
+		stl::write_thunk_call<BSInputDeviceManager_PollInputDevices>(REL::RelocationID(67315, 68617).address() + REL::Relocate(0x7B, 0x7B, 0x81));
 
 		logger::info("Hooking BSShader::LoadShaders");
 		stl::detour_thunk<BSShader_LoadShaders>(REL::RelocationID(101339, 108326));
@@ -1027,8 +1052,8 @@ namespace Hooks
 		stl::write_thunk_call<CreateRenderTarget_NormalsSwap>(REL::RelocationID(100458, 107175).address() + REL::Relocate(0x46B, 0x46E, 0x5C3));
 		stl::write_thunk_call<CreateRenderTarget_MotionVectors>(REL::RelocationID(100458, 107175).address() + REL::Relocate(0x4F0, 0x4EF, 0x64E));
 
-		stl::write_thunk_call<CreateRenderTarget_RefractionNormals>(REL::RelocationID(100458, 107175).address() + REL::Relocate(0x503, 0x502));
-		stl::write_thunk_call<CreateRenderTarget_UnderwaterMask>(REL::RelocationID(100458, 107175).address() + REL::Relocate(0xB19, 0xB19));
+		stl::write_thunk_call<CreateRenderTarget_RefractionNormals>(REL::RelocationID(100458, 107175).address() + REL::Relocate(0x503, 0x502, 0x661));
+		stl::write_thunk_call<CreateRenderTarget_UnderwaterMask>(REL::RelocationID(100458, 107175).address() + REL::Relocate(0xB19, 0xB19, 0xE06));
 
 		stl::write_thunk_call<CreateRenderTarget_Water1>(REL::RelocationID(100458, 107175).address() + REL::Relocate(0xF4F, 0xF51));
 		stl::write_thunk_call<CreateRenderTarget_Water2>(REL::RelocationID(100458, 107175).address() + REL::Relocate(0xF65, 0xF67));
@@ -1054,7 +1079,7 @@ namespace Hooks
 		stl::detour_thunk<CSShadersSupport::Renderer_DispatchCSShader>(REL::RelocationID(75532, 77329));
 
 		logger::info("Hooking TESWaterReflections::Update_Actor::GetLOSPosition for Sky Reflection Fix");
-		stl::write_thunk_call<TESWaterReflections_Update_Actor_GetLOSPosition>(REL::RelocationID(31373, 32160).address() + REL::Relocate(0x1AD, 0x1CA));
+		stl::write_thunk_call<TESWaterReflections_Update_Actor_GetLOSPosition>(REL::RelocationID(31373, 32160).address() + REL::Relocate(0x1AD, 0x1CA, 0x1ed));
 
 		logger::info("Hooking Sky::UpdateColors");
 		stl::detour_thunk<Sky_UpdateColors>(REL::RelocationID(25686, 26233));

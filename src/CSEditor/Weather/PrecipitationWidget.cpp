@@ -235,7 +235,7 @@ void PrecipitationWidget::LoadFromGameSettings()
 	settings.particleType = precipitation->GetSettingValue(RE::BGSShaderParticleGeometryData::DataID::kParticleType).i;
 	settings.boxSize = precipitation->GetSettingValue(RE::BGSShaderParticleGeometryData::DataID::kBoxSize).f;
 	settings.particleDensity = precipitation->GetSettingValue(RE::BGSShaderParticleGeometryData::DataID::kParticleDensity).f;
-	auto& particleTexture = precipitation->GetRuntimeData().particleTexture;
+	GET_INSTANCE_MEMBER(particleTexture, precipitation)
 	settings.particleTexture = particleTexture.textureName.c_str();
 }
 
@@ -276,7 +276,7 @@ void PrecipitationWidget::ApplyChanges()
 	precipitation->GetSettingRef(DataID::kParticleType).i = settings.particleType;
 	precipitation->GetSettingRef(DataID::kBoxSize).f = settings.boxSize;
 	precipitation->GetSettingRef(DataID::kParticleDensity).f = settings.particleDensity;
-	auto& particleTexture = precipitation->GetRuntimeData().particleTexture;
+	GET_INSTANCE_MEMBER(particleTexture, precipitation)
 	particleTexture.textureName = settings.particleTexture.c_str();
 	ApplyLiveParticleTexture(settings.particleTexture);
 	Widget::ForceCurrentWeatherReinit();

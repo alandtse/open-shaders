@@ -43,6 +43,7 @@ namespace WaterBlend
 PS_OUTPUT main(PS_INPUT input)
 {
 	PS_OUTPUT psout;
+	uint eyeIndex = Stereo::GetEyeIndexFromTexCoord(input.TexCoord);
 	float2 adjustedScreenPosition = FrameBuffer::GetDynamicResolutionAdjustedScreenPosition(input.TexCoord);
 	float waterMask = waterMaskTex.Sample(waterMaskSampler, adjustedScreenPosition).z;
 	if (waterMask < WaterBlend::WaterMaskThreshold) {
@@ -51,14 +52,17 @@ PS_OUTPUT main(PS_INPUT input)
 
 	float3 sourceColor = sourceTex.Sample(sourceSampler, adjustedScreenPosition).xyz;
 	float2 motion = motionBufferTex.Sample(motionBufferSampler, adjustedScreenPosition).xy;
-	float2 motionScreenPosition = input.TexCoord + motion;
+	float2 motionScreenPosition = Stereo::ConvertToStereoUV(Stereo::ConvertFromStereoUV(input.TexCoord, eyeIndex) + motion, eyeIndex);
 	float2 motionAdjustedScreenPosition =
 		FrameBuffer::GetPreviousDynamicResolutionAdjustedScreenPosition(motionScreenPosition);
 	float4 waterHistory =
 		waterHistoryTex.Sample(waterHistorySampler, motionAdjustedScreenPosition).xyzw;
 
 	float3 finalColor = sourceColor;
-	if (motionScreenPosition.x >= 0 && motionScreenPosition.y >= 0 && motionScreenPosition.x <= 1 &&
+	if (
+#	ifndef VR
+		motionScreenPosition.x >= 0 && motionScreenPosition.y >= 0 && motionScreenPosition.x <= 1 &&
+#	endif
 		motionScreenPosition.y <= 1 && waterHistory.w > 0.0) {
 		float historyFactor = 0.95;
 		if (NearFar_Menu_DistanceFactor.z == 0) {

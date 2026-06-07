@@ -25,9 +25,11 @@
 #include <wrl/client.h>
 
 #include "../Feature.h"
+#include "../Features/VR.h"
 #include "../Globals.h"
 #include "../Menu.h"
 #include "FileSystem.h"
+#include "VRUtils.h"
 
 #define STB_IMAGE_IMPLEMENTATION
 #include <algorithm>

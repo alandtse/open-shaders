@@ -139,8 +139,18 @@ namespace ShaderConstants
 	{
 		static const GrassPS& Get()
 		{
-			static GrassPS instance{};
+			static GrassPS instance = REL::Module::IsVR() ? GetVR() : GetFlat();
 			return instance;
+		}
+
+		static GrassPS GetFlat()
+		{
+			return GrassPS{};
+		}
+
+		static GrassPS GetVR()
+		{
+			return GrassPS{};
 		}
 
 		const int32_t PBRFlags = 0;
@@ -152,8 +162,18 @@ namespace ShaderConstants
 	{
 		static const EffectPS& Get()
 		{
-			static EffectPS instance{};
+			static EffectPS instance = REL::Module::IsVR() ? GetVR() : GetFlat();
 			return instance;
+		}
+
+		static EffectPS GetFlat()
+		{
+			return EffectPS{};
+		}
+
+		static EffectPS GetVR()
+		{
+			return EffectPS{};
 		}
 
 		const int32_t PropertyColor = 0;
@@ -356,6 +376,17 @@ namespace SIE
 
 		inline static bool IsSupportedShader(const RE::BSShader::Type type)
 		{
+			if (!REL::Module::IsVR())
+				return type == RE::BSShader::Type::Lighting ||
+				       type == RE::BSShader::Type::BloodSplatter ||
+				       type == RE::BSShader::Type::DistantTree ||
+				       type == RE::BSShader::Type::Sky ||
+				       type == RE::BSShader::Type::Grass ||
+				       type == RE::BSShader::Type::Particle ||
+				       type == RE::BSShader::Type::Water ||
+				       type == RE::BSShader::Type::Effect ||
+				       type == RE::BSShader::Type::Utility ||
+				       type == RE::BSShader::Type::ImageSpace;
 			return type == RE::BSShader::Type::Lighting ||
 			       type == RE::BSShader::Type::BloodSplatter ||
 			       type == RE::BSShader::Type::DistantTree ||

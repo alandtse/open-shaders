@@ -537,6 +537,7 @@ PS_OUTPUT main(PS_INPUT input)
 	feedbackOut.x = feedbackLumaOut;
 	// Vanilla writes opaque alpha unconditionally on both SE and VR (decompile o0.w = 1).
 	colorOut.w = 1;
+#	endif
 	feedbackOut.w = 1;
 
 #	ifdef HDR_OUTPUT

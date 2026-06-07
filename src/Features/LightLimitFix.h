@@ -66,7 +66,7 @@ public:
 		float invRadius;
 		float fadeZone;
 		float sizeBias;
-		PositionOpt positionWS;
+		PositionOpt positionWS[2];
 		uint128_t roomFlags = uint32_t(0);
 		stl::enumeration<LightFlags> lightFlags;
 		uint32_t shadowMapIndex = 0;
@@ -223,7 +223,7 @@ public:
 	float lightsNear = 1;
 	float lightsFar = 16384;
 
-	RE::NiPoint3 eyePositionCached{};
+	RE::NiPoint3 eyePositionCached[2]{};
 	bool wasEmpty = false;
 	bool wasWorld = false;
 	int previousRoomIndex = -1;
@@ -422,13 +422,14 @@ public:
 			stl::write_vfunc<0x6, BSWaterShader_SetupGeometry>(RE::VTABLE_BSWaterShader[0]);
 
 			stl::write_thunk_call<ValidLight1>(REL::RelocationID(100994, 107781).address() + 0x92);
-			stl::write_thunk_call<ValidLight2>(REL::RelocationID(100997, 107784).address() + REL::Relocate(0x139, 0x12A));
+			stl::write_thunk_call<ValidLight2>(REL::RelocationID(100997, 107784).address() + REL::Relocate(0x139, 0x12A, 0x133));
 			stl::write_thunk_call<ValidLight3>(REL::RelocationID(101296, 108283).address() + REL::Relocate(0xB7, 0x7E));
 
 			logger::info("[LLF] Installed hooks");
 		}
 	};
 
+	virtual bool SupportsVR() override { return true; };
 	virtual bool IsCore() const override { return true; }
 };
 
@@ -458,10 +459,10 @@ struct fmt::formatter<LightLimitFix::LightData>
 	auto format(const LightLimitFix::LightData& l, format_context& ctx) const -> format_context::iterator
 	{
 		// ctx.out() is an output iterator to write to.
-		return fmt::format_to(ctx.out(), "{{address {:x} color {} radius {} posWS {}}}",
+		return fmt::format_to(ctx.out(), "{{address {:x} color {} radius {} posWS {} {}}}",
 			reinterpret_cast<uintptr_t>(&l),
 			(Vector3)l.color,
 			l.radius,
-			(Vector3)l.positionWS.data);
+			(Vector3)l.positionWS[0].data, (Vector3)l.positionWS[1].data);
 	}
 };
