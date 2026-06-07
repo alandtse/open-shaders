@@ -529,42 +529,32 @@ PS_OUTPUT main(PS_INPUT input)
 		float shadowVisibility = 0;
 
 		float3 positionLS = mul(transpose(lightProjectionMatrix), float4(positionMS.xyz, 1)).xyz;
-#			if defined(VR)
-		float shadowMapCompareDepth = positionLS.z - shadowMapThreshold;
-#			else
-		float shadowMapCompareDepth = positionLS.z;
-#			endif
 
 #			if SHADOWFILTER == 0
 		float shadowMapValue = TexShadowMapSampler.Sample(SampShadowMapSampler, float3(positionLS.xy, cascadeIndex)).x;
-		if (shadowMapValue >= shadowMapCompareDepth) {
+		if (shadowMapValue >= positionLS.z) {
 			shadowVisibility = 1;
 		}
 #			elif SHADOWFILTER == 1
-		shadowVisibility = TexShadowMapSamplerComp.SampleCmpLevelZero(SampShadowMapSamplerComp, float3(positionLS.xy, cascadeIndex), shadowMapCompareDepth).x;
+		shadowVisibility = TexShadowMapSamplerComp.SampleCmpLevelZero(SampShadowMapSamplerComp, float3(positionLS.xy, cascadeIndex), positionLS.z).x;
 #			elif SHADOWFILTER == 3
-		shadowVisibility = SampleShadowPCF(TexShadowMapSamplerComp, SampShadowMapSamplerComp, positionLS.xy, cascadeIndex, shadowMapCompareDepth, rotationMatrix, ShadowSampleParam.z * 0.5);
+		shadowVisibility = SampleShadowPCF(TexShadowMapSamplerComp, SampShadowMapSamplerComp, positionLS.xy, cascadeIndex, positionLS.z, rotationMatrix, ShadowSampleParam.z * 0.5);
 #			endif
 
 		if (cascadeIndex < 1 && StartSplitDistances.y < shadowMapDepth) {
 			float cascade1ShadowVisibility = 0;
 
 			float3 cascade1PositionLS = mul(transpose(ShadowMapProj[eyeIndex][1]), float4(positionMS.xyz, 1)).xyz;
-#			if defined(VR)
-			float cascade1CompareDepth = cascade1PositionLS.z - AlphaTestRef.z;
-#			else
-			float cascade1CompareDepth = cascade1PositionLS.z;
-#			endif
 
 #			if SHADOWFILTER == 0
 			float cascade1ShadowMapValue = TexShadowMapSampler.Sample(SampShadowMapSampler, float3(cascade1PositionLS.xy, 1)).x;
-			if (cascade1ShadowMapValue >= cascade1CompareDepth) {
+			if (cascade1ShadowMapValue >= cascade1PositionLS.z) {
 				cascade1ShadowVisibility = 1;
 			}
 #			elif SHADOWFILTER == 1
-			cascade1ShadowVisibility = TexShadowMapSamplerComp.SampleCmpLevelZero(SampShadowMapSamplerComp, float3(cascade1PositionLS.xy, 1), cascade1CompareDepth).x;
+			cascade1ShadowVisibility = TexShadowMapSamplerComp.SampleCmpLevelZero(SampShadowMapSamplerComp, float3(cascade1PositionLS.xy, 1), cascade1PositionLS.z).x;
 #			elif SHADOWFILTER == 3
-			cascade1ShadowVisibility = SampleShadowPCF(TexShadowMapSamplerComp, SampShadowMapSamplerComp, cascade1PositionLS.xy, 1, cascade1CompareDepth, rotationMatrix, ShadowSampleParam.z * 0.5);
+			cascade1ShadowVisibility = SampleShadowPCF(TexShadowMapSamplerComp, SampShadowMapSamplerComp, cascade1PositionLS.xy, 1, cascade1PositionLS.z, rotationMatrix, ShadowSampleParam.z * 0.5);
 #			endif
 
 			float cascade1BlendFactor = smoothstep(0, 1, (shadowMapDepth - StartSplitDistances.y) / (EndSplitDistances.x - StartSplitDistances.y));
