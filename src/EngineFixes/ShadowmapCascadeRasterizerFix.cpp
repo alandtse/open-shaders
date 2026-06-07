@@ -1,48 +1,51 @@
 #include "ShadowmapCascadeRasterizerFix.h"
 
+#include "Utils/D3D.h"
+
 void ShadowmapRasterizerFix::Install()
 {
-	// This function is called once per cascade to begin the updating and rendering process
-	stl::write_thunk_call<BSShadowDirectionalLight_RenderShadowmaps_RenderCascade>(REL::RelocationID(101495, 108489).address() + REL::Relocate(0xC6, 0xC6, 0xF6));
+	gRasterStates = reinterpret_cast<RasterStatePtr*>(REL::RelocationID(524748, 411363).address());
 
-	gRasterStates = reinterpret_cast<RasterStateArray*>(REL::RelocationID(524748, 411363).address());
+	// VR's gRasterStates has 13 depth-bias presets vs 12 on flat; stride accordingly so the
+	// per-cascade swap lands in the slots the engine actually binds (fixes VR cascade flicker).
+	depthDim = globals::game::isVR ? 13 : 12;
 
 	numCascades = static_cast<uint>(Util::GetGameSettingValue<std::int32_t>("iNumSplits:Display", Settings.at("iNumSplits:Display")));
+
+	// Install the hook LAST, after all static state is set, so a render-thread RenderCascade
+	// can't enter thunk() with a null gRasterStates or an unset VR stride. The hooked function
+	// is called once per cascade to begin the updating and rendering process.
+	stl::write_thunk_call<BSShadowDirectionalLight_RenderShadowmaps_RenderCascade>(REL::RelocationID(101495, 108489).address() + REL::Relocate(0xC6, 0xC6, 0xF6));
 }
 
 void ShadowmapRasterizerFix::BSShadowDirectionalLight_RenderShadowmaps_RenderCascade::thunk(RE::BSShadowDirectionalLight* light, void* arg1, void* arg2, uint32_t flags)
 {
-	// VR bypasses the flat global rasterizer-table swap: swapping the shared global table per
-	// cascade is not stereo-safe and flickers; VR routes directional shadows via the engine mask.
-	if (globals::game::isVR) {
-		func(light, arg1, arg2, flags);
-		return;
-	}
-
 	static uint cascade = 0;
+
+	const auto bytes = static_cast<std::size_t>(StateCount()) * sizeof(RasterStatePtr);
 
 	static bool initialized = false;
 	if (!initialized) {
 		//Backup
 		if (cascade == 0) {
-			std::memcpy(backupGameRasterStates, *gRasterStates, sizeof(RasterStateArray));
-			numCascades = std::min(numCascades, maxCascades);
+			std::memcpy(backupGameRasterStates, gRasterStates, bytes);
+			numCascades = std::max(1u, std::min(numCascades, maxCascades));
 		}
 
-		//Clone
-		CloneRasterStates(gRasterStates, cascade);
+		//Clone from the pristine engine table (we overwrite gRasterStates per cascade below)
+		CloneRasterStates(backupGameRasterStates, cascade);
 
 		initialized = cascade == numCascades - 1;
 	}
 
 	//Emplace
-	std::memcpy(*gRasterStates, shadowmapRasterStates[cascade], sizeof(RasterStateArray));
+	std::memcpy(gRasterStates, shadowmapRasterStates[cascade], bytes);
 
 	func(light, arg1, arg2, flags);
 
 	//Restore
 	if (cascade == numCascades - 1)
-		std::memcpy(*gRasterStates, backupGameRasterStates, sizeof(RasterStateArray));
+		std::memcpy(gRasterStates, backupGameRasterStates, bytes);
 
 	cascade = ++cascade < numCascades ? cascade : 0;
 }
@@ -55,13 +58,14 @@ void ShadowmapRasterizerFix::GetUpdatedRasterDesc(D3D11_RASTERIZER_DESC& outputD
 }
 
 // Since state objects are shared globally across the pipeline we make duplicate arrays that cover the same range of states the game does
-void ShadowmapRasterizerFix::CloneRasterStates(RasterStateArray* inputArray, int cascade)
+void ShadowmapRasterizerFix::CloneRasterStates(RasterStatePtr* inputArray, int cascade)
 {
-	for (int fill = 0; fill < 2; fill++) {
-		for (int cull = 0; cull < 3; cull++) {
-			for (int depth = 0; depth < 12; depth++) {
-				for (int scissor = 0; scissor < 2; scissor++) {
-					if (auto* gRasterizer = (*inputArray)[fill][cull][depth][scissor]) {
+	for (int fill = 0; fill < kFill; fill++) {
+		for (int cull = 0; cull < kCull; cull++) {
+			for (int depth = 0; depth < depthDim; depth++) {
+				for (int scissor = 0; scissor < kScissor; scissor++) {
+					const int i = StateIndex(fill, cull, depth, scissor);
+					if (auto* gRasterizer = inputArray[i]) {
 						D3D11_RASTERIZER_DESC desc{};
 						gRasterizer->GetDesc(&desc);
 
@@ -69,10 +73,12 @@ void ShadowmapRasterizerFix::CloneRasterStates(RasterStateArray* inputArray, int
 
 						// Degrade instead of crashing: on failure keep the engine's own state for this slot
 						// (loses only our added bias, not its cull/fill/scissor) rather than D3D defaults.
-						auto*& clonedRaster = shadowmapRasterStates[cascade][fill][cull][depth][scissor];
+						auto*& clonedRaster = shadowmapRasterStates[cascade][i];
 						if (const auto hr = globals::d3d::device->CreateRasterizerState(&desc, &clonedRaster); FAILED(hr)) {
 							logger::warn("ShadowmapRasterizerFix: failed to clone cascade {} rasterizer state (hr=0x{:08X}); keeping engine state", cascade, static_cast<std::uint32_t>(hr));
-							clonedRaster = gRasterizer;
+							clonedRaster = gRasterizer;  // engine's own state; leave its name as-is
+						} else {
+							Util::SetResourceName(clonedRaster, "ShadowmapCascadeRasterizerFix::CascadeBias[%d][%d]", cascade, i);
 						}
 					}
 				}
