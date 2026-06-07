@@ -2,9 +2,6 @@
 
 void ShadowmapRasterizerFix::Install()
 {
-	// This function is called once per cascade to begin the updating and rendering process
-	stl::write_thunk_call<BSShadowDirectionalLight_RenderShadowmaps_RenderCascade>(REL::RelocationID(101495, 108489).address() + REL::Relocate(0xC6, 0xC6, 0xF6));
-
 	gRasterStates = reinterpret_cast<RasterStatePtr*>(REL::RelocationID(524748, 411363).address());
 
 	// VR's gRasterStates has 13 depth-bias presets vs 12 on flat; stride accordingly so the
@@ -12,6 +9,11 @@ void ShadowmapRasterizerFix::Install()
 	depthDim = globals::game::isVR ? 13 : 12;
 
 	numCascades = static_cast<uint>(Util::GetGameSettingValue<std::int32_t>("iNumSplits:Display", Settings.at("iNumSplits:Display")));
+
+	// Install the hook LAST, after all static state is set, so a render-thread RenderCascade
+	// can't enter thunk() with a null gRasterStates or an unset VR stride. The hooked function
+	// is called once per cascade to begin the updating and rendering process.
+	stl::write_thunk_call<BSShadowDirectionalLight_RenderShadowmaps_RenderCascade>(REL::RelocationID(101495, 108489).address() + REL::Relocate(0xC6, 0xC6, 0xF6));
 }
 
 void ShadowmapRasterizerFix::BSShadowDirectionalLight_RenderShadowmaps_RenderCascade::thunk(RE::BSShadowDirectionalLight* light, void* arg1, void* arg2, uint32_t flags)
@@ -25,11 +27,11 @@ void ShadowmapRasterizerFix::BSShadowDirectionalLight_RenderShadowmaps_RenderCas
 		//Backup
 		if (cascade == 0) {
 			std::memcpy(backupGameRasterStates, gRasterStates, bytes);
-			numCascades = std::min(numCascades, maxCascades);
+			numCascades = std::max(1u, std::min(numCascades, maxCascades));
 		}
 
-		//Clone
-		CloneRasterStates(gRasterStates, cascade);
+		//Clone from the pristine engine table (we overwrite gRasterStates per cascade below)
+		CloneRasterStates(backupGameRasterStates, cascade);
 
 		initialized = cascade == numCascades - 1;
 	}
