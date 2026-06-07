@@ -909,6 +909,24 @@ static std::vector<InputCombo> DeriveWeatherEditorKey(const std::vector<InputCom
 
 void Menu::ProcessInputEventQueue()
 {
+	// Apply any off-thread visibility requests (e.g. devbench) here on the render thread,
+	// mirroring the ToggleKey path, so SetVisible's ImGui access stays on the owning thread.
+	// Absolute open/close first, then toggle parity, so rapid sub-frame toggles aren't dropped.
+	{
+		const auto abs = pendingAbsolute.exchange(VisibilityRequest::None, std::memory_order_relaxed);
+		const unsigned int toggles = pendingToggleCount.exchange(0, std::memory_order_relaxed);
+		if (abs != VisibilityRequest::None || toggles != 0u) {
+			bool target = IsEnabled;
+			if (abs == VisibilityRequest::Open)
+				target = true;
+			else if (abs == VisibilityRequest::Close)
+				target = false;
+			if (toggles % 2u == 1u)
+				target = !target;
+			SetVisible(target);
+		}
+	}
+
 	std::unique_lock<std::shared_mutex> mutex(_inputEventMutex);
 	ImGuiIO& io = ImGui::GetIO();
 	// Split the queue into VR and non-VR events
@@ -1043,13 +1061,7 @@ void Menu::ProcessInputEventQueue()
 						std::function<void()> action;
 					};
 					KeyAction keyActions[] = {
-						{ settings.ToggleKey, [this]() {
-							 if (!HomePageRenderer::ShouldShowFirstTimeSetup()) {
-								 IsEnabled = !IsEnabled;
-								 if (IsEnabled)
-									 ImGui::GetIO().ClearInputKeys();  // Prevent toggle key from remaining "held" in ImGui after open.
-							 }
-						 } },
+						{ settings.ToggleKey, [this]() { SetVisible(!IsEnabled); } },
 						{ settings.SkipCompilationKey, [this, shaderCache]() { if (!ShouldSwallowInput() && shaderCache->IsCompiling()) shaderCache->backgroundCompilation = true; } },
 						{ settings.EffectToggleKey, [shaderCache]() { shaderCache->SetEnabled(!shaderCache->IsEnabled()); } },
 						{ settings.ShaderBlockPrevKey, [this, shaderCache]() { if (settings.EnableShaderBlocking) shaderCache->IterateShaderBlock(); } },
@@ -1175,6 +1187,21 @@ void Menu::ProcessInputEvents(RE::InputEvent* const* a_events)
 			addToEventQueue(KeyEvent(static_cast<RE::ThumbstickEvent*>(it)));
 		}
 	}
+}
+
+bool Menu::SetVisible(bool a_visible)
+{
+	// Match the ToggleKey path: never open over first-time setup, and clear ImGui's
+	// held keys only on the closed->open transition so a programmatic open doesn't
+	// leave a phantom key down -- and a repeated open while already visible doesn't
+	// drop in-progress input.
+	if (a_visible && HomePageRenderer::ShouldShowFirstTimeSetup())
+		return IsEnabled;
+	const bool wasEnabled = IsEnabled;
+	IsEnabled = a_visible;
+	if (IsEnabled && !wasEnabled)
+		ImGui::GetIO().ClearInputKeys();
+	return IsEnabled;
 }
 
 bool Menu::ShouldSwallowInput()

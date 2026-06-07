@@ -17,6 +17,7 @@
 #	include "Features/RenderDoc.h"
 #	include "Features/ScreenshotFeature.h"
 #	include "Globals.h"
+#	include "Menu.h"
 #	include "ShaderCache.h"
 #	include "State.h"
 
@@ -37,8 +38,8 @@ namespace
 	using json = nlohmann::json;
 
 	// Current render frame, used as a coarse "enqueued at" stamp so callers can poll
-	// inspect(kind=state) until frame_count advances past it (i.e. a queued main-thread
-	// task has had at least one tick to run). Safe from any thread (atomic load).
+	// `inspect kind=openshaders` until frame_count advances past it (i.e. a queued
+	// main-thread task has had at least one tick to run). Safe from any thread (atomic load).
 	uint EnqueuedFrame()
 	{
 		return globals::state ? globals::state->frameCountAtomic.load(std::memory_order_relaxed) : 0u;
@@ -282,41 +283,44 @@ namespace
 
 	// ---- inspect: engine state / shader-cache status ----------------------------------
 
-	json BuildInspectResult(const json& a_args)
+	// Registered as base-tool extensions on devbench 1.5.0+ (`inspect kind=openshaders`,
+	// `inspect kind=shadercache`); the base tool routes by key, so each handler ignores
+	// the kind arg and returns its own object.
+	json BuildInspectStateResult(const json&)
 	{
-		const std::string kind = a_args.value("kind", std::string{});
-		if (kind.empty())
-			return json{ { "error", "missing required parameter 'kind'" } };
-
-		if (kind == "state") {
-			return json{
-				{ "plugin", "CommunityShaders" },
-				{ "frame_count", EnqueuedFrame() },
-				{ "vr", globals::game::isVR },
-			};
-		}
-		if (kind == "shadercache") {
-			// Built from thread-safe ShaderCache accessors. Poll completedTasks against a
-			// pre-deploy snapshot to know a hot-reloaded shader finished; a rising
-			// failedTasks / currentFailedCount surfaces an otherwise-invisible failed compile.
-			auto* cache = globals::shaderCache;
-			if (!cache)
-				return json{ { "error", "shader cache unavailable" } };
-			return json{
-				{ "compiling", cache->IsCompiling() },
-				{ "completedTasks", cache->GetCompletedTasks() },
-				{ "totalTasks", cache->GetTotalTasks() },
-				{ "failedTasks", cache->GetFailedTasks() },
-				{ "currentFailedCount", cache->GetCurrentFailedCount() },
-				{ "frame_count", EnqueuedFrame() },
-			};
-		}
-		return json{ { "error", "unknown kind" }, { "kind", kind }, { "supported", json::array({ "state", "shadercache" }) } };
+		return json{
+			{ "plugin", "CommunityShaders" },
+			{ "frame_count", EnqueuedFrame() },
+			{ "vr", globals::game::isVR },
+		};
 	}
 
-	void InspectToolHandler(void*, const char* a_argsJson, void* a_sink, DevBenchAPI::WriteFn a_write)
+	json BuildInspectShadercacheResult(const json&)
 	{
-		RunHandler(&BuildInspectResult, a_argsJson, a_sink, a_write);
+		// Built from thread-safe ShaderCache accessors. Poll completedTasks against a
+		// pre-deploy snapshot to know a hot-reloaded shader finished; a rising
+		// failedTasks / currentFailedCount surfaces an otherwise-invisible failed compile.
+		auto* cache = globals::shaderCache;
+		if (!cache)
+			return json{ { "error", "shader cache unavailable" } };
+		return json{
+			{ "compiling", cache->IsCompiling() },
+			{ "completedTasks", cache->GetCompletedTasks() },
+			{ "totalTasks", cache->GetTotalTasks() },
+			{ "failedTasks", cache->GetFailedTasks() },
+			{ "currentFailedCount", cache->GetCurrentFailedCount() },
+			{ "frame_count", EnqueuedFrame() },
+		};
+	}
+
+	void InspectStateHandler(void*, const char* a_argsJson, void* a_sink, DevBenchAPI::WriteFn a_write)
+	{
+		RunHandler(&BuildInspectStateResult, a_argsJson, a_sink, a_write);
+	}
+
+	void InspectShadercacheHandler(void*, const char* a_argsJson, void* a_sink, DevBenchAPI::WriteFn a_write)
+	{
+		RunHandler(&BuildInspectShadercacheResult, a_argsJson, a_sink, a_write);
 	}
 
 	// ---- shadercache: clear / delete the compiled cache -------------------------------
@@ -483,6 +487,33 @@ namespace
 	{
 		RunHandler(&BuildSettingsResult, a_argsJson, a_sink, a_write);
 	}
+
+	// ---- menu handler: open / close / toggle the Community Shaders settings menu -------
+
+	json BuildMenuResult(const json& a_args)
+	{
+		const std::string op = a_args.value("op", std::string("toggle"));
+		Menu::VisibilityRequest req;
+		if (op == "open")
+			req = Menu::VisibilityRequest::Open;
+		else if (op == "close")
+			req = Menu::VisibilityRequest::Close;
+		else if (op == "toggle")
+			req = Menu::VisibilityRequest::Toggle;
+		else
+			return json{ { "error", "unknown op (open|close|toggle)" }, { "op", op } };
+
+		// SetVisible touches the ImGui context and the IsEnabled flag the render thread owns, so
+		// it can't run on this listener thread (nor on the SKSE main thread). Enqueue an atomic
+		// request the render loop consumes next frame, mirroring the ToggleKey path.
+		Menu::GetSingleton()->RequestVisibility(req);
+		return json{ { "op", op }, { "queued", true } };
+	}
+
+	void MenuHandler(void*, const char* a_argsJson, void* a_sink, DevBenchAPI::WriteFn a_write)
+	{
+		RunHandler(&BuildMenuResult, a_argsJson, a_sink, a_write);
+	}
 }
 
 namespace DevBenchBridge
@@ -505,12 +536,8 @@ namespace DevBenchBridge
 			R"({"description":"All Open Shaders graphics-feature operations — enumerate, inspect settings, mutate settings, restore defaults, toggle on/off. Action-dispatched. list: returns an array of {name,shortName,loaded,version,category,isCore,supportsVR,inMenu}; features with restart-gated settings also include restartFields:[{key,label,pending}]. get: params shortName, returns the SaveSettings blob (null if the feature has no override; set/reset then no-op). set: params shortName, settings (object). reset: params shortName, calls RestoreDefaultSettings. toggle: params shortName, enabled (boolean, OPTIONAL — omit to flip the current loaded state); flips Feature::loaded.","inputSchema":{"type":"object","properties":{"action":{"type":"string","enum":["list","get","set","reset","toggle"]},"shortName":{"type":"string"},"settings":{"type":"object"},"enabled":{"type":"boolean"}}}})";
 		dvb->RegisterTool("openshaders.feature", featureDesc, &FeatureToolHandler, nullptr);
 
-		static constexpr const char* inspectDesc =
-			R"({"description":"Read non-feature Open Shaders engine state. Kind-dispatched; response is a JSON object. kind=state -> {plugin,frame_count,vr}; frame_count increases each render tick, use it as ground truth that a queued operation has had time to run. kind=shadercache -> {compiling,completedTasks,totalTasks,failedTasks,currentFailedCount,frame_count}; poll completedTasks against a pre-deploy snapshot to know a hot-reloaded shader finished, and watch failedTasks/currentFailedCount for failed compiles. For feature reads use openshaders.feature(action=list|get).","readOnly":true,"inputSchema":{"type":"object","properties":{"kind":{"type":"string","enum":["state","shadercache"]}},"required":["kind"]}})";
-		dvb->RegisterTool("openshaders.inspect", inspectDesc, &InspectToolHandler, nullptr);
-
 		static constexpr const char* shadercacheDesc =
-			R"({"description":"Manage Open Shaders' compiled shader cache. Action-dispatched, fire-and-forget on the main thread. clear: drop the IN-MEMORY cache only; with the disk cache enabled shaders reload from Data/ShaderCache rather than recompiling, so this does NOT guarantee a recompile. deleteDisk: delete the on-disk cache AND drop the in-memory cache, forcing a full cold recompile (use this for compile benchmarks). Watch progress via openshaders.inspect kind=shadercache and the openshaders.shaderRecompiled event. Read-only status is openshaders.inspect kind=shadercache.","inputSchema":{"type":"object","properties":{"action":{"type":"string","enum":["clear","deleteDisk"]}},"required":["action"]}})";
+			R"({"description":"Manage Open Shaders' compiled shader cache. Action-dispatched, fire-and-forget on the main thread. clear: drop the IN-MEMORY cache only; with the disk cache enabled shaders reload from Data/ShaderCache rather than recompiling, so this does NOT guarantee a recompile. deleteDisk: delete the on-disk cache AND drop the in-memory cache, forcing a full cold recompile (use this for compile benchmarks). Watch progress via inspect kind=shadercache and the openshaders.shaderRecompiled event. Read-only status is inspect kind=shadercache.","inputSchema":{"type":"object","properties":{"action":{"type":"string","enum":["clear","deleteDisk"]}},"required":["action"]}})";
 		dvb->RegisterTool("openshaders.shadercache", shadercacheDesc, &ShadercacheToolHandler, nullptr);
 
 		static constexpr const char* captureDesc =
@@ -520,6 +547,29 @@ namespace DevBenchBridge
 		static constexpr const char* settingsDesc =
 			R"({"description":"Save, load, or reset the GLOBAL Open Shaders user configuration (Data/SKSE/Plugins/CommunityShaders/*.json). Action-dispatched, all fire-and-forget on the main thread. save: persist current settings (State::Save). load: re-read settings from disk and apply (State::Load). reset: restore every feature to its defaults then persist. Use after openshaders.feature set/reset to make changes durable, or to roll an A/B session back to the saved baseline.","inputSchema":{"type":"object","properties":{"action":{"type":"string","enum":["save","load","reset"]}},"required":["action"]}})";
 		dvb->RegisterTool("openshaders.settings", settingsDesc, &SettingsToolHandler, nullptr);
+
+		// devbench 1.5.0+ generalized tool extensions: route the CS settings menu and the
+		// non-feature reads UNDER the base `menu` / `inspect` tools (menu invoke name=…,
+		// inspect kind=…) instead of as top-level tools, keeping the agent-facing surface
+		// small. RegisterToolExtension's vtable slot exists only on build >= 10500; no
+		// fallback on older hosts (the menu + inspect reads are simply unavailable there).
+		// "CommunityShaders" matches the ImGui window id after `###`, so the menu name lines
+		// up with the on-screen window.
+		if (dvb->GetBuildNumber() >= 10500) {
+			static constexpr const char* menuDesc =
+				R"({"description":"Open, close, or toggle the Community Shaders (Open Shaders) in-game settings menu headlessly — the same window the ToggleKey (default End) shows. op: open|close|toggle (default toggle). Returns {op,queued:true}; the change is applied on the render thread on the next frame (open is a no-op while first-time setup is pending).","inputSchema":{"type":"object","properties":{"op":{"type":"string","enum":["open","close","toggle"]}}}})";
+			dvb->RegisterToolExtension("menu", "CommunityShaders", menuDesc, &MenuHandler, nullptr);
+
+			static constexpr const char* inspectStateDesc =
+				R"({"description":"Open Shaders engine state -> {plugin,frame_count,vr}. frame_count increases each render tick — use it as ground truth that a queued operation has had a frame to run.","readOnly":true,"inputSchema":{"type":"object"}})";
+			dvb->RegisterToolExtension("inspect", "openshaders", inspectStateDesc, &InspectStateHandler, nullptr);
+
+			static constexpr const char* inspectCacheDesc =
+				R"({"description":"Open Shaders shader-cache status -> {compiling,completedTasks,totalTasks,failedTasks,currentFailedCount,frame_count}. Poll completedTasks against a pre-deploy snapshot to know a hot-reloaded shader finished; watch failedTasks/currentFailedCount for failed compiles.","readOnly":true,"inputSchema":{"type":"object"}})";
+			dvb->RegisterToolExtension("inspect", "shadercache", inspectCacheDesc, &InspectShadercacheHandler, nullptr);
+		} else {
+			logger::info("DevBenchBridge: devbench build {} < 10500; CS menu + inspect extensions need 1.5.0", dvb->GetBuildNumber());
+		}
 	}
 }
 
