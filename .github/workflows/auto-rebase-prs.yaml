@@ -1,75 +1,158 @@
 name: "Auto-rebase open PRs"
 
-# Rebase open PRs against `dev` whenever it moves. Thin wrapper over
-# peter-evans/rebase@v3.
+# Rebase open PRs against `dev` on a schedule, skipping any PR whose CI is
+# currently running so a rebase force-push never cancels an in-flight check.
+# Orchestrates peter-evans/rebase@v3 with one invocation per selected PR.
 #
-# Forks: pushing to a fork PR head requires (a) a user PAT belonging to
-# a maintainer of this repo and (b) the PR author having "Allow edits
-# by maintainers" checked. The action silently skips PRs missing either,
-# and skips conflicts.
+# Why scheduled (not on every dev push): a force-push to a PR head supersedes
+# that PR's pr-checks run (pr-checks uses `concurrency: cancel-in-progress` keyed
+# per PR number), so rebasing reactively after each merge cancelled CI
+# mid-completion across every behind PR. Running at predictable times AND
+# skipping busy PRs eliminates that waste. A PR that is busy on every pass is
+# picked up the next run, or immediately via workflow_dispatch.
 #
-# Token: RELEASE_PAT (classic PAT, `repo` + `workflow`). `workflow` is
-# required because rebased PRs may include `.github/workflows/` diffs.
+# Forks: pushing to a fork PR head needs (a) RELEASE_PAT from a maintainer and
+# (b) the PR author's "Allow edits by maintainers". peter-evans/rebase silently
+# skips PRs missing either, and skips conflicts.
+#
+# Token: RELEASE_PAT (classic PAT, `repo` + `workflow`). `workflow` is required
+# because rebased PRs may include `.github/workflows/` diffs.
 
 on:
-    push:
-        branches: [dev]
+    schedule:
+        # Target ~05:00 / 17:00 America/Los_Angeles. GitHub cron is UTC-only and
+        # does not follow DST, so these are pinned for PDT (UTC-7) and drift one
+        # hour later (06:00 / 18:00 PT) during PST. The 17:00 (active-hours) run is
+        # safe because `select` skips PRs with running CI; twice daily keeps PRs
+        # current and reconciles post-hotfix within ~12h. For an immediate
+        # post-release reconcile, use workflow_dispatch.
+        - cron: "0 12 * * *" # 05:00 PT (PDT)
+        - cron: "0 0 * * *" # 17:00 PT (PDT)
     workflow_dispatch:
         inputs:
             pr_number:
-                description: "Optional: rebase just this PR number (the action accepts head as `<owner>:<branch>`; we resolve via gh api). Leave empty to rebase all open PRs against dev."
+                description: "Optional: rebase just this PR number. Empty = all eligible open PRs against dev."
                 required: false
                 default: ""
+            force_busy:
+                description: "Rebase even PRs that have in-progress CI (override the busy skip)."
+                type: boolean
+                required: false
+                default: false
 
 permissions:
     contents: write
     pull-requests: write
 
-# Two jobs by design:
-#
-# 1. `debounce` — sleeps for 30 minutes on push events. Has
-#    `cancel-in-progress: true` so a fresh push during the sleep
-#    kills the still-sleeping run and the new push starts its own
-#    timer. Workflow-dispatch runs skip the sleep entirely.
-# 2. `rebase` — depends on `debounce` and runs `peter-evans/rebase`.
-#    Has `cancel-in-progress: false` so once it starts force-pushing
-#    PR heads, it can't be interrupted mid-flight by a subsequent
-#    push. The downside is a small window (the rebase duration)
-#    where an additional push has to queue rather than supersede —
-#    but interrupting force-pushes mid-rebase leaves PRs in an
-#    inconsistent half-rebased state, which is worse.
-#
-# End state: one rebase pass per quiet 30-min window, no half-done
-# rebases.
-
 jobs:
-    debounce:
+    # 1. select — decide which PRs to rebase this pass. Excludes drafts,
+    #    `no-auto-rebase`, non-dev bases, and (the key fix) any PR with a
+    #    queued/in-progress check, so the rebase never cancels running CI.
+    #    Cancellable: a newer dispatch/schedule supersedes a still-selecting run.
+    select:
         runs-on: ubuntu-latest
-        # The debounce job alone is cancellable — a new push restarts
-        # its 30-minute timer, dropping the prior queued run.
         concurrency:
-            group: auto-rebase-prs-debounce
+            group: auto-rebase-prs-select
             cancel-in-progress: true
+        outputs:
+            heads: ${{ steps.pick.outputs.heads }}
         steps:
-            - name: Debounce dev-push storms
-              # Only debounce when fired by a push to dev. Manual dispatches
-              # run immediately (the next job has no dependency wait when
-              # this step is skipped). Coalesces a burst of PR merges into
-              # a single rebase pass, keeping PR-build CI load proportional
-              # to landings/half-hour rather than landings × open-PR-count.
-              if: github.event_name == 'push'
-              run: sleep 1800
+            - name: Select eligible PRs (open, base dev, not excluded, CI idle)
+              id: pick
+              env:
+                  GH_TOKEN: ${{ secrets.RELEASE_PAT }}
+                  REPO: ${{ github.repository }}
+                  # inputs.* is only populated for workflow_dispatch; guard so scheduled
+                  # runs get empty values (all-PRs path, busy-skip on) unambiguously.
+                  PR_NUMBER: ${{ github.event_name == 'workflow_dispatch' && inputs.pr_number || '' }}
+                  FORCE_BUSY: ${{ github.event_name == 'workflow_dispatch' && inputs.force_busy || '' }}
+              run: |
+                  set -euo pipefail
 
+                  # Candidate PR numbers. An explicit pr_number is honoured as-is
+                  # (only open + base-dev + busy are enforced below); the all-PRs
+                  # path pre-filters drafts and the no-auto-rebase label.
+                  if [[ -n "${PR_NUMBER}" ]]; then
+                    candidates="${PR_NUMBER}"
+                    enforce_exclusions="false"
+                  else
+                    candidates=$(gh pr list --repo "$REPO" --base dev --state open \
+                      --limit 1000 --json number,isDraft,labels \
+                      --jq '.[] | select(.isDraft | not)
+                                 | select([.labels[].name] | index("no-auto-rebase") | not)
+                                 | .number')
+                    enforce_exclusions="true"
+                  fi
+
+                  heads='[]'
+                  skipped=0
+                  for n in ${candidates}; do
+                    info=$(gh pr view "$n" --repo "$REPO" \
+                      --json state,baseRefName,isDraft,labels,headRefName,headRefOid,headRepositoryOwner)
+                    state=$(jq -r '.state' <<<"$info")
+                    base=$(jq -r '.baseRefName' <<<"$info")
+                    draft=$(jq -r '.isDraft' <<<"$info")
+                    excluded=$(jq -r '([.labels[].name] | index("no-auto-rebase")) != null' <<<"$info")
+
+                    if [[ "$state" != "OPEN" || "$base" != "dev" ]]; then
+                      echo "skip #$n (state=$state base=$base)"; skipped=$((skipped+1)); continue
+                    fi
+                    if [[ "$enforce_exclusions" == "true" && ( "$draft" == "true" || "$excluded" == "true" ) ]]; then
+                      echo "skip #$n (draft=$draft excluded=$excluded)"; skipped=$((skipped+1)); continue
+                    fi
+
+                    # Busy check: defer any PR with a queued/in-progress check so the
+                    # rebase force-push can't cancel it. Probe the head SHA's check-runs
+                    # directly (per_page=100 covers any realistic matrix) so an API error
+                    # (fail CLOSED -> skip, retry next run) is distinct from "no checks"
+                    # (idle -> safe to rebase); `gh pr checks` conflates the two.
+                    if [[ "${FORCE_BUSY}" != "true" ]]; then
+                      head_sha=$(jq -r '.headRefOid' <<<"$info")
+                      set +e
+                      busy=$(gh api "repos/${REPO}/commits/${head_sha}/check-runs?per_page=100" \
+                        --jq 'any(.check_runs[]?; .status == "queued" or .status == "in_progress")')
+                      rc=$?
+                      set -e
+                      if [[ $rc -ne 0 ]]; then
+                        echo "skip #$n (check-run probe failed rc=$rc — deferring to avoid cancelling CI)"; skipped=$((skipped+1)); continue
+                      fi
+                      if [[ "$busy" == "true" ]]; then
+                        echo "skip #$n (CI in progress)"; skipped=$((skipped+1)); continue
+                      fi
+                    fi
+
+                    head=$(jq -r '"\(.headRepositoryOwner.login):\(.headRefName)"' <<<"$info")
+                    heads=$(jq -c --arg h "$head" '. + [$h]' <<<"$heads")
+                    echo "select #$n -> $head"
+                  done
+
+                  echo "heads=$heads" >> "$GITHUB_OUTPUT"
+                  count=$(jq 'length' <<<"$heads")
+                  {
+                    echo "## Auto-rebase selection"
+                    echo ""
+                    echo "- Selected for rebase: \`$count\`"
+                    echo "- Skipped (busy CI / draft / excluded / not-open / non-dev base): \`$skipped\`"
+                    echo "- Base: \`dev\`"
+                    if [[ -n "${PR_NUMBER}" ]]; then echo "- Targeted single PR: #${PR_NUMBER}"; fi
+                    if [[ "${FORCE_BUSY}" == "true" ]]; then echo "- force_busy: rebasing even PRs with in-progress CI"; fi
+                  } >> "$GITHUB_STEP_SUMMARY"
+
+    # 2. rebase — one matrix leg per selected PR. peter-evans/rebase force-pushes
+    #    only that PR's head, so legs are independent and run in parallel; the
+    #    per-head concurrency group serializes a PR against itself (cancel-in-progress
+    #    false) so a force-push is never interrupted mid-flight. Skipped entirely
+    #    when nothing was selected (avoids an empty-matrix error).
     rebase:
+        needs: select
+        if: needs.select.outputs.heads != '[]'
         runs-on: ubuntu-latest
-        needs: debounce
-        # The rebase job is NOT cancellable — once peter-evans/rebase
-        # starts force-pushing PR heads, interrupting it mid-flight could
-        # leave some PRs rebased and others not, or interrupt a push
-        # mid-operation. A subsequent dev push queues behind this run
-        # instead.
+        strategy:
+            fail-fast: false
+            matrix:
+                head: ${{ fromJSON(needs.select.outputs.heads) }}
         concurrency:
-            group: auto-rebase-prs-rebase
+            group: auto-rebase-prs-rebase-${{ matrix.head }}
             cancel-in-progress: false
         steps:
             - name: Checkout
@@ -78,69 +161,12 @@ jobs:
                   fetch-depth: 0
                   token: ${{ secrets.RELEASE_PAT }}
 
-            - name: Resolve single-PR head spec (if pr_number given)
-              id: resolve_head
-              if: inputs.pr_number != ''
-              env:
-                  GH_TOKEN: ${{ secrets.RELEASE_PAT }}
-                  PR_NUMBER: ${{ inputs.pr_number }}
-              run: |
-                  set -euo pipefail
-                  # Guard against rebasing a closed PR or one targeting
-                  # a non-dev base (e.g. a hotfix staging branch).
-                  PR_JSON=$(gh pr view "${PR_NUMBER}" --repo '${{ github.repository }}' \
-                    --json state,baseRefName,headRepositoryOwner,headRefName)
-                  PR_STATE=$(echo "${PR_JSON}" | jq -r '.state')
-                  PR_BASE=$(echo "${PR_JSON}" | jq -r '.baseRefName')
-                  if [[ "${PR_STATE}" != "OPEN" ]]; then
-                    echo "::warning::PR #${PR_NUMBER} is ${PR_STATE}, not OPEN — skipping."
-                    echo "head=" >> "$GITHUB_OUTPUT"
-                    exit 0
-                  fi
-                  if [[ "${PR_BASE}" != "dev" ]]; then
-                    echo "::warning::PR #${PR_NUMBER} targets '${PR_BASE}', not 'dev' — skipping to avoid rebasing the wrong base."
-                    echo "head=" >> "$GITHUB_OUTPUT"
-                    exit 0
-                  fi
-                  HEAD_REF=$(echo "${PR_JSON}" | jq -r '"\(.headRepositoryOwner.login):\(.headRefName)"')
-                  echo "head=${HEAD_REF}" >> "$GITHUB_OUTPUT"
-
-            - name: Rebase open PRs against dev
-              id: rebase
-              # Single-PR dispatches without a valid head fall through to
-              # the all-PRs default; this guard keeps that from happening.
-              if: inputs.pr_number == '' || steps.resolve_head.outputs.head != ''
+            - name: Rebase ${{ matrix.head }} onto dev
               uses: peter-evans/rebase@v3
               with:
                   token: ${{ secrets.RELEASE_PAT }}
                   base: dev
-                  head: ${{ steps.resolve_head.outputs.head }}
+                  head: ${{ matrix.head }}
                   exclude-drafts: true
                   exclude-labels: |
                       no-auto-rebase
-
-            - name: Summarize
-              env:
-                  REBASED: ${{ steps.rebase.outputs.rebased-count }}
-              run: |
-                  {
-                    echo "## Auto-rebase summary"
-                    echo ""
-                    echo "- PRs rebased: \`${REBASED:-0}\`"
-                    echo "- Base: \`dev\`"
-                    if [[ -n '${{ inputs.pr_number }}' ]]; then
-                      echo "- Targeted single PR: #${{ inputs.pr_number }} (head \`${{ steps.resolve_head.outputs.head }}\`)"
-                    fi
-                    echo ""
-                    echo "PRs not rebased fall into one of three buckets:"
-                    echo "- Already up-to-date with \`dev\` (no-op)"
-                    echo "- Draft or labeled \`no-auto-rebase\` (excluded)"
-                    echo "- Conflict during rebase, OR fork without maintainer-edit access (action silently skips)"
-                    echo ""
-                    echo "PRs in the conflict bucket need a manual rebase by the author:"
-                    echo '```bash'
-                    echo "git fetch origin && git rebase origin/dev"
-                    echo "# resolve conflicts, git rebase --continue"
-                    echo "git push --force-with-lease"
-                    echo '```'
-                  } >> "$GITHUB_STEP_SUMMARY"
