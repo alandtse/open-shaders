@@ -1,5 +1,7 @@
 #include "ShadowmapCascadeRasterizerFix.h"
 
+#include "Utils/D3D.h"
+
 void ShadowmapRasterizerFix::Install()
 {
 	gRasterStates = reinterpret_cast<RasterStatePtr*>(REL::RelocationID(524748, 411363).address());
@@ -74,7 +76,9 @@ void ShadowmapRasterizerFix::CloneRasterStates(RasterStatePtr* inputArray, int c
 						auto*& clonedRaster = shadowmapRasterStates[cascade][i];
 						if (const auto hr = globals::d3d::device->CreateRasterizerState(&desc, &clonedRaster); FAILED(hr)) {
 							logger::warn("ShadowmapRasterizerFix: failed to clone cascade {} rasterizer state (hr=0x{:08X}); keeping engine state", cascade, static_cast<std::uint32_t>(hr));
-							clonedRaster = gRasterizer;
+							clonedRaster = gRasterizer;  // engine's own state; leave its name as-is
+						} else {
+							Util::SetResourceName(clonedRaster, "ShadowmapCascadeRasterizerFix::CascadeBias[%d][%d]", cascade, i);
 						}
 					}
 				}
