@@ -62,8 +62,10 @@ jobs:
               env:
                   GH_TOKEN: ${{ secrets.RELEASE_PAT }}
                   REPO: ${{ github.repository }}
-                  PR_NUMBER: ${{ inputs.pr_number }}
-                  FORCE_BUSY: ${{ inputs.force_busy }}
+                  # inputs.* is only populated for workflow_dispatch; guard so scheduled
+                  # runs get empty values (all-PRs path, busy-skip on) unambiguously.
+                  PR_NUMBER: ${{ github.event_name == 'workflow_dispatch' && inputs.pr_number || '' }}
+                  FORCE_BUSY: ${{ github.event_name == 'workflow_dispatch' && inputs.force_busy || '' }}
               run: |
                   set -euo pipefail
 
@@ -75,7 +77,7 @@ jobs:
                     enforce_exclusions="false"
                   else
                     candidates=$(gh pr list --repo "$REPO" --base dev --state open \
-                      --limit 100 --json number,isDraft,labels \
+                      --limit 1000 --json number,isDraft,labels \
                       --jq '.[] | select(.isDraft | not)
                                  | select([.labels[].name] | index("no-auto-rebase") | not)
                                  | .number')
@@ -86,7 +88,7 @@ jobs:
                   skipped=0
                   for n in ${candidates}; do
                     info=$(gh pr view "$n" --repo "$REPO" \
-                      --json state,baseRefName,isDraft,labels,headRefName,headRepositoryOwner)
+                      --json state,baseRefName,isDraft,labels,headRefName,headRefOid,headRepositoryOwner)
                     state=$(jq -r '.state' <<<"$info")
                     base=$(jq -r '.baseRefName' <<<"$info")
                     draft=$(jq -r '.isDraft' <<<"$info")
@@ -100,15 +102,20 @@ jobs:
                     fi
 
                     # Busy check: defer any PR with a queued/in-progress check so the
-                    # rebase force-push can't cancel it. `gh pr checks` exits non-zero
-                    # when checks are pending/failing, so capture without tripping -e;
-                    # the --jq result ("true"/"false") is what matters. No checks at
-                    # all -> empty output -> treated as idle.
+                    # rebase force-push can't cancel it. Probe the head SHA's check-runs
+                    # directly (per_page=100 covers any realistic matrix) so an API error
+                    # (fail CLOSED -> skip, retry next run) is distinct from "no checks"
+                    # (idle -> safe to rebase); `gh pr checks` conflates the two.
                     if [[ "${FORCE_BUSY}" != "true" ]]; then
+                      head_sha=$(jq -r '.headRefOid' <<<"$info")
                       set +e
-                      busy=$(gh pr checks "$n" --repo "$REPO" --json bucket \
-                        --jq 'any(.[]; .bucket == "pending")' 2>/dev/null)
+                      busy=$(gh api "repos/${REPO}/commits/${head_sha}/check-runs?per_page=100" \
+                        --jq 'any(.check_runs[]?; .status == "queued" or .status == "in_progress")')
+                      rc=$?
                       set -e
+                      if [[ $rc -ne 0 ]]; then
+                        echo "skip #$n (check-run probe failed rc=$rc — deferring to avoid cancelling CI)"; skipped=$((skipped+1)); continue
+                      fi
                       if [[ "$busy" == "true" ]]; then
                         echo "skip #$n (CI in progress)"; skipped=$((skipped+1)); continue
                       fi
