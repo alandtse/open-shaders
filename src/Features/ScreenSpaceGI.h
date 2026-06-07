@@ -21,7 +21,7 @@ public:
 			"Screen Space Global Illumination adds realistic indirect lighting and "
 			"ambient occlusion to the game. This technique simulates how light "
 			"bounces off surfaces to illuminate other objects naturally.";
-		if (REL::Module::IsVR()) {
+		if (globals::game::isVR) {
 			desc +=
 				"\n\nWarning: In VR, this feature may have visual artifacts and "
 				"can have a significant performance impact due to the nature of "
@@ -60,6 +60,7 @@ public:
 	struct Settings
 	{
 		bool Enabled = true;
+		// Keep raw runtime check for ctor-time defaults before globals::ReInit().
 		bool EnableGI = REL::Module::IsVR() ? false : true;  // AO only for VR by default
 		bool EnableExperimentalSpecularGI = false;
 		bool EnableVanillaSSAO = false;

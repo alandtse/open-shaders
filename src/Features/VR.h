@@ -129,7 +129,7 @@ public:
 	void CompileStereoBlendShaders();
 	bool IsStereoOptimizationCullingReady() const
 	{
-		return REL::Module::IsVR() &&
+		return globals::game::isVR &&
 		       stereoOpt.CanDispatchStencil() &&
 		       stereoBlendOverwriteCS &&
 		       stereoBlendCopyTex &&

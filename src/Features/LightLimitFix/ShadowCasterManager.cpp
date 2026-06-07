@@ -402,7 +402,7 @@ namespace ShadowCasterManager
 	// Hook #2: VR: renderer in R14, result -> RBP; SE/AE: renderer in RBP, result -> R14.
 	static void Hook_SelectDepthBuffer2(CONTEXT& ctx)
 	{
-		bool isVR = REL::Module::IsVR();
+		bool isVR = globals::game::isVR;
 		bool readOnly = isVR ? reinterpret_cast<RE::BSGraphics::Renderer*>(ctx.R14)->GetRuntimeData().readOnlyDepth : reinterpret_cast<RE::BSGraphics::Renderer*>(ctx.Rbp)->GetRuntimeData().readOnlyDepth;
 
 		int type = GetDepthTargetType();
@@ -479,7 +479,7 @@ namespace ShadowCasterManager
 		// cover the same range as FindFreeIndex; a mismatch means a light
 		// silently gets idx=0 and corrupts the slot at index 0.
 
-		if (REL::Module::IsVR())
+		if (globals::game::isVR)
 			ctx.Rdx = static_cast<DWORD64>(idx);
 		else
 			ctx.Rsi = static_cast<DWORD64>(idx);
@@ -1229,7 +1229,7 @@ namespace ShadowCasterManager
 	static void GameApplyLensFlare(RE::BSLight* light)
 	{
 		// SE/AE only -- no VR equivalent (ID 100440)
-		if (REL::Module::IsVR())
+		if (globals::game::isVR)
 			return;
 		using F = void (*)(RE::BSLight*);
 		static REL::Relocation<F> func{ REL::RelocationID(100440, 107157) };
@@ -1257,7 +1257,7 @@ namespace ShadowCasterManager
 		// VR:     (cam, coord, r1, r2, eyeIndex, eps)  -- pass 0xffffffff for combined frustum
 		static REL::Relocation<uintptr_t> addr{ REL::RelocationID(69265, 70632) };
 		auto ptr = addr.address();
-		if (REL::Module::IsVR()) {
+		if (globals::game::isVR) {
 			using VR = void (*)(RE::NiCamera*, float*, float*, float*, uint32_t, float);
 			reinterpret_cast<VR>(ptr)(cam, coord, r1, r2, 0xffffffffu, eps);
 		} else {
@@ -1269,12 +1269,12 @@ namespace ShadowCasterManager
 	// Convenience: runtime-aware shadow-light field accessor (SE vs VR RuntimeData differ).
 	// Usage: ShadowField(light, maskIndex) = 3;
 #define ShadowField(light, member) \
-	(REL::Module::IsVR() ? (light)->GetVRRuntimeData().member : (light)->GetRuntimeData().member)
+	(globals::game::isVR ? (light)->GetVRRuntimeData().member : (light)->GetRuntimeData().member)
 
 	// Returns the culling process for the first shadow descriptor of a light.
 	static RE::BSCullingProcess* GetLightCullingProcess(RE::BSShadowLight* light)
 	{
-		return REL::Module::IsVR() ? light->GetVRRuntimeData().shadowmapDescriptors.front().cullingProcess : light->GetRuntimeData().shadowmapDescriptors.front().cullingProcess;
+		return globals::game::isVR ? light->GetVRRuntimeData().shadowmapDescriptors.front().cullingProcess : light->GetRuntimeData().shadowmapDescriptors.front().cullingProcess;
 	}
 
 	// =========================================================================
@@ -1601,7 +1601,7 @@ namespace ShadowCasterManager
 			if (drawFocus || (!*GetFocusShadowSelected() && light->GetIsFrustumOrDirectionalLight())) {
 				GameSetupDirectionalLight(light, camera);
 				GameAccumulate(light);
-				if (REL::Module::IsVR()) {
+				if (globals::game::isVR) {
 					for (auto& desc : light->GetVRRuntimeData().focusShadowmapDescriptors) {
 						desc.vrRenderTarget[0] = RE::RENDER_TARGET_DEPTHSTENCIL::kNONE;
 						desc.vrRenderTarget[1] = RE::RENDER_TARGET_DEPTHSTENCIL::kNONE;
@@ -1647,7 +1647,7 @@ namespace ShadowCasterManager
 
 				float vw = (float)*globals::game::viewWidth;
 				float vh = (float)*globals::game::viewHeight;
-				if (REL::Module::IsVR()) {
+				if (globals::game::isVR) {
 					vw *= GetVRDRSWidthRatio();
 					vh *= GetVRDRSHeightRatio();
 				}
@@ -1683,7 +1683,7 @@ namespace ShadowCasterManager
 			int32_t idx = s_lights.FindLight(light, s_settings.ShadowLightCount);
 			if (idx < 0)
 				idx = 0;
-			if (REL::Module::IsVR()) {
+			if (globals::game::isVR) {
 				for (auto& desc : light->GetVRRuntimeData().shadowmapDescriptors) {
 					desc.renderTarget = RE::RENDER_TARGET_DEPTHSTENCIL::kNONE;
 					desc.shadowmapIndex = static_cast<uint32_t>(idx);
@@ -1754,7 +1754,7 @@ namespace ShadowCasterManager
 		} guard;
 
 		// VR display guard: skip scheduling when the HMD display is not active.
-		if (REL::Module::IsVR() && !GetVRDrawShadows())
+		if (globals::game::isVR && !GetVRDrawShadows())
 			return;
 
 		auto* ssn = GetShadowSceneNode();
@@ -1792,13 +1792,13 @@ namespace ShadowCasterManager
 			auto* sun = ssn->GetRuntimeData().sunShadowDirLight;
 			if (sun) {
 				static REL::Relocation<bool*> vrUpdateFlag{ REL::Offset(0x1ed62f8) };
-				uint8_t vrFlag = REL::Module::IsVR() ? static_cast<uint8_t>(*vrUpdateFlag) + 1 : 0;
+				uint8_t vrFlag = globals::game::isVR ? static_cast<uint8_t>(*vrUpdateFlag) + 1 : 0;
 				sun->Accumulate(*GetAccumLightSlot(), 0, nullptr, vrFlag);
 
-				if (sun->lensFlareData && !REL::Module::IsVR())
+				if (sun->lensFlareData && !globals::game::isVR)
 					GameApplyLensFlare(sun);
 
-				if (REL::Module::IsVR() && !GetVRAccumFirst()) {
+				if (globals::game::isVR && !GetVRAccumFirst()) {
 					GameVRPrepareShadowMaps(sun);
 					GameVRAccumulateShadowMaps(sun);
 				}
@@ -2779,7 +2779,7 @@ namespace ShadowCasterManager
 						// kSHADOWMAPS, so its descriptor.shadowmapIndex is unused.
 						if (s_lights.Sun && i == 0)
 							continue;
-						if (REL::Module::IsVR()) {
+						if (globals::game::isVR) {
 							for (auto& desc : e.Light->GetVRRuntimeData().shadowmapDescriptors)
 								desc.shadowmapIndex = static_cast<uint32_t>(i);
 						} else {
@@ -2866,7 +2866,7 @@ namespace ShadowCasterManager
 		// iterating shadow casters, then restores it. Without this, each hemisphere
 		// render is doubled for both eyes -> 4-quadrant shadow map texture.
 		bool savedStereo = false;
-		if (REL::Module::IsVR()) {
+		if (globals::game::isVR) {
 			savedStereo = *globals::game::drawStereo;
 			*globals::game::drawStereo = false;
 		}
@@ -2918,7 +2918,7 @@ namespace ShadowCasterManager
 
 		state->EndPerfEvent();
 
-		if (REL::Module::IsVR())
+		if (globals::game::isVR)
 			*globals::game::drawStereo = savedStereo;
 	}
 
@@ -2931,7 +2931,7 @@ namespace ShadowCasterManager
 	// r8 gets a stale pointer whose [+0x50] slot is null -> crash at execute 0x0.
 	static void Hook_RenderShadowLights(CONTEXT& ctx)
 	{
-		if (!REL::Module::IsVR())
+		if (!globals::game::isVR)
 			ctx.Rax = 0;
 		RenderScheduledShadowLights();
 	};
@@ -2999,7 +2999,7 @@ namespace ShadowCasterManager
 		uint32_t fpMask = *reinterpret_cast<uint32_t*>(ctx.Rsp + 0x50);                        // a10
 
 		// VR passes an 11th arg: if non-zero, skip accumulation (vanilla early-out).
-		if (REL::Module::IsVR() && *reinterpret_cast<char*>(ctx.Rsp + 0x58) != 0) {
+		if (globals::game::isVR && *reinterpret_cast<char*>(ctx.Rsp + 0x58) != 0) {
 			ctx.Rax = 1;  // addedLightCount = sun only
 			return;
 		}

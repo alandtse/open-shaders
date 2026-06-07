@@ -369,7 +369,7 @@ void GrassCollision::UpdateCollisionTexture()
 		ID3D11Buffer* buffers[1] = { *globals::game::perFrame };
 		ID3D11Buffer* vrBuffer = nullptr;
 
-		if (REL::Module::IsVR()) {
+		if (globals::game::isVR) {
 			static REL::Relocation<ID3D11Buffer**> VRValues{ REL::Offset(0x3180688) };
 			vrBuffer = *VRValues.get();
 		}

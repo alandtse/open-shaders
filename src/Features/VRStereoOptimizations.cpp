@@ -85,7 +85,7 @@ void VRStereoOptimizations::RestoreDefaultSettings()
 
 void VRStereoOptimizations::SetupResources()
 {
-	if (!REL::Module::IsVR())
+	if (!globals::game::isVR)
 		return;
 
 	auto device = globals::d3d::device;
@@ -322,7 +322,7 @@ void VRStereoOptimizations::UpdateConstantBuffer()
 
 void VRStereoOptimizations::DispatchStencil()
 {
-	if (!REL::Module::IsVR())
+	if (!globals::game::isVR)
 		return;
 	if (settings.stereoMode == StereoMode::Off)
 		return;

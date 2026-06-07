@@ -193,6 +193,7 @@ public:
 
 	ConstantBuffer* strictLightDataCB = nullptr;
 
+	// Keep raw runtime check for ctor-time default before globals::ReInit().
 	int eyeCount = !REL::Module::IsVR() ? 1 : 2;
 
 	// Debug-only visualization state. Lives on the instance rather than in

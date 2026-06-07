@@ -1805,7 +1805,7 @@ namespace Util
 				}
 			}
 
-			if (hasVRInput && REL::Module::IsVR()) {
+			if (hasVRInput && globals::game::isVR) {
 				return InputCombo::GetVRString(combo);
 			}
 
@@ -2346,7 +2346,7 @@ namespace Util
 		}
 
 		// Draw VR-specific color coding if applicable
-		if (REL::Module::IsVR() && !combo.empty()) {
+		if (globals::game::isVR && !combo.empty()) {
 			ImGui::SameLine();
 
 			// Check if we have mixed devices

@@ -20,12 +20,12 @@ namespace Util
 	// VR-aware counts for render targets
 	inline int GetRenderTargetCount()
 	{
-		return REL::Module::IsVR() ? RE::RENDER_TARGETS::kVRTOTAL : RE::RENDER_TARGETS::kTOTAL;
+		return globals::game::isVR ? RE::RENDER_TARGETS::kVRTOTAL : RE::RENDER_TARGETS::kTOTAL;
 	}
 
 	inline int GetDepthStencilCount()
 	{
-		return REL::Module::IsVR() ? RE::RENDER_TARGETS_DEPTHSTENCIL::kVRTOTAL : RE::RENDER_TARGETS_DEPTHSTENCIL::kTOTAL;
+		return globals::game::isVR ? RE::RENDER_TARGETS_DEPTHSTENCIL::kVRTOTAL : RE::RENDER_TARGETS_DEPTHSTENCIL::kTOTAL;
 	}
 
 	HRESULT SaveTextureToFile(ID3D11Device* device, ID3D11DeviceContext* context, const std::filesystem::path& path, ID3D11Texture2D* tex);

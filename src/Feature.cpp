@@ -250,7 +250,7 @@ const std::vector<Feature*>& Feature::GetFeatureList()
 		&globals::features::hdrDisplay
 	};
 
-	if (REL::Module::IsVR()) {
+	if (globals::game::isVR) {
 		// Helper function to build VR feature list
 		static auto BuildVRList = []() -> std::vector<Feature*> {
 			auto v = features;

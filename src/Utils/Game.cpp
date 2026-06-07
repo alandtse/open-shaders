@@ -96,7 +96,7 @@ namespace Util
 	RE::NiPoint3 GetAverageEyePosition()
 	{
 		auto shadowState = globals::game::shadowState;
-		if (!REL::Module::IsVR())
+		if (!globals::game::isVR)
 			return shadowState->GetRuntimeData().posAdjust.getEye();
 		return (shadowState->GetVRRuntimeData().posAdjust.getEye(0) + shadowState->GetVRRuntimeData().posAdjust.getEye(1)) * 0.5f;
 	}
@@ -104,7 +104,7 @@ namespace Util
 	RE::NiPoint3 GetEyePosition(int eyeIndex)
 	{
 		auto shadowState = globals::game::shadowState;
-		if (!REL::Module::IsVR())
+		if (!globals::game::isVR)
 			return shadowState->GetRuntimeData().posAdjust.getEye();
 		return shadowState->GetVRRuntimeData().posAdjust.getEye(eyeIndex);
 	}
@@ -112,7 +112,7 @@ namespace Util
 	RE::BSGraphics::ViewData GetCameraData(int eyeIndex)
 	{
 		auto shadowState = globals::game::shadowState;
-		if (!REL::Module::IsVR()) {
+		if (!globals::game::isVR) {
 			return shadowState->GetRuntimeData().cameraData.getEye();
 		}
 		return shadowState->GetVRRuntimeData().cameraData.getEye(eyeIndex);
@@ -135,7 +135,7 @@ namespace Util
 	bool GetTemporal()
 	{
 		auto imageSpaceManager = RE::ImageSpaceManager::GetSingleton();
-		return (!REL::Module::IsVR() ? imageSpaceManager->GetRuntimeData().BSImagespaceShaderISTemporalAA->taaEnabled : imageSpaceManager->GetVRRuntimeData().BSImagespaceShaderISTemporalAA->taaEnabled);
+		return (!globals::game::isVR ? imageSpaceManager->GetRuntimeData().BSImagespaceShaderISTemporalAA->taaEnabled : imageSpaceManager->GetVRRuntimeData().BSImagespaceShaderISTemporalAA->taaEnabled);
 	}
 
 	float GetVerticalFOVRad()

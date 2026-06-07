@@ -14,6 +14,7 @@ namespace ShaderConstants
 	{
 		static const LightingPS& Get()
 		{
+			// Keep raw runtime check: this static can initialize before globals::ReInit().
 			static LightingPS instance = REL::Module::IsVR() ? GetVR() : GetFlat();
 			return instance;
 		}

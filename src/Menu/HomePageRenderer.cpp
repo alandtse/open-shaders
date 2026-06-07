@@ -517,7 +517,7 @@ void HomePageRenderer::RenderFirstTimeSetupDialog()
 bool HomePageRenderer::ShouldShowFirstTimeSetup()
 {
 	// Never show first-time setup in VR mode
-	if (REL::Module::IsVR()) {
+	if (globals::game::isVR) {
 		return false;
 	}
 

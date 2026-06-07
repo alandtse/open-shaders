@@ -181,7 +181,7 @@ namespace globals
 			graphicsState = RE::BSGraphics::State::GetSingleton();
 			renderer = RE::BSGraphics::Renderer::GetSingleton();
 			smState = &RE::BSShaderManager::State::GetSingleton();
-			isVR = REL::Module::IsVR();
+			isVR = REL::Module::IsVR();  // Init source of truth for globals::game::isVR
 			iniSettingCollection = RE::INISettingCollection::GetSingleton();
 			iniPrefSettingCollection = RE::INIPrefSettingCollection::GetSingleton();
 			gameSettingCollection = RE::GameSettingCollection::GetSingleton();
@@ -203,7 +203,7 @@ namespace globals
 			frameCounter = reinterpret_cast<int32_t*>(REL::RelocationID(525008, 411489).address());
 			viewWidth = reinterpret_cast<int*>(REL::RelocationID(524978, 411459).address());
 			viewHeight = reinterpret_cast<int*>(REL::RelocationID(524979, 411460).address());
-			if (REL::Module::IsVR())
+			if (globals::game::isVR)
 				drawStereo = reinterpret_cast<bool*>(REL::RelocationID(524907, 411393).address() + sizeof(void*));
 		}
 
@@ -253,7 +253,7 @@ namespace globals
 	void CacheFramebuffer()
 	{
 		using namespace game;
-		if (REL::Module::IsVR()) {
+		if (globals::game::isVR) {
 			auto frameBufferVR = (FrameBufferVR*)mappedFrameBuffer->pData;
 			frameBufferCached.vr = *frameBufferVR;
 		} else {

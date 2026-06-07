@@ -906,7 +906,7 @@ namespace SIE
 				{ "ScaleMask", 13 },
 			};
 
-			if (REL::Module::IsVR()) {
+			if (globals::game::isVR) {
 				grassVS.insert({ "Padding", 14 });
 			} else {
 				grassVS.insert({ "ShadowClampValue", 14 });
@@ -1012,7 +1012,7 @@ namespace SIE
 				{ "CellTexCoordOffset", 11 },
 			};
 
-			if (!REL::Module::IsVR()) {
+			if (!globals::game::isVR) {
 				waterVS.insert(
 					{
 						{ "SubTexOffset", 12 },
@@ -1079,7 +1079,7 @@ namespace SIE
 				{ "ShadowLightParam", 8 },
 			};
 
-			if (!REL::Module::IsVR()) {
+			if (!globals::game::isVR) {
 				utilityPS.insert(
 					{
 						{ "ShadowFadeParam", 9 },
@@ -1454,7 +1454,7 @@ namespace SIE
 				defines[lastIndex++] = { "D3DCOMPILE_SKIP_OPTIMIZATION", nullptr };
 				defines[lastIndex++] = { "D3DCOMPILE_DEBUG", nullptr };
 			}
-			if (REL::Module::IsVR())
+			if (globals::game::isVR)
 				defines[lastIndex++] = { "VR", nullptr };
 			auto shaderDefines = globals::state->GetDefines();
 			if (!shaderDefines->empty()) {
