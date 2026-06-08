@@ -1001,14 +1001,22 @@ Upscaling::UpscaleMethod Upscaling::GetUpscaleMethod() const
 	if (globals::game::isVR && GetOpenCompositeUpscalingBlocker().active)
 		return UpscaleMethod::kNONE;
 
-	// Lock runtime to the boot upscaler under PerfMode — engine RTs are
-	// sized for it, and routing a different method through testTexture/
-	// renderRes paths breaks the HMD.
+	// PerfMode sizes the engine RTs at boot for a testTexture-redirecting upscaler. Keep the
+	// boot-latched method while DLSS is available; if DLSS drops out (RenderDoc / no-DLSS GPU)
+	// fall to FSR — the only other redirecting method — never a live or non-redirecting choice
+	// that would desync the fixed RT sizing.
 	if (globals::features::upscaling.perfMode.IsHookActive())
-		return static_cast<UpscaleMethod>(bootSnapshot.Boot(&Settings::upscaleMethod));
-	if (streamline.featureDLSS)
-		return (UpscaleMethod)settings.upscaleMethod;
-	return (UpscaleMethod)settings.upscaleMethodNoDLSS;
+		return streamline.featureDLSS ?
+		           static_cast<UpscaleMethod>(bootSnapshot.Boot(&Settings::upscaleMethod)) :
+		           UpscaleMethod::kFSR;
+
+	// No PerfMode: the DLSS-capable preference, or the no-DLSS preference when DLSS is unavailable —
+	// coerced off DLSS so an out-of-range config can't re-select an unresolved DLSS path.
+	if (!streamline.featureDLSS) {
+		const auto noDlss = static_cast<UpscaleMethod>(settings.upscaleMethodNoDLSS);
+		return noDlss == UpscaleMethod::kDLSS ? UpscaleMethod::kFSR : noDlss;
+	}
+	return static_cast<UpscaleMethod>(settings.upscaleMethod);
 }
 
 bool Upscaling::PerfModePrerequisitesMet() const
