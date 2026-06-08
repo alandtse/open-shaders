@@ -11,6 +11,7 @@ public:
 	bool inline SupportsVR() override { return true; }
 
 	virtual inline std::string GetName() override { return "Screen Space GI"; }
+	virtual std::string GetDisplayName() override { return T("feature.screen_space_gi.name", "Screen Space GI"); }
 	virtual inline std::string GetShortName() override { return "ScreenSpaceGI"; }
 	virtual inline std::string GetFeatureModLink() override { return MakeNexusModURL(MOD_ID); }
 	virtual std::string_view GetCategory() const override { return FeatureCategories::kLighting; }

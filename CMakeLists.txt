@@ -18,7 +18,7 @@ endif()
 project(
     # gersemi: ignore
     CommunityShaders
-    VERSION 1.7.0
+    VERSION 1.7.1
     LANGUAGES CXX
 )
 
@@ -143,9 +143,12 @@ target_include_directories(
         ${BSHOSHANY_THREAD_POOL_INCLUDE_DIRS}
         ${CLIB_UTIL_INCLUDE_DIRS}
         "${CMAKE_SOURCE_DIR}/package/Shaders"
+        "${CMAKE_SOURCE_DIR}/extern/sk_hdr_png/include"
         ${DETOURS_INCLUDE_DIRS}
         ${EXPRTK_INCLUDE_DIRS}
 )
+
+target_compile_definitions(${PROJECT_NAME} PRIVATE SK_HDR_PNG_COMMUNITY_SHADERS)
 
 target_link_libraries(
     ${PROJECT_NAME}
@@ -166,6 +169,7 @@ target_link_libraries(
         d3d12.lib
         Microsoft::DirectX-Headers
         ${DETOURS_LIBRARY}
+        windowscodecs
 )
 
 # devbench bridge: opt-out via -DDEVBENCH_BRIDGE=OFF. When off, the port isn't required
@@ -184,6 +188,9 @@ if(MSVC)
             "$<$<CONFIG:RelWithDebInfo>:/LTCG>"
             "$<$<CONFIG:RelWithDebInfo>:/INCREMENTAL:NO>"
     )
+    # Large translation units (e.g. LightLimitFix/ShadowCasterManager.cpp pulling the
+    # full feature + editor headers) exceed the default COFF section limit; /bigobj.
+    target_compile_options(${PROJECT_NAME} PRIVATE "/bigobj")
 endif()
 
 # https://gitlab.kitware.com/cmake/cmake/-/issues/24922#note_1371990

@@ -6,19 +6,22 @@
 
 #include "Deferred.h"
 #include "FeatureIssues.h"
+#include "Features/CSEditor.h"
 #include "Features/CloudShadows.h"
 #include "Features/DynamicCubemaps.h"
+#include "Features/ExponentialHeightFog.h"
 #include "Features/FoveatedCommon.h"
 #include "Features/HDRDisplay.h"
 #include "Features/InteriorSun.h"
 #include "Features/PerformanceOverlay.h"
+#include "Features/Skin.h"
+#include "Features/SkySync.h"
 #include "Features/TerrainBlending.h"
 #include "Features/TerrainHelper.h"
 #include "Features/Upscaling.h"
 #include "Features/VR.h"
 #include "Features/VRStereoOptimizations.h"
 #include "Features/VolumetricShadows.h"
-#include "Features/WeatherEditor.h"
 #include "Menu.h"
 #include "SceneSettingsManager.h"
 #include "SettingsOverrideManager.h"
@@ -55,7 +58,8 @@ void State::Draw()
 	auto& terrainBlending = globals::features::terrainBlending;
 	auto& terrainHelper = globals::features::terrainHelper;
 	auto& cloudShadows = globals::features::cloudShadows;
-	auto& weatherEditor = globals::features::weatherEditor;
+	auto& csEditor = globals::features::csEditor;
+	auto& skin = globals::features::skin;
 	auto& truePBR = globals::features::truePBR;
 	auto context = globals::d3d::context;
 	auto& volumetricShadows = globals::features::volumetricShadows;
@@ -64,7 +68,7 @@ void State::Draw()
 		// Process deferred cell transitions (interior detection)
 		SceneSettingsManager::GetSingleton()->Update();
 
-		if (weatherEditor.loaded) {
+		if (csEditor.loaded) {
 			ZoneScopedN("WeatherManager::UpdateFeatures");
 			WeatherManager::GetSingleton()->UpdateFeatures();
 		}
@@ -80,13 +84,18 @@ void State::Draw()
 		}
 
 		if (terrainHelper.loaded) {
-			ZoneScopedN("TerrainHelper::SetShaderResouces");
-			terrainHelper.SetShaderResouces(context);
+			ZoneScopedN("TerrainHelper::SetShaderResources");
+			terrainHelper.SetShaderResources(context);
+		}
+
+		if (skin.loaded) {
+			ZoneScopedN("Skin::SetShaderResources");
+			skin.SetShaderResources(context);
 		}
 
 		if (truePBR.loaded) {
-			ZoneScopedN("TruePBR::SetShaderResouces");
-			truePBR.SetShaderResouces(context);
+			ZoneScopedN("TruePBR::SetShaderResources");
+			truePBR.SetShaderResources(context);
 		}
 
 		if (permutationData != permutationDataPrevious) {
@@ -99,6 +108,8 @@ void State::Draw()
 				if (currentPixelDescriptor & static_cast<uint32_t>(SIE::ShaderCache::UtilityShaderFlags::RenderShadowmask)) {
 					if (volumetricShadows.loaded)
 						volumetricShadows.CopyShadowLightData();
+					if (globals::features::exponentialHeightFog.loaded)
+						globals::features::exponentialHeightFog.CaptureDirectionalShadowMap();
 				}
 			}
 		}
@@ -167,6 +178,8 @@ void State::Debug()
 
 void State::Reset()
 {
+	globals::profiler->EndFrame();
+
 	Feature::ForEachLoadedFeature("Reset", [](Feature* feature) { feature->Reset(); });
 	if (!globals::game::ui->GameIsPaused())
 		timer += RE::GetSecondsSinceLastFrame();
@@ -211,6 +224,11 @@ void State::Reset()
 
 void State::Setup()
 {
+	// Detect Moon and Stars mod for compatibility adjustments
+	moonAndStarsLoaded = GetModuleHandle(L"po3_MoonMod.dll") != nullptr;
+	if (moonAndStarsLoaded)
+		logger::info("Moon and Stars detected, compatibility enabled");
+
 	SetupResources();
 
 	// Probe typed UAV load support before features set up their resources, so any
@@ -359,6 +377,10 @@ void State::Load(ConfigMode a_configMode, bool a_allowReload)
 		for (auto* feature : Feature::GetFeatureList()) {
 			try {
 				const std::string featureName = feature->GetShortName();
+				if (!disabledFeatures.contains(featureName) && feature->IsDisabledByDefault()) {
+					disabledFeatures[featureName] = true;
+					logger::info("Feature '{}' is disabled by default", featureName);
+				}
 				bool isDisabled = disabledFeatures.contains(featureName) && disabledFeatures[featureName];
 				if (!isDisabled) {
 					logger::info("Loading Feature: '{}'", featureName);
@@ -450,6 +472,7 @@ void State::SaveToJson(nlohmann::json& settings)
 	general["Enable Disk Cache"] = shaderCache->IsDiskCache();
 	general["Skip Unchanged Shaders"] = shaderCache->IsSkipUnchangedShaders();
 	general["Enable Async"] = shaderCache->IsAsync();
+	general["Language"] = I18n::GetSingleton()->GetCurrentLocale();
 
 	settings["General"] = general;
 
@@ -531,6 +554,23 @@ void State::LoadFromJson(nlohmann::json& settings)
 			shaderCache->SetSkipUnchangedShaders(general["Skip Unchanged Shaders"]);
 		if (general.contains("Enable Async") && general["Enable Async"].is_boolean())
 			shaderCache->SetAsync(general["Enable Async"]);
+
+		// Load i18n locale preference
+		if (general.contains("Language") && general["Language"].is_string()) {
+			auto locale = general["Language"].get<std::string>();
+			auto* i18n = I18n::GetSingleton();
+			if (locale != i18n->GetCurrentLocale()) {
+				i18n->SetLocale(locale);
+			}
+		} else {
+			// No saved language preference — auto-detect from system locale on first launch
+			auto* i18n = I18n::GetSingleton();
+			auto detected = i18n->DetectSystemLocale();
+			if (detected != "en" && detected != i18n->GetCurrentLocale()) {
+				i18n->SetLocale(detected);
+				logger::info("[I18n] Auto-detected system locale: '{}'", detected);
+			}
+		}
 	}
 
 	if (settings.contains("Replace Original Shaders") && settings["Replace Original Shaders"].is_object()) {
@@ -660,9 +700,9 @@ bool State::IsDeveloperMode()
 	return GetLogLevel() <= spdlog::level::debug;
 }
 
-void State::ModifyRenderTarget(RE::RENDER_TARGETS::RENDER_TARGET a_target, RE::BSGraphics::RenderTargetProperties* a_properties)
+void State::ModifyRenderTarget(RE::RENDER_TARGETS::RENDER_TARGET a_target, RE::BSGraphics::RenderTargetProperties& a_properties)
 {
-	a_properties->supportUnorderedAccess = true;
+	a_properties.supportUnorderedAccess = true;
 	logger::debug("Adding UAV access to {}", magic_enum::enum_name(a_target));
 }
 
@@ -743,8 +783,8 @@ void State::SetupResources()
 	sharedDataCB = new ConstantBuffer(ConstantBufferDesc<SharedDataCB>());
 
 	auto [data, size] = GetFeatureBufferData(false);
+	(void)data;
 	featureDataCB = new ConstantBuffer(ConstantBufferDesc((uint32_t)size));
-	delete[] data;
 
 	// Grab main texture to get resolution
 	// VR cannot use viewport->screenWidth/Height as it's the desktop preview window's resolution and not HMD
@@ -760,6 +800,16 @@ void State::SetupResources()
 #ifdef TRACY_ENABLE
 	Feature::SetTracyCtx(tracyCtx);
 #endif
+
+	globals::profiler->Initialize(globals::d3d::device, globals::d3d::context);
+
+	if (frameAnnotations) {
+		globals::profiler->SetPerfEventCallbacks(
+			[this](std::string_view name) { BeginPerfEvent(name); },
+			[this](std::string_view) { EndPerfEvent(); });
+	} else {
+		globals::profiler->SetPerfEventCallbacks({}, {});
+	}
 }
 
 void State::ModifyShaderLookup(const RE::BSShader& a_shader, uint& a_vertexDescriptor, uint& a_pixelDescriptor, bool a_forceDeferred)
@@ -993,6 +1043,34 @@ void State::UpdateSharedData([[maybe_unused]] bool a_inWorld, [[maybe_unused]] b
 			data.MipBias = 0;
 		}
 
+		if (auto sky = globals::game::sky) {
+			// Process sun
+			if (auto sun = sky->sun; sun && sun->root && sky->root) {
+				const auto& sunPos = sun->root->world.translate;
+				const auto& skyPos = sky->root->world.translate;
+				float3 sunDirection = { sunPos.x - skyPos.x, sunPos.y - skyPos.y, sunPos.z - skyPos.z };
+				sunDirection.Normalize();
+				data.SunDirection = { sunDirection.x, sunDirection.y, sunDirection.z, 0.0f };
+
+				if (sun->sunBase) {
+					if (const auto prop = skyrim_cast<RE::BSSkyShaderProperty*>(sun->sunBase->GetGeometryRuntimeData().shaderProperty.get()))
+						data.SunColor = { prop->kBlendColor.red * prop->kBlendColor.alpha, prop->kBlendColor.green * prop->kBlendColor.alpha, prop->kBlendColor.blue * prop->kBlendColor.alpha, prop->kBlendColor.alpha };
+				}
+			}
+
+			if (auto masser = sky->masser) {
+				auto dir = Util::Moon::GetDirection(masser, moonAndStarsLoaded);
+				data.MasserDirection = { dir.x, dir.y, dir.z, 0.0f };
+				data.MasserColor = Util::Moon::GetBlendColor(masser, Util::Moon::MasserBaseColor, globals::features::skySync.settings.NewMoonIntensity, globals::features::skySync.settings.CrescentMoonIntensity, globals::features::skySync.settings.FullMoonIntensity);
+			}
+
+			if (auto secunda = sky->secunda) {
+				auto dir = Util::Moon::GetDirection(secunda, moonAndStarsLoaded);
+				data.SecundaDirection = { dir.x, dir.y, dir.z, 0.0f };
+				data.SecundaColor = Util::Moon::GetBlendColor(secunda, Util::Moon::SecundaBaseColor, globals::features::skySync.settings.NewMoonIntensity, globals::features::skySync.settings.CrescentMoonIntensity, globals::features::skySync.settings.FullMoonIntensity);
+			}
+		}
+
 		// DALC to SH
 		const auto& m = dalcTransform.rotate;
 		const auto& t = dalcTransform.translate;
@@ -1043,8 +1121,6 @@ void State::UpdateSharedData([[maybe_unused]] bool a_inWorld, [[maybe_unused]] b
 		auto [data, size] = GetFeatureBufferData(a_inWorld);
 
 		featureDataCB->Update(data, size);
-
-		delete[] data;
 	}
 
 	auto* srv = Util::GetCurrentSceneDepthSRV(true);

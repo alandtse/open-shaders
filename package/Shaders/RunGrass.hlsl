@@ -358,9 +358,7 @@ struct PS_OUTPUT
 	float4 Reflectance: SV_Target5;
 #		endif  // TRUE_PBR
 	float4 Masks: SV_Target6;
-#		if defined(TRUE_PBR)
-	float4 Parameters: SV_Target7;
-#		endif  // TRUE_PBR
+	float4 Masks2: SV_Target7;
 #	endif      // RENDER_DEPTH
 };
 #else
@@ -374,6 +372,7 @@ struct PS_OUTPUT
 	float4 Normal: SV_Target2;
 	float4 Albedo: SV_Target3;
 	float4 Masks: SV_Target6;
+	float4 Masks2: SV_Target7;
 #	endif
 };
 #endif
@@ -641,7 +640,8 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	lightsDiffuseColor += dirLightColor * dirDetailedShadow * saturate(dirLightAngle) * Color::VanillaNormalization();
 
 	float3 vertexColor = Color::ColorToLinear(input.Color.xyz);
-	vertexColor /= max(max(max(vertexColor.r, vertexColor.g), vertexColor.b), EPSILON_DIVISION);
+	float vertexAO = max(max(vertexColor.r, vertexColor.g), vertexColor.b);
+	vertexColor /= max(vertexAO, EPSILON_DIVISION);
 
 #				if defined(SKYLIGHTING)
 #					if defined(VR)
@@ -649,7 +649,6 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 #					else
 	float3 positionMSSkylight = input.WorldPosition.xyz;
 #					endif
-	float vertexAO = max(max(vertexColor.r, vertexColor.g), vertexColor.b);
 	float skylightingDiffuse = Skylighting::GetVertexSkylightingDiffuse(positionMSSkylight, normal, vertexAO);
 #				endif  // SKYLIGHTING
 
@@ -804,7 +803,6 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	psout.Albedo = float4(Color::IrradianceToGamma(indirectDiffuseLobeWeight), 1);
 	psout.NormalGlossiness = float4(GBuffer::EncodeNormal(normalVS), 1 - pbrSurfaceProperties.Roughness, 1);
 	psout.Reflectance = float4(indirectSpecularLobeWeight, 1);
-	psout.Parameters = float4(0, 0, 1, 1);
 #			else
 	psout.Albedo = float4(albedo, 1);
 	psout.NormalGlossiness = float4(GBuffer::EncodeNormal(normalVS), specColor.w, 1);
@@ -812,6 +810,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 
 	psout.Specular = float4(specularColor, 1);
 	psout.Masks = float4(0, 0, Color::RGBToYCoCg(directionalAmbientColor).x, 0);
+	psout.Masks2 = float4(1.0 - vertexAO, 0, 0, 0);
 #		endif
 	return psout;
 }
@@ -928,7 +927,8 @@ PS_OUTPUT main(PS_INPUT input)
 	float3 normal = -normalize(cross(ddx, ddy));
 
 	float3 vertexColor = Color::ColorToLinear(input.Color.xyz);
-	vertexColor /= max(max(max(vertexColor.r, vertexColor.g), vertexColor.b), EPSILON_DIVISION);
+	float vertexAO = max(max(vertexColor.r, vertexColor.g), vertexColor.b);
+	vertexColor /= max(vertexAO, EPSILON_DIVISION);
 
 #			if defined(SKYLIGHTING)
 #				if defined(VR)
@@ -936,7 +936,6 @@ PS_OUTPUT main(PS_INPUT input)
 #				else
 	float3 positionMSSkylight = input.WorldPosition.xyz;
 #				endif
-	float vertexAO = max(max(vertexColor.r, vertexColor.g), vertexColor.b);
 	float skylightingDiffuse = Skylighting::GetVertexSkylightingDiffuse(positionMSSkylight, normal, vertexAO);
 #			endif  // SKYLIGHTING
 
@@ -978,6 +977,7 @@ PS_OUTPUT main(PS_INPUT input)
 
 	psout.Albedo = float4(albedo, 1);
 	psout.Masks = float4(0, 0, Color::RGBToYCoCg(directionalAmbientColor).x, 0);
+	psout.Masks2 = float4(1.0 - vertexAO, 0, 0, 0);
 #		endif
 
 	return psout;

@@ -1,4 +1,4 @@
-﻿#include "VR.h"
+#include "VR.h"
 #include "Menu.h"
 #include "RE/B/BSOpenVR.h"
 #include "RE/P/PlayerCharacter.h"

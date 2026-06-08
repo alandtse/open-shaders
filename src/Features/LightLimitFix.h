@@ -19,6 +19,7 @@ private:
 
 public:
 	virtual inline std::string GetName() override { return "Light Limit Fix"; }
+	virtual std::string GetDisplayName() override { return T("feature.light_limit_fix.name", "Light Limit Fix"); }
 	virtual inline std::string GetShortName() override { return "LightLimitFix"; }
 	virtual inline std::string_view GetShaderDefineName() override { return "LIGHT_LIMIT_FIX"; }
 	virtual std::string_view GetCategory() const override { return FeatureCategories::kLighting; }
