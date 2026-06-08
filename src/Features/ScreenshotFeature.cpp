@@ -28,7 +28,6 @@
 #include <format>
 #include <fstream>
 #include <functional>
-#include <malloc.h>
 #include <vector>
 
 namespace
@@ -436,29 +435,12 @@ namespace
 	constexpr unsigned char kPrimariesBT2100 = 9;
 	constexpr unsigned char kTransferPQ = 16;
 
-	struct HdrFormatInfo
-	{
-		DXGI_FORMAT dxgi;
-	};
-
-	constexpr HdrFormatInfo kHdrFormats[] = {
-		{ DXGI_FORMAT_R10G10B10A2_UNORM },
-		{ DXGI_FORMAT_R16G16B16A16_FLOAT },
-	};
-
-	const HdrFormatInfo* LookupHdrFormat(DXGI_FORMAT format)
-	{
-		for (const auto& info : kHdrFormats) {
-			if (info.dxgi == format) {
-				return &info;
-			}
-		}
-		return nullptr;
-	}
-
+	// The HDR composite back buffer is already BT.2020 PQ in one of these formats;
+	// anything else takes the SDR save path.
 	bool IsHdrCaptureFormat(DXGI_FORMAT format)
 	{
-		return LookupHdrFormat(format) != nullptr;
+		return format == DXGI_FORMAT_R10G10B10A2_UNORM ||
+		       format == DXGI_FORMAT_R16G16B16A16_FLOAT;
 	}
 
 	// Quantize a 16-bit PQ sample to `bits` significant bits (file-size knob mirroring
