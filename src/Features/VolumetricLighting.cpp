@@ -40,7 +40,7 @@ void VolumetricLighting::DrawSettings()
 		SetupVL();
 	if (globals::game::isVR)
 		Util::UI::RestartGatedAnnotate(bootSnapshot, settings, &Settings::InteriorEnabled,
-			"Volumetric god-rays / fog scattering in interior cells.");
+			T(TKEY("enable_interiors_tooltip"), "Volumetric god-rays / fog scattering in interior cells."));
 
 	if (settings.InteriorEnabled)
 		DrawVolumetricLightingSettings(settings.InteriorQuality, settings.InteriorCustomSize, true, inInterior);

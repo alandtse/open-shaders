@@ -121,16 +121,16 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	PositionSet)
 
 static const std::unordered_map<RE::BSShader::Type, std::string> kShaderTypeTooltips = {
-	{ RE::BSShader::Type::Grass, "Draw calls using the Grass shader. Typically many, but each is usually cheap." },
-	{ RE::BSShader::Type::Sky, "Draw calls for the sky dome, clouds, and related effects." },
-	{ RE::BSShader::Type::Water, "Draw calls for water surfaces and effects." },
-	{ RE::BSShader::Type::Lighting, "Draw calls for dynamic and static lighting passes." },
-	{ RE::BSShader::Type::Effect, "Draw calls for special effects, particles, and post-processing." },
-	{ RE::BSShader::Type::Utility, "Draw calls for utility passes, such as shadow masks or G-buffer fills." },
-	{ RE::BSShader::Type::DistantTree, "Draw calls for distant tree rendering (LOD vegetation)." },
-	{ RE::BSShader::Type::Particle, "Draw calls for particle systems (smoke, sparks, etc.)." },
-	{ RE::BSShader::Type::BloodSplatter, "Draw calls for blood splatter effects." },
-	{ RE::BSShader::Type::ImageSpace, "Draw calls for image space post-processing effects." }
+	{ RE::BSShader::Type::Grass, T(TKEY("tip_grass"), "Draw calls using the Grass shader. Typically many, but each is usually cheap.") },
+	{ RE::BSShader::Type::Sky, T(TKEY("tip_sky"), "Draw calls for the sky dome, clouds, and related effects.") },
+	{ RE::BSShader::Type::Water, T(TKEY("tip_water"), "Draw calls for water surfaces and effects.") },
+	{ RE::BSShader::Type::Lighting, T(TKEY("tip_lighting"), "Draw calls for dynamic and static lighting passes.") },
+	{ RE::BSShader::Type::Effect, T(TKEY("tip_effect"), "Draw calls for special effects, particles, and post-processing.") },
+	{ RE::BSShader::Type::Utility, T(TKEY("tip_utility"), "Draw calls for utility passes, such as shadow masks or G-buffer fills.") },
+	{ RE::BSShader::Type::DistantTree, T(TKEY("tip_distant_tree"), "Draw calls for distant tree rendering (LOD vegetation).") },
+	{ RE::BSShader::Type::Particle, T(TKEY("tip_particle"), "Draw calls for particle systems (smoke, sparks, etc.).") },
+	{ RE::BSShader::Type::BloodSplatter, T(TKEY("tip_blood_splatter"), "Draw calls for blood splatter effects.") },
+	{ RE::BSShader::Type::ImageSpace, T(TKEY("tip_image_space"), "Draw calls for image space post-processing effects.") }
 };
 // ============================================================================
 // VIRTUAL OVERRIDES (Feature.h interface)
@@ -443,8 +443,8 @@ void PerformanceOverlay::DrawFPS()
 		// Prepare overlay text
 		char overlay_text[128];
 		snprintf(overlay_text, IM_ARRAYSIZE(overlay_text),
-			"%s%.2f ms (%.1f FPS)",
-			this->state.isFrameGenerationActive ? "Pre-FG: " : "",
+			T(TKEY("graph_overlay_fmt"), "%s%.2f ms (%.1f FPS)"),
+			this->state.isFrameGenerationActive ? T(TKEY("pre_fg_prefix"), "Pre-FG: ") : "",
 			this->state.smoothFrameTimeMs, this->state.smoothFps);
 
 		// Set graph colors
@@ -465,13 +465,13 @@ void PerformanceOverlay::DrawFPS()
 		// Draw frametime target reference lines
 		if (ImGui::BeginTable("FrametimeTargets", 3, ImGuiTableFlags_SizingStretchSame)) {
 			ImGui::TableNextColumn();
-			ImGui::Text("30 FPS: 33.3 ms");
+			ImGui::Text("%s", T(TKEY("ref_30fps"), "30 FPS: 33.3 ms"));
 
 			ImGui::TableNextColumn();
-			ImGui::Text("60 FPS: 16.7 ms");
+			ImGui::Text("%s", T(TKEY("ref_60fps"), "60 FPS: 16.7 ms"));
 
 			ImGui::TableNextColumn();
-			ImGui::Text("120 FPS: 8.3 ms");
+			ImGui::Text("%s", T(TKEY("ref_120fps"), "120 FPS: 8.3 ms"));
 
 			ImGui::EndTable();
 		}
@@ -486,7 +486,7 @@ void PerformanceOverlay::DrawFPS()
 			// Show note that FSR uses calculated data
 			ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.0f, 1.0f), "%s", T(TKEY("post_fg_calculated"), "Post-FG: Calculated timing (2x Pre-FG)"));
 			if (auto _tt = Util::HoverTooltipWrapper()) {
-				ImGui::Text("AMD FSR Frame Generation uses calculated timing data (2x Pre-FG).\nNVIDIA DLSS Frame Generation provides measured timing data.");
+				ImGui::Text("%s", T(TKEY("fsr_dlss_timing_tooltip"), "AMD FSR Frame Generation uses calculated timing data (2x Pre-FG).\nNVIDIA DLSS Frame Generation provides measured timing data."));
 			}
 		}
 
@@ -541,7 +541,7 @@ void PerformanceOverlay::DrawPostFGFrameTimeGraph()
 	// Prepare overlay text
 	char overlay_text[128];
 	snprintf(overlay_text, IM_ARRAYSIZE(overlay_text),
-		"Post-FG: %.2f ms (%.1f FPS)",
+		T(TKEY("post_fg_graph_overlay_fmt"), "Post-FG: %.2f ms (%.1f FPS)"),
 		state.postFGSmoothFrameTimeMs, state.postFGSmoothFps);
 
 	// Set graph colors - blue for post-FG
@@ -562,13 +562,13 @@ void PerformanceOverlay::DrawPostFGFrameTimeGraph()
 	// Draw frametime target reference lines
 	if (ImGui::BeginTable("PostFGFrametimeTargets", 3, ImGuiTableFlags_SizingStretchSame)) {
 		ImGui::TableNextColumn();
-		ImGui::Text("30 FPS: 33.3 ms");
+		ImGui::Text("%s", T(TKEY("ref_30fps"), "30 FPS: 33.3 ms"));
 
 		ImGui::TableNextColumn();
-		ImGui::Text("60 FPS: 16.7 ms");
+		ImGui::Text("%s", T(TKEY("ref_60fps"), "60 FPS: 16.7 ms"));
 
 		ImGui::TableNextColumn();
-		ImGui::Text("120 FPS: 8.3 ms");
+		ImGui::Text("%s", T(TKEY("ref_120fps"), "120 FPS: 8.3 ms"));
 
 		ImGui::EndTable();
 	}
@@ -676,20 +676,20 @@ void PerformanceOverlay::DrawABTestStatisticalValidity(const Menu::ThemeSettings
 	}
 
 	ImGui::PushStyleColor(ImGuiCol_Text, validityColor);
-	ImGui::Text("Test Duration: %.1f seconds | Valid Frames: %d/%d (%.1f%%) | Excluded: %d",
+	ImGui::Text(T(TKEY("test_duration_line"), "Test Duration: %.1f seconds | Valid Frames: %d/%d (%.1f%%) | Excluded: %d"),
 		totalDuration, validFrames, totalWithExcluded, validPercent, excludedFrames);
 	ImGui::PopStyleColor();
 	if (ImGui::IsItemHovered()) {
 		if (auto _tt = Util::HoverTooltipWrapper()) {
 			char validStr[128], marginalStr[128];
-			snprintf(validStr, sizeof(validStr), "Statistically valid (>%d samples, >%.0fs duration, >%.0f%% valid)", kMinimumSamplesForValidity, static_cast<float>(kMinimumTestDuration), kMinimumValidFramesPercent);
-			snprintf(marginalStr, sizeof(marginalStr), "Marginal validity (>%d samples, >%.0fs duration)", kMinimumSamplesForMarginal, static_cast<float>(kMinimumDurationForMarginal));
+			snprintf(validStr, sizeof(validStr), T(TKEY("validity_valid_fmt"), "Statistically valid (>%d samples, >%.0fs duration, >%.0f%% valid)"), kMinimumSamplesForValidity, static_cast<float>(kMinimumTestDuration), kMinimumValidFramesPercent);
+			snprintf(marginalStr, sizeof(marginalStr), T(TKEY("validity_marginal_fmt"), "Marginal validity (>%d samples, >%.0fs duration)"), kMinimumSamplesForMarginal, static_cast<float>(kMinimumDurationForMarginal));
 			Util::ColoredTextLines validityLegend = {
-				{ "Valid frames are those not excluded as outliers.\nA low percentage may indicate instability or test interruptions.\nExcluded frames are those with frame times > 3x median or > 100ms.\nThis removes shader compilation spikes, JSON loading overhead, and other anomalies\nthat would skew the performance comparison.", theme.Palette.Text },
+				{ T(TKEY("validity_legend_body"), "Valid frames are those not excluded as outliers.\nA low percentage may indicate instability or test interruptions.\nExcluded frames are those with frame times > 3x median or > 100ms.\nThis removes shader compilation spikes, JSON loading overhead, and other anomalies\nthat would skew the performance comparison."), theme.Palette.Text },
 				{ "", theme.Palette.Text },
 				{ validStr, theme.StatusPalette.SuccessColor },
 				{ marginalStr, theme.StatusPalette.Warning },
-				{ "Insufficient data for reliable results", theme.StatusPalette.Error }
+				{ T(TKEY("validity_insufficient"), "Insufficient data for reliable results"), theme.StatusPalette.Error }
 			};
 			Util::DrawColoredMultiLineTooltip(validityLegend);
 		}
@@ -727,17 +727,17 @@ void PerformanceOverlay::ConvertABTestResultsToRows(const std::vector<Aggregated
 			if (tipIt != kShaderTypeTooltips.end()) {
 				row.tooltip = tipIt->second;
 			} else {
-				row.tooltip = "Draw calls for this shader type.";
+				row.tooltip = T(TKEY("tip_generic_shader"), "Draw calls for this shader type.");
 			}
 		} else {
 			auto maybeSpecialType = magic_enum::enum_cast<SpecialShaderType>(row.shaderType);
 			if (maybeSpecialType.has_value()) {
 				switch (*maybeSpecialType) {
 				case SpecialShaderType::Total:
-					row.tooltip = "Total frame time.";
+					row.tooltip = T(TKEY("tip_total"), "Total frame time.");
 					break;
 				case SpecialShaderType::Other:
-					row.tooltip = "Frame time not attributed to any measured shader type. This includes UI, post-processing, engine work, and any GPU activity not directly measured by the overlay.";
+					row.tooltip = T(TKEY("tip_other_abtest"), "Frame time not attributed to any measured shader type. This includes UI, post-processing, engine work, and any GPU activity not directly measured by the overlay.");
 					break;
 				}
 			}
@@ -765,76 +765,76 @@ ABTestLegends PerformanceOverlay::BuildABTestLegends(const Menu::ThemeSettings& 
 	ABTestLegends legends;
 
 	legends.shaderType = {
-		"Shader Type",
-		{ { "Shader Type: The type of shader being measured.", theme.Palette.Text },
-			{ "Click to toggle shader on/off for performance testing.", theme.Palette.Text } }
+		T(TKEY("col_shader_type"), "Shader Type"),
+		{ { T(TKEY("ableg_shader_type_desc"), "Shader Type: The type of shader being measured."), theme.Palette.Text },
+			{ T(TKEY("ableg_shader_type_toggle"), "Click to toggle shader on/off for performance testing."), theme.Palette.Text } }
 	};
 
 	legends.aAvg = {
-		"A Avg (ms)",
-		{ { "A Avg (ms): Average frame time for Variant A (USER config).", theme.Palette.Text },
+		T(TKEY("col_a_avg"), "A Avg (ms)"),
+		{ { T(TKEY("ableg_a_avg_desc"), "A Avg (ms): Average frame time for Variant A (USER config)."), theme.Palette.Text },
 			{ "", theme.Palette.Text },
-			{ "Color Legend (compared to Variant B):", theme.Palette.Text },
-			{ "  Better (lower than B)", theme.StatusPalette.SuccessColor },
-			{ "  Worse (higher than B)", theme.StatusPalette.Error },
-			{ "  Same as B", theme.Palette.Text } }
+			{ T(TKEY("ableg_color_vs_b"), "Color Legend (compared to Variant B):"), theme.Palette.Text },
+			{ T(TKEY("ableg_better_than_b"), "  Better (lower than B)"), theme.StatusPalette.SuccessColor },
+			{ T(TKEY("ableg_worse_than_b"), "  Worse (higher than B)"), theme.StatusPalette.Error },
+			{ T(TKEY("ableg_same_as_b"), "  Same as B"), theme.Palette.Text } }
 	};
 
 	legends.bAvg = {
-		"B Avg (ms)",
-		{ { "B Avg (ms): Average frame time for Variant B (TEST config).", theme.Palette.Text },
+		T(TKEY("col_b_avg"), "B Avg (ms)"),
+		{ { T(TKEY("ableg_b_avg_desc"), "B Avg (ms): Average frame time for Variant B (TEST config)."), theme.Palette.Text },
 			{ "", theme.Palette.Text },
-			{ "Color Legend (compared to Variant A):", theme.Palette.Text },
-			{ "  Better (lower than A)", theme.StatusPalette.SuccessColor },
-			{ "  Worse (higher than A)", theme.StatusPalette.Error },
-			{ "  Same as A", theme.Palette.Text } }
+			{ T(TKEY("ableg_color_vs_a"), "Color Legend (compared to Variant A):"), theme.Palette.Text },
+			{ T(TKEY("ableg_better_than_a"), "  Better (lower than A)"), theme.StatusPalette.SuccessColor },
+			{ T(TKEY("ableg_worse_than_a"), "  Worse (higher than A)"), theme.StatusPalette.Error },
+			{ T(TKEY("ableg_same_as_a"), "  Same as A"), theme.Palette.Text } }
 	};
 
 	legends.delta = {
-		"Delta (ms)",
-		{ { "Delta (ms): Difference between Variant B and Variant A (B - A).", theme.Palette.Text },
-			{ "Negative values indicate Variant B is better (lower frame time).", theme.Palette.Text },
-			{ "Positive values indicate Variant A is better (lower frame time).", theme.Palette.Text },
-			{ "Percentage shows relative performance difference.", theme.Palette.Text },
+		T(TKEY("col_delta"), "Delta (ms)"),
+		{ { T(TKEY("ableg_delta_desc"), "Delta (ms): Difference between Variant B and Variant A (B - A)."), theme.Palette.Text },
+			{ T(TKEY("ableg_delta_neg"), "Negative values indicate Variant B is better (lower frame time)."), theme.Palette.Text },
+			{ T(TKEY("ableg_delta_pos"), "Positive values indicate Variant A is better (lower frame time)."), theme.Palette.Text },
+			{ T(TKEY("ableg_delta_percent"), "Percentage shows relative performance difference."), theme.Palette.Text },
 			{ "", theme.Palette.Text },
-			{ "Color Legend:", theme.Palette.Text },
-			{ "  Negative (B better)", theme.StatusPalette.SuccessColor },
-			{ "  Positive (A better)", theme.StatusPalette.Error },
-			{ "  Zero (same)", theme.Palette.Text } }
+			{ T(TKEY("ableg_color_legend"), "Color Legend:"), theme.Palette.Text },
+			{ T(TKEY("ableg_negative_b_better"), "  Negative (B better)"), theme.StatusPalette.SuccessColor },
+			{ T(TKEY("ableg_positive_a_better"), "  Positive (A better)"), theme.StatusPalette.Error },
+			{ T(TKEY("ableg_zero_same"), "  Zero (same)"), theme.Palette.Text } }
 	};
 
 	legends.aMedian = {
-		"A Median (ms)",
-		{ { "A Median: Median frame time for Variant A (USER config).", theme.Palette.Text },
-			{ "Median is less sensitive to outliers than average.", theme.Palette.Text },
+		T(TKEY("col_a_median"), "A Median (ms)"),
+		{ { T(TKEY("ableg_a_median_desc"), "A Median: Median frame time for Variant A (USER config)."), theme.Palette.Text },
+			{ T(TKEY("ableg_median_outliers"), "Median is less sensitive to outliers than average."), theme.Palette.Text },
 			{ "", theme.Palette.Text },
-			{ "Color Legend (compared to Variant B median):", theme.Palette.Text },
-			{ "  Better (lower than B)", theme.StatusPalette.SuccessColor },
-			{ "  Worse (higher than B)", theme.StatusPalette.Error },
-			{ "  Same as B", theme.Palette.Text } }
+			{ T(TKEY("ableg_color_vs_b_median"), "Color Legend (compared to Variant B median):"), theme.Palette.Text },
+			{ T(TKEY("ableg_better_than_b"), "  Better (lower than B)"), theme.StatusPalette.SuccessColor },
+			{ T(TKEY("ableg_worse_than_b"), "  Worse (higher than B)"), theme.StatusPalette.Error },
+			{ T(TKEY("ableg_same_as_b"), "  Same as B"), theme.Palette.Text } }
 	};
 
 	legends.bMedian = {
-		"B Median (ms)",
-		{ { "B Median: Median frame time for Variant B (TEST config).", theme.Palette.Text },
-			{ "Median is less sensitive to outliers than average.", theme.Palette.Text },
+		T(TKEY("col_b_median"), "B Median (ms)"),
+		{ { T(TKEY("ableg_b_median_desc"), "B Median: Median frame time for Variant B (TEST config)."), theme.Palette.Text },
+			{ T(TKEY("ableg_median_outliers"), "Median is less sensitive to outliers than average."), theme.Palette.Text },
 			{ "", theme.Palette.Text },
-			{ "Color Legend (compared to Variant A median):", theme.Palette.Text },
-			{ "  Better (lower than A)", theme.StatusPalette.SuccessColor },
-			{ "  Worse (higher than A)", theme.StatusPalette.Error },
-			{ "  Same as A", theme.Palette.Text } }
+			{ T(TKEY("ableg_color_vs_a_median"), "Color Legend (compared to Variant A median):"), theme.Palette.Text },
+			{ T(TKEY("ableg_better_than_a"), "  Better (lower than A)"), theme.StatusPalette.SuccessColor },
+			{ T(TKEY("ableg_worse_than_a"), "  Worse (higher than A)"), theme.StatusPalette.Error },
+			{ T(TKEY("ableg_same_as_a"), "  Same as A"), theme.Palette.Text } }
 	};
 
 	legends.medianDelta = {
-		"Median Delta (ms)",
-		{ { "Median Delta: Difference between Variant B and Variant A medians (B - A).", theme.Palette.Text },
-			{ "Negative values indicate Variant B is better (lower median).", theme.Palette.Text },
-			{ "Positive values indicate Variant A is better (lower median).", theme.Palette.Text },
+		T(TKEY("col_median_delta"), "Median Delta (ms)"),
+		{ { T(TKEY("ableg_median_delta_desc"), "Median Delta: Difference between Variant B and Variant A medians (B - A)."), theme.Palette.Text },
+			{ T(TKEY("ableg_median_delta_neg"), "Negative values indicate Variant B is better (lower median)."), theme.Palette.Text },
+			{ T(TKEY("ableg_median_delta_pos"), "Positive values indicate Variant A is better (lower median)."), theme.Palette.Text },
 			{ "", theme.Palette.Text },
-			{ "Color Legend:", theme.Palette.Text },
-			{ "  Negative (B better)", theme.StatusPalette.SuccessColor },
-			{ "  Positive (A better)", theme.StatusPalette.Error },
-			{ "  Zero (same)", theme.Palette.Text } }
+			{ T(TKEY("ableg_color_legend"), "Color Legend:"), theme.Palette.Text },
+			{ T(TKEY("ableg_negative_b_better"), "  Negative (B better)"), theme.StatusPalette.SuccessColor },
+			{ T(TKEY("ableg_positive_a_better"), "  Positive (A better)"), theme.StatusPalette.Error },
+			{ T(TKEY("ableg_zero_same"), "  Zero (same)"), theme.Palette.Text } }
 	};
 
 	return legends;
@@ -863,7 +863,7 @@ std::vector<ColumnConfig> PerformanceOverlay::BuildABTestResultsTableColumns(con
 						// Add FPS for Total row
 						if (row.label == "Total:") {
 							float fps = row.frameTime > 0.0f ? 1000.0f / row.frameTime : 0.0f;
-							ImGui::Text("FPS: %.2f", fps);
+							ImGui::Text(T(TKEY("fps_value"), "FPS: %.2f"), fps);
 						}
 					}
 				}
@@ -894,7 +894,7 @@ std::vector<ColumnConfig> PerformanceOverlay::BuildABTestResultsTableColumns(con
 				if (ImGui::IsItemHovered()) {
 					if (auto _tt = Util::HoverTooltipWrapper()) {
 						if (row.label == "Total:") {
-							ImGui::Text("A (USER) FPS: %.2f", Util::CalcFPS(value));
+							ImGui::Text(T(TKEY("a_user_fps"), "A (USER) FPS: %.2f"), Util::CalcFPS(value));
 						} else {
 							Util::DrawColoredMultiLineTooltip(legends.aAvg.tooltip);
 						}
@@ -929,7 +929,7 @@ std::vector<ColumnConfig> PerformanceOverlay::BuildABTestResultsTableColumns(con
 				if (ImGui::IsItemHovered()) {
 					if (auto _tt = Util::HoverTooltipWrapper()) {
 						if (row.label == "Total:") {
-							ImGui::Text("B (TEST) FPS: %.2f", Util::CalcFPS(value));
+							ImGui::Text(T(TKEY("b_test_fps"), "B (TEST) FPS: %.2f"), Util::CalcFPS(value));
 						} else {
 							Util::DrawColoredMultiLineTooltip(legends.bAvg.tooltip);
 						}
@@ -970,15 +970,15 @@ std::vector<ColumnConfig> PerformanceOverlay::BuildABTestResultsTableColumns(con
 						if (row.testFrameTime.has_value()) {
 							// Show detailed values for rows with test data
 							if (row.label == "Total:") {
-								ImGui::TextUnformatted("Delta (B - A):");
+								ImGui::TextUnformatted(T(TKEY("delta_b_minus_a"), "Delta (B - A):"));
 								ImGui::Separator();
-								ImGui::Text("A (USER) FPS: %.2f", Util::CalcFPS(row.frameTime));
-								ImGui::Text("B (TEST) FPS: %.2f", Util::CalcFPS(*row.testFrameTime));
+								ImGui::Text(T(TKEY("a_user_fps"), "A (USER) FPS: %.2f"), Util::CalcFPS(row.frameTime));
+								ImGui::Text(T(TKEY("b_test_fps"), "B (TEST) FPS: %.2f"), Util::CalcFPS(*row.testFrameTime));
 							} else {
-								ImGui::TextUnformatted("Delta (B - A):");
+								ImGui::TextUnformatted(T(TKEY("delta_b_minus_a"), "Delta (B - A):"));
 								ImGui::Separator();
-								ImGui::Text("A (USER): %.3f ms", row.frameTime);
-								ImGui::Text("B (TEST): %.3f ms", *row.testFrameTime);
+								ImGui::Text(T(TKEY("a_user_ms"), "A (USER): %.3f ms"), row.frameTime);
+								ImGui::Text(T(TKEY("b_test_ms"), "B (TEST): %.3f ms"), *row.testFrameTime);
 							}
 							ImGui::Separator();
 						}
@@ -1017,8 +1017,9 @@ std::vector<ColumnConfig> PerformanceOverlay::BuildABTestResultsTableColumns(con
 				if (ImGui::IsItemHovered()) {
 					if (auto _tt = Util::HoverTooltipWrapper()) {
 						if (row.label == "Total:") {
+							float fpsVal = Util::CalcFPS(value);
 							Util::ColoredTextLines fpsTooltip{
-								{ std::format("A (USER) Median FPS: {:.2f}", Util::CalcFPS(value)), ImVec4(1.0f, 1.0f, 1.0f, 1.0f) }
+								{ std::vformat(T(TKEY("a_user_median_fps"), "A (USER) Median FPS: {:.2f}"), std::make_format_args(fpsVal)), ImVec4(1.0f, 1.0f, 1.0f, 1.0f) }
 							};
 							Util::DrawColoredMultiLineTooltip(fpsTooltip);
 						} else {
@@ -1055,8 +1056,9 @@ std::vector<ColumnConfig> PerformanceOverlay::BuildABTestResultsTableColumns(con
 				if (ImGui::IsItemHovered()) {
 					if (auto _tt = Util::HoverTooltipWrapper()) {
 						if (row.label == "Total:") {
+							float fpsVal = Util::CalcFPS(value);
 							Util::ColoredTextLines fpsTooltip{
-								{ std::format("B (TEST) Median FPS: {:.2f}", Util::CalcFPS(value)), ImVec4(1.0f, 1.0f, 1.0f, 1.0f) }
+								{ std::vformat(T(TKEY("b_test_median_fps"), "B (TEST) Median FPS: {:.2f}"), std::make_format_args(fpsVal)), ImVec4(1.0f, 1.0f, 1.0f, 1.0f) }
 							};
 							Util::DrawColoredMultiLineTooltip(fpsTooltip);
 						} else {
@@ -1098,13 +1100,15 @@ std::vector<ColumnConfig> PerformanceOverlay::BuildABTestResultsTableColumns(con
 				if (ImGui::IsItemHovered()) {
 					if (auto _tt = Util::HoverTooltipWrapper()) {
 						if (row.label == "Total:" && row.testCostPerCall.has_value()) {
+							float aMedianFps = Util::CalcFPS(row.costPerCall);
+							float bMedianFps = Util::CalcFPS(*row.testCostPerCall);
 							Util::ColoredTextLines fpsTooltip{
-								{ "Median Delta (B - A):", ImVec4(1.0f, 1.0f, 1.0f, 1.0f) },
+								{ T(TKEY("median_delta_b_minus_a"), "Median Delta (B - A):"), ImVec4(1.0f, 1.0f, 1.0f, 1.0f) },
 								{ "", ImVec4(1.0f, 1.0f, 1.0f, 1.0f) },
-								{ std::format("A (USER) Median FPS: {:.2f}", Util::CalcFPS(row.costPerCall)), ImVec4(1.0f, 1.0f, 1.0f, 1.0f) },
-								{ std::format("B (TEST) Median FPS: {:.2f}", Util::CalcFPS(*row.testCostPerCall)), ImVec4(1.0f, 1.0f, 1.0f, 1.0f) },
+								{ std::vformat(T(TKEY("a_user_median_fps"), "A (USER) Median FPS: {:.2f}"), std::make_format_args(aMedianFps)), ImVec4(1.0f, 1.0f, 1.0f, 1.0f) },
+								{ std::vformat(T(TKEY("b_test_median_fps"), "B (TEST) Median FPS: {:.2f}"), std::make_format_args(bMedianFps)), ImVec4(1.0f, 1.0f, 1.0f, 1.0f) },
 								{ "", ImVec4(1.0f, 1.0f, 1.0f, 1.0f) },
-								{ "Median is less sensitive to outliers than average.", ImVec4(1.0f, 1.0f, 1.0f, 1.0f) }
+								{ T(TKEY("ableg_median_outliers"), "Median is less sensitive to outliers than average."), ImVec4(1.0f, 1.0f, 1.0f, 1.0f) }
 							};
 							Util::DrawColoredMultiLineTooltip(fpsTooltip);
 						} else {
@@ -1189,11 +1193,11 @@ void PerformanceOverlay::DrawABTestSection(const std::vector<DrawCallRow>& allRo
 		// --- A/B Results Controls ---
 		static bool showSettingsDiff = false;
 		ImGui::BeginGroup();
-		if (ImGui::Button(showSettingsDiff ? "Hide Settings Diff" : "Show Settings Diff")) {
+		if (ImGui::Button(showSettingsDiff ? T(TKEY("hide_settings_diff"), "Hide Settings Diff") : T(TKEY("show_settings_diff"), "Show Settings Diff"))) {
 			showSettingsDiff = !showSettingsDiff;
 		}
 		ImGui::SameLine();
-		if (ImGui::Button("Clear A/B Test Results")) {
+		if (ImGui::Button(T(TKEY("clear_abtest_results"), "Clear A/B Test Results"))) {
 			aggregator.Clear();
 			this->settingsDiff.clear();
 			this->settingsDiffLoaded = false;
@@ -1221,13 +1225,13 @@ void PerformanceOverlay::DrawABTestSection(const std::vector<DrawCallRow>& allRo
 				}
 				this->settingsDiffLoaded = true;
 			}
-			ImGui::TextUnformatted("Differences between USER (A) and TEST (B) configs:");
+			ImGui::TextUnformatted(T(TKEY("diff_header"), "Differences between USER (A) and TEST (B) configs:"));
 			if (this->settingsDiff.empty()) {
-				ImGui::TextUnformatted("No setting changes detected between USER (A) and TEST (B) configs.");
+				ImGui::TextUnformatted(T(TKEY("diff_none"), "No setting changes detected between USER (A) and TEST (B) configs."));
 			} else if (ImGui::BeginTable("ABSettingsDiffTable", 3, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_Sortable)) {
-				ImGui::TableSetupColumn("Setting Path", ImGuiTableColumnFlags_DefaultSort);
-				ImGui::TableSetupColumn("A Value");
-				ImGui::TableSetupColumn("B Value");
+				ImGui::TableSetupColumn(T(TKEY("col_setting_path"), "Setting Path"), ImGuiTableColumnFlags_DefaultSort);
+				ImGui::TableSetupColumn(T(TKEY("col_a_value"), "A Value"));
+				ImGui::TableSetupColumn(T(TKEY("col_b_value"), "B Value"));
 				ImGui::TableHeadersRow();
 
 				// Determine which variant performed better based on Total row
@@ -1364,54 +1368,54 @@ DrawCallLegends PerformanceOverlay::BuildDrawCallLegends(const Menu::ThemeSettin
 	DrawCallLegends legends;
 
 	legends.shaderType = {
-		"Shader Type",
-		{ { "Shader Type: The type of shader being measured.", theme.Palette.Text },
-			{ "Click to toggle shader on/off for performance testing.", theme.Palette.Text } }
+		T(TKEY("col_shader_type"), "Shader Type"),
+		{ { T(TKEY("dcleg_shader_type_desc"), "Shader Type: The type of shader being measured."), theme.Palette.Text },
+			{ T(TKEY("dcleg_shader_type_toggle"), "Click to toggle shader on/off for performance testing."), theme.Palette.Text } }
 	};
 
 	legends.drawCalls = {
-		"Draw Calls",
-		{ { "Draw Calls: Number of draw calls for this shader type in the current frame.", theme.Palette.Text } }
+		T(TKEY("col_draw_calls"), "Draw Calls"),
+		{ { T(TKEY("dcleg_draw_calls_desc"), "Draw Calls: Number of draw calls for this shader type in the current frame."), theme.Palette.Text } }
 	};
 
 	legends.frameTime = {
-		"Frame Time (%)",
+		T(TKEY("col_frame_time"), "Frame Time (%)"),
 		{ { GetTestDataTooltip(), theme.Palette.Text },
 			{ "", theme.Palette.Text },
-			{ "Performance Color Legend (ms):", theme.Palette.Text },
-			{ "  <= 2 ms", theme.StatusPalette.SuccessColor },
-			{ "  > 2 ms and <= 5 ms", theme.StatusPalette.Warning },
-			{ "  > 5 ms", theme.StatusPalette.Error } }
+			{ T(TKEY("dcleg_perf_color_ms"), "Performance Color Legend (ms):"), theme.Palette.Text },
+			{ T(TKEY("dcleg_ft_good"), "  <= 2 ms"), theme.StatusPalette.SuccessColor },
+			{ T(TKEY("dcleg_ft_warn"), "  > 2 ms and <= 5 ms"), theme.StatusPalette.Warning },
+			{ T(TKEY("dcleg_ft_bad"), "  > 5 ms"), theme.StatusPalette.Error } }
 	};
 
 	legends.costPerCall = {
-		"Cost/Call",
-		{ { "Cost/Call: Average time per draw call for this shader type.", theme.Palette.Text },
+		T(TKEY("col_cost_per_call"), "Cost/Call"),
+		{ { T(TKEY("dcleg_cost_per_call_desc"), "Cost/Call: Average time per draw call for this shader type."), theme.Palette.Text },
 			{ "", theme.Palette.Text },
-			{ "Color Legend (ms/call):", theme.Palette.Text },
-			{ "  <= 0.05 ms/call", theme.StatusPalette.SuccessColor },
-			{ "  > 0.05 ms and <= 0.2 ms/call", theme.StatusPalette.Warning },
-			{ "  > 0.2 ms/call", theme.StatusPalette.Error } }
+			{ T(TKEY("dcleg_color_ms_call"), "Color Legend (ms/call):"), theme.Palette.Text },
+			{ T(TKEY("dcleg_cpc_good"), "  <= 0.05 ms/call"), theme.StatusPalette.SuccessColor },
+			{ T(TKEY("dcleg_cpc_warn"), "  > 0.05 ms and <= 0.2 ms/call"), theme.StatusPalette.Warning },
+			{ T(TKEY("dcleg_cpc_bad"), "  > 0.2 ms/call"), theme.StatusPalette.Error } }
 	};
 
 	legends.testFrameTime = {
-		"Test Frame Time (%)",
+		T(TKEY("col_test_frame_time"), "Test Frame Time (%)"),
 		{ { GetTestDataTooltip(), theme.Palette.Text },
 			{ "", theme.Palette.Text },
-			{ "Color Legend (compared to live data):", theme.Palette.Text },
-			{ "  Better (lower than live)", theme.StatusPalette.SuccessColor },
-			{ "  Worse (higher than live)", theme.StatusPalette.Error },
-			{ "  Same as live", theme.Palette.Text } }
+			{ T(TKEY("dcleg_color_vs_live"), "Color Legend (compared to live data):"), theme.Palette.Text },
+			{ T(TKEY("dcleg_better_than_live"), "  Better (lower than live)"), theme.StatusPalette.SuccessColor },
+			{ T(TKEY("dcleg_worse_than_live"), "  Worse (higher than live)"), theme.StatusPalette.Error },
+			{ T(TKEY("dcleg_same_as_live"), "  Same as live"), theme.Palette.Text } }
 	};
 
 	legends.testCostPerCall = {
-		"Test Cost/Call",
+		T(TKEY("col_test_cost_per_call"), "Test Cost/Call"),
 		{ { GetTestDataTooltip(), theme.Palette.Text },
 			{ "", theme.Palette.Text },
-			{ "Color Legend (compared to live data):", theme.Palette.Text },
-			{ "  Better (lower than live)", theme.StatusPalette.SuccessColor },
-			{ "  Worse (higher than live)", theme.StatusPalette.Error },
-			{ "  Same as live", theme.Palette.Text } }
+			{ T(TKEY("dcleg_color_vs_live"), "Color Legend (compared to live data):"), theme.Palette.Text },
+			{ T(TKEY("dcleg_better_than_live"), "  Better (lower than live)"), theme.StatusPalette.SuccessColor },
+			{ T(TKEY("dcleg_worse_than_live"), "  Worse (higher than live)"), theme.StatusPalette.Error },
+			{ T(TKEY("dcleg_same_as_live"), "  Same as live"), theme.Palette.Text } }
 	};
 
 	return legends;
@@ -1461,9 +1465,9 @@ std::vector<ColumnConfig> PerformanceOverlay::BuildDrawCallTableColumns(const Me
 				if (ImGui::IsItemHovered()) {
 					if (auto _tt = Util::HoverTooltipWrapper()) {
 						if (row.drawCalls == kDrawCallsNotApplicable) {
-							ImGui::TextUnformatted("Draw Calls: Not applicable for unmeasured GPU time.");
+							ImGui::TextUnformatted(T(TKEY("draw_calls_na"), "Draw Calls: Not applicable for unmeasured GPU time."));
 						} else {
-							ImGui::TextUnformatted("Draw Calls: Number of draw calls for this shader type in the current frame.");
+							ImGui::TextUnformatted(T(TKEY("dcleg_draw_calls_desc"), "Draw Calls: Number of draw calls for this shader type in the current frame."));
 						}
 					}
 				}
@@ -1559,7 +1563,7 @@ std::pair<std::vector<DrawCallRow>, std::vector<DrawCallRow>> PerformanceOverlay
 			testCostPerCall = it->second.costPerCall;
 		}
 		std::string label = std::string(magic_enum::enum_name(type)) + ":";
-		std::string tooltip = "Draw calls for this shader type.";
+		std::string tooltip = T(TKEY("tip_generic_shader"), "Draw calls for this shader type.");
 		auto tipIt = kShaderTypeTooltips.find(type);
 		if (tipIt != kShaderTypeTooltips.end()) {
 			tooltip = tipIt->second;
@@ -1591,13 +1595,13 @@ std::pair<std::vector<DrawCallRow>, std::vector<DrawCallRow>> PerformanceOverlay
 	DrawCallRow csPassesRow = {
 		"CS Passes:", magic_enum::enum_integer(SpecialShaderType::CSPasses), kDrawCallsNotApplicable, csPassesTime, csPercent,
 		0.0f,
-		std::string("GPU time spent in Community Shaders compute passes (profiled)."),
+		std::string(T(TKEY("tip_cs_passes"), "GPU time spent in Community Shaders compute passes (profiled).")),
 		true, std::nullopt, std::nullopt
 	};
 	DrawCallRow otherRow = {
 		"Other:", magic_enum::enum_integer(SpecialShaderType::Other), kDrawCallsNotApplicable, remainingOtherTime, remainingOtherPercent,
 		0.0f,
-		std::string("Frame time not attributed to any measured shader type or CS compute pass. This includes UI, post-processing, engine work, and any GPU activity not directly measured."),
+		std::string(T(TKEY("tip_other"), "Frame time not attributed to any measured shader type or CS compute pass. This includes UI, post-processing, engine work, and any GPU activity not directly measured.")),
 		true, otherTestFrameTime, otherTestCostPerCall
 	};
 	float totalFrameTime = smoothedFrameTime;
@@ -1606,7 +1610,7 @@ std::pair<std::vector<DrawCallRow>, std::vector<DrawCallRow>> PerformanceOverlay
 	DrawCallRow totalRow = {
 		"Total:", magic_enum::enum_integer(SpecialShaderType::Total), static_cast<int>(globals::state->GetTotalSmoothedDrawCalls()), totalFrameTime, totalPercent,
 		totalCostPerCall,
-		std::string("Total frame time."),
+		std::string(T(TKEY("tip_total"), "Total frame time.")),
 		true, totalTestFrameTime, totalTestCostPerCall
 	};
 	std::vector<DrawCallRow> summaryRows;
@@ -1641,7 +1645,7 @@ std::function<void(int, int, const DrawCallRow&)> PerformanceOverlay::CreateTabl
 					if (auto _tt = Util::HoverTooltipWrapper()) {
 						ImGui::TextUnformatted(row.tooltip.c_str());
 						float _fps = row.frameTime > 0.0f ? 1000.0f / row.frameTime : 0.0f;
-						ImGui::Text("FPS: %.2f", _fps);
+						ImGui::Text(T(TKEY("fps_value"), "FPS: %.2f"), _fps);
 					}
 				}
 			} else if (row.label == "Other:") {
@@ -1842,11 +1846,11 @@ std::string PerformanceOverlay::GetTestDataTooltip() const
 {
 	switch (testDataSource) {
 	case TestDataSource::ABTest_VariantB:
-		return std::string("Test data from Test (Variant B).\nLast updated: ") + Util::TimeAgoStringQPC(testDataLastUpdated, state.overlayTimingFrequency) + " ago.";
+		return std::string(T(TKEY("testdata_from_variant_b"), "Test data from Test (Variant B).\nLast updated: ")) + Util::TimeAgoStringQPC(testDataLastUpdated, state.overlayTimingFrequency) + T(TKEY("testdata_ago_suffix"), " ago.");
 	case TestDataSource::ManualShaderToggle:
-		return std::string("Test data from manual shader toggle.\nLast updated: ") + Util::TimeAgoStringQPC(testDataLastUpdated, state.overlayTimingFrequency) + " ago.";
+		return std::string(T(TKEY("testdata_from_manual_toggle"), "Test data from manual shader toggle.\nLast updated: ")) + Util::TimeAgoStringQPC(testDataLastUpdated, state.overlayTimingFrequency) + T(TKEY("testdata_ago_suffix"), " ago.");
 	default:
-		return "No test data available.";
+		return T(TKEY("testdata_none"), "No test data available.");
 	}
 }
 

@@ -1,10 +1,14 @@
 #include "ABTesting.h"
 #include "Features/PerformanceOverlay.h"
+#include "I18n/I18n.h"
 #include "Menu.h"
 #include "Menu/ThemeManager.h"
 #include "State.h"
 #include "Utils/FileSystem.h"
 #include "Utils/UI.h"
+
+#define I18N_KEY_PREFIX "feature.perf_overlay."
+
 #include <cmath>
 #include <fmt/format.h>
 #include <fstream>
@@ -138,7 +142,7 @@ void ABTestingManager::DrawSettingsUI()
 {
 	auto& performanceOverlay = globals::features::performanceOverlay;
 
-	if (ImGui::SliderInt("A/B Test Interval", reinterpret_cast<int*>(&testInterval), 0, 10)) {
+	if (ImGui::SliderInt(T(TKEY("abtest_interval"), "A/B Test Interval"), reinterpret_cast<int*>(&testInterval), 0, 10)) {
 		bool overlayWasEnabled = performanceOverlay.settings.ShowInOverlay;
 		if (testInterval == 0) {
 			Disable();
@@ -151,13 +155,14 @@ void ABTestingManager::DrawSettingsUI()
 	}
 
 	if (auto _tt = Util::HoverTooltipWrapper()) {
-		ImGui::Text(
-			"A/B Testing compares two configurations by automatically swapping between them.\n"
-			"Workflow: Configure your test settings, then enable A/B testing.\n"
-			"- Variant B (TEST) = Your current settings when you enable testing\n"
-			"- Variant A (USER) = Your previously saved user configuration\n"
-			"Testing starts with Variant B, then swaps every N seconds.\n"
-			"Set to 0 to disable and restore TEST settings.");
+		ImGui::Text("%s",
+			T(TKEY("abtest_tooltip"),
+				"A/B Testing compares two configurations by automatically swapping between them.\n"
+				"Workflow: Configure your test settings, then enable A/B testing.\n"
+				"- Variant B (TEST) = Your current settings when you enable testing\n"
+				"- Variant A (USER) = Your previously saved user configuration\n"
+				"Testing starts with Variant B, then swaps every N seconds.\n"
+				"Set to 0 to disable and restore TEST settings."));
 	}
 }
 
@@ -248,9 +253,10 @@ void ABTestingManager::DrawOverlayUI()
 	remaining = std::max(0.0f, remaining);
 
 	// Show current variant and time
-	ImGui::Text(fmt::format("{} : {:.1f}s left",
-		usingTestConfig ? "Variant B (TEST)" : "Variant A (USER)", remaining)
-			.c_str());
+	const char* variantLabel = usingTestConfig ? T(TKEY("variant_b_test"), "Variant B (TEST)") : T(TKEY("variant_a_user"), "Variant A (USER)");
+	ImGui::Text("%s", fmt::format(fmt::runtime(T(TKEY("variant_time_left_fmt"), "{} : {:.1f}s left")),
+						  variantLabel, remaining)
+						  .c_str());
 
 	// Show what changed (for both variants)
 	if (hasTestSnapshot) {
@@ -261,16 +267,18 @@ void ABTestingManager::DrawOverlayUI()
 
 			constexpr size_t MAX_CHANGES_DISPLAYED = 10;  // Show max 10 individual changes, otherwise show count
 			if (differences.size() <= MAX_CHANGES_DISPLAYED) {
-				ImGui::TextColored(ImVec4(0.7f, 0.9f, 1.0f, 1.0f), "Changes from USER:");
+				ImGui::TextColored(ImVec4(0.7f, 0.9f, 1.0f, 1.0f), "%s", T(TKEY("changes_from_user"), "Changes from USER:"));
 				for (const auto& diff : differences) {
 					ImGui::BulletText("%s", diff.c_str());
 				}
 			} else {
 				ImGui::TextColored(ImVec4(0.7f, 0.9f, 1.0f, 1.0f),
-					"%zu settings changed", differences.size());
+					T(TKEY("settings_changed_count"), "%zu settings changed"), differences.size());
 			}
 		}
 	}
 
 	ImGui::End();
 }
+
+#undef I18N_KEY_PREFIX

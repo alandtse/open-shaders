@@ -130,15 +130,16 @@ void LightLimitFix::DrawSettings()
 	// table below. Same layout as the overlay so testers see the same
 	// thing in both views with the stats above the (potentially long)
 	// table -- no scrolling required to find the headline numbers.
-	ImGui::SeparatorText("Shadow Limit Fix -- Active Casters");
+	ImGui::SeparatorText(T("feature.light_limit_fix.shadow_limit_fix_active_casters", "Shadow Limit Fix -- Active Casters"));
 
-	ImGui::Checkbox("Show Shadow Overlay", &settings.ShowShadowOverlay);
+	ImGui::Checkbox(T("feature.light_limit_fix.show_shadow_overlay", "Show Shadow Overlay"), &settings.ShowShadowOverlay);
 	if (auto _tt = Util::HoverTooltipWrapper()) {
-		ImGui::Text(
-			"Pop out an always-visible overlay window with the shadow caster table.\n"
-			"Without this, the overlay only appears when a light is suppressed\n"
-			"or a visualisation mode is active. Enable to access the table's\n"
-			"debug controls (cycle button, solo, Shift+hover pulse) any time.");
+		ImGui::Text("%s",
+			T("feature.light_limit_fix.show_shadow_overlay_tooltip",
+				"Pop out an always-visible overlay window with the shadow caster table.\n"
+				"Without this, the overlay only appears when a light is suppressed\n"
+				"or a visualisation mode is active. Enable to access the table's\n"
+				"debug controls (cycle button, solo, Shift+hover pulse) any time."));
 	}
 
 	ShadowCasterManager::DrawShadowSummary(lightCount, MAX_LIGHTS, shadowUnshadowedLightCount);
@@ -147,176 +148,184 @@ void LightLimitFix::DrawSettings()
 	ShadowCasterManager::DrawShadowLightTable(true, false);
 
 	///////////////////////////////
-	ImGui::SeparatorText("Contact Shadows");
+	ImGui::SeparatorText(T("feature.light_limit_fix.contact_shadows_header", "Contact Shadows"));
 
-	ImGui::Checkbox("Enable Contact Shadows", &settings.EnableContactShadows);
+	ImGui::Checkbox(T("feature.light_limit_fix.enable_contact_shadows", "Enable Contact Shadows"), &settings.EnableContactShadows);
 	if (auto _tt = Util::HoverTooltipWrapper()) {
-		ImGui::Text("All point lights (strict and clustered, except simple lights) cast short screen-space shadows. Performance impact.");
+		ImGui::Text("%s", T("feature.light_limit_fix.enable_contact_shadows_tooltip", "All point lights (strict and clustered, except simple lights) cast short screen-space shadows. Performance impact."));
 	}
 
-	if (settings.EnableContactShadows && ImGui::TreeNode("Contact Shadow Tuning")) {
+	if (settings.EnableContactShadows && ImGui::TreeNode(T("feature.light_limit_fix.contact_shadow_tuning", "Contact Shadow Tuning"))) {
 		// SliderScalar with ImGuiDataType_U32 instead of `SliderInt + (int*)cast`:
 		// the cast violates strict aliasing (UB) and would also misinterpret any
 		// transient negative value inside ImGui before clamp. SliderScalar
 		// reads/writes the uint storage directly with explicit min/max bounds.
 		constexpr uint32_t kMinSteps = 1, kMaxSteps = 16;
-		ImGui::SliderScalar("Max Steps", ImGuiDataType_U32, &settings.ContactShadowMaxSteps,
+		ImGui::SliderScalar(T("feature.light_limit_fix.contact_shadow_max_steps", "Max Steps"), ImGuiDataType_U32, &settings.ContactShadowMaxSteps,
 			&kMinSteps, &kMaxSteps, "%u", ImGuiSliderFlags_AlwaysClamp);
 		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::Text("Raymarch steps at zero depth. Higher = longer / more accurate contact shadows, linearly more cost.\nVR users should consider 2 to halve per-eye cost.");
+			ImGui::Text("%s", T("feature.light_limit_fix.contact_shadow_max_steps_tooltip", "Raymarch steps at zero depth. Higher = longer / more accurate contact shadows, linearly more cost.\nVR users should consider 2 to halve per-eye cost."));
 		}
 
 		// AlwaysClamp on every float slider too: without it, Ctrl+Click text entry can
 		// land arbitrary out-of-range values in settings before GetCommonBufferData's
 		// boundary clamp catches them at the GPU side.
-		ImGui::SliderFloat("Max Distance", &settings.ContactShadowMaxDistance, 64.0f, 4096.0f, "%.0f", ImGuiSliderFlags_AlwaysClamp);
+		ImGui::SliderFloat(T("feature.light_limit_fix.contact_shadow_max_distance", "Max Distance"), &settings.ContactShadowMaxDistance, 64.0f, 4096.0f, "%.0f", ImGuiSliderFlags_AlwaysClamp);
 		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::Text("View-space depth at which contact shadows fade to zero steps. Avoids paying for shadows on distant surfaces where they don't read.");
+			ImGui::Text("%s", T("feature.light_limit_fix.contact_shadow_max_distance_tooltip", "View-space depth at which contact shadows fade to zero steps. Avoids paying for shadows on distant surfaces where they don't read."));
 		}
 
-		ImGui::SliderFloat("Stride", &settings.ContactShadowStride, 0.5f, 8.0f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+		ImGui::SliderFloat(T("feature.light_limit_fix.contact_shadow_stride", "Stride"), &settings.ContactShadowStride, 0.5f, 8.0f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
 		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::Text("Per-step march length in view-space units at near depth (auto-scales linearly past ~100 units so far surfaces don't undersample). Larger = longer screen-space reach with coarser detail.");
+			ImGui::Text("%s", T("feature.light_limit_fix.contact_shadow_stride_tooltip", "Per-step march length in view-space units at near depth (auto-scales linearly past ~100 units so far surfaces don't undersample). Larger = longer screen-space reach with coarser detail."));
 		}
 
-		ImGui::SliderFloat("Thickness", &settings.ContactShadowThickness, 0.0f, 1.0f, "%.3f", ImGuiSliderFlags_AlwaysClamp);
+		ImGui::SliderFloat(T("feature.light_limit_fix.contact_shadow_thickness", "Thickness"), &settings.ContactShadowThickness, 0.0f, 1.0f, "%.3f", ImGuiSliderFlags_AlwaysClamp);
 		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::Text("Depth-delta multiplier for shadow onset. Larger = darker contact at occluder edges.");
+			ImGui::Text("%s", T("feature.light_limit_fix.contact_shadow_thickness_tooltip", "Depth-delta multiplier for shadow onset. Larger = darker contact at occluder edges."));
 		}
 
-		ImGui::SliderFloat("Depth Fade", &settings.ContactShadowDepthFade, 0.0f, 1.0f, "%.3f", ImGuiSliderFlags_AlwaysClamp);
+		ImGui::SliderFloat(T("feature.light_limit_fix.contact_shadow_depth_fade", "Depth Fade"), &settings.ContactShadowDepthFade, 0.0f, 1.0f, "%.3f", ImGuiSliderFlags_AlwaysClamp);
 		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::Text("Depth-delta multiplier for shadow falloff. Larger = shadows truncate sooner behind thick occluders.");
+			ImGui::Text("%s", T("feature.light_limit_fix.contact_shadow_depth_fade_tooltip", "Depth-delta multiplier for shadow falloff. Larger = shadows truncate sooner behind thick occluders."));
 		}
 
-		ImGui::SliderFloat("Min Light Intensity", &settings.ContactShadowMinIntensity, 0.0f, 1.0f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+		ImGui::SliderFloat(T("feature.light_limit_fix.contact_shadow_min_intensity", "Min Light Intensity"), &settings.ContactShadowMinIntensity, 0.0f, 1.0f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
 		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::Text(
-				"Skip contact shadows for CLUSTERED lights whose normalized distance falloff "
-				"`1 - (lightDist/radius)^2` at the pixel is below this threshold. "
-				"Strict lights are always raymarched regardless of this threshold. "
-				"Higher = larger perf win, may drop subtle shadows from weak lights at their reach edge.");
+			ImGui::Text("%s",
+				T("feature.light_limit_fix.contact_shadow_min_intensity_tooltip",
+					"Skip contact shadows for CLUSTERED lights whose normalized distance falloff "
+					"`1 - (lightDist/radius)^2` at the pixel is below this threshold. "
+					"Strict lights are always raymarched regardless of this threshold. "
+					"Higher = larger perf win, may drop subtle shadows from weak lights at their reach edge."));
 		}
 
 		ImGui::TreePop();
 	}
 
 	ImGui::BeginDisabled(!settings.EnableContactShadows);
-	ImGui::Checkbox("Enable Particle Contact Shadows", &settings.EnableParticleContactShadows);
+	ImGui::Checkbox(T("feature.light_limit_fix.enable_particle_contact_shadows", "Enable Particle Contact Shadows"), &settings.EnableParticleContactShadows);
 	if (auto _tt = Util::HoverTooltipWrapper()) {
-		ImGui::Text("Also cast contact shadows from particle lights. Larger performance impact in fire/magic-heavy scenes.");
+		ImGui::Text("%s", T("feature.light_limit_fix.enable_particle_contact_shadows_tooltip", "Also cast contact shadows from particle lights. Larger performance impact in fire/magic-heavy scenes."));
 	}
 	ImGui::EndDisabled();
 
-	ImGui::SeparatorText("Particle Lights");
+	ImGui::SeparatorText(T("feature.light_limit_fix.particle_lights_header", "Particle Lights"));
 
-	ImGui::TextWrapped(
-		"Turns configured particle effects (candles, braziers, torches, magic) into dynamic lights. "
-		"Requires a particle-light config pack shipping Data\\ParticleLights\\*.ini (e.g. Embers HD, "
-		"Lanterns of Skyrim); with no pack installed this section has no effect.");
-	ImGui::TextWrapped(
-		"Particle lights are additive emitters and do NOT cast shadow-map shadows, so they never appear "
-		"in the shadow caster table above. Turn on \"Enable Particle Contact Shadows\" in the Contact "
-		"Shadows section for short screen-space contact shadows.");
+	ImGui::TextWrapped("%s",
+		T("feature.light_limit_fix.particle_lights_intro",
+			"Turns configured particle effects (candles, braziers, torches, magic) into dynamic lights. "
+			"Requires a particle-light config pack shipping Data\\ParticleLights\\*.ini (e.g. Embers HD, "
+			"Lanterns of Skyrim); with no pack installed this section has no effect."));
+	ImGui::TextWrapped("%s",
+		T("feature.light_limit_fix.particle_lights_additive_note",
+			"Particle lights are additive emitters and do NOT cast shadow-map shadows, so they never appear "
+			"in the shadow caster table above. Turn on \"Enable Particle Contact Shadows\" in the Contact "
+			"Shadows section for short screen-space contact shadows."));
 	ImGui::Spacing();
 
-	ImGui::Checkbox("Enable Particle Lights", &settings.EnableParticleLights);
+	ImGui::Checkbox(T("feature.light_limit_fix.enable_particle_lights", "Enable Particle Lights"), &settings.EnableParticleLights);
 	if (auto _tt = Util::HoverTooltipWrapper()) {
-		ImGui::Text("Master toggle for the particle-light feature.");
+		ImGui::Text("%s", T("feature.light_limit_fix.enable_particle_lights_tooltip", "Master toggle for the particle-light feature."));
 	}
 
-	if (ImGui::TreeNode("Performance##particles")) {
-		ImGui::Checkbox("Enable Culling", &settings.EnableParticleLightsCulling);
+	if (ImGui::TreeNode(T("feature.light_limit_fix.particle_performance", "Performance##particles"))) {
+		ImGui::Checkbox(T("feature.light_limit_fix.enable_particle_culling", "Enable Culling"), &settings.EnableParticleLightsCulling);
 		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::Text("Significantly improves performance by not rendering empty textures. Only disable if you are encountering issues.");
+			ImGui::Text("%s", T("feature.light_limit_fix.enable_particle_culling_tooltip", "Significantly improves performance by not rendering empty textures. Only disable if you are encountering issues."));
 		}
 
-		ImGui::Checkbox("Enable Detection", &settings.EnableParticleLightsDetection);
+		ImGui::Checkbox(T("feature.light_limit_fix.enable_particle_detection", "Enable Detection"), &settings.EnableParticleLightsDetection);
 		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::Text("Adds particle lights to the player light level so that NPCs detect them for stealth and gameplay.");
+			ImGui::Text("%s", T("feature.light_limit_fix.enable_particle_detection_tooltip", "Adds particle lights to the player light level so that NPCs detect them for stealth and gameplay."));
 		}
 
-		ImGui::Checkbox("Enable Optimization", &settings.EnableParticleLightsOptimization);
+		ImGui::Checkbox(T("feature.light_limit_fix.enable_particle_optimization", "Enable Optimization"), &settings.EnableParticleLightsOptimization);
 		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::Text("Merges vertices which are close enough to each other to improve performance.");
+			ImGui::Text("%s", T("feature.light_limit_fix.enable_particle_optimization_tooltip", "Merges vertices which are close enough to each other to improve performance."));
 		}
 
-		ImGui::SliderFloat("Cluster Threshold", &settings.ParticleClusterThreshold, kParticleClusterThresholdMin, kParticleClusterThresholdMax, "%.1f");
+		ImGui::SliderFloat(T("feature.light_limit_fix.particle_cluster_threshold", "Cluster Threshold"), &settings.ParticleClusterThreshold, kParticleClusterThresholdMin, kParticleClusterThresholdMax, "%.1f");
 		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::Text(
-				"Distance+radius similarity threshold for merging particles into one light.\n"
-				"Higher = more merging, better performance, blurrier lights.\n"
-				"Lower = less merging, more precise, more expensive.");
+			ImGui::Text("%s",
+				T("feature.light_limit_fix.particle_cluster_threshold_tooltip",
+					"Distance+radius similarity threshold for merging particles into one light.\n"
+					"Higher = more merging, better performance, blurrier lights.\n"
+					"Lower = less merging, more precise, more expensive."));
 		}
 
-		ImGui::SliderInt("Max Particles per Emitter", &settings.MaxParticlesPerEmitter, kMaxParticlesPerEmitterMin, kMaxParticlesPerEmitterMax);
+		ImGui::SliderInt(T("feature.light_limit_fix.max_particles_per_emitter", "Max Particles per Emitter"), &settings.MaxParticlesPerEmitter, kMaxParticlesPerEmitterMin, kMaxParticlesPerEmitterMax);
 		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::Text(
-				"Maximum number of particles sampled per emitter per frame.\n"
-				"Higher = closer to the real particle system but more CPU work.\n"
-				"Lower = faster, especially for very dense effects.");
+			ImGui::Text("%s",
+				T("feature.light_limit_fix.max_particles_per_emitter_tooltip",
+					"Maximum number of particles sampled per emitter per frame.\n"
+					"Higher = closer to the real particle system but more CPU work.\n"
+					"Lower = faster, especially for very dense effects."));
 		}
 
-		ImGui::SliderFloat("Max Particle Distance", &settings.MaxParticleDistance, 1000.0f, kMaxParticleDistanceMax, "%.0f");
+		ImGui::SliderFloat(T("feature.light_limit_fix.max_particle_distance", "Max Particle Distance"), &settings.MaxParticleDistance, 1000.0f, kMaxParticleDistanceMax, "%.0f");
 		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::Text(
-				"Particle lights beyond this distance from the camera are skipped entirely.\n"
-				"Lower = better performance, but distant effects won't contribute light.\n"
-				"Higher = more distant particle lighting, but more cost.");
+			ImGui::Text("%s",
+				T("feature.light_limit_fix.max_particle_distance_tooltip",
+					"Particle lights beyond this distance from the camera are skipped entirely.\n"
+					"Lower = better performance, but distant effects won't contribute light.\n"
+					"Higher = more distant particle lighting, but more cost."));
 		}
 
 		ImGui::TreePop();
 	}
 
-	if (ImGui::TreeNode("Appearance##particles")) {
-		ImGui::SliderFloat("Saturation", &settings.ParticleLightsSaturation, kParticleLightsSaturationMin, kParticleLightsSaturationMax, "%.2f");
+	if (ImGui::TreeNode(T("feature.light_limit_fix.particle_appearance", "Appearance##particles"))) {
+		ImGui::SliderFloat(T("feature.light_limit_fix.particle_saturation", "Saturation"), &settings.ParticleLightsSaturation, kParticleLightsSaturationMin, kParticleLightsSaturationMax, "%.2f");
 		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::Text("Color saturation of particle/billboard lights. 1.0 = source color; higher = more vivid.");
+			ImGui::Text("%s", T("feature.light_limit_fix.particle_saturation_tooltip", "Color saturation of particle/billboard lights. 1.0 = source color; higher = more vivid."));
 		}
-		ImGui::SliderFloat("Particle Brightness", &settings.ParticleBrightness, kParticleBrightnessMin, kParticleBrightnessMax, "%.2f");
+		ImGui::SliderFloat(T("feature.light_limit_fix.particle_brightness", "Particle Brightness"), &settings.ParticleBrightness, kParticleBrightnessMin, kParticleBrightnessMax, "%.2f");
 		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::Text("Intensity multiplier for particle-system emitters (fire, sparks, magic).");
+			ImGui::Text("%s", T("feature.light_limit_fix.particle_brightness_tooltip", "Intensity multiplier for particle-system emitters (fire, sparks, magic)."));
 		}
-		ImGui::SliderFloat("Particle Radius", &settings.ParticleRadius, kParticleRadiusMin, kParticleRadiusMax, "%.2f");
+		ImGui::SliderFloat(T("feature.light_limit_fix.particle_radius", "Particle Radius"), &settings.ParticleRadius, kParticleRadiusMin, kParticleRadiusMax, "%.2f");
 		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::Text("Radius multiplier for particle-system emitters. Larger = light reaches further.");
+			ImGui::Text("%s", T("feature.light_limit_fix.particle_radius_tooltip", "Radius multiplier for particle-system emitters. Larger = light reaches further."));
 		}
-		ImGui::SliderFloat("Billboard Brightness", &settings.BillboardBrightness, kBillboardBrightnessMin, kBillboardBrightnessMax, "%.2f");
+		ImGui::SliderFloat(T("feature.light_limit_fix.billboard_brightness", "Billboard Brightness"), &settings.BillboardBrightness, kBillboardBrightnessMin, kBillboardBrightnessMax, "%.2f");
 		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::Text("Intensity multiplier for billboard (single-quad) emitters such as candle flames.");
+			ImGui::Text("%s", T("feature.light_limit_fix.billboard_brightness_tooltip", "Intensity multiplier for billboard (single-quad) emitters such as candle flames."));
 		}
-		ImGui::SliderFloat("Billboard Radius", &settings.BillboardRadius, kBillboardRadiusMin, kBillboardRadiusMax, "%.2f");
+		ImGui::SliderFloat(T("feature.light_limit_fix.billboard_radius", "Billboard Radius"), &settings.BillboardRadius, kBillboardRadiusMin, kBillboardRadiusMax, "%.2f");
 		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::Text("Radius multiplier for billboard emitters. Larger = light reaches further.");
+			ImGui::Text("%s", T("feature.light_limit_fix.billboard_radius_tooltip", "Radius multiplier for billboard emitters. Larger = light reaches further."));
 		}
 
 		ImGui::TreePop();
 	}
 
-	ImGui::SeparatorText("Placed Lights (JSON)");
+	ImGui::SeparatorText(T("feature.light_limit_fix.placed_lights_json_header", "Placed Lights (JSON)"));
 
-	ImGui::TextWrapped(
-		"Scales the intensity of runtime lights attached from Light records by Light Placer-style mods. "
-		"Separate from particle lights; requires Inverse Square Lighting for the runtime metadata.");
+	ImGui::TextWrapped("%s",
+		T("feature.light_limit_fix.placed_lights_json_intro",
+			"Scales the intensity of runtime lights attached from Light records by Light Placer-style mods. "
+			"Separate from particle lights; requires Inverse Square Lighting for the runtime metadata."));
 	ImGui::Spacing();
 
 	{
 		const bool jsonPlacedLightsSupported = globals::features::inverseSquareLighting.loaded;
 		ImGui::BeginDisabled(!jsonPlacedLightsSupported);
-		ImGui::SliderFloat("Intensity Scale", &settings.JsonPlacedLightIntensity, kJsonPlacedLightIntensityMin, kJsonPlacedLightIntensityMax, "%.2f");
+		ImGui::SliderFloat(T("feature.light_limit_fix.json_intensity_scale", "Intensity Scale"), &settings.JsonPlacedLightIntensity, kJsonPlacedLightIntensityMin, kJsonPlacedLightIntensityMax, "%.2f");
 		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::Text(
-				"Scales intensity for attached runtime lights generated from Light records.\n"
-				"Primarily targets Light Placer-style JSON lights.\n"
-				"Requires Inverse Square Lighting runtime metadata.");
+			ImGui::Text("%s",
+				T("feature.light_limit_fix.json_intensity_scale_tooltip",
+					"Scales intensity for attached runtime lights generated from Light records.\n"
+					"Primarily targets Light Placer-style JSON lights.\n"
+					"Requires Inverse Square Lighting runtime metadata."));
 		}
 
-		ImGui::Checkbox("Interiors Only", &settings.JsonPlacedLightsInteriorsOnly);
-		ImGui::Checkbox("Portal Strict Only", &settings.JsonPlacedLightsPortalStrictOnly);
+		ImGui::Checkbox(T("feature.light_limit_fix.json_interiors_only", "Interiors Only"), &settings.JsonPlacedLightsInteriorsOnly);
+		ImGui::Checkbox(T("feature.light_limit_fix.json_portal_strict_only", "Portal Strict Only"), &settings.JsonPlacedLightsPortalStrictOnly);
 		ImGui::EndDisabled();
 
 		if (!jsonPlacedLightsSupported)
-			ImGui::TextDisabled("Requires Inverse Square Lighting to identify JSON-placed runtime lights.");
+			ImGui::TextDisabled("%s", T("feature.light_limit_fix.json_requires_isl", "Requires Inverse Square Lighting to identify JSON-placed runtime lights."));
 	}
 
 	///////////////////////////////
