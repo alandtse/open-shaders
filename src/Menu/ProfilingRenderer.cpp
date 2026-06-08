@@ -2,8 +2,8 @@
 
 #include <algorithm>
 #include <cmath>
-#include <unordered_map>
 #include <imgui.h>
+#include <unordered_map>
 
 #include "Globals.h"
 #include "I18n/I18n.h"
@@ -340,7 +340,6 @@ void ProfilingRenderer::RenderStatistics(bool showTable, bool showModeToggle)
 			ImGui::EndTable();
 		}
 	}
-
 }
 
 void ProfilingRenderer::RenderFeatureTimers(const std::string& featurePrefix)

@@ -1,6 +1,7 @@
 #include "Globals.h"
 
 #include "Deferred.h"
+#include "Features/CSEditor.h"
 #include "Features/CloudShadows.h"
 #include "Features/DynamicCubemaps.h"
 #include "Features/ExponentialHeightFog.h"
@@ -36,7 +37,6 @@
 #include "Features/VolumetricLighting.h"
 #include "Features/VolumetricShadows.h"
 #include "Features/WaterEffects.h"
-#include "Features/CSEditor.h"
 #include "Features/WetnessEffects.h"
 #include "Menu.h"
 #include "ShaderCache.h"

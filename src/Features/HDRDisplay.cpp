@@ -430,11 +430,9 @@ void HDRDisplay::DrawSettings()
 		};
 		const char* forceEnableLabel = T(TKEY("force_enable_hdr"), "Force Enable HDR");
 		const char* cancelLabel = T(TKEY("cancel"), "Cancel");
-		const float buttonWidth = std::max({
-			ThemeManager::Constants::POPUP_BUTTON_WIDTH * Util::GetUIScale(),
+		const float buttonWidth = std::max({ ThemeManager::Constants::POPUP_BUTTON_WIDTH * Util::GetUIScale(),
 			buttonWidthForLabel(forceEnableLabel),
-			buttonWidthForLabel(cancelLabel)
-		});
+			buttonWidthForLabel(cancelLabel) });
 
 		if (ImGui::Button(forceEnableLabel, ImVec2(buttonWidth, 0))) {
 			{

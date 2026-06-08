@@ -148,10 +148,7 @@ target_include_directories(
         ${EXPRTK_INCLUDE_DIRS}
 )
 
-target_compile_definitions(
-    ${PROJECT_NAME}
-    PRIVATE SK_HDR_PNG_COMMUNITY_SHADERS
-)
+target_compile_definitions(${PROJECT_NAME} PRIVATE SK_HDR_PNG_COMMUNITY_SHADERS)
 
 target_link_libraries(
     ${PROJECT_NAME}

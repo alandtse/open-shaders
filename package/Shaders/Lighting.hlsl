@@ -2214,7 +2214,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 #			endif  // SPECULAR
 #		endif      // SPARKLE
 
-#	endif      // SNOW
+#	endif  // SNOW
 
 #	if defined(WORLD_MAP)
 	baseColor.xyz = GetWorldMapBaseColor(rawBaseColor.xyz, baseColor.xyz, projWeight);

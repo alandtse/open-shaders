@@ -558,6 +558,4 @@ inline void SkySync::ShadowFader::ClampDirection(RE::NiPoint3& dir)
 	dir.z = sinElev;
 }
 
-
-
 #undef I18N_KEY_PREFIX

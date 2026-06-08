@@ -6,6 +6,7 @@
 #include "State.h"
 #include "Utils/D3D.h"
 
+#include "Features/CSEditor.h"
 #include "Features/DynamicCubemaps.h"
 #include "Features/IBL.h"
 #include "Features/LightLimitFix/ShadowCasterManager.h"
@@ -15,7 +16,6 @@
 #include "Features/TerrainBlending.h"
 #include "Features/Upscaling.h"
 #include "Features/VR.h"
-#include "Features/CSEditor.h"
 
 #include "Hooks.h"
 

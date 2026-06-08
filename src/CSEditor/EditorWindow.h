@@ -2,6 +2,7 @@
 
 #include "Buffer.h"
 
+#include "LightEditor.h"
 #include "Weather/CellLightingWidget.h"
 #include "Weather/ImageSpaceWidget.h"
 #include "Weather/LensFlareWidget.h"
@@ -10,7 +11,6 @@
 #include "Weather/ReferenceEffectWidget.h"
 #include "Weather/VolumetricLightingWidget.h"
 #include "Weather/WeatherWidget.h"
-#include "LightEditor.h"
 #include "WeatherUtils.h"
 #include "Widget.h"
 

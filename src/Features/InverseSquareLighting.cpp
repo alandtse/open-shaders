@@ -1,8 +1,8 @@
 #include "InverseSquareLighting.h"
+#include "CSEditor/EditorWindow.h"
 #include "Features/InverseSquareLighting/Common.h"
 #include "Features/InverseSquareLighting/RadiusMath.h"
 #include "LightLimitFix.h"
-#include "CSEditor/EditorWindow.h"
 #include <numbers>
 
 void InverseSquareLighting::PostPostLoad()

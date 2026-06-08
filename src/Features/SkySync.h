@@ -63,7 +63,6 @@ public:
 		static inline REL::Relocation<decltype(thunk)> func;
 	};
 
-
 private:
 	enum class CellFlagExt : uint16_t
 	{
