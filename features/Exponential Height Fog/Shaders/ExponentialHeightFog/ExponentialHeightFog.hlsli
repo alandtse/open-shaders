@@ -46,6 +46,11 @@ namespace ExponentialHeightFog
 
 	float GetSceneDepthForFog(float3 positionWS, uint eyeIndex, out float2 volumeUV, out float projectedDepth)
 	{
+		// Init out-params at entry: fxc's flow analysis flags X4000 on the [branch]
+		// early-return path otherwise (every path already assigns these).
+		volumeUV = 0.0f.xx;
+		projectedDepth = 0.0f;
+
 		float4 clipPosition = mul(FrameBuffer::CameraViewProj[eyeIndex], float4(positionWS, 1.0f));
 		[branch] if (clipPosition.w <= 0.0f)
 		{
@@ -73,8 +78,8 @@ namespace ExponentialHeightFog
 		if (volumeWidth == 0 || volumeHeight == 0 || volumeDepth == 0)
 			return float4(0.0f, 0.0f, 0.0f, 1.0f);
 
-		float2 volumeUV;
-		float projectedDepth;
+		float2 volumeUV = 0.0f.xx;
+		float projectedDepth = 0.0f;
 		float sceneDepth = GetSceneDepthForFog(positionWS, eyeIndex, volumeUV, projectedDepth);
 		if (projectedDepth <= 0.0f)
 			return float4(0.0f, 0.0f, 0.0f, 1.0f);
@@ -205,8 +210,8 @@ namespace ExponentialHeightFog
 		}
 		uint eyeIndex = GetEyeIndexFromCameraWS(cameraWS);
 		float3 viewToPos = positionWS;
-		float2 volumeUV;
-		float projectedDepth;
+		float2 volumeUV = 0.0f.xx;
+		float projectedDepth = 0.0f;
 		float sceneDepth = GetSceneDepthForFog(positionWS, eyeIndex, volumeUV, projectedDepth);
 		[branch] if (projectedDepth > 1e-4f && sceneDepth > projectedDepth)
 		{
