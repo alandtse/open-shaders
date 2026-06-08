@@ -150,4 +150,12 @@ private:
 	static void CalculateAlternateSunDirectionAndDistance(RE::NiPoint3& outDir, float& outDist, float time, float sunrise, float sunset, float sunAngle);
 
 	static void SetSunPosition(const RE::Sun* sun, const RE::NiPoint3& dir, float distance);
+
+	// --- Open Shaders fork: altitude (horizon-dip) correction restored from the pre-#2408
+	// SkySync. Upstream #2408 deleted this yet still lists "fixes the sun appearing higher
+	// when you gain altitude" in its feature summary. Re-implemented as an additive helper
+	// applied inside ProcessSun/ProcessMoon so upstream #2408 merges stay clean.
+	static constexpr float RenderDistance = 325000.0f;
+	static RE::NiPoint3 GetApparentDirection(const RE::NiPoint3& dir, float altitude);
+	static float GetPlayerAltitude();
 };
