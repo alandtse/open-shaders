@@ -185,4 +185,44 @@ namespace Util::HdrPng
 		}
 		return false;
 	}
+
+	bool PatchSbitChunk(std::vector<uint8_t>& png, uint8_t bits)
+	{
+		static constexpr uint8_t kSig[8] = { 0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A };
+		if (bits < 1 || bits > 16 || png.size() < 8 || std::memcmp(png.data(), kSig, 8) != 0) {
+			return false;
+		}
+
+		size_t pos = 8;
+		while (pos + 8 <= png.size()) {
+			const uint32_t dataLen = ReadBE32(png.data() + pos);
+			const uint8_t* type = png.data() + pos + 4;
+			if (std::memcmp(type, "IDAT", 4) == 0) {
+				return false;  // sBIT must precede IDAT; not found
+			}
+			if (std::memcmp(type, "sBIT", 4) == 0) {
+				// Only the 3-byte truecolour (RGB) form the stb writer emits.
+				if (dataLen != 3 || pos + 12 + static_cast<size_t>(dataLen) > png.size()) {
+					return false;
+				}
+				const size_t dataPos = pos + 8;
+				png[dataPos] = bits;
+				png[dataPos + 1] = bits;
+				png[dataPos + 2] = bits;
+				const uint32_t crc = Crc32(png.data() + pos + 4, 4 + static_cast<size_t>(dataLen));
+				const size_t crcPos = dataPos + dataLen;
+				png[crcPos] = static_cast<uint8_t>(crc >> 24);
+				png[crcPos + 1] = static_cast<uint8_t>(crc >> 16);
+				png[crcPos + 2] = static_cast<uint8_t>(crc >> 8);
+				png[crcPos + 3] = static_cast<uint8_t>(crc);
+				return true;
+			}
+			const size_t advance = static_cast<size_t>(dataLen) + 12;
+			if (advance < 12 || pos + advance < pos) {
+				return false;
+			}
+			pos += advance;
+		}
+		return false;
+	}
 }

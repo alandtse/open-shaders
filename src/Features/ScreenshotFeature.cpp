@@ -534,6 +534,10 @@ namespace
 			return false;
 		}
 
+		// The stb writer hard-codes sBIT=16; rewrite it to the real quantized
+		// significant-bit depth so the chunk doesn't over-claim precision.
+		Util::HdrPng::PatchSbitChunk(png, static_cast<uint8_t>(std::clamp(quantizationBits, 1, 16)));
+
 		// Best-effort static HDR metadata (mDCv mastering display + cLLi content light
 		// level); skip silently if a splice fails so a valid PNG still ships.
 		Util::HdrPng::InsertChunkBeforeIdat(png, Util::HdrPng::BuildMdcvChunk());

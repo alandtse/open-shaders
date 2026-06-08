@@ -221,3 +221,51 @@ TEST_CASE("InsertChunkBeforeIdat splices before the first IDAT", "[hdrpng]")
 	REQUIRE_FALSE(InsertChunkBeforeIdat(notPng, cl));
 	REQUIRE(notPng == copy);
 }
+
+TEST_CASE("PatchSbitChunk rewrites sBIT significant bits and CRC", "[hdrpng]")
+{
+	auto be32 = [](std::vector<uint8_t>& v, uint32_t x) {
+		v.push_back(uint8_t(x >> 24));
+		v.push_back(uint8_t(x >> 16));
+		v.push_back(uint8_t(x >> 8));
+		v.push_back(uint8_t(x));
+	};
+	auto chunk = [&](std::vector<uint8_t>& v, const char* type, const std::vector<uint8_t>& data) {
+		be32(v, static_cast<uint32_t>(data.size()));
+		v.insert(v.end(), type, type + 4);
+		v.insert(v.end(), data.begin(), data.end());
+		be32(v, 0);  // placeholder CRC
+	};
+
+	std::vector<uint8_t> png = { 0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A };
+	chunk(png, "IHDR", std::vector<uint8_t>(13, 0));
+	const size_t sbitStart = png.size();
+	chunk(png, "sBIT", std::vector<uint8_t>{ 16, 16, 16 });
+	chunk(png, "IDAT", std::vector<uint8_t>(4, 0xAB));
+	chunk(png, "IEND", {});
+
+	REQUIRE(PatchSbitChunk(png, 11));
+	// Data bytes (after length(4) + type(4)) now report 11 significant bits.
+	REQUIRE(png[sbitStart + 8] == 11);
+	REQUIRE(png[sbitStart + 9] == 11);
+	REQUIRE(png[sbitStart + 10] == 11);
+	// CRC (over type + 3 data bytes = 7 bytes) was recomputed to match.
+	const uint32_t crc = Crc32(png.data() + sbitStart + 4, 7);
+	const size_t crcPos = sbitStart + 11;
+	REQUIRE(png[crcPos] == uint8_t(crc >> 24));
+	REQUIRE(png[crcPos + 1] == uint8_t(crc >> 16));
+	REQUIRE(png[crcPos + 2] == uint8_t(crc >> 8));
+	REQUIRE(png[crcPos + 3] == uint8_t(crc));
+
+	// Out-of-range bit counts are rejected; png left unchanged.
+	const auto patched = png;
+	REQUIRE_FALSE(PatchSbitChunk(png, 0));
+	REQUIRE_FALSE(PatchSbitChunk(png, 17));
+	REQUIRE(png == patched);
+
+	// A PNG with no sBIT chunk is rejected.
+	std::vector<uint8_t> noSbit = { 0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A };
+	chunk(noSbit, "IHDR", std::vector<uint8_t>(13, 0));
+	chunk(noSbit, "IDAT", std::vector<uint8_t>(4, 0));
+	REQUIRE_FALSE(PatchSbitChunk(noSbit, 11));
+}

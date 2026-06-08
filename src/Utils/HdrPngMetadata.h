@@ -49,4 +49,11 @@ namespace Util::HdrPng
 	// Insert chunkBytes immediately before the first IDAT chunk of png (in place).
 	// Returns false (png unchanged) if png is not a well-formed PNG with an IDAT.
 	bool InsertChunkBeforeIdat(std::vector<uint8_t>& png, const std::vector<uint8_t>& chunkBytes);
+
+	// Rewrite the per-channel significant-bit counts in the PNG's sBIT chunk to
+	// `bits` (and recompute its CRC), in place. The stb writer always emits
+	// sBIT=16; after we quantize the payload to fewer bits this makes sBIT report
+	// the true significant-bit depth. Returns false (png unchanged) if no 3-byte
+	// RGB sBIT chunk is found or `bits` is out of 1..16.
+	bool PatchSbitChunk(std::vector<uint8_t>& png, uint8_t bits);
 }
