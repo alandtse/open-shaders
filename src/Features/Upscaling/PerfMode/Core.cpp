@@ -10,6 +10,13 @@
 // (same one Upscaling.cpp uses), avoiding a duplicate scale table here.
 #include <FidelityFX/host/ffx_fsr3.h>
 
+void PerfMode::ClearFakeDS()
+{
+	if (!hookActive || !fakeDSV)
+		return;
+	globals::d3d::context->ClearDepthStencilView(fakeDSV.get(), D3D11_CLEAR_DEPTH | D3D11_CLEAR_STENCIL, 1.0f, 0);
+}
+
 void PerfMode::SetupResources()
 {
 	if (!globals::game::isVR)
@@ -163,10 +170,7 @@ void PerfMode::SetupResources()
 		}
 	}
 
-	if (hookActive && fakeDSV) {
-		auto* ctx = globals::d3d::context;
-		ctx->ClearDepthStencilView(fakeDSV.get(), D3D11_CLEAR_DEPTH | D3D11_CLEAR_STENCIL, 1.0f, 0);
-	}
+	ClearFakeDS();
 
 	// IS shader hooks (must be installed AFTER FrameAnnotations)
 	if (hookActive && !tonemapHookInstalled) {

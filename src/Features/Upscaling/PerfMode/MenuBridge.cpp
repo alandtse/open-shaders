@@ -64,6 +64,14 @@ void PerfMode::UIPassDispatch_Hook::thunk(RE::BSGraphics::BSShaderAccumulator* s
 		globals::game::stateUpdateFlags->set(RE::BSGraphics::ShaderFlags::DIRTY_VIEWPORT);
 	}
 
+	// fakeDS is only cleared at init, so without this a prior frame's UI-pass depth (controllers)
+	// lingers and LessEqual-occludes the menu compositor — the persistent hand-shaped cutout.
+	const uint32_t frame = globals::state ? globals::state->frameCount : 0;
+	if (perfMode.lastFakeDSClearFrame != frame) {
+		perfMode.ClearFakeDS();
+		perfMode.lastFakeDSClearFrame = frame;
+	}
+
 	// Skip VP compression in UpdateViewPort hook during UI pass
 	perfMode.postInterceptActive = true;
 
