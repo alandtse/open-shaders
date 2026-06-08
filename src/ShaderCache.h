@@ -569,7 +569,9 @@ namespace SIE
 		// atomic: written from the menu/input thread (boot setting + Skip Compilation hotkey),
 		// read on the management/compile and render threads.
 		std::atomic<bool> backgroundCompilation = false;
-		bool menuLoaded = false;
+		// atomic: written from the SKSE messaging handler (kDataLoaded),
+		// read on the render/UI threads (OverlayRenderer, BackgroundBlur).
+		std::atomic<bool> menuLoaded = false;
 
 		enum class LightingShaderTechniques
 		{
