@@ -31,7 +31,7 @@ void VolumetricLighting::DrawSettings()
 		SetupVL();
 	if (globals::game::isVR)
 		Util::UI::RestartGatedAnnotate(bootSnapshot, settings, &Settings::ExteriorEnabled,
-			"Volumetric god-rays / fog scattering in exterior cells.");
+			T(TKEY("enable_exteriors_tooltip"), "Volumetric god-rays / fog scattering in exterior cells."));
 
 	if (settings.ExteriorEnabled)
 		DrawVolumetricLightingSettings(settings.ExteriorQuality, settings.ExteriorCustomSize, false, !inInterior);

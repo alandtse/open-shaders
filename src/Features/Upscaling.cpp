@@ -354,9 +354,10 @@ void Upscaling::DrawSettings()
 			};
 			ImGui::Combo(T(TKEY("dlss_model_preset"), "DLSS Model Preset"), (int*)&settings.presetDLSS, presets, 5);
 			if (auto _tt = Util::HoverTooltipWrapper()) {
-				ImGui::Text("%s", T(TKEY("dlss_model_preset_tooltip"), "Choose which DLSS AI model preset to use."));
-				ImGui::Text("Each model offers different visual quality, performance, and motion stability.");
-				ImGui::Text("Set to 'Default' for automatic selection based on your Upscale Preset and hardware.");
+				ImGui::Text("%s", T(TKEY("dlss_model_preset_tooltip"),
+									  "Choose which DLSS AI model preset to use.\n"
+									  "Each model offers different visual quality, performance, and motion stability.\n"
+									  "Set to 'Default' for automatic selection based on your Upscale Preset and hardware."));
 			}
 		}
 
@@ -448,14 +449,15 @@ void Upscaling::DrawSettings()
 			if (!frameGenerationDx12PathActive)
 				ImGui::EndDisabled();
 
-			ImGui::TextWrapped("Allows frame generation to function on low refresh rate monitors. Detected: %.2f Hz", refreshRate);
+			ImGui::TextWrapped(T(TKEY("frame_limit_refresh_rate"), "Allows frame generation to function on low refresh rate monitors. Detected: %.2f Hz"), refreshRate);
 			bool fgForce = settings.frameGenerationForceEnable != 0;
 			if (ImGui::Checkbox(T(TKEY("force_enable_frame_generation"), "Force Enable Frame Generation"), &fgForce))
 				settings.frameGenerationForceEnable = fgForce ? 1 : 0;
 			Util::UI::RestartGatedAnnotate(bootSnapshot, settings, &Settings::frameGenerationForceEnable,
-				"Bypass the high-refresh-rate monitor check so Frame Generation can run on lower-Hz\n"
-				"displays. Useful for laptops and older monitors at the cost of less headroom for the\n"
-				"generated frames.");
+				T(TKEY("force_enable_frame_generation_tooltip"),
+					"Bypass the high-refresh-rate monitor check so Frame Generation can run on lower-Hz\n"
+					"displays. Useful for laptops and older monitors at the cost of less headroom for the\n"
+					"generated frames."));
 
 			ImGui::Checkbox(T(TKEY("frame_generation_in_menus"), "Frame Generation in Menus"), &settings.frameGenerationAllowInMenus);
 			if (auto _tt = Util::HoverTooltipWrapper()) {
@@ -565,7 +567,11 @@ void Upscaling::DrawSettings()
 
 	if (ImGui::TreeNodeEx(T(TKEY("backend_diagnostics"), "Backend Diagnostics"))) {
 		// Streamline log level selection
-		const char* logLevels[] = { "Off", "Default", "Verbose" };
+		const char* logLevels[] = {
+			T(TKEY("streamline_log_level_off"), "Off"),
+			T(TKEY("streamline_log_level_default"), "Default"),
+			T(TKEY("streamline_log_level_verbose"), "Verbose")
+		};
 		// streamlineLogLevel is sanitized in LoadSettings (runs on every load,
 		// not gated on this node being expanded), so the stored value is in range.
 		int logLevelIdx = static_cast<int>(settings.streamlineLogLevel);

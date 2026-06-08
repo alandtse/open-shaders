@@ -282,7 +282,7 @@ void VRStereoOptimizations::DrawSettings()
 			ImGui::Checkbox(T("feature.vr_stereo.debug_pom_depth", "Debug POM Depth"), &settings.debugPOMDepth);
 			if (settings.debugFullBlendDepth)
 				ImGui::TextColored(ImVec4(0, 1, 1, 1), "%s", T("feature.vr_stereo.full_blend_zone_hint", "  Cyan = full blend zone (closer = stronger tint)"));
-			ImGui::Text("Stencil swaps this frame: %u", stencilSwapCount);
+			ImGui::Text(T("feature.vr_stereo.stencil_swaps_this_frame", "Stencil swaps this frame: %u"), stencilSwapCount);
 			ImGui::TreePop();
 		}
 	}

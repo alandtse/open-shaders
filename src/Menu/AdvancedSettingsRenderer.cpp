@@ -27,7 +27,7 @@ void AdvancedSettingsRenderer::RenderAdvancedSettings(
 	// Disable at Boot = user-facing failsafe toggles
 	// Testing   = A/B harness + dev-mode test scaffolding
 	if (ImGui::BeginTabBar("##AdvancedSettingsTabs", ImGuiTabBarFlags_None)) {
-		if (MenuFonts::BeginTabItemWithFont("Diagnostics", Menu::FontRole::Subheading)) {
+		if (MenuFonts::BeginTabItemWithFont(T("menu.advanced.tab_diagnostics", "Diagnostics"), Menu::FontRole::Subheading)) {
 			if (ImGui::BeginChild("##DiagnosticsContent", ImVec2(0, 0), false)) {
 				RenderDiagnosticsSection();
 			}
@@ -43,7 +43,7 @@ void AdvancedSettingsRenderer::RenderAdvancedSettings(
 			ImGui::EndTabItem();
 		}
 
-		if (MenuFonts::BeginTabItemWithFont("Shaders", Menu::FontRole::Subheading)) {
+		if (MenuFonts::BeginTabItemWithFont(T("menu.advanced.tab_shaders", "Shaders"), Menu::FontRole::Subheading)) {
 			if (ImGui::BeginChild("##ShadersContent", ImVec2(0, 0), false)) {
 				RenderShadersSection();
 			}
@@ -100,7 +100,7 @@ void AdvancedSettingsRenderer::RenderShaderCompileFlags()
 {
 	auto shaderCache = globals::shaderCache;
 
-	Util::DrawSectionHeader("Compile Flags");
+	Util::DrawSectionHeader(T("menu.advanced.compile_flags_header", "Compile Flags"));
 
 	// Shader Defines input
 	auto& shaderDefines = globals::state->shaderDefinesString;
@@ -159,7 +159,7 @@ void AdvancedSettingsRenderer::RenderShaderThreading()
 {
 	auto shaderCache = globals::shaderCache;
 
-	Util::DrawSectionHeader("Threading");
+	Util::DrawSectionHeader(T("menu.advanced.threading_header", "Threading"));
 
 	// hardware_concurrency() is permitted to return 0 if the implementation can't
 	// detect it. Fall back to the actual compile-pool thread count we ended up
@@ -196,7 +196,7 @@ void AdvancedSettingsRenderer::RenderShaderCacheControls()
 {
 	auto shaderCache = globals::shaderCache;
 
-	Util::DrawSectionHeader("Cache & File Watcher");
+	Util::DrawSectionHeader(T("menu.advanced.cache_watcher_header", "Cache & File Watcher"));
 
 	// File Watcher option
 	bool useFileWatcher = shaderCache->UseFileWatcher();
@@ -455,7 +455,7 @@ void AdvancedSettingsRenderer::RenderLoggingControls()
 
 void AdvancedSettingsRenderer::RenderRuntimeDebugControls()
 {
-	Util::DrawSectionHeader("Runtime Debug");
+	Util::DrawSectionHeader(T("menu.advanced.runtime_debug_header", "Runtime Debug"));
 
 	// Frame annotations toggle
 	ImGui::Checkbox(T("menu.advanced.frame_annotations", "Frame Annotations"), &globals::state->frameAnnotations);

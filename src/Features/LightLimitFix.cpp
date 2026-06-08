@@ -118,8 +118,9 @@ void LightLimitFix::DrawSettings()
 	ShadowCasterManager::DrawSettings(settings.ShadowSettings);
 
 	if (ImGui::TreeNodeEx(T("feature.light_limit_fix.statistics", "Statistics"), ImGuiTreeNodeFlags_DefaultOpen)) {
-		ImGui::Text(std::format("Clustered Light Count : {}", lightCount).c_str());
-		ImGui::Text(std::format("Particle Lights Count : {}", currentParticleLights.size()).c_str());
+		ImGui::Text(std::vformat(T("feature.light_limit_fix.stat_clustered_light_count", "Clustered Light Count : {}"), std::make_format_args(lightCount)).c_str());
+		auto particleLightCount = currentParticleLights.size();
+		ImGui::Text(std::vformat(T("feature.light_limit_fix.stat_particle_lights_count", "Particle Lights Count : {}"), std::make_format_args(particleLightCount)).c_str());
 		ImGui::TreePop();
 	}
 
@@ -328,17 +329,17 @@ void LightLimitFix::DrawSettings()
 		}
 
 		{
-			static const char* comboOptions[] = {
-				"Light Limit",
-				"Strict Lights Count",
-				"Clustered Lights Count",
-				"Shadow Mask",
-				"Shadow Light Count",
-				"Point Light Shadow Factor",
-				"Unshadowed Point Lights",
-				"Shadow Caster Density",
-				"Shadow Slot Index Color",
-				"Light Type Visualization",
+			const char* comboOptions[] = {
+				T("feature.light_limit_fix.lights_vis_mode_opt_light_limit", "Light Limit"),
+				T("feature.light_limit_fix.lights_vis_mode_opt_strict_lights_count", "Strict Lights Count"),
+				T("feature.light_limit_fix.lights_vis_mode_opt_clustered_lights_count", "Clustered Lights Count"),
+				T("feature.light_limit_fix.lights_vis_mode_opt_shadow_mask", "Shadow Mask"),
+				T("feature.light_limit_fix.lights_vis_mode_opt_shadow_light_count", "Shadow Light Count"),
+				T("feature.light_limit_fix.lights_vis_mode_opt_point_light_shadow_factor", "Point Light Shadow Factor"),
+				T("feature.light_limit_fix.lights_vis_mode_opt_unshadowed_point_lights", "Unshadowed Point Lights"),
+				T("feature.light_limit_fix.lights_vis_mode_opt_shadow_caster_density", "Shadow Caster Density"),
+				T("feature.light_limit_fix.lights_vis_mode_opt_shadow_slot_index_color", "Shadow Slot Index Color"),
+				T("feature.light_limit_fix.lights_vis_mode_opt_light_type_visualization", "Light Type Visualization"),
 			};
 			// Round-trip through int instead of `(int*)&uint` to avoid strict-aliasing UB
 			// (ImGui has no ComboScalar). Clamp on the way in defends against any stale
