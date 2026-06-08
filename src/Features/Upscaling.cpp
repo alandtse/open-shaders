@@ -2523,12 +2523,6 @@ void Upscaling::UpscaleDepth()
 		copyIfNonAliased(depthCopy.texture, depth.texture);
 	}
 
-	// Now propagate the upscaled depth to kMAIN_COPY so downstream VR passes see it.
-	if (globals::game::isVR) {
-		TracyD3D11Zone(globals::state->tracyCtx, "Upscaling - Depth VR Propagate");
-		copyIfNonAliased(depthCopy.texture, depth.texture);
-	}
-
 	ID3D11ShaderResourceView* nullPSResources[3] = { nullptr, nullptr, nullptr };
 	context->PSSetShaderResources(0, ARRAYSIZE(nullPSResources), nullPSResources);
 
