@@ -23,6 +23,16 @@ runs:
           run: git config --system core.longpaths true
           shell: bash
 
+        # Pin vcpkg's download cache to a stable, cacheable path. vcpkg checks
+        # this directory (by SHA512) before fetching any asset -- port source
+        # tarballs AND tools acquired via vcpkg_find_acquire_program (e.g. the
+        # pinned PowerShell-core zip applocal.ps1 needs). Caching it (below)
+        # lets those downloads survive across runs, so a transient GitHub
+        # releases 504 on a cache-cold tool fetch can't fail the build.
+        - name: Pin vcpkg downloads directory
+          shell: bash
+          run: echo "VCPKG_DOWNLOADS=${{ github.workspace }}/vcpkg_downloads" >> "$GITHUB_ENV"
+
         - name: Install CMake 4.x
           uses: lukka/get-cmake@v4.3.3
           with:
@@ -87,6 +97,15 @@ runs:
               }
               if ($version) {
                   Add-Content -Path $env:GITHUB_OUTPUT -Value "version=$version" -Encoding UTF8
+                  # Major.minor only -- used for cache keys so a VS toolset
+                  # patch bump (e.g. 14.51.x -> 14.51.y) doesn't bust the build
+                  # cache. Within a minor, the ABI is stable; ninja still
+                  # recompiles any genuinely changed translation units.
+                  if ($version -match '^([0-9]+\.[0-9]+)') {
+                      Add-Content -Path $env:GITHUB_OUTPUT -Value "version_mm=$($Matches[1])" -Encoding UTF8
+                  } else {
+                      Add-Content -Path $env:GITHUB_OUTPUT -Value "version_mm=$version" -Encoding UTF8
+                  }
               } else {
                   throw "MSVC version not found"
               }
@@ -96,6 +115,28 @@ runs:
           uses: lukka/run-vcpkg@v11.6
           with:
               vcpkgJsonGlob: vcpkg.json
+
+        # vcpkg download (asset) cache. Keyed on the manifest + baseline, NOT
+        # the compiler -- the set of fetched assets only changes when deps or
+        # the baseline change, so this survives VS toolset drift. Same
+        # trusted-write / untrusted-restore split as the build cache below.
+        - name: Cache vcpkg downloads (trusted, restore + save)
+          if: github.event_name != 'pull_request' && github.event_name != 'pull_request_target'
+          uses: actions/cache@v5
+          with:
+              path: ${{ github.workspace }}/vcpkg_downloads
+              key: ${{ runner.os }}-vcpkg-downloads-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json') }}
+              restore-keys: |
+                  ${{ runner.os }}-vcpkg-downloads-
+
+        - name: Restore vcpkg downloads (untrusted PR, restore-only)
+          if: github.event_name == 'pull_request' || github.event_name == 'pull_request_target'
+          uses: actions/cache/restore@v5
+          with:
+              path: ${{ github.workspace }}/vcpkg_downloads
+              key: ${{ runner.os }}-vcpkg-downloads-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json') }}
+              restore-keys: |
+                  ${{ runner.os }}-vcpkg-downloads-
 
         # Cache strategy is split by event trust level to avoid the
         # pull_request_target cache-poisoning class of bug (CodeQL rule
@@ -119,20 +160,20 @@ runs:
           uses: actions/cache@v5
           with:
               path: ${{ inputs.build-dir }}
-              key: ${{ runner.os }}-cmake-msvc-${{ steps.msvc_version.outputs.version }}-${{ inputs.cache-key-suffix }}-${{ github.event.inputs.cache-key-suffix || 'default' }}-${{ hashFiles('.gitmodules', 'extern/**', 'CMakePresets.json', 'vcpkg.json', 'vcpkg-configuration.json') }}
+              key: ${{ runner.os }}-cmake-msvc-${{ steps.msvc_version.outputs.version_mm }}-${{ inputs.cache-key-suffix }}-${{ github.event.inputs.cache-key-suffix || 'default' }}-${{ hashFiles('.gitmodules', 'extern/**', 'CMakePresets.json', 'vcpkg.json', 'vcpkg-configuration.json') }}
               restore-keys: |
-                  ${{ runner.os }}-cmake-msvc-${{ steps.msvc_version.outputs.version }}-${{ inputs.cache-key-suffix }}-${{ github.event.inputs.cache-key-suffix || 'default' }}-
-                  ${{ runner.os }}-cmake-msvc-${{ steps.msvc_version.outputs.version }}-${{ inputs.cache-key-suffix }}-
+                  ${{ runner.os }}-cmake-msvc-${{ steps.msvc_version.outputs.version_mm }}-${{ inputs.cache-key-suffix }}-${{ github.event.inputs.cache-key-suffix || 'default' }}-
+                  ${{ runner.os }}-cmake-msvc-${{ steps.msvc_version.outputs.version_mm }}-${{ inputs.cache-key-suffix }}-
 
         - name: Restore CMake build cache (untrusted PR, restore-only)
           if: github.event_name == 'pull_request' || github.event_name == 'pull_request_target'
           uses: actions/cache/restore@v5
           with:
               path: ${{ inputs.build-dir }}
-              key: ${{ runner.os }}-cmake-msvc-${{ steps.msvc_version.outputs.version }}-${{ inputs.cache-key-suffix }}-${{ github.event.inputs.cache-key-suffix || 'default' }}-${{ hashFiles('.gitmodules', 'extern/**', 'CMakePresets.json', 'vcpkg.json', 'vcpkg-configuration.json') }}
+              key: ${{ runner.os }}-cmake-msvc-${{ steps.msvc_version.outputs.version_mm }}-${{ inputs.cache-key-suffix }}-${{ github.event.inputs.cache-key-suffix || 'default' }}-${{ hashFiles('.gitmodules', 'extern/**', 'CMakePresets.json', 'vcpkg.json', 'vcpkg-configuration.json') }}
               restore-keys: |
-                  ${{ runner.os }}-cmake-msvc-${{ steps.msvc_version.outputs.version }}-${{ inputs.cache-key-suffix }}-${{ github.event.inputs.cache-key-suffix || 'default' }}-
-                  ${{ runner.os }}-cmake-msvc-${{ steps.msvc_version.outputs.version }}-${{ inputs.cache-key-suffix }}-
+                  ${{ runner.os }}-cmake-msvc-${{ steps.msvc_version.outputs.version_mm }}-${{ inputs.cache-key-suffix }}-${{ github.event.inputs.cache-key-suffix || 'default' }}-
+                  ${{ runner.os }}-cmake-msvc-${{ steps.msvc_version.outputs.version_mm }}-${{ inputs.cache-key-suffix }}-
 
         - name: Remove stale CMake cache if configuration changed
           shell: pwsh
@@ -181,3 +222,20 @@ runs:
                   Remove-Item -Recurse -Force $buildDir
                 }
               }
+
+        # Pre-install vcpkg deps via a CMake configure, wrapped in retry. This
+        # is the only step that hits the network for vcpkg ports/tools, so a
+        # transient GitHub-releases 504 (e.g. the PowerShell-core fetch) gets
+        # retried here instead of failing the build. Subsequent run-cmake steps
+        # in the calling job reuse this warm configure + the cached downloads,
+        # so they do no further network I/O. -DBUILD_SHADER_TESTS=OFF keeps the
+        # warm-up minimal; jobs that need the shader_tests target reconfigure
+        # with =ON (no re-download -- deps are independent of that flag).
+        - name: Pre-install vcpkg dependencies (retry)
+          uses: nick-fields/retry@v3
+          with:
+              timeout_minutes: 30
+              max_attempts: 3
+              retry_wait_seconds: 30
+              shell: pwsh
+              command: cmake --preset ${{ inputs.cmake-preset }} -DBUILD_SHADER_TESTS=OFF
