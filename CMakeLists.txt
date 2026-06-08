@@ -159,7 +159,9 @@ set(STB_IMAGE_WRITE_IMPL "${CMAKE_SOURCE_DIR}/src/Utils/StbImageWriteImpl.c")
 target_sources(${PROJECT_NAME} PRIVATE "${STB_IMAGE_WRITE_IMPL}")
 set_source_files_properties(
     "${STB_IMAGE_WRITE_IMPL}"
-    PROPERTIES SKIP_PRECOMPILE_HEADERS ON COMPILE_OPTIONS "/W0"
+    PROPERTIES
+        SKIP_PRECOMPILE_HEADERS ON
+        COMPILE_OPTIONS "$<$<C_COMPILER_ID:MSVC>:/W0>"
 )
 
 target_link_libraries(

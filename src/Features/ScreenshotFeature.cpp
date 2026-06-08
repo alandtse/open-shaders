@@ -547,7 +547,14 @@ namespace
 		}
 		os.write(reinterpret_cast<const char*>(png.data()), static_cast<std::streamsize>(png.size()));
 		os.flush();
-		return static_cast<bool>(os);
+		const bool success = static_cast<bool>(os);
+		os.close();
+		if (!success) {
+			// Don't leave a truncated PNG behind on a partial write.
+			std::error_code ec;
+			std::filesystem::remove(outputPath, ec);
+		}
+		return success;
 	}
 
 	bool SaveSdrScreenshot(
@@ -648,7 +655,8 @@ void ScreenshotFeature::DrawSettings()
 	if (hdrCaptureAvailable) {
 		ImGui::TextWrapped("%s",
 			T(TKEY("hdr_note"),
-				"HDR enabled: saves the displayed frame as a 48 bpp RGB PNG with cICP HDR metadata (BT.2020 PQ). "
+				"HDR enabled: saves the displayed frame as a 48 bpp RGB PNG with HDR10 metadata "
+				"(cICP color signaling plus MaxCLL/MaxFALL and mastering-display levels, BT.2020 PQ). "
 				"Use an HDR-aware viewer such as Windows Photos (HDR on) or Special K SKIF."));
 		ImGui::SliderInt(
 			T(TKEY("hdr_bit_depth"), "HDR PNG bit depth"),
@@ -666,7 +674,7 @@ void ScreenshotFeature::DrawSettings()
 	} else {
 		ImGui::TextWrapped("%s",
 			T(TKEY("sdr_note"),
-				"Enable HDR Display to capture HDR PNG screenshots with cICP HDR metadata. "
+				"Enable HDR Display to capture HDR PNG screenshots with HDR10 metadata. "
 				"SDR captures use the lossless format selected below."));
 	}
 
