@@ -29,13 +29,13 @@ $sha = (gh api "repos/$repo/commits/$Ref" --jq '.sha').Trim()
 if (-not $sha) { throw "Could not resolve ref '$Ref' in $repo" }
 
 Write-Host "Fetching $path @ $sha ..."
-$tmp = New-TemporaryFile
-gh api "repos/$repo/contents/$($path)?ref=$sha" --jq '.content' |
-    ForEach-Object { [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String(($_ -replace '\s', ''))) } |
-    Set-Content -Path $tmp -NoNewline -Encoding utf8
-
-Copy-Item $tmp $dest -Force
-Remove-Item $tmp -Force
+# Write the decoded base64 as raw bytes so the vendored file is byte-identical
+# to upstream. Set-Content -Encoding utf8 would prepend a UTF-8 BOM under Windows
+# PowerShell 5.1 (and could rewrite line endings), breaking the byte-for-byte
+# provenance guarantee.
+$b64 = (gh api "repos/$repo/contents/$($path)?ref=$sha" --jq '.content') -replace '\s', ''
+if (-not $b64) { throw "Empty content returned for $path @ $sha" }
+[System.IO.File]::WriteAllBytes($dest, [Convert]::FromBase64String($b64))
 
 # Update the pinned commit line in PROVENANCE.md.
 (Get-Content $prov) -replace '(\*\*Pinned commit:\*\* `)[0-9a-f]{7,40}(`)', "`${1}$sha`${2}" |

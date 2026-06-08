@@ -153,6 +153,8 @@ target_include_directories(
 # encode_png_line takes signed char* (legal in C, an error in C++). Not picked up by the
 # src/*.cpp glob, so add it explicitly; skip the C++ PCH and silence warnings for this
 # third-party TU (the target builds with /W4 /WX). Keeps the vendored header pristine.
+# The top-level project() enables only CXX; enable C explicitly for this .c TU.
+enable_language(C)
 set(STB_IMAGE_WRITE_IMPL "${CMAKE_SOURCE_DIR}/src/Utils/StbImageWriteImpl.c")
 target_sources(${PROJECT_NAME} PRIVATE "${STB_IMAGE_WRITE_IMPL}")
 set_source_files_properties(

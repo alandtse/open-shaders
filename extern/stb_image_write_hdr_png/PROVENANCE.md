@@ -20,6 +20,13 @@ If a local change ever proves unavoidable, keep it as a separate `.patch` re-app
 the update script (`git apply --3way`), never inline edits — but prefer doing the work in
 our glue instead.
 
+## Known upstream issues (intentionally not patched)
+
+- `stbi_write_hdr_png_to_func` leaks `data_compressed` if the final
+  `STBIW_MALLOC(file_size)` fails. Triggers only on OOM while allocating the whole
+  output PNG (capture fails harmlessly in that case), so we keep the header pristine
+  rather than carry a patch. Fix belongs upstream in ReShade.
+
 ## Updating
 
 ```

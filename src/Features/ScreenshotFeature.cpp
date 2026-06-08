@@ -20,7 +20,7 @@
 #include <DirectXPackedVector.h>
 #include <DirectXTex.h>
 #include <shlobj.h>  // DROPFILES (CF_HDROP clipboard)
-// Declarations only; the implementation lives in Utils/StbImageWriteImpl.cpp.
+// Declarations only; the implementation lives in Utils/StbImageWriteImpl.c.
 // stb_image.h precedes the HDR-PNG header for the stbi_us typedef.
 #include <stb_image.h>
 #include <stb_image_write.h>
