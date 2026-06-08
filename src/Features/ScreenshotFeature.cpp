@@ -13,18 +13,23 @@
 #include "I18n/I18n.h"
 #include "Menu.h"
 #include "Utils/FileSystem.h"
+#include "Utils/HdrPngMetadata.h"
 
 #define I18N_KEY_PREFIX "feature.screenshot."
 
+#include <DirectXPackedVector.h>
 #include <DirectXTex.h>
-#pragma warning(push)
-#pragma warning(disable: 4244)  // double->float conversion in third-party header
-#include <sk_hdr_png.hpp>
-#pragma warning(pop)
+#include <shlobj.h>  // DROPFILES (CF_HDROP clipboard)
+// Declarations only; the implementation lives in Utils/StbImageWriteImpl.c.
+// stb_image.h precedes the HDR-PNG header for the stbi_us typedef.
+#include <stb_image.h>
+#include <stb_image_write.h>
+#include <stb_image_write_hdr_png.h>
 
 #include <format>
+#include <fstream>
 #include <functional>
-#include <malloc.h>
+#include <vector>
 
 namespace
 {
@@ -425,56 +430,77 @@ namespace
 		return ResolveToAbsoluteGamePath(std::filesystem::path(screenshotPath) / buf);
 	}
 
-	struct HdrFormatInfo
-	{
-		DXGI_FORMAT dxgi;
-		sk_hdr_png::format png;
-		size_t bytesPerPixel;
-	};
+	// JxlColorEncoding code points the stb HDR-PNG writer signals via cICP/iCCP.
+	// 9 = BT.2100/BT.2020 primaries, 16 = PQ transfer (the combo that makes the
+	// writer embed the PQ ICC profile). Our HDR capture is already BT.2020 PQ.
+	constexpr unsigned char kPrimariesBT2100 = 9;
+	constexpr unsigned char kTransferPQ = 16;
 
-	constexpr HdrFormatInfo kHdrFormats[] = {
-		{ DXGI_FORMAT_R10G10B10A2_UNORM, sk_hdr_png::format::r10g10b10a2_unorm, 4 },
-		{ DXGI_FORMAT_R16G16B16A16_FLOAT, sk_hdr_png::format::r16g16b16a16_pq, 8 },
-	};
-
-	const HdrFormatInfo* LookupHdrFormat(DXGI_FORMAT format)
-	{
-		for (const auto& info : kHdrFormats) {
-			if (info.dxgi == format) {
-				return &info;
-			}
-		}
-		return nullptr;
-	}
-
+	// The HDR composite back buffer is already BT.2020 PQ in one of these formats;
+	// anything else takes the SDR save path.
 	bool IsHdrCaptureFormat(DXGI_FORMAT format)
 	{
-		return LookupHdrFormat(format) != nullptr;
+		return format == DXGI_FORMAT_R10G10B10A2_UNORM ||
+		       format == DXGI_FORMAT_R16G16B16A16_FLOAT;
 	}
 
-	// sk_hdr_png requires 16-byte aligned pixel memory.
-	bool CopyToAlignedPixelBuffer(
-		const DirectX::Image& image,
-		size_t bytesPerPixel,
-		void*& outAligned,
-		size_t& outByteSize)
+	// Quantize a 16-bit PQ sample to `bits` significant bits (file-size knob mirroring
+	// the old encoder's hdrPngBitDepth). bits >= 16 is a no-op.
+	inline uint16_t QuantizePqSample(uint16_t v, int bits)
 	{
-		if (bytesPerPixel == 0) {
-			return false;
+		if (bits >= 16) {
+			return v;
 		}
+		const int drop = 16 - bits;
+		const uint32_t bias = 1u << (drop - 1);
+		const uint32_t r = ((static_cast<uint32_t>(v) + bias) >> drop) << drop;
+		return static_cast<uint16_t>(r > 0xFFFFu ? 0xFFFFu : r);
+	}
 
-		const size_t tightRowBytes = static_cast<size_t>(image.width) * bytesPerPixel;
-		outByteSize = tightRowBytes * image.height;
+	// stbi_write_func: accumulate the encoded PNG into a byte buffer so we can splice
+	// the cLLi metadata chunk in before writing to disk.
+	void StbWriteToVector(void* context, void* data, int size)
+	{
+		auto* out = static_cast<std::vector<uint8_t>*>(context);
+		const auto* bytes = static_cast<const uint8_t*>(data);
+		out->insert(out->end(), bytes, bytes + size);
+	}
 
-		outAligned = _aligned_malloc(outByteSize, 16);
-		if (!outAligned) {
+	// Build a tight RGB uint16 buffer. The capture is already BT.2020 PQ, so this only
+	// expands bit depth (no colour transform) and applies quantization. comp = 3.
+	bool BuildPqRgb16(const DirectX::Image& image, DXGI_FORMAT format, int bits, std::vector<uint16_t>& outRgb)
+	{
+		const size_t w = image.width, h = image.height;
+		outRgb.resize(w * h * 3);
+		const uint8_t* srcRow = image.pixels;
+		size_t o = 0;
+
+		if (format == DXGI_FORMAT_R16G16B16A16_FLOAT) {
+			for (size_t y = 0; y < h; ++y) {
+				const uint16_t* px = reinterpret_cast<const uint16_t*>(srcRow);
+				for (size_t x = 0; x < w; ++x, px += 4) {
+					for (int c = 0; c < 3; ++c) {
+						float f = DirectX::PackedVector::XMConvertHalfToFloat(px[c]);
+						f = f < 0.0f ? 0.0f : (f > 1.0f ? 1.0f : f);
+						outRgb[o++] = QuantizePqSample(static_cast<uint16_t>(f * 65535.0f + 0.5f), bits);
+					}
+				}
+				srcRow += image.rowPitch;
+			}
+		} else if (format == DXGI_FORMAT_R10G10B10A2_UNORM) {
+			for (size_t y = 0; y < h; ++y) {
+				const uint32_t* px = reinterpret_cast<const uint32_t*>(srcRow);
+				for (size_t x = 0; x < w; ++x) {
+					const uint32_t p = px[x];
+					const uint32_t ch[3] = { p & 0x3FFu, (p >> 10) & 0x3FFu, (p >> 20) & 0x3FFu };
+					for (int c = 0; c < 3; ++c) {
+						outRgb[o++] = QuantizePqSample(static_cast<uint16_t>((ch[c] * 65535u + 511u) / 1023u), bits);
+					}
+				}
+				srcRow += image.rowPitch;
+			}
+		} else {
 			return false;
-		}
-
-		auto* dest = static_cast<uint8_t*>(outAligned);
-		const auto* src = image.pixels;
-		for (size_t row = 0; row < image.height; ++row) {
-			memcpy(dest + row * tightRowBytes, src + row * image.rowPitch, tightRowBytes);
 		}
 		return true;
 	}
@@ -486,28 +512,54 @@ namespace
 		DXGI_FORMAT format)
 	{
 		const DirectX::Image* firstImage = image.GetImage(0, 0, 0);
-		const HdrFormatInfo* hdrInfo = firstImage ? LookupHdrFormat(format) : nullptr;
-		if (!firstImage || !hdrInfo || firstImage->format != format) {
+		if (!firstImage || !IsHdrCaptureFormat(format) || firstImage->format != format) {
 			return false;
 		}
 
-		void* alignedPixels = nullptr;
-		size_t byteSize = 0;
-		if (!CopyToAlignedPixelBuffer(*firstImage, hdrInfo->bytesPerPixel, alignedPixels, byteSize)) {
+		std::vector<uint16_t> rgb;
+		if (!BuildPqRgb16(*firstImage, format, quantizationBits, rgb)) {
 			return false;
 		}
 
-		const bool saved = sk_hdr_png::write_image_to_disk(
-			outputPath.wstring().c_str(),
-			static_cast<unsigned int>(firstImage->width),
-			static_cast<unsigned int>(firstImage->height),
-			alignedPixels,
-			quantizationBits,
-			hdrInfo->png,
-			false);
+		// Encode into memory so we can splice in the cLLi metadata chunk (the stb
+		// writer emits cICP/sBIT/iCCP/cHRM but not content-light-level).
+		std::vector<uint8_t> png;
+		const int ok = stbi_write_hdr_png_to_func(
+			&StbWriteToVector, &png,
+			static_cast<int>(firstImage->width),
+			static_cast<int>(firstImage->height),
+			3, rgb.data(), 0,
+			kPrimariesBT2100, kTransferPQ);
+		if (ok == 0 || png.empty()) {
+			return false;
+		}
 
-		_aligned_free(alignedPixels);
-		return saved;
+		// The stb writer hard-codes sBIT=16; rewrite it to the real quantized
+		// significant-bit depth so the chunk doesn't over-claim precision.
+		Util::HdrPng::PatchSbitChunk(png, static_cast<uint8_t>(std::clamp(quantizationBits, 1, 16)));
+
+		// Best-effort static HDR metadata (mDCv mastering display + cLLi content light
+		// level); skip silently if a splice fails so a valid PNG still ships.
+		Util::HdrPng::InsertChunkBeforeIdat(png, Util::HdrPng::BuildMdcvChunk());
+		const auto cll = Util::HdrPng::ComputeContentLightLevel(
+			rgb.data(), static_cast<size_t>(firstImage->width) * firstImage->height);
+		Util::HdrPng::InsertChunkBeforeIdat(png, Util::HdrPng::BuildClliChunk(cll));
+
+		std::ofstream os(outputPath, std::ios::binary);
+		if (!os) {
+			return false;
+		}
+		os.write(reinterpret_cast<const char*>(png.data()), static_cast<std::streamsize>(png.size()));
+		// Close before checking state: close() flushes, and a flush/write error
+		// (e.g. disk full) only surfaces on the stream after the final flush.
+		os.close();
+		const bool success = static_cast<bool>(os);
+		if (!success) {
+			// Don't leave a truncated PNG behind on a partial write/flush failure.
+			std::error_code ec;
+			std::filesystem::remove(outputPath, ec);
+		}
+		return success;
 	}
 
 	bool SaveSdrScreenshot(
@@ -608,7 +660,8 @@ void ScreenshotFeature::DrawSettings()
 	if (hdrCaptureAvailable) {
 		ImGui::TextWrapped("%s",
 			T(TKEY("hdr_note"),
-				"HDR enabled: saves the displayed frame as PNG with HDR10 metadata (48 bpp RGB, cICP/cLLi). "
+				"HDR enabled: saves the displayed frame as a 48 bpp RGB PNG with HDR10 metadata "
+				"(cICP color signaling plus MaxCLL/MaxFALL and mastering-display levels, BT.2020 PQ). "
 				"Use an HDR-aware viewer such as Windows Photos (HDR on) or Special K SKIF."));
 		ImGui::SliderInt(
 			T(TKEY("hdr_bit_depth"), "HDR PNG bit depth"),

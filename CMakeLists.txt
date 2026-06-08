@@ -143,12 +143,26 @@ target_include_directories(
         ${BSHOSHANY_THREAD_POOL_INCLUDE_DIRS}
         ${CLIB_UTIL_INCLUDE_DIRS}
         "${CMAKE_SOURCE_DIR}/package/Shaders"
-        "${CMAKE_SOURCE_DIR}/extern/sk_hdr_png/include"
+        "${CMAKE_SOURCE_DIR}/extern/stb_image_write_hdr_png"
         ${DETOURS_INCLUDE_DIRS}
         ${EXPRTK_INCLUDE_DIRS}
 )
 
-target_compile_definitions(${PROJECT_NAME} PRIVATE SK_HDR_PNG_COMMUNITY_SHADERS)
+# stb_image_write impl (incl. ReShade's vendored HDR-PNG extension) builds as C, like
+# upstream's deps/stb_impl.c: the extension passes unsigned char* where stb's
+# encode_png_line takes signed char* (legal in C, an error in C++). Not picked up by the
+# src/*.cpp glob, so add it explicitly; skip the C++ PCH and silence warnings for this
+# third-party TU (the target builds with /W4 /WX). Keeps the vendored header pristine.
+# The top-level project() enables only CXX; enable C explicitly for this .c TU.
+enable_language(C)
+set(STB_IMAGE_WRITE_IMPL "${CMAKE_SOURCE_DIR}/src/Utils/StbImageWriteImpl.c")
+target_sources(${PROJECT_NAME} PRIVATE "${STB_IMAGE_WRITE_IMPL}")
+set_source_files_properties(
+    "${STB_IMAGE_WRITE_IMPL}"
+    PROPERTIES
+        SKIP_PRECOMPILE_HEADERS ON
+        COMPILE_OPTIONS "$<$<C_COMPILER_ID:MSVC>:/W0>"
+)
 
 target_link_libraries(
     ${PROJECT_NAME}

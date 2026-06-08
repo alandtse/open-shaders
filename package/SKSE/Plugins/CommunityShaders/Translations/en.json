@@ -1456,7 +1456,7 @@
     "feature.screenshot.format_png": "PNG (lossless)",
     "feature.screenshot.hdr_bit_depth": "HDR PNG bit depth",
     "feature.screenshot.hdr_bit_depth_tooltip": "Quantization for the 48 bpp RGB PNG payload. 11-bit is a good default; higher values increase file size with diminishing returns.",
-    "feature.screenshot.hdr_note": "HDR enabled: saves the displayed frame as PNG with HDR10 metadata (48 bpp RGB, cICP/cLLi). Use an HDR-aware viewer such as Windows Photos (HDR on) or Special K SKIF.",
+    "feature.screenshot.hdr_note": "HDR enabled: saves the displayed frame as a 48 bpp RGB PNG with HDR10 metadata (cICP color signaling plus MaxCLL/MaxFALL and mastering-display levels, BT.2020 PQ). Use an HDR-aware viewer such as Windows Photos (HDR on) or Special K SKIF.",
     "feature.screenshot.hotkey": "Hotkey",
     "feature.screenshot.hotkey_collision": "This hotkey collides with vanilla PrintScreen; both saves will fire. Set bAllowScreenShot=0 in Skyrim.ini to suppress vanilla, or pick a different hotkey above.",
     "feature.screenshot.name": "Screenshot",

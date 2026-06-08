@@ -52,6 +52,7 @@ add_executable(cpp_tests
     test_isl_radiusmath.cpp
     test_shadowcaster_math.cpp
     test_llf_sanitize.cpp
+    test_hdr_png_metadata.cpp
     # Stub I18n::Get so units-under-test that call T() (Subrect's DrawEditor)
     # link without pulling the translation loader into the test binary.
     i18n_stub.cpp
@@ -59,6 +60,7 @@ add_executable(cpp_tests
     # depend on the plugin DLL build (which pulls in FFX/Streamline/etc.).
     "${CMAKE_SOURCE_DIR}/src/Utils/Subrect.cpp"
     "${CMAKE_SOURCE_DIR}/src/Utils/SphericalHarmonics.cpp"
+    "${CMAKE_SOURCE_DIR}/src/Utils/HdrPngMetadata.cpp"
 )
 
 # The plugin defines the float2/3/4 = SimpleMath aliases in its PCH, which the
