@@ -13,6 +13,7 @@
 #include "I18n/I18n.h"
 #include "Menu.h"
 #include "Utils/FileSystem.h"
+#include "Utils/HdrPngMetadata.h"
 
 #define I18N_KEY_PREFIX "feature.screenshot."
 
@@ -456,10 +457,13 @@ namespace
 		return static_cast<uint16_t>(r > 0xFFFFu ? 0xFFFFu : r);
 	}
 
-	// stbi_write_func: append the encoded bytes to the open output stream.
-	void StbWriteToStream(void* context, void* data, int size)
+	// stbi_write_func: accumulate the encoded PNG into a byte buffer so we can splice
+	// the cLLi metadata chunk in before writing to disk.
+	void StbWriteToVector(void* context, void* data, int size)
 	{
-		static_cast<std::ofstream*>(context)->write(static_cast<const char*>(data), size);
+		auto* out = static_cast<std::vector<uint8_t>*>(context);
+		const auto* bytes = static_cast<const uint8_t*>(data);
+		out->insert(out->end(), bytes, bytes + size);
 	}
 
 	// Build a tight RGB uint16 buffer. The capture is already BT.2020 PQ, so this only
@@ -517,20 +521,32 @@ namespace
 			return false;
 		}
 
-		std::ofstream os(outputPath, std::ios::binary);
-		if (!os) {
-			return false;
-		}
-
+		// Encode into memory so we can splice in the cLLi metadata chunk (the stb
+		// writer emits cICP/sBIT/iCCP/cHRM but not content-light-level).
+		std::vector<uint8_t> png;
 		const int ok = stbi_write_hdr_png_to_func(
-			&StbWriteToStream, &os,
+			&StbWriteToVector, &png,
 			static_cast<int>(firstImage->width),
 			static_cast<int>(firstImage->height),
 			3, rgb.data(), 0,
 			kPrimariesBT2100, kTransferPQ);
+		if (ok == 0 || png.empty()) {
+			return false;
+		}
 
+		// Best-effort cLLi (MaxCLL/MaxFALL); skip silently if the splice fails so a
+		// valid PNG still ships without the optional metadata.
+		const auto cll = Util::HdrPng::ComputeContentLightLevel(
+			rgb.data(), static_cast<size_t>(firstImage->width) * firstImage->height);
+		Util::HdrPng::InsertChunkBeforeIdat(png, Util::HdrPng::BuildClliChunk(cll));
+
+		std::ofstream os(outputPath, std::ios::binary);
+		if (!os) {
+			return false;
+		}
+		os.write(reinterpret_cast<const char*>(png.data()), static_cast<std::streamsize>(png.size()));
 		os.flush();
-		return ok != 0 && static_cast<bool>(os);
+		return static_cast<bool>(os);
 	}
 
 	bool SaveSdrScreenshot(
