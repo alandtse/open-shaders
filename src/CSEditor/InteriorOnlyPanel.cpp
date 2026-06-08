@@ -204,9 +204,9 @@ namespace InteriorOnlyPanel
 		if (Util::ErrorButton("X", ImVec2(C::SCENE_DELETE_BUTTON_WIDTH * scale, 0))) {
 			if (entry.source == EntrySource::Overwrite) {
 				pendingDeleteIndex = index;
-				deleteSingleOverwritePopup.message = std::format(
-					"Delete overwrite file '{}'?\nThis will permanently remove the file from disk.",
-					entry.sourceFilename);
+				deleteSingleOverwritePopup.message = std::vformat(
+					T(TKEY("delete_overwrite_file_confirm"), "Delete overwrite file '{}'?\nThis will permanently remove the file from disk."),
+					std::make_format_args(entry.sourceFilename));
 				deleteSingleOverwritePopup.Request();
 			} else {
 				manager->RemoveSetting(kSceneType, index);

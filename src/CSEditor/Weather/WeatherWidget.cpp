@@ -420,6 +420,7 @@ void WeatherWidget::DrawWidget()
 void WeatherWidget::LoadSettings()
 {
 	bool hadErrors = false;
+	std::string editorIdForNotify;  // lvalue backing for std::make_format_args in failure notifications
 	if (!js.empty()) {
 		try {
 			// Attempt to load settings from JSON
@@ -442,8 +443,9 @@ void WeatherWidget::LoadSettings()
 			if (hadErrors) {
 				// Fallback to vanilla/game values
 				settings = vanillaSettings;
+				editorIdForNotify = GetEditorID();
 				EditorWindow::GetSingleton()->ShowNotification(
-					std::format("Some values failed to load for {}", GetEditorID()),
+					std::vformat(T(TKEY("some_values_failed_to_load"), "Some values failed to load for {}"), std::make_format_args(editorIdForNotify)),
 					Util::Colors::GetError(),
 					3.0f);
 			} else {
@@ -477,8 +479,9 @@ void WeatherWidget::LoadSettings()
 			logger::error("Weather {}: Failed to deserialize settings from JSON: {}", GetEditorID(), e.what());
 			// Fallback to vanilla/game values on exception
 			settings = vanillaSettings;
+			editorIdForNotify = GetEditorID();
 			EditorWindow::GetSingleton()->ShowNotification(
-				std::format("Some values failed to load for {}", GetEditorID()),
+				std::vformat(T(TKEY("some_values_failed_to_load"), "Some values failed to load for {}"), std::make_format_args(editorIdForNotify)),
 				Util::Colors::GetError(),
 				3.0f);
 			return;
@@ -1139,10 +1142,10 @@ void WeatherWidget::DrawCloudSettings()
 			ImGui::Spacing();
 
 			ImGui::PushItemWidth(ImGui::GetContentRegionAvail().x * 0.3f);
-			if (WeatherUtils::DrawSliderInt8(std::format("Cloud Layer Speed Y##{}", layer), settings.clouds[i].cloudLayerSpeedY))
+			if (WeatherUtils::DrawSliderInt8(std::vformat(T(TKEY("cloud_layer_speed_y"), "Cloud Layer Speed Y##{}"), std::make_format_args(layer)), settings.clouds[i].cloudLayerSpeedY))
 				changed = true;
 			ImGui::Spacing();
-			if (WeatherUtils::DrawSliderInt8(std::format("Cloud Layer Speed X##{}", layer), settings.clouds[i].cloudLayerSpeedX))
+			if (WeatherUtils::DrawSliderInt8(std::vformat(T(TKEY("cloud_layer_speed_x"), "Cloud Layer Speed X##{}"), std::make_format_args(layer)), settings.clouds[i].cloudLayerSpeedX))
 				changed = true;
 			ImGui::PopItemWidth();
 
@@ -1612,8 +1615,9 @@ void WeatherWidget::InheritAllFromParent()
 	if (EditorWindow::GetSingleton()->settings.autoApplyChanges)
 		ApplyChanges();
 
+	const std::string parentId = parentWidget->GetEditorID();
 	EditorWindow::GetSingleton()->ShowNotification(
-		std::format("Inherited all settings from {}", parentWidget->GetEditorID()),
+		std::vformat(T(TKEY("inherited_all_settings_from"), "Inherited all settings from {}"), std::make_format_args(parentId)),
 		Util::Colors::GetSuccess(),
 		3.0f);
 }
@@ -1681,8 +1685,9 @@ void WeatherWidget::LoadFeatureSettings()
 			}
 
 			// Show notification
+			const std::string editorIdForWarn = GetEditorID();
 			EditorWindow::GetSingleton()->ShowNotification(
-				std::format("Warning: {} references missing feature(s): {}", GetEditorID(), missingList),
+				std::vformat(T(TKEY("references_missing_features"), "Warning: {} references missing feature(s): {}"), std::make_format_args(editorIdForWarn, missingList)),
 				Util::Colors::GetWarning(),
 				5.0f);
 
@@ -1694,9 +1699,10 @@ void WeatherWidget::LoadFeatureSettings()
 				FeatureIssues::AddFeatureIssue(
 					featureName,
 					"",
-					std::format("Weather '{}' contains settings for this feature, but the feature is not loaded. "
-								"The weather-specific parameters will be ignored until the feature is installed and loaded.",
-						GetEditorID()),
+					std::vformat(T(TKEY("weather_references_unloaded_feature"),
+									 "Weather '{}' contains settings for this feature, but the feature is not loaded. "
+									 "The weather-specific parameters will be ignored until the feature is installed and loaded."),
+						std::make_format_args(editorIdForWarn)),
 					FeatureIssues::FeatureIssueInfo::IssueType::UNKNOWN,
 					fileInfo,
 					"");

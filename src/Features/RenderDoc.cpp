@@ -953,10 +953,11 @@ void RenderDoc::ApplyAutomaticCommentsToNewCaptures()
 
 std::string RenderDoc::GetOverlayWarningMessage() const
 {
-	return "WARNING: RenderDoc capture is active, performance will be severely impacted.\n"
-		   "Upscaling and Framegeneration may be incompatible.\n"
-		   "Press F12, Print Screen or press the Capture button in the RenderDoc feature settings.\n"
-		   "Disable RenderDoc capture in the RenderDoc feature settings.";
+	return T(TKEY("overlay_warning"),
+		"WARNING: RenderDoc capture is active, performance will be severely impacted.\n"
+		"Upscaling and Framegeneration may be incompatible.\n"
+		"Press F12, Print Screen or press the Capture button in the RenderDoc feature settings.\n"
+		"Disable RenderDoc capture in the RenderDoc feature settings.");
 }
 
 void RenderDoc::ClearFailedDeletions()

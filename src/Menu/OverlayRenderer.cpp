@@ -42,7 +42,7 @@ namespace
 	void DrawShaderCompilationFailures(uint64_t failed, const Menu::ThemeSettings& themeSettings)
 	{
 		ImGui::TextColored(themeSettings.StatusPalette.Error,
-			"ERROR: %llu shaders failed to compile. Check installation and CommunityShaders.log",
+			T("overlay.shaders_failed", "ERROR: %llu shaders failed to compile. Check installation and CommunityShaders.log"),
 			static_cast<unsigned long long>(failed));
 
 		if (FeatureIssues::HasPotentialShaderModifyingFeatures()) {
@@ -271,9 +271,10 @@ void OverlayRenderer::RenderShaderCompilationStatus(const std::function<const ch
 	bool renderDocAvailable = renderDoc->IsAvailable();
 	const auto renderDocInformation = renderDoc->GetOverlayWarningMessage();
 
-	auto progressTitle = fmt::format("{}Compiling Shaders: {}",
-		shaderCache->backgroundCompilation ? "Background " : "",
-		shaderCache->GetShaderStatsString(!state->IsDeveloperMode()).c_str());
+	std::string compilePrefix = shaderCache->backgroundCompilation ? T("overlay.background_prefix", "Background ") : "";
+	std::string shaderStats = shaderCache->GetShaderStatsString(!state->IsDeveloperMode());
+	auto progressTitle = std::vformat(T("overlay.compiling_shaders", "{}Compiling Shaders: {}"),
+		std::make_format_args(compilePrefix, shaderStats));
 	auto percent = (float)compiledShaders / (float)totalShaders;
 	auto progressOverlay = fmt::format("{}/{} ({:2.1f}%)", compiledShaders, totalShaders, 100 * percent);
 
@@ -292,20 +293,21 @@ void OverlayRenderer::RenderShaderCompilationStatus(const std::function<const ch
 			int heavyLimit = static_cast<int>(Util::GetPerformanceCoreCount());
 			uint64_t slow = shaderCache->GetSlowTasks();
 			uint64_t verySlow = shaderCache->GetVerySlowTasks();
-			ImGui::Text("Threads: %d / %d limit | Heavy: %d / %d P-cores | %d workers",
+			ImGui::Text(T("overlay.threads_status", "Threads: %d / %d limit | Heavy: %d / %d P-cores | %d workers"),
 				compilationRunning,
 				threadLimit,
 				heavyInFlight,
 				heavyLimit,
 				(int)shaderCache->compilationPool.get_thread_count());
 			if (slow > 0) {
-				ImGui::Text("Slow shaders: %llu (very slow: %llu)", slow, verySlow);
+				ImGui::Text(T("overlay.slow_shaders", "Slow shaders: %llu (very slow: %llu)"), slow, verySlow);
 			}
 		}
 		if (!shaderCache->backgroundCompilation && shaderCache->menuLoaded) {
-			auto skipShadersText = fmt::format(
-				"Press {} to proceed without completing shader compilation. ",
-				keyIdToString(Menu::GetSingleton()->GetSettings().SkipCompilationKey));
+			const char* skipKeyName = keyIdToString(Menu::GetSingleton()->GetSettings().SkipCompilationKey);
+			auto skipShadersText = std::vformat(
+				T("overlay.skip_compilation", "Press {} to proceed without completing shader compilation. "),
+				std::make_format_args(skipKeyName));
 			ImGui::TextUnformatted(skipShadersText.c_str());
 			ImGui::TextUnformatted(T("overlay.uncompiled_warning", "WARNING: Uncompiled shaders will have visual errors or cause stuttering when loading."));
 		}
@@ -439,7 +441,7 @@ void OverlayRenderer::RenderShaderBlockingStatus()
 	}
 
 	Util::Text::Error(T("overlay.shader_blocking_active", "Shader Blocking Active"));
-	ImGui::Text("Blocked: %s", shaderCache->blockedKey.c_str());
+	ImGui::Text(T("overlay.blocked_key", "Blocked: %s"), shaderCache->blockedKey.c_str());
 
 	// Try to get more details from active shaders
 	auto activeShaders = shaderCache->GetActiveShaders();
@@ -456,14 +458,14 @@ void OverlayRenderer::RenderShaderBlockingStatus()
 	}
 
 	if (foundBlocked) {
-		ImGui::Text("Index: %zu/%zu", blockedIndex, activeShaders.size());
+		ImGui::Text(T("overlay.blocked_index", "Index: %zu/%zu"), blockedIndex, activeShaders.size());
 	} else {
-		ImGui::Text("Index: N/A (%zu active)", activeShaders.size());
+		ImGui::Text(T("overlay.blocked_index_na", "Index: N/A (%zu active)"), activeShaders.size());
 	}
 
 	for (const auto& shader : activeShaders) {
 		if (shader.key == shaderCache->blockedKey) {
-			ImGui::Text("Type: %s | Class: %s | Descriptor: 0x%X",
+			ImGui::Text(T("overlay.blocked_shader_detail", "Type: %s | Class: %s | Descriptor: 0x%X"),
 				magic_enum::enum_name(shader.shaderType).data(),
 				magic_enum::enum_name(shader.shaderClass).data(),
 				shader.descriptor);

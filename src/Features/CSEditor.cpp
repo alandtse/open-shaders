@@ -465,8 +465,8 @@ void CSEditor::DisplayWeatherBasicInfo(RE::TESWeather* weather, float weatherPct
 	bool showTooltip = CSEditor::RenderMultiColorWeatherName(weather, weatherText);
 	if (showTooltip) {
 		ImGui::BeginTooltip();
-		ImGui::Text(T(TKEY("tooltip_name"), "Name: %s"), weather->GetName() ? weather->GetName() : "Unnamed");
-		ImGui::Text(T(TKEY("tooltip_editor_id_2"), "Editor ID: %s"), weather->GetFormEditorID() ? weather->GetFormEditorID() : "None");
+		ImGui::Text(T(TKEY("tooltip_name"), "Name: %s"), weather->GetName() ? weather->GetName() : T(TKEY("unnamed"), "Unnamed"));
+		ImGui::Text(T(TKEY("tooltip_editor_id_2"), "Editor ID: %s"), weather->GetFormEditorID() ? weather->GetFormEditorID() : T(TKEY("none_value"), "None"));
 		ImGui::Text(T(TKEY("tooltip_form_id_2"), "Form ID: 0x%08X"), weather->GetFormID());
 		auto flagNames = CSEditor::GetWeatherFlagNames(weather);
 		if (!flagNames.empty()) {
@@ -812,8 +812,8 @@ void CSEditor::RenderWeatherControls(RE::Sky* sky, bool showSectionHeader)
 
 			if (ImGui::IsItemHovered()) {
 				ImGui::BeginTooltip();
-				ImGui::Text(T(TKEY("tooltip_weather_name"), "Weather: %s"), weather->GetName() ? weather->GetName() : "Unnamed");
-				ImGui::Text(T(TKEY("tooltip_editor_id"), "Editor ID: %s"), weather->GetFormEditorID() ? weather->GetFormEditorID() : "None");
+				ImGui::Text(T(TKEY("tooltip_weather_name"), "Weather: %s"), weather->GetName() ? weather->GetName() : T(TKEY("unnamed"), "Unnamed"));
+				ImGui::Text(T(TKEY("tooltip_editor_id"), "Editor ID: %s"), weather->GetFormEditorID() ? weather->GetFormEditorID() : T(TKEY("none_value"), "None"));
 				ImGui::Text(T(TKEY("tooltip_form_id"), "Form ID: 0x%08X"), weather->GetFormID());
 				ImGui::EndTooltip();
 			}

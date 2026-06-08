@@ -333,7 +333,7 @@ void SettingsTabRenderer::RenderShadersTab()
 
 			auto state = globals::state;
 			if (state->IsDeveloperMode()) {
-				ImGui::Text("Threads: %d compile, %d background, %d pool | P-cores: %d",
+				ImGui::Text(T("menu.settings.shader_thread_diagnostics", "Threads: %d compile, %d background, %d pool | P-cores: %d"),
 					(int)shaderCache->compilationThreadCount,
 					(int)shaderCache->backgroundCompilationThreadCount,
 					(int)shaderCache->compilationPool.get_thread_count(),
@@ -1005,7 +1005,7 @@ void SettingsTabRenderer::RenderFontsTab()
 			}
 
 			const char* familyPreview = fontCatalog.families.empty() ? T("menu.settings.no_families", "No families") : fontCatalog.families[familyIndex].displayName.c_str();
-			std::string familyLabel = std::format("{} Family##{}", descriptor.displayName, roleIndex);
+			std::string familyLabel = std::vformat(T("menu.settings.font_family_label", "{} Family##{}"), std::make_format_args(descriptor.displayName, roleIndex));
 			{
 				FontRoleGuard familyComboFont(Menu::FontRole::Body);
 				if (ImGui::BeginCombo(familyLabel.c_str(), familyPreview)) {
@@ -1057,7 +1057,7 @@ void SettingsTabRenderer::RenderFontsTab()
 					styleIndex = 0;
 				}
 				const char* stylePreview = selectedFamily->styles.empty() ? T("menu.settings.no_styles", "No styles") : selectedFamily->styles[styleIndex].displayName.c_str();
-				std::string styleLabel = std::format("{} Style##{}", descriptor.displayName, roleIndex);
+				std::string styleLabel = std::vformat(T("menu.settings.font_style_label", "{} Style##{}"), std::make_format_args(descriptor.displayName, roleIndex));
 				{
 					FontRoleGuard styleComboFont(Menu::FontRole::Body);
 					if (ImGui::BeginCombo(styleLabel.c_str(), stylePreview)) {
@@ -1086,12 +1086,12 @@ void SettingsTabRenderer::RenderFontsTab()
 
 			ImGui::TextDisabled(T("menu.settings.file_label", "File: %s"), roleSettings.File.c_str());
 
-			std::string scaleLabel = std::format("{} Scale##{}", descriptor.displayName, roleIndex);
+			std::string scaleLabel = std::vformat(T("menu.settings.font_scale_label", "{} Scale##{}"), std::make_format_args(descriptor.displayName, roleIndex));
 			if (ImGui::SliderFloat(scaleLabel.c_str(), &roleSettings.SizeScale, 0.5f, 2.5f, "%.2fx", ImGuiSliderFlags_AlwaysClamp)) {
 				menuInstance->pendingFontReload = true;
 			}
 			ImGui::SameLine();
-			std::string resetLabel = std::format("Reset##Scale{}", roleIndex);
+			std::string resetLabel = std::string(T("menu.settings.reset", "Reset")) + "##Scale" + std::to_string(roleIndex);
 			if (ImGui::Button(resetLabel.c_str())) {
 				roleSettings.SizeScale = Menu::GetFontRoleDefaultScale(role);
 				menuInstance->pendingFontReload = true;
