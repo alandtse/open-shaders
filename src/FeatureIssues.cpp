@@ -616,7 +616,7 @@ namespace FeatureIssues
 			ImGui::SameLine();
 			ImGui::Text("%s", T("menu.issues.core_feature_installed", "Core feature already installed"));
 			if (auto _tt = Util::HoverTooltipWrapper()) {
-				ImGui::TextWrapped("This feature is already included as part of the core Open Shaders installation. Uninstall this feature with your mod manager.");
+				ImGui::TextWrapped("%s", T("menu.issues.core_feature_installed_tooltip", "This feature is already included as part of the core Open Shaders installation. Uninstall this feature with your mod manager."));
 			}
 		} else if (issue.IsVersionMismatch()) {
 			ImGui::SameLine();
@@ -732,10 +732,10 @@ namespace FeatureIssues
 					ImGui::TextWrapped("%s", T("menu.issues.unknown_delete_warning",
 												 "This is an UNKNOWN feature. If it modified core shader files (outside of its own folder), deleting these files alone will NOT fix shader compilation issues."));
 					ImGui::Spacing();
-					ImGui::TextColored(theme.StatusPalette.Warning, "If compilation issues persist after deletion:");
-					ImGui::BulletText("Completely uninstall the feature via your mod manager");
-					ImGui::BulletText("Check for modified files in Data/Shaders/ (not in feature subfolders)");
-					ImGui::BulletText("Consider reinstalling Open Shaders if issues persist");
+					ImGui::TextColored(theme.StatusPalette.Warning, "%s", T("menu.issues.compilation_persist_warning", "If compilation issues persist after deletion:"));
+					ImGui::BulletText("%s", T("menu.issues.uninstall_via_mod_manager", "Completely uninstall the feature via your mod manager"));
+					ImGui::BulletText("%s", T("menu.issues.check_modified_files", "Check for modified files in Data/Shaders/ (not in feature subfolders)"));
+					ImGui::BulletText("%s", T("menu.issues.reinstall_cs", "Consider reinstalling Open Shaders if issues persist"));
 					ImGui::Spacing();
 					ImGui::Separator();
 					ImGui::Spacing();
@@ -1532,15 +1532,15 @@ namespace FeatureIssues
 			auto* menu = Menu::GetSingleton();
 			const auto& themeSettings = menu->GetTheme();
 
-			auto sectionWrapper = Util::SectionWrapper("Feature Issue Testing",
-				"These tools create test INI files to trigger all known feature issue types for testing purposes.",
+			auto sectionWrapper = Util::SectionWrapper(T("menu.issues.test.feature_issue_testing", "Feature Issue Testing"),
+				T("menu.issues.test.feature_issue_testing_desc", "These tools create test INI files to trigger all known feature issue types for testing purposes."),
 				themeSettings.Palette.Text);
 
 			if (sectionWrapper) {
 				const bool hasActiveTests = HasActiveTestInis();
 				if (hasActiveTests) {  // Warning section using theme colors
 					ImGui::PushStyleColor(ImGuiCol_Text, themeSettings.StatusPalette.RestartNeeded);
-					ImGui::TextWrapped("Test INI files are currently active. Restart CS to see feature issues.");
+					ImGui::TextWrapped("%s", T("menu.issues.test.active_inis_warning", "Test INI files are currently active. Restart CS to see feature issues."));
 					ImGui::PopStyleColor();  // Show detailed test state information
 					ImGui::Spacing();
 					ImGui::PushStyleColor(ImGuiCol_Text, themeSettings.StatusPalette.RestartNeeded);
@@ -1557,19 +1557,19 @@ namespace FeatureIssues
 						themeSettings.StatusPalette.RestartNeeded,
 						themeSettings.StatusPalette.CurrentHotkey);
 
-					if (ImGui::Button("Create Test INIs", { -1, 0 })) {
+					if (ImGui::Button(T("menu.issues.test.create_test_inis", "Create Test INIs"), { -1, 0 })) {
 						auto testInis = CreateTestInis();
 						logger::info("Created {} test INI files for feature issue testing", testInis.size());
 					}
 				}
 
 				if (auto _tt = Util::HoverTooltipWrapper()) {
-					ImGui::Text(
-						"Creates test INI files that trigger all known feature issue cases:\n"
-						"- Obsolete features (ComplexParallaxMaterials, TerrainBlending, etc.)\n"
-						"- Unknown features (fake non-existent features)\n"
-						"- Version mismatch (modifies existing feature version)\n"
-						"Restart CS after creating to see the issues in action.");
+					ImGui::Text("%s", T("menu.issues.test.create_test_inis_tooltip",
+										  "Creates test INI files that trigger all known feature issue cases:\n"
+										  "- Obsolete features (ComplexParallaxMaterials, TerrainBlending, etc.)\n"
+										  "- Unknown features (fake non-existent features)\n"
+										  "- Version mismatch (modifies existing feature version)\n"
+										  "Restart CS after creating to see the issues in action."));
 				}
 
 				// Restore button
@@ -1580,7 +1580,7 @@ namespace FeatureIssues
 						themeSettings.StatusPalette.Error,
 						themeSettings.StatusPalette.CurrentHotkey);
 
-					if (ImGui::Button("Restore", { -1, 0 })) {
+					if (ImGui::Button(T("menu.issues.test.restore", "Restore"), { -1, 0 })) {
 						auto& testInis = GetCurrentTestInis();
 						if (RestoreOriginalState(testInis)) {
 							logger::info("Successfully restored original state");
@@ -1591,10 +1591,10 @@ namespace FeatureIssues
 				}
 
 				if (auto _tt = Util::HoverTooltipWrapper()) {
-					ImGui::Text(
-						"Removes all test INI files and restores any modified INI files to their original state.\n"
-						"This undoes all changes made by 'Create Test INIs'.\n"
-						"Restart CS after restoring to see normal operation.");
+					ImGui::Text("%s", T("menu.issues.test.restore_tooltip",
+										  "Removes all test INI files and restores any modified INI files to their original state.\n"
+										  "This undoes all changes made by 'Create Test INIs'.\n"
+										  "Restart CS after restoring to see normal operation."));
 				}
 			}
 		}
