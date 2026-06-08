@@ -11,12 +11,13 @@
 #   git push origin <local-branch>:ci_test/<name>
 # then watch the "CI self-test" run. Delete the ci_test/* branch when done.
 #
-# SECURITY: triggered only by `push`. Forks cannot push to this repository's
-# refs, so this only ever runs trusted, same-repo code -- it does NOT use the
-# pull_request_target trust-inversion that fork PRs require. The repository
-# guard below skips it on forks. Cache writes use an isolated key suffix
-# (-ci-test) so a ci_test branch can never poison the dev / main / PR build
-# caches that production runs consume.
+# SECURITY: triggered only by `push` (to ci_test/**) and manual
+# `workflow_dispatch`. Both are write-access-gated -- forks cannot push to this
+# repository's refs and cannot dispatch its workflows -- so this only ever runs
+# trusted, same-repo code; it does NOT use the pull_request_target trust
+# inversion that fork PRs require. The repository guard below skips it on forks.
+# Cache writes use an isolated key suffix (-ci-test) so a ci_test branch can
+# never poison the dev / main / PR build caches that production runs consume.
 name: "CI self-test"
 
 on:
