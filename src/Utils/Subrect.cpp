@@ -1,5 +1,6 @@
 #include "Utils/Subrect.h"
 
+#include "../I18n/I18n.h"
 #include <algorithm>
 #include <cmath>
 #include <d3d11.h>

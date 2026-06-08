@@ -13,12 +13,13 @@
 #include "Features/HDRDisplay.h"
 #include "Features/InteriorSun.h"
 #include "Features/LightLimitFix.h"
+#include "Features/ScreenshotFeature.h"
+#include "Features/Skin.h"
+#include "Features/SkySync.h"
 #include "Features/Upscaling.h"
 #include "Features/Upscaling/FoveatedRender/Bridge.h"
 #include "Features/VR.h"
 #include "Features/VolumetricLighting.h"
-
-#include "ShaderTools/BSShaderHooks.h"
 
 std::unordered_map<void*, std::pair<std::unique_ptr<uint8_t[]>, size_t>> ShaderBytecodeMap;
 
@@ -266,6 +267,9 @@ struct IDXGISwapChain_Present
 			[&](IDXGISwapChain* swapChain, UINT syncInterval, UINT presentFlags) {
 				return func(swapChain, syncInterval, presentFlags);
 			});
+
+		// Runs after HDR Present so the captured back buffer matches what's on screen.
+		globals::features::screenshotFeature.ProcessCaptureRequest();
 
 		TracyD3D11Collect(globals::state->tracyCtx);
 
@@ -558,8 +562,9 @@ namespace Hooks
 	{
 		static void thunk(RE::BSGraphics::Renderer* This, RE::RENDER_TARGETS::RENDER_TARGET a_target, RE::BSGraphics::RenderTargetProperties* a_properties)
 		{
-			globals::state->ModifyRenderTarget(a_target, a_properties);
-			func(This, a_target, a_properties);
+			auto properties = *a_properties;
+			globals::state->ModifyRenderTarget(a_target, properties);
+			func(This, a_target, &properties);
 		}
 		static inline REL::Relocation<decltype(thunk)> func;
 	};
@@ -596,8 +601,9 @@ namespace Hooks
 	{
 		static void thunk(RE::BSGraphics::Renderer* This, RE::RENDER_TARGETS::RENDER_TARGET a_target, RE::BSGraphics::RenderTargetProperties* a_properties)
 		{
-			globals::state->ModifyRenderTarget(a_target, a_properties);
-			func(This, a_target, a_properties);
+			auto properties = *a_properties;
+			globals::state->ModifyRenderTarget(a_target, properties);
+			func(This, a_target, &properties);
 		}
 		static inline REL::Relocation<decltype(thunk)> func;
 	};
@@ -606,8 +612,9 @@ namespace Hooks
 	{
 		static void thunk(RE::BSGraphics::Renderer* This, RE::RENDER_TARGETS::RENDER_TARGET a_target, RE::BSGraphics::RenderTargetProperties* a_properties)
 		{
-			globals::state->ModifyRenderTarget(a_target, a_properties);
-			func(This, a_target, a_properties);
+			auto properties = *a_properties;
+			globals::state->ModifyRenderTarget(a_target, properties);
+			func(This, a_target, &properties);
 		}
 		static inline REL::Relocation<decltype(thunk)> func;
 	};
@@ -616,8 +623,9 @@ namespace Hooks
 	{
 		static void thunk(RE::BSGraphics::Renderer* This, RE::RENDER_TARGETS::RENDER_TARGET a_target, RE::BSGraphics::RenderTargetProperties* a_properties)
 		{
-			globals::state->ModifyRenderTarget(a_target, a_properties);
-			func(This, a_target, a_properties);
+			auto properties = *a_properties;
+			globals::state->ModifyRenderTarget(a_target, properties);
+			func(This, a_target, &properties);
 		}
 		static inline REL::Relocation<decltype(thunk)> func;
 	};
@@ -639,6 +647,28 @@ namespace Hooks
 		{
 			auto properties = *a_properties;
 			properties.copyable = true;
+			func(This, a_target, &properties);
+		}
+		static inline REL::Relocation<decltype(thunk)> func;
+	};
+
+	struct CreateRenderTarget_Water1
+	{
+		static void thunk(RE::BSGraphics::Renderer* This, RE::RENDER_TARGETS::RENDER_TARGET a_target, RE::BSGraphics::RenderTargetProperties* a_properties)
+		{
+			auto properties = *a_properties;
+			properties.format.set(RE::BSGraphics::Format::kR16G16B16A16_FLOAT);
+			func(This, a_target, &properties);
+		}
+		static inline REL::Relocation<decltype(thunk)> func;
+	};
+
+	struct CreateRenderTarget_Water2
+	{
+		static void thunk(RE::BSGraphics::Renderer* This, RE::RENDER_TARGETS::RENDER_TARGET a_target, RE::BSGraphics::RenderTargetProperties* a_properties)
+		{
+			auto properties = *a_properties;
+			properties.format.set(RE::BSGraphics::Format::kR16G16B16A16_FLOAT);
 			func(This, a_target, &properties);
 		}
 		static inline REL::Relocation<decltype(thunk)> func;
@@ -947,6 +977,12 @@ namespace Hooks
 		func(a_pass, a_technique, a_alphaTest, a_renderFlags);
 	}
 
+	void Sky_UpdateColors::thunk(RE::Sky* sky, float a_delta)
+	{
+		func(sky, a_delta);
+		globals::features::skySync.OnSkyUpdateColors(sky);
+	}
+
 	/**
 	 * @brief Installs hooks, detours, and memory patches for graphics, input, and rendering subsystems.
 	 *
@@ -995,6 +1031,9 @@ namespace Hooks
 		stl::write_thunk_call<CreateRenderTarget_RefractionNormals>(REL::RelocationID(100458, 107175).address() + REL::Relocate(0x503, 0x502, 0x661));
 		stl::write_thunk_call<CreateRenderTarget_UnderwaterMask>(REL::RelocationID(100458, 107175).address() + REL::Relocate(0xB19, 0xB19, 0xE06));
 
+		stl::write_thunk_call<CreateRenderTarget_Water1>(REL::RelocationID(100458, 107175).address() + REL::Relocate(0xF4F, 0xF51, 0x12C2));
+		stl::write_thunk_call<CreateRenderTarget_Water2>(REL::RelocationID(100458, 107175).address() + REL::Relocate(0xF65, 0xF67, 0x12D8));
+
 		stl::write_thunk_call<CreateDepthStencil_PrecipitationMask>(REL::RelocationID(100458, 107175).address() + REL::Relocate(0x1245, 0x123B, 0x1917));
 		stl::write_thunk_call<CreateCubemapRenderTarget_Reflections>(REL::RelocationID(100458, 107175).address() + REL::Relocate(0xA25, 0xA25, 0xCD2));
 		stl::write_thunk_call<CreateDepthStencil_Reflections>(REL::RelocationID(100458, 107175).address() + REL::Relocate(0xA59, 0xA59, 0xD13));
@@ -1017,6 +1056,9 @@ namespace Hooks
 
 		logger::info("Hooking TESWaterReflections::Update_Actor::GetLOSPosition for Sky Reflection Fix");
 		stl::write_thunk_call<TESWaterReflections_Update_Actor_GetLOSPosition>(REL::RelocationID(31373, 32160).address() + REL::Relocate(0x1AD, 0x1CA, 0x1ed));
+
+		logger::info("Hooking Sky::UpdateColors");
+		stl::detour_thunk<Sky_UpdateColors>(REL::RelocationID(25686, 26233));
 
 		logger::info("Installing SetupGeometry hooks");
 		stl::write_vfunc<0x6, EffectExtensions::BSEffectShader_SetupGeometry>(RE::VTABLE_BSEffectShader[0]);

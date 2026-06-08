@@ -1,5 +1,6 @@
 #include "Upscaling.h"
 
+#include "../I18n/I18n.h"
 #include "Deferred.h"
 #include "HDRDisplay.h"
 #include "Hooks.h"
@@ -20,6 +21,8 @@
 #include <cmath>
 #include <directx/d3dx12.h>
 #include <format>
+
+#define I18N_KEY_PREFIX "feature.upscaling."
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	Upscaling::Settings,
@@ -192,7 +195,10 @@ void Upscaling::DrawSettings()
 	const bool openCompositeBlocksUpscaling = openCompositeBlocker.active;
 
 	// Display upscaling options in the UI
-	std::vector<std::string> upscaleModes = { "None", "TAA" };
+	std::vector<std::string> upscaleModes = {
+		T(TKEY("method_none"), "None"),
+		T(TKEY("method_taa"), "TAA")
+	};
 
 	std::string fsrLabel = "AMD FSR 3.1";
 	upscaleModes.push_back(fsrLabel);
@@ -281,8 +287,20 @@ void Upscaling::DrawSettings()
 
 	// Display upscaling settings if applicable
 	if (upscaleMethod != UpscaleMethod::kNONE && upscaleMethod != UpscaleMethod::kTAA) {
-		const char* upscalePresetsDLSS[] = { "Ultra Performance", "Performance", "Balanced", "Quality", "DLAA" };
-		const char* upscalePresets[] = { "Ultra Performance", "Performance", "Balanced", "Quality", "Native AA" };
+		const char* upscalePresetsDLSS[] = {
+			T(TKEY("preset_ultra_performance"), "Ultra Performance"),
+			T(TKEY("preset_performance"), "Performance"),
+			T(TKEY("preset_balanced"), "Balanced"),
+			T(TKEY("preset_quality"), "Quality"),
+			T(TKEY("preset_dlaa"), "DLAA")
+		};
+		const char* upscalePresets[] = {
+			T(TKEY("preset_ultra_performance"), "Ultra Performance"),
+			T(TKEY("preset_performance"), "Performance"),
+			T(TKEY("preset_balanced"), "Balanced"),
+			T(TKEY("preset_quality"), "Quality"),
+			T(TKEY("preset_native_aa"), "Native AA")
+		};
 
 		// Compute a safe preset index (4 - qualityMode) clamped to [0,4] to avoid negative/overflow indexing
 		int presetIndex = 0;
@@ -323,12 +341,18 @@ void Upscaling::DrawSettings()
 		}
 
 		if (upscaleMethod == UpscaleMethod::kFSR) {
-			ImGui::SliderFloat("Sharpness", &settings.sharpnessFSR, 0.0f, 1.0f, "%.1f");
+			ImGui::SliderFloat(T(TKEY("sharpness"), "Sharpness"), &settings.sharpnessFSR, 0.0f, 1.0f, "%.1f");
 		} else if (upscaleMethod == UpscaleMethod::kDLSS) {
-			ImGui::SliderFloat("Sharpness", &settings.sharpnessDLSS, 0.0f, 1.0f, "%.1f");
+			ImGui::SliderFloat(T(TKEY("sharpness"), "Sharpness"), &settings.sharpnessDLSS, 0.0f, 1.0f, "%.1f");
 
-			const char* presets[] = { "Default", "Preset J", "Preset K", "Preset L", "Preset M" };
-			ImGui::Combo("DLSS Model Preset", (int*)&settings.presetDLSS, presets, 5);
+			const char* presets[] = {
+				T(TKEY("dlss_model_preset_default"), "Default"),
+				T(TKEY("dlss_model_preset_j"), "Preset J"),
+				T(TKEY("dlss_model_preset_k"), "Preset K"),
+				T(TKEY("dlss_model_preset_l"), "Preset L"),
+				T(TKEY("dlss_model_preset_m"), "Preset M")
+			};
+			ImGui::Combo(T(TKEY("dlss_model_preset"), "DLSS Model Preset"), (int*)&settings.presetDLSS, presets, 5);
 			if (auto _tt = Util::HoverTooltipWrapper()) {
 				ImGui::Text("Choose which DLSS AI model preset to use.");
 				ImGui::Text("Each model offers different visual quality, performance, and motion stability.");
@@ -443,57 +467,57 @@ void Upscaling::DrawSettings()
 		}
 	}
 
-	if (streamline.reflexSupportedOnCurrentAdapter && ImGui::TreeNodeEx("NVIDIA Reflex", ImGuiTreeNodeFlags_DefaultOpen)) {
+	if (streamline.reflexSupportedOnCurrentAdapter && ImGui::TreeNodeEx(T(TKEY("nvidia_reflex"), "NVIDIA Reflex"), ImGuiTreeNodeFlags_DefaultOpen)) {
 		const bool reflexBlockedByFrameGeneration = frameGenerationDx12PathActive;
 		const bool reflexAvailable = streamline.initialized && streamline.featureReflex;
 		const bool reflexControlsAvailable = reflexAvailable && !reflexBlockedByFrameGeneration;
 		const bool markerOptimizationAvailable = reflexControlsAvailable && streamline.featurePCL;
 		if (reflexBlockedByFrameGeneration) {
-			ImGui::TextDisabled("Reflex is unavailable while the DX12 frame-generation swapchain is active.");
+			ImGui::TextDisabled("%s", T(TKEY("reflex_blocked_by_fg"), "Reflex is unavailable while the DX12 frame-generation swapchain is active."));
 		}
 
 		if (!reflexAvailable) {
-			ImGui::TextDisabled("Reflex is not available. Ensure sl.reflex.dll is present and restart.");
+			ImGui::TextDisabled("%s", T(TKEY("reflex_not_available"), "Reflex is not available. Ensure sl.reflex.dll is present and restart."));
 		}
 
 		if (!reflexControlsAvailable)
 			ImGui::BeginDisabled();
 
-		ImGui::Checkbox("Low Latency Mode", &settings.reflexLowLatencyMode);
+		ImGui::Checkbox(T(TKEY("low_latency_mode"), "Low Latency Mode"), &settings.reflexLowLatencyMode);
 		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::TextUnformatted("Cuts input delay by syncing CPU work closer to the GPU.");
-			ImGui::TextUnformatted("Can reduce max FPS a little, but usually feels more responsive.");
+			ImGui::TextUnformatted(T(TKEY("low_latency_mode_tooltip_1"), "Cuts input delay by syncing CPU work closer to the GPU."));
+			ImGui::TextUnformatted(T(TKEY("low_latency_mode_tooltip_2"), "Can reduce max FPS a little, but usually feels more responsive."));
 		}
 
 		if (!settings.reflexLowLatencyMode)
 			ImGui::BeginDisabled();
 
-		ImGui::Checkbox("Low Latency Boost", &settings.reflexLowLatencyBoost);
+		ImGui::Checkbox(T(TKEY("low_latency_boost"), "Low Latency Boost"), &settings.reflexLowLatencyBoost);
 		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::TextUnformatted("Keeps GPU clocks higher to avoid latency spikes at low GPU load.");
-			ImGui::TextUnformatted("Useful if frametime jumps; costs extra power and heat.");
+			ImGui::TextUnformatted(T(TKEY("low_latency_boost_tooltip_1"), "Keeps GPU clocks higher to avoid latency spikes at low GPU load."));
+			ImGui::TextUnformatted(T(TKEY("low_latency_boost_tooltip_2"), "Useful if frametime jumps; costs extra power and heat."));
 		}
 
 		if (!markerOptimizationAvailable)
 			ImGui::BeginDisabled();
 
-		ImGui::Checkbox("Use Markers To Optimize", &settings.reflexUseMarkersToOptimize);
+		ImGui::Checkbox(T(TKEY("use_markers_to_optimize"), "Use Markers To Optimize"), &settings.reflexUseMarkersToOptimize);
 		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::TextUnformatted("Uses frame markers for tighter Reflex timing.");
-			ImGui::TextUnformatted("Try On first; turn Off if it causes stutter on your setup.");
+			ImGui::TextUnformatted(T(TKEY("use_markers_to_optimize_tooltip_1"), "Uses frame markers for tighter Reflex timing."));
+			ImGui::TextUnformatted(T(TKEY("use_markers_to_optimize_tooltip_2"), "Try On first; turn Off if it causes stutter on your setup."));
 		}
 
 		if (!markerOptimizationAvailable)
 			ImGui::EndDisabled();
 
 		if (!markerOptimizationAvailable) {
-			ImGui::TextDisabled("Marker optimization unavailable (PCL not loaded).");
+			ImGui::TextDisabled("%s", T(TKEY("marker_optimization_unavailable"), "Marker optimization unavailable (PCL not loaded)."));
 		}
 
-		ImGui::Checkbox("Use FPS Limit", &settings.reflexUseFPSLimit);
+		ImGui::Checkbox(T(TKEY("use_fps_limit"), "Use FPS Limit"), &settings.reflexUseFPSLimit);
 		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::TextUnformatted("Uses Reflex's internal FPS cap for steadier frametimes.");
-			ImGui::TextUnformatted("Can lower latency versus uncapped rendering.");
+			ImGui::TextUnformatted(T(TKEY("use_fps_limit_tooltip_1"), "Uses Reflex's internal FPS cap for steadier frametimes."));
+			ImGui::TextUnformatted(T(TKEY("use_fps_limit_tooltip_2"), "Can lower latency versus uncapped rendering."));
 		}
 
 		if (!settings.reflexLowLatencyMode)
@@ -505,10 +529,10 @@ void Upscaling::DrawSettings()
 		if (!std::isfinite(settings.reflexFPSLimit))
 			settings.reflexFPSLimit = 60.0f;
 		settings.reflexFPSLimit = std::clamp(settings.reflexFPSLimit, 20.0f, 240.0f);
-		ImGui::SliderFloat("FPS Limit", &settings.reflexFPSLimit, 20.0f, 240.0f, "%.0f");
+		ImGui::SliderFloat(T(TKEY("fps_limit"), "FPS Limit"), &settings.reflexFPSLimit, 20.0f, 240.0f, "%.0f");
 		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::TextUnformatted("Set your frame cap target.");
-			ImGui::TextUnformatted("Start about 2-3 FPS below refresh rate (e.g. 117 for 120 Hz).");
+			ImGui::TextUnformatted(T(TKEY("fps_limit_tooltip_1"), "Set your frame cap target."));
+			ImGui::TextUnformatted(T(TKEY("fps_limit_tooltip_2"), "Start about 2-3 FPS below refresh rate (e.g. 117 for 120 Hz)."));
 		}
 
 		if (!settings.reflexUseFPSLimit)
@@ -545,7 +569,7 @@ void Upscaling::DrawSettings()
 		// streamlineLogLevel is sanitized in LoadSettings (runs on every load,
 		// not gated on this node being expanded), so the stored value is in range.
 		int logLevelIdx = static_cast<int>(settings.streamlineLogLevel);
-		if (ImGui::Combo("Streamline Logging", &logLevelIdx, logLevels, IM_ARRAYSIZE(logLevels))) {
+		if (ImGui::Combo(T(TKEY("streamline_logging"), "Streamline Logging"), &logLevelIdx, logLevels, IM_ARRAYSIZE(logLevels))) {
 			settings.streamlineLogLevel = static_cast<uint>(logLevelIdx);
 		}
 		Util::UI::RestartGatedAnnotate(bootSnapshot, settings, &Settings::streamlineLogLevel,
@@ -583,6 +607,68 @@ void Upscaling::DrawSettings()
 			}
 
 			if (ImGui::TreeNode("Native Inputs")) {
+				auto renderer = globals::game::renderer;
+				auto& main = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMAIN];
+				auto& mvec = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMOTION_VECTOR];
+				auto& depth = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kMAIN];
+
+				auto DisplayRT = [&](const char* label, ID3D11Texture2D* tex, ID3D11ShaderResourceView* srv) {
+					if (srv && tex) {
+						D3D11_TEXTURE2D_DESC desc;
+						tex->GetDesc(&desc);
+						char buf[128];
+						snprintf(buf, sizeof(buf), "%s (%ux%u)", label, desc.Width, desc.Height);
+						if (ImGui::TreeNode(buf)) {
+							ImGui::Image(srv, { desc.Width * debugRescale, desc.Height * debugRescale });
+							ImGui::TreePop();
+						}
+					}
+				};
+
+				DisplayRT("kMAIN (Color Input)", (ID3D11Texture2D*)main.texture, (ID3D11ShaderResourceView*)main.SRV);
+				DisplayRT("Motion Vectors", (ID3D11Texture2D*)mvec.texture, (ID3D11ShaderResourceView*)mvec.SRV);
+				DisplayRT("Depth", depth.texture, depth.depthSRV);
+
+				if (reactiveMaskTexture)
+					BUFFER_VIEWER_NODE_TITLE(reactiveMaskTexture, "Reactive Mask", debugRescale)
+				if (transparencyCompositionMaskTexture)
+					BUFFER_VIEWER_NODE_TITLE(transparencyCompositionMaskTexture, "Transparency Mask", debugRescale)
+
+				ImGui::TreePop();
+			}
+		}
+
+		// VR Debug visualization -- per-eye buffers and native inputs
+		if (globals::game::isVR) {
+			ImGui::Separator();
+			static float debugRescale = 0.15f;
+			ImGui::SliderFloat(T(TKEY("view_resize"), "View Resize"), &debugRescale, 0.05f, 1.f);
+
+			if (ImGui::TreeNode(T(TKEY("upscaling_intermediates"), "Upscaling Intermediates"))) {
+				if (vrIntermediateMotionVectors[0]) {
+					bool isDLSS = GetUpscaleMethod() == UpscaleMethod::kDLSS;
+					if (vrIntermediateColorIn[0] && vrIntermediateColorOut[0]) {
+						BUFFER_VIEWER_NODE_TITLE(vrIntermediateColorIn[0], "Left Eye In", debugRescale)
+						BUFFER_VIEWER_NODE_TITLE(vrIntermediateColorIn[1], "Right Eye In", debugRescale)
+						if (!isDLSS)
+							BUFFER_VIEWER_NODE_TITLE(vrIntermediateColorOut[0], "Left Eye Out", debugRescale)
+						BUFFER_VIEWER_NODE_TITLE(vrIntermediateColorOut[1], "Right Eye Out", debugRescale)
+					}
+					BUFFER_VIEWER_NODE_TITLE(vrIntermediateMotionVectors[0], "Left Eye MVec", debugRescale)
+					BUFFER_VIEWER_NODE_TITLE(vrIntermediateMotionVectors[1], "Right Eye MVec", debugRescale)
+					BUFFER_VIEWER_NODE_TITLE(vrIntermediateReactiveMask[0], "Left Eye Reactive", debugRescale)
+					BUFFER_VIEWER_NODE_TITLE(vrIntermediateReactiveMask[1], "Right Eye Reactive", debugRescale)
+					if (vrIntermediateTransparencyMask[0]) {
+						BUFFER_VIEWER_NODE_TITLE(vrIntermediateTransparencyMask[0], "Left Eye Transparency", debugRescale)
+						BUFFER_VIEWER_NODE_TITLE(vrIntermediateTransparencyMask[1], "Right Eye Transparency", debugRescale)
+					}
+				} else {
+					ImGui::TextDisabled("%s", T(TKEY("vr_intermediates_not_created"), "VR intermediates not yet created (enter game world)"));
+				}
+				ImGui::TreePop();
+			}
+
+			if (ImGui::TreeNode(T(TKEY("native_inputs"), "Native Inputs"))) {
 				auto renderer = globals::game::renderer;
 				auto& main = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMAIN];
 				auto& mvec = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMOTION_VECTOR];
@@ -1775,7 +1861,9 @@ void Upscaling::CopySharedD3D12Resources()
 
 		context->PSSetShader(copyDepthToSharedBufferPS.get(), nullptr, 0);
 
+		globals::profiler->BeginPass("Upscaling::CopyDepthD3D12");
 		context->Draw(3, 0);
+		globals::profiler->EndPass();
 	}
 
 	// Clean up
@@ -2084,6 +2172,7 @@ void Upscaling::Upscale()
 	auto& motionVector = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMOTION_VECTOR];
 
 	{
+		globals::profiler->BeginPass("Upscaling::EncodeTextures");
 		state->BeginPerfEvent("Encode Upscaling Textures");
 		TracyD3D11Zone(globals::state->tracyCtx, "Encode Upscaling Textures");
 
@@ -2143,9 +2232,11 @@ void Upscaling::Upscale()
 		context->CSSetShader(shader, nullptr, 0);
 
 		state->EndPerfEvent();
+		globals::profiler->EndPass();
 	}
 
 	{
+		globals::profiler->BeginPass("Upscaling::Upscale");
 		state->BeginPerfEvent("Upscaling");
 		TracyD3D11Zone(globals::state->tracyCtx, "Upscaling Dispatch");
 
@@ -2206,6 +2297,7 @@ void Upscaling::Upscale()
 		}
 
 		state->EndPerfEvent();
+		globals::profiler->EndPass();
 	}
 }
 
@@ -2392,6 +2484,7 @@ void Upscaling::UpscaleDepth()
 		context->OMSetRenderTargets(2, rtvs, depth.views[0]);
 
 		context->PSSetShader(depthUpscalePS, nullptr, 0);
+		globals::profiler->BeginPass("Upscaling::DepthUpscale");
 		context->Draw(3, 0);
 	} else {
 		TracyD3D11Zone(globals::state->tracyCtx, "Upscaling - Full Resolution Underwater Mask Depth Copy");
@@ -2420,6 +2513,7 @@ void Upscaling::UpscaleDepth()
 		context->OMSetRenderTargets(ARRAYSIZE(rtvs), rtvs, nullptr);
 
 		context->PSSetShader(underwaterMaskPS, nullptr, 0);
+		globals::profiler->BeginPass("Upscaling::UnderwaterMaskUpscale");
 		context->Draw(3, 0);
 	}
 

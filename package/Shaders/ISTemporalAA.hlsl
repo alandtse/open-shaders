@@ -63,11 +63,11 @@ float EncodeFeedbackLuma(float pqLuma)
 {
 	// PQ → linear (single channel: luma only, no colour transform needed)
 	float linearLuma = DisplayMapping::PQtoLinear(pqLuma.xxx, 10000.0).x;
-	return Color::LinearToGammaSafe(linearLuma);
+	return Color::LinearToGammaSafe(linearLuma.xxx).x;
 }
 float DecodeFeedbackLuma(float gammaLuma)
 {
-	float linearLuma = Color::GammaToLinearSafe(gammaLuma);
+	float linearLuma = Color::GammaToLinearSafe(gammaLuma.xxx).x;
 	return DisplayMapping::LinearToPQ(linearLuma.xxx, 10000.0).x;
 }
 #	endif
