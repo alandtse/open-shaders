@@ -67,32 +67,32 @@ void SkySync::DrawSettings()
 		ImGui::Text("%s", T(TKEY("min_shadow_elevation_tooltip"), "The minimum angle sunlight will set to. Caps shadow length. Higher = shorter shadows at sunset/sunrise."));
 	}
 
-	ImGui::SliderFloat("Shadow Transition Duration", &settings.ShadowTransitionDuration, 0.0f, 500.0f, "%.0f", ImGuiSliderFlags_AlwaysClamp);
+	ImGui::SliderFloat(T(TKEY("shadow_transition_duration"), "Shadow Transition Duration"), &settings.ShadowTransitionDuration, 0.0f, 500.0f, "%.0f", ImGuiSliderFlags_AlwaysClamp);
 	if (auto _tt = Util::HoverTooltipWrapper()) {
-		ImGui::Text("How long (in game-time units) the shadow direction takes to fade between sources. 100 = ~5 seconds at timescale 20.");
+		ImGui::TextUnformatted(T(TKEY("shadow_transition_duration_tooltip"), "How long (in game-time units) the shadow direction takes to fade between sources. 100 = ~5 seconds at timescale 20."));
 	}
 
-	ImGui::Checkbox("Dim Sunlight Under Horizon", &settings.DimSunlightUnderHorizon);
+	ImGui::Checkbox(T(TKEY("dim_sunlight_under_horizon"), "Dim Sunlight Under Horizon"), &settings.DimSunlightUnderHorizon);
 	if (auto _tt = Util::HoverTooltipWrapper()) {
-		ImGui::TextUnformatted("Fade directional light to zero as the sun goes below the horizon.");
+		ImGui::TextUnformatted(T(TKEY("dim_sunlight_under_horizon_tooltip"), "Fade directional light to zero as the sun goes below the horizon."));
 	}
 
-	ImGui::SliderFloat("New Moon Intensity", &settings.NewMoonIntensity, 0.0f, 1.0f, "%.3f", ImGuiSliderFlags_AlwaysClamp);
-	ImGui::SliderFloat("Crescent Intensity", &settings.CrescentMoonIntensity, 0.0f, 1.0f, "%.3f", ImGuiSliderFlags_AlwaysClamp);
-	ImGui::SliderFloat("Full Moon Intensity", &settings.FullMoonIntensity, 0.0f, 1.0f, "%.3f", ImGuiSliderFlags_AlwaysClamp);
+	ImGui::SliderFloat(T(TKEY("new_moon_intensity"), "New Moon Intensity"), &settings.NewMoonIntensity, 0.0f, 1.0f, "%.3f", ImGuiSliderFlags_AlwaysClamp);
+	ImGui::SliderFloat(T(TKEY("crescent_intensity"), "Crescent Intensity"), &settings.CrescentMoonIntensity, 0.0f, 1.0f, "%.3f", ImGuiSliderFlags_AlwaysClamp);
+	ImGui::SliderFloat(T(TKEY("full_moon_intensity"), "Full Moon Intensity"), &settings.FullMoonIntensity, 0.0f, 1.0f, "%.3f", ImGuiSliderFlags_AlwaysClamp);
 
-	if (ImGui::TreeNodeEx("Debug", ImGuiTreeNodeFlags_None)) {
-		static constexpr const char* CasterNames[] = { "Sun", "Masser", "Secunda", "None" };
-		static constexpr const char* PhaseNames[] = { "Full", "Waning Gibbous", "Waning Quarter", "Waning Crescent", "New", "Waxing Crescent", "Waxing Quarter", "Waxing Gibbous" };
+	if (ImGui::TreeNodeEx(T(TKEY("debug"), "Debug"), ImGuiTreeNodeFlags_None)) {
+		const char* CasterNames[] = { T(TKEY("caster_sun"), "Sun"), T(TKEY("caster_masser"), "Masser"), T(TKEY("caster_secunda"), "Secunda"), T(TKEY("caster_none"), "None") };
+		const char* PhaseNames[] = { T(TKEY("phase_full"), "Full"), T(TKEY("phase_waning_gibbous"), "Waning Gibbous"), T(TKEY("phase_waning_quarter"), "Waning Quarter"), T(TKEY("phase_waning_crescent"), "Waning Crescent"), T(TKEY("phase_new"), "New"), T(TKEY("phase_waxing_crescent"), "Waxing Crescent"), T(TKEY("phase_waxing_quarter"), "Waxing Quarter"), T(TKEY("phase_waxing_gibbous"), "Waxing Gibbous") };
 
-		auto getPhase = [](const RE::Moon* moon) -> const char* {
+		auto getPhase = [&](const RE::Moon* moon) -> const char* {
 			if (!moon || !moon->moonMesh)
-				return "Unknown";
+				return T(TKEY("phase_unknown"), "Unknown");
 			if (const auto prop = skyrim_cast<RE::BSSkyShaderProperty*>(moon->moonMesh->GetGeometryRuntimeData().shaderProperty.get())) {
 				if (auto tex = prop->GetBaseTexture())
 					return PhaseNames[static_cast<int>(Util::Moon::GetPhaseFromTexture(tex->name.c_str()))];
 			}
-			return "Unknown";
+			return T(TKEY("phase_unknown"), "Unknown");
 		};
 
 		auto drawMoonEntry = [&](const char* label, Caster caster, const char* phase) {
@@ -104,24 +104,24 @@ void SkySync::DrawSettings()
 		};
 
 		const auto sky = globals::game::sky;
-		drawMoonEntry("Masser", Caster::Masser, sky ? getPhase(sky->masser) : "Unknown");
-		drawMoonEntry("Secunda", Caster::Secunda, sky ? getPhase(sky->secunda) : "Unknown");
+		drawMoonEntry(T(TKEY("caster_masser"), "Masser"), Caster::Masser, sky ? getPhase(sky->masser) : T(TKEY("phase_unknown"), "Unknown"));
+		drawMoonEntry(T(TKEY("caster_secunda"), "Secunda"), Caster::Secunda, sky ? getPhase(sky->secunda) : T(TKEY("phase_unknown"), "Unknown"));
 
-		ImGui::Text("Dim: %.3f", currentDim);
+		ImGui::Text(T(TKEY("debug_dim"), "Dim: %.3f"), currentDim);
 
 		ImGui::Spacing();
 		ImGui::Separator();
 		ImGui::Spacing();
 
-		ImGui::Text("Shadow target: %s", CasterNames[static_cast<int>(shadowFader.target)]);
-		ImGui::Text("Shadow dir:    (%.2f, %.2f, %.2f)", shadowFader.currentDir.x, shadowFader.currentDir.y, shadowFader.currentDir.z);
+		ImGui::Text(T(TKEY("debug_shadow_target"), "Shadow target: %s"), CasterNames[static_cast<int>(shadowFader.target)]);
+		ImGui::Text(T(TKEY("debug_shadow_dir"), "Shadow dir:    (%.2f, %.2f, %.2f)"), shadowFader.currentDir.x, shadowFader.currentDir.y, shadowFader.currentDir.z);
 		if (shadowFader.transitioning) {
 			const float t = settings.ShadowTransitionDuration > 0.0f ? shadowFader.fadeTimer / settings.ShadowTransitionDuration : 1.0f;
 			ImGui::ProgressBar(t, { -1.0f, 0.0f }, "");
 			ImGui::SameLine(0.0f, ImGui::GetStyle().ItemInnerSpacing.x);
-			ImGui::Text("Transitioning %.0f%%", t * 100.0f);
+			ImGui::Text(T(TKEY("debug_transitioning"), "Transitioning %.0f%%"), t * 100.0f);
 		} else {
-			ImGui::TextDisabled("No transition");
+			ImGui::TextDisabled(T(TKEY("debug_no_transition"), "No transition"));
 		}
 
 		ImGui::TreePop();

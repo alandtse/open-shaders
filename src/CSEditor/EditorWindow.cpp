@@ -669,7 +669,7 @@ void EditorWindow::ShowObjectsWindow()
 
 							// Display current cell name
 							const char* cellName = cell->GetName();
-							std::string displayName = cellName && cellName[0] ? cellName : "[Unnamed Cell]";
+							std::string displayName = cellName && cellName[0] ? cellName : T(TKEY("unnamed_cell"), "[Unnamed Cell]");
 							std::string label = displayName;
 
 							// Highlight current cell (before TableRowSelectable so hover/active can override)
@@ -1143,7 +1143,8 @@ void EditorWindow::RenderUI()
 				ImGui::PopStyleColor();
 			}
 			ImGui::PopStyleVar(2);
-			Util::AddTooltip(canUndo ? std::format("Undo (Ctrl+Z) - {} states", (int)undoStack.size()).c_str() : T(TKEY("undo_no_changes"), "Undo (Ctrl+Z) - No changes to undo"));
+			const int undoStateCount = (int)undoStack.size();
+			Util::AddTooltip(canUndo ? std::vformat(T(TKEY("undo_states"), "Undo (Ctrl+Z) - {} states"), std::make_format_args(undoStateCount)).c_str() : T(TKEY("undo_no_changes"), "Undo (Ctrl+Z) - No changes to undo"));
 		}
 
 		// Right-aligned items — use SetCursorScreenPos to bypass menu bar GroupOffset

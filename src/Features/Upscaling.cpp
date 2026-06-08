@@ -225,14 +225,14 @@ void Upscaling::DrawSettings()
 		modeLabels.push_back(upscaleModes[i].c_str());
 	if (openCompositeBlocksUpscaling)
 		ImGui::BeginDisabled();
-	ImGui::Combo("Method", (int*)currentUpscaleMode, modeLabels.data(), (int)modeLabels.size());
+	ImGui::Combo(T(TKEY("method"), "Method"), (int*)currentUpscaleMode, modeLabels.data(), (int)modeLabels.size());
 	if (openCompositeBlocksUpscaling)
 		ImGui::EndDisabled();
 	if (auto _tt = Util::HoverTooltipWrapper()) {
 		if (openCompositeBlocksUpscaling)
-			ImGui::Text("Locked to None while OpenComposite has %s=true.", openCompositeBlocker.settingName.c_str());
+			ImGui::Text(T(TKEY("method_locked_opencomposite"), "Locked to None while OpenComposite has %s=true."), openCompositeBlocker.settingName.c_str());
 		else
-			ImGui::TextUnformatted("Selects the upscaling backend.");
+			ImGui::TextUnformatted(T(TKEY("method_tooltip"), "Selects the upscaling backend."));
 	}
 
 	*currentUpscaleMode = std::min(availableModes, *currentUpscaleMode);
@@ -258,9 +258,9 @@ void Upscaling::DrawSettings()
 	// diff uses the RestartNeeded color so users learn the cue means "you
 	// changed something that won't apply yet."
 	if (perfMode.IsHookActive()) {
-		ImGui::TextWrapped(
+		ImGui::TextWrapped(T(TKEY("perfmode_active_note"),
 			"Render-at-upscaled-resolution is active: Method and Upscale Preset changes only take effect after a game restart. "
-			"Sharpness / model preset / Reflex remain live.");
+			"Sharpness / model preset / Reflex remain live."));
 
 		// Method pending-diff. Only fires when the user is editing the DLSS-
 		// path mode slot (upscaleMethod, not upscaleMethodNoDLSS), since
@@ -279,9 +279,9 @@ void Upscaling::DrawSettings()
 	if (!globals::game::isVR && upscaleMethod == UpscaleMethod::kDLSS) {
 		auto screenSize = globals::state->screenSize;
 		if (screenSize.x > streamline.MAX_RESOLUTION || screenSize.y > streamline.MAX_RESOLUTION) {
-			Util::Text::Warning("Warning: Requested resolution %.0f x %.0f exceeds maximum supported resolution %d x %d for DLSS.",
+			Util::Text::Warning(T(TKEY("dlss_resolution_warning"), "Warning: Requested resolution %.0f x %.0f exceeds maximum supported resolution %d x %d for DLSS."),
 				screenSize.x, screenSize.y, streamline.MAX_RESOLUTION, streamline.MAX_RESOLUTION);
-			Util::Text::Warning("DLSS will not function. Lower your resolution or select a different upscaling method.");
+			Util::Text::Warning(T(TKEY("dlss_will_not_function"), "DLSS will not function. Lower your resolution or select a different upscaling method."));
 		}
 	}
 
@@ -325,7 +325,7 @@ void Upscaling::DrawSettings()
 			const float displayScale = 1.0f / GetQualityModeRatio(settings.qualityMode);
 			std::string labelWithScale = std::format("{} ( {:.2f}x )", baseLabel, displayScale);
 
-			ImGui::SliderInt("Upscale Preset", (int*)&settings.qualityMode, 0, 4, labelWithScale.c_str());
+			ImGui::SliderInt(T(TKEY("upscale_preset"), "Upscale Preset"), (int*)&settings.qualityMode, 0, 4, labelWithScale.c_str());
 
 			// Pending-diff vs the boot snapshot the runtime upscaler is
 			// actually using. Without this the slider change looks like a
@@ -354,9 +354,10 @@ void Upscaling::DrawSettings()
 			};
 			ImGui::Combo(T(TKEY("dlss_model_preset"), "DLSS Model Preset"), (int*)&settings.presetDLSS, presets, 5);
 			if (auto _tt = Util::HoverTooltipWrapper()) {
-				ImGui::Text("Choose which DLSS AI model preset to use.");
-				ImGui::Text("Each model offers different visual quality, performance, and motion stability.");
-				ImGui::Text("Set to 'Default' for automatic selection based on your Upscale Preset and hardware.");
+				ImGui::Text("%s", T(TKEY("dlss_model_preset_tooltip"),
+									  "Choose which DLSS AI model preset to use.\n"
+									  "Each model offers different visual quality, performance, and motion stability.\n"
+									  "Set to 'Default' for automatic selection based on your Upscale Preset and hardware."));
 			}
 		}
 
@@ -377,32 +378,32 @@ void Upscaling::DrawSettings()
 				upscaleMethod == UpscaleMethod::kFSR;
 			if (!methodSupportsPerf)
 				ImGui::BeginDisabled();
-			ImGui::Checkbox("Render engine at upscaled resolution", &settings.renderAtUpscaleRes);
+			ImGui::Checkbox(T(TKEY("render_at_upscale_res"), "Render engine at upscaled resolution"), &settings.renderAtUpscaleRes);
 			if (!methodSupportsPerf)
 				ImGui::EndDisabled();
 			// Hover tooltip always renders (so users learn what the option does even when greyed out).
 			// The pending-restart banner fires only when DLSS or FSR is the active upscaler — the
 			// feature can't take effect otherwise, so a "pending restart" hint there would mislead.
 			if (auto _tt = Util::HoverTooltipWrapper()) {
-				ImGui::Text(
-					"On by default. The engine pipeline allocates render targets at the upscaled-render\n"
-					"resolution instead of the HMD display resolution; the upscaler (DLSS or FSR) writes\n"
-					"its output to a private DisplayRes texture. Substantial VRAM and bandwidth savings,\n"
-					"especially at high HMD resolutions.\n"
-					"\n"
-					"Locked to the Upscale Preset selected at launch: changing the preset (or this\n"
-					"toggle) takes effect after a game restart. At Native AA (1.0x) there is no\n"
-					"render-res reduction, so the lock stays off and preset changes apply live.\n"
-					"\n"
-					"Requires DLSS or FSR. Sharpness / model preset / Reflex remain live.");
+				ImGui::Text("%s", T(TKEY("render_at_upscale_res_tooltip"),
+									  "On by default. The engine pipeline allocates render targets at the upscaled-render\n"
+									  "resolution instead of the HMD display resolution; the upscaler (DLSS or FSR) writes\n"
+									  "its output to a private DisplayRes texture. Substantial VRAM and bandwidth savings,\n"
+									  "especially at high HMD resolutions.\n"
+									  "\n"
+									  "Locked to the Upscale Preset selected at launch: changing the preset (or this\n"
+									  "toggle) takes effect after a game restart. At Native AA (1.0x) there is no\n"
+									  "render-res reduction, so the lock stays off and preset changes apply live.\n"
+									  "\n"
+									  "Requires DLSS or FSR. Sharpness / model preset / Reflex remain live."));
 			}
 			if (!methodSupportsPerf && settings.renderAtUpscaleRes)
-				Util::Text::Disabled("Render-at-upscaled-resolution requires DLSS or FSR — switch upscaler Method to activate.");
+				Util::Text::Disabled(T(TKEY("render_at_upscale_res_requires"), "Render-at-upscaled-resolution requires DLSS or FSR — switch upscaler Method to activate."));
 			// At Native AA (1x) there's nothing to bank, so the size hook stays dormant even while
 			// checked — surface the no-op rather than implying the toggle does something.
 			if (methodSupportsPerf && settings.renderAtUpscaleRes &&
 				GetQualityModeRatio(settings.qualityMode) <= 1.0f)
-				Util::Text::Disabled("No effect at Native AA (1x) — renders at full resolution; raise the Upscale Preset to engage.");
+				Util::Text::Disabled(T(TKEY("render_at_upscale_res_native_noop"), "No effect at Native AA (1x) — renders at full resolution; raise the Upscale Preset to engage."));
 			if (methodSupportsPerf)
 				Util::UI::DrawSettingDiff(bootSnapshot, settings, &Settings::renderAtUpscaleRes);
 		}
@@ -411,56 +412,58 @@ void Upscaling::DrawSettings()
 	const bool frameGenerationDx12PathActive = IsFrameGenerationDx12PathActive();
 
 	if (!globals::game::isVR) {
-		if (ImGui::TreeNodeEx("Frame Generation", ImGuiTreeNodeFlags_DefaultOpen)) {
-			ImGui::Text("Frame Generation interpolates real frames with generated ones for a smoother experience");
-			ImGui::Text("Uses AMD FSR Frame Generation technology");
+		if (ImGui::TreeNodeEx(T(TKEY("frame_generation"), "Frame Generation"), ImGuiTreeNodeFlags_DefaultOpen)) {
+			ImGui::Text("%s", T(TKEY("frame_generation_desc"), "Frame Generation interpolates real frames with generated ones for a smoother experience"));
+			ImGui::Text("%s", T(TKEY("frame_generation_tech"), "Uses AMD FSR Frame Generation technology"));
 			if (HasFrameGenModule())
-				ImGui::Text("AMD FSR Frame Generation is available.");
-			ImGui::Text("Requires a D3D11 to D3D12 proxy which can create compatibility issues");
+				ImGui::Text("%s", T(TKEY("frame_generation_available"), "AMD FSR Frame Generation is available."));
+			ImGui::Text("%s", T(TKEY("frame_generation_proxy_note"), "Requires a D3D11 to D3D12 proxy which can create compatibility issues"));
 
 			if (!isWindowed) {
-				Util::Text::Warning("Warning: Requires windowed mode");
+				Util::Text::Warning(T(TKEY("fg_warn_windowed"), "Warning: Requires windowed mode"));
 			}
 
 			if (lowRefreshRate && !settings.frameGenerationForceEnable) {
-				Util::Text::Warning("Warning: Requires a high refresh rate monitor or Force Enable Frame Generation");
+				Util::Text::Warning(T(TKEY("fg_warn_refresh_rate"), "Warning: Requires a high refresh rate monitor or Force Enable Frame Generation"));
 			}
 
 			if (fidelityFXMissing) {
-				Util::Text::Warning("Warning: FidelityFX DLLs are not loaded");
+				Util::Text::Warning(T(TKEY("fg_warn_fidelityfx_missing"), "Warning: FidelityFX DLLs are not loaded"));
 			}
 
 			bool fgEnabled = settings.frameGenerationMode != 0;
-			if (ImGui::Checkbox("Frame Generation", &fgEnabled))
+			if (ImGui::Checkbox(T(TKEY("frame_generation"), "Frame Generation"), &fgEnabled))
 				settings.frameGenerationMode = fgEnabled ? 1 : 0;
 			Util::UI::RestartGatedAnnotate(bootSnapshot, settings, &Settings::frameGenerationMode,
-				"Interpolate real frames with generated ones for a smoother experience. Uses AMD FSR Frame\n"
-				"Generation. Requires a D3D11-to-D3D12 proxy swapchain which can introduce compatibility\n"
-				"issues; in particular, frame generation works only in windowed mode.");
+				T(TKEY("frame_generation_tooltip"),
+					"Interpolate real frames with generated ones for a smoother experience. Uses AMD FSR Frame\n"
+					"Generation. Requires a D3D11-to-D3D12 proxy swapchain which can introduce compatibility\n"
+					"issues; in particular, frame generation works only in windowed mode."));
 
 			if (!frameGenerationDx12PathActive)
 				ImGui::BeginDisabled();
 
 			bool flEnabled = settings.frameLimitMode != 0;
-			if (ImGui::Checkbox("Frame Limit (Variable Refresh Rate)", &flEnabled))
+			if (ImGui::Checkbox(T(TKEY("frame_limit_vrr"), "Frame Limit (Variable Refresh Rate)"), &flEnabled))
 				settings.frameLimitMode = flEnabled ? 1 : 0;
 
 			if (!frameGenerationDx12PathActive)
 				ImGui::EndDisabled();
 
-			ImGui::TextWrapped("Allows frame generation to function on low refresh rate monitors. Detected: %.2f Hz", refreshRate);
+			ImGui::TextWrapped(T(TKEY("frame_limit_refresh_rate"), "Allows frame generation to function on low refresh rate monitors. Detected: %.2f Hz"), refreshRate);
 			bool fgForce = settings.frameGenerationForceEnable != 0;
-			if (ImGui::Checkbox("Force Enable Frame Generation", &fgForce))
+			if (ImGui::Checkbox(T(TKEY("force_enable_frame_generation"), "Force Enable Frame Generation"), &fgForce))
 				settings.frameGenerationForceEnable = fgForce ? 1 : 0;
 			Util::UI::RestartGatedAnnotate(bootSnapshot, settings, &Settings::frameGenerationForceEnable,
-				"Bypass the high-refresh-rate monitor check so Frame Generation can run on lower-Hz\n"
-				"displays. Useful for laptops and older monitors at the cost of less headroom for the\n"
-				"generated frames.");
+				T(TKEY("force_enable_frame_generation_tooltip"),
+					"Bypass the high-refresh-rate monitor check so Frame Generation can run on lower-Hz\n"
+					"displays. Useful for laptops and older monitors at the cost of less headroom for the\n"
+					"generated frames."));
 
-			ImGui::Checkbox("Frame Generation in Menus", &settings.frameGenerationAllowInMenus);
+			ImGui::Checkbox(T(TKEY("frame_generation_in_menus"), "Frame Generation in Menus"), &settings.frameGenerationAllowInMenus);
 			if (auto _tt = Util::HoverTooltipWrapper()) {
-				ImGui::TextUnformatted("Keeps frame generation active while game menus are open.");
-				ImGui::TextUnformatted("May feel smoother, but increases menu input latency.");
+				ImGui::TextUnformatted(T(TKEY("frame_generation_in_menus_tooltip_1"), "Keeps frame generation active while game menus are open."));
+				ImGui::TextUnformatted(T(TKEY("frame_generation_in_menus_tooltip_2"), "May feel smoother, but increases menu input latency."));
 			}
 
 			ImGui::TreePop();
@@ -555,7 +558,7 @@ void Upscaling::DrawSettings()
 		const bool enabled = foveatedRender.settings.enabled != 0;
 		if (!enabled)
 			ImGui::BeginDisabled();
-		if (ImGui::TreeNodeEx("Foveated DLSS — Tuning")) {
+		if (ImGui::TreeNodeEx(T(TKEY("foveated_tuning"), "Foveated DLSS — Tuning"))) {
 			foveatedRender.DrawSettings();
 			ImGui::TreePop();
 		}
@@ -563,9 +566,13 @@ void Upscaling::DrawSettings()
 			ImGui::EndDisabled();
 	}
 
-	if (ImGui::TreeNodeEx("Backend Diagnostics")) {
+	if (ImGui::TreeNodeEx(T(TKEY("backend_diagnostics"), "Backend Diagnostics"))) {
 		// Streamline log level selection
-		const char* logLevels[] = { "Off", "Default", "Verbose" };
+		const char* logLevels[] = {
+			T(TKEY("streamline_log_level_off"), "Off"),
+			T(TKEY("streamline_log_level_default"), "Default"),
+			T(TKEY("streamline_log_level_verbose"), "Verbose")
+		};
 		// streamlineLogLevel is sanitized in LoadSettings (runs on every load,
 		// not gated on this node being expanded), so the stored value is in range.
 		int logLevelIdx = static_cast<int>(settings.streamlineLogLevel);
@@ -573,16 +580,17 @@ void Upscaling::DrawSettings()
 			settings.streamlineLogLevel = static_cast<uint>(logLevelIdx);
 		}
 		Util::UI::RestartGatedAnnotate(bootSnapshot, settings, &Settings::streamlineLogLevel,
-			"Verbosity of the NVIDIA Streamline backend logs. Useful for debugging issues with DLSS / "
-			"DLSS-G.");
+			T(TKEY("streamline_logging_tooltip"),
+				"Verbosity of the NVIDIA Streamline backend logs. Useful for debugging issues with DLSS / "
+				"DLSS-G."));
 
 		// VR Debug visualization -- per-eye buffers and native inputs
 		if (globals::game::isVR) {
 			ImGui::Separator();
 			static float debugRescale = 0.15f;
-			ImGui::SliderFloat("View Resize", &debugRescale, 0.05f, 1.f);
+			ImGui::SliderFloat(T(TKEY("view_resize"), "View Resize"), &debugRescale, 0.05f, 1.f);
 
-			if (ImGui::TreeNode("Upscaling Intermediates")) {
+			if (ImGui::TreeNode(T(TKEY("upscaling_intermediates"), "Upscaling Intermediates"))) {
 				if (vrIntermediateMotionVectors[0]) {
 					bool isDLSS = GetUpscaleMethod() == UpscaleMethod::kDLSS;
 					if (vrIntermediateColorIn[0] && vrIntermediateColorOut[0]) {
@@ -601,12 +609,12 @@ void Upscaling::DrawSettings()
 						BUFFER_VIEWER_NODE_TITLE(vrIntermediateTransparencyMask[1], "Right Eye Transparency", debugRescale)
 					}
 				} else {
-					ImGui::TextDisabled("VR intermediates not yet created (enter game world)");
+					ImGui::TextDisabled("%s", T(TKEY("vr_intermediates_not_created"), "VR intermediates not yet created (enter game world)"));
 				}
 				ImGui::TreePop();
 			}
 
-			if (ImGui::TreeNode("Native Inputs")) {
+			if (ImGui::TreeNode(T(TKEY("native_inputs"), "Native Inputs"))) {
 				auto renderer = globals::game::renderer;
 				auto& main = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMAIN];
 				auto& mvec = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMOTION_VECTOR];
@@ -701,8 +709,8 @@ void Upscaling::DrawSettings()
 		}
 
 		ImGui::Separator();
-		Util::DrawDllVersionTable("AMD FidelityFX DLLs (click to open folder)", FidelityFX::PluginDir, FidelityFX::dllVersions, "ffx_dll_versions");
-		Util::DrawDllVersionTable("NVIDIA Streamline DLLs (click to open folder)", Streamline::PluginDir, Streamline::dllVersions, "sl_dll_versions");
+		Util::DrawDllVersionTable(T(TKEY("ffx_dll_table_title"), "AMD FidelityFX DLLs (click to open folder)"), FidelityFX::PluginDir, FidelityFX::dllVersions, "ffx_dll_versions");
+		Util::DrawDllVersionTable(T(TKEY("sl_dll_table_title"), "NVIDIA Streamline DLLs (click to open folder)"), Streamline::PluginDir, Streamline::dllVersions, "sl_dll_versions");
 		ImGui::TreePop();
 	}
 }

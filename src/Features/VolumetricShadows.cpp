@@ -1,8 +1,11 @@
 #include "VolumetricShadows.h"
 
 #include "Globals.h"
+#include "I18n/I18n.h"
 #include "State.h"
 #include "Utils/D3D.h"
+
+#define I18N_KEY_PREFIX "feature.volumetric_shadows."
 
 void VolumetricShadows::SetupResources()
 {
@@ -317,11 +320,11 @@ void VolumetricShadows::SetSharedShadowMapSRV(ID3D11DeviceContext* a_context, ID
 
 void VolumetricShadows::DrawSettings()
 {
-	ImGui::SeparatorText("Debug");
+	ImGui::SeparatorText(T(TKEY("debug"), "Debug"));
 
-	if (ImGui::TreeNode("Buffer Viewer")) {
+	if (ImGui::TreeNode(T(TKEY("buffer_viewer"), "Buffer Viewer"))) {
 		static float debugRescale = .3f;
-		ImGui::SliderFloat("View Resize", &debugRescale, 0.f, 1.f);
+		ImGui::SliderFloat(T(TKEY("view_resize"), "View Resize"), &debugRescale, 0.f, 1.f);
 
 		auto DisplayRT = [&](const char* label, ID3D11Texture2D* tex, ID3D11ShaderResourceView* srv) {
 			if (srv && tex) {
@@ -336,8 +339,8 @@ void VolumetricShadows::DrawSettings()
 			}
 		};
 
-		DisplayRT("VSM Cascade 0", shadowCopyTexture, shadowCopyMip0SRV);
-		DisplayRT("VSM Cascade 1", shadowCopyTexture, shadowCopyMip1SRV);
+		DisplayRT(T(TKEY("vsm_cascade_0"), "VSM Cascade 0"), shadowCopyTexture, shadowCopyMip0SRV);
+		DisplayRT(T(TKEY("vsm_cascade_1"), "VSM Cascade 1"), shadowCopyTexture, shadowCopyMip1SRV);
 
 		ImGui::TreePop();
 	}
@@ -379,3 +382,5 @@ bool VolumetricShadows::HasShaderDefine(RE::BSShader::Type)
 {
 	return true;
 }
+
+#undef I18N_KEY_PREFIX
