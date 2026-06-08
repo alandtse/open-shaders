@@ -1,8 +1,8 @@
 #include "Utils/HdrPngMetadata.h"
 
-#include <array>
 #include <cmath>
 #include <cstring>
+#include <vector>
 
 namespace Util::HdrPng
 {
@@ -39,8 +39,9 @@ namespace Util::HdrPng
 
 		// 1-nit histogram over [0,10000] for a hot-pixel-robust percentile, plus a
 		// running mean. maxRGB per CTA-861.3 (the brightest component, not luminance).
+		// Heap-allocated (~80 KB) to keep it off the worker-thread stack.
 		constexpr int kBins = 10001;
-		std::array<uint64_t, kBins> hist{};
+		std::vector<uint64_t> hist(kBins, 0);
 		double sumNits = 0.0;
 
 		for (size_t i = 0; i < pixelCount; ++i) {
