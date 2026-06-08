@@ -465,9 +465,6 @@ void Streamline::SetDLSSOptions(sl::ViewportHandle p_viewport, uint32_t width, u
 	// produces zeroed output. See SetDLSSOptions decl in Streamline.h for the rationale.
 	dlssOptions.outputHeight = height != 0 ? height : (dlssperfActive ? (uint)perfMode.GetDisplayScreenSize().y : (uint)state->screenSize.y);
 
-	dlssOptions.outputWidth = width;
-	dlssOptions.outputHeight = (uint)state->screenSize.y;
-
 	// Detect HDR from kMAIN format at runtime -- VR kMAIN may be 8-bit while SE is FP16
 	{
 		auto renderer = globals::game::renderer;
