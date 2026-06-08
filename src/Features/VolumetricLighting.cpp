@@ -27,7 +27,7 @@ void VolumetricLighting::DrawSettings()
 {
 	// VR pre-allocates VL render targets at boot, so a runtime toggle can't
 	// resize them -- gate only in VR. Non-VR resizes live.
-	if (ImGui::Checkbox("Enable Volumetric Lighting in Exteriors", &settings.ExteriorEnabled))
+	if (ImGui::Checkbox(T(TKEY("enable_exteriors"), "Enable Volumetric Lighting in Exteriors"), &settings.ExteriorEnabled))
 		SetupVL();
 	if (globals::game::isVR)
 		Util::UI::RestartGatedAnnotate(bootSnapshot, settings, &Settings::ExteriorEnabled,

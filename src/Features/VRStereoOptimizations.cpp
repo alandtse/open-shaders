@@ -2,6 +2,7 @@
 
 #include "ExtendedMaterials.h"
 #include "Globals.h"
+#include "I18n/I18n.h"
 #include "Menu.h"
 #include "State.h"
 #include "Utils/D3D.h"
@@ -253,34 +254,34 @@ void VRStereoOptimizations::ClearPomOffsetTexture()
 
 void VRStereoOptimizations::DrawSettings()
 {
-	const char* modeNames[] = { "Off", "Enable" };
+	const char* modeNames[] = { T("feature.vr_stereo.off", "Off"), T("feature.vr_stereo.enable", "Enable") };
 	int currentMode = static_cast<int>(settings.stereoMode);
-	if (ImGui::Combo("Enable Stereo Reprojection", &currentMode, modeNames, IM_ARRAYSIZE(modeNames)))
+	if (ImGui::Combo(T("feature.vr_stereo.enable_stereo_reprojection", "Enable Stereo Reprojection"), &currentMode, modeNames, IM_ARRAYSIZE(modeNames)))
 		settings.stereoMode = static_cast<StereoMode>(currentMode);
-	Util::AddTooltip("Reprojects Eye 0 (left) pixels into Eye 1 (right) using depth and motion data,\nskipping redundant full shading where the views overlap.\nReduces GPU cost in VR by shading each pixel fewer times per frame.");
+	Util::AddTooltip(T("feature.vr_stereo.enable_stereo_reprojection_tooltip", "Reprojects Eye 0 (left) pixels into Eye 1 (right) using depth and motion data,\nskipping redundant full shading where the views overlap.\nReduces GPU cost in VR by shading each pixel fewer times per frame."));
 
 	if (globals::game::isVR)
 		Util::UI::DrawSettingDiff(bootSnapshot, settings, &Settings::stereoMode);
 	if (settings.stereoMode == StereoMode::Off)
 		return;
 
-	ImGui::SliderFloat("Disocclusion Depth Threshold", &settings.disocclusionDepthThreshold, 0.001f, 0.1f, "%.4f");
+	ImGui::SliderFloat(T("feature.vr_stereo.disocclusion_depth_threshold", "Disocclusion Depth Threshold"), &settings.disocclusionDepthThreshold, 0.001f, 0.1f, "%.4f");
 
-	ImGui::SliderFloat("Forward Occlusion Scale", &settings.forwardOcclusionScale, 0.0f, 1.0f, "%.2f");
-	Util::AddTooltip("Prevents Eye 0 silhouette edges from bleeding onto Eye 1 backgrounds.\nFires when Eye 0 depth is within this fraction of Eye 1 depth (e.g. 0.5 = Eye 0 less than 2x Eye 1 depth).\nLower = more aggressive. 0 = disabled.");
+	ImGui::SliderFloat(T("feature.vr_stereo.forward_occlusion_scale", "Forward Occlusion Scale"), &settings.forwardOcclusionScale, 0.0f, 1.0f, "%.2f");
+	Util::AddTooltip(T("feature.vr_stereo.forward_occlusion_scale_tooltip", "Prevents Eye 0 silhouette edges from bleeding onto Eye 1 backgrounds.\nFires when Eye 0 depth is within this fraction of Eye 1 depth (e.g. 0.5 = Eye 0 less than 2x Eye 1 depth).\nLower = more aggressive. 0 = disabled."));
 
 	if (globals::state->IsDeveloperMode()) {
-		if (ImGui::TreeNode("Debug")) {
-			ImGui::SliderFloat("Full Blend Distance", &settings.fullBlendDistance, 0.0f, 10000.0f, "%.0f");
-			Util::AddTooltip("Geometry closer than this distance (game units) is fully shaded in both eyes and bilaterally blended for 2x supersampling. 0 = disabled.");
+		if (ImGui::TreeNode(T("feature.vr_stereo.debug", "Debug"))) {
+			ImGui::SliderFloat(T("feature.vr_stereo.full_blend_distance", "Full Blend Distance"), &settings.fullBlendDistance, 0.0f, 10000.0f, "%.0f");
+			Util::AddTooltip(T("feature.vr_stereo.full_blend_distance_tooltip", "Geometry closer than this distance (game units) is fully shaded in both eyes and bilaterally blended for 2x supersampling. 0 = disabled."));
 
-			ImGui::SliderFloat("POM Depth Scale", &settings.pomDepthScale, 0.0f, 500.0f, "%.1f");
-			Util::AddTooltip("Scale factor for POM depth correction in stereo reprojection.\n1.0 = physical scale. Increase for more visible POM stereo depth.");
-			ImGui::Checkbox("Skip Pixel Reprojection", &settings.debugSkipMerge);
-			ImGui::Checkbox("Full Blend Depth View", &settings.debugFullBlendDepth);
-			ImGui::Checkbox("Debug POM Depth", &settings.debugPOMDepth);
+			ImGui::SliderFloat(T("feature.vr_stereo.pom_depth_scale", "POM Depth Scale"), &settings.pomDepthScale, 0.0f, 500.0f, "%.1f");
+			Util::AddTooltip(T("feature.vr_stereo.pom_depth_scale_tooltip", "Scale factor for POM depth correction in stereo reprojection.\n1.0 = physical scale. Increase for more visible POM stereo depth."));
+			ImGui::Checkbox(T("feature.vr_stereo.skip_pixel_reprojection", "Skip Pixel Reprojection"), &settings.debugSkipMerge);
+			ImGui::Checkbox(T("feature.vr_stereo.full_blend_depth_view", "Full Blend Depth View"), &settings.debugFullBlendDepth);
+			ImGui::Checkbox(T("feature.vr_stereo.debug_pom_depth", "Debug POM Depth"), &settings.debugPOMDepth);
 			if (settings.debugFullBlendDepth)
-				ImGui::TextColored(ImVec4(0, 1, 1, 1), "  Cyan = full blend zone (closer = stronger tint)");
+				ImGui::TextColored(ImVec4(0, 1, 1, 1), "%s", T("feature.vr_stereo.full_blend_zone_hint", "  Cyan = full blend zone (closer = stronger tint)"));
 			ImGui::Text("Stencil swaps this frame: %u", stencilSwapCount);
 			ImGui::TreePop();
 		}

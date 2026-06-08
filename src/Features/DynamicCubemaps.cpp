@@ -33,7 +33,7 @@ void DynamicCubemaps::DrawSettings()
 	if (ImGui::TreeNodeEx(T(TKEY("screen_space_reflections"), "Screen Space Reflections"), ImGuiTreeNodeFlags_DefaultOpen)) {
 		recompileFlag |= ImGui::Checkbox(T(TKEY("enable_ssr"), "Enable Screen Space Reflections"), reinterpret_cast<bool*>(&settings.EnabledSSR));
 		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::Text("Enable Screen Space Reflections on Water");
+			ImGui::Text("%s", T(TKEY("enable_ssr_tooltip"), "Enable Screen Space Reflections on Water"));
 		}
 		if (globals::game::isVR)
 			Util::UI::DrawSettingDiff(bootSnapshot, settings, &Settings::EnabledSSR);
@@ -119,7 +119,7 @@ void DynamicCubemaps::DrawSettings()
 		ImGui::TreePop();
 	}
 	if (globals::game::isVR) {
-		if (ImGui::TreeNodeEx("Advanced VR Settings", ImGuiTreeNodeFlags_DefaultOpen)) {
+		if (ImGui::TreeNodeEx(T(TKEY("advanced_vr_settings"), "Advanced VR Settings"), ImGuiTreeNodeFlags_DefaultOpen)) {
 			Util::RenderImGuiSettingsTree(iniVRCubeMapSettings, "VR");
 			Util::RenderImGuiSettingsTree(hiddenVRCubeMapSettings, "hiddenVR");
 			ImGui::TreePop();

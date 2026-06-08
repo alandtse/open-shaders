@@ -225,7 +225,7 @@ void Upscaling::DrawSettings()
 		modeLabels.push_back(upscaleModes[i].c_str());
 	if (openCompositeBlocksUpscaling)
 		ImGui::BeginDisabled();
-	ImGui::Combo("Method", (int*)currentUpscaleMode, modeLabels.data(), (int)modeLabels.size());
+	ImGui::Combo(T(TKEY("method"), "Method"), (int*)currentUpscaleMode, modeLabels.data(), (int)modeLabels.size());
 	if (openCompositeBlocksUpscaling)
 		ImGui::EndDisabled();
 	if (auto _tt = Util::HoverTooltipWrapper()) {
@@ -325,7 +325,7 @@ void Upscaling::DrawSettings()
 			const float displayScale = 1.0f / GetQualityModeRatio(settings.qualityMode);
 			std::string labelWithScale = std::format("{} ( {:.2f}x )", baseLabel, displayScale);
 
-			ImGui::SliderInt("Upscale Preset", (int*)&settings.qualityMode, 0, 4, labelWithScale.c_str());
+			ImGui::SliderInt(T(TKEY("upscale_preset"), "Upscale Preset"), (int*)&settings.qualityMode, 0, 4, labelWithScale.c_str());
 
 			// Pending-diff vs the boot snapshot the runtime upscaler is
 			// actually using. Without this the slider change looks like a
@@ -354,7 +354,7 @@ void Upscaling::DrawSettings()
 			};
 			ImGui::Combo(T(TKEY("dlss_model_preset"), "DLSS Model Preset"), (int*)&settings.presetDLSS, presets, 5);
 			if (auto _tt = Util::HoverTooltipWrapper()) {
-				ImGui::Text("Choose which DLSS AI model preset to use.");
+				ImGui::Text("%s", T(TKEY("dlss_model_preset_tooltip"), "Choose which DLSS AI model preset to use."));
 				ImGui::Text("Each model offers different visual quality, performance, and motion stability.");
 				ImGui::Text("Set to 'Default' for automatic selection based on your Upscale Preset and hardware.");
 			}
@@ -411,12 +411,12 @@ void Upscaling::DrawSettings()
 	const bool frameGenerationDx12PathActive = IsFrameGenerationDx12PathActive();
 
 	if (!globals::game::isVR) {
-		if (ImGui::TreeNodeEx("Frame Generation", ImGuiTreeNodeFlags_DefaultOpen)) {
-			ImGui::Text("Frame Generation interpolates real frames with generated ones for a smoother experience");
-			ImGui::Text("Uses AMD FSR Frame Generation technology");
+		if (ImGui::TreeNodeEx(T(TKEY("frame_generation"), "Frame Generation"), ImGuiTreeNodeFlags_DefaultOpen)) {
+			ImGui::Text("%s", T(TKEY("frame_generation_desc"), "Frame Generation interpolates real frames with generated ones for a smoother experience"));
+			ImGui::Text("%s", T(TKEY("frame_generation_tech"), "Uses AMD FSR Frame Generation technology"));
 			if (HasFrameGenModule())
-				ImGui::Text("AMD FSR Frame Generation is available.");
-			ImGui::Text("Requires a D3D11 to D3D12 proxy which can create compatibility issues");
+				ImGui::Text("%s", T(TKEY("frame_generation_available"), "AMD FSR Frame Generation is available."));
+			ImGui::Text("%s", T(TKEY("frame_generation_proxy_note"), "Requires a D3D11 to D3D12 proxy which can create compatibility issues"));
 
 			if (!isWindowed) {
 				Util::Text::Warning("Warning: Requires windowed mode");
@@ -431,7 +431,7 @@ void Upscaling::DrawSettings()
 			}
 
 			bool fgEnabled = settings.frameGenerationMode != 0;
-			if (ImGui::Checkbox("Frame Generation", &fgEnabled))
+			if (ImGui::Checkbox(T(TKEY("frame_generation"), "Frame Generation"), &fgEnabled))
 				settings.frameGenerationMode = fgEnabled ? 1 : 0;
 			Util::UI::RestartGatedAnnotate(bootSnapshot, settings, &Settings::frameGenerationMode,
 				"Interpolate real frames with generated ones for a smoother experience. Uses AMD FSR Frame\n"
@@ -442,7 +442,7 @@ void Upscaling::DrawSettings()
 				ImGui::BeginDisabled();
 
 			bool flEnabled = settings.frameLimitMode != 0;
-			if (ImGui::Checkbox("Frame Limit (Variable Refresh Rate)", &flEnabled))
+			if (ImGui::Checkbox(T(TKEY("frame_limit_vrr"), "Frame Limit (Variable Refresh Rate)"), &flEnabled))
 				settings.frameLimitMode = flEnabled ? 1 : 0;
 
 			if (!frameGenerationDx12PathActive)
@@ -450,17 +450,17 @@ void Upscaling::DrawSettings()
 
 			ImGui::TextWrapped("Allows frame generation to function on low refresh rate monitors. Detected: %.2f Hz", refreshRate);
 			bool fgForce = settings.frameGenerationForceEnable != 0;
-			if (ImGui::Checkbox("Force Enable Frame Generation", &fgForce))
+			if (ImGui::Checkbox(T(TKEY("force_enable_frame_generation"), "Force Enable Frame Generation"), &fgForce))
 				settings.frameGenerationForceEnable = fgForce ? 1 : 0;
 			Util::UI::RestartGatedAnnotate(bootSnapshot, settings, &Settings::frameGenerationForceEnable,
 				"Bypass the high-refresh-rate monitor check so Frame Generation can run on lower-Hz\n"
 				"displays. Useful for laptops and older monitors at the cost of less headroom for the\n"
 				"generated frames.");
 
-			ImGui::Checkbox("Frame Generation in Menus", &settings.frameGenerationAllowInMenus);
+			ImGui::Checkbox(T(TKEY("frame_generation_in_menus"), "Frame Generation in Menus"), &settings.frameGenerationAllowInMenus);
 			if (auto _tt = Util::HoverTooltipWrapper()) {
-				ImGui::TextUnformatted("Keeps frame generation active while game menus are open.");
-				ImGui::TextUnformatted("May feel smoother, but increases menu input latency.");
+				ImGui::TextUnformatted(T(TKEY("frame_generation_in_menus_tooltip_1"), "Keeps frame generation active while game menus are open."));
+				ImGui::TextUnformatted(T(TKEY("frame_generation_in_menus_tooltip_2"), "May feel smoother, but increases menu input latency."));
 			}
 
 			ImGui::TreePop();
@@ -563,7 +563,7 @@ void Upscaling::DrawSettings()
 			ImGui::EndDisabled();
 	}
 
-	if (ImGui::TreeNodeEx("Backend Diagnostics")) {
+	if (ImGui::TreeNodeEx(T(TKEY("backend_diagnostics"), "Backend Diagnostics"))) {
 		// Streamline log level selection
 		const char* logLevels[] = { "Off", "Default", "Verbose" };
 		// streamlineLogLevel is sanitized in LoadSettings (runs on every load,
@@ -573,8 +573,9 @@ void Upscaling::DrawSettings()
 			settings.streamlineLogLevel = static_cast<uint>(logLevelIdx);
 		}
 		Util::UI::RestartGatedAnnotate(bootSnapshot, settings, &Settings::streamlineLogLevel,
-			"Verbosity of the NVIDIA Streamline backend logs. Useful for debugging issues with DLSS / "
-			"DLSS-G.");
+			T(TKEY("streamline_logging_tooltip"),
+				"Verbosity of the NVIDIA Streamline backend logs. Useful for debugging issues with DLSS / "
+				"DLSS-G."));
 
 		// VR Debug visualization -- per-eye buffers and native inputs
 		if (globals::game::isVR) {

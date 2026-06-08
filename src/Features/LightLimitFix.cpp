@@ -3,6 +3,7 @@
 #include "Features/LightLimitFix/SettingsSanitize.h"
 #include "Features/LightLimitFix/ShadowCasterMath.h"
 #include "Globals.h"
+#include "I18n/I18n.h"
 #include "InverseSquareLighting.h"
 #include "LinearLighting.h"
 #include "Utils/UI.h"
@@ -116,7 +117,7 @@ void LightLimitFix::DrawSettings()
 
 	ShadowCasterManager::DrawSettings(settings.ShadowSettings);
 
-	if (ImGui::TreeNodeEx("Statistics", ImGuiTreeNodeFlags_DefaultOpen)) {
+	if (ImGui::TreeNodeEx(T("feature.light_limit_fix.statistics", "Statistics"), ImGuiTreeNodeFlags_DefaultOpen)) {
 		ImGui::Text(std::format("Clustered Light Count : {}", lightCount).c_str());
 		ImGui::Text(std::format("Particle Lights Count : {}", currentParticleLights.size()).c_str());
 		ImGui::TreePop();
@@ -318,12 +319,12 @@ void LightLimitFix::DrawSettings()
 	}
 
 	///////////////////////////////
-	ImGui::SeparatorText("Debug");
+	ImGui::SeparatorText(T("feature.light_limit_fix.debug", "Debug"));
 
-	if (ImGui::TreeNode("Light Limit Visualization")) {
-		ImGui::Checkbox("Enable Lights Visualisation", &EnableLightsVisualisation);
+	if (ImGui::TreeNode(T("feature.light_limit_fix.light_limit_vis", "Light Limit Visualization"))) {
+		ImGui::Checkbox(T("feature.light_limit_fix.enable_lights_vis", "Enable Lights Visualisation"), &EnableLightsVisualisation);
 		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::Text("Enables visualization of the light limit\n");
+			ImGui::Text("%s", T("feature.light_limit_fix.enable_lights_vis_tooltip", "Enables visualization of the light limit\n"));
 		}
 
 		{
@@ -344,15 +345,17 @@ void LightLimitFix::DrawSettings()
 			// persisted value that might still exist from older builds.
 			int visMode = std::clamp(static_cast<int>(LightsVisualisationMode),
 				0, IM_ARRAYSIZE(comboOptions) - 1);
-			ImGui::Combo("Lights Visualisation Mode", &visMode, comboOptions, IM_ARRAYSIZE(comboOptions));
+			ImGui::Combo(T("feature.light_limit_fix.lights_vis_mode", "Lights Visualisation Mode"), &visMode, comboOptions, IM_ARRAYSIZE(comboOptions));
 			LightsVisualisationMode = static_cast<uint>(visMode);
 			if (auto _tt = Util::HoverTooltipWrapper()) {
 				ImGui::Text(
-					"Light Limit: Red when the strict light limit is reached (>=7 portal-strict lights).\n"
-					"\n"
-					"Strict Lights Count: Heatmap of portal-strict lights per pixel (blue=0, red=15).\n"
-					"\n"
-					"Clustered Lights Count: Heatmap of dynamic lights in each screen tile (blue=0, red=128).");
+					"%s",
+					T("feature.light_limit_fix.lights_vis_mode_tooltip",
+						"Light Limit: Red when the strict light limit is reached (>=7 portal-strict lights).\n"
+						"\n"
+						"Strict Lights Count: Heatmap of portal-strict lights per pixel (blue=0, red=15).\n"
+						"\n"
+						"Clustered Lights Count: Heatmap of dynamic lights in each screen tile (blue=0, red=128)."));
 				ShadowCasterManager::DrawVisualisationTooltipShadowModes();
 			}
 		}
