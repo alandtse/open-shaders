@@ -572,9 +572,6 @@ namespace Hooks
 	// kSNOW / kSNOW_SWAP are created at R8G8B8A8_UNORM by vanilla; the snow shader
 	// writes accumulated wetness/sparkle values that exceed the 8-bit range and
 	// quantize into visible banding on tessellated snow. Promote to fp16 for headroom.
-	// kSNOW / kSNOW_SWAP are created at R8G8B8A8_UNORM by vanilla; the snow shader
-	// writes accumulated wetness/sparkle values that exceed the 8-bit range and
-	// quantize into visible banding on tessellated snow. Promote to fp16 for headroom.
 	struct CreateRenderTarget_Snow
 	{
 		static void thunk(RE::BSGraphics::Renderer* This, RE::RENDER_TARGETS::RENDER_TARGET a_target, RE::BSGraphics::RenderTargetProperties* a_properties)
