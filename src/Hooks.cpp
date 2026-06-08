@@ -12,8 +12,8 @@
 
 #include "Features/HDRDisplay.h"
 #include "Features/InteriorSun.h"
-#include "Features/ScreenshotFeature.h"
 #include "Features/LightLimitFix.h"
+#include "Features/ScreenshotFeature.h"
 #include "Features/Skin.h"
 #include "Features/SkySync.h"
 #include "Features/Upscaling.h"
@@ -267,6 +267,9 @@ struct IDXGISwapChain_Present
 			[&](IDXGISwapChain* swapChain, UINT syncInterval, UINT presentFlags) {
 				return func(swapChain, syncInterval, presentFlags);
 			});
+
+		// Runs after HDR Present so the captured back buffer matches what's on screen.
+		globals::features::screenshotFeature.ProcessCaptureRequest();
 
 		TracyD3D11Collect(globals::state->tracyCtx);
 
