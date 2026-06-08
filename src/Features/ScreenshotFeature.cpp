@@ -16,15 +16,20 @@
 
 #define I18N_KEY_PREFIX "feature.screenshot."
 
+#include <DirectXPackedVector.h>
 #include <DirectXTex.h>
-#pragma warning(push)
-#pragma warning(disable: 4244)  // double->float conversion in third-party header
-#include <sk_hdr_png.hpp>
-#pragma warning(pop)
+#include <shlobj.h>  // DROPFILES (CF_HDROP clipboard)
+// Declarations only; the implementation lives in Utils/StbImageWriteImpl.cpp.
+// stb_image.h precedes the HDR-PNG header for the stbi_us typedef.
+#include <stb_image.h>
+#include <stb_image_write.h>
+#include <stb_image_write_hdr_png.h>
 
 #include <format>
+#include <fstream>
 #include <functional>
 #include <malloc.h>
+#include <vector>
 
 namespace
 {
@@ -425,16 +430,20 @@ namespace
 		return ResolveToAbsoluteGamePath(std::filesystem::path(screenshotPath) / buf);
 	}
 
+	// JxlColorEncoding code points the stb HDR-PNG writer signals via cICP/iCCP.
+	// 9 = BT.2100/BT.2020 primaries, 16 = PQ transfer (the combo that makes the
+	// writer embed the PQ ICC profile). Our HDR capture is already BT.2020 PQ.
+	constexpr unsigned char kPrimariesBT2100 = 9;
+	constexpr unsigned char kTransferPQ = 16;
+
 	struct HdrFormatInfo
 	{
 		DXGI_FORMAT dxgi;
-		sk_hdr_png::format png;
-		size_t bytesPerPixel;
 	};
 
 	constexpr HdrFormatInfo kHdrFormats[] = {
-		{ DXGI_FORMAT_R10G10B10A2_UNORM, sk_hdr_png::format::r10g10b10a2_unorm, 4 },
-		{ DXGI_FORMAT_R16G16B16A16_FLOAT, sk_hdr_png::format::r16g16b16a16_pq, 8 },
+		{ DXGI_FORMAT_R10G10B10A2_UNORM },
+		{ DXGI_FORMAT_R16G16B16A16_FLOAT },
 	};
 
 	const HdrFormatInfo* LookupHdrFormat(DXGI_FORMAT format)
@@ -452,29 +461,60 @@ namespace
 		return LookupHdrFormat(format) != nullptr;
 	}
 
-	// sk_hdr_png requires 16-byte aligned pixel memory.
-	bool CopyToAlignedPixelBuffer(
-		const DirectX::Image& image,
-		size_t bytesPerPixel,
-		void*& outAligned,
-		size_t& outByteSize)
+	// Quantize a 16-bit PQ sample to `bits` significant bits (file-size knob mirroring
+	// the old encoder's hdrPngBitDepth). bits >= 16 is a no-op.
+	inline uint16_t QuantizePqSample(uint16_t v, int bits)
 	{
-		if (bytesPerPixel == 0) {
-			return false;
+		if (bits >= 16) {
+			return v;
 		}
+		const int drop = 16 - bits;
+		const uint32_t bias = 1u << (drop - 1);
+		const uint32_t r = ((static_cast<uint32_t>(v) + bias) >> drop) << drop;
+		return static_cast<uint16_t>(r > 0xFFFFu ? 0xFFFFu : r);
+	}
 
-		const size_t tightRowBytes = static_cast<size_t>(image.width) * bytesPerPixel;
-		outByteSize = tightRowBytes * image.height;
+	// stbi_write_func: append the encoded bytes to the open output stream.
+	void StbWriteToStream(void* context, void* data, int size)
+	{
+		static_cast<std::ofstream*>(context)->write(static_cast<const char*>(data), size);
+	}
 
-		outAligned = _aligned_malloc(outByteSize, 16);
-		if (!outAligned) {
+	// Build a tight RGB uint16 buffer. The capture is already BT.2020 PQ, so this only
+	// expands bit depth (no colour transform) and applies quantization. comp = 3.
+	bool BuildPqRgb16(const DirectX::Image& image, DXGI_FORMAT format, int bits, std::vector<uint16_t>& outRgb)
+	{
+		const size_t w = image.width, h = image.height;
+		outRgb.resize(w * h * 3);
+		const uint8_t* srcRow = image.pixels;
+		size_t o = 0;
+
+		if (format == DXGI_FORMAT_R16G16B16A16_FLOAT) {
+			for (size_t y = 0; y < h; ++y) {
+				const uint16_t* px = reinterpret_cast<const uint16_t*>(srcRow);
+				for (size_t x = 0; x < w; ++x, px += 4) {
+					for (int c = 0; c < 3; ++c) {
+						float f = DirectX::PackedVector::XMConvertHalfToFloat(px[c]);
+						f = f < 0.0f ? 0.0f : (f > 1.0f ? 1.0f : f);
+						outRgb[o++] = QuantizePqSample(static_cast<uint16_t>(f * 65535.0f + 0.5f), bits);
+					}
+				}
+				srcRow += image.rowPitch;
+			}
+		} else if (format == DXGI_FORMAT_R10G10B10A2_UNORM) {
+			for (size_t y = 0; y < h; ++y) {
+				const uint32_t* px = reinterpret_cast<const uint32_t*>(srcRow);
+				for (size_t x = 0; x < w; ++x) {
+					const uint32_t p = px[x];
+					const uint32_t ch[3] = { p & 0x3FFu, (p >> 10) & 0x3FFu, (p >> 20) & 0x3FFu };
+					for (int c = 0; c < 3; ++c) {
+						outRgb[o++] = QuantizePqSample(static_cast<uint16_t>((ch[c] * 65535u + 511u) / 1023u), bits);
+					}
+				}
+				srcRow += image.rowPitch;
+			}
+		} else {
 			return false;
-		}
-
-		auto* dest = static_cast<uint8_t*>(outAligned);
-		const auto* src = image.pixels;
-		for (size_t row = 0; row < image.height; ++row) {
-			memcpy(dest + row * tightRowBytes, src + row * image.rowPitch, tightRowBytes);
 		}
 		return true;
 	}
@@ -486,28 +526,29 @@ namespace
 		DXGI_FORMAT format)
 	{
 		const DirectX::Image* firstImage = image.GetImage(0, 0, 0);
-		const HdrFormatInfo* hdrInfo = firstImage ? LookupHdrFormat(format) : nullptr;
-		if (!firstImage || !hdrInfo || firstImage->format != format) {
+		if (!firstImage || !IsHdrCaptureFormat(format) || firstImage->format != format) {
 			return false;
 		}
 
-		void* alignedPixels = nullptr;
-		size_t byteSize = 0;
-		if (!CopyToAlignedPixelBuffer(*firstImage, hdrInfo->bytesPerPixel, alignedPixels, byteSize)) {
+		std::vector<uint16_t> rgb;
+		if (!BuildPqRgb16(*firstImage, format, quantizationBits, rgb)) {
 			return false;
 		}
 
-		const bool saved = sk_hdr_png::write_image_to_disk(
-			outputPath.wstring().c_str(),
-			static_cast<unsigned int>(firstImage->width),
-			static_cast<unsigned int>(firstImage->height),
-			alignedPixels,
-			quantizationBits,
-			hdrInfo->png,
-			false);
+		std::ofstream os(outputPath, std::ios::binary);
+		if (!os) {
+			return false;
+		}
 
-		_aligned_free(alignedPixels);
-		return saved;
+		const int ok = stbi_write_hdr_png_to_func(
+			&StbWriteToStream, &os,
+			static_cast<int>(firstImage->width),
+			static_cast<int>(firstImage->height),
+			3, rgb.data(), 0,
+			kPrimariesBT2100, kTransferPQ);
+
+		os.flush();
+		return ok != 0 && static_cast<bool>(os);
 	}
 
 	bool SaveSdrScreenshot(
