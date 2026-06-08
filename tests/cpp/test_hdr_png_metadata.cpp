@@ -134,6 +134,57 @@ TEST_CASE("BuildClliChunk emits the spec byte layout", "[hdrpng]")
 	REQUIRE(stored == crc);
 }
 
+TEST_CASE("BuildMdcvChunk emits the 24-byte spec layout (BT.2020/D65/1000-nit)", "[hdrpng]")
+{
+	auto chunk = BuildMdcvChunk();
+	REQUIRE(chunk.size() == 4 + 4 + 24 + 4);  // len + type + 24B payload + crc
+
+	REQUIRE(chunk[0] == 0x00);
+	REQUIRE(chunk[1] == 0x00);
+	REQUIRE(chunk[2] == 0x00);
+	REQUIRE(chunk[3] == 0x18);  // length 24
+	REQUIRE(chunk[4] == 'm');
+	REQUIRE(chunk[5] == 'D');
+	REQUIRE(chunk[6] == 'C');
+	REQUIRE(chunk[7] == 'v');
+
+	// Payload: u16 primaries R,G,B (x,y) + u16 white, then u32 max/min luminance, BE.
+	const uint8_t expect[24] = {
+		0x8A,
+		0x48,  // red x   35400
+		0x39,
+		0x08,  // red y   14600
+		0x21,
+		0x34,  // green x  8500
+		0x9B,
+		0xAA,  // green y 39850
+		0x19,
+		0x96,  // blue x   6550
+		0x08,
+		0xFC,  // blue y   2300
+		0x3D,
+		0x13,  // white x 15635 (D65)
+		0x40,
+		0x42,  // white y 16450 (D65)
+		0x00,
+		0x98,
+		0x96,
+		0x80,  // max 10000000 (1000 cd/m^2)
+		0x00,
+		0x00,
+		0x00,
+		0x01,  // min 1        (0.0001 cd/m^2)
+	};
+	for (int i = 0; i < 24; ++i) {
+		REQUIRE(chunk[8 + i] == expect[i]);
+	}
+	// CRC covers type + payload.
+	const uint32_t crc = Crc32(chunk.data() + 4, 28);
+	const uint32_t stored = (uint32_t(chunk[32]) << 24) | (uint32_t(chunk[33]) << 16) |
+	                        (uint32_t(chunk[34]) << 8) | uint32_t(chunk[35]);
+	REQUIRE(stored == crc);
+}
+
 TEST_CASE("InsertChunkBeforeIdat splices before the first IDAT", "[hdrpng]")
 {
 	auto be32 = [](std::vector<uint8_t>& v, uint32_t x) {

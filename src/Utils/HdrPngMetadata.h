@@ -40,6 +40,12 @@ namespace Util::HdrPng
 	// Build a complete cLLi chunk: length(4 BE) + "cLLi" + payload(8 BE) + CRC(4 BE).
 	std::vector<uint8_t> BuildClliChunk(ContentLightLevel cll);
 
+	// Build a complete mDCv (Mastering Display Color Volume, SMPTE ST 2086) chunk for
+	// a fixed BT.2020 / D65 / 1000-nit mastering display. Per the PNG spec the 24-byte
+	// payload is: 6x u16 primaries (R,G,B; x then y; /0.00002), 2x u16 white point,
+	// then u32 max + u32 min luminance (/0.0001 cd/m^2). All big-endian.
+	std::vector<uint8_t> BuildMdcvChunk();
+
 	// Insert chunkBytes immediately before the first IDAT chunk of png (in place).
 	// Returns false (png unchanged) if png is not a well-formed PNG with an IDAT.
 	bool InsertChunkBeforeIdat(std::vector<uint8_t>& png, const std::vector<uint8_t>& chunkBytes);

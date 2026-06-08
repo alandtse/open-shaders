@@ -534,8 +534,9 @@ namespace
 			return false;
 		}
 
-		// Best-effort cLLi (MaxCLL/MaxFALL); skip silently if the splice fails so a
-		// valid PNG still ships without the optional metadata.
+		// Best-effort static HDR metadata (mDCv mastering display + cLLi content light
+		// level); skip silently if a splice fails so a valid PNG still ships.
+		Util::HdrPng::InsertChunkBeforeIdat(png, Util::HdrPng::BuildMdcvChunk());
 		const auto cll = Util::HdrPng::ComputeContentLightLevel(
 			rgb.data(), static_cast<size_t>(firstImage->width) * firstImage->height);
 		Util::HdrPng::InsertChunkBeforeIdat(png, Util::HdrPng::BuildClliChunk(cll));

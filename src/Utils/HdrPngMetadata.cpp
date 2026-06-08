@@ -97,6 +97,12 @@ namespace Util::HdrPng
 
 	namespace
 	{
+		void PushBE16(std::vector<uint8_t>& out, uint16_t v)
+		{
+			out.push_back(static_cast<uint8_t>((v >> 8) & 0xFF));
+			out.push_back(static_cast<uint8_t>(v & 0xFF));
+		}
+
 		void PushBE32(std::vector<uint8_t>& out, uint32_t v)
 		{
 			out.push_back(static_cast<uint8_t>((v >> 24) & 0xFF));
@@ -123,6 +129,31 @@ namespace Util::HdrPng
 		chunk.insert(chunk.end(), type, type + 4);
 		PushBE32(chunk, cll.maxCLL);
 		PushBE32(chunk, cll.maxFALL);
+		const uint32_t crc = Crc32(chunk.data() + crcStart, chunk.size() - crcStart);
+		PushBE32(chunk, crc);
+		return chunk;
+	}
+
+	std::vector<uint8_t> BuildMdcvChunk()
+	{
+		// Fixed BT.2020 primaries / D65 white (x,y / 0.00002) and a 1000-nit mastering
+		// display (max=1000 cd/m^2, min=0.0001 cd/m^2, both / 0.0001).
+		std::vector<uint8_t> chunk;
+		chunk.reserve(4 + 4 + 24 + 4);
+		PushBE32(chunk, 24);  // payload length
+		const size_t crcStart = chunk.size();
+		const char type[4] = { 'm', 'D', 'C', 'v' };
+		chunk.insert(chunk.end(), type, type + 4);
+		PushBE16(chunk, 35400);      // red x
+		PushBE16(chunk, 14600);      // red y
+		PushBE16(chunk, 8500);       // green x
+		PushBE16(chunk, 39850);      // green y
+		PushBE16(chunk, 6550);       // blue x
+		PushBE16(chunk, 2300);       // blue y
+		PushBE16(chunk, 15635);      // white x (D65)
+		PushBE16(chunk, 16450);      // white y (D65)
+		PushBE32(chunk, 10000000u);  // max luminance: 1000 cd/m^2
+		PushBE32(chunk, 1u);         // min luminance: 0.0001 cd/m^2
 		const uint32_t crc = Crc32(chunk.data() + crcStart, chunk.size() - crcStart);
 		PushBE32(chunk, crc);
 		return chunk;
