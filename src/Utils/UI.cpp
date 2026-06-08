@@ -1460,7 +1460,7 @@ namespace Util
 			auto realPath = Util::PathHelpers::GetRealPathFromDataRelative(pluginDir);
 			ShellExecuteW(nullptr, L"open", realPath.empty() ? pluginDir : realPath.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
 		}
-		std::vector<std::string> headers = { "DLL Name", "Version" };
+		std::vector<std::string> headers = { T("ui.table.dll_name", "DLL Name"), T("ui.table.version", "Version") };
 		std::vector<std::vector<std::string>> rows;
 		rows.reserve(dllVersions.size());
 		for (const auto& [name, version] : dllVersions)
@@ -2204,11 +2204,11 @@ namespace Util
 					auto* weatherManager = WeatherManager::GetSingleton();
 					auto currentWeathers = weatherManager->GetCurrentWeathers();
 					ImGui::PushTextWrapPos(ImGui::GetFontSize() * 35.0f);
-					ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.2f, 1.0f), "Weather Override Active");
-					ImGui::TextWrapped("This setting is controlled by the current weather (%s).",
+					ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.2f, 1.0f), "%s", T("ui.weather_override_active", "Weather Override Active"));
+					ImGui::TextWrapped(T("ui.weather_setting_controlled", "This setting is controlled by the current weather (%s)."),
 						currentWeathers.currentWeather ? currentWeathers.currentWeather->GetFormEditorID() : "Unknown");
 					ImGui::Separator();
-					ImGui::TextColored(ImVec4(0.6f, 0.9f, 0.6f, 1.0f), "Click to open CS Editor");
+					ImGui::TextColored(ImVec4(0.6f, 0.9f, 0.6f, 1.0f), "%s", T("ui.click_to_open_cs_editor", "Click to open CS Editor"));
 					ImGui::PopTextWrapPos();
 					ImGui::EndTooltip();
 				}
@@ -2258,11 +2258,11 @@ namespace Util
 					auto* weatherManager = WeatherManager::GetSingleton();
 					auto currentWeathers = weatherManager->GetCurrentWeathers();
 					ImGui::PushTextWrapPos(ImGui::GetFontSize() * 35.0f);
-					ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.2f, 1.0f), "Weather Override Active");
-					ImGui::TextWrapped("This setting is controlled by the current weather (%s).",
+					ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.2f, 1.0f), "%s", T("ui.weather_override_active", "Weather Override Active"));
+					ImGui::TextWrapped(T("ui.weather_setting_controlled", "This setting is controlled by the current weather (%s)."),
 						currentWeathers.currentWeather ? currentWeathers.currentWeather->GetFormEditorID() : "Unknown");
 					ImGui::Separator();
-					ImGui::TextColored(ImVec4(0.6f, 0.9f, 0.6f, 1.0f), "Click to open CS Editor");
+					ImGui::TextColored(ImVec4(0.6f, 0.9f, 0.6f, 1.0f), "%s", T("ui.click_to_open_cs_editor", "Click to open CS Editor"));
 					ImGui::PopTextWrapPos();
 					ImGui::EndTooltip();
 				}
@@ -2309,11 +2309,11 @@ namespace Util
 					auto* weatherManager = WeatherManager::GetSingleton();
 					auto currentWeathers = weatherManager->GetCurrentWeathers();
 					ImGui::PushTextWrapPos(ImGui::GetFontSize() * 35.0f);
-					ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.2f, 1.0f), "Weather Override Active");
-					ImGui::TextWrapped("This setting is controlled by the current weather (%s).",
+					ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.2f, 1.0f), "%s", T("ui.weather_override_active", "Weather Override Active"));
+					ImGui::TextWrapped(T("ui.weather_setting_controlled", "This setting is controlled by the current weather (%s)."),
 						currentWeathers.currentWeather ? currentWeathers.currentWeather->GetFormEditorID() : "Unknown");
 					ImGui::Separator();
-					ImGui::TextColored(ImVec4(0.6f, 0.9f, 0.6f, 1.0f), "Click to open CS Editor");
+					ImGui::TextColored(ImVec4(0.6f, 0.9f, 0.6f, 1.0f), "%s", T("ui.click_to_open_cs_editor", "Click to open CS Editor"));
 					ImGui::PopTextWrapPos();
 					ImGui::EndTooltip();
 				}
@@ -2360,11 +2360,11 @@ namespace Util
 					auto* weatherManager = WeatherManager::GetSingleton();
 					auto currentWeathers = weatherManager->GetCurrentWeathers();
 					ImGui::PushTextWrapPos(ImGui::GetFontSize() * 35.0f);
-					ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.2f, 1.0f), "Weather Override Active");
-					ImGui::TextWrapped("This setting is controlled by the current weather (%s).",
+					ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.2f, 1.0f), "%s", T("ui.weather_override_active", "Weather Override Active"));
+					ImGui::TextWrapped(T("ui.weather_setting_controlled", "This setting is controlled by the current weather (%s)."),
 						currentWeathers.currentWeather ? currentWeathers.currentWeather->GetFormEditorID() : "Unknown");
 					ImGui::Separator();
-					ImGui::TextColored(ImVec4(0.6f, 0.9f, 0.6f, 1.0f), "Click to open CS Editor");
+					ImGui::TextColored(ImVec4(0.6f, 0.9f, 0.6f, 1.0f), "%s", T("ui.click_to_open_cs_editor", "Click to open CS Editor"));
 					ImGui::PopTextWrapPos();
 					ImGui::EndTooltip();
 				}
@@ -2401,7 +2401,7 @@ namespace Util
 			if (!combo.empty()) {
 				buttonText = Util::Input::KeyIdToString(combo) + "...";  // Indicate it's still capturing
 			} else {
-				buttonText = "Recording... (Esc to cancel)";
+				buttonText = T("ui.input.recording", "Recording... (Esc to cancel)");
 			}
 
 			if (ImGui::Button(buttonText.c_str(), ImVec2(0, 0))) {
@@ -2412,7 +2412,7 @@ namespace Util
 
 			// Add tooltip explaining how to record
 			if (ImGui::IsItemHovered()) {
-				ImGui::SetTooltip("Press any key combination.\nModifiers (Ctrl, Shift, Alt) are supported.\nPress Escape to cancel.");
+				ImGui::SetTooltip("%s", T("ui.input.record_hint", "Press any key combination.\nModifiers (Ctrl, Shift, Alt) are supported.\nPress Escape to cancel."));
 			}
 		} else {
 			// Display current binding with unique button ID
@@ -2424,7 +2424,7 @@ namespace Util
 
 			// Context menu for clearing
 			if (ImGui::BeginPopupContextItem()) {
-				if (ImGui::Selectable("Clear Binding")) {
+				if (ImGui::Selectable(T("ui.input.clear_binding", "Clear Binding"))) {
 					combo.clear();
 					changed = true;
 				}
@@ -2434,7 +2434,7 @@ namespace Util
 			// First run / empty state hint
 			if (combo.empty()) {
 				ImGui::SameLine();
-				ImGui::TextDisabled("(Click to bind)");
+				ImGui::TextDisabled("%s", T("ui.input.click_to_bind", "(Click to bind)"));
 			}
 		}
 
@@ -2468,13 +2468,13 @@ namespace Util
 
 			if (hasBoth || (hasPrimary && hasSecondary)) {
 				indicatorColor = GetControllerBothColor();
-				indicatorText = hasBoth ? "(Both)" : "(Mixed)";
+				indicatorText = hasBoth ? T("ui.input.indicator_both", "(Both)") : T("ui.input.indicator_mixed", "(Mixed)");
 			} else if (hasPrimary) {
 				indicatorColor = GetControllerPrimaryColor();
-				indicatorText = "(Primary)";
+				indicatorText = T("ui.input.indicator_primary", "(Primary)");
 			} else if (hasSecondary) {
 				indicatorColor = GetControllerSecondaryColor();
-				indicatorText = "(Secondary)";
+				indicatorText = T("ui.input.indicator_secondary", "(Secondary)");
 			}
 
 			if (indicatorText[0] != '\0') {
@@ -2497,8 +2497,8 @@ namespace Util
 
 				ImGui::BeginTooltip();
 				ImGui::PushTextWrapPos(ImGui::GetFontSize() * 35.0f);
-				ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.2f, 1.0f), "Setting Constrained");
-				ImGui::Text("This setting is constrained by:");
+				ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.2f, 1.0f), "%s", T("ui.constraint.setting_constrained", "Setting Constrained"));
+				ImGui::Text("%s", T("ui.constraint.constrained_by", "This setting is constrained by:"));
 				ImGui::Spacing();
 				for (const auto& src : constraint.sources) {
 					ImGui::BulletText("%s", src.featureName.c_str());
@@ -2506,12 +2506,12 @@ namespace Util
 					ImGui::TextWrapped("%s", src.reason.c_str());
 					if (src.recommendDisableAtBoot) {
 						ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.5f, 1.0f),
-							"Consider disabling this feature at boot for best compatibility.");
+							"%s", T("ui.constraint.consider_disable", "Consider disabling this feature at boot for best compatibility."));
 					}
 					ImGui::Unindent();
 				}
 				ImGui::Separator();
-				ImGui::Text("Forced value: %s", FeatureConstraints::FormatConstraintValue(constraint.forcedValue).c_str());
+				ImGui::Text(T("ui.constraint.forced_value", "Forced value: %s"), FeatureConstraints::FormatConstraintValue(constraint.forcedValue).c_str());
 				ImGui::PopTextWrapPos();
 				ImGui::EndTooltip();
 			}

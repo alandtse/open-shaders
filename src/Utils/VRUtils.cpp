@@ -1,4 +1,5 @@
 #include "VRUtils.h"
+#include "../I18n/I18n.h"
 #include "Features/VR.h"  // For ButtonCombo and ControllerDevice definitions
 #include "RE/B/BSOpenVR.h"
 #include "UI.h"
@@ -42,15 +43,15 @@ namespace Util
 				const char* label = "";
 				switch (combo[i].GetDevice()) {
 				case InputDeviceType::Primary:
-					label = "(Primary Controller)";
+					label = T("ui.vr.primary_controller", "(Primary Controller)");
 					labelColor = Util::GetControllerPrimaryColor();
 					break;
 				case InputDeviceType::Secondary:
-					label = "(Secondary Controller)";
+					label = T("ui.vr.secondary_controller", "(Secondary Controller)");
 					labelColor = Util::GetControllerSecondaryColor();
 					break;
 				case InputDeviceType::Both:
-					label = "(Both Controllers)";
+					label = T("ui.vr.both_controllers", "(Both Controllers)");
 					labelColor = Util::GetControllerBothColor();
 					break;
 				default:
@@ -63,10 +64,10 @@ namespace Util
 		}
 		if (anyDrawn) {
 			if (auto _tt = Util::HoverTooltipWrapper()) {
-				Util::DrawColoredMultiLineTooltip({ { "Color coding:", Util::GetControllerDefaultColor() },
-					{ "Yellow = Primary controller", Util::GetControllerPrimaryColor() },
-					{ "Blue = Secondary controller", Util::GetControllerSecondaryColor() },
-					{ "Green = Both controllers (Yellow + Blue)", Util::GetControllerBothColor() } });
+				Util::DrawColoredMultiLineTooltip({ { T("ui.vr.color_coding", "Color coding:"), Util::GetControllerDefaultColor() },
+					{ T("ui.vr.color_coding_primary", "Yellow = Primary controller"), Util::GetControllerPrimaryColor() },
+					{ T("ui.vr.color_coding_secondary", "Blue = Secondary controller"), Util::GetControllerSecondaryColor() },
+					{ T("ui.vr.color_coding_both", "Green = Both controllers (Yellow + Blue)"), Util::GetControllerBothColor() } });
 			}
 		}
 	}

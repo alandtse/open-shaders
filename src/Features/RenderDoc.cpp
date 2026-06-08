@@ -142,7 +142,7 @@ void RenderDoc::DrawSettings()
 
 	// Include enable toggle and annotation forcing logic here
 	bool prevRenderDocCapture = settings.enableCapture;
-	if (ImGui::Checkbox("Enable RenderDoc Capture", &settings.enableCapture)) {
+	if (ImGui::Checkbox(T(TKEY("enable_capture"), "Enable RenderDoc Capture"), &settings.enableCapture)) {
 		if (settings.enableCapture && !prevRenderDocCapture) {
 			globals::state->useFrameAnnotations = globals::state->frameAnnotations;
 			globals::state->frameAnnotations = true;
@@ -156,8 +156,8 @@ void RenderDoc::DrawSettings()
 	// pending banner below it -- the previous ordering drew the banner between
 	// the checkbox and the tooltip, so a pending banner would steal the hover.
 	Util::UI::RestartGatedAnnotate(bootSnapshot, settings, &Settings::enableCapture, [] {
-		ImGui::TextUnformatted("Enable RenderDoc frame capture for providing debug captures to the Open Shaders team (or upstream Community Shaders for upstream-relevant issues).");
-		ImGui::TextUnformatted("Enabling capture will force-enable frame annotations for easier debugging and will restore the previous setting when disabled.");
+		ImGui::TextUnformatted(T(TKEY("enable_capture_tooltip"), "Enable RenderDoc frame capture for providing debug captures to the Open Shaders team (or upstream Community Shaders for upstream-relevant issues)."));
+		ImGui::TextUnformatted(T(TKEY("enable_capture_tooltip2"), "Enabling capture will force-enable frame annotations for easier debugging and will restore the previous setting when disabled."));
 	});
 
 	// The rest of the UI renders only when capture is active
@@ -171,7 +171,7 @@ void RenderDoc::DrawSettings()
 	}
 
 	if (!renderDocCaptureEnabled && renderDocActive) {
-		ImGui::TextColored(themeSettings.StatusPalette.Warning, "Performance will be severely impacted until the game is restarted.");
+		ImGui::TextColored(themeSettings.StatusPalette.Warning, "%s", T(TKEY("restart_to_disable"), "Performance will be severely impacted until the game is restarted."));
 		return;
 	}
 
@@ -953,10 +953,11 @@ void RenderDoc::ApplyAutomaticCommentsToNewCaptures()
 
 std::string RenderDoc::GetOverlayWarningMessage() const
 {
-	return "WARNING: RenderDoc capture is active, performance will be severely impacted.\n"
-		   "Upscaling and Framegeneration may be incompatible.\n"
-		   "Press F12, Print Screen or press the Capture button in the RenderDoc feature settings.\n"
-		   "Disable RenderDoc capture in the RenderDoc feature settings.";
+	return T(TKEY("overlay_warning"),
+		"WARNING: RenderDoc capture is active, performance will be severely impacted.\n"
+		"Upscaling and Framegeneration may be incompatible.\n"
+		"Press F12, Print Screen or press the Capture button in the RenderDoc feature settings.\n"
+		"Disable RenderDoc capture in the RenderDoc feature settings.");
 }
 
 void RenderDoc::ClearFailedDeletions()

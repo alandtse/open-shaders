@@ -90,6 +90,10 @@ struct PerfMode
 	// Fake 3k DepthStencil for Post pass DS swap
 	ID3D11DepthStencilView* GetFakeDSV() const { return fakeDSV.get(); }
 
+	// Reset fakeDS to far depth (1.0) + stencil 0 — its intended throwaway state. Must run
+	// per-frame, not just at init, or UI-pass depth writes (controllers) linger and occlude menus.
+	void ClearFakeDS();
+
 	// Bridge the DLSS-reconstructed menu BG (testTexture, displayRes) into
 	// the bound enlarged RT so OpenVR submit sees both BG + UI compositor
 	// output. One-shot per frame; gated via blittedFrameId.
@@ -319,6 +323,7 @@ private:
 	// Fake 3k DepthStencil (DisplayRes, same format as engine kMAIN DS)
 	winrt::com_ptr<ID3D11Texture2D> fakeDS;
 	winrt::com_ptr<ID3D11DepthStencilView> fakeDSV;
+	uint32_t lastFakeDSClearFrame = UINT32_MAX;  // frame guard so ClearFakeDS runs once/frame
 
 	// autoSwapDSIdx == UINT32_MAX → no active swap; otherwise it's the
 	// kMAIN/kMAIN_COPY slot whose views[] were rewritten and must be

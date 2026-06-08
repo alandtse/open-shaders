@@ -3,6 +3,7 @@
 
 #include "../LightLimitFix.h"
 #include "Deferred.h"
+#include "I18n/I18n.h"
 #include "Menu/ThemeManager.h"
 #include "State.h"
 #include "Util.h"
@@ -300,9 +301,9 @@ void LightLimitFix::DrawOverlay()
 		};
 		uint32_t m = LightsVisualisationMode;
 		const char* vizName = (m < IM_ARRAYSIZE(kVizNames)) ? kVizNames[m] : "Unknown";
-		ImGui::TextColored(ImVec4(1.0f, 0.3f, 0.3f, 1.0f), "LLF DEBUG - %s", vizName);
+		ImGui::TextColored(ImVec4(1.0f, 0.3f, 0.3f, 1.0f), T("feature.light_limit_fix.overlay_debug_label", "LLF DEBUG - %s"), vizName);
 	} else
-		ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.2f, 1.0f), "LLF - Shadow Suppression");
+		ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.2f, 1.0f), "%s", T("feature.light_limit_fix.overlay_shadow_suppression", "LLF - Shadow Suppression"));
 	ImGui::Separator();
 
 	uint32_t mode = vizOn ? LightsVisualisationMode : UINT32_MAX;

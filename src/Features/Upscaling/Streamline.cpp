@@ -803,6 +803,10 @@ void Streamline::UpdateReflex()
  */
 void Streamline::DestroyDLSSResources()
 {
+	// DLSS entry points are only resolved when DLSS is available; calling them otherwise faults.
+	if (!featureDLSS)
+		return;
+
 	sl::DLSSOptions dlssOptions{};
 	dlssOptions.mode = sl::DLSSMode::eOff;
 

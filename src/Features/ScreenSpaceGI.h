@@ -19,23 +19,25 @@ public:
 	virtual std::pair<std::string, std::vector<std::string>> GetFeatureSummary() override
 	{
 		std::string desc =
-			"Screen Space Global Illumination adds realistic indirect lighting and "
-			"ambient occlusion to the game. This technique simulates how light "
-			"bounces off surfaces to illuminate other objects naturally.";
+			T("feature.screen_space_gi.description",
+				"Screen Space Global Illumination adds realistic indirect lighting and "
+				"ambient occlusion to the game. This technique simulates how light "
+				"bounces off surfaces to illuminate other objects naturally.");
 		if (globals::game::isVR) {
 			desc +=
-				"\n\nWarning: In VR, this feature may have visual artifacts and "
-				"can have a significant performance impact due to the nature of "
-				"screen space effects.";
+				T("feature.screen_space_gi.vr_warning",
+					"\n\nWarning: In VR, this feature may have visual artifacts and "
+					"can have a significant performance impact due to the nature of "
+					"screen space effects.");
 		}
 		return std::make_pair(
 			desc,
 			std::vector<std::string>{
-				"Realistic indirect lighting",
-				"Enhanced ambient occlusion",
-				"Improved visual depth and atmosphere",
-				"Temporal denoising for smooth results",
-				"Configurable quality and performance settings" });
+				T("feature.screen_space_gi.key_feature_1", "Realistic indirect lighting"),
+				T("feature.screen_space_gi.key_feature_2", "Enhanced ambient occlusion"),
+				T("feature.screen_space_gi.key_feature_3", "Improved visual depth and atmosphere"),
+				T("feature.screen_space_gi.key_feature_4", "Temporal denoising for smooth results"),
+				T("feature.screen_space_gi.key_feature_5", "Configurable quality and performance settings") });
 	}
 
 	virtual void RestoreDefaultSettings() override;

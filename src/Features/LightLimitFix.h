@@ -27,13 +27,14 @@ public:
 	virtual std::pair<std::string, std::vector<std::string>> GetFeatureSummary() override
 	{
 		return {
-			"Light Limit Fix removes the vanilla game's 4-light limit, allowing unlimited dynamic lights in scenes. "
-			"It also extends shadow support to all point and spot lights.",
-			{ "Removes 4-light limit",
-				"Unlimited dynamic lights",
-				"Shadow support for point and spot lights",
-				"Improved lighting quality",
-				"Particle lights from configurable INI" }
+			T("feature.light_limit_fix.description",
+				"Light Limit Fix removes the vanilla game's 4-light limit, allowing unlimited dynamic lights in scenes. "
+				"It also extends shadow support to all point and spot lights."),
+			{ T("feature.light_limit_fix.key_feature_1", "Removes 4-light limit"),
+				T("feature.light_limit_fix.key_feature_2", "Unlimited dynamic lights"),
+				T("feature.light_limit_fix.key_feature_3", "Shadow support for point and spot lights"),
+				T("feature.light_limit_fix.key_feature_4", "Improved lighting quality"),
+				T("feature.light_limit_fix.key_feature_5", "Particle lights from configurable INI") }
 		};
 	}
 

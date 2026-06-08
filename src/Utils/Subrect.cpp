@@ -226,9 +226,9 @@ namespace Util::Subrect
 		}
 
 		std::string currentPreview =
-			(selectedPresetIndex >= 0 && selectedPresetIndex < static_cast<int>(presets.size())) ? presets[selectedPresetIndex].name : "(Custom)";
+			(selectedPresetIndex >= 0 && selectedPresetIndex < static_cast<int>(presets.size())) ? presets[selectedPresetIndex].name : T("ui.subrect.custom", "(Custom)");
 
-		if (ImGui::BeginCombo("Crop Preset", currentPreview.c_str())) {
+		if (ImGui::BeginCombo(T("ui.subrect.crop_preset", "Crop Preset"), currentPreview.c_str())) {
 			for (int i = 0; i < static_cast<int>(presets.size()); ++i) {
 				const bool isSelected = selectedPresetIndex == i;
 				if (ImGui::Selectable(presets[i].name.c_str(), isSelected)) {
@@ -241,9 +241,9 @@ namespace Util::Subrect
 			ImGui::EndCombo();
 		}
 
-		ImGui::InputText("Save As", newPresetName, sizeof(newPresetName));
+		ImGui::InputText(T("ui.subrect.save_as", "Save As"), newPresetName, sizeof(newPresetName));
 		ImGui::SameLine();
-		if (ImGui::Button("Save Preset")) {
+		if (ImGui::Button(T("ui.subrect.save_preset", "Save Preset"))) {
 			std::string presetName = newPresetName;
 			if (!presetName.empty()) {
 				// Preserve the right-eye UV only when stereo is on. In mono
@@ -264,22 +264,22 @@ namespace Util::Subrect
 
 		if (selectedPresetIndex > 0) {
 			ImGui::SameLine();
-			if (ImGui::Button("Delete Preset")) {
+			if (ImGui::Button(T("ui.subrect.delete_preset", "Delete Preset"))) {
 				presets.erase(presets.begin() + selectedPresetIndex);
 				ApplyPreset(0);
 			}
 		}
 
 		ImGui::SameLine();
-		if (ImGui::Button("Reset Crop")) {
+		if (ImGui::Button(T("ui.subrect.reset_crop", "Reset Crop"))) {
 			ApplyPreset(0);
 		}
 
 		ImGui::Spacing();
 		ImGui::PushItemWidth(250.0f);
 		bool changed = false;
-		changed |= ImGui::SliderFloat2("Position UV (X, Y)", &currentUV.x, 0.0f, 1.0f, "%.3f");
-		changed |= ImGui::SliderFloat2("Size UV (W, H)", &currentUV.w, 0.01f, 1.0f, "%.3f");
+		changed |= ImGui::SliderFloat2(T("ui.subrect.position_uv", "Position UV (X, Y)"), &currentUV.x, 0.0f, 1.0f, "%.3f");
+		changed |= ImGui::SliderFloat2(T("ui.subrect.size_uv", "Size UV (W, H)"), &currentUV.w, 0.01f, 1.0f, "%.3f");
 		ImGui::PopItemWidth();
 
 		if (changed) {
@@ -291,10 +291,10 @@ namespace Util::Subrect
 		}
 
 		ImGui::Spacing();
-		ImGui::Text("Interactive Cropping (Drag on the image to select)");
+		ImGui::Text("%s", T("ui.subrect.interactive_cropping", "Interactive Cropping (Drag on the image to select)"));
 
 		if (!previewSrv || !previewTexture) {
-			ImGui::TextDisabled("Preview unavailable.");
+			ImGui::TextDisabled("%s", T("ui.subrect.preview_unavailable", "Preview unavailable."));
 			return;
 		}
 

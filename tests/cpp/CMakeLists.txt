@@ -53,6 +53,9 @@ add_executable(cpp_tests
     test_shadowcaster_math.cpp
     test_llf_sanitize.cpp
     test_hdr_png_metadata.cpp
+    # Stub I18n::Get so units-under-test that call T() (Subrect's DrawEditor)
+    # link without pulling the translation loader into the test binary.
+    i18n_stub.cpp
     # Compile the unit-under-test directly into the test binary so we don't
     # depend on the plugin DLL build (which pulls in FFX/Streamline/etc.).
     "${CMAKE_SOURCE_DIR}/src/Utils/Subrect.cpp"

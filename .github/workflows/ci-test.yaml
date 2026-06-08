@@ -1,0 +1,49 @@
+# CI self-test harness for workflow / composite-action changes.
+#
+# WHY: pr-checks runs under pull_request_target, where the workflow
+# definitions AND composite actions resolve from the BASE branch. A PR
+# therefore can never exercise its own changes to a reusable workflow or a
+# composite action (e.g. .github/actions/setup-build-environment). Push a
+# branch under ci_test/** to run the full build/validation matrix from THAT
+# branch's ref, so CI-infrastructure changes are validated before they merge.
+#
+# Usage:
+#   git push origin <local-branch>:ci_test/<name>
+# then watch the "CI self-test" run. Delete the ci_test/* branch when done.
+#
+# SECURITY: triggered only by `push` (to ci_test/**) and manual
+# `workflow_dispatch`. Both are write-access-gated -- forks cannot push to this
+# repository's refs and cannot dispatch its workflows -- so this only ever runs
+# trusted, same-repo code; it does NOT use the pull_request_target trust
+# inversion that fork PRs require. The repository guard below skips it on forks.
+# Cache writes use an isolated key suffix (-ci-test) so a ci_test branch can
+# never poison the dev / main / PR build caches that production runs consume.
+name: "CI self-test"
+
+on:
+    push:
+        branches: [ci_test/**]
+    workflow_dispatch:
+
+permissions:
+    contents: read
+
+concurrency:
+    group: ci-test-${{ github.ref }}
+    cancel-in-progress: true
+
+jobs:
+    self-test:
+        # Same-repo only: never run on a fork that happens to carry this file.
+        if: github.repository == 'alandtse/open-shaders'
+        uses: ./.github/workflows/_shared-build.yaml
+        with:
+            ref: ${{ github.sha }}
+            repository: ${{ github.repository }}
+            run-cpp: true
+            run-shader-validation: true
+            run-shader-tests: true
+            run-cpp-tests: true
+            # Isolate this harness's build caches from production keys so a
+            # ci_test branch cannot poison dev / main / PR build caches.
+            cache-key-suffix: "-ci-test"

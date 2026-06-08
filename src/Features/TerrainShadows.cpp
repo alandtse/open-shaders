@@ -38,24 +38,25 @@ void TerrainShadows::DrawSettings()
 				curr_worldspace_name = worldspace->GetName();
 			}
 		}
-		ImGui::Text(fmt::format("Current worldspace: {} ({})", curr_worldspace, curr_worldspace_name).c_str());
-		ImGui::Text(fmt::format("Has height map: {}", heightmaps.contains(curr_worldspace)).c_str());
+		bool hasHeightMap = heightmaps.contains(curr_worldspace);
+		ImGui::Text(std::vformat(T(TKEY("current_worldspace"), "Current worldspace: {} ({})"), std::make_format_args(curr_worldspace, curr_worldspace_name)).c_str());
+		ImGui::Text(std::vformat(T(TKEY("has_height_map"), "Has height map: {}"), std::make_format_args(hasHeightMap)).c_str());
 
 		ImGui::Separator();
 
-		ImGui::BulletText("shadowUpdateCBData");
+		ImGui::BulletText(T(TKEY("shadow_update_cb_data"), "shadowUpdateCBData"));
 		ImGui::Indent();
 		{
-			ImGui::Text(fmt::format("LightPxDir: ({}, {})", shadowUpdateCBData.LightPxDir.x, shadowUpdateCBData.LightPxDir.y).c_str());
-			ImGui::Text(fmt::format("LightDeltaZ: ({}, {})", shadowUpdateCBData.LightDeltaZ.x, shadowUpdateCBData.LightDeltaZ.y).c_str());
-			ImGui::Text(fmt::format("StartPxCoord: {}", shadowUpdateCBData.StartPxCoord).c_str());
-			ImGui::Text(fmt::format("PxSize: ({}, {})", shadowUpdateCBData.PxSize.x, shadowUpdateCBData.PxSize.y).c_str());
+			ImGui::Text(std::vformat(T(TKEY("light_px_dir"), "LightPxDir: ({}, {})"), std::make_format_args(shadowUpdateCBData.LightPxDir.x, shadowUpdateCBData.LightPxDir.y)).c_str());
+			ImGui::Text(std::vformat(T(TKEY("light_delta_z"), "LightDeltaZ: ({}, {})"), std::make_format_args(shadowUpdateCBData.LightDeltaZ.x, shadowUpdateCBData.LightDeltaZ.y)).c_str());
+			ImGui::Text(std::vformat(T(TKEY("start_px_coord"), "StartPxCoord: {}"), std::make_format_args(shadowUpdateCBData.StartPxCoord)).c_str());
+			ImGui::Text(std::vformat(T(TKEY("px_size"), "PxSize: ({}, {})"), std::make_format_args(shadowUpdateCBData.PxSize.x, shadowUpdateCBData.PxSize.y)).c_str());
 		}
 		ImGui::Unindent();
 
 		if (ImGui::TreeNode(T(TKEY("buffer_viewer"), "Buffer Viewer"))) {
 			static float debugRescale = .1f;
-			ImGui::SliderFloat("View Resize", &debugRescale, 0.f, 1.f);
+			ImGui::SliderFloat(T(TKEY("view_resize"), "View Resize"), &debugRescale, 0.f, 1.f);
 
 			if (texShadowHeight) {
 				BUFFER_VIEWER_NODE_BULLET(texShadowHeight, debugRescale)
