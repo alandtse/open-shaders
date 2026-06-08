@@ -878,8 +878,17 @@ sk_hdr_png::write_image_to_disk (const wchar_t* image_path, unsigned int width, 
 
 	HRESULT hr = E_OUTOFMEMORY;
 
-	UINT row_stride  = (width * 48 + 7)/8;
-	UINT buffer_size = height * row_stride;
+	// Compute packed dimensions in 64-bit, then reject anything exceeding the WIC
+	// WritePixels UINT cbStride/cbBufferSize limit (such images are unencodable here
+	// anyway). Prevents a 32-bit overflow from undersizing png_buffer -> heap overflow.
+	const uint64_t row_stride64  = ((uint64_t)width * 48ull + 7ull) / 8ull;
+	const uint64_t buffer_size64 = (uint64_t)height * row_stride64;
+	if (row_stride64 > 0xFFFFFFFFull || buffer_size64 > 0xFFFFFFFFull)
+	{
+		return false;
+	}
+	UINT row_stride  = static_cast<UINT>(row_stride64);
+	UINT buffer_size = static_cast<UINT>(buffer_size64);
 
 	BYTE*     png_buffer      =     (BYTE *)_aligned_malloc(sizeof (    BYTE) * buffer_size,    16);
 	XMFLOAT4* rgba32_scanline = (XMFLOAT4 *)_aligned_malloc(sizeof (XMFLOAT4) * width,          16);
@@ -918,7 +927,7 @@ sk_hdr_png::write_image_to_disk (const wchar_t* image_path, unsigned int width, 
 
 				auto pixel_luminance = luminance;
 
-				for (size_t i = 0; i < width * height; i++)
+				for (size_t i = 0; i < static_cast<size_t>(width) * height; i++)
 				{
 					const uint32_t color = *reinterpret_cast<const uint32_t *>(src_pixels++);
 
