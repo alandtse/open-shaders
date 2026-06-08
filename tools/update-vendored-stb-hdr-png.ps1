@@ -37,9 +37,11 @@ $b64 = (gh api "repos/$repo/contents/$($path)?ref=$sha" --jq '.content') -replac
 if (-not $b64) { throw "Empty content returned for $path @ $sha" }
 [System.IO.File]::WriteAllBytes($dest, [Convert]::FromBase64String($b64))
 
-# Update the pinned commit line in PROVENANCE.md.
-(Get-Content $prov) -replace '(\*\*Pinned commit:\*\* `)[0-9a-f]{7,40}(`)', "`${1}$sha`${2}" |
-    Set-Content -Path $prov -Encoding utf8
+# Update the pinned commit line in PROVENANCE.md. Write without a BOM (same
+# reason as the header above: Set-Content -Encoding utf8 prepends a UTF-8 BOM
+# under Windows PowerShell 5.1).
+$provText = (Get-Content $prov -Raw) -replace '(\*\*Pinned commit:\*\* `)[0-9a-f]{7,40}(`)', "`${1}$sha`${2}"
+[System.IO.File]::WriteAllText($prov, $provText, (New-Object System.Text.UTF8Encoding($false)))
 
 Write-Host "Updated vendored header and pinned commit -> $sha"
 Write-Host "--- git diff (review, rebuild, re-run HDR-screenshot smoke) ---"

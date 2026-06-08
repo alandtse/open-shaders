@@ -550,11 +550,12 @@ namespace
 			return false;
 		}
 		os.write(reinterpret_cast<const char*>(png.data()), static_cast<std::streamsize>(png.size()));
-		os.flush();
-		const bool success = static_cast<bool>(os);
+		// Close before checking state: close() flushes, and a flush/write error
+		// (e.g. disk full) only surfaces on the stream after the final flush.
 		os.close();
+		const bool success = static_cast<bool>(os);
 		if (!success) {
-			// Don't leave a truncated PNG behind on a partial write.
+			// Don't leave a truncated PNG behind on a partial write/flush failure.
 			std::error_code ec;
 			std::filesystem::remove(outputPath, ec);
 		}
