@@ -66,6 +66,23 @@ Set `CommunityShadersOutputDir` environment variable to semicolon-separated Skyr
 CommunityShadersOutputDir=F:/MySkyrimModpack/mods/CommunityShaders;F:/SteamLibrary/steamapps/common/SkyrimVR/Data;F:/SteamLibrary/steamapps/common/Skyrim Special Edition/Data
 ```
 
+### IDE / clangd setup
+
+The shipped presets use the Visual Studio generator, which does **not** emit a
+`compile_commands.json`. Without one, clangd parses every TU with the fallback
+flags in `.clangd` and reports false "unknown include / undefined symbol"
+diagnostics. After configuring the `ALL` preset once, generate an accurate
+compile database:
+
+```bash
+pwsh tools/gen-clangd-db.ps1
+```
+
+It stands up a throwaway Ninja configure (no build, reuses the `ALL` preset's
+vcpkg packages), writes `compile_commands.json` to the repo root (gitignored,
+machine-specific), and rewrites paths when the build runs under a `subst` drive.
+Re-run it when the include graph or CMake options change, then restart clangd.
+
 ### Shader Development and Testing
 
 ```bash
@@ -560,6 +577,15 @@ After a hotfix release, open PRs targeting `dev` are auto-rebased by the `Auto-r
 -   Run `Release: Semantic Version` on `hotfix/X.Y.x` for the current line — it will fail with `cannot be published as it is out of range` because the maintenance contract requires the hotfix line to be strictly older than `main`. Use `ff_target` into `main` instead.
 
 Full details: [Open Shaders developer wiki — Patch Release Process](https://github.com/alandtse/open-shaders/wiki/Developers#patch-release-process-any-line). The fork now maintains its own wiki (transferred from upstream) at `alandtse/open-shaders/wiki`; the `maint-update-wiki.yaml` workflow auto-publishes buffer documentation there on every push to `dev`. Upstream Community Shaders maintains its own copy at `community-shaders/skyrim-community-shaders/wiki` — link to whichever is appropriate for the audience.
+
+### Syncing from upstream Community Shaders
+
+Upstream is `community-shaders/skyrim-community-shaders`. Pull its changes **by merge, never cherry-pick** — this is the rule that keeps future syncs cheap:
+
+-   **Merge, don't cherry-pick.** `git merge <upstream-ref>` (an upstream `vX.Y.Z` tag — there is no `upstream/master`). Cherry-pick rewrites each commit to a new SHA, so upstream's originals never become ancestors and the **next** `git merge` re-conflicts on the same hunks forever. A merge makes the upstream commits ancestors once, so subsequent syncs are clean.
+-   **Land the sync PR as a merge commit, never squash.** Squash collapses the merge into one fresh SHA and throws the ancestry away, undoing the whole point. The repo default is squash, so the PR must be set to "Create a merge commit" explicitly (mirrors the #121 sync).
+-   **Verify ancestry after landing:** `git merge-base --is-ancestor <upstream-sha> HEAD` must pass for each adopted upstream commit.
+-   **Resolve conflicts keep-VR** (this fork is the VR maintainer). Typical conflicts are just fork CI config or feature `.ini` versions — resolve `--ours`. If upstream ships a VR removal, revert it and keep VR.
 
 ### Code Organization and Refactoring Patterns
 
