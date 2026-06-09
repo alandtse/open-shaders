@@ -117,6 +117,7 @@ void RemoteControl::DrawSettings()
 	ImGui::BulletText("%s", T(TKEY("tool_shadercache"), "openshaders.shadercache — clear / delete the compiled cache"));
 	ImGui::BulletText("%s", T(TKEY("tool_capture"), "openshaders.capture — RenderDoc / screenshot capture"));
 	ImGui::BulletText("%s", T(TKEY("tool_settings"), "openshaders.settings — save / load / reset the global config"));
+	ImGui::BulletText("%s", T(TKEY("tool_menu"), "openshaders.menu — open / close / toggle and navigate to a menu section"));
 	ImGui::TextDisabled("%s",
 		T(TKEY("console_note"), "Note: the console tool is provided by devbench itself, not this plugin."));
 #else

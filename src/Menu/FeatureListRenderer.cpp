@@ -1,10 +1,13 @@
 #include "FeatureListRenderer.h"
 
 #include <algorithm>
+#include <array>
+#include <cctype>
 #include <cmath>
 #include <filesystem>
 #include <format>
 #include <imgui.h>
+#include <optional>
 #include <ranges>
 #include <system_error>
 #include <unordered_set>
@@ -29,6 +32,40 @@
 
 namespace
 {
+	std::string NormalizeMenuSelection(std::string_view value)
+	{
+		std::string normalized;
+		normalized.reserve(value.size());
+		for (const unsigned char ch : value) {
+			if (std::isalnum(ch))
+				normalized.push_back(static_cast<char>(std::tolower(ch)));
+		}
+		return normalized;
+	}
+
+	std::optional<std::string> ResolveBuiltInMenuDisplayName(const std::string& requested)
+	{
+		struct BuiltInMenuName
+		{
+			const char* canonical;
+			const char* i18nKey;
+			const char* fallback;
+		};
+		static constexpr std::array<BuiltInMenuName, 4> kBuiltInMenuNames{ {
+			{ "Home", "menu.features.home", "Home" },
+			{ "General", "menu.features.general", "General" },
+			{ "Advanced", "menu.features.advanced", "Advanced" },
+			{ "Profiling", "menu.features.profiling", "Profiling" },
+		} };
+		const auto normalized = NormalizeMenuSelection(requested);
+		for (const auto& candidate : kBuiltInMenuNames) {
+			const std::string localized = T(candidate.i18nKey, candidate.fallback);
+			if (normalized == NormalizeMenuSelection(candidate.canonical) || normalized == NormalizeMenuSelection(localized))
+				return localized;
+		}
+		return std::nullopt;
+	}
+
 	// Core built-in menu names that always appear first in the menu list
 	// These are canonical identifiers used for logic — NOT translated
 	constexpr std::array<const char*, 5> CORE_MENU_NAMES = {
@@ -413,12 +450,22 @@ void FeatureListRenderer::HandlePendingFeatureSelection(
 	size_t& selectedMenu)
 {
 	if (!pendingFeatureSelection.empty()) {
+		const auto normalizedPending = NormalizeMenuSelection(pendingFeatureSelection);
+		const auto builtInDisplayName = ResolveBuiltInMenuDisplayName(pendingFeatureSelection);
 		for (size_t i = 0; i < menuList.size(); ++i) {
-			if (std::holds_alternative<Feature*>(menuList[i])) {
-				Feature* feature = std::get<Feature*>(menuList[i]);
-				if (feature->GetShortName() == pendingFeatureSelection) {
+			if (std::holds_alternative<BuiltInMenu>(menuList[i])) {
+				const auto& menu = std::get<BuiltInMenu>(menuList[i]);
+				if (builtInDisplayName && menu.name == *builtInDisplayName) {
 					selectedMenu = i;
-					logger::info("Navigated to {} feature menu", pendingFeatureSelection);
+					logger::info("Navigated to {} menu", pendingFeatureSelection);
+					break;
+				}
+			} else if (std::holds_alternative<Feature*>(menuList[i])) {
+				Feature* feature = std::get<Feature*>(menuList[i]);
+				if (NormalizeMenuSelection(feature->GetShortName()) == normalizedPending ||
+					NormalizeMenuSelection(feature->GetDisplayName()) == normalizedPending) {
+					selectedMenu = i;
+					logger::info("Navigated to {} menu", pendingFeatureSelection);
 					break;
 				}
 			}

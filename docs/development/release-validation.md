@@ -65,9 +65,13 @@ All calls are `POST http://127.0.0.1:<port>/api/tool/<name>`.
 | Alive           | `inspect {"kind":"state"}`                                       | returns `plugin`, correct `vr` flag, no error                              |
 | **Shader gate** | `openshaders.inspect {"kind":"shadercache"}`                     | **`failedTasks == 0` and `currentFailedCount == 0`**, `compiling == false` |
 | Features        | `openshaders.feature {"action":"list"}`                          | every entry `loaded == true`                                               |
+| Menu (QA)       | `openshaders.menu {"op":"open","section":"Advanced"}`            | menu opens and navigates to requested section                              |
 | In-game         | `game {"action":"loadLast"}` → poll `inspect` for `playerLoaded` | reaches `playerLoaded`, no CTD                                             |
 | Runtime shaders | `openshaders.inspect {"kind":"shadercache"}` (after load)        | `failedTasks == 0` for the runtime/on-demand batch                         |
 | Evidence        | `openshaders.capture {"kind":"screenshot"}`                      | writes `Screenshots/CS_*.bmp`                                              |
+
+If you are driving the base devbench `menu` tool directly, the Community Shaders menu
+toggle call is `menu {"action":"invoke","name":"CommunityShaders"}`.
 
 Then scan the log for genuine errors (see §4 for the path). Distinguish release-relevant
 failures from **known-benign** lines that appear every run:
