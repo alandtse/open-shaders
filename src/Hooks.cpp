@@ -652,28 +652,6 @@ namespace Hooks
 		static inline REL::Relocation<decltype(thunk)> func;
 	};
 
-	struct CreateRenderTarget_Water1
-	{
-		static void thunk(RE::BSGraphics::Renderer* This, RE::RENDER_TARGETS::RENDER_TARGET a_target, RE::BSGraphics::RenderTargetProperties* a_properties)
-		{
-			auto properties = *a_properties;
-			properties.format.set(RE::BSGraphics::Format::kR16G16B16A16_FLOAT);
-			func(This, a_target, &properties);
-		}
-		static inline REL::Relocation<decltype(thunk)> func;
-	};
-
-	struct CreateRenderTarget_Water2
-	{
-		static void thunk(RE::BSGraphics::Renderer* This, RE::RENDER_TARGETS::RENDER_TARGET a_target, RE::BSGraphics::RenderTargetProperties* a_properties)
-		{
-			auto properties = *a_properties;
-			properties.format.set(RE::BSGraphics::Format::kR16G16B16A16_FLOAT);
-			func(This, a_target, &properties);
-		}
-		static inline REL::Relocation<decltype(thunk)> func;
-	};
-
 	struct BSShader__BeginTechnique_SetVertexShader
 	{
 		static void thunk(RE::BSGraphics::Renderer*, RE::BSGraphics::VertexShader* a_vertexShader)
@@ -1030,9 +1008,6 @@ namespace Hooks
 
 		stl::write_thunk_call<CreateRenderTarget_RefractionNormals>(REL::RelocationID(100458, 107175).address() + REL::Relocate(0x503, 0x502, 0x661));
 		stl::write_thunk_call<CreateRenderTarget_UnderwaterMask>(REL::RelocationID(100458, 107175).address() + REL::Relocate(0xB19, 0xB19, 0xE06));
-
-		stl::write_thunk_call<CreateRenderTarget_Water1>(REL::RelocationID(100458, 107175).address() + REL::Relocate(0xF4F, 0xF51, 0x12C2));
-		stl::write_thunk_call<CreateRenderTarget_Water2>(REL::RelocationID(100458, 107175).address() + REL::Relocate(0xF65, 0xF67, 0x12D8));
 
 		stl::write_thunk_call<CreateDepthStencil_PrecipitationMask>(REL::RelocationID(100458, 107175).address() + REL::Relocate(0x1245, 0x123B, 0x1917));
 		stl::write_thunk_call<CreateCubemapRenderTarget_Reflections>(REL::RelocationID(100458, 107175).address() + REL::Relocate(0xA25, 0xA25, 0xCD2));
