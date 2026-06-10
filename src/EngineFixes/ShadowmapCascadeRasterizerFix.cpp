@@ -10,44 +10,47 @@ void ShadowmapRasterizerFix::Install()
 	// per-cascade swap lands in the slots the engine actually binds (fixes VR cascade flicker).
 	depthDim = globals::game::isVR ? 13 : 12;
 
-	numCascades = static_cast<uint>(Util::GetGameSettingValue<std::int32_t>("iNumSplits:Display", Settings.at("iNumSplits:Display")));
-
 	// Install the hook LAST, after all static state is set, so a render-thread RenderCascade
 	// can't enter thunk() with a null gRasterStates or an unset VR stride. The hooked function
 	// is called once per cascade to begin the updating and rendering process.
 	stl::write_thunk_call<BSShadowDirectionalLight_RenderShadowmaps_RenderCascade>(REL::RelocationID(101495, 108489).address() + REL::Relocate(0xC6, 0xC6, 0xF6));
 }
 
-void ShadowmapRasterizerFix::BSShadowDirectionalLight_RenderShadowmaps_RenderCascade::thunk(RE::BSShadowDirectionalLight* light, void* arg1, void* arg2, uint32_t flags)
+void ShadowmapRasterizerFix::BSShadowDirectionalLight_RenderShadowmaps_RenderCascade::thunk(RE::BSShadowDirectionalLight* light, void* a_descriptor, void* arg2, uint32_t flags)
 {
-	static uint cascade = 0;
+	// The engine writes the cascade index into the shadowmap descriptor right before this call
+	// (SE/AE +0x58, VR +0x70); read it rather than counting calls so we can never desync from
+	// the engine's own loop (its cascade count is not capped at 3 like ours).
+	const auto index = *reinterpret_cast<const std::uint32_t*>(
+		static_cast<const std::byte*>(a_descriptor) + REL::Relocate(0x58, 0x58, 0x70));
+	const uint cascade = std::min(index, maxCascades - 1);
 
 	const auto bytes = static_cast<std::size_t>(StateCount()) * sizeof(RasterStatePtr);
 
-	static bool initialized = false;
-	if (!initialized) {
-		//Backup
-		if (cascade == 0) {
-			std::memcpy(backupGameRasterStates, gRasterStates, bytes);
-			numCascades = std::max(1u, std::min(numCascades, maxCascades));
-		}
-
-		//Clone from the pristine engine table (we overwrite gRasterStates per cascade below)
-		CloneRasterStates(backupGameRasterStates, cascade);
-
-		initialized = cascade == numCascades - 1;
+	static bool backedUp = false;
+	if (!backedUp) {
+		std::memcpy(backupGameRasterStates, gRasterStates, bytes);
+		backedUp = true;
 	}
 
-	//Emplace
+	static bool cloned[maxCascades] = {};
+	if (!cloned[cascade]) {
+		// Clone from the pristine engine table (we overwrite gRasterStates below)
+		CloneRasterStates(backupGameRasterStates, cascade);
+		cloned[cascade] = true;
+	}
+
+	// Emplace, and force a rebind: the engine issues RSSetState only when a raster dirty flag
+	// is set and caches by table index, so swapping table contents alone leaves the previous
+	// cascade's state bound until unrelated state traffic happens to dirty it (= flicker).
 	std::memcpy(gRasterStates, shadowmapRasterStates[cascade], bytes);
+	globals::game::stateUpdateFlags->set(RE::BSGraphics::ShaderFlags::DIRTY_RASTER_DEPTH_BIAS);
 
-	func(light, arg1, arg2, flags);
+	func(light, a_descriptor, arg2, flags);
 
-	//Restore
-	if (cascade == numCascades - 1)
-		std::memcpy(gRasterStates, backupGameRasterStates, bytes);
-
-	cascade = ++cascade < numCascades ? cascade : 0;
+	// Restore unconditionally so the biased table can never leak past this cascade.
+	std::memcpy(gRasterStates, backupGameRasterStates, bytes);
+	globals::game::stateUpdateFlags->set(RE::BSGraphics::ShaderFlags::DIRTY_RASTER_DEPTH_BIAS);
 }
 
 void ShadowmapRasterizerFix::GetUpdatedRasterDesc(D3D11_RASTERIZER_DESC& outputDesc, ShadowMapRasterizerDescriptor shadowmapDesc)
