@@ -18,11 +18,10 @@ void ShadowmapRasterizerFix::Install()
 
 void ShadowmapRasterizerFix::BSShadowDirectionalLight_RenderShadowmaps_RenderCascade::thunk(RE::BSShadowDirectionalLight* light, void* a_descriptor, void* arg2, uint32_t flags)
 {
-	// The engine writes the cascade index into the shadowmap descriptor right before this call
-	// (SE/AE +0x58, VR +0x70); read it rather than counting calls so we can never desync from
-	// the engine's own loop (its cascade count is not capped at 3 like ours).
-	const auto index = *reinterpret_cast<const std::uint32_t*>(
-		static_cast<const std::byte*>(a_descriptor) + REL::Relocate(0x58, 0x58, 0x70));
+	// The engine writes the cascade index into the shadowmap descriptor right before this call;
+	// read it rather than counting calls so we can never desync from the engine's own loop (its
+	// cascade count is not capped at 3 like ours).
+	const auto index = REL::RelocateMember<const std::uint32_t>(a_descriptor, 0x58, 0x70);
 	const uint cascade = std::min(index, maxCascades - 1);
 
 	const auto bytes = static_cast<std::size_t>(StateCount()) * sizeof(RasterStatePtr);
