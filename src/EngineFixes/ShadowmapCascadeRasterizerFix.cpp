@@ -20,8 +20,10 @@ void ShadowmapRasterizerFix::BSShadowDirectionalLight_RenderShadowmaps_RenderCas
 {
 	// The engine writes the cascade index into the shadowmap descriptor right before this call;
 	// read it rather than counting calls so we can never desync from the engine's own loop (its
-	// cascade count is not capped at 3 like ours).
-	const auto index = REL::RelocateMember<const std::uint32_t>(a_descriptor, 0x58, 0x70);
+	// cascade count is not capped at 3 like ours). The descriptor layout differs per runtime.
+	const auto index = globals::game::isVR ?
+	                       static_cast<RE::BSShadowLight::ShadowmapDescriptorVR*>(a_descriptor)->shadowmapIndex :
+	                       static_cast<RE::BSShadowLight::ShadowmapDescriptor*>(a_descriptor)->shadowmapIndex;
 	const uint cascade = std::min(index, maxCascades - 1);
 
 	const auto bytes = static_cast<std::size_t>(StateCount()) * sizeof(RasterStatePtr);
