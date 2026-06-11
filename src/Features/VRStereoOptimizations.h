@@ -12,14 +12,16 @@ using json = nlohmann::json;
  * @brief VR Stereo Rendering Optimizations feature.
  *
  * Uses hardware stencil culling to skip Eye 1 pixel shading for pixels that can be
- * reprojected from Eye 0 via lateral stereo reprojection, then runs a compute shader
- * to fill those pixels. This avoids redundant pixel shading in overlapping stereo regions.
+ * reprojected from Eye 0, then restores depth and the G-buffer for those pixels so the
+ * deferred composite lights them natively. This avoids redundant pixel shading in the
+ * overlapping stereo region without sharing shaded color between eyes.
  *
  * Pipeline:
  *   1. DispatchStencil()             - CS classifies per-pixel reprojection viability into a mode texture,
  *                                      then a fullscreen VS/PS pass writes that classification into the stencil buffer.
  *   2. (Game renders Eye 1)          - Hardware stencil test skips shading for marked pixels.
- *   3. VR::DrawStereoBlend()         - Stereo overwrite CS reprojects Eye 0 color into skipped Eye 1 pixels.
+ *   3. RepairCulledEye1()            - Restores depth and reprojects the G-buffer from Eye 0 for the
+ *                                      skipped pixels, so all downstream passes light Eye 1 natively.
  */
 struct VRStereoOptimizations
 {
@@ -39,11 +41,11 @@ struct VRStereoOptimizations
 	/// Per-pixel classification written by StencilCS
 	enum PixelMode : uint8_t
 	{
-		MODE_DISOCCLUDED = 0,     ///< Fully shaded, no reprojection, no blend
-		MODE_EDGE = 1,            ///< Fully shaded + bilateral blend with other eye
-		MODE_MAIN = 2,            ///< Eye 0: no reproject (Perf) / bilateral (Quality). Eye 1: overwrite (Perf) / bilateral (Quality)
-		MODE_EDGE_NEIGHBOUR = 3,  ///< Outer band: background pixels near edge, blended in post-process
-		MODE_FULL_BLEND = 4,      ///< Near-camera pixels: fully shaded in both eyes + bilateral blended
+		MODE_DISOCCLUDED = 0,     ///< Fully shaded natively (no reprojection)
+		MODE_EDGE = 1,            ///< Depth-edge band: fully shaded natively
+		MODE_MAIN = 2,            ///< Eligible for culling: Eye 1 shading skipped, G-buffer reprojected from Eye 0
+		MODE_EDGE_NEIGHBOUR = 3,  ///< Outer band near an edge: fully shaded natively
+		MODE_FULL_BLEND = 4,      ///< Near-camera (within FullBlendDistance): excluded from culling, shaded in both eyes
 	};
 
 	//=============================================================================
@@ -74,7 +76,7 @@ struct VRStereoOptimizations
 		float minEdgeDistance = 5000.0f;     ///< Minimum linearized depth for edge AA (game units)
 		float fullBlendDistance = 0.0f;      ///< Linearized depth below which near-camera geometry is excluded from culling (game units)
 		float forwardOcclusionScale = 0.1f;  ///< Eye 0 depth multiplier for directional disocclusion; 0 = disabled
-		float qualityJitterOffset = 0.125f;
+		// reserved for foveated reprojection — see alandtse/open-shaders#143
 		float foveatedRegionRadius = 0.3f;
 		float foveatedRegionCenterX = 0.5f;
 		float foveatedRegionCenterY = 0.5f;
@@ -105,16 +107,16 @@ struct VRStereoOptimizations
 		float FrameDim[2];     // Full stereo buffer dimensions
 		float RcpFrameDim[2];  // 1.0 / FrameDim
 
-		uint32_t StereoModeValue;  // Cast of StereoMode enum (0-3)
+		uint32_t StereoModeValue;  // Cast of StereoMode enum (0=Off, 1=Enable)
 		float DisocclusionThreshold;
 		float EdgeDepthThreshold;
-		uint32_t EdgeWidth;
+		uint32_t _pad0;
 
-		float QualityJitter[2];  // Sub-pixel jitter offset (Quality mode)
-		float FoveatedRadius;
+		float _pad1[2];
+		float FoveatedRadius;         // reserved for foveated reprojection — see alandtse/open-shaders#143
 		float ForwardOcclusionScale;  ///< Eye 0 depth multiplier for directional disocclusion (0 = disabled)
 
-		float FoveatedCenter[2];  // Foveal region center UV
+		float FoveatedCenter[2];  // reserved for foveated reprojection — see alandtse/open-shaders#143
 		float MinEdgeDistance;
 		float FullBlendDistance;  // Linearized depth for full blend zone
 	};

@@ -27,7 +27,6 @@ void VRStereoOptimizations::SaveSettings(json& o_json)
 	o_json["StereoMode"] = settings.stereoMode;
 	o_json["DisocclusionDepthThreshold"] = settings.disocclusionDepthThreshold;
 	o_json["FullBlendDistance"] = settings.fullBlendDistance;
-	o_json["QualityJitterOffset"] = settings.qualityJitterOffset;
 	o_json["FoveatedRegionRadius"] = settings.foveatedRegionRadius;
 	o_json["FoveatedRegionCenterX"] = settings.foveatedRegionCenterX;
 	o_json["FoveatedRegionCenterY"] = settings.foveatedRegionCenterY;
@@ -52,7 +51,6 @@ void VRStereoOptimizations::LoadSettings(json& o_json)
 		settings.stereoMode = o_json["StereoMode"].get<StereoMode>();
 
 	loadClampedFloat("DisocclusionDepthThreshold", settings.disocclusionDepthThreshold, 0.001f, 0.1f);
-	loadClampedFloat("QualityJitterOffset", settings.qualityJitterOffset, 0.0f, 1.0f);
 	loadClampedFloat("FoveatedRegionRadius", settings.foveatedRegionRadius, 0.0f, 1.0f);
 	loadClampedFloat("FoveatedRegionCenterX", settings.foveatedRegionCenterX, 0.0f, 1.0f);
 	loadClampedFloat("FoveatedRegionCenterY", settings.foveatedRegionCenterY, 0.0f, 1.0f);
@@ -301,9 +299,6 @@ void VRStereoOptimizations::UpdateConstantBuffer()
 	params.StereoModeValue = static_cast<uint32_t>(settings.stereoMode);
 	params.DisocclusionThreshold = settings.disocclusionDepthThreshold;
 	params.EdgeDepthThreshold = settings.edgeDepthThreshold;
-	params.EdgeWidth = 2;
-	params.QualityJitter[0] = settings.qualityJitterOffset;
-	params.QualityJitter[1] = settings.qualityJitterOffset;
 	params.FoveatedRadius = settings.foveatedRegionRadius;
 	params.FoveatedCenter[0] = settings.foveatedRegionCenterX;
 	params.FoveatedCenter[1] = settings.foveatedRegionCenterY;
