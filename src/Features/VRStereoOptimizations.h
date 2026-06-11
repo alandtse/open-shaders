@@ -186,27 +186,17 @@ struct VRStereoOptimizations
 	bool IsStencilActive() const { return stencilActive; }
 	void NoteStencilSwap() { ++stencilSwapCount; }
 
-	/// Deactivate stencil culling (called from Deferred after geometry rendering completes)
-	void DeactivateStencil();
-
 	/**
-	 * @brief Restore depth for stencil-culled Eye 1 pixels.
+	 * @brief Repair the stencil-culled Eye 1 pixels after geometry rendering.
 	 *
-	 * Culled fragments never write depth, leaving holes that later depth-tested passes
-	 * (water, sky) draw through. Fullscreen pass stencil-masked to EQUAL ref=1 writes
-	 * SV_Depth from the classification depth source. Call after DeactivateStencil,
-	 * before water/sky rendering.
+	 * Single deferred-pipeline entry point: deactivates stencil culling, restores depth,
+	 * then reprojects the G-buffer for the culled pixels so all downstream consumers
+	 * (SSGI, composite, water, sky) run unmodified and light Eye 1 natively. No-op when
+	 * stencil culling did not engage this frame. Must run after geometry, before any
+	 * pass that reads depth or the G-buffer; the sub-steps are ordering-sensitive and
+	 * encapsulated here so callers cannot interleave work between them.
 	 */
-	void ExecuteDepthFillPass();
-
-	/**
-	 * @brief Fill culled Eye 1 G-buffer texels from Eye 0 via stereo reprojection.
-	 *
-	 * Materializes valid Eye 1 data once so all downstream consumers (SSGI, composite,
-	 * water, ...) run unmodified and light Eye 1 natively. Call after ExecuteDepthFillPass,
-	 * before any pass that reads the G-buffer.
-	 */
-	void DispatchGBufferFill();
+	void RepairCulledEye1();
 
 	/// Get mode texture SRV for external consumers (e.g., DeferredCompositeCS Eye 1 skip)
 	ID3D11ShaderResourceView* GetModeTextureSRV() const { return texPerPixelMode ? texPerPixelMode->srv.get() : nullptr; }
@@ -227,6 +217,17 @@ private:
 
 	/// Fullscreen triangle pass: reads mode texture, writes stencil ref=1 for MODE_MAIN pixels
 	void ExecuteStencilWritePass();
+
+	/// Deactivate stencil culling once geometry rendering completes (RepairCulledEye1 step 1).
+	void DeactivateStencil();
+
+	/// Fullscreen pass (stencil EQUAL ref=1) writing SV_Depth from the classification depth
+	/// source, restoring depth for culled Eye 1 pixels (RepairCulledEye1 step 2).
+	void ExecuteDepthFillPass();
+
+	/// Reproject the G-buffer from Eye 0 into the culled Eye 1 pixels so downstream passes
+	/// light Eye 1 natively (RepairCulledEye1 step 3).
+	void DispatchGBufferFill();
 
 	/// Compiles all shaders used by this feature
 	void CompileShaders();

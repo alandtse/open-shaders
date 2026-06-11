@@ -352,21 +352,11 @@ void Deferred::DeferredPasses()
 		}
 	}
 
-	// VR: geometry rendering is complete — deactivate stencil culling, then restore
-	// depth and G-buffer data for the culled Eye 1 pixels BEFORE any consumer (SSGI,
-	// composite, water) reads them. Downstream passes run unmodified on complete data.
-	// Order is load-bearing: DeactivateStencil must precede the depth fill so the
-	// OMSetDepthStencilState hook stops swapping in the NOT_EQUAL clone and the fill's
-	// own EQUAL-ref=1 DSS survives. Keep these three calls adjacent — no engine draw or
-	// stencil clear may run between them, or the stencil mask is lost.
-	if (globals::game::isVR) {
-		auto& stereoOpt = globals::features::vr.stereoOpt;
-		if (stereoOpt.IsStencilActive()) {
-			stereoOpt.DeactivateStencil();
-			stereoOpt.ExecuteDepthFillPass();
-			stereoOpt.DispatchGBufferFill();
-		}
-	}
+	// VR: geometry rendering is complete — repair the stencil-culled Eye 1 pixels (restore
+	// depth + reproject the G-buffer) BEFORE any consumer (SSGI, composite, water) reads
+	// them, so downstream passes run unmodified on complete data. No-op when culling is off.
+	if (globals::game::isVR)
+		globals::features::vr.stereoOpt.RepairCulledEye1();
 
 	auto specular = renderer->GetRuntimeData().renderTargets[SPECULAR];
 	auto albedo = renderer->GetRuntimeData().renderTargets[ALBEDO];

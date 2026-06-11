@@ -662,6 +662,20 @@ void VRStereoOptimizations::DeactivateStencil()
 	stencilActive = false;
 }
 
+void VRStereoOptimizations::RepairCulledEye1()
+{
+	if (!stencilActive)
+		return;
+
+	// Order is load-bearing: DeactivateStencil must precede the depth fill so the
+	// OMSetDepthStencilState hook stops swapping in the NOT_EQUAL clone and the fill's
+	// own EQUAL-ref=1 DSS survives. No engine draw or stencil clear may run between
+	// these steps, or the stencil mask is lost — hence they live in one method.
+	DeactivateStencil();
+	ExecuteDepthFillPass();
+	DispatchGBufferFill();
+}
+
 void VRStereoOptimizations::ExecuteDepthFillPass()
 {
 	if (!depthFillPS || !stencilWriteVS || !depthFillDSS || !stencilWriteRS)
