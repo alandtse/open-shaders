@@ -585,7 +585,7 @@ Upstream is `community-shaders/skyrim-community-shaders`. Pull its changes **by 
 -   **Merge, don't cherry-pick.** `git merge <upstream-ref>` (an upstream `vX.Y.Z` tag — there is no `upstream/master`). Cherry-pick rewrites each commit to a new SHA, so upstream's originals never become ancestors and the **next** `git merge` re-conflicts on the same hunks forever. A merge makes the upstream commits ancestors once, so subsequent syncs are clean.
 -   **Land the sync PR as a merge commit, never squash.** Squash collapses the merge into one fresh SHA and throws the ancestry away, undoing the whole point. The repo default is squash, so the PR must be set to "Create a merge commit" explicitly (mirrors the #121 sync).
 -   **Verify ancestry after landing:** `git merge-base --is-ancestor <upstream-sha> HEAD` must pass for each adopted upstream commit.
--   **Resolve conflicts keep-VR** (this fork is the VR maintainer). Typical conflicts are just fork CI config or feature `.ini` versions — resolve `--ours`. If upstream ships a VR removal, revert it and keep VR.
+-   **Resolve conflicts in favor of keeping VR** (this fork is the VR maintainer). Typical conflicts are just fork CI config or feature `.ini` versions — resolve `--ours`. If upstream ships a VR removal, revert it and keep VR.
 
 ### Code Organization and Refactoring Patterns
 

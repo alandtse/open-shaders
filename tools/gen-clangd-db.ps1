@@ -44,7 +44,9 @@ $rootFwd = ($root -replace '\\', '/').TrimEnd('/')
 # otherwise build in-place at the repo root.
 $drive = $null
 foreach ($line in (subst)) {
-    if ($line -match '^([A-Z]):\\?\s*=>\s*(.+)$') {
+    # `subst` prints "Z:\: => C:\path"; tolerate the trailing colon and an
+    # optional backslash so the mapped-drive lookup actually matches.
+    if ($line -match '^([A-Z]):\\?:?\s*=>\s*(.+)$') {
         if ($matches[2].TrimEnd('\') -ieq $root.TrimEnd('\')) { $drive = "$($matches[1]):"; break }
     }
 }
@@ -58,6 +60,7 @@ Write-Host "Build at : $base$(if ($drive) { '  (subst drive; paths rewritten bac
 $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
 if (-not (Test-Path $vswhere)) { throw "vswhere.exe not found at $vswhere" }
 $vsRoot = (& $vswhere -latest -prerelease -property installationPath | Select-Object -First 1).Trim()
+if (-not $vsRoot) { throw 'vswhere found no Visual Studio install (need the Desktop development with C++ workload).' }
 $vcvars = Join-Path $vsRoot 'VC\Auxiliary\Build\vcvars64.bat'
 if (-not (Test-Path $vcvars)) { throw "vcvars64.bat not found under $vsRoot" }
 cmd /c "`"$vcvars`" && set" | ForEach-Object {
@@ -99,7 +102,12 @@ $cmakeArgs = @(
     '-DBUILD_CPP_TESTS=OFF'
 )
 Write-Host 'Configuring Ninja DB (no build)...'
-& cmake @cmakeArgs | Out-Null
+# Let cmake's diagnostics reach the console and check its native exit code —
+# $ErrorActionPreference='Stop' does not trip on a non-zero exe exit, so a
+# silent configure failure would otherwise surface only as the generic
+# "did not produce compile_commands.json" below.
+& cmake @cmakeArgs
+if ($LASTEXITCODE -ne 0) { throw "cmake configure failed (exit code $LASTEXITCODE)." }
 $dbSrc = Join-Path $root 'build/clangd-gen/compile_commands.json'
 if (-not (Test-Path $dbSrc)) { throw 'Configure did not produce compile_commands.json' }
 
