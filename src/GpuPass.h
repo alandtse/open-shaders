@@ -37,4 +37,4 @@ private:
 /// The variable name is mangled with __LINE__ so two CS_GPU_PASS calls in the
 /// same function cannot collide.
 #define CS_GPU_PASS(name) \
-	ScopedGpuPass ___cs_gpu_pass_##__LINE__ { name }
+	ScopedGpuPass cs_gpu_pass_##__LINE__ { name }

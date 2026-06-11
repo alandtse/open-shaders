@@ -12,7 +12,7 @@ ScopedGpuPass::ScopedGpuPass(std::string_view name)
 	//    BeginPass also fires the legacy BeginPerfEvent callback for any
 	//    call sites that are not yet migrated to ScopedGpuPass.
 	if (profiler) {
-		profiler->BeginPass(std::string(name));
+		profiler->BeginPass(std::string(name), false);
 		profilerActive = true;
 	}
 
@@ -63,5 +63,5 @@ ScopedGpuPass::~ScopedGpuPass()
 #endif
 
 	if (profilerActive)
-		globals::profiler->EndPass();
+		globals::profiler->EndPass(false);
 }

@@ -71,8 +71,8 @@ public:
 	}
 
 	void BeginFrame();
-	void BeginPass(const std::string& name);
-	void EndPass();
+	void BeginPass(const std::string& name, bool fireCallbacks = true);
+	void EndPass(bool fireCallbacks = true);
 	void EndFrame();
 
 	const std::vector<TimerResult>& GetResults() const { return results; }

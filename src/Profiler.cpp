@@ -94,7 +94,7 @@ void Profiler::BeginFrame()
 	context->Begin(frame.disjoint.get());
 }
 
-void Profiler::BeginPass(const std::string& name)
+void Profiler::BeginPass(const std::string& name, bool fireCallbacks)
 {
 	if (!initialized || !context)
 		return;
@@ -111,11 +111,11 @@ void Profiler::BeginPass(const std::string& name)
 	context->End(timer.begin.get());
 	QueryPerformanceCounter(&timer.cpuBegin);
 
-	if (beginPerfEvent)
+	if (fireCallbacks && beginPerfEvent)
 		beginPerfEvent(name);
 }
 
-void Profiler::EndPass()
+void Profiler::EndPass(bool fireCallbacks)
 {
 	if (!initialized || !context || !frameActive)
 		return;
@@ -133,7 +133,7 @@ void Profiler::EndPass()
 	context->End(timer.end.get());
 	frame.activeCount++;
 
-	if (endPerfEvent)
+	if (fireCallbacks && endPerfEvent)
 		endPerfEvent({});
 }
 

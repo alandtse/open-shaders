@@ -2619,11 +2619,6 @@ void Upscaling::ApplySharpening()
 	currentSharpness = exp2(-currentSharpness);
 
 	auto context = globals::d3d::context;
-	auto renderer = globals::game::renderer;
-	auto& main = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMAIN];
-
-	if (!main.UAV)
-		return;
 
 	context->OMSetRenderTargets(0, nullptr, nullptr);
 
