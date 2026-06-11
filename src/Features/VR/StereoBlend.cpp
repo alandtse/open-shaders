@@ -57,7 +57,9 @@ void VR::DrawStereoBlend()
 	if (!globals::game::isVR || !stereoBlendCopyTex || !stereoBlendCB)
 		return;
 
-	if (!settings.EnableStereoBlend || !stereoBlendCS)
+	// Debug views (StereoBlendDebugMode 1..3) must run even with the blend disabled,
+	// otherwise a persisted debug config renders nothing until the combo is re-touched.
+	if ((!settings.EnableStereoBlend && settings.StereoBlendDebugMode == 0) || !stereoBlendCS)
 		return;
 
 	if (!AnyScreenSpaceEffectLoaded() && !globals::state->IsDeveloperMode())

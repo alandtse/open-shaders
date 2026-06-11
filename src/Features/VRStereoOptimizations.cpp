@@ -71,6 +71,15 @@ void VRStereoOptimizations::RestoreDefaultSettings()
 // RESOURCE SETUP
 //=============================================================================
 
+bool VRStereoOptimizations::SupportsGBufferFill()
+{
+	return State::SupportsTypedUAVLoad(DXGI_FORMAT_R16G16B16A16_FLOAT) &&
+	       State::SupportsTypedUAVLoad(DXGI_FORMAT_R16G16_FLOAT) &&
+	       State::SupportsTypedUAVLoad(DXGI_FORMAT_R10G10B10A2_UNORM) &&
+	       State::SupportsTypedUAVLoad(DXGI_FORMAT_R11G11B10_FLOAT) &&
+	       State::SupportsTypedUAVLoad(DXGI_FORMAT_R16_UNORM);
+}
+
 void VRStereoOptimizations::SetupResources()
 {
 	if (!globals::game::isVR)
@@ -167,12 +176,7 @@ void VRStereoOptimizations::SetupResources()
 
 	// GBufferFillCS does typed UAV loads on these formats; without support the reads
 	// return undefined data, so disable the feature (CanDispatchStencil gates on this).
-	gBufferFillSupported =
-		State::SupportsTypedUAVLoad(DXGI_FORMAT_R16G16B16A16_FLOAT) &&
-		State::SupportsTypedUAVLoad(DXGI_FORMAT_R16G16_FLOAT) &&
-		State::SupportsTypedUAVLoad(DXGI_FORMAT_R10G10B10A2_UNORM) &&
-		State::SupportsTypedUAVLoad(DXGI_FORMAT_R11G11B10_FLOAT) &&
-		State::SupportsTypedUAVLoad(DXGI_FORMAT_R16_UNORM);
+	gBufferFillSupported = SupportsGBufferFill();
 	if (!gBufferFillSupported)
 		logger::warn("[VRStereoOptimizations] GPU lacks typed-UAV-load support for G-buffer formats; stereo reprojection disabled.");
 

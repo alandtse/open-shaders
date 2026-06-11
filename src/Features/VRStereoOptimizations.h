@@ -64,6 +64,11 @@ struct VRStereoOptimizations
 	void RestoreDefaultSettings();
 	void ClearShaderCache();
 
+	/// True when the GPU supports typed UAV loads for every G-buffer format the
+	/// fill CS touches. Stateless capability query (no setup ordering dependency),
+	/// so Deferred can gate UAV-capable G-buffer allocation on the same condition.
+	static bool SupportsGBufferFill();
+
 	//=============================================================================
 	// SETTINGS
 	//=============================================================================

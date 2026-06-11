@@ -140,7 +140,13 @@ void Deferred::SetupResources()
 		// VR stereo reprojection fills culled Eye 1 G-buffer texels from Eye 0 via a CS
 		// reading and writing the same texture (different halves), which needs UAV access.
 		uint gbufferBindFlags = D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE;
-		if (globals::game::isVR && globals::features::vr.stereoOpt.settings.stereoMode != VRStereoOptimizations::StereoMode::Off)
+		// Match the runtime fill gate: only request UAV-capable G-buffers when the
+		// feature is on AND the GPU supports typed UAV loads for these formats. On
+		// unsupported hardware the fill never runs (CanDispatchStencil gates on the
+		// same capability), and the UAV bind flag could fail texture creation outright.
+		if (globals::game::isVR &&
+			globals::features::vr.stereoOpt.settings.stereoMode != VRStereoOptimizations::StereoMode::Off &&
+			VRStereoOptimizations::SupportsGBufferFill())
 			gbufferBindFlags |= D3D11_BIND_UNORDERED_ACCESS;
 
 		// Albedo
