@@ -350,7 +350,6 @@ void PerfMode::DownscaleToKMain()
 	if (!hookActive || !testTextureSRV || !boxDownscalePS || !boxDownscaleVS || !linearSampler)
 		return;
 
-	auto state = globals::state;
 	auto renderer = globals::game::renderer;
 	auto context = globals::d3d::context;
 	auto& rtData = renderer->GetRuntimeData();

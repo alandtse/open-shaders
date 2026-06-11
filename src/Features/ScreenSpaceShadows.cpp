@@ -165,7 +165,7 @@ void ScreenSpaceShadows::DrawShadows()
 
 	auto lightProjectionF = CalculateLightProjection(0);
 
-	float2 renderSize = Util::ConvertToDynamic(state->screenSize);
+	float2 renderSize = Util::ConvertToDynamic(globals::state->screenSize);
 	int viewportSize[2] = { (int)renderSize.x, (int)renderSize.y };
 
 	if (globals::game::isVR)
@@ -238,41 +238,40 @@ void ScreenSpaceShadows::DrawShadows()
 				context->Dispatch(dispatchData.WaveCount[0], dispatchData.WaveCount[1], dispatchData.WaveCount[2]);
 			}
 		}
+	};
+
+	float InvTexSizeX = 1.0f / (float)viewportSize[0];
+	float InvTexSizeY = 1.0f / (float)viewportSize[1];
+
+	if (!globals::game::isVR) {
+		DispatchEye(nullptr, GetComputeRaymarch(), lightProjectionF.data(), InvTexSizeX, InvTexSizeY);
+	} else {
+		{
+			CS_GPU_PASS("SSS::LeftEye");
+			DispatchEye("Left Eye", GetComputeRaymarch(), lightProjectionF.data(), InvTexSizeX, InvTexSizeY);
+		}
+
+		// Calculate light projection for right eye
+		auto lightProjectionRightF = CalculateLightProjection(1);
+		{
+			CS_GPU_PASS("SSS::RightEye");
+			DispatchEye("Right Eye", GetComputeRaymarchRight(), lightProjectionRightF.data(), InvTexSizeX, InvTexSizeY);
+		}
 	}
-};
 
-float InvTexSizeX = 1.0f / (float)viewportSize[0];
-float InvTexSizeY = 1.0f / (float)viewportSize[1];
+	ID3D11ShaderResourceView* views[1]{ nullptr };
+	context->CSSetShaderResources(0, 1, views);
 
-if (!globals::game::isVR) {
-	DispatchEye(nullptr, GetComputeRaymarch(), lightProjectionF.data(), InvTexSizeX, InvTexSizeY);
-} else {
-	{
-		CS_GPU_PASS("SSS::LeftEye");
-		DispatchEye("Left Eye", GetComputeRaymarch(), lightProjectionF.data(), InvTexSizeX, InvTexSizeY);
-	}
+	ID3D11UnorderedAccessView* uavs[1]{ nullptr };
+	context->CSSetUnorderedAccessViews(0, 1, uavs, nullptr);
 
-	// Calculate light projection for right eye
-	auto lightProjectionRightF = CalculateLightProjection(1);
-	{
-		CS_GPU_PASS("SSS::RightEye");
-		DispatchEye("Right Eye", GetComputeRaymarchRight(), lightProjectionRightF.data(), InvTexSizeX, InvTexSizeY);
-	}
-}
+	context->CSSetShader(nullptr, nullptr, 0);
 
-ID3D11ShaderResourceView* views[1]{ nullptr };
-context->CSSetShaderResources(0, 1, views);
+	ID3D11SamplerState* sampler = nullptr;
+	context->CSSetSamplers(0, 1, &sampler);
 
-ID3D11UnorderedAccessView* uavs[1]{ nullptr };
-context->CSSetUnorderedAccessViews(0, 1, uavs, nullptr);
-
-context->CSSetShader(nullptr, nullptr, 0);
-
-ID3D11SamplerState* sampler = nullptr;
-context->CSSetSamplers(0, 1, &sampler);
-
-buffer = nullptr;
-context->CSSetConstantBuffers(1, 1, &buffer);
+	buffer = nullptr;
+	context->CSSetConstantBuffers(1, 1, &buffer);
 }
 
 void ScreenSpaceShadows::DrawStereoSync()

@@ -119,6 +119,7 @@ void PerfMode::MaybeBlitMenuBG(uint32_t boundRTIdx)
 		return;
 
 	auto renderer = globals::game::renderer;
+	auto context = globals::d3d::context;
 	auto& rtData = renderer->GetRuntimeData();
 	auto& dest = rtData.renderTargets[boundRTIdx];
 	if (!dest.RTV || !dest.texture)

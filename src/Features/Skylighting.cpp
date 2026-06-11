@@ -482,7 +482,6 @@ void Skylighting::RenderOcclusion()
 {
 	ZoneScopedS(8);
 	auto shaderCache = globals::shaderCache;
-	auto state = globals::state;
 	auto renderer = globals::game::renderer;
 	auto sky = globals::game::sky;
 
