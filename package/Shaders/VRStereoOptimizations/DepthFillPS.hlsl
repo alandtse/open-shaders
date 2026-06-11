@@ -16,7 +16,10 @@ struct PS_INPUT
 	float2 TexCoord: TEXCOORD0;
 };
 
-float main(PS_INPUT input) : SV_Depth
+// Force the stencil EQUAL=1 test before the shader so the PS only runs on the ~80% of
+// pixels that were culled (MODE_MAIN), not the whole Eye 1 half. The depth write is still
+// late (SV_Depth), but the early stencil cull removes the non-reprojected pixels' shading.
+[earlydepthstencil] float main(PS_INPUT input) : SV_Depth
 {
 	// Depth source is full SBS resolution - SV_Position maps directly
 	// (viewport is the Eye 1 half, so Position.x starts at eyeWidth).
