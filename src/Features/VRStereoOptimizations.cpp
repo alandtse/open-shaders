@@ -1,5 +1,6 @@
 #include "VRStereoOptimizations.h"
 
+#include "Deferred.h"
 #include "ExtendedMaterials.h"
 #include "Globals.h"
 #include "I18n/I18n.h"
@@ -174,6 +175,27 @@ void VRStereoOptimizations::SetupResources()
 		Util::SetResourceName(stencilWriteDSS.get(), "VRStereoOpt::StencilWriteDSS");
 	}
 
+	// Depth-stencil state for the depth fill pass:
+	// depth ALWAYS + write ALL restores depth on the masked pixels; stencil read-only
+	// EQUAL ref=1 hardware-masks the fullscreen triangle to stencil-culled pixels only.
+	{
+		D3D11_DEPTH_STENCIL_DESC dssDesc{};
+		dssDesc.DepthEnable = TRUE;
+		dssDesc.DepthWriteMask = D3D11_DEPTH_WRITE_MASK_ALL;
+		dssDesc.DepthFunc = D3D11_COMPARISON_ALWAYS;
+		dssDesc.StencilEnable = TRUE;
+		dssDesc.StencilReadMask = 0xFF;
+		dssDesc.StencilWriteMask = 0x00;
+		dssDesc.FrontFace.StencilFailOp = D3D11_STENCIL_OP_KEEP;
+		dssDesc.FrontFace.StencilDepthFailOp = D3D11_STENCIL_OP_KEEP;
+		dssDesc.FrontFace.StencilPassOp = D3D11_STENCIL_OP_KEEP;
+		dssDesc.FrontFace.StencilFunc = D3D11_COMPARISON_EQUAL;
+		dssDesc.BackFace = dssDesc.FrontFace;
+
+		DX::ThrowIfFailed(device->CreateDepthStencilState(&dssDesc, depthFillDSS.put()));
+		Util::SetResourceName(depthFillDSS.get(), "VRStereoOpt::DepthFillDSS");
+	}
+
 	// Rasterizer state for stencil write: no culling, no depth clip
 	{
 		D3D11_RASTERIZER_DESC rsDesc{};
@@ -223,14 +245,26 @@ void VRStereoOptimizations::CompileShaders()
 		stencilWritePS.attach(reinterpret_cast<ID3D11PixelShader*>(ptr));
 	else
 		logger::error("[VRStereoOptimizations] Failed to compile StencilWritePS");
+
+	if (auto* ptr = Util::CompileShader(L"Data\\Shaders\\VRStereoOptimizations\\DepthFillPS.hlsl", vspsDefines, "ps_5_0"))
+		depthFillPS.attach(reinterpret_cast<ID3D11PixelShader*>(ptr));
+	else
+		logger::error("[VRStereoOptimizations] Failed to compile DepthFillPS");
+
+	if (auto* ptr = Util::CompileShader(L"Data\\Shaders\\VRStereoOptimizations\\GBufferFillCS.hlsl", csDefines, "cs_5_0"))
+		gBufferFillCS.attach(reinterpret_cast<ID3D11ComputeShader*>(ptr));
+	else
+		logger::error("[VRStereoOptimizations] Failed to compile GBufferFillCS");
 }
 
 void VRStereoOptimizations::ClearShaderCache()
 {
 	stencilCS = nullptr;
+	gBufferFillCS = nullptr;
 	stencilDebugDepthMapCS = nullptr;
 	stencilWriteVS = nullptr;
 	stencilWritePS = nullptr;
+	depthFillPS = nullptr;
 	dssCache.clear();
 
 	// Framework clears caches without a follow-up SetupResources; without an immediate
@@ -614,4 +648,200 @@ void VRStereoOptimizations::DeactivateStencil()
 		return;
 	logger::trace("[VRStereoOptimizations] Frame: stencilSwapCount={}", stencilSwapCount);
 	stencilActive = false;
+}
+
+void VRStereoOptimizations::ExecuteDepthFillPass()
+{
+	if (!depthFillPS || !stencilWriteVS || !depthFillDSS || !stencilWriteRS)
+		return;
+
+	auto* depthSRV = Util::GetCurrentSceneDepthSRV();
+	if (!depthSRV)
+		return;
+
+	ZoneScoped;
+	TracyD3D11Zone(globals::state->tracyCtx, "VR Stereo Opt - Depth Fill");
+
+	if (globals::state->frameAnnotations)
+		globals::state->BeginPerfEvent("VR Stereo Opt - Depth Fill");
+
+	auto context = globals::d3d::context;
+	auto renderer = globals::game::renderer;
+
+	// ===== SAVE PIPELINE STATE =====
+
+	ID3D11RenderTargetView* savedRTVs[D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT] = {};
+	ID3D11DepthStencilView* savedDSV = nullptr;
+	context->OMGetRenderTargets(D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT, savedRTVs, &savedDSV);
+
+	ID3D11DepthStencilState* savedDSS = nullptr;
+	UINT savedStencilRef = 0;
+	context->OMGetDepthStencilState(&savedDSS, &savedStencilRef);
+
+	ID3D11RasterizerState* savedRS = nullptr;
+	context->RSGetState(&savedRS);
+
+	D3D11_VIEWPORT savedViewports[D3D11_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE] = {};
+	UINT numViewports = D3D11_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE;
+	context->RSGetViewports(&numViewports, savedViewports);
+
+	ID3D11VertexShader* savedVS = nullptr;
+	context->VSGetShader(&savedVS, nullptr, nullptr);
+
+	ID3D11PixelShader* savedPS = nullptr;
+	context->PSGetShader(&savedPS, nullptr, nullptr);
+
+	ID3D11GeometryShader* savedGS = nullptr;
+	context->GSGetShader(&savedGS, nullptr, nullptr);
+
+	ID3D11InputLayout* savedInputLayout = nullptr;
+	context->IAGetInputLayout(&savedInputLayout);
+
+	D3D11_PRIMITIVE_TOPOLOGY savedTopology = D3D11_PRIMITIVE_TOPOLOGY_UNDEFINED;
+	context->IAGetPrimitiveTopology(&savedTopology);
+
+	ID3D11ShaderResourceView* savedPSSRV = nullptr;
+	context->PSGetShaderResources(0, 1, &savedPSSRV);
+
+	// ===== DEPTH FILL PASS =====
+
+	auto& depthData = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kMAIN];
+	context->OMSetRenderTargets(0, nullptr, depthData.views[0]);
+	context->OMSetDepthStencilState(depthFillDSS.get(), 1);
+	context->RSSetState(stencilWriteRS.get());
+
+	// Eye 1 viewport (right half of SBS buffer)
+	{
+		D3D11_TEXTURE2D_DESC mainDesc;
+		renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMAIN].texture->GetDesc(&mainDesc);
+
+		D3D11_VIEWPORT vp{};
+		vp.TopLeftX = static_cast<float>(mainDesc.Width / 2);
+		vp.TopLeftY = 0.0f;
+		vp.Width = static_cast<float>(mainDesc.Width / 2);
+		vp.Height = static_cast<float>(mainDesc.Height);
+		vp.MinDepth = 0.0f;
+		vp.MaxDepth = 1.0f;
+		context->RSSetViewports(1, &vp);
+	}
+
+	context->VSSetShader(stencilWriteVS.get(), nullptr, 0);
+	context->PSSetShader(depthFillPS.get(), nullptr, 0);
+	context->GSSetShader(nullptr, nullptr, 0);
+	context->PSSetShaderResources(0, 1, &depthSRV);
+
+	context->IASetInputLayout(nullptr);
+	context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+
+	context->Draw(3, 0);
+
+	// ===== RESTORE PIPELINE STATE =====
+
+	ID3D11ShaderResourceView* nullSRV = nullptr;
+	context->PSSetShaderResources(0, 1, &nullSRV);
+
+	context->OMSetRenderTargets(D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT, savedRTVs, savedDSV);
+	context->OMSetDepthStencilState(savedDSS, savedStencilRef);
+	context->RSSetState(savedRS);
+	context->RSSetViewports(numViewports, savedViewports);
+	context->VSSetShader(savedVS, nullptr, 0);
+	context->PSSetShader(savedPS, nullptr, 0);
+	context->GSSetShader(savedGS, nullptr, 0);
+	context->IASetInputLayout(savedInputLayout);
+	context->IASetPrimitiveTopology(savedTopology);
+	context->PSSetShaderResources(0, 1, &savedPSSRV);
+
+	for (auto& rtv : savedRTVs) {
+		if (rtv)
+			rtv->Release();
+	}
+	if (savedDSV)
+		savedDSV->Release();
+	if (savedDSS)
+		savedDSS->Release();
+	if (savedRS)
+		savedRS->Release();
+	if (savedVS)
+		savedVS->Release();
+	if (savedPS)
+		savedPS->Release();
+	if (savedGS)
+		savedGS->Release();
+	if (savedInputLayout)
+		savedInputLayout->Release();
+	if (savedPSSRV)
+		savedPSSRV->Release();
+
+	if (globals::state->frameAnnotations)
+		globals::state->EndPerfEvent();
+}
+
+void VRStereoOptimizations::DispatchGBufferFill()
+{
+	if (!gBufferFillCS || !texPerPixelMode || !paramsCB)
+		return;
+
+	auto* depthSRV = Util::GetCurrentSceneDepthSRV();
+	if (!depthSRV)
+		return;
+
+	ZoneScoped;
+	TracyD3D11Zone(globals::state->tracyCtx, "VR Stereo Opt - GBuffer Fill");
+
+	if (globals::state->frameAnnotations)
+		globals::state->BeginPerfEvent("VR Stereo Opt - GBuffer Fill");
+
+	auto context = globals::d3d::context;
+	auto renderer = globals::game::renderer;
+	auto& rt = renderer->GetRuntimeData().renderTargets;
+
+	// The deferred MRT set is bound as RTVs at this point; UAV binds on the same
+	// textures would be dropped by the runtime. Unbind render targets first.
+	ID3D11RenderTargetView* savedRTVs[D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT] = {};
+	ID3D11DepthStencilView* savedDSV = nullptr;
+	context->OMGetRenderTargets(D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT, savedRTVs, &savedDSV);
+	context->OMSetRenderTargets(0, nullptr, nullptr);
+
+	UpdateConstantBuffer();
+	auto cbPtr = paramsCB->CB();
+
+	ID3D11ShaderResourceView* srvs[2]{ depthSRV, texPerPixelMode->srv.get() };
+	ID3D11UnorderedAccessView* uavs[8]{
+		rt[RE::RENDER_TARGETS::kMAIN].UAV,
+		rt[RE::RENDER_TARGETS::kMOTION_VECTOR].UAV,
+		rt[NORMALROUGHNESS].UAV,
+		rt[ALBEDO].UAV,
+		rt[SPECULAR].UAV,
+		rt[REFLECTANCE].UAV,
+		rt[MASKS].UAV,
+		rt[MASKS2].UAV,
+	};
+
+	context->CSSetConstantBuffers(1, 1, &cbPtr);
+	context->CSSetShaderResources(0, 2, srvs);
+	context->CSSetUnorderedAccessViews(0, 8, uavs, nullptr);
+	context->CSSetShader(gBufferFillCS.get(), nullptr, 0);
+
+	uint32_t eyeWidth = texPerPixelMode->desc.Width / 2;
+	uint32_t height = texPerPixelMode->desc.Height;
+	context->Dispatch((eyeWidth + 7) / 8, (height + 7) / 8, 1);
+
+	ID3D11ShaderResourceView* nullSRVs[2] = {};
+	ID3D11UnorderedAccessView* nullUAVs[8] = {};
+	ID3D11Buffer* nullCB = nullptr;
+	context->CSSetShaderResources(0, 2, nullSRVs);
+	context->CSSetUnorderedAccessViews(0, 8, nullUAVs, nullptr);
+	context->CSSetConstantBuffers(1, 1, &nullCB);
+	context->CSSetShader(nullptr, nullptr, 0);
+
+	context->OMSetRenderTargets(D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT, savedRTVs, savedDSV);
+	for (auto& rtv : savedRTVs) {
+		if (rtv)
+			rtv->Release();
+	}
+	if (savedDSV)
+		savedDSV->Release();
+
+	if (globals::state->frameAnnotations)
+		globals::state->EndPerfEvent();
 }

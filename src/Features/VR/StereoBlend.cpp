@@ -57,7 +57,9 @@ bool VR::AnyScreenSpaceEffectLoaded()
 
 void VR::DrawStereoBlend()
 {
-	bool vrStereoOptActive = IsStereoOptimizationCullingReady();
+	// The G-buffer fill lights Eye 1 natively; the stereo overwrite (color copy)
+	// path is retired. Debug visualization modes 4/5 can still exercise it.
+	bool vrStereoOptActive = false;
 
 	if (!globals::game::isVR || !stereoBlendCopyTex || !stereoBlendCB)
 		return;

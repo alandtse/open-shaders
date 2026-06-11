@@ -182,6 +182,25 @@ struct VRStereoOptimizations
 	/// Deactivate stencil culling (called from Deferred after geometry rendering completes)
 	void DeactivateStencil();
 
+	/**
+	 * @brief Restore depth for stencil-culled Eye 1 pixels.
+	 *
+	 * Culled fragments never write depth, leaving holes that later depth-tested passes
+	 * (water, sky) draw through. Fullscreen pass stencil-masked to EQUAL ref=1 writes
+	 * SV_Depth from the classification depth source. Call after DeactivateStencil,
+	 * before water/sky rendering.
+	 */
+	void ExecuteDepthFillPass();
+
+	/**
+	 * @brief Fill culled Eye 1 G-buffer texels from Eye 0 via stereo reprojection.
+	 *
+	 * Materializes valid Eye 1 data once so all downstream consumers (SSGI, composite,
+	 * water, ...) run unmodified and light Eye 1 natively. Call after ExecuteDepthFillPass,
+	 * before any pass that reads the G-buffer.
+	 */
+	void DispatchGBufferFill();
+
 	/// Get mode texture SRV for external consumers (e.g., DeferredCompositeCS Eye 1 skip)
 	ID3D11ShaderResourceView* GetModeTextureSRV() const { return texPerPixelMode ? texPerPixelMode->srv.get() : nullptr; }
 
@@ -217,12 +236,15 @@ private:
 	eastl::unique_ptr<Texture2D> texPomOffset;     ///< R16_FLOAT POM depth offset written by Lighting PS, read by StereoBlendCS
 
 	winrt::com_ptr<ID3D11DepthStencilState> stencilWriteDSS;
+	winrt::com_ptr<ID3D11DepthStencilState> depthFillDSS;
 	winrt::com_ptr<ID3D11RasterizerState> stencilWriteRS;
 
 	winrt::com_ptr<ID3D11ComputeShader> stencilCS;
+	winrt::com_ptr<ID3D11ComputeShader> gBufferFillCS;
 	winrt::com_ptr<ID3D11ComputeShader> stencilDebugDepthMapCS;
 	winrt::com_ptr<ID3D11VertexShader> stencilWriteVS;
 	winrt::com_ptr<ID3D11PixelShader> stencilWritePS;
+	winrt::com_ptr<ID3D11PixelShader> depthFillPS;
 
 	/// Cache of original DSS -> modified DSS with stencil NOT_EQUAL enforcement
 	std::unordered_map<ID3D11DepthStencilState*, winrt::com_ptr<ID3D11DepthStencilState>> dssCache;

@@ -126,18 +126,24 @@ void Deferred::SetupResources()
 		// TEMPORAL_AA_WATER_1
 		// TEMPORAL_AA_WATER_2
 
+		// VR stereo reprojection fills culled Eye 1 G-buffer texels from Eye 0 via a CS
+		// reading and writing the same texture (different halves), which needs UAV access.
+		uint gbufferBindFlags = D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE;
+		if (globals::game::isVR && globals::features::vr.stereoOpt.settings.stereoMode != VRStereoOptimizations::StereoMode::Off)
+			gbufferBindFlags |= D3D11_BIND_UNORDERED_ACCESS;
+
 		// Albedo
-		SetupRenderTarget(ALBEDO, texDesc, srvDesc, rtvDesc, uavDesc, DXGI_FORMAT_R10G10B10A2_UNORM, D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE);
+		SetupRenderTarget(ALBEDO, texDesc, srvDesc, rtvDesc, uavDesc, DXGI_FORMAT_R10G10B10A2_UNORM, gbufferBindFlags);
 		// Specular
-		SetupRenderTarget(SPECULAR, texDesc, srvDesc, rtvDesc, uavDesc, DXGI_FORMAT_R11G11B10_FLOAT, D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE);
+		SetupRenderTarget(SPECULAR, texDesc, srvDesc, rtvDesc, uavDesc, DXGI_FORMAT_R11G11B10_FLOAT, gbufferBindFlags);
 		// Reflectance
-		SetupRenderTarget(REFLECTANCE, texDesc, srvDesc, rtvDesc, uavDesc, DXGI_FORMAT_R11G11B10_FLOAT, D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE);
+		SetupRenderTarget(REFLECTANCE, texDesc, srvDesc, rtvDesc, uavDesc, DXGI_FORMAT_R11G11B10_FLOAT, gbufferBindFlags);
 		// Normal + Roughness
-		SetupRenderTarget(NORMALROUGHNESS, texDesc, srvDesc, rtvDesc, uavDesc, DXGI_FORMAT_R10G10B10A2_UNORM, D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE);
+		SetupRenderTarget(NORMALROUGHNESS, texDesc, srvDesc, rtvDesc, uavDesc, DXGI_FORMAT_R10G10B10A2_UNORM, gbufferBindFlags);
 		// Masks
-		SetupRenderTarget(MASKS, texDesc, srvDesc, rtvDesc, uavDesc, DXGI_FORMAT_R11G11B10_FLOAT, D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE);
+		SetupRenderTarget(MASKS, texDesc, srvDesc, rtvDesc, uavDesc, DXGI_FORMAT_R11G11B10_FLOAT, gbufferBindFlags);
 		// Masks2 (vertexAO; fp16 to allow blending)
-		SetupRenderTarget(MASKS2, texDesc, srvDesc, rtvDesc, uavDesc, DXGI_FORMAT_R16_UNORM, D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE);
+		SetupRenderTarget(MASKS2, texDesc, srvDesc, rtvDesc, uavDesc, DXGI_FORMAT_R16_UNORM, gbufferBindFlags);
 
 		// TAA water history buffers need RGBA16: alpha stores premultiplied coverage for ISWaterBlend
 		SetupRenderTarget(RE::RENDER_TARGETS::kWATER_1, texDesc, srvDesc, rtvDesc, uavDesc, DXGI_FORMAT_R16G16B16A16_FLOAT, D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE);
@@ -346,6 +352,18 @@ void Deferred::DeferredPasses()
 		}
 	}
 
+	// VR: geometry rendering is complete — deactivate stencil culling, then restore
+	// depth and G-buffer data for the culled Eye 1 pixels BEFORE any consumer (SSGI,
+	// composite, water) reads them. Downstream passes run unmodified on complete data.
+	if (globals::game::isVR) {
+		auto& stereoOpt = globals::features::vr.stereoOpt;
+		if (stereoOpt.IsStencilActive()) {
+			stereoOpt.DeactivateStencil();
+			stereoOpt.ExecuteDepthFillPass();
+			stereoOpt.DispatchGBufferFill();
+		}
+	}
+
 	auto specular = renderer->GetRuntimeData().renderTargets[SPECULAR];
 	auto albedo = renderer->GetRuntimeData().renderTargets[ALBEDO];
 	auto normalRoughness = renderer->GetRuntimeData().renderTargets[NORMALROUGHNESS];
@@ -409,12 +427,9 @@ void Deferred::DeferredPasses()
 
 		context->CSSetShaderResources(0, ARRAYSIZE(srvs), srvs);
 
-		// Bind VRStereoOptimizations mode texture for Eye 1 skip.
-		// Bind null when disabled so stale mode data doesn't cause incorrect early-exits
-		// in DeferredCompositeCS (null SRV reads return 0 = MODE_DISOCCLUDED, all pixels composite normally).
-		auto& vrStereoOpt = globals::features::vr.stereoOpt;
-		bool stereoCullingReady = globals::features::vr.IsStereoOptimizationCullingReady();
-		ID3D11ShaderResourceView* modeSRV = stereoCullingReady ? vrStereoOpt.GetModeTextureSRV() : nullptr;
+		// G-buffer fill materializes valid Eye 1 data before this point, so composite
+		// lights Eye 1 natively — no mode-texture skip (null SRV reads 0 = MODE_DISOCCLUDED).
+		ID3D11ShaderResourceView* modeSRV = nullptr;
 		context->CSSetShaderResources(16, 1, &modeSRV);
 
 		ID3D11UnorderedAccessView* uavs[3]{ main.UAV, normals.UAV, motionVectors.UAV };
@@ -435,17 +450,8 @@ void Deferred::DeferredPasses()
 		context->CSSetShaderResources(16, 1, &nullSRV);
 	}
 
-	// VR: Deactivate stencil culling now that geometry rendering is complete.
-	// Must happen before StereoBlend so the blend pass itself isn't stencil-blocked.
-	if (globals::game::isVR) {
-		auto& stereoOpt = globals::features::vr.stereoOpt;
-		if (stereoOpt.IsStencilActive()) {
-			stereoOpt.DeactivateStencil();
-		}
-	}
-
-	// VR: Stereo reprojection fills Eye 1 holes here (after DeferredComposite, before SSR/water/sky)
-	// so that ISReflectionsRayTracing sees valid pixels in both eyes.
+	// VR: Bilateral stereo blend (the reprojection color-overwrite path is gone —
+	// Eye 1 is lit natively from the G-buffer fill done before SSGI/composite).
 	if (globals::game::isVR) {
 		globals::profiler->BeginPass("VR::StereoBlend");
 		globals::features::vr.DrawStereoBlend();
