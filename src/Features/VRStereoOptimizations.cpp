@@ -33,8 +33,6 @@ void VRStereoOptimizations::SaveSettings(json& o_json)
 	o_json["FoveatedRegionCenterY"] = settings.foveatedRegionCenterY;
 	o_json["UseEyeTracking"] = settings.useEyeTracking;
 	o_json["DebugSkipMerge"] = settings.debugSkipMerge;
-	o_json["DebugForceAllStencil"] = settings.debugForceAllStencil;
-	o_json["DebugForceAllReprojectCS"] = settings.debugForceAllReprojectCS;
 	o_json["DebugDepthMap"] = settings.debugDepthMap;
 	o_json["ForwardOcclusionScale"] = settings.forwardOcclusionScale;
 }
@@ -63,8 +61,6 @@ void VRStereoOptimizations::LoadSettings(json& o_json)
 
 	loadBool("UseEyeTracking", settings.useEyeTracking);
 	loadBool("DebugSkipMerge", settings.debugSkipMerge);
-	loadBool("DebugForceAllStencil", settings.debugForceAllStencil);
-	loadBool("DebugForceAllReprojectCS", settings.debugForceAllReprojectCS);
 	loadBool("DebugDepthMap", settings.debugDepthMap);
 }
 
@@ -404,6 +400,21 @@ void VRStereoOptimizations::DispatchStencil()
 		globals::state->EndPerfEvent();
 }
 
+void VRStereoOptimizations::SetEye1Viewport()
+{
+	D3D11_TEXTURE2D_DESC mainDesc;
+	globals::game::renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMAIN].texture->GetDesc(&mainDesc);
+
+	D3D11_VIEWPORT vp{};
+	vp.TopLeftX = static_cast<float>(mainDesc.Width / 2);
+	vp.TopLeftY = 0.0f;
+	vp.Width = static_cast<float>(mainDesc.Width / 2);
+	vp.Height = static_cast<float>(mainDesc.Height);
+	vp.MinDepth = 0.0f;
+	vp.MaxDepth = 1.0f;
+	globals::d3d::context->RSSetViewports(1, &vp);
+}
+
 void VRStereoOptimizations::ExecuteStencilWritePass()
 {
 	auto context = globals::d3d::context;
@@ -471,20 +482,7 @@ void VRStereoOptimizations::ExecuteStencilWritePass()
 	context->OMSetDepthStencilState(stencilWriteDSS.get(), 1);
 	context->RSSetState(stencilWriteRS.get());
 
-	// Eye 1 viewport (right half of SBS buffer)
-	{
-		D3D11_TEXTURE2D_DESC mainDesc;
-		renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMAIN].texture->GetDesc(&mainDesc);
-
-		D3D11_VIEWPORT vp{};
-		vp.TopLeftX = static_cast<float>(mainDesc.Width / 2);
-		vp.TopLeftY = 0.0f;
-		vp.Width = static_cast<float>(mainDesc.Width / 2);
-		vp.Height = static_cast<float>(mainDesc.Height);
-		vp.MinDepth = 0.0f;
-		vp.MaxDepth = 1.0f;
-		context->RSSetViewports(1, &vp);
-	}
+	SetEye1Viewport();
 
 	// Bind shaders and mode texture
 	context->VSSetShader(stencilWriteVS.get(), nullptr, 0);
@@ -686,20 +684,7 @@ void VRStereoOptimizations::ExecuteDepthFillPass()
 	context->OMSetDepthStencilState(depthFillDSS.get(), 1);
 	context->RSSetState(stencilWriteRS.get());
 
-	// Eye 1 viewport (right half of SBS buffer)
-	{
-		D3D11_TEXTURE2D_DESC mainDesc;
-		renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMAIN].texture->GetDesc(&mainDesc);
-
-		D3D11_VIEWPORT vp{};
-		vp.TopLeftX = static_cast<float>(mainDesc.Width / 2);
-		vp.TopLeftY = 0.0f;
-		vp.Width = static_cast<float>(mainDesc.Width / 2);
-		vp.Height = static_cast<float>(mainDesc.Height);
-		vp.MinDepth = 0.0f;
-		vp.MaxDepth = 1.0f;
-		context->RSSetViewports(1, &vp);
-	}
+	SetEye1Viewport();
 
 	context->VSSetShader(stencilWriteVS.get(), nullptr, 0);
 	context->PSSetShader(depthFillPS.get(), nullptr, 0);

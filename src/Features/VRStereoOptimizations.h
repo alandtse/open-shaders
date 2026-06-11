@@ -82,8 +82,6 @@ struct VRStereoOptimizations
 
 		// Debug controls
 		bool debugSkipMerge = false;
-		bool debugForceAllStencil = false;
-		bool debugForceAllReprojectCS = false;
 		bool debugDepthMap = false;
 
 	} settings;
@@ -211,6 +209,9 @@ private:
 	/// Reproject the G-buffer from Eye 0 into the culled Eye 1 pixels so downstream passes
 	/// light Eye 1 natively (RepairCulledEye1 step 3).
 	void DispatchGBufferFill();
+
+	/// Sets the rasterizer viewport to the Eye 1 (right) half of the SBS buffer.
+	void SetEye1Viewport();
 
 	/// Compiles all shaders used by this feature
 	void CompileShaders();
