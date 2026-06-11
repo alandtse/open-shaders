@@ -1,4 +1,5 @@
 #include "ScreenSpaceGI.h"
+#include "GpuPass.h"
 
 #include <DirectXTex.h>
 
@@ -722,8 +723,7 @@ void ScreenSpaceGI::DrawSSGI()
 		return;
 	}
 
-	ZoneScoped;
-	TracyD3D11Zone(globals::state->tracyCtx, "SSGI");
+	CS_GPU_PASS("ScreenSpaceGI::SSGI");
 
 	static uint lastFrameAoTexIdx = 0;
 	static uint lastFrameGITexIdx = 0;
@@ -773,7 +773,7 @@ void ScreenSpaceGI::DrawSSGI()
 
 	// prefilter depths
 	{
-		TracyD3D11Zone(globals::state->tracyCtx, "SSGI - Prefilter Depths");
+		CS_GPU_PASS("ScreenSpaceGI::PrefilterDepths");
 
 		srvs.at(0) = Util::GetCurrentSceneDepthSRV();
 		for (int i = 0; i < 5; ++i)
@@ -782,217 +782,198 @@ void ScreenSpaceGI::DrawSSGI()
 		context->CSSetShaderResources(0, (uint)srvs.size(), srvs.data());
 		context->CSSetUnorderedAccessViews(0, (uint)uavs.size(), uavs.data(), nullptr);
 		context->CSSetShader(prefilterDepthsCompute.get(), nullptr, 0);
-		globals::profiler->BeginPass("ScreenSpaceGI::PrefilterDepths");
 		context->Dispatch((resolution[0] + 15) >> 4, (resolution[1] + 15) >> 4, 1);
-		globals::profiler->EndPass();
 	}
 
 	// fetch radiance and disocclusion
+	CS_GPU_PASS("ScreenSpaceGI::RadianceDisocc");
+
+	resetViews();
+	srvs.at(0) = rts[deferred->forwardRenderTargets[0]].SRV;
+	srvs.at(1) = texWorkingDepth->srv.get();
+	srvs.at(2) = rts[NORMALROUGHNESS].SRV;
+	srvs.at(3) = texPrevGeo->srv.get();
+	srvs.at(4) = rts[RE::RENDER_TARGET::kMOTION_VECTOR].SRV;
+	srvs.at(5) = texAccumFrames[lastFrameAccumTexIdx]->srv.get();
+	srvs.at(6) = texAo[inputAoTexIdx]->srv.get();
+	srvs.at(7) = texIlY[inputGITexIdx]->srv.get();
+	srvs.at(8) = texIlCoCg[inputGITexIdx]->srv.get();
+	srvs.at(9) = texGiSpecular[inputAoTexIdx]->srv.get();
+	srvs.at(10) = nullptr;
+
+	uavs.at(0) = texRadianceTemp->uav.get();
+	uavs.at(1) = texAccumFrames[!lastFrameAccumTexIdx]->uav.get();
+	uavs.at(2) = texAo[!inputAoTexIdx]->uav.get();
+	uavs.at(3) = texIlY[!inputGITexIdx]->uav.get();
+	uavs.at(4) = texIlCoCg[!inputGITexIdx]->uav.get();
+	uavs.at(5) = texGiSpecular[!inputAoTexIdx]->uav.get();
+
+	context->CSSetShaderResources(0, (uint)srvs.size(), srvs.data());
+	context->CSSetUnorderedAccessViews(0, (uint)uavs.size(), uavs.data(), nullptr);
+	context->CSSetShader(radianceDisoccCompute.get(), nullptr, 0);
+	context->Dispatch((internalRes[0] + 7u) >> 3, (internalRes[1] + 7u) >> 3, 1);
+
+	// Prefilter radiance texture instead of using GenerateMips for proper dynamic resolution handling.
+	// radianceDisocc wrote mip 0 directly to texRadianceTemp above, so we can bind it
+	// as SRV input here without an intermediate CopySubresourceRegion.
 	{
-		TracyD3D11Zone(globals::state->tracyCtx, "SSGI - Radiance Disocc");
+		CS_GPU_PASS("ScreenSpaceGI::PrefilterRadiance");
 
 		resetViews();
-		srvs.at(0) = rts[deferred->forwardRenderTargets[0]].SRV;
-		srvs.at(1) = texWorkingDepth->srv.get();
-		srvs.at(2) = rts[NORMALROUGHNESS].SRV;
-		srvs.at(3) = texPrevGeo->srv.get();
-		srvs.at(4) = rts[RE::RENDER_TARGET::kMOTION_VECTOR].SRV;
-		srvs.at(5) = texAccumFrames[lastFrameAccumTexIdx]->srv.get();
-		srvs.at(6) = texAo[inputAoTexIdx]->srv.get();
-		srvs.at(7) = texIlY[inputGITexIdx]->srv.get();
-		srvs.at(8) = texIlCoCg[inputGITexIdx]->srv.get();
-		srvs.at(9) = texGiSpecular[inputAoTexIdx]->srv.get();
-		srvs.at(10) = nullptr;
-
-		uavs.at(0) = texRadianceTemp->uav.get();
-		uavs.at(1) = texAccumFrames[!lastFrameAccumTexIdx]->uav.get();
-		uavs.at(2) = texAo[!inputAoTexIdx]->uav.get();
-		uavs.at(3) = texIlY[!inputGITexIdx]->uav.get();
-		uavs.at(4) = texIlCoCg[!inputGITexIdx]->uav.get();
-		uavs.at(5) = texGiSpecular[!inputAoTexIdx]->uav.get();
-
-		context->CSSetShaderResources(0, (uint)srvs.size(), srvs.data());
-		context->CSSetUnorderedAccessViews(0, (uint)uavs.size(), uavs.data(), nullptr);
-		context->CSSetShader(radianceDisoccCompute.get(), nullptr, 0);
-		globals::profiler->BeginPass("ScreenSpaceGI::RadianceDisocc");
-		context->Dispatch((internalRes[0] + 7u) >> 3, (internalRes[1] + 7u) >> 3, 1);
-		globals::profiler->EndPass();
-
-		// Prefilter radiance texture instead of using GenerateMips for proper dynamic resolution handling.
-		// radianceDisocc wrote mip 0 directly to texRadianceTemp above, so we can bind it
-		// as SRV input here without an intermediate CopySubresourceRegion.
-		{
-			TracyD3D11Zone(globals::state->tracyCtx, "SSGI - Prefilter Radiance");
-
-			resetViews();
-			srvs.at(0) = texRadianceTemp->srv.get();
-			uavs.at(0) = uavRadiance[0].get();  // Mip 0
-			uavs.at(1) = uavRadiance[1].get();  // Mip 1
-			uavs.at(2) = uavRadiance[2].get();  // Mip 2
-			uavs.at(3) = uavRadiance[3].get();  // Mip 3
-			uavs.at(4) = uavRadiance[4].get();  // Mip 4
-
-			context->CSSetShaderResources(0, 1, srvs.data());
-			context->CSSetUnorderedAccessViews(0, 5, uavs.data(), nullptr);
-			context->CSSetShader(prefilterRadianceCompute.get(), nullptr, 0);
-			globals::profiler->BeginPass("ScreenSpaceGI::PrefilterRadiance");
-			context->Dispatch((internalRes[0] + 15u) >> 4, (internalRes[1] + 15u) >> 4, 1);
-			globals::profiler->EndPass();
-		}
-
-		inputAoTexIdx = !inputAoTexIdx;
-		inputGITexIdx = !inputGITexIdx;
-		lastFrameAccumTexIdx = !lastFrameAccumTexIdx;
-	}
-
-	// Prefilter normals
-	{
-		TracyD3D11Zone(globals::state->tracyCtx, "SSGI - Prefilter Normals");
-
-		resetViews();
-		srvs.at(0) = rts[NORMALROUGHNESS].SRV;
-		uavs.at(0) = uavNormal[0].get();
-		uavs.at(1) = uavNormal[1].get();
-		uavs.at(2) = uavNormal[2].get();
-		uavs.at(3) = uavNormal[3].get();
-		uavs.at(4) = uavNormal[4].get();
+		srvs.at(0) = texRadianceTemp->srv.get();
+		uavs.at(0) = uavRadiance[0].get();  // Mip 0
+		uavs.at(1) = uavRadiance[1].get();  // Mip 1
+		uavs.at(2) = uavRadiance[2].get();  // Mip 2
+		uavs.at(3) = uavRadiance[3].get();  // Mip 3
+		uavs.at(4) = uavRadiance[4].get();  // Mip 4
 
 		context->CSSetShaderResources(0, 1, srvs.data());
 		context->CSSetUnorderedAccessViews(0, 5, uavs.data(), nullptr);
-		context->CSSetShader(prefilterNormalCompute.get(), nullptr, 0);
-		globals::profiler->BeginPass("ScreenSpaceGI::PrefilterNormals");
+		context->CSSetShader(prefilterRadianceCompute.get(), nullptr, 0);
 		context->Dispatch((internalRes[0] + 15u) >> 4, (internalRes[1] + 15u) >> 4, 1);
-		globals::profiler->EndPass();
 	}
 
-	// GI
-	{
-		TracyD3D11Zone(globals::state->tracyCtx, "SSGI - GI");
+	inputAoTexIdx = !inputAoTexIdx;
+	inputGITexIdx = !inputGITexIdx;
+	lastFrameAccumTexIdx = !lastFrameAccumTexIdx;
+}
 
-		resetViews();
-		srvs.at(0) = texWorkingDepth->srv.get();
-		srvs.at(1) = rts[NORMALROUGHNESS].SRV;
-		srvs.at(2) = texRadiance->srv.get();
-		srvs.at(3) = texNoise->srv.get();
-		srvs.at(4) = texAccumFrames[lastFrameAccumTexIdx]->srv.get();
-		srvs.at(5) = texIlY[inputGITexIdx]->srv.get();
-		srvs.at(6) = texIlCoCg[inputGITexIdx]->srv.get();
-		srvs.at(7) = texGiSpecular[inputAoTexIdx]->srv.get();
-		srvs.at(8) = texNormal->srv.get();
+// Prefilter normals
+{
+	CS_GPU_PASS("ScreenSpaceGI::PrefilterNormals");
 
-		uavs.at(0) = texAo[!inputAoTexIdx]->uav.get();
-		uavs.at(1) = texIlY[!inputGITexIdx]->uav.get();
-		uavs.at(2) = texIlCoCg[!inputGITexIdx]->uav.get();
-		uavs.at(3) = texGiSpecular[!inputAoTexIdx]->uav.get();
-		uavs.at(4) = texPrevGeo->uav.get();
-
-		context->CSSetShaderResources(0, (uint)srvs.size(), srvs.data());
-		context->CSSetUnorderedAccessViews(0, (uint)uavs.size(), uavs.data(), nullptr);
-		context->CSSetShader(giCompute.get(), nullptr, 0);
-		globals::profiler->BeginPass("ScreenSpaceGI::GI");
-		context->Dispatch((internalRes[0] + 7u) >> 3, (internalRes[1] + 7u) >> 3, 1);
-		globals::profiler->EndPass();
-
-		inputAoTexIdx = !inputAoTexIdx;
-		inputGITexIdx = !inputGITexIdx;
-		lastFrameGITexIdx = inputGITexIdx;
-		lastFrameAoTexIdx = inputAoTexIdx;
-	}
-
-	// blur
-	if (settings.EnableBlur) {
-		TracyD3D11Zone(globals::state->tracyCtx, "SSGI - Diffuse Blur");
-
-		resetViews();
-		srvs.at(0) = texWorkingDepth->srv.get();
-		srvs.at(1) = rts[NORMALROUGHNESS].SRV;
-		srvs.at(2) = texAccumFrames[lastFrameAccumTexIdx]->srv.get();
-		srvs.at(3) = texIlY[inputGITexIdx]->srv.get();
-		srvs.at(4) = texIlCoCg[inputGITexIdx]->srv.get();
-
-		uavs.at(0) = texAccumFrames[!lastFrameAccumTexIdx]->uav.get();
-		uavs.at(1) = texIlY[!inputGITexIdx]->uav.get();
-		uavs.at(2) = texIlCoCg[!inputGITexIdx]->uav.get();
-
-		context->CSSetShaderResources(0, (uint)srvs.size(), srvs.data());
-		context->CSSetUnorderedAccessViews(0, (uint)uavs.size(), uavs.data(), nullptr);
-		context->CSSetShader(blurCompute.get(), nullptr, 0);
-		globals::profiler->BeginPass("ScreenSpaceGI::Blur");
-		context->Dispatch((internalRes[0] + 7u) >> 3, (internalRes[1] + 7u) >> 3, 1);
-		globals::profiler->EndPass();
-
-		inputGITexIdx = !inputGITexIdx;
-		lastFrameGITexIdx = inputGITexIdx;
-		lastFrameAccumTexIdx = !lastFrameAccumTexIdx;
-	}
-
-	// VR stereo sync: bilateral blend of SSGI buffers between eyes
-	// Shi, Billeter, Eisemann 2022, "Stereo-consistent screen-space ambient occlusion"
-	if (globals::game::isVR && stereoSyncCompute) {
-		TracyD3D11Zone(globals::state->tracyCtx, "SSGI - Stereo Sync");
-
-		if (globals::state->frameAnnotations)
-			globals::state->BeginPerfEvent("SSGI - Stereo Sync");
-
-		resetViews();
-		srvs.at(0) = texWorkingDepth->srv.get();
-		srvs.at(1) = texAo[inputAoTexIdx]->srv.get();
-		srvs.at(2) = texIlY[inputGITexIdx]->srv.get();
-		srvs.at(3) = texIlCoCg[inputGITexIdx]->srv.get();
-
-		uavs.at(0) = texAo[!inputAoTexIdx]->uav.get();
-		uavs.at(1) = texIlY[!inputGITexIdx]->uav.get();
-		uavs.at(2) = texIlCoCg[!inputGITexIdx]->uav.get();
-
-		context->CSSetShaderResources(0, (uint)srvs.size(), srvs.data());
-		context->CSSetUnorderedAccessViews(0, (uint)uavs.size(), uavs.data(), nullptr);
-		context->CSSetShader(stereoSyncCompute.get(), nullptr, 0);
-		context->Dispatch((internalRes[0] + 7u) >> 3, (internalRes[1] + 7u) >> 3, 1);
-
-		inputAoTexIdx = !inputAoTexIdx;
-		inputGITexIdx = !inputGITexIdx;
-
-		if (globals::state->frameAnnotations)
-			globals::state->EndPerfEvent();
-	}
-
-	// upsample
-	if (settings.ResolutionMode != 0) {
-		resetViews();
-		srvs.at(0) = texWorkingDepth->srv.get();
-		srvs.at(1) = texAo[inputAoTexIdx]->srv.get();
-		srvs.at(2) = texIlY[inputGITexIdx]->srv.get();
-		srvs.at(3) = texIlCoCg[inputGITexIdx]->srv.get();
-		srvs.at(4) = texGiSpecular[inputAoTexIdx]->srv.get();
-
-		uavs.at(0) = texAo[!inputAoTexIdx]->uav.get();
-		uavs.at(1) = texIlY[!inputGITexIdx]->uav.get();
-		uavs.at(2) = texIlCoCg[!inputGITexIdx]->uav.get();
-		uavs.at(3) = texGiSpecular[!inputAoTexIdx]->uav.get();
-
-		context->CSSetShaderResources(0, (uint)srvs.size(), srvs.data());
-		context->CSSetUnorderedAccessViews(0, (uint)uavs.size(), uavs.data(), nullptr);
-		context->CSSetShader(upsampleCompute.get(), nullptr, 0);
-		globals::profiler->BeginPass("ScreenSpaceGI::Upsample");
-		context->Dispatch((resolution[0] + 7u) >> 3, (resolution[1] + 7u) >> 3, 1);
-		globals::profiler->EndPass();
-
-		inputAoTexIdx = !inputAoTexIdx;
-		inputGITexIdx = !inputGITexIdx;
-	}
-
-	outputAoIdx = inputAoTexIdx;
-	outputIlIdx = inputGITexIdx;
-
-	// cleanup
 	resetViews();
+	srvs.at(0) = rts[NORMALROUGHNESS].SRV;
+	uavs.at(0) = uavNormal[0].get();
+	uavs.at(1) = uavNormal[1].get();
+	uavs.at(2) = uavNormal[2].get();
+	uavs.at(3) = uavNormal[3].get();
+	uavs.at(4) = uavNormal[4].get();
 
-	samplers.fill(nullptr);
-	cb = nullptr;
+	context->CSSetShaderResources(0, 1, srvs.data());
+	context->CSSetUnorderedAccessViews(0, 5, uavs.data(), nullptr);
+	context->CSSetShader(prefilterNormalCompute.get(), nullptr, 0);
+	context->Dispatch((internalRes[0] + 15u) >> 4, (internalRes[1] + 15u) >> 4, 1);
+}
 
-	context->CSSetConstantBuffers(1, 1, &cb);
-	context->CSSetSamplers(0, (uint)samplers.size(), samplers.data());
-	context->CSSetShader(nullptr, nullptr, 0);
+// GI
+{
+	CS_GPU_PASS("ScreenSpaceGI::GI");
+
+	resetViews();
+	srvs.at(0) = texWorkingDepth->srv.get();
+	srvs.at(1) = rts[NORMALROUGHNESS].SRV;
+	srvs.at(2) = texRadiance->srv.get();
+	srvs.at(3) = texNoise->srv.get();
+	srvs.at(4) = texAccumFrames[lastFrameAccumTexIdx]->srv.get();
+	srvs.at(5) = texIlY[inputGITexIdx]->srv.get();
+	srvs.at(6) = texIlCoCg[inputGITexIdx]->srv.get();
+	srvs.at(7) = texGiSpecular[inputAoTexIdx]->srv.get();
+	srvs.at(8) = texNormal->srv.get();
+
+	uavs.at(0) = texAo[!inputAoTexIdx]->uav.get();
+	uavs.at(1) = texIlY[!inputGITexIdx]->uav.get();
+	uavs.at(2) = texIlCoCg[!inputGITexIdx]->uav.get();
+	uavs.at(3) = texGiSpecular[!inputAoTexIdx]->uav.get();
+	uavs.at(4) = texPrevGeo->uav.get();
+
+	context->CSSetShaderResources(0, (uint)srvs.size(), srvs.data());
+	context->CSSetUnorderedAccessViews(0, (uint)uavs.size(), uavs.data(), nullptr);
+	context->CSSetShader(giCompute.get(), nullptr, 0);
+	context->Dispatch((internalRes[0] + 7u) >> 3, (internalRes[1] + 7u) >> 3, 1);
+
+	inputAoTexIdx = !inputAoTexIdx;
+	inputGITexIdx = !inputGITexIdx;
+	lastFrameGITexIdx = inputGITexIdx;
+	lastFrameAoTexIdx = inputAoTexIdx;
+}
+
+// blur
+if (settings.EnableBlur) {
+	CS_GPU_PASS("ScreenSpaceGI::Blur");
+
+	resetViews();
+	srvs.at(0) = texWorkingDepth->srv.get();
+	srvs.at(1) = rts[NORMALROUGHNESS].SRV;
+	srvs.at(2) = texAccumFrames[lastFrameAccumTexIdx]->srv.get();
+	srvs.at(3) = texIlY[inputGITexIdx]->srv.get();
+	srvs.at(4) = texIlCoCg[inputGITexIdx]->srv.get();
+
+	uavs.at(0) = texAccumFrames[!lastFrameAccumTexIdx]->uav.get();
+	uavs.at(1) = texIlY[!inputGITexIdx]->uav.get();
+	uavs.at(2) = texIlCoCg[!inputGITexIdx]->uav.get();
+
+	context->CSSetShaderResources(0, (uint)srvs.size(), srvs.data());
+	context->CSSetUnorderedAccessViews(0, (uint)uavs.size(), uavs.data(), nullptr);
+	context->CSSetShader(blurCompute.get(), nullptr, 0);
+	context->Dispatch((internalRes[0] + 7u) >> 3, (internalRes[1] + 7u) >> 3, 1);
+
+	inputGITexIdx = !inputGITexIdx;
+	lastFrameGITexIdx = inputGITexIdx;
+	lastFrameAccumTexIdx = !lastFrameAccumTexIdx;
+}
+
+// VR stereo sync: bilateral blend of SSGI buffers between eyes
+// Shi, Billeter, Eisemann 2022, "Stereo-consistent screen-space ambient occlusion"
+if (globals::game::isVR && stereoSyncCompute) {
+	CS_GPU_PASS("ScreenSpaceGI::StereoSync");
+
+	resetViews();
+	srvs.at(0) = texWorkingDepth->srv.get();
+	srvs.at(1) = texAo[inputAoTexIdx]->srv.get();
+	srvs.at(2) = texIlY[inputGITexIdx]->srv.get();
+	srvs.at(3) = texIlCoCg[inputGITexIdx]->srv.get();
+
+	uavs.at(0) = texAo[!inputAoTexIdx]->uav.get();
+	uavs.at(1) = texIlY[!inputGITexIdx]->uav.get();
+	uavs.at(2) = texIlCoCg[!inputGITexIdx]->uav.get();
+
+	context->CSSetShaderResources(0, (uint)srvs.size(), srvs.data());
+	context->CSSetUnorderedAccessViews(0, (uint)uavs.size(), uavs.data(), nullptr);
+	context->CSSetShader(stereoSyncCompute.get(), nullptr, 0);
+	context->Dispatch((internalRes[0] + 7u) >> 3, (internalRes[1] + 7u) >> 3, 1);
+
+	inputAoTexIdx = !inputAoTexIdx;
+	inputGITexIdx = !inputGITexIdx;
+}
+
+// upsample
+if (settings.ResolutionMode != 0) {
+	CS_GPU_PASS("ScreenSpaceGI::Upsample");
+
+	resetViews();
+	srvs.at(0) = texWorkingDepth->srv.get();
+	srvs.at(1) = texAo[inputAoTexIdx]->srv.get();
+	srvs.at(2) = texIlY[inputGITexIdx]->srv.get();
+	srvs.at(3) = texIlCoCg[inputGITexIdx]->srv.get();
+	srvs.at(4) = texGiSpecular[inputAoTexIdx]->srv.get();
+
+	uavs.at(0) = texAo[!inputAoTexIdx]->uav.get();
+	uavs.at(1) = texIlY[!inputGITexIdx]->uav.get();
+	uavs.at(2) = texIlCoCg[!inputGITexIdx]->uav.get();
+	uavs.at(3) = texGiSpecular[!inputAoTexIdx]->uav.get();
+
+	context->CSSetShaderResources(0, (uint)srvs.size(), srvs.data());
+	context->CSSetUnorderedAccessViews(0, (uint)uavs.size(), uavs.data(), nullptr);
+	context->CSSetShader(upsampleCompute.get(), nullptr, 0);
+	context->Dispatch((resolution[0] + 7u) >> 3, (resolution[1] + 7u) >> 3, 1);
+
+	inputAoTexIdx = !inputAoTexIdx;
+	inputGITexIdx = !inputGITexIdx;
+}
+
+outputAoIdx = inputAoTexIdx;
+outputIlIdx = inputGITexIdx;
+
+// cleanup
+resetViews();
+
+samplers.fill(nullptr);
+cb = nullptr;
+
+context->CSSetConstantBuffers(1, 1, &cb);
+context->CSSetSamplers(0, (uint)samplers.size(), samplers.data());
+context->CSSetShader(nullptr, nullptr, 0);
 }
 
 #undef I18N_KEY_PREFIX

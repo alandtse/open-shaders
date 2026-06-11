@@ -1,4 +1,5 @@
 #include "HDRDisplay.h"
+#include "GpuPass.h"
 
 #include "PCH.h"
 
@@ -1167,13 +1168,12 @@ void HDRDisplay::ClearUIBuffer()
 
 void HDRDisplay::ApplyHDR()
 {
-	ZoneScoped;
-	TracyD3D11Zone(globals::state->tracyCtx, "HDR Processing");
-
 	std::lock_guard<std::mutex> lock(settingsMutex);
 
 	if (!hdrDataCB || !hdrTexture || !outputTexture)
 		return;
+
+	CS_GPU_PASS("HDRDisplay::HDROutput");
 
 	auto& upscaling = globals::features::upscaling;
 
@@ -1183,8 +1183,6 @@ void HDRDisplay::ApplyHDR()
 
 	// Update constant buffer before applying HDR
 	UpdateHDRData();
-
-	state->BeginPerfEvent("HDR Processing");
 
 	{
 		auto dispatchCount = Util::GetScreenDispatchCount(false);
@@ -1256,14 +1254,11 @@ void HDRDisplay::ApplyHDR()
 				}
 			}
 
-			state->EndPerfEvent();
 			return;
 		}
 
 		context->CSSetShader(computeShader, nullptr, 0);
-		globals::profiler->BeginPass("HDRDisplay::HDROutput");
 		context->Dispatch(dispatchCount.x, dispatchCount.y, 1);
-		globals::profiler->EndPass();
 
 		views[0] = nullptr;
 		views[1] = nullptr;
@@ -1297,8 +1292,6 @@ void HDRDisplay::ApplyHDR()
 			backBuffer->Release();
 		}
 	}
-
-	state->EndPerfEvent();
 }
 
 void HDRDisplay::DestroyResources()
@@ -1484,9 +1477,6 @@ ID3D11ComputeShader* HDRDisplay::GetUIBrightnessCS()
 
 void HDRDisplay::ScaleUIBrightnessForFG()
 {
-	ZoneScoped;
-	TracyD3D11Zone(globals::state->tracyCtx, "UI Brightness Scale");
-
 	auto& upscaling = globals::features::upscaling;
 	// FG merges PQ UI from this pass; paused UI stays gamma for HDROutput.
 	if (!IsFGCompositingThisFrame())
@@ -1498,10 +1488,10 @@ void HDRDisplay::ScaleUIBrightnessForFG()
 	if (!hdrDataCB || !upscaling.dx12SwapChain.uiBufferWrapped || !upscaling.dx12SwapChain.uiBufferWrapped->uav)
 		return;
 
+	CS_GPU_PASS("HDRDisplay::UIBrightness");
+
 	auto context = globals::d3d::context;
 	auto state = globals::state;
-
-	state->BeginPerfEvent("UI Brightness Scale");
 
 	// Update constant buffer with current settings
 	UpdateHDRData();
@@ -1517,9 +1507,7 @@ void HDRDisplay::ScaleUIBrightnessForFG()
 	auto computeShader = GetUIBrightnessCS();
 	if (computeShader) {
 		context->CSSetShader(computeShader, nullptr, 0);
-		globals::profiler->BeginPass("HDRDisplay::UIBrightness");
 		context->Dispatch(dispatchCount.x, dispatchCount.y, 1);
-		globals::profiler->EndPass();
 	}
 
 	// Cleanup
@@ -1528,8 +1516,6 @@ void HDRDisplay::ScaleUIBrightnessForFG()
 	cbs[0] = nullptr;
 	context->CSSetConstantBuffers(0, 1, cbs);
 	context->CSSetShader(nullptr, nullptr, 0);
-
-	state->EndPerfEvent();
 }
 
 float HDRDisplay::GetDisplayMaxLuminance() const

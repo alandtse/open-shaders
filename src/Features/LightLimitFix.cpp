@@ -3,6 +3,7 @@
 #include "Features/LightLimitFix/SettingsSanitize.h"
 #include "Features/LightLimitFix/ShadowCasterMath.h"
 #include "Globals.h"
+#include "GpuPass.h"
 #include "I18n/I18n.h"
 #include "InverseSquareLighting.h"
 #include "LinearLighting.h"
@@ -811,13 +812,10 @@ void LightLimitFix::ApplyJsonPlacedLightIntensityScale(
 
 void LightLimitFix::Prepass()
 {
+	CS_GPU_PASS("LightLimitFix::Prepass");
+
 	auto context = globals::d3d::context;
 
-	auto state = globals::state;
-
-	ZoneScoped;
-	TracyD3D11Zone(globals::state->tracyCtx, "LightLimitFix Prepass");
-	state->BeginPerfEvent("LightLimitFix Prepass");
 	ShadowCasterManager::Update(settings.ShadowSettings, globals::game::smState->shadowSceneNode[0], nullptr);
 	UpdateLights();
 
@@ -826,8 +824,6 @@ void LightLimitFix::Prepass()
 	views[1] = lightIndexList->srv.get();
 	views[2] = lightGrid->srv.get();
 	context->PSSetShaderResources(35, ARRAYSIZE(views), views);
-
-	state->EndPerfEvent();
 }
 
 bool LightLimitFix::IsValidLight(RE::BSLight* a_light)
@@ -1179,7 +1175,7 @@ void LightLimitFix::UpdateStructure()
 	clusterSize[2] = 32;
 
 	{
-		TracyD3D11Zone(globals::state->tracyCtx, "LightLimitFix Cluster Build");
+		CS_GPU_PASS("LightLimitFix::ClusterBuild");
 		LightBuildingCB updateData{};
 		updateData.LightsNear = lightsNear;
 		updateData.LightsFar = lightsFar;
@@ -1194,16 +1190,14 @@ void LightLimitFix::UpdateStructure()
 		context->CSSetUnorderedAccessViews(0, 1, &clusters_uav, nullptr);
 
 		context->CSSetShader(clusterBuildingCS, nullptr, 0);
-		globals::profiler->BeginPass("LightLimitFix::ClusterBuild");
 		context->Dispatch(clusterSize[0], clusterSize[1], clusterSize[2]);
-		globals::profiler->EndPass();
 
 		ID3D11UnorderedAccessView* null_uav = nullptr;
 		context->CSSetUnorderedAccessViews(0, 1, &null_uav, nullptr);
 	}
 
 	{
-		TracyD3D11Zone(globals::state->tracyCtx, "LightLimitFix Cluster Cull");
+		CS_GPU_PASS("LightLimitFix::ClusterCull");
 		LightCullingCB updateData{};
 		updateData.LightCount = lightCount;
 		std::copy(clusterSize, clusterSize + 3, updateData.ClusterSize);
@@ -1223,9 +1217,7 @@ void LightLimitFix::UpdateStructure()
 		context->CSSetUnorderedAccessViews(0, ARRAYSIZE(uavs), uavs, nullptr);
 
 		context->CSSetShader(clusterCullingCS, nullptr, 0);
-		globals::profiler->BeginPass("LightLimitFix::ClusterCull");
 		context->Dispatch((clusterSize[0] + 15) / 16, (clusterSize[1] + 15) / 16, (clusterSize[2] + 3) / 4);
-		globals::profiler->EndPass();
 	}
 
 	context->CSSetShader(nullptr, nullptr, 0);

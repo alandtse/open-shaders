@@ -1,4 +1,5 @@
 #include "RCAS.h"
+#include "../../../GpuPass.h"
 
 #include "../../../Deferred.h"
 #include "../../../State.h"
@@ -34,19 +35,15 @@ void RCAS::CreateComputeShader()
 
 void RCAS::ApplySharpen(ID3D11ShaderResourceView* inputSRV, ID3D11UnorderedAccessView* outputUAV, float sharpness)
 {
-	ZoneScoped;
-	TracyD3D11Zone(globals::state->tracyCtx, "RCAS Sharpening");
-
-	auto state = globals::state;
-	auto context = globals::d3d::context;
-
 	if (!rcasComputeShader) {
 		logger::warn("[RCAS] Compute shader not compiled");
 		return;
 	}
 
-	globals::profiler->BeginPass("Upscaling::RCAS");
-	state->BeginPerfEvent("RCAS Sharpening");
+	CS_GPU_PASS("Upscaling::RCAS");
+
+	auto state = globals::state;
+	auto context = globals::d3d::context;
 
 	uint32_t screenWidth = (uint32_t)state->screenSize.x;
 	uint32_t screenHeight = (uint32_t)state->screenSize.y;
@@ -77,7 +74,4 @@ void RCAS::ApplySharpen(ID3D11ShaderResourceView* inputSRV, ID3D11UnorderedAcces
 	context->CSSetUnorderedAccessViews(0, 1, nullUAVs, nullptr);
 
 	context->CSSetShader(nullptr, nullptr, 0);
-
-	globals::profiler->EndPass();
-	state->EndPerfEvent();
 }

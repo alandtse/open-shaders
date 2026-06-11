@@ -1,3 +1,4 @@
+#include "../../../GpuPass.h"
 #include "../PerfMode.h"
 
 #include <algorithm>
@@ -123,11 +124,7 @@ void PerfMode::MaybeBlitMenuBG(uint32_t boundRTIdx)
 	if (!dest.RTV || !dest.texture)
 		return;
 
-	ZoneScoped;
-	auto state = globals::state;
-	auto* context = globals::d3d::context;
-	state->BeginPerfEvent("PerfMode::MenuBGBlit");
-	TracyD3D11Zone(state->tracyCtx, "PerfMode::MenuBGBlit");
+	CS_GPU_PASS("PerfMode::MenuBGBlit");
 
 	globals::features::upscaling.Upscale();
 
@@ -169,7 +166,6 @@ void PerfMode::MaybeBlitMenuBG(uint32_t boundRTIdx)
 	}
 
 	blittedFrameId = currentFrame;
-	state->EndPerfEvent();
 }
 
 void PerfMode::InstallCreateRTThunks()

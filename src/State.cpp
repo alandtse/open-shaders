@@ -947,6 +947,16 @@ void State::EndPerfEvent()
 	pPerf->EndEvent();
 }
 
+void State::BeginAnnotation(std::string_view title)
+{
+	pPerf->BeginEvent(std::wstring(title.begin(), title.end()).c_str());
+}
+
+void State::EndAnnotation()
+{
+	pPerf->EndEvent();
+}
+
 void State::SetPerfMarker(std::string_view title)
 {
 	pPerf->SetMarker(std::wstring(title.begin(), title.end()).c_str());
