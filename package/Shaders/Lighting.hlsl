@@ -2081,10 +2081,12 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	float3x3 tbnTr = ReconstructTBN(input.WorldPosition.xyz, worldNormal, screenUV);
 #	else
 	float3 worldNormal = normalize(mul(tbn, normal.xyz));
-#		if defined(TREE_ANIM)
+#		if defined(TREE_ANIM) && !defined(VR)
 	float3 viewNormal = normalize(FrameBuffer::WorldToView(worldNormal, false, eyeIndex));
 	viewNormal = float3(viewNormal.xy, -abs(viewNormal.z));
 	worldNormal = normalize(FrameBuffer::ViewToWorld(viewNormal, false, eyeIndex));
+#		elif defined(TREE_ANIM)
+	// VR must keep tree normals eye/view independent.
 #		endif
 
 #		if defined(SPARKLE)
