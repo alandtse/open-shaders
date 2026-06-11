@@ -32,14 +32,10 @@ void VRStereoOptimizations::SaveSettings(json& o_json)
 	o_json["FoveatedRegionCenterX"] = settings.foveatedRegionCenterX;
 	o_json["FoveatedRegionCenterY"] = settings.foveatedRegionCenterY;
 	o_json["UseEyeTracking"] = settings.useEyeTracking;
-	o_json["DebugVisualization"] = settings.debugVisualization;
 	o_json["DebugSkipMerge"] = settings.debugSkipMerge;
 	o_json["DebugForceAllStencil"] = settings.debugForceAllStencil;
 	o_json["DebugForceAllReprojectCS"] = settings.debugForceAllReprojectCS;
 	o_json["DebugDepthMap"] = settings.debugDepthMap;
-	o_json["DebugFullBlendDepth"] = settings.debugFullBlendDepth;
-	o_json["DebugPOMDepth"] = settings.debugPOMDepth;
-	o_json["POMDepthScale"] = settings.pomDepthScale;
 	o_json["ForwardOcclusionScale"] = settings.forwardOcclusionScale;
 }
 
@@ -63,17 +59,13 @@ void VRStereoOptimizations::LoadSettings(json& o_json)
 	loadClampedFloat("FoveatedRegionCenterX", settings.foveatedRegionCenterX, 0.0f, 1.0f);
 	loadClampedFloat("FoveatedRegionCenterY", settings.foveatedRegionCenterY, 0.0f, 1.0f);
 	loadClampedFloat("FullBlendDistance", settings.fullBlendDistance, 0.0f, 50000.0f);
-	loadClampedFloat("POMDepthScale", settings.pomDepthScale, 0.0f, 500.0f);
 	loadClampedFloat("ForwardOcclusionScale", settings.forwardOcclusionScale, 0.0f, 10.0f);
 
 	loadBool("UseEyeTracking", settings.useEyeTracking);
-	loadBool("DebugVisualization", settings.debugVisualization);
 	loadBool("DebugSkipMerge", settings.debugSkipMerge);
 	loadBool("DebugForceAllStencil", settings.debugForceAllStencil);
 	loadBool("DebugForceAllReprojectCS", settings.debugForceAllReprojectCS);
 	loadBool("DebugDepthMap", settings.debugDepthMap);
-	loadBool("DebugFullBlendDepth", settings.debugFullBlendDepth);
-	loadBool("DebugPOMDepth", settings.debugPOMDepth);
 }
 
 void VRStereoOptimizations::RestoreDefaultSettings()
@@ -123,34 +115,6 @@ void VRStereoOptimizations::SetupResources()
 			.Texture2D = { .MostDetailedMip = 0, .MipLevels = 1 } });
 		texPerPixelMode->CreateUAV(D3D11_UNORDERED_ACCESS_VIEW_DESC{
 			.Format = DXGI_FORMAT_R8_UINT,
-			.ViewDimension = D3D11_UAV_DIMENSION_TEXTURE2D,
-			.Texture2D = { .MipSlice = 0 } });
-	}
-
-	// POM offset texture (R16_FLOAT, full SBS resolution)
-	// Written by Lighting PS (u7) for POM-active pixels, read by StereoBlendCS for depth-aware reprojection.
-	// Replaces the former overloading of Reflectance.w, so Reflectance stays R11G11B10 with no alpha.
-	{
-		D3D11_TEXTURE2D_DESC pomDesc{};
-		pomDesc.Width = mainDesc.Width;
-		pomDesc.Height = mainDesc.Height;
-		pomDesc.MipLevels = 1;
-		pomDesc.ArraySize = 1;
-		pomDesc.Format = DXGI_FORMAT_R16_FLOAT;
-		pomDesc.SampleDesc.Count = 1;
-		pomDesc.SampleDesc.Quality = 0;
-		pomDesc.Usage = D3D11_USAGE_DEFAULT;
-		pomDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS;
-		pomDesc.CPUAccessFlags = 0;
-		pomDesc.MiscFlags = 0;
-
-		texPomOffset = eastl::make_unique<Texture2D>(pomDesc, "VRStereoOpt::PomOffset");
-		texPomOffset->CreateSRV(D3D11_SHADER_RESOURCE_VIEW_DESC{
-			.Format = DXGI_FORMAT_R16_FLOAT,
-			.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D,
-			.Texture2D = { .MostDetailedMip = 0, .MipLevels = 1 } });
-		texPomOffset->CreateUAV(D3D11_UNORDERED_ACCESS_VIEW_DESC{
-			.Format = DXGI_FORMAT_R16_FLOAT,
 			.ViewDimension = D3D11_UAV_DIMENSION_TEXTURE2D,
 			.Texture2D = { .MipSlice = 0 } });
 	}
@@ -291,14 +255,6 @@ void VRStereoOptimizations::Reset()
 	stencilSwapCount = 0;
 }
 
-void VRStereoOptimizations::ClearPomOffsetTexture()
-{
-	if (!texPomOffset)
-		return;
-	const float clearValue[4] = { kPomOffsetNoData, kPomOffsetNoData, kPomOffsetNoData, kPomOffsetNoData };
-	globals::d3d::context->ClearUnorderedAccessViewFloat(texPomOffset->uav.get(), clearValue);
-}
-
 //=============================================================================
 // IMGUI SETTINGS
 //=============================================================================
@@ -324,15 +280,9 @@ void VRStereoOptimizations::DrawSettings()
 	if (globals::state->IsDeveloperMode()) {
 		if (ImGui::TreeNode(T("feature.vr_stereo.debug", "Debug"))) {
 			ImGui::SliderFloat(T("feature.vr_stereo.full_blend_distance", "Full Blend Distance"), &settings.fullBlendDistance, 0.0f, 10000.0f, "%.0f");
-			Util::AddTooltip(T("feature.vr_stereo.full_blend_distance_tooltip", "Geometry closer than this distance (game units) is fully shaded in both eyes and bilaterally blended for 2x supersampling. 0 = disabled."));
+			Util::AddTooltip(T("feature.vr_stereo.full_blend_distance_tooltip", "Geometry closer than this distance (game units) is excluded from culling and rendered natively in both eyes. 0 = disabled."));
 
-			ImGui::SliderFloat(T("feature.vr_stereo.pom_depth_scale", "POM Depth Scale"), &settings.pomDepthScale, 0.0f, 500.0f, "%.1f");
-			Util::AddTooltip(T("feature.vr_stereo.pom_depth_scale_tooltip", "Scale factor for POM depth correction in stereo reprojection.\n1.0 = physical scale. Increase for more visible POM stereo depth."));
 			ImGui::Checkbox(T("feature.vr_stereo.skip_pixel_reprojection", "Skip Pixel Reprojection"), &settings.debugSkipMerge);
-			ImGui::Checkbox(T("feature.vr_stereo.full_blend_depth_view", "Full Blend Depth View"), &settings.debugFullBlendDepth);
-			ImGui::Checkbox(T("feature.vr_stereo.debug_pom_depth", "Debug POM Depth"), &settings.debugPOMDepth);
-			if (settings.debugFullBlendDepth)
-				ImGui::TextColored(ImVec4(0, 1, 1, 1), "%s", T("feature.vr_stereo.full_blend_zone_hint", "  Cyan = full blend zone (closer = stronger tint)"));
 			ImGui::Text(T("feature.vr_stereo.stencil_swaps_this_frame", "Stencil swaps this frame: %u"), stencilSwapCount);
 			ImGui::TreePop();
 		}
