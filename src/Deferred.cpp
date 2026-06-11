@@ -19,6 +19,17 @@
 
 #include "Hooks.h"
 
+#ifdef TRACY_ENABLE
+#	include <optional>
+// GPU zone around the engine's deferred-geometry render (the G-buffer pass that VR stereo
+// culling skips Eye 1 pixels in). It spans StartDeferred -> EndDeferred, across the engine's
+// RenderBatches calls, so it can't be a scoped macro — open it after StartDeferred sets up the
+// MRT/stencil and close it before EndDeferred runs the CS lighting. This is the zone that makes
+// the reprojection geometry saving measurable (CS passes are already individually zoned).
+static constexpr tracy::SourceLocationData kDeferredGeoSrcLoc{ "Deferred Geometry", "Deferred::StartDeferred", __FILE__, (uint32_t)__LINE__, 0 };
+static std::optional<tracy::D3D11ZoneScope> g_deferredGeoZone;
+#endif
+
 struct DepthStates
 {
 	ID3D11DepthStencilState* a[6][40];
@@ -297,10 +308,6 @@ void Deferred::StartDeferred()
 	{
 		auto context = globals::d3d::context;
 
-		// Clear POM offset texture to -1.0 sentinel so pixels the Lighting PS never touches read "no POM"
-		if (globals::features::vr.stereoOpt.loaded)
-			globals::features::vr.stereoOpt.ClearPomOffsetTexture();
-
 		ID3D11Buffer* buffers[1] = { *globals::game::perFrame.get() };
 
 		ID3D11Buffer* vrBuffer = nullptr;
@@ -326,6 +333,14 @@ void Deferred::StartDeferred()
 	if (globals::game::isVR && globals::features::vr.IsStereoOptimizationCullingReady()) {
 		globals::features::vr.stereoOpt.DispatchStencil();
 	}
+
+#ifdef TRACY_ENABLE
+	// Bracket the engine deferred-geometry render that follows (closed in EndDeferred).
+	if (globals::state->tracyCtx) {
+		g_deferredGeoZone.reset();
+		g_deferredGeoZone.emplace(globals::state->tracyCtx, &kDeferredGeoSrcLoc, true);
+	}
+#endif
 }
 
 void Deferred::DeferredPasses()
@@ -474,6 +489,11 @@ void Deferred::EndDeferred()
 {
 	if (!globals::state->inWorld)
 		return;
+
+#ifdef TRACY_ENABLE
+	// Close the engine deferred-geometry GPU zone opened in StartDeferred, before CS lighting.
+	g_deferredGeoZone.reset();
+#endif
 
 	auto shaderCache = globals::shaderCache;
 
