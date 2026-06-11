@@ -232,6 +232,11 @@ void VRStereoOptimizations::ClearShaderCache()
 	stencilWriteVS = nullptr;
 	stencilWritePS = nullptr;
 	dssCache.clear();
+
+	// Framework clears caches without a follow-up SetupResources; without an immediate
+	// recompile CanDispatchStencil() stays false and the feature silently disengages.
+	if (loaded)
+		CompileShaders();
 }
 
 void VRStereoOptimizations::Reset()

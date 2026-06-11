@@ -356,13 +356,6 @@ struct PS_OUTPUT
 
 #ifdef PSHADER
 
-#	if defined(VR_STEREO_OPT) && !defined(SNOW)
-// POM depth offset UAV — written per-pixel for StereoBlendCS depth-aware reprojection.
-// Bound at u7 (after the 7 deferred MRT slots 0-6) via OMSetRenderTargetsAndUnorderedAccessViews.
-// -1.0 = no POM (sentinel, matches ClearPomOffsetTexture); >= 0 = POM ran (StereoBlendCS checks >= 0).
-RWTexture2D<float> PomOffsetTex : register(u7);
-#	endif
-
 SamplerState SampTerrainParallaxSampler : register(s1);
 
 #	if defined(LANDSCAPE)
@@ -3573,13 +3566,6 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 
 	psout.Reflectance = float4(indirectLobeWeights.specular, psout.Diffuse.w);
 	psout.NormalGlossiness = float4(GBuffer::EncodeNormal(screenSpaceNormal), saturate(1.0 - material.Roughness), psout.Diffuse.w);
-
-#		if defined(VR_STEREO_OPT) && !defined(SNOW)
-	// VR stereo reprojection: write POM depth offset to dedicated texture (u7) for StereoBlendCS.
-	// hasPOM disambiguates "POM ran at geometry plane (pixelOffset=0.5)" from "POM did not run".
-	// -1.0 is the explicit no-POM sentinel (R16_FLOAT supports negatives); StereoBlendCS checks >= 0.
-	PomOffsetTex[uint2(input.Position.xy)] = hasPOM ? pixelOffset : Stereo::POM_NO_DATA;
-#		endif
 
 	float masksZ = Color::RGBToYCoCg(directionalAmbientColor).x;
 
