@@ -151,16 +151,23 @@ struct VRStereoOptimizations
 	 */
 	bool CanDispatchStencil() const
 	{
+		// Cull Eye 1 geometry only when every pass that repairs it is ready: the stencil
+		// classify/write pass AND the depth-fill + G-buffer-fill passes. Without this, a
+		// fill-shader compile failure would cull Eye 1 and never restore it (full corruption).
 		return loaded &&
 		       settings.stereoMode != StereoMode::Off &&
 		       !settings.debugSkipMerge &&
+		       gBufferFillSupported &&
 		       stencilCS &&
 		       stencilWriteVS &&
 		       stencilWritePS &&
+		       depthFillPS &&
+		       gBufferFillCS &&
 		       texPerPixelMode &&
 		       paramsCB &&
 		       stencilWriteDSS &&
-		       stencilWriteRS;
+		       stencilWriteRS &&
+		       depthFillDSS;
 	}
 
 	/**
@@ -251,4 +258,9 @@ private:
 
 	bool stencilActive = false;
 	uint32_t stencilSwapCount = 0;
+
+	// GBufferFillCS does typed UAV loads on the G-buffer formats (R10G10B10A2,
+	// R11G11B10, R16_UNORM, fp16); without TypedUAVLoadAdditionalFormats those reads
+	// return undefined data, so the feature stays off rather than corrupt Eye 1.
+	bool gBufferFillSupported = false;
 };

@@ -204,7 +204,19 @@ void VRStereoOptimizations::SetupResources()
 		rsDesc.DepthClipEnable = FALSE;
 
 		DX::ThrowIfFailed(device->CreateRasterizerState(&rsDesc, stencilWriteRS.put()));
+		Util::SetResourceName(stencilWriteRS.get(), "VRStereoOpt::StencilWriteRS");
 	}
+
+	// GBufferFillCS does typed UAV loads on these formats; without support the reads
+	// return undefined data, so disable the feature (CanDispatchStencil gates on this).
+	gBufferFillSupported =
+		State::SupportsTypedUAVLoad(DXGI_FORMAT_R16G16B16A16_FLOAT) &&
+		State::SupportsTypedUAVLoad(DXGI_FORMAT_R16G16_FLOAT) &&
+		State::SupportsTypedUAVLoad(DXGI_FORMAT_R10G10B10A2_UNORM) &&
+		State::SupportsTypedUAVLoad(DXGI_FORMAT_R11G11B10_FLOAT) &&
+		State::SupportsTypedUAVLoad(DXGI_FORMAT_R16_UNORM);
+	if (!gBufferFillSupported)
+		logger::warn("[VRStereoOptimizations] GPU lacks typed-UAV-load support for G-buffer formats; stereo reprojection disabled.");
 
 	CompileShaders();
 
@@ -802,7 +814,8 @@ void VRStereoOptimizations::DispatchGBufferFill()
 	context->OMGetRenderTargets(D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT, savedRTVs, &savedDSV);
 	context->OMSetRenderTargets(0, nullptr, nullptr);
 
-	UpdateConstantBuffer();
+	// paramsCB already uploaded this frame by DispatchStencil (settings/resolution are
+	// frame-constant); no re-upload needed.
 	auto cbPtr = paramsCB->CB();
 
 	ID3D11ShaderResourceView* srvs[2]{ depthSRV, texPerPixelMode->srv.get() };

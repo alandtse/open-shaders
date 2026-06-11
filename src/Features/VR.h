@@ -112,8 +112,6 @@ public:
 		};
 	}
 
-	virtual inline std::string_view GetShaderDefineName() override { return "VR_STEREO_OPT"; }
-	virtual inline bool HasShaderDefine(RE::BSShader::Type t) override { return stereoOpt.CanDispatchStencil() && (t == RE::BSShader::Type::Utility || t == RE::BSShader::Type::Lighting); }
 	virtual void Reset() override;
 	virtual void SetupResources() override;
 	virtual void ClearShaderCache() override;
@@ -131,11 +129,10 @@ public:
 	void CompileStereoBlendShaders();
 	bool IsStereoOptimizationCullingReady() const
 	{
-		return globals::game::isVR &&
-		       stereoOpt.CanDispatchStencil() &&
-		       stereoBlendOverwriteCS &&
-		       stereoBlendCopyTex &&
-		       stereoBlendCB;
+		// Eye 1 is repaired by the depth-fill + G-buffer-fill passes (checked in
+		// CanDispatchStencil), not the retired StereoBlend overwrite path — so the
+		// stereoBlend* resources are no longer a prerequisite for engaging culling.
+		return globals::game::isVR && stereoOpt.CanDispatchStencil();
 	}
 	static bool AnyScreenSpaceEffectLoaded();
 

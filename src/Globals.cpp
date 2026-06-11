@@ -307,36 +307,6 @@ namespace globals
 	};
 
 	/**
-	 * @brief Hooked OMSetRenderTargets — injects POM offset UAV at slot 7 when in the deferred pass.
-	 *
-	 * vtable index 33 for ID3D11DeviceContext::OMSetRenderTargets.
-	 * After Skyrim binds the deferred MRT (clearing all UAVs), this hook re-adds the POM offset
-	 * UAV at slot u7 so the Lighting PS (VR_STEREO_OPT permutation) can write per-pixel parallax
-	 * depth offsets without overloading Reflectance.w.
-	 */
-	struct ID3D11DeviceContext_OMSetRenderTargets
-	{
-		static void STDMETHODCALLTYPE thunk(ID3D11DeviceContext* This, UINT NumViews, ID3D11RenderTargetView* const* ppRenderTargetViews, ID3D11DepthStencilView* pDepthStencilView)
-		{
-			func(This, NumViews, ppRenderTargetViews, pDepthStencilView);
-
-			// D3D11 handles any SRV/UAV conflict automatically (silently unbinds the UAV when
-			// the same resource is later bound as an SRV), so no NumViews guard is needed.
-			if (globals::deferred->deferredPass) {
-				auto& stereoOpt = globals::features::vr.stereoOpt;
-				if (stereoOpt.loaded) {
-					if (auto* uav = stereoOpt.GetPomOffsetUAV()) {
-						This->OMSetRenderTargetsAndUnorderedAccessViews(
-							D3D11_KEEP_RENDER_TARGETS_AND_DEPTH_STENCIL, nullptr, nullptr,
-							7, 1, &uav, nullptr);
-					}
-				}
-			}
-		}
-		static inline REL::Relocation<decltype(thunk)> func;
-	};
-
-	/**
 	 * @brief Hooked OMSetDepthStencilState — replaces DSS with stencil-enforcing version when VR stereo opt is active.
 	 *
 	 * vtable index 36 for ID3D11DeviceContext::OMSetDepthStencilState.
@@ -415,8 +385,9 @@ namespace globals
 		// VR stereo optimization hooks: installed only when stereo reprojection is enabled at startup.
 		// Changing stereoMode at runtime requires a restart; the UI communicates this to the user.
 		if (globals::game::isVR && globals::features::vr.stereoOpt.settings.stereoMode != VRStereoOptimizations::StereoMode::Off) {
-			// EXPERIMENT: OMSetRenderTargets UAV-inject hook (vfunc 33) not installed — the POM
-			// offset UAV write is removed from Lighting PS so early depth/stencil rejection works.
+			// Do not re-add an OMSetRenderTargets (vfunc 33) UAV-inject hook: binding a UAV at
+			// u7 alongside the 8 deferred MRTs disables early depth/stencil rejection (the perf
+			// premise). Eye 1 is repaired by the depth-fill + G-buffer-fill passes instead.
 			stl::detour_vfunc<36, ID3D11DeviceContext_OMSetDepthStencilState>(a_context);
 			stl::detour_vfunc<53, ID3D11DeviceContext_ClearDepthStencilView>(a_context);
 		}

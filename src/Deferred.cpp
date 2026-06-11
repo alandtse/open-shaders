@@ -355,6 +355,10 @@ void Deferred::DeferredPasses()
 	// VR: geometry rendering is complete — deactivate stencil culling, then restore
 	// depth and G-buffer data for the culled Eye 1 pixels BEFORE any consumer (SSGI,
 	// composite, water) reads them. Downstream passes run unmodified on complete data.
+	// Order is load-bearing: DeactivateStencil must precede the depth fill so the
+	// OMSetDepthStencilState hook stops swapping in the NOT_EQUAL clone and the fill's
+	// own EQUAL-ref=1 DSS survives. Keep these three calls adjacent — no engine draw or
+	// stencil clear may run between them, or the stencil mask is lost.
 	if (globals::game::isVR) {
 		auto& stereoOpt = globals::features::vr.stereoOpt;
 		if (stereoOpt.IsStencilActive()) {
@@ -709,9 +713,6 @@ ID3D11ComputeShader* Deferred::GetComputeMainComposite()
 		if (globals::game::isVR)
 			defines.push_back({ "FRAMEBUFFER", nullptr });
 
-		if (globals::game::isVR)
-			defines.push_back({ "VR_STEREO_OPT", nullptr });
-
 		// TERRAIN_BLENDING flips DepthTexture's HLSL type from `Texture2D<unorm float>`
 		// (R24_UNORM_X8_TYPELESS game depth) to `Texture2D<float>` (R32_FLOAT blendedDepth).
 		if (globals::features::terrainBlending.loaded)
@@ -741,9 +742,6 @@ ID3D11ComputeShader* Deferred::GetComputeMainCompositeInterior()
 
 		if (globals::game::isVR)
 			defines.push_back({ "FRAMEBUFFER", nullptr });
-
-		if (globals::game::isVR)
-			defines.push_back({ "VR_STEREO_OPT", nullptr });
 
 		// TERRAIN_BLENDING flips DepthTexture's HLSL type from `Texture2D<unorm float>`
 		// (R24_UNORM_X8_TYPELESS game depth) to `Texture2D<float>` (R32_FLOAT blendedDepth).
