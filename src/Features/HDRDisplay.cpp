@@ -1178,7 +1178,6 @@ void HDRDisplay::ApplyHDR()
 	auto& upscaling = globals::features::upscaling;
 
 	auto context = globals::d3d::context;
-	auto state = globals::state;
 	auto renderer = globals::game::renderer;
 
 	// Update constant buffer before applying HDR
@@ -1491,7 +1490,6 @@ void HDRDisplay::ScaleUIBrightnessForFG()
 	CS_GPU_PASS("HDRDisplay::UIBrightness");
 
 	auto context = globals::d3d::context;
-	auto state = globals::state;
 
 	// Update constant buffer with current settings
 	UpdateHDRData();
