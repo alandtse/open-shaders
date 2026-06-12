@@ -2427,6 +2427,90 @@ namespace SIE
 		isSkipUnchangedShaders = value;
 	}
 
+	// Scan a root shader's include closure (deployed merged tree under Data/Shaders)
+	// for a token. Used for partial invalidation: a feature can only affect a root
+	// shader whose preprocessed source actually references its define. Any IO/parse
+	// failure returns nullopt so callers fall back to the conservative full wipe.
+	static std::optional<bool> RootShaderReferencesToken(const std::filesystem::path& root, const std::string& token)
+	{
+		try {
+			static const std::regex includeRe(R"#(^\s*#\s*include\s+"([^"]+)")#");
+			std::set<std::filesystem::path> visited;
+			std::vector<std::filesystem::path> queue{ root };
+			const std::filesystem::path shadersRoot = L"Data\\Shaders";
+			while (!queue.empty()) {
+				auto file = queue.back();
+				queue.pop_back();
+				if (!visited.insert(file).second)
+					continue;
+				std::ifstream stream(file);
+				if (!stream)
+					return std::nullopt;
+				std::string line;
+				while (std::getline(stream, line)) {
+					if (line.find(token) != std::string::npos)
+						return true;
+					std::smatch m;
+					if (std::regex_search(line, m, includeRe)) {
+						// Includes resolve against the merged root, then the includer's dir.
+						auto byRoot = shadersRoot / m[1].str();
+						auto byLocal = file.parent_path() / m[1].str();
+						if (std::filesystem::exists(byRoot))
+							queue.push_back(byRoot);
+						else if (std::filesystem::exists(byLocal))
+							queue.push_back(byLocal);
+						// Unresolvable includes are permutation-gated feature paths; the
+						// token test above already covers the gating define on this line.
+					}
+				}
+			}
+			return false;
+		} catch (...) {
+			return std::nullopt;
+		}
+	}
+
+	// Delete only the cache dirs whose shaders reference any of the given feature
+	// defines. Returns false (caller must full-wipe) if any define is empty or any
+	// scan fails -- conservative by construction.
+	static bool TryPartialDiskCacheInvalidation(const std::vector<std::string>& defines)
+	{
+		try {
+			for (const auto& define : defines)
+				if (define.empty())
+					return false;
+			size_t deleted = 0, kept = 0;
+			for (const auto& entry : std::filesystem::directory_iterator(L"Data\\ShaderCache")) {
+				if (!entry.is_directory())
+					continue;
+				const auto root = std::filesystem::path(L"Data\\Shaders") / (entry.path().filename().wstring() + L".hlsl");
+				if (!std::filesystem::exists(root))
+					return false;
+				bool affected = false;
+				for (const auto& define : defines) {
+					auto refs = RootShaderReferencesToken(root, define);
+					if (!refs.has_value())
+						return false;
+					if (*refs) {
+						affected = true;
+						break;
+					}
+				}
+				if (affected) {
+					std::filesystem::remove_all(entry.path());
+					++deleted;
+				} else {
+					++kept;
+				}
+			}
+			logger::info("Partial disk cache invalidation: deleted {} shader dirs, kept {}", deleted, kept);
+			return true;
+		} catch (std::exception const& ex) {
+			logger::warn("Partial disk cache invalidation failed, falling back to full wipe: {}", ex.what());
+			return false;
+		}
+	}
+
 	void ShaderCache::DeleteDiskCache()
 	{
 		std::scoped_lock lock{ compilationSet.compilationMutex };
@@ -2455,6 +2539,8 @@ namespace SIE
 			cacheMismatches.push_back({ CacheMismatch::Kind::PluginVersion, "Plugin", "no plugin version found in cache" });
 		}
 
+		std::vector<std::string> versionMismatchDefines;
+		heldMismatchDefines.clear();
 		for (auto* feature : Feature::GetFeatureList()) {
 			const auto shortName = feature->GetShortName();
 			const bool enabledInCache = ini.GetBoolValue(shortName.c_str(), "Enabled", false);
@@ -2463,6 +2549,7 @@ namespace SIE
 					feature->loaded ?
 						"installed/enabled now, but the cache was built without it" :
 						"the cache was built with it, but it is now uninstalled or disabled at boot" });
+				heldMismatchDefines.emplace_back(feature->GetShaderDefineName());
 				continue;
 			}
 			if (feature->loaded) {
@@ -2471,6 +2558,7 @@ namespace SIE
 					cacheMismatches.push_back({ CacheMismatch::Kind::FeatureVersion, std::string(feature->GetName()),
 						std::format("version changed (installed: {}, cached: {})", feature->version,
 							versionInCache ? versionInCache : "<none>") });
+					versionMismatchDefines.emplace_back(feature->GetShaderDefineName());
 				}
 			}
 		}
@@ -2497,6 +2585,16 @@ namespace SIE
 			diskCacheHeld = true;
 			SetDiskCache(false);
 			logger::info("Disk cache HELD (not deleted): feature set changed; compiling memory-only this session");
+			return;
+		}
+
+		// Feature version bumps only affect shaders that actually reference the
+		// feature's define; keep the rest of the cache. Anything else (plugin
+		// version change, missing define, scan failure) falls back to a full wipe.
+		const bool onlyFeatureVersions = std::ranges::all_of(cacheMismatches,
+			[](const CacheMismatch& m) { return m.kind == CacheMismatch::Kind::FeatureVersion; });
+		if (onlyFeatureVersions && TryPartialDiskCacheInvalidation(versionMismatchDefines)) {
+			WriteDiskCacheInfo();  // refresh the manifest so surviving blobs validate next boot
 		} else {
 			DeleteDiskCache();
 		}
@@ -2508,7 +2606,9 @@ namespace SIE
 			return;
 		diskCacheHeld = false;
 		cacheMismatches.clear();
-		DeleteDiskCache();
+		if (!TryPartialDiskCacheInvalidation(heldMismatchDefines))
+			DeleteDiskCache();
+		heldMismatchDefines.clear();
 		SetDiskCache(true);
 		WriteDiskCacheInfo();
 		Clear();

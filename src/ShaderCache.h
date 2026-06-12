@@ -850,6 +850,7 @@ namespace SIE
 		bool isDiskCache = true;
 		bool diskCacheHeld = false;
 		std::vector<CacheMismatch> cacheMismatches;
+		std::vector<std::string> heldMismatchDefines;
 		bool isSkipUnchangedShaders = true;  ///< when true, recompile a disk-cached shader only if its source is newer
 		bool isAsync = true;
 		bool isDump = false;
