@@ -314,6 +314,18 @@ try {
                 Write-Host ("    [{0}] {1}" -f $mark, $_.InputObject)
             }
             if (@($d).Count -gt 30) { Write-Host ("    ... (+{0} more lines)" -f (@($d).Count - 30)) }
+        } elseif ($PreprocessOnly) {
+            # Compare-Object is multiset-based: a pure line REORDER (e.g. clang-format
+            # sorting adjacent #includes) yields an empty diff. Show first order divergence.
+            $bl = @($rb.Lines); $wl = @($rw.Lines)
+            for ($i = 0; $i -lt [Math]::Min($bl.Count, $wl.Count); $i++) {
+                if ($bl[$i] -cne $wl[$i]) {
+                    Write-Host "    (same lines, different ORDER — first divergence:)" -ForegroundColor Yellow
+                    Write-Host ("    [base@{0}] {1}" -f $i, $bl[$i])
+                    Write-Host ("    [work@{0}] {1}" -f $i, $wl[$i])
+                    break
+                }
+            }
         }
     }
 
