@@ -210,12 +210,20 @@ def main() -> int:
     ap.add_argument("--finalize-existing", help="finalize an already-compiled cache dir (from CI shader validation) instead of compiling")
     ap.add_argument("--shader-dir", help="merged shader tree used for --finalize-existing (e.g. build/ALL/aio/Shaders)")
     ap.add_argument("--runtime", choices=["SE", "VR", "both"], default="both")
+    ap.add_argument("--source-root", help="repo checkout to take shaders/configs/version from (default: this repo; use a release-tag checkout to seed an old release)")
     ap.add_argument("--out", default="dist/shader-cache", help="output root")
     ap.add_argument("--jobs", type=int, default=os.cpu_count() or 4)
     ap.add_argument("--skip-compile", action="store_true", help="stage + Info.ini only (plumbing test)")
     args = ap.parse_args()
     args.jobs = max(1, args.jobs)
 
+    global REPO, CONFIGS
+    if args.source_root:
+        REPO = Path(args.source_root).resolve()
+        CONFIGS = {
+            "SE": REPO / ".github/configs/shader-validation.yaml",
+            "VR": REPO / ".github/configs/shader-validation-vr.yaml",
+        }
     plugin_version = args.plugin_version or default_plugin_version()
     if args.finalize_existing:
         if not args.shader_dir or args.runtime == "both":

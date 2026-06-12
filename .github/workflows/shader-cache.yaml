@@ -1,9 +1,12 @@
 name: "Release: Prebuilt Shader Cache"
 
-# Packages the ShaderCache artifacts produced by the release build's shader
-# validation (which compiles at release parity when cache-artifacts is set --
-# one compile serves validation AND distribution) and attaches them to the
-# release. Issue #148.
+# Two modes (issue #148):
+#  - Attach: package ShaderCache artifacts from a release-build run (run-id) onto
+#    the release. Normal path once releases build with cache-artifacts.
+#  - Seed: no run-id given -> compile the cache HERE for the given tag's shaders,
+#    using THIS ref's tooling (old tags predate build-shader-cache.py, and
+#    workflow_dispatch runs the workflow definition from the dispatching ref).
+#    Use this to backfill the latest existing release for testing.
 
 on:
     workflow_dispatch:
@@ -12,14 +15,59 @@ on:
                 description: "Release tag to attach caches to (e.g. v1.7.1)"
                 required: true
             run-id:
-                description: "release-build run id that produced the ShaderCache artifacts"
-                required: true
+                description: "release-build run id with ShaderCache artifacts (empty = seed: compile here from the tag's shaders)"
+                required: false
+                default: ""
+            dry-run:
+                description: "Build/package but skip the release upload"
+                type: boolean
+                default: false
 
 permissions:
     contents: write
 
 jobs:
+    seed-build:
+        if: inputs.run-id == ''
+        runs-on: windows-2025
+        strategy:
+            matrix:
+                runtime: [SE, VR]
+            fail-fast: false
+        steps:
+            - name: Checkout tooling (this ref)
+              uses: actions/checkout@v6
+
+            - name: Checkout release tag shaders
+              uses: actions/checkout@v6
+              with:
+                  ref: ${{ inputs.tag }}
+                  path: target
+
+            - uses: actions/setup-python@v6
+              with:
+                  python-version: "3.12"
+
+            - name: Install hlslkit
+              run: pip install pyyaml git+https://github.com/alandtse/hlslkit.git
+
+            - name: Build ${{ matrix.runtime }} cache from ${{ inputs.tag }} shaders
+              shell: pwsh
+              run: |
+                  python tools/build-shader-cache.py --source-root target --runtime ${{ matrix.runtime }} `
+                    --out dist/shader-cache --jobs 4
+
+            - name: Upload cache artifact
+              uses: actions/upload-artifact@v7
+              with:
+                  name: ShaderCache-${{ matrix.runtime }}
+                  path: dist/shader-cache/${{ matrix.runtime }}/ShaderCache
+                  retention-days: 30
+
     attach-cache:
+        needs: [seed-build]
+        # needs is skipped-tolerant: run after seed-build OR immediately in attach mode.
+        if: always() && (needs.seed-build.result == 'success' || (inputs.run-id != '' && needs.seed-build.result == 'skipped'))
         runs-on: ubuntu-latest
         strategy:
             matrix:
@@ -30,13 +78,17 @@ jobs:
               with:
                   name: ShaderCache-${{ matrix.runtime }}
                   path: ShaderCache
-                  run-id: ${{ inputs.run-id }}
+                  run-id: ${{ inputs.run-id || github.run_id }}
                   github-token: ${{ github.token }}
 
-            - name: Package and attach
-              env:
-                  GH_TOKEN: ${{ github.token }}
+            - name: Package
               run: |
                   NAME="ShaderCache-${{ matrix.runtime }}-${{ inputs.tag }}.7z"
                   7z a -t7z -mx=7 "$NAME" ./ShaderCache
-                  gh release upload "${{ inputs.tag }}" "$NAME" --clobber --repo "${{ github.repository }}"
+                  ls -lh "$NAME"
+
+            - name: Attach to release
+              if: ${{ !inputs.dry-run }}
+              env:
+                  GH_TOKEN: ${{ github.token }}
+              run: gh release upload "${{ inputs.tag }}" "ShaderCache-${{ matrix.runtime }}-${{ inputs.tag }}.7z" --clobber --repo "${{ github.repository }}"
