@@ -166,6 +166,15 @@ TEST_CASE("RootShaderReferencesToken: closure search", "[cacheinvalidation]")
 		REQUIRE(r.has_value());
 		CHECK(*r == false);
 	}
+	SECTION("relative-spelling cycle terminates (visited is normalized)")
+	{
+		Write(shaders / "Rel1.hlsl", "#include \"Sub/../Rel2.hlsli\"\n");
+		Write(shaders / "Rel2.hlsli", "#include \"Sub/../Rel1.hlsl\"\n");
+		Write(shaders / "Sub/keep.txt", "");
+		auto r = RootShaderReferencesToken(shaders / "Rel1.hlsl", "MY_TOKEN", shaders);
+		REQUIRE(r.has_value());
+		CHECK(*r == false);
+	}
 	SECTION("unresolvable include is skipped, not fatal")
 	{
 		Write(shaders / "Gated.hlsl", "#include \"NotInstalledFeature/X.hlsli\"\n");

@@ -97,7 +97,9 @@ namespace Util::CacheInvalidation
 			std::set<std::filesystem::path> visited;
 			std::vector<std::filesystem::path> queue{ root };
 			while (!queue.empty()) {
-				auto file = queue.back();
+				// Normalize so relative spellings (Sub/../A.hlsli) can't defeat the
+				// visited set and spin on a cycle.
+				auto file = queue.back().lexically_normal();
 				queue.pop_back();
 				if (!visited.insert(file).second)
 					continue;

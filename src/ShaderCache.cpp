@@ -2527,14 +2527,16 @@ namespace SIE
 	{
 		if (!diskCacheHeld)
 			return;
-		diskCacheHeld = false;
-		cacheMismatches.clear();
+		// Mutate the disk cache while diskCacheHeld still gates blob writes off, so
+		// in-flight compiles can't write into dirs mid-delete; flip the hold last.
 		if (!PartialInvalidation(heldMismatchDefines))
 			DeleteDiskCache();
 		heldMismatchDefines.clear();
 		// Manifest-first is safe: a partial cache is valid by design (missing blobs
 		// compile on demand), so a quit mid-rebuild costs nothing.
 		WriteDiskCacheInfo();
+		diskCacheHeld = false;
+		cacheMismatches.clear();
 		Clear();
 		logger::info("Cache rebuild accepted: rebuilding disk cache for the current feature set");
 	}
