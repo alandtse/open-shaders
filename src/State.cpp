@@ -706,6 +706,18 @@ void State::ModifyRenderTarget(RE::RENDER_TARGETS::RENDER_TARGET a_target, RE::B
 	logger::debug("Adding UAV access to {}", magic_enum::enum_name(a_target));
 }
 
+bool State::SupportsTypedUAVLoad(DXGI_FORMAT a_format)
+{
+	auto device = globals::d3d::device;
+	if (!device)
+		return false;
+	D3D11_FEATURE_DATA_FORMAT_SUPPORT2 support2{};
+	support2.InFormat = a_format;
+	if (FAILED(device->CheckFeatureSupport(D3D11_FEATURE_FORMAT_SUPPORT2, &support2, sizeof(support2))))
+		return false;
+	return (support2.OutFormatSupport2 & D3D11_FORMAT_SUPPORT2_UAV_TYPED_LOAD) != 0;
+}
+
 void State::CheckTypedUAVLoadSupport()
 {
 	auto device = globals::d3d::device;
@@ -731,6 +743,8 @@ void State::CheckTypedUAVLoadSupport()
 		{ DXGI_FORMAT_R16G16B16A16_UNORM, "R16G16B16A16_UNORM", "Grass Collision (collisionTexture)" },
 		{ DXGI_FORMAT_R16G16_UNORM, "R16G16_UNORM", "Terrain Shadows (RWTexShadowHeights)" },
 		{ DXGI_FORMAT_R16G16_FLOAT, "R16G16_FLOAT", "VR Stereo Blend (kMOTION_VECTOR reprojection)" },
+		{ DXGI_FORMAT_R10G10B10A2_UNORM, "R10G10B10A2_UNORM", "VR Stereo Reprojection G-buffer fill (NormalRoughness, Albedo)" },
+		{ DXGI_FORMAT_R16_UNORM, "R16_UNORM", "VR Stereo Reprojection G-buffer fill (Masks2)" },
 		{ DXGI_FORMAT_R8G8B8A8_UNORM, "R8G8B8A8_UNORM", "HDR Display UI brightness (uiTexture)" },
 		{ DXGI_FORMAT_R8_UINT, "R8_UINT", "Skylighting accumulation frames (outAccumFramesArray)" },
 		{ DXGI_FORMAT_R16_FLOAT, "R16_FLOAT", "Vanilla volumetric lighting density (DensityRW)" },

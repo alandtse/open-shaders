@@ -112,8 +112,6 @@ public:
 		};
 	}
 
-	virtual inline std::string_view GetShaderDefineName() override { return "VR_STEREO_OPT"; }
-	virtual inline bool HasShaderDefine(RE::BSShader::Type t) override { return stereoOpt.CanDispatchStencil() && (t == RE::BSShader::Type::Utility || t == RE::BSShader::Type::Lighting); }
 	virtual void Reset() override;
 	virtual void SetupResources() override;
 	virtual void ClearShaderCache() override;
@@ -131,11 +129,10 @@ public:
 	void CompileStereoBlendShaders();
 	bool IsStereoOptimizationCullingReady() const
 	{
-		return globals::game::isVR &&
-		       stereoOpt.CanDispatchStencil() &&
-		       stereoBlendOverwriteCS &&
-		       stereoBlendCopyTex &&
-		       stereoBlendCB;
+		// Eye 1 is repaired by the depth-fill + G-buffer-fill passes (checked in
+		// CanDispatchStencil), not the retired StereoBlend overwrite path — so the
+		// stereoBlend* resources are no longer a prerequisite for engaging culling.
+		return globals::game::isVR && stereoOpt.CanDispatchStencil();
 	}
 	static bool AnyScreenSpaceEffectLoaded();
 
@@ -178,7 +175,7 @@ public:
 		float StereoBlendDepthSigma = 0.01f;      ///< Depth sensitivity for bilateral weight (lower = stricter)
 		float StereoBlendMaxFactor = 0.1f;        ///< Maximum blend factor; keep low to preserve stereo parallax
 		float StereoBlendColorThreshold = 0.02f;  ///< Minimum color difference to trigger blending (luminance)
-		int StereoBlendDebugMode = 0;             ///< 0=off, 1=back-check, 2=blend weight, 3=edge detection, 4=overwrite, 5=overwrite Eye1
+		int StereoBlendDebugMode = 0;             ///< 0=off, 1=back-check, 2=blend weight, 3=edge detection
 
 		// VR foveated shader detail: render expensive screen-space effects at reduced detail in the
 		// periphery, driven by the active Foveated DLSS region. Consumed by foveated SSR.
@@ -280,7 +277,7 @@ public:
 			StereoBlendDepthSigma = std::clamp(StereoBlendDepthSigma, 0.001f, 0.1f);
 			StereoBlendMaxFactor = std::clamp(StereoBlendMaxFactor, 0.0f, 0.5f);
 			StereoBlendColorThreshold = std::clamp(StereoBlendColorThreshold, 0.0f, 0.2f);
-			StereoBlendDebugMode = std::clamp(StereoBlendDebugMode, 0, 5);
+			StereoBlendDebugMode = std::clamp(StereoBlendDebugMode, 0, 3);
 		}
 	};
 
@@ -379,10 +376,8 @@ public:
 	winrt::com_ptr<ID3D11ComputeShader> stereoBlendDebugBackCheckCS;
 	winrt::com_ptr<ID3D11ComputeShader> stereoBlendDebugBlendWeightCS;
 	winrt::com_ptr<ID3D11ComputeShader> stereoBlendDebugEdgeDetectionCS;
-	winrt::com_ptr<ID3D11ComputeShader> stereoBlendOverwriteCS;
 	eastl::unique_ptr<Texture2D> stereoBlendCopyTex;
 	eastl::unique_ptr<ConstantBuffer> stereoBlendCB;
-	winrt::com_ptr<ID3D11SamplerState> stereoBlendLinearSampler;
 
 	VRStereoOptimizations stereoOpt;
 
@@ -393,10 +388,6 @@ public:
 		float DepthSigma;
 		float MaxBlendFactor;
 		float ColorDiffThreshold;
-		float DebugEdgeTint;
-		uint32_t DebugMode;
-		float FullBlendDistance;
-		float POMDepthScale;
 		float _pad;
 	};
 

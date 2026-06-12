@@ -1,5 +1,6 @@
 #include "VRStereoOptimizations.h"
 
+#include "Deferred.h"
 #include "ExtendedMaterials.h"
 #include "Globals.h"
 #include "GpuPass.h"
@@ -26,20 +27,15 @@ void VRStereoOptimizations::SaveSettings(json& o_json)
 {
 	o_json["StereoMode"] = settings.stereoMode;
 	o_json["DisocclusionDepthThreshold"] = settings.disocclusionDepthThreshold;
+	o_json["EdgeDepthThreshold"] = settings.edgeDepthThreshold;
+	o_json["MinEdgeDistance"] = settings.minEdgeDistance;
 	o_json["FullBlendDistance"] = settings.fullBlendDistance;
-	o_json["QualityJitterOffset"] = settings.qualityJitterOffset;
 	o_json["FoveatedRegionRadius"] = settings.foveatedRegionRadius;
 	o_json["FoveatedRegionCenterX"] = settings.foveatedRegionCenterX;
 	o_json["FoveatedRegionCenterY"] = settings.foveatedRegionCenterY;
 	o_json["UseEyeTracking"] = settings.useEyeTracking;
-	o_json["DebugVisualization"] = settings.debugVisualization;
 	o_json["DebugSkipMerge"] = settings.debugSkipMerge;
-	o_json["DebugForceAllStencil"] = settings.debugForceAllStencil;
-	o_json["DebugForceAllReprojectCS"] = settings.debugForceAllReprojectCS;
 	o_json["DebugDepthMap"] = settings.debugDepthMap;
-	o_json["DebugFullBlendDepth"] = settings.debugFullBlendDepth;
-	o_json["DebugPOMDepth"] = settings.debugPOMDepth;
-	o_json["POMDepthScale"] = settings.pomDepthScale;
 	o_json["ForwardOcclusionScale"] = settings.forwardOcclusionScale;
 }
 
@@ -58,22 +54,17 @@ void VRStereoOptimizations::LoadSettings(json& o_json)
 		settings.stereoMode = o_json["StereoMode"].get<StereoMode>();
 
 	loadClampedFloat("DisocclusionDepthThreshold", settings.disocclusionDepthThreshold, 0.001f, 0.1f);
-	loadClampedFloat("QualityJitterOffset", settings.qualityJitterOffset, 0.0f, 1.0f);
+	loadClampedFloat("EdgeDepthThreshold", settings.edgeDepthThreshold, 0.0f, 1.0f);
+	loadClampedFloat("MinEdgeDistance", settings.minEdgeDistance, 0.0f, 50000.0f);
 	loadClampedFloat("FoveatedRegionRadius", settings.foveatedRegionRadius, 0.0f, 1.0f);
 	loadClampedFloat("FoveatedRegionCenterX", settings.foveatedRegionCenterX, 0.0f, 1.0f);
 	loadClampedFloat("FoveatedRegionCenterY", settings.foveatedRegionCenterY, 0.0f, 1.0f);
 	loadClampedFloat("FullBlendDistance", settings.fullBlendDistance, 0.0f, 50000.0f);
-	loadClampedFloat("POMDepthScale", settings.pomDepthScale, 0.0f, 500.0f);
 	loadClampedFloat("ForwardOcclusionScale", settings.forwardOcclusionScale, 0.0f, 10.0f);
 
 	loadBool("UseEyeTracking", settings.useEyeTracking);
-	loadBool("DebugVisualization", settings.debugVisualization);
 	loadBool("DebugSkipMerge", settings.debugSkipMerge);
-	loadBool("DebugForceAllStencil", settings.debugForceAllStencil);
-	loadBool("DebugForceAllReprojectCS", settings.debugForceAllReprojectCS);
 	loadBool("DebugDepthMap", settings.debugDepthMap);
-	loadBool("DebugFullBlendDepth", settings.debugFullBlendDepth);
-	loadBool("DebugPOMDepth", settings.debugPOMDepth);
 }
 
 void VRStereoOptimizations::RestoreDefaultSettings()
@@ -84,6 +75,15 @@ void VRStereoOptimizations::RestoreDefaultSettings()
 //=============================================================================
 // RESOURCE SETUP
 //=============================================================================
+
+bool VRStereoOptimizations::SupportsGBufferFill()
+{
+	return State::SupportsTypedUAVLoad(DXGI_FORMAT_R16G16B16A16_FLOAT) &&
+	       State::SupportsTypedUAVLoad(DXGI_FORMAT_R16G16_FLOAT) &&
+	       State::SupportsTypedUAVLoad(DXGI_FORMAT_R10G10B10A2_UNORM) &&
+	       State::SupportsTypedUAVLoad(DXGI_FORMAT_R11G11B10_FLOAT) &&
+	       State::SupportsTypedUAVLoad(DXGI_FORMAT_R16_UNORM);
+}
 
 void VRStereoOptimizations::SetupResources()
 {
@@ -127,34 +127,6 @@ void VRStereoOptimizations::SetupResources()
 			.Texture2D = { .MipSlice = 0 } });
 	}
 
-	// POM offset texture (R16_FLOAT, full SBS resolution)
-	// Written by Lighting PS (u7) for POM-active pixels, read by StereoBlendCS for depth-aware reprojection.
-	// Replaces the former overloading of Reflectance.w, so Reflectance stays R11G11B10 with no alpha.
-	{
-		D3D11_TEXTURE2D_DESC pomDesc{};
-		pomDesc.Width = mainDesc.Width;
-		pomDesc.Height = mainDesc.Height;
-		pomDesc.MipLevels = 1;
-		pomDesc.ArraySize = 1;
-		pomDesc.Format = DXGI_FORMAT_R16_FLOAT;
-		pomDesc.SampleDesc.Count = 1;
-		pomDesc.SampleDesc.Quality = 0;
-		pomDesc.Usage = D3D11_USAGE_DEFAULT;
-		pomDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS;
-		pomDesc.CPUAccessFlags = 0;
-		pomDesc.MiscFlags = 0;
-
-		texPomOffset = eastl::make_unique<Texture2D>(pomDesc, "VRStereoOpt::PomOffset");
-		texPomOffset->CreateSRV(D3D11_SHADER_RESOURCE_VIEW_DESC{
-			.Format = DXGI_FORMAT_R16_FLOAT,
-			.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D,
-			.Texture2D = { .MostDetailedMip = 0, .MipLevels = 1 } });
-		texPomOffset->CreateUAV(D3D11_UNORDERED_ACCESS_VIEW_DESC{
-			.Format = DXGI_FORMAT_R16_FLOAT,
-			.ViewDimension = D3D11_UAV_DIMENSION_TEXTURE2D,
-			.Texture2D = { .MipSlice = 0 } });
-	}
-
 	// Depth-stencil state for stencil write pass:
 	// Depth test OFF (not rendering geometry), depth writes OFF, stencil ALWAYS + REPLACE with ref=1.
 	// We use the normal (writable) kMAIN DSV — no simultaneous SRV binding needed.
@@ -175,6 +147,27 @@ void VRStereoOptimizations::SetupResources()
 		Util::SetResourceName(stencilWriteDSS.get(), "VRStereoOpt::StencilWriteDSS");
 	}
 
+	// Depth-stencil state for the depth fill pass:
+	// depth ALWAYS + write ALL restores depth on the masked pixels; stencil read-only
+	// EQUAL ref=1 hardware-masks the fullscreen triangle to stencil-culled pixels only.
+	{
+		D3D11_DEPTH_STENCIL_DESC dssDesc{};
+		dssDesc.DepthEnable = TRUE;
+		dssDesc.DepthWriteMask = D3D11_DEPTH_WRITE_MASK_ALL;
+		dssDesc.DepthFunc = D3D11_COMPARISON_ALWAYS;
+		dssDesc.StencilEnable = TRUE;
+		dssDesc.StencilReadMask = 0xFF;
+		dssDesc.StencilWriteMask = 0x00;
+		dssDesc.FrontFace.StencilFailOp = D3D11_STENCIL_OP_KEEP;
+		dssDesc.FrontFace.StencilDepthFailOp = D3D11_STENCIL_OP_KEEP;
+		dssDesc.FrontFace.StencilPassOp = D3D11_STENCIL_OP_KEEP;
+		dssDesc.FrontFace.StencilFunc = D3D11_COMPARISON_EQUAL;
+		dssDesc.BackFace = dssDesc.FrontFace;
+
+		DX::ThrowIfFailed(device->CreateDepthStencilState(&dssDesc, depthFillDSS.put()));
+		Util::SetResourceName(depthFillDSS.get(), "VRStereoOpt::DepthFillDSS");
+	}
+
 	// Rasterizer state for stencil write: no culling, no depth clip
 	{
 		D3D11_RASTERIZER_DESC rsDesc{};
@@ -183,7 +176,14 @@ void VRStereoOptimizations::SetupResources()
 		rsDesc.DepthClipEnable = FALSE;
 
 		DX::ThrowIfFailed(device->CreateRasterizerState(&rsDesc, stencilWriteRS.put()));
+		Util::SetResourceName(stencilWriteRS.get(), "VRStereoOpt::StencilWriteRS");
 	}
+
+	// GBufferFillCS does typed UAV loads on these formats; without support the reads
+	// return undefined data, so disable the feature (CanDispatchStencil gates on this).
+	gBufferFillSupported = SupportsGBufferFill();
+	if (!gBufferFillSupported)
+		logger::warn("[VRStereoOptimizations] GPU lacks typed-UAV-load support for G-buffer formats; stereo reprojection disabled.");
 
 	CompileShaders();
 
@@ -224,29 +224,38 @@ void VRStereoOptimizations::CompileShaders()
 		stencilWritePS.attach(reinterpret_cast<ID3D11PixelShader*>(ptr));
 	else
 		logger::error("[VRStereoOptimizations] Failed to compile StencilWritePS");
+
+	if (auto* ptr = Util::CompileShader(L"Data\\Shaders\\VRStereoOptimizations\\DepthFillPS.hlsl", vspsDefines, "ps_5_0"))
+		depthFillPS.attach(reinterpret_cast<ID3D11PixelShader*>(ptr));
+	else
+		logger::error("[VRStereoOptimizations] Failed to compile DepthFillPS");
+
+	if (auto* ptr = Util::CompileShader(L"Data\\Shaders\\VRStereoOptimizations\\GBufferFillCS.hlsl", csDefines, "cs_5_0"))
+		gBufferFillCS.attach(reinterpret_cast<ID3D11ComputeShader*>(ptr));
+	else
+		logger::error("[VRStereoOptimizations] Failed to compile GBufferFillCS");
 }
 
 void VRStereoOptimizations::ClearShaderCache()
 {
 	stencilCS = nullptr;
+	gBufferFillCS = nullptr;
 	stencilDebugDepthMapCS = nullptr;
 	stencilWriteVS = nullptr;
 	stencilWritePS = nullptr;
+	depthFillPS = nullptr;
 	dssCache.clear();
+
+	// Framework clears caches without a follow-up SetupResources; without an immediate
+	// recompile CanDispatchStencil() stays false and the feature silently disengages.
+	if (loaded)
+		CompileShaders();
 }
 
 void VRStereoOptimizations::Reset()
 {
 	stencilActive = false;
 	stencilSwapCount = 0;
-}
-
-void VRStereoOptimizations::ClearPomOffsetTexture()
-{
-	if (!texPomOffset)
-		return;
-	const float clearValue[4] = { kPomOffsetNoData, kPomOffsetNoData, kPomOffsetNoData, kPomOffsetNoData };
-	globals::d3d::context->ClearUnorderedAccessViewFloat(texPomOffset->uav.get(), clearValue);
 }
 
 //=============================================================================
@@ -274,15 +283,9 @@ void VRStereoOptimizations::DrawSettings()
 	if (globals::state->IsDeveloperMode()) {
 		if (ImGui::TreeNode(T("feature.vr_stereo.debug", "Debug"))) {
 			ImGui::SliderFloat(T("feature.vr_stereo.full_blend_distance", "Full Blend Distance"), &settings.fullBlendDistance, 0.0f, 10000.0f, "%.0f");
-			Util::AddTooltip(T("feature.vr_stereo.full_blend_distance_tooltip", "Geometry closer than this distance (game units) is fully shaded in both eyes and bilaterally blended for 2x supersampling. 0 = disabled."));
+			Util::AddTooltip(T("feature.vr_stereo.full_blend_distance_tooltip", "Geometry closer than this distance (game units) is excluded from culling and rendered natively in both eyes. 0 = disabled."));
 
-			ImGui::SliderFloat(T("feature.vr_stereo.pom_depth_scale", "POM Depth Scale"), &settings.pomDepthScale, 0.0f, 500.0f, "%.1f");
-			Util::AddTooltip(T("feature.vr_stereo.pom_depth_scale_tooltip", "Scale factor for POM depth correction in stereo reprojection.\n1.0 = physical scale. Increase for more visible POM stereo depth."));
 			ImGui::Checkbox(T("feature.vr_stereo.skip_pixel_reprojection", "Skip Pixel Reprojection"), &settings.debugSkipMerge);
-			ImGui::Checkbox(T("feature.vr_stereo.full_blend_depth_view", "Full Blend Depth View"), &settings.debugFullBlendDepth);
-			ImGui::Checkbox(T("feature.vr_stereo.debug_pom_depth", "Debug POM Depth"), &settings.debugPOMDepth);
-			if (settings.debugFullBlendDepth)
-				ImGui::TextColored(ImVec4(0, 1, 1, 1), "%s", T("feature.vr_stereo.full_blend_zone_hint", "  Cyan = full blend zone (closer = stronger tint)"));
 			ImGui::Text(T("feature.vr_stereo.stencil_swaps_this_frame", "Stencil swaps this frame: %u"), stencilSwapCount);
 			ImGui::TreePop();
 		}
@@ -305,9 +308,6 @@ void VRStereoOptimizations::UpdateConstantBuffer()
 	params.StereoModeValue = static_cast<uint32_t>(settings.stereoMode);
 	params.DisocclusionThreshold = settings.disocclusionDepthThreshold;
 	params.EdgeDepthThreshold = settings.edgeDepthThreshold;
-	params.EdgeWidth = 2;
-	params.QualityJitter[0] = settings.qualityJitterOffset;
-	params.QualityJitter[1] = settings.qualityJitterOffset;
 	params.FoveatedRadius = settings.foveatedRegionRadius;
 	params.FoveatedCenter[0] = settings.foveatedRegionCenterX;
 	params.FoveatedCenter[1] = settings.foveatedRegionCenterY;
@@ -324,12 +324,9 @@ void VRStereoOptimizations::UpdateConstantBuffer()
 
 void VRStereoOptimizations::DispatchStencil()
 {
-	if (!globals::game::isVR)
-		return;
-	if (settings.stereoMode == StereoMode::Off)
-		return;
-	if (!stencilCS || !stencilWriteVS || !stencilWritePS || !texPerPixelMode || !paramsCB ||
-		!stencilWriteDSS || !stencilWriteRS)
+	// Same readiness contract as the Deferred call site: never cull Eye 1 unless the full
+	// repair pipeline (depth-fill + G-buffer-fill) is ready, else Eye 1 is left corrupt.
+	if (!globals::game::isVR || !CanDispatchStencil())
 		return;
 
 	ZoneScoped;
@@ -391,6 +388,21 @@ void VRStereoOptimizations::DispatchStencil()
 
 	stencilActive = true;
 	stencilSwapCount = 0;
+}
+
+void VRStereoOptimizations::SetEye1Viewport()
+{
+	D3D11_TEXTURE2D_DESC mainDesc;
+	globals::game::renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMAIN].texture->GetDesc(&mainDesc);
+
+	D3D11_VIEWPORT vp{};
+	vp.TopLeftX = static_cast<float>(mainDesc.Width / 2);
+	vp.TopLeftY = 0.0f;
+	vp.Width = static_cast<float>(mainDesc.Width / 2);
+	vp.Height = static_cast<float>(mainDesc.Height);
+	vp.MinDepth = 0.0f;
+	vp.MaxDepth = 1.0f;
+	globals::d3d::context->RSSetViewports(1, &vp);
 }
 
 void VRStereoOptimizations::ExecuteStencilWritePass()
@@ -460,20 +472,7 @@ void VRStereoOptimizations::ExecuteStencilWritePass()
 	context->OMSetDepthStencilState(stencilWriteDSS.get(), 1);
 	context->RSSetState(stencilWriteRS.get());
 
-	// Eye 1 viewport (right half of SBS buffer)
-	{
-		D3D11_TEXTURE2D_DESC mainDesc;
-		renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMAIN].texture->GetDesc(&mainDesc);
-
-		D3D11_VIEWPORT vp{};
-		vp.TopLeftX = static_cast<float>(mainDesc.Width / 2);
-		vp.TopLeftY = 0.0f;
-		vp.Width = static_cast<float>(mainDesc.Width / 2);
-		vp.Height = static_cast<float>(mainDesc.Height);
-		vp.MinDepth = 0.0f;
-		vp.MaxDepth = 1.0f;
-		context->RSSetViewports(1, &vp);
-	}
+	SetEye1Viewport();
 
 	// Bind shaders and mode texture
 	context->VSSetShader(stencilWriteVS.get(), nullptr, 0);
@@ -599,4 +598,190 @@ void VRStereoOptimizations::DeactivateStencil()
 		return;
 	logger::trace("[VRStereoOptimizations] Frame: stencilSwapCount={}", stencilSwapCount);
 	stencilActive = false;
+}
+
+void VRStereoOptimizations::RepairCulledEye1()
+{
+	if (!stencilActive)
+		return;
+
+	// Order is load-bearing: DeactivateStencil must precede the depth fill so the
+	// OMSetDepthStencilState hook stops swapping in the NOT_EQUAL clone and the fill's
+	// own EQUAL-ref=1 DSS survives. No engine draw or stencil clear may run between
+	// these steps, or the stencil mask is lost — hence they live in one method.
+	DeactivateStencil();
+	ExecuteDepthFillPass();
+	DispatchGBufferFill();
+}
+
+void VRStereoOptimizations::ExecuteDepthFillPass()
+{
+	if (!depthFillPS || !stencilWriteVS || !depthFillDSS || !stencilWriteRS)
+		return;
+
+	auto* depthSRV = Util::GetCurrentSceneDepthSRV();
+	if (!depthSRV)
+		return;
+
+	ZoneScoped;
+	CS_GPU_PASS("VRStereoOpt::DepthFill");
+
+	auto context = globals::d3d::context;
+	auto renderer = globals::game::renderer;
+
+	// ===== SAVE PIPELINE STATE =====
+
+	ID3D11RenderTargetView* savedRTVs[D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT] = {};
+	ID3D11DepthStencilView* savedDSV = nullptr;
+	context->OMGetRenderTargets(D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT, savedRTVs, &savedDSV);
+
+	ID3D11DepthStencilState* savedDSS = nullptr;
+	UINT savedStencilRef = 0;
+	context->OMGetDepthStencilState(&savedDSS, &savedStencilRef);
+
+	ID3D11RasterizerState* savedRS = nullptr;
+	context->RSGetState(&savedRS);
+
+	D3D11_VIEWPORT savedViewports[D3D11_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE] = {};
+	UINT numViewports = D3D11_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE;
+	context->RSGetViewports(&numViewports, savedViewports);
+
+	ID3D11VertexShader* savedVS = nullptr;
+	context->VSGetShader(&savedVS, nullptr, nullptr);
+
+	ID3D11PixelShader* savedPS = nullptr;
+	context->PSGetShader(&savedPS, nullptr, nullptr);
+
+	ID3D11GeometryShader* savedGS = nullptr;
+	context->GSGetShader(&savedGS, nullptr, nullptr);
+
+	ID3D11InputLayout* savedInputLayout = nullptr;
+	context->IAGetInputLayout(&savedInputLayout);
+
+	D3D11_PRIMITIVE_TOPOLOGY savedTopology = D3D11_PRIMITIVE_TOPOLOGY_UNDEFINED;
+	context->IAGetPrimitiveTopology(&savedTopology);
+
+	ID3D11ShaderResourceView* savedPSSRV = nullptr;
+	context->PSGetShaderResources(0, 1, &savedPSSRV);
+
+	// ===== DEPTH FILL PASS =====
+
+	auto& depthData = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kMAIN];
+	context->OMSetRenderTargets(0, nullptr, depthData.views[0]);
+	context->OMSetDepthStencilState(depthFillDSS.get(), 1);
+	context->RSSetState(stencilWriteRS.get());
+
+	SetEye1Viewport();
+
+	context->VSSetShader(stencilWriteVS.get(), nullptr, 0);
+	context->PSSetShader(depthFillPS.get(), nullptr, 0);
+	context->GSSetShader(nullptr, nullptr, 0);
+	context->PSSetShaderResources(0, 1, &depthSRV);
+
+	context->IASetInputLayout(nullptr);
+	context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+
+	context->Draw(3, 0);
+
+	// ===== RESTORE PIPELINE STATE =====
+
+	ID3D11ShaderResourceView* nullSRV = nullptr;
+	context->PSSetShaderResources(0, 1, &nullSRV);
+
+	context->OMSetRenderTargets(D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT, savedRTVs, savedDSV);
+	context->OMSetDepthStencilState(savedDSS, savedStencilRef);
+	context->RSSetState(savedRS);
+	context->RSSetViewports(numViewports, savedViewports);
+	context->VSSetShader(savedVS, nullptr, 0);
+	context->PSSetShader(savedPS, nullptr, 0);
+	context->GSSetShader(savedGS, nullptr, 0);
+	context->IASetInputLayout(savedInputLayout);
+	context->IASetPrimitiveTopology(savedTopology);
+	context->PSSetShaderResources(0, 1, &savedPSSRV);
+
+	for (auto& rtv : savedRTVs) {
+		if (rtv)
+			rtv->Release();
+	}
+	if (savedDSV)
+		savedDSV->Release();
+	if (savedDSS)
+		savedDSS->Release();
+	if (savedRS)
+		savedRS->Release();
+	if (savedVS)
+		savedVS->Release();
+	if (savedPS)
+		savedPS->Release();
+	if (savedGS)
+		savedGS->Release();
+	if (savedInputLayout)
+		savedInputLayout->Release();
+	if (savedPSSRV)
+		savedPSSRV->Release();
+}
+
+void VRStereoOptimizations::DispatchGBufferFill()
+{
+	if (!gBufferFillCS || !texPerPixelMode || !paramsCB)
+		return;
+
+	auto* depthSRV = Util::GetCurrentSceneDepthSRV();
+	if (!depthSRV)
+		return;
+
+	ZoneScoped;
+	CS_GPU_PASS("VRStereoOpt::GBufferFill");
+
+	auto context = globals::d3d::context;
+	auto renderer = globals::game::renderer;
+	auto& rt = renderer->GetRuntimeData().renderTargets;
+
+	// The deferred MRT set is bound as RTVs at this point; UAV binds on the same
+	// textures would be dropped by the runtime. Unbind render targets first.
+	ID3D11RenderTargetView* savedRTVs[D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT] = {};
+	ID3D11DepthStencilView* savedDSV = nullptr;
+	context->OMGetRenderTargets(D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT, savedRTVs, &savedDSV);
+	context->OMSetRenderTargets(0, nullptr, nullptr);
+
+	// paramsCB already uploaded this frame by DispatchStencil (settings/resolution are
+	// frame-constant); no re-upload needed.
+	auto cbPtr = paramsCB->CB();
+
+	ID3D11ShaderResourceView* srvs[2]{ depthSRV, texPerPixelMode->srv.get() };
+	ID3D11UnorderedAccessView* uavs[8]{
+		rt[RE::RENDER_TARGETS::kMAIN].UAV,
+		rt[RE::RENDER_TARGETS::kMOTION_VECTOR].UAV,
+		rt[NORMALROUGHNESS].UAV,
+		rt[ALBEDO].UAV,
+		rt[SPECULAR].UAV,
+		rt[REFLECTANCE].UAV,
+		rt[MASKS].UAV,
+		rt[MASKS2].UAV,
+	};
+
+	context->CSSetConstantBuffers(1, 1, &cbPtr);
+	context->CSSetShaderResources(0, 2, srvs);
+	context->CSSetUnorderedAccessViews(0, 8, uavs, nullptr);
+	context->CSSetShader(gBufferFillCS.get(), nullptr, 0);
+
+	uint32_t eyeWidth = texPerPixelMode->desc.Width / 2;
+	uint32_t height = texPerPixelMode->desc.Height;
+	context->Dispatch((eyeWidth + 7) / 8, (height + 7) / 8, 1);
+
+	ID3D11ShaderResourceView* nullSRVs[2] = {};
+	ID3D11UnorderedAccessView* nullUAVs[8] = {};
+	ID3D11Buffer* nullCB = nullptr;
+	context->CSSetShaderResources(0, 2, nullSRVs);
+	context->CSSetUnorderedAccessViews(0, 8, nullUAVs, nullptr);
+	context->CSSetConstantBuffers(1, 1, &nullCB);
+	context->CSSetShader(nullptr, nullptr, 0);
+
+	context->OMSetRenderTargets(D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT, savedRTVs, savedDSV);
+	for (auto& rtv : savedRTVs) {
+		if (rtv)
+			rtv->Release();
+	}
+	if (savedDSV)
+		savedDSV->Release();
 }
