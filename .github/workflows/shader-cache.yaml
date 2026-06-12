@@ -24,11 +24,13 @@ on:
                 default: false
 
 permissions:
-    contents: write
+    contents: read
 
 jobs:
     seed-build:
         if: inputs.run-id == ''
+        permissions:
+            contents: read
         runs-on: windows-2025
         strategy:
             matrix:
@@ -48,8 +50,8 @@ jobs:
               with:
                   python-version: "3.12"
 
-            - name: Install hlslkit
-              run: pip install pyyaml git+https://github.com/alandtse/hlslkit.git
+            - name: Install hlslkit (pinned)
+              run: pip install pyyaml git+https://github.com/alandtse/hlslkit.git@92fccb1060d67a5f7afc5b9ca2bfb206a0a90cd0
 
             - name: Build ${{ matrix.runtime }} cache from ${{ inputs.tag }} shaders
               shell: pwsh
@@ -68,11 +70,27 @@ jobs:
         needs: [seed-build]
         # needs is skipped-tolerant: run after seed-build OR immediately in attach mode.
         if: always() && (needs.seed-build.result == 'success' || (inputs.run-id != '' && needs.seed-build.result == 'skipped'))
+        permissions:
+            contents: write
         runs-on: ubuntu-latest
         strategy:
             matrix:
                 runtime: [SE, VR]
         steps:
+            # Artifacts from an arbitrary run must not land on the wrong release.
+            # commits/<tag> dereferences annotated tags to the commit SHA.
+            - name: Verify run-id matches tag
+              if: inputs.run-id != ''
+              env:
+                  GH_TOKEN: ${{ github.token }}
+              run: |
+                  TAG_SHA="$(gh api "repos/${{ github.repository }}/commits/${{ inputs.tag }}" --jq .sha)"
+                  RUN_SHA="$(gh api "repos/${{ github.repository }}/actions/runs/${{ inputs.run-id }}" --jq .head_sha)"
+                  if [ "$TAG_SHA" != "$RUN_SHA" ]; then
+                    echo "run-id ${{ inputs.run-id }} (head $RUN_SHA) does not match tag ${{ inputs.tag }} ($TAG_SHA)" >&2
+                    exit 1
+                  fi
+
             - name: Download cache artifact
               uses: actions/download-artifact@v6
               with:
