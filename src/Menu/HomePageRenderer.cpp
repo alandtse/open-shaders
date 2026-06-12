@@ -8,6 +8,7 @@
 #include "I18n/I18n.h"
 #include "Menu.h"
 #include "Plugin.h"
+#include "ShaderCache.h"
 #include "State.h"
 #include "Util.h"
 #include "Utils/UI.h"
@@ -31,6 +32,8 @@ void HomePageRenderer::RenderHomePage()
 
 	RenderWelcomeSection();
 	ImGui::Spacing();
+
+	RenderCacheMismatchSection();
 
 	RenderActiveConstraintsSection();
 
@@ -207,6 +210,46 @@ void HomePageRenderer::RenderFAQSection()
 									 "are not covered by the GPL Licence. Any included assets may not be used without explicit "
 									 "permission."));
 	}
+}
+
+void HomePageRenderer::RenderCacheMismatchSection()
+{
+	auto shaderCache = globals::shaderCache;
+	if (!shaderCache || !shaderCache->IsDiskCacheHeld())
+		return;
+
+	auto menu = Menu::GetSingleton();
+	ImVec4 warningColor = menu ? menu->GetTheme().StatusPalette.Warning : ImVec4(1.0f, 0.8f, 0.2f, 1.0f);
+
+	ImGui::PushStyleColor(ImGuiCol_Text, warningColor);
+	bool headerOpen = ImGui::CollapsingHeader(T("menu.home.cache_mismatch", "Shader Cache Mismatch Detected"), ImGuiTreeNodeFlags_DefaultOpen);
+	ImGui::PopStyleColor();
+	if (!headerOpen)
+		return;
+
+	ImGui::TextWrapped("%s", T("menu.home.cache_mismatch_desc",
+								 "Your installed feature set no longer matches the shader cache on disk. The cache has been "
+								 "preserved and shaders are compiling in memory for this session only. If this change was "
+								 "unintentional (a feature accidentally uninstalled or disabled at boot), fix your setup and "
+								 "restart - the existing cache will be reused. If the change was intentional, rebuild the cache."));
+	ImGui::Spacing();
+
+	for (const auto& mismatch : shaderCache->GetCacheMismatches())
+		ImGui::BulletText("%s: %s", mismatch.feature.c_str(), mismatch.detail.c_str());
+	ImGui::Spacing();
+
+	if (ImGui::Button(T("menu.home.cache_mismatch_rebuild", "Rebuild Shader Cache Now"))) {
+		shaderCache->AcceptCacheRebuild();
+	}
+	if (auto _tt = Util::HoverTooltipWrapper()) {
+		ImGui::Text("%s", T("menu.home.cache_mismatch_rebuild_tooltip",
+							  "Deletes the old cache and recompiles all shaders for your current feature set. "
+							  "This can take a while; the old cache cannot be recovered afterwards."));
+	}
+
+	ImGui::Spacing();
+	ImGui::Separator();
+	ImGui::Spacing();
 }
 
 void HomePageRenderer::RenderActiveConstraintsSection()
