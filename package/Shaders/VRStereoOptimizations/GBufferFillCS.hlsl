@@ -55,11 +55,8 @@ RWTexture2D<unorm float> Masks2RW : register(u7);            // R16_UNORM
 	uint2 src = uint2(r.otherPx);
 
 	MainRW[px] = MainRW[src];
-	// Eye 1 motion is stencil-culled too (kMOTION_VECTOR is MRT slot 1 of the culled
-	// geometry pass), so there is no native value to keep. Eye 0's motion is not
-	// view-invariant, but the inter-eye difference is only the per-frame change in
-	// stereo disparity — small versus the head/object motion that dominates — so it
-	// is a close approximation and far better than leaving these texels uninitialized.
+	// Eye 1 motion is culled too, so Eye 0's is the only value available — a close
+	// approximation, as the inter-eye delta is just small per-frame disparity change.
 	MotionRW[px] = MotionRW[src];
 	NormalRoughnessRW[px] = NormalRoughnessRW[src];
 	AlbedoRW[px] = AlbedoRW[src];
