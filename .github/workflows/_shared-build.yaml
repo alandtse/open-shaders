@@ -236,16 +236,18 @@ jobs:
                   python tools/validate_changed_shaders.py --changed-list-file changed_files.txt -- \
                     hlslkit-compile --fxc "${{ steps.find_fxc.outputs.fxc_path }}" --shader-dir build/ALL/aio/Shaders --output-dir build/ShaderCache --config ${{ matrix.config.file }} --max-warnings 0 --suppress-warnings X1519 $EXTRA
 
+            # Never runs in pull_request_target contexts (cache-artifacts is only set by
+            # release-build); the event guard makes that structural for CodeQL.
             - name: Finalize distributable shader cache (${{ matrix.config.runtime }})
-              if: inputs.cache-artifacts && steps.check-hlsl.outputs.skip != 'true'
+              if: inputs.cache-artifacts && github.event_name != 'pull_request_target' && steps.check-hlsl.outputs.skip != 'true'
               shell: bash
               run: |
                   # Re-profiles default-disabled features' shaders (validation keeps their
                   # defines on for coverage), prunes sidecars, writes Info.ini.
-                  python tools/build-shader-cache.py --finalize-existing build/ShaderCache                     --shader-dir build/ALL/aio/Shaders --runtime ${{ matrix.config.runtime }} --jobs 4
+                  python tools/build-shader-cache.py --finalize-existing build/ShaderCache --shader-dir build/ALL/aio/Shaders --runtime ${{ matrix.config.runtime }} --jobs 4
 
             - name: Upload shader cache artifact (${{ matrix.config.runtime }})
-              if: inputs.cache-artifacts && steps.check-hlsl.outputs.skip != 'true'
+              if: inputs.cache-artifacts && github.event_name != 'pull_request_target' && steps.check-hlsl.outputs.skip != 'true'
               uses: actions/upload-artifact@v7
               with:
                   name: ShaderCache-${{ matrix.config.runtime }}

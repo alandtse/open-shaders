@@ -135,7 +135,7 @@ def default_plugin_version() -> str:
     import re
 
     text = (REPO / "CMakeLists.txt").read_text(encoding="utf-8", errors="replace")
-    m = re.search(r"VERSION\s+(\d+)\.(\d+)\.(\d+)", text)
+    m = re.search(r"project\s*\([^)]*?VERSION\s+(\d+)\.(\d+)\.(\d+)", text, re.IGNORECASE | re.DOTALL)
     if not m:
         raise SystemExit("cannot derive plugin version from CMakeLists.txt; pass --plugin-version")
     return "-".join(m.groups()) + "-0"
@@ -211,9 +211,10 @@ def main() -> int:
     ap.add_argument("--shader-dir", help="merged shader tree used for --finalize-existing (e.g. build/ALL/aio/Shaders)")
     ap.add_argument("--runtime", choices=["SE", "VR", "both"], default="both")
     ap.add_argument("--out", default="dist/shader-cache", help="output root")
-    ap.add_argument("--jobs", type=int, default=os.cpu_count())
+    ap.add_argument("--jobs", type=int, default=os.cpu_count() or 4)
     ap.add_argument("--skip-compile", action="store_true", help="stage + Info.ini only (plumbing test)")
     args = ap.parse_args()
+    args.jobs = max(1, args.jobs)
 
     plugin_version = args.plugin_version or default_plugin_version()
     if args.finalize_existing:
