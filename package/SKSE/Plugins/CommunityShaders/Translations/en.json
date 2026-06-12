@@ -2843,6 +2843,7 @@
     "overlay.blocked_index_na": "Index: N/A (%zu active)",
     "overlay.blocked_key": "Blocked: %s",
     "overlay.blocked_shader_detail": "Type: %s | Class: %s | Descriptor: 0x%X",
+    "overlay.cache_held": "Feature set changed: your previous shader cache is preserved on disk.\nOpen the Open Shaders menu home page to rebuild it or fix your setup and restart.",
     "overlay.compiling_shaders": "{}Compiling Shaders: {}",
     "overlay.modified_features": "Features that may have modified shaders detected. Check Feature Issues in the Menu.",
     "overlay.shader_blocking_active": "Shader Blocking Active",
