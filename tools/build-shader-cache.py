@@ -109,7 +109,7 @@ def aio_feature_stems(source_root: Path) -> set:
         if not inis:
             continue
         is_core = (feature_dir / "CORE").exists()
-        auto = any("true" in line.lower()
+        auto = any(line.split("=", 1)[1].split(";", 1)[0].strip().lower() == "true"
             for ini in inis for line in ini.read_text(encoding="utf-8-sig", errors="replace").splitlines()
             if line.lower().replace(" ", "").startswith("autoupload="))
         if is_core or auto:
@@ -388,36 +388,6 @@ def default_plugin_version() -> str:
     if not m:
         raise SystemExit("cannot derive plugin version from CMakeLists.txt; pass --plugin-version")
     return "-".join(m.groups()) + "-0"
-
-
-def roots_referencing(shaders: Path, token: str) -> list[Path]:
-    """Root .hlsl files whose include closure references token (identifier-bounded)."""
-    import re
-
-    inc_re = re.compile(r'^\s*#\s*include\s+"([^"]+)"')
-    tok_re = re.compile(r"\b" + re.escape(token) + r"\b")
-
-    def refs(root: Path) -> bool:
-        seen, queue = set(), [root]
-        while queue:
-            f = queue.pop()
-            f = f.resolve()
-            if f in seen or not f.exists():
-                continue
-            seen.add(f)
-            text = f.read_text(encoding="utf-8", errors="replace")
-            if tok_re.search(text):
-                return True
-            for line in text.splitlines():
-                m = inc_re.match(line)
-                if m:
-                    for cand in (shaders / m.group(1), f.parent / m.group(1)):
-                        if cand.exists():
-                            queue.append(cand)
-                            break
-        return False
-
-    return [p for p in sorted(shaders.glob("*.hlsl")) if refs(p)]
 
 
 def finalize_existing(cache_dir: Path, shaders: Path, plugin_version: str, runtime: str, profile: str) -> int:
