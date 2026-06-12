@@ -124,6 +124,10 @@ def main() -> int:
                 "--config", str(CONFIGS[rt]),
                 "--strip-debug-defines",
                 "--optimization-level", "3",
+                # Cache build, not validation: known-benign warnings must not fail the job
+                # (X1519 WATER macro redefinition is long-standing and suppressed in CI validation).
+                "--suppress-warnings", "X1519",
+                "--max-warnings", "-1",
                 "--jobs", str(args.jobs),
             ]
             print("run:", " ".join(cmd))
