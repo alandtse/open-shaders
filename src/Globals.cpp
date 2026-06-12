@@ -121,6 +121,7 @@ namespace globals
 		RE::Sky* sky = nullptr;
 		RE::UI* ui = nullptr;
 		RE::Calendar* calendar = nullptr;
+		RE::ImageSpaceManager* imageSpaceManager = nullptr;
 		std::atomic<bool> quitGame{ false };
 
 		RE::BSGraphics::PixelShader** currentPixelShader = nullptr;
@@ -236,6 +237,7 @@ namespace globals
 		player = RE::PlayerCharacter::GetSingleton();
 		sky = RE::Sky::GetSingleton();
 		utilityShader = RE::BSUtilityShader::GetSingleton();
+		imageSpaceManager = RE::ImageSpaceManager::GetSingleton();
 
 		bEnableLandFade = iniSettingCollection->GetSetting("bEnableLandFade:Display");
 
