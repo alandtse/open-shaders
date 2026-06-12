@@ -9,6 +9,7 @@
 #include "ShadowCasterManager.h"
 #include "../../Deferred.h"
 #include "../../Globals.h"
+#include "../../GpuPass.h"
 #include "../../State.h"
 #include "../../Utils/Game.h"
 #include "../../Utils/UI.h"
@@ -2875,11 +2876,7 @@ namespace ShadowCasterManager
 		}
 
 		ZoneScopedN("SCM::RenderScheduledShadowLights");
-		auto* state = globals::state;
-		state->BeginPerfEvent("SCM::RenderScheduledShadowLights");
-#ifdef TRACY_ENABLE
-		TracyD3D11Zone(state->tracyCtx, "SCM::RenderScheduledShadowLights");
-#endif
+		CS_GPU_PASS("SCM::RenderScheduledShadowLights");
 
 		s_budget.Begin(1);
 
@@ -2893,9 +2890,7 @@ namespace ShadowCasterManager
 		// and exterior scenes render with no sun shadow.
 		if (s_lights.Sun && s_lights.Lights[0].Light) {
 			ZoneNamedN(zSun, "SCM::Render::Sun", true);
-#ifdef TRACY_ENABLE
-			TracyD3D11Zone(state->tracyCtx, "SCM::Render::Sun");
-#endif
+			CS_GPU_PASS("SCM::Render::Sun");
 			s_budget.BeginLight(s_lights.Lights[0].Light, 1);
 			s_lights.Lights[0].Light->Render(tmp);
 			s_budget.EndLight(s_lights.Lights[0].Light, 1);
@@ -2906,9 +2901,7 @@ namespace ShadowCasterManager
 		// highest point-light slot when Sun=true.
 		{
 			ZoneNamedN(zPoint, "SCM::Render::PointLights", true);
-#ifdef TRACY_ENABLE
-			TracyD3D11Zone(state->tracyCtx, "SCM::Render::PointLights");
-#endif
+			CS_GPU_PASS("SCM::Render::PointLights");
 			for (int i = s_lights.PointLightFirst(); i < s_lights.PointLightEnd(s_settings.ShadowLightCount); i++) {
 				auto& e = s_lights.Lights[i];
 				if (!e.Light || !e.RedrawFrame)
@@ -2918,8 +2911,6 @@ namespace ShadowCasterManager
 				s_budget.EndLight(e.Light, 1);
 			}
 		}
-
-		state->EndPerfEvent();
 
 		if (globals::game::isVR)
 			*globals::game::drawStereo = savedStereo;

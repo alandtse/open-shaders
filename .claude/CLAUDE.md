@@ -407,6 +407,7 @@ Feature versions are automatically extracted from `.ini` files and compiled into
 -   **A/B Testing Framework**: Built-in performance comparison system for measuring feature impact
 -   **VR Performance**: VR has higher performance requirements; some features may need different settings
 -   **Tracy Profiler**: Optional build-time integration (`TRACY_SUPPORT`) for detailed performance analysis
+-   **New Pass Instrumentation**: Use `CS_GPU_PASS("Feature::Pass")` (RAII `ScopedGpuPass`) at every render pass entry point. Direct `TracyD3D11Zone` / `State::BeginPerfEvent` at new pass sites are discouraged — they bypass the profiler table and create name divergence. Raw/legacy zones are still appropriate for sub-dispatch annotations within a pass where profiler timer granularity is not needed.
 
 **Shader Performance Patterns**:
 

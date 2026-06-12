@@ -1,6 +1,7 @@
 #include "ScreenSpaceShadows.h"
 
 #include "Features/TerrainBlending.h"
+#include "GpuPass.h"
 #include "I18n/I18n.h"
 #include "State.h"
 #include "Utils/D3D.h"
@@ -143,8 +144,7 @@ ID3D11ComputeShader* ScreenSpaceShadows::GetComputeRaymarchRight()
 void ScreenSpaceShadows::DrawShadows()
 {
 	ZoneScopedS(8);
-	auto state = globals::state;
-	TracyD3D11Zone(state->tracyCtx, "Screen Space Shadows");
+	CS_GPU_PASS("ScreenSpaceShadows::DrawShadows");
 
 	auto context = globals::d3d::context;
 
@@ -165,7 +165,7 @@ void ScreenSpaceShadows::DrawShadows()
 
 	auto lightProjectionF = CalculateLightProjection(0);
 
-	float2 renderSize = Util::ConvertToDynamic(state->screenSize);
+	float2 renderSize = Util::ConvertToDynamic(globals::state->screenSize);
 	int viewportSize[2] = { (int)renderSize.x, (int)renderSize.y };
 
 	if (globals::game::isVR)
@@ -199,14 +199,7 @@ void ScreenSpaceShadows::DrawShadows()
 	auto DispatchEye = [&](const char* eyeName, ID3D11ComputeShader* shader, const float* lightProj,
 						   float invTexSizeX, float invTexSizeY) {
 		std::string timerName = eyeName ? std::format("ScreenSpaceShadows::RayMarch({})", eyeName) : "ScreenSpaceShadows::RayMarch";
-		globals::profiler->BeginPass(timerName);
-
-		if (globals::state->frameAnnotations && eyeName) {
-			std::string eventName = std::format("SSS - Ray March ({})", eyeName);
-			globals::state->BeginPerfEvent(eventName);
-		} else if (globals::state->frameAnnotations) {
-			globals::state->BeginPerfEvent("SSS - Ray March");
-		}
+		CS_GPU_PASS(timerName);
 
 		context->CSSetShader(shader, nullptr, 0);
 
@@ -216,7 +209,7 @@ void ScreenSpaceShadows::DrawShadows()
 			auto dispatchData = dispatchList.Dispatch[i];
 
 			{
-				TracyD3D11Zone(globals::state->tracyCtx, "SSS - DispatchEye CB");
+				CS_GPU_PASS("SSS::RayMarch::DispatchEyeCB");
 
 				RaymarchCB data{};
 				data.LightCoordinate[0] = dispatchList.LightCoordinate_Shader[0];
@@ -241,16 +234,10 @@ void ScreenSpaceShadows::DrawShadows()
 			}
 
 			{
-				TracyD3D11Zone(globals::state->tracyCtx, "SSS - DispatchEye Sweep");
+				CS_GPU_PASS("SSS::RayMarch::DispatchEyeSweep");
 				context->Dispatch(dispatchData.WaveCount[0], dispatchData.WaveCount[1], dispatchData.WaveCount[2]);
 			}
 		}
-
-		if (globals::state->frameAnnotations) {
-			globals::state->EndPerfEvent();
-		}
-
-		globals::profiler->EndPass();
 	};
 
 	float InvTexSizeX = 1.0f / (float)viewportSize[0];
@@ -260,14 +247,14 @@ void ScreenSpaceShadows::DrawShadows()
 		DispatchEye(nullptr, GetComputeRaymarch(), lightProjectionF.data(), InvTexSizeX, InvTexSizeY);
 	} else {
 		{
-			TracyD3D11Zone(globals::state->tracyCtx, "SSS - Left Eye");
+			CS_GPU_PASS("SSS::LeftEye");
 			DispatchEye("Left Eye", GetComputeRaymarch(), lightProjectionF.data(), InvTexSizeX, InvTexSizeY);
 		}
 
 		// Calculate light projection for right eye
 		auto lightProjectionRightF = CalculateLightProjection(1);
 		{
-			TracyD3D11Zone(globals::state->tracyCtx, "SSS - Right Eye");
+			CS_GPU_PASS("SSS::RightEye");
 			DispatchEye("Right Eye", GetComputeRaymarchRight(), lightProjectionRightF.data(), InvTexSizeX, InvTexSizeY);
 		}
 	}
@@ -302,14 +289,9 @@ void ScreenSpaceShadows::DrawStereoSync()
 		return;
 
 	ZoneScoped;
-	TracyD3D11Zone(globals::state->tracyCtx, "SSS - Stereo Sync");
-
-	if (globals::state->frameAnnotations)
-		globals::state->BeginPerfEvent("SSS - Stereo Sync");
+	CS_GPU_PASS("ScreenSpaceShadows::StereoSync");
 
 	auto context = globals::d3d::context;
-	globals::profiler->BeginPass("ScreenSpaceShadows::StereoSync");
-
 	context->CopyResource(stereoSyncCopyTex->resource.get(), screenSpaceShadowsTexture->resource.get());
 
 	float2 resolution = Util::ConvertToDynamic(globals::state->screenSize);
@@ -347,11 +329,6 @@ void ScreenSpaceShadows::DrawStereoSync()
 	context->CSSetUnorderedAccessViews(0, 1, uavs, nullptr);
 	context->CSSetConstantBuffers(1, 1, &cbPtr);
 	context->CSSetShader(nullptr, nullptr, 0);
-
-	globals::profiler->EndPass();
-
-	if (globals::state->frameAnnotations)
-		globals::state->EndPerfEvent();
 }
 
 void ScreenSpaceShadows::Prepass()

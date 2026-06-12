@@ -2,6 +2,7 @@
 
 #include "ExtendedMaterials.h"
 #include "Globals.h"
+#include "GpuPass.h"
 #include "I18n/I18n.h"
 #include "Menu.h"
 #include "State.h"
@@ -332,10 +333,7 @@ void VRStereoOptimizations::DispatchStencil()
 		return;
 
 	ZoneScoped;
-	TracyD3D11Zone(globals::state->tracyCtx, "VR Stereo Opt - Stencil");
-
-	if (globals::state->frameAnnotations)
-		globals::state->BeginPerfEvent("VR Stereo Opt - Stencil");
+	CS_GPU_PASS("VRStereoOpt::Stencil");
 
 	auto context = globals::d3d::context;
 
@@ -348,19 +346,14 @@ void VRStereoOptimizations::DispatchStencil()
 	auto* depthSRV = Util::GetCurrentSceneDepthSRV();
 	if (!depthSRV) {
 		logger::warn("[VRStereoOptimizations] DispatchStencil: depthSRV is null, skipping");
-		if (globals::state->frameAnnotations)
-			globals::state->EndPerfEvent();
 		return;
 	}
 
-	// Dispatch classification CS over Eye 1 region
-	// Input: t0 = depth, b1 = params CB
-	// Output: u0 = per-pixel mode texture
 	{
-		TracyD3D11Zone(globals::state->tracyCtx, "StereoOpt - Mode Classify");
+		CS_GPU_PASS("StereoOpt::ModeClassify");
 
 		{
-			TracyD3D11Zone(globals::state->tracyCtx, "StereoOpt - Mode Classify Bind");
+			CS_GPU_PASS("StereoOpt::ModeClassifyBind");
 
 			ID3D11ShaderResourceView* srvs[1]{ depthSRV };
 			ID3D11UnorderedAccessView* uavs[1]{ texPerPixelMode->uav.get() };
@@ -373,7 +366,7 @@ void VRStereoOptimizations::DispatchStencil()
 		}
 
 		{
-			TracyD3D11Zone(globals::state->tracyCtx, "StereoOpt - Mode Classify Dispatch");
+			CS_GPU_PASS("StereoOpt::ModeClassifyDispatch");
 
 			uint32_t fullWidth = texPerPixelMode->desc.Width;
 			uint32_t fullHeight = texPerPixelMode->desc.Height;
@@ -392,15 +385,12 @@ void VRStereoOptimizations::DispatchStencil()
 
 	// Transfer classification to hardware stencil buffer
 	{
-		TracyD3D11Zone(globals::state->tracyCtx, "StereoOpt - Stencil Write");
+		CS_GPU_PASS("StereoOpt::StencilWrite");
 		ExecuteStencilWritePass();
 	}
 
 	stencilActive = true;
 	stencilSwapCount = 0;
-
-	if (globals::state->frameAnnotations)
-		globals::state->EndPerfEvent();
 }
 
 void VRStereoOptimizations::ExecuteStencilWritePass()

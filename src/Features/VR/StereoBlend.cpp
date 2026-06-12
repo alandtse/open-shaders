@@ -4,6 +4,7 @@
 #include "Features/DynamicCubemaps.h"
 #include "Features/ScreenSpaceGI.h"
 #include "Features/ScreenSpaceShadows.h"
+#include "GpuPass.h"
 #include "State.h"
 #include "Utils/D3D.h"
 
@@ -73,10 +74,7 @@ void VR::DrawStereoBlend()
 		return;
 
 	ZoneScoped;
-	TracyD3D11Zone(globals::state->tracyCtx, "VR Stereo Blend");
-
-	if (globals::state->frameAnnotations)
-		globals::state->BeginPerfEvent("VR Stereo Blend");
+	CS_GPU_PASS("VR::StereoBlend");
 
 	auto context = globals::d3d::context;
 	auto renderer = globals::game::renderer;
@@ -191,11 +189,15 @@ void VR::DrawStereoBlend()
 
 	context->CSSetShader(activeCS, nullptr, 0);
 	if (isOverwriteMode) {
-		TracyD3D11Zone(globals::state->tracyCtx, "StereoBlend - Overwrite");
-		context->Dispatch(dispatchCount.x, dispatchCount.y, 1);
+		{
+			CS_GPU_PASS("StereoBlend::Overwrite");
+			context->Dispatch(dispatchCount.x, dispatchCount.y, 1);
+		}
 	} else {
-		TracyD3D11Zone(globals::state->tracyCtx, "StereoBlend - Bilateral");
-		context->Dispatch(dispatchCount.x, dispatchCount.y, 1);
+		{
+			CS_GPU_PASS("StereoBlend::Bilateral");
+			context->Dispatch(dispatchCount.x, dispatchCount.y, 1);
+		}
 	}
 
 	// Cleanup
@@ -222,6 +224,5 @@ void VR::DrawStereoBlend()
 		savedDSV->Release();
 	}
 
-	if (globals::state->frameAnnotations)
-		globals::state->EndPerfEvent();
+	// Done
 }

@@ -931,7 +931,9 @@ void State::BeginPerfEvent(std::string_view title)
 	const TracyCZoneCtx ctx = ___tracy_emit_zone_begin_alloc(srcloc, true);
 	s_tracyPerfZones.push_back(ctx);
 #endif
-	pPerf->BeginEvent(std::wstring(title.begin(), title.end()).c_str());
+	if (pPerf) {
+		pPerf->BeginEvent(std::wstring(title.begin(), title.end()).c_str());
+	}
 }
 
 void State::EndPerfEvent()
@@ -944,12 +946,30 @@ void State::EndPerfEvent()
 		logger::warn("EndPerfEvent called without a matching BeginPerfEvent");
 	}
 #endif
-	pPerf->EndEvent();
+	if (pPerf) {
+		pPerf->EndEvent();
+	}
+}
+
+void State::BeginAnnotation(std::string_view title)
+{
+	if (pPerf) {
+		pPerf->BeginEvent(std::wstring(title.begin(), title.end()).c_str());
+	}
+}
+
+void State::EndAnnotation()
+{
+	if (pPerf) {
+		pPerf->EndEvent();
+	}
 }
 
 void State::SetPerfMarker(std::string_view title)
 {
-	pPerf->SetMarker(std::wstring(title.begin(), title.end()).c_str());
+	if (pPerf) {
+		pPerf->SetMarker(std::wstring(title.begin(), title.end()).c_str());
+	}
 }
 
 void State::SetAdapterDescription(const std::wstring& description)

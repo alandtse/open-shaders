@@ -1,8 +1,8 @@
 #include "GrassCollision.h"
 
 #include "Globals.h"
+#include "GpuPass.h"
 #include "I18n/I18n.h"
-#include "State.h"
 #include "Utils/ActorUtils.h"
 #include "Utils/D3D.h"
 
@@ -400,9 +400,8 @@ void GrassCollision::UpdateCollisionTexture()
 		context->CSSetUnorderedAccessViews(0, ARRAYSIZE(uavs), uavs, nullptr);
 
 		context->CSSetShader(GetCollisionUpdateCS(), nullptr, 0);
-		globals::profiler->BeginPass("GrassCollision::CollisionUpdate");
+		CS_GPU_PASS("GrassCollision::CollisionUpdate");
 		context->Dispatch(512 / 8, 512 / 8, 1);
-		globals::profiler->EndPass();
 	}
 
 	context->CSSetShader(nullptr, nullptr, 0);
