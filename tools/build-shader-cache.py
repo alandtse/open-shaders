@@ -130,14 +130,96 @@ def prune_non_cache_files(cache_dir: Path) -> None:
             d.rmdir()
 
 
+def default_plugin_version() -> str:
+    """Derive Plugin::VERSION's dash form (X-Y-Z-0) from CMakeLists' project VERSION."""
+    import re
+
+    text = (REPO / "CMakeLists.txt").read_text(encoding="utf-8", errors="replace")
+    m = re.search(r"VERSION\s+(\d+)\.(\d+)\.(\d+)", text)
+    if not m:
+        raise SystemExit("cannot derive plugin version from CMakeLists.txt; pass --plugin-version")
+    return "-".join(m.groups()) + "-0"
+
+
+def roots_referencing(shaders: Path, token: str) -> list[Path]:
+    """Root .hlsl files whose include closure references token (identifier-bounded)."""
+    import re
+
+    inc_re = re.compile(r'^\s*#\s*include\s+"([^"]+)"')
+    tok_re = re.compile(r"\b" + re.escape(token) + r"\b")
+
+    def refs(root: Path) -> bool:
+        seen, queue = set(), [root]
+        while queue:
+            f = queue.pop()
+            f = f.resolve()
+            if f in seen or not f.exists():
+                continue
+            seen.add(f)
+            text = f.read_text(encoding="utf-8", errors="replace")
+            if tok_re.search(text):
+                return True
+            for line in text.splitlines():
+                m = inc_re.match(line)
+                if m:
+                    for cand in (shaders / m.group(1), f.parent / m.group(1)):
+                        if cand.exists():
+                            queue.append(cand)
+                            break
+        return False
+
+    return [p for p in sorted(shaders.glob("*.hlsl")) if refs(p)]
+
+
+def finalize_existing(cache_dir: Path, shaders: Path, plugin_version: str, runtime: str, jobs: int) -> int:
+    """Turn a validation-produced compile dir into a shippable cache: recompile the
+    default-disabled features' referencing roots with their defines stripped (the
+    validation configs keep them on for coverage), prune sidecars, write Info.ini."""
+    for short, define in DEFAULT_DISABLED_FEATURES.items():
+        affected = roots_referencing(shaders, define)
+        print(f"{short} ({define}): re-profiling {len(affected)} roots: {[p.stem for p in affected]}")
+        if not affected:
+            continue
+        config = filter_default_disabled_defines(CONFIGS[runtime], cache_dir.parent / f"config-default-{runtime}.yaml")
+        for root in affected:
+            cmd = [
+                "hlslkit-compile",
+                "--shader-dir", str(root),
+                "--output-dir", str(cache_dir),
+                "--config", str(config),
+                "--strip-debug-defines",
+                "--optimization-level", "3",
+                "--suppress-warnings", "X1519",
+                "--max-warnings", "999999",
+                "--jobs", str(jobs),
+            ]
+            r = subprocess.run(cmd)
+            if r.returncode != 0:
+                print(f"re-profile failed for {root.name} (exit {r.returncode})", file=sys.stderr)
+                return r.returncode
+    prune_non_cache_files(cache_dir)
+    n = write_info_ini(cache_dir, shaders, plugin_version, runtime)
+    blobs = sum(1 for p in cache_dir.rglob("*") if p.suffix in (".pso", ".vso", ".cso"))
+    print(f"{runtime}: finalized {blobs} cache blobs, Info.ini with {n} feature sections -> {cache_dir}")
+    return 0
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--plugin-version", required=True, help='Plugin::VERSION string, e.g. "1-7-1-0"')
+    ap.add_argument("--plugin-version", help='Plugin::VERSION string, e.g. "1-7-1-0" (default: derived from CMakeLists.txt)')
+    ap.add_argument("--finalize-existing", help="finalize an already-compiled cache dir (from CI shader validation) instead of compiling")
+    ap.add_argument("--shader-dir", help="merged shader tree used for --finalize-existing (e.g. build/ALL/aio/Shaders)")
     ap.add_argument("--runtime", choices=["SE", "VR", "both"], default="both")
     ap.add_argument("--out", default="dist/shader-cache", help="output root")
     ap.add_argument("--jobs", type=int, default=os.cpu_count())
     ap.add_argument("--skip-compile", action="store_true", help="stage + Info.ini only (plumbing test)")
     args = ap.parse_args()
+
+    plugin_version = args.plugin_version or default_plugin_version()
+    if args.finalize_existing:
+        if not args.shader_dir or args.runtime == "both":
+            raise SystemExit("--finalize-existing requires --shader-dir and a single --runtime")
+        return finalize_existing(Path(args.finalize_existing), Path(args.shader_dir), plugin_version, args.runtime, args.jobs)
 
     out_root = Path(args.out)
     stage = out_root / "staged-shaders"
@@ -169,7 +251,7 @@ def main() -> int:
                 print(f"hlslkit-compile failed for {rt} (exit {r.returncode})", file=sys.stderr)
                 return r.returncode
             prune_non_cache_files(cache_dir)
-        n = write_info_ini(cache_dir, stage, args.plugin_version, rt)
+        n = write_info_ini(cache_dir, stage, plugin_version, rt)
         blobs = sum(1 for _ in cache_dir.rglob("*") if _.suffix in (".pso", ".vso", ".cso"))
         print(f"{rt}: {blobs} cache blobs, Info.ini with {n} feature sections -> {cache_dir}")
     return 0
