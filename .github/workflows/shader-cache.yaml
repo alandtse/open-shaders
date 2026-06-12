@@ -1,0 +1,68 @@
+name: "Release: Prebuilt Shader Cache"
+
+# Builds distributable shader disk caches (issue #148) and attaches them to the
+# release. Users who install the matching archive skip the entire first-boot
+# shader compile (the dominant install/update cost; Lighting alone is ~2.5h of
+# single-thread CPU work). Runs on release publish so the Info.ini PluginVersion
+# always matches the released DLL's Plugin::VERSION.
+
+on:
+    release:
+        types: [published]
+    workflow_dispatch:
+        inputs:
+            tag:
+                description: "Release tag to build caches for (e.g. v1.7.1)"
+                required: true
+
+permissions:
+    contents: write
+
+jobs:
+    build-cache:
+        runs-on: windows-latest
+        strategy:
+            matrix:
+                runtime: [SE, VR]
+        steps:
+            - name: Resolve tag
+              id: tag
+              shell: pwsh
+              run: |
+                  $tag = if ('${{ github.event_name }}' -eq 'workflow_dispatch') { '${{ inputs.tag }}' } else { '${{ github.event.release.tag_name }}' }
+                  # Plugin::VERSION.string() is dash-separated and 4-part: v1.7.1 -> 1-7-1-0
+                  $ver = ($tag -replace '^v','') -replace '\.','-'
+                  if (($ver -split '-').Count -eq 3) { $ver = "$ver-0" }
+                  "tag=$tag" >> $env:GITHUB_OUTPUT
+                  "version=$ver" >> $env:GITHUB_OUTPUT
+
+            - uses: actions/checkout@v4
+              with:
+                  ref: ${{ steps.tag.outputs.tag }}
+
+            - uses: actions/setup-python@v5
+              with:
+                  python-version: "3.12"
+
+            - name: Install hlslkit
+              run: pip install git+https://github.com/alandtse/hlslkit.git
+
+            - name: Build ${{ matrix.runtime }} cache (release-parity flags)
+              shell: pwsh
+              run: |
+                  python tools/build-shader-cache.py --plugin-version "${{ steps.tag.outputs.version }}" `
+                    --runtime ${{ matrix.runtime }} --out dist/shader-cache --jobs 4
+
+            - name: Package
+              shell: pwsh
+              run: |
+                  $name = "ShaderCache-${{ matrix.runtime }}-${{ steps.tag.outputs.tag }}.7z"
+                  # Archive rooted at ShaderCache/ so it extracts directly into Data/.
+                  7z a -t7z -mx=7 "dist/$name" "./dist/shader-cache/${{ matrix.runtime }}/ShaderCache"
+                  "ARCHIVE=dist/$name" >> $env:GITHUB_ENV
+
+            - name: Attach to release
+              shell: pwsh
+              env:
+                  GH_TOKEN: ${{ github.token }}
+              run: gh release upload "${{ steps.tag.outputs.tag }}" "$env:ARCHIVE" --clobber
