@@ -1,7 +1,7 @@
 [![Latest Release](https://img.shields.io/github/v/release/alandtse/open-shaders)](https://github.com/alandtse/open-shaders/releases)
-[![License](https://img.shields.io/github/license/alandtse/open-shaders)](./LICENSE)
-[![Last Commit](https://img.shields.io/github/last-commit/alandtse/open-shaders)](https://github.com/alandtse/open-shaders/commits)
-[![Build Status](https://img.shields.io/github/actions/workflow/status/alandtse/open-shaders/release-build.yaml?branch=dev)](https://github.com/alandtse/open-shaders/actions)
+[![License](https://img.shields.io/github/license/alandtse/open-shaders)](./COPYING)
+[![Last Commit](https://img.shields.io/github/last-commit/alandtse/open-shaders)](https://github.com/alandtse/open-shaders/commits/dev)
+[![Build Status](https://img.shields.io/github/actions/workflow/status/alandtse/open-shaders/release-build.yaml)](https://github.com/alandtse/open-shaders/actions/workflows/release-build.yaml)
 [![Open Issues](https://img.shields.io/github/issues/alandtse/open-shaders)](https://github.com/alandtse/open-shaders/issues)
 [![Contributors](https://img.shields.io/github/contributors/alandtse/open-shaders)](https://github.com/alandtse/open-shaders/graphs/contributors)
 [![Stars](https://img.shields.io/github/stars/alandtse/open-shaders?style=social)](https://github.com/alandtse/open-shaders/stargazers)
@@ -19,7 +19,7 @@ SKSE core plugin for advanced graphics modifications for Skyrim and fork of Comm
 
 ## About this fork
 
-**Open Shaders is a fork of [Community Shaders](https://github.com/community-shaders/skyrim-community-shaders).** All of the architecture, the shader pipeline, the feature framework, and the vast majority of the code in this repository originated upstream and is the work of the upstream Community Shaders authors and contributors. This fork inherits the upstream [GPL-3.0-or-later license with the Modding and Linking exceptions](./COPYING) — copyrights, authorship, and the modding exceptions are preserved unchanged. See the upstream [contributors page](https://github.com/community-shaders/skyrim-community-shaders/graphs/contributors) for the team behind the project.
+**Open Shaders is a fork of [Community Shaders](https://github.com/community-shaders/skyrim-community-shaders).** All of the architecture, the shader pipeline, the feature framework, and the vast majority of the code in this repository originated upstream and is the work of the upstream Community Shaders authors and contributors. Copyrights and authorship are preserved unchanged. See the upstream [contributors page](https://github.com/community-shaders/skyrim-community-shaders/graphs/contributors) for the team behind the project.
 
 **Naming convention used throughout this repo and the in-game UI:**
 
