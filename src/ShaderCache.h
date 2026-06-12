@@ -4,6 +4,7 @@
 #include <efsw/efsw.hpp>
 #include <vector>
 
+#include "Utils/CacheInvalidation.h"
 #include "Utils/WinApi.h"
 
 using namespace std::chrono;
@@ -422,18 +423,8 @@ namespace SIE
 		void WriteDiskCacheInfo();
 
 		/// One disk-cache/runtime state divergence found by ValidateDiskCache.
-		struct CacheMismatch
-		{
-			enum class Kind
-			{
-				PluginVersion,   ///< plugin updated (or no Info.ini) — expected, rebuild silently
-				FeatureVersion,  ///< feature updated — expected, rebuild silently
-				EnabledFlip,     ///< feature set changed — likely unintentional, hold + prompt
-			};
-			Kind kind;
-			std::string feature;  ///< display name ("Plugin" for plugin-version entries)
-			std::string detail;   ///< human-readable direction of the mismatch
-		};
+		/// (Logic lives in Utils/CacheInvalidation.h so tests/cpp can exercise it.)
+		using CacheMismatch = Util::CacheInvalidation::CacheMismatch;
 
 		/// Mismatches found at boot (empty when the disk cache validated clean).
 		const std::vector<CacheMismatch>& GetCacheMismatches() const { return cacheMismatches; }
