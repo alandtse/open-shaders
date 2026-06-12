@@ -184,6 +184,7 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	EnableShaderBlocking,
 	FirstTimeSetupCompleted,
 	SkipClearCacheConfirmation,
+	BackgroundShaderCompilationOnBoot,
 	AutoHideFeatureList,
 	SkipConstraintWarning,
 	RequireShiftToDock,
@@ -492,6 +493,13 @@ void Menu::Load(json& o_json)
 			}
 		}
 	}
+
+	// Apply the boot-time background-compile preference. Settings load before the
+	// first compile and the kDataLoaded blocking wait, so this reliably reaches
+	// the first-load compile. OR in (never clear) so an env-var force or a manual
+	// Skip Compilation press during a runtime settings reload is preserved.
+	if (settings.BackgroundShaderCompilationOnBoot)
+		globals::shaderCache->backgroundCompilation = true;
 }
 
 void Menu::Save(json& o_json)
