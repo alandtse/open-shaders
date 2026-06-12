@@ -12,13 +12,13 @@ cbuffer VRStereoOptParams : register(b1)
 	uint StereoModeValue;         // 0=Off, 1=Enable
 	float DisocclusionThreshold;  // Depth difference threshold for disocclusion detection
 	float EdgeDepthThreshold;     // Relative depth difference threshold for edge detection
-	uint EdgeWidth;               // Half-width of edge detection band in pixels
+	uint _pad0;
 
-	float2 QualityJitter;         // Sub-pixel jitter offset (Quality mode)
-	float FoveatedRadius;         // Radius of foveal region in UV space
+	float2 _pad1;
+	float FoveatedRadius;         // reserved for foveated reprojection — see alandtse/open-shaders#143
 	float ForwardOcclusionScale;  // Eye 0 depth multiplier for directional disocclusion (0 = disabled)
 
-	float2 FoveatedCenter;  // Center of foveal region in UV space
+	float2 FoveatedCenter;  // reserved for foveated reprojection — see alandtse/open-shaders#143
 	float MinEdgeDistance;
 	float FullBlendDistance;  // Linearized depth below which pixels get MODE_FULL_BLEND (game units)
 };

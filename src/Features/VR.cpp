@@ -101,10 +101,7 @@ void VR::SetupResources()
 
 	if (globals::game::isVR && stereoOpt.settings.stereoMode != VRStereoOptimizations::StereoMode::Off) {
 		stereoOpt.SetupResources();
-		stereoOpt.loaded =
-			stereoOpt.GetModeTextureSRV() != nullptr &&
-			stereoOpt.GetPomOffsetSRV() != nullptr &&
-			stereoOpt.GetPomOffsetUAV() != nullptr;
+		stereoOpt.loaded = stereoOpt.GetModeTextureSRV() != nullptr;
 	} else {
 		stereoOpt.loaded = false;
 	}

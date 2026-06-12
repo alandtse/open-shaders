@@ -139,6 +139,10 @@ public:
 	///        Called once at startup; emits one info line per supported format and one
 	///        warn line per unsupported format with the feature that needs it.
 	void CheckTypedUAVLoadSupport();
+
+	/// @brief Returns true if the current device supports typed UAV loads (RWTexture<T>
+	///        subscript reads) for @p a_format. Use to gate features that need it.
+	static bool SupportsTypedUAVLoad(DXGI_FORMAT a_format);
 	void ModifyShaderLookup(const RE::BSShader& a_shader, uint& a_vertexDescriptor, uint& a_pixelDescriptor, bool a_forceDeferred = false);
 
 	void BeginPerfEvent(std::string_view title);
