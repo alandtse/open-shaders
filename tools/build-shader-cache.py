@@ -70,6 +70,52 @@ RUNTIME_EXCLUDED_FEATURES = {"SE": {"VR"}, "VR": set()}
 # cache paths don't encode the feature set -- mismatched blobs would silently load).
 DEFAULT_DISABLED_FEATURES = {"UnifiedWater": "UNIFIED_WATER"}
 
+
+def feature_define_map(source_root: Path) -> dict:
+    """shortName -> shader define, parsed from src/Features headers (empty define
+    if the feature declares none)."""
+    import re
+
+    out = {}
+    for h in sorted((source_root / "src/Features").rglob("*.h")):
+        text = h.read_text(encoding="utf-8", errors="replace")
+        short = re.search(r'GetShortName\(\)[^{]*\{\s*return\s+"(\w+)"', text)
+        if not short:
+            continue
+        define = re.search(r'GetShaderDefineName\(\)[^{]*\{\s*return\s+"(\w+)"', text)
+        out[short.group(1)] = define.group(1) if define else ""
+    return out
+
+
+def default_disabled_features(source_root: Path) -> set:
+    """Feature short names with IsDisabledByDefault() == true, parsed from headers."""
+    import re
+
+    out = set()
+    for h in sorted((source_root / "src/Features").rglob("*.h")):
+        text = h.read_text(encoding="utf-8", errors="replace")
+        if re.search(r"IsDisabledByDefault\(\)[^{]*\{\s*return\s+true", text):
+            short = re.search(r'GetShortName\(\)[^{]*\{\s*return\s+"(\w+)"', text)
+            if short:
+                out.add(short.group(1))
+    return out
+
+
+def aio_feature_stems(source_root: Path) -> set:
+    """Feature ini stems shipped in the AIO: CORE marker present or autoupload=true."""
+    stems = set()
+    for feature_dir in sorted((source_root / "features").iterdir()):
+        inis = list(feature_dir.glob("Shaders/Features/*.ini"))
+        if not inis:
+            continue
+        is_core = (feature_dir / "CORE").exists()
+        auto = any("true" in line.lower()
+            for ini in inis for line in ini.read_text(encoding="utf-8-sig", errors="replace").splitlines()
+            if line.lower().replace(" ", "").startswith("autoupload="))
+        if is_core or auto:
+            stems.update(i.stem for i in inis)
+    return stems
+
 IMAGESPACE_DIRS = {
     # (SE enum, VR enum) -> runtime fxpFilename dir; from RE/I/ImageSpaceManager.h X/X2 macros.
     (0, 0): "WorldMap",
@@ -232,12 +278,15 @@ IMAGESPACE_DIRS = {
 
 
 
-def write_info_ini(cache_dir: Path, stage: Path, plugin_version: str, runtime: str) -> int:
-    """Emit Info.ini matching ShaderCache::WriteDiskCacheInfo's output format."""
+def write_info_ini(cache_dir: Path, stage: Path, plugin_version: str, runtime: str, include_stems=None) -> int:
+    """Emit Info.ini matching ShaderCache::WriteDiskCacheInfo's output format.
+    include_stems limits sections to the target profile (AIO default install)."""
     lines = ["[Cache]", f"PluginVersion = {plugin_version}", "", ""]
     count = 0
     for ini_path in sorted((stage / "Features").glob("*.ini")):
         if ini_path.stem in RUNTIME_EXCLUDED_FEATURES[runtime]:
+            continue
+        if include_stems is not None and ini_path.stem not in include_stems:
             continue
         cp = configparser.ConfigParser()
         cp.read(ini_path, encoding="utf-8-sig")
@@ -257,11 +306,10 @@ def write_info_ini(cache_dir: Path, stage: Path, plugin_version: str, runtime: s
     return count
 
 
-def filter_default_disabled_defines(config: Path, out: Path) -> Path:
-    """Strip default-disabled features' defines from every define list in the config."""
+def filter_profile_defines(config: Path, out: Path, drop: set) -> Path:
+    """Strip the given defines from every define list in the config."""
     import yaml
 
-    drop = set(DEFAULT_DISABLED_FEATURES.values())
     cfg = yaml.safe_load(config.read_text(encoding="utf-8"))
 
     def scrub(node):
@@ -306,6 +354,18 @@ def remap_imagespace_dirs(cache_dir: Path, runtime: str) -> None:
                 f.replace(dest / f.name)
         if not any(d.iterdir()):
             d.rmdir()
+
+
+def profile_strip_defines(source_root: Path, profile: str) -> tuple:
+    """(strip_defines, include_stems): defines absent from the target profile's
+    runtime (non-AIO features + default-disabled), and the manifest stems."""
+    defines = feature_define_map(source_root)
+    disabled = default_disabled_features(source_root) or set(DEFAULT_DISABLED_FEATURES)
+    all_stems = {p.stem for p in (source_root / "features").glob("*/Shaders/Features/*.ini")}
+    include = aio_feature_stems(source_root) if profile == "aio" else all_stems
+    excluded = (all_stems - include) | disabled
+    strip = {defines[stem] for stem in excluded if defines.get(stem)}
+    return strip, include
 
 
 def prune_non_cache_files(cache_dir: Path) -> None:
@@ -360,35 +420,14 @@ def roots_referencing(shaders: Path, token: str) -> list[Path]:
     return [p for p in sorted(shaders.glob("*.hlsl")) if refs(p)]
 
 
-def finalize_existing(cache_dir: Path, shaders: Path, plugin_version: str, runtime: str, jobs: int) -> int:
-    """Turn a validation-produced compile dir into a shippable cache: recompile the
-    default-disabled features' referencing roots with their defines stripped (the
-    validation configs keep them on for coverage), prune sidecars, write Info.ini."""
-    for short, define in DEFAULT_DISABLED_FEATURES.items():
-        affected = roots_referencing(shaders, define)
-        print(f"{short} ({define}): re-profiling {len(affected)} roots: {[p.stem for p in affected]}")
-        if not affected:
-            continue
-        config = filter_default_disabled_defines(CONFIGS[runtime], cache_dir.parent / f"config-default-{runtime}.yaml")
-        for root in affected:
-            cmd = [
-                "hlslkit-compile",
-                "--shader-dir", str(root),
-                "--output-dir", str(cache_dir),
-                "--config", str(config),
-                "--strip-debug-defines",
-                "--optimization-level", "3",
-                "--suppress-warnings", "X1519",
-                "--max-warnings", "999999",
-                "--jobs", str(jobs),
-            ]
-            r = subprocess.run(cmd)
-            if r.returncode != 0:
-                print(f"re-profile failed for {root.name} (exit {r.returncode})", file=sys.stderr)
-                return r.returncode
+def finalize_existing(cache_dir: Path, shaders: Path, plugin_version: str, runtime: str, profile: str) -> int:
+    """Turn a validation-produced compile dir into a shippable cache. The compile
+    itself must have used the profile config (--emit-profile-config), so this only
+    prunes sidecars, remaps ImageSpace dirs, and writes the profile manifest."""
+    _, include = profile_strip_defines(REPO, profile)
     prune_non_cache_files(cache_dir)
     remap_imagespace_dirs(cache_dir, runtime)
-    n = write_info_ini(cache_dir, shaders, plugin_version, runtime)
+    n = write_info_ini(cache_dir, shaders, plugin_version, runtime, include)
     blobs = sum(1 for p in cache_dir.rglob("*") if p.suffix in (".pso", ".vso", ".cso"))
     print(f"{runtime}: finalized {blobs} cache blobs, Info.ini with {n} feature sections -> {cache_dir}")
     return 0
@@ -400,6 +439,10 @@ def main() -> int:
     ap.add_argument("--finalize-existing", help="finalize an already-compiled cache dir (from CI shader validation) instead of compiling")
     ap.add_argument("--shader-dir", help="merged shader tree used for --finalize-existing (e.g. build/ALL/aio/Shaders)")
     ap.add_argument("--runtime", choices=["SE", "VR", "both"], default="both")
+    ap.add_argument("--profile", choices=["aio", "full"], default="aio",
+        help="feature profile the cache targets; aio = default install (the cache is INVALID once any extra feature is added)")
+    ap.add_argument("--emit-profile-config", nargs=2, metavar=("IN", "OUT"),
+        help="write the profile-stripped copy of a validation config and exit (used by CI so one compile serves validation and the cache)")
     ap.add_argument("--source-root", help="repo checkout to take shaders/configs/version from (default: this repo; use a release-tag checkout to seed an old release)")
     ap.add_argument("--out", default="dist/shader-cache", help="output root")
     ap.add_argument("--jobs", type=int, default=os.cpu_count() or 4)
@@ -415,10 +458,16 @@ def main() -> int:
             "VR": REPO / ".github/configs/shader-validation-vr.yaml",
         }
     plugin_version = args.plugin_version or default_plugin_version()
+    if args.emit_profile_config:
+        strip, _ = profile_strip_defines(REPO, args.profile)
+        filter_profile_defines(Path(args.emit_profile_config[0]), Path(args.emit_profile_config[1]), strip)
+        print(f"profile config ({args.profile}) -> {args.emit_profile_config[1]}; stripped: {sorted(strip)}")
+        return 0
+
     if args.finalize_existing:
         if not args.shader_dir or args.runtime == "both":
             raise SystemExit("--finalize-existing requires --shader-dir and a single --runtime")
-        return finalize_existing(Path(args.finalize_existing), Path(args.shader_dir), plugin_version, args.runtime, args.jobs)
+        return finalize_existing(Path(args.finalize_existing), Path(args.shader_dir), plugin_version, args.runtime, args.profile)
 
     out_root = Path(args.out)
     stage = out_root / "staged-shaders"
@@ -430,7 +479,8 @@ def main() -> int:
         cache_dir = out_root / rt / "ShaderCache"
         cache_dir.mkdir(parents=True, exist_ok=True)
         if not args.skip_compile:
-            config = filter_default_disabled_defines(CONFIGS[rt], out_root / f"config-{rt}.yaml")
+            strip, _ = profile_strip_defines(REPO, args.profile)
+            config = filter_profile_defines(CONFIGS[rt], out_root / f"config-{rt}.yaml", strip)
             cmd = [
                 "hlslkit-compile",
                 "--shader-dir", str(stage),
@@ -451,7 +501,8 @@ def main() -> int:
                 return r.returncode
             prune_non_cache_files(cache_dir)
             remap_imagespace_dirs(cache_dir, rt)
-        n = write_info_ini(cache_dir, stage, plugin_version, rt)
+        _, include = profile_strip_defines(REPO, args.profile)
+        n = write_info_ini(cache_dir, stage, plugin_version, rt, include)
         blobs = sum(1 for _ in cache_dir.rglob("*") if _.suffix in (".pso", ".vso", ".cso"))
         print(f"{rt}: {blobs} cache blobs, Info.ini with {n} feature sections -> {cache_dir}")
     return 0
