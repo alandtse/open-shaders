@@ -127,6 +127,13 @@ files, e.g. `Lighting.hlsl` → `LightingVS.hlsli`, `LightingLandscape.hlsli`,
 5. Forbidden: editing `Common/*.hlsli` shared by other shaders (separate,
    sequential work units if ever needed); touching `featuresIndices` /
    descriptor logic; editing more than the assigned range.
+6. Forbidden, git: any history surgery beyond creating your own section
+   commits — no `reset`, no `rebase`, no amending or dropping commits you did
+   not create in this work unit (amending your own just-made commit to absorb
+   pre-commit hook reformatting is fine, after re-running the gate). If the
+   branch contains commits or working-tree changes you don't recognize, leave
+   them untouched — they belong to the orchestrator. If that state blocks you,
+   STOP and report.
 
 Parallelization: shaders are independent (Lighting ∥ Water ∥ Effect ∥ Utility ∥
 RunGrass); **sections within one shader are sequential** (each move shifts line
