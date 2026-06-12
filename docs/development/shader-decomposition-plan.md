@@ -94,9 +94,13 @@ post-hook re-runs, burned ~an hour per shader on redundant sweeps. The protocol:
    `git bisect run` re-testing only that one permutation
    (`-Permutations "<failing>"`) finds the culprit commit in log₂(N) steps of
    seconds each. Drop or fix it, then one final full-list run as the PR proof.
-4. Don't re-gate after clang-format hook reformatting — Tier 0 is
-   whitespace-immune by construction (fxc `/P` retokenizes); spot-check one
-   permutation if paranoid.
+4. ALWAYS re-gate after the clang-format hook touches a file. The hook is NOT
+   whitespace-only: it sorts adjacent `#include` lines (it once swapped
+   `LightingPS_Resources` after `_Helpers`, putting functions before the
+   declarations they use — caught only because Tier 0 hashes are
+   order-sensitive). When two includes must keep a semantic order, separate
+   them with a comment line so the sorter sees two blocks. The re-gate costs
+   seconds with the parallel cached gate, so there is no reason to skip it.
 
 The verify script is parallel (`-Jobs`, default cores−2) and caches the
 base-ref side per SHA (`build/verify-cache/`). Measured on Lighting: full
