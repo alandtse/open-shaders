@@ -129,11 +129,14 @@ files, e.g. `Lighting.hlsl` → `LightingVS.hlsli`, `LightingLandscape.hlsli`,
    descriptor logic; editing more than the assigned range.
 6. Forbidden, git: any history surgery beyond creating your own section
    commits — no `reset`, no `rebase`, no amending or dropping commits you did
-   not create in this work unit (amending your own just-made commit to absorb
-   pre-commit hook reformatting is fine, after re-running the gate). If the
-   branch contains commits or working-tree changes you don't recognize, leave
-   them untouched — they belong to the orchestrator. If that state blocks you,
-   STOP and report.
+   not create in this work unit. Pre-commit hook handling: if the hook
+   REJECTED your `git commit` (no new commit exists — check `git log -1`
+   authorship/title first), stage the hook's reformatting, re-run the gate,
+   and run a fresh `git commit` — `--amend` here rewrites someone else's
+   HEAD. Only amend when `git log -1` shows the commit you just created. If
+   the branch contains commits or working-tree changes you don't recognize,
+   leave them untouched — they belong to the orchestrator. If that state
+   blocks you, STOP and report.
 
 Parallelization: shaders are independent (Lighting ∥ Water ∥ Effect ∥ Utility ∥
 RunGrass); **sections within one shader are sequential** (each move shifts line
