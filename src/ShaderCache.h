@@ -420,6 +420,31 @@ namespace SIE
 		void DeleteDiskCache();
 		void ValidateDiskCache();
 		void WriteDiskCacheInfo();
+
+		/// One disk-cache/runtime state divergence found by ValidateDiskCache.
+		struct CacheMismatch
+		{
+			enum class Kind
+			{
+				PluginVersion,   ///< plugin updated (or no Info.ini) — expected, rebuild silently
+				FeatureVersion,  ///< feature updated — expected, rebuild silently
+				EnabledFlip,     ///< feature set changed — likely unintentional, hold + prompt
+			};
+			Kind kind;
+			std::string feature;  ///< display name ("Plugin" for plugin-version entries)
+			std::string detail;   ///< human-readable direction of the mismatch
+		};
+
+		/// Mismatches found at boot (empty when the disk cache validated clean).
+		const std::vector<CacheMismatch>& GetCacheMismatches() const { return cacheMismatches; }
+
+		/// True while an enabled-flip mismatch holds the disk cache: blobs preserved on
+		/// disk, this session compiles memory-only, and the menu offers rebuild vs
+		/// fix-setup-and-restart (after a fix the cache revalidates untouched).
+		bool IsDiskCacheHeld() const { return diskCacheHeld; }
+
+		/// User accepted the new feature state: wipe the held cache and rebuild to disk.
+		void AcceptCacheRebuild();
 		bool IsSkipUnchangedShaders() const;
 		void SetSkipUnchangedShaders(bool value);
 		bool UseFileWatcher() const;
@@ -823,6 +848,8 @@ namespace SIE
 
 		bool isEnabled = true;
 		bool isDiskCache = true;
+		bool diskCacheHeld = false;
+		std::vector<CacheMismatch> cacheMismatches;
 		bool isSkipUnchangedShaders = true;  ///< when true, recompile a disk-cached shader only if its source is newer
 		bool isAsync = true;
 		bool isDump = false;

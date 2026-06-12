@@ -11,6 +11,7 @@
 #include <d3dcompiler.h>
 
 #include "Deferred.h"
+#include "Feature.h"
 #include "State.h"
 
 #include "Features/DynamicCubemaps.h"
@@ -2442,31 +2443,76 @@ namespace SIE
 		CSimpleIniA ini;
 		ini.SetUnicode();
 		ini.LoadFile(L"Data\\ShaderCache\\Info.ini");
-		bool valid = true;
+		cacheMismatches.clear();
+		diskCacheHeld = false;
 
-		// Check plugin version
 		if (auto pluginVersion = ini.GetValue("Cache", "PluginVersion")) {
 			if (strcmp(Plugin::VERSION.string().c_str(), pluginVersion) != 0) {
-				logger::info("Disk cache outdated: plugin version changed (current: {}, cached: {})",
-					Plugin::VERSION.string(), pluginVersion);
-				valid = false;
+				cacheMismatches.push_back({ CacheMismatch::Kind::PluginVersion, "Plugin",
+					std::format("version changed (current: {}, cached: {})", Plugin::VERSION.string(), pluginVersion) });
 			}
 		} else {
-			logger::info("Disk cache outdated: no plugin version found");
-			valid = false;
+			cacheMismatches.push_back({ CacheMismatch::Kind::PluginVersion, "Plugin", "no plugin version found in cache" });
 		}
 
-		// Check feature validation
-		if (!(globals::state->ValidateCache(ini))) {
-			logger::info("Disk cache outdated: feature validation failed");
-			valid = false;
+		for (auto* feature : Feature::GetFeatureList()) {
+			const auto shortName = feature->GetShortName();
+			const bool enabledInCache = ini.GetBoolValue(shortName.c_str(), "Enabled", false);
+			if (enabledInCache != feature->loaded) {
+				cacheMismatches.push_back({ CacheMismatch::Kind::EnabledFlip, std::string(feature->GetName()),
+					feature->loaded ?
+						"installed/enabled now, but the cache was built without it" :
+						"the cache was built with it, but it is now uninstalled or disabled at boot" });
+				continue;
+			}
+			if (feature->loaded) {
+				const auto versionInCache = ini.GetValue(shortName.c_str(), "Version");
+				if (!versionInCache || strcmp(versionInCache, feature->version.c_str()) != 0) {
+					cacheMismatches.push_back({ CacheMismatch::Kind::FeatureVersion, std::string(feature->GetName()),
+						std::format("version changed (installed: {}, cached: {})", feature->version,
+							versionInCache ? versionInCache : "<none>") });
+				}
+			}
 		}
 
-		if (valid) {
+		if (cacheMismatches.empty()) {
 			logger::info("Using disk cache");
+			return;
+		}
+
+		for (const auto& mismatch : cacheMismatches)
+			logger::info("Disk cache mismatch: {} - {}", mismatch.feature, mismatch.detail);
+
+		// Version-type mismatches are the expected post-update path: rebuild silently
+		// as before. Pure enabled-state flips are likely unintentional (a feature
+		// accidentally uninstalled or boot-disabled), so HOLD instead of wiping:
+		// preserve the cache on disk, compile this session memory-only (IsDiskCache()
+		// already gates both blob reads/writes and WriteDiskCacheInfo), and let the
+		// menu offer "rebuild now" vs "fix setup and restart" (the cache revalidates
+		// untouched after a fix). Loading mismatched blobs is never an option --
+		// feature defines change every shader's bytecode and paths don't encode them.
+		const bool onlyEnabledFlips = std::ranges::all_of(cacheMismatches,
+			[](const CacheMismatch& m) { return m.kind == CacheMismatch::Kind::EnabledFlip; });
+		if (onlyEnabledFlips) {
+			diskCacheHeld = true;
+			SetDiskCache(false);
+			logger::info("Disk cache HELD (not deleted): feature set changed; compiling memory-only this session");
 		} else {
 			DeleteDiskCache();
 		}
+	}
+
+	void ShaderCache::AcceptCacheRebuild()
+	{
+		if (!diskCacheHeld)
+			return;
+		diskCacheHeld = false;
+		cacheMismatches.clear();
+		DeleteDiskCache();
+		SetDiskCache(true);
+		WriteDiskCacheInfo();
+		Clear();
+		logger::info("Cache rebuild accepted: rebuilding disk cache for the current feature set");
 	}
 
 	void ShaderCache::WriteDiskCacheInfo()
