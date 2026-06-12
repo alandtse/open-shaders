@@ -27,6 +27,8 @@ void VRStereoOptimizations::SaveSettings(json& o_json)
 {
 	o_json["StereoMode"] = settings.stereoMode;
 	o_json["DisocclusionDepthThreshold"] = settings.disocclusionDepthThreshold;
+	o_json["EdgeDepthThreshold"] = settings.edgeDepthThreshold;
+	o_json["MinEdgeDistance"] = settings.minEdgeDistance;
 	o_json["FullBlendDistance"] = settings.fullBlendDistance;
 	o_json["FoveatedRegionRadius"] = settings.foveatedRegionRadius;
 	o_json["FoveatedRegionCenterX"] = settings.foveatedRegionCenterX;
@@ -52,6 +54,8 @@ void VRStereoOptimizations::LoadSettings(json& o_json)
 		settings.stereoMode = o_json["StereoMode"].get<StereoMode>();
 
 	loadClampedFloat("DisocclusionDepthThreshold", settings.disocclusionDepthThreshold, 0.001f, 0.1f);
+	loadClampedFloat("EdgeDepthThreshold", settings.edgeDepthThreshold, 0.0f, 1.0f);
+	loadClampedFloat("MinEdgeDistance", settings.minEdgeDistance, 0.0f, 50000.0f);
 	loadClampedFloat("FoveatedRegionRadius", settings.foveatedRegionRadius, 0.0f, 1.0f);
 	loadClampedFloat("FoveatedRegionCenterX", settings.foveatedRegionCenterX, 0.0f, 1.0f);
 	loadClampedFloat("FoveatedRegionCenterY", settings.foveatedRegionCenterY, 0.0f, 1.0f);
@@ -320,12 +324,9 @@ void VRStereoOptimizations::UpdateConstantBuffer()
 
 void VRStereoOptimizations::DispatchStencil()
 {
-	if (!globals::game::isVR)
-		return;
-	if (settings.stereoMode == StereoMode::Off)
-		return;
-	if (!stencilCS || !stencilWriteVS || !stencilWritePS || !texPerPixelMode || !paramsCB ||
-		!stencilWriteDSS || !stencilWriteRS)
+	// Same readiness contract as the Deferred call site: never cull Eye 1 unless the full
+	// repair pipeline (depth-fill + G-buffer-fill) is ready, else Eye 1 is left corrupt.
+	if (!globals::game::isVR || !CanDispatchStencil())
 		return;
 
 	ZoneScoped;
