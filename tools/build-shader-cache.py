@@ -70,6 +70,167 @@ RUNTIME_EXCLUDED_FEATURES = {"SE": {"VR"}, "VR": set()}
 # cache paths don't encode the feature set -- mismatched blobs would silently load).
 DEFAULT_DISABLED_FEATURES = {"UnifiedWater": "UNIFIED_WATER"}
 
+IMAGESPACE_DIRS = {
+    # (SE enum, VR enum) -> runtime fxpFilename dir; from RE/I/ImageSpaceManager.h X/X2 macros.
+    (0, 0): "WorldMap",
+    (1, 1): "Refraction",
+    (2, 2): "ISFXAA",
+    (3, 3): "DepthOfField",
+    (5, 5): "RadialBlur",
+    (6, 6): "FullScreenBlur",
+    (7, 7): "GetHit",
+    (8, 8): "Map",
+    (9, 9): "Blur3",
+    (10, 10): "Blur5",
+    (11, 11): "Blur7",
+    (12, 12): "Blur9",
+    (13, 13): "Blur11",
+    (14, 14): "Blur13",
+    (15, 15): "Blur15",
+    (16, 16): "BlurNonHDR3",
+    (17, 17): "BlurNonHDR5",
+    (18, 18): "BlurNonHDR7",
+    (19, 19): "BlurNonHDR9",
+    (20, 20): "BlurNonHDR11",
+    (21, 21): "BlurNonHDR13",
+    (22, 22): "BlurNonHDR15",
+    (23, 23): "BlurBrightPass3",
+    (24, 24): "BlurBrightPass5",
+    (25, 25): "BlurBrightPass7",
+    (26, 26): "BlurBrightPass9",
+    (27, 27): "BlurBrightPass11",
+    (28, 28): "BlurBrightPass13",
+    (29, 29): "BlurBrightPass15",
+    (30, 30): "HDR",
+    (31, 31): "WaterDisplacement",
+    (32, 32): "VolumetricLighting",
+    (33, 33): "Noise",
+    (34, 34): "ISCopy",
+    (35, 35): "ISCopyDynamicFetchDisabled",
+    (36, 36): "ISCopyScaleBias",
+    (37, 37): "ISCopyCustomViewport",
+    (38, 38): "ISCopyGrayScale",
+    (39, 39): "ISRefraction",
+    (40, 40): "ISDoubleVision",
+    (41, 41): "ISCopyTextureMask",
+    (42, 42): "ISMap",
+    (43, 43): "ISWorldMap",
+    (44, 44): "ISWorldMapNoSkyBlur",
+    (45, 45): "ISDepthOfField",
+    (46, 46): "ISDepthOfFieldFogged",
+    (47, 47): "ISDepthOfFieldMaskedFogged",
+    (49, 49): "ISDistantBlur",
+    (50, 50): "ISDistantBlurFogged",
+    (51, 51): "ISDistantBlurMaskedFogged",
+    (52, 52): "ISRadialBlur",
+    (53, 53): "ISRadialBlurMedium",
+    (54, 54): "ISRadialBlurHigh",
+    (55, 55): "ISHDRTonemapBlendCinematic",
+    (56, 56): "ISHDRTonemapBlendCinematicFade",
+    (57, 57): "ISHDRDownSample16",
+    (58, 58): "ISHDRDownSample4",
+    (59, 59): "ISHDRDownSample16Lum",
+    (60, 60): "ISHDRDownSample4RGB2Lum",
+    (61, 61): "ISHDRDownSample4LumClamp",
+    (62, 62): "ISHDRDownSample4LightAdapt",
+    (63, 63): "ISHDRDownSample16LumClamp",
+    (64, 64): "ISHDRDownSample16LightAdapt",
+    (65, 65): "ISBlur3",
+    (66, 66): "ISBlur5",
+    (67, 67): "ISBlur7",
+    (68, 68): "ISBlur9",
+    (69, 69): "ISBlur11",
+    (70, 70): "ISBlur13",
+    (71, 71): "ISBlur15",
+    (72, 72): "ISNonHDRBlur3",
+    (73, 73): "ISNonHDRBlur5",
+    (74, 74): "ISNonHDRBlur7",
+    (75, 75): "ISNonHDRBlur9",
+    (76, 76): "ISNonHDRBlur11",
+    (77, 77): "ISNonHDRBlur13",
+    (78, 78): "ISNonHDRBlur15",
+    (79, 79): "ISBrightPassBlur3",
+    (80, 80): "ISBrightPassBlur5",
+    (81, 81): "ISBrightPassBlur7",
+    (82, 82): "ISBrightPassBlur9",
+    (83, 83): "ISBrightPassBlur11",
+    (84, 84): "ISBrightPassBlur13",
+    (85, 85): "ISBrightPassBlur15",
+    (86, 86): "ISWaterDisplacementClearSimulation",
+    (87, 87): "ISWaterDisplacementTexOffset",
+    (88, 88): "ISWaterDisplacementWadingRipple",
+    (89, 89): "ISWaterDisplacementRainRipple",
+    (90, 90): "ISWaterWadingHeightmap",
+    (91, 91): "ISWaterRainHeightmap",
+    (92, 92): "ISWaterBlendHeightmaps",
+    (93, 93): "ISWaterSmoothHeightmap",
+    (94, 94): "ISWaterDisplacementNormals",
+    (95, 95): "ISNoiseScrollAndBlend",
+    (96, 96): "ISNoiseNormalmap",
+    (97, 97): "ISVolumetricLighting",
+    (98, 101): "ISLocalMap",
+    (99, 102): "ISAlphaBlend",
+    (100, 103): "ISLensFlare",
+    (101, 104): "ISLensFlareVisibility",
+    (102, 105): "ISApplyReflections",
+    (103, 106): "ISApplyVolumetricLighting",
+    (104, 107): "ISBasicCopy",
+    (105, 108): "ISBlur",
+    (106, 109): "ISVolumetricLightingBlurHCS",
+    (107, 110): "ISVolumetricLightingBlurVCS",
+    (108, 111): "ISReflectionBlurHCS",
+    (109, 112): "ISReflectionBlurVCS",
+    (110, 113): "ISParallaxMaskBlurHCS",
+    (111, 114): "ISParallaxMaskBlurVCS",
+    (112, 115): "ISDepthOfFieldBlurHCS",
+    (113, 116): "ISDepthOfFieldBlurVCS",
+    (114, 117): "ISCompositeVolumetricLighting",
+    (115, 118): "ISCompositeLensFlare",
+    (116, 119): "ISCompositeLensFlareVolumetricLighting",
+    (117, 120): "ISCopySubRegionCS",
+    (118, 121): "ISDebugSnow",
+    (119, 122): "ISDownsample",
+    (120, 123): "ISDownsampleIgnoreBrightest",
+    (121, 124): "ISDownsampleCS",
+    (122, 125): "ISDownsampleIgnoreBrightestCS",
+    (123, 128): "ISExp",
+    (124, 130): "ISIBLensFlares",
+    (125, 131): "ISLightingComposite",
+    (126, 132): "ISLightingCompositeNoDirectionalLight",
+    (127, 133): "ISLightingCompositeMenu",
+    (128, 134): "ISPerlinNoiseCS",
+    (129, 135): "ISPerlinNoise2DCS",
+    (130, 145): "ReflectionsRayTracing",
+    (131, 146): "ISReflectionsDebugSpecMask",
+    (132, 147): "ISSAOBlurH",
+    (133, 148): "ISSAOBlurV",
+    (134, 149): "ISSAOBlurHCS",
+    (135, 150): "ISSAOBlurVCS",
+    (136, 151): "ISSAOCameraZ",
+    (137, 152): "ISSAOCameraZAndMipsCS",
+    (138, 153): "ISSAOCompositeSAO",
+    (139, 154): "ISSAOCompositeFog",
+    (140, 155): "ISSAOCompositeSAOFog",
+    (141, 156): "ISMinify",
+    (142, 157): "ISMinifyContrast",
+    (143, 158): "ISSAORawAO",
+    (144, 159): "ISSAORawAONoTemporal",
+    (145, 160): "ISSAORawAOCS",
+    (146, 161): "ISSILComposite",
+    (147, 162): "ISSILRawInd",
+    (148, 163): "ISSimpleColor",
+    (149, 164): "ISDisplayDepth",
+    (150, 165): "ISSnowSSS",
+    (151, 166): "ISTemporalAA",
+    (152, 167): "ISTemporalAA_UI",
+    (153, 168): "ISTemporalAA_Water",
+    (154, 169): "ISUpsampleDynamicResolution",
+    (155, 170): "ISWaterBlend",
+    (156, 171): "ISUnderwaterMask",
+    (157, 172): "ISWaterFlow",
+}
+
+
 
 def write_info_ini(cache_dir: Path, stage: Path, plugin_version: str, runtime: str) -> int:
     """Emit Info.ini matching ShaderCache::WriteDiskCacheInfo's output format."""
@@ -117,6 +278,34 @@ def filter_default_disabled_defines(config: Path, out: Path) -> Path:
     scrub(cfg)
     out.write_text(yaml.safe_dump(cfg, sort_keys=False), encoding="utf-8")
     return out
+
+
+def remap_imagespace_dirs(cache_dir: Path, runtime: str) -> None:
+    """hlslkit names output dirs by source-file stem, but the runtime reads
+    ImageSpace blobs from per-technique dirs named by fxpFilename, selected by
+    the descriptor (= ImageSpaceManager effect enum, which differs SE vs VR for
+    X2 entries). Move each IS blob to its technique dir; verified byte-identical
+    naming against runtime-written caches on both runtimes."""
+    idx = 1 if runtime == "VR" else 0
+    by_desc = {k[idx]: v for k, v in IMAGESPACE_DIRS.items()}
+    keep = {".pso", ".vso", ".cso"}
+    for d in sorted(cache_dir.iterdir()):
+        if not d.is_dir() or not d.name.startswith("IS"):
+            continue
+        for f in sorted(d.iterdir()):
+            if f.suffix.lower() not in keep:
+                continue
+            try:
+                desc = int(f.stem, 16)
+            except ValueError:
+                continue
+            target = by_desc.get(desc)
+            if target and target != d.name:
+                dest = cache_dir / target
+                dest.mkdir(exist_ok=True)
+                f.replace(dest / f.name)
+        if not any(d.iterdir()):
+            d.rmdir()
 
 
 def prune_non_cache_files(cache_dir: Path) -> None:
@@ -198,6 +387,7 @@ def finalize_existing(cache_dir: Path, shaders: Path, plugin_version: str, runti
                 print(f"re-profile failed for {root.name} (exit {r.returncode})", file=sys.stderr)
                 return r.returncode
     prune_non_cache_files(cache_dir)
+    remap_imagespace_dirs(cache_dir, runtime)
     n = write_info_ini(cache_dir, shaders, plugin_version, runtime)
     blobs = sum(1 for p in cache_dir.rglob("*") if p.suffix in (".pso", ".vso", ".cso"))
     print(f"{runtime}: finalized {blobs} cache blobs, Info.ini with {n} feature sections -> {cache_dir}")
@@ -260,6 +450,7 @@ def main() -> int:
                 print(f"hlslkit-compile failed for {rt} (exit {r.returncode})", file=sys.stderr)
                 return r.returncode
             prune_non_cache_files(cache_dir)
+            remap_imagespace_dirs(cache_dir, rt)
         n = write_info_ini(cache_dir, stage, plugin_version, rt)
         blobs = sum(1 for _ in cache_dir.rglob("*") if _.suffix in (".pso", ".vso", ".cso"))
         print(f"{rt}: {blobs} cache blobs, Info.ini with {n} feature sections -> {cache_dir}")
