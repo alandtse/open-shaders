@@ -2484,7 +2484,7 @@ namespace SIE
 		std::vector<std::string> versionMismatchDefines;
 		for (const auto& mismatch : cacheMismatches) {
 			for (const auto& fs : featureStates) {
-				if (fs.name == mismatch.feature) {
+				if (fs.shortName == mismatch.shortName) {
 					if (mismatch.kind == CacheMismatch::Kind::EnabledFlip)
 						heldMismatchDefines.push_back(fs.define);
 					else if (mismatch.kind == CacheMismatch::Kind::FeatureVersion)
@@ -2501,19 +2501,12 @@ namespace SIE
 		for (const auto& mismatch : cacheMismatches)
 			logger::info("Disk cache mismatch: {} - {}", mismatch.feature, mismatch.detail);
 
-		// Version-type mismatches are the expected post-update path: rebuild silently
-		// as before. Pure enabled-state flips are likely unintentional (a feature
-		// accidentally uninstalled or boot-disabled), so HOLD instead of wiping:
-		// preserve the cache on disk, compile this session memory-only (IsDiskCache()
-		// already gates both blob reads/writes and WriteDiskCacheInfo), and let the
-		// menu offer "rebuild now" vs "fix setup and restart" (the cache revalidates
-		// untouched after a fix). Loading mismatched blobs is never an option --
-		// feature defines change every shader's bytecode and paths don't encode them.
+		// Version mismatches = expected update path (rebuild silently). Enabled flips
+		// are likely unintentional, so hold: keep blobs, compile memory-only, let the menu decide.
 		const bool onlyEnabledFlips = std::ranges::all_of(cacheMismatches,
 			[](const CacheMismatch& m) { return m.kind == CacheMismatch::Kind::EnabledFlip; });
 		if (onlyEnabledFlips) {
 			diskCacheHeld = true;
-			SetDiskCache(false);
 			logger::info("Disk cache HELD (not deleted): feature set changed; compiling memory-only this session");
 			return;
 		}
@@ -2539,7 +2532,8 @@ namespace SIE
 		if (!PartialInvalidation(heldMismatchDefines))
 			DeleteDiskCache();
 		heldMismatchDefines.clear();
-		SetDiskCache(true);
+		// Manifest-first is safe: a partial cache is valid by design (missing blobs
+		// compile on demand), so a quit mid-rebuild costs nothing.
 		WriteDiskCacheInfo();
 		Clear();
 		logger::info("Cache rebuild accepted: rebuilding disk cache for the current feature set");
@@ -2678,7 +2672,7 @@ namespace SIE
 		uint32_t descriptor)
 	{
 		if (const auto shaderBlob =
-				SShaderCache::CompileShader(ShaderClass::Vertex, shader, descriptor, isDiskCache, dependencyTracker.get())) {
+				SShaderCache::CompileShader(ShaderClass::Vertex, shader, descriptor, IsDiskCacheActive(), dependencyTracker.get())) {
 			auto device = globals::d3d::device;
 
 			auto newShader = SShaderCache::CreateVertexShader(*shaderBlob, shader,
@@ -2707,7 +2701,7 @@ namespace SIE
 		uint32_t descriptor)
 	{
 		if (const auto shaderBlob =
-				SShaderCache::CompileShader(ShaderClass::Pixel, shader, descriptor, isDiskCache, dependencyTracker.get())) {
+				SShaderCache::CompileShader(ShaderClass::Pixel, shader, descriptor, IsDiskCacheActive(), dependencyTracker.get())) {
 			auto device = globals::d3d::device;
 
 			auto newShader = SShaderCache::CreatePixelShader(*shaderBlob, shader,
@@ -2736,7 +2730,7 @@ namespace SIE
 		uint32_t descriptor)
 	{
 		if (const auto shaderBlob =
-				SShaderCache::CompileShader(ShaderClass::Compute, shader, descriptor, isDiskCache, dependencyTracker.get())) {
+				SShaderCache::CompileShader(ShaderClass::Compute, shader, descriptor, IsDiskCacheActive(), dependencyTracker.get())) {
 			auto device = globals::d3d::device;
 
 			auto newShader = SShaderCache::CreateComputeShader(*shaderBlob, shader,

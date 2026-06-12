@@ -7,8 +7,12 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <atomic>
+#include <chrono>
 #include <filesystem>
+#include <format>
 #include <fstream>
+#include <process.h>
 
 using namespace Util::CacheInvalidation;
 namespace fs = std::filesystem;
@@ -20,7 +24,9 @@ namespace
 		fs::path path;
 		TempDir()
 		{
-			path = fs::temp_directory_path() / ("csci_" + std::to_string(::rand()) + std::to_string(::clock()));
+			static std::atomic<unsigned> counter{ 0 };
+			path = fs::temp_directory_path() / std::format("csci_{}_{}_{}", ::_getpid(),
+												   std::chrono::high_resolution_clock::now().time_since_epoch().count(), counter++);
 			fs::create_directories(path);
 		}
 		~TempDir()
@@ -152,6 +158,13 @@ TEST_CASE("RootShaderReferencesToken: closure search", "[cacheinvalidation]")
 		auto r = RootShaderReferencesToken(shaders / "Sub/Local.hlsl", "MY_TOKEN", shaders);
 		REQUIRE(r.has_value());
 		CHECK(*r == true);
+	}
+	SECTION("identifier-boundary: superstring token does not match")
+	{
+		Write(shaders / "Super.hlsl", "#if defined(MY_TOKENX)\n#endif\n");
+		auto r = RootShaderReferencesToken(shaders / "Super.hlsl", "MY_TOKEN", shaders);
+		REQUIRE(r.has_value());
+		CHECK(*r == false);
 	}
 	SECTION("unresolvable include is skipped, not fatal")
 	{

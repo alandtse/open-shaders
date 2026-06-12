@@ -6,6 +6,7 @@
 // serving a blob compiled under a different feature set is silent corruption
 // (feature defines change every shader's bytecode; cache paths don't encode them).
 
+#include <cctype>
 #include <filesystem>
 #include <format>
 #include <fstream>
@@ -28,8 +29,9 @@ namespace Util::CacheInvalidation
 			EnabledFlip,     ///< feature set changed — likely unintentional, hold + prompt
 		};
 		Kind kind;
-		std::string feature;  ///< display name ("Plugin" for plugin-version entries)
-		std::string detail;   ///< human-readable direction of the mismatch
+		std::string shortName;  ///< stable key ("Plugin" for plugin-version entries)
+		std::string feature;    ///< display name for UI
+		std::string detail;     ///< human-readable direction of the mismatch
 	};
 
 	/// Runtime-side view of a feature, decoupled from the Feature class.
@@ -58,16 +60,16 @@ namespace Util::CacheInvalidation
 	{
 		std::vector<CacheMismatch> mismatches;
 		if (!cachedPluginVersion) {
-			mismatches.push_back({ CacheMismatch::Kind::PluginVersion, "Plugin", "no plugin version found in cache" });
+			mismatches.push_back({ CacheMismatch::Kind::PluginVersion, "Plugin", "Plugin", "no plugin version found in cache" });
 		} else if (*cachedPluginVersion != currentPluginVersion) {
-			mismatches.push_back({ CacheMismatch::Kind::PluginVersion, "Plugin",
+			mismatches.push_back({ CacheMismatch::Kind::PluginVersion, "Plugin", "Plugin",
 				std::format("version changed (current: {}, cached: {})", currentPluginVersion, *cachedPluginVersion) });
 		}
 		for (const auto& feature : features) {
 			const auto it = cacheEntries.find(feature.shortName);
 			const bool enabledInCache = it != cacheEntries.end() && it->second.enabled;
 			if (enabledInCache != feature.loaded) {
-				mismatches.push_back({ CacheMismatch::Kind::EnabledFlip, feature.name,
+				mismatches.push_back({ CacheMismatch::Kind::EnabledFlip, feature.shortName, feature.name,
 					feature.loaded ?
 						"installed/enabled now, but the cache was built without it" :
 						"the cache was built with it, but it is now uninstalled or disabled at boot" });
@@ -76,7 +78,7 @@ namespace Util::CacheInvalidation
 			if (feature.loaded) {
 				const auto& cachedVersion = it->second.version;
 				if (!cachedVersion || *cachedVersion != feature.version) {
-					mismatches.push_back({ CacheMismatch::Kind::FeatureVersion, feature.name,
+					mismatches.push_back({ CacheMismatch::Kind::FeatureVersion, feature.shortName, feature.name,
 						std::format("version changed (installed: {}, cached: {})", feature.version,
 							cachedVersion ? *cachedVersion : "<none>") });
 				}
@@ -104,8 +106,14 @@ namespace Util::CacheInvalidation
 					return std::nullopt;
 				std::string line;
 				while (std::getline(stream, line)) {
-					if (line.find(token) != std::string::npos)
-						return true;
+					// Identifier-boundary match: UNIFIED_WATER must not hit UNIFIED_WATERX.
+					for (size_t pos = line.find(token); pos != std::string::npos; pos = line.find(token, pos + 1)) {
+						const auto isIdent = [](char c) { return std::isalnum(static_cast<unsigned char>(c)) || c == '_'; };
+						const bool beforeOk = pos == 0 || !isIdent(line[pos - 1]);
+						const bool afterOk = pos + token.size() >= line.size() || !isIdent(line[pos + token.size()]);
+						if (beforeOk && afterOk)
+							return true;
+					}
 					std::smatch m;
 					if (std::regex_search(line, m, includeRe)) {
 						// Includes resolve against the merged root, then the includer's dir.

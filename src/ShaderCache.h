@@ -434,6 +434,11 @@ namespace SIE
 		/// fix-setup-and-restart (after a fix the cache revalidates untouched).
 		bool IsDiskCacheHeld() const { return diskCacheHeld; }
 
+		/// Disk-cache IO gate: user setting AND not held. The hold must not flip
+		/// isDiskCache itself -- that value persists as "Enable Disk Cache" in user
+		/// settings, so a save during a held session would disable the cache forever.
+		bool IsDiskCacheActive() const { return isDiskCache && !diskCacheHeld; }
+
 		/// User accepted the new feature state: wipe the held cache and rebuild to disk.
 		void AcceptCacheRebuild();
 		bool IsSkipUnchangedShaders() const;
