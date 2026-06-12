@@ -51,7 +51,7 @@ param(
     [Parameter(ParameterSetName = "Log", Mandatory = $true)]
     [string]$FromLog,
     [string]$OutCsv,
-    [string]$IncludeDir = "package/Shaders",
+    [string[]]$IncludeDir,
     [string]$Entry = "main",
     [string]$Profile,
     [string]$Fxc,
@@ -112,6 +112,14 @@ function Resolve-Fxc {
 
 $fxcPath = Resolve-Fxc
 if (-not (Test-Path $Shader)) { throw "Shader '$Shader' not found." }
+# The game compiles against the MERGED tree (package/Shaders + every feature's
+# Shaders dir deployed together), so feature includes like
+# "WaterEffects/WaterCaustics.hlsli" need each features/*/Shaders as a root.
+if (-not $IncludeDir) {
+    $IncludeDir = @("package/Shaders") + @(Get-ChildItem -Directory "features" -ErrorAction SilentlyContinue |
+            ForEach-Object { Join-Path $_.FullName "Shaders" } | Where-Object { Test-Path $_ })
+}
+$incArgs = @(); foreach ($d in $IncludeDir) { $incArgs += "/I"; $incArgs += $d }
 if (-not (Test-Path $PermutationsFile)) { throw "Permutations file '$PermutationsFile' not found." }
 if (-not $Profile) { $Profile = if ($Shader -match 'CS\.hlsl$') { "cs_5_0" } else { "ps_5_0" } }
 if (-not $OutCsv) { $OutCsv = "shader-bench.csv" }
@@ -135,7 +143,12 @@ try {
             $defArgs += $(if ($d -like '*=*') { $d } else { "$d=1" })
         }
         $sw = [Diagnostics.Stopwatch]::StartNew()
-        $null = & $fxcPath /nologo /O3 /T $Profile /E $Entry @defArgs /I $IncludeDir $Shader /Fo $tmp 2>&1
+        # PS 5.1 wraps native stderr in ErrorRecords when redirected; under
+        # ErrorActionPreference=Stop that aborts the run instead of logging the row.
+        $prevEap = $ErrorActionPreference
+        $ErrorActionPreference = "Continue"
+        $null = & $fxcPath /nologo /O3 /T $Profile /E $Entry @defArgs @incArgs $Shader /Fo $tmp 2>&1
+        $ErrorActionPreference = $prevEap
         $sw.Stop()
         $ok = ($LASTEXITCODE -eq 0)
         $rows.Add([pscustomobject]@{

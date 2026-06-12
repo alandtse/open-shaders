@@ -27,7 +27,9 @@
     Git ref to treat as "before". Default: merge-base of HEAD and origin/dev.
 
 .PARAMETER IncludeDir
-    Shader include root passed to fxc /I. Default: package/Shaders.
+    Shader include root(s) passed to fxc /I. Default: package/Shaders plus every
+    features/*/Shaders dir, mirroring the merged tree the game compiles against
+    (Lighting and friends include feature .hlsli files).
 
 .PARAMETER Permutations
     Optional explicit permutation list; each entry is a space-separated define set,
@@ -63,7 +65,7 @@ param(
     [Parameter(Mandatory = $true, Position = 0)]
     [string]$Shader,
     [string]$BaseRef,
-    [string]$IncludeDir = "package/Shaders",
+    [string[]]$IncludeDir,
     [string[]]$Permutations,
     [string]$PermutationsFile,
     [switch]$PreprocessOnly,
@@ -114,6 +116,15 @@ try {
         if (-not $BaseRef) { $BaseRef = "HEAD" }
     }
 
+    # The game compiles against the MERGED tree (package/Shaders + every feature's
+    # Shaders dir deployed together), so feature includes like
+    # "WaterEffects/WaterCaustics.hlsli" need each features/*/Shaders as a root.
+    if (-not $IncludeDir) {
+        $IncludeDir = @("package/Shaders") + @(Get-ChildItem -Directory "features" -ErrorAction SilentlyContinue |
+                ForEach-Object { "features/$($_.Name)/Shaders" } | Where-Object { Test-Path $_ })
+    }
+    $IncludeDir = @($IncludeDir | ForEach-Object { $_.Replace('\', '/').TrimEnd('/') })
+
     if (-not $Profile) {
         $Profile = if ($relPath -match 'CS\.hlsl$') { "cs_5_0" } else { "ps_5_0" }
     }
@@ -146,14 +157,14 @@ try {
     $baseRoot = Join-Path $work "base"
     New-Item -ItemType Directory -Force $baseRoot | Out-Null
     $tar = Join-Path $work "base.tar"
-    git archive --format=tar -o $tar $BaseRef -- $IncludeDir $relPath 2>$null
+    git archive --format=tar -o $tar $BaseRef -- @IncludeDir $relPath 2>$null
     if ($LASTEXITCODE -ne 0 -or -not (Test-Path $tar)) {
-        throw "git archive failed for '$BaseRef' (paths: $IncludeDir, $relPath)."
+        throw "git archive failed for '$BaseRef' (paths: $($IncludeDir -join ', '), $relPath)."
     }
     tar -xf $tar -C $baseRoot
     if ($LASTEXITCODE -ne 0) { throw "Failed to extract base archive." }
     $baseFile = Join-Path $baseRoot $relPath
-    $baseInclude = Join-Path $baseRoot $IncludeDir
+    $baseInclude = @($IncludeDir | ForEach-Object { Join-Path $baseRoot $_ })
     if (-not (Test-Path $baseFile)) { throw "'$relPath' not found at '$BaseRef'." }
 
     function DefineArgs([string]$defs) {
@@ -166,19 +177,27 @@ try {
         return $defArgs
     }
 
-    function Compile([string]$src, [string]$incDir, [string]$defs, [string]$outFile, [switch]$Asm) {
+    function IncludeArgs([string[]]$incDirs) {
+        $incArgs = @()
+        foreach ($d in $incDirs) { $incArgs += "/I"; $incArgs += $d }
+        return $incArgs
+    }
+
+    function Compile([string]$src, [string[]]$incDirs, [string]$defs, [string]$outFile, [switch]$Asm) {
         $defArgs = DefineArgs $defs
+        $incArgs = IncludeArgs $incDirs
         $fmt = if ($Asm) { "/Fc" } else { "/Fo" }
-        $out = & $fxcPath /nologo /T $Profile /E $Entry @defArgs /I $incDir $src $fmt $outFile 2>&1
+        $out = & $fxcPath /nologo /T $Profile /E $Entry @defArgs @incArgs $src $fmt $outFile 2>&1
         return @{ Code = $LASTEXITCODE; Out = $out }
     }
 
     # Tier 0: preprocessed text with #line directives stripped. Identical text =>
     # identical DXBC at any optimization level (fxc embeds no file/line without /Zi),
     # so cut-paste moves between files verify in milliseconds per permutation.
-    function PreprocessLines([string]$src, [string]$incDir, [string]$defs, [string]$outFile) {
+    function PreprocessLines([string]$src, [string[]]$incDirs, [string]$defs, [string]$outFile) {
         $defArgs = DefineArgs $defs
-        $out = & $fxcPath /nologo /P $outFile @defArgs /I $incDir $src 2>&1
+        $incArgs = IncludeArgs $incDirs
+        $out = & $fxcPath /nologo /P $outFile @defArgs @incArgs $src 2>&1
         if ($LASTEXITCODE -ne 0) { return @{ Code = $LASTEXITCODE; Out = $out } }
         # Also drop blank lines and trailing whitespace: include-boundary expansion
         # shifts them, and neither can affect tokenization (no line-splices survive /P).
@@ -190,7 +209,7 @@ try {
     Write-Host "Shader   : $relPath"
     Write-Host "Base ref : $BaseRef  (full include tree materialized)"
     Write-Host "Profile  : $Profile  (entry $Entry)"
-    Write-Host "Include  : $IncludeDir"
+    Write-Host "Include  : $($IncludeDir.Count) roots (package/Shaders + features/*/Shaders)"
     Write-Host ("-" * 60)
 
     $allIdentical = $true
