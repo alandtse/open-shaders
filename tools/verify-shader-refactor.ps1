@@ -320,7 +320,7 @@ try {
             $bl = @($rb.Lines); $wl = @($rw.Lines)
             for ($i = 0; $i -lt [Math]::Min($bl.Count, $wl.Count); $i++) {
                 if ($bl[$i] -cne $wl[$i]) {
-                    Write-Host "    (same lines, different ORDER — first divergence:)" -ForegroundColor Yellow
+                    Write-Host "    (same lines, different ORDER - first divergence:)" -ForegroundColor Yellow
                     Write-Host ("    [base@{0}] {1}" -f $i, $bl[$i])
                     Write-Host ("    [work@{0}] {1}" -f $i, $wl[$i])
                     break
