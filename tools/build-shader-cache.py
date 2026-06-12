@@ -64,6 +64,12 @@ def stage_merged_shaders(stage: Path) -> None:
 # for them at all on the other (verified against live SE and VR installs).
 RUNTIME_EXCLUDED_FEATURES = {"SE": {"VR"}, "VR": set()}
 
+# Features with IsDisabledByDefault() == true are NOT loaded on a default install:
+# the manifest must say Enabled=false AND their global define must be stripped from
+# every compiled permutation (feature defines change every shader's bytecode, and
+# cache paths don't encode the feature set -- mismatched blobs would silently load).
+DEFAULT_DISABLED_FEATURES = {"UnifiedWater": "UNIFIED_WATER"}
+
 
 def write_info_ini(cache_dir: Path, stage: Path, plugin_version: str, runtime: str) -> int:
     """Emit Info.ini matching ShaderCache::WriteDiskCacheInfo's output format."""
@@ -78,13 +84,39 @@ def write_info_ini(cache_dir: Path, stage: Path, plugin_version: str, runtime: s
         if not version:
             print(f"WARN: {ini_path.name} has no Info/Version; skipped", file=sys.stderr)
             continue
-        lines += [f"[{ini_path.stem}]", "Enabled = true", f"Version = {version}", "", ""]
+        if ini_path.stem in DEFAULT_DISABLED_FEATURES:
+            lines += [f"[{ini_path.stem}]", "Enabled = false", "Version = ", "", ""]
+        else:
+            lines += [f"[{ini_path.stem}]", "Enabled = true", f"Version = {version}", "", ""]
         count += 1
     # UTF-8 BOM and CRLF to byte-match the runtime's SimpleIni output.
     (cache_dir / "Info.ini").write_bytes(
         b"\xef\xbb\xbf" + "\r\n".join(lines).encode("utf-8")
     )
     return count
+
+
+def filter_default_disabled_defines(config: Path, out: Path) -> Path:
+    """Strip default-disabled features' defines from every define list in the config."""
+    import yaml
+
+    drop = set(DEFAULT_DISABLED_FEATURES.values())
+    cfg = yaml.safe_load(config.read_text(encoding="utf-8"))
+
+    def scrub(node):
+        if isinstance(node, dict):
+            for k, v in node.items():
+                if k in ("common_defines", "defines") and isinstance(v, list):
+                    node[k] = [d for d in v if d.split("=", 1)[0] not in drop]
+                else:
+                    scrub(v)
+        elif isinstance(node, list):
+            for v in node:
+                scrub(v)
+
+    scrub(cfg)
+    out.write_text(yaml.safe_dump(cfg, sort_keys=False), encoding="utf-8")
+    return out
 
 
 def prune_non_cache_files(cache_dir: Path) -> None:
@@ -117,11 +149,12 @@ def main() -> int:
         cache_dir = out_root / rt / "ShaderCache"
         cache_dir.mkdir(parents=True, exist_ok=True)
         if not args.skip_compile:
+            config = filter_default_disabled_defines(CONFIGS[rt], out_root / f"config-{rt}.yaml")
             cmd = [
                 "hlslkit-compile",
                 "--shader-dir", str(stage),
                 "--output-dir", str(cache_dir),
-                "--config", str(CONFIGS[rt]),
+                "--config", str(config),
                 "--strip-debug-defines",
                 "--optimization-level", "3",
                 # Cache build, not validation: known-benign warnings must not fail the job
