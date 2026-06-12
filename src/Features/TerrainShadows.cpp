@@ -3,6 +3,7 @@
 #include <DirectXTex.h>
 #include <pystring/pystring.h>
 
+#include "GpuPass.h"
 #include "I18n/I18n.h"
 #include "State.h"
 #include "Util.h"
@@ -340,7 +341,6 @@ void TerrainShadows::UpdateShadow()
 	auto sunLight = skyrim_cast<RE::NiDirectionalLight*>(shadowSceneNode->GetRuntimeData().sunLight->light.get());
 	if (!sunLight)
 		return;
-	TracyD3D11Zone(globals::state->tracyCtx, "Terrain Occlusion - Update Shadows");
 
 	/* ---- UPDATE CB ---- */
 	uint width = texHeightMap->desc.Width;
@@ -418,9 +418,10 @@ void TerrainShadows::UpdateShadow()
 	context->CSSetUnorderedAccessViews(0, ARRAYSIZE(newer.uavs), newer.uavs, nullptr);
 	context->CSSetConstantBuffers(0, 1, &newer.buffer);
 	context->CSSetShader(shadowUpdateProgram.get(), nullptr, 0);
-	globals::profiler->BeginPass("TerrainShadows::ShadowUpdate");
-	context->Dispatch(abs(shadowUpdateCBData.LightPxDir.x) >= abs(shadowUpdateCBData.LightPxDir.y) ? height : width, 1, 1);
-	globals::profiler->EndPass();
+	{
+		CS_GPU_PASS("TerrainShadows::ShadowUpdate");
+		context->Dispatch(abs(shadowUpdateCBData.LightPxDir.x) >= abs(shadowUpdateCBData.LightPxDir.y) ? height : width, 1, 1);
+	}
 
 	/* ---- RESTORE ---- */
 	context->CSSetShaderResources(0, ARRAYSIZE(old.srvs), old.srvs);

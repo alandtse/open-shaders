@@ -2,6 +2,7 @@
 
 #include "Deferred.h"
 #include "Globals.h"
+#include "GpuPass.h"
 #include "I18n/I18n.h"
 #include "ShaderCache.h"
 #include "State.h"
@@ -760,7 +761,7 @@ void TerrainBlending::TerrainShaderHacks()
 
 void TerrainBlending::ResetDepth()
 {
-	TracyD3D11Zone(globals::state->tracyCtx, "Terrain Blending - Reset Depth");
+	CS_GPU_PASS("TerrainBlending::ResetDepth");
 	auto context = globals::d3d::context;
 
 	auto dsv = terrainDepth.views[0];
@@ -769,9 +770,7 @@ void TerrainBlending::ResetDepth()
 
 void TerrainBlending::ResetTerrainDepth()
 {
-	TracyD3D11Zone(globals::state->tracyCtx, "Terrain Blending - Reset Terrain Depth");
-	if (globals::state->frameAnnotations)
-		globals::state->BeginPerfEvent("Terrain Blending - Reset Terrain Depth");
+	CS_GPU_PASS("TerrainBlending::ResetTerrainDepth");
 
 	auto context = globals::d3d::context;
 
@@ -780,17 +779,12 @@ void TerrainBlending::ResetTerrainDepth()
 
 	auto currentVertexShader = *globals::game::currentVertexShader;
 	context->VSSetShader((ID3D11VertexShader*)currentVertexShader->shader, NULL, NULL);
-
-	if (globals::state->frameAnnotations)
-		globals::state->EndPerfEvent();
 }
 
 void TerrainBlending::BlendPrepassDepths()
 {
 	ZoneScoped;
-	TracyD3D11Zone(globals::state->tracyCtx, "Terrain Blending - Blend Prepass Depths");
-	if (globals::state->frameAnnotations)
-		globals::state->BeginPerfEvent("Terrain Blending - Blend Prepass Depths");
+	CS_GPU_PASS("TerrainBlending::BlendPrepassDepths");
 
 	auto context = globals::d3d::context;
 	context->OMSetRenderTargets(0, nullptr, nullptr);
@@ -798,7 +792,7 @@ void TerrainBlending::BlendPrepassDepths()
 	auto dispatchCount = Util::GetScreenDispatchCount();
 
 	{
-		TracyD3D11Zone(globals::state->tracyCtx, "Terrain Blending - Depth Blend CS");
+		CS_GPU_PASS("TerrainBlending::DepthBlend");
 
 		ID3D11ShaderResourceView* views[2] = { depthSRVBackup, terrainDepth.depthSRV };
 		context->CSSetShaderResources(0, ARRAYSIZE(views), views);
@@ -809,9 +803,7 @@ void TerrainBlending::BlendPrepassDepths()
 
 		context->CSSetShader(GetDepthBlendShader(), nullptr, 0);
 
-		globals::profiler->BeginPass("TerrainBlending::DepthBlend");
 		context->Dispatch(dispatchCount.x, dispatchCount.y, 1);
-		globals::profiler->EndPass();
 	}
 
 	ID3D11ShaderResourceView* views[2] = { nullptr, nullptr };
@@ -827,9 +819,6 @@ void TerrainBlending::BlendPrepassDepths()
 	stateUpdateFlags->set(RE::BSGraphics::ShaderFlags::DIRTY_RENDERTARGET);
 	// CopyResource(terrainDepth <- mainDepth) eliminated: main depth is now written
 	// directly into mainDepthCopy (u2) by the CS above, saving a full-stereo D24S8 copy.
-
-	if (globals::state->frameAnnotations)
-		globals::state->EndPerfEvent();
 }
 
 void TerrainBlending::ClearShaderCache()
@@ -1021,9 +1010,7 @@ void TerrainBlending::RenderTerrainBlendingPasses()
 	const uint64_t noBlendPassCount = static_cast<uint64_t>(renderPasses.size());
 
 	if (terrainPassCount != 0 || noBlendPassCount != 0) {
-		TracyD3D11Zone(globals::state->tracyCtx, "Terrain Blending - Render Passes");
-		if (globals::state->frameAnnotations)
-			globals::state->BeginPerfEvent("Terrain Blending - Render Passes");
+		CS_GPU_PASS("TerrainBlending::RenderPasses");
 
 		GET_INSTANCE_MEMBER(alphaBlendMode, shadowState)
 		GET_INSTANCE_MEMBER(alphaBlendWriteMode, shadowState)
@@ -1053,9 +1040,6 @@ void TerrainBlending::RenderTerrainBlendingPasses()
 
 		terrainRenderPasses.clear();
 		renderPasses.clear();
-
-		if (globals::state->frameAnnotations)
-			globals::state->EndPerfEvent();
 	}
 
 	auto& mainDepth = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kMAIN];

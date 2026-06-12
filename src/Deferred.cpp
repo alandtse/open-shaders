@@ -2,6 +2,7 @@
 
 #include <DDSTextureLoader.h>
 
+#include "GpuPass.h"
 #include "ShaderCache.h"
 #include "State.h"
 #include "Utils/D3D.h"
@@ -209,8 +210,7 @@ void Deferred::SetupResources()
 
 void Deferred::ReflectionsPrepasses()
 {
-	ZoneScoped;
-	TracyD3D11Zone(globals::state->tracyCtx, "Reflections Prepass");
+	CS_GPU_PASS("Deferred::ReflectionsPrepass");
 
 	auto shaderCache = globals::shaderCache;
 
@@ -232,8 +232,7 @@ void Deferred::ReflectionsPrepasses()
 
 void Deferred::EarlyPrepasses()
 {
-	ZoneScoped;
-	TracyD3D11Zone(globals::state->tracyCtx, "Early Prepass");
+	CS_GPU_PASS("Deferred::EarlyPrepass");
 
 	auto shaderCache = globals::shaderCache;
 
@@ -255,8 +254,7 @@ void Deferred::EarlyPrepasses()
 
 void Deferred::PrepassPasses()
 {
-	ZoneScoped;
-	TracyD3D11Zone(globals::state->tracyCtx, "Prepass");
+	CS_GPU_PASS("Deferred::Prepass");
 
 	auto shaderCache = globals::shaderCache;
 
@@ -349,8 +347,7 @@ void Deferred::StartDeferred()
 
 void Deferred::DeferredPasses()
 {
-	ZoneScoped;
-	TracyD3D11Zone(globals::state->tracyCtx, "Deferred");
+	CS_GPU_PASS("Deferred::DeferredPasses");
 
 	auto renderer = globals::game::renderer;
 	auto context = globals::d3d::context;
@@ -414,7 +411,7 @@ void Deferred::DeferredPasses()
 
 	// Deferred Composite
 	{
-		TracyD3D11Zone(globals::state->tracyCtx, "Deferred Composite");
+		CS_GPU_PASS("Deferred::DeferredComposite");
 
 		ID3D11ShaderResourceView* srvs[16]{
 			specular.SRV,                                                                                    // t0  SpecularTexture
@@ -451,12 +448,7 @@ void Deferred::DeferredPasses()
 		auto shader = interior ? GetComputeMainCompositeInterior() : GetComputeMainComposite();
 		context->CSSetShader(shader, nullptr, 0);
 
-		{
-			TracyD3D11Zone(globals::state->tracyCtx, "Deferred Composite - Dispatch");
-			globals::profiler->BeginPass("DeferredComposite");
-			context->Dispatch(dispatchCount.x, dispatchCount.y, 1);
-			globals::profiler->EndPass();
-		}
+		context->Dispatch(dispatchCount.x, dispatchCount.y, 1);
 
 		// Unbind mode texture SRV
 		ID3D11ShaderResourceView* nullSRV = nullptr;
@@ -466,9 +458,8 @@ void Deferred::DeferredPasses()
 	// VR: Bilateral stereo blend (the reprojection color-overwrite path is gone —
 	// Eye 1 is lit natively from the G-buffer fill done before SSGI/composite).
 	if (globals::game::isVR) {
-		globals::profiler->BeginPass("VR::StereoBlend");
+		CS_GPU_PASS("VR::StereoBlend");
 		globals::features::vr.DrawStereoBlend();
-		globals::profiler->EndPass();
 	}
 
 	// Clear
@@ -657,8 +648,7 @@ void Deferred::SetShadowCascadeParameters(T& lightData, DirectionalShadowLightDa
 
 void Deferred::CopyShadowLightData()
 {
-	ZoneScoped;
-	TracyD3D11Zone(globals::state->tracyCtx, "CopyShadowLightData");
+	CS_GPU_PASS("Deferred::CopyShadowLightData");
 
 	auto* shadowSceneNode = globals::game::smState->shadowSceneNode[0];
 	if (!shadowSceneNode)

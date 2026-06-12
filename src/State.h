@@ -149,6 +149,11 @@ public:
 	void EndPerfEvent();
 	void SetPerfMarker(std::string_view title);
 
+	/// RenderDoc/PIX annotation only — no Tracy CPU zone.
+	/// Used by ScopedGpuPass which manages its own Tracy CPU zone unconditionally.
+	void BeginAnnotation(std::string_view title);
+	void EndAnnotation();
+
 	void SetAdapterDescription(const std::wstring& description);
 
 	bool frameAnnotations = false;

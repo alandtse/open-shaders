@@ -10,7 +10,7 @@
 class Profiler
 {
 public:
-	static constexpr uint32_t kMaxTimers = 128;
+	static constexpr uint32_t kMaxTimers = 256;
 	static constexpr uint32_t kFrameLatency = 3;
 	static constexpr uint32_t kHistorySize = 300;
 
@@ -71,8 +71,8 @@ public:
 	}
 
 	void BeginFrame();
-	void BeginPass(const std::string& name);
-	void EndPass();
+	void BeginPass(const std::string& name, bool fireCallbacks = true);
+	void EndPass(bool fireCallbacks = true);
 	void EndFrame();
 
 	const std::vector<TimerResult>& GetResults() const { return results; }

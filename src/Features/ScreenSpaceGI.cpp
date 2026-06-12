@@ -1,4 +1,5 @@
 #include "ScreenSpaceGI.h"
+#include "GpuPass.h"
 
 #include <DirectXTex.h>
 
@@ -722,8 +723,7 @@ void ScreenSpaceGI::DrawSSGI()
 		return;
 	}
 
-	ZoneScoped;
-	TracyD3D11Zone(globals::state->tracyCtx, "SSGI");
+	CS_GPU_PASS("ScreenSpaceGI::SSGI");
 
 	static uint lastFrameAoTexIdx = 0;
 	static uint lastFrameGITexIdx = 0;
@@ -773,7 +773,7 @@ void ScreenSpaceGI::DrawSSGI()
 
 	// prefilter depths
 	{
-		TracyD3D11Zone(globals::state->tracyCtx, "SSGI - Prefilter Depths");
+		CS_GPU_PASS("ScreenSpaceGI::PrefilterDepths");
 
 		srvs.at(0) = Util::GetCurrentSceneDepthSRV();
 		for (int i = 0; i < 5; ++i)
@@ -782,14 +782,12 @@ void ScreenSpaceGI::DrawSSGI()
 		context->CSSetShaderResources(0, (uint)srvs.size(), srvs.data());
 		context->CSSetUnorderedAccessViews(0, (uint)uavs.size(), uavs.data(), nullptr);
 		context->CSSetShader(prefilterDepthsCompute.get(), nullptr, 0);
-		globals::profiler->BeginPass("ScreenSpaceGI::PrefilterDepths");
 		context->Dispatch((resolution[0] + 15) >> 4, (resolution[1] + 15) >> 4, 1);
-		globals::profiler->EndPass();
 	}
 
 	// fetch radiance and disocclusion
 	{
-		TracyD3D11Zone(globals::state->tracyCtx, "SSGI - Radiance Disocc");
+		CS_GPU_PASS("ScreenSpaceGI::RadianceDisocc");
 
 		resetViews();
 		srvs.at(0) = rts[deferred->forwardRenderTargets[0]].SRV;
@@ -814,15 +812,13 @@ void ScreenSpaceGI::DrawSSGI()
 		context->CSSetShaderResources(0, (uint)srvs.size(), srvs.data());
 		context->CSSetUnorderedAccessViews(0, (uint)uavs.size(), uavs.data(), nullptr);
 		context->CSSetShader(radianceDisoccCompute.get(), nullptr, 0);
-		globals::profiler->BeginPass("ScreenSpaceGI::RadianceDisocc");
 		context->Dispatch((internalRes[0] + 7u) >> 3, (internalRes[1] + 7u) >> 3, 1);
-		globals::profiler->EndPass();
 
 		// Prefilter radiance texture instead of using GenerateMips for proper dynamic resolution handling.
 		// radianceDisocc wrote mip 0 directly to texRadianceTemp above, so we can bind it
 		// as SRV input here without an intermediate CopySubresourceRegion.
 		{
-			TracyD3D11Zone(globals::state->tracyCtx, "SSGI - Prefilter Radiance");
+			CS_GPU_PASS("ScreenSpaceGI::PrefilterRadiance");
 
 			resetViews();
 			srvs.at(0) = texRadianceTemp->srv.get();
@@ -835,9 +831,7 @@ void ScreenSpaceGI::DrawSSGI()
 			context->CSSetShaderResources(0, 1, srvs.data());
 			context->CSSetUnorderedAccessViews(0, 5, uavs.data(), nullptr);
 			context->CSSetShader(prefilterRadianceCompute.get(), nullptr, 0);
-			globals::profiler->BeginPass("ScreenSpaceGI::PrefilterRadiance");
 			context->Dispatch((internalRes[0] + 15u) >> 4, (internalRes[1] + 15u) >> 4, 1);
-			globals::profiler->EndPass();
 		}
 
 		inputAoTexIdx = !inputAoTexIdx;
@@ -847,7 +841,7 @@ void ScreenSpaceGI::DrawSSGI()
 
 	// Prefilter normals
 	{
-		TracyD3D11Zone(globals::state->tracyCtx, "SSGI - Prefilter Normals");
+		CS_GPU_PASS("ScreenSpaceGI::PrefilterNormals");
 
 		resetViews();
 		srvs.at(0) = rts[NORMALROUGHNESS].SRV;
@@ -860,14 +854,12 @@ void ScreenSpaceGI::DrawSSGI()
 		context->CSSetShaderResources(0, 1, srvs.data());
 		context->CSSetUnorderedAccessViews(0, 5, uavs.data(), nullptr);
 		context->CSSetShader(prefilterNormalCompute.get(), nullptr, 0);
-		globals::profiler->BeginPass("ScreenSpaceGI::PrefilterNormals");
 		context->Dispatch((internalRes[0] + 15u) >> 4, (internalRes[1] + 15u) >> 4, 1);
-		globals::profiler->EndPass();
 	}
 
 	// GI
 	{
-		TracyD3D11Zone(globals::state->tracyCtx, "SSGI - GI");
+		CS_GPU_PASS("ScreenSpaceGI::GI");
 
 		resetViews();
 		srvs.at(0) = texWorkingDepth->srv.get();
@@ -889,9 +881,7 @@ void ScreenSpaceGI::DrawSSGI()
 		context->CSSetShaderResources(0, (uint)srvs.size(), srvs.data());
 		context->CSSetUnorderedAccessViews(0, (uint)uavs.size(), uavs.data(), nullptr);
 		context->CSSetShader(giCompute.get(), nullptr, 0);
-		globals::profiler->BeginPass("ScreenSpaceGI::GI");
 		context->Dispatch((internalRes[0] + 7u) >> 3, (internalRes[1] + 7u) >> 3, 1);
-		globals::profiler->EndPass();
 
 		inputAoTexIdx = !inputAoTexIdx;
 		inputGITexIdx = !inputGITexIdx;
@@ -901,7 +891,7 @@ void ScreenSpaceGI::DrawSSGI()
 
 	// blur
 	if (settings.EnableBlur) {
-		TracyD3D11Zone(globals::state->tracyCtx, "SSGI - Diffuse Blur");
+		CS_GPU_PASS("ScreenSpaceGI::Blur");
 
 		resetViews();
 		srvs.at(0) = texWorkingDepth->srv.get();
@@ -917,9 +907,7 @@ void ScreenSpaceGI::DrawSSGI()
 		context->CSSetShaderResources(0, (uint)srvs.size(), srvs.data());
 		context->CSSetUnorderedAccessViews(0, (uint)uavs.size(), uavs.data(), nullptr);
 		context->CSSetShader(blurCompute.get(), nullptr, 0);
-		globals::profiler->BeginPass("ScreenSpaceGI::Blur");
 		context->Dispatch((internalRes[0] + 7u) >> 3, (internalRes[1] + 7u) >> 3, 1);
-		globals::profiler->EndPass();
 
 		inputGITexIdx = !inputGITexIdx;
 		lastFrameGITexIdx = inputGITexIdx;
@@ -929,10 +917,7 @@ void ScreenSpaceGI::DrawSSGI()
 	// VR stereo sync: bilateral blend of SSGI buffers between eyes
 	// Shi, Billeter, Eisemann 2022, "Stereo-consistent screen-space ambient occlusion"
 	if (globals::game::isVR && stereoSyncCompute) {
-		TracyD3D11Zone(globals::state->tracyCtx, "SSGI - Stereo Sync");
-
-		if (globals::state->frameAnnotations)
-			globals::state->BeginPerfEvent("SSGI - Stereo Sync");
+		CS_GPU_PASS("ScreenSpaceGI::StereoSync");
 
 		resetViews();
 		srvs.at(0) = texWorkingDepth->srv.get();
@@ -951,13 +936,12 @@ void ScreenSpaceGI::DrawSSGI()
 
 		inputAoTexIdx = !inputAoTexIdx;
 		inputGITexIdx = !inputGITexIdx;
-
-		if (globals::state->frameAnnotations)
-			globals::state->EndPerfEvent();
 	}
 
 	// upsample
 	if (settings.ResolutionMode != 0) {
+		CS_GPU_PASS("ScreenSpaceGI::Upsample");
+
 		resetViews();
 		srvs.at(0) = texWorkingDepth->srv.get();
 		srvs.at(1) = texAo[inputAoTexIdx]->srv.get();
@@ -973,9 +957,7 @@ void ScreenSpaceGI::DrawSSGI()
 		context->CSSetShaderResources(0, (uint)srvs.size(), srvs.data());
 		context->CSSetUnorderedAccessViews(0, (uint)uavs.size(), uavs.data(), nullptr);
 		context->CSSetShader(upsampleCompute.get(), nullptr, 0);
-		globals::profiler->BeginPass("ScreenSpaceGI::Upsample");
 		context->Dispatch((resolution[0] + 7u) >> 3, (resolution[1] + 7u) >> 3, 1);
-		globals::profiler->EndPass();
 
 		inputAoTexIdx = !inputAoTexIdx;
 		inputGITexIdx = !inputGITexIdx;

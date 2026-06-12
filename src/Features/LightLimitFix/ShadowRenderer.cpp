@@ -3,6 +3,7 @@
 
 #include "../LightLimitFix.h"
 #include "Deferred.h"
+#include "GpuPass.h"
 #include "I18n/I18n.h"
 #include "Menu/ThemeManager.h"
 #include "State.h"
@@ -39,18 +40,13 @@ static bool SetShadowParameters(T& lightData, Deferred::ShadowLightData& sd)
 
 void LightLimitFix::EarlyPrepass()
 {
-	auto state = globals::state;
-	state->BeginPerfEvent("LLF CopyShadowLightData");
 	CopyShadowLightData();
-	state->EndPerfEvent();
 }
 
 void LightLimitFix::CopyShadowLightData()
 {
 	ZoneScoped;
-#ifdef TRACY_ENABLE
-	TracyD3D11Zone(globals::state->tracyCtx, "LLF CopyShadowLightData");
-#endif
+	CS_GPU_PASS("LightLimitFix::CopyShadowLightData");
 
 	uint32_t slots = ShadowCasterManager::GetInstalledSlotCount();
 	if (slots == 0) {

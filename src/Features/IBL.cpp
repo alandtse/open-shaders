@@ -7,6 +7,7 @@
 #include "WeatherVariableRegistry.h"
 
 #include "../I18n/I18n.h"
+#include "GpuPass.h"
 #include <DDSTextureLoader.h>
 #include <DirectXTex.h>
 
@@ -236,9 +237,10 @@ void IBL::Prepass()
 		context->CSSetShaderResources(0, (uint)srvs.size(), srvs.data());
 		context->CSSetUnorderedAccessViews(0, (uint)uavs.size(), uavs.data(), nullptr);
 		context->CSSetShader(GetDiffuseIBLCS(), nullptr, 0);
-		globals::profiler->BeginPass("IBL::EnvDiffuseIBL");
-		context->Dispatch(1, 1, 1);
-		globals::profiler->EndPass();
+		{
+			CS_GPU_PASS("IBL::EnvDiffuseIBL");
+			context->Dispatch(1, 1, 1);
+		}
 	} else {
 		// Still need to set sampler and shader for sky IBL dispatch below
 		context->CSSetSamplers(0, (uint)samplers.size(), samplers.data());
@@ -254,9 +256,10 @@ void IBL::Prepass()
 
 		context->CSSetShaderResources(0, (uint)srvs.size(), srvs.data());
 		context->CSSetUnorderedAccessViews(0, (uint)uavs.size(), uavs.data(), nullptr);
-		globals::profiler->BeginPass("IBL::SkyDiffuseIBL");
-		context->Dispatch(1, 1, 1);
-		globals::profiler->EndPass();
+		{
+			CS_GPU_PASS("IBL::SkyDiffuseIBL");
+			context->Dispatch(1, 1, 1);
+		}
 	}
 
 	// Reset

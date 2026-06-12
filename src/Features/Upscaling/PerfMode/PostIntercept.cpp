@@ -1,3 +1,4 @@
+#include "../../../GpuPass.h"
 #include "../PerfMode.h"
 
 #include <algorithm>
@@ -40,8 +41,7 @@ void PerfMode::TonemapRender_Hook::thunk(void* imageSpaceShader, RE::BSTriShape*
 		return;
 	}
 
-	ZoneScoped;
-	TracyD3D11Zone(globals::state->tracyCtx, "PerfMode::TonemapRender");
+	CS_GPU_PASS("PerfMode::TonemapRender");
 
 	auto renderer = RE::BSGraphics::Renderer::GetSingleton();
 	auto& rtData = renderer->GetRuntimeData();
@@ -104,8 +104,7 @@ void PerfMode::RefractionRender_Hook::thunk(void* imageSpaceShader, RE::BSTriSha
 		return;
 	}
 
-	ZoneScoped;
-	TracyD3D11Zone(globals::state->tracyCtx, "PerfMode::RefractionRender");
+	CS_GPU_PASS("PerfMode::RefractionRender");
 
 	// --- Pass 1: engine's normal 1k refraction (untouched) ---
 	func(imageSpaceShader, shape, param);
@@ -248,8 +247,7 @@ void PerfMode::ISCopyRender_Hook::thunk(void* imageSpaceShader, RE::BSTriShape* 
 							rtDesc.Height > static_cast<UINT>(savedVP[0].Height + 1.0f));
 
 	if (needsStretch) {
-		ZoneScoped;
-		TracyD3D11Zone(globals::state->tracyCtx, "PerfMode::ISCopyStretch");
+		CS_GPU_PASS("PerfMode::ISCopyStretch");
 
 		// Replay viewport: full dest extent, preserve depth range from the
 		// original so anything sampling depth (unlikely for ISCopy but safe)
@@ -352,8 +350,6 @@ void PerfMode::DownscaleToKMain()
 	if (!hookActive || !testTextureSRV || !boxDownscalePS || !boxDownscaleVS || !linearSampler)
 		return;
 
-	ZoneScoped;
-	auto state = globals::state;
 	auto renderer = globals::game::renderer;
 	auto context = globals::d3d::context;
 	auto& rtData = renderer->GetRuntimeData();
@@ -365,8 +361,7 @@ void PerfMode::DownscaleToKMain()
 	if (!kmain.RTV)
 		return;
 
-	state->BeginPerfEvent("PerfMode::DownscaleToKMain");
-	TracyD3D11Zone(state->tracyCtx, "PerfMode::DownscaleToKMain");
+	CS_GPU_PASS("PerfMode::DownscaleToKMain");
 
 	{
 		FullscreenPassScope stateScope(context);
@@ -405,8 +400,6 @@ void PerfMode::DownscaleToKMain()
 		context->OMSetRenderTargets(1, &rtv, nullptr);
 		context->Draw(3, 0);
 	}
-
-	state->EndPerfEvent();
 }
 
 void PerfMode::HandlePostProcessing(const std::function<void()>& enginePost)

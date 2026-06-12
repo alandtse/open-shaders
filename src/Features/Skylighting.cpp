@@ -1,5 +1,6 @@
 #include "Skylighting.h"
 
+#include "GpuPass.h"
 #include "I18n/I18n.h"
 #include "ShaderCache.h"
 #include "State.h"
@@ -215,7 +216,7 @@ void Skylighting::Prepass()
 	if (interior)
 		return;
 
-	TracyD3D11Zone(globals::state->tracyCtx, "Skylighting - Update Probes");
+	CS_GPU_PASS("Skylighting::ProbeUpdate");
 
 	auto context = globals::d3d::context;
 
@@ -230,9 +231,7 @@ void Skylighting::Prepass()
 			context->CSSetShaderResources(0, (uint)srvs.size(), srvs.data());
 			context->CSSetUnorderedAccessViews(0, (uint)uavs.size(), uavs.data(), nullptr);
 			context->CSSetShader(probeUpdateCompute.get(), nullptr, 0);
-			globals::profiler->BeginPass("Skylighting::ProbeUpdate");
 			context->Dispatch((probeArrayDims[0] + 7u) >> 3, (probeArrayDims[1] + 7u) >> 3, probeArrayDims[2]);
-			globals::profiler->EndPass();
 		}
 
 		// Reset
@@ -483,15 +482,14 @@ void Skylighting::RenderOcclusion()
 {
 	ZoneScopedS(8);
 	auto shaderCache = globals::shaderCache;
-	auto state = globals::state;
 	auto renderer = globals::game::renderer;
 	auto sky = globals::game::sky;
 
 	if (!shaderCache->IsEnabled()) {
-		TracyD3D11Zone(globals::state->tracyCtx, "Precipitation Mask");
-		state->BeginPerfEvent("Precipitation Mask");
-		Main_Precipitation_RenderOcclusion::func();
-		state->EndPerfEvent();
+		{
+			CS_GPU_PASS("Skylighting::PrecipitationMask");
+			Main_Precipitation_RenderOcclusion::func();
+		}
 		return;
 	}
 
@@ -502,8 +500,7 @@ void Skylighting::RenderOcclusion()
 			auto precip = sky->precip;
 
 			{
-				TracyD3D11Zone(globals::state->tracyCtx, "Precipitation Mask");
-				state->BeginPerfEvent("Precipitation Mask");
+				CS_GPU_PASS("Skylighting::PrecipitationMask");
 
 				doPrecip = false;
 
@@ -518,17 +515,12 @@ void Skylighting::RenderOcclusion()
 					auto particleShaderProperty = netimmerse_cast<RE::BSParticleShaderProperty*>(shaderProp);
 					auto rain = (RE::BSParticleShaderRainEmitter*)(particleShaderProperty->particleEmitter);
 
-					globals::profiler->BeginPass("Skylighting::PrecipMask");
 					precip->RenderMask(rain);
-					globals::profiler->EndPass();
 				}
-
-				state->EndPerfEvent();
 			}
 
 			{
-				TracyD3D11Zone(globals::state->tracyCtx, "Skylighting Mask");
-				state->BeginPerfEvent("Skylighting Mask");
+				CS_GPU_PASS("Skylighting::SkylightingMask");
 
 				if (queuedResetSkylighting)
 					ResetSkylighting();
@@ -592,10 +584,8 @@ void Skylighting::RenderOcclusion()
 
 				BSParticleShaderRainEmitter* rain = new BSParticleShaderRainEmitter;
 				{
-					TracyD3D11Zone(state->tracyCtx, "Skylighting - Render Height Map");
-					globals::profiler->BeginPass("Skylighting::OcclusionMask");
+					CS_GPU_PASS("Skylighting::OcclusionMask");
 					precip->RenderMask((RE::BSParticleShaderRainEmitter*)rain);
-					globals::profiler->EndPass();
 				}
 				inOcclusion = false;
 
@@ -615,8 +605,6 @@ void Skylighting::RenderOcclusion()
 					ZoneScopedN("Skylighting - Restore Projection");
 					_computeProjection(precip, precip->occlusionData.camera);
 				}
-
-				state->EndPerfEvent();
 			}
 		}
 	}
