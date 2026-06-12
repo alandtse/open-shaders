@@ -80,6 +80,29 @@ Timing measurements (not correctness) must use **release-parity flags**
 (`/O3`, no `D3DCOMPILE_DEBUG`/`SKIP_OPTIMIZATION`) — the validation config's
 debug flags make compiles artificially fast and would understate every number.
 
+### Verification cadence: batch + bisect (never per-micro-step)
+
+Verification cost must scale with the number of _failures_, not the number of
+changes. The Phase-1 retrospective: gating every section twice per stage, plus
+post-hook re-runs, burned ~an hour per shader on redundant sweeps. The protocol:
+
+1. Author a whole batch of changes (each its own commit; no gating while
+   authoring beyond compiling in your head).
+2. One gate run over the full list with `-FailFast`. IDENTICAL ⇒ done — N
+   changes verified for the price of one run.
+3. On DIFFERS the script prints the failing permutation as a **bisect probe**:
+   `git bisect run` re-testing only that one permutation
+   (`-Permutations "<failing>"`) finds the culprit commit in log₂(N) steps of
+   seconds each. Drop or fix it, then one final full-list run as the PR proof.
+4. Don't re-gate after clang-format hook reformatting — Tier 0 is
+   whitespace-immune by construction (fxc `/P` retokenizes); spot-check one
+   permutation if paranoid.
+
+The verify script is parallel (`-Jobs`, default cores−2) and caches the
+base-ref side per SHA (`build/verify-cache/`). Measured on Lighting: full
+1276-perm Tier-0 ≈ 21s cold / 10s warm (was 5–10 min); stratified Tier-1 ≈
+64s cold / 40s warm (was 10+ min).
+
 ## Phase 0 — Tooling + triage baseline (one capable agent, sequential)
 
 Deliverables, each small and testable:
@@ -118,8 +141,9 @@ files, e.g. `Lighting.hlsl` → `LightingVS.hlsli`, `LightingLandscape.hlsli`,
    leave `#include "NewSection.hlsli"` at the original site. No reordering, no
    renaming, no whitespace/comment edits, no "while I'm here" fixes. One section
    per commit.
-3. Gate: Tier 0 over the **full** permutation list (cheap). Exit 0 ⇒ commit.
-   Exit non-zero ⇒ `git checkout` the touched files, report the failure, stop.
+3. Gate: batch + bisect (see "Verification cadence" above) — commit each
+   section, gate the whole batch once with `-FailFast` at the end. On failure,
+   bisect with the printed probe permutation, drop the culprit commit, report.
    Do not retry with variations.
 4. End of shader (all sections done): one Tier-1 run over the `stratified` list
    as a belt-and-braces check (catches include-resolution surprises that /P
