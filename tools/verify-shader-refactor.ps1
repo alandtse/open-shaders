@@ -33,6 +33,19 @@
     Optional explicit permutation list; each entry is a space-separated define set,
     e.g. -Permutations "PSHADER","PSHADER VR". Overrides the auto sweep.
 
+.PARAMETER PermutationsFile
+    File with one space-separated define set per line ('#' comments allowed), as
+    produced by tools/gen-verify-perms.py. Overrides -Permutations and the auto
+    sweep. Use this for the big shaders -- the default sweep is far too weak there.
+
+.PARAMETER PreprocessOnly
+    Tier-0 gate: compare fxc /P preprocessed output (with #line directives
+    stripped) instead of compiled DXBC. Identical preprocessed text proves
+    identical bytecode at every optimization level, and runs in milliseconds per
+    permutation, so it can sweep a full permutation list cheaply. Only valid for
+    refactors that don't change the preprocessed text (pure cut-paste moves);
+    a legitimate guard-tightening change must use the default DXBC compare.
+
 .PARAMETER Entry
     Shader entry point. Default: main.
 
@@ -52,6 +65,8 @@ param(
     [string]$BaseRef,
     [string]$IncludeDir = "package/Shaders",
     [string[]]$Permutations,
+    [string]$PermutationsFile,
+    [switch]$PreprocessOnly,
     [string]$Entry = "main",
     [string]$Profile,
     [string]$Fxc
@@ -108,6 +123,12 @@ try {
         default { "PSHADER" }
     }
 
+    if ($PermutationsFile) {
+        if (-not (Test-Path $PermutationsFile)) { throw "Permutations file '$PermutationsFile' not found." }
+        $Permutations = @(Get-Content $PermutationsFile | ForEach-Object { $_.Trim() } |
+                Where-Object { $_ -and -not $_.StartsWith('#') })
+        if ($Permutations.Count -eq 0) { throw "Permutations file '$PermutationsFile' contains no define sets." }
+    }
     if (-not $Permutations -or $Permutations.Count -eq 0) {
         $Permutations = @(
             "$stageDefine",
@@ -135,16 +156,35 @@ try {
     $baseInclude = Join-Path $baseRoot $IncludeDir
     if (-not (Test-Path $baseFile)) { throw "'$relPath' not found at '$BaseRef'." }
 
-    function Compile([string]$src, [string]$incDir, [string]$defs, [string]$outFile, [switch]$Asm) {
+    function DefineArgs([string]$defs) {
         # Preserve explicit-valued defines (e.g. SHADOWFILTER=0); only bare names get =1.
         $defArgs = @()
         foreach ($d in ($defs -split '\s+' | Where-Object { $_ })) {
             $defArgs += "/D"
             $defArgs += $(if ($d -like '*=*') { $d } else { "$d=1" })
         }
+        return $defArgs
+    }
+
+    function Compile([string]$src, [string]$incDir, [string]$defs, [string]$outFile, [switch]$Asm) {
+        $defArgs = DefineArgs $defs
         $fmt = if ($Asm) { "/Fc" } else { "/Fo" }
         $out = & $fxcPath /nologo /T $Profile /E $Entry @defArgs /I $incDir $src $fmt $outFile 2>&1
         return @{ Code = $LASTEXITCODE; Out = $out }
+    }
+
+    # Tier 0: preprocessed text with #line directives stripped. Identical text =>
+    # identical DXBC at any optimization level (fxc embeds no file/line without /Zi),
+    # so cut-paste moves between files verify in milliseconds per permutation.
+    function PreprocessLines([string]$src, [string]$incDir, [string]$defs, [string]$outFile) {
+        $defArgs = DefineArgs $defs
+        $out = & $fxcPath /nologo /P $outFile @defArgs /I $incDir $src 2>&1
+        if ($LASTEXITCODE -ne 0) { return @{ Code = $LASTEXITCODE; Out = $out } }
+        # Also drop blank lines and trailing whitespace: include-boundary expansion
+        # shifts them, and neither can affect tokenization (no line-splices survive /P).
+        $lines = @(Get-Content $outFile | ForEach-Object { $_.TrimEnd() } |
+                Where-Object { $_ -and $_ -notmatch '^\s*#line' })
+        return @{ Code = 0; Lines = $lines }
     }
 
     Write-Host "Shader   : $relPath"
@@ -158,6 +198,33 @@ try {
 
     foreach ($perm in $Permutations) {
         $tag = $perm
+
+        if ($PreprocessOnly) {
+            $rb = PreprocessLines $baseFile $baseInclude $perm (Join-Path $work "base.i")
+            $rw = PreprocessLines $shaderFull $IncludeDir $perm (Join-Path $work "work.i")
+            if ($rb.Code -ne 0 -or $rw.Code -ne 0) {
+                $anyError = $true
+                $which = if ($rb.Code -ne 0) { "BASE" } else { "WORK" }
+                Write-Host "[$tag] PREPROCESS-ERROR ($which)" -ForegroundColor Red
+                ($(if ($rb.Code -ne 0) { $rb.Out } else { $rw.Out }) | Where-Object { $_ -match 'error|warning' } | Select-Object -First 6) |
+                    ForEach-Object { Write-Host "    $_" }
+                continue
+            }
+            $d = Compare-Object $rb.Lines $rw.Lines
+            if (-not $d) {
+                Write-Host "[$tag] IDENTICAL (preprocessed)" -ForegroundColor Green
+            } else {
+                $allIdentical = $false
+                Write-Host "[$tag] DIFFERS (preprocessed text)" -ForegroundColor Yellow
+                $d | Select-Object -First 20 | ForEach-Object {
+                    $mark = if ($_.SideIndicator -eq '=>') { 'work' } else { 'base' }
+                    Write-Host ("    [{0}] {1}" -f $mark, $_.InputObject)
+                }
+                if (@($d).Count -gt 20) { Write-Host ("    ... (+{0} more lines)" -f (@($d).Count - 20)) }
+            }
+            continue
+        }
+
         $baseCso = Join-Path $work "base.cso"
         $workCso = Join-Path $work "work.cso"
         $rb = Compile $baseFile $baseInclude $perm $baseCso
