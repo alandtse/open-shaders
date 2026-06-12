@@ -1,5 +1,6 @@
 #include "Game.h"
 
+#include "Globals.h"
 #include "State.h"
 
 namespace Util
@@ -134,8 +135,32 @@ namespace Util
 
 	bool GetTemporal()
 	{
-		auto imageSpaceManager = RE::ImageSpaceManager::GetSingleton();
-		return (!globals::game::isVR ? imageSpaceManager->GetRuntimeData().BSImagespaceShaderISTemporalAA->taaEnabled : imageSpaceManager->GetVRRuntimeData().BSImagespaceShaderISTemporalAA->taaEnabled);
+		auto* imageSpaceManager = globals::game::imageSpaceManager;
+		if (!imageSpaceManager)
+			return false;
+		// VR keeps its own ISTemporalAA instance at a different offset.
+		auto& taaShader = !globals::game::isVR ?
+		                      imageSpaceManager->GetRuntimeData().BSImagespaceShaderISTemporalAA :
+		                      imageSpaceManager->GetVRRuntimeData().BSImagespaceShaderISTemporalAA;
+		return taaShader && taaShader->taaEnabled;
+	}
+
+	void SetTemporal(bool enabled)
+	{
+		auto* imageSpaceManager = globals::game::imageSpaceManager;
+		if (!imageSpaceManager)
+			return;
+		auto& taaShader = !globals::game::isVR ?
+		                      imageSpaceManager->GetRuntimeData().BSImagespaceShaderISTemporalAA :
+		                      imageSpaceManager->GetVRRuntimeData().BSImagespaceShaderISTemporalAA;
+		if (taaShader)
+			taaShader->taaEnabled = enabled;
+	}
+
+	void DisableVanillaTAA()
+	{
+		if (auto* setting = RE::GetINISetting("bUseTAA:Display"))
+			setting->data.b = false;
 	}
 
 	float GetVerticalFOVRad()
