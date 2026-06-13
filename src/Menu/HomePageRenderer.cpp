@@ -239,14 +239,14 @@ void HomePageRenderer::RenderCacheMismatchSection()
 		const char* detail = mismatch.detail.c_str();  // English fallback (logs / non-flip kinds)
 		if (mismatch.kind == MismatchKind::EnabledFlip)
 			detail = mismatch.nowPresent ?
-			             T("menu.home.cache_mismatch_added", "enabled now, but the cache was built without it") :
-			             T("menu.home.cache_mismatch_removed", "in the cache, but now uninstalled or disabled at boot");
+			             T("menu.home.cache_mismatch_added", "in your setup now, but missing from the saved cache") :
+			             T("menu.home.cache_mismatch_removed", "in the saved cache, but missing from your setup now");
 		ImGui::BulletText("%s: %s", mismatch.feature.c_str(), detail);
 	}
 	ImGui::Spacing();
 
 	ImGui::TextWrapped("%s", T("menu.home.cache_mismatch_resolve",
-								 "Restore the changed feature(s) and restart to reuse the saved cache, or rebuild for your "
+								 "Match your features to the saved cache and restart to reuse it, or rebuild for your "
 								 "current setup:"));
 
 	// Every shown mismatch is an EnabledFlip (a Disable-at-Boot difference), so matching the

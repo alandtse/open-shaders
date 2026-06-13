@@ -299,7 +299,7 @@ void OverlayRenderer::RenderShaderCompilationStatus(const std::function<const ch
 			ImGui::TextColored(themeSettings.StatusPalette.Error,
 				T("overlay.feature_issues_compiling",
 					"WARNING: %zu feature(s) failed to load (bad install or version mismatch).\n"
-					"Quit, fix them in the menu's Feature Issues tab, and restart -- compiling now\n"
+					"Quit, fix them in the menu's Feature Issues tab, and restart - compiling now\n"
 					"bakes the wrong shaders and you will have to recompile after fixing."),
 				issueCount);
 		}
