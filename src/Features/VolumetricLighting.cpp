@@ -189,7 +189,6 @@ void VolumetricLighting::PostPostLoad()
 		stl::write_thunk_call<RenderDepth>(REL::RelocationID(35560, 0).address() + REL::Relocate(0x2EE, 0));
 	}
 
-	bEnableVolumetricLighting = reinterpret_cast<bool*>(REL::RelocationID(527940, 414913).address());
 	gVolumetricLightingSizeLow = reinterpret_cast<TextureSize*>(REL::RelocationID(527970, 414916).address());
 	gVolumetricLightingSizeMedium = reinterpret_cast<TextureSize*>(REL::RelocationID(527973, 414919).address());
 	gVolumetricLightingSizeHigh = reinterpret_cast<TextureSize*>(REL::RelocationID(527976, 414922).address());
@@ -244,14 +243,14 @@ void VolumetricLighting::SetupVL()
 		if (globals::game::isVR)
 			SetBooleanSettings(hiddenVRSettings, GetName(), settings.InteriorEnabled && inInteriorWithSun);
 		else
-			*bEnableVolumetricLighting = settings.InteriorEnabled && inInteriorWithSun;
+			*globals::game::bEnableVolumetricLighting = settings.InteriorEnabled && inInteriorWithSun;
 		*gVolumetricLightingSizeHigh = static_cast<Quality>(settings.InteriorQuality) == Quality::Custom ? settings.InteriorCustomSize : defaultSizeHigh;
 		SetVLQuality(GetVLDescriptor(), settings.InteriorQuality);
 	} else {
 		if (globals::game::isVR)
 			SetBooleanSettings(hiddenVRSettings, GetName(), settings.ExteriorEnabled);
 		else
-			*bEnableVolumetricLighting = settings.ExteriorEnabled;
+			*globals::game::bEnableVolumetricLighting = settings.ExteriorEnabled;
 		*gVolumetricLightingSizeHigh = static_cast<Quality>(settings.ExteriorQuality) == Quality::Custom ? settings.ExteriorCustomSize : defaultSizeHigh;
 		SetVLQuality(GetVLDescriptor(), settings.ExteriorQuality);
 	}
@@ -281,7 +280,7 @@ void VolumetricLighting::RenderVolumetricLighting(VolumetricLightingDescriptor* 
 void VolumetricLighting::RenderDepth::thunk()
 {
 	func();
-	if (globals::features::volumetricLighting.bEnableVolumetricLighting)
+	if (globals::game::bEnableVolumetricLighting)
 		RenderVolumetricLighting(&GetVLDescriptor(), RE::Main::WorldRootCamera(), false);
 }
 
@@ -352,8 +351,7 @@ void VolumetricLighting::CopyResource::thunk(ID3D11DeviceContext* a_this, ID3D11
 	// But, the copy might have to be done manually later after IsFullScreenVR if
 	// used in the next frame.
 
-	auto& singleton = globals::features::volumetricLighting;
-	if (!(Util::IsDynamicResolution() && singleton.bEnableVolumetricLighting)) {
+	if (!(Util::IsDynamicResolution() && globals::game::bEnableVolumetricLighting)) {
 		a_this->CopyResource(a_renderTarget, a_renderTargetSource);
 	}
 }
