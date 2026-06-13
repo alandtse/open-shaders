@@ -4,6 +4,7 @@
 #include <efsw/efsw.hpp>
 #include <vector>
 
+#include "Utils/CacheInvalidation.h"
 #include "Utils/WinApi.h"
 
 using namespace std::chrono;
@@ -420,6 +421,26 @@ namespace SIE
 		void DeleteDiskCache();
 		void ValidateDiskCache();
 		void WriteDiskCacheInfo();
+
+		/// One disk-cache/runtime state divergence found by ValidateDiskCache.
+		/// (Logic lives in Utils/CacheInvalidation.h so tests/cpp can exercise it.)
+		using CacheMismatch = Util::CacheInvalidation::CacheMismatch;
+
+		/// Mismatches found at boot (empty when the disk cache validated clean).
+		const std::vector<CacheMismatch>& GetCacheMismatches() const { return cacheMismatches; }
+
+		/// True while an enabled-flip mismatch holds the disk cache: blobs preserved on
+		/// disk, this session compiles memory-only, and the menu offers rebuild vs
+		/// fix-setup-and-restart (after a fix the cache revalidates untouched).
+		bool IsDiskCacheHeld() const { return diskCacheHeld; }
+
+		/// Disk-cache IO gate: user setting AND not held. The hold must not flip
+		/// isDiskCache itself -- that value persists as "Enable Disk Cache" in user
+		/// settings, so a save during a held session would disable the cache forever.
+		bool IsDiskCacheActive() const { return isDiskCache && !diskCacheHeld; }
+
+		/// User accepted the new feature state: wipe the held cache and rebuild to disk.
+		void AcceptCacheRebuild();
 		bool IsSkipUnchangedShaders() const;
 		void SetSkipUnchangedShaders(bool value);
 		bool UseFileWatcher() const;
@@ -566,8 +587,12 @@ namespace SIE
 		int32_t backgroundCompilationThreadCount = std::max(static_cast<int32_t>(Util::GetPerformanceCoreCount()) / 2, 1);
 		BS::thread_pool<> compilationPool{ static_cast<std::size_t>(compilationThreadCount) };
 		std::jthread managementJthread;  // dedicated thread for ManageCompilationSet (not in pool)
-		bool backgroundCompilation = false;
-		bool menuLoaded = false;
+		// atomic: written from the menu/input thread (boot setting + Skip Compilation hotkey),
+		// read on the management/compile and render threads.
+		std::atomic<bool> backgroundCompilation = false;
+		// atomic: written from the SKSE messaging handler (kDataLoaded),
+		// read on the render/UI threads (OverlayRenderer, BackgroundBlur).
+		std::atomic<bool> menuLoaded = false;
 
 		enum class LightingShaderTechniques
 		{
@@ -823,6 +848,9 @@ namespace SIE
 
 		bool isEnabled = true;
 		bool isDiskCache = true;
+		bool diskCacheHeld = false;
+		std::vector<CacheMismatch> cacheMismatches;
+		std::vector<std::string> heldMismatchDefines;
 		bool isSkipUnchangedShaders = true;  ///< when true, recompile a disk-cached shader only if its source is newer
 		bool isAsync = true;
 		bool isDump = false;

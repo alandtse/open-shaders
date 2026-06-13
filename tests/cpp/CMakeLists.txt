@@ -53,6 +53,7 @@ add_executable(cpp_tests
     test_shadowcaster_math.cpp
     test_llf_sanitize.cpp
     test_hdr_png_metadata.cpp
+    test_cacheinvalidation.cpp
     # Stub I18n::Get so units-under-test that call T() (Subrect's DrawEditor)
     # link without pulling the translation loader into the test binary.
     i18n_stub.cpp

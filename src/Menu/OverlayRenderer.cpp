@@ -286,6 +286,12 @@ void OverlayRenderer::RenderShaderCompilationStatus(const std::function<const ch
 		}
 		ImGui::TextUnformatted(progressTitle.c_str());
 		ImGui::ProgressBar(percent, ImVec2(0.0f, 0.0f), progressOverlay.c_str());
+		if (shaderCache->IsDiskCacheHeld()) {
+			ImGui::TextColored(themeSettings.StatusPalette.Warning, "%s",
+				T("overlay.cache_held",
+					"Feature set changed: your previous shader cache is preserved on disk.\n"
+					"Open the Open Shaders menu home page to rebuild it or fix your setup and restart."));
+		}
 		if (state->IsDeveloperMode()) {
 			int32_t threadLimit = shaderCache->backgroundCompilation ? shaderCache->backgroundCompilationThreadCount : shaderCache->compilationThreadCount;
 			int compilationRunning = (int)shaderCache->compilationPool.get_tasks_running();
