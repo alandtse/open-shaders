@@ -274,11 +274,30 @@ void HomePageRenderer::RenderCacheMismatchSection()
 		s_matchApplied = false;
 		s_lastMismatchCount = mismatchCount;
 	}
+	// Once Match is applied the choice is made (reuse on next restart): collapse to a single
+	// confirmation and drop both action buttons, so the resolved state reads cleanly instead of
+	// leaving the now-irrelevant Rebuild button beside the message.
+	if (s_matchApplied) {
+		ImGui::TextColored(menu ? menu->GetTheme().StatusPalette.RestartNeeded : ImVec4(0.4f, 1.0f, 0.4f, 1.0f),
+			"%s", T("menu.home.cache_mismatch_matched", "Boot settings updated - restart to reuse the saved cache."));
+		ImGui::Spacing();
+		ImGui::Separator();
+		ImGui::Spacing();
+		return;
+	}
+
+	// Two mutually-exclusive choices, side by side: match the cache (reuse) or rebuild it.
 	if (!canMatch)
 		ImGui::BeginDisabled();
 	const bool matchClicked = ImGui::Button(T("menu.home.cache_mismatch_match", "Match Cache & Restart"));
 	if (!canMatch)
 		ImGui::EndDisabled();
+	if (auto _ttm = Util::HoverTooltipWrapper()) {
+		if (canMatch)
+			ImGui::Text("%s", T("menu.home.cache_mismatch_match_tooltip", "Sets your Disable-at-Boot toggles to match the saved cache, so a restart reuses it with no recompile."));
+		else
+			ImGui::Text(T("menu.home.cache_mismatch_match_blocked", "Unavailable: '%s' is uninstalled (not just disabled), so settings can't match the cache. Reinstall it or rebuild."), blockingFeature);
+	}
 	if (matchClicked) {
 		if (auto* state = globals::state) {
 			for (const auto& m : shaderCache->GetCacheMismatches())
@@ -287,23 +306,14 @@ void HomePageRenderer::RenderCacheMismatchSection()
 			s_matchApplied = true;
 		}
 	}
-	if (auto _ttm = Util::HoverTooltipWrapper()) {
-		if (canMatch)
-			ImGui::Text("%s", T("menu.home.cache_mismatch_match_tooltip", "Sets your Disable-at-Boot toggles to match the saved cache, so a restart reuses it with no recompile."));
-		else
-			ImGui::Text(T("menu.home.cache_mismatch_match_blocked", "Unavailable: '%s' is uninstalled (not just disabled), so settings can't match the cache. Reinstall it or rebuild."), blockingFeature);
-	}
-	if (s_matchApplied)
-		ImGui::TextColored(menu ? menu->GetTheme().StatusPalette.RestartNeeded : ImVec4(0.4f, 1.0f, 0.4f, 1.0f),
-			"%s", T("menu.home.cache_mismatch_matched", "Boot settings updated - restart to reuse the cache."));
 	ImGui::SameLine();
-	if (ImGui::Button(T("menu.home.cache_mismatch_rebuild", "Rebuild Shader Cache Now"))) {
+	if (ImGui::Button(T("menu.home.cache_mismatch_rebuild", "Rebuild Cache for Current Features"))) {
 		shaderCache->AcceptCacheRebuild();
 	}
 	if (auto _tt = Util::HoverTooltipWrapper()) {
 		ImGui::Text("%s", T("menu.home.cache_mismatch_rebuild_tooltip",
-							  "Recompiles all shaders for your current features and saves a new cache. "
-							  "Takes a while; the old cache is replaced."));
+							  "Discards the saved cache and recompiles all shaders for your current features. "
+							  "Takes a while, but stops the every-launch recompile."));
 	}
 
 	ImGui::Spacing();
