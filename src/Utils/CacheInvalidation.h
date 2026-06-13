@@ -29,9 +29,10 @@ namespace Util::CacheInvalidation
 			EnabledFlip,     ///< feature set changed — likely unintentional, hold + prompt
 		};
 		Kind kind;
-		std::string shortName;  ///< stable key ("Plugin" for plugin-version entries)
-		std::string feature;    ///< display name for UI
-		std::string detail;     ///< human-readable direction of the mismatch
+		std::string shortName;    ///< stable key ("Plugin" for plugin-version entries)
+		std::string feature;      ///< display name for UI
+		std::string detail;       ///< English direction of the mismatch (logs + fallback)
+		bool nowPresent = false;  ///< EnabledFlip only: feature is loaded now (added) vs not (removed); lets the UI localize the direction
 	};
 
 	/// Runtime-side view of a feature, decoupled from the Feature class.
@@ -72,7 +73,8 @@ namespace Util::CacheInvalidation
 				mismatches.push_back({ CacheMismatch::Kind::EnabledFlip, feature.shortName, feature.name,
 					feature.loaded ?
 						"installed/enabled now, but the cache was built without it" :
-						"the cache was built with it, but it is now uninstalled or disabled at boot" });
+						"the cache was built with it, but it is now uninstalled or disabled at boot",
+					feature.loaded });
 				continue;
 			}
 			if (feature.loaded) {

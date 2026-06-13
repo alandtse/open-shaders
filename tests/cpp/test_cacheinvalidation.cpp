@@ -80,6 +80,7 @@ TEST_CASE("ClassifyMismatches: enabled flips in both directions", "[cacheinvalid
 		REQUIRE(m.size() == 1);
 		CHECK(m[0].kind == CacheMismatch::Kind::EnabledFlip);
 		CHECK(m[0].detail.find("uninstalled or disabled") != std::string::npos);
+		CHECK(m[0].nowPresent == false);  // removed direction → UI shows the "_removed" string
 	}
 	SECTION("feature installed vs cache built without it")
 	{
@@ -87,6 +88,7 @@ TEST_CASE("ClassifyMismatches: enabled flips in both directions", "[cacheinvalid
 		REQUIRE(m.size() == 1);
 		CHECK(m[0].kind == CacheMismatch::Kind::EnabledFlip);
 		CHECK(m[0].detail.find("built without it") != std::string::npos);
+		CHECK(m[0].nowPresent == true);  // added direction → UI shows the "_added" string
 	}
 	SECTION("feature absent from manifest entirely counts as flip when loaded")
 	{
