@@ -292,6 +292,17 @@ void OverlayRenderer::RenderShaderCompilationStatus(const std::function<const ch
 					"Feature set changed: your previous shader cache is preserved on disk.\n"
 					"Open the Open Shaders menu home page to rebuild it or fix your setup and restart."));
 		}
+		// Surface bad-install feature problems during the compile itself; otherwise
+		// the user only learns from the Feature Issues tab after baking the wrong set.
+		if (FeatureIssues::HasFeatureIssues()) {
+			const size_t issueCount = FeatureIssues::GetFeatureIssues().size();
+			ImGui::TextColored(themeSettings.StatusPalette.Error,
+				T("overlay.feature_issues_compiling",
+					"WARNING: %zu feature(s) failed to load (bad install or version mismatch).\n"
+					"Quit, fix them in the menu's Feature Issues tab, and restart -- compiling now\n"
+					"bakes the wrong shaders and you will have to recompile after fixing."),
+				issueCount);
+		}
 		if (state->IsDeveloperMode()) {
 			int32_t threadLimit = shaderCache->backgroundCompilation ? shaderCache->backgroundCompilationThreadCount : shaderCache->compilationThreadCount;
 			int compilationRunning = (int)shaderCache->compilationPool.get_tasks_running();

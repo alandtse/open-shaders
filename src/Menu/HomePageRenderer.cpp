@@ -268,6 +268,12 @@ void HomePageRenderer::RenderCacheMismatchSection()
 	}
 	const bool canMatch = blockingFeature == nullptr;
 	static bool s_matchApplied = false;
+	// Clear the "restart to reuse" confirmation if the mismatch set changes underneath us.
+	static size_t s_lastMismatchCount = 0;
+	if (const size_t mismatchCount = shaderCache->GetCacheMismatches().size(); mismatchCount != s_lastMismatchCount) {
+		s_matchApplied = false;
+		s_lastMismatchCount = mismatchCount;
+	}
 	if (!canMatch)
 		ImGui::BeginDisabled();
 	const bool matchClicked = ImGui::Button(T("menu.home.cache_mismatch_match", "Match Cache & Restart"));
@@ -281,11 +287,11 @@ void HomePageRenderer::RenderCacheMismatchSection()
 			s_matchApplied = true;
 		}
 	}
-	if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+	if (auto _ttm = Util::HoverTooltipWrapper()) {
 		if (canMatch)
-			ImGui::SetTooltip("%s", T("menu.home.cache_mismatch_match_tooltip", "Sets your Disable-at-Boot toggles to match the saved cache, so a restart reuses it with no recompile."));
+			ImGui::Text("%s", T("menu.home.cache_mismatch_match_tooltip", "Sets your Disable-at-Boot toggles to match the saved cache, so a restart reuses it with no recompile."));
 		else
-			ImGui::SetTooltip(T("menu.home.cache_mismatch_match_blocked", "Unavailable: '%s' is uninstalled (not just disabled), so settings can't match the cache. Reinstall it or rebuild."), blockingFeature);
+			ImGui::Text(T("menu.home.cache_mismatch_match_blocked", "Unavailable: '%s' is uninstalled (not just disabled), so settings can't match the cache. Reinstall it or rebuild."), blockingFeature);
 	}
 	if (s_matchApplied)
 		ImGui::TextColored(menu ? menu->GetTheme().StatusPalette.RestartNeeded : ImVec4(0.4f, 1.0f, 0.4f, 1.0f),

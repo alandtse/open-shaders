@@ -2852,6 +2852,7 @@
     "overlay.blocked_shader_detail": "Type: %s | Class: %s | Descriptor: 0x%X",
     "overlay.cache_held": "Feature set changed: your previous shader cache is preserved on disk.\nOpen the Open Shaders menu home page to rebuild it or fix your setup and restart.",
     "overlay.compiling_shaders": "{}Compiling Shaders: {}",
+    "overlay.feature_issues_compiling": "WARNING: %zu feature(s) failed to load (bad install or version mismatch).\nQuit, fix them in the menu's Feature Issues tab, and restart -- compiling now\nbakes the wrong shaders and you will have to recompile after fixing.",
     "overlay.modified_features": "Features that may have modified shaders detected. Check Feature Issues in the Menu.",
     "overlay.shader_blocking_active": "Shader Blocking Active",
     "overlay.shaders_failed": "ERROR: %llu shaders failed to compile. Check installation and CommunityShaders.log",
