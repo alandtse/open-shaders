@@ -23,6 +23,10 @@ on:
                 description: "Run shader unit tests"
                 type: boolean
                 default: true
+            cache-artifacts:
+                description: "Compile shader validation at release parity and upload distributable ShaderCache artifacts"
+                type: boolean
+                default: false
             run-cpp-tests:
                 description: "Run C++ unit tests (tests/cpp)"
                 type: boolean
@@ -145,8 +149,10 @@ jobs:
                 config:
                     - name: "Flatrim"
                       file: ".github/configs/shader-validation.yaml"
+                      runtime: "SE"
                     - name: "VR"
                       file: ".github/configs/shader-validation-vr.yaml"
+                      runtime: "VR"
             fail-fast: false
         steps:
             - name: Checkout code
@@ -223,8 +229,39 @@ jobs:
                   fi
                   echo "Changed files for incremental validation:"
                   cat changed_files.txt || true
+                  # When the run doubles as the cache builder: release parity (/O3, debug
+                  # defines stripped) AND the default-install profile config (non-AIO and
+                  # default-disabled feature defines stripped -- the shipped cache targets a
+                  # default install and is invalid once any extra feature is added). PR
+                  # validation keeps the full configs, so all feature paths stay covered.
+                  CONFIG="${{ matrix.config.file }}"
+                  EXTRA=""
+                  if [ "${{ inputs.cache-artifacts }}" = "true" ]; then
+                    EXTRA="--strip-debug-defines --optimization-level 3"
+                    python tools/build-shader-cache.py --emit-profile-config "$CONFIG" "profile-config-${{ matrix.config.runtime }}.yaml"
+                    CONFIG="profile-config-${{ matrix.config.runtime }}.yaml"
+                  fi
                   python tools/validate_changed_shaders.py --changed-list-file changed_files.txt -- \
-                    hlslkit-compile --fxc "${{ steps.find_fxc.outputs.fxc_path }}" --shader-dir build/ALL/aio/Shaders --output-dir build/ShaderCache --config ${{ matrix.config.file }} --max-warnings 0 --suppress-warnings X1519
+                    hlslkit-compile --fxc "${{ steps.find_fxc.outputs.fxc_path }}" --shader-dir build/ALL/aio/Shaders --output-dir build/ShaderCache --config "$CONFIG" --max-warnings 0 --suppress-warnings X1519 $EXTRA
+
+            # Never runs in pull_request_target contexts or on fork checkouts
+            # (cache-artifacts is only set by release-build); the guards make
+            # that structural for CodeQL and future callers.
+            - name: Finalize distributable shader cache (${{ matrix.config.runtime }})
+              if: inputs.cache-artifacts && github.event_name != 'pull_request_target' && inputs.repository == github.repository && steps.check-hlsl.outputs.skip != 'true'
+              shell: bash
+              run: |
+                  # Re-profiles default-disabled features' shaders (validation keeps their
+                  # defines on for coverage), prunes sidecars, writes Info.ini.
+                  python tools/build-shader-cache.py --finalize-existing build/ShaderCache --shader-dir build/ALL/aio/Shaders --runtime ${{ matrix.config.runtime }}
+
+            - name: Upload shader cache artifact (${{ matrix.config.runtime }})
+              if: inputs.cache-artifacts && github.event_name != 'pull_request_target' && inputs.repository == github.repository && steps.check-hlsl.outputs.skip != 'true'
+              uses: actions/upload-artifact@v7
+              with:
+                  name: ShaderCache-${{ matrix.config.runtime }}
+                  path: build/ShaderCache
+                  retention-days: 30
 
             - name: Upload shader validation logs
               if: failure() && steps.check-hlsl.outputs.skip != 'true'
