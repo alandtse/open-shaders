@@ -34,7 +34,9 @@ namespace ImGuiVRHelperClient
 {
 	void Init()
 	{
-		if (!REL::Module::IsVR()) {
+		// Init() runs at SKSE kPostLoad, after globals::ReInit() has
+		// cached the VR flag, so prefer the global over REL::Module::IsVR().
+		if (!globals::game::isVR) {
 			return;
 		}
 
