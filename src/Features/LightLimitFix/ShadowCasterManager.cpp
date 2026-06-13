@@ -4169,6 +4169,50 @@ namespace ShadowCasterManager
 			return;
 		}
 
+		// === "Last changed" tracking (debug aid) ===========================
+		// Stamp the time each light's role (shadow / converted / absent) last
+		// changed, so the table's "Changed" column shows "N ago" and can be
+		// sorted to float just-promoted/demoted/converted lights to the top --
+		// stable while the player is still, jumps when something transitions.
+		// Render-side and debug-only; no coupling to the scheduler.
+		// Role codes for "Changed" tracking, ordered by shadow involvement.
+		enum : uint8_t
+		{
+			kRoleAbsent = 0,
+			kRoleConverted = 1,
+			kRoleShadow = 2
+		};
+		static std::unordered_map<uintptr_t, uint8_t> s_rowRole;      // values are kRole* above
+		static std::unordered_map<uintptr_t, double> s_rowChangedAt;  // ImGui time of last role change
+		{
+			const double now = ImGui::GetTime();
+			static std::unordered_set<uintptr_t> seen;
+			seen.clear();
+			for (const auto& r : rows) {
+				if (r.isFocus)
+					continue;  // engine-owned; not user churn
+				const uint8_t role = r.inScene ? kRoleShadow : (r.converted ? kRoleConverted : kRoleAbsent);
+				seen.insert(r.info.lightKey);
+				auto [it, inserted] = s_rowRole.try_emplace(r.info.lightKey, role);
+				if (inserted) {
+					// First sighting is itself a transition -- stamp it so a just-
+					// appeared light shows an age and sorts as recently changed.
+					s_rowChangedAt[r.info.lightKey] = now;
+				} else if (it->second != role) {
+					it->second = role;
+					s_rowChangedAt[r.info.lightKey] = now;
+				}
+			}
+			// A light that dropped out of the table (e.g. promoted shadow then
+			// disabled) stamps a change so it re-surfaces when it reappears.
+			for (auto& [key, role] : s_rowRole) {
+				if (role != kRoleAbsent && !seen.count(key)) {
+					role = kRoleAbsent;
+					s_rowChangedAt[key] = now;
+				}
+			}
+		}
+
 		// -- Header: active count + suppression badge ----------------------
 		ImGui::Text(T(TKEY("shadow_slots_active"), "Shadow slots: %u active"), s_shadowSlotUsage);
 		if (!s_suppressedLights.empty()) {
@@ -4331,6 +4375,7 @@ namespace ShadowCasterManager
 		const int typeColIdx = addrColIdx + (showColor ? 2 : 1);
 		const int radColIdx = typeColIdx + 1;
 		const int centrColIdx = radColIdx + 1;
+		const int changedColIdx = centrColIdx + 1;
 
 		std::vector<std::string> headers;
 		if (showButtons) {
@@ -4344,9 +4389,22 @@ namespace ShadowCasterManager
 		headers.push_back(T(TKEY("col_type"), "Type"));
 		headers.push_back(T(TKEY("col_range"), "Range"));
 		headers.push_back(T(TKEY("col_imp"), "Imp"));
+		headers.push_back(T(TKEY("col_changed"), "Changed"));
 
 		using SortFn = std::function<bool(const SlotRow&, const SlotRow&, bool)>;
 		std::vector<SortFn> sorts(headers.size(), nullptr);
+		// "Changed" sort: most-recently-changed role first. Stable while idle
+		// (every age grows together); a just-transitioned light jumps to the top.
+		sorts[changedColIdx] = [](const SlotRow& a, const SlotRow& b, bool asc) {
+			auto when = [](const SlotRow& r) -> double {
+				auto it = s_rowChangedAt.find(r.info.lightKey);
+				return it != s_rowChangedAt.end() ? it->second : -1.0;  // never-changed = oldest
+			};
+			double wa = when(a), wb = when(b);
+			if (wa != wb)
+				return asc ? wa > wb : wa < wb;  // ascending click => most recent on top
+			return a.info.lightKey < b.info.lightKey;
+		};
 		// Status sort: in-scene shadow casters → converted → out-of-scene.
 		// Suppressed lights sort to the end (treated as worst rank).
 		sorts[statusColIdx] = [](const SlotRow& a, const SlotRow& b, bool asc) {
@@ -4598,6 +4656,25 @@ namespace ShadowCasterManager
 													"Rows tinted yellow are high-importance (>0.1)\n"
 													"-- they deliver meaningful illumination near the camera\n"
 													"or player and receive accelerated shadow redraw scheduling."));
+				} else if (col == changedColIdx) {
+					auto chIt = s_rowChangedAt.find(key);
+					if (row.isFocus || chIt == s_rowChangedAt.end()) {
+						ImGui::TextDisabled("--");
+					} else {
+						double age = ImGui::GetTime() - chIt->second;
+						if (age < 0.0)
+							age = 0.0;
+						constexpr int kSecPerMin = 60;
+						constexpr double kSecPerHour = 3600.0;
+						if (age < kSecPerMin)
+							ImGui::Text("%.1fs", age);
+						else if (age < kSecPerHour)
+							ImGui::Text("%dm%02ds", static_cast<int>(age) / kSecPerMin, static_cast<int>(age) % kSecPerMin);
+						else
+							ImGui::Text("%dm", static_cast<int>(age) / kSecPerMin);
+					}
+					if (ImGui::IsItemHovered())
+						ImGui::SetTooltip("%s", T(TKEY("changed_tooltip"), "Time since this light last changed role (shadow / converted / out).\nSort this column to bring just-changed lights to the top."));
 				}
 				// Hi column dropped -- highImp now tints the row background
 				// (see TableSetBgColor at the top of this lambda) so the visual
