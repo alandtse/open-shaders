@@ -3,6 +3,7 @@
 
 #include <imgui.h>
 
+#include "Feature.h"
 #include "FeatureConstraints.h"
 #include "Globals.h"
 #include "I18n/I18n.h"
@@ -247,6 +248,49 @@ void HomePageRenderer::RenderCacheMismatchSection()
 	ImGui::TextWrapped("%s", T("menu.home.cache_mismatch_resolve",
 								 "Restore the changed feature(s) and restart to reuse the saved cache, or rebuild for your "
 								 "current setup:"));
+
+	// "Match Cache": an EnabledFlip is just a Disable-at-Boot difference, so flip those
+	// settings to the cache's state and the next boot reuses the cache with no recompile.
+	// (The banner only shows when every mismatch is a flip, so that always holds here.)
+	// Disabled when a flip is for an *uninstalled* feature: re-enabling can't load missing
+	// files, so settings alone can't match -- the hover explains why and points to rebuild.
+	const char* blockingFeature = nullptr;
+	for (const auto& m : shaderCache->GetCacheMismatches()) {
+		if (m.kind != MismatchKind::EnabledFlip || m.nowPresent)
+			continue;  // only "cache had it, now off" needs the feature installed
+		for (auto* f : Feature::GetFeatureList())
+			if (f->GetShortName() == m.shortName && !f->failedLoadedMessage.empty()) {
+				blockingFeature = m.feature.c_str();
+				break;
+			}
+		if (blockingFeature)
+			break;
+	}
+	const bool canMatch = blockingFeature == nullptr;
+	static bool s_matchApplied = false;
+	if (!canMatch)
+		ImGui::BeginDisabled();
+	const bool matchClicked = ImGui::Button(T("menu.home.cache_mismatch_match", "Match Cache & Restart"));
+	if (!canMatch)
+		ImGui::EndDisabled();
+	if (matchClicked) {
+		if (auto* state = globals::state) {
+			for (const auto& m : shaderCache->GetCacheMismatches())
+				state->SetFeatureDisabled(m.shortName, m.nowPresent);
+			state->Save();
+			s_matchApplied = true;
+		}
+	}
+	if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+		if (canMatch)
+			ImGui::SetTooltip("%s", T("menu.home.cache_mismatch_match_tooltip", "Sets your Disable-at-Boot toggles to match the saved cache, so a restart reuses it with no recompile."));
+		else
+			ImGui::SetTooltip(T("menu.home.cache_mismatch_match_blocked", "Unavailable: '%s' is uninstalled (not just disabled), so settings can't match the cache. Reinstall it or rebuild."), blockingFeature);
+	}
+	if (s_matchApplied)
+		ImGui::TextColored(menu ? menu->GetTheme().StatusPalette.RestartNeeded : ImVec4(0.4f, 1.0f, 0.4f, 1.0f),
+			"%s", T("menu.home.cache_mismatch_matched", "Boot settings updated - restart to reuse the cache."));
+	ImGui::SameLine();
 	if (ImGui::Button(T("menu.home.cache_mismatch_rebuild", "Rebuild Shader Cache Now"))) {
 		shaderCache->AcceptCacheRebuild();
 	}
