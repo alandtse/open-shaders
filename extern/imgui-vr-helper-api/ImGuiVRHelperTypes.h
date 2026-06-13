@@ -156,9 +156,11 @@ namespace ImGuiVRHelperPluginAPI
 		///   - The dashboard plane renders only while the SteamVR
 		///     dashboard is open; the in-scene panel takes over when
 		///     it's closed.
-		///   - Set the thumbnail asset via SetDashboardThumbnail (PNG
-		///     path) after registration, or pass nullptr and accept the
-		///     default helper icon.
+		///   - The helper owns a single shared dashboard overlay; a picker
+		///     in the helper's settings panel chooses which eligible
+		///     client's panel is mirrored onto it. There is no per-client
+		///     thumbnail API in v1 — the rail entry uses SteamVR's default
+		///     overlay icon.
 		///
 		/// Compatibility note: dashboard overlays require the SteamVR
 		/// IVROverlay implementation. OpenComposite-based runtimes
