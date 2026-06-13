@@ -249,11 +249,9 @@ void HomePageRenderer::RenderCacheMismatchSection()
 								 "Restore the changed feature(s) and restart to reuse the saved cache, or rebuild for your "
 								 "current setup:"));
 
-	// "Match Cache": an EnabledFlip is just a Disable-at-Boot difference, so flip those
-	// settings to the cache's state and the next boot reuses the cache with no recompile.
-	// (The banner only shows when every mismatch is a flip, so that always holds here.)
-	// Disabled when a flip is for an *uninstalled* feature: re-enabling can't load missing
-	// files, so settings alone can't match -- the hover explains why and points to rebuild.
+	// Every shown mismatch is an EnabledFlip (a Disable-at-Boot difference), so matching the
+	// cache's enabled-state lets the next boot reuse it with no recompile. Disabled when a flip
+	// is for an *uninstalled* feature: settings can't load missing files (the hover explains).
 	const char* blockingFeature = nullptr;
 	for (const auto& m : shaderCache->GetCacheMismatches()) {
 		if (m.kind != MismatchKind::EnabledFlip || m.nowPresent)
@@ -274,9 +272,8 @@ void HomePageRenderer::RenderCacheMismatchSection()
 		s_matchApplied = false;
 		s_lastMismatchCount = mismatchCount;
 	}
-	// Once Match is applied the choice is made (reuse on next restart): collapse to a single
-	// confirmation and drop both action buttons, so the resolved state reads cleanly instead of
-	// leaving the now-irrelevant Rebuild button beside the message.
+	// After Match the choice is made (reuse on restart): show only the confirmation and drop
+	// both buttons, so the resolved state doesn't leave Rebuild beside the reuse message.
 	if (s_matchApplied) {
 		ImGui::TextColored(menu ? menu->GetTheme().StatusPalette.RestartNeeded : ImVec4(0.4f, 1.0f, 0.4f, 1.0f),
 			"%s", T("menu.home.cache_mismatch_matched", "Boot settings updated - restart to reuse the saved cache."));
