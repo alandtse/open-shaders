@@ -228,23 +228,32 @@ void HomePageRenderer::RenderCacheMismatchSection()
 		return;
 
 	ImGui::TextWrapped("%s", T("menu.home.cache_mismatch_desc",
-								 "Your installed feature set no longer matches the shader cache on disk. The cache has been "
-								 "preserved and shaders are compiling in memory for this session only. If this change was "
-								 "unintentional (a feature accidentally uninstalled or disabled at boot), fix your setup and "
-								 "restart - the existing cache will be reused. If the change was intentional, rebuild the cache."));
+								 "Your installed features changed, so the saved shader cache no longer matches. Shaders "
+								 "compile in memory this session - and on every launch until you resolve this. The saved "
+								 "cache is preserved."));
 	ImGui::Spacing();
 
-	for (const auto& mismatch : shaderCache->GetCacheMismatches())
-		ImGui::BulletText("%s: %s", mismatch.feature.c_str(), mismatch.detail.c_str());
+	using MismatchKind = Util::CacheInvalidation::CacheMismatch::Kind;
+	for (const auto& mismatch : shaderCache->GetCacheMismatches()) {
+		const char* detail = mismatch.detail.c_str();  // English fallback (logs / non-flip kinds)
+		if (mismatch.kind == MismatchKind::EnabledFlip)
+			detail = mismatch.nowPresent ?
+			             T("menu.home.cache_mismatch_added", "enabled now, but the cache was built without it") :
+			             T("menu.home.cache_mismatch_removed", "in the cache, but now uninstalled or disabled at boot");
+		ImGui::BulletText("%s: %s", mismatch.feature.c_str(), detail);
+	}
 	ImGui::Spacing();
 
+	ImGui::TextWrapped("%s", T("menu.home.cache_mismatch_resolve",
+								 "Restore the changed feature(s) and restart to reuse the saved cache, or rebuild for your "
+								 "current setup:"));
 	if (ImGui::Button(T("menu.home.cache_mismatch_rebuild", "Rebuild Shader Cache Now"))) {
 		shaderCache->AcceptCacheRebuild();
 	}
 	if (auto _tt = Util::HoverTooltipWrapper()) {
 		ImGui::Text("%s", T("menu.home.cache_mismatch_rebuild_tooltip",
-							  "Deletes the old cache and recompiles all shaders for your current feature set. "
-							  "This can take a while; the old cache cannot be recovered afterwards."));
+							  "Recompiles all shaders for your current features and saves a new cache. "
+							  "Takes a while; the old cache is replaced."));
 	}
 
 	ImGui::Spacing();
