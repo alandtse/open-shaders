@@ -297,8 +297,11 @@ void HomePageRenderer::RenderCacheMismatchSection()
 	}
 	if (matchClicked) {
 		if (auto* state = globals::state) {
-			for (const auto& m : shaderCache->GetCacheMismatches())
+			for (const auto& m : shaderCache->GetCacheMismatches()) {
+				if (m.kind != MismatchKind::EnabledFlip)
+					continue;  // only flips map to a Disable-at-Boot toggle; never persist other kinds
 				state->SetFeatureDisabled(m.shortName, m.nowPresent);
+			}
 			state->Save();
 			s_matchApplied = true;
 		}
