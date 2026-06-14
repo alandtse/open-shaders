@@ -5371,54 +5371,6 @@ namespace ShadowCasterManager
 						T(TKEY("restart_session_resolution"), "Restart required -- current session uses %d px shadow maps."),
 						s_initialShadowMapResolution);
 				}
-
-				ImGui::Checkbox(T(TKEY("match_shadow_to_light_fade"), "Match Shadow Distance to Light Fade"), &settings.MatchShadowToLightFade);
-				if (ImGui::IsItemHovered())
-					ImGui::SetTooltip("%s", T(TKEY("match_shadow_to_light_fade_tooltip"),
-												"Each frame, set the shadow-cull distance to the engine's light\n"
-												"LOD fade-out distance, so a shadow exists exactly as long as its\n"
-												"light is visible -- removes the on-approach pop without rendering\n"
-												"shadows past where lights fade. Auto-adapts to interior-cell and\n"
-												"weather overrides; overrides the sliders below while enabled (#161)."));
-
-				// ---- Shadow Distance (live) -----------------------------------
-				// Drives the engine's shadow-cull far plane. A light past this
-				// distance is frustum-culled (frustrumCull=0xff) and demoted to a
-				// normal light, so its shadow pops in as the player crosses the
-				// boundary (#161). Raising it keeps distant casters shadowed at the
-				// cost of more shadow renders. Applies live; persisted on Save.
-				// Disabled while MatchShadowToLightFade drives the distance for us.
-				ImGui::BeginDisabled(settings.MatchShadowToLightFade);
-				if (auto* iSetting = prefColl->GetSetting("fInteriorShadowDistance:Display")) {
-					float v = iSetting->GetFloat();
-					if (ImGui::SliderFloat(T(TKEY("interior_shadow_distance"), "Interior Shadow Distance"), &v, 1000.0f, 12000.0f, "%.0f")) {
-						iSetting->SetFloat(v);
-						s_shadowDistanceDirty = true;
-						RefreshEngineShadowDistanceCache();  // apply live, no cell reload
-					}
-					if (ImGui::IsItemHovered())
-						ImGui::SetTooltip("%s", T(TKEY("interior_shadow_distance_tooltip"),
-													"Distance (game units) past which interior light shadows are culled\n"
-													"(fInteriorShadowDistance:Display, vanilla default 3000). Raise it so\n"
-													"distant interior casters stay shadowed instead of popping in on\n"
-													"approach (#161) -- costs more shadow renders. Applies live;\n"
-													"persisted to SkyrimPrefs.ini on Save Settings."));
-				}
-				if (auto* eSetting = prefColl->GetSetting("fShadowDistance:Display")) {
-					float v = eSetting->GetFloat();
-					if (ImGui::SliderFloat(T(TKEY("exterior_shadow_distance"), "Exterior Shadow Distance"), &v, 2000.0f, 20000.0f, "%.0f")) {
-						eSetting->SetFloat(v);
-						s_shadowDistanceDirty = true;
-						RefreshEngineShadowDistanceCache();  // apply live, no cell reload
-					}
-					if (ImGui::IsItemHovered())
-						ImGui::SetTooltip("%s", T(TKEY("exterior_shadow_distance_tooltip"),
-													"Distance (game units) past which exterior shadows are culled\n"
-													"(fShadowDistance:Display). Also drives the directional sun cascade\n"
-													"range, so higher values soften distant outdoor shadow transitions\n"
-													"at a GPU cost. Applies live; persisted on Save Settings."));
-				}
-				ImGui::EndDisabled();
 			}
 		}
 
@@ -5650,6 +5602,57 @@ namespace ShadowCasterManager
 				ImGui::SetTooltip("%s", T(TKEY("allow_immediate_draw_new_lights_tooltip"),
 											"Allow a light just added to the active pool to render its shadow map this frame.\n"
 											"Prevents a one-frame shadow-map gap when new lights enter view."));
+
+			ImGui::SeparatorText(T(TKEY("shadow_distance_header"), "Shadow Distance"));
+			if (auto* prefColl = RE::INIPrefSettingCollection::GetSingleton()) {
+				ImGui::Checkbox(T(TKEY("match_shadow_to_light_fade"), "Match Shadow Distance to Light Fade"), &settings.MatchShadowToLightFade);
+				if (ImGui::IsItemHovered())
+					ImGui::SetTooltip("%s", T(TKEY("match_shadow_to_light_fade_tooltip"),
+												"Each frame, set the shadow-cull distance to the engine's light\n"
+												"LOD fade-out distance, so a shadow exists exactly as long as its\n"
+												"light is visible -- removes the on-approach pop without rendering\n"
+												"shadows past where lights fade. Auto-adapts to interior-cell and\n"
+												"weather overrides; overrides the sliders below while enabled (#161)."));
+
+				// ---- Shadow Distance (live) -----------------------------------
+				// Drives the engine's shadow-cull far plane. A light past this
+				// distance is frustum-culled (frustrumCull=0xff) and demoted to a
+				// normal light, so its shadow pops in as the player crosses the
+				// boundary (#161). Raising it keeps distant casters shadowed at the
+				// cost of more shadow renders. Applies live; persisted on Save.
+				// Disabled while MatchShadowToLightFade drives the distance for us.
+				ImGui::BeginDisabled(settings.MatchShadowToLightFade);
+				if (auto* iSetting = prefColl->GetSetting("fInteriorShadowDistance:Display")) {
+					float v = iSetting->GetFloat();
+					if (ImGui::SliderFloat(T(TKEY("interior_shadow_distance"), "Interior Shadow Distance"), &v, 1000.0f, 12000.0f, "%.0f")) {
+						iSetting->SetFloat(v);
+						s_shadowDistanceDirty = true;
+						RefreshEngineShadowDistanceCache();  // apply live, no cell reload
+					}
+					if (ImGui::IsItemHovered())
+						ImGui::SetTooltip("%s", T(TKEY("interior_shadow_distance_tooltip"),
+													"Distance (game units) past which interior light shadows are culled\n"
+													"(fInteriorShadowDistance:Display, vanilla default 3000). Raise it so\n"
+													"distant interior casters stay shadowed instead of popping in on\n"
+													"approach (#161) -- costs more shadow renders. Applies live;\n"
+													"persisted to SkyrimPrefs.ini on Save Settings."));
+				}
+				if (auto* eSetting = prefColl->GetSetting("fShadowDistance:Display")) {
+					float v = eSetting->GetFloat();
+					if (ImGui::SliderFloat(T(TKEY("exterior_shadow_distance"), "Exterior Shadow Distance"), &v, 2000.0f, 20000.0f, "%.0f")) {
+						eSetting->SetFloat(v);
+						s_shadowDistanceDirty = true;
+						RefreshEngineShadowDistanceCache();  // apply live, no cell reload
+					}
+					if (ImGui::IsItemHovered())
+						ImGui::SetTooltip("%s", T(TKEY("exterior_shadow_distance_tooltip"),
+													"Distance (game units) past which exterior shadows are culled\n"
+													"(fShadowDistance:Display). Also drives the directional sun cascade\n"
+													"range, so higher values soften distant outdoor shadow transitions\n"
+													"at a GPU cost. Applies live; persisted on Save Settings."));
+				}
+				ImGui::EndDisabled();
+			}
 
 			// ---- Importance scheduling curve ------------------------------
 			ImGui::SeparatorText(T(TKEY("importance_scheduling"), "Importance Scheduling"));

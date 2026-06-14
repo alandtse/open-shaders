@@ -1069,6 +1069,7 @@
     "feature.light_limit_fix.session_enabled": "enabled",
     "feature.light_limit_fix.shadow_array_unverified_banner": "Shadow array not yet verified -- load a save to confirm allocation.",
     "feature.light_limit_fix.shadow_array_unverified_tooltip": "kSHADOWMAPS isn't readable yet (main menu / loading screen).\nOnce you reach gameplay the scheduler verifies the actual\nslice count against your requested value. If they disagree\nthis banner turns red.",
+    "feature.light_limit_fix.shadow_distance_header": "Shadow Distance",
     "feature.light_limit_fix.shadow_light_count": "Shadow Light Count",
     "feature.light_limit_fix.shadow_light_count_projection_tooltip": "%s\n\nProjected kSHADOWMAPS array at %d slots: %.1f MB\nPer-slice cost: %.2f MB  (%u x %u, %u B/pixel)\nProjected free VRAM after restart: %.1f MB",
     "feature.light_limit_fix.shadow_light_count_tooltip": "Maximum simultaneous shadow-casting point/spot lights (directional sun not counted).\n  0  = scheduler runs but selects no point lights (sun/directional unaffected).\n  4  = vanilla point light count with intelligent selection.\n  >4 = extended mode; depth buffer expanded when >8. Max 127\n       (VRAM is the practical limit -- watch the projected-VRAM bar).\nRequires a game restart to take effect.",

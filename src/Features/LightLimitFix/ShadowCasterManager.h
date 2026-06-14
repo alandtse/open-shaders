@@ -259,8 +259,10 @@ namespace ShadowCasterManager
 		/// distance each frame, so a caster's shadow exists exactly as long as its
 		/// light is visible -- no on-approach pop, no shadows past where the light
 		/// fades. Auto-adapts to interior-cell / weather overrides. Leaves the user's
-		/// fInteriorShadowDistance/fShadowDistance prefs untouched (#161).
-		bool MatchShadowToLightFade = false;
+		/// fInteriorShadowDistance/fShadowDistance prefs untouched. On by default --
+		/// only takes effect while the SLF shadow scheduler is active, which already
+		/// owns a redraw budget, so the extra reach is bounded (#161).
+		bool MatchShadowToLightFade = true;
 
 		/// Force-enable portal-strict on shadow casters as they're added by
 		/// the engine. Per-type because portal-strict on spotlights drops
