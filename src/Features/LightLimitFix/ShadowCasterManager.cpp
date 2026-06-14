@@ -3323,6 +3323,11 @@ namespace ShadowCasterManager
 	// would rewrite the user's prefs file even if shadow res wasn't edited.
 	static bool s_shadowResolutionDirty = false;
 
+	// Set by the shadow-distance sliders (fInteriorShadowDistance / fShadowDistance).
+	// Unlike resolution these apply live (the engine reads them each frame for shadow
+	// culling), but still need persisting to SkyrimPrefs.ini on Save Settings.
+	static bool s_shadowDistanceDirty = false;
+
 	void LoadINISettings()
 	{
 		// No-op: the engine already loaded SkyrimPrefs.ini at startup, so the
@@ -3330,47 +3335,47 @@ namespace ShadowCasterManager
 		// that need to land before SCM::Install hook here.
 	}
 
-	void SaveINISettings()
+	// Persist one live INIPref setting to SkyrimPrefs.ini.
+	//
+	// The engine's INIPrefSettingCollection::WriteSetting requires OpenHandle to
+	// have been called first (it writes via the cached `handle` member, which is
+	// null between RefreshINI calls). Calling it directly returns true but silently
+	// no-ops -- verified by the fact that the live RE::Setting updates but
+	// SkyrimPrefs.ini's timestamp doesn't change after Save Settings. Sidestep the
+	// engine path entirely with WritePrivateProfileStringA. CommonLib stores the
+	// full path of SkyrimPrefs.ini in subKey at startup (see
+	// InitializeSkyrimINIPrefSettingCollection caller at SE 1406489e6 / AE 140648990
+	// / VR equivalent). The setting name encodes "<key>:<section>", and the key's
+	// type prefix (i/u/f/b) picks the value formatting.
+	static void PersistPrefSetting(RE::INIPrefSettingCollection* prefColl, RE::Setting* setting)
 	{
-		if (!s_shadowResolutionDirty)
+		if (!prefColl || !setting)
 			return;
-		auto* prefColl = RE::INIPrefSettingCollection::GetSingleton();
-		if (!prefColl)
-			return;
-		auto* setting = prefColl->GetSetting("iShadowMapResolution:Display");
-		if (!setting)
-			return;
-
-		// The engine's INIPrefSettingCollection::WriteSetting requires
-		// OpenHandle to have been called first (it writes via the cached
-		// `handle` member, which is null between RefreshINI calls). Calling
-		// it directly returns true but silently no-ops -- verified by the
-		// fact that the live RE::Setting updates but SkyrimPrefs.ini's
-		// timestamp doesn't change after Save Settings.
-		//
-		// Sidestep the engine path entirely with WritePrivateProfileStringA.
-		// CommonLib stores the full path of SkyrimPrefs.ini in subKey at
-		// startup (see InitializeSkyrimINIPrefSettingCollection caller at
-		// SE 1406489e6 / AE 140648990 / VR equivalent -- it concatenates the
-		// Documents path with "SkyrimPrefs.ini"). The setting name encodes
-		// "<key>:<section>" -- "iShadowMapResolution:Display" means
-		// [Display]\niShadowMapResolution=N.
 		const char* fullName = setting->GetName();
 		const char* colon = std::strchr(fullName, ':');
 		if (!colon) {
 			logger::warn("[SCM] Setting name '{}' has no section -- cannot write to INI", fullName);
-			s_shadowResolutionDirty = false;
 			return;
 		}
 		const std::string key(fullName, colon - fullName);
 		const std::string section(colon + 1);
-		const std::string value = std::to_string(setting->GetInteger());
+		std::string value;
+		switch (fullName[0]) {
+		case 'f':
+			value = std::to_string(setting->GetFloat());
+			break;
+		case 'b':
+			value = setting->GetBool() ? "1" : "0";
+			break;
+		default:  // i / u and anything else -> integer
+			value = std::to_string(setting->GetInteger());
+			break;
+		}
 
 		// subKey holds the full path to SkyrimPrefs.ini.
 		const char* iniPath = prefColl->subKey;
 		if (!iniPath || !iniPath[0]) {
 			logger::warn("[SCM] INIPrefSettingCollection subKey is empty -- cannot write to INI");
-			s_shadowResolutionDirty = false;
 			return;
 		}
 
@@ -3388,7 +3393,25 @@ namespace ShadowCasterManager
 			logger::warn("[SCM] WritePrivateProfileStringA failed (err={}) writing [{}]{}={} to {}",
 				err, section, key, value, iniPath);
 		}
-		s_shadowResolutionDirty = false;
+	}
+
+	void SaveINISettings()
+	{
+		if (!s_shadowResolutionDirty && !s_shadowDistanceDirty)
+			return;
+		auto* prefColl = RE::INIPrefSettingCollection::GetSingleton();
+		if (!prefColl)
+			return;
+
+		if (s_shadowResolutionDirty) {
+			PersistPrefSetting(prefColl, prefColl->GetSetting("iShadowMapResolution:Display"));
+			s_shadowResolutionDirty = false;
+		}
+		if (s_shadowDistanceDirty) {
+			PersistPrefSetting(prefColl, prefColl->GetSetting("fInteriorShadowDistance:Display"));
+			PersistPrefSetting(prefColl, prefColl->GetSetting("fShadowDistance:Display"));
+			s_shadowDistanceDirty = false;
+		}
 	}
 
 	// Boot-time value of settings.Enabled, captured once in Install() and
@@ -5226,6 +5249,40 @@ namespace ShadowCasterManager
 					ImGui::TextColored(theme.StatusPalette.RestartNeeded,
 						T(TKEY("restart_session_resolution"), "Restart required -- current session uses %d px shadow maps."),
 						s_initialShadowMapResolution);
+				}
+
+				// ---- Shadow Distance (live) -----------------------------------
+				// Drives the engine's shadow-cull far plane. A light past this
+				// distance is frustum-culled (frustrumCull=0xff) and demoted to a
+				// normal light, so its shadow pops in as the player crosses the
+				// boundary (#161). Raising it keeps distant casters shadowed at the
+				// cost of more shadow renders. Applies live; persisted on Save.
+				if (auto* iSetting = prefColl->GetSetting("fInteriorShadowDistance:Display")) {
+					float v = iSetting->GetFloat();
+					if (ImGui::SliderFloat(T(TKEY("interior_shadow_distance"), "Interior Shadow Distance"), &v, 1000.0f, 12000.0f, "%.0f")) {
+						iSetting->SetFloat(v);
+						s_shadowDistanceDirty = true;
+					}
+					if (ImGui::IsItemHovered())
+						ImGui::SetTooltip("%s", T(TKEY("interior_shadow_distance_tooltip"),
+													"Distance (game units) past which interior light shadows are culled\n"
+													"(fInteriorShadowDistance:Display, vanilla default 3000). Raise it so\n"
+													"distant interior casters stay shadowed instead of popping in on\n"
+													"approach (#161) -- costs more shadow renders. Applies live;\n"
+													"persisted to SkyrimPrefs.ini on Save Settings."));
+				}
+				if (auto* eSetting = prefColl->GetSetting("fShadowDistance:Display")) {
+					float v = eSetting->GetFloat();
+					if (ImGui::SliderFloat(T(TKEY("exterior_shadow_distance"), "Exterior Shadow Distance"), &v, 2000.0f, 20000.0f, "%.0f")) {
+						eSetting->SetFloat(v);
+						s_shadowDistanceDirty = true;
+					}
+					if (ImGui::IsItemHovered())
+						ImGui::SetTooltip("%s", T(TKEY("exterior_shadow_distance_tooltip"),
+													"Distance (game units) past which exterior shadows are culled\n"
+													"(fShadowDistance:Display). Also drives the directional sun cascade\n"
+													"range, so higher values soften distant outdoor shadow transitions\n"
+													"at a GPU cost. Applies live; persisted on Save Settings."));
 				}
 			}
 		}
