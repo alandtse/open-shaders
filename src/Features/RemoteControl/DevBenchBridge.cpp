@@ -14,6 +14,7 @@
 #ifdef DEVBENCH_BRIDGE_ENABLED
 
 #	include "Feature.h"
+#	include "Features/LightLimitFix/ShadowCasterManager.h"
 #	include "Features/RenderDoc.h"
 #	include "Features/ScreenshotFeature.h"
 #	include "Globals.h"
@@ -27,6 +28,7 @@
 #	include <algorithm>
 #	include <chrono>
 #	include <cstring>
+#	include <format>
 #	include <functional>
 #	include <future>
 #	include <memory>
@@ -313,6 +315,35 @@ namespace
 		};
 	}
 
+	// Light Limit Fix shadow-scheduler diagnostics. RequestSchedSnapshot is thread-safe
+	// (snapshot copied under a mutex by the render thread) and primes the scheduler to
+	// keep filling it for a short window, so a first idle call may return valid=false --
+	// poll again after a frame. Light pointers are hex strings (JSON-number-safe).
+	json BuildInspectShadowsResult(const json&)
+	{
+		const auto snap = ShadowCasterManager::RequestSchedSnapshot();
+		json lights = json::array();
+		for (const auto& [ptr, reason] : snap.demoted)
+			lights.push_back(json{
+				{ "ptr", std::format("{:#018x}", ptr) },
+				{ "reason", ShadowCasterManager::SchedReasonName(reason) },
+			});
+		return json{
+			{ "valid", snap.valid },
+			{ "frame", snap.frame },
+			{ "total", snap.total },
+			{ "chosen", snap.chosen },
+			{ "excess", snap.excess },
+			{ "invalidCamera", snap.invalidCamera },
+			{ "invalidPortal", snap.invalidPortal },
+			{ "invalidFrustum", snap.invalidFrustum },
+			{ "invalidLod", snap.invalidLod },
+			{ "invalidOther", snap.invalidOther },
+			{ "slotsInUse", snap.slotsInUse },
+			{ "lights", lights },
+		};
+	}
+
 	void InspectStateHandler(void*, const char* a_argsJson, void* a_sink, DevBenchAPI::WriteFn a_write)
 	{
 		RunHandler(&BuildInspectStateResult, a_argsJson, a_sink, a_write);
@@ -321,6 +352,11 @@ namespace
 	void InspectShadercacheHandler(void*, const char* a_argsJson, void* a_sink, DevBenchAPI::WriteFn a_write)
 	{
 		RunHandler(&BuildInspectShadercacheResult, a_argsJson, a_sink, a_write);
+	}
+
+	void InspectShadowsHandler(void*, const char* a_argsJson, void* a_sink, DevBenchAPI::WriteFn a_write)
+	{
+		RunHandler(&BuildInspectShadowsResult, a_argsJson, a_sink, a_write);
 	}
 
 	// ---- shadercache: clear / delete the compiled cache -------------------------------
@@ -567,6 +603,10 @@ namespace DevBenchBridge
 			static constexpr const char* inspectCacheDesc =
 				R"({"description":"Open Shaders shader-cache status -> {compiling,completedTasks,totalTasks,failedTasks,currentFailedCount,frame_count}. Poll completedTasks against a pre-deploy snapshot to know a hot-reloaded shader finished; watch failedTasks/currentFailedCount for failed compiles.","readOnly":true,"inputSchema":{"type":"object"}})";
 			dvb->RegisterToolExtension("inspect", "shadercache", inspectCacheDesc, &InspectShadercacheHandler, nullptr);
+
+			static constexpr const char* inspectShadowsDesc =
+				R"({"description":"Open Shaders Light Limit Fix shadow-scheduler diagnostics -> {valid,frame,total,chosen,excess,invalidCamera,invalidPortal,invalidFrustum,invalidLod,invalidOther,slotsInUse,lights:[{ptr,reason}]}. reason: portal|frustum|lod|excess|other -- why a non-chosen light was demoted from a shadow caster. The scheduler fills this only while the settings menu is open or a dump was recently requested; calling this primes it, so if valid==false (idle) poll again after a frame (use inspect kind=openshaders frame_count to know a tick passed).","readOnly":true,"inputSchema":{"type":"object"}})";
+			dvb->RegisterToolExtension("inspect", "llfshadows", inspectShadowsDesc, &InspectShadowsHandler, nullptr);
 		} else {
 			logger::info("DevBenchBridge: devbench build {} < 10500; CS menu + inspect extensions need 1.5.0", dvb->GetBuildNumber());
 		}

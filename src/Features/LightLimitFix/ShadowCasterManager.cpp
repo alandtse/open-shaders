@@ -19,6 +19,8 @@
 
 #include <exprtk.hpp>
 
+#include <mutex>
+
 #define I18N_KEY_PREFIX "feature.light_limit_fix."
 
 namespace ShadowCasterManager
@@ -1113,6 +1115,65 @@ namespace ShadowCasterManager
 		return *reinterpret_cast<bool*>(uid.address());
 	}
 
+	// Recompute the engine's cached shadow-cull square from the live shadow-distance
+	// settings; the engine self-refreshes it only on a cell transition, so a slider
+	// edit otherwise wouldn't reach the cull until a reload.
+	static void CallUpdateShadowDistance(bool a_interior)
+	{
+		static REL::Relocation<void(bool)> fn{ REL::RelocationID(98978, 105631) };
+		fn(a_interior);
+	}
+
+	// Engine's current light LOD fade-out distance (squared), recomputed each frame
+	// by Sky::UpdateLightLODFadeDistances with interior-cell / weather overrides.
+	static float GetLightLODEndFadeSquared()
+	{
+		static REL::Relocation<float*> p{ REL::RelocationID(527669, 414583) };
+		return *p;
+	}
+
+	// Engine shadow-cull distance cache, compared against (dist²-radius²) in the
+	// per-frame light cull. The engine recomputes it only on a cell transition, so a
+	// per-frame writer must re-apply every frame to stay live.
+	static float& ShadowDistanceCurrent()
+	{
+		static REL::Relocation<float*> p{ REL::RelocationID(528314, 415263) };
+		return *p;
+	}
+	static float& ShadowDistanceSquaredCurrent()
+	{
+		static REL::Relocation<float*> p{ REL::RelocationID(528316, 415264) };
+		return *p;
+	}
+
+	// Couple the shadow-cull distance to the light fade-out distance so a caster's
+	// shadow lasts as long as its light stays lit, removing the lit-but-shadowless
+	// band that reads as a pop-in. Recompute from the user's base each frame and
+	// write the engine cache directly (it self-refreshes only on a cell transition);
+	// max() never shrinks a deliberately larger configured distance, and the
+	// non-squared global is kept in sync for sun-cascade paths that read it.
+	static void ApplyShadowToLightFadeMatch()
+	{
+		if (!s_settings.MatchShadowToLightFade)
+			return;
+		const float endSq = GetLightLODEndFadeSquared();
+		if (!std::isfinite(endSq) || endSq <= 0.0f)
+			return;  // light fade disabled / not yet computed -- leave the cull as-is
+		auto* prefColl = RE::INIPrefSettingCollection::GetSingleton();
+		if (!prefColl)
+			return;
+		const bool interior = Util::IsInterior();
+		auto* setting = prefColl->GetSetting(interior ? "fInteriorShadowDistance:Display" : "fShadowDistance:Display");
+		if (!setting)
+			return;
+		const float base = setting->GetFloat();
+		if (!std::isfinite(base) || base < 0.0f)
+			return;  // malformed INI -- don't poison the engine cull with NaN/inf
+		const float targetSq = std::max(base * base, endSq);
+		ShadowDistanceSquaredCurrent() = targetSq;
+		ShadowDistanceCurrent() = std::sqrt(targetSq);
+	}
+
 	static bool* GetFocusShadowSelected()
 	{
 		static REL::RelocationID uid(528096, 415041);
@@ -1742,6 +1803,78 @@ namespace ShadowCasterManager
 		bool invalidLod{ false };      // engine's LOD-fade zeroed lodDimmer
 	};
 
+	// Why a candidate was demoted/disabled this frame, captured from the validation
+	// flags so the shadow table can explain each "Conv" row. Populated in the
+	// candidate tally loop (the flags are computed regardless); read only when the
+	// debug table is open, so no runtime cost in normal play.
+	enum class ConvertReason : uint8_t
+	{
+		None,
+		Portal,           // not reachable through the visible portal graph
+		FrustumDistance,  // off-screen or beyond the shadow-cull distance (frustrumCull)
+		LodFaded,         // past the light's LOD fade distance (lodDimmer == 0)
+		Excess,           // ranked below the shadow-caster budget
+		CameraOther,      // UpdateCamera rejected it for some other reason
+	};
+	static std::unordered_map<uintptr_t, ConvertReason> s_convertReason;
+
+	// Headless scheduling-diagnostics snapshot (devbench `inspect kind=llfshadows`).
+	// The scheduler (render thread) fills s_schedSnapshot under the mutex at pass end;
+	// RequestSchedSnapshot (devbench listener thread) reads it under the same mutex.
+	// s_schedDumpFrames latches a short window of passes to keep filling it after a
+	// request, so polling returns fresh data even while the menu is closed.
+	static std::mutex s_schedSnapshotMutex;
+	static SchedSnapshot s_schedSnapshot;
+	static std::atomic<int> s_schedDumpFrames{ 0 };
+
+	const char* SchedReasonName(uint8_t a_reason)
+	{
+		switch (static_cast<ConvertReason>(a_reason)) {
+		case ConvertReason::Portal:
+			return "portal";
+		case ConvertReason::FrustumDistance:
+			return "frustum";
+		case ConvertReason::LodFaded:
+			return "lod";
+		case ConvertReason::Excess:
+			return "excess";
+		case ConvertReason::CameraOther:
+			return "other";
+		default:
+			return "none";
+		}
+	}
+
+	SchedSnapshot RequestSchedSnapshot()
+	{
+		// Prime ~2s of scheduling passes so repeated polls return fresh data even with
+		// the menu closed; hand back the latest snapshot under the lock.
+		s_schedDumpFrames.store(120, std::memory_order_relaxed);
+		std::scoped_lock lock(s_schedSnapshotMutex);
+		return s_schedSnapshot;
+	}
+
+	static const char* ConvertReasonText(uintptr_t a_key)
+	{
+		auto it = s_convertReason.find(a_key);
+		if (it == s_convertReason.end())
+			return nullptr;
+		switch (it->second) {
+		case ConvertReason::Portal:
+			return T(TKEY("conv_reason_portal"), "Reason: portal-culled -- the light's room isn't reachable through the visible portal graph.");
+		case ConvertReason::FrustumDistance:
+			return T(TKEY("conv_reason_frustum"), "Reason: frustum/distance-culled -- off-screen, or beyond the shadow-cull distance.");
+		case ConvertReason::LodFaded:
+			return T(TKEY("conv_reason_lod"), "Reason: LOD-faded -- past the light's LOD fade-out distance.");
+		case ConvertReason::Excess:
+			return T(TKEY("conv_reason_excess"), "Reason: excess -- ranked below the shadow-caster budget.");
+		case ConvertReason::CameraOther:
+			return T(TKEY("conv_reason_other"), "Reason: rejected by the engine visibility test.");
+		default:
+			return nullptr;
+		}
+	}
+
 	static void ScheduleShadowCasters()
 	{
 		ZoneScopedN("SCM::ScheduleShadowCasters");
@@ -1765,6 +1898,17 @@ namespace ShadowCasterManager
 		auto* camera = GetWorldCamera();
 		if (!ssn || !camera)
 			return;
+
+		// Couple the shadow-cull distance to the light fade before the validation
+		// pass runs UpdateCamera (which reads the cached square). No-op unless
+		// MatchShadowToLightFade is enabled.
+		ApplyShadowToLightFadeMatch();
+
+		// Maintain the demotion diagnostics this pass only when something can read them:
+		// the open settings menu (Conv tooltip) or a recent devbench dump request. Keeps
+		// the per-light hash churn + snapshot copy off the hot path otherwise.
+		const bool wantDiag = Menu::GetSingleton()->IsEnabled ||
+		                      s_schedDumpFrames.load(std::memory_order_relaxed) > 0;
 
 		// Read the engine's per-frame focus-shadow actor count and reserve
 		// matching pool slots. Eject any point lights that occupy a slot the
@@ -1993,12 +2137,35 @@ namespace ShadowCasterManager
 			// Tracy candidate breakdown: emits per-frame so a capture can be
 			// queried alongside the per-action counters to verify the math
 			// (chosen + excess + invalid_camera + invalid_portal == total).
+			// Populate the demotion map only when wantDiag (menu open or a devbench
+			// dump was requested) -- skip the per-frame hash churn otherwise.
+			if (wantDiag)
+				s_convertReason.clear();
 			for (auto& c : candidates) {
 				s_schedDiag.candidates_total++;
 				if (c.chosen)
 					s_schedDiag.candidates_chosen++;
 				if (c.excess)
 					s_schedDiag.candidates_excess++;
+
+				// Capture why a non-chosen light is demoted, for the shadow table.
+				// Portal wins (distinct disable path), then frustum/distance, LOD,
+				// excess -- matching the atomic loop's branch precedence.
+				if (wantDiag && !c.chosen) {
+					ConvertReason r = ConvertReason::None;
+					if (c.invalidPortal)
+						r = ConvertReason::Portal;
+					else if (c.invalidFrustum)
+						r = ConvertReason::FrustumDistance;
+					else if (c.invalidLod)
+						r = ConvertReason::LodFaded;
+					else if (c.excess)
+						r = ConvertReason::Excess;
+					else if (c.invalidCamera)
+						r = ConvertReason::CameraOther;
+					if (r != ConvertReason::None)
+						s_convertReason[reinterpret_cast<uintptr_t>(c.light)] = r;
+				}
 				if (c.invalidCamera)
 					s_schedDiag.candidates_invalid_camera++;
 				if (c.invalidPortal)
@@ -2832,6 +2999,34 @@ namespace ShadowCasterManager
 				if (s_lights.Lights[i].Light)
 					s_schedDiag.slots_in_use++;
 
+			// Publish the scheduling snapshot for headless inspection (devbench
+			// inspect kind=llfshadows). wantDiag already gated the per-light reason
+			// capture above; copy + swap under the lock so the listener thread reads a
+			// consistent snapshot, then consume one dump-request pass.
+			if (wantDiag) {
+				SchedSnapshot snap;
+				snap.valid = true;
+				snap.frame = globals::state ? globals::state->frameCountAtomic.load(std::memory_order_relaxed) : 0u;
+				snap.total = s_schedDiag.candidates_total;
+				snap.chosen = s_schedDiag.candidates_chosen;
+				snap.excess = s_schedDiag.candidates_excess;
+				snap.invalidCamera = s_schedDiag.candidates_invalid_camera;
+				snap.invalidPortal = s_schedDiag.candidates_invalid_portal;
+				snap.invalidFrustum = s_schedDiag.candidates_invalid_frustum;
+				snap.invalidLod = s_schedDiag.candidates_invalid_lod;
+				snap.invalidOther = s_schedDiag.candidates_invalid_other;
+				snap.slotsInUse = s_schedDiag.slots_in_use;
+				snap.demoted.reserve(s_convertReason.size());
+				for (const auto& [ptr, reason] : s_convertReason)
+					snap.demoted.emplace_back(ptr, static_cast<uint8_t>(reason));
+				{
+					std::scoped_lock lock(s_schedSnapshotMutex);
+					s_schedSnapshot = std::move(snap);
+				}
+				if (s_schedDumpFrames.load(std::memory_order_relaxed) > 0)
+					s_schedDumpFrames.fetch_sub(1, std::memory_order_relaxed);
+			}
+
 			TracyPlot("scm.candidates.total", (int64_t)s_schedDiag.candidates_total);
 			TracyPlot("scm.candidates.chosen", (int64_t)s_schedDiag.candidates_chosen);
 			TracyPlot("scm.candidates.excess", (int64_t)s_schedDiag.candidates_excess);
@@ -3323,6 +3518,11 @@ namespace ShadowCasterManager
 	// would rewrite the user's prefs file even if shadow res wasn't edited.
 	static bool s_shadowResolutionDirty = false;
 
+	// Set by the shadow-distance sliders (fInteriorShadowDistance / fShadowDistance).
+	// Unlike resolution these apply live (the engine reads them each frame for shadow
+	// culling), but still need persisting to SkyrimPrefs.ini on Save Settings.
+	static bool s_shadowDistanceDirty = false;
+
 	void LoadINISettings()
 	{
 		// No-op: the engine already loaded SkyrimPrefs.ini at startup, so the
@@ -3330,47 +3530,54 @@ namespace ShadowCasterManager
 		// that need to land before SCM::Install hook here.
 	}
 
-	void SaveINISettings()
+	// Refresh the engine's cached shadow-cull distance after a slider edit so it
+	// applies without a cell reload.
+	static void RefreshEngineShadowDistanceCache()
 	{
-		if (!s_shadowResolutionDirty)
-			return;
-		auto* prefColl = RE::INIPrefSettingCollection::GetSingleton();
-		if (!prefColl)
-			return;
-		auto* setting = prefColl->GetSetting("iShadowMapResolution:Display");
-		if (!setting)
-			return;
+		CallUpdateShadowDistance(Util::IsInterior());
+	}
 
-		// The engine's INIPrefSettingCollection::WriteSetting requires
-		// OpenHandle to have been called first (it writes via the cached
-		// `handle` member, which is null between RefreshINI calls). Calling
-		// it directly returns true but silently no-ops -- verified by the
-		// fact that the live RE::Setting updates but SkyrimPrefs.ini's
-		// timestamp doesn't change after Save Settings.
-		//
-		// Sidestep the engine path entirely with WritePrivateProfileStringA.
-		// CommonLib stores the full path of SkyrimPrefs.ini in subKey at
-		// startup (see InitializeSkyrimINIPrefSettingCollection caller at
-		// SE 1406489e6 / AE 140648990 / VR equivalent -- it concatenates the
-		// Documents path with "SkyrimPrefs.ini"). The setting name encodes
-		// "<key>:<section>" -- "iShadowMapResolution:Display" means
-		// [Display]\niShadowMapResolution=N.
+	// Persist one live INIPref setting to SkyrimPrefs.ini.
+	//
+	// The engine's INIPrefSettingCollection::WriteSetting requires OpenHandle to
+	// have been called first (it writes via the cached `handle` member, which is
+	// null between RefreshINI calls). Calling it directly returns true but silently
+	// no-ops -- verified by the fact that the live RE::Setting updates but
+	// SkyrimPrefs.ini's timestamp doesn't change after Save Settings. Sidestep the
+	// engine path entirely with WritePrivateProfileStringA. CommonLib stores the
+	// full path of SkyrimPrefs.ini in subKey at startup (see
+	// InitializeSkyrimINIPrefSettingCollection caller at SE 1406489e6 / AE 140648990
+	// / VR equivalent). The setting name encodes "<key>:<section>", and the key's
+	// type prefix (i/u/f/b) picks the value formatting.
+	static void PersistPrefSetting(RE::INIPrefSettingCollection* prefColl, RE::Setting* setting)
+	{
+		if (!prefColl || !setting)
+			return;
 		const char* fullName = setting->GetName();
 		const char* colon = std::strchr(fullName, ':');
 		if (!colon) {
 			logger::warn("[SCM] Setting name '{}' has no section -- cannot write to INI", fullName);
-			s_shadowResolutionDirty = false;
 			return;
 		}
 		const std::string key(fullName, colon - fullName);
 		const std::string section(colon + 1);
-		const std::string value = std::to_string(setting->GetInteger());
+		std::string value;
+		switch (fullName[0]) {
+		case 'f':
+			value = std::to_string(setting->GetFloat());
+			break;
+		case 'b':
+			value = setting->GetBool() ? "1" : "0";
+			break;
+		default:  // i / u and anything else -> integer
+			value = std::to_string(setting->GetInteger());
+			break;
+		}
 
 		// subKey holds the full path to SkyrimPrefs.ini.
 		const char* iniPath = prefColl->subKey;
 		if (!iniPath || !iniPath[0]) {
 			logger::warn("[SCM] INIPrefSettingCollection subKey is empty -- cannot write to INI");
-			s_shadowResolutionDirty = false;
 			return;
 		}
 
@@ -3382,13 +3589,52 @@ namespace ShadowCasterManager
 			// timestamp and contents stay stale until the process exits.
 			// See KB Q104112 / MSDN remarks for WritePrivateProfileString.
 			::WritePrivateProfileStringA(nullptr, nullptr, nullptr, iniPath);
-			logger::info("[SCM] Persisted [{}]{}={} to {}", section, key, value, iniPath);
+			// Log the setting only -- iniPath holds the user's profile dir.
+			logger::info("[SCM] Persisted [{}]{}={}", section, key, value);
 		} else {
 			const DWORD err = ::GetLastError();
-			logger::warn("[SCM] WritePrivateProfileStringA failed (err={}) writing [{}]{}={} to {}",
-				err, section, key, value, iniPath);
+			logger::warn("[SCM] WritePrivateProfileStringA failed (err={}) writing [{}]{}={}",
+				err, section, key, value);
 		}
-		s_shadowResolutionDirty = false;
+	}
+
+	// Resolve a "<key>:<section>" engine setting from whichever collection owns it.
+	// The light-LOD knobs live in Skyrim.ini (INISettingCollection) while the shadow
+	// distances live in SkyrimPrefs.ini (INIPrefSettingCollection); callers shouldn't
+	// have to know which. Persisting always targets SkyrimPrefs.ini, which overrides
+	// Skyrim.ini at load, so a single write path keeps either kind sticky.
+	static RE::Setting* GetDisplaySetting(const char* a_name)
+	{
+		if (auto* pc = RE::INIPrefSettingCollection::GetSingleton())
+			if (auto* s = pc->GetSetting(a_name))
+				return s;
+		if (auto* ic = globals::game::iniSettingCollection)
+			if (auto* s = ic->GetSetting(a_name))
+				return s;
+		return nullptr;
+	}
+
+	void SaveINISettings()
+	{
+		if (!s_shadowResolutionDirty && !s_shadowDistanceDirty)
+			return;
+		auto* prefColl = RE::INIPrefSettingCollection::GetSingleton();
+		if (!prefColl)
+			return;
+
+		if (s_shadowResolutionDirty) {
+			PersistPrefSetting(prefColl, prefColl->GetSetting("iShadowMapResolution:Display"));
+			s_shadowResolutionDirty = false;
+		}
+		if (s_shadowDistanceDirty) {
+			PersistPrefSetting(prefColl, prefColl->GetSetting("fInteriorShadowDistance:Display"));
+			PersistPrefSetting(prefColl, prefColl->GetSetting("fShadowDistance:Display"));
+			// Light-LOD knobs live in Skyrim.ini; persist to SkyrimPrefs.ini anyway
+			// (it overrides at load) so the master Light Fade Distance sticks.
+			PersistPrefSetting(prefColl, GetDisplaySetting("fLightLODStartFade:Display"));
+			PersistPrefSetting(prefColl, GetDisplaySetting("fLightLODMaxStartFade:Display"));
+			s_shadowDistanceDirty = false;
+		}
 	}
 
 	// Boot-time value of settings.Enabled, captured once in Install() and
@@ -4581,10 +4827,15 @@ namespace ShadowCasterManager
 							ImGui::SetTooltip(T(TKEY("status_slot_tooltip"), "Casting shadows this frame in slot %u."), row.idx);
 					} else if (row.converted) {
 						ImGui::TextColored(ImVec4(0.95f, 0.75f, 0.25f, 1), T(TKEY("status_conv"), "Conv"));
-						if (ImGui::IsItemHovered())
-							ImGui::SetTooltip("%s", T(TKEY("status_conv_tooltip"),
-														"Demoted to a normal (non-shadow) light this frame.\n"
-														"Cluster lighting still illuminates it; no shadow-map cost."));
+						if (ImGui::IsItemHovered()) {
+							// Append the per-light demotion reason (captured from the
+							// validation flags) so it's clear WHY this light has no shadow.
+							const char* reason = ConvertReasonText(row.info.lightKey);
+							ImGui::SetTooltip("%s%s%s", T(TKEY("status_conv_tooltip"),
+															"Demoted to a normal (non-shadow) light this frame.\n"
+															"Cluster lighting still illuminates it; no shadow-map cost."),
+								reason ? "\n" : "", reason ? reason : "");
+						}
 					} else {
 						ImGui::TextDisabled(T(TKEY("status_out"), "Out"));
 						if (ImGui::IsItemHovered())
@@ -5458,6 +5709,84 @@ namespace ShadowCasterManager
 				ImGui::SetTooltip("%s", T(TKEY("allow_immediate_draw_new_lights_tooltip"),
 											"Allow a light just added to the active pool to render its shadow map this frame.\n"
 											"Prevents a one-frame shadow-map gap when new lights enter view."));
+
+			ImGui::SeparatorText(T(TKEY("shadow_distance_header"), "Shadow Distance"));
+			if (auto* prefColl = RE::INIPrefSettingCollection::GetSingleton()) {
+				const bool wasMatching = settings.MatchShadowToLightFade;
+				if (ImGui::Checkbox(T(TKEY("match_shadow_to_light_fade"), "Match Shadow Distance to Light Fade"), &settings.MatchShadowToLightFade) &&
+					wasMatching && !settings.MatchShadowToLightFade)
+					RefreshEngineShadowDistanceCache();  // toggled off: restore the manual distance now, don't wait for a reload
+				if (ImGui::IsItemHovered())
+					ImGui::SetTooltip("%s", T(TKEY("match_shadow_to_light_fade_tooltip"),
+												"Each frame, set the shadow-cull distance to the engine's light\n"
+												"LOD fade-out distance, so a shadow exists exactly as long as its\n"
+												"light is visible -- removes the on-approach pop without rendering\n"
+												"shadows past where lights fade. Auto-adapts to interior-cell and\n"
+												"weather overrides; overrides the sliders below while enabled."));
+
+				// ---- Shadow Distance (live) -----------------------------------
+				// Drives the engine's shadow-cull far plane. A light past this
+				// distance is culled and demoted to a normal light, so its shadow
+				// pops in as the player crosses the boundary. Raising it keeps
+				// distant casters shadowed at the cost of more shadow renders.
+				// Applies live; persisted on Save. Disabled while
+				// MatchShadowToLightFade drives the distance for us.
+				ImGui::BeginDisabled(settings.MatchShadowToLightFade);
+				if (auto* iSetting = prefColl->GetSetting("fInteriorShadowDistance:Display")) {
+					float v = iSetting->GetFloat();
+					if (ImGui::SliderFloat(T(TKEY("interior_shadow_distance"), "Interior Shadow Distance"), &v, 1000.0f, 12000.0f, "%.0f")) {
+						iSetting->SetFloat(v);
+						s_shadowDistanceDirty = true;
+						RefreshEngineShadowDistanceCache();  // apply live, no cell reload
+					}
+					if (ImGui::IsItemHovered())
+						ImGui::SetTooltip("%s", T(TKEY("interior_shadow_distance_tooltip"),
+													"Distance (game units) past which interior light shadows are culled\n"
+													"(fInteriorShadowDistance:Display, vanilla default 3000). Raise it so\n"
+													"distant interior casters stay shadowed instead of popping in on\n"
+													"approach -- costs more shadow renders. Applies live;\n"
+													"persisted to SkyrimPrefs.ini on Save Settings."));
+				}
+				if (auto* eSetting = prefColl->GetSetting("fShadowDistance:Display")) {
+					float v = eSetting->GetFloat();
+					if (ImGui::SliderFloat(T(TKEY("exterior_shadow_distance"), "Exterior Shadow Distance"), &v, 2000.0f, 20000.0f, "%.0f")) {
+						eSetting->SetFloat(v);
+						s_shadowDistanceDirty = true;
+						RefreshEngineShadowDistanceCache();  // apply live, no cell reload
+					}
+					if (ImGui::IsItemHovered())
+						ImGui::SetTooltip("%s", T(TKEY("exterior_shadow_distance_tooltip"),
+													"Distance (game units) past which exterior shadows are culled\n"
+													"(fShadowDistance:Display). Also drives the directional sun cascade\n"
+													"range, so higher values soften distant outdoor shadow transitions\n"
+													"at a GPU cost. Applies live; persisted on Save Settings."));
+				}
+				ImGui::EndDisabled();
+
+				// Light fade distance -- not gated by the match toggle because it
+				// drives the LIGHTS. With Match on it's the master "how far do lights
+				// AND their shadows reach" control, since the coupling tracks it.
+				if (auto* lodStart = GetDisplaySetting("fLightLODStartFade:Display")) {
+					float v = lodStart->GetFloat();
+					if (ImGui::SliderFloat(T(TKEY("light_fade_distance"), "Light Fade Distance"), &v, 1000.0f, 20000.0f, "%.0f")) {
+						lodStart->SetFloat(v);
+						// fLightLODMaxStartFade caps the start fade; lift it so the
+						// slider isn't silently clamped (only raise, never lower).
+						if (auto* lodMax = GetDisplaySetting("fLightLODMaxStartFade:Display"))
+							if (lodMax->GetFloat() < v)
+								lodMax->SetFloat(v);
+						s_shadowDistanceDirty = true;
+					}
+					if (ImGui::IsItemHovered())
+						ImGui::SetTooltip("%s", T(TKEY("light_fade_distance_tooltip"),
+													"Distance (game units) at which lights LOD-fade out\n"
+													"(fLightLODStartFade; also lifts the fLightLODMaxStartFade cap).\n"
+													"With 'Match Shadow Distance to Light Fade' on, this is the master\n"
+													"control -- it sets how far BOTH lights and their shadows reach.\n"
+													"Vanilla 3500. Global light-LOD setting: affects all lights, not\n"
+													"just shadow casters. Persisted to SkyrimPrefs.ini on Save."));
+				}
+			}
 
 			// ---- Importance scheduling curve ------------------------------
 			ImGui::SeparatorText(T(TKEY("importance_scheduling"), "Importance Scheduling"));

@@ -255,6 +255,15 @@ namespace ShadowCasterManager
 		/// Disabled by default; experimental.
 		bool PromoteNormalToShadow = false;
 
+		/// Match the shadow-cull distance to the engine's light LOD fade-out
+		/// distance each frame, so a caster's shadow exists exactly as long as its
+		/// light is visible -- no on-approach pop, no shadows past where the light
+		/// fades. Auto-adapts to interior-cell / weather overrides. Leaves the user's
+		/// fInteriorShadowDistance/fShadowDistance prefs untouched. On by default --
+		/// only takes effect while the SLF shadow scheduler is active, which already
+		/// owns a redraw budget, so the extra reach is bounded.
+		bool MatchShadowToLightFade = true;
+
 		/// Force-enable portal-strict on shadow casters as they're added by
 		/// the engine. Per-type because portal-strict on spotlights drops
 		/// culled-but-visible spots entirely, while on omnis/hemispheres it
@@ -330,6 +339,7 @@ namespace ShadowCasterManager
 		RedrawBudgetMs,
 		ConvertExcessToNormal,
 		PromoteNormalToShadow,
+		MatchShadowToLightFade,
 		ForceEnablePortalStrictOmni,
 		ForceEnablePortalStrictHemi,
 		ForceEnablePortalStrictSpot,
@@ -503,6 +513,39 @@ namespace ShadowCasterManager
 	/// overlay stays available while users have any override in effect, even
 	/// without the visualisation modes or the explicit ShowShadowOverlay toggle.
 	bool HasAnyOverrides();
+
+	// -------------------------------------------------------------------------
+	// Scheduling diagnostics snapshot (headless inspection via devbench
+	// `inspect kind=llfshadows`). The scheduler fills it only while the settings
+	// menu is open or a snapshot was recently requested, to keep diagnostics off
+	// the hot path otherwise.
+	// -------------------------------------------------------------------------
+	struct SchedSnapshot
+	{
+		bool valid = false;      ///< false until at least one pass has filled it
+		uint32_t frame = 0;      ///< render frame the snapshot was taken on
+		int total = 0;           ///< candidates examined this pass
+		int chosen = 0;          ///< picked as shadow casters
+		int excess = 0;          ///< over the shadow-caster budget
+		int invalidCamera = 0;   ///< rejected by the engine UpdateCamera test
+		int invalidPortal = 0;   ///< portal-graph unreachable
+		int invalidFrustum = 0;  ///< off-screen / beyond shadow-cull distance
+		int invalidLod = 0;      ///< past the light's LOD fade-out distance
+		int invalidOther = 0;    ///< UpdateCamera failure, neither frustum nor LOD
+		int slotsInUse = 0;      ///< occupied shadow slots at pass end
+		/// Per non-chosen light: (light pointer, demotion-reason byte). Name via SchedReasonName().
+		std::vector<std::pair<uintptr_t, uint8_t>> demoted;
+	};
+
+	/// Requests and returns the latest scheduling-diagnostics snapshot. Thread-safe
+	/// (callable off the render thread). The request primes the scheduler to fill the
+	/// snapshot for a short window, so the first call after an idle period may return a
+	/// stale/empty snapshot (valid == false) -- poll again after a frame for fresh data.
+	SchedSnapshot RequestSchedSnapshot();
+
+	/// Stable lowercase name for a demotion-reason byte (SchedSnapshot::demoted.second):
+	/// "portal" | "frustum" | "lod" | "excess" | "other" | "none".
+	const char* SchedReasonName(uint8_t reason);
 
 	// -------------------------------------------------------------------------
 	// Debugging override API
