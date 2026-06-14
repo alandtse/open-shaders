@@ -280,7 +280,7 @@ void VolumetricLighting::RenderVolumetricLighting(VolumetricLightingDescriptor* 
 void VolumetricLighting::RenderDepth::thunk()
 {
 	func();
-	if (globals::game::bEnableVolumetricLighting)
+	if (globals::game::bEnableVolumetricLighting && *globals::game::bEnableVolumetricLighting)
 		RenderVolumetricLighting(&GetVLDescriptor(), RE::Main::WorldRootCamera(), false);
 }
 
@@ -351,7 +351,7 @@ void VolumetricLighting::CopyResource::thunk(ID3D11DeviceContext* a_this, ID3D11
 	// But, the copy might have to be done manually later after IsFullScreenVR if
 	// used in the next frame.
 
-	if (!(Util::IsDynamicResolution() && globals::game::bEnableVolumetricLighting)) {
+	if (!(Util::IsDynamicResolution() && globals::game::bEnableVolumetricLighting && *globals::game::bEnableVolumetricLighting)) {
 		a_this->CopyResource(a_renderTarget, a_renderTargetSource);
 	}
 }
