@@ -1133,14 +1133,16 @@ namespace ShadowCasterManager
 		return *p;
 	}
 
-	// Drive the engine's shadow-cull distance to match the light fade-out distance,
-	// so a caster's shadow exists exactly as long as its light is visible -- the
+	// Extend the engine's shadow-cull distance up to the light fade-out distance,
+	// so a caster's shadow exists at least as long as its light is visible -- the
 	// 3000<->3500 lit-but-shadowless band that reads as a pop collapses (#161). We
-	// set the active shadow-distance INI to sqrt(lightFadeEnd), let the engine
-	// recompute its cached ShadowDistanceSquared via UpdateShadowDistanceAndInterior-
-	// Flag, then restore the INI so the user's prefs/slider stay untouched -- only
-	// the engine's cached square changes, re-applied each frame. The direct global
-	// write is avoided because ShadowDistanceSquared's SE id isn't in the VR addrlib.
+	// set the active shadow-distance INI to max(userDistance, sqrt(lightFadeEnd)),
+	// let the engine recompute its cached ShadowDistanceSquared via UpdateShadow-
+	// DistanceAndInteriorFlag, then restore the INI so the user's prefs/slider stay
+	// untouched -- only the engine's cached square changes, re-applied each frame.
+	// max() respects a deliberately larger user distance (VR default 7500). The
+	// direct global write is avoided: ShadowDistanceSquared's SE id isn't in the VR
+	// addrlib.
 	static void ApplyShadowToLightFadeMatch()
 	{
 		if (!s_settings.MatchShadowToLightFade)
@@ -1156,8 +1158,15 @@ namespace ShadowCasterManager
 		if (!setting)
 			return;
 		const float saved = setting->GetFloat();
-		setting->SetFloat(std::sqrt(endSq));
-		CallUpdateShadowDistance(interior);  // recomputes ShadowDistanceSquared = endSq
+		// Only EXTEND toward the light fade, never pull shadows in below the user's
+		// configured distance. If their shadow distance already exceeds the light
+		// fade (e.g. VR default 7500 > 3500), respect it -- the coupling closes the
+		// lit-but-shadowless gap, it doesn't shrink a deliberately larger range.
+		const float target = std::max(saved, std::sqrt(endSq));
+		if (target <= saved)
+			return;  // user's distance already covers the light fade; leave as-is
+		setting->SetFloat(target);
+		CallUpdateShadowDistance(interior);  // recomputes ShadowDistanceSquared = target
 		setting->SetFloat(saved);            // leave the user's pref untouched
 	}
 
