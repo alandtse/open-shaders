@@ -235,15 +235,6 @@ namespace
 			// ISCopy reads kFRAMEBUFFER.SRV to distribute the frame to the HMD and
 			// companion window, so we must write the tonemapped content back into
 			// kFRAMEBUFFER before ISCopy runs.
-			//
-			// TODO (future HDR HMD support): The correct pipeline is to run the full
-			// HDR composite (PQ encode, paper white, peak nits) HERE, writing the
-			// result back to kFRAMEBUFFER so ISCopy distributes HDR-processed content
-			// to both the HMD and companion at their native sizes.  The post-Present
-			// ApplyHDR path cannot do this correctly because ISCopy has already run
-			// and the companion back buffer (1024x1024) does not match outputTexture
-			// (sized from kMAIN).  Requires hooking the ISCopy vfunc to fire
-			// HDROutputCS before distribution.
 			if (globals::game::isVR && hdr->settings.enableHDR &&
 				hdr->hdrTexture && hdr->hdrTexture->resource) {
 				auto& fb = globals::game::renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kFRAMEBUFFER];
