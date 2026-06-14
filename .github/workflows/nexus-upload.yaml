@@ -46,6 +46,14 @@ on:
             changelog:
                 description: "Optional release notes or changelog for Nexus"
                 required: false
+            shader_cache_uploader:
+                description: "Uploader for the optional prebuilt shader caches (aio mode). 'official' = Nexus-Mods/upload-action (sets the OPTIONAL category + file groups); 'none' = skip. unex is not offered here: it can only set MAIN files."
+                required: false
+                type: choice
+                default: "official"
+                options:
+                    - "official"
+                    - "none"
     workflow_call:
         inputs:
             mode:
@@ -80,6 +88,10 @@ on:
                 required: false
                 type: string
                 default: ""
+            shader_cache_uploader:
+                required: false
+                type: string
+                default: "official"
         secrets:
             UNEX_NEXUSMODS_SESSION_COOKIE:
                 required: false
@@ -523,7 +535,9 @@ jobs:
         name: Upload Prebuilt Shader Caches
         needs: prepare-nexus-matrix
         runs-on: ubuntu-latest
-        if: needs.prepare-nexus-matrix.outputs.mode == 'aio'
+        if: >
+            needs.prepare-nexus-matrix.outputs.mode == 'aio' &&
+            (inputs.shader_cache_uploader || 'official') == 'official'
         strategy:
             fail-fast: false
             matrix:
