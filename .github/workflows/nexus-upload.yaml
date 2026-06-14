@@ -557,6 +557,11 @@ jobs:
             file_category: optional
             display_name: ${{ matrix.display_name }}
             archive_existing_file: true
+            # Idempotent re-runs: skip a cache already on the page (matches the
+            # AIO uploader's check_existing). Requires the mod ID for the query.
+            check_existing: true
+            nexus_mod_id: ${{ inputs.nexus_mod_id || '180419' }}
+            nexus_game_id: ${{ inputs.nexus_game_id || 'skyrimspecialedition' }}
             dry_run: ${{ needs.prepare-nexus-matrix.outputs.dry_run == 'true' }}
             description: >-
                 Prebuilt shader cache for default AIO settings. If you install any other
