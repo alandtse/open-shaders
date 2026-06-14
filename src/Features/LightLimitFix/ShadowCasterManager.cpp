@@ -2093,7 +2093,12 @@ namespace ShadowCasterManager
 			// Tracy candidate breakdown: emits per-frame so a capture can be
 			// queried alongside the per-action counters to verify the math
 			// (chosen + excess + invalid_camera + invalid_portal == total).
-			s_convertReason.clear();
+			// The demotion map is read only by the shadow-table Conv tooltip, so
+			// maintain it only while the settings menu is open -- skip the per-frame
+			// hash churn on the scheduler hot path when nothing can display it.
+			const bool wantConvertReason = Menu::GetSingleton()->IsEnabled;
+			if (wantConvertReason)
+				s_convertReason.clear();
 			for (auto& c : candidates) {
 				s_schedDiag.candidates_total++;
 				if (c.chosen)
@@ -2104,7 +2109,7 @@ namespace ShadowCasterManager
 				// Capture why a non-chosen light is demoted, for the shadow table.
 				// Portal wins (distinct disable path), then frustum/distance, LOD,
 				// excess -- matching the atomic loop's branch precedence.
-				if (!c.chosen) {
+				if (wantConvertReason && !c.chosen) {
 					ConvertReason r = ConvertReason::None;
 					if (c.invalidPortal)
 						r = ConvertReason::Portal;
