@@ -515,6 +515,39 @@ namespace ShadowCasterManager
 	bool HasAnyOverrides();
 
 	// -------------------------------------------------------------------------
+	// Scheduling diagnostics snapshot (headless inspection via devbench
+	// `inspect kind=llfshadows`). The scheduler fills it only while the settings
+	// menu is open or a snapshot was recently requested, to keep diagnostics off
+	// the hot path otherwise.
+	// -------------------------------------------------------------------------
+	struct SchedSnapshot
+	{
+		bool valid = false;      ///< false until at least one pass has filled it
+		uint32_t frame = 0;      ///< render frame the snapshot was taken on
+		int total = 0;           ///< candidates examined this pass
+		int chosen = 0;          ///< picked as shadow casters
+		int excess = 0;          ///< over the shadow-caster budget
+		int invalidCamera = 0;   ///< rejected by the engine UpdateCamera test
+		int invalidPortal = 0;   ///< portal-graph unreachable
+		int invalidFrustum = 0;  ///< off-screen / beyond shadow-cull distance
+		int invalidLod = 0;      ///< past the light's LOD fade-out distance
+		int invalidOther = 0;    ///< UpdateCamera failure, neither frustum nor LOD
+		int slotsInUse = 0;      ///< occupied shadow slots at pass end
+		/// Per non-chosen light: (light pointer, demotion-reason byte). Name via SchedReasonName().
+		std::vector<std::pair<uintptr_t, uint8_t>> demoted;
+	};
+
+	/// Requests and returns the latest scheduling-diagnostics snapshot. Thread-safe
+	/// (callable off the render thread). The request primes the scheduler to fill the
+	/// snapshot for a short window, so the first call after an idle period may return a
+	/// stale/empty snapshot (valid == false) -- poll again after a frame for fresh data.
+	SchedSnapshot RequestSchedSnapshot();
+
+	/// Stable lowercase name for a demotion-reason byte (SchedSnapshot::demoted.second):
+	/// "portal" | "frustum" | "lod" | "excess" | "other" | "none".
+	const char* SchedReasonName(uint8_t reason);
+
+	// -------------------------------------------------------------------------
 	// Debugging override API
 	//
 	// Per-light state pins (Shadow / Convert) override the scheduler's automatic

@@ -19,6 +19,8 @@
 
 #include <exprtk.hpp>
 
+#include <mutex>
+
 #define I18N_KEY_PREFIX "feature.light_limit_fix."
 
 namespace ShadowCasterManager
@@ -1816,6 +1818,42 @@ namespace ShadowCasterManager
 	};
 	static std::unordered_map<uintptr_t, ConvertReason> s_convertReason;
 
+	// Headless scheduling-diagnostics snapshot (devbench `inspect kind=llfshadows`).
+	// The scheduler (render thread) fills s_schedSnapshot under the mutex at pass end;
+	// RequestSchedSnapshot (devbench listener thread) reads it under the same mutex.
+	// s_schedDumpFrames latches a short window of passes to keep filling it after a
+	// request, so polling returns fresh data even while the menu is closed.
+	static std::mutex s_schedSnapshotMutex;
+	static SchedSnapshot s_schedSnapshot;
+	static std::atomic<int> s_schedDumpFrames{ 0 };
+
+	const char* SchedReasonName(uint8_t a_reason)
+	{
+		switch (static_cast<ConvertReason>(a_reason)) {
+		case ConvertReason::Portal:
+			return "portal";
+		case ConvertReason::FrustumDistance:
+			return "frustum";
+		case ConvertReason::LodFaded:
+			return "lod";
+		case ConvertReason::Excess:
+			return "excess";
+		case ConvertReason::CameraOther:
+			return "other";
+		default:
+			return "none";
+		}
+	}
+
+	SchedSnapshot RequestSchedSnapshot()
+	{
+		// Prime ~2s of scheduling passes so repeated polls return fresh data even with
+		// the menu closed; hand back the latest snapshot under the lock.
+		s_schedDumpFrames.store(120, std::memory_order_relaxed);
+		std::scoped_lock lock(s_schedSnapshotMutex);
+		return s_schedSnapshot;
+	}
+
 	static const char* ConvertReasonText(uintptr_t a_key)
 	{
 		auto it = s_convertReason.find(a_key);
@@ -1865,6 +1903,12 @@ namespace ShadowCasterManager
 		// pass runs UpdateCamera (which reads the cached square). No-op unless
 		// MatchShadowToLightFade is enabled.
 		ApplyShadowToLightFadeMatch();
+
+		// Maintain the demotion diagnostics this pass only when something can read them:
+		// the open settings menu (Conv tooltip) or a recent devbench dump request. Keeps
+		// the per-light hash churn + snapshot copy off the hot path otherwise.
+		const bool wantDiag = Menu::GetSingleton()->IsEnabled ||
+		                      s_schedDumpFrames.load(std::memory_order_relaxed) > 0;
 
 		// Read the engine's per-frame focus-shadow actor count and reserve
 		// matching pool slots. Eject any point lights that occupy a slot the
@@ -2093,11 +2137,9 @@ namespace ShadowCasterManager
 			// Tracy candidate breakdown: emits per-frame so a capture can be
 			// queried alongside the per-action counters to verify the math
 			// (chosen + excess + invalid_camera + invalid_portal == total).
-			// The demotion map is read only by the shadow-table Conv tooltip, so
-			// maintain it only while the settings menu is open -- skip the per-frame
-			// hash churn on the scheduler hot path when nothing can display it.
-			const bool wantConvertReason = Menu::GetSingleton()->IsEnabled;
-			if (wantConvertReason)
+			// Populate the demotion map only when wantDiag (menu open or a devbench
+			// dump was requested) -- skip the per-frame hash churn otherwise.
+			if (wantDiag)
 				s_convertReason.clear();
 			for (auto& c : candidates) {
 				s_schedDiag.candidates_total++;
@@ -2109,7 +2151,7 @@ namespace ShadowCasterManager
 				// Capture why a non-chosen light is demoted, for the shadow table.
 				// Portal wins (distinct disable path), then frustum/distance, LOD,
 				// excess -- matching the atomic loop's branch precedence.
-				if (wantConvertReason && !c.chosen) {
+				if (wantDiag && !c.chosen) {
 					ConvertReason r = ConvertReason::None;
 					if (c.invalidPortal)
 						r = ConvertReason::Portal;
@@ -2956,6 +2998,34 @@ namespace ShadowCasterManager
 			for (int i = 0; i < s_lights.Size; i++)
 				if (s_lights.Lights[i].Light)
 					s_schedDiag.slots_in_use++;
+
+			// Publish the scheduling snapshot for headless inspection (devbench
+			// inspect kind=llfshadows). wantDiag already gated the per-light reason
+			// capture above; copy + swap under the lock so the listener thread reads a
+			// consistent snapshot, then consume one dump-request pass.
+			if (wantDiag) {
+				SchedSnapshot snap;
+				snap.valid = true;
+				snap.frame = globals::state ? globals::state->frameCountAtomic.load(std::memory_order_relaxed) : 0u;
+				snap.total = s_schedDiag.candidates_total;
+				snap.chosen = s_schedDiag.candidates_chosen;
+				snap.excess = s_schedDiag.candidates_excess;
+				snap.invalidCamera = s_schedDiag.candidates_invalid_camera;
+				snap.invalidPortal = s_schedDiag.candidates_invalid_portal;
+				snap.invalidFrustum = s_schedDiag.candidates_invalid_frustum;
+				snap.invalidLod = s_schedDiag.candidates_invalid_lod;
+				snap.invalidOther = s_schedDiag.candidates_invalid_other;
+				snap.slotsInUse = s_schedDiag.slots_in_use;
+				snap.demoted.reserve(s_convertReason.size());
+				for (const auto& [ptr, reason] : s_convertReason)
+					snap.demoted.emplace_back(ptr, static_cast<uint8_t>(reason));
+				{
+					std::scoped_lock lock(s_schedSnapshotMutex);
+					s_schedSnapshot = std::move(snap);
+				}
+				if (s_schedDumpFrames.load(std::memory_order_relaxed) > 0)
+					s_schedDumpFrames.fetch_sub(1, std::memory_order_relaxed);
+			}
 
 			TracyPlot("scm.candidates.total", (int64_t)s_schedDiag.candidates_total);
 			TracyPlot("scm.candidates.chosen", (int64_t)s_schedDiag.candidates_chosen);
