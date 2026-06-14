@@ -80,7 +80,7 @@ runs:
               $version = $null
               for ($attempt = 1; $attempt -le 5 -and -not $version; $attempt++) {
                   if ($attempt -gt 1) {
-                      Write-Warning "MSVC probe attempt $attempt: cl.exe not ready yet, retrying..."
+                      Write-Warning "MSVC probe attempt ${attempt}: cl.exe not ready yet, retrying..."
                       Start-Sleep -Seconds 10
                   }
                   try { $output = & cl.exe /Bv dummy.cpp 2>&1 } catch { $output = "$_" }
