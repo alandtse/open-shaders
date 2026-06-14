@@ -540,9 +540,11 @@ jobs:
             fail-fast: false
             matrix:
                 include:
+                    # display_name is the Nexus file/version name; it must match
+                    # ^[a-zA-Z0-9 _'().-]+$ (no '/'), so use "SE-AE" not "SE/AE".
                     - file_group_id: "7535987"
                       pattern: ShaderCache-SE-*.7z
-                      display_name: ShaderCache SE/AE
+                      display_name: ShaderCache SE-AE
                     - file_group_id: "7535993"
                       pattern: ShaderCache-VR-*.7z
                       display_name: ShaderCache VR
