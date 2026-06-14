@@ -65,7 +65,7 @@ Install them manually only if you want them in everywhere.
 -   [Address Library for SKSE](https://www.nexusmods.com/skyrimspecialedition/mods/32444)
     -   Needed for SSE/AE
 -   [VR Address Library for SKSEVR](https://www.nexusmods.com/skyrimspecialedition/mods/58101)
-    -   Needed for VR
+    -   Needed for VR (**0.225.0 or newer** — earlier versions lack the shadow-distance offsets the Light Limit Fix shadow-to-light-fade coupling resolves)
 
 ## Build Instructions
 

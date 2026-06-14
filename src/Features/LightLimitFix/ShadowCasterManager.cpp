@@ -1133,16 +1133,32 @@ namespace ShadowCasterManager
 		return *p;
 	}
 
-	// Extend the engine's shadow-cull distance up to the light fade-out distance,
-	// so a caster's shadow exists at least as long as its light is visible -- the
-	// 3000<->3500 lit-but-shadowless band that reads as a pop collapses (#161). We
-	// set the active shadow-distance INI to max(userDistance, sqrt(lightFadeEnd)),
-	// let the engine recompute its cached ShadowDistanceSquared via UpdateShadow-
-	// DistanceAndInteriorFlag, then restore the INI so the user's prefs/slider stay
-	// untouched -- only the engine's cached square changes, re-applied each frame.
-	// max() respects a deliberately larger user distance (VR default 7500). The
-	// direct global write is avoided: ShadowDistanceSquared's SE id isn't in the VR
-	// addrlib.
+	// Engine shadow-cull distance globals. The per-frame BSShadow*Light::UpdateCamera
+	// cull compares (dist²-radius²) against ShadowDistanceSquared_Current; the engine
+	// recomputes both (from fInterior/fShadowDistance) only on a cell transition.
+	// RelocationID (SE, AE); VR via the SE id. 528316 ships in the VR address library
+	// for this work; 528314 (ShadowDistance_Current) was already mapped.
+	static float& ShadowDistanceCurrent()
+	{
+		static REL::Relocation<float*> p{ REL::RelocationID(528314, 415263) };
+		return *p;
+	}
+	static float& ShadowDistanceSquaredCurrent()
+	{
+		static REL::Relocation<float*> p{ REL::RelocationID(528316, 415264) };
+		return *p;
+	}
+
+	// Extend the engine's cached shadow-cull distance up to the light fade-out
+	// distance, so a caster's shadow lasts at least as long as its light is visible --
+	// the 3000<->3500 lit-but-shadowless band that reads as a pop collapses (#161).
+	// Recompute from the user's base distance each frame (so it tracks the light fade
+	// both ways) and write the cached globals directly: they're only refreshed by the
+	// engine on a cell transition, so re-applying each frame keeps the coupling live
+	// while the user's INI prefs stay untouched. max() respects a deliberately larger
+	// user distance (VR default 7500) -- the coupling closes the gap, it never shrinks
+	// a configured range. The non-squared global is kept consistent for sun-cascade
+	// paths that read it.
 	static void ApplyShadowToLightFadeMatch()
 	{
 		if (!s_settings.MatchShadowToLightFade)
@@ -1157,17 +1173,10 @@ namespace ShadowCasterManager
 		auto* setting = prefColl->GetSetting(interior ? "fInteriorShadowDistance:Display" : "fShadowDistance:Display");
 		if (!setting)
 			return;
-		const float saved = setting->GetFloat();
-		// Only EXTEND toward the light fade, never pull shadows in below the user's
-		// configured distance. If their shadow distance already exceeds the light
-		// fade (e.g. VR default 7500 > 3500), respect it -- the coupling closes the
-		// lit-but-shadowless gap, it doesn't shrink a deliberately larger range.
-		const float target = std::max(saved, std::sqrt(endSq));
-		if (target <= saved)
-			return;  // user's distance already covers the light fade; leave as-is
-		setting->SetFloat(target);
-		CallUpdateShadowDistance(interior);  // recomputes ShadowDistanceSquared = target
-		setting->SetFloat(saved);            // leave the user's pref untouched
+		const float base = setting->GetFloat();
+		const float targetSq = std::max(base * base, endSq);
+		ShadowDistanceSquaredCurrent() = targetSq;
+		ShadowDistanceCurrent() = std::sqrt(targetSq);
 	}
 
 	static bool* GetFocusShadowSelected()
