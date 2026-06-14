@@ -540,9 +540,11 @@ jobs:
             fail-fast: false
             matrix:
                 include:
+                    # display_name is the Nexus file/version name; it must match
+                    # ^[a-zA-Z0-9 _'().-]+$ (no '/'), so use "SE-AE" not "SE/AE".
                     - file_group_id: "7535987"
                       pattern: ShaderCache-SE-*.7z
-                      display_name: ShaderCache SE/AE
+                      display_name: ShaderCache SE-AE
                     - file_group_id: "7535993"
                       pattern: ShaderCache-VR-*.7z
                       display_name: ShaderCache VR
@@ -555,6 +557,11 @@ jobs:
             file_category: optional
             display_name: ${{ matrix.display_name }}
             archive_existing_file: true
+            # Idempotent re-runs: skip a cache already on the page (matches the
+            # AIO uploader's check_existing). Requires the mod ID for the query.
+            check_existing: true
+            nexus_mod_id: ${{ inputs.nexus_mod_id || '180419' }}
+            nexus_game_id: ${{ inputs.nexus_game_id || 'skyrimspecialedition' }}
             dry_run: ${{ needs.prepare-nexus-matrix.outputs.dry_run == 'true' }}
             description: >-
                 Prebuilt shader cache for default AIO settings. If you install any other

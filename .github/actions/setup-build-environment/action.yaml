@@ -74,25 +74,25 @@ runs:
           shell: pwsh
           run: |
               "int main() { return 0; }" | Out-File -FilePath "dummy.cpp" -Encoding ASCII
-              $output = & cl.exe /Bv dummy.cpp 2>&1
+              # After a reboot-pending VS Build Tools install (exit 3010), cl.exe
+              # can be transiently unresolvable / emit no version on the first
+              # probe — the flake that fails the cache-build jobs. Retry the probe.
               $version = $null
-              $lines = $output -split "`n|`r"
-              foreach ($line in $lines) {
-                  if ($line -match 'Version ([0-9]+\.[0-9]+\.[0-9]+)') {
-                      $version = $Matches[1]
-                      break
+              for ($attempt = 1; $attempt -le 5 -and -not $version; $attempt++) {
+                  if ($attempt -gt 1) {
+                      Write-Warning "MSVC probe attempt ${attempt}: cl.exe not ready yet, retrying..."
+                      Start-Sleep -Seconds 10
                   }
-                  elseif ($line -match '([0-9]+\.[0-9]+\.[0-9]+)') {
-                      $version = $Matches[1]
-                      break
-                  }
-              }
-              if (-not $version) {
-                  if ($output -match 'Version ([0-9]+\.[0-9]+\.[0-9]+)') {
-                      $version = $Matches[1]
-                  }
-                  elseif ($output -match '([0-9]+\.[0-9]+\.[0-9]+)') {
-                      $version = $Matches[1]
+                  try { $output = & cl.exe /Bv dummy.cpp 2>&1 } catch { $output = "$_" }
+                  foreach ($line in ($output -split "`n|`r")) {
+                      if ($line -match 'Version ([0-9]+\.[0-9]+\.[0-9]+)') {
+                          $version = $Matches[1]
+                          break
+                      }
+                      elseif ($line -match '([0-9]+\.[0-9]+\.[0-9]+)') {
+                          $version = $Matches[1]
+                          break
+                      }
                   }
               }
               if ($version) {
@@ -107,7 +107,7 @@ runs:
                       Add-Content -Path $env:GITHUB_OUTPUT -Value "version_mm=$version" -Encoding UTF8
                   }
               } else {
-                  throw "MSVC version not found"
+                  throw "MSVC version not found after 5 cl.exe probe attempts"
               }
               Remove-Item "dummy.cpp" -ErrorAction SilentlyContinue
 
