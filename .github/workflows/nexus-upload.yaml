@@ -201,6 +201,9 @@ jobs:
                   body = release.get('body') or ''
                   body = re.sub(r'\n---\n+# Feature Version Audit\b.*', '', body, flags=re.DOTALL).strip()
                   release_ver = os.environ['RELEASE_VER']
+                  # Prebuilt shader caches are uploaded separately as OPTIONAL files via the
+                  # official Nexus action (see the upload-shader-caches job) — unex can only set
+                  # MAIN files, so they are not part of this (unex) AIO matrix.
                   row = {
                       'name': 'core',
                       'is_core': True,
@@ -209,7 +212,11 @@ jobs:
                       'mod_filename': os.environ['EFFECTIVE_FILENAME'],
                       'auto_upload': True,
                       'changelog': body,
-                      'file_description': f'Open Shaders {release_ver} AIO. See changelog for included features.',
+                      'file_description': (
+                          f'Open Shaders {release_ver} AIO. See changelog for included features. '
+                          'Optional prebuilt shader caches (SE/AE and VR) are available as separate '
+                          'files below to skip first-launch shader compilation.'
+                      ),
                   }
                   with open('nexus-matrix-raw.json', 'w') as f:
                       json.dump([row], f)
@@ -505,6 +512,71 @@ jobs:
         secrets:
             UNEX_NEXUSMODS_SESSION_COOKIE: ${{ secrets.UNEX_NEXUSMODS_SESSION_COOKIE }}
             UNEX_APIKEY: ${{ secrets.UNEX_APIKEY }}
+
+    upload-shader-caches:
+        # Prebuilt shader caches are OPTIONAL files. The unex path above only sets MAIN files,
+        # so the caches use the official Nexus action (file_category + file-group support).
+        # aio mode only; matrix (per-feature) mode does not produce these. Each cache is its own
+        # manually-minted file group on the Open Shaders page; archive_existing_file rolls the
+        # prior version into the group. The .7z come from the release assets attached by the
+        # "Release: Prebuilt Shader Cache" workflow; a runtime is skipped if its asset is absent.
+        name: Upload Prebuilt Shader Caches
+        needs: prepare-nexus-matrix
+        runs-on: ubuntu-latest
+        if: needs.prepare-nexus-matrix.outputs.mode == 'aio'
+        strategy:
+            fail-fast: false
+            matrix:
+                include:
+                    - runtime: SE
+                      pattern: ShaderCache-SE-*.7z
+                      file_group_id: "7535987"
+                      display_name: ShaderCache SE/AE
+                    - runtime: VR
+                      pattern: ShaderCache-VR-*.7z
+                      file_group_id: "7535993"
+                      display_name: ShaderCache VR
+        steps:
+            - name: Download cache asset from release
+              id: dl
+              env:
+                  GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+              run: |
+                  mkdir -p caches
+                  gh release download "${{ needs.prepare-nexus-matrix.outputs.tag }}" \
+                    --repo "$GITHUB_REPOSITORY" --pattern "${{ matrix.pattern }}" --dir caches || true
+                  file=$(find caches -maxdepth 1 -name "${{ matrix.pattern }}" | sort | head -n1)
+                  if [ -z "$file" ]; then
+                    echo "::warning::No ${{ matrix.runtime }} shader-cache asset on release ${{ needs.prepare-nexus-matrix.outputs.tag }} (pattern ${{ matrix.pattern }}); skipping."
+                    echo "found=false" >> "$GITHUB_OUTPUT"
+                  else
+                    echo "Found cache asset: $file"
+                    echo "file=$file" >> "$GITHUB_OUTPUT"
+                    echo "found=true" >> "$GITHUB_OUTPUT"
+                  fi
+
+            - name: Report planned cache upload
+              if: steps.dl.outputs.found == 'true'
+              run: |
+                  echo "Optional shader cache: ${{ matrix.display_name }} (group ${{ matrix.file_group_id }}) v${{ needs.prepare-nexus-matrix.outputs.version }}"
+                  if [ "${{ needs.prepare-nexus-matrix.outputs.dry_run }}" = "true" ]; then
+                    echo "Dry run: skipping actual upload."
+                  fi
+
+            - name: Upload optional shader cache to Nexus
+              if: steps.dl.outputs.found == 'true' && needs.prepare-nexus-matrix.outputs.dry_run != 'true'
+              uses: Nexus-Mods/upload-action@0bf670d75d46988c176c9bfacc94ca0144e0fe3f # v1.0.0-beta.7
+              with:
+                  api_key: ${{ secrets.UNEX_APIKEY }}
+                  file_group_id: ${{ matrix.file_group_id }}
+                  filename: ${{ steps.dl.outputs.file }}
+                  display_name: ${{ matrix.display_name }}
+                  version: ${{ needs.prepare-nexus-matrix.outputs.version }}
+                  file_category: optional
+                  archive_existing_file: true
+                  description: >-
+                      Prebuilt shader cache for default AIO settings. If you install any other
+                      optional features or tweak settings, this will not help you. Must match AIO version.
 
     upload-summary:
         name: Upload Summary
