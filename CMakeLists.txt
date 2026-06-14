@@ -500,6 +500,17 @@ foreach(_fpath IN LISTS AIO_EXCLUDED_FEATURE_PATHS)
             list(APPEND AIO_EXCLUDED_STAGE_RELPATHS "Shaders/${_ini}")
         endforeach()
     endif()
+
+    # Strip the feature's non-shader staged assets (.esp/.esl, meshes/, etc.).
+    # DESTINATION "." maps feature-root-relative paths straight to the AIO root;
+    # enumerate files (not dirs) so shared trees like meshes/ survive for others.
+    file(GLOB_RECURSE _nonshader_files RELATIVE "${_fpath}" "${_fpath}/*")
+    foreach(_nf IN LISTS _nonshader_files)
+        if(_nf MATCHES "^Shaders/" OR _nf STREQUAL "CORE")
+            continue()
+        endif()
+        list(APPEND AIO_EXCLUDED_STAGE_RELPATHS "${_nf}")
+    endforeach()
 endforeach()
 list(REMOVE_DUPLICATES AIO_EXCLUDED_STAGE_RELPATHS)
 
