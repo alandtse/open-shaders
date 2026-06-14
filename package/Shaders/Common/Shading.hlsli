@@ -35,8 +35,13 @@ float ApproximateDirectOcculusion(float aoVisibility, float NdotL)
 // geometric normal s, a base normal t and a secondary (or detail) normal u
 float3 ReorientNormal(float3 u, float3 t, float3 s)
 {
-	// Build the shortest-arc quaternion
-	float4 q = float4(cross(s, t), dot(s, t) + 1) / sqrt(2 * (dot(s, t) + 1));
+	// Build the shortest-arc quaternion. Antiparallel s/t make dot(s,t)+1 == 0,
+	// so guard the sqrt/divide against NaNs leaking into lighting.
+	float d = dot(s, t);
+	float denom = 2.0 * (d + 1.0);
+	if (denom <= EPSILON_DIVISION)
+		return normalize(u);
+	float4 q = float4(cross(s, t), d + 1.0) * rsqrt(denom);
 
 	// Rotate the normal
 	return u * (q.w * q.w - dot(q.xyz, q.xyz)) + 2 * q.xyz * dot(q.xyz, u) + 2 * q.w * cross(q.xyz, u);
@@ -48,7 +53,9 @@ float3 ReorientNormal(float3 n1, float3 n2)
 	n1 += float3(0, 0, 1);
 	n2 *= float3(-1, -1, 1);
 
-	return n1 * dot(n1, n2) / n1.z - n2;
+	// Guard n1.z (== 0 for a perpendicular detail normal) to avoid divide-by-zero NaNs.
+	float safeZ = abs(n1.z) < EPSILON_DIVISION ? (n1.z < 0.0 ? -EPSILON_DIVISION : EPSILON_DIVISION) : n1.z;
+	return n1 * dot(n1, n2) / safeZ - n2;
 }
 
 float3x3 ReconstructTBN(float3 worldPos, float3 worldNormal, float2 uv)
@@ -73,8 +80,8 @@ float3 CalculateNormalFromHeight(float height, float heightScale, float2 uv)
 	float2 dUVdy = ddy(uv);
 
 	float det = dUVdx.x * dUVdy.y - dUVdx.y * dUVdy.x;
-	if (det < EPSILON_DIVISION) {
-		return float3(0, 0, 1);  // Avoid division by zero
+	if (abs(det) < EPSILON_DIVISION) {
+		return float3(0, 0, 1);  // Avoid division by zero (abs keeps valid mirrored-UV dets)
 	}
 
 	float dHdx_Tex = (dHdx * dUVdy.y - dHdy * dUVdx.y) / det;
