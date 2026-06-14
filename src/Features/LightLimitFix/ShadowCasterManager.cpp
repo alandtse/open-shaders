@@ -1113,31 +1113,26 @@ namespace ShadowCasterManager
 		return *reinterpret_cast<bool*>(uid.address());
 	}
 
-	// Recompute the engine's cached ShadowDistanceSquared from the live shadow-distance
-	// settings -- the engine otherwise only refreshes it on an interior/exterior
-	// transition, so live edits don't reach the cull until a cell reload (#161).
-	// RelocationID (SE, AE); VR via the SE id (UpdateShadowDistanceAndInteriorFlag:
-	// SE 0x141295ad0 / AE 0x14147fed0 / VR 0x1412ce720).
+	// Recompute the engine's cached shadow-cull square from the live shadow-distance
+	// settings; the engine self-refreshes it only on a cell transition, so a slider
+	// edit otherwise wouldn't reach the cull until a reload.
 	static void CallUpdateShadowDistance(bool a_interior)
 	{
 		static REL::Relocation<void(bool)> fn{ REL::RelocationID(98978, 105631) };
 		fn(a_interior);
 	}
 
-	// #161 (B): engine's current light LOD fade-out distance squared, recomputed
-	// every frame by Sky::UpdateLightLODFadeDistances (auto-includes interior-cell /
-	// weather overrides). RelocationID resolves on all three runtimes.
+	// Engine's current light LOD fade-out distance (squared), recomputed each frame
+	// by Sky::UpdateLightLODFadeDistances with interior-cell / weather overrides.
 	static float GetLightLODEndFadeSquared()
 	{
 		static REL::Relocation<float*> p{ REL::RelocationID(527669, 414583) };
 		return *p;
 	}
 
-	// Engine shadow-cull distance globals. The per-frame BSShadow*Light::UpdateCamera
-	// cull compares (dist²-radius²) against ShadowDistanceSquared_Current; the engine
-	// recomputes both (from fInterior/fShadowDistance) only on a cell transition.
-	// RelocationID (SE, AE); VR via the SE id. 528316 ships in the VR address library
-	// for this work; 528314 (ShadowDistance_Current) was already mapped.
+	// Engine shadow-cull distance cache, compared against (dist²-radius²) in the
+	// per-frame light cull. The engine recomputes it only on a cell transition, so a
+	// per-frame writer must re-apply every frame to stay live.
 	static float& ShadowDistanceCurrent()
 	{
 		static REL::Relocation<float*> p{ REL::RelocationID(528314, 415263) };
@@ -1149,22 +1144,18 @@ namespace ShadowCasterManager
 		return *p;
 	}
 
-	// Extend the engine's cached shadow-cull distance up to the light fade-out
-	// distance, so a caster's shadow lasts at least as long as its light is visible --
-	// the 3000<->3500 lit-but-shadowless band that reads as a pop collapses (#161).
-	// Recompute from the user's base distance each frame (so it tracks the light fade
-	// both ways) and write the cached globals directly: they're only refreshed by the
-	// engine on a cell transition, so re-applying each frame keeps the coupling live
-	// while the user's INI prefs stay untouched. max() respects a deliberately larger
-	// user distance (VR default 7500) -- the coupling closes the gap, it never shrinks
-	// a configured range. The non-squared global is kept consistent for sun-cascade
-	// paths that read it.
+	// Couple the shadow-cull distance to the light fade-out distance so a caster's
+	// shadow lasts as long as its light stays lit, removing the lit-but-shadowless
+	// band that reads as a pop-in. Recompute from the user's base each frame and
+	// write the engine cache directly (it self-refreshes only on a cell transition);
+	// max() never shrinks a deliberately larger configured distance, and the
+	// non-squared global is kept in sync for sun-cascade paths that read it.
 	static void ApplyShadowToLightFadeMatch()
 	{
 		if (!s_settings.MatchShadowToLightFade)
 			return;
 		const float endSq = GetLightLODEndFadeSquared();
-		if (!(endSq > 0.0f))
+		if (!std::isfinite(endSq) || endSq <= 0.0f)
 			return;  // light fade disabled / not yet computed -- leave the cull as-is
 		auto* prefColl = RE::INIPrefSettingCollection::GetSingleton();
 		if (!prefColl)
@@ -1174,6 +1165,8 @@ namespace ShadowCasterManager
 		if (!setting)
 			return;
 		const float base = setting->GetFloat();
+		if (!std::isfinite(base) || base < 0.0f)
+			return;  // malformed INI -- don't poison the engine cull with NaN/inf
 		const float targetSq = std::max(base * base, endSq);
 		ShadowDistanceSquaredCurrent() = targetSq;
 		ShadowDistanceCurrent() = std::sqrt(targetSq);
@@ -1868,9 +1861,9 @@ namespace ShadowCasterManager
 		if (!ssn || !camera)
 			return;
 
-		// #161 (B): couple the shadow-cull distance to the light fade-out distance
-		// before the validation pass runs UpdateCamera (which reads the cached
-		// ShadowDistanceSquared). No-op unless MatchShadowToLightFade is enabled.
+		// Couple the shadow-cull distance to the light fade before the validation
+		// pass runs UpdateCamera (which reads the cached square). No-op unless
+		// MatchShadowToLightFade is enabled.
 		ApplyShadowToLightFadeMatch();
 
 		// Read the engine's per-frame focus-shadow actor count and reserve
@@ -3462,8 +3455,8 @@ namespace ShadowCasterManager
 		// that need to land before SCM::Install hook here.
 	}
 
-	// Refresh the engine's cached shadow-cull distance after a manual slider edit so
-	// it applies without a cell reload (see CallUpdateShadowDistance) (#161).
+	// Refresh the engine's cached shadow-cull distance after a slider edit so it
+	// applies without a cell reload.
 	static void RefreshEngineShadowDistanceCache()
 	{
 		CallUpdateShadowDistance(Util::IsInterior());
@@ -3521,11 +3514,12 @@ namespace ShadowCasterManager
 			// timestamp and contents stay stale until the process exits.
 			// See KB Q104112 / MSDN remarks for WritePrivateProfileString.
 			::WritePrivateProfileStringA(nullptr, nullptr, nullptr, iniPath);
-			logger::info("[SCM] Persisted [{}]{}={} to {}", section, key, value, iniPath);
+			// Log the setting only -- iniPath holds the user's profile dir.
+			logger::info("[SCM] Persisted [{}]{}={}", section, key, value);
 		} else {
 			const DWORD err = ::GetLastError();
-			logger::warn("[SCM] WritePrivateProfileStringA failed (err={}) writing [{}]{}={} to {}",
-				err, section, key, value, iniPath);
+			logger::warn("[SCM] WritePrivateProfileStringA failed (err={}) writing [{}]{}={}",
+				err, section, key, value);
 		}
 	}
 
@@ -5643,22 +5637,25 @@ namespace ShadowCasterManager
 
 			ImGui::SeparatorText(T(TKEY("shadow_distance_header"), "Shadow Distance"));
 			if (auto* prefColl = RE::INIPrefSettingCollection::GetSingleton()) {
-				ImGui::Checkbox(T(TKEY("match_shadow_to_light_fade"), "Match Shadow Distance to Light Fade"), &settings.MatchShadowToLightFade);
+				const bool wasMatching = settings.MatchShadowToLightFade;
+				if (ImGui::Checkbox(T(TKEY("match_shadow_to_light_fade"), "Match Shadow Distance to Light Fade"), &settings.MatchShadowToLightFade) &&
+					wasMatching && !settings.MatchShadowToLightFade)
+					RefreshEngineShadowDistanceCache();  // toggled off: restore the manual distance now, don't wait for a reload
 				if (ImGui::IsItemHovered())
 					ImGui::SetTooltip("%s", T(TKEY("match_shadow_to_light_fade_tooltip"),
 												"Each frame, set the shadow-cull distance to the engine's light\n"
 												"LOD fade-out distance, so a shadow exists exactly as long as its\n"
 												"light is visible -- removes the on-approach pop without rendering\n"
 												"shadows past where lights fade. Auto-adapts to interior-cell and\n"
-												"weather overrides; overrides the sliders below while enabled (#161)."));
+												"weather overrides; overrides the sliders below while enabled."));
 
 				// ---- Shadow Distance (live) -----------------------------------
 				// Drives the engine's shadow-cull far plane. A light past this
-				// distance is frustum-culled (frustrumCull=0xff) and demoted to a
-				// normal light, so its shadow pops in as the player crosses the
-				// boundary (#161). Raising it keeps distant casters shadowed at the
-				// cost of more shadow renders. Applies live; persisted on Save.
-				// Disabled while MatchShadowToLightFade drives the distance for us.
+				// distance is culled and demoted to a normal light, so its shadow
+				// pops in as the player crosses the boundary. Raising it keeps
+				// distant casters shadowed at the cost of more shadow renders.
+				// Applies live; persisted on Save. Disabled while
+				// MatchShadowToLightFade drives the distance for us.
 				ImGui::BeginDisabled(settings.MatchShadowToLightFade);
 				if (auto* iSetting = prefColl->GetSetting("fInteriorShadowDistance:Display")) {
 					float v = iSetting->GetFloat();
@@ -5672,7 +5669,7 @@ namespace ShadowCasterManager
 													"Distance (game units) past which interior light shadows are culled\n"
 													"(fInteriorShadowDistance:Display, vanilla default 3000). Raise it so\n"
 													"distant interior casters stay shadowed instead of popping in on\n"
-													"approach (#161) -- costs more shadow renders. Applies live;\n"
+													"approach -- costs more shadow renders. Applies live;\n"
 													"persisted to SkyrimPrefs.ini on Save Settings."));
 				}
 				if (auto* eSetting = prefColl->GetSetting("fShadowDistance:Display")) {
