@@ -986,6 +986,8 @@
     "feature.light_limit_fix.key_feature_4": "Improved lighting quality",
     "feature.light_limit_fix.key_feature_5": "Particle lights from configurable INI",
     "feature.light_limit_fix.light_conversion": "Light Conversion##LightConv",
+    "feature.light_limit_fix.light_fade_distance": "Light Fade Distance",
+    "feature.light_limit_fix.light_fade_distance_tooltip": "Distance (game units) at which lights LOD-fade out\n(fLightLODStartFade; also lifts the fLightLODMaxStartFade cap).\nWith 'Match Shadow Distance to Light Fade' on, this is the master\ncontrol -- it sets how far BOTH lights and their shadows reach.\nVanilla 3500. Global light-LOD setting: affects all lights, not\njust shadow casters. Persisted to SkyrimPrefs.ini on Save.",
     "feature.light_limit_fix.light_limit_vis": "Light Limit Visualization",
     "feature.light_limit_fix.lights_vis_mode": "Lights Visualisation Mode",
     "feature.light_limit_fix.lights_vis_mode_opt_clustered_lights_count": "Clustered Lights Count",

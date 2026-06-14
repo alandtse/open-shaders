@@ -3511,6 +3511,22 @@ namespace ShadowCasterManager
 		}
 	}
 
+	// Resolve a "<key>:<section>" engine setting from whichever collection owns it.
+	// The light-LOD knobs live in Skyrim.ini (INISettingCollection) while the shadow
+	// distances live in SkyrimPrefs.ini (INIPrefSettingCollection); callers shouldn't
+	// have to know which. Persisting always targets SkyrimPrefs.ini, which overrides
+	// Skyrim.ini at load, so a single write path keeps either kind sticky.
+	static RE::Setting* GetDisplaySetting(const char* a_name)
+	{
+		if (auto* pc = RE::INIPrefSettingCollection::GetSingleton())
+			if (auto* s = pc->GetSetting(a_name))
+				return s;
+		if (auto* ic = globals::game::iniSettingCollection)
+			if (auto* s = ic->GetSetting(a_name))
+				return s;
+		return nullptr;
+	}
+
 	void SaveINISettings()
 	{
 		if (!s_shadowResolutionDirty && !s_shadowDistanceDirty)
@@ -3526,6 +3542,10 @@ namespace ShadowCasterManager
 		if (s_shadowDistanceDirty) {
 			PersistPrefSetting(prefColl, prefColl->GetSetting("fInteriorShadowDistance:Display"));
 			PersistPrefSetting(prefColl, prefColl->GetSetting("fShadowDistance:Display"));
+			// Light-LOD knobs live in Skyrim.ini; persist to SkyrimPrefs.ini anyway
+			// (it overrides at load) so the master Light Fade Distance sticks.
+			PersistPrefSetting(prefColl, GetDisplaySetting("fLightLODStartFade:Display"));
+			PersistPrefSetting(prefColl, GetDisplaySetting("fLightLODMaxStartFade:Display"));
 			s_shadowDistanceDirty = false;
 		}
 	}
@@ -5652,6 +5672,30 @@ namespace ShadowCasterManager
 													"at a GPU cost. Applies live; persisted on Save Settings."));
 				}
 				ImGui::EndDisabled();
+
+				// Light fade distance -- not gated by the match toggle because it
+				// drives the LIGHTS. With Match on it's the master "how far do lights
+				// AND their shadows reach" control, since the coupling tracks it.
+				if (auto* lodStart = GetDisplaySetting("fLightLODStartFade:Display")) {
+					float v = lodStart->GetFloat();
+					if (ImGui::SliderFloat(T(TKEY("light_fade_distance"), "Light Fade Distance"), &v, 1000.0f, 20000.0f, "%.0f")) {
+						lodStart->SetFloat(v);
+						// fLightLODMaxStartFade caps the start fade; lift it so the
+						// slider isn't silently clamped (only raise, never lower).
+						if (auto* lodMax = GetDisplaySetting("fLightLODMaxStartFade:Display"))
+							if (lodMax->GetFloat() < v)
+								lodMax->SetFloat(v);
+						s_shadowDistanceDirty = true;
+					}
+					if (ImGui::IsItemHovered())
+						ImGui::SetTooltip("%s", T(TKEY("light_fade_distance_tooltip"),
+													"Distance (game units) at which lights LOD-fade out\n"
+													"(fLightLODStartFade; also lifts the fLightLODMaxStartFade cap).\n"
+													"With 'Match Shadow Distance to Light Fade' on, this is the master\n"
+													"control -- it sets how far BOTH lights and their shadows reach.\n"
+													"Vanilla 3500. Global light-LOD setting: affects all lights, not\n"
+													"just shadow casters. Persisted to SkyrimPrefs.ini on Save."));
+				}
 			}
 
 			// ---- Importance scheduling curve ------------------------------
