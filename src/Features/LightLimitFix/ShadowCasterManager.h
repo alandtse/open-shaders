@@ -261,7 +261,7 @@ namespace ShadowCasterManager
 		/// fades. Auto-adapts to interior-cell / weather overrides. Leaves the user's
 		/// fInteriorShadowDistance/fShadowDistance prefs untouched. On by default --
 		/// only takes effect while the SLF shadow scheduler is active, which already
-		/// owns a redraw budget, so the extra reach is bounded (#161).
+		/// owns a redraw budget, so the extra reach is bounded.
 		bool MatchShadowToLightFade = true;
 
 		/// Force-enable portal-strict on shadow casters as they're added by
