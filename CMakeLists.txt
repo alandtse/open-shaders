@@ -404,20 +404,25 @@ string(TIMESTAMP UTC_NOW "%Y-%m-%dT%H-%MZ" UTC)
 # Set AIO directory path used by multiple targets below
 set(AIO_DIR "${CMAKE_CURRENT_BINARY_DIR}/aio")
 
-# TRUE iff the feature's .ini sets `autoupload = true` (case-insensitive)
-# or the feature is CORE (always included). Result in ${out_var}.
-function(feature_is_autoupload feature_path out_var)
+# TRUE if the feature ships in the AIO: it is CORE, or its `.ini` sets
+# `autoupload = true` or `aio = true` (aio bundles without a standalone
+# upload — the matrix upload is gated on autoupload). Result in ${out_var}.
+function(feature_in_aio feature_path out_var)
     if(EXISTS "${feature_path}/CORE")
         set(${out_var} TRUE PARENT_SCOPE)
         return()
     endif()
     file(GLOB _ini_candidates "${feature_path}/Shaders/Features/*.ini")
     foreach(_ini IN LISTS _ini_candidates)
-        file(STRINGS "${_ini}" _ini_lines REGEX "^[ \t]*autoupload[ \t]*=")
+        file(
+            STRINGS "${_ini}"
+            _ini_lines
+            REGEX "^[ \t]*(autoupload|aio)[ \t]*="
+        )
         foreach(_line IN LISTS _ini_lines)
             # Strip "key =" to extract the value, lowercase it.
             string(
-                REGEX REPLACE "^[ \t]*autoupload[ \t]*=[ \t]*"
+                REGEX REPLACE "^[ \t]*(autoupload|aio)[ \t]*=[ \t]*"
                 ""
                 _val
                 "${_line}"
@@ -450,7 +455,7 @@ foreach(_fpath IN LISTS FEATURE_PATHS)
     if(AIO_INCLUDE_NON_AUTOUPLOAD)
         list(APPEND AIO_INCLUDED_FEATURE_PATHS "${_fpath}")
     else()
-        feature_is_autoupload("${_fpath}" _ok)
+        feature_in_aio("${_fpath}" _ok)
         if(_ok)
             list(APPEND AIO_INCLUDED_FEATURE_PATHS "${_fpath}")
         else()
@@ -500,6 +505,17 @@ foreach(_fpath IN LISTS AIO_EXCLUDED_FEATURE_PATHS)
             list(APPEND AIO_EXCLUDED_STAGE_RELPATHS "Shaders/${_ini}")
         endforeach()
     endif()
+
+    # Strip the feature's non-shader staged assets (.esp/.esl, meshes/, etc.).
+    # DESTINATION "." maps feature-root-relative paths straight to the AIO root;
+    # enumerate files (not dirs) so shared trees like meshes/ survive for others.
+    file(GLOB_RECURSE _nonshader_files RELATIVE "${_fpath}" "${_fpath}/*")
+    foreach(_nf IN LISTS _nonshader_files)
+        if(_nf MATCHES "^Shaders/" OR _nf STREQUAL "CORE")
+            continue()
+        endif()
+        list(APPEND AIO_EXCLUDED_STAGE_RELPATHS "${_nf}")
+    endforeach()
 endforeach()
 list(REMOVE_DUPLICATES AIO_EXCLUDED_STAGE_RELPATHS)
 
