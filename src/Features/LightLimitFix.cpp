@@ -13,7 +13,6 @@
 #include "Menu/ThemeManager.h"
 #include "Shadercache.h"
 #include "State.h"
-#include "Util.h"
 #include "Utils/ExternalEmittance.h"
 
 #include <algorithm>
