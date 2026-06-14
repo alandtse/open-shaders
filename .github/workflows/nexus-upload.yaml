@@ -46,6 +46,14 @@ on:
             changelog:
                 description: "Optional release notes or changelog for Nexus"
                 required: false
+            shader_cache_uploader:
+                description: "Uploader for the optional prebuilt shader caches (aio mode). 'official' = Nexus-Mods/upload-action (sets the OPTIONAL category + file groups); 'none' = skip. unex is not offered here: it can only set MAIN files."
+                required: false
+                type: choice
+                default: "official"
+                options:
+                    - "official"
+                    - "none"
     workflow_call:
         inputs:
             mode:
@@ -80,6 +88,10 @@ on:
                 required: false
                 type: string
                 default: ""
+            shader_cache_uploader:
+                required: false
+                type: string
+                default: "official"
         secrets:
             UNEX_NEXUSMODS_SESSION_COOKIE:
                 required: false
@@ -201,6 +213,9 @@ jobs:
                   body = release.get('body') or ''
                   body = re.sub(r'\n---\n+# Feature Version Audit\b.*', '', body, flags=re.DOTALL).strip()
                   release_ver = os.environ['RELEASE_VER']
+                  # Prebuilt shader caches are uploaded separately as OPTIONAL files via the
+                  # official Nexus action (see the upload-shader-caches job) — unex can only set
+                  # MAIN files, so they are not part of this (unex) AIO matrix.
                   row = {
                       'name': 'core',
                       'is_core': True,
@@ -209,7 +224,11 @@ jobs:
                       'mod_filename': os.environ['EFFECTIVE_FILENAME'],
                       'auto_upload': True,
                       'changelog': body,
-                      'file_description': f'Open Shaders {release_ver} AIO. See changelog for included features.',
+                      'file_description': (
+                          f'Open Shaders {release_ver} AIO. See changelog for included features. '
+                          'Optional prebuilt shader caches (SE/AE and VR) are available as separate '
+                          'files below to skip first-launch shader compilation.'
+                      ),
                   }
                   with open('nexus-matrix-raw.json', 'w') as f:
                       json.dump([row], f)
@@ -504,6 +523,43 @@ jobs:
             check_existing: true
         secrets:
             UNEX_NEXUSMODS_SESSION_COOKIE: ${{ secrets.UNEX_NEXUSMODS_SESSION_COOKIE }}
+            UNEX_APIKEY: ${{ secrets.UNEX_APIKEY }}
+
+    upload-shader-caches:
+        # Prebuilt shader caches are OPTIONAL files. The unex path above only sets MAIN files,
+        # so the caches use the official-action reusable workflow (file_category + file-group
+        # support). aio mode only; each cache is its own manually-minted file group on the Open
+        # Shaders page, and archive_existing_file rolls the prior version into the group. The .7z
+        # come from the release assets attached by the "Release: Prebuilt Shader Cache" workflow;
+        # a runtime is skipped (warning) if its asset is absent.
+        needs: prepare-nexus-matrix
+        if: >
+            needs.prepare-nexus-matrix.outputs.mode == 'aio' &&
+            (inputs.shader_cache_uploader || 'official') == 'official'
+        strategy:
+            fail-fast: false
+            matrix:
+                include:
+                    - file_group_id: "7535987"
+                      pattern: ShaderCache-SE-*.7z
+                      display_name: ShaderCache SE/AE
+                    - file_group_id: "7535993"
+                      pattern: ShaderCache-VR-*.7z
+                      display_name: ShaderCache VR
+        uses: alandtse/nexus-workflows/.github/workflows/upload-nexus-official.yml@main
+        with:
+            file_group_id: ${{ matrix.file_group_id }}
+            version: ${{ needs.prepare-nexus-matrix.outputs.version }}
+            tag_name: ${{ needs.prepare-nexus-matrix.outputs.tag }}
+            artifact_pattern: ${{ matrix.pattern }}
+            file_category: optional
+            display_name: ${{ matrix.display_name }}
+            archive_existing_file: true
+            dry_run: ${{ needs.prepare-nexus-matrix.outputs.dry_run == 'true' }}
+            description: >-
+                Prebuilt shader cache for default AIO settings. If you install any other
+                optional features or tweak settings, this will not help you. Must match AIO version.
+        secrets:
             UNEX_APIKEY: ${{ secrets.UNEX_APIKEY }}
 
     upload-summary:
