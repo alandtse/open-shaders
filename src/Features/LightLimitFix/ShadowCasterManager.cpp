@@ -3335,6 +3335,19 @@ namespace ShadowCasterManager
 		// that need to land before SCM::Install hook here.
 	}
 
+	// Force the engine to recompute its cached shadow-cull distance from the live
+	// fInteriorShadowDistance / fShadowDistance settings. The engine only refreshes
+	// ShadowDistanceSquared_Current (what BSShadow*Light::UpdateCamera compares
+	// against) on an interior/exterior transition, so a live slider edit wouldn't
+	// reach the cull until a cell reload without this nudge (#161). RelocationID is
+	// (SE, AE); VR resolves via the SE id (verified UpdateShadowDistanceAndInteriorFlag
+	// = SE 0x141295ad0 / AE 0x14147fed0 / VR 0x1412ce720).
+	static void RefreshEngineShadowDistanceCache()
+	{
+		static REL::Relocation<void(bool)> UpdateShadowDistanceAndInteriorFlag{ REL::RelocationID(98978, 105631) };
+		UpdateShadowDistanceAndInteriorFlag(Util::IsInterior());
+	}
+
 	// Persist one live INIPref setting to SkyrimPrefs.ini.
 	//
 	// The engine's INIPrefSettingCollection::WriteSetting requires OpenHandle to
@@ -5262,6 +5275,7 @@ namespace ShadowCasterManager
 					if (ImGui::SliderFloat(T(TKEY("interior_shadow_distance"), "Interior Shadow Distance"), &v, 1000.0f, 12000.0f, "%.0f")) {
 						iSetting->SetFloat(v);
 						s_shadowDistanceDirty = true;
+						RefreshEngineShadowDistanceCache();  // apply live, no cell reload
 					}
 					if (ImGui::IsItemHovered())
 						ImGui::SetTooltip("%s", T(TKEY("interior_shadow_distance_tooltip"),
@@ -5276,6 +5290,7 @@ namespace ShadowCasterManager
 					if (ImGui::SliderFloat(T(TKEY("exterior_shadow_distance"), "Exterior Shadow Distance"), &v, 2000.0f, 20000.0f, "%.0f")) {
 						eSetting->SetFloat(v);
 						s_shadowDistanceDirty = true;
+						RefreshEngineShadowDistanceCache();  // apply live, no cell reload
 					}
 					if (ImGui::IsItemHovered())
 						ImGui::SetTooltip("%s", T(TKEY("exterior_shadow_distance_tooltip"),
