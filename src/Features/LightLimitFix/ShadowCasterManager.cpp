@@ -1113,6 +1113,17 @@ namespace ShadowCasterManager
 		return *reinterpret_cast<bool*>(uid.address());
 	}
 
+	// Recompute the engine's cached ShadowDistanceSquared from the live shadow-distance
+	// settings -- the engine otherwise only refreshes it on an interior/exterior
+	// transition, so live edits don't reach the cull until a cell reload (#161).
+	// RelocationID (SE, AE); VR via the SE id (UpdateShadowDistanceAndInteriorFlag:
+	// SE 0x141295ad0 / AE 0x14147fed0 / VR 0x1412ce720).
+	static void CallUpdateShadowDistance(bool a_interior)
+	{
+		static REL::Relocation<void(bool)> fn{ REL::RelocationID(98978, 105631) };
+		fn(a_interior);
+	}
+
 	// #161 (B): engine's current light LOD fade-out distance squared, recomputed
 	// every frame by Sky::UpdateLightLODFadeDistances (auto-includes interior-cell /
 	// weather overrides). RelocationID resolves on all three runtimes.
@@ -1144,11 +1155,10 @@ namespace ShadowCasterManager
 		auto* setting = prefColl->GetSetting(interior ? "fInteriorShadowDistance:Display" : "fShadowDistance:Display");
 		if (!setting)
 			return;
-		static REL::Relocation<void(bool)> UpdateShadowDistanceAndInteriorFlag{ REL::RelocationID(98978, 105631) };
 		const float saved = setting->GetFloat();
 		setting->SetFloat(std::sqrt(endSq));
-		UpdateShadowDistanceAndInteriorFlag(interior);  // recomputes ShadowDistanceSquared = endSq
-		setting->SetFloat(saved);                       // leave the user's pref untouched
+		CallUpdateShadowDistance(interior);  // recomputes ShadowDistanceSquared = endSq
+		setting->SetFloat(saved);            // leave the user's pref untouched
 	}
 
 	static bool* GetFocusShadowSelected()
@@ -1780,6 +1790,42 @@ namespace ShadowCasterManager
 		bool invalidLod{ false };      // engine's LOD-fade zeroed lodDimmer
 	};
 
+	// Why a candidate was demoted/disabled this frame, captured from the validation
+	// flags so the shadow table can explain each "Conv" row. Populated in the
+	// candidate tally loop (the flags are computed regardless); read only when the
+	// debug table is open, so no runtime cost in normal play.
+	enum class ConvertReason : uint8_t
+	{
+		None,
+		Portal,           // not reachable through the visible portal graph
+		FrustumDistance,  // off-screen or beyond the shadow-cull distance (frustrumCull)
+		LodFaded,         // past the light's LOD fade distance (lodDimmer == 0)
+		Excess,           // ranked below the shadow-caster budget
+		CameraOther,      // UpdateCamera rejected it for some other reason
+	};
+	static std::unordered_map<uintptr_t, ConvertReason> s_convertReason;
+
+	static const char* ConvertReasonText(uintptr_t a_key)
+	{
+		auto it = s_convertReason.find(a_key);
+		if (it == s_convertReason.end())
+			return nullptr;
+		switch (it->second) {
+		case ConvertReason::Portal:
+			return T(TKEY("conv_reason_portal"), "Reason: portal-culled -- the light's room isn't reachable through the visible portal graph.");
+		case ConvertReason::FrustumDistance:
+			return T(TKEY("conv_reason_frustum"), "Reason: frustum/distance-culled -- off-screen, or beyond the shadow-cull distance.");
+		case ConvertReason::LodFaded:
+			return T(TKEY("conv_reason_lod"), "Reason: LOD-faded -- past the light's LOD fade-out distance.");
+		case ConvertReason::Excess:
+			return T(TKEY("conv_reason_excess"), "Reason: excess -- ranked below the shadow-caster budget.");
+		case ConvertReason::CameraOther:
+			return T(TKEY("conv_reason_other"), "Reason: rejected by the engine visibility test.");
+		default:
+			return nullptr;
+		}
+	}
+
 	static void ScheduleShadowCasters()
 	{
 		ZoneScopedN("SCM::ScheduleShadowCasters");
@@ -2036,12 +2082,32 @@ namespace ShadowCasterManager
 			// Tracy candidate breakdown: emits per-frame so a capture can be
 			// queried alongside the per-action counters to verify the math
 			// (chosen + excess + invalid_camera + invalid_portal == total).
+			s_convertReason.clear();
 			for (auto& c : candidates) {
 				s_schedDiag.candidates_total++;
 				if (c.chosen)
 					s_schedDiag.candidates_chosen++;
 				if (c.excess)
 					s_schedDiag.candidates_excess++;
+
+				// Capture why a non-chosen light is demoted, for the shadow table.
+				// Portal wins (distinct disable path), then frustum/distance, LOD,
+				// excess -- matching the atomic loop's branch precedence.
+				if (!c.chosen) {
+					ConvertReason r = ConvertReason::None;
+					if (c.invalidPortal)
+						r = ConvertReason::Portal;
+					else if (c.invalidFrustum)
+						r = ConvertReason::FrustumDistance;
+					else if (c.invalidLod)
+						r = ConvertReason::LodFaded;
+					else if (c.excess)
+						r = ConvertReason::Excess;
+					else if (c.invalidCamera)
+						r = ConvertReason::CameraOther;
+					if (r != ConvertReason::None)
+						s_convertReason[reinterpret_cast<uintptr_t>(c.light)] = r;
+				}
 				if (c.invalidCamera)
 					s_schedDiag.candidates_invalid_camera++;
 				if (c.invalidPortal)
@@ -3378,17 +3444,11 @@ namespace ShadowCasterManager
 		// that need to land before SCM::Install hook here.
 	}
 
-	// Force the engine to recompute its cached shadow-cull distance from the live
-	// fInteriorShadowDistance / fShadowDistance settings. The engine only refreshes
-	// ShadowDistanceSquared_Current (what BSShadow*Light::UpdateCamera compares
-	// against) on an interior/exterior transition, so a live slider edit wouldn't
-	// reach the cull until a cell reload without this nudge (#161). RelocationID is
-	// (SE, AE); VR resolves via the SE id (verified UpdateShadowDistanceAndInteriorFlag
-	// = SE 0x141295ad0 / AE 0x14147fed0 / VR 0x1412ce720).
+	// Refresh the engine's cached shadow-cull distance after a manual slider edit so
+	// it applies without a cell reload (see CallUpdateShadowDistance) (#161).
 	static void RefreshEngineShadowDistanceCache()
 	{
-		static REL::Relocation<void(bool)> UpdateShadowDistanceAndInteriorFlag{ REL::RelocationID(98978, 105631) };
-		UpdateShadowDistanceAndInteriorFlag(Util::IsInterior());
+		CallUpdateShadowDistance(Util::IsInterior());
 	}
 
 	// Persist one live INIPref setting to SkyrimPrefs.ini.
@@ -4660,10 +4720,15 @@ namespace ShadowCasterManager
 							ImGui::SetTooltip(T(TKEY("status_slot_tooltip"), "Casting shadows this frame in slot %u."), row.idx);
 					} else if (row.converted) {
 						ImGui::TextColored(ImVec4(0.95f, 0.75f, 0.25f, 1), T(TKEY("status_conv"), "Conv"));
-						if (ImGui::IsItemHovered())
-							ImGui::SetTooltip("%s", T(TKEY("status_conv_tooltip"),
-														"Demoted to a normal (non-shadow) light this frame.\n"
-														"Cluster lighting still illuminates it; no shadow-map cost."));
+						if (ImGui::IsItemHovered()) {
+							// Append the per-light demotion reason (captured from the
+							// validation flags) so it's clear WHY this light has no shadow.
+							const char* reason = ConvertReasonText(row.info.lightKey);
+							ImGui::SetTooltip("%s%s%s", T(TKEY("status_conv_tooltip"),
+															"Demoted to a normal (non-shadow) light this frame.\n"
+															"Cluster lighting still illuminates it; no shadow-map cost."),
+								reason ? "\n" : "", reason ? reason : "");
+						}
 					} else {
 						ImGui::TextDisabled(T(TKEY("status_out"), "Out"));
 						if (ImGui::IsItemHovered())
