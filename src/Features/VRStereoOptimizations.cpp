@@ -410,48 +410,9 @@ void VRStereoOptimizations::ExecuteStencilWritePass()
 	auto context = globals::d3d::context;
 	auto renderer = globals::game::renderer;
 
-	// ===== SAVE FULL D3D11 PIPELINE STATE =====
-
-	ID3D11RenderTargetView* savedRTVs[D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT] = {};
-	ID3D11DepthStencilView* savedDSV = nullptr;
-	context->OMGetRenderTargets(D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT, savedRTVs, &savedDSV);
-
-	ID3D11DepthStencilState* savedDSS = nullptr;
-	UINT savedStencilRef = 0;
-	context->OMGetDepthStencilState(&savedDSS, &savedStencilRef);
-
-	ID3D11BlendState* savedBlendState = nullptr;
-	FLOAT savedBlendFactor[4] = {};
-	UINT savedSampleMask = 0;
-	context->OMGetBlendState(&savedBlendState, savedBlendFactor, &savedSampleMask);
-
-	ID3D11RasterizerState* savedRS = nullptr;
-	context->RSGetState(&savedRS);
-
-	D3D11_VIEWPORT savedViewports[D3D11_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE] = {};
-	UINT numViewports = D3D11_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE;
-	context->RSGetViewports(&numViewports, savedViewports);
-
-	ID3D11VertexShader* savedVS = nullptr;
-	context->VSGetShader(&savedVS, nullptr, nullptr);
-
-	ID3D11PixelShader* savedPS = nullptr;
-	context->PSGetShader(&savedPS, nullptr, nullptr);
-
-	ID3D11GeometryShader* savedGS = nullptr;
-	context->GSGetShader(&savedGS, nullptr, nullptr);
-
-	ID3D11InputLayout* savedInputLayout = nullptr;
-	context->IAGetInputLayout(&savedInputLayout);
-
-	D3D11_PRIMITIVE_TOPOLOGY savedTopology = D3D11_PRIMITIVE_TOPOLOGY_UNDEFINED;
-	context->IAGetPrimitiveTopology(&savedTopology);
-
-	ID3D11ShaderResourceView* savedPSSRV = nullptr;
-	context->PSGetShaderResources(0, 1, &savedPSSRV);
-
-	ID3D11Buffer* savedPSCB = nullptr;
-	context->PSGetConstantBuffers(1, 1, &savedPSCB);
+	// Snapshot + restore the full pipeline state this fullscreen pass clobbers
+	// (incl. PS constant-buffer slot 1, the params CB this pass binds).
+	Util::FullscreenPassScope scope(context);
 
 	// ===== SET UP STENCIL WRITE PASS =====
 
@@ -492,50 +453,7 @@ void VRStereoOptimizations::ExecuteStencilWritePass()
 
 	context->Draw(3, 0);
 
-	// ===== RESTORE FULL D3D11 PIPELINE STATE =====
-
-	ID3D11ShaderResourceView* nullSRV = nullptr;
-	context->PSSetShaderResources(0, 1, &nullSRV);
-
-	context->PSSetConstantBuffers(1, 1, &savedPSCB);
-
-	context->OMSetRenderTargets(D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT, savedRTVs, savedDSV);
-	context->OMSetDepthStencilState(savedDSS, savedStencilRef);
-	context->OMSetBlendState(savedBlendState, savedBlendFactor, savedSampleMask);
-	context->RSSetState(savedRS);
-	context->RSSetViewports(numViewports, savedViewports);
-	context->VSSetShader(savedVS, nullptr, 0);
-	context->PSSetShader(savedPS, nullptr, 0);
-	context->GSSetShader(savedGS, nullptr, 0);
-	context->IASetInputLayout(savedInputLayout);
-	context->IASetPrimitiveTopology(savedTopology);
-	context->PSSetShaderResources(0, 1, &savedPSSRV);
-
-	// Release COM references acquired by Get* calls
-	for (auto& rtv : savedRTVs) {
-		if (rtv)
-			rtv->Release();
-	}
-	if (savedDSV)
-		savedDSV->Release();
-	if (savedDSS)
-		savedDSS->Release();
-	if (savedBlendState)
-		savedBlendState->Release();
-	if (savedRS)
-		savedRS->Release();
-	if (savedVS)
-		savedVS->Release();
-	if (savedPS)
-		savedPS->Release();
-	if (savedGS)
-		savedGS->Release();
-	if (savedInputLayout)
-		savedInputLayout->Release();
-	if (savedPSSRV)
-		savedPSSRV->Release();
-	if (savedPSCB)
-		savedPSCB->Release();
+	// Pipeline state restored by `scope` dtor.
 }
 
 //=============================================================================
@@ -629,40 +547,8 @@ void VRStereoOptimizations::ExecuteDepthFillPass()
 	auto context = globals::d3d::context;
 	auto renderer = globals::game::renderer;
 
-	// ===== SAVE PIPELINE STATE =====
-
-	ID3D11RenderTargetView* savedRTVs[D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT] = {};
-	ID3D11DepthStencilView* savedDSV = nullptr;
-	context->OMGetRenderTargets(D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT, savedRTVs, &savedDSV);
-
-	ID3D11DepthStencilState* savedDSS = nullptr;
-	UINT savedStencilRef = 0;
-	context->OMGetDepthStencilState(&savedDSS, &savedStencilRef);
-
-	ID3D11RasterizerState* savedRS = nullptr;
-	context->RSGetState(&savedRS);
-
-	D3D11_VIEWPORT savedViewports[D3D11_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE] = {};
-	UINT numViewports = D3D11_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE;
-	context->RSGetViewports(&numViewports, savedViewports);
-
-	ID3D11VertexShader* savedVS = nullptr;
-	context->VSGetShader(&savedVS, nullptr, nullptr);
-
-	ID3D11PixelShader* savedPS = nullptr;
-	context->PSGetShader(&savedPS, nullptr, nullptr);
-
-	ID3D11GeometryShader* savedGS = nullptr;
-	context->GSGetShader(&savedGS, nullptr, nullptr);
-
-	ID3D11InputLayout* savedInputLayout = nullptr;
-	context->IAGetInputLayout(&savedInputLayout);
-
-	D3D11_PRIMITIVE_TOPOLOGY savedTopology = D3D11_PRIMITIVE_TOPOLOGY_UNDEFINED;
-	context->IAGetPrimitiveTopology(&savedTopology);
-
-	ID3D11ShaderResourceView* savedPSSRV = nullptr;
-	context->PSGetShaderResources(0, 1, &savedPSSRV);
+	// Snapshot + restore the full pipeline state this fullscreen pass clobbers.
+	Util::FullscreenPassScope scope(context);
 
 	// ===== DEPTH FILL PASS =====
 
@@ -683,42 +569,7 @@ void VRStereoOptimizations::ExecuteDepthFillPass()
 
 	context->Draw(3, 0);
 
-	// ===== RESTORE PIPELINE STATE =====
-
-	ID3D11ShaderResourceView* nullSRV = nullptr;
-	context->PSSetShaderResources(0, 1, &nullSRV);
-
-	context->OMSetRenderTargets(D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT, savedRTVs, savedDSV);
-	context->OMSetDepthStencilState(savedDSS, savedStencilRef);
-	context->RSSetState(savedRS);
-	context->RSSetViewports(numViewports, savedViewports);
-	context->VSSetShader(savedVS, nullptr, 0);
-	context->PSSetShader(savedPS, nullptr, 0);
-	context->GSSetShader(savedGS, nullptr, 0);
-	context->IASetInputLayout(savedInputLayout);
-	context->IASetPrimitiveTopology(savedTopology);
-	context->PSSetShaderResources(0, 1, &savedPSSRV);
-
-	for (auto& rtv : savedRTVs) {
-		if (rtv)
-			rtv->Release();
-	}
-	if (savedDSV)
-		savedDSV->Release();
-	if (savedDSS)
-		savedDSS->Release();
-	if (savedRS)
-		savedRS->Release();
-	if (savedVS)
-		savedVS->Release();
-	if (savedPS)
-		savedPS->Release();
-	if (savedGS)
-		savedGS->Release();
-	if (savedInputLayout)
-		savedInputLayout->Release();
-	if (savedPSSRV)
-		savedPSSRV->Release();
+	// Pipeline state restored by `scope` dtor.
 }
 
 void VRStereoOptimizations::DispatchGBufferFill()

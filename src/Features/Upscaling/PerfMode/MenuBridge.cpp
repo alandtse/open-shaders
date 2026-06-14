@@ -130,7 +130,7 @@ void PerfMode::MaybeBlitMenuBG(uint32_t boundRTIdx)
 	globals::features::upscaling.Upscale();
 
 	{
-		FullscreenPassScope stateScope(context);
+		Util::FullscreenPassScope stateScope(context);
 
 		// IA: fullscreen triangle, no VB/IB
 		context->IASetInputLayout(nullptr);
