@@ -1329,6 +1329,14 @@ void HDRDisplay::SnapshotCleanScene()
 		cleanSceneCapture->CreateSRV(srvDesc);
 	}
 
+	// Degrade to no clean capture this frame if the texture/SRV could not be created
+	// (resize / device pressure) rather than dereferencing a null resource on the render thread.
+	if (!cleanSceneCapture->resource || !cleanSceneCapture->srv) {
+		delete cleanSceneCapture;
+		cleanSceneCapture = nullptr;
+		return;
+	}
+
 	globals::d3d::context->CopyResource(cleanSceneCapture->resource.get(), hdrTexture->resource.get());
 	cleanSceneCaptureFrame = globals::state->frameCount;
 }
