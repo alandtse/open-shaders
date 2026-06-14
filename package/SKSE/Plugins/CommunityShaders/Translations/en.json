@@ -994,6 +994,8 @@
     "feature.light_limit_fix.lights_vis_mode_opt_strict_lights_count": "Strict Lights Count",
     "feature.light_limit_fix.lights_vis_mode_opt_unshadowed_point_lights": "Unshadowed Point Lights",
     "feature.light_limit_fix.lights_vis_mode_tooltip": "Light Limit: Red when the strict light limit is reached (>=7 portal-strict lights).\n\nStrict Lights Count: Heatmap of portal-strict lights per pixel (blue=0, red=15).\n\nClustered Lights Count: Heatmap of dynamic lights in each screen tile (blue=0, red=128).",
+    "feature.light_limit_fix.match_shadow_to_light_fade": "Match Shadow Distance to Light Fade",
+    "feature.light_limit_fix.match_shadow_to_light_fade_tooltip": "Each frame, set the shadow-cull distance to the engine's light\nLOD fade-out distance, so a shadow exists exactly as long as its\nlight is visible -- removes the on-approach pop without rendering\nshadows past where lights fade. Auto-adapts to interior-cell and\nweather overrides; overrides the sliders below while enabled (#161).",
     "feature.light_limit_fix.max_interval_scale": "Max Interval Scale",
     "feature.light_limit_fix.max_interval_scale_tooltip": "Interval multiplier applied to unimportant lights (importance = 0).\nHigher values defer dim or distant lights more aggressively.\nDefault: 2.0",
     "feature.light_limit_fix.max_particle_distance": "Max Particle Distance",

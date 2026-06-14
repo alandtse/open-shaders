@@ -255,6 +255,13 @@ namespace ShadowCasterManager
 		/// Disabled by default; experimental.
 		bool PromoteNormalToShadow = false;
 
+		/// Match the shadow-cull distance to the engine's light LOD fade-out
+		/// distance each frame, so a caster's shadow exists exactly as long as its
+		/// light is visible -- no on-approach pop, no shadows past where the light
+		/// fades. Auto-adapts to interior-cell / weather overrides. Leaves the user's
+		/// fInteriorShadowDistance/fShadowDistance prefs untouched (#161).
+		bool MatchShadowToLightFade = false;
+
 		/// Force-enable portal-strict on shadow casters as they're added by
 		/// the engine. Per-type because portal-strict on spotlights drops
 		/// culled-but-visible spots entirely, while on omnis/hemispheres it
@@ -330,6 +337,7 @@ namespace ShadowCasterManager
 		RedrawBudgetMs,
 		ConvertExcessToNormal,
 		PromoteNormalToShadow,
+		MatchShadowToLightFade,
 		ForceEnablePortalStrictOmni,
 		ForceEnablePortalStrictHemi,
 		ForceEnablePortalStrictSpot,

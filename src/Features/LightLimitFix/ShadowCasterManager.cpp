@@ -1113,6 +1113,44 @@ namespace ShadowCasterManager
 		return *reinterpret_cast<bool*>(uid.address());
 	}
 
+	// #161 (B): engine's current light LOD fade-out distance squared, recomputed
+	// every frame by Sky::UpdateLightLODFadeDistances (auto-includes interior-cell /
+	// weather overrides). RelocationID resolves on all three runtimes.
+	static float GetLightLODEndFadeSquared()
+	{
+		static REL::Relocation<float*> p{ REL::RelocationID(527669, 414583) };
+		return *p;
+	}
+
+	// Drive the engine's shadow-cull distance to match the light fade-out distance,
+	// so a caster's shadow exists exactly as long as its light is visible -- the
+	// 3000<->3500 lit-but-shadowless band that reads as a pop collapses (#161). We
+	// set the active shadow-distance INI to sqrt(lightFadeEnd), let the engine
+	// recompute its cached ShadowDistanceSquared via UpdateShadowDistanceAndInterior-
+	// Flag, then restore the INI so the user's prefs/slider stay untouched -- only
+	// the engine's cached square changes, re-applied each frame. The direct global
+	// write is avoided because ShadowDistanceSquared's SE id isn't in the VR addrlib.
+	static void ApplyShadowToLightFadeMatch()
+	{
+		if (!s_settings.MatchShadowToLightFade)
+			return;
+		const float endSq = GetLightLODEndFadeSquared();
+		if (!(endSq > 0.0f))
+			return;  // light fade disabled / not yet computed -- leave the cull as-is
+		auto* prefColl = RE::INIPrefSettingCollection::GetSingleton();
+		if (!prefColl)
+			return;
+		const bool interior = Util::IsInterior();
+		auto* setting = prefColl->GetSetting(interior ? "fInteriorShadowDistance:Display" : "fShadowDistance:Display");
+		if (!setting)
+			return;
+		static REL::Relocation<void(bool)> UpdateShadowDistanceAndInteriorFlag{ REL::RelocationID(98978, 105631) };
+		const float saved = setting->GetFloat();
+		setting->SetFloat(std::sqrt(endSq));
+		UpdateShadowDistanceAndInteriorFlag(interior);  // recomputes ShadowDistanceSquared = endSq
+		setting->SetFloat(saved);                       // leave the user's pref untouched
+	}
+
 	static bool* GetFocusShadowSelected()
 	{
 		static REL::RelocationID uid(528096, 415041);
@@ -1765,6 +1803,11 @@ namespace ShadowCasterManager
 		auto* camera = GetWorldCamera();
 		if (!ssn || !camera)
 			return;
+
+		// #161 (B): couple the shadow-cull distance to the light fade-out distance
+		// before the validation pass runs UpdateCamera (which reads the cached
+		// ShadowDistanceSquared). No-op unless MatchShadowToLightFade is enabled.
+		ApplyShadowToLightFadeMatch();
 
 		// Read the engine's per-frame focus-shadow actor count and reserve
 		// matching pool slots. Eject any point lights that occupy a slot the
@@ -5264,12 +5307,23 @@ namespace ShadowCasterManager
 						s_initialShadowMapResolution);
 				}
 
+				ImGui::Checkbox(T(TKEY("match_shadow_to_light_fade"), "Match Shadow Distance to Light Fade"), &settings.MatchShadowToLightFade);
+				if (ImGui::IsItemHovered())
+					ImGui::SetTooltip("%s", T(TKEY("match_shadow_to_light_fade_tooltip"),
+												"Each frame, set the shadow-cull distance to the engine's light\n"
+												"LOD fade-out distance, so a shadow exists exactly as long as its\n"
+												"light is visible -- removes the on-approach pop without rendering\n"
+												"shadows past where lights fade. Auto-adapts to interior-cell and\n"
+												"weather overrides; overrides the sliders below while enabled (#161)."));
+
 				// ---- Shadow Distance (live) -----------------------------------
 				// Drives the engine's shadow-cull far plane. A light past this
 				// distance is frustum-culled (frustrumCull=0xff) and demoted to a
 				// normal light, so its shadow pops in as the player crosses the
 				// boundary (#161). Raising it keeps distant casters shadowed at the
 				// cost of more shadow renders. Applies live; persisted on Save.
+				// Disabled while MatchShadowToLightFade drives the distance for us.
+				ImGui::BeginDisabled(settings.MatchShadowToLightFade);
 				if (auto* iSetting = prefColl->GetSetting("fInteriorShadowDistance:Display")) {
 					float v = iSetting->GetFloat();
 					if (ImGui::SliderFloat(T(TKEY("interior_shadow_distance"), "Interior Shadow Distance"), &v, 1000.0f, 12000.0f, "%.0f")) {
@@ -5299,6 +5353,7 @@ namespace ShadowCasterManager
 													"range, so higher values soften distant outdoor shadow transitions\n"
 													"at a GPU cost. Applies live; persisted on Save Settings."));
 				}
+				ImGui::EndDisabled();
 			}
 		}
 
