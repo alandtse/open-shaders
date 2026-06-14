@@ -305,7 +305,7 @@ public:
 	 * renderRes and DLSS targets a private displayRes texture) can drive
 	 * the repair without going through UpscaleDepth's wider envelope.
 	 * Sets and leaves D3D11 pipeline state dirty on exit — wrap in your
-	 * own save/restore (PerfMode uses its FullscreenPassScope).
+	 * own save/restore (e.g. Util::FullscreenPassScope).
 	 */
 	void RunUnderwaterMaskRepair();
 

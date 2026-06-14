@@ -364,7 +364,7 @@ void PerfMode::DownscaleToKMain()
 	CS_GPU_PASS("PerfMode::DownscaleToKMain");
 
 	{
-		FullscreenPassScope stateScope(context);
+		Util::FullscreenPassScope stateScope(context);
 
 		// IA: fullscreen triangle (no vertex/index buffers)
 		context->IASetInputLayout(nullptr);
@@ -424,7 +424,7 @@ void PerfMode::HandlePostProcessing(const std::function<void()>& enginePost)
 	// mask-only draw directly inside our own FullscreenPassScope so the
 	// inbound engine state is restored on exit.
 	{
-		FullscreenPassScope scope(globals::d3d::context);
+		Util::FullscreenPassScope scope(globals::d3d::context);
 		globals::features::upscaling.RunUnderwaterMaskRepair();
 	}
 
