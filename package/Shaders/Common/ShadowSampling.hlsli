@@ -95,7 +95,7 @@ namespace ShadowSampling
 		uint sampleCount = clamp(uint(totalRayLength / stepSize + 0.5), 1, 4);
 		float rcpSampleCount = rcp(sampleCount);
 
-		float noise = Random::InterleavedGradientNoise(screenPosition, SharedData::FrameCount);
+		float noise = Random::InterleavedGradientNoise(Stereo::EyeStableNoiseCoord(screenPosition, SharedData::BufferDim.xy), SharedData::FrameCount);
 
 		float worldShadow = 0.0;
 		for (uint i = 0; i < sampleCount; i++) {

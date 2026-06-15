@@ -240,7 +240,7 @@ PS_OUTPUT main(PS_INPUT input)
 	if (HDRSun::IsHdrSunActive()) {
 		// Dither bright output to reduce banding in high-boost sun path.
 		// Same baseColor/skyScale treatment for DITHER and non-DITHER; DITHER adds noiseGrad later.
-		baseColor.xyz += (Random::InterleavedGradientNoise(input.Position.xy) - 0.5f) *
+		baseColor.xyz += (Random::InterleavedGradientNoise(Stereo::EyeStableNoiseCoord(input.Position.xy, SharedData::BufferDim.xy)) - 0.5f) *
 		                 (saturate(hdrSunGain - 1.0f) / 255.0f);
 		skyScale = 0.0f;
 	}

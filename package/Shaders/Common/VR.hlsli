@@ -107,6 +107,33 @@ namespace Stereo
 	}
 
 	/**
+	* @brief Returns an eye-stable pixel coordinate for seeding screen-space noise (IGN).
+	*
+	* Seeding interleaved-gradient noise from the raw side-by-side pixel coordinate makes
+	* the two eyes hash decorrelated values for the same world point — the half-buffer
+	* x-offset dominates — which reads as per-eye rivalry on whatever the noise drives
+	* (shadow/dither/LOD shimmer). This maps the coordinate to the eye-local mono pixel
+	* grid so both eyes hash the same value for the same screen-relative position, at the
+	* same noise frequency (the 0.5 width factor preserves the per-eye pixel pitch).
+	* Flat builds have no seam and return the coordinate unchanged (byte-identical).
+	*
+	* @param[in] sbsPixel  Raw SV_Position-style pixel coordinate in the packed buffer.
+	* @param[in] bufferDim Full packed buffer dimensions (both eyes wide in VR).
+	* @return Pixel coordinate to pass to Random::InterleavedGradientNoise.
+	*/
+	float2 EyeStableNoiseCoord(float2 sbsPixel, float2 bufferDim)
+	{
+#ifdef VR
+		float2 stereoUV = sbsPixel / bufferDim;
+		uint eyeIndex = GetEyeIndexFromTexCoord(stereoUV);
+		float2 monoUV = ConvertFromStereoUV(stereoUV, eyeIndex);
+		return monoUV * float2(bufferDim.x * 0.5, bufferDim.y);
+#else
+		return sbsPixel;
+#endif
+	}
+
+	/**
 	* @brief Applies motion velocity to UV coordinates and determines if the resulting mono UV is out of screen bounds.
 	* @param uv Screen UV coordinates (stereo in VR, mono in SE)
 	* @param velocity Delta motion mapping

@@ -502,7 +502,7 @@ PS_OUTPUT main(PS_INPUT input)
 	float fadeFactor = input.Alpha.x;
 #		endif
 
-	float noise = Random::InterleavedGradientNoise(input.PositionCS.xy, SharedData::FrameCount);
+	float noise = Random::InterleavedGradientNoise(Stereo::EyeStableNoiseCoord(input.PositionCS.xy, SharedData::BufferDim.xy), SharedData::FrameCount);
 
 	float2 rotation;
 	sincos(Math::TAU * noise, rotation.y, rotation.x);
