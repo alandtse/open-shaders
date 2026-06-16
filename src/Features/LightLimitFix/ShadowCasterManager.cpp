@@ -299,9 +299,9 @@ namespace ShadowCasterManager
 	static std::atomic<bool> s_pendingSessionReset{ false };
 
 	// Serializes the scheduler's portalGraph-dependent engine mutations (render
-	// thread) against the cell teardown that nulls ssn->portalGraph (main thread,
-	// ClearSceneAndFog). The scheduler takes it shared; ClearSceneAndFog takes it
-	// exclusive, so the graph can't be nulled while the scheduler holds it -- closes
+	// thread) against the cell teardown that nulls/swaps ssn->portalGraph (main
+	// thread, ResetScene). The scheduler/AccumulateLight take it shared; ResetScene
+	// takes it exclusive, so the graph can't change while a reader holds it -- closes
 	// the cross-thread null-deref the pass-start gate can't catch.
 	static std::shared_mutex s_portalGraphMutex;
 
@@ -3570,25 +3570,12 @@ namespace ShadowCasterManager
 			s_pendingSessionReset.store(true, std::memory_order_release);
 	}
 
-	// Detours ShadowSceneNode::ClearSceneAndFog (RelocationID 99687/106321), the
-	// teardown that sets ssn->portalGraph = nullptr on cell unload. Hold the graph
-	// lock exclusive across the original so the render-thread scheduler (which holds
-	// it shared) cannot read portalGraph while it is being nulled.
-	struct Hook_ClearSceneAndFog
-	{
-		static void thunk(RE::ShadowSceneNode* a_ssn)
-		{
-			std::unique_lock lock(s_portalGraphMutex);
-			func(a_ssn);
-		}
-		static inline REL::Relocation<decltype(thunk)> func;
-	};
-
 	// Detours ShadowSceneNode::ResetScene (RelocationID 99741/106385) -- the SSN portalGraph
 	// setter (this->portalGraph = a_graph), called from ResetCellGrid on interior cell
-	// transitions to detach the old cell's graph (a_graph null). This is the actual coc-time
-	// nuller (ClearSceneAndFog only fires on SSN teardown). Hold the graph lock exclusive
-	// across it so it cannot null/swap portalGraph while AccumulateLight reads it.
+	// transitions to detach the old cell's graph (a_graph null). This is the coc-time nuller
+	// behind the crash (ClearSceneAndFog only fires on SSN teardown, never on a transition).
+	// Hold the graph lock exclusive across it so it cannot null/swap portalGraph while
+	// AccumulateLight reads it.
 	struct Hook_ResetScene
 	{
 		static void thunk(RE::ShadowSceneNode* a_ssn, RE::BSPortalGraph* a_graph)
@@ -4249,14 +4236,6 @@ namespace ShadowCasterManager
 		}
 
 		{
-			// ShadowSceneNode::ClearSceneAndFog -- nulls ssn->portalGraph on cell
-			// teardown. Detour to hold s_portalGraphMutex exclusive across it so the
-			// render-thread scheduler can't read a null graph mid-pass (crash#1 race).
-			if (long rc = stl::detour_thunk<Hook_ClearSceneAndFog>(REL::RelocationID(99687, 106321)))
-				logger::error("[SCM] Hook_ClearSceneAndFog detour FAILED (DetourTransactionCommit={})", rc);
-		}
-
-		{
 			// ShadowSceneNode::ResetScene -- the portalGraph setter; the coc-time nuller
 			// (via ResetCellGrid). Exclusive lock so it can't swap portalGraph while the
 			// render-thread AccumulateLight holds it shared (crash#1 TOCTOU).
@@ -4266,8 +4245,8 @@ namespace ShadowCasterManager
 
 		{
 			// ShadowSceneNode::AccumulateLight -- hold s_portalGraphMutex shared across
-			// the engine's per-light accumulate so ClearSceneAndFog can't null portalGraph
-			// mid-call (crash#1 mid-function TOCTOU). Read side of the ClearSceneAndFog lock.
+			// the engine's per-light accumulate so ResetScene can't swap portalGraph
+			// mid-call (crash#1 mid-function TOCTOU). Read side of the ResetScene lock.
 			if (long rc = stl::detour_thunk<Hook_AccumulateLight>(REL::RelocationID(99753, 106401)))
 				logger::error("[SCM] Hook_AccumulateLight detour FAILED (DetourTransactionCommit={})", rc);
 		}
