@@ -21,6 +21,7 @@
 
 #include <Windows.h>  // SEH (__try) for the shadow-light usability backstop
 #include <mutex>
+#include <shared_mutex>
 
 #define I18N_KEY_PREFIX "feature.light_limit_fix."
 
@@ -296,6 +297,13 @@ namespace ShadowCasterManager
 	// pass dereferences a slot -- the natural-engine-cycle clear that the
 	// LoadingMenu-driven ResetSession is too coarse to time precisely.
 	static std::atomic<bool> s_pendingSessionReset{ false };
+
+	// Serializes the scheduler's portalGraph-dependent engine mutations (render
+	// thread) against the cell teardown that nulls ssn->portalGraph (main thread,
+	// ClearSceneAndFog). The scheduler takes it shared; ClearSceneAndFog takes it
+	// exclusive, so the graph can't be nulled while the scheduler holds it -- closes
+	// the cross-thread null-deref the pass-start gate can't catch.
+	static std::shared_mutex s_portalGraphMutex;
 
 	// User suppression set (lightKey = BSShadowLight pointer cast to uintptr_t).
 	// Persisted across light lifetimes so suppressing a torch survives the player
@@ -2876,17 +2884,18 @@ namespace ShadowCasterManager
 		// zone captures both our scheduler work and any engine-side rendering
 		// it pulls in for chosen lights.
 		{
+			// Hold the graph lock shared for the whole mutation loop: ClearSceneAndFog
+			// (main thread) takes it exclusive to null ssn->portalGraph, so while we hold
+			// it the graph stays valid and the engine mutations below (ConvertLight /
+			// DisableLight / EnableLight -> AccumulateLight) can't deref a null graph.
+			// try_to_lock: if a teardown holds it, skip this pass instead of blocking.
+			std::shared_lock<std::shared_mutex> graphLock(s_portalGraphMutex, std::try_to_lock);
+			if (!graphLock.owns_lock())
+				return;
+			if (IsPortalGraphTransitioning())  // re-check once; stable now under the lock
+				return;
 			ZoneNamedN(zoneAtomic, "SCM::AtomicMutationLoop", true);
 			for (auto& c : candidates) {
-				// The main thread nulls ssn->portalGraph mid-pass during a cell
-				// transition; every engine mutation below (ConvertLight / DisableLight /
-				// EnableLight) fans into AccumulateLight, which derefs portalGraph
-				// unguarded. The pass-start gate can't catch a cross-thread null that
-				// lands mid-pass, so re-check here and stop touching the engine for the
-				// rest of the pass -- candidates keep their state and are reconsidered
-				// next pass.
-				if (IsPortalGraphTransitioning())
-					break;
 				if (c.invalid) {
 					// isUsableLight (membership + vtable) is the same gate the
 					// excess branch uses. Both ConvertLight and DisableLight
@@ -3561,6 +3570,56 @@ namespace ShadowCasterManager
 			s_pendingSessionReset.store(true, std::memory_order_release);
 	}
 
+	// Detours ShadowSceneNode::ClearSceneAndFog (RelocationID 99687/106321), the
+	// teardown that sets ssn->portalGraph = nullptr on cell unload. Hold the graph
+	// lock exclusive across the original so the render-thread scheduler (which holds
+	// it shared) cannot read portalGraph while it is being nulled.
+	struct Hook_ClearSceneAndFog
+	{
+		static void thunk(RE::ShadowSceneNode* a_ssn)
+		{
+			std::unique_lock lock(s_portalGraphMutex);
+			func(a_ssn);
+		}
+		static inline REL::Relocation<decltype(thunk)> func;
+	};
+
+	// Detours ShadowSceneNode::ResetScene (RelocationID 99741/106385) -- the SSN portalGraph
+	// setter (this->portalGraph = a_graph), called from ResetCellGrid on interior cell
+	// transitions to detach the old cell's graph (a_graph null). This is the actual coc-time
+	// nuller (ClearSceneAndFog only fires on SSN teardown). Hold the graph lock exclusive
+	// across it so it cannot null/swap portalGraph while AccumulateLight reads it.
+	struct Hook_ResetScene
+	{
+		static void thunk(RE::ShadowSceneNode* a_ssn, RE::BSPortalGraph* a_graph)
+		{
+			std::unique_lock lock(s_portalGraphMutex);
+			func(a_ssn, a_graph);
+		}
+		static inline REL::Relocation<decltype(thunk)> func;
+	};
+
+	// Detours ShadowSceneNode::AccumulateLight (RelocationID 99753/106401), the engine's
+	// per-light portal/room shadow accumulation. It derefs ssn->portalGraph at several
+	// sites AFTER an entry null guard already passed, so the teardown nulling portalGraph
+	// on another thread mid-call is a TOCTOU. Take the graph lock SHARED but with
+	// try_to_lock: while ResetScene holds it exclusive (actively swapping portalGraph),
+	// skip this light's accumulation for the frame -- safe, and crucially non-blocking, so
+	// the render thread never parks on the lock (a blocking acquire deadlocks against
+	// ResetScene's own wait for render-thread progress). When acquired, holding it shared
+	// keeps ResetScene from nulling portalGraph mid-call.
+	struct Hook_AccumulateLight
+	{
+		static void thunk(RE::ShadowSceneNode* a_ssn, RE::BSLight* a_light, void* a3, std::uint8_t a4)
+		{
+			std::shared_lock lock(s_portalGraphMutex, std::try_to_lock);
+			if (!lock.owns_lock())
+				return;  // ResetScene is swapping portalGraph; skip rather than read a null graph
+			func(a_ssn, a_light, a3, a4);
+		}
+		static inline REL::Relocation<decltype(thunk)> func;
+	};
+
 	// Fires at start of ShadowSceneNode::AddLight (ID 99692/106326).
 	// Optionally promotes normal light to shadow light; always forces portal-strict.
 	static void Hook_ConvertLights_Add(CONTEXT& ctx)
@@ -3628,6 +3687,14 @@ namespace ShadowCasterManager
 		auto* nilight = reinterpret_cast<RE::NiLight*>(ctx.Rdx);
 		if (!bslight)
 			return;
+		// A promoted shadow light is allocated non-zeroed and no ctor in the chain inits
+		// BSLight::cullingProcess (+0x128). AccumulateLight reuses a non-null cullingProcess
+		// as-is, so stale heap garbage there becomes a fake BSParabolicCullingProcess that
+		// room-light culling calls a vfunc on -> garbage-vtable CTD. Null it at creation
+		// (SetLight runs during AddLight, before any accumulate) so the engine builds a real
+		// one, exactly as a fresh zeroed page would.
+		if (nilight && s_shadowConvert.count(nilight))
+			bslight->cullingProcess = nullptr;
 		auto* oldlight = bslight->light.get();
 		if (oldlight && oldlight != nilight) {
 			bool did = s_shadowConvert.erase(oldlight) != 0;
@@ -4179,6 +4246,30 @@ namespace ShadowCasterManager
 			int sz = REL::Relocate(5, 8, 5);
 			if (!SKSE::stl::install_context_hook(uid.address(), sz, Hook_ClearLightArrays, sz))
 				logger::error("[SCM] Failed to install Hook_ClearLightArrays");
+		}
+
+		{
+			// ShadowSceneNode::ClearSceneAndFog -- nulls ssn->portalGraph on cell
+			// teardown. Detour to hold s_portalGraphMutex exclusive across it so the
+			// render-thread scheduler can't read a null graph mid-pass (crash#1 race).
+			if (long rc = stl::detour_thunk<Hook_ClearSceneAndFog>(REL::RelocationID(99687, 106321)))
+				logger::error("[SCM] Hook_ClearSceneAndFog detour FAILED (DetourTransactionCommit={})", rc);
+		}
+
+		{
+			// ShadowSceneNode::ResetScene -- the portalGraph setter; the coc-time nuller
+			// (via ResetCellGrid). Exclusive lock so it can't swap portalGraph while the
+			// render-thread AccumulateLight holds it shared (crash#1 TOCTOU).
+			if (long rc = stl::detour_thunk<Hook_ResetScene>(REL::RelocationID(99741, 106385)))
+				logger::error("[SCM] Hook_ResetScene detour FAILED (DetourTransactionCommit={})", rc);
+		}
+
+		{
+			// ShadowSceneNode::AccumulateLight -- hold s_portalGraphMutex shared across
+			// the engine's per-light accumulate so ClearSceneAndFog can't null portalGraph
+			// mid-call (crash#1 mid-function TOCTOU). Read side of the ClearSceneAndFog lock.
+			if (long rc = stl::detour_thunk<Hook_AccumulateLight>(REL::RelocationID(99753, 106401)))
+				logger::error("[SCM] Hook_AccumulateLight detour FAILED (DetourTransactionCommit={})", rc);
 		}
 
 		{
