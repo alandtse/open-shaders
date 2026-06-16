@@ -290,6 +290,10 @@ namespace ShadowCasterManager
 	};
 	static std::vector<ConvertedLight> s_normalConvert;
 	static std::set<RE::NiLight*> s_shadowConvert;
+	// Promoted lights whose descriptor pool-slots have been initialized once. EnableLight
+	// only inits lights that win a render slot; this tracks the scheduler-time init that
+	// covers promoted lights added but never enabled, so teardown can't read garbage.
+	static std::set<RE::NiLight*> s_shadowConvertDescriptorInited;
 
 	// Set by Hook_ClearLightArrays (the engine's bulk shadow-light teardown) and
 	// drained at the top of ScheduleShadowCasters on the render thread, so a
@@ -2169,6 +2173,17 @@ namespace ShadowCasterManager
 				auto* l = sp.get();
 				if (!l || l == sunLight)
 					continue;
+				// Promoted lights are allocated non-zeroed; their descriptor pool-slots stay
+				// garbage until init. EnableLight only inits lights that win a render slot, so
+				// init here (once) -- this is the type-safe BSShadowLight source -- to cover a
+				// promoted light added but never enabled before teardown reads it.
+				if (s_settings.ShadowLightCount > 4) {
+					if (auto* ni = l->light.get(); ni && s_shadowConvert.contains(ni) &&
+												   !s_shadowConvertDescriptorInited.contains(ni)) {
+						InitPromotedDescriptorSlots(l);
+						s_shadowConvertDescriptorInited.insert(ni);
+					}
+				}
 				auto& c = candidates.emplace_back();
 				c.light = l;
 				c.sun = false;
@@ -3553,8 +3568,10 @@ namespace ShadowCasterManager
 				break;
 			}
 		}
-		if (light)
+		if (light) {
 			s_shadowConvert.erase(light);
+			s_shadowConvertDescriptorInited.erase(light);
+		}
 	}
 
 	// Fires at start of ShadowSceneNode::ClearLightArrays (RelocationID 99704/106338),
@@ -3685,6 +3702,7 @@ namespace ShadowCasterManager
 		auto* oldlight = bslight->light.get();
 		if (oldlight && oldlight != nilight) {
 			bool did = s_shadowConvert.erase(oldlight) != 0;
+			s_shadowConvertDescriptorInited.erase(oldlight);  // reassigned nilight re-inits via scheduler
 			if (nilight && did)
 				s_shadowConvert.insert(nilight);
 		}
@@ -4363,6 +4381,7 @@ namespace ShadowCasterManager
 		// was a silent no-op on every runtime and accomplished nothing.
 		s_normalConvert.clear();
 		s_shadowConvert.clear();
+		s_shadowConvertDescriptorInited.clear();
 		s_pinShadow.clear();
 		s_pinConvert.clear();
 		s_soloLight = 0;
