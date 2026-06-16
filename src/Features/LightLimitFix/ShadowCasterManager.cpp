@@ -2878,6 +2878,15 @@ namespace ShadowCasterManager
 		{
 			ZoneNamedN(zoneAtomic, "SCM::AtomicMutationLoop", true);
 			for (auto& c : candidates) {
+				// The main thread nulls ssn->portalGraph mid-pass during a cell
+				// transition; every engine mutation below (ConvertLight / DisableLight /
+				// EnableLight) fans into AccumulateLight, which derefs portalGraph
+				// unguarded. The pass-start gate can't catch a cross-thread null that
+				// lands mid-pass, so re-check here and stop touching the engine for the
+				// rest of the pass -- candidates keep their state and are reconsidered
+				// next pass.
+				if (IsPortalGraphTransitioning())
+					break;
 				if (c.invalid) {
 					// isUsableLight (membership + vtable) is the same gate the
 					// excess branch uses. Both ConvertLight and DisableLight
