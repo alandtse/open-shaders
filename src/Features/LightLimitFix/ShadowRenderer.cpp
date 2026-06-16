@@ -48,6 +48,22 @@ void LightLimitFix::CopyShadowLightData()
 	ZoneScoped;
 	CS_GPU_PASS("LightLimitFix::CopyShadowLightData");
 
+	// While an engine shadow teardown is pending (ClearLightArrays), the engine
+	// frees shadow lights and their GPU resources. Iterating shadowLightsAccum or
+	// binding shadow SRVs in this window can reference a freed object -- the async
+	// driver deref of a freed shadow resource is the cell-transition CTD. Degrade
+	// to the same unbound/cleared state the slots==0 path uses until the scheduler
+	// drains the reset next frame. (The render gate in RenderScheduledShadowLights
+	// covers the shadow *render*; this covers the per-frame upload/bind.)
+	if (ShadowCasterManager::IsSessionResetPending()) {
+		ShadowCasterManager::BeginSlotFrame(0);
+		shadowLightCount = 0;
+		shadowUnshadowedLightCount = 0;
+		ID3D11ShaderResourceView* nullSRVs[2]{ nullptr, nullptr };
+		globals::d3d::context->PSSetShaderResources(102, ARRAYSIZE(nullSRVs), nullSRVs);
+		return;
+	}
+
 	uint32_t slots = ShadowCasterManager::GetInstalledSlotCount();
 	if (slots == 0) {
 		// Clean degradation when SCM hasn't published a usable slot count yet

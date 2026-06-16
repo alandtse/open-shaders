@@ -1288,6 +1288,37 @@ void LightLimitFix::Hooks::BSLightingShader_SetupGeometry::thunk(RE::BSShader* T
 	singleton.BSLightingShader_SetupGeometry_After(Pass);
 }
 
+namespace
+{
+	// VirtualQuery readability probe: the environment-independent check the
+	// address-floor heuristic can't be -- it asks the OS whether [ptr, ptr+size)
+	// is committed + readable, so a freed light at ANY address (the 16 MB garbage
+	// in the VR effect-shader crash, or a high unmapped one) is rejected without
+	// guessing the heap base. Wrapped in a Tracy zone (LLF::EffectLightProbe) so
+	// its per-frame cost is measurable in a TRACY_SUPPORT build.
+	bool IsReadableRange(const void* a_ptr, std::size_t a_size) noexcept
+	{
+		MEMORY_BASIC_INFORMATION mbi{};
+		if (::VirtualQuery(a_ptr, &mbi, sizeof(mbi)) == 0)
+			return false;
+		if (mbi.State != MEM_COMMIT)
+			return false;
+		constexpr DWORD kReadable = PAGE_READONLY | PAGE_READWRITE | PAGE_WRITECOPY |
+		                            PAGE_EXECUTE_READ | PAGE_EXECUTE_READWRITE | PAGE_EXECUTE_WRITECOPY;
+		if ((mbi.Protect & kReadable) == 0 || (mbi.Protect & (PAGE_GUARD | PAGE_NOACCESS)) != 0)
+			return false;
+		const auto base = reinterpret_cast<std::uintptr_t>(mbi.BaseAddress);
+		const auto p = reinterpret_cast<std::uintptr_t>(a_ptr);
+		return (p + a_size) <= (base + mbi.RegionSize);  // whole range in this committed region
+	}
+
+	bool ProbeReadable(const void* a_ptr, std::size_t a_size)
+	{
+		ZoneScopedN("LLF::EffectLightProbe");
+		return IsReadableRange(a_ptr, a_size);
+	}
+}
+
 void LightLimitFix::Hooks::BSEffectShader_SetupGeometry::thunk(RE::BSShader* This, RE::BSRenderPass* Pass, uint32_t RenderFlags)
 {
 	// Defensive pre-call guard: BSEffectShader::SetupGeometry iterates
@@ -1301,17 +1332,20 @@ void LightLimitFix::Hooks::BSEffectShader_SetupGeometry::thunk(RE::BSShader* Thi
 	// but it's still ref-counted alive in some list).
 	//
 	// Walk the array and clamp numLights to the count of entries that the
-	// engine can safely dereference. Validation:
-	//   - BSLight* is canonical, 8-byte aligned, non-null
-	//   - bsLight->light pointer is canonical, 8-byte aligned, non-null
-	// Entries failing either check stop the loop; the engine's own loop
-	// bails on the first bad entry too, so clamping matches its contract.
+	// engine can safely dereference. Validation does the cheap range/alignment
+	// check first, then a VirtualQuery readability probe -- the probe is the real
+	// boundary, since a freed light can pass the cheap checks yet point to
+	// unmapped memory (the 16 MB garbage pointer that AV'd reading NiLight->fade):
+	//   - BSLight* canonical/aligned/non-null + [.., +0x50) readable (->light @ +0x48)
+	//   - bsLight->light (NiLight) canonical/aligned/non-null + [.., +0x168) readable (->fade @ VR +0x15C)
+	// Entries failing any check stop the loop; the engine's own loop bails on the
+	// first bad entry too, so clamping matches its contract.
 	if (Pass && Pass->sceneLights && Pass->numLights > 0) {
 		using ShadowCasterManager::IsPlausibleShadowLightPtr;
 		std::uint8_t validCount = 0;
 		for (std::uint8_t i = 0; i < Pass->numLights; ++i) {
 			RE::BSLight* bsLight = Pass->sceneLights[i];
-			if (!IsPlausibleShadowLightPtr(reinterpret_cast<std::uintptr_t>(bsLight))) {
+			if (!IsPlausibleShadowLightPtr(reinterpret_cast<std::uintptr_t>(bsLight)) || !ProbeReadable(bsLight, 0x50)) {
 				static int loggedBsLight = 0;
 				if (loggedBsLight++ < 10) {
 					logger::warn(
@@ -1322,7 +1356,7 @@ void LightLimitFix::Hooks::BSEffectShader_SetupGeometry::thunk(RE::BSShader* Thi
 				break;
 			}
 			RE::NiLight* niLight = bsLight->light.get();
-			if (!IsPlausibleShadowLightPtr(reinterpret_cast<std::uintptr_t>(niLight))) {
+			if (!IsPlausibleShadowLightPtr(reinterpret_cast<std::uintptr_t>(niLight)) || !ProbeReadable(niLight, 0x168)) {
 				// Catches both NULL (engine cleared the NiPointer) and
 				// garbage (BSLight memory recycled). NULL is the more common
 				// observed failure -- the engine's loop has no null check

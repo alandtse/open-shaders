@@ -19,6 +19,7 @@
 
 #include <exprtk.hpp>
 
+#include <Windows.h>  // SEH (__try) for the shadow-light usability backstop
 #include <mutex>
 
 #define I18N_KEY_PREFIX "feature.light_limit_fix."
@@ -288,6 +289,13 @@ namespace ShadowCasterManager
 	};
 	static std::vector<ConvertedLight> s_normalConvert;
 	static std::set<RE::NiLight*> s_shadowConvert;
+
+	// Set by Hook_ClearLightArrays (the engine's bulk shadow-light teardown) and
+	// drained at the top of ScheduleShadowCasters on the render thread, so a
+	// scene tear-down drops every stale s_lights/convert pointer before the next
+	// pass dereferences a slot -- the natural-engine-cycle clear that the
+	// LoadingMenu-driven ResetSession is too coarse to time precisely.
+	static std::atomic<bool> s_pendingSessionReset{ false };
 
 	// User suppression set (lightKey = BSShadowLight pointer cast to uintptr_t).
 	// Persisted across light lifetimes so suppressing a torch survives the player
@@ -806,6 +814,11 @@ namespace ShadowCasterManager
 		return s_installedSlotCount > 0 ? s_installedSlotCount : s_requestedSlotCount;
 	}
 
+	bool IsSessionResetPending()
+	{
+		return s_pendingSessionReset.load(std::memory_order_acquire);
+	}
+
 	// Resolution actually used to allocate kSHADOWMAPS this session. Captured
 	// lazily from the real D3D11 texture geometry the first time it becomes
 	// readable -- NOT from the RE::Setting at Install() time. The engine's
@@ -1092,6 +1105,23 @@ namespace ShadowCasterManager
 		static REL::RelocationID uid(528087, 415032);
 		auto* sg = *reinterpret_cast<RE::BSSceneGraph**>(uid.address());
 		return sg ? sg->GetRuntimeData().camera.get() : nullptr;
+	}
+
+	// True while an interior cell's BSPortalGraph is mid-rebuild (transiently null
+	// during a cell transition). Engine portal accumulation
+	// (ShadowSceneNode::AccumulateLight, RE 106401) and BSShadowLight::Render deref
+	// ssn->portalGraph (+0x228) with no null guard in either the strict or loose
+	// branch, so driving our schedule/render while it is null faults in portal
+	// culling. SCM is the sole shadow-caster scheduler (we replace
+	// CalculateActiveShadowCasterLights), so pausing for the 1-2 frames the graph is
+	// null closes the window without disturbing the light set. Exteriors legitimately
+	// have no portal graph -- only gate in interiors so outdoor scheduling is unaffected.
+	static bool IsPortalGraphTransitioning()
+	{
+		if (!Util::IsInterior())
+			return false;
+		auto* ssn = GetShadowSceneNode();
+		return !ssn || ssn->GetRuntimeData().portalGraph == nullptr;
 	}
 
 	static bool GetSunBool1()
@@ -1647,6 +1677,72 @@ namespace ShadowCasterManager
 		GameEnableLight(ssn, light);
 	}
 
+	// Reset a promoted (parabolic) light's descriptor pool-slot indices to the
+	// "no slot" sentinel. BSShadowParabolicLight is allocated NON-zeroed and its
+	// ctor never writes the descriptor renderTarget / vrRenderTarget / shadowmapIndex
+	// (RENDER_TARGET_DEPTHSTENCIL slot *indices* into the shared depth-stencil pool,
+	// not pointers). In VR the engine indexes the pool by vrRenderTarget, so the
+	// uninitialized heap garbage becomes an OOB pool walk -> nvwgf2umx AV on the next
+	// cell teardown. kNONE forces the engine's RenderCascade/Accumulate to re-allocate
+	// a valid slot. Must run for EVERY promoted light (incl. ones never EnableLight'd),
+	// or teardown reads the garbage of an added-but-unscheduled promoted light.
+	static void InitPromotedDescriptorSlots(RE::BSShadowLight* light)
+	{
+		if (!light)
+			return;
+		int32_t idx = s_lights.FindLight(light, s_settings.ShadowLightCount);
+		if (idx < 0)
+			idx = 0;
+		if (globals::game::isVR) {
+			auto& vrData = light->GetVRRuntimeData();
+			for (auto& desc : vrData.shadowmapDescriptors) {
+				desc.renderTarget = RE::RENDER_TARGET_DEPTHSTENCIL::kNONE;
+				desc.vrRenderTarget[0] = RE::RENDER_TARGET_DEPTHSTENCIL::kNONE;
+				desc.vrRenderTarget[1] = RE::RENDER_TARGET_DEPTHSTENCIL::kNONE;
+				desc.shadowmapIndex = static_cast<uint32_t>(idx);
+			}
+			for (auto& desc : vrData.focusShadowmapDescriptors) {
+				desc.vrRenderTarget[0] = RE::RENDER_TARGET_DEPTHSTENCIL::kNONE;
+				desc.vrRenderTarget[1] = RE::RENDER_TARGET_DEPTHSTENCIL::kNONE;
+			}
+		} else {
+			for (auto& desc : light->GetRuntimeData().shadowmapDescriptors) {
+				desc.renderTarget = RE::RENDER_TARGET_DEPTHSTENCIL::kNONE;
+				desc.shadowmapIndex = static_cast<uint32_t>(idx);
+			}
+		}
+	}
+
+	// Vtable hook (slot 0x0A Render) on BSShadowParabolicLight. The engine's Render
+	// renders cascade 0 (RenderCascade assigns it a real depth-stencil slot in
+	// renderTarget+shadowmapIndex), then for cascade 1 copies cascade 0's renderTarget
+	// but NOT its shadowmapIndex -- so descriptor[1] keeps a stale/wrong shadowmapIndex
+	// (the SCM pool idx left there is out of the depth-stencil pool range).
+	// At cell teardown Reset reads descriptor[1].shadowmapIndex (renderTarget is valid,
+	// so it isn't skipped) and frees the WRONG global pool slot -> mask corruption ->
+	// nvwgf2umx OOB pool walk. Mirror what the engine already does for renderTarget:
+	// copy descriptor[0].shadowmapIndex into descriptor[1] after Render. Runs on the
+	// render thread per-light (same safety as EnableLight); no cross-thread race.
+	struct Hook_ParabolicRender
+	{
+		static void thunk(RE::BSShadowParabolicLight* light, std::uint32_t& a_index)
+		{
+			func(light, a_index);
+			if (!light)
+				return;
+			if (globals::game::isVR) {
+				auto& descs = light->GetVRRuntimeData().shadowmapDescriptors;
+				if (descs.size() >= 2)
+					descs[1].shadowmapIndex = descs[0].shadowmapIndex;
+			} else {
+				auto& descs = light->GetRuntimeData().shadowmapDescriptors;
+				if (descs.size() >= 2)
+					descs[1].shadowmapIndex = descs[0].shadowmapIndex;
+			}
+		}
+		static inline REL::Relocation<decltype(thunk)> func;
+	};
+
 	// Activates a non-sun shadow light into slot `slotIndex`.
 	static void EnableLight(RE::BSShadowLight* light, RE::NiCamera* camera,
 		RE::ShadowSceneNode* ssn, int slotIndex)
@@ -1744,22 +1840,8 @@ namespace ShadowCasterManager
 		// RenderCascade keeps the slot from a prior frame and lights not
 		// redrawn this frame would corrupt another light's shadow map.
 		// Pool index maps 1:1 to texture slot; slice 0 stays unused.
-		if (s_settings.ShadowLightCount > 4) {
-			int32_t idx = s_lights.FindLight(light, s_settings.ShadowLightCount);
-			if (idx < 0)
-				idx = 0;
-			if (globals::game::isVR) {
-				for (auto& desc : light->GetVRRuntimeData().shadowmapDescriptors) {
-					desc.renderTarget = RE::RENDER_TARGET_DEPTHSTENCIL::kNONE;
-					desc.shadowmapIndex = static_cast<uint32_t>(idx);
-				}
-			} else {
-				for (auto& desc : light->GetRuntimeData().shadowmapDescriptors) {
-					desc.renderTarget = RE::RENDER_TARGET_DEPTHSTENCIL::kNONE;
-					desc.shadowmapIndex = static_cast<uint32_t>(idx);
-				}
-			}
-		}
+		if (s_settings.ShadowLightCount > 4)
+			InitPromotedDescriptorSlots(light);
 
 		// Only apply lens flare when lensFlareData is non-null; calling it on parabolic lights
 		// (null lensFlareData) registers them into the lens flare system, causing a crash
@@ -1875,6 +1957,51 @@ namespace ShadowCasterManager
 		}
 	}
 
+	// Shadow-light usability SEH backstop. The ClearLightArrays teardown hook is
+	// the primary defense (clears our pool when the engine bulk-frees lights); this
+	// SEH catches any residual AV in the membership/usability scan so a missed edge
+	// is a skipped light, not a CTD. Kept until broad validation lets it go.
+	static void LogShadowSehCatch()
+	{
+		static std::atomic<int> n{ 0 };
+		if (n.fetch_add(1, std::memory_order_relaxed) < 20)
+			logger::warn("[SCM] SEH caught AV in shadow-light usability scan (probe missed); skipping light");
+	}
+
+	// SEH backstop in its own function (no C++ unwinding objects) so MSVC accepts
+	// __try. Returns false (unusable) on any access violation.
+	template <class Fn>
+	static bool SafeUsable(Fn&& a_fn, RE::BSShadowLight* a_light)
+	{
+		__try {
+			return a_fn(a_light);
+		} __except (GetExceptionCode() == EXCEPTION_ACCESS_VIOLATION ? EXCEPTION_EXECUTE_HANDLER : EXCEPTION_CONTINUE_SEARCH) {
+			LogShadowSehCatch();
+			return false;
+		}
+	}
+
+	// Run UpdateCamera + EnableLight + the validity scan in one non-inlined SEH
+	// region: EnableLight can read shadowMapCount from a freed light and corrupt
+	// accumLightSlot / array bounds, AV'ing here or in the membership scan that
+	// follows; catching it skips the light instead of a CTD (the per-frame
+	// accumLightSlot reset recovers next frame). __declspec(noinline) is
+	// load-bearing -- without the boundary the optimizer inlines this and dissolves
+	// the __except region. No C++ unwinding objects in this frame (MSVC __try).
+	template <class UsableFn>
+	__declspec(noinline) static bool SafeEnableAndValidate(LightEntry& e, RE::NiCamera* a_camera,
+		RE::ShadowSceneNode* a_ssn, std::uint32_t a_slot, UsableFn&& a_isUsable)
+	{
+		__try {
+			e.Light->UpdateCamera(a_camera);
+			EnableLight(e.Light, a_camera, a_ssn, a_slot);
+			return e.Light && a_isUsable(e.Light);
+		} __except (GetExceptionCode() == EXCEPTION_ACCESS_VIOLATION ? EXCEPTION_EXECUTE_HANDLER : EXCEPTION_CONTINUE_SEARCH) {
+			LogShadowSehCatch();
+			return false;
+		}
+	}
+
 	static void ScheduleShadowCasters()
 	{
 		ZoneScopedN("SCM::ScheduleShadowCasters");
@@ -1898,6 +2025,49 @@ namespace ShadowCasterManager
 		auto* camera = GetWorldCamera();
 		if (!ssn || !camera)
 			return;
+
+		// Pause while the interior portal graph is mid-rebuild (cell transition).
+		if (IsPortalGraphTransitioning())
+			return;
+
+		// Drain a pending teardown reset BEFORE touching any slot, then SKIP this
+		// pass. The engine's bulk shadow-light teardown (ClearLightArrays) freed
+		// the previous scene's lights since our last pass but does NOT shrink
+		// activeShadowLights -- it leaves dangling entries until it later drains
+		// lightQueueRemove and rebuilds the array. So this frame we must neither
+		// snapshot activeShadowLights (heldRefs would IncRef freed memory) nor
+		// score candidates from it. Clear our pool on the render thread and bail;
+		// the engine's ResetCalculatedShadowCasterLights already left the array
+		// vanilla-valid for this frame, and the next pass runs once the array is
+		// rebuilt. (Load-bearing: removing this return reintroduces the 20 SEH
+		// catches. It does NOT cause the separate d3d11 shadow-render crash, which
+		// reproduces with or without the skip.)
+		if (s_pendingSessionReset.exchange(false, std::memory_order_acquire)) {
+			ResetSession();
+			return;
+		}
+
+		// Hold a strong ref to every active shadow light for the whole pass.
+		// activeShadowLights is BSTArray<NiPointer<BSShadowLight>>, but the
+		// scheduler walks raw BSShadowLight* (candidates, s_lights.Lights[]).
+		// EnableLight/ConvertLight trigger engine scene mutations -- and a
+		// concurrent bulk cell-teardown (NiNode::ReleaseChildren, which bypasses
+		// our per-light RemoveLight hook) can free a light mid-pass while our raw
+		// pointer still references it. The freed memory is then recycled and our
+		// write through it (e.g. lodDimmer = 1.0f below) corrupts the new
+		// occupant's vtable -> CTD.
+		// Snapshotting NiPointers here keeps every light alive until heldRefs
+		// destructs at pass end -- the refs are taken now, while activeShadowLights
+		// is valid, so the engine's frees only take effect once we have stopped
+		// touching the pointers. Local (not static): releases at every return path.
+		std::vector<RE::NiPointer<RE::BSShadowLight>> heldRefs;
+		{
+			auto& alive = ssn->GetRuntimeData().activeShadowLights;
+			heldRefs.reserve(alive.size() + 1);
+			for (auto& sp : alive)
+				if (sp)
+					heldRefs.push_back(sp);
+		}
 
 		// Couple the shadow-cull distance to the light fade before the validation
 		// pass runs UpdateCamera (which reads the cached square). No-op unless
@@ -2642,6 +2812,9 @@ namespace ShadowCasterManager
 				return false;
 			if (l == sunLight)
 				return true;
+			// Membership scan over activeShadowLights. The ClearLightArrays
+			// teardown hook (+ ResetSession/skip) keeps us from scanning a
+			// torn-down array; SafeUsable (SEH) is the remaining backstop.
 			for (auto& sp : shadowSceneNodeRT->activeShadowLights)
 				if (sp.get() == l)
 					return true;
@@ -2735,7 +2908,15 @@ namespace ShadowCasterManager
 						// than snapping to full intensity. Matches the
 						// per-frame restore in LightLimitFix::UpdateLights
 						// for already-converted lights.
-						if (c.light->lodDimmer == 0.0f)
+						//
+						// Re-validate before writing: ConvertLight's scene
+						// mutation (or a concurrent bulk cell-teardown) can free
+						// c.light here, and a 1.0f store into the recycled memory
+						// corrupts the new occupant's vtable -> CTD. heldRefs
+						// should keep it alive; this guards any candidate it
+						// doesn't cover. A demoted-but-removed light skips the
+						// restore -- UpdateLights re-applies it next frame.
+						if (SafeUsable(isUsableLight, c.light) && c.light->lodDimmer == 0.0f)
 							c.light->lodDimmer = 1.0f;
 					} else {
 						s_schedDiag.disabled_invalid++;
@@ -2761,32 +2942,26 @@ namespace ShadowCasterManager
 						// may have transitively freed this light via game-side scene
 						// mutations (membership change OR tbbmalloc-zeroed memory),
 						// so re-validate before any virtual dispatch.
-						if (!isUsableLight(e.Light)) {
+						if (!SafeUsable(isUsableLight, e.Light)) {
 							e.Light = nullptr;
 							continue;
 						}
 
 						auto* lightSnapshot = e.Light;  // value snapshot for budget pairing
-
-						e.Light->UpdateCamera(camera);
 						s_budget.BeginLight(lightSnapshot, 0);
+						// EnableLight callbacks can null e.Light (re-entrant scheduling /
+						// scene mutation), AND the engine can free the BSShadowLight during
+						// the call without nulling our pointer, then read shadowMapCount from
+						// it -- corrupting accumLightSlot / the array bounds and AV'ing here
+						// or in the membership scan. Run UpdateCamera + EnableLight + the
+						// validity scan in one noinline SEH region so the AV is caught and the
+						// light skipped, not a CTD (per-frame accumLightSlot reset recovers).
+						bool stillUsable;
 						{
 							ZoneNamedN(zEnable, "SCM::Engine::EnableLight", true);
-							EnableLight(e.Light, camera, ssn, slot);
+							stillUsable = SafeEnableAndValidate(e, camera, ssn, slot, isUsableLight);
 						}
-
-						// EnableLight callbacks can null e.Light (re-entrant scheduling
-						// / scene mutation), AND the engine can free the BSShadowLight
-						// during the call without nulling our pointer -- a third-party
-						// VR crash report (CommunityShaders.dll v1.5.1, file path
-						// D:\a\skyrim-community-shaders\... at EnableLight's
-						// `*GetAccumLightSlot() += light->shadowMapCount`) showed the
-						// engine reading shadowMapCount from a freed BSShadowLight,
-						// corrupting the global accumLightSlot counter, then a
-						// downstream `[base + corrupted*8]` AV. Bare null check passes
-						// for the freed-but-non-null case; isUsableLight rejects it
-						// via the activeShadowLights-membership and vtable checks.
-						if (!e.Light || !isUsableLight(e.Light))
+						if (!stillUsable)
 							continue;
 						s_budget.EndLight(lightSnapshot, 0);
 
@@ -2924,7 +3099,7 @@ namespace ShadowCasterManager
 					// Same hazard as the post-EnableLight site: the engine can
 					// free the light during this call. Use isUsableLight, not
 					// just null check.
-					if (!e.Light || !isUsableLight(e.Light))
+					if (!e.Light || !SafeUsable(isUsableLight, e.Light))
 						continue;
 					endIdx += e.Light->shadowMapCount;
 					ShadowField(e.Light, maskIndex) = static_cast<uint32_t>(i);
@@ -3061,6 +3236,23 @@ namespace ShadowCasterManager
 
 	static void RenderScheduledShadowLights()
 	{
+		// A cell-transition teardown (ShadowSceneNode::ClearLightArrays, hooked to set
+		// s_pendingSessionReset at its entry before it frees) deallocates the engine
+		// shadow accumulator's renderPass storage. The schedule pass drains the flag,
+		// but a teardown landing after schedule and before this render pass leaves us
+		// flushing a freed accumulator -> AV in BSBatchRenderer::RenderBatches
+		// (renderPass._data == NULL). Skip the whole pass while a reset is pending;
+		// ScheduleShadowCasters owns the drain (+ ResetSession) next frame -- only load
+		// here, never exchange, or s_lights would never get reset. Do this before the
+		// drawStereo save so a skip leaves engine state untouched.
+		if (s_pendingSessionReset.load(std::memory_order_acquire))
+			return;
+
+		// Pause while the interior portal graph is mid-rebuild (cell transition);
+		// BSShadowLight::Render walks portal culling that derefs ssn->portalGraph.
+		if (IsPortalGraphTransitioning())
+			return;
+
 		// VR: RenderActiveShadowCasterLights normally saves+clears g_drawStereo before
 		// iterating shadow casters, then restores it. Without this, each hemisphere
 		// render is doubled for both eyes -> 4-quadrant shadow map texture.
@@ -3083,7 +3275,8 @@ namespace ShadowCasterManager
 		// we replaced that walk with this loop, so we need to call sun.Render
 		// explicitly. Without this, the directional cascade pass is skipped
 		// and exterior scenes render with no sun shadow.
-		if (s_lights.Sun && s_lights.Lights[0].Light) {
+		if (s_lights.Sun && s_lights.Lights[0].Light &&
+			!s_pendingSessionReset.load(std::memory_order_acquire)) {
 			ZoneNamedN(zSun, "SCM::Render::Sun", true);
 			CS_GPU_PASS("SCM::Render::Sun");
 			s_budget.BeginLight(s_lights.Lights[0].Light, 1);
@@ -3098,6 +3291,11 @@ namespace ShadowCasterManager
 			ZoneNamedN(zPoint, "SCM::Render::PointLights", true);
 			CS_GPU_PASS("SCM::Render::PointLights");
 			for (int i = s_lights.PointLightFirst(); i < s_lights.PointLightEnd(s_settings.ShadowLightCount); i++) {
+				// A teardown can begin mid-pass; ClearLightArrays sets the flag at its
+				// entry before freeing, so bailing here stops flushing into an accumulator
+				// being torn down (narrows the window to a single in-flight Render call).
+				if (s_pendingSessionReset.load(std::memory_order_acquire))
+					break;
 				auto& e = s_lights.Lights[i];
 				if (!e.Light || !e.RedrawFrame)
 					continue;
@@ -3341,6 +3539,19 @@ namespace ShadowCasterManager
 			s_shadowConvert.erase(light);
 	}
 
+	// Fires at start of ShadowSceneNode::ClearLightArrays (RelocationID 99704/106338),
+	// the engine's bulk shadow-light teardown on cell unload / scene reset. It frees
+	// activeShadowLights via the inner queued removal -- bypassing the per-light
+	// RemoveLight hook above -- so this is the only signal for a wholesale free.
+	// Flag a session reset; the scheduler drains it on the render thread next pass
+	// so our stale pointers never outlive the lights the engine just freed.
+	static void Hook_ClearLightArrays(CONTEXT& ctx)
+	{
+		auto* ssn = reinterpret_cast<RE::ShadowSceneNode*>(ctx.Rcx);
+		if (ssn == GetShadowSceneNode())
+			s_pendingSessionReset.store(true, std::memory_order_release);
+	}
+
 	// Fires at start of ShadowSceneNode::AddLight (ID 99692/106326).
 	// Optionally promotes normal light to shadow light; always forces portal-strict.
 	static void Hook_ConvertLights_Add(CONTEXT& ctx)
@@ -3351,6 +3562,7 @@ namespace ShadowCasterManager
 		if (ssn != GetShadowSceneNode() || !light || !p)
 			return;
 
+		bool justPromoted = false;
 		if (s_settings.PromoteNormalToShadow && !p->shadowLight) {
 			p->shadowLight = true;
 			p->fov = 6.2831855f;
@@ -3360,6 +3572,7 @@ namespace ShadowCasterManager
 			p->depthBias = 1.0f;
 			p->nearDistance = (light->GetLightRuntimeData().radius.x / 512.0f) * 219.6356f;
 			s_shadowConvert.insert(light);
+			justPromoted = true;
 		}
 		// Portal-strict policy by shadow type. The engine picks the concrete
 		// shadow class (BSShadowParabolicLight / BSShadowHemisphereLight /
@@ -3369,20 +3582,33 @@ namespace ShadowCasterManager
 		//   fov <  ~pi   -> perspective spot/frustum
 		// Tightening portal-strict on omnis/hemis usefully exercises the
 		// portal-graph visibility test; doing it on spots drops culled-but-
-		// visible spots entirely (the cone test rejects spots whose origin
-		// sits behind a portal even when the cone sweeps into a visible
-		// room). Honour the per-type toggle so users can A/B easily.
-		constexpr float kFovHemiThreshold = 3.0f;  // ~pi
-		constexpr float kFovOmniThreshold = 6.0f;  // ~2pi
-		bool enforce = false;
-		if (p->fov >= kFovOmniThreshold)
-			enforce = s_settings.ForceEnablePortalStrictOmni;
-		else if (p->fov >= kFovHemiThreshold)
-			enforce = s_settings.ForceEnablePortalStrictHemi;
-		else
-			enforce = s_settings.ForceEnablePortalStrictSpot;
-		if (enforce)
-			p->portalStrict = true;
+		// visible spots entirely.
+		//
+		// NEVER force portal-strict on a light WE just promoted. A promoted
+		// (originally-normal) light has no stable portal-graph entry; portalStrict
+		// sends it down the engine's STRICT portal-accumulation branch, which derefs
+		// ShadowSceneNode::portalGraph (+0x228) and cull->portalGraphEntry WITHOUT the
+		// NULL guards the non-strict branch has. During a cell transition the graph is
+		// transiently NULL -> flat: null deref in BSParabolicCullingProcess (RE 76136
+		// <- 106401, SkyrimSE+0xE15240); VR: the light is mis-culled, never enters
+		// shadowLightsAccum, so RenderCascade never assigns it a depth-stencil slot and
+		// its vrRenderTarget stays uninitialized garbage -> nvwgf2umx OOB pool walk.
+		// Non-strict survives cleanly.
+		if (!justPromoted) {
+			constexpr float kFovHemiThreshold = 3.0f;  // ~pi
+			constexpr float kFovOmniThreshold = 6.0f;  // ~2pi
+			bool enforce = false;
+			if (p->fov >= kFovOmniThreshold)
+				enforce = s_settings.ForceEnablePortalStrictOmni;
+			else if (p->fov >= kFovHemiThreshold)
+				enforce = s_settings.ForceEnablePortalStrictHemi;
+			else
+				enforce = s_settings.ForceEnablePortalStrictSpot;
+			// Portals only exist in interiors; portalStrict outdoors has no graph to
+			// test against -- a no-op at best, a mis-cull of visible casters at worst.
+			if (enforce && Util::IsInterior())
+				p->portalStrict = true;
+		}
 	}
 
 	// Fires at start of BSLight::SetLight (ID 101302/108289).
@@ -3819,55 +4045,27 @@ namespace ShadowCasterManager
 			REL::safe_write(uid3.address(), &zero, 1);
 		}
 
-		// ---- Screen-space shadow-mask pass: clamp to vanilla 4 slices ---------
-		// Suppress the engine's screen-space shadow-mask inner loop. With
-		// extended slot counts SLF can produce maskIndex >= 4, which makes
-		// the loop OOB-read the 4-entry per-slot blend-mode table
-		// (DAT_141861380); the mask's R channel (sun cascades) is the only
-		// channel LIGHT_LIMIT_FIX consumes anyway -- extended shadow casters
-		// are served by LLF's cluster pipeline reading kSHADOWMAPS directly.
-		// See Hook_RenderShadowLightsWithUtilityShader above for the full
-		// rationale, including the previous Hook_DisableColorMask's misread
-		// (it patched out the inner call, not a color-mask call -- verified
-		// via Ghidra).
-		if (globals::game::isVR) {
-			// VR's Main::RenderShadowmasks (100422) inlines the inner loop
-			// instead of calling the standalone 100423, so the detour below
-			// would never fire. NOP the near-CALL at +0x9E directly. Only
-			// needed when extended slot counts can produce maskIndex >= 4;
-			// vanilla 4-slice VR doesn't trip the OOB.
-			if (settings.ShadowLightCount > 4) {
-				// Site verification: the call at +0x9E must be `E8 rel32`
-				// targeting the inlined helper at +0xC0 (rel32 = 0xC0 -
-				// next-instruction-addr = 0xC0 - 0xA3 = 0x1D). If either the
-				// opcode or the target drifts, fail closed -- clamp the
-				// scheduler back to vanilla 4 slots so a drifted binary
-				// degrades to "no extended shadows" rather than the original
-				// CTD path this patch protects.
-				static REL::RelocationID renderShadowmasks(100422, 107140);
-				constexpr std::uint8_t kCallOffset = 0x9E;
-				constexpr std::uint8_t kCallOpcode = 0xE8;  // near CALL rel32
-				constexpr std::int32_t kExpectedRel32 = 0x1D;
-				const auto site = renderShadowmasks.address() + kCallOffset;
-				const auto opcode = *reinterpret_cast<const std::uint8_t*>(site);
-				const auto rel32 = *reinterpret_cast<const std::int32_t*>(site + 1);
-				if (opcode != kCallOpcode || rel32 != kExpectedRel32) {
-					logger::warn(
-						"[SCM] VR shadow-mask site drift: expected E8 rel32=0x{:X} at RenderShadowmasks+0x{:X}, "
-						"found 0x{:02X} rel32=0x{:X}. Clamping ShadowLightCount to 4 (vanilla) to avoid OOB CTD.",
-						kExpectedRel32, kCallOffset, opcode, rel32);
-					s_installedShadowLightCount = 4;
-				} else {
-					REL::safe_fill(site, REL::NOP, 5);
-					logger::info("[SCM] VR: NOPed inner shadow-mask call at RenderShadowmasks+0x{:X}", kCallOffset);
-				}
-			}
-		} else {
-			// Flat (SE/AE): RenderShadowmasks calls the standalone 100423,
-			// so detour that function to a no-op.
-			stl::detour_thunk<Hook_RenderShadowLightsWithUtilityShader>(
-				REL::RelocationID(100423, 107141));
-		}
+		// ---- Screen-space shadow-mask pass: skip vanilla on all runtimes -----
+		// Detour the standalone RenderShadowLightsWithUtilityShader
+		// (100423/107141) to a no-op. Its inner loop indexes a 4-entry
+		// per-slot blend-mode table by BSShadowLight::maskIndex; SLF's extended
+		// slots -- and teardown's 0xFF "removed" sentinel -- push maskIndex >= 4
+		// -> OOB read -> corrupt shadow-render state (a VR driver CTD on cell
+		// transitions; tolerated as a garbage blend value on flat). LIGHT_LIMIT_
+		// FIX consumes only the mask's R channel and serves extended casters
+		// from its own cluster pipeline reading kSHADOWMAPS directly, so
+		// dropping the pass loses nothing. See
+		// Hook_RenderShadowLightsWithUtilityShader above for the full rationale.
+		//
+		// RenderShadowmasks calls this standalone function on every runtime
+		// including VR (verified via Ghidra: VR @ 0x141323740, called from
+		// RenderShadowmasks+0x9E -- the loop is NOT inlined). This used to be a
+		// VR-specific call-site NOP only because the VR address library mismapped
+		// id 100423 to an unrelated helper (0x1409c0c80), so the detour resolved
+		// to the wrong function. With the addrlib entry corrected to 0x141323740
+		// the one detour works on all three -- do not reintroduce the VR split.
+		stl::detour_thunk<Hook_RenderShadowLightsWithUtilityShader>(
+			REL::RelocationID(100423, 107141));
 
 		// ---- Shadow caster selection -----------------------------------------
 
@@ -3947,6 +4145,10 @@ namespace ShadowCasterManager
 			vtbl4.write_vfunc(3, Hook_IsShadowLight);
 		}
 
+		// Parabolic Render (vtable 0x0A): repair the engine's omission of copying
+		// cascade 0's shadowmapIndex to cascade 1, so teardown frees the right slot.
+		stl::write_vfunc<0x0A, Hook_ParabolicRender>(RE::VTABLE_BSShadowParabolicLight[0]);
+
 		{
 			// ShadowSceneNode::RemoveLight -- fires at +0x9 (SE: 6 bytes, AE: 5 bytes).
 			// Drains s_normalConvert / s_shadowConvert entries for the removed light.
@@ -3955,6 +4157,19 @@ namespace ShadowCasterManager
 			int sz = REL::Relocate(6, 5, 6);
 			if (!SKSE::stl::install_context_hook(uid.address() + REL::Relocate(0x9, 0x9, 0x9), sz, Hook_ConvertLights_Remove, sz))
 				logger::error("[SCM] Failed to install Hook_ConvertLights_Remove");
+		}
+
+		{
+			// ShadowSceneNode::ClearLightArrays -- the bulk shadow-light teardown
+			// on cell unload, which frees activeShadowLights via the inner queued
+			// removal (bypassing the per-light RemoveLight hook). Hook the function
+			// start to flag a session reset. Prologue is version-specific: SE/VR
+			// steal 4 PUSHes (5 bytes); AE's 5th byte splits a SUB RSP, so steal
+			// through it (8 bytes).
+			static REL::RelocationID uid(99704, 106338);
+			int sz = REL::Relocate(5, 8, 5);
+			if (!SKSE::stl::install_context_hook(uid.address(), sz, Hook_ClearLightArrays, sz))
+				logger::error("[SCM] Failed to install Hook_ClearLightArrays");
 		}
 
 		{

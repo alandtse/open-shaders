@@ -59,6 +59,13 @@ namespace ShadowCasterManager
 	/// this rather than reaching into Deferred / the renderer directly.
 	std::uint32_t GetInstalledSlotCount();
 
+	/// True while an engine shadow-scene teardown (ClearLightArrays) is pending
+	/// and not yet drained by ScheduleShadowCasters. During this window the
+	/// engine frees shadow lights and their GPU resources, so per-frame consumers
+	/// must skip iterating the accumulator and binding shadow resources to avoid
+	/// referencing freed objects. Non-draining load; the scheduler owns the drain.
+	bool IsSessionResetPending();
+
 	/// Live VRAM telemetry used for shadow-array sizing decisions and stats.
 	/// All values in bytes; populated from IDXGIAdapter3::QueryVideoMemoryInfo
 	/// + the kSHADOWMAPS texture's actual geometry. valid=false when the
