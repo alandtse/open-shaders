@@ -293,6 +293,10 @@ namespace ShadowCasterManager
 	// Promoted lights whose descriptor pool-slots were initialized once (scheduler-time),
 	// covering lights never enabled -- EnableLight only inits slot winners.
 	static std::set<RE::NiLight*> s_shadowConvertDescriptorInited;
+	// Guards both sets above. Game-thread hooks (Add/SetLight/Remove) mutate them while the
+	// render-thread scheduler reads and reconciles; concurrent std::set mutation corrupts the
+	// tree and hangs a later traversal. Lock every access; never re-entered while held.
+	static std::mutex s_shadowConvertMutex;
 
 	// Set by Hook_ClearLightArrays on engine bulk teardown, drained atop ScheduleShadowCasters
 	// so stale s_lights/convert pointers clear before the next pass dereferences a slot.
@@ -1371,6 +1375,16 @@ namespace ShadowCasterManager
 		return globals::game::isVR ? light->GetVRRuntimeData().shadowmapDescriptors.front().cullingProcess : light->GetRuntimeData().shadowmapDescriptors.front().cullingProcess;
 	}
 
+	// True if this NiLight was promoted normal->shadow (PromoteNormalToShadow). Takes the
+	// tracking lock; safe to call from the render thread while hooks mutate the set.
+	static bool IsPromotedLight(RE::NiLight* ni)
+	{
+		if (!ni)
+			return false;
+		std::scoped_lock lk(s_shadowConvertMutex);
+		return s_shadowConvert.contains(ni);
+	}
+
 	// =========================================================================
 	// Formula helpers
 	//
@@ -1483,7 +1497,7 @@ namespace ShadowCasterManager
 			z = nilight->world.translate.z;
 
 			if (s_settings.PromoteNormalToShadow)
-				FormulaHelper::SetParam(kFormulaParam_LightNS, s_shadowConvert.find(nilight) != s_shadowConvert.end() ? 1.0 : 0.0);
+				FormulaHelper::SetParam(kFormulaParam_LightNS, IsPromotedLight(nilight) ? 1.0 : 0.0);
 		} else {
 			FormulaHelper::SetParam(kFormulaParam_LightIntensity, 0.0);
 			FormulaHelper::SetParam(kFormulaParam_LightRadius, 0.0);
@@ -2136,10 +2150,12 @@ namespace ShadowCasterManager
 				// init here (once) -- this is the type-safe BSShadowLight source -- to cover a
 				// promoted light added but never enabled before teardown reads it.
 				if (s_settings.ShadowLightCount > 4) {
-					if (auto* ni = l->light.get(); ni && s_shadowConvert.contains(ni) &&
-												   !s_shadowConvertDescriptorInited.contains(ni)) {
-						InitPromotedDescriptorSlots(l);
-						s_shadowConvertDescriptorInited.insert(ni);
+					if (auto* ni = l->light.get(); ni) {
+						std::scoped_lock lk(s_shadowConvertMutex);
+						if (s_shadowConvert.contains(ni) && !s_shadowConvertDescriptorInited.contains(ni)) {
+							InitPromotedDescriptorSlots(l);
+							s_shadowConvertDescriptorInited.insert(ni);
+						}
 					}
 				}
 				auto& c = candidates.emplace_back();
@@ -2153,6 +2169,22 @@ namespace ShadowCasterManager
 			if (n > 0)
 				ZoneText(buf, static_cast<size_t>(n));
 #endif
+		}
+
+		// Drop tracking entries whose NiLight left activeShadowLights -- pointer membership
+		// only, never deref a freed light. This is the only safe cleanup: ResetSession can't
+		// wipe (deferred, races the new cell's promotions) and bulk ClearLightArrays bypasses
+		// the per-light erase, so without it promoted lights leak in and read as native.
+		{
+			std::scoped_lock lk(s_shadowConvertMutex);
+			if (!s_shadowConvert.empty() || !s_shadowConvertDescriptorInited.empty()) {
+				std::set<RE::NiLight*> liveNi;
+				for (auto& c : candidates)
+					if (auto* ni = c.light->light.get())
+						liveNi.insert(ni);
+				std::erase_if(s_shadowConvert, [&](RE::NiLight* ni) { return !liveNi.contains(ni); });
+				std::erase_if(s_shadowConvertDescriptorInited, [&](RE::NiLight* ni) { return !liveNi.contains(ni); });
+			}
 		}
 
 		// Validation, redraw-interval scoring, and RedrawFrame marking all
@@ -2261,7 +2293,11 @@ namespace ShadowCasterManager
 				// Portal culling only applies in interior cells where a portal graph exists.
 				// Lights with no culling process (e.g. WSU spotlights outside cell bounds)
 				// or no portal are unconditionally visible; skip the check for them.
-				auto* cull = GetLightCullingProcess(l);
+				// Promoted lights carry a rebuilt culling process whose portal-graph entry the
+				// engine never room-associates (always visibleUnboundSpace), so the test
+				// false-culls an in-view light. The verdict is unreliable for them by
+				// construction -- always skip the demotion; native lights still get it.
+				auto* cull = IsPromotedLight(l->light.get()) ? nullptr : GetLightCullingProcess(l);
 				if (cull) {
 					auto* portal = reinterpret_cast<RE::BSPortalGraphEntry*>(cull->portalGraphEntry);
 					if (portal) {
@@ -3503,6 +3539,7 @@ namespace ShadowCasterManager
 			}
 		}
 		if (light) {
+			std::scoped_lock lk(s_shadowConvertMutex);
 			s_shadowConvert.erase(light);
 			s_shadowConvertDescriptorInited.erase(light);
 		}
@@ -3566,7 +3603,10 @@ namespace ShadowCasterManager
 			p->falloff = 1.0f;
 			p->depthBias = 1.0f;
 			p->nearDistance = (light->GetLightRuntimeData().radius.x / 512.0f) * 219.6356f;
-			s_shadowConvert.insert(light);
+			{
+				std::scoped_lock lk(s_shadowConvertMutex);
+				s_shadowConvert.insert(light);
+			}
 			justPromoted = true;
 		}
 		// Portal-strict policy by shadow type (engine picks the shadow class by FOV: >=2pi omni,
@@ -3605,14 +3645,17 @@ namespace ShadowCasterManager
 		// room-light culling calls a vfunc on -> garbage-vtable CTD. Null it at creation
 		// (SetLight runs during AddLight, before any accumulate) so the engine builds a real
 		// one, exactly as a fresh zeroed page would.
-		if (nilight && s_shadowConvert.count(nilight))
-			bslight->cullingProcess = nullptr;
-		auto* oldlight = bslight->light.get();
-		if (oldlight && oldlight != nilight) {
-			bool did = s_shadowConvert.erase(oldlight) != 0;
-			s_shadowConvertDescriptorInited.erase(oldlight);  // reassigned nilight re-inits via scheduler
-			if (nilight && did)
-				s_shadowConvert.insert(nilight);
+		{
+			std::scoped_lock lk(s_shadowConvertMutex);
+			if (nilight && s_shadowConvert.count(nilight))
+				bslight->cullingProcess = nullptr;
+			auto* oldlight = bslight->light.get();
+			if (oldlight && oldlight != nilight) {
+				bool did = s_shadowConvert.erase(oldlight) != 0;
+				s_shadowConvertDescriptorInited.erase(oldlight);  // reassigned nilight re-inits via scheduler
+				if (nilight && did)
+					s_shadowConvert.insert(nilight);
+			}
 		}
 	}
 
@@ -4271,8 +4314,9 @@ namespace ShadowCasterManager
 		// takes NiLight* (not BSLight* as the wrapper assumed); the call
 		// was a silent no-op on every runtime and accomplished nothing.
 		s_normalConvert.clear();
-		s_shadowConvert.clear();
-		s_shadowConvertDescriptorInited.clear();
+		// Promotion tracking is NOT wiped here: this reset is deferred to the render thread
+		// and can drain after the game thread promotes the new cell's lights, wiping live
+		// entries. ScheduleShadowCasters reconciles stale entries per-frame instead.
 		s_pinShadow.clear();
 		s_pinConvert.clear();
 		s_soloLight = 0;
