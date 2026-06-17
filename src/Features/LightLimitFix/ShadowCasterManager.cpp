@@ -3608,6 +3608,15 @@ namespace ShadowCasterManager
 				s_shadowConvert.insert(light);
 			}
 			justPromoted = true;
+		} else {
+			// This NiLight is not one we promoted (native shadow caster, or promotion off).
+			// If the allocator reused its address from a freed promoted light, drop the stale
+			// entry now -- synchronously, before the scheduler can misread it as promoted.
+			// A re-added promoted light always arrives with shadowLight=false and takes the
+			// branch above, so this never un-tracks one of ours.
+			std::scoped_lock lk(s_shadowConvertMutex);
+			s_shadowConvert.erase(light);
+			s_shadowConvertDescriptorInited.erase(light);
 		}
 		// Portal-strict policy by shadow type (engine picks the shadow class by FOV: >=2pi omni,
 		// >=pi hemi, <pi spot). Tighten on omnis/hemis; on spots it drops culled-but-visible spots.
