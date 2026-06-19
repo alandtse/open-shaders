@@ -110,10 +110,16 @@ void HomePageRenderer::RenderQuickLinksSection()
 	ImGui::Text("%s", quickLinksTitle);
 
 	// Nexus button → the Open Shaders fork page (mod 180419).
-	ImGui::Columns(3, nullptr, false);
+	ImGui::Columns(4, nullptr, false);
 
 	if (ImGui::Button(T("menu.home.nexus_mods", "Nexus Mods"), ImVec2(-1, 0))) {
 		ShellExecuteA(NULL, "open", "https://www.nexusmods.com/skyrimspecialedition/mods/180419", NULL, NULL, SW_SHOWNORMAL);
+	}
+
+	// Discord button → the Open Shaders fork's own server invite.
+	ImGui::NextColumn();
+	if (ImGui::Button(T("menu.home.join_discord", "Join Discord"), ImVec2(-1, 0))) {
+		ShellExecuteA(NULL, "open", "https://discord.gg/V6qa82Spxw", NULL, NULL, SW_SHOWNORMAL);
 	}
 
 	ImGui::NextColumn();
