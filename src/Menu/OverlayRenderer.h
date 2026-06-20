@@ -46,7 +46,6 @@ public:
 		float currentFontSize);
 
 private:
-	static void HandleVRSetup();
 	static bool ShouldSkipRendering();
 	static void HandleFontReload(Menu& menu, float& cachedFontSize, float currentFontSize);
 	static void InitializeImGuiFrame(Menu& menu);

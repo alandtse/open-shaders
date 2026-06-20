@@ -138,14 +138,11 @@ void OverlayRenderer::RenderOverlay(
 	float& cachedFontSize,
 	float currentFontSize)
 {
-	HandleVRSetup();
 	processInputEventQueue();
 
-	// The helper drives wand pointing → ImGui mouse synthesis, so skip
-	// SCS's internal controller→ImGui pump when registered.
-	if (!ImGuiVRHelperClient::IsRegistered() && globals::features::vr.IsOpenVRCompatible()) {
-		globals::features::vr.ProcessControllerInputForImGui();
-	}
+	// VR overlay textures and controller→ImGui input are owned by the helper
+	// (helper-required); SCS no longer recreates overlay textures or pumps
+	// controller input itself.
 
 	if (ShouldSkipRendering()) {
 		auto& io = ImGui::GetIO();
@@ -194,15 +191,6 @@ void OverlayRenderer::RenderOverlay(
 	HandleABTesting();
 	PatchOverlappingWindowBackgrounds();
 	FinalizeImGuiFrame();
-}
-
-void OverlayRenderer::HandleVRSetup()
-{
-	// The helper owns the overlay texture, so skip SCS's
-	// menuTexture/menuRTV recreation when registered.
-	if (!ImGuiVRHelperClient::IsRegistered() && globals::features::vr.IsOpenVRCompatible()) {
-		globals::features::vr.RecreateOverlayTexturesIfNeeded();
-	}
 }
 
 bool OverlayRenderer::ShouldSkipRendering()
@@ -425,17 +413,10 @@ void OverlayRenderer::FinalizeImGuiFrame()
 
 	ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
 
-	// Render the same draw data into the ImGuiVRHelper's panel RTV so
-	// the helper can composite our menu as a 3D quad in the HMD.
+	// Render the same draw data into the ImGuiVRHelper's panel RTV so the
+	// helper can composite our menu as a 3D quad in the HMD. The helper owns
+	// VR overlay compositing (helper-required) — SCS no longer submits its own.
 	ImGuiVRHelperClient::RenderToPanel();
-
-	// When the helper is registered it owns VR overlay compositing, so
-	// skip SCS's internal SubmitOverlayFrame path. Per the
-	// helper-required policy, without the helper VR users get menus only
-	// on the desktop monitor (no fallback to SCS's own overlay).
-	if (!ImGuiVRHelperClient::IsRegistered() && globals::features::vr.IsOpenVRCompatible()) {
-		globals::features::vr.SubmitOverlayFrame();
-	}
 }
 
 void OverlayRenderer::RenderFirstTimeSetupOverlay()

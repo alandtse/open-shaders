@@ -1073,12 +1073,10 @@ void Menu::ProcessInputEventQueue()
 	}
 	// Process VR events
 	if (!vrEvents.empty()) {
-		// When the helper is registered it drives wand pointing, combo
-		// matching, drag, and overlay focus, so forward raw VR controller
-		// events to it instead of SCS's own ProcessVREvents/
-		// UpdateOverlayMenuStateFromInput. Without the helper
-		// (helper-required policy) SCS drops these events; VR users see
-		// menus only on the desktop monitor.
+		// Helper-required: forward raw VR controller events to the helper,
+		// which owns wand pointing, combo matching, drag and overlay focus.
+		// Without the helper the events are dropped — VR menus are desktop-only
+		// (no fallback to SCS's own VR overlay).
 		if (ImGuiVRHelperClient::IsRegistered()) {
 			for (const auto& event : vrEvents) {
 				ImGuiVRHelperClient::FeedVREvent(
@@ -1088,9 +1086,6 @@ void Menu::ProcessInputEventQueue()
 					event.thumbstickX,
 					event.thumbstickY);
 			}
-		} else {
-			globals::features::vr.ProcessVREvents(vrEvents);
-			globals::features::vr.UpdateOverlayMenuStateFromInput();
 		}
 	}
 
