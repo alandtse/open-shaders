@@ -47,3 +47,26 @@ jobs:
             # Isolate this harness's build caches from production keys so a
             # ci_test branch cannot poison dev / main / PR build caches.
             cache-key-suffix: "-ci-test"
+
+    # Run the feature version audit from THIS branch's ref. pr-checks runs it
+    # under pull_request_target from the BASE branch, so a change to the audit
+    # algorithm itself (e.g. release-stage 0.x logic) can never be exercised by
+    # its own PR. Push the change to ci_test/** to verify the verdict here first.
+    feature-audit:
+        if: github.repository == 'alandtse/open-shaders'
+        runs-on: ubuntu-latest
+        permissions:
+            contents: read
+        steps:
+            - uses: actions/checkout@v6
+              with:
+                  fetch-depth: 0
+            - uses: actions/setup-python@v6
+              with:
+                  python-version: "3.11"
+            - name: Run feature version audit (this branch vs dev)
+              run: |
+                  set -euo pipefail
+                  git fetch origin dev
+                  python tools/feature_version_audit.py --pr-check --ci \
+                    --base "$(git rev-parse origin/dev)" --head "${{ github.sha }}"

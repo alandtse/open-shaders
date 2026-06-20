@@ -16,6 +16,11 @@ on:
                 description: "Promotion mode: dev SHA to fast-forward main to before releasing. Leave empty for a normal release on the dispatched branch."
                 required: false
                 default: ""
+            skip_feature_bumps:
+                description: "Skip the automatic feature .ini version bumps (feature_version_audit.py --apply-bumps). Tick to bypass the bump algorithm and hand-manage feature versions for this release."
+                type: boolean
+                required: false
+                default: false
 
 permissions:
     contents: write
@@ -120,7 +125,11 @@ jobs:
                   # semantic-release runs against the promoted history.
                   git checkout -B main "${FF_TARGET}"
 
+            # Escape hatch: the audit runs from the dispatched branch here (not
+            # under pull_request_target), but a misfiring bump algorithm can still
+            # apply a wrong version. Tick skip_feature_bumps to hand-manage instead.
             - name: Apply feature version bumps
+              if: ${{ !inputs.skip_feature_bumps }}
               run: |
                   python tools/feature_version_audit.py \
                     --apply-bumps \
