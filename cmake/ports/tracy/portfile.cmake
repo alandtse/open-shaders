@@ -1,11 +1,9 @@
 vcpkg_from_github(
     OUT_SOURCE_PATH SOURCE_PATH
     REPO wolfpld/tracy
-    REF 14a1a3227e046e7bee3abed406c7faab61de3620
-    SHA512 113b2dd35d75edeb1358514bf857bc694c048fb7b2604a22e8fcc7efa63d342a6c7cbf02162073d2ee8690821e0f80f95be6270416777645d9092d5508e76372
+    REF 1706ac57acc8d067134e2f59aa67421d48bfb31a
+    SHA512 f08f94eb5452f33aca36ce87515628b7292f3f670be5ade0739978db8ae3975b7718f4c153e79e5d049fe27d45b71b2f9dc89485be42672e8379f0e9b346b5c6
     HEAD_REF master
-    PATCHES
-        build-tools.patch
 )
 
 vcpkg_check_features(OUT_FEATURE_OPTIONS FEATURE_OPTIONS
@@ -42,6 +40,15 @@ vcpkg_cmake_configure(
         LEGACY
 )
 vcpkg_cmake_install()
+
+# Tracy's install() FILES list omits these common headers at this ref even
+# though the client headers (e.g. TracyProfiler.hpp) include them; copy them
+# so downstream code compiles.
+file(INSTALL
+    "${SOURCE_PATH}/public/common/TracyFormat.hpp"
+    "${SOURCE_PATH}/public/common/TracyVersion.hpp"
+    DESTINATION "${CURRENT_PACKAGES_DIR}/include/tracy/common")
+
 vcpkg_copy_pdbs()
 vcpkg_cmake_config_fixup(PACKAGE_NAME Tracy CONFIG_PATH lib/cmake/Tracy)
 
