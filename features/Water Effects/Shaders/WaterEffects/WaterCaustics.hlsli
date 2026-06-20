@@ -25,6 +25,7 @@ namespace WaterEffects
 
 	float3 ComputeCaustics(float4 waterData, float3 worldPosition, uint eyeIndex)
 	{
+		float3 result = 1.0.xxx;
 		float causticsDistToWater = waterData.w - worldPosition.z;
 		float shoreFactorCaustics = saturate(causticsDistToWater / 64.0);
 
@@ -53,9 +54,9 @@ namespace WaterEffects
 				causticsLow = min(SampleCausticsDispersion(causticsUV1, dispersionOffset), SampleCausticsDispersion(causticsUV2, dispersionOffset)) * 4.0;
 
 			float3 caustics = lerp(causticsLow, causticsHigh, causticsFade);
-			return lerp(1.0.xxx, caustics, shoreFactorCaustics);
+			result = lerp(1.0.xxx, caustics, shoreFactorCaustics);
 		}
 
-		return 1.0.xxx;
+		return result;
 	}
 }
