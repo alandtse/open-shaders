@@ -46,7 +46,8 @@ jobs:
                           '{username: "Open Shaders", embeds: [ ({description: $desc, color: $color}
                               + (if $title != "" then {title: $title} else {} end)
                               + (if $title != "" and $url != "" then {url: $url} else {} end)) ]}')
-                      curl -sf -X POST -H "Content-Type: application/json" -d "$payload" "$WEBHOOK" >/dev/null
+                      curl -sf --retry 3 --retry-delay 2 --connect-timeout 5 --max-time 20 \
+                          -X POST -H "Content-Type: application/json" -d "$payload" "$WEBHOOK" >/dev/null
                       sleep 1  # courtesy gap to avoid Discord rate limits
                   }
 

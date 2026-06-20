@@ -56,12 +56,15 @@ jobs:
                           'python tools/sort-i18n.py --write',
                           '```'
                       ].join('\n');
-                      const { data: comments } = await github.rest.issues.listComments({
-                          owner: context.repo.owner,
-                          repo: context.repo.repo,
-                          issue_number: context.issue.number,
-                          per_page: 100
-                      });
+                      const comments = await github.paginate(
+                          github.rest.issues.listComments,
+                          {
+                              owner: context.repo.owner,
+                              repo: context.repo.repo,
+                              issue_number: context.issue.number,
+                              per_page: 100
+                          }
+                      );
                       const comment = comments.find(comment =>
                           comment.user.type === 'Bot' && comment.body.includes(marker)
                       );
