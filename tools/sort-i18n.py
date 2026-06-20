@@ -163,7 +163,7 @@ def main():
                 if needs_prune:
                     print(f"    -> Rewritten with correct key order; pruned {len(extra_keys)} extra key(s)")
                 else:
-                    print(f"    -> Rewritten with correct key order")
+                    print("    -> Rewritten with correct key order")
 
     print()
     if changed_files:
