@@ -48,6 +48,8 @@ jobs:
             run-shader-tests: false
             run-cpp-tests: false
             release-parity-validation: true
+            # Gate matches the shipped set only; the full-config pass is a PR concern.
+            run-full-config-validation: false
 
     release:
         needs: validate-shaders

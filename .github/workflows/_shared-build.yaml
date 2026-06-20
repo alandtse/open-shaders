@@ -28,9 +28,13 @@ on:
                 type: boolean
                 default: false
             release-parity-validation:
-                description: "Validate shaders at release parity (/O3 + default-install profile config) WITHOUT producing cache artifacts. Implied by cache-artifacts; use to gate a release on the same checks the cache build enforces."
+                description: "Run the release-parity pass (/O3 + default-install profile config) WITHOUT producing cache artifacts. Implied by cache-artifacts; use to gate a release, or alongside run-full-config-validation on PRs to cover both sets."
                 type: boolean
                 default: false
+            run-full-config-validation:
+                description: "Run the full-config pass (every feature, default opt). On by default for broad PR coverage; release/cache/gate runs set this false since they only need the release-parity (profile) set."
+                type: boolean
+                default: true
             run-cpp-tests:
                 description: "Run C++ unit tests (tests/cpp)"
                 type: boolean
@@ -233,22 +237,35 @@ jobs:
                   fi
                   echo "Changed files for incremental validation:"
                   cat changed_files.txt || true
-                  # Release parity (cache build OR a release gate): /O3 with debug
-                  # defines stripped AND the default-install profile config (non-AIO and
-                  # default-disabled feature defines stripped -- the shipped cache targets a
-                  # default install and is invalid once any extra feature is added). This is
-                  # the set the release ships; the gate catches /O3-only warnings (e.g. X4000
-                  # uninitialized return) that the default /O1 PR validation does not. PR
-                  # validation keeps the full configs, so all feature paths stay covered.
-                  CONFIG="${{ matrix.config.file }}"
-                  EXTRA=""
-                  if [ "${{ inputs.cache-artifacts }}" = "true" ] || [ "${{ inputs.release-parity-validation }}" = "true" ]; then
-                    EXTRA="--strip-debug-defines --optimization-level 3"
-                    python tools/build-shader-cache.py --emit-profile-config "$CONFIG" "profile-config-${{ matrix.config.runtime }}.yaml"
-                    CONFIG="profile-config-${{ matrix.config.runtime }}.yaml"
+                  # Two independent incremental passes. validate_changed_shaders builds the
+                  # #include graph and compiles only the entry points that transitively
+                  # include a changed file, so both stay bounded by the change set:
+                  #   1. Full config, default opt -- every feature path stays covered.
+                  #   2. Release parity: /O3 (debug defines stripped) on the default-install
+                  #      profile config (non-AIO and default-disabled defines stripped -- the
+                  #      shipped cache targets a default install). This is the set the release
+                  #      ships and the only one that surfaces /O3-only warnings (e.g. X4000
+                  #      uninitialized return). PRs run both; the cache build and release gate
+                  #      run only #2.
+                  FXC="${{ steps.find_fxc.outputs.fxc_path }}"
+                  PLAIN_CONFIG="${{ matrix.config.file }}"
+                  mkdir -p build/ShaderCache build/ShaderCacheFull
+
+                  if [ "${{ inputs.run-full-config-validation }}" = "true" ]; then
+                    echo "::group::Full-config validation (default opt)"
+                    python tools/validate_changed_shaders.py --changed-list-file changed_files.txt -- \
+                      hlslkit-compile --fxc "$FXC" --shader-dir build/ALL/aio/Shaders --output-dir build/ShaderCacheFull --config "$PLAIN_CONFIG" --max-warnings 0 --suppress-warnings X1519
+                    echo "::endgroup::"
                   fi
-                  python tools/validate_changed_shaders.py --changed-list-file changed_files.txt -- \
-                    hlslkit-compile --fxc "${{ steps.find_fxc.outputs.fxc_path }}" --shader-dir build/ALL/aio/Shaders --output-dir build/ShaderCache --config "$CONFIG" --max-warnings 0 --suppress-warnings X1519 $EXTRA
+
+                  if [ "${{ inputs.cache-artifacts }}" = "true" ] || [ "${{ inputs.release-parity-validation }}" = "true" ]; then
+                    echo "::group::Release-parity validation (/O3, default-install profile)"
+                    PROFILE_CONFIG="profile-config-${{ matrix.config.runtime }}.yaml"
+                    python tools/build-shader-cache.py --emit-profile-config "$PLAIN_CONFIG" "$PROFILE_CONFIG"
+                    python tools/validate_changed_shaders.py --changed-list-file changed_files.txt -- \
+                      hlslkit-compile --fxc "$FXC" --shader-dir build/ALL/aio/Shaders --output-dir build/ShaderCache --config "$PROFILE_CONFIG" --max-warnings 0 --suppress-warnings X1519 --strip-debug-defines --optimization-level 3
+                    echo "::endgroup::"
+                  fi
 
             # Never runs in pull_request_target contexts or on fork checkouts
             # (cache-artifacts is only set by release-build); the guards make

@@ -154,6 +154,10 @@ jobs:
             shader-tests-should-build: ${{ needs.check-changes.outputs.shader-tests-should-build || 'true' }}
             cpp-tests-should-build: ${{ needs.check-changes.outputs.cpp-tests-should-build || 'true' }}
             changed-files-json: ${{ needs.check-changes.outputs.changed-files-json }}
+            # Also run the release-parity pass (/O3 + profile) incrementally, so /O3-only
+            # warnings (e.g. X4000) that would break the release cache are caught pre-merge.
+            # run-full-config-validation stays on, so PRs cover both sets.
+            release-parity-validation: true
 
     # Security: this job has GITHUB_TOKEN write permissions but executes no fork
     # code. It sparse-checks-out the BASE branch (trusted) for the

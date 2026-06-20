@@ -44,6 +44,8 @@ jobs:
             run-shader-tests: ${{ github.event_name != 'workflow_dispatch' || inputs.validate-shaders == true }}
             cache-key-suffix: ${{ inputs.cache-key-suffix || '' }}
             cache-artifacts: true
+            # Cache build only needs the release-parity (profile) pass.
+            run-full-config-validation: false
 
     feature-audit:
         name: Feature Version Audit (Release)
