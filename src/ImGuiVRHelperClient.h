@@ -36,11 +36,9 @@ namespace ImGuiVRHelperClient
 
 	/// True iff the helper has requested SCS render its menu this
 	/// frame (focus-render contract — kClientFlag_RendersOnFocus).
-	/// Triggered by either the helper's dashboard picker selecting
-	/// CommunityShaders, or the helper's in-scene focus model
-	/// routing focus to us. OverlayRenderer ORs this with
-	/// Menu::IsEnabled to decide whether to draw the menu into the
-	/// panel RTV.
+	/// Triggered when the helper's in-scene focus model routes focus
+	/// to us. OverlayRenderer ORs this with Menu::IsEnabled to decide
+	/// whether to draw the menu into the panel RTV.
 	bool HelperRequestsRender();
 
 	/// Renders the current ImGui draw data (as produced by the most

@@ -12,14 +12,11 @@ namespace
 	uint32_t g_clientId = 0;
 
 	// Latched each helper Frame. OverlayRenderer reads this via
-	// ImGuiVRHelperClient::HelperRequestsRender() to know whether to
-	// render the menu independent of Menu::IsEnabled. Set when:
-	//   - User picked CommunityShaders in the helper's dashboard combo
-	//   - Helper's in-scene focus model picked us (e.g. another panel
-	//     dismissed)
-	// Either way the helper expects fresh pixels in our panel RTV this
-	// frame. Reading is racy (render thread vs OnFrame thread) but the
-	// value is just a bool — torn reads don't matter.
+	// ImGuiVRHelperClient::HelperRequestsRender() to know whether to render the
+	// menu independent of Menu::IsEnabled. Set when the helper's in-scene focus
+	// model routes focus to us, so it expects fresh pixels in our panel RTV this
+	// frame. Reading is racy (render thread vs OnFrame thread) but the value is
+	// just a bool — torn reads don't matter.
 	bool g_helperRequestsRender = false;
 
 	constexpr uint32_t kFrameFlag_HasFocus = 1u << 0;
@@ -48,23 +45,13 @@ namespace ImGuiVRHelperClient
 
 		const auto version = Plugin::VERSION.string();
 
-		// Opt into both presentation surfaces:
-		//   * In-scene panel (the free-floating quad in front of the
-		//     player) — implicit; every panel-mode client gets one.
-		//   * SteamVR Dashboard — kClientFlag_Dashboard. SCS becomes
-		//     selectable in the helper's dashboard picker so users can
-		//     reach the menu from the SteamVR rail without breaking
-		//     immersion to find a controller hotkey.
-		//
-		// kClientFlag_RendersOnFocus advertises that we honor the
-		// helper's focus-render contract: when Frame.flags has
-		// client_has_focus, OverlayRenderer renders the menu into the
-		// panel RTV regardless of Menu::IsEnabled. This is what makes
-		// the dashboard picker work end-to-end (without it, SCS would
-		// show the "(manual trigger)" annotation in the helper's combo
-		// and require the user to press TAB).
-		const uint32_t flags = ImGuiVRHelperPluginAPI::kClientFlag_Dashboard |
-		                       ImGuiVRHelperPluginAPI::kClientFlag_RendersOnFocus;
+		// In-scene panel presentation (the free-floating quad in front of the
+		// player) is implicit — every panel-mode client gets one.
+		// kClientFlag_RendersOnFocus advertises that we honor the helper's
+		// focus-render contract: when Frame.flags has client_has_focus,
+		// OverlayRenderer renders the menu into the panel RTV regardless of
+		// Menu::IsEnabled.
+		const uint32_t flags = ImGuiVRHelperPluginAPI::kClientFlag_RendersOnFocus;
 
 		g_clientId = g_helper->RegisterClient(
 			"CommunityShaders",
