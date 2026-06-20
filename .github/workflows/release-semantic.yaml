@@ -32,7 +32,25 @@ concurrency:
     cancel-in-progress: false
 
 jobs:
+    # Gate the version cut on the release-parity shader validation the cache build
+    # enforces (/O3 + default-install profile). Shader-only (no C++ build), so it adds
+    # zero PR-phase cost and runs once per release cut. Catches /O3-only warnings (e.g.
+    # X4000 uninitialized return) before semantic-release tags a version whose caches
+    # would then fail to build. Validates the about-to-be-released ref: ff_target in
+    # promotion mode, else the dispatched SHA.
+    validate-shaders:
+        uses: ./.github/workflows/_shared-build.yaml
+        with:
+            ref: ${{ inputs.ff_target || github.sha }}
+            repository: ${{ github.repository }}
+            run-cpp: false
+            run-shader-validation: true
+            run-shader-tests: false
+            run-cpp-tests: false
+            release-parity-validation: true
+
     release:
+        needs: validate-shaders
         runs-on: ubuntu-latest
         steps:
             - name: Checkout repository
