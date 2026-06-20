@@ -234,22 +234,32 @@ def get_feature_ini_metadata(feature_dir_or_ini_path):
 
     return {k: v for k, v in metadata.items() if v is not None and v != ""}
 
+def read_current_ini_content(ini_path):
+    """Read the current (HEAD) feature .ini text. In ref mode read it from HEAD_REF;
+    if that read fails, fall back to the checked-out workspace file rather than the
+    caller's miss-default. A failed ref read must not be mistaken for "no version /
+    release stage" — that misread proposes a spurious version bump on a pre-release or
+    space-named feature whose ref blob the runner failed to fetch. Returns None only
+    when neither source is readable."""
+    if HEAD_REF != "HEAD":
+        rel_path = os.path.relpath(ini_path, PROJECT_ROOT).replace("\\", "/")
+        try:
+            return subprocess.check_output(
+                ["git", "show", f"{HEAD_REF}:{rel_path}"], stderr=subprocess.DEVNULL
+            ).decode("utf-8")
+        except Exception:
+            pass  # fall back to the checked-out workspace file
+    try:
+        with open(ini_path, "r", encoding="utf-8") as f:
+            return f.read()
+    except Exception:
+        return None
+
 def get_version_from_ini(ini_path, content=None):
     if content is None:
-        if HEAD_REF != "HEAD":
-            rel_path = os.path.relpath(ini_path, PROJECT_ROOT).replace("\\", "/")
-            try:
-                content = subprocess.check_output(
-                    ["git", "show", f"{HEAD_REF}:{rel_path}"], stderr=subprocess.DEVNULL
-                ).decode("utf-8")
-            except Exception:
-                return None
-        else:
-            try:
-                with open(ini_path, "r", encoding="utf-8") as f:
-                    content = f.read()
-            except Exception:
-                return None
+        content = read_current_ini_content(ini_path)
+        if content is None:
+            return None
     m = RE_VERSION.search(content)
     if m:
         return tuple(map(int, m.groups()))
@@ -278,20 +288,9 @@ def stage_from_content(content):
 
 def get_stage_from_ini(ini_path, content=None):
     if content is None:
-        if HEAD_REF != "HEAD":
-            rel_path = os.path.relpath(ini_path, PROJECT_ROOT).replace("\\", "/")
-            try:
-                content = subprocess.check_output(
-                    ["git", "show", f"{HEAD_REF}:{rel_path}"], stderr=subprocess.DEVNULL
-                ).decode("utf-8")
-            except Exception:
-                return STAGE_RELEASE
-        else:
-            try:
-                with open(ini_path, "r", encoding="utf-8") as f:
-                    content = f.read()
-            except Exception:
-                return STAGE_RELEASE
+        content = read_current_ini_content(ini_path)
+        if content is None:
+            return STAGE_RELEASE
     return stage_from_content(content)
 
 def get_prior_stage(ini_path, base_ref):
