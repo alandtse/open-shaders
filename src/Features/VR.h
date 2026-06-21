@@ -287,89 +287,9 @@ public:
 	// VR-SPECIFIC PUBLIC API
 	//=============================================================================
 
-	void ProcessVREvents(std::vector<Menu::KeyEvent>& vrEvents);
-
-	// Wand pointing methods
-	enum class OverlayType
-	{
-		HMD,
-		Controller
-	};
-	bool ComputeWandIntersection(vr::TrackedDeviceIndex_t controllerIndex, ImVec2& outUV);
-	bool ComputeWandIntersectionForOverlayType(OverlayType type, vr::TrackedDeviceIndex_t controllerIndex, ImVec2& outUV);
-	void UpdateCursorFromWandPointing();
-	void UpdateOverlayMenuStateFromInput();
-	void ProcessVRButtonEvent(const Menu::KeyEvent& event);
-	void UpdateControllerState(const Menu::KeyEvent& event);
-	void ProcessThumbstickScroll(RE::VRControllerState& controllerState, size_t thumbstickIndex, float deadzone, ImGuiIO& io);
-	void ProcessControllerInputForImGui();
-
-	void RecreateOverlayTexturesIfNeeded();
-	void SubmitOverlayFrame();
-	bool IsWelcomeOverlayVisible() const;
-
-	/**
-	 * @brief Context for rendering VR overlays with render target management
-	 */
-	struct OverlayRenderContext
-	{
-		vr::IVROverlay* gameOverlay;
-		vr::IVROverlay* cleanOverlay;
-		RE::BSOpenVR* openvr;
-		ID3D11RenderTargetView* oldRTV = nullptr;
-		float clearColor[4] = { 0, 0, 0, 0 };
-
-		bool IsValid() const
-		{
-			return gameOverlay && cleanOverlay && openvr && openvr->vrSystem;
-		}
-
-		void SaveRenderTarget()
-		{
-			globals::d3d::context->OMGetRenderTargets(1, &oldRTV, nullptr);
-		}
-
-		void RestoreRenderTarget()
-		{
-			globals::d3d::context->OMSetRenderTargets(1, &oldRTV, nullptr);
-			if (oldRTV) {
-				oldRTV->Release();
-				oldRTV = nullptr;
-			}
-		}
-
-		void RenderToTexture(ID3D11RenderTargetView* targetRTV)
-		{
-			globals::d3d::context->OMSetRenderTargets(1, &targetRTV, nullptr);
-			globals::d3d::context->ClearRenderTargetView(targetRTV, clearColor);
-			ImGui::Render();
-			ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
-		}
-	};
-
-	void SubmitHMDOverlay(OverlayRenderContext& context);
-	void SubmitControllerOverlay(OverlayRenderContext& context);
-	void HideAllOverlays(vr::IVROverlay* gameOverlay);
-
-	void UpdateOverlayDrag();
-	bool CanPerformDrag();
-	void UpdateActiveDrag();
-	void TryStartNewDrag();
-	void SetFixedOverlayToCurrentHMD();
-	void UpdateFixedWorldPositioning();
-	bool ShouldHighlightOverlayWindow() const { return overlayDragState.dragging; }
-
 	//=============================================================================
 	// PUBLIC MEMBER VARIABLES
 	//=============================================================================
-
-	// OpenVR overlay handles and DirectX 11 rendering resources
-	vr::VROverlayHandle_t menuOverlayHandle = vr::k_ulOverlayHandleInvalid;
-	vr::VROverlayHandle_t menuControllerOverlayHandle = vr::k_ulOverlayHandleInvalid;
-	winrt::com_ptr<ID3D11Texture2D> menuTexture;
-	winrt::com_ptr<ID3D11RenderTargetView> menuRTV;
-	winrt::com_ptr<ID3D11Texture2D> menuControllerTexture;
-	winrt::com_ptr<ID3D11RenderTargetView> menuControllerRTV;
 
 	// Stereo blend compute shader resources
 	winrt::com_ptr<ID3D11ComputeShader> stereoBlendCS;
@@ -395,85 +315,6 @@ public:
 	bool* gDepthBufferCulling = nullptr;
 	float* gMinOccludeeBoxExtent = nullptr;
 
-	// VR Controller state and logging
-	struct VRControllerEventLog
-	{
-		int device;
-		int keyCode;
-		int value;
-		bool pressed;
-		double heldTime;
-		std::string heldSource;
-		float thumbstickX = 0.0f;
-		float thumbstickY = 0.0f;
-		std::string controllerRole;
-	};
-
-	std::vector<VRControllerEventLog> vrControllerEventLog;
-	RE::VRControllerState primaryControllerState;
-	RE::VRControllerState secondaryControllerState;
-	bool lastKnownLeftHandedMode = false;
-
-	struct OverlayWorldPosition
-	{
-		Matrix m = Matrix::Identity;
-		bool initialized = false;
-	} fixedWorldOverlayPosition;
-
-	struct OverlayDragState
-	{
-		bool dragging = false;
-		vr::TrackedDeviceIndex_t controllerIndex = vr::k_unTrackedDeviceIndexInvalid;
-		bool isPrimary = false;
-		bool isSecondary = false;
-		Matrix initialControllerMatrix = Matrix::Identity;
-		Matrix initialOverlayMatrix = Matrix::Identity;
-		Matrix grabOffset = Matrix::Identity;
-		bool intersecting = false;
-
-		enum class DragMode
-		{
-			None,
-			FixedWorld,
-			HMD,
-			Controller
-		} mode = DragMode::None;
-
-		Vector3 initialHMDOffset = Vector3::Zero;
-		Vector3 initialControllerOffset = Vector3::Zero;
-		float initialHMDScale = 1.0f;
-		Matrix startControllerMatrix = Matrix::Identity;
-	} overlayDragState;
-
-	struct ComboSequence
-	{
-		std::vector<uint32_t> sequence;
-		double startTime = 0.0;
-		size_t currentIndex = 0;
-		bool active = false;
-	};
-	ComboSequence menuOpenCombo;
-	ComboSequence menuCloseCombo;
-
-	enum class ComboType
-	{
-		None,
-		MenuOpen,
-		MenuClose,
-		OverlayOpen,
-		OverlayClose
-	};
-
-	bool isCapturingCombo = false;
-	ComboType currentComboType = ComboType::None;
-	const char* currentComboName = nullptr;
-	std::vector<ButtonCombo> recordedCombo;
-	double comboStartTime = 0.0;
-	double comboTimeout = 3.0;
-
-	// Button controller recording state for UI settings
-	std::unordered_map<uint32_t, ControllerDevice> recordingButtonControllers;
-
 	// OpenVR version and compatibility information
 	struct OpenVRInfo
 	{
@@ -494,68 +335,10 @@ public:
 		bool probingSucceeded = false;
 	} openVRInfo;
 
-	RE::NiPoint3 savedPlayerWorldPos = RE::NiPoint3();  // Used for auto-reset distance check
-
-	// Wand pointing state
-	struct WandIntersectionState
-	{
-		bool isIntersecting = false;
-		ImVec2 uvCoordinates = ImVec2(0.0f, 0.0f);
-		vr::TrackedDeviceIndex_t controllerIndex = vr::k_unTrackedDeviceIndexInvalid;
-		Vector3 rayOrigin = Vector3::Zero;
-		Vector3 rayDirection = Vector3::Zero;
-	} wandState;
-
-	// In-Scene Overlay Rendering Resources (Fallback for incompatible runtimes)
-	struct InSceneResources
-	{
-		winrt::com_ptr<ID3D11VertexShader> vs;
-		winrt::com_ptr<ID3D11PixelShader> ps;
-		winrt::com_ptr<ID3D11Buffer> vb;
-		winrt::com_ptr<ID3D11Buffer> ib;
-		winrt::com_ptr<ID3D11Buffer> cb;
-		winrt::com_ptr<ID3D11InputLayout> inputLayout;
-		winrt::com_ptr<ID3D11BlendState> blendState;
-		winrt::com_ptr<ID3D11DepthStencilState> depthState;
-		winrt::com_ptr<ID3D11SamplerState> sampler;
-		winrt::com_ptr<ID3D11RasterizerState> rasterizerState;
-
-		// Cached SRV to avoid creating every frame
-		winrt::com_ptr<ID3D11ShaderResourceView> menuSRV;
-		ID3D11Texture2D* cachedMenuTexture = nullptr;
-
-		// Cached RTVs per eye to avoid creating every frame
-		struct CachedRTV
-		{
-			winrt::com_ptr<ID3D11RenderTargetView> rtv;
-			ID3D11Texture2D* texture = nullptr;
-		};
-		CachedRTV cachedEyeRTVs[2];
-
-		bool initialized = false;
-	} inSceneResources;
-
-	struct InSceneCB
-	{
-		Matrix wvp;
-	};
-
-	void InitInSceneResources();
-	void RenderInSceneOverlay(vr::EVREye eye, ID3D11Texture2D* targetTexture, const vr::VRTextureBounds_t* bounds);
-	void InstallSubmitHook();
 	void DetectOpenVRInfo();
 	bool IsOpenVRCompatible() const;
 
 	/// Returns the HMD display refresh rate in Hz, or 0.0 if unavailable.
 	/// Queries IVRSystem via the game's already-loaded OpenVR DLL — no extra linking required.
 	float GetHMDRefreshRate() const;
-
-private:
-	//=============================================================================
-	// PRIVATE HELPERS
-	//=============================================================================
-
-	bool GetGripPressed(bool isLeft, bool isRight) const;
-	void ResetComboRecording();
-	void ApplyRecordedCombo();
 };

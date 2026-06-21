@@ -191,56 +191,8 @@ void VR::EarlyPrepass()
 }
 
 //=============================================================================
-// OVERLAY SUBMIT AND DEPTH BUFFER CULLING
+// DEPTH BUFFER CULLING
 //=============================================================================
-
-void VR::RecreateOverlayTexturesIfNeeded()
-{
-	Util::CreateOverlayTextureAndRTV(globals::d3d::device, Config::kOverlayWidth, Config::kOverlayHeight, menuTexture.put(), menuRTV.put());
-}
-
-bool VR::IsWelcomeOverlayVisible() const
-{
-	return settings.kAutoHideSeconds > 0 &&
-	       globals::game::ui &&
-	       globals::game::ui->IsMenuOpen(RE::MainMenu::MENU_NAME) &&
-	       globals::menu &&
-	       !globals::menu->IsEnabled;
-}
-
-void VR::SubmitOverlayFrame()
-{
-	InstallSubmitHook();
-
-	RE::BSOpenVR* openvr = RE::BSOpenVR::GetSingleton();
-	if (!openvr || !openvr->vrSystem) {
-		return;
-	}
-
-	auto& enabled = globals::menu->IsEnabled;
-	auto& overlayVisible = globals::menu->overlayVisible;
-
-	if ((enabled || overlayVisible || IsWelcomeOverlayVisible()) && menuTexture.get() && menuRTV.get()) {
-		UpdateFixedWorldPositioning();
-		UpdateOverlayDrag();
-
-		ID3D11RenderTargetView* oldRTV = nullptr;
-		globals::d3d::context->OMGetRenderTargets(1, &oldRTV, nullptr);
-		ID3D11RenderTargetView* menuRTVPtr = menuRTV.get();
-		globals::d3d::context->OMSetRenderTargets(1, &menuRTVPtr, nullptr);
-		float clearColor[4] = { 0, 0, 0, 0 };
-		globals::d3d::context->ClearRenderTargetView(menuRTV.get(), clearColor);
-		ImGui::Render();
-		ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
-		globals::d3d::context->OMSetRenderTargets(1, &oldRTV, nullptr);
-
-		bool beingDragged = settings.EnableDragToReposition && overlayDragState.dragging;
-		Util::ApplyHighlightTintToTexture(menuTexture.get(), beingDragged, settings.dragHighlightColor);
-
-		if (oldRTV)
-			oldRTV->Release();
-	}
-}
 
 // Helper to centralize VR depth buffer culling logic, reducing duplication between DataLoaded, EarlyPrepass, and Settings UI.
 void VR::UpdateDepthBufferCulling()
