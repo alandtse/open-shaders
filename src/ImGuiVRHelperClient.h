@@ -4,20 +4,9 @@
 
 // SCS-side adapter for the standalone ImGuiVRHelper SKSE plugin.
 //
-// Handles the SKSE-messaging handshake, registers SCS as TWO clients, and
-// renders SCS ImGui draw data into the helper-owned panel RTVs from
-// OverlayRenderer.
-//
-// Two surfaces (see Surface):
-//   - Menu (kClientFlag_RendersOnFocus): the focus-driven, interactive
-//     settings/editor panel. Carries all focus/combo/wand input — this is
-//     the client every input/focus path below targets, and the one
-//     IsRegistered() reports on. Stored as g_clientId.
-//   - Hud (kClientFlag_HUDMode): an always-on, non-interactive overlay for
-//     status that must be visible during gameplay/launch without the menu
-//     being focused (shader-compilation progress, performance overlay,
-//     shader-blocking status, feature-issue warnings, welcome banner).
-//     No focus, no input, no on_frame. Stored as g_hudClientId.
+// Handles the SKSE-messaging handshake, registers SCS as a client, and
+// renders the SCS ImGui draw data into the helper-owned panel RTV from
+// OverlayRenderer::FinalizeImGuiFrame.
 //
 // When the helper is registered, the SCS-internal VR overlay pipeline
 // (SubmitOverlayFrame, ProcessVREvents, wand pointing, drag, combo
@@ -34,26 +23,15 @@
 
 namespace ImGuiVRHelperClient
 {
-	/// Which helper-owned panel a render targets.
-	enum class Surface
-	{
-		Menu,  ///< interactive settings/editor panel (g_clientId)
-		Hud,   ///< always-on non-interactive overlay (g_hudClientId)
-	};
-
 	/// Performs the SKSE messaging handshake with ImGuiVRHelper and
-	/// registers "CommunityShaders" (Menu surface) plus
-	/// "CommunityShaders.HUD" (Hud surface) as clients. No-op if not
-	/// running under VR or if the helper isn't installed. Safe to call
-	/// once from kPostLoad. If the Menu client fails to register the
-	/// adapter disables itself; if only the Hud client fails it logs a
-	/// warning and continues (HUD overlays just won't show in VR).
+	/// registers "CommunityShaders" as a client. No-op if not running
+	/// under VR or if the helper isn't installed. Safe to call once
+	/// from kPostLoad.
 	void Init();
 
-	/// True if the handshake succeeded and we hold a valid MENU client_id.
+	/// True if the handshake succeeded and we hold a valid client_id.
 	/// Use this to gate out SCS-internal VR overlay/input paths now
-	/// owned by the helper. (The Hud client is best-effort and does not
-	/// affect this.)
+	/// owned by the helper.
 	bool IsRegistered();
 
 	/// True iff the helper has requested SCS render its menu this
@@ -63,16 +41,15 @@ namespace ImGuiVRHelperClient
 	/// whether to draw the menu into the panel RTV.
 	bool HelperRequestsRender();
 
-	/// Renders the current ImGui draw data (ImGui::GetDrawData(), as
-	/// produced by the most recent ImGui::Render()) into the specified
-	/// surface's helper-owned panel RTV. Saves and restores the
-	/// previously bound render target/viewport. No-op if the helper
-	/// isn't registered, the targeted client id is 0, or that client's
-	/// panel isn't yet available.
+	/// Renders the current ImGui draw data (as produced by the most
+	/// recent ImGui::Render() in OverlayRenderer::FinalizeImGuiFrame)
+	/// into the helper's panel RTV. Saves and restores the previously
+	/// bound render target. No-op if the helper isn't registered or
+	/// the panel isn't yet available.
 	///
 	/// Must be called between ImGui::Render() and the next
 	/// ImGui::NewFrame() so GetDrawData() returns valid data.
-	void RenderToPanel(Surface surface);
+	void RenderToPanel();
 
 	/// Per-frame VR input pump. Call once per rendered frame on the render
 	/// thread BEFORE ImGui::NewFrame() (from Menu::ProcessInputEventQueue).

@@ -17,8 +17,7 @@ namespace
 	namespace API = ImGuiVRHelperPluginAPI;
 
 	API::IImGuiVRHelperInterface001* g_helper = nullptr;
-	uint32_t g_clientId = 0;     // MENU surface: interactive, focus/input owner
-	uint32_t g_hudClientId = 0;  // HUD surface: always-on, non-interactive overlays
+	uint32_t g_clientId = 0;
 
 	// Latched each helper Frame. OverlayRenderer reads this via
 	// ImGuiVRHelperClient::HelperRequestsRender() to know whether to render the
@@ -245,25 +244,8 @@ namespace ImGuiVRHelperClient
 			return;
 		}
 
-		// Second client: an always-on HUD-mode surface for non-interactive
-		// status overlays (shader compilation, performance overlay, blocking
-		// status, feature issues, welcome banner). HUD clients render every
-		// frame they exist, with no focus/input — so on_frame is nullptr and
-		// no combos/wand are wired to it. Best-effort: if it fails to
-		// register we keep the menu working and just lose the VR HUD.
-		g_hudClientId = g_helper->RegisterClient(
-			"CommunityShaders.HUD",
-			version.c_str(),
-			nullptr,
-			nullptr,
-			ImGuiVRHelperPluginAPI::kClientFlag_HUDMode);
-
-		if (g_hudClientId == 0) {
-			logger::warn("ImGuiVRHelper HUD RegisterClient failed; always-on VR overlays will only render on the desktop monitor");
-		}
-
-		logger::info("ImGuiVRHelper handshake successful (build {}), client_id={}, hud_client_id={}, reported_version={}",
-			g_helper->GetBuildNumber(), g_clientId, g_hudClientId, version);
+		logger::info("ImGuiVRHelper handshake successful (build {}), client_id={}, reported_version={}",
+			g_helper->GetBuildNumber(), g_clientId, version);
 	}
 
 	bool IsRegistered()
@@ -276,20 +258,14 @@ namespace ImGuiVRHelperClient
 		return g_helperRequestsRender;
 	}
 
-	void RenderToPanel(Surface surface)
+	void RenderToPanel()
 	{
-		// IsRegistered() gates on the MENU client + helper presence; the HUD
-		// client is best-effort, so also bail if the targeted id is 0.
 		if (!IsRegistered()) {
-			return;
-		}
-		const uint32_t targetClientId = (surface == Surface::Hud) ? g_hudClientId : g_clientId;
-		if (targetClientId == 0) {
 			return;
 		}
 
 		ImGuiVRHelperPluginAPI::PanelHandle panel{};
-		if (!g_helper->GetPanel(targetClientId, &panel) || panel.rtv == nullptr) {
+		if (!g_helper->GetPanel(g_clientId, &panel) || panel.rtv == nullptr) {
 			// Helper hasn't issued a panel yet (e.g. before its first
 			// Submit-hook fires). Try again next frame.
 			return;
