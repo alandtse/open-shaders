@@ -51,6 +51,20 @@ namespace ImGuiVRHelperClient
 	/// ImGui::NewFrame() so GetDrawData() returns valid data.
 	void RenderToPanel();
 
+	/// Per-frame VR input pump. Call once per rendered frame on the render
+	/// thread BEFORE ImGui::NewFrame() (from Menu::ProcessInputEventQueue).
+	/// Three jobs, all no-ops if the helper isn't registered:
+	///   1. Polls the helper's combo state to open/close the menu (and the
+	///      secondary overlay) — restores the VR controller activation that
+	///      used to live in VR::UpdateOverlayMenuStateFromInput.
+	///   2. Keeps helper focus in sync with Menu::IsEnabled so the helper
+	///      composites our panel RTV into the eyes while the menu is open.
+	///   3. Feeds the wand pointer (GetPointer) + controller buttons/stick
+	///      into ImGui IO (cursor, click, scroll) so the VR menu is usable
+	///      with the controller — the per-client OnFrame input consumer the
+	///      helper delegates to clients.
+	void Update();
+
 	/// Forward a single VR controller event into the helper's input
 	/// state. Translates SCS's RE::INPUT_DEVICE / scancode / thumbstick
 	/// values to the helper's wire-stable wire format.

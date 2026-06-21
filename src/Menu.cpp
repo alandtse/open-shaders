@@ -1089,6 +1089,13 @@ void Menu::ProcessInputEventQueue()
 		}
 	}
 
+	// Per-frame VR input pump (runs every frame, not just when there are events):
+	// polls helper combos to open/close the menu, syncs helper focus to
+	// Menu::IsEnabled, and feeds the wand pointer + controller buttons into ImGui
+	// IO. Must run before ImGui::NewFrame (InitializeImGuiFrame), which it does —
+	// ProcessInputEventQueue is called first in OverlayRenderer::RenderOverlay.
+	ImGuiVRHelperClient::Update();
+
 	// Process non-VR events in Menu
 	for (auto& event : nonVREvents) {
 		if (event.eventType == RE::INPUT_EVENT_TYPE::kChar) {
