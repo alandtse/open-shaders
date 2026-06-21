@@ -1,5 +1,6 @@
 #pragma once
 
+#include "ImGuiVRHelperClient.h"  // ImGuiVRHelperClient::Surface
 #include "Utils/Input.h"
 #include <functional>
 #include <vector>
@@ -53,6 +54,29 @@ private:
 	static void RenderShaderBlockingStatus();
 	static void RenderFirstTimeSetupOverlay();
 	static void RenderFeatureOverlays();
+	static void RenderWelcomeOverlay();
 	static void HandleABTesting();
 	static void FinalizeImGuiFrame();
+
+	// Two-pass VR rendering (used only when the helper is registered).
+	// The MENU pass runs first so its ImGui::NewFrame() consumes the
+	// wand/keyboard input queued by ImGuiVRHelperClient::Update(); the HUD
+	// pass is non-interactive and gets no input.
+	static void RenderMenuPass(
+		Menu& menu,
+		const std::function<void()>& drawSettings,
+		const std::function<const char*(std::vector<InputCombo>)>& keyIdToString);
+	static void RenderHudPass(
+		const std::function<const char*(std::vector<InputCombo>)>& keyIdToString);
+
+	// MENU-pass frame lifecycle (the original Initialize/Finalize split,
+	// but Finalize now targets a specified surface).
+	static void BeginMenuPass(Menu& menu);
+	static void EndMenuPass(ImGuiVRHelperClient::Surface surface);
+
+	// HUD-pass frame lifecycle: a lighter NewFrame that does NOT re-run
+	// ImGui_ImplWin32_NewFrame (no double time-advance / desktop-cursor
+	// read) and feeds no input.
+	static void BeginHudPass();
+	static void EndHudPass(ImGuiVRHelperClient::Surface surface);
 };

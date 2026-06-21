@@ -153,6 +153,20 @@ void OverlayRenderer::RenderOverlay(
 	}
 
 	HandleFontReload(menu, cachedFontSize, currentFontSize);
+
+	if (ImGuiVRHelperClient::IsRegistered()) {
+		// VR + helper present: render two independent ImGui passes into two
+		// helper-owned panels. The MENU pass runs FIRST so its NewFrame()
+		// consumes the wand/keyboard input that ImGuiVRHelperClient::Update()
+		// (called from processInputEventQueue above) queued into io — the HUD
+		// pass is non-interactive and must not eat it.
+		RenderMenuPass(menu, drawSettings, keyIdToString);
+		RenderHudPass(keyIdToString);
+		return;
+	}
+
+	// Flat (non-VR / helper-absent) path: the original single combined frame
+	// to the backbuffer. Unchanged behavior; no RenderToPanel.
 	InitializeImGuiFrame(menu);
 
 	RenderShaderCompilationStatus(keyIdToString);
@@ -193,6 +207,61 @@ void OverlayRenderer::RenderOverlay(
 	FinalizeImGuiFrame();
 }
 
+// ---- Two-pass VR rendering -------------------------------------------------
+
+void OverlayRenderer::RenderMenuPass(
+	Menu& menu,
+	const std::function<void()>& drawSettings,
+	const std::function<const char*(std::vector<InputCombo>)>& /*keyIdToString*/)
+{
+	BeginMenuPass(menu);
+
+	// Interactive content only — the status overlays move to the HUD pass.
+	auto* editorWindow = EditorWindow::GetSingleton();
+	if (editorWindow->open && !EditorWindow::CanBeOpen()) {
+		editorWindow->open = false;
+		if (editorWindow->IsInPreviewMode())
+			editorWindow->ExitPreviewMode();
+	}
+	editorWindow->UpdateOpenState();
+	if (editorWindow->open) {
+		bool flying = editorWindow->IsPreviewFlying();
+		auto& io = ImGui::GetIO();
+		io.MouseDrawCursor = !flying;
+		if (flying)
+			io.MousePos = { -FLT_MAX, -FLT_MAX };  // prevent hover/tooltips during active flying
+		editorWindow->Draw();
+	} else if (menu.IsEnabled || HomePageRenderer::ShouldShowFirstTimeSetup() ||
+			   ImGuiVRHelperClient::HelperRequestsRender()) {
+		ImGui::GetIO().MouseDrawCursor = true;
+		if (menu.IsEnabled || ImGuiVRHelperClient::HelperRequestsRender()) {
+			drawSettings();
+		}
+	} else {
+		ImGui::GetIO().MouseDrawCursor = false;
+	}
+
+	RenderFirstTimeSetupOverlay();
+	HandleABTesting();
+	PatchOverlappingWindowBackgrounds();
+
+	EndMenuPass(ImGuiVRHelperClient::Surface::Menu);
+}
+
+void OverlayRenderer::RenderHudPass(
+	const std::function<const char*(std::vector<InputCombo>)>& keyIdToString)
+{
+	BeginHudPass();
+
+	// Always-on, non-interactive status content.
+	RenderShaderCompilationStatus(keyIdToString);
+	RenderShaderBlockingStatus();
+	RenderFeatureOverlays();
+	RenderWelcomeOverlay();
+
+	EndHudPass(ImGuiVRHelperClient::Surface::Hud);
+}
+
 bool OverlayRenderer::ShouldSkipRendering()
 {
 	auto shaderCache = globals::shaderCache;
@@ -223,7 +292,21 @@ void OverlayRenderer::HandleFontReload(Menu& menu, float& cachedFontSize, float 
 	}
 }
 
+namespace
+{
+	// Swapchain size + DeltaTime captured by the menu pass (or the flat
+	// InitializeImGuiFrame) for reuse by the lighter HUD pass, which doesn't
+	// re-run ImGui_ImplWin32_NewFrame.
+	ImVec2 s_lastDisplaySize{ 0.0f, 0.0f };
+	float s_lastDeltaTime = 1.0f / 60.0f;
+}
+
 void OverlayRenderer::InitializeImGuiFrame(Menu& menu)
+{
+	BeginMenuPass(menu);
+}
+
+void OverlayRenderer::BeginMenuPass(Menu& menu)
 {
 	// Start the Dear ImGui frame
 	ImGui_ImplDX11_NewFrame();
@@ -238,6 +321,11 @@ void OverlayRenderer::InitializeImGuiFrame(Menu& menu)
 
 	ImGui::NewFrame();
 
+	// Capture for the HUD pass (same swapchain size; DeltaTime as advanced by
+	// ImGui_ImplWin32_NewFrame this frame).
+	s_lastDisplaySize = ImVec2(displayW, displayH);
+	s_lastDeltaTime = ImGui::GetIO().DeltaTime;
+
 	// Detect display size change (cross-session via ini handler, mid-session via member)
 	const float2 currentDisplaySize{ displayW, displayH };
 	if (menu.lastDisplaySize.x > 0.f && menu.lastDisplaySize != currentDisplaySize) {
@@ -249,6 +337,53 @@ void OverlayRenderer::InitializeImGuiFrame(Menu& menu)
 	menu.lastDisplaySize = currentDisplaySize;
 
 	ThemeManager::SetupImGuiStyle(menu);
+}
+
+void OverlayRenderer::BeginHudPass()
+{
+	// Lighter NewFrame: advance the DX11 backend and start a frame, but do
+	// NOT run ImGui_ImplWin32_NewFrame (avoids double-advancing time and
+	// re-reading the desktop cursor) and feed NO input. The HUD pass is
+	// non-interactive.
+	ImGui_ImplDX11_NewFrame();
+
+	ImGuiIO& io = ImGui::GetIO();
+	io.DisplaySize = (s_lastDisplaySize.x > 0.0f) ? s_lastDisplaySize : ImVec2(1920.0f, 1080.0f);
+	io.DeltaTime = (s_lastDeltaTime > 0.0f) ? s_lastDeltaTime : (1.0f / 60.0f);
+
+	ImGui::NewFrame();
+}
+
+void OverlayRenderer::EndMenuPass(ImGuiVRHelperClient::Surface surface)
+{
+	// Custom cursor for the interactive surface only.
+	if (auto* menu = Menu::GetSingleton();
+		menu && menu->GetSettings().Theme.UseCustomCursor && Util::CursorLoader::GetLoadedCount() > 0) {
+		Util::CursorLoader::DrawCustomCursor(*menu);
+	}
+
+	ImGui::Render();
+
+	// Background blur belongs to the menu surface only.
+	BackgroundBlur::RenderBackgroundBlur();
+
+	// Desktop mirror.
+	ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
+
+	// And into the helper's panel for this surface.
+	ImGuiVRHelperClient::RenderToPanel(surface);
+}
+
+void OverlayRenderer::EndHudPass(ImGuiVRHelperClient::Surface surface)
+{
+	// No custom cursor, no background blur for the non-interactive HUD.
+	ImGui::Render();
+
+	// Desktop mirror.
+	ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
+
+	// And into the helper's HUD panel.
+	ImGuiVRHelperClient::RenderToPanel(surface);
 }
 
 void OverlayRenderer::RenderShaderCompilationStatus(const std::function<const char*(std::vector<InputCombo>)>& keyIdToString)
@@ -375,6 +510,64 @@ void OverlayRenderer::RenderFeatureOverlays()
 	}
 }
 
+void OverlayRenderer::RenderWelcomeOverlay()
+{
+	// Onboarding banner shown in the HUD pass so it appears at launch / main
+	// menu without the settings menu being open. Auto-hides after
+	// kAutoHideSeconds, and stops for the session once the menu has been
+	// opened (locally or via the helper's focus) at least once.
+	const int autoHideSeconds = globals::features::vr.settings.kAutoHideSeconds;
+	if (autoHideSeconds <= 0) {
+		return;  // disabled
+	}
+
+	static bool s_menuEverOpened = false;
+	if (!s_menuEverOpened &&
+		(Menu::GetSingleton()->IsEnabled || ImGuiVRHelperClient::HelperRequestsRender())) {
+		s_menuEverOpened = true;
+	}
+	if (s_menuEverOpened) {
+		return;
+	}
+
+	// Steady countdown via QueryPerformanceCounter (started on first draw).
+	static LARGE_INTEGER s_freq{};
+	static LARGE_INTEGER s_start{};
+	static bool s_started = false;
+	if (!s_started) {
+		QueryPerformanceFrequency(&s_freq);
+		QueryPerformanceCounter(&s_start);
+		s_started = true;
+	}
+	LARGE_INTEGER now{};
+	QueryPerformanceCounter(&now);
+	const double elapsed = (s_freq.QuadPart > 0) ?
+	                           static_cast<double>(now.QuadPart - s_start.QuadPart) / static_cast<double>(s_freq.QuadPart) :
+	                           0.0;
+	if (elapsed >= static_cast<double>(autoHideSeconds)) {
+		return;
+	}
+
+	const float scale = Util::GetUIScale();
+	const ImGuiViewport* vp = ImGui::GetMainViewport();
+	ImGui::SetNextWindowPos(ImVec2(vp->Pos.x + vp->Size.x * 0.5f, vp->Pos.y + 40.0f * scale),
+		ImGuiCond_Always, ImVec2(0.5f, 0.0f));
+	ImGui::SetNextWindowBgAlpha(0.65f);
+	if (ImGui::Begin("CSWelcomeOverlay", nullptr,
+			ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_AlwaysAutoResize |
+				ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize |
+				ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing |
+				ImGuiWindowFlags_NoNav)) {
+		ImGui::TextUnformatted(T("overlay.welcome_title", "Community Shaders (VR)"));
+		ImGui::Separator();
+		ImGui::TextUnformatted(T("overlay.welcome_open",
+			"Pause the game, then press Shift+F4 - or your bound controller combo - to open the menu."));
+		ImGui::TextUnformatted(T("overlay.welcome_bind",
+			"(Bind a controller combo in the menu's Interaction settings.)"));
+	}
+	ImGui::End();
+}
+
 void OverlayRenderer::HandleABTesting()
 {
 	// A/B Testing management
@@ -413,10 +606,8 @@ void OverlayRenderer::FinalizeImGuiFrame()
 
 	ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
 
-	// Render the same draw data into the ImGuiVRHelper's panel RTV so the
-	// helper can composite our menu as a 3D quad in the HMD. The helper owns
-	// VR overlay compositing (helper-required) — SCS no longer submits its own.
-	ImGuiVRHelperClient::RenderToPanel();
+	// Flat path only (helper not registered): no RenderToPanel. The two-pass
+	// VR path (RenderMenuPass/RenderHudPass) targets the helper panels itself.
 }
 
 void OverlayRenderer::RenderFirstTimeSetupOverlay()
