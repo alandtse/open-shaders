@@ -175,6 +175,8 @@ void PerfMode::SetupResources()
 	// IS shader hooks (must be installed AFTER FrameAnnotations)
 	if (hookActive && !tonemapHookInstalled) {
 		stl::write_vfunc<0x1, TonemapRender_Hook>(RE::VTABLE_BSImagespaceShaderHDRTonemapBlendCinematic[3]);
+		// Also hook the Fade variant (active during fullscreen imagespace fades).
+		stl::write_vfunc<0x1, TonemapFadeRender_Hook>(RE::VTABLE_BSImagespaceShaderHDRTonemapBlendCinematicFade[3]);
 		tonemapHookInstalled = true;
 	}
 

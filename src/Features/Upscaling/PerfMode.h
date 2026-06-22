@@ -171,10 +171,24 @@ private:
 		static inline REL::Relocation<decltype(thunk)> func;
 	};
 
-	// IS shader hook: ISHDRTonemapBlendCinematic (Render vfunc 0x1 on vtable[3])
-	// Chains after FrameAnnotations (if active). Swaps kMAIN SRV + kMAIN DS before
-	// tonemap, restores after.
+	// Shared swap+render impl for the cinematic tonemap hooks (Render vfunc 0x1 on
+	// vtable[3]). Templated so each variant calls its own `func` (the two vtables
+	// hold different originals). Chains after FrameAnnotations: swaps kMAIN SRV +
+	// kMAIN DS before tonemap, restores after.
+	template <class Hook>
+	static void RenderTonemapWithSwap(void* imageSpaceShader, RE::BSTriShape* shape, RE::ImageSpaceEffectParam* param);
+
 	struct TonemapRender_Hook
+	{
+		static void thunk(void* imageSpaceShader, RE::BSTriShape* shape, RE::ImageSpaceEffectParam* param);
+		static inline REL::Relocation<decltype(thunk)> func;
+	};
+	// Fade variant (BSImagespaceShaderHDRTonemapBlendCinematicFade). The engine swaps
+	// to this tonemap whenever a fullscreen imagespace fade is active — e.g. a nearby
+	// fireball/Unrelenting Force impact. It needs the identical RT/DS fixup; without it
+	// the 3k tonemap RT binds against the 1k kMAIN depth-stencil, D3D11 drops the
+	// size-mismatched draw, and the world freezes behind a still-updating menu.
+	struct TonemapFadeRender_Hook
 	{
 		static void thunk(void* imageSpaceShader, RE::BSTriShape* shape, RE::ImageSpaceEffectParam* param);
 		static inline REL::Relocation<decltype(thunk)> func;

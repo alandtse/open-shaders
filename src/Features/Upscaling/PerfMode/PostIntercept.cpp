@@ -12,18 +12,20 @@
 #include <FidelityFX/host/ffx_fsr3.h>
 
 // ============================================================================
-// TonemapRender_Hook: IS shader hook for ISHDRTonemapBlendCinematic
+// Tonemap hooks: ISHDRTonemapBlendCinematic + ...CinematicFade (Render vfunc
+// 0x1 on vtable[3]) — both share RenderTonemapWithSwap.
 // ============================================================================
 // Installed via stl::write_vfunc<0x1> on vtable[3], chains after FrameAnnotations.
 // Inner layer of two-layer swap: swaps kMAIN SRV → testTextureSRV and
 // kMAIN DS → fakeDS before tonemap Render(), restores after.
 
-void PerfMode::TonemapRender_Hook::thunk(void* imageSpaceShader, RE::BSTriShape* shape, RE::ImageSpaceEffectParam* param)
+template <class Hook>
+void PerfMode::RenderTonemapWithSwap(void* imageSpaceShader, RE::BSTriShape* shape, RE::ImageSpaceEffectParam* param)
 {
 	auto& perfMode = globals::features::upscaling.perfMode;
 
 	if (!perfMode.hookActive || !perfMode.testTextureSRV || !perfMode.fakeDSV) {
-		func(imageSpaceShader, shape, param);
+		Hook::func(imageSpaceShader, shape, param);
 		return;
 	}
 
@@ -36,7 +38,7 @@ void PerfMode::TonemapRender_Hook::thunk(void* imageSpaceShader, RE::BSTriShape*
 	// DLSS-reconstructed testTexture into kTOTAL. Per-frame guarded so it
 	// runs at most once per frame regardless of how many menu redraws fire.
 	if (globals::state && globals::state->IsMainOrLoadingMenuOpen()) {
-		func(imageSpaceShader, shape, param);
+		Hook::func(imageSpaceShader, shape, param);
 		perfMode.MaybeBlitMenuBG(RE::RENDER_TARGETS::kTOTAL);
 		return;
 	}
@@ -71,7 +73,7 @@ void PerfMode::TonemapRender_Hook::thunk(void* imageSpaceShader, RE::BSTriShape*
 	}
 
 	// --- Call original (or FrameAnnotations chain) ---
-	func(imageSpaceShader, shape, param);
+	Hook::func(imageSpaceShader, shape, param);
 
 	// --- Restore kMAIN SRV ---
 	kmainRT.SRV = perfMode.savedKMainSRV;
@@ -86,6 +88,16 @@ void PerfMode::TonemapRender_Hook::thunk(void* imageSpaceShader, RE::BSTriShape*
 		kmainDS.views[i] = perfMode.savedKMainViews[i];
 	for (int i = 0; i < 8; i++)
 		kmainDS.readOnlyViews[i] = perfMode.savedKMainReadOnlyViews[i];
+}
+
+void PerfMode::TonemapRender_Hook::thunk(void* imageSpaceShader, RE::BSTriShape* shape, RE::ImageSpaceEffectParam* param)
+{
+	PerfMode::RenderTonemapWithSwap<TonemapRender_Hook>(imageSpaceShader, shape, param);
+}
+
+void PerfMode::TonemapFadeRender_Hook::thunk(void* imageSpaceShader, RE::BSTriShape* shape, RE::ImageSpaceEffectParam* param)
+{
+	PerfMode::RenderTonemapWithSwap<TonemapFadeRender_Hook>(imageSpaceShader, shape, param);
 }
 
 // ============================================================================
