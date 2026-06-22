@@ -45,6 +45,7 @@ namespace
 
 	// Render-thread-only state.
 	bool g_focusRequested = false;     // edge latch mirroring Menu::IsEnabled into helper focus
+	bool g_hadFocus = false;           // latched once the helper grants us focus, for close-on-focus-loss
 	bool g_combosRegistered = false;   // VR menu/overlay combos registered once with the helper
 	uint32_t g_prevHeldMask = 0;       // previous consumed button mask, for click edge detection
 	API::ComboId g_openCombo = 0;
@@ -371,6 +372,21 @@ namespace ImGuiVRHelperClient
 					g_helper->ComboFired(g_overlayOpenCombo);
 				if (g_overlayCloseCombo)
 					g_helper->ComboFired(g_overlayCloseCombo);
+			}
+		}
+
+		// Single-window swap: if our menu is open but the helper handed VR focus
+		// to another overlay (another mod's hotkey, or the helper's own UI),
+		// close our menu so the new overlay replaces it. g_hadFocus gates on
+		// having actually held focus, so the one-frame grant lag on open doesn't
+		// self-close us.
+		if (g_helperRequestsRender) {
+			g_hadFocus = true;
+		} else if (g_hadFocus) {
+			g_hadFocus = false;
+			if (globals::menu && globals::menu->IsEnabled) {
+				globals::menu->IsEnabled = false;
+				logger::info("ImGuiVRHelper: lost VR focus to another overlay; closing CS menu");
 			}
 		}
 
