@@ -357,6 +357,13 @@ namespace ImGuiVRHelperClient
 			}
 			if (g_closeCombo && g_helper->ComboFired(g_closeCombo)) {
 				menu->IsEnabled = false;
+				// Also drop helper focus: when the menu was shown by a swap
+				// (helper focus, IsEnabled already false), clearing IsEnabled
+				// alone doesn't close it — the helper keeps compositing us until
+				// focus is released.
+				g_helper->ReleaseFocus(g_clientId);
+				g_focusRequested = false;
+				g_hadFocus = false;
 			}
 			if (menu->IsEnabled) {
 				if (g_overlayOpenCombo && g_helper->ComboFired(g_overlayOpenCombo)) {
