@@ -395,7 +395,9 @@ namespace ImGuiVRHelperClient
 		// Show our panel exactly while our menu is open.
 		SyncFocus(menuOpen);
 
-		// Drive the cursor/clicks/scroll from the wand + controller buttons.
-		ApplyVRInputToImGui(menuOpen);
+		// Drive cursor/clicks/scroll whenever our menu is SHOWN — our own open
+		// OR the helper swapped focus to us (RendersOnFocus). Without the focus
+		// case a swapped-to menu rendered but received no input.
+		ApplyVRInputToImGui(menuOpen || HelperRequestsRender());
 	}
 }
