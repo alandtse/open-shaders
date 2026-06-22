@@ -73,7 +73,7 @@ namespace
 	// Translate an SCS keybind (vector<ButtonCombo>, packed device<<16|reKey,
 	// identical layout to API::InputCombo) into a helper combo registration.
 	// Returns 0 for an empty/unbound keybind.
-	API::ComboId RegisterComboFromBinding(const std::vector<ButtonCombo>& binds)
+	API::ComboId RegisterComboFromBinding(const std::vector<ButtonCombo>& binds, const char* label)
 	{
 		if (binds.empty())
 			return 0;
@@ -83,8 +83,9 @@ namespace
 			keys.emplace_back(static_cast<API::InputDeviceType>(b.GetDevice()), b.GetKey());
 		}
 		// timeout_s is unused for simultaneous chords (the helper matches when
-		// all keys are held at once); pass 0.
-		return g_helper->RegisterCombo(g_clientId, keys.data(), keys.size(), 0.0f);
+		// all keys are held at once); pass 0. `label` names the combo in the
+		// helper's controller-mapping UI.
+		return g_helper->RegisterCombo(g_clientId, keys.data(), keys.size(), 0.0f, label);
 	}
 
 	// Register the VR menu/overlay open/close combos with the helper once, on
@@ -96,10 +97,10 @@ namespace
 		if (g_combosRegistered)
 			return;
 		const auto& s = globals::features::vr.settings;
-		g_openCombo = RegisterComboFromBinding(s.VRMenuOpenKeys);
-		g_closeCombo = RegisterComboFromBinding(s.VRMenuCloseKeys);
-		g_overlayOpenCombo = RegisterComboFromBinding(s.VROverlayOpenKeys);
-		g_overlayCloseCombo = RegisterComboFromBinding(s.VROverlayCloseKeys);
+		g_openCombo = RegisterComboFromBinding(s.VRMenuOpenKeys, "Open menu");
+		g_closeCombo = RegisterComboFromBinding(s.VRMenuCloseKeys, "Close menu");
+		g_overlayOpenCombo = RegisterComboFromBinding(s.VROverlayOpenKeys, "Open overlay");
+		g_overlayCloseCombo = RegisterComboFromBinding(s.VROverlayCloseKeys, "Close overlay");
 		g_combosRegistered = true;
 		logger::info("ImGuiVRHelper: registered VR combos (menuOpen={}, menuClose={}, overlayOpen={}, overlayClose={})",
 			g_openCombo, g_closeCombo, g_overlayOpenCombo, g_overlayCloseCombo);

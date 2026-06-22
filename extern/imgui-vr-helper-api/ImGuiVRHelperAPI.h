@@ -102,8 +102,12 @@ namespace ImGuiVRHelperPluginAPI
 		/// Register a button combo for this client. Returns a ComboId the
 		/// client polls each frame via ComboFired. The helper handles all
 		/// matching, sequence timing, and one-shot edge detection.
+		///
+		/// `label` is a short human-readable name for the combo ("Open menu"),
+		/// shown in the helper's controller-mapping UI so users can tell a
+		/// client's combos apart. May be null/empty.
 		virtual ComboId RegisterCombo(uint32_t client_id, const InputCombo* keys,
-			std::size_t n, float timeout_s) = 0;
+			std::size_t n, float timeout_s, const char* label) = 0;
 
 		/// Edge-triggered: returns true exactly once per combo activation
 		/// and resets internal latch.
