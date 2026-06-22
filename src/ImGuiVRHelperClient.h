@@ -77,4 +77,11 @@ namespace ImGuiVRHelperClient
 	/// invoking this when IsRegistered() is false.
 	void FeedVREvent(uint32_t device, uint32_t key_code, bool pressed,
 		float thumbstick_x, float thumbstick_y);
+
+	/// Draw a sortable / filterable table of the VR menu/overlay bindings,
+	/// color-coded per controller, with a per-row Rebind button (live capture
+	/// through the helper, persisted to CS settings). Restores the bindings
+	/// review/rebind UI that VR lost. Call from inside an ImGui window in the
+	/// VR settings page. No-op if the helper isn't registered.
+	void DrawBindingsTable();
 }

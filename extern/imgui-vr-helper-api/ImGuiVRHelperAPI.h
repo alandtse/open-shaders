@@ -106,8 +106,14 @@ namespace ImGuiVRHelperPluginAPI
 		/// `label` is a short human-readable name for the combo ("Open menu"),
 		/// shown in the helper's controller-mapping UI so users can tell a
 		/// client's combos apart. May be null/empty.
+		///
+		/// `on_rebind` (may be null) is invoked when the user rebinds this combo
+		/// from the controller map: the helper updates the live keys AND calls
+		/// back with the new chord so the client can persist it. `user` is passed
+		/// through to that callback.
 		virtual ComboId RegisterCombo(uint32_t client_id, const InputCombo* keys,
-			std::size_t n, float timeout_s, const char* label) = 0;
+			std::size_t n, float timeout_s, const char* label,
+			ComboRebindFn on_rebind, void* user) = 0;
 
 		/// Edge-triggered: returns true exactly once per combo activation
 		/// and resets internal latch.
@@ -189,6 +195,15 @@ namespace ImGuiVRHelperPluginAPI
 		/// of the v1 design — keeps the SteamVR rail uncluttered as the
 		/// helper picks up more clients.
 		virtual bool IsDashboardVisible() = 0;
+
+		// ---- Combo rebinding -------------------------------------------
+
+		/// Rebind a previously-registered combo to a new chord (e.g. driven by an
+		/// in-app bindings table). Updates the live keys the helper matches AND
+		/// invokes the combo's `on_rebind` callback so the owner can persist it.
+		/// No-op if `combo` is unknown or `n` is 0 / out of range.
+		virtual void RebindCombo(ComboId combo, const InputCombo* keys,
+			std::size_t n) = 0;
 	};
 
 }  // namespace ImGuiVRHelperPluginAPI

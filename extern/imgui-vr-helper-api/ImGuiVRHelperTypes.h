@@ -83,6 +83,14 @@ namespace ImGuiVRHelperPluginAPI
 						 ///< bit2 client_pointer_in_panel
 	};
 
+	/// Named bits for Frame::flags.
+	enum FrameFlags : uint32_t
+	{
+		kFrameFlag_HasFocus = 1u << 0,        ///< the helper routed in-scene focus to this client
+		kFrameFlag_OverlayVisible = 1u << 1,  ///< any client overlay is currently shown
+		kFrameFlag_PointerInPanel = 1u << 2,  ///< this client's wand pointer is on its panel
+	};
+
 	/// Helper-owned render target the client renders its ImGui frame into.
 	/// Valid until UnregisterClient. Width/height may change between frames
 	/// if the user resizes the panel; clients should re-check each frame.
@@ -100,6 +108,11 @@ namespace ImGuiVRHelperPluginAPI
 
 	using OnFrameFn = void (*)(const Frame*, void* user);
 	using ComboRecordedFn = void (*)(const InputCombo*, std::size_t n, void* user);
+
+	/// Called when the user rebinds a registered combo from the helper's
+	/// controller-map UI. The helper has already updated the combo's live keys;
+	/// this delivers the new chord so the client can persist it to its settings.
+	using ComboRebindFn = void (*)(const InputCombo* keys, std::size_t n, void* user);
 
 	/// Bit flags for RegisterClient().
 	enum ClientFlags : uint32_t
