@@ -16,8 +16,8 @@ namespace
 	API::Client g_client;
 
 	bool g_combosRegistered = false;
-	API::ComboId g_openCombo = 0;
-	API::ComboId g_closeCombo = 0;
+	// Main menu open/close are owned by the helper now (see EnsureCombosRegistered).
+	// CS keeps only its secondary in-menu overlay toggle.
 	API::ComboId g_overlayOpenCombo = 0;
 	API::ComboId g_overlayCloseCombo = 0;
 
@@ -50,10 +50,11 @@ namespace
 		};
 	}
 
-	// Register CS's VR menu/overlay open/close combos with the helper once, on
-	// the first Update() (settings are loaded by then). Rebinds from the helper
-	// controller map or CS's own bindings table now take effect live AND persist
-	// via MakePersist.
+	// Register CS's secondary in-menu overlay combos with the helper once, on the
+	// first Update() (settings are loaded by then). The main menu open/close are
+	// owned by the helper — it focuses the last-opened overlay and documents the
+	// binding in its welcome banner — so CS no longer registers those; it just
+	// renders when the helper grants focus (RendersOnFocus).
 	void EnsureCombosRegistered()
 	{
 		if (g_combosRegistered)
@@ -62,17 +63,13 @@ namespace
 		// A default-constructed Settings carries the factory defaults from VR.h's
 		// member initializers — pass them so the bindings table's Reset works.
 		const VR::Settings d{};
-		g_openCombo = g_client.AddCombo("Open menu", ToApi(s.VRMenuOpenKeys),
-			MakePersist(s.VRMenuOpenKeys), ToApi(d.VRMenuOpenKeys));
-		g_closeCombo = g_client.AddCombo("Close menu", ToApi(s.VRMenuCloseKeys),
-			MakePersist(s.VRMenuCloseKeys), ToApi(d.VRMenuCloseKeys));
 		g_overlayOpenCombo = g_client.AddCombo("Open overlay", ToApi(s.VROverlayOpenKeys),
 			MakePersist(s.VROverlayOpenKeys), ToApi(d.VROverlayOpenKeys));
 		g_overlayCloseCombo = g_client.AddCombo("Close overlay", ToApi(s.VROverlayCloseKeys),
 			MakePersist(s.VROverlayCloseKeys), ToApi(d.VROverlayCloseKeys));
 		g_combosRegistered = true;
-		logger::info("ImGuiVRHelper: registered VR combos (menuOpen={}, menuClose={}, overlayOpen={}, overlayClose={})",
-			g_openCombo, g_closeCombo, g_overlayOpenCombo, g_overlayCloseCombo);
+		logger::info("ImGuiVRHelper: registered VR overlay combos (overlayOpen={}, overlayClose={})",
+			g_overlayOpenCombo, g_overlayCloseCombo);
 	}
 }
 
@@ -119,42 +116,28 @@ namespace ImGuiVRHelperClient
 
 		EnsureCombosRegistered();
 
-		// VR controller activation: poll combo state and flip menu/overlay open
-		// and close — restoring what used to live in
-		// VR::UpdateOverlayMenuStateFromInput (now gated off).
+		// The helper owns menu open/close: it focuses our overlay to show it and
+		// releases focus to hide it (open/close combos, the overlay cycle, or a
+		// swap to another overlay). Mirror that focus into CS's menu state so our
+		// own flags and the desktop window agree. We render whenever focused
+		// (RendersOnFocus), so the menu stays interactive without CS driving
+		// IsEnabled from its own combo.
+		const bool focused = g_client.HasFocus();
 		if (auto* menu = globals::menu) {
-			if (g_client.Fired(g_openCombo))
-				menu->IsEnabled = true;
-			if (g_client.Fired(g_closeCombo)) {
-				menu->IsEnabled = false;
-				// Drop focus too: a menu shown by a swap (helper focus,
-				// IsEnabled already false) won't close on IsEnabled alone.
-				g_client.ReleaseFocus();
-			}
-			if (menu->IsEnabled) {
+			menu->IsEnabled = focused;
+			if (focused) {
+				// CS's secondary in-menu overlay stays CS-owned.
 				if (g_client.Fired(g_overlayOpenCombo))
 					menu->overlayVisible = true;
 				if (g_client.Fired(g_overlayCloseCombo))
 					menu->overlayVisible = false;
-			} else {
-				// Drain overlay-combo latches while the menu is closed so they
-				// don't fire stale on the next open.
+			} else if (g_overlayOpenCombo || g_overlayCloseCombo) {
+				// Drain latches while closed so they don't fire stale on reopen.
 				g_client.Fired(g_overlayOpenCombo);
 				g_client.Fired(g_overlayCloseCombo);
 			}
 		}
 
-		// Single-window swap: if the helper handed VR focus to another overlay
-		// while our menu was open, close ours so the new one replaces it.
-		if (g_client.ConsumeFocusLost() && globals::menu && globals::menu->IsEnabled) {
-			globals::menu->IsEnabled = false;
-			logger::info("ImGuiVRHelper: lost VR focus to another overlay; closing CS menu");
-		}
-
-		const bool menuOpen = globals::menu && globals::menu->IsEnabled;
-		g_client.SyncFocus(menuOpen);
-		// Drive cursor/clicks/scroll whenever our menu is shown — our own open
-		// OR the helper swapped focus to us.
-		g_client.PumpInput(menuOpen || g_client.HasFocus(), globals::features::vr.settings.mouseDeadzone);
+		g_client.PumpInput(focused, globals::features::vr.settings.mouseDeadzone);
 	}
 }
