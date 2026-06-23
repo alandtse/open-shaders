@@ -197,6 +197,17 @@ namespace ImGuiVRHelperPluginAPI
 			}
 		}
 
+		/// Unconditionally request helper focus (show this client's overlay). Use
+		/// when the client opens its menu itself (e.g. a keyboard shortcut) so the
+		/// helper composites it. Pair with ReleaseFocus() to close.
+		void RequestFocus()
+		{
+			if (!IsConnected())
+				return;
+			m_helper->RequestFocus(m_id);
+			m_focusRequested = true;
+		}
+
 		/// Unconditionally release helper focus and reset focus latches. Use
 		/// when closing in response to a hotkey: covers the swap case where the
 		/// helper granted focus without an explicit RequestFocus (so SyncFocus
