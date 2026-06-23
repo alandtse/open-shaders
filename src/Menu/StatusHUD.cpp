@@ -2,6 +2,7 @@
 
 #include <imgui.h>
 #include <imgui_impl_dx11.h>
+#include <imgui_internal.h>
 
 #include "Globals.h"
 #include "ImGuiVRHelperClient.h"
@@ -124,8 +125,37 @@ namespace StatusHUD
 		io.DisplaySize = displaySize;
 		io.DeltaTime = 1.0f / 60.0f;
 
+		// The helper supersamples HUD panels (see Overlay::Config::kHUDSupersample),
+		// so the panel is larger than our logical DisplaySize. Keep DisplaySize at
+		// the menu's logical size (so overlay positions match the desktop exactly)
+		// and let DisplayFramebufferScale drive font rasterization up to the real
+		// panel resolution — ImGui 1.92 bakes glyphs at this density, so text stays
+		// crisp across the wide HUD quad instead of being upscaled.
+		API::PanelHandle panel{};
+		if (g_hud.Helper()->GetPanel(g_hud.Id(), &panel) && panel.width && panel.height &&
+			displaySize.x > 0.0f && displaySize.y > 0.0f) {
+			io.DisplayFramebufferScale =
+				ImVec2(static_cast<float>(panel.width) / displaySize.x,
+					static_cast<float>(panel.height) / displaySize.y);
+		}
+
 		ImGui_ImplDX11_NewFrame();
 		ImGui::NewFrame();
+
+		// The HUD is a passive mirror — its windows can never be dragged, so they
+		// must re-honor their source position/size every frame. Re-allow the
+		// positional Cond flags so FirstUseEver/Once behave like Always here. This
+		// makes EVERY overlay track the menu with zero HUD-specific code in the
+		// overlays themselves: a client just renders the same code into the HUD
+		// context, and position-stickiness is the HUD context's concern, not the
+		// overlay's. (Windows from prior frames; empty on the very first frame,
+		// where FirstUseEver applies anyway.)
+		for (ImGuiWindow* w : g_ctx->Windows) {
+			w->SetWindowPosAllowFlags |=
+				ImGuiCond_Always | ImGuiCond_Once | ImGuiCond_FirstUseEver | ImGuiCond_Appearing;
+			w->SetWindowSizeAllowFlags |=
+				ImGuiCond_Always | ImGuiCond_Once | ImGuiCond_FirstUseEver | ImGuiCond_Appearing;
+		}
 
 		// Identical code path: the real CS overlay renderers. Display only here —
 		// input is handled by the menu renderer when the menu is open.
