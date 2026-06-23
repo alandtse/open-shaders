@@ -154,14 +154,23 @@ namespace ImGuiVRHelperPluginAPI
 		// ---- Combos ----------------------------------------------------
 
 		/// Register a chord. `onRebind` (optional) fires with the new chord
-		/// whenever the user rebinds it, so you can persist your bindings.
-		/// Returns 0 for an empty chord or if not connected.
+		/// whenever the user rebinds, clears, or resets it, so you can persist
+		/// your bindings (an empty chord means unbound). `defaultKeys` (optional)
+		/// is the factory default for this binding — pass it to enable the
+		/// per-row "Reset" button in DrawBindingsTable. Returns 0 for an empty
+		/// initial chord or if not connected.
 		ComboId AddCombo(const char* label, const std::vector<InputCombo>& keys,
-			RebindCallback onRebind = {})
+			RebindCallback onRebind = {}, const std::vector<InputCombo>& defaultKeys = {})
 		{
 			if (!IsConnected() || keys.empty())
 				return 0;
-			m_combos.push_back(ComboEntry{ this, 0, label ? label : "", keys, std::move(onRebind) });
+			ComboEntry entry;
+			entry.owner = this;
+			entry.label = label ? label : "";
+			entry.keys = keys;
+			entry.onRebind = std::move(onRebind);
+			entry.defaults = defaultKeys;
+			m_combos.push_back(std::move(entry));
 			ComboEntry& e = m_combos.back();
 			e.id = m_helper->RegisterCombo(m_id, e.keys.data(), e.keys.size(), 0.0f,
 				e.label.c_str(), &RebindThunk, &e);
@@ -347,10 +356,11 @@ namespace ImGuiVRHelperPluginAPI
 		// ---- Bindings table widget -------------------------------------
 
 		/// Draw a sortable / filterable table of every combo registered via
-		/// AddCombo, color-coded per controller, with a Rebind button per row
-		/// (live capture through the helper, persisted via your onRebind). Drop
-		/// into your own settings window. `strId` must be unique if you draw
-		/// more than one.
+		/// AddCombo, color-coded per controller, with per-row Rebind (live
+		/// capture), Clear (unbind), and — when a default was supplied to
+		/// AddCombo and the binding differs from it — Reset. All three persist
+		/// via your onRebind. Drop into your own settings window. `strId` must be
+		/// unique if you draw more than one.
 		void DrawBindingsTable(const char* strId = "##vrhelper_bindings")
 		{
 			if (m_combos.empty()) {
@@ -363,7 +373,7 @@ namespace ImGuiVRHelperPluginAPI
 				sizeof(m_filter));
 
 			const ImGuiTableFlags flags = ImGuiTableFlags_Sortable | ImGuiTableFlags_RowBg |
-										  ImGuiTableFlags_BordersInnerH | ImGuiTableFlags_SizingStretchProp;
+			                              ImGuiTableFlags_BordersInnerH | ImGuiTableFlags_SizingStretchProp;
 			if (!ImGui::BeginTable(strId, 3, flags))
 				return;
 
@@ -397,20 +407,36 @@ namespace ImGuiVRHelperPluginAPI
 				ImGui::TextUnformatted(e->label.empty() ? "(unnamed)" : e->label.c_str());
 
 				ImGui::TableSetColumnIndex(1);
-				for (std::size_t i = 0; i < e->keys.size(); ++i) {
-					if (i != 0) {
-						ImGui::SameLine(0.0f, 0.0f);
-						ImGui::TextDisabled(" + ");
-						ImGui::SameLine(0.0f, 0.0f);
+				if (e->keys.empty()) {
+					ImGui::TextDisabled("(unbound)");
+				} else {
+					for (std::size_t i = 0; i < e->keys.size(); ++i) {
+						if (i != 0) {
+							ImGui::SameLine(0.0f, 0.0f);
+							ImGui::TextDisabled(" + ");
+							ImGui::SameLine(0.0f, 0.0f);
+						}
+						const InputCombo& k = e->keys[i];
+						ImGui::TextColored(DeviceColor(k.GetDevice()), "%s",
+							ButtonName(k.GetDevice(), k.GetKey()).c_str());
 					}
-					const InputCombo& k = e->keys[i];
-					ImGui::TextColored(DeviceColor(k.GetDevice()), "%s",
-						ButtonName(k.GetDevice(), k.GetKey()).c_str());
 				}
 
 				ImGui::TableSetColumnIndex(2);
 				if (ImGui::SmallButton("Rebind"))
 					m_helper->StartComboRecording(m_id, e->label.c_str(), &RecordThunk, e, 5.0f);
+				if (!e->keys.empty()) {
+					ImGui::SameLine();
+					if (ImGui::SmallButton("Clear"))
+						m_helper->RebindCombo(e->id, nullptr, 0);  // unbind (empty chord)
+				}
+				// Reset shown only when a factory default was provided and the
+				// current binding differs from it.
+				if (!e->defaults.empty() && e->keys != e->defaults) {
+					ImGui::SameLine();
+					if (ImGui::SmallButton("Reset"))
+						m_helper->RebindCombo(e->id, e->defaults.data(), e->defaults.size());
+				}
 
 				ImGui::PopID();
 			}
@@ -425,6 +451,7 @@ namespace ImGuiVRHelperPluginAPI
 			ComboId id = 0;
 			std::string label;
 			std::vector<InputCombo> keys;
+			std::vector<InputCombo> defaults;  ///< factory default, for the Reset button
 			RebindCallback onRebind;
 		};
 
@@ -451,9 +478,9 @@ namespace ImGuiVRHelperPluginAPI
 		static void RebindThunk(const InputCombo* keys, std::size_t n, void* user)
 		{
 			auto* e = static_cast<ComboEntry*>(user);
-			if (!e || !keys || n == 0)
+			if (!e)
 				return;
-			e->keys.assign(keys, keys + n);
+			e->keys.assign(keys, keys + n);  // n == 0 clears (unbind)
 			if (e->onRebind)
 				e->onRebind(keys, n);
 		}

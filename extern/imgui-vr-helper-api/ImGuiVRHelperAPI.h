@@ -201,7 +201,9 @@ namespace ImGuiVRHelperPluginAPI
 		/// Rebind a previously-registered combo to a new chord (e.g. driven by an
 		/// in-app bindings table). Updates the live keys the helper matches AND
 		/// invokes the combo's `on_rebind` callback so the owner can persist it.
-		/// No-op if `combo` is unknown or `n` is 0 / out of range.
+		/// Pass `n == 0` (keys may be null) to CLEAR the binding — the combo
+		/// stays registered but never fires until rebound. No-op if `combo` is
+		/// unknown or `n` is out of range (> 8).
 		virtual void RebindCombo(ComboId combo, const InputCombo* keys,
 			std::size_t n) = 0;
 	};

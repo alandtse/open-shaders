@@ -59,10 +59,17 @@ namespace
 		if (g_combosRegistered)
 			return;
 		auto& s = globals::features::vr.settings;
-		g_openCombo = g_client.AddCombo("Open menu", ToApi(s.VRMenuOpenKeys), MakePersist(s.VRMenuOpenKeys));
-		g_closeCombo = g_client.AddCombo("Close menu", ToApi(s.VRMenuCloseKeys), MakePersist(s.VRMenuCloseKeys));
-		g_overlayOpenCombo = g_client.AddCombo("Open overlay", ToApi(s.VROverlayOpenKeys), MakePersist(s.VROverlayOpenKeys));
-		g_overlayCloseCombo = g_client.AddCombo("Close overlay", ToApi(s.VROverlayCloseKeys), MakePersist(s.VROverlayCloseKeys));
+		// A default-constructed Settings carries the factory defaults from VR.h's
+		// member initializers — pass them so the bindings table's Reset works.
+		const VR::Settings d{};
+		g_openCombo = g_client.AddCombo("Open menu", ToApi(s.VRMenuOpenKeys),
+			MakePersist(s.VRMenuOpenKeys), ToApi(d.VRMenuOpenKeys));
+		g_closeCombo = g_client.AddCombo("Close menu", ToApi(s.VRMenuCloseKeys),
+			MakePersist(s.VRMenuCloseKeys), ToApi(d.VRMenuCloseKeys));
+		g_overlayOpenCombo = g_client.AddCombo("Open overlay", ToApi(s.VROverlayOpenKeys),
+			MakePersist(s.VROverlayOpenKeys), ToApi(d.VROverlayOpenKeys));
+		g_overlayCloseCombo = g_client.AddCombo("Close overlay", ToApi(s.VROverlayCloseKeys),
+			MakePersist(s.VROverlayCloseKeys), ToApi(d.VROverlayCloseKeys));
 		g_combosRegistered = true;
 		logger::info("ImGuiVRHelper: registered VR combos (menuOpen={}, menuClose={}, overlayOpen={}, overlayClose={})",
 			g_openCombo, g_closeCombo, g_overlayOpenCombo, g_overlayCloseCombo);
