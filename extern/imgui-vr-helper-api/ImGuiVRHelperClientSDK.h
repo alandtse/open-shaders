@@ -115,6 +115,14 @@ namespace ImGuiVRHelperPluginAPI
 	/// Convenience wrapper around the helper interface. One instance per mod;
 	/// not thread-safe except for the OnFrame snapshot, which is mutex-guarded
 	/// so the helper's frame thread and your render thread can share it.
+	///
+	/// ImGui ownership: YOU bring your own statically-linked ImGui + DX11 backend.
+	/// The helper only owns the panel RTV and the controller input source; it never
+	/// shares a GImGui with you. PumpInput/RenderToPanel act on your current
+	/// context; RenderHud owns a private context of its own. Call PumpInput and
+	/// RenderToPanel on your render thread (after your NewFrame / Render
+	/// respectively). The OnFrame callback runs on the helper's frame thread — the
+	/// SDK already mutex-guards the bit of state it shares with your render thread.
 	class Client
 	{
 	public:
@@ -188,6 +196,24 @@ namespace ImGuiVRHelperPluginAPI
 			e.id = m_helper->RegisterCombo(m_id, e.keys.data(), e.keys.size(), 0.0f,
 				e.label.c_str(), &RebindThunk, &e);
 			return e.id;
+		}
+
+		/// Convenience: register a chord whose rebinds are written straight back
+		/// into `storage`, then `onChanged` fires (e.g. to save settings) — no
+		/// hand-written persist lambda. `storage` must outlive this client (it's
+		/// captured by reference); pass your settings vector. `defaults` enables
+		/// the per-row Reset in DrawBindingsTable.
+		ComboId AddCombo(const char* label, std::vector<InputCombo>& storage,
+			std::function<void()> onChanged = {}, const std::vector<InputCombo>& defaults = {})
+		{
+			return AddCombo(
+				label, storage,
+				[&storage, onChanged](const InputCombo* keys, std::size_t n) {
+					storage.assign(keys, keys + n);
+					if (onChanged)
+						onChanged();
+				},
+				defaults);
 		}
 
 		/// Edge-triggered: true exactly once per activation.
