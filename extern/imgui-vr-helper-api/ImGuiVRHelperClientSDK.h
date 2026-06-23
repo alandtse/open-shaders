@@ -393,6 +393,32 @@ namespace ImGuiVRHelperPluginAPI
 			}
 		}
 
+		/// One-call interactive menu for a VR mod that brings its own ImGui context
+		/// + DX11 backend (the common case). Reconciles focus against `menuOpen`,
+		/// pumps controller input, and — every frame — runs NewFrame -> your draw()
+		/// -> Render on the CURRENT context and blits to the panel (clearing once
+		/// when hidden). `draw` only runs while shown. Returns the resolved shown
+		/// state. It owns NewFrame/Render, so don't also drive them yourself that
+		/// frame. For desktop mouse/keyboard you still feed ImGui yourself before
+		/// this (e.g. a Win32 backend); this adds only the VR controller input —
+		/// which is why a desktop+VR client with a custom frame (like Community
+		/// Shaders) drives the steps individually instead of using this.
+		bool RenderMenu(ID3D11DeviceContext* ctx, bool& menuOpen, const std::function<void()>& draw)
+		{
+			if (!IsConnected() || !ctx || !draw)
+				return menuOpen;
+			ReconcileFocus(menuOpen);
+			const bool shown = menuOpen;
+			PumpInput(shown);
+			ImGui_ImplDX11_NewFrame();
+			ImGui::NewFrame();
+			if (shown)
+				draw();
+			ImGui::Render();
+			RenderToPanel(ctx);  // blits when drawn, clears once when hidden
+			return menuOpen;
+		}
+
 		/// Set once: loads your fonts + style into the private HUD context, called
 		/// right after it's created, so RenderHud matches your desktop look.
 		void SetHudStyleCallback(std::function<void()> styleSetup) { m_hudStyle = std::move(styleSetup); }
