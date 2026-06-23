@@ -45,14 +45,17 @@ public:
 		float& cachedFontSize,
 		float currentFontSize);
 
+	// Always-on status overlays, exposed so the VR status HUD renders the exact
+	// same code path (with CS's fonts/style) into its own panel. See StatusHUD.
+	static void RenderShaderCompilationStatus(const std::function<const char*(std::vector<InputCombo>)>& keyIdToString);
+	static void RenderShaderBlockingStatus();
+	static void RenderFeatureOverlays();
+
 private:
 	static bool ShouldSkipRendering();
 	static void HandleFontReload(Menu& menu, float& cachedFontSize, float currentFontSize);
 	static void InitializeImGuiFrame(Menu& menu);
-	static void RenderShaderCompilationStatus(const std::function<const char*(std::vector<InputCombo>)>& keyIdToString);
-	static void RenderShaderBlockingStatus();
 	static void RenderFirstTimeSetupOverlay();
-	static void RenderFeatureOverlays();
 	static void HandleABTesting();
 	static void FinalizeImGuiFrame();
 };

@@ -29,6 +29,7 @@
 #include "Menu/AdvancedSettingsRenderer.h"
 #include "Menu/BackgroundBlur.h"
 #include "Menu/CursorLoader.h"
+#include "Menu/StatusHUD.h"
 #include "Menu/FeatureListRenderer.h"
 #include "Menu/Fonts.h"
 #include "Menu/HomePageRenderer.h"
@@ -999,6 +1000,11 @@ void Menu::DrawOverlay()
 		},
 		cachedFontSize,
 		ThemeManager::ResolveFontSize(*this));
+
+	// Always-on VR status HUD (shader-compilation progress, etc.) into its own
+	// helper HUD panel, so it composites over the scene without the menu being
+	// focused. No-op on desktop / without the helper.
+	StatusHUD::Render();
 }
 
 /**
