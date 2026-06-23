@@ -26,10 +26,13 @@
 //
 //   g_vr.DrawBindingsTable();
 //
-// This header pulls in <imgui.h>, <imgui_impl_dx11.h> and <d3d11.h>; include
-// it from a translation unit that already has ImGui + the DX11 backend. It
-// does NOT depend on CommonLibSSE/RE — button names use the OpenVR key codes
-// directly — so it is safe to vendor alongside the other api/ headers.
+// Hard dependencies (include from a TU that has them): Dear ImGui (<imgui.h> +
+// <imgui_internal.h>) and the official DX11 backend (<imgui_impl_dx11.h>),
+// <d3d11.h>, and nlohmann/json (pulled by ImGuiVRHelperInput.h). RenderHud /
+// RenderToPanel call ImGui_ImplDX11_* directly, so a mod shipping a custom
+// (non-stock) ImGui backend can't use those methods. It does NOT depend on
+// CommonLibSSE/RE — button names use OpenVR key codes — so it is safe to
+// vendor alongside the other api/ headers.
 
 #pragma once
 
@@ -114,6 +117,13 @@ namespace ImGuiVRHelperPluginAPI
 		ScopedImGuiContext(const ScopedImGuiContext&) = delete;
 		ScopedImGuiContext& operator=(const ScopedImGuiContext&) = delete;
 	};
+
+	/// True if the helper plugin is installed and its interface is available,
+	/// without registering. Lets a mod decide up front whether to adopt the VR
+	/// path or fall back to desktop-only, and tell "not installed" from a failed
+	/// Connect() (a false Connect after this returned true means registration was
+	/// rejected, e.g. a duplicate client name).
+	[[nodiscard]] inline bool IsHelperInstalled() { return GetImGuiVRHelperInterface001() != nullptr; }
 
 	/// Convenience wrapper around the helper interface. One instance per mod;
 	/// not thread-safe except for the OnFrame snapshot, which is mutex-guarded
@@ -371,10 +381,16 @@ namespace ImGuiVRHelperPluginAPI
 				return;
 
 			ImDrawData* drawData = ImGui::GetDrawData();
-			if (!drawData || !drawData->Valid || drawData->CmdListsCount <= 0)
-				return;
-
-			BlitDrawData(ctx, panel, drawData);
+			if (drawData && drawData->Valid && drawData->CmdListsCount > 0) {
+				BlitDrawData(ctx, panel, drawData);
+				m_panelWasShowing = true;
+			} else if (m_panelWasShowing) {
+				// Nothing to draw this frame — clear once so the helper doesn't keep
+				// compositing the last frame's pixels during an overlay swap.
+				const float clear[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
+				ctx->ClearRenderTargetView(panel.rtv, clear);
+				m_panelWasShowing = false;
+			}
 		}
 
 		/// Set once: loads your fonts + style into the private HUD context, called
@@ -690,6 +706,8 @@ namespace ImGuiVRHelperPluginAPI
 		bool m_prevMenuOpen = false;  // ReconcileFocus edge state
 		float m_accumX = 0.0f;
 		float m_accumY = 0.0f;
+
+		bool m_panelWasShowing = false;  // RenderToPanel clear-once
 
 		// RenderHud private context: its own ImGui context + DX11 backend + style.
 		ImGuiContext* m_hudCtx = nullptr;
