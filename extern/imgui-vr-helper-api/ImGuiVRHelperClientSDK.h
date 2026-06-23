@@ -12,12 +12,15 @@
 //   // at SKSE kPostLoad:
 //   g_vr.Connect("MyMod", versionStr, ImGuiVRHelperPluginAPI::kClientFlag_RendersOnFocus);
 //   g_vr.AddCombo("Open menu", myOpenKeys, [](auto* k, auto n){ /* persist */ });
-//   // each render frame, after building your ImGui frame and calling ImGui::Render():
+//   // each render frame:
 //   if (g_vr.Fired(openCombo)) menuOpen = true;
-//   if (g_vr.ConsumeFocusLost()) menuOpen = false;
-//   g_vr.SyncFocus(menuOpen);
-//   g_vr.PumpInput(menuOpen || g_vr.HasFocus());
+//   g_vr.ReconcileFocus(menuOpen);  // syncs menuOpen <-> helper focus both ways
+//   g_vr.PumpInput(menuOpen);
+//   // build your ImGui frame + ImGui::Render(), then:
 //   g_vr.RenderToPanel(myD3DContext);
+//
+// For an always-on HUD layer, the whole context lifecycle is one call:
+//   g_vr.RenderHud(device, ctx, displaySize, []{ /* your ImGui draws */ });
 //
 // Plus a drop-in, sortable/filterable bindings table for your own settings UI:
 //
@@ -198,24 +201,6 @@ namespace ImGuiVRHelperPluginAPI
 			return e.id;
 		}
 
-		/// Convenience: register a chord whose rebinds are written straight back
-		/// into `storage`, then `onChanged` fires (e.g. to save settings) — no
-		/// hand-written persist lambda. `storage` must outlive this client (it's
-		/// captured by reference); pass your settings vector. `defaults` enables
-		/// the per-row Reset in DrawBindingsTable.
-		ComboId AddCombo(const char* label, std::vector<InputCombo>& storage,
-			std::function<void()> onChanged = {}, const std::vector<InputCombo>& defaults = {})
-		{
-			return AddCombo(
-				label, storage,
-				[&storage, onChanged](const InputCombo* keys, std::size_t n) {
-					storage.assign(keys, keys + n);
-					if (onChanged)
-						onChanged();
-				},
-				defaults);
-		}
-
 		/// Edge-triggered: true exactly once per activation.
 		bool Fired(ComboId id) { return IsConnected() && id != 0 && m_helper->ComboFired(id); }
 
@@ -223,7 +208,9 @@ namespace ImGuiVRHelperPluginAPI
 
 		/// Keep helper focus in lockstep with your menu-open flag (edge-based,
 		/// so it doesn't fight the helper's own UI for focus every frame).
-		void SyncFocus(bool menuOpen)
+		/// Deprecated: ReconcileFocus does this plus the helper->client direction;
+		/// don't mix the two (they track separate latches).
+		[[deprecated("use ReconcileFocus")]] void SyncFocus(bool menuOpen)
 		{
 			if (!IsConnected())
 				return;
@@ -263,7 +250,8 @@ namespace ImGuiVRHelperPluginAPI
 		/// Returns true exactly once when the helper took focus away while you
 		/// held it (the user opened another overlay) — close your menu so the
 		/// new overlay replaces it (single-window swap).
-		bool ConsumeFocusLost()
+		/// Deprecated: ReconcileFocus folds this in; don't mix the two.
+		[[deprecated("use ReconcileFocus")]] bool ConsumeFocusLost()
 		{
 			if (m_requestsRender) {
 				m_hadFocus = true;
@@ -406,6 +394,8 @@ namespace ImGuiVRHelperPluginAPI
 		{
 			if (!IsConnected() || !device || !ctx || !draw)
 				return;
+			if (logicalSize.x <= 0.0f || logicalSize.y <= 0.0f)
+				return;  // a zero DisplaySize would clip everything to a blank HUD
 
 			ScopedImGuiContext guard;  // restores the caller's context on every exit
 
