@@ -44,6 +44,7 @@
 #include <d3d11.h>
 #include <imgui.h>
 #include <imgui_impl_dx11.h>
+#include <imgui_internal.h>  // RenderHud re-allows window SetWindowPos*AllowFlags
 
 #include "ImGuiVRHelperAPI.h"
 #include "ImGuiVRHelperInput.h"
@@ -98,6 +99,18 @@ namespace ImGuiVRHelperPluginAPI
 		}
 		return "Key " + std::to_string(key);
 	}
+
+	/// RAII guard: captures the current ImGui context and restores it on scope
+	/// exit. Use around any code that switches to a private context — leaving a
+	/// foreign context current crashes the host's ImGui_ImplWin32_NewFrame.
+	struct ScopedImGuiContext
+	{
+		ImGuiContext* prev = ImGui::GetCurrentContext();
+		~ScopedImGuiContext() { ImGui::SetCurrentContext(prev); }
+		ScopedImGuiContext() = default;
+		ScopedImGuiContext(const ScopedImGuiContext&) = delete;
+		ScopedImGuiContext& operator=(const ScopedImGuiContext&) = delete;
+	};
 
 	/// Convenience wrapper around the helper interface. One instance per mod;
 	/// not thread-safe except for the OnFrame snapshot, which is mutex-guarded
@@ -237,6 +250,28 @@ namespace ImGuiVRHelperPluginAPI
 			return false;
 		}
 
+		/// One-call focus reconciliation — replaces SyncFocus + ConsumeFocusLost +
+		/// the manual edge logic. Pass your menu-open flag by reference: when you
+		/// toggle it, helper focus follows; when the helper changes focus (the user
+		/// cycled overlays to/from you), your flag follows. Returns the resolved
+		/// shown state — feed it to PumpInput and use it to gate NewFrame/Render.
+		bool ReconcileFocus(bool& menuOpen)
+		{
+			if (!IsConnected())
+				return menuOpen;
+			const bool focused = HasFocus();
+			if (menuOpen != m_prevMenuOpen) {
+				if (menuOpen)
+					RequestFocus();
+				else
+					ReleaseFocus();
+			} else if (focused != menuOpen) {
+				menuOpen = focused;  // helper changed focus (overlay swap) — mirror it
+			}
+			m_prevMenuOpen = menuOpen;
+			return menuOpen;
+		}
+
 		/// Pump the wand cursor, controller buttons, and thumbstick scroll into
 		/// the current ImGui context's IO. Call with `active` true while your
 		/// menu is shown (your own open OR HasFocus()); pass it false otherwise
@@ -325,35 +360,93 @@ namespace ImGuiVRHelperPluginAPI
 			if (!drawData || !drawData->Valid || drawData->CmdListsCount <= 0)
 				return;
 
-			ID3D11RenderTargetView* prevRTV = nullptr;
-			ID3D11DepthStencilView* prevDSV = nullptr;
-			ctx->OMGetRenderTargets(1, &prevRTV, &prevDSV);
+			BlitDrawData(ctx, panel, drawData);
+		}
 
-			D3D11_VIEWPORT prevViewports[D3D11_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE]{};
-			UINT prevViewportCount = D3D11_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE;
-			ctx->RSGetViewports(&prevViewportCount, prevViewports);
+		/// Set once: loads your fonts + style into the private HUD context, called
+		/// right after it's created, so RenderHud matches your desktop look.
+		void SetHudStyleCallback(std::function<void()> styleSetup) { m_hudStyle = std::move(styleSetup); }
 
-			D3D11_VIEWPORT vp{};
-			vp.Width = static_cast<float>(panel.width);
-			vp.Height = static_cast<float>(panel.height);
-			vp.MinDepth = 0.0f;
-			vp.MaxDepth = 1.0f;
-			ctx->RSSetViewports(1, &vp);
+		/// Render an always-on HUD layer (a kClientFlag_HUDMode client) in one
+		/// call — the whole context lifecycle the flag promises, done for you.
+		/// Owns a private, non-interactive ImGui context + DX11 backend, sizes it
+		/// to the (supersampled) panel so text stays crisp, re-honors window
+		/// positions every frame (a passive mirror can't be dragged), runs `draw`
+		/// to build the UI in your own style, blits to the panel, and clears it
+		/// once when nothing is drawn. `logicalSize` is your UI's coordinate space
+		/// (typically your desktop DisplaySize) so layout matches the flat screen.
+		void RenderHud(ID3D11Device* device, ID3D11DeviceContext* ctx, ImVec2 logicalSize,
+			const std::function<void()>& draw)
+		{
+			if (!IsConnected() || !device || !ctx || !draw)
+				return;
 
-			ID3D11RenderTargetView* rtv = panel.rtv;
-			ctx->OMSetRenderTargets(1, &rtv, nullptr);
-			const float clearColor[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
-			ctx->ClearRenderTargetView(rtv, clearColor);
+			ScopedImGuiContext guard;  // restores the caller's context on every exit
 
-			ImGui_ImplDX11_RenderDrawData(drawData);
+			if (!m_hudCtx) {
+				m_hudCtx = ImGui::CreateContext();
+				ImGui::SetCurrentContext(m_hudCtx);
+				ImGuiIO& io = ImGui::GetIO();
+				io.IniFilename = nullptr;
+				io.LogFilename = nullptr;
+				if (!ImGui_ImplDX11_Init(device, ctx)) {
+					ImGui::DestroyContext(m_hudCtx);
+					m_hudCtx = nullptr;
+					return;
+				}
+				if (m_hudStyle)
+					m_hudStyle();
+			}
 
-			ctx->OMSetRenderTargets(1, &prevRTV, prevDSV);
-			if (prevViewportCount > 0)
-				ctx->RSSetViewports(prevViewportCount, prevViewports);
-			if (prevRTV)
-				prevRTV->Release();
-			if (prevDSV)
-				prevDSV->Release();
+			PanelHandle panel{};
+			if (!m_helper->GetPanel(m_id, &panel) || panel.rtv == nullptr)
+				return;
+
+			ImGui::SetCurrentContext(m_hudCtx);
+			ImGuiIO& io = ImGui::GetIO();
+			io.DisplaySize = logicalSize;
+			if (panel.width && panel.height && logicalSize.x > 0.0f && logicalSize.y > 0.0f)
+				io.DisplayFramebufferScale = ImVec2(static_cast<float>(panel.width) / logicalSize.x,
+					static_cast<float>(panel.height) / logicalSize.y);
+			io.DeltaTime = 1.0f / 60.0f;
+
+			ImGui_ImplDX11_NewFrame();
+			ImGui::NewFrame();
+
+			// Passive mirror: re-allow the positional Cond flags so FirstUseEver/Once
+			// act like Always, and every window tracks its source position each frame.
+			for (ImGuiWindow* w : m_hudCtx->Windows) {
+				w->SetWindowPosAllowFlags |=
+					ImGuiCond_Always | ImGuiCond_Once | ImGuiCond_FirstUseEver | ImGuiCond_Appearing;
+				w->SetWindowSizeAllowFlags |=
+					ImGuiCond_Always | ImGuiCond_Once | ImGuiCond_FirstUseEver | ImGuiCond_Appearing;
+			}
+
+			draw();
+
+			ImGui::Render();
+			ImDrawData* drawData = ImGui::GetDrawData();
+			if (drawData && drawData->Valid && drawData->CmdListsCount > 0) {
+				BlitDrawData(ctx, panel, drawData);
+				m_hudWasShowing = true;
+			} else if (m_hudWasShowing) {
+				const float clear[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
+				ctx->ClearRenderTargetView(panel.rtv, clear);
+				m_hudWasShowing = false;
+			}
+		}
+
+		/// Destroy the private HUD context + DX11 backend (call on shutdown). Safe
+		/// if RenderHud was never used.
+		void ShutdownHud()
+		{
+			if (!m_hudCtx)
+				return;
+			ScopedImGuiContext guard;
+			ImGui::SetCurrentContext(m_hudCtx);
+			ImGui_ImplDX11_Shutdown();
+			ImGui::DestroyContext(m_hudCtx);
+			m_hudCtx = nullptr;
 		}
 
 		/// Forward a raw VR controller event into the helper (for clients that
@@ -529,6 +622,41 @@ namespace ImGuiVRHelperPluginAPI
 			return h.find(n) != std::string::npos;
 		}
 
+		// Blit the current draw data into `panel`, restoring the prior RT + viewport.
+		// Shared by RenderToPanel and RenderHud.
+		void BlitDrawData(ID3D11DeviceContext* ctx, const PanelHandle& panel, ImDrawData* drawData)
+		{
+			ID3D11RenderTargetView* prevRTV = nullptr;
+			ID3D11DepthStencilView* prevDSV = nullptr;
+			ctx->OMGetRenderTargets(1, &prevRTV, &prevDSV);
+
+			D3D11_VIEWPORT prevViewports[D3D11_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE]{};
+			UINT prevViewportCount = D3D11_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE;
+			ctx->RSGetViewports(&prevViewportCount, prevViewports);
+
+			D3D11_VIEWPORT vp{};
+			vp.Width = static_cast<float>(panel.width);
+			vp.Height = static_cast<float>(panel.height);
+			vp.MinDepth = 0.0f;
+			vp.MaxDepth = 1.0f;
+			ctx->RSSetViewports(1, &vp);
+
+			ID3D11RenderTargetView* rtv = panel.rtv;
+			ctx->OMSetRenderTargets(1, &rtv, nullptr);
+			const float clearColor[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
+			ctx->ClearRenderTargetView(rtv, clearColor);
+
+			ImGui_ImplDX11_RenderDrawData(drawData);
+
+			ctx->OMSetRenderTargets(1, &prevRTV, prevDSV);
+			if (prevViewportCount > 0)
+				ctx->RSSetViewports(prevViewportCount, prevViewports);
+			if (prevRTV)
+				prevRTV->Release();
+			if (prevDSV)
+				prevDSV->Release();
+		}
+
 		IImGuiVRHelperInterface001* m_helper = nullptr;
 		uint32_t m_id = 0;
 		bool m_requestsRender = false;
@@ -543,8 +671,14 @@ namespace ImGuiVRHelperPluginAPI
 		uint32_t m_prevHeld = 0;
 		bool m_focusRequested = false;
 		bool m_hadFocus = false;
+		bool m_prevMenuOpen = false;  // ReconcileFocus edge state
 		float m_accumX = 0.0f;
 		float m_accumY = 0.0f;
+
+		// RenderHud private context: its own ImGui context + DX11 backend + style.
+		ImGuiContext* m_hudCtx = nullptr;
+		bool m_hudWasShowing = false;
+		std::function<void()> m_hudStyle;
 
 		std::list<ComboEntry> m_combos;  // stable node addresses back the thunk user pointers
 		char m_filter[64] = {};

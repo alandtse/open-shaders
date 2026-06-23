@@ -20,7 +20,6 @@ namespace
 	// CS keeps only its secondary in-menu overlay toggle.
 	API::ComboId g_overlayOpenCombo = 0;
 	API::ComboId g_overlayCloseCombo = 0;
-	bool g_prevMenuEnabled = false;  // edge-detect CS toggling its own menu
 
 	// CS's ButtonCombo (Utils/Input.h) and the helper's API::InputCombo are
 	// layout-compatible but distinct types, so convert element-by-element. The
@@ -123,24 +122,11 @@ namespace ImGuiVRHelperClient
 			return;
 		}
 
-		// The menu opens/closes two ways; reconcile them against helper focus,
-		// which is the single source of truth for VR visibility (the helper
-		// composites us only while focused, via RendersOnFocus):
-		//   - CS toggles its own menu (keyboard / desktop UI) -> drive helper
-		//     focus to match (request to show, release to hide).
-		//   - The helper changes our focus (open/close combo, cycle, swap) ->
-		//     mirror it into IsEnabled.
+		// Reconcile the menu-open flag with helper focus (the single source of
+		// truth for VR visibility): CS toggling its own menu drives focus; the
+		// helper changing focus (open/close combo, cycle, swap) drives IsEnabled.
+		g_client.ReconcileFocus(menu->IsEnabled);
 		const bool focused = g_client.HasFocus();
-		bool& enabled = menu->IsEnabled;
-		if (enabled != g_prevMenuEnabled) {
-			if (enabled)
-				g_client.RequestFocus();
-			else
-				g_client.ReleaseFocus();
-		} else if (focused != enabled) {
-			enabled = focused;
-		}
-		g_prevMenuEnabled = enabled;
 
 		if (focused) {
 			// CS's secondary in-menu overlay stays CS-owned.
