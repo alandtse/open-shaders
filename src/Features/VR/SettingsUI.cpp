@@ -243,7 +243,7 @@ void VR::DrawSettings()
 			if (BeginTabItemWithFont(T(TKEY("tab_controls"), "Controls"), Menu::FontRole::Subheading)) {
 				if (ImGui::BeginChild("##VRControlsFrame", { 0, 0 }, true)) {
 					ImGui::TextWrapped("%s", T(TKEY("controls_help"),
-						"VR controller bindings. Click Rebind, then hold the new button combo."));
+												 "VR controller bindings. Click Rebind, then hold the new button combo."));
 					ImGui::Spacing();
 					ImGuiVRHelperClient::DrawBindingsTable();
 				}
