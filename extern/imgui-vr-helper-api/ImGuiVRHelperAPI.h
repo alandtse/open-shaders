@@ -4,10 +4,13 @@
 // ImGuiVRHelper public API.
 //
 // Clients vendor api/ImGuiVRHelperAPI.h, api/ImGuiVRHelperAPI.cpp,
-// api/ImGuiVRHelperTypes.h, and api/ImGuiVRHelperInput.h. After SKSE's
-// kPostLoad fires, call GetImGuiVRHelperInterface001() to obtain a pointer
-// to the helper's API. Subsequent calls go through the returned vtable —
-// SKSE messaging is only used for the one-shot handshake.
+// api/ImGuiVRHelperTypes.h, and api/ImGuiVRHelperInput.h. At SKSE's
+// kPostPostLoad, call GetImGuiVRHelperInterface001() to obtain a pointer to the
+// helper's API. kPostPostLoad (not kPostLoad) is the safe point: it fires after
+// every plugin's kPostLoad, so the helper's messaging listener is registered
+// regardless of load order. The handshake is retryable if you must call earlier.
+// Subsequent calls go through the returned vtable — SKSE messaging is only used
+// for the handshake.
 //
 // Handshake pattern derived from
 //   https://github.com/alandtse/SkyrimVRESL/blob/master/src/SkyrimVRESLAPI.h
@@ -47,7 +50,8 @@ namespace ImGuiVRHelperPluginAPI
 
 	struct IImGuiVRHelperInterface001;
 
-	/// One-shot handshake. Call once after kPostLoad. Returns nullptr if
+	/// Handshake. Call at kPostPostLoad (retryable — a null result before the
+	/// helper's listener registers is not fatal; call again). Returns nullptr if
 	/// the helper isn't installed or is older than version 001.
 	IImGuiVRHelperInterface001* GetImGuiVRHelperInterface001();
 

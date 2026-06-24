@@ -9,7 +9,8 @@
 // existing ImGui menu then looks like:
 //
 //   ImGuiVRHelperPluginAPI::Client g_vr;
-//   // at SKSE kPostLoad:
+//   // at SKSE kPostPostLoad (fires after every plugin's kPostLoad, so the
+//   // helper's listener is registered regardless of load order):
 //   g_vr.Connect("MyMod", versionStr, ImGuiVRHelperPluginAPI::kClientFlag_RendersOnFocus);
 //   g_vr.AddCombo("Open menu", myOpenKeys, [](auto* k, auto n){ /* persist */ });
 //   // each render frame:
@@ -150,9 +151,10 @@ namespace ImGuiVRHelperPluginAPI
 
 		// ---- Lifecycle -------------------------------------------------
 
-		/// Perform the kPostLoad handshake and register as a client. Safe to
-		/// call once; returns true if the helper is installed and registration
-		/// succeeded. `flags` is a bitmask of kClientFlag_*.
+		/// Perform the handshake and register as a client. Call at kPostPostLoad
+		/// (so the helper's listener is up regardless of load order); retryable if
+		/// you call earlier. Returns true once the helper is found and registration
+		/// succeeds. `flags` is a bitmask of kClientFlag_*.
 		bool Connect(const char* name, const char* version, uint32_t flags)
 		{
 			if (m_id != 0)
