@@ -5,7 +5,6 @@
 #include "Features/Upscaling.h"
 #include "Features/VR.h"
 #include "I18n/I18n.h"
-#include "ImGuiVRHelperClient.h"
 #include "Menu.h"
 #include "Menu/Fonts.h"
 #include "RE/B/BSOpenVR.h"
@@ -239,13 +238,13 @@ void VR::DrawSettings()
 		// Controller bindings — only meaningful when the VR overlay helper owns
 		// input. Restores the sortable/filterable bindings table (with rebind)
 		// via the helper's client SDK.
-		if (ImGuiVRHelperClient::IsRegistered()) {
+		if (IsHelperRegistered()) {
 			if (BeginTabItemWithFont(T(TKEY("tab_controls"), "Controls"), Menu::FontRole::Subheading)) {
 				if (ImGui::BeginChild("##VRControlsFrame", { 0, 0 }, true)) {
 					ImGui::TextWrapped("%s", T(TKEY("controls_help"),
 												 "VR controller bindings. Click Rebind, then hold the new button combo."));
 					ImGui::Spacing();
-					ImGuiVRHelperClient::DrawBindingsTable();
+					DrawHelperBindingsTable();
 				}
 				ImGui::EndChild();
 				ImGui::EndTabItem();

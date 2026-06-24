@@ -170,6 +170,10 @@ void VR::PostPostLoad()
 	REL::safe_write(REL::RelocationID(0, 0, 69528).address() + REL::Relocate(0, 0, 0xD9) + 0x2, 0x148);
 	REL::safe_write(REL::RelocationID(0, 0, 69528).address() + REL::Relocate(0, 0, 0xE5) + 0x2, 0x14C);
 	REL::safe_write(REL::RelocationID(0, 0, 69528).address() + REL::Relocate(0, 0, 0xF1) + 0x2, 0x150);
+
+	// Connect to ImGuiVRHelper here (kPostPostLoad): the helper has registered its
+	// handshake listener by now, so this reaches it regardless of load order.
+	ConnectHelper();
 }
 
 void VR::DataLoaded()

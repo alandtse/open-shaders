@@ -287,6 +287,19 @@ public:
 	// VR-SPECIFIC PUBLIC API
 	//=============================================================================
 
+	// ImGuiVRHelper client integration (impl in Features/VR/HelperClient.cpp).
+	// The VR overlay/menu/input/HUD is provided by the standalone ImGuiVRHelper
+	// plugin; the VR feature is its client. CS glue (keybind<->combo mapping,
+	// rebind persistence, Menu::IsEnabled, status HUD) lives in that file.
+	void ConnectHelper();        ///< Connect as a client; called from PostPostLoad.
+	void UpdateHelper();         ///< Per-frame focus reconcile + wand input (from Menu).
+	void RenderHelperToPanel();  ///< Blit the menu into the helper's panel (from OverlayRenderer).
+	void RenderStatusHud();      ///< Always-on status overlays via a HUD-mode client (from Menu).
+	void FeedHelperEvent(uint32_t device, uint32_t key, bool pressed, float stickX, float stickY);
+	[[nodiscard]] bool IsHelperRegistered() const;     ///< True once the menu client is connected.
+	[[nodiscard]] bool HelperRequestsRender() const;   ///< True when the helper routed focus to us this frame.
+	void DrawHelperBindingsTable();  ///< Controller bindings table (from DrawSettings).
+
 	//=============================================================================
 	// PUBLIC MEMBER VARIABLES
 	//=============================================================================

@@ -12,7 +12,6 @@
 
 #include "ENB/ENBSeriesAPI.h"
 
-#include "ImGuiVRHelperClient.h"
 
 #define DLLEXPORT __declspec(dllexport)
 
@@ -82,14 +81,6 @@ void MessageHandler(SKSE::MessagingInterface::Message* message)
 	switch (message->type) {
 	case SKSE::MessagingInterface::kPostPostLoad:
 		{
-			// Handshake with ImGuiVRHelper. Must run at kPostPostLoad, not
-			// kPostLoad: the helper registers its client-handshake listener at
-			// kPostLoad, and a null-sender listener only reaches plugins loaded
-			// when it registers. Requesting at kPostPostLoad — after every
-			// plugin's kPostLoad — guarantees we reach it regardless of load
-			// order. (Helper-required for VR menus; without it VR users only see
-			// the menu on the desktop monitor.)
-			ImGuiVRHelperClient::Init();
 
 			if (errors.empty()) {
 				Deferred::Hooks::Install();

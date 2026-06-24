@@ -25,7 +25,7 @@
 #include "Features/RenderDoc.h"
 #include "Features/Upscaling.h"
 #include "I18n/I18n.h"
-#include "ImGuiVRHelperClient.h"
+#include "Features/VR.h"
 #include "Menu/AdvancedSettingsRenderer.h"
 #include "Menu/BackgroundBlur.h"
 #include "Menu/CursorLoader.h"
@@ -49,7 +49,6 @@
 #include "Features/PerformanceOverlay/ABTesting/ABTestAggregator.h"
 #include "Features/PerformanceOverlay/ABTesting/ABTesting.h"
 #include "Features/ScreenshotFeature.h"
-#include "Features/VR.h"
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	Menu::ThemeSettings::PaletteColors,
@@ -1004,7 +1003,7 @@ void Menu::DrawOverlay()
 	// Always-on VR status HUD (shader-compilation progress, etc.) into its own
 	// helper HUD panel, so it composites over the scene without the menu being
 	// focused. No-op on desktop / without the helper.
-	StatusHUD::Render();
+	globals::features::vr.RenderStatusHud();
 }
 
 /**
@@ -1083,9 +1082,9 @@ void Menu::ProcessInputEventQueue()
 		// which owns wand pointing, combo matching, drag and overlay focus.
 		// Without the helper the events are dropped — VR menus are desktop-only
 		// (no fallback to SCS's own VR overlay).
-		if (ImGuiVRHelperClient::IsRegistered()) {
+		if (globals::features::vr.IsHelperRegistered()) {
 			for (const auto& event : vrEvents) {
-				ImGuiVRHelperClient::FeedVREvent(
+				globals::features::vr.FeedHelperEvent(
 					static_cast<uint32_t>(event.device),
 					event.keyCode,
 					event.IsPressed(),
@@ -1100,7 +1099,7 @@ void Menu::ProcessInputEventQueue()
 	// Menu::IsEnabled, and feeds the wand pointer + controller buttons into ImGui
 	// IO. Must run before ImGui::NewFrame (InitializeImGuiFrame), which it does —
 	// ProcessInputEventQueue is called first in OverlayRenderer::RenderOverlay.
-	ImGuiVRHelperClient::Update();
+	globals::features::vr.UpdateHelper();
 
 	// Process non-VR events in Menu
 	for (auto& event : nonVREvents) {

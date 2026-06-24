@@ -16,7 +16,7 @@
 #include "Features/RenderDoc.h"
 #include "Globals.h"
 #include "I18n/I18n.h"
-#include "ImGuiVRHelperClient.h"
+#include "Features/VR.h"
 #include "Menu.h"
 #include "Menu/CursorLoader.h"
 #include "ShaderCache.h"
@@ -25,7 +25,6 @@
 
 #include "Features/PerformanceOverlay.h"
 #include "Features/PerformanceOverlay/ABTesting/ABTesting.h"
-#include "Features/VR.h"
 
 namespace
 {
@@ -173,13 +172,13 @@ void OverlayRenderer::RenderOverlay(
 			io.MousePos = { -FLT_MAX, -FLT_MAX };  // prevent hover/tooltips during active flying
 		editorWindow->Draw();
 	} else if (menu.IsEnabled || HomePageRenderer::ShouldShowFirstTimeSetup() ||
-			   ImGuiVRHelperClient::HelperRequestsRender()) {
+			   globals::features::vr.HelperRequestsRender()) {
 		ImGui::GetIO().MouseDrawCursor = true;
 		// Helper-requested render: the helper's in-scene focus model routed
 		// focus here. Draw the settings UI even though Menu::IsEnabled hasn't
 		// been flipped by the local TAB hotkey. This honors the
 		// kClientFlag_RendersOnFocus contract we advertised at registration.
-		if (menu.IsEnabled || ImGuiVRHelperClient::HelperRequestsRender()) {
+		if (menu.IsEnabled || globals::features::vr.HelperRequestsRender()) {
 			drawSettings();
 		}
 	} else {
@@ -416,7 +415,7 @@ void OverlayRenderer::FinalizeImGuiFrame()
 	// Render the same draw data into the ImGuiVRHelper's panel RTV so the
 	// helper can composite our menu as a 3D quad in the HMD. The helper owns
 	// VR overlay compositing (helper-required) — SCS no longer submits its own.
-	ImGuiVRHelperClient::RenderToPanel();
+	globals::features::vr.RenderHelperToPanel();
 }
 
 void OverlayRenderer::RenderFirstTimeSetupOverlay()

@@ -46,7 +46,8 @@ public:
 		float currentFontSize);
 
 	// Always-on status overlays, exposed so the VR status HUD renders the exact
-	// same code path (with CS's fonts/style) into its own panel. See StatusHUD.
+	// same code path (with CS's fonts/style) into its own panel. See
+	// VR::RenderStatusHud (Features/VR/HelperClient.cpp).
 	static void RenderShaderCompilationStatus(const std::function<const char*(std::vector<InputCombo>)>& keyIdToString);
 	static void RenderShaderBlockingStatus();
 	static void RenderFeatureOverlays();
