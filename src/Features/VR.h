@@ -296,9 +296,9 @@ public:
 	void RenderHelperToPanel();  ///< Blit the menu into the helper's panel (from OverlayRenderer).
 	void RenderStatusHud();      ///< Always-on status overlays via a HUD-mode client (from Menu).
 	void FeedHelperEvent(uint32_t device, uint32_t key, bool pressed, float stickX, float stickY);
-	[[nodiscard]] bool IsHelperRegistered() const;     ///< True once the menu client is connected.
-	[[nodiscard]] bool HelperRequestsRender() const;   ///< True when the helper routed focus to us this frame.
-	void DrawHelperBindingsTable();  ///< Controller bindings table (from DrawSettings).
+	[[nodiscard]] bool IsHelperRegistered() const;    ///< True once the menu client is connected.
+	[[nodiscard]] bool HelperRequestsRender() const;  ///< True when the helper routed focus to us this frame.
+	void DrawHelperBindingsTable();                   ///< Controller bindings table (from DrawSettings).
 
 	//=============================================================================
 	// PUBLIC MEMBER VARIABLES

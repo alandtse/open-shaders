@@ -12,7 +12,6 @@
 
 #include "ENB/ENBSeriesAPI.h"
 
-
 #define DLLEXPORT __declspec(dllexport)
 
 std::list<std::string> errors;
@@ -81,7 +80,6 @@ void MessageHandler(SKSE::MessagingInterface::Message* message)
 	switch (message->type) {
 	case SKSE::MessagingInterface::kPostPostLoad:
 		{
-
 			if (errors.empty()) {
 				Deferred::Hooks::Install();
 				Hooks::Install();
