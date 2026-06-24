@@ -373,6 +373,17 @@ namespace ImGuiVRHelperPluginAPI
 		/// Blit the current ImGui draw data into the helper-owned panel RTV.
 		/// Call after ImGui::Render(). Saves and restores the bound render
 		/// target / viewport so the rest of your frame is undisturbed.
+		///
+		/// VR: this panel is your ONLY headset output. When connected, render to
+		/// the panel and do NOT also run your normal in-game draw
+		/// (ImGui_ImplDX11_RenderDrawData) into the game's frame for the VR view.
+		/// If your menu hook draws into the game's HUD/menu target (e.g. Skyrim's
+		/// kHUDMENU), the engine wraps that flat texture onto its CURVED world HUD
+		/// and your menu comes out sheared/deformed — a second, mangled copy
+		/// alongside this flat panel. Gate it: `if (IsConnected()) RenderToPanel();
+		/// else ImGui_ImplDX11_RenderDrawData();`. Hooking at Present (the desktop
+		/// swapchain/mirror) instead is harmless, since the mirror isn't shown in
+		/// the headset.
 		void RenderToPanel(ID3D11DeviceContext* ctx)
 		{
 			if (!IsConnected() || !ctx)

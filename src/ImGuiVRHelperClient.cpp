@@ -77,8 +77,8 @@ namespace ImGuiVRHelperClient
 {
 	void Init()
 	{
-		// Init() runs at SKSE kPostLoad, after globals::ReInit() has cached the
-		// VR flag, so prefer the global over REL::Module::IsVR().
+		// Init() runs at SKSE kPostPostLoad, after globals::ReInit() has cached
+		// the VR flag, so prefer the global over REL::Module::IsVR().
 		if (!globals::game::isVR)
 			return;
 
