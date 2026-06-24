@@ -99,7 +99,9 @@ namespace ImGuiVRHelperClient
 
 	bool HelperRequestsRender() { return g_client.HasFocus(); }
 
-	void RenderToPanel() { g_client.RenderToPanel(globals::d3d::context); }
+	// ctx omitted: the SDK derives the immediate context from the panel RTV's
+	// device (the single game device), so we no longer thread globals::d3d::context.
+	void RenderToPanel() { g_client.RenderToPanel(); }
 
 	void FeedVREvent(uint32_t device, uint32_t key_code, bool pressed,
 		float thumbstick_x, float thumbstick_y)
