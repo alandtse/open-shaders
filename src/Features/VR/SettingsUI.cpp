@@ -34,7 +34,7 @@ namespace
 
 // VR overlay UX (including the welcome banner) is owned by the standalone
 // ImGuiVRHelper plugin. OverlayFeature::DrawOverlay is pure virtual, so VR
-// keeps an empty override; there is no SCS-internal overlay fallback.
+// keeps an empty override; no built-in overlay fallback.
 void VR::DrawOverlay() {}
 
 //=============================================================================

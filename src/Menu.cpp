@@ -36,7 +36,6 @@
 #include "Menu/MenuHeaderRenderer.h"
 #include "Menu/OverlayRenderer.h"
 #include "Menu/SettingsTabRenderer.h"
-#include "Menu/StatusHUD.h"
 #include "Menu/ThemeManager.h"
 #include "ShaderCache.h"
 #include "State.h"
@@ -1081,7 +1080,7 @@ void Menu::ProcessInputEventQueue()
 		// Helper-required: forward raw VR controller events to the helper,
 		// which owns wand pointing, combo matching, drag and overlay focus.
 		// Without the helper the events are dropped — VR menus are desktop-only
-		// (no fallback to SCS's own VR overlay).
+		// (no built-in VR overlay fallback).
 		if (globals::features::vr.IsHelperRegistered()) {
 			for (const auto& event : vrEvents) {
 				globals::features::vr.FeedHelperEvent(

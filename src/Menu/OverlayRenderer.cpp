@@ -140,7 +140,7 @@ void OverlayRenderer::RenderOverlay(
 	processInputEventQueue();
 
 	// VR overlay textures and controller→ImGui input are owned by the helper
-	// (helper-required); SCS no longer recreates overlay textures or pumps
+	// (helper-required); Community Shaders no longer recreates overlay textures or pumps
 	// controller input itself.
 
 	if (ShouldSkipRendering()) {
@@ -414,7 +414,7 @@ void OverlayRenderer::FinalizeImGuiFrame()
 
 	// Render the same draw data into the ImGuiVRHelper's panel RTV so the
 	// helper can composite our menu as a 3D quad in the HMD. The helper owns
-	// VR overlay compositing (helper-required) — SCS no longer submits its own.
+	// VR overlay compositing — Community Shaders no longer submits its own.
 	globals::features::vr.RenderHelperToPanel();
 }
 
