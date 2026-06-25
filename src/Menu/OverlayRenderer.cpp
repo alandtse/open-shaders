@@ -139,10 +139,6 @@ void OverlayRenderer::RenderOverlay(
 {
 	processInputEventQueue();
 
-	// VR overlay textures and controller→ImGui input are owned by the helper
-	// (helper-required); Community Shaders no longer recreates overlay textures or pumps
-	// controller input itself.
-
 	if (ShouldSkipRendering()) {
 		auto& io = ImGui::GetIO();
 		io.ClearInputKeys();
