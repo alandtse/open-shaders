@@ -202,7 +202,9 @@ bool OverlayRenderer::ShouldSkipRendering()
 			 abTestingManager->IsEnabled() ||
 			 (failed && !hide) ||
 			 globals::features::performanceOverlay.settings.ShowInOverlay ||
-			 renderDoc->IsAvailable());
+			 renderDoc->IsAvailable() ||
+			 HomePageRenderer::ShouldShowFirstTimeSetup() ||
+			 globals::features::vr.HelperRequestsRender());
 }
 
 void OverlayRenderer::HandleFontReload(Menu& menu, float& cachedFontSize, float currentFontSize)

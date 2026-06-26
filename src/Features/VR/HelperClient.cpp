@@ -4,6 +4,8 @@
 
 #include "Features/VR.h"
 
+#include <format>
+#include <algorithm>
 #include <imgui.h>
 
 #include "Globals.h"
@@ -75,7 +77,9 @@ void VR::ConnectHelper()
 		return;
 	// RendersOnFocus: render into the panel whenever the helper grants focus, even
 	// if Menu::IsEnabled is false.
-	if (!g_client.Connect("CommunityShaders", Plugin::VERSION.string().c_str(),
+	const auto clientName = std::string(Plugin::NAME);
+	const auto versionStr = std::format("{}.{}.{}", Plugin::VERSION.major(), Plugin::VERSION.minor(), Plugin::VERSION.patch());
+	if (!g_client.Connect(clientName.c_str(), versionStr.c_str(),
 			API::kClientFlag_RendersOnFocus)) {
 		logger::info("ImGuiVRHelper not detected; VR menus will only render on the desktop monitor");
 		return;
@@ -125,7 +129,8 @@ void VR::UpdateHelper()
 		g_client.Fired(g_overlayCloseCombo);
 	}
 
-	g_client.PumpInput(focused, settings.mouseDeadzone);
+	float clampedDeadzone = std::clamp(settings.mouseDeadzone, 0.0f, 1.0f);
+	g_client.PumpInput(focused, clampedDeadzone);
 }
 
 void VR::RenderStatusHud()
@@ -138,7 +143,9 @@ void VR::RenderStatusHud()
 		return;
 
 	if (!g_hudConnected) {
-		if (!g_hud.Connect("CommunityShaders.HUD", Plugin::VERSION.string().c_str(),
+		const auto hudName = std::format("{}.HUD", Plugin::NAME);
+		const auto versionStr = std::format("{}.{}.{}", Plugin::VERSION.major(), Plugin::VERSION.minor(), Plugin::VERSION.patch());
+		if (!g_hud.Connect(hudName.c_str(), versionStr.c_str(),
 				API::kClientFlag_HUDMode))
 			return;
 		g_hud.SetHudStyleCallback([menu]() { ThemeManager::SetupImGuiStyle(*menu); });
