@@ -4,8 +4,8 @@
 
 #include "Features/VR.h"
 
-#include <format>
 #include <algorithm>
+#include <format>
 #include <imgui.h>
 
 #include "Globals.h"

@@ -1320,7 +1320,6 @@ void Menu::ProcessInputEventQueue()
 			}
 		}
 	}
-
 }
 
 bool Menu::IsCapturingHotkeyInput() const
