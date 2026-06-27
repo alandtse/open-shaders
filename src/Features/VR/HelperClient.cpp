@@ -84,8 +84,8 @@ void VR::ConnectHelper()
 		logger::info("ImGuiVRHelper not detected; VR menus will only render on the desktop monitor");
 		return;
 	}
-	logger::info("ImGuiVRHelper handshake successful (build {}), client_id={}",
-		g_client.Helper()->GetBuildNumber(), g_client.Id());
+	logger::info("ImGuiVRHelper handshake successful (build {}), client_id={}, vr_keyboard={}",
+		g_client.Helper()->GetBuildNumber(), g_client.Id(), g_client.HasKeyboard());
 }
 
 bool VR::IsHelperRegistered() const { return g_client.IsConnected(); }
@@ -117,6 +117,9 @@ void VR::UpdateHelper()
 	// our menu-open flag both ways.
 	g_client.ReconcileFocus(menu->IsEnabled);
 	const bool focused = g_client.HasFocus();
+
+	// Automatic VR text entry: any focused ImGui text field pops the VR keyboard.
+	g_client.PumpKeyboard();
 
 	if (focused) {
 		if (g_client.Fired(g_overlayOpenCombo))
