@@ -231,12 +231,30 @@ void OverlayRenderer::InitializeImGuiFrame(Menu& menu)
 
 	const float displayW = static_cast<float>(desc.BufferDesc.Width);
 	const float displayH = static_cast<float>(desc.BufferDesc.Height);
-	Util::UpdateImGuiInput(desc.OutputWindow, displayW, displayH);
+
+	uint32_t panelW = 0, panelH = 0;
+	const bool vrPanel = globals::game::isVR && globals::features::vr.GetHelperPanelSize(panelW, panelH);
+	if (vrPanel) {
+		// VR: lay the menu out in the helper panel's logical space — a fixed
+		// kOverlayHeight tall, panel aspect wide — so font sizing (tuned to
+		// kOverlayHeight) is correct regardless of the desktop-mirror window, and
+		// the layout is supersample-invariant (aspect from GetPanel survives a
+		// uniformly supersampled panel; the helper upscales the 1080 raster).
+		// The wand drives the cursor (VR::UpdateHelper -> PumpInput), so skip the
+		// desktop cursor injection here — feeding it would fight the wand position.
+		auto& io = ImGui::GetIO();
+		const float logicalH = static_cast<float>(VR::Config::kOverlayHeight);
+		io.DisplaySize = ImVec2(logicalH * static_cast<float>(panelW) / static_cast<float>(panelH), logicalH);
+	} else {
+		Util::UpdateImGuiInput(desc.OutputWindow, displayW, displayH);
+	}
 
 	ImGui::NewFrame();
 
-	// Detect display size change (cross-session via ini handler, mid-session via member)
-	const float2 currentDisplaySize{ displayW, displayH };
+	// Detect display size change (cross-session via ini handler, mid-session via
+	// member). Use the resolved ImGui canvas, which is the panel-logical size in
+	// VR (stable) and the swapchain size on desktop.
+	const float2 currentDisplaySize{ ImGui::GetIO().DisplaySize.x, ImGui::GetIO().DisplaySize.y };
 	if (menu.lastDisplaySize.x > 0.f && menu.lastDisplaySize != currentDisplaySize) {
 		logger::info("Display size changed: {}x{} -> {}x{}, resetting window layout",
 			menu.lastDisplaySize.x, menu.lastDisplaySize.y, currentDisplaySize.x, currentDisplaySize.y);

@@ -100,6 +100,20 @@ void VR::FeedHelperEvent(uint32_t device, uint32_t key, bool pressed, float stic
 
 void VR::DrawHelperBindingsTable() { g_client.DrawBindingsTable(); }
 
+bool VR::GetHelperPanelSize(uint32_t& width, uint32_t& height) const
+{
+	if (!g_client.IsConnected() || !g_client.Helper())
+		return false;
+	API::PanelHandle panel{};
+	// GetPanel allocates the panel RTV lazily (after the helper's D3D init), so
+	// this returns false until then — callers fall back to the desktop path.
+	if (!g_client.Helper()->GetPanel(g_client.Id(), &panel) || !panel.width || !panel.height)
+		return false;
+	width = panel.width;
+	height = panel.height;
+	return true;
+}
+
 void VR::UpdateHelper()
 {
 	if (!g_client.IsConnected())

@@ -7,11 +7,7 @@
 #include "VRStereoOptimizations.h"
 #include <algorithm>
 #include <d3d11.h>
-#include <imgui_impl_dx11.h>
-#include <magic_enum/magic_enum.hpp>
-#include <openvr.h>
 #include <string>
-#include <unordered_map>
 #include <vector>
 #include <winrt/base.h>
 
@@ -200,6 +196,12 @@ public:
 	[[nodiscard]] bool IsHelperRegistered() const;    ///< True once the menu client is connected.
 	[[nodiscard]] bool HelperRequestsRender() const;  ///< True when the helper routed focus to us this frame.
 	void DrawHelperBindingsTable();                   ///< Controller bindings table (from DrawSettings).
+
+	/// Pixel dimensions of the helper's menu panel RTV (from the client SDK's
+	/// GetPanel). False if the helper isn't connected or the panel isn't
+	/// allocated yet. Used to lay the menu out in the panel's logical space so
+	/// font sizing is correct independent of the desktop-mirror window.
+	[[nodiscard]] bool GetHelperPanelSize(uint32_t& width, uint32_t& height) const;
 
 	//=============================================================================
 	// PUBLIC MEMBER VARIABLES
