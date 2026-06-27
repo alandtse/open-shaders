@@ -22,28 +22,23 @@ using ControllerDevice = InputDeviceType;
 using ButtonCombo = InputCombo;
 
 /**
- * @brief Main VR feature class providing VR-specific optimizations and overlay UI system
+ * @brief Main VR feature class providing VR-specific optimizations and the ImGuiVRHelper client
  *
- * This class extends OverlayFeature to provide comprehensive VR support including:
+ * This class extends OverlayFeature and provides:
  * - Performance optimizations (depth buffer culling, occlusion culling)
- * - VR overlay system for in-game UI interaction
- * - Controller input processing and button combo mapping
- * - Overlay positioning and manipulation (HMD-relative, controller-relative, fixed world)
- * - Drag-and-drop overlay repositioning
+ * - Stereo reprojection/blend consistency passes
+ * - The ImGuiVRHelper client glue: the standalone helper plugin owns the VR
+ *   menu panel, overlay submission, controller input, combos, and the status
+ *   HUD; this feature wires CS settings/menu state to it (see HelperClient.cpp).
  *
  * The VR class follows the singleton pattern and integrates with the OpenVR API
- * to provide seamless VR experience within the Open Shaders framework.
+ * to provide a seamless VR experience within the Open Shaders framework.
  *
  * @example
  * ```cpp
- * // Get the VR singleton instance
  * VR* vr = VR::GetSingleton();
- *
- * // Check if VR is supported
  * if (vr->SupportsVR()) {
- *     // Configure VR settings
- *     vr->settings.EnableDepthBufferCulling = true;
- *     vr->settings.VRMenuScale = 1.2f;
+ *     vr->settings.EnableDepthBufferCullingExterior = true;
  * }
  * ```
  */
@@ -62,34 +57,8 @@ public:
 	 */
 	struct Config
 	{
-		// Overlay texture dimensions
-		static constexpr int kOverlayWidth = 1920;                                                                       ///< Overlay texture width in pixels
-		static constexpr int kOverlayHeight = 1080;                                                                      ///< Overlay texture height in pixels
-		static constexpr float kOverlayAspect = static_cast<float>(kOverlayHeight) / static_cast<float>(kOverlayWidth);  ///< Aspect ratio (height/width)
-
-		static inline Matrix CreateOverlayScaleMatrix(float scale)
-		{
-			return Matrix::CreateScale(scale, scale * kOverlayAspect, scale);
-		}
-
-		static constexpr float kDefaultMenuScale = 1.0f;      ///< Default overlay scale factor
-		static constexpr float kMinMenuScale = 0.1f;          ///< Minimum allowed overlay scale
-		static constexpr float kMaxMenuScale = 5.0f;          ///< Maximum allowed overlay scale
-		static constexpr float kDefaultComboTimeout = 3.0f;   ///< Default timeout for button combos (seconds)
+		static constexpr int kOverlayHeight = 1080;           ///< Reference panel height in pixels (used for font sizing)
 		static constexpr float kDefaultMouseDeadzone = 0.1f;  ///< Default thumbstick deadzone for mouse input
-		static constexpr float kDefaultMouseSpeed = 10.0f;    ///< Default mouse speed multiplier
-		static constexpr int kDefaultAutoHideSeconds = 30;    ///< Default auto-hide timeout for overlay messages
-		static constexpr int kMaxAutoHideSeconds = 300;       ///< Maximum auto-hide timeout (5 minutes)
-
-		// Default HMD overlay offset values (in meters, relative to HMD)
-		static constexpr float kDefaultHMDOffsetX = 0.195f;   ///< Default horizontal offset from HMD
-		static constexpr float kDefaultHMDOffsetY = -0.375f;  ///< Default vertical offset from HMD
-		static constexpr float kDefaultHMDOffsetZ = -1.355f;  ///< Default depth offset from HMD
-
-		// Default controller overlay offset values (in meters, relative to controller)
-		static constexpr float kDefaultControllerOffsetX = 0.295f;  ///< Default horizontal offset from controller
-		static constexpr float kDefaultControllerOffsetY = 0.211f;  ///< Default vertical offset from controller
-		static constexpr float kDefaultControllerOffsetZ = 0.063f;  ///< Default depth offset from controller
 	};
 
 	//=============================================================================
@@ -104,9 +73,9 @@ public:
 		return {
 			T("feature.vr.description", "Provides VR-specific optimizations and enhancements for Open Shaders, improving performance and visual quality in virtual reality environments."),
 			{ T("feature.vr.key_feature_1", "Depth buffer culling optimization for VR performance"),
-				T("feature.vr.key_feature_2", "In-scene overlay menu with HMD/Controller/Fixed World attach modes"),
-				T("feature.vr.key_feature_3", "VR controller input with customizable button mappings"),
-				T("feature.vr.key_feature_4", "Grip-to-drag overlay positioning with depth control"),
+				T("feature.vr.key_feature_2", "ImGuiVRHelper-driven in-headset menu, overlay, and controller input"),
+				T("feature.vr.key_feature_3", "Customizable controller button mappings via the helper bindings table"),
+				T("feature.vr.key_feature_4", "Stereo reprojection and depth-aware blend consistency"),
 				T("feature.vr.key_feature_5", "Configurable occlusion culling parameters"),
 				T("feature.vr.key_feature_6", "Enhanced VR compatibility with SteamVR and OpenComposite") }
 		};
@@ -148,8 +117,10 @@ public:
 	// OVERLAY FEATURE OVERRIDES
 	//=============================================================================
 
+	// VR status/welcome overlays are owned by ImGuiVRHelper (see RenderStatusHud),
+	// so the OverlayFeature draw path is a no-op and never reports itself visible.
 	virtual void DrawOverlay() override;
-	virtual bool IsOverlayVisible() const override { return IsOpenVRCompatible() && settings.kAutoHideSeconds > 0 && globals::menu && !globals::menu->IsEnabled; }
+	virtual bool IsOverlayVisible() const override { return false; }
 
 	//=============================================================================
 	// SETTINGS STRUCTURE
@@ -182,83 +153,17 @@ public:
 		bool EnableSSRFoveation = false;            ///< Foveate screen-space reflection raymarching in the periphery
 		bool EnableSSRFoveationHardCutoff = false;  ///< Hard-skip SSR outside the center (vs feathered falloff)
 
-		// VR Menu Overlay positioning settings
-		float VRMenuScale = Config::kDefaultMenuScale;  ///< Scale factor for overlay UI (0.5-2.0)
-		int VRMenuPositioningMethod = 1;                ///< 0 = HMD relative, 1 = Fixed world position
+		// Thumbstick deadzone for the wand-driven mouse cursor (0.0-1.0).
+		float mouseDeadzone = Config::kDefaultMouseDeadzone;
 
-		/**
-		 * @brief Defines how overlays are attached and positioned in VR space
-		 */
-		enum class OverlayAttachMode
-		{
-			HMDOnly = 0,         ///< Overlay attached to HMD only
-			ControllerOnly = 1,  ///< Overlay attached to controller only
-			Both = 2,            ///< Overlay can be attached to both HMD and controller
-			None = 3             ///< Overlay display disabled
-		};
-		OverlayAttachMode attachMode = OverlayAttachMode::HMDOnly;              ///< Current overlay attachment mode
-		ControllerDevice VRMenuAttachController = ControllerDevice::Secondary;  ///< Which controller to attach overlay to
-
-		// HMD overlay offset settings (in meters)
-		float VRMenuOffsetX = Config::kDefaultHMDOffsetX;  ///< Horizontal offset from HMD
-		float VRMenuOffsetY = Config::kDefaultHMDOffsetY;  ///< Vertical offset from HMD
-		float VRMenuOffsetZ = Config::kDefaultHMDOffsetZ;  ///< Depth offset from HMD
-
-		// Controller overlay offset settings (in meters)
-		float VRMenuControllerOffsetX = Config::kDefaultControllerOffsetX;  ///< Horizontal offset from controller
-		float VRMenuControllerOffsetY = Config::kDefaultControllerOffsetY;  ///< Vertical offset from controller
-		float VRMenuControllerOffsetZ = Config::kDefaultControllerOffsetZ;  ///< Depth offset from controller
-
-		// Input and interaction settings
-		bool VRMenuControllerDiagnosticsTestMode = false;     ///< Enable controller diagnostics mode
-		float mouseDeadzone = Config::kDefaultMouseDeadzone;  ///< Thumbstick deadzone for mouse input (0.0-1.0)
-		float mouseSpeed = Config::kDefaultMouseSpeed;        ///< Mouse speed multiplier (0.1-50.0)
-
-		// Wand pointing settings
-		bool EnableWandPointing = true;  ///< Enable controller wand/ray-cast pointing (modern VR input)
-
-		// Visual customization
-		std::array<float, 4> dragHighlightColor = { 1.0f, 1.0f, 0.0f, 0.3f };  ///< RGBA color for drag highlight
-
-		// Key binding configurations
-		std::vector<ButtonCombo> VRMenuOpenKeys = { ///< Button combos to open VR menu
-			ButtonCombo::Secondary(static_cast<uint32_t>(RE::BSOpenVRControllerDevice::Keys::kXA)),
-			ButtonCombo::Secondary(static_cast<uint32_t>(RE::BSOpenVRControllerDevice::Keys::kBY))
-		};
-		std::vector<ButtonCombo> VRMenuCloseKeys = { ///< Button combos to close VR menu
-			ButtonCombo::Both(static_cast<uint32_t>(RE::BSOpenVRControllerDevice::Keys::kGrip))
-		};
-		std::vector<ButtonCombo> VROverlayOpenKeys = { ///< Button combos to open VR overlay
+		// Overlay open/close combos forwarded to ImGuiVRHelper; the helper owns the
+		// menu open/close combos. Rebinds round-trip through the helper's bindings table.
+		std::vector<ButtonCombo> VROverlayOpenKeys = {
 			ButtonCombo::Secondary(static_cast<uint32_t>(RE::BSOpenVRControllerDevice::Keys::kJoystickTrigger))
 		};
-		std::vector<ButtonCombo> VROverlayCloseKeys = { ///< Button combos to close VR overlay
+		std::vector<ButtonCombo> VROverlayCloseKeys = {
 			ButtonCombo::Primary(static_cast<uint32_t>(RE::BSOpenVRControllerDevice::Keys::kJoystickTrigger))
 		};
-
-		// General interaction settings
-		float comboTimeout = Config::kDefaultComboTimeout;       ///< Timeout for button combo sequences (1.0-10.0 seconds)
-		int kAutoHideSeconds = Config::kDefaultAutoHideSeconds;  ///< Auto-hide timeout for overlay messages (>0 shows overlay, <=0 hides it)
-		bool EnableDragToReposition = false;                     ///< Allow drag-and-drop overlay repositioning
-
-		float VRMenuAutoResetDistance = 1000.0f;  // Default: 1000 units ≈ 14.3 meters
-
-		/**
-		 * @brief Validates if the current menu scale is within acceptable range
-		 * @return true if scale is between kMinMenuScale and kMaxMenuScale
-		 */
-		bool IsMenuScaleValid() const
-		{
-			return VRMenuScale >= Config::kMinMenuScale && VRMenuScale <= Config::kMaxMenuScale;
-		}
-
-		/**
-		 * @brief Validates if the current attach mode is valid
-		 * @return true if attach mode is within valid enum range
-		 */
-		bool IsAttachModeValid() const
-		{
-			return attachMode >= OverlayAttachMode::HMDOnly && attachMode <= OverlayAttachMode::None;
-		}
 
 		/**
 		 * @brief Clamps all settings to their valid ranges
@@ -269,11 +174,7 @@ public:
 		 */
 		void ClampToValidRanges()
 		{
-			VRMenuScale = std::clamp(VRMenuScale, Config::kMinMenuScale, Config::kMaxMenuScale);
 			mouseDeadzone = std::clamp(mouseDeadzone, 0.0f, 1.0f);
-			mouseSpeed = std::clamp(mouseSpeed, 0.1f, 50.0f);
-			comboTimeout = std::clamp(comboTimeout, 1.0f, 10.0f);
-			kAutoHideSeconds = std::clamp(kAutoHideSeconds, 0, Config::kMaxAutoHideSeconds);
 			StereoBlendDepthSigma = std::clamp(StereoBlendDepthSigma, 0.001f, 0.1f);
 			StereoBlendMaxFactor = std::clamp(StereoBlendMaxFactor, 0.0f, 0.5f);
 			StereoBlendColorThreshold = std::clamp(StereoBlendColorThreshold, 0.0f, 0.2f);

@@ -13,35 +13,14 @@
 #include <imgui_impl_dx11.h>
 #include <openvr.h>
 
-using AttachMode = VR::Settings::OverlayAttachMode;
-
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	VR::Settings,
 	EnableDepthBufferCullingInterior,
 	EnableDepthBufferCullingExterior,
 	MinOccludeeBoxExtent,
-	VRMenuScale,
-	VRMenuPositioningMethod,
-	attachMode,
-	VRMenuAttachController,
-	VRMenuOffsetX,
-	VRMenuOffsetY,
-	VRMenuOffsetZ,
-	VRMenuControllerOffsetX,
-	VRMenuControllerOffsetY,
-	VRMenuControllerOffsetZ,
 	mouseDeadzone,
-	mouseSpeed,
-	dragHighlightColor,
-	VRMenuOpenKeys,
-	VRMenuCloseKeys,
 	VROverlayOpenKeys,
 	VROverlayCloseKeys,
-	comboTimeout,
-	EnableDragToReposition,
-	kAutoHideSeconds,
-	VRMenuAutoResetDistance,
-	EnableWandPointing,
 	EnableStereoBlend,
 	StereoBlendDepthSigma,
 	StereoBlendMaxFactor,

@@ -18,8 +18,6 @@
 
 #define I18N_KEY_PREFIX "feature.vr."
 
-using AttachMode = VR::Settings::OverlayAttachMode;
-
 namespace
 {
 	bool BeginTabItemWithFont(const char* label, Menu::FontRole role, ImGuiTabItemFlags flags = ImGuiTabItemFlags_None)
