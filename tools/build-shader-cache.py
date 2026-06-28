@@ -35,6 +35,7 @@ visible in CommunityShaders.log as "Saved disk cache info (plugin version: X)").
 import argparse
 import configparser
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -101,20 +102,64 @@ def default_disabled_features(source_root: Path) -> set:
     return out
 
 
+# AIO membership truthy values / keys -- must match feature_in_aio() in CMakeLists.txt
+# (the packaging authority). The --check-aio-partition CI guard fails the build if
+# this logic drifts from CMake's, so the prebuilt cache can never omit an AIO feature
+# (a mismatch strips that feature's define + manifest section -> forced recompile).
+_AIO_TRUTHY = {"true", "1", "yes", "on"}
+_AIO_LINE_RE = re.compile(r"^[ \t]*(?:autoupload|aio)[ \t]*=[ \t]*(.*)$", re.IGNORECASE)
+
+
+def feature_in_aio(feature_dir: Path) -> bool:
+    """Mirror of CMake feature_in_aio(): a feature ships in the AIO if it has a CORE
+    marker, or a Features/*.ini sets `autoupload`/`aio` to a truthy value."""
+    if (feature_dir / "CORE").exists():
+        return True
+    for ini in feature_dir.glob("Shaders/Features/*.ini"):
+        for line in ini.read_text(encoding="utf-8-sig", errors="replace").splitlines():
+            m = _AIO_LINE_RE.match(line)
+            if m and m.group(1).strip().lower() in _AIO_TRUTHY:
+                return True
+    return False
+
+
+def aio_feature_dirs(source_root: Path) -> set:
+    """Feature directory names shipped in the AIO (the partition key CMake emits)."""
+    return {
+        d.name
+        for d in sorted((source_root / "features").iterdir())
+        if d.is_dir() and list(d.glob("Shaders/Features/*.ini")) and feature_in_aio(d)
+    }
+
+
 def aio_feature_stems(source_root: Path) -> set:
-    """Feature ini stems shipped in the AIO: CORE marker present or autoupload=true."""
+    """Feature ini stems shipped in the AIO (CORE / autoupload / aio truthy)."""
     stems = set()
     for feature_dir in sorted((source_root / "features").iterdir()):
         inis = list(feature_dir.glob("Shaders/Features/*.ini"))
-        if not inis:
-            continue
-        is_core = (feature_dir / "CORE").exists()
-        auto = any(line.split("=", 1)[1].split(";", 1)[0].strip().lower() == "true"
-            for ini in inis for line in ini.read_text(encoding="utf-8-sig", errors="replace").splitlines()
-            if line.lower().replace(" ", "").startswith("autoupload="))
-        if is_core or auto:
+        if inis and feature_in_aio(feature_dir):
             stems.update(i.stem for i in inis)
     return stems
+
+
+def check_aio_partition(source_root: Path, cmake_list_file: Path) -> int:
+    """Fail if this script's AIO partition disagrees with CMake's emitted list
+    (build/<preset>/aio-features.txt, one feature dir name per line). Keeps the two
+    feature_in_aio() implementations from drifting; assumes the default config
+    (AIO_INCLUDE_NON_AUTOUPLOAD=OFF, which CI uses)."""
+    cmake_set = {l.strip() for l in cmake_list_file.read_text(encoding="utf-8").splitlines() if l.strip()}
+    py_set = aio_feature_dirs(source_root)
+    if cmake_set == py_set:
+        print(f"AIO partition consistent ({len(py_set)} features).")
+        return 0
+    print("ERROR: AIO partition mismatch between CMakeLists.txt feature_in_aio() and "
+          "tools/build-shader-cache.py. Reconcile the two so the cache ships every AIO feature.",
+          file=sys.stderr)
+    if cmake_set - py_set:
+        print(f"  shipped by CMake but missing from cache builder: {sorted(cmake_set - py_set)}", file=sys.stderr)
+    if py_set - cmake_set:
+        print(f"  in cache builder but not shipped by CMake: {sorted(py_set - cmake_set)}", file=sys.stderr)
+    return 1
 
 IMAGESPACE_DIRS = {
     # (SE enum, VR enum) -> runtime fxpFilename dir; from RE/I/ImageSpaceManager.h X/X2 macros.
@@ -417,6 +462,8 @@ def main() -> int:
     ap.add_argument("--out", default="dist/shader-cache", help="output root")
     ap.add_argument("--jobs", type=int, default=os.cpu_count() or 4)
     ap.add_argument("--skip-compile", action="store_true", help="stage + Info.ini only (plumbing test)")
+    ap.add_argument("--check-aio-partition", metavar="CMAKE_LIST",
+        help="verify this script's AIO partition matches CMake's emitted aio-features.txt, then exit")
     args = ap.parse_args()
     args.jobs = max(1, args.jobs)
 
@@ -427,6 +474,8 @@ def main() -> int:
             "SE": REPO / ".github/configs/shader-validation.yaml",
             "VR": REPO / ".github/configs/shader-validation-vr.yaml",
         }
+    if args.check_aio_partition:
+        return check_aio_partition(REPO, Path(args.check_aio_partition))
     plugin_version = args.plugin_version or default_plugin_version()
     if args.emit_profile_config:
         strip, _ = profile_strip_defines(REPO, args.profile)

@@ -502,6 +502,18 @@ list(LENGTH AIO_INCLUDED_FEATURE_PATHS _aio_in_count)
 list(LENGTH AIO_EXCLUDED_FEATURE_PATHS _aio_out_count)
 message("\tAIO features included: ${_aio_in_count}")
 
+# Emit the authoritative AIO feature-dir list so tools/build-shader-cache.py can
+# verify (via --check-aio-partition) that its own partition matches; a drift would
+# silently strip an AIO feature from the prebuilt cache and force a recompile.
+set(_aio_names "")
+foreach(_fpath IN LISTS AIO_INCLUDED_FEATURE_PATHS)
+    get_filename_component(_n "${_fpath}" NAME)
+    list(APPEND _aio_names "${_n}")
+endforeach()
+list(SORT _aio_names)
+string(REPLACE ";" "\n" _aio_names_text "${_aio_names}")
+file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/aio-features.txt" "${_aio_names_text}\n")
+
 # Build the paths (relative to AIO root) that the archive step deletes
 # from the stage. We derive them from each feature's on-disk structure
 # because the source folder, inner shader dir, and .ini basename can
