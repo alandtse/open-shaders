@@ -661,7 +661,15 @@ jobs:
     upload-summary:
         name: Upload Summary
         runs-on: ubuntu-latest
-        needs: [prepare-nexus-matrix, prepare-artifacts, upload-to-nexus, upload-aio, upload-aio-changelog, check-nexus-versions]
+        needs:
+            [
+                prepare-nexus-matrix,
+                prepare-artifacts,
+                upload-to-nexus,
+                upload-aio,
+                upload-aio-changelog,
+                check-nexus-versions,
+            ]
         if: always() && needs.prepare-nexus-matrix.result == 'success'
         steps:
             - name: Checkout repository
