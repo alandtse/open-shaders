@@ -1,692 +1,156 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
-
-## Fork identity
-
-This repository is **Open Shaders** ([alandtse/open-shaders](https://github.com/alandtse/open-shaders), [Nexus mod 180419](https://www.nexusmods.com/skyrimspecialedition/mods/180419)), a fork of [Community Shaders](https://github.com/community-shaders/skyrim-community-shaders) ([Nexus mod 86492](https://www.nexusmods.com/skyrimspecialedition/mods/86492)). The public/display name is "Open Shaders"; the runtime identity is intentionally kept as upstream Community Shaders so user installs are drop-in compatible:
-
--   **Keep as `CommunityShaders`** (do NOT rename): the CMake `PROJECT_NAME`, the DLL filename, the `SKSE/Plugins/CommunityShaders/` runtime directory, the `CommunityShaders.log` log file, the ImGui window ID after `###`, asset paths under `package/Interface/CommunityShaders/`, and any HLSL include paths.
--   **Use "Open Shaders"**: in-game menu titles, README/AI-INSTRUCTIONS public-facing copy, the AIO Nexus mod filename, the GitHub release name, the in-game Welcome / FAQ / About text.
--   **Link "Community Shaders" explicitly to upstream**: when the text or comment refers to the upstream project (its Nexus page is 86492, its repo is `community-shaders/skyrim-community-shaders`, its wiki lives on that repo). Never link `doodlum/skyrim-community-shaders` — that path is dead. The fork's own Nexus page is 180419.
-
-The AIO bundle ships a feature when its `Shaders/Features/*.ini` sets `autoupload = true` or `aio = true`, or it is CORE (has a `CORE` marker file). Use `aio = true` (with `autoupload = false`) to bundle a third-party feature redistributed with permission without uploading it standalone — the per-feature matrix upload is gated on `autoupload`. A runtime-core feature (`IsCore()` returns `true`) must **also** carry a `CORE` marker, or its shaders are excluded from the AIO and it ships broken (e.g. `IBL/IBL.hlsli` is a shared include of `Lighting.hlsl`/`Water.hlsl`). Partition logic: `feature_in_aio` in `CMakeLists.txt`; `AIO_INCLUDE_NON_AUTOUPLOAD=ON` includes everything for local dev. The Nexus upload workflow ships only the AIO archive — there is no per-feature matrix distribution. See `.github/workflows/nexus-upload.yaml`.
-
-**Logo absence is intentional.** The upstream Community Shaders logo is non-GPL, not trademark-licensed, and may not be redistributed by forks — so `cs-logo.png` is not present in this repo. The icon loader's load path is null-safe at every consumer (`IconLoader.cpp` retries the colored fallback; `Menu.cpp` derives `showLogo` from `texture != nullptr`; `MenuHeaderRenderer` and `HomePageRenderer` gate all logo draws on the null check). Missing logo → one `logger::warn`, menu renders headers without the logo image, layout adjusts via the `showLogo` flag. Do not "fix" the missing file or restore the upstream asset.
-
-## Build Commands
-
-### WSL/Linux Environment Note
-
-This is a Windows-specific project requiring Visual Studio and Windows SDK. If working in WSL, use PowerShell to execute build commands:
-
-```bash
-# In WSL, use powershell.exe to run Windows commands
-powershell.exe -Command "./BuildRelease.bat [PRESET_NAME]"
-```
-
-### Primary Build Command
-
-```bash
-./BuildRelease.bat [PRESET_NAME]
-```
-
-**Available Presets** (from CMakePresets.json):
-
--   `ALL` (default) - Builds universal binary supporting SE/AE/VR runtime detection
--   `SE` - Skyrim Special Edition only (compile-time targeting)
--   `AE` - Anniversary Edition only (compile-time targeting)
--   `VR` - Skyrim VR only (compile-time targeting)
--   `PRE-AE` - SE + VR (excludes AE)
--   `FLATRIM` - SE + AE (excludes VR)
--   Tracy profiling is not a separate preset — add `-DTRACY_SUPPORT=ON` to any preset (e.g. `ALL`)
-
-**User Preset Template**:
-
--   `ALL-WITH-AUTO-DEPLOYMENT` - Extends `ALL` with `AUTO_PLUGIN_DEPLOYMENT=ON` (copy template to use)
-
-### Development Setup
-
-1. Copy `CMakeUserPresets.json.template` → `CMakeUserPresets.json`
-2. Configure `CommunityShadersOutputDir` for auto-deployment to Skyrim installations
-3. Set build options in user preset or CMake cache:
-
-**Build Options** (CMake cache variables):
-
--   `AUTO_PLUGIN_DEPLOYMENT` (default: OFF) - Auto-copy build output to `CommunityShadersOutputDir`
--   `ZIP_TO_DIST` (default: ON) - Creates individual feature packages as 7z files in `/dist`
--   `AIO_ZIP_TO_DIST` (default: ON) - Creates all-in-one distribution package as 7z in `/dist`
--   `TRACY_SUPPORT` (default: OFF) - Enables Tracy profiler integration for performance analysis
-
-**Auto-Deployment Configuration**:
-
-Set `CommunityShadersOutputDir` environment variable to semicolon-separated Skyrim Data directories:
-
-```
-CommunityShadersOutputDir=F:/MySkyrimModpack/mods/CommunityShaders;F:/SteamLibrary/steamapps/common/SkyrimVR/Data;F:/SteamLibrary/steamapps/common/Skyrim Special Edition/Data
-```
-
-### IDE / clangd setup
-
-The shipped presets use the Visual Studio generator, which does **not** emit a
-`compile_commands.json`. Without one, clangd parses every TU with the fallback
-flags in `.clangd` and reports false "unknown include / undefined symbol"
-diagnostics. After configuring the `ALL` preset once, generate an accurate
-compile database:
-
-```bash
-pwsh tools/gen-clangd-db.ps1
-```
-
-It stands up a throwaway Ninja configure (no build, reuses the `ALL` preset's
-vcpkg packages), writes `compile_commands.json` to the repo root (gitignored,
-machine-specific), and rewrites paths when the build runs under a `subst` drive.
-Re-run it when the include graph or CMake options change, then restart clangd.
-
-### Shader Development and Testing
-
-```bash
-# Install hlslkit (external dependency)
-pip install git+https://github.com/alandtse/hlslkit.git
-
-# Prepare shaders for validation (builds shader directory structure)
-cmake --build ./build/ALL --target prepare_shaders
-
-# Full shader suite validation (can be time-consuming)
-hlslkit-compile --shader-dir build/ALL/aio/Shaders --output-dir build/ShaderCache --config .github/configs/shader-validation.yaml --max-warnings 0 --suppress-warnings X1519
-
-# VR-specific validation
-hlslkit-compile --shader-dir build/ALL/aio/Shaders --output-dir build/ShaderCache --config .github/configs/shader-validation-vr.yaml --max-warnings 0 --suppress-warnings X1519
-
-# Targeted testing for faster development (recommended during development)
-# Test specific base shader
-hlslkit-compile --shader-dir build/ALL/aio/Shaders/Lighting.hlsl --output-dir build/ShaderCache --config .github/configs/shader-validation.yaml
-
-# Test specific compute shader
-hlslkit-compile --shader-dir build/ALL/aio/Shaders/DeferredCompositeCS.hlsl --output-dir build/ShaderCache --config .github/configs/shader-validation.yaml
-
-# Test specific feature directory
-hlslkit-compile --shader-dir build/ALL/aio/Shaders/ScreenSpaceGI/ --output-dir build/ShaderCache --config .github/configs/shader-validation.yaml
-
-# Test feature-specific compute shader
-hlslkit-compile --shader-dir build/ALL/aio/Shaders/LightLimitFix/ClusterBuildingCS.hlsl --output-dir build/ShaderCache --config .github/configs/shader-validation.yaml
-
-# Generate shader defines from game log (requires CommunityShaders.log from game)
-hlslkit-generate-defines --log CommunityShaders.log
-
-# Scan for buffer conflicts across features
-hlslkit-buffer-scan --features-dir features/
-
-# Prove a shader refactor changed no behavior (compiles base ref vs working tree,
-# compares DXBC across VR x HDR_OUTPUT permutations; exit 0 identical / 2 differs)
-pwsh tools/verify-shader-refactor.ps1 package/Shaders/Foo.hlsl   # bash: tools/verify-shader-refactor.sh
-```
-
-When refactoring an existing shader (especially the decompile-transcription shaders like
-`ISTemporalAA.hlsl`), use `tools/verify-shader-refactor.ps1` to prove the change is
-behavior-preserving: identical compiled bytecode means a provable no-op. When the refactor
-legitimately reorders ops (bytecode differs but behavior shouldn't), validate it with the runtime
-A/B harness instead — capture one frame, swap just that shader, and diff the output against the
-shipping baseline (`tools/taa-renderdoc-ab.py`). See `docs/development/shader-workflow.md` and
-`docs/development/shader-runtime-ab.md` for details.
-
-### Custom CMake Targets
-
-**Package and Deployment Targets**:
-
-```bash
-# Prepare AIO package structure (automatic with AIO_ZIP_TO_DIST or AUTO_PLUGIN_DEPLOYMENT)
-cmake --build ./build/ALL --target PREPARE_AIO
-
-# Prepare shaders only (useful for CI shader validation)
-cmake --build ./build/ALL --target prepare_shaders
-
-# Fast shader-only deployment (no DLL build, no tests - for dev iteration)
-# See docs/development/shader-workflow.md for details
-cmake --build ./build/ALL --target COPY_SHADERS
-
-# Full deployment with DLL build and tests
-cmake --build ./build/ALL --target DEPLOY_ALL
-
-# Create AIO zip package (when AIO_ZIP_TO_DIST=ON)
-cmake --build ./build/ALL --target AIO_ZIP_PACKAGE
-```
-
-**Development Targets**:
-
-```bash
-# Format all C++ and HLSL code (requires clang-format)
-cmake --build ./build/ALL --target FORMAT_CODE
-
-# Generate shader validation configs from game logs (requires PowerShell)
-cmake --build ./build/ALL --target generate_shader_configs
-```
-
-## Architecture Overview
-
-### Manual packaging targets (detailed)
-
-The project also provides a set of manual packaging targets that create distributable 7z packages or install the project into the AIO folder. These targets are useful when you want precise control over packaging (CI artifacts, local QA, or manual deployment).
-
-Quick commands:
-
-```bash
-# Create the Core package (includes CORE features + plugin DLL)
-cmake --build ./build/ALL --target Package-Core
-
-# Create a manual AIO package (.7z) via install + tar
-cmake --build ./build/ALL --target Package-AIO-Manual
-
-# Create an individual feature package (name is sanitized from the feature folder)
-cmake --build ./build/ALL --target Package-<Feature>
-
-# Install into the AIO folder (installs to build/<preset>/aio)
-cmake --build ./build/ALL --target AIO
-
-# Alternatively use cmake --install to install to a custom prefix
-cmake --install ./build/ALL --prefix <TARGET_DIR>  # installs files according to CMake install() rules
-```
-
-Notes and behaviour:
-
--   `Package-Core` collects everything marked as CORE and the built plugin into a temporary folder, then tars it to `dist/${PROJECT_NAME}-${UTC_NOW}.7z`.
--   `Package-<Feature>` targets are generated per feature directory (non-CORE features). They create `${FEATURE}-${UTC_NOW}.7z` in `dist/`.
--   `Package-AIO-Manual` performs an install to the AIO folder and then creates a single AIO archive. This is similar to the automated `AIO_ZIP_PACKAGE`, but wired as an explicit file-producing custom target (useful for CI reproducibility).
--   `AIO` target runs `cmake --install` with the `aio` prefix so you can locally inspect the AIO folder layout without creating an archive.
--   The install-based packaging uses the CMake `install()` rules defined near the top of `CMakeLists.txt` (the project installs `SKSE/Plugins`, copies `package/` and feature folders, and removes the Core placeholder). This makes manual installs and CI artifacts consistent with the runtime AIO layout.
-
-Where to look in `CMakeLists.txt`:
-
--   Manual packaging targets are defined in the "Manual packaging targets (Package-XXX)" section and create files under `${CMAKE_SOURCE_DIR}/dist`.
--   The `install()` rules near the top of the file show what gets placed into the AIO layout when running `cmake --install`.
-
-### Plugin Architecture
-
-**Core Pattern**: Feature-driven modular system where each graphics enhancement is an independent `Feature` class that can be enabled/disabled at runtime.
-
-**Key Classes**:
-
--   `Feature` (src/Feature.h) - Base class for all graphics features
--   `State` (src/State.h) - Global singleton managing feature lifecycle
--   `ShaderCache` (src/ShaderCache.h) - Runtime shader compilation and caching
--   `Menu` (src/Menu.h) - ImGui-based in-game configuration interface
-
-### Feature Implementation Pattern
-
-Each feature follows consistent structure:
-
-1. **C++ Implementation**: `src/Features/FeatureName.cpp/h` inheriting from `Feature`
-2. **Shader Assets**: `features/FeatureName/Shaders/` containing HLSL shaders
-3. **Configuration**: `features/FeatureName/Shaders/Features/FeatureName.ini` with versioned settings
-4. **Core Features**: Features with `CORE` marker file bundle with main mod
-
-### DirectX Integration
-
-**Hooking System**: Uses Detours library to intercept DirectX 11 API calls in `src/Hooks.cpp`
-**Deferred Rendering**: Custom deferred pipeline in `src/Deferred.cpp` with feature integration points
-**Shader Management**: Runtime compilation with include system (`package/Shaders/Common/`) for shared utilities
-**Base Shader Library**: `package/Shaders/` contains Skyrim's core rendering shaders (Lighting.hlsl, Water.hlsl, Sky.hlsl, etc.)
-
-### Cross-Platform Support
-
-**Single Binary**: Supports SE/AE/VR through CommonLibSSE-NG runtime detection
-**VR Adaptations**: Specialized rendering paths in `src/Features/VR/`
-**API Abstraction**: Dual DirectX 11 support with feature-specific rendering strategies
-
-**Non-VR is primary; VR is a minimal divergence**: Treat non-VR (flatrim: SE/AE) as the primary code path. VR is a divergence kept to the **minimum necessary** — fork only where behavior is genuinely VR-specific (different engine data paths, stereo/per-eye projection, VR-only resources or RE structs). In **HLSL** that fork is `#if defined(VR)` (compile-time, per shader permutation); in **C++** it's the runtime flag `globals::game::isVR` — the universal binary uses runtime detection, not compile-time `#ifdef`s. Don't add VR branches for convenience or to paper over a side-effect of another change; prefer a single shared path and diverge only when truly required, keeping any VR branch small and localized. **For runtime VR checks prefer the cached `globals::game::isVR` over calling `REL::Module::IsVR()` directly** — the global is a one-time cache of that call set during init; reserve `REL::Module::IsVR()` for early-init contexts before globals are populated. **Why**: maximum accessibility for contributors to support both ecosystems — shared core code keeps the project approachable, so the same people can maintain both paths. When reviewing a change that adds VR branches, ask whether the divergence is intrinsic VR behavior or a workaround that could be unified.
-
-## Critical Dependencies
-
-### CommonLibSSE-NG (`extern/CommonLibSSE-NG`)
-
-**Essential reverse engineering library** providing reverse-engineered interfaces to interact with Skyrim's game engine safely.
-
-**Core Functionality**:
-
--   **Game Object Access**: RE namespace with Skyrim's internal classes and structures
--   **Memory Management**: Safe access to game memory with proper lifetime management
--   **Event System**: Hook into Skyrim's event dispatching (rendering, input, etc.)
--   **Address Library Integration**: Runtime address resolution for different game versions
-
-**Key Namespaces**:
-
--   `RE::` - Skyrim game objects and classes (BSShader, TESObjectREFR, etc.)
--   `REL::` - Relative addressing and version management
--   `SKSE::` - SKSE plugin interfaces and utilities
-
-### Runtime Targeting System
-
-CommonLibSSE-NG supports multiple Skyrim versions through sophisticated runtime targeting. Further information is available at https://github.com/CharmedBaryon/CommonLibSSE-NG/wiki/Runtime-Targeting
-
-**Build Presets**:
-
--   `SE` - Skyrim Special Edition only
--   `AE` - Anniversary Edition only
--   `VR` - Skyrim VR only
--   `ALL` - Multi-runtime support (default for this project)
-
-**Compile-Time vs Runtime Patterns**:
-
-**Single Runtime (compile-time)**: When targeting one version, `#ifdef ENABLE_SKYRIM_VR` conditionally compiles VR-specific code:
-
-```cpp
-#ifdef ENABLE_SKYRIM_VR
-    virtual void Unk_09(UI_MENU_Unk09 a_unk);  // VR-only vfunc
-#endif
-```
-
-**Multi-Runtime (runtime detection)**: When targeting ALL, uses runtime accessors:
-
-```cpp
-// Runtime member access with different offsets per version
-auto& GetRuntimeData() {
-    return REL::RelocateMemberIfNewer<PLAYER_RUNTIME_DATA>(
-        SKSE::RUNTIME_SSE_1_6_629, this, 0x3D8, 0x3E0);
-}
-
-// VR-specific runtime data (only exists in VR)
-auto& GetVRRuntimeData() {
-    return REL::RelocateMember<VR_PLAYER_RUNTIME_DATA>(this, 0, 0x3D8);
-}
-
-// Runtime detection
-if (REL::Module::IsVR()) {
-    // VR-specific code path
-}
-```
-
-**Key Runtime Utilities**:
-
--   `REL::RelocateMember<T>()` - Access members with different offsets
--   `REL::RelocateVirtual<T>()` - Call virtual functions with variant vtables
--   `REL::Module::IsVR()`, `IsAE()`, `IsSE()` - Runtime version detection
--   `REL::RelocationID()` - Dynamic address resolution based on version
-
-**Critical for Development**: When modifying classes that inherit from game objects, always check if they have runtime-specific variations and use appropriate accessor patterns.
-
-## Core Architecture
-
-### Global System (`src/Globals.h`)
-
-Central coordination point providing access to all major subsystems:
-
-**Core Systems**:
-
--   `globals::state` - Main plugin state and feature lifecycle management
--   `globals::deferred` - Deferred rendering pipeline coordinator
--   `globals::menu` - ImGui-based in-game configuration interface
--   `globals::shaderCache` - Runtime shader compilation and caching
-
-**Graphics Integration**:
-
--   `globals::d3d::*` - DirectX 11 device, context, and swapchain access
--   `globals::game::*` - Skyrim graphics state (shadowState, renderer, shaders)
--   `globals::upscaling` - FidelityFX and Streamline integration
--   `globals::dx12SwapChain` - DirectX 12 support for advanced features
-
-**Feature Registry** (`globals::features::`):
-All graphics features are globally accessible for cross-feature coordination:
-
--   Lighting: `lightLimitFix`, `volumetricLighting`, `skylighting`, `ibl`
--   Terrain: `terrainShadows`, `terrainBlending`, `terrainVariation`, `terrainHelper`
--   Materials: `extendedMaterials`, `hairSpecular`, `subsurfaceScattering`
--   Effects: `screenSpaceGI`, `screenSpaceShadows`, `waterEffects`, `wetnessEffects`
--   Environment: `cloudShadows`, `dynamicCubemaps`, `weatherEditor`, `skySync`
--   VR: `vr` - VR-specific adaptations and coordinate transformations
-
-### Shared Utilities (`src/Utils/`)
-
-Common functionality organized by domain:
-
--   `UI.h/cpp` - ImGui utilities, input mapping, and UI helper functions
--   `D3D.h/cpp` - DirectX utilities and helper functions
--   `Game.h/cpp` - Skyrim-specific game state and object utilities
--   `VRUtils.h/cpp` - VR-specific utilities and coordinate transformations
--   `FileSystem.h/cpp` - File I/O and path manipulation helpers
--   `Format.h/cpp` - String formatting and conversion utilities
--   `Serialize.h/cpp` - JSON serialization helpers
-
-### Shader Architecture
-
-**Base Shader Library** (`package/Shaders/`):
-
--   **Core Rendering**: `Lighting.hlsl`, `Water.hlsl`, `Sky.hlsl`, `Particle.hlsl` - Skyrim's main rendering pipeline
--   **Image Space Effects**: `IS*.hlsl` files - Post-processing effects (blur, depth of field, volumetric lighting)
--   **Compute Shaders**: `*CS.hlsl` files - GPU parallel processing (deferred composite, ambient composite)
--   **Common Utilities**: `Common/` directory with shared includes (BRDF.hlsli, Math.hlsli, GBuffer.hlsli)
-
-**Feature Shaders** (`features/*/Shaders/`):
-
--   **Feature-Specific**: Each feature has its own shader directory (e.g., `ScreenSpaceGI/`, `LightLimitFix/`)
--   **Compute-Heavy Features**: Many use compute shaders for performance (ClusterBuildingCS.hlsl, gi.cs.hlsl)
--   **Include Integration**: Features can use shared utilities from `package/Shaders/Common/`
-
-### Menu System
-
-Modular ImGui-based configuration interface with specialized renderers for different UI sections and centralized constants in `ThemeManager::Constants`.
-
-## Feature Development Workflow
-
-### Adding New Features
-
-1. Use template in `template/` directory as starting point
-2. Implement `Feature` interface with required methods:
-    - `DrawSettings()` - ImGui configuration UI with performance impact warnings
-    - `LoadSettings()` - JSON deserialization
-    - `SaveSettings()` - JSON serialization
-    - Feature-specific rendering hooks with performance considerations
-3. Add shader files to `features/NewFeature/Shaders/` with compute shader optimization
-4. Create versioned `.ini` configuration file with performance-related settings
-5. Register feature in appropriate source files and `globals::features`
-6. **Performance Testing**: Measure GPU impact and provide user toggles for heavy features
-
-### Testing and Validation
-
--   **Shader Compilation**: Use hlslkit tools for validation before commit
--   **Buffer Conflicts**: Run buffer_scan.py to detect register conflicts
--   **Integration Testing**: Build and test in-game with various Skyrim editions
--   **A/B Testing**: Use built-in A/B testing framework for performance comparisons
-
-### Version Management
-
-Feature versions are automatically extracted from `.ini` files and compiled into `FeatureVersions.h` at build time for backward compatibility checking.
-
-### Release Stages (Alpha / Beta)
-
-Features can declare a release-maturity stage in their `.ini` `[Info]` section. This drives the default-enabled state, a UI marker, and the version-audit policy.
-
-**Declaring a stage** (in `features/<Feature>/Shaders/Features/<Feature>.ini`):
-
-```ini
-[Info]
-Version = 0-2-0
-Beta = True
-```
-
--   Flags: `Alpha` or `Beta`. Truthy values are `true`, `1`, `yes`, `on` (case-insensitive). Absent or non-truthy means full **Release**.
--   `Alpha` takes precedence over `Beta` when both are set.
--   The flag line must start the line (after optional whitespace). The CMake parser in `CMakeLists.txt` and the Python parser in `tools/feature_version_audit.py` are both line-anchored; **keep these two regexes in sync** so build-time classification and audit enforcement agree.
-
-**Build-time baking**: `CMakeLists.txt` collects flagged features into `FEATURE_ALPHA_NAMES` / `FEATURE_BETA_NAMES` in the generated `FeatureVersions.h` (same mechanism as `FEATURE_CORE_NAMES`).
-
-**Runtime API** (`src/Feature.h`):
-
--   `Feature::GetReleaseStage()` returns `ReleaseStage::{Release, Beta, Alpha}` by looking the short name up in the baked sets. Resolve it once and pass it around; it is not cached.
--   `IsAlpha()` / `IsBeta()` convenience predicates.
--   `static GetReleaseStageTag(ReleaseStage)` returns the localized `[ALPHA]` / `[BETA]` marker (empty for Release). It takes the stage so callers that already resolved it avoid a redundant lookup.
--   `IsDisabledByDefault()` returns `true` for any non-Release stage, so **Alpha/Beta features start disabled on first install**. Users can still enable them via the "Disable at Boot" menu. Do not add a redundant `IsDisabledByDefault` override on a feature that already carries a stage flag.
-
-**UI**: `FeatureListRenderer` draws the stage tag next to the feature name. Alpha uses the theme `StatusPalette.Error` color, Beta uses `StatusPalette.Warning`.
-
-**Versioning convention** (enforced by `tools/feature_version_audit.py`):
-
--   Pre-release features use `0.x` versions. Entering pre-release from a release/fresh baseline: Beta starts at `0-2-0`, Alpha at `0-1-0`.
--   `alpha -> beta` bumps the minor and resets the patch.
--   Within the same pre-release stage, normal semver applies inside `0.x`.
--   A breaking change (`feat!:` / `BREAKING CHANGE:`) on a pre-release feature **promotes it to release `1-0-0` and strips the Alpha/Beta flag**. `--apply-bumps` performs both the version bump and the flag removal automatically.
--   Stage transitions are exact-match enforced (they may legitimately lower the version, e.g. release `1.x` -> beta `0-2-0`), unlike the lenient `>` check used within a stage.
-
-## Key Development Patterns
-
-### Memory Management
-
--   Modern C++23 with RAII principles
--   Smart pointers for automatic resource management
--   Thread pool (bshoshany-thread-pool) for parallel operations
-
-### Configuration System
-
--   JSON-based settings with nlohmann_json
--   Hot-reload capability through ImGui interface
--   Versioned feature configurations for compatibility
--   Restart-gated fields use `Util::Settings::BootSnapshot` + `kRestartFields` metadata to diff boot-latched vs selected values (drives `Util::Text::RestartNeeded` banners and MCP introspection; see Upscaling for a canary)
-
-### Error Handling
-
--   **Comprehensive Logging**: Integrated with SKSE logging system with different severity levels
--   **Graceful Degradation**: Features should disable cleanly on shader compilation failures
--   **User-Friendly Errors**: Report errors through ImGui interface with actionable guidance
--   **Graphics-Specific Errors**: Handle DirectX device lost scenarios and shader compilation failures
--   **Recovery Mechanisms**: Provide fallback rendering paths when advanced features fail
--   **Error Context**: Include relevant graphics state (current shader, buffer sizes) in error messages
-
-### Performance Considerations
-
-**Runtime Graphics Performance** (Critical for Skyrim gameplay):
-
--   **Deferred Rendering Impact**: Features hook into Skyrim's rendering pipeline, adding GPU workload
--   **Feature Toggles**: Users can disable individual features at boot if performance is impacted (`Disable at Boot` buttons)
--   **A/B Testing Framework**: Built-in performance comparison system for measuring feature impact
--   **VR Performance**: VR has higher performance requirements; some features may need different settings
--   **Tracy Profiler**: Optional build-time integration (`TRACY_SUPPORT`) for detailed performance analysis
--   **New Pass Instrumentation**: Use `CS_GPU_PASS("Feature::Pass")` (RAII `ScopedGpuPass`) at every render pass entry point. Direct `TracyD3D11Zone` / `State::BeginPerfEvent` at new pass sites are discouraged — they bypass the profiler table and create name divergence. Raw/legacy zones are still appropriate for sub-dispatch annotations within a pass where profiler timer granularity is not needed.
-
-**Shader Performance Patterns**:
-
--   **Compute Shaders**: Many features use compute shaders for parallel GPU processing (Screen Space GI, Light Limit Fix)
--   **Buffer Management**: Careful GPU buffer allocation to avoid conflicts and minimize memory transfers
--   **LOD Considerations**: Features should respect Skyrim's LOD system to maintain performance at distance
--   **Resolution Scaling**: Consider how features scale with different rendering resolutions
-
-**Performance Testing**:
-
--   **In-Game Profiling**: Use Tracy integration to measure actual frame impact
--   **Feature Isolation**: Test features individually to identify performance bottlenecks
--   **Cross-Edition Impact**: SE/AE/VR may have different performance characteristics for the same feature
-
-**Justifying `perf:` PRs** (every speedup carries a measured number):
-
--   **Justify at the PR level, not per commit.** A PR whose point is a speedup — shipped as `perf:`, or a `feat:`/`refactor:` justified by performance — states the measured before/after in its description. The PR as a whole earns the claim; individual commits don't each need a number.
--   **Normalize to the frame budget; don't quote raw deltas.** Express cost/saving as a percent of the target frame (90 fps ≈ 11.1 ms; flatrim 60 fps ≈ 16.7 ms). A percent stays meaningful even when the present rate is throttled — SteamVR drops to ~10 fps with the HMD off, so wall-clock frame time is unreliable, but per-pass GPU cost and its share of the budget are not. A raw "−2 ms" doesn't say whether it mattered.
--   **GPU per-pass cost (primary signal):** configure any preset with `-DTRACY_SUPPORT=ON` (e.g. `cmake --preset ALL -DTRACY_SUPPORT=ON`), connect Tracy (server port 8086), and read the pass's GPU zone; wrap a new pass with the `TracyD3D11Zone(ctx, "Name")` macro (or `tracy::D3D11ZoneScope` directly when the zone must span calls, as the SSR PreRender/PostRender hook does) if it isn't already instrumented.
--   **A/B a feature:** toggle it (in-game menu, or devbench `openshaders.feature`), capture the same scene and camera both ways, and diff the zone times with scene, resolution, and upscaler held fixed.
--   **No-op shader refactors:** prove with `tools/verify-shader-refactor.ps1` (bytecode-identical = provable no-op); for legitimate op-reordering use the runtime A/B harness `tools/taa-renderdoc-ab.py`.
--   A micro-optimization you can't isolate on the bench → label it `refactor:`, not `perf:`.
-
-### Development Performance
-
--   **Shader Testing**: Full validation suite can be time-consuming; use targeted testing during development
--   **Build Performance**: Multi-threaded compilation with job control (`hlslkit-compile --jobs N`)
--   **Iterative Development**: Test specific shader files/directories rather than entire shader suite
-
-## AI Assistant Guidelines
-
-### Role and Expertise
-
-**Act as an experienced graphics programming and Skyrim modding expert** with deep knowledge of:
-
--   DirectX 11/12 rendering pipelines and performance optimization
--   SKSE plugin development and Skyrim's game engine internals
--   CommonLibSSE-NG runtime targeting and cross-version compatibility
--   HLSL shader development and GPU compute programming
--   ImGui interface design and user experience considerations
-
-### Constructive Proactivity
-
-**Identify and address issues proactively**:
-
--   **Performance Concerns**: If code could impact rendering performance, suggest optimizations or user toggles
--   **Security Risks**: Flag potential crashes from unvalidated user input, malformed configs, or unsafe DirectX operations
--   **Runtime Compatibility**: Warn when code might break SE/AE/VR compatibility or suggest `REL::RelocateMember()` patterns
--   **Buffer Conflicts**: Highlight potential GPU register conflicts and recommend hlslkit buffer scanning
--   **Graphics Best Practices**: Suggest more idiomatic DirectX/HLSL patterns when appropriate
-
-**Implementation Standards**:
-
--   Provide complete, working solutions rather than TODO/FIXME placeholders
--   Explain reasoning for graphics/performance-related changes
--   Consider the full rendering pipeline impact of modifications
--   Always include necessary error handling for graphics operations
-
-### Code Quality Expectations
-
--   **No Placeholders**: Never include TODO, FIXME, or incomplete implementations unless explicitly requested for planning
--   **Complete Solutions**: Provide fully functional code with proper error handling and resource management
--   **Performance Conscious**: Always consider GPU workload and user experience impact
--   **Documentation**: Include Doxygen comments for public methods, especially graphics-related functions
--   **Concise Comments (1–2 lines max)**: Comments explain _why_, not _what_. Keep an inline/body comment to **1–2 lines**; go longer only for an extraordinary reason — a load-bearing invariant, gotcha, or "don't revert this" warning that genuinely needs the space. The long version (RE narrative, design rationale, the journey to the answer) belongs in the commit message / PR description, not the code. **Don't add an explicit "see commit/PR" pointer** — `git blame` already links each line to the commit that explains it; state the invariant and stop. **Don't name the one-off incident or tool that prompted the fix** ("the RenderDoc CTD", "the bug from #129") — describe the general failure mode the code guards against, which is what a future reader needs. Doxygen/API doc comments on public declarations are exempt from the limit but stay concise. No mid-function tutorial paragraphs.
--   **Minimal Churn**: PRs touch only what the change requires. Don't reformat unrelated lines, rename adjacent variables, or "clean up" code outside the PR's scope. If you spot something worth fixing nearby, open a follow-up PR or surface it in the description rather than expanding the diff. Auto-format/lint touching unrelated lines is acceptable only when it's the linter's own commit; mixing with logic changes obscures review.
--   **Comments describe present code, not absent code**: Don't add comments that describe code that used to be in the file but isn't now ("the Discord banner was removed", "this constant was renamed from X"). The reader sees only the present file; the deletion isn't visible. Past-tense framing of present behavior is fine ("if someone landed a commit during the release, abort"); the rule is specifically about describing code that no longer exists. Exception: a regression-risk warning that names the removed code so a future maintainer doesn't restore it ("do not restore cs-logo.png — the upstream logo isn't GPL/trademark-licensed for fork redistribution") is load-bearing and stays. Commit messages, PR descriptions, and CHANGELOG entries are the right place for "what changed" — code comments are not.
-
-## Development Best Practices (Learned from Codebase)
-
-### Commit Message Standards
-
-Follow conventional commit format for consistency:
-
--   **Format**: `type(scope): description`
--   **Title Limit**: 50 characters maximum
--   **Body Wrap**: 72 characters per line
--   **Examples**:
-    -   `feat(menu): extract DrawMenuVisitor helper methods`
-    -   `fix(imgui): resolve orphaned TableNextColumn calls`
-    -   `refactor(constants): centralize UI constants in ThemeManager`
-    -   `ci: gate cpp_tests build on changed files`
-    -   `build: drop CORE marker from per-feature AIO copy`
-    -   `test: fix cpp_tests build under MSVC C++23 modules`
-
-**Squash-merge note.** PRs are squash-merged, so the **PR title** becomes the commit message that semantic-release reads. Getting the title's type right matters more than per-commit messages on the PR branch — those get discarded. Use `gh pr edit <num> --title "..."` to fix a stale title before merge.
-
-**Type → release impact** (the full set accepted by `amannn/action-semantic-pull-request@v5` + `@semantic-release/commit-analyzer` defaults):
-
-| Type       | Use for                                                   | Release impact          |
-| ---------- | --------------------------------------------------------- | ----------------------- |
-| `feat`     | New user-facing feature or capability                     | **minor** (1.X.0)       |
-| `fix`      | Bug fix to user-facing behavior                           | **patch** (1.5.X)       |
-| `perf`     | Performance improvement to user-facing behavior           | **patch** (1.5.X)       |
-| `revert`   | Revert of a prior commit                                  | follows reverted commit |
-| `build`    | Build system, packaging, dependencies (CMake, vcpkg, AIO) | none                    |
-| `chore`    | Maintenance, misc tooling, repo hygiene                   | none                    |
-| `ci`       | CI workflows, GitHub Actions, lint configs                | none                    |
-| `docs`     | Documentation, comments, READMEs, CLAUDE.md               | none                    |
-| `refactor` | Code restructuring with no behavior change                | none                    |
-| `style`    | Formatting, whitespace, missing semicolons                | none                    |
-| `test`     | Tests, test fixtures, test infrastructure                 | none                    |
-
-Append `!` to the type (or add a `BREAKING CHANGE:` footer) for **major** (X.0.0).
-
-**Pick the type with version impact in mind.** Common traps:
-
--   A pure build/CI/test change mislabeled `fix:` will burn a patch release on a non-user-visible change. Use `build:`, `ci:`, or `test:` instead.
--   A refactor mislabeled `feat:` will force a minor bump.
--   A perf win on internal code (not exposed to users) is `refactor:`, not `perf:`.
--   `chore:` is a catch-all; prefer the specific type when one fits.
-
-### Release Branch Model
-
-| Branch         | Role                            | Releases produced                                                               |
-| -------------- | ------------------------------- | ------------------------------------------------------------------------------- |
-| `main`         | Stable release channel          | `vX.Y.Z`                                                                        |
-| `dev`          | Integration / RC                | `vX.Y.Z-rc.N` prereleases                                                       |
-| `hotfix/X.Y.x` | Maintenance for **older** lines | `vX.Y.Z` on the `X.Y` channel (also reused as staging for current-line patches) |
-
-**Default branch for PRs is `dev`.** Feature work, fixes, and refactors all land there via normal PRs. `main` is updated only through the release workflows — never PR a feature branch directly into `main`.
-
-**Branch lineage invariant:** after every release reconciles, `main` is an ancestor of `dev`, so every tag on `main` is reachable from `dev`. The `Release: Semantic Version` workflow keeps this invariant in two ways depending on the promotion source:
-
--   **dev → main promotion** (minor/major): main fast-forwards to the dev SHA, semantic-release appends a `chore(release):` commit on top, then dev fast-forwards to absorb that commit. No history rewrites on either branch.
--   **hotfix-staging → main promotion** (current-line patch): main fast-forwards to the hotfix-staging SHA, semantic-release appends the `chore(release):` commit, then dev is **rebase-reconciled** onto the new main. `git rebase` drops dev's originals of the cherry-picked fixes (patch-id match) and replays any unique dev work on top. This is the only place the workflow force-pushes (`--force-with-lease`) — it is intentional and load-bearing.
-
-After a hotfix release, open PRs targeting `dev` are auto-rebased by the `Auto-rebase open PRs` workflow (a thin wrapper around `peter-evans/rebase@v3`). PRs from forks need "Allow edits by maintainers" enabled or the action silently skips them; drafts and PRs labeled `no-auto-rebase` are also excluded. The workflow's job summary reports the rebased count and lists the buckets PRs can fall into; conflict-skipped PRs need a manual `git rebase origin/dev` by the author.
-
-**Patch flow (current line _or_ older line, same staging mechanism):**
-
-1. Land the fix on `dev` via normal PR (if applicable).
-2. Dispatch **Actions → Release: Hotfix Candidate** — auto-creates/reuses `hotfix/X.Y.x` from the latest stable tag, cherry-picks eligible `fix:`/`perf:` commits, opens a PR.
-3. PR checks build a `vX.Y.Z-prNNNN` prerelease for verification.
-4. Merge the candidate PR.
-5. Cut the release:
-    - **Current line** (`main` is on `X.Y`): dispatch **Release: Semantic Version** on `main` with `ff_target = <hotfix/X.Y.x tip SHA>`.
-    - **Older line** (`main` has shipped a newer minor/major): dispatch **Release: Semantic Version** on `hotfix/X.Y.x` with `ff_target` empty.
-
-**Minor/major release flow:**
-
-1. Cut RCs from `dev`: dispatch **Release: Semantic Version** on `dev`, `ff_target` empty → `vX.Y.Z-rc.N`.
-2. When ready, dispatch **Release: Semantic Version** on `main` with `ff_target = <dev SHA>` (typically the latest RC's SHA). The workflow FFs `main`, runs semantic-release to cut stable, then FFs `dev` to absorb the `chore(release):` commit.
-
-**Things agents should not do without explicit user direction:**
-
--   Force-push or rebase `main`, `dev`, or any `hotfix/*` branch. (The release workflow's rebase-reconcile of `dev` after a hotfix-staging promotion is the one sanctioned exception; humans should not replicate it manually unless the workflow's remediation block explicitly instructs them to.)
--   Manually create tags matching `v*` (semantic-release owns these).
--   Bump `CMakeLists.txt`'s `VERSION` field outside the release workflow.
--   PR a feature branch directly into `main`.
--   Run `Release: Semantic Version` on `hotfix/X.Y.x` for the current line — it will fail with `cannot be published as it is out of range` because the maintenance contract requires the hotfix line to be strictly older than `main`. Use `ff_target` into `main` instead.
-
-Full details: [Open Shaders developer wiki — Patch Release Process](https://github.com/alandtse/open-shaders/wiki/Developers#patch-release-process-any-line). The fork now maintains its own wiki (transferred from upstream) at `alandtse/open-shaders/wiki`; the `maint-update-wiki.yaml` workflow auto-publishes buffer documentation there on every push to `dev`. Upstream Community Shaders maintains its own copy at `community-shaders/skyrim-community-shaders/wiki` — link to whichever is appropriate for the audience.
-
-### Syncing from upstream Community Shaders
-
-Upstream is `community-shaders/skyrim-community-shaders`. Pull its changes **by merge, never cherry-pick** — this is the rule that keeps future syncs cheap:
-
--   **Merge, don't cherry-pick.** `git merge <upstream-ref>` (an upstream `vX.Y.Z` tag — there is no `upstream/master`). Cherry-pick rewrites each commit to a new SHA, so upstream's originals never become ancestors and the **next** `git merge` re-conflicts on the same hunks forever. A merge makes the upstream commits ancestors once, so subsequent syncs are clean.
--   **Land the sync PR as a merge commit, never squash.** Squash collapses the merge into one fresh SHA and throws the ancestry away, undoing the whole point. The repo default is squash, so the PR must be set to "Create a merge commit" explicitly (mirrors the #121 sync).
--   **Verify ancestry after landing:** `git merge-base --is-ancestor <upstream-sha> HEAD` must pass for each adopted upstream commit.
--   **Resolve conflicts in favor of keeping VR** (this fork is the VR maintainer). Typical conflicts are just fork CI config or feature `.ini` versions — resolve `--ours`. If upstream ships a VR removal, revert it and keep VR.
-
-### Code Organization and Refactoring Patterns
-
--   **Extract Large Functions**: Functions over ~200 lines should be broken into focused helper methods (see `FeatureListRenderer::DrawMenuVisitor` refactoring)
--   **Centralize Constants**: Magic numbers should be extracted to named constants in appropriate classes (see `ThemeManager::Constants`)
--   **Modular UI Design**: UI components should be separated by responsibility (Menu system uses HeaderRenderer, FeatureListRenderer, etc.)
-
-### ImGui Integration Patterns
-
--   **Table API Compliance**: Always pair `ImGui::BeginTable()` with `ImGui::EndTable()` - orphaned `TableNextColumn()` calls will cause issues
--   **Style Management**: Use RAII pattern for ImGui style changes; avoid save/restore without actual modifications
--   **Consistent Spacing**: Use centralized constants for UI spacing and padding rather than hardcoded values
-
-### Menu System Development
-
--   **Callback Pattern**: Use callbacks to access private methods from extracted UI components rather than making methods public
--   **State Management**: UI state should be managed centrally in Menu class, with components receiving state as parameters
--   **Documentation Standards**: Use Doxygen comments for all public methods, especially extracted utilities
-
-### Shader Development Workflow
-
--   **Build Before Test**: Always run `cmake --build ./build/ALL --target prepare_shaders` before shader validation
--   **Targeted Testing**: Use specific shader/directory paths with hlslkit-compile during development to avoid full suite delays
--   **Performance Optimization**: Use `--jobs`, `--strip-debug-defines`, and `--optimization-level` flags for faster compilation
--   **Validation Early**: Use hlslkit validation in development, not just CI, to catch issues early
-
-### Testing and Validation
-
--   **Build Verification**: Always test builds after significant refactoring - this codebase has complex dependencies
--   **Cross-Edition Testing**: Changes may affect SE/AE/VR differently due to engine differences
--   **Memory Management**: Pay attention to smart pointer usage and RAII patterns when modifying existing code
-
-### Security and Input Validation
-
--   **Configuration Files**: Always validate `.ini` files and user settings - malformed configurations can crash Skyrim
--   **Shader Input Validation**: Validate shader parameters and buffer sizes to prevent GPU driver crashes
--   **File Path Validation**: Sanitize file paths for texture/asset loading to prevent directory traversal
--   **Memory Safety**: Use bounds checking for buffer operations, especially with DirectX resource management
--   **Resource Limits**: Enforce reasonable limits on user-configurable values (texture sizes, buffer counts, etc.)
-
-### Code Quality Standards
-
--   **Descriptive Naming**: Use domain-specific names that clearly indicate graphics/rendering purpose
-    -   `screenSpaceAmbientOcclusion` not `ssao`
-    -   `UpdateShadowCascades()` not `UpdateSC()`
--   **Single Responsibility**: Each feature class should handle one graphics technique only
--   **Function Complexity**: Keep rendering functions focused; extract complex GPU operations into separate methods
--   **Resource Management**: Always pair graphics resource creation with proper cleanup (RAII)
--   **D3D11 Resource Naming**: Every D3D11 resource must be named for RenderDoc debuggability. Use
-    `Util::SetResourceName(ptr, "Feature::ResourceDescription")` after raw `device->Create*` calls.
-    For wrapper types (`Texture2D`, `Buffer`, `ConstantBuffer`, etc. in `Buffer.h`), pass the name
-    to the constructor and views are named automatically. Convention: `"Feature::Name"` for the
-    resource, `"Feature::Name SRV"` / `"Feature::Name UAV"` etc. for views (handled automatically
-    by the wrappers). The canonical implementation lives in `Util::SetResourceName` (`Utils/D3D.cpp`);
-    never duplicate the GUID or re-implement the call inline.
-
-### Common Pitfalls to Avoid
-
--   **Include Dependencies**: New features often require adding includes (ShaderCache.h, imgui_stdlib.h, etc.)
--   **Forward Declarations**: Use forward declarations in headers when possible, full includes in .cpp files
--   **VR Considerations**: VR has different rendering requirements - check VR-specific code paths when modifying graphics features
--   **Feature Versioning**: Feature .ini files use semantic versioning - increment appropriately when changing settings structure
--   **Performance Impact**: Always consider GPU workload when adding new rendering features - provide toggle options for users
--   **Buffer Conflicts**: Check hlslkit buffer scanning to avoid GPU register conflicts that cause rendering issues
--   **Graphics State Corruption**: Minimize DirectX state changes; restore state after modifications
--   **Thread Safety**: Graphics operations must consider Skyrim's rendering thread vs game logic thread
--   **DRY Violations in Cross-Cutting Refactors**: When adding a utility pattern across many files (e.g., resource naming, debug hooks), check whether the implementation exists in multiple places before writing a new one. For example, `Buffer.h` helper classes and raw `device->Create*` callsites both need `SetResourceName` — ensure they share a single implementation, not duplicate GUID definitions or parallel helper functions. Use a forward declaration in headers to delegate to the canonical implementation in `Utils/D3D.cpp` rather than re-implementing inline.
--   **DRY review is codebase-wide, not diff-local**: A DRY check on a PR/diff is not just "does this PR repeat itself" — it is "does this change reinvent functionality that an existing shared utility already provides, and should call instead." Review the diff **against the rest of the tree**: every new `device->Create*` should use `Util::SetResourceName`; a game-setting read should use `Util::GetGameSettingValue`; a runtime VR check should use the cached `globals::game::isVR` (this is a preference for code that runs after globals are populated — `REL::Module::IsVR()` stays correct in early-init/ctor paths, per the VR runtime-detection guidance above, so don't flag those); JSON (de)serialization should use `Utils/Serialize.h`, and string/format and path work the `Utils/Format.h` / `Utils/FileSystem.h` helpers. Flag a reimplementation even when the duplication is only against existing code and not visible within the PR itself, and prefer switching the new code to the shared utility — but only when a canonical helper actually exists to point to.
+This file provides guidance to coding agents when working with code in this repository.
+
+## Quick Checklist (Most Violated Rules)
+
+- **PR Title & Commits:** Use Conventional Commits (`type(scope): description`), title <= 50 chars, body wrapped to 72 chars/line. Target branch must be `dev` (never PR directly to `main`).
+- **PR Title Correction:** If a PR title becomes stale before merging, fix it with: `gh pr edit <num> --title "..."` (PR title becomes the release commit message).
+- **Comments:** Max 1-2 lines inline. Explain *why*, not *what*. Describe present code only (never absent/removed code, except for regression-risk warnings). No mid-function tutorials.
+- **Comment Invariants:** Do not add "see commit/PR" pointers or name one-off incidents/tools (e.g. "the RenderDoc CTD"). State the invariant and stop.
+- **Minimal Churn:** Do not reformat unrelated code or rename adjacent variables outside the PR scope.
+- **DRY Review:** Check new code against existing shared utilities codebase-wide (e.g. `SetResourceName`, `GetGameSettingValue`, `isVR` cache, serialize/format/filesystem helpers).
+- **DirectX Naming:** Name every D3D11 resource using `Util::SetResourceName`. Canonical implementation is in `Utils/D3D.cpp`; never duplicate the GUID or re-implement inline.
+- **VR Maintenance:** Keep VR divergence to the absolute minimum necessary. Resolve merge conflicts in favor of keeping VR.
+- **Git Safety:** Never force-push/rebase shared branches (`main`, `dev`, `hotfix/*`). Never manually create `v*` tags, hand-modify `CMakeLists.txt` version, or run release workflow on `hotfix/X.Y.x` for the current line.
+- **Upstream Sync:** Merge, never cherry-pick. Land sync PRs as merge commits, never squash. Verify ancestry after merging.
+
+---
+
+## Fork Identity & Logo Policy
+
+- **Keep as `CommunityShaders` (Do NOT rename C++ runtime identity):** Keep CMake `PROJECT_NAME`, DLL name, `SKSE/Plugins/CommunityShaders/` directory, `CommunityShaders.log`, ImGui window ID after `###`, asset paths under `package/Interface/CommunityShaders/`, and HLSL include paths.
+- **Use "Open Shaders" for public identity:** Use in in-game menu titles, READMEs/instructions, Nexus filenames, GitHub release names, and Welcome/FAQ/About text.
+- **Link Upstream Explicitly:** Link upstream references to `community-shaders/skyrim-community-shaders` (Nexus 86492). Do not link dead `doodlum` paths. Open Shaders' own Nexus is 180419.
+- **AIO Bundling Semantics:** 
+  - The Nexus upload workflow ships **ONLY** the AIO archive; there is no per-feature matrix distribution.
+  - The per-feature matrix upload is gated on `autoupload = true` (in the feature's `.ini` `[Info]` section).
+  - Use `aio = true` (with `autoupload = false`) to bundle a third-party feature redistributed with permission without uploading it standalone.
+  - A runtime-core feature (`IsCore()` returns `true`) must **also** carry a `CORE` marker file, or its shaders are excluded from the AIO bundle and it ships broken (e.g. shared includes).
+  - Partition logic is handled by `feature_in_aio` in `CMakeLists.txt`. For local development, configure `AIO_INCLUDE_NON_AUTOUPLOAD=ON` to include everything.
+- **No Logo:** `cs-logo.png` is intentionally absent (non-GPL). Do not "fix" this or restore upstream assets. Logo draws are null-safe fallback (retries colored fallback in `IconLoader.cpp` and gates draw on null check in `Menu.cpp`, `MenuHeaderRenderer`, and `HomePageRenderer`).
+  - *Exception to comment rules:* A regression-risk warning naming removed code so a future maintainer doesn't restore it (e.g. "do not restore cs-logo.png") is load-bearing and stays.
+
+---
+
+## Comment & Documentation Standards
+
+- **Doxygen:** Use Doxygen-style comments for all public declarations and API methods (especially graphics-related functions).
+- **Concise Inline Comments:** Keep body/inline comments to **1–2 lines max**. Go longer only for extraordinary reasons (load-bearing invariants, gotchas, or "don't revert this" warnings). Long-form explanations belong in the commit message or PR description, not in the code.
+- **Focus on Rationale:** Comments must explain *why* something is done, not *what* the code does. Do not add an explicit "see commit/PR" pointer (the VCS history already links each line to its commit) or name transient tools/issues ("the RenderDoc CTD").
+- **Present Code Only:** Comments must describe the present file's code. Do not comment on absent or deleted code (e.g., "this constant was renamed from X"), as the deletion is not visible to the reader.
+
+---
+
+## Code Quality & Architecture Standards
+
+- **No Placeholders:** Never ship TODO, FIXME, or incomplete implementations unless explicitly requested for planning. Provide complete, working solutions with full error handling.
+- **Minimal Churn:** PRs must touch only the lines required for the change. Do not reformat unrelated code, clean up surrounding structures, or rename adjacent variables.
+- **Descriptive Naming:** Use domain-specific names that clearly indicate graphics/rendering purpose (e.g. `screenSpaceAmbientOcclusion` not `ssao`, `UpdateShadowCascades()` not `UpdateSC()`).
+- **Single Responsibility:** Each feature class must handle exactly one graphics technique. Break up C++ functions longer than ~200 lines into focused helper methods.
+- **Centralize Constants:** Extract magic numbers and UI theme settings to named constants in appropriate classes (e.g., `ThemeManager::Constants`).
+- **DRY Codebase-Wide:** Do not reinvent existing functionality. Check your changes against the codebase and use shared utility libraries in `src/Utils/` (e.g., `Serialize.h` for JSON, `Format.h` for strings, `FileSystem.h` for paths, `UI.h` for ImGui). Always reuse:
+  - `Util::SetResourceName` for resource naming.
+  - `Util::GetGameSettingValue` for reading game settings.
+  - The cached `globals::game::isVR` for runtime VR checks.
+- **ImGui Integration:**
+  - Always pair `ImGui::BeginTable()` with `ImGui::EndTable()`. Orphaned `TableNextColumn()` calls cause layout bugs and crashes.
+  - Use the RAII pattern for ImGui style changes; avoid manual save/restore states.
+  - Use central Theme constants for UI spacing and padding instead of hardcoded values.
+  - Use callbacks to access private methods from modular UI components rather than making methods public. Keep UI state managed centrally in the `Menu` class.
+- **Restart-Gated Config Fields:** Use `Util::Settings::BootSnapshot` + `kRestartFields` metadata to diff boot-latched vs selected settings values. This drives `Util::Text::RestartNeeded` banners and MCP/menu introspection (Upscaling acts as the canary).
+
+---
+
+## DirectX & D3D11 Resource Naming
+
+- **Debuggability:** Every D3D11 resource must be named for RenderDoc debuggability using `Util::SetResourceName(ptr, "Feature::ResourceDescription")` after raw `device->Create*` calls.
+- **Wrappers:** For wrapper types (`Texture2D`, `Buffer`, `ConstantBuffer` in `Buffer.h`), pass the name to the constructor. Views are named automatically.
+- **Conventions:** Use `"Feature::Name"` for the resource and `"Feature::Name SRV"` / `"Feature::Name UAV"` for views.
+- **Implementation:** The canonical implementation lives in `Util::SetResourceName` (`Utils/D3D.cpp`). Never duplicate the GUID or re-implement this call inline.
+
+---
+
+## VR & Cross-Platform Policy
+
+- **Non-VR is Primary:** Treat non-VR (flatrim: SE/AE) as the primary code path. VR is a minimal divergence kept to the absolute minimum necessary.
+- **Divergence Rules:**
+  - Diverge only where behavior is genuinely VR-specific (stereo projection, VR-only resources, different engine data paths).
+  - *C++:* Use runtime checks. Universal binaries use runtime detection. Prefer the cached `globals::game::isVR` over calling `REL::Module::IsVR()` directly (reserve direct calls for early-init paths).
+  - *HLSL:* Diverge via `#if defined(VR)` compiler checks per shader permutation.
+  - Keep VR branches small and localized. Avoid VR branching to work around side-effects; unify paths where possible.
+- *For detailed multi-runtime member offset and virtual relocations, see [Repository Architecture](../docs/development/architecture.md).*
+
+---
+
+## Performance & Profiling Rules
+
+- **Pass Instrumentation:** Wrap every new render pass entry point with the `CS_GPU_PASS("Feature::Pass")` macro (RAII `ScopedGpuPass`). Do not use direct `TracyD3D11Zone` or `State::BeginPerfEvent` at pass entry sites.
+- **Sub-Dispatch Annotations:** Raw/legacy zones (such as `TracyD3D11Zone`) are only appropriate for sub-dispatches within a pass where profiler timer granularity is not required.
+- **Justifying Speedups:** PRs claiming performance speedups (or `perf:` commits) must state a measured number in their description:
+  - Justify at the PR level, not per commit.
+  - Normalize cost/savings as a percentage of the target frame budget (VR 90fps ≈ 11.1ms; flatrim 60fps ≈ 16.7ms). Do not quote raw wall-clock deltas.
+  - Measure GPU per-pass cost using Tracy (compile preset with `-DTRACY_SUPPORT=ON`, connect server to port 8086).
+  - A/B test a feature: toggle it (via in-game menu or devbench `openshaders.feature`), capture the same scene/camera both ways, and diff the zone times holding scene, resolution, and upscaler fixed.
+  - Micro-optimizations that cannot be isolated/benchmarked must be labeled `refactor:`, not `perf:`.
+
+---
+
+## Error Handling & Memory Management
+
+- **Memory Safety:** Follow RAII principles with C++23, using smart pointers for automatic resource management and the `bshoshany-thread-pool` for parallel operations.
+- **Graceful Degradation:** Features must disable cleanly on shader compilation failures or DirectX errors. Provide robust fallback rendering paths.
+- **Error Context:** Include relevant graphics state (current shader, buffer sizes, etc.) in error logs.
+- **User-Friendly Reporting:** Report errors through the ImGui interface with actionable guidance.
+
+---
+
+## Git & Release Invariants
+
+- **PR Branch Targets:** All PRs must target the `dev` branch. Never PR directly to `main`.
+- **Approval:** Never push to shared branches without explicit OK.
+- **Commit Message Formatting:** Use `type(scope): description`. Title <= 50 characters, body lines wrapped at 72 characters.
+- **Commit Versioning Traps:**
+  - Mislabeling a build/CI/test change as `fix:` burns a patch release on a non-user-visible change. Use `build:`, `ci:`, or `test:`.
+  - Mislabeling a refactor as `feat:` forces a minor bump.
+  - A performance improvement on internal code is `refactor:`, not `perf:`.
+  - `chore:` is a catch-all; prefer the specific type when one fits.
+- **Branch Lineage:** `main` must remain an ancestor of `dev`. Following a hotfix staging promotion, `dev` is auto-rebase-reconciled (force-pushed by the workflow) to absorb the `chore(release):` commit.
+- **Prohibitions (Never do these without explicit user direction):**
+  - Do not force-push or rebase `main`, `dev`, or any `hotfix/*` branch (except release workflow auto-reconciliations).
+  - Do not manually create tags matching `v*` (semantic-release owns these).
+  - Do not manually bump `CMakeLists.txt`'s `VERSION` field.
+  - Do not PR a feature branch directly into `main`.
+  - Do not run `Release: Semantic Version` on `hotfix/X.Y.x` for the current line (fails with "cannot be published as it is out of range"). Use `ff_target` into `main` instead.
+- **Upstream Sync Rules:**
+  - Pull changes from upstream `community-shaders/skyrim-community-shaders` by merge (`git merge <upstream-ref>`), never cherry-pick.
+  - Land sync PRs as merge commits, never squash.
+  - Resolve conflicts in favor of keeping VR. Revert upstream VR removals.
+  - Verify ancestry after landing: `git merge-base --is-ancestor <upstream-sha> HEAD` must pass.
+- *For conventional commit mappings, staging/RC workflows, release stages (Alpha/Beta ini flags), and manual packaging targets, see [Release Process](../docs/development/release-process.md) and [Upstream Sync Guide](../docs/development/upstream-sync.md).*
+
+---
+
+## Security & Input Validation
+
+- **Configuration:** Validate all `.ini` configuration files and user settings to prevent Skyrim startup crashes.
+- **Shaders:** Validate shader parameters and buffer sizes to prevent GPU driver crashes.
+- **Paths:** Sanitize and validate all file paths for texture and asset loading to prevent directory traversal.
+- **Bounds Checking:** Enforce bounds checking for buffer operations, especially during DirectX resource management.
+- **Limits:** Enforce reasonable limits on user-configurable values (texture sizes, buffer counts, etc.).
+
+---
+
+## Environment & Build Reference Summary
+
+- **WSL/Linux Note:** For Windows SDK compilation, run via PowerShell:
+  `powershell.exe -Command "./BuildRelease.bat [PRESET_NAME]"`
+- **Primary Build Command:** `./BuildRelease.bat [PRESET_NAME]`
+  - *Presets:* `ALL` (default), `SE`, `AE`, `VR`, `PRE-AE`, `FLATRIM`.
+- **clangd setup:** Generate compilation database after configuring `ALL`:
+  `pwsh tools/gen-clangd-db.ps1`
+- **Shader Refactor Verification:**
+  - *Identical DXBC:* Provable no-op (`tools/verify-shader-refactor.ps1`).
+  - *Legitimate op-reordering:* Use runtime A/B frame diffing (`tools/taa-renderdoc-ab.py`).
+- **Feature Workflow:** Start from `template/`, implement the C++ class inheriting from `Feature` (`DrawSettings()`, `LoadSettings()`, `SaveSettings()`, and feature-specific rendering hooks), and register in appropriate source files and `globals::features`.
+- *For detailed setup, options, and commands, see [VSCode Setup](../docs/development/vscode-setup.md), [Development README](../docs/development/README.md), [Shader Development Workflow](../docs/development/shader-workflow.md), [In-game A/B Testing](../docs/development/shader-runtime-ab.md), and [Repository Architecture](../docs/development/architecture.md).*

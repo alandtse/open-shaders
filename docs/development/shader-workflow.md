@@ -126,3 +126,62 @@ narrowed when provably safe — any of these forces a full run:
 find in the shader tree falls back to full validation. Preprocessor guards are
 ignored when scanning `#include`s, so the affected set is always a conservative
 superset — over-validating costs time, never correctness.
+
+## Manual Shader Validation Commands
+
+To validate shaders locally using `hlslkit` (external dependency):
+
+```bash
+# Install hlslkit
+pip install git+https://github.com/alandtse/hlslkit.git
+
+# Prepare shaders for validation (builds shader directory structure)
+cmake --build ./build/ALL --target prepare_shaders
+
+# Full shader suite validation
+hlslkit-compile --shader-dir build/ALL/aio/Shaders --output-dir build/ShaderCache --config .github/configs/shader-validation.yaml --max-warnings 0 --suppress-warnings X1519
+
+# VR-specific validation
+hlslkit-compile --shader-dir build/ALL/aio/Shaders --output-dir build/ShaderCache --config .github/configs/shader-validation-vr.yaml --max-warnings 0 --suppress-warnings X1519
+
+# Targeted testing for faster development
+# Test specific base shader
+hlslkit-compile --shader-dir build/ALL/aio/Shaders/Lighting.hlsl --output-dir build/ShaderCache --config .github/configs/shader-validation.yaml
+
+# Test specific compute shader
+hlslkit-compile --shader-dir build/ALL/aio/Shaders/DeferredCompositeCS.hlsl --output-dir build/ShaderCache --config .github/configs/shader-validation.yaml
+
+# Test specific feature directory
+hlslkit-compile --shader-dir build/ALL/aio/Shaders/ScreenSpaceGI/ --output-dir build/ShaderCache --config .github/configs/shader-validation.yaml
+
+# Test feature-specific compute shader
+hlslkit-compile --shader-dir build/ALL/aio/Shaders/LightLimitFix/ClusterBuildingCS.hlsl --output-dir build/ShaderCache --config .github/configs/shader-validation.yaml
+
+# Generate shader defines from game log (requires CommunityShaders.log from game)
+hlslkit-generate-defines --log CommunityShaders.log
+
+# Scan for buffer conflicts across features
+hlslkit-buffer-scan --features-dir features/
+```
+
+## Custom CMake Targets
+
+In addition to `COPY_SHADERS` and `DEPLOY_ALL`, the project provides several other specialized build and utility targets:
+
+```bash
+# Prepare AIO package structure (automatic with AIO_ZIP_TO_DIST or AUTO_PLUGIN_DEPLOYMENT)
+cmake --build ./build/ALL --target PREPARE_AIO
+
+# Prepare shaders only (useful for CI shader validation)
+cmake --build ./build/ALL --target prepare_shaders
+
+# Create AIO zip package (when AIO_ZIP_TO_DIST=ON)
+cmake --build ./build/ALL --target AIO_ZIP_PACKAGE
+
+# Format all C++ and HLSL code (requires clang-format)
+cmake --build ./build/ALL --target FORMAT_CODE
+
+# Generate shader validation configs from game logs (requires PowerShell)
+cmake --build ./build/ALL --target generate_shader_configs
+```
+

@@ -64,6 +64,13 @@ A real conflict (in a file _not_ on the fork-owned list) means upstream and the 
 
 The workflow `git merge --abort`s, posts the conflicted file list to the workflow summary, and exits non-zero. Resolution is manual: clone, run the same merge locally, resolve, push.
 
+### Conflict Resolution Guidelines
+
+1. **Resolve conflicts in favor of keeping VR** (this fork is the VR maintainer). Typical conflicts are just fork CI config or feature `.ini` versions — resolve `--ours`.
+2. If upstream ships a VR removal, revert it and keep VR.
+3. **Verify ancestry after landing:** `git merge-base --is-ancestor <upstream-sha> HEAD` must pass for each adopted upstream commit.
+
+
 If you do recurring syncs, enabling `git rerere` is worth the one-time setup — it caches each conflict resolution and replays it the next time the same hunks conflict. Per-clone setting, not repo-wide:
 
 ```bash

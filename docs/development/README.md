@@ -5,6 +5,9 @@
 -   **[VSCode Setup](./vscode-setup.md)** - IDE configuration, extensions, and auto-deploy
 -   **[Shader Workflow](./shader-workflow.md)** - Fast shader iteration and deployment
 -   **[Upstream Sync](./upstream-sync.md)** - How Open Shaders merges with upstream community-shaders
+-   **[Repository Architecture](./architecture.md)** - Codebase layout, global systems, and multi-runtime targeting
+-   **[Release Process](./release-process.md)** - Branch model, semantic version bumps, release stages, and manual packaging
+
 
 ## Quick Links
 
@@ -16,13 +19,35 @@
 -   **Create a worktree with submodules + local preset:** `pwsh ./tools/new-worktree.ps1 -Name my-branch`
 -   **Install optional git alias:** `pwsh ./tools/install-worktree-alias.ps1`
 
-### Build Presets
+### Build Presets and Meanings
 
--   `ALL` - Standard build (no auto-deployment)
--   `ALL-WITH-AUTO-DEPLOYMENT` - Build + deploy to game directory
+-   `ALL` - Universal binary supporting SE/AE/VR runtime detection (default, standard build without auto-deployment)
+-   `SE` - Skyrim Special Edition only (compile-time targeting)
+-   `AE` - Anniversary Edition only (compile-time targeting)
+-   `VR` - Skyrim VR only (compile-time targeting)
+-   `PRE-AE` - Special Edition + VR (excludes AE)
+-   `FLATRIM` - Special Edition + AE (excludes VR)
+-   `ALL-WITH-AUTO-DEPLOYMENT` - Extends `ALL` with `AUTO_PLUGIN_DEPLOYMENT=ON` to deploy built plugins and assets directly to target directories (copy template `CMakeUserPresets.json.template` to `CMakeUserPresets.json` to configure).
 -   `Dev` - Fast iteration preset (recommended for development)
 
 See `CMakePresets.json` for all available presets.
+
+### Build and Development Configuration
+
+To customize builds, set these CMake options (cache variables):
+
+-   `AUTO_PLUGIN_DEPLOYMENT` (default: `OFF`) - Auto-copy build output to `CommunityShadersOutputDir`.
+-   `ZIP_TO_DIST` (default: `ON`) - Creates individual feature packages as 7z files in `/dist`.
+-   `AIO_ZIP_TO_DIST` (default: `ON`) - Creates all-in-one distribution package as 7z in `/dist`.
+-   `TRACY_SUPPORT` (default: `OFF`) - Enables Tracy profiler integration for performance analysis.
+
+#### Auto-Deployment Configuration
+Set the `CommunityShadersOutputDir` environment variable to a semicolon-separated list of target Skyrim Data directories:
+
+```
+CommunityShadersOutputDir=F:/MySkyrimModpack/mods/CommunityShaders;F:/SteamLibrary/steamapps/common/SkyrimVR/Data;F:/SteamLibrary/steamapps/common/Skyrim Special Edition/Data
+```
+
 
 ## Worktrees
 
