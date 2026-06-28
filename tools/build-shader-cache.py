@@ -124,11 +124,12 @@ def feature_in_aio(feature_dir: Path) -> bool:
 
 
 def aio_feature_dirs(source_root: Path) -> set:
-    """Feature directory names shipped in the AIO (the partition key CMake emits)."""
+    """Feature directory names shipped in the AIO (the partition key CMake emits).
+    Mirrors CMake feature_in_aio() exactly -- CORE features qualify with no ini."""
     return {
         d.name
-        for d in sorted((source_root / "features").iterdir())
-        if d.is_dir() and list(d.glob("Shaders/Features/*.ini")) and feature_in_aio(d)
+        for d in (source_root / "features").iterdir()
+        if d.is_dir() and feature_in_aio(d)
     }
 
 

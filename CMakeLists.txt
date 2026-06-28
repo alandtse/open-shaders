@@ -439,45 +439,10 @@ string(TIMESTAMP UTC_NOW "%Y-%m-%dT%H-%MZ" UTC)
 # Set AIO directory path used by multiple targets below
 set(AIO_DIR "${CMAKE_CURRENT_BINARY_DIR}/aio")
 
-# TRUE if the feature ships in the AIO: it is CORE, or its `.ini` sets
-# `autoupload = true` or `aio = true` (aio bundles without a standalone
-# upload — the matrix upload is gated on autoupload). Result in ${out_var}.
-function(feature_in_aio feature_path out_var)
-    if(EXISTS "${feature_path}/CORE")
-        set(${out_var} TRUE PARENT_SCOPE)
-        return()
-    endif()
-    file(GLOB _ini_candidates "${feature_path}/Shaders/Features/*.ini")
-    foreach(_ini IN LISTS _ini_candidates)
-        file(
-            STRINGS "${_ini}"
-            _ini_lines
-            REGEX "^[ \t]*(autoupload|aio)[ \t]*="
-        )
-        foreach(_line IN LISTS _ini_lines)
-            # Strip "key =" to extract the value, lowercase it.
-            string(
-                REGEX REPLACE "^[ \t]*(autoupload|aio)[ \t]*=[ \t]*"
-                ""
-                _val
-                "${_line}"
-            )
-            string(STRIP "${_val}" _val)
-            string(TOLOWER "${_val}" _val)
-            # Treat unset / falsey values as off; only explicit truthy values count.
-            if(
-                _val STREQUAL "true"
-                OR _val STREQUAL "1"
-                OR _val STREQUAL "yes"
-                OR _val STREQUAL "on"
-            )
-                set(${out_var} TRUE PARENT_SCOPE)
-                return()
-            endif()
-        endforeach()
-    endforeach()
-    set(${out_var} FALSE PARENT_SCOPE)
-endfunction()
+# feature_in_aio(): TRUE if the feature ships in the AIO (CORE, or its `.ini`
+# sets autoupload/aio truthy). Shared with the standalone partition emitter and
+# the CI consistency guard so all three agree on what the AIO contains.
+include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/AioPartition.cmake)
 
 # Partition features into AIO-included / -excluded sets.
 # AIO_INCLUDE_NON_AUTOUPLOAD=ON includes everything (local dev override).
@@ -501,21 +466,6 @@ endforeach()
 list(LENGTH AIO_INCLUDED_FEATURE_PATHS _aio_in_count)
 list(LENGTH AIO_EXCLUDED_FEATURE_PATHS _aio_out_count)
 message("\tAIO features included: ${_aio_in_count}")
-
-# Emit the authoritative AIO feature-dir list so tools/build-shader-cache.py can
-# verify (via --check-aio-partition) that its own partition matches; a drift would
-# silently strip an AIO feature from the prebuilt cache and force a recompile.
-set(_aio_names "")
-foreach(_fpath IN LISTS AIO_INCLUDED_FEATURE_PATHS)
-    get_filename_component(_n "${_fpath}" NAME)
-    list(APPEND _aio_names "${_n}")
-endforeach()
-list(SORT _aio_names)
-string(REPLACE ";" "\n" _aio_names_text "${_aio_names}")
-file(
-    WRITE "${CMAKE_CURRENT_BINARY_DIR}/aio-features.txt"
-    "${_aio_names_text}\n"
-)
 
 # Build the paths (relative to AIO root) that the archive step deletes
 # from the stage. We derive them from each feature's on-disk structure

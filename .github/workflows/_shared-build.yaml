@@ -184,10 +184,6 @@ jobs:
             - name: Prepare shaders
               if: steps.check-hlsl.outputs.skip != 'true'
               uses: ./.github/actions/prepare-shaders
-            - name: Verify AIO partition (CMake vs cache builder)
-              if: steps.check-hlsl.outputs.skip != 'true'
-              shell: bash
-              run: python tools/build-shader-cache.py --check-aio-partition build/ALL/aio-features.txt
             - name: Locate fxc.exe
               if: steps.check-hlsl.outputs.skip != 'true'
               id: find_fxc

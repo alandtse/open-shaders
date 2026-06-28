@@ -1,0 +1,50 @@
+name: "PR: AIO Partition Consistency"
+
+# Verifies tools/build-shader-cache.py's AIO partition matches CMake's
+# feature_in_aio() (cmake/AioPartition.cmake). A drift would silently drop an
+# AIO feature from the prebuilt shader cache and force a first-launch recompile.
+#
+# Deliberately a plain pull_request job (read-only token, no secrets, no build
+# cache): it runs the PR's own code but is not a cache-poisoning vector, and it
+# computes the CMake partition via `cmake -P` with no project()/vcpkg configure.
+
+on:
+    pull_request:
+        paths:
+            - "features/**/*.ini"
+            - "CMakeLists.txt"
+            - "cmake/AioPartition.cmake"
+            - "cmake/emit-aio-features.cmake"
+            - "tools/build-shader-cache.py"
+            - ".github/workflows/pr-aio-partition.yaml"
+    push:
+        branches: [dev, main, "hotfix/**"]
+        paths:
+            - "features/**/*.ini"
+            - "CMakeLists.txt"
+            - "cmake/AioPartition.cmake"
+            - "cmake/emit-aio-features.cmake"
+            - "tools/build-shader-cache.py"
+            - ".github/workflows/pr-aio-partition.yaml"
+
+permissions:
+    contents: read
+
+concurrency:
+    group: aio-partition-${{ github.event.pull_request.number || github.ref }}
+    cancel-in-progress: true
+
+jobs:
+    check:
+        runs-on: ubuntu-latest
+        steps:
+            - uses: actions/checkout@v6
+              with:
+                  persist-credentials: false
+            - uses: actions/setup-python@v6
+              with:
+                  python-version: "3.12"
+            - name: Compute CMake AIO partition
+              run: cmake -DOUTPUT=aio-features.txt -P cmake/emit-aio-features.cmake
+            - name: Verify cache builder partition matches CMake
+              run: python tools/build-shader-cache.py --check-aio-partition aio-features.txt
