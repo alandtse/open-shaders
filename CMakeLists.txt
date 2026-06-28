@@ -512,7 +512,10 @@ foreach(_fpath IN LISTS AIO_INCLUDED_FEATURE_PATHS)
 endforeach()
 list(SORT _aio_names)
 string(REPLACE ";" "\n" _aio_names_text "${_aio_names}")
-file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/aio-features.txt" "${_aio_names_text}\n")
+file(
+    WRITE "${CMAKE_CURRENT_BINARY_DIR}/aio-features.txt"
+    "${_aio_names_text}\n"
+)
 
 # Build the paths (relative to AIO root) that the archive step deletes
 # from the stage. We derive them from each feature's on-disk structure
