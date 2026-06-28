@@ -18,3 +18,13 @@ jobs:
             - uses: amannn/action-semantic-pull-request@v5
               env:
                   GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+            - name: "Enforce title length (<= 50 chars)"
+              env:
+                  TITLE: ${{ github.event.pull_request.title }}
+              run: |
+                  length=${#TITLE}
+                  if [ "$length" -gt 50 ]; then
+                      echo "PR title is too long: $length characters (max 50)."
+                      exit 1
+                  fi
