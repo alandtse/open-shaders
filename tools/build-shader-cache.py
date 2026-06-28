@@ -102,10 +102,10 @@ def default_disabled_features(source_root: Path) -> set:
     return out
 
 
-# AIO membership truthy values / keys -- must match feature_in_aio() in CMakeLists.txt
-# (the packaging authority). The --check-aio-partition CI guard fails the build if
-# this logic drifts from CMake's, so the prebuilt cache can never omit an AIO feature
-# (a mismatch strips that feature's define + manifest section -> forced recompile).
+# AIO membership truthy values / keys -- must match CMake's feature_in_aio()
+# (cmake/AioPartition.cmake, the packaging authority). The --check-aio-partition
+# guard fails CI if this drifts from CMake, so the prebuilt cache can never omit an
+# AIO feature (a mismatch strips its define + manifest section -> forced recompile).
 _AIO_TRUTHY = {"true", "1", "yes", "on"}
 _AIO_LINE_RE = re.compile(r"^[ \t]*(?:autoupload|aio)[ \t]*=[ \t]*(.*)$", re.IGNORECASE)
 
@@ -145,17 +145,17 @@ def aio_feature_stems(source_root: Path) -> set:
 
 def check_aio_partition(source_root: Path, cmake_list_file: Path) -> int:
     """Fail if this script's AIO partition disagrees with CMake's emitted list
-    (build/<preset>/aio-features.txt, one feature dir name per line). Keeps the two
-    feature_in_aio() implementations from drifting; assumes the default config
-    (AIO_INCLUDE_NON_AUTOUPLOAD=OFF, which CI uses)."""
+    (cmake_list_file: one feature dir name per line, from cmake/emit-aio-features.cmake).
+    Keeps the Python and CMake feature_in_aio() implementations from drifting; assumes
+    the default config (AIO_INCLUDE_NON_AUTOUPLOAD=OFF, which CI uses)."""
     cmake_set = {l.strip() for l in cmake_list_file.read_text(encoding="utf-8").splitlines() if l.strip()}
     py_set = aio_feature_dirs(source_root)
     if cmake_set == py_set:
         print(f"AIO partition consistent ({len(py_set)} features).")
         return 0
-    print("ERROR: AIO partition mismatch between CMakeLists.txt feature_in_aio() and "
-          "tools/build-shader-cache.py. Reconcile the two so the cache ships every AIO feature.",
-          file=sys.stderr)
+    print("ERROR: AIO partition mismatch between CMake's feature_in_aio() "
+          "(cmake/AioPartition.cmake) and tools/build-shader-cache.py. Reconcile the two "
+          "so the cache ships every AIO feature.", file=sys.stderr)
     if cmake_set - py_set:
         print(f"  shipped by CMake but missing from cache builder: {sorted(cmake_set - py_set)}", file=sys.stderr)
     if py_set - cmake_set:
