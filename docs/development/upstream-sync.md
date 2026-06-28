@@ -70,7 +70,6 @@ The workflow `git merge --abort`s, posts the conflicted file list to the workflo
 2. If upstream ships a VR removal, revert it and keep VR.
 3. **Verify ancestry after landing:** `git merge-base --is-ancestor <upstream-sha> HEAD` must pass for each adopted upstream commit.
 
-
 If you do recurring syncs, enabling `git rerere` is worth the one-time setup — it caches each conflict resolution and replays it the next time the same hunks conflict. Per-clone setting, not repo-wide:
 
 ```bash

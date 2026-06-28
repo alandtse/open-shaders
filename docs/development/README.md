@@ -8,7 +8,6 @@
 -   **[Repository Architecture](./architecture.md)** - Codebase layout, global systems, and multi-runtime targeting
 -   **[Release Process](./release-process.md)** - Branch model, semantic version bumps, release stages, and manual packaging
 
-
 ## Quick Links
 
 ### Common Tasks
@@ -42,12 +41,12 @@ To customize builds, set these CMake options (cache variables):
 -   `TRACY_SUPPORT` (default: `OFF`) - Enables Tracy profiler integration for performance analysis.
 
 #### Auto-Deployment Configuration
+
 Set the `CommunityShadersOutputDir` environment variable to a semicolon-separated list of target Skyrim Data directories:
 
 ```
 CommunityShadersOutputDir=F:/MySkyrimModpack/mods/CommunityShaders;F:/SteamLibrary/steamapps/common/SkyrimVR/Data;F:/SteamLibrary/steamapps/common/Skyrim Special Edition/Data
 ```
-
 
 ## Worktrees
 

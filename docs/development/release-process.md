@@ -22,7 +22,7 @@ PRs are squash-merged, so the **PR title** becomes the commit message that seman
 | `style`    | Formatting, whitespace, missing semicolons                | none                    |
 | `test`     | Tests, test fixtures, test infrastructure                 | none                    |
 
-- **Breaking Changes:** Append `!` to the type (or add a `BREAKING CHANGE:` footer) for **major** release bumps (X.0.0).
+-   **Breaking Changes:** Append `!` to the type (or add a `BREAKING CHANGE:` footer) for **major** release bumps (X.0.0).
 
 ---
 
@@ -35,10 +35,11 @@ PRs are squash-merged, so the **PR title** becomes the commit message that seman
 | `hotfix/X.Y.x` | Maintenance for **older** lines | `vX.Y.Z` on the `X.Y` channel (also reused as staging for current-line patches) |
 
 ### Branch Lineage Invariant
+
 After every release reconciles, `main` is an ancestor of `dev`, so every tag on `main` is reachable from `dev`. The `Release: Semantic Version` workflow keeps this invariant in two ways depending on the promotion source:
 
-- **dev → main promotion** (minor/major): `main` fast-forwards to the `dev` SHA, semantic-release appends a `chore(release):` commit on top, then `dev` fast-forwards to absorb that commit. No history rewrites.
-- **hotfix-staging → main promotion** (current-line patch): `main` fast-forwards to the hotfix-staging SHA, semantic-release appends the `chore(release):` commit, then `dev` is **rebase-reconciled** onto the new `main`. `git rebase` drops `dev`'s originals of the cherry-picked fixes (patch-id match) and replays any unique `dev` work on top. This is the only place the workflow force-pushes (`--force-with-lease`).
+-   **dev → main promotion** (minor/major): `main` fast-forwards to the `dev` SHA, semantic-release appends a `chore(release):` commit on top, then `dev` fast-forwards to absorb that commit. No history rewrites.
+-   **hotfix-staging → main promotion** (current-line patch): `main` fast-forwards to the hotfix-staging SHA, semantic-release appends the `chore(release):` commit, then `dev` is **rebase-reconciled** onto the new `main`. `git rebase` drops `dev`'s originals of the cherry-picked fixes (patch-id match) and replays any unique `dev` work on top. This is the only place the workflow force-pushes (`--force-with-lease`).
 
 After a hotfix release, open PRs targeting `dev` are auto-rebased by the `Auto-rebase open PRs` workflow. PRs from forks need "Allow edits by maintainers" enabled or the action silently skips them; drafts and PRs labeled `no-auto-rebase` are also excluded.
 
@@ -68,6 +69,7 @@ After a hotfix release, open PRs targeting `dev` are auto-rebased by the `Auto-r
 Features can declare a release-maturity stage in their `.ini` `[Info]` section. This drives the default-enabled state, a UI marker, and the version-audit policy.
 
 ### Declaring a Stage
+
 In `features/<Feature>/Shaders/Features/<Feature>.ini`:
 
 ```ini
@@ -76,30 +78,33 @@ Version = 0-2-0
 Beta = True
 ```
 
-- **Flags:** `Alpha` or `Beta`. Truthy values are `true`, `1`, `yes`, `on` (case-insensitive). Absent or non-truthy means full **Release**.
-- `Alpha` takes precedence over `Beta` when both are set.
-- The flag line must start the line (after optional whitespace). The CMake parser in `CMakeLists.txt` and the Python parser in `tools/feature_version_audit.py` are both line-anchored; **keep these two regexes in sync**.
+-   **Flags:** `Alpha` or `Beta`. Truthy values are `true`, `1`, `yes`, `on` (case-insensitive). Absent or non-truthy means full **Release**.
+-   `Alpha` takes precedence over `Beta` when both are set.
+-   The flag line must start the line (after optional whitespace). The CMake parser in `CMakeLists.txt` and the Python parser in `tools/feature_version_audit.py` are both line-anchored; **keep these two regexes in sync**.
 
 ### Build-time Baking
+
 `CMakeLists.txt` collects flagged features into `FEATURE_ALPHA_NAMES` / `FEATURE_BETA_NAMES` in the generated `FeatureVersions.h`.
 
 ### Runtime API (`src/Feature.h`)
-- `Feature::GetReleaseStage()` returns `ReleaseStage::{Release, Beta, Alpha}` by looking the short name up in the baked sets. Resolve it once and pass it around; it is not cached.
-- `IsAlpha()` / `IsBeta()` convenience predicates.
-- `static GetReleaseStageTag(ReleaseStage)` returns the localized `[ALPHA]` / `[BETA]` marker (empty for Release). It takes the stage so callers that already resolved it avoid a redundant lookup.
-- `IsDisabledByDefault()` returns `true` for any non-Release stage, so **Alpha/Beta features start disabled on first install**. Users can still enable them via the "Disable at Boot" menu; do not add a redundant `IsDisabledByDefault` override on a feature that already carries a stage flag.
+
+-   `Feature::GetReleaseStage()` returns `ReleaseStage::{Release, Beta, Alpha}` by looking the short name up in the baked sets. Resolve it once and pass it around; it is not cached.
+-   `IsAlpha()` / `IsBeta()` convenience predicates.
+-   `static GetReleaseStageTag(ReleaseStage)` returns the localized `[ALPHA]` / `[BETA]` marker (empty for Release). It takes the stage so callers that already resolved it avoid a redundant lookup.
+-   `IsDisabledByDefault()` returns `true` for any non-Release stage, so **Alpha/Beta features start disabled on first install**. Users can still enable them via the "Disable at Boot" menu; do not add a redundant `IsDisabledByDefault` override on a feature that already carries a stage flag.
 
 ### UI
-- `FeatureListRenderer` draws the stage tag next to the feature name. Alpha uses the theme `StatusPalette.Error` color, Beta uses `StatusPalette.Warning`.
+
+-   `FeatureListRenderer` draws the stage tag next to the feature name. Alpha uses the theme `StatusPalette.Error` color, Beta uses `StatusPalette.Warning`.
 
 ### Versioning Convention (Enforced by `tools/feature_version_audit.py`)
-- Pre-release features use `0.x` versions.
-- Beta starts at `0-2-0`, Alpha at `0-1-0`.
-- `alpha -> beta` bumps the minor and resets the patch.
-- Within the same pre-release stage, normal semver applies inside `0.x`.
-- A breaking change (`feat!:` / `BREAKING CHANGE:`) on a pre-release feature **promotes it to release `1-0-0` and strips the Alpha/Beta flag**. `--apply-bumps` performs both the version bump and the flag removal automatically.
-- Stage transitions are exact-match enforced (and may legitimately LOWER the version, e.g. release `1.x` -> beta `0-2-0`), unlike the lenient `>` check used within a stage.
 
+-   Pre-release features use `0.x` versions.
+-   Beta starts at `0-2-0`, Alpha at `0-1-0`.
+-   `alpha -> beta` bumps the minor and resets the patch.
+-   Within the same pre-release stage, normal semver applies inside `0.x`.
+-   A breaking change (`feat!:` / `BREAKING CHANGE:`) on a pre-release feature **promotes it to release `1-0-0` and strips the Alpha/Beta flag**. `--apply-bumps` performs both the version bump and the flag removal automatically.
+-   Stage transitions are exact-match enforced (and may legitimately LOWER the version, e.g. release `1.x` -> beta `0-2-0`), unlike the lenient `>` check used within a stage.
 
 ---
 
@@ -124,7 +129,7 @@ cmake --build ./build/ALL --target AIO
 cmake --install ./build/ALL --prefix <TARGET_DIR>
 ```
 
-- `Package-Core` collects everything marked as CORE and the built plugin into a temporary folder, then tars it to `dist/${PROJECT_NAME}-${UTC_NOW}.7z`.
-- `Package-<Feature>` targets create `${FEATURE}-${UTC_NOW}.7z` in `dist/`.
-- `Package-AIO-Manual` performs an install to the AIO folder and then creates a single AIO archive (similar to the automated `AIO_ZIP_PACKAGE`, but wired as an explicit file-producing target).
-- `AIO` target runs `cmake --install` with the `aio` prefix to inspect the folder layout without creating an archive.
+-   `Package-Core` collects everything marked as CORE and the built plugin into a temporary folder, then tars it to `dist/${PROJECT_NAME}-${UTC_NOW}.7z`.
+-   `Package-<Feature>` targets create `${FEATURE}-${UTC_NOW}.7z` in `dist/`.
+-   `Package-AIO-Manual` performs an install to the AIO folder and then creates a single AIO archive (similar to the automated `AIO_ZIP_PACKAGE`, but wired as an explicit file-producing target).
+-   `AIO` target runs `cmake --install` with the `aio` prefix to inspect the folder layout without creating an archive.
