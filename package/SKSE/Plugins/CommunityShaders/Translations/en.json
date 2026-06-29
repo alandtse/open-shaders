@@ -935,6 +935,7 @@
     "feature.light_editor.select_a_light": "Select a light",
     "feature.light_editor.select_mesh": "Select Mesh",
     "feature.light_editor.select_mesh_tooltip": "Click a mesh in the world to attach a new bulb, edit an existing bulb, or whitelist/blacklist this reference.",
+    "feature.light_editor.select_mesh_vr_unsupported": "Mesh picking is not supported in VR.",
     "feature.light_editor.shadow_depth_bias": "Shadow Depth Bias",
     "feature.light_editor.shadows_only": "Shadows Only",
     "feature.light_editor.shadows_only_tooltip": "Only show lights with HemiShadow or OmniShadow flags.",

@@ -1,6 +1,7 @@
 #include "LightEditor.h"
 #include "../Features/InverseSquareLighting.h"
 #include "../Features/LightLimitFix.h"
+#include "../Globals.h"
 #include "../I18n/I18n.h"
 #include "../Menu.h"
 #include "../Utils/UI.h"
@@ -975,11 +976,18 @@ void LightEditor::LoadPopupPrefs()
 
 void LightEditor::DrawAddLightButton()
 {
-	if (ImGui::Button(T(TKEY("select_mesh"), "Select Mesh"))) {
-		picker.BeginPick();
+	// Mesh picking ray-casts through the desktop camera at the ImGui cursor; there is no VR equivalent.
+	const bool isVR = globals::game::isVR;
+	{
+		const auto vrGuard = Util::DisableGuard(isVR);
+		if (ImGui::Button(T(TKEY("select_mesh"), "Select Mesh"))) {
+			picker.BeginPick();
+		}
 	}
 	if (auto _tt = Util::HoverTooltipWrapper()) {
-		ImGui::Text("%s", T(TKEY("select_mesh_tooltip"), "Click a mesh in the world to attach a new bulb, edit an existing bulb, or whitelist/blacklist this reference."));
+		ImGui::Text("%s", isVR ?
+								 T(TKEY("select_mesh_vr_unsupported"), "Mesh picking is not supported in VR.") :
+								 T(TKEY("select_mesh_tooltip"), "Click a mesh in the world to attach a new bulb, edit an existing bulb, or whitelist/blacklist this reference."));
 	}
 
 	if (picker.IsPicking()) {
