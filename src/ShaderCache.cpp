@@ -3485,9 +3485,9 @@ namespace SIE
 			// without polling. Guarded on the devbench host being present.
 			if (auto* dvb = DevBenchAPI::GetDevBenchInterface001()) {
 				const nlohmann::json payload{
-					{ "completedTasks", completedTasks.load(std::memory_order_relaxed) },
-					{ "failedTasks", failedTasks.load(std::memory_order_relaxed) },
-					{ "totalTasks", totalTasks.load(std::memory_order_relaxed) },
+					{ "completedTasks", completedSnapshot },
+					{ "failedTasks", failedSnapshot },
+					{ "totalTasks", totalSnapshot },
 					{ "durationMs", completionTimeMs },
 				};
 				const std::string dumped = payload.dump();
