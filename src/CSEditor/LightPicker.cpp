@@ -274,9 +274,8 @@ void LightPicker::Update()
 	}
 
 	if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
-		// Reuse the hover result if the mouse didn't move between the last hover update and click.
-		PickedMesh hit = hoverMesh.valid ? hoverMesh :
-		                                   (pickMode == PickMode::kEffect ? ResolveNearestToCursor(false) : ResolveUnderCursor(false));
+		// Resolve fresh at the click position; the throttled hover hit may lag the cursor.
+		PickedMesh hit = (pickMode == PickMode::kEffect) ? ResolveNearestToCursor(false) : ResolveUnderCursor(false);
 		if (hit.valid) {
 			// Log only the committed pick (hover resolves run silently to keep the log quiet).
 			logger::info("[LightPicker] Picked base 0x{:08X} '{}' model '{}' ref '{}' plugin '{}'",
