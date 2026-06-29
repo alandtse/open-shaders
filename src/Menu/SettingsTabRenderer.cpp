@@ -1010,6 +1010,11 @@ void SettingsTabRenderer::RenderFontsTab()
 		}
 
 		ImGui::EndTabItem();
+	} else if (auto* menuInstance = globals::menu; menuInstance->wantsFontPreviewAtlas) {
+		// Fonts tab not active: drop the preview-font atlas so it is not rebaked into every
+		// later atlas rebuild for the rest of the session.
+		menuInstance->wantsFontPreviewAtlas = false;
+		menuInstance->pendingFontReload = true;
 	}
 }
 
