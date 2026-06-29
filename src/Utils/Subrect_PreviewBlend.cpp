@@ -39,4 +39,15 @@ namespace Util::Subrect
 			context->OMSetBlendState(opaqueBlend.get(), nullptr, 0xFFFFFFFF);
 		}
 	}
+
+	void ImageOpaque(ID3D11ShaderResourceView* a_srv, const ImVec2& a_size, const ImVec2& a_uv0, const ImVec2& a_uv1)
+	{
+		if (!a_srv) {
+			return;
+		}
+		auto* drawList = ImGui::GetWindowDrawList();
+		drawList->AddCallback(OpaquePreviewBlendCallback, nullptr);
+		ImGui::Image(reinterpret_cast<ImTextureID>(a_srv), a_size, a_uv0, a_uv1);
+		drawList->AddCallback(ImDrawCallback_ResetRenderState, nullptr);
+	}
 }  // namespace Util::Subrect

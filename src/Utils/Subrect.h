@@ -184,4 +184,11 @@ namespace Util::Subrect
 	//      produces a cutout visible only through the HMD. RGB-only writes
 	//      leave the plate's pre-cleared alpha=1 in place.
 	void OpaquePreviewBlendCallback(const ImDrawList*, const ImDrawCmd*);
+
+	// Draws an ImGui image of a render-target SRV with opaque RGB blending (wraps the Image draw
+	// in OpaquePreviewBlendCallback + ImDrawCallback_ResetRenderState). Use instead of a raw
+	// ImGui::Image whenever the SRV is an RT with non-1 alpha, or the preview shows as a
+	// transparency mask (and a cutout through the HMD in VR). No-op if a_srv is null.
+	void ImageOpaque(ID3D11ShaderResourceView* a_srv, const ImVec2& a_size,
+		const ImVec2& a_uv0 = ImVec2(0, 0), const ImVec2& a_uv1 = ImVec2(1, 1));
 }  // namespace Util::Subrect
