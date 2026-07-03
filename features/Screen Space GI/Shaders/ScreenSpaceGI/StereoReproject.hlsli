@@ -17,7 +17,10 @@ float4 LinearToRawDepth(float4 d)
 	return (SharedData::CameraData.x - SharedData::CameraData.w / d) / SharedData::CameraData.z;
 }
 
-#ifdef VR
+// FRAMEBUFFER (not just VR) because ReprojectToOtherEye lives in the FrameBuffer-gated
+// half of VR.hlsli; the plain-compute gi.cs permutation (no FRAMEBUFFER) includes this
+// header but never calls the helper, so keep it out of that compile.
+#if defined(VR) && defined(FRAMEBUFFER)
 static const float kGIReprojectDepthAgree = 0.05;  // NDC surface-match tolerance
 
 // True when this eye's pixel can take the other eye's marched GI exactly: it
@@ -42,6 +45,6 @@ bool GIReprojectsCleanly(float2 uv, float linearDepth, uint eyeIndex, Texture2D<
 	otherPx = r.otherPx;
 	return Stereo::IsReprojectionExact(r, rawDepth, LinearToRawDepth(otherLinear), kGIReprojectDepthAgree);
 }
-#endif  // VR
+#endif  // VR && FRAMEBUFFER
 
 #endif  // SSGI_STEREO_REPROJECT
