@@ -147,11 +147,9 @@ namespace Stereo
 		float2 clampedMono = prevUVmono;
 
 #ifdef VR
-		// Reject when the reprojected mono UV leaves [0,1] on EITHER axis — symmetric, matching the
-		// SE/vanilla rule. The previous VR path clamped mono.x < 0 to 0 instead of rejecting, which on
-		// fast head turns smeared a stretched left-edge history column into the frame (transient
-		// brightening near each eye's left/centre-seam edge). Rejecting falls back to the current frame
-		// there, which is correct for a disoccluded edge.
+		// Reject on inclusive boundaries (<= 0 or >= 1) on both axes, matching the SE rule below.
+		// Do not clamp mono.x < 0 instead of rejecting: it smears a stretched history column at each
+		// eye's left/centre-seam edge on fast head turns.
 		isOutOfBounds = (prevUVmono.x >= 1.0) || (prevUVmono.x <= 0.0) || (prevUVmono.y <= 0.0) || (prevUVmono.y >= 1.0);
 		clampedMono.x = saturate(prevUVmono.x);
 #else
