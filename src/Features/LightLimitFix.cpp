@@ -1309,15 +1309,20 @@ void LightLimitFix::Hooks::BSLightingShader_SetupGeometry::thunk(RE::BSShader* T
 		RE::NiLight* niLight = IsPlausibleShadowLightPtr(reinterpret_cast<std::uintptr_t>(dirLight)) ? SafeReadDirectionalNiLight(dirLight) : nullptr;
 		if (Pass->numLights == 0 || !IsSafeDirectionalNiLight(niLight)) {
 			directionalSlotSafe = false;
-			static int logged = 0;
-			if (logged++ < 10) {
+			// One stale light is hit by many passes per frame; dedupe on the NiLight value
+			// so a single bad light logs once, not once per draw. Bounded total either way.
+			static std::uintptr_t lastLoggedNiLight = 1;  // 1 never equals a real/garbage slot value
+			static int distinctLogged = 0;
+			const auto niLightVal = reinterpret_cast<std::uintptr_t>(niLight);
+			if (niLightVal != lastLoggedNiLight && distinctLogged++ < 20) {
+				lastLoggedNiLight = niLightVal;
 				logger::warn(
 					"[LLF] BSLightingShader_SetupGeometry: directional sceneLights[0] unsafe "
 					"(numLights={} BSLight=0x{:x} NiLight=0x{:x}); skipping engine SetupGeometry "
 					"to avoid GeometrySetupConstantDirectionalLight null-deref (#92)",
 					Pass->numLights,
 					reinterpret_cast<std::uintptr_t>(dirLight),
-					reinterpret_cast<std::uintptr_t>(niLight));
+					niLightVal);
 			}
 		}
 	}
