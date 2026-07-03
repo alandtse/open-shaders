@@ -56,6 +56,9 @@ namespace SIE
 		std::chrono::system_clock::time_point maxMTime;
 	};
 
+	/// Newest mtime across a shader source and its recursive quoted includes, memoized per file.
+	/// The scan is textual (preprocessor-blind), which over-approximates: an ifdef'd-out include
+	/// still contributes its mtime. That errs toward recompiling, never toward serving stale.
 	static std::chrono::system_clock::time_point GetMaxShaderMTimeInternal(
 		const std::filesystem::path& path,
 		const std::filesystem::path& shadersRoot,
@@ -63,9 +66,7 @@ namespace SIE
 		std::unordered_set<std::string>& visited)
 	{
 		std::string pathStr = path.string();
-#ifdef _WIN32
 		std::transform(pathStr.begin(), pathStr.end(), pathStr.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-#endif
 
 		if (visited.contains(pathStr)) {
 			return std::chrono::system_clock::time_point::min();
@@ -118,6 +119,12 @@ namespace SIE
 				std::filesystem::path includePath = shadersRoot / includeName;
 				if (!std::filesystem::exists(includePath, ec)) {
 					includePath = path.parent_path() / includeName;
+					// Absent at both probes: an ifdef'd-out include for an uninstalled feature.
+					// Skipping matches the compiler (which never opens it); forcing a recompile
+					// here would defeat the disk cache on every boot for such installs.
+					if (!std::filesystem::exists(includePath, ec)) {
+						continue;
+					}
 				}
 
 				auto childTime = GetMaxShaderMTimeInternal(includePath, shadersRoot, memo, visited);
