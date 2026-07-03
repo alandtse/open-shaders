@@ -1241,6 +1241,10 @@ void LightLimitFix::UpdateStructure()
 
 namespace
 {
+	// Defined below with the effect-shader guard; declared here so the directional
+	// guard can reject a mapped-implausible NiLight before the engine derefs it.
+	bool ProbeReadable(const void* a_ptr, std::size_t a_size);
+
 	// SEH-guarded read of sceneLights[0]->light. The pointer-value plausibility
 	// check can't distinguish a live BSLight from a stale-but-canonical one, so
 	// reading dirLight->light can itself AV (#92). Treat any fault as "no NiLight"
@@ -1273,7 +1277,11 @@ void LightLimitFix::Hooks::BSLightingShader_SetupGeometry::thunk(RE::BSShader* T
 		// A stale-but-canonical dirLight passes the pointer-value check yet still AVs on
 		// dirLight->light, so capture the NiLight under SEH and reuse it below (no second deref).
 		RE::NiLight* niLight = IsPlausibleShadowLightPtr(reinterpret_cast<std::uintptr_t>(dirLight)) ? SafeReadDirectionalNiLight(dirLight) : nullptr;
-		if (Pass->numLights == 0 || !IsPlausibleShadowLightPtr(reinterpret_cast<std::uintptr_t>(niLight))) {
+		// A recycled BSLight can hand back a canonical-looking but unmapped NiLight; the
+		// engine reads fade/diffuse/direction unguarded through +0x174, so also require
+		// the range to be committed and readable (same probe as the effect-shader guard).
+		if (Pass->numLights == 0 || !IsPlausibleShadowLightPtr(reinterpret_cast<std::uintptr_t>(niLight)) ||
+			!ProbeReadable(niLight, 0x174)) {
 			directionalSlotSafe = false;
 			static int logged = 0;
 			if (logged++ < 10) {
