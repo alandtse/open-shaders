@@ -4,8 +4,13 @@
 // Shared Class-A cross-eye reprojection helpers for SSGI. Used by the gi.cs
 // eye-0-only march skip and the reproject transfer so a pixel is skipped only if
 // the reproject will fill it — the two hit/miss decisions cannot drift.
-// Requires Common/FrameBuffer.hlsli, Common/VR.hlsli, and ScreenSpaceGI/common.hlsli
-// to be included first (for FrameBuffer::, Stereo::, and FP_Z/RES_MIP/samplers).
+
+// Include our own dependencies so this is order-independent: the include sorter
+// reorders headers alphabetically, which otherwise pulls common.hlsli after this
+// file (SharedData/FP_Z/RES_MIP/samplers) and breaks the FRAMEBUFFER permutation.
+// All three are include-guarded, so this is a no-op where already included.
+#include "Common/VR.hlsli"
+#include "ScreenSpaceGI/common.hlsli"
 
 // Inverse of ScreenToViewDepth: linear view-space Z back to raw NDC depth.
 float LinearToRawDepth(float d)
