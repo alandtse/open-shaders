@@ -15,7 +15,6 @@
 #include <fstream>
 #include <mutex>
 #include <unordered_map>
-#include <unordered_set>
 
 #include "Deferred.h"
 #include "Feature.h"
@@ -50,92 +49,94 @@ namespace SIE
 		return status;
 	}
 
-	struct MemoEntry
+	struct IncludeParseEntry
 	{
 		std::chrono::system_clock::time_point selfMTime;
-		std::chrono::system_clock::time_point maxMTime;
+		std::vector<std::filesystem::path> includes;
 	};
 
-	/// Newest mtime across a shader source and its recursive quoted includes, memoized per file.
-	/// The scan is textual (preprocessor-blind), which over-approximates: an ifdef'd-out include
-	/// still contributes its mtime. That errs toward recompiling, never toward serving stale.
+	static std::string NormalizedPathKey(const std::filesystem::path& path)
+	{
+		// lexically_normal collapses ".."/"." spellings so aliases of one file share a key
+		// (and can't slip past the per-call cycle guard).
+		std::string key = path.lexically_normal().string();
+#ifdef _WIN32
+		std::transform(key.begin(), key.end(), key.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+#endif
+		return key;
+	}
+
+	/// Newest mtime across a shader source and its recursive quoted includes. Only the parsed
+	/// include lists are cached across calls (keyed by each file's own mtime); every query re-stats
+	/// the graph, so a changed descendant is always seen. The scan is textual (preprocessor-blind),
+	/// which over-approximates: an ifdef'd-out include still contributes its mtime. That errs
+	/// toward recompiling, never toward serving stale.
 	static std::chrono::system_clock::time_point GetMaxShaderMTimeInternal(
 		const std::filesystem::path& path,
 		const std::filesystem::path& shadersRoot,
-		std::unordered_map<std::string, MemoEntry>& memo,
-		std::unordered_set<std::string>& visited)
+		std::unordered_map<std::string, IncludeParseEntry>& parseCache,
+		std::unordered_map<std::string, std::chrono::system_clock::time_point>& callResults)
 	{
-		std::string pathStr = path.string();
-		std::transform(pathStr.begin(), pathStr.end(), pathStr.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-
-		if (visited.contains(pathStr)) {
-			return std::chrono::system_clock::time_point::min();
-		}
-		visited.insert(pathStr);
+		const std::string key = NormalizedPathKey(path);
+		if (auto it = callResults.find(key); it != callResults.end())
+			return it->second;
+		// In-progress marker: an include cycle resolves to min() and drops out of the max.
+		callResults[key] = std::chrono::system_clock::time_point::min();
 
 		std::error_code ec;
-		if (!std::filesystem::exists(path, ec)) {
-			return std::chrono::system_clock::now();
-		}
-
-		auto currentSelfMTime = std::chrono::clock_cast<std::chrono::system_clock>(std::filesystem::last_write_time(path, ec));
+		const auto selfMTime = std::chrono::clock_cast<std::chrono::system_clock>(std::filesystem::last_write_time(path, ec));
 		if (ec) {
-			return std::chrono::system_clock::now();
+			// Unreadable source: report "just changed" so the cache recompiles rather than serving stale.
+			const auto now = std::chrono::system_clock::now();
+			callResults[key] = now;
+			return now;
 		}
 
-		if (auto it = memo.find(pathStr); it != memo.end()) {
-			if (it->second.selfMTime == currentSelfMTime) {
-				visited.erase(pathStr);
-				return it->second.maxMTime;
-			}
-		}
-
-		auto maxTime = currentSelfMTime;
-
-		std::ifstream ifs(path);
-		if (ifs.is_open()) {
-			std::string line;
-			while (std::getline(ifs, line)) {
-				size_t start = line.find_first_not_of(" \t");
-				if (start == std::string::npos) {
-					continue;
-				}
-				if (line.compare(start, 8, "#include") != 0) {
-					continue;
-				}
-				size_t firstQuote = line.find('"', start + 8);
-				if (firstQuote == std::string::npos) {
-					continue;
-				}
-				size_t secondQuote = line.find('"', firstQuote + 1);
-				if (secondQuote == std::string::npos) {
-					continue;
-				}
-				std::string includeName = line.substr(firstQuote + 1, secondQuote - firstQuote - 1);
-				if (includeName.empty()) {
-					continue;
-				}
-
-				std::filesystem::path includePath = shadersRoot / includeName;
-				if (!std::filesystem::exists(includePath, ec)) {
-					includePath = path.parent_path() / includeName;
-					// Absent at both probes: an ifdef'd-out include for an uninstalled feature.
-					// Skipping matches the compiler (which never opens it); forcing a recompile
-					// here would defeat the disk cache on every boot for such installs.
-					if (!std::filesystem::exists(includePath, ec)) {
+		auto* parsed = [&]() -> const IncludeParseEntry* {
+			if (auto it = parseCache.find(key); it != parseCache.end() && it->second.selfMTime == selfMTime)
+				return &it->second;
+			IncludeParseEntry entry{ selfMTime, {} };
+			std::ifstream ifs(path);
+			if (ifs.is_open()) {
+				std::string line;
+				while (std::getline(ifs, line)) {
+					// Accept whitespace between '#' and "include" ("#	include" is the norm in
+					// this repo's nested-#if style).
+					size_t pos = line.find_first_not_of(" 	");
+					if (pos == std::string::npos || line[pos] != '#')
 						continue;
-					}
-				}
+					pos = line.find_first_not_of(" 	", pos + 1);
+					if (pos == std::string::npos || line.compare(pos, 7, "include") != 0)
+						continue;
+					const size_t firstQuote = line.find('"', pos + 7);
+					if (firstQuote == std::string::npos)
+						continue;
+					const size_t secondQuote = line.find('"', firstQuote + 1);
+					if (secondQuote == std::string::npos || secondQuote == firstQuote + 1)
+						continue;
+					const std::string includeName = line.substr(firstQuote + 1, secondQuote - firstQuote - 1);
 
-				auto childTime = GetMaxShaderMTimeInternal(includePath, shadersRoot, memo, visited);
-				if (childTime > maxTime) {
-					maxTime = childTime;
+					std::error_code probeEc;
+					std::filesystem::path includePath = shadersRoot / includeName;
+					if (!std::filesystem::exists(includePath, probeEc)) {
+						includePath = path.parent_path() / includeName;
+						// Absent at both probes: an ifdef'd-out include for an uninstalled feature.
+						// Skipping matches the compiler (which never opens it); forcing a recompile
+						// here would defeat the disk cache on every boot for such installs.
+						if (!std::filesystem::exists(includePath, probeEc))
+							continue;
+					}
+					entry.includes.push_back(std::move(includePath));
 				}
 			}
-		}
+			return &(parseCache[key] = std::move(entry));
+		}();
 
-		visited.erase(pathStr);
-		memo[pathStr] = MemoEntry{ currentSelfMTime, maxTime };
+		auto maxTime = selfMTime;
+		for (const auto& includePath : parsed->includes)
+			maxTime = std::max(maxTime, GetMaxShaderMTimeInternal(includePath, shadersRoot, parseCache, callResults));
+
+		callResults[key] = maxTime;
 		return maxTime;
 	}
 
@@ -143,12 +144,12 @@ namespace SIE
 		const std::filesystem::path& path,
 		const std::filesystem::path& shadersRoot)
 	{
-		static std::unordered_map<std::string, MemoEntry> memo;
-		static std::mutex memoMutex;
+		static std::unordered_map<std::string, IncludeParseEntry> parseCache;
+		static std::mutex parseCacheMutex;
 
-		std::lock_guard lock(memoMutex);
-		std::unordered_set<std::string> visited;
-		return GetMaxShaderMTimeInternal(path, shadersRoot, memo, visited);
+		std::lock_guard lock(parseCacheMutex);
+		std::unordered_map<std::string, std::chrono::system_clock::time_point> callResults;
+		return GetMaxShaderMTimeInternal(path, shadersRoot, parseCache, callResults);
 	}
 
 	// Custom include handler to track all includes during shader compilation
