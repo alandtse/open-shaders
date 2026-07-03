@@ -33,6 +33,7 @@
 #include "Common/Spherical Harmonics/SphericalHarmonics.hlsli"
 #include "Common/VR.hlsli"
 #include "ScreenSpaceGI/common.hlsli"
+#include "ScreenSpaceGI/StereoReproject.hlsli"
 
 Texture2D<float> srcWorkingDepth : register(t0);
 Texture2D<float4> srcNormalRoughness : register(t1);
@@ -358,14 +359,19 @@ void CalculateGI(
 	outPrevGeo[pxCoord] = half3(viewspaceZ, encodedWorldNormal);
 
 #ifdef STEREO_EYE0_ONLY
-	// Class-A reproject fills eye 1 from eye 0 in a following pass; skip the expensive
-	// march here. Geometry (outPrevGeo) is written above so next frame's temporal
-	// reprojection still has this eye's depth/normal.
+	// Class-A: skip the march only for eye-1 pixels the reproject pass will fill exactly
+	// (reprojects in-frame + matching surface in eye 0). Disoccluded pixels — the
+	// frustum-edge strip and occluder gaps — fall through and march natively so the
+	// reproject's fallback reads a real value, not a hole. Geometry (outPrevGeo) is
+	// written above regardless for next frame's temporal reprojection.
 	if (eyeIndex != 0) {
-		outAo[pxCoord] = 0;
-		outY[pxCoord] = 0;
-		outCoCg[pxCoord] = 0;
-		return;
+		int2 otherPx;
+		if (GIReprojectsCleanly(uv, viewspaceZ, eyeIndex, srcWorkingDepth, frameScale, otherPx)) {
+			outAo[pxCoord] = 0;
+			outY[pxCoord] = 0;
+			outCoCg[pxCoord] = 0;
+			return;
+		}
 	}
 #endif
 

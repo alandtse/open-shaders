@@ -631,10 +631,12 @@ void ScreenSpaceGI::CompileComputeShaders()
 	if (globals::game::isVR) {
 		shaderInfos.push_back({ &stereoSyncCompute, "stereoSync.cs.hlsl", { { "FRAMEBUFFER", "" } } });
 		shaderInfos.push_back({ &reprojectCompute, "reproject.cs.hlsl", { { "FRAMEBUFFER", "" } } });
-		// Eye-0-only GI permutation for the reproject path. Only meaningful with specular
-		// off (the reproject transfers diffuse GI); skip the unused specular combination.
+		// Eye-0-only GI permutation for the reproject path. FRAMEBUFFER exposes the
+		// Stereo:: reprojection helpers (gated out of VR.hlsli for plain compute). Only
+		// meaningful with specular off (the reproject transfers diffuse GI); skip the
+		// unused specular combination.
 		if (!settings.EnableExperimentalSpecularGI)
-			shaderInfos.push_back({ &giEye0OnlyCompute, "gi.cs.hlsl", { { "STEREO_EYE0_ONLY", "" } } });
+			shaderInfos.push_back({ &giEye0OnlyCompute, "gi.cs.hlsl", { { "STEREO_EYE0_ONLY", "" }, { "FRAMEBUFFER", "" } } });
 	}
 	for (auto& info : shaderInfos) {
 		if (globals::game::isVR)

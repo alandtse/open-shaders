@@ -577,6 +577,21 @@ namespace Stereo
 	}
 
 	/**
+	* @brief Canonical Class-A (view-independent) reprojection test: can this pixel take
+	* the other eye's value exactly?
+	*
+	* True only when the reprojection landed in-frame (result.valid) and the other eye
+	* shows the same surface (depths agree within agreeThreshold). Consumers use the one
+	* test both to skip the eye's own compute and to gate the transfer in the reproject
+	* pass, so the hit/miss decisions cannot drift. Depths must be in the same comparable
+	* space (raw/NDC); the caller converts and applies mask/sky rejection first.
+	*/
+	bool IsReprojectionExact(StereoBilateralResult result, float depth, float otherEyeDepth, float agreeThreshold)
+	{
+		return result.valid && (abs(otherEyeDepth - depth) <= agreeThreshold);
+	}
+
+	/**
 	* @brief Computes bilateral blend weight with depth comparison and back-check.
 	*
 	* Second stage of the stereo bilateral filter from Shi, Billeter, Eisemann 2022.

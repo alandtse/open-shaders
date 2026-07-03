@@ -1,0 +1,47 @@
+#ifndef SSGI_STEREO_REPROJECT
+#define SSGI_STEREO_REPROJECT
+
+// Shared Class-A cross-eye reprojection helpers for SSGI. Used by the gi.cs
+// eye-0-only march skip and the reproject transfer so a pixel is skipped only if
+// the reproject will fill it — the two hit/miss decisions cannot drift.
+// Requires Common/FrameBuffer.hlsli, Common/VR.hlsli, and ScreenSpaceGI/common.hlsli
+// to be included first (for FrameBuffer::, Stereo::, and FP_Z/RES_MIP/samplers).
+
+// Inverse of ScreenToViewDepth: linear view-space Z back to raw NDC depth.
+float LinearToRawDepth(float d)
+{
+	return (SharedData::CameraData.x - SharedData::CameraData.w / d) / SharedData::CameraData.z;
+}
+float4 LinearToRawDepth(float4 d)
+{
+	return (SharedData::CameraData.x - SharedData::CameraData.w / d) / SharedData::CameraData.z;
+}
+
+#ifdef VR
+static const float kGIReprojectDepthAgree = 0.05;  // NDC surface-match tolerance
+
+// True when this eye's pixel can take the other eye's marched GI exactly: it
+// reprojects in-frame (frustum) and the other eye shows the same surface (depths
+// agree). Returns the other-eye pixel in otherPx on a hit. A miss is the disoccluded
+// set — the frustum-edge strip plus occluder gaps — which the caller marches natively.
+bool GIReprojectsCleanly(float2 uv, float linearDepth, uint eyeIndex, Texture2D<float> depthTex, float2 texScale, out int2 otherPx)
+{
+	otherPx = int2(0, 0);
+	if (linearDepth < FP_Z)  // HMD mask / first-person hands: not Class-A geometry
+		return false;
+
+	float rawDepth = LinearToRawDepth(linearDepth);
+	Stereo::StereoBilateralResult r = Stereo::ReprojectToOtherEye(uv, rawDepth, eyeIndex, OUT_FRAME_DIM);
+	if (!r.valid)  // frustum out-of-bounds: the disoccluded edge strip
+		return false;
+
+	float otherLinear = depthTex.SampleLevel(samplerPointClamp, r.otherStereoUV * texScale, RES_MIP);
+	if (otherLinear < FP_Z)  // reprojected into mask / hands
+		return false;
+
+	otherPx = r.otherPx;
+	return Stereo::IsReprojectionExact(r, rawDepth, LinearToRawDepth(otherLinear), kGIReprojectDepthAgree);
+}
+#endif  // VR
+
+#endif  // SSGI_STEREO_REPROJECT
