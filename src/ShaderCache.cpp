@@ -8,10 +8,10 @@
 #	include <DevBenchAPI.h>
 #endif
 
-#include <d3dcompiler.h>
 #include <algorithm>
 #include <cctype>
 #include <chrono>
+#include <d3dcompiler.h>
 #include <fstream>
 #include <mutex>
 #include <unordered_map>
