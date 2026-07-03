@@ -8,8 +8,8 @@
 
 #include "Common/FrameBuffer.hlsli"
 #include "Common/VR.hlsli"
-#include "ScreenSpaceGI/common.hlsli"
 #include "ScreenSpaceGI/StereoReproject.hlsli"
+#include "ScreenSpaceGI/common.hlsli"
 
 #ifdef VR
 

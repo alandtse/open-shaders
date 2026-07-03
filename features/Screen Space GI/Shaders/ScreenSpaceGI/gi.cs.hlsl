@@ -32,8 +32,8 @@
 #include "Common/Math.hlsli"
 #include "Common/Spherical Harmonics/SphericalHarmonics.hlsli"
 #include "Common/VR.hlsli"
-#include "ScreenSpaceGI/common.hlsli"
 #include "ScreenSpaceGI/StereoReproject.hlsli"
+#include "ScreenSpaceGI/common.hlsli"
 
 Texture2D<float> srcWorkingDepth : register(t0);
 Texture2D<float4> srcNormalRoughness : register(t1);
