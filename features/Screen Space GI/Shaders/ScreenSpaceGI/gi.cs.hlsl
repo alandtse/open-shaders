@@ -357,6 +357,18 @@ void CalculateGI(
 	half2 encodedWorldNormal = GBuffer::EncodeNormal(ViewToWorldVector(viewspaceNormal, FrameBuffer::CameraViewInverse[eyeIndex]));
 	outPrevGeo[pxCoord] = half3(viewspaceZ, encodedWorldNormal);
 
+#ifdef STEREO_EYE0_ONLY
+	// Class-A reproject fills eye 1 from eye 0 in a following pass; skip the expensive
+	// march here. Geometry (outPrevGeo) is written above so next frame's temporal
+	// reprojection still has this eye's depth/normal.
+	if (eyeIndex != 0) {
+		outAo[pxCoord] = 0;
+		outY[pxCoord] = 0;
+		outCoCg[pxCoord] = 0;
+		return;
+	}
+#endif
+
 	// Move center pixel slightly towards camera to avoid imprecision artifacts due to depth buffer imprecision; offset depends on depth texture format used
 	viewspaceZ *= 0.99920h;  // this is good for FP16 depth buffer
 

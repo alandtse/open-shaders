@@ -100,6 +100,9 @@ public:
 		uint MaxAccumFrames = 16;
 		float BlurRadius = 2.f;
 		float DistanceNormalisation = 2.f;
+		// VR dev/A-B: march eye 0 only and reproject its view-independent diffuse GI
+		// into eye 1 instead of the bilateral stereo sync. Ignored when specular GI is on.
+		bool UseStereoReproject = false;
 	} settings;
 
 	struct alignas(16) SSGICB
@@ -180,7 +183,9 @@ public:
 	winrt::com_ptr<ID3D11ComputeShader> prefilterNormalCompute = nullptr;
 	winrt::com_ptr<ID3D11ComputeShader> radianceDisoccCompute = nullptr;
 	winrt::com_ptr<ID3D11ComputeShader> giCompute = nullptr;
+	winrt::com_ptr<ID3D11ComputeShader> giEye0OnlyCompute = nullptr;
 	winrt::com_ptr<ID3D11ComputeShader> blurCompute = nullptr;
 	winrt::com_ptr<ID3D11ComputeShader> stereoSyncCompute = nullptr;
+	winrt::com_ptr<ID3D11ComputeShader> reprojectCompute = nullptr;
 	winrt::com_ptr<ID3D11ComputeShader> upsampleCompute = nullptr;
 };
