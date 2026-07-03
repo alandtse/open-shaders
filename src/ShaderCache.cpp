@@ -9,6 +9,13 @@
 #endif
 
 #include <d3dcompiler.h>
+#include <algorithm>
+#include <cctype>
+#include <chrono>
+#include <fstream>
+#include <mutex>
+#include <unordered_map>
+#include <unordered_set>
 
 #include "Deferred.h"
 #include "Feature.h"
@@ -42,6 +49,101 @@ namespace SIE
 		status.currentFailedCount = cache->GetCurrentFailedCount();
 		return status;
 	}
+
+	struct MemoEntry
+	{
+		std::chrono::system_clock::time_point selfMTime;
+		std::chrono::system_clock::time_point maxMTime;
+	};
+
+	static std::chrono::system_clock::time_point GetMaxShaderMTimeInternal(
+		const std::filesystem::path& path,
+		const std::filesystem::path& shadersRoot,
+		std::unordered_map<std::string, MemoEntry>& memo,
+		std::unordered_set<std::string>& visited)
+	{
+		std::string pathStr = path.string();
+#ifdef _WIN32
+		std::transform(pathStr.begin(), pathStr.end(), pathStr.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+#endif
+
+		if (visited.contains(pathStr)) {
+			return std::chrono::system_clock::time_point::min();
+		}
+		visited.insert(pathStr);
+
+		std::error_code ec;
+		if (!std::filesystem::exists(path, ec)) {
+			return std::chrono::system_clock::now();
+		}
+
+		auto currentSelfMTime = std::chrono::clock_cast<std::chrono::system_clock>(std::filesystem::last_write_time(path, ec));
+		if (ec) {
+			return std::chrono::system_clock::now();
+		}
+
+		if (auto it = memo.find(pathStr); it != memo.end()) {
+			if (it->second.selfMTime == currentSelfMTime) {
+				visited.erase(pathStr);
+				return it->second.maxMTime;
+			}
+		}
+
+		auto maxTime = currentSelfMTime;
+
+		std::ifstream ifs(path);
+		if (ifs.is_open()) {
+			std::string line;
+			while (std::getline(ifs, line)) {
+				size_t start = line.find_first_not_of(" \t");
+				if (start == std::string::npos) {
+					continue;
+				}
+				if (line.compare(start, 8, "#include") != 0) {
+					continue;
+				}
+				size_t firstQuote = line.find('"', start + 8);
+				if (firstQuote == std::string::npos) {
+					continue;
+				}
+				size_t secondQuote = line.find('"', firstQuote + 1);
+				if (secondQuote == std::string::npos) {
+					continue;
+				}
+				std::string includeName = line.substr(firstQuote + 1, secondQuote - firstQuote - 1);
+				if (includeName.empty()) {
+					continue;
+				}
+
+				std::filesystem::path includePath = shadersRoot / includeName;
+				if (!std::filesystem::exists(includePath, ec)) {
+					includePath = path.parent_path() / includeName;
+				}
+
+				auto childTime = GetMaxShaderMTimeInternal(includePath, shadersRoot, memo, visited);
+				if (childTime > maxTime) {
+					maxTime = childTime;
+				}
+			}
+		}
+
+		visited.erase(pathStr);
+		memo[pathStr] = MemoEntry{ currentSelfMTime, maxTime };
+		return maxTime;
+	}
+
+	static std::chrono::system_clock::time_point GetMaxShaderMTime(
+		const std::filesystem::path& path,
+		const std::filesystem::path& shadersRoot)
+	{
+		static std::unordered_map<std::string, MemoEntry> memo;
+		static std::mutex memoMutex;
+
+		std::lock_guard lock(memoMutex);
+		std::unordered_set<std::string> visited;
+		return GetMaxShaderMTimeInternal(path, shadersRoot, memo, visited);
+	}
+
 	// Custom include handler to track all includes during shader compilation
 	class TrackingIncludeHandler : public ID3DInclude
 	{
@@ -1416,7 +1518,7 @@ namespace SIE
 					if (diskCacheOutdated)
 						logger::debug("Diskcached shader {} older than {}", SIE::SShaderCache::GetShaderString(shaderClass, shader, descriptor, true), std::format("{:%Y%m%d%H%M}", diskCacheTime));
 				} else if (cache.IsSkipUnchangedShaders()) {
-					// No file watcher: compare disk-cache mtime directly against the .hlsl source file mtime.
+					// Compare disk cache mtime against max mtime over the entire include tree to handle shared include changes.
 					std::error_code ec;
 					const auto diskCacheTime = std::chrono::clock_cast<std::chrono::system_clock>(std::filesystem::last_write_time(diskPath, ec));
 					if (ec) {
@@ -1427,10 +1529,8 @@ namespace SIE
 								static_cast<const RE::BSImagespaceShader&>(shader).originalShaderName :
 								shader.fxpFilename);
 						if (std::filesystem::exists(shaderSourcePath)) {
-							const auto sourceTime = std::chrono::clock_cast<std::chrono::system_clock>(std::filesystem::last_write_time(shaderSourcePath, ec));
-							if (ec) {
-								logger::debug("Failed to read source mtime for {}: {}", Util::WStringToString(shaderSourcePath), ec.message());
-							} else if (sourceTime > diskCacheTime) {
+							const auto sourceTime = GetMaxShaderMTime(shaderSourcePath, std::filesystem::path(shaderSourcePath).parent_path());
+							if (sourceTime > diskCacheTime) {
 								diskCacheOutdated = true;
 								logger::debug("Disk-cached shader {} outdated: source is newer than cache", SIE::SShaderCache::GetShaderString(shaderClass, shader, descriptor, true));
 							}
