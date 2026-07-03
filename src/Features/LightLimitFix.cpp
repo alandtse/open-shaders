@@ -1311,10 +1311,14 @@ void LightLimitFix::Hooks::BSLightingShader_SetupGeometry::thunk(RE::BSShader* T
 			directionalSlotSafe = false;
 			// One stale light is hit by many passes per frame; dedupe on the NiLight value
 			// so a single bad light logs once, not once per draw. Bounded total either way.
-			static std::uintptr_t lastLoggedNiLight = 1;  // 1 never equals a real/garbage slot value
+			// A separate first-log flag avoids suppressing an initial value that happens to
+			// equal any chosen sentinel (garbage slots can be small integers like 0x1).
+			static bool everLogged = false;
+			static std::uintptr_t lastLoggedNiLight = 0;
 			static int distinctLogged = 0;
 			const auto niLightVal = reinterpret_cast<std::uintptr_t>(niLight);
-			if (niLightVal != lastLoggedNiLight && distinctLogged++ < 20) {
+			if ((!everLogged || niLightVal != lastLoggedNiLight) && distinctLogged++ < 20) {
+				everLogged = true;
 				lastLoggedNiLight = niLightVal;
 				logger::warn(
 					"[LLF] BSLightingShader_SetupGeometry: directional sceneLights[0] unsafe "
