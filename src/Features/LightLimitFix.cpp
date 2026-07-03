@@ -1241,9 +1241,39 @@ void LightLimitFix::UpdateStructure()
 
 namespace
 {
-	// Defined below with the effect-shader guard; declared here so the directional
-	// guard can reject a mapped-implausible NiLight before the engine derefs it.
+	// Defined below with the effect-shader guard.
 	bool ProbeReadable(const void* a_ptr, std::size_t a_size);
+
+	// Every unguarded engine read on these types, VR layout: NiLight fade +0x15C,
+	// diffuse +0x144, direction through +0x173; BSLight through its NiPointer slot.
+	constexpr std::size_t kNiLightEngineReadSize = 0x174;
+	constexpr std::size_t kBSLightEngineReadSize = 0x50;
+
+	// Plausibility + committed-readability in one check: the value test rejects
+	// null/garbage cheaply, the VirtualQuery probe rejects freed-but-canonical
+	// pointers the value test cannot (a recycled light block stays mapped-looking).
+	bool IsSafeLightRange(const void* a_ptr, std::size_t a_size)
+	{
+		return ShadowCasterManager::IsPlausibleShadowLightPtr(reinterpret_cast<std::uintptr_t>(a_ptr)) &&
+		       ProbeReadable(a_ptr, a_size);
+	}
+
+	// The directional slot is almost always the same sun NiLight for every pass in a
+	// frame; revalidating it per pass would put a VirtualQuery syscall on the hottest
+	// draw path. Render-thread-only state, revalidated once per pointer per frame.
+	bool IsSafeDirectionalNiLight(const RE::NiLight* a_light)
+	{
+		static const RE::NiLight* validated = nullptr;
+		static uint32_t validatedFrame = ~0u;
+		const uint32_t frame = globals::state ? globals::state->frameCount : 0;
+		if (a_light == validated && frame == validatedFrame)
+			return true;
+		if (!IsSafeLightRange(a_light, kNiLightEngineReadSize))
+			return false;
+		validated = a_light;
+		validatedFrame = frame;
+		return true;
+	}
 
 	// SEH-guarded read of sceneLights[0]->light. The pointer-value plausibility
 	// check can't distinguish a live BSLight from a stale-but-canonical one, so
@@ -1277,11 +1307,7 @@ void LightLimitFix::Hooks::BSLightingShader_SetupGeometry::thunk(RE::BSShader* T
 		// A stale-but-canonical dirLight passes the pointer-value check yet still AVs on
 		// dirLight->light, so capture the NiLight under SEH and reuse it below (no second deref).
 		RE::NiLight* niLight = IsPlausibleShadowLightPtr(reinterpret_cast<std::uintptr_t>(dirLight)) ? SafeReadDirectionalNiLight(dirLight) : nullptr;
-		// A recycled BSLight can hand back a canonical-looking but unmapped NiLight; the
-		// engine reads fade/diffuse/direction unguarded through +0x174, so also require
-		// the range to be committed and readable (same probe as the effect-shader guard).
-		if (Pass->numLights == 0 || !IsPlausibleShadowLightPtr(reinterpret_cast<std::uintptr_t>(niLight)) ||
-			!ProbeReadable(niLight, 0x174)) {
+		if (Pass->numLights == 0 || !IsSafeDirectionalNiLight(niLight)) {
 			directionalSlotSafe = false;
 			static int logged = 0;
 			if (logged++ < 10) {
@@ -1341,11 +1367,10 @@ void LightLimitFix::Hooks::BSEffectShader_SetupGeometry::thunk(RE::BSShader* Thi
 	// probe (the real boundary -- a freed light passes the cheap checks but points to unmapped
 	// memory). Entries failing any check stop the loop, matching the engine's bail-on-first-bad.
 	if (Pass && Pass->sceneLights && Pass->numLights > 0) {
-		using ShadowCasterManager::IsPlausibleShadowLightPtr;
 		std::uint8_t validCount = 0;
 		for (std::uint8_t i = 0; i < Pass->numLights; ++i) {
 			RE::BSLight* bsLight = Pass->sceneLights[i];
-			if (!IsPlausibleShadowLightPtr(reinterpret_cast<std::uintptr_t>(bsLight)) || !ProbeReadable(bsLight, 0x50)) {
+			if (!IsSafeLightRange(bsLight, kBSLightEngineReadSize)) {
 				static int loggedBsLight = 0;
 				if (loggedBsLight++ < 10) {
 					logger::warn(
@@ -1356,7 +1381,7 @@ void LightLimitFix::Hooks::BSEffectShader_SetupGeometry::thunk(RE::BSShader* Thi
 				break;
 			}
 			RE::NiLight* niLight = bsLight->light.get();
-			if (!IsPlausibleShadowLightPtr(reinterpret_cast<std::uintptr_t>(niLight)) || !ProbeReadable(niLight, 0x168)) {
+			if (!IsSafeLightRange(niLight, kNiLightEngineReadSize)) {
 				// Catches both NULL (engine cleared the NiPointer) and
 				// garbage (BSLight memory recycled). NULL is the more common
 				// observed failure -- the engine's loop has no null check
