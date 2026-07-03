@@ -88,11 +88,11 @@ void ScreenSpaceGI::DrawSettings()
 
 			if (globals::game::isVR && globals::state->IsDeveloperMode()) {
 				auto reprojectGuard = Util::DisableGuard(settings.EnableExperimentalSpecularGI);
-				ImGui::Checkbox(T(TKEY("vr_stereo_reproject"), "VR Stereo Reproject"), &settings.UseStereoReproject);
+				ImGui::Checkbox(T(TKEY("vr_stereo_reproject"), "VR Stereo Reprojection"), &settings.UseStereoReproject);
 				if (auto _tt = Util::HoverTooltipWrapper())
 					ImGui::Text("%s", T(TKEY("vr_stereo_reproject_tooltip"),
-										  "Marches the left eye only and reprojects its diffuse GI to the right eye, "
-										  "skipping the right-eye march. Requires HQ Specular IL off (specular is "
+										  "Reprojects Eye 0 (left)'s diffuse GI into Eye 1 (right) and skips the Eye 1 "
+										  "march, reducing GPU cost. Requires HQ Specular IL off (specular is "
 										  "view-dependent). Disoccluded pixels fall back to no GI."));
 			}
 		}
