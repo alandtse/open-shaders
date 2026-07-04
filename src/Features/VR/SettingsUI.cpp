@@ -272,7 +272,8 @@ void VR::DrawVRPerformanceSettings()
 	using StereoMode = VRStereoOptimizations::StereoMode;
 	ImGui::SeparatorText(GetDisplayName().c_str());
 
-	// Curated perf levers only; the Stereo/General tabs hold the detailed tuning.
+	// The profile-controlled lever only; depth culling and detailed tuning live in the
+	// General/Stereo tabs (no duplicate here).
 	bool reproject = stereoOpt.settings.stereoMode != StereoMode::Off;
 	if (ImGui::Checkbox(T(TKEY("vr_perf_reproject"), "Stereo Reprojection"), &reproject))
 		stereoOpt.settings.stereoMode = reproject ? StereoMode::Enable : StereoMode::Off;
@@ -280,11 +281,8 @@ void VR::DrawVRPerformanceSettings()
 		ImGui::Text("%s", T(TKEY("vr_perf_reproject_tooltip"),
 							  "Shares eye 0's shading with eye 1 where valid, cutting VR GPU cost. "
 							  "Detailed tuning is in the Stereo tab."));
-
-	bool cullingChanged = ImGui::Checkbox(T(TKEY("depth_culling_exteriors"), "Enable Depth Buffer Culling in Exteriors"), &settings.EnableDepthBufferCullingExterior);
-	cullingChanged |= ImGui::Checkbox(T(TKEY("depth_culling_interiors"), "Enable Depth Buffer Culling in Interiors"), &settings.EnableDepthBufferCullingInterior);
-	if (cullingChanged)
-		UpdateDepthBufferCulling();
+	// stereoMode latches at boot; surface the pending-restart cue the hub intro promises.
+	Util::UI::DrawSettingDiff(stereoOpt.bootSnapshot, stereoOpt.settings, &VRStereoOptimizations::Settings::stereoMode);
 }
 
 // Stereo reprojection is the big VR GPU-cost saver with a minor disocclusion artifact,
