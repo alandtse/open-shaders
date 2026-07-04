@@ -354,9 +354,12 @@ static const float kEps = 0.0001f;
 	ASSERT(IsTrue, abs(resultRight.y - 0.5) < kEps);
 	ASSERT(IsFalse, oob);
 
-	// OOB condition: mono velocity pushes past 1.0
+	// OOB past the right edge (mono >= 1): oob set; returned x is the dead saturate (0.5 stereo).
 	float2 resultOob = Stereo::ApplyVelocityToUV(float2(0.25, 0.5), float2(1.5, 0.0), oob);
 	ASSERT(IsTrue, oob);
-	// In VR, out of bounds is clamped (mono x < 0 maps to 0 -> stereo 0, mono x > 1 saturates to 1 -> stereo 0.5 for left)
 	ASSERT(IsTrue, abs(resultOob.x - 0.5) < kEps);
+
+	// OOB past the left edge (mono <= 0) must reject too, not clamp-and-sample.
+	Stereo::ApplyVelocityToUV(float2(0.25, 0.5), float2(-0.6, 0.0), oob);
+	ASSERT(IsTrue, oob);
 }
