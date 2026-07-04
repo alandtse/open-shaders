@@ -144,7 +144,7 @@ namespace
 			}
 		}
 
-		if (ImGui::CollapsingHeader(T(TKEY("foveated_effects_header"), "Foveated Effects"))) {
+		if (ImGui::CollapsingHeader(T(TKEY("foveated_effects_header"), "Foveation-Following Effects"))) {
 			auto& upscaling = globals::features::upscaling;
 			auto& dynamicCubemaps = globals::features::dynamicCubemaps;
 			const bool foveatedDLSSActive = upscaling.foveatedRender.IsActive();
@@ -156,7 +156,7 @@ namespace
 				ImGui::TextColored(ImVec4(1.0f, 0.7f, 0.3f, 1.0f), "%s", T(TKEY("foveated_requires_ssr"), "Requires Screen Space Reflections (Dynamic Cubemaps)."));
 
 			ImGui::BeginDisabled(!foveatedDLSSActive || !ssrEnabled);
-			ImGui::Checkbox(T(TKEY("foveated_ssr_raymarching"), "Foveate SSR Raymarching"), &settings.EnableSSRFoveation);
+			ImGui::Checkbox(T(TKEY("foveated_ssr_raymarching"), "Foveate SSR (follows DLSS region)"), &settings.EnableSSRFoveation);
 			if (auto _tt = Util::HoverTooltipWrapper()) {
 				ImGui::Text("%s",
 					T(TKEY("foveated_ssr_raymarching_tooltip"),
