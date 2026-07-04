@@ -234,10 +234,13 @@ void Upscaling::DrawPerfModeToggle()
 
 // FoveatedRender: foveated subrect DLSS — VR-only, opt-in. Enable lives at the top level
 // for discoverability; the body knobs are collapsed by default and greyed until opted in.
-void Upscaling::DrawFoveationControls()
+void Upscaling::DrawFoveationControls(bool showTuning)
 {
 	ImGui::Separator();
 	foveatedRender.DrawEnable();
+	// Hub view shows just the enable; the deep tuning tree lives in the Upscaling panel.
+	if (!showTuning)
+		return;
 	const bool enabled = foveatedRender.settings.enabled != 0;
 	if (!enabled)
 		ImGui::BeginDisabled();
@@ -255,7 +258,7 @@ void Upscaling::DrawVRPerformanceSettings()
 {
 	ImGui::SeparatorText(T(TKEY("vr_perf_upscaling_header"), "Upscaling & Foveation"));
 	DrawPerfModeToggle();
-	DrawFoveationControls();
+	DrawFoveationControls(false);
 }
 
 // qualityMode: 1=Quality, 2=Balanced, 3=Performance (lower renders at higher res).

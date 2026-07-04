@@ -7,6 +7,7 @@
 #include "I18n/I18n.h"
 #include "Menu.h"
 #include "Menu/Fonts.h"
+#include "Menu/VRPerformanceRenderer.h"
 #include "RE/B/BSOpenVR.h"
 #include "RE/P/PlayerCharacter.h"
 #include "State.h"
@@ -217,6 +218,14 @@ void VR::DrawSettings()
 	if (!menu)
 		return;
 	if (ImGui::BeginTabBar("##VRTabs", ImGuiTabBarFlags_None)) {
+		if (BeginTabItemWithFont(T(TKEY("tab_performance"), "Performance"), Menu::FontRole::Subheading)) {
+			if (ImGui::BeginChild("##VRPerformanceFrame", { 0, 0 }, true)) {
+				VRPerformanceRenderer::Render();
+			}
+			ImGui::EndChild();
+			ImGui::EndTabItem();
+		}
+
 		if (BeginTabItemWithFont(T(TKEY("tab_general"), "General"), Menu::FontRole::Subheading)) {
 			if (ImGui::BeginChild("##VRGeneralFrame", { 0, 0 }, true)) {
 				DrawGeneralVRSettings();
@@ -258,9 +267,22 @@ void VR::DrawSettings()
 // feature's sections alongside other features' perf controls.
 void VR::DrawVRPerformanceSettings()
 {
-	ImGui::SeparatorText(T(TKEY("vr_perf_group"), "Stereo & Culling"));
-	DrawGeneralVRSettings();
-	DrawStereoSettings();
+	using StereoMode = VRStereoOptimizations::StereoMode;
+	ImGui::SeparatorText(GetDisplayName().c_str());
+
+	// Curated perf levers only; the Stereo/General tabs hold the detailed tuning.
+	bool reproject = stereoOpt.settings.stereoMode != StereoMode::Off;
+	if (ImGui::Checkbox(T(TKEY("vr_perf_reproject"), "Stereo Reprojection"), &reproject))
+		stereoOpt.settings.stereoMode = reproject ? StereoMode::Enable : StereoMode::Off;
+	if (auto _tt = Util::HoverTooltipWrapper())
+		ImGui::Text("%s", T(TKEY("vr_perf_reproject_tooltip"),
+							  "Shares eye 0's shading with eye 1 where valid, cutting VR GPU cost. "
+							  "Detailed tuning is in the Stereo tab."));
+
+	bool cullingChanged = ImGui::Checkbox(T(TKEY("depth_culling_exteriors"), "Enable Depth Buffer Culling in Exteriors"), &settings.EnableDepthBufferCullingExterior);
+	cullingChanged |= ImGui::Checkbox(T(TKEY("depth_culling_interiors"), "Enable Depth Buffer Culling in Interiors"), &settings.EnableDepthBufferCullingInterior);
+	if (cullingChanged)
+		UpdateDepthBufferCulling();
 }
 
 // Stereo reprojection is the big VR GPU-cost saver with a minor disocclusion artifact,
