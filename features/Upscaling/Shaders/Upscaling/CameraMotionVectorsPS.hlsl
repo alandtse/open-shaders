@@ -1,3 +1,4 @@
+#include "Common/Math.hlsli"
 #include "Common/VR.hlsli"
 
 Texture2D<float> DepthTexture : register(t0);
