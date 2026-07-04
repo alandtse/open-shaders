@@ -359,7 +359,7 @@ void CalculateGI(
 	outPrevGeo[pxCoord] = half3(viewspaceZ, encodedWorldNormal);
 
 #ifdef STEREO_EYE0_ONLY
-	// Class-A: skip the march only for eye-1 pixels the reproject pass will fill exactly
+	// View-independent: skip the march only for eye-1 pixels the reproject pass will fill exactly
 	// (reprojects in-frame + matching surface in eye 0). Disoccluded pixels — the
 	// frustum-edge strip and occluder gaps — fall through and march natively so the
 	// reproject's fallback reads a real value, not a hole. Geometry (outPrevGeo) is

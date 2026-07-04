@@ -878,7 +878,7 @@ void ScreenSpaceGI::DrawSSGI()
 		context->Dispatch((internalRes[0] + 15u) >> 4, (internalRes[1] + 15u) >> 4, 1);
 	}
 
-	// Class-A stereo reproject: march eye 0 only, transfer its view-independent diffuse
+	// Stereo reproject: march eye 0 only, transfer its view-independent diffuse
 	// GI into eye 1. Requires specular GI off (specular is view-dependent) and both the
 	// eye-0-only march and reproject shaders compiled.
 	const bool useReproject = globals::game::isVR && settings.UseStereoReproject &&
@@ -916,7 +916,7 @@ void ScreenSpaceGI::DrawSSGI()
 		lastFrameAoTexIdx = inputAoTexIdx;
 	}
 
-	// Class-A reproject: fill eye 1's diffuse GI from eye 0 before the blur, whose
+	// View-independent reproject: fill eye 1's diffuse GI from eye 0 before the blur, whose
 	// seam taps read across eyes. Replaces the tail bilateral stereo sync below.
 	if (useReproject) {
 		CS_GPU_PASS("ScreenSpaceGI::Reproject");
@@ -968,7 +968,7 @@ void ScreenSpaceGI::DrawSSGI()
 	}
 
 	// VR stereo sync: bilateral blend of SSGI buffers between eyes (skipped when the
-	// Class-A reproject above already unified them).
+	// view-independent reproject above already unified them).
 	// Shi, Billeter, Eisemann 2022, "Stereo-consistent screen-space ambient occlusion"
 	if (globals::game::isVR && stereoSyncCompute && !useReproject) {
 		CS_GPU_PASS("ScreenSpaceGI::StereoSync");

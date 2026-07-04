@@ -1,7 +1,7 @@
 #ifndef SSGI_STEREO_REPROJECT
 #define SSGI_STEREO_REPROJECT
 
-// Shared Class-A cross-eye reprojection helpers for SSGI. Used by the gi.cs
+// Shared view-independent cross-eye reprojection helpers for SSGI. Used by the gi.cs
 // eye-0-only march skip and the reproject transfer so a pixel is skipped only if
 // the reproject will fill it — the two hit/miss decisions cannot drift.
 
@@ -35,7 +35,7 @@ static const float kGIReprojectDepthAgree = 0.05;  // NDC surface-match toleranc
 bool GIReprojectsCleanly(float2 uv, float linearDepth, uint eyeIndex, Texture2D<float> depthTex, float2 texScale, out int2 otherPx)
 {
 	otherPx = int2(0, 0);
-	if (linearDepth < FP_Z)  // HMD mask / first-person hands: not Class-A geometry
+	if (linearDepth < FP_Z)  // HMD mask / first-person hands: not view-independent geometry
 		return false;
 
 	float rawDepth = LinearToRawDepth(linearDepth);

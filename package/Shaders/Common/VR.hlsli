@@ -577,7 +577,7 @@ namespace Stereo
 	}
 
 	/**
-	* @brief Canonical Class-A (view-independent) reprojection test: can this pixel take
+	* @brief Canonical view-independent reprojection test: can this pixel take
 	* the other eye's value exactly?
 	*
 	* True only when the reprojection landed in-frame (result.valid) and the other eye

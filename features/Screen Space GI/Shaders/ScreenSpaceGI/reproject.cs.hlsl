@@ -1,4 +1,4 @@
-// Stereo Reproject - Class A (view-independent) cross-eye transfer for SSGI diffuse
+// Stereo Reproject - view-independent cross-eye transfer for SSGI diffuse
 //
 // AO and diffuse indirect lighting depend only on world geometry + incoming light, so
 // the value at a world point is identical in both eyes. Rather than march both eyes
