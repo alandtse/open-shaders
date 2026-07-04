@@ -196,7 +196,7 @@ public:
 	/**
 	 * @brief Renders this feature's VR performance-relevant controls into the central
 	 * VR Performance panel. Default empty: features without VR perf knobs contribute
-	 * nothing (fail-safe — no registry to keep in sync). Overrides should render the
+	 * nothing (fail-safe: no registry to keep in sync). Overrides should render the
 	 * SAME controls (bound to the same settings) they show in their own panel, so the
 	 * hub and the feature panel are two views of one state. Convention: open with an
 	 * ImGui::SeparatorText group label so every contributor is grouped uniformly.
@@ -221,7 +221,7 @@ public:
 
 	/**
 	 * @brief Applies a VR performance profile to this feature's settings. Default empty:
-	 * each feature maps the profile to its own settings (decoupled — the hub broadcasts
+	 * each feature maps the profile to its own settings (decoupled: the hub broadcasts
 	 * one profile to every feature, none needs to know about the others). Restart-gated
 	 * fields changed here surface their pending-restart banners as usual.
 	 */

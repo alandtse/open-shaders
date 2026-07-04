@@ -521,7 +521,7 @@ namespace
 			// path the in-game hub button uses, then persist. Restart-gated fields (render preset,
 			// foveation, reprojection) take effect on the next game launch. Exposes the profiles to
 			// headless automation/CI, which can't click the ImGui button.
-			// VR-only, matching the VR Performance hub — on flatrim the profiles are meaningless.
+			// VR-only, matching the VR Performance hub; on flatrim the profiles are meaningless.
 			if (!globals::game::isVR)
 				return json{ { "error", "applyVRProfile is VR-only" }, { "action", action } };
 			const std::string profileName = a_args.value("profile", std::string{});
@@ -617,7 +617,7 @@ namespace DevBenchBridge
 		dvb->RegisterTool("openshaders.capture", captureDesc, &CaptureToolHandler, nullptr);
 
 		static constexpr const char* settingsDesc =
-			R"({"description":"Save, load, reset, or apply a VR performance profile to the GLOBAL Open Shaders user configuration (Data/SKSE/Plugins/CommunityShaders/*.json). Action-dispatched, all fire-and-forget on the main thread. save: persist current settings (State::Save). load: re-read settings from disk and apply (State::Load). reset: restore every feature to its defaults then persist. applyVRProfile: broadcast the named VR performance profile (params profile: performance|balanced|quality) through Feature::ApplyVRPerformanceProfile across all features, then persist — restart-gated fields (render preset, foveation, reprojection) take effect on next launch. Use after openshaders.feature set/reset to make changes durable, or to roll an A/B session back to the saved baseline.","inputSchema":{"type":"object","properties":{"action":{"type":"string","enum":["save","load","reset","applyVRProfile"]},"profile":{"type":"string","enum":["performance","balanced","quality"]}},"required":["action"]}})";
+			R"({"description":"Save, load, reset, or apply a VR performance profile to the GLOBAL Open Shaders user configuration (Data/SKSE/Plugins/CommunityShaders/*.json). Action-dispatched, all fire-and-forget on the main thread. save: persist current settings (State::Save). load: re-read settings from disk and apply (State::Load). reset: restore every feature to its defaults then persist. applyVRProfile: broadcast the named VR performance profile (params profile: performance|balanced|quality) through Feature::ApplyVRPerformanceProfile across all features, then persist; restart-gated fields (render preset, foveation, reprojection) take effect on next launch. Use after openshaders.feature set/reset to make changes durable, or to roll an A/B session back to the saved baseline.","inputSchema":{"type":"object","properties":{"action":{"type":"string","enum":["save","load","reset","applyVRProfile"]},"profile":{"type":"string","enum":["performance","balanced","quality"]}},"required":["action"]}})";
 		dvb->RegisterTool("openshaders.settings", settingsDesc, &SettingsToolHandler, nullptr);
 
 		// devbench 1.5.0+ generalized tool extensions: route the CS settings menu and the

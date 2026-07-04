@@ -73,7 +73,7 @@ void ScreenSpaceGI::ApplyVRPerformanceProfile(VRPerfProfile profile)
 bool ScreenSpaceGI::MatchesVRPerformanceProfile(VRPerfProfile profile) const
 {
 	// Specular GI forces bilateral sync (view-dependent), so the reproject setting is moot
-	// then — don't veto the hub's active-profile detection for a knob the user can't apply.
+	// then, so don't veto the hub's active-profile detection for a knob the user can't apply.
 	return settings.EnableExperimentalSpecularGI || settings.UseStereoReproject == VRProfileEnablesReproject(profile);
 }
 
