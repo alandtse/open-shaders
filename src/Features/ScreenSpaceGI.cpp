@@ -86,7 +86,10 @@ void ScreenSpaceGI::DrawSettings()
 			if (auto _tt = Util::HoverTooltipWrapper())
 				ImGui::Text("%s", T(TKEY("hq_specular_il_tooltip"), "An experimental specular GI that is more accurate but requires more samples. Won't be blurred."));
 
-			if (globals::game::isVR && globals::state->IsDeveloperMode()) {
+			// User-facing (not dev-gated): the perf win ships default-on and users need to
+			// reach it to opt out. The central VR-performance hub (see #238) will surface
+			// this same setting; this stays the feature-local source of truth.
+			if (globals::game::isVR) {
 				auto reprojectGuard = Util::DisableGuard(settings.EnableExperimentalSpecularGI);
 				ImGui::Checkbox(T(TKEY("vr_stereo_reproject"), "VR Stereo Reprojection"), &settings.UseStereoReproject);
 				if (auto _tt = Util::HoverTooltipWrapper())

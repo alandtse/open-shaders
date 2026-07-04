@@ -100,9 +100,10 @@ public:
 		uint MaxAccumFrames = 16;
 		float BlurRadius = 2.f;
 		float DistanceNormalisation = 2.f;
-		// VR dev/A-B: march eye 0 only and reproject its view-independent diffuse GI
-		// into eye 1 instead of the bilateral stereo sync. Ignored when specular GI is on.
-		bool UseStereoReproject = false;
+		// VR: march eye 0 only and reproject its view-independent diffuse GI into eye 1
+		// instead of the bilateral stereo sync. Default on for the perf win (~40% of the
+		// GI march); ignored when specular GI is on (specular is view-dependent).
+		bool UseStereoReproject = true;
 	} settings;
 
 	struct alignas(16) SSGICB
