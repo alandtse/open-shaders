@@ -1,6 +1,7 @@
 #include "VRPerformanceRenderer.h"
 
 #include <algorithm>
+#include <exception>
 #include <imgui.h>
 #include <vector>
 
@@ -86,6 +87,8 @@ void VRPerformanceRenderer::Render()
 			feature->DrawVRPerformanceSettings();
 		} catch (const std::exception& e) {
 			ImGui::TextColored(ImVec4(1, 0, 0, 1), "%s: draw error (%s)", feature->GetShortName().c_str(), e.what());
+		} catch (...) {
+			ImGui::TextColored(ImVec4(1, 0, 0, 1), "%s: draw error (unknown)", feature->GetShortName().c_str());
 		}
 		ImGui::PopID();
 	}

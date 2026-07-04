@@ -540,6 +540,8 @@ namespace
 					Feature::ApplyVRPerformanceProfileToAll(profile);
 				} catch (const std::exception& e) {
 					logger::error("DevBenchBridge: settings(applyVRProfile) threw: {}", e.what());
+				} catch (...) {
+					logger::error("DevBenchBridge: settings(applyVRProfile) threw (unknown)");
 				}
 				try {
 					state->Save(State::ConfigMode::USER);

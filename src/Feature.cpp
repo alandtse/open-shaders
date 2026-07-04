@@ -299,6 +299,8 @@ void Feature::ApplyVRPerformanceProfileToAll(VRPerfProfile profile)
 			feature->ApplyVRPerformanceProfile(profile);
 		} catch (const std::exception& e) {
 			logger::error("ApplyVRPerformanceProfileToAll: {} threw: {}", feature->GetShortName(), e.what());
+		} catch (...) {
+			logger::error("ApplyVRPerformanceProfileToAll: {} threw (unknown)", feature->GetShortName());
 		}
 	}
 }
