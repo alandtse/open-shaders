@@ -101,8 +101,8 @@ void HomePageRenderer::RenderWelcomeSection()
 	// to it from the home page.
 	if (globals::game::isVR) {
 		ImGui::TextWrapped("%s", T("menu.home.vr_performance_tip",
-			"VR: one-tap performance profiles (foveation, reprojection, render resolution) live on the "
-			"Performance tab of the VR feature settings."));
+									 "VR: one-tap performance profiles (foveation, reprojection, render resolution) live on the "
+									 "Performance tab of the VR feature settings."));
 		ImGui::Spacing();
 	}
 

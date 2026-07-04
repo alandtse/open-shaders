@@ -299,8 +299,8 @@ bool Upscaling::MatchesVRPerformanceProfile(VRPerfProfile profile) const
 		return false;
 	const bool foveation = profile == VRPerfProfile::Performance;
 	const uint qm = profile == VRPerfProfile::Performance ? (uint)QualityMode::kPerformance :
-	                                                        profile == VRPerfProfile::Balanced ? (uint)QualityMode::kBalanced :
-	                                                                                             (uint)QualityMode::kQuality;
+	                profile == VRPerfProfile::Balanced    ? (uint)QualityMode::kBalanced :
+	                                                        (uint)QualityMode::kQuality;
 	return settings.qualityMode == qm && (foveatedRender.settings.enabled != 0) == foveation;
 }
 
