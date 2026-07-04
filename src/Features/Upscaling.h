@@ -171,6 +171,12 @@ public:
 	size_t GetSettingsBlobSize() const override { return sizeof(settings); }
 
 	virtual void DrawSettings() override;
+	/// @brief Renders the VR PerfMode (render-at-upscaled-res) toggle. Shared by the
+	/// upscaler panel and the VR Performance hub. VR-only; caller guards on isVR.
+	void DrawPerfModeToggle();
+	/// @brief Renders the Foveated DLSS enable + tuning tree. Shared by the upscaler
+	/// panel and the VR Performance hub. VR-only; caller guards on isVR.
+	void DrawFoveationControls();
 	virtual void SaveSettings(json& o_json) override;
 	virtual void LoadSettings(json& o_json) override;
 	virtual void RestoreDefaultSettings() override;
