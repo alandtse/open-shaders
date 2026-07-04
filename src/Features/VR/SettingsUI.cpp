@@ -101,9 +101,7 @@ namespace
 			}
 
 			ImGui::EndDisabled();
-		}
 
-		if (isDev) {
 			ImGui::Separator();
 
 			// Auto-enable required feature when a debug mode is selected; restore on Off.
@@ -162,7 +160,7 @@ namespace
 			}
 
 			ImGui::BeginDisabled(!settings.EnableSSRFoveation);
-			ImGui::Checkbox("Hard Cutoff Outside Center##SSRFoveation", &settings.EnableSSRFoveationHardCutoff);
+			ImGui::Checkbox(T(TKEY("foveated_ssr_hard_cutoff"), "Hard Cutoff Outside Center##SSRFoveation"), &settings.EnableSSRFoveationHardCutoff);
 			if (auto _tt = Util::HoverTooltipWrapper()) {
 				ImGui::Text("%s",
 					T(TKEY("foveated_hard_cutoff_tooltip"),

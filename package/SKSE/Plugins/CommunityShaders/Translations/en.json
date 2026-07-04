@@ -2046,6 +2046,7 @@
     "feature.vr.foveated_hard_cutoff_tooltip": "Hard-skip SSR outside the center region instead of a feathered falloff.\nCheaper, but the transition edge may be visible. Default off (feathered).",
     "feature.vr.foveated_requires_dlss": "Requires Foveated DLSS to be active (Upscaling settings).",
     "feature.vr.foveated_requires_ssr": "Requires Screen Space Reflections (Dynamic Cubemaps).",
+    "feature.vr.foveated_ssr_hard_cutoff": "Hard Cutoff Outside Center##SSRFoveation",
     "feature.vr.foveated_ssr_raymarching": "Foveate SSR (follows DLSS region)",
     "feature.vr.foveated_ssr_raymarching_tooltip": "Reduces screen-space reflection raymarching toward the periphery, using the\nactive Foveated DLSS region. Central reflections stay full quality; peripheral\npixels fall back to the cubemap / water reflection. VR only.",
     "feature.vr.general_settings_header": "General Settings",
