@@ -53,7 +53,9 @@ namespace
 		bool hasEffects = VR::AnyScreenSpaceEffectLoaded();
 		bool isDev = globals::state && globals::state->IsDeveloperMode();
 
-		if (ImGui::CollapsingHeader(T(TKEY("stereo_blend_header"), "Stereo Blend"), ImGuiTreeNodeFlags_DefaultOpen)) {
+		// Developer-only: superseded by per-effect cross-eye reproject (SSS/SSGI) plus the
+		// native eye-1 G-buffer fill; kept as a stereo-disparity inspector, not a user knob.
+		if (isDev && ImGui::CollapsingHeader(T(TKEY("stereo_blend_header"), "Stereo Blend"), ImGuiTreeNodeFlags_DefaultOpen)) {
 			if (!hasEffects && !isDev) {
 				ImGui::TextColored(ImVec4(1.0f, 0.7f, 0.3f, 1.0f), "%s", T(TKEY("stereo_blend_requires_effect"), "Requires an active screen-space effect (SSGI, SS Shadows, SSR)."));
 			} else {
@@ -105,7 +107,7 @@ namespace
 			}
 		}
 
-		if (hasEffects || isDev) {
+		if (isDev) {
 			ImGui::Separator();
 
 			// Auto-enable required feature when a debug mode is selected; restore on Off.
