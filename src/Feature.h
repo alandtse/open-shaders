@@ -203,6 +203,22 @@ public:
 	 */
 	virtual void DrawVRPerformanceSettings() {}
 
+	/** @brief Named VR performance profiles broadcast from the VR Performance hub. */
+	enum class VRPerfProfile
+	{
+		Performance,  ///< Maximum framerate: lowest render res, all perf features on.
+		Balanced,     ///< Middle ground.
+		Quality       ///< Maximum fidelity: higher render res, perf shortcuts off.
+	};
+
+	/**
+	 * @brief Applies a VR performance profile to this feature's settings. Default empty:
+	 * each feature maps the profile to its own settings (decoupled — the hub broadcasts
+	 * one profile to every feature, none needs to know about the others). Restart-gated
+	 * fields changed here surface their pending-restart banners as usual.
+	 */
+	virtual void ApplyVRPerformanceProfile(VRPerfProfile /*profile*/) {}
+
 	/** @brief Draws the UI shown when this feature failed to load. */
 	virtual void DrawUnloadedUI();
 

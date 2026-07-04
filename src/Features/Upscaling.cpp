@@ -258,6 +258,29 @@ void Upscaling::DrawVRPerformanceSettings()
 	DrawFoveationControls();
 }
 
+// qualityMode: 1=Quality, 2=Balanced, 3=Performance (lower renders at higher res).
+// PerfMode stays on for every profile — it is the recommended default VRAM/bandwidth win.
+// Foveated DLSS trades peripheral sharpness for speed, so only the Performance profile
+// opts into it. qualityMode/renderAtUpscaleRes/foveation latch at boot (restart-gated).
+void Upscaling::ApplyVRPerformanceProfile(VRPerfProfile profile)
+{
+	settings.renderAtUpscaleRes = true;
+	switch (profile) {
+	case VRPerfProfile::Performance:
+		settings.qualityMode = 3;
+		foveatedRender.settings.enabled = 1;
+		break;
+	case VRPerfProfile::Balanced:
+		settings.qualityMode = 2;
+		foveatedRender.settings.enabled = 0;
+		break;
+	case VRPerfProfile::Quality:
+		settings.qualityMode = 1;
+		foveatedRender.settings.enabled = 0;
+		break;
+	}
+}
+
 void Upscaling::DrawSettings()
 {
 	// Force method to None up front so the picker reflects the locked state.

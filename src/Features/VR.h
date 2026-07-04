@@ -107,6 +107,7 @@ public:
 
 	virtual void DrawSettings() override;
 	virtual void DrawVRPerformanceSettings() override;
+	virtual void ApplyVRPerformanceProfile(VRPerfProfile profile) override;
 
 	virtual std::string_view GetCategory() const override { return FeatureCategories::kUtility; }
 
