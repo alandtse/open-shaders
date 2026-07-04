@@ -295,4 +295,10 @@ void VR::ApplyVRPerformanceProfile(VRPerfProfile profile)
 		profile == VRPerfProfile::Quality ? StereoMode::Off : StereoMode::Enable;
 }
 
+bool VR::MatchesVRPerformanceProfile(VRPerfProfile profile) const
+{
+	using StereoMode = VRStereoOptimizations::StereoMode;
+	return stereoOpt.settings.stereoMode == (profile == VRPerfProfile::Quality ? StereoMode::Off : StereoMode::Enable);
+}
+
 #undef I18N_KEY_PREFIX

@@ -70,6 +70,11 @@ void ScreenSpaceGI::ApplyVRPerformanceProfile(VRPerfProfile profile)
 	settings.UseStereoReproject = profile != VRPerfProfile::Quality;
 }
 
+bool ScreenSpaceGI::MatchesVRPerformanceProfile(VRPerfProfile profile) const
+{
+	return settings.UseStereoReproject == (profile != VRPerfProfile::Quality);
+}
+
 void ScreenSpaceGI::DrawSettings()
 {
 	static bool showAdvanced;

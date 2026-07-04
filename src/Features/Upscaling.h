@@ -184,6 +184,7 @@ public:
 	virtual void DrawVRPerformanceSettings() override;
 	int GetVRPerformanceOrder() const override { return 10; }
 	virtual void ApplyVRPerformanceProfile(VRPerfProfile profile) override;
+	bool MatchesVRPerformanceProfile(VRPerfProfile profile) const override;
 	/// @brief Renders the VR PerfMode (render-at-upscaled-res) toggle. Shared by the
 	/// upscaler panel and the VR Performance hub. VR-only; caller guards on isVR.
 	void DrawPerfModeToggle();

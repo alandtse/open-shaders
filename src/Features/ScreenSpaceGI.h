@@ -48,6 +48,7 @@ public:
 	virtual void DrawVRPerformanceSettings() override;
 	int GetVRPerformanceOrder() const override { return 40; }
 	virtual void ApplyVRPerformanceProfile(VRPerfProfile profile) override;
+	bool MatchesVRPerformanceProfile(VRPerfProfile profile) const override;
 	/// @brief Renders the VR stereo reprojection toggle. Shared by the SSGI panel and the
 	/// VR Performance hub. VR-only; caller guards on isVR.
 	void DrawReprojectToggle();

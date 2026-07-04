@@ -223,6 +223,11 @@ public:
 	 */
 	virtual void ApplyVRPerformanceProfile(VRPerfProfile /*profile*/) {}
 
+	/** @brief True when this feature's settings already equal what ApplyVRPerformanceProfile
+	 *         would set for @p profile. The hub uses it to show the active profile (or Custom).
+	 *         Default true so features without perf profiles don't veto the match. */
+	virtual bool MatchesVRPerformanceProfile(VRPerfProfile /*profile*/) const { return true; }
+
 	/** @brief Draws the UI shown when this feature failed to load. */
 	virtual void DrawUnloadedUI();
 

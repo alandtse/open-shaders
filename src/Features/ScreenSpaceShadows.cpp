@@ -67,6 +67,11 @@ void ScreenSpaceShadows::ApplyVRPerformanceProfile(VRPerfProfile profile)
 	useStereoReproject = profile != VRPerfProfile::Quality;
 }
 
+bool ScreenSpaceShadows::MatchesVRPerformanceProfile(VRPerfProfile profile) const
+{
+	return enableStereoSync && useStereoReproject == (profile != VRPerfProfile::Quality);
+}
+
 void ScreenSpaceShadows::DrawSettings()
 {
 	if (ImGui::TreeNodeEx(T(TKEY("general"), "General"), ImGuiTreeNodeFlags_DefaultOpen)) {

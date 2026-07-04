@@ -27,24 +27,51 @@ void VRPerformanceRenderer::Render()
 								 "latch at game launch."));
 	ImGui::Spacing();
 
-	// Profiles: one click sets the whole VR perf stack (upscaler, foveation, reprojection)
-	// coherently across features. The sections below tune from there.
+	// Profiles: one click sets the whole VR perf stack coherently across features. The active
+	// profile is the one every feature's settings currently match (else Custom), so the buttons
+	// show state instead of looking stateless.
+	const Feature::VRPerfProfile profiles[3] = {
+		Feature::VRPerfProfile::Performance, Feature::VRPerfProfile::Balanced, Feature::VRPerfProfile::Quality
+	};
+	int activeIdx = -1;
+	for (int i = 0; i < 3 && activeIdx < 0; ++i) {
+		bool all = true;
+		for (Feature* f : Feature::GetFeatureList())
+			if (f->loaded && !f->MatchesVRPerformanceProfile(profiles[i])) {
+				all = false;
+				break;
+			}
+		if (all)
+			activeIdx = i;
+	}
+
+	const char* labels[3] = {
+		T(TKEY("profile_performance"), "Performance"),
+		T(TKEY("profile_balanced"), "Balanced"),
+		T(TKEY("profile_quality"), "Quality")
+	};
+	const char* tooltips[3] = {
+		T(TKEY("profile_performance_tooltip"), "Lowest render resolution; foveation and reprojection on. Fastest."),
+		T(TKEY("profile_balanced_tooltip"), "Mid render resolution; reprojection on."),
+		T(TKEY("profile_quality_tooltip"), "Higher render resolution; reprojection off for max fidelity. Some changes apply on restart.")
+	};
 	ImGui::TextUnformatted(T(TKEY("profiles_label"), "Profile:"));
-	ImGui::SameLine();
-	if (ImGui::Button(T(TKEY("profile_performance"), "Performance")))
-		ApplyProfile(Feature::VRPerfProfile::Performance);
-	if (auto _tt = Util::HoverTooltipWrapper())
-		ImGui::Text("%s", T(TKEY("profile_performance_tooltip"), "Lowest render resolution; foveation and reprojection on. Fastest."));
-	ImGui::SameLine();
-	if (ImGui::Button(T(TKEY("profile_balanced"), "Balanced")))
-		ApplyProfile(Feature::VRPerfProfile::Balanced);
-	if (auto _tt = Util::HoverTooltipWrapper())
-		ImGui::Text("%s", T(TKEY("profile_balanced_tooltip"), "Mid render resolution; reprojection on."));
-	ImGui::SameLine();
-	if (ImGui::Button(T(TKEY("profile_quality"), "Quality")))
-		ApplyProfile(Feature::VRPerfProfile::Quality);
-	if (auto _tt = Util::HoverTooltipWrapper())
-		ImGui::Text("%s", T(TKEY("profile_quality_tooltip"), "Higher render resolution; reprojection off for max fidelity. Some changes apply on restart."));
+	for (int i = 0; i < 3; ++i) {
+		ImGui::SameLine();
+		const bool active = i == activeIdx;
+		if (active)
+			ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive));
+		if (ImGui::Button(labels[i]))
+			ApplyProfile(profiles[i]);
+		if (active)
+			ImGui::PopStyleColor();
+		if (auto _tt = Util::HoverTooltipWrapper())
+			ImGui::Text("%s", tooltips[i]);
+	}
+	if (activeIdx < 0) {
+		ImGui::SameLine();
+		ImGui::TextDisabled("%s", T(TKEY("profile_custom"), "(Custom)"));
+	}
 
 	ImGui::Spacing();
 	ImGui::Separator();

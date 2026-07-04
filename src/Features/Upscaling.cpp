@@ -293,6 +293,17 @@ void Upscaling::ApplyVRPerformanceProfile(VRPerfProfile profile)
 	}
 }
 
+bool Upscaling::MatchesVRPerformanceProfile(VRPerfProfile profile) const
+{
+	if (!settings.renderAtUpscaleRes)
+		return false;
+	const bool foveation = profile == VRPerfProfile::Performance;
+	const uint qm = profile == VRPerfProfile::Performance ? (uint)QualityMode::kPerformance :
+	                                                        profile == VRPerfProfile::Balanced ? (uint)QualityMode::kBalanced :
+	                                                                                             (uint)QualityMode::kQuality;
+	return settings.qualityMode == qm && (foveatedRender.settings.enabled != 0) == foveation;
+}
+
 void Upscaling::DrawSettings()
 {
 	// Force method to None up front so the picker reflects the locked state.

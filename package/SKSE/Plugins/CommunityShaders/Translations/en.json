@@ -2819,6 +2819,7 @@
     "menu.vr_performance.intro": "VR performance settings from across all features, gathered in one place. Each section is the same control shown in that feature's own panel — changes here take effect there too. Settings marked as requiring a restart latch at game launch.",
     "menu.vr_performance.profile_balanced": "Balanced",
     "menu.vr_performance.profile_balanced_tooltip": "Mid render resolution; reprojection on.",
+    "menu.vr_performance.profile_custom": "(Custom)",
     "menu.vr_performance.profile_performance": "Performance",
     "menu.vr_performance.profile_performance_tooltip": "Lowest render resolution; foveation and reprojection on. Fastest.",
     "menu.vr_performance.profile_quality": "Quality",
