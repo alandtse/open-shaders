@@ -259,9 +259,11 @@ void Upscaling::DrawVRPerformanceSettings()
 	ImGui::SeparatorText(T(TKEY("vr_perf_upscaling_header"), "Upscaling & Foveation"));
 	DrawPerfModeToggle();
 	// The profile-controlled render preset is the biggest VR lever; show its value and
-	// pending-restart cue here rather than leaving profile changes invisible.
+	// pending-restart cue here rather than leaving profile changes invisible. Gate the cue on
+	// the PerfMode hook like DrawSettings, since qualityMode only latches when it is active.
 	ImGui::Text("%s: %s", T(TKEY("vr_perf_upscale_preset"), "Upscale preset"), GetQualityModeName(settings.qualityMode));
-	Util::UI::DrawSettingDiff(bootSnapshot, settings, &Settings::qualityMode);
+	if (perfMode.IsHookActive())
+		Util::UI::DrawSettingDiff(bootSnapshot, settings, &Settings::qualityMode);
 	DrawFoveationControls(false);
 }
 
