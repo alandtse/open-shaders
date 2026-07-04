@@ -31,20 +31,18 @@ void VRPerformanceRenderer::Render()
 	ImGui::SameLine();
 	if (ImGui::Button(T(TKEY("profile_performance"), "Performance")))
 		ApplyProfile(Feature::VRPerfProfile::Performance);
+	if (auto _tt = Util::HoverTooltipWrapper())
+		ImGui::Text("%s", T(TKEY("profile_performance_tooltip"), "Lowest render resolution; foveation and reprojection on. Fastest."));
 	ImGui::SameLine();
 	if (ImGui::Button(T(TKEY("profile_balanced"), "Balanced")))
 		ApplyProfile(Feature::VRPerfProfile::Balanced);
+	if (auto _tt = Util::HoverTooltipWrapper())
+		ImGui::Text("%s", T(TKEY("profile_balanced_tooltip"), "Mid render resolution; reprojection on."));
 	ImGui::SameLine();
 	if (ImGui::Button(T(TKEY("profile_quality"), "Quality")))
 		ApplyProfile(Feature::VRPerfProfile::Quality);
-	if (auto _tt = Util::HoverTooltipWrapper()) {
-		ImGui::Text("%s", T(TKEY("profiles_tooltip"),
-							  "Performance: lowest render resolution, foveation and stereo reprojection on.\n"
-							  "Balanced: mid render resolution, reprojection on.\n"
-							  "Quality: higher render resolution, reprojection off for maximum fidelity.\n\n"
-							  "Some changes (render resolution, foveation, reprojection) apply after a "
-							  "game restart — the affected sections below show a pending-restart note."));
-	}
+	if (auto _tt = Util::HoverTooltipWrapper())
+		ImGui::Text("%s", T(TKEY("profile_quality_tooltip"), "Higher render resolution; reprojection off for max fidelity. Some changes apply on restart."));
 
 	ImGui::Spacing();
 	ImGui::Separator();

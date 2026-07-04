@@ -59,10 +59,11 @@ void ScreenSpaceShadows::DrawVRPerformanceSettings()
 	DrawStereoToggles();
 }
 
-// Reprojection is the shadow perf win with a minor disocclusion artifact: on for
-// Performance/Balanced, off for Quality (max fidelity).
+// A profile drives the whole stereo mode, so enable the umbrella (else it can't engage from
+// Off): Performance/Balanced reproject (fast), Quality uses bilateral sync (both eyes, max fidelity).
 void ScreenSpaceShadows::ApplyVRPerformanceProfile(VRPerfProfile profile)
 {
+	enableStereoSync = true;
 	useStereoReproject = profile != VRPerfProfile::Quality;
 }
 
