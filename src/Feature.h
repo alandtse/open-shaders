@@ -232,6 +232,10 @@ public:
 	 *         Default true so features without perf profiles don't veto the match. */
 	virtual bool MatchesVRPerformanceProfile(VRPerfProfile /*profile*/) const { return true; }
 
+	/** @brief Broadcasts a profile to every loaded feature. The hub button and the devbench
+	 *         handler share this so the loaded-guard rule lives in exactly one place. */
+	static void ApplyVRPerformanceProfileToAll(VRPerfProfile profile);
+
 	/** @brief Draws the UI shown when this feature failed to load. */
 	virtual void DrawUnloadedUI();
 

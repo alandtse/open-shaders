@@ -10,14 +10,6 @@
 
 #define I18N_KEY_PREFIX "menu.vr_performance."
 
-// Broadcasts one profile to every loaded feature; each maps it to its own settings.
-static void ApplyProfile(Feature::VRPerfProfile profile)
-{
-	for (Feature* feature : Feature::GetFeatureList())
-		if (feature->loaded)
-			feature->ApplyVRPerformanceProfile(profile);
-}
-
 void VRPerformanceRenderer::Render()
 {
 	ImGui::TextWrapped("%s", T(TKEY("intro"),
@@ -34,7 +26,7 @@ void VRPerformanceRenderer::Render()
 		Feature::VRPerfProfile::Performance, Feature::VRPerfProfile::Balanced, Feature::VRPerfProfile::Quality
 	};
 	int activeIdx = -1;
-	for (int i = 0; i < 3 && activeIdx < 0; ++i) {
+	for (int i = 0; i < IM_ARRAYSIZE(profiles) && activeIdx < 0; ++i) {
 		bool all = true;
 		for (Feature* f : Feature::GetFeatureList())
 			if (f->loaded && !f->MatchesVRPerformanceProfile(profiles[i])) {
@@ -56,13 +48,13 @@ void VRPerformanceRenderer::Render()
 		T(TKEY("profile_quality_tooltip"), "Higher render resolution; reprojection off for max fidelity. Some changes apply on restart.")
 	};
 	ImGui::TextUnformatted(T(TKEY("profiles_label"), "Profile:"));
-	for (int i = 0; i < 3; ++i) {
+	for (int i = 0; i < IM_ARRAYSIZE(profiles); ++i) {
 		ImGui::SameLine();
 		const bool active = i == activeIdx;
 		if (active)
 			ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive));
 		if (ImGui::Button(labels[i]))
-			ApplyProfile(profiles[i]);
+			Feature::ApplyVRPerformanceProfileToAll(profiles[i]);
 		if (active)
 			ImGui::PopStyleColor();
 		if (auto _tt = Util::HoverTooltipWrapper())

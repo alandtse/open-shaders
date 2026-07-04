@@ -536,12 +536,10 @@ namespace
 				return json{ { "error", "unknown profile (performance|balanced|quality)" }, { "profile", profileName } };
 
 			task->AddTask([state, profile]() {
-				for (auto* f : Feature::GetFeatureList()) {
-					try {
-						f->ApplyVRPerformanceProfile(profile);
-					} catch (const std::exception& e) {
-						logger::error("DevBenchBridge: settings(applyVRProfile) {} threw: {}", f->GetShortName(), e.what());
-					}
+				try {
+					Feature::ApplyVRPerformanceProfileToAll(profile);
+				} catch (const std::exception& e) {
+					logger::error("DevBenchBridge: settings(applyVRProfile) threw: {}", e.what());
 				}
 				try {
 					state->Save(State::ConfigMode::USER);

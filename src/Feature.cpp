@@ -289,6 +289,13 @@ const std::vector<Feature*>& Feature::GetFeatureList()
 	}
 }
 
+void Feature::ApplyVRPerformanceProfileToAll(VRPerfProfile profile)
+{
+	for (auto* feature : GetFeatureList())
+		if (feature->loaded)
+			feature->ApplyVRPerformanceProfile(profile);
+}
+
 namespace
 {
 	// LoadingMenu fires on the main thread; latch the transition here and let the render thread run
