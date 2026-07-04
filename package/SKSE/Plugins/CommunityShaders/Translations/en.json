@@ -2474,6 +2474,7 @@
     "menu.home.join_discord": "Join Discord",
     "menu.home.nexus_mods": "Nexus Mods",
     "menu.home.quick_links": "Quick Links",
+    "menu.home.vr_performance_tip": "VR: one-tap performance profiles (foveation, reprojection, render resolution) live on the Performance tab of the VR feature settings.",
     "menu.home.welcome": "Welcome to Open Shaders {version}",
     "menu.home.welcome_dev": "Welcome to Open Shaders {version} [{build}]",
     "menu.issues.all_ini_loading": "All feature INI files are loading successfully.",

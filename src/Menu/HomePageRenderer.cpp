@@ -97,6 +97,15 @@ void HomePageRenderer::RenderWelcomeSection()
 
 	ImGui::Spacing();
 
+	// VR discoverability: the perf hub is a tab inside the VR feature, so point new VR users
+	// to it from the home page.
+	if (globals::game::isVR) {
+		ImGui::TextWrapped("%s", T("menu.home.vr_performance_tip",
+			"VR: one-tap performance profiles (foveation, reprojection, render resolution) live on the "
+			"Performance tab of the VR feature settings."));
+		ImGui::Spacing();
+	}
+
 	ImGui::PopStyleVar();
 }
 
