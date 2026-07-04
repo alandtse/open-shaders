@@ -101,8 +101,8 @@ public:
 		float BlurRadius = 2.f;
 		float DistanceNormalisation = 2.f;
 		// VR: march eye 0 only and reproject its view-independent diffuse GI into eye 1
-		// instead of the bilateral stereo sync. Default on for the perf win (~40% of the
-		// GI march); ignored when specular GI is on (specular is view-dependent).
+		// instead of the bilateral stereo sync. Default on (skips the eye-1 march where it
+		// can); ignored when specular GI is on (specular is view-dependent).
 		bool UseStereoReproject = true;
 	} settings;
 
