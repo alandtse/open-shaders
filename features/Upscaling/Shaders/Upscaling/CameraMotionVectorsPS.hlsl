@@ -16,6 +16,8 @@ struct PS_INPUT
 	float2 TexCoord: TEXCOORD;
 };
 
+static const float2 kNDCToUVVelocityScale = float2(-0.5, 0.5);
+
 // Camera-only reprojection for frames where no geometry pass writes motion vectors
 // (the main menu). Only the camera moves there, so depth + the view-proj delta
 // fully determine each pixel's motion. Not a substitute for geometry MVs in gameplay.
@@ -29,10 +31,9 @@ float2 main(PS_INPUT input) : SV_Target
 	// Homogeneous throughout: the intermediate world position needs no divide.
 	float4 world = mul(CurViewProjUnjitteredInverse[eyeIndex], clipPos);
 	float4 prevClip = mul(PrevViewProjUnjittered[eyeIndex], world);
-	if (prevClip.w <= 1e-5)
+	if (prevClip.w <= EPSILON_DIVISION)
 		return 0;
 
-	// GetSSMotionVector convention: NDC delta scaled by (-0.5, 0.5) is a UV-space velocity.
 	float2 prevNDC = prevClip.xy / prevClip.w;
-	return float2(-0.5, 0.5) * (clipPos.xy - prevNDC);
+	return kNDCToUVVelocityScale * (clipPos.xy - prevNDC);
 }
