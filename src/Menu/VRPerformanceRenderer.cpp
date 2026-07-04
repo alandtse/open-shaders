@@ -1,6 +1,8 @@
 #include "VRPerformanceRenderer.h"
 
+#include <algorithm>
 #include <imgui.h>
+#include <vector>
 
 #include "Feature.h"
 #include "I18n/I18n.h"
@@ -48,11 +50,16 @@ void VRPerformanceRenderer::Render()
 	ImGui::Separator();
 	ImGui::Spacing();
 
-	// Loaded features contribute their VR perf controls via the shared hook. Features
+	// Loaded features contribute their VR perf controls via the shared hook, drawn in
+	// perf-impact order (GetVRPerformanceOrder), not feature-registration order. Features
 	// without VR perf knobs draw nothing, so the page shows only what is relevant.
-	for (Feature* feature : Feature::GetFeatureList()) {
-		if (!feature->loaded)
-			continue;
+	std::vector<Feature*> ordered;
+	for (Feature* feature : Feature::GetFeatureList())
+		if (feature->loaded)
+			ordered.push_back(feature);
+	std::sort(ordered.begin(), ordered.end(),
+		[](const Feature* a, const Feature* b) { return a->GetVRPerformanceOrder() < b->GetVRPerformanceOrder(); });
+	for (Feature* feature : ordered) {
 		ImGui::PushID(feature);
 		feature->DrawVRPerformanceSettings();
 		ImGui::PopID();

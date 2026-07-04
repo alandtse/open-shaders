@@ -203,6 +203,10 @@ public:
 	 */
 	virtual void DrawVRPerformanceSettings() {}
 
+	/** @brief Sort key for the VR Performance hub (lower draws first); default puts
+	 *         unranked features last so the order reflects perf impact, not registration. */
+	virtual int GetVRPerformanceOrder() const { return 1000; }
+
 	/** @brief Named VR performance profiles broadcast from the VR Performance hub. */
 	enum class VRPerfProfile
 	{

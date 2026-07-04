@@ -100,6 +100,7 @@ public:
 	/** @brief Draws the ImGui settings UI for screen-space shadow configuration. */
 	virtual void DrawSettings() override;
 	virtual void DrawVRPerformanceSettings() override;
+	int GetVRPerformanceOrder() const override { return 30; }
 	virtual void ApplyVRPerformanceProfile(VRPerfProfile profile) override;
 	/// @brief Renders the VR stereo sync/reprojection toggles. Shared by the SSS panel and
 	/// the VR Performance hub. VR-only; caller guards on isVR.
