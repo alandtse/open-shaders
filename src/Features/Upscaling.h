@@ -53,8 +53,8 @@ public:
 		kDLSS
 	};
 
-	// Upscale preset; a lower value renders at higher internal resolution (less upscaling).
-	// Matches FfxFsr3QualityMode.
+	// Upscale preset indexed by numeric value: lower values (Quality) mean higher internal
+	// render resolution; higher values (Ultra Performance) upscale more. Matches FfxFsr3QualityMode.
 	enum class QualityMode : uint
 	{
 		kNativeAA = 0,

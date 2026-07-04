@@ -273,12 +273,11 @@ void VR::DrawVRPerformanceSettings()
 	bool reproject = stereoOpt.settings.stereoMode != StereoMode::Off;
 	if (ImGui::Checkbox(T(TKEY("vr_perf_reproject"), "Stereo Reprojection"), &reproject))
 		stereoOpt.settings.stereoMode = reproject ? StereoMode::Enable : StereoMode::Off;
-	if (auto _tt = Util::HoverTooltipWrapper())
-		ImGui::Text("%s", T(TKEY("vr_perf_reproject_tooltip"),
-							  "Shares eye 0's shading with eye 1 where valid, cutting VR GPU cost. "
-							  "Detailed tuning is in the Stereo tab."));
-	// stereoMode latches at boot; surface the pending-restart cue the hub intro promises.
-	Util::UI::DrawSettingDiff(stereoOpt.bootSnapshot, stereoOpt.settings, &VRStereoOptimizations::Settings::stereoMode);
+	// stereoMode latches at boot; the shared helper attaches the tooltip and the pending-restart cue.
+	Util::UI::RestartGatedAnnotate(stereoOpt.bootSnapshot, stereoOpt.settings, &VRStereoOptimizations::Settings::stereoMode,
+		T(TKEY("vr_perf_reproject_tooltip"),
+			"Shares eye 0's shading with eye 1 where valid, cutting VR GPU cost. "
+			"Detailed tuning is in the Stereo tab."));
 }
 
 // Stereo reprojection is the big VR GPU-cost saver with a minor disocclusion artifact,

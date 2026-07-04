@@ -291,9 +291,16 @@ const std::vector<Feature*>& Feature::GetFeatureList()
 
 void Feature::ApplyVRPerformanceProfileToAll(VRPerfProfile profile)
 {
-	for (auto* feature : GetFeatureList())
-		if (feature->loaded)
+	for (auto* feature : GetFeatureList()) {
+		if (!feature->loaded)
+			continue;
+		// One feature's failure must not abort the broadcast to the rest.
+		try {
 			feature->ApplyVRPerformanceProfile(profile);
+		} catch (const std::exception& e) {
+			logger::error("ApplyVRPerformanceProfileToAll: {} threw: {}", feature->GetShortName(), e.what());
+		}
+	}
 }
 
 namespace

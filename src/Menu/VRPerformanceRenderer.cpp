@@ -76,11 +76,17 @@ void VRPerformanceRenderer::Render()
 	for (Feature* feature : Feature::GetFeatureList())
 		if (feature->loaded)
 			ordered.push_back(feature);
-	std::sort(ordered.begin(), ordered.end(),
+	// stable_sort keeps registration order among equal ranks (e.g. the default 1000) deterministic.
+	std::stable_sort(ordered.begin(), ordered.end(),
 		[](const Feature* a, const Feature* b) { return a->GetVRPerformanceOrder() < b->GetVRPerformanceOrder(); });
 	for (Feature* feature : ordered) {
 		ImGui::PushID(feature);
-		feature->DrawVRPerformanceSettings();
+		// Isolate each feature's draw so one throwing hook can't blank the rest of the page.
+		try {
+			feature->DrawVRPerformanceSettings();
+		} catch (const std::exception& e) {
+			ImGui::TextColored(ImVec4(1, 0, 0, 1), "%s: draw error (%s)", feature->GetShortName().c_str(), e.what());
+		}
 		ImGui::PopID();
 	}
 }

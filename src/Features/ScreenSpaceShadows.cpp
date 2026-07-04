@@ -43,7 +43,7 @@ void ScreenSpaceShadows::DrawStereoToggles()
 							  "Bilateral Sync: both eyes compute, then reconcile — highest quality, highest cost.\n"
 							  "Reprojection: compute Eye 0 and transfer to Eye 1, skipping its raymarch — "
 							  "fastest; disoccluded pixels fall back to unshadowed."));
-	if (useStereoReproject && globals::state->IsDeveloperMode()) {
+	if (enableStereoSync && useStereoReproject && globals::state->IsDeveloperMode()) {
 		ImGui::Checkbox(T(TKEY("vr_stereo_reproject_debug"), "Show Reprojection Disocclusion"), &debugReprojectDisocclusion);
 		if (auto _tt = Util::HoverTooltipWrapper())
 			ImGui::Text("%s", T(TKEY("vr_stereo_reproject_debug_tooltip"),
