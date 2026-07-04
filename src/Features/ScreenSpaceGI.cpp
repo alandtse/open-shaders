@@ -95,8 +95,8 @@ void ScreenSpaceGI::DrawSettings()
 				if (auto _tt = Util::HoverTooltipWrapper())
 					ImGui::Text("%s", T(TKEY("vr_stereo_reproject_tooltip"),
 										  "Reprojects Eye 0 (left)'s diffuse GI into Eye 1 (right) and skips the Eye 1 "
-										  "march, reducing GPU cost. Requires HQ Specular IL off (specular is "
-										  "view-dependent). Disoccluded pixels fall back to no GI."));
+										  "march where it can, reducing GPU cost. Requires HQ Specular IL off (specular "
+										  "is view-dependent). Disoccluded pixels are marched natively instead."));
 			}
 		}
 
