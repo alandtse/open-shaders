@@ -215,6 +215,10 @@ public:
 		Quality       ///< Maximum fidelity: higher render res, perf shortcuts off.
 	};
 
+	/** @brief Shared profile convention: every VR reprojection feature enables reproject
+	 *         except on Quality (max fidelity). One source so apply/match can't drift. */
+	static constexpr bool VRProfileEnablesReproject(VRPerfProfile profile) { return profile != VRPerfProfile::Quality; }
+
 	/**
 	 * @brief Applies a VR performance profile to this feature's settings. Default empty:
 	 * each feature maps the profile to its own settings (decoupled — the hub broadcasts

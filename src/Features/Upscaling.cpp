@@ -270,38 +270,38 @@ void Upscaling::DrawVRPerformanceSettings()
 	DrawFoveationControls(false);
 }
 
-// qualityMode: 1=Quality, 2=Balanced, 3=Performance (lower renders at higher res).
-// PerfMode stays on for every profile — it is the recommended default VRAM/bandwidth win.
-// Foveated DLSS trades peripheral sharpness for speed, so only the Performance profile
-// opts into it. qualityMode/renderAtUpscaleRes/foveation latch at boot (restart-gated).
+uint Upscaling::VRProfileQualityMode(VRPerfProfile profile)
+{
+	switch (profile) {
+	case VRPerfProfile::Performance:
+		return (uint)QualityMode::kPerformance;
+	case VRPerfProfile::Balanced:
+		return (uint)QualityMode::kBalanced;
+	default:
+		return (uint)QualityMode::kQuality;
+	}
+}
+
+// Foveated DLSS trades peripheral sharpness for speed, so only Performance opts into it.
+bool Upscaling::VRProfileFoveation(VRPerfProfile profile)
+{
+	return profile == VRPerfProfile::Performance;
+}
+
+// PerfMode (renderAtUpscaleRes) stays on for every profile; qualityMode and foveation
+// latch at boot (restart-gated).
 void Upscaling::ApplyVRPerformanceProfile(VRPerfProfile profile)
 {
 	settings.renderAtUpscaleRes = true;
-	switch (profile) {
-	case VRPerfProfile::Performance:
-		settings.qualityMode = (uint)QualityMode::kPerformance;
-		foveatedRender.settings.enabled = 1;
-		break;
-	case VRPerfProfile::Balanced:
-		settings.qualityMode = (uint)QualityMode::kBalanced;
-		foveatedRender.settings.enabled = 0;
-		break;
-	case VRPerfProfile::Quality:
-		settings.qualityMode = (uint)QualityMode::kQuality;
-		foveatedRender.settings.enabled = 0;
-		break;
-	}
+	settings.qualityMode = VRProfileQualityMode(profile);
+	foveatedRender.settings.enabled = VRProfileFoveation(profile) ? 1 : 0;
 }
 
 bool Upscaling::MatchesVRPerformanceProfile(VRPerfProfile profile) const
 {
-	if (!settings.renderAtUpscaleRes)
-		return false;
-	const bool foveation = profile == VRPerfProfile::Performance;
-	const uint qm = profile == VRPerfProfile::Performance ? (uint)QualityMode::kPerformance :
-	                profile == VRPerfProfile::Balanced    ? (uint)QualityMode::kBalanced :
-	                                                        (uint)QualityMode::kQuality;
-	return settings.qualityMode == qm && (foveatedRender.settings.enabled != 0) == foveation;
+	return settings.renderAtUpscaleRes &&
+	       settings.qualityMode == VRProfileQualityMode(profile) &&
+	       (foveatedRender.settings.enabled != 0) == VRProfileFoveation(profile);
 }
 
 void Upscaling::DrawSettings()

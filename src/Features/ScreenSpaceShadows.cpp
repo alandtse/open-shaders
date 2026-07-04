@@ -64,12 +64,12 @@ void ScreenSpaceShadows::DrawVRPerformanceSettings()
 void ScreenSpaceShadows::ApplyVRPerformanceProfile(VRPerfProfile profile)
 {
 	enableStereoSync = true;
-	useStereoReproject = profile != VRPerfProfile::Quality;
+	useStereoReproject = VRProfileEnablesReproject(profile);
 }
 
 bool ScreenSpaceShadows::MatchesVRPerformanceProfile(VRPerfProfile profile) const
 {
-	return enableStereoSync && useStereoReproject == (profile != VRPerfProfile::Quality);
+	return enableStereoSync && useStereoReproject == VRProfileEnablesReproject(profile);
 }
 
 void ScreenSpaceShadows::DrawSettings()

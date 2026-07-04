@@ -291,14 +291,13 @@ void VR::DrawVRPerformanceSettings()
 void VR::ApplyVRPerformanceProfile(VRPerfProfile profile)
 {
 	using StereoMode = VRStereoOptimizations::StereoMode;
-	stereoOpt.settings.stereoMode =
-		profile == VRPerfProfile::Quality ? StereoMode::Off : StereoMode::Enable;
+	stereoOpt.settings.stereoMode = VRProfileEnablesReproject(profile) ? StereoMode::Enable : StereoMode::Off;
 }
 
 bool VR::MatchesVRPerformanceProfile(VRPerfProfile profile) const
 {
 	using StereoMode = VRStereoOptimizations::StereoMode;
-	return stereoOpt.settings.stereoMode == (profile == VRPerfProfile::Quality ? StereoMode::Off : StereoMode::Enable);
+	return stereoOpt.settings.stereoMode == (VRProfileEnablesReproject(profile) ? StereoMode::Enable : StereoMode::Off);
 }
 
 #undef I18N_KEY_PREFIX

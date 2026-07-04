@@ -67,12 +67,12 @@ void ScreenSpaceGI::DrawVRPerformanceSettings()
 // Performance/Balanced, off for Quality (max fidelity). Ignored when specular GI is on.
 void ScreenSpaceGI::ApplyVRPerformanceProfile(VRPerfProfile profile)
 {
-	settings.UseStereoReproject = profile != VRPerfProfile::Quality;
+	settings.UseStereoReproject = VRProfileEnablesReproject(profile);
 }
 
 bool ScreenSpaceGI::MatchesVRPerformanceProfile(VRPerfProfile profile) const
 {
-	return settings.UseStereoReproject == (profile != VRPerfProfile::Quality);
+	return settings.UseStereoReproject == VRProfileEnablesReproject(profile);
 }
 
 void ScreenSpaceGI::DrawSettings()
