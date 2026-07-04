@@ -249,6 +249,15 @@ void Upscaling::DrawFoveationControls()
 		ImGui::EndDisabled();
 }
 
+// Central VR Performance hub view: the render-res PerfMode toggle and Foveated DLSS,
+// the two upscaler-owned VR perf knobs, bound to the same settings the upscaler panel shows.
+void Upscaling::DrawVRPerformanceSettings()
+{
+	ImGui::SeparatorText(T(TKEY("vr_perf_upscaling_header"), "Upscaling & Foveation"));
+	DrawPerfModeToggle();
+	DrawFoveationControls();
+}
+
 void Upscaling::DrawSettings()
 {
 	// Force method to None up front so the picker reflects the locked state.

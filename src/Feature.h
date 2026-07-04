@@ -193,6 +193,16 @@ public:
 	virtual void OnSceneTransitionReset(bool /*opening*/) {}
 	virtual void DrawSettings() {}
 
+	/**
+	 * @brief Renders this feature's VR performance-relevant controls into the central
+	 * VR Performance panel. Default empty: features without VR perf knobs contribute
+	 * nothing (fail-safe — no registry to keep in sync). Overrides should render the
+	 * SAME controls (bound to the same settings) they show in their own panel, so the
+	 * hub and the feature panel are two views of one state. Convention: open with an
+	 * ImGui::SeparatorText group label so every contributor is grouped uniformly.
+	 */
+	virtual void DrawVRPerformanceSettings() {}
+
 	/** @brief Draws the UI shown when this feature failed to load. */
 	virtual void DrawUnloadedUI();
 

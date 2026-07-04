@@ -171,6 +171,7 @@ public:
 	size_t GetSettingsBlobSize() const override { return sizeof(settings); }
 
 	virtual void DrawSettings() override;
+	virtual void DrawVRPerformanceSettings() override;
 	/// @brief Renders the VR PerfMode (render-at-upscaled-res) toggle. Shared by the
 	/// upscaler panel and the VR Performance hub. VR-only; caller guards on isVR.
 	void DrawPerfModeToggle();

@@ -20,6 +20,7 @@
 #include "Menu/HomePageRenderer.h"
 #include "Menu/ProfilingRenderer.h"
 #include "Menu/ThemeManager.h"
+#include "Menu/VRPerformanceRenderer.h"
 #include "SceneSettingsManager.h"
 #include "SettingsOverrideManager.h"
 #include "State.h"
@@ -31,8 +32,8 @@ namespace
 {
 	// Core built-in menu names that always appear first in the menu list
 	// These are canonical identifiers used for logic — NOT translated
-	constexpr std::array<const char*, 5> CORE_MENU_NAMES = {
-		"Home", "General", "Advanced", "Profiling", "Display"
+	constexpr std::array<const char*, 6> CORE_MENU_NAMES = {
+		"Home", "General", "Advanced", "Profiling", "VR Performance", "Display"
 	};
 
 	const char* GetCoreMenuDisplayName(const char* canonicalName)
@@ -45,6 +46,8 @@ namespace
 			return T("menu.features.advanced", "Advanced");
 		if (std::strcmp(canonicalName, "Profiling") == 0)
 			return T("menu.features.profiling", "Profiling");
+		if (std::strcmp(canonicalName, "VR Performance") == 0)
+			return T("menu.features.vr_performance", "VR Performance");
 		if (std::strcmp(canonicalName, "Display") == 0)
 			return T("menu.features.display", "Display");
 		return canonicalName;
@@ -368,6 +371,11 @@ std::vector<FeatureListRenderer::MenuFuncInfo> FeatureListRenderer::BuildMenuLis
 	};  // NOTE: The menu list is rebuilt every frame, so category expansion states
 	// persist correctly. This is acceptable since the list is small and built
 	// infrequently, but could be optimized if performance becomes an issue.
+
+	// VR Performance hub — consolidates every feature's VR perf controls in one place.
+	// VR-only; rendered in the core-menu band (before the feature list) for discoverability.
+	if (globals::game::isVR)
+		menuList.push_back(BuiltInMenu{ T("menu.features.vr_performance", "VR Performance"), []() { VRPerformanceRenderer::Render(); } });
 
 	// Group features by category
 	std::map<std::string, std::vector<Feature*>> categorizedFeatures;

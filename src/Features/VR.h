@@ -106,6 +106,7 @@ public:
 	virtual void RestoreDefaultSettings() override;
 
 	virtual void DrawSettings() override;
+	virtual void DrawVRPerformanceSettings() override;
 
 	virtual std::string_view GetCategory() const override { return FeatureCategories::kUtility; }
 
