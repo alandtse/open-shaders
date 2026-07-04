@@ -878,9 +878,8 @@ void ScreenSpaceGI::DrawSSGI()
 		context->Dispatch((internalRes[0] + 15u) >> 4, (internalRes[1] + 15u) >> 4, 1);
 	}
 
-	// Stereo reproject: march eye 0 only, transfer its view-independent diffuse
-	// GI into eye 1. Requires specular GI off (specular is view-dependent) and both the
-	// eye-0-only march and reproject shaders compiled.
+	// Reproject eye 0's view-independent diffuse GI into eye 1; requires specular GI off
+	// (view-dependent) and both the eye-0-only march and reproject shaders compiled.
 	const bool useReproject = globals::game::isVR && settings.UseStereoReproject &&
 	                          !settings.EnableExperimentalSpecularGI && giEye0OnlyCompute && reprojectCompute;
 

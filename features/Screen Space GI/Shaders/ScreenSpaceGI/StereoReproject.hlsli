@@ -1,9 +1,8 @@
 #ifndef SSGI_STEREO_REPROJECT
 #define SSGI_STEREO_REPROJECT
 
-// Shared view-independent cross-eye reprojection helpers for SSGI. Used by the gi.cs
-// eye-0-only march skip and the reproject transfer so a pixel is skipped only if
-// the reproject will fill it — the two hit/miss decisions cannot drift.
+// Shared view-independent reproject helpers for SSGI: one predicate gates both the
+// eye-0-only march skip and the transfer, so the two hit/miss decisions cannot drift.
 
 // Include our own dependencies so this is order-independent: the include sorter
 // reorders headers alphabetically, which otherwise pulls common.hlsli after this
