@@ -23,6 +23,45 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	BilinearThreshold,
 	ShadowContrast)
 
+void ScreenSpaceShadows::DrawStereoToggles()
+{
+	ImGui::Checkbox(T(TKEY("vr_stereo_sync"), "VR Stereo Sync"), &enableStereoSync);
+	if (auto _tt = Util::HoverTooltipWrapper())
+		ImGui::Text("%s", T(TKEY("vr_stereo_sync_tooltip"),
+							  "Reconciles shadow data between Eye 0 (left) and Eye 1 (right) via bilateral "
+							  "reprojection and a depth-weighted blur to reduce per-eye noise. Min-blend "
+							  "preserves a shadow if either eye detects an occluder."));
+	if (enableStereoSync) {
+		ImGui::Checkbox(T(TKEY("vr_stereo_reproject"), "VR Stereo Reprojection"), &useStereoReproject);
+		if (auto _tt = Util::HoverTooltipWrapper())
+			ImGui::Text("%s", T(TKEY("vr_stereo_reproject_tooltip"),
+								  "Reprojects Eye 0 (left)'s view-independent shadow into Eye 1 (right) and "
+								  "skips the Eye 1 raymarch, reducing GPU cost. Disoccluded pixels (visible "
+								  "only to Eye 1) fall back to unshadowed."));
+		if (useStereoReproject && globals::state->IsDeveloperMode()) {
+			ImGui::Checkbox(T(TKEY("vr_stereo_reproject_debug"), "Show Reprojection Disocclusion"), &debugReprojectDisocclusion);
+			if (auto _tt = Util::HoverTooltipWrapper())
+				ImGui::Text("%s", T(TKEY("vr_stereo_reproject_debug_tooltip"),
+									  "Paints Eye 1 pixels Eye 0 cannot see black to visualize the "
+									  "reprojection coverage gap."));
+		}
+	}
+}
+
+// Hub view: the SSS stereo sync/reprojection toggles, bound to the same settings the SSS panel shows.
+void ScreenSpaceShadows::DrawVRPerformanceSettings()
+{
+	ImGui::SeparatorText(GetDisplayName().c_str());
+	DrawStereoToggles();
+}
+
+// Reprojection is the shadow perf win with a minor disocclusion artifact: on for
+// Performance/Balanced, off for Quality (max fidelity).
+void ScreenSpaceShadows::ApplyVRPerformanceProfile(VRPerfProfile profile)
+{
+	useStereoReproject = profile != VRPerfProfile::Quality;
+}
+
 void ScreenSpaceShadows::DrawSettings()
 {
 	if (ImGui::TreeNodeEx(T(TKEY("general"), "General"), ImGuiTreeNodeFlags_DefaultOpen)) {
@@ -46,29 +85,8 @@ void ScreenSpaceShadows::DrawSettings()
 		if (auto _tt = Util::HoverTooltipWrapper())
 			ImGui::Text("%s", T(TKEY("shadow_contrast_tooltip"), "Contrast boost for the shadow transition. Higher values produce harder shadow edges."));
 
-		if (globals::game::isVR) {
-			ImGui::Checkbox(T(TKEY("vr_stereo_sync"), "VR Stereo Sync"), &enableStereoSync);
-			if (auto _tt = Util::HoverTooltipWrapper())
-				ImGui::Text("%s", T(TKEY("vr_stereo_sync_tooltip"),
-									  "Reconciles shadow data between Eye 0 (left) and Eye 1 (right) via bilateral "
-									  "reprojection and a depth-weighted blur to reduce per-eye noise. Min-blend "
-									  "preserves a shadow if either eye detects an occluder."));
-			if (enableStereoSync) {
-				ImGui::Checkbox(T(TKEY("vr_stereo_reproject"), "VR Stereo Reprojection"), &useStereoReproject);
-				if (auto _tt = Util::HoverTooltipWrapper())
-					ImGui::Text("%s", T(TKEY("vr_stereo_reproject_tooltip"),
-										  "Reprojects Eye 0 (left)'s view-independent shadow into Eye 1 (right) and "
-										  "skips the Eye 1 raymarch, reducing GPU cost. Disoccluded pixels (visible "
-										  "only to Eye 1) fall back to unshadowed."));
-				if (useStereoReproject && globals::state->IsDeveloperMode()) {
-					ImGui::Checkbox(T(TKEY("vr_stereo_reproject_debug"), "Show Reprojection Disocclusion"), &debugReprojectDisocclusion);
-					if (auto _tt = Util::HoverTooltipWrapper())
-						ImGui::Text("%s", T(TKEY("vr_stereo_reproject_debug_tooltip"),
-											  "Paints Eye 1 pixels Eye 0 cannot see black to visualize the "
-											  "reprojection coverage gap."));
-				}
-			}
-		}
+		if (globals::game::isVR)
+			DrawStereoToggles();
 
 		ImGui::Spacing();
 		ImGui::Spacing();
