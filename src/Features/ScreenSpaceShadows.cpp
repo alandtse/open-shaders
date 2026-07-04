@@ -33,7 +33,7 @@ void ScreenSpaceShadows::DrawStereoToggles()
 		T(TKEY("vr_stereo_mode_sync"), "Bilateral Sync"),
 		T(TKEY("vr_stereo_mode_reproject"), "Reprojection")
 	};
-	if (ImGui::Combo(T(TKEY("vr_stereo_mode"), "VR Stereo Consistency"), &mode, modes, IM_ARRAYSIZE(modes))) {
+	if (ImGui::Combo(T(TKEY("vr_stereo_mode"), "Stereo Consistency"), &mode, modes, IM_ARRAYSIZE(modes))) {
 		enableStereoSync = mode != 0;
 		useStereoReproject = mode == 2;
 	}

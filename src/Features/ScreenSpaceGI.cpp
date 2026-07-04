@@ -48,7 +48,7 @@ void ScreenSpaceGI::RestoreDefaultSettings()
 void ScreenSpaceGI::DrawReprojectToggle()
 {
 	auto reprojectGuard = Util::DisableGuard(settings.EnableExperimentalSpecularGI);
-	ImGui::Checkbox(T(TKEY("vr_stereo_reproject"), "VR Stereo Reprojection"), &settings.UseStereoReproject);
+	ImGui::Checkbox(T(TKEY("vr_stereo_reproject"), "Stereo Reprojection"), &settings.UseStereoReproject);
 	if (auto _tt = Util::HoverTooltipWrapper())
 		ImGui::Text("%s", T(TKEY("vr_stereo_reproject_tooltip"),
 							  "Reprojects Eye 0 (left)'s diffuse GI into Eye 1 (right) and skips the Eye 1 "
