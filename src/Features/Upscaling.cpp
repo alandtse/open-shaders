@@ -258,6 +258,15 @@ void Upscaling::DrawVRPerformanceSettings()
 {
 	ImGui::SeparatorText(T(TKEY("vr_perf_upscaling_header"), "Upscaling & Foveation"));
 	DrawPerfModeToggle();
+	// The profile-controlled render preset is the biggest VR lever — show its value and
+	// pending-restart cue here rather than leaving profile changes invisible.
+	const char* presetNames[] = {
+		T(TKEY("preset_native_aa"), "Native AA"), T(TKEY("preset_quality"), "Quality"),
+		T(TKEY("preset_balanced"), "Balanced"), T(TKEY("preset_performance"), "Performance"),
+		T(TKEY("preset_ultra_performance"), "Ultra Performance")
+	};
+	ImGui::Text("%s: %s", T(TKEY("vr_perf_upscale_preset"), "Upscale preset"), presetNames[std::min(settings.qualityMode, 4u)]);
+	Util::UI::DrawSettingDiff(bootSnapshot, settings, &Settings::qualityMode);
 	DrawFoveationControls(false);
 }
 

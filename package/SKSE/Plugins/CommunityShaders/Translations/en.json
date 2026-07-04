@@ -2000,6 +2000,7 @@
     "feature.upscaling.use_markers_to_optimize_tooltip_2": "Try On first; turn Off if it causes stutter on your setup.",
     "feature.upscaling.view_resize": "View Resize",
     "feature.upscaling.vr_intermediates_not_created": "VR intermediates not yet created (enter game world)",
+    "feature.upscaling.vr_perf_upscale_preset": "Upscale preset",
     "feature.upscaling.vr_perf_upscaling_header": "Upscaling & Foveation",
     "feature.volumetric_lighting.description": "Volumetric Lighting creates realistic light scattering effects through fog, dust, and atmospheric particles.\nThis adds dramatic god rays and atmospheric depth to both interior and exterior environments.",
     "feature.volumetric_lighting.enable_exteriors": "Enable Volumetric Lighting in Exteriors",
