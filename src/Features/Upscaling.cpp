@@ -267,15 +267,15 @@ void Upscaling::ApplyVRPerformanceProfile(VRPerfProfile profile)
 	settings.renderAtUpscaleRes = true;
 	switch (profile) {
 	case VRPerfProfile::Performance:
-		settings.qualityMode = 3;
+		settings.qualityMode = (uint)QualityMode::kPerformance;
 		foveatedRender.settings.enabled = 1;
 		break;
 	case VRPerfProfile::Balanced:
-		settings.qualityMode = 2;
+		settings.qualityMode = (uint)QualityMode::kBalanced;
 		foveatedRender.settings.enabled = 0;
 		break;
 	case VRPerfProfile::Quality:
-		settings.qualityMode = 1;
+		settings.qualityMode = (uint)QualityMode::kQuality;
 		foveatedRender.settings.enabled = 0;
 		break;
 	}

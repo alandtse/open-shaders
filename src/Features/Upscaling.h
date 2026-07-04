@@ -53,11 +53,21 @@ public:
 		kDLSS
 	};
 
+	// Upscale quality preset; lower renders at higher resolution. Values match FfxFsr3QualityMode.
+	enum class QualityMode : uint
+	{
+		kNativeAA = 0,
+		kQuality = 1,
+		kBalanced = 2,
+		kPerformance = 3,
+		kUltraPerformance = 4,
+	};
+
 	struct Settings
 	{
 		uint upscaleMethod = (uint)UpscaleMethod::kDLSS;
 		uint upscaleMethodNoDLSS = (uint)UpscaleMethod::kFSR;
-		uint qualityMode = 1;  // Default to Quality (1=Quality, 2=Balanced, 3=Performance, 4=Ultra Performance, 0=Native AA)
+		uint qualityMode = (uint)QualityMode::kQuality;
 		uint frameLimitMode = 1;
 		uint frameGenerationMode = 1;
 		uint frameGenerationForceEnable = 0;
