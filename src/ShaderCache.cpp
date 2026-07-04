@@ -75,6 +75,7 @@ namespace SIE
 		const std::filesystem::path& path,
 		const std::filesystem::path& shadersRoot,
 		std::unordered_map<std::string, IncludeParseEntry>& parseCache,
+		std::mutex& parseCacheMutex,
 		std::unordered_map<std::string, std::chrono::system_clock::time_point>& callResults)
 	{
 		const std::string key = NormalizedPathKey(path);
@@ -92,49 +93,66 @@ namespace SIE
 			return now;
 		}
 
-		auto* parsed = [&]() -> const IncludeParseEntry* {
-			if (auto it = parseCache.find(key); it != parseCache.end() && it->second.selfMTime == selfMTime)
-				return &it->second;
-			IncludeParseEntry entry{ selfMTime, {} };
-			std::ifstream ifs(path);
-			if (ifs.is_open()) {
-				std::string line;
-				while (std::getline(ifs, line)) {
-					// Accept whitespace between '#' and "include" ("#	include" is the norm in
-					// this repo's nested-#if style).
-					size_t pos = line.find_first_not_of(" 	");
-					if (pos == std::string::npos || line[pos] != '#')
-						continue;
-					pos = line.find_first_not_of(" 	", pos + 1);
-					if (pos == std::string::npos || line.compare(pos, 7, "include") != 0)
-						continue;
-					const size_t firstQuote = line.find('"', pos + 7);
-					if (firstQuote == std::string::npos)
-						continue;
-					const size_t secondQuote = line.find('"', firstQuote + 1);
-					if (secondQuote == std::string::npos || secondQuote == firstQuote + 1)
-						continue;
-					const std::string includeName = line.substr(firstQuote + 1, secondQuote - firstQuote - 1);
-
-					std::error_code probeEc;
-					std::filesystem::path includePath = shadersRoot / includeName;
-					if (!std::filesystem::exists(includePath, probeEc)) {
-						includePath = path.parent_path() / includeName;
-						// Absent at both probes: an ifdef'd-out include for an uninstalled feature.
-						// Skipping matches the compiler (which never opens it); forcing a recompile
-						// here would defeat the disk cache on every boot for such installs.
-						if (!std::filesystem::exists(includePath, probeEc))
-							continue;
-					}
-					entry.includes.push_back(std::move(includePath));
-				}
+		// Hold parseCacheMutex only around the shared-map lookup/insert; the stat above and the
+		// file read below run unlocked so parallel validity checks don't serialize on cold boot.
+		// The include list is copied out (never a pointer into the map) so a concurrent insert
+		// can't rehash it out from under the recursion.
+		std::vector<std::filesystem::path> includes;
+		bool cached = false;
+		{
+			std::lock_guard lock(parseCacheMutex);
+			if (auto it = parseCache.find(key); it != parseCache.end() && it->second.selfMTime == selfMTime) {
+				includes = it->second.includes;
+				cached = true;
 			}
-			return &(parseCache[key] = std::move(entry));
-		}();
+		}
+
+		if (!cached) {
+			std::ifstream ifs(path);
+			if (!ifs.is_open()) {
+				// Metadata readable but contents not (transient lock/AV): force a recompile rather
+				// than caching an empty include list and serving stale.
+				const auto now = std::chrono::system_clock::now();
+				callResults[key] = now;
+				return now;
+			}
+			std::string line;
+			while (std::getline(ifs, line)) {
+				// Accept whitespace between '#' and "include" ("#	include" is the norm in
+				// this repo's nested-#if style).
+				size_t pos = line.find_first_not_of(" 	");
+				if (pos == std::string::npos || line[pos] != '#')
+					continue;
+				pos = line.find_first_not_of(" 	", pos + 1);
+				if (pos == std::string::npos || line.compare(pos, 7, "include") != 0)
+					continue;
+				const size_t firstQuote = line.find('"', pos + 7);
+				if (firstQuote == std::string::npos)
+					continue;
+				const size_t secondQuote = line.find('"', firstQuote + 1);
+				if (secondQuote == std::string::npos || secondQuote == firstQuote + 1)
+					continue;
+				const std::string includeName = line.substr(firstQuote + 1, secondQuote - firstQuote - 1);
+
+				std::error_code rootEc, parentEc;
+				std::filesystem::path includePath = shadersRoot / includeName;
+				if (!std::filesystem::exists(includePath, rootEc)) {
+					includePath = path.parent_path() / includeName;
+					// Clean "not found" at both probes: an ifdef'd-out include for an uninstalled
+					// feature. Skipping matches the compiler (which never opens it). A probe IO error
+					// instead falls through so the stat below forces a recompile rather than serving stale.
+					if (!std::filesystem::exists(includePath, parentEc) && !rootEc && !parentEc)
+						continue;
+				}
+				includes.push_back(std::move(includePath));
+			}
+			std::lock_guard lock(parseCacheMutex);
+			parseCache[key] = IncludeParseEntry{ selfMTime, includes };
+		}
 
 		auto maxTime = selfMTime;
-		for (const auto& includePath : parsed->includes)
-			maxTime = std::max(maxTime, GetMaxShaderMTimeInternal(includePath, shadersRoot, parseCache, callResults));
+		for (const auto& includePath : includes)
+			maxTime = std::max(maxTime, GetMaxShaderMTimeInternal(includePath, shadersRoot, parseCache, parseCacheMutex, callResults));
 
 		callResults[key] = maxTime;
 		return maxTime;
@@ -147,9 +165,8 @@ namespace SIE
 		static std::unordered_map<std::string, IncludeParseEntry> parseCache;
 		static std::mutex parseCacheMutex;
 
-		std::lock_guard lock(parseCacheMutex);
 		std::unordered_map<std::string, std::chrono::system_clock::time_point> callResults;
-		return GetMaxShaderMTimeInternal(path, shadersRoot, parseCache, callResults);
+		return GetMaxShaderMTimeInternal(path, shadersRoot, parseCache, parseCacheMutex, callResults);
 	}
 
 	// Custom include handler to track all includes during shader compilation
