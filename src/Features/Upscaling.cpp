@@ -260,12 +260,7 @@ void Upscaling::DrawVRPerformanceSettings()
 	DrawPerfModeToggle();
 	// The profile-controlled render preset is the biggest VR lever — show its value and
 	// pending-restart cue here rather than leaving profile changes invisible.
-	const char* presetNames[] = {
-		T(TKEY("preset_native_aa"), "Native AA"), T(TKEY("preset_quality"), "Quality"),
-		T(TKEY("preset_balanced"), "Balanced"), T(TKEY("preset_performance"), "Performance"),
-		T(TKEY("preset_ultra_performance"), "Ultra Performance")
-	};
-	ImGui::Text("%s: %s", T(TKEY("vr_perf_upscale_preset"), "Upscale preset"), presetNames[std::min(settings.qualityMode, 4u)]);
+	ImGui::Text("%s: %s", T(TKEY("vr_perf_upscale_preset"), "Upscale preset"), GetQualityModeName(settings.qualityMode));
 	Util::UI::DrawSettingDiff(bootSnapshot, settings, &Settings::qualityMode);
 	DrawFoveationControls(false);
 }
@@ -286,6 +281,23 @@ uint Upscaling::VRProfileQualityMode(VRPerfProfile profile)
 bool Upscaling::VRProfileFoveation(VRPerfProfile profile)
 {
 	return profile == VRPerfProfile::Performance;
+}
+
+// Single source for preset display names; the native tier reads DLAA under DLSS, Native AA otherwise.
+const char* Upscaling::GetQualityModeName(uint qualityMode) const
+{
+	switch (std::min(qualityMode, (uint)QualityMode::kUltraPerformance)) {
+	case (uint)QualityMode::kNativeAA:
+		return GetUpscaleMethod() == UpscaleMethod::kDLSS ? T(TKEY("preset_dlaa"), "DLAA") : T(TKEY("preset_native_aa"), "Native AA");
+	case (uint)QualityMode::kQuality:
+		return T(TKEY("preset_quality"), "Quality");
+	case (uint)QualityMode::kBalanced:
+		return T(TKEY("preset_balanced"), "Balanced");
+	case (uint)QualityMode::kPerformance:
+		return T(TKEY("preset_performance"), "Performance");
+	default:
+		return T(TKEY("preset_ultra_performance"), "Ultra Performance");
+	}
 }
 
 // PerfMode (renderAtUpscaleRes) stays on for every profile; qualityMode and foveation
@@ -404,36 +416,7 @@ void Upscaling::DrawSettings()
 
 	// Display upscaling settings if applicable
 	if (upscaleMethod != UpscaleMethod::kNONE && upscaleMethod != UpscaleMethod::kTAA) {
-		const char* upscalePresetsDLSS[] = {
-			T(TKEY("preset_ultra_performance"), "Ultra Performance"),
-			T(TKEY("preset_performance"), "Performance"),
-			T(TKEY("preset_balanced"), "Balanced"),
-			T(TKEY("preset_quality"), "Quality"),
-			T(TKEY("preset_dlaa"), "DLAA")
-		};
-		const char* upscalePresets[] = {
-			T(TKEY("preset_ultra_performance"), "Ultra Performance"),
-			T(TKEY("preset_performance"), "Performance"),
-			T(TKEY("preset_balanced"), "Balanced"),
-			T(TKEY("preset_quality"), "Quality"),
-			T(TKEY("preset_native_aa"), "Native AA")
-		};
-
-		// Compute a safe preset index (4 - qualityMode) clamped to [0,4] to avoid negative/overflow indexing
-		int presetIndex = 0;
-		if (settings.qualityMode <= 4)
-			presetIndex = 4 - static_cast<int>(settings.qualityMode);
-		presetIndex = std::clamp(presetIndex, 0, 4);
-
-		// Choose preset name set and the corresponding scales once, then show a
-		// single SliderInt to avoid duplicated calls.
-		const char* baseLabel = nullptr;
-
-		if (upscaleMethod == UpscaleMethod::kFSR) {
-			baseLabel = upscalePresets[presetIndex];
-		} else if (upscaleMethod == UpscaleMethod::kDLSS) {
-			baseLabel = upscalePresetsDLSS[presetIndex];
-		}
+		const char* baseLabel = GetQualityModeName(settings.qualityMode);
 
 		if (baseLabel) {
 			// Derive scale from live `settings.qualityMode` — `resolution-
@@ -450,7 +433,7 @@ void Upscaling::DrawSettings()
 			if (perfMode.IsHookActive() &&
 				bootSnapshot.HasPendingChange(settings, &Settings::qualityMode)) {
 				const uint bm = std::clamp<uint>(bootSnapshot.Boot(&Settings::qualityMode), 0u, 4u);
-				const char* bootLabel = (upscaleMethod == UpscaleMethod::kDLSS) ? upscalePresetsDLSS[std::clamp<int>(4 - (int)bm, 0, 4)] : upscalePresets[std::clamp<int>(4 - (int)bm, 0, 4)];
+				const char* bootLabel = GetQualityModeName(bm);
 				Util::Text::RestartNeeded(
 					"Pending restart: currently active = %s ( %.2fx ). Change applies after game restart.",
 					bootLabel, 1.0f / GetQualityModeRatio(bm));

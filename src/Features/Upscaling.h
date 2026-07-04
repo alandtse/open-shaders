@@ -193,6 +193,7 @@ public:
 	void DrawFoveationControls(bool showTuning = true);
 	static uint VRProfileQualityMode(VRPerfProfile profile);
 	static bool VRProfileFoveation(VRPerfProfile profile);
+	const char* GetQualityModeName(uint qualityMode) const;
 	virtual void SaveSettings(json& o_json) override;
 	virtual void LoadSettings(json& o_json) override;
 	virtual void RestoreDefaultSettings() override;
