@@ -1,12 +1,9 @@
 // Stereo Reproject - view-independent cross-eye transfer for SSGI diffuse
 //
-// AO and diffuse indirect lighting depend only on world geometry + incoming light, so
-// the value at a world point is identical in both eyes. Rather than march both eyes
-// and bilaterally blend (stereoSync.cs.hlsl), march eye 0 fully and transfer its result
-// into eye 1 by reprojection. Where eye 0 cannot see the point, gi.cs marched eye 1
-// natively (the same GIReprojectsCleanly test gates both), so the fallback keeps a real
-// value. Runs before the blur, whose seam taps read across eyes. Same bindings as
-// stereoSync.cs.hlsl.
+// AO and diffuse indirect GI are view-independent, so eye 1 can take eye 0's value at
+// the same world point. On a disocclusion miss, gi.cs marched eye 1 natively (gated by
+// the same GIReprojectsCleanly test), so the fallback is a real value, not a hole.
+// Must run before the blur, whose seam taps read across eyes.
 //
 // Based on: Nehab et al. 2007, "Accelerating Real-Time Shading with Reverse
 // Reprojection Caching" (transfer view-independent shading, recompute on miss).
