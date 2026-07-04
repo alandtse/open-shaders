@@ -56,55 +56,51 @@ namespace
 		// Developer-only: superseded by per-effect cross-eye reproject (SSS/SSGI) plus the
 		// native eye-1 G-buffer fill; kept as a stereo-disparity inspector, not a user knob.
 		if (isDev && ImGui::CollapsingHeader(T(TKEY("stereo_blend_header"), "Stereo Blend"), ImGuiTreeNodeFlags_DefaultOpen)) {
-			if (!hasEffects && !isDev) {
-				ImGui::TextColored(ImVec4(1.0f, 0.7f, 0.3f, 1.0f), "%s", T(TKEY("stereo_blend_requires_effect"), "Requires an active screen-space effect (SSGI, SS Shadows, SSR)."));
-			} else {
-				if (!hasEffects)
-					ImGui::TextColored(ImVec4(0.6f, 0.6f, 1.0f, 1.0f), "%s", T(TKEY("stereo_blend_dev_mode"), "Developer mode: no screen-space effects active."));
+			if (!hasEffects)
+				ImGui::TextColored(ImVec4(0.6f, 0.6f, 1.0f, 1.0f), "%s", T(TKEY("stereo_blend_dev_mode"), "Developer mode: no screen-space effects active."));
 
-				ImGui::Checkbox(T(TKEY("stereo_blend_enable"), "Enable Stereo Blend"), &settings.EnableStereoBlend);
-				if (auto _tt = Util::HoverTooltipWrapper()) {
-					ImGui::Text("%s",
-						T(TKEY("stereo_blend_enable_tooltip"),
-							"Post-composite depth-aware bilateral blend between eyes.\n"
-							"Reduces stereo inconsistencies from screen-space effects (SSGI, SSR, etc.).\n"
-							"Each pixel is reprojected to the other eye; blending is applied only where\n"
-							"depth agrees (same surface). Full-screen pass in VR."));
-				}
-
-				ImGui::BeginDisabled(!settings.EnableStereoBlend);
-
-				ImGui::SliderFloat(T(TKEY("stereo_blend_depth_sigma"), "Depth Sigma"), &settings.StereoBlendDepthSigma, 0.001f, 0.1f, "%.4f");
-				if (auto _tt = Util::HoverTooltipWrapper()) {
-					ImGui::Text("%s",
-						T(TKEY("stereo_blend_depth_sigma_tooltip"),
-							"Depth sensitivity for the bilateral weight.\n"
-							"Lower values are stricter -- only blend when depths match very closely.\n"
-							"Higher values allow blending across slight depth differences.\n"
-							"Default: 0.01"));
-				}
-
-				ImGui::SliderFloat(T(TKEY("stereo_blend_max_factor"), "Max Blend Factor"), &settings.StereoBlendMaxFactor, 0.0f, 0.5f, "%.2f");
-				if (auto _tt = Util::HoverTooltipWrapper()) {
-					ImGui::Text("%s",
-						T(TKEY("stereo_blend_max_factor_tooltip"),
-							"Maximum blend strength between the two eyes.\n"
-							"Higher values reduce screen-space effect flicker but destroy stereo depth.\n"
-							"Keep below ~0.15 to preserve 3D parallax.\n"
-							"Default: 0.1"));
-				}
-
-				ImGui::SliderFloat(T(TKEY("stereo_blend_color_threshold"), "Color Difference Threshold"), &settings.StereoBlendColorThreshold, 0.0f, 0.2f, "%.3f");
-				if (auto _tt = Util::HoverTooltipWrapper()) {
-					ImGui::Text("%s",
-						T(TKEY("stereo_blend_color_threshold_tooltip"),
-							"Minimum luminance difference between eyes to trigger blending.\n"
-							"Set to 0 to blend everywhere. Higher = more selective.\n"
-							"Default: 0.02"));
-				}
-
-				ImGui::EndDisabled();
+			ImGui::Checkbox(T(TKEY("stereo_blend_enable"), "Enable Stereo Blend"), &settings.EnableStereoBlend);
+			if (auto _tt = Util::HoverTooltipWrapper()) {
+				ImGui::Text("%s",
+					T(TKEY("stereo_blend_enable_tooltip"),
+						"Post-composite depth-aware bilateral blend between eyes.\n"
+						"Reduces stereo inconsistencies from screen-space effects (SSGI, SSR, etc.).\n"
+						"Each pixel is reprojected to the other eye; blending is applied only where\n"
+						"depth agrees (same surface). Full-screen pass in VR."));
 			}
+
+			ImGui::BeginDisabled(!settings.EnableStereoBlend);
+
+			ImGui::SliderFloat(T(TKEY("stereo_blend_depth_sigma"), "Depth Sigma"), &settings.StereoBlendDepthSigma, 0.001f, 0.1f, "%.4f");
+			if (auto _tt = Util::HoverTooltipWrapper()) {
+				ImGui::Text("%s",
+					T(TKEY("stereo_blend_depth_sigma_tooltip"),
+						"Depth sensitivity for the bilateral weight.\n"
+						"Lower values are stricter -- only blend when depths match very closely.\n"
+						"Higher values allow blending across slight depth differences.\n"
+						"Default: 0.01"));
+			}
+
+			ImGui::SliderFloat(T(TKEY("stereo_blend_max_factor"), "Max Blend Factor"), &settings.StereoBlendMaxFactor, 0.0f, 0.5f, "%.2f");
+			if (auto _tt = Util::HoverTooltipWrapper()) {
+				ImGui::Text("%s",
+					T(TKEY("stereo_blend_max_factor_tooltip"),
+						"Maximum blend strength between the two eyes.\n"
+						"Higher values reduce screen-space effect flicker but destroy stereo depth.\n"
+						"Keep below ~0.15 to preserve 3D parallax.\n"
+						"Default: 0.1"));
+			}
+
+			ImGui::SliderFloat(T(TKEY("stereo_blend_color_threshold"), "Color Difference Threshold"), &settings.StereoBlendColorThreshold, 0.0f, 0.2f, "%.3f");
+			if (auto _tt = Util::HoverTooltipWrapper()) {
+				ImGui::Text("%s",
+					T(TKEY("stereo_blend_color_threshold_tooltip"),
+						"Minimum luminance difference between eyes to trigger blending.\n"
+						"Set to 0 to blend everywhere. Higher = more selective.\n"
+						"Default: 0.02"));
+			}
+
+			ImGui::EndDisabled();
 		}
 
 		if (isDev) {

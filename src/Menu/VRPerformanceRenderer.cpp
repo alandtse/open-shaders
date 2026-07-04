@@ -15,8 +15,8 @@ void VRPerformanceRenderer::Render()
 	ImGui::TextWrapped("%s", T(TKEY("intro"),
 								 "VR performance settings from across all features, gathered in one place. "
 								 "Each section is the same control shown in that feature's own panel — "
-								 "changes here take effect there too. Settings marked as requiring a restart "
-								 "latch at game launch."));
+								 "changes here take effect there too. Settings that need a restart take "
+								 "effect at the next game launch."));
 	ImGui::Spacing();
 
 	// Profiles: one click sets the whole VR perf stack coherently across features. The active
