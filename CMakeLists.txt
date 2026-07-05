@@ -212,15 +212,7 @@ if(DEVBENCH_BRIDGE)
     target_compile_definitions(${PROJECT_NAME} PRIVATE DEVBENCH_BRIDGE_ENABLED)
 endif()
 
-# Some third-party libs (e.g. FFX backend) are built with /GL.
-# In RelWithDebInfo, align linker options to avoid LNK4075/LNK1218 when warnings are treated as errors.
 if(MSVC)
-    target_link_options(
-        ${PROJECT_NAME}
-        PRIVATE
-            "$<$<CONFIG:RelWithDebInfo>:/LTCG>"
-            "$<$<CONFIG:RelWithDebInfo>:/INCREMENTAL:NO>"
-    )
     # Large translation units (e.g. LightLimitFix/ShadowCasterManager.cpp pulling the
     # full feature + editor headers) exceed the default COFF section limit; /bigobj.
     target_compile_options(${PROJECT_NAME} PRIVATE "/bigobj")
@@ -950,7 +942,13 @@ if(AUTO_PLUGIN_DEPLOYMENT)
                     "/NDL" "/NJH" "/NJS"
                 COMMAND
                     ${CMAKE_COMMAND} -E touch ${DEPLOY_TARGET_HASH}_deploy.stamp
-                DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/prepare_aio.stamp
+                # Depend on the PREPARE_AIO target (not its stamp file): a
+                # file-level DEPENDS here makes the VS generator duplicate
+                # PREPARE_AIO's producing rule into DEPLOY_ALL.vcxproj too,
+                # so both copies can race writing the same AIO tree.
+                # Depending on the target name makes it a build-order-only
+                # dependency instead.
+                DEPENDS PREPARE_AIO
                 COMMENT
                     "Incremental deploy (excluding Shaders) to ${DEPLOY_TARGET} (robocopy-wrapper)"
             )
@@ -972,8 +970,9 @@ if(AUTO_PLUGIN_DEPLOYMENT)
                     "${DEPLOY_TARGET}/SKSE/Plugins/$<TARGET_PDB_FILE_NAME:${PROJECT_NAME}>"
                 COMMAND
                     ${CMAKE_COMMAND} -E touch ${DEPLOY_TARGET_HASH}_plugin.stamp
+                # See PREPARE_AIO target-name rationale above.
                 DEPENDS
-                    ${CMAKE_CURRENT_BINARY_DIR}/prepare_aio.stamp
+                    PREPARE_AIO
                     ${PROJECT_NAME}
                 COMMENT "Copy plugin DLL/PDB to ${DEPLOY_TARGET}/SKSE/Plugins"
             )
@@ -995,7 +994,9 @@ if(AUTO_PLUGIN_DEPLOYMENT)
                 COMMAND
                     ${CMAKE_COMMAND} -E touch
                     ${DEPLOY_TARGET_HASH}_shaders_only.stamp
-                DEPENDS copy_shaders.stamp
+                # See PREPARE_AIO target-name rationale above; copy_shaders.stamp
+                # is owned by the prepare_shaders target.
+                DEPENDS prepare_shaders
                 COMMENT "Fast shader-only deploy to ${DEPLOY_TARGET}/Shaders"
             )
 
@@ -1019,9 +1020,10 @@ if(AUTO_PLUGIN_DEPLOYMENT)
                 COMMAND
                     ${CMAKE_COMMAND} -E touch
                     ${DEPLOY_TARGET_HASH}_shaders_full.stamp
+                # See PREPARE_AIO target-name rationale above.
                 DEPENDS
-                    copy_shaders.stamp
-                    ${CMAKE_CURRENT_BINARY_DIR}/prepare_aio.stamp
+                    prepare_shaders
+                    PREPARE_AIO
                 COMMENT
                     "Full shader deploy to ${DEPLOY_TARGET}/Shaders (with PREPARE_AIO)"
             )
@@ -1053,10 +1055,16 @@ if(AUTO_PLUGIN_DEPLOYMENT)
 
     # Full deployment target for packaging/CI
     # Builds DLL, prepares AIO, deploys everything, runs tests
+    # Depend on the prepare_shaders target (not its copy_shaders.stamp
+    # output file): the per-deploy-target stamps above already order
+    # themselves after prepare_shaders/PREPARE_AIO by target name, and
+    # listing the raw file here too would make the VS generator duplicate
+    # the shader-copy rule into DEPLOY_ALL.vcxproj, letting that duplicate
+    # race the real one in prepare_shaders.vcxproj for the same AIO tree.
     add_custom_target(
         DEPLOY_ALL
         ALL
-        DEPENDS copy_shaders.stamp ${DEPLOY_TARGET_HASHES}
+        DEPENDS prepare_shaders ${DEPLOY_TARGET_HASHES}
         COMMENT "Full deployment: DLL + shaders + all files to game directory"
     )
 endif()
