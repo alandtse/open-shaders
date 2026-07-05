@@ -971,9 +971,7 @@ if(AUTO_PLUGIN_DEPLOYMENT)
                 COMMAND
                     ${CMAKE_COMMAND} -E touch ${DEPLOY_TARGET_HASH}_plugin.stamp
                 # See PREPARE_AIO target-name rationale above.
-                DEPENDS
-                    PREPARE_AIO
-                    ${PROJECT_NAME}
+                DEPENDS PREPARE_AIO ${PROJECT_NAME}
                 COMMENT "Copy plugin DLL/PDB to ${DEPLOY_TARGET}/SKSE/Plugins"
             )
 
@@ -1021,9 +1019,7 @@ if(AUTO_PLUGIN_DEPLOYMENT)
                     ${CMAKE_COMMAND} -E touch
                     ${DEPLOY_TARGET_HASH}_shaders_full.stamp
                 # See PREPARE_AIO target-name rationale above.
-                DEPENDS
-                    prepare_shaders
-                    PREPARE_AIO
+                DEPENDS prepare_shaders PREPARE_AIO
                 COMMENT
                     "Full shader deploy to ${DEPLOY_TARGET}/Shaders (with PREPARE_AIO)"
             )
