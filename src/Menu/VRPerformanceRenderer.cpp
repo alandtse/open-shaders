@@ -7,11 +7,32 @@
 
 #include "Feature.h"
 #include "I18n/I18n.h"
+#include "Menu.h"
 #include "Utils/UI.h"
 
 #define I18N_KEY_PREFIX "menu.vr_performance."
 
-void VRPerformanceRenderer::Render()
+// Section header: the feature name as a jump link to its panel, or a plain
+// SeparatorText for the host (a link there would navigate to this very page).
+static void DrawSectionHeader(Feature* feature, bool linkable)
+{
+	const std::string label = feature->GetVRPerformanceSectionLabel();
+	if (label.empty())
+		return;
+	if (!linkable) {
+		ImGui::SeparatorText(label.c_str());
+		return;
+	}
+	if (ImGui::TextLink(label.c_str())) {
+		if (auto* menu = Menu::GetSingleton())
+			menu->SelectFeatureMenu(feature->GetShortName());
+	}
+	if (auto _tt = Util::HoverTooltipWrapper())
+		ImGui::Text("%s", T(TKEY("open_feature_tooltip"), "Open this feature's full settings panel"));
+	ImGui::Separator();
+}
+
+void VRPerformanceRenderer::Render(Feature* host)
 {
 	ImGui::TextWrapped("%s", T(TKEY("intro"),
 								 "VR performance settings from across all features, gathered in one place. "
@@ -82,6 +103,7 @@ void VRPerformanceRenderer::Render()
 		[](const Feature* a, const Feature* b) { return a->GetVRPerformanceOrder() < b->GetVRPerformanceOrder(); });
 	for (Feature* feature : ordered) {
 		ImGui::PushID(feature);
+		DrawSectionHeader(feature, feature != host);
 		// Isolate each feature's draw so one throwing hook can't blank the rest of the page.
 		try {
 			feature->DrawVRPerformanceSettings();

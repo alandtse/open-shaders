@@ -10,9 +10,13 @@
  * (bound to the same settings) each feature draws in its own panel. A feature that
  * does not override the hook contributes nothing (fail-safe; no registry to maintain).
  */
+struct Feature;
+
 class VRPerformanceRenderer
 {
 public:
-	/** @brief Draws the VR Performance page. VR-only; caller gates on isVR. */
-	static void Render();
+	/** @brief Draws the VR Performance page. VR-only; caller gates on isVR.
+	 *  @param host The feature whose panel embeds the page; its section header is not
+	 *              drawn as a jump link (it would navigate to the page itself). */
+	static void Render(Feature* host);
 };

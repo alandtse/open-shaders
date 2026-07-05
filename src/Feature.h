@@ -198,10 +198,15 @@ public:
 	 * VR Performance panel. Default empty: features without VR perf knobs contribute
 	 * nothing (fail-safe: no registry to keep in sync). Overrides should render the
 	 * SAME controls (bound to the same settings) they show in their own panel, so the
-	 * hub and the feature panel are two views of one state. Convention: open with an
-	 * ImGui::SeparatorText group label so every contributor is grouped uniformly.
+	 * hub and the feature panel are two views of one state. The hub draws the section
+	 * header (with a jump link to the feature's panel); overrides render controls only.
 	 */
 	virtual void DrawVRPerformanceSettings() {}
+
+	/** @brief Section label the VR Performance hub draws (as a jump link to this
+	 *         feature's panel) above this feature's controls. Override alongside
+	 *         DrawVRPerformanceSettings; empty (default) draws no header. */
+	virtual std::string GetVRPerformanceSectionLabel() { return ""; }
 
 	/** @brief Sort key for the VR Performance hub (lower draws first); default puts
 	 *         unranked features last so the order reflects perf impact, not registration. */

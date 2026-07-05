@@ -46,6 +46,7 @@ public:
 	/** @brief Draws the ImGui settings UI with quality presets, visual parameters, and denoising options. */
 	virtual void DrawSettings() override;
 	virtual void DrawVRPerformanceSettings() override;
+	std::string GetVRPerformanceSectionLabel() override { return GetDisplayName(); }
 	int GetVRPerformanceOrder() const override { return 40; }
 	virtual void ApplyVRPerformanceProfile(VRPerfProfile profile) override;
 	bool MatchesVRPerformanceProfile(VRPerfProfile profile) const override;

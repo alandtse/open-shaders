@@ -55,7 +55,6 @@ void ScreenSpaceShadows::DrawStereoToggles()
 // Hub view: the SSS stereo sync/reprojection toggles, bound to the same settings the SSS panel shows.
 void ScreenSpaceShadows::DrawVRPerformanceSettings()
 {
-	ImGui::SeparatorText(GetDisplayName().c_str());
 	DrawStereoToggles();
 }
 

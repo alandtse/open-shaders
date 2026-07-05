@@ -2819,6 +2819,7 @@
     "menu.toggle_error_message": "Toggle Error Message",
     "menu.toggle_error_message_tooltip": "Hide or show the shader failure message. Your installation is broken and will likely see errors in game. Please double check you have updated all features and that your load order is correct. See CommunityShaders.log for details and check the Nexus Mods page or Discord server.",
     "menu.vr_performance.intro": "VR performance settings from across all features, gathered in one place. Each section is the same control shown in that feature's own panel; changes here take effect there too. Settings that need a restart take effect at the next game launch.",
+    "menu.vr_performance.open_feature_tooltip": "Open this feature's full settings panel",
     "menu.vr_performance.profile_balanced": "Balanced",
     "menu.vr_performance.profile_balanced_tooltip": "Mid render resolution; reprojection on.",
     "menu.vr_performance.profile_custom": "(Custom)",

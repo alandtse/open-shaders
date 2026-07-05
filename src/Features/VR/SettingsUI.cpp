@@ -216,7 +216,7 @@ void VR::DrawSettings()
 	if (ImGui::BeginTabBar("##VRTabs", ImGuiTabBarFlags_None)) {
 		if (BeginTabItemWithFont(T(TKEY("tab_performance"), "Performance"), Menu::FontRole::Subheading)) {
 			if (ImGui::BeginChild("##VRPerformanceFrame", { 0, 0 }, true)) {
-				VRPerformanceRenderer::Render();
+				VRPerformanceRenderer::Render(this);
 			}
 			ImGui::EndChild();
 			ImGui::EndTabItem();
@@ -264,7 +264,6 @@ void VR::DrawSettings()
 void VR::DrawVRPerformanceSettings()
 {
 	using StereoMode = VRStereoOptimizations::StereoMode;
-	ImGui::SeparatorText(GetDisplayName().c_str());
 
 	// The profile-controlled lever only; depth culling and detailed tuning live in the
 	// General/Stereo tabs (no duplicate here).

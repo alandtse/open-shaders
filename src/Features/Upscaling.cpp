@@ -254,9 +254,14 @@ void Upscaling::DrawFoveationControls(bool showTuning)
 
 // Central VR Performance hub view: the render-res PerfMode toggle and Foveated DLSS,
 // the two upscaler-owned VR perf knobs, bound to the same settings the upscaler panel shows.
+// Narrower than the feature name: the hub section only covers the VR perf knobs.
+std::string Upscaling::GetVRPerformanceSectionLabel()
+{
+	return T(TKEY("vr_perf_upscaling_header"), "Upscaling & Foveation");
+}
+
 void Upscaling::DrawVRPerformanceSettings()
 {
-	ImGui::SeparatorText(T(TKEY("vr_perf_upscaling_header"), "Upscaling & Foveation"));
 	DrawPerfModeToggle();
 	// The profile-controlled render preset is the biggest VR lever; show its value and
 	// pending-restart cue here rather than leaving profile changes invisible. Gate the cue on

@@ -59,7 +59,6 @@ void ScreenSpaceGI::DrawReprojectToggle()
 // Hub view: the SSGI stereo reprojection toggle, bound to the same setting the SSGI panel shows.
 void ScreenSpaceGI::DrawVRPerformanceSettings()
 {
-	ImGui::SeparatorText(GetDisplayName().c_str());
 	DrawReprojectToggle();
 }
 

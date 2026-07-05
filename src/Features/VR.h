@@ -107,6 +107,7 @@ public:
 
 	virtual void DrawSettings() override;
 	virtual void DrawVRPerformanceSettings() override;
+	std::string GetVRPerformanceSectionLabel() override { return GetDisplayName(); }
 	int GetVRPerformanceOrder() const override { return 20; }
 	virtual void ApplyVRPerformanceProfile(VRPerfProfile profile) override;
 	bool MatchesVRPerformanceProfile(VRPerfProfile profile) const override;
