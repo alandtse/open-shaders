@@ -942,13 +942,15 @@ if(AUTO_PLUGIN_DEPLOYMENT)
                     "/NDL" "/NJH" "/NJS"
                 COMMAND
                     ${CMAKE_COMMAND} -E touch ${DEPLOY_TARGET_HASH}_deploy.stamp
-                # Depend on the PREPARE_AIO target (not its stamp file): a
-                # file-level DEPENDS here makes the VS generator duplicate
-                # PREPARE_AIO's producing rule into DEPLOY_ALL.vcxproj too,
-                # so both copies can race writing the same AIO tree.
-                # Depending on the target name makes it a build-order-only
-                # dependency instead.
-                DEPENDS PREPARE_AIO
+                # Depend on the PREPARE_AIO target AND its stamp file: the
+                # target-level dependency stops the VS generator duplicating
+                # PREPARE_AIO's producing rule into DEPLOY_ALL.vcxproj (two
+                # copies race writing the same AIO tree); the stamp file adds
+                # the mtime edge so this rule re-runs when staging changes
+                # (target-only DEPENDS is order-only and never re-triggers).
+                DEPENDS
+                    PREPARE_AIO
+                    ${CMAKE_CURRENT_BINARY_DIR}/prepare_aio.stamp
                 COMMENT
                     "Incremental deploy (excluding Shaders) to ${DEPLOY_TARGET} (robocopy-wrapper)"
             )
@@ -992,9 +994,10 @@ if(AUTO_PLUGIN_DEPLOYMENT)
                 COMMAND
                     ${CMAKE_COMMAND} -E touch
                     ${DEPLOY_TARGET_HASH}_shaders_only.stamp
-                # See PREPARE_AIO target-name rationale above; copy_shaders.stamp
-                # is owned by the prepare_shaders target.
-                DEPENDS prepare_shaders
+                # See the PREPARE_AIO target+stamp rationale above.
+                DEPENDS
+                    prepare_shaders
+                    ${CMAKE_CURRENT_BINARY_DIR}/copy_shaders.stamp
                 COMMENT "Fast shader-only deploy to ${DEPLOY_TARGET}/Shaders"
             )
 
@@ -1018,8 +1021,12 @@ if(AUTO_PLUGIN_DEPLOYMENT)
                 COMMAND
                     ${CMAKE_COMMAND} -E touch
                     ${DEPLOY_TARGET_HASH}_shaders_full.stamp
-                # See PREPARE_AIO target-name rationale above.
-                DEPENDS prepare_shaders PREPARE_AIO
+                # See the PREPARE_AIO target+stamp rationale above.
+                DEPENDS
+                    prepare_shaders
+                    PREPARE_AIO
+                    ${CMAKE_CURRENT_BINARY_DIR}/copy_shaders.stamp
+                    ${CMAKE_CURRENT_BINARY_DIR}/prepare_aio.stamp
                 COMMENT
                     "Full shader deploy to ${DEPLOY_TARGET}/Shaders (with PREPARE_AIO)"
             )
