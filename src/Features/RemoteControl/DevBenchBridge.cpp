@@ -517,11 +517,7 @@ namespace
 			return json{ { "action", "reset" }, { "queued", true }, { "enqueued_at_frame", frame } };
 		}
 		if (action == "applyVRProfile") {
-			// Broadcast a VR performance profile through the same Feature::ApplyVRPerformanceProfile
-			// path the in-game hub button uses, then persist. Restart-gated fields (render preset,
-			// foveation, reprojection) take effect on the next game launch. Exposes the profiles to
-			// headless automation/CI, which can't click the ImGui button.
-			// VR-only, matching the VR Performance hub; on flatrim the profiles are meaningless.
+			// Same broadcast path as the in-game hub button, exposed for headless automation/CI.
 			if (!globals::game::isVR)
 				return json{ { "error", "applyVRProfile is VR-only" }, { "action", action } };
 			const std::string profileName = a_args.value("profile", std::string{});

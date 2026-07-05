@@ -41,9 +41,7 @@ void VRPerformanceRenderer::Render(Feature* host)
 								 "effect at the next game launch."));
 	ImGui::Spacing();
 
-	// Profiles: one click sets the whole VR perf stack coherently across features. The active
-	// profile is the one every feature's settings currently match (else Custom), so the buttons
-	// show state instead of looking stateless.
+	// The active profile is the one every feature's settings currently match (else Custom).
 	const Feature::VRPerfProfile profiles[3] = {
 		Feature::VRPerfProfile::Performance, Feature::VRPerfProfile::Balanced, Feature::VRPerfProfile::Quality
 	};
@@ -91,9 +89,7 @@ void VRPerformanceRenderer::Render(Feature* host)
 	ImGui::Separator();
 	ImGui::Spacing();
 
-	// Loaded features contribute their VR perf controls via the shared hook, drawn in
-	// perf-impact order (GetVRPerformanceOrder), not feature-registration order. Features
-	// without VR perf knobs draw nothing, so the page shows only what is relevant.
+	// Drawn in perf-impact order (GetVRPerformanceOrder), not feature-registration order.
 	std::vector<Feature*> ordered;
 	for (Feature* feature : Feature::GetFeatureList())
 		if (feature->loaded)

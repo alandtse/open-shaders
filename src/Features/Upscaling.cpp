@@ -252,23 +252,25 @@ void Upscaling::DrawFoveationControls(bool showTuning)
 		ImGui::EndDisabled();
 }
 
-// Central VR Performance hub view: the render-res PerfMode toggle and Foveated DLSS,
-// the two upscaler-owned VR perf knobs, bound to the same settings the upscaler panel shows.
 // Narrower than the feature name: the hub section only covers the VR perf knobs.
 std::string Upscaling::GetVRPerformanceSectionLabel()
 {
 	return T(TKEY("vr_perf_upscaling_header"), "Upscaling & Foveation");
 }
 
+// Central VR Performance hub view: the render-res PerfMode toggle and Foveated DLSS,
+// the two upscaler-owned VR perf knobs, bound to the same settings the upscaler panel shows.
 void Upscaling::DrawVRPerformanceSettings()
 {
 	DrawPerfModeToggle();
-	// The profile-controlled render preset is the biggest VR lever; show its value and
-	// pending-restart cue here rather than leaving profile changes invisible. Gate the cue on
-	// the PerfMode hook like DrawSettings, since qualityMode only latches when it is active.
-	ImGui::Text("%s: %s", T(TKEY("vr_perf_upscale_preset"), "Upscale preset"), GetQualityModeName(settings.qualityMode));
-	if (perfMode.IsHookActive())
-		Util::UI::DrawSettingDiff(bootSnapshot, settings, &Settings::qualityMode);
+	// The upscale preset is only meaningful when an upscaler is active; match the same
+	// gate DrawSettings uses so the hub doesn't show an inert value for None/TAA.
+	const auto upscaleMethod = GetUpscaleMethod();
+	if (upscaleMethod != UpscaleMethod::kNONE && upscaleMethod != UpscaleMethod::kTAA) {
+		ImGui::Text("%s: %s", T(TKEY("vr_perf_upscale_preset"), "Upscale preset"), GetQualityModeName(settings.qualityMode));
+		if (perfMode.IsHookActive())
+			Util::UI::DrawSettingDiff(bootSnapshot, settings, &Settings::qualityMode);
+	}
 	DrawFoveationControls(false);
 }
 
