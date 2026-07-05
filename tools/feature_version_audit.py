@@ -27,8 +27,7 @@ DEFAULT_SHADER_TYPES = (".ini", ".hlsl", ".hlsli")
 RE_MOD_ID = re.compile(r'MOD_ID\s*=\s*"([^"]+)"')
 RE_FEATURE_MOD_LINK_DIRECT = re.compile(r'GetFeatureModLink\s*\([^)]*\)\s*\{\s*return\s*"(https?://[^"]+)";\s*\}')
 RE_FEATURE_MOD_LINK_NEXUS = re.compile(r'GetFeatureModLink\s*\([^)]*\)\s*\{\s*return\s*MakeNexusModURL\(MOD_ID\);')
-RE_FEATURE_SUMMARY_DIRECT = re.compile(r'GetFeatureSummary\s*\([^)]*\)\s*(?:override)?\s*\{\s*return \{\s*"([^"]+)"\s*,\s*\{([^}]*)\}', re.DOTALL)
-RE_FEATURE_SUMMARY_MULTILINE = re.compile(r'GetFeatureSummary\s*\([^)]*\)\s*(?:override)?\s*\{\s*return \{\s*((?:"[^"]*"\s*)+),\s*\{([^}]*)\}', re.DOTALL)
+RE_FEATURE_SUMMARY_DIRECT = re.compile(r'GetFeatureSummary\s*\([^)]*\)\s*(?:override)?\s*\{\s*return \{\s*(.*?)\s*,\s*\{([^}]*)\}', re.DOTALL)
 RE_FEATURE_SUMMARY_CPP = re.compile(r'GetFeatureSummary\s*\([^)]*\)\s*\{[^}]*?std::string description\s*=\s*"([^"]+)";\s*std::vector<std::string> keyFeatures\s*=\s*\{([^}]*)\}', re.DOTALL)
 RE_FEATURE_SUMMARY_CPP_MULTILINE = re.compile(r'GetFeatureSummary\s*\([^)]*\)\s*\{[^}]*?std::string description\s*=\s*((?:"[^"]*"\s*)+);\s*std::vector<std::string> keyFeatures\s*=\s*\{([^}]*)\}', re.DOTALL)
 RE_FEATURE_DESCRIPTION_DIRECT = re.compile(r'GetFeatureDescription\s*\([^)]*\)\s*\{\s*return\s*"([^"]+)";\s*\}')
@@ -68,6 +67,19 @@ def extract_regex(pattern, content, group=1):
 
 def extract_multiline_strings(multiline):
     return [d.replace("\n", " ").strip() for d in re.findall(r'"([^\"]*)"', multiline) if d.strip()]
+
+# feat: localization (#2416) wrapped every GetFeatureSummary() string in
+# T("i18n.key", "default text") without updating this extractor, so
+# description/key_features silently came back empty for every localized
+# feature (verified: RE_FEATURE_SUMMARY_DIRECT/MULTILINE never matched
+# post-#2416 source). Pull the trailing literal out of either form.
+RE_T_OR_LITERAL = re.compile(r'T\s*\(\s*"[^"]*"\s*,\s*"([^"]*)"\s*\)|"([^"]*)"', re.DOTALL)
+
+def extract_t_or_literal_strings(blob):
+    return [
+        (m.group(1) if m.group(1) is not None else m.group(2)).replace("\n", " ").strip()
+        for m in RE_T_OR_LITERAL.finditer(blob)
+    ]
 
 def normalize_feature_key(name):
     return ''.join(str(name or '').lower().replace('-', ' ').split())
@@ -456,15 +468,15 @@ def parse_feature_metadata_file(path, mod_id=None, is_core=False):
             mod_link = DEFAULT_NEXUS_BASE_URL + mod_id
         if not mod_link and not is_core and mod_id:
             mod_link = DEFAULT_NEXUS_BASE_URL + mod_id
-        # GetFeatureSummary
+        # GetFeatureSummary (description/key features are either bare "literal"
+        # or T("i18n.key", "literal") strings; extract_t_or_literal_strings
+        # handles both, and naturally splits key features on their own T()/
+        # literal boundaries instead of a naive comma-split that breaks on
+        # the comma inside each T("key", "text") call).
         m = RE_FEATURE_SUMMARY_DIRECT.search(content)
         if m:
-            description = m.group(1).replace("\n", " ").strip()
-            key_features = [k.strip().strip('"') for k in m.group(2).split(',') if k.strip()]
-        m = RE_FEATURE_SUMMARY_MULTILINE.search(content)
-        if m:
-            description = " ".join(extract_multiline_strings(m.group(1)))
-            key_features = [k.strip().strip('"') for k in m.group(2).split(',') if k.strip()]
+            description = " ".join(extract_t_or_literal_strings(m.group(1)))
+            key_features = extract_t_or_literal_strings(m.group(2))
         m = RE_FEATURE_SUMMARY_CPP.search(content)
         if m:
             description = m.group(1).replace("\n", " ").strip()
