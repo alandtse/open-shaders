@@ -58,10 +58,8 @@ void VR::DrawStereoBlend()
 	if (!globals::game::isVR || !stereoBlendCopyTex || !stereoBlendCB)
 		return;
 
-	// Debug views (ReprojectDebugMode 2..4) must run even with the blend disabled,
-	// otherwise a persisted debug config renders nothing until the combo is re-touched.
-	// Mode 1 (Coverage) is SSS's/SSGI's own reproject-shader output; StereoBlend has
-	// no part in it and must not force itself on for it.
+	// Debug modes 2-4 must run even with blend disabled (else a persisted config
+	// renders nothing); mode 1 (Coverage) needs no Stereo Blend at all.
 	const bool stereoBlendDebugActive = settings.ReprojectDebugMode >= 2 && settings.ReprojectDebugMode <= 4;
 	if ((!settings.EnableStereoBlend && !stereoBlendDebugActive) || !stereoBlendCS)
 		return;

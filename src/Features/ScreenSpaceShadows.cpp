@@ -326,9 +326,8 @@ void ScreenSpaceShadows::DrawShadows()
 
 ID3D11ComputeShader* ScreenSpaceShadows::GetStereoReprojectCS()
 {
-	// Clamp the debug variant to Developer Mode at use-time: the shared VR reprojection
-	// debug mode persists, so it must not keep painting the debug view into gameplay
-	// after dev mode is turned off.
+	// Clamp to Developer Mode at use-time: the shared debug mode persists, so it must
+	// not keep painting the debug view into gameplay after dev mode is turned off.
 	const bool useDebug = globals::features::vr.settings.ReprojectDebugMode == 1 && globals::state->IsDeveloperMode();
 
 	// Per-variant failure latch: don't retry a broken shader every frame, and never let a
