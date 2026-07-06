@@ -62,8 +62,6 @@ public:
 	// shadow to eye 1) instead of the bilateral sync. Default on for the perf win (eye-1
 	// raymarch skipped).
 	bool useStereoReproject = true;
-	// Dev viz: paint true-disocclusion eye-1 pixels black to measure the reproject gap.
-	bool debugReprojectDisocclusion = false;
 
 	struct alignas(16) StereoSyncCB
 	{

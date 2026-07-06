@@ -1,6 +1,7 @@
 #include "ScreenSpaceShadows.h"
 
 #include "Features/TerrainBlending.h"
+#include "Features/VR.h"
 #include "GpuPass.h"
 #include "I18n/I18n.h"
 #include "State.h"
@@ -43,13 +44,6 @@ void ScreenSpaceShadows::DrawStereoToggles()
 							  "Bilateral Sync: both eyes compute, then reconcile (highest quality, highest cost).\n"
 							  "Reprojection: compute Eye 0 and transfer to Eye 1, skipping its raymarch. "
 							  "Fastest; disoccluded pixels fall back to unshadowed."));
-	if (enableStereoSync && useStereoReproject && globals::state->IsDeveloperMode()) {
-		ImGui::Checkbox(T(TKEY("vr_stereo_reproject_debug"), "Show Reprojection Disocclusion"), &debugReprojectDisocclusion);
-		if (auto _tt = Util::HoverTooltipWrapper())
-			ImGui::Text("%s", T(TKEY("vr_stereo_reproject_debug_tooltip"),
-								  "Paints Eye 1 pixels Eye 0 cannot see black to visualize the "
-								  "reprojection coverage gap."));
-	}
 }
 
 // Hub view: the SSS stereo sync/reprojection toggles, bound to the same settings the SSS panel shows.
@@ -332,9 +326,10 @@ void ScreenSpaceShadows::DrawShadows()
 
 ID3D11ComputeShader* ScreenSpaceShadows::GetStereoReprojectCS()
 {
-	// Clamp the debug variant to Developer Mode at use-time: the toggle persists, so it
-	// must not keep painting the debug view into gameplay after dev mode is turned off.
-	const bool useDebug = debugReprojectDisocclusion && globals::state->IsDeveloperMode();
+	// Clamp the debug variant to Developer Mode at use-time: the shared VR reprojection
+	// debug mode persists, so it must not keep painting the debug view into gameplay
+	// after dev mode is turned off.
+	const bool useDebug = globals::features::vr.settings.ReprojectDebugMode == 1 && globals::state->IsDeveloperMode();
 
 	// Per-variant failure latch: don't retry a broken shader every frame, and never let a
 	// dev-only debug-variant failure disable the production reproject (null = callers fall back).

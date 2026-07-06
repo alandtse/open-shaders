@@ -109,16 +109,18 @@ namespace
 			static bool s_weEnabledStereoBlend = false;
 
 			const char* debugModes[] = {
-				T(TKEY("stereo_debug_off"), "Off"),
-				T(TKEY("stereo_debug_back_check"), "Back-Check"),
-				T(TKEY("stereo_debug_blend_weight"), "Blend Weight"),
-				T(TKEY("stereo_debug_edge_detection"), "Edge Detection")
+				T(TKEY("reproject_debug_off"), "Off"),
+				T(TKEY("reproject_debug_coverage"), "Coverage"),
+				T(TKEY("reproject_debug_back_check"), "Back-Check"),
+				T(TKEY("reproject_debug_blend_weight"), "Blend Weight"),
+				T(TKEY("reproject_debug_edge_detection"), "Edge Detection")
 			};
-			if (ImGui::Combo(T(TKEY("stereo_debug_view"), "Debug View"), &settings.StereoBlendDebugMode, debugModes, IM_ARRAYSIZE(debugModes))) {
-				int newMode = settings.StereoBlendDebugMode;
-				bool needsBlend = (newMode >= 1 && newMode <= 3);
+			if (ImGui::Combo(T(TKEY("reproject_debug_view"), "Reprojection Debug View"), &settings.ReprojectDebugMode, debugModes, IM_ARRAYSIZE(debugModes))) {
+				int newMode = settings.ReprojectDebugMode;
+				bool needsBlend = (newMode >= 2 && newMode <= 4);
 
-				// Auto-enable Stereo Blend for modes 1-3 (runtime-toggleable)
+				// Auto-enable Stereo Blend for its own debug modes (2-4); Coverage (1) is
+				// SSS's/SSGI's own reproject-shader output and needs no Stereo Blend.
 				if (needsBlend && !settings.EnableStereoBlend) {
 					settings.EnableStereoBlend = true;
 					s_weEnabledStereoBlend = true;
@@ -129,9 +131,11 @@ namespace
 			}
 			if (auto _tt = Util::HoverTooltipWrapper()) {
 				ImGui::Text("%s",
-					T(TKEY("stereo_debug_view_tooltip"),
-						"Selecting a debug mode auto-enables Stereo Blend; setting back to Off restores it.\n\n"
+					T(TKEY("reproject_debug_view_tooltip"),
+						"Back-Check/Blend Weight/Edge Detection auto-enable Stereo Blend; setting back "
+						"to Off restores it.\n\n"
 						"Off: Normal rendering\n"
+						"Coverage: SSS/SSGI reprojection coverage (black = disoccluded, marched natively)\n"
 						"Back-Check: Round-trip reprojection validation\n"
 						"Blend Weight: Heatmap of bilateral blend intensity\n"
 						"Edge Detection: Highlights depth discontinuities"));

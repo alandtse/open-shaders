@@ -147,7 +147,9 @@ public:
 		float StereoBlendDepthSigma = 0.01f;      ///< Depth sensitivity for bilateral weight (lower = stricter)
 		float StereoBlendMaxFactor = 0.1f;        ///< Maximum blend factor; keep low to preserve stereo parallax
 		float StereoBlendColorThreshold = 0.02f;  ///< Minimum color difference to trigger blending (luminance)
-		int StereoBlendDebugMode = 0;             ///< 0=off, 1=back-check, 2=blend weight, 3=edge detection
+		// Shared reprojection debug view: Coverage drives SSS's and SSGI's own reproject
+		// shaders; Back-Check/Blend Weight/Edge Detection are StereoBlend-specific.
+		int ReprojectDebugMode = 0;  ///< 0=off, 1=coverage, 2=back-check, 3=blend weight, 4=edge detection
 
 		// VR foveated shader detail: render expensive screen-space effects at reduced detail in the
 		// periphery, driven by the active Foveated DLSS region. Consumed by foveated SSR.
@@ -179,7 +181,7 @@ public:
 			StereoBlendDepthSigma = std::clamp(StereoBlendDepthSigma, 0.001f, 0.1f);
 			StereoBlendMaxFactor = std::clamp(StereoBlendMaxFactor, 0.0f, 0.5f);
 			StereoBlendColorThreshold = std::clamp(StereoBlendColorThreshold, 0.0f, 0.2f);
-			StereoBlendDebugMode = std::clamp(StereoBlendDebugMode, 0, 3);
+			ReprojectDebugMode = std::clamp(ReprojectDebugMode, 0, 4);
 		}
 	};
 

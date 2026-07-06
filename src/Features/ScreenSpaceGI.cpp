@@ -5,6 +5,7 @@
 
 #include "../I18n/I18n.h"
 #include "Deferred.h"
+#include "Features/VR.h"
 #include "State.h"
 #include "Util.h"
 
@@ -54,13 +55,6 @@ void ScreenSpaceGI::DrawReprojectToggle()
 							  "Reprojects Eye 0 (left)'s diffuse GI into Eye 1 (right) and skips the Eye 1 "
 							  "march where it can, reducing GPU cost. Requires HQ Specular IL off (specular "
 							  "is view-dependent). Disoccluded pixels are marched natively instead."));
-	if (settings.UseStereoReproject && globals::state->IsDeveloperMode()) {
-		ImGui::Checkbox(T(TKEY("vr_stereo_reproject_debug"), "Show Reprojection Disocclusion"), &debugReprojectDisocclusion);
-		if (auto _tt = Util::HoverTooltipWrapper())
-			ImGui::Text("%s", T(TKEY("vr_stereo_reproject_debug_tooltip"),
-								  "Paints Eye 1 pixels Eye 0 cannot see black to visualize the "
-								  "reprojection coverage gap."));
-	}
 }
 
 // Hub view: the SSGI stereo reprojection toggle, bound to the same setting the SSGI panel shows.
@@ -960,7 +954,7 @@ void ScreenSpaceGI::DrawSSGI()
 		uavs.at(1) = texIlY[!inputGITexIdx]->uav.get();
 		uavs.at(2) = texIlCoCg[!inputGITexIdx]->uav.get();
 
-		const bool useReprojectDebug = debugReprojectDisocclusion && globals::state->IsDeveloperMode() && reprojectDebugCompute;
+		const bool useReprojectDebug = globals::features::vr.settings.ReprojectDebugMode == 1 && globals::state->IsDeveloperMode() && reprojectDebugCompute;
 		context->CSSetShaderResources(0, (uint)srvs.size(), srvs.data());
 		context->CSSetUnorderedAccessViews(0, (uint)uavs.size(), uavs.data(), nullptr);
 		context->CSSetShader(useReprojectDebug ? reprojectDebugCompute.get() : reprojectCompute.get(), nullptr, 0);
