@@ -13,6 +13,10 @@ shadertoolsconfig.json
 
 tools/__pycache__/
 
+# feature_version_audit.py --apply-bumps output, read by
+# tools/release-notes-feature-audit-plugin.js during Semantic Release
+/feature-audit-notes.md
+
 # clangd compile database (machine-specific absolute paths; regenerate with
 # tools/gen-clangd-db.ps1)
 /compile_commands.json
