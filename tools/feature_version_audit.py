@@ -654,8 +654,12 @@ def propose_new_version(prior_version, commits, prior_stage=STAGE_RELEASE, curre
     # Pre-release stage transitions take precedence over commit-based bumps.
     if current_stage in (STAGE_ALPHA, STAGE_BETA):
         if prior_stage == STAGE_RELEASE:
-            # Entering pre-release from release/fresh: fixed baselines.
-            return (0, 1, 0) if current_stage == STAGE_ALPHA else (0, 2, 0)
+            if major == 0:
+                # Genuinely new, never-stable feature: fixed baselines.
+                return (0, 1, 0) if current_stage == STAGE_ALPHA else (0, 2, 0)
+            # Already >=1.0.0: re-tagging a mature feature Alpha/Beta (e.g.
+            # for a packaging reason) must not read as a version downgrade.
+            return None
         if prior_stage == STAGE_ALPHA and current_stage == STAGE_BETA:
             # alpha -> beta: extra minor bump, patch reset.
             return (0, minor + 1, 0)
