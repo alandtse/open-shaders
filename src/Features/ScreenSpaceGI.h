@@ -195,5 +195,9 @@ public:
 	winrt::com_ptr<ID3D11ComputeShader> blurCompute = nullptr;
 	winrt::com_ptr<ID3D11ComputeShader> stereoSyncCompute = nullptr;
 	winrt::com_ptr<ID3D11ComputeShader> reprojectCompute = nullptr;
+	winrt::com_ptr<ID3D11ComputeShader> reprojectDebugCompute = nullptr;
 	winrt::com_ptr<ID3D11ComputeShader> upsampleCompute = nullptr;
+
+	// Dev viz: paint true-disocclusion eye-1 pixels black to measure the reproject gap.
+	bool debugReprojectDisocclusion = false;
 };

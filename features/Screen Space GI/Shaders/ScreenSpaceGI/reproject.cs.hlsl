@@ -44,12 +44,16 @@ void Passthrough(uint2 dtid)
 	// Eye 0 is the reference: keep its natively marched GI unchanged.
 	if (eyeIndex == 0) {
 		Passthrough(dtid);
+#	ifdef DEBUG_DISOCCLUSION
+		outAo[dtid] = 1.0;  // reference eye: never disoccluded
+#	endif
 		return;
 	}
 
 	float depth = srcDepth.SampleLevel(samplerPointClamp, uv * frameScale, RES_MIP);
 	int2 otherPx;
-	if (GIReprojectsCleanly(uv, depth, eyeIndex, srcDepth, frameScale, otherPx)) {
+	bool cleanlyReprojected = GIReprojectsCleanly(uv, depth, eyeIndex, srcDepth, frameScale, otherPx);
+	if (cleanlyReprojected) {
 		// Surfaces agree: GI is view-independent, transfer eye 0's value exactly.
 		outAo[dtid] = srcAo[otherPx];
 		outIlY[dtid] = srcIlY[otherPx];
@@ -58,6 +62,13 @@ void Passthrough(uint2 dtid)
 		// Disocclusion: gi.cs marched this pixel natively (same test), keep it.
 		Passthrough(dtid);
 	}
+
+#	ifdef DEBUG_DISOCCLUSION
+	// Overwrite only AO (a simple scalar visibility multiplier); IlY/IlCoCg are
+	// spherical-harmonics coefficients, not a plain color -- forcing them to a debug
+	// value would corrupt the composite instead of visualizing coverage.
+	outAo[dtid] = cleanlyReprojected ? 1.0 : 0.0;
+#	endif
 }
 
 #endif  // VR

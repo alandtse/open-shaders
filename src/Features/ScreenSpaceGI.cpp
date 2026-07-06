@@ -54,6 +54,13 @@ void ScreenSpaceGI::DrawReprojectToggle()
 							  "Reprojects Eye 0 (left)'s diffuse GI into Eye 1 (right) and skips the Eye 1 "
 							  "march where it can, reducing GPU cost. Requires HQ Specular IL off (specular "
 							  "is view-dependent). Disoccluded pixels are marched natively instead."));
+	if (settings.UseStereoReproject && globals::state->IsDeveloperMode()) {
+		ImGui::Checkbox(T(TKEY("vr_stereo_reproject_debug"), "Show Reprojection Disocclusion"), &debugReprojectDisocclusion);
+		if (auto _tt = Util::HoverTooltipWrapper())
+			ImGui::Text("%s", T(TKEY("vr_stereo_reproject_debug_tooltip"),
+								  "Paints Eye 1 pixels Eye 0 cannot see black to visualize the "
+								  "reprojection coverage gap."));
+	}
 }
 
 // Hub view: the SSGI stereo reprojection toggle, bound to the same setting the SSGI panel shows.
@@ -623,7 +630,7 @@ void ScreenSpaceGI::SetupResources()
 void ScreenSpaceGI::ClearShaderCache()
 {
 	static const std::vector<winrt::com_ptr<ID3D11ComputeShader>*> shaderPtrs = {
-		&prefilterDepthsCompute, &prefilterRadianceCompute, &prefilterNormalCompute, &radianceDisoccCompute, &giCompute, &giEye0OnlyCompute, &blurCompute, &stereoSyncCompute, &reprojectCompute, &upsampleCompute
+		&prefilterDepthsCompute, &prefilterRadianceCompute, &prefilterNormalCompute, &radianceDisoccCompute, &giCompute, &giEye0OnlyCompute, &blurCompute, &stereoSyncCompute, &reprojectCompute, &reprojectDebugCompute, &upsampleCompute
 	};
 
 	for (auto shader : shaderPtrs)
@@ -655,6 +662,7 @@ void ScreenSpaceGI::CompileComputeShaders()
 	if (globals::game::isVR) {
 		shaderInfos.push_back({ &stereoSyncCompute, "stereoSync.cs.hlsl", { { "FRAMEBUFFER", "" } } });
 		shaderInfos.push_back({ &reprojectCompute, "reproject.cs.hlsl", { { "FRAMEBUFFER", "" } } });
+		shaderInfos.push_back({ &reprojectDebugCompute, "reproject.cs.hlsl", { { "FRAMEBUFFER", "" }, { "DEBUG_DISOCCLUSION", "" } } });
 		// Eye-0-only GI permutation for the reproject path. FRAMEBUFFER exposes the
 		// Stereo:: reprojection helpers (gated out of VR.hlsli for plain compute). Only
 		// meaningful with specular off (the reproject transfers diffuse GI); skip the
@@ -952,9 +960,10 @@ void ScreenSpaceGI::DrawSSGI()
 		uavs.at(1) = texIlY[!inputGITexIdx]->uav.get();
 		uavs.at(2) = texIlCoCg[!inputGITexIdx]->uav.get();
 
+		const bool useReprojectDebug = debugReprojectDisocclusion && globals::state->IsDeveloperMode() && reprojectDebugCompute;
 		context->CSSetShaderResources(0, (uint)srvs.size(), srvs.data());
 		context->CSSetUnorderedAccessViews(0, (uint)uavs.size(), uavs.data(), nullptr);
-		context->CSSetShader(reprojectCompute.get(), nullptr, 0);
+		context->CSSetShader(useReprojectDebug ? reprojectDebugCompute.get() : reprojectCompute.get(), nullptr, 0);
 		context->Dispatch((internalRes[0] + 7u) >> 3, (internalRes[1] + 7u) >> 3, 1);
 
 		inputAoTexIdx = !inputAoTexIdx;
