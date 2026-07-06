@@ -72,14 +72,33 @@ def extract_multiline_strings(multiline):
 # T("i18n.key", "default text") without updating this extractor, so
 # description/key_features silently came back empty for every localized
 # feature (verified: RE_FEATURE_SUMMARY_DIRECT/MULTILINE never matched
-# post-#2416 source). Pull the trailing literal out of either form.
-RE_T_OR_LITERAL = re.compile(r'T\s*\(\s*"[^"]*"\s*,\s*"([^"]*)"\s*\)|"([^"]*)"', re.DOTALL)
+# post-#2416 source). Pull the trailing literal(s) out of either form.
+# T()'s second arg allows one-or-more adjacent string literals -- C++
+# concatenates them at compile time (e.g. LightLimitFix.h wraps a long
+# description across two literals); matching only a single "..." made the
+# whole T(...) call fail and fall through to the bare-literal alternative,
+# which then grabbed the i18n key itself as if it were description text.
+RE_T_OR_LITERAL = re.compile(r'T\s*\(\s*"[^"]*"\s*,\s*((?:"[^"]*"\s*)+)\)|"([^"]*)"', re.DOTALL)
+
+def _unescape_cpp_string(s):
+    # Only the escapes plausible in a UI description/key-feature literal;
+    # a literal \n (e.g. TerrainVariation.h) must become a space like an
+    # actual source newline does, not leak into the table as "\n".
+    return s.replace("\\n", " ").replace("\\t", " ").replace('\\"', '"').replace("\\\\", "\\")
 
 def extract_t_or_literal_strings(blob):
-    return [
-        (m.group(1) if m.group(1) is not None else m.group(2)).replace("\n", " ").strip()
-        for m in RE_T_OR_LITERAL.finditer(blob)
-    ]
+    results = []
+    for m in RE_T_OR_LITERAL.finditer(blob):
+        if m.group(1) is not None:
+            # Adjacent literals concatenate directly (no inserted separator,
+            # matching C++ semantics -- any needed spacing is already in the
+            # literals themselves).
+            parts = re.findall(r'"([^"]*)"', m.group(1))
+            text = "".join(parts)
+        else:
+            text = m.group(2)
+        results.append(_unescape_cpp_string(text).replace("\n", " ").strip())
+    return results
 
 def normalize_feature_key(name):
     return ''.join(str(name or '').lower().replace('-', ' ').split())
