@@ -19,12 +19,34 @@ jobs:
               env:
                   GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+            # Each check always runs (if: always()) and reports its own error,
+            # so a title with multiple problems surfaces both in one run.
             - name: "Enforce title length (<= 50 chars)"
+              id: length-check
               env:
                   TITLE: ${{ github.event.pull_request.title }}
               run: |
                   length=${#TITLE}
                   if [ "$length" -gt 50 ]; then
-                      echo "PR title is too long: $length characters (max 50)."
+                      echo "::error::PR title is too long: $length characters (max 50)."
+                      echo "failed=true" >> "$GITHUB_OUTPUT"
+                  fi
+
+            - name: "Reject a ci/build scope on another type"
+              id: scope-check
+              if: always()
+              env:
+                  TITLE: ${{ github.event.pull_request.title }}
+              run: |
+                  title_lower="${TITLE,,}"
+                  if [[ "$title_lower" =~ ^[a-z]+\((ci|build)\)!?: ]]; then
+                      echo "::error::PR title has a '(ci)'/'(build)' scope -- use 'ci:'/'build:' as the type directly instead; a scope on another type wrongly attaches a release-impact classification."
+                      echo "failed=true" >> "$GITHUB_OUTPUT"
+                  fi
+
+            - name: "Fail if any title check failed"
+              if: always()
+              run: |
+                  if [ "${{ steps.length-check.outputs.failed }}" = "true" ] || [ "${{ steps.scope-check.outputs.failed }}" = "true" ]; then
                       exit 1
                   fi
