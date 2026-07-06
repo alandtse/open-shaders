@@ -149,10 +149,8 @@ jobs:
             # under pull_request_target), but a misfiring bump algorithm can still
             # apply a wrong version. Tick skip_feature_bumps to hand-manage instead.
             #
-            # Output is repo-relative (not /tmp): tools/release-notes-feature-
-            # audit-plugin.js reads it in the Semantic Release step below to
-            # append it to the generated notes, so it must survive in the
-            # checkout those notes are generated from.
+            # Repo-relative output: the Semantic Release step below reads
+            # this file from the checkout to build the release notes.
             - name: Apply feature version bumps
               if: ${{ !inputs.skip_feature_bumps }}
               run: |

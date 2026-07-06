@@ -86,15 +86,8 @@ jobs:
                   name: dist-artifacts
                   path: dist/
 
-            # The Feature Metadata Summary is baked into this body already --
-            # tools/release-notes-feature-audit-plugin.js appends it during
-            # Semantic Release, in the same job/ref as the version bumps it
-            # reports on. This step used to re-run the audit against this
-            # (by-then-immutable) tag and splice it in with text surgery; that
-            # meant a tool fix landing after a tag was cut could never affect
-            # that release, and every re-run re-derived the same stale
-            # content. Now it just resolves the tag and fetches the body
-            # semantic-release already produced.
+            # The Feature Metadata Summary is already in this body (appended
+            # during Semantic Release); just resolve the tag and fetch it.
             - name: Resolve release tag and body
               id: combined_notes
               shell: bash

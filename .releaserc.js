@@ -21,11 +21,8 @@ module.exports = {
   plugins: [
     '@semantic-release/commit-analyzer',
     '@semantic-release/release-notes-generator',
-    // Appends the Feature Metadata Summary release-semantic.yaml's "Apply
-    // feature version bumps" step wrote to feature-audit-notes.md. Must run
-    // after release-notes-generator (generateNotes outputs concatenate in
-    // plugins-array order). See the plugin file for why this replaced a
-    // post-publish re-run against the (by then immutable) tag.
+    // Must follow release-notes-generator: generateNotes outputs concatenate
+    // in plugins-array order.
     './tools/release-notes-feature-audit-plugin.js',
     [
       '@google/semantic-release-replace-plugin',
