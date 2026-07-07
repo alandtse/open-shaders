@@ -301,9 +301,8 @@ void OverlayRenderer::RenderShaderCompilationStatus(const std::function<const ch
 	auto progressOverlay = fmt::format("{}/{} ({:2.1f}%)", compiledShaders, totalShaders, 100 * percent);
 
 	if (shaderCache->IsCompiling()) {
-		// VR immersion: hide the routine background-compile progress readout, but never
-		// the blocking-compile path (game is genuinely paused then) or anything exceptional
-		// (failures/feature issues/cache-held/RenderDoc warning) that the user still needs.
+		// VR immersion: suppress only the routine background-compile readout; the
+		// blocking-compile path and anything exceptional still show below.
 		const bool hideRoutineHud = globals::game::isVR && shaderCache->backgroundCompilation &&
 		                            Menu::GetSingleton()->GetSettings().HideCompilationHUDInVR;
 		const bool hasExceptionalInfo = shaderCache->IsDiskCacheHeld() || FeatureIssues::HasFeatureIssues() ||
