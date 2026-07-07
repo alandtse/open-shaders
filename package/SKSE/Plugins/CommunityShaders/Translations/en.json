@@ -2392,6 +2392,8 @@
     "menu.advanced.frame_annotations_tooltip": "Enable detailed frame annotations for debugging render passes and draw calls.",
     "menu.advanced.half_precision": "Half Precision (Partial Precision)",
     "menu.advanced.half_precision_tooltip": "Adds D3DCOMPILE_PARTIAL_PRECISION to the shader compiler flags.\nLets fxc downgrade unmarked float ops to FP16 where it can prove safety, on top of the existing min16float type hints.\nOn FP16-capable GPUs (Pascal+ / GCN+ / Skylake+) this can halve register pressure and double ALU throughput, but it can also introduce minor visual differences in shaders that haven't been audited for precision sensitivity.\nToggling this clears the shader cache and triggers a full recompile.",
+    "menu.advanced.hide_compilation_hud_vr": "Hide Compilation HUD in VR",
+    "menu.advanced.hide_compilation_hud_vr_tooltip": "Suppresses the background-compilation progress overlay for immersion. The blocking foreground-compile warning still shows, since the game is genuinely paused then.",
     "menu.advanced.infinite_core_efficiency": "Infinite-core efficiency",
     "menu.advanced.infinite_core_efficiency_metric": "Infinite-core efficiency (S/T_p): %.1f%%",
     "menu.advanced.infinite_core_efficiency_tooltip_1": "How close runtime is to the infinite-core lower bound.",
