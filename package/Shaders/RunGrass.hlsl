@@ -650,8 +650,8 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 		lightsDiffuseColor += dirLightColor * dirDetailedShadow * saturate(wrappedDirLight) * Color::VanillaNormalization();
 	} else {
 		// Original Standard Model
-	lightsDiffuseColor += dirLightColor * dirDetailedShadow * saturate(dirLightAngle) * Color::VanillaNormalization();
-}
+		lightsDiffuseColor += dirLightColor * dirDetailedShadow * saturate(dirLightAngle) * Color::VanillaNormalization();
+	}
 
 	float3 vertexColor = Color::ColorToLinear(input.Color.xyz);
 	float vertexAO = max(max(vertexColor.r, vertexColor.g), vertexColor.b);
@@ -743,8 +743,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 				if (SharedData::grassLightingSettings.EnableWrappedLighting) {
 					float wrappedLight = saturate(lightAngle + wrapAmount) / (1.0 + wrapAmount);
 					lightDiffuseColor = lightColor * wrappedLight;
-				} 
-				else {
+				} else {
 					lightDiffuseColor = lightColor * saturate(lightAngle);
 				}
 
