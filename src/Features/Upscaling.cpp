@@ -267,7 +267,7 @@ void Upscaling::DrawPerfModeToggle()
 		settings.vrRenderScaleLive = liveScale ? (perfMode.IsHookActive() ?
 														 std::min(1.0f, static_cast<float>(perfMode.GetRenderEyeWidth()) / static_cast<float>(perfMode.GetDisplayEyeWidth())) :
 														 kVRRenderScaleMax) :
-	                                             0.0f;
+		                                         0.0f;
 	if (auto _tt = Util::HoverTooltipWrapper()) {
 		ImGui::Text("%s", T(TKEY("vr_render_scale_live_tooltip"),
 							  "Adjusts the render resolution on the fly by shrinking the rendered region\n"

@@ -89,7 +89,7 @@ void PerfMode::InstallRenderTargetSizeHook()
 		displayEyeWidth, displayEyeHeight, renderEyeWidth, renderEyeHeight, qualityMode,
 		upscaling.settings.vrRenderScaleReserveNative ? "native reserved" :
 		explicitScale                                 ? "explicit scale" :
-		                                                "preset-derived");
+														"preset-derived");
 
 	// Restart-required settings snapshot is latched by the render-target
 	// creation hook, but keep this robust to call-order changes.
