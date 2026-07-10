@@ -1081,8 +1081,18 @@ void State::UpdateSharedData([[maybe_unused]] bool a_inWorld, [[maybe_unused]] b
 		if (upscaling.loaded) {
 			auto upscaleMethod = upscaling.GetUpscaleMethod();
 			if (temporal && upscaleMethod != Upscaling::UpscaleMethod::kTAA) {
-				auto renderSize = Util::ConvertToDynamic(screenSize, true);
-				data.MipBias = std::log2f(renderSize.x / screenSize.x);
+				const auto& perfMode = upscaling.perfMode;
+				if (perfMode.IsHookActive()) {
+					// PerfMode renders the engine RTs sub-native while the upscaler
+					// outputs DisplayRes, but forces the DRS ratio to identity, so
+					// bias off the latched eye dims, not the (unity) dynamic ratio.
+					data.MipBias = std::log2f(
+						static_cast<float>(perfMode.GetRenderEyeWidth()) /
+						static_cast<float>(perfMode.GetDisplayEyeWidth()));
+				} else {
+					auto renderSize = Util::ConvertToDynamic(screenSize, true);
+					data.MipBias = std::log2f(renderSize.x / screenSize.x);
+				}
 				if (upscaleMethod == Upscaling::UpscaleMethod::kDLSS)
 					data.MipBias -= 1.0f;
 			} else {
