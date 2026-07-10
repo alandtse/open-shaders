@@ -19,7 +19,7 @@ SamplerComparisonState comparisonSampler : register(s0);
 		return;
 
 	uint3 probeTexID = uint3(dtid.xy, probeSlice);
-	uint3 cellID = uint3(max(int3(probeTexID) - settings.ArrayOrigin.xyz, 0) % arrayDims);
+	uint3 cellID = uint3(max(int3(probeTexID) - settings.ArrayOrigin.xyz, 0)) % arrayDims;
 	uint3 validMin = (uint3)max(0, settings.ValidMargin.xyz);
 	uint3 validMax = arrayDims - 1 + (uint3)min(0, settings.ValidMargin.xyz);
 	bool isValid = all(cellID >= validMin) && all(cellID <= validMax);  // check if the cell is newly added

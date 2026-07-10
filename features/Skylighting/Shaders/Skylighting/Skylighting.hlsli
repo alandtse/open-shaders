@@ -123,7 +123,7 @@ namespace Skylighting
 					if (any(cellID < 0) || any((uint3)cellID >= arrayDims))
 						continue;
 
-					float3 cellCentreMS = cellID + 0.5 - int3(arrayDims) / 2;
+					float3 cellCentreMS = cellID + 0.5 - arrayDims / 2;
 					cellCentreMS = cellCentreMS * cellSize;
 
 					// https://handmade.network/p/75/monter/blog/p/7288-engine_work__global_illumination_with_irradiance_probes
@@ -133,7 +133,7 @@ namespace Skylighting
 					float3 trilinearWeights = 1 - abs(offset - trilinearPos);
 					float w = trilinearWeights.x * trilinearWeights.y * trilinearWeights.z * tangentWeight;
 
-					uint3 cellTexID = (cellID + params.ArrayOrigin.xyz) % arrayDims;
+					uint3 cellTexID = uint3(cellID + params.ArrayOrigin.xyz) % arrayDims;
 					sh2 probe = SphericalHarmonics::Scale(SkylightingProbeArray[cellTexID], w);
 
 					sum = SphericalHarmonics::Add(sum, probe);
@@ -196,13 +196,13 @@ namespace Skylighting
 			if (any(cellID < 0) || any((uint3)cellID >= arrayDims))
 				continue;
 
-			float3 cellCentreMS = cellID + 0.5 - int3(arrayDims) / 2;
+			float3 cellCentreMS = cellID + 0.5 - arrayDims / 2;
 			cellCentreMS = cellCentreMS * cellSize;
 
 			float3 trilinearWeights = 1 - abs(offset - trilinearPos);
 			float w = trilinearWeights.x * trilinearWeights.y * trilinearWeights.z;
 
-			uint3 cellTexID = (cellID + params.ArrayOrigin.xyz) % arrayDims;
+			uint3 cellTexID = uint3(cellID + params.ArrayOrigin.xyz) % arrayDims;
 			sh2 probe = SphericalHarmonics::Scale(SkylightingProbeArray[cellTexID], w);
 
 			sum = SphericalHarmonics::Add(sum, probe);

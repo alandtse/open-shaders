@@ -447,7 +447,7 @@ Skylighting::SkylightingCB Skylighting::GetCommonBufferData(bool a_inWorld)
 	auto cellOrigin = cellID * cellSize;
 	float3 cellIDDiff = prevCellID - cellID;
 	prevCellID = cellID;
-	DirectX::XMINT3 cellIDDiffI = { (int)cellIDDiff.x, (int)cellIDDiff.y, (int)cellIDDiff.z };
+	DirectX::XMINT3 cellIDDiffI = { static_cast<int>(cellIDDiff.x), static_cast<int>(cellIDDiff.y), static_cast<int>(cellIDDiff.z) };
 
 	bool shouldForceFullUpdate =
 		cellIDDiffI.x != 0 ||
@@ -476,9 +476,9 @@ Skylighting::SkylightingCB Skylighting::GetCommonBufferData(bool a_inWorld)
 		.OcclusionDir = OcclusionDir,
 		.PosOffset = cellOrigin - eyePos,
 		.ArrayOrigin = {
-			((int)cellID.x - probeArrayDims[0] / 2) % probeArrayDims[0],
-			((int)cellID.y - probeArrayDims[1] / 2) % probeArrayDims[1],
-			((int)cellID.z - probeArrayDims[2] / 2) % probeArrayDims[2] },
+			(static_cast<int>(cellID.x) - probeArrayDims[0] / 2) % probeArrayDims[0],
+			(static_cast<int>(cellID.y) - probeArrayDims[1] / 2) % probeArrayDims[1],
+			(static_cast<int>(cellID.z) - probeArrayDims[2] / 2) % probeArrayDims[2] },
 		.ValidMargin = { cellIDDiffI.x, cellIDDiffI.y, cellIDDiffI.z },
 		.ArrayDims = { probeArrayDims[0], probeArrayDims[1], probeArrayDims[2] },
 		.ProbeFieldSize = probeFieldSize,
