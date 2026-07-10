@@ -137,9 +137,19 @@ public:
 	 * @brief Clamps a per-eye render extent into the NGX-supported range for the given
 	 * quality mode and output size. No-op when DLSS or the optimal-settings query is
 	 * unavailable. Used at PerfMode install so an explicit render scale can't allocate
-	 * engine RTs outside the range DLSS will accept at dispatch.
+	 * engine RTs outside the range DLSS will accept at dispatch, and per frame by the
+	 * live render scale (results are cached per mode/output pair).
 	 */
 	void ClampToDLSSRenderRange(uint32_t a_qualityMode, uint32_t a_outputWidth, uint32_t a_outputHeight, uint32_t& a_renderWidth, uint32_t& a_renderHeight);
+
+	// Optimal-settings cache for ClampToDLSSRenderRange, indexed by quality mode.
+	struct DLSSRangeCacheEntry
+	{
+		uint32_t outputWidth = 0;
+		uint32_t outputHeight = 0;
+		sl::DLSSOptimalSettings optimal{};
+	};
+	DLSSRangeCacheEntry dlssRangeCache[5]{};
 
 	/**
 	 * @brief Dispatches DLSS upscaling for the current frame.

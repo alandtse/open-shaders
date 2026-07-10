@@ -1084,10 +1084,11 @@ void State::UpdateSharedData([[maybe_unused]] bool a_inWorld, [[maybe_unused]] b
 				const auto& perfMode = upscaling.perfMode;
 				if (perfMode.IsHookActive()) {
 					// PerfMode renders the engine RTs sub-native while the upscaler
-					// outputs DisplayRes, but forces the DRS ratio to identity, so
-					// bias off the latched eye dims, not the (unity) dynamic ratio.
+					// outputs DisplayRes; the DRS ratio is relative to the latched
+					// allocation (identity, or below it under the live scale), so
+					// bias off the latched eye dims scaled by the current ratio.
 					data.MipBias = std::log2f(
-						static_cast<float>(perfMode.GetRenderEyeWidth()) /
+						static_cast<float>(perfMode.GetRenderEyeWidth()) * upscaling.resolutionScale.x /
 						static_cast<float>(perfMode.GetDisplayEyeWidth()));
 				} else {
 					auto renderSize = Util::ConvertToDynamic(screenSize, true);

@@ -45,7 +45,9 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	reflexUseFPSLimit,
 	reflexFPSLimit,
 	renderAtUpscaleRes,
-	vrRenderScale);
+	vrRenderScale,
+	vrRenderScaleLive,
+	vrRenderScaleReserveNative);
 
 decltype(&D3D11CreateDeviceAndSwapChain) ptrD3D11CreateDeviceAndSwapChainUpscaling;
 
@@ -226,9 +228,10 @@ void Upscaling::DrawPerfModeToggle()
 		Util::Text::Disabled(T(TKEY("render_at_upscale_res_requires"), "Render-at-upscaled-resolution requires DLSS or FSR. Switch upscaler Method to activate."));
 	// At Native AA (1x) there's nothing to bank, so the size hook stays dormant even while
 	// checked; surface the no-op rather than implying the toggle does something. An explicit
-	// render scale supplies its own sub-native res, so the hint doesn't apply then.
+	// render scale or a reserved native ceiling supplies the engagement instead.
 	if (methodSupportsPerf && settings.renderAtUpscaleRes &&
-		GetQualityModeRatio(settings.qualityMode) <= 1.0f && settings.vrRenderScale <= 0.0f)
+		GetQualityModeRatio(settings.qualityMode) <= 1.0f && settings.vrRenderScale <= 0.0f &&
+		!settings.vrRenderScaleReserveNative)
 		Util::Text::Disabled(T(TKEY("render_at_upscale_res_native_noop"), "No effect at Native AA (1x): renders at full resolution; raise the Upscale Preset to engage."));
 	if (methodSupportsPerf)
 		Util::UI::DrawSettingDiff(bootSnapshot, settings, &Settings::renderAtUpscaleRes);
@@ -255,10 +258,47 @@ void Upscaling::DrawPerfModeToggle()
 		if (ImGui::SliderFloat(T(TKEY("vr_render_scale"), "VR Render Scale"), &scalePercent, kVRRenderScaleMin * 100.0f, kVRRenderScaleMax * 100.0f, "%.0f%%"))
 			settings.vrRenderScale = scalePercent / 100.0f;
 	}
+
+	// Live sub-ceiling scale: applies immediately, so no restart banner. It can
+	// only shrink below the boot-latched allocation; the reserve toggle raises
+	// that ceiling to native (restart-gated) for the full live range.
+	bool liveScale = settings.vrRenderScaleLive > 0.0f;
+	if (ImGui::Checkbox(T(TKEY("vr_render_scale_live_enable"), "Live render scale (no restart)"), &liveScale))
+		settings.vrRenderScaleLive = liveScale ? (perfMode.IsHookActive() ?
+														 std::min(1.0f, static_cast<float>(perfMode.GetRenderEyeWidth()) / static_cast<float>(perfMode.GetDisplayEyeWidth())) :
+														 kVRRenderScaleMax) :
+	                                             0.0f;
+	if (auto _tt = Util::HoverTooltipWrapper()) {
+		ImGui::Text("%s", T(TKEY("vr_render_scale_live_tooltip"),
+							  "Adjusts the render resolution on the fly by shrinking the rendered region\n"
+							  "inside the allocation chosen at launch, so it can only go BELOW that ceiling.\n"
+							  "Enable 'Reserve native for live rescaling' (restart) for the full range.\n"
+							  "VRAM stays at the ceiling size while rendering below it."));
+	}
+	if (liveScale) {
+		float livePercent = settings.vrRenderScaleLive * 100.0f;
+		if (ImGui::SliderFloat(T(TKEY("vr_render_scale_live"), "Live Render Scale"), &livePercent, kVRRenderScaleMin * 100.0f, 100.0f, "%.0f%%"))
+			settings.vrRenderScaleLive = livePercent / 100.0f;
+		if (perfMode.IsHookActive()) {
+			const uint32_t effWidth = std::min(perfMode.GetRenderEyeWidth(), (uint32_t)(perfMode.GetDisplayEyeWidth() * settings.vrRenderScaleLive)) & ~1u;
+			const uint32_t effHeight = std::min(perfMode.GetRenderEyeHeight(), (uint32_t)(perfMode.GetDisplayEyeHeight() * settings.vrRenderScaleLive)) & ~1u;
+			ImGui::Text(T(TKEY("vr_render_scale_live_effective"), "Effective: %ux%u per eye (ceiling %ux%u)"),
+				effWidth, effHeight, perfMode.GetRenderEyeWidth(), perfMode.GetRenderEyeHeight());
+		}
+	}
+	ImGui::Checkbox(T(TKEY("vr_render_scale_reserve"), "Reserve native for live rescaling"), &settings.vrRenderScaleReserveNative);
+	if (auto _tt = Util::HoverTooltipWrapper()) {
+		ImGui::Text("%s", T(TKEY("vr_render_scale_reserve_tooltip"),
+							  "Allocates render targets at the HMD's native size so the live scale gets\n"
+							  "the full range. Costs native-size VRAM even while rendering below it.\n"
+							  "Takes effect after a game restart."));
+	}
 	if (!scaleEditable)
 		ImGui::EndDisabled();
-	if (methodSupportsPerf)
+	if (methodSupportsPerf) {
 		Util::UI::DrawSettingDiff(bootSnapshot, settings, &Settings::vrRenderScale);
+		Util::UI::DrawSettingDiff(bootSnapshot, settings, &Settings::vrRenderScaleReserveNative);
+	}
 }
 
 // FoveatedRender: foveated subrect DLSS, VR-only, opt-in. Enable lives at the top level
@@ -348,6 +388,7 @@ void Upscaling::ApplyVRPerformanceProfile(VRPerfProfile profile)
 	settings.renderAtUpscaleRes = true;
 	settings.qualityMode = VRProfileQualityMode(profile);
 	settings.vrRenderScale = 0.0f;
+	settings.vrRenderScaleLive = 0.0f;
 	foveatedRender.settings.enabled = VRProfileFoveation(profile) ? 1 : 0;
 }
 
@@ -355,6 +396,7 @@ bool Upscaling::MatchesVRPerformanceProfile(VRPerfProfile profile) const
 {
 	return settings.renderAtUpscaleRes &&
 	       settings.vrRenderScale == 0.0f &&
+	       settings.vrRenderScaleLive == 0.0f &&
 	       settings.qualityMode == VRProfileQualityMode(profile) &&
 	       (foveatedRender.settings.enabled != 0) == VRProfileFoveation(profile);
 }
@@ -892,6 +934,15 @@ void Upscaling::LoadSettings(json& o_json)
 		logger::warn("[Upscaling] Loaded vrRenderScale {} out of range, clamping to {}", settings.vrRenderScale, clamped);
 		settings.vrRenderScale = clamped;
 	}
+	if (settings.vrRenderScaleLive != 0.0f &&
+		(!std::isfinite(settings.vrRenderScaleLive) ||
+			settings.vrRenderScaleLive < kVRRenderScaleMin || settings.vrRenderScaleLive > 1.0f)) {
+		const float clamped = std::isfinite(settings.vrRenderScaleLive) && settings.vrRenderScaleLive > 0.0f ?
+		                          std::clamp(settings.vrRenderScaleLive, kVRRenderScaleMin, 1.0f) :
+		                          0.0f;
+		logger::warn("[Upscaling] Loaded vrRenderScaleLive {} out of range, clamping to {}", settings.vrRenderScaleLive, clamped);
+		settings.vrRenderScaleLive = clamped;
+	}
 	if (settings.qualityMode > 4) {
 		logger::warn("[Upscaling] Loaded qualityMode {} out of range, clamping to 4", settings.qualityMode);
 		settings.qualityMode = 4;
@@ -1103,6 +1154,20 @@ float Upscaling::GetQualityModeRatio(uint qualityMode)
 	return std::isfinite(ratio) && ratio > 0.0f ? ratio : 3.0f;
 }
 
+uint Upscaling::NearestQualityModeForRatio(float a_ratio)
+{
+	uint best = 1;
+	float bestDelta = FLT_MAX;
+	for (uint mode = 1; mode <= 4; ++mode) {
+		const float delta = std::abs(GetQualityModeRatio(mode) - a_ratio);
+		if (delta < bestDelta) {
+			bestDelta = delta;
+			best = mode;
+		}
+	}
+	return best;
+}
+
 Upscaling::UpscaleMethod Upscaling::GetUpscaleMethod() const
 {
 	// OpenComposite owning upscaling wins over everything (incl. PerfMode); VR-only.
@@ -1134,9 +1199,11 @@ bool Upscaling::PerfModePrerequisitesMet() const
 	const auto method = GetUpscaleMethod();
 	const bool methodRedirectsOutput = method == UpscaleMethod::kDLSS || method == UpscaleMethod::kFSR;
 	// >1.0x: a sub-display render res to bank. Native AA (1.0x) banks nothing
-	// unless an explicit render scale supplies the sub-display res itself.
+	// unless an explicit render scale supplies the sub-display res itself, or
+	// native allocations are reserved so the live scale can shrink below them.
 	return globals::game::isVR && methodRedirectsOutput &&
-	       (GetQualityModeRatio(settings.qualityMode) > 1.0f || settings.vrRenderScale > 0.0f);
+	       (GetQualityModeRatio(settings.qualityMode) > 1.0f || settings.vrRenderScale > 0.0f ||
+			   settings.vrRenderScaleReserveNative);
 }
 
 bool Upscaling::ShouldEngagePerfMode() const
@@ -1750,9 +1817,44 @@ void Upscaling::ConfigureUpscaling(RE::BSGraphics::State* a_viewport)
 			perfMode.IsHookActive() &&
 			(upscaleMethod == UpscaleMethod::kDLSS || upscaleMethod == UpscaleMethod::kFSR);
 		if (dlssperfRenderResPath) {
-			resolutionScale = { 1.0f, 1.0f };
+			const auto allocEyeWidth = perfMode.GetRenderEyeWidth();
+			const auto allocEyeHeight = perfMode.GetRenderEyeHeight();
+			auto renderWidth = static_cast<int>(allocEyeWidth);
+			auto renderHeight = static_cast<int>(allocEyeHeight);
 
-			auto renderWidth = static_cast<int>(perfMode.GetRenderEyeWidth());
+			// Live sub-ceiling scale: shrink the rendered region inside the latched
+			// allocation via the DRS ratio; the upscalers consume the region through
+			// their dispatch extents, so no relatch is needed. Skipped while the
+			// FoveatedRender subrect route owns the per-eye extents.
+			const float liveScale = std::clamp(settings.vrRenderScaleLive, 0.0f, 1.0f);
+			const bool foveatedRouteActive = upscaleMethod == UpscaleMethod::kDLSS && foveatedRender.settings.enabled != 0;
+			if (liveScale > 0.0f && !foveatedRouteActive) {
+				uint32_t effEyeWidth = std::min(allocEyeWidth, (uint32_t)(perfMode.GetDisplayEyeWidth() * liveScale)) & ~1u;
+				uint32_t effEyeHeight = std::min(allocEyeHeight, (uint32_t)(perfMode.GetDisplayEyeHeight() * liveScale)) & ~1u;
+				// DLSS validates extents against the active mode; re-derive the mode
+				// from the effective ratio and keep the extents inside its NGX range.
+				if (upscaleMethod == UpscaleMethod::kDLSS && effEyeWidth > 0) {
+					const uint liveMode = NearestQualityModeForRatio(
+						static_cast<float>(perfMode.GetDisplayEyeWidth()) / static_cast<float>(effEyeWidth));
+					streamline.ClampToDLSSRenderRange(liveMode, perfMode.GetDisplayEyeWidth(), perfMode.GetDisplayEyeHeight(), effEyeWidth, effEyeHeight);
+					effEyeWidth = std::min(effEyeWidth, allocEyeWidth);
+					effEyeHeight = std::min(effEyeHeight, allocEyeHeight);
+				}
+				if (effEyeWidth >= 2 && effEyeHeight >= 2) {
+					renderWidth = static_cast<int>(effEyeWidth);
+					renderHeight = static_cast<int>(effEyeHeight);
+				}
+				static uint32_t lastLoggedWidth = 0;
+				if (lastLoggedWidth != effEyeWidth) {
+					lastLoggedWidth = effEyeWidth;
+					logger::info("[Upscaling] Live render scale {:.0f}%: {}x{} per eye (allocation {}x{})",
+						liveScale * 100.0f, renderWidth, renderHeight, allocEyeWidth, allocEyeHeight);
+				}
+			}
+
+			resolutionScale.x = static_cast<float>(renderWidth) / static_cast<float>(allocEyeWidth);
+			resolutionScale.y = static_cast<float>(renderHeight) / static_cast<float>(allocEyeHeight);
+
 			auto displayWidth = static_cast<int>(perfMode.GetDisplayEyeWidth());
 
 			auto phaseCount = GetJitterPhaseCount(renderWidth, displayWidth);
@@ -1766,7 +1868,7 @@ void Upscaling::ConfigureUpscaling(RE::BSGraphics::State* a_viewport)
 			else
 				a_viewport->projectionPosScaleX = -2.0f * jitter.x / renderWidth;
 
-			a_viewport->projectionPosScaleY = 2.0f * jitter.y / static_cast<int>(perfMode.GetRenderEyeHeight());
+			a_viewport->projectionPosScaleY = 2.0f * jitter.y / renderHeight;
 		} else {
 			// Boot qualityMode under PerfMode so projection stays coherent
 			// with the engine RTs sized at install.

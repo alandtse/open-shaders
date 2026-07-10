@@ -93,10 +93,25 @@ public:
 		// HMD's native size and the preset becomes inert; DLSS clamps the extent into
 		// the nearest preset's NGX-supported range at boot. Boot-locked like qualityMode.
 		float vrRenderScale = 0.0f;
+
+		// Live VR render scale (0 = off: render at the boot-latched allocation).
+		// Applies without a restart by shrinking the rendered region inside the
+		// latched allocation via the DRS ratio + upscaler dispatch extents, so it
+		// can only go BELOW the boot ceiling. Fraction of the HMD's native size.
+		float vrRenderScaleLive = 0.0f;
+
+		// Reserve native-size allocations so the live scale gets the full range.
+		// Costs ceiling-sized VRAM while rendering below it. Boot-locked.
+		bool vrRenderScaleReserveNative = false;
 	};
 
 	static constexpr float kVRRenderScaleMin = 0.33f;
 	static constexpr float kVRRenderScaleMax = 0.95f;
+
+	/** @brief Quality mode (1-4) whose upscale ratio is nearest to the requested one.
+	 * NativeAA (0) is excluded: callers pass sub-native ratios, and DLAA rejects
+	 * render extents below the output size. */
+	static uint NearestQualityModeForRatio(float a_ratio);
 
 	Settings settings;
 
@@ -108,7 +123,7 @@ public:
 	// presetDLSS is deliberately NOT here: Streamline::SetDLSSOptions reads
 	// settings.presetDLSS per-frame and applies it via slDLSSSetOptions, so
 	// it's already runtime-effective.
-	inline static constexpr Util::Settings::RestartTable<Settings, 7> kRestartFields{ {
+	inline static constexpr Util::Settings::RestartTable<Settings, 8> kRestartFields{ {
 		UTIL_RESTART_FIELD(Settings, frameGenerationMode, "Frame Generation"),
 		UTIL_RESTART_FIELD(Settings, frameGenerationForceEnable, "Force Enable Frame Generation"),
 		UTIL_RESTART_FIELD(Settings, renderAtUpscaleRes, "Render at Upscaled Resolution"),
@@ -116,6 +131,7 @@ public:
 		UTIL_RESTART_FIELD(Settings, upscaleMethod, "Upscaling Method"),
 		UTIL_RESTART_FIELD(Settings, qualityMode, "Upscale Preset"),
 		UTIL_RESTART_FIELD(Settings, vrRenderScale, "VR Render Scale"),
+		UTIL_RESTART_FIELD(Settings, vrRenderScaleReserveNative, "Reserve Native for Live Rescaling"),
 	} };
 	Util::Settings::BootSnapshot<Settings> bootSnapshot{ kRestartFields };
 
@@ -190,7 +206,9 @@ public:
 		for (const auto& f : kRestartFields) {
 			if (f.offset == offsetof(Settings, qualityMode) || f.offset == offsetof(Settings, upscaleMethod))
 				continue;
-			if ((f.offset == offsetof(Settings, renderAtUpscaleRes) || f.offset == offsetof(Settings, vrRenderScale)) && !gatePerfFields)
+			if ((f.offset == offsetof(Settings, renderAtUpscaleRes) || f.offset == offsetof(Settings, vrRenderScale) ||
+					f.offset == offsetof(Settings, vrRenderScaleReserveNative)) &&
+				!gatePerfFields)
 				continue;
 			scratch.push_back(f);
 		}
