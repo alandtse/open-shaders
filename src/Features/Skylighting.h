@@ -108,6 +108,9 @@ public:
 
 	// cached variables
 	bool queuedResetSkylighting = true;
+	// Grid changes from settings loads must recreate resources on the render
+	// thread (consumed at Prepass); the load itself runs on the main thread.
+	bool queuedSetupResources = false;
 	bool inOcclusion = false;
 	REX::W32::XMFLOAT4X4 OcclusionTransform;
 	float4 OcclusionDir;

@@ -128,11 +128,12 @@ void Skylighting::LoadSettings(json& o_json)
 
 	const uint previousDims[3] = { probeArrayDims[0], probeArrayDims[1], probeArrayDims[2] };
 	ApplyProbeGridQuality();
-	// Runtime profile loads can change the grid; recreate arrays so dims match the dispatch.
+	// Runtime profile loads can change the grid; queue the recreation for the
+	// render thread since this runs on the main thread mid-frame.
 	if (globals::d3d::device && globals::game::renderer &&
 		(previousDims[0] != probeArrayDims[0] || previousDims[1] != probeArrayDims[1] || previousDims[2] != probeArrayDims[2])) {
-		SetupResources();
-		ResetSkylighting();
+		queuedSetupResources = true;
+		queuedResetSkylighting = true;
 	}
 }
 
@@ -147,13 +148,9 @@ void Skylighting::RestoreDefaultSettings()
 	const uint previousProbeGridQuality = settings.ProbeGridQuality;
 	settings = {};
 	ApplyProbeGridQuality();
-	if (globals::d3d::device && globals::game::renderer) {
-		if (previousProbeGridQuality != settings.ProbeGridQuality)
-			SetupResources();
-		ResetSkylighting();
-	} else {
-		queuedResetSkylighting = true;
-	}
+	if (previousProbeGridQuality != settings.ProbeGridQuality)
+		queuedSetupResources = true;
+	queuedResetSkylighting = true;
 }
 
 void Skylighting::ResetSkylighting()
@@ -491,6 +488,12 @@ Skylighting::SkylightingCB Skylighting::GetCommonBufferData(bool a_inWorld)
 
 void Skylighting::Prepass()
 {
+	// Render thread: safe point to recreate resources queued by settings loads.
+	if (queuedSetupResources && globals::d3d::device && globals::game::renderer) {
+		queuedSetupResources = false;
+		SetupResources();
+	}
+
 	if (globals::state->isMapMenuOpen)
 		return;
 
