@@ -429,30 +429,67 @@ bool Streamline::IsRTXAndBelow40Series(IDXGIAdapter* a_adapter)
 	return false;
 }
 
+sl::DLSSMode Streamline::DLSSModeForQualityMode(uint32_t a_qualityMode)
+{
+	switch (a_qualityMode) {
+	case 1:
+		return sl::DLSSMode::eMaxQuality;
+	case 2:
+		return sl::DLSSMode::eBalanced;
+	case 3:
+		return sl::DLSSMode::eMaxPerformance;
+	case 4:
+		return sl::DLSSMode::eUltraPerformance;
+	default:
+		return sl::DLSSMode::eDLAA;
+	}
+}
+
+void Streamline::ClampToDLSSRenderRange(uint32_t a_qualityMode, uint32_t a_outputWidth, uint32_t a_outputHeight, uint32_t& a_renderWidth, uint32_t& a_renderHeight)
+{
+	if (!featureDLSS || !slDLSSGetOptimalSettings)
+		return;
+
+	sl::DLSSOptions options{};
+	options.mode = DLSSModeForQualityMode(a_qualityMode);
+	options.outputWidth = a_outputWidth;
+	options.outputHeight = a_outputHeight;
+	sl::DLSSOptimalSettings optimal{};
+	if (slDLSSGetOptimalSettings(options, optimal) != sl::Result::eOk)
+		return;
+	if (!optimal.renderWidthMin || !optimal.renderHeightMin || !optimal.renderWidthMax || !optimal.renderHeightMax)
+		return;
+
+	// Prefer even dims (half-res buffer alignment) but never leave the NGX range.
+	auto clampEven = [](uint32_t v, uint32_t lo, uint32_t hi) {
+		v = std::clamp(v, lo, hi);
+		if ((v & 1u) && v + 1 <= hi)
+			++v;
+		else if ((v & 1u) && v > lo)
+			--v;
+		return v;
+	};
+	const uint32_t clampedW = clampEven(a_renderWidth, optimal.renderWidthMin, optimal.renderWidthMax);
+	const uint32_t clampedH = clampEven(a_renderHeight, optimal.renderHeightMin, optimal.renderHeightMax);
+	if (clampedW != a_renderWidth || clampedH != a_renderHeight)
+		logger::info("[Streamline] Render extent {}x{} clamped to DLSS mode {} range [{}x{}..{}x{}] -> {}x{}",
+			a_renderWidth, a_renderHeight, a_qualityMode,
+			optimal.renderWidthMin, optimal.renderHeightMin, optimal.renderWidthMax, optimal.renderHeightMax,
+			clampedW, clampedH);
+	a_renderWidth = clampedW;
+	a_renderHeight = clampedH;
+}
+
 void Streamline::SetDLSSOptions(sl::ViewportHandle p_viewport, uint32_t width, uint32_t height)
 {
 	sl::DLSSOptions dlssOptions{};
 
-	// Boot qualityMode under PerfMode — DLSS dispatch must match the
-	// renderRes the engine was sized for at install.
-	uint32_t qualityMode = globals::features::upscaling.perfMode.IsHookActive() ? globals::features::upscaling.bootSnapshot.Boot(&Upscaling::Settings::qualityMode) : globals::features::upscaling.settings.qualityMode;
-	switch (qualityMode) {
-	case 1:
-		dlssOptions.mode = sl::DLSSMode::eMaxQuality;
-		break;
-	case 2:
-		dlssOptions.mode = sl::DLSSMode::eBalanced;
-		break;
-	case 3:
-		dlssOptions.mode = sl::DLSSMode::eMaxPerformance;
-		break;
-	case 4:
-		dlssOptions.mode = sl::DLSSMode::eUltraPerformance;
-		break;
-	default:
-		dlssOptions.mode = sl::DLSSMode::eDLAA;
-		break;
-	}
+	// Latched qualityMode under PerfMode: DLSS dispatch must match the renderRes
+	// the engine was sized for at install (the boot preset under Auto, or the
+	// nearest-ratio mode an explicit vrRenderScale was latched against).
+	auto& perfModeRef = globals::features::upscaling.perfMode;
+	const uint32_t qualityMode = perfModeRef.IsHookActive() ? perfModeRef.GetLatchedQualityMode() : globals::features::upscaling.settings.qualityMode;
+	dlssOptions.mode = DLSSModeForQualityMode(qualityMode);
 
 	auto state = globals::state;
 

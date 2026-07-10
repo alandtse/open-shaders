@@ -130,6 +130,17 @@ public:
 	// upscale path). Non-zero is the subrect height the FoveatedRender route needs.
 	void SetDLSSOptions(sl::ViewportHandle p_viewport, uint32_t width, uint32_t height = 0);
 
+	/** @brief Maps an Upscaling quality mode (0-4) to the corresponding sl::DLSSMode. */
+	static sl::DLSSMode DLSSModeForQualityMode(uint32_t a_qualityMode);
+
+	/**
+	 * @brief Clamps a per-eye render extent into the NGX-supported range for the given
+	 * quality mode and output size. No-op when DLSS or the optimal-settings query is
+	 * unavailable. Used at PerfMode install so an explicit render scale can't allocate
+	 * engine RTs outside the range DLSS will accept at dispatch.
+	 */
+	void ClampToDLSSRenderRange(uint32_t a_qualityMode, uint32_t a_outputWidth, uint32_t a_outputHeight, uint32_t& a_renderWidth, uint32_t& a_renderHeight);
+
 	/**
 	 * @brief Dispatches DLSS upscaling for the current frame.
 	 * @param a_upscalingTexture The input color texture to upscale.

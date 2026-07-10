@@ -87,7 +87,16 @@ public:
 		// resolution to bank VRAM/bandwidth. Boot-locked (changing it re-allocates RTs at world load).
 		// Engages only when ShouldEngagePerfMode() holds; a no-op otherwise (see GetUpscaleMethod area).
 		bool renderAtUpscaleRes = true;
+
+		// Explicit VR render scale (0 = Auto: derive the render resolution from the
+		// Upscale Preset ratio). When set, each eye renders at this fraction of the
+		// HMD's native size and the preset becomes inert; DLSS clamps the extent into
+		// the nearest preset's NGX-supported range at boot. Boot-locked like qualityMode.
+		float vrRenderScale = 0.0f;
 	};
+
+	static constexpr float kVRRenderScaleMin = 0.33f;
+	static constexpr float kVRRenderScaleMax = 0.95f;
 
 	Settings settings;
 
@@ -99,13 +108,14 @@ public:
 	// presetDLSS is deliberately NOT here: Streamline::SetDLSSOptions reads
 	// settings.presetDLSS per-frame and applies it via slDLSSSetOptions, so
 	// it's already runtime-effective.
-	inline static constexpr Util::Settings::RestartTable<Settings, 6> kRestartFields{ {
+	inline static constexpr Util::Settings::RestartTable<Settings, 7> kRestartFields{ {
 		UTIL_RESTART_FIELD(Settings, frameGenerationMode, "Frame Generation"),
 		UTIL_RESTART_FIELD(Settings, frameGenerationForceEnable, "Force Enable Frame Generation"),
 		UTIL_RESTART_FIELD(Settings, renderAtUpscaleRes, "Render at Upscaled Resolution"),
 		UTIL_RESTART_FIELD(Settings, streamlineLogLevel, "Streamline Logging"),
 		UTIL_RESTART_FIELD(Settings, upscaleMethod, "Upscaling Method"),
 		UTIL_RESTART_FIELD(Settings, qualityMode, "Upscale Preset"),
+		UTIL_RESTART_FIELD(Settings, vrRenderScale, "VR Render Scale"),
 	} };
 	Util::Settings::BootSnapshot<Settings> bootSnapshot{ kRestartFields };
 
@@ -159,19 +169,28 @@ public:
 	std::span<const Util::Settings::RestartFieldInfo> GetRestartRequiredFields() const override
 	{
 		// While PerfMode is engaged the engine RTs are sized for qualityMode/upscaleMethod, so both
-		// are boot-locked; off, they switch live. renderAtUpscaleRes is boot-locked only when the
-		// other prerequisites could make toggling it engage PerfMode (else it's a no-op).
-		if (perfMode.IsHookActive())
-			return { kRestartFields.data(), kRestartFields.size() };
-		const bool gateRenderAtUpscaleRes = PerfModePrerequisitesMet();
+		// are boot-locked; off, they switch live. renderAtUpscaleRes/vrRenderScale are boot-locked
+		// only when the other prerequisites could make editing them engage PerfMode (else a no-op).
 		// static thread_local: storage must outlive the returned span; callers consume it on the
 		// same thread before the next call.
 		static thread_local std::vector<Util::Settings::RestartFieldInfo> scratch;
 		scratch.clear();
+		if (perfMode.IsHookActive()) {
+			if (!perfMode.IsExplicitScaleLatched())
+				return { kRestartFields.data(), kRestartFields.size() };
+			// An explicit scale owns the render res, so the preset is inert until
+			// the scale is cleared; don't demand a restart for an inert field.
+			for (const auto& f : kRestartFields) {
+				if (f.offset != offsetof(Settings, qualityMode))
+					scratch.push_back(f);
+			}
+			return { scratch.data(), scratch.size() };
+		}
+		const bool gatePerfFields = PerfModePrerequisitesMet();
 		for (const auto& f : kRestartFields) {
 			if (f.offset == offsetof(Settings, qualityMode) || f.offset == offsetof(Settings, upscaleMethod))
 				continue;
-			if (f.offset == offsetof(Settings, renderAtUpscaleRes) && !gateRenderAtUpscaleRes)
+			if ((f.offset == offsetof(Settings, renderAtUpscaleRes) || f.offset == offsetof(Settings, vrRenderScale)) && !gatePerfFields)
 				continue;
 			scratch.push_back(f);
 		}

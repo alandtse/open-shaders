@@ -57,6 +57,11 @@ struct PerfMode
 	uint32_t GetDisplayEyeHeight() const { return displayEyeHeight; }
 	uint32_t GetRenderEyeWidth() const { return renderEyeWidth; }
 	uint32_t GetRenderEyeHeight() const { return renderEyeHeight; }
+	// Upscaler quality mode the engine RTs were latched for at install: the boot
+	// qualityMode under Auto, or the nearest-ratio mode derived from an explicit
+	// vrRenderScale. DLSS dispatch must use this, not the live/boot preset.
+	uint32_t GetLatchedQualityMode() const { return latchedQualityMode; }
+	bool IsExplicitScaleLatched() const { return explicitScaleLatched; }
 
 	// Phase 3: real HMD display resolution in SBS format (e.g. 3072×1632)
 	// Used by Upscaling pipeline to override polluted screenSize (which equals RenderRes after hook)
@@ -163,6 +168,8 @@ private:
 	uint32_t displayEyeHeight = 0;
 	uint32_t renderEyeWidth = 0;
 	uint32_t renderEyeHeight = 0;
+	uint32_t latchedQualityMode = 0;
+	bool explicitScaleLatched = false;
 
 	// Phase 2: vtable hook for BSOpenVR::GetRenderTargetSize (vfunc 0x12)
 	struct GetRenderTargetSize_Hook

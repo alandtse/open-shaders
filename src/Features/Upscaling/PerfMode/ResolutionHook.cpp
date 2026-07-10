@@ -1,6 +1,7 @@
 #include "../PerfMode.h"
 
 #include <algorithm>
+#include <cfloat>
 #include <cmath>
 
 #include "../../../State.h"
@@ -9,6 +10,23 @@
 // Quality mode -> render-scale resolution is supplied by the FFX SDK helper
 // (same one Upscaling.cpp uses), avoiding a duplicate scale table here.
 #include <FidelityFX/host/ffx_fsr3.h>
+
+// Quality mode (1..4) whose upscale ratio is nearest to the requested one.
+// NativeAA (0) is excluded: an explicit sub-native scale is always an upscale,
+// and DLAA rejects render extents below the output size.
+static uint32_t NearestQualityModeForRatio(float a_ratio)
+{
+	uint32_t best = 1;
+	float bestDelta = FLT_MAX;
+	for (uint32_t mode = 1; mode <= 4; ++mode) {
+		const float delta = std::abs(Upscaling::GetQualityModeRatio(mode) - a_ratio);
+		if (delta < bestDelta) {
+			bestDelta = delta;
+			best = mode;
+		}
+	}
+	return best;
+}
 
 void PerfMode::InstallRenderTargetSizeHook()
 {
@@ -46,15 +64,44 @@ void PerfMode::InstallRenderTargetSizeHook()
 	// renderEye dimensions and silently mis-size every engine RT. Fail closed
 	// — leave hookActive=false so the rest of PerfMode is dormant and DLSS
 	// runs on dev's standard path.
-	const uint32_t qualityModeRaw = globals::features::upscaling.settings.qualityMode;
-	const uint32_t qualityMode = std::clamp<uint32_t>(qualityModeRaw, 0, 4);  // FfxFsr3QualityMode range
-	const float scale = ffxFsr3GetUpscaleRatioFromQualityMode(static_cast<FfxFsr3QualityMode>(qualityMode));
+	auto& upscaling = globals::features::upscaling;
+	const uint32_t qualityModeRaw = upscaling.settings.qualityMode;
+	uint32_t qualityMode = std::clamp<uint32_t>(qualityModeRaw, 0, 4);  // FfxFsr3QualityMode range
+	float scale = ffxFsr3GetUpscaleRatioFromQualityMode(static_cast<FfxFsr3QualityMode>(qualityMode));
 	if (!std::isfinite(scale) || scale <= 0.0f) {
 		logger::error("[PerfMode] FFX returned invalid upscale ratio {} for qualityMode {} (raw {}); hook NOT installed", scale, qualityMode, qualityModeRaw);
 		return;
 	}
-	renderEyeWidth = std::max<uint32_t>(1, (uint32_t)(w / scale));
-	renderEyeHeight = std::max<uint32_t>(1, (uint32_t)(h / scale));
+
+	// Explicit render scale overrides the preset-derived ratio. The preset itself
+	// becomes inert; the upscaler mode is re-derived as the nearest preset ratio
+	// so NGX's extent-vs-mode validation matches the RT allocation.
+	const float explicitScaleRaw = upscaling.settings.vrRenderScale;
+	const bool explicitScale = explicitScaleRaw > 0.0f;
+	if (explicitScale) {
+		const float clamped = std::clamp(explicitScaleRaw, Upscaling::kVRRenderScaleMin, Upscaling::kVRRenderScaleMax);
+		if (clamped != explicitScaleRaw)
+			logger::warn("[PerfMode] vrRenderScale {} out of range, clamped to {}", explicitScaleRaw, clamped);
+		scale = 1.0f / clamped;
+		qualityMode = NearestQualityModeForRatio(scale);
+	}
+
+	// Even dimensions: odd widths truncate the engine's half-res buffers
+	// (underwater mask, volumetrics) and misalign SBS stereo math by a pixel.
+	renderEyeWidth = std::max<uint32_t>(2, (uint32_t)(w / scale)) & ~1u;
+	renderEyeHeight = std::max<uint32_t>(2, (uint32_t)(h / scale)) & ~1u;
+
+	// DLSS validates render extents against the latched mode's NGX-supported
+	// range; an explicit scale can land between preset ratios, so clamp the
+	// allocation itself (never the dispatch extent: the RTs must match).
+	if (explicitScale && upscaling.GetUpscaleMethod() == Upscaling::UpscaleMethod::kDLSS)
+		upscaling.streamline.ClampToDLSSRenderRange(qualityMode, displayEyeWidth, displayEyeHeight, renderEyeWidth, renderEyeHeight);
+
+	latchedQualityMode = qualityMode;
+	explicitScaleLatched = explicitScale;
+	logger::info("[PerfMode] Latched display {}x{} -> render {}x{} per eye (quality mode {}, {})",
+		displayEyeWidth, displayEyeHeight, renderEyeWidth, renderEyeHeight, qualityMode,
+		explicitScale ? "explicit scale" : "preset-derived");
 
 	// Restart-required settings snapshot is latched by the render-target
 	// creation hook, but keep this robust to call-order changes.
