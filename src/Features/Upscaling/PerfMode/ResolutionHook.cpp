@@ -1,7 +1,6 @@
 #include "../PerfMode.h"
 
 #include <algorithm>
-#include <cfloat>
 #include <cmath>
 
 #include "../../../State.h"
@@ -10,23 +9,6 @@
 // Quality mode -> render-scale resolution is supplied by the FFX SDK helper
 // (same one Upscaling.cpp uses), avoiding a duplicate scale table here.
 #include <FidelityFX/host/ffx_fsr3.h>
-
-// Quality mode (1..4) whose upscale ratio is nearest to the requested one.
-// NativeAA (0) is excluded: an explicit sub-native scale is always an upscale,
-// and DLAA rejects render extents below the output size.
-static uint32_t NearestQualityModeForRatio(float a_ratio)
-{
-	uint32_t best = 1;
-	float bestDelta = FLT_MAX;
-	for (uint32_t mode = 1; mode <= 4; ++mode) {
-		const float delta = std::abs(Upscaling::GetQualityModeRatio(mode) - a_ratio);
-		if (delta < bestDelta) {
-			bestDelta = delta;
-			best = mode;
-		}
-	}
-	return best;
-}
 
 void PerfMode::InstallRenderTargetSizeHook()
 {
@@ -73,16 +55,22 @@ void PerfMode::InstallRenderTargetSizeHook()
 		return;
 	}
 
-	// An explicit scale overrides the preset ratio (the preset becomes inert) and
-	// re-derives the mode so NGX extent-vs-mode validation matches the allocation.
+	// An explicit scale overrides the preset ratio (preset inert) and re-derives
+	// the mode for NGX validation; reserving native allocations wins over both.
 	const float explicitScaleRaw = upscaling.settings.vrRenderScale;
-	const bool explicitScale = explicitScaleRaw > 0.0f;
-	if (explicitScale) {
+	bool explicitScale = explicitScaleRaw > 0.0f;
+	if (upscaling.settings.vrRenderScaleReserveNative) {
+		scale = 1.0f;
+		explicitScale = false;
+		// 1:1 extents need the DLAA mode or NGX rejects every evaluate; the
+		// live path re-derives a sub-native mode per frame when scaling down.
+		qualityMode = 0;
+	} else if (explicitScale) {
 		const float clamped = std::clamp(explicitScaleRaw, Upscaling::kVRRenderScaleMin, Upscaling::kVRRenderScaleMax);
 		if (clamped != explicitScaleRaw)
 			logger::warn("[PerfMode] vrRenderScale {} out of range, clamped to {}", explicitScaleRaw, clamped);
 		scale = 1.0f / clamped;
-		qualityMode = NearestQualityModeForRatio(scale);
+		qualityMode = Upscaling::NearestQualityModeForRatio(scale);
 	}
 
 	// Even dimensions: odd widths truncate the engine's half-res buffers
@@ -99,7 +87,9 @@ void PerfMode::InstallRenderTargetSizeHook()
 	explicitScaleLatched = explicitScale;
 	logger::info("[PerfMode] Latched display {}x{} -> render {}x{} per eye (quality mode {}, {})",
 		displayEyeWidth, displayEyeHeight, renderEyeWidth, renderEyeHeight, qualityMode,
-		explicitScale ? "explicit scale" : "preset-derived");
+		upscaling.settings.vrRenderScaleReserveNative ? "native reserved" :
+		explicitScale                                 ? "explicit scale" :
+														"preset-derived");
 
 	// Restart-required settings snapshot is latched by the render-target
 	// creation hook, but keep this robust to call-order changes.

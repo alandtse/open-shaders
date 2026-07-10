@@ -450,13 +450,21 @@ void Streamline::ClampToDLSSRenderRange(uint32_t a_qualityMode, uint32_t a_outpu
 	if (!featureDLSS || !slDLSSGetOptimalSettings)
 		return;
 
-	sl::DLSSOptions options{};
-	options.mode = DLSSModeForQualityMode(a_qualityMode);
-	options.outputWidth = a_outputWidth;
-	options.outputHeight = a_outputHeight;
-	sl::DLSSOptimalSettings optimal{};
-	if (slDLSSGetOptimalSettings(options, optimal) != sl::Result::eOk)
-		return;
+	// Cached per mode/output pair: the live render scale calls this per frame.
+	auto& cached = dlssRangeCache[std::min<uint32_t>(a_qualityMode, 4u)];
+	if (cached.outputWidth != a_outputWidth || cached.outputHeight != a_outputHeight) {
+		sl::DLSSOptions options{};
+		options.mode = DLSSModeForQualityMode(a_qualityMode);
+		options.outputWidth = a_outputWidth;
+		options.outputHeight = a_outputHeight;
+		sl::DLSSOptimalSettings optimal{};
+		if (slDLSSGetOptimalSettings(options, optimal) != sl::Result::eOk)
+			return;
+		cached.outputWidth = a_outputWidth;
+		cached.outputHeight = a_outputHeight;
+		cached.optimal = optimal;
+	}
+	const auto& optimal = cached.optimal;
 	if (!optimal.renderWidthMin || !optimal.renderHeightMin || !optimal.renderWidthMax || !optimal.renderHeightMax)
 		return;
 
@@ -484,10 +492,19 @@ void Streamline::SetDLSSOptions(sl::ViewportHandle p_viewport, uint32_t width, u
 {
 	sl::DLSSOptions dlssOptions{};
 
-	// DLSS dispatch must match the renderRes the engine RTs were latched for,
-	// not the live preset.
-	auto& perfModeRef = globals::features::upscaling.perfMode;
-	const uint32_t qualityMode = perfModeRef.IsHookActive() ? perfModeRef.GetLatchedQualityMode() : globals::features::upscaling.settings.qualityMode;
+	// DLSS dispatch must match the latched renderRes; a live sub-ceiling scale
+	// shrinks the extents, so re-derive the mode from the effective ratio.
+	auto& upscalingRef = globals::features::upscaling;
+	auto& perfModeRef = upscalingRef.perfMode;
+	uint32_t qualityMode;
+	if (perfModeRef.IsHookActive()) {
+		qualityMode = perfModeRef.GetLatchedQualityMode();
+		const float effEyeWidth = perfModeRef.GetRenderEyeWidth() * upscalingRef.resolutionScale.x;
+		if (upscalingRef.settings.vrRenderScaleLive > 0.0f && upscalingRef.resolutionScale.x < 0.999f && effEyeWidth >= 1.0f)
+			qualityMode = Upscaling::NearestQualityModeForRatio(perfModeRef.GetDisplayEyeWidth() / effEyeWidth);
+	} else {
+		qualityMode = upscalingRef.settings.qualityMode;
+	}
 	dlssOptions.mode = DLSSModeForQualityMode(qualityMode);
 
 	auto state = globals::state;
@@ -693,8 +710,9 @@ void Streamline::Upscale(ID3D11Resource* a_upscalingTexture, ID3D11Resource* a_r
 
 		uint32_t eyeWidthOut = (uint32_t)(displaySize.x / 2);
 		uint32_t eyeHeightOut = (uint32_t)displaySize.y;
-		uint32_t eyeWidthIn = (uint32_t)(renderSize.x / 2);
-		uint32_t eyeHeightIn = (uint32_t)renderSize.y;
+		// Round: the DRS ratio round-trip must not truncate below the clamped even dims.
+		uint32_t eyeWidthIn = (uint32_t)(renderSize.x / 2.0f + 0.5f);
+		uint32_t eyeHeightIn = (uint32_t)(renderSize.y + 0.5f);
 
 		sl::Extent perEyeIn{ 0, 0, eyeWidthIn, eyeHeightIn };
 		sl::Extent perEyeOut{ 0, 0, eyeWidthOut, eyeHeightOut };
