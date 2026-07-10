@@ -153,10 +153,13 @@ namespace SharedData
 		float4 PosOffset;   // xyz: cell origin in camera model space
 		uint4 ArrayOrigin;  // xyz: array origin
 		int4 ValidMargin;
+		uint3 ArrayDims;
+		float ProbeFieldSize;
 
 		float MinDiffuseVisibility;
 		float MinSpecularVisibility;
-		uint2 pad0;
+		uint ProbeUpdateSliceStart;
+		uint ProbeUpdateSliceCount;
 	};
 
 	struct CloudShadowsSettings

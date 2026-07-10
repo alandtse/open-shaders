@@ -12,19 +12,26 @@ SamplerComparisonState comparisonSampler : register(s0);
 	const float fadeInThreshold = 15;
 	const static sh2 unitSH = Skylighting::UNIT_SH;
 	const SharedData::SkylightingSettings settings = SharedData::skylightingSettings;
-	uint3 cellID = uint3(max(int3(dtid) - settings.ArrayOrigin.xyz, 0) % Skylighting::ARRAY_DIM);
+	const uint3 arrayDims = Skylighting::GetArrayDims(settings);
+	uint sliceCount = max(1u, settings.ProbeUpdateSliceCount);
+	uint probeSlice = settings.ProbeUpdateSliceStart + dtid.z;
+	if (dtid.z >= sliceCount || probeSlice >= arrayDims.z)
+		return;
+
+	uint3 probeTexID = uint3(dtid.xy, probeSlice);
+	uint3 cellID = uint3(max(int3(probeTexID) - settings.ArrayOrigin.xyz, 0) % arrayDims);
 	uint3 validMin = (uint3)max(0, settings.ValidMargin.xyz);
-	uint3 validMax = Skylighting::ARRAY_DIM - 1 + (uint3)min(0, settings.ValidMargin.xyz);
+	uint3 validMax = arrayDims - 1 + (uint3)min(0, settings.ValidMargin.xyz);
 	bool isValid = all(cellID >= validMin) && all(cellID <= validMax);  // check if the cell is newly added
-	float3 cellCentreMS = cellID + 0.5 - Skylighting::ARRAY_DIM / 2;
-	cellCentreMS = cellCentreMS / Skylighting::ARRAY_DIM * Skylighting::ARRAY_SIZE + settings.PosOffset.xyz;
+	float3 cellCentreMS = cellID + 0.5 - arrayDims / 2;
+	cellCentreMS = cellCentreMS / arrayDims * Skylighting::GetArraySize(settings) + settings.PosOffset.xyz;
 
 	float3 cellCentreOS = mul(settings.OcclusionViewProj, float4(cellCentreMS, 1)).xyz;
 	cellCentreOS.y = -cellCentreOS.y;
 	float2 occlusionUV = cellCentreOS.xy * 0.5 + 0.5;
 
 	if (all(occlusionUV > 0) && all(occlusionUV < 1)) {
-		uint accumFrames = isValid ? (outAccumFramesArray[dtid] + 1) : 1;
+		uint accumFrames = isValid ? (outAccumFramesArray[probeTexID] + 1) : 1;
 		float visibility = srcOcclusionDepth.SampleCmpLevelZero(comparisonSampler, occlusionUV, cellCentreOS.z);
 
 		sh2 occlusionSH = SphericalHarmonics::Scale(SphericalHarmonics::Evaluate(settings.OcclusionDir.xyz), visibility * 4.0 * Math::PI);  // 4 pi from monte carlo
@@ -32,15 +39,15 @@ SamplerComparisonState comparisonSampler : register(s0);
 			float lerpFactor = rcp(accumFrames);
 			sh2 prevProbeSH = unitSH;
 			if (accumFrames > 1)
-				prevProbeSH += (outProbeArray[dtid] - unitSH) * fadeInThreshold / min(fadeInThreshold, accumFrames - 1);  // inverse confidence
+				prevProbeSH += (outProbeArray[probeTexID] - unitSH) * fadeInThreshold / min(fadeInThreshold, accumFrames - 1);  // inverse confidence
 			occlusionSH = lerp(prevProbeSH, occlusionSH, lerpFactor);
 		}
 		occlusionSH = lerp(unitSH, occlusionSH, min(fadeInThreshold, accumFrames) / fadeInThreshold);  // confidence fade in
 
-		outProbeArray[dtid] = occlusionSH;
-		outAccumFramesArray[dtid] = accumFrames;
+		outProbeArray[probeTexID] = occlusionSH;
+		outAccumFramesArray[probeTexID] = accumFrames;
 	} else if (!isValid) {
-		outProbeArray[dtid] = unitSH;
-		outAccumFramesArray[dtid] = 0;
+		outProbeArray[probeTexID] = unitSH;
+		outAccumFramesArray[probeTexID] = 0;
 	}
 }
