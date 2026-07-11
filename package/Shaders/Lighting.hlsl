@@ -951,8 +951,8 @@ float GetSnowParameterY(float texProjTmp, float alpha)
 
 #	include "Common/LightingEval.hlsli"
 
-#if defined(VR)
-#	include "Common/FoveatedShaderDetail.hlsli"
+#	if defined(VR)
+#		include "Common/FoveatedShaderDetail.hlsli"
 
 float GetVRLightingAuxiliaryDetailWeight(float2 eyeUv, uint eyeIndex)
 {
@@ -966,16 +966,16 @@ float GetVRLightingAuxiliaryDetailWeight(float2 eyeUv, uint eyeIndex)
 		SharedData::VRFoveationData0.z,
 		centerOffset);
 }
-#endif
+#	endif
 
 float ApplyVRLightingAuxiliaryShadowWeight(float shadow, float detailWeight)
 {
-#if defined(VR)
+#	if defined(VR)
 	const float unshadowed = 1.0f;
 	return lerp(unshadowed, shadow, detailWeight);
-#else
+#	else
 	return shadow;
-#endif
+#	endif
 }
 
 PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
