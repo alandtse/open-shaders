@@ -951,6 +951,33 @@ float GetSnowParameterY(float texProjTmp, float alpha)
 
 #	include "Common/LightingEval.hlsli"
 
+#if defined(VR)
+#	include "Common/FoveatedShaderDetail.hlsli"
+
+float GetVRLightingAuxiliaryDetailWeight(float2 eyeUv, uint eyeIndex)
+{
+	float lightingFoveationMode = SharedData::VRFoveationData0.w;
+	float2 centerOffset = eyeIndex == 0 ? SharedData::VRFoveationCenterOffsets.xy : SharedData::VRFoveationCenterOffsets.zw;
+	return FoveatedEvaluateShaderDetailWeight(
+		lightingFoveationMode,
+		eyeUv,
+		SharedData::VRFoveationData0.x,
+		SharedData::VRFoveationData0.y,
+		SharedData::VRFoveationData0.z,
+		centerOffset);
+}
+#endif
+
+float ApplyVRLightingAuxiliaryShadowWeight(float shadow, float detailWeight)
+{
+#if defined(VR)
+	const float unshadowed = 1.0f;
+	return lerp(unshadowed, shadow, detailWeight);
+#else
+	return shadow;
+#endif
+}
+
 PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 {
 	PS_OUTPUT psout;
@@ -961,6 +988,14 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 
 	float2 screenUV = FrameBuffer::ViewToUV(viewPosition, true, eyeIndex);
 	float screenNoise = Random::InterleavedGradientNoise(Stereo::EyeStableNoiseCoord(input.Position.xy, SharedData::BufferDim.xy), SharedData::FrameCount);
+
+#	if defined(VR)
+	float vrAuxDetailWeight = GetVRLightingAuxiliaryDetailWeight(screenUV, eyeIndex);
+	bool vrAuxDetailEnabled = FoveatedIsShaderDetailActive(vrAuxDetailWeight);
+#	else
+	const float vrAuxDetailWeight = 1.0;
+	const bool vrAuxDetailEnabled = true;
+#	endif
 
 #	if defined(DEFERRED)
 	const bool inWorld = true;
@@ -2829,8 +2864,11 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	dirLightContext = CreateDirectLightingContext(worldNormal.xyz, vertexNormal.xyz, viewDirection, DirLightDirection, dirLightColor, dirDetailedShadow, dirSoftShadow);
 #		if defined(HAIR) && defined(CS_HAIR)
 	if (SharedData::hairSpecularSettings.Enabled) {
-		float hairShadow = Hair::HairSelfShadow(input.WorldPosition.xyz, DirLightDirection, screenNoise, eyeIndex);
-		dirLightContext.hairShadow = hairShadow;
+		dirLightContext.hairShadow = 1.0;
+		if (vrAuxDetailEnabled) {
+			float hairShadow = Hair::HairSelfShadow(input.WorldPosition.xyz, DirLightDirection, screenNoise, eyeIndex);
+			dirLightContext.hairShadow = ApplyVRLightingAuxiliaryShadowWeight(hairShadow, vrAuxDetailWeight);
+		}
 	}
 #		endif
 #	endif
@@ -2894,8 +2932,11 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 		pointLightContext = CreateDirectLightingContext(worldNormal.xyz, vertexNormal.xyz, viewDirection, normalizedLightDirection, lightColor, lightShadow, lightShadow);
 #				if defined(HAIR) && defined(CS_HAIR)
 		if (SharedData::hairSpecularSettings.Enabled) {
-			float hairShadow = Hair::HairSelfShadow(input.WorldPosition.xyz, normalizedLightDirection, screenNoise, eyeIndex);
-			pointLightContext.hairShadow = hairShadow;
+			pointLightContext.hairShadow = 1.0;
+			if (vrAuxDetailEnabled) {
+				float hairShadow = Hair::HairSelfShadow(input.WorldPosition.xyz, normalizedLightDirection, screenNoise, eyeIndex);
+				pointLightContext.hairShadow = ApplyVRLightingAuxiliaryShadowWeight(hairShadow, vrAuxDetailWeight);
+			}
 		}
 #				endif
 #			endif
@@ -3036,7 +3077,8 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 				canShadow &&
 				shadowComponent != 0.0 &&
 				lightAngle > 0.0 &&
-				passesIntensityGate)
+				passesIntensityGate &&
+				vrAuxDetailEnabled)
 			{
 				// Derive view-space position via CameraView; the Light struct only carries positionWS
 				// (camera-relative) so the matrix multiply here is the cheapest path until positionVS
@@ -3044,6 +3086,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 				float3 lightPositionVS = mul(FrameBuffer::CameraView[eyeIndex], float4(light.positionWS[eyeIndex].xyz, 1)).xyz;
 				float3 normalizedLightDirectionVS = normalize(lightPositionVS - viewPosition.xyz);
 				contactShadow = LightLimitFix::ContactShadows(viewPosition, contactShadowNoise, normalizedLightDirectionVS, contactShadowSteps, eyeIndex);
+				contactShadow = ApplyVRLightingAuxiliaryShadowWeight(contactShadow, vrAuxDetailWeight);
 			}
 		}
 #			endif
@@ -3101,8 +3144,11 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 		pointLightContext = CreateDirectLightingContext(worldNormal.xyz, vertexNormal.xyz, viewDirection, normalizedLightDirection, lightColor, pointLightShadow, pointLightShadow);
 #				if defined(HAIR) && defined(CS_HAIR)
 		if (SharedData::hairSpecularSettings.Enabled) {
-			float hairShadow = Hair::HairSelfShadow(input.WorldPosition.xyz, normalizedLightDirection, screenNoise, eyeIndex);
-			pointLightContext.hairShadow = hairShadow;
+			pointLightContext.hairShadow = 1.0;
+			if (vrAuxDetailEnabled) {
+				float hairShadow = Hair::HairSelfShadow(input.WorldPosition.xyz, normalizedLightDirection, screenNoise, eyeIndex);
+				pointLightContext.hairShadow = ApplyVRLightingAuxiliaryShadowWeight(hairShadow, vrAuxDetailWeight);
+			}
 		}
 #				endif
 #			endif
