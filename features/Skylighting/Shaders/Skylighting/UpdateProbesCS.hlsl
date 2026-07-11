@@ -12,6 +12,9 @@ SamplerComparisonState comparisonSampler : register(s0);
 	const float fadeInThreshold = 15;
 	const static sh2 unitSH = Skylighting::UNIT_SH;
 	const SharedData::SkylightingSettings settings = SharedData::skylightingSettings;
+	if (!Skylighting::IsEnabled(settings))
+		return;
+
 	const uint3 arrayDims = Skylighting::GetArrayDims(settings);
 	uint sliceCount = max(1u, settings.ProbeUpdateSliceCount);
 	uint probeSlice = settings.ProbeUpdateSliceStart + dtid.z;
@@ -24,7 +27,7 @@ SamplerComparisonState comparisonSampler : register(s0);
 	uint3 validMax = arrayDims - 1 + (uint3)min(0, settings.ValidMargin.xyz);
 	bool isValid = all(cellID >= validMin) && all(cellID <= validMax);  // check if the cell is newly added
 	float3 cellCentreMS = cellID + 0.5 - arrayDims / 2;
-	cellCentreMS = cellCentreMS / arrayDims * Skylighting::GetArraySize(settings) + settings.PosOffset.xyz;
+	cellCentreMS = cellCentreMS / arrayDims * Skylighting::GetArraySize(settings) + settings.PosOffset;
 
 	float3 cellCentreOS = mul(settings.OcclusionViewProj, float4(cellCentreMS, 1)).xyz;
 	cellCentreOS.y = -cellCentreOS.y;

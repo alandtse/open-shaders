@@ -1786,6 +1786,8 @@
     "feature.skylighting.active_probe_grid": "Active Probe Grid: %u x %u x %u",
     "feature.skylighting.description": "Simulates realistic ambient lighting by calculating sky occlusion and directional lighting, providing more accurate and natural illumination in outdoor environments.",
     "feature.skylighting.diffuse_min_visibility": "Diffuse Min Visibility",
+    "feature.skylighting.enable_skylighting": "Enable Skylighting",
+    "feature.skylighting.enable_skylighting_tooltip": "Runtime-safe toggle. Keeps shaders and hooks loaded, but disables Skylighting updates and shading until re-enabled.",
     "feature.skylighting.grid_quality_balanced": "Balanced (192 x 192 x 96)",
     "feature.skylighting.grid_quality_extreme": "Extreme (512 x 512 x 256)",
     "feature.skylighting.grid_quality_performance": "Performance (128 x 128 x 64)",

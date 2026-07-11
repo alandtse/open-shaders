@@ -150,7 +150,8 @@ namespace SharedData
 		row_major float4x4 OcclusionViewProj;
 		float4 OcclusionDir;
 
-		float4 PosOffset;   // xyz: cell origin in camera model space
+		float3 PosOffset;  // cell origin in camera model space
+		uint Enabled;
 		uint4 ArrayOrigin;  // xyz: array origin
 		int4 ValidMargin;
 		uint3 ArrayDims;

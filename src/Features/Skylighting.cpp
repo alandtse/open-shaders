@@ -115,6 +115,7 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	MinSpecularVisibility,
 	ProbeFieldSize,
 	ProbeGridQuality,
+	EnableSkylighting,
 	EnableIncrementalProbeUpdates,
 	StableSliceCount,
 	EnableReducedUpdateFrequency,
@@ -123,6 +124,7 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 
 void Skylighting::LoadSettings(json& o_json)
 {
+	const bool previousEnableSkylighting = settings.EnableSkylighting;
 	settings = o_json;
 	NormalizeSettings(settings);
 
@@ -134,6 +136,16 @@ void Skylighting::LoadSettings(json& o_json)
 		(previousDims[0] != probeArrayDims[0] || previousDims[1] != probeArrayDims[1] || previousDims[2] != probeArrayDims[2])) {
 		queuedSetupResources = true;
 		queuedResetSkylighting = true;
+	}
+
+	// A loaded config can flip EnableSkylighting; stop stale occlusion state from
+	// leaking across the transition the same way the settings-UI toggle does.
+	if (previousEnableSkylighting != settings.EnableSkylighting) {
+		inOcclusion = false;
+		if (globals::d3d::device && globals::game::renderer)
+			ResetSkylighting();
+		else
+			queuedResetSkylighting = true;
 	}
 }
 
@@ -186,6 +198,17 @@ void Skylighting::ApplyProbeGridQuality()
 
 void Skylighting::DrawSettings()
 {
+	// Shader defines and precipitation hooks are startup-time, so a true load/unload
+	// toggle isn't safe; this just gates updates/shading at runtime instead.
+	if (ImGui::Checkbox(T(TKEY("enable_skylighting"), "Enable Skylighting"), &settings.EnableSkylighting)) {
+		inOcclusion = false;
+		ResetSkylighting();
+	}
+	if (auto _tt = Util::HoverTooltipWrapper())
+		ImGui::Text("%s", T(TKEY("enable_skylighting_tooltip"), "Runtime-safe toggle. Keeps shaders and hooks loaded, but disables Skylighting updates and shading until re-enabled."));
+
+	ImGui::Separator();
+
 	ImGui::Text("%s", T(TKEY("min_visibility_desc"), "Minimum visibility values. Diffuse darkens objects. Specular removes the sky from reflections."));
 	ImGui::SliderFloat(T(TKEY("diffuse_min_visibility"), "Diffuse Min Visibility"), &settings.MinDiffuseVisibility, 0.01f, 1.f, "%.2f");
 	ImGui::SliderFloat(T(TKEY("specular_min_visibility"), "Specular Min Visibility"), &settings.MinSpecularVisibility, 0.01f, 1.f, "%.2f");
@@ -427,6 +450,9 @@ Skylighting::SkylightingCB Skylighting::GetCommonBufferData(bool a_inWorld)
 	if (!a_inWorld)
 		return Skylighting::SkylightingCB{};
 
+	if (!IsRuntimeActive())
+		return Skylighting::SkylightingCB{};
+
 	if (globals::state->isMapMenuOpen)
 		return Skylighting::SkylightingCB{};
 
@@ -472,6 +498,7 @@ Skylighting::SkylightingCB Skylighting::GetCommonBufferData(bool a_inWorld)
 		.OcclusionViewProj = OcclusionTransform,
 		.OcclusionDir = OcclusionDir,
 		.PosOffset = cellOrigin - eyePos,
+		.Enabled = 1u,
 		.ArrayOrigin = {
 			(static_cast<int>(cellID.x) - probeArrayDims[0] / 2) % probeArrayDims[0],
 			(static_cast<int>(cellID.y) - probeArrayDims[1] / 2) % probeArrayDims[1],
@@ -492,6 +519,14 @@ void Skylighting::Prepass()
 	if (queuedSetupResources && globals::d3d::device && globals::game::renderer) {
 		queuedSetupResources = false;
 		SetupResources();
+	}
+
+	if (!IsRuntimeActive()) {
+		if (auto context = globals::d3d::context) {
+			ID3D11ShaderResourceView* srv = nullptr;
+			context->PSSetShaderResources(50, 1, &srv);
+		}
+		return;
 	}
 
 	if (globals::state->isMapMenuOpen)
@@ -672,6 +707,11 @@ RE::BSShaderProperty::RenderPassArray* Skylighting::BSLightingShaderProperty_Get
 {
 	auto& skylighting = globals::features::skylighting;
 
+	if (!skylighting.IsRuntimeActive()) {
+		skylighting.inOcclusion = false;
+		return func(property, geometry, renderMode, accumulator);
+	}
+
 	auto batch = accumulator->GetRuntimeData().batchRenderer;
 	batch->geometryGroups[14]->flags &= ~1;
 
@@ -765,7 +805,7 @@ void Skylighting::SetViewFrustum::thunk(RE::NiCamera* a_camera, RE::NiFrustum* a
 {
 	auto& skylighting = globals::features::skylighting;
 
-	if (skylighting.inOcclusion) {
+	if (skylighting.IsRuntimeActive() && skylighting.inOcclusion) {
 		ApplyOcclusionCornerFrustum(skylighting.frameCount % kOcclusionCornerCount, *a_frustum);
 	}
 
@@ -776,7 +816,7 @@ void Skylighting::SetViewFrustumVR::thunk(RE::NiCamera* a_camera, RE::NiFrustum*
 {
 	auto& skylighting = globals::features::skylighting;
 
-	if (skylighting.inOcclusion) {
+	if (skylighting.IsRuntimeActive() && skylighting.inOcclusion) {
 		ApplyOcclusionCornerFrustum(skylighting.frameCount % kOcclusionCornerCount, *a_frustum);
 	}
 
@@ -786,6 +826,14 @@ void Skylighting::SetViewFrustumVR::thunk(RE::NiCamera* a_camera, RE::NiFrustum*
 void Skylighting::RenderOcclusion()
 {
 	ZoneScopedS(8);
+
+	if (!IsRuntimeActive()) {
+		inOcclusion = false;
+		CS_GPU_PASS("Skylighting::PrecipitationMask");
+		Main_Precipitation_RenderOcclusion::func();
+		return;
+	}
+
 	auto shaderCache = globals::shaderCache;
 	auto renderer = globals::game::renderer;
 	auto sky = globals::game::sky;

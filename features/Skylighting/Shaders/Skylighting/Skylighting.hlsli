@@ -18,6 +18,21 @@ namespace Skylighting
 
 	const static float DEFAULT_PROBE_FIELD_SIZE = 10000.f;
 
+	bool IsEnabled()
+	{
+		return SharedData::skylightingSettings.Enabled != 0;
+	}
+
+	bool IsEnabled(SharedData::SkylightingSettings params)
+	{
+		return params.Enabled != 0;
+	}
+
+	sh2 GetUnoccludedProbe()
+	{
+		return UNIT_SH / 1e-10;
+	}
+
 	// Zeroed CB (interiors, menus) degrades to a 1-cell grid at the default field size.
 	uint3 GetArrayDims(SharedData::SkylightingSettings params)
 	{
@@ -36,6 +51,9 @@ namespace Skylighting
 
 	float GetFadeOutFactor(float3 positionMS)
 	{
+		if (!IsEnabled())
+			return 0.0;
+
 		float3 uvw = saturate(positionMS / GetArraySize(SharedData::skylightingSettings) + .5);
 		float3 dists = min(uvw, 1 - uvw);
 		float edgeDist = min(dists.x, min(dists.y, dists.z));
@@ -69,6 +87,9 @@ namespace Skylighting
 #if defined(PSHADER)
 	void ApplySkylighting(inout float3 diffuseColor, inout float3 directionalAmbientColor, float3 albedo, float skylightingDiffuse)
 	{
+		if (!IsEnabled())
+			return;
+
 		float maxScale = 1.0;
 		if (directionalAmbientColor.x > 0.0)
 			maxScale = min(maxScale, diffuseColor.x / directionalAmbientColor.x);
@@ -95,18 +116,18 @@ namespace Skylighting
 		const uint3 arrayDims = GetArrayDims(params);
 		const float3 arraySize = GetArraySize(params);
 		const float3 cellSize = GetCellSize(params);
-		sh2 scaledUnitSH = UNIT_SH / 1e-10;
+		sh2 unoccludedProbe = GetUnoccludedProbe();
 
-		if (SharedData::InInterior)
-			return scaledUnitSH;
+		if (!IsEnabled(params) || SharedData::InInterior)
+			return unoccludedProbe;
 
 		positionMS.xyz += normalWS * cellSize * 0.5;  // Receiver normal bias
 
-		float3 positionMSAdjusted = positionMS - params.PosOffset.xyz;
+		float3 positionMSAdjusted = positionMS - params.PosOffset;
 		float3 uvw = positionMSAdjusted / arraySize + .5;
 
 		if (any(uvw < 0) || any(uvw > 1))
-			return scaledUnitSH;
+			return unoccludedProbe;
 
 		float3 cellVxCoord = uvw * arrayDims;
 		int3 cell000 = floor(cellVxCoord - 0.5);
@@ -148,7 +169,7 @@ namespace Skylighting
 	// yields min(skylightingDiffuse, vertexAO). Pass vertexAO = 1 to skip this compensation.
 	float GetVertexSkylightingDiffuse(float3 positionMS, float3 normalWS, float vertexAO)
 	{
-		if (SharedData::InInterior)
+		if (!IsEnabled() || SharedData::InInterior)
 			return 1.0;
 
 		float fadeOutFactor = GetFadeOutFactor(positionMS);
@@ -169,16 +190,16 @@ namespace Skylighting
 		const uint3 arrayDims = GetArrayDims(params);
 		const float3 arraySize = GetArraySize(params);
 		const float3 cellSize = GetCellSize(params);
-		sh2 scaledUnitSH = UNIT_SH / 1e-10;
+		sh2 unoccludedProbe = GetUnoccludedProbe();
 
-		if (SharedData::InInterior)
-			return scaledUnitSH;
+		if (!IsEnabled(params) || SharedData::InInterior)
+			return unoccludedProbe;
 
-		float3 positionMSAdjusted = positionMS - params.PosOffset.xyz;
+		float3 positionMSAdjusted = positionMS - params.PosOffset;
 		float3 uvw = positionMSAdjusted / arraySize + .5;
 
 		if (any(uvw < 0) || any(uvw > 1))
-			return scaledUnitSH;
+			return unoccludedProbe;
 
 		float3 cellVxCoord = uvw * arrayDims;
 		int3 cell000 = floor(cellVxCoord - 0.5);

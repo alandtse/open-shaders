@@ -61,6 +61,7 @@ public:
 		float MinSpecularVisibility = 0.1f;
 		float ProbeFieldSize = kDefaultProbeFieldSize;  // total camera-centered XY field width in game units
 		uint ProbeGridQuality = 2;                      // preset index; 2 = 256 x 256 x 128, the legacy fixed grid
+		bool EnableSkylighting = true;
 		bool EnableIncrementalProbeUpdates = false;
 		uint StableSliceCount = 8;
 		bool EnableReducedUpdateFrequency = false;
@@ -74,7 +75,7 @@ public:
 		float4 OcclusionDir;
 
 		float3 PosOffset;  // cell origin in camera model space
-		uint _pad0;
+		uint Enabled;
 		uint ArrayOrigin[3];  // xyz: array origin
 		uint _pad1;
 		int ValidMargin[4];
@@ -94,6 +95,9 @@ public:
 	 * @return Populated SkylightingCB structure, or zeroed if not in world or map menu is open.
 	 */
 	SkylightingCB GetCommonBufferData(bool a_inWorld);
+
+	/** @brief Runtime-safe enabled check: keeps shaders/hooks loaded but skips updates, shading, and occlusion when off. */
+	bool IsRuntimeActive() const { return loaded && settings.EnableSkylighting; }
 
 	winrt::com_ptr<ID3D11SamplerState> comparisonSampler = nullptr;
 
