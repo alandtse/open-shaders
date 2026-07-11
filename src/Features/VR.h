@@ -153,6 +153,12 @@ public:
 		// periphery, driven by the active Foveated DLSS region. Consumed by foveated SSR.
 		bool EnableSSRFoveation = false;            ///< Foveate screen-space reflection raymarching in the periphery
 		bool EnableSSRFoveationHardCutoff = false;  ///< Hard-skip SSR outside the center (vs feathered falloff)
+		bool EnableLightingFoveation = false;       ///< Foveate lighting auxiliary detail in the periphery
+		bool EnableLightingFoveationHardCutoff = false; ///< Hard-skip lighting detail outside the center
+		bool EnableWaterParallaxFoveation = false;  ///< Foveate water parallax step counts in the periphery
+		bool EnableWaterParallaxFoveationHardCutoff = false; ///< Hard-skip water parallax outside the center
+		bool EnableDynamicCubemapFoveation = false; ///< Foveate dynamic cubemap cadence in the periphery
+		bool EnableDynamicCubemapVisibilityThrottle = false; ///< Throttle dynamic cubemap visibility in the periphery
 
 		// Thumbstick deadzone for the wand-driven mouse cursor (0.0-1.0).
 		float mouseDeadzone = Config::kDefaultMouseDeadzone;

@@ -22,6 +22,7 @@
 #include "Features/VR.h"
 #include "Features/VRStereoOptimizations.h"
 #include "Features/VolumetricShadows.h"
+#include "Features/WaterEffects.h"
 #include "Menu.h"
 #include "SceneSettingsManager.h"
 #include "SettingsOverrideManager.h"
@@ -1138,23 +1139,40 @@ void State::UpdateSharedData([[maybe_unused]] bool a_inWorld, [[maybe_unused]] b
 
 		data.HDRData = globals::features::hdrDisplay.GetSharedDataHDR();
 
-		// VR foveated shader detail (consumed by foveated SSR). Default to off; populate from the
-		// active foveation region only when SSR foveation is enabled and SSR is actually running.
+		// VR foveated shader detail. Default to off; populate from the active foveation
+		// profile only when at least one consumer is enabled.
 		data.VRFoveationData0 = { FoveatedCommon::kCenterScaleMax, FoveatedCommon::kCenterFeather, 1.0f,
 			FoveatedCommon::GetShaderMode(FoveatedCommon::DetailMode::Off) };
+		data.VRFoveationModes = { 0.0f, 0.0f, 0.0f, 0.0f };
 		data.VRFoveationCenterOffsets = { 0.0f, 0.0f, 0.0f, 0.0f };
 		if (globals::game::isVR) {
 			const auto& vr = globals::features::vr;
 			const auto& dynamicCubemaps = globals::features::dynamicCubemaps;
+			const auto& waterEffects = globals::features::waterEffects;
+
 			const bool ssrFoveationEnabled = vr.loaded && vr.settings.EnableSSRFoveation &&
 			                                 dynamicCubemaps.loaded && dynamicCubemaps.settings.EnabledSSR;
-			if (ssrFoveationEnabled) {
+			const bool lightingFoveationEnabled = vr.loaded && vr.settings.EnableLightingFoveation;
+			const bool waterParallaxActive = vr.loaded && vr.settings.EnableWaterParallaxFoveation && waterEffects.loaded;
+
+			const bool anyFoveatedShaderDetailEnabled =
+				lightingFoveationEnabled ||
+				ssrFoveationEnabled ||
+				waterParallaxActive;
+
+			if (anyFoveatedShaderDetailEnabled) {
 				const auto profile = upscaling.foveatedRender.GetFoveationProfile();
 				if (profile.available) {  // available already implies an active (non-full) coverage scale
-					const float ssrMode = FoveatedCommon::GetShaderMode(FoveatedCommon::GetDetailMode(
-						true, vr.settings.EnableSSRFoveationHardCutoff));
+					const float lightingMode = FoveatedCommon::GetShaderMode(
+						FoveatedCommon::GetDetailMode(lightingFoveationEnabled, vr.settings.EnableLightingFoveationHardCutoff));
+					const float ssrMode = FoveatedCommon::GetShaderMode(
+						FoveatedCommon::GetDetailMode(ssrFoveationEnabled, vr.settings.EnableSSRFoveationHardCutoff));
+					const float waterMode = FoveatedCommon::GetShaderMode(
+						FoveatedCommon::GetDetailMode(waterParallaxActive, vr.settings.EnableWaterParallaxFoveationHardCutoff));
+
 					data.VRFoveationData0 = { profile.coverageScale, FoveatedCommon::kCenterFeather,
-						profile.centerHorizontalScale, ssrMode };
+						profile.centerHorizontalScale, lightingMode };
+					data.VRFoveationModes = { ssrMode, waterMode, 0.0f, 0.0f };
 					data.VRFoveationCenterOffsets = {
 						profile.centerOffsets[0].x, profile.centerOffsets[0].y,
 						profile.centerOffsets[1].x, profile.centerOffsets[1].y

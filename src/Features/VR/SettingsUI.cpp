@@ -4,6 +4,7 @@
 #include "Features/ScreenSpaceShadows.h"
 #include "Features/Upscaling.h"
 #include "Features/VR.h"
+#include "Features/WaterEffects.h"
 #include "I18n/I18n.h"
 #include "Menu.h"
 #include "Menu/Fonts.h"
@@ -180,6 +181,66 @@ namespace
 						"Cheaper, but the transition edge may be visible. Default off (feathered)."));
 			}
 			ImGui::EndDisabled();
+			ImGui::EndDisabled();
+
+			ImGui::BeginDisabled(!foveatedDLSSActive);
+			ImGui::Checkbox(T(TKEY("foveated_lighting"), "Foveate Lighting (follows DLSS region)"), &settings.EnableLightingFoveation);
+			if (auto _tt = Util::HoverTooltipWrapper()) {
+				ImGui::Text("%s",
+					T(TKEY("foveated_lighting_tooltip"),
+						"Reduces lighting detail toward the periphery, using the active\n"
+						"Foveated DLSS region. VR only."));
+			}
+
+			ImGui::BeginDisabled(!settings.EnableLightingFoveation);
+			ImGui::Checkbox(T(TKEY("foveated_lighting_hard_cutoff"), "Hard Cutoff Outside Center##LightingFoveation"), &settings.EnableLightingFoveationHardCutoff);
+			if (auto _tt = Util::HoverTooltipWrapper()) {
+				ImGui::Text("%s",
+					T(TKEY("foveated_lighting_hard_cutoff_tooltip"),
+						"Hard-skip lighting detail outside the center region instead of a feathered falloff.\n"
+						"Cheaper, but the transition edge may be visible. Default off (feathered)."));
+			}
+			ImGui::EndDisabled();
+			ImGui::EndDisabled();
+
+			const bool waterEnabled = globals::features::waterEffects.loaded;
+			ImGui::BeginDisabled(!foveatedDLSSActive || !waterEnabled);
+			ImGui::Checkbox(T(TKEY("foveated_water_parallax"), "Foveate Water Parallax (follows DLSS region)"), &settings.EnableWaterParallaxFoveation);
+			if (auto _tt = Util::HoverTooltipWrapper()) {
+				ImGui::Text("%s",
+					T(TKEY("foveated_water_parallax_tooltip"),
+						"Reduces water parallax step count toward the periphery, using the active\n"
+						"Foveated DLSS region. VR only."));
+			}
+
+			ImGui::BeginDisabled(!settings.EnableWaterParallaxFoveation);
+			ImGui::Checkbox(T(TKEY("foveated_water_parallax_hard_cutoff"), "Hard Cutoff Outside Center##WaterParallaxFoveation"), &settings.EnableWaterParallaxFoveationHardCutoff);
+			if (auto _tt = Util::HoverTooltipWrapper()) {
+				ImGui::Text("%s",
+					T(TKEY("foveated_water_parallax_hard_cutoff_tooltip"),
+						"Hard-skip water parallax outside the center region instead of a feathered falloff.\n"
+						"Cheaper, but the transition edge may be visible. Default off (feathered)."));
+			}
+			ImGui::EndDisabled();
+			ImGui::EndDisabled();
+
+			const bool cubemapsLoaded = globals::features::dynamicCubemaps.loaded;
+			ImGui::BeginDisabled(!foveatedDLSSActive || !cubemapsLoaded);
+			ImGui::Checkbox(T(TKEY("foveated_cubemap_cadence"), "Foveate Dynamic Cubemap Cadence (follows DLSS region)"), &settings.EnableDynamicCubemapFoveation);
+			if (auto _tt = Util::HoverTooltipWrapper()) {
+				ImGui::Text("%s",
+					T(TKEY("foveated_cubemap_cadence_tooltip"),
+						"Reduces dynamic cubemap update frequency based on the active foveated\n"
+						"DLSS region. VR only."));
+			}
+
+			ImGui::Checkbox(T(TKEY("foveated_cubemap_throttle"), "Foveate Dynamic Cubemap Visibility (follows DLSS region)"), &settings.EnableDynamicCubemapVisibilityThrottle);
+			if (auto _tt = Util::HoverTooltipWrapper()) {
+				ImGui::Text("%s",
+					T(TKEY("foveated_cubemap_throttle_tooltip"),
+						"Skips dynamic cubemap updates when reflections are not visible in the active foveated\n"
+						"DLSS region. VR only."));
+			}
 			ImGui::EndDisabled();
 		}
 	}

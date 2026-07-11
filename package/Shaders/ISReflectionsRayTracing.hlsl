@@ -221,7 +221,7 @@ PS_OUTPUT main(PS_INPUT input)
 
 #	if defined(VR)
 	float ssrFoveationWeight = 1.0;
-	float ssrFoveationMode = SharedData::VRFoveationData0.w;
+	float ssrFoveationMode = SharedData::VRFoveationModes.x;
 	[branch] if (ssrFoveationMode >= FOVEATED_SHADER_DETAIL_MODE_FEATHERED)
 	{
 		ssrFoveationWeight = GetVRSSRFoveationWeight(ssrFoveationMode, uv, eyeIndex);
