@@ -60,8 +60,8 @@ void GrassLighting::DrawSettings()
 		ImGui::Checkbox(T(TKEY("enable_wrapped_lighting"), "Enable Wrapped Lighting"), (bool*)&settings.EnableWrappedLighting);
 		if (auto _tt = Util::HoverTooltipWrapper()) {
 			ImGui::Text("%s", T(TKEY("enable_wrapped_lighting_tooltip"),
-				"Enables a softer-looking wrapped lighting model from CS 1.3. "
-				"Useful for certain non-complex grass textures that look too dark during midday, when the sun is directly overhead."));
+								  "Enables a softer-looking wrapped lighting model from CS 1.3. "
+								  "Useful for certain non-complex grass textures that look too dark during midday, when the sun is directly overhead."));
 		}
 		ImGui::Spacing();
 		ImGui::Spacing();
