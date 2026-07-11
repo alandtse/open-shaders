@@ -91,6 +91,19 @@ public:
 	bool recompileFlag = false;
 	float previousHoursPassed = 0.0f;
 
+	bool realActiveReflections = false;
+	uint32_t cadenceFrameCounter = 0;
+	uint32_t nextCadenceTaskFrame = 0;
+	uint32_t highPriorityCadenceTasksRemaining = 0;
+	bool cadenceReflectionStateInitialized = false;
+	bool lastRealActiveReflections = false;
+	bool lastFakeReflections = false;
+
+	static constexpr uint32_t kFakeReflectionCubemapCadence = 2;
+	static constexpr uint32_t kInteriorCubemapCadence = 4;
+	static constexpr uint32_t kLowVisibilityCubemapCadence = 8;
+	static constexpr uint32_t kHighPriorityCubemapTaskBudget = 8;
+
 	enum class NextTask
 	{
 		kCaptureInferAndIrradianceA,
@@ -228,6 +241,12 @@ public:
 	void CompressToBC6H(bool a_reflections);
 
 	ID3D11ComputeShader* GetComputeShaderBC6HEncode();
+
+	void MarkCubemapRefreshHighPriority();
+	bool IsReflectionTask(NextTask a_task) const;
+	bool ShouldRunCurrentCubemapTask(bool a_cadenceEnabled, bool a_visibilityThrottleEnabled);
+	void FinishCurrentCubemapTask(bool a_cadenceEnabled);
+	uint32_t GetCurrentCubemapCadence() const;
 
 	virtual bool SupportsVR() override { return true; };
 	virtual bool IsCore() const override { return true; };

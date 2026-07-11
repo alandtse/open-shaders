@@ -7,8 +7,10 @@
 #include "I18n/I18n.h"
 #include "ShaderCache.h"
 #include "State.h"
+#include "Upscaling.h"
 #include "Utils/D3D.h"
 #include "Utils/UI.h"
+#include "VR.h"
 
 #define I18N_KEY_PREFIX "feature.dynamic_cubemaps."
 
@@ -579,6 +581,7 @@ void DynamicCubemaps::UpdateCubemap()
 			// Restart the split pipeline so the stale mid/last irradiance mips
 			// from the pre-jump capture aren't compressed before the recapture.
 			nextTask = NextTask::kCaptureInferAndIrradianceA;
+			MarkCubemapRefreshHighPriority();
 		}
 	}
 
@@ -589,6 +592,22 @@ void DynamicCubemaps::UpdateCubemap()
 			// if can't find specific hlsl file cache, clear all image space files
 			shaderCache->Clear(RE::BSShader::Types::ImageSpace);
 		recompileFlag = false;
+		MarkCubemapRefreshHighPriority();
+	}
+
+	bool cadenceEnabled = false;
+	bool visibilityThrottleEnabled = false;
+	auto& vr = globals::features::vr;
+	if (globals::game::isVR && vr.loaded && globals::features::upscaling.loaded) {
+		const auto profile = globals::features::upscaling.foveatedRender.GetFoveationProfile();
+		if (profile.available) {
+			cadenceEnabled = vr.settings.EnableDynamicCubemapFoveation;
+			visibilityThrottleEnabled = vr.settings.EnableDynamicCubemapVisibilityThrottle;
+		}
+	}
+
+	if (!ShouldRunCurrentCubemapTask(cadenceEnabled, visibilityThrottleEnabled)) {
+		return;
 	}
 
 	static constexpr uint32_t kIrradianceSplit = 2;
@@ -631,6 +650,8 @@ void DynamicCubemaps::UpdateCubemap()
 		nextTask = NextTask::kCaptureInferAndIrradianceA;
 		break;
 	}
+
+	FinishCurrentCubemapTask(cadenceEnabled);
 }
 
 void DynamicCubemaps::PostDeferred()
@@ -849,16 +870,110 @@ void DynamicCubemaps::SetupResources()
 
 void DynamicCubemaps::Reset()
 {
-	activeReflections = globals::state->activeReflections;
+	bool visibilityThrottleEnabled = false;
+	auto& vr = globals::features::vr;
+	if (globals::game::isVR && vr.loaded && globals::features::upscaling.loaded) {
+		const auto profile = globals::features::upscaling.foveatedRender.GetFoveationProfile();
+		if (profile.available) {
+			visibilityThrottleEnabled = vr.settings.EnableDynamicCubemapVisibilityThrottle;
+		}
+	}
+
+	realActiveReflections = globals::state->activeReflections;
+	activeReflections = realActiveReflections;
 
 	if (globals::game::sky)
 		fakeReflections = activeReflections && globals::game::sky->flags.any(RE::Sky::Flags::kHideSky);
 	else
 		fakeReflections = false;
 
-	if (!activeReflections && !Util::IsInterior()) {
+	if (!activeReflections && !Util::IsInterior() && !visibilityThrottleEnabled) {
 		activeReflections = true;
 		fakeReflections = true;
 	}
+
+	if (!cadenceReflectionStateInitialized ||
+		lastRealActiveReflections != realActiveReflections ||
+		lastFakeReflections != fakeReflections) {
+		MarkCubemapRefreshHighPriority();
+		lastRealActiveReflections = realActiveReflections;
+		lastFakeReflections = fakeReflections;
+		cadenceReflectionStateInitialized = true;
+	}
+}
+
+void DynamicCubemaps::MarkCubemapRefreshHighPriority()
+{
+	highPriorityCadenceTasksRemaining = kHighPriorityCubemapTaskBudget;
+	nextCadenceTaskFrame = cadenceFrameCounter;
+}
+
+bool DynamicCubemaps::IsReflectionTask(NextTask a_task) const
+{
+	switch (a_task) {
+	case NextTask::kCaptureInferAndIrradianceA2:
+	case NextTask::kIrradianceBA2:
+	case NextTask::kIrradianceBBAndBC6H2:
+		return true;
+	default:
+		return false;
+	}
+}
+
+uint32_t DynamicCubemaps::GetCurrentCubemapCadence() const
+{
+	if (realActiveReflections) {
+		return 1;
+	}
+
+	if (fakeReflections) {
+		return kFakeReflectionCubemapCadence;
+	}
+
+	if (Util::IsInterior()) {
+		return kInteriorCubemapCadence;
+	}
+
+	return kLowVisibilityCubemapCadence;
+}
+
+bool DynamicCubemaps::ShouldRunCurrentCubemapTask(bool a_cadenceEnabled, bool a_visibilityThrottleEnabled)
+{
+	++cadenceFrameCounter;
+
+	if (!a_cadenceEnabled && !a_visibilityThrottleEnabled) {
+		return true;
+	}
+
+	const bool reflectionTask = IsReflectionTask(nextTask);
+	if (a_visibilityThrottleEnabled && reflectionTask && !realActiveReflections && !fakeReflections) {
+		nextTask = NextTask::kCaptureInferAndIrradianceA;
+		return false;
+	}
+
+	if (!a_cadenceEnabled) {
+		return true;
+	}
+
+	if (highPriorityCadenceTasksRemaining > 0) {
+		return true;
+	}
+
+	return cadenceFrameCounter >= nextCadenceTaskFrame;
+}
+
+void DynamicCubemaps::FinishCurrentCubemapTask(bool a_cadenceEnabled)
+{
+	if (!a_cadenceEnabled) {
+		return;
+	}
+
+	if (highPriorityCadenceTasksRemaining > 0) {
+		--highPriorityCadenceTasksRemaining;
+		nextCadenceTaskFrame = cadenceFrameCounter + 1;
+		return;
+	}
+
+	nextCadenceTaskFrame = cadenceFrameCounter + GetCurrentCubemapCadence();
 }
 #undef I18N_KEY_PREFIX
