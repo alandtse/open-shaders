@@ -667,6 +667,23 @@ FlowmapData GetFlowmapDataWorldSpace(FlowmapData textureSpaceData)
 #				include "WaterEffects/WaterParallax.hlsli"
 #			endif
 
+#			if defined(VR) && defined(WATER_PARALLAX)
+#				include "Common/FoveatedShaderDetail.hlsli"
+
+float GetVRWaterParallaxDetailWeight(float2 eyeUv, uint eyeIndex)
+{
+	float waterParallaxFoveationMode = SharedData::VRFoveationModes.y;
+	float2 centerOffset = eyeIndex == 0 ? SharedData::VRFoveationCenterOffsets.xy : SharedData::VRFoveationCenterOffsets.zw;
+	return FoveatedEvaluateShaderDetailWeight(
+		waterParallaxFoveationMode,
+		eyeUv,
+		SharedData::VRFoveationData0.x,
+		SharedData::VRFoveationData0.y,
+		SharedData::VRFoveationData0.z,
+		centerOffset);
+}
+#			endif
+
 #			if defined(DYNAMIC_CUBEMAPS)
 #				include "DynamicCubemaps/DynamicCubemaps.hlsli"
 #			endif
@@ -682,7 +699,7 @@ struct WaterNormalData
 	float4 rippleInfo;  // xyz = scaled ripple normal (normalized normal * intensity), w = splash effect intensity
 };
 
-WaterNormalData GetWaterNormal(PS_INPUT input, float distanceFactor, float normalsDepthFactor, float3 viewDirection, float depth, uint eyeIndex, float wetnessOcclusion)
+WaterNormalData GetWaterNormal(PS_INPUT input, float distanceFactor, float normalsDepthFactor, float3 viewDirection, float depth, uint eyeIndex, float wetnessOcclusion, float waterParallaxDetailWeight)
 {
 	WaterNormalData result;
 	result.rippleInfo = float4(0, 0, 0, 0);
@@ -690,7 +707,7 @@ WaterNormalData GetWaterNormal(PS_INPUT input, float distanceFactor, float norma
 	float3 normalScalesRcp = rcp(input.NormalsScale.xyz);
 
 #			if defined(WATER_PARALLAX)
-	float2 parallaxOffset = WaterEffects::GetParallaxOffset(input, normalScalesRcp);
+	float2 parallaxOffset = WaterEffects::GetParallaxOffset(input, normalScalesRcp, waterParallaxDetailWeight);
 #			endif
 
 #			if defined(FLOWMAP)
@@ -705,13 +722,13 @@ WaterNormalData GetWaterNormal(PS_INPUT input, float distanceFactor, float norma
 	PS_INPUT flowmapInput = input;
 	float2 flowmapParallaxOffset = float2(0, 0);
 #				if defined(WATER_PARALLAX) && !defined(LOD)
-	float parallaxAmount = WaterEffects::GetFlowmapParallaxAmount(input, flowmapDimensions, viewDirection);
+	float parallaxAmount = WaterEffects::GetFlowmapParallaxAmount(input, flowmapDimensions, viewDirection, waterParallaxDetailWeight);
 	float2 parallaxDir = viewDirection.xy / -viewDirection.z;
 	parallaxDir.y = -parallaxDir.y;
 	float viewDotUp = -viewDirection.z;
 	parallaxDir *= 0.008 * saturate(viewDotUp * 2.0);
 	flowmapInput.TexCoord3.xy = input.TexCoord3.xy + parallaxAmount * parallaxDir;
-	flowmapParallaxOffset = WaterEffects::GetFlowmapParallaxOffset(input, flowmapDimensions, viewDirection, normalScalesRcp);
+	flowmapParallaxOffset = WaterEffects::GetFlowmapParallaxOffset(input, flowmapDimensions, viewDirection, normalScalesRcp, waterParallaxDetailWeight);
 #				endif
 
 	// Calculate cell blend weights using parallaxed input
@@ -1129,10 +1146,19 @@ PS_OUTPUT main(PS_INPUT input)
 	wetnessOcclusion = inWorld ? pow(saturate(skylighting), 2) : 0;
 #			endif
 
+	float waterParallaxDetailWeight = 1.0;
+#			if defined(VR) && defined(WATER_PARALLAX)
+	float waterParallaxFoveationMode = SharedData::VRFoveationModes.y;
+	[branch] if (waterParallaxFoveationMode >= FOVEATED_SHADER_DETAIL_MODE_FEATHERED)
+	{
+		waterParallaxDetailWeight = GetVRWaterParallaxDetailWeight(saturate(screenUV), eyeIndex);
+	}
+#			endif
+
 #			if defined(SKYLIGHTING)
-	WaterNormalData waterData = GetWaterNormal(input, distanceBlendFactor, depthControl.z, viewDirection, depth, eyeIndex, wetnessOcclusion);
+	WaterNormalData waterData = GetWaterNormal(input, distanceBlendFactor, depthControl.z, viewDirection, depth, eyeIndex, wetnessOcclusion, waterParallaxDetailWeight);
 #			else
-	WaterNormalData waterData = GetWaterNormal(input, distanceBlendFactor, depthControl.z, viewDirection, depth, eyeIndex, inWorld);
+	WaterNormalData waterData = GetWaterNormal(input, distanceBlendFactor, depthControl.z, viewDirection, depth, eyeIndex, inWorld, waterParallaxDetailWeight);
 #			endif
 
 	float3 normal = waterData.normal;
