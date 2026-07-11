@@ -58,9 +58,10 @@ void VR::DrawStereoBlend()
 	if (!globals::game::isVR || !stereoBlendCopyTex || !stereoBlendCB)
 		return;
 
-	// Debug modes 2-4 must run even with blend disabled (else a persisted config
-	// renders nothing); mode 1 (Coverage) needs no Stereo Blend at all.
-	const bool stereoBlendDebugActive = settings.ReprojectDebugMode >= 2 && settings.ReprojectDebugMode <= 4;
+	// Debug modes 2-4 must run even with blend disabled (else a persisted config renders
+	// nothing); mode 1 (Coverage) needs no Stereo Blend at all. Re-checks Developer Mode
+	// here since ReprojectDebugMode persists across sessions independent of that toggle.
+	const bool stereoBlendDebugActive = settings.ReprojectDebugMode >= 2 && settings.ReprojectDebugMode <= 4 && globals::state->IsDeveloperMode();
 	if ((!settings.EnableStereoBlend && !stereoBlendDebugActive) || !stereoBlendCS)
 		return;
 
