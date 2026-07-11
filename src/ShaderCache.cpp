@@ -126,13 +126,17 @@ namespace SIE
 				pos = line.find_first_not_of(" 	", pos + 1);
 				if (pos == std::string::npos || line.compare(pos, 7, "include") != 0)
 					continue;
-				const size_t firstQuote = line.find('"', pos + 7);
-				if (firstQuote == std::string::npos)
+				// Accept both quoted and angle-bracket includes; under-tracking either
+				// form risks serving a stale cache, which the textual scan must never do.
+				const size_t afterInclude = pos + 7;
+				const size_t firstDelim = line.find_first_of("\"<", afterInclude);
+				if (firstDelim == std::string::npos)
 					continue;
-				const size_t secondQuote = line.find('"', firstQuote + 1);
-				if (secondQuote == std::string::npos || secondQuote == firstQuote + 1)
+				const char closeDelim = line[firstDelim] == '"' ? '"' : '>';
+				const size_t secondDelim = line.find(closeDelim, firstDelim + 1);
+				if (secondDelim == std::string::npos || secondDelim == firstDelim + 1)
 					continue;
-				const std::string includeName = line.substr(firstQuote + 1, secondQuote - firstQuote - 1);
+				const std::string includeName = line.substr(firstDelim + 1, secondDelim - firstDelim - 1);
 
 				std::error_code rootEc, parentEc;
 				std::filesystem::path includePath = shadersRoot / includeName;
