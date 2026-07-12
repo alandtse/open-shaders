@@ -251,15 +251,8 @@ namespace
 				if (!feature)
 					return json{ { "error", "feature not found or not loaded" }, { "shortName", shortName } };
 				try {
-					// A caller's blob is usually partial (one field they care
-					// about). Feature settings structs deserialize via
-					// NLOHMANN_DEFINE_TYPE_..._WITH_DEFAULT, which fills any
-					// key absent from the blob from a fresh DEFAULT-constructed
-					// object, not the feature's current value -- applying the
-					// partial blob directly would silently reset every
-					// unmentioned field (and nested struct) to defaults. Merge
-					// the partial blob onto the feature's current full settings
-					// (RFC 7396 JSON Merge Patch) before applying.
+					// WITH_DEFAULT deserialization fills a blob's absent keys
+					// from a fresh default, not the live value; merge first.
 					json current;
 					feature->SaveSettings(current);
 					current.merge_patch(blob);
