@@ -9,12 +9,13 @@
 #include <mutex>
 #include <nlohmann/json.hpp>
 
+#include "Utils/BootSnapshot.h"
+
 using json = nlohmann::json;
 
 #include <FeatureBuffer.h>
 
 #include <Hooks.h>
-#include <mutex>
 
 class State
 {
@@ -40,6 +41,17 @@ public:
 		static State singleton;
 		return &singleton;
 	}
+
+	struct Settings
+	{
+		bool highQualitySnowTargets = true;
+	};
+	Settings globalSettings;
+
+	inline static constexpr Util::Settings::RestartTable<Settings, 1> kRestartFields{ {
+		UTIL_RESTART_FIELD(Settings, highQualitySnowTargets, "High Quality Snow Targets"),
+	} };
+	Util::Settings::BootSnapshot<Settings> bootSnapshot{ kRestartFields };
 
 	bool enabledClasses[RE::BSShader::Type::Total - 1];
 	bool enablePShaders = true;

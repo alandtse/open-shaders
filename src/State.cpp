@@ -462,6 +462,10 @@ void State::Load(ConfigMode a_configMode, bool a_allowReload)
 	}
 	if (errorDetected && a_allowReload)
 		Load(a_configMode, false);
+	// Latch outside the try so a config parse failure still snapshots the (default) values —
+	// an unlatched snapshot would hand Boot() readers a default-constructed field value (e.g.
+	// false for bool) instead of the actual boot-time setting.
+	bootSnapshot.LatchIfNeeded(globalSettings);
 }
 
 void State::SaveToJson(nlohmann::json& settings)
@@ -480,6 +484,7 @@ void State::SaveToJson(nlohmann::json& settings)
 	advanced["Use FileWatcher"] = shaderCache->UseFileWatcher();
 	advanced["Frame Annotations"] = frameAnnotations;
 	advanced["Partial Precision"] = enablePartialPrecision.load(std::memory_order_relaxed);
+	advanced["highQualitySnowTargets"] = globalSettings.highQualitySnowTargets;
 	settings["Advanced"] = advanced;
 
 	json general;
@@ -557,6 +562,8 @@ void State::LoadFromJson(nlohmann::json& settings)
 			frameAnnotations = advanced["Frame Annotations"];
 		if (advanced.contains("Partial Precision") && advanced["Partial Precision"].is_boolean())
 			enablePartialPrecision.store(advanced["Partial Precision"].get<bool>(), std::memory_order_relaxed);
+		if (advanced.contains("highQualitySnowTargets") && advanced["highQualitySnowTargets"].is_boolean())
+			globalSettings.highQualitySnowTargets = advanced["highQualitySnowTargets"].get<bool>();
 	}
 
 	if (settings.contains("General") && settings["General"].is_object()) {
