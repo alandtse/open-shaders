@@ -32,6 +32,7 @@
 #include "Common/Math.hlsli"
 #include "Common/Spherical Harmonics/SphericalHarmonics.hlsli"
 #include "Common/VR.hlsli"
+#include "ScreenSpaceGI/StereoReproject.hlsli"
 #include "ScreenSpaceGI/common.hlsli"
 
 Texture2D<float> srcWorkingDepth : register(t0);
@@ -356,6 +357,21 @@ void CalculateGI(
 
 	half2 encodedWorldNormal = GBuffer::EncodeNormal(ViewToWorldVector(viewspaceNormal, FrameBuffer::CameraViewInverse[eyeIndex]));
 	outPrevGeo[pxCoord] = half3(viewspaceZ, encodedWorldNormal);
+
+#ifdef STEREO_EYE0_ONLY
+	// Skip the march only for eye-1 pixels the reproject will fill exactly (in-frame +
+	// matching surface); disoccluded pixels fall through and march natively so the
+	// reproject fallback reads a real value, not a hole.
+	if (eyeIndex != 0) {
+		int2 otherPx;
+		if (GIReprojectsCleanly(uv, viewspaceZ, eyeIndex, srcWorkingDepth, frameScale, otherPx)) {
+			outAo[pxCoord] = 0;
+			outY[pxCoord] = 0;
+			outCoCg[pxCoord] = 0;
+			return;
+		}
+	}
+#endif
 
 	// Move center pixel slightly towards camera to avoid imprecision artifacts due to depth buffer imprecision; offset depends on depth texture format used
 	viewspaceZ *= 0.99920h;  // this is good for FP16 depth buffer

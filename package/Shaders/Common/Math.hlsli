@@ -29,6 +29,11 @@ namespace Math
 	static const float HALF_PI = PI * 0.5f;                      // PI / 2
 	static const float TAU = PI * 2.0f;                          // PI * 2
 	static const float INV_PI = 1.0f / PI;                       // 1 / PI
+
+	float GetFinalDepth(float a_depth, float a_nearPlane, float a_farPlane)
+	{
+		return (2.0f * a_nearPlane * a_farPlane) / ((a_farPlane + a_nearPlane) - (a_depth * 2.0f - 1.0f) * (a_farPlane - a_nearPlane));
+	}
 }
 
 #endif  //__MATH_DEPENDENCY_HLSL__

@@ -40,18 +40,21 @@ float3 IntersectionZPlane(float3 B, float z_dist)
 	return result;
 }
 
-[numthreads(1, 1, 1)] void main(uint3 groupId : SV_GroupID,
+[numthreads(NUMTHREAD_X, NUMTHREAD_Y, NUMTHREAD_Z)] void main(uint3 groupId : SV_GroupID,
 	uint3 dispatchThreadId : SV_DispatchThreadID,
 	uint3 groupThreadId : SV_GroupThreadID,
 	uint groupIndex : SV_GroupIndex) {
-	uint clusterIndex = groupId.x +
-	                    groupId.y * ClusterSize.x +
-	                    groupId.z * (ClusterSize.x * ClusterSize.y);
+	if (any(dispatchThreadId >= uint3(ClusterSize.x, ClusterSize.y, ClusterSize.z)))
+		return;
+
+	uint clusterIndex = dispatchThreadId.x +
+	                    dispatchThreadId.y * ClusterSize.x +
+	                    dispatchThreadId.z * (ClusterSize.x * ClusterSize.y);
 
 	float2 clusterSize = rcp(float2(ClusterSize.x, ClusterSize.y));
 
-	float2 texcoordMax = (groupId.xy + 1) * clusterSize;
-	float2 texcoordMin = groupId.xy * clusterSize;
+	float2 texcoordMax = (dispatchThreadId.xy + 1) * clusterSize;
+	float2 texcoordMin = dispatchThreadId.xy * clusterSize;
 #if !defined(VR)
 	float3 maxPointVS = GetPositionVS(texcoordMax, 1.0f);
 	float3 minPointVS = GetPositionVS(texcoordMin, 1.0f);
@@ -60,8 +63,8 @@ float3 IntersectionZPlane(float3 B, float z_dist)
 	float3 minPointVS = min(GetPositionVS(texcoordMin, 1.0f, 0), GetPositionVS(texcoordMin, 1.0f, 1));
 #endif  // !VR
 
-	float clusterNear = LightsNear * pow(abs(LightsFar / LightsNear), groupId.z / float(ClusterSize.z));
-	float clusterFar = LightsNear * pow(abs(LightsFar / LightsNear), (groupId.z + 1) / float(ClusterSize.z));
+	float clusterNear = LightsNear * pow(abs(LightsFar / LightsNear), dispatchThreadId.z / float(ClusterSize.z));
+	float clusterFar = LightsNear * pow(abs(LightsFar / LightsNear), (dispatchThreadId.z + 1) / float(ClusterSize.z));
 
 	float3 minPointNear = IntersectionZPlane(minPointVS, clusterNear);
 	float3 minPointFar = IntersectionZPlane(minPointVS, clusterFar);

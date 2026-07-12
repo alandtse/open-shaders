@@ -23,6 +23,54 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	BilinearThreshold,
 	ShadowContrast)
 
+void ScreenSpaceShadows::DrawStereoToggles()
+{
+	// Backing state is two bools (enableStereoSync umbrella + useStereoReproject method);
+	// surface them as one 3-state selector so the modes don't read as rival toggles.
+	int mode = !enableStereoSync ? 0 : (useStereoReproject ? 2 : 1);
+	const char* modes[] = {
+		T(TKEY("vr_stereo_mode_off"), "Off"),
+		T(TKEY("vr_stereo_mode_sync"), "Bilateral Sync"),
+		T(TKEY("vr_stereo_mode_reproject"), "Reprojection")
+	};
+	if (ImGui::Combo(T(TKEY("vr_stereo_mode"), "Stereo Consistency"), &mode, modes, IM_ARRAYSIZE(modes))) {
+		enableStereoSync = mode != 0;
+		useStereoReproject = mode == 2;
+	}
+	if (auto _tt = Util::HoverTooltipWrapper())
+		ImGui::Text("%s", T(TKEY("vr_stereo_mode_tooltip"),
+							  "Off: each eye computes shadows independently (may mismatch between eyes).\n"
+							  "Bilateral Sync: both eyes compute, then reconcile (highest quality, highest cost).\n"
+							  "Reprojection: compute Eye 0 and transfer to Eye 1, skipping its raymarch. "
+							  "Fastest; disoccluded pixels fall back to unshadowed."));
+	if (enableStereoSync && useStereoReproject && globals::state->IsDeveloperMode()) {
+		ImGui::Checkbox(T(TKEY("vr_stereo_reproject_debug"), "Show Reprojection Disocclusion"), &debugReprojectDisocclusion);
+		if (auto _tt = Util::HoverTooltipWrapper())
+			ImGui::Text("%s", T(TKEY("vr_stereo_reproject_debug_tooltip"),
+								  "Paints Eye 1 pixels Eye 0 cannot see black to visualize the "
+								  "reprojection coverage gap."));
+	}
+}
+
+// Hub view: the SSS stereo sync/reprojection toggles, bound to the same settings the SSS panel shows.
+void ScreenSpaceShadows::DrawVRPerformanceSettings()
+{
+	DrawStereoToggles();
+}
+
+// A profile drives the whole stereo mode, so enable the umbrella (else it can't engage from
+// Off): Performance/Balanced reproject (fast), Quality uses bilateral sync (both eyes, max fidelity).
+void ScreenSpaceShadows::ApplyVRPerformanceProfile(VRPerfProfile profile)
+{
+	enableStereoSync = true;
+	useStereoReproject = VRProfileEnablesReproject(profile);
+}
+
+bool ScreenSpaceShadows::MatchesVRPerformanceProfile(VRPerfProfile profile) const
+{
+	return enableStereoSync && useStereoReproject == VRProfileEnablesReproject(profile);
+}
+
 void ScreenSpaceShadows::DrawSettings()
 {
 	if (ImGui::TreeNodeEx(T(TKEY("general"), "General"), ImGuiTreeNodeFlags_DefaultOpen)) {
@@ -46,14 +94,8 @@ void ScreenSpaceShadows::DrawSettings()
 		if (auto _tt = Util::HoverTooltipWrapper())
 			ImGui::Text("%s", T(TKEY("shadow_contrast_tooltip"), "Contrast boost for the shadow transition. Higher values produce harder shadow edges."));
 
-		if (globals::game::isVR && globals::state->IsDeveloperMode()) {
-			ImGui::Checkbox(T(TKEY("vr_stereo_sync"), "VR Stereo Sync"), &enableStereoSync);
-			if (auto _tt = Util::HoverTooltipWrapper())
-				ImGui::Text("%s", T(TKEY("vr_stereo_sync_tooltip"),
-									  "Synchronizes shadow data between left and right eyes via bilateral reprojection "
-									  "and applies a depth-weighted blur to reduce per-eye noise. "
-									  "Uses min-blend so if either eye detects an occluder, the shadow is preserved. "));
-		}
+		if (globals::game::isVR)
+			DrawStereoToggles();
 
 		ImGui::Spacing();
 		ImGui::Spacing();
@@ -80,6 +122,16 @@ void ScreenSpaceShadows::ClearShaderCache()
 		stereoSyncCS->Release();
 		stereoSyncCS = nullptr;
 	}
+	if (stereoReprojectCS) {
+		stereoReprojectCS->Release();
+		stereoReprojectCS = nullptr;
+	}
+	if (stereoReprojectDebugCS) {
+		stereoReprojectDebugCS->Release();
+		stereoReprojectDebugCS = nullptr;
+	}
+	stereoReprojectCompileFailed = false;
+	stereoReprojectDebugCompileFailed = false;
 }
 
 uint ScreenSpaceShadows::GetScaledSampleCount()
@@ -251,11 +303,15 @@ void ScreenSpaceShadows::DrawShadows()
 			DispatchEye("Left Eye", GetComputeRaymarch(), lightProjectionF.data(), InvTexSizeX, InvTexSizeY);
 		}
 
-		// Calculate light projection for right eye
-		auto lightProjectionRightF = CalculateLightProjection(1);
-		{
-			CS_GPU_PASS("SSS::RightEye");
-			DispatchEye("Right Eye", GetComputeRaymarchRight(), lightProjectionRightF.data(), InvTexSizeX, InvTexSizeY);
+		// Skip the eye-1 march only when DrawStereoSync's reproject will fill it; a failed
+		// reproject compile keeps the march so eye 1 isn't left at the lit clear.
+		if (!(useStereoReproject && enableStereoSync && GetStereoReprojectCS())) {
+			// Calculate light projection for right eye
+			auto lightProjectionRightF = CalculateLightProjection(1);
+			{
+				CS_GPU_PASS("SSS::RightEye");
+				DispatchEye("Right Eye", GetComputeRaymarchRight(), lightProjectionRightF.data(), InvTexSizeX, InvTexSizeY);
+			}
 		}
 	}
 
@@ -274,22 +330,56 @@ void ScreenSpaceShadows::DrawShadows()
 	context->CSSetConstantBuffers(1, 1, &buffer);
 }
 
+ID3D11ComputeShader* ScreenSpaceShadows::GetStereoReprojectCS()
+{
+	// Clamp the debug variant to Developer Mode at use-time: the toggle persists, so it
+	// must not keep painting the debug view into gameplay after dev mode is turned off.
+	const bool useDebug = debugReprojectDisocclusion && globals::state->IsDeveloperMode();
+
+	// Per-variant failure latch: don't retry a broken shader every frame, and never let a
+	// dev-only debug-variant failure disable the production reproject (null = callers fall back).
+	bool& compileFailed = useDebug ? stereoReprojectDebugCompileFailed : stereoReprojectCompileFailed;
+	if (compileFailed)
+		return nullptr;
+
+	auto& shader = useDebug ? stereoReprojectDebugCS : stereoReprojectCS;
+	if (!shader) {
+		std::vector<std::pair<const char*, const char*>> defines{ { "VR", "" }, { "FRAMEBUFFER", "" } };
+		if (globals::features::terrainBlending.loaded)
+			defines.push_back({ "TERRAIN_BLENDING", "" });
+		if (useDebug)
+			defines.push_back({ "DEBUG_DISOCCLUSION", "" });
+		shader = reinterpret_cast<ID3D11ComputeShader*>(Util::CompileShader(L"Data\\Shaders\\ScreenSpaceShadows\\ShadowReprojectCS.hlsl", defines, "cs_5_0"));
+		if (!shader)
+			compileFailed = true;
+	}
+	return shader;
+}
+
 void ScreenSpaceShadows::DrawStereoSync()
 {
 	if (!globals::game::isVR || !enableStereoSync || !stereoSyncCopyTex || !stereoSyncCB)
 		return;
 
-	if (!stereoSyncCS) {
-		std::vector<std::pair<const char*, const char*>> defines{ { "VR", "" }, { "FRAMEBUFFER", "" } };
-		if (globals::features::terrainBlending.loaded)
-			defines.push_back({ "TERRAIN_BLENDING", "" });
-		stereoSyncCS = reinterpret_cast<ID3D11ComputeShader*>(Util::CompileShader(L"Data\\Shaders\\ScreenSpaceShadows\\StereoSyncCS.hlsl", defines, "cs_5_0"));
+	// Prefer the reproject variant; compile the bilateral sync lazily only when it is the
+	// actual fallback, so the default reproject path never builds an unused shader.
+	ID3D11ComputeShader* stereoCS = useStereoReproject ? GetStereoReprojectCS() : nullptr;
+	if (!stereoCS) {
+		if (!stereoSyncCS) {
+			std::vector<std::pair<const char*, const char*>> defines{ { "VR", "" }, { "FRAMEBUFFER", "" } };
+			if (globals::features::terrainBlending.loaded)
+				defines.push_back({ "TERRAIN_BLENDING", "" });
+			stereoSyncCS = reinterpret_cast<ID3D11ComputeShader*>(Util::CompileShader(L"Data\\Shaders\\ScreenSpaceShadows\\StereoSyncCS.hlsl", defines, "cs_5_0"));
+		}
+		stereoCS = stereoSyncCS;
 	}
-	if (!stereoSyncCS)
+	if (!stereoCS)
 		return;
 
 	ZoneScoped;
-	CS_GPU_PASS("ScreenSpaceShadows::StereoSync");
+	// Label the pass by the path actually dispatched so profiler captures aren't
+	// mislabeled as the bilateral sync when the reproject variant runs.
+	CS_GPU_PASS(stereoCS == stereoSyncCS ? "ScreenSpaceShadows::StereoSync" : "ScreenSpaceShadows::StereoReproject");
 
 	auto context = globals::d3d::context;
 	context->CopyResource(stereoSyncCopyTex->resource.get(), screenSpaceShadowsTexture->resource.get());
@@ -316,7 +406,7 @@ void ScreenSpaceShadows::DrawStereoSync()
 	context->CSSetConstantBuffers(5, 1, &sharedDataBuf);
 	context->CSSetShaderResources(0, 2, srvs);
 	context->CSSetUnorderedAccessViews(0, 1, uavs, nullptr);
-	context->CSSetShader(stereoSyncCS, nullptr, 0);
+	context->CSSetShader(stereoCS, nullptr, 0);
 
 	auto dispatchCount = Util::GetScreenDispatchCount(true);
 	context->Dispatch(dispatchCount.x, dispatchCount.y, 1);
@@ -351,16 +441,23 @@ void ScreenSpaceShadows::Prepass()
 void ScreenSpaceShadows::LoadSettings(json& o_json)
 {
 	bendSettings = o_json;
+	// Absent key resets to the default, so an older blob can't pin a stale state.
+	enableStereoSync = o_json.value("EnableStereoSync", true);
+	useStereoReproject = o_json.value("UseStereoReproject", true);
 }
 
 void ScreenSpaceShadows::SaveSettings(json& o_json)
 {
 	o_json = bendSettings;
+	o_json["EnableStereoSync"] = enableStereoSync;
+	o_json["UseStereoReproject"] = useStereoReproject;
 }
 
 void ScreenSpaceShadows::RestoreDefaultSettings()
 {
 	bendSettings = {};
+	enableStereoSync = true;
+	useStereoReproject = true;
 }
 
 bool ScreenSpaceShadows::HasShaderDefine(RE::BSShader::Type)

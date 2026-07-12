@@ -76,11 +76,13 @@ void VR::ConnectHelper()
 	if (!globals::game::isVR)
 		return;
 	// RendersOnFocus: render into the panel whenever the helper grants focus, even
-	// if Menu::IsEnabled is false.
+	// if Menu::IsEnabled is false. OwnCursor: keep drawing our own ImGui cursor in
+	// VR too (content-aware per hovered widget, and honors Theme.UseCustomCursor)
+	// instead of the helper's composited pointer.
 	const auto clientName = std::string(Plugin::NAME);
 	const auto versionStr = std::format("{}.{}.{}", Plugin::VERSION.major(), Plugin::VERSION.minor(), Plugin::VERSION.patch());
 	if (!g_client.Connect(clientName.c_str(), versionStr.c_str(),
-			API::kClientFlag_RendersOnFocus)) {
+			API::kClientFlag_RendersOnFocus | API::kClientFlag_OwnCursor)) {
 		logger::info("ImGuiVRHelper not detected; VR menus will only render on the desktop monitor");
 		return;
 	}

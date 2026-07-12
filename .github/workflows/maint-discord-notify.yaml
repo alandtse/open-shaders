@@ -16,13 +16,36 @@ jobs:
         if: ${{ github.event.release.prerelease == false }}
         runs-on: "ubuntu-latest"
         steps:
+            # Only .github/scripts is needed, to reuse strip_audit() from the
+            # Nexus changelog step rather than duplicating that regex here.
+            - uses: actions/checkout@v6
+              with:
+                  sparse-checkout: .github/scripts
+
+            - name: "Strip Feature Version Audit section"
+              id: strip-audit
+              env:
+                  RELEASE_BODY: ${{ github.event.release.body }}
+              run: |
+                  delimiter="EOF_$(uuidgen)"
+                  {
+                      echo "body<<$delimiter"
+                      python3 - << 'PYEOF'
+                  import os, sys
+                  sys.path.insert(0, ".github/scripts")
+                  from nexus_changelog import strip_audit
+                  print(strip_audit(os.environ.get("RELEASE_BODY", "")))
+                  PYEOF
+                      echo "$delimiter"
+                  } >> "$GITHUB_OUTPUT"
+
             - name: "Post to Discord"
               env:
                   WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
                   RELEASE_TITLE: ${{ github.event.release.name }}
                   RELEASE_TAG: ${{ github.event.release.tag_name }}
                   RELEASE_URL: ${{ github.event.release.html_url }}
-                  RELEASE_BODY: ${{ github.event.release.body }}
+                  RELEASE_BODY: ${{ steps.strip-audit.outputs.body }}
               run: |
                   set -euo pipefail
 

@@ -7,6 +7,7 @@
 #include "I18n/I18n.h"
 #include "Menu.h"
 #include "Menu/Fonts.h"
+#include "Menu/VRPerformanceRenderer.h"
 #include "RE/B/BSOpenVR.h"
 #include "RE/P/PlayerCharacter.h"
 #include "State.h"
@@ -52,59 +53,55 @@ namespace
 		bool hasEffects = VR::AnyScreenSpaceEffectLoaded();
 		bool isDev = globals::state && globals::state->IsDeveloperMode();
 
-		if (ImGui::CollapsingHeader(T(TKEY("stereo_blend_header"), "Stereo Blend"), ImGuiTreeNodeFlags_DefaultOpen)) {
-			if (!hasEffects && !isDev) {
-				ImGui::TextColored(ImVec4(1.0f, 0.7f, 0.3f, 1.0f), "%s", T(TKEY("stereo_blend_requires_effect"), "Requires an active screen-space effect (SSGI, SS Shadows, SSR)."));
-			} else {
-				if (!hasEffects)
-					ImGui::TextColored(ImVec4(0.6f, 0.6f, 1.0f, 1.0f), "%s", T(TKEY("stereo_blend_dev_mode"), "Developer mode: no screen-space effects active."));
+		// Developer-only: superseded by per-effect cross-eye reproject (SSS/SSGI) plus the
+		// native eye-1 G-buffer fill; kept as a stereo-disparity inspector, not a user knob.
+		if (isDev && ImGui::CollapsingHeader(T(TKEY("stereo_blend_header"), "Stereo Blend"), ImGuiTreeNodeFlags_DefaultOpen)) {
+			if (!hasEffects)
+				ImGui::TextColored(ImVec4(0.6f, 0.6f, 1.0f, 1.0f), "%s", T(TKEY("stereo_blend_dev_mode"), "Developer mode: no screen-space effects active."));
 
-				ImGui::Checkbox(T(TKEY("stereo_blend_enable"), "Enable Stereo Blend"), &settings.EnableStereoBlend);
-				if (auto _tt = Util::HoverTooltipWrapper()) {
-					ImGui::Text("%s",
-						T(TKEY("stereo_blend_enable_tooltip"),
-							"Post-composite depth-aware bilateral blend between eyes.\n"
-							"Reduces stereo inconsistencies from screen-space effects (SSGI, SSR, etc.).\n"
-							"Each pixel is reprojected to the other eye; blending is applied only where\n"
-							"depth agrees (same surface). Full-screen pass in VR."));
-				}
-
-				ImGui::BeginDisabled(!settings.EnableStereoBlend);
-
-				ImGui::SliderFloat(T(TKEY("stereo_blend_depth_sigma"), "Depth Sigma"), &settings.StereoBlendDepthSigma, 0.001f, 0.1f, "%.4f");
-				if (auto _tt = Util::HoverTooltipWrapper()) {
-					ImGui::Text("%s",
-						T(TKEY("stereo_blend_depth_sigma_tooltip"),
-							"Depth sensitivity for the bilateral weight.\n"
-							"Lower values are stricter -- only blend when depths match very closely.\n"
-							"Higher values allow blending across slight depth differences.\n"
-							"Default: 0.01"));
-				}
-
-				ImGui::SliderFloat(T(TKEY("stereo_blend_max_factor"), "Max Blend Factor"), &settings.StereoBlendMaxFactor, 0.0f, 0.5f, "%.2f");
-				if (auto _tt = Util::HoverTooltipWrapper()) {
-					ImGui::Text("%s",
-						T(TKEY("stereo_blend_max_factor_tooltip"),
-							"Maximum blend strength between the two eyes.\n"
-							"Higher values reduce screen-space effect flicker but destroy stereo depth.\n"
-							"Keep below ~0.15 to preserve 3D parallax.\n"
-							"Default: 0.1"));
-				}
-
-				ImGui::SliderFloat(T(TKEY("stereo_blend_color_threshold"), "Color Difference Threshold"), &settings.StereoBlendColorThreshold, 0.0f, 0.2f, "%.3f");
-				if (auto _tt = Util::HoverTooltipWrapper()) {
-					ImGui::Text("%s",
-						T(TKEY("stereo_blend_color_threshold_tooltip"),
-							"Minimum luminance difference between eyes to trigger blending.\n"
-							"Set to 0 to blend everywhere. Higher = more selective.\n"
-							"Default: 0.02"));
-				}
-
-				ImGui::EndDisabled();
+			ImGui::Checkbox(T(TKEY("stereo_blend_enable"), "Enable Stereo Blend"), &settings.EnableStereoBlend);
+			if (auto _tt = Util::HoverTooltipWrapper()) {
+				ImGui::Text("%s",
+					T(TKEY("stereo_blend_enable_tooltip"),
+						"Post-composite depth-aware bilateral blend between eyes.\n"
+						"Reduces stereo inconsistencies from screen-space effects (SSGI, SSR, etc.).\n"
+						"Each pixel is reprojected to the other eye; blending is applied only where\n"
+						"depth agrees (same surface). Full-screen pass in VR."));
 			}
-		}
 
-		if (hasEffects || isDev) {
+			ImGui::BeginDisabled(!settings.EnableStereoBlend);
+
+			ImGui::SliderFloat(T(TKEY("stereo_blend_depth_sigma"), "Depth Sigma"), &settings.StereoBlendDepthSigma, 0.001f, 0.1f, "%.4f");
+			if (auto _tt = Util::HoverTooltipWrapper()) {
+				ImGui::Text("%s",
+					T(TKEY("stereo_blend_depth_sigma_tooltip"),
+						"Depth sensitivity for the bilateral weight.\n"
+						"Lower values are stricter -- only blend when depths match very closely.\n"
+						"Higher values allow blending across slight depth differences.\n"
+						"Default: 0.01"));
+			}
+
+			ImGui::SliderFloat(T(TKEY("stereo_blend_max_factor"), "Max Blend Factor"), &settings.StereoBlendMaxFactor, 0.0f, 0.5f, "%.2f");
+			if (auto _tt = Util::HoverTooltipWrapper()) {
+				ImGui::Text("%s",
+					T(TKEY("stereo_blend_max_factor_tooltip"),
+						"Maximum blend strength between the two eyes.\n"
+						"Higher values reduce screen-space effect flicker but destroy stereo depth.\n"
+						"Keep below ~0.15 to preserve 3D parallax.\n"
+						"Default: 0.1"));
+			}
+
+			ImGui::SliderFloat(T(TKEY("stereo_blend_color_threshold"), "Color Difference Threshold"), &settings.StereoBlendColorThreshold, 0.0f, 0.2f, "%.3f");
+			if (auto _tt = Util::HoverTooltipWrapper()) {
+				ImGui::Text("%s",
+					T(TKEY("stereo_blend_color_threshold_tooltip"),
+						"Minimum luminance difference between eyes to trigger blending.\n"
+						"Set to 0 to blend everywhere. Higher = more selective.\n"
+						"Default: 0.02"));
+			}
+
+			ImGui::EndDisabled();
+
 			ImGui::Separator();
 
 			// Auto-enable required feature when a debug mode is selected; restore on Off.
@@ -141,19 +138,31 @@ namespace
 			}
 		}
 
-		if (ImGui::CollapsingHeader(T(TKEY("foveated_effects_header"), "Foveated Effects"))) {
+		if (ImGui::CollapsingHeader(T(TKEY("foveated_effects_header"), "Foveation-Following Effects"))) {
 			auto& upscaling = globals::features::upscaling;
 			auto& dynamicCubemaps = globals::features::dynamicCubemaps;
 			const bool foveatedDLSSActive = upscaling.foveatedRender.IsActive();
 			const bool ssrEnabled = dynamicCubemaps.loaded && dynamicCubemaps.settings.EnabledSSR;
 
-			if (!foveatedDLSSActive)
-				ImGui::TextColored(ImVec4(1.0f, 0.7f, 0.3f, 1.0f), "%s", T(TKEY("foveated_requires_dlss"), "Requires Foveated DLSS to be active (Upscaling settings)."));
-			if (!ssrEnabled)
-				ImGui::TextColored(ImVec4(1.0f, 0.7f, 0.3f, 1.0f), "%s", T(TKEY("foveated_requires_ssr"), "Requires Screen Space Reflections (Dynamic Cubemaps)."));
+			if (!foveatedDLSSActive) {
+				ImGui::TextColored(ImVec4(1.0f, 0.7f, 0.3f, 1.0f), "%s", T(TKEY("foveated_requires_dlss"), "Requires Foveated DLSS to be active:"));
+				ImGui::SameLine();
+				if (ImGui::TextLink(T(TKEY("foveated_requires_dlss_link"), "Upscaling settings"))) {
+					if (auto* menu = Menu::GetSingleton())
+						menu->SelectFeatureMenu(upscaling.GetShortName());
+				}
+			}
+			if (!ssrEnabled) {
+				ImGui::TextColored(ImVec4(1.0f, 0.7f, 0.3f, 1.0f), "%s", T(TKEY("foveated_requires_ssr"), "Requires Screen Space Reflections:"));
+				ImGui::SameLine();
+				if (ImGui::TextLink(T(TKEY("foveated_requires_ssr_link"), "Dynamic Cubemaps settings"))) {
+					if (auto* menu = Menu::GetSingleton())
+						menu->SelectFeatureMenu(dynamicCubemaps.GetShortName());
+				}
+			}
 
 			ImGui::BeginDisabled(!foveatedDLSSActive || !ssrEnabled);
-			ImGui::Checkbox(T(TKEY("foveated_ssr_raymarching"), "Foveate SSR Raymarching"), &settings.EnableSSRFoveation);
+			ImGui::Checkbox(T(TKEY("foveated_ssr_raymarching"), "Foveate SSR (follows DLSS region)"), &settings.EnableSSRFoveation);
 			if (auto _tt = Util::HoverTooltipWrapper()) {
 				ImGui::Text("%s",
 					T(TKEY("foveated_ssr_raymarching_tooltip"),
@@ -163,7 +172,7 @@ namespace
 			}
 
 			ImGui::BeginDisabled(!settings.EnableSSRFoveation);
-			ImGui::Checkbox("Hard Cutoff Outside Center##SSRFoveation", &settings.EnableSSRFoveationHardCutoff);
+			ImGui::Checkbox(T(TKEY("foveated_ssr_hard_cutoff"), "Hard Cutoff Outside Center##SSRFoveation"), &settings.EnableSSRFoveationHardCutoff);
 			if (auto _tt = Util::HoverTooltipWrapper()) {
 				ImGui::Text("%s",
 					T(TKEY("foveated_hard_cutoff_tooltip"),
@@ -217,6 +226,14 @@ void VR::DrawSettings()
 	if (!menu)
 		return;
 	if (ImGui::BeginTabBar("##VRTabs", ImGuiTabBarFlags_None)) {
+		if (BeginTabItemWithFont(T(TKEY("tab_performance"), "Performance"), Menu::FontRole::Subheading)) {
+			if (ImGui::BeginChild("##VRPerformanceFrame", { 0, 0 }, true)) {
+				VRPerformanceRenderer::Render(this);
+			}
+			ImGui::EndChild();
+			ImGui::EndTabItem();
+		}
+
 		if (BeginTabItemWithFont(T(TKEY("tab_general"), "General"), Menu::FontRole::Subheading)) {
 			if (ImGui::BeginChild("##VRGeneralFrame", { 0, 0 }, true)) {
 				DrawGeneralVRSettings();
@@ -251,6 +268,40 @@ void VR::DrawSettings()
 
 		ImGui::EndTabBar();
 	}
+}
+
+// Central VR Performance hub view: the same stereo + culling controls the Stereo/General
+// tabs render, bound to the same settings. Skips the tab bar so the hub can stack this
+// feature's sections alongside other features' perf controls.
+void VR::DrawVRPerformanceSettings()
+{
+	using StereoMode = VRStereoOptimizations::StereoMode;
+
+	// The profile-controlled lever only; depth culling and detailed tuning live in the
+	// General/Stereo tabs (no duplicate here).
+	bool reproject = stereoOpt.settings.stereoMode != StereoMode::Off;
+	if (ImGui::Checkbox(T(TKEY("vr_perf_reproject"), "Stereo Reprojection"), &reproject))
+		stereoOpt.settings.stereoMode = reproject ? StereoMode::Enable : StereoMode::Off;
+	// stereoMode latches at boot; the shared helper attaches the tooltip and the pending-restart cue.
+	Util::UI::RestartGatedAnnotate(stereoOpt.bootSnapshot, stereoOpt.settings, &VRStereoOptimizations::Settings::stereoMode,
+		T(TKEY("vr_perf_reproject_tooltip"),
+			"Shares eye 0's shading with eye 1 where valid, cutting VR GPU cost. "
+			"Detailed tuning is in the Stereo tab."));
+}
+
+// Stereo reprojection is the big VR GPU-cost saver with a minor disocclusion artifact,
+// so Performance/Balanced enable it and Quality turns it off for maximum fidelity.
+// stereoMode is restart-gated (surfaces its pending banner in the reprojection panel).
+void VR::ApplyVRPerformanceProfile(VRPerfProfile profile)
+{
+	using StereoMode = VRStereoOptimizations::StereoMode;
+	stereoOpt.settings.stereoMode = VRProfileEnablesReproject(profile) ? StereoMode::Enable : StereoMode::Off;
+}
+
+bool VR::MatchesVRPerformanceProfile(VRPerfProfile profile) const
+{
+	using StereoMode = VRStereoOptimizations::StereoMode;
+	return stereoOpt.settings.stereoMode == (VRProfileEnablesReproject(profile) ? StereoMode::Enable : StereoMode::Off);
 }
 
 #undef I18N_KEY_PREFIX

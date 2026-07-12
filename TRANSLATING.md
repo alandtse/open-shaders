@@ -1,6 +1,6 @@
-# Translating Community Shaders
+# Translating Open Shaders
 
-Community Shaders supports multiple languages through a JSON-based translation system.
+Open Shaders supports multiple languages through a JSON-based translation system.
 This document explains how to contribute translations.
 
 ## For Translators (No Coding Required)
@@ -9,7 +9,7 @@ This document explains how to contribute translations.
 
 The easiest way to contribute translations is through our hosted Weblate instance:
 
-1. Visit: **[hosted.weblate.org/projects/community-shaders](https://hosted.weblate.org/projects/community-shaders/)** _(link will be active once configured)_
+1. Visit: **[hosted.weblate.org/engage/open-shaders](https://hosted.weblate.org/engage/open-shaders/)**
 2. Create an account or log in with GitHub
 3. Select your language
 4. Translate strings in the web interface
@@ -39,8 +39,8 @@ Weblate provides:
         "version": "1.0.0",
         "authors": ["Your Name"]
     },
-    "menu.home.welcome": "欢迎使用 Community Shaders {version}",
-    "menu.faq.q1": "什么是 Community Shaders？",
+    "menu.home.welcome": "欢迎使用 Open Shaders {version}",
+    "menu.faq.q1": "什么是 Open Shaders？",
     ...
 }
 ```
@@ -135,4 +135,4 @@ weather_editor.<item>           — Weather editor
 ## CJK Font Support
 
 CJK languages (Chinese, Japanese, Korean) require fonts with appropriate glyph coverage.
-Community Shaders uses system CJK fonts by default.
+Open Shaders uses system CJK fonts by default.

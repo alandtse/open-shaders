@@ -289,6 +289,18 @@ namespace Util
 	/** Draws a theme warning-colored button for cautionary or reversible actions. */
 	bool WarningButton(const char* label, const ImVec2& size = ImVec2(0, 0));
 
+	/** Style for lockable controls where Unlock enters edit mode. */
+	StyledButtonWrapper UnlockButtonStyle();
+
+	/** Draws a green Unlock button for lockable controls. */
+	bool UnlockButton(const char* label, const ImVec2& size = ImVec2(0, 0));
+
+	/** Style for lockable controls where Lock returns to the locked state. */
+	StyledButtonWrapper LockButtonStyle();
+
+	/** Draws a red Lock button for lockable controls. */
+	bool LockButton(const char* label, const ImVec2& size = ImVec2(0, 0));
+
 	/**
 	 * Alpha-based error-color button — use in toolbar rows alongside SuccessButton/WarningButton
 	 * for visual consistency. For standalone destructive actions (delete icons, close buttons),

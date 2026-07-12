@@ -324,16 +324,18 @@ LightLimitFix::ParticleLightReference LightLimitFix::GetParticleLightConfigs(RE:
 	bool hasGradientConfig = false;
 	ParticleLights::GradientConfig gradientConfig{};
 	if (!material->greyscaleTexturePath.empty()) {
-		// Gradients are an optional override: a missing entry falls back to the base
-		// config rather than disabling the particle light entirely.
+		// A greyscale texture must resolve to a known gradient, or the reference is
+		// invalid -- falling back to the base config here let ungated effects (e.g.
+		// Spellforge) get lit and blow out depending on the NIF.
 		const auto gradientName = Util::GetLowercaseStem(material->greyscaleTexturePath.c_str(), ".dds");
-		if (gradientName) {
-			auto& gradientConfigs = particleLights.particleLightGradientConfigs;
-			if (auto itGradient = gradientConfigs.find(*gradientName); itGradient != gradientConfigs.end()) {
-				hasGradientConfig = true;
-				gradientConfig = itGradient->second;
-			}
-		}
+		if (!gradientName)
+			return cacheInvalidReference(node);
+		auto& gradientConfigs = particleLights.particleLightGradientConfigs;
+		auto itGradient = gradientConfigs.find(*gradientName);
+		if (itGradient == gradientConfigs.end())
+			return cacheInvalidReference(node);
+		hasGradientConfig = true;
+		gradientConfig = itGradient->second;
 	}
 
 	ParticleLightReference reference{};

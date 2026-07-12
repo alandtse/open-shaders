@@ -147,8 +147,9 @@ namespace Stereo
 		float2 clampedMono = prevUVmono;
 
 #ifdef VR
-		// VR logic: mono.x < 0 is clamped to 0, not rejected. OOB fires for mono.x >= 1 or mono.y outside [0, 1] inclusive.
-		isOutOfBounds = (prevUVmono.x >= 1.0) || (prevUVmono.y <= 0.0) || (prevUVmono.y >= 1.0);
+		// Reject the left edge (mono.x <= 0) too, not clamp-and-sample: clamping smears a
+		// stretched history column at each eye's left/centre-seam edge on fast head turns.
+		isOutOfBounds = (prevUVmono.x >= 1.0) || (prevUVmono.x <= 0.0) || (prevUVmono.y <= 0.0) || (prevUVmono.y >= 1.0);
 		clampedMono.x = saturate(prevUVmono.x);
 #else
 		// SE logic: inclusive boundaries on both sides.
@@ -567,13 +568,30 @@ namespace Stereo
 		float2 monoUV = ConvertFromStereoUV(stereoUV, eyeIndex);
 		float3 otherEyeUV = ConvertMonoUVToOtherEye(float3(monoUV, depth), eyeIndex);
 
-		if (FrameBuffer::IsOutsideFrame(otherEyeUV.xy, false))
+		if (FrameBuffer::IsOutsideFrame(otherEyeUV.xy, false)) {
+			result.skipReason = 3;  // out of bounds
 			return result;
+		}
 
 		result.otherStereoUV = ConvertToStereoUV(otherEyeUV.xy, otherEyeIndex);
 		result.otherPx = clamp(int2(result.otherStereoUV * frameDim), int2(0, 0), int2(frameDim) - 1);
 		result.valid = true;
 		return result;
+	}
+
+	/**
+	* @brief Canonical view-independent reprojection test: can this pixel take
+	* the other eye's value exactly?
+	*
+	* True only when the reprojection landed in-frame (result.valid) and the other eye
+	* shows the same surface (depths agree within agreeThreshold). Consumers use the one
+	* test both to skip the eye's own compute and to gate the transfer in the reproject
+	* pass, so the hit/miss decisions cannot drift. Depths must be in the same comparable
+	* space (raw/NDC); the caller converts and applies mask/sky rejection first.
+	*/
+	bool IsReprojectionExact(StereoBilateralResult result, float depth, float otherEyeDepth, float agreeThreshold)
+	{
+		return result.valid && (abs(otherEyeDepth - depth) <= agreeThreshold);
 	}
 
 	/**
@@ -671,10 +689,7 @@ namespace Stereo
 			r.skipReason = 1;  // source edge
 			return r;
 		}
-		r = ReprojectToOtherEye(stereoUV, centerDepthNDC, eyeIndex, frameDim);
-		if (!r.valid)
-			r.skipReason = 3;  // out of bounds
-		return r;
+		return ReprojectToOtherEye(stereoUV, centerDepthNDC, eyeIndex, frameDim);
 	}
 
 	/**

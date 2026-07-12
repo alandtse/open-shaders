@@ -53,11 +53,22 @@ public:
 		kDLSS
 	};
 
+	// Upscale preset indexed by numeric value: lower values (Quality) mean higher internal
+	// render resolution; higher values (Ultra Performance) upscale more. Matches FfxFsr3QualityMode.
+	enum class QualityMode : uint
+	{
+		kNativeAA = 0,
+		kQuality = 1,
+		kBalanced = 2,
+		kPerformance = 3,
+		kUltraPerformance = 4,
+	};
+
 	struct Settings
 	{
 		uint upscaleMethod = (uint)UpscaleMethod::kDLSS;
 		uint upscaleMethodNoDLSS = (uint)UpscaleMethod::kFSR;
-		uint qualityMode = 1;  // Default to Quality (1=Quality, 2=Balanced, 3=Performance, 4=Ultra Performance, 0=Native AA)
+		uint qualityMode = (uint)QualityMode::kQuality;
 		uint frameLimitMode = 1;
 		uint frameGenerationMode = 1;
 		uint frameGenerationForceEnable = 0;
@@ -112,8 +123,19 @@ public:
 		uint pad0;
 	};
 
+	struct CameraMotionVectorsCB
+	{
+		float4x4 curViewProjUnjitteredInverse[2];  // index 1 unused in flat
+		float4x4 prevViewProjUnjittered[2];
+	};
+
 	ConstantBuffer* jitterCB = nullptr;
 	ConstantBuffer* upscalingDataCB = nullptr;
+	ConstantBuffer* cameraMotionVectorsCB = nullptr;
+
+	// True while the current menu frame's MV buffer holds camera-derived motion
+	// (written by FillMenuCameraMotionVectors); gates the upscalers' menu reset.
+	bool menuCameraMVsValid = false;
 
 	// Runtime state
 	bool isWindowed = false;
@@ -160,6 +182,20 @@ public:
 	size_t GetSettingsBlobSize() const override { return sizeof(settings); }
 
 	virtual void DrawSettings() override;
+	virtual void DrawVRPerformanceSettings() override;
+	std::string GetVRPerformanceSectionLabel() override;
+	int GetVRPerformanceOrder() const override { return 10; }
+	virtual void ApplyVRPerformanceProfile(VRPerfProfile profile) override;
+	bool MatchesVRPerformanceProfile(VRPerfProfile profile) const override;
+	/// @brief Renders the VR PerfMode (render-at-upscaled-res) toggle. Shared by the
+	/// upscaler panel and the VR Performance hub. VR-only; caller guards on isVR.
+	void DrawPerfModeToggle();
+	/// @brief Renders the Foveated DLSS enable + tuning tree. Shared by the upscaler
+	/// panel and the VR Performance hub. VR-only; caller guards on isVR.
+	void DrawFoveationControls(bool showTuning = true);
+	static uint VRProfileQualityMode(VRPerfProfile profile);
+	static bool VRProfileFoveation(VRPerfProfile profile);
+	const char* GetQualityModeName(uint qualityMode) const;
 	virtual void SaveSettings(json& o_json) override;
 	virtual void LoadSettings(json& o_json) override;
 	virtual void RestoreDefaultSettings() override;
@@ -208,6 +244,17 @@ public:
 
 	winrt::com_ptr<ID3D11PixelShader> underwaterMaskUpscalePS;
 	ID3D11PixelShader* GetUnderwaterMaskUpscalePS();
+
+	winrt::com_ptr<ID3D11PixelShader> cameraMotionVectorsPS;
+	ID3D11PixelShader* GetCameraMotionVectorsPS();
+
+	/**
+	 * @brief Writes camera-derived motion vectors into kMOTION_VECTOR from depth and the
+	 *        unjittered view-proj delta. Valid only when nothing but the camera moves
+	 *        (the main menu, where no geometry pass writes motion vectors).
+	 *        Sets menuCameraMVsValid on success.
+	 */
+	void FillMenuCameraMotionVectors();
 
 	winrt::com_ptr<ID3D11VertexShader> upscaleVS;
 	ID3D11VertexShader* GetUpscaleVS();

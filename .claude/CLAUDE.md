@@ -11,6 +11,7 @@ This file provides guidance to coding agents when working with code in this repo
 -   **Minimal Churn:** Do not reformat unrelated code or rename adjacent variables outside the PR scope.
 -   **DRY Review:** Check new code against existing shared utilities codebase-wide (e.g. `SetResourceName`, `GetGameSettingValue`, `isVR` cache, serialize/format/filesystem helpers).
 -   **DirectX Naming:** Name every D3D11 resource using `Util::SetResourceName`. Canonical implementation is in `Utils/D3D.cpp`; never duplicate the GUID or re-implement inline.
+-   **Perf Instrumentation:** Use `CS_GPU_PASS("Feature::Pass")` (RAII `ScopedGpuPass`, `src/GpuPass.h`) at every render-pass entry point, new or ported. It is the single canonical helper for perf timing — one call gets the internal profiler, a Tracy CPU zone, a Tracy GPU zone, and the RenderDoc/PIX annotation together. Never hand-roll `state->BeginPerfEvent`/`EndPerfEvent` pairs or raw `TracyD3D11Zone` at a pass entry. **Code transplanted from another fork is a common violation source** — sibling forks use their own raw annotation patterns; swap them for `CS_GPU_PASS` during the port, don't carry them over.
 -   **VR Maintenance:** Keep VR divergence to the absolute minimum necessary. Resolve merge conflicts in favor of keeping VR.
 -   **Git Safety:** Never force-push/rebase shared branches (`main`, `dev`, `hotfix/*`). Never manually create `v*` tags, hand-modify `CMakeLists.txt` version, or run release workflow on `hotfix/X.Y.x` for the current line.
 -   **Upstream Sync:** Merge, never cherry-pick. Land sync PRs as merge commits, never squash. Verify ancestry after merging.
@@ -87,6 +88,7 @@ This file provides guidance to coding agents when working with code in this repo
 
 -   **Pass Instrumentation:** Wrap every new render pass entry point with the `CS_GPU_PASS("Feature::Pass")` macro (RAII `ScopedGpuPass`). Do not use direct `TracyD3D11Zone` or `State::BeginPerfEvent` at pass entry sites.
 -   **Sub-Dispatch Annotations:** Raw/legacy zones (such as `TracyD3D11Zone`) are only appropriate for sub-dispatches within a pass where profiler timer granularity is not required.
+-   **Ported Code:** When transplanting a pass from another fork, its own raw `BeginPerfEvent`/`EndPerfEvent` or `TracyD3D11Zone` calls do not carry the fork's meaning here — replace them with `CS_GPU_PASS` as part of the port, not a follow-up. Give the two dispatch paths of a runtime-vs-fallback feature distinct pass names (e.g. `Feature::RuntimeDispatch` vs `Feature::HostDispatch`) so they can be A/B'd against each other via Tracy.
 -   **Justifying Speedups:** PRs claiming performance speedups (or `perf:` commits) must state a measured number in their description:
     -   Justify at the PR level, not per commit.
     -   Normalize cost/savings as a percentage of the target frame budget (VR 90fps ≈ 11.1ms; flatrim 60fps ≈ 16.7ms). Do not quote raw wall-clock deltas.

@@ -366,7 +366,14 @@ namespace Util
 			if (showDontAskAgain)
 				ImGui::Checkbox(T("ui.dont_ask_again", "Don't ask me again"), &dontAskCheckbox);
 
-			constexpr float buttonWidth = ThemeManager::Constants::POPUP_BUTTON_WIDTH;
+			const auto buttonWidthForLabel = [](const std::string& label) {
+				return ImGui::CalcTextSize(label.c_str()).x + ImGui::GetStyle().FramePadding.x * 2.0f;
+			};
+			const float buttonWidth = std::max({
+				ThemeManager::Constants::POPUP_BUTTON_WIDTH * GetUIScale(),
+				buttonWidthForLabel(confirmLabel),
+				buttonWidthForLabel(cancelLabel),
+			});
 			const float spacing = ImGui::GetStyle().ItemSpacing.x;
 			const float totalWidth = buttonWidth * 2 + spacing;
 			const float offset = (ImGui::GetWindowWidth() - totalWidth) * 0.5f;
@@ -524,6 +531,11 @@ namespace Util
 
 	namespace ButtonHelpers
 	{
+		constexpr ImVec4 kUnlockButtonColor = ImVec4(0.2f, 0.8f, 0.2f, 1.0f);
+		constexpr ImVec4 kUnlockButtonHoverColor = ImVec4(0.3f, 0.9f, 0.3f, 1.0f);
+		constexpr ImVec4 kLockButtonColor = ImVec4(0.8f, 0.2f, 0.2f, 1.0f);
+		constexpr ImVec4 kLockButtonHoverColor = ImVec4(0.9f, 0.3f, 0.3f, 1.0f);
+
 		ImVec4 AdjustButtonColor(const ImVec4& color, float amount)
 		{
 			const float maxChannel = std::max({ color.x, color.y, color.z });
@@ -597,6 +609,26 @@ namespace Util
 	bool WarningButton(const char* label, const ImVec2& size)
 	{
 		return ButtonHelpers::InvokeStyledButton(WarningButtonStyle, [&] { return ImGui::Button(label, size); });
+	}
+
+	StyledButtonWrapper UnlockButtonStyle()
+	{
+		return StyledButtonWrapper(ButtonHelpers::kUnlockButtonColor, ButtonHelpers::kUnlockButtonHoverColor, ButtonHelpers::kUnlockButtonHoverColor);
+	}
+
+	bool UnlockButton(const char* label, const ImVec2& size)
+	{
+		return ButtonHelpers::InvokeStyledButton(UnlockButtonStyle, [&] { return ImGui::Button(label, size); });
+	}
+
+	StyledButtonWrapper LockButtonStyle()
+	{
+		return StyledButtonWrapper(ButtonHelpers::kLockButtonColor, ButtonHelpers::kLockButtonHoverColor, ButtonHelpers::kLockButtonHoverColor);
+	}
+
+	bool LockButton(const char* label, const ImVec2& size)
+	{
+		return ButtonHelpers::InvokeStyledButton(LockButtonStyle, [&] { return ImGui::Button(label, size); });
 	}
 
 	bool ErrorTextButton(const char* label, const ImVec2& size)
@@ -2134,7 +2166,7 @@ namespace Util
 			}
 
 			auto* globalRegistry = WeatherVariables::GlobalWeatherRegistry::GetSingleton();
-			auto* weatherManager = WeatherManager::GetSingleton();
+			auto* weatherManager = globals::weatherManager;
 
 			// Check if this feature has registered weather variables
 			std::string featureName = feature->GetShortName();
@@ -2168,7 +2200,7 @@ namespace Util
 			bool isControlled = IsWeatherControlled(feature, settingName);
 
 			if (isControlled) {
-				auto* weatherManager = WeatherManager::GetSingleton();
+				auto* weatherManager = globals::weatherManager;
 				auto currentWeathers = weatherManager->GetCurrentWeathers();
 
 				// Make it look like a clickable button when weather-controlled
@@ -2187,7 +2219,7 @@ namespace Util
 
 				// Check if clicked
 				if (ImGui::IsItemClicked()) {
-					auto* weatherManager = WeatherManager::GetSingleton();
+					auto* weatherManager = globals::weatherManager;
 					auto* editorWindow = EditorWindow::GetSingleton();
 					auto currentWeathers = weatherManager->GetCurrentWeathers();
 
@@ -2201,7 +2233,7 @@ namespace Util
 
 				if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
 					ImGui::BeginTooltip();
-					auto* weatherManager = WeatherManager::GetSingleton();
+					auto* weatherManager = globals::weatherManager;
 					auto currentWeathers = weatherManager->GetCurrentWeathers();
 					ImGui::PushTextWrapPos(ImGui::GetFontSize() * 35.0f);
 					Util::Text::Warning("%s", T("ui.weather_override_active", "Weather Override Active"));
@@ -2224,7 +2256,7 @@ namespace Util
 			bool isControlled = IsWeatherControlled(feature, settingName);
 
 			if (isControlled) {
-				auto* weatherManager = WeatherManager::GetSingleton();
+				auto* weatherManager = globals::weatherManager;
 				auto currentWeathers = weatherManager->GetCurrentWeathers();
 
 				ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0.3f, 0.3f, 0.4f, 0.8f));
@@ -2241,7 +2273,7 @@ namespace Util
 				ImGui::PopStyleColor(2);
 
 				if (ImGui::IsItemClicked()) {
-					auto* weatherManager = WeatherManager::GetSingleton();
+					auto* weatherManager = globals::weatherManager;
 					auto* editorWindow = EditorWindow::GetSingleton();
 					auto currentWeathers = weatherManager->GetCurrentWeathers();
 
@@ -2255,7 +2287,7 @@ namespace Util
 
 				if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
 					ImGui::BeginTooltip();
-					auto* weatherManager = WeatherManager::GetSingleton();
+					auto* weatherManager = globals::weatherManager;
 					auto currentWeathers = weatherManager->GetCurrentWeathers();
 					ImGui::PushTextWrapPos(ImGui::GetFontSize() * 35.0f);
 					Util::Text::Warning("%s", T("ui.weather_override_active", "Weather Override Active"));
@@ -2278,7 +2310,7 @@ namespace Util
 			bool isControlled = IsWeatherControlled(feature, settingName);
 
 			if (isControlled) {
-				auto* weatherManager = WeatherManager::GetSingleton();
+				auto* weatherManager = globals::weatherManager;
 				auto currentWeathers = weatherManager->GetCurrentWeathers();
 
 				ImGui::PushStyleVar(ImGuiStyleVar_Alpha, ImGui::GetStyle().Alpha * 0.7f);
@@ -2292,7 +2324,7 @@ namespace Util
 				ImGui::PopStyleVar();
 
 				if (ImGui::IsItemClicked()) {
-					auto* weatherManager = WeatherManager::GetSingleton();
+					auto* weatherManager = globals::weatherManager;
 					auto* editorWindow = EditorWindow::GetSingleton();
 					auto currentWeathers = weatherManager->GetCurrentWeathers();
 
@@ -2306,7 +2338,7 @@ namespace Util
 
 				if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
 					ImGui::BeginTooltip();
-					auto* weatherManager = WeatherManager::GetSingleton();
+					auto* weatherManager = globals::weatherManager;
 					auto currentWeathers = weatherManager->GetCurrentWeathers();
 					ImGui::PushTextWrapPos(ImGui::GetFontSize() * 35.0f);
 					Util::Text::Warning("%s", T("ui.weather_override_active", "Weather Override Active"));
@@ -2329,7 +2361,7 @@ namespace Util
 			bool isControlled = IsWeatherControlled(feature, settingName);
 
 			if (isControlled) {
-				auto* weatherManager = WeatherManager::GetSingleton();
+				auto* weatherManager = globals::weatherManager;
 				auto currentWeathers = weatherManager->GetCurrentWeathers();
 
 				ImGui::PushStyleVar(ImGuiStyleVar_Alpha, ImGui::GetStyle().Alpha * 0.7f);
@@ -2343,7 +2375,7 @@ namespace Util
 				ImGui::PopStyleVar();
 
 				if (ImGui::IsItemClicked()) {
-					auto* weatherManager = WeatherManager::GetSingleton();
+					auto* weatherManager = globals::weatherManager;
 					auto* editorWindow = EditorWindow::GetSingleton();
 					auto currentWeathers = weatherManager->GetCurrentWeathers();
 
@@ -2357,7 +2389,7 @@ namespace Util
 
 				if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
 					ImGui::BeginTooltip();
-					auto* weatherManager = WeatherManager::GetSingleton();
+					auto* weatherManager = globals::weatherManager;
 					auto currentWeathers = weatherManager->GetCurrentWeathers();
 					ImGui::PushTextWrapPos(ImGui::GetFontSize() * 35.0f);
 					Util::Text::Warning("%s", T("ui.weather_override_active", "Weather Override Active"));

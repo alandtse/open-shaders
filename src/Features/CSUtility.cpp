@@ -4,6 +4,7 @@
 #include "I18n/I18n.h"
 #include "LightLimitFix.h"
 #include "LinearLighting.h"
+#include "UnderwaterDepthOfField.h"
 #include "Utils/PointLightFlags.h"
 #include "Utils/UI.h"
 
@@ -40,6 +41,8 @@ namespace
 		a_settings.linearSpotlightMult = ClampFiniteOrDefault(a_settings.linearSpotlightMult, kMultiplierMin, kMultiplierMax, defaults.linearSpotlightMult);
 		a_settings.omnidirectionalBulbMult = ClampFiniteOrDefault(a_settings.omnidirectionalBulbMult, kMultiplierMin, kMultiplierMax, defaults.omnidirectionalBulbMult);
 		a_settings.linearOmnidirectionalBulbMult = ClampFiniteOrDefault(a_settings.linearOmnidirectionalBulbMult, kMultiplierMin, kMultiplierMax, defaults.linearOmnidirectionalBulbMult);
+		CSUtility::SanitizeDepthOfFieldOverride(a_settings.sceneDof);
+		CSUtility::SanitizeDepthOfFieldOverride(a_settings.underwaterDof);
 	}
 
 	void DrawMultiplierSlider(const char* a_label, float& a_value, float a_max = kMultiplierMax)
@@ -62,6 +65,33 @@ namespace
 }
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
+	CSUtility::DepthOfFieldAutoFocusSettings,
+	nearDistance,
+	farDistance,
+	nearRange,
+	farRange,
+	nearBlur,
+	farBlur,
+	blurMultiplier)
+
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
+	CSUtility::DepthOfFieldSettings,
+	strength,
+	distance,
+	range,
+	mode,
+	excludeSky,
+	autoFocus,
+	autoFocusSettings,
+	blurRadius)
+
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
+	CSUtility::DepthOfFieldOverride,
+	locked,
+	values,
+	baseline)
+
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	CSUtility::Settings,
 	skyBrightness,
 	directionalLightMult,
@@ -70,7 +100,9 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	spotlightMult,
 	linearSpotlightMult,
 	omnidirectionalBulbMult,
-	linearOmnidirectionalBulbMult)
+	linearOmnidirectionalBulbMult,
+	sceneDof,
+	underwaterDof)
 
 void CSUtility::DrawSettings()
 {
@@ -94,6 +126,8 @@ void CSUtility::DrawSettings()
 			}
 			ImGui::EndTabItem();
 		}
+
+		DrawDepthOfFieldSettings();
 
 		ImGui::EndTabBar();
 	}
@@ -192,6 +226,12 @@ struct CSUtility::Hooks
 void CSUtility::PostPostLoad()
 {
 	Hooks::Install();
+	InstallDepthOfFieldHooks();
+}
+
+void CSUtility::DataLoaded()
+{
+	UnderwaterDepthOfField::InstallHooks();
 }
 
 #undef I18N_KEY_PREFIX

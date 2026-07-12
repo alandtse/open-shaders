@@ -193,6 +193,54 @@ public:
 	virtual void OnSceneTransitionReset(bool /*opening*/) {}
 	virtual void DrawSettings() {}
 
+	/**
+	 * @brief Renders this feature's VR performance-relevant controls into the central
+	 * VR Performance panel. Default empty: features without VR perf knobs contribute
+	 * nothing (fail-safe: no registry to keep in sync). Overrides should render the
+	 * SAME controls (bound to the same settings) they show in their own panel, so the
+	 * hub and the feature panel are two views of one state. The hub draws the section
+	 * header (with a jump link to the feature's panel); overrides render controls only.
+	 */
+	virtual void DrawVRPerformanceSettings() {}
+
+	/** @brief Section label the VR Performance hub draws (as a jump link to this
+	 *         feature's panel) above this feature's controls. Override alongside
+	 *         DrawVRPerformanceSettings; empty (default) draws no header. */
+	virtual std::string GetVRPerformanceSectionLabel() { return ""; }
+
+	/** @brief Sort key for the VR Performance hub (lower draws first); default puts
+	 *         unranked features last so the order reflects perf impact, not registration. */
+	virtual int GetVRPerformanceOrder() const { return 1000; }
+
+	/** @brief Named VR performance profiles broadcast from the VR Performance hub. */
+	enum class VRPerfProfile
+	{
+		Performance,  ///< Maximum framerate: lowest render res, all perf features on.
+		Balanced,     ///< Middle ground.
+		Quality       ///< Maximum fidelity: higher render res, perf shortcuts off.
+	};
+
+	/** @brief Shared profile convention: every VR reprojection feature enables reproject
+	 *         except on Quality (max fidelity). One source so apply/match can't drift. */
+	static constexpr bool VRProfileEnablesReproject(VRPerfProfile profile) { return profile != VRPerfProfile::Quality; }
+
+	/**
+	 * @brief Applies a VR performance profile to this feature's settings. Default empty:
+	 * each feature maps the profile to its own settings (decoupled: the hub broadcasts
+	 * one profile to every feature, none needs to know about the others). Restart-gated
+	 * fields changed here surface their pending-restart banners as usual.
+	 */
+	virtual void ApplyVRPerformanceProfile(VRPerfProfile /*profile*/) {}
+
+	/** @brief True when this feature's settings already equal what ApplyVRPerformanceProfile
+	 *         would set for @p profile. The hub uses it to show the active profile (or Custom).
+	 *         Default true so features without perf profiles don't veto the match. */
+	virtual bool MatchesVRPerformanceProfile(VRPerfProfile /*profile*/) const { return true; }
+
+	/** @brief Broadcasts a profile to every loaded feature. The hub button and the devbench
+	 *         handler share this so the loaded-guard rule lives in exactly one place. */
+	static void ApplyVRPerformanceProfileToAll(VRPerfProfile profile);
+
 	/** @brief Draws the UI shown when this feature failed to load. */
 	virtual void DrawUnloadedUI();
 

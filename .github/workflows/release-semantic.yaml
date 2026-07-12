@@ -148,12 +148,15 @@ jobs:
             # Escape hatch: the audit runs from the dispatched branch here (not
             # under pull_request_target), but a misfiring bump algorithm can still
             # apply a wrong version. Tick skip_feature_bumps to hand-manage instead.
+            #
+            # Repo-relative output: the Semantic Release step below reads
+            # this file from the checkout to build the release notes.
             - name: Apply feature version bumps
               if: ${{ !inputs.skip_feature_bumps }}
               run: |
                   python tools/feature_version_audit.py \
                     --apply-bumps \
-                    --output /tmp/feature-version-audit.txt
+                    --output feature-audit-notes.md
 
             - name: Semantic Release
               id: semantic

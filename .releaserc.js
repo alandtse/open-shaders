@@ -21,6 +21,9 @@ module.exports = {
   plugins: [
     '@semantic-release/commit-analyzer',
     '@semantic-release/release-notes-generator',
+    // Must follow release-notes-generator: generateNotes outputs concatenate
+    // in plugins-array order.
+    './tools/release-notes-feature-audit-plugin.js',
     [
       '@google/semantic-release-replace-plugin',
       {

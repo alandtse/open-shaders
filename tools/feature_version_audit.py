@@ -27,8 +27,7 @@ DEFAULT_SHADER_TYPES = (".ini", ".hlsl", ".hlsli")
 RE_MOD_ID = re.compile(r'MOD_ID\s*=\s*"([^"]+)"')
 RE_FEATURE_MOD_LINK_DIRECT = re.compile(r'GetFeatureModLink\s*\([^)]*\)\s*\{\s*return\s*"(https?://[^"]+)";\s*\}')
 RE_FEATURE_MOD_LINK_NEXUS = re.compile(r'GetFeatureModLink\s*\([^)]*\)\s*\{\s*return\s*MakeNexusModURL\(MOD_ID\);')
-RE_FEATURE_SUMMARY_DIRECT = re.compile(r'GetFeatureSummary\s*\([^)]*\)\s*(?:override)?\s*\{\s*return \{\s*"([^"]+)"\s*,\s*\{([^}]*)\}', re.DOTALL)
-RE_FEATURE_SUMMARY_MULTILINE = re.compile(r'GetFeatureSummary\s*\([^)]*\)\s*(?:override)?\s*\{\s*return \{\s*((?:"[^"]*"\s*)+),\s*\{([^}]*)\}', re.DOTALL)
+RE_FEATURE_SUMMARY_DIRECT = re.compile(r'GetFeatureSummary\s*\([^)]*\)\s*(?:override)?\s*\{\s*return \{\s*(.*?)\s*,\s*\{([^}]*)\}', re.DOTALL)
 RE_FEATURE_SUMMARY_CPP = re.compile(r'GetFeatureSummary\s*\([^)]*\)\s*\{[^}]*?std::string description\s*=\s*"([^"]+)";\s*std::vector<std::string> keyFeatures\s*=\s*\{([^}]*)\}', re.DOTALL)
 RE_FEATURE_SUMMARY_CPP_MULTILINE = re.compile(r'GetFeatureSummary\s*\([^)]*\)\s*\{[^}]*?std::string description\s*=\s*((?:"[^"]*"\s*)+);\s*std::vector<std::string> keyFeatures\s*=\s*\{([^}]*)\}', re.DOTALL)
 RE_FEATURE_DESCRIPTION_DIRECT = re.compile(r'GetFeatureDescription\s*\([^)]*\)\s*\{\s*return\s*"([^"]+)";\s*\}')
@@ -68,6 +67,28 @@ def extract_regex(pattern, content, group=1):
 
 def extract_multiline_strings(multiline):
     return [d.replace("\n", " ").strip() for d in re.findall(r'"([^\"]*)"', multiline) if d.strip()]
+
+# T()'s value arg may be several adjacent C++ string literals; capture all
+# of them or the whole T(...) match fails and falls through to matching
+# the args (including the key) individually as bare strings.
+RE_T_OR_LITERAL = re.compile(r'T\s*\(\s*"[^"]*"\s*,\s*((?:"[^"]*"\s*)+)\)|"([^"]*)"', re.DOTALL)
+
+def _unescape_cpp_string(s):
+    # Only escapes plausible in a UI string; a literal \n must become a
+    # space like a real source newline does, not "\n" in the output.
+    return s.replace("\\n", " ").replace("\\t", " ").replace('\\"', '"').replace("\\\\", "\\")
+
+def extract_t_or_literal_strings(blob):
+    results = []
+    for m in RE_T_OR_LITERAL.finditer(blob):
+        if m.group(1) is not None:
+            # Adjacent literals concatenate directly; C++ has no separator.
+            parts = re.findall(r'"([^"]*)"', m.group(1))
+            text = "".join(parts)
+        else:
+            text = m.group(2)
+        results.append(_unescape_cpp_string(text).replace("\n", " ").strip())
+    return results
 
 def normalize_feature_key(name):
     return ''.join(str(name or '').lower().replace('-', ' ').split())
@@ -336,6 +357,16 @@ def get_changed_files(feature_path, base_ref, file_types=None):
     except Exception:
         return []
 
+def is_version_relevant(file, ini_path):
+    # Version keys shader-cache invalidation; only .hlsl/.hlsli and the
+    # canonical ini can affect that cache, so other .ini files don't count.
+    ext = os.path.splitext(file)[1].lower()
+    if ext != ".ini":
+        return True
+    if not ini_path:
+        return False
+    return Path(file).resolve() == Path(ini_path).resolve()
+
 def get_commits_for_file(file_path, base_ref):
     try:
         output = subprocess.check_output(
@@ -456,15 +487,12 @@ def parse_feature_metadata_file(path, mod_id=None, is_core=False):
             mod_link = DEFAULT_NEXUS_BASE_URL + mod_id
         if not mod_link and not is_core and mod_id:
             mod_link = DEFAULT_NEXUS_BASE_URL + mod_id
-        # GetFeatureSummary
+        # Splits key features on their own T()/literal boundaries, not a
+        # naive comma-split (which breaks inside each T("key", "text")).
         m = RE_FEATURE_SUMMARY_DIRECT.search(content)
         if m:
-            description = m.group(1).replace("\n", " ").strip()
-            key_features = [k.strip().strip('"') for k in m.group(2).split(',') if k.strip()]
-        m = RE_FEATURE_SUMMARY_MULTILINE.search(content)
-        if m:
-            description = " ".join(extract_multiline_strings(m.group(1)))
-            key_features = [k.strip().strip('"') for k in m.group(2).split(',') if k.strip()]
+            description = " ".join(extract_t_or_literal_strings(m.group(1)))
+            key_features = extract_t_or_literal_strings(m.group(2))
         m = RE_FEATURE_SUMMARY_CPP.search(content)
         if m:
             description = m.group(1).replace("\n", " ").strip()
@@ -636,8 +664,12 @@ def propose_new_version(prior_version, commits, prior_stage=STAGE_RELEASE, curre
     # Pre-release stage transitions take precedence over commit-based bumps.
     if current_stage in (STAGE_ALPHA, STAGE_BETA):
         if prior_stage == STAGE_RELEASE:
-            # Entering pre-release from release/fresh: fixed baselines.
-            return (0, 1, 0) if current_stage == STAGE_ALPHA else (0, 2, 0)
+            if major == 0:
+                # Genuinely new, never-stable feature: fixed baselines.
+                return (0, 1, 0) if current_stage == STAGE_ALPHA else (0, 2, 0)
+            # Already >=1.0.0: re-tagging a mature feature Alpha/Beta (e.g.
+            # for a packaging reason) must not read as a version downgrade.
+            return None
         if prior_stage == STAGE_ALPHA and current_stage == STAGE_BETA:
             # alpha -> beta: extra minor bump, patch reset.
             return (0, minor + 1, 0)
@@ -735,12 +767,12 @@ def analyze_features(FEATURES_DIR, feature_meta_map, base_ref, only_changed=Fals
         # PR-scoped changes: used for change-type display and new-feature detection.
         # Only packaged files under features/ participate in feature versioning.
         changes = get_changed_files(feature_dir, base_ref)
-        changes = list(set(changes))
+        changes = [c for c in set(changes) if is_version_relevant(c[1], ini_path)]
 
         # Release-scoped changes: all changes since last release, used to propose the correct
         # version so that a bump already applied by a prior PR satisfies this check.
         release_changes = get_changed_files(feature_dir, version_ref)
-        release_changes = list(set(release_changes))
+        release_changes = [c for c in set(release_changes) if is_version_relevant(c[1], ini_path)]
 
         change_types = set(os.path.splitext(f)[1].lower() for _, f in changes)
         all_commits = []

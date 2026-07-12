@@ -34,7 +34,8 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	NormalDisocclusion,
 	MaxAccumFrames,
 	BlurRadius,
-	DistanceNormalisation)
+	DistanceNormalisation,
+	UseStereoReproject)
 
 ////////////////////////////////////////////////////////////////////////////////////
 
@@ -42,6 +43,37 @@ void ScreenSpaceGI::RestoreDefaultSettings()
 {
 	settings = {};
 	recompileFlag = true;
+}
+
+void ScreenSpaceGI::DrawReprojectToggle()
+{
+	auto reprojectGuard = Util::DisableGuard(settings.EnableExperimentalSpecularGI);
+	ImGui::Checkbox(T(TKEY("vr_stereo_reproject"), "Stereo Reprojection"), &settings.UseStereoReproject);
+	if (auto _tt = Util::HoverTooltipWrapper())
+		ImGui::Text("%s", T(TKEY("vr_stereo_reproject_tooltip"),
+							  "Reprojects Eye 0 (left)'s diffuse GI into Eye 1 (right) and skips the Eye 1 "
+							  "march where it can, reducing GPU cost. Requires HQ Specular IL off (specular "
+							  "is view-dependent). Disoccluded pixels are marched natively instead."));
+}
+
+// Hub view: the SSGI stereo reprojection toggle, bound to the same setting the SSGI panel shows.
+void ScreenSpaceGI::DrawVRPerformanceSettings()
+{
+	DrawReprojectToggle();
+}
+
+// Reprojection is the GI perf win with a minor disocclusion artifact: on for
+// Performance/Balanced, off for Quality (max fidelity). Ignored when specular GI is on.
+void ScreenSpaceGI::ApplyVRPerformanceProfile(VRPerfProfile profile)
+{
+	settings.UseStereoReproject = VRProfileEnablesReproject(profile);
+}
+
+bool ScreenSpaceGI::MatchesVRPerformanceProfile(VRPerfProfile profile) const
+{
+	// Specular GI forces bilateral sync (view-dependent), so the reproject setting is moot
+	// then, so don't veto the hub's active-profile detection for a knob the user can't apply.
+	return settings.EnableExperimentalSpecularGI || settings.UseStereoReproject == VRProfileEnablesReproject(profile);
 }
 
 void ScreenSpaceGI::DrawSettings()
@@ -84,6 +116,9 @@ void ScreenSpaceGI::DrawSettings()
 			recompileFlag |= ImGui::Checkbox(T(TKEY("hq_specular_il"), "(Experimental) HQ Specular IL"), &settings.EnableExperimentalSpecularGI);
 			if (auto _tt = Util::HoverTooltipWrapper())
 				ImGui::Text("%s", T(TKEY("hq_specular_il_tooltip"), "An experimental specular GI that is more accurate but requires more samples. Won't be blurred."));
+
+			if (globals::game::isVR)
+				DrawReprojectToggle();
 		}
 
 		ImGui::EndTable();
@@ -588,7 +623,7 @@ void ScreenSpaceGI::SetupResources()
 void ScreenSpaceGI::ClearShaderCache()
 {
 	static const std::vector<winrt::com_ptr<ID3D11ComputeShader>*> shaderPtrs = {
-		&prefilterDepthsCompute, &prefilterRadianceCompute, &prefilterNormalCompute, &radianceDisoccCompute, &giCompute, &blurCompute, &stereoSyncCompute, &upsampleCompute
+		&prefilterDepthsCompute, &prefilterRadianceCompute, &prefilterNormalCompute, &radianceDisoccCompute, &giCompute, &giEye0OnlyCompute, &blurCompute, &stereoSyncCompute, &reprojectCompute, &upsampleCompute
 	};
 
 	for (auto shader : shaderPtrs)
@@ -617,8 +652,16 @@ void ScreenSpaceGI::CompileComputeShaders()
 			{ &upsampleCompute, "upsample.cs.hlsl", {} },
 		};
 
-	if (globals::game::isVR)
+	if (globals::game::isVR) {
 		shaderInfos.push_back({ &stereoSyncCompute, "stereoSync.cs.hlsl", { { "FRAMEBUFFER", "" } } });
+		shaderInfos.push_back({ &reprojectCompute, "reproject.cs.hlsl", { { "FRAMEBUFFER", "" } } });
+		// Eye-0-only GI permutation for the reproject path. FRAMEBUFFER exposes the
+		// Stereo:: reprojection helpers (gated out of VR.hlsli for plain compute). Only
+		// meaningful with specular off (the reproject transfers diffuse GI); skip the
+		// unused specular combination.
+		if (!settings.EnableExperimentalSpecularGI)
+			shaderInfos.push_back({ &giEye0OnlyCompute, "gi.cs.hlsl", { { "STEREO_EYE0_ONLY", "" }, { "FRAMEBUFFER", "" } } });
+	}
 	for (auto& info : shaderInfos) {
 		if (globals::game::isVR)
 			info.defines.push_back({ "VR", "" });
@@ -857,6 +900,11 @@ void ScreenSpaceGI::DrawSSGI()
 		context->Dispatch((internalRes[0] + 15u) >> 4, (internalRes[1] + 15u) >> 4, 1);
 	}
 
+	// Reproject eye 0's view-independent diffuse GI into eye 1; requires specular GI off
+	// (view-dependent) and both the eye-0-only march and reproject shaders compiled.
+	const bool useReproject = globals::game::isVR && settings.UseStereoReproject &&
+	                          !settings.EnableExperimentalSpecularGI && giEye0OnlyCompute && reprojectCompute;
+
 	// GI
 	{
 		CS_GPU_PASS("ScreenSpaceGI::GI");
@@ -880,7 +928,33 @@ void ScreenSpaceGI::DrawSSGI()
 
 		context->CSSetShaderResources(0, (uint)srvs.size(), srvs.data());
 		context->CSSetUnorderedAccessViews(0, (uint)uavs.size(), uavs.data(), nullptr);
-		context->CSSetShader(giCompute.get(), nullptr, 0);
+		context->CSSetShader(useReproject ? giEye0OnlyCompute.get() : giCompute.get(), nullptr, 0);
+		context->Dispatch((internalRes[0] + 7u) >> 3, (internalRes[1] + 7u) >> 3, 1);
+
+		inputAoTexIdx = !inputAoTexIdx;
+		inputGITexIdx = !inputGITexIdx;
+		lastFrameGITexIdx = inputGITexIdx;
+		lastFrameAoTexIdx = inputAoTexIdx;
+	}
+
+	// View-independent reproject: fill eye 1's diffuse GI from eye 0 before the blur, whose
+	// seam taps read across eyes. Replaces the tail bilateral stereo sync below.
+	if (useReproject) {
+		CS_GPU_PASS("ScreenSpaceGI::Reproject");
+
+		resetViews();
+		srvs.at(0) = texWorkingDepth->srv.get();
+		srvs.at(1) = texAo[inputAoTexIdx]->srv.get();
+		srvs.at(2) = texIlY[inputGITexIdx]->srv.get();
+		srvs.at(3) = texIlCoCg[inputGITexIdx]->srv.get();
+
+		uavs.at(0) = texAo[!inputAoTexIdx]->uav.get();
+		uavs.at(1) = texIlY[!inputGITexIdx]->uav.get();
+		uavs.at(2) = texIlCoCg[!inputGITexIdx]->uav.get();
+
+		context->CSSetShaderResources(0, (uint)srvs.size(), srvs.data());
+		context->CSSetUnorderedAccessViews(0, (uint)uavs.size(), uavs.data(), nullptr);
+		context->CSSetShader(reprojectCompute.get(), nullptr, 0);
 		context->Dispatch((internalRes[0] + 7u) >> 3, (internalRes[1] + 7u) >> 3, 1);
 
 		inputAoTexIdx = !inputAoTexIdx;
@@ -914,9 +988,10 @@ void ScreenSpaceGI::DrawSSGI()
 		lastFrameAccumTexIdx = !lastFrameAccumTexIdx;
 	}
 
-	// VR stereo sync: bilateral blend of SSGI buffers between eyes
+	// VR stereo sync: bilateral blend of SSGI buffers between eyes (skipped when the
+	// view-independent reproject above already unified them).
 	// Shi, Billeter, Eisemann 2022, "Stereo-consistent screen-space ambient occlusion"
-	if (globals::game::isVR && stereoSyncCompute) {
+	if (globals::game::isVR && stereoSyncCompute && !useReproject) {
 		CS_GPU_PASS("ScreenSpaceGI::StereoSync");
 
 		resetViews();

@@ -55,6 +55,7 @@ public:
 private:
 	static bool ShouldSkipRendering();
 	static void HandleFontReload(Menu& menu, float& cachedFontSize, float currentFontSize);
+	static bool ApplyVRPanelDisplaySize();
 	static void InitializeImGuiFrame(Menu& menu);
 	static void RenderFirstTimeSetupOverlay();
 	static void HandleABTesting();

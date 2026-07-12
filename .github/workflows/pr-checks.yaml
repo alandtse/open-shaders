@@ -52,8 +52,8 @@ jobs:
             # NEXT PR after merge). Only files read from the PR's checkout
             # (shader-validation configs) genuinely benefit from a rebuild.
             should-build: ${{ steps.changed-files.outputs.build_any_changed == 'true' || steps.changed-files.outputs.cpp_any_changed == 'true' || steps.changed-files.outputs.build_ci_any_changed == 'true' || steps.changed-files.outcome == 'failure' }}
-            hlsl-should-build: ${{ steps.changed-files.outputs.hlsl_any_changed == 'true' || steps.changed-files.outputs.cmake_any_changed == 'true' || steps.changed-files.outputs.build_ci_any_changed == 'true' || steps.changed-files.outcome == 'failure' }}
-            shader-tests-should-build: ${{ steps.changed-files.outputs.shader_tests_any_changed == 'true' || steps.changed-files.outputs.hlsl_any_changed == 'true' || steps.changed-files.outputs.cmake_any_changed == 'true' || steps.changed-files.outputs.build_ci_any_changed == 'true' || steps.changed-files.outcome == 'failure' }}
+            hlsl-should-build: ${{ steps.changed-files.outputs.hlsl_any_changed == 'true' || steps.changed-files.outputs.cmake_any_changed == 'true' || steps.changed-files.outputs.build_ci_any_changed == 'true' || steps.ini-version-check.outputs.version_changed == 'true' || steps.changed-files.outcome == 'failure' }}
+            shader-tests-should-build: ${{ steps.changed-files.outputs.shader_tests_any_changed == 'true' || steps.changed-files.outputs.hlsl_any_changed == 'true' || steps.changed-files.outputs.cmake_any_changed == 'true' || steps.changed-files.outputs.build_ci_any_changed == 'true' || steps.ini-version-check.outputs.version_changed == 'true' || steps.changed-files.outcome == 'failure' }}
             # cpp_tests target compiles src/Utils/Subrect.cpp directly (see tests/cpp/CMakeLists.txt),
             # so any cpp_any change is conservative-but-correct. cpp_tests_any catches changes to
             # the test sources themselves. cmake/build_ci cover CMake + CI plumbing.
@@ -110,6 +110,11 @@ jobs:
                         - '**.hlsli'
                         - 'package/Shaders/**'
                         - 'features/**/Shaders/**'
+                        - '!features/**/Shaders/Features/*.ini'
+                      # Most ini fields (Alpha, aio, autoupload) are packaging
+                      # metadata; only a Version change needs revalidation.
+                      feature_ini:
+                        - 'features/**/Shaders/Features/*.ini'
                       shader_tests:
                         - 'tests/shaders/**'
                       cpp_tests:
@@ -130,6 +135,32 @@ jobs:
                   escape_json: false
                   base_sha: ${{ github.event.pull_request.base.sha }}
                   sha: ${{ github.event.pull_request.head.sha }}
+
+            # feature_ini_any_changed is too broad on its own; only treat it
+            # like an hlsl change if the diff actually touches a Version line.
+            - name: Check feature ini Version changes
+              id: ini-version-check
+              if: steps.changed-files.outputs.feature_ini_any_changed == 'true'
+              env:
+                  ALL_CHANGED_JSON: ${{ steps.changed-files-json.outputs.all_changed_files }}
+                  JSON_OK: ${{ steps.changed-files-json.outcome == 'success' }}
+              run: |
+                  set -euo pipefail
+                  if [ "$JSON_OK" != "true" ]; then
+                    echo "version_changed=true" >> "$GITHUB_OUTPUT"
+                    exit 0
+                  fi
+                  version_changed=false
+                  while IFS= read -r file; do
+                    case "$file" in
+                      features/*/Shaders/Features/*.ini)
+                        if git diff "${{ github.event.pull_request.base.sha }}" "${{ github.event.pull_request.head.sha }}" -- "$file" | grep -qE '^[+-][[:space:]]*Version[[:space:]]*='; then
+                          version_changed=true
+                        fi
+                        ;;
+                    esac
+                  done < <(jq -r '.[]' <<< "$ALL_CHANGED_JSON")
+                  echo "version_changed=$version_changed" >> "$GITHUB_OUTPUT"
 
     # Security: this job compiles untrusted fork code.
     # It uses _shared-build.yaml which enforces permissions: contents: read and receives NO secrets.

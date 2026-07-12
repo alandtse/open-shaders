@@ -47,37 +47,9 @@ jobs:
             # Cache build only needs the release-parity (profile) pass.
             run-full-config-validation: false
 
-    feature-audit:
-        name: Feature Version Audit (Release)
-        if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'release'
-        runs-on: ubuntu-latest
-        continue-on-error: true
-        steps:
-            - name: Checkout code
-              uses: actions/checkout@v6
-              with:
-                  fetch-depth: 0
-                  submodules: recursive
-
-            - name: Setup Python
-              uses: actions/setup-python@v6
-              with:
-                  python-version: "3.11"
-
-            - name: Run feature version audit
-              run: |
-                  python tools/feature_version_audit.py --output feature-version-audit-latest.md
-                  cat feature-version-audit-latest.md
-
-            - name: Upload feature audit markdown
-              uses: actions/upload-artifact@v7
-              with:
-                  name: feature-version-audit
-                  path: feature-version-audit-latest.md
-
     release:
         name: Post Release for Draft, Manual Run, or Tag
-        needs: [build, feature-audit]
+        needs: [build]
         if: >
             always() && !cancelled() &&
             needs.build.outputs.cpp-built == 'true' &&
@@ -114,14 +86,9 @@ jobs:
                   name: dist-artifacts
                   path: dist/
 
-            - name: Download feature audit artifact
-              continue-on-error: true
-              uses: actions/download-artifact@v7
-              with:
-                  name: feature-version-audit
-                  path: .
-
-            - name: Generate combined release notes
+            # The Feature Metadata Summary is already in this body (appended
+            # during Semantic Release); just resolve the tag and fetch it.
+            - name: Resolve release tag and body
               id: combined_notes
               shell: bash
               # GH_TOKEN: required for `gh release view`; without it the `||`
@@ -158,23 +125,6 @@ jobs:
                       cat /tmp/gh-err
                       exit 1
                     fi
-                  fi
-
-                  if [ -f feature-version-audit-latest.md ]; then
-                    # Strip any prior audit section so re-runs don't duplicate
-                    # it. Find the first "# Feature Version Audit" heading and
-                    # drop everything from the preceding "---" separator
-                    # onward.
-                    audit_line=$(grep -nx '# Feature Version Audit' auto-release-notes.md | head -1 | cut -d: -f1 || true)
-                    if [ -n "${audit_line:-}" ]; then
-                      sep_line=$(awk -v target="$audit_line" 'NR < target && /^---$/ { last = NR } END { print last }' auto-release-notes.md)
-                      if [ -n "${sep_line:-}" ]; then
-                        head -n $((sep_line - 1)) auto-release-notes.md > auto-release-notes.tmp
-                        mv auto-release-notes.tmp auto-release-notes.md
-                      fi
-                    fi
-                    echo -e "\n---\n\n" >> auto-release-notes.md
-                    cat feature-version-audit-latest.md >> auto-release-notes.md
                   fi
                   echo "body_file=auto-release-notes.md" >> $GITHUB_OUTPUT
                   echo "release_tag=$RELEASE_TAG" >> $GITHUB_OUTPUT

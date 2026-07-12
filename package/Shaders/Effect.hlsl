@@ -1003,7 +1003,7 @@ PS_OUTPUT main(PS_INPUT input)
 		} else if (SharedData::lightLimitFixSettings.LightsVisualisationMode == 1) {
 			psout.Diffuse.xyz = Color::TurboColormap(0.0);
 		} else {
-			psout.Diffuse.xyz = Color::TurboColormap((float)lightCount / MAX_CLUSTER_LIGHTS);
+			psout.Diffuse.xyz = Color::TurboColormap((float)numClusteredLights / MAX_CLUSTER_LIGHTS);
 		}
 	}
 #	endif

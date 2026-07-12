@@ -377,7 +377,11 @@ bool Streamline::CheckFrameConstants(sl::ViewportHandle p_viewport, uint32_t eye
 	auto& upscaling = globals::features::upscaling;
 	auto jitter = upscaling.jitter;
 	slConstants.jitterOffset = { -jitter.x, -jitter.y };
-	slConstants.reset = sl::Boolean::eFalse;
+	// Menus render no motion vectors; camera-derived MVs restore valid reprojection there.
+	// Reset only when that fill couldn't run — accumulating against zero MVs ghosts.
+	slConstants.reset = (state->IsMainOrLoadingMenuOpen() && !upscaling.menuCameraMVsValid) ?
+	                        sl::Boolean::eTrue :
+	                        sl::Boolean::eFalse;
 
 	// Apply foveated mvec scale only when the subrect execute path is actually
 	// running this frame (flag set by ExecuteVRDlssCore). The standard full-frame

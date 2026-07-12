@@ -4,6 +4,8 @@
 #include "Feature.h"
 #include "I18n/I18n.h"
 
+#include <cstdint>
+
 struct CSUtility : Feature
 {
 	static CSUtility* GetSingleton()
@@ -30,6 +32,36 @@ struct CSUtility : Feature
 				T("feature.cs_utility.key_feature_3", "Separate controls for linear point lights") } };
 	}
 
+	struct DepthOfFieldAutoFocusSettings
+	{
+		float nearDistance = 0.0f;
+		float farDistance = 0.0f;
+		float nearRange = 0.0f;
+		float farRange = 0.0f;
+		float nearBlur = 0.0f;
+		float farBlur = 0.0f;
+		float blurMultiplier = 1.0f;
+	};
+
+	struct DepthOfFieldSettings
+	{
+		float strength = 0.0f;
+		float distance = 0.0f;
+		float range = 0.0f;
+		uint32_t mode = 2;
+		bool excludeSky = false;
+		bool autoFocus = false;
+		DepthOfFieldAutoFocusSettings autoFocusSettings;
+		uint32_t blurRadius = 2;
+	};
+
+	struct DepthOfFieldOverride
+	{
+		bool locked = false;
+		DepthOfFieldSettings values;
+		DepthOfFieldSettings baseline;
+	};
+
 	struct Settings
 	{
 		float skyBrightness = 1.0f;
@@ -40,6 +72,8 @@ struct CSUtility : Feature
 		float linearSpotlightMult = 1.0f;
 		float omnidirectionalBulbMult = 1.0f;
 		float linearOmnidirectionalBulbMult = 1.0f;
+		DepthOfFieldOverride sceneDof;
+		DepthOfFieldOverride underwaterDof;
 	} settings;
 
 	struct alignas(16) PerFrameData
@@ -71,9 +105,15 @@ struct CSUtility : Feature
 	virtual void RestoreDefaultSettings() override;
 	virtual void SetupResources() override;
 	virtual void PostPostLoad() override;
+	virtual void DataLoaded() override;
 
 	PerFrameData GetCommonBufferData() const;
 	void UpdateVanillaPointLightData(RE::BSRenderPass* a_pass, uint32_t a_lightCount);
+	void DrawDepthOfFieldSettings();
+	void InstallDepthOfFieldHooks();
+
+	static void SanitizeDepthOfFieldSettings(DepthOfFieldSettings& a_settings);
+	static void SanitizeDepthOfFieldOverride(DepthOfFieldOverride& a_override);
 
 	struct Hooks;
 };

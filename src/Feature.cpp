@@ -36,6 +36,7 @@
 #include "Features/UnifiedWater.h"
 #include "Features/Upscaling.h"
 #include "Features/VR.h"
+#include "Features/VanillaFresnel.h"
 #include "Features/VolumetricLighting.h"
 #include "Features/VolumetricShadows.h"
 #include "Features/WaterEffects.h"
@@ -238,6 +239,7 @@ const std::vector<Feature*>& Feature::GetFeatureList()
 		&globals::features::skySync,
 		&globals::features::terrainBlending,
 		&globals::features::terrainHelper,
+		&globals::features::vanillaFresnel,
 		&globals::features::volumetricLighting,
 		&globals::features::lodBlending,
 		&globals::features::inverseSquareLighting,
@@ -286,6 +288,22 @@ const std::vector<Feature*>& Feature::GetFeatureList()
 		return featuresVR;
 	} else {
 		return features;
+	}
+}
+
+void Feature::ApplyVRPerformanceProfileToAll(VRPerfProfile profile)
+{
+	for (auto* feature : GetFeatureList()) {
+		if (!feature->loaded)
+			continue;
+		// One feature's failure must not abort the broadcast to the rest.
+		try {
+			feature->ApplyVRPerformanceProfile(profile);
+		} catch (const std::exception& e) {
+			logger::error("ApplyVRPerformanceProfileToAll: {} threw: {}", feature->GetShortName(), e.what());
+		} catch (...) {
+			logger::error("ApplyVRPerformanceProfileToAll: {} threw (unknown)", feature->GetShortName());
+		}
 	}
 }
 

@@ -55,6 +55,8 @@ void State::Draw()
 	ZoneScoped;
 
 	auto shaderCache = globals::shaderCache;
+	auto weatherManager = globals::weatherManager;
+	auto sceneSettingsManager = globals::sceneSettingsManager;
 	auto& terrainBlending = globals::features::terrainBlending;
 	auto& terrainHelper = globals::features::terrainHelper;
 	auto& cloudShadows = globals::features::cloudShadows;
@@ -66,11 +68,11 @@ void State::Draw()
 
 	if (shaderCache->IsEnabled()) {
 		// Process deferred cell transitions (interior detection)
-		SceneSettingsManager::GetSingleton()->Update();
+		sceneSettingsManager->Update();
 
 		if (csEditor.loaded) {
 			ZoneScopedN("WeatherManager::UpdateFeatures");
-			WeatherManager::GetSingleton()->UpdateFeatures();
+			weatherManager->UpdateFeatures();
 		}
 
 		if (terrainBlending.loaded && terrainBlending.settings.Enabled) {
@@ -252,10 +254,10 @@ void State::Setup()
 	globals::deferred->SetupResources();
 
 	// Load per-weather settings after features are setup
-	WeatherManager::GetSingleton()->LoadPerWeatherSettingsFromDisk();
+	globals::weatherManager->LoadPerWeatherSettingsFromDisk();
 
 	// Load scene-specific settings (Interior Only, etc.)
-	SceneSettingsManager::GetSingleton()->LoadAll();
+	globals::sceneSettingsManager->LoadAll();
 }
 
 static std::string GetConfigPath(State::ConfigMode a_configMode)

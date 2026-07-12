@@ -1,6 +1,8 @@
 // Composite Blur Pass Shader with Rounded Rectangle Mask
 // Part of the BackgroundBlur system - applies blurred texture with rounded corners
 
+#include "Common/BlurDither.hlsli"
+
 cbuffer WindowBuffer : register(b1)
 {
 	float4 WindowRect;    // x = minX, y = minY, z = maxX, w = maxY (in pixels)
@@ -10,8 +12,6 @@ cbuffer WindowBuffer : register(b1)
 SamplerState LinearSampler : register(s0);
 Texture2D InputTexture : register(t0);
 
-static const float TWO_PI = 6.28318530718f;
-static const int NUM_JITTER_SAMPLES = 4;
 static const float DOWNSAMPLE_FACTOR = 8.0f;
 static const float CLIP_EPSILON = 0.001f;
 
@@ -30,47 +30,17 @@ VS_OUTPUT VS_Main(uint vertexID : SV_VertexID)
 	return output;
 }
 
-// High quality 2D hash - returns two independent random values in [0,1]
-// Uses different prime multipliers to avoid correlation between x and y
-float2 Hash22(float2 p)
-{
-	// Two independent hashes using different constants
-	float3 p3 = frac(float3(p.xyx) * float3(0.1031f, 0.1030f, 0.0973f));
-	p3 += dot(p3, p3.yzx + 33.33f);
-	return frac((p3.xx + p3.yz) * p3.zy);
-}
-
 // Soft sampling with blurred dithering - takes 4 samples with jittered offsets
 // and averages them to smooth out the noise while still breaking up blocky pixels
 float4 SampleWithSoftening(float2 uv, float2 pixelPos, float2 texelSize)
 {
-	// Get base random offset for this pixel
-	float2 noise = Hash22(pixelPos);
-
-	// Rotated grid offsets (45 degree rotation for better coverage)
-	// This creates a smooth disc-like sampling pattern
-	static const float2 offsets[NUM_JITTER_SAMPLES] = {
-		float2(-0.25f, -0.25f),
-		float2(0.25f, -0.25f),
-		float2(-0.25f, 0.25f),
-		float2(0.25f, 0.25f)
-	};
-
-	// Random rotation angle based on pixel position
-	float angle = noise.x * TWO_PI;
-	float s, c;
-	sincos(angle, s, c);
-	float2x2 rotation = float2x2(c, -s, s, c);
-
-	// Sample 4 points with rotated jittered offsets and average
 	float4 result = 0;
-	[unroll] for (int i = 0; i < NUM_JITTER_SAMPLES; i++)
+	[unroll] for (int i = 0; i < BlurDither::kSampleCount; i++)
 	{
-		float2 jitter = mul(rotation, offsets[i]) * texelSize;
-		result += InputTexture.Sample(LinearSampler, uv + jitter);
+		result += InputTexture.Sample(LinearSampler, uv + BlurDither::GetOffset(pixelPos, i) * texelSize);
 	}
 
-	return result / (float)NUM_JITTER_SAMPLES;
+	return result / (float)BlurDither::kSampleCount;
 }
 
 // Compute signed distance to a rounded rectangle

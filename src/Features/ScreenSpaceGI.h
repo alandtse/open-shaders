@@ -45,6 +45,14 @@ public:
 	virtual void RestoreDefaultSettings() override;
 	/** @brief Draws the ImGui settings UI with quality presets, visual parameters, and denoising options. */
 	virtual void DrawSettings() override;
+	virtual void DrawVRPerformanceSettings() override;
+	std::string GetVRPerformanceSectionLabel() override { return GetDisplayName(); }
+	int GetVRPerformanceOrder() const override { return 40; }
+	virtual void ApplyVRPerformanceProfile(VRPerfProfile profile) override;
+	bool MatchesVRPerformanceProfile(VRPerfProfile profile) const override;
+	/// @brief Renders the VR stereo reprojection toggle. Shared by the SSGI panel and the
+	/// VR Performance hub. VR-only; caller guards on isVR.
+	void DrawReprojectToggle();
 
 	virtual void LoadSettings(json& o_json) override;
 	virtual void SaveSettings(json& o_json) override;
@@ -100,6 +108,9 @@ public:
 		uint MaxAccumFrames = 16;
 		float BlurRadius = 2.f;
 		float DistanceNormalisation = 2.f;
+		// VR: reproject eye 0's view-independent diffuse GI into eye 1 (skips the eye-1 march).
+		// Default on; ignored when specular GI is on (specular is view-dependent).
+		bool UseStereoReproject = true;
 	} settings;
 
 	struct alignas(16) SSGICB
@@ -180,7 +191,9 @@ public:
 	winrt::com_ptr<ID3D11ComputeShader> prefilterNormalCompute = nullptr;
 	winrt::com_ptr<ID3D11ComputeShader> radianceDisoccCompute = nullptr;
 	winrt::com_ptr<ID3D11ComputeShader> giCompute = nullptr;
+	winrt::com_ptr<ID3D11ComputeShader> giEye0OnlyCompute = nullptr;
 	winrt::com_ptr<ID3D11ComputeShader> blurCompute = nullptr;
 	winrt::com_ptr<ID3D11ComputeShader> stereoSyncCompute = nullptr;
+	winrt::com_ptr<ID3D11ComputeShader> reprojectCompute = nullptr;
 	winrt::com_ptr<ID3D11ComputeShader> upsampleCompute = nullptr;
 };

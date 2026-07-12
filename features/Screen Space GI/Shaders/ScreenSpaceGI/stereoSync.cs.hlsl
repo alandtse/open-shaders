@@ -8,6 +8,7 @@
 
 #include "Common/FrameBuffer.hlsli"
 #include "Common/VR.hlsli"
+#include "ScreenSpaceGI/StereoReproject.hlsli"
 #include "ScreenSpaceGI/common.hlsli"
 
 #ifdef VR
@@ -49,16 +50,7 @@ float4 SampleCrossDepths(float2 centerUV, float2 step, float2 texScale, uint eye
 		srcDepth.SampleLevel(samplerPointClamp, (uv + float2(0, -step.y)) * texScale, RES_MIP));
 }
 
-// Convert SSGI's linear view-space Z to raw NDC Z for the shared bilateral path.
-// raw = (n*f - f/d) / (f-n), with CameraData = (n*f, ?, f-n, f).
-float LinearToRawDepth(float d)
-{
-	return (SharedData::CameraData.x - SharedData::CameraData.w / d) / SharedData::CameraData.z;
-}
-float4 LinearToRawDepth(float4 d)
-{
-	return (SharedData::CameraData.x - SharedData::CameraData.w / d) / SharedData::CameraData.z;
-}
+// LinearToRawDepth lives in ScreenSpaceGI/StereoReproject.hlsli (shared with reproject/gi).
 
 [numthreads(8, 8, 1)] void main(uint2 dtid : SV_DispatchThreadID) {
 	const float2 outFrameDim = OUT_FRAME_DIM;

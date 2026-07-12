@@ -1036,8 +1036,6 @@
     "feature.screen_space_shadows.shadow_contrast_tooltip": "阴影过渡的对比度增强。较高值产生更硬的阴影边缘。",
     "feature.screen_space_shadows.surface_thickness": "表面厚度",
     "feature.screen_space_shadows.surface_thickness_tooltip": "阴影检测的假设表面厚度。较低值产生更薄、更精确的阴影。",
-    "feature.screen_space_shadows.vr_stereo_sync": "VR立体同步",
-    "feature.screen_space_shadows.vr_stereo_sync_tooltip": "通过双向重投影同步左右眼之间的阴影数据，并应用深度加权模糊以减少每只眼睛的噪点。使用最小混合，如果任一眼睛检测到遮挡物，则保留阴影。",
     "feature.screenshot.apply_crop": "应用裁剪",
     "feature.screenshot.async_note": "捕获和保存异步运行，不会让游戏停顿。",
     "feature.screenshot.crop": "裁剪",
