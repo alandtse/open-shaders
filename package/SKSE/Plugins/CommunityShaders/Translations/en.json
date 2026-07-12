@@ -751,6 +751,8 @@
     "feature.grass_lighting.detection_threshold": "Detection Threshold",
     "feature.grass_lighting.detection_threshold_tooltip": "Threshold for detecting complex grass textures. Lower values are more strict.",
     "feature.grass_lighting.effects": "Effects",
+    "feature.grass_lighting.enable_wrapped_lighting": "Enable Wrapped Lighting",
+    "feature.grass_lighting.enable_wrapped_lighting_tooltip": "Enables a softer-looking wrapped lighting model from CS 1.3. Useful for certain non-complex grass textures that look too dark during midday, when the sun is directly overhead.",
     "feature.grass_lighting.glossiness": "Glossiness",
     "feature.grass_lighting.glossiness_tooltip": "Specular highlight glossiness.",
     "feature.grass_lighting.key_feature_1": "Enhanced grass lighting model",
