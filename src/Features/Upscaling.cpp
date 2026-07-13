@@ -2307,10 +2307,10 @@ void Upscaling::Upscale()
 	auto& main = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMAIN];
 	auto& motionVector = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMOTION_VECTOR];
 
-	// The main menu's only motion is the camera, so synthesized camera MVs give the upscalers
-	// valid reprojection there. Loading screens animate geometry (the rotating model) that
-	// camera-derived MVs cannot represent — those keep the per-frame reset instead.
-	if (globals::state->isMainMenuOpen && !globals::state->isLoadingMenuOpen)
+	// Camera-only synthesized MVs are only valid for a static flat menu background.
+	// Loading screens and any real scene rendered behind a menu (VR Playroom) have
+	// their own motion the camera-derived MVs can't represent, so keep the reset.
+	if (globals::state->isMainMenuOpen && !globals::state->isLoadingMenuOpen && !globals::state->worldRenderedThisFrame)
 		FillMenuCameraMotionVectors();
 	else
 		menuCameraMVsValid = false;

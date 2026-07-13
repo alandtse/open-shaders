@@ -29,15 +29,11 @@ void PerfMode::RenderTonemapWithSwap(void* imageSpaceShader, RE::BSTriShape* sha
 		return;
 	}
 
-	// Menu/loading-screen path: the engine's bridge into kTOTAL assumes
-	// RT.size == kMAIN.size (true for DLAA, broken under DLSS presets where
-	// kMAIN is renderRes), so the BG ends up missing and OpenVR reprojects
-	// stale content as movement smears. Skip the gameplay SRV/DS hijack and
-	// let tonemap run untouched, then call MaybeBlitMenuBG to drive a
-	// one-shot Upscaling::Upscale() + MenuBGBlitPS blit of the resulting
-	// DLSS-reconstructed testTexture into kTOTAL. Per-frame guarded so it
-	// runs at most once per frame regardless of how many menu redraws fire.
-	if (globals::state && globals::state->IsMainOrLoadingMenuOpen()) {
+	// Flat menu / loading backdrop: no live world, so the engine's kTOTAL bridge
+	// leaves the BG missing under renderRes; MaybeBlitMenuBG upscales+blits it in.
+	// VR Playroom renders a live head-tracked world behind the menu, so it must
+	// take the gameplay swap below or it presents as a frozen head-locked backdrop.
+	if (globals::state && globals::state->IsMainOrLoadingMenuOpen() && !globals::state->worldRenderedThisFrame) {
 		Hook::func(imageSpaceShader, shape, param);
 		perfMode.MaybeBlitMenuBG(RE::RENDER_TARGETS::kTOTAL);
 		return;
