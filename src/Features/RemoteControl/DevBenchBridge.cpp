@@ -149,6 +149,24 @@ namespace
 		return entry;
 	}
 
+	// Collects keys of a_incoming that a_known has no counterpart for, as dotted
+	// paths, recursing into nested groups. The settings serializers drop keys they
+	// don't recognize, so a mis-nested or misspelled key would otherwise apply
+	// nothing while still reporting success.
+	void CollectUnknownSettingKeys(const json& a_incoming, const json& a_known,
+		const std::string& a_prefix, std::vector<std::string>& a_out)
+	{
+		if (!a_incoming.is_object())
+			return;
+		for (auto it = a_incoming.begin(); it != a_incoming.end(); ++it) {
+			const std::string path = a_prefix.empty() ? it.key() : a_prefix + "." + it.key();
+			if (!a_known.is_object() || !a_known.contains(it.key()))
+				a_out.push_back(path);
+			else if (it.value().is_object())
+				CollectUnknownSettingKeys(it.value(), a_known[it.key()], path, a_out);
+		}
+	}
+
 	json BuildFeatureResult(const json& a_args)
 	{
 		const std::string action = a_args.value("action", std::string("list"));
@@ -266,6 +284,21 @@ namespace
 					// from a fresh default, not the live value; merge first.
 					json current;
 					feature->SaveSettings(current);
+					// The saved blob is the canonical shape, so reject anything it
+					// doesn't name rather than deserializing it away to a silent
+					// no-op the caller sees as applied. Skipped when the feature
+					// has no override to compare against.
+					if (current.is_object()) {
+						std::vector<std::string> unknown;
+						CollectUnknownSettingKeys(blob, current, "", unknown);
+						if (!unknown.empty())
+							return json{
+								{ "error", "unrecognized setting key(s); nothing applied" },
+								{ "shortName", shortName },
+								{ "unknownKeys", unknown },
+								{ "hint", "keys must match the shape from feature(action='get'); nested groups such as ShadowSettings must be nested, not flattened" }
+							};
+					}
 					current.merge_patch(blob);
 					feature->LoadSettings(current);
 					logger::info("DevBenchBridge: feature(set, {}) applied", shortName);
@@ -619,7 +652,7 @@ namespace DevBenchBridge
 		// so existing MCP clients keep working under the new prefix.
 
 		static constexpr const char* featureDesc =
-			R"({"description":"All Open Shaders graphics-feature operations — enumerate, inspect settings, mutate settings, restore defaults, toggle on/off, read live diagnostics. Action-dispatched. list: returns an array of {name,shortName,loaded,version,category,isCore,supportsVR,inMenu}; features with restart-gated settings also include restartFields:[{key,label,pending}]. get: params shortName, returns the SaveSettings blob (null if the feature has no override; set/reset then no-op). set: params shortName, settings (object). reset: params shortName, calls RestoreDefaultSettings. toggle: params shortName, enabled (boolean, OPTIONAL — omit to flip the current loaded state); flips Feature::loaded. diagnostics: params shortName, returns the feature's live runtime stats via GetDiagnostics (an empty object if the feature does not override it); use this instead of adding a new inspect kind for a new counter.","inputSchema":{"type":"object","properties":{"action":{"type":"string","enum":["list","get","set","reset","toggle","diagnostics"]},"shortName":{"type":"string"},"settings":{"type":"object"},"enabled":{"type":"boolean"}}}})";
+			R"({"description":"All Open Shaders graphics-feature operations — enumerate, inspect settings, mutate settings, restore defaults, toggle on/off, read live diagnostics. Action-dispatched. list: returns an array of {name,shortName,loaded,version,category,isCore,supportsVR,inMenu}; features with restart-gated settings also include restartFields:[{key,label,pending}]. get: params shortName, returns the SaveSettings blob (null if the feature has no override; set/reset then no-op). set: params shortName, settings (object) — a partial blob merged over the current settings, so it MUST use the same shape get returns, including nested groups (e.g. LightLimitFix's shadow settings live under settings.ShadowSettings.*, NOT at the top level). Keys the feature does not define are rejected with unknownKeys rather than silently ignored; call get first if unsure of the shape. Restart-gated keys (see list's restartFields) apply on the next launch, so verify with get rather than assuming a set took effect immediately. reset: params shortName, calls RestoreDefaultSettings. toggle: params shortName, enabled (boolean, OPTIONAL — omit to flip the current loaded state); flips Feature::loaded. diagnostics: params shortName, returns the feature's live runtime stats via GetDiagnostics (an empty object if the feature does not override it); use this instead of adding a new inspect kind for a new counter.","inputSchema":{"type":"object","properties":{"action":{"type":"string","enum":["list","get","set","reset","toggle","diagnostics"]},"shortName":{"type":"string"},"settings":{"type":"object"},"enabled":{"type":"boolean"}}}})";
 		dvb->RegisterTool("openshaders.feature", featureDesc, &FeatureToolHandler, nullptr);
 
 		static constexpr const char* shadercacheDesc =
