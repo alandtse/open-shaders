@@ -1270,9 +1270,14 @@ namespace SIE
 		static std::string MergeDefinesString(std::array<D3D_SHADER_MACRO, 64>& defines, bool a_sort = false)
 		{
 			std::string result;
+			// a.Name/b.Name are char*, so comparing them directly sorts by
+			// address, not content -- non-deterministic across runs. Null
+			// names (unused slots) always sort last.
 			if (a_sort)
 				std::sort(std::begin(defines), std::end(defines), [](const D3D_SHADER_MACRO& a, const D3D_SHADER_MACRO& b) {
-					return a.Name > b.Name;
+					if (a.Name == nullptr || b.Name == nullptr)
+						return a.Name != nullptr;
+					return std::strcmp(a.Name, b.Name) < 0;
 				});
 			for (const auto& def : defines) {
 				if (def.Name != nullptr) {
@@ -1283,8 +1288,6 @@ namespace SIE
 					}
 					result += ' ';
 				} else {
-					if (a_sort)  // sometimes the sort messes up so null entries get interspersed
-						continue;
 					break;
 				}
 			}
