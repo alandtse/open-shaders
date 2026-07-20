@@ -645,6 +645,14 @@ void State::Save(ConfigMode a_configMode)
 	} catch (const std::exception& e) {
 		logger::warn("Failed to write settings to file: {}. Error: {}", configPath, e.what());
 	}
+
+	// A real user save is the only signal that a Disable-at-Boot change (restart-
+	// gated) was actually intentional; record it so next boot's disk-cache mismatch
+	// can auto-resolve instead of holding for the "Rebuild Cache" menu action.
+	if (a_configMode == ConfigMode::USER) {
+		if (auto* shaderCache = globals::shaderCache)
+			shaderCache->MarkExpectedFeatureFlip();
+	}
 }
 
 bool State::ValidateCache(CSimpleIniA& a_ini)

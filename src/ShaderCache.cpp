@@ -2610,6 +2610,11 @@ namespace SIE
 
 		std::vector<Util::CacheInvalidation::FeatureState> featureStates;
 		std::map<std::string, Util::CacheInvalidation::CacheIniEntry> cacheEntries;
+		// A prior settings save may have recorded, per feature, the enabled state
+		// it was about to persist (MarkExpectedFeatureFlip). If a feature's actual
+		// loaded state this boot matches what was recorded, its flip was already
+		// confirmed by the user and doesn't need to hold for input below.
+		std::map<std::string, bool> expectedEnabledMatches;
 		for (auto* feature : Feature::GetFeatureList()) {
 			const auto shortName = feature->GetShortName();
 			featureStates.push_back({ shortName, feature->GetDisplayName(), feature->loaded,
@@ -2619,6 +2624,8 @@ namespace SIE
 			if (auto v = ini.GetValue(shortName.c_str(), "Version"))
 				entry.version = v;
 			cacheEntries[shortName] = entry;
+			if (ini.GetValue(shortName.c_str(), "ExpectedEnabled"))
+				expectedEnabledMatches[shortName] = ini.GetBoolValue(shortName.c_str(), "ExpectedEnabled", false) == feature->loaded;
 		}
 
 		cacheMismatches = Util::CacheInvalidation::ClassifyMismatches(
@@ -2646,10 +2653,23 @@ namespace SIE
 			logger::info("Disk cache mismatch: {} - {}", mismatch.feature, mismatch.detail);
 
 		// Version mismatches = expected update path (rebuild silently). Enabled flips
-		// are likely unintentional, so hold: keep blobs, compile memory-only, let the menu decide.
+		// are usually unintentional, so hold: keep blobs, compile memory-only, let the
+		// menu decide -- unless every flip exactly matches what a settings save already
+		// told us to expect, in which case the user already confirmed this transition.
 		const bool onlyEnabledFlips = std::ranges::all_of(cacheMismatches,
 			[](const CacheMismatch& m) { return m.kind == CacheMismatch::Kind::EnabledFlip; });
 		if (onlyEnabledFlips) {
+			const bool allExpected = std::ranges::all_of(cacheMismatches, [&](const CacheMismatch& m) {
+				auto it = expectedEnabledMatches.find(m.shortName);
+				return it != expectedEnabledMatches.end() && it->second;
+			});
+			if (allExpected && PartialInvalidation(heldMismatchDefines)) {
+				logger::info("Disk cache mismatch matches a settings save from last session; auto-resolving");
+				WriteDiskCacheInfo();  // also drops the now-consumed ExpectedEnabled markers
+				heldMismatchDefines.clear();
+				cacheMismatches.clear();
+				return;
+			}
 			diskCacheHeld = true;
 			logger::info("Disk cache HELD (not deleted): feature set changed; compiling memory-only this session");
 			return;
@@ -2693,6 +2713,28 @@ namespace SIE
 		globals::state->WriteDiskCacheInfo(ini);
 		ini.SaveFile(L"Data\\ShaderCache\\Info.ini");
 		logger::info("Saved disk cache info (plugin version: {})", Plugin::VERSION.string());
+	}
+
+	void ShaderCache::MarkExpectedFeatureFlip()
+	{
+		CSimpleIniA ini;
+		ini.SetUnicode();
+		ini.LoadFile(L"Data\\ShaderCache\\Info.ini");
+		bool changed = false;
+		for (auto* feature : Feature::GetFeatureList()) {
+			const auto shortName = feature->GetShortName();
+			const bool cachedEnabled = ini.GetBoolValue(shortName.c_str(), "Enabled", false);
+			const bool nextEnabled = !globals::state->IsFeatureDisabled(shortName);
+			if (nextEnabled != cachedEnabled) {
+				ini.SetBoolValue(shortName.c_str(), "ExpectedEnabled", nextEnabled);
+				changed = true;
+			} else if (ini.GetValue(shortName.c_str(), "ExpectedEnabled")) {
+				ini.Delete(shortName.c_str(), "ExpectedEnabled");
+				changed = true;
+			}
+		}
+		if (changed)
+			ini.SaveFile(L"Data\\ShaderCache\\Info.ini");
 	}
 
 	/// True when an env var is set to a truthy value ("1" or "true", case-insensitive).

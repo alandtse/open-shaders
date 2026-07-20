@@ -476,6 +476,11 @@ namespace SIE
 		/// User accepted the new feature state: wipe the held cache and rebuild to disk.
 		void AcceptCacheRebuild();
 
+		/// Records the enabled state a Disable-at-Boot save is about to persist, per
+		/// feature, so a future EnabledFlip mismatch that matches exactly what was
+		/// recorded here can auto-resolve at boot instead of holding for user input.
+		void MarkExpectedFeatureFlip();
+
 		/** Gets whether unchanged shaders are skipped during recompilation. */
 		bool IsSkipUnchangedShaders() const;
 		/** Sets whether unchanged shaders are skipped during recompilation. */
