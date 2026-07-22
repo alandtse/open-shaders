@@ -94,6 +94,8 @@ jobs:
                   ref: ${{ inputs.ref }}
                   repository: ${{ inputs.repository }}
                   submodules: recursive
+                  # Safe: this job is contents:read and this workflow takes no secrets input.
+                  allow-unsafe-pr-checkout: true
 
             - name: Setup Build Environment
               id: setup
@@ -173,6 +175,8 @@ jobs:
                   ref: ${{ inputs.ref }}
                   repository: ${{ inputs.repository }}
                   submodules: recursive
+                  # Safe: this job is contents:read and this workflow takes no secrets input.
+                  allow-unsafe-pr-checkout: true
 
             - name: Check for HLSL Changes
               id: check-hlsl
@@ -316,6 +320,8 @@ jobs:
                   ref: ${{ inputs.ref }}
                   repository: ${{ inputs.repository }}
                   submodules: recursive
+                  # Safe: this job is contents:read and this workflow takes no secrets input.
+                  allow-unsafe-pr-checkout: true
 
             - name: Check for HLSL Changes
               id: check-hlsl
@@ -368,6 +374,8 @@ jobs:
                   ref: ${{ inputs.ref }}
                   repository: ${{ inputs.repository }}
                   submodules: recursive
+                  # Safe: this job is contents:read and this workflow takes no secrets input.
+                  allow-unsafe-pr-checkout: true
 
             # Inline gate (no composite action - the logic is one branch).
             # PR events skip when no relevant files changed; push / dispatch /
