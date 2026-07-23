@@ -1,4 +1,4 @@
-#include "VRPerformanceRenderer.h"
+#include "PerformanceRenderer.h"
 
 #include <algorithm>
 #include <exception>
@@ -32,7 +32,7 @@ static void DrawSectionHeader(Feature* feature, bool linkable)
 	ImGui::Separator();
 }
 
-void VRPerformanceRenderer::Render(Feature* host)
+void PerformanceRenderer::Render(Feature* host)
 {
 	ImGui::TextWrapped("%s", T(TKEY("intro"),
 								 "Performance settings from across all features, gathered in one place. "

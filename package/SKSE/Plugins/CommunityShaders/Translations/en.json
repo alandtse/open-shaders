@@ -2565,6 +2565,7 @@
     "menu.features.ok_button": "OK",
     "menu.features.pause_weather_overrides": "Pause Weather Overrides",
     "menu.features.pause_weather_tooltip": "Temporarily disable weather-based setting adjustments for this feature.\nThis state is not saved.",
+    "menu.features.performance": "Performance",
     "menu.features.profiling": "Profiling",
     "menu.features.restore_defaults": "Restore Defaults",
     "menu.features.restore_defaults_tooltip": "Restore default settings for this feature",

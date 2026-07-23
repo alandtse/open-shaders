@@ -7,7 +7,7 @@
 #include "I18n/I18n.h"
 #include "Menu.h"
 #include "Menu/Fonts.h"
-#include "Menu/VRPerformanceRenderer.h"
+#include "Menu/PerformanceRenderer.h"
 #include "RE/B/BSOpenVR.h"
 #include "RE/P/PlayerCharacter.h"
 #include "State.h"
@@ -232,7 +232,7 @@ void VR::DrawSettings()
 	if (ImGui::BeginTabBar("##VRTabs", ImGuiTabBarFlags_None)) {
 		if (BeginTabItemWithFont(T(TKEY("tab_performance"), "Performance"), Menu::FontRole::Subheading)) {
 			if (ImGui::BeginChild("##VRPerformanceFrame", { 0, 0 }, true)) {
-				VRPerformanceRenderer::Render(this);
+				PerformanceRenderer::Render(this);
 			}
 			ImGui::EndChild();
 			ImGui::EndTabItem();
