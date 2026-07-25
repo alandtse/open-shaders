@@ -202,7 +202,10 @@ jobs:
         if: >
             always() && !cancelled() &&
             needs.build.outputs.cpp-built == 'true'
-        runs-on: windows-2025
+        # No compilation here: artifact download + gh/jq notes + the
+        # publish-release composite. release-dev.yaml's equivalent job
+        # already runs this exact shape on ubuntu-latest.
+        runs-on: ubuntu-latest
         permissions:
             contents: write
             pull-requests: write
