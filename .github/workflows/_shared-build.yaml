@@ -153,8 +153,18 @@ jobs:
                   retention-days: 30
 
     shader-validation:
+        # Full-config and release-parity are independent fxc invocations against
+        # the same prepared shader tree (~30-40 min each on a PR) -- splitting
+        # them into their own matrix legs instead of running sequentially in one
+        # job roughly halves shader-validation wall-clock. `matrix` isn't
+        # available in a job-level `if` (evaluated before matrix expansion), so
+        # each pass's original run condition (full-config runs when
+        # run-full-config-validation is set; release-parity runs for cache
+        # builds or release-parity-validation) gates the compile step instead --
+        # a leg that doesn't need its pass still runs checkout/setup (cheap) and
+        # just skips the actual fxc invocation.
         if: inputs.run-shader-validation
-        name: Validate shader compilation (${{ matrix.config.name }})
+        name: Validate shader compilation (${{ matrix.config.name }} / ${{ matrix.pass }})
         runs-on: windows-2025-vs2026
         permissions:
             contents: read
@@ -167,6 +177,7 @@ jobs:
                     - name: "VR"
                       file: ".github/configs/shader-validation-vr.yaml"
                       runtime: "VR"
+                pass: [full-config, release-parity]
             fail-fast: false
         steps:
             - name: Checkout code
@@ -223,8 +234,21 @@ jobs:
 
             # --shader-dir stays on build/ALL: prepare-shaders always populates
             # the ALL preset; inputs.cmake-preset only selects the C++ tier.
-            - name: Validate shader compilation (${{ matrix.config.name }})
-              if: steps.check-hlsl.outputs.skip != 'true'
+            # validate_changed_shaders builds the #include graph and compiles
+            # only entry points that transitively include a changed file, so
+            # both passes stay bounded by the change set:
+            #   full-config: default opt -- every feature path stays covered.
+            #   release-parity: /O3 (debug defines stripped) on the
+            #     default-install profile config (non-AIO and
+            #     default-disabled defines stripped -- the shipped cache
+            #     targets a default install). This is the set the release
+            #     ships and the only one that surfaces /O3-only warnings
+            #     (e.g. X4000 uninitialized return).
+            - name: Validate shader compilation (${{ matrix.config.name }} / ${{ matrix.pass }})
+              if: >
+                  steps.check-hlsl.outputs.skip != 'true' &&
+                  ((matrix.pass == 'full-config' && inputs.run-full-config-validation) ||
+                   (matrix.pass == 'release-parity' && (inputs.cache-artifacts || inputs.release-parity-validation)))
               shell: bash
               env:
                   CHANGED_FILES_JSON: ${{ inputs.changed-files-json }}
@@ -247,28 +271,17 @@ jobs:
                   fi
                   echo "Changed files for incremental validation:"
                   cat changed_files.txt || true
-                  # Two independent incremental passes. validate_changed_shaders builds the
-                  # #include graph and compiles only the entry points that transitively
-                  # include a changed file, so both stay bounded by the change set:
-                  #   1. Full config, default opt -- every feature path stays covered.
-                  #   2. Release parity: /O3 (debug defines stripped) on the default-install
-                  #      profile config (non-AIO and default-disabled defines stripped -- the
-                  #      shipped cache targets a default install). This is the set the release
-                  #      ships and the only one that surfaces /O3-only warnings (e.g. X4000
-                  #      uninitialized return). PRs run both; the cache build and release gate
-                  #      run only #2.
                   FXC="${{ steps.find_fxc.outputs.fxc_path }}"
                   PLAIN_CONFIG="${{ matrix.config.file }}"
-                  mkdir -p build/ShaderCache build/ShaderCacheFull
 
-                  if [ "${{ inputs.run-full-config-validation }}" = "true" ]; then
+                  if [ "${{ matrix.pass }}" = "full-config" ]; then
+                    mkdir -p build/ShaderCacheFull
                     echo "::group::Full-config validation (default opt)"
                     python tools/validate_changed_shaders.py --changed-list-file changed_files.txt -- \
                       hlslkit-compile --fxc "$FXC" --shader-dir build/ALL/aio/Shaders --output-dir build/ShaderCacheFull --config "$PLAIN_CONFIG" --max-warnings 0 --suppress-warnings X1519
                     echo "::endgroup::"
-                  fi
-
-                  if [ "${{ inputs.cache-artifacts }}" = "true" ] || [ "${{ inputs.release-parity-validation }}" = "true" ]; then
+                  else
+                    mkdir -p build/ShaderCache
                     echo "::group::Release-parity validation (/O3, default-install profile)"
                     PROFILE_CONFIG="profile-config-${{ matrix.config.runtime }}.yaml"
                     python tools/build-shader-cache.py --emit-profile-config "$PLAIN_CONFIG" "$PROFILE_CONFIG"
@@ -279,9 +292,10 @@ jobs:
 
             # Never runs in pull_request_target contexts or on fork checkouts
             # (cache-artifacts is only set by release-build); the guards make
-            # that structural for CodeQL and future callers.
+            # that structural for CodeQL and future callers. release-parity
+            # only: ShaderCache/ is that pass's output dir.
             - name: Finalize distributable shader cache (${{ matrix.config.runtime }})
-              if: inputs.cache-artifacts && github.event_name != 'pull_request_target' && inputs.repository == github.repository && steps.check-hlsl.outputs.skip != 'true'
+              if: matrix.pass == 'release-parity' && inputs.cache-artifacts && github.event_name != 'pull_request_target' && inputs.repository == github.repository && steps.check-hlsl.outputs.skip != 'true'
               shell: bash
               run: |
                   # Re-profiles default-disabled features' shaders (validation keeps their
@@ -289,21 +303,27 @@ jobs:
                   python tools/build-shader-cache.py --finalize-existing build/ShaderCache --shader-dir build/ALL/aio/Shaders --runtime ${{ matrix.config.runtime }}
 
             - name: Upload shader cache artifact (${{ matrix.config.runtime }})
-              if: inputs.cache-artifacts && github.event_name != 'pull_request_target' && inputs.repository == github.repository && steps.check-hlsl.outputs.skip != 'true'
+              if: matrix.pass == 'release-parity' && inputs.cache-artifacts && github.event_name != 'pull_request_target' && inputs.repository == github.repository && steps.check-hlsl.outputs.skip != 'true'
               uses: actions/upload-artifact@v7
               with:
                   name: ShaderCache-${{ matrix.config.runtime }}
                   path: build/ShaderCache
                   retention-days: 30
 
+            # Both possible output dirs are listed (if-no-files-found: ignore
+            # covers whichever pass this leg didn't run) so full-config
+            # failures -- previously not captured, since that pass writes to
+            # ShaderCacheFull/ instead of ShaderCache/ -- are now uploaded too.
             - name: Upload shader validation logs
               if: failure() && steps.check-hlsl.outputs.skip != 'true'
               uses: actions/upload-artifact@v7
               with:
-                  name: shader-validation-logs-${{ matrix.config.name }}
+                  name: shader-validation-logs-${{ matrix.config.name }}-${{ matrix.pass }}
                   path: |
                       build/ShaderCache/new_issues.log
                       build/ShaderCache/*.log
+                      build/ShaderCacheFull/new_issues.log
+                      build/ShaderCacheFull/*.log
                   retention-days: 7
                   if-no-files-found: ignore
 
