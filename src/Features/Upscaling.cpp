@@ -340,7 +340,9 @@ void Upscaling::ApplyPerformanceProfile(PerfProfile profile)
 	settings.renderAtUpscaleRes = true;
 	settings.qualityMode = ProfileQualityMode(profile);
 	settings.vrRenderScale = 0.0f;
-	foveatedRender.settings.enabled = ProfileFoveation(profile) ? 1 : 0;
+	// Foveation is VR-only (DrawFoveationControls/IsRuntimeSupported); leave it alone on Flat.
+	if (globals::game::isVR)
+		foveatedRender.settings.enabled = ProfileFoveation(profile) ? 1 : 0;
 }
 
 bool Upscaling::MatchesPerformanceProfile(PerfProfile profile) const
@@ -348,7 +350,7 @@ bool Upscaling::MatchesPerformanceProfile(PerfProfile profile) const
 	return settings.renderAtUpscaleRes &&
 	       settings.vrRenderScale == 0.0f &&
 	       settings.qualityMode == ProfileQualityMode(profile) &&
-	       (foveatedRender.settings.enabled != 0) == ProfileFoveation(profile);
+	       (!globals::game::isVR || (foveatedRender.settings.enabled != 0) == ProfileFoveation(profile));
 }
 
 void Upscaling::DrawSettings()

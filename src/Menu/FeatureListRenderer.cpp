@@ -60,9 +60,9 @@ namespace
 		return canonicalName;
 	}
 
-	bool IsCoreMenu(const std::string& menuName)
+	bool IsCoreMenu(const std::string& canonicalId)
 	{
-		return std::find(CORE_MENU_NAMES.begin(), CORE_MENU_NAMES.end(), menuName) != CORE_MENU_NAMES.end();
+		return std::find(CORE_MENU_NAMES.begin(), CORE_MENU_NAMES.end(), canonicalId) != CORE_MENU_NAMES.end();
 	}
 
 	// Color for the [ALPHA]/[BETA] stage marker. Alpha (less stable) reads as an error,
@@ -403,11 +403,11 @@ std::vector<FeatureListRenderer::MenuFuncInfo> FeatureListRenderer::BuildMenuLis
 	}
 
 	auto menuList = std::vector<MenuFuncInfo>{
-		BuiltInMenu{ T("menu.features.home", "Home"), []() { HomePageRenderer::RenderHomePage(); } },
-		BuiltInMenu{ T("menu.features.general", "General"), drawGeneralSettings },
-		BuiltInMenu{ T("menu.features.performance", "Performance"), []() { PerformanceRenderer::Render(); } },
-		BuiltInMenu{ T("menu.features.advanced", "Advanced"), drawAdvancedSettings },
-		BuiltInMenu{ T("menu.features.profiling", "Profiling"), []() { ProfilingRenderer::RenderStatistics(); } }
+		BuiltInMenu{ T("menu.features.home", "Home"), "Home", []() { HomePageRenderer::RenderHomePage(); } },
+		BuiltInMenu{ T("menu.features.general", "General"), "General", drawGeneralSettings },
+		BuiltInMenu{ T("menu.features.performance", "Performance"), "Performance", []() { PerformanceRenderer::Render(); } },
+		BuiltInMenu{ T("menu.features.advanced", "Advanced"), "Advanced", drawAdvancedSettings },
+		BuiltInMenu{ T("menu.features.profiling", "Profiling"), "Profiling", []() { ProfilingRenderer::RenderStatistics(); } }
 	};  // NOTE: The menu list is rebuilt every frame, so category expansion states
 	// persist correctly. This is acceptable since the list is small and built
 	// infrequently, but could be optimized if performance becomes an issue.
@@ -475,7 +475,7 @@ std::vector<FeatureListRenderer::MenuFuncInfo> FeatureListRenderer::BuildMenuLis
 	}
 	// Add top section for feature issues (rejected features, obsolete info, etc.)
 	if (FeatureIssues::HasFeatureIssues()) {
-		menuList.insert(menuList.begin(), BuiltInMenu{ T("menu.features.feature_issues", "Feature Issues"), []() {
+		menuList.insert(menuList.begin(), BuiltInMenu{ T("menu.features.feature_issues", "Feature Issues"), "", []() {
 														  FeatureIssues::DrawFeatureIssuesUI();
 													  } });
 	}
@@ -524,7 +524,7 @@ void FeatureListRenderer::RenderLeftColumn(
 		for (size_t i = 0; i < menuList.size(); i++) {
 			if (std::holds_alternative<BuiltInMenu>(menuList[i])) {
 				const BuiltInMenu& menu = std::get<BuiltInMenu>(menuList[i]);
-				if (IsCoreMenu(menu.name)) {
+				if (IsCoreMenu(menu.canonicalId)) {
 					coreMenuCount++;
 				}
 			}
@@ -535,7 +535,7 @@ void FeatureListRenderer::RenderLeftColumn(
 		for (size_t i = 0; i < menuList.size() && renderedCoreMenus < CORE_MENU_NAMES.size(); i++) {
 			if (std::holds_alternative<BuiltInMenu>(menuList[i])) {
 				const BuiltInMenu& menu = std::get<BuiltInMenu>(menuList[i]);
-				if (IsCoreMenu(menu.name)) {
+				if (IsCoreMenu(menu.canonicalId)) {
 					std::visit(ListMenuVisitor{ i, selectedMenu, categoryExpansionStates }, menuList[i]);
 					renderedCoreMenus++;
 				}
@@ -550,7 +550,7 @@ void FeatureListRenderer::RenderLeftColumn(
 		for (size_t i = 0; i < menuList.size(); i++) {
 			if (std::holds_alternative<BuiltInMenu>(menuList[i])) {
 				const BuiltInMenu& menu = std::get<BuiltInMenu>(menuList[i]);
-				if (IsCoreMenu(menu.name)) {
+				if (IsCoreMenu(menu.canonicalId)) {
 					continue;  // Skip, already rendered
 				}
 			}

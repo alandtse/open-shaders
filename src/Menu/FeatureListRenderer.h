@@ -21,7 +21,9 @@ public:
 	/** @brief Describes a built-in (non-feature) menu page with a name and draw callback. */
 	struct BuiltInMenu
 	{
-		std::string name;
+		std::string name;  // translated display text
+		// Untranslated identifier for IsCoreMenu(); empty for non-core entries (e.g. Feature Issues).
+		std::string canonicalId;
 		std::function<void()> func;
 	};
 

@@ -64,10 +64,12 @@ void PerformanceRenderer::Render(Feature* host)
 		T(TKEY("profile_balanced"), "Balanced"),
 		T(TKEY("profile_quality"), "Quality")
 	};
+	// Foveation/reprojection are VR-only (their sections are hidden on Flat via
+	// PerformanceSectionRequiresVR), so don't claim they're affected there.
 	const char* tooltips[3] = {
-		T(TKEY("profile_performance_tooltip"), "Lowest render resolution; foveation and reprojection on. Fastest."),
-		T(TKEY("profile_balanced_tooltip"), "Mid render resolution; reprojection on."),
-		T(TKEY("profile_quality_tooltip"), "Higher render resolution; reprojection off for max fidelity. Some changes apply on restart.")
+		globals::game::isVR ? T(TKEY("profile_performance_tooltip"), "Lowest render resolution; foveation and reprojection on. Fastest.") : T(TKEY("profile_performance_tooltip_flat"), "Lowest render resolution. Fastest."),
+		globals::game::isVR ? T(TKEY("profile_balanced_tooltip"), "Mid render resolution; reprojection on.") : T(TKEY("profile_balanced_tooltip_flat"), "Mid render resolution."),
+		globals::game::isVR ? T(TKEY("profile_quality_tooltip"), "Higher render resolution; reprojection off for max fidelity. Some changes apply on restart.") : T(TKEY("profile_quality_tooltip_flat"), "Higher render resolution for max fidelity. Some changes apply on restart.")
 	};
 	ImGui::TextUnformatted(T(TKEY("profiles_label"), "Profile:"));
 	for (int i = 0; i < IM_ARRAYSIZE(profiles); ++i) {
