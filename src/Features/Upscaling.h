@@ -213,8 +213,6 @@ public:
 	/// panel and the Performance hub. VR-only; self-gates via IsRuntimeSupported()
 	/// (shown disabled off-VR rather than hidden).
 	void DrawFoveationControls(bool showTuning = true);
-	static uint ProfileQualityMode(PerfProfile profile);
-	static bool ProfileFoveation(PerfProfile profile);
 	const char* GetQualityModeName(uint qualityMode) const;
 	virtual void SaveSettings(json& o_json) override;
 	virtual void LoadSettings(json& o_json) override;

@@ -298,22 +298,27 @@ void Upscaling::DrawPerformanceSettings()
 	DrawFoveationControls(false);
 }
 
-uint Upscaling::ProfileQualityMode(PerfProfile profile)
+namespace
 {
-	switch (profile) {
-	case PerfProfile::Performance:
-		return (uint)QualityMode::kPerformance;
-	case PerfProfile::Balanced:
-		return (uint)QualityMode::kBalanced;
-	default:
-		return (uint)QualityMode::kQuality;
-	}
-}
+	struct UpscalePreset
+	{
+		uint qualityMode;
+		bool foveation;
+	};
 
-// Foveated DLSS trades peripheral sharpness for speed, so only Performance opts into it.
-bool Upscaling::ProfileFoveation(PerfProfile profile)
-{
-	return profile == PerfProfile::Performance;
+	// Foveated DLSS trades peripheral sharpness for speed, so only Performance opts into
+	// it. Single source of truth for Apply/MatchesPerformanceProfile below.
+	constexpr UpscalePreset GetUpscalePreset(Feature::PerfProfile profile)
+	{
+		switch (profile) {
+		case Feature::PerfProfile::Performance:
+			return { (uint)Upscaling::QualityMode::kPerformance, true };
+		case Feature::PerfProfile::Balanced:
+			return { (uint)Upscaling::QualityMode::kBalanced, false };
+		default:
+			return { (uint)Upscaling::QualityMode::kQuality, false };
+		}
+	}
 }
 
 // Single source for preset display names; the native tier reads DLAA under DLSS, Native AA otherwise.
@@ -337,20 +342,22 @@ const char* Upscaling::GetQualityModeName(uint qualityMode) const
 // Profiles are preset-driven, so scale overrides are cleared.
 void Upscaling::ApplyPerformanceProfile(PerfProfile profile)
 {
+	const auto preset = GetUpscalePreset(profile);
 	settings.renderAtUpscaleRes = true;
-	settings.qualityMode = ProfileQualityMode(profile);
+	settings.qualityMode = preset.qualityMode;
 	settings.vrRenderScale = 0.0f;
 	// Foveation is VR-only (DrawFoveationControls/IsRuntimeSupported); leave it alone on Flat.
 	if (globals::game::isVR)
-		foveatedRender.settings.enabled = ProfileFoveation(profile) ? 1 : 0;
+		foveatedRender.settings.enabled = preset.foveation ? 1 : 0;
 }
 
 bool Upscaling::MatchesPerformanceProfile(PerfProfile profile) const
 {
+	const auto preset = GetUpscalePreset(profile);
 	return settings.renderAtUpscaleRes &&
 	       settings.vrRenderScale == 0.0f &&
-	       settings.qualityMode == ProfileQualityMode(profile) &&
-	       (!globals::game::isVR || (foveatedRender.settings.enabled != 0) == ProfileFoveation(profile));
+	       settings.qualityMode == preset.qualityMode &&
+	       (!globals::game::isVR || (foveatedRender.settings.enabled != 0) == preset.foveation);
 }
 
 void Upscaling::DrawSettings()

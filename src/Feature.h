@@ -238,6 +238,11 @@ public:
 	 * each feature maps the profile to its own settings (decoupled: the hub broadcasts
 	 * one profile to every feature, none needs to know about the others). Restart-gated
 	 * fields changed here surface their pending-restart banners as usual.
+	 *
+	 * Implement alongside MatchesPerformanceProfile by deriving both from the same pure
+	 * profile -> value(s) function (see ProfileEnablesReproject above for a single-value
+	 * example, LightLimitFix::GetImpactCullPreset for a multi-value one) so the two can't
+	 * drift apart -- never hardcode the mapping separately in each override.
 	 */
 	virtual void ApplyPerformanceProfile(PerfProfile /*profile*/) {}
 
