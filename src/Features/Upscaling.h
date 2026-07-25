@@ -200,19 +200,21 @@ public:
 	size_t GetSettingsBlobSize() const override { return sizeof(settings); }
 
 	virtual void DrawSettings() override;
-	virtual void DrawVRPerformanceSettings() override;
-	std::string GetVRPerformanceSectionLabel() override;
-	int GetVRPerformanceOrder() const override { return 10; }
-	virtual void ApplyVRPerformanceProfile(VRPerfProfile profile) override;
-	bool MatchesVRPerformanceProfile(VRPerfProfile profile) const override;
-	/// @brief Renders the VR PerfMode (render-at-upscaled-res) toggle. Shared by the
-	/// upscaler panel and the Performance hub. VR-only; caller guards on isVR.
+	virtual void DrawPerformanceSettings() override;
+	std::string GetPerformanceSectionLabel() override;
+	int GetPerformanceOrder() const override { return 10; }
+	virtual void ApplyPerformanceProfile(PerfProfile profile) override;
+	bool MatchesPerformanceProfile(PerfProfile profile) const override;
+	/// @brief Renders the PerfMode (render-at-upscaled-res) toggle. Shared by the
+	/// upscaler panel and the Performance hub. Meaningful on Flat and VR alike;
+	/// gates on the active upscale method instead (DLSS/FSR only).
 	void DrawPerfModeToggle();
 	/// @brief Renders the Foveated DLSS enable + tuning tree. Shared by the upscaler
-	/// panel and the Performance hub. VR-only; caller guards on isVR.
+	/// panel and the Performance hub. VR-only; self-gates via IsRuntimeSupported()
+	/// (shown disabled off-VR rather than hidden).
 	void DrawFoveationControls(bool showTuning = true);
-	static uint VRProfileQualityMode(VRPerfProfile profile);
-	static bool VRProfileFoveation(VRPerfProfile profile);
+	static uint ProfileQualityMode(PerfProfile profile);
+	static bool ProfileFoveation(PerfProfile profile);
 	const char* GetQualityModeName(uint qualityMode) const;
 	virtual void SaveSettings(json& o_json) override;
 	virtual void LoadSettings(json& o_json) override;

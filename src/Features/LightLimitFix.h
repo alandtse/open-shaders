@@ -260,9 +260,13 @@ public:
 	virtual void DrawSettings() override;
 	/** @brief Hub view: the Caster Cull + Light Impact Floor presets and sliders,
 	 *  bound to the same settings DrawSettings' own Advanced panel shows. */
-	void DrawVRPerformanceSettings() override;
-	std::string GetVRPerformanceSectionLabel() override { return GetDisplayName(); }
-	int GetVRPerformanceOrder() const override { return 25; }
+	void DrawPerformanceSettings() override;
+	std::string GetPerformanceSectionLabel() override { return GetDisplayName(); }
+	int GetPerformanceOrder() const override { return 25; }
+	/** @brief Maps the hub profile onto the same Caster Cull + Light Impact Floor
+	 *  presets DrawImpactCullControls' own Quality/Balanced/Performance buttons use. */
+	void ApplyPerformanceProfile(PerfProfile profile) override;
+	bool MatchesPerformanceProfile(PerfProfile profile) const override;
 	/** @brief Draws the debug overlay warning when light visualization is enabled. */
 	virtual void DrawOverlay() override;
 	/** @brief Returns whether the debug overlay should be displayed. */

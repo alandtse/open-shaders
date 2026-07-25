@@ -231,7 +231,7 @@ void VR::DrawSettings()
 		return;
 	if (ImGui::BeginTabBar("##VRTabs", ImGuiTabBarFlags_None)) {
 		if (BeginTabItemWithFont(T(TKEY("tab_performance"), "Performance"), Menu::FontRole::Subheading)) {
-			if (ImGui::BeginChild("##VRPerformanceFrame", { 0, 0 }, true)) {
+			if (ImGui::BeginChild("##PerformanceFrame", { 0, 0 }, true)) {
 				PerformanceRenderer::Render(this);
 			}
 			ImGui::EndChild();
@@ -277,7 +277,7 @@ void VR::DrawSettings()
 // Central Performance hub view: the same stereo + culling controls the Stereo/General
 // tabs render, bound to the same settings. Skips the tab bar so the hub can stack this
 // feature's sections alongside other features' perf controls.
-void VR::DrawVRPerformanceSettings()
+void VR::DrawPerformanceSettings()
 {
 	using StereoMode = VRStereoOptimizations::StereoMode;
 
@@ -296,16 +296,16 @@ void VR::DrawVRPerformanceSettings()
 // Stereo reprojection is the big VR GPU-cost saver with a minor disocclusion artifact,
 // so Performance/Balanced enable it and Quality turns it off for maximum fidelity.
 // stereoMode is restart-gated (surfaces its pending banner in the reprojection panel).
-void VR::ApplyVRPerformanceProfile(VRPerfProfile profile)
+void VR::ApplyPerformanceProfile(PerfProfile profile)
 {
 	using StereoMode = VRStereoOptimizations::StereoMode;
-	stereoOpt.settings.stereoMode = VRProfileEnablesReproject(profile) ? StereoMode::Enable : StereoMode::Off;
+	stereoOpt.settings.stereoMode = ProfileEnablesReproject(profile) ? StereoMode::Enable : StereoMode::Off;
 }
 
-bool VR::MatchesVRPerformanceProfile(VRPerfProfile profile) const
+bool VR::MatchesPerformanceProfile(PerfProfile profile) const
 {
 	using StereoMode = VRStereoOptimizations::StereoMode;
-	return stereoOpt.settings.stereoMode == (VRProfileEnablesReproject(profile) ? StereoMode::Enable : StereoMode::Off);
+	return stereoOpt.settings.stereoMode == (ProfileEnablesReproject(profile) ? StereoMode::Enable : StereoMode::Off);
 }
 
 #undef I18N_KEY_PREFIX

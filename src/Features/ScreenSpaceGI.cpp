@@ -58,23 +58,23 @@ void ScreenSpaceGI::DrawReprojectToggle()
 }
 
 // Hub view: the SSGI stereo reprojection toggle, bound to the same setting the SSGI panel shows.
-void ScreenSpaceGI::DrawVRPerformanceSettings()
+void ScreenSpaceGI::DrawPerformanceSettings()
 {
 	DrawReprojectToggle();
 }
 
 // Reprojection is the GI perf win with a minor disocclusion artifact: on for
 // Performance/Balanced, off for Quality (max fidelity). Ignored when specular GI is on.
-void ScreenSpaceGI::ApplyVRPerformanceProfile(VRPerfProfile profile)
+void ScreenSpaceGI::ApplyPerformanceProfile(PerfProfile profile)
 {
-	settings.UseStereoReproject = VRProfileEnablesReproject(profile);
+	settings.UseStereoReproject = ProfileEnablesReproject(profile);
 }
 
-bool ScreenSpaceGI::MatchesVRPerformanceProfile(VRPerfProfile profile) const
+bool ScreenSpaceGI::MatchesPerformanceProfile(PerfProfile profile) const
 {
 	// Specular GI forces bilateral sync (view-dependent), so the reproject setting is moot
 	// then, so don't veto the hub's active-profile detection for a knob the user can't apply.
-	return settings.EnableExperimentalSpecularGI || settings.UseStereoReproject == VRProfileEnablesReproject(profile);
+	return settings.EnableExperimentalSpecularGI || settings.UseStereoReproject == ProfileEnablesReproject(profile);
 }
 
 void ScreenSpaceGI::DrawSettings()

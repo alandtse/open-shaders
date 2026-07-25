@@ -295,7 +295,7 @@ const std::vector<Feature*>& Feature::GetFeatureList()
 	}
 }
 
-void Feature::ApplyVRPerformanceProfileToAll(VRPerfProfile profile)
+void Feature::ApplyPerformanceProfileToAll(PerfProfile profile)
 {
 	for (auto* feature : GetFeatureList()) {
 		if (!feature->loaded)
@@ -304,11 +304,11 @@ void Feature::ApplyVRPerformanceProfileToAll(VRPerfProfile profile)
 			continue;
 		// One feature's failure must not abort the broadcast to the rest.
 		try {
-			feature->ApplyVRPerformanceProfile(profile);
+			feature->ApplyPerformanceProfile(profile);
 		} catch (const std::exception& e) {
-			logger::error("ApplyVRPerformanceProfileToAll: {} threw: {}", feature->GetShortName(), e.what());
+			logger::error("ApplyPerformanceProfileToAll: {} threw: {}", feature->GetShortName(), e.what());
 		} catch (...) {
-			logger::error("ApplyVRPerformanceProfileToAll: {} threw (unknown)", feature->GetShortName());
+			logger::error("ApplyPerformanceProfileToAll: {} threw (unknown)", feature->GetShortName());
 		}
 	}
 }

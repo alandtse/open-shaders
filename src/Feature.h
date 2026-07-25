@@ -201,9 +201,9 @@ public:
 	 * hub and the feature panel are two views of one state. The hub draws the section
 	 * header (with a jump link to the feature's panel); overrides render controls only.
 	 */
-	virtual void DrawVRPerformanceSettings() {}
+	virtual void DrawPerformanceSettings() {}
 
-	/** @brief Return true when DrawVRPerformanceSettings() draws ONLY VR-specific
+	/** @brief Return true when DrawPerformanceSettings() draws ONLY VR-specific
 	 *         controls (stereo/eye-relative knobs meaningless with one eye). The hub
 	 *         then skips this feature's whole section (header included) outside VR,
 	 *         so authors don't need to gate content manually. Default false: content
@@ -214,15 +214,15 @@ public:
 
 	/** @brief Section label the Performance hub draws (as a jump link to this
 	 *         feature's panel) above this feature's controls. Override alongside
-	 *         DrawVRPerformanceSettings; empty (default) draws no header. */
-	virtual std::string GetVRPerformanceSectionLabel() { return ""; }
+	 *         DrawPerformanceSettings; empty (default) draws no header. */
+	virtual std::string GetPerformanceSectionLabel() { return ""; }
 
 	/** @brief Sort key for the Performance hub (lower draws first); default puts
 	 *         unranked features last so the order reflects perf impact, not registration. */
-	virtual int GetVRPerformanceOrder() const { return 1000; }
+	virtual int GetPerformanceOrder() const { return 1000; }
 
 	/** @brief Named VR performance profiles broadcast from the Performance hub. */
-	enum class VRPerfProfile
+	enum class PerfProfile
 	{
 		Performance,  ///< Maximum framerate: lowest render res, all perf features on.
 		Balanced,     ///< Middle ground.
@@ -231,7 +231,7 @@ public:
 
 	/** @brief Shared profile convention: every VR reprojection feature enables reproject
 	 *         except on Quality (max fidelity). One source so apply/match can't drift. */
-	static constexpr bool VRProfileEnablesReproject(VRPerfProfile profile) { return profile != VRPerfProfile::Quality; }
+	static constexpr bool ProfileEnablesReproject(PerfProfile profile) { return profile != PerfProfile::Quality; }
 
 	/**
 	 * @brief Applies a VR performance profile to this feature's settings. Default empty:
@@ -239,16 +239,16 @@ public:
 	 * one profile to every feature, none needs to know about the others). Restart-gated
 	 * fields changed here surface their pending-restart banners as usual.
 	 */
-	virtual void ApplyVRPerformanceProfile(VRPerfProfile /*profile*/) {}
+	virtual void ApplyPerformanceProfile(PerfProfile /*profile*/) {}
 
-	/** @brief True when this feature's settings already equal what ApplyVRPerformanceProfile
+	/** @brief True when this feature's settings already equal what ApplyPerformanceProfile
 	 *         would set for @p profile. The hub uses it to show the active profile (or Custom).
 	 *         Default true so features without perf profiles don't veto the match. */
-	virtual bool MatchesVRPerformanceProfile(VRPerfProfile /*profile*/) const { return true; }
+	virtual bool MatchesPerformanceProfile(PerfProfile /*profile*/) const { return true; }
 
 	/** @brief Broadcasts a profile to every loaded feature. The hub button and the devbench
 	 *         handler share this so the loaded-guard rule lives in exactly one place. */
-	static void ApplyVRPerformanceProfileToAll(VRPerfProfile profile);
+	static void ApplyPerformanceProfileToAll(PerfProfile profile);
 
 	/** @brief Draws the UI shown when this feature failed to load. */
 	virtual void DrawUnloadedUI();

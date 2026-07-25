@@ -17,7 +17,7 @@
 // SeparatorText for the host (a link there would navigate to this very page).
 static void DrawSectionHeader(Feature* feature, bool linkable)
 {
-	const std::string label = feature->GetVRPerformanceSectionLabel();
+	const std::string label = feature->GetPerformanceSectionLabel();
 	if (label.empty())
 		return;
 	if (!linkable) {
@@ -43,15 +43,15 @@ void PerformanceRenderer::Render(Feature* host)
 	ImGui::Spacing();
 
 	// The active profile is the one every feature's settings currently match (else Custom).
-	const Feature::VRPerfProfile profiles[3] = {
-		Feature::VRPerfProfile::Performance, Feature::VRPerfProfile::Balanced, Feature::VRPerfProfile::Quality
+	const Feature::PerfProfile profiles[3] = {
+		Feature::PerfProfile::Performance, Feature::PerfProfile::Balanced, Feature::PerfProfile::Quality
 	};
 	int activeIdx = -1;
 	for (int i = 0; i < IM_ARRAYSIZE(profiles) && activeIdx < 0; ++i) {
 		bool all = true;
 		for (Feature* f : Feature::GetFeatureList())
 			if (f->loaded && (globals::game::isVR || !f->PerformanceSectionRequiresVR()) &&
-				!f->MatchesVRPerformanceProfile(profiles[i])) {
+				!f->MatchesPerformanceProfile(profiles[i])) {
 				all = false;
 				break;
 			}
@@ -76,7 +76,7 @@ void PerformanceRenderer::Render(Feature* host)
 		if (active)
 			ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive));
 		if (ImGui::Button(labels[i]))
-			Feature::ApplyVRPerformanceProfileToAll(profiles[i]);
+			Feature::ApplyPerformanceProfileToAll(profiles[i]);
 		if (active)
 			ImGui::PopStyleColor();
 		if (auto _tt = Util::HoverTooltipWrapper())
@@ -91,7 +91,7 @@ void PerformanceRenderer::Render(Feature* host)
 	ImGui::Separator();
 	ImGui::Spacing();
 
-	// Drawn in perf-impact order (GetVRPerformanceOrder), not feature-registration order.
+	// Drawn in perf-impact order (GetPerformanceOrder), not feature-registration order.
 	// Skips features whose whole section is VR-only outside VR (PerformanceSectionRequiresVR)
 	// so authors of VR-only sections don't need to gate their draw code manually.
 	std::vector<Feature*> ordered;
@@ -100,13 +100,13 @@ void PerformanceRenderer::Render(Feature* host)
 			ordered.push_back(feature);
 	// stable_sort keeps registration order among equal ranks (e.g. the default 1000) deterministic.
 	std::stable_sort(ordered.begin(), ordered.end(),
-		[](const Feature* a, const Feature* b) { return a->GetVRPerformanceOrder() < b->GetVRPerformanceOrder(); });
+		[](const Feature* a, const Feature* b) { return a->GetPerformanceOrder() < b->GetPerformanceOrder(); });
 	for (Feature* feature : ordered) {
 		ImGui::PushID(feature);
 		DrawSectionHeader(feature, feature != host);
 		// Isolate each feature's draw so one throwing hook can't blank the rest of the page.
 		try {
-			feature->DrawVRPerformanceSettings();
+			feature->DrawPerformanceSettings();
 		} catch (const std::exception& e) {
 			ImGui::TextColored(ImVec4(1, 0, 0, 1), "%s: draw error (%s)", feature->GetDisplayName().c_str(), e.what());
 		} catch (...) {

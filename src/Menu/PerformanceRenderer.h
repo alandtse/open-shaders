@@ -6,7 +6,7 @@
  * reprojection, and culling) so users can manage performance in one place.
  *
  * The page owns no settings state. It iterates loaded features and calls
- * Feature::DrawVRPerformanceSettings() on each; controls bind directly to feature settings.
+ * Feature::DrawPerformanceSettings() on each; controls bind directly to feature settings.
  * Intelligently includes VR-specific sections when running in VR mode.
  */
 struct Feature;

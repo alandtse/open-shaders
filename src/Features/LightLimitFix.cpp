@@ -116,9 +116,46 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	JsonPlacedLightsInteriorsOnly,
 	JsonPlacedLightsPortalStrictOnly)
 
-void LightLimitFix::DrawVRPerformanceSettings()
+void LightLimitFix::DrawPerformanceSettings()
 {
 	ShadowCasterManager::DrawImpactCullControls(settings.ShadowSettings);
+}
+
+namespace
+{
+	struct ImpactCullPreset
+	{
+		float floor;
+		float cull;
+	};
+
+	// Same three tiers DrawImpactCullControls' own preset buttons apply (Quality: no
+	// culling; Balanced/Performance: progressively stronger impact floor + angular cull).
+	// Single source of truth for Apply/MatchesPerformanceProfile below.
+	constexpr ImpactCullPreset GetImpactCullPreset(Feature::PerfProfile profile)
+	{
+		switch (profile) {
+		case Feature::PerfProfile::Performance:
+			return { 0.025f, 0.012f };
+		case Feature::PerfProfile::Balanced:
+			return { 0.001f, 0.008f };
+		default:
+			return { 0.0f, 0.0f };
+		}
+	}
+}
+
+void LightLimitFix::ApplyPerformanceProfile(PerfProfile profile)
+{
+	const auto preset = GetImpactCullPreset(profile);
+	settings.ShadowSettings.ShadowImpactFloor = preset.floor;
+	settings.ShadowSettings.CasterCullAngularMin = preset.cull;
+}
+
+bool LightLimitFix::MatchesPerformanceProfile(PerfProfile profile) const
+{
+	const auto preset = GetImpactCullPreset(profile);
+	return settings.ShadowSettings.ShadowImpactFloor == preset.floor && settings.ShadowSettings.CasterCullAngularMin == preset.cull;
 }
 
 void LightLimitFix::DrawSettings()

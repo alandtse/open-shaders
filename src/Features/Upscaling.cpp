@@ -275,14 +275,14 @@ void Upscaling::DrawFoveationControls(bool showTuning)
 }
 
 // Narrower than the feature name: the hub section only covers the VR perf knobs.
-std::string Upscaling::GetVRPerformanceSectionLabel()
+std::string Upscaling::GetPerformanceSectionLabel()
 {
 	return T(TKEY("vr_perf_upscaling_header"), "Upscaling & Foveation");
 }
 
 // Central Performance hub view: the render-res PerfMode toggle and Foveated DLSS,
 // the two upscaler-owned VR perf knobs, bound to the same settings the upscaler panel shows.
-void Upscaling::DrawVRPerformanceSettings()
+void Upscaling::DrawPerformanceSettings()
 {
 	DrawPerfModeToggle();
 	// The upscale preset is only meaningful when an upscaler is active; match the same
@@ -298,12 +298,12 @@ void Upscaling::DrawVRPerformanceSettings()
 	DrawFoveationControls(false);
 }
 
-uint Upscaling::VRProfileQualityMode(VRPerfProfile profile)
+uint Upscaling::ProfileQualityMode(PerfProfile profile)
 {
 	switch (profile) {
-	case VRPerfProfile::Performance:
+	case PerfProfile::Performance:
 		return (uint)QualityMode::kPerformance;
-	case VRPerfProfile::Balanced:
+	case PerfProfile::Balanced:
 		return (uint)QualityMode::kBalanced;
 	default:
 		return (uint)QualityMode::kQuality;
@@ -311,9 +311,9 @@ uint Upscaling::VRProfileQualityMode(VRPerfProfile profile)
 }
 
 // Foveated DLSS trades peripheral sharpness for speed, so only Performance opts into it.
-bool Upscaling::VRProfileFoveation(VRPerfProfile profile)
+bool Upscaling::ProfileFoveation(PerfProfile profile)
 {
-	return profile == VRPerfProfile::Performance;
+	return profile == PerfProfile::Performance;
 }
 
 // Single source for preset display names; the native tier reads DLAA under DLSS, Native AA otherwise.
@@ -335,20 +335,20 @@ const char* Upscaling::GetQualityModeName(uint qualityMode) const
 
 // PerfMode stays on for every profile; qualityMode and foveation latch at boot.
 // Profiles are preset-driven, so scale overrides are cleared.
-void Upscaling::ApplyVRPerformanceProfile(VRPerfProfile profile)
+void Upscaling::ApplyPerformanceProfile(PerfProfile profile)
 {
 	settings.renderAtUpscaleRes = true;
-	settings.qualityMode = VRProfileQualityMode(profile);
+	settings.qualityMode = ProfileQualityMode(profile);
 	settings.vrRenderScale = 0.0f;
-	foveatedRender.settings.enabled = VRProfileFoveation(profile) ? 1 : 0;
+	foveatedRender.settings.enabled = ProfileFoveation(profile) ? 1 : 0;
 }
 
-bool Upscaling::MatchesVRPerformanceProfile(VRPerfProfile profile) const
+bool Upscaling::MatchesPerformanceProfile(PerfProfile profile) const
 {
 	return settings.renderAtUpscaleRes &&
 	       settings.vrRenderScale == 0.0f &&
-	       settings.qualityMode == VRProfileQualityMode(profile) &&
-	       (foveatedRender.settings.enabled != 0) == VRProfileFoveation(profile);
+	       settings.qualityMode == ProfileQualityMode(profile) &&
+	       (foveatedRender.settings.enabled != 0) == ProfileFoveation(profile);
 }
 
 void Upscaling::DrawSettings()

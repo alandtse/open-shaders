@@ -47,22 +47,22 @@ void ScreenSpaceShadows::DrawStereoToggles()
 }
 
 // Hub view: the SSS stereo sync/reprojection toggles, bound to the same settings the SSS panel shows.
-void ScreenSpaceShadows::DrawVRPerformanceSettings()
+void ScreenSpaceShadows::DrawPerformanceSettings()
 {
 	DrawStereoToggles();
 }
 
 // A profile drives the whole stereo mode, so enable the umbrella (else it can't engage from
 // Off): Performance/Balanced reproject (fast), Quality uses bilateral sync (both eyes, max fidelity).
-void ScreenSpaceShadows::ApplyVRPerformanceProfile(VRPerfProfile profile)
+void ScreenSpaceShadows::ApplyPerformanceProfile(PerfProfile profile)
 {
 	enableStereoSync = true;
-	useStereoReproject = VRProfileEnablesReproject(profile);
+	useStereoReproject = ProfileEnablesReproject(profile);
 }
 
-bool ScreenSpaceShadows::MatchesVRPerformanceProfile(VRPerfProfile profile) const
+bool ScreenSpaceShadows::MatchesPerformanceProfile(PerfProfile profile) const
 {
-	return enableStereoSync && useStereoReproject == VRProfileEnablesReproject(profile);
+	return enableStereoSync && useStereoReproject == ProfileEnablesReproject(profile);
 }
 
 void ScreenSpaceShadows::DrawSettings()

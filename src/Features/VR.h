@@ -106,11 +106,13 @@ public:
 	virtual void RestoreDefaultSettings() override;
 
 	virtual void DrawSettings() override;
-	virtual void DrawVRPerformanceSettings() override;
-	std::string GetVRPerformanceSectionLabel() override { return GetDisplayName(); }
-	int GetVRPerformanceOrder() const override { return 20; }
-	virtual void ApplyVRPerformanceProfile(VRPerfProfile profile) override;
-	bool MatchesVRPerformanceProfile(VRPerfProfile profile) const override;
+	virtual void DrawPerformanceSettings() override;
+	/// @brief DrawPerformanceSettings() only draws the stereo reprojection toggle.
+	bool PerformanceSectionRequiresVR() const override { return true; }
+	std::string GetPerformanceSectionLabel() override { return GetDisplayName(); }
+	int GetPerformanceOrder() const override { return 20; }
+	virtual void ApplyPerformanceProfile(PerfProfile profile) override;
+	bool MatchesPerformanceProfile(PerfProfile profile) const override;
 
 	virtual std::string_view GetCategory() const override { return FeatureCategories::kUtility; }
 
