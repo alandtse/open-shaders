@@ -39,32 +39,12 @@ runs:
               cmakeVersion: "~4.2.0"
               useCloudCache: false
 
-        - name: Install Visual Studio 2026 Build Tools
-          shell: pwsh
-          run: |
-              $installerUrl = "https://aka.ms/vs/stable/vs_BuildTools.exe"
-              $installerPath = "$env:TEMP\vs_buildtools.exe"
-              Invoke-WebRequest -Uri $installerUrl -OutFile $installerPath -UseBasicParsing
-              $proc = Start-Process -FilePath $installerPath -ArgumentList `
-                  "--quiet", "--wait", "--norestart", "--nocache", `
-                  "--add", "Microsoft.VisualStudio.Workload.VCTools", `
-                  "--add", "Microsoft.VisualStudio.Component.VC.Tools.x86.x64", `
-                  "--add", "Microsoft.VisualStudio.Component.Windows11SDK.26100" `
-                  -Wait -NoNewWindow -PassThru
-              $successExitCodes = @(0, 3010) # 3010 = ERROR_SUCCESS_REBOOT_REQUIRED
-              if ($successExitCodes -notcontains $proc.ExitCode) {
-                  throw "Visual Studio Build Tools installer failed with exit code $($proc.ExitCode)."
-              }
-              if ($proc.ExitCode -eq 3010) {
-                  Write-Warning "Visual Studio Build Tools installer requested a reboot; continuing on GitHub runner."
-              }
-              Remove-Item $installerPath -ErrorAction SilentlyContinue
-
         - name: Setup MSVC environment
+          # windows-2025-vs2026 ships VS2026 preinstalled (VC.Tools.x86.x64 +
+          # Windows11SDK.26100), so this just detects it; no install step needed.
           # Swapped from ilammy/msvc-dev-cmd@v1 (node20, deprecated) to
-          # TheMrMilchmann/setup-msvc-dev@v4 (node24). The new action has no
-          # `vsversion` input — the prior step installs only VS Build Tools
-          # 2026, so default detection picks it up.
+          # TheMrMilchmann/setup-msvc-dev@v4 (node24), which has no `vsversion`
+          # input -- default detection picks up the preinstalled toolset.
           uses: TheMrMilchmann/setup-msvc-dev@v4.0.0
           with:
               arch: x64

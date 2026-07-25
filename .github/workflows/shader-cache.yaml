@@ -31,7 +31,7 @@ jobs:
         if: inputs.run-id == ''
         permissions:
             contents: read
-        runs-on: windows-2025
+        runs-on: windows-2025-vs2026
         strategy:
             matrix:
                 runtime: [SE, VR]

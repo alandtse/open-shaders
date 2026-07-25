@@ -75,7 +75,7 @@ jobs:
     cpp-build:
         name: Build plugin and addons (${{ matrix.compiler.name }})
         if: inputs.run-cpp
-        runs-on: windows-2025
+        runs-on: windows-2025-vs2026
         permissions:
             contents: read
         outputs:
@@ -155,7 +155,7 @@ jobs:
     shader-validation:
         if: inputs.run-shader-validation
         name: Validate shader compilation (${{ matrix.config.name }})
-        runs-on: windows-2025
+        runs-on: windows-2025-vs2026
         permissions:
             contents: read
         strategy:
@@ -310,7 +310,7 @@ jobs:
     shader-unit-tests:
         name: Run Shader Unit Tests
         if: inputs.run-shader-tests
-        runs-on: windows-2025
+        runs-on: windows-2025-vs2026
         permissions:
             contents: read
         steps:
@@ -364,7 +364,7 @@ jobs:
     cpp-unit-tests:
         name: Run C++ Unit Tests
         if: inputs.run-cpp-tests
-        runs-on: windows-2025
+        runs-on: windows-2025-vs2026
         permissions:
             contents: read
         steps:
