@@ -300,6 +300,8 @@ void Feature::ApplyVRPerformanceProfileToAll(VRPerfProfile profile)
 	for (auto* feature : GetFeatureList()) {
 		if (!feature->loaded)
 			continue;
+		if (feature->PerformanceSectionRequiresVR() && !globals::game::isVR)
+			continue;
 		// One feature's failure must not abort the broadcast to the rest.
 		try {
 			feature->ApplyVRPerformanceProfile(profile);

@@ -98,6 +98,8 @@ public:
 	/** @brief Draws the ImGui settings UI for screen-space shadow configuration. */
 	virtual void DrawSettings() override;
 	virtual void DrawVRPerformanceSettings() override;
+	/// @brief DrawVRPerformanceSettings() only draws the stereo sync/reprojection toggles.
+	bool PerformanceSectionRequiresVR() const override { return true; }
 	std::string GetVRPerformanceSectionLabel() override { return GetDisplayName(); }
 	int GetVRPerformanceOrder() const override { return 30; }
 	virtual void ApplyVRPerformanceProfile(VRPerfProfile profile) override;

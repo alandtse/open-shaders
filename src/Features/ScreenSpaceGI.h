@@ -46,6 +46,8 @@ public:
 	/** @brief Draws the ImGui settings UI with quality presets, visual parameters, and denoising options. */
 	virtual void DrawSettings() override;
 	virtual void DrawVRPerformanceSettings() override;
+	/// @brief DrawVRPerformanceSettings() only draws the stereo reprojection toggle.
+	bool PerformanceSectionRequiresVR() const override { return true; }
 	std::string GetVRPerformanceSectionLabel() override { return GetDisplayName(); }
 	int GetVRPerformanceOrder() const override { return 40; }
 	virtual void ApplyVRPerformanceProfile(VRPerfProfile profile) override;

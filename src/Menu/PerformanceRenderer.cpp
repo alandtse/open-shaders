@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "Feature.h"
+#include "Globals.h"
 #include "I18n/I18n.h"
 #include "Menu.h"
 #include "Utils/UI.h"
@@ -49,7 +50,8 @@ void PerformanceRenderer::Render(Feature* host)
 	for (int i = 0; i < IM_ARRAYSIZE(profiles) && activeIdx < 0; ++i) {
 		bool all = true;
 		for (Feature* f : Feature::GetFeatureList())
-			if (f->loaded && !f->MatchesVRPerformanceProfile(profiles[i])) {
+			if (f->loaded && (globals::game::isVR || !f->PerformanceSectionRequiresVR()) &&
+				!f->MatchesVRPerformanceProfile(profiles[i])) {
 				all = false;
 				break;
 			}
@@ -90,9 +92,11 @@ void PerformanceRenderer::Render(Feature* host)
 	ImGui::Spacing();
 
 	// Drawn in perf-impact order (GetVRPerformanceOrder), not feature-registration order.
+	// Skips features whose whole section is VR-only outside VR (PerformanceSectionRequiresVR)
+	// so authors of VR-only sections don't need to gate their draw code manually.
 	std::vector<Feature*> ordered;
 	for (Feature* feature : Feature::GetFeatureList())
-		if (feature->loaded)
+		if (feature->loaded && (globals::game::isVR || !feature->PerformanceSectionRequiresVR()))
 			ordered.push_back(feature);
 	// stable_sort keeps registration order among equal ranks (e.g. the default 1000) deterministic.
 	std::stable_sort(ordered.begin(), ordered.end(),
