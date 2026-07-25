@@ -48,6 +48,33 @@ jobs:
             # ci_test branch cannot poison dev / main / PR build caches.
             cache-key-suffix: "-ci-test"
 
+    # pr-checks.yaml's "Post Prerelease from PR" and release-build.yaml's
+    # "Post Release" jobs call this composite directly and are themselves
+    # unreachable from their own PRs (same base-branch-resolution problem as
+    # above). dry-run:true skips the actual ncipollo call, so this validates
+    # the composite's steps run cleanly on a given runner OS (e.g. a runs-on
+    # migration) without creating or mutating a real release/tag.
+    post-release-dry-run:
+        if: github.repository == 'alandtse/open-shaders'
+        runs-on: ubuntu-latest
+        permissions:
+            contents: read
+        steps:
+            - name: Check out composite action
+              uses: actions/checkout@v6
+              with:
+                  sparse-checkout: .github/actions
+
+            - name: Dry-run publish-release composite
+              uses: ./.github/actions/publish-release
+              with:
+                  token: ${{ github.token }}
+                  tag: ci-test-dry-run
+                  name: "CI self-test dry run"
+                  body: "Dry-run self-test; no release is created."
+                  dry-run: "true"
+                  download-artifact: "false"
+
     # Run the feature version audit from THIS branch's ref. pr-checks runs it
     # under pull_request_target from the BASE branch, so a change to the audit
     # algorithm itself (e.g. release-stage 0.x logic) can never be exercised by

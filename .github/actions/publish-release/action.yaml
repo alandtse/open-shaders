@@ -55,6 +55,10 @@ inputs:
         description: "Workflow artifact to download when download-artifact is true."
         required: false
         default: "dist-artifacts"
+    dry-run:
+        description: "Skip the actual ncipollo release call; just log what would be published. For self-testing this action on a new runner OS without creating/mutating a real release."
+        required: false
+        default: "false"
 
 runs:
     using: "composite"
@@ -66,11 +70,21 @@ runs:
               name: ${{ inputs.artifact-name }}
               path: dist/
 
+        - name: Report dry-run intent
+          if: inputs.dry-run == 'true'
+          shell: bash
+          run: |
+              echo "### Dry run: would publish release" >> "$GITHUB_STEP_SUMMARY"
+              echo "- tag: ${{ inputs.tag }}" >> "$GITHUB_STEP_SUMMARY"
+              echo "- name: ${{ inputs.name }}" >> "$GITHUB_STEP_SUMMARY"
+              echo "- artifacts: ${{ inputs.artifacts }}" >> "$GITHUB_STEP_SUMMARY"
+              echo "- prerelease: ${{ inputs.prerelease }}, draft: ${{ inputs.draft }}" >> "$GITHUB_STEP_SUMMARY"
+
         # Two gated invocations so `body` and `bodyFile` are NEVER passed
         # together: ncipollo does not reliably defer an empty `body` to
         # `bodyFile`, so passing both could blank a file-based caller's body.
         - name: Create or update release (body file)
-          if: inputs.body-file != ''
+          if: inputs.dry-run != 'true' && inputs.body-file != ''
           uses: ncipollo/release-action@339a81892b84b4eeb0f6e744e4574d79d0d9b8dd # v1
           with:
               token: ${{ inputs.token }}
@@ -88,7 +102,7 @@ runs:
               removeArtifacts: true
 
         - name: Create or update release (inline / generated body)
-          if: inputs.body-file == ''
+          if: inputs.dry-run != 'true' && inputs.body-file == ''
           uses: ncipollo/release-action@339a81892b84b4eeb0f6e744e4574d79d0d9b8dd # v1
           with:
               token: ${{ inputs.token }}
