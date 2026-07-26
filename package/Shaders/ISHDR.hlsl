@@ -124,13 +124,13 @@ float3 SampleVanillaBloomEnhanced(float2 uv)
 			float2(0.70710678, 0.70710678)
 		};
 
-		[unroll]
-		for (uint cardinalIndex = 0; cardinalIndex < 4; ++cardinalIndex) {
+		[unroll] for (uint cardinalIndex = 0; cardinalIndex < 4; ++cardinalIndex)
+		{
 			float2 sampleUV = Stereo::ClampToEyeUV(uv + CARDINAL_OFFSETS[cardinalIndex] * sampleOffset, eyeIndex);
 			wide += ImageTex.Sample(ImageSampler, sampleUV).xyz * 0.10;
 		}
-		[unroll]
-		for (uint diagonalIndex = 0; diagonalIndex < 4; ++diagonalIndex) {
+		[unroll] for (uint diagonalIndex = 0; diagonalIndex < 4; ++diagonalIndex)
+		{
 			float2 sampleUV = Stereo::ClampToEyeUV(uv + DIAGONAL_OFFSETS[diagonalIndex] * sampleOffset, eyeIndex);
 			wide += ImageTex.Sample(ImageSampler, sampleUV).xyz * 0.08;
 		}
