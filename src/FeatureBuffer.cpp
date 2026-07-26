@@ -2,6 +2,7 @@
 
 #include <array>
 
+#include "Features/Bloom.h"
 #include "Features/CSUtility.h"
 #include "Features/CloudShadows.h"
 #include "Features/DynamicCubemaps.h"
@@ -66,5 +67,6 @@ std::pair<unsigned char*, size_t> GetFeatureBufferData(bool a_inWorld)
 		globals::features::truePBR.settings,
 		globals::features::skin.GetCommonBufferData(),
 		globals::features::vanillaFresnel.settings,
+		Bloom::GetCommonBufferData(globals::features::csUtility.settings.vanillaBloom),
 		globals::features::postProcessing.GetCommonBufferData());
 }

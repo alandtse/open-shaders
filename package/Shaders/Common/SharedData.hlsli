@@ -354,6 +354,17 @@ namespace SharedData
 		float pad;
 	};
 
+	struct BloomSettings
+	{
+		uint Enabled;
+		float Strength;
+		float Radius;
+		float Scatter;
+
+		float Saturation;
+		float3 Tint;
+	};
+
 	struct PostProcessingSettings
 	{
 		uint DisableVanillaTonemapping;
@@ -382,6 +393,7 @@ namespace SharedData
 		TruePBRSettings truePBRSettings;
 		SkinData skinData;
 		VanillaFresnelSettings vanillaFresnelSettings;
+		BloomSettings bloomSettings;
 		PostProcessingSettings postProcessingSettings;
 	};
 

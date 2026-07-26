@@ -96,6 +96,55 @@ float3 GetTonemapFactorHejlBurgessDawson(float3 luminance, bool isHDR = false)
 
 #	include "Common/DisplayMapping.hlsli"
 
+#	if defined(BLEND) && defined(CS_UTILITY)
+float3 SampleVanillaBloomEnhanced(float2 uv)
+{
+	float3 center = ImageTex.Sample(ImageSampler, uv).xyz;
+	float3 bloom = center;
+
+	if (SharedData::bloomSettings.Enabled) {
+		uint bloomWidth = 1;
+		uint bloomHeight = 1;
+		ImageTex.GetDimensions(bloomWidth, bloomHeight);
+		float2 sampleOffset = SharedData::bloomSettings.Radius / max(float2(bloomWidth, bloomHeight), float2(1.0, 1.0));
+		uint eyeIndex = Stereo::GetEyeIndexFromTexCoord(uv);
+
+		float3 wide = center * 0.28;
+
+		static const float2 CARDINAL_OFFSETS[4] = {
+			float2(-1.0, 0.0),
+			float2(1.0, 0.0),
+			float2(0.0, -1.0),
+			float2(0.0, 1.0)
+		};
+		static const float2 DIAGONAL_OFFSETS[4] = {
+			float2(-0.70710678, -0.70710678),
+			float2(0.70710678, -0.70710678),
+			float2(-0.70710678, 0.70710678),
+			float2(0.70710678, 0.70710678)
+		};
+
+		[unroll]
+		for (uint cardinalIndex = 0; cardinalIndex < 4; ++cardinalIndex) {
+			float2 sampleUV = Stereo::ClampToEyeUV(uv + CARDINAL_OFFSETS[cardinalIndex] * sampleOffset, eyeIndex);
+			wide += ImageTex.Sample(ImageSampler, sampleUV).xyz * 0.10;
+		}
+		[unroll]
+		for (uint diagonalIndex = 0; diagonalIndex < 4; ++diagonalIndex) {
+			float2 sampleUV = Stereo::ClampToEyeUV(uv + DIAGONAL_OFFSETS[diagonalIndex] * sampleOffset, eyeIndex);
+			wide += ImageTex.Sample(ImageSampler, sampleUV).xyz * 0.08;
+		}
+
+		bloom = lerp(center, wide, SharedData::bloomSettings.Scatter);
+		float luminance = Color::RGBToLuminance(bloom);
+		bloom = lerp(luminance.xxx, bloom, SharedData::bloomSettings.Saturation);
+		bloom *= SharedData::bloomSettings.Tint * SharedData::bloomSettings.Strength;
+	}
+
+	return bloom;
+}
+#	endif
+
 PS_OUTPUT main(PS_INPUT input)
 {
 	PS_OUTPUT psout;
@@ -155,9 +204,17 @@ PS_OUTPUT main(PS_INPUT input)
 
 	float3 bloomColor = 0;
 	if (Flags.x > 0.5) {
+#		if defined(CS_UTILITY)
+		bloomColor = SampleVanillaBloomEnhanced(uv);
+#		else
 		bloomColor = ImageTex.Sample(ImageSampler, uv).xyz;
+#		endif
 	} else {
+#		if defined(CS_UTILITY)
+		bloomColor = SampleVanillaBloomEnhanced(input.TexCoord.xy);
+#		else
 		bloomColor = ImageTex.Sample(ImageSampler, input.TexCoord.xy).xyz;
+#		endif
 	}
 
 	float2 avgValue = AvgTex.Sample(AvgSampler, input.TexCoord.xy).xy;
