@@ -1,5 +1,7 @@
 #include "Bloom.h"
 
+#include <cmath>
+
 #include "../I18n/I18n.h"
 #include "../Utils/UI.h"
 
@@ -90,16 +92,21 @@ Bloom::Settings Bloom::GetCommonBufferData(Settings settings)
 
 void Bloom::SanitizeSettings(Settings& settings)
 {
+	const Settings defaults{};
+	auto clampFiniteOrDefault = [](float value, float min, float max, float defaultValue) {
+		return std::isfinite(value) ? std::clamp(value, min, max) : defaultValue;
+	};
+
 	settings.Enabled = settings.Enabled != 0;
-	settings.Strength = std::clamp(settings.Strength, 0.0f, kStrengthMax);
-	settings.Radius = std::clamp(settings.Radius, 0.0f, kRadiusMax);
-	settings.Scatter = std::clamp(settings.Scatter, 0.0f, 1.0f);
-	settings.Saturation = std::clamp(settings.Saturation, 0.0f, kSaturationMax);
-	settings.Tint.x = std::clamp(settings.Tint.x, 0.0f, 1.0f);
-	settings.Tint.y = std::clamp(settings.Tint.y, 0.0f, 1.0f);
-	settings.Tint.z = std::clamp(settings.Tint.z, 0.0f, 1.0f);
-	settings.MaxContribution = std::clamp(settings.MaxContribution, 0.0f, kMaxContributionMax);
-	settings.GlowThreshold = std::clamp(settings.GlowThreshold, 0.0f, settings.MaxContribution);
+	settings.Strength = clampFiniteOrDefault(settings.Strength, 0.0f, kStrengthMax, defaults.Strength);
+	settings.Radius = clampFiniteOrDefault(settings.Radius, 0.0f, kRadiusMax, defaults.Radius);
+	settings.Scatter = clampFiniteOrDefault(settings.Scatter, 0.0f, 1.0f, defaults.Scatter);
+	settings.Saturation = clampFiniteOrDefault(settings.Saturation, 0.0f, kSaturationMax, defaults.Saturation);
+	settings.Tint.x = clampFiniteOrDefault(settings.Tint.x, 0.0f, 1.0f, defaults.Tint.x);
+	settings.Tint.y = clampFiniteOrDefault(settings.Tint.y, 0.0f, 1.0f, defaults.Tint.y);
+	settings.Tint.z = clampFiniteOrDefault(settings.Tint.z, 0.0f, 1.0f, defaults.Tint.z);
+	settings.MaxContribution = clampFiniteOrDefault(settings.MaxContribution, 0.0f, kMaxContributionMax, defaults.MaxContribution);
+	settings.GlowThreshold = clampFiniteOrDefault(settings.GlowThreshold, 0.0f, settings.MaxContribution, defaults.GlowThreshold);
 }
 
 #undef I18N_KEY_PREFIX
