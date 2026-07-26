@@ -47,7 +47,7 @@ std::pair<unsigned char*, size_t> _GetFeatureBufferData(Ts... feat_datas)
 
 std::pair<unsigned char*, size_t> GetFeatureBufferData(bool a_inWorld)
 {
-	const auto& bloomSettings = Util::IsInterior() ? globals::features::csUtility.settings.interiorVanillaBloom : globals::features::csUtility.settings.vanillaBloom;
+	const auto& bloomSettings = Util::IsInterior() ? globals::features::csUtility.settings.interiorVanillaBloom : globals::features::csUtility.settings.exteriorVanillaBloom;
 	return _GetFeatureBufferData(
 		globals::features::grassLighting.settings,
 		globals::features::extendedMaterials.settings,

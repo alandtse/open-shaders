@@ -44,7 +44,7 @@ namespace
 		a_settings.linearOmnidirectionalBulbMult = ClampFiniteOrDefault(a_settings.linearOmnidirectionalBulbMult, kMultiplierMin, kMultiplierMax, defaults.linearOmnidirectionalBulbMult);
 		CSUtility::SanitizeDepthOfFieldOverride(a_settings.sceneDof);
 		CSUtility::SanitizeDepthOfFieldOverride(a_settings.underwaterDof);
-		Bloom::SanitizeSettings(a_settings.vanillaBloom);
+		Bloom::SanitizeSettings(a_settings.exteriorVanillaBloom);
 		Bloom::SanitizeSettings(a_settings.interiorVanillaBloom);
 	}
 
@@ -106,7 +106,7 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	linearOmnidirectionalBulbMult,
 	sceneDof,
 	underwaterDof,
-	vanillaBloom,
+	exteriorVanillaBloom,
 	interiorVanillaBloom)
 
 void CSUtility::DrawSettings()
@@ -144,7 +144,7 @@ void CSUtility::DrawVanillaBloomSettings()
 	if (ImGui::BeginTabItem(T(TKEY("tab_vanilla_bloom"), "Vanilla Bloom"))) {
 		if (ImGui::BeginTabBar("##VanillaBloomProfiles", ImGuiTabBarFlags_None)) {
 			if (ImGui::BeginTabItem(T(TKEY("exterior"), "Exterior"))) {
-				Bloom::DrawSettings(settings.vanillaBloom, false);
+				Bloom::DrawSettings(settings.exteriorVanillaBloom, false);
 				ImGui::EndTabItem();
 			}
 			if (ImGui::BeginTabItem(T(TKEY("interior"), "Interior"))) {
@@ -159,9 +159,11 @@ void CSUtility::DrawVanillaBloomSettings()
 
 void CSUtility::LoadSettings(json& o_json)
 {
+	if (!o_json.contains("exteriorVanillaBloom") && o_json.contains("vanillaBloom"))
+		o_json["exteriorVanillaBloom"] = o_json["vanillaBloom"];
 	settings = o_json;
 	if (!o_json.contains("interiorVanillaBloom"))
-		settings.interiorVanillaBloom = settings.vanillaBloom;
+		settings.interiorVanillaBloom = settings.exteriorVanillaBloom;
 	SanitizeSettings(settings);
 }
 

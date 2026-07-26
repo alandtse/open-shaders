@@ -75,7 +75,7 @@ struct CSUtility : Feature
 		float linearOmnidirectionalBulbMult = 1.0f;
 		DepthOfFieldOverride sceneDof;
 		DepthOfFieldOverride underwaterDof;
-		Bloom::Settings vanillaBloom;
+		Bloom::Settings exteriorVanillaBloom;
 		Bloom::Settings interiorVanillaBloom;
 	} settings;
 
