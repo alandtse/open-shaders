@@ -144,11 +144,11 @@ void CSUtility::DrawVanillaBloomSettings()
 	if (ImGui::BeginTabItem(T(TKEY("tab_vanilla_bloom"), "Vanilla Bloom"))) {
 		if (ImGui::BeginTabBar("##VanillaBloomProfiles", ImGuiTabBarFlags_None)) {
 			if (ImGui::BeginTabItem(T(TKEY("exterior"), "Exterior"))) {
-				Bloom::DrawSettings(settings.vanillaBloom);
+				Bloom::DrawSettings(settings.vanillaBloom, false);
 				ImGui::EndTabItem();
 			}
 			if (ImGui::BeginTabItem(T(TKEY("interior"), "Interior"))) {
-				Bloom::DrawSettings(settings.interiorVanillaBloom);
+				Bloom::DrawSettings(settings.interiorVanillaBloom, true);
 				ImGui::EndTabItem();
 			}
 			ImGui::EndTabBar();
