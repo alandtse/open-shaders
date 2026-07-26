@@ -217,6 +217,12 @@ PS_OUTPUT main(PS_INPUT input)
 #		endif
 	}
 
+#		if defined(CS_UTILITY)
+	float bloomLuminance = Color::RGBToLuminance(bloomColor);
+	float bloomScale = min(1.0, SharedData::bloomSettings.MaxContribution / max(bloomLuminance, EPSILON_DIVISION));
+	bloomColor *= bloomScale;
+#		endif
+
 	float2 avgValue = AvgTex.Sample(AvgSampler, input.TexCoord.xy).xy;
 
 	float3 outputColor = 0.0;
@@ -241,7 +247,8 @@ PS_OUTPUT main(PS_INPUT input)
 		// bloom intensity against this shoulder don't get blown-out highlights. HDR keeps the
 		// soft-saturation form (1 - exp2(-x)) which bleeds bloom into specular peaks intentionally.
 		float3 bloomMask = isHDR ? saturate(Param.x - (1.0 - exp2(-blendedColor))) : saturate(Param.x - blendedColor);
-		blendedColor += bloomMask * bloomColor;
+		float3 bloomContribution = bloomMask * bloomColor;
+		blendedColor += bloomContribution;
 	}
 
 	float blendedLuminance = Color::RGBToLuminance(blendedColor);

@@ -363,6 +363,8 @@ namespace SharedData
 
 		float Saturation;
 		float3 Tint;
+		float MaxContribution;
+		float3 pad;
 	};
 
 	struct PostProcessingSettings

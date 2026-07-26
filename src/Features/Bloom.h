@@ -11,8 +11,10 @@ struct Bloom
 
 		float Saturation = 0.9f;
 		float3 Tint = { 1.0f, 0.98f, 0.94f };
+		float MaxContribution = 8.0f;
+		float3 pad;
 	};
-	static_assert(sizeof(Settings) == 32);
+	static_assert(sizeof(Settings) == 48);
 
 	static void DrawSettings(Settings& settings);
 	static Settings GetCommonBufferData(Settings settings);
@@ -26,4 +28,5 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	Radius,
 	Scatter,
 	Saturation,
-	Tint)
+	Tint,
+	MaxContribution)

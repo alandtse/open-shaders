@@ -9,6 +9,7 @@ namespace
 	constexpr float kStrengthMax = 6.0f;
 	constexpr float kRadiusMax = 32.0f;
 	constexpr float kSaturationMax = 2.0f;
+	constexpr float kMaxContributionMax = 8.0f;
 }
 
 void Bloom::DrawSettings(Settings& settings)
@@ -46,6 +47,7 @@ void Bloom::DrawSettings(Settings& settings)
 	ImGui::SliderFloat(T(TKEY("scatter"), "Scatter"), &settings.Scatter, 0.0f, 1.0f, "%.2f");
 	ImGui::SliderFloat(T(TKEY("saturation"), "Saturation"), &settings.Saturation, 0.0f, kSaturationMax, "%.2f");
 	ImGui::ColorEdit3(T(TKEY("tint"), "Tint"), reinterpret_cast<float*>(&settings.Tint));
+	ImGui::SliderFloat(T(TKEY("max_contribution"), "Glow Limit"), &settings.MaxContribution, 0.0f, kMaxContributionMax, "%.2f");
 	ImGui::EndDisabled();
 
 	SanitizeSettings(settings);
@@ -67,6 +69,7 @@ void Bloom::SanitizeSettings(Settings& settings)
 	settings.Tint.x = std::clamp(settings.Tint.x, 0.0f, 1.0f);
 	settings.Tint.y = std::clamp(settings.Tint.y, 0.0f, 1.0f);
 	settings.Tint.z = std::clamp(settings.Tint.z, 0.0f, 1.0f);
+	settings.MaxContribution = std::clamp(settings.MaxContribution, 0.0f, kMaxContributionMax);
 }
 
 #undef I18N_KEY_PREFIX

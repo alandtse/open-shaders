@@ -76,6 +76,7 @@ struct CSUtility : Feature
 		DepthOfFieldOverride sceneDof;
 		DepthOfFieldOverride underwaterDof;
 		Bloom::Settings vanillaBloom;
+		Bloom::Settings interiorVanillaBloom;
 	} settings;
 
 	struct alignas(16) PerFrameData

@@ -24,6 +24,7 @@
 #include "Features/VanillaFresnel.h"
 #include "Features/WetnessEffects.h"
 #include "TruePBR.h"
+#include "Utils/Game.h"
 
 template <class... Ts>
 std::pair<unsigned char*, size_t> _GetFeatureBufferData(Ts... feat_datas)
@@ -46,6 +47,7 @@ std::pair<unsigned char*, size_t> _GetFeatureBufferData(Ts... feat_datas)
 
 std::pair<unsigned char*, size_t> GetFeatureBufferData(bool a_inWorld)
 {
+	const auto& bloomSettings = Util::IsInterior() ? globals::features::csUtility.settings.interiorVanillaBloom : globals::features::csUtility.settings.vanillaBloom;
 	return _GetFeatureBufferData(
 		globals::features::grassLighting.settings,
 		globals::features::extendedMaterials.settings,
@@ -67,6 +69,6 @@ std::pair<unsigned char*, size_t> GetFeatureBufferData(bool a_inWorld)
 		globals::features::truePBR.settings,
 		globals::features::skin.GetCommonBufferData(),
 		globals::features::vanillaFresnel.settings,
-		Bloom::GetCommonBufferData(globals::features::csUtility.settings.vanillaBloom),
+		Bloom::GetCommonBufferData(bloomSettings),
 		globals::features::postProcessing.GetCommonBufferData());
 }
