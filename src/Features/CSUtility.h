@@ -1,7 +1,7 @@
 #pragma once
 
-#include "Buffer.h"
 #include "Bloom.h"
+#include "Buffer.h"
 #include "Feature.h"
 #include "I18n/I18n.h"
 

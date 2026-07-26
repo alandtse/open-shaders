@@ -1,7 +1,7 @@
 #include "CSUtility.h"
 
-#include "Globals.h"
 #include "Bloom.h"
+#include "Globals.h"
 #include "I18n/I18n.h"
 #include "LightLimitFix.h"
 #include "LinearLighting.h"
