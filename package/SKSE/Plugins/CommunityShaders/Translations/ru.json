@@ -1515,7 +1515,6 @@
     "menu.advanced.change_shader_block_next": "Изменить##ShaderBlockNext",
     "menu.advanced.change_shader_block_prev": "Изменить##ShaderBlockPrev",
     "menu.advanced.clear_shader_cache": "Очистить кэш шейдеров",
-    "menu.advanced.clear_shader_cache_tooltip": "Очистить все скомпилированные шейдеры из памяти. Принуждает к перекомпиляции всех шейдеров при следующем использовании.",
     "menu.advanced.click_to_block": "Левый клик для блокировки этого шейдера",
     "menu.advanced.click_to_unblock": "Левый клик для разблокировки этого шейдера",
     "menu.advanced.column_class": "Класс",

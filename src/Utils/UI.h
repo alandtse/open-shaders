@@ -16,6 +16,7 @@
 #include "../Menu/ThemeManager.h"
 #include "Utils/BootSnapshot.h"
 #include "Utils/Input.h"
+#include "Utils/ShaderCacheClearScope.h"
 
 // Forward declarations
 struct ID3D11Device;
@@ -191,13 +192,20 @@ namespace Util
 	 */
 	void HelpMarker(const char* a_desc);
 
+	/** @brief Reads the current setting and live Shift state. UI-thread only. */
+	ShaderCacheClearScope ResolveShaderCacheClearScope();
+
+	/** @brief Tooltip body describing what a plain click currently resolves to, given
+	 *  the live Shift/default state - callers append their own modifier hint line. */
+	const char* GetClearShaderCacheTooltip();
+
 	/**
 	 * Confirmation popup for clearing shader cache.
 	 * Call RequestClearShaderCacheConfirmation() when the clear button is clicked.
 	 * Call DrawClearShaderCacheConfirmation() every frame to render the popup.
 	 * The popup respects the "don't ask me again" setting.
 	 */
-	void RequestClearShaderCacheConfirmation();
+	void RequestClearShaderCacheConfirmation(ShaderCacheClearScope a_scope);
 	void DrawClearShaderCacheConfirmation();
 
 	/**

@@ -258,12 +258,27 @@ void AdvancedSettingsRenderer::RenderShaderCacheControls()
 		ImGui::Text("%s", T("menu.advanced.dump_shaders_tooltip", "Dump shaders at startup. This should be used only when reversing shaders. Normal users don't need this."));
 	}
 
-	// Clear Shader Cache button
-	if (ImGui::Button(T("menu.advanced.clear_shader_cache", "Clear Shader Cache"), { -1, 0 })) {
-		shaderCache->Clear();
+	// Routed through the shared confirmation/scope path so all three clear-cache entry
+	// points share identical confirmation, scope resolution, and disk-cache behavior.
+	{
+		const bool capturing = shaderCache->IsCapturingActiveShaders();
+		const bool awaitingMenuClose = shaderCache->IsAwaitingMenuCloseCapture();
+		ImGui::BeginDisabled(capturing || awaitingMenuClose);
+		if (ImGui::Button(T("menu.advanced.clear_shader_cache", "Clear Shader Cache"), { -1, 0 })) {
+			Util::RequestClearShaderCacheConfirmation(Util::ResolveShaderCacheClearScope());
+		}
+		ImGui::EndDisabled();
 	}
 	if (auto _tt = Util::HoverTooltipWrapper()) {
-		ImGui::Text("%s", T("menu.advanced.clear_shader_cache_tooltip", "Clear all compiled shaders from memory. Forces recompilation of all shaders on next use."));
+		ImGui::Text("%s", Util::GetClearShaderCacheTooltip());
+		ImGui::Text("%s", T("menu.clear_shader_cache_modifier_hint", "Shift-click for the other clear mode."));
+	}
+	if (auto count = shaderCache->GetLastScopedClearCount(); count > 0) {
+		auto lastClearMs = shaderCache->GetLastScopedClearMs();
+		ImGui::TextDisabled("%s",
+			std::vformat(T("menu.advanced.last_smart_clear", "Last smart clear: {} shader(s) ({:.1f} ms)"),
+				std::make_format_args(count, lastClearMs))
+				.c_str());
 	}
 }
 

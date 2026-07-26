@@ -909,9 +909,11 @@ namespace SIE
 		/** @brief True while dev mode or a capture window requires shader tracking. */
 		bool IsTrackingActiveShaders() const;
 		/** @brief Evicts every shader in the current capture batch from memory, disk, and
-		 *  the compilation set, then releases scope-capable feature shaders.
+		 *  the compilation set. a_clearFeatures also clears Deferred and every loaded
+		 *  feature's shader cache - pass false on a cycle's second window, since that
+		 *  work isn't scoped by the capture and doesn't need repeating.
 		 *  @return Number of cache entries evicted. */
-		size_t ClearActive();
+		size_t ClearActive(bool a_clearFeatures = true);
 		/** @brief Result of the most recent ClearActive() call, for UI status display. */
 		size_t GetLastScopedClearCount() const { return lastScopedClearCount; }
 		/** @brief Elapsed time in milliseconds of the most recent ClearActive() call. */
@@ -928,12 +930,13 @@ namespace SIE
 		void EvictShader(const std::string& a_key, RE::BSShader::Type a_type, uint32_t a_descriptor,
 			ShaderClass a_shaderClass, const std::wstring& a_diskPath, bool a_deleteDiskBlob = true);
 
-		std::atomic<uint32_t> activeShaderCaptureFramesRemaining{ 0 };  // read cross-thread; see ShaderCache.cpp
+		std::atomic<uint32_t> activeShaderCaptureFramesRemaining{ 0 };                       // read cross-thread (TrackActiveShader)
 		ActiveShaderCaptureStage activeShaderCaptureStage = ActiveShaderCaptureStage::Idle;  // render thread only
 		std::chrono::steady_clock::time_point activeShaderCaptureDeadline;                   // render thread only
 		bool activeShaderCaptureMenuWasVisible = false;                                      // render thread only
-		std::thread::id activeShaderCaptureThread;  // render thread latched at arm time; gates the capture write
+		std::atomic<std::thread::id> activeShaderCaptureThread;                              // read cross-thread (TrackActiveShader)
 		ankerl::unordered_dense::map<std::string, ActiveShaderInfo> capturedShaders;         // guarded by activeShadersMutex
+		std::unordered_set<std::string> clearedThisCaptureCycle;                             // render thread only; reset per BeginActiveShaderCapture()
 		size_t lastScopedClearCount = 0;
 		double lastScopedClearMs = 0.0;
 

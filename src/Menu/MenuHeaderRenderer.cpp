@@ -175,15 +175,23 @@ void MenuHeaderRenderer::RenderHeader(bool isDocked, bool showLogo, bool canShow
 
 			// Clear Shader Cache Button
 			ImGui::TableNextColumn();
-			if (ImGui::Button(T("menu.clear_shader_cache", "Clear Shader Cache"), { -1, 0 })) {
-				Util::RequestClearShaderCacheConfirmation();
+			{
+				const bool capturing = shaderCache->IsCapturingActiveShaders();
+				const bool awaitingMenuClose = shaderCache->IsAwaitingMenuCloseCapture();
+				ImGui::BeginDisabled(capturing || awaitingMenuClose);
+				std::string label = awaitingMenuClose ?
+				                        T("menu.clear_shader_cache_awaiting_close", "Close the menu to finish") :
+				                    capturing ?
+				                        std::format("{} {}", T("menu.clear_shader_cache_capturing", "Capturing..."), shaderCache->GetActiveShaderCaptureFramesRemaining()) :
+				                        T("menu.clear_shader_cache", "Clear Shader Cache");
+				if (ImGui::Button(label.c_str(), { -1, 0 })) {
+					Util::RequestClearShaderCacheConfirmation(Util::ResolveShaderCacheClearScope());
+				}
+				ImGui::EndDisabled();
 			}
 			if (auto _tt = Util::HoverTooltipWrapper()) {
-				ImGui::Text("%s", T("menu.clear_shader_cache_tooltip",
-									  "Clears the shader cache and disk cache (if enabled). "
-									  "The Shader Cache is the collection of compiled shaders which replace the vanilla shaders at runtime. "
-									  "The Disk Cache is a collection of compiled shaders on disk. "
-									  "Clearing will mean that shaders are recompiled only when the game re-encounters them."));
+				ImGui::Text("%s", Util::GetClearShaderCacheTooltip());
+				ImGui::Text("%s", T("menu.clear_shader_cache_modifier_hint", "Shift-click for the other clear mode."));
 			}
 
 			// Error message toggle if needed
@@ -258,13 +266,9 @@ std::vector<MenuHeaderRenderer::ActionIcon> MenuHeaderRenderer::BuildActionIcons
 	}
 	if (uiIcons.clearCache.texture) {
 		actionIcons.push_back({ uiIcons.clearCache.texture,
-			T("menu.clear_shader_cache_tooltip",
-				"Clears the shader cache and disk cache (if enabled). "
-				"The Shader Cache is the collection of compiled shaders which replace the vanilla shaders at runtime. "
-				"The Disk Cache is a collection of compiled shaders on disk. "
-				"Clearing will mean that shaders are recompiled only when the game re-encounters them."),
+			Util::GetClearShaderCacheTooltip(),
 			[]() {
-				Util::RequestClearShaderCacheConfirmation();
+				Util::RequestClearShaderCacheConfirmation(Util::ResolveShaderCacheClearScope());
 			} });
 	}
 

@@ -250,32 +250,66 @@ namespace Util
 	// Static state for clear shader cache confirmation popup
 	static bool showClearCacheConfirmation = false;
 	static bool dontAskAgainCheckbox = false;
+	static ShaderCacheClearScope pendingClearScope = ShaderCacheClearScope::Full;
+
+	ShaderCacheClearScope ResolveShaderCacheClearScope()
+	{
+		auto* menu = globals::menu;
+		const bool smartDefault = menu && menu->GetSettings().SmartClearShaderCacheDefault;
+		return ResolveShaderCacheClearScope(smartDefault, ImGui::GetIO().KeyShift);
+	}
+
+	const char* GetClearShaderCacheTooltip()
+	{
+		if (ResolveShaderCacheClearScope() == ShaderCacheClearScope::ActiveOnly) {
+			return T("ui.clear_shader_cache_tooltip_smart",
+				"Clears only the shaders drawing the current scene. They recompile in the "
+				"background as the scene redraws; everything else stays cached.");
+		}
+		return T("menu.clear_shader_cache_tooltip",
+			"Clears the shader cache and disk cache (if enabled). "
+			"The Shader Cache is the collection of compiled shaders which replace the vanilla shaders at runtime. "
+			"The Disk Cache is a collection of compiled shaders on disk. "
+			"Clearing will mean that shaders are recompiled only when the game re-encounters them.");
+	}
 
 	// Helper function to perform the actual cache clearing
-	static void PerformClearShaderCache()
+	static void PerformClearShaderCache(ShaderCacheClearScope a_scope)
 	{
 		auto* shaderCache = globals::shaderCache;
-		if (shaderCache) {
-			shaderCache->Clear();
-			if (shaderCache->IsDiskCache()) {
-				shaderCache->DeleteDiskCache();
-			}
+		if (!shaderCache)
+			return;
+
+		if (a_scope == ShaderCacheClearScope::ActiveOnly) {
+			shaderCache->BeginActiveShaderCapture();
+			return;
+		}
+
+		shaderCache->Clear();
+		if (shaderCache->IsDiskCache()) {
+			shaderCache->DeleteDiskCache();
 		}
 	}
 
-	void RequestClearShaderCacheConfirmation()
+	void RequestClearShaderCacheConfirmation(ShaderCacheClearScope a_scope)
 	{
 		auto* menu = globals::menu;
 		if (!menu)
 			return;
 
+		if (globals::shaderCache &&
+			(globals::shaderCache->IsCapturingActiveShaders() || globals::shaderCache->IsAwaitingMenuCloseCapture())) {
+			return;  // ignore re-trigger while a capture is already in progress
+		}
+
 		// If user has opted to skip confirmation, clear immediately
 		if (menu->GetSettings().SkipClearCacheConfirmation) {
-			PerformClearShaderCache();
+			PerformClearShaderCache(a_scope);
 			return;
 		}
 
 		// Show confirmation popup
+		pendingClearScope = a_scope;
 		showClearCacheConfirmation = true;
 		dontAskAgainCheckbox = false;
 	}
@@ -285,16 +319,32 @@ namespace Util
 		if (!showClearCacheConfirmation)
 			return;
 
-		ImGui::OpenPopup(T("ui.clear_shader_cache", "Clear Shader Cache?"));
+		const bool isSmart = pendingClearScope == ShaderCacheClearScope::ActiveOnly;
+		const char* title = isSmart ? T("ui.smart_clear_shader_cache", "Clear Active Shaders?") : T("ui.clear_shader_cache", "Clear Shader Cache?");
 
-		if (auto popup = CenteredPopupModal(T("ui.clear_shader_cache", "Clear Shader Cache?"), &showClearCacheConfirmation)) {
+		ImGui::OpenPopup(title);
+
+		if (auto popup = CenteredPopupModal(title, &showClearCacheConfirmation)) {
 			ImGui::Text("%s", T("ui.clear_cache_confirm", "Are you sure you want to clear the shader cache?"));
 			ImGui::Spacing();
 			ImGui::Spacing();
-			ImGui::TextWrapped(
-				"%s", T("ui.clear_cache_desc",
-						  "This will clear all compiled shaders from memory and disk cache (if enabled). "
-						  "Shaders will be recompiled when the game next encounters them."));
+			if (isSmart) {
+				ImGui::TextWrapped(
+					"%s", T("ui.smart_clear_cache_desc",
+							  "Watches the next second of rendering and clears only the shaders drawing this scene, "
+							  "twice - once now, and once after this menu closes to catch what it was covering. "
+							  "Everything else stays cached.\n\n"
+							  "The cleared shaders recompile in the background as the scene redraws, so expect a "
+							  "brief stutter and some surfaces reverting to their vanilla appearance until it "
+							  "finishes. That is expected - this clears far less than a full wipe, it does not "
+							  "make the recompile invisible.\n\n"
+							  "Keep the broken area visible while it captures. If the problem persists, use a full clear."));
+			} else {
+				ImGui::TextWrapped(
+					"%s", T("ui.clear_cache_desc",
+							  "This will clear all compiled shaders from memory and disk cache (if enabled). "
+							  "Shaders will be recompiled when the game next encounters them."));
+			}
 			ImGui::Spacing();
 			ImGui::Spacing();
 			ImGui::Separator();
@@ -321,7 +371,7 @@ namespace Util
 					}
 				}
 
-				PerformClearShaderCache();
+				PerformClearShaderCache(pendingClearScope);
 				showClearCacheConfirmation = false;
 				ImGui::CloseCurrentPopup();
 			}

@@ -1546,7 +1546,6 @@
     "menu.advanced.change_shader_block_next": "更改##ShaderBlockNext",
     "menu.advanced.change_shader_block_prev": "更改##ShaderBlockPrev",
     "menu.advanced.clear_shader_cache": "清除着色器缓存",
-    "menu.advanced.clear_shader_cache_tooltip": "从内存中清除所有已编译的着色器。下次使用时强制重新编译所有着色器。",
     "menu.advanced.click_to_block": "左键点击拦截此着色器",
     "menu.advanced.click_to_unblock": "左键点击取消拦截此着色器",
     "menu.advanced.column_class": "类别",

@@ -517,6 +517,17 @@ void SettingsTabRenderer::RenderBehaviorTab()
 			ImGui::Text("%s", T("menu.settings.skip_clear_cache_dialogue_tooltip", "When checked, the shader cache will be cleared immediately without asking for confirmation."));
 		}
 
+		bool smartClearDefault = menuSettings.SmartClearShaderCacheDefault;
+		if (ImGui::Checkbox(T("menu.settings.smart_clear_default", "Smart Clear by Default"), &smartClearDefault)) {
+			menuSettings.SmartClearShaderCacheDefault = smartClearDefault;
+		}
+		if (auto _tt = Util::HoverTooltipWrapper()) {
+			ImGui::Text("%s", T("menu.settings.smart_clear_default_tooltip",
+								  "When checked, the Clear Shader Cache buttons clear only the shaders drawing "
+								  "the current scene, and Shift-click performs a full clear. When unchecked, "
+								  "the roles are reversed."));
+		}
+
 		if (ImGui::Checkbox(T("menu.settings.use_custom_cursor", "Use Custom Theme Cursor"), &themeSettings.UseCustomCursor)) {
 			globals::menu->pendingCursorReload = true;
 		}
