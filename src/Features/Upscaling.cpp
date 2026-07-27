@@ -280,21 +280,28 @@ std::string Upscaling::GetPerformanceSectionLabel()
 	return T(TKEY("vr_perf_upscaling_header"), "Upscaling & Foveation");
 }
 
+// Central Performance hub view: which upscale preset is active (set by the global
+// Performance/Balanced/Quality buttons above), visible without expanding Advanced --
+// otherwise this section looks empty right below those buttons.
+void Upscaling::DrawPerformancePresets()
+{
+	// Only meaningful when an upscaler is active; match the same gate DrawSettings
+	// uses so the hub doesn't show an inert value for None/TAA.
+	const auto upscaleMethod = GetUpscaleMethod();
+	if (upscaleMethod == UpscaleMethod::kNONE || upscaleMethod == UpscaleMethod::kTAA)
+		return;
+	ImGui::Text("%s: %s", T(TKEY("vr_perf_upscale_preset"), "Upscale preset"), GetQualityModeName(settings.qualityMode));
+	// No pending-restart diff while an explicit scale owns the render res:
+	// the preset is inert and a restart wouldn't apply it.
+	if (perfMode.IsHookActive() && !perfMode.IsExplicitScaleLatched())
+		Util::UI::DrawSettingDiff(bootSnapshot, settings, &Settings::qualityMode);
+}
+
 // Central Performance hub view: the render-res PerfMode toggle and Foveated DLSS,
 // the two upscaler-owned VR perf knobs, bound to the same settings the upscaler panel shows.
 void Upscaling::DrawPerformanceSettings()
 {
 	DrawPerfModeToggle();
-	// The upscale preset is only meaningful when an upscaler is active; match the same
-	// gate DrawSettings uses so the hub doesn't show an inert value for None/TAA.
-	const auto upscaleMethod = GetUpscaleMethod();
-	if (upscaleMethod != UpscaleMethod::kNONE && upscaleMethod != UpscaleMethod::kTAA) {
-		ImGui::Text("%s: %s", T(TKEY("vr_perf_upscale_preset"), "Upscale preset"), GetQualityModeName(settings.qualityMode));
-		// No pending-restart diff while an explicit scale owns the render res:
-		// the preset is inert and a restart wouldn't apply it.
-		if (perfMode.IsHookActive() && !perfMode.IsExplicitScaleLatched())
-			Util::UI::DrawSettingDiff(bootSnapshot, settings, &Settings::qualityMode);
-	}
 	// Foveated DLSS is VR-only; hide rather than disable so flat users never see a
 	// control they can never activate (mirrors the gate at DrawSettings' own call site).
 	if (globals::game::isVR)

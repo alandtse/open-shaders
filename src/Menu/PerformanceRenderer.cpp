@@ -15,6 +15,9 @@
 
 // Section header: the feature name as a jump link to its panel, or a plain
 // SeparatorText for the host (a link there would navigate to this very page).
+// Draws no trailing divider of its own -- the caller closes out each section
+// with a separator AFTER its content, so dividers read as "end of this
+// feature's block" rather than appearing to split the link from its own body.
 static void DrawSectionHeader(Feature* feature, bool linkable)
 {
 	const std::string label = feature->GetPerformanceSectionLabel();
@@ -30,7 +33,6 @@ static void DrawSectionHeader(Feature* feature, bool linkable)
 	}
 	if (auto _tt = Util::HoverTooltipWrapper())
 		ImGui::Text("%s", T(TKEY("open_feature_tooltip"), "Open this feature's full settings panel"));
-	ImGui::Separator();
 }
 
 void PerformanceRenderer::Render(Feature* host)
@@ -152,6 +154,10 @@ void PerformanceRenderer::Render(Feature* host)
 			ImGui::TreePop();
 		}
 		ImGui::PopID();
+		// Closes out this feature's block, not the header above -- keeps the divider
+		// meaning consistent ("end of a section") no matter how much content it drew.
+		ImGui::Separator();
+		ImGui::Spacing();
 	}
 }
 

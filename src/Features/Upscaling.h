@@ -201,6 +201,7 @@ public:
 
 	virtual void DrawSettings() override;
 	virtual void DrawPerformanceSettings() override;
+	void DrawPerformancePresets() override;
 	std::string GetPerformanceSectionLabel() override;
 	int GetPerformanceOrder() const override { return 10; }
 	virtual void ApplyPerformanceProfile(PerfProfile profile) override;
