@@ -203,6 +203,14 @@ public:
 	 */
 	virtual void DrawPerformanceSettings() {}
 
+	/** @brief Feature-specific preset controls (e.g. LightLimitFix's own
+	 *  Quality/Balanced/Performance shadow-impact-cull buttons) drawn directly
+	 *  under the hub's section header, outside the collapsed Advanced tree.
+	 *  Default empty: most features rely solely on the hub's global 3-profile
+	 *  buttons and have nothing to add here. Raw sliders/knobs belong in
+	 *  DrawPerformanceSettings instead, where they're collapsed by default. */
+	virtual void DrawPerformancePresets() {}
+
 	/** @brief Return true when DrawPerformanceSettings() draws ONLY VR-specific
 	 *         controls (stereo/eye-relative knobs meaningless with one eye). The hub
 	 *         then skips this feature's whole section (header included) outside VR,

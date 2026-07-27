@@ -682,7 +682,13 @@ namespace ShadowCasterManager
 	/// Draws ImGui settings panel for shadow caster scheduler.
 	void DrawSettings(Settings& settings);
 
-	/// Draws caster cull and impact floor UI controls.
+	/// Draws the Quality/Balanced/Performance caster-cull preset buttons only.
+	void DrawImpactCullPresetButtons(Settings& settings);
+
+	/// Draws the raw caster cull angular / impact floor sliders only.
+	void DrawImpactCullSliders(Settings& settings);
+
+	/// Draws caster cull and impact floor UI controls (presets + sliders together).
 	void DrawImpactCullControls(Settings& settings);
 
 	/// Loads Skyrim INI preferences owned by SCM.

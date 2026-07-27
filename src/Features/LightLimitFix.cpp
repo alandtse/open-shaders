@@ -118,13 +118,20 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 
 void LightLimitFix::DrawPerformanceSettings()
 {
+	if (!settings.ShadowSettings.Enabled)
+		return;
+	ShadowCasterManager::DrawImpactCullSliders(settings.ShadowSettings);
+}
+
+void LightLimitFix::DrawPerformancePresets()
+{
 	ImGui::SeparatorText(T("feature.light_limit_fix.shadow_limit_fix_header", "Shadow Limit Fix"));
 	if (!settings.ShadowSettings.Enabled) {
 		ImGui::TextDisabled("%s", T("feature.light_limit_fix.shadow_limit_fix_disabled_hub",
 									  "Shadow Limit Fix is disabled in this feature's settings."));
 		return;
 	}
-	ShadowCasterManager::DrawImpactCullControls(settings.ShadowSettings);
+	ShadowCasterManager::DrawImpactCullPresetButtons(settings.ShadowSettings);
 }
 
 namespace

@@ -1079,7 +1079,7 @@ namespace ShadowCasterManager
 			ImGui::SetTooltip("%s", tip);
 	}
 
-	void DrawImpactCullControls(Settings& settings)
+	void DrawImpactCullPresetButtons(Settings& settings)
 	{
 		DrawImpactCullPresetButton(settings, T(TKEY("preset_quality"), "Quality"),
 			T(TKEY("preset_quality_tip"), "No shadow culling (default)."), 0.0f, 0.0f);
@@ -1095,7 +1095,10 @@ namespace ShadowCasterManager
 				"Stronger impact floor.\n"
 				"May drop shadows from minor distant lights."),
 			0.025f, 0.012f);
+	}
 
+	void DrawImpactCullSliders(Settings& settings)
+	{
 		ImGui::SliderFloat(T(TKEY("caster_cull_angular"), "Caster Cull Screen Size Min"),
 			&settings.CasterCullAngularMin, 0.0f, 0.1f, "%.4f");
 		if (ImGui::IsItemHovered())
@@ -1117,6 +1120,12 @@ namespace ShadowCasterManager
 										"this. The light still lights the room; it just stops redrawing a\n"
 										"near-invisible shadow. 0 disables. Hover the Low group button\n"
 										"above the light table to preview which lights it would affect."));
+	}
+
+	void DrawImpactCullControls(Settings& settings)
+	{
+		DrawImpactCullPresetButtons(settings);
+		DrawImpactCullSliders(settings);
 	}
 
 	void DrawSettings(Settings& settings)

@@ -45,10 +45,13 @@ void PerformanceRenderer::Render(Feature* host)
 	// Features whose whole section is VR-only outside VR (PerformanceSectionRequiresVR)
 	// are skipped everywhere below: active-profile detection, the restart banner, and
 	// the per-feature list itself, so authors of VR-only sections don't need to gate
-	// their draw code manually.
+	// their draw code manually. A non-empty section label is what "opted into the hub"
+	// means; without this check every loaded feature (including ones with no hub
+	// content at all) would get an empty header-less "Advanced" node.
 	std::vector<Feature*> ordered;
 	for (Feature* feature : Feature::GetFeatureList())
-		if (feature->loaded && (globals::game::isVR || !feature->PerformanceSectionRequiresVR()))
+		if (feature->loaded && (globals::game::isVR || !feature->PerformanceSectionRequiresVR()) &&
+			!feature->GetPerformanceSectionLabel().empty())
 			ordered.push_back(feature);
 	// stable_sort keeps registration order among equal ranks (e.g. the default 1000) deterministic.
 	std::stable_sort(ordered.begin(), ordered.end(),
@@ -122,8 +125,18 @@ void PerformanceRenderer::Render(Feature* host)
 	for (Feature* feature : ordered) {
 		ImGui::PushID(feature);
 		DrawSectionHeader(feature, feature != host);
-		// Collapsed by default: the presets above are the primary surface for most users;
-		// this is for verifying what a preset changed or fine-tuning past it.
+		// Presets stay visible: they're the primary surface, same as the global
+		// buttons above. Only raw sliders/knobs collapse into Advanced below.
+		try {
+			feature->DrawPerformancePresets();
+		} catch (const std::exception& e) {
+			logger::error("PerformanceRenderer: {} presets threw: {}", feature->GetShortName(), e.what());
+			Util::Text::WrappedError("%s: draw error (%s)", feature->GetDisplayName().c_str(), e.what());
+		} catch (...) {
+			logger::error("PerformanceRenderer: {} presets threw (unknown)", feature->GetShortName());
+			Util::Text::WrappedError("%s: draw error (unknown)", feature->GetDisplayName().c_str());
+		}
+		// Collapsed by default: for verifying what a preset changed or fine-tuning past it.
 		if (ImGui::TreeNodeEx(T(TKEY("section_advanced"), "Advanced"), ImGuiTreeNodeFlags_None)) {
 			// Isolate each feature's draw so one throwing hook can't blank the rest of the page.
 			// Logged, not just shown inline, so a reported red box is diagnosable from the log.
