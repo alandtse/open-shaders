@@ -159,11 +159,7 @@ void CSUtility::DrawVanillaBloomSettings()
 
 void CSUtility::LoadSettings(json& o_json)
 {
-	if (!o_json.contains("exteriorVanillaBloom") && o_json.contains("vanillaBloom"))
-		o_json["exteriorVanillaBloom"] = o_json["vanillaBloom"];
 	settings = o_json;
-	if (!o_json.contains("interiorVanillaBloom"))
-		settings.interiorVanillaBloom = settings.exteriorVanillaBloom;
 	SanitizeSettings(settings);
 }
 

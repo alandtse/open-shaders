@@ -357,14 +357,14 @@ namespace SharedData
 	struct BloomSettings
 	{
 		uint Enabled;
-		float Strength;
-		float Radius;
-		float Scatter;
+		float EnhancementIntensity;
+		float HaloRadius;
+		float HaloSpread;
 
-		float Saturation;
-		float3 Tint;
-		float GlowThreshold;
-		float MaxContribution;
+		float BloomSaturation;
+		float3 BloomTint;
+		float CompressionThreshold;
+		float CompressionCeiling;
 		float2 pad;
 	};
 

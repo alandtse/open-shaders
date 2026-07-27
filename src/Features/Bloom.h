@@ -5,14 +5,14 @@ struct Bloom
 	struct Settings
 	{
 		uint Enabled = true;
-		float Strength = 1.0f;
-		float Radius = 3.5f;
-		float Scatter = 0.85f;
+		float EnhancementIntensity = 1.0f;
+		float HaloRadius = 3.5f;
+		float HaloSpread = 0.85f;
 
-		float Saturation = 0.9f;
-		float3 Tint = { 1.0f, 0.98f, 0.94f };
-		float GlowThreshold = 0.0f;
-		float MaxContribution = 8.0f;
+		float BloomSaturation = 0.9f;
+		float3 BloomTint = { 1.0f, 0.98f, 0.94f };
+		float CompressionThreshold = 0.0f;
+		float CompressionCeiling = 8.0f;
 		float2 pad{};
 	};
 	static_assert(sizeof(Settings) == 48);
@@ -25,10 +25,10 @@ struct Bloom
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	Bloom::Settings,
 	Enabled,
-	Strength,
-	Radius,
-	Scatter,
-	Saturation,
-	Tint,
-	GlowThreshold,
-	MaxContribution)
+	EnhancementIntensity,
+	HaloRadius,
+	HaloSpread,
+	BloomSaturation,
+	BloomTint,
+	CompressionThreshold,
+	CompressionCeiling)

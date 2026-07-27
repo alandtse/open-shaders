@@ -9,10 +9,10 @@
 
 namespace
 {
-	constexpr float kStrengthMax = 6.0f;
-	constexpr float kRadiusMax = 32.0f;
-	constexpr float kSaturationMax = 2.0f;
-	constexpr float kMaxContributionMax = 8.0f;
+	constexpr float kEnhancementIntensityMax = 6.0f;
+	constexpr float kHaloRadiusMax = 32.0f;
+	constexpr float kBloomSaturationMax = 2.0f;
+	constexpr float kCompressionCeilingMax = 8.0f;
 
 	void DrawTooltip(const char* a_text)
 	{
@@ -24,7 +24,7 @@ namespace
 void Bloom::DrawSettings(Settings& settings, bool a_isInterior)
 {
 	bool enabled = settings.Enabled != 0;
-	if (ImGui::Checkbox(T(TKEY("enable"), "Enable Vanilla Bloom Enhanced"), &enabled)) {
+	if (ImGui::Checkbox(T(TKEY("enable_enhancement"), "Enable Bloom Enhancement"), &enabled)) {
 		settings.Enabled = enabled;
 	}
 
@@ -35,50 +35,50 @@ void Bloom::DrawSettings(Settings& settings, bool a_isInterior)
 	if (ImGui::Button(T(TKEY("preset_fantasy"), "Fantasy"))) {
 		settings.Enabled = true;
 		if (a_isInterior) {
-			settings.Strength = 2.0f;
-			settings.Radius = 19.0f;
-			settings.Scatter = 0.3f;
-			settings.Saturation = 1.1f;
-			settings.Tint = { 236.0f / 255.0f, 160.0f / 255.0f, 160.0f / 255.0f };
-			settings.MaxContribution = 1.10f;
-			settings.GlowThreshold = 0.14f;
+			settings.EnhancementIntensity = 2.0f;
+			settings.HaloRadius = 19.0f;
+			settings.HaloSpread = 0.3f;
+			settings.BloomSaturation = 1.1f;
+			settings.BloomTint = { 236.0f / 255.0f, 160.0f / 255.0f, 160.0f / 255.0f };
+			settings.CompressionCeiling = 1.10f;
+			settings.CompressionThreshold = 0.14f;
 		} else {
-			settings.Strength = 3.25f;
-			settings.Radius = 20.0f;
-			settings.Scatter = 1.0f;
-			settings.Saturation = 1.15f;
-			settings.Tint = { 1.0f, 0.98f, 0.94f };
-			settings.MaxContribution = kMaxContributionMax;
-			settings.GlowThreshold = 0.0f;
+			settings.EnhancementIntensity = 3.25f;
+			settings.HaloRadius = 20.0f;
+			settings.HaloSpread = 1.0f;
+			settings.BloomSaturation = 1.15f;
+			settings.BloomTint = { 1.0f, 0.98f, 0.94f };
+			settings.CompressionCeiling = kCompressionCeilingMax;
+			settings.CompressionThreshold = 0.0f;
 		}
 	}
 	ImGui::SameLine();
 	if (ImGui::Button(T(TKEY("preset_dreamy"), "Dreamy"))) {
 		settings.Enabled = true;
-		settings.Strength = 1.5f;
-		settings.Radius = 28.0f;
-		settings.Scatter = 0.72f;
-		settings.Saturation = 0.85f;
-		settings.Tint = { 185.0f / 255.0f, 215.0f / 255.0f, 1.0f };
-		settings.MaxContribution = 0.9f;
-		settings.GlowThreshold = 0.08f;
+		settings.EnhancementIntensity = 1.5f;
+		settings.HaloRadius = 28.0f;
+		settings.HaloSpread = 0.72f;
+		settings.BloomSaturation = 0.85f;
+		settings.BloomTint = { 185.0f / 255.0f, 215.0f / 255.0f, 1.0f };
+		settings.CompressionCeiling = 0.9f;
+		settings.CompressionThreshold = 0.08f;
 	}
 
 	ImGui::BeginDisabled(!settings.Enabled);
-	ImGui::SliderFloat(T(TKEY("strength"), "Strength"), &settings.Strength, 0.0f, kStrengthMax, "%.2f");
-	DrawTooltip(T(TKEY("strength_tooltip"), "Multiplies the bloom signal before Glow Threshold and Glow Ceiling are applied. Raise it to exaggerate weak bloom, such as the sky."));
-	ImGui::SliderFloat(T(TKEY("radius"), "Radius"), &settings.Radius, 0.0f, kRadiusMax, "%.1f");
-	DrawTooltip(T(TKEY("radius_tooltip"), "Controls how far bloom spreads from bright sources. Higher values create wider halos."));
-	ImGui::SliderFloat(T(TKEY("scatter"), "Scatter"), &settings.Scatter, 0.0f, 1.0f, "%.2f");
-	DrawTooltip(T(TKEY("scatter_tooltip"), "Blends between the source pixel and the wider bloom samples. Higher values make the bloom softer and more spread out."));
-	ImGui::SliderFloat(T(TKEY("saturation"), "Saturation"), &settings.Saturation, 0.0f, kSaturationMax, "%.2f");
-	DrawTooltip(T(TKEY("saturation_tooltip"), "Controls how much color the bloom keeps. Lower values make it whiter; higher values preserve or exaggerate its tint."));
-	ImGui::ColorEdit3(T(TKEY("tint"), "Tint"), reinterpret_cast<float*>(&settings.Tint));
-	DrawTooltip(T(TKEY("tint_tooltip"), "Colors the bloom halo without changing the underlying scene lighting."));
-	ImGui::SliderFloat(T(TKEY("max_contribution"), "Glow Ceiling"), &settings.MaxContribution, 0.0f, kMaxContributionMax, "%.2f");
-	DrawTooltip(T(TKEY("glow_ceiling_tooltip"), "The soft limiter's maximum glow level. Bloom above the threshold approaches this value instead of continuing to scale. Set to 0 to remove added bloom."));
-	ImGui::SliderFloat(T(TKEY("glow_threshold"), "Glow Threshold"), &settings.GlowThreshold, 0.0f, settings.MaxContribution, "%.2f");
-	DrawTooltip(T(TKEY("glow_threshold_tooltip"), "The post-Strength bloom level where soft compression starts. Bloom below it is unchanged; bloom above it rolls toward Glow Ceiling. Set it equal to Glow Ceiling for a hard cap."));
+	ImGui::SliderFloat(T(TKEY("enhancement_intensity"), "Enhancement Intensity"), &settings.EnhancementIntensity, 0.0f, kEnhancementIntensityMax, "%.2f");
+	DrawTooltip(T(TKEY("enhancement_intensity_tooltip"), "Multiplies the generated vanilla bloom signal before compression. Raise it to exaggerate weak bloom, such as the sky."));
+	ImGui::SliderFloat(T(TKEY("halo_radius"), "Halo Radius"), &settings.HaloRadius, 0.0f, kHaloRadiusMax, "%.1f");
+	DrawTooltip(T(TKEY("halo_radius_tooltip"), "Controls the radius of the enhancement's additional bloom samples. Higher values create wider halos."));
+	ImGui::SliderFloat(T(TKEY("halo_spread"), "Halo Spread"), &settings.HaloSpread, 0.0f, 1.0f, "%.2f");
+	DrawTooltip(T(TKEY("halo_spread_tooltip"), "Blends between the original bloom and the widened halo samples. Higher values make the halo softer and more spread out."));
+	ImGui::SliderFloat(T(TKEY("bloom_saturation"), "Bloom Saturation"), &settings.BloomSaturation, 0.0f, kBloomSaturationMax, "%.2f");
+	DrawTooltip(T(TKEY("bloom_saturation_tooltip"), "Controls the color saturation of the enhanced bloom. Lower values make it whiter; higher values preserve or exaggerate its tint."));
+	ImGui::ColorEdit3(T(TKEY("bloom_tint"), "Bloom Tint"), reinterpret_cast<float*>(&settings.BloomTint));
+	DrawTooltip(T(TKEY("bloom_tint_tooltip"), "Colors the bloom halo without changing the underlying scene lighting."));
+	ImGui::SliderFloat(T(TKEY("compression_ceiling"), "Compression Ceiling"), &settings.CompressionCeiling, 0.0f, kCompressionCeilingMax, "%.2f");
+	DrawTooltip(T(TKEY("compression_ceiling_tooltip"), "The soft limiter's maximum bloom level. Bloom above the compression threshold approaches this value instead of continuing to scale. Set to 0 to remove added bloom."));
+	ImGui::SliderFloat(T(TKEY("compression_threshold"), "Compression Threshold"), &settings.CompressionThreshold, 0.0f, settings.CompressionCeiling, "%.2f");
+	DrawTooltip(T(TKEY("compression_threshold_tooltip"), "The post-enhancement bloom level where soft compression starts. Bloom below it is unchanged; bloom above it rolls toward Compression Ceiling. Set it equal to Compression Ceiling for a hard cap."));
 	ImGui::EndDisabled();
 
 	SanitizeSettings(settings);
@@ -99,15 +99,15 @@ void Bloom::SanitizeSettings(Settings& settings)
 
 	settings.pad = {};
 	settings.Enabled = settings.Enabled != 0;
-	settings.Strength = clampFiniteOrDefault(settings.Strength, 0.0f, kStrengthMax, defaults.Strength);
-	settings.Radius = clampFiniteOrDefault(settings.Radius, 0.0f, kRadiusMax, defaults.Radius);
-	settings.Scatter = clampFiniteOrDefault(settings.Scatter, 0.0f, 1.0f, defaults.Scatter);
-	settings.Saturation = clampFiniteOrDefault(settings.Saturation, 0.0f, kSaturationMax, defaults.Saturation);
-	settings.Tint.x = clampFiniteOrDefault(settings.Tint.x, 0.0f, 1.0f, defaults.Tint.x);
-	settings.Tint.y = clampFiniteOrDefault(settings.Tint.y, 0.0f, 1.0f, defaults.Tint.y);
-	settings.Tint.z = clampFiniteOrDefault(settings.Tint.z, 0.0f, 1.0f, defaults.Tint.z);
-	settings.MaxContribution = clampFiniteOrDefault(settings.MaxContribution, 0.0f, kMaxContributionMax, defaults.MaxContribution);
-	settings.GlowThreshold = clampFiniteOrDefault(settings.GlowThreshold, 0.0f, settings.MaxContribution, defaults.GlowThreshold);
+	settings.EnhancementIntensity = clampFiniteOrDefault(settings.EnhancementIntensity, 0.0f, kEnhancementIntensityMax, defaults.EnhancementIntensity);
+	settings.HaloRadius = clampFiniteOrDefault(settings.HaloRadius, 0.0f, kHaloRadiusMax, defaults.HaloRadius);
+	settings.HaloSpread = clampFiniteOrDefault(settings.HaloSpread, 0.0f, 1.0f, defaults.HaloSpread);
+	settings.BloomSaturation = clampFiniteOrDefault(settings.BloomSaturation, 0.0f, kBloomSaturationMax, defaults.BloomSaturation);
+	settings.BloomTint.x = clampFiniteOrDefault(settings.BloomTint.x, 0.0f, 1.0f, defaults.BloomTint.x);
+	settings.BloomTint.y = clampFiniteOrDefault(settings.BloomTint.y, 0.0f, 1.0f, defaults.BloomTint.y);
+	settings.BloomTint.z = clampFiniteOrDefault(settings.BloomTint.z, 0.0f, 1.0f, defaults.BloomTint.z);
+	settings.CompressionCeiling = clampFiniteOrDefault(settings.CompressionCeiling, 0.0f, kCompressionCeilingMax, defaults.CompressionCeiling);
+	settings.CompressionThreshold = clampFiniteOrDefault(settings.CompressionThreshold, 0.0f, settings.CompressionCeiling, defaults.CompressionThreshold);
 }
 
 #undef I18N_KEY_PREFIX

@@ -106,7 +106,7 @@ float3 SampleVanillaBloomEnhanced(float2 uv)
 		uint bloomWidth = 1;
 		uint bloomHeight = 1;
 		ImageTex.GetDimensions(bloomWidth, bloomHeight);
-		float2 sampleOffset = SharedData::bloomSettings.Radius / max(float2(bloomWidth, bloomHeight), float2(1.0, 1.0));
+		float2 sampleOffset = SharedData::bloomSettings.HaloRadius / max(float2(bloomWidth, bloomHeight), float2(1.0, 1.0));
 		uint eyeIndex = Stereo::GetEyeIndexFromTexCoord(uv);
 
 		float3 wide = center * 0.28;
@@ -135,10 +135,10 @@ float3 SampleVanillaBloomEnhanced(float2 uv)
 			wide += ImageTex.Sample(ImageSampler, sampleUV).xyz * 0.08;
 		}
 
-		bloom = lerp(center, wide, SharedData::bloomSettings.Scatter);
+		bloom = lerp(center, wide, SharedData::bloomSettings.HaloSpread);
 		float luminance = Color::RGBToLuminance(bloom);
-		bloom = lerp(luminance.xxx, bloom, SharedData::bloomSettings.Saturation);
-		bloom *= SharedData::bloomSettings.Tint * SharedData::bloomSettings.Strength;
+		bloom = lerp(luminance.xxx, bloom, SharedData::bloomSettings.BloomSaturation);
+		bloom *= SharedData::bloomSettings.BloomTint * SharedData::bloomSettings.EnhancementIntensity;
 	}
 
 	return bloom;
@@ -220,8 +220,8 @@ PS_OUTPUT main(PS_INPUT input)
 #		if defined(CS_UTILITY)
 	if (SharedData::bloomSettings.Enabled) {
 		float bloomLuminance = Color::RGBToLuminance(bloomColor);
-		float glowThreshold = min(SharedData::bloomSettings.GlowThreshold, SharedData::bloomSettings.MaxContribution);
-		float glowCeiling = SharedData::bloomSettings.MaxContribution;
+		float glowThreshold = min(SharedData::bloomSettings.CompressionThreshold, SharedData::bloomSettings.CompressionCeiling);
+		float glowCeiling = SharedData::bloomSettings.CompressionCeiling;
 		float bloomExcess = max(0.0, bloomLuminance - glowThreshold);
 		float softRange = max(glowCeiling - glowThreshold, EPSILON_DIVISION);
 		float compressedBloomLuminance = glowCeiling > 0.0 ? (bloomLuminance <= glowThreshold ? bloomLuminance : glowThreshold + bloomExcess / (1.0 + bloomExcess / softRange)) : 0.0;
