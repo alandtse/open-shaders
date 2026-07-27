@@ -97,6 +97,7 @@ void Bloom::SanitizeSettings(Settings& settings)
 		return std::isfinite(value) ? std::clamp(value, min, max) : defaultValue;
 	};
 
+	settings.pad = {};
 	settings.Enabled = settings.Enabled != 0;
 	settings.Strength = clampFiniteOrDefault(settings.Strength, 0.0f, kStrengthMax, defaults.Strength);
 	settings.Radius = clampFiniteOrDefault(settings.Radius, 0.0f, kRadiusMax, defaults.Radius);

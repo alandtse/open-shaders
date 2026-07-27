@@ -218,14 +218,16 @@ PS_OUTPUT main(PS_INPUT input)
 	}
 
 #		if defined(CS_UTILITY)
-	float bloomLuminance = Color::RGBToLuminance(bloomColor);
-	float glowThreshold = min(SharedData::bloomSettings.GlowThreshold, SharedData::bloomSettings.MaxContribution);
-	float glowCeiling = SharedData::bloomSettings.MaxContribution;
-	float bloomExcess = max(0.0, bloomLuminance - glowThreshold);
-	float softRange = max(glowCeiling - glowThreshold, EPSILON_DIVISION);
-	float compressedBloomLuminance = glowCeiling > 0.0 ? (bloomLuminance <= glowThreshold ? bloomLuminance : glowThreshold + bloomExcess / (1.0 + bloomExcess / softRange)) : 0.0;
-	float bloomScale = compressedBloomLuminance / max(bloomLuminance, EPSILON_DIVISION);
-	bloomColor *= bloomScale;
+	if (SharedData::bloomSettings.Enabled) {
+		float bloomLuminance = Color::RGBToLuminance(bloomColor);
+		float glowThreshold = min(SharedData::bloomSettings.GlowThreshold, SharedData::bloomSettings.MaxContribution);
+		float glowCeiling = SharedData::bloomSettings.MaxContribution;
+		float bloomExcess = max(0.0, bloomLuminance - glowThreshold);
+		float softRange = max(glowCeiling - glowThreshold, EPSILON_DIVISION);
+		float compressedBloomLuminance = glowCeiling > 0.0 ? (bloomLuminance <= glowThreshold ? bloomLuminance : glowThreshold + bloomExcess / (1.0 + bloomExcess / softRange)) : 0.0;
+		float bloomScale = compressedBloomLuminance / max(bloomLuminance, EPSILON_DIVISION);
+		bloomColor *= bloomScale;
+	}
 #		endif
 
 	float2 avgValue = AvgTex.Sample(AvgSampler, input.TexCoord.xy).xy;

@@ -13,7 +13,7 @@ struct Bloom
 		float3 Tint = { 1.0f, 0.98f, 0.94f };
 		float GlowThreshold = 0.0f;
 		float MaxContribution = 8.0f;
-		float2 pad;
+		float2 pad{};
 	};
 	static_assert(sizeof(Settings) == 48);
 
