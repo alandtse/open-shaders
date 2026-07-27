@@ -1063,6 +1063,18 @@ void Menu::ProcessInputEventQueue()
 		}
 	}
 
+	// Apply any off-thread feature-menu selection request (see RequestFeatureMenu) here on
+	// the render thread, same reasoning as the visibility handoff above.
+	{
+		std::string requested;
+		{
+			std::lock_guard<std::mutex> lock(offThreadFeatureSelectionMutex);
+			requested.swap(offThreadFeatureSelection);
+		}
+		if (!requested.empty())
+			SelectFeatureMenu(requested);
+	}
+
 	std::vector<KeyEvent> queuedEvents;
 	{
 		std::unique_lock<std::shared_mutex> mutex(_inputEventMutex);

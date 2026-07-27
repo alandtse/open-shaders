@@ -502,6 +502,15 @@ void FeatureListRenderer::HandlePendingFeatureSelection(
 					logger::info("Navigated to {} feature menu", pendingFeatureSelection);
 					break;
 				}
+			} else if (std::holds_alternative<BuiltInMenu>(menuList[i])) {
+				// Built-in pages (e.g. "Performance", "Home") aren't Features and have no
+				// GetShortName(); match on the same canonicalId used by IsCoreMenu() instead.
+				const auto& builtIn = std::get<BuiltInMenu>(menuList[i]);
+				if (!builtIn.canonicalId.empty() && builtIn.canonicalId == pendingFeatureSelection) {
+					selectedMenu = i;
+					logger::info("Navigated to {} built-in menu", pendingFeatureSelection);
+					break;
+				}
 			}
 		}
 		pendingFeatureSelection.clear();  // Clear after processing

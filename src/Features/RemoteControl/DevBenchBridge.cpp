@@ -689,11 +689,20 @@ namespace
 		else
 			return json{ { "error", "unknown op (open|close|toggle)" }, { "op", op } };
 
+		// Optional page navigation, e.g. "Performance" or a feature's GetShortName().
+		// RequestFeatureMenu is thread-safe (see its doc comment) for the same reason
+		// RequestVisibility is used below instead of calling SetVisible directly.
+		std::string page;
+		if (auto it = a_args.find("page"); it != a_args.end() && it->is_string())
+			page = it->get<std::string>();
+		if (!page.empty())
+			Menu::GetSingleton()->RequestFeatureMenu(page);
+
 		// SetVisible touches the ImGui context and the IsEnabled flag the render thread owns, so
 		// it can't run on this listener thread (nor on the SKSE main thread). Enqueue an atomic
 		// request the render loop consumes next frame, mirroring the ToggleKey path.
 		Menu::GetSingleton()->RequestVisibility(req);
-		return json{ { "op", op }, { "queued", true } };
+		return json{ { "op", op }, { "page", page }, { "queued", true } };
 	}
 
 	void MenuHandler(void*, const char* a_argsJson, void* a_sink, DevBenchAPI::WriteFn a_write)
@@ -743,7 +752,7 @@ namespace DevBenchBridge
 		// up with the on-screen window.
 		if (dvb->GetBuildNumber() >= 10500) {
 			static constexpr const char* menuDesc =
-				R"({"description":"Open, close, or toggle the Open Shaders in-game settings menu headlessly, the same window the ToggleKey (default End) shows. op: open|close|toggle (default toggle). Returns {op,queued:true}; the change is applied on the render thread on the next frame (open is a no-op while first-time setup is pending).","inputSchema":{"type":"object","properties":{"op":{"type":"string","enum":["open","close","toggle"]}}}})";
+				R"({"description":"Open, close, or toggle the Open Shaders in-game settings menu headlessly, the same window the ToggleKey (default End) shows. op: open|close|toggle (default toggle). page: OPTIONAL built-in page name (e.g. \"Performance\", \"Home\") or a feature's shortName (see openshaders.feature list) to navigate to on the next frame, same as clicking it in the left pane. Returns {op,page,queued:true}; the change is applied on the render thread on the next frame (open is a no-op while first-time setup is pending).","inputSchema":{"type":"object","properties":{"op":{"type":"string","enum":["open","close","toggle"]},"page":{"type":"string"}}}})";
 			dvb->RegisterToolExtension("menu", "CommunityShaders", menuDesc, &MenuHandler, nullptr);
 
 			static constexpr const char* inspectStateDesc =

@@ -8,6 +8,7 @@
 #include <atomic>
 #include <cstdint>
 #include <dxgi1_4.h>
+#include <mutex>
 #include <nlohmann/json.hpp>
 #include <optional>
 #include <shared_mutex>
@@ -184,6 +185,19 @@ public:
 			pendingAbsolute.store(a_request, std::memory_order_relaxed);  // Open or Close
 	}
 
+	/**
+	 * @brief Thread-safe entry point for off-thread callers (e.g. devbench) to navigate
+	 * to a specific feature/page menu. SelectFeatureMenu itself is render-thread-only
+	 * (writes pendingFeatureSelection unsynchronized, assuming the caller and consumer
+	 * are the same thread); this stages the name behind a mutex and ProcessInputEventQueue
+	 * hands it off to SelectFeatureMenu on the render thread next frame.
+	 */
+	void RequestFeatureMenu(std::string a_featureName)
+	{
+		std::lock_guard<std::mutex> lock(offThreadFeatureSelectionMutex);
+		offThreadFeatureSelection = std::move(a_featureName);
+	}
+
 	// Search bar state
 	std::string featureSearch;  // For left pane feature search
 	/** @brief Draws the in-game performance/debug overlay */
@@ -248,6 +262,11 @@ private:
 	// last-writer-wins; toggles accumulate so rapid sub-frame toggles aren't dropped.
 	std::atomic<VisibilityRequest> pendingAbsolute{ VisibilityRequest::None };  // None/Open/Close
 	std::atomic<unsigned int> pendingToggleCount{ 0 };
+
+	// Off-thread feature-menu selection request (see RequestFeatureMenu), drained into
+	// pendingFeatureSelection on the render thread in ProcessInputEventQueue.
+	std::mutex offThreadFeatureSelectionMutex;
+	std::string offThreadFeatureSelection;
 
 public:
 	// Display size tracking for cross-session resolution change detection
@@ -539,7 +558,8 @@ public:
 	/** @brief Gets the loaded ImFont pointer for the given role */
 	ImFont* GetFont(FontRole role) const { return loadedFontRoles[static_cast<size_t>(role)]; }
 
-	/** @brief Queues a feature to be selected in the left panel on the next frame */
+	/** @brief Queues a feature (by GetShortName()) or built-in page (by canonicalId, e.g.
+	 *  "Performance") to be selected in the left panel on the next frame. */
 	void SelectFeatureMenu(const std::string& featureName);
 	static std::unordered_map<std::string, int> categoryCounts;  // Number of features in each feature category
 
