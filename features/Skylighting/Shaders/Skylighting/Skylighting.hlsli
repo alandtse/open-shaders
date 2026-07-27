@@ -16,13 +16,27 @@ namespace Skylighting
 
 	const static sh2 UNIT_SH = float4(sqrt(4.0 * Math::PI), 0, 0, 0);
 
-	const static uint3 ARRAY_DIM = uint3(256, 256, 128);
-	const static float3 ARRAY_SIZE = 10000.f * float3(1, 1, 0.5);
-	const static float3 CELL_SIZE = ARRAY_SIZE / ARRAY_DIM;
+	const static float DEFAULT_PROBE_FIELD_SIZE = 10000.f;
+
+	// Zeroed CB (interiors, menus) degrades to a 1-cell grid at the default field size.
+	uint3 GetArrayDims(SharedData::SkylightingSettings params)
+	{
+		return max(params.ArrayDims.xyz, uint3(1, 1, 1));
+	}
+
+	float3 GetArraySize(SharedData::SkylightingSettings params)
+	{
+		return max(params.ProbeFieldSize, DEFAULT_PROBE_FIELD_SIZE) * float3(1, 1, 0.5);
+	}
+
+	float3 GetCellSize(SharedData::SkylightingSettings params)
+	{
+		return GetArraySize(params) / float3(GetArrayDims(params));
+	}
 
 	float GetFadeOutFactor(float3 positionMS)
 	{
-		float3 uvw = saturate(positionMS / ARRAY_SIZE + .5);
+		float3 uvw = saturate(positionMS / GetArraySize(SharedData::skylightingSettings) + .5);
 		float3 dists = min(uvw, 1 - uvw);
 		float edgeDist = min(dists.x, min(dists.y, dists.z));
 		return saturate(edgeDist * 20);
@@ -77,20 +91,24 @@ namespace Skylighting
 #if defined(PSHADER) || defined(SKYLIGHTING_PROBE_REGISTER)
 	sh2 Sample(float3 positionMS, float3 normalWS)
 	{
+		const SharedData::SkylightingSettings params = SharedData::skylightingSettings;
+		const uint3 arrayDims = GetArrayDims(params);
+		const float3 arraySize = GetArraySize(params);
+		const float3 cellSize = GetCellSize(params);
 		sh2 scaledUnitSH = UNIT_SH / 1e-10;
 
 		if (SharedData::InInterior)
 			return scaledUnitSH;
 
-		positionMS.xyz += normalWS * CELL_SIZE * 0.5;  // Receiver normal bias
+		positionMS.xyz += normalWS * cellSize * 0.5;  // Receiver normal bias
 
-		float3 positionMSAdjusted = positionMS - SharedData::skylightingSettings.PosOffset.xyz;
-		float3 uvw = positionMSAdjusted / ARRAY_SIZE + .5;
+		float3 positionMSAdjusted = positionMS - params.PosOffset.xyz;
+		float3 uvw = positionMSAdjusted / arraySize + .5;
 
 		if (any(uvw < 0) || any(uvw > 1))
 			return scaledUnitSH;
 
-		float3 cellVxCoord = uvw * ARRAY_DIM;
+		float3 cellVxCoord = uvw * arrayDims;
 		int3 cell000 = floor(cellVxCoord - 0.5);
 		float3 trilinearPos = cellVxCoord - 0.5 - cell000;
 
@@ -102,11 +120,11 @@ namespace Skylighting
 					int3 offset = int3(i, j, k);
 					int3 cellID = cell000 + offset;
 
-					if (any(cellID < 0) || any((uint3)cellID >= ARRAY_DIM))
+					if (any(cellID < 0) || any((uint3)cellID >= arrayDims))
 						continue;
 
-					float3 cellCentreMS = cellID + 0.5 - ARRAY_DIM / 2;
-					cellCentreMS = cellCentreMS * CELL_SIZE;
+					float3 cellCentreMS = cellID + 0.5 - arrayDims / 2;
+					cellCentreMS = cellCentreMS * cellSize;
 
 					// https://handmade.network/p/75/monter/blog/p/7288-engine_work__global_illumination_with_irradiance_probes
 					// basic tangent checks
@@ -115,7 +133,7 @@ namespace Skylighting
 					float3 trilinearWeights = 1 - abs(offset - trilinearPos);
 					float w = trilinearWeights.x * trilinearWeights.y * trilinearWeights.z * tangentWeight;
 
-					uint3 cellTexID = (cellID + SharedData::skylightingSettings.ArrayOrigin.xyz) % ARRAY_DIM;
+					uint3 cellTexID = uint3(cellID + params.ArrayOrigin.xyz) % arrayDims;
 					sh2 probe = SphericalHarmonics::Scale(SkylightingProbeArray[cellTexID], w);
 
 					sum = SphericalHarmonics::Add(sum, probe);
@@ -147,18 +165,22 @@ namespace Skylighting
 
 	sh2 SampleNoBias(float3 positionMS)
 	{
+		const SharedData::SkylightingSettings params = SharedData::skylightingSettings;
+		const uint3 arrayDims = GetArrayDims(params);
+		const float3 arraySize = GetArraySize(params);
+		const float3 cellSize = GetCellSize(params);
 		sh2 scaledUnitSH = UNIT_SH / 1e-10;
 
 		if (SharedData::InInterior)
 			return scaledUnitSH;
 
-		float3 positionMSAdjusted = positionMS - SharedData::skylightingSettings.PosOffset.xyz;
-		float3 uvw = positionMSAdjusted / ARRAY_SIZE + .5;
+		float3 positionMSAdjusted = positionMS - params.PosOffset.xyz;
+		float3 uvw = positionMSAdjusted / arraySize + .5;
 
 		if (any(uvw < 0) || any(uvw > 1))
 			return scaledUnitSH;
 
-		float3 cellVxCoord = uvw * ARRAY_DIM;
+		float3 cellVxCoord = uvw * arrayDims;
 		int3 cell000 = floor(cellVxCoord - 0.5);
 		float3 trilinearPos = cellVxCoord - 0.5 - cell000;
 
@@ -171,16 +193,16 @@ namespace Skylighting
 			int3 offset = int3(i, j, k);
 			int3 cellID = cell000 + offset;
 
-			if (any(cellID < 0) || any((uint3)cellID >= ARRAY_DIM))
+			if (any(cellID < 0) || any((uint3)cellID >= arrayDims))
 				continue;
 
-			float3 cellCentreMS = cellID + 0.5 - ARRAY_DIM / 2;
-			cellCentreMS = cellCentreMS * CELL_SIZE;
+			float3 cellCentreMS = cellID + 0.5 - arrayDims / 2;
+			cellCentreMS = cellCentreMS * cellSize;
 
 			float3 trilinearWeights = 1 - abs(offset - trilinearPos);
 			float w = trilinearWeights.x * trilinearWeights.y * trilinearWeights.z;
 
-			uint3 cellTexID = (cellID + SharedData::skylightingSettings.ArrayOrigin.xyz) % ARRAY_DIM;
+			uint3 cellTexID = uint3(cellID + params.ArrayOrigin.xyz) % arrayDims;
 			sh2 probe = SphericalHarmonics::Scale(SkylightingProbeArray[cellTexID], w);
 
 			sum = SphericalHarmonics::Add(sum, probe);

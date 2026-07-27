@@ -52,9 +52,20 @@ public:
 
 	struct Settings
 	{
+		static constexpr float kDefaultProbeFieldSize = 10000.f;
+		static constexpr float kMinProbeFieldSize = 10000.f;
+		static constexpr float kMaxProbeFieldSize = 32768.f;
+
 		float MaxZenith = 3.1415926f / 2.f;  // 90 deg
 		float MinDiffuseVisibility = 0.1f;
 		float MinSpecularVisibility = 0.1f;
+		float ProbeFieldSize = kDefaultProbeFieldSize;  // total camera-centered XY field width in game units
+		uint ProbeGridQuality = 2;                      // preset index; 2 = 256 x 256 x 128, the legacy fixed grid
+		bool EnableIncrementalProbeUpdates = false;
+		uint StableSliceCount = 8;
+		bool EnableReducedUpdateFrequency = false;
+		uint OcclusionUpdateInterval = 2;
+		uint ProbeUpdateInterval = 2;
 	} settings;
 
 	struct SkylightingCB
@@ -64,13 +75,16 @@ public:
 
 		float3 PosOffset;  // cell origin in camera model space
 		uint _pad0;
-		uint ArrayOrigin[3];  // xyz: array origin, w: max accum frames
+		uint ArrayOrigin[3];  // xyz: array origin
 		uint _pad1;
 		int ValidMargin[4];
+		uint ArrayDims[3];
+		float ProbeFieldSize;
 
 		float MinDiffuseVisibility;
 		float MinSpecularVisibility;
-		uint _pad2[2];
+		uint ProbeUpdateSliceStart;
+		uint ProbeUpdateSliceCount;
 	};
 	static_assert(sizeof(SkylightingCB) % 16 == 0);
 
@@ -91,17 +105,32 @@ public:
 
 	// misc parameters
 	uint probeArrayDims[3] = { 256, 256, 128 };
-	float occlusionDistance = 10000.f;
 
 	// cached variables
 	bool queuedResetSkylighting = true;
+	// Grid changes from settings loads must recreate resources on the render
+	// thread (consumed at Prepass); the load itself runs on the main thread.
+	bool queuedSetupResources = false;
 	bool inOcclusion = false;
 	REX::W32::XMFLOAT4X4 OcclusionTransform;
 	float4 OcclusionDir;
 	uint frameCount = 0;
+	float3 prevCellID = { 0, 0, 0 };
+	uint probeUpdateSliceStart = 0;
+	uint probeUpdateSliceCount = 128;
+	uint probeUpdateSliceCursor = 0;
+	uint probeUpdateCornerMask = 0;
+	uint forcedFullUpdateFrames = 1;
+	bool forceProbeUpdateThisFrame = true;
+	uint probeUpdateFrameCounter = 0;
+	uint occlusionUpdateFrameCounter = 0;
 
 	/** @brief Clears the accumulation frames array to force a full rebuild of skylighting probes. */
 	void ResetSkylighting();
+	/** @brief Restarts the incremental probe update window (slice cursor and quadrant mask). */
+	void ResetProbeUpdateWindow();
+	/** @brief Applies the selected probe grid preset to probeArrayDims and reclamps dependent settings. */
+	void ApplyProbeGridQuality();
 
 	std::chrono::time_point<std::chrono::system_clock> lastUpdateTimer = std::chrono::system_clock::now();
 
