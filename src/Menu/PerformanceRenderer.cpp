@@ -45,8 +45,11 @@ static void DrawSectionHeader(Feature* feature, bool linkable)
 
 void PerformanceRenderer::DrawSubsectionLink(const char* label, Feature* feature)
 {
-	DrawFeatureLink(label, feature);
+	// Indent BEFORE drawing the link, not after -- otherwise only content following
+	// the link (often nothing) ends up indented, and the link itself, the one thing
+	// meant to visually nest, stays flush with the top-level section header above it.
 	ImGui::Indent();
+	DrawFeatureLink(label, feature);
 }
 
 // Draws a Performance/Balanced/Quality button row, highlighting whichever index is
