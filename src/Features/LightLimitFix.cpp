@@ -118,17 +118,13 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 
 void LightLimitFix::DrawPerformanceSettings()
 {
+	ImGui::SeparatorText(T("feature.light_limit_fix.shadow_limit_fix_header", "Shadow Limit Fix"));
 	if (!settings.ShadowSettings.Enabled) {
 		ImGui::TextDisabled("%s", T("feature.light_limit_fix.shadow_limit_fix_disabled_hub",
 									  "Shadow Limit Fix is disabled in this feature's settings."));
 		return;
 	}
 	ShadowCasterManager::DrawImpactCullControls(settings.ShadowSettings);
-}
-
-std::string LightLimitFix::GetPerformanceSectionLabel()
-{
-	return T("feature.light_limit_fix.shadow_limit_fix_header", "Shadow Limit Fix");
 }
 
 namespace
@@ -164,8 +160,16 @@ void LightLimitFix::ApplyPerformanceProfile(PerfProfile profile)
 
 bool LightLimitFix::MatchesPerformanceProfile(PerfProfile profile) const
 {
+	// Shadow Limit Fix off: these values have no effect, so don't veto the hub's
+	// active-profile detection for a knob the user can't currently apply.
+	if (!settings.ShadowSettings.Enabled)
+		return true;
 	const auto preset = GetImpactCullPreset(profile);
-	return settings.ShadowSettings.ShadowImpactFloor == preset.floor && settings.ShadowSettings.CasterCullAngularMin == preset.cull;
+	// Epsilon compare, not ==: a JSON save/load round-trip through float can
+	// perturb the last bit, which would otherwise permanently read as Custom.
+	constexpr float kEpsilon = 1e-4f;
+	return std::abs(settings.ShadowSettings.ShadowImpactFloor - preset.floor) <= kEpsilon &&
+	       std::abs(settings.ShadowSettings.CasterCullAngularMin - preset.cull) <= kEpsilon;
 }
 
 void LightLimitFix::DrawSettings()

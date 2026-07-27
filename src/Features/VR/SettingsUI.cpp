@@ -7,7 +7,6 @@
 #include "I18n/I18n.h"
 #include "Menu.h"
 #include "Menu/Fonts.h"
-#include "Menu/PerformanceRenderer.h"
 #include "RE/B/BSOpenVR.h"
 #include "RE/P/PlayerCharacter.h"
 #include "State.h"
@@ -230,14 +229,8 @@ void VR::DrawSettings()
 	if (!menu)
 		return;
 	if (ImGui::BeginTabBar("##VRTabs", ImGuiTabBarFlags_None)) {
-		if (BeginTabItemWithFont(T(TKEY("tab_performance"), "Performance"), Menu::FontRole::Subheading)) {
-			if (ImGui::BeginChild("##PerformanceFrame", { 0, 0 }, true)) {
-				PerformanceRenderer::Render(this);
-			}
-			ImGui::EndChild();
-			ImGui::EndTabItem();
-		}
-
+		// The central Performance page (top-level menu entry) replaced this tab's old
+		// embedded copy of the same controls; VR's section there links back here.
 		if (BeginTabItemWithFont(T(TKEY("tab_general"), "General"), Menu::FontRole::Subheading)) {
 			if (ImGui::BeginChild("##VRGeneralFrame", { 0, 0 }, true)) {
 				DrawGeneralVRSettings();

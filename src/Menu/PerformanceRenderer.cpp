@@ -42,6 +42,18 @@ void PerformanceRenderer::Render(Feature* host)
 								 "effect at the next game launch."));
 	ImGui::Spacing();
 
+	// Features whose whole section is VR-only outside VR (PerformanceSectionRequiresVR)
+	// are skipped everywhere below: active-profile detection, the restart banner, and
+	// the per-feature list itself, so authors of VR-only sections don't need to gate
+	// their draw code manually.
+	std::vector<Feature*> ordered;
+	for (Feature* feature : Feature::GetFeatureList())
+		if (feature->loaded && (globals::game::isVR || !feature->PerformanceSectionRequiresVR()))
+			ordered.push_back(feature);
+	// stable_sort keeps registration order among equal ranks (e.g. the default 1000) deterministic.
+	std::stable_sort(ordered.begin(), ordered.end(),
+		[](const Feature* a, const Feature* b) { return a->GetPerformanceOrder() < b->GetPerformanceOrder(); });
+
 	// The active profile is the one every feature's settings currently match (else Custom).
 	const Feature::PerfProfile profiles[3] = {
 		Feature::PerfProfile::Performance, Feature::PerfProfile::Balanced, Feature::PerfProfile::Quality
@@ -49,9 +61,8 @@ void PerformanceRenderer::Render(Feature* host)
 	int activeIdx = -1;
 	for (int i = 0; i < IM_ARRAYSIZE(profiles) && activeIdx < 0; ++i) {
 		bool all = true;
-		for (Feature* f : Feature::GetFeatureList())
-			if (f->loaded && (globals::game::isVR || !f->PerformanceSectionRequiresVR()) &&
-				!f->MatchesPerformanceProfile(profiles[i])) {
+		for (Feature* f : ordered)
+			if (!f->MatchesPerformanceProfile(profiles[i])) {
 				all = false;
 				break;
 			}
@@ -65,10 +76,13 @@ void PerformanceRenderer::Render(Feature* host)
 		T(TKEY("profile_quality"), "Quality")
 	};
 	// Foveation/reprojection are VR-only (their sections are hidden on Flat via
-	// PerformanceSectionRequiresVR), so don't claim they're affected there.
+	// PerformanceSectionRequiresVR), so don't claim they're affected there. All
+	// three set Upscaling's qualityMode, which is restart-gated whenever PerfMode
+	// is engaged (the normal case for any DLSS/FSR user) -- so every tooltip
+	// carries the same restart caveat, not just Quality's.
 	const char* tooltips[3] = {
-		globals::game::isVR ? T(TKEY("profile_performance_tooltip"), "Lowest render resolution; foveation and reprojection on. Fastest.") : T(TKEY("profile_performance_tooltip_flat"), "Lowest render resolution. Fastest."),
-		globals::game::isVR ? T(TKEY("profile_balanced_tooltip"), "Mid render resolution; reprojection on.") : T(TKEY("profile_balanced_tooltip_flat"), "Mid render resolution."),
+		globals::game::isVR ? T(TKEY("profile_performance_tooltip"), "Lowest render resolution; foveation and reprojection on. Fastest. Some changes apply on restart.") : T(TKEY("profile_performance_tooltip_flat"), "Lowest render resolution. Fastest. Some changes apply on restart."),
+		globals::game::isVR ? T(TKEY("profile_balanced_tooltip"), "Mid render resolution; reprojection on. Some changes apply on restart.") : T(TKEY("profile_balanced_tooltip_flat"), "Mid render resolution. Some changes apply on restart."),
 		globals::game::isVR ? T(TKEY("profile_quality_tooltip"), "Higher render resolution; reprojection off for max fidelity. Some changes apply on restart.") : T(TKEY("profile_quality_tooltip_flat"), "Higher render resolution for max fidelity. Some changes apply on restart.")
 	};
 	ImGui::TextUnformatted(T(TKEY("profiles_label"), "Profile:"));
@@ -89,33 +103,38 @@ void PerformanceRenderer::Render(Feature* host)
 		ImGui::TextDisabled("%s", T(TKEY("profile_custom"), "(Custom)"));
 	}
 
+	// Surface the restart need here, not just inside each feature's collapsed section --
+	// otherwise clicking a preset with a restart-gated field looks like it did nothing.
+	bool anyPendingRestart = false;
+	for (Feature* f : ordered)
+		if (f->HasAnyPendingRestart()) {
+			anyPendingRestart = true;
+			break;
+		}
+	if (anyPendingRestart)
+		Util::Text::RestartNeeded("%s", T(TKEY("pending_restart_banner"), "Some changes below need a restart to take effect."));
+
 	ImGui::Spacing();
 	ImGui::Separator();
 	ImGui::Spacing();
 
-	// Drawn in perf-impact order (GetPerformanceOrder), not feature-registration order.
-	// Skips features whose whole section is VR-only outside VR (PerformanceSectionRequiresVR)
-	// so authors of VR-only sections don't need to gate their draw code manually.
-	std::vector<Feature*> ordered;
-	for (Feature* feature : Feature::GetFeatureList())
-		if (feature->loaded && (globals::game::isVR || !feature->PerformanceSectionRequiresVR()))
-			ordered.push_back(feature);
-	// stable_sort keeps registration order among equal ranks (e.g. the default 1000) deterministic.
-	std::stable_sort(ordered.begin(), ordered.end(),
-		[](const Feature* a, const Feature* b) { return a->GetPerformanceOrder() < b->GetPerformanceOrder(); });
+	// Drawn in perf-impact order (GetPerformanceOrder), set up in `ordered` above.
 	for (Feature* feature : ordered) {
 		ImGui::PushID(feature);
 		DrawSectionHeader(feature, feature != host);
 		// Collapsed by default: the presets above are the primary surface for most users;
 		// this is for verifying what a preset changed or fine-tuning past it.
-		if (ImGui::TreeNodeEx(T(TKEY("section_settings"), "Settings"), ImGuiTreeNodeFlags_None)) {
+		if (ImGui::TreeNodeEx(T(TKEY("section_advanced"), "Advanced"), ImGuiTreeNodeFlags_None)) {
 			// Isolate each feature's draw so one throwing hook can't blank the rest of the page.
+			// Logged, not just shown inline, so a reported red box is diagnosable from the log.
 			try {
 				feature->DrawPerformanceSettings();
 			} catch (const std::exception& e) {
-				ImGui::TextColored(ImVec4(1, 0, 0, 1), "%s: draw error (%s)", feature->GetDisplayName().c_str(), e.what());
+				logger::error("PerformanceRenderer: {} threw: {}", feature->GetShortName(), e.what());
+				Util::Text::WrappedError("%s: draw error (%s)", feature->GetDisplayName().c_str(), e.what());
 			} catch (...) {
-				ImGui::TextColored(ImVec4(1, 0, 0, 1), "%s: draw error (unknown)", feature->GetDisplayName().c_str());
+				logger::error("PerformanceRenderer: {} threw (unknown)", feature->GetShortName());
+				Util::Text::WrappedError("%s: draw error (unknown)", feature->GetDisplayName().c_str());
 			}
 			ImGui::TreePop();
 		}
