@@ -280,17 +280,16 @@ std::string Upscaling::GetPerformanceSectionLabel()
 	return T(TKEY("vr_perf_upscaling_header"), "Upscaling & Foveation");
 }
 
-// Central Performance hub view: which upscale preset is active (set by the global
-// Performance/Balanced/Quality buttons above), visible without expanding Advanced --
-// otherwise this section looks empty right below those buttons.
+// Central Performance hub view: the restart-pending diff for qualityMode, the one
+// thing the hub's own Performance/Balanced/Quality button row (which already shows
+// which preset is active via highlighting) can't convey on its own.
 void Upscaling::DrawPerformancePresets()
 {
 	// Only meaningful when an upscaler is active; match the same gate DrawSettings
-	// uses so the hub doesn't show an inert value for None/TAA.
+	// uses so the hub doesn't show an inert diff for None/TAA.
 	const auto upscaleMethod = GetUpscaleMethod();
 	if (upscaleMethod == UpscaleMethod::kNONE || upscaleMethod == UpscaleMethod::kTAA)
 		return;
-	ImGui::Text("%s: %s", T(TKEY("vr_perf_upscale_preset"), "Upscale preset"), GetQualityModeName(settings.qualityMode));
 	// No pending-restart diff while an explicit scale owns the render res:
 	// the preset is inert and a restart wouldn't apply it.
 	if (perfMode.IsHookActive() && !perfMode.IsExplicitScaleLatched())
