@@ -264,7 +264,7 @@ public:
 	 *  visible outside the hub's collapsed Advanced tree. Empty when Shadow
 	 *  Limit Fix itself is off -- nothing to tune. */
 	void DrawPerformanceSettings() override;
-	/** @brief Hub view: draws only a "Shadow Limit Fix" subsection header (the feature
+	/** @brief Hub view: draws an indented "Shadow Limit Fix" subsection link (the feature
 	 *  is otherwise labeled by its real display name, matching every other hub entry)
 	 *  and a disabled-state note. The hub's own preset row already applies the profile
 	 *  to this feature via ApplyPerformanceProfile, so no buttons are duplicated here. */

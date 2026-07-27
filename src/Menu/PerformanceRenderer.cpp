@@ -14,6 +14,18 @@
 
 #define I18N_KEY_PREFIX "menu.performance."
 
+// Shared by the top-level section header and DrawSubsectionLink: a clickable link to
+// a feature's own panel, with the standard "open this feature" tooltip.
+static void DrawFeatureLink(const char* label, Feature* feature)
+{
+	if (ImGui::TextLink(label)) {
+		if (auto* menu = Menu::GetSingleton())
+			menu->SelectFeatureMenu(feature->GetShortName());
+	}
+	if (auto _tt = Util::HoverTooltipWrapper())
+		ImGui::Text("%s", T(TKEY("open_feature_tooltip"), "Open this feature's full settings panel"));
+}
+
 // Section header: the feature name as a jump link to its panel, or a plain
 // SeparatorText for the host (a link there would navigate to this very page).
 // Draws no trailing divider of its own -- the caller closes out each section
@@ -28,12 +40,13 @@ static void DrawSectionHeader(Feature* feature, bool linkable)
 		ImGui::SeparatorText(label.c_str());
 		return;
 	}
-	if (ImGui::TextLink(label.c_str())) {
-		if (auto* menu = Menu::GetSingleton())
-			menu->SelectFeatureMenu(feature->GetShortName());
-	}
-	if (auto _tt = Util::HoverTooltipWrapper())
-		ImGui::Text("%s", T(TKEY("open_feature_tooltip"), "Open this feature's full settings panel"));
+	DrawFeatureLink(label.c_str(), feature);
+}
+
+void PerformanceRenderer::DrawSubsectionLink(const char* label, Feature* feature)
+{
+	DrawFeatureLink(label, feature);
+	ImGui::Indent();
 }
 
 // Draws a Performance/Balanced/Quality button row, highlighting whichever index is

@@ -7,6 +7,7 @@
 #include "I18n/I18n.h"
 #include "InverseSquareLighting.h"
 #include "LinearLighting.h"
+#include "Menu/PerformanceRenderer.h"
 #include "Utils/UI.h"
 
 #include "Deferred.h"
@@ -125,13 +126,15 @@ void LightLimitFix::DrawPerformanceSettings()
 
 void LightLimitFix::DrawPerformancePresets()
 {
-	// Names this subsection "Shadow Limit Fix" (not the broader Light Limit Fix
-	// feature); the hub's own preset row above already applies the profile here via
+	// Indented, clickable link (not a SeparatorText header) so "Shadow Limit Fix"
+	// reads as nested under this feature's own section rather than a sibling one;
+	// the hub's own preset row above already applies the profile here via
 	// ApplyPerformanceProfile, so this doesn't repeat those buttons.
-	ImGui::SeparatorText(T("feature.light_limit_fix.shadow_limit_fix_header", "Shadow Limit Fix"));
+	PerformanceRenderer::DrawSubsectionLink(T("feature.light_limit_fix.shadow_limit_fix_header", "Shadow Limit Fix"), this);
 	if (!settings.ShadowSettings.Enabled)
 		ImGui::TextDisabled("%s", T("feature.light_limit_fix.shadow_limit_fix_disabled_hub",
 									  "Shadow Limit Fix is disabled in this feature's settings."));
+	ImGui::Unindent();
 }
 
 namespace

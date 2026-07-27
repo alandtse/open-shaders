@@ -20,4 +20,17 @@ public:
 	 *             is not drawn as a jump link to prevent redundant navigation.
 	 */
 	static void Render(Feature* host = nullptr);
+
+	/**
+	 * @brief Draws an indented, clickable heading for a named sub-part of a feature's
+	 * hub section (e.g. LightLimitFix's "Shadow Limit Fix" impact-cull controls, which
+	 * are named differently from the feature's own display name). Unlike the top-level
+	 * section header, this draws no full-width divider, so it reads as nested under the
+	 * feature rather than as a sibling top-level section; the link still navigates to
+	 * the same feature panel. Caller must pair with ImGui::Unindent() once its
+	 * subsection content is drawn.
+	 * @param label The subsection's display name (e.g. "Shadow Limit Fix").
+	 * @param feature The feature to navigate to when the link is clicked.
+	 */
+	static void DrawSubsectionLink(const char* label, Feature* feature);
 };
