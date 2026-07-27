@@ -44,8 +44,7 @@ namespace
 		a_settings.linearOmnidirectionalBulbMult = ClampFiniteOrDefault(a_settings.linearOmnidirectionalBulbMult, kMultiplierMin, kMultiplierMax, defaults.linearOmnidirectionalBulbMult);
 		CSUtility::SanitizeDepthOfFieldOverride(a_settings.sceneDof);
 		CSUtility::SanitizeDepthOfFieldOverride(a_settings.underwaterDof);
-		Bloom::SanitizeSettings(a_settings.exteriorVanillaBloom);
-		Bloom::SanitizeSettings(a_settings.interiorVanillaBloom);
+		Bloom::SanitizeSettings(a_settings.bloomEnhancement);
 	}
 
 	void DrawMultiplierSlider(const char* a_label, float& a_value, float a_max = kMultiplierMax)
@@ -106,8 +105,7 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	linearOmnidirectionalBulbMult,
 	sceneDof,
 	underwaterDof,
-	exteriorVanillaBloom,
-	interiorVanillaBloom)
+	bloomEnhancement)
 
 void CSUtility::DrawSettings()
 {
@@ -142,17 +140,7 @@ void CSUtility::DrawSettings()
 void CSUtility::DrawVanillaBloomSettings()
 {
 	if (ImGui::BeginTabItem(T(TKEY("tab_vanilla_bloom"), "Vanilla Bloom"))) {
-		if (ImGui::BeginTabBar("##VanillaBloomProfiles", ImGuiTabBarFlags_None)) {
-			if (ImGui::BeginTabItem(T(TKEY("exterior"), "Exterior"))) {
-				Bloom::DrawSettings(settings.exteriorVanillaBloom, false);
-				ImGui::EndTabItem();
-			}
-			if (ImGui::BeginTabItem(T(TKEY("interior"), "Interior"))) {
-				Bloom::DrawSettings(settings.interiorVanillaBloom, true);
-				ImGui::EndTabItem();
-			}
-			ImGui::EndTabBar();
-		}
+		Bloom::DrawSettings(settings.bloomEnhancement);
 		ImGui::EndTabItem();
 	}
 }

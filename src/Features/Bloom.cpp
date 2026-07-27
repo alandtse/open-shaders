@@ -21,7 +21,7 @@ namespace
 	}
 }
 
-void Bloom::DrawSettings(Settings& settings, bool a_isInterior)
+void Bloom::DrawSettings(Settings& settings)
 {
 	bool enabled = settings.Enabled != 0;
 	if (ImGui::Checkbox(T(TKEY("enable_enhancement"), "Enable Bloom Enhancement"), &enabled)) {
@@ -34,23 +34,13 @@ void Bloom::DrawSettings(Settings& settings, bool a_isInterior)
 	ImGui::SameLine();
 	if (ImGui::Button(T(TKEY("preset_fantasy"), "Fantasy"))) {
 		settings.Enabled = true;
-		if (a_isInterior) {
-			settings.EnhancementIntensity = 2.0f;
-			settings.HaloRadius = 19.0f;
-			settings.HaloSpread = 0.3f;
-			settings.BloomSaturation = 1.1f;
-			settings.BloomTint = { 236.0f / 255.0f, 160.0f / 255.0f, 160.0f / 255.0f };
-			settings.CompressionCeiling = 1.10f;
-			settings.CompressionThreshold = 0.14f;
-		} else {
-			settings.EnhancementIntensity = 3.25f;
-			settings.HaloRadius = 20.0f;
-			settings.HaloSpread = 1.0f;
-			settings.BloomSaturation = 1.15f;
-			settings.BloomTint = { 1.0f, 0.98f, 0.94f };
-			settings.CompressionCeiling = kCompressionCeilingMax;
-			settings.CompressionThreshold = 0.0f;
-		}
+		settings.EnhancementIntensity = 3.25f;
+		settings.HaloRadius = 20.0f;
+		settings.HaloSpread = 1.0f;
+		settings.BloomSaturation = 1.15f;
+		settings.BloomTint = { 1.0f, 0.98f, 0.94f };
+		settings.CompressionCeiling = kCompressionCeilingMax;
+		settings.CompressionThreshold = 0.0f;
 	}
 	ImGui::SameLine();
 	if (ImGui::Button(T(TKEY("preset_dreamy"), "Dreamy"))) {

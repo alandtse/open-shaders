@@ -4,7 +4,7 @@ struct Bloom
 {
 	struct Settings
 	{
-		uint Enabled = true;
+		uint Enabled = false;
 		float EnhancementIntensity = 1.0f;
 		float HaloRadius = 3.5f;
 		float HaloSpread = 0.85f;
@@ -17,7 +17,7 @@ struct Bloom
 	};
 	static_assert(sizeof(Settings) == 48);
 
-	static void DrawSettings(Settings& settings, bool a_isInterior);
+	static void DrawSettings(Settings& settings);
 	static Settings GetCommonBufferData(Settings settings);
 	static void SanitizeSettings(Settings& settings);
 };
