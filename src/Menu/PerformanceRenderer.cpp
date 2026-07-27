@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <exception>
+#include <functional>
 #include <imgui.h>
 #include <vector>
 
@@ -33,6 +34,31 @@ static void DrawSectionHeader(Feature* feature, bool linkable)
 	}
 	if (auto _tt = Util::HoverTooltipWrapper())
 		ImGui::Text("%s", T(TKEY("open_feature_tooltip"), "Open this feature's full settings panel"));
+}
+
+// Draws a Performance/Balanced/Quality button row, highlighting whichever index is
+// active (-1 = none, i.e. Custom), invoking apply(profile) on click. Shared by the
+// global broadcast row and each per-feature row so both look and behave identically.
+static void DrawProfileButtonRow(const Feature::PerfProfile (&profiles)[3], const char* const (&labels)[3],
+	const char* const (&tooltips)[3], int activeIdx, const std::function<void(Feature::PerfProfile)>& apply)
+{
+	for (int i = 0; i < IM_ARRAYSIZE(profiles); ++i) {
+		if (i > 0)
+			ImGui::SameLine();
+		const bool active = i == activeIdx;
+		if (active)
+			ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive));
+		if (ImGui::Button(labels[i]))
+			apply(profiles[i]);
+		if (active)
+			ImGui::PopStyleColor();
+		if (auto _tt = Util::HoverTooltipWrapper())
+			ImGui::Text("%s", tooltips[i]);
+	}
+	if (activeIdx < 0) {
+		ImGui::SameLine();
+		ImGui::TextDisabled("%s", T(TKEY("profile_custom"), "(Custom)"));
+	}
 }
 
 void PerformanceRenderer::Render(Feature* host)
@@ -91,22 +117,17 @@ void PerformanceRenderer::Render(Feature* host)
 		globals::game::isVR ? T(TKEY("profile_quality_tooltip"), "Higher render resolution; reprojection off for max fidelity. Some changes apply on restart.") : T(TKEY("profile_quality_tooltip_flat"), "Higher render resolution for max fidelity. Some changes apply on restart.")
 	};
 	ImGui::TextUnformatted(T(TKEY("profiles_label"), "Profile:"));
-	for (int i = 0; i < IM_ARRAYSIZE(profiles); ++i) {
-		ImGui::SameLine();
-		const bool active = i == activeIdx;
-		if (active)
-			ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive));
-		if (ImGui::Button(labels[i]))
-			Feature::ApplyPerformanceProfileToAll(profiles[i]);
-		if (active)
-			ImGui::PopStyleColor();
-		if (auto _tt = Util::HoverTooltipWrapper())
-			ImGui::Text("%s", tooltips[i]);
-	}
-	if (activeIdx < 0) {
-		ImGui::SameLine();
-		ImGui::TextDisabled("%s", T(TKEY("profile_custom"), "(Custom)"));
-	}
+	ImGui::SameLine();
+	DrawProfileButtonRow(profiles, labels, tooltips, activeIdx,
+		[](Feature::PerfProfile p) { Feature::ApplyPerformanceProfileToAll(p); });
+
+	// Generic per-section tooltips: unlike the global row above, a section's row can't
+	// claim specifics (render resolution, foveation) that only apply to SOME features.
+	const char* sectionTooltips[3] = {
+		T(TKEY("profile_performance_section_tooltip"), "Apply this section's Performance-tier settings only."),
+		T(TKEY("profile_balanced_section_tooltip"), "Apply this section's Balanced-tier settings only."),
+		T(TKEY("profile_quality_section_tooltip"), "Apply this section's Quality-tier settings only.")
+	};
 
 	// Surface the restart need here, not just inside each feature's collapsed section --
 	// otherwise clicking a preset with a restart-gated field looks like it did nothing.
@@ -127,19 +148,18 @@ void PerformanceRenderer::Render(Feature* host)
 	for (Feature* feature : ordered) {
 		ImGui::PushID(feature);
 		DrawSectionHeader(feature, feature != host);
-		// Uniform preset bar for every section, computed here rather than left to each
-		// feature to hand-roll: which of the 3 global profiles this feature's OWN
-		// settings currently match (or Custom). Features with nothing else to show
-		// (VR, ScreenSpaceGI, ScreenSpaceShadows) still get a visible status line
-		// instead of an empty gap before Advanced.
+		// Uniform, actionable preset row for every section, computed here rather than
+		// left to each feature to hand-roll: applies the profile to just THIS feature
+		// (unlike the global row above, which broadcasts to all of them), so users can
+		// nudge one section without disturbing the rest. Features with nothing else to
+		// show (VR, ScreenSpaceGI, ScreenSpaceShadows) still get visible, working
+		// controls instead of an empty gap before Advanced.
 		int featureActiveIdx = -1;
 		for (int i = 0; i < IM_ARRAYSIZE(profiles) && featureActiveIdx < 0; ++i)
 			if (feature->MatchesPerformanceProfile(profiles[i]))
 				featureActiveIdx = i;
-		if (featureActiveIdx >= 0)
-			ImGui::TextDisabled("%s: %s", T(TKEY("section_matches"), "Matches"), labels[featureActiveIdx]);
-		else
-			ImGui::TextDisabled("%s", T(TKEY("profile_custom"), "(Custom)"));
+		DrawProfileButtonRow(profiles, labels, sectionTooltips, featureActiveIdx,
+			[feature](Feature::PerfProfile p) { feature->ApplyPerformanceProfile(p); });
 		// Presets stay visible: they're the primary surface, same as the global
 		// buttons above. Only raw sliders/knobs collapse into Advanced below.
 		try {
