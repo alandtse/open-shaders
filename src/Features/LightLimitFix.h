@@ -259,9 +259,12 @@ public:
 	/** @brief Draws the ImGui settings UI for light limit fix configuration and debug visualization. */
 	virtual void DrawSettings() override;
 	/** @brief Hub view: the Caster Cull + Light Impact Floor presets and sliders,
-	 *  bound to the same settings DrawSettings' own Advanced panel shows. */
+	 *  bound to the same settings DrawSettings' own Advanced panel shows. Disabled
+	 *  when Shadow Limit Fix itself is off, matching DrawSettings' own gate. */
 	void DrawPerformanceSettings() override;
-	std::string GetPerformanceSectionLabel() override { return GetDisplayName(); }
+	/** @brief Named for the actual content (Shadow Limit Fix's impact-cull controls),
+	 *  not the broader Light Limit Fix feature, since that's all this section draws. */
+	std::string GetPerformanceSectionLabel() override;
 	int GetPerformanceOrder() const override { return 25; }
 	/** @brief Maps the hub profile onto the same Caster Cull + Light Impact Floor
 	 *  presets DrawImpactCullControls' own Quality/Balanced/Performance buttons use. */

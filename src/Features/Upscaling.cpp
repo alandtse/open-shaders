@@ -295,7 +295,10 @@ void Upscaling::DrawPerformanceSettings()
 		if (perfMode.IsHookActive() && !perfMode.IsExplicitScaleLatched())
 			Util::UI::DrawSettingDiff(bootSnapshot, settings, &Settings::qualityMode);
 	}
-	DrawFoveationControls(false);
+	// Foveated DLSS is VR-only; hide rather than disable so flat users never see a
+	// control they can never activate (mirrors the gate at DrawSettings' own call site).
+	if (globals::game::isVR)
+		DrawFoveationControls(false);
 }
 
 namespace

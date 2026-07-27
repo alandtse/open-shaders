@@ -106,13 +106,18 @@ void PerformanceRenderer::Render(Feature* host)
 	for (Feature* feature : ordered) {
 		ImGui::PushID(feature);
 		DrawSectionHeader(feature, feature != host);
-		// Isolate each feature's draw so one throwing hook can't blank the rest of the page.
-		try {
-			feature->DrawPerformanceSettings();
-		} catch (const std::exception& e) {
-			ImGui::TextColored(ImVec4(1, 0, 0, 1), "%s: draw error (%s)", feature->GetDisplayName().c_str(), e.what());
-		} catch (...) {
-			ImGui::TextColored(ImVec4(1, 0, 0, 1), "%s: draw error (unknown)", feature->GetDisplayName().c_str());
+		// Collapsed by default: the presets above are the primary surface for most users;
+		// this is for verifying what a preset changed or fine-tuning past it.
+		if (ImGui::TreeNodeEx(T(TKEY("section_settings"), "Settings"), ImGuiTreeNodeFlags_None)) {
+			// Isolate each feature's draw so one throwing hook can't blank the rest of the page.
+			try {
+				feature->DrawPerformanceSettings();
+			} catch (const std::exception& e) {
+				ImGui::TextColored(ImVec4(1, 0, 0, 1), "%s: draw error (%s)", feature->GetDisplayName().c_str(), e.what());
+			} catch (...) {
+				ImGui::TextColored(ImVec4(1, 0, 0, 1), "%s: draw error (unknown)", feature->GetDisplayName().c_str());
+			}
+			ImGui::TreePop();
 		}
 		ImGui::PopID();
 	}
