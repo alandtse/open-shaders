@@ -2702,6 +2702,7 @@
     "menu.performance.profile_quality_tooltip_flat": "Higher render resolution for max fidelity. Some changes apply on restart.",
     "menu.performance.profiles_label": "Profile:",
     "menu.performance.section_advanced": "Advanced",
+    "menu.performance.section_matches": "Matches",
     "menu.profiling.avg": "Avg",
     "menu.profiling.cpu": "CPU",
     "menu.profiling.gpu": "GPU",

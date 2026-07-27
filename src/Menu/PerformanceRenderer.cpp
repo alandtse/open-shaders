@@ -127,6 +127,19 @@ void PerformanceRenderer::Render(Feature* host)
 	for (Feature* feature : ordered) {
 		ImGui::PushID(feature);
 		DrawSectionHeader(feature, feature != host);
+		// Uniform preset bar for every section, computed here rather than left to each
+		// feature to hand-roll: which of the 3 global profiles this feature's OWN
+		// settings currently match (or Custom). Features with nothing else to show
+		// (VR, ScreenSpaceGI, ScreenSpaceShadows) still get a visible status line
+		// instead of an empty gap before Advanced.
+		int featureActiveIdx = -1;
+		for (int i = 0; i < IM_ARRAYSIZE(profiles) && featureActiveIdx < 0; ++i)
+			if (feature->MatchesPerformanceProfile(profiles[i]))
+				featureActiveIdx = i;
+		if (featureActiveIdx >= 0)
+			ImGui::TextDisabled("%s: %s", T(TKEY("section_matches"), "Matches"), labels[featureActiveIdx]);
+		else
+			ImGui::TextDisabled("%s", T(TKEY("profile_custom"), "(Custom)"));
 		// Presets stay visible: they're the primary surface, same as the global
 		// buttons above. Only raw sliders/knobs collapse into Advanced below.
 		try {
