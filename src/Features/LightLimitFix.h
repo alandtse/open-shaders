@@ -258,11 +258,9 @@ public:
 
 	/** @brief Draws the ImGui settings UI for light limit fix configuration and debug visualization. */
 	virtual void DrawSettings() override;
-	/** @brief Hub view: the raw Caster Cull Screen Size Min / Light Impact Floor
-	 *  sliders, bound to the same settings DrawSettings' own Advanced panel
-	 *  shows. Presets live in DrawPerformancePresets instead, so they stay
-	 *  visible outside the hub's collapsed Advanced tree. Empty when Shadow
-	 *  Limit Fix itself is off -- nothing to tune. */
+	/** @brief Hub view: the raw caster-cull sliders only -- presets live in
+	 *  DrawPerformancePresets so they stay visible outside Advanced. Empty
+	 *  when Shadow Limit Fix is off -- nothing to tune. */
 	void DrawPerformanceSettings() override;
 	/** @brief Hub view: draws an indented "Shadow Limit Fix" subsection link (the feature
 	 *  is otherwise labeled by its real display name, matching every other hub entry)

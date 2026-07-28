@@ -14,9 +14,7 @@
 
 #define I18N_KEY_PREFIX "menu.performance."
 
-// Shared by the top-level section header and DrawSubsectionLink: a clickable link to
-// a feature's own panel (optionally to a specific section anchor within it), with the
-// standard "open this feature" tooltip.
+// Shared by DrawSectionHeader and DrawSubsectionLink for a consistent link + tooltip.
 static void DrawFeatureLink(const char* label, Feature* feature, const char* sectionAnchor = "")
 {
 	if (ImGui::TextLink(label)) {
@@ -53,9 +51,8 @@ void PerformanceRenderer::DrawSubsectionLink(const char* label, Feature* feature
 	DrawFeatureLink(label, feature, sectionAnchor);
 }
 
-// Draws a Performance/Balanced/Quality button row, highlighting whichever index is
-// active (-1 = none, i.e. Custom), invoking apply(profile) on click. Shared by the
-// global broadcast row and each per-feature row so both look and behave identically.
+// Draws a Performance/Balanced/Quality button row, highlighting the active index
+// (-1 = Custom). Shared by the global and per-feature rows so both stay identical.
 static void DrawProfileButtonRow(const Feature::PerfProfile (&profiles)[3], const char* const (&labels)[3],
 	const char* const (&tooltips)[3], int activeIdx, const std::function<void(Feature::PerfProfile)>& apply)
 {

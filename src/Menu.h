@@ -185,13 +185,9 @@ public:
 			pendingAbsolute.store(a_request, std::memory_order_relaxed);  // Open or Close
 	}
 
-	/**
-	 * @brief Thread-safe entry point for off-thread callers (e.g. devbench) to navigate
-	 * to a specific feature/page menu. SelectFeatureMenu itself is render-thread-only
-	 * (writes pendingFeatureSelection unsynchronized, assuming the caller and consumer
-	 * are the same thread); this stages the name behind a mutex and ProcessInputEventQueue
-	 * hands it off to SelectFeatureMenu on the render thread next frame.
-	 */
+	/** @brief Thread-safe navigation request for off-thread callers (e.g. devbench):
+	 *  SelectFeatureMenu itself is render-thread-only, so this stages the name and
+	 *  ProcessInputEventQueue hands it off next frame. */
 	void RequestFeatureMenu(std::string a_featureName)
 	{
 		std::lock_guard<std::mutex> lock(offThreadFeatureSelectionMutex);
@@ -640,9 +636,7 @@ private:
 	// Menu navigation
 	std::string pendingFeatureSelection;  // Feature to select on next frame
 	// Anchor id set alongside pendingFeatureSelection (see SelectFeatureMenu); a
-	// feature's own DrawSettings checks and clears this to scroll to a specific
-	// heading once its panel is selected, instead of leaving the panel wherever it
-	// was last scrolled to.
+	// feature's DrawSettings consumes it via ConsumeSectionAnchor to scroll there.
 	std::string pendingSectionAnchor;
 
 	// Input event handling

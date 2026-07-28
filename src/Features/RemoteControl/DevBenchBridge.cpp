@@ -634,8 +634,7 @@ namespace
 			return json{ { "action", "reset" }, { "queued", true }, { "enqueued_at_frame", frame } };
 		}
 		if (action == "applyVRProfile") {
-			// Same broadcast path as the in-game hub button (Flat and VR alike since the
-			// Performance hub generalized), exposed for headless automation/CI.
+			// Same broadcast path as the in-game hub button, exposed for headless automation/CI.
 			const std::string profileName = a_args.value("profile", std::string{});
 			Feature::PerfProfile profile;
 			if (profileName == "performance")

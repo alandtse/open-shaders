@@ -211,13 +211,10 @@ public:
 	 *  DrawPerformanceSettings instead, where they're collapsed by default. */
 	virtual void DrawPerformancePresets() {}
 
-	/** @brief Return true when DrawPerformanceSettings() draws ONLY VR-specific
-	 *         controls (stereo/eye-relative knobs meaningless with one eye). The hub
-	 *         then skips this feature's whole section (header included) outside VR,
-	 *         so authors don't need to gate content manually. Default false: content
-	 *         that's meaningful on both platforms, or that mixes universal and VR-only
-	 *         controls, should self-gate the VR-only parts internally instead (see
-	 *         Upscaling::DrawFoveationControls). */
+	/** @brief True when DrawPerformanceSettings() draws ONLY VR-specific controls;
+	 *         the hub then skips this feature's whole section outside VR. Default
+	 *         false -- mixed-content features should self-gate the VR-only parts
+	 *         internally instead (see Upscaling::DrawFoveationControls). */
 	virtual bool PerformanceSectionRequiresVR() const { return false; }
 
 	/** @brief Section label the Performance hub draws (as a jump link to this
