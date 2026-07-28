@@ -229,8 +229,6 @@ void VR::DrawSettings()
 	if (!menu)
 		return;
 	if (ImGui::BeginTabBar("##VRTabs", ImGuiTabBarFlags_None)) {
-		// VR-specific performance controls are covered by the top-level Performance
-		// page; don't re-add a duplicate tab here.
 		if (BeginTabItemWithFont(T(TKEY("tab_general"), "General"), Menu::FontRole::Subheading)) {
 			if (ImGui::BeginChild("##VRGeneralFrame", { 0, 0 }, true)) {
 				DrawGeneralVRSettings();
