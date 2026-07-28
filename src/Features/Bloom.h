@@ -19,7 +19,7 @@ struct Bloom
 		uint Enabled = false;
 		uint SelectedPreset = 0;
 		Profile Default;
-		Profile Fantasy = { 4.0f, 14.0f, 1.0f, 1.15f, { 1.0f, 0.98f, 0.94f }, 0.35f, 1.0f };
+		Profile Fantasy = { 4.0f, 14.0f, 1.0f, 1.15f, { 1.0f, 0.98f, 0.94f }, 0.0f, 0.67f };
 		Profile Dreamy = { 2.5f, 14.0f, 0.72f, 0.85f, { 165.0f / 255.0f, 205.0f / 255.0f, 1.0f }, 0.08f, 0.9f };
 	};
 
