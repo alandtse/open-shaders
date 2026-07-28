@@ -1412,9 +1412,10 @@ bool Menu::IsPreviewFlying()
 	return editorWindow && editorWindow->IsPreviewFlying();
 }
 
-void Menu::SelectFeatureMenu(const std::string& featureName)
+void Menu::SelectFeatureMenu(const std::string& featureName, const std::string& sectionAnchor)
 {
 	pendingFeatureSelection = featureName;
+	pendingSectionAnchor = sectionAnchor;
 	logger::info("Queued navigation to {} feature menu", featureName);
 }
 

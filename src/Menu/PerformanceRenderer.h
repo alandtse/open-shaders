@@ -31,6 +31,8 @@ public:
 	 * subsection content is drawn.
 	 * @param label The subsection's display name (e.g. "Shadow Limit Fix").
 	 * @param feature The feature to navigate to when the link is clicked.
+	 * @param sectionAnchor Optional anchor id (see Menu::SelectFeatureMenu) the
+	 *        feature's own DrawSettings can check to scroll to this subsection.
 	 */
-	static void DrawSubsectionLink(const char* label, Feature* feature);
+	static void DrawSubsectionLink(const char* label, Feature* feature, const char* sectionAnchor = "");
 };

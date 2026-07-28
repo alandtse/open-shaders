@@ -15,12 +15,13 @@
 #define I18N_KEY_PREFIX "menu.performance."
 
 // Shared by the top-level section header and DrawSubsectionLink: a clickable link to
-// a feature's own panel, with the standard "open this feature" tooltip.
-static void DrawFeatureLink(const char* label, Feature* feature)
+// a feature's own panel (optionally to a specific section anchor within it), with the
+// standard "open this feature" tooltip.
+static void DrawFeatureLink(const char* label, Feature* feature, const char* sectionAnchor = "")
 {
 	if (ImGui::TextLink(label)) {
 		if (auto* menu = Menu::GetSingleton())
-			menu->SelectFeatureMenu(feature->GetShortName());
+			menu->SelectFeatureMenu(feature->GetShortName(), sectionAnchor);
 	}
 	if (auto _tt = Util::HoverTooltipWrapper())
 		ImGui::Text("%s", T(TKEY("open_feature_tooltip"), "Open this feature's full settings panel"));
@@ -43,13 +44,13 @@ static void DrawSectionHeader(Feature* feature, bool linkable)
 	DrawFeatureLink(label.c_str(), feature);
 }
 
-void PerformanceRenderer::DrawSubsectionLink(const char* label, Feature* feature)
+void PerformanceRenderer::DrawSubsectionLink(const char* label, Feature* feature, const char* sectionAnchor)
 {
 	// Indent BEFORE drawing the link, not after -- otherwise only content following
 	// the link (often nothing) ends up indented, and the link itself, the one thing
 	// meant to visually nest, stays flush with the top-level section header above it.
 	ImGui::Indent();
-	DrawFeatureLink(label, feature);
+	DrawFeatureLink(label, feature, sectionAnchor);
 }
 
 // Draws a Performance/Balanced/Quality button row, highlighting whichever index is

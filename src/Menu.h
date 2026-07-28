@@ -559,8 +559,22 @@ public:
 	ImFont* GetFont(FontRole role) const { return loadedFontRoles[static_cast<size_t>(role)]; }
 
 	/** @brief Queues a feature (by GetShortName()) or built-in page (by canonicalId, e.g.
-	 *  "Performance") to be selected in the left panel on the next frame. */
-	void SelectFeatureMenu(const std::string& featureName);
+	 *  "Performance") to be selected in the left panel on the next frame.
+	 *  @param sectionAnchor Optional: an anchor id a feature's own DrawSettings can
+	 *  check (via pendingSectionAnchor) to scroll to a specific heading once selected,
+	 *  instead of leaving the panel at whatever scroll position it was last left at. */
+	void SelectFeatureMenu(const std::string& featureName, const std::string& sectionAnchor = "");
+
+	/** @brief Returns true and clears the pending section anchor if it matches @p anchor;
+	 *  a feature's own DrawSettings calls this to consume a hub subsection link's scroll
+	 *  target (see SelectFeatureMenu) exactly once, without exposing the raw field. */
+	bool ConsumeSectionAnchor(const std::string& anchor)
+	{
+		if (pendingSectionAnchor != anchor)
+			return false;
+		pendingSectionAnchor.clear();
+		return true;
+	}
 	static std::unordered_map<std::string, int> categoryCounts;  // Number of features in each feature category
 
 	bool overlayVisible = false;
@@ -625,6 +639,11 @@ private:
 
 	// Menu navigation
 	std::string pendingFeatureSelection;  // Feature to select on next frame
+	// Anchor id set alongside pendingFeatureSelection (see SelectFeatureMenu); a
+	// feature's own DrawSettings checks and clears this to scroll to a specific
+	// heading once its panel is selected, instead of leaving the panel wherever it
+	// was last scrolled to.
+	std::string pendingSectionAnchor;
 
 	// Input event handling
 	std::vector<KeyEvent> _keyEventQueue;

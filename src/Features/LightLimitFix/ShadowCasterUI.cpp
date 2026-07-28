@@ -1131,6 +1131,11 @@ namespace ShadowCasterManager
 	void DrawSettings(Settings& settings)
 	{
 		ImGui::SeparatorText(T(TKEY("shadow_limit_fix_header"), "Shadow Limit Fix"));
+		// The Performance hub's "Shadow Limit Fix" subsection link sets this anchor
+		// (Menu::SelectFeatureMenu) so clicking it scrolls here even if the panel was
+		// last left scrolled elsewhere, instead of relying on this being drawn first.
+		if (auto* menu = Menu::GetSingleton(); menu && menu->ConsumeSectionAnchor("ShadowLimitFix"))
+			ImGui::SetScrollHereY(0.0f);
 
 		// ---- External conflict banner --------------------------------------
 		if (s_externalConflict) {

@@ -130,7 +130,7 @@ void LightLimitFix::DrawPerformancePresets()
 	// reads as nested under this feature's own section rather than a sibling one;
 	// the hub's own preset row above already applies the profile here via
 	// ApplyPerformanceProfile, so this doesn't repeat those buttons.
-	PerformanceRenderer::DrawSubsectionLink(T("feature.light_limit_fix.shadow_limit_fix_header", "Shadow Limit Fix"), this);
+	PerformanceRenderer::DrawSubsectionLink(T("feature.light_limit_fix.shadow_limit_fix_header", "Shadow Limit Fix"), this, "ShadowLimitFix");
 	if (!settings.ShadowSettings.Enabled)
 		ImGui::TextDisabled("%s", T("feature.light_limit_fix.shadow_limit_fix_disabled_hub",
 									  "Shadow Limit Fix is disabled in this feature's settings."));
