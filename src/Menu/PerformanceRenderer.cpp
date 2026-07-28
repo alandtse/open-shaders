@@ -87,12 +87,8 @@ void PerformanceRenderer::Render(Feature* host)
 								 "effect at the next game launch."));
 	ImGui::Spacing();
 
-	// Features whose whole section is VR-only outside VR (PerformanceSectionRequiresVR)
-	// are skipped everywhere below: active-profile detection, the restart banner, and
-	// the per-feature list itself, so authors of VR-only sections don't need to gate
-	// their draw code manually. A non-empty section label is what "opted into the hub"
-	// means; without this check every loaded feature (including ones with no hub
-	// content at all) would get an empty header-less "Advanced" node.
+	// VR-only sections are skipped everywhere below (PerformanceSectionRequiresVR), and a
+	// feature needs a non-empty section label to opt in at all -- else it'd get an empty node.
 	std::vector<Feature*> ordered;
 	for (Feature* feature : Feature::GetFeatureList())
 		if (feature->loaded && (globals::game::isVR || !feature->PerformanceSectionRequiresVR()) &&
@@ -123,11 +119,8 @@ void PerformanceRenderer::Render(Feature* host)
 		T(TKEY("profile_balanced"), "Balanced"),
 		T(TKEY("profile_quality"), "Quality")
 	};
-	// Foveation/reprojection are VR-only (their sections are hidden on Flat via
-	// PerformanceSectionRequiresVR), so don't claim they're affected there. All
-	// three set Upscaling's qualityMode, which is restart-gated whenever PerfMode
-	// is engaged (the normal case for any DLSS/FSR user) -- so every tooltip
-	// carries the same restart caveat, not just Quality's.
+	// Foveation/reprojection tooltips only apply in VR. All three set Upscaling's
+	// restart-gated qualityMode, so every tooltip carries that caveat, not just Quality's.
 	const char* tooltips[3] = {
 		globals::game::isVR ? T(TKEY("profile_performance_tooltip"), "Lowest render resolution; foveation and reprojection on. Fastest. Some changes apply on restart.") : T(TKEY("profile_performance_tooltip_flat"), "Lowest render resolution. Fastest. Some changes apply on restart."),
 		globals::game::isVR ? T(TKEY("profile_balanced_tooltip"), "Mid render resolution; reprojection on. Some changes apply on restart.") : T(TKEY("profile_balanced_tooltip_flat"), "Mid render resolution. Some changes apply on restart."),
@@ -165,12 +158,8 @@ void PerformanceRenderer::Render(Feature* host)
 	for (Feature* feature : ordered) {
 		ImGui::PushID(feature);
 		DrawSectionHeader(feature, feature != host);
-		// Uniform, actionable preset row for every section, computed here rather than
-		// left to each feature to hand-roll: applies the profile to just THIS feature
-		// (unlike the global row above, which broadcasts to all of them), so users can
-		// nudge one section without disturbing the rest. Features with nothing else to
-		// show (VR, ScreenSpaceGI, ScreenSpaceShadows) still get visible, working
-		// controls instead of an empty gap before Advanced.
+		// Uniform, actionable preset row for every section: applies the profile to just
+		// THIS feature, unlike the global broadcast row above.
 		int featureActiveIdx = -1;
 		for (int i = 0; i < IM_ARRAYSIZE(profiles) && featureActiveIdx < 0; ++i)
 			if (feature->MatchesPerformanceProfile(profiles[i]))
