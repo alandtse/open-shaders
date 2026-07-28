@@ -109,7 +109,11 @@ float3 SampleVanillaBloomEnhanced(float2 uv)
 		float2 sampleOffset = SharedData::bloomSettings.HaloRadius / max(float2(bloomWidth, bloomHeight), float2(1.0, 1.0));
 		uint eyeIndex = Stereo::GetEyeIndexFromTexCoord(uv);
 
-		float3 wide = center * 0.28;
+		// Normalized 3x3 halo kernel: center + 4 cardinal + 4 diagonal weights sum to 1.0.
+		static const float BLOOM_CENTER_WEIGHT = 0.28;
+		static const float BLOOM_CARDINAL_WEIGHT = 0.10;
+		static const float BLOOM_DIAGONAL_WEIGHT = 0.08;
+		float3 wide = center * BLOOM_CENTER_WEIGHT;
 
 		static const float2 CARDINAL_OFFSETS[4] = {
 			float2(-1.0, 0.0),
@@ -127,12 +131,12 @@ float3 SampleVanillaBloomEnhanced(float2 uv)
 		[unroll] for (uint cardinalIndex = 0; cardinalIndex < 4; ++cardinalIndex)
 		{
 			float2 sampleUV = Stereo::ClampToEyeUV(uv + CARDINAL_OFFSETS[cardinalIndex] * sampleOffset, eyeIndex);
-			wide += ImageTex.Sample(ImageSampler, sampleUV).xyz * 0.10;
+			wide += ImageTex.Sample(ImageSampler, sampleUV).xyz * BLOOM_CARDINAL_WEIGHT;
 		}
 		[unroll] for (uint diagonalIndex = 0; diagonalIndex < 4; ++diagonalIndex)
 		{
 			float2 sampleUV = Stereo::ClampToEyeUV(uv + DIAGONAL_OFFSETS[diagonalIndex] * sampleOffset, eyeIndex);
-			wide += ImageTex.Sample(ImageSampler, sampleUV).xyz * 0.08;
+			wide += ImageTex.Sample(ImageSampler, sampleUV).xyz * BLOOM_DIAGONAL_WEIGHT;
 		}
 
 		bloom = lerp(center, wide, SharedData::bloomSettings.HaloSpread);
