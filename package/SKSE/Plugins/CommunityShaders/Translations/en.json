@@ -440,6 +440,7 @@
     "feature.bloom.preset_default": "Default",
     "feature.bloom.preset_dreamy": "Dreamy",
     "feature.bloom.preset_fantasy": "Fantasy",
+    "feature.bloom.preset_reset": "Reset Preset",
     "feature.category.characters": "Characters",
     "feature.category.display": "Display",
     "feature.category.grass": "Grass",

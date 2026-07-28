@@ -75,7 +75,7 @@ struct CSUtility : Feature
 		float linearOmnidirectionalBulbMult = 1.0f;
 		DepthOfFieldOverride sceneDof;
 		DepthOfFieldOverride underwaterDof;
-		Bloom::Settings bloomEnhancement;
+		Bloom::PresetSettings bloomEnhancement;
 	} settings;
 
 	struct alignas(16) PerFrameData
