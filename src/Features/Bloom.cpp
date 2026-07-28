@@ -123,7 +123,8 @@ void Bloom::SanitizeSettings(PresetSettings& settings)
 		profile.BloomTint.y = clampFiniteOrDefault(profile.BloomTint.y, 0.0f, 1.0f, defaultProfile.BloomTint.y);
 		profile.BloomTint.z = clampFiniteOrDefault(profile.BloomTint.z, 0.0f, 1.0f, defaultProfile.BloomTint.z);
 		profile.CompressionCeiling = clampFiniteOrDefault(profile.CompressionCeiling, 0.0f, kCompressionCeilingMax, defaultProfile.CompressionCeiling);
-		profile.CompressionThreshold = clampFiniteOrDefault(profile.CompressionThreshold, 0.0f, profile.CompressionCeiling, defaultProfile.CompressionThreshold);
+		const float thresholdDefault = std::min(defaultProfile.CompressionThreshold, profile.CompressionCeiling);
+		profile.CompressionThreshold = clampFiniteOrDefault(profile.CompressionThreshold, 0.0f, profile.CompressionCeiling, thresholdDefault);
 	};
 
 	settings.Enabled = settings.Enabled != 0;
