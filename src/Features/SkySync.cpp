@@ -224,10 +224,32 @@ void SkySync::OnSkyUpdateColors(RE::Sky* sky)
 void SkySync::Sky_Update::thunk(RE::Sky* sky)
 {
 	func(sky);
-	globals::features::skySync.Update(sky);
+	auto& skySync = globals::features::skySync;
+	skySync.Update(sky, skySync.ObserveSunDirection(sky));
 }
 
-void SkySync::Update(const RE::Sky* sky)
+bool SkySync::ObserveSunDirection(const RE::Sky* sky) noexcept
+{
+	if (!sky || !sky->sun || !sky->sun->root) {
+		hasPreviousSunDirection = false;
+		return false;
+	}
+
+	auto direction = sky->sun->root->local.translate;
+	if (direction.Unitize() < FLT_EPSILON) {
+		hasPreviousSunDirection = false;
+		return false;
+	}
+
+	const auto difference = direction - previousSunDirection;
+	const bool discontinuity = !hasPreviousSunDirection ||
+	                           difference.Dot(difference) >= MaxContinuousSunDirectionStep * MaxContinuousSunDirectionStep;
+	previousSunDirection = direction;
+	hasPreviousSunDirection = true;
+	return discontinuity;
+}
+
+void SkySync::Update(const RE::Sky* sky, bool a_sunDirectionDiscontinuity)
 {
 	if (!settings.Enabled) {
 		currentDim = 1.0f;
@@ -243,14 +265,15 @@ void SkySync::Update(const RE::Sky* sky)
 	}
 
 	const auto cell = player->GetParentCell();
+	bool resetTransition = false;
 
 	if (cell != currentCell) {
+		resetTransition = true;
 		const auto prevCell = currentCell;
 		if (cell)
 			SetSkyRotation(sky, cell);
 		if (cell && prevCell && (cell->IsInteriorCell() != prevCell->IsInteriorCell() || cell->GetRuntimeData().worldSpace != prevCell->GetRuntimeData().worldSpace))
 			shadowFader.Reset();
-		lastGameHour = -1.0f;
 	}
 
 	// Exterior worldspaces always run; interior cells require the sunlight-shadows flag.
@@ -312,21 +335,11 @@ void SkySync::Update(const RE::Sky* sky)
 	ProcessMoon(sky, Caster::Masser, directions, intensities);
 	ProcessMoon(sky, Caster::Secunda, directions, intensities);
 
-	// Advance the shadow fade by elapsed game time so the transition stays smooth during
-	// normal play but snaps when time jumps (scrubbing, waiting, fast travel).
-	const float gameHour = sky->currentGameHour;
-	float fadeAdvance = settings.ShadowTransitionDuration;  // first frame: snap
-	if (lastGameHour >= 0.0f) {
-		float hourDelta = gameHour - lastGameHour;
-		if (hourDelta > 12.0f)
-			hourDelta -= 24.0f;
-		else if (hourDelta < -12.0f)
-			hourDelta += 24.0f;
-		fadeAdvance = std::abs(hourDelta) * SecondsPerGameHour;
-	}
-	lastGameHour = gameHour;
+	const auto calendar = globals::game::calendar;
+	const auto deltaTime = globals::game::deltaTime;
+	float fadeAdvance = calendar && deltaTime ? std::max(*deltaTime * calendar->GetTimescale(), 0.0f) : 0.0f;
 
-	shadowFader.Update(sky, directions, intensities, settings.ShadowTransitionDuration, fadeAdvance);
+	shadowFader.Update(sky, directions, intensities, settings.ShadowTransitionDuration, fadeAdvance, a_sunDirectionDiscontinuity || resetTransition);
 }
 void SkySync::SetSunAngle()
 {
@@ -493,15 +506,21 @@ void SkySync::ShadowFader::Reset()
 	target = Caster::Sun;
 	previousTarget = Caster::Sun;
 	fadeTimer = 0.0f;
+	immediateTransitionRemaining = 0.0f;
 	transitioning = false;
 	sunriseReleased = false;
 	frozenHeading = 0.0f;
 	sunsetHeadingLocked = false;
 }
 
-void SkySync::ShadowFader::Update(const RE::Sky* sky, RE::NiPoint3 dirs[], float intensities[], float fadeDuration, float fadeAdvance)
+void SkySync::ShadowFader::Update(const RE::Sky* sky, RE::NiPoint3 dirs[], float intensities[], float fadeDuration, float fadeAdvance, bool a_immediateTransition)
 {
 	auto isValidDir = [](const RE::NiPoint3& d) { return d.x != 0.0f || d.y != 0.0f || d.z != 0.0f; };
+
+	if (fadeDuration > 0.0f && a_immediateTransition)
+		immediateTransitionRemaining = fadeDuration;
+	else
+		immediateTransitionRemaining = std::max(immediateTransitionRemaining - fadeAdvance, 0.0f);
 
 	Caster best;
 
@@ -542,11 +561,14 @@ void SkySync::ShadowFader::Update(const RE::Sky* sky, RE::NiPoint3 dirs[], float
 	if (!transitioning) {
 		currentDir = targetDir;
 		vlIntensityFactor = target == Caster::None ? 0.0f : 1.0f;
+		if (target != Caster::None)
+			immediateTransitionRemaining = 0.0f;
 		SetLighting(sky, currentDir);
 		return;
 	}
 
-	fadeTimer = std::min(fadeTimer + fadeAdvance, fadeDuration);
+	const float effectiveFadeAdvance = immediateTransitionRemaining > 0.0f ? fadeDuration : fadeAdvance;
+	fadeTimer = std::min(fadeTimer + effectiveFadeAdvance, fadeDuration);
 	const float t = fadeDuration > 0.0f ? fadeTimer / fadeDuration : 1.0f;
 
 	currentDir = {
@@ -563,6 +585,8 @@ void SkySync::ShadowFader::Update(const RE::Sky* sky, RE::NiPoint3 dirs[], float
 
 	// Fade VL out as it settles into the no-caster fallback, otherwise fade with shadow alignment.
 	vlIntensityFactor = target == Caster::None ? 1.0f - t : ComputeVLFactor(currentDir, targetDir);
+	if (target != Caster::None && !transitioning)
+		immediateTransitionRemaining = 0.0f;
 	SetLighting(sky, currentDir);
 }
 

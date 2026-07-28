@@ -33,6 +33,8 @@ public:
 
 	bool needPrecompute = false;
 	uint shadowUpdateIdx = 0;
+	bool hasPreviousLightDirection = false;
+	float3 previousLightDirection{};
 
 	struct HeightMapMetadata
 	{
@@ -51,7 +53,7 @@ public:
 		float2 LightDeltaZ;  // per LightUVDir, upper penumbra and lower, should be negative
 		uint StartPxCoord;
 		float2 PxSize;
-		uint pad0[1];
+		float BlendWeight;
 		float2 PosRange;
 		float2 ZRange;
 	} shadowUpdateCBData;
@@ -100,8 +102,11 @@ public:
 	void LoadHeightmap();
 	/** @brief Creates the shadow height texture after a new heightmap is loaded. */
 	void Precompute();
-	/** @brief Dispatches the shadow update compute shader using the current sun direction. */
-	void UpdateShadow();
+	/**
+	 * @brief Dispatches the shadow update compute shader using the current sun direction.
+	 * @param a_refreshImmediately Whether to update the full map without temporal blending.
+	 */
+	void UpdateShadow(bool a_refreshImmediately);
 
 	/** @brief Binds the shadow height texture to shader resource slots for reflection rendering. */
 	virtual void ReflectionsPrepass() override;

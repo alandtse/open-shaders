@@ -1,4 +1,5 @@
 ﻿#pragma once
+
 #include "RE/M/Moon.h"
 
 #include "Utils/Moon.h"
@@ -115,13 +116,14 @@ private:
 		Caster target = Caster::Sun;
 		Caster previousTarget = Caster::Sun;
 		float fadeTimer = 0.0f;
+		float immediateTransitionRemaining = 0.0f;
 		bool transitioning = false;
 		bool sunriseReleased = false;
 		float frozenHeading = 0.0f;
 		bool sunsetHeadingLocked = false;
 		float vlIntensityFactor = 1.0f;
 
-		void Update(const RE::Sky* sky, RE::NiPoint3 dirs[], float intensities[], float fadeDuration, float fadeAdvance);
+		void Update(const RE::Sky* sky, RE::NiPoint3 dirs[], float intensities[], float fadeDuration, float fadeAdvance, bool a_immediateTransition);
 		void LockSunElevation(RE::NiPoint3 dirs[]);
 		static void SetLighting(const RE::Sky* sky, RE::NiPoint3 dir);
 		static void SetDirection(RE::NiPoint3& dir, float headingRadians, float elevRadians);
@@ -136,11 +138,11 @@ private:
 	static constexpr float SouthernSunAngle = 90.0f - 35.0f;
 	static constexpr float NorthernSunAngle = 90.0f + 35.0f;
 	static constexpr float VanillaSunAngle = 90.0f + 5.0f;
-	static constexpr float SecondsPerGameHour = 3600.0f;
 	static constexpr float SunsetHeadingLockThreshold = 0.5f;
 	static constexpr float VLFadeStartAngle = 2.0f;
 	static constexpr float VLFadeEndAngle = 10.0f;
 	static constexpr float MaxHorizonFadeHours = 1.5f;
+	static constexpr float MaxContinuousSunDirectionStep = RE::NI_PI / 180.0f;
 
 	inline static RE::NiPoint3* gSunPosition = nullptr;
 	inline static RE::BSVolumetricLightingRenderData* gVolumetricLighting = nullptr;
@@ -149,7 +151,8 @@ private:
 	RE::TESObjectCELL* currentCell = nullptr;
 	float sunAngle = 90.0f;
 	float currentSkyRotation = D3D11_FLOAT32_MAX;
-	float lastGameHour = -1.0f;
+	RE::NiPoint3 previousSunDirection{};
+	bool hasPreviousSunDirection = false;
 
 	float4 colors[3] = {};
 	float currentDim = 1.0f;
@@ -160,7 +163,9 @@ private:
 
 	void DisableOnConflict(std::string_view conflictName);
 
-	void Update(const RE::Sky* sky);
+	void Update(const RE::Sky* sky, bool a_sunDirectionDiscontinuity);
+
+	bool ObserveSunDirection(const RE::Sky* sky) noexcept;
 
 	void SetSunAngle();
 
