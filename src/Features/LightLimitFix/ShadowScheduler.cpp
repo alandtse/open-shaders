@@ -155,7 +155,7 @@ namespace ShadowCasterManager
 	// AppendVirtual (vtable slot 0x18). We hook that slot on ONLY the parabolic
 	// vtable -- so it fires exclusively for point-light shadow culling, never
 	// the sun, spots, or main scene -- and skip the append for a caster whose
-	// angular half-size from the light (bound radius / distance) is below
+	// camera-relative screen size (bound radius / distance to camera) is below
 	// CasterCullAngularMin. s_currentCullLight identifies the light being
 	// accumulated (set around EnableLight's Accumulate call, same render
 	// thread), so the cost metric uses the VR-validated BSShadowLight position
