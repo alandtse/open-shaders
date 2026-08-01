@@ -81,7 +81,7 @@ Claude Code loads it via the `@../AGENTS.md` import in `.claude/CLAUDE.md`.
     -   _C++:_ Use runtime checks. Universal binaries use runtime detection. Prefer the cached `globals::game::isVR` over calling `REL::Module::IsVR()` directly (reserve direct calls for early-init paths).
     -   _HLSL:_ Diverge via `#if defined(VR)` compiler checks per shader permutation.
     -   Keep VR branches small and localized. Avoid VR branching to work around side-effects; unify paths where possible.
--   _For detailed multi-runtime member offset and virtual relocations, see [Repository Architecture](../docs/development/architecture.md)._
+-   _For detailed multi-runtime member offset and virtual relocations, see [Repository Architecture](docs/development/architecture.md)._
 
 ---
 
@@ -130,7 +130,7 @@ Claude Code loads it via the `@../AGENTS.md` import in `.claude/CLAUDE.md`.
     -   Land sync PRs as merge commits, never squash.
     -   Resolve conflicts in favor of keeping VR. Revert upstream VR removals.
     -   Verify ancestry after landing: `git merge-base --is-ancestor <upstream-sha> HEAD` must pass.
--   _For conventional commit mappings, staging/RC workflows, release stages (Alpha/Beta ini flags), and manual packaging targets, see [Release Process](../docs/development/release-process.md) and [Upstream Sync Guide](../docs/development/upstream-sync.md)._
+-   _For conventional commit mappings, staging/RC workflows, release stages (Alpha/Beta ini flags), and manual packaging targets, see [Release Process](docs/development/release-process.md) and [Upstream Sync Guide](docs/development/upstream-sync.md)._
 
 ---
 
@@ -156,5 +156,5 @@ Claude Code loads it via the `@../AGENTS.md` import in `.claude/CLAUDE.md`.
     -   _Identical DXBC:_ Provable no-op (`tools/verify-shader-refactor.ps1`).
     -   _Legitimate op-reordering:_ Use runtime A/B frame diffing (`tools/taa-renderdoc-ab.py`).
 -   **Feature Workflow:** Start from `template/`, implement the C++ class inheriting from `Feature` (`DrawSettings()`, `LoadSettings()`, `SaveSettings()`, and feature-specific rendering hooks), and register in appropriate source files and `globals::features`.
--   **Fast Iteration (avoid needless shader recompiles):** Match the build to what changed: `Dev-Fast` for C++-only, building just the `CommunityShaders` target under a `*-WITH-AUTO-DEPLOYMENT` preset for a DLL-only deploy (no shaders/tests touched), `COPY_SHADERS` for shader-only. Deploying the AIO `Shaders/` tree is content-based (`cmake/SyncShaderDeploy.cmake`), so an unchanged shader keeps its mtime across a branch switch instead of forcing an in-game recompile. For branch-swap A/B testing, use a separate build directory (or worktree) per branch rather than switching branches inside one build dir. See [Shader Development Workflow](../docs/development/shader-workflow.md#fast-iteration-without-paying-a-full-shader-recompile) for the full mechanism and the two in-game toggles (Skip Unchanged Shaders, File Watcher).
--   _For detailed setup, options, and commands, see [VSCode Setup](../docs/development/vscode-setup.md), [Development README](../docs/development/README.md), [Shader Development Workflow](../docs/development/shader-workflow.md), [In-game A/B Testing](../docs/development/shader-runtime-ab.md), and [Repository Architecture](../docs/development/architecture.md)._
+-   **Fast Iteration (avoid needless shader recompiles):** Match the build to what changed: `Dev-Fast` for C++-only, building just the `CommunityShaders` target under a `*-WITH-AUTO-DEPLOYMENT` preset for a DLL-only deploy (no shaders/tests touched), `COPY_SHADERS` for shader-only. Deploying the AIO `Shaders/` tree is content-based (`cmake/SyncShaderDeploy.cmake`), so an unchanged shader keeps its mtime across a branch switch instead of forcing an in-game recompile. For branch-swap A/B testing, use a separate build directory (or worktree) per branch rather than switching branches inside one build dir. See [Shader Development Workflow](docs/development/shader-workflow.md#fast-iteration-without-paying-a-full-shader-recompile) for the full mechanism and the two in-game toggles (Skip Unchanged Shaders, File Watcher).
+-   _For detailed setup, options, and commands, see [VSCode Setup](docs/development/vscode-setup.md), [Development README](docs/development/README.md), [Shader Development Workflow](docs/development/shader-workflow.md), [In-game A/B Testing](docs/development/shader-runtime-ab.md), and [Repository Architecture](docs/development/architecture.md)._
