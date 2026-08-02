@@ -11,18 +11,6 @@
 
 #define I18N_KEY_PREFIX "feature.terrain_shadows."
 
-namespace
-{
-	constexpr float kDirectionalLightDiscontinuityThreshold = RE::NI_PI / 180.0f;
-
-	bool HasDirectionalLightDiscontinuity(const float3& a_currentDirection, const float3& a_previousDirection) noexcept
-	{
-		const float3 difference = a_currentDirection - a_previousDirection;
-		return difference.Dot(difference) >=
-		       kDirectionalLightDiscontinuityThreshold * kDirectionalLightDiscontinuityThreshold;
-	}
-}
-
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	TerrainShadows::Settings,
 	EnableTerrainShadow)
@@ -357,9 +345,9 @@ void TerrainShadows::UpdateShadow(bool a_refreshImmediately)
 
 	const auto worldDirection = sunLight->GetWorldDirection();
 	const float3 currentSunDirection = { worldDirection.x, worldDirection.y, worldDirection.z };
-	if (!hasPreviousLightDirection || HasDirectionalLightDiscontinuity(currentSunDirection, previousLightDirection))
+	if (!hasPreviousLightDirection || Util::HasDirectionalLightDiscontinuity(worldDirection, previousLightDirection))
 		a_refreshImmediately = true;
-	previousLightDirection = currentSunDirection;
+	previousLightDirection = worldDirection;
 	hasPreviousLightDirection = true;
 
 	/* ---- UPDATE CB ---- */

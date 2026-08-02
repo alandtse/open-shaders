@@ -1,6 +1,7 @@
 #include "SkySync.h"
 #include "../I18n/I18n.h"
 #include "RE/B/BSVolumetricLightingRenderData.h"
+#include "Utils/Game.h"
 
 #define I18N_KEY_PREFIX "feature.sky_sync."
 
@@ -241,9 +242,8 @@ bool SkySync::ObserveSunDirection(const RE::Sky* sky) noexcept
 		return false;
 	}
 
-	const auto difference = direction - previousSunDirection;
 	const bool discontinuity = !hasPreviousSunDirection ||
-	                           difference.Dot(difference) >= MaxContinuousSunDirectionStep * MaxContinuousSunDirectionStep;
+	                           Util::HasDirectionalLightDiscontinuity(direction, previousSunDirection);
 	previousSunDirection = direction;
 	hasPreviousSunDirection = true;
 	return discontinuity;

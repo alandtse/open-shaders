@@ -34,7 +34,7 @@ public:
 	bool needPrecompute = false;
 	uint shadowUpdateIdx = 0;
 	bool hasPreviousLightDirection = false;
-	float3 previousLightDirection{};
+	RE::NiPoint3 previousLightDirection{};
 
 	struct HeightMapMetadata
 	{

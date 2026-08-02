@@ -32,6 +32,15 @@
 
 namespace Util
 {
+	inline constexpr float DirectionalLightDiscontinuityThreshold = RE::NI_PI / 180.0f;
+
+	[[nodiscard]] inline bool HasDirectionalLightDiscontinuity(const RE::NiPoint3& a_currentDirection, const RE::NiPoint3& a_previousDirection) noexcept
+	{
+		const auto difference = a_currentDirection - a_previousDirection;
+		return difference.Dot(difference) >=
+		       DirectionalLightDiscontinuityThreshold * DirectionalLightDiscontinuityThreshold;
+	}
+
 	void StoreTransform3x4NoScale(DirectX::XMFLOAT3X4& Dest, const RE::NiTransform& Source);
 
 	float4 TryGetWaterData(float offsetX, float offsetY);

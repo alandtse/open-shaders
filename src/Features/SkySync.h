@@ -142,7 +142,6 @@ private:
 	static constexpr float VLFadeStartAngle = 2.0f;
 	static constexpr float VLFadeEndAngle = 10.0f;
 	static constexpr float MaxHorizonFadeHours = 1.5f;
-	static constexpr float MaxContinuousSunDirectionStep = RE::NI_PI / 180.0f;
 
 	inline static RE::NiPoint3* gSunPosition = nullptr;
 	inline static RE::BSVolumetricLightingRenderData* gVolumetricLighting = nullptr;
