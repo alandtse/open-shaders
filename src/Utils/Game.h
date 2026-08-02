@@ -36,7 +36,21 @@ namespace Util
 
 	[[nodiscard]] inline bool HasDirectionalLightDiscontinuity(const RE::NiPoint3& a_currentDirection, const RE::NiPoint3& a_previousDirection) noexcept
 	{
-		const auto difference = a_currentDirection - a_previousDirection;
+		const auto isFinite = [](const RE::NiPoint3& a_direction) {
+			return std::isfinite(a_direction.x) && std::isfinite(a_direction.y) && std::isfinite(a_direction.z);
+		};
+		if (!isFinite(a_currentDirection) || !isFinite(a_previousDirection))
+			return false;
+
+		auto currentDirection = a_currentDirection;
+		auto previousDirection = a_previousDirection;
+		const float currentLength = currentDirection.Unitize();
+		const float previousLength = previousDirection.Unitize();
+		if (!std::isfinite(currentLength) || !std::isfinite(previousLength) ||
+			currentLength <= FLT_EPSILON || previousLength <= FLT_EPSILON)
+			return false;
+
+		const auto difference = currentDirection - previousDirection;
 		return difference.Dot(difference) >=
 		       DirectionalLightDiscontinuityThreshold * DirectionalLightDiscontinuityThreshold;
 	}
