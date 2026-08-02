@@ -3,8 +3,8 @@
 #include <DirectXTex.h>
 #include <pystring/pystring.h>
 
-#include "GpuPass.h"
 #include "Globals.h"
+#include "GpuPass.h"
 #include "I18n/I18n.h"
 #include "State.h"
 #include "Util.h"
