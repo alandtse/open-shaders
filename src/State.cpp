@@ -23,7 +23,7 @@
 #include "Features/VR.h"
 #include "Features/VRStereoOptimizations.h"
 #include "Features/VolumetricShadows.h"
-#include "Features/WeatherPicker.h"
+#include "Features/SceneSelector.h"
 #include "Menu.h"
 #include "SceneSettingsManager.h"
 #include "SettingsOverrideManager.h"
@@ -64,7 +64,7 @@ void State::Draw()
 	auto& terrainHelper = globals::features::terrainHelper;
 	auto& cloudShadows = globals::features::cloudShadows;
 	auto& csEditor = globals::features::csEditor;
-	auto& weatherPicker = globals::features::weatherPicker;
+	auto& sceneSelector = globals::features::sceneSelector;
 	auto& skin = globals::features::skin;
 	auto& truePBR = globals::features::truePBR;
 	auto context = globals::d3d::context;
@@ -74,7 +74,7 @@ void State::Draw()
 		// Process deferred cell transitions (interior detection)
 		sceneSettingsManager->Update();
 
-		if (csEditor.loaded || weatherPicker.loaded) {
+		if (csEditor.loaded || sceneSelector.loaded) {
 			ZoneScopedN("WeatherManager::UpdateFeatures");
 			weatherManager->UpdateFeatures();
 		}

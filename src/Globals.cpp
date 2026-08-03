@@ -42,7 +42,7 @@
 #include "Features/VolumetricLighting.h"
 #include "Features/VolumetricShadows.h"
 #include "Features/WaterEffects.h"
-#include "Features/WeatherPicker.h"
+#include "Features/SceneSelector.h"
 #include "Features/WetnessEffects.h"
 #include "Menu.h"
 #include "SceneSettingsManager.h"
@@ -91,7 +91,7 @@ namespace globals
 		VolumetricLighting volumetricLighting{};
 		VR vr{};
 		WaterEffects waterEffects{};
-		WeatherPicker weatherPicker{};
+		SceneSelector sceneSelector{};
 		PerformanceOverlay performanceOverlay{};
 		WetnessEffects wetnessEffects{};
 		ExtendedTranslucency extendedTranslucency{};

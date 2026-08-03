@@ -42,7 +42,7 @@
 #include "Features/VolumetricLighting.h"
 #include "Features/VolumetricShadows.h"
 #include "Features/WaterEffects.h"
-#include "Features/WeatherPicker.h"
+#include "Features/SceneSelector.h"
 #include "Features/WetnessEffects.h"
 #include "I18n/I18n.h"
 #include "Menu.h"
@@ -255,7 +255,7 @@ const std::vector<Feature*>& Feature::GetFeatureList()
 		&globals::features::renderDoc,
 		&globals::features::remoteControl,
 		&globals::features::csEditor,
-		&globals::features::weatherPicker,
+		&globals::features::sceneSelector,
 		&globals::features::csUtility,
 		&globals::features::screenshotFeature,
 		&globals::features::linearLighting,

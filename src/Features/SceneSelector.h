@@ -3,11 +3,11 @@
 #include "I18n/I18n.h"
 #include "OverlayFeature.h"
 
-struct WeatherPicker : OverlayFeature
+struct SceneSelector : OverlayFeature
 {
 public:
 	virtual inline std::string GetName() override { return "Weather Picker"; }
-	virtual std::string GetDisplayName() override { return T("feature.weather_picker.name", "Weather Picker"); }
+	virtual std::string GetDisplayName() override { return T("feature.weather_picker.name", "Scene Selector"); }
 	virtual inline std::string GetShortName() override { return "WeatherPicker"; }
 	virtual inline std::string_view GetCategory() const override { return FeatureCategories::kUtility; }
 	virtual bool SupportsVR() override { return true; }
@@ -80,7 +80,7 @@ private:
 
 	void DrawShowInOverlayToggle();
 	void DrawTimeControls();
-	void DrawWeatherPickerSection();
+	void DrawSceneSelectorSection();
 	static void DrawWeatherStatusPanel();
 
 	static constexpr float WIND_DIRECTION_OFFSET = 30.5f;
@@ -103,7 +103,7 @@ private:
 	{
 		bool operator()(const RE::TESWeather* a, const RE::TESWeather* b) const
 		{
-			return WeatherPicker::GetDisplayName(a) < WeatherPicker::GetDisplayName(b);
+			return SceneSelector::GetDisplayName(a) < SceneSelector::GetDisplayName(b);
 		}
 	};
 

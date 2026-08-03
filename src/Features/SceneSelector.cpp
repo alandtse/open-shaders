@@ -1,4 +1,4 @@
-#include "WeatherPicker.h"
+#include "SceneSelector.h"
 #include "I18n/I18n.h"
 
 #define I18N_KEY_PREFIX "feature.weather_picker."
@@ -75,40 +75,40 @@ namespace
 }
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
-	WeatherPicker::WeatherDetailsWindowSettings,
+	SceneSelector::WeatherDetailsWindowSettings,
 	Enabled,
 	ShowInOverlay,
 	Position,
 	PositionSet)
 
-void WeatherPicker::LoadSettings(json& o_json)
+void SceneSelector::LoadSettings(json& o_json)
 {
 	WeatherDetailsWindow = o_json;
 }
 
-void WeatherPicker::SaveSettings(json& o_json)
+void SceneSelector::SaveSettings(json& o_json)
 {
 	o_json = WeatherDetailsWindow;
 }
 
-void WeatherPicker::PostPostLoad()
+void SceneSelector::PostPostLoad()
 {
 	// Before the game loop starts, so no call site can be executing while it is rewritten.
 	EditorWindow::InstallWeatherLockHooks();
 }
 
-void WeatherPicker::DataLoaded()
+void SceneSelector::DataLoaded()
 {
 	s_dataAvailable = true;
 }
 
-void WeatherPicker::Prepass()
+void SceneSelector::Prepass()
 {
 	if (!globals::features::csEditor.loaded)
 		CSEditor::UpdateWeatherLockAndTime();
 }
 
-void WeatherPicker::EnsureWeatherListLoaded()
+void SceneSelector::EnsureWeatherListLoaded()
 {
 	if (!s_dataAvailable)
 		return;
@@ -116,18 +116,18 @@ void WeatherPicker::EnsureWeatherListLoaded()
 	LoadAllWeathers();
 }
 
-void WeatherPicker::DrawSettings()
+void SceneSelector::DrawSettings()
 {
 	EnsureWeatherListLoaded();
 
 	DrawTimeControls();
-	DrawWeatherPickerSection();
+	DrawSceneSelectorSection();
 
 	ImGui::Spacing();
 	DrawShowInOverlayToggle();
 }
 
-void WeatherPicker::DrawShowInOverlayToggle()
+void SceneSelector::DrawShowInOverlayToggle()
 {
 	const auto& themeSettings = Menu::GetSingleton()->GetTheme();
 	const auto& menuSettings = Menu::GetSingleton()->GetSettings();
@@ -145,7 +145,7 @@ void WeatherPicker::DrawShowInOverlayToggle()
 	}
 }
 
-void WeatherPicker::DrawWeatherPickerSection()
+void SceneSelector::DrawSceneSelectorSection()
 {
 	ImGui::Spacing();
 
@@ -154,14 +154,14 @@ void WeatherPicker::DrawWeatherPickerSection()
 	RenderFeatureWeatherAnalysis();
 }
 
-void WeatherPicker::DrawTimeControls()
+void SceneSelector::DrawTimeControls()
 {
 	ImGui::SeparatorText(T(TKEY("time_control"), "Time Control"));
 	EditorWindow::GetSingleton()->DrawTimeControls();
 	ImGui::Spacing();
 }
 
-void WeatherPicker::DrawWeatherStatusPanel()
+void SceneSelector::DrawWeatherStatusPanel()
 {
 	ImGui::SeparatorText(T(TKEY("weather_transition"), "Weather Transition"));
 
@@ -194,16 +194,16 @@ void WeatherPicker::DrawWeatherStatusPanel()
 }
 
 // ================================================================================
-// Weather Picker functionality
+// Scene Selector functionality
 // ================================================================================
 
-void WeatherPicker::ResetWindowLayout()
+void SceneSelector::ResetWindowLayout()
 {
 	WeatherDetailsWindow.PositionSet = false;
 	resetWindowSize = true;
 }
 
-void WeatherPicker::RenderWeatherDetailsWindow(bool* open)
+void SceneSelector::RenderWeatherDetailsWindow(bool* open)
 {
 	if (!open || !*open)
 		return;
@@ -254,7 +254,7 @@ void WeatherPicker::RenderWeatherDetailsWindow(bool* open)
 	resetWindowSize = false;
 }
 
-ImVec4 WeatherPicker::GetWeatherTypeColor(RE::TESWeather* weather)
+ImVec4 SceneSelector::GetWeatherTypeColor(RE::TESWeather* weather)
 {
 	if (!weather) {
 		return Menu::GetSingleton()->GetTheme().StatusPalette.InfoColor;
@@ -288,7 +288,7 @@ ImVec4 WeatherPicker::GetWeatherTypeColor(RE::TESWeather* weather)
 }
 
 // --- Helper: Display basic weather info (name, flags, percentage) ---
-void WeatherPicker::DisplayWeatherBasicInfo(RE::TESWeather* weather, float weatherPct)
+void SceneSelector::DisplayWeatherBasicInfo(RE::TESWeather* weather, float weatherPct)
 {
 	if (!weather) {
 		ImGui::BulletText("%s", T(TKEY("no_weather_found"), "No Weather Found"));
@@ -297,13 +297,13 @@ void WeatherPicker::DisplayWeatherBasicInfo(RE::TESWeather* weather, float weath
 	std::string weatherText = Util::FormatWeather(weather);
 	ImGui::Bullet();
 	ImGui::SameLine();
-	bool showTooltip = WeatherPicker::RenderMultiColorWeatherName(weather, weatherText);
+	bool showTooltip = SceneSelector::RenderMultiColorWeatherName(weather, weatherText);
 	if (showTooltip) {
 		ImGui::BeginTooltip();
 		ImGui::Text(T(TKEY("tooltip_name"), "Name: %s"), weather->GetName() ? weather->GetName() : T(TKEY("unnamed"), "Unnamed"));
 		ImGui::Text(T(TKEY("tooltip_editor_id_2"), "Editor ID: %s"), weather->GetFormEditorID() ? weather->GetFormEditorID() : T(TKEY("none_value"), "None"));
 		ImGui::Text(T(TKEY("tooltip_form_id_2"), "Form ID: 0x%08X"), weather->GetFormID());
-		auto flagNames = WeatherPicker::GetWeatherFlagNames(weather);
+		auto flagNames = SceneSelector::GetWeatherFlagNames(weather);
 		if (!flagNames.empty()) {
 			std::string joinedFlags = flagNames[0];
 			for (size_t j = 1; j < flagNames.size(); ++j) {
@@ -320,7 +320,7 @@ void WeatherPicker::DisplayWeatherBasicInfo(RE::TESWeather* weather, float weath
 	}
 }
 
-void WeatherPicker::DisplayPrecipitationInfo(RE::TESWeather* weather)
+void SceneSelector::DisplayPrecipitationInfo(RE::TESWeather* weather)
 {
 	if (!weather || !weather->precipitationData) {
 		ImGui::BulletText("%s", T(TKEY("no_precipitation_data"), "Particle Density: No precipitation data"));
@@ -348,7 +348,7 @@ void WeatherPicker::DisplayPrecipitationInfo(RE::TESWeather* weather)
 	}
 }
 
-void WeatherPicker::DisplayLightningInfo(RE::TESWeather* weather, bool showInteractiveElements)
+void SceneSelector::DisplayLightningInfo(RE::TESWeather* weather, bool showInteractiveElements)
 {
 	if (!weather || (uint8_t)weather->data.thunderLightningFrequency == 0)
 		return;
@@ -402,7 +402,7 @@ void WeatherPicker::DisplayLightningInfo(RE::TESWeather* weather, bool showInter
 	}
 }
 
-void WeatherPicker::DisplayWindInfo(RE::TESWeather* weather)
+void SceneSelector::DisplayWindInfo(RE::TESWeather* weather)
 {
 	auto sky = globals::game::sky;
 	if (!weather || (weather->data.windSpeed <= 0 && (!sky || sky->windSpeed <= 0.0f)))
@@ -467,29 +467,29 @@ void WeatherPicker::DisplayWindInfo(RE::TESWeather* weather)
 }
 
 // --- Main function: now just delegates to helpers ---
-void WeatherPicker::DisplayWeatherInfo(RE::TESWeather* weather, float weatherPct, bool showInteractiveElements)
+void SceneSelector::DisplayWeatherInfo(RE::TESWeather* weather, float weatherPct, bool showInteractiveElements)
 {
 	ImGui::SeparatorText(T(TKEY("overview"), "Overview"));
-	WeatherPicker::DisplayWeatherBasicInfo(weather, weatherPct);
+	SceneSelector::DisplayWeatherBasicInfo(weather, weatherPct);
 	if (!weather)
 		return;
 
 	ImGui::SeparatorText(T(TKEY("precipitation"), "Precipitation"));
-	WeatherPicker::DisplayPrecipitationInfo(weather);
+	SceneSelector::DisplayPrecipitationInfo(weather);
 
 	if ((uint8_t)weather->data.thunderLightningFrequency != 0) {
 		ImGui::SeparatorText(T(TKEY("lightning"), "Lightning"));
-		WeatherPicker::DisplayLightningInfo(weather, showInteractiveElements);
+		SceneSelector::DisplayLightningInfo(weather, showInteractiveElements);
 	}
 
 	auto sky = globals::game::sky;
 	if (weather->data.windSpeed > 0 || (sky && sky->windSpeed > 0.0f)) {
 		ImGui::SeparatorText(T(TKEY("wind"), "Wind"));
-		WeatherPicker::DisplayWindInfo(weather);
+		SceneSelector::DisplayWindInfo(weather);
 	}
 }
 
-void WeatherPicker::RenderWeatherControls(RE::Sky* sky)
+void SceneSelector::RenderWeatherControls(RE::Sky* sky)
 {
 	ImGui::SeparatorText(T(TKEY("weather_selection"), "Weather Selection"));
 
@@ -543,7 +543,7 @@ void WeatherPicker::RenderWeatherControls(RE::Sky* sky)
 		sky->ResetWeather();
 		// Update the selection box to reflect the reset weather without double-applying
 		s_selectedWeatherIdx = FindWeatherIndex(sky->defaultWeather);
-		logger::info("[WeatherPicker] Reset weather to default");
+		logger::info("[SceneSelector] Reset weather to default");
 	}
 
 	if (auto _tt = Util::HoverTooltipWrapper()) {
@@ -600,7 +600,7 @@ void WeatherPicker::RenderWeatherControls(RE::Sky* sky)
 	                               weatherLabels[s_selectedWeatherIdx].c_str() :
 	                               T(TKEY("select_weather"), "Select Weather");
 
-	static constexpr const char* kWeatherSearchId = "WeatherPicker";
+	static constexpr const char* kWeatherSearchId = "SceneSelector";
 
 	if (ImGui::BeginCombo(T(TKEY("weather"), "Weather"), comboPreview)) {
 		auto searchText = Util::DrawComboSearchInput(kWeatherSearchId);
@@ -639,7 +639,7 @@ void WeatherPicker::RenderWeatherControls(RE::Sky* sky)
 					editorWindow->LockWeather(selectedWeather);
 
 				Util::ClearComboSearch(kWeatherSearchId);
-				logger::info("[WeatherPicker] Changed weather to: {}", Util::FormatWeather(selectedWeather));
+				logger::info("[SceneSelector] Changed weather to: {}", Util::FormatWeather(selectedWeather));
 				break;
 			}
 
@@ -660,7 +660,7 @@ void WeatherPicker::RenderWeatherControls(RE::Sky* sky)
 	}
 }
 
-void WeatherPicker::RenderWeatherInformationDisplay(RE::Sky* sky, bool showInteractiveElements)
+void SceneSelector::RenderWeatherInformationDisplay(RE::Sky* sky, bool showInteractiveElements)
 {
 	// Update cache: store current lastWeather if it exists, otherwise keep the cached one
 	if (sky->lastWeather) {
@@ -698,7 +698,7 @@ void WeatherPicker::RenderWeatherInformationDisplay(RE::Sky* sky, bool showInter
 	}
 }
 
-void WeatherPicker::RenderCoreWeatherDetails(bool showInteractiveElements)
+void SceneSelector::RenderCoreWeatherDetails(bool showInteractiveElements)
 {
 	const auto showError = [](const char* msg) {
 		auto menu = Menu::GetSingleton();
@@ -724,7 +724,7 @@ void WeatherPicker::RenderCoreWeatherDetails(bool showInteractiveElements)
 	}
 }
 
-void WeatherPicker::LoadAllWeathers()
+void SceneSelector::LoadAllWeathers()
 {
 	if (s_weathersLoaded)
 		return;
@@ -748,7 +748,7 @@ void WeatherPicker::LoadAllWeathers()
 	}
 }
 
-void WeatherPicker::UpdateFilteredWeathers()
+void SceneSelector::UpdateFilteredWeathers()
 {
 	s_filteredWeathers.clear();
 	for (auto weather : s_allWeathers) {
@@ -787,7 +787,7 @@ void WeatherPicker::UpdateFilteredWeathers()
 	}
 }
 
-int WeatherPicker::FindWeatherIndex(RE::TESWeather* targetWeather)
+int SceneSelector::FindWeatherIndex(RE::TESWeather* targetWeather)
 {
 	if (!targetWeather)
 		return -1;
@@ -799,7 +799,7 @@ int WeatherPicker::FindWeatherIndex(RE::TESWeather* targetWeather)
 	return -1;
 }
 
-void WeatherPicker::RenderFeatureWeatherAnalysis()
+void SceneSelector::RenderFeatureWeatherAnalysis()
 {
 	auto sky = globals::game::sky;
 	if (!sky || sky->mode.get() != RE::Sky::Mode::kFull)
@@ -808,8 +808,8 @@ void WeatherPicker::RenderFeatureWeatherAnalysis()
 	// Iterate through all loaded features to show their weather analysis
 	for (auto* feature : Feature::GetFeatureList()) {
 		if (feature->loaded) {
-			// Skip WeatherPicker itself to avoid recursion
-			if (feature == &globals::features::weatherPicker) {
+			// Skip SceneSelector itself to avoid recursion
+			if (feature == &globals::features::sceneSelector) {
 				continue;
 			}
 
@@ -838,7 +838,7 @@ void WeatherPicker::RenderFeatureWeatherAnalysis()
 	}
 }
 
-std::vector<std::string> WeatherPicker::GetWeatherFlagNames(RE::TESWeather* weather)
+std::vector<std::string> SceneSelector::GetWeatherFlagNames(RE::TESWeather* weather)
 {
 	std::vector<std::string> flagNames;
 	if (!weather) {
@@ -880,7 +880,7 @@ std::vector<std::string> WeatherPicker::GetWeatherFlagNames(RE::TESWeather* weat
 	return flagNames;
 }
 
-bool WeatherPicker::RenderMultiColorWeatherName(RE::TESWeather* weather, const std::string& weatherName)
+bool SceneSelector::RenderMultiColorWeatherName(RE::TESWeather* weather, const std::string& weatherName)
 {
 	if (!weather) {
 		ImGui::Text("%s", weatherName.c_str());
@@ -946,7 +946,7 @@ bool WeatherPicker::RenderMultiColorWeatherName(RE::TESWeather* weather, const s
 }
 
 // Helper function to get color for a specific weather flag
-ImVec4 WeatherPicker::GetWeatherFlagColor(RE::TESWeather::WeatherDataFlag flag)
+ImVec4 SceneSelector::GetWeatherFlagColor(RE::TESWeather::WeatherDataFlag flag)
 {
 	const auto& theme = Menu::GetSingleton()->GetTheme();
 
@@ -969,7 +969,7 @@ ImVec4 WeatherPicker::GetWeatherFlagColor(RE::TESWeather::WeatherDataFlag flag)
 }
 
 // Helper function to get color for a specific flag name
-ImVec4 WeatherPicker::GetWeatherFlagColorByName(const std::string& flagName)
+ImVec4 SceneSelector::GetWeatherFlagColorByName(const std::string& flagName)
 {
 	if (const auto* info = FindWeatherFlagInfo(flagName)) {
 		return GetWeatherFlagColor(info->flag);
@@ -979,7 +979,7 @@ ImVec4 WeatherPicker::GetWeatherFlagColorByName(const std::string& flagName)
 	return Menu::GetSingleton()->GetTheme().StatusPalette.Warning;
 }
 
-std::string WeatherPicker::GetDisplayName(const RE::TESWeather* weather)
+std::string SceneSelector::GetDisplayName(const RE::TESWeather* weather)
 {
 	if (!weather) {
 		return "Unknown";
@@ -997,7 +997,7 @@ std::string WeatherPicker::GetDisplayName(const RE::TESWeather* weather)
 
 #undef I18N_KEY_PREFIX
 
-void WeatherPicker::DrawOverlay()
+void SceneSelector::DrawOverlay()
 {
 	auto player = RE::PlayerCharacter::GetSingleton();
 	if (!player || !player->parentCell)
@@ -1016,7 +1016,7 @@ void WeatherPicker::DrawOverlay()
 	s_prevOverlayVisible = overlayVisible;
 }
 
-bool WeatherPicker::IsOverlayVisible() const
+bool SceneSelector::IsOverlayVisible() const
 {
 	return WeatherDetailsWindow.ShowInOverlay;
 }
