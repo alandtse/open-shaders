@@ -108,7 +108,7 @@ float3 SampleVanillaBloomEnhanced(float2 uv)
 		ImageTex.GetDimensions(bloomWidth, bloomHeight);
 		// Normalized 5x5 separable Gaussian kernel. The outer cardinal samples are one Halo Radius from the center.
 		static const uint BLOOM_GAUSSIAN_KERNEL_SIZE = 5;
-		static const uint BLOOM_GAUSSIAN_KERNEL_CENTER = BLOOM_GAUSSIAN_KERNEL_SIZE / 2;
+		static const uint BLOOM_GAUSSIAN_KERNEL_CENTER = 2;
 		static const float BLOOM_GAUSSIAN_RADIUS_SCALE = 0.5;
 		static const float BLOOM_GAUSSIAN_WEIGHT_OUTER = 0.0625;
 		static const float BLOOM_GAUSSIAN_WEIGHT_INNER = 0.25;
