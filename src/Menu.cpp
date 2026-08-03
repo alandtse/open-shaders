@@ -47,8 +47,8 @@
 #include "Features/PerformanceOverlay.h"
 #include "Features/PerformanceOverlay/ABTesting/ABTestAggregator.h"
 #include "Features/PerformanceOverlay/ABTesting/ABTesting.h"
-#include "Features/ScreenshotFeature.h"
 #include "Features/SceneSelector.h"
+#include "Features/ScreenshotFeature.h"
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	Menu::ThemeSettings::PaletteColors,
