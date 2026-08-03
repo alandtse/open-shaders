@@ -106,27 +106,36 @@ float3 SampleVanillaBloomEnhanced(float2 uv)
 		uint bloomWidth = 1;
 		uint bloomHeight = 1;
 		ImageTex.GetDimensions(bloomWidth, bloomHeight);
-		float2 sampleStep = (SharedData::bloomSettings.HaloRadius * 0.5) / max(float2(bloomWidth, bloomHeight), float2(1.0, 1.0));
-		uint eyeIndex = Stereo::GetEyeIndexFromTexCoord(uv);
-
 		// Normalized 5x5 separable Gaussian kernel. The outer cardinal samples are one Halo Radius from the center.
-		static const float BLOOM_GAUSSIAN_WEIGHTS[5] = {
-			0.0625,
-			0.25,
-			0.375,
-			0.25,
-			0.0625
+		static const uint BLOOM_GAUSSIAN_KERNEL_SIZE = 5;
+		static const uint BLOOM_GAUSSIAN_KERNEL_CENTER = BLOOM_GAUSSIAN_KERNEL_SIZE / 2;
+		static const float BLOOM_GAUSSIAN_RADIUS_SCALE = 0.5;
+		static const float BLOOM_GAUSSIAN_WEIGHT_OUTER = 0.0625;
+		static const float BLOOM_GAUSSIAN_WEIGHT_INNER = 0.25;
+		static const float BLOOM_GAUSSIAN_WEIGHT_CENTER = 0.375;
+		static const float BLOOM_GAUSSIAN_WEIGHTS[BLOOM_GAUSSIAN_KERNEL_SIZE] = {
+			BLOOM_GAUSSIAN_WEIGHT_OUTER,
+			BLOOM_GAUSSIAN_WEIGHT_INNER,
+			BLOOM_GAUSSIAN_WEIGHT_CENTER,
+			BLOOM_GAUSSIAN_WEIGHT_INNER,
+			BLOOM_GAUSSIAN_WEIGHT_OUTER
 		};
+		float2 sampleStep = (SharedData::bloomSettings.HaloRadius * BLOOM_GAUSSIAN_RADIUS_SCALE) / max(float2(bloomWidth, bloomHeight), float2(1.0, 1.0));
+		uint eyeIndex = Stereo::GetEyeIndexFromTexCoord(uv);
 		float3 wide = 0.0;
 
-		[unroll] for (uint y = 0; y < 5; ++y)
+		[unroll] for (uint y = 0; y < BLOOM_GAUSSIAN_KERNEL_SIZE; ++y)
 		{
-			[unroll] for (uint x = 0; x < 5; ++x)
+			[unroll] for (uint x = 0; x < BLOOM_GAUSSIAN_KERNEL_SIZE; ++x)
 			{
 				float weight = BLOOM_GAUSSIAN_WEIGHTS[x] * BLOOM_GAUSSIAN_WEIGHTS[y];
-				float2 offset = (float2(x, y) - 2.0) * sampleStep;
-				float2 sampleUV = Stereo::ClampToEyeUV(uv + offset, eyeIndex);
-				wide += ImageTex.Sample(ImageSampler, sampleUV).xyz * weight;
+				if (x == BLOOM_GAUSSIAN_KERNEL_CENTER && y == BLOOM_GAUSSIAN_KERNEL_CENTER) {
+					wide += center * weight;
+				} else {
+					float2 offset = (float2(x, y) - float(BLOOM_GAUSSIAN_KERNEL_CENTER)) * sampleStep;
+					float2 sampleUV = Stereo::ClampToEyeUV(uv + offset, eyeIndex);
+					wide += ImageTex.Sample(ImageSampler, sampleUV).xyz * weight;
+				}
 			}
 		}
 
