@@ -339,6 +339,18 @@ void SkySync::Update(const RE::Sky* sky, bool a_sunDirectionDiscontinuity)
 	const auto deltaTime = globals::game::deltaTime;
 	float fadeAdvance = calendar && deltaTime ? std::max(*deltaTime * calendar->GetTimescale(), 0.0f) : 0.0f;
 
+	// Direct clock movement must advance caster transitions even while frame time is paused.
+	const float gameHour = sky->currentGameHour;
+	if (lastGameHour >= 0.0f) {
+		float hourDelta = gameHour - lastGameHour;
+		if (hourDelta > 12.0f)
+			hourDelta -= 24.0f;
+		else if (hourDelta < -12.0f)
+			hourDelta += 24.0f;
+		fadeAdvance = std::max(fadeAdvance, std::abs(hourDelta) * SecondsPerGameHour);
+	}
+	lastGameHour = gameHour;
+
 	shadowFader.Update(sky, directions, intensities, settings.ShadowTransitionDuration, fadeAdvance, a_sunDirectionDiscontinuity || resetTransition);
 }
 void SkySync::SetSunAngle()
