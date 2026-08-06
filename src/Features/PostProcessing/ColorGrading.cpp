@@ -1,5 +1,6 @@
 #include "ColorGrading.h"
 
+#include "GpuPass.h"
 #include "State.h"
 #include "Util.h"
 
@@ -164,11 +165,9 @@ namespace
 	void DrawRGBAll(ColorSettings& settings, const AllRGBControl& control)
 	{
 		auto& value = settings.*control.value;
-		ImGui::PushID(control.id);
-		auto* allValue = ImGui::GetStateStorage()->GetFloatRef(ImGui::GetID("##AllState"), AverageRGB(value));
-		ImGui::PopID();
+		float allValue = AverageRGB(value);
 
-		DrawAllRGBSliders(control, *allValue, &value.x, [&](float newAll) {
+		DrawAllRGBSliders(control, allValue, &value.x, [&](float newAll) {
 			SetRGB(value, newAll);
 		});
 	}
@@ -1121,132 +1120,135 @@ void ColorGrading::Draw(TextureInfo& inout_tex)
 	if (recompileFlag)
 		ClearShaderCache();
 
-	globals::profiler->BeginPass("PostProcessing::ColorGrading");
 	state->BeginPerfEvent("Color Grading and Tonemapping");
-
-	auto& pp = globals::features::postProcessing;
-
-	RE::ImageSpaceData imageSpaceData = pp.imageSpaceManager->gameISData;
-	auto& hdr = globals::features::hdrDisplay;
-	const bool hdrEnabled = hdr.loaded && hdr.settings.enableHDR;
-	UpdateColorSpaceTransforms(hdrEnabled);
-
-	// Always compute XYZ matrices for white balance
 	{
-		auto& spaces = getAvailableColorSpaces();
-		int wsIdx = std::clamp(settings.processColorSpace, 0, static_cast<int>(spaces.size()) - 1);
-		auto storeMatrix = [](const DirectX::SimpleMath::Matrix& mat, std::array<float3, 3>& out) {
-			out = {
-				float3{ mat(0, 0), mat(0, 1), mat(0, 2) },
-				float3{ mat(1, 0), mat(1, 1), mat(1, 2) },
-				float3{ mat(2, 0), mat(2, 1), mat(2, 2) }
-			};
-		};
-		storeMatrix(getRGBMatrix(spaces[wsIdx], "XYZ"), workingToXYZMatrix);
-		storeMatrix(getRGBMatrix("XYZ", spaces[wsIdx]), xyzToWorkingMatrix);
-	}
+		// Scoped tighter than the perf event above: excludes the debug
+		// curve-readback dispatch below from the profiled GPU cost.
+		CS_GPU_PASS("PostProcessing::ColorGrading");
 
-	ColorCB colorCBData = {
-		.asccdl = { settings.slope, settings.power, settings.cdlOffset },
-		.liftgammagain = { PackLiftGammaGainAllRGB(settings.lift, ZeroAllNeutral),
-			PackLiftGammaGainAllRGB(settings.gamma, ZeroAllNeutral),
-			PackLiftGammaGainAllRGB(settings.gain, UnitAllNeutral) },
-		.inOutGamma = settings.inOutGamma,
-		.oklchSaturation = settings.oklchSaturation,
-		.oklchColorMixer = { settings.oklchColorMixer[0], settings.oklchColorMixer[1], settings.oklchColorMixer[2], settings.oklchColorMixer[3], settings.oklchColorMixer[4], settings.oklchColorMixer[5], settings.oklchColorMixer[6] },
-		.contrast = settings.contrast,
-		.pivot = settings.pivot,
-		.exposureTemperatureTint = settings.exposureTemperatureTint,
-		.shadows = settings.shadowsGain,
-		.midtones = settings.midtonesGain,
-		.highlights = settings.highlightsGain,
-		.shadowsHighlightsRange = settings.shadowsHighlightsRange,
-		.tonemapParams = { settings.tonemapParams[0], settings.tonemapParams[1] },
-		.inputToWorking = { float4{ inputToWorkingMatrix[0].x, inputToWorkingMatrix[0].y, inputToWorkingMatrix[0].z, 0.f }, float4{ inputToWorkingMatrix[1].x, inputToWorkingMatrix[1].y, inputToWorkingMatrix[1].z, 0.f }, float4{ inputToWorkingMatrix[2].x, inputToWorkingMatrix[2].y, inputToWorkingMatrix[2].z, 0.f } },
-		.workingToTonemap = { float4{ workingToTonemapMatrix[0].x, workingToTonemapMatrix[0].y, workingToTonemapMatrix[0].z, 0.f }, float4{ workingToTonemapMatrix[1].x, workingToTonemapMatrix[1].y, workingToTonemapMatrix[1].z, 0.f }, float4{ workingToTonemapMatrix[2].x, workingToTonemapMatrix[2].y, workingToTonemapMatrix[2].z, 0.f } },
-		.tonemapToOutput = { float4{ tonemapToOutputMatrix[0].x, tonemapToOutputMatrix[0].y, tonemapToOutputMatrix[0].z, 0.f }, float4{ tonemapToOutputMatrix[1].x, tonemapToOutputMatrix[1].y, tonemapToOutputMatrix[1].z, 0.f }, float4{ tonemapToOutputMatrix[2].x, tonemapToOutputMatrix[2].y, tonemapToOutputMatrix[2].z, 0.f } },
-		.workingToXYZ = { float4{ workingToXYZMatrix[0].x, workingToXYZMatrix[0].y, workingToXYZMatrix[0].z, 0.f }, float4{ workingToXYZMatrix[1].x, workingToXYZMatrix[1].y, workingToXYZMatrix[1].z, 0.f }, float4{ workingToXYZMatrix[2].x, workingToXYZMatrix[2].y, workingToXYZMatrix[2].z, 0.f } },
-		.xyzToWorking = { float4{ xyzToWorkingMatrix[0].x, xyzToWorkingMatrix[0].y, xyzToWorkingMatrix[0].z, 0.f }, float4{ xyzToWorkingMatrix[1].x, xyzToWorkingMatrix[1].y, xyzToWorkingMatrix[1].z, 0.f }, float4{ xyzToWorkingMatrix[2].x, xyzToWorkingMatrix[2].y, xyzToWorkingMatrix[2].z, 0.f } },
-		.workingWhitePoint = [&]() {
+		auto& pp = globals::features::postProcessing;
+
+		RE::ImageSpaceData imageSpaceData = pp.imageSpaceManager->gameISData;
+		auto& hdr = globals::features::hdrDisplay;
+		const bool hdrEnabled = hdr.loaded && hdr.settings.enableHDR;
+		UpdateColorSpaceTransforms(hdrEnabled);
+
+		// Always compute XYZ matrices for white balance
+		{
+			auto& spaces = getAvailableColorSpaces();
+			int wsIdx = std::clamp(settings.processColorSpace, 0, static_cast<int>(spaces.size()) - 1);
+			auto storeMatrix = [](const DirectX::SimpleMath::Matrix& mat, std::array<float3, 3>& out) {
+				out = {
+					float3{ mat(0, 0), mat(0, 1), mat(0, 2) },
+					float3{ mat(1, 0), mat(1, 1), mat(1, 2) },
+					float3{ mat(2, 0), mat(2, 1), mat(2, 2) }
+				};
+			};
+			storeMatrix(getRGBMatrix(spaces[wsIdx], "XYZ"), workingToXYZMatrix);
+			storeMatrix(getRGBMatrix("XYZ", spaces[wsIdx]), xyzToWorkingMatrix);
+		}
+
+		ColorCB colorCBData = {
+			.asccdl = { settings.slope, settings.power, settings.cdlOffset },
+			.liftgammagain = { PackLiftGammaGainAllRGB(settings.lift, ZeroAllNeutral),
+				PackLiftGammaGainAllRGB(settings.gamma, ZeroAllNeutral),
+				PackLiftGammaGainAllRGB(settings.gain, UnitAllNeutral) },
+			.inOutGamma = settings.inOutGamma,
+			.oklchSaturation = settings.oklchSaturation,
+			.oklchColorMixer = { settings.oklchColorMixer[0], settings.oklchColorMixer[1], settings.oklchColorMixer[2], settings.oklchColorMixer[3], settings.oklchColorMixer[4], settings.oklchColorMixer[5], settings.oklchColorMixer[6] },
+			.contrast = settings.contrast,
+			.pivot = settings.pivot,
+			.exposureTemperatureTint = settings.exposureTemperatureTint,
+			.shadows = settings.shadowsGain,
+			.midtones = settings.midtonesGain,
+			.highlights = settings.highlightsGain,
+			.shadowsHighlightsRange = settings.shadowsHighlightsRange,
+			.tonemapParams = { settings.tonemapParams[0], settings.tonemapParams[1] },
+			.inputToWorking = { float4{ inputToWorkingMatrix[0].x, inputToWorkingMatrix[0].y, inputToWorkingMatrix[0].z, 0.f }, float4{ inputToWorkingMatrix[1].x, inputToWorkingMatrix[1].y, inputToWorkingMatrix[1].z, 0.f }, float4{ inputToWorkingMatrix[2].x, inputToWorkingMatrix[2].y, inputToWorkingMatrix[2].z, 0.f } },
+			.workingToTonemap = { float4{ workingToTonemapMatrix[0].x, workingToTonemapMatrix[0].y, workingToTonemapMatrix[0].z, 0.f }, float4{ workingToTonemapMatrix[1].x, workingToTonemapMatrix[1].y, workingToTonemapMatrix[1].z, 0.f }, float4{ workingToTonemapMatrix[2].x, workingToTonemapMatrix[2].y, workingToTonemapMatrix[2].z, 0.f } },
+			.tonemapToOutput = { float4{ tonemapToOutputMatrix[0].x, tonemapToOutputMatrix[0].y, tonemapToOutputMatrix[0].z, 0.f }, float4{ tonemapToOutputMatrix[1].x, tonemapToOutputMatrix[1].y, tonemapToOutputMatrix[1].z, 0.f }, float4{ tonemapToOutputMatrix[2].x, tonemapToOutputMatrix[2].y, tonemapToOutputMatrix[2].z, 0.f } },
+			.workingToXYZ = { float4{ workingToXYZMatrix[0].x, workingToXYZMatrix[0].y, workingToXYZMatrix[0].z, 0.f }, float4{ workingToXYZMatrix[1].x, workingToXYZMatrix[1].y, workingToXYZMatrix[1].z, 0.f }, float4{ workingToXYZMatrix[2].x, workingToXYZMatrix[2].y, workingToXYZMatrix[2].z, 0.f } },
+			.xyzToWorking = { float4{ xyzToWorkingMatrix[0].x, xyzToWorkingMatrix[0].y, xyzToWorkingMatrix[0].z, 0.f }, float4{ xyzToWorkingMatrix[1].x, xyzToWorkingMatrix[1].y, xyzToWorkingMatrix[1].z, 0.f }, float4{ xyzToWorkingMatrix[2].x, xyzToWorkingMatrix[2].y, xyzToWorkingMatrix[2].z, 0.f } },
+			.workingWhitePoint = [&]() {
 			auto& spaces = getAvailableColorSpaces();
 			int wsIdx = std::clamp(settings.processColorSpace, 0, static_cast<int>(spaces.size()) - 1);
 			auto wp = getWhitePoint(spaces[wsIdx]);
 			return float4{ wp.x, wp.y, 0.f, 0.f }; }(),
-		.shadowsOffset = settings.shadowsOffset,
-		.midtonesOffset = settings.midtonesOffset,
-		.highlightsOffset = settings.highlightsOffset,
-		.cinematic = float4{ std::lerp(1.f, imageSpaceData.baseData.cinematic.saturation, settings.gameCinematicBlend.x), std::lerp(1.f, imageSpaceData.baseData.cinematic.brightness, settings.gameCinematicBlend.y), std::lerp(1.f, imageSpaceData.baseData.cinematic.contrast, settings.gameCinematicBlend.z), imageSpaceData.baseAmount },
-		.fade = float4{ imageSpaceData.modData.data[RE::ImageSpaceModData::kFadeR], imageSpaceData.modData.data[RE::ImageSpaceModData::kFadeG], imageSpaceData.modData.data[RE::ImageSpaceModData::kFadeB], imageSpaceData.modData.data[RE::ImageSpaceModData::kFadeAmount] * settings.gameFadeBlend },
-		.tint = float4{ imageSpaceData.baseData.tint.color.red, imageSpaceData.baseData.tint.color.green, imageSpaceData.baseData.tint.color.blue, imageSpaceData.baseData.tint.amount * settings.gameTintBlend },
-		.logType = settings.useLog ? ((1u << settings.logType) | (settings.invertLog ? (1u << 3u) : 0u)) : 0u,
-		.skipLDR = settings.skipLDR,
-		.skipLUT = settings.skipLUT,
-		.enableTonemap = settings.enableTonemap,
-		.enableColorSpaceTransform = true,
-		// Auto-populate HDR settings from HDR feature
-		.enableHDR = [&]() -> uint {
-			return hdrEnabled ? 1u : 0u;
-		}(),
-		.hdrPeakNits = [&]() -> float {
-			return hdrEnabled ? static_cast<float>(hdr.settings.hdrPeakNits) : 1000.f;
-		}(),
-		.hdrPaperWhiteNits = [&]() -> float {
-			return hdrEnabled ? static_cast<float>(hdr.settings.hdrPaperWhite) : 203.f;
-		}(),
-		.odrtConfig = settings.odrtConfig,
-	};
-	colorCB->Update(colorCBData);
+			.shadowsOffset = settings.shadowsOffset,
+			.midtonesOffset = settings.midtonesOffset,
+			.highlightsOffset = settings.highlightsOffset,
+			.cinematic = float4{ std::lerp(1.f, imageSpaceData.baseData.cinematic.saturation, settings.gameCinematicBlend.x), std::lerp(1.f, imageSpaceData.baseData.cinematic.brightness, settings.gameCinematicBlend.y), std::lerp(1.f, imageSpaceData.baseData.cinematic.contrast, settings.gameCinematicBlend.z), imageSpaceData.baseAmount },
+			.fade = float4{ imageSpaceData.modData.data[RE::ImageSpaceModData::kFadeR], imageSpaceData.modData.data[RE::ImageSpaceModData::kFadeG], imageSpaceData.modData.data[RE::ImageSpaceModData::kFadeB], imageSpaceData.modData.data[RE::ImageSpaceModData::kFadeAmount] * settings.gameFadeBlend },
+			.tint = float4{ imageSpaceData.baseData.tint.color.red, imageSpaceData.baseData.tint.color.green, imageSpaceData.baseData.tint.color.blue, imageSpaceData.baseData.tint.amount * settings.gameTintBlend },
+			.logType = settings.useLog ? ((1u << settings.logType) | (settings.invertLog ? (1u << 3u) : 0u)) : 0u,
+			.skipLDR = settings.skipLDR,
+			.skipLUT = settings.skipLUT,
+			.enableTonemap = settings.enableTonemap,
+			.enableColorSpaceTransform = true,
+			// Auto-populate HDR settings from HDR feature
+			.enableHDR = [&]() -> uint {
+				return hdrEnabled ? 1u : 0u;
+			}(),
+			.hdrPeakNits = [&]() -> float {
+				return hdrEnabled ? static_cast<float>(hdr.settings.hdrPeakNits) : 1000.f;
+			}(),
+			.hdrPaperWhiteNits = [&]() -> float {
+				return hdrEnabled ? static_cast<float>(hdr.settings.hdrPaperWhite) : 203.f;
+			}(),
+			.odrtConfig = settings.odrtConfig,
+		};
+		colorCB->Update(colorCBData);
 
-	// Check if curve needs update (CB changed = settings changed)
-	if (memcmp(&colorCBData, prevCurveCB.data(), sizeof(ColorCB)) != 0) {
-		curveNeedsUpdate = true;
-		memcpy(prevCurveCB.data(), &colorCBData, sizeof(ColorCB));
-	}
+		// Check if curve needs update (CB changed = settings changed)
+		if (memcmp(&colorCBData, prevCurveCB.data(), sizeof(ColorCB)) != 0) {
+			curveNeedsUpdate = true;
+			memcpy(prevCurveCB.data(), &colorCBData, sizeof(ColorCB));
+		}
 
-	ID3D11Buffer* cb = colorCB->CB();
-	context->CSSetConstantBuffers(1, 1, &cb);
+		ID3D11Buffer* cb = colorCB->CB();
+		context->CSSetConstantBuffers(1, 1, &cb);
 
-	std::array<ID3D11SamplerState*, 1> samplers = { linearSampler.get() };
-	context->CSSetSamplers(0, 1, samplers.data());
-	ID3D11UnorderedAccessView* uav = nullptr;
+		std::array<ID3D11SamplerState*, 1> samplers = { linearSampler.get() };
+		context->CSSetSamplers(0, 1, samplers.data());
+		ID3D11UnorderedAccessView* uav = nullptr;
 
-	if (!settings.skipLUT) {
-		// LUT Gen
-		uav = texLUT->uav.get();
+		if (!settings.skipLUT) {
+			// LUT Gen
+			uav = texLUT->uav.get();
+			context->CSSetUnorderedAccessViews(0, 1, &uav, nullptr);
+			context->CSSetShader(lutgenCS.get(), nullptr, 0);
+			context->Dispatch(LUTDim >> 3, LUTDim >> 3, LUTDim >> 3);
+
+			uav = nullptr;
+			context->CSSetUnorderedAccessViews(0, 1, &uav, nullptr);
+			context->CSSetShader(nullptr, nullptr, 0);
+		}
+
+		// Apply Color Grading (via LUT or direct)
+		std::array<ID3D11ShaderResourceView*, 2> srvs = { inout_tex.srv, texLUT->srv.get() };
+		uav = texColor->uav.get();
 		context->CSSetUnorderedAccessViews(0, 1, &uav, nullptr);
-		context->CSSetShader(lutgenCS.get(), nullptr, 0);
-		context->Dispatch(LUTDim >> 3, LUTDim >> 3, LUTDim >> 3);
+		context->CSSetShaderResources(0, (UINT)(settings.skipLUT ? 1 : 2), srvs.data());
+		context->CSSetShader(colorgradingCS.get(), nullptr, 0);
 
+		context->Dispatch((texColor->desc.Width + 7) >> 3, (texColor->desc.Height + 7) >> 3, 1);
+
+		// clean up
+		srvs.fill(nullptr);
 		uav = nullptr;
+		cb = nullptr;
 		context->CSSetUnorderedAccessViews(0, 1, &uav, nullptr);
+		context->CSSetShaderResources(0, 2, srvs.data());
+		context->CSSetConstantBuffers(1, 1, &cb);
 		context->CSSetShader(nullptr, nullptr, 0);
+
+		if (saveImagesFlag) {
+			saveImagesFlag = false;
+			OutputTextures();
+		}
+
+		inout_tex = { texColor->resource.get(), texColor->srv.get() };
 	}
-
-	// Apply Color Grading (via LUT or direct)
-	std::array<ID3D11ShaderResourceView*, 2> srvs = { inout_tex.srv, texLUT->srv.get() };
-	uav = texColor->uav.get();
-	context->CSSetUnorderedAccessViews(0, 1, &uav, nullptr);
-	context->CSSetShaderResources(0, (UINT)(settings.skipLUT ? 1 : 2), srvs.data());
-	context->CSSetShader(colorgradingCS.get(), nullptr, 0);
-
-	context->Dispatch((texColor->desc.Width + 7) >> 3, (texColor->desc.Height + 7) >> 3, 1);
-
-	// clean up
-	srvs.fill(nullptr);
-	uav = nullptr;
-	cb = nullptr;
-	context->CSSetUnorderedAccessViews(0, 1, &uav, nullptr);
-	context->CSSetShaderResources(0, 2, srvs.data());
-	context->CSSetConstantBuffers(1, 1, &cb);
-	context->CSSetShader(nullptr, nullptr, 0);
-
-	if (saveImagesFlag) {
-		saveImagesFlag = false;
-		OutputTextures();
-	}
-
-	inout_tex = { texColor->resource.get(), texColor->srv.get() };
-	globals::profiler->EndPass();
 
 	const bool curveReadbackActive =
 		Menu::GetSingleton()->IsEnabled &&

@@ -2,6 +2,7 @@
 
 #include <array>
 
+#include "Features/Bloom.h"
 #include "Features/CSUtility.h"
 #include "Features/CloudShadows.h"
 #include "Features/DynamicCubemaps.h"
@@ -23,6 +24,7 @@
 #include "Features/VanillaFresnel.h"
 #include "Features/WetnessEffects.h"
 #include "TruePBR.h"
+#include "Utils/Game.h"
 
 template <class... Ts>
 std::pair<unsigned char*, size_t> _GetFeatureBufferData(Ts... feat_datas)
@@ -45,6 +47,7 @@ std::pair<unsigned char*, size_t> _GetFeatureBufferData(Ts... feat_datas)
 
 std::pair<unsigned char*, size_t> GetFeatureBufferData(bool a_inWorld)
 {
+	const auto& bloomSettings = globals::features::csUtility.settings.bloomEnhancement;
 	return _GetFeatureBufferData(
 		globals::features::grassLighting.settings,
 		globals::features::extendedMaterials.settings,
@@ -66,5 +69,6 @@ std::pair<unsigned char*, size_t> GetFeatureBufferData(bool a_inWorld)
 		globals::features::truePBR.settings,
 		globals::features::skin.GetCommonBufferData(),
 		globals::features::vanillaFresnel.settings,
+		Bloom::GetCommonBufferData(bloomSettings),
 		globals::features::postProcessing.GetCommonBufferData());
 }

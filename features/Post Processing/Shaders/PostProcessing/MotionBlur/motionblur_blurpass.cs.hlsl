@@ -7,6 +7,7 @@
 
 #include "Common/FrameBuffer.hlsli"
 #include "Common/MotionBlur.hlsli"
+#include "Common/VR.hlsli"
 #include "PostProcessing/common.hlsli"
 
 // Textures and buffers
@@ -146,6 +147,10 @@ float2 GetVelocityTexCoord(float2 targetTexCoord)
 
 	float centerVelocityLen = length(centerVelocity);
 
+	// Blur direction can point anywhere and the radius can reach g_MaxBlurRadius
+	// pixels, which can cross the packed stereo buffer's eye seam; clamp per-eye.
+	uint eyeIndex = Stereo::GetEyeIndexFromTexCoord(texCoord);
+
 	// Initialize for sampling
 	float4 sum = float4(0.0f, 0.0f, 0.0f, 0.0f);
 	float pixelToSampleUnitsScale = float(g_SampleCount) / blurLength;
@@ -163,6 +168,8 @@ float2 GetVelocityTexCoord(float2 targetTexCoord)
 
 		float2 sampleTexCoordsFwd = (pixelPos + pixelOffsetFwd + 0.5f) / float2(dimensions);
 		float2 sampleTexCoordsBck = (pixelPos + pixelOffsetBck + 0.5f) / float2(dimensions);
+		sampleTexCoordsFwd = Stereo::ClampToEyeUV(sampleTexCoordsFwd, eyeIndex);
+		sampleTexCoordsBck = Stereo::ClampToEyeUV(sampleTexCoordsBck, eyeIndex);
 
 		// Sample depth and velocity
 		float sampleDepthFwd = TexDepth.SampleLevel(PointSampler, sampleTexCoordsFwd, 0);

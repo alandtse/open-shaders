@@ -44,7 +44,18 @@ public:
 	// directional shadow record so we want it to fail at compile time.
 	// 8 float4x4 (Shadow + Inv + Focus) + 2 float4 (splits + FocusCount/pad).
 	static_assert(sizeof(DirectionalShadowLightData) == 8 * sizeof(float4x4) + 2 * sizeof(float4),
-		"DirectionalShadowLightData layout drifted from ShadowSampling.hlsli mirror");
+		"DirectionalShadowLightData layout drifted from its HLSL mirrors in ShadowSampling.hlsli, "
+		"UpdateProbesCS.hlsl, and VolumetricFogLightScatteringCS.hlsl");
+	// The sizeof guard above only catches drift that changes total size, not field order --
+	// the two local struct copies below only depend on these leading fields staying in place.
+	static_assert(offsetof(DirectionalShadowLightData, ShadowProj) == 0,
+		"UpdateProbesCS.hlsl/VolumetricFogLightScatteringCS.hlsl mirror drifted: ShadowProj offset");
+	static_assert(offsetof(DirectionalShadowLightData, InvShadowProj) == 2 * sizeof(float4x4),
+		"UpdateProbesCS.hlsl/VolumetricFogLightScatteringCS.hlsl mirror drifted: InvShadowProj offset");
+	static_assert(offsetof(DirectionalShadowLightData, EndSplitDistances) == 4 * sizeof(float4x4),
+		"UpdateProbesCS.hlsl/VolumetricFogLightScatteringCS.hlsl mirror drifted: EndSplitDistances offset");
+	static_assert(offsetof(DirectionalShadowLightData, StartSplitDistances) == 4 * sizeof(float4x4) + sizeof(float2),
+		"UpdateProbesCS.hlsl/VolumetricFogLightScatteringCS.hlsl mirror drifted: StartSplitDistances offset");
 
 	struct alignas(16) ShadowLightData
 	{

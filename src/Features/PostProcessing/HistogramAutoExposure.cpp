@@ -1,5 +1,6 @@
 #include "HistogramAutoExposure.h"
 
+#include "GpuPass.h"
 #include "I18n/I18n.h"
 #include "Menu.h"
 #include "State.h"
@@ -271,7 +272,6 @@ void HistogramAutoExposure::Draw(TextureInfo& inout_tex)
 	};
 
 	context->CSSetConstantBuffers(1, 1, &cb);
-	globals::profiler->BeginPass("PostProcessing::HistogramAutoExposure");
 	state->BeginPerfEvent("Histogram Auto Exposure");
 
 	const bool histogramReadbackActive =
@@ -283,62 +283,66 @@ void HistogramAutoExposure::Draw(TextureInfo& inout_tex)
 		histogramReadbackRequested = false;
 
 	{
-		state->BeginPerfEvent("Calculate Histogram");
-		srvs[0] = inout_tex.srv;
-		uavs[0] = histogramSB->UAV();
-		uavs[1] = adaptationSB->UAV();
-
-		context->CSSetShaderResources(0, (UINT)srvs.size(), srvs.data());
-		context->CSSetUnorderedAccessViews(0, (UINT)uavs.size(), uavs.data(), nullptr);
-
-		// Calculate histogram
-		context->CSSetShader(histogramCS.get(), nullptr, 0);
-		uint texWidth = 0;
-		uint texHeight = 0;
+		// Scoped tighter than the perf event above: excludes the debug
+		// histogram-readback below from the profiled GPU cost.
+		CS_GPU_PASS("PostProcessing::HistogramAutoExposure");
 		{
-			D3D11_TEXTURE2D_DESC desc;
-			inout_tex.tex->GetDesc(&desc);
-			texWidth = desc.Width;
-			texHeight = desc.Height;
-		}
-		uint32_t dispatchX = ((texWidth - 1) >> 5) + 1;
-		uint32_t dispatchY = ((texHeight - 1) >> 5) + 1;
-		dispatchX = (dispatchX + 7) / 8;
-		dispatchY = (dispatchY + 7) / 8;
-
-		context->Dispatch(dispatchX, dispatchY, 1);
-
-		if (histogramReadbackActive && histogramStagingBuffer) {
-			uavs.fill(nullptr);
-			context->CSSetUnorderedAccessViews(0, (UINT)uavs.size(), uavs.data(), nullptr);
-
-			ID3D11Resource* histResource = nullptr;
-			histogramSB->UAV()->GetResource(&histResource);
-			context->CopyResource(histogramStagingBuffer.get(), histResource);
-			histResource->Release();
-
+			state->BeginPerfEvent("Calculate Histogram");
+			srvs[0] = inout_tex.srv;
 			uavs[0] = histogramSB->UAV();
 			uavs[1] = adaptationSB->UAV();
+
+			context->CSSetShaderResources(0, (UINT)srvs.size(), srvs.data());
 			context->CSSetUnorderedAccessViews(0, (UINT)uavs.size(), uavs.data(), nullptr);
+
+			// Calculate histogram
+			context->CSSetShader(histogramCS.get(), nullptr, 0);
+			uint texWidth = 0;
+			uint texHeight = 0;
+			{
+				D3D11_TEXTURE2D_DESC desc;
+				inout_tex.tex->GetDesc(&desc);
+				texWidth = desc.Width;
+				texHeight = desc.Height;
+			}
+			uint32_t dispatchX = ((texWidth - 1) >> 5) + 1;
+			uint32_t dispatchY = ((texHeight - 1) >> 5) + 1;
+			dispatchX = (dispatchX + 7) / 8;
+			dispatchY = (dispatchY + 7) / 8;
+
+			context->Dispatch(dispatchX, dispatchY, 1);
+
+			if (histogramReadbackActive && histogramStagingBuffer) {
+				uavs.fill(nullptr);
+				context->CSSetUnorderedAccessViews(0, (UINT)uavs.size(), uavs.data(), nullptr);
+
+				ID3D11Resource* histResource = nullptr;
+				histogramSB->UAV()->GetResource(&histResource);
+				context->CopyResource(histogramStagingBuffer.get(), histResource);
+				histResource->Release();
+
+				uavs[0] = histogramSB->UAV();
+				uavs[1] = adaptationSB->UAV();
+				context->CSSetUnorderedAccessViews(0, (UINT)uavs.size(), uavs.data(), nullptr);
+			}
+
+			// Calculate average
+			context->CSSetShader(histogramAvgCS.get(), nullptr, 0);
+			context->Dispatch(1, 1, 1);
+			state->EndPerfEvent();
 		}
 
-		// Calculate average
-		context->CSSetShader(histogramAvgCS.get(), nullptr, 0);
-		context->Dispatch(1, 1, 1);
-		state->EndPerfEvent();
+		// Clean up
+		resetViews();
+		cb = nullptr;
+		context->CSSetConstantBuffers(1, 1, &cb);
+		context->CSSetShader(nullptr, nullptr, 0);
+
+		// NOTE: We intentionally do NOT modify inout_tex here.
+		// The adaptation result is stored in adaptationSB and will be consumed
+		// by the Composite pass which applies exposure before color grading.
 	}
-
-	// Clean up
-	resetViews();
-	cb = nullptr;
-	context->CSSetConstantBuffers(1, 1, &cb);
-	context->CSSetShader(nullptr, nullptr, 0);
-
-	// NOTE: We intentionally do NOT modify inout_tex here.
-	// The adaptation result is stored in adaptationSB and will be consumed
-	// by the Composite pass which applies exposure before color grading.
 	state->EndPerfEvent();
-	globals::profiler->EndPass();
 
 	// Readback histogram and adaptation data when the histogram panel is open.
 	// histogramStagingBuffer was copied before CS_Average cleared the GPU histogram.

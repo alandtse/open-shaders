@@ -9,6 +9,24 @@ RWTexture3D<float4> LightScattering : register(u0);
 
 #include "Common/Random.hlsli"
 #include "ExponentialHeightFog/VolumetricFogCSCommon.hlsli"
+
+// Must stay byte-identical to the canonical mirror in ShadowSampling.hlsli -- a
+// StructuredBuffer bind requires matching element stride, not just a matching prefix.
+// Declared before the LightLimitFix include below: LightLimitFix.hlsli's
+// GetDirectionalShadow references these at global scope.
+struct DirectionalShadowLightData
+{
+	column_major float4x4 ShadowProj[2];
+	column_major float4x4 InvShadowProj[2];
+	float2 EndSplitDistances;
+	float2 StartSplitDistances;
+	column_major float4x4 FocusShadowProj[4];
+	uint FocusShadowCount;
+	uint3 _pad0;
+};
+
+StructuredBuffer<DirectionalShadowLightData> DirectionalShadowLights : register(t98);
+
 #include "IBL/IBL.hlsli"
 #if defined(TERRAIN_SHADOWS)
 #	include "TerrainShadows/TerrainShadows.hlsli"
@@ -22,16 +40,6 @@ RWTexture3D<float4> LightScattering : register(u0);
 #endif
 #define SKYLIGHTING_PROBE_REGISTER t50
 #include "Skylighting/Skylighting.hlsli"
-
-struct DirectionalShadowLightData
-{
-	column_major float4x4 ShadowProj[2];
-	column_major float4x4 InvShadowProj[2];
-	float2 EndSplitDistances;
-	float2 StartSplitDistances;
-};
-
-StructuredBuffer<DirectionalShadowLightData> DirectionalShadowLights : register(t98);
 
 // 4D PCG hash matching UE's Rand4DPCG32 (jcgt.org/published/0009/03/02/)
 uint4 Rand4DPCG32(int4 p)

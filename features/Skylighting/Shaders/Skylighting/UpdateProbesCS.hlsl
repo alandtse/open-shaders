@@ -3,15 +3,19 @@
 #include "Skylighting/Skylighting.hlsli"
 
 Texture2D<unorm float> srcOcclusionDepth : register(t0);
-Texture2DArray<float4> ShadowCascadeMap : register(t1);
 Texture2DArray<float4> ESRAMShadow : register(t3);
 
+// Must stay byte-identical to the canonical mirror in ShadowSampling.hlsli --
+// a StructuredBuffer bind requires matching element stride, not just a matching prefix.
 struct DirectionalShadowLightData
 {
 	column_major float4x4 ShadowProj[2];
 	column_major float4x4 InvShadowProj[2];
 	float2 EndSplitDistances;
 	float2 StartSplitDistances;
+	column_major float4x4 FocusShadowProj[4];
+	uint FocusShadowCount;
+	uint3 _pad0;
 };
 StructuredBuffer<DirectionalShadowLightData> DirectionalShadowLights : register(t2);
 
@@ -94,7 +98,9 @@ static const float3 noise3D[32] = {
 	}
 
 	// Shadow cascade sampling with bitmask accumulation
-	float4 cellCentreCS = mul(FrameBuffer::CameraViewProj, float4(cellCentreMS, 1));
+	// Mono dispatch shared by both eyes (see Skylighting::Prepass); eye index is
+	// arbitrary but harmless for this coarse world-space visibility test.
+	float4 cellCentreCS = mul(FrameBuffer::CameraViewProj[0], float4(cellCentreMS, 1));
 	float2 screenUV = (cellCentreCS.xy / cellCentreCS.w) * float2(0.5, -0.5) + 0.5;
 	bool onScreen = cellCentreCS.w > 0 && all(screenUV > 0) && all(screenUV < 1);
 
@@ -105,11 +111,11 @@ static const float3 noise3D[32] = {
 		uint bitIndex = SharedData::FrameCount % 32;
 		float3 jitteredMS = cellCentreMS + noise3D[bitIndex] * 128;
 
-		float ndcDepth = FrameBuffer::GetShadowDepth(jitteredMS);
+		float ndcDepth = FrameBuffer::GetShadowDepth(jitteredMS, 0);
 		float linearDepth = SharedData::GetScreenDepth(ndcDepth);
 
 		if (linearDepth > 0 && linearDepth < shadowData.EndSplitDistances.y) {
-			float3 positionWS = jitteredMS + FrameBuffer::CameraPosAdjust.xyz;
+			float3 positionWS = jitteredMS + FrameBuffer::CameraPosAdjust[0].xyz;
 
 			uint cascadeIndex = (linearDepth > shadowData.EndSplitDistances.x) ? 1u : 0u;
 
@@ -117,9 +123,7 @@ static const float3 noise3D[32] = {
 
 			positionLS.xy = saturate(positionLS.xy);
 
-			float cascadeShadow = ShadowCascadeMap.SampleCmpLevelZero(comparisonSampler, float3(positionLS.xy, cascadeIndex), positionLS.z);
-			float esramShadow = ESRAMShadow.SampleCmpLevelZero(comparisonSampler, float3(positionLS.xy, cascadeIndex), positionLS.z);
-			shadowSample = min(cascadeShadow, esramShadow);
+			shadowSample = ESRAMShadow.SampleCmpLevelZero(comparisonSampler, float3(positionLS.xy, cascadeIndex), positionLS.z);
 
 			float fade = saturate(linearDepth / shadowData.EndSplitDistances.y);
 			float fadeFactor = 1.0 - pow(fade * fade, 8);

@@ -219,7 +219,8 @@ namespace ShadowCasterManager
 
 		// --- Contribution-based caster culling ---
 
-		/// Culls casters whose camera angular screen size is below this threshold (0 disables).
+		/// Culls casters below this camera-relative screen size (radius / distance-to-viewer,
+		/// NOT angular size relative to the light itself) (0 disables).
 		float CasterCullAngularMin = 0.0f;
 
 		/// Converts lights whose overall on-screen relevance is below this floor to non-shadow (0 disables).

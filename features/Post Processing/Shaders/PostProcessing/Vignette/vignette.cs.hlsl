@@ -1,3 +1,5 @@
+#include "Common/VR.hlsli"
+
 RWTexture2D<float4> RWTexOut : register(u0);
 
 Texture2D<float4> TexColor : register(t0);
@@ -13,7 +15,12 @@ cbuffer VignetteCB : register(b1)
 
 	float2 uv = (tid + .5) * RcpDynRes.xy;
 
-	float cos_view = length((uv - .5) * float2(1, Params0.w));
+	// Vignette falloff is centered on the screen; in VR the packed stereo buffer's
+	// midpoint is the seam between eyes, not either eye's center, so recenter per-eye.
+	uint eyeIndex = Stereo::GetEyeIndexFromTexCoord(uv);
+	float2 eyeUV = Stereo::ConvertFromStereoUV(uv, eyeIndex);
+
+	float cos_view = length((eyeUV - .5) * float2(1, Params0.w));
 	cos_view = Params0.x * rsqrt(cos_view * cos_view + Params0.x * Params0.x);
 	float vignette = pow(max(cos_view, 0.0), Params0.z);
 

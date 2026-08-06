@@ -394,6 +394,8 @@ void PerformanceOverlay::DrawOverlay()
 	if (this->settings.ShowCSPasses) {
 		if (needsSeparator)
 			ImGui::Separator();
+		// RenderStatistics requests capture itself -- only pay query/QPC
+		// overhead while this row is actually visible.
 		ProfilingRenderer::RenderStatistics(false, false);
 		needsSeparator = true;
 	}
@@ -1601,6 +1603,11 @@ std::pair<std::vector<DrawCallRow>, std::vector<DrawCallRow>> PerformanceOverlay
 	if (std::abs(otherFrameTime) < 1e-4f)
 		otherFrameTime = 0.0f;
 
+	// Requesting here (not just from the ShowCSPasses row) keeps the "Other"
+	// bucket below from overstating by the un-subtracted CS-passes cost when
+	// draw calls are shown without the separate CS-passes row also visible.
+	if (this->settings.ShowDrawCalls)
+		globals::profiler->RequestCapture();
 	float csPassesTime = globals::profiler->GetTotalTimeMs();
 	float csPercent = smoothedFrameTime > 0.0f ? (csPassesTime / smoothedFrameTime) * 100.0f : 0.0f;
 	float remainingOtherTime = std::max(0.0f, otherFrameTime - csPassesTime);

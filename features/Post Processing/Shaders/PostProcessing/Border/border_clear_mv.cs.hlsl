@@ -1,4 +1,5 @@
 #include "Common/SharedData.hlsli"
+#include "Common/VR.hlsli"
 
 Texture2D<float> DepthTexture : register(t0);
 
@@ -23,7 +24,11 @@ cbuffer BorderCB : register(b1)
 	if (depth > depthThreshold || depthThreshold == 0.0f) {
 		// UV relative to the dynamic resolution viewport [0, 1]
 		float2 uv = (DTid.xy + 0.5f) / dynResDim;
-		if (uv.y < Scale.x || uv.y > (1 - Scale.y) || uv.x < Scale.z || uv.x > (1 - Scale.w)) {
+		// Left/right border thresholds are eye-relative; in VR the packed stereo
+		// buffer's raw x spans both eyes, so remap to the eye-local [0,1] range.
+		uint eyeIndex = Stereo::GetEyeIndexFromTexCoord(uv);
+		float2 eyeUV = Stereo::ConvertFromStereoUV(uv, eyeIndex);
+		if (uv.y < Scale.x || uv.y > (1 - Scale.y) || eyeUV.x < Scale.z || eyeUV.x > (1 - Scale.w)) {
 			MotionTexture[DTid.xy] = float4(0.0, 0.0, 0.0, 1.0);
 		}
 	}

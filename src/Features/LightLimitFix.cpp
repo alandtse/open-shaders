@@ -8,12 +8,14 @@
 #include "InverseSquareLighting.h"
 #include "LinearLighting.h"
 #include "Menu/PerformanceRenderer.h"
+#include "Profiler.h"
 #include "Utils/UI.h"
 
 #include "Deferred.h"
 #include "Menu/ThemeManager.h"
 #include "Shadercache.h"
 #include "State.h"
+#include "Utils/D3D.h"
 #include "Utils/ExternalEmittance.h"
 
 #include <algorithm>
@@ -585,6 +587,8 @@ void LightLimitFix::SetupResources()
 
 void LightLimitFix::Reset()
 {
+	effectLightValidationCache.clear();
+
 	std::lock_guard<std::mutex> queueLock{ particleLightsQueueMutex };
 
 	for (auto& particleLight : currentParticleLights) {
@@ -1008,55 +1012,103 @@ void LightLimitFix::UpdateLights()
 	const bool isInterior = Util::IsInterior();
 	RefreshJsonPlacedLightCacheFrame();
 
-	// Process point lights
+	{
+		CS_PROFILE_CPU_SCOPE(globals::profiler, "LightLimitFix::SceneLightsCPU");
 
-	roomNodes.clear();
+		// Process point lights
 
-	auto addRoom = [&](RE::NiNode* node, LightData& light) {
-		if (!node)
-			return;
+		roomNodes.clear();
 
-		constexpr std::size_t kMaxRoomFlags = 128;
-		uint8_t roomIndex = 0;
-		if (auto it = roomNodes.find(node); it == roomNodes.cend()) {
-			if (roomNodes.size() >= kMaxRoomFlags)
+		auto addRoom = [&](RE::NiNode* node, LightData& light) {
+			if (!node)
 				return;
-			roomIndex = static_cast<uint8_t>(roomNodes.size());
-			roomNodes.insert_or_assign(node, roomIndex);
-		} else {
-			roomIndex = it->second;
-		}
-		light.roomFlags.SetBit(roomIndex, 1);
-	};
 
-	// Hover-pulse helper: if the table has a hovered row matching this light's
-	// pointer, replace the cluster colour with a magenta pulse so the user can
-	// see which light a row corresponds to in 3D. Pulse cycles ~once per second
-	// using ImGui::GetTime() for a stable visual signal.
-	auto applyDebugOverrides = [](LightData& light, const void* lightPtr) {
-		const auto key = reinterpret_cast<uintptr_t>(lightPtr);
-		auto hoverKey = ShadowCasterManager::GetHoveredLight();
-		if (hoverKey != 0 && key == hoverKey) {
-			float t = 0.5f + 0.5f * std::sin(static_cast<float>(ImGui::GetTime()) * 6.2831853f);
-			light.color = { 1.0f, 0.0f, 1.0f };  // magenta
-			light.fade = 4.0f + t * 4.0f;        // pulsed intensity
-		} else if (ShadowCasterManager::IsHighlighted(key)) {
-			// Steady magenta on every light in the selected highlight group
-			// (populated by the table's group-button hover), distinct from
-			// the single pulsing hover light.
-			light.color = { 1.0f, 0.0f, 1.0f };
-		}
-	};
-
-	auto addLight = [&](const RE::NiPointer<RE::BSLight>& e) {
-		if (auto bsLight = e.get()) {
-			if (auto niLight = bsLight->light.get()) {
-				// IsSuppressed includes solo (every key except the soloed one is
-				// implicitly suppressed). This filters every non-shadow cluster
-				// light through the user's debug overrides.
-				if (ShadowCasterManager::IsSuppressed(reinterpret_cast<uintptr_t>(bsLight)))
+			constexpr std::size_t kMaxRoomFlags = 128;
+			uint8_t roomIndex = 0;
+			if (auto it = roomNodes.find(node); it == roomNodes.cend()) {
+				if (roomNodes.size() >= kMaxRoomFlags)
 					return;
-				if (IsValidLight(bsLight)) {
+				roomIndex = static_cast<uint8_t>(roomNodes.size());
+				roomNodes.insert_or_assign(node, roomIndex);
+			} else {
+				roomIndex = it->second;
+			}
+			light.roomFlags.SetBit(roomIndex, 1);
+		};
+
+		// Hover-pulse helper: if the table has a hovered row matching this light's
+		// pointer, replace the cluster colour with a magenta pulse so the user can
+		// see which light a row corresponds to in 3D. Pulse cycles ~once per second
+		// using ImGui::GetTime() for a stable visual signal.
+		auto applyDebugOverrides = [](LightData& light, const void* lightPtr) {
+			const auto key = reinterpret_cast<uintptr_t>(lightPtr);
+			auto hoverKey = ShadowCasterManager::GetHoveredLight();
+			if (hoverKey != 0 && key == hoverKey) {
+				float t = 0.5f + 0.5f * std::sin(static_cast<float>(ImGui::GetTime()) * 6.2831853f);
+				light.color = { 1.0f, 0.0f, 1.0f };  // magenta
+				light.fade = 4.0f + t * 4.0f;        // pulsed intensity
+			} else if (ShadowCasterManager::IsHighlighted(key)) {
+				// Steady magenta on every light in the selected highlight group
+				// (populated by the table's group-button hover), distinct from
+				// the single pulsing hover light.
+				light.color = { 1.0f, 0.0f, 1.0f };
+			}
+		};
+
+		auto addLight = [&](const RE::NiPointer<RE::BSLight>& e) {
+			if (auto bsLight = e.get()) {
+				if (auto niLight = bsLight->light.get()) {
+					// IsSuppressed includes solo (every key except the soloed one is
+					// implicitly suppressed). This filters every non-shadow cluster
+					// light through the user's debug overrides.
+					if (ShadowCasterManager::IsSuppressed(reinterpret_cast<uintptr_t>(bsLight)))
+						return;
+					if (IsValidLight(bsLight)) {
+						auto& runtimeData = niLight->GetLightRuntimeData();
+
+						LightData light{};
+						light.color = { runtimeData.diffuse.red, runtimeData.diffuse.green, runtimeData.diffuse.blue };
+						light.lightFlags = std::bit_cast<LightFlags>(runtimeData.ambient.red);
+
+						if (isl.loaded) {
+							isl.ProcessLight(light, bsLight, niLight);
+						} else {
+							light.radius = runtimeData.radius.x;
+							light.fade = runtimeData.fade;
+						}
+
+						SetPointLightTypeFlags(light, bsLight);
+						light.fade *= bsLight->lodDimmer;
+						const bool isPortalStrict = !IsGlobalLight(bsLight);
+
+						if (isPortalStrict) {
+							for (const auto& roomPtr : bsLight->rooms) {
+								if (roomPtr)
+									addRoom(static_cast<RE::NiNode*>(roomPtr), light);
+							}
+							for (const auto& portalPtr : bsLight->portals) {
+								if (portalPtr && portalPtr->portalSharedNode)
+									addRoom(static_cast<RE::NiNode*>(portalPtr->portalSharedNode.get()), light);
+							}
+							light.lightFlags.set(LightFlags::PortalStrict);
+						}
+						ApplyJsonPlacedLightIntensityScale(light, bsLight, niLight, isPortalStrict, isInterior);
+
+						SetLightPosition(light, niLight->world.translate);
+
+						applyDebugOverrides(light, bsLight);
+
+						if ((light.color.x + light.color.y + light.color.z) * light.fade > 1e-4 && light.radius > 1e-4) {
+							lightsData.push_back(light);
+						}
+					}
+				}
+			}
+		};
+
+		auto addShadowLight = [&](RE::BSShadowLight* shadowLight, bool castsShadow, uint32_t shadowSlot = 0) {
+			if (IsValidLight(shadowLight)) {
+				if (auto niLight = shadowLight->light.get()) {
 					auto& runtimeData = niLight->GetLightRuntimeData();
 
 					LightData light{};
@@ -1064,188 +1116,150 @@ void LightLimitFix::UpdateLights()
 					light.lightFlags = std::bit_cast<LightFlags>(runtimeData.ambient.red);
 
 					if (isl.loaded) {
-						isl.ProcessLight(light, bsLight, niLight);
+						isl.ProcessLight(light, shadowLight, niLight);
 					} else {
 						light.radius = runtimeData.radius.x;
+						// light.color *= runtimeData.fade;
 						light.fade = runtimeData.fade;
 					}
 
-					SetPointLightTypeFlags(light, bsLight);
-					light.fade *= bsLight->lodDimmer;
-					const bool isPortalStrict = !IsGlobalLight(bsLight);
+					SetPointLightTypeFlags(light, shadowLight);
+					light.fade *= shadowLight->lodDimmer;
 
-					if (isPortalStrict) {
-						for (const auto& roomPtr : bsLight->rooms) {
-							if (roomPtr)
-								addRoom(static_cast<RE::NiNode*>(roomPtr), light);
+					if (!IsGlobalLight(shadowLight)) {
+						// List of BSMultiBoundRooms affected by a light
+						for (const auto& roomPtr : shadowLight->rooms) {
+							addRoom(roomPtr, light);
 						}
-						for (const auto& portalPtr : bsLight->portals) {
-							if (portalPtr && portalPtr->portalSharedNode)
-								addRoom(static_cast<RE::NiNode*>(portalPtr->portalSharedNode.get()), light);
+						// List of BSPortals affected by a light
+						for (const auto& portalPtr : shadowLight->portals) {
+							addRoom(portalPtr->portalSharedNode.get(), light);
 						}
 						light.lightFlags.set(LightFlags::PortalStrict);
 					}
-					ApplyJsonPlacedLightIntensityScale(light, bsLight, niLight, isPortalStrict, isInterior);
+
+					if (castsShadow) {
+						// Use the caller-provided stable slot index from s_lights
+						// rather than shadowmapDescriptors[0].shadowmapIndex, which
+						// can drift relative to our scheduler-assigned slot when
+						// ReturnShadowmaps fires between scheduling and lighting.
+						light.shadowMapIndex = shadowSlot;
+						light.lightFlags.set(LightFlags::Shadow);
+					}
 
 					SetLightPosition(light, niLight->world.translate);
 
-					applyDebugOverrides(light, bsLight);
+					applyDebugOverrides(light, shadowLight);
 
 					if ((light.color.x + light.color.y + light.color.z) * light.fade > 1e-4 && light.radius > 1e-4) {
 						lightsData.push_back(light);
 					}
 				}
 			}
+		};
+
+		// Single pass over shadowLightsAccum:
+		//   - Builds shadowLightPtrs so activeLights below skips lights already added here.
+		//   - Calls addShadowLight for each logical light.
+		// EnableLight calls both GameEnableLight (→ activeLights) and
+		// GameSetShadowCasterSlot (→ shadowLightsAccum) for redrawn lights, so without
+		// the skip below each redrawn shadow light would be added twice.
+		//
+		// Static reuses the bucket array across frames -- a local set would
+		// destroy + recreate its buckets every frame, defeating the reserve().
+		// Dense layout avoids the per-insert node allocation a std::unordered_set
+		// would incur. Upper bound is the configured kSHADOWMAPS slot count;
+		// shadowLightsAccum is sized to hold at most that many distinct point/spot
+		// lights (sun occupies one logical entry but no kSHADOWMAPS slice, hence
+		// the belt-and-braces +1).
+		static ankerl::unordered_dense::set<RE::BSLight*> shadowLightPtrs;
+		shadowLightPtrs.clear();
+		shadowLightPtrs.reserve(ShadowCasterManager::GetInstalledSlotCount() + 1);
+		ShadowCasterManager::ForEachShadowLight(shadowSceneNode->GetRuntimeData().shadowLightsAccum,
+			[&](RE::BSShadowLight* light) {
+				shadowLightPtrs.insert(light);
+				// GetShadowSlot returns the kSHADOWMAPS texture slot:
+				//   -1 : sun (no kSHADOWMAPS slice — sun shadows live in kSHADOWMAPS_ESRAM
+				//        and are sampled via the directional cascade path, not the cluster
+				//        loop). Skip cluster injection entirely. The sun stays in
+				//        shadowLightPtrs so the activeLights loop below doesn't re-add it.
+				//   >=0: kSHADOWMAPS slice index (0..ShadowMapSlots-1) post-reclaim.
+				int32_t stableSlot = ShadowCasterManager::GetShadowSlot(light);
+				if (stableSlot < 0)
+					return;
+				bool castsShadow = static_cast<uint32_t>(stableSlot) < ShadowCasterManager::GetInstalledSlotCount();
+				addShadowLight(light, castsShadow, castsShadow ? static_cast<uint32_t>(stableSlot) : 0u);
+			});
+
+		for (auto& e : shadowSceneNode->GetRuntimeData().activeLights) {
+			if (auto bsLight = e.get(); bsLight && shadowLightPtrs.count(bsLight))
+				continue;  // shadow light: already added above with correct Shadow flag
+			addLight(e);
 		}
-	};
 
-	auto addShadowLight = [&](RE::BSShadowLight* shadowLight, bool castsShadow, uint32_t shadowSlot = 0) {
-		if (IsValidLight(shadowLight)) {
-			if (auto niLight = shadowLight->light.get()) {
-				auto& runtimeData = niLight->GetLightRuntimeData();
-
-				LightData light{};
-				light.color = { runtimeData.diffuse.red, runtimeData.diffuse.green, runtimeData.diffuse.blue };
-				light.lightFlags = std::bit_cast<LightFlags>(runtimeData.ambient.red);
-
-				if (isl.loaded) {
-					isl.ProcessLight(light, shadowLight, niLight);
-				} else {
-					light.radius = runtimeData.radius.x;
-					// light.color *= runtimeData.fade;
-					light.fade = runtimeData.fade;
-				}
-
-				SetPointLightTypeFlags(light, shadowLight);
-				light.fade *= shadowLight->lodDimmer;
-
-				if (!IsGlobalLight(shadowLight)) {
-					// List of BSMultiBoundRooms affected by a light
-					for (const auto& roomPtr : shadowLight->rooms) {
-						addRoom(roomPtr, light);
-					}
-					// List of BSPortals affected by a light
-					for (const auto& portalPtr : shadowLight->portals) {
-						addRoom(portalPtr->portalSharedNode.get(), light);
-					}
-					light.lightFlags.set(LightFlags::PortalStrict);
-				}
-
-				if (castsShadow) {
-					// Use the caller-provided stable slot index from s_lights
-					// rather than shadowmapDescriptors[0].shadowmapIndex, which
-					// can drift relative to our scheduler-assigned slot when
-					// ReturnShadowmaps fires between scheduling and lighting.
-					light.shadowMapIndex = shadowSlot;
-					light.lightFlags.set(LightFlags::Shadow);
-				}
-
-				SetLightPosition(light, niLight->world.translate);
-
-				applyDebugOverrides(light, shadowLight);
-
-				if ((light.color.x + light.color.y + light.color.z) * light.fade > 1e-4 && light.radius > 1e-4) {
-					lightsData.push_back(light);
-				}
-			}
-		}
-	};
-
-	// Single pass over shadowLightsAccum:
-	//   - Builds shadowLightPtrs so activeLights below skips lights already added here.
-	//   - Calls addShadowLight for each logical light.
-	// EnableLight calls both GameEnableLight (→ activeLights) and
-	// GameSetShadowCasterSlot (→ shadowLightsAccum) for redrawn lights, so without
-	// the skip below each redrawn shadow light would be added twice.
-	//
-	// Static reuses the bucket array across frames -- a local set would
-	// destroy + recreate its buckets every frame, defeating the reserve().
-	// Dense layout avoids the per-insert node allocation a std::unordered_set
-	// would incur. Upper bound is the configured kSHADOWMAPS slot count;
-	// shadowLightsAccum is sized to hold at most that many distinct point/spot
-	// lights (sun occupies one logical entry but no kSHADOWMAPS slice, hence
-	// the belt-and-braces +1).
-	static ankerl::unordered_dense::set<RE::BSLight*> shadowLightPtrs;
-	shadowLightPtrs.clear();
-	shadowLightPtrs.reserve(ShadowCasterManager::GetInstalledSlotCount() + 1);
-	ShadowCasterManager::ForEachShadowLight(shadowSceneNode->GetRuntimeData().shadowLightsAccum,
-		[&](RE::BSShadowLight* light) {
-			shadowLightPtrs.insert(light);
-			// GetShadowSlot returns the kSHADOWMAPS texture slot:
-			//   -1 : sun (no kSHADOWMAPS slice — sun shadows live in kSHADOWMAPS_ESRAM
-			//        and are sampled via the directional cascade path, not the cluster
-			//        loop). Skip cluster injection entirely. The sun stays in
-			//        shadowLightPtrs so the activeLights loop below doesn't re-add it.
-			//   >=0: kSHADOWMAPS slice index (0..ShadowMapSlots-1) post-reclaim.
-			int32_t stableSlot = ShadowCasterManager::GetShadowSlot(light);
-			if (stableSlot < 0)
+		// Converted shadow lights (shadow lights demoted to normal-light overflow handling
+		// via SCM's ConvertExcessToNormal) live in the engine's activeShadowLights list
+		// (offset 0x148) — verified via Ghidra against ShadowSceneNode AE 1.6.1170. They
+		// are NOT migrated to activeLights (0x130) when our Hook_IsShadowLight reports
+		// false, because the engine's AddLight just searches the existing wrappers and
+		// activates the matching one in-place rather than moving entries between lists.
+		//
+		// Iterate SCM's s_normalConvert directly rather than scanning activeShadowLights:
+		// only lights actually in s_normalConvert are intended to render as non-shadow.
+		// activeShadowLights also contains BSShadowLights that are merely active shadow
+		// casters this frame (already handled via shadowLightsAccum above), and could in
+		// principle contain disabled-but-not-yet-removed entries. Iterating the convert
+		// list is both tighter (no false positives) and cheaper.
+		//
+		// Without this, ConvertExcessToNormal lights have no entry in the cluster
+		// lightsData[] and never render — the user-visible "converted lights are
+		// invisible" symptom.
+		ShadowCasterManager::ForEachConvertedLight([&](RE::BSShadowLight* light) {
+			auto* asBs = static_cast<RE::BSLight*>(light);
+			if (shadowLightPtrs.count(asBs))
+				return;  // simultaneously a shadow caster this frame; already added
+			// Honour the user's suppression toggle in the shadow caster table:
+			// converted lights share the same lightKey suppression set as shadow
+			// lights, so suppressing one in the table hides it whether it's
+			// rendering as a shadow caster or demoted to non-shadow.
+			if (ShadowCasterManager::IsSuppressed(reinterpret_cast<uintptr_t>(light)))
 				return;
-			bool castsShadow = static_cast<uint32_t>(stableSlot) < ShadowCasterManager::GetInstalledSlotCount();
-			addShadowLight(light, castsShadow, castsShadow ? static_cast<uint32_t>(stableSlot) : 0u);
+			// Engine zeroes lodDimmer when its shadow-distance LOD cull fires
+			// (BSShadowParabolicLight_UpdateCamera test 2, gated on the lodFade
+			// flag -- not a visibility test, see ShadowCasterManager.cpp's
+			// Ghidra-verified comment). Without restoration, addLight()'s
+			// `light.fade *= lodDimmer` would zero the contribution and the
+			// (color*fade > 1e-4) filter would drop the light entirely.
+			//
+			// Restore only when fully zeroed. Any smooth fade value the engine
+			// set (between 0 and 1) is preserved -- those represent the engine's
+			// own gradual distance attenuation, which is correct to honour for
+			// cluster lighting. Overriding unconditionally was producing
+			// distant always-full-bright converted lights that ignored the
+			// engine's intended fade-with-distance.
+			if (light->lodDimmer == 0.0f)
+				light->lodDimmer = 1.0f;
+			addLight(RE::NiPointer<RE::BSLight>(asBs));
 		});
-
-	for (auto& e : shadowSceneNode->GetRuntimeData().activeLights) {
-		if (auto bsLight = e.get(); bsLight && shadowLightPtrs.count(bsLight))
-			continue;  // shadow light: already added above with correct Shadow flag
-		addLight(e);
 	}
 
-	// Converted shadow lights (shadow lights demoted to normal-light overflow handling
-	// via SCM's ConvertExcessToNormal) live in the engine's activeShadowLights list
-	// (offset 0x148) — verified via Ghidra against ShadowSceneNode AE 1.6.1170. They
-	// are NOT migrated to activeLights (0x130) when our Hook_IsShadowLight reports
-	// false, because the engine's AddLight just searches the existing wrappers and
-	// activates the matching one in-place rather than moving entries between lists.
-	//
-	// Iterate SCM's s_normalConvert directly rather than scanning activeShadowLights:
-	// only lights actually in s_normalConvert are intended to render as non-shadow.
-	// activeShadowLights also contains BSShadowLights that are merely active shadow
-	// casters this frame (already handled via shadowLightsAccum above), and could in
-	// principle contain disabled-but-not-yet-removed entries. Iterating the convert
-	// list is both tighter (no false positives) and cheaper.
-	//
-	// Without this, ConvertExcessToNormal lights have no entry in the cluster
-	// lightsData[] and never render — the user-visible "converted lights are
-	// invisible" symptom.
-	ShadowCasterManager::ForEachConvertedLight([&](RE::BSShadowLight* light) {
-		auto* asBs = static_cast<RE::BSLight*>(light);
-		if (shadowLightPtrs.count(asBs))
-			return;  // simultaneously a shadow caster this frame; already added
-		// Honour the user's suppression toggle in the shadow caster table:
-		// converted lights share the same lightKey suppression set as shadow
-		// lights, so suppressing one in the table hides it whether it's
-		// rendering as a shadow caster or demoted to non-shadow.
-		if (ShadowCasterManager::IsSuppressed(reinterpret_cast<uintptr_t>(light)))
-			return;
-		// Engine zeroes lodDimmer when its shadow-distance LOD cull fires
-		// (BSShadowParabolicLight_UpdateCamera test 2, gated on the lodFade
-		// flag -- not a visibility test, see ShadowCasterManager.cpp's
-		// Ghidra-verified comment). Without restoration, addLight()'s
-		// `light.fade *= lodDimmer` would zero the contribution and the
-		// (color*fade > 1e-4) filter would drop the light entirely.
-		//
-		// Restore only when fully zeroed. Any smooth fade value the engine
-		// set (between 0 and 1) is preserved -- those represent the engine's
-		// own gradual distance attenuation, which is correct to honour for
-		// cluster lighting. Overriding unconditionally was producing
-		// distant always-full-bright converted lights that ignored the
-		// engine's intended fade-with-distance.
-		if (light->lodDimmer == 0.0f)
-			light->lodDimmer = 1.0f;
-		addLight(RE::NiPointer<RE::BSLight>(asBs));
-	});
-
-	ProcessQueuedParticleLights(lightsData);
+	{
+		CS_PROFILE_CPU_SCOPE(globals::profiler, "LightLimitFix::ParticleLightsCPU");
+		ProcessQueuedParticleLights(lightsData);
+	}
 
 	lightCount = std::min((uint)lightsData.size(), MAX_LIGHTS);
 	clusteredLightCount.store(lightCount, std::memory_order_relaxed);
 
-	D3D11_MAPPED_SUBRESOURCE mapped;
-	DX::ThrowIfFailed(context->Map(lights->resource.get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped));
-	size_t bytes = sizeof(LightData) * lightCount;
-	if (bytes > 0)
-		memcpy_s(mapped.pData, bytes, lightsData.data(), bytes);
-	context->Unmap(lights->resource.get(), 0);
+	{
+		CS_PROFILE_CPU_SCOPE(globals::profiler, "LightLimitFix::UploadLightsCPU");
+		D3D11_MAPPED_SUBRESOURCE mapped;
+		DX::ThrowIfFailed(context->Map(lights->resource.get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped));
+		size_t bytes = sizeof(LightData) * lightCount;
+		if (bytes > 0)
+			memcpy_s(mapped.pData, bytes, lightsData.data(), bytes);
+		context->Unmap(lights->resource.get(), 0);
+	}
 
 	UpdateStructure();
 
@@ -1365,22 +1379,18 @@ namespace
 		return true;
 	}
 
-	// SEH-guarded read of sceneLights[0]->light. The pointer-value plausibility
-	// check can't distinguish a live BSLight from a stale-but-canonical one, so
-	// reading dirLight->light can itself AV (#92). Treat any fault as "no NiLight"
-	// so the caller skips the engine's null-deref path instead of crashing in the
-	// guard. Kept in its own function (no C++ unwinding objects) per MSVC's __try
-	// restriction. Matches the __except(1) AV-guard pattern used elsewhere here.
-	RE::NiLight* SafeReadDirectionalNiLight(RE::BSLight* dirLight)
+	// Pointer plausibility cannot distinguish a live BSLight from stale mapped memory.
+	// Keep the SEH read free of C++ unwinding objects for MSVC's __try restriction.
+	RE::NiLight* SafeReadNiLight(RE::BSLight* a_light)
 	{
 #if defined(_MSC_VER)
 		__try {
-			return dirLight->light.get();
+			return a_light->light.get();
 		} __except (1) {
 			return nullptr;
 		}
 #else
-		return dirLight->light.get();
+		return a_light->light.get();
 #endif
 	}
 }
@@ -1396,7 +1406,7 @@ void LightLimitFix::Hooks::BSLightingShader_SetupGeometry::thunk(RE::BSShader* T
 		RE::BSLight* dirLight = (Pass->numLights > 0 && Pass->sceneLights) ? Pass->sceneLights[0] : nullptr;
 		// A stale-but-canonical dirLight passes the pointer-value check yet still AVs on
 		// dirLight->light, so capture the NiLight under SEH and reuse it below (no second deref).
-		RE::NiLight* niLight = IsPlausibleShadowLightPtr(reinterpret_cast<std::uintptr_t>(dirLight)) ? SafeReadDirectionalNiLight(dirLight) : nullptr;
+		RE::NiLight* niLight = IsPlausibleShadowLightPtr(reinterpret_cast<std::uintptr_t>(dirLight)) ? SafeReadNiLight(dirLight) : nullptr;
 		if (Pass->numLights == 0 || !IsSafeDirectionalNiLight(niLight)) {
 			directionalSlotSafe = false;
 			// One stale light is hit by many passes per frame; dedupe on the NiLight value
@@ -1459,16 +1469,22 @@ namespace
 
 void LightLimitFix::Hooks::BSEffectShader_SetupGeometry::thunk(RE::BSShader* This, RE::BSRenderPass* Pass, uint32_t RenderFlags)
 {
-	// Defensive guard: BSEffectShader::SetupGeometry derefs Pass->sceneLights[i]->light->fade with
-	// no null check, and sceneLights[] is a raw BSLight** that can outlive its lights (recycled
-	// garbage, or a half-destroyed BSLight with NULL NiLight -> AV). Clamp numLights to the entries
-	// the engine can safely deref: cheap range/alignment check, then a VirtualQuery readability
-	// probe (the real boundary -- a freed light passes the cheap checks but points to unmapped
-	// memory). Entries failing any check stop the loop, matching the engine's bail-on-first-bad.
+	// Validate each raw scene-light pair on first use per frame; cache hits still SEH-read the
+	// BSLight field so unmapped or changed entries fall back to the full guard.
 	if (Pass && Pass->sceneLights && Pass->numLights > 0) {
 		std::uint8_t validCount = 0;
+		auto& validationCache = globals::features::lightLimitFix.effectLightValidationCache;
 		for (std::uint8_t i = 0; i < Pass->numLights; ++i) {
 			RE::BSLight* bsLight = Pass->sceneLights[i];
+			if (const auto cached = validationCache.find(bsLight); cached != validationCache.end()) {
+				const auto currentNiLight = SafeReadNiLight(bsLight);
+				if (currentNiLight == cached->second) {
+					++validCount;
+					continue;
+				}
+				validationCache.erase(cached);
+			}
+
 			if (!IsSafeLightRange(bsLight, kBSLightEngineReadSize)) {
 				static int loggedBsLight = 0;
 				if (loggedBsLight++ < 10) {
@@ -1479,7 +1495,7 @@ void LightLimitFix::Hooks::BSEffectShader_SetupGeometry::thunk(RE::BSShader* Thi
 				}
 				break;
 			}
-			RE::NiLight* niLight = bsLight->light.get();
+			RE::NiLight* niLight = SafeReadNiLight(bsLight);
 			if (!IsSafeLightRange(niLight, kNiLightEngineReadSize)) {
 				// Catches both NULL (engine cleared the NiPointer) and
 				// garbage (BSLight memory recycled). NULL is the more common
@@ -1497,6 +1513,8 @@ void LightLimitFix::Hooks::BSEffectShader_SetupGeometry::thunk(RE::BSShader* Thi
 				}
 				break;
 			}
+
+			validationCache.insert_or_assign(bsLight, niLight);
 			++validCount;
 		}
 		if (validCount < Pass->numLights)
@@ -1513,6 +1531,10 @@ void LightLimitFix::Hooks::BSEffectShader_SetupGeometry::thunk(RE::BSShader* Thi
 void LightLimitFix::Hooks::BSWaterShader_SetupGeometry::thunk(RE::BSShader* This, RE::BSRenderPass* Pass, uint32_t RenderFlags)
 {
 	func(This, Pass, RenderFlags);
+	// CloudShadows leaves cubemap depth in t17 without restoring it; rebind the 16-bit
+	// scene depth the contact-shadow raymarch expects.
+	auto* srv = Util::GetCurrentSceneDepthSRV(true);
+	globals::d3d::context->PSSetShaderResources(17, 1, &srv);
 	auto& singleton = globals::features::lightLimitFix;
 	singleton.BSLightingShader_SetupGeometry_Before(Pass);
 	singleton.BSLightingShader_SetupGeometry_After(Pass);

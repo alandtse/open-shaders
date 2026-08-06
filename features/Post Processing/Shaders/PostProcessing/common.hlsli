@@ -208,11 +208,18 @@ float3 CorrectOutOfRangeColor(float3 Color, float3 LuminanceVec)
 	return Color;
 }
 
+static const float3 kChromaticAberrationInfluence = float3(0.04, 0.0, 0.03);
+
+void GetChromaticAberrationUVs(float2 texcoord, float strength, out float2 uvR, out float2 uvB)
+{
+	uvR = (texcoord - 0.5) * (1.0 - strength * kChromaticAberrationInfluence.r) + 0.5;
+	uvB = (texcoord - 0.5) * (1.0 + strength * kChromaticAberrationInfluence.b) + 0.5;
+}
+
 float4 SampleCA(Texture2D tex, SamplerState samp, float2 texcoord, float strength, uint mipLevel)
 {
-	float3 influence = float3(0.04, 0.0, 0.03);
-	float2 CAr = (texcoord - 0.5) * (1.0 - strength * influence.r) + 0.5;
-	float2 CAb = (texcoord - 0.5) * (1.0 + strength * influence.b) + 0.5;
+	float2 CAr, CAb;
+	GetChromaticAberrationUVs(texcoord, strength, CAr, CAb);
 
 	float4 color;
 	color.r = tex.SampleLevel(samp, CAr, mipLevel).r;

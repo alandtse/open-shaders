@@ -31,7 +31,7 @@ if not exist "%VSWHERE%" (
     echo ERROR: vswhere.exe not found; run from a VS x64 developer prompt instead
     exit /b 1
 )
-"%VSWHERE%" -latest -products * -property installationPath > "%TEMP%\cs_vsinstall.txt"
+"%VSWHERE%" -latest -prerelease -products * -property installationPath > "%TEMP%\cs_vsinstall.txt"
 set /p VSINSTALL=<"%TEMP%\cs_vsinstall.txt"
 del "%TEMP%\cs_vsinstall.txt" >nul 2>&1
 if not defined VSINSTALL (

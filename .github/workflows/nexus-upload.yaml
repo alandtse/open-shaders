@@ -559,8 +559,13 @@ jobs:
             file_category: main
             display_name: ${{ matrix.mod_filename }}
             description: ${{ matrix.file_description || '' }}
-            # New AIO becomes the main file; archive the prior version's main.
-            archive_existing_file: true
+            # Nexus already keeps a superseded version visible in the file's version
+            # history, marked "old", without this. Setting it true instead hides the
+            # prior AIO entirely, which is not what we want here.
+            archive_existing_file: false
+            # New AIO is the mod's current version and its default download.
+            update_mod_version: true
+            primary_mod_manager_download: true
             check_existing: true
             nexus_mod_id: ${{ matrix.nexus_mod_id }}
             nexus_game_id: ${{ inputs.nexus_game_id || 'skyrimspecialedition' }}

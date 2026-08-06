@@ -145,6 +145,11 @@ void VolumetricLighting::LoadSettings(json& o_json)
 	settings = o_json;
 	settings.ExteriorQuality = std::clamp(settings.ExteriorQuality, 0, static_cast<int32_t>(Quality::Count) - 1);
 	settings.InteriorQuality = std::clamp(settings.InteriorQuality, 0, static_cast<int32_t>(Quality::Count) - 1);
+	// Mirror the menu toggle's immediate refresh. initialised gates this: EarlyPrepass's
+	// first run always calls SetupVL itself and is what establishes inInterior, so a
+	// settings load before that has run would otherwise set up the wrong interior/exterior.
+	if (loaded && initialised && gVolumetricLightingSizeHigh)
+		SetupVL();
 }
 
 void VolumetricLighting::SaveSettings(json& o_json)
@@ -157,6 +162,10 @@ void VolumetricLighting::RestoreDefaultSettings()
 	settings = {};
 	if (globals::game::isVR)
 		Util::ResetGameSettingsToDefaults(hiddenVRSettings);
+	// Same staleness fix as LoadSettings: without this, "Restore Defaults" doesn't
+	// take effect until the next interior/exterior transition.
+	if (loaded && initialised && gVolumetricLightingSizeHigh)
+		SetupVL();
 }
 
 void VolumetricLighting::DataLoaded()

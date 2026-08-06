@@ -2,6 +2,7 @@
 
 #include "Features/LinearLighting.h"
 #include "Globals.h"
+#include "GpuPass.h"
 #include "I18n/I18n.h"
 #include "PostProcessingUI.h"
 #include "State.h"
@@ -793,115 +794,116 @@ void PhysicalGlare::Draw(TextureInfo& inout_tex)
 
 	// ========== Step 1: Regenerate PSF if parameters changed ==========
 	if (NeedsPSFRegeneration()) {
-		globals::profiler->BeginPass("PostProcessing::PhysicalGlare::PSF");
+		CS_GPU_PASS("PostProcessing::PhysicalGlare::PSF");
 		GeneratePSF();
 
 		// Re-update CB because GeneratePSF() overwrites it with DeltaTime=0
 		glareCB->Update(cbData);
 		cb = glareCB->CB();
 		context->CSSetConstantBuffers(1, 1, &cb);
-		globals::profiler->EndPass();
 	}
 
 	// ========== Step 2: Threshold + downsample scene into FFT textures ==========
-	globals::profiler->BeginPass("PostProcessing::PhysicalGlare::FFT");
 	{
-		// We write R, G, B channels into texFFT[0..2][0]
-		ID3D11ShaderResourceView* srv = inout_tex.srv;
-		std::array<ID3D11UnorderedAccessView*, 3> uavs = {
-			texFFT[0][0]->uav.get(),
-			texFFT[1][0]->uav.get(),
-			texFFT[2][0]->uav.get()
-		};
+		CS_GPU_PASS("PostProcessing::PhysicalGlare::FFT");
+		{
+			// We write R, G, B channels into texFFT[0..2][0]
+			ID3D11ShaderResourceView* srv = inout_tex.srv;
+			std::array<ID3D11UnorderedAccessView*, 3> uavs = {
+				texFFT[0][0]->uav.get(),
+				texFFT[1][0]->uav.get(),
+				texFFT[2][0]->uav.get()
+			};
 
-		context->CSSetShaderResources(0, 1, &srv);
-		context->CSSetUnorderedAccessViews(0, (uint)uavs.size(), uavs.data(), nullptr);
-		context->CSSetShader(thresholdCS.get(), nullptr, 0);
-		context->Dispatch((currentFFTResolution + 7) >> 3, (currentFFTResolution + 7) >> 3, 1);
-
-		srv = nullptr;
-		uavs.fill(nullptr);
-		context->CSSetShaderResources(0, 1, &srv);
-		context->CSSetUnorderedAccessViews(0, (uint)uavs.size(), uavs.data(), nullptr);
-	}
-
-	// ========== Step 3: Forward FFT on scene (per channel) ==========
-	for (int ch = 0; ch < 3; ch++) {
-		// Row FFT: texFFT[ch][0] -> texFFT[ch][1]
-		DispatchFFT(fftRowCS.get(), texFFT[ch][0].get(), texFFT[ch][1].get(), currentFFTResolution);
-		// Col FFT: texFFT[ch][1] -> texFFT[ch][0]
-		DispatchFFT(fftColCS.get(), texFFT[ch][1].get(), texFFT[ch][0].get(), currentFFTResolution);
-	}
-
-	// ========== Step 4: Frequency-domain multiply (scene * PSF) ==========
-	{
-		// Input: texFFT[ch][0] (scene FFT), texPSF_FFT[ch]
-		// Output: texFFT[ch][1]
-		std::array<ID3D11ShaderResourceView*, 2> srvs = { nullptr, nullptr };
-		std::array<ID3D11UnorderedAccessView*, 1> uavs = { nullptr };
-
-		for (int ch = 0; ch < 3; ch++) {
-			srvs[0] = texFFT[ch][0]->srv.get();
-			srvs[1] = texPSF_FFT[ch]->srv.get();
-			uavs[0] = texFFT[ch][1]->uav.get();
-
-			context->CSSetShaderResources(0, (uint)srvs.size(), srvs.data());
+			context->CSSetShaderResources(0, 1, &srv);
 			context->CSSetUnorderedAccessViews(0, (uint)uavs.size(), uavs.data(), nullptr);
-			context->CSSetShader(multiplyCS.get(), nullptr, 0);
+			context->CSSetShader(thresholdCS.get(), nullptr, 0);
 			context->Dispatch((currentFFTResolution + 7) >> 3, (currentFFTResolution + 7) >> 3, 1);
 
-			srvs.fill(nullptr);
+			srv = nullptr;
 			uavs.fill(nullptr);
-			context->CSSetShaderResources(0, (uint)srvs.size(), srvs.data());
+			context->CSSetShaderResources(0, 1, &srv);
 			context->CSSetUnorderedAccessViews(0, (uint)uavs.size(), uavs.data(), nullptr);
+		}
+
+		// ========== Step 3: Forward FFT on scene (per channel) ==========
+		for (int ch = 0; ch < 3; ch++) {
+			// Row FFT: texFFT[ch][0] -> texFFT[ch][1]
+			DispatchFFT(fftRowCS.get(), texFFT[ch][0].get(), texFFT[ch][1].get(), currentFFTResolution);
+			// Col FFT: texFFT[ch][1] -> texFFT[ch][0]
+			DispatchFFT(fftColCS.get(), texFFT[ch][1].get(), texFFT[ch][0].get(), currentFFTResolution);
+		}
+
+		// ========== Step 4: Frequency-domain multiply (scene * PSF) ==========
+		{
+			// Input: texFFT[ch][0] (scene FFT), texPSF_FFT[ch]
+			// Output: texFFT[ch][1]
+			std::array<ID3D11ShaderResourceView*, 2> srvs = { nullptr, nullptr };
+			std::array<ID3D11UnorderedAccessView*, 1> uavs = { nullptr };
+
+			for (int ch = 0; ch < 3; ch++) {
+				srvs[0] = texFFT[ch][0]->srv.get();
+				srvs[1] = texPSF_FFT[ch]->srv.get();
+				uavs[0] = texFFT[ch][1]->uav.get();
+
+				context->CSSetShaderResources(0, (uint)srvs.size(), srvs.data());
+				context->CSSetUnorderedAccessViews(0, (uint)uavs.size(), uavs.data(), nullptr);
+				context->CSSetShader(multiplyCS.get(), nullptr, 0);
+				context->Dispatch((currentFFTResolution + 7) >> 3, (currentFFTResolution + 7) >> 3, 1);
+
+				srvs.fill(nullptr);
+				uavs.fill(nullptr);
+				context->CSSetShaderResources(0, (uint)srvs.size(), srvs.data());
+				context->CSSetUnorderedAccessViews(0, (uint)uavs.size(), uavs.data(), nullptr);
+			}
+		}
+
+		// ========== Step 5: Inverse FFT (per channel) ==========
+		for (int ch = 0; ch < 3; ch++) {
+			// Row IFFT: texFFT[ch][1] -> texFFT[ch][0]
+			DispatchFFT(fftRowInvCS.get(), texFFT[ch][1].get(), texFFT[ch][0].get(), currentFFTResolution);
+			// Col IFFT: texFFT[ch][0] -> texFFT[ch][1]
+			DispatchFFT(fftColInvCS.get(), texFFT[ch][0].get(), texFFT[ch][1].get(), currentFFTResolution);
 		}
 	}
 
-	// ========== Step 5: Inverse FFT (per channel) ==========
-	for (int ch = 0; ch < 3; ch++) {
-		// Row IFFT: texFFT[ch][1] -> texFFT[ch][0]
-		DispatchFFT(fftRowInvCS.get(), texFFT[ch][1].get(), texFFT[ch][0].get(), currentFFTResolution);
-		// Col IFFT: texFFT[ch][0] -> texFFT[ch][1]
-		DispatchFFT(fftColInvCS.get(), texFFT[ch][0].get(), texFFT[ch][1].get(), currentFFTResolution);
-	}
-	globals::profiler->EndPass();
-
 	// ========== Step 6: Composite (upsample + add to scene) ==========
-	globals::profiler->BeginPass("PostProcessing::PhysicalGlare::Composite");
 	{
-		// t0 = scene, t1/t2/t3 = IFFT result R/G/B (texFFT[ch][1]),
-		// u0 = output
-		std::array<ID3D11ShaderResourceView*, 4> srvs = {
-			inout_tex.srv,
-			texFFT[0][1]->srv.get(),
-			texFFT[1][1]->srv.get(),
-			texFFT[2][1]->srv.get(),
-		};
-		std::array<ID3D11UnorderedAccessView*, 1> uavs = {
-			texOutput->uav.get(),
-		};
-		ID3D11SamplerState* sampler = linearSampler.get();
+		CS_GPU_PASS("PostProcessing::PhysicalGlare::Composite");
+		{
+			// t0 = scene, t1/t2/t3 = IFFT result R/G/B (texFFT[ch][1]),
+			// u0 = output
+			std::array<ID3D11ShaderResourceView*, 4> srvs = {
+				inout_tex.srv,
+				texFFT[0][1]->srv.get(),
+				texFFT[1][1]->srv.get(),
+				texFFT[2][1]->srv.get(),
+			};
+			std::array<ID3D11UnorderedAccessView*, 1> uavs = {
+				texOutput->uav.get(),
+			};
+			ID3D11SamplerState* sampler = linearSampler.get();
 
-		context->CSSetShaderResources(0, (uint)srvs.size(), srvs.data());
-		context->CSSetUnorderedAccessViews(0, (uint)uavs.size(), uavs.data(), nullptr);
-		context->CSSetSamplers(0, 1, &sampler);
-		context->CSSetShader(compositeCS.get(), nullptr, 0);
+			context->CSSetShaderResources(0, (uint)srvs.size(), srvs.data());
+			context->CSSetUnorderedAccessViews(0, (uint)uavs.size(), uavs.data(), nullptr);
+			context->CSSetSamplers(0, 1, &sampler);
+			context->CSSetShader(compositeCS.get(), nullptr, 0);
 
-		context->Dispatch(((uint)texOutput->desc.Width + 7) >> 3, ((uint)texOutput->desc.Height + 7) >> 3, 1);
+			context->Dispatch(((uint)texOutput->desc.Width + 7) >> 3, ((uint)texOutput->desc.Height + 7) >> 3, 1);
 
-		srvs.fill(nullptr);
-		uavs.fill(nullptr);
-		sampler = nullptr;
-		context->CSSetShaderResources(0, (uint)srvs.size(), srvs.data());
-		context->CSSetUnorderedAccessViews(0, (uint)uavs.size(), uavs.data(), nullptr);
-		context->CSSetSamplers(0, 1, &sampler);
+			srvs.fill(nullptr);
+			uavs.fill(nullptr);
+			sampler = nullptr;
+			context->CSSetShaderResources(0, (uint)srvs.size(), srvs.data());
+			context->CSSetUnorderedAccessViews(0, (uint)uavs.size(), uavs.data(), nullptr);
+			context->CSSetSamplers(0, 1, &sampler);
+		}
+
+		// Cleanup
+		cb = nullptr;
+		context->CSSetConstantBuffers(1, 1, &cb);
+		context->CSSetShader(nullptr, nullptr, 0);
 	}
-
-	// Cleanup
-	cb = nullptr;
-	context->CSSetConstantBuffers(1, 1, &cb);
-	context->CSSetShader(nullptr, nullptr, 0);
-	globals::profiler->EndPass();
 
 	state->EndPerfEvent();
 }

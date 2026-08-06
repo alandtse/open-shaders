@@ -99,7 +99,11 @@ $cmakeArgs = @(
     '-DENABLE_SKYRIM_AE=ON', '-DENABLE_SKYRIM_SE=ON', '-DENABLE_SKYRIM_VR=ON',
     '-DAUTO_PLUGIN_DEPLOYMENT=OFF',
     '-DCOMMONLIB_PREBUILT_MULTICONFIG=ON',
-    '-DBUILD_CPP_TESTS=OFF'
+    '-DBUILD_CPP_TESTS=OFF',
+    # CMake's OpenMP probe fails to detect MSVC's OpenMP support under Ninja;
+    # seed the flag the VS-generator build already discovers for the same compiler.
+    '-DOpenMP_CXX_FLAGS=-openmp',
+    '-DOpenMP_CXX_LIB_NAMES='
 )
 Write-Host 'Configuring Ninja DB (no build)...'
 # Let cmake's diagnostics reach the console and check its native exit code —

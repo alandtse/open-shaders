@@ -2,6 +2,9 @@
 
 #include "D3D.h"
 
+#include <algorithm>
+#include <cassert>
+
 namespace Util
 {
 	void TimestampQueryBatch::Configure(uint32_t a_maxPairs, const char* a_debugName)
@@ -9,6 +12,7 @@ namespace Util
 		maxPairs = a_maxPairs;
 		debugName = a_debugName;
 		pairs.reserve(a_maxPairs);
+		closed.assign(a_maxPairs, false);
 	}
 
 	bool TimestampQueryBatch::EnsureDisjoint(ID3D11Device* a_device)
@@ -61,8 +65,29 @@ namespace Util
 	{
 		disjoint = nullptr;
 		pairs.clear();
+		// Keep closed sized to maxPairs (not emptied): EnsurePair lazily
+		// re-grows pairs up to maxPairs without requiring Configure() again,
+		// and AcquireInterval/CommitInterval/CloseInterval index closed by
+		// that same bound.
+		closed.assign(maxPairs, false);
+		allocCount = 0;
 		used = 0;
 		creationFailed = false;
+#ifndef NDEBUG
+		usedSequentialApi = false;
+		usedNestingApi = false;
+#endif
+	}
+
+	void TimestampQueryBatch::Reset()
+	{
+		allocCount = 0;
+		used = 0;
+		std::fill(closed.begin(), closed.end(), false);
+#ifndef NDEBUG
+		usedSequentialApi = false;
+		usedNestingApi = false;
+#endif
 	}
 
 	bool TimestampQueryBatch::BeginBatch(ID3D11Device* a_device, ID3D11DeviceContext* a_context)
@@ -75,6 +100,10 @@ namespace Util
 
 	int TimestampQueryBatch::BeginInterval(ID3D11Device* a_device, ID3D11DeviceContext* a_context)
 	{
+#ifndef NDEBUG
+		usedSequentialApi = true;
+		assert(!(usedSequentialApi && usedNestingApi) && "TimestampQueryBatch: mixed sequential/nesting API use on one instance");
+#endif
 		if (!a_context || used >= maxPairs || !EnsurePair(a_device, used))
 			return -1;
 		a_context->End(pairs[used].begin.get());
@@ -86,7 +115,32 @@ namespace Util
 		if (!a_context || used >= pairs.size() || !pairs[used].end)
 			return;
 		a_context->End(pairs[used].end.get());
+		closed[used] = true;
 		used++;
+		allocCount = used;
+	}
+
+	int TimestampQueryBatch::AcquireInterval(ID3D11Device* a_device, ID3D11DeviceContext* a_context)
+	{
+#ifndef NDEBUG
+		usedNestingApi = true;
+		assert(!(usedSequentialApi && usedNestingApi) && "TimestampQueryBatch: mixed sequential/nesting API use on one instance");
+#endif
+		if (!a_context || allocCount >= maxPairs || !EnsurePair(a_device, allocCount))
+			return -1;
+		const uint32_t index = allocCount;
+		closed[index] = false;
+		a_context->End(pairs[index].begin.get());
+		allocCount++;
+		return static_cast<int>(index);
+	}
+
+	void TimestampQueryBatch::CloseInterval(ID3D11DeviceContext* a_context, uint32_t a_index)
+	{
+		if (!a_context || a_index >= pairs.size() || !pairs[a_index].end)
+			return;
+		a_context->End(pairs[a_index].end.get());
+		closed[a_index] = true;
 	}
 
 	void TimestampQueryBatch::EndBatch(ID3D11DeviceContext* a_context)
@@ -107,7 +161,9 @@ namespace Util
 		if (info.Disjoint || !info.Frequency)
 			return Status::Disjoint;
 
-		for (uint32_t i = 0; i < used; i++) {
+		for (uint32_t i = 0; i < allocCount; i++) {
+			if (i >= closed.size() || !closed[i])
+				continue;
 			uint64_t tsBegin = 0, tsEnd = 0;
 			if (a_context->GetData(pairs[i].begin.get(), &tsBegin, sizeof(tsBegin), D3D11_ASYNC_GETDATA_DONOTFLUSH) != S_OK)
 				continue;

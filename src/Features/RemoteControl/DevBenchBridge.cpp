@@ -19,8 +19,11 @@
 #	include "Features/ScreenshotFeature.h"
 #	include "Globals.h"
 #	include "Menu.h"
+#	include "Profiler.h"
 #	include "ShaderCache.h"
 #	include "State.h"
+#	include "Utils/SettingsPatch.h"
+#	include "VRAPI/CSpluginapi.h"
 
 #	include <DevBenchAPI.h>
 #	include <nlohmann/json.hpp>
@@ -34,6 +37,7 @@
 #	include <memory>
 #	include <optional>
 #	include <stdexcept>
+#	include <unordered_map>
 
 namespace
 {
@@ -149,24 +153,6 @@ namespace
 		return entry;
 	}
 
-	// Collects keys of a_incoming that a_known has no counterpart for, as dotted
-	// paths, recursing into nested groups. The settings serializers drop keys they
-	// don't recognize, so a mis-nested or misspelled key would otherwise apply
-	// nothing while still reporting success.
-	void CollectUnknownSettingKeys(const json& a_incoming, const json& a_known,
-		const std::string& a_prefix, std::vector<std::string>& a_out)
-	{
-		if (!a_incoming.is_object())
-			return;
-		for (auto it = a_incoming.begin(); it != a_incoming.end(); ++it) {
-			const std::string path = a_prefix.empty() ? it.key() : a_prefix + "." + it.key();
-			if (!a_known.is_object() || !a_known.contains(it.key()))
-				a_out.push_back(path);
-			else if (it.value().is_object())
-				CollectUnknownSettingKeys(it.value(), a_known[it.key()], path, a_out);
-		}
-	}
-
 	json BuildFeatureResult(const json& a_args)
 	{
 		const std::string action = a_args.value("action", std::string("list"));
@@ -268,6 +254,41 @@ namespace
 			});
 		}
 
+		// Live runtime-only debug flags (never persisted to SettingsUser.json)
+		// via Feature::GetRuntimeFlags/SetRuntimeFlag, mirroring
+		// GetDiagnostics above. Empty object / false if unimplemented.
+		if (action == "runtimeGet") {
+			return RunOnMainThread([shortName]() -> json {
+				auto* feature = Feature::FindFeatureByShortName(shortName);
+				if (!feature)
+					return json{ { "error", "feature not found or not loaded" }, { "shortName", shortName } };
+				return feature->GetRuntimeFlags();
+			});
+		}
+
+		if (action == "runtimeSet") {
+			if (!a_args.contains("name") || !a_args["name"].is_string())
+				return json{ { "error", "missing required string parameter 'name'" } };
+			if (!a_args.contains("value") || !a_args["value"].is_boolean())
+				return json{ { "error", "missing required boolean parameter 'value'" } };
+			std::string flagName = a_args["name"];
+			bool flagValue = a_args["value"];
+			return RunOnMainThread([shortName, flagName, flagValue]() -> json {
+				auto* feature = Feature::FindFeatureByShortName(shortName);
+				if (!feature)
+					return json{ { "error", "feature not found or not loaded" }, { "shortName", shortName } };
+				if (!feature->SetRuntimeFlag(flagName, flagValue))
+					return json{
+						{ "error", "unrecognized runtime flag" },
+						{ "shortName", shortName },
+						{ "name", flagName },
+						{ "hint", "must match a key from feature(action='runtimeGet')" }
+					};
+				logger::info("DevBenchBridge: feature(runtimeSet, {}, {}) applied", shortName, flagName);
+				return json{ { "action", "runtimeSet" }, { "shortName", shortName }, { "name", flagName }, { "applied", true } };
+			});
+		}
+
 		// set / reset resolve + apply on the main thread and report the real outcome: an invalid
 		// shortName must NOT come back as a fake success. Synchronous (LoadSettings is fast), so
 		// the lookup race is avoided AND the caller learns whether the mutation actually applied.
@@ -280,27 +301,14 @@ namespace
 				if (!feature)
 					return json{ { "error", "feature not found or not loaded" }, { "shortName", shortName } };
 				try {
-					// WITH_DEFAULT deserialization fills a blob's absent keys
-					// from a fresh default, not the live value; merge first.
-					json current;
-					feature->SaveSettings(current);
-					// The saved blob is the canonical shape, so reject anything it
-					// doesn't name rather than deserializing it away to a silent
-					// no-op the caller sees as applied. Skipped when the feature
-					// has no override to compare against.
-					if (current.is_object()) {
-						std::vector<std::string> unknown;
-						CollectUnknownSettingKeys(blob, current, "", unknown);
-						if (!unknown.empty())
-							return json{
-								{ "error", "unrecognized setting key(s); nothing applied" },
-								{ "shortName", shortName },
-								{ "unknownKeys", unknown },
-								{ "hint", "keys must match the shape from feature(action='get'); nested groups such as ShadowSettings must be nested, not flattened" }
-							};
-					}
-					current.merge_patch(blob);
-					feature->LoadSettings(current);
+					std::vector<std::string> unknown;
+					if (!Util::Settings::ApplyPatch(*feature, blob, unknown))
+						return json{
+							{ "error", "unrecognized setting key(s); nothing applied" },
+							{ "shortName", shortName },
+							{ "unknownKeys", unknown },
+							{ "hint", "keys must match the shape from feature(action='get'); nested groups such as ShadowSettings must be nested, not flattened" }
+						};
 					logger::info("DevBenchBridge: feature(set, {}) applied", shortName);
 					return json{ { "action", "set" }, { "shortName", shortName }, { "applied", true } };
 				} catch (const std::exception& e) {
@@ -324,7 +332,7 @@ namespace
 			});
 		}
 
-		return json{ { "error", "unknown action (list|get|set|reset|toggle|diagnostics)" }, { "action", action } };
+		return json{ { "error", "unknown action (list|get|set|reset|toggle|diagnostics|runtimeGet|runtimeSet)" }, { "action", action } };
 	}
 
 	void FeatureToolHandler(void*, const char* a_argsJson, void* a_sink, DevBenchAPI::WriteFn a_write)
@@ -457,6 +465,69 @@ namespace
 		RunHandler(&BuildInspectShadowsResult, a_argsJson, a_sink, a_write);
 	}
 
+	// Marshaled to the main thread: GetResults() returns a live reference the
+	// render thread clears+rebuilds every frame, and TimerResult's history
+	// pointers dangle across a knownTimers reallocation -- nothing from it
+	// may be read or retained off that thread.
+	json BuildInspectProfilerResult(const json&)
+	{
+		auto* profiler = globals::profiler;
+		if (!profiler)
+			return json{ { "error", "profiler unavailable" } };
+		return RunOnMainThread([profiler]() -> json {
+			// Calling this tool is itself a capture request, the same as any
+			// visible consumer (the Profiling menu, a feature panel).
+			profiler->RequestCapture();
+
+			json timers = json::array();
+			for (const auto& r : profiler->GetResults()) {
+				if (!r.valid)
+					continue;
+				timers.push_back(json{
+					{ "name", r.name },
+					{ "gpuMs", r.gpuTimeMs },
+					{ "topLevelMs", r.topLevelMs },
+					{ "avgMs", r.avgMs },
+					{ "p95Ms", r.p95Ms },
+					{ "p99Ms", r.p99Ms },
+					{ "cpuMs", r.cpuTimeMs },
+					{ "cpuAvgMs", r.cpuAvgMs },
+					{ "cpuP95Ms", r.cpuP95Ms },
+					{ "cpuP99Ms", r.cpuP99Ms },
+					{ "hasGpu", r.hasGpu },
+					{ "hasCpu", r.hasCpu },
+					{ "activeGpu", r.activeGpu },
+					{ "activeCpu", r.activeCpu },
+					{ "historyHead", r.historyHead },
+					{ "historyCount", r.historyCount },
+					{ "cpuHistoryHead", r.cpuHistoryHead },
+					{ "cpuHistoryCount", r.cpuHistoryCount },
+				});
+			}
+
+			return json{
+				{ "enabled", profiler->IsUserEnabled() },
+				{ "capturing", profiler->IsEnabled() },
+				{ "frame_count", EnqueuedFrame() },
+				{ "capturedFrameCount", profiler->GetCapturedFrameCount() },
+				{ "totalMs", profiler->GetTotalTimeMs() },
+				{ "cpuTotalMs", profiler->GetCpuTotalTimeMs() },
+				{ "resolvedTotalMs", profiler->GetResolvedTotalTimeMs() },
+				{ "resolvedCpuTotalMs", profiler->GetResolvedCpuTotalTimeMs() },
+				{ "acquiredSlots", profiler->GetAcquiredSlots() },
+				{ "peakAcquiredSlots", profiler->GetPeakAcquiredSlots() },
+				{ "slotRefusals", profiler->GetSlotRefusals() },
+				{ "maxTimers", Profiler::kMaxTimers },
+				{ "timers", timers },
+			};
+		});
+	}
+
+	void InspectProfilerHandler(void*, const char* a_argsJson, void* a_sink, DevBenchAPI::WriteFn a_write)
+	{
+		RunHandler(&BuildInspectProfilerResult, a_argsJson, a_sink, a_write);
+	}
+
 	// ---- shadercache: clear / delete the compiled cache -------------------------------
 
 	json BuildShadercacheResult(const json& a_args)
@@ -496,12 +567,44 @@ namespace
 			task->AddTask([cache]() { cache->BeginActiveShaderCapture(); });
 			return json{ { "action", "activeOnly" }, { "queued", true }, { "enqueued_at_frame", frame }, { "note", "scoped (smart) clear started; captures on-screen shaders over two windows, then evicts+recompiles just those (see inspect(kind=shadercache) and openshaders.shaderRecompiled)" } };
 		}
-		return json{ { "error", "unknown action (clear|deleteDisk|activeOnly)" }, { "action", action } };
+		if (action == "backgroundCompile") {
+			// Same atomic the in-game "Skip Compilation" hotkey flips (Menu.cpp);
+			// unblocks XSEPlugin.cpp's boot-wait loop on its next check.
+			cache->backgroundCompilation = true;
+			return json{ { "action", "backgroundCompile" }, { "backgroundCompilation", true } };
+		}
+		return json{ { "error", "unknown action (clear|deleteDisk|activeOnly|backgroundCompile)" }, { "action", action } };
 	}
 
 	void ShadercacheToolHandler(void*, const char* a_argsJson, void* a_sink, DevBenchAPI::WriteFn a_write)
 	{
 		RunHandler(&BuildShadercacheResult, a_argsJson, a_sink, a_write);
+	}
+
+	// ---- profiler: enable / disable runtime capture ----------------------------------
+
+	json BuildProfilerResult(const json& a_args)
+	{
+		const std::string action = a_args.value("action", std::string{});
+		auto* profiler = globals::profiler;
+		if (!profiler)
+			return json{ { "error", "profiler unavailable" } };
+		// SetUserEnabled only touches std::atomic_bool fields, so this is
+		// safe to call directly off the devbench thread -- no marshalling.
+		if (action == "enable") {
+			profiler->SetUserEnabled(true);
+			return json{ { "action", "enable" }, { "enabled", true } };
+		}
+		if (action == "disable") {
+			profiler->SetUserEnabled(false);
+			return json{ { "action", "disable" }, { "enabled", false } };
+		}
+		return json{ { "error", "unknown action (enable|disable)" }, { "action", action } };
+	}
+
+	void ProfilerToolHandler(void*, const char* a_argsJson, void* a_sink, DevBenchAPI::WriteFn a_write)
+	{
+		RunHandler(&BuildProfilerResult, a_argsJson, a_sink, a_write);
 	}
 
 	// ---- capture: renderdoc / screenshot ----------------------------------------------
@@ -715,6 +818,85 @@ namespace
 	{
 		RunHandler(&BuildMenuResult, a_argsJson, a_sink, a_write);
 	}
+
+	// ---- pluginapi: exercise the real SKSE ICSInterface001 ABI ------------------------
+
+	// GetApi(0) always returns the same static instance for any revision this build
+	// supports (see CSpluginapi.cpp) -- no handshake needed since we're in-process.
+	CSPluginAPI::ICSInterface001* GetTestPluginApi()
+	{
+		return static_cast<CSPluginAPI::ICSInterface001*>(CSPluginAPI::GetApi(0));
+	}
+
+	// Dispatches directly on the devbench listener thread rather than marshaling to
+	// main: API.md documents every method as callable from any thread (setters stage
+	// into CSPluginAPI's queue; ProcessStagedSettings applies on the render thread next
+	// frame), so calling from here exercises that contract instead of sidestepping it.
+	json BuildPluginApiResult(const json& a_args)
+	{
+		auto* api = GetTestPluginApi();
+		if (!api)
+			return json{ { "error", "plugin API unavailable" } };
+
+		const std::string method = a_args.value("method", std::string{});
+		const json params = a_args.value("params", json::object());
+		const uint frame = EnqueuedFrame();
+
+		using CSPluginAPI::DLSSProfile;
+		using CSPluginAPI::UpscaleMethod;
+		using CSPluginAPI::UpscalePreset;
+		using Handler = std::function<json(CSPluginAPI::ICSInterface001*, const json&)>;
+
+		static const std::unordered_map<std::string, Handler> kMethods{
+			{ "getBuildNumber", [](auto* i, const json&) { return json{ { "result", i->getBuildNumber() } }; } },
+			{ "GetSSSEnabled", [](auto* i, const json&) { return json{ { "result", i->GetSSSEnabled() } }; } },
+			{ "SetSSSEnabled", [](auto* i, const json& p) { i->SetSSSEnabled(p.value("enabled", false)); return json{ { "staged", true } }; } },
+			{ "GetSSGIEnabled", [](auto* i, const json&) { return json{ { "result", i->GetSSGIEnabled() } }; } },
+			{ "SetSSGIEnabled", [](auto* i, const json& p) { i->SetSSGIEnabled(p.value("enabled", false)); return json{ { "staged", true } }; } },
+			{ "GetVolumetricLightingExteriorEnabled", [](auto* i, const json&) { return json{ { "result", i->GetVolumetricLightingExteriorEnabled() } }; } },
+			{ "SetVolumetricLightingExteriorEnabled", [](auto* i, const json& p) { i->SetVolumetricLightingExteriorEnabled(p.value("enabled", false)); return json{ { "staged", true } }; } },
+			{ "GetUpscalePreset", [](auto* i, const json&) { return json{ { "result", static_cast<uint32_t>(i->GetUpscalePreset()) } }; } },
+			{ "SetUpscalePreset", [](auto* i, const json& p) { i->SetUpscalePreset(static_cast<UpscalePreset>(p.value("preset", 0u))); return json{ { "staged", true } }; } },
+			{ "GetLightLimitFixContactShadowsEnabled", [](auto* i, const json&) { return json{ { "result", i->GetLightLimitFixContactShadowsEnabled() } }; } },
+			{ "SetLightLimitFixContactShadowsEnabled", [](auto* i, const json& p) { i->SetLightLimitFixContactShadowsEnabled(p.value("enabled", false)); return json{ { "staged", true } }; } },
+			{ "GetDLSSProfile", [](auto* i, const json&) { return json{ { "result", static_cast<uint32_t>(i->GetDLSSProfile()) } }; } },
+			{ "SetDLSSProfile", [](auto* i, const json& p) { i->SetDLSSProfile(static_cast<DLSSProfile>(p.value("profile", 0u))); return json{ { "staged", true } }; } },
+			{ "GetRenderAtUpscaleResEnabled", [](auto* i, const json&) { return json{ { "result", i->GetRenderAtUpscaleResEnabled() } }; } },
+			{ "SetRenderAtUpscaleResEnabled", [](auto* i, const json& p) { i->SetRenderAtUpscaleResEnabled(p.value("enabled", false)); return json{ { "staged", true } }; } },
+			{ "GetRenderAtUpscaleResActive", [](auto* i, const json&) { return json{ { "result", i->GetRenderAtUpscaleResActive() } }; } },
+			{ "SetVRUpscalingTransitionProfile", [](auto* i, const json& p) {
+				 i->SetVRUpscalingTransitionProfile(p.value("renderScaleModeEnabled", false), static_cast<UpscalePreset>(p.value("preset", 0u)), static_cast<DLSSProfile>(p.value("profile", 0u)));
+				 return json{ { "staged", true } }; } },
+			{ "GetUpscaleMethod", [](auto* i, const json&) { return json{ { "result", static_cast<uint32_t>(i->GetUpscaleMethod()) } }; } },
+			{ "SetUpscaleMethod", [](auto* i, const json& p) { i->SetUpscaleMethod(static_cast<UpscaleMethod>(p.value("method", 0u))); return json{ { "staged", true } }; } },
+			{ "SetVRUpscalingTransitionProfileForMethod", [](auto* i, const json& p) {
+				 i->SetVRUpscalingTransitionProfileForMethod(static_cast<UpscaleMethod>(p.value("method", 0u)), p.value("renderScaleModeEnabled", false), static_cast<UpscalePreset>(p.value("preset", 0u)), static_cast<DLSSProfile>(p.value("profile", 0u)));
+				 return json{ { "staged", true } }; } },
+			{ "GetVRUpscalingApplyBlockReasons", [](auto* i, const json&) { return json{ { "result", i->GetVRUpscalingApplyBlockReasons() } }; } },
+			{ "IsVRUpscalingProfileApplyAllowed", [](auto* i, const json&) { return json{ { "result", i->IsVRUpscalingProfileApplyAllowed() } }; } },
+		};
+
+		const auto it = kMethods.find(method);
+		if (it == kMethods.end())
+			return json{ { "error", "unknown method" }, { "method", method } };
+		try {
+			json result = it->second(api, params);
+			// The ABI setters return void, so "staged" means dispatched, not
+			// accepted -- the ABI's own enum validation can silently no-op an
+			// unsupported value. Stamp the frame so a caller can poll
+			// inspect/openshaders.feature for the actual outcome next tick.
+			if (result.contains("staged"))
+				result["enqueued_at_frame"] = frame;
+			return result;
+		} catch (const std::exception& e) {
+			return json{ { "error", "method threw" }, { "method", method }, { "detail", e.what() } };
+		}
+	}
+
+	void PluginApiHandler(void*, const char* a_argsJson, void* a_sink, DevBenchAPI::WriteFn a_write)
+	{
+		RunHandler(&BuildPluginApiResult, a_argsJson, a_sink, a_write);
+	}
 }
 
 namespace DevBenchBridge
@@ -734,12 +916,16 @@ namespace DevBenchBridge
 		// so existing MCP clients keep working under the new prefix.
 
 		static constexpr const char* featureDesc =
-			R"({"description":"All Open Shaders graphics-feature operations — enumerate, inspect settings, mutate settings, restore defaults, toggle on/off, read live diagnostics. Action-dispatched. list: returns an array of {name,shortName,loaded,version,category,isCore,supportsVR,inMenu}; features with restart-gated settings also include restartFields:[{key,label,pending}]. get: params shortName, returns the SaveSettings blob (null if the feature has no override; set/reset then no-op). set: params shortName, settings (object) — a partial blob merged over the current settings, so it MUST use the same shape get returns, including nested groups (e.g. LightLimitFix's shadow settings live under settings.ShadowSettings.*, NOT at the top level). Keys the feature does not define are rejected with unknownKeys rather than silently ignored; call get first if unsure of the shape. Restart-gated keys (see list's restartFields) apply on the next launch, so verify with get rather than assuming a set took effect immediately. reset: params shortName, calls RestoreDefaultSettings. toggle: params shortName, enabled (boolean, OPTIONAL — omit to flip the current loaded state); flips Feature::loaded. diagnostics: params shortName, returns the feature's live runtime stats via GetDiagnostics (an empty object if the feature does not override it); use this instead of adding a new inspect kind for a new counter.","inputSchema":{"type":"object","properties":{"action":{"type":"string","enum":["list","get","set","reset","toggle","diagnostics"]},"shortName":{"type":"string"},"settings":{"type":"object"},"enabled":{"type":"boolean"}}}})";
+			R"({"description":"All Open Shaders graphics-feature operations — enumerate, inspect settings, mutate settings, restore defaults, toggle on/off, read live diagnostics, read/write runtime-only debug flags. Action-dispatched. list: returns an array of {name,shortName,loaded,version,category,isCore,supportsVR,inMenu}; features with restart-gated settings also include restartFields:[{key,label,pending}]. get: params shortName, returns the SaveSettings blob (null if the feature has no override; set/reset then no-op). set: params shortName, settings (object) — a partial blob merged over the current settings, so it MUST use the same shape get returns, including nested groups (e.g. LightLimitFix's shadow settings live under settings.ShadowSettings.*, NOT at the top level). Keys the feature does not define are rejected with unknownKeys rather than silently ignored; call get first if unsure of the shape. Restart-gated keys (see list's restartFields) apply on the next launch, so verify with get rather than assuming a set took effect immediately. reset: params shortName, calls RestoreDefaultSettings. toggle: params shortName, enabled (boolean, OPTIONAL — omit to flip the current loaded state); flips Feature::loaded. diagnostics: params shortName, returns the feature's live runtime stats via GetDiagnostics (an empty object if the feature does not override it); use this instead of adding a new inspect kind for a new counter. runtimeGet: params shortName, returns the feature's live runtime-only debug flags via GetRuntimeFlags as {name: bool} (an empty object if the feature does not override it) — these are deliberately never persisted to SettingsUser.json (e.g. a debug instrumentation toggle that would otherwise cost every user extra GPU work on every load), so 'set' cannot reach them and they reset to their code default on every relaunch. runtimeSet: params shortName, name (string), value (boolean) — sets one flag via SetRuntimeFlag; fails with an error if the feature has no runtime flag by that name (call runtimeGet first to see valid names).","inputSchema":{"type":"object","properties":{"action":{"type":"string","enum":["list","get","set","reset","toggle","diagnostics","runtimeGet","runtimeSet"]},"shortName":{"type":"string"},"settings":{"type":"object"},"enabled":{"type":"boolean"},"name":{"type":"string"},"value":{"type":"boolean"}}}})";
 		dvb->RegisterTool("openshaders.feature", featureDesc, &FeatureToolHandler, nullptr);
 
 		static constexpr const char* shadercacheDesc =
-			R"({"description":"Manage Open Shaders' compiled shader cache. Action-dispatched, fire-and-forget on the main thread. clear: drop the IN-MEMORY cache only; with the disk cache enabled shaders reload from Data/ShaderCache rather than recompiling, so this does NOT guarantee a recompile. deleteDisk: delete the on-disk cache AND drop the in-memory cache, forcing a full cold recompile (use this for compile benchmarks). activeOnly: the in-game 'smart clear' -- captures whatever shaders are on screen over two windows, then evicts+recompiles just those (needs something rendering; a menu-only screen may capture nothing). Watch progress via inspect kind=shadercache and the openshaders.shaderRecompiled event. Read-only status is inspect kind=shadercache.","inputSchema":{"type":"object","properties":{"action":{"type":"string","enum":["clear","deleteDisk","activeOnly"]}},"required":["action"]}})";
+			R"({"description":"Manage Open Shaders' compiled shader cache. clear, deleteDisk, and activeOnly are queued onto the main thread, fire-and-forget. backgroundCompile is an immediate atomic state change made on the calling (devbench listener) thread. clear: drop the IN-MEMORY cache only; with the disk cache enabled shaders reload from Data/ShaderCache rather than recompiling, so this does NOT guarantee a recompile. deleteDisk: delete the on-disk cache AND drop the in-memory cache, forcing a full cold recompile (use this for compile benchmarks). activeOnly: the in-game 'smart clear' -- captures whatever shaders are on screen over two windows, then evicts+recompiles just those (needs something rendering; a menu-only screen may capture nothing). backgroundCompile: skip the boot-time wait for the FULL eager compile queue to drain -- same effect as the in-game 'Skip Compilation' hotkey. Compilation keeps running in the background afterward (fewer threads, so it doesn't starve gameplay), but the game becomes playable/scriptable immediately. For a benchmark harness: call this once right after launch, then drive one throwaway replay to demand-compile just that scene's own shaders before the timed run, instead of waiting out every permutation the whole install could ever need (can be 20-30 minutes on a large AIO modlist). Watch progress via inspect kind=shadercache and the openshaders.shaderRecompiled event. Read-only status is inspect kind=shadercache.","inputSchema":{"type":"object","properties":{"action":{"type":"string","enum":["clear","deleteDisk","activeOnly","backgroundCompile"]}},"required":["action"]}})";
 		dvb->RegisterTool("openshaders.shadercache", shadercacheDesc, &ShadercacheToolHandler, nullptr);
+
+		static constexpr const char* profilerDesc =
+			R"({"description":"Enable or disable Open Shaders' runtime GPU/CPU profiler capture. Action-dispatched. enable/disable: SetUserEnabled(true/false) -- the same flag the in-game Profiling page's checkbox drives, so this is the one state transition (off->on) a script can reach no other way. Read timing data via inspect kind=profiler; that tool also requests a capture on its own, so a script doesn't need to enable AND separately request one, only enable if disabled.","inputSchema":{"type":"object","properties":{"action":{"type":"string","enum":["enable","disable"]}},"required":["action"]}})";
+		dvb->RegisterTool("openshaders.profiler", profilerDesc, &ProfilerToolHandler, nullptr);
 
 		static constexpr const char* captureDesc =
 			R"({"description":"Trigger a frame capture on the next render. Kind-dispatched. kind=renderdoc: RenderDoc multi-frame capture via the in-app API, honors frames (1-120, default 1); RenderDoc must be attached/loaded (check openshaders.feature list for RenderDoc.loaded). kind=screenshot: lossless screenshot via the Screenshot feature; frames is ignored. kind=shadowmaps: writes the shadow atlas depth texture (DDS) + slot-manifest JSON to Data/SKSE/Plugins/CommunityShaders/Captures on the next shadow pass (atlas mode only): ground truth for tile contents without a RenderDoc attach. Fire-and-forget: no artifact path is returned synchronously.","inputSchema":{"type":"object","properties":{"kind":{"type":"string","enum":["renderdoc","screenshot","shadowmaps"]},"frames":{"type":"number"}},"required":["kind"]}})";
@@ -748,6 +934,10 @@ namespace DevBenchBridge
 		static constexpr const char* settingsDesc =
 			R"({"description":"Save, load, reset, or apply a performance profile to the GLOBAL Open Shaders user configuration. Action-dispatched, all fire-and-forget on the main thread. save: persist current settings (State::Save). load: re-read settings from disk and apply (State::Load). reset: restore every feature to its defaults then persist. applyVRProfile: broadcast the named performance profile (params profile: performance|balanced|quality) through Feature::ApplyPerformanceProfile across all features (Flat and VR alike), then persist; restart-gated fields (render preset, foveation, reprojection) take effect on next launch. Use after openshaders.feature set/reset to make changes durable, or to roll an A/B session back to the saved baseline.","inputSchema":{"type":"object","properties":{"action":{"type":"string","enum":["save","load","reset","applyVRProfile"]},"profile":{"type":"string","enum":["performance","balanced","quality"]}},"required":["action"]}})";
 		dvb->RegisterTool("openshaders.settings", settingsDesc, &SettingsToolHandler, nullptr);
+
+		static constexpr const char* pluginApiDesc =
+			R"({"description":"Calls a method on the actual SKSE ICSInterface001 plugin ABI (see API.md) -- the same in-process interface a third-party plugin gets from the CSAP message handshake, not a re-implementation. Exercises the real vtable, including the internal staging/apply path (StagePatch -> ProcessStagedSettings, applied on the render thread next frame) that openshaders.feature's set action bypasses by writing settings directly. method (top-level, not nested under params): one of getBuildNumber, GetSSSEnabled, SetSSSEnabled, GetSSGIEnabled, SetSSGIEnabled, GetVolumetricLightingExteriorEnabled, SetVolumetricLightingExteriorEnabled, GetUpscalePreset, SetUpscalePreset, GetLightLimitFixContactShadowsEnabled, SetLightLimitFixContactShadowsEnabled, GetDLSSProfile, SetDLSSProfile, GetRenderAtUpscaleResEnabled, SetRenderAtUpscaleResEnabled, GetRenderAtUpscaleResActive, SetVRUpscalingTransitionProfile, GetUpscaleMethod, SetUpscaleMethod, SetVRUpscalingTransitionProfileForMethod, GetVRUpscalingApplyBlockReasons, IsVRUpscalingProfileApplyAllowed. params: named args for setters (enabled: bool; preset/profile/method: the ABI enum's underlying uint value; renderScaleModeEnabled: bool) -- omitted args default to 0/false, so always pass every arg a setter takes. Getters return {result}. Setters return {staged:true,enqueued_at_frame} -- staged means the call was dispatched to the ABI, NOT that it was accepted: the ABI validates enum arguments internally and silently ignores unsupported values (kHoshipa/kUltraQuality presets, DLSS profile kF, out-of-range methods, or -- for the two VR transition methods -- any single invalid argument, which aborts the whole call), only logging a warning. Confirm the real outcome with openshaders.feature action=get once frame_count (inspect kind=openshaders) advances past enqueued_at_frame; an unsupported value leaves the setting unchanged. A setter call is safe from this listener thread by the same contract API.md documents for a real plugin thread.","inputSchema":{"type":"object","properties":{"method":{"type":"string"},"params":{"type":"object"}},"required":["method"]}})";
+		dvb->RegisterTool("openshaders.pluginapi", pluginApiDesc, &PluginApiHandler, nullptr);
 
 		// devbench 1.5.0+ generalized tool extensions: route the CS settings menu and the
 		// non-feature reads UNDER the base `menu` / `inspect` tools (menu invoke name=…,
@@ -772,6 +962,10 @@ namespace DevBenchBridge
 			static constexpr const char* inspectShadowsDesc =
 				R"({"description":"Open Shaders Light Limit Fix shadow-scheduler diagnostics -> {valid,frame,total,chosen,excess,invalid*,slotsInUse,lights:[{ptr,reason}],slots:[{slot,ptr,importance,score,desiredScale,budgetScale,pendingScale,renderedScale,tile:{x,y,size,contentValid}}],classes:{full,half,quarter,eighth,sixteenth},atlas:{dim,capacityCells,occupancy,vramBytes},budget:{avgLightCostUs,avgRedrawsPerFrame,estPassMsPerFrame,staticBakesTotal}}. reason: portal|frustum|lod|excess|other -- why a non-chosen light was demoted from a shadow caster. slots covers occupied point-light pool slots (tile.size 0 = no atlas tile); classes buckets renderedScale; atlas is all-zero when the shadow atlas is inactive; budget is the GPU-timestamp tracker (estPassMsPerFrame = avg cost x avg redraws, the REST perf A/B metric). The scheduler fills this only while the settings menu is open or a dump was recently requested; calling this primes it, so if valid==false (idle) poll again after a frame (use inspect kind=openshaders frame_count to know a tick passed).","readOnly":true,"inputSchema":{"type":"object"}})";
 			dvb->RegisterToolExtension("inspect", "llfshadows", inspectShadowsDesc, &InspectShadowsHandler, nullptr);
+
+			static constexpr const char* inspectProfilerDesc =
+				R"({"description":"Open Shaders GPU/CPU profiler snapshot -> {enabled,capturing,frame_count,capturedFrameCount,totalMs,cpuTotalMs,resolvedTotalMs,resolvedCpuTotalMs,acquiredSlots,peakAcquiredSlots,slotRefusals,maxTimers,timers:[{name,gpuMs,topLevelMs,avgMs,p95Ms,p99Ms,cpuMs,cpuAvgMs,cpuP95Ms,cpuP99Ms,hasGpu,hasCpu,activeGpu,activeCpu,historyHead,historyCount,cpuHistoryHead,cpuHistoryCount}]}. Calling this primes a capture (like llfshadows), so an idle first call may show stale data -- capturedFrameCount is the engine frame the returned timers were actually recorded on (both it and frame_count are read in the same call, so they're always comparable). Results lag capture by kFrameLatency (3) frames by construction, so frame_count - capturedFrameCount == 3 is a maximally fresh snapshot and it is never less than 3; larger values mean staleness (e.g. capture was off, or the game is paused/loading). totalMs/cpuTotalMs are the LIVE values shown in the menu (zeroed while idle so the overlay doesn't show a stale sum); resolvedTotalMs/resolvedCpuTotalMs pair with capturedFrameCount and the timers array instead, so they never zero on their own and are the ones to use for exact checks. topLevelMs is the portion of gpuMs from top-level (non-nested) intervals only; for a feature with nested passes, resolvedTotalMs should equal the sum of topLevelMs across its timers. historyHead advances by exactly 1 per rolling-history sample regardless of how many call sites shared a name -- CollectResults sums same-name intervals into one entry before pushing, so a pass invoked twice in one frame (e.g. by a screenshot/crop-preview path recomposing the same output) never doubles its delta; comparing historyHead's delta between two polls across every hasGpu timer PRESENT IN BOTH polls should be identical (a timer first seen between polls starts fresh and is exempt) -- a mismatched delta means a missed/skipped cycle, not a duplicate call site. acquiredSlots is the GPU timer-slot count used in the most recently completed cycle (0 for a CPU-only cycle with no GPU frame; vs maxTimers, currently 256); peakAcquiredSlots is the session high-water mark of the same, since a sparse poll would likely miss a transient spike that acquiredSlots alone would show. slotRefusals is a cumulative session count of BeginPass calls that failed for lack of a free slot -- any nonzero value means timing data was silently dropped at some point this session, not necessarily the current frame. Enable/disable capture via openshaders.profiler.","readOnly":true,"inputSchema":{"type":"object"}})";
+			dvb->RegisterToolExtension("inspect", "profiler", inspectProfilerDesc, &InspectProfilerHandler, nullptr);
 		} else {
 			logger::info("DevBenchBridge: devbench build {} < 10500; CS menu + inspect extensions need 1.5.0", dvb->GetBuildNumber());
 		}

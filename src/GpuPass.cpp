@@ -11,10 +11,10 @@ ScopedGpuPass::ScopedGpuPass(std::string_view name)
 	// 1. Internal profiler: GPU timestamp query start + always-on CPU QPC.
 	//    BeginPass also fires the legacy BeginPerfEvent callback for any
 	//    call sites that are not yet migrated to ScopedGpuPass.
-	if (profiler) {
-		profiler->BeginPass(std::string(name), false);
-		profilerActive = true;
-	}
+	// Gates EndPass below: at capacity BeginPass returns false and opens
+	// nothing, so EndPass must not close an unrelated already-open pass.
+	if (profiler)
+		profilerActive = profiler->BeginPass(name, false);
 
 #ifdef TRACY_ENABLE
 	// 2. Tracy CPU zone — unconditional; not gated on frameAnnotations so

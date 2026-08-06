@@ -1,6 +1,8 @@
 // ShadowEngineHooks.cpp
 // Every game-engine touchpoint of the shadow caster scheduler: hook thunks, engine accessors, and Install().
 
+#include <atomic>
+
 #include "../../Deferred.h"
 #include "../../Globals.h"
 #include "../../GpuPass.h"
@@ -282,6 +284,50 @@ namespace ShadowCasterManager
 		static void thunk()
 		{
 			(void)func;  // suppress "unused" warning while keeping the relocation
+		}
+		static inline REL::Relocation<decltype(thunk)> func;
+	};
+
+	// StartGroupingAlphas bump-allocates a global GeometryGroup array with no
+	// capacity check; past the ceiling it reads adjacent .rdata as a bogus
+	// BSBatchRenderer* and AVs in ClearAllRenderPasses. Returning null matches
+	// the engine's own no-camera result, so callers already handle it.
+	static std::uint32_t* s_alphaGroupCount = nullptr;
+	static std::uint32_t s_alphaGroupLimit = 0;
+
+	// Array element counts (binary literals; VR was built with double the slots).
+	static constexpr std::uint32_t kAlphaGeometryGroupCapacityFlat = 512;
+	static constexpr std::uint32_t kAlphaGeometryGroupCapacityVR = 1024;
+
+	// Must exceed the max threads concurrently inside the guarded function: the
+	// engine claims entries via LOCK XADD, so every worker already past the
+	// guard's read can still claim one before it increments.
+	static constexpr std::uint32_t kAlphaGeometryGroupReserve = 64;
+
+	// High-water mark and refused-allocation count, for diagnostics only.
+	static std::atomic<std::uint32_t> s_alphaGroupPeak{ 0 };
+	static std::atomic<std::uint64_t> s_alphaGroupDrops{ 0 };
+
+	struct Hook_StartGroupingAlphas
+	{
+		static void* thunk(RE::BSBatchRenderer* a_this, void* a_bound, RE::NiCamera* a_camera,
+			bool a_sortByClosestPoint)
+		{
+			if (s_alphaGroupCount && a_camera) {
+				const std::uint32_t live = *s_alphaGroupCount;
+				// CAS so a concurrent worker cannot lose a higher peak.
+				std::uint32_t seen = s_alphaGroupPeak.load(std::memory_order_relaxed);
+				while (live > seen && !s_alphaGroupPeak.compare_exchange_weak(
+										  seen, live, std::memory_order_relaxed)) {
+				}
+				if (live >= s_alphaGroupLimit) {
+					const uint64_t n = s_alphaGroupDrops.fetch_add(1, std::memory_order_relaxed) + 1;
+					if (n == 1u || (n % 10000u) == 0u)
+						logger::warn("[SCM] Alpha GeometryGroup ceiling reached ({} live, {} refused)", live, n);
+					return nullptr;
+				}
+			}
+			return func(a_this, a_bound, a_camera, a_sortByClosestPoint);
 		}
 		static inline REL::Relocation<decltype(thunk)> func;
 	};
@@ -1267,6 +1313,53 @@ namespace ShadowCasterManager
 		// nothing. One detour for all runtimes -- don't re-split for VR (a since-corrected mismap).
 		stl::detour_thunk<Hook_RenderShadowLightsWithUtilityShader>(
 			REL::RelocationID(100423, 107141));
+
+		// Alpha GeometryGroup ceiling (100874/107670, see Hook_StartGroupingAlphas).
+		// The counter has no address-library id of its own; it's decoded out of
+		// ClearAlphaGeometryGroups (100856/107646), an 11-byte `mov dword
+		// [counter], 0; ret` whose RIP-relative operand IS the counter -- the
+		// opcode check below is what makes that safe rather than a guess.
+		{
+			// `mov dword ptr [rip+disp32], imm32` (C7 /0, RIP-relative ModRM), then
+			// `ret`; the operand is relative to the end of the 10-byte store.
+			constexpr std::uint8_t kMovDwordImmOpcode = 0xC7;
+			constexpr std::uint8_t kRipRelativeModRM = 0x05;
+			constexpr std::uint8_t kRetOpcode = 0xC3;
+			constexpr std::size_t kMovDwordImmSize = 10;
+
+			const auto clearFn = REL::RelocationID(100856, 107646).address();
+			const auto* code = reinterpret_cast<const std::uint8_t*>(clearFn);
+			std::uint32_t immediate = 1;
+			std::int32_t displacement = 0;
+			if (clearFn) {
+				std::memcpy(&displacement, code + 2, sizeof(displacement));
+				std::memcpy(&immediate, code + 6, sizeof(immediate));
+			}
+			// The immediate must be the zero this function exists to store: a
+			// patched sentinel would mean the counter no longer means what the
+			// ceiling check assumes.
+			const bool shapeOk = clearFn && code[0] == kMovDwordImmOpcode &&
+			                     code[1] == kRipRelativeModRM && immediate == 0u &&
+			                     code[kMovDwordImmSize] == kRetOpcode;
+			const auto counter = shapeOk ? clearFn + kMovDwordImmSize + displacement : 0;
+			// Containment check: a decode this guard trusts enough to dereference
+			// every frame must land in the module's own data, not wherever a
+			// displacement happened to point.
+			const auto data = REL::Module::get().segment(REL::Segment::data);
+			if (counter >= data.address() && counter < data.address() + data.size()) {
+				s_alphaGroupCount = reinterpret_cast<std::uint32_t*>(counter);
+				s_alphaGroupLimit = (globals::game::isVR ? kAlphaGeometryGroupCapacityVR :
+														   kAlphaGeometryGroupCapacityFlat) -
+				                    kAlphaGeometryGroupReserve;
+				if (long rc = stl::detour_thunk<Hook_StartGroupingAlphas>(REL::RelocationID(100874, 107670)))
+					logger::error("[SCM] Failed to install Hook_StartGroupingAlphas ({})", rc);
+			} else {
+				s_alphaGroupCount = nullptr;
+				logger::error(
+					"[SCM] Alpha GeometryGroup guard not installed: "
+					"ClearAlphaGeometryGroups did not decode to a counter in .data");
+			}
+		}
 
 		// ---- Shadow caster selection -----------------------------------------
 

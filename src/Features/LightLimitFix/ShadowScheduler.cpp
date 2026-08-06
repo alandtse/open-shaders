@@ -155,7 +155,7 @@ namespace ShadowCasterManager
 	// AppendVirtual (vtable slot 0x18). We hook that slot on ONLY the parabolic
 	// vtable -- so it fires exclusively for point-light shadow culling, never
 	// the sun, spots, or main scene -- and skip the append for a caster whose
-	// angular half-size from the light (bound radius / distance) is below
+	// camera-relative screen size (bound radius / distance to camera) is below
 	// CasterCullAngularMin. s_currentCullLight identifies the light being
 	// accumulated (set around EnableLight's Accumulate call, same render
 	// thread), so the cost metric uses the VR-validated BSShadowLight position
@@ -306,6 +306,14 @@ namespace ShadowCasterManager
 	/// validation gate). Render thread only; keys are never dereferenced, so a
 	/// dead light's stale entry is harmless until the size prune.
 	std::unordered_map<RE::BSShadowLight*, uint32_t> s_invalidStreak;
+
+	/// Consecutive frames a light scored below ShadowImpactFloor (exit hysteresis
+	/// mirroring s_invalidStreak above). Without this, a light hovering near the
+	/// floor drops its atlas slot and re-bakes every time it dips back above --
+	/// EnableLight's own pose-rebake counter can then latch splitExcluded after a
+	/// handful of these flaps within its window, permanently downgrading the
+	/// light to full renders. Render thread only; same dereference/prune notes.
+	std::unordered_map<RE::BSShadowLight*, uint32_t> s_belowFloorStreak;
 
 	// CPU-only meters (steady_clock). The budget tracker's per-light cost is a
 	// GPU timestamp interval; these answer the walk-vs-submission CPU question
@@ -1431,8 +1439,17 @@ namespace ShadowCasterManager
 				c.score = CalculateLightScore(l, camera, tmpIndex++,
 					s_settings.ShadowImpactFloor > 0.0f ? &impact : nullptr);
 				if (s_settings.ShadowImpactFloor > 0.0f && impact < s_settings.ShadowImpactFloor) {
-					c.belowFloor = true;
-					AddBelowFloor(reinterpret_cast<uintptr_t>(l));
+					// Exit hysteresis, same shape as s_invalidStreak above: a light
+					// hovering near the floor must fail 15 consecutive frames before
+					// it's actually dropped, or it flaps its atlas slot every time it
+					// dips back above and re-bakes on return.
+					PruneIfOversized(s_belowFloorStreak, 512);
+					if (++s_belowFloorStreak[l] >= 15) {
+						c.belowFloor = true;
+						AddBelowFloor(reinterpret_cast<uintptr_t>(l));
+					}
+				} else {
+					s_belowFloorStreak.erase(l);
 				}
 			}
 #ifdef TRACY_ENABLE
@@ -1926,11 +1943,11 @@ namespace ShadowCasterManager
 				e.RedrawFrame = (i == 0 && s_lights.Sun);
 				if (e.RedrawFrame) {
 					e.LastDrawnFrame = now;
-					isFirst = false;
 					maxRedraw--;
-					// Sun's budget cost is bookkept at 0 (different texture
-					// pipeline -- it has its own cascade buffer), so no
-					// budgetRemain decrement.
+					// Sun's budget cost is bookkept at 0, so no budgetRemain
+					// decrement. isFirst deliberately survives the sun -- it's
+					// the point lights' starvation guarantee, which the sun
+					// used to consume before an over-budget light could use it.
 				}
 			}
 

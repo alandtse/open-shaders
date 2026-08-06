@@ -6,6 +6,8 @@
 #include <optional>
 #include <string_view>
 
+#include "Utils/Macros.h"
+
 /// RAII scope that fans a single pass name to all three instrumentation sinks:
 ///   1. Internal profiler (GPU timestamp + CPU QPC → Profiling table)
 ///   2. Tracy CPU zone (always-on when TRACY_ENABLE; not gated on frameAnnotations)
@@ -33,11 +35,8 @@ private:
 	bool profilerActive = false;
 };
 
-#define CS_GPU_PASS_CONCAT_IMPL(a, b) a##b
-#define CS_GPU_PASS_CONCAT(a, b) CS_GPU_PASS_CONCAT_IMPL(a, b)
-
 /// Drop a single-line GPU pass scope at render-pass entry.
 /// The variable name is mangled with __LINE__ so two CS_GPU_PASS calls in the
 /// same function cannot collide.
 #define CS_GPU_PASS(name) \
-	ScopedGpuPass CS_GPU_PASS_CONCAT(cs_gpu_pass_, __LINE__) { name }
+	ScopedGpuPass CS_DETAIL_CONCAT(cs_gpu_pass_, __LINE__) { name }

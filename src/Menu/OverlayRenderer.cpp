@@ -14,8 +14,8 @@
 #include "Feature.h"
 #include "FeatureIssues.h"
 #include "Features/RenderDoc.h"
+#include "Features/SceneSelector.h"
 #include "Features/VR.h"
-#include "Features/WeatherPicker.h"
 #include "Globals.h"
 #include "I18n/I18n.h"
 #include "Menu.h"
@@ -206,7 +206,7 @@ bool OverlayRenderer::ShouldSkipRendering()
 			 abTestingManager->IsEnabled() ||
 			 (failed && !hide) ||
 			 globals::features::performanceOverlay.settings.ShowInOverlay ||
-			 globals::features::weatherPicker.IsOverlayVisible() ||
+			 globals::features::sceneSelector.IsOverlayVisible() ||
 			 renderDoc->IsAvailable() ||
 			 HomePageRenderer::ShouldShowFirstTimeSetup() ||
 			 globals::features::vr.HelperRequestsRender());
@@ -272,7 +272,7 @@ void OverlayRenderer::InitializeImGuiFrame(Menu& menu)
 		menu.resetLayout = true;
 		EditorWindow::GetSingleton()->resetLayout = true;
 		globals::features::performanceOverlay.ResetWindowLayout();
-		globals::features::weatherPicker.ResetWindowLayout();
+		globals::features::sceneSelector.ResetWindowLayout();
 	}
 	menu.lastDisplaySize = currentDisplaySize;
 

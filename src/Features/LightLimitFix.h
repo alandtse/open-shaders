@@ -18,6 +18,7 @@ private:
 	// clusterCount * CLUSTER_MAX_LIGHTS. MUST match MAX_CLUSTER_LIGHTS in the
 	// shader-side Common.hlsli or the cull pass can overrun the pool.
 	static constexpr uint32_t CLUSTER_MAX_LIGHTS = 128;
+	eastl::hash_map<RE::BSLight*, RE::NiLight*> effectLightValidationCache;
 
 public:
 	virtual inline std::string GetName() override { return "Light Limit Fix"; }

@@ -3,6 +3,7 @@
 #include "IconsFontAwesome5.h"
 #include "imgui_stdlib.h"
 
+#include "Globals.h"
 #include "Profiler.h"
 #include "State.h"
 #include "Util.h"
@@ -648,14 +649,28 @@ void PostProcessing::Prepass()
 		pendingSettings = {};
 	}
 
-	// Update gameISData
-	const auto ImageSpace = RE::ImageSpaceManager::GetSingleton();
-	const auto& iSRuntimeData = ImageSpace->GetRuntimeData();
-	imageSpaceManager->gameISData = iSRuntimeData.data;
-	if (const auto& overrideBaseData = iSRuntimeData.overrideBaseData) {
-		imageSpaceManager->gameISData.baseData = *overrideBaseData;
+	// globals::game::imageSpaceManager isn't cached until OnDataLoaded(); skip
+	// the update rather than crash if Prepass() runs before that.
+	if (!globals::game::imageSpaceManager) {
+		return;
+	}
+
+	// Update gameISData. GetRuntimeData() and GetVRRuntimeData() return
+	// differently-laid-out structs (VR_RUNTIME_DATA has two extra leading
+	// fields), so calling the wrong one for the current runtime silently
+	// misreads unrelated bytes as pointers.
+	const auto updateGameISData = [this](const auto& iSRuntimeData) {
+		imageSpaceManager->gameISData = iSRuntimeData.data;
+		if (const auto& overrideBaseData = iSRuntimeData.overrideBaseData) {
+			imageSpaceManager->gameISData.baseData = *overrideBaseData;
+		} else if (const auto& currentBaseData = iSRuntimeData.currentBaseData) {
+			imageSpaceManager->gameISData.baseData = *currentBaseData;
+		}
+	};
+	if (globals::game::isVR) {
+		updateGameISData(globals::game::imageSpaceManager->GetVRRuntimeData());
 	} else {
-		imageSpaceManager->gameISData.baseData = *iSRuntimeData.currentBaseData;
+		updateGameISData(globals::game::imageSpaceManager->GetRuntimeData());
 	}
 }
 

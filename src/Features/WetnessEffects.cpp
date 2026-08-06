@@ -1,7 +1,7 @@
 #include "WetnessEffects.h"
 #include "I18n/I18n.h"
 #include "Menu.h"
-#include "WeatherPicker.h"
+#include "SceneSelector.h"
 
 #define I18N_KEY_PREFIX "feature.wetness_effects."
 
@@ -613,13 +613,13 @@ void WetnessEffects::DrawSettings()
 
 	ImGui::Spacing();
 	ImGui::Spacing();
-	auto& weatherPicker = globals::features::weatherPicker;
-	if (weatherPicker.loaded) {
-		if (ImGui::SmallButton(T(TKEY("open_weather_picker"), "Open Weather Picker"))) {
-			Menu::GetSingleton()->SelectFeatureMenu(weatherPicker.GetShortName());
+	auto& sceneSelector = globals::features::sceneSelector;
+	if (sceneSelector.loaded) {
+		if (ImGui::SmallButton(T(TKEY("open_weather_picker"), "Open Scene Selector"))) {
+			Menu::GetSingleton()->SelectFeatureMenu(sceneSelector.GetShortName());
 		}
 		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::Text("%s", T(TKEY("open_weather_picker_tooltip"), "Open Weather Picker feature"));
+			ImGui::Text("%s", T(TKEY("open_weather_picker_tooltip"), "Open Scene Selector feature"));
 		}
 	}
 

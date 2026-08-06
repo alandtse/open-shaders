@@ -252,7 +252,9 @@ namespace Stereo
 	* @brief Clamps a pixel coordinate to the eye-local X bounds of the packed stereo buffer.
 	*
 	* Prevents cross-neighbor pixel reads from crossing the half-width seam into the
-	* other eye's region of the side-by-side stereo texture.
+	* other eye's region of the side-by-side stereo texture. In flat (non-VR) builds
+	* there is no seam, so X is just clamped to [0, frameDim.x-1] — callers can
+	* invoke it unconditionally.
 	*
 	* @param[in] px        Pixel coordinate to clamp.
 	* @param[in] eyeIndex  Eye index (0 = left, 1 = right).
@@ -261,8 +263,12 @@ namespace Stereo
 	*/
 	int2 ClampToEyeBounds(int2 px, uint eyeIndex, float2 frameDim)
 	{
+#ifdef VR
 		int halfWidth = (int)((uint)frameDim.x >> 1);
 		px.x = clamp(px.x, eyeIndex == 0 ? 0 : halfWidth, eyeIndex == 0 ? (halfWidth - 1) : ((int)frameDim.x - 1));
+#else
+		px.x = clamp(px.x, 0, (int)frameDim.x - 1);
+#endif
 		px.y = clamp(px.y, 0, (int)frameDim.y - 1);
 		return px;
 	}

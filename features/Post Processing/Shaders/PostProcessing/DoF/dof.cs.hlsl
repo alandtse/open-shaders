@@ -114,6 +114,7 @@
 #include "Common/Game.hlsli"
 #include "Common/Math.hlsli"
 #include "Common/SharedData.hlsli"
+#include "Common/VR.hlsli"
 
 RWTexture2D<float4> RWTexOut : register(u0);
 RWTexture2D<float> RWFocus : register(u1);
@@ -262,11 +263,13 @@ float PerformSingleValueGaussianBlur(Texture2D<float> source, float2 texcoord, f
 	coc *= weight[0];
 
 	float2 factorToUse = offsetWeight * NearPlaneMaxBlur * 0.8f;
+	// Horizontal offsets can cross the packed stereo buffer's eye seam; clamp per-eye.
+	uint eyeIndex = Stereo::GetEyeIndexFromTexCoord(texcoord);
 	for (int i = 1; i < 18; ++i) {
 		float2 coordOffset = factorToUse * offset[i];
 		float weightSample = weight[i];
-		coc += GetBlurDiscRadiusFromSource(source, texcoord + coordOffset, flattenToZero) * weightSample;
-		coc += GetBlurDiscRadiusFromSource(source, texcoord - coordOffset, flattenToZero) * weightSample;
+		coc += GetBlurDiscRadiusFromSource(source, Stereo::ClampToEyeUV(texcoord + coordOffset, eyeIndex), flattenToZero) * weightSample;
+		coc += GetBlurDiscRadiusFromSource(source, Stereo::ClampToEyeUV(texcoord - coordOffset, eyeIndex), flattenToZero) * weightSample;
 	}
 
 	return saturate(coc);
@@ -331,10 +334,15 @@ float PerformTileGatherHorizontal(uint2 DTid)
 	float minCoC = 10;
 	float coc;
 	float2 offset = uint2(1, 0);
+	uint width, height;
+	TexCoCInput.GetDimensions(width, height);
+	uint eyeIndex = Stereo::GetEyeIndexFromTexCoord(DTid / float2(width, height));
 	for (float i = 0; i <= tileSize; ++i) {
-		coc = TexCoCInput[DTid + offset].r;
+		int2 coordPos = Stereo::ClampToEyeBounds(int2(DTid) + int2(offset), eyeIndex, float2(width, height));
+		int2 coordNeg = Stereo::ClampToEyeBounds(int2(DTid) - int2(offset), eyeIndex, float2(width, height));
+		coc = TexCoCInput[coordPos].r;
 		minCoC = min(minCoC, coc);
-		coc = TexCoCInput[DTid - offset].r;
+		coc = TexCoCInput[coordNeg].r;
 		minCoC = min(minCoC, coc);
 		offset.x += 1;
 	}
@@ -367,11 +375,13 @@ float PerformNeighborTileGather(uint2 DTid)
 	uint height;
 	TexCoCInput.GetDimensions(width, height);
 	int2 maxCoord = int2(width, height) - 1;
+	uint eyeIndex = Stereo::GetEyeIndexFromTexCoord(DTid / float2(width, height));
 
 	// Gather the center tile and its eight neighbors.
 	for (int i = -1; i < 2; i++) {
 		for (int j = -1; j < 2; j++) {
 			int2 coord = clamp(int2(DTid) + int2(i, j) * 3, int2(0, 0), maxCoord);
+			coord = Stereo::ClampToEyeBounds(coord, eyeIndex, float2(width, height));
 			float coc = TexCoCInput[coord].r;
 			minCoC = min(minCoC, coc);
 		}
@@ -413,21 +423,24 @@ float4 PerformFullFragmentGaussianBlur(Texture2D source, float2 texcoord, uint2 
 
 	fragment *= weight[0];
 	float2 factorToUse = offsetWeight * PostBlurSmoothing;
+	uint eyeIndex = Stereo::GetEyeIndexFromTexCoord(texcoord);
 
 	for (int i = 1; i < 6; ++i) {
 		float2 coordOffset = factorToUse * offset[i];
 		float weightSample = weight[i];
-		float sampleCoC = TexCoCInput.SampleLevel(LinearSampler, texcoord + coordOffset, 0).r;
+		float2 uvPos = Stereo::ClampToEyeUV(texcoord + coordOffset, eyeIndex);
+		float2 uvNeg = Stereo::ClampToEyeUV(texcoord - coordOffset, eyeIndex);
+		float sampleCoC = TexCoCInput.SampleLevel(LinearSampler, uvPos, 0).r;
 		float maskFactor = abs(sampleCoC) < 0.2;
 
 		fragment += (originalFragment * maskFactor * weightSample) +
-		            (source.SampleLevel(LinearSampler, texcoord + coordOffset, 0) * (1 - maskFactor) * weightSample);
+		            (source.SampleLevel(LinearSampler, uvPos, 0) * (1 - maskFactor) * weightSample);
 
-		sampleCoC = TexCoCInput.SampleLevel(LinearSampler, texcoord - coordOffset, 0).r;
+		sampleCoC = TexCoCInput.SampleLevel(LinearSampler, uvNeg, 0).r;
 		maskFactor = abs(sampleCoC) < 0.2;
 
 		fragment += (originalFragment * maskFactor * weightSample) +
-		            (source.SampleLevel(LinearSampler, texcoord - coordOffset, 0) * (1 - maskFactor) * weightSample);
+		            (source.SampleLevel(LinearSampler, uvNeg, 0) * (1 - maskFactor) * weightSample);
 	}
 	return fragment;
 }
@@ -510,6 +523,8 @@ float4 PerformFullFragmentGaussianBlur(Texture2D source, float2 texcoord, uint2 
 	}
 	float bokehBusyFactorToUse = saturate(1.0 - BokehBusyFactor);  // use the busy factor as an edge bias on the blur, not the highlights
 	float4 average = float4(color.rgb * colorRadius * bokehBusyFactorToUse, bokehBusyFactorToUse);
+	uint eyeIndex = Stereo::GetEyeIndexFromTexCoord(blurInfo.texcoord);
+	float2 texcoordMono = Stereo::ConvertFromStereoUV(blurInfo.texcoord, eyeIndex);
 	float2 pointOffset = float2(0, 0);
 	float2 ringRadiusDeltaCoords = (SharedData::BufferDim.zw * blurInfo.farPlaneMaxBlurInPixels * colorRadius) / blurInfo.numberOfRings;
 	float2 currentRingRadiusCoords = ringRadiusDeltaCoords;
@@ -530,8 +545,8 @@ float4 PerformFullFragmentGaussianBlur(Texture2D source, float2 texcoord, uint2 
 			if (useShape)
 				shapeTap = GetShapeTap(angle, shapeRingDistance);
 			else
-				pointOffset = ApplyPetzvalMorph(pointOffset, blurInfo.texcoord);
-			float2 tapCoords = float2(blurInfo.texcoord + (pointOffset * currentRingRadiusCoords));
+				pointOffset = ApplyPetzvalMorph(pointOffset, texcoordMono);
+			float2 tapCoords = Stereo::ClampToEyeUV(float2(blurInfo.texcoord + (pointOffset * currentRingRadiusCoords)), eyeIndex);
 			float sampleRadius = TexCoCInput.SampleLevel(LinearSampler, tapCoords, 0).r;
 			float4 tap = 0;
 			float weight = (sampleRadius >= 0) * ringWeight * CalculateSampleWeight(sampleRadius * FarPlaneMaxBlur, ringDistance) * (shapeTap.a > 0.01 ? 1.0f : 0.0f);
@@ -579,6 +594,8 @@ float4 PerformFullFragmentGaussianBlur(Texture2D source, float2 texcoord, uint2 
 	// luma is stored in alpha
 	float bokehBusyFactorToUse = saturate(1.0 - BokehBusyFactor);  // use the busy factor as an edge bias on the blur, not the highlights
 	float4 average = float4(color.rgb * colorRadiusToUse * bokehBusyFactorToUse, bokehBusyFactorToUse);
+	uint eyeIndex = Stereo::GetEyeIndexFromTexCoord(blurInfo.texcoord);
+	float2 texcoordMono = Stereo::ConvertFromStereoUV(blurInfo.texcoord, eyeIndex);
 	float2 pointOffset = float2(0, 0);
 	float nearPlaneBlurInPixels = blurInfo.nearPlaneMaxBlurInPixels * colorRadiusToUse;
 	float2 ringRadiusDeltaCoords = float2(SharedData::BufferDim.z, SharedData::BufferDim.w) * (nearPlaneBlurInPixels / (numberOfRings - 1));
@@ -598,8 +615,8 @@ float4 PerformFullFragmentGaussianBlur(Texture2D source, float2 texcoord, uint2 
 			if (useShape)
 				shapeTap = GetShapeTap(angle, shapeRingDistance);
 			else
-				pointOffset = ApplyPetzvalMorph(pointOffset, blurInfo.texcoord);
-			float2 tapCoords = float2(blurInfo.texcoord + (pointOffset * currentRingRadiusCoords));
+				pointOffset = ApplyPetzvalMorph(pointOffset, texcoordMono);
+			float2 tapCoords = Stereo::ClampToEyeUV(float2(blurInfo.texcoord + (pointOffset * currentRingRadiusCoords)), eyeIndex);
 			float4 tap = TexColor.SampleLevel(LinearSampler, tapCoords, 0);
 			// r contains blurred CoC, g contains original CoC. Original can be negative
 			float2 sampleRadii = float2(TexCoCBlurredInput.SampleLevel(LinearSampler, tapCoords, 0), TexCoCInput.SampleLevel(LinearSampler, tapCoords, 0));

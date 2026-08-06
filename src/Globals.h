@@ -30,7 +30,7 @@ struct VanillaFresnel;
 struct VolumetricLighting;
 struct VR;
 struct WaterEffects;
-struct WeatherPicker;
+struct SceneSelector;
 struct PerformanceOverlay;
 struct WetnessEffects;
 struct ExtendedTranslucency;
@@ -123,7 +123,7 @@ namespace globals
 		extern VolumetricLighting volumetricLighting;
 		extern VR vr;
 		extern WaterEffects waterEffects;
-		extern WeatherPicker weatherPicker;
+		extern SceneSelector sceneSelector;
 		extern PerformanceOverlay performanceOverlay;
 		extern WetnessEffects wetnessEffects;
 		extern ExtendedTranslucency extendedTranslucency;
@@ -272,6 +272,7 @@ namespace globals
 		extern float* deltaTime;
 		extern RE::BSUtilityShader* utilityShader;
 		extern RE::PlayerCharacter* player;
+		extern RE::PlayerCamera* playerCamera;
 		extern RE::Sky* sky;
 		extern RE::UI* ui;
 		extern RE::Calendar* calendar;

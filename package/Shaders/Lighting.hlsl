@@ -2782,9 +2782,6 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 		dirSoftShadow = dirDetailedShadow;
 #		endif  // VOLUMETRIC_SHADOWS
 #	endif
-#	if defined(SKYLIGHTING_SHADOW_VIS)
-		skylightingShadowVisibility = dirSoftShadow;
-#	endif
 	}
 #	if !defined(DEFERRED)
 	else {
@@ -2841,7 +2838,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 #	endif
 
 #	if defined(SKYLIGHTING_SHADOW_VIS)
-	dirSoftShadow = skylightingShadowVisibility;
+	dirSoftShadow = min(dirSoftShadow, skylightingShadowVisibility);
 #	endif
 
 	float3 diffuseColor = 0.0.xxx;

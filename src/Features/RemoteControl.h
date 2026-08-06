@@ -32,9 +32,7 @@ public:
 		};
 	}
 
-	// The bridge installs at DataLoaded (not Load): Load runs during SKSEPluginLoad, before
-	// devbench's kPostLoad init, so its cross-plugin interface isn't ready yet.
-	void DataLoaded() override;
+	void PostPostLoad() override;
 	void DrawSettings() override;
 
 	RemoteControl() = default;

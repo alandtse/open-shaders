@@ -6,6 +6,7 @@
  * Outputs final neighborhood-aware velocity data for blur pass
  */
 
+#include "Common/VR.hlsli"
 #include "PostProcessing/common.hlsli"
 
 // Textures
@@ -52,6 +53,10 @@ float2 ExtractVelocity(float4 colorSample)
 	float2 maxVelocity = float2(0.0f, 0.0f);
 	float maxVelocityMagnitude = 0.0f;
 
+	// The grid spans the full packed stereo buffer, so its middle column is the eye
+	// seam; keep the 3x3 neighborhood from crossing into the other eye's cells.
+	uint eyeIndex = Stereo::GetEyeIndexFromTexCoord(float2(cellIndex) / float2(GRID_SIZE, GRID_SIZE));
+
 	// Check 3x3 neighborhood
 	for (int y = -1; y <= 1; y++) {
 		for (int x = -1; x <= 1; x++) {
@@ -61,7 +66,8 @@ float2 ExtractVelocity(float4 colorSample)
 			// Skip out-of-bounds neighbors
 			if (neighborCellIndex.x < 0 || neighborCellIndex.y < 0 ||
 				neighborCellIndex.x >= int(GRID_SIZE) ||
-				neighborCellIndex.y >= int(GRID_SIZE))
+				neighborCellIndex.y >= int(GRID_SIZE) ||
+				Stereo::GetEyeIndexFromTexCoord(float2(neighborCellIndex) / float2(GRID_SIZE, GRID_SIZE)) != eyeIndex)
 				continue;
 
 			// Get neighbor velocity

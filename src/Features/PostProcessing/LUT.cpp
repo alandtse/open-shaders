@@ -1,5 +1,6 @@
 #include "LUT.h"
 
+#include "GpuPass.h"
 #include "PostProcessingUI.h"
 #include "State.h"
 #include "Util.h"
@@ -263,7 +264,7 @@ void LUT::Draw(TextureInfo& inout_tex)
 	if (LutType == -1)
 		return;
 
-	globals::profiler->BeginPass("PostProcessing::LUT");
+	CS_GPU_PASS("PostProcessing::LUT");
 	auto context = globals::d3d::context;
 
 	float2 res = { (float)texOutput->desc.Width, (float)texOutput->desc.Height };
@@ -302,5 +303,4 @@ void LUT::Draw(TextureInfo& inout_tex)
 	context->CSSetShader(nullptr, nullptr, 0);
 
 	inout_tex = { texOutput->resource.get(), texOutput->srv.get() };
-	globals::profiler->EndPass();
 }

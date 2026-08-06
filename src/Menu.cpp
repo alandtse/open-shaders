@@ -47,8 +47,8 @@
 #include "Features/PerformanceOverlay.h"
 #include "Features/PerformanceOverlay/ABTesting/ABTestAggregator.h"
 #include "Features/PerformanceOverlay/ABTesting/ABTesting.h"
+#include "Features/SceneSelector.h"
 #include "Features/ScreenshotFeature.h"
-#include "Features/WeatherPicker.h"
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	Menu::ThemeSettings::PaletteColors,
@@ -1422,21 +1422,21 @@ void Menu::SelectFeatureMenu(const std::string& featureName, const std::string& 
 /**
  * @brief Renders the standalone weather details window when enabled
  *
- * Delegates to the Weather Picker feature for rendering the weather details window
+ * Delegates to the Scene Selector feature for rendering the weather details window
  * that can remain open even when the main menu is closed. This provides a simple
- * coordination layer between the Menu system and the Weather Picker feature.
+ * coordination layer between the Menu system and the Scene Selector feature.
  */
 void Menu::DrawWeatherDetailsWindow()
 {
-	if (!globals::features::weatherPicker.WeatherDetailsWindow.Enabled) {
+	if (!globals::features::sceneSelector.WeatherDetailsWindow.Enabled) {
 		return;
 	}
-	if (!globals::features::weatherPicker.loaded) {
+	if (!globals::features::sceneSelector.loaded) {
 		return;
 	}
 
-	// Use the Weather Picker feature for window management and rendering
-	auto& weather = globals::features::weatherPicker;
+	// Use the Scene Selector feature for window management and rendering
+	auto& weather = globals::features::sceneSelector;
 	bool* p_open = &weather.WeatherDetailsWindow.Enabled;
 	weather.RenderWeatherDetailsWindow(p_open);
 }

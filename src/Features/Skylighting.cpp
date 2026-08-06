@@ -7,6 +7,9 @@
 #include "State.h"
 #include "Utils/D3D.h"
 
+#include <cmath>
+#include <numbers>
+
 #define I18N_KEY_PREFIX "feature.skylighting."
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
@@ -33,6 +36,10 @@ void Skylighting::RestoreDefaultSettings()
 void Skylighting::ResetSkylighting()
 {
 	auto context = globals::d3d::context;
+
+	const float unitSH[4] = { std::sqrt(4.0f * std::numbers::pi_v<float>), 0.0f, 0.0f, 0.0f };
+	context->ClearUnorderedAccessViewFloat(texProbeArray->uav.get(), unitSH);
+
 	UINT clr[1] = { 0 };
 	context->ClearUnorderedAccessViewUint(texAccumFramesArray->uav.get(), clr);
 	context->ClearUnorderedAccessViewUint(texShadowBitmask->uav.get(), clr);
@@ -134,6 +141,8 @@ void Skylighting::SetupResources()
 		texShadowVisibility->CreateUAV(uavDesc);
 	}
 
+	ResetSkylighting();
+
 	{
 		D3D11_SAMPLER_DESC samplerDesc = {};
 		samplerDesc.Filter = D3D11_FILTER_COMPARISON_MIN_MAG_MIP_LINEAR;  // Use comparison filtering
@@ -234,19 +243,19 @@ void Skylighting::Prepass()
 	if (interior)
 		return;
 
-	CS_GPU_PASS("Skylighting::ProbeUpdate");
-
 	auto context = globals::d3d::context;
 
-	{
+	if (probeUpdateCompute) {
+		CS_GPU_PASS("Skylighting::ProbeUpdate");
+
 		auto renderer = globals::game::renderer;
-		auto& esramDepthStencil = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kVOLUMETRIC_LIGHTING_SHADOWMAPS_ESRAM];
+		auto& cascadeDepthStencil = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGET_DEPTHSTENCIL::kSHADOWMAPS_ESRAM];
 
 		std::array<ID3D11ShaderResourceView*, 4> srvs = {
 			texOcclusion->srv.get(),
-			shadowCascadeSRV ? shadowCascadeSRV : nullptr,
-			shadowCascadeSRV ? globals::deferred->directionalShadowLights->srv.get() : nullptr,
-			shadowCascadeSRV ? esramDepthStencil.depthSRV : nullptr
+			nullptr,
+			globals::deferred->directionalShadowLights->srv.get(),
+			cascadeDepthStencil.depthSRV
 		};
 		std::array<ID3D11UnorderedAccessView*, 4> uavs = {
 			texProbeArray->uav.get(),
@@ -644,16 +653,6 @@ void Skylighting::RenderOcclusion()
 			}
 		}
 	}
-}
-
-void Skylighting::CaptureShadowCascadeSRV()
-{
-	auto context = globals::d3d::context;
-	ID3D11ShaderResourceView* srv = nullptr;
-	context->PSGetShaderResources(4, 1, &srv);
-	if (shadowCascadeSRV)
-		shadowCascadeSRV->Release();
-	shadowCascadeSRV = srv;
 }
 
 void Skylighting::Main_Precipitation_RenderOcclusion::thunk()

@@ -96,6 +96,59 @@ float3 GetTonemapFactorHejlBurgessDawson(float3 luminance, bool isHDR = false)
 
 #	include "Common/DisplayMapping.hlsli"
 
+#	if defined(BLEND) && defined(CS_UTILITY)
+float3 SampleVanillaBloomEnhanced(float2 uv)
+{
+	float3 center = ImageTex.Sample(ImageSampler, uv).xyz;
+	float3 bloom = center;
+
+	if (SharedData::bloomSettings.Enabled) {
+		uint bloomWidth = 1;
+		uint bloomHeight = 1;
+		ImageTex.GetDimensions(bloomWidth, bloomHeight);
+		// Normalized 5x5 separable Gaussian kernel. The outer cardinal samples are one Halo Radius from the center.
+		static const uint BLOOM_GAUSSIAN_KERNEL_SIZE = 5;
+		static const uint BLOOM_GAUSSIAN_KERNEL_CENTER = 2;
+		static const float BLOOM_GAUSSIAN_RADIUS_SCALE = 0.5;
+		static const float BLOOM_GAUSSIAN_WEIGHT_OUTER = 0.0625;
+		static const float BLOOM_GAUSSIAN_WEIGHT_INNER = 0.25;
+		static const float BLOOM_GAUSSIAN_WEIGHT_CENTER = 0.375;
+		static const float BLOOM_GAUSSIAN_WEIGHTS[BLOOM_GAUSSIAN_KERNEL_SIZE] = {
+			BLOOM_GAUSSIAN_WEIGHT_OUTER,
+			BLOOM_GAUSSIAN_WEIGHT_INNER,
+			BLOOM_GAUSSIAN_WEIGHT_CENTER,
+			BLOOM_GAUSSIAN_WEIGHT_INNER,
+			BLOOM_GAUSSIAN_WEIGHT_OUTER
+		};
+		float2 sampleStep = (SharedData::bloomSettings.HaloRadius * BLOOM_GAUSSIAN_RADIUS_SCALE) / max(float2(bloomWidth, bloomHeight), float2(1.0, 1.0));
+		uint eyeIndex = Stereo::GetEyeIndexFromTexCoord(uv);
+		float3 wide = 0.0;
+
+		[unroll] for (uint y = 0; y < BLOOM_GAUSSIAN_KERNEL_SIZE; ++y)
+		{
+			[unroll] for (uint x = 0; x < BLOOM_GAUSSIAN_KERNEL_SIZE; ++x)
+			{
+				float weight = BLOOM_GAUSSIAN_WEIGHTS[x] * BLOOM_GAUSSIAN_WEIGHTS[y];
+				if (x == BLOOM_GAUSSIAN_KERNEL_CENTER && y == BLOOM_GAUSSIAN_KERNEL_CENTER) {
+					wide += center * weight;
+				} else {
+					float2 offset = (float2(x, y) - float(BLOOM_GAUSSIAN_KERNEL_CENTER)) * sampleStep;
+					float2 sampleUV = Stereo::ClampToEyeUV(uv + offset, eyeIndex);
+					wide += ImageTex.Sample(ImageSampler, sampleUV).xyz * weight;
+				}
+			}
+		}
+
+		bloom = lerp(center, wide, SharedData::bloomSettings.HaloSpread);
+		float luminance = Color::RGBToLuminance(bloom);
+		bloom = lerp(luminance.xxx, bloom, SharedData::bloomSettings.BloomSaturation);
+		bloom *= SharedData::bloomSettings.BloomTint * SharedData::bloomSettings.EnhancementIntensity;
+	}
+
+	return bloom;
+}
+#	endif
+
 PS_OUTPUT main(PS_INPUT input)
 {
 	PS_OUTPUT psout;
@@ -155,10 +208,31 @@ PS_OUTPUT main(PS_INPUT input)
 
 	float3 bloomColor = 0;
 	if (Flags.x > 0.5) {
+#		if defined(CS_UTILITY)
+		bloomColor = SampleVanillaBloomEnhanced(uv);
+#		else
 		bloomColor = ImageTex.Sample(ImageSampler, uv).xyz;
+#		endif
 	} else {
+#		if defined(CS_UTILITY)
+		bloomColor = SampleVanillaBloomEnhanced(input.TexCoord.xy);
+#		else
 		bloomColor = ImageTex.Sample(ImageSampler, input.TexCoord.xy).xyz;
+#		endif
 	}
+
+#		if defined(CS_UTILITY)
+	if (SharedData::bloomSettings.Enabled) {
+		float bloomLuminance = Color::RGBToLuminance(bloomColor);
+		float glowThreshold = min(SharedData::bloomSettings.CompressionThreshold, SharedData::bloomSettings.CompressionCeiling);
+		float glowCeiling = SharedData::bloomSettings.CompressionCeiling;
+		float bloomExcess = max(0.0, bloomLuminance - glowThreshold);
+		float softRange = max(glowCeiling - glowThreshold, EPSILON_DIVISION);
+		float compressedBloomLuminance = glowCeiling > 0.0 ? (bloomLuminance <= glowThreshold ? bloomLuminance : glowThreshold + bloomExcess / (1.0 + bloomExcess / softRange)) : 0.0;
+		float bloomScale = compressedBloomLuminance / max(bloomLuminance, EPSILON_DIVISION);
+		bloomColor *= bloomScale;
+	}
+#		endif
 
 	float2 avgValue = AvgTex.Sample(AvgSampler, input.TexCoord.xy).xy;
 
@@ -184,7 +258,8 @@ PS_OUTPUT main(PS_INPUT input)
 		// bloom intensity against this shoulder don't get blown-out highlights. HDR keeps the
 		// soft-saturation form (1 - exp2(-x)) which bleeds bloom into specular peaks intentionally.
 		float3 bloomMask = isHDR ? saturate(Param.x - (1.0 - exp2(-blendedColor))) : saturate(Param.x - blendedColor);
-		blendedColor += bloomMask * bloomColor;
+		float3 bloomContribution = bloomMask * bloomColor;
+		blendedColor += bloomContribution;
 	}
 
 	float blendedLuminance = Color::RGBToLuminance(blendedColor);

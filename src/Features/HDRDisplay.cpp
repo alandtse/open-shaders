@@ -1144,7 +1144,7 @@ void HDRDisplay::ApplyHDR()
 	if (!hdrDataCB || !hdrTexture || !outputTexture)
 		return;
 
-	CS_GPU_PASS("HDRDisplay::HDROutput");
+	CS_GPU_PASS("HDRDisplay::ApplyHDR");
 
 	auto& upscaling = globals::features::upscaling;
 
@@ -1238,9 +1238,10 @@ void HDRDisplay::DispatchHDROutput(ID3D11ShaderResourceView* sceneSRV, ID3D11Sha
 	context->CSSetShader(computeShader, nullptr, 0);
 
 	auto dispatchCount = Util::GetScreenDispatchCount(false);
-	globals::profiler->BeginPass("HDRDisplay::HDROutput");
-	context->Dispatch(dispatchCount.x, dispatchCount.y, 1);
-	globals::profiler->EndPass();
+	{
+		CS_GPU_PASS("HDRDisplay::HDROutput");
+		context->Dispatch(dispatchCount.x, dispatchCount.y, 1);
+	}
 
 	views[0] = nullptr;
 	views[1] = nullptr;
@@ -1319,6 +1320,11 @@ ID3D11Texture2D* HDRDisplay::ComposeCleanCapture(ID3D11ShaderResourceView* scene
 
 	if (!GetHDROutputCS())
 		return nullptr;
+
+	// Distinct name from ApplyHDR's pass: this dispatch is a separate workload
+	// (the screenshot/crop-preview path), and CollectResults sums same-named
+	// intervals, so sharing a name would double-count ApplyHDR's cost.
+	CS_GPU_PASS("HDRDisplay::CleanCapture");
 
 	// Null UI SRV (t1 samples as 0) leaves the scene alone: no UI, menu, or blur.
 	HDRDataCB data = BuildHDRData();

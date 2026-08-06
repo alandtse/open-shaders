@@ -88,3 +88,39 @@ static const float kEps = 0.0001f;
 	ASSERT(AreEqual, Stereo::GetEyeIndexFromTexCoord(float2(0.75, 0.5)), 0u);
 	ASSERT(AreEqual, Stereo::GetEyeIndexFromTexCoord(float2(1.0, 0.5)), 0u);
 }
+
+	/// @tags vr, flat, uv
+	/// ClampToEyeUV clamps to the full [0,1] range (no seam) in flat mode
+	[numthreads(1, 1, 1)] void TestFlatClampToEyeUVIsFullRange()
+{
+	float2 interior = Stereo::ClampToEyeUV(float2(0.9, 0.5), 0);
+	ASSERT(IsTrue, abs(interior.x - 0.9) < kEps);
+
+	// Past the VR seam (0.5) is NOT clamped in flat mode.
+	float2 pastSeam = Stereo::ClampToEyeUV(float2(0.6, 0.5), 0);
+	ASSERT(IsTrue, abs(pastSeam.x - 0.6) < kEps);
+
+	float2 leftBorder = Stereo::ClampToEyeUV(float2(-0.1, 0.5), 0);
+	ASSERT(IsTrue, abs(leftBorder.x - 0.0) < kEps);
+
+	float2 rightBorder = Stereo::ClampToEyeUV(float2(1.1, 0.5), 1);
+	ASSERT(IsTrue, abs(rightBorder.x - 1.0) < kEps);
+}
+
+/// @tags vr, flat, pixel
+/// ClampToEyeBounds clamps to the full buffer width (no seam) in flat mode
+[numthreads(1, 1, 1)] void TestFlatClampToEyeBoundsIsFullRange() {
+	float2 frameDim = float2(2048, 1024);
+	int2 interior = Stereo::ClampToEyeBounds(int2(1500, 512), 0, frameDim);
+	ASSERT(AreEqual, interior.x, 1500);
+
+	// Past the VR seam (1024) is NOT clamped in flat mode.
+	int2 pastSeam = Stereo::ClampToEyeBounds(int2(1200, 512), 0, frameDim);
+	ASSERT(AreEqual, pastSeam.x, 1200);
+
+	int2 leftBorder = Stereo::ClampToEyeBounds(int2(-1, 512), 0, frameDim);
+	ASSERT(AreEqual, leftBorder.x, 0);
+
+	int2 rightBorder = Stereo::ClampToEyeBounds(int2(2049, 512), 1, frameDim);
+	ASSERT(AreEqual, rightBorder.x, 2047);
+}

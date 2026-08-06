@@ -44,6 +44,8 @@ namespace legit
 		double startTime;
 		double endTime;
 		std::string name;
+		/// Optional shortened label for legend rendering; falls back to name when empty.
+		std::string displayName;
 		uint32_t color;
 
 		/** @brief Get the duration of this task in seconds. */
@@ -133,6 +135,7 @@ namespace ImGuiUtils
 				}
 			}
 			currFrameIndex = (currFrameIndex + 1) % frames.size();
+			framesLoaded = std::min(framesLoaded + 1, frames.size());
 			RebuildTaskStats(currFrameIndex, 300);
 		}
 
@@ -169,7 +172,7 @@ namespace ImGuiUtils
 		}
 
 	private:
-		size_t GetCurrFrameIndex(size_t frameIndexOffset)
+		size_t GetCurrFrameIndex(size_t frameIndexOffset) const
 		{
 			return (currFrameIndex - frameIndexOffset - 1 + 2 * frames.size()) % frames.size();
 		}
@@ -205,7 +208,9 @@ namespace ImGuiUtils
 
 		void RenderGraph(ImDrawList* drawList, ImVec2 graphPos, ImVec2 graphSize, size_t frameIndexOffset, float maxFrameTime, float uiScale)
 		{
-			Rect(drawList, graphPos, ImVec2(graphPos.x + graphSize.x, graphPos.y + graphSize.y), 0xffffffff, false);
+			ImVec4 borderColor = ImGui::GetStyleColorVec4(ImGuiCol_Border);
+			borderColor.w *= 0.85f;
+			Rect(drawList, graphPos, ImVec2(graphPos.x + graphSize.x, graphPos.y + graphSize.y), ImGui::GetColorU32(borderColor), false);
 			const float scaledFrameWidth = std::max(1.0f, static_cast<float>(frameWidth) * uiScale);
 			const float scaledFrameSpacing = std::max(1.0f, static_cast<float>(frameSpacing) * uiScale);
 			const float heightThreshold = uiScale;
@@ -229,15 +234,20 @@ namespace ImGuiUtils
 
 		void RenderLegend(ImDrawList* drawList, ImVec2 legendPos, ImVec2 legendSize, size_t frameIndexOffset, float maxFrameTime, float uiScale)
 		{
+			constexpr size_t kLegendAverageFrames = 60;
 			float markerLeftRectMargin = 3.0f * uiScale;
 			float markerLeftRectWidth = 5.0f * uiScale;
-			float markerMidWidth = 30.0f * uiScale;
-			float markerRightRectWidth = 10.0f * uiScale;
+			float markerMidWidth = 18.0f * uiScale;
+			float markerRightRectWidth = 8.0f * uiScale;
 			float markerRigthRectMargin = 3.0f * uiScale;
 			float markerRightRectHeight = 10.0f * uiScale;
 			float markerRightRectSpacing = 4.0f * uiScale;
-			float nameOffset = 30.0f * uiScale;
-			ImVec2 textMargin = ImVec2(5.0f * uiScale, -3.0f * uiScale);
+			ImVec2 textMargin = ImVec2(5.0f * uiScale, -2.0f * uiScale);
+			constexpr float legendTextScale = 0.74f;
+			ImVec4 legendTextColor = ImGui::GetStyleColorVec4(ImGuiCol_Text);
+			legendTextColor.w *= 0.78f;
+			const ImU32 mutedTextColor = ImGui::GetColorU32(legendTextColor);
+			const float timeColumnWidth = std::max(48.0f, CalcTextWidth("000.00ms", legendTextScale) + textMargin.x);
 
 			auto& currFrame = frames[GetCurrFrameIndex(frameIndexOffset)];
 			size_t maxTasksCount = size_t(legendSize.y / (markerRightRectHeight + markerRightRectSpacing));
@@ -248,6 +258,9 @@ namespace ImGuiUtils
 			size_t tasksToShow = std::min<size_t>(taskStats.size(), maxTasksCount);
 			size_t tasksShownCount = 0;
 			for (size_t taskIndex = 0; taskIndex < currFrame.tasks.size(); taskIndex++) {
+				if (taskIndex >= currFrame.taskStatsIndex.size())
+					continue;
+
 				auto& task = currFrame.tasks[taskIndex];
 				auto& stat = taskStats[currFrame.taskStatsIndex[taskIndex]];
 
@@ -271,16 +284,55 @@ namespace ImGuiUtils
 				ImVec2 markerRightRectMax = ImVec2(markerRightRectMin.x + markerRightRectWidth, markerRightRectMin.y - markerRightRectHeight);
 				RenderTaskMarker(drawList, markerLeftRectMin, markerLeftRectMax, markerRightRectMin, markerRightRectMax, task.color);
 
-				uint32_t textColor = useColoredLegendText ? task.color : legit::Colors::imguiText;
+				uint32_t textColor = useColoredLegendText ? task.color : mutedTextColor;
 
-				float taskTimeMs = float(task.endTime - task.startTime);
+				// Rolling average instead of the single-frame time keeps legend values readable.
+				double taskTime = GetAverageTaskTime(currFrame.taskStatsIndex[taskIndex], frameIndexOffset, kLegendAverageFrames);
+				if (taskTime <= 0.0)
+					taskTime = task.endTime - task.startTime;
+				const float taskTimeMs = float(taskTime * 1000.0);
 				std::ostringstream timeText;
 				timeText.precision(2);
-				timeText << std::fixed << std::string("[") << (taskTimeMs * 1000.0f);
+				timeText << std::fixed << taskTimeMs << "ms";
+				const std::string& label = task.displayName.empty() ? task.name : task.displayName;
 
-				Text(drawList, ImVec2(markerRightRectMax.x + textMargin.x, markerRightRectMax.y + textMargin.y), textColor, timeText.str().c_str());
-				Text(drawList, ImVec2(markerRightRectMax.x + textMargin.x + nameOffset, markerRightRectMax.y + textMargin.y), textColor, (std::string("ms] ") + task.name).c_str());
+				Text(drawList, ImVec2(markerRightRectMax.x + textMargin.x, markerRightRectMax.y + textMargin.y), textColor, timeText.str().c_str(), legendTextScale);
+				Text(drawList, ImVec2(markerRightRectMax.x + textMargin.x + timeColumnWidth, markerRightRectMax.y + textMargin.y), textColor, label.c_str(), legendTextScale);
 			}
+		}
+
+		/**
+		 * @brief Get a task's mean per-frame time over the most recent loaded frames.
+		 * @param taskStatsIndex Index into taskStats identifying the task.
+		 * @param frameIndexOffset Offset backwards from the current frame.
+		 * @param frameCount Maximum number of frames to average over.
+		 */
+		double GetAverageTaskTime(size_t taskStatsIndex, size_t frameIndexOffset, size_t frameCount) const
+		{
+			if (frames.empty() || frameIndexOffset >= framesLoaded)
+				return 0.0;
+
+			const size_t availableFrames = framesLoaded - frameIndexOffset;
+			const size_t lookback = std::min(frameCount, availableFrames);
+			double sum = 0.0;
+			for (size_t frameNumber = 0; frameNumber < lookback; ++frameNumber) {
+				const size_t frameIndex = GetCurrFrameIndex(frameIndexOffset + frameNumber);
+				const auto& frame = frames[frameIndex];
+				double frameTaskTime = 0.0;
+				for (size_t taskIndex = 0; taskIndex < frame.tasks.size(); ++taskIndex) {
+					if (taskIndex >= frame.taskStatsIndex.size())
+						continue;
+
+					if (frame.taskStatsIndex[taskIndex] != taskStatsIndex)
+						continue;
+
+					const auto& task = frame.tasks[taskIndex];
+					frameTaskTime += task.endTime - task.startTime;
+				}
+				sum += frameTaskTime;
+			}
+
+			return lookback > 0 ? sum / static_cast<double>(lookback) : 0.0;
 		}
 
 		static void Rect(ImDrawList* drawList, ImVec2 minPoint, ImVec2 maxPoint, uint32_t col, bool filled = true)
@@ -291,9 +343,18 @@ namespace ImGuiUtils
 				drawList->AddRect(minPoint, maxPoint, col);
 		}
 
-		static void Text(ImDrawList* drawList, ImVec2 point, uint32_t col, const char* text)
+		static void Text(ImDrawList* drawList, ImVec2 point, uint32_t col, const char* text, float scale = 1.0f)
 		{
-			drawList->AddText(point, col, text);
+			ImFont* font = ImGui::GetFont();
+			const float fontSize = ImGui::GetFontSize() * scale;
+			drawList->AddText(font, fontSize, point, col, text);
+		}
+
+		static float CalcTextWidth(const char* text, float scale = 1.0f)
+		{
+			ImFont* font = ImGui::GetFont();
+			const float fontSize = ImGui::GetFontSize() * scale;
+			return font->CalcTextSizeA(fontSize, 1000000.0f, 0.0f, text).x;
 		}
 
 		static void RenderTaskMarker(ImDrawList* drawList, ImVec2 leftMinPoint, ImVec2 leftMaxPoint, ImVec2 rightMinPoint, ImVec2 rightMaxPoint, uint32_t col)
@@ -327,6 +388,7 @@ namespace ImGuiUtils
 		std::map<std::string, size_t> taskNameToStatsIndex;
 		std::vector<FrameData> frames;
 		size_t currFrameIndex = 0;
+		size_t framesLoaded = 0;
 		float peakFrameTime = 0.0f;
 	};
 }

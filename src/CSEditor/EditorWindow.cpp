@@ -1852,9 +1852,17 @@ namespace
 	std::atomic<RE::TESWeather*> g_lockedWeather{ nullptr };
 	std::atomic_bool g_weatherLockActive{ false };
 
+	// Set once InstallWeatherLockHooks has actually redirected both call sets; gates the
+	// Lock Weather UI so a failed install can't be engaged as a silent no-op.
+	std::atomic_bool g_weatherLockHooksInstalled{ false };
+
 	constexpr std::uint8_t kCallOpcode = 0xE8;           // CALL rel32
 	constexpr std::uint8_t kJumpOpcode = 0xE9;           // JMP rel32 (tail call)
 	constexpr std::size_t kRelativeInstructionSize = 5;  // opcode + int32 displacement
+
+	// A real SetWeather/ForceWeather call count is low single digits; a scan returning far
+	// more than this indicates a stale relocation ID matching unrelated bytes, not real sites.
+	constexpr std::size_t kMaxPlausibleCallSites = 32;
 
 	/** @brief A direct E8/E9 reference to a game function. */
 	struct WeatherCallSite
@@ -1937,19 +1945,64 @@ namespace
 
 void EditorWindow::InstallWeatherLockHooks()
 {
+	static std::atomic_bool installAttempted{ false };
+	if (installAttempted.exchange(true, std::memory_order_acq_rel)) {
+		logger::debug("[CSEditor] Weather lock hook install already attempted this session, skipping");
+		return;
+	}
+
 	// Not exported by CommonLib, which keeps them in function-local statics (RE/S/Sky.cpp).
+	// A relocation ID miss here hard-terminates via stl::report_and_fail, not an exception --
+	// this and the trampoline-exhaustion path below are the two failures this function cannot
+	// convert into a graceful disable; both are accepted, unavoidable residual risk.
 	const REL::Relocation<std::uintptr_t> setWeather{ REL::RelocationID(25694, 26241) };
 	const REL::Relocation<std::uintptr_t> forceWeather{ REL::RelocationID(25696, 26243) };
 
 	const auto setWeatherSites = FindDirectReferences(setWeather.address());
 	const auto forceWeatherSites = FindDirectReferences(forceWeather.address());
 
-	// No AllocTrampoline: it would free the block other hooks branch through, and each thunk only
-	// needs the one 14-byte stub its call sites share.
-	InstallCallSiteHooks(setWeatherSites, SetWeatherThunk);
-	InstallCallSiteHooks(forceWeatherSites, ForceWeatherThunk);
+	if (setWeatherSites.empty() || forceWeatherSites.empty()) {
+		logger::warn(
+			"[CSEditor] Weather lock found {} SetWeather and {} ForceWeather call sites -- "
+			"relocation IDs may be stale for this game version, feature disabled",
+			setWeatherSites.size(), forceWeatherSites.size());
+		return;
+	}
+	if (setWeatherSites.size() > kMaxPlausibleCallSites || forceWeatherSites.size() > kMaxPlausibleCallSites) {
+		logger::error(
+			"[CSEditor] Weather lock found {} SetWeather and {} ForceWeather call sites, "
+			"exceeding the plausible bound of {} -- likely a false-positive byte match, feature disabled",
+			setWeatherSites.size(), forceWeatherSites.size(), kMaxPlausibleCallSites);
+		return;
+	}
 
+	// No AllocTrampoline: it would free the block other hooks branch through. write_call/write_branch
+	// memoize their stub per unique destination, so this needs only 2 stubs total (one per thunk)
+	// regardless of call-site count -- not one stub per site.
+	constexpr std::size_t kWorstCaseStubBytes = 2 * 14;
+	if (SKSE::GetTrampoline().free_size() < kWorstCaseStubBytes) {
+		logger::error("[CSEditor] Weather lock skipped: trampoline has {} bytes free, needs {}",
+			SKSE::GetTrampoline().free_size(), kWorstCaseStubBytes);
+		return;
+	}
+
+	try {
+		InstallCallSiteHooks(setWeatherSites, SetWeatherThunk);
+		InstallCallSiteHooks(forceWeatherSites, ForceWeatherThunk);
+	} catch (const std::exception& e) {
+		// Only catches std::exception-class failures (e.g. bad_alloc); trampoline exhaustion is
+		// avoided by the free_size() check above, but a genuine SEH access violation is not caught.
+		logger::error("[CSEditor] Weather lock hook installation failed, feature disabled: {}", e.what());
+		return;
+	}
+
+	g_weatherLockHooksInstalled.store(true, std::memory_order_release);
 	logger::info("[CSEditor] Weather lock hooked {} SetWeather and {} ForceWeather call sites", setWeatherSites.size(), forceWeatherSites.size());
+}
+
+bool EditorWindow::AreWeatherLockHooksInstalled()
+{
+	return g_weatherLockHooksInstalled.load(std::memory_order_acquire);
 }
 
 void EditorWindow::MaintainWeatherLock()

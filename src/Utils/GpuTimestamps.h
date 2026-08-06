@@ -16,10 +16,19 @@ namespace Util
 	 * units). Consumers own the batching policy: frame rings, latency,
 	 * and any payloads keyed by the returned interval index.
 	 *
-	 * Interval contract: BeginInterval stamps into the CURRENT slot without
-	 * advancing and returns its index; CommitInterval stamps the end and
-	 * advances. An interval that is begun but never committed is simply
-	 * overwritten by the next BeginInterval and never resolved.
+	 * Two interval APIs share one allocation cursor and completion set, but
+	 * a single bracket (the span between BeginBatch/EndBatch) must use only
+	 * one of them (debug-asserted; the check resets with Reset()):
+	 *  - Sequential (BeginInterval/CommitInterval): for non-nesting
+	 *    consumers. BeginInterval stamps the CURRENT slot without advancing
+	 *    and returns its index; CommitInterval stamps the end, marks it
+	 *    resolvable, and advances. An interval begun but never committed is
+	 *    silently overwritten by the next BeginInterval.
+	 *  - Nesting (AcquireInterval/CloseInterval): AcquireInterval stamps a
+	 *    begin at a freshly allocated index and advances immediately, so
+	 *    concurrently open (nested) intervals never collide on one slot.
+	 *    CloseInterval stamps that index's end and marks it resolvable. An
+	 *    interval acquired but never closed is simply never resolved.
 	 */
 	class TimestampQueryBatch
 	{
@@ -30,7 +39,7 @@ namespace Util
 
 		/// Eagerly creates the disjoint and every pair, for consumers that
 		/// cannot afford lazy creation mid-pass. Lazy consumers can skip
-		/// this; BeginInterval creates pairs on demand.
+		/// this; BeginInterval/AcquireInterval create pairs on demand.
 		bool Preallocate(ID3D11Device* a_device);
 
 		void ReleaseQueries();
@@ -42,8 +51,17 @@ namespace Util
 		/// capacity / on creation failure. Does not advance.
 		int BeginInterval(ID3D11Device* a_device, ID3D11DeviceContext* a_context);
 
-		/// Stamps the current interval's end and advances to the next slot.
+		/// Stamps the current interval's end, marks it resolvable, and
+		/// advances to the next slot.
 		void CommitInterval(ID3D11DeviceContext* a_context);
+
+		/// Stamps a freshly allocated interval's begin and advances
+		/// immediately; returns its index, or -1 at capacity / on creation
+		/// failure. Safe to call again before the returned index is closed.
+		int AcquireInterval(ID3D11Device* a_device, ID3D11DeviceContext* a_context);
+
+		/// Stamps the given interval's end and marks it resolvable.
+		void CloseInterval(ID3D11DeviceContext* a_context, uint32_t a_index);
 
 		/// Closes the disjoint bracket.
 		void EndBatch(ID3D11DeviceContext* a_context);
@@ -56,19 +74,21 @@ namespace Util
 		};
 
 		/// Polls with DONOTFLUSH (never stalls). On Ok, calls
-		/// a_visit(intervalIndex, deltaTicks, frequency) for every committed
-		/// interval whose two timestamps resolved with end > begin; intervals
-		/// still unresolved are skipped, not reported.
+		/// a_visit(intervalIndex, deltaTicks, frequency) for every resolvable
+		/// (closed/committed) interval whose two timestamps resolved with
+		/// end > begin; anything else is skipped, not reported.
 		Status TryResolve(ID3D11DeviceContext* a_context,
 			const std::function<void(uint32_t, uint64_t, uint64_t)>& a_visit) const;
 
-		/// Committed interval count for the current bracket.
+		/// Committed interval count for the current bracket. Sequential-API
+		/// consumers only: equals the allocation cursor for that API.
 		uint32_t Used() const { return used; }
 
 		bool CreationFailed() const { return creationFailed; }
 
-		/// Forgets committed intervals so the batch can record a new bracket.
-		void Reset() { used = 0; }
+		/// Forgets all intervals (committed or not) so the batch can record
+		/// a new bracket.
+		void Reset();
 
 	private:
 		struct Pair
@@ -82,9 +102,15 @@ namespace Util
 
 		winrt::com_ptr<ID3D11Query> disjoint;
 		std::vector<Pair> pairs;
+		std::vector<bool> closed;
 		uint32_t maxPairs = 0;
-		uint32_t used = 0;
+		uint32_t allocCount = 0;  ///< high-water mark of stamped-begin slots this bracket
+		uint32_t used = 0;        ///< sequential-API committed count; == allocCount for that API
 		bool creationFailed = false;
+#ifndef NDEBUG
+		bool usedSequentialApi = false;
+		bool usedNestingApi = false;
+#endif
 		const char* debugName = "TimestampQueryBatch";
 	};
 }

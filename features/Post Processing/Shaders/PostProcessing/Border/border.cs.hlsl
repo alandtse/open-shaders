@@ -1,4 +1,5 @@
 #include "Common/SharedData.hlsli"
+#include "Common/VR.hlsli"
 
 Texture2D<float4> InputTexture : register(t0);
 Texture2D<float> DepthTexture : register(t1);
@@ -18,7 +19,11 @@ cbuffer BorderCB : register(b1)
 	float depthThreshold = BorderColor.w;
 	if (depth > depthThreshold || depthThreshold == 0.0f) {
 		float2 uv = (DTid.xy + 0.5f) * SharedData::BufferDim.zw;
-		if (uv.y < Scale.x || uv.y > (1 - Scale.y) || uv.x < Scale.z || uv.x > (1 - Scale.w)) {
+		// Left/right border thresholds are eye-relative; in VR the packed stereo
+		// buffer's raw x spans both eyes, so remap to the eye-local [0,1] range.
+		uint eyeIndex = Stereo::GetEyeIndexFromTexCoord(uv);
+		float2 eyeUV = Stereo::ConvertFromStereoUV(uv, eyeIndex);
+		if (uv.y < Scale.x || uv.y > (1 - Scale.y) || eyeUV.x < Scale.z || eyeUV.x > (1 - Scale.w)) {
 			OutputTexture[DTid.xy] = float4(borderColor, 1.0);
 			MotionTexture[DTid.xy] = float4(0.0, 0.0, 0.0, 1.0);
 		} else {

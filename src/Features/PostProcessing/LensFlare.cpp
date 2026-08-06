@@ -1,6 +1,7 @@
 #include "LensFlare.h"
 
 #include "Features/PostProcessing.h"
+#include "GpuPass.h"
 #include "I18n/I18n.h"
 #include "PostProcessingUI.h"
 #include "State.h"
@@ -758,7 +759,7 @@ void LensFlare::Draw(TextureInfo& inout_tex)
 	auto state = globals::state;
 	auto context = globals::d3d::context;
 
-	globals::profiler->BeginPass("PostProcessing::LensFlare");
+	CS_GPU_PASS("PostProcessing::LensFlare");
 	state->BeginPerfEvent("Lens Flare");
 
 	uint fullW = texFlare->desc.Width;
@@ -881,5 +882,4 @@ void LensFlare::Draw(TextureInfo& inout_tex)
 
 	inout_tex = { texFlare->resource.get(), texFlare->srv.get() };
 	state->EndPerfEvent();
-	globals::profiler->EndPass();
 }

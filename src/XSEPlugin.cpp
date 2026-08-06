@@ -9,6 +9,7 @@
 #include "SceneSettingsManager.h"
 #include "ShaderCache.h"
 #include "State.h"
+#include "VRAPI/CSpluginapi.h"
 
 #include "ENB/ENBSeriesAPI.h"
 
@@ -78,6 +79,17 @@ extern "C" DLLEXPORT bool SKSEAPI SKSEPlugin_Query(const SKSE::QueryInterface*, 
 void MessageHandler(SKSE::MessagingInterface::Message* message)
 {
 	switch (message->type) {
+	case SKSE::MessagingInterface::kPostLoad:
+		{
+			// Null sender: consumer plugins dispatch the interface request to us by name.
+			auto messaging = SKSE::GetMessagingInterface();
+			if (!messaging || !messaging->RegisterListener(nullptr, CSPluginAPI::ModMessageHandler))
+				logger::error("Failed to register Community Shaders API message listener");
+			else
+				logger::info("Registered Community Shaders API message listener during PostLoad");
+
+			break;
+		}
 	case SKSE::MessagingInterface::kPostPostLoad:
 		{
 			if (errors.empty()) {

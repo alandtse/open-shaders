@@ -187,7 +187,7 @@ public:
 	/**
 	 * @brief Computes combined hash of all override files for a feature
 	 * Used to detect when overrides have changed (mod update/reinstall)
-	 * @param featureName The short name of the feature
+	 * @param featureName The short name of the feature, or "Global"
 	 * @return Combined hash string, empty if no overrides
 	 */
 	std::string GetCombinedOverrideHash(const std::string& featureName) const;
@@ -200,7 +200,7 @@ public:
 
 	/**
 	 * @brief Gets the merged override settings for a feature (all overrides applied, no user modifications)
-	 * @param featureName The short name of the feature
+	 * @param featureName The short name of the feature, or "Global"
 	 * @param baseSettings The base settings to start with
 	 * @return Settings with all overrides applied
 	 */

@@ -9,6 +9,7 @@
 #include "Upscaling/Streamline.h"
 #include "Utils/BootSnapshot.h"
 #include "VR/OpenVRDetection.h"
+#include <algorithm>
 #include <d3d11_4.h>
 #include <d3d12.h>
 #include <winrt/base.h>

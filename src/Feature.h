@@ -316,6 +316,23 @@ public:
 	virtual json GetDiagnostics() { return json::object(); }
 
 	/**
+	 * @brief Live runtime-only debug flags (e.g. an instrumentation toggle
+	 * deliberately excluded from SaveSettings so a shipped SettingsUser.json
+	 * never silently pays for the extra cost). Exposed generically via
+	 * devbench's openshaders.feature action=runtimeGet/runtimeSet; override
+	 * both to add a flag without adding new DevBenchBridge dispatch code.
+	 * @return An empty object by default; override to report {name: bool}.
+	 */
+	virtual json GetRuntimeFlags() { return json::object(); }
+
+	/**
+	 * @brief Sets a named runtime-only debug flag from GetRuntimeFlags.
+	 * Never touches SaveSettings/SettingsUser.json.
+	 * @return false if this feature has no runtime flag by that name.
+	 */
+	virtual bool SetRuntimeFlag(std::string_view /*name*/, bool /*value*/) { return false; }
+
+	/**
 	 * @brief Toggles the "disabled at boot" state for this feature.
 	 * @return The new disabled state (true = disabled at boot).
 	 */
@@ -410,6 +427,14 @@ public:
 	 * @return Pointer to the feature if found and loaded, nullptr otherwise.
 	 */
 	static Feature* FindFeatureByShortName(const std::string& shortName);
+
+	/**
+	 * @brief Finds any registered feature by short name, ignoring VR filtering and loaded state.
+	 *
+	 * @param shortName The short name to search for.
+	 * @return Pointer to the feature if registered, nullptr otherwise.
+	 */
+	static Feature* FindRegisteredFeatureByShortName(const std::string& shortName);
 
 	/**
 	 * @brief Gets sorted short names of all loaded features that appear in the menu.

@@ -3,6 +3,7 @@
 #include "Feature.h"
 #include "FeatureIssues.h"
 #include "Util.h"
+#include "Utils/SettingsPatch.h"
 
 #include <algorithm>
 #include <ctime>
@@ -1001,37 +1002,8 @@ bool SettingsOverrideManager::SaveUserOverride(const std::string& featureName, c
 		return false;
 	}
 
-	// Compare only the keys that BOTH exist in overrides AND in current settings
-	// Keys that the override defines but the feature doesn't save should be ignored
-	// (they might be for nested settings or deprecated options)
-	bool hasDifferences = false;
-	for (const auto& [key, overrideValue] : overrideSettings.items()) {
-		// Skip keys that the feature doesn't save - can't track user changes to them
-		if (!currentSettings.contains(key)) {
-			continue;
-		}
-
-		const auto& currentValue = currentSettings[key];
-
-		// For numeric values, compare with tolerance to handle float32/float64 precision differences
-		// JSON stores floats as float64, but C++ features often use float32, causing precision loss
-		if (currentValue.is_number() && overrideValue.is_number()) {
-			double current = currentValue.get<double>();
-			double override = overrideValue.get<double>();
-			double diff = std::abs(current - override);
-			// Use relative tolerance for larger values, absolute for small values
-			double tolerance = std::max(1e-6, std::abs(override) * 1e-5);
-			if (diff > tolerance) {
-				hasDifferences = true;
-				break;
-			}
-		} else if (currentValue != overrideValue) {
-			hasDifferences = true;
-			break;
-		}
-	}
-
-	if (!hasDifferences) {
+	json userOverride = Util::Settings::BuildUserOverride(currentSettings, overrideSettings);
+	if (userOverride.empty()) {
 		// User hasn't changed any overridden settings, delete user file if it exists
 		DeleteUserOverride(featureName);
 		return false;
@@ -1049,7 +1021,7 @@ bool SettingsOverrideManager::SaveUserOverride(const std::string& featureName, c
 			return false;
 		}
 
-		file << currentSettings.dump(1);
+		file << userOverride.dump(1);
 		file.flush();
 
 		if (file.fail()) {
@@ -1130,11 +1102,19 @@ std::string SettingsOverrideManager::GetCombinedOverrideHash(const std::string& 
 
 	std::string combinedHashes;
 
-	auto it = featureOverrideMap.find(featureName);
-	if (it != featureOverrideMap.end()) {
-		for (size_t index : it->second) {
-			if (index < overrides.size()) {
-				combinedHashes += overrides[index].fileHash;
+	if (featureName == "Global") {
+		for (const auto& override : overrides) {
+			if (override.isGlobal) {
+				combinedHashes += override.fileHash;
+			}
+		}
+	} else {
+		auto it = featureOverrideMap.find(featureName);
+		if (it != featureOverrideMap.end()) {
+			for (size_t index : it->second) {
+				if (index < overrides.size()) {
+					combinedHashes += overrides[index].fileHash;
+				}
 			}
 		}
 	}
@@ -1215,6 +1195,10 @@ void SettingsOverrideManager::CleanupStaleUserOverrides()
 json SettingsOverrideManager::GetMergedOverrideSettings(const std::string& featureName, const json& baseSettings)
 {
 	json merged = baseSettings;
-	ApplyOverrides(featureName, merged);
+	if (featureName == "Global") {
+		ApplyGlobalOverrides(merged);
+	} else {
+		ApplyOverrides(featureName, merged);
+	}
 	return merged;
 }

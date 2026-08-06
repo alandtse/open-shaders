@@ -2,6 +2,7 @@
 
 #include "CODBloom.h"
 #include "Features/PostProcessing.h"
+#include "GpuPass.h"
 #include "HistogramAutoExposure.h"
 #include "LensFlare.h"
 #include "LocalExposure.h"
@@ -115,7 +116,7 @@ void Composite::Draw(TextureInfo& inout_tex)
 	if (flags == NONE)
 		return;
 
-	globals::profiler->BeginPass("PostProcessing::Composite");
+	CS_GPU_PASS("PostProcessing::Composite");
 	auto state = globals::state;
 	auto context = globals::d3d::context;
 
@@ -124,7 +125,6 @@ void Composite::Draw(TextureInfo& inout_tex)
 	ID3D11ComputeShader* shader = compositeShaders[flags].get();
 	if (!shader) {
 		state->EndPerfEvent();
-		globals::profiler->EndPass();
 		return;
 	}
 
@@ -190,5 +190,4 @@ void Composite::Draw(TextureInfo& inout_tex)
 
 	inout_tex = { texOutput->resource.get(), texOutput->srv.get() };
 	state->EndPerfEvent();
-	globals::profiler->EndPass();
 }

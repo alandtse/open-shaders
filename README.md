@@ -137,7 +137,7 @@ cmake --build ./build/ALL --config Release --target Package-GrassLighting
 
 The AIO bundles only features marked `autoupload = true` in their feature `.ini` — features not yet ready for release are built but excluded from the AIO. To include everything in a local build, see the `AIO_INCLUDE_NON_AUTOUPLOAD` CMake option.
 
-For more details about packaging targets, options, and the difference between automated and manual packaging, see the "Manual packaging targets (detailed)" section in `.claude/CLAUDE.md`.
+For more details about packaging targets, options, and the difference between automated and manual packaging, see the ["Manual Packaging Targets"](docs/development/release-process.md#manual-packaging-targets) section in the Release Process guide.
 
 #### CMAKE Options (optional)
 

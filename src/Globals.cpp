@@ -23,6 +23,7 @@
 #include "Features/PostProcessing.h"
 #include "Features/RemoteControl.h"
 #include "Features/RenderDoc.h"
+#include "Features/SceneSelector.h"
 #include "Features/ScreenSpaceGI.h"
 #include "Features/ScreenSpaceShadows.h"
 #include "Features/ScreenshotFeature.h"
@@ -42,7 +43,6 @@
 #include "Features/VolumetricLighting.h"
 #include "Features/VolumetricShadows.h"
 #include "Features/WaterEffects.h"
-#include "Features/WeatherPicker.h"
 #include "Features/WetnessEffects.h"
 #include "Menu.h"
 #include "SceneSettingsManager.h"
@@ -91,7 +91,7 @@ namespace globals
 		VolumetricLighting volumetricLighting{};
 		VR vr{};
 		WaterEffects waterEffects{};
-		WeatherPicker weatherPicker{};
+		SceneSelector sceneSelector{};
 		PerformanceOverlay performanceOverlay{};
 		WetnessEffects wetnessEffects{};
 		ExtendedTranslucency extendedTranslucency{};
@@ -131,6 +131,7 @@ namespace globals
 		float* deltaTime = nullptr;
 		RE::BSUtilityShader* utilityShader = nullptr;
 		RE::PlayerCharacter* player = nullptr;
+		RE::PlayerCamera* playerCamera = nullptr;
 		RE::Sky* sky = nullptr;
 		RE::UI* ui = nullptr;
 		RE::Calendar* calendar = nullptr;
@@ -253,6 +254,7 @@ namespace globals
 		using namespace game;
 		RefreshTES();
 		player = RE::PlayerCharacter::GetSingleton();
+		playerCamera = RE::PlayerCamera::GetSingleton();
 		sky = RE::Sky::GetSingleton();
 		utilityShader = RE::BSUtilityShader::GetSingleton();
 		imageSpaceManager = RE::ImageSpaceManager::GetSingleton();
