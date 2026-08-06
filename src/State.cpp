@@ -601,7 +601,10 @@ void State::LoadFromJson(nlohmann::json& settings)
 		if (advanced.contains("Dump Shaders") && advanced["Dump Shaders"].is_boolean())
 			shaderCache->SetDump(advanced["Dump Shaders"]);
 		if (advanced.contains("Log Level") && advanced["Log Level"].is_number_integer()) {
-			const auto newLogLevel = magic_enum::enum_cast<spdlog::level::level_enum>(advanced["Log Level"].get<int>()).value_or(spdlog::level::info);
+			const auto rawLogLevel = advanced["Log Level"].get<int64_t>();
+			const auto newLogLevel = (rawLogLevel >= 0 && rawLogLevel <= static_cast<int64_t>(spdlog::level::off)) ?
+			                             magic_enum::enum_cast<spdlog::level::level_enum>(static_cast<int>(rawLogLevel)).value_or(spdlog::level::info) :
+			                             spdlog::level::info;
 			if (newLogLevel != logLevel)
 				SetLogLevel(newLogLevel);
 		}
