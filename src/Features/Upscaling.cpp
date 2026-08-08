@@ -1242,6 +1242,32 @@ void Upscaling::CreateUpscalingTextureResources(UpscaleMethod a_upscalemethod)
 			transparencyCompositionMaskTexture->CreateSRV(srvDesc);
 			transparencyCompositionMaskTexture->CreateUAV(uavDesc);
 		}
+
+		// Cross-API runtime sharing does not support the game's R24G8 depth allocation.
+		if (a_upscalemethod == UpscaleMethod::kFSR && !globals::game::isVR && fidelityFX.ShouldUseRuntimeUpscalerForFSR() && !runtimeFsrDepthTexture) {
+			D3D11_TEXTURE2D_DESC depthDesc{};
+			depthDesc.Width = texDesc.Width;
+			depthDesc.Height = texDesc.Height;
+			depthDesc.MipLevels = 1;
+			depthDesc.ArraySize = 1;
+			depthDesc.Format = DXGI_FORMAT_R32_FLOAT;
+			depthDesc.SampleDesc.Count = 1;
+			depthDesc.Usage = D3D11_USAGE_DEFAULT;
+			depthDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS;
+
+			D3D11_SHADER_RESOURCE_VIEW_DESC depthSrvDesc{};
+			depthSrvDesc.Format = depthDesc.Format;
+			depthSrvDesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
+			depthSrvDesc.Texture2D.MipLevels = 1;
+
+			D3D11_UNORDERED_ACCESS_VIEW_DESC depthUavDesc{};
+			depthUavDesc.Format = depthDesc.Format;
+			depthUavDesc.ViewDimension = D3D11_UAV_DIMENSION_TEXTURE2D;
+
+			runtimeFsrDepthTexture = new Texture2D(depthDesc, "Upscaling::RuntimeFsrDepth");
+			runtimeFsrDepthTexture->CreateSRV(depthSrvDesc);
+			runtimeFsrDepthTexture->CreateUAV(depthUavDesc);
+		}
 	}
 
 	// Motion vector copy texture is only needed for DLSS
@@ -1308,6 +1334,15 @@ void Upscaling::DestroyUpscalingTextureResources(UpscaleMethod a_upscalemethod)
 			delete transparencyCompositionMaskTexture;
 			transparencyCompositionMaskTexture = nullptr;
 		}
+	}
+
+	if (a_upscalemethod != UpscaleMethod::kFSR && runtimeFsrDepthTexture) {
+		runtimeFsrDepthTexture->srv = nullptr;
+		runtimeFsrDepthTexture->uav = nullptr;
+		runtimeFsrDepthTexture->resource = nullptr;
+
+		delete runtimeFsrDepthTexture;
+		runtimeFsrDepthTexture = nullptr;
 	}
 
 	// Motion vector copy texture is only needed for DLSS - destroy when switching away from DLSS
@@ -1388,11 +1423,10 @@ ID3D11ComputeShader* Upscaling::GetEncodeTexturesCS()
 	auto upscaleMethod = GetUpscaleMethod();
 	uint methodIndex = (uint)upscaleMethod;
 
-	// VR FSR needs a separate variant: DEPTH_OUTPUT converts the R24G8_TYPELESS game depth to
-	// R32_FLOAT so GetFfxResourceDescriptionDX11() returns a valid format instead of UNKNOWN.
-	if (globals::game::isVR && upscaleMethod == UpscaleMethod::kFSR) {
+	// Runtime FSR and VR require typed R32_FLOAT depth instead of the game's R24G8 resource.
+	if (upscaleMethod == UpscaleMethod::kFSR && (globals::game::isVR || runtimeFsrDepthTexture)) {
 		if (!encodeTexturesCSDepthOutput) {
-			logger::debug("Compiling EncodeTexturesCS.hlsl for VR FSR (FSR + DEPTH_OUTPUT)");
+			logger::debug("Compiling EncodeTexturesCS.hlsl for FSR typed depth output");
 			std::vector<std::pair<const char*, const char*>> defines = {
 				{ "FSR", "" },
 				{ "DEPTH_OUTPUT", "" }
@@ -2461,14 +2495,17 @@ void Upscaling::Upscale()
 			auto upscalingBuffer = upscalingDataCB->CB();
 			context->CSSetConstantBuffers(0, 1, &upscalingBuffer);
 
-			// u2 (MotionVectorOutput): DLSS only — 5x5 dilated MVec for ghosting reduction.
-			// u3 (DepthOutput): VR FSR only — converts R24G8_TYPELESS to R32_FLOAT so
-			//   GetFfxResourceDescriptionDX11() returns a valid format. DLSS depth is copied in Streamline.cpp.
+			// u2 is DLSS-only; u3 provides typed depth for VR FSR and flat runtime FSR.
+			ID3D11UnorderedAccessView* depthOutput = nullptr;
+			if (upscaleMethod == UpscaleMethod::kFSR) {
+				depthOutput = globals::game::isVR ? vrIntermediateLinearDepth[i]->uav.get() :
+				                                      (runtimeFsrDepthTexture ? runtimeFsrDepthTexture->uav.get() : nullptr);
+			}
 			ID3D11UnorderedAccessView* uavs[4] = {
 				globals::game::isVR ? vrIntermediateReactiveMask[i]->uav.get() : reactiveMaskTexture->uav.get(),
 				globals::game::isVR ? vrIntermediateTransparencyMask[i]->uav.get() : transparencyCompositionMaskTexture->uav.get(),
 				(upscaleMethod == UpscaleMethod::kDLSS) ? (globals::game::isVR ? vrIntermediateMotionVectors[i]->uav.get() : motionVectorCopyTexture->uav.get()) : nullptr,
-				(upscaleMethod == UpscaleMethod::kFSR && globals::game::isVR) ? vrIntermediateLinearDepth[i]->uav.get() : nullptr
+				depthOutput
 			};
 			context->CSSetUnorderedAccessViews(0, ARRAYSIZE(uavs), uavs, nullptr);
 
@@ -2541,10 +2578,12 @@ void Upscaling::Upscale()
 			// output must land in perfMode.testTexture (the private displayRes target used for
 			// OpenVR submit), not back in the now-small kMAIN. Mirrors Streamline's colorOut
 			// routing for DLSS.
+			auto& depth = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kMAIN];
+			ID3D11Resource* fsrDepth = runtimeFsrDepthTexture ? runtimeFsrDepthTexture->resource.get() : depth.texture;
 			ID3D11Resource* fsrColorOut = (perfMode.IsHookActive() && perfMode.GetTestTexture()) ?
 			                                  static_cast<ID3D11Resource*>(perfMode.GetTestTexture()) :
 			                                  nullptr;
-			fidelityFX.Upscale(main.texture, reactiveMaskTexture->resource.get(), transparencyCompositionMaskTexture->resource.get(), motionVector.texture, settings.sharpnessFSR, fsrColorOut);
+			fidelityFX.Upscale(main.texture, fsrDepth, reactiveMaskTexture->resource.get(), transparencyCompositionMaskTexture->resource.get(), motionVector.texture, settings.sharpnessFSR, fsrColorOut);
 		}
 	}
 }

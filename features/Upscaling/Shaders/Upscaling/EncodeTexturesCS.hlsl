@@ -73,8 +73,7 @@ RWTexture2D<float> DepthOutput : register(u3);
 #endif
 
 #if defined(DEPTH_OUTPUT)
-	// Copy depth as R32_FLOAT so FSR DX11 backend receives a typed format.
-	// The raw depth resource is R24G8_TYPELESS in VR which maps to FFX_SURFACE_FORMAT_UNKNOWN.
+	// FSR and the D3D11/D3D12 runtime bridge require a typed depth format.
 	DepthOutput[dispatchID.xy] = DepthMask[srcCoord];
 #endif
 
