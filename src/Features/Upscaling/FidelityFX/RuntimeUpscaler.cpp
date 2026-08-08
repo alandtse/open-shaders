@@ -431,13 +431,15 @@ namespace
 
 	// A faulting dispatch inside the AMD-provided DLL is not guaranteed to raise a C++
 	// exception the caller's try/catch can observe; wrap it the same way as the host path.
-	bool DispatchRuntimeUpscalerProtected(ffx::Context& a_context, ffx::DispatchDescUpscale& a_dispatchParameters)
+	bool DispatchRuntimeUpscalerProtected(ffx::Context& a_context, ffx::DispatchDescUpscale& a_dispatchParameters, bool& a_faulted)
 	{
+		a_faulted = false;
 		bool dispatchOk = true;
 
 		__try {
 			dispatchOk = ffx::Dispatch(a_context, a_dispatchParameters) == ffx::ReturnCode::Ok;
 		} __except (EXCEPTION_EXECUTE_HANDLER) {
+			a_faulted = true;
 			dispatchOk = false;
 		}
 
@@ -1533,7 +1535,15 @@ bool FidelityFX::DispatchRuntimeUpscalerSingle(uint32_t a_contextIndex, ID3D11Re
 			const bool runtimeFallbackReset = runtimeFallbackResetDispatchesRemaining > 0;
 			dispatchParameters.reset = dispatchParameters.reset || runtimeFallbackReset;
 
-			dispatchOk = DispatchRuntimeUpscalerProtected(runtimeUpscalerContexts[a_contextIndex], dispatchParameters);
+			bool dispatchFaulted = false;
+			dispatchOk = DispatchRuntimeUpscalerProtected(runtimeUpscalerContexts[a_contextIndex], dispatchParameters, dispatchFaulted);
+			if (dispatchFaulted) {
+				commandContext->fenceValue = 0;
+				runtimeFallbackResetDispatchesRemaining = std::max(runtimeFallbackResetDispatchesRemaining, runtimeUpscalerContextCount);
+				QuarantineRuntimeUpscalerForSession("runtime upscaler dispatch fault");
+				logger::critical("[FidelityFX] Runtime upscaler dispatch faulted for eye {}; the provider will not be used again this session", a_contextIndex);
+				return false;
+			}
 			if (dispatchOk && runtimeFallbackReset)
 				runtimeFallbackResetDispatchesRemaining--;
 
