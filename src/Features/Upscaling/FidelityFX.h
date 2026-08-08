@@ -32,7 +32,7 @@ public:
 	static constexpr const wchar_t* PluginDir = L"Data\\Shaders\\Upscaling\\FidelityFX";
 	// Host-linked FSR3 SDK version, used to distinguish it from a runtime-provided upscaler version.
 	static constexpr uint32_t Fsr3Version = FFX_UPSCALER_MAKE_VERSION(FFX_FSR3_VERSION_MAJOR, FFX_FSR3_VERSION_MINOR, FFX_FSR3_VERSION_PATCH);
-	// Optional AMD-distributed DLL providing a runtime-substitutable upscaler (incl. FSR4 on RDNA4).
+	// Optional AMD-distributed DLL providing a runtime-substitutable upscaler.
 	static constexpr std::wstring_view RuntimeUpscalerDllName = L"amd_fidelityfx_upscaler_dx12.dll";
 	static constexpr std::string_view RuntimeUpscalerDllNameUtf8 = "amd_fidelityfx_upscaler_dx12.dll";
 	~FidelityFX();
@@ -62,7 +62,7 @@ public:
 	// Cached DLL version info for FidelityFX plugin directory
 	static std::vector<std::pair<std::string, std::string>> dllVersions;
 
-	/** @brief Loads the FidelityFX loader and frame generation DLLs from the plugin directory. */
+	/** @brief Loads the FidelityFX loader and runtime DLLs from the plugin directory. */
 	void LoadFFX();
 	/** @brief Creates the FidelityFX frame generation context for the current swap chain. */
 	void SetupFrameGeneration();
@@ -176,6 +176,7 @@ private:
 	WrappedResource* runtimeTransparencyShared[2]{};
 	WrappedResource* runtimeOutputShared[2]{};
 
+	HMODULE frameGenerationModule = nullptr;
 	HMODULE runtimeUpscalerModule = nullptr;
 
 	enum class RuntimeUpscalerFramePath : uint8_t

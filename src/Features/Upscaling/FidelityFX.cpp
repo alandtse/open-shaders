@@ -12,51 +12,152 @@ ffxFunctions ffxModule;
 
 std::vector<std::pair<std::string, std::string>> FidelityFX::dllVersions = {};
 
-// Defined in RuntimeUpscaler.cpp; registers PluginDir as a DLL search directory so the
-// runtime upscaler DLL can resolve sibling loader/framegen DLLs there.
-HMODULE LoadFidelityFxDllSafe(const std::wstring& a_path);
+namespace
+{
+	DLL_DIRECTORY_COOKIE s_fidelityFxDllDirectoryCookie = nullptr;
+
+	std::string GetFidelityFxPathText(const std::filesystem::path& a_path)
+	{
+		return stl::utf16_to_utf8(a_path.wstring()).value_or("<unprintable path>");
+	}
+
+	void EnsureFidelityFxDllDirectory(const std::filesystem::path& a_pluginDir)
+	{
+		if (s_fidelityFxDllDirectoryCookie)
+			return;
+
+		auto kernel32 = GetModuleHandleW(L"kernel32.dll");
+		if (!kernel32) {
+			const auto error = GetLastError();
+			logger::warn("[FidelityFX] Failed to access kernel32 while registering '{}' (Win32 error {})",
+				GetFidelityFxPathText(a_pluginDir), error);
+			return;
+		}
+
+		using AddDllDirectoryFn = DLL_DIRECTORY_COOKIE(WINAPI*)(PCWSTR);
+		auto addDllDirectory = reinterpret_cast<AddDllDirectoryFn>(GetProcAddress(kernel32, "AddDllDirectory"));
+		if (!addDllDirectory) {
+			const auto error = GetLastError();
+			logger::warn("[FidelityFX] AddDllDirectory is unavailable for '{}' (Win32 error {})",
+				GetFidelityFxPathText(a_pluginDir), error);
+			return;
+		}
+
+		s_fidelityFxDllDirectoryCookie = addDllDirectory(a_pluginDir.c_str());
+		if (!s_fidelityFxDllDirectoryCookie) {
+			const auto error = GetLastError();
+			logger::warn("[FidelityFX] Failed to register DLL directory '{}' (Win32 error {})",
+				GetFidelityFxPathText(a_pluginDir), error);
+		}
+	}
+
+	HMODULE LoadFidelityFxDll(const std::filesystem::path& a_path, DWORD& a_error)
+	{
+		constexpr DWORD kLoadFlags =
+			LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR |
+			LOAD_LIBRARY_SEARCH_DEFAULT_DIRS |
+			LOAD_LIBRARY_SEARCH_USER_DIRS;
+
+		a_error = ERROR_SUCCESS;
+		auto loadedModule = LoadLibraryExW(a_path.c_str(), nullptr, kLoadFlags);
+		if (!loadedModule)
+			a_error = GetLastError();
+		return loadedModule;
+	}
+
+	bool FidelityFxDllExists(const std::filesystem::path& a_path, std::error_code& a_error)
+	{
+		a_error.clear();
+		return std::filesystem::is_regular_file(a_path, a_error);
+	}
+}
 
 void FidelityFX::LoadFFX()
 {
-	// Load uframe generation DLL and its function pointers
-	std::wstring framegenDllName = L"amd_fidelityfx_framegeneration_dx12.dll";
-	std::wstring framegenPath = std::wstring(FidelityFX::PluginDir) + L"\\" + framegenDllName;
-	featureFSR3FG = LoadLibrary(framegenPath.c_str());
+	featureFSR3FG = false;
+	featureRuntimeUpscaler = false;
 
-	// Optional runtime-substitutable upscaler DLL (incl. FSR4 on RDNA4). See RuntimeUpscaler.cpp.
-	std::wstring runtimeUpscalerPath = std::wstring(FidelityFX::PluginDir) + L"\\" + std::wstring(FidelityFX::RuntimeUpscalerDllName);
-	runtimeUpscalerModule = LoadFidelityFxDllSafe(runtimeUpscalerPath);
-	featureRuntimeUpscaler = runtimeUpscalerModule != nullptr;
-	if (featureRuntimeUpscaler) {
-		logger::info("[FidelityFX] Runtime upscaler DLL found and available");
+	const auto pluginDir = (Util::PathHelpers::GetDataPath() / "Shaders" / "Upscaling" / "FidelityFX").lexically_normal();
+	if (!pluginDir.is_absolute()) {
+		logger::error("[FidelityFX] Refusing non-absolute DLL directory '{}'", GetFidelityFxPathText(pluginDir));
+		return;
 	}
 
-	// Load loader DLL from plugin directory
-	std::wstring loaderDllName = L"amd_fidelityfx_loader_dx12.dll";
-	std::wstring pluginLoaderPath = std::wstring(FidelityFX::PluginDir) + L"\\" + loaderDllName;
+	EnsureFidelityFxDllDirectory(pluginDir);
 
-	module = LoadLibrary(pluginLoaderPath.c_str());
+	const auto loaderPath = pluginDir / "amd_fidelityfx_loader_dx12.dll";
+	const auto frameGenerationPath = pluginDir / "amd_fidelityfx_framegeneration_dx12.dll";
+	const auto runtimeUpscalerPath = pluginDir / RuntimeUpscalerDllName;
 
-	// Cache all DLL versions in the FidelityFX directory
-	std::filesystem::path pluginDir = std::filesystem::path(FidelityFX::PluginDir);
 	FidelityFX::dllVersions = Util::EnumerateDllVersions(pluginDir);
 	for (const auto& [name, versionStr] : FidelityFX::dllVersions)
 		logger::info("[FidelityFX] {} version: {}", name, versionStr);
 
-	if (module) {
-		logger::info("[FidelityFX] Loader DLL loaded successfully from plugin directory");
-
-		ffxLoadFunctions(&ffxModule, module);
-
-		if (featureFSR3FG) {
-			logger::info("[FidelityFX] Frame generation DLL found and available");
-		} else {
-			logger::warn("[FidelityFX] Frame generation DLL not found - FSR3 frame generation disabled");
+	const auto loadDll = [](const char* a_label, const std::filesystem::path& a_path, HMODULE& a_module) {
+		if (a_module) {
+			logger::info("[FidelityFX] {} loaded from '{}'", a_label, GetFidelityFxPathText(a_path));
+			return true;
 		}
-	} else {
-		logger::error("[FidelityFX] Failed to load {} from plugin directory",
-			stl::utf16_to_utf8(loaderDllName).value_or("loader DLL"));
+
+		std::error_code fileError;
+		if (!FidelityFxDllExists(a_path, fileError)) {
+			if (fileError) {
+				logger::error("[FidelityFX] Failed to inspect {} at '{}': {}", a_label,
+					GetFidelityFxPathText(a_path), fileError.message());
+			} else {
+				logger::warn("[FidelityFX] {} is missing at '{}'", a_label, GetFidelityFxPathText(a_path));
+			}
+			return false;
+		}
+
+		DWORD loadError = ERROR_SUCCESS;
+		a_module = LoadFidelityFxDll(a_path, loadError);
+		if (!a_module) {
+			logger::error("[FidelityFX] {} exists but failed to load from '{}' (Win32 error {})",
+				a_label, GetFidelityFxPathText(a_path), loadError);
+			return false;
+		}
+
+		logger::info("[FidelityFX] {} loaded from '{}'", a_label, GetFidelityFxPathText(a_path));
+		return true;
+	};
+
+	const bool loaderLoaded = loadDll("Loader DLL", loaderPath, module);
+	if (loaderLoaded) {
+		ffxModule = {};
+		ffxLoadFunctions(&ffxModule, module);
 	}
+
+	const bool loaderReady = loaderLoaded &&
+	                         ffxModule.CreateContext &&
+	                         ffxModule.DestroyContext &&
+	                         ffxModule.Configure &&
+	                         ffxModule.Query &&
+	                         ffxModule.Dispatch;
+	if (loaderLoaded && !loaderReady)
+		logger::error("[FidelityFX] Loader DLL is missing one or more required API exports at '{}'", GetFidelityFxPathText(loaderPath));
+
+	if (!loaderReady) {
+		const auto reportSkippedDll = [](const char* a_label, const std::filesystem::path& a_path) {
+			std::error_code fileError;
+			if (FidelityFxDllExists(a_path, fileError)) {
+				logger::warn("[FidelityFX] {} exists at '{}' but was not loaded because the loader is unavailable",
+					a_label, GetFidelityFxPathText(a_path));
+			} else if (fileError) {
+				logger::error("[FidelityFX] Failed to inspect {} at '{}': {}", a_label,
+					GetFidelityFxPathText(a_path), fileError.message());
+			} else {
+				logger::warn("[FidelityFX] {} is missing at '{}'", a_label, GetFidelityFxPathText(a_path));
+			}
+		};
+
+		reportSkippedDll("Frame generation DLL", frameGenerationPath);
+		reportSkippedDll("Runtime upscaler DLL", runtimeUpscalerPath);
+		return;
+	}
+
+	featureFSR3FG = loadDll("Frame generation DLL", frameGenerationPath, frameGenerationModule);
+	featureRuntimeUpscaler = loadDll("Runtime upscaler DLL", runtimeUpscalerPath, runtimeUpscalerModule);
 }
 
 void FidelityFX::SetupFrameGeneration()

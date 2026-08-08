@@ -25,28 +25,6 @@ FfxResource ffxGetResource(ID3D11Resource* dx11Resource, wchar_t const* ffxResNa
 
 namespace
 {
-	void EnsureFidelityFxDllDirectory();
-}
-
-// Used by FidelityFX::LoadFFX() (FidelityFX.cpp) to load amd_fidelityfx_upscaler_dx12.dll
-// so it can resolve sibling loader/framegen DLLs in the same plugin directory.
-HMODULE LoadFidelityFxDllSafe(const std::wstring& a_path)
-{
-	EnsureFidelityFxDllDirectory();
-
-	constexpr DWORD kLoadFlags =
-		LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR |
-		LOAD_LIBRARY_SEARCH_DEFAULT_DIRS |
-		LOAD_LIBRARY_SEARCH_USER_DIRS;
-
-	if (auto module = LoadLibraryExW(a_path.c_str(), nullptr, kLoadFlags))
-		return module;
-
-	return LoadLibraryW(a_path.c_str());
-}
-
-namespace
-{
 	constexpr uint32_t kAmdVendorId = 0x1002u;
 	constexpr uint32_t kNvidiaVendorId = 0x10DEu;
 
@@ -117,27 +95,6 @@ namespace
 	bool UseSplitPerEyeFSRContexts()
 	{
 		return globals::game::isVR;
-	}
-
-	void* s_fidelityFxDllDirectoryCookie = nullptr;
-
-	// Registers PluginDir as a DLL search directory -- plain LoadLibrary won't find
-	// sibling loader/framegen DLLs there under safe DLL search mode.
-	void EnsureFidelityFxDllDirectory()
-	{
-		if (s_fidelityFxDllDirectoryCookie)
-			return;
-
-		auto kernel32 = GetModuleHandleW(L"kernel32.dll");
-		if (!kernel32)
-			return;
-
-		using AddDllDirectoryFn = void*(WINAPI*)(PCWSTR);
-		auto addDllDirectory = reinterpret_cast<AddDllDirectoryFn>(GetProcAddress(kernel32, "AddDllDirectory"));
-		if (!addDllDirectory)
-			return;
-
-		s_fidelityFxDllDirectoryCookie = addDllDirectory(FidelityFX::PluginDir);
 	}
 
 	bool TryGetTexture2DDesc(ID3D11Resource* a_resource, D3D11_TEXTURE2D_DESC& a_outDesc)
