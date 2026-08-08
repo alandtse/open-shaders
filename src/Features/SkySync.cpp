@@ -298,7 +298,7 @@ bool SkySync::Update(const RE::Sky* sky)
 		const auto prevCell = currentCell;
 		const bool resetFaderForCellChange = cell && prevCell &&
 		                                     (cell->IsInteriorCell() != currentCellInterior ||
-		                                         cell->GetRuntimeData().worldSpace != currentCellWorldspace);
+												 cell->GetRuntimeData().worldSpace != currentCellWorldspace);
 		if (cell)
 			SetSkyRotation(sky, cell);
 		if (resetFaderForCellChange)
