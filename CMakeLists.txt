@@ -119,6 +119,7 @@ add_subdirectory(${CMAKE_SOURCE_DIR}/cmake/Streamline)
 find_path(DETOURS_INCLUDE_DIRS "detours/detours.h")
 find_library(DETOURS_LIBRARY detours REQUIRED)
 include(FidelityFX-SDK)
+include(FidelityFX-Runtime)
 
 target_compile_definitions(
     ${PROJECT_NAME}
@@ -584,6 +585,11 @@ install(
     COMPONENT Shaders
     PATTERN "Tests" EXCLUDE
 )
+install(
+    FILES ${FFX_RUNTIME_FILES}
+    DESTINATION Shaders/Upscaling/FidelityFX
+    COMPONENT FidelityFXRuntime
+)
 install(CODE "file(REMOVE \${CMAKE_INSTALL_PREFIX}/Core)" COMPONENT Shaders)
 
 # #######################################################################################################################
@@ -644,7 +650,8 @@ if(AUTO_PLUGIN_DEPLOYMENT OR AIO_ZIP_TO_DIST)
     set(_feature_paths_list_file
         "${CMAKE_CURRENT_BINARY_DIR}/feature_paths.txt"
     )
-    string(REPLACE ";" "\n" _feature_paths_file_content "${FEATURE_PATHS}")
+    set(_aio_source_paths ${FEATURE_PATHS} "${FFX_RUNTIME_FEATURE_ROOT}")
+    string(REPLACE ";" "\n" _feature_paths_file_content "${_aio_source_paths}")
     file(WRITE "${_feature_paths_list_file}" "${_feature_paths_file_content}")
 
     # Ensure SKSE/Plugins dir exists
@@ -779,7 +786,7 @@ if(AUTO_PLUGIN_DEPLOYMENT OR AIO_ZIP_TO_DIST)
 
     # All features' shaders are copied — cross-feature #includes need the
     # full tree at compile time (e.g. DistantTree.hlsl pulls IBL/IBL.hlsli).
-    set(_feature_shader_paths)
+    set(_feature_shader_paths "${FFX_RUNTIME_SHADER_ROOT}")
     foreach(_fpath IN LISTS FEATURE_PATHS)
         if(EXISTS "${_fpath}/Shaders")
             list(APPEND _feature_shader_paths "${_fpath}/Shaders")
@@ -814,6 +821,7 @@ if(AUTO_PLUGIN_DEPLOYMENT OR AIO_ZIP_TO_DIST)
     )
 
     append_copy_if_different(_shader_copy_cmds _package_shaders "${CMAKE_SOURCE_DIR}/package/Shaders" "${AIO_DIR}/Shaders")
+    append_copy_if_different(_shader_copy_cmds FFX_RUNTIME_FILES "${FFX_RUNTIME_SHADER_ROOT}" "${AIO_DIR}/Shaders")
 
     foreach(_fpath IN LISTS FEATURE_PATHS)
         if(EXISTS "${_fpath}/Shaders")
@@ -835,6 +843,7 @@ if(AUTO_PLUGIN_DEPLOYMENT OR AIO_ZIP_TO_DIST)
         COMMAND ${CMAKE_COMMAND} -E touch copy_shaders.stamp
         DEPENDS
             ${HLSL_FILES}
+            ${FFX_RUNTIME_FILES}
             ${CMAKE_SOURCE_DIR}/cmake/CleanupStaleEntries.cmake
         COMMENT "Copying changed shaders into AIO/Shaders"
     )
@@ -1154,15 +1163,39 @@ if(ZIP_TO_DIST)
         message(
             "Zipping ${FEATURE_PATH} to ${CMAKE_SOURCE_DIR}/dist/${FEATURE}-${UTC_NOW}.7z"
         )
-        add_custom_command(
-            TARGET ${PROJECT_NAME}
-            POST_BUILD
-            COMMAND
-                ${CMAKE_COMMAND} -E tar cf
-                ${CMAKE_SOURCE_DIR}/dist/${FEATURE}-${UTC_NOW}.7z --format=7zip
-                -- .
-            WORKING_DIRECTORY ${FEATURE_PATH}
-        )
+        if(FEATURE STREQUAL "Upscaling")
+            set(
+                FEATURE_ZIP_STAGE
+                "${CMAKE_CURRENT_BINARY_DIR}/feature_zip/${FEATURE}"
+            )
+            add_custom_command(
+                TARGET ${PROJECT_NAME}
+                POST_BUILD
+                COMMAND
+                    ${CMAKE_COMMAND} -E remove_directory "${FEATURE_ZIP_STAGE}"
+                COMMAND
+                    ${CMAKE_COMMAND} -E copy_directory "${FEATURE_PATH}"
+                    "${FEATURE_ZIP_STAGE}"
+                COMMAND
+                    ${CMAKE_COMMAND} --install ${CMAKE_BINARY_DIR} --prefix
+                    "${FEATURE_ZIP_STAGE}" --component FidelityFXRuntime
+                COMMAND
+                    ${CMAKE_COMMAND} -E chdir "${FEATURE_ZIP_STAGE}"
+                    ${CMAKE_COMMAND} -E tar cf
+                    ${CMAKE_SOURCE_DIR}/dist/${FEATURE}-${UTC_NOW}.7z
+                    --format=7zip -- .
+            )
+        else()
+            add_custom_command(
+                TARGET ${PROJECT_NAME}
+                POST_BUILD
+                COMMAND
+                    ${CMAKE_COMMAND} -E tar cf
+                    ${CMAKE_SOURCE_DIR}/dist/${FEATURE}-${UTC_NOW}.7z
+                    --format=7zip -- .
+                WORKING_DIRECTORY ${FEATURE_PATH}
+            )
+        endif()
     endforeach()
 endif()
 
@@ -1345,14 +1378,39 @@ foreach(FEATURE_PATH ${FEATURE_PATHS})
     get_filename_component(FEATURE ${FEATURE_PATH} NAME)
     set(FEATURE_PACKAGE "${DIST_PATH}/${FEATURE}-${UTC_NOW}.7z")
 
-    add_custom_command(
-        OUTPUT ${FEATURE_PACKAGE}
-        COMMAND
-            ${CMAKE_COMMAND} -E tar cfv ${FEATURE_PACKAGE} --format=7zip -- .
-        WORKING_DIRECTORY "${FEATURE_PATH}"
-        DEPENDS ${FEATURE_SOURCES}
-        COMMENT "Creating ${FEATURE} zip package"
-    )
+    if(FEATURE STREQUAL "Upscaling")
+        set(
+            FEATURE_PACKAGE_STAGE
+            "${CMAKE_CURRENT_BINARY_DIR}/feature_package/${FEATURE}"
+        )
+        add_custom_command(
+            OUTPUT ${FEATURE_PACKAGE}
+            COMMAND
+                ${CMAKE_COMMAND} -E remove_directory "${FEATURE_PACKAGE_STAGE}"
+            COMMAND
+                ${CMAKE_COMMAND} -E copy_directory "${FEATURE_PATH}"
+                "${FEATURE_PACKAGE_STAGE}"
+            COMMAND
+                ${CMAKE_COMMAND} --install ${CMAKE_BINARY_DIR} --prefix
+                "${FEATURE_PACKAGE_STAGE}" --component FidelityFXRuntime
+            COMMAND
+                ${CMAKE_COMMAND} -E chdir "${FEATURE_PACKAGE_STAGE}"
+                ${CMAKE_COMMAND} -E tar cfv ${FEATURE_PACKAGE}
+                --format=7zip -- .
+            DEPENDS ${FEATURE_SOURCES} ${FFX_RUNTIME_FILES}
+            COMMENT "Creating ${FEATURE} zip package"
+        )
+    else()
+        add_custom_command(
+            OUTPUT ${FEATURE_PACKAGE}
+            COMMAND
+                ${CMAKE_COMMAND} -E tar cfv ${FEATURE_PACKAGE}
+                --format=7zip -- .
+            WORKING_DIRECTORY "${FEATURE_PATH}"
+            DEPENDS ${FEATURE_SOURCES}
+            COMMENT "Creating ${FEATURE} zip package"
+        )
+    endif()
 
     string(REPLACE " " "" FEATURE ${FEATURE})
     string(REPLACE "-" "" FEATURE ${FEATURE})
@@ -1362,7 +1420,7 @@ endforeach()
 # AIO Folder target
 add_custom_command(
     OUTPUT ${AIO_DIR}/SKSE/Plugins/${PROJECT_NAME}.dll
-    DEPENDS ${CORE_SOURCES}
+    DEPENDS ${CORE_SOURCES} ${FFX_RUNTIME_FILES}
     COMMAND ${CMAKE_COMMAND} --install ${CMAKE_BINARY_DIR} --prefix ${AIO_DIR}
     COMMENT "Installing to AIO folder"
 )
@@ -1450,7 +1508,7 @@ endif()
 
 add_custom_command(
     OUTPUT ${AIO_PACKAGE}
-    DEPENDS ${CORE_SOURCES} ${_aio_manual_cmds}
+    DEPENDS ${CORE_SOURCES} ${FFX_RUNTIME_FILES} ${_aio_manual_cmds}
     COMMENT "Creating AIO zip package (manual)"
 )
 add_custom_target("Package-AIO-Manual" DEPENDS ${AIO_PACKAGE})
