@@ -119,7 +119,6 @@ add_subdirectory(${CMAKE_SOURCE_DIR}/cmake/Streamline)
 find_path(DETOURS_INCLUDE_DIRS "detours/detours.h")
 find_library(DETOURS_LIBRARY detours REQUIRED)
 include(FidelityFX-SDK)
-include(FidelityFX-Runtime)
 
 target_compile_definitions(
     ${PROJECT_NAME}
@@ -585,11 +584,8 @@ install(
     COMPONENT Shaders
     PATTERN "Tests" EXCLUDE
 )
-install(
-    FILES ${FFX_RUNTIME_FILES}
-    DESTINATION Shaders/Upscaling/FidelityFX
-    COMPONENT FidelityFXRuntime
-)
+include(FeaturePackaging)
+include(FidelityFX-Runtime)
 install(CODE "file(REMOVE \${CMAKE_INSTALL_PREFIX}/Core)" COMPONENT Shaders)
 
 # #######################################################################################################################
@@ -1163,39 +1159,22 @@ if(ZIP_TO_DIST)
         message(
             "Zipping ${FEATURE_PATH} to ${CMAKE_SOURCE_DIR}/dist/${FEATURE}-${UTC_NOW}.7z"
         )
-        if(FEATURE STREQUAL "Upscaling")
-            set(
-                FEATURE_ZIP_STAGE
-                "${CMAKE_CURRENT_BINARY_DIR}/feature_zip/${FEATURE}"
-            )
-            add_custom_command(
-                TARGET ${PROJECT_NAME}
-                POST_BUILD
-                COMMAND
-                    ${CMAKE_COMMAND} -E remove_directory "${FEATURE_ZIP_STAGE}"
-                COMMAND
-                    ${CMAKE_COMMAND} -E copy_directory "${FEATURE_PATH}"
-                    "${FEATURE_ZIP_STAGE}"
-                COMMAND
-                    ${CMAKE_COMMAND} --install ${CMAKE_BINARY_DIR} --prefix
-                    "${FEATURE_ZIP_STAGE}" --component FidelityFXRuntime
-                COMMAND
-                    ${CMAKE_COMMAND} -E chdir "${FEATURE_ZIP_STAGE}"
-                    ${CMAKE_COMMAND} -E tar cf
-                    ${CMAKE_SOURCE_DIR}/dist/${FEATURE}-${UTC_NOW}.7z
-                    --format=7zip -- .
-            )
-        else()
-            add_custom_command(
-                TARGET ${PROJECT_NAME}
-                POST_BUILD
-                COMMAND
-                    ${CMAKE_COMMAND} -E tar cf
-                    ${CMAKE_SOURCE_DIR}/dist/${FEATURE}-${UTC_NOW}.7z
-                    --format=7zip -- .
-                WORKING_DIRECTORY ${FEATURE_PATH}
-            )
-        endif()
+        set(FEATURE_ZIP_STAGE
+            "${CMAKE_CURRENT_BINARY_DIR}/feature_zip/${FEATURE}"
+        )
+        feature_package_commands(
+            FEATURE_ZIP_COMMANDS
+            "${FEATURE}"
+            "${FEATURE_PATH}"
+            "${FEATURE_ZIP_STAGE}"
+            "${CMAKE_SOURCE_DIR}/dist/${FEATURE}-${UTC_NOW}.7z"
+            cf
+        )
+        add_custom_command(
+            TARGET ${PROJECT_NAME}
+            POST_BUILD
+            ${FEATURE_ZIP_COMMANDS}
+        )
     endforeach()
 endif()
 
@@ -1378,39 +1357,23 @@ foreach(FEATURE_PATH ${FEATURE_PATHS})
     get_filename_component(FEATURE ${FEATURE_PATH} NAME)
     set(FEATURE_PACKAGE "${DIST_PATH}/${FEATURE}-${UTC_NOW}.7z")
 
-    if(FEATURE STREQUAL "Upscaling")
-        set(
-            FEATURE_PACKAGE_STAGE
-            "${CMAKE_CURRENT_BINARY_DIR}/feature_package/${FEATURE}"
-        )
-        add_custom_command(
-            OUTPUT ${FEATURE_PACKAGE}
-            COMMAND
-                ${CMAKE_COMMAND} -E remove_directory "${FEATURE_PACKAGE_STAGE}"
-            COMMAND
-                ${CMAKE_COMMAND} -E copy_directory "${FEATURE_PATH}"
-                "${FEATURE_PACKAGE_STAGE}"
-            COMMAND
-                ${CMAKE_COMMAND} --install ${CMAKE_BINARY_DIR} --prefix
-                "${FEATURE_PACKAGE_STAGE}" --component FidelityFXRuntime
-            COMMAND
-                ${CMAKE_COMMAND} -E chdir "${FEATURE_PACKAGE_STAGE}"
-                ${CMAKE_COMMAND} -E tar cfv ${FEATURE_PACKAGE}
-                --format=7zip -- .
-            DEPENDS ${FEATURE_SOURCES} ${FFX_RUNTIME_FILES}
-            COMMENT "Creating ${FEATURE} zip package"
-        )
-    else()
-        add_custom_command(
-            OUTPUT ${FEATURE_PACKAGE}
-            COMMAND
-                ${CMAKE_COMMAND} -E tar cfv ${FEATURE_PACKAGE}
-                --format=7zip -- .
-            WORKING_DIRECTORY "${FEATURE_PATH}"
-            DEPENDS ${FEATURE_SOURCES}
-            COMMENT "Creating ${FEATURE} zip package"
-        )
-    endif()
+    set(FEATURE_PACKAGE_STAGE
+        "${CMAKE_CURRENT_BINARY_DIR}/feature_package/${FEATURE}"
+    )
+    feature_package_commands(
+        FEATURE_PACKAGE_COMMANDS
+        "${FEATURE}"
+        "${FEATURE_PATH}"
+        "${FEATURE_PACKAGE_STAGE}"
+        "${FEATURE_PACKAGE}"
+        cfv
+    )
+    feature_payload_dependencies("${FEATURE}" FEATURE_PACKAGE_DEPENDENCIES)
+    add_custom_command(
+        OUTPUT ${FEATURE_PACKAGE} ${FEATURE_PACKAGE_COMMANDS}
+        DEPENDS ${FEATURE_SOURCES} ${FEATURE_PACKAGE_DEPENDENCIES}
+        COMMENT "Creating ${FEATURE} zip package"
+    )
 
     string(REPLACE " " "" FEATURE ${FEATURE})
     string(REPLACE "-" "" FEATURE ${FEATURE})
