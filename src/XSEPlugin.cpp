@@ -1,5 +1,4 @@
 #include "Deferred.h"
-#include "Features/SkySync.h"
 #include "Features/Upscaling.h"
 #include "FrameAnnotations.h"
 #include "Globals.h"
