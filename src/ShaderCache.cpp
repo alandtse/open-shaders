@@ -2888,8 +2888,11 @@ namespace SIE
 		featureSetRevertPending = false;
 		featureSetCacheBackedUp = false;
 		previousDiskCacheAvailable = false;
-		cacheMismatches.clear();
-		previousCacheMismatches.clear();
+		{
+			std::lock_guard lock{ mismatchesMutex };
+			cacheMismatches.clear();
+			previousCacheMismatches.clear();
+		}
 		heldMismatchDefines.clear();
 	}
 
@@ -2915,7 +2918,10 @@ namespace SIE
 	void ShaderCache::RefreshPreviousDiskCacheInfo()
 	{
 		previousDiskCacheAvailable = false;
-		previousCacheMismatches.clear();
+		{
+			std::lock_guard lock{ mismatchesMutex };
+			previousCacheMismatches.clear();
+		}
 
 		if (!HasDiskCacheInfo(PreviousDiskCachePath()))
 			return;
@@ -2941,7 +2947,10 @@ namespace SIE
 			return;
 		}
 
-		previousCacheMismatches = std::move(mismatches);
+		{
+			std::lock_guard lock{ mismatchesMutex };
+			previousCacheMismatches = std::move(mismatches);
+		}
 		previousDiskCacheAvailable = true;
 	}
 
@@ -2950,13 +2959,16 @@ namespace SIE
 		CSimpleIniA ini;
 		ini.SetUnicode();
 		ini.LoadFile((DiskCachePath() / L"Info.ini").c_str());
-		cacheMismatches.clear();
+		{
+			std::lock_guard lock{ mismatchesMutex };
+			cacheMismatches.clear();
+			previousCacheMismatches.clear();
+		}
 		diskCacheHeld = false;
 		featureSetChanged = false;
 		featureSetRevertPending = false;
 		featureSetCacheBackedUp = false;
 		previousDiskCacheAvailable = false;
-		previousCacheMismatches.clear();
 		heldMismatchDefines.clear();
 
 		RefreshPreviousDiskCacheInfo();
@@ -2985,8 +2997,11 @@ namespace SIE
 				expectedEnabledMatches[shortName] = ini.GetBoolValue(shortName.c_str(), "ExpectedEnabled", false) == feature->loaded;
 		}
 
-		cacheMismatches = Util::CacheInvalidation::ClassifyMismatches(
-			Plugin::VERSION.string(), cachedPluginVersion, featureStates, cacheEntries);
+		{
+			std::lock_guard lock{ mismatchesMutex };
+			cacheMismatches = Util::CacheInvalidation::ClassifyMismatches(
+				Plugin::VERSION.string(), cachedPluginVersion, featureStates, cacheEntries);
+		}
 
 		// Defines of mismatched features, for partial invalidation or the held accept path.
 		heldMismatchDefines = GetDefinesForMismatches(cacheMismatches, featureStates, CacheMismatch::Kind::EnabledFlip);
@@ -3020,15 +3035,22 @@ namespace SIE
 				logger::info("Disk cache mismatch matches a settings save from last session; auto-resolving");
 				WriteDiskCacheInfo();  // also drops the now-consumed ExpectedEnabled markers
 				heldMismatchDefines.clear();
-				cacheMismatches.clear();
+				{
+					std::lock_guard lock{ mismatchesMutex };
+					cacheMismatches.clear();
+				}
 				return;
 			}
 
 			if (BackupActiveDiskCache()) {
 				featureSetChanged = true;
 				featureSetCacheBackedUp = true;
-				const bool previousRestoreAvailable =
-					SetPreviousCacheRestoreCandidate(cacheMismatches, previousDiskCacheAvailable, previousCacheMismatches);
+				bool previousRestoreAvailable;
+				{
+					std::lock_guard lock{ mismatchesMutex };
+					previousRestoreAvailable =
+						SetPreviousCacheRestoreCandidate(cacheMismatches, previousDiskCacheAvailable, previousCacheMismatches);
+				}
 				WriteDiskCacheInfo();
 				if (previousRestoreAvailable) {
 					logger::info("Feature set changed: compiling a new active disk cache; previous cache is available for restore");
@@ -3077,7 +3099,11 @@ namespace SIE
 			return;
 
 		const bool committedFeatureSetBackup = featureSetCacheBackedUp;
-		auto committedPreviousCacheMismatches = committedFeatureSetBackup ? cacheMismatches : std::vector<CacheMismatch>{};
+		std::vector<CacheMismatch> committedPreviousCacheMismatches;
+		if (committedFeatureSetBackup) {
+			std::lock_guard lock{ mismatchesMutex };
+			committedPreviousCacheMismatches = cacheMismatches;
+		}
 
 		if (!featureSetCacheBackedUp && !PartialInvalidation(heldMismatchDefines))
 			DeleteActiveDiskCache();
@@ -3088,11 +3114,17 @@ namespace SIE
 		featureSetChanged = false;
 		featureSetRevertPending = false;
 		featureSetCacheBackedUp = false;
-		cacheMismatches.clear();
+		{
+			std::lock_guard lock{ mismatchesMutex };
+			cacheMismatches.clear();
+		}
 		RefreshPreviousDiskCacheInfo();
-		if (committedFeatureSetBackup && !previousDiskCacheAvailable &&
-			SetPreviousCacheRestoreCandidate(std::move(committedPreviousCacheMismatches), previousDiskCacheAvailable, previousCacheMismatches)) {
-			logger::info("Previous shader cache restore retained from feature-change backup");
+		{
+			std::lock_guard lock{ mismatchesMutex };
+			if (committedFeatureSetBackup && !previousDiskCacheAvailable &&
+				SetPreviousCacheRestoreCandidate(std::move(committedPreviousCacheMismatches), previousDiskCacheAvailable, previousCacheMismatches)) {
+				logger::info("Previous shader cache restore retained from feature-change backup");
+			}
 		}
 		logger::info("Feature set change committed: disk cache rebuilt for the current feature set");
 	}
@@ -3100,12 +3132,19 @@ namespace SIE
 	bool ShaderCache::RestorePreviousDiskCache()
 	{
 		const bool hadPreviousRestoreCandidate = previousDiskCacheAvailable;
-		auto retainedPreviousCacheMismatches = previousCacheMismatches;
+		std::vector<CacheMismatch> retainedPreviousCacheMismatches;
+		{
+			std::lock_guard lock{ mismatchesMutex };
+			retainedPreviousCacheMismatches = previousCacheMismatches;
+		}
 
 		RefreshPreviousDiskCacheInfo();
-		if (!previousDiskCacheAvailable && hadPreviousRestoreCandidate &&
-			SetPreviousCacheRestoreCandidate(std::move(retainedPreviousCacheMismatches), previousDiskCacheAvailable, previousCacheMismatches)) {
-			logger::info("Previous shader cache restore retained from feature-change backup");
+		{
+			std::lock_guard lock{ mismatchesMutex };
+			if (!previousDiskCacheAvailable && hadPreviousRestoreCandidate &&
+				SetPreviousCacheRestoreCandidate(std::move(retainedPreviousCacheMismatches), previousDiskCacheAvailable, previousCacheMismatches)) {
+				logger::info("Previous shader cache restore retained from feature-change backup");
+			}
 		}
 		if (!previousDiskCacheAvailable) {
 			logger::warn("Cannot restore previous shader cache: no compatible previous cache is available");
@@ -3154,7 +3193,10 @@ namespace SIE
 		featureSetCacheBackedUp = false;
 		diskCacheHeld = false;
 		heldMismatchDefines.clear();
-		cacheMismatches.clear();
+		{
+			std::lock_guard lock{ mismatchesMutex };
+			cacheMismatches.clear();
+		}
 		RefreshPreviousDiskCacheInfo();
 		logger::info("Previous shader cache restored: restart to load it");
 		return true;
@@ -3174,7 +3216,10 @@ namespace SIE
 		featureSetChanged = false;
 		featureSetRevertPending = false;
 		featureSetCacheBackedUp = false;
-		cacheMismatches.clear();
+		{
+			std::lock_guard lock{ mismatchesMutex };
+			cacheMismatches.clear();
+		}
 		RefreshPreviousDiskCacheInfo();
 		Clear();
 		logger::info("Cache rebuild accepted: rebuilding disk cache for the current feature set");

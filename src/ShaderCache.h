@@ -478,10 +478,21 @@ namespace SIE
 		/// (Logic lives in Utils/CacheInvalidation.h so tests/cpp can exercise it.)
 		using CacheMismatch = Util::CacheInvalidation::CacheMismatch;
 
-		/// Mismatches found at boot (empty when the disk cache validated clean).
-		const std::vector<CacheMismatch>& GetCacheMismatches() const { return cacheMismatches; }
-		/// Mismatches between the restorable rollback cache and the current setup.
-		const std::vector<CacheMismatch>& GetPreviousCacheMismatches() const { return previousCacheMismatches; }
+		/// Mismatches found at boot (empty when the disk cache validated clean). Returned by
+		/// value: devbench's listener thread reads this while the main thread (via
+		/// ValidateDiskCache/rollback actions) reassigns it, so a reference would be unsafe.
+		std::vector<CacheMismatch> GetCacheMismatches() const
+		{
+			std::lock_guard lock{ mismatchesMutex };
+			return cacheMismatches;
+		}
+		/// Mismatches between the restorable rollback cache and the current setup. See
+		/// GetCacheMismatches for why this is returned by value.
+		std::vector<CacheMismatch> GetPreviousCacheMismatches() const
+		{
+			std::lock_guard lock{ mismatchesMutex };
+			return previousCacheMismatches;
+		}
 		/// True when boot detected a pure feature-toggle change and rotated the old
 		/// cache into the rollback slot; cleared once the new cache is committed.
 		bool HasFeatureSetChanges() const { return featureSetChanged; }
@@ -995,6 +1006,10 @@ namespace SIE
 		bool featureSetRevertPending = false;
 		bool featureSetCacheBackedUp = false;
 		bool previousDiskCacheAvailable = false;
+		// Guards cacheMismatches/previousCacheMismatches: reassigned/cleared on the main
+		// thread (ValidateDiskCache, rollback actions), read from devbench's listener
+		// thread via GetCacheMismatches/GetPreviousCacheMismatches.
+		mutable std::mutex mismatchesMutex;
 		std::vector<CacheMismatch> cacheMismatches;
 		std::vector<CacheMismatch> previousCacheMismatches;
 		std::vector<std::string> heldMismatchDefines;
