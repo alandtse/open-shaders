@@ -264,18 +264,34 @@ WrappedResource::WrappedResource(D3D11_TEXTURE2D_DESC a_texDesc, ID3D11Device5* 
 {
 	// Create D3D11 shared texture directly instead of wrapping D3D12 resource
 	a_texDesc.MiscFlags |= D3D11_RESOURCE_MISC_SHARED | D3D11_RESOURCE_MISC_SHARED_NTHANDLE;
-	DX::ThrowIfFailed(a_d3d11Device->CreateTexture2D(&a_texDesc, nullptr, &resource11));
+	auto throwIfFailed = [&](HRESULT a_result, const char* a_operation) {
+		if (FAILED(a_result)) {
+			logger::error(
+				"[DX12SwapChain] Wrapped resource '{}' {} failed: HRESULT 0x{:08X}, dimensions {}x{}, format {}, bind flags 0x{:X}, misc flags 0x{:X}",
+				a_name.empty() ? "<unnamed>" : a_name.c_str(),
+				a_operation,
+				static_cast<uint32_t>(a_result),
+				a_texDesc.Width,
+				a_texDesc.Height,
+				static_cast<uint32_t>(a_texDesc.Format),
+				a_texDesc.BindFlags,
+				a_texDesc.MiscFlags);
+		}
+		DX::ThrowIfFailed(a_result);
+	};
+
+	throwIfFailed(a_d3d11Device->CreateTexture2D(&a_texDesc, nullptr, &resource11), "CreateTexture2D");
 	if (!a_name.empty())
 		Util::SetResourceName(resource11, "%s", a_name.c_str());
 
 	// Get shared handle from D3D11 texture to enable D3D12 access
 	winrt::com_ptr<IDXGIResource1> dxgiResource;
-	DX::ThrowIfFailed(resource11->QueryInterface(IID_PPV_ARGS(dxgiResource.put())));
+	throwIfFailed(resource11->QueryInterface(IID_PPV_ARGS(dxgiResource.put())), "QueryInterface(IDXGIResource1)");
 	HANDLE sharedHandle = nullptr;
-	DX::ThrowIfFailed(dxgiResource->CreateSharedHandle(nullptr, DXGI_SHARED_RESOURCE_READ | DXGI_SHARED_RESOURCE_WRITE, nullptr, &sharedHandle));
+	throwIfFailed(dxgiResource->CreateSharedHandle(nullptr, DXGI_SHARED_RESOURCE_READ | DXGI_SHARED_RESOURCE_WRITE, nullptr, &sharedHandle), "CreateSharedHandle");
 
 	// Open the shared D3D11 texture as D3D12 resource
-	DX::ThrowIfFailed(a_d3d12Device->OpenSharedHandle(sharedHandle, IID_PPV_ARGS(resource.put())));
+	throwIfFailed(a_d3d12Device->OpenSharedHandle(sharedHandle, IID_PPV_ARGS(resource.put())), "OpenSharedHandle");
 	CloseHandle(sharedHandle);
 
 	if (a_texDesc.BindFlags & D3D11_BIND_SHADER_RESOURCE) {
@@ -285,7 +301,7 @@ WrappedResource::WrappedResource(D3D11_TEXTURE2D_DESC a_texDesc, ID3D11Device5* 
 		srvDesc.Texture2D.MostDetailedMip = 0;
 		srvDesc.Texture2D.MipLevels = 1;
 
-		DX::ThrowIfFailed(a_d3d11Device->CreateShaderResourceView(resource11, &srvDesc, &srv));
+		throwIfFailed(a_d3d11Device->CreateShaderResourceView(resource11, &srvDesc, &srv), "CreateShaderResourceView");
 		if (!a_name.empty())
 			Util::SetResourceName(srv, "%s SRV", a_name.c_str());
 	}
@@ -298,14 +314,14 @@ WrappedResource::WrappedResource(D3D11_TEXTURE2D_DESC a_texDesc, ID3D11Device5* 
 			uavDesc.Texture2DArray.FirstArraySlice = 0;
 			uavDesc.Texture2DArray.ArraySize = a_texDesc.ArraySize;
 
-			DX::ThrowIfFailed(a_d3d11Device->CreateUnorderedAccessView(resource11, &uavDesc, &uav));
+			throwIfFailed(a_d3d11Device->CreateUnorderedAccessView(resource11, &uavDesc, &uav), "CreateUnorderedAccessView");
 		} else {
 			D3D11_UNORDERED_ACCESS_VIEW_DESC uavDesc = {};
 			uavDesc.Format = a_texDesc.Format;
 			uavDesc.ViewDimension = D3D11_UAV_DIMENSION_TEXTURE2D;
 			uavDesc.Texture2D.MipSlice = 0;
 
-			DX::ThrowIfFailed(a_d3d11Device->CreateUnorderedAccessView(resource11, &uavDesc, &uav));
+			throwIfFailed(a_d3d11Device->CreateUnorderedAccessView(resource11, &uavDesc, &uav), "CreateUnorderedAccessView");
 		}
 		if (!a_name.empty())
 			Util::SetResourceName(uav, "%s UAV", a_name.c_str());
@@ -316,7 +332,7 @@ WrappedResource::WrappedResource(D3D11_TEXTURE2D_DESC a_texDesc, ID3D11Device5* 
 		rtvDesc.Format = a_texDesc.Format;
 		rtvDesc.ViewDimension = D3D11_RTV_DIMENSION_TEXTURE2D;
 		rtvDesc.Texture2D.MipSlice = 0;
-		DX::ThrowIfFailed(a_d3d11Device->CreateRenderTargetView(resource11, &rtvDesc, &rtv));
+		throwIfFailed(a_d3d11Device->CreateRenderTargetView(resource11, &rtvDesc, &rtv), "CreateRenderTargetView");
 		if (!a_name.empty())
 			Util::SetResourceName(rtv, "%s RTV", a_name.c_str());
 	}
