@@ -197,11 +197,21 @@ void SkySync::DataLoaded()
 
 void SkySync::RequestTimeJumpTransition()
 {
+	if (!loaded) {
+		globals::features::terrainShadows.RequestTimeJumpRefresh();
+		return;
+	}
+
 	timeJumpTransitionRequested.store(true, std::memory_order_release);
 }
 
 void SkySync::RequestGameLoadTransition()
 {
+	if (!loaded) {
+		globals::features::terrainShadows.RequestTimeJumpRefresh();
+		return;
+	}
+
 	gameLoadTransitionRequested.store(true, std::memory_order_release);
 }
 

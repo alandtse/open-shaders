@@ -101,8 +101,6 @@ public:
 
 	/** @brief Loads heightmaps, precomputes shadow textures, and updates shadows in the early prepass. */
 	virtual void EarlyPrepass() override;
-	/** @brief Registers the Papyrus GameHour setter callback. */
-	virtual void Load() override;
 	/** @brief Installs event-driven time-change hooks. */
 	virtual void PostPostLoad() override;
 	/** @brief Registers engine time-change and player-cell event handlers. */

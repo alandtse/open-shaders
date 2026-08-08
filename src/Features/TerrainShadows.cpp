@@ -154,49 +154,41 @@ namespace
 		static inline REL::Relocation<decltype(thunk)> func;
 	};
 
-	void PapyrusSetGlobalValue(RE::BSScript::IVirtualMachine* a_vm, RE::VMStackID a_stackID, RE::TESGlobal* a_global, float a_value)
+	struct PapyrusSetGlobalValueHook
 	{
-		if (!a_global)
-			return;
+		static void thunk(RE::BSScript::IVirtualMachine* a_vm, RE::VMStackID a_stackID, RE::TESGlobal* a_global, float a_value)
+		{
+			const auto calendar = globals::game::calendar;
+			const bool changesGameHour = calendar && a_global == calendar->gameHour;
+			const float previousValue = changesGameHour ? a_global->value : 0.0f;
 
-		if ((a_global->formFlags & RE::TESGlobal::RecordFlags::kConstant) != 0) {
-			if (a_vm)
-				a_vm->TraceStack("Cannot set the value of a constant GlobalVariable", a_stackID);
-			return;
+			func(a_vm, a_stackID, a_global, a_value);
+			if (changesGameHour && a_global->value != previousValue)
+				RequestTimeJumpSynchronization();
 		}
 
-		const auto calendar = globals::game::calendar;
-		const bool changesGameHour = calendar && a_global == calendar->gameHour && a_global->value != a_value;
-		a_global->value = a_value;
-		if (changesGameHour)
-			RequestTimeJumpSynchronization();
-	}
+		static void Install()
+		{
+			const auto result = stl::detour_thunk<PapyrusSetGlobalValueHook>(REL::RelocationID(55352, 55923));
+			if (result == NO_ERROR)
+				logger::info("[Terrain Shadows] Installed Papyrus GameHour change hook");
+			else
+				logger::error("[Terrain Shadows] Failed to install Papyrus GameHour change hook: {}", result);
+		}
 
-	bool RegisterPapyrusFunctions(RE::BSScript::IVirtualMachine* a_vm)
-	{
-		if (!a_vm)
-			return false;
-
-		a_vm->RegisterFunction("SetValue", "GlobalVariable", PapyrusSetGlobalValue, true);
-		return true;
-	}
+		static inline REL::Relocation<decltype(thunk)> func;
+	};
 }
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	TerrainShadows::Settings,
 	EnableTerrainShadow)
 
-void TerrainShadows::Load()
-{
-	const auto papyrus = SKSE::GetPapyrusInterface();
-	if (!papyrus || !papyrus->Register(RegisterPapyrusFunctions))
-		logger::error("[Terrain Shadows] Failed to register Papyrus time-change handler");
-}
-
 void TerrainShadows::PostPostLoad()
 {
 	ConsoleCommandHook::Install();
 	VRFastTravelHook::Install();
+	PapyrusSetGlobalValueHook::Install();
 }
 
 void TerrainShadows::DataLoaded()
