@@ -10,7 +10,6 @@
 #include "Globals.h"
 #include "GpuPass.h"
 #include "I18n/I18n.h"
-#include "SkySync.h"
 #include "State.h"
 #include "Util.h"
 
@@ -34,7 +33,7 @@ namespace
 
 	void RequestTimeJumpSynchronization()
 	{
-		globals::features::skySync.RequestTimeJumpTransition();
+		Util::RequestTimeJumpTransition();
 	}
 
 	class TimeJumpEventHandler :
@@ -213,9 +212,9 @@ void TerrainShadows::DataLoaded()
 		logger::warn("[Terrain Shadows] Player cell event source not found");
 }
 
-void TerrainShadows::RequestTimeJumpRefresh()
+void TerrainShadows::GameLoaded()
 {
-	requestedTimeJumpRefreshGeneration.fetch_add(1, std::memory_order_release);
+	Util::RequestGameLoadTransition();
 }
 
 void TerrainShadows::LoadSettings(json& o_json)
@@ -655,7 +654,7 @@ void TerrainShadows::EarlyPrepass()
 {
 	LoadHeightmap();
 
-	const auto requestedRefreshGeneration = requestedTimeJumpRefreshGeneration.load(std::memory_order_acquire);
+	const auto requestedRefreshGeneration = Util::GetCompletedCelestialTransitionGeneration();
 	const bool timeJumpRefresh = requestedRefreshGeneration != handledTimeJumpRefreshGeneration;
 	if (!settings.EnableTerrainShadow)
 		return;

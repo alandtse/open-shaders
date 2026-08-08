@@ -1,10 +1,77 @@
 #include "Game.h"
 
+#include <atomic>
+
 #include "Globals.h"
 #include "State.h"
 
+namespace
+{
+	std::atomic_bool celestialTransitionHandlerAvailable{ false };
+	std::atomic_bool timeJumpTransitionRequested{ false };
+	std::atomic_bool gameLoadTransitionRequested{ false };
+	std::atomic_uint32_t completedCelestialTransitionGeneration{ 0 };
+
+	void MarkCelestialTransitionComplete()
+	{
+		completedCelestialTransitionGeneration.fetch_add(1, std::memory_order_release);
+	}
+
+	void RequestCelestialTransition(std::atomic_bool& a_request)
+	{
+		a_request.store(true, std::memory_order_release);
+		if (!celestialTransitionHandlerAvailable.load(std::memory_order_acquire) &&
+			a_request.exchange(false, std::memory_order_acq_rel)) {
+			MarkCelestialTransitionComplete();
+		}
+	}
+}
+
 namespace Util
 {
+	void SetCelestialTransitionHandlerAvailable(bool a_available)
+	{
+		celestialTransitionHandlerAvailable.store(a_available, std::memory_order_release);
+		if (a_available)
+			return;
+
+		const bool hadPendingTransition = timeJumpTransitionRequested.exchange(false, std::memory_order_acq_rel) |
+		                                  gameLoadTransitionRequested.exchange(false, std::memory_order_acq_rel);
+		if (hadPendingTransition)
+			MarkCelestialTransitionComplete();
+	}
+
+	void RequestTimeJumpTransition()
+	{
+		RequestCelestialTransition(timeJumpTransitionRequested);
+	}
+
+	void RequestGameLoadTransition()
+	{
+		RequestCelestialTransition(gameLoadTransitionRequested);
+	}
+
+	CelestialTransitionRequest ConsumeCelestialTransitionRequest()
+	{
+		if (!celestialTransitionHandlerAvailable.load(std::memory_order_acquire))
+			return {};
+
+		return {
+			.timeJump = timeJumpTransitionRequested.exchange(false, std::memory_order_acq_rel),
+			.gameLoad = gameLoadTransitionRequested.exchange(false, std::memory_order_acq_rel),
+		};
+	}
+
+	void CompleteCelestialTransition()
+	{
+		MarkCelestialTransitionComplete();
+	}
+
+	std::uint32_t GetCompletedCelestialTransitionGeneration()
+	{
+		return completedCelestialTransitionGeneration.load(std::memory_order_acquire);
+	}
+
 	void StoreTransform3x4NoScale(DirectX::XMFLOAT3X4& Dest, const RE::NiTransform& Source)
 	{
 		//

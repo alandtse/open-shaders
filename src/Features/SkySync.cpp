@@ -2,7 +2,7 @@
 #include "../I18n/I18n.h"
 #include "RE/B/BSVolumetricLightingRenderData.h"
 
-#include "TerrainShadows.h"
+#include "Utils/Game.h"
 
 #define I18N_KEY_PREFIX "feature.sky_sync."
 
@@ -179,6 +179,7 @@ void SkySync::PostPostLoad()
 	}
 
 	stl::detour_thunk<Sky_Update>(REL::RelocationID(25682, 26229));
+	Util::SetCelestialTransitionHandlerAvailable(true);
 
 	gSunPosition = reinterpret_cast<RE::NiPoint3*>(REL::RelocationID(527924, 414871).address());
 
@@ -195,24 +196,9 @@ void SkySync::DataLoaded()
 		DisableOnConflict("DVLaSS");
 }
 
-void SkySync::RequestTimeJumpTransition()
+void SkySync::GameLoaded()
 {
-	if (!loaded) {
-		globals::features::terrainShadows.RequestTimeJumpRefresh();
-		return;
-	}
-
-	timeJumpTransitionRequested.store(true, std::memory_order_release);
-}
-
-void SkySync::RequestGameLoadTransition()
-{
-	if (!loaded) {
-		globals::features::terrainShadows.RequestTimeJumpRefresh();
-		return;
-	}
-
-	gameLoadTransitionRequested.store(true, std::memory_order_release);
+	Util::RequestGameLoadTransition();
 }
 
 void SkySync::DisableOnConflict(std::string_view conflictName)
@@ -220,6 +206,7 @@ void SkySync::DisableOnConflict(std::string_view conflictName)
 	failedLoadedMessage = fmt::format("Disabled as {} has been detected, both cannot be used together", conflictName);
 	loaded = false;
 	settings.Enabled = false;
+	Util::SetCelestialTransitionHandlerAvailable(false);
 	logger::warn("[Sky Sync] {}", failedLoadedMessage);
 }
 
@@ -249,17 +236,16 @@ void SkySync::Sky_Update::thunk(RE::Sky* sky)
 	auto& skySync = globals::features::skySync;
 	skySync.PreparePendingTransitions();
 	if (skySync.Update(sky))
-		globals::features::terrainShadows.RequestTimeJumpRefresh();
+		Util::CompleteCelestialTransition();
 }
 
 void SkySync::PreparePendingTransitions()
 {
-	const bool timeJumpRequested = timeJumpTransitionRequested.exchange(false, std::memory_order_acq_rel);
-	const bool gameLoadRequested = gameLoadTransitionRequested.exchange(false, std::memory_order_acq_rel);
-	if (!timeJumpRequested && !gameLoadRequested)
+	const auto request = Util::ConsumeCelestialTransitionRequest();
+	if (!request.timeJump && !request.gameLoad)
 		return;
 
-	if (gameLoadRequested) {
+	if (request.gameLoad) {
 		shadowFader.Reset();
 		currentCell = nullptr;
 		currentCellInterior = false;

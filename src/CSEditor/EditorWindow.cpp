@@ -3,7 +3,6 @@
 #include "../I18n/I18n.h"
 #include "Features/CSEditor.h"
 #include "Features/HDRDisplay.h"
-#include "Features/SkySync.h"
 #include "Features/Upscaling.h"
 #include "Globals.h"
 #include "InteriorOnlyPanel.h"
@@ -11,6 +10,7 @@
 #include "Menu/BackgroundBlur.h"
 #include "PaletteWindow.h"
 #include "State.h"
+#include "Utils/Game.h"
 #include "Utils/Subrect.h"
 #include "Utils/UI.h"
 #include "Weather/LightingTemplateWidget.h"
@@ -2185,13 +2185,13 @@ bool EditorWindow::DrawGameHourSlider(const char* label, const char* format)
 	if (changed && active) {
 		const double currentTime = ImGui::GetTime();
 		if (!gameHourScrubRefreshIssued || currentTime - lastGameHourScrubRefreshTime >= kGameHourScrubRefreshIntervalSeconds) {
-			globals::features::skySync.RequestTimeJumpTransition();
+			Util::RequestTimeJumpTransition();
 			lastGameHourScrubRefreshTime = currentTime;
 			gameHourScrubRefreshIssued = true;
 		}
 	}
 	if (deactivatedAfterEdit)
-		globals::features::skySync.RequestTimeJumpTransition();
+		Util::RequestTimeJumpTransition();
 	if (deactivated)
 		gameHourScrubRefreshIssued = false;
 	return true;

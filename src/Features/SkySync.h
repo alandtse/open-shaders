@@ -1,7 +1,5 @@
 ﻿#pragma once
 
-#include <atomic>
-
 #include "RE/M/Moon.h"
 
 #include "Utils/Moon.h"
@@ -70,10 +68,8 @@ public:
 	virtual void PostPostLoad() override;
 	/** @brief Checks for conflicting ESP files after game data is loaded. */
 	virtual void DataLoaded() override;
-	/** @brief Requests an immediate light transition after Skyrim next updates the sky. */
-	void RequestTimeJumpTransition();
-	/** @brief Requests one immediate synchronization after a game load or new game. */
-	void RequestGameLoadTransition();
+	/** @brief Requests immediate celestial synchronization after loading an existing save. */
+	virtual void GameLoaded() override;
 
 	struct Sky_Update
 	{
@@ -158,8 +154,6 @@ private:
 	RE::TESWorldSpace* currentCellWorldspace = nullptr;
 	float sunAngle = 90.0f;
 	float currentSkyRotation = D3D11_FLOAT32_MAX;
-	std::atomic_bool timeJumpTransitionRequested{ false };
-	std::atomic_bool gameLoadTransitionRequested{ false };
 	bool immediateTransitionReady = false;
 
 	float4 colors[3] = {};

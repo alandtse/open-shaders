@@ -150,10 +150,9 @@ void MessageHandler(SKSE::MessagingInterface::Message* message)
 			break;
 		}
 	case SKSE::MessagingInterface::kPostLoadGame:
-	case SKSE::MessagingInterface::kNewGame:
 		{
 			if (errors.empty())
-				globals::features::skySync.RequestGameLoadTransition();
+				Feature::ForEachLoadedFeature("GameLoaded", [](Feature* feature) { feature->GameLoaded(); });
 			break;
 		}
 	}

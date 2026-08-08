@@ -1,6 +1,5 @@
 #pragma once
 
-#include <atomic>
 #include <cstdint>
 #include <filesystem>
 
@@ -36,7 +35,6 @@ public:
 
 	bool needPrecompute = false;
 	uint shadowUpdateIdx = 0;
-	std::atomic_uint32_t requestedTimeJumpRefreshGeneration{ 0 };
 	std::uint32_t handledTimeJumpRefreshGeneration = 0;
 
 	struct HeightMapMetadata
@@ -105,8 +103,8 @@ public:
 	virtual void PostPostLoad() override;
 	/** @brief Registers engine time-change and player-cell event handlers. */
 	virtual void DataLoaded() override;
-	/** @brief Requests a full terrain-shadow refresh using the synchronized directional light. */
-	void RequestTimeJumpRefresh();
+	/** @brief Requests celestial synchronization after loading an existing save. */
+	virtual void GameLoaded() override;
 	/** @brief Loads the heightmap DDS for the current worldspace if not already cached. */
 	void LoadHeightmap();
 	/** @brief Creates the shadow height texture after a new heightmap is loaded. */
