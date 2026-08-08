@@ -386,6 +386,9 @@ private:
 	float timeScaleSlider = kVanillaTimeScale;
 	bool timeRestoredForMenu = false;
 	bool wasPausedBeforeMenu = false;
+	static constexpr double kGameHourScrubRefreshIntervalSeconds = 0.1;
+	double lastGameHourScrubRefreshTime = 0.0;
+	bool gameHourScrubRefreshIssued = false;
 
 	// Sorting state
 	enum class SortColumn

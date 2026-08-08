@@ -1,4 +1,5 @@
 #include "Deferred.h"
+#include "Features/SkySync.h"
 #include "Features/Upscaling.h"
 #include "FrameAnnotations.h"
 #include "Globals.h"
@@ -146,6 +147,13 @@ void MessageHandler(SKSE::MessagingInterface::Message* message)
 				Feature::ForEachLoadedFeature("DataLoaded", [](Feature* feature) { feature->DataLoaded(); });
 			}
 
+			break;
+		}
+	case SKSE::MessagingInterface::kPostLoadGame:
+	case SKSE::MessagingInterface::kNewGame:
+		{
+			if (errors.empty())
+				globals::features::skySync.RequestGameLoadTransition();
 			break;
 		}
 	}

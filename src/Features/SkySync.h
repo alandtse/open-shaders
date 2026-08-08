@@ -1,5 +1,7 @@
 ﻿#pragma once
 
+#include <atomic>
+
 #include "RE/M/Moon.h"
 
 #include "Utils/Moon.h"
@@ -68,6 +70,10 @@ public:
 	virtual void PostPostLoad() override;
 	/** @brief Checks for conflicting ESP files after game data is loaded. */
 	virtual void DataLoaded() override;
+	/** @brief Requests an immediate light transition after Skyrim next updates the sky. */
+	void RequestTimeJumpTransition();
+	/** @brief Requests one immediate synchronization after a game load or new game. */
+	void RequestGameLoadTransition();
 
 	struct Sky_Update
 	{
@@ -138,7 +144,6 @@ private:
 	static constexpr float SouthernSunAngle = 90.0f - 35.0f;
 	static constexpr float NorthernSunAngle = 90.0f + 35.0f;
 	static constexpr float VanillaSunAngle = 90.0f + 5.0f;
-	static constexpr float SecondsPerGameHour = 3600.0f;
 	static constexpr float SunsetHeadingLockThreshold = 0.5f;
 	static constexpr float VLFadeStartAngle = 2.0f;
 	static constexpr float VLFadeEndAngle = 10.0f;
@@ -149,11 +154,13 @@ private:
 
 	bool moonAndStarsLoaded = false;
 	RE::TESObjectCELL* currentCell = nullptr;
+	bool currentCellInterior = false;
+	RE::TESWorldSpace* currentCellWorldspace = nullptr;
 	float sunAngle = 90.0f;
 	float currentSkyRotation = D3D11_FLOAT32_MAX;
-	float lastGameHour = -1.0f;
-	RE::NiPoint3 previousSunDirection{};
-	bool hasPreviousSunDirection = false;
+	std::atomic_bool timeJumpTransitionRequested{ false };
+	std::atomic_bool gameLoadTransitionRequested{ false };
+	bool immediateTransitionReady = false;
 
 	float4 colors[3] = {};
 	float currentDim = 1.0f;
@@ -164,9 +171,9 @@ private:
 
 	void DisableOnConflict(std::string_view conflictName);
 
-	void Update(const RE::Sky* sky, bool a_sunDirectionDiscontinuity);
+	void PreparePendingTransitions();
 
-	bool ObserveSunDirection(const RE::Sky* sky) noexcept;
+	bool Update(const RE::Sky* sky);
 
 	void SetSunAngle();
 

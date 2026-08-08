@@ -3,6 +3,7 @@
 #include "../I18n/I18n.h"
 #include "Features/CSEditor.h"
 #include "Features/HDRDisplay.h"
+#include "Features/SkySync.h"
 #include "Features/Upscaling.h"
 #include "Globals.h"
 #include "InteriorOnlyPanel.h"
@@ -2174,7 +2175,25 @@ bool EditorWindow::DrawGameHourSlider(const char* label, const char* format)
 	auto calendar = GetCalendar();
 	if (!calendar || !calendar->gameHour)
 		return false;
-	ImGui::SliderFloat(label, &calendar->gameHour->value, 0.0f, kGameHourMax, format);
+	const bool changed = ImGui::SliderFloat(label, &calendar->gameHour->value, 0.0f, kGameHourMax, format);
+	const bool activated = ImGui::IsItemActivated();
+	const bool active = ImGui::IsItemActive();
+	const bool deactivated = ImGui::IsItemDeactivated();
+	const bool deactivatedAfterEdit = ImGui::IsItemDeactivatedAfterEdit();
+	if (activated)
+		gameHourScrubRefreshIssued = false;
+	if (changed && active) {
+		const double currentTime = ImGui::GetTime();
+		if (!gameHourScrubRefreshIssued || currentTime - lastGameHourScrubRefreshTime >= kGameHourScrubRefreshIntervalSeconds) {
+			globals::features::skySync.RequestTimeJumpTransition();
+			lastGameHourScrubRefreshTime = currentTime;
+			gameHourScrubRefreshIssued = true;
+		}
+	}
+	if (deactivatedAfterEdit)
+		globals::features::skySync.RequestTimeJumpTransition();
+	if (deactivated)
+		gameHourScrubRefreshIssued = false;
 	return true;
 }
 
