@@ -308,9 +308,16 @@ namespace
 		return false;
 	}
 
+	std::string FfxCreateResultText(bool a_attempted, ffxReturnCode_t a_result)
+	{
+		if (!a_attempted)
+			return "not attempted";
+
+		return std::format("code {}", static_cast<uint32_t>(a_result));
+	}
+
 	enum class RuntimeUpscalerCreateAttempt : uint8_t
 	{
-		kGenericOverrideOnly,
 		kGenericOverrideWithUpscalerVersion,
 		kUpscalerVersionDescriptor,
 		kDefaultProvider
@@ -320,6 +327,7 @@ namespace
 	{
 		RuntimeUpscalerCreateAttempt attempt;
 		bool enabled;
+		bool attempted = false;
 		ffxReturnCode_t result = FFX_API_RETURN_ERROR;
 	};
 
@@ -338,10 +346,6 @@ namespace
 		a_overrideVersionDesc.header.pNext = nullptr;
 
 		switch (a_attempt) {
-		case RuntimeUpscalerCreateAttempt::kGenericOverrideOnly:
-			a_createDesc.header.pNext = &a_backendDesc.header;
-			a_backendDesc.header.pNext = &a_overrideVersionDesc.header;
-			break;
 		case RuntimeUpscalerCreateAttempt::kGenericOverrideWithUpscalerVersion:
 			a_createDesc.header.pNext = &a_backendDesc.header;
 			a_backendDesc.header.pNext = &a_versionDesc.header;
@@ -487,7 +491,7 @@ bool FidelityFX::IsRuntimeUpscalerProviderMatchingRequestedVersion() const
 		return false;
 
 	if (runtimeUpscalerProviderMatchedVersionName.empty() && runtimeUpscalerProviderMatchedVersionId == 0)
-		return true;
+		return false;
 
 	const uint32_t requestedVersion = runtimeUpscalerRequestedVersion ? runtimeUpscalerRequestedVersion : GetPreferredRuntimeUpscalerVersion();
 	return RuntimeProviderMatchesVersion(runtimeUpscalerProviderMatchedVersionId, runtimeUpscalerProviderMatchedVersionName, requestedVersion);
@@ -1098,21 +1102,6 @@ bool FidelityFX::EnsureRuntimeUpscalerContexts(uint32_t a_fullRenderWidth, uint3
 		runtimeUpscalerSupportConfirmed = a_supported;
 		runtimeUpscalerProviderMatchedVersionId = 0;
 		runtimeUpscalerProviderMatchedVersionName.clear();
-
-		if (!a_supported || !runtimeUpscalerContexts[0] || !ffxModule.Query)
-			return;
-
-		ffxQueryGetProviderVersion providerQuery{};
-		providerQuery.header.type = FFX_API_QUERY_DESC_TYPE_GET_PROVIDER_VERSION;
-		providerQuery.header.pNext = nullptr;
-		providerQuery.versionId = 0;
-		providerQuery.versionName = nullptr;
-
-		if (ffxModule.Query(&runtimeUpscalerContexts[0], &providerQuery.header) == FFX_API_RETURN_OK) {
-			runtimeUpscalerProviderMatchedVersionId = providerQuery.versionId;
-			if (providerQuery.versionName)
-				runtimeUpscalerProviderMatchedVersionName = providerQuery.versionName;
-		}
 	};
 
 	if (!a_fullRenderWidth || !a_fullRenderHeight || !a_fullDisplayWidth || !a_fullDisplayHeight) {
@@ -1127,7 +1116,7 @@ bool FidelityFX::EnsureRuntimeUpscalerContexts(uint32_t a_fullRenderWidth, uint3
 		recordRuntimeProviderResult(false);
 		return false;
 	}
-	if (!ffxModule.CreateContext || !ffxModule.DestroyContext) {
+	if (!ffxModule.CreateContext || !ffxModule.DestroyContext || !ffxModule.Query) {
 		recordRuntimeProviderResult(false);
 		return false;
 	}
@@ -1175,8 +1164,7 @@ bool FidelityFX::EnsureRuntimeUpscalerContexts(uint32_t a_fullRenderWidth, uint3
 		ffx::CreateContextDescOverrideVersion overrideVersionDesc{};
 		overrideVersionDesc.versionId = runtimeVersionId;
 
-		std::array<RuntimeUpscalerCreateAttemptResult, 4> attempts{ {
-			{ RuntimeUpscalerCreateAttempt::kGenericOverrideOnly, hasRuntimeVersionOverride },
+		std::array<RuntimeUpscalerCreateAttemptResult, 3> attempts{ {
 			{ RuntimeUpscalerCreateAttempt::kGenericOverrideWithUpscalerVersion, hasRuntimeVersionOverride },
 			{ RuntimeUpscalerCreateAttempt::kUpscalerVersionDescriptor, true },
 			{ RuntimeUpscalerCreateAttempt::kDefaultProvider, a_requestedVersion == FFX_UPSCALER_VERSION },
@@ -1187,6 +1175,7 @@ bool FidelityFX::EnsureRuntimeUpscalerContexts(uint32_t a_fullRenderWidth, uint3
 			if (!attempt.enabled)
 				continue;
 
+			attempt.attempted = true;
 			attempt.result = TryCreateRuntimeUpscalerContext(
 				runtimeUpscalerContexts[i],
 				attempt.attempt,
@@ -1203,6 +1192,24 @@ bool FidelityFX::EnsureRuntimeUpscalerContexts(uint32_t a_fullRenderWidth, uint3
 		}
 
 		if (!contextCreated) {
+			const auto getAttemptResult = [&](RuntimeUpscalerCreateAttempt a_attempt) {
+				const auto iter = std::find_if(attempts.begin(), attempts.end(), [&](const RuntimeUpscalerCreateAttemptResult& a_result) {
+					return a_result.attempt == a_attempt;
+				});
+
+				return iter != attempts.end() ? FfxCreateResultText(iter->attempted, iter->result) : std::string("not attempted");
+			};
+
+			logger::error("[FidelityFX] Failed to create runtime upscaler context {} for FSR version {}. Override + upscaler descriptor: {}, upscaler version descriptor: {}, default provider: {} (Render: {}x{}, Display: {}x{}).",
+				i,
+				UpscalerVersionToString(a_requestedVersion),
+				getAttemptResult(RuntimeUpscalerCreateAttempt::kGenericOverrideWithUpscalerVersion),
+				getAttemptResult(RuntimeUpscalerCreateAttempt::kUpscalerVersionDescriptor),
+				getAttemptResult(RuntimeUpscalerCreateAttempt::kDefaultProvider),
+				a_fullRenderWidth,
+				a_fullRenderHeight,
+				a_fullDisplayWidth,
+				a_fullDisplayHeight);
 			DestroyRuntimeUpscalerContexts();
 			recordRuntimeProviderResult(false);
 			return false;
@@ -1215,7 +1222,58 @@ bool FidelityFX::EnsureRuntimeUpscalerContexts(uint32_t a_fullRenderWidth, uint3
 	runtimeUpscalerMaxDisplayWidth = a_fullDisplayWidth;
 	runtimeUpscalerMaxDisplayHeight = a_fullDisplayHeight;
 	runtimeUpscalerRequestedVersion = a_requestedVersion;
+
+	uint64_t selectedProviderVersionId = 0;
+	std::string selectedProviderVersionName;
+	for (uint32_t i = 0; i < a_contextCount; ++i) {
+		ffxQueryGetProviderVersion providerQuery{};
+		providerQuery.header.type = FFX_API_QUERY_DESC_TYPE_GET_PROVIDER_VERSION;
+		providerQuery.header.pNext = nullptr;
+		providerQuery.versionId = 0;
+		providerQuery.versionName = nullptr;
+
+		const auto queryResult = ffxModule.Query(&runtimeUpscalerContexts[i], &providerQuery.header);
+		const std::string providerVersionName = providerQuery.versionName ? providerQuery.versionName : "";
+		const bool providerIdentityKnown = queryResult == FFX_API_RETURN_OK &&
+		                                   (providerQuery.versionId != 0 || !providerVersionName.empty());
+		const bool providerVersionMatches = providerIdentityKnown &&
+		                                    RuntimeProviderMatchesVersion(providerQuery.versionId, providerVersionName, a_requestedVersion);
+		const bool providerMatchesOtherContexts = i == 0 ||
+		                                          (providerQuery.versionId == selectedProviderVersionId && providerVersionName == selectedProviderVersionName);
+		if (!providerIdentityKnown || !providerVersionMatches || !providerMatchesOtherContexts) {
+			auto providerName = RuntimeProviderDisplayName(providerQuery.versionId, providerVersionName);
+			if (providerName.empty())
+				providerName = "unknown";
+
+			const char* failureReason = "differs from the other runtime contexts";
+			if (!providerIdentityKnown)
+				failureReason = "identity is unknown";
+			else if (!providerVersionMatches)
+				failureReason = "does not match the requested version";
+			logger::error("[FidelityFX] Runtime upscaler context {} provider '{}' {} for FSR version {} (query code {}, Render: {}x{}, Display: {}x{}).",
+				i,
+				providerName,
+				failureReason,
+				UpscalerVersionToString(a_requestedVersion),
+				static_cast<uint32_t>(queryResult),
+				a_fullRenderWidth,
+				a_fullRenderHeight,
+				a_fullDisplayWidth,
+				a_fullDisplayHeight);
+			DestroyRuntimeUpscalerContexts();
+			recordRuntimeProviderResult(false);
+			return false;
+		}
+
+		if (i == 0) {
+			selectedProviderVersionId = providerQuery.versionId;
+			selectedProviderVersionName = providerVersionName;
+		}
+	}
+
 	recordRuntimeProviderResult(true);
+	runtimeUpscalerProviderMatchedVersionId = selectedProviderVersionId;
+	runtimeUpscalerProviderMatchedVersionName = selectedProviderVersionName;
 
 	return true;
 }
