@@ -502,6 +502,12 @@ namespace ShadowCasterManager
 	/// True when atlas is boot-enabled and resources exist.
 	bool AtlasActive();
 
+	/// True while `light` failed UpdateCamera this frame but still holds a
+	/// slot -- it keeps its cached tile and cannot redraw (see s_cameraHold).
+	/// Atlas eviction must exempt held lights: they can't repair a freed
+	/// tile until they re-enter scoring, unlike an actively-scheduled light.
+	bool IsCameraHeld(RE::BSShadowLight* light);
+
 	/// Creates/updates atlas resources per frame.
 	void UpdateAtlas();
 

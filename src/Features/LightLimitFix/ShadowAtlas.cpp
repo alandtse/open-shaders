@@ -636,6 +636,10 @@ namespace ShadowCasterManager
 						}
 						continue;
 					}
+					// Held lights can't repair a freed tile until they re-enter
+					// scoring on un-hold -- excluded from eviction, not just orphans.
+					if (IsCameraHeld(entry->Light))
+						continue;
 					const uint32_t needed = OrderForScale(entry->pendingScale);
 					if (other.tile.order > needed && other.tile.order - needed > activeOver) {
 						activeOver = other.tile.order - needed;
@@ -694,6 +698,16 @@ namespace ShadowCasterManager
 									// Already rastered into this frame's command list;
 									// evicting now would corrupt GPU-visible content.
 									if (other.renderFrame == currentFrame) {
+										disqualified = true;
+										break;
+									}
+									// A held owner can't repair a freed tile until it
+									// re-enters scoring on un-hold -- same disqualification
+									// as a currently-rastering owner, not just an omission.
+									if (const auto* heldEntry = i < static_cast<size_t>(s_lights.Size) ?
+									                                &s_lights.Lights[i] :
+									                                nullptr;
+										heldEntry && heldEntry->Light && IsCameraHeld(heldEntry->Light)) {
 										disqualified = true;
 										break;
 									}
