@@ -70,6 +70,18 @@ namespace SIE
 		return key;
 	}
 
+	// Folds a_path's key + mtime into *a_fingerprint once per node's first visit,
+	// so it also changes on a closure shape change, unlike max mtime alone.
+	static void FoldClosureFingerprint(Util::ContentHash::Hash128* a_fingerprint, const std::string& a_key,
+		std::chrono::system_clock::time_point a_mtime)
+	{
+		if (!a_fingerprint)
+			return;
+		const int64_t ticks = a_mtime.time_since_epoch().count();
+		*a_fingerprint = Util::ContentHash::CombineHashes(*a_fingerprint,
+			Util::ContentHash::CombineHashes(Util::ContentHash::HashString(a_key), Util::ContentHash::HashBytes(&ticks, sizeof(ticks))));
+	}
+
 	/// Newest mtime across a shader source and its recursive quoted includes. Only the parsed
 	/// include lists are cached across calls (keyed by each file's own mtime); every query re-stats
 	/// the graph, so a changed descendant is always seen. The scan is textual (preprocessor-blind),
@@ -80,7 +92,8 @@ namespace SIE
 		const std::filesystem::path& shadersRoot,
 		std::unordered_map<std::string, IncludeParseEntry>& parseCache,
 		std::mutex& parseCacheMutex,
-		std::unordered_map<std::string, std::chrono::system_clock::time_point>& callResults)
+		std::unordered_map<std::string, std::chrono::system_clock::time_point>& callResults,
+		Util::ContentHash::Hash128* fingerprint = nullptr)
 	{
 		const std::string key = NormalizedPathKey(path);
 		if (auto it = callResults.find(key); it != callResults.end())
@@ -94,8 +107,12 @@ namespace SIE
 			// Unreadable source: report "just changed" so the cache recompiles rather than serving stale.
 			const auto now = std::chrono::system_clock::now();
 			callResults[key] = now;
+			// now() never repeats, so a closure containing this node never re-hits
+			// the digest memo below -- conservatively forces a recompile.
+			FoldClosureFingerprint(fingerprint, key, now);
 			return now;
 		}
+		FoldClosureFingerprint(fingerprint, key, selfMTime);
 
 		// Hold parseCacheMutex only around the shared-map lookup/insert; the stat above and the
 		// file read below run unlocked so parallel validity checks don't serialize on cold boot.
@@ -114,8 +131,9 @@ namespace SIE
 		if (!cached) {
 			std::ifstream ifs(path);
 			if (!ifs.is_open()) {
-				// Metadata readable but contents not (transient lock/AV): force a recompile rather
-				// than caching an empty include list and serving stale.
+				// Metadata readable but contents not (transient lock/AV): force a recompile
+				// rather than caching an empty include list and serving stale. Already
+				// folded into the fingerprint above; no second fold needed here.
 				const auto now = std::chrono::system_clock::now();
 				callResults[key] = now;
 				return now;
@@ -160,7 +178,7 @@ namespace SIE
 
 		auto maxTime = selfMTime;
 		for (const auto& includePath : includes)
-			maxTime = std::max(maxTime, GetMaxShaderMTimeInternal(includePath, shadersRoot, parseCache, parseCacheMutex, callResults));
+			maxTime = std::max(maxTime, GetMaxShaderMTimeInternal(includePath, shadersRoot, parseCache, parseCacheMutex, callResults, fingerprint));
 
 		callResults[key] = maxTime;
 		return maxTime;
@@ -174,11 +192,22 @@ namespace SIE
 
 	static std::chrono::system_clock::time_point GetMaxShaderMTime(
 		const std::filesystem::path& path,
-		const std::filesystem::path& shadersRoot)
+		const std::filesystem::path& shadersRoot,
+		Util::ContentHash::Hash128* fingerprint = nullptr)
 	{
 		std::unordered_map<std::string, std::chrono::system_clock::time_point> callResults;
-		return GetMaxShaderMTimeInternal(path, shadersRoot, g_shaderIncludeParseCache, g_shaderIncludeParseCacheMutex, callResults);
+		return GetMaxShaderMTimeInternal(path, shadersRoot, g_shaderIncludeParseCache, g_shaderIncludeParseCacheMutex, callResults, fingerprint);
 	}
+
+	// Root-only memo of GetShaderContentDigest's closure digest; interior nodes
+	// must never be memoized here, since callResults is only valid per-traversal.
+	struct ClosureDigestEntry
+	{
+		Util::ContentHash::Hash128 closureFingerprint;
+		Util::ContentHash::Hash128 digest;
+	};
+	std::unordered_map<std::string, ClosureDigestEntry> g_shaderClosureDigestCache;
+	std::mutex g_shaderClosureDigestCacheMutex;
 
 	/// Merkle-style content digest over a shader source and its recursive quoted
 	/// includes (path-sorted, so ordering doesn't affect the result). Reads the
@@ -244,13 +273,26 @@ namespace SIE
 		const std::filesystem::path& path,
 		const std::filesystem::path& shadersRoot)
 	{
-		// Warm the shared parse cache's include lists for this closure (a cheap
-		// no-op if a prior call already did it this session): the internal
-		// digest walk only ever reads parseCache[...].includes, never scans.
-		GetMaxShaderMTime(path, shadersRoot);
+		// Builds this call's closure fingerprint, checked against the digest memo
+		// below so a repeat call for the same source skips the recursive walk.
+		Util::ContentHash::Hash128 fingerprint{};
+		GetMaxShaderMTime(path, shadersRoot, &fingerprint);
+
+		const std::string rootKey = NormalizedPathKey(path);
+		{
+			std::lock_guard lock(g_shaderClosureDigestCacheMutex);
+			if (auto it = g_shaderClosureDigestCache.find(rootKey);
+				it != g_shaderClosureDigestCache.end() && it->second.closureFingerprint == fingerprint)
+				return it->second.digest;
+		}
 
 		std::unordered_map<std::string, std::optional<Util::ContentHash::Hash128>> callResults;
-		return GetShaderContentDigestInternal(path, g_shaderIncludeParseCache, g_shaderIncludeParseCacheMutex, callResults);
+		const auto result = GetShaderContentDigestInternal(path, g_shaderIncludeParseCache, g_shaderIncludeParseCacheMutex, callResults);
+		if (result) {
+			std::lock_guard lock(g_shaderClosureDigestCacheMutex);
+			g_shaderClosureDigestCache[rootKey] = ClosureDigestEntry{ fingerprint, *result };
+		}
+		return result;
 	}
 
 	// Times a digest computation and folds it into the cache's running stats, so
@@ -2418,6 +2460,10 @@ namespace SIE
 		{
 			std::unique_lock lockM{ mapMutex };
 			shaderMap.clear();
+			// Applying a parked eviction after this clear would hit a since-recompiled
+			// key and burn a spurious recompile.
+			deferredEvictions.clear();
+			deferredEvictionCount.store(0, std::memory_order_relaxed);
 		}
 		{
 			std::unique_lock lockH{ hlslMapMutex };
@@ -2450,9 +2496,11 @@ namespace SIE
 			hlslToShaderMap.erase(it);
 		}
 
-		// Step 2: Process the copied entries without holding hlslMapMutex
+		// Step 2: Process the copied entries without holding hlslMapMutex. A Pending
+		// entry gets parked (TryDeferEviction) instead of evicted immediately.
 		for (auto& entry : entries) {
-			EvictShader(entry.key, entry.type, entry.descriptor, entry.shaderClass, entry.diskPath);
+			if (!TryDeferEviction(entry))
+				EvictShader(entry.key, entry.type, entry.descriptor, entry.shaderClass, entry.diskPath);
 		}
 
 		if (!entries.empty()) {
@@ -2535,6 +2583,10 @@ namespace SIE
 			}
 		}
 
+		// This key's Pending claim (if any) just resolved above -- apply any eviction
+		// a concurrent Clear(path) parked against it while it was in flight.
+		ApplyDeferredEviction(key);
+
 		return a_blob != nullptr;
 	}
 
@@ -2582,6 +2634,7 @@ namespace SIE
 		}
 		if (changed) {
 			mapCV.notify_all();
+			ApplyDeferredEviction(key);
 		}
 	}
 
@@ -2769,8 +2822,11 @@ namespace SIE
 	{
 		std::vector<Util::CacheInvalidation::FeatureState> featureStates;
 		for (auto* feature : Feature::GetFeatureList()) {
+			// Only a non-empty failedLoadedMessage is a genuine load failure; !loaded
+			// alone also covers ordinary and environment-gated disables.
 			featureStates.push_back({ feature->GetShortName(), feature->GetDisplayName(), feature->loaded,
-				feature->version, std::string(feature->GetShaderDefineName()) });
+				feature->version, std::string(feature->GetShaderDefineName()),
+				!feature->loaded && !feature->failedLoadedMessage.empty() });
 		}
 		return featureStates;
 	}
@@ -2816,17 +2872,10 @@ namespace SIE
 
 	using Util::CacheInvalidation::OnlyEnabledFlips;
 
-	static bool IsFeatureDeliberatelyDisabled(const std::string& shortName)
-	{
-		auto* state = globals::state;
-		return state && state->IsFeatureDisabled(shortName);
-	}
-
-	// Thin runtime wrappers: real logic in Utils/CacheInvalidation.h (unit-tested),
-	// kept pure over parameters via the injected globals::state predicate above.
+	// Thin runtime wrapper: real logic in Utils/CacheInvalidation.h (unit-tested).
 	static bool HasMissingOrFailedFeature(const std::vector<Util::CacheInvalidation::CacheMismatch>& mismatches)
 	{
-		return Util::CacheInvalidation::HasMissingFeature(mismatches, IsFeatureDeliberatelyDisabled);
+		return Util::CacheInvalidation::HasFailedFeature(mismatches);
 	}
 
 	// The rollback slot's on-disk presence is the one filesystem check these
@@ -2834,7 +2883,7 @@ namespace SIE
 	// passed in rather than the callee reaching for PreviousDiskCachePath() itself.
 	static bool ArePreviousCacheMismatchesRestorable(const std::vector<Util::CacheInvalidation::CacheMismatch>& mismatches)
 	{
-		return Util::CacheInvalidation::AreCacheMismatchesRestorable(mismatches, IsFeatureDeliberatelyDisabled);
+		return Util::CacheInvalidation::AreCacheMismatchesRestorable(mismatches);
 	}
 
 	static bool SetPreviousCacheRestoreCandidate(
@@ -2843,18 +2892,22 @@ namespace SIE
 		std::vector<Util::CacheInvalidation::CacheMismatch>& previousCacheMismatches)
 	{
 		return Util::CacheInvalidation::TrySetRestoreCandidate(std::move(mismatches),
-			HasDiskCacheInfo(PreviousDiskCachePath()), IsFeatureDeliberatelyDisabled,
+			HasDiskCacheInfo(PreviousDiskCachePath()),
 			previousDiskCacheAvailable, previousCacheMismatches);
 	}
 
 	// Thin runtime wrapper: real logic in Utils/CacheInvalidation.h (unit-tested).
-	static bool PartialInvalidation(const std::vector<std::string>& defines)
+	// outDestructive is set when the active cache was left partially deleted --
+	// the caller must wipe it outright rather than rotate it into the rollback slot.
+	static bool PartialInvalidation(const std::vector<std::string>& defines, bool& outDestructive)
 	{
 		size_t deleted = 0, kept = 0;
 		const bool ok = Util::CacheInvalidation::TryPartialInvalidation(
-			DiskCachePath(), L"Data/Shaders", defines, &deleted, &kept);
+			DiskCachePath(), L"Data/Shaders", defines, &deleted, &kept, &outDestructive);
 		if (ok)
 			logger::info("Partial disk cache invalidation: deleted {} shader dirs, kept {}", deleted, kept);
+		else if (outDestructive)
+			logger::warn("Partial disk cache invalidation failed mid-delete: active cache is now inconsistent, wiping outright");
 		else
 			logger::warn("Partial disk cache invalidation unavailable, falling back to full wipe");
 		return ok;
@@ -2888,8 +2941,11 @@ namespace SIE
 		featureSetRevertPending = false;
 		featureSetCacheBackedUp = false;
 		previousDiskCacheAvailable = false;
-		cacheMismatches.clear();
-		previousCacheMismatches.clear();
+		{
+			std::lock_guard lock{ mismatchesMutex };
+			cacheMismatches.clear();
+			previousCacheMismatches.clear();
+		}
 		heldMismatchDefines.clear();
 	}
 
@@ -2915,7 +2971,10 @@ namespace SIE
 	void ShaderCache::RefreshPreviousDiskCacheInfo()
 	{
 		previousDiskCacheAvailable = false;
-		previousCacheMismatches.clear();
+		{
+			std::lock_guard lock{ mismatchesMutex };
+			previousCacheMismatches.clear();
+		}
 
 		if (!HasDiskCacheInfo(PreviousDiskCachePath()))
 			return;
@@ -2941,7 +3000,10 @@ namespace SIE
 			return;
 		}
 
-		previousCacheMismatches = std::move(mismatches);
+		{
+			std::lock_guard lock{ mismatchesMutex };
+			previousCacheMismatches = std::move(mismatches);
+		}
 		previousDiskCacheAvailable = true;
 	}
 
@@ -2950,13 +3012,16 @@ namespace SIE
 		CSimpleIniA ini;
 		ini.SetUnicode();
 		ini.LoadFile((DiskCachePath() / L"Info.ini").c_str());
-		cacheMismatches.clear();
+		{
+			std::lock_guard lock{ mismatchesMutex };
+			cacheMismatches.clear();
+			previousCacheMismatches.clear();
+		}
 		diskCacheHeld = false;
 		featureSetChanged = false;
 		featureSetRevertPending = false;
 		featureSetCacheBackedUp = false;
 		previousDiskCacheAvailable = false;
-		previousCacheMismatches.clear();
 		heldMismatchDefines.clear();
 
 		RefreshPreviousDiskCacheInfo();
@@ -2975,7 +3040,8 @@ namespace SIE
 		for (auto* feature : Feature::GetFeatureList()) {
 			const auto shortName = feature->GetShortName();
 			featureStates.push_back({ shortName, feature->GetDisplayName(), feature->loaded,
-				feature->version, std::string(feature->GetShaderDefineName()) });
+				feature->version, std::string(feature->GetShaderDefineName()),
+				!feature->loaded && !feature->failedLoadedMessage.empty() });
 			Util::CacheInvalidation::CacheIniEntry entry;
 			entry.enabled = ini.GetBoolValue(shortName.c_str(), "Enabled", false);
 			if (auto v = ini.GetValue(shortName.c_str(), "Version"))
@@ -2985,8 +3051,11 @@ namespace SIE
 				expectedEnabledMatches[shortName] = ini.GetBoolValue(shortName.c_str(), "ExpectedEnabled", false) == feature->loaded;
 		}
 
-		cacheMismatches = Util::CacheInvalidation::ClassifyMismatches(
-			Plugin::VERSION.string(), cachedPluginVersion, featureStates, cacheEntries);
+		{
+			std::lock_guard lock{ mismatchesMutex };
+			cacheMismatches = Util::CacheInvalidation::ClassifyMismatches(
+				Plugin::VERSION.string(), cachedPluginVersion, featureStates, cacheEntries);
+		}
 
 		// Defines of mismatched features, for partial invalidation or the held accept path.
 		heldMismatchDefines = GetDefinesForMismatches(cacheMismatches, featureStates, CacheMismatch::Kind::EnabledFlip);
@@ -3012,23 +3081,43 @@ namespace SIE
 				return;
 			}
 
-			const bool allExpected = std::ranges::all_of(cacheMismatches, [&](const CacheMismatch& m) {
-				auto it = expectedEnabledMatches.find(m.shortName);
-				return it != expectedEnabledMatches.end() && it->second;
-			});
-			if (allExpected && PartialInvalidation(heldMismatchDefines)) {
-				logger::info("Disk cache mismatch matches a settings save from last session; auto-resolving");
-				WriteDiskCacheInfo();  // also drops the now-consumed ExpectedEnabled markers
+			// No genuine failure here, so recompile just the flipped features'
+			// shaders instead of rotating the whole cache below.
+			bool partialInvalidationDestructive = false;
+			if (PartialInvalidation(heldMismatchDefines, partialInvalidationDestructive)) {
+				const bool allExpected = std::ranges::all_of(cacheMismatches, [&](const CacheMismatch& m) {
+					auto it = expectedEnabledMatches.find(m.shortName);
+					return it != expectedEnabledMatches.end() && it->second;
+				});
+				WriteDiskCacheInfo();  // also drops any now-consumed ExpectedEnabled markers
 				heldMismatchDefines.clear();
-				cacheMismatches.clear();
+				{
+					std::lock_guard lock{ mismatchesMutex };
+					cacheMismatches.clear();
+				}
+				if (allExpected)
+					logger::info("Disk cache mismatch matches a settings save from last session; auto-resolving");
+				else
+					logger::info("Disk cache mismatch resolved: recompiling only the affected features");
 				return;
 			}
 
-			if (BackupActiveDiskCache()) {
+			// A partially-deleted active cache is unsafe to keep as a rollback
+			// candidate -- wipe it outright instead of rotating it into Previous.
+			if (partialInvalidationDestructive) {
+				DeleteActiveDiskCache();
+				featureSetChanged = true;
+				WriteDiskCacheInfo();
+				logger::info("Feature set changed: compiling a new active disk cache; the inconsistent one was discarded, no restore available");
+			} else if (BackupActiveDiskCache()) {
 				featureSetChanged = true;
 				featureSetCacheBackedUp = true;
-				const bool previousRestoreAvailable =
-					SetPreviousCacheRestoreCandidate(cacheMismatches, previousDiskCacheAvailable, previousCacheMismatches);
+				bool previousRestoreAvailable;
+				{
+					std::lock_guard lock{ mismatchesMutex };
+					previousRestoreAvailable =
+						SetPreviousCacheRestoreCandidate(cacheMismatches, previousDiskCacheAvailable, previousCacheMismatches);
+				}
 				WriteDiskCacheInfo();
 				if (previousRestoreAvailable) {
 					logger::info("Feature set changed: compiling a new active disk cache; previous cache is available for restore");
@@ -3057,7 +3146,11 @@ namespace SIE
 		// staleness now, so this no longer needs a full wipe to stay safe.
 		const bool onlyPluginVersion = std::ranges::all_of(cacheMismatches,
 			[](const CacheMismatch& m) { return m.kind == CacheMismatch::Kind::PluginVersion; });
-		if (onlyFeatureVersions && PartialInvalidation(versionMismatchDefines)) {
+		// Any failure here (destructive or not) already falls through to the
+		// unconditional DeleteActiveDiskCache() below, so the distinction doesn't
+		// change behavior at this call site.
+		[[maybe_unused]] bool versionInvalidationDestructive = false;
+		if (onlyFeatureVersions && PartialInvalidation(versionMismatchDefines, versionInvalidationDestructive)) {
 			WriteDiskCacheInfo();  // refresh the manifest so surviving blobs validate next boot
 			// The cache survives this mismatch instead of a full wipe, so nothing else
 			// prunes entries for shaders removed/renamed since the last version that did wipe.
@@ -3077,9 +3170,14 @@ namespace SIE
 			return;
 
 		const bool committedFeatureSetBackup = featureSetCacheBackedUp;
-		auto committedPreviousCacheMismatches = committedFeatureSetBackup ? cacheMismatches : std::vector<CacheMismatch>{};
+		std::vector<CacheMismatch> committedPreviousCacheMismatches;
+		if (committedFeatureSetBackup) {
+			std::lock_guard lock{ mismatchesMutex };
+			committedPreviousCacheMismatches = cacheMismatches;
+		}
 
-		if (!featureSetCacheBackedUp && !PartialInvalidation(heldMismatchDefines))
+		[[maybe_unused]] bool commitInvalidationDestructive = false;
+		if (!featureSetCacheBackedUp && !PartialInvalidation(heldMismatchDefines, commitInvalidationDestructive))
 			DeleteActiveDiskCache();
 
 		diskCacheHeld = false;
@@ -3088,11 +3186,17 @@ namespace SIE
 		featureSetChanged = false;
 		featureSetRevertPending = false;
 		featureSetCacheBackedUp = false;
-		cacheMismatches.clear();
+		{
+			std::lock_guard lock{ mismatchesMutex };
+			cacheMismatches.clear();
+		}
 		RefreshPreviousDiskCacheInfo();
-		if (committedFeatureSetBackup && !previousDiskCacheAvailable &&
-			SetPreviousCacheRestoreCandidate(std::move(committedPreviousCacheMismatches), previousDiskCacheAvailable, previousCacheMismatches)) {
-			logger::info("Previous shader cache restore retained from feature-change backup");
+		{
+			std::lock_guard lock{ mismatchesMutex };
+			if (committedFeatureSetBackup && !previousDiskCacheAvailable &&
+				SetPreviousCacheRestoreCandidate(std::move(committedPreviousCacheMismatches), previousDiskCacheAvailable, previousCacheMismatches)) {
+				logger::info("Previous shader cache restore retained from feature-change backup");
+			}
 		}
 		logger::info("Feature set change committed: disk cache rebuilt for the current feature set");
 	}
@@ -3100,12 +3204,19 @@ namespace SIE
 	bool ShaderCache::RestorePreviousDiskCache()
 	{
 		const bool hadPreviousRestoreCandidate = previousDiskCacheAvailable;
-		auto retainedPreviousCacheMismatches = previousCacheMismatches;
+		std::vector<CacheMismatch> retainedPreviousCacheMismatches;
+		{
+			std::lock_guard lock{ mismatchesMutex };
+			retainedPreviousCacheMismatches = previousCacheMismatches;
+		}
 
 		RefreshPreviousDiskCacheInfo();
-		if (!previousDiskCacheAvailable && hadPreviousRestoreCandidate &&
-			SetPreviousCacheRestoreCandidate(std::move(retainedPreviousCacheMismatches), previousDiskCacheAvailable, previousCacheMismatches)) {
-			logger::info("Previous shader cache restore retained from feature-change backup");
+		{
+			std::lock_guard lock{ mismatchesMutex };
+			if (!previousDiskCacheAvailable && hadPreviousRestoreCandidate &&
+				SetPreviousCacheRestoreCandidate(std::move(retainedPreviousCacheMismatches), previousDiskCacheAvailable, previousCacheMismatches)) {
+				logger::info("Previous shader cache restore retained from feature-change backup");
+			}
 		}
 		if (!previousDiskCacheAvailable) {
 			logger::warn("Cannot restore previous shader cache: no compatible previous cache is available");
@@ -3154,7 +3265,10 @@ namespace SIE
 		featureSetCacheBackedUp = false;
 		diskCacheHeld = false;
 		heldMismatchDefines.clear();
-		cacheMismatches.clear();
+		{
+			std::lock_guard lock{ mismatchesMutex };
+			cacheMismatches.clear();
+		}
 		RefreshPreviousDiskCacheInfo();
 		logger::info("Previous shader cache restored: restart to load it");
 		return true;
@@ -3165,7 +3279,8 @@ namespace SIE
 		if (!diskCacheHeld)
 			return;
 
-		if (!PartialInvalidation(heldMismatchDefines))
+		[[maybe_unused]] bool acceptInvalidationDestructive = false;
+		if (!PartialInvalidation(heldMismatchDefines, acceptInvalidationDestructive))
 			DeleteActiveDiskCache();
 
 		heldMismatchDefines.clear();
@@ -3174,7 +3289,10 @@ namespace SIE
 		featureSetChanged = false;
 		featureSetRevertPending = false;
 		featureSetCacheBackedUp = false;
-		cacheMismatches.clear();
+		{
+			std::lock_guard lock{ mismatchesMutex };
+			cacheMismatches.clear();
+		}
 		RefreshPreviousDiskCacheInfo();
 		Clear();
 		logger::info("Cache rebuild accepted: rebuilding disk cache for the current feature set");

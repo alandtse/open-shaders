@@ -224,6 +224,7 @@ public:
 	bool settingShaderBlockNextKey = false;  // Debug: capture shader block next key
 	bool settingCSEditorToggleKey = false;   // CS Editor toggle key
 	bool settingScreenshotKey = false;       // Screenshot capture key
+	bool settingEffects11ToggleKey = false;  // Effects 11 toggle key
 
 	// Font caching (made public for ThemeManager and OverlayRenderer access)
 	// Marked mutable because they're cache fields that may be updated from const methods
@@ -520,22 +521,23 @@ public:
 	{
 		std::vector<InputCombo> ToggleKey = { InputCombo::Keyboard(VK_END) };
 		std::vector<InputCombo> SkipCompilationKey = { InputCombo::Keyboard(VK_ESCAPE) };
-		std::vector<InputCombo> EffectToggleKey = { InputCombo::Keyboard(VK_MULTIPLY) };                               // toggle all effects
-		std::vector<InputCombo> OverlayToggleKey = { InputCombo::Keyboard(VK_F10) };                                   // Global overlay toggle key for all overlays
-		std::vector<InputCombo> ShaderBlockPrevKey = { InputCombo::Keyboard(VK_PRIOR) };                               // Debug: cycle backward through shaders (PageUp)
-		std::vector<InputCombo> ShaderBlockNextKey = { InputCombo::Keyboard(VK_NEXT) };                                // Debug: cycle forward through shaders (PageDown)
-		std::vector<InputCombo> CSEditorToggleKey = { InputCombo::Keyboard(VK_SHIFT), InputCombo::Keyboard(VK_END) };  // CS Editor toggle key
-		std::vector<InputCombo> ScreenshotKey = { InputCombo::Keyboard(VK_SNAPSHOT) };                                 // Screenshot capture key
-		bool EnableShaderBlocking = false;                                                                             // Enable shader blocking hotkeys for debugging
-		bool FirstTimeSetupCompleted = false;                                                                          // Track if first-time setup has been completed
-		bool SkipClearCacheConfirmation = false;                                                                       // Skip confirmation dialog when clearing shader cache
-		bool SmartClearShaderCacheDefault = false;                                                                     // Plain-click clears only active shaders instead of the full cache; Shift-click inverts
-		bool BackgroundShaderCompilationOnBoot = false;                                                                // Load the menu immediately and compile shaders in the background on boot (same as the Skip Compilation key)
-		bool HideCompilationHUDInVR = false;                                                                           // VR immersion: suppress the background-compilation progress HUD (the blocking/foreground compile warning still shows)
-		bool AutoHideFeatureList = false;                                                                              // Auto-hide left feature list panel, show on hover
-		bool SkipConstraintWarning = false;                                                                            // Skip popup when a setting change creates new constraints
-		bool RequireShiftToDock = true;                                                                                // Require holding Shift to dock windows
-		bool UseResolutionFont = true;                                                                                 // When true, runtime font size scales with screen resolution; when persisted to theme files, FontSize is zeroed for backward compatibility
+		std::vector<InputCombo> EffectToggleKey = { InputCombo::Keyboard(VK_MULTIPLY) };                                     // toggle all effects
+		std::vector<InputCombo> OverlayToggleKey = { InputCombo::Keyboard(VK_F10) };                                         // Global overlay toggle key for all overlays
+		std::vector<InputCombo> ShaderBlockPrevKey = { InputCombo::Keyboard(VK_PRIOR) };                                     // Debug: cycle backward through shaders (PageUp)
+		std::vector<InputCombo> ShaderBlockNextKey = { InputCombo::Keyboard(VK_NEXT) };                                      // Debug: cycle forward through shaders (PageDown)
+		std::vector<InputCombo> CSEditorToggleKey = { InputCombo::Keyboard(VK_SHIFT), InputCombo::Keyboard(VK_END) };        // CS Editor toggle key
+		std::vector<InputCombo> ScreenshotKey = { InputCombo::Keyboard(VK_SNAPSHOT) };                                       // Screenshot capture key
+		std::vector<InputCombo> Effects11ToggleKey = { InputCombo::Keyboard(VK_SHIFT), InputCombo::Keyboard(VK_MULTIPLY) };  // Effects 11 toggle key
+		bool EnableShaderBlocking = false;                                                                                   // Enable shader blocking hotkeys for debugging
+		bool FirstTimeSetupCompleted = false;                                                                                // Track if first-time setup has been completed
+		bool SkipClearCacheConfirmation = false;                                                                             // Skip confirmation dialog when clearing shader cache
+		bool SmartClearShaderCacheDefault = false;                                                                           // Plain-click clears only active shaders instead of the full cache; Shift-click inverts
+		bool BackgroundShaderCompilationOnBoot = false;                                                                      // Load the menu immediately and compile shaders in the background on boot (same as the Skip Compilation key)
+		bool HideCompilationHUDInVR = false;                                                                                 // VR immersion: suppress the background-compilation progress HUD (the blocking/foreground compile warning still shows)
+		bool AutoHideFeatureList = false;                                                                                    // Auto-hide left feature list panel, show on hover
+		bool SkipConstraintWarning = false;                                                                                  // Skip popup when a setting change creates new constraints
+		bool RequireShiftToDock = true;                                                                                      // Require holding Shift to dock windows
+		bool UseResolutionFont = true;                                                                                       // When true, runtime font size scales with screen resolution; when persisted to theme files, FontSize is zeroed for backward compatibility
 		ThemeSettings Theme;
 		std::string SelectedThemePreset = "";  // Currently selected theme preset (empty = custom/user theme)
 	};

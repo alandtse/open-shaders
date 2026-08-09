@@ -10,6 +10,7 @@
 #include "Menu/BackgroundBlur.h"
 #include "PaletteWindow.h"
 #include "State.h"
+#include "Utils/Game.h"
 #include "Utils/Subrect.h"
 #include "Utils/UI.h"
 #include "Weather/LightingTemplateWidget.h"
@@ -1945,6 +1946,7 @@ namespace
 
 void EditorWindow::InstallWeatherLockHooks()
 {
+	// Re-entry would rewrite an already-hooked site to branch at its own thunk.
 	static std::atomic_bool installAttempted{ false };
 	if (installAttempted.exchange(true, std::memory_order_acq_rel)) {
 		logger::debug("[CSEditor] Weather lock hook install already attempted this session, skipping");
@@ -2174,7 +2176,25 @@ bool EditorWindow::DrawGameHourSlider(const char* label, const char* format)
 	auto calendar = GetCalendar();
 	if (!calendar || !calendar->gameHour)
 		return false;
-	ImGui::SliderFloat(label, &calendar->gameHour->value, 0.0f, kGameHourMax, format);
+	const bool changed = ImGui::SliderFloat(label, &calendar->gameHour->value, 0.0f, kGameHourMax, format);
+	const bool activated = ImGui::IsItemActivated();
+	const bool active = ImGui::IsItemActive();
+	const bool deactivated = ImGui::IsItemDeactivated();
+	const bool deactivatedAfterEdit = ImGui::IsItemDeactivatedAfterEdit();
+	if (activated)
+		gameHourScrubRefreshIssued = false;
+	if (changed && active) {
+		const double currentTime = ImGui::GetTime();
+		if (!gameHourScrubRefreshIssued || currentTime - lastGameHourScrubRefreshTime >= kGameHourScrubRefreshIntervalSeconds) {
+			Util::RequestTimeJumpTransition();
+			lastGameHourScrubRefreshTime = currentTime;
+			gameHourScrubRefreshIssued = true;
+		}
+	}
+	if (deactivatedAfterEdit)
+		Util::RequestTimeJumpTransition();
+	if (deactivated)
+		gameHourScrubRefreshIssued = false;
 	return true;
 }
 

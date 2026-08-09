@@ -255,8 +255,8 @@ namespace
 		}
 
 		// Live runtime-only debug flags (never persisted to SettingsUser.json)
-		// via Feature::GetRuntimeFlags/SetRuntimeFlag, mirroring
-		// GetDiagnostics above. Empty object / false if unimplemented.
+		// via Feature::GetRuntimeFlags/SetRuntimeFlag; see LightLimitFix for
+		// the reference override. Empty object / false if unimplemented.
 		if (action == "runtimeGet") {
 			return RunOnMainThread([shortName]() -> json {
 				auto* feature = Feature::FindFeatureByShortName(shortName);
@@ -354,6 +354,21 @@ namespace
 		};
 	}
 
+	json MismatchesToJson(const std::vector<Util::CacheInvalidation::CacheMismatch>& a_mismatches)
+	{
+		json out = json::array();
+		for (const auto& mismatch : a_mismatches) {
+			out.push_back(json{
+				{ "kind", magic_enum::enum_name(mismatch.kind) },
+				{ "shortName", mismatch.shortName },
+				{ "feature", mismatch.feature },
+				{ "detail", mismatch.detail },
+				{ "nowPresent", mismatch.nowPresent },
+			});
+		}
+		return out;
+	}
+
 	json BuildInspectShadercacheResult(const json&)
 	{
 		// Built from thread-safe ShaderCache accessors. Poll completedTasks against a
@@ -373,6 +388,14 @@ namespace
 			{ "digestComputeCount", cache->GetDigestComputeCount() },
 			{ "digestComputeTimeUs", cache->GetDigestComputeTimeUs() },
 			{ "frame_count", EnqueuedFrame() },
+			// Rollback/backup-slot state, mirrored by the restorePrevious/acceptRebuild actions.
+			{ "diskCacheHeld", cache->IsDiskCacheHeld() },
+			{ "featureSetChanged", cache->HasFeatureSetChanges() },
+			{ "featureSetRevertPending", cache->HasFeatureSetRevertPending() },
+			{ "featureSetCacheBackedUp", cache->HasFeatureSetCacheBackup() },
+			{ "previousDiskCacheAvailable", cache->HasPreviousDiskCache() },
+			{ "cacheMismatches", MismatchesToJson(cache->GetCacheMismatches()) },
+			{ "previousCacheMismatches", MismatchesToJson(cache->GetPreviousCacheMismatches()) },
 		};
 	}
 
@@ -390,14 +413,21 @@ namespace
 				{ "reason", ShadowCasterManager::SchedReasonName(reason) },
 			});
 		json slots = json::array();
-		// renderedScale histogram (full..sixteenth) so gates can assert the
-		// class ladder without walking the slot array.
+		// Bucketed from tile.size, not renderedScale, which reflects the requested
+		// scale -- a starved light can request full and get only the smallest tile.
 		int classes[5] = {};
+		int classNone = 0;  // tileSize == 0: no atlas tile, distinct from the smallest class
+		const float baseTexels = snap.baseTileTexels > 0.0f ? snap.baseTileTexels : 2048.0f;
 		for (const auto& s : snap.slots) {
-			int cls = 0;
-			for (float step = 1.0f; s.renderedScale < step && cls < 4; step *= 0.5f)
-				cls++;
-			classes[cls]++;
+			if (s.tileSize == 0) {
+				classNone++;
+			} else {
+				int cls = 0;
+				const float tileScale = static_cast<float>(s.tileSize) / baseTexels;
+				for (float step = 1.0f; tileScale < step && cls < 4; step *= 0.5f)
+					cls++;
+				classes[cls]++;
+			}
 			slots.push_back(json{
 				{ "slot", s.index },
 				{ "ptr", std::format("{:#018x}", s.light) },
@@ -408,9 +438,18 @@ namespace
 				{ "pendingScale", s.pendingScale },
 				{ "renderedScale", s.renderedScale },
 				{ "tile", json{ { "x", s.tileX }, { "y", s.tileY }, { "size", s.tileSize }, { "contentValid", s.tileContentValid } } },
+				{ "geomListSize", s.geomListSize },
+				{ "staticValid", s.staticValid },
+				{ "staticEmpty", s.staticEmpty },
 				{ "upload", json{ { "recorded", s.uploadRecorded }, { "paramY", s.uploadParamY }, { "range", s.uploadRange } } },
 				{ "suppressed", s.suppressed },
 				{ "promoted", s.promoted },
+				{ "redrawnThisFrame", s.redrawnThisFrame },
+				{ "schedDirty", s.schedDirty },
+				{ "dirtyStallFrames", s.dirtyStallFrames },
+				{ "redrawScore", s.redrawScore },
+				{ "lastDrawnFrame", s.lastDrawnFrame },
+				{ "cameraHold", s.cameraHold },
 			});
 		}
 		return json{
@@ -427,14 +466,16 @@ namespace
 			{ "slotsInUse", snap.slotsInUse },
 			{ "lights", lights },
 			{ "slots", slots },
-			{ "classes", json{ { "full", classes[0] }, { "half", classes[1] }, { "quarter", classes[2] }, { "eighth", classes[3] }, { "sixteenth", classes[4] } } },
+			{ "classes", json{ { "full", classes[0] }, { "half", classes[1] }, { "quarter", classes[2] }, { "eighth", classes[3] }, { "sixteenth", classes[4] }, { "none", classNone } } },
 			{ "atlas", json{
 						   { "dim", snap.atlasDim },
+						   { "baseTileTexels", snap.baseTileTexels },
 						   { "capacityCells", snap.atlasCapacityCells },
 						   { "occupancy", snap.atlasOccupancy },
 						   { "vramBytes", snap.atlasVramBytes },
 						   { "tileReallocs", snap.atlasTileReallocs },
 						   { "ownerInvalidations", snap.atlasOwnerInvalidations },
+						   { "allocDenied", snap.atlasAllocDenied },
 						   { "cpuAccumUsAvg", snap.cpuAccumUsAvg },
 						   { "cpuSubmitUsAvg", snap.cpuSubmitUsAvg },
 						   { "cpuEnableUsAvg", snap.cpuEnableUsAvg },
@@ -444,9 +485,39 @@ namespace
 							{ "avgRedrawsPerFrame", snap.avgRedrawsPerFrame },
 							{ "estPassMsPerFrame", snap.avgLightCostUs / 1000.0 * snap.avgRedrawsPerFrame },
 							{ "staticBakesTotal", snap.staticBakesTotal },
+							{ "cellResetsTotal", snap.cellResetsTotal },
+							{ "cullPoolDropsTotal", snap.cullPoolDropsTotal },
+							{ "casterCullDropsTotal", snap.casterCullDropsTotal },
 							{ "sleepSkips", snap.sleepSkips },
 							{ "sleepSkipsTotal", snap.sleepSkipsTotal },
+							{ "demandSkips", snap.demandSkips },
+							{ "demandSkipsTotal", snap.demandSkipsTotal },
+							{ "alphaGroupPeak", snap.alphaGroupPeak },
+							{ "alphaGroupDrops", snap.alphaGroupDrops },
 						} },
+			{ "demandAudit", json{
+								 { "frustumCandidates", snap.frustumAuditCandidates },
+								 { "frustumKeptSphereOut", snap.frustumAuditKeptOut },
+								 { "frustumSuspects", snap.frustumAuditSuspects },
+								 { "slotted", snap.demandSlotted },
+								 { "zero", snap.demandZero },
+								 { "subTap", snap.demandSubTap },
+								 { "skipEligible", snap.demandSkipEligible },
+								 { "swapIn", snap.demandSwapIn },
+								 { "swapInAboveEps", snap.demandSwapInAboveEps },
+								 { "redrawsSaved", snap.demandRedrawsSaved },
+								 { "budgetSaturated", snap.demandBudgetSaturated },
+								 { "phase1Enabled", snap.demandPhase1Enabled },
+								 { "skipActive", snap.demandSkipActive },
+								 { "skipEligibleTotal", snap.demandSkipEligibleTotal },
+								 { "swapInTotal", snap.demandSwapInTotal },
+								 { "redrawsSavedTotal", snap.demandRedrawsSavedTotal },
+							 } },
+			{ "redrawStall", json{
+								 { "stallMax", snap.stallMax },
+								 { "stallWorstSlot", snap.stallWorstSlot },
+								 { "demandRatio", snap.demandRatio },
+							 } },
 		};
 	}
 
@@ -573,7 +644,19 @@ namespace
 			cache->backgroundCompilation = true;
 			return json{ { "action", "backgroundCompile" }, { "backgroundCompilation", true } };
 		}
-		return json{ { "error", "unknown action (clear|deleteDisk|activeOnly|backgroundCompile)" }, { "action", action } };
+		if (action == "acceptRebuild") {
+			// Mirrors the in-game held-cache prompt's "rebuild" button (HomePageRenderer.cpp):
+			// discards the held cache's stale-feature blobs and rebuilds for the current setup.
+			task->AddTask([cache]() { cache->AcceptCacheRebuild(); });
+			return json{ { "action", "acceptRebuild" }, { "queued", true }, { "enqueued_at_frame", frame }, { "note", "accepted the feature-set change; disk cache rebuilding for the current setup, see inspect(kind=shadercache)" } };
+		}
+		if (action == "restorePrevious") {
+			// Mirrors the in-game held-cache prompt's "restore previous" button;
+			// only takes effect after a restart.
+			task->AddTask([cache]() { cache->RestorePreviousDiskCache(); });
+			return json{ { "action", "restorePrevious" }, { "queued", true }, { "enqueued_at_frame", frame }, { "note", "restore requires compilation to be idle and a compatible previous cache; check CommunityShaders.log or inspect(kind=shadercache).featureSetRevertPending for the outcome, then restart to load it" } };
+		}
+		return json{ { "error", "unknown action (clear|deleteDisk|activeOnly|backgroundCompile|acceptRebuild|restorePrevious)" }, { "action", action } };
 	}
 
 	void ShadercacheToolHandler(void*, const char* a_argsJson, void* a_sink, DevBenchAPI::WriteFn a_write)
@@ -920,7 +1003,7 @@ namespace DevBenchBridge
 		dvb->RegisterTool("openshaders.feature", featureDesc, &FeatureToolHandler, nullptr);
 
 		static constexpr const char* shadercacheDesc =
-			R"({"description":"Manage Open Shaders' compiled shader cache. clear, deleteDisk, and activeOnly are queued onto the main thread, fire-and-forget. backgroundCompile is an immediate atomic state change made on the calling (devbench listener) thread. clear: drop the IN-MEMORY cache only; with the disk cache enabled shaders reload from Data/ShaderCache rather than recompiling, so this does NOT guarantee a recompile. deleteDisk: delete the on-disk cache AND drop the in-memory cache, forcing a full cold recompile (use this for compile benchmarks). activeOnly: the in-game 'smart clear' -- captures whatever shaders are on screen over two windows, then evicts+recompiles just those (needs something rendering; a menu-only screen may capture nothing). backgroundCompile: skip the boot-time wait for the FULL eager compile queue to drain -- same effect as the in-game 'Skip Compilation' hotkey. Compilation keeps running in the background afterward (fewer threads, so it doesn't starve gameplay), but the game becomes playable/scriptable immediately. For a benchmark harness: call this once right after launch, then drive one throwaway replay to demand-compile just that scene's own shaders before the timed run, instead of waiting out every permutation the whole install could ever need (can be 20-30 minutes on a large AIO modlist). Watch progress via inspect kind=shadercache and the openshaders.shaderRecompiled event. Read-only status is inspect kind=shadercache.","inputSchema":{"type":"object","properties":{"action":{"type":"string","enum":["clear","deleteDisk","activeOnly","backgroundCompile"]}},"required":["action"]}})";
+			R"({"description":"Manage Open Shaders' compiled shader cache. clear, deleteDisk, activeOnly, acceptRebuild, and restorePrevious are queued onto the main thread, fire-and-forget. backgroundCompile is an immediate atomic state change made on the calling (devbench listener) thread. clear: drop the IN-MEMORY cache only; with the disk cache enabled shaders reload from Data/ShaderCache rather than recompiling, so this does NOT guarantee a recompile. deleteDisk: delete the on-disk cache AND drop the in-memory cache, forcing a full cold recompile (use this for compile benchmarks). activeOnly: the in-game 'smart clear' -- captures whatever shaders are on screen over two windows, then evicts+recompiles just those (needs something rendering; a menu-only screen may capture nothing). backgroundCompile: skip the boot-time wait for the FULL eager compile queue to drain -- same effect as the in-game 'Skip Compilation' hotkey. Compilation keeps running in the background afterward (fewer threads, so it doesn't starve gameplay), but the game becomes playable/scriptable immediately. For a benchmark harness: call this once right after launch, then drive one throwaway replay to demand-compile just that scene's own shaders before the timed run, instead of waiting out every permutation the whole install could ever need (can be 20-30 minutes on a large AIO modlist). acceptRebuild: when a feature-set change is holding the disk cache (see inspect(kind=shadercache).diskCacheHeld/cacheMismatches), accept it and rebuild for the current setup -- mirrors the in-game prompt's 'rebuild' button. restorePrevious: swap the rollback slot (the pre-change cache) back into the active slot -- mirrors the in-game prompt's 'restore previous' button; requires compilation to be idle, only takes effect after a restart, check inspect(kind=shadercache).featureSetRevertPending or the log for the outcome. Watch progress via inspect kind=shadercache and the openshaders.shaderRecompiled event. Read-only status (including rollback/backup-slot state) is inspect kind=shadercache.","inputSchema":{"type":"object","properties":{"action":{"type":"string","enum":["clear","deleteDisk","activeOnly","backgroundCompile","acceptRebuild","restorePrevious"]}},"required":["action"]}})";
 		dvb->RegisterTool("openshaders.shadercache", shadercacheDesc, &ShadercacheToolHandler, nullptr);
 
 		static constexpr const char* profilerDesc =
@@ -956,7 +1039,7 @@ namespace DevBenchBridge
 			dvb->RegisterToolExtension("inspect", "openshaders", inspectStateDesc, &InspectStateHandler, nullptr);
 
 			static constexpr const char* inspectCacheDesc =
-				R"({"description":"Open Shaders shader-cache status -> {compiling,completedTasks,totalTasks,failedTasks,currentFailedCount,diskHitTasks,digestDecidedTasks,digestComputeCount,digestComputeTimeUs,frame_count}. Poll completedTasks against a pre-deploy snapshot to know a hot-reloaded shader finished; watch failedTasks/currentFailedCount for failed compiles. digestDecidedTasks counts disk-cache validity checks resolved by the content-digest manifest rather than falling back to mtime; digestComputeTimeUs is the cumulative microseconds spent computing content digests this session.","readOnly":true,"inputSchema":{"type":"object"}})";
+				R"({"description":"Open Shaders shader-cache status -> {compiling,completedTasks,totalTasks,failedTasks,currentFailedCount,diskHitTasks,digestDecidedTasks,digestComputeCount,digestComputeTimeUs,frame_count,diskCacheHeld,featureSetChanged,featureSetRevertPending,featureSetCacheBackedUp,previousDiskCacheAvailable,cacheMismatches,previousCacheMismatches}. Poll completedTasks against a pre-deploy snapshot to know a hot-reloaded shader finished; watch failedTasks/currentFailedCount for failed compiles. digestDecidedTasks counts disk-cache validity checks resolved by the content-digest manifest rather than falling back to mtime; digestComputeTimeUs is the cumulative microseconds spent computing content digests this session. diskCacheHeld true means a feature-set mismatch (see cacheMismatches, each {kind,shortName,feature,detail,nowPresent}) is holding the whole disk cache this session -- resolve with openshaders.shadercache acceptRebuild or restorePrevious. previousDiskCacheAvailable/previousCacheMismatches describe the rollback slot (the pre-change cache) a restorePrevious call would swap back in.","readOnly":true,"inputSchema":{"type":"object"}})";
 			dvb->RegisterToolExtension("inspect", "shadercache", inspectCacheDesc, &InspectShadercacheHandler, nullptr);
 
 			static constexpr const char* inspectShadowsDesc =

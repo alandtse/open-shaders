@@ -6,6 +6,7 @@
 #include "Features/CSUtility.h"
 #include "Features/CloudShadows.h"
 #include "Features/DynamicCubemaps.h"
+#include "Features/Effects11.h"
 #include "Features/ExponentialHeightFog.h"
 #include "Features/ExtendedMaterials.h"
 #include "Features/ExtendedTranslucency.h"
@@ -56,7 +57,7 @@ std::pair<unsigned char*, size_t> GetFeatureBufferData(bool a_inWorld)
 		globals::features::lightLimitFix.GetCommonBufferData(),
 		globals::features::wetnessEffects.GetCommonBufferData(),
 		globals::features::skylighting.GetCommonBufferData(a_inWorld),
-		globals::features::cloudShadows.settings,
+		globals::features::cloudShadows.GetCommonBufferData(),
 		globals::features::lodBlending.settings,
 		globals::features::hairSpecular.settings,
 		globals::features::terrainVariation.settings,
@@ -64,8 +65,16 @@ std::pair<unsigned char*, size_t> GetFeatureBufferData(bool a_inWorld)
 		globals::features::extendedTranslucency.GetCommonBufferData(),
 		globals::features::csUtility.GetCommonBufferData(),
 		globals::features::linearLighting.GetCommonBufferData(),
+#if defined(ENABLE_EFFECTS11)
+		globals::features::effects11.GetCommonBufferData(),
+#else
+		// Effects11::PerFrame keeps this cbuffer slot's size/offset stable across the
+		// ENABLE_EFFECTS11 build gate; the type is declared unconditionally in
+		// Effects11.h even though the feature instance only exists when the gate is on.
+		Effects11::PerFrame{},
+#endif
 		globals::features::terrainBlending.settings,
-		globals::features::exponentialHeightFog.settings,
+		globals::features::exponentialHeightFog.GetCommonBufferData(),
 		globals::features::truePBR.settings,
 		globals::features::skin.GetCommonBufferData(),
 		globals::features::vanillaFresnel.settings,

@@ -150,6 +150,12 @@ void MessageHandler(SKSE::MessagingInterface::Message* message)
 
 			break;
 		}
+	case SKSE::MessagingInterface::kPostLoadGame:
+		{
+			if (errors.empty())
+				Feature::ForEachLoadedFeature("GameLoaded", [](Feature* feature) { feature->GameLoaded(); });
+			break;
+		}
 	}
 }
 
@@ -161,9 +167,10 @@ bool Load()
 	}
 
 	if (REL::Module::IsVR()) {  // Pre-ReInit check; globals::game::isVR not populated yet
-		// 0.238.0 adds BSShadowLight::ctor (100810) and BSLight::IsInRange
-		// (101299) for the SCM culling-process zeroing and attachment heal.
-		REL::IDDatabase::get().IsVRAddressLibraryAtLeastVersion("0.238.0", true);
+		// Floor covers 0.238.0's BSShadowLight::ctor (100810) / BSLight::IsInRange
+		// (101299) and 0.250.0's SetBackHemisphereAccumulator (101600, guarded by
+		// ShadowParabolicNullAccumulatorFix against a vanilla null-this crash).
+		REL::IDDatabase::get().IsVRAddressLibraryAtLeastVersion("0.250.0", true);
 	}
 
 	auto privateProfileRedirectorVersion = Util::GetDllVersion(L"Data/SKSE/Plugins/PrivateProfileRedirector.dll");
@@ -202,7 +209,8 @@ bool Load()
 		L"Data/SKSE/Plugins/SSEReShadeHelper.dll",
 		L"Data/SKSE/Plugins/TAASharpen.dll",
 		L"Data/SKSE/Plugins/NVIDIA_Reflex.dll",
-		L"Data/SKSE/Plugins/MARA.dll"
+		L"Data/SKSE/Plugins/MARA.dll",
+		L"Data/SKSE/Plugins/NativeWaterLightStabilizer.dll"
 	};
 
 	for (const auto dll : incompatibleDLLs) {

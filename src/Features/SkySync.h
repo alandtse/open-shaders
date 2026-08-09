@@ -68,6 +68,8 @@ public:
 	virtual void PostPostLoad() override;
 	/** @brief Checks for conflicting ESP files after game data is loaded. */
 	virtual void DataLoaded() override;
+	/** @brief Requests immediate celestial synchronization after loading an existing save. */
+	virtual void GameLoaded() override;
 
 	struct Sky_Update
 	{
@@ -148,10 +150,11 @@ private:
 
 	bool moonAndStarsLoaded = false;
 	RE::TESObjectCELL* currentCell = nullptr;
+	bool currentCellInterior = false;
+	RE::TESWorldSpace* currentCellWorldspace = nullptr;
 	float sunAngle = 90.0f;
 	float currentSkyRotation = D3D11_FLOAT32_MAX;
-	RE::NiPoint3 previousSunDirection{};
-	bool hasPreviousSunDirection = false;
+	bool immediateTransitionReady = false;
 
 	float4 colors[3] = {};
 	float currentDim = 1.0f;
@@ -162,9 +165,9 @@ private:
 
 	void DisableOnConflict(std::string_view conflictName);
 
-	void Update(const RE::Sky* sky, bool a_sunDirectionDiscontinuity);
+	void PreparePendingTransitions();
 
-	bool ObserveSunDirection(const RE::Sky* sky) noexcept;
+	bool Update(const RE::Sky* sky);
 
 	void SetSunAngle();
 

@@ -35,6 +35,7 @@ namespace Util::CacheInvalidation
 		std::string feature;      ///< display name for UI
 		std::string detail;       ///< English direction of the mismatch (logs + fallback)
 		bool nowPresent = false;  ///< EnabledFlip only: feature is loaded now (added) vs not (removed); lets the UI localize the direction
+		bool nowFailed = false;   ///< EnabledFlip + !nowPresent only: the feature genuinely failed to load (a broken install), not just off by choice or shipped default -- see FeatureState::failedToLoad
 	};
 
 	/// Runtime-side view of a feature, decoupled from the Feature class.
@@ -44,7 +45,8 @@ namespace Util::CacheInvalidation
 		std::string name;
 		bool loaded = false;
 		std::string version;
-		std::string define;  ///< global shader define; empty => unknown reach (full wipe)
+		std::string define;         ///< global shader define; empty => unknown reach (full wipe)
+		bool failedToLoad = false;  ///< !loaded because of a genuine load error, not a deliberate/default disable
 	};
 
 	/// Parsed Info.ini feature section.
@@ -76,7 +78,7 @@ namespace Util::CacheInvalidation
 					feature.loaded ?
 						"installed/enabled now, but the cache was built without it" :
 						"the cache was built with it, but it is now uninstalled or disabled at boot",
-					feature.loaded });
+					feature.loaded, !feature.loaded && feature.failedToLoad });
 				continue;
 			}
 			if (feature.loaded) {
@@ -99,29 +101,21 @@ namespace Util::CacheInvalidation
 			[](const CacheMismatch& mismatch) { return mismatch.kind == CacheMismatch::Kind::EnabledFlip; });
 	}
 
-	/// Predicate for "is this feature deliberately disabled at boot", injected so
-	/// this stays free of the `globals::state` singleton the real caller reads.
-	using IsFeatureDeliberatelyDisabledFn = std::function<bool(const std::string& shortName)>;
-
-	/// A cached feature that is gone but NOT deliberately disabled at boot is a
-	/// broken install: hold rather than rotate, so a fixed install reuses the cache.
-	inline bool HasMissingFeature(const std::vector<CacheMismatch>& mismatches,
-		const IsFeatureDeliberatelyDisabledFn& isDeliberatelyDisabled)
+	/// A missing feature that genuinely failed to load is a broken install: hold
+	/// rather than rotate, so a fixed install reuses the cache untouched.
+	inline bool HasFailedFeature(const std::vector<CacheMismatch>& mismatches)
 	{
 		return std::ranges::any_of(mismatches,
-			[&](const CacheMismatch& mismatch) {
-				if (mismatch.kind != CacheMismatch::Kind::EnabledFlip || mismatch.nowPresent)
-					return false;
-				return !isDeliberatelyDisabled(mismatch.shortName);
+			[](const CacheMismatch& mismatch) {
+				return mismatch.kind == CacheMismatch::Kind::EnabledFlip && !mismatch.nowPresent && mismatch.nowFailed;
 			});
 	}
 
 	/// True when a set of current-vs-rollback-slot mismatches is eligible for
 	/// restore: non-empty, pure toggle flips, and no broken-install case among them.
-	inline bool AreCacheMismatchesRestorable(const std::vector<CacheMismatch>& mismatches,
-		const IsFeatureDeliberatelyDisabledFn& isDeliberatelyDisabled)
+	inline bool AreCacheMismatchesRestorable(const std::vector<CacheMismatch>& mismatches)
 	{
-		return !mismatches.empty() && OnlyEnabledFlips(mismatches) && !HasMissingFeature(mismatches, isDeliberatelyDisabled);
+		return !mismatches.empty() && OnlyEnabledFlips(mismatches) && !HasFailedFeature(mismatches);
 	}
 
 	/// Decide whether `mismatches` (current state vs. the rollback slot's
@@ -130,10 +124,9 @@ namespace Util::CacheInvalidation
 	/// concern (a filesystem check), passed in as `previousCacheOnDisk` so this
 	/// stays pure and testable without a real ShaderCache.Previous directory.
 	inline bool TrySetRestoreCandidate(std::vector<CacheMismatch> mismatches, bool previousCacheOnDisk,
-		const IsFeatureDeliberatelyDisabledFn& isDeliberatelyDisabled,
 		bool& outAvailable, std::vector<CacheMismatch>& outMismatches)
 	{
-		if (!previousCacheOnDisk || !AreCacheMismatchesRestorable(mismatches, isDeliberatelyDisabled))
+		if (!previousCacheOnDisk || !AreCacheMismatchesRestorable(mismatches))
 			return false;
 
 		outMismatches = std::move(mismatches);
@@ -141,14 +134,12 @@ namespace Util::CacheInvalidation
 		return true;
 	}
 
-	/// The first EnabledFlip mismatch (cache had it, now missing) whose feature
-	/// failed to load rather than just being toggled off -- matching such a
-	/// mismatch can't be resolved by a settings change alone.
-	inline const CacheMismatch* FindMatchBlockingFeature(const std::vector<CacheMismatch>& mismatches,
-		const std::function<bool(const std::string& shortName)>& featureFailedToLoad)
+	/// The first EnabledFlip mismatch whose feature genuinely failed to load --
+	/// such a mismatch can't be resolved by a settings change alone.
+	inline const CacheMismatch* FindMatchBlockingFeature(const std::vector<CacheMismatch>& mismatches)
 	{
 		for (const auto& mismatch : mismatches) {
-			if (mismatch.kind == CacheMismatch::Kind::EnabledFlip && !mismatch.nowPresent && featureFailedToLoad(mismatch.shortName))
+			if (mismatch.kind == CacheMismatch::Kind::EnabledFlip && !mismatch.nowPresent && mismatch.nowFailed)
 				return &mismatch;
 		}
 		return nullptr;
@@ -296,22 +287,38 @@ namespace Util::CacheInvalidation
 
 	/// Delete only the cache dirs whose root shader references any of the defines.
 	/// Returns false (caller must full-wipe) on any empty define, missing root
-	/// source, or scan failure -- conservative by construction.
+	/// source, or scan failure -- conservative by construction. If a deletion
+	/// itself fails partway through (some dirs already removed, others not), sets
+	/// *outDestructivePartialFailure so the caller knows the active cache is now
+	/// inconsistent and must be wiped outright rather than treated as untouched.
 	inline bool TryPartialInvalidation(
 		const std::filesystem::path& cacheRoot, const std::filesystem::path& shadersRoot,
-		const std::vector<std::string>& defines, size_t* outDeleted = nullptr, size_t* outKept = nullptr)
+		const std::vector<std::string>& defines, size_t* outDeleted = nullptr, size_t* outKept = nullptr,
+		bool* outDestructivePartialFailure = nullptr)
 	{
+		if (outDestructivePartialFailure)
+			*outDestructivePartialFailure = false;
 		try {
 			for (const auto& define : defines)
 				if (define.empty())
 					return false;
-			size_t deleted = 0, kept = 0;
+			// Two-phase: scan to completion before deleting, so a mid-scan bail-out
+			// can't leave a half-deleted cache to rotate into the rollback slot.
+			std::vector<std::filesystem::path> toDelete;
+			size_t kept = 0;
 			for (const auto& entry : std::filesystem::directory_iterator(cacheRoot)) {
 				if (!entry.is_directory())
 					continue;
-				const auto root = shadersRoot / (entry.path().filename().wstring() + L".hlsl");
-				if (!std::filesystem::exists(root))
-					return false;
+				const auto dirName = entry.path().filename().wstring();
+				auto root = shadersRoot / (dirName + L".hlsl");
+				if (!std::filesystem::exists(root)) {
+					// ImageSpace cache dirs are named for the technique (e.g. "ISDepthOfField"),
+					// not their real source; they all compile from the shared Utility.hlsl.
+					const bool isImageSpace = dirName.starts_with(L"IS") || dirName == L"ReflectionsRayTracing";
+					root = isImageSpace ? shadersRoot / L"Utility.hlsl" : root;
+					if (!isImageSpace || !std::filesystem::exists(root))
+						return false;
+				}
 				bool affected = false;
 				for (const auto& define : defines) {
 					auto refs = RootShaderReferencesToken(root, define, shadersRoot);
@@ -322,15 +329,50 @@ namespace Util::CacheInvalidation
 						break;
 					}
 				}
-				if (affected) {
-					std::filesystem::remove_all(entry.path());
-					++deleted;
-				} else {
+				if (affected)
+					toDelete.push_back(entry.path());
+				else
 					++kept;
+			}
+			// remove_all() recurses into each directory's own contents, so a
+			// single toDelete entry can itself be left half-removed (e.g. one
+			// locked file among several) -- and MSVC's error_code overload does
+			// NOT report a partial count on failure (returns npos the same as
+			// if nothing had been touched), so that can't distinguish partial
+			// from clean. Instead compare each entry's on-disk file count
+			// before and after a failed attempt: fewer files afterward means
+			// something in that entry really was removed.
+			size_t anyRemoved = 0;
+			for (const auto& path : toDelete) {
+				std::error_code countEc;
+				size_t before = 0;
+				for (const auto& child : std::filesystem::recursive_directory_iterator(path, countEc))
+					(void)child, ++before;
+
+				std::error_code ec;
+				std::filesystem::remove_all(path, ec);
+				if (!ec) {
+					++anyRemoved;
+					continue;
 				}
+
+				size_t after = 0;
+				if (std::filesystem::exists(path)) {
+					std::error_code afterEc;
+					for (const auto& child : std::filesystem::recursive_directory_iterator(path, afterEc))
+						(void)child, ++after;
+				}
+				// Only genuinely partial (something already gone) counts as
+				// destructive; failing before anything was removed leaves
+				// the cache untouched, same as any other clean bail-out above.
+				if (after < before)
+					++anyRemoved;
+				if (outDestructivePartialFailure)
+					*outDestructivePartialFailure = anyRemoved > 0;
+				return false;
 			}
 			if (outDeleted)
-				*outDeleted = deleted;
+				*outDeleted = toDelete.size();
 			if (outKept)
 				*outKept = kept;
 			return true;

@@ -6,6 +6,9 @@
 #include "Features/CSUtility.h"
 #include "Features/CloudShadows.h"
 #include "Features/DynamicCubemaps.h"
+#if defined(ENABLE_EFFECTS11)
+#	include "Features/Effects11.h"
+#endif
 #include "Features/ExponentialHeightFog.h"
 #include "Features/ExtendedMaterials.h"
 #include "Features/ExtendedTranslucency.h"
@@ -266,6 +269,9 @@ namespace
 			&globals::features::csUtility,
 			&globals::features::screenshotFeature,
 			&globals::features::linearLighting,
+#if defined(ENABLE_EFFECTS11)
+			&globals::features::effects11,
+#endif
 			&globals::features::unifiedWater,
 			&globals::features::horizonFix,
 			&globals::features::exponentialHeightFog,

@@ -8,6 +8,7 @@
 #include "Features/VR.h"
 #include "State.h"
 #include "Util.h"
+#include "Utils/Game.h"
 
 #define I18N_KEY_PREFIX "feature.screen_space_gi."
 
@@ -397,6 +398,33 @@ void ScreenSpaceGI::SaveSettings(json& o_json)
 	o_json = settings;
 }
 
+RE::BSEventNotifyControl ScreenSpaceGI::MenuOpenCloseEventHandler::ProcessEvent(const RE::MenuOpenCloseEvent* a_event, RE::BSTEventSource<RE::MenuOpenCloseEvent>*)
+{
+	if (a_event->menuName == RE::LoadingMenu::MENU_NAME && !a_event->opening)
+		globals::features::screenSpaceGI.queuedResetHistory = true;
+
+	return RE::BSEventNotifyControl::kContinue;
+}
+
+bool ScreenSpaceGI::MenuOpenCloseEventHandler::Register()
+{
+	static MenuOpenCloseEventHandler singleton;
+	auto ui = globals::game::ui;
+
+	if (!ui) {
+		logger::error("UI event source not found");
+		return false;
+	}
+
+	ui->GetEventSource<RE::MenuOpenCloseEvent>()->AddEventSink(&singleton);
+	return true;
+}
+
+void ScreenSpaceGI::PostPostLoad()
+{
+	MenuOpenCloseEventHandler::Register();
+}
+
 void ScreenSpaceGI::SetupResources()
 {
 	auto renderer = globals::game::renderer;
@@ -759,7 +787,7 @@ void ScreenSpaceGI::DrawSSGI()
 	// Also write the live SAO params object so the toggle applies this frame instead
 	// of only at the next ImageSpaceManager reinit.
 	auto imageSpaceManager = RE::ImageSpaceManager::GetSingleton();
-	GET_INSTANCE_MEMBER(BSImagespaceShaderISSAOBlurH, imageSpaceManager);
+	GET_INSTANCE_MEMBER_VRPTR(BSImagespaceShaderISSAOBlurH, imageSpaceManager);
 	if (auto* sao = BSImagespaceShaderISSAOBlurH)
 		sao->enableSAO = settings.EnableVanillaSSAO;
 
@@ -778,6 +806,14 @@ void ScreenSpaceGI::DrawSSGI()
 	static uint lastFrameAccumTexIdx = 0;
 	uint inputAoTexIdx = lastFrameAoTexIdx;
 	uint inputGITexIdx = lastFrameGITexIdx;
+
+	// Zeroing the accumulation count drives the denoiser's lerp factor to 1, dropping stale
+	// history in one frame instead of fading it over MaxAccumFrames.
+	if (queuedResetHistory.exchange(false)) {
+		FLOAT clr[4] = { 0.f, 0.f, 0.f, 0.f };
+		for (auto& tex : texAccumFrames)
+			context->ClearUnorderedAccessViewFloat(tex->uav.get(), clr);
+	}
 
 	//////////////////////////////////////////////////////
 

@@ -665,6 +665,8 @@ void Streamline::Upscale(ID3D11Resource* a_upscalingTexture, ID3D11Resource* a_r
 	// quality-scale doesn't match the actual extent ratio. The upscale also
 	// has to write into perfMode's private DisplayRes testTexture instead of
 	// the now-RenderRes kMAIN.
+	// DLSS input and output must not alias. Always write to the intermediate texture,
+	// then either sharpen or copy the result back to kMAIN.
 	auto& upscaling = globals::features::upscaling;
 	auto& perfMode = globals::features::upscaling.perfMode;
 	const bool dlssperfActive = perfMode.IsHookActive() && perfMode.GetTestTexture();

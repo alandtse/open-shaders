@@ -478,10 +478,21 @@ namespace SIE
 		/// (Logic lives in Utils/CacheInvalidation.h so tests/cpp can exercise it.)
 		using CacheMismatch = Util::CacheInvalidation::CacheMismatch;
 
-		/// Mismatches found at boot (empty when the disk cache validated clean).
-		const std::vector<CacheMismatch>& GetCacheMismatches() const { return cacheMismatches; }
-		/// Mismatches between the restorable rollback cache and the current setup.
-		const std::vector<CacheMismatch>& GetPreviousCacheMismatches() const { return previousCacheMismatches; }
+		/// Mismatches found at boot (empty when the disk cache validated clean). Returned by
+		/// value: devbench's listener thread reads this while the main thread (via
+		/// ValidateDiskCache/rollback actions) reassigns it, so a reference would be unsafe.
+		std::vector<CacheMismatch> GetCacheMismatches() const
+		{
+			std::lock_guard lock{ mismatchesMutex };
+			return cacheMismatches;
+		}
+		/// Mismatches between the restorable rollback cache and the current setup. See
+		/// GetCacheMismatches for why this is returned by value.
+		std::vector<CacheMismatch> GetPreviousCacheMismatches() const
+		{
+			std::lock_guard lock{ mismatchesMutex };
+			return previousCacheMismatches;
+		}
 		/// True when boot detected a pure feature-toggle change and rotated the old
 		/// cache into the rollback slot; cleared once the new cache is committed.
 		bool HasFeatureSetChanges() const { return featureSetChanged; }
@@ -995,6 +1006,10 @@ namespace SIE
 		bool featureSetRevertPending = false;
 		bool featureSetCacheBackedUp = false;
 		bool previousDiskCacheAvailable = false;
+		// Guards cacheMismatches/previousCacheMismatches: reassigned/cleared on the main
+		// thread (ValidateDiskCache, rollback actions), read from devbench's listener
+		// thread via GetCacheMismatches/GetPreviousCacheMismatches.
+		mutable std::mutex mismatchesMutex;
 		std::vector<CacheMismatch> cacheMismatches;
 		std::vector<CacheMismatch> previousCacheMismatches;
 		std::vector<std::string> heldMismatchDefines;
@@ -1016,6 +1031,18 @@ namespace SIE
 		std::mutex modifiedMapMutex;                                                              // guard for modifiedShaderMap
 		ankerl::unordered_dense::map<std::string, std::set<hlslRecord>> hlslToShaderMap{};        // hashmap linking specific hlsl files to shader keys in shaderMap
 		std::mutex hlslMapMutex;                                                                  // guard for hlslToShaderMap
+
+		// Evictions parked while their key was Pending; guarded by mapMutex.
+		// deferredEvictionCount is a lock-free fast path for the common empty case.
+		ankerl::unordered_dense::map<std::string, hlslRecord> deferredEvictions;
+		std::atomic<size_t> deferredEvictionCount{ 0 };
+
+		/** @brief Parks a_record's eviction if its key is Pending, returning true;
+		 *  otherwise returns false and the caller should EvictShader it immediately. */
+		bool TryDeferEviction(const hlslRecord& a_record);
+		/** @brief Applies a parked eviction for a_key, if any. Must be called with no ShaderCache
+		 *  mutex held: it calls EvictShader, which takes compilationMutex. */
+		void ApplyDeferredEviction(const std::string& a_key);
 
 		// efsw file watcher
 		efsw::FileWatcher* fileWatcher = nullptr;

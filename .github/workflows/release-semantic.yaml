@@ -158,6 +158,17 @@ jobs:
                     --apply-bumps \
                     --output feature-audit-notes.md
 
+            # Blocking gate (PR check above is informative only): catches a
+            # misfiring bump algorithm or a gap left by skip_feature_bumps.
+            - name: Verify feature versions
+              run: |
+                  set +e
+                  python tools/feature_version_audit.py --ci --output feature-audit-verify.md
+                  EXIT_CODE=$?
+                  set -e
+                  cat feature-audit-verify.md
+                  exit $EXIT_CODE
+
             - name: Semantic Release
               id: semantic
               uses: cycjimmy/semantic-release-action@v6

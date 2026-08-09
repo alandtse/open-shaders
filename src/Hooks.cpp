@@ -11,6 +11,7 @@
 #include "Util.h"
 
 #include "Features/CSUtility.h"
+#include "Features/Effects11.h"
 #include "Features/HDRDisplay.h"
 #include "Features/InteriorSun.h"
 #include "Features/LightLimitFix.h"
@@ -186,6 +187,10 @@ namespace SkyExtensions
 		static void thunk(RE::BSShader* shader, RE::BSRenderPass* pass, uint32_t renderFlags)
 		{
 			globals::state->UpdateSkyShaderPermutation(pass);
+#if defined(ENABLE_EFFECTS11)
+			if (globals::features::effects11.loaded)
+				globals::features::effects11.ModifySky(pass);
+#endif
 			func(shader, pass, renderFlags);
 		}
 		static inline REL::Relocation<decltype(thunk)> func;
@@ -251,6 +256,75 @@ namespace WaterBlendHistory
 			func(imageSpaceShader, shape, param);
 		}
 
+		static inline REL::Relocation<decltype(thunk)> func;
+	};
+}
+
+namespace WeatherExtensions
+{
+	struct Sky_UpdateColors
+	{
+		static void thunk(RE::Sky* sky, float a_delta)
+		{
+			func(sky, a_delta);
+#if defined(ENABLE_EFFECTS11)
+			if (globals::features::effects11.loaded)
+				globals::features::effects11.OnSkyUpdateColors(sky);
+#endif
+			globals::features::skySync.OnSkyUpdateColors(sky);
+		}
+		static inline REL::Relocation<decltype(thunk)> func;
+	};
+
+	struct Sky_SetDirectionalAmbientColors
+	{
+		static void thunk(Effects11::DirectionalAmbientColors& DirectionalAmbientColors, RE::NiColor* AmbientSpecularTint, float AmbientSpecularFresnel)
+		{
+#if defined(ENABLE_EFFECTS11)
+			if (globals::features::effects11.loaded) {
+				globals::features::effects11.CheckCommonData();
+				if (globals::features::effects11.enableEffect) {
+					// The engine passes Sky's own cube by reference, so overriding in place would
+					// compound on every call Sky has not recomputed colors for.
+					Effects11::DirectionalAmbientColors overridden = DirectionalAmbientColors;
+					globals::features::effects11.OverrideAmbientLighting(overridden);
+					func(overridden, AmbientSpecularTint, AmbientSpecularFresnel);
+					return;
+				}
+			}
+#endif
+			func(DirectionalAmbientColors, AmbientSpecularTint, AmbientSpecularFresnel);
+		}
+		static inline REL::Relocation<decltype(thunk)> func;
+	};
+}
+
+namespace PostProcessingExtensions
+{
+	struct Main_HDRTonemapBlendCinematic_Render
+	{
+		static void thunk(RE::ImageSpaceManager* a1, RE::ImageSpaceEffect* a2, uint32_t a3, uint32_t a4, RE::ImageSpaceShaderParam* a5)
+		{
+			if (!globals::state->IsMainOrLoadingMenuOpen() &&
+				globals::state->HandlePostProcessing(
+					static_cast<RE::RENDER_TARGET>(a3),
+					static_cast<RE::RENDER_TARGET>(a4)))
+				return;
+			func(a1, a2, a3, a4, a5);
+		}
+		static inline REL::Relocation<decltype(thunk)> func;
+	};
+
+	struct BSParticleShader_SetupGeometry
+	{
+		static void thunk(RE::BSShader* This, RE::BSRenderPass* Pass, uint32_t RenderFlags)
+		{
+			func(This, Pass, RenderFlags);
+#if defined(ENABLE_EFFECTS11)
+			if (globals::features::effects11.loaded)
+				globals::features::effects11.ModifyParticle(Pass);
+#endif
+		}
 		static inline REL::Relocation<decltype(thunk)> func;
 	};
 }
@@ -1060,8 +1134,9 @@ namespace Hooks
 		logger::info("Hooking TESWaterReflections::Update_Actor::GetLOSPosition for Sky Reflection Fix");
 		stl::write_thunk_call<TESWaterReflections_Update_Actor_GetLOSPosition>(REL::RelocationID(31373, 32160).address() + REL::Relocate(0x1AD, 0x1CA, 0x1ed));
 
-		logger::info("Hooking Sky::UpdateColors");
-		stl::detour_thunk<Sky_UpdateColors>(REL::RelocationID(25686, 26233));
+		logger::info("Hooking weather extensions");
+		stl::detour_thunk<WeatherExtensions::Sky_UpdateColors>(REL::RelocationID(25686, 26233));
+		stl::detour_thunk<WeatherExtensions::Sky_SetDirectionalAmbientColors>(REL::RelocationID(98989, 105643));
 
 		logger::info("Hooking MenuManager::DrawInterfaceStart for menu TAA");
 		stl::detour_thunk<MenuManagerDrawInterfaceStart>(REL::RelocationID(79947, 82084));
@@ -1071,6 +1146,29 @@ namespace Hooks
 		stl::write_vfunc<0x6, SkyExtensions::BSSkyShader_SetupGeometry>(RE::VTABLE_BSSkyShader[0]);
 		stl::write_thunk_call<GrassExtensions::BSGrassShaderProperty_ctor>(REL::RelocationID(15214, 15383).address() + REL::Relocate(0x45B, 0x4F5));
 		stl::write_vfunc<0x6, GrassExtensions::BSGrassShader_SetupGeometry>(RE::VTABLE_BSGrassShader[0]);
+		stl::write_vfunc<0x6, PostProcessingExtensions::BSParticleShader_SetupGeometry>(RE::VTABLE_BSParticleShader[0]);
+
+		// Only serves Effects11's tonemap takeover (HandlePostProcessing is a no-op
+		// without it), and Effects11 has no VR support (no HMD does real HDR
+		// passthrough) -- so left uninstalled on VR. The VR offsets below are RE'd
+		// and correct (Ghidra: matched by identical render-target argument setup
+		// and the a2 effect-pointer field, 0xf0 then 0x110), not just SE/AE's
+		// values reused -- kept ready in case a future HDR-capable HMD needs this.
+		if (!REL::Module::IsVR()) {
+			logger::info("Installing post-processing hooks");
+			// AE's a2 slot at this call site is an effects-array INDEX, not the
+			// ImageSpaceEffect* SE/VR pass (RE-confirmed) -- harmless today since
+			// this thunk never dereferences a2, only forwards it, but a real type
+			// mismatch if that ever changes. AE's single call here is also a branch
+			// between two different ImageSpaceManager instances, not a pair like
+			// SE/VR's two hooked calls -- unclear which (if either) of SE's two
+			// passes it actually corresponds to.
+			stl::write_thunk_call<PostProcessingExtensions::Main_HDRTonemapBlendCinematic_Render>(REL::RelocationID(99023, 105674, 99023).address() + REL::Relocate(0x1EA, 0x178, 0x20E));
+			// SE and VR both have a second matching call site (confirmed structurally
+			// identical); AE's equivalent isn't identified, so stay conservative there.
+			if (REL::Module::IsSE() || REL::Module::IsVR())
+				stl::write_thunk_call<PostProcessingExtensions::Main_HDRTonemapBlendCinematic_Render>(REL::RelocationID(99023, 105674, 99023).address() + REL::Relocate(0x230, 0x178, 0x254));
+		}
 
 		// Patch render space in BSLightingShader::SetupGeometry to always use world space
 		// The variable updateEyePosition is set to 1 when not skinned. By patching to be 0 it will always use world space

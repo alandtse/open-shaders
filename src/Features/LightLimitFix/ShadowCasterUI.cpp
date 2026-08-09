@@ -211,7 +211,10 @@ namespace ShadowCasterManager
 
 		// Group hover repopulates the highlight set; clear it every frame so
 		// stale entries drop once a hover ends or the controls stop rendering.
+		// Row hover needs the same lifecycle so the FP strict-light draws
+		// (which run after this) still see it.
 		ClearHighlight();
+		SetHoveredLight(0);
 
 		// -- Group toggle buttons ------------------------------------------
 		// green = at least one unsuppressed; grey = all suppressed; click flips.
@@ -266,10 +269,9 @@ namespace ShadowCasterManager
 					toggleMatching(pred);
 				ImGui::PopStyleColor(2);
 				if (ImGui::IsItemHovered()) {
-					// Hovering a group tints its whole set magenta in-world -- the
-					// group-scale analogue of Shift+hover on one row. Populated
-					// here, cleared at the table draw above; click toggles
-					// suppression unless the group is preview-only.
+					// Hovering a group tints its whole set magenta in-world (the group-scale
+					// analogue of hovering one row), populated here and cleared at the
+					// table draw above; click toggles suppression unless preview-only.
 					for (auto& r : rows)
 						if (pred(r))
 							AddHighlight(r.info.lightKey);
@@ -354,15 +356,12 @@ namespace ShadowCasterManager
 					"     Auto -> Shadow pin (S) -> Convert pin (C) -> Suppress (X) -> Auto.\n"
 					"  *  Solo button (col 2): isolate this light against a black scene.\n"
 					"     Click again to clear; only one light may be soloed at a time.\n"
-					"  *  Hold Shift while hovering a row to highlight that light in the\n"
-					"     world with a pulsing magenta tint. Release Shift or move the\n"
-					"     cursor away to stop. Useful when you can't tell which entry\n"
-					"     corresponds to which physical light. Does not affect rendering\n"
-					"     when Shift is not held.\n\n"
-					"Group buttons toggle suppression for every matching row at once.\n"
-					"Hovering a group button highlights its lights in the world with\n"
-					"no modifier needed -- Shift is only required for single-row\n"
-					"hover highlighting in the table.\n"
+					"  *  Hover a row to highlight that light in the world with a\n"
+					"     pulsing magenta tint. Move the cursor away to stop. Useful\n"
+					"     when you can't tell which entry corresponds to which\n"
+					"     physical light.\n\n"
+					"Group buttons toggle suppression for every matching row at once,\n"
+					"and hovering one highlights its lights in the world the same way.\n"
 					"Clear All appears when any override is active and resets everything."));
 		}
 
@@ -542,10 +541,9 @@ namespace ShadowCasterManager
 				const bool pinConvert = s_pinConvert.count(key) > 0;
 				const bool isSolo = (s_soloLight == key && key != 0);
 
-				// Sets s_hoverLightKey (magenta debug pulse in-world) only while
-				// Shift is held, so normal row clicks don't trigger it.
+				// Sets s_hoverLightKey (magenta debug pulse in-world) on hover.
 				auto noteHover = [&]() {
-					if (ImGui::IsItemHovered() && ImGui::GetIO().KeyShift)
+					if (ImGui::IsItemHovered())
 						s_hoverLightKey = key;
 				};
 
@@ -1580,6 +1578,44 @@ namespace ShadowCasterManager
 						"Minimum is %d (lower values cause shadow flicker as redraw rotation outpaces TAA).\n"
 						"Upper bound matches the Shadow Light Count setting (%d)."),
 					Settings::kMinMaxRedrawPerFrame, maxRedraws);
+		}
+
+		// ---- Shadow redraw scheduling ----------------------------------------
+		if (ImGui::TreeNode(T(TKEY("redraw_scheduling"), "Shadow Redraw Scheduling##RedrawScheduling"))) {
+			ImGui::SliderFloat(T(TKEY("redraw_interval_max_frames"), "Shadow Staleness Ceiling (frames)"),
+				&settings.RedrawIntervalMaxFrames, 4.0f, 60.0f, "%.0f", ImGuiSliderFlags_AlwaysClamp);
+			if (ImGui::IsItemHovered())
+				ImGui::SetTooltip("%s", T(TKEY("redraw_interval_max_frames_tooltip"),
+											"Hard ceiling on how long any light's shadow can go stale,\n"
+											"regardless of importance/staleness score. Bounds worst-case\n"
+											"redraw latency so low-priority lights can't starve indefinitely.\n"
+											"A light the GPU confirms contributes nothing visible gets a\n"
+											"proportionally longer ceiling instead of this same bound.\n"
+											"Default: 20"));
+
+			ImGui::Checkbox(T(TKEY("skip_zero_demand_redraw"), "Skip Redraws for Unseen Lights"), &settings.SkipZeroDemandRedraw);
+			if (ImGui::IsItemHovered())
+				ImGui::SetTooltip("%s", T(TKEY("skip_zero_demand_redraw_tooltip"),
+											"Skips redrawing a shadow map entirely while the GPU measures nothing\n"
+											"on screen lit by that light across many consecutive samples. Removes\n"
+											"the work rather than reordering it, so it can free budget for lights\n"
+											"you can actually see.\n"
+											"A skipped light keeps showing its last shadow map and redraws again as\n"
+											"soon as anything it lights comes back into view, and every skipped\n"
+											"light redraws periodically regardless. Requires the Shadow Atlas."));
+
+			ImGui::Checkbox(T(TKEY("redraw_due_gate_enabled"), "Stop Early Once Nothing Is Due"), &settings.RedrawDueGateEnabled);
+			if (ImGui::IsItemHovered())
+				ImGui::SetTooltip("%s", T(TKEY("redraw_due_gate_enabled_tooltip"),
+											"Stops spending the redraw budget once every light with an actually-\n"
+											"stale shadow (moved, changed, or never drawn) has been redrawn this\n"
+											"frame, instead of always using the full budget on whichever light is\n"
+											"next in priority order even when its shadow is already correct.\n"
+											"Reduces GPU cost the most in scenes with many lights but few that are\n"
+											"actually changing (e.g. a lit interior with the player standing still).\n"
+											"Worst-case staleness stays bounded by Shadow Staleness Ceiling above."));
+
+			ImGui::TreePop();
 		}
 
 		// ---- Light conversion (requires restart for hooks) -----------------

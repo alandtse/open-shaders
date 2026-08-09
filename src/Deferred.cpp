@@ -9,6 +9,7 @@
 
 #include "Features/CSEditor.h"
 #include "Features/DynamicCubemaps.h"
+#include "Features/Effects11.h"
 #include "Features/IBL.h"
 #include "Features/LightLimitFix/ShadowCasterManager.h"
 #include "Features/ScreenSpaceGI.h"
@@ -478,6 +479,11 @@ void Deferred::DeferredPasses()
 
 	if (dynamicCubemaps.loaded)
 		dynamicCubemaps.PostDeferred();
+
+#if defined(ENABLE_EFFECTS11)
+	if (globals::features::effects11.loaded)
+		globals::features::effects11.DrawVolumetricRays();
+#endif
 }
 
 void Deferred::EndDeferred()

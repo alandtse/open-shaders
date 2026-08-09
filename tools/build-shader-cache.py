@@ -73,11 +73,12 @@ def stage_merged_shaders(stage: Path) -> None:
 # for them at all on the other (verified against live SE and VR installs).
 RUNTIME_EXCLUDED_FEATURES = {"SE": {"VR"}, "VR": set()}
 
-# Features with IsDisabledByDefault() == true are NOT loaded on a default install:
-# the manifest must say Enabled=false AND their global define must be stripped from
-# every compiled permutation (feature defines change every shader's bytecode, and
-# cache paths don't encode the feature set -- mismatched blobs would silently load).
-DEFAULT_DISABLED_FEATURES = {"UnifiedWater": "UNIFIED_WATER"}
+# Features that self-disable at runtime based on an optional external dependency
+# (a companion plugin DLL, a conflicting mod) rather than the Alpha/Beta .ini stage
+# flag -- the CI build environment has neither, so building with them enabled would
+# ship blobs a default install can never use. Keep in sync with the runtime's
+# self-disable sites (src/Features/HorizonFix.cpp, src/Features/SkySync.cpp).
+ENVIRONMENT_GATED_FEATURES = {"HorizonFix", "SkySync"}
 
 
 def feature_define_map(source_root: Path) -> dict:
@@ -97,16 +98,19 @@ def feature_define_map(source_root: Path) -> dict:
 
 
 def default_disabled_features(source_root: Path) -> set:
-    """Feature short names with IsDisabledByDefault() == true, parsed from headers."""
-    import re
+    """Feature short names with IsDisabledByDefault() == true (any stage other than
+    Release), mirroring Feature::GetReleaseStage()/CMakeLists.txt's Alpha/Beta .ini
+    parse. Delegates to tools/feature_version_audit.py's stage_from_content, the
+    canonical Python-side implementation of that same line-anchored match, rather
+    than re-deriving it (the two must never drift independently)."""
+    sys.path.insert(0, str(Path(__file__).parent))
+    from feature_version_audit import STAGE_RELEASE, stage_from_content
 
     out = set()
-    for h in sorted((source_root / "src/Features").rglob("*.h")):
-        text = h.read_text(encoding="utf-8", errors="replace")
-        if re.search(r"IsDisabledByDefault\(\)[^{]*\{\s*return\s+true", text):
-            short = re.search(r'GetShortName\(\)[^{]*\{\s*return\s+"(\w+)"', text)
-            if short:
-                out.add(short.group(1))
+    for ini_path in sorted((source_root / "features").glob("*/Shaders/Features/*.ini")):
+        content = ini_path.read_text(encoding="utf-8-sig", errors="replace")
+        if stage_from_content(content) != STAGE_RELEASE:
+            out.add(ini_path.stem)
     return out
 
 
@@ -169,6 +173,40 @@ def check_aio_partition(source_root: Path, cmake_list_file: Path) -> int:
     if py_set - cmake_set:
         print(f"  in cache builder but not shipped by CMake: {sorted(py_set - cmake_set)}", file=sys.stderr)
     return 1
+
+def check_default_disabled(source_root: Path, feature_versions_header: Path) -> int:
+    """Fail if this script's default-disabled (Alpha/Beta) feature set disagrees with
+    the CMake-generated FeatureVersions.h (feature_versions_header: build/*/cmake/
+    FeatureVersions.h from a configured build). Keeps the Python ini parse
+    (default_disabled_features, via feature_version_audit.stage_from_content) from
+    drifting from Feature::GetReleaseStage()'s C++ arrays -- a drift here means the
+    prebuilt cache's Info.ini/stripped defines disagree with what a default install
+    actually loads, holding the whole disk cache on every fresh boot (see
+    src/Utils/CacheInvalidation.h's HasMissingFeature)."""
+    text = feature_versions_header.read_text(encoding="utf-8", errors="replace")
+    cpp_set = set()
+    for array_name in ("FEATURE_ALPHA_NAMES", "FEATURE_BETA_NAMES"):
+        m = re.search(rf"{array_name}\s*\{{(.*?)\}}", text, re.DOTALL)
+        if not m:
+            print(f"ERROR: could not find {array_name} in {feature_versions_header} "
+                  "-- header missing or malformed, refusing to compare against an "
+                  "unparsed C++ side.", file=sys.stderr)
+            return 1
+        cpp_set.update(re.findall(r'"(\w+)"sv', m.group(1)))
+    py_set = default_disabled_features(source_root)
+    if cpp_set == py_set:
+        print(f"Default-disabled feature set consistent ({len(py_set)} features).")
+        return 0
+    print("ERROR: default-disabled feature set mismatch between CMake's generated "
+          "FeatureVersions.h (Feature::GetReleaseStage() Alpha/Beta arrays) and "
+          "tools/build-shader-cache.py's default_disabled_features(). Reconcile the two "
+          "so the prebuilt cache's Info.ini matches what a default install loads.", file=sys.stderr)
+    if cpp_set - py_set:
+        print(f"  disabled by C++ but missing from cache builder: {sorted(cpp_set - py_set)}", file=sys.stderr)
+    if py_set - cpp_set:
+        print(f"  in cache builder but not disabled by C++: {sorted(py_set - cpp_set)}", file=sys.stderr)
+    return 1
+
 
 IMAGESPACE_DIRS = {
     # (SE enum, VR enum) -> runtime fxpFilename dir; from RE/I/ImageSpaceManager.h X/X2 macros.
@@ -332,9 +370,12 @@ IMAGESPACE_DIRS = {
 
 
 
-def write_info_ini(cache_dir: Path, stage: Path, plugin_version: str, runtime: str, include_stems=None) -> int:
+def write_info_ini(cache_dir: Path, stage: Path, plugin_version: str, runtime: str, include_stems=None, disabled_stems=None) -> int:
     """Emit Info.ini matching ShaderCache::WriteDiskCacheInfo's output format.
-    include_stems limits sections to the target profile (AIO default install)."""
+    include_stems limits sections to the target profile (AIO default install);
+    disabled_stems (default_disabled_features() | ENVIRONMENT_GATED_FEATURES) marks
+    which of those sections a default install actually loads with Enabled=false."""
+    disabled_stems = disabled_stems or set()
     lines = ["[Cache]", f"PluginVersion = {plugin_version}", "", ""]
     count = 0
     for ini_path in sorted((stage / "Features").glob("*.ini")):
@@ -348,7 +389,7 @@ def write_info_ini(cache_dir: Path, stage: Path, plugin_version: str, runtime: s
         if not version:
             print(f"WARN: {ini_path.name} has no Info/Version; skipped", file=sys.stderr)
             continue
-        if ini_path.stem in DEFAULT_DISABLED_FEATURES:
+        if ini_path.stem in disabled_stems:
             lines += [f"[{ini_path.stem}]", "Enabled = false", "Version = ", "", ""]
         else:
             lines += [f"[{ini_path.stem}]", "Enabled = true", f"Version = {version}", "", ""]
@@ -437,15 +478,16 @@ def write_shader_cache_manifest(cache_dir: Path, shader_root: Path, runtime: str
 
 
 def profile_strip_defines(source_root: Path, profile: str) -> tuple:
-    """(strip_defines, include_stems): defines absent from the target profile's
-    runtime (non-AIO features + default-disabled), and the manifest stems."""
+    """(strip_defines, include_stems, disabled_stems): defines absent from the target
+    profile's runtime (non-AIO features + default-disabled), the manifest stems, and
+    which of those stems a default install ships Enabled=false for (see write_info_ini)."""
     defines = feature_define_map(source_root)
-    disabled = default_disabled_features(source_root) or set(DEFAULT_DISABLED_FEATURES)
+    disabled = default_disabled_features(source_root) | ENVIRONMENT_GATED_FEATURES
     all_stems = {p.stem for p in (source_root / "features").glob("*/Shaders/Features/*.ini")}
     include = aio_feature_stems(source_root) if profile == "aio" else all_stems
     excluded = (all_stems - include) | disabled
     strip = {defines[stem] for stem in excluded if defines.get(stem)}
-    return strip, include
+    return strip, include, disabled
 
 
 def prune_non_cache_files(cache_dir: Path) -> None:
@@ -475,11 +517,11 @@ def finalize_existing(cache_dir: Path, shaders: Path, plugin_version: str, runti
     """Turn a validation-produced compile dir into a shippable cache. The compile
     itself must have used the profile config (--emit-profile-config), so this only
     prunes sidecars, remaps ImageSpace dirs, and writes the profile manifest."""
-    _, include = profile_strip_defines(REPO, profile)
+    _, include, disabled = profile_strip_defines(REPO, profile)
     prune_non_cache_files(cache_dir)
     imagespace_remap = remap_imagespace_dirs(cache_dir, runtime)
     write_shader_cache_manifest(cache_dir, shaders, runtime, imagespace_remap)
-    n = write_info_ini(cache_dir, shaders, plugin_version, runtime, include)
+    n = write_info_ini(cache_dir, shaders, plugin_version, runtime, include, disabled)
     blobs = sum(1 for p in cache_dir.rglob("*") if p.suffix in (".pso", ".vso", ".cso"))
     print(f"{runtime}: finalized {blobs} cache blobs, Info.ini with {n} feature sections -> {cache_dir}")
     return 0
@@ -501,6 +543,8 @@ def main() -> int:
     ap.add_argument("--skip-compile", action="store_true", help="stage + Info.ini only (plumbing test)")
     ap.add_argument("--check-aio-partition", metavar="CMAKE_LIST",
         help="verify this script's AIO partition matches CMake's emitted aio-features.txt, then exit")
+    ap.add_argument("--check-default-disabled", metavar="FEATURE_VERSIONS_H",
+        help="verify this script's default-disabled (Alpha/Beta) set matches a configured build's generated FeatureVersions.h, then exit")
     args = ap.parse_args()
     args.jobs = max(1, args.jobs)
 
@@ -513,9 +557,11 @@ def main() -> int:
         }
     if args.check_aio_partition:
         return check_aio_partition(REPO, Path(args.check_aio_partition))
+    if args.check_default_disabled:
+        return check_default_disabled(REPO, Path(args.check_default_disabled))
     plugin_version = args.plugin_version or default_plugin_version()
     if args.emit_profile_config:
-        strip, _ = profile_strip_defines(REPO, args.profile)
+        strip, _, _ = profile_strip_defines(REPO, args.profile)
         filter_profile_defines(Path(args.emit_profile_config[0]), Path(args.emit_profile_config[1]), strip)
         print(f"profile config ({args.profile}) -> {args.emit_profile_config[1]}; stripped: {sorted(strip)}")
         return 0
@@ -535,7 +581,7 @@ def main() -> int:
         cache_dir = out_root / rt / "ShaderCache"
         cache_dir.mkdir(parents=True, exist_ok=True)
         if not args.skip_compile:
-            strip, _ = profile_strip_defines(REPO, args.profile)
+            strip, _, _ = profile_strip_defines(REPO, args.profile)
             config = filter_profile_defines(CONFIGS[rt], out_root / f"config-{rt}.yaml", strip)
             cmd = [
                 "hlslkit-compile",
@@ -558,8 +604,8 @@ def main() -> int:
             prune_non_cache_files(cache_dir)
             imagespace_remap = remap_imagespace_dirs(cache_dir, rt)
             write_shader_cache_manifest(cache_dir, stage, rt, imagespace_remap)
-        _, include = profile_strip_defines(REPO, args.profile)
-        n = write_info_ini(cache_dir, stage, plugin_version, rt, include)
+        _, include, disabled = profile_strip_defines(REPO, args.profile)
+        n = write_info_ini(cache_dir, stage, plugin_version, rt, include, disabled)
         blobs = sum(1 for _ in cache_dir.rglob("*") if _.suffix in (".pso", ".vso", ".cso"))
         print(f"{rt}: {blobs} cache blobs, Info.ini with {n} feature sections -> {cache_dir}")
     return 0

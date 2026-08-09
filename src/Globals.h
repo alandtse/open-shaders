@@ -38,6 +38,9 @@ struct Upscaling;
 class Profiler;
 struct CSEditor;
 struct CSUtility;
+#if defined(ENABLE_EFFECTS11)
+struct Effects11;
+#endif
 struct ExponentialHeightFog;
 struct HDRDisplay;
 struct PostProcessing;
@@ -129,6 +132,9 @@ namespace globals
 		extern ExtendedTranslucency extendedTranslucency;
 		extern Upscaling upscaling;
 		extern HDRDisplay hdrDisplay;
+#if defined(ENABLE_EFFECTS11)
+		extern Effects11 effects11;
+#endif
 		extern RenderDoc renderDoc;
 		extern RemoteControl remoteControl;
 		extern ScreenshotFeature screenshotFeature;

@@ -44,6 +44,7 @@
 
 #include "CSEditor/EditorWindow.h"
 #include "Features/CSEditor.h"
+#include "Features/Effects11.h"
 #include "Features/PerformanceOverlay.h"
 #include "Features/PerformanceOverlay/ABTesting/ABTestAggregator.h"
 #include "Features/PerformanceOverlay/ABTesting/ABTesting.h"
@@ -429,6 +430,7 @@ void Menu::Load(json& o_json)
 	migrateKey(o_json, "ShaderBlockNextKey", settings.ShaderBlockNextKey);
 	migrateKey(o_json, "CSEditorToggleKey", settings.CSEditorToggleKey);
 	migrateKey(o_json, "ScreenshotKey", settings.ScreenshotKey);
+	migrateKey(o_json, "Effects11ToggleKey", settings.Effects11ToggleKey);
 
 	// Helper for new smart serialization with error handling
 	auto loadComboList = [](const json& j, const char* keyName, std::vector<InputCombo>& target) {
@@ -450,6 +452,7 @@ void Menu::Load(json& o_json)
 	loadComboList(o_json, "ShaderBlockNextKey", settings.ShaderBlockNextKey);
 	loadComboList(o_json, "CSEditorToggleKey", settings.CSEditorToggleKey);
 	loadComboList(o_json, "ScreenshotKey", settings.ScreenshotKey);
+	loadComboList(o_json, "Effects11ToggleKey", settings.Effects11ToggleKey);
 
 	// Legacy support: If old config has Theme data and no SelectedThemePreset, load it
 	if (o_json.contains("Theme") && o_json["Theme"].is_object() && settings.SelectedThemePreset.empty()) {
@@ -525,6 +528,7 @@ void Menu::Save(json& o_json)
 	InputCombo::ComboList::to_json(o_json["ShaderBlockNextKey"], settings.ShaderBlockNextKey);
 	InputCombo::ComboList::to_json(o_json["CSEditorToggleKey"], settings.CSEditorToggleKey);
 	InputCombo::ComboList::to_json(o_json["ScreenshotKey"], settings.ScreenshotKey);
+	InputCombo::ComboList::to_json(o_json["Effects11ToggleKey"], settings.Effects11ToggleKey);
 }
 
 void Menu::LoadTheme(json& o_json)
@@ -869,7 +873,8 @@ void Menu::DrawGeneralSettings()
 		.settingShaderBlockPrevKey = settingShaderBlockPrevKey,
 		.settingShaderBlockNextKey = settingShaderBlockNextKey,
 		.settingCSEditorToggleKey = settingCSEditorToggleKey,
-		.settingScreenshotKey = settingScreenshotKey
+		.settingScreenshotKey = settingScreenshotKey,
+		.settingEffects11ToggleKey = settingEffects11ToggleKey
 	};
 
 	// Render settings using extracted component
@@ -911,6 +916,9 @@ void Menu::DrawDisableAtBootSettings()
 
 		// Display sorted features
 		for (auto* feature : featureList) {
+			if (feature->IsHiddenUnreleased())
+				continue;
+
 			const std::string featureName = feature->GetShortName();
 			const auto checkboxLabel = std::format("{}##DisableAtBoot{}", feature->GetDisplayName(), featureName);
 			bool isDisabled = disabledFeatures.contains(featureName) && disabledFeatures[featureName];
@@ -1194,6 +1202,12 @@ void Menu::ProcessInputEventQueue()
 						 if (globals::features::screenshotFeature.loaded)
 							 globals::features::screenshotFeature.captureRequested = true;
 					 } },
+					{ settings.Effects11ToggleKey, []() {
+#if defined(ENABLE_EFFECTS11)
+						 if (globals::features::effects11.loaded)
+							 globals::features::effects11.ToggleEnabled();
+#endif
+					 } },
 				};
 				// RenderDoc's capture key is a single, unmodified key; only consider it on key-up.
 				if (!combosOnly && globals::features::renderDoc.HandleCaptureHotkey(key))
@@ -1207,6 +1221,16 @@ void Menu::ProcessInputEventQueue()
 				}
 				return false;
 			};
+
+			// Hardcoded Shift+Enter toggle for the CS menu (always available)
+			if (event.IsDown() && key == VK_RETURN && (GetAsyncKeyState(VK_SHIFT) & 0x8000)) {
+				if (!HomePageRenderer::ShouldShowFirstTimeSetup()) {
+					IsEnabled = !IsEnabled;
+					if (IsEnabled)
+						ImGui::GetIO().ClearInputKeys();
+				}
+				continue;
+			}
 
 			if (!event.IsPressed()) {
 				// Skip key release if it was used to close the first-time setup dialog
@@ -1235,6 +1259,7 @@ void Menu::ProcessInputEventQueue()
 					{ &settings.ShaderBlockNextKey, &settingShaderBlockNextKey, [this](std::vector<InputCombo> keys) { settings.ShaderBlockNextKey = keys; settingShaderBlockNextKey = false; } },
 					{ &settings.CSEditorToggleKey, &settingCSEditorToggleKey, [this](std::vector<InputCombo> keys) { settings.CSEditorToggleKey = keys; settingCSEditorToggleKey = false; } },
 					{ &settings.ScreenshotKey, &settingScreenshotKey, [this](std::vector<InputCombo> keys) { settings.ScreenshotKey = keys; settingScreenshotKey = false; } },
+					{ &settings.Effects11ToggleKey, &settingEffects11ToggleKey, [this](std::vector<InputCombo> keys) { settings.Effects11ToggleKey = keys; settingEffects11ToggleKey = false; } },
 				};
 				bool handled = false;
 				for (auto& h : hotkeyActions) {
@@ -1313,7 +1338,8 @@ void Menu::ProcessInputEventQueue()
 				&settings.ToggleKey, &settings.EffectToggleKey,
 				&settings.OverlayToggleKey, &settings.ShaderBlockPrevKey, &settings.ShaderBlockNextKey,
 				&settings.CSEditorToggleKey,
-				&settings.ScreenshotKey
+				&settings.ScreenshotKey,
+				&settings.Effects11ToggleKey
 			};
 			bool isHotkey = ShouldSwallowInput() && std::any_of(std::begin(hotkeys), std::end(hotkeys),
 														[key](const auto* combo) { return InputCombo::MatchesKeyboardCombo(*combo, key); });
@@ -1341,7 +1367,7 @@ void Menu::ProcessInputEventQueue()
 bool Menu::IsCapturingHotkeyInput() const
 {
 	return settingToggleKey || settingSkipCompilationKey || settingsEffectsToggle ||
-	       settingOverlayToggleKey || settingShaderBlockPrevKey || settingShaderBlockNextKey || settingCSEditorToggleKey || settingScreenshotKey;
+	       settingOverlayToggleKey || settingShaderBlockPrevKey || settingShaderBlockNextKey || settingCSEditorToggleKey || settingScreenshotKey || settingEffects11ToggleKey;
 }
 
 void Menu::addToEventQueue(KeyEvent e)

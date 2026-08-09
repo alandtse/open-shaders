@@ -231,6 +231,76 @@ TEST_CASE("TryPartialInvalidation: conservative fallbacks", "[cacheinvalidation]
 	}
 }
 
+TEST_CASE("TryPartialInvalidation: delete failure on the only candidate is not destructive", "[cacheinvalidation]")
+{
+	TempDir t;
+	auto shaders = t.path / "Shaders";
+	auto cache = t.path / "ShaderCache";
+	Write(shaders / "Water.hlsl", "#if defined(UNIFIED_WATER)\n#endif\n");
+	Write(cache / "Water/1.pso", "blob");
+
+	// An open (not delete-sharing) file handle blocks Windows from removing
+	// its directory, forcing remove_all() to throw. Nothing else was queued
+	// for deletion, so the cache is left exactly as it started -- not the
+	// "already partially gone" case the destructive flag exists to signal.
+	std::ofstream held(cache / "Water/1.pso", std::ios::binary | std::ios::app);
+	REQUIRE(held.is_open());
+
+	bool destructive = false;
+	CHECK_FALSE(TryPartialInvalidation(cache, shaders, { "UNIFIED_WATER" }, nullptr, nullptr, &destructive));
+	CHECK_FALSE(destructive);
+
+	held.close();
+}
+
+TEST_CASE("TryPartialInvalidation: failure after a prior deletion is destructive", "[cacheinvalidation]")
+{
+	TempDir t;
+	auto shaders = t.path / "Shaders";
+	auto cache = t.path / "ShaderCache";
+	Write(shaders / "Fog.hlsl", "#if defined(UNIFIED_WATER)\n#endif\n");
+	Write(shaders / "Water.hlsl", "#if defined(UNIFIED_WATER)\n#endif\n");
+	Write(cache / "Fog/1.pso", "blob");
+	Write(cache / "Water/1.pso", "blob");
+
+	// NTFS enumerates a directory's entries via its $I30 B-tree index, sorted
+	// by filename -- "Fog" iterates before "Water", so this deterministically
+	// exercises delete-succeeds-then-delete-fails, not delete-fails-first.
+	std::ofstream held(cache / "Water/1.pso", std::ios::binary | std::ios::app);
+	REQUIRE(held.is_open());
+
+	bool destructive = false;
+	CHECK_FALSE(TryPartialInvalidation(cache, shaders, { "UNIFIED_WATER" }, nullptr, nullptr, &destructive));
+	CHECK(destructive);
+	CHECK_FALSE(fs::exists(cache / "Fog"));  // confirms Fog really was deleted first
+
+	held.close();
+}
+
+TEST_CASE("TryPartialInvalidation: partial delete within one directory is destructive", "[cacheinvalidation]")
+{
+	// remove_all() recurses into a directory's own contents; a single toDelete
+	// entry with one locked file among several must still report destructive,
+	// since its unlocked siblings get removed before the locked one throws.
+	TempDir t;
+	auto shaders = t.path / "Shaders";
+	auto cache = t.path / "ShaderCache";
+	Write(shaders / "Water.hlsl", "#if defined(UNIFIED_WATER)\n#endif\n");
+	Write(cache / "Water/1.pso", "blob");
+	Write(cache / "Water/2.pso", "blob");
+
+	std::ofstream held(cache / "Water/2.pso", std::ios::binary | std::ios::app);
+	REQUIRE(held.is_open());
+
+	bool destructive = false;
+	CHECK_FALSE(TryPartialInvalidation(cache, shaders, { "UNIFIED_WATER" }, nullptr, nullptr, &destructive));
+	CHECK(destructive);
+	CHECK_FALSE(fs::exists(cache / "Water/1.pso"));  // the unlocked sibling is really gone
+	CHECK(fs::exists(cache / "Water/2.pso"));        // the locked file survives
+
+	held.close();
+}
+
 TEST_CASE("BackupCacheDirectory and RestoreCacheDirectory: transactional swap logic", "[cacheinvalidation]")
 {
 	TempDir t;
@@ -350,10 +420,10 @@ TEST_CASE("RestoreCacheDirectory: transactional failure path leaves the rollback
 	}
 }
 
-TEST_CASE("OnlyEnabledFlips / HasMissingFeature / FindMatchBlockingFeature: decision predicates", "[cacheinvalidation]")
+TEST_CASE("OnlyEnabledFlips / HasFailedFeature / FindMatchBlockingFeature: decision predicates", "[cacheinvalidation]")
 {
-	const auto flip = [](std::string shortName, bool nowPresent) {
-		return CacheMismatch{ CacheMismatch::Kind::EnabledFlip, shortName, shortName + " Name", "detail", nowPresent };
+	const auto flip = [](std::string shortName, bool nowPresent, bool nowFailed = false) {
+		return CacheMismatch{ CacheMismatch::Kind::EnabledFlip, shortName, shortName + " Name", "detail", nowPresent, nowFailed };
 	};
 	const auto versionBump = [](std::string shortName) {
 		return CacheMismatch{ CacheMismatch::Kind::FeatureVersion, shortName, shortName + " Name", "detail", true };
@@ -366,49 +436,41 @@ TEST_CASE("OnlyEnabledFlips / HasMissingFeature / FindMatchBlockingFeature: deci
 		CHECK(OnlyEnabledFlips({}));  // vacuously true, matches std::ranges::all_of on empty
 	}
 
-	SECTION("HasMissingFeature: only 'cache had it, now off, and not deliberately disabled' counts as missing")
+	SECTION("HasFailedFeature: only 'cache had it, now off, and genuinely failed to load' counts")
 	{
-		const auto disabled = [](std::set<std::string> names) {
-			return [names](const std::string& n) { return names.count(n) != 0; };
-		};
-
-		// Cache had A, A is gone now, and nothing marked it deliberately disabled: broken install.
-		CHECK(HasMissingFeature({ flip("A", false) }, disabled({})));
-		// Same mismatch, but the user did deliberately disable it at boot: not missing.
-		CHECK_FALSE(HasMissingFeature({ flip("A", false) }, disabled({ "A" })));
-		// "Added" direction (nowPresent=true) never counts, regardless of the predicate.
-		CHECK_FALSE(HasMissingFeature({ flip("A", true) }, disabled({})));
+		// Cache had A, A is gone now, and it genuinely failed to load: broken install.
+		CHECK(HasFailedFeature({ flip("A", false, true) }));
+		// Same mismatch, but not a load failure (deliberate/default disable): not missing.
+		CHECK_FALSE(HasFailedFeature({ flip("A", false, false) }));
+		// "Added" direction (nowPresent=true) never counts, regardless of nowFailed.
+		CHECK_FALSE(HasFailedFeature({ flip("A", true, true) }));
 		// A FeatureVersion mismatch is never treated as a missing-feature case.
-		CHECK_FALSE(HasMissingFeature({ versionBump("A") }, disabled({})));
+		CHECK_FALSE(HasFailedFeature({ versionBump("A") }));
 	}
 
 	SECTION("FindMatchBlockingFeature: only a removed-and-failed-to-load feature blocks Match")
 	{
-		const auto failed = [](std::set<std::string> names) {
-			return [names](const std::string& n) { return names.count(n) != 0; };
-		};
-
 		const std::vector<CacheMismatch> none;
-		CHECK(FindMatchBlockingFeature(none, failed({})) == nullptr);
+		CHECK(FindMatchBlockingFeature(none) == nullptr);
 
 		// Added direction never blocks, even if that feature also happens to have failed to load.
-		const std::vector<CacheMismatch> addedOnly{ flip("A", true) };
-		CHECK(FindMatchBlockingFeature(addedOnly, failed({ "A" })) == nullptr);
+		const std::vector<CacheMismatch> addedOnly{ flip("A", true, true) };
+		CHECK(FindMatchBlockingFeature(addedOnly) == nullptr);
 
 		// Removed direction, but the feature just isn't installed (no failedLoadedMessage): no block.
-		const std::vector<CacheMismatch> removedNotFailed{ flip("A", false) };
-		CHECK(FindMatchBlockingFeature(removedNotFailed, failed({})) == nullptr);
+		const std::vector<CacheMismatch> removedNotFailed{ flip("A", false, false) };
+		CHECK(FindMatchBlockingFeature(removedNotFailed) == nullptr);
 
 		// Removed direction and the feature genuinely failed to load: blocks, returns that mismatch.
 		// The mismatch vector must outlive the returned pointer, so it's a named local, not a temporary.
-		const std::vector<CacheMismatch> removedAndFailed{ flip("A", false) };
-		const auto* blocking = FindMatchBlockingFeature(removedAndFailed, failed({ "A" }));
+		const std::vector<CacheMismatch> removedAndFailed{ flip("A", false, true) };
+		const auto* blocking = FindMatchBlockingFeature(removedAndFailed);
 		REQUIRE(blocking != nullptr);
 		CHECK(blocking->shortName == "A");
 
 		// First matching candidate wins when more than one qualifies.
-		const std::vector<CacheMismatch> twoCandidates{ flip("A", false), flip("B", false) };
-		const auto* firstOfTwo = FindMatchBlockingFeature(twoCandidates, failed({ "A", "B" }));
+		const std::vector<CacheMismatch> twoCandidates{ flip("A", false, true), flip("B", false, true) };
+		const auto* firstOfTwo = FindMatchBlockingFeature(twoCandidates);
 		REQUIRE(firstOfTwo != nullptr);
 		CHECK(firstOfTwo->shortName == "A");
 	}
@@ -416,49 +478,46 @@ TEST_CASE("OnlyEnabledFlips / HasMissingFeature / FindMatchBlockingFeature: deci
 
 TEST_CASE("AreCacheMismatchesRestorable / TrySetRestoreCandidate: rollback restore eligibility", "[cacheinvalidation]")
 {
-	const auto flip = [](std::string shortName, bool nowPresent) {
-		return CacheMismatch{ CacheMismatch::Kind::EnabledFlip, shortName, shortName + " Name", "detail", nowPresent };
+	const auto flip = [](std::string shortName, bool nowPresent, bool nowFailed = false) {
+		return CacheMismatch{ CacheMismatch::Kind::EnabledFlip, shortName, shortName + " Name", "detail", nowPresent, nowFailed };
 	};
 	const auto versionBump = [](std::string shortName) {
 		return CacheMismatch{ CacheMismatch::Kind::FeatureVersion, shortName, shortName + " Name", "detail", true };
 	};
-	const auto disabled = [](std::set<std::string> names) {
-		return [names](const std::string& n) { return names.count(n) != 0; };
-	};
 
 	SECTION("AreCacheMismatchesRestorable: empty, mixed-kind, and broken-install all disqualify")
 	{
-		CHECK_FALSE(AreCacheMismatchesRestorable({}, disabled({})));
+		CHECK_FALSE(AreCacheMismatchesRestorable({}));
 
-		const std::vector<CacheMismatch> pureFlipsDisabled{ flip("A", false) };
-		CHECK(AreCacheMismatchesRestorable(pureFlipsDisabled, disabled({ "A" })));
+		const std::vector<CacheMismatch> pureFlipsNotFailed{ flip("A", false, false) };
+		CHECK(AreCacheMismatchesRestorable(pureFlipsNotFailed));
 
-		// Cache had it, now missing, and nothing marked it deliberately disabled: broken install.
-		const std::vector<CacheMismatch> pureFlipsNotDisabled{ flip("A", false) };
-		CHECK_FALSE(AreCacheMismatchesRestorable(pureFlipsNotDisabled, disabled({})));
+		// Cache had it, now missing, and it genuinely failed to load: broken install.
+		const std::vector<CacheMismatch> pureFlipsFailed{ flip("A", false, true) };
+		CHECK_FALSE(AreCacheMismatchesRestorable(pureFlipsFailed));
 
-		const std::vector<CacheMismatch> mixedKinds{ flip("A", false), versionBump("B") };
-		CHECK_FALSE(AreCacheMismatchesRestorable(mixedKinds, disabled({ "A" })));
+		const std::vector<CacheMismatch> mixedKinds{ flip("A", false, false), versionBump("B") };
+		CHECK_FALSE(AreCacheMismatchesRestorable(mixedKinds));
 	}
 
 	SECTION("TrySetRestoreCandidate: on-disk check gates it even when mismatches are otherwise restorable")
 	{
-		const std::vector<CacheMismatch> restorable{ flip("A", false) };
+		const std::vector<CacheMismatch> restorable{ flip("A", false, false) };
 		bool available = false;
 		std::vector<CacheMismatch> recorded;
 
-		CHECK_FALSE(TrySetRestoreCandidate(restorable, /*previousCacheOnDisk=*/false, disabled({ "A" }), available, recorded));
+		CHECK_FALSE(TrySetRestoreCandidate(restorable, /*previousCacheOnDisk=*/false, available, recorded));
 		CHECK_FALSE(available);
 		CHECK(recorded.empty());
 	}
 
 	SECTION("TrySetRestoreCandidate: succeeds and records the mismatches when both conditions hold")
 	{
-		const std::vector<CacheMismatch> restorable{ flip("A", false), flip("B", true) };
+		const std::vector<CacheMismatch> restorable{ flip("A", false, false), flip("B", true) };
 		bool available = false;
 		std::vector<CacheMismatch> recorded;
 
-		CHECK(TrySetRestoreCandidate(restorable, /*previousCacheOnDisk=*/true, disabled({ "A" }), available, recorded));
+		CHECK(TrySetRestoreCandidate(restorable, /*previousCacheOnDisk=*/true, available, recorded));
 		CHECK(available);
 		REQUIRE(recorded.size() == 2);
 		CHECK(recorded[0].shortName == "A");
@@ -467,11 +526,11 @@ TEST_CASE("AreCacheMismatchesRestorable / TrySetRestoreCandidate: rollback resto
 
 	SECTION("TrySetRestoreCandidate: not-restorable mismatches fail even with the cache on disk")
 	{
-		const std::vector<CacheMismatch> brokenInstall{ flip("A", false) };
+		const std::vector<CacheMismatch> brokenInstall{ flip("A", false, true) };
 		bool available = false;
 		std::vector<CacheMismatch> recorded;
 
-		CHECK_FALSE(TrySetRestoreCandidate(brokenInstall, /*previousCacheOnDisk=*/true, disabled({}), available, recorded));
+		CHECK_FALSE(TrySetRestoreCandidate(brokenInstall, /*previousCacheOnDisk=*/true, available, recorded));
 		CHECK_FALSE(available);
 		CHECK(recorded.empty());
 	}
@@ -486,7 +545,7 @@ TEST_CASE("AreCacheMismatchesRestorable / TrySetRestoreCandidate: rollback resto
 		std::vector<CacheMismatch> recorded{ flip("Stale", false) };
 
 		const std::vector<CacheMismatch> notRestorable{ versionBump("A") };
-		CHECK_FALSE(TrySetRestoreCandidate(notRestorable, /*previousCacheOnDisk=*/true, disabled({}), available, recorded));
+		CHECK_FALSE(TrySetRestoreCandidate(notRestorable, /*previousCacheOnDisk=*/true, available, recorded));
 		// Untouched on failure: the function returns before writing either out-param.
 		CHECK(available);
 		REQUIRE(recorded.size() == 1);

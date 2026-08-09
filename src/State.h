@@ -89,6 +89,8 @@ public:
 	/** @brief One-time post-D3D setup: creates resources, probes GPU caps, initializes features. */
 	void Setup();
 
+	bool HandlePostProcessing(RE::RENDER_TARGET a_input, RE::RENDER_TARGET a_output);
+
 	/**
 	 * @brief Loads settings from disk (default, then user, then overrides).
 	 * @param a_configMode Which config file to load.
@@ -347,6 +349,7 @@ public:
 	bool isMainMenuOpen = false;
 	bool isLoadingMenuOpen = false;
 	bool isMapMenuOpen = false;
+	bool isStatsMenuOpen = false;
 	/** @brief Returns true if the cached main-menu or loading-menu state is open. */
 	bool IsMainOrLoadingMenuOpen() const { return isMainMenuOpen || isLoadingMenuOpen; }
 	/** @brief Returns true if main/loading menu is open, with a live fallback query via the UI pointer. */
@@ -384,7 +387,6 @@ public:
 	struct alignas(16) SharedDataCB
 	{
 		float4 WaterData[25];
-		DirectX::XMFLOAT3X4 DirectionalAmbient;
 		float4 DirLightDirection;
 		float4 DirLightColor;
 		float4 SunDirection;

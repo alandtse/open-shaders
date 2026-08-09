@@ -1,5 +1,7 @@
 #pragma once
 
+#include "../../Utils/MathUtils.h"
+
 #include <algorithm>
 #include <cstdint>
 
@@ -7,6 +9,50 @@
 // without the game/RE runtime.
 namespace ShadowCasterManager
 {
+	using Util::HashCombine;
+	using Util::HashCombineFloat;
+	using Util::QuantizeFloat;
+
+	/// Buckets a stall length for ShadowScheduler's stallHistogram: 0, 1-2,
+	/// 3-7, 8-15, 16-44, 45+ (top boundary matches kSleepRedrawIntervalFrames).
+	inline uint32_t StallBucket(uint32_t v) noexcept
+	{
+		if (v == 0)
+			return 0;
+		if (v <= 2)
+			return 1;
+		if (v <= 7)
+			return 2;
+		if (v <= 15)
+			return 3;
+		if (v <= 44)
+			return 4;
+		return 5;
+	}
+
+	/// Buckets a streak length for ShadowScheduler's demand-streak histograms:
+	/// 0, 1-2, 3-7, 8-15, 16-31, 32-63, 64-127, 128-255, 256+.
+	inline uint32_t DemandStreakBucket(uint32_t v) noexcept
+	{
+		if (v == 0)
+			return 0;
+		if (v <= 2)
+			return 1;
+		if (v <= 7)
+			return 2;
+		if (v <= 15)
+			return 3;
+		if (v <= 31)
+			return 4;
+		if (v <= 63)
+			return 5;
+		if (v <= 127)
+			return 6;
+		if (v <= 255)
+			return 7;
+		return 8;
+	}
+
 	// Rejects heap garbage an accumulator slot can hold between our prepass and
 	// the engine's read: below the low 64 KiB null-guard region (near-null like
 	// 0x8 would AV), outside the x64 canonical range, or not 8-byte aligned
@@ -56,21 +102,18 @@ namespace ShadowCasterManager
 		return (TileScaleTarget(sizeProxy * kDemoteHeadroom, baseTileTexels) < currentScale) ? target : currentScale;
 	}
 
-	// 90th-percentile of the most-recent min(count, Window) frame-time samples
-	// in `ring`. Percentile is order-independent, so the first `n` entries are
-	// sampled directly (ring head/wraparound doesn't matter). Returns the 60fps
-	// fallback (16.67 ms) before any samples exist. A non-positive count (no
-	// samples, or a corrupt/negative value) takes the fallback -- a negative n
-	// would otherwise drive std::copy / std::nth_element out of bounds.
+	// Percentile (default 90th) of the last min(count, Window) samples in
+	// `ring`. Returns the 60fps fallback (16.67 ms) when count <= 0, which
+	// also guards std::copy/std::nth_element against a negative n.
 	template <int Window>
-	inline float FrameTimePercentile90(const float (&ring)[Window], int count)
+	inline float FrameTimePercentile(const float (&ring)[Window], int count, float percentile = 0.9f)
 	{
 		if (count <= 0)
 			return 16.67f;
 		const int n = std::min(count, Window);
 		float tmp[Window];
 		std::copy(ring, ring + n, tmp);
-		const int idx = static_cast<int>(n * 0.9f);
+		const int idx = std::clamp(static_cast<int>(n * percentile), 0, n - 1);
 		std::nth_element(tmp, tmp + idx, tmp + n);
 		return tmp[idx];
 	}

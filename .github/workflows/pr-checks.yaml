@@ -329,12 +329,10 @@ jobs:
             - name: Run feature version audit (PR check)
               id: audit
               run: |
-                  set +e
-                  python tools/feature_version_audit.py --pr-check --ci --base ${{ github.event.pull_request.base.sha }} --head refs/pr_head > pr-feature-audit.md
-                  EXIT_CODE=$?
-                  set -e
+                  # Informative only -- release-semantic.yaml's post-bump
+                  # step is the actual blocking gate.
+                  python tools/feature_version_audit.py --pr-check --base ${{ github.event.pull_request.base.sha }} --head refs/pr_head > pr-feature-audit.md
                   cat pr-feature-audit.md
-                  exit $EXIT_CODE
 
             - name: Upload feature audit markdown (PR)
               if: always()

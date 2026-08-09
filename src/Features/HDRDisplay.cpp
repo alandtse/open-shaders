@@ -4,6 +4,9 @@
 #include "PCH.h"
 
 #include "Buffer.h"
+#if defined(ENABLE_EFFECTS11)
+#	include "Effects11.h"
+#endif
 #include "Globals.h"
 #include "I18n/I18n.h"
 #include "LinearLighting.h"
@@ -1638,6 +1641,11 @@ HDRDisplay::HDRDataCB HDRDisplay::BuildHDRData() const
 	// TweenMenu = pause UI. ScaleUIBrightnessForFG skips while GameIsPaused(), so HDROutputCS applies the same mid-alpha boost when compositing gamma UI.
 	data.fgTweenMenuMidAlphaBoost = (ui && ui->IsMenuOpen(RE::TweenMenu::MENU_NAME)) ? 1.f : 0.f;
 	data.previewSDR = 0.f;
+#if defined(ENABLE_EFFECTS11)
+	data.applyAutoHDR = globals::features::effects11.ReplacedTonemapperThisFrame() ? 1.f : 0.f;
+#else
+	data.applyAutoHDR = 0.f;
+#endif
 	return data;
 }
 

@@ -288,25 +288,11 @@ namespace ShadowCasterManager
 		static inline REL::Relocation<decltype(thunk)> func;
 	};
 
-	// StartGroupingAlphas bump-allocates a global GeometryGroup array with no
-	// capacity check; past the ceiling it reads adjacent .rdata as a bogus
-	// BSBatchRenderer* and AVs in ClearAllRenderPasses. Returning null matches
-	// the engine's own no-camera result, so callers already handle it.
+	// BSBatchRenderer::StartGroupingAlphas bump-allocates a global array with no
+	// capacity check; an extended shadow pool's demand can exceed it, AV'ing on
+	// adjacent .rdata read as bogus `this`. Return null: callers already handle it.
 	static std::uint32_t* s_alphaGroupCount = nullptr;
 	static std::uint32_t s_alphaGroupLimit = 0;
-
-	// Array element counts (binary literals; VR was built with double the slots).
-	static constexpr std::uint32_t kAlphaGeometryGroupCapacityFlat = 512;
-	static constexpr std::uint32_t kAlphaGeometryGroupCapacityVR = 1024;
-
-	// Must exceed the max threads concurrently inside the guarded function: the
-	// engine claims entries via LOCK XADD, so every worker already past the
-	// guard's read can still claim one before it increments.
-	static constexpr std::uint32_t kAlphaGeometryGroupReserve = 64;
-
-	// High-water mark and refused-allocation count, for diagnostics only.
-	static std::atomic<std::uint32_t> s_alphaGroupPeak{ 0 };
-	static std::atomic<std::uint64_t> s_alphaGroupDrops{ 0 };
 
 	struct Hook_StartGroupingAlphas
 	{
@@ -315,7 +301,7 @@ namespace ShadowCasterManager
 		{
 			if (s_alphaGroupCount && a_camera) {
 				const std::uint32_t live = *s_alphaGroupCount;
-				// CAS so a concurrent worker cannot lose a higher peak.
+				// High-water mark; CAS so a concurrent worker cannot lose a higher peak.
 				std::uint32_t seen = s_alphaGroupPeak.load(std::memory_order_relaxed);
 				while (live > seen && !s_alphaGroupPeak.compare_exchange_weak(
 										  seen, live, std::memory_order_relaxed)) {
@@ -475,6 +461,20 @@ namespace ShadowCasterManager
 	{
 		static REL::RelocationID uid(528093, 415038);
 		return reinterpret_cast<uint32_t*>(uid.address());
+	}
+
+	// Same test EnableLight uses to admit a light to firstPersonShadowMask:
+	// does the camera sit inside the light's sphere of influence. Shared so
+	// the redraw path (EnableLight), the demand-skip reinsert path, and the
+	// extended-pool surface admission below can't drift out of sync.
+	bool LightContainsCamera(const RE::NiLight* a_niLight, const RE::NiCamera* a_camera)
+	{
+		if (!a_niLight || !a_camera)
+			return false;
+		auto delta = a_niLight->world.translate - a_camera->world.translate;
+		float dist = std::sqrt(delta.x * delta.x + delta.y * delta.y + delta.z * delta.z);
+		float radius = a_niLight->GetLightRuntimeData().radius.x;
+		return dist < radius + a_camera->GetNearPlane();
 	}
 	// Written back to the game at the end of scheduling.
 	uint32_t* GetFrameLightCount()
@@ -808,7 +808,13 @@ namespace ShadowCasterManager
 				if (alreadyAdded)
 					continue;
 
-				if (GameIsLightAffectingSurface(shaderProp, reinterpret_cast<RE::BSLight*>(e.Light))) {
+				// GameIsLightAffectingSurface has no distance test, so use the
+				// vanilla mask's own camera-inside-light-radius test instead --
+				// lets lights past kShadowMaskBits (32) still reach first person.
+				bool admits = firstPerson ?
+				                  LightContainsCamera(e.Light->light.get(), GetWorldCamera()) :
+				                  GameIsLightAffectingSurface(shaderProp, reinterpret_cast<RE::BSLight*>(e.Light));
+				if (admits) {
 					lights[added++] = reinterpret_cast<RE::BSLight*>(e.Light);
 					(*shadowCount)++;
 				}
@@ -933,6 +939,10 @@ namespace ShadowCasterManager
 		{
 			std::unique_lock lock(s_portalGraphMutex);
 			func(a_ssn, a_graph);
+			// Cell-grid shift: freed caster geometry can have its address recycled
+			// by the new cell, aliasing s_casterMobility's stale identity onto it.
+			// Deferred to the render thread (both are render-thread-only).
+			s_pendingCellReset.store(true, std::memory_order_release);
 		}
 		static inline REL::Relocation<decltype(thunk)> func;
 	};

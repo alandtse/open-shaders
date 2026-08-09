@@ -64,11 +64,8 @@ groupshared float2 g_shadowHeight[NTHREADS];
 
 uint GetWrappedCoord(int coord, uint dimension)
 {
-	if (coord < 0)
-		coord += int(dimension);
-	else if (coord >= int(dimension))
-		coord -= int(dimension);
-	return uint(coord);
+	int wrappedCoord = coord % int(dimension);
+	return uint(wrappedCoord < 0 ? wrappedCoord + int(dimension) : wrappedCoord);
 }
 
 [numthreads(NTHREADS, 1, 1)] void main(const uint gtid : SV_GroupThreadID, const uint gid : SV_GroupID) {

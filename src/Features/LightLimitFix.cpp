@@ -1,4 +1,7 @@
 #include "LightLimitFix.h"
+#if defined(ENABLE_EFFECTS11)
+#	include "Features/Effects11.h"
+#endif
 #include "Features/InverseSquareLighting/Common.h"
 #include "Features/LightLimitFix/SettingsSanitize.h"
 #include "Features/LightLimitFix/ShadowCasterMath.h"
@@ -10,6 +13,7 @@
 #include "Menu/PerformanceRenderer.h"
 #include "Profiler.h"
 #include "Utils/UI.h"
+#include <bit>
 
 #include "Deferred.h"
 #include "Menu/ThemeManager.h"
@@ -76,6 +80,8 @@ namespace
 	{
 		a_data.NumStrictLights = 0;
 		a_data.ShadowBitMask = 0;
+		a_data.FirstPerson = 0;
+		a_data.WorldEyePosition = {};
 		if (a_resetRoomIndex)
 			a_data.RoomIndex = -1;
 	}
@@ -83,6 +89,24 @@ namespace
 	void SetPointLightTypeFlags(LightLimitFix::LightData& a_light, RE::BSLight* a_bsLight)
 	{
 		PointLightFlags::SetPointLightTypeFlags(a_light.lightFlags, a_bsLight);
+	}
+
+	// Tints a hovered/highlighted debug-table row's light magenta in-world so
+	// the user can see which light a row corresponds to in 3D.
+	void ApplyLightDebugOverrides(LightLimitFix::LightData& a_light, const void* a_lightPtr)
+	{
+		const auto key = reinterpret_cast<uintptr_t>(a_lightPtr);
+		auto hoverKey = ShadowCasterManager::GetHoveredLight();
+		if (hoverKey != 0 && key == hoverKey) {
+			float t = 0.5f + 0.5f * std::sin(static_cast<float>(ImGui::GetTime()) * 6.2831853f);
+			a_light.color = { 1.0f, 0.0f, 1.0f };  // magenta
+			a_light.fade = 4.0f + t * 4.0f;        // pulsed intensity
+		} else if (ShadowCasterManager::IsHighlighted(key)) {
+			// Steady magenta on every light in the selected highlight group
+			// (populated by the table's group-button hover), distinct from
+			// the single pulsing hover light.
+			a_light.color = { 1.0f, 0.0f, 1.0f };
+		}
 	}
 }
 
@@ -210,7 +234,7 @@ void LightLimitFix::DrawSettings()
 				"Pop out an always-visible overlay window with the shadow caster table.\n"
 				"Without this, the overlay only appears when a light is suppressed\n"
 				"or a visualisation mode is active. Enable to access the table's\n"
-				"debug controls (cycle button, solo, Shift+hover pulse) any time."));
+				"debug controls (cycle button, solo, hover pulse) any time."));
 	}
 
 	ShadowCasterManager::DrawShadowSummary(lightCount, MAX_LIGHTS, shadowUnshadowedLightCount);
@@ -402,6 +426,14 @@ void LightLimitFix::DrawSettings()
 	///////////////////////////////
 	ImGui::SeparatorText(T("feature.light_limit_fix.debug", "Debug"));
 
+	ImGui::Checkbox(T("feature.light_limit_fix.shadow_demand_instrumentation", "Shadow Demand Instrumentation"), &ShadowDemandInstrumentation);
+	if (auto _tt = Util::HoverTooltipWrapper()) {
+		ImGui::Text("%s", T("feature.light_limit_fix.shadow_demand_instrumentation_tooltip",
+							  "Diagnostic only: logs a per-slot shadow-demand distribution every ~300 frames.\n"
+							  "The measurement itself always runs while \"Prioritize Redraws by Screen\n"
+							  "Demand\" (Performance settings) is on, with or without this log.\n"));
+	}
+
 	if (ImGui::TreeNode(T("feature.light_limit_fix.light_limit_vis", "Light Limit Visualization"))) {
 		ImGui::Checkbox(T("feature.light_limit_fix.enable_lights_vis", "Enable Lights Visualisation"), &EnableLightsVisualisation);
 		if (auto _tt = Util::HoverTooltipWrapper()) {
@@ -501,9 +533,13 @@ void LightLimitFix::SetupResources()
 			clusterDefines = { { "VR", "" } };
 		clusterBuildingCS = (ID3D11ComputeShader*)Util::CompileShader(L"Data\\Shaders\\LightLimitFix\\ClusterBuildingCS.hlsl", clusterDefines, "cs_5_0");
 		clusterCullingCS = (ID3D11ComputeShader*)Util::CompileShader(L"Data\\Shaders\\LightLimitFix\\ClusterCullingCS.hlsl", clusterDefines, "cs_5_0");
+		shadowDemandCS = (ID3D11ComputeShader*)Util::CompileShader(L"Data\\Shaders\\LightLimitFix\\ShadowDemandCS.hlsl", clusterDefines, "cs_5_0");
+		shadowDepthPyramidCS = (ID3D11ComputeShader*)Util::CompileShader(L"Data\\Shaders\\LightLimitFix\\ShadowDepthPyramidCS.hlsl", clusterDefines, "cs_5_0");
 
 		lightBuildingCB = new ConstantBuffer(ConstantBufferDesc<LightBuildingCB>());
 		lightCullingCB = new ConstantBuffer(ConstantBufferDesc<LightCullingCB>());
+		shadowDemandCB = new ConstantBuffer(ConstantBufferDesc<ShadowDemandCB>(), "LLF::ShadowDemandCB");
+		shadowDepthPyramidCB = new ConstantBuffer(ConstantBufferDesc<ShadowDepthPyramidCB>(), "LLF::ShadowDepthPyramidCB");
 	}
 
 	{
@@ -560,6 +596,59 @@ void LightLimitFix::SetupResources()
 		lightGrid->CreateSRV(srvDesc);
 		uavDesc.Buffer.NumElements = numElements;
 		lightGrid->CreateUAV(uavDesc);
+
+		numElements = clusterSize[0] * clusterSize[1] * (globals::game::isVR ? 2u : 1u);
+		sbDesc.StructureByteStride = sizeof(float) * 2;
+		sbDesc.ByteWidth = sbDesc.StructureByteStride * numElements;
+		tileDepthRange = eastl::make_unique<Buffer>(sbDesc, nullptr, "LLF::TileDepthRange");
+		srvDesc.Buffer.NumElements = numElements;
+		tileDepthRange->CreateSRV(srvDesc);
+		uavDesc.Buffer.NumElements = numElements;
+		tileDepthRange->CreateUAV(uavDesc);
+
+		numElements = MAX_SHADOW_DEMAND_SLOTS;
+		sbDesc.StructureByteStride = sizeof(uint32_t);
+		sbDesc.ByteWidth = sizeof(uint32_t) * numElements;
+		shadowDemand = eastl::make_unique<Buffer>(sbDesc, nullptr, "LLF::ShadowDemand");
+		uavDesc.Buffer.NumElements = numElements;
+		shadowDemand->CreateUAV(uavDesc);
+
+		numElements = 1;
+		sbDesc.StructureByteStride = sizeof(uint32_t);
+		sbDesc.ByteWidth = sizeof(uint32_t) * numElements;
+		shadowDemandOverflow = eastl::make_unique<Buffer>(sbDesc, nullptr, "LLF::ShadowDemandOverflow");
+		uavDesc.Buffer.NumElements = numElements;
+		shadowDemandOverflow->CreateUAV(uavDesc);
+
+		numElements = kShadowDemandMaxElements;
+		sbDesc.StructureByteStride = sizeof(uint32_t);
+		sbDesc.ByteWidth = sizeof(uint32_t) * numElements;
+		shadowDemandMax = eastl::make_unique<Buffer>(sbDesc, nullptr, "LLF::ShadowDemandMax");
+		uavDesc.Buffer.NumElements = numElements;
+		shadowDemandMax->CreateUAV(uavDesc);
+
+		D3D11_BUFFER_DESC stagingDesc{};
+		stagingDesc.Usage = D3D11_USAGE_STAGING;
+		stagingDesc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+		stagingDesc.BindFlags = 0;
+		// No SHADER_RESOURCE/UNORDERED_ACCESS bind flag here (staging has none),
+		// so MISC_BUFFER_STRUCTURED would make CreateBuffer reject the desc.
+		stagingDesc.MiscFlags = 0;
+		stagingDesc.StructureByteStride = 0;
+		stagingDesc.ByteWidth = sizeof(uint32_t) * MAX_SHADOW_DEMAND_SLOTS;
+		D3D11_BUFFER_DESC maxStagingDesc = stagingDesc;
+		maxStagingDesc.ByteWidth = sizeof(uint32_t) * kShadowDemandMaxElements;
+		for (uint32_t i = 0; i < kShadowDemandRingSize; i++) {
+			shadowDemandStaging[i] = eastl::make_unique<Buffer>(stagingDesc, nullptr,
+				fmt::format("LLF::ShadowDemandStaging{}", i).c_str());
+			shadowDemandMaxStaging[i] = eastl::make_unique<Buffer>(maxStagingDesc, nullptr,
+				fmt::format("LLF::ShadowDemandMaxStaging{}", i).c_str());
+			shadowDemandRingState[i] = ShadowDemandRingState::Idle;
+			shadowDemandRingWriteFrame[i] = 0;
+		}
+		shadowDemandEMA.fill(0.0f);
+		shadowDemandEMAInitialized = false;
+		shadowDemandMaxLatest.fill(0);
 	}
 
 	{
@@ -616,8 +705,17 @@ void LightLimitFix::OnSceneTransitionReset(bool opening)
 	// LoadingMenu open: drop the shadow-caster session caches before the engine tears down the old
 	// cell. Dispatched on the render thread (Feature::DrainSceneTransitions), so it serializes with
 	// the settings-menu table iteration that reads the same caches instead of racing it.
-	if (opening)
+	if (opening) {
 		ShadowCasterManager::ResetSession();
+		// Slots are reassigned to different lights across a cell transition;
+		// an old occupant's decaying EMA must not read as a new light's demand.
+		shadowDemandEMA.fill(0.0f);
+		shadowDemandEMAInitialized = false;
+		shadowDemandMaxLatest.fill(0);
+		shadowDemandClusterSaturated = false;
+		for (uint32_t i = 0; i < kShadowDemandRingSize; i++)
+			shadowDemandRingState[i] = ShadowDemandRingState::Idle;
+	}
 }
 
 void LightLimitFix::LoadSettings(json& o_json)
@@ -660,6 +758,22 @@ json LightLimitFix::GetDiagnostics()
 		{ "lightCount", clusteredLightCount.load(std::memory_order_relaxed) },
 		{ "maxLights", MAX_LIGHTS },
 	};
+}
+
+json LightLimitFix::GetRuntimeFlags()
+{
+	return json{
+		{ "ShadowDemandInstrumentation", ShadowDemandInstrumentation },
+	};
+}
+
+bool LightLimitFix::SetRuntimeFlag(std::string_view name, bool value)
+{
+	if (name == "ShadowDemandInstrumentation") {
+		ShadowDemandInstrumentation = value;
+		return true;
+	}
+	return false;
 }
 
 RE::NiNode* GetParentRoomNode(RE::NiAVObject* object)
@@ -720,15 +834,27 @@ void LightLimitFix::BSLightingShader_SetupGeometry_GeometrySetupConstantPointLig
 
 	bool inWorld = accumulator->GetRuntimeData().activeShadowSceneNode == smState->shadowSceneNode[0];
 	const bool isInterior = Util::IsInterior();
+	// The first-person pass rebases b12's posAdjust, so its draws can't index
+	// the world-camera cluster grid. BSShaderAccumulator::firstPerson is never
+	// written on SE, so detect the camera rebase directly; VR keeps the grid.
+	const bool firstPerson = inWorld && !globals::game::isVR &&
+	                         (Util::GetEyePosition(0) - eyePositionCached[0]).SqrLength() > 1.0f;
 
 	constexpr uint32_t kStrictLightCapacity = 15;
 	const uint32_t availableSceneLights = a_pass->numLights > 0 ? (a_pass->numLights - 1) : 0;
-	const uint32_t requestedStrictLights = inWorld ? 0u : availableSceneLights;
+	const uint32_t requestedStrictLights = (inWorld && !firstPerson) ? 0u : availableSceneLights;
 	const uint32_t strictLightCount = std::min(requestedStrictLights, kStrictLightCapacity);
 	const uint32_t strictShadowLightCount = std::min(static_cast<uint32_t>(a_pass->numShadowLights), availableSceneLights);
 	RefreshJsonPlacedLightCacheFrame();
 
 	ClearStrictLightData(strictLightDataTemp, false);
+	strictLightDataTemp.FirstPerson = firstPerson ? 1u : 0u;
+	if (firstPerson) {
+		// Shadow-space projections need the true world eye; b12's posAdjust is
+		// viewmodel-local during this pass and cannot reconstruct it.
+		strictLightDataTemp.WorldEyePosition =
+			float4(eyePositionCached[0].x, eyePositionCached[0].y, eyePositionCached[0].z, 0.0f);
+	}
 
 	uint32_t outIndex = 0;
 #if defined(_MSC_VER)
@@ -741,6 +867,12 @@ void LightLimitFix::BSLightingShader_SetupGeometry_GeometrySetupConstantPointLig
 				continue;
 			auto niLight = bsLight->light.get();
 			if (!niLight)
+				continue;
+			// IsSuppressed includes solo (every key except the soloed one is
+			// implicitly suppressed). The cluster path already filters through
+			// this; strict lights need the same so solo/hover debug tooling is
+			// consistent between world and first-person surfaces.
+			if (ShadowCasterManager::IsSuppressed(reinterpret_cast<uintptr_t>(bsLight)))
 				continue;
 
 			auto& runtimeData = niLight->GetLightRuntimeData();
@@ -761,22 +893,20 @@ void LightLimitFix::BSLightingShader_SetupGeometry_GeometrySetupConstantPointLig
 			const bool isPortalStrict = !IsGlobalLight(bsLight);
 			ApplyJsonPlacedLightIntensityScale(light, bsLight, niLight, isPortalStrict, isInterior);
 
+#if defined(ENABLE_EFFECTS11)
+			auto& effects11 = globals::features::effects11;
+			if (inWorld && effects11.enableEffect)
+				effects11.OverridePointLightColor(light.color);
+#endif
+
 			SetLightPosition(light, niLight->world.translate, inWorld);
+
+			ApplyLightDebugOverrides(light, bsLight);
 
 			if (i < strictShadowLightCount && bsLight->IsShadowLight()) {
 				auto* shadowLight = static_cast<RE::BSShadowLight*>(bsLight);
-				// Use SCM's stable container-slot index instead of reading the
-				// live `shadowmapDescriptors[0].shadowmapIndex`. The descriptor
-				// field can be corrupted mid-frame by ReturnShadowmaps() (called
-				// via Hook_DisableColorMask) after ScheduleShadowCasters fixed
-				// it but before this strict-light setup runs -- a stale-but-in
-				// -range index would still pass an upper-bound check yet point
-				// strict-light shader sampling at the wrong kSHADOWMAPS slice.
-				// GetShadowSlot reads from the SCM's own pool (s_lights, set in
-				// ScheduleShadowCasters and never touched by ReturnShadowmaps),
-				// so it stays consistent with CopyShadowLightData and
-				// UpdateLights, which also key off it. Returns -1 for the sun
-				// or inactive lights; both cases skip setting the Shadow flag.
+				// Use SCM's stable slot: shadowmapDescriptors[0].shadowmapIndex can be
+				// corrupted mid-frame by ReturnShadowmaps. -1 means sun/inactive, skip.
 				const int32_t slot = ShadowCasterManager::GetShadowSlot(shadowLight);
 				if (slot >= 0 && static_cast<uint32_t>(slot) < ShadowCasterManager::GetInstalledSlotCount()) {
 					light.shadowMapIndex = static_cast<uint32_t>(slot);
@@ -821,11 +951,13 @@ void LightLimitFix::BSLightingShader_SetupGeometry_After(RE::BSRenderPass*)
 	const auto isEmpty = strictLightDataTemp.NumStrictLights == 0;
 	const bool isWorld = accumulator->GetRuntimeData().activeShadowSceneNode == shadowSceneNode;
 	const auto roomIndex = strictLightDataTemp.RoomIndex;
+	const bool isFirstPerson = strictLightDataTemp.FirstPerson != 0;
 
-	if (!isEmpty || (isEmpty && !wasEmpty) || isWorld != wasWorld || previousRoomIndex != roomIndex) {
+	if (!isEmpty || (isEmpty && !wasEmpty) || isWorld != wasWorld || isFirstPerson != wasFirstPerson || previousRoomIndex != roomIndex) {
 		strictLightDataCB->Update(strictLightDataTemp);
 		wasEmpty = isEmpty;
 		wasWorld = isWorld;
+		wasFirstPerson = isFirstPerson;
 		previousRoomIndex = roomIndex;
 	}
 
@@ -907,6 +1039,18 @@ void LightLimitFix::Prepass()
 
 	auto context = globals::d3d::context;
 
+	ShadowCasterManager::ShadowDemandSample demandSample;
+	demandSample.ema = shadowDemandEMA;
+	demandSample.maxLatest = shadowDemandMaxLatest;
+	demandSample.initialized = shadowDemandEMAInitialized;
+	demandSample.clusterSaturated = shadowDemandClusterSaturated;
+	demandSample.instrumentation = ShadowDemandInstrumentation;
+	demandSample.redrawDueGate = settings.ShadowSettings.RedrawDueGateEnabled;
+	demandSample.sampleSerial = shadowDemandSampleSerial;
+	demandSample.lastDrainFrame = shadowDemandLastDrainFrame;
+	demandSample.frameCounter = shadowDemandFrameCounter;
+	demandSample.tileCount = clusterSize[0] * clusterSize[1];
+	ShadowCasterManager::SetShadowDemand(demandSample);
 	ShadowCasterManager::Update(settings.ShadowSettings, globals::game::smState->shadowSceneNode[0], nullptr);
 	UpdateLights();
 
@@ -955,11 +1099,21 @@ void LightLimitFix::ClearShaderCache()
 		clusterCullingCS->Release();
 		clusterCullingCS = nullptr;
 	}
+	if (shadowDemandCS) {
+		shadowDemandCS->Release();
+		shadowDemandCS = nullptr;
+	}
+	if (shadowDepthPyramidCS) {
+		shadowDepthPyramidCS->Release();
+		shadowDepthPyramidCS = nullptr;
+	}
 	std::vector<std::pair<const char*, const char*>> clusterDefines;
 	if (globals::game::isVR)
 		clusterDefines = { { "VR", "" } };
 	clusterBuildingCS = (ID3D11ComputeShader*)Util::CompileShader(L"Data\\Shaders\\LightLimitFix\\ClusterBuildingCS.hlsl", clusterDefines, "cs_5_0");
 	clusterCullingCS = (ID3D11ComputeShader*)Util::CompileShader(L"Data\\Shaders\\LightLimitFix\\ClusterCullingCS.hlsl", clusterDefines, "cs_5_0");
+	shadowDemandCS = (ID3D11ComputeShader*)Util::CompileShader(L"Data\\Shaders\\LightLimitFix\\ShadowDemandCS.hlsl", clusterDefines, "cs_5_0");
+	shadowDepthPyramidCS = (ID3D11ComputeShader*)Util::CompileShader(L"Data\\Shaders\\LightLimitFix\\ShadowDepthPyramidCS.hlsl", clusterDefines, "cs_5_0");
 }
 
 void LightLimitFix::UpdateLights()
@@ -1036,25 +1190,6 @@ void LightLimitFix::UpdateLights()
 			light.roomFlags.SetBit(roomIndex, 1);
 		};
 
-		// Hover-pulse helper: if the table has a hovered row matching this light's
-		// pointer, replace the cluster colour with a magenta pulse so the user can
-		// see which light a row corresponds to in 3D. Pulse cycles ~once per second
-		// using ImGui::GetTime() for a stable visual signal.
-		auto applyDebugOverrides = [](LightData& light, const void* lightPtr) {
-			const auto key = reinterpret_cast<uintptr_t>(lightPtr);
-			auto hoverKey = ShadowCasterManager::GetHoveredLight();
-			if (hoverKey != 0 && key == hoverKey) {
-				float t = 0.5f + 0.5f * std::sin(static_cast<float>(ImGui::GetTime()) * 6.2831853f);
-				light.color = { 1.0f, 0.0f, 1.0f };  // magenta
-				light.fade = 4.0f + t * 4.0f;        // pulsed intensity
-			} else if (ShadowCasterManager::IsHighlighted(key)) {
-				// Steady magenta on every light in the selected highlight group
-				// (populated by the table's group-button hover), distinct from
-				// the single pulsing hover light.
-				light.color = { 1.0f, 0.0f, 1.0f };
-			}
-		};
-
 		auto addLight = [&](const RE::NiPointer<RE::BSLight>& e) {
 			if (auto bsLight = e.get()) {
 				if (auto niLight = bsLight->light.get()) {
@@ -1077,6 +1212,12 @@ void LightLimitFix::UpdateLights()
 							light.fade = runtimeData.fade;
 						}
 
+#if defined(ENABLE_EFFECTS11)
+						auto& effects11 = globals::features::effects11;
+						if (effects11.enableEffect)
+							effects11.OverridePointLightColor(light.color);
+#endif
+
 						SetPointLightTypeFlags(light, bsLight);
 						light.fade *= bsLight->lodDimmer;
 						const bool isPortalStrict = !IsGlobalLight(bsLight);
@@ -1096,7 +1237,7 @@ void LightLimitFix::UpdateLights()
 
 						SetLightPosition(light, niLight->world.translate);
 
-						applyDebugOverrides(light, bsLight);
+						ApplyLightDebugOverrides(light, bsLight);
 
 						if ((light.color.x + light.color.y + light.color.z) * light.fade > 1e-4 && light.radius > 1e-4) {
 							lightsData.push_back(light);
@@ -1149,7 +1290,7 @@ void LightLimitFix::UpdateLights()
 
 					SetLightPosition(light, niLight->world.translate);
 
-					applyDebugOverrides(light, shadowLight);
+					ApplyLightDebugOverrides(light, shadowLight);
 
 					if ((light.color.x + light.color.y + light.color.z) * light.fade > 1e-4 && light.radius > 1e-4) {
 						lightsData.push_back(light);
@@ -1158,32 +1299,16 @@ void LightLimitFix::UpdateLights()
 			}
 		};
 
-		// Single pass over shadowLightsAccum:
-		//   - Builds shadowLightPtrs so activeLights below skips lights already added here.
-		//   - Calls addShadowLight for each logical light.
-		// EnableLight calls both GameEnableLight (→ activeLights) and
-		// GameSetShadowCasterSlot (→ shadowLightsAccum) for redrawn lights, so without
-		// the skip below each redrawn shadow light would be added twice.
-		//
-		// Static reuses the bucket array across frames -- a local set would
-		// destroy + recreate its buckets every frame, defeating the reserve().
-		// Dense layout avoids the per-insert node allocation a std::unordered_set
-		// would incur. Upper bound is the configured kSHADOWMAPS slot count;
-		// shadowLightsAccum is sized to hold at most that many distinct point/spot
-		// lights (sun occupies one logical entry but no kSHADOWMAPS slice, hence
-		// the belt-and-braces +1).
+		// shadowLightPtrs lets activeLights below skip lights added here: EnableLight
+		// calls both GameEnableLight and GameSetShadowCasterSlot for redrawn lights.
 		static ankerl::unordered_dense::set<RE::BSLight*> shadowLightPtrs;
 		shadowLightPtrs.clear();
 		shadowLightPtrs.reserve(ShadowCasterManager::GetInstalledSlotCount() + 1);
 		ShadowCasterManager::ForEachShadowLight(shadowSceneNode->GetRuntimeData().shadowLightsAccum,
 			[&](RE::BSShadowLight* light) {
 				shadowLightPtrs.insert(light);
-				// GetShadowSlot returns the kSHADOWMAPS texture slot:
-				//   -1 : sun (no kSHADOWMAPS slice — sun shadows live in kSHADOWMAPS_ESRAM
-				//        and are sampled via the directional cascade path, not the cluster
-				//        loop). Skip cluster injection entirely. The sun stays in
-				//        shadowLightPtrs so the activeLights loop below doesn't re-add it.
-				//   >=0: kSHADOWMAPS slice index (0..ShadowMapSlots-1) post-reclaim.
+				// -1 = sun, sampled via the cascade path; skip injection but keep it in
+				// shadowLightPtrs so it isn't re-added. >=0 = kSHADOWMAPS slice index.
 				int32_t stableSlot = ShadowCasterManager::GetShadowSlot(light);
 				if (stableSlot < 0)
 					return;
@@ -1191,29 +1316,30 @@ void LightLimitFix::UpdateLights()
 				addShadowLight(light, castsShadow, castsShadow ? static_cast<uint32_t>(stableSlot) : 0u);
 			});
 
+		// Backstop for the same accum-walk silent-drop as
+		// ShadowRenderer.cpp::CopyShadowLightData: a light this walk misses gets zero
+		// illumination this frame, not just no shadow. Re-visit slots it didn't see.
+		{
+			const auto& pool = ShadowCasterManager::GetLights();
+			const int32_t first = pool.PointLightFirst();
+			const int32_t end = std::min(static_cast<int32_t>(ShadowCasterManager::GetInstalledSlotCount()), pool.Size);
+			for (int32_t i = first; i < end; i++) {
+				auto* light = pool.Lights[i].Light;
+				if (!light || shadowLightPtrs.count(light))
+					continue;
+				shadowLightPtrs.insert(light);
+				addShadowLight(light, true, static_cast<uint32_t>(i));
+			}
+		}
+
 		for (auto& e : shadowSceneNode->GetRuntimeData().activeLights) {
 			if (auto bsLight = e.get(); bsLight && shadowLightPtrs.count(bsLight))
 				continue;  // shadow light: already added above with correct Shadow flag
 			addLight(e);
 		}
 
-		// Converted shadow lights (shadow lights demoted to normal-light overflow handling
-		// via SCM's ConvertExcessToNormal) live in the engine's activeShadowLights list
-		// (offset 0x148) — verified via Ghidra against ShadowSceneNode AE 1.6.1170. They
-		// are NOT migrated to activeLights (0x130) when our Hook_IsShadowLight reports
-		// false, because the engine's AddLight just searches the existing wrappers and
-		// activates the matching one in-place rather than moving entries between lists.
-		//
-		// Iterate SCM's s_normalConvert directly rather than scanning activeShadowLights:
-		// only lights actually in s_normalConvert are intended to render as non-shadow.
-		// activeShadowLights also contains BSShadowLights that are merely active shadow
-		// casters this frame (already handled via shadowLightsAccum above), and could in
-		// principle contain disabled-but-not-yet-removed entries. Iterating the convert
-		// list is both tighter (no false positives) and cheaper.
-		//
-		// Without this, ConvertExcessToNormal lights have no entry in the cluster
-		// lightsData[] and never render — the user-visible "converted lights are
-		// invisible" symptom.
+		// Converted shadow lights stay in activeShadowLights, not activeLights, so
+		// iterate s_normalConvert directly or these lights get no cluster entry.
 		ShadowCasterManager::ForEachConvertedLight([&](RE::BSShadowLight* light) {
 			auto* asBs = static_cast<RE::BSLight*>(light);
 			if (shadowLightPtrs.count(asBs))
@@ -1224,21 +1350,7 @@ void LightLimitFix::UpdateLights()
 			// rendering as a shadow caster or demoted to non-shadow.
 			if (ShadowCasterManager::IsSuppressed(reinterpret_cast<uintptr_t>(light)))
 				return;
-			// Engine zeroes lodDimmer when its shadow-distance LOD cull fires
-			// (BSShadowParabolicLight_UpdateCamera test 2, gated on the lodFade
-			// flag -- not a visibility test, see ShadowCasterManager.cpp's
-			// Ghidra-verified comment). Without restoration, addLight()'s
-			// `light.fade *= lodDimmer` would zero the contribution and the
-			// (color*fade > 1e-4) filter would drop the light entirely.
-			//
-			// Restore only when fully zeroed. Any smooth fade value the engine
-			// set (between 0 and 1) is preserved -- those represent the engine's
-			// own gradual distance attenuation, which is correct to honour for
-			// cluster lighting. Overriding unconditionally was producing
-			// distant always-full-bright converted lights that ignored the
-			// engine's intended fade-with-distance.
-			if (light->lodDimmer == 0.0f)
-				light->lodDimmer = 1.0f;
+			ShadowCasterManager::RestoreZeroedLodDimmer(light);
 			addLight(RE::NiPointer<RE::BSLight>(asBs));
 		});
 	}
@@ -1262,13 +1374,6 @@ void LightLimitFix::UpdateLights()
 	}
 
 	UpdateStructure();
-
-	// Single-shot consumption: clear the hover key after the cluster has read it.
-	// The table re-sets it every frame the cursor is hovering a row with Shift
-	// held, so the pulse continues smoothly while hovering. As soon as the menu
-	// closes (or the cursor leaves the table, or Shift is released), the table
-	// stops re-setting the key and the pulse vanishes on the next frame.
-	ShadowCasterManager::SetHoveredLight(0);
 }
 
 void LightLimitFix::UpdateStructure()
@@ -1341,6 +1446,222 @@ void LightLimitFix::UpdateStructure()
 
 	ID3D11UnorderedAccessView* null_uavs[3] = { nullptr };
 	context->CSSetUnorderedAccessViews(0, 3, null_uavs, nullptr);
+
+	UpdateShadowDemand();
+}
+
+static_assert(LightLimitFix::MAX_SHADOW_DEMAND_SLOTS == ShadowCasterManager::kMaxShadowDemandSlots,
+	"LightLimitFix::MAX_SHADOW_DEMAND_SLOTS and ShadowCasterManager::kMaxShadowDemandSlots must match -- "
+	"SetShadowDemand copies between arrays of these sizes.");
+
+void LightLimitFix::UpdateShadowDemand()
+{
+	// No-op if either compute shader failed to build.
+	if (!shadowDemandCS || !shadowDepthPyramidCS)
+		return;
+
+	auto context = globals::d3d::context;
+	auto renderer = globals::game::renderer;
+	shadowDemandFrameCounter++;
+
+	// Only the instrumentation log consumes the lag window; keep it empty while
+	// off, or the first report after enabling it averages an arbitrarily long idle.
+	if (!ShadowDemandInstrumentation) {
+		shadowDemandDrainLagMin = UINT32_MAX;
+		shadowDemandDrainLagMax = 0;
+		shadowDemandDrainLagSum = 0;
+		shadowDemandDrainCount = 0;
+	}
+
+	// Set inside the CS_GPU_PASS block below, but must outlive it: the ring
+	// copy after the block needs the TapCount actually dispatched this frame.
+	uint32_t dispatchedTapCount = 1;
+	auto& depth = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kPOST_ZPREPASS_COPY];
+	{
+		CS_GPU_PASS("LightLimitFix::ShadowDepthPyramid");
+
+		ShadowDepthPyramidCB pyramidCB{};
+		std::copy(clusterSize, clusterSize + 3, pyramidCB.ClusterSize);
+		shadowDepthPyramidCB->Update(pyramidCB);
+
+		ID3D11Buffer* cb = shadowDepthPyramidCB->CB();
+		context->CSSetConstantBuffers(0, 1, &cb);
+
+		ID3D11ShaderResourceView* srvs[] = { depth.depthSRV };
+		context->CSSetShaderResources(0, ARRAYSIZE(srvs), srvs);
+
+		ID3D11UnorderedAccessView* uavs[] = { tileDepthRange->uav.get() };
+		context->CSSetUnorderedAccessViews(0, ARRAYSIZE(uavs), uavs, nullptr);
+
+		context->CSSetShader(shadowDepthPyramidCS, nullptr, 0);
+		context->Dispatch(clusterSize[0], clusterSize[1], globals::game::isVR ? 2 : 1);
+
+		context->CSSetShader(nullptr, nullptr, 0);
+		ID3D11Buffer* null_cb = nullptr;
+		context->CSSetConstantBuffers(0, 1, &null_cb);
+		ID3D11ShaderResourceView* null_srvs[ARRAYSIZE(srvs)] = { nullptr };
+		context->CSSetShaderResources(0, ARRAYSIZE(srvs), null_srvs);
+		ID3D11UnorderedAccessView* null_uavs[ARRAYSIZE(uavs)] = { nullptr };
+		context->CSSetUnorderedAccessViews(0, ARRAYSIZE(uavs), null_uavs, nullptr);
+	}
+	{
+		CS_GPU_PASS("LightLimitFix::ShadowDemand");
+
+		UINT zero[4] = { 0, 0, 0, 0 };
+		context->ClearUnorderedAccessViewUint(shadowDemand->uav.get(), zero);
+		context->ClearUnorderedAccessViewUint(shadowDemandOverflow->uav.get(), zero);
+		// Mandatory: InterlockedMax persists across frames, so without this clear
+		// every slot ratchets to its lifetime peak and never reads zero again.
+		context->ClearUnorderedAccessViewUint(shadowDemandMax->uav.get(), zero);
+
+		ShadowDemandCB cbData{};
+		cbData.LightsNear = lightsNear;
+		cbData.LightsFar = lightsFar;
+		cbData.InvLogFarOverNear = 1.0f / std::log(lightsFar / lightsNear);
+		// Jitter is mandatory: a fixed centre tap makes an unsampled lit region a
+		// PERMANENT blind spot. kZeroDemandSkipStreak's calibration assumes a
+		// jittered tap; unjittered is outside its validated domain.
+		cbData.FrameIndex = static_cast<uint32_t>(shadowDemandFrameCounter) + 1u;
+		std::copy(clusterSize, clusterSize + 3, cbData.ClusterSize);
+		// Clamp to the jitter hash cycle's powers-of-two (kDemandTapCount). FrameIndex
+		// is never 0, so HLSL's FrameIndex==0 centre-tap branch is dead but kept for
+		// re-enabling that debug path without a shader edit.
+		cbData.TapCount = std::clamp(std::bit_ceil(static_cast<uint32_t>(kDemandTapCount)), 1u, 8u);
+		dispatchedTapCount = cbData.TapCount;
+		shadowDemandCB->Update(cbData);
+
+		ID3D11Buffer* cb = shadowDemandCB->CB();
+		context->CSSetConstantBuffers(0, 1, &cb);
+
+		ID3D11ShaderResourceView* srvs[] = { depth.depthSRV, lightGrid->srv.get(), lightIndexList->srv.get(), lights->srv.get(),
+			tileDepthRange->srv.get() };
+		context->CSSetShaderResources(0, ARRAYSIZE(srvs), srvs);
+
+		ID3D11UnorderedAccessView* uavs[] = { shadowDemand->uav.get(), shadowDemandOverflow->uav.get(),
+			shadowDemandMax->uav.get() };
+		context->CSSetUnorderedAccessViews(0, ARRAYSIZE(uavs), uavs, nullptr);
+
+		context->CSSetShader(shadowDemandCS, nullptr, 0);
+		context->Dispatch((clusterSize[0] + 15) / 16, (clusterSize[1] + 15) / 16, 1);
+
+		context->CSSetShader(nullptr, nullptr, 0);
+		ID3D11Buffer* null_cb = nullptr;
+		context->CSSetConstantBuffers(0, 1, &null_cb);
+		ID3D11ShaderResourceView* null_srvs[ARRAYSIZE(srvs)] = { nullptr };
+		context->CSSetShaderResources(0, ARRAYSIZE(srvs), null_srvs);
+		ID3D11UnorderedAccessView* null_uavs2[ARRAYSIZE(uavs)] = { nullptr };
+		context->CSSetUnorderedAccessViews(0, ARRAYSIZE(uavs), null_uavs2, nullptr);
+	}
+
+	// Copy only if the ring slot isn't still awaiting an earlier Map --
+	// overwriting a Pending slot's buffer while a Map is outstanding corrupts
+	// the read. If Pending, skip; the cursor doesn't advance until it's free.
+	uint32_t ring = shadowDemandRingCursor;
+	if (shadowDemandRingState[ring] == ShadowDemandRingState::Idle) {
+		context->CopyResource(shadowDemandStaging[ring]->resource.get(), shadowDemand->resource.get());
+		context->CopyResource(shadowDemandMaxStaging[ring]->resource.get(), shadowDemandMax->resource.get());
+		shadowDemandRingState[ring] = ShadowDemandRingState::Pending;
+		shadowDemandRingWriteFrame[ring] = shadowDemandFrameCounter;
+		shadowDemandRingTapCount[ring] = dispatchedTapCount;
+		shadowDemandRingCursor = (ring + 1) % kShadowDemandRingSize;
+	}
+
+	// One non-blocking Map per eligible ring per frame; retry next frame on
+	// DXGI_ERROR_WAS_STILL_DRAWING. Maxima combine with max(), never bitwise OR
+	// (5|6==7 is corruption); the serial advances once regardless of drain count.
+	std::array<uint32_t, kShadowDemandMaxElements> maxCombined{};
+	bool drainedThisFrame = false;
+	for (uint32_t i = 0; i < kShadowDemandRingSize; i++) {
+		if (shadowDemandRingState[i] != ShadowDemandRingState::Pending)
+			continue;
+		if (shadowDemandFrameCounter - shadowDemandRingWriteFrame[i] < kShadowDemandRingSize)
+			continue;
+
+		D3D11_MAPPED_SUBRESOURCE mapped{};
+		HRESULT hr = context->Map(shadowDemandStaging[i]->resource.get(), 0, D3D11_MAP_READ, D3D11_MAP_FLAG_DO_NOT_WAIT, &mapped);
+		if (hr == DXGI_ERROR_WAS_STILL_DRAWING)
+			continue;
+		if (FAILED(hr)) {
+			shadowDemandRingState[i] = ShadowDemandRingState::Idle;
+			continue;
+		}
+
+		D3D11_MAPPED_SUBRESOURCE mappedMax{};
+		HRESULT hrMax = context->Map(shadowDemandMaxStaging[i]->resource.get(), 0, D3D11_MAP_READ, D3D11_MAP_FLAG_DO_NOT_WAIT, &mappedMax);
+		if (FAILED(hrMax)) {
+			// The pair must stay in lockstep -- a max sample from a different
+			// dispatch than its saturation flag is what this same-buffer placement prevents.
+			context->Unmap(shadowDemandStaging[i]->resource.get(), 0);
+			if (hrMax != DXGI_ERROR_WAS_STILL_DRAWING)
+				shadowDemandRingState[i] = ShadowDemandRingState::Idle;
+			continue;
+		}
+
+		// VR eyes and taps sum into one raw slot; divide by both here using THIS
+		// ring slot's dispatched TapCount so a mid-flight override can't desync it.
+		const float demandSumDivisor = (globals::game::isVR ? 2.0f : 1.0f) *
+		                               static_cast<float>(std::max<uint32_t>(shadowDemandRingTapCount[i], 1u)) * 1024.0f;
+		const uint32_t* raw = static_cast<const uint32_t*>(mapped.pData);
+		for (uint32_t slot = 0; slot < MAX_SHADOW_DEMAND_SLOTS; slot++) {
+			float sample = static_cast<float>(raw[slot]) / demandSumDivisor;  // matches kDemandScale in ShadowDemandCS.hlsl
+			float& ema = shadowDemandEMA[slot];
+			if (!shadowDemandEMAInitialized || sample > ema)
+				ema = sample;  // instant attack
+			else
+				ema = std::lerp(ema, sample, 0.1f);  // slow decay
+		}
+		const uint32_t* rawMax = static_cast<const uint32_t*>(mappedMax.pData);
+		for (uint32_t e = 0; e < kShadowDemandMaxElements; e++)
+			maxCombined[e] = std::max(maxCombined[e], rawMax[e]);
+
+		const auto lag = static_cast<uint32_t>(shadowDemandFrameCounter - shadowDemandRingWriteFrame[i]);
+		shadowDemandDrainLagMin = std::min(shadowDemandDrainLagMin, lag);
+		shadowDemandDrainLagMax = std::max(shadowDemandDrainLagMax, lag);
+		shadowDemandDrainLagSum += lag;
+		shadowDemandDrainCount++;
+
+		shadowDemandEMAInitialized = true;
+		drainedThisFrame = true;
+		context->Unmap(shadowDemandMaxStaging[i]->resource.get(), 0);
+		context->Unmap(shadowDemandStaging[i]->resource.get(), 0);
+		shadowDemandRingState[i] = ShadowDemandRingState::Idle;
+	}
+
+	if (drainedThisFrame) {
+		std::copy_n(maxCombined.begin(), MAX_SHADOW_DEMAND_SLOTS, shadowDemandMaxLatest.begin());
+		shadowDemandClusterSaturated = maxCombined[MAX_SHADOW_DEMAND_SLOTS] != 0;
+		shadowDemandSampleSerial++;
+		shadowDemandLastDrainFrame = shadowDemandFrameCounter;
+	}
+
+	// Debug-only distribution dump; SetShadowDemand (called every frame from
+	// Prepass) is the actual demand-skip consumption path and doesn't need this log.
+	if (ShadowDemandInstrumentation && shadowDemandEMAInitialized && shadowDemandFrameCounter - shadowDemandLastLogFrame >= 300) {
+		shadowDemandLastLogFrame = shadowDemandFrameCounter;
+		auto installedSlotCount = ShadowCasterManager::GetInstalledSlotCount();
+		auto count = std::min<uint32_t>(installedSlotCount, MAX_SHADOW_DEMAND_SLOTS);
+		if (count > 0) {
+			float minV = shadowDemandEMA[0], maxV = shadowDemandEMA[0], sum = 0.0f;
+			for (uint32_t i = 0; i < count; i++) {
+				minV = std::min(minV, shadowDemandEMA[i]);
+				maxV = std::max(maxV, shadowDemandEMA[i]);
+				sum += shadowDemandEMA[i];
+			}
+			logger::info("[SCM] ShadowDemand instrumentation: {} slots, min={:.2f} max={:.2f} mean={:.2f}",
+				count, minV, maxV, sum / count);
+		}
+		// See shadowDemandDrainLagMin's declaration for the frame-rate caveat.
+		if (shadowDemandDrainCount > 0) {
+			logger::info("[SCM] ShadowDemand drain lag: min={} mean={:.1f} max={} frames over {} drains (saturated={})",
+				shadowDemandDrainLagMin,
+				static_cast<double>(shadowDemandDrainLagSum) / static_cast<double>(shadowDemandDrainCount),
+				shadowDemandDrainLagMax, shadowDemandDrainCount, shadowDemandClusterSaturated);
+			shadowDemandDrainLagMin = UINT32_MAX;
+			shadowDemandDrainLagMax = 0;
+			shadowDemandDrainLagSum = 0;
+			shadowDemandDrainCount = 0;
+		}
+	}
 }
 
 namespace

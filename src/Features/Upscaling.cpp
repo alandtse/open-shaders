@@ -2499,7 +2499,7 @@ void Upscaling::Upscale()
 			ID3D11UnorderedAccessView* depthOutput = nullptr;
 			if (upscaleMethod == UpscaleMethod::kFSR) {
 				depthOutput = globals::game::isVR ? vrIntermediateLinearDepth[i]->uav.get() :
-				                                      (runtimeFsrDepthTexture ? runtimeFsrDepthTexture->uav.get() : nullptr);
+				                                    (runtimeFsrDepthTexture ? runtimeFsrDepthTexture->uav.get() : nullptr);
 			}
 			ID3D11UnorderedAccessView* uavs[4] = {
 				globals::game::isVR ? vrIntermediateReactiveMask[i]->uav.get() : reactiveMaskTexture->uav.get(),
@@ -2911,20 +2911,28 @@ void Upscaling::ApplySharpening()
 	auto renderer = globals::game::renderer;
 	auto& main = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMAIN];
 
-	if (!main.UAV)
+	if (!main.texture)
 		return;
 
 	CS_GPU_PASS("Upscaling::Sharpening");
-
-	float currentSharpness = (-2.0f * settings.sharpnessDLSS) + 2.0f;
-	currentSharpness = exp2(-currentSharpness);
 
 	auto context = globals::d3d::context;
 
 	context->OMSetRenderTargets(0, nullptr, nullptr);
 
-	// Zero-copy path: DLSS has already written to sharpenerTexture; sharpen directly into kMAIN.UAV.
-	rcas.ApplySharpen(sharpenerTexture->srv.get(), main.UAV, currentSharpness);
+	if (settings.sharpnessEnabledDLSS && settings.sharpnessDLSS > 0.0f && main.UAV) {
+		// Match FSR3's slider->RCAS conversion exactly (ffx_fsr3upscaler.cpp + FsrRcasCon):
+		//   sharpenessRemapped = -2*slider + 2   (sharpness in stops)
+		//   rcasAttenuation    = exp2(-sharpenessRemapped) = exp2(2*slider - 2)
+		float currentSharpness = (-2.0f * settings.sharpnessDLSS) + 2.0f;
+		currentSharpness = exp2(-currentSharpness);
+
+		// DLSS has already written to sharpenerTexture; sharpen directly into kMAIN.UAV.
+		rcas.ApplySharpen(sharpenerTexture->srv.get(), main.UAV, currentSharpness);
+	} else {
+		// Sharpening is disabled: resolve the DLSS output without altering it.
+		context->CopyResource(main.texture, sharpenerTexture->resource.get());
+	}
 
 	globals::game::stateUpdateFlags->set(RE::BSGraphics::ShaderFlags::DIRTY_RENDERTARGET);
 }

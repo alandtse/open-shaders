@@ -6,6 +6,7 @@
 #include "OverlayFeature.h"
 #include "Utils/PointLightFlags.h"
 
+#include <array>
 #include <atomic>
 #include <mutex>
 #include <shared_mutex>
@@ -99,6 +100,26 @@ public:
 	};
 	STATIC_ASSERT_ALIGNAS_16(LightCullingCB);
 
+	struct alignas(16) ShadowDemandCB
+	{
+		float LightsNear;
+		float LightsFar;
+		float InvLogFarOverNear;
+		uint FrameIndex;  ///< 0 = jitter disabled (unjittered centre tap)
+		uint ClusterSize[4];
+		uint TapCount;  ///< Spatial samples per tile per frame; forced to 1 when FrameIndex == 0.
+		uint pad[3];
+	};
+	STATIC_ASSERT_ALIGNAS_16(ShadowDemandCB);
+
+	struct alignas(16) ShadowDepthPyramidCB
+	{
+		uint ClusterSize[4];
+	};
+	STATIC_ASSERT_ALIGNAS_16(ShadowDepthPyramidCB);
+	// Must match MAX_SHADOW_DEMAND_SLOTS in ShadowDemandCS.hlsl.
+	static constexpr uint32_t MAX_SHADOW_DEMAND_SLOTS = 128;
+
 	struct alignas(16) PerFrame
 	{
 		uint EnableContactShadows;
@@ -136,7 +157,8 @@ public:
 		uint NumStrictLights;
 		int RoomIndex;
 		uint ShadowBitMask;
-		uint pad0;
+		uint FirstPerson;
+		float4 WorldEyePosition;  ///< True world-camera eye for FP shadow projection (w unused).
 		LightData StrictLights[15];
 	};
 	STATIC_ASSERT_ALIGNAS_16(StrictLightDataCB);
@@ -209,15 +231,80 @@ public:
 
 	ID3D11ComputeShader* clusterBuildingCS = nullptr;
 	ID3D11ComputeShader* clusterCullingCS = nullptr;
+	ID3D11ComputeShader* shadowDemandCS = nullptr;
+	ID3D11ComputeShader* shadowDepthPyramidCS = nullptr;
 
 	ConstantBuffer* lightBuildingCB = nullptr;
 	ConstantBuffer* lightCullingCB = nullptr;
+	ConstantBuffer* shadowDemandCB = nullptr;
+	ConstantBuffer* shadowDepthPyramidCB = nullptr;
 
 	eastl::unique_ptr<Buffer> lights = nullptr;
 	eastl::unique_ptr<Buffer> clusters = nullptr;
 	eastl::unique_ptr<Buffer> lightIndexCounter = nullptr;
 	eastl::unique_ptr<Buffer> lightIndexList = nullptr;
 	eastl::unique_ptr<Buffer> lightGrid = nullptr;
+
+	// Depth extremes from ShadowDepthPyramidCS's exhaustive reduction, used
+	// by ShadowDemandCS for an occlusion test. Written then read same-frame.
+	eastl::unique_ptr<Buffer> tileDepthRange = nullptr;  // RWStructuredBuffer<float2>[clusterSize.x*clusterSize.y*eyes]
+	// GPU-measured per-slot occlusion demand, consumed by DemandSkipEligible
+	// to exempt an unseen light's shadow from this frame's redraw.
+	eastl::unique_ptr<Buffer> shadowDemand = nullptr;          // RWStructuredBuffer<uint>[MAX_SHADOW_DEMAND_SLOTS], DEFAULT+UAV
+	eastl::unique_ptr<Buffer> shadowDemandOverflow = nullptr;  // RWStructuredBuffer<uint>[1], DEFAULT+UAV
+	// Per-tile maxima plus the trailing cluster-saturation flag; the max is the
+	// magnitude signal a hard skip needs, which the sum conflates away.
+	static constexpr uint32_t kShadowDemandMaxElements = MAX_SHADOW_DEMAND_SLOTS + 1;
+	eastl::unique_ptr<Buffer> shadowDemandMax = nullptr;  // RWStructuredBuffer<uint>[kShadowDemandMaxElements], DEFAULT+UAV
+	// Spatial taps per tile per frame. Shipped at 1: more taps made the demand
+	// signal more sensitive to a flame's own flicker, worsening false skips --
+	// don't raise without new evidence. Must be a power of two in {1,2,4,8}:
+	// the jitter hash cycle (ShadowDemandCS.hlsl) advances every 8 taps.
+	static constexpr uint32_t kDemandTapCount = 1;
+	static constexpr uint32_t kShadowDemandRingSize = 3;
+	eastl::unique_ptr<Buffer> shadowDemandStaging[kShadowDemandRingSize]{};
+	eastl::unique_ptr<Buffer> shadowDemandMaxStaging[kShadowDemandRingSize]{};
+	// Idle = safe to CopyResource into; Pending = a Map attempt is outstanding
+	// (DO_NOT_WAIT, never a poll loop) -- don't overwrite until back to Idle.
+	enum class ShadowDemandRingState
+	{
+		Idle,
+		Pending
+	};
+	ShadowDemandRingState shadowDemandRingState[kShadowDemandRingSize]{};
+	uint64_t shadowDemandRingWriteFrame[kShadowDemandRingSize]{};
+	// Dispatched TapCount for this ring slot, read back at drain time -- a live
+	// devbench override change mid-flight can't normalize with the wrong divisor.
+	uint32_t shadowDemandRingTapCount[kShadowDemandRingSize]{};
+	uint32_t shadowDemandRingCursor = 0;
+	uint64_t shadowDemandFrameCounter = 0;
+	// Asymmetric EMA: instant attack, slow decay (a symmetric EMA stacks readback
+	// lag into visible lag after a camera turn). A slot with no reading yet must
+	// be treated as high demand, not 0.
+	std::array<float, MAX_SHADOW_DEMAND_SLOTS> shadowDemandEMA{};
+	bool shadowDemandEMAInitialized = false;
+	uint64_t shadowDemandLastLogFrame = 0;
+
+	// Unlike the EMA: raw last-drained reading, no temporal filter -- the streak
+	// filter needs each sample distinct (hence the serial) and needs to detect stalls.
+	std::array<uint32_t, MAX_SHADOW_DEMAND_SLOTS> shadowDemandMaxLatest{};
+	bool shadowDemandClusterSaturated = false;
+	uint32_t shadowDemandSampleSerial = 0;
+	uint64_t shadowDemandLastDrainFrame = 0;
+	// kDemandStaleFrames is a frame count, so a faster frame rate can push
+	// every drain past it and silently report a null result.
+	uint32_t shadowDemandDrainLagMin = UINT32_MAX;
+	uint32_t shadowDemandDrainLagMax = 0;
+	uint64_t shadowDemandDrainLagSum = 0;
+	uint64_t shadowDemandDrainCount = 0;
+
+	// Debug-only, mirrors EnableLightsVisualisation: lives on the instance, not
+	// Settings, so it never persists into a shipped JSON or taxes every load.
+	bool ShadowDemandInstrumentation = false;
+
+	/** @brief Dispatches the Phase-0 shadow-demand instrumentation pass and, on
+	 *  a readback-ready frame, updates the CPU-side EMA and logs its distribution. */
+	void UpdateShadowDemand();
 
 	std::uint32_t lightCount = 0;
 	float lightsNear = 1;
@@ -226,6 +313,7 @@ public:
 	RE::NiPoint3 eyePositionCached[2]{};
 	bool wasEmpty = false;
 	bool wasWorld = false;
+	bool wasFirstPerson = false;
 	int previousRoomIndex = -1;
 
 	Util::FrameChecker frameChecker;
@@ -251,11 +339,14 @@ public:
 
 	virtual void LoadSettings(json& o_json) override;
 	virtual void SaveSettings(json& o_json) override;
-
 	virtual void RestoreDefaultSettings() override;
 
 	/** @brief Live particle/clustered light counts, for devbench's openshaders.feature action=diagnostics. */
 	virtual json GetDiagnostics() override;
+
+	/** @brief Exposes ShadowDemandInstrumentation for devbench's openshaders.feature action=runtimeGet/runtimeSet. */
+	virtual json GetRuntimeFlags() override;
+	virtual bool SetRuntimeFlag(std::string_view name, bool value) override;
 
 	/** @brief Draws the ImGui settings UI for light limit fix configuration and debug visualization. */
 	virtual void DrawSettings() override;

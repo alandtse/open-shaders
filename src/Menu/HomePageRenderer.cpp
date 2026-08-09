@@ -305,14 +305,8 @@ void HomePageRenderer::RenderCacheMismatchSection()
 
 	// Every shown mismatch is an EnabledFlip (a Disable-at-Boot difference), so matching the
 	// cache's enabled-state lets the next boot reuse it with no recompile. Disabled when a flip
-	// is for an *uninstalled* feature: settings can't load missing files (the hover explains).
-	const auto* blockingMismatch = Util::CacheInvalidation::FindMatchBlockingFeature(
-		shaderCache->GetCacheMismatches(), [](const std::string& shortName) {
-			for (auto* f : Feature::GetFeatureList())
-				if (f->GetShortName() == shortName)
-					return !f->failedLoadedMessage.empty();
-			return false;
-		});
+	// is for a feature that failed to load: settings can't match a broken feature (the hover explains).
+	const auto* blockingMismatch = Util::CacheInvalidation::FindMatchBlockingFeature(shaderCache->GetCacheMismatches());
 	const char* blockingFeature = blockingMismatch ? blockingMismatch->feature.c_str() : nullptr;
 	const bool canMatch = blockingFeature == nullptr;
 	static bool s_matchApplied = false;
@@ -370,7 +364,7 @@ void HomePageRenderer::RenderCacheMismatchSection()
 			if (canMatch)
 				ImGui::Text("%s", T("menu.home.cache_mismatch_match_tooltip", "Sets your Disable-at-Boot toggles to match the saved cache, so a restart reuses it with no recompile."));
 			else
-				ImGui::Text("%s", std::vformat(T("menu.home.cache_mismatch_match_blocked", "Unavailable: '{}' is uninstalled (not just disabled), so settings can't match the cache. Reinstall it or rebuild."), std::make_format_args(blockingFeature)).c_str());
+				ImGui::Text("%s", std::vformat(T("menu.home.cache_mismatch_match_blocked", "Unavailable: '{}' could not load, so settings can't match the cache. Check Feature Issues for details, fix the install, or rebuild."), std::make_format_args(blockingFeature)).c_str());
 		}
 		if (matchClicked) {
 			if (auto* state = globals::state) {
