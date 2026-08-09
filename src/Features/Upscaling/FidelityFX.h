@@ -25,7 +25,7 @@
 
 class WrappedResource;
 
-/** @brief Manages AMD FidelityFX Super Resolution 3 upscaling and frame generation. */
+/** @brief Manages AMD FidelityFX upscaling and frame generation, including the host FSR3 SDK and the runtime-loaded FSR4 provider. */
 class FidelityFX
 {
 public:
@@ -93,35 +93,72 @@ public:
 
 	// Runtime upscaler provider (amd_fidelityfx_upscaler_dx12.dll): on eligible AMD hardware,
 	// dispatches via the runtime DLL instead of the host FSR3 SDK. See RuntimeUpscaler.cpp.
+	/** @brief True if the active adapter is an AMD GPU. */
 	bool IsAmdAdapterDetected() const;
+	/** @brief True if the active adapter is an NVIDIA GPU. */
 	bool IsNvidiaAdapterDetected() const;
+	/** @brief True if the runtime upscaler DLL was found and loaded. */
 	bool IsRuntimeUpscalerPresent() const;
+	/** @brief Classifies an adapter's FSR 4.1.1 eligibility from its DXGI description. */
 	static Fsr4AdapterSupport GetFsr4AdapterSupport(const DXGI_ADAPTER_DESC& a_adapterDesc);
+	/** @brief Classifies the active adapter's FSR 4.1.1 eligibility. */
 	Fsr4AdapterSupport GetFsr4AdapterSupport() const;
+	/** @brief True if the active adapter qualifies for the one-shot runtime-FSR4 migration. */
 	bool IsRuntimeFsr4AutoEligible() const;
+	/** @brief True if the runtime upscaler DLL and an eligible adapter are both present. */
 	bool IsRuntimeFsr4Available() const;
+	/** @brief True if settings and hardware together call for requesting the runtime FSR4 provider. */
 	bool ShouldRequestRuntimeFsr4() const;
+	/** @brief True if the runtime upscaler provider must handle FSR dispatch this frame. */
 	bool ShouldUseRuntimeUpscalerForFSR() const;
+	/** @brief True once the runtime upscaler support probe has produced a result. */
 	bool HasRuntimeUpscalerSupportCheckResult() const;
+	/** @brief True if the runtime upscaler support probe confirmed provider support. */
 	bool IsRuntimeUpscalerSupportConfirmed() const;
+	/** @brief True if the loaded runtime provider's version matches what was requested. */
 	bool IsRuntimeUpscalerProviderMatchingRequestedVersion() const;
+	/** @brief True if a runtime-provider dispatch failure is latched for the current session. */
 	bool IsRuntimeUpscalerFailureLatched() const;
+	/** @brief True if a runtime-FSR4-specific dispatch failure is latched for the current session. */
 	bool IsRuntimeFsr4FailureLatched() const;
+	/** @brief Human-readable label for the frame path the runtime upscaler last dispatched through. */
 	const std::string& GetRuntimeUpscalerLastFramePathLabel() const;
+	/** @brief Human-readable label for the FSR path selected by current settings. */
 	const std::string& GetConfiguredFsrPathLabel() const;
+	/** @brief Human-readable label for the FSR path actually shown to the user this frame. */
 	const std::string& GetDisplayedFsrPathLabel() const;
+	/** @brief Human-readable label for the host-linked FSR3 SDK version. */
 	static const std::string& GetHostFsrSdkLabel();
+	/** @brief Human-readable label for a runtime upscaler provider version. */
 	static const std::string& GetRuntimeUpscalerLabel(uint32_t a_version);
+	/** @brief Name of the currently loaded runtime upscaler provider. */
 	std::string GetRuntimeUpscalerProviderName() const;
+	/** @brief Human-readable string for the runtime upscaler version this session requested. */
 	std::string GetRuntimeUpscalerRequestedVersionString() const;
 
+	/** @brief True if runtime upscaler GPU resources are currently allocated. */
 	bool HasRuntimeUpscalerResources() const;
+	/** @brief Polls whether a pending runtime upscaler resource teardown has finished. */
 	bool PollRuntimeUpscalerTeardownReady();
+	/** @brief Releases runtime upscaler resources ahead of a provider relatch attempt. */
 	void ReleaseRuntimeUpscalerResourcesForRelatch(bool a_waitForIdle = true);
+	/** @brief Resets the host FSR3 GPU-idle fence used before context teardown. */
 	void ResetFSRIdleFence();
+	/** @brief Tears down runtime upscaler resources, optionally invalidating the cached provider. */
 	void ResetRuntimeUpscalerResources(bool a_invalidateProviderCache = false);
 
-	// Per-context/eye dispatch primitive used by Upscale(); chooses runtime vs host FSR3.
+	/**
+	 * @brief Upscales one context (eye) via the runtime provider or the host FSR3 SDK. Per-context/eye
+	 * dispatch primitive used by Upscale(); chooses runtime vs host FSR3.
+	 * @param a_contextIndex Context/eye index; must be less than the active context count.
+	 * @param a_renderWidth Render-resolution width of the input resources.
+	 * @param a_renderHeight Render-resolution height of the input resources.
+	 * @param a_displayWidth Display-resolution width of a_output.
+	 * @param a_displayHeight Display-resolution height of a_output.
+	 * @param a_motionVectorScaleX Motion-vector X scale to normalize into FFX's expected units.
+	 * @param a_motionVectorScaleY Motion-vector Y scale to normalize into FFX's expected units.
+	 * @return True if the region was upscaled.
+	 */
 	bool UpscaleRegion(uint32_t a_contextIndex, ID3D11Resource* a_color, ID3D11Resource* a_depth, ID3D11Resource* a_motionVectors,
 		ID3D11Resource* a_reactiveMask, ID3D11Resource* a_transparencyCompositionMask, ID3D11Resource* a_output,
 		uint32_t a_renderWidth, uint32_t a_renderHeight, uint32_t a_displayWidth, uint32_t a_displayHeight,
