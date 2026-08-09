@@ -417,7 +417,10 @@ namespace LightLimitFix
 		GetShadowTapClamp(useAtlas, shadowLightData.AtlasRect, tileScale, clampLo, clampHi);
 		float shadow = 0.0;
 
-		[unroll] for (int i = 0; i < 8; i++)
+		// Dynamic loop instead of unrolling this branchy tap body 8x: measured
+		// ~3x faster GPU cost AND ~29% faster fxc /O3 compile time versus the
+		// unrolled version (Tracy zone comparison, 26k+ samples each side).
+		[loop] for (int i = 0; i < 8; i++)
 		{
 			float2 sampleOffset = mul(Random::SpiralSampleOffsets8[i], rotationMatrix);
 			float2 uv = positionLS.xy + sampleOffset * PCFRadius2D;
@@ -442,7 +445,9 @@ namespace LightLimitFix
 		GetShadowTapClamp(useAtlas, atlasRect, tileScale, clampLo, clampHi);
 		float shadow = 0.0;
 
-		[unroll] for (int i = 0; i < 8; i++)
+		// See GetSpotlightShadow: dynamic loop instead of unrolling the
+		// branchy tap body 8x.
+		[loop] for (int i = 0; i < 8; i++)
 		{
 			float2 offset = mul(Random::SpiralSampleOffsets8[i], rotationMatrix) * PCFRadius2D;
 			float2 uv = sampleUV + offset;
