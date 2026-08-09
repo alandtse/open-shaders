@@ -380,6 +380,16 @@ namespace ShadowCasterManager
 		/// metric). FROZEN while skippedThisFrame, so occlusion isn't read as starvation.
 		uint16_t dirtyStallFrames{ 0 };
 
+		/// Set by AdmitRedraw on every admission; consumed by the next scoring pass
+		/// to tell "tile still invalid after a real attempt" (a failure) apart from
+		/// "never attempted yet" (not a failure) -- see the tileInvalid backoff.
+		bool awaitingTileResult{ false };
+		/// Consecutive admissions that left the tile invalid. Geometric backoff
+		/// input; 0 means no active backoff.
+		int32_t tileFailStreak{ 0 };
+		/// Frame the forced-due clamp resumes; -1 while no backoff is active.
+		int32_t tileRetryFrame{ -1 };
+
 		/// Set when removed from `pending` by the sleep or demand skip, not by
 		/// exhausted budget -- distinguishes "never a candidate" from "lost the
 		/// budget race" for dirtyStallFrames above.
@@ -446,6 +456,9 @@ namespace ShadowCasterManager
 			promoteStreak = 0;
 			dirtyStallFrames = 0;
 			skippedThisFrame = false;
+			awaitingTileResult = false;
+			tileFailStreak = 0;
+			tileRetryFrame = -1;
 		}
 	};
 
