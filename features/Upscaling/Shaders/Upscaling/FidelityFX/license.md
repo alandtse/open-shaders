@@ -3,9 +3,9 @@
 The following license applies to the official AMD-signed FidelityFX runtime binaries
 distributed with this feature:
 
-- `amd_fidelityfx_framegeneration_dx12.dll`
-- `amd_fidelityfx_loader_dx12.dll`
-- `amd_fidelityfx_upscaler_dx12.dll`
+-   `amd_fidelityfx_framegeneration_dx12.dll`
+-   `amd_fidelityfx_loader_dx12.dll`
+-   `amd_fidelityfx_upscaler_dx12.dll`
 
 Copyright (C) Advanced Micro Devices, Inc.
 
