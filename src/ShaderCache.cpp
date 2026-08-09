@@ -4220,6 +4220,7 @@ namespace SIE
 		// before the conditionVariable notification.
 		if (!shaderCache->IsCompiling()) {
 			QueryPerformanceCounter(&lastReset);
+			lastResetQpc.store(lastReset.QuadPart, std::memory_order_relaxed);
 			lastCalculation = lastReset;
 		}
 
@@ -4268,6 +4269,7 @@ namespace SIE
 				// Complete() and Forget(), which do know.
 				if (totalTasks.load(std::memory_order_relaxed) == 0) {
 					QueryPerformanceCounter(&lastReset);
+					lastResetQpc.store(lastReset.QuadPart, std::memory_order_relaxed);
 					lastCalculation = lastReset;
 				}
 
@@ -4334,6 +4336,7 @@ namespace SIE
 				// restart the clock and un-freeze completion tracking.
 				if (completionTime.load(std::memory_order_relaxed) != 0) {
 					QueryPerformanceCounter(&lastReset);
+					lastResetQpc.store(lastReset.QuadPart, std::memory_order_relaxed);
 					lastCalculation = lastReset;
 					completionTime.store(0, std::memory_order_relaxed);
 					compilationPhaseStarted.store(false, std::memory_order_relaxed);
@@ -4434,6 +4437,7 @@ namespace SIE
 		completedPriorityWeight = 0;
 		heavyTasksInFlight = 0;
 		QueryPerformanceCounter(&lastReset);
+		lastResetQpc.store(lastReset.QuadPart, std::memory_order_relaxed);
 		QueryPerformanceCounter(&lastCalculation);
 		completionTime = { 0 };  // Reset completion time
 		totalTime = { 0 };

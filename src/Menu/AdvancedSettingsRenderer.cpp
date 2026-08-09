@@ -439,8 +439,7 @@ void AdvancedSettingsRenderer::RenderShaderCompileStatistics()
 		}
 	}
 
-	// Collapsed by default -- can hold hundreds of rows.
-	if (ImGui::TreeNodeEx(T("menu.advanced.all_compiled_tasks", "All Compiled Tasks"))) {
+	if (ImGui::TreeNodeEx(T("menu.advanced.all_compiled_tasks", "All Compiled Tasks"), ImGuiTreeNodeFlags_DefaultOpen)) {
 		using SlowTaskRecord = SIE::CompilationSet::SlowTaskRecord;
 
 		// Keyed on lastReset's QPC tick, not record count -- two builds can compile the

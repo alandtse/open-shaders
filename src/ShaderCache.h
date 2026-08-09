@@ -292,6 +292,7 @@ namespace SIE
 	{
 	public:
 		LARGE_INTEGER lastReset;
+		std::atomic<int64_t> lastResetQpc{ 0 };  // Lock-free mirror of lastReset.QuadPart for GetLastResetQpc().
 		LARGE_INTEGER lastCalculation;
 		std::atomic<int64_t> completionTime;  // When compilation completed (QuadPart equivalent)
 		LARGE_INTEGER frequency;
@@ -301,6 +302,7 @@ namespace SIE
 		{
 			QueryPerformanceFrequency(&frequency);
 			QueryPerformanceCounter(&lastReset);
+			lastResetQpc.store(lastReset.QuadPart, std::memory_order_relaxed);
 			QueryPerformanceCounter(&lastCalculation);
 			completionTime.store(0, std::memory_order_relaxed);
 		}
@@ -383,7 +385,7 @@ namespace SIE
 
 		/** @brief QPC tick of the last Clear() — a per-build generation marker so UI caches
 		 *  invalidate on a fresh build even if it happens to complete the same task count. */
-		int64_t GetLastResetQpc() const { return lastReset.QuadPart; }
+		int64_t GetLastResetQpc() const { return lastResetQpc.load(std::memory_order_relaxed); }
 
 		/** @brief Ticks per second for converting QPC-based timestamps (e.g. SlowTaskRecord::startQpc). */
 		int64_t GetQpcFrequency() const { return frequency.QuadPart; }
