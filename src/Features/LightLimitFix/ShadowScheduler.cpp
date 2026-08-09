@@ -161,10 +161,8 @@ namespace ShadowCasterManager
 	constexpr uint16_t kPromoteStreakFrames = 60;
 
 	/// Lights held this frame (UpdateCamera failed, exit streak immature, but
-	/// already held a slot). Excluded from `pending` before budget accounting --
-	/// rejected camera state means they keep their cached tile, not redraw.
-	/// Main::Draw thread only (both populating hooks run on it) -- no lock needed,
-	/// but never read this cross-thread without adding real synchronization.
+	/// already held a slot). Excluded from `pending` before budget accounting.
+	/// Main::Draw thread only (both populating hooks run on it) -- no lock needed.
 	std::unordered_set<RE::BSShadowLight*> s_cameraHold;
 
 	/// Bumped once per non-reentrant ScheduleShadowCasters attempt, before any of
@@ -272,10 +270,9 @@ namespace ShadowCasterManager
 	constexpr int32_t kSleepStaggerStride = 7;
 
 	// Tile-invalid backoff step and ceiling: an admission that leaves a tile
-	// invalid (allocator denial, empty caster list, unswapped promotion) is
-	// backed off streak*step frames, capped, instead of re-admitted every
-	// frame -- clamped separately to this light's own max-delay ceiling so it
-	// can never miss its normal interval regardless of the cap chosen here.
+	// invalid is backed off streak*step frames, capped, instead of
+	// re-admitted every frame -- separately clamped to this light's own
+	// max-delay ceiling so it can never miss its normal interval.
 	constexpr int32_t kTileBackoffStepFrames = 4;
 	constexpr int32_t kTileBackoffMaxStreak = 8;
 
@@ -3118,8 +3115,7 @@ namespace ShadowCasterManager
 		// Atlas rank budget: in importance order, each light gets the biggest class
 		// that still leaves a quarter cell for every lower-ranked light; without it,
 		// first arrivals hoard full tiles and later lights get no tile at all. Skips
-		// entirely on a stale hold-set frame -- ranking off a wrong exclusion set
-		// would churn pendingScale for no good reason; next fresh frame re-ranks.
+		// on a stale hold-set frame -- next fresh frame re-ranks.
 		if (AtlasActive() && s_cameraHoldGeneration == s_scheduleGeneration) {
 			static std::vector<LightEntry*> ranked;
 			ranked.clear();
