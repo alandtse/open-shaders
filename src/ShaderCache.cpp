@@ -3702,13 +3702,9 @@ namespace SIE
 		}
 
 		const int64_t freq = compilationSet.GetQpcFrequency();
-		// A task dispatched before a Clear() reset can still finish (and get recorded)
-		// after it, so its startQpc may predate CompilationSet::lastReset. Anchor on the
-		// earliest point any slice will actually be drawn at instead of lastReset, so
-		// every slice lands at ts >= 0 rather than clamping (which would lose real
-		// elapsed time between straggler tasks). The queue_wait slice below is drawn
-		// starting queueWaitMs before startQpc, so it -- not the raw startQpc -- is the
-		// true earliest point for a task with a long queue wait.
+		// Anchor on the earliest drawn point (a task's queue_wait slice starts before
+		// its startQpc), not lastReset -- a straggler finishing after a Clear() reset
+		// can predate it, which would otherwise draw at a negative ts.
 		int64_t baselineQpc = records.front().startQpc;
 		for (const auto& rec : records) {
 			const int64_t queueWaitQpc = static_cast<int64_t>(rec.queueWaitMs * static_cast<double>(freq) / 1000.0);

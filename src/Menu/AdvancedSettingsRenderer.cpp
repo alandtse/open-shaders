@@ -446,11 +446,8 @@ void AdvancedSettingsRenderer::RenderShaderCompileStatistics()
 	if (ImGui::TreeNodeEx(T("menu.advanced.all_compiled_tasks", "All Compiled Tasks"))) {
 		using SlowTaskRecord = SIE::CompilationSet::SlowTaskRecord;
 
-		// Records are append-only per build and only reset in CompilationSet::Clear(),
-		// which also stamps a fresh lastReset QPC tick — a reliable per-build generation
-		// marker, unlike record count (two builds can coincidentally compile the same
-		// number of tasks). Rebuilding the row copy is skipped whenever this tick hasn't
-		// moved, and only happens at all while this TreeNode is open.
+		// Keyed on lastReset's QPC tick, not record count -- two builds can
+		// coincidentally compile the same number of tasks. Only rebuilt while open.
 		static std::vector<SlowTaskRecord> cachedRows;
 		static int64_t cachedResetQpc = -1;
 		const int64_t resetQpc = shaderCache->GetLastResetQpc();
