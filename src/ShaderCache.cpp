@@ -3693,6 +3693,11 @@ namespace SIE
 		return compilationSet.GetLastResetQpc();
 	}
 
+	int64_t ShaderCache::GetQpcFrequency()
+	{
+		return compilationSet.GetQpcFrequency();
+	}
+
 	bool ShaderCache::ExportCompileTrace(const std::filesystem::path& a_path)
 	{
 		const auto records = compilationSet.GetAllTaskRecords();

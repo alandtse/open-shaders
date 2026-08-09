@@ -664,6 +664,8 @@ namespace SIE
 		std::vector<CompilationSet::SlowTaskRecord> GetAllTaskRecords();
 		/** @brief QPC tick of the last build reset — a generation marker for UI caches. */
 		int64_t GetLastResetQpc();
+		/** @brief Ticks per second for converting QPC-based timestamps (e.g. SlowTaskRecord::startQpc). */
+		int64_t GetQpcFrequency();
 		std::optional<CompilationSet::ParallelismStats> GetParallelismStats();
 
 		/**

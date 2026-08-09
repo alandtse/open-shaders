@@ -1391,6 +1391,14 @@ namespace Util
 		std::string header;
 		std::string tooltip;
 		std::function<std::string(const T&)> getValue;
+		// Single-line instead of wrapped, with the full value as its hover tooltip
+		// (instead of the column description) -- for values too long to fit a
+		// reasonably-sized column, e.g. a shader key with many defines. Filtering
+		// still matches the full value regardless of this flag.
+		bool truncate = false;
+		// Relative stretch weight under ImGuiTableFlags_SizingStretchProp; columns
+		// with short, similar-length values (durations, counts) should stay at 1.
+		float widthWeight = 1.0f;
 	};
 
 	/**
@@ -1570,7 +1578,7 @@ namespace Util
 		if (ImGui::BeginTable(table_id, static_cast<int>(columns.size()), flags)) {
 			// Set up columns
 			for (size_t i = 0; i < columns.size(); ++i) {
-				ImGui::TableSetupColumn(columns[i].header.c_str());
+				ImGui::TableSetupColumn(columns[i].header.c_str(), ImGuiTableColumnFlags_WidthStretch, columns[i].widthWeight);
 			}
 			ImGui::TableHeadersRow();
 
@@ -1617,7 +1625,8 @@ namespace Util
 						// All columns are now text-only with highlighting
 						std::string value = column.getValue(row);
 						ImVec4 textColor = getRowTextColor ? getRowTextColor(row) : ImVec4(0, 0, 0, 0);
-						Util::RenderTableCell(value, filterState.filterText, column.tooltip, nullptr, ImVec4(1.0f, 1.0f, 0.0f, 1.0f), true, textColor);
+						const std::string& cellTooltip = column.truncate ? value : column.tooltip;
+						Util::RenderTableCell(value, filterState.filterText, cellTooltip, nullptr, ImVec4(1.0f, 1.0f, 0.0f, 1.0f), !column.truncate, textColor);
 					}
 
 					// Now create the invisible button that covers the entire rendered row

@@ -3027,6 +3027,8 @@
     "menu.advanced.click_to_unblock": "Left-click to unblock this shader",
     "menu.advanced.column_class": "Class",
     "menu.advanced.column_class_tooltip": "Shader class",
+    "menu.advanced.column_completed": "Completed",
+    "menu.advanced.column_completed_tooltip": "Time from build start to when this task finished compiling",
     "menu.advanced.column_defines": "Defines",
     "menu.advanced.column_defines_tooltip": "Number of active define permutations for this task",
     "menu.advanced.column_descriptor": "Descriptor",

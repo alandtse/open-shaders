@@ -454,7 +454,7 @@ void AdvancedSettingsRenderer::RenderShaderCompileStatistics()
 
 		static char taskFilterText[256] = "";
 		static int taskSearchColumn = 0;
-		static size_t taskSortColumn = 1;  // default sort by Elapsed
+		static size_t taskSortColumn = 7;  // default sort by Completed, most recent first
 		static bool taskSortAscending = false;
 
 		auto queuePercent = [](const SlowTaskRecord& rec) {
@@ -462,10 +462,17 @@ void AdvancedSettingsRenderer::RenderShaderCompileStatistics()
 			return total > 0.0 ? 100.0 * rec.queueWaitMs / total : 0.0;
 		};
 
+		const int64_t qpcFrequency = shaderCache->GetQpcFrequency();
+		// Time from build start to when this task finished, for a completion-order sort/display.
+		auto completedSinceStartMs = [resetQpc, qpcFrequency](const SlowTaskRecord& rec) {
+			return static_cast<double>(rec.startQpc - resetQpc) * 1000.0 / static_cast<double>(qpcFrequency) + rec.elapsedMs;
+		};
+
 		std::vector<Util::TableColumnConfig<SlowTaskRecord>> columns = {
 			{ T("menu.advanced.column_task_key", "Key"), T("menu.advanced.column_task_key_tooltip", "Shader file, class, and active defines"), [](const SlowTaskRecord& rec) {
 				 return rec.key;
-			 } },
+			 },
+				/*truncate=*/true, /*widthWeight=*/4.0f },
 			{ T("menu.advanced.column_elapsed", "Elapsed"), T("menu.advanced.column_elapsed_tooltip", "Wall-clock compile time for this task"), [](const SlowTaskRecord& rec) {
 				 return Util::FormatDuration(rec.elapsedMs);
 			 } },
@@ -483,6 +490,9 @@ void AdvancedSettingsRenderer::RenderShaderCompileStatistics()
 			 } },
 			{ T("menu.advanced.column_source_kb", "Source KB"), T("menu.advanced.column_source_kb_tooltip", "HLSL source file size at compile time"), [](const SlowTaskRecord& rec) {
 				 return std::format("{:.1f}", static_cast<double>(rec.sourceSizeBytes) / 1024.0);
+			 } },
+			{ T("menu.advanced.column_completed", "Completed"), T("menu.advanced.column_completed_tooltip", "Time from build start to when this task finished compiling"), [completedSinceStartMs](const SlowTaskRecord& rec) {
+				 return Util::FormatDuration(completedSinceStartMs(rec));
 			 } }
 		};
 
@@ -497,10 +507,15 @@ void AdvancedSettingsRenderer::RenderShaderCompileStatistics()
 			},
 			[](const SlowTaskRecord& a, const SlowTaskRecord& b, bool asc) { return asc ? (a.priority < b.priority) : (a.priority > b.priority); },
 			[](const SlowTaskRecord& a, const SlowTaskRecord& b, bool asc) { return asc ? (a.defineCount < b.defineCount) : (a.defineCount > b.defineCount); },
-			[](const SlowTaskRecord& a, const SlowTaskRecord& b, bool asc) { return asc ? (a.sourceSizeBytes < b.sourceSizeBytes) : (a.sourceSizeBytes > b.sourceSizeBytes); }
+			[](const SlowTaskRecord& a, const SlowTaskRecord& b, bool asc) { return asc ? (a.sourceSizeBytes < b.sourceSizeBytes) : (a.sourceSizeBytes > b.sourceSizeBytes); },
+			[completedSinceStartMs](const SlowTaskRecord& a, const SlowTaskRecord& b, bool asc) {
+				const double aVal = completedSinceStartMs(a);
+				const double bVal = completedSinceStartMs(b);
+				return asc ? (aVal < bVal) : (aVal > bVal);
+			}
 		};
 
-		auto getFilterableFields = [queuePercent](const SlowTaskRecord& rec) -> std::vector<std::string> {
+		auto getFilterableFields = [queuePercent, completedSinceStartMs](const SlowTaskRecord& rec) -> std::vector<std::string> {
 			return {
 				rec.key,
 				Util::FormatDuration(rec.elapsedMs),
@@ -508,7 +523,8 @@ void AdvancedSettingsRenderer::RenderShaderCompileStatistics()
 				Util::FormatPercent(static_cast<float>(queuePercent(rec))),
 				std::to_string(rec.priority),
 				std::to_string(rec.defineCount),
-				std::format("{:.1f}", static_cast<double>(rec.sourceSizeBytes) / 1024.0)
+				std::format("{:.1f}", static_cast<double>(rec.sourceSizeBytes) / 1024.0),
+				Util::FormatDuration(completedSinceStartMs(rec))
 			};
 		};
 
@@ -542,6 +558,12 @@ void AdvancedSettingsRenderer::RenderShaderCompileStatistics()
 	}
 
 	ImGui::TreePop();
+
+	ImGui::Spacing();
+	ImGui::Separator();
+	ImGui::Spacing();
+
+	RenderCompileTraceExport();
 }
 
 // -----------------------------------------------------------------------------
@@ -565,12 +587,6 @@ void AdvancedSettingsRenderer::RenderDiagnosticsSection()
 		ImGui::Spacing();
 
 		RenderShaderBlockingPanel();
-
-		ImGui::Spacing();
-		ImGui::Separator();
-		ImGui::Spacing();
-
-		RenderCompileTraceExport();
 	}
 }
 
