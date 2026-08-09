@@ -154,6 +154,11 @@ namespace ShadowCasterManager
 	/// rejected camera state means they keep their cached tile, not redraw.
 	std::unordered_set<RE::BSShadowLight*> s_cameraHold;
 
+	bool IsCameraHeld(RE::BSShadowLight* light)
+	{
+		return light && s_cameraHold.count(light) > 0;
+	}
+
 	/// Consecutive frames a light scored below ShadowImpactFloor (exit hysteresis
 	/// mirroring s_lastValidFrame); without it a light hovering near the floor
 	/// re-bakes every dip and can latch splitExcluded into permanent full renders.
@@ -1981,8 +1986,17 @@ namespace ShadowCasterManager
 				backstopWindowFrames - ((e->Index * kSleepStaggerStride) % backstopSpreadCap);
 			const double displacementTexels =
 				formulaDisplacement / static_cast<double>(std::max(posStep, 1e-4f));
+			// A slot with NO tile at all (GetSlotTileTexels returns false, e.g. after
+			// FreeSlotTile) must count as invalid too, not just a present-but-invalid
+			// tile -- otherwise a fully freed slot reads schedDirty=false via this
+			// term (short-circuited to false) and can sample unshadowed indefinitely,
+			// only recovering once some unrelated OR-term (usually the multi-second
+			// staggered backstop) happens to fire. Gated on AtlasActive(): outside
+			// atlas mode GetSlotTileTexels always returns false, which would
+			// otherwise force every light dirty every frame.
 			AtlasTileTexels schedDirtyTile{};
-			const bool tileInvalid = GetSlotTileTexels(e->Index, schedDirtyTile) && !schedDirtyTile.contentValid;
+			const bool tileInvalid = AtlasActive() &&
+			                         (!GetSlotTileTexels(e->Index, schedDirtyTile) || !schedDirtyTile.contentValid);
 			e->schedDirty = e->LastDrawnFrame < 0 ||
 			                e->lastGeomHash == 0 ||
 			                e->pendingGeomHash != e->lastGeomHash ||
@@ -2017,6 +2031,14 @@ namespace ShadowCasterManager
 			const int32_t staggerCapFrames = std::max(1, static_cast<int32_t>(effectiveDelay * 0.5));
 			const int32_t deadlineStagger = (e->Index * 41) % staggerCapFrames;
 			e->RedrawScore -= static_cast<double>(deadlineStagger);
+
+			// A light sampling as unshadowed (no valid content at all) is strictly
+			// worse than a stale one -- the due-gate's interval throttle must never
+			// hold it past "due" while its tile is blank, or a heal that needs
+			// multiple admissions (bake + composite) stretches a 1-frame bright
+			// blip into a full RedrawScore interval of visibly bright shadow.
+			if (tileInvalid)
+				e->RedrawScore = std::min(e->RedrawScore, static_cast<double>(now));
 
 			// Demanded redraws/frame vs actual admissions/frame distinguishes a tuning
 			// problem (demand within capacity) from genuine overload.
@@ -2083,10 +2105,18 @@ namespace ShadowCasterManager
 			// spent unconditionally every frame. isFirst stays exempt to match its
 			// unconditional admission below.
 			if (s_shadowDemand.redrawDueGate && !isFirst) {
+				// Dirty sorts before clean (ScheduleOrderLess), so once we reach a
+				// clean entry nothing after it can be dirty either -- safe to break.
 				if (!e->schedDirty)
 					break;
+				// Within the dirty partition, starved entries sort ahead of
+				// RedrawScore order -- a starved-but-not-yet-due entry must not
+				// block a LATER dirty entry that IS due (e.g. a content-invalid
+				// light clamped to now by the tileInvalid check above). continue,
+				// not break: the dirty partition is small, so the extra scan cost
+				// is negligible next to blanking a light's shadow for an interval.
 				if (e->RedrawScore > static_cast<double>(now))
-					break;
+					continue;
 			}
 			int32_t budgetEstimate = s_budget.GetCost(e->Light);
 			if (isFirst) {
