@@ -2061,11 +2061,9 @@ namespace ShadowCasterManager
 			const int32_t deadlineStagger = (e->Index * 41) % staggerCapFrames;
 			e->RedrawScore -= static_cast<double>(deadlineStagger);
 
-			// A light sampling as unshadowed (no valid content at all) is strictly
-			// worse than a stale one -- the due-gate's interval throttle must never
-			// hold it past "due" while its tile is blank, or a heal that needs
-			// multiple admissions (bake + composite) stretches a 1-frame bright
-			// blip into a full RedrawScore interval of visibly bright shadow.
+			// Unshadowed is strictly worse than stale -- the due-gate must
+			// never hold a blank tile past "due", or a multi-admission heal
+			// stretches a 1-frame blip into a full interval of bright shadow.
 			if (tileInvalid)
 				e->RedrawScore = std::min(e->RedrawScore, static_cast<double>(now));
 
@@ -2145,12 +2143,8 @@ namespace ShadowCasterManager
 				// clean entry nothing after it can be dirty either -- safe to break.
 				if (!e->schedDirty)
 					break;
-				// Within the dirty partition, starved entries sort ahead of
-				// RedrawScore order -- a starved-but-not-yet-due entry must not
-				// block a LATER dirty entry that IS due (e.g. a content-invalid
-				// light clamped to now by the tileInvalid check above). continue,
-				// not break: the dirty partition is small, so the extra scan cost
-				// is negligible next to blanking a light's shadow for an interval.
+				// continue, not break: a starved-but-not-yet-due entry must not
+				// block a LATER dirty entry that IS due (e.g. tileInvalid-clamped).
 				if (e->RedrawScore > static_cast<double>(now))
 					continue;
 			}
