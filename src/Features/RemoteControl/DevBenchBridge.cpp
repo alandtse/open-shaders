@@ -1,5 +1,7 @@
 #include "Features/RemoteControl/DevBenchBridge.h"
 
+#include "Utils/FileSystem.h"
+
 // Registers our tools into the devbench test bench over its C-ABI. Gated by
 // DEVBENCH_BRIDGE_ENABLED (set by CMake when the devbench-api port is available);
 // otherwise this file compiles to an empty Install(). Inert at runtime when no
@@ -656,7 +658,20 @@ namespace
 			task->AddTask([cache]() { cache->RestorePreviousDiskCache(); });
 			return json{ { "action", "restorePrevious" }, { "queued", true }, { "enqueued_at_frame", frame }, { "note", "restore requires compilation to be idle and a compatible previous cache; check CommunityShaders.log or inspect(kind=shadercache).featureSetRevertPending for the outcome, then restart to load it" } };
 		}
-		return json{ { "error", "unknown action (clear|deleteDisk|activeOnly|backgroundCompile|acceptRebuild|restorePrevious)" }, { "action", action } };
+		if (action == "exportTrace") {
+			// Read-only over slowTaskRecords (mutex-guarded) plus a file write; unlike the
+			// cache-mutating actions above this touches no render/UI state, so it's safe to
+			// run directly on the devbench thread rather than marshalling to main.
+			auto path = a_args.contains("path") ?
+			                std::filesystem::path(a_args.value("path", std::string{})) :
+			                Util::PathHelpers::GetLogPath().parent_path() / "compile-trace.json";
+			const bool ok = cache->ExportCompileTrace(path);
+			if (!ok) {
+				return json{ { "action", "exportTrace" }, { "success", false }, { "error", "export failed or no task records for the current build; see CommunityShaders.log" } };
+			}
+			return json{ { "action", "exportTrace" }, { "success", true }, { "path", path.string() } };
+		}
+		return json{ { "error", "unknown action (clear|deleteDisk|activeOnly|backgroundCompile|acceptRebuild|restorePrevious|exportTrace)" }, { "action", action } };
 	}
 
 	void ShadercacheToolHandler(void*, const char* a_argsJson, void* a_sink, DevBenchAPI::WriteFn a_write)

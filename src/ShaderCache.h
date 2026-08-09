@@ -350,6 +350,8 @@ namespace SIE
 			int priority = 0;               // estimated compile weight (see ComputePriority)
 			int defineCount = 0;            // popcount of descriptor — active define permutations
 			uintmax_t sourceSizeBytes = 0;  // HLSL source file size at compile time
+			uint32_t threadId = 0;          // worker thread id at compile time, for trace export
+			int64_t startQpc = 0;           // QueryPerformanceCounter ticks at compile start, for trace export
 		};
 
 		/** On-demand parallelism metrics derived from task timings. */
@@ -375,6 +377,16 @@ namespace SIE
 
 		/** @brief Returns a copy of the N records with the highest elapsedMs, sorted descending. */
 		std::vector<SlowTaskRecord> GetTopSlowTasks(size_t n = 3) const;
+
+		/** @brief Returns a copy of every task record collected for the current build. */
+		std::vector<SlowTaskRecord> GetAllTaskRecords() const;
+
+		/** @brief QPC tick of the last Clear() — a per-build generation marker so UI caches
+		 *  invalidate on a fresh build even if it happens to complete the same task count. */
+		int64_t GetLastResetQpc() const { return lastReset.QuadPart; }
+
+		/** @brief Ticks per second for converting QPC-based timestamps (e.g. SlowTaskRecord::startQpc). */
+		int64_t GetQpcFrequency() const { return frequency.QuadPart; }
 
 		/** @brief Computes parallelism metrics on demand from collected task timings. */
 		std::optional<ParallelismStats> GetParallelismStats() const;
@@ -646,7 +658,21 @@ namespace SIE
 
 		/** @brief Returns a copy of the top-N slowest task records from the last build, sorted descending. */
 		std::vector<CompilationSet::SlowTaskRecord> GetTopSlowTasks(size_t n = 3);
+		/** @brief Returns a copy of every task record collected for the current build. */
+		std::vector<CompilationSet::SlowTaskRecord> GetAllTaskRecords();
+		/** @brief QPC tick of the last build reset — a generation marker for UI caches. */
+		int64_t GetLastResetQpc();
 		std::optional<CompilationSet::ParallelismStats> GetParallelismStats();
+
+		/**
+		 * @brief Writes every collected task record for the current build to a_path as a
+		 * Chrome Trace Event Format JSON array (importable directly by ui.perfetto.dev or
+		 * chrome://tracing) for diagnosing whether a slow build is genuine shader compile
+		 * cost or external CPU contention during the build window.
+		 * @return true on success; false on an empty record set or a file-write failure
+		 *  (logged, never throws).
+		 */
+		bool ExportCompileTrace(const std::filesystem::path& a_path);
 
 		/**
 		 * @brief Clears all shaders of a specific type from the shader map.
