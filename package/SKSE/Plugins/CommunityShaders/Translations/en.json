@@ -3053,7 +3053,7 @@
     "menu.advanced.column_type_tooltip": "Shader type",
     "menu.advanced.compile_flags_header": "Compile Flags",
     "menu.advanced.compile_trace_busy": "Wait for the current build to finish before exporting.",
-    "menu.advanced.compile_trace_export_failed": "Export failed — check CommunityShaders.log for details.",
+    "menu.advanced.compile_trace_export_failed": "Export failed; check CommunityShaders.log for details.",
     "menu.advanced.compile_trace_exported": "Exported: %s",
     "menu.advanced.compile_trace_header": "Compile Trace Export",
     "menu.advanced.compile_trace_tooltip_1": "Writes every compiled task from the current build to a Chrome Trace Event Format JSON file, importable at ui.perfetto.dev or chrome://tracing.",

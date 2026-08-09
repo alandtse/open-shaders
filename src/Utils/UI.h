@@ -1391,13 +1391,9 @@ namespace Util
 		std::string header;
 		std::string tooltip;
 		std::function<std::string(const T&)> getValue;
-		// Single-line instead of wrapped, with the full value as its hover tooltip
-		// (instead of the column description) -- for values too long to fit a
-		// reasonably-sized column, e.g. a shader key with many defines. Filtering
-		// still matches the full value regardless of this flag.
+		// Full value is the hover tooltip and still matches filters even when display text is cut.
 		bool truncate = false;
-		// Relative stretch weight under ImGuiTableFlags_SizingStretchProp; columns
-		// with short, similar-length values (durations, counts) should stay at 1.
+		// Relative stretch weight under ImGuiTableFlags_SizingStretchProp.
 		float widthWeight = 1.0f;
 	};
 

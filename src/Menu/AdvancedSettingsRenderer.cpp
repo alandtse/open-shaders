@@ -626,7 +626,7 @@ void AdvancedSettingsRenderer::RenderCompileTraceExport()
 		if (lastExportOk) {
 			ImGui::TextColored({ 0.4f, 0.9f, 0.4f, 1.0f }, T("menu.advanced.compile_trace_exported", "Exported: %s"), lastExportPath.c_str());
 		} else {
-			ImGui::TextColored({ 0.9f, 0.4f, 0.4f, 1.0f }, "%s", T("menu.advanced.compile_trace_export_failed", "Export failed — check CommunityShaders.log for details."));
+			ImGui::TextColored({ 0.9f, 0.4f, 0.4f, 1.0f }, "%s", T("menu.advanced.compile_trace_export_failed", "Export failed; check CommunityShaders.log for details."));
 		}
 	}
 }
