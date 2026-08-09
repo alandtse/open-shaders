@@ -18,6 +18,8 @@ function(download_ffx_runtime _filename _sha256)
         EXPECTED_HASH "SHA256=${_sha256}"
         STATUS _download_status
         TLS_VERIFY ON
+        TIMEOUT 120
+        INACTIVITY_TIMEOUT 20
     )
     list(GET _download_status 0 _status_code)
     list(GET _download_status 1 _status_message)
