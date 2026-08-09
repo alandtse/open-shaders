@@ -117,11 +117,8 @@ namespace ShadowCasterManager
 		auto* plr = globals::game::player;
 		if (!plr || !ni)
 			return false;
-		const auto pp = plr->GetPosition();
-		const auto& lp = ni->world.translate;
-		const float dx = pp.x - lp.x, dy = pp.y - lp.y, dz = pp.z - lp.z;
 		const float r = ni->GetLightRuntimeData().radius.x;
-		return dx * dx + dy * dy + dz * dz < r * r;
+		return ni->world.translate.GetSquaredDistance(plr->GetPosition()) < r * r;
 	}
 
 	/// Player-only dynamic-caster proxy, applied every frame on top of the
