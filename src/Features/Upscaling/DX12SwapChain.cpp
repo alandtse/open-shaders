@@ -290,9 +290,12 @@ WrappedResource::WrappedResource(D3D11_TEXTURE2D_DESC a_texDesc, ID3D11Device5* 
 	HANDLE sharedHandle = nullptr;
 	throwIfFailed(dxgiResource->CreateSharedHandle(nullptr, DXGI_SHARED_RESOURCE_READ | DXGI_SHARED_RESOURCE_WRITE, nullptr, &sharedHandle), "CreateSharedHandle");
 
-	// Open the shared D3D11 texture as D3D12 resource
-	throwIfFailed(a_d3d12Device->OpenSharedHandle(sharedHandle, IID_PPV_ARGS(resource.put())), "OpenSharedHandle");
+	// Open the shared D3D11 texture as D3D12 resource. Close the NT handle
+	// unconditionally before checking the result -- a thrown failure must
+	// not leak it.
+	const HRESULT openResult = a_d3d12Device->OpenSharedHandle(sharedHandle, IID_PPV_ARGS(resource.put()));
 	CloseHandle(sharedHandle);
+	throwIfFailed(openResult, "OpenSharedHandle");
 
 	if (a_texDesc.BindFlags & D3D11_BIND_SHADER_RESOURCE) {
 		D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
