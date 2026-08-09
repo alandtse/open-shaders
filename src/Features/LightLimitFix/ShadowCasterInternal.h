@@ -257,7 +257,7 @@ namespace ShadowCasterManager
 		{ "lightlum", "Rec.709 luminance of the diffuse color x engine fade", kFormulaParam_LightLum },
 		{ "lightattcam", "Skyrim falloff attenuation (1-(d/r)^2)^2 at the camera; 0 outside the radius", kFormulaParam_LightAttCam },
 		{ "lightattplayer", "Skyrim falloff attenuation (1-(d/r)^2)^2 at the player; 1 for a carried light", kFormulaParam_LightAttPlayer },
-		{ "lightdynamiccasters", "live dynamic shadow casters for this light: skinned (actor/creature) casters in its geometry list, +1 when the player stands inside the radius; 0 for purely static content", kFormulaParam_LightDynamicCasters },
+		{ "lightdynamiccasters", "live dynamic-caster presence for this light: skinned (actor/creature) casters in its geometry list, +1 when the player stands inside the radius, or 1 if a recent accumulate saw a mover; 0 for purely static content", kFormulaParam_LightDynamicCasters },
 		{ "camerax", "camera world X", kFormulaParam_CameraX },
 		{ "cameray", "camera world Y", kFormulaParam_CameraY },
 		{ "cameraz", "camera world Z", kFormulaParam_CameraZ },

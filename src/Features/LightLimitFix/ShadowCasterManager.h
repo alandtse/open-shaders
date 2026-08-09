@@ -145,7 +145,8 @@ namespace ShadowCasterManager
 		kFormulaParam_LightLum,             ///< Rec.709 luminance of diffuse x engine fade
 		kFormulaParam_LightAttCam,          ///< Skyrim falloff attenuation at camera
 		kFormulaParam_LightAttPlayer,       ///< Skyrim falloff attenuation at player
-		kFormulaParam_LightDynamicCasters,  ///< Skinned casters in geomList, +1 when player inside radius
+		kFormulaParam_LightDynamicCasters,  ///< Dynamic-caster presence: skinned geomList count + player-radius
+											///< proxy, or 1 from the split cache's last-accumulate latch
 
 		kFormulaParam_CameraX,
 		kFormulaParam_CameraY,
