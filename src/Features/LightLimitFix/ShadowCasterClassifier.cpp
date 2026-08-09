@@ -283,9 +283,10 @@ namespace ShadowCasterManager
 	// Unsynchronized by design: only the accumulate thread's walk folds into it.
 	std::uint64_t s_visitStaticHash{ 0 };
 
-	// Dynamic casters the current accumulate appended (DynamicOnly/All passes
-	// only). Reset with the hash seed in EnableLight, latched into SplitState
-	// for the sleep skip.
+	// Dynamic casters the current accumulate appended, counted on every pass
+	// (including StaticOnly, which filters them out but must still see them).
+	// Reset with the hash seed in EnableLight, latched into SplitState for
+	// the sleep skip and the due-gate's dynamic-caster dirty term.
 	std::atomic<uint32_t> s_visitDynamicCount{ 0 };
 	// Static casters the current StaticOnly bake appended, so an empty bake
 	// is never advertised as real cached content.
@@ -333,8 +334,12 @@ namespace ShadowCasterManager
 			FoldStaticCasterHash(geom, *rec);
 		switch (static_cast<CasterPass>(s_cullPassMode.load(std::memory_order_relaxed))) {
 		case CasterPass::StaticOnly:
-			if (dynamic)
+			if (dynamic) {
+				// Counted even though filtered: the mover latch must see
+				// dynamics on bake passes too, not only on composites.
+				s_visitDynamicCount.fetch_add(1, std::memory_order_relaxed);
 				return true;  // bake pass skips movers
+			}
 			s_visitStaticCount.fetch_add(1, std::memory_order_relaxed);
 			break;
 		case CasterPass::DynamicOnly:

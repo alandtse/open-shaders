@@ -145,6 +145,7 @@ namespace ShadowCasterManager
 		kFormulaParam_LightLum,             ///< Rec.709 luminance of diffuse x engine fade
 		kFormulaParam_LightAttCam,          ///< Skyrim falloff attenuation at camera
 		kFormulaParam_LightAttPlayer,       ///< Skyrim falloff attenuation at player
+		kFormulaParam_LightDynamicCasters,  ///< Skinned casters in geomList, +1 when player inside radius
 
 		kFormulaParam_CameraX,
 		kFormulaParam_CameraY,
@@ -393,6 +394,8 @@ namespace ShadowCasterManager
 		std::uint64_t cachedPendingGeomHash{ 0 };
 		int32_t lastHashComputeFrame{ -1 };
 		uint32_t lastHashGeomListSize{ 0 };
+		/// Skinned casters counted by the same cached geomList walk.
+		uint32_t cachedSkinnedCasters{ 0 };
 
 		/// Tile scale slot content was rasterized at.
 		float renderedScale{ 1.0f };
@@ -429,6 +432,7 @@ namespace ShadowCasterManager
 			cachedPendingGeomHash = 0;
 			lastHashComputeFrame = -1;
 			lastHashGeomListSize = 0;
+			cachedSkinnedCasters = 0;
 			renderedScale = 1.0f;
 			pendingScale = 1.0f;
 			desiredScale = 1.0f;

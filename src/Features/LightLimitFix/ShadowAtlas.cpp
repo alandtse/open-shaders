@@ -476,10 +476,10 @@ namespace ShadowCasterManager
 		// actually fails.
 		for (size_t i = 0; i < s_atlas.slots.size(); i++) {
 			auto& slot = s_atlas.slots[i];
-			if (!slot.tile.valid)
-				continue;
 			const auto* entry = i < static_cast<size_t>(s_lights.Size) ? &s_lights.Lights[i] : nullptr;
 			if (!entry || !entry->Light) {
+				if (!slot.tile.valid)
+					continue;
 				// Orphan grace: a gate-flapped light usually returns within a
 				// few frames, and re-entry reclaims this slot with its content
 				// intact (array parity). Free only when the owner stays gone;
@@ -502,19 +502,41 @@ namespace ShadowCasterManager
 					FreeSlotTile(static_cast<int32_t>(i));
 				continue;
 			}
-			slot.orphanSince = 0;
 			// The tile's depths (and static bake) belong to the light that
 			// rasterized them: a slot handed to a different light must not
 			// advertise the previous owner's shadow as valid content. Key on
 			// the NiLight, not the BSShadowLight wrapper -- promotion recreates
 			// the wrapper for the same engine light, and keying on it blinked
-			// shadows off on every promotion churn. First claim (fresh tile)
-			// skips the invalidation.
+			// shadows off on every promotion churn.
 			const void* stableOwner = entry->Light->light.get();
+			// Pool reshuffles (score reordering, camera-boundary churn) move a
+			// light between indices without moving its tile -- blanking on
+			// mismatch degenerated a live shadow to fully unshadowed for the
+			// whole rebuild window. Migrate the light's surviving content
+			// (from an active index it left, or a parked orphan record --
+			// see ParkOrphanSlotRecord) to its new index instead. Guarded by
+			// slot count: each swap permanently settles one record, so this
+			// terminates even under adversarial reshuffle patterns.
+			for (size_t guard = 0; slot.owner != stableOwner && guard < s_atlas.slots.size(); guard++) {
+				int32_t swapWith = -1;
+				for (size_t j = 0; j < s_atlas.slots.size() && swapWith < 0; j++) {
+					const auto& other = s_atlas.slots[j];
+					if (j != i && other.owner == stableOwner && other.tile.valid && other.valid)
+						swapWith = static_cast<int32_t>(j);
+				}
+				if (swapWith < 0)
+					break;
+				std::swap(slot, s_atlas.slots[static_cast<size_t>(swapWith)]);
+			}
+			slot.orphanSince = 0;
+			if (!slot.tile.valid)
+				continue;  // no surviving content anywhere; EnsureSlotTile starts fresh
 			if (slot.owner != stableOwner) {
 				const bool firstClaim = slot.owner == nullptr;
 				slot.owner = stableOwner;
 				if (!firstClaim) {
+					// No owner-matching content survives to migrate: a slot handed to
+					// a different light must not advertise the previous owner's shadow.
 					slot.valid = false;
 					slot.staticValid = false;
 					slot.bakeValid = false;
@@ -618,8 +640,9 @@ namespace ShadowCasterManager
 				// immediately. Mass reclaim cascaded: every victim is a light
 				// NOT rendering this frame, and un-rescheduled it stayed dark
 				// for its whole redraw interval.
-				int32_t orphanVictim = -1, activeVictim = -1;
-				uint32_t orphanBest = 0, activeOver = 0;
+				int32_t orphanVictim = -1, idleVictim = -1, activeVictim = -1;
+				uint32_t orphanBest = 0, idleOver = 0, activeOver = 0;
+				double activeVictimScore = 0.0;
 				const auto* requester = poolSlot < static_cast<int32_t>(s_lights.Size) ?
 				                            &s_lights.Lights[poolSlot] :
 				                            nullptr;
@@ -640,10 +663,25 @@ namespace ShadowCasterManager
 					// scoring on un-hold -- excluded from eviction, not just orphans.
 					if (IsCameraHeld(entry->Light))
 						continue;
+					// Already rastered into this frame's command list; evicting now
+					// would corrupt GPU-visible content (parity with the node search).
+					if (other.renderFrame == currentFrame)
+						continue;
 					const uint32_t needed = OrderForScale(entry->pendingScale);
-					if (other.tile.order > needed && other.tile.order - needed > activeOver) {
-						activeOver = other.tile.order - needed;
+					if (other.tile.order <= needed)
+						continue;
+					const uint32_t over = other.tile.order - needed;
+					// Confirmed zero-demand content first: nobody samples its shadow,
+					// so its blank-until-redraw window is imperceptible.
+					if (DemandSkipCandidate(*entry)) {
+						if (over > idleOver) {
+							idleOver = over;
+							idleVictim = static_cast<int32_t>(i);
+						}
+					} else if (over > activeOver) {
+						activeOver = over;
 						activeVictim = static_cast<int32_t>(i);
+						activeVictimScore = entry->lastScore;
 					}
 				}
 				// Free the largest ORPHAN first (its light already left, held only
@@ -653,7 +691,15 @@ namespace ShadowCasterManager
 					FreeSlotTile(orphanVictim);
 					continue;
 				}
-				if (activeVictim >= 0) {
+				if (idleVictim >= 0) {
+					FreeSlotTile(idleVictim);
+					s_lights.Lights[idleVictim].LastDrawnFrame = -1;
+					continue;
+				}
+				// A watched victim falls only to a clearly higher-value requester --
+				// same 2x margin the node search below enforces; otherwise the outer
+				// loop walks the request down a class instead of blanking a shadow.
+				if (activeVictim >= 0 && requester && requester->lastScore > activeVictimScore * 2.0) {
 					FreeSlotTile(activeVictim);
 					s_lights.Lights[activeVictim].LastDrawnFrame = -1;
 					continue;
@@ -847,6 +893,29 @@ namespace ShadowCasterManager
 		if (slot.pending.valid)
 			s_atlas.allocator.Free(slot.pending);
 		slot = {};
+	}
+
+	bool ParkOrphanSlotRecord(int32_t poolSlot)
+	{
+		if (!s_atlas.ready || poolSlot < 0 || static_cast<size_t>(poolSlot) >= s_atlas.slots.size())
+			return false;
+		auto& slot = s_atlas.slots[poolSlot];
+		if (!slot.tile.valid || !slot.valid || !slot.owner)
+			return false;
+		// Any light-free index with no record of its own can host the displaced
+		// record; the owner's return finds it by owner scan, not by index.
+		for (size_t i = 0; i < s_atlas.slots.size(); i++) {
+			if (static_cast<int32_t>(i) == poolSlot)
+				continue;
+			auto& other = s_atlas.slots[i];
+			if (other.tile.valid || other.pending.valid)
+				continue;
+			if (i < static_cast<size_t>(s_lights.Size) && s_lights.Lights[i].Light)
+				continue;
+			std::swap(slot, other);
+			return true;
+		}
+		return false;
 	}
 
 	void FreeAllTiles()

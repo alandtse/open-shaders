@@ -293,6 +293,7 @@ namespace ShadowCasterManager
 		FormulaHelper::SetParam(kFormulaParam_LightConverted, 0.0);
 		FormulaHelper::SetParam(kFormulaParam_LightIndex, index);
 		FormulaHelper::SetParam(kFormulaParam_LightDisplacement, 0.0);    // overridden per-entry in redraw interval loop
+		FormulaHelper::SetParam(kFormulaParam_LightDynamicCasters, 0.0);  // overridden per-entry in redraw interval loop
 		FormulaHelper::SetParam(kFormulaParam_PlayerLightDistance, 0.0);  // overridden below after light position is known
 
 		// Temporal stickiness signals. Both derived from the slot pool in one

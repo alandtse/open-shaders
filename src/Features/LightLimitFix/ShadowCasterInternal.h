@@ -257,6 +257,7 @@ namespace ShadowCasterManager
 		{ "lightlum", "Rec.709 luminance of the diffuse color x engine fade", kFormulaParam_LightLum },
 		{ "lightattcam", "Skyrim falloff attenuation (1-(d/r)^2)^2 at the camera; 0 outside the radius", kFormulaParam_LightAttCam },
 		{ "lightattplayer", "Skyrim falloff attenuation (1-(d/r)^2)^2 at the player; 1 for a carried light", kFormulaParam_LightAttPlayer },
+		{ "lightdynamiccasters", "live dynamic shadow casters for this light: skinned (actor/creature) casters in its geometry list, +1 when the player stands inside the radius; 0 for purely static content", kFormulaParam_LightDynamicCasters },
 		{ "camerax", "camera world X", kFormulaParam_CameraX },
 		{ "cameray", "camera world Y", kFormulaParam_CameraY },
 		{ "cameraz", "camera world Z", kFormulaParam_CameraZ },
@@ -508,6 +509,10 @@ namespace ShadowCasterManager
 	/// tile until they re-enter scoring, unlike an actively-scheduled light.
 	bool IsCameraHeld(RE::BSShadowLight* light);
 
+	/// True when the demand oracle confirms nobody currently samples this
+	/// light's shadow (fails open: unusable samples never read as absent).
+	bool DemandSkipCandidate(const LightEntry& e);
+
 	/// Creates/updates atlas resources per frame.
 	void UpdateAtlas();
 
@@ -534,6 +539,9 @@ namespace ShadowCasterManager
 	bool LoadSlotBakeSnapshot(int32_t poolSlot, ShadowBakeSnapshot& out);
 
 	void FreeSlotTile(int32_t poolSlot);
+	/// Moves a still-valid displaced tile record to a light-free index so its
+	/// owner can reclaim the content on re-entry; false when unparkable.
+	bool ParkOrphanSlotRecord(int32_t poolSlot);
 	void FreeAllTiles();
 
 	bool GetSlotTileTexels(int32_t poolSlot, AtlasTileTexels& out);
