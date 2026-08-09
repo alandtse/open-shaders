@@ -456,6 +456,15 @@ namespace SIE
 			return std::format(L"Data/Shaders/{}.hlsl", std::wstring(name.begin(), name.end()));
 		}
 
+		// ImageSpace shaders are keyed by technique (fxpFilename) but all compile
+		// from a shared source file named by originalShaderName instead.
+		static std::string_view GetShaderSourceName(const RE::BSShader& shader)
+		{
+			return shader.shaderType == RE::BSShader::Type::ImageSpace ?
+			           static_cast<const RE::BSImagespaceShader&>(shader).originalShaderName :
+			           std::string_view(shader.fxpFilename);
+		}
+
 		static const char* GetShaderProfile(ShaderClass shaderClass)
 		{
 			switch (shaderClass) {
@@ -1731,10 +1740,7 @@ namespace SIE
 				// Manifest-first: a recorded digest is authoritative, falling back
 				// to the mtime checks below only when no digest is on record yet.
 				bool decidedByDigest = false;
-				const std::wstring shaderSourcePath = GetShaderPath(
-					shader.shaderType == RE::BSShader::Type::ImageSpace ?
-						static_cast<const RE::BSImagespaceShader&>(shader).originalShaderName :
-						shader.fxpFilename);
+				const std::wstring shaderSourcePath = GetShaderPath(GetShaderSourceName(shader));
 				// Manifest lookup is a cheap map Get; gate the expensive digest walk
 				// (file read + full include-closure hash) on it actually finding
 				// something to compare against, not the other way around -- a blob
@@ -4052,15 +4058,10 @@ namespace SIE
 		const auto descriptorComplexity = std::popcount(static_cast<uint32_t>(task.GetId()));
 		uintmax_t sourceBytes = 0;
 		{
-			// GetString() format: "fxpFilename:ShaderClass:defines" — filename is before the first colon.
-			const auto taskStr = task.GetString();
-			const auto sep = taskStr.find(':');
-			if (sep != std::string::npos) {
-				const auto shaderName = taskStr.substr(0, sep);
-				if (auto path = SIE::SShaderCache::GetShaderPath(shaderName); !path.empty()) {
-					std::error_code ec;
-					sourceBytes = std::filesystem::file_size(path, ec);
-				}
+			std::error_code ec;
+			sourceBytes = std::filesystem::file_size(task.GetSourcePath(), ec);
+			if (ec) {
+				sourceBytes = 0;
 			}
 		}
 
@@ -4133,6 +4134,11 @@ namespace SIE
 	std::string ShaderCompilationTask::GetString() const
 	{
 		return SIE::SShaderCache::GetShaderString(shaderClass, shader, descriptor, true);
+	}
+
+	std::wstring ShaderCompilationTask::GetSourcePath() const
+	{
+		return SIE::SShaderCache::GetShaderPath(SIE::SShaderCache::GetShaderSourceName(shader));
 	}
 
 	bool ShaderCompilationTask::operator==(const ShaderCompilationTask& other) const

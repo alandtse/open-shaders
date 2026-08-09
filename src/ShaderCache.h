@@ -232,6 +232,8 @@ namespace SIE
 		static size_t MakeId(ShaderClass shaderClass, RE::BSShader::Type shaderType, uint32_t descriptor);
 		/** @brief Returns a human-readable string describing this task (shader file, class, defines). */
 		std::string GetString() const;
+		/** @brief Path to the actual HLSL source this task compiles from (not always fxpFilename -- see ImageSpace shaders). */
+		std::wstring GetSourcePath() const;
 
 		/**
 		 * LPT scheduling score: higher = more expensive = should be dispatched first.
