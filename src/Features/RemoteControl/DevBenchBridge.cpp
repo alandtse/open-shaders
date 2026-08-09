@@ -1,5 +1,7 @@
 #include "Features/RemoteControl/DevBenchBridge.h"
 
+#include <algorithm>
+
 #include "Utils/FileSystem.h"
 
 // Registers our tools into the devbench test bench over its C-ABI. Gated by
@@ -662,9 +664,21 @@ namespace
 			// Read-only over slowTaskRecords (mutex-guarded) plus a file write; unlike the
 			// cache-mutating actions above this touches no render/UI state, so it's safe to
 			// run directly on the devbench thread rather than marshalling to main.
-			auto path = a_args.contains("path") ?
-			                std::filesystem::path(a_args.value("path", std::string{})) :
-			                Util::PathHelpers::GetLogPath().parent_path() / "compile-trace.json";
+			const auto logDir = Util::PathHelpers::GetLogPath().parent_path();
+			std::filesystem::path path = logDir / "compile-trace.json";
+			if (a_args.contains("path")) {
+				const std::filesystem::path requested(a_args.value("path", std::string{}));
+				if (requested.is_absolute()) {
+					return json{ { "action", "exportTrace" }, { "success", false }, { "error", "path must be relative to the log directory, not absolute" } };
+				}
+				const auto resolved = (logDir / requested).lexically_normal();
+				const auto rel = resolved.lexically_relative(logDir);
+				const bool escapesLogDir = rel.empty() || std::any_of(rel.begin(), rel.end(), [](const auto& part) { return part == ".."; });
+				if (escapesLogDir) {
+					return json{ { "action", "exportTrace" }, { "success", false }, { "error", "path escapes the log directory" } };
+				}
+				path = resolved;
+			}
 			const bool ok = cache->ExportCompileTrace(path);
 			if (!ok) {
 				return json{ { "action", "exportTrace" }, { "success", false }, { "error", "export failed or no task records for the current build; see CommunityShaders.log" } };

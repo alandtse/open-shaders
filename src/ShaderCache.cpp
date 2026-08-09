@@ -3761,6 +3761,11 @@ namespace SIE
 				return false;
 			}
 			file << events.dump(2);
+			file.flush();
+			if (!file.good()) {
+				logger::warn("ExportCompileTrace: write to {} failed (disk full or I/O error)", a_path.string());
+				return false;
+			}
 		} catch (const std::exception& e) {
 			logger::warn("ExportCompileTrace: failed writing {}: {}", a_path.string(), e.what());
 			return false;
