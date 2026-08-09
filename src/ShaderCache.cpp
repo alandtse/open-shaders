@@ -3717,8 +3717,7 @@ namespace SIE
 		nlohmann::json events = nlohmann::json::array();
 		const uint32_t pid = GetCurrentProcessId();
 
-		// One thread_name metadata event per worker thread so Perfetto/chrome://tracing
-		// group lanes under a readable label instead of a bare numeric tid.
+		// One thread_name event per worker so Perfetto groups lanes readably.
 		std::unordered_set<uint32_t> namedThreads;
 		for (const auto& rec : records) {
 			if (namedThreads.insert(rec.threadId).second) {
@@ -3732,8 +3731,7 @@ namespace SIE
 
 		for (const auto& rec : records) {
 			const double startUs = qpcToUs(rec.startQpc);
-			// Separate slice for the enqueue -> dispatch wait, so a wide queue-wait slice
-			// next to a narrow compile slice reads as scheduler starvation at a glance.
+			// Separate slice for the queue wait so it reads as scheduler starvation.
 			if (rec.queueWaitMs > 0.0) {
 				events.push_back({ { "name", "queue_wait" },
 					{ "cat", "shader_compile" },
@@ -4069,8 +4067,7 @@ namespace SIE
 		constexpr double kSlowMs = 2000.0;
 		constexpr double kVerySlowMs = 8000.0;
 
-		// Record every task for post-mortem analysis and developer UI (top-N display,
-		// full table, and Chrome Trace export — see ShaderCache::ExportCompileTrace).
+		// Recorded for post-mortem analysis, the developer UI, and trace export.
 		{
 			std::lock_guard lock(compilationSet.slowTasksMutex);
 			compilationSet.slowTaskRecords.push_back({ taskKey, elapsedMs, queueWaitMs, task.GetPriority(),

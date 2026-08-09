@@ -439,17 +439,12 @@ void AdvancedSettingsRenderer::RenderShaderCompileStatistics()
 		}
 	}
 
-	// Full sortable/filterable table of every task record from this build. The
-	// top-3 list above answers "what's slow" at a glance; this is for digging
-	// into patterns (e.g. a whole class of permutations, not just the extreme
-	// tail). Collapsed by default since it can hold hundreds of rows.
+	// Collapsed by default -- can hold hundreds of rows.
 	if (ImGui::TreeNodeEx(T("menu.advanced.all_compiled_tasks", "All Compiled Tasks"))) {
 		using SlowTaskRecord = SIE::CompilationSet::SlowTaskRecord;
 
-		// Keyed on lastReset's QPC tick, not record count -- two builds can
-		// coincidentally compile the same number of tasks. Refreshed every frame
-		// while a build is running (matches the top-3 list's live behavior above),
-		// then cached once idle since nothing's changing.
+		// Keyed on lastReset's QPC tick, not record count -- two builds can compile the
+		// same task count. Also refreshed while compiling so it doesn't freeze mid-build.
 		static std::vector<SlowTaskRecord> cachedRows;
 		static int64_t cachedResetQpc = -1;
 		const int64_t resetQpc = shaderCache->GetLastResetQpc();

@@ -661,9 +661,8 @@ namespace
 			return json{ { "action", "restorePrevious" }, { "queued", true }, { "enqueued_at_frame", frame }, { "note", "restore requires compilation to be idle and a compatible previous cache; check CommunityShaders.log or inspect(kind=shadercache).featureSetRevertPending for the outcome, then restart to load it" } };
 		}
 		if (action == "exportTrace") {
-			// Read-only over slowTaskRecords (mutex-guarded) plus a file write; unlike the
-			// cache-mutating actions above this touches no render/UI state, so it's safe to
-			// run directly on the devbench thread rather than marshalling to main.
+			// Only reads records (mutex-guarded) and writes a file -- safe off-thread. Don't
+			// add render/UI-state access here without marshalling like the actions above.
 			const auto logDir = Util::PathHelpers::GetLogPath().parent_path();
 			std::filesystem::path path = logDir / "compile-trace.json";
 			if (a_args.contains("path")) {

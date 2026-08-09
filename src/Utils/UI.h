@@ -1592,9 +1592,7 @@ namespace Util
 				}
 			}
 
-			// Render rows with input event support. Clipped: sort/filter above
-			// already ran over the full set, so only visible rows pay the
-			// per-cell format/highlight/InvisibleButton cost below.
+			// Sort/filter above must stay before this clipper, or only visible rows sort.
 			ImGuiListClipper clipper;
 			clipper.Begin(static_cast<int>(filteredRows.size()));
 			while (clipper.Step()) {
