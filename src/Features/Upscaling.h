@@ -119,7 +119,7 @@ public:
 	// presetDLSS is deliberately NOT here: Streamline::SetDLSSOptions reads
 	// settings.presetDLSS per-frame and applies it via slDLSSSetOptions, so
 	// it's already runtime-effective.
-	inline static constexpr Util::Settings::RestartTable<Settings, 7> kRestartFields{ {
+	inline static constexpr Util::Settings::RestartTable<Settings, 8> kRestartFields{ {
 		UTIL_RESTART_FIELD(Settings, frameGenerationMode, "Frame Generation"),
 		UTIL_RESTART_FIELD(Settings, frameGenerationForceEnable, "Force Enable Frame Generation"),
 		UTIL_RESTART_FIELD(Settings, renderAtUpscaleRes, "Render at Upscaled Resolution"),
@@ -127,6 +127,11 @@ public:
 		UTIL_RESTART_FIELD(Settings, upscaleMethod, "Upscaling Method"),
 		UTIL_RESTART_FIELD(Settings, qualityMode, "Upscale Preset"),
 		UTIL_RESTART_FIELD(Settings, vrRenderScale, "VR Render Scale"),
+		// CreateUpscalingTextureResources (which allocates runtimeFsrDepthTexture)
+		// only runs on an upscale-method change, not on this toggle -- restart-gate
+		// it so a mid-session flip can't select the runtime provider without ever
+		// allocating the texture Upscale() then dereferences.
+		UTIL_RESTART_FIELD(Settings, fsr4RuntimeEnable, "Use Runtime FSR4"),
 	} };
 	Util::Settings::BootSnapshot<Settings> bootSnapshot{ kRestartFields };
 
