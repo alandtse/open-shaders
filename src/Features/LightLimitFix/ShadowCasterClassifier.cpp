@@ -399,10 +399,7 @@ namespace ShadowCasterManager
 			}
 			if (angularMin > 0.0f && light) {
 				const auto& wb = a_visible.worldBound;
-				const float dx = wb.center.x - s_cullCameraPos.x;
-				const float dy = wb.center.y - s_cullCameraPos.y;
-				const float dz = wb.center.z - s_cullCameraPos.z;
-				const float distSq = dx * dx + dy * dy + dz * dz;
+				const float distSq = wb.center.GetSquaredDistance(s_cullCameraPos);
 				const float radiusSq = wb.radius * wb.radius;
 				// Squared form of dist > radius && radius/dist < angularMin, avoiding
 				// the per-caster sqrt; also skips casters enclosing the camera (shadow could be anywhere).

@@ -206,8 +206,7 @@ namespace ShadowCasterManager
 		// coneFraction since falloff alone cannot distinguish beam-elsewhere
 		// from actually-lit within the sphere.
 		auto computeAtt = [&](const RE::NiPoint3& pos) -> float {
-			const float dx = pos.x - lp.x, dy = pos.y - lp.y, dz = pos.z - lp.z;
-			const float dist2 = dx * dx + dy * dy + dz * dz;
+			const float dist2 = pos.GetSquaredDistance(lp);
 			const float r2 = lightRadius * lightRadius;
 			if (dist2 >= r2)
 				return 0.0f;
