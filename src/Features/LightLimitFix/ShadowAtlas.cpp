@@ -509,14 +509,10 @@ namespace ShadowCasterManager
 			// the wrapper for the same engine light, and keying on it blinked
 			// shadows off on every promotion churn.
 			const void* stableOwner = entry->Light->light.get();
-			// Pool reshuffles (score reordering, camera-boundary churn) move a
-			// light between indices without moving its tile -- blanking on
-			// mismatch degenerated a live shadow to fully unshadowed for the
-			// whole rebuild window. Migrate the light's surviving content
-			// (from an active index it left, or a parked orphan record --
-			// see ParkOrphanSlotRecord) to its new index instead. Guarded by
-			// slot count: each swap permanently settles one record, so this
-			// terminates even under adversarial reshuffle patterns.
+			// A pool reshuffle moves a light between indices without moving its
+			// tile; migrate its surviving content (active index or a parked
+			// orphan, see ParkOrphanSlotRecord) instead of blanking it. Guarded
+			// by slot count so this always terminates.
 			for (size_t guard = 0; slot.owner != stableOwner && guard < s_atlas.slots.size(); guard++) {
 				int32_t swapWith = -1;
 				for (size_t j = 0; j < s_atlas.slots.size() && swapWith < 0; j++) {

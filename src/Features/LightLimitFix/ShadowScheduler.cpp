@@ -1872,11 +1872,8 @@ namespace ShadowCasterManager
 				}
 			}
 
-			// Live dynamic-caster presence, computed OUTSIDE the accumulate so
-			// admission can never deadlock on a latch that only updates after
-			// admission: skinned casters from the cached geomList walk (below,
-			// <= kGeomHashRehashInterval+1 frames stale), the player via the
-			// O(1) radius proxy, plus the split cache's last-accumulate latch.
+			// Computed OUTSIDE the accumulate so admission can't deadlock on a
+			// latch that only updates after admission.
 			uint32_t dynamicCasters = e->cachedSkinnedCasters;
 			if (PlayerWithinLightRadius(e->Light->light.get()))
 				dynamicCasters++;
@@ -2022,14 +2019,10 @@ namespace ShadowCasterManager
 				backstopWindowFrames - ((e->Index * kSleepStaggerStride) % backstopSpreadCap);
 			const double displacementTexels =
 				formulaDisplacement / static_cast<double>(std::max(posStep, 1e-4f));
-			// A slot with NO tile at all (GetSlotTileTexels returns false, e.g. after
-			// FreeSlotTile) must count as invalid too, not just a present-but-invalid
-			// tile -- otherwise a fully freed slot reads schedDirty=false via this
-			// term (short-circuited to false) and can sample unshadowed indefinitely,
-			// only recovering once some unrelated OR-term (usually the multi-second
-			// staggered backstop) happens to fire. Gated on AtlasActive(): outside
-			// atlas mode GetSlotTileTexels always returns false, which would
-			// otherwise force every light dirty every frame.
+			// A slot with no tile at all must count as invalid too, not just a
+			// present-but-invalid one, or a fully freed slot can sample
+			// unshadowed indefinitely. Gated on AtlasActive() so non-atlas mode
+			// doesn't force every light dirty every frame.
 			AtlasTileTexels schedDirtyTile{};
 			const bool tileInvalid = AtlasActive() &&
 			                         (!GetSlotTileTexels(e->Index, schedDirtyTile) || !schedDirtyTile.contentValid);
