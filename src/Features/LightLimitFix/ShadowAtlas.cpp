@@ -657,7 +657,7 @@ namespace ShadowCasterManager
 					}
 					// Held lights can't repair a freed tile until they re-enter
 					// scoring on un-hold -- excluded from eviction, not just orphans.
-					if (IsCameraHeld(entry->Light))
+					if (IsEvictionHeld(entry->Light))
 						continue;
 					// Already rastered into this frame's command list; evicting now
 					// would corrupt GPU-visible content (parity with the node search).
@@ -749,7 +749,7 @@ namespace ShadowCasterManager
 									if (const auto* heldEntry = i < static_cast<size_t>(s_lights.Size) ?
 									                                &s_lights.Lights[i] :
 									                                nullptr;
-										heldEntry && heldEntry->Light && IsCameraHeld(heldEntry->Light)) {
+										heldEntry && heldEntry->Light && IsEvictionHeld(heldEntry->Light)) {
 										disqualified = true;
 										break;
 									}
