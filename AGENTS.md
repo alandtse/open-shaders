@@ -10,7 +10,7 @@ Claude Code loads it via the `@../AGENTS.md` import in `.claude/CLAUDE.md`.
 -   **Comments:** Max 1-2 lines inline. Explain _why_, not _what_. Describe present code only (never absent/removed code, except for regression-risk warnings). No mid-function tutorials.
 -   **Comment Invariants:** Do not add "see commit/PR" pointers or name one-off incidents/tools (e.g. "the RenderDoc CTD"). State the invariant and stop.
 -   **Minimal Churn:** Do not reformat unrelated code or rename adjacent variables outside the PR scope.
--   **DRY Review:** Check new code against existing shared utilities codebase-wide (e.g. `SetResourceName`, `GetGameSettingValue`, `isVR` cache, serialize/format/filesystem helpers).
+-   **DRY Review:** Check new code against existing shared utilities codebase-wide (e.g. `SetResourceName`, `GetGameSettingValue`, cached `globals::game::*` pointers over raw `GetSingleton()`, serialize/format/filesystem helpers).
 -   **DirectX Naming:** Name every D3D11 resource using `Util::SetResourceName`. Canonical implementation is in `Utils/D3D.cpp`; never duplicate the GUID or re-implement inline.
 -   **Perf Instrumentation:** Use `CS_GPU_PASS("Feature::Pass")` (RAII `ScopedGpuPass`, `src/GpuPass.h`) at every render-pass entry point, new or ported. It is the single canonical helper for perf timing — one call gets the internal profiler, a Tracy CPU zone, a Tracy GPU zone, and the RenderDoc/PIX annotation together. Never hand-roll `state->BeginPerfEvent`/`EndPerfEvent` pairs or raw `TracyD3D11Zone` at a pass entry. **Code transplanted from another fork is a common violation source** — sibling forks use their own raw annotation patterns; swap them for `CS_GPU_PASS` during the port, don't carry them over.
 -   **VR Maintenance:** Keep VR divergence to the absolute minimum necessary. Resolve merge conflicts in favor of keeping VR.
@@ -54,7 +54,7 @@ Claude Code loads it via the `@../AGENTS.md` import in `.claude/CLAUDE.md`.
 -   **DRY Codebase-Wide:** Do not reinvent existing functionality. Check your changes against the codebase and use shared utility libraries in `src/Utils/` (e.g., `Serialize.h` for JSON, `Format.h` for strings, `FileSystem.h` for paths, `UI.h` for ImGui). Always reuse:
     -   `Util::SetResourceName` for resource naming.
     -   `Util::GetGameSettingValue` for reading game settings.
-    -   The cached `globals::game::isVR` for runtime VR checks.
+    -   The cached `globals::game::*` pointers (`Globals.h`) over calling the equivalent `RE::*::GetSingleton()` directly — e.g. `globals::game::player` instead of `RE::PlayerCharacter::GetSingleton()`, `globals::game::isVR` instead of `REL::Module::IsVR()`.
 -   **ImGui Integration:**
     -   Always pair `ImGui::BeginTable()` with `ImGui::EndTable()`. Orphaned `TableNextColumn()` calls cause layout bugs and crashes.
     -   Use the RAII pattern for ImGui style changes; avoid manual save/restore states.

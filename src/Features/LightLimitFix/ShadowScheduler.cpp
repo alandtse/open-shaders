@@ -114,7 +114,7 @@ namespace ShadowCasterManager
 	/// usually isn't in geomList at scheduling time. O(1), safe every frame.
 	static bool PlayerWithinLightRadius(RE::NiLight* ni)
 	{
-		auto* plr = RE::PlayerCharacter::GetSingleton();
+		auto* plr = globals::game::player;
 		if (!plr || !ni)
 			return false;
 		const auto pp = plr->GetPosition();
@@ -136,7 +136,7 @@ namespace ShadowCasterManager
 	{
 		if (!PlayerWithinLightRadius(ni))
 			return h;
-		const auto pp = RE::PlayerCharacter::GetSingleton()->GetPosition();
+		const auto pp = globals::game::player->GetPosition();
 		const float actorStep = std::clamp(posStep, 1.0f, 8.0f);
 		h = HashCombineFloat(h, QuantizeFloat(pp.x, actorStep));
 		h = HashCombineFloat(h, QuantizeFloat(pp.y, actorStep));
