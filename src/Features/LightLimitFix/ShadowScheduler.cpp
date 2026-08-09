@@ -2087,7 +2087,7 @@ namespace ShadowCasterManager
 			if (tileInvalid) {
 				if (e->awaitingTileResult) {
 					e->tileFailStreak = std::min(e->tileFailStreak + 1, kTileBackoffMaxStreak);
-					e->tileRetryFrame = now + e->tileFailStreak * kTileBackoffStepFrames;
+					e->tileRetryFrame = now + (kTileBackoffStepFrames << (e->tileFailStreak - 1));
 					e->awaitingTileResult = false;
 				}
 				if (e->tileFailStreak > 0 && now < e->tileRetryFrame) {
@@ -2097,6 +2097,7 @@ namespace ShadowCasterManager
 					e->RedrawScore = std::min(e->RedrawScore, static_cast<double>(now));
 				}
 			} else {
+				e->awaitingTileResult = false;
 				e->tileFailStreak = 0;
 				e->tileRetryFrame = -1;
 			}
