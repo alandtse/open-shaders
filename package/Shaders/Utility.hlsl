@@ -130,6 +130,15 @@ VS_OUTPUT main(VS_INPUT input)
 		input.InstanceID
 #	endif
 	);
+	const bool treeBendEnabled = (Permutation::ExtraShaderDescriptor & Permutation::ExtraFlags::TreeBend) != 0;
+	float treeWindInstanceResponse = 1.0;
+#	if !defined(SKINNED)
+	if (treeBendEnabled) {
+		float2 instanceOriginWS =
+			float2(World[0][0].w, World[0][1].w) + FrameBuffer::CameraPosAdjust[0].xy;
+		treeWindInstanceResponse = TrunkWind::GetInstanceResponse(instanceOriginWS);
+	}
+#	endif
 
 #	if (defined(RENDER_DEPTH) && defined(RENDER_SHADOWMASK_ANY)) || SHADOWFILTER == 2
 	vsout.PositionCS.xy = input.PositionMS.xy;
@@ -155,8 +164,14 @@ VS_OUTPUT main(VS_INPUT input)
 #		if defined(VC) && defined(NORMALS) && defined(TREE_ANIM)
 	if ((Permutation::ExtraShaderDescriptor & Permutation::ExtraFlags::DisableTreeAnimation) == 0) {
 		float2 treeTmp1 = SmoothSaturate(abs(2 * frac(float2(0.1, 0.25) * (TreeParams.w * TreeParams.y * TreeParams.x) + dot(input.PositionMS.xyz, 1.0.xxx) + 0.5) - 1));
-		float normalMult = (treeTmp1.x + 0.1 * treeTmp1.y) *
-		                   (input.Color.w * TreeParams.z * Permutation::GetWindIntensityScale());
+		float animationStrength = TreeParams.z * Permutation::GetCurrentWindIntensityScale();
+		if (treeBendEnabled) {
+			animationStrength =
+				Permutation::GetCurrentTrunkWindStrength() * treeWindInstanceResponse *
+				Permutation::TrunkWindLeafSensitivity;
+		}
+		float normalMult =
+			(treeTmp1.x + 0.1 * treeTmp1.y) * input.Color.w * animationStrength;
 		positionMS.xyz += normalMS.xyz * normalMult;
 	}
 #		endif
@@ -170,17 +185,17 @@ VS_OUTPUT main(VS_INPUT input)
 
 	float3x4 worldMatrix = Skinned::GetBoneTransformMatrix(Bones, boneIndices, FrameBuffer::CameraPosAdjust[eyeIndex].xyz, input.BoneWeights);
 	precise float4 positionWS = float4(mul(positionMS, transpose(worldMatrix)), 1);
-	if ((Permutation::ExtraShaderDescriptor & Permutation::ExtraFlags::TreeBend) != 0) {
+	if (treeBendEnabled) {
 		positionWS.xy += TrunkWind::GetWorldDisplacement(
-			positionMS.z, Permutation::TrunkWindTimer, Permutation::TrunkWindVector);
+			positionMS.z, Permutation::TrunkWindVector, Permutation::GetCurrentTrunkWindVariationScale(), treeWindInstanceResponse);
 	}
 
 	positionCS = mul(FrameBuffer::CameraViewProj[eyeIndex], positionWS);
 #		else
-	if ((Permutation::ExtraShaderDescriptor & Permutation::ExtraFlags::TreeBend) != 0) {
+	if (treeBendEnabled) {
 		precise float4 positionWS = mul(World[eyeIndex], positionMS);
 		positionWS.xy += TrunkWind::GetWorldDisplacement(
-			positionMS.z, Permutation::TrunkWindTimer, Permutation::TrunkWindVector);
+			positionMS.z, Permutation::TrunkWindVector, Permutation::GetCurrentTrunkWindVariationScale(), treeWindInstanceResponse);
 		positionCS = mul(FrameBuffer::CameraViewProj[eyeIndex], positionWS);
 	} else {
 		precise float4x4 modelViewProj = mul(FrameBuffer::CameraViewProj[eyeIndex], World[eyeIndex]);

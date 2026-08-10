@@ -107,12 +107,83 @@ namespace Permutation
 
 		float WindIntensityOverride;
 		uint OverrideWindIntensity;
-		float2 PerShaderPadding;
+		float TrunkWindGustStrength;
+		float TrunkWindPreviousGustStrength;
+
+		float TrunkWindFlexibleHeight;
+		float TrunkWindMaximumDisplacement;
+		float TrunkWindInstanceResponseMin;
+		float TrunkWindInstanceResponseMax;
+
+		float TrunkWindVariationMin;
+		float TrunkWindVariationMax;
+		float TrunkWindVariationInterval;
+		float TrunkWindBendSensitivity;
+
+		float TrunkWindLeafSensitivity;
+		float3 TrunkWindPadding;
 	};
 
-	float GetWindIntensityScale()
+	float GetWindIntensityOverrideScale()
 	{
 		return OverrideWindIntensity != 0 ? WindIntensityOverride : 1.0;
+	}
+
+	float GetWindVariationSample(float sampleIndex)
+	{
+		return frac(sin(sampleIndex * 12.9898 + 78.233) * 43758.5453);
+	}
+
+	float GetWindVariation(float time)
+	{
+		float variationMin = min(TrunkWindVariationMin, TrunkWindVariationMax);
+		float variationMax = max(TrunkWindVariationMin, TrunkWindVariationMax);
+		float samplePosition = time / max(TrunkWindVariationInterval, 0.1);
+		float sampleIndex = floor(samplePosition);
+		float blend = frac(samplePosition);
+		blend = blend * blend * (3.0 - 2.0 * blend);
+		float variation = lerp(GetWindVariationSample(sampleIndex), GetWindVariationSample(sampleIndex + 1.0), blend);
+		return lerp(variationMin, variationMax, variation);
+	}
+
+	float GetCurrentWindVariationScale()
+	{
+		return TrunkWindGustStrength * GetWindVariation(TrunkWindTimer);
+	}
+
+	float GetPreviousWindVariationScale()
+	{
+		return TrunkWindPreviousGustStrength * GetWindVariation(TrunkWindPreviousTimer);
+	}
+
+	float GetCurrentTrunkWindVariationScale()
+	{
+		return GetCurrentWindVariationScale() * TrunkWindBendSensitivity;
+	}
+
+	float GetPreviousTrunkWindVariationScale()
+	{
+		return GetPreviousWindVariationScale() * TrunkWindBendSensitivity;
+	}
+
+	float GetCurrentTrunkWindStrength()
+	{
+		return length(TrunkWindVector) * GetCurrentTrunkWindVariationScale();
+	}
+
+	float GetPreviousTrunkWindStrength()
+	{
+		return length(TrunkWindPreviousVector) * GetPreviousTrunkWindVariationScale();
+	}
+
+	float GetCurrentWindIntensityScale()
+	{
+		return GetWindIntensityOverrideScale() * GetCurrentWindVariationScale();
+	}
+
+	float GetPreviousWindIntensityScale()
+	{
+		return GetWindIntensityOverrideScale() * GetPreviousWindVariationScale();
 	}
 
 }

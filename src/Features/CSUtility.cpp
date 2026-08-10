@@ -5,6 +5,7 @@
 #include "I18n/I18n.h"
 #include "LightLimitFix.h"
 #include "LinearLighting.h"
+#include "State.h"
 #include "UnderwaterDepthOfField.h"
 #include "Utils/PointLightFlags.h"
 #include "Utils/UI.h"
@@ -22,6 +23,24 @@ namespace
 	constexpr float kMultiplierMax = 5.0f;
 	constexpr float kTrunkWindIntensityMin = 0.0f;
 	constexpr float kTrunkWindIntensityMax = 10.0f;
+	constexpr float kTrunkWindFlexibleHeightMin = 1.0f;
+	constexpr float kTrunkWindFlexibleHeightMax = 16384.0f;
+	constexpr float kTrunkWindMaximumDisplacementMin = 0.0f;
+	constexpr float kTrunkWindMaximumDisplacementMax = 4096.0f;
+	constexpr float kTrunkWindSensitivityMin = 0.0f;
+	constexpr float kTrunkWindSensitivityMax = 20.0f;
+	constexpr float kTrunkWindResponseMin = 0.0f;
+	constexpr float kTrunkWindResponseMax = 3.0f;
+	constexpr float kTrunkWindGustStrengthMin = 0.0f;
+	constexpr float kTrunkWindGustStrengthMax = 3.0f;
+	constexpr float kTrunkWindGustHoldMin = 0.25f;
+	constexpr float kTrunkWindGustHoldMax = 60.0f;
+	constexpr float kTrunkWindGustTransitionMin = 0.01f;
+	constexpr float kTrunkWindGustTransitionMax = 5.0f;
+	constexpr float kTrunkWindVariationScaleMin = 0.0f;
+	constexpr float kTrunkWindVariationScaleMax = 3.0f;
+	constexpr float kTrunkWindVariationIntervalMin = 0.1f;
+	constexpr float kTrunkWindVariationIntervalMax = 20.0f;
 	constexpr uint32_t kMaxVanillaPointLights = 7;
 	constexpr uint32_t kVanillaPointLightCBRegister = 3;
 	constexpr uint32_t kFirstPointLightSceneIndex = 1;
@@ -37,6 +56,28 @@ namespace
 	{
 		const CSUtility::Settings defaults{};
 		a_settings.trunkWindIntensityOverride = ClampFiniteOrDefault(a_settings.trunkWindIntensityOverride, kTrunkWindIntensityMin, kTrunkWindIntensityMax, defaults.trunkWindIntensityOverride);
+		a_settings.trunkWindFlexibleHeight = ClampFiniteOrDefault(a_settings.trunkWindFlexibleHeight, kTrunkWindFlexibleHeightMin, kTrunkWindFlexibleHeightMax, defaults.trunkWindFlexibleHeight);
+		a_settings.trunkWindMaximumDisplacement = ClampFiniteOrDefault(a_settings.trunkWindMaximumDisplacement, kTrunkWindMaximumDisplacementMin, kTrunkWindMaximumDisplacementMax, defaults.trunkWindMaximumDisplacement);
+		a_settings.trunkWindBendSensitivity = ClampFiniteOrDefault(a_settings.trunkWindBendSensitivity, kTrunkWindSensitivityMin, kTrunkWindSensitivityMax, defaults.trunkWindBendSensitivity);
+		a_settings.trunkWindLeafSensitivity = ClampFiniteOrDefault(a_settings.trunkWindLeafSensitivity, kTrunkWindSensitivityMin, kTrunkWindSensitivityMax, defaults.trunkWindLeafSensitivity);
+		a_settings.trunkWindInstanceResponseMin = ClampFiniteOrDefault(a_settings.trunkWindInstanceResponseMin, kTrunkWindResponseMin, kTrunkWindResponseMax, defaults.trunkWindInstanceResponseMin);
+		a_settings.trunkWindInstanceResponseMax = ClampFiniteOrDefault(a_settings.trunkWindInstanceResponseMax, kTrunkWindResponseMin, kTrunkWindResponseMax, defaults.trunkWindInstanceResponseMax);
+		a_settings.trunkWindGustStrengthMin = ClampFiniteOrDefault(a_settings.trunkWindGustStrengthMin, kTrunkWindGustStrengthMin, kTrunkWindGustStrengthMax, defaults.trunkWindGustStrengthMin);
+		a_settings.trunkWindGustStrengthMax = ClampFiniteOrDefault(a_settings.trunkWindGustStrengthMax, kTrunkWindGustStrengthMin, kTrunkWindGustStrengthMax, defaults.trunkWindGustStrengthMax);
+		a_settings.trunkWindGustHoldMin = ClampFiniteOrDefault(a_settings.trunkWindGustHoldMin, kTrunkWindGustHoldMin, kTrunkWindGustHoldMax, defaults.trunkWindGustHoldMin);
+		a_settings.trunkWindGustHoldMax = ClampFiniteOrDefault(a_settings.trunkWindGustHoldMax, kTrunkWindGustHoldMin, kTrunkWindGustHoldMax, defaults.trunkWindGustHoldMax);
+		a_settings.trunkWindGustTransitionDuration = ClampFiniteOrDefault(a_settings.trunkWindGustTransitionDuration, kTrunkWindGustTransitionMin, kTrunkWindGustTransitionMax, defaults.trunkWindGustTransitionDuration);
+		a_settings.trunkWindVariationMin = ClampFiniteOrDefault(a_settings.trunkWindVariationMin, kTrunkWindVariationScaleMin, kTrunkWindVariationScaleMax, defaults.trunkWindVariationMin);
+		a_settings.trunkWindVariationMax = ClampFiniteOrDefault(a_settings.trunkWindVariationMax, kTrunkWindVariationScaleMin, kTrunkWindVariationScaleMax, defaults.trunkWindVariationMax);
+		a_settings.trunkWindVariationInterval = ClampFiniteOrDefault(a_settings.trunkWindVariationInterval, kTrunkWindVariationIntervalMin, kTrunkWindVariationIntervalMax, defaults.trunkWindVariationInterval);
+		if (a_settings.trunkWindInstanceResponseMin > a_settings.trunkWindInstanceResponseMax)
+			std::swap(a_settings.trunkWindInstanceResponseMin, a_settings.trunkWindInstanceResponseMax);
+		if (a_settings.trunkWindGustStrengthMin > a_settings.trunkWindGustStrengthMax)
+			std::swap(a_settings.trunkWindGustStrengthMin, a_settings.trunkWindGustStrengthMax);
+		if (a_settings.trunkWindGustHoldMin > a_settings.trunkWindGustHoldMax)
+			std::swap(a_settings.trunkWindGustHoldMin, a_settings.trunkWindGustHoldMax);
+		if (a_settings.trunkWindVariationMin > a_settings.trunkWindVariationMax)
+			std::swap(a_settings.trunkWindVariationMin, a_settings.trunkWindVariationMax);
 		a_settings.skyBrightness = ClampFiniteOrDefault(a_settings.skyBrightness, kSkyBrightnessMin, kSkyBrightnessMax, defaults.skyBrightness);
 		a_settings.directionalLightMult = ClampFiniteOrDefault(a_settings.directionalLightMult, kMultiplierMin, kMultiplierMax, defaults.directionalLightMult);
 		a_settings.pointLightMult = ClampFiniteOrDefault(a_settings.pointLightMult, kMultiplierMin, kMultiplierMax, defaults.pointLightMult);
@@ -102,6 +143,20 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	disableVanillaTreeAnimation,
 	overrideTrunkWindIntensity,
 	trunkWindIntensityOverride,
+	trunkWindFlexibleHeight,
+	trunkWindMaximumDisplacement,
+	trunkWindBendSensitivity,
+	trunkWindLeafSensitivity,
+	trunkWindInstanceResponseMin,
+	trunkWindInstanceResponseMax,
+	trunkWindGustStrengthMin,
+	trunkWindGustStrengthMax,
+	trunkWindGustHoldMin,
+	trunkWindGustHoldMax,
+	trunkWindGustTransitionDuration,
+	trunkWindVariationMin,
+	trunkWindVariationMax,
+	trunkWindVariationInterval,
 	skyBrightness,
 	directionalLightMult,
 	pointLightMult,
@@ -126,6 +181,40 @@ void CSUtility::DrawSettings()
 			ImGui::EndDisabled();
 			if (auto _tt = Util::HoverTooltipWrapper()) {
 				ImGui::TextUnformatted(T(TKEY("trunk_wind_intensity_tooltip"), "0 is calm, 1 is full normal-scale wind, and values above 1 are exaggerated."));
+			}
+			ImGui::SeparatorText(T(TKEY("trunk_wind_response"), "Tree Response"));
+			ImGui::SliderFloat(T(TKEY("trunk_wind_flexible_height"), "Flexible Height"), &settings.trunkWindFlexibleHeight,
+				kTrunkWindFlexibleHeightMin, kTrunkWindFlexibleHeightMax, "%.0f", ImGuiSliderFlags_AlwaysClamp);
+			ImGui::SliderFloat(T(TKEY("trunk_wind_maximum_displacement"), "Maximum Displacement"), &settings.trunkWindMaximumDisplacement,
+				kTrunkWindMaximumDisplacementMin, kTrunkWindMaximumDisplacementMax, "%.0f", ImGuiSliderFlags_AlwaysClamp);
+			ImGui::SliderFloat(T(TKEY("trunk_wind_bend_sensitivity"), "Trunk Wind Sensitivity"), &settings.trunkWindBendSensitivity,
+				kTrunkWindSensitivityMin, kTrunkWindSensitivityMax, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+			ImGui::SliderFloat(T(TKEY("trunk_wind_leaf_sensitivity"), "Leaf Wind Sensitivity"), &settings.trunkWindLeafSensitivity,
+				kTrunkWindSensitivityMin, kTrunkWindSensitivityMax, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+			ImGui::SliderFloat(T(TKEY("trunk_wind_response_min"), "Per-Tree Response Minimum"), &settings.trunkWindInstanceResponseMin,
+				kTrunkWindResponseMin, kTrunkWindResponseMax, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+			ImGui::SliderFloat(T(TKEY("trunk_wind_response_max"), "Per-Tree Response Maximum"), &settings.trunkWindInstanceResponseMax,
+				kTrunkWindResponseMin, kTrunkWindResponseMax, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+			ImGui::SeparatorText(T(TKEY("trunk_wind_gusts"), "Gusts"));
+			ImGui::SliderFloat(T(TKEY("trunk_wind_gust_strength_min"), "Gust Strength Minimum"), &settings.trunkWindGustStrengthMin,
+				kTrunkWindGustStrengthMin, kTrunkWindGustStrengthMax, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+			ImGui::SliderFloat(T(TKEY("trunk_wind_gust_strength_max"), "Gust Strength Maximum"), &settings.trunkWindGustStrengthMax,
+				kTrunkWindGustStrengthMin, kTrunkWindGustStrengthMax, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+			ImGui::SliderFloat(T(TKEY("trunk_wind_gust_hold_min"), "Gust Hold Minimum"), &settings.trunkWindGustHoldMin,
+				kTrunkWindGustHoldMin, kTrunkWindGustHoldMax, "%.2f s", ImGuiSliderFlags_AlwaysClamp);
+			ImGui::SliderFloat(T(TKEY("trunk_wind_gust_hold_max"), "Gust Hold Maximum"), &settings.trunkWindGustHoldMax,
+				kTrunkWindGustHoldMin, kTrunkWindGustHoldMax, "%.2f s", ImGuiSliderFlags_AlwaysClamp);
+			ImGui::SliderFloat(T(TKEY("trunk_wind_gust_transition"), "Gust Transition Duration"), &settings.trunkWindGustTransitionDuration,
+				kTrunkWindGustTransitionMin, kTrunkWindGustTransitionMax, "%.2f s", ImGuiSliderFlags_AlwaysClamp);
+			ImGui::SliderFloat(T(TKEY("trunk_wind_variation_min"), "Gust Variation Minimum"), &settings.trunkWindVariationMin,
+				kTrunkWindVariationScaleMin, kTrunkWindVariationScaleMax, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+			ImGui::SliderFloat(T(TKEY("trunk_wind_variation_max"), "Gust Variation Maximum"), &settings.trunkWindVariationMax,
+				kTrunkWindVariationScaleMin, kTrunkWindVariationScaleMax, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+			ImGui::SliderFloat(T(TKEY("trunk_wind_variation_interval"), "Gust Variation Interval"), &settings.trunkWindVariationInterval,
+				kTrunkWindVariationIntervalMin, kTrunkWindVariationIntervalMax, "%.2f s", ImGuiSliderFlags_AlwaysClamp);
+			if (ImGui::Button(T(TKEY("trunk_wind_trigger_gust"), "Trigger New Gust"))) {
+				globals::state->trunkWindGustHoldRemaining = 0.0f;
+				globals::state->trunkWindGustTransitioning = false;
 			}
 			ImGui::Checkbox(T(TKEY("disable_vanilla_tree_animation"), "Disable Vanilla Tree Animation (Test)"), &settings.disableVanillaTreeAnimation);
 			if (auto _tt = Util::HoverTooltipWrapper()) {

@@ -143,7 +143,7 @@ cbuffer cb8 : register(b8)
 }
 
 // Calculate wind displacement for a grass vertex
-float3 CalculateWindDisplacement(VS_INPUT input, float windTimer)
+float3 CalculateWindDisplacement(VS_INPUT input, float windTimer, float windIntensityScale)
 {
 	float windAngle = 0.4 * ((input.InstanceData1.x + input.InstanceData1.y) * -0.0078125 + windTimer);
 	float windAngleSin, windAngleCos;
@@ -152,7 +152,7 @@ float3 CalculateWindDisplacement(VS_INPUT input, float windTimer)
 	float windTmp3 = 0.2 * cos(Math::PI * windAngleCos);
 	float windTmp1 = sin(Math::PI * windAngleSin);
 	float windTmp2 = sin(Math::TAU * windAngleSin);
-	float windPower = WindVector.z * Permutation::GetWindIntensityScale() *
+	float windPower = WindVector.z * windIntensityScale *
 	                  (((windTmp1 + windTmp2) * 0.3 + windTmp3) * (0.5 * (input.Color.w * input.Color.w)));
 
 	return float3(WindVector.xy, 0) * windPower;
@@ -199,8 +199,10 @@ VS_OUTPUT main(VS_INPUT input)
 
 	float4 msPosition = GetMSPosition(input, world3x3);
 
-	float3 windDisplacement = CalculateWindDisplacement(input, WindTimer);
-	float3 previousWindDisplacement = CalculateWindDisplacement(input, PreviousWindTimer);
+	float3 windDisplacement =
+		CalculateWindDisplacement(input, WindTimer, Permutation::GetCurrentWindIntensityScale());
+	float3 previousWindDisplacement =
+		CalculateWindDisplacement(input, PreviousWindTimer, Permutation::GetPreviousWindIntensityScale());
 
 #		ifdef GRASS_COLLISION
 	float3 displacement, previousDisplacement;
@@ -273,8 +275,10 @@ VS_OUTPUT main(VS_INPUT input)
 
 	float4 msPosition = GetMSPosition(input);
 
-	float3 windDisplacement = CalculateWindDisplacement(input, WindTimer);
-	float3 previousWindDisplacement = CalculateWindDisplacement(input, PreviousWindTimer);
+	float3 windDisplacement =
+		CalculateWindDisplacement(input, WindTimer, Permutation::GetCurrentWindIntensityScale());
+	float3 previousWindDisplacement =
+		CalculateWindDisplacement(input, PreviousWindTimer, Permutation::GetPreviousWindIntensityScale());
 
 #		ifdef GRASS_COLLISION
 	float3 displacement, previousDisplacement;

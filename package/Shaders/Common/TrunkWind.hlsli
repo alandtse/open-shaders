@@ -3,15 +3,21 @@
 
 namespace TrunkWind
 {
-	float2 GetWorldDisplacement(float localHeight, float time, float2 windVector)
+	float GetInstanceResponse(float2 instanceOriginWS)
 	{
-		const float flexibleHeight = 4096.0;
-		const float maximumDisplacement = 512.0;
+		float2 hash = frac(instanceOriginWS * float2(0.1031, 0.1030));
+		hash += dot(hash, hash.yx + 33.33);
+		float responseMin = min(Permutation::TrunkWindInstanceResponseMin, Permutation::TrunkWindInstanceResponseMax);
+		float responseMax = max(Permutation::TrunkWindInstanceResponseMin, Permutation::TrunkWindInstanceResponseMax);
+		return lerp(responseMin, responseMax, frac((hash.x + hash.y) * hash.x));
+	}
 
-		float height = saturate(max(localHeight, 0.0) / flexibleHeight);
+	float2 GetWorldDisplacement(float localHeight, float2 windVector, float gustStrength, float instanceResponse)
+	{
+		float height = saturate(max(localHeight, 0.0) / max(Permutation::TrunkWindFlexibleHeight, 1.0));
 		float flexibility = height * height;
-		float gust = 0.55 + 0.3 * sin(time * 1.25) + 0.15 * sin(time * 2.7 + 0.9);
-		return windVector * (maximumDisplacement * flexibility * gust);
+		return windVector *
+		       (max(Permutation::TrunkWindMaximumDisplacement, 0.0) * flexibility * gustStrength * instanceResponse);
 	}
 }
 

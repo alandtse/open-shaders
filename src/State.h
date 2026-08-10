@@ -63,6 +63,14 @@ public:
 	float previousTimer = 0;
 	float2 trunkWindVector = {};
 	float2 previousTrunkWindVector = {};
+	float trunkWindGustStrength = 1.0f;
+	float previousTrunkWindGustStrength = 1.0f;
+	float trunkWindGustStartStrength = 1.0f;
+	float trunkWindGustTargetStrength = 1.0f;
+	float trunkWindGustHoldRemaining = 0.0f;
+	float trunkWindGustTransitionElapsed = 0.0f;
+	uint32_t trunkWindRandomState = 0xA341316Cu;
+	bool trunkWindGustTransitioning = false;
 	double smoothDrawCalls[RE::BSShader::Type::Total + 1];
 	int drawCalls[RE::BSShader::Type::Total + 1];
 
@@ -383,7 +391,21 @@ public:
 
 		float WindIntensityOverride;
 		uint OverrideWindIntensity;
-		float2 pad1;
+		float TrunkWindGustStrength;
+		float TrunkWindPreviousGustStrength;
+
+		float TrunkWindFlexibleHeight;
+		float TrunkWindMaximumDisplacement;
+		float TrunkWindInstanceResponseMin;
+		float TrunkWindInstanceResponseMax;
+
+		float TrunkWindVariationMin;
+		float TrunkWindVariationMax;
+		float TrunkWindVariationInterval;
+		float TrunkWindBendSensitivity;
+
+		float TrunkWindLeafSensitivity;
+		float3 pad1;
 
 		bool operator==(const PermutationCB& other) const
 		{
@@ -395,7 +417,18 @@ public:
 			       TrunkWindPreviousVector.x == other.TrunkWindPreviousVector.x &&
 			       TrunkWindPreviousVector.y == other.TrunkWindPreviousVector.y &&
 			       WindIntensityOverride == other.WindIntensityOverride &&
-			       OverrideWindIntensity == other.OverrideWindIntensity;
+			       OverrideWindIntensity == other.OverrideWindIntensity &&
+			       TrunkWindGustStrength == other.TrunkWindGustStrength &&
+			       TrunkWindPreviousGustStrength == other.TrunkWindPreviousGustStrength &&
+			       TrunkWindFlexibleHeight == other.TrunkWindFlexibleHeight &&
+			       TrunkWindMaximumDisplacement == other.TrunkWindMaximumDisplacement &&
+			       TrunkWindInstanceResponseMin == other.TrunkWindInstanceResponseMin &&
+			       TrunkWindInstanceResponseMax == other.TrunkWindInstanceResponseMax &&
+			       TrunkWindVariationMin == other.TrunkWindVariationMin &&
+			       TrunkWindVariationMax == other.TrunkWindVariationMax &&
+			       TrunkWindVariationInterval == other.TrunkWindVariationInterval &&
+			       TrunkWindBendSensitivity == other.TrunkWindBendSensitivity &&
+			       TrunkWindLeafSensitivity == other.TrunkWindLeafSensitivity;
 		}
 	};
 	STATIC_ASSERT_ALIGNAS_16(PermutationCB);

@@ -40,6 +40,15 @@
 static thread_local std::vector<TracyCZoneCtx> s_tracyPerfZones;
 #endif
 
+namespace
+{
+	float NextTrunkWindRandom(uint32_t& a_state)
+	{
+		a_state = a_state * 1664525u + 1013904223u;
+		return static_cast<float>(a_state >> 8) * (1.0f / 16777216.0f);
+	}
+}
+
 void State::UpdateSkyShaderPermutation(RE::BSRenderPass* a_pass)
 {
 	permutationData.ExtraShaderDescriptor &= ~static_cast<uint32_t>(State::ExtraShaderDescriptors::IsSun);
@@ -63,6 +72,17 @@ void State::UpdatePermutationBuffer()
 	permutationData.WindIntensityOverride = globals::features::csUtility.settings.trunkWindIntensityOverride;
 	permutationData.OverrideWindIntensity = globals::features::csUtility.loaded &&
 	                                        globals::features::csUtility.settings.overrideTrunkWindIntensity;
+	permutationData.TrunkWindGustStrength = trunkWindGustStrength;
+	permutationData.TrunkWindPreviousGustStrength = previousTrunkWindGustStrength;
+	permutationData.TrunkWindFlexibleHeight = globals::features::csUtility.settings.trunkWindFlexibleHeight;
+	permutationData.TrunkWindMaximumDisplacement = globals::features::csUtility.settings.trunkWindMaximumDisplacement;
+	permutationData.TrunkWindInstanceResponseMin = globals::features::csUtility.settings.trunkWindInstanceResponseMin;
+	permutationData.TrunkWindInstanceResponseMax = globals::features::csUtility.settings.trunkWindInstanceResponseMax;
+	permutationData.TrunkWindVariationMin = globals::features::csUtility.settings.trunkWindVariationMin;
+	permutationData.TrunkWindVariationMax = globals::features::csUtility.settings.trunkWindVariationMax;
+	permutationData.TrunkWindVariationInterval = globals::features::csUtility.settings.trunkWindVariationInterval;
+	permutationData.TrunkWindBendSensitivity = globals::features::csUtility.settings.trunkWindBendSensitivity;
+	permutationData.TrunkWindLeafSensitivity = globals::features::csUtility.settings.trunkWindLeafSensitivity;
 	if (permutationData != permutationDataPrevious) {
 		permutationCB->Update(permutationData);
 		permutationDataPrevious = permutationData;
@@ -224,8 +244,40 @@ void State::Reset()
 	globals::profiler->EndFrame(frameCount);
 
 	Feature::ForEachLoadedFeature("Reset", [](Feature* feature) { feature->Reset(); });
+	const auto& trunkWindSettings = globals::features::csUtility.settings;
+	const auto [gustStrengthMin, gustStrengthMax] = std::minmax(
+		trunkWindSettings.trunkWindGustStrengthMin, trunkWindSettings.trunkWindGustStrengthMax);
+	const auto [gustHoldMin, gustHoldMax] = std::minmax(
+		trunkWindSettings.trunkWindGustHoldMin, trunkWindSettings.trunkWindGustHoldMax);
+	const float gustTransitionDuration = std::max(trunkWindSettings.trunkWindGustTransitionDuration, 0.01f);
+	const bool gamePaused = globals::game::ui->GameIsPaused();
+	const float frameTime = gamePaused ? 0.0f : std::max(RE::GetSecondsSinceLastFrame(), 0.0f);
 	previousTimer = timer;
 	previousTrunkWindVector = trunkWindVector;
+	previousTrunkWindGustStrength = trunkWindGustStrength;
+	if (frameTime > 0.0f) {
+		if (trunkWindGustTransitioning) {
+			trunkWindGustTransitionElapsed += frameTime;
+			const float transition = std::clamp(trunkWindGustTransitionElapsed / gustTransitionDuration, 0.0f, 1.0f);
+			const float smoothTransition = transition * transition * (3.0f - 2.0f * transition);
+			trunkWindGustStrength = std::lerp(trunkWindGustStartStrength, trunkWindGustTargetStrength, smoothTransition);
+			if (transition >= 1.0f) {
+				trunkWindGustStrength = trunkWindGustTargetStrength;
+				trunkWindGustTransitioning = false;
+			}
+		} else {
+			trunkWindGustHoldRemaining -= frameTime;
+			if (trunkWindGustHoldRemaining <= 0.0f) {
+				trunkWindGustStartStrength = trunkWindGustStrength;
+				trunkWindGustTargetStrength = std::lerp(gustStrengthMin, gustStrengthMax,
+					NextTrunkWindRandom(trunkWindRandomState));
+				trunkWindGustHoldRemaining = std::lerp(gustHoldMin, gustHoldMax,
+					NextTrunkWindRandom(trunkWindRandomState));
+				trunkWindGustTransitionElapsed = 0.0f;
+				trunkWindGustTransitioning = true;
+			}
+		}
+	}
 	trunkWindVector = {};
 	const bool overrideTrunkWindIntensity = globals::features::csUtility.loaded &&
 	                                        globals::features::csUtility.settings.overrideTrunkWindIntensity;
@@ -246,8 +298,8 @@ void State::Reset()
 	if (overrideTrunkWindIntensity && trunkWindVector.x == 0.0f && trunkWindVector.y == 0.0f) {
 		trunkWindVector.x = overriddenTrunkWindIntensity;
 	}
-	if (!globals::game::ui->GameIsPaused())
-		timer += RE::GetSecondsSinceLastFrame();
+	if (!gamePaused)
+		timer += frameTime;
 
 	worldRenderedThisFrame = false;
 
