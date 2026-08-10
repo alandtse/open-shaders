@@ -1,14 +1,12 @@
 #include "Common/FrameBuffer.hlsli"
 #include "Common/LodLandscape.hlsli"
 #include "Common/Math.hlsli"
+#include "Common/Permutation.hlsli"
 #include "Common/Random.hlsli"
 #include "Common/SharedData.hlsli"
 #include "Common/Skinned.hlsli"
+#include "Common/TrunkWind.hlsli"
 #include "Common/VR.hlsli"
-
-#if defined(TRUNK_SINE)
-#	include "Common/TrunkWind.hlsli"
-#endif
 
 #if defined(RENDER_SHADOWMASK) || defined(RENDER_SHADOWMASKSPOT) || defined(RENDER_SHADOWMASKPB) || defined(RENDER_SHADOWMASKDPB)
 #	define RENDER_SHADOWMASK_ANY
@@ -149,20 +147,21 @@ VS_OUTPUT main(VS_INPUT input)
 	precise float4 positionMS = float4(input.PositionMS.xyz, 1.0);
 	float4 positionCS = float4(0, 0, 0, 0);
 
-#		if defined(TRUNK_SINE)
-	positionMS.xy += TrunkWind::GetDisplacement(positionMS.xyz, TrunkWind::Timer);
-#		endif
-
 	float3 normalMS = float3(1, 1, 1);
 #		if defined(NORMALS)
 	normalMS = input.Normal.xyz * 2 - 1;
 #		endif
 
 #		if defined(VC) && defined(NORMALS) && defined(TREE_ANIM)
-	float2 treeTmp1 = SmoothSaturate(abs(2 * frac(float2(0.1, 0.25) * (TreeParams.w * TreeParams.y * TreeParams.x) + dot(input.PositionMS.xyz, 1.0.xxx) + 0.5) - 1));
-	float normalMult = (treeTmp1.x + 0.1 * treeTmp1.y) * (input.Color.w * TreeParams.z);
-	positionMS.xyz += normalMS.xyz * normalMult;
+	if ((Permutation::ExtraShaderDescriptor & Permutation::ExtraFlags::DisableTreeAnimation) == 0) {
+		float2 treeTmp1 = SmoothSaturate(abs(2 * frac(float2(0.1, 0.25) * (TreeParams.w * TreeParams.y * TreeParams.x) + dot(input.PositionMS.xyz, 1.0.xxx) + 0.5) - 1));
+		float normalMult = (treeTmp1.x + 0.1 * treeTmp1.y) * (input.Color.w * TreeParams.z);
+		positionMS.xyz += normalMS.xyz * normalMult;
+	}
 #		endif
+
+	if ((Permutation::ExtraShaderDescriptor & Permutation::ExtraFlags::TreeBend) != 0)
+		positionMS.xy += TrunkWind::GetDisplacement(positionMS.xyz, Permutation::TrunkWindTimer);
 
 #		if defined(LOD_LANDSCAPE)
 	positionMS = LodLandscape::AdjustLodLandscapeVertexPositionMS(positionMS, World[eyeIndex], HighDetailRange[eyeIndex]);

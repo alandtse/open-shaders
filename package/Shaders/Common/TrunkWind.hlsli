@@ -3,11 +3,6 @@
 
 namespace TrunkWind
 {
-	cbuffer TrunkSharedData : register(b6)
-	{
-		float Timer : packoffset(c38.x);
-	};
-
 	float2 GetDisplacement(float3 positionMS, float time)
 	{
 		const float flexibleHeight = 4096.0;

@@ -53,6 +53,15 @@ void State::UpdateSkyShaderPermutation(RE::BSRenderPass* a_pass)
 	}
 }
 
+void State::UpdatePermutationBuffer()
+{
+	permutationData.TrunkWindTimer = timer;
+	if (permutationData != permutationDataPrevious) {
+		permutationCB->Update(permutationData);
+		permutationDataPrevious = permutationData;
+	}
+}
+
 void State::Draw()
 {
 	ZoneScoped;
@@ -110,10 +119,7 @@ void State::Draw()
 			volumetricShadows.SetShaderResources(context);
 		}
 
-		if (permutationData != permutationDataPrevious) {
-			permutationCB->Update(permutationData);
-			permutationDataPrevious = permutationData;
-		}
+		UpdatePermutationBuffer();
 
 		if (currentShader && updateShader) {
 			if (currentShader->shaderType.get() == RE::BSShader::Type::Utility) {
@@ -879,12 +885,6 @@ void State::ModifyShaderLookup(const RE::BSShader& a_shader, uint& a_vertexDescr
 		switch (a_shader.shaderType.get()) {
 		case RE::BSShader::Type::Lighting:
 			{
-				if ((a_vertexDescriptor & static_cast<uint32_t>(SIE::ShaderCache::LightingShaderFlags::TrunkSine)) != 0) {
-					static std::atomic_uint32_t diagnosticCount = 0;
-					if (diagnosticCount.fetch_add(1, std::memory_order_relaxed) < 16)
-						logger::info("[TrunkBend] vertex descriptor={:08X}", a_vertexDescriptor);
-				}
-
 				a_vertexDescriptor &= ~((uint32_t)SIE::ShaderCache::LightingShaderFlags::AdditionalAlphaMask |
 										(uint32_t)SIE::ShaderCache::LightingShaderFlags::AmbientSpecular |
 										(uint32_t)SIE::ShaderCache::LightingShaderFlags::DoAlphaTest |

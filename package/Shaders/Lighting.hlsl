@@ -14,9 +14,7 @@
 #include "Common/Triplanar.hlsli"
 #include "Common/VR.hlsli"
 
-#if defined(TRUNK_SINE)
-#	include "Common/TrunkWind.hlsli"
-#endif
+#include "Common/TrunkWind.hlsli"
 
 #if defined(FACEGEN) || defined(FACEGEN_RGB_TINT)
 #	define SKIN
@@ -199,17 +197,19 @@ VS_OUTPUT main(VS_INPUT input)
 	precise float4 previousInputPosition = inputPosition;
 
 #	if defined(TREE_ANIM)
-	precise float2 treeShiftVector = GetTreeShiftVector(input.Position, input.Color);
-	float3 normal = -1.0.xxx + 2.0.xxx * input.Normal.xyz;
+	if ((Permutation::ExtraShaderDescriptor & Permutation::ExtraFlags::DisableTreeAnimation) == 0) {
+		precise float2 treeShiftVector = GetTreeShiftVector(input.Position, input.Color);
+		float3 normal = -1.0.xxx + 2.0.xxx * input.Normal.xyz;
 
-	inputPosition.xyz += normal.xyz * treeShiftVector.x;
-	previousInputPosition.xyz += normal.xyz * treeShiftVector.y;
+		inputPosition.xyz += normal.xyz * treeShiftVector.x;
+		previousInputPosition.xyz += normal.xyz * treeShiftVector.y;
+	}
 #	endif
 
-#	if defined(TRUNK_SINE)
-	inputPosition.xy += TrunkWind::GetDisplacement(inputPosition.xyz, TrunkWind::Timer);
-	previousInputPosition.xy += TrunkWind::GetDisplacement(previousInputPosition.xyz, TrunkWind::Timer - 1.0 / 60.0);
-#	endif
+	if ((Permutation::ExtraShaderDescriptor & Permutation::ExtraFlags::TreeBend) != 0) {
+		inputPosition.xy += TrunkWind::GetDisplacement(inputPosition.xyz, Permutation::TrunkWindTimer);
+		previousInputPosition.xy += TrunkWind::GetDisplacement(previousInputPosition.xyz, Permutation::TrunkWindTimer - 1.0 / 60.0);
+	}
 
 #	if defined(SKINNED)
 	precise int4 actualIndices = 765.01.xxxx * input.BoneIndices.xyzw;

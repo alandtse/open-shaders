@@ -448,10 +448,6 @@ namespace SIE
 					defines[lastIndex++] = { "GLINT", nullptr };
 				}
 			}
-			if ((descriptor & static_cast<uint32_t>(ShaderCache::LightingShaderFlags::TrunkSine)) != 0) {
-				defines[lastIndex++] = { "TRUNK_SINE", nullptr };
-			}
-
 			for (auto* feature : Feature::GetFeatureList()) {
 				if (feature->loaded && feature->HasShaderDefine(RE::BSShader::Type::Lighting)) {
 					defines[lastIndex++] = { feature->GetShaderDefineName().data(), nullptr };
@@ -823,9 +819,6 @@ namespace SIE
 			}
 			if (descriptor & static_cast<uint32_t>(Normals)) {
 				defines[lastIndex++] = { "NORMALS", nullptr };
-			}
-			if (descriptor & static_cast<uint32_t>(TrunkSine)) {
-				defines[lastIndex++] = { "TRUNK_SINE", nullptr };
 			}
 			if (descriptor & static_cast<uint32_t>(AlphaTest)) {
 				defines[lastIndex++] = { "ALPHA_TEST", nullptr };
@@ -2274,12 +2267,7 @@ namespace SIE
 			}
 		}
 
-		const auto compileTrunkSineSynchronously =
-			(shader.shaderType == RE::BSShader::Type::Lighting &&
-				(descriptor & static_cast<uint32_t>(LightingShaderFlags::TrunkSine)) != 0) ||
-			(shader.shaderType == RE::BSShader::Type::Utility &&
-				(descriptor & static_cast<uint32_t>(UtilityShaderFlags::TrunkSine)) != 0);
-		if (IsAsync() && !compileTrunkSineSynchronously) {
+		if (IsAsync()) {
 			compilationSet.Add({ ShaderClass::Vertex, shader, descriptor });
 		} else {
 			return MakeAndAddVertexShader(shader, descriptor);

@@ -23,6 +23,7 @@
 #include "Features/VolumetricLighting.h"
 
 #include "RE/B/BSGeometry.h"
+#include "RE/B/BSLeafAnimNode.h"
 
 #include <atomic>
 #include <cstring>
@@ -121,21 +122,51 @@ struct BSShader_LoadShaders
 
 namespace
 {
-	constexpr UINT kTrunkSharedDataVertexRegister = 6;
+	constexpr UINT kPermutationVertexRegister = 4;
+	constexpr auto kTreeBendDescriptor = static_cast<uint32_t>(State::ExtraShaderDescriptors::TreeBend);
+	constexpr auto kDisableTreeAnimationDescriptor = static_cast<uint32_t>(State::ExtraShaderDescriptors::DisableTreeAnimation);
 
-	class TrunkRenderPassScope;
-	thread_local TrunkRenderPassScope* currentTrunkRenderPass = nullptr;
-
-	bool IsTrunkRenderPass(const RE::BSRenderPass* a_pass)
+	bool IsExplicitTrunkGeometry(const RE::BSGeometry* a_geometry)
 	{
-		if (!globals::features::csUtility.loaded || !globals::features::csUtility.settings.enableTrunkBend || !a_pass || !a_pass->geometry)
+		if (!a_geometry)
 			return false;
 
-		const char* geometryName = a_pass->geometry->name.c_str();
+		const char* geometryName = a_geometry->name.c_str();
 		return geometryName && (std::strcmp(geometryName, "trunk") == 0 || std::strncmp(geometryName, "OS_TRUNK", 8) == 0);
 	}
 
-	bool SupportsTrunkBend(const RE::BSShader& a_shader, uint32_t a_vertexDescriptor)
+	bool ContainsExplicitTrunkGeometry(RE::NiAVObject* a_object)
+	{
+		if (!a_object)
+			return false;
+
+		if (auto* geometry = a_object->AsGeometry())
+			return IsExplicitTrunkGeometry(geometry);
+
+		if (auto* node = a_object->AsNode()) {
+			for (const auto& child : node->GetChildren()) {
+				if (ContainsExplicitTrunkGeometry(child.get()))
+					return true;
+			}
+		}
+
+		return false;
+	}
+
+	bool IsTreeGeometry(const RE::BSGeometry* a_geometry)
+	{
+		if (IsExplicitTrunkGeometry(a_geometry))
+			return true;
+
+		for (auto* parent = a_geometry ? a_geometry->parent : nullptr; parent; parent = parent->parent) {
+			if (auto* leafNode = netimmerse_cast<RE::BSLeafAnimNode*>(parent))
+				return ContainsExplicitTrunkGeometry(leafNode);
+		}
+
+		return false;
+	}
+
+	bool SupportsTreeBend(const RE::BSShader& a_shader, uint32_t a_vertexDescriptor)
 	{
 		if (a_shader.shaderType == RE::BSShader::Type::Lighting) {
 			const auto technique = static_cast<SIE::ShaderCache::LightingShaderTechniques>((a_vertexDescriptor >> 24) & 0x3F);
@@ -143,118 +174,126 @@ namespace
 			       technique != SIE::ShaderCache::LightingShaderTechniques::LODObjectHD;
 		}
 
-		if (a_shader.shaderType == RE::BSShader::Type::Utility) {
-			return (a_vertexDescriptor & static_cast<uint32_t>(SIE::ShaderCache::UtilityShaderFlags::LodObject)) == 0;
-		}
-
-		return false;
+		return a_shader.shaderType == RE::BSShader::Type::Utility &&
+		       (a_vertexDescriptor & static_cast<uint32_t>(SIE::ShaderCache::UtilityShaderFlags::LodObject)) == 0;
 	}
 
-	class TrunkRenderPassScope
+	uint32_t GetRenderPassVertexDescriptor(const RE::BSRenderPass& a_pass)
+	{
+		constexpr uint32_t kLightingTechniqueStart = 0x4800002D;
+		if (a_pass.shader && a_pass.shader->shaderType == RE::BSShader::Type::Lighting && a_pass.passEnum >= kLightingTechniqueStart)
+			return a_pass.passEnum - kLightingTechniqueStart;
+		return a_pass.passEnum;
+	}
+
+	bool IsTreeRenderPass(const RE::BSRenderPass* a_pass)
+	{
+		if (!a_pass || !a_pass->shader || !a_pass->geometry)
+			return false;
+
+		const auto shaderType = a_pass->shader->shaderType.get();
+		return (shaderType == RE::BSShader::Type::Lighting || shaderType == RE::BSShader::Type::Utility) &&
+		       IsTreeGeometry(a_pass->geometry);
+	}
+
+	bool IsTreeBendRenderPass(const RE::BSRenderPass* a_pass)
+	{
+		if (!globals::features::csUtility.loaded || !globals::features::csUtility.settings.enableTrunkBend ||
+			!IsTreeRenderPass(a_pass) || !SupportsTreeBend(*a_pass->shader, GetRenderPassVertexDescriptor(*a_pass)))
+			return false;
+
+		return true;
+	}
+
+	void BindVertexPermutationData(const RE::BSShader* a_shader)
+	{
+		auto* state = globals::state;
+		if (!state || !a_shader || !globals::shaderCache || !globals::shaderCache->IsEnabled() || !globals::d3d::context)
+			return;
+
+		const auto shaderType = a_shader->shaderType.get();
+		if (shaderType != RE::BSShader::Type::Lighting && shaderType != RE::BSShader::Type::Utility)
+			return;
+
+		auto* permutationBuffer = state->permutationCB->CB();
+		globals::d3d::context->VSSetConstantBuffers(kPermutationVertexRegister, 1, &permutationBuffer);
+	}
+
+	class TreeBendPassScope
 	{
 	public:
-		explicit TrunkRenderPassScope(RE::BSRenderPass* a_pass) : previousScope(currentTrunkRenderPass)
+		TreeBendPassScope(RE::BSRenderPass* a_pass, uint32_t a_vertexDescriptor) :
+			state(globals::state), pass(a_pass)
 		{
-			if (IsTrunkRenderPass(a_pass)) {
-				isTrunkPass = true;
-				if (globals::d3d::context) {
-					globals::d3d::context->VSGetShader(&previousVertexShader, nullptr, nullptr);
-					globals::d3d::context->PSGetShader(&previousPixelShader, nullptr, nullptr);
-				}
-				currentTrunkRenderPass = this;
-				static std::atomic_uint32_t diagnosticCount = 0;
-				if (diagnosticCount.fetch_add(1, std::memory_order_relaxed) < 16)
-					logger::info("[TrunkBend] scoped render pass geometry='{}'", a_pass->geometry->name);
+			if (!state)
+				return;
+
+			previousExtraShaderDescriptor = state->permutationData.ExtraShaderDescriptor;
+			treeBendSelected = IsTreeBendRenderPass(a_pass);
+			if (treeBendSelected) {
+				state->permutationData.ExtraShaderDescriptor |= kTreeBendDescriptor;
 			} else {
-				currentTrunkRenderPass = nullptr;
+				state->permutationData.ExtraShaderDescriptor &= ~kTreeBendDescriptor;
+			}
+
+			const bool disableTreeAnimation = globals::features::csUtility.loaded &&
+			                                  globals::features::csUtility.settings.disableVanillaTreeAnimation &&
+			                                  IsTreeRenderPass(a_pass);
+			if (disableTreeAnimation) {
+				state->permutationData.ExtraShaderDescriptor |= kDisableTreeAnimationDescriptor;
+			} else {
+				state->permutationData.ExtraShaderDescriptor &= ~kDisableTreeAnimationDescriptor;
+			}
+
+			state->UpdatePermutationBuffer();
+			BindVertexPermutationData(a_pass ? a_pass->shader : nullptr);
+
+			if (treeBendSelected) {
+				static std::atomic_uint32_t diagnosticCount = 0;
+				if (diagnosticCount.fetch_add(1, std::memory_order_relaxed) < 64) {
+					logger::info("[TreeBend] uploaded geometry='{}' pass={:08X} descriptor={:08X} batch={:08X}",
+						a_pass->geometry->name, a_pass->passEnum, GetRenderPassVertexDescriptor(*a_pass), a_vertexDescriptor);
+				}
 			}
 		}
 
-		~TrunkRenderPassScope()
+		~TreeBendPassScope()
 		{
-			if (isTrunkPass) {
-				if (globals::d3d::context) {
-					globals::d3d::context->VSSetShader(previousVertexShader, nullptr, 0);
-					globals::d3d::context->PSSetShader(previousPixelShader, nullptr, 0);
+			if (state && treeBendSelected && pass && pass->geometry && pass->geometry->name == "leaves") {
+				static std::atomic_uint32_t leafDiagnosticCount = 0;
+				if (leafDiagnosticCount.fetch_add(1, std::memory_order_relaxed) < 64) {
+					ID3D11Buffer* boundBuffer = nullptr;
+					globals::d3d::context->VSGetConstantBuffers(kPermutationVertexRegister, 1, &boundBuffer);
+					const bool permutationBufferBound = boundBuffer && state->permutationCB && boundBuffer == state->permutationCB->CB();
+					if (boundBuffer)
+						boundBuffer->Release();
+					logger::info("[TreeBendLeaf] pass={:08X} batchVS={:08X} currentVS={:08X} modifiedVS={:08X} currentPS={:08X} modifiedPS={:08X} b4={} uploaded={}",
+						pass->passEnum, GetRenderPassVertexDescriptor(*pass), state->currentVertexDescriptor,
+						state->modifiedVertexDescriptor, state->currentPixelDescriptor, state->modifiedPixelDescriptor,
+						static_cast<uint32_t>(permutationBufferBound),
+						static_cast<uint32_t>((state->permutationDataPrevious.ExtraShaderDescriptor & kTreeBendDescriptor) != 0));
 				}
-				if (previousVertexShader)
-					previousVertexShader->Release();
-				if (previousPixelShader)
-					previousPixelShader->Release();
-
-				constexpr auto trunkBit = static_cast<uint32_t>(SIE::ShaderCache::LightingShaderFlags::TrunkSine);
-				auto* state = globals::state;
-				state->currentVertexDescriptor &= ~trunkBit;
-				state->modifiedVertexDescriptor &= ~trunkBit;
-				state->lastModifiedVertexDescriptor &= ~trunkBit;
-				state->permutationData.VertexShaderDescriptor &= ~trunkBit;
-				globals::game::stateUpdateFlags->set(RE::BSGraphics::DIRTY_VERTEX_DESC);
 			}
-			currentTrunkRenderPass = previousScope;
+
+			if (state)
+				state->permutationData.ExtraShaderDescriptor = previousExtraShaderDescriptor;
 		}
 
 	private:
-		TrunkRenderPassScope* previousScope = nullptr;
-		ID3D11VertexShader* previousVertexShader = nullptr;
-		ID3D11PixelShader* previousPixelShader = nullptr;
-		bool isTrunkPass = false;
+		State* state = nullptr;
+		RE::BSRenderPass* pass = nullptr;
+		uint32_t previousExtraShaderDescriptor = 0;
+		bool treeBendSelected = false;
 	};
 
-	void BindTrunkVertexShaderForCurrentDraw()
+	void BindVertexPermutationData()
 	{
-		if (!currentTrunkRenderPass)
-			return;
-
-		auto* state = globals::state;
-		auto* shaderCache = globals::shaderCache;
-		if (!state || !shaderCache || !state->currentShader || !SupportsTrunkBend(*state->currentShader, state->currentVertexDescriptor))
-			return;
-
-		uint32_t vertexDescriptor = state->modifiedVertexDescriptor;
-		if (state->currentShader->shaderType == RE::BSShader::Type::Lighting)
-			vertexDescriptor |= static_cast<uint32_t>(SIE::ShaderCache::LightingShaderFlags::TrunkSine);
-		else
-			vertexDescriptor |= static_cast<uint32_t>(SIE::ShaderCache::UtilityShaderFlags::TrunkSine);
-
-		auto* pixelShader = shaderCache->GetPixelShader(*state->currentShader, state->modifiedPixelDescriptor);
-		if (!pixelShader) {
-			static std::atomic_uint32_t missingPixelCount = 0;
-			if (missingPixelCount.fetch_add(1, std::memory_order_relaxed) < 8)
-				logger::warn("[TrunkBend] per-draw bind deferred: missing PS descriptor={:08X}", state->modifiedPixelDescriptor);
-			return;
-		}
-
-		auto* vertexShader = shaderCache->GetVertexShader(*state->currentShader, vertexDescriptor);
-		if (!vertexShader) {
-			static std::atomic_uint32_t failedCount = 0;
-			if (failedCount.fetch_add(1, std::memory_order_relaxed) < 8)
-				logger::error("[TrunkBend] per-draw VS bind failed descriptor={:08X}", vertexDescriptor);
-			return;
-		}
-
-		globals::d3d::context->PSSetShader(reinterpret_cast<ID3D11PixelShader*>(pixelShader->shader), nullptr, 0);
-
-		auto* sharedDataBuffer = state->sharedDataCB->CB();
-		globals::d3d::context->VSSetConstantBuffers(kTrunkSharedDataVertexRegister, 1, &sharedDataBuffer);
-		globals::d3d::context->VSSetShader(reinterpret_cast<ID3D11VertexShader*>(vertexShader->shader), nullptr, 0);
-
-		static std::atomic_uint32_t bindCount = 0;
-		if (bindCount.fetch_add(1, std::memory_order_relaxed) < 32)
-			logger::info("[TrunkBend] per-draw shader bind type={} VS={:08X} PS={:08X}", magic_enum::enum_name(state->currentShader->shaderType.get()), vertexDescriptor, state->modifiedPixelDescriptor);
+		BindVertexPermutationData(globals::state ? globals::state->currentShader : nullptr);
 	}
 }
 
 bool Hooks::BSShader_BeginTechnique::thunk(RE::BSShader* shader, uint32_t vertexDescriptor, uint32_t pixelDescriptor, bool skipPixelShader)
 {
-	const uint32_t nativeVertexDescriptor = vertexDescriptor;
-	const bool consumeTrunkBendMarker = currentTrunkRenderPass != nullptr && SupportsTrunkBend(*shader, vertexDescriptor);
-	if (consumeTrunkBendMarker) {
-		if (shader->shaderType == RE::BSShader::Type::Lighting)
-			vertexDescriptor |= static_cast<uint32_t>(SIE::ShaderCache::LightingShaderFlags::TrunkSine);
-		else
-			vertexDescriptor |= static_cast<uint32_t>(SIE::ShaderCache::UtilityShaderFlags::TrunkSine);
-	}
-
 	auto state = globals::state;
 	auto shaderCache = globals::shaderCache;
 
@@ -275,26 +314,21 @@ bool Hooks::BSShader_BeginTechnique::thunk(RE::BSShader* shader, uint32_t vertex
 	// Only check against non-shader bits
 	state->permutationData.PixelShaderDescriptor &= ~state->modifiedPixelDescriptor;
 
-	bool shaderFound = func(shader, nativeVertexDescriptor, pixelDescriptor, skipPixelShader);
-	if (consumeTrunkBendMarker && !shaderFound) {
-		static std::atomic_uint32_t failedNativeTechniqueCount = 0;
-		if (failedNativeTechniqueCount.fetch_add(1, std::memory_order_relaxed) < 8)
-			logger::error("[TrunkBend] native BeginTechnique rejected vertexDescriptor={:08X} pixelDescriptor={:08X}", nativeVertexDescriptor, pixelDescriptor);
-	}
+	bool shaderFound = func(shader, vertexDescriptor, pixelDescriptor, skipPixelShader);
 
 	if (!shaderFound && shader->shaderType.get() != RE::BSShader::Type::Effect) {
 		RE::BSGraphics::VertexShader* vertexShader = shaderCache->GetVertexShader(*shader, state->modifiedVertexDescriptor);
 		RE::BSGraphics::PixelShader* pixelShader = shaderCache->GetPixelShader(*shader, state->modifiedPixelDescriptor);
 		if (vertexShader == nullptr || (!skipPixelShader && pixelShader == nullptr)) {
+			shaderFound = false;
 		} else {
 			state->settingCustomShader = true;
-			if (consumeTrunkBendMarker) {
-				auto* sharedDataBuffer = state->sharedDataCB->CB();
-				globals::d3d::context->VSSetConstantBuffers(kTrunkSharedDataVertexRegister, 1, &sharedDataBuffer);
-			}
 			globals::d3d::context->VSSetShader(reinterpret_cast<ID3D11VertexShader*>(vertexShader->shader), NULL, NULL);
 			*globals::game::currentVertexShader = vertexShader;
 			globals::game::stateUpdateFlags->set(RE::BSGraphics::DIRTY_VERTEX_DESC);
+			if (skipPixelShader) {
+				pixelShader = nullptr;
+			}
 			*globals::game::currentPixelShader = pixelShader;
 			if (pixelShader)
 				globals::d3d::context->PSSetShader(reinterpret_cast<ID3D11PixelShader*>(pixelShader->shader), NULL, NULL);
@@ -485,7 +519,8 @@ void Hooks::BSGraphics_SetDirtyStates::thunk(bool isCompute)
 {
 	func(isCompute);
 	globals::state->Draw();
-	BindTrunkVertexShaderForCurrentDraw();
+	if (!isCompute)
+		BindVertexPermutationData();
 }
 
 struct ID3D11Device_CreateVertexShader
@@ -828,11 +863,6 @@ namespace Hooks
 		{
 			auto state = globals::state;
 			auto shaderCache = globals::shaderCache;
-			const bool trunkBendDraw =
-				(state->currentShader->shaderType == RE::BSShader::Type::Lighting || state->currentShader->shaderType == RE::BSShader::Type::Utility) &&
-				(state->modifiedVertexDescriptor & static_cast<uint32_t>(SIE::ShaderCache::LightingShaderFlags::TrunkSine)) != 0;
-			static std::atomic_uint32_t trunkBendBindCount = 0;
-			const bool logTrunkBend = trunkBendDraw && trunkBendBindCount.fetch_add(1, std::memory_order_relaxed) < 32;
 
 			if (!state->settingCustomShader) {
 				if (shaderCache->IsEnabled()) {
@@ -840,23 +870,8 @@ namespace Hooks
 					auto type = currentShader->shaderType.get();
 					if (type > 0 && type < RE::BSShader::Type::Total) {
 						if (state->enabledClasses[type - 1]) {
-							if (trunkBendDraw && !shaderCache->GetPixelShader(*currentShader, state->modifiedPixelDescriptor)) {
-								static std::atomic_uint32_t deferredVertexCount = 0;
-								if (deferredVertexCount.fetch_add(1, std::memory_order_relaxed) < 8)
-									logger::warn("[TrunkBend] deferring VS bind until PS is ready descriptor={:08X}", state->modifiedPixelDescriptor);
-								globals::game::stateUpdateFlags->set(RE::BSGraphics::DIRTY_VERTEX_DESC);
-								*globals::game::currentVertexShader = a_vertexShader;
-								globals::d3d::context->VSSetShader(reinterpret_cast<ID3D11VertexShader*>(a_vertexShader->shader), nullptr, 0);
-								return;
-							}
 							RE::BSGraphics::VertexShader* vertexShader = shaderCache->GetVertexShader(*currentShader, state->modifiedVertexDescriptor);
 							if (vertexShader) {
-								if (logTrunkBend)
-									logger::info("[TrunkBend] bind VS descriptor={:08X} vanilla={:p} custom={:p}", state->modifiedVertexDescriptor, static_cast<void*>(a_vertexShader), static_cast<void*>(vertexShader));
-								if (trunkBendDraw) {
-									auto* sharedDataBuffer = state->sharedDataCB->CB();
-									globals::d3d::context->VSSetConstantBuffers(kTrunkSharedDataVertexRegister, 1, &sharedDataBuffer);
-								}
 								globals::d3d::context->VSSetShader(reinterpret_cast<ID3D11VertexShader*>(vertexShader->shader), NULL, NULL);
 								*globals::game::currentVertexShader = a_vertexShader;
 								globals::game::stateUpdateFlags->set(RE::BSGraphics::DIRTY_VERTEX_DESC);
@@ -866,9 +881,6 @@ namespace Hooks
 					}
 				}
 			}
-
-			if (logTrunkBend)
-				logger::info("[TrunkBend] bind VS fallback descriptor={:08X} vanilla={:p}", state->modifiedVertexDescriptor, static_cast<void*>(a_vertexShader));
 
 			globals::game::stateUpdateFlags->set(RE::BSGraphics::DIRTY_VERTEX_DESC);
 
@@ -884,11 +896,6 @@ namespace Hooks
 		{
 			auto state = globals::state;
 			auto shaderCache = globals::shaderCache;
-			const bool trunkBendDraw =
-				state->currentShader->shaderType == RE::BSShader::Type::Lighting &&
-				(state->modifiedPixelDescriptor & static_cast<uint32_t>(SIE::ShaderCache::LightingShaderFlags::TrunkSine)) != 0;
-			static std::atomic_uint32_t trunkBendBindCount = 0;
-			const bool logTrunkBend = trunkBendDraw && trunkBendBindCount.fetch_add(1, std::memory_order_relaxed) < 32;
 
 			if (!state->settingCustomShader) {
 				if (shaderCache->IsEnabled()) {
@@ -898,8 +905,6 @@ namespace Hooks
 						if (state->enabledClasses[type - 1]) {
 							RE::BSGraphics::PixelShader* pixelShader = shaderCache->GetPixelShader(*currentShader, state->modifiedPixelDescriptor);
 							if (pixelShader) {
-								if (logTrunkBend)
-									logger::info("[TrunkBend] bind PS descriptor={:08X} vanilla={:p} custom={:p}", state->modifiedPixelDescriptor, static_cast<void*>(a_pixelShader), static_cast<void*>(pixelShader));
 								globals::d3d::context->PSSetShader(reinterpret_cast<ID3D11PixelShader*>(pixelShader->shader), NULL, NULL);
 								*globals::game::currentPixelShader = a_pixelShader;
 								return;
@@ -908,9 +913,6 @@ namespace Hooks
 					}
 				}
 			}
-
-			if (logTrunkBend)
-				logger::info("[TrunkBend] bind PS fallback descriptor={:08X} vanilla={:p}", state->modifiedPixelDescriptor, static_cast<void*>(a_pixelShader));
 
 			*globals::game::currentPixelShader = a_pixelShader;
 
@@ -1134,7 +1136,7 @@ namespace Hooks
 		if (ShouldSkipRenderPassForParticleLights(a_pass, a_technique))
 			return;
 
-		TrunkRenderPassScope trunkRenderPassScope(a_pass);
+		TreeBendPassScope treeBendPassScope(a_pass, a_technique);
 		func(a_pass, a_technique, a_alphaTest, a_renderFlags);
 	}
 
@@ -1147,7 +1149,7 @@ namespace Hooks
 		if (ShouldSkipRenderPassForParticleLights(a_pass, a_technique))
 			return;
 
-		TrunkRenderPassScope trunkRenderPassScope(a_pass);
+		TreeBendPassScope treeBendPassScope(a_pass, a_technique);
 		func(a_pass, a_technique, a_alphaTest, a_renderFlags);
 	}
 
@@ -1160,7 +1162,7 @@ namespace Hooks
 		if (ShouldSkipRenderPassForParticleLights(a_pass, a_technique))
 			return;
 
-		TrunkRenderPassScope trunkRenderPassScope(a_pass);
+		TreeBendPassScope treeBendPassScope(a_pass, a_technique);
 		func(a_pass, a_technique, a_alphaTest, a_renderFlags);
 	}
 

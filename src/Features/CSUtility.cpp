@@ -96,6 +96,7 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	CSUtility::Settings,
 	enableTrunkBend,
+	disableVanillaTreeAnimation,
 	skyBrightness,
 	directionalLightMult,
 	pointLightMult,
@@ -113,6 +114,10 @@ void CSUtility::DrawSettings()
 	if (ImGui::BeginTabBar("##CSUtilityTabs", ImGuiTabBarFlags_None)) {
 		if (ImGui::BeginTabItem(T(TKEY("tab_trees"), "Trees"))) {
 			ImGui::Checkbox(T(TKEY("enable_trunk_bend"), "Enable Trunk Bend"), &settings.enableTrunkBend);
+			ImGui::Checkbox(T(TKEY("disable_vanilla_tree_animation"), "Disable Vanilla Tree Animation (Test)"), &settings.disableVanillaTreeAnimation);
+			if (auto _tt = Util::HoverTooltipWrapper()) {
+				ImGui::TextUnformatted(T(TKEY("disable_vanilla_tree_animation_tooltip"), "Disables TREE_ANIM only for explicitly identified tree geometry."));
+			}
 			ImGui::EndTabItem();
 		}
 

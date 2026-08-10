@@ -320,7 +320,9 @@ public:
 		GrassSphereNormal = 1 << 3,
 		IsSun = 1 << 4,
 		SuppressExternalEmittance = 1 << 5,
-		IsEye = 1 << 6
+		IsEye = 1 << 6,
+		TreeBend = 1 << 7,
+		DisableTreeAnimation = 1 << 8
 	};
 
 	enum class ExtraFeatureDescriptors : uint32_t
@@ -358,6 +360,7 @@ public:
 
 	void UpdateSharedData(bool a_inWorld, bool a_prepass);
 	void UpdateSkyShaderPermutation(RE::BSRenderPass* a_pass);
+	void UpdatePermutationBuffer();
 	bool HasDirectionalShadows() const;
 
 	struct PermutationCB
@@ -368,13 +371,15 @@ public:
 		uint ExtraFeatureDescriptor;
 
 		float EffectRadius;
-		float3 pad0;
+		float TrunkWindTimer;
+		float2 pad0;
 
 		bool operator==(const PermutationCB& other) const
 		{
 			return PixelShaderDescriptor == other.PixelShaderDescriptor &&
 			       ExtraShaderDescriptor == other.ExtraShaderDescriptor &&
-			       ExtraFeatureDescriptor == other.ExtraFeatureDescriptor && EffectRadius == other.EffectRadius;
+			       ExtraFeatureDescriptor == other.ExtraFeatureDescriptor && EffectRadius == other.EffectRadius &&
+			       TrunkWindTimer == other.TrunkWindTimer;
 		}
 	};
 	STATIC_ASSERT_ALIGNAS_16(PermutationCB);
