@@ -65,6 +65,7 @@ struct CSUtility : Feature
 
 	struct Settings
 	{
+		bool enableTrunkBend = true;
 		float skyBrightness = 1.0f;
 		float directionalLightMult = 1.0f;
 		float pointLightMult = 1.0f;

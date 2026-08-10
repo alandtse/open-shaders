@@ -6,6 +6,10 @@
 #include "Common/Skinned.hlsli"
 #include "Common/VR.hlsli"
 
+#if defined(TRUNK_SINE)
+#	include "Common/TrunkWind.hlsli"
+#endif
+
 #if defined(RENDER_SHADOWMASK) || defined(RENDER_SHADOWMASKSPOT) || defined(RENDER_SHADOWMASKPB) || defined(RENDER_SHADOWMASKDPB)
 #	define RENDER_SHADOWMASK_ANY
 #endif
@@ -144,6 +148,10 @@ VS_OUTPUT main(VS_INPUT input)
 
 	precise float4 positionMS = float4(input.PositionMS.xyz, 1.0);
 	float4 positionCS = float4(0, 0, 0, 0);
+
+#		if defined(TRUNK_SINE)
+	positionMS.xy += TrunkWind::GetDisplacement(positionMS.xyz, TrunkWind::Timer);
+#		endif
 
 	float3 normalMS = float3(1, 1, 1);
 #		if defined(NORMALS)

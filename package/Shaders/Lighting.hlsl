@@ -14,6 +14,10 @@
 #include "Common/Triplanar.hlsli"
 #include "Common/VR.hlsli"
 
+#if defined(TRUNK_SINE)
+#	include "Common/TrunkWind.hlsli"
+#endif
+
 #if defined(FACEGEN) || defined(FACEGEN_RGB_TINT)
 #	define SKIN
 #endif
@@ -200,6 +204,11 @@ VS_OUTPUT main(VS_INPUT input)
 
 	inputPosition.xyz += normal.xyz * treeShiftVector.x;
 	previousInputPosition.xyz += normal.xyz * treeShiftVector.y;
+#	endif
+
+#	if defined(TRUNK_SINE)
+	inputPosition.xy += TrunkWind::GetDisplacement(inputPosition.xyz, TrunkWind::Timer);
+	previousInputPosition.xy += TrunkWind::GetDisplacement(previousInputPosition.xyz, TrunkWind::Timer - 1.0 / 60.0);
 #	endif
 
 #	if defined(SKINNED)

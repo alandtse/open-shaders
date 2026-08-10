@@ -95,6 +95,7 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	CSUtility::Settings,
+	enableTrunkBend,
 	skyBrightness,
 	directionalLightMult,
 	pointLightMult,
@@ -110,6 +111,11 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 void CSUtility::DrawSettings()
 {
 	if (ImGui::BeginTabBar("##CSUtilityTabs", ImGuiTabBarFlags_None)) {
+		if (ImGui::BeginTabItem(T(TKEY("tab_trees"), "Trees"))) {
+			ImGui::Checkbox(T(TKEY("enable_trunk_bend"), "Enable Trunk Bend"), &settings.enableTrunkBend);
+			ImGui::EndTabItem();
+		}
+
 		if (ImGui::BeginTabItem(T(TKEY("tab_atmosphere"), "Atmosphere"))) {
 			ImGui::SliderFloat(T(TKEY("sky_brightness"), "Sky Brightness"), &settings.skyBrightness, kSkyBrightnessMin, kSkyBrightnessMax, "%.2f", ImGuiSliderFlags_AlwaysClamp);
 			ImGui::EndTabItem();

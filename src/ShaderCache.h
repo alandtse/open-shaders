@@ -690,6 +690,7 @@ namespace SIE
 			// Community Shaders start
 			TruePbr = 1 << 3,
 			Deferred = 1 << 4,
+			TrunkSine = 1 << 6,
 			// Community Shaders end
 			Specular = 1 << 9,
 			SoftLighting = 1 << 10,
@@ -820,6 +821,7 @@ namespace SIE
 			Skinned = 1 << 2,
 			Normals = 1 << 3,
 			BinormalTangent = 1 << 4,
+			TrunkSine = 1 << 6,
 			AlphaTest = 1 << 7,
 			LodLandscape = 1 << 8,
 			RenderNormal = 1 << 9,
