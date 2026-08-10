@@ -60,6 +60,7 @@ public:
 	std::vector<std::pair<std::string, std::string>> shaderDefines{};  // data structure to parse string into; needed to avoid dangling pointers
 
 	float timer = 0;
+	float previousTimer = 0;
 	double smoothDrawCalls[RE::BSShader::Type::Total + 1];
 	int drawCalls[RE::BSShader::Type::Total + 1];
 
@@ -372,14 +373,15 @@ public:
 
 		float EffectRadius;
 		float TrunkWindTimer;
-		float2 pad0;
+		float TrunkWindPreviousTimer;
+		float pad0;
 
 		bool operator==(const PermutationCB& other) const
 		{
 			return PixelShaderDescriptor == other.PixelShaderDescriptor &&
 			       ExtraShaderDescriptor == other.ExtraShaderDescriptor &&
 			       ExtraFeatureDescriptor == other.ExtraFeatureDescriptor && EffectRadius == other.EffectRadius &&
-			       TrunkWindTimer == other.TrunkWindTimer;
+			       TrunkWindTimer == other.TrunkWindTimer && TrunkWindPreviousTimer == other.TrunkWindPreviousTimer;
 		}
 	};
 	STATIC_ASSERT_ALIGNAS_16(PermutationCB);

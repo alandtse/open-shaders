@@ -56,6 +56,7 @@ void State::UpdateSkyShaderPermutation(RE::BSRenderPass* a_pass)
 void State::UpdatePermutationBuffer()
 {
 	permutationData.TrunkWindTimer = timer;
+	permutationData.TrunkWindPreviousTimer = previousTimer;
 	if (permutationData != permutationDataPrevious) {
 		permutationCB->Update(permutationData);
 		permutationDataPrevious = permutationData;
@@ -217,6 +218,7 @@ void State::Reset()
 	globals::profiler->EndFrame(frameCount);
 
 	Feature::ForEachLoadedFeature("Reset", [](Feature* feature) { feature->Reset(); });
+	previousTimer = timer;
 	if (!globals::game::ui->GameIsPaused())
 		timer += RE::GetSecondsSinceLastFrame();
 

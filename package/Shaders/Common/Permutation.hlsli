@@ -100,6 +100,7 @@ namespace Permutation
 
 		float EffectRadius;
 		float TrunkWindTimer;
+		float TrunkWindPreviousTimer;
 	};
 
 }

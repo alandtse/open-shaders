@@ -208,7 +208,7 @@ VS_OUTPUT main(VS_INPUT input)
 
 	if ((Permutation::ExtraShaderDescriptor & Permutation::ExtraFlags::TreeBend) != 0) {
 		inputPosition.xy += TrunkWind::GetDisplacement(inputPosition.xyz, Permutation::TrunkWindTimer);
-		previousInputPosition.xy += TrunkWind::GetDisplacement(previousInputPosition.xyz, Permutation::TrunkWindTimer - 1.0 / 60.0);
+		previousInputPosition.xy += TrunkWind::GetDisplacement(previousInputPosition.xyz, Permutation::TrunkWindPreviousTimer);
 	}
 
 #	if defined(SKINNED)
@@ -217,14 +217,14 @@ VS_OUTPUT main(VS_INPUT input)
 	float3x4 previousWorldMatrix =
 		Skinned::GetBoneTransformMatrix(PreviousBones, actualIndices, PreviousBonesPivot[eyeIndex], input.BoneWeights);
 	precise float4 previousWorldPosition =
-		float4(mul(inputPosition, transpose(previousWorldMatrix)), 1);
+		float4(mul(previousInputPosition, transpose(previousWorldMatrix)), 1);
 
 	float3x4 worldMatrix = Skinned::GetBoneTransformMatrix(Bones, actualIndices, BonesPivot[eyeIndex], input.BoneWeights);
 	precise float4 worldPosition = float4(mul(inputPosition, transpose(worldMatrix)), 1);
 
 	float4 viewPos = mul(ViewProj[eyeIndex], worldPosition);
 #	else   // !SKINNED
-	precise float4 previousWorldPosition = float4(mul(PreviousWorld[eyeIndex], inputPosition), 1);
+	precise float4 previousWorldPosition = float4(mul(PreviousWorld[eyeIndex], previousInputPosition), 1);
 	precise float4 worldPosition = float4(mul(World[eyeIndex], inputPosition), 1);
 	precise float4x4 world4x4 = float4x4(World[eyeIndex][0], World[eyeIndex][1], World[eyeIndex][2], float4(0, 0, 0, 1));
 	precise float4x4 modelView = mul(ViewProj[eyeIndex], world4x4);
