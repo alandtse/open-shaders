@@ -61,6 +61,8 @@ public:
 
 	float timer = 0;
 	float previousTimer = 0;
+	float2 trunkWindVector = {};
+	float2 previousTrunkWindVector = {};
 	double smoothDrawCalls[RE::BSShader::Type::Total + 1];
 	int drawCalls[RE::BSShader::Type::Total + 1];
 
@@ -376,12 +378,24 @@ public:
 		float TrunkWindPreviousTimer;
 		float pad0;
 
+		float2 TrunkWindVector;
+		float2 TrunkWindPreviousVector;
+
+		float WindIntensityOverride;
+		uint OverrideWindIntensity;
+		float2 pad1;
+
 		bool operator==(const PermutationCB& other) const
 		{
 			return PixelShaderDescriptor == other.PixelShaderDescriptor &&
 			       ExtraShaderDescriptor == other.ExtraShaderDescriptor &&
 			       ExtraFeatureDescriptor == other.ExtraFeatureDescriptor && EffectRadius == other.EffectRadius &&
-			       TrunkWindTimer == other.TrunkWindTimer && TrunkWindPreviousTimer == other.TrunkWindPreviousTimer;
+			       TrunkWindTimer == other.TrunkWindTimer && TrunkWindPreviousTimer == other.TrunkWindPreviousTimer &&
+			       TrunkWindVector.x == other.TrunkWindVector.x && TrunkWindVector.y == other.TrunkWindVector.y &&
+			       TrunkWindPreviousVector.x == other.TrunkWindPreviousVector.x &&
+			       TrunkWindPreviousVector.y == other.TrunkWindPreviousVector.y &&
+			       WindIntensityOverride == other.WindIntensityOverride &&
+			       OverrideWindIntensity == other.OverrideWindIntensity;
 		}
 	};
 	STATIC_ASSERT_ALIGNAS_16(PermutationCB);

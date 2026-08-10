@@ -212,7 +212,8 @@ namespace
 			return;
 
 		const auto shaderType = a_shader->shaderType.get();
-		if (shaderType != RE::BSShader::Type::Lighting && shaderType != RE::BSShader::Type::Utility)
+		if (shaderType != RE::BSShader::Type::Lighting && shaderType != RE::BSShader::Type::Utility &&
+			shaderType != RE::BSShader::Type::Grass)
 			return;
 
 		auto* permutationBuffer = state->permutationCB->CB();
@@ -251,8 +252,9 @@ namespace
 			if (treeBendSelected) {
 				static std::atomic_uint32_t diagnosticCount = 0;
 				if (diagnosticCount.fetch_add(1, std::memory_order_relaxed) < 64) {
-					logger::info("[TreeBend] uploaded geometry='{}' pass={:08X} descriptor={:08X} batch={:08X}",
-						a_pass->geometry->name, a_pass->passEnum, GetRenderPassVertexDescriptor(*a_pass), a_vertexDescriptor);
+					logger::info("[TreeBend] uploaded geometry='{}' pass={:08X} descriptor={:08X} batch={:08X} wind=({:.3f},{:.3f})",
+						a_pass->geometry->name, a_pass->passEnum, GetRenderPassVertexDescriptor(*a_pass), a_vertexDescriptor,
+						state->permutationData.TrunkWindVector.x, state->permutationData.TrunkWindVector.y);
 				}
 			}
 		}

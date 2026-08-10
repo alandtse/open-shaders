@@ -101,7 +101,19 @@ namespace Permutation
 		float EffectRadius;
 		float TrunkWindTimer;
 		float TrunkWindPreviousTimer;
+
+		float2 TrunkWindVector;
+		float2 TrunkWindPreviousVector;
+
+		float WindIntensityOverride;
+		uint OverrideWindIntensity;
+		float2 PerShaderPadding;
 	};
+
+	float GetWindIntensityScale()
+	{
+		return OverrideWindIntensity != 0 ? WindIntensityOverride : 1.0;
+	}
 
 }
 #endif  // __PERMUTATION_DEPENDENCY_HLSL__

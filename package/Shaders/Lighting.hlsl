@@ -175,7 +175,7 @@ float2 GetTreeShiftVector(float4 position, float4 color)
 	precise float4 tmp2 = float4(0.1, 0.25, 0.1, 0.25) * tmp1 + dot(position.xyz, 1.0.xxx).xxxx;
 	precise float4 tmp3 = abs(-1.0.xxxx + 2.0.xxxx * frac(0.5.xxxx + tmp2.xyzw));
 	precise float4 tmp4 = (tmp3 * tmp3) * (3.0.xxxx - 2.0.xxxx * tmp3);
-	return (tmp4.xz + 0.1.xx * tmp4.yw) * (TreeParams.z * color.w).xx;
+	return (tmp4.xz + 0.1.xx * tmp4.yw) * (TreeParams.z * color.w * Permutation::GetWindIntensityScale()).xx;
 }
 #	endif  // TREE_ANIM
 
@@ -206,11 +206,6 @@ VS_OUTPUT main(VS_INPUT input)
 	}
 #	endif
 
-	if ((Permutation::ExtraShaderDescriptor & Permutation::ExtraFlags::TreeBend) != 0) {
-		inputPosition.xy += TrunkWind::GetDisplacement(inputPosition.xyz, Permutation::TrunkWindTimer);
-		previousInputPosition.xy += TrunkWind::GetDisplacement(previousInputPosition.xyz, Permutation::TrunkWindPreviousTimer);
-	}
-
 #	if defined(SKINNED)
 	precise int4 actualIndices = 765.01.xxxx * input.BoneIndices.xyzw;
 
@@ -221,15 +216,31 @@ VS_OUTPUT main(VS_INPUT input)
 
 	float3x4 worldMatrix = Skinned::GetBoneTransformMatrix(Bones, actualIndices, BonesPivot[eyeIndex], input.BoneWeights);
 	precise float4 worldPosition = float4(mul(inputPosition, transpose(worldMatrix)), 1);
-
-	float4 viewPos = mul(ViewProj[eyeIndex], worldPosition);
 #	else   // !SKINNED
 	precise float4 previousWorldPosition = float4(mul(PreviousWorld[eyeIndex], previousInputPosition), 1);
 	precise float4 worldPosition = float4(mul(World[eyeIndex], inputPosition), 1);
-	precise float4x4 world4x4 = float4x4(World[eyeIndex][0], World[eyeIndex][1], World[eyeIndex][2], float4(0, 0, 0, 1));
-	precise float4x4 modelView = mul(ViewProj[eyeIndex], world4x4);
-	float4 viewPos = mul(modelView, inputPosition);
 #	endif  // SKINNED
+
+	const bool treeBendEnabled = (Permutation::ExtraShaderDescriptor & Permutation::ExtraFlags::TreeBend) != 0;
+	if (treeBendEnabled) {
+		worldPosition.xy += TrunkWind::GetWorldDisplacement(
+			inputPosition.z, Permutation::TrunkWindTimer, Permutation::TrunkWindVector);
+		previousWorldPosition.xy += TrunkWind::GetWorldDisplacement(
+			previousInputPosition.z, Permutation::TrunkWindPreviousTimer, Permutation::TrunkWindPreviousVector);
+	}
+
+	float4 viewPos;
+#	if defined(SKINNED)
+	viewPos = mul(ViewProj[eyeIndex], worldPosition);
+#	else
+	if (treeBendEnabled) {
+		viewPos = mul(ViewProj[eyeIndex], worldPosition);
+	} else {
+		precise float4x4 world4x4 = float4x4(World[eyeIndex][0], World[eyeIndex][1], World[eyeIndex][2], float4(0, 0, 0, 1));
+		precise float4x4 modelView = mul(ViewProj[eyeIndex], world4x4);
+		viewPos = mul(modelView, inputPosition);
+	}
+#	endif
 
 	vsout.Position = viewPos;
 

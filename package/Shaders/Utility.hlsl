@@ -155,13 +155,11 @@ VS_OUTPUT main(VS_INPUT input)
 #		if defined(VC) && defined(NORMALS) && defined(TREE_ANIM)
 	if ((Permutation::ExtraShaderDescriptor & Permutation::ExtraFlags::DisableTreeAnimation) == 0) {
 		float2 treeTmp1 = SmoothSaturate(abs(2 * frac(float2(0.1, 0.25) * (TreeParams.w * TreeParams.y * TreeParams.x) + dot(input.PositionMS.xyz, 1.0.xxx) + 0.5) - 1));
-		float normalMult = (treeTmp1.x + 0.1 * treeTmp1.y) * (input.Color.w * TreeParams.z);
+		float normalMult = (treeTmp1.x + 0.1 * treeTmp1.y) *
+		                   (input.Color.w * TreeParams.z * Permutation::GetWindIntensityScale());
 		positionMS.xyz += normalMS.xyz * normalMult;
 	}
 #		endif
-
-	if ((Permutation::ExtraShaderDescriptor & Permutation::ExtraFlags::TreeBend) != 0)
-		positionMS.xy += TrunkWind::GetDisplacement(positionMS.xyz, Permutation::TrunkWindTimer);
 
 #		if defined(LOD_LANDSCAPE)
 	positionMS = LodLandscape::AdjustLodLandscapeVertexPositionMS(positionMS, World[eyeIndex], HighDetailRange[eyeIndex]);
@@ -172,11 +170,22 @@ VS_OUTPUT main(VS_INPUT input)
 
 	float3x4 worldMatrix = Skinned::GetBoneTransformMatrix(Bones, boneIndices, FrameBuffer::CameraPosAdjust[eyeIndex].xyz, input.BoneWeights);
 	precise float4 positionWS = float4(mul(positionMS, transpose(worldMatrix)), 1);
+	if ((Permutation::ExtraShaderDescriptor & Permutation::ExtraFlags::TreeBend) != 0) {
+		positionWS.xy += TrunkWind::GetWorldDisplacement(
+			positionMS.z, Permutation::TrunkWindTimer, Permutation::TrunkWindVector);
+	}
 
 	positionCS = mul(FrameBuffer::CameraViewProj[eyeIndex], positionWS);
 #		else
-	precise float4x4 modelViewProj = mul(FrameBuffer::CameraViewProj[eyeIndex], World[eyeIndex]);
-	positionCS = mul(modelViewProj, positionMS);
+	if ((Permutation::ExtraShaderDescriptor & Permutation::ExtraFlags::TreeBend) != 0) {
+		precise float4 positionWS = mul(World[eyeIndex], positionMS);
+		positionWS.xy += TrunkWind::GetWorldDisplacement(
+			positionMS.z, Permutation::TrunkWindTimer, Permutation::TrunkWindVector);
+		positionCS = mul(FrameBuffer::CameraViewProj[eyeIndex], positionWS);
+	} else {
+		precise float4x4 modelViewProj = mul(FrameBuffer::CameraViewProj[eyeIndex], World[eyeIndex]);
+		positionCS = mul(modelViewProj, positionMS);
+	}
 #		endif
 
 #		if defined(RENDER_SHADOWMAP) && defined(RENDER_SHADOWMAP_CLAMPED)

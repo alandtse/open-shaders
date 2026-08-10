@@ -20,6 +20,8 @@ namespace
 	constexpr float kSkyBrightnessMax = 2.0f;
 	constexpr float kMultiplierMin = 0.0f;
 	constexpr float kMultiplierMax = 5.0f;
+	constexpr float kTrunkWindIntensityMin = 0.0f;
+	constexpr float kTrunkWindIntensityMax = 10.0f;
 	constexpr uint32_t kMaxVanillaPointLights = 7;
 	constexpr uint32_t kVanillaPointLightCBRegister = 3;
 	constexpr uint32_t kFirstPointLightSceneIndex = 1;
@@ -34,6 +36,7 @@ namespace
 	void SanitizeSettings(CSUtility::Settings& a_settings)
 	{
 		const CSUtility::Settings defaults{};
+		a_settings.trunkWindIntensityOverride = ClampFiniteOrDefault(a_settings.trunkWindIntensityOverride, kTrunkWindIntensityMin, kTrunkWindIntensityMax, defaults.trunkWindIntensityOverride);
 		a_settings.skyBrightness = ClampFiniteOrDefault(a_settings.skyBrightness, kSkyBrightnessMin, kSkyBrightnessMax, defaults.skyBrightness);
 		a_settings.directionalLightMult = ClampFiniteOrDefault(a_settings.directionalLightMult, kMultiplierMin, kMultiplierMax, defaults.directionalLightMult);
 		a_settings.pointLightMult = ClampFiniteOrDefault(a_settings.pointLightMult, kMultiplierMin, kMultiplierMax, defaults.pointLightMult);
@@ -97,6 +100,8 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	CSUtility::Settings,
 	enableTrunkBend,
 	disableVanillaTreeAnimation,
+	overrideTrunkWindIntensity,
+	trunkWindIntensityOverride,
 	skyBrightness,
 	directionalLightMult,
 	pointLightMult,
@@ -114,6 +119,14 @@ void CSUtility::DrawSettings()
 	if (ImGui::BeginTabBar("##CSUtilityTabs", ImGuiTabBarFlags_None)) {
 		if (ImGui::BeginTabItem(T(TKEY("tab_trees"), "Trees"))) {
 			ImGui::Checkbox(T(TKEY("enable_trunk_bend"), "Enable Trunk Bend"), &settings.enableTrunkBend);
+			ImGui::Checkbox(T(TKEY("override_trunk_wind_intensity"), "Override Wind Intensity"), &settings.overrideTrunkWindIntensity);
+			ImGui::BeginDisabled(!settings.overrideTrunkWindIntensity);
+			ImGui::SliderFloat(T(TKEY("trunk_wind_intensity"), "Wind Intensity"), &settings.trunkWindIntensityOverride,
+				kTrunkWindIntensityMin, kTrunkWindIntensityMax, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+			ImGui::EndDisabled();
+			if (auto _tt = Util::HoverTooltipWrapper()) {
+				ImGui::TextUnformatted(T(TKEY("trunk_wind_intensity_tooltip"), "0 is calm, 1 is full normal-scale wind, and values above 1 are exaggerated."));
+			}
 			ImGui::Checkbox(T(TKEY("disable_vanilla_tree_animation"), "Disable Vanilla Tree Animation (Test)"), &settings.disableVanillaTreeAnimation);
 			if (auto _tt = Util::HoverTooltipWrapper()) {
 				ImGui::TextUnformatted(T(TKEY("disable_vanilla_tree_animation_tooltip"), "Disables TREE_ANIM only for explicitly identified tree geometry."));

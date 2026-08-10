@@ -152,8 +152,8 @@ float3 CalculateWindDisplacement(VS_INPUT input, float windTimer)
 	float windTmp3 = 0.2 * cos(Math::PI * windAngleCos);
 	float windTmp1 = sin(Math::PI * windAngleSin);
 	float windTmp2 = sin(Math::TAU * windAngleSin);
-	float windPower = WindVector.z * (((windTmp1 + windTmp2) * 0.3 + windTmp3) *
-										 (0.5 * (input.Color.w * input.Color.w)));
+	float windPower = WindVector.z * Permutation::GetWindIntensityScale() *
+	                  (((windTmp1 + windTmp2) * 0.3 + windTmp3) * (0.5 * (input.Color.w * input.Color.w)));
 
 	return float3(WindVector.xy, 0) * windPower;
 }

@@ -7,6 +7,7 @@
 #include "Deferred.h"
 #include "FeatureIssues.h"
 #include "Features/CSEditor.h"
+#include "Features/CSUtility.h"
 #include "Features/CloudShadows.h"
 #include "Features/DynamicCubemaps.h"
 #include "Features/ExponentialHeightFog.h"
@@ -57,6 +58,11 @@ void State::UpdatePermutationBuffer()
 {
 	permutationData.TrunkWindTimer = timer;
 	permutationData.TrunkWindPreviousTimer = previousTimer;
+	permutationData.TrunkWindVector = trunkWindVector;
+	permutationData.TrunkWindPreviousVector = previousTrunkWindVector;
+	permutationData.WindIntensityOverride = globals::features::csUtility.settings.trunkWindIntensityOverride;
+	permutationData.OverrideWindIntensity = globals::features::csUtility.loaded &&
+	                                        globals::features::csUtility.settings.overrideTrunkWindIntensity;
 	if (permutationData != permutationDataPrevious) {
 		permutationCB->Update(permutationData);
 		permutationDataPrevious = permutationData;
@@ -219,6 +225,27 @@ void State::Reset()
 
 	Feature::ForEachLoadedFeature("Reset", [](Feature* feature) { feature->Reset(); });
 	previousTimer = timer;
+	previousTrunkWindVector = trunkWindVector;
+	trunkWindVector = {};
+	const bool overrideTrunkWindIntensity = globals::features::csUtility.loaded &&
+	                                        globals::features::csUtility.settings.overrideTrunkWindIntensity;
+	const float overriddenTrunkWindIntensity = globals::features::csUtility.settings.trunkWindIntensityOverride;
+	if (const auto* treeManager = RE::BSTreeManager::GetSingleton()) {
+		const float directionLength = std::hypot(treeManager->windDirection.x, treeManager->windDirection.y);
+		float activeWindIntensity = std::clamp(treeManager->windMagnitude, 0.0f, 1.0f);
+		if (const auto* sky = globals::game::sky; sky && std::isfinite(sky->windSpeed))
+			activeWindIntensity = std::clamp(sky->windSpeed, 0.0f, 1.0f);
+		const float magnitude = overrideTrunkWindIntensity ? overriddenTrunkWindIntensity : activeWindIntensity;
+		if (std::isfinite(directionLength) && directionLength > 0.0001f && std::isfinite(magnitude)) {
+			trunkWindVector.x = treeManager->windDirection.x / directionLength * magnitude;
+			trunkWindVector.y = treeManager->windDirection.y / directionLength * magnitude;
+		}
+	} else if (overrideTrunkWindIntensity) {
+		trunkWindVector.x = overriddenTrunkWindIntensity;
+	}
+	if (overrideTrunkWindIntensity && trunkWindVector.x == 0.0f && trunkWindVector.y == 0.0f) {
+		trunkWindVector.x = overriddenTrunkWindIntensity;
+	}
 	if (!globals::game::ui->GameIsPaused())
 		timer += RE::GetSecondsSinceLastFrame();
 

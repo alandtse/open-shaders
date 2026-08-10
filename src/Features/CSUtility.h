@@ -67,6 +67,8 @@ struct CSUtility : Feature
 	{
 		bool enableTrunkBend = true;
 		bool disableVanillaTreeAnimation = false;
+		bool overrideTrunkWindIntensity = false;
+		float trunkWindIntensityOverride = 1.0f;
 		float skyBrightness = 1.0f;
 		float directionalLightMult = 1.0f;
 		float pointLightMult = 1.0f;
