@@ -157,8 +157,10 @@ namespace
 		{
 			if (IsTrunkRenderPass(a_pass)) {
 				isTrunkPass = true;
-				if (globals::d3d::context)
+				if (globals::d3d::context) {
 					globals::d3d::context->VSGetShader(&previousVertexShader, nullptr, nullptr);
+					globals::d3d::context->PSGetShader(&previousPixelShader, nullptr, nullptr);
+				}
 				currentTrunkRenderPass = this;
 				static std::atomic_uint32_t diagnosticCount = 0;
 				if (diagnosticCount.fetch_add(1, std::memory_order_relaxed) < 16)
@@ -171,10 +173,14 @@ namespace
 		~TrunkRenderPassScope()
 		{
 			if (isTrunkPass) {
-				if (globals::d3d::context)
+				if (globals::d3d::context) {
 					globals::d3d::context->VSSetShader(previousVertexShader, nullptr, 0);
+					globals::d3d::context->PSSetShader(previousPixelShader, nullptr, 0);
+				}
 				if (previousVertexShader)
 					previousVertexShader->Release();
+				if (previousPixelShader)
+					previousPixelShader->Release();
 
 				constexpr auto trunkBit = static_cast<uint32_t>(SIE::ShaderCache::LightingShaderFlags::TrunkSine);
 				auto* state = globals::state;
@@ -190,6 +196,7 @@ namespace
 	private:
 		TrunkRenderPassScope* previousScope = nullptr;
 		ID3D11VertexShader* previousVertexShader = nullptr;
+		ID3D11PixelShader* previousPixelShader = nullptr;
 		bool isTrunkPass = false;
 	};
 
@@ -209,6 +216,14 @@ namespace
 		else
 			vertexDescriptor |= static_cast<uint32_t>(SIE::ShaderCache::UtilityShaderFlags::TrunkSine);
 
+		auto* pixelShader = shaderCache->GetPixelShader(*state->currentShader, state->modifiedPixelDescriptor);
+		if (!pixelShader) {
+			static std::atomic_uint32_t missingPixelCount = 0;
+			if (missingPixelCount.fetch_add(1, std::memory_order_relaxed) < 8)
+				logger::warn("[TrunkBend] per-draw bind deferred: missing PS descriptor={:08X}", state->modifiedPixelDescriptor);
+			return;
+		}
+
 		auto* vertexShader = shaderCache->GetVertexShader(*state->currentShader, vertexDescriptor);
 		if (!vertexShader) {
 			static std::atomic_uint32_t failedCount = 0;
@@ -217,13 +232,15 @@ namespace
 			return;
 		}
 
+		globals::d3d::context->PSSetShader(reinterpret_cast<ID3D11PixelShader*>(pixelShader->shader), nullptr, 0);
+
 		auto* sharedDataBuffer = state->sharedDataCB->CB();
 		globals::d3d::context->VSSetConstantBuffers(kTrunkSharedDataVertexRegister, 1, &sharedDataBuffer);
 		globals::d3d::context->VSSetShader(reinterpret_cast<ID3D11VertexShader*>(vertexShader->shader), nullptr, 0);
 
 		static std::atomic_uint32_t bindCount = 0;
 		if (bindCount.fetch_add(1, std::memory_order_relaxed) < 32)
-			logger::info("[TrunkBend] per-draw VS bind shader={} descriptor={:08X}", magic_enum::enum_name(state->currentShader->shaderType.get()), vertexDescriptor);
+			logger::info("[TrunkBend] per-draw shader bind type={} VS={:08X} PS={:08X}", magic_enum::enum_name(state->currentShader->shaderType.get()), vertexDescriptor, state->modifiedPixelDescriptor);
 	}
 }
 
@@ -823,6 +840,15 @@ namespace Hooks
 					auto type = currentShader->shaderType.get();
 					if (type > 0 && type < RE::BSShader::Type::Total) {
 						if (state->enabledClasses[type - 1]) {
+							if (trunkBendDraw && !shaderCache->GetPixelShader(*currentShader, state->modifiedPixelDescriptor)) {
+								static std::atomic_uint32_t deferredVertexCount = 0;
+								if (deferredVertexCount.fetch_add(1, std::memory_order_relaxed) < 8)
+									logger::warn("[TrunkBend] deferring VS bind until PS is ready descriptor={:08X}", state->modifiedPixelDescriptor);
+								globals::game::stateUpdateFlags->set(RE::BSGraphics::DIRTY_VERTEX_DESC);
+								*globals::game::currentVertexShader = a_vertexShader;
+								globals::d3d::context->VSSetShader(reinterpret_cast<ID3D11VertexShader*>(a_vertexShader->shader), nullptr, 0);
+								return;
+							}
 							RE::BSGraphics::VertexShader* vertexShader = shaderCache->GetVertexShader(*currentShader, state->modifiedVertexDescriptor);
 							if (vertexShader) {
 								if (logTrunkBend)
