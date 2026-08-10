@@ -655,6 +655,7 @@ install(
 )
 include(FeaturePackaging)
 include(FidelityFX-Runtime)
+include(Streamline-Runtime)
 install(CODE "file(REMOVE \${CMAKE_INSTALL_PREFIX}/Core)" COMPONENT Shaders)
 
 # #######################################################################################################################
