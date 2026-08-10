@@ -213,15 +213,6 @@ void Streamline::CheckFeatures(IDXGIAdapter* a_adapter)
 		featurePCL = false;
 	}
 
-	if (featureDLSS) {
-		isRTXBelow40series = IsRTXAndBelow40Series(a_adapter);
-
-		if (isRTXBelow40series)
-			logger::info("[Streamline] Older RTX GPU detected, DLSS 4.0 will be used instead of DLSS 4.5");
-		else
-			logger::info("[Streamline] Newer RTX GPU detected, DLSS 4.5 will be used instead of DLSS 4.0");
-	}
-
 	logger::info("[Streamline] DLSS {} available", featureDLSS ? "is" : "is not");
 	if (reflexSupportedOnCurrentAdapter) {
 		logger::info("[Streamline] Reflex {} available", featureReflex ? "is" : "is not");
@@ -405,30 +396,6 @@ bool Streamline::CheckFrameConstants(sl::ViewportHandle p_viewport, uint32_t eye
 	return true;
 }
 
-bool Streamline::IsRTXAndBelow40Series(IDXGIAdapter* a_adapter)
-{
-	DXGI_ADAPTER_DESC adapterDesc = {};
-
-	a_adapter->GetDesc(&adapterDesc);
-
-	UINT vendorId = adapterDesc.VendorId;
-	UINT deviceId = adapterDesc.DeviceId;
-
-	// Check if NVIDIA
-	if (vendorId != 0x10DE)
-		return false;
-
-	// RTX 30 series (Ampere) - 0x2200-0x25FF
-	if (deviceId >= 0x2200 && deviceId <= 0x2600)
-		return true;
-
-	// RTX 20 series (Turing with RT cores) - 0x1E00-0x1FFF
-	if (deviceId >= 0x1E00 && deviceId <= 0x1FFF)
-		return true;
-
-	return false;
-}
-
 sl::DLSSMode Streamline::DLSSModeForQualityMode(uint32_t a_qualityMode)
 {
 	switch (a_qualityMode) {
@@ -532,6 +499,7 @@ void Streamline::SetDLSSOptions(sl::ViewportHandle p_viewport, uint32_t width, u
 		break;
 	}
 
+	// Keep eDefault for Auto so NVIDIA can update the mode-specific presets.
 	if (customPreset.has_value()) {
 		dlssOptions.dlaaPreset = customPreset.value();
 		dlssOptions.ultraQualityPreset = customPreset.value();
@@ -539,20 +507,6 @@ void Streamline::SetDLSSOptions(sl::ViewportHandle p_viewport, uint32_t width, u
 		dlssOptions.balancedPreset = customPreset.value();
 		dlssOptions.performancePreset = customPreset.value();
 		dlssOptions.ultraPerformancePreset = customPreset.value();
-	} else if (isRTXBelow40series) {
-		dlssOptions.dlaaPreset = sl::DLSSPreset::ePresetJ;
-		dlssOptions.ultraQualityPreset = sl::DLSSPreset::ePresetJ;
-		dlssOptions.qualityPreset = sl::DLSSPreset::ePresetJ;
-		dlssOptions.balancedPreset = sl::DLSSPreset::ePresetJ;
-		dlssOptions.performancePreset = sl::DLSSPreset::ePresetJ;
-		dlssOptions.ultraPerformancePreset = sl::DLSSPreset::ePresetM;
-	} else {
-		dlssOptions.dlaaPreset = sl::DLSSPreset::ePresetJ;
-		dlssOptions.ultraQualityPreset = sl::DLSSPreset::ePresetJ;
-		dlssOptions.qualityPreset = sl::DLSSPreset::ePresetM;
-		dlssOptions.balancedPreset = sl::DLSSPreset::ePresetM;
-		dlssOptions.performancePreset = sl::DLSSPreset::ePresetM;
-		dlssOptions.ultraPerformancePreset = sl::DLSSPreset::ePresetL;
 	}
 
 	dlssOptions.preExposure = 1.0f;

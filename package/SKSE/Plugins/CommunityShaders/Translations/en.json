@@ -2490,7 +2490,7 @@
     "feature.upscaling.dlss_model_preset_k": "Preset K",
     "feature.upscaling.dlss_model_preset_l": "Preset L",
     "feature.upscaling.dlss_model_preset_m": "Preset M",
-    "feature.upscaling.dlss_model_preset_tooltip": "Choose which DLSS AI model preset to use.\nEach model offers different visual quality, performance, and motion stability.\nSet to 'Default' for automatic selection based on your Upscale Preset and hardware.",
+    "feature.upscaling.dlss_model_preset_tooltip": "Choose which DLSS AI model preset to use.\nDefault lets the NVIDIA runtime choose for each upscale mode.\nCurrent defaults are K for DLAA, Quality, and Balanced; M for Performance; and L for Ultra Performance.\nAn explicit preset overrides every upscale mode.",
     "feature.upscaling.dlss_resolution_warning": "Warning: Requested resolution %.0f x %.0f exceeds maximum supported resolution %d x %d for DLSS.",
     "feature.upscaling.dlss_will_not_function": "DLSS will not function. Lower your resolution or select a different upscaling method.",
     "feature.upscaling.enable_sharpening": "Enable Sharpening",

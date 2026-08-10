@@ -76,8 +76,6 @@ public:
 	Util::FrameChecker frameChecker;
 	sl::FrameToken* frameToken = nullptr;
 
-	bool isRTXBelow40series = false;
-
 	struct ReflexOptionsCache
 	{
 		bool valid = false;
@@ -118,13 +116,6 @@ public:
 	/** @brief Acquires a new frame token from Streamline for the current frame. */
 	bool EnsureFrameToken();
 	bool CheckFrameConstants(sl::ViewportHandle p_viewport, uint32_t eyeIndex = 0);
-
-	/**
-	 * @brief Detects whether the GPU is an NVIDIA RTX card below the 40-series generation.
-	 * @param a_adapter The DXGI adapter to inspect.
-	 * @return True if the adapter is RTX 20xx or 30xx series.
-	 */
-	bool IsRTXAndBelow40Series(IDXGIAdapter* a_adapter);
 
 	// height = 0 -> use full per-eye DisplayRes height (default for the standard
 	// upscale path). Non-zero is the subrect height the FoveatedRender route needs.

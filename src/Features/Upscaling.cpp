@@ -562,8 +562,9 @@ void Upscaling::DrawSettings()
 			if (auto _tt = Util::HoverTooltipWrapper()) {
 				ImGui::Text("%s", T(TKEY("dlss_model_preset_tooltip"),
 									  "Choose which DLSS AI model preset to use.\n"
-									  "Each model offers different visual quality, performance, and motion stability.\n"
-									  "Set to 'Default' for automatic selection based on your Upscale Preset and hardware."));
+									  "Default lets the NVIDIA runtime choose for each upscale mode.\n"
+									  "Current defaults are K for DLAA, Quality, and Balanced; M for Performance; and L for Ultra Performance.\n"
+									  "An explicit preset overrides every upscale mode."));
 			}
 		}
 
