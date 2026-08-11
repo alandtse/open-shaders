@@ -83,6 +83,17 @@ void State::UpdatePermutationBuffer()
 	permutationData.TrunkWindVariationInterval = globals::features::csUtility.settings.trunkWindVariationInterval;
 	permutationData.TrunkWindBendSensitivity = globals::features::csUtility.settings.trunkWindBendSensitivity;
 	permutationData.TrunkWindLeafSensitivity = globals::features::csUtility.settings.trunkWindLeafSensitivity;
+	permutationData.EnableGrassWindExperiment = globals::features::csUtility.loaded &&
+	                                            globals::features::csUtility.settings.enableGrassWindExperiment;
+	permutationData.GrassWindDisplacementScale = globals::features::csUtility.settings.grassWindDisplacementScale;
+	permutationData.GrassWindWaveSize = globals::features::csUtility.settings.grassWindWaveSize;
+	permutationData.GrassWindWaveSpeed = globals::features::csUtility.settings.grassWindWaveSpeed;
+	permutationData.GrassWindWaveStrength = globals::features::csUtility.settings.grassWindWaveStrength;
+	permutationData.GrassWindFlutterStrength = globals::features::csUtility.settings.grassWindFlutterStrength;
+	permutationData.GrassWindFlutterSpeed = globals::features::csUtility.settings.grassWindFlutterSpeed;
+	permutationData.GrassWindVerticalBend = globals::features::csUtility.settings.grassWindVerticalBend;
+	permutationData.GrassWindMaximumDisplacement = globals::features::csUtility.settings.grassWindMaximumDisplacement;
+	permutationData.EnableGrassWindGusts = globals::features::csUtility.settings.enableGrassWindGusts;
 	if (permutationData != permutationDataPrevious) {
 		permutationCB->Update(permutationData);
 		permutationDataPrevious = permutationData;

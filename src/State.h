@@ -405,7 +405,19 @@ public:
 		float TrunkWindBendSensitivity;
 
 		float TrunkWindLeafSensitivity;
-		float3 pad1;
+		uint EnableGrassWindExperiment;
+		float GrassWindDisplacementScale;
+		float GrassWindWaveSize;
+
+		float GrassWindWaveSpeed;
+		float GrassWindWaveStrength;
+		float GrassWindFlutterStrength;
+		float GrassWindFlutterSpeed;
+
+		float GrassWindVerticalBend;
+		float GrassWindMaximumDisplacement;
+		uint EnableGrassWindGusts;
+		float pad1;
 
 		bool operator==(const PermutationCB& other) const
 		{
@@ -428,7 +440,16 @@ public:
 			       TrunkWindVariationMax == other.TrunkWindVariationMax &&
 			       TrunkWindVariationInterval == other.TrunkWindVariationInterval &&
 			       TrunkWindBendSensitivity == other.TrunkWindBendSensitivity &&
-			       TrunkWindLeafSensitivity == other.TrunkWindLeafSensitivity;
+			       TrunkWindLeafSensitivity == other.TrunkWindLeafSensitivity &&
+			       EnableGrassWindExperiment == other.EnableGrassWindExperiment &&
+			       GrassWindDisplacementScale == other.GrassWindDisplacementScale &&
+			       GrassWindWaveSize == other.GrassWindWaveSize && GrassWindWaveSpeed == other.GrassWindWaveSpeed &&
+			       GrassWindWaveStrength == other.GrassWindWaveStrength &&
+			       GrassWindFlutterStrength == other.GrassWindFlutterStrength &&
+			       GrassWindFlutterSpeed == other.GrassWindFlutterSpeed &&
+			       GrassWindVerticalBend == other.GrassWindVerticalBend &&
+			       GrassWindMaximumDisplacement == other.GrassWindMaximumDisplacement &&
+			       EnableGrassWindGusts == other.EnableGrassWindGusts;
 		}
 	};
 	STATIC_ASSERT_ALIGNAS_16(PermutationCB);

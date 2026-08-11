@@ -142,8 +142,7 @@ cbuffer cb8 : register(b8)
 	float4 cb8[240];
 }
 
-// Calculate wind displacement for a grass vertex
-float3 CalculateWindDisplacement(VS_INPUT input, float windTimer, float windIntensityScale)
+float3 CalculateVanillaWindDisplacement(VS_INPUT input, float windTimer, float windIntensityScale)
 {
 	float windAngle = 0.4 * ((input.InstanceData1.x + input.InstanceData1.y) * -0.0078125 + windTimer);
 	float windAngleSin, windAngleCos;
@@ -156,6 +155,47 @@ float3 CalculateWindDisplacement(VS_INPUT input, float windTimer, float windInte
 	                  (((windTmp1 + windTmp2) * 0.3 + windTmp3) * (0.5 * (input.Color.w * input.Color.w)));
 
 	return float3(WindVector.xy, 0) * windPower;
+}
+
+// Broad spatial waves keep neighboring clumps coherent while smaller motion prevents rigid field-wide animation.
+float3 CalculateWindDisplacement(
+	VS_INPUT input, float windTimer, float windIntensityScale, float2 windDirection)
+{
+	if (Permutation::EnableGrassWindExperiment == 0)
+		return CalculateVanillaWindDisplacement(input, windTimer, windIntensityScale);
+
+	float2 crossWindDirection = float2(-windDirection.y, windDirection.x);
+	float alongWind = dot(input.InstanceData1.xy, windDirection);
+	float acrossWind = dot(input.InstanceData1.xy, crossWindDirection);
+
+	float waveFrequency = Math::TAU / max(Permutation::GrassWindWaveSize, 1.0);
+	float crossWindWarp = sin(acrossWind * waveFrequency * 0.67 + windTimer * Permutation::GrassWindWaveSpeed * 0.125) * 0.9;
+	float wavePhase = alongWind * waveFrequency - windTimer * Permutation::GrassWindWaveSpeed + crossWindWarp;
+	float waveFront = smoothstep(0.2, 0.9, 0.5 + 0.5 * sin(wavePhase));
+	float flutter = 0.5 + 0.5 * sin(
+									windTimer * Permutation::GrassWindFlutterSpeed + alongWind * 0.017 + acrossWind * 0.011);
+
+	float tipWeight = saturate(input.Color.w);
+	tipWeight *= tipWeight;
+	float response = 0.25 + waveFront * Permutation::GrassWindWaveStrength +
+	                 flutter * Permutation::GrassWindFlutterStrength;
+	float windPower =
+		WindVector.z * windIntensityScale * tipWeight * response * Permutation::GrassWindDisplacementScale;
+
+	float3 displacement = float3(
+		windDirection * windPower, -abs(windPower) * Permutation::GrassWindVerticalBend * tipWeight);
+	float displacementLength = length(displacement);
+	float displacementLimit = max(Permutation::GrassWindMaximumDisplacement, 0.0);
+	displacement *= min(1.0, displacementLimit / max(displacementLength, 1e-6));
+	return displacement;
+}
+
+float2 GetModelWindDirection(float2 worldWindVector, float4x4 worldMatrix)
+{
+	float useSharedDirection = dot(worldWindVector, worldWindVector) > 1e-6;
+	float2 sourceDirection = lerp(WindVector.xy, worldWindVector, useSharedDirection);
+	float3 modelDirection = mul(transpose((float3x3)worldMatrix), float3(sourceDirection, 0.0));
+	return modelDirection.xy * rsqrt(max(dot(modelDirection.xy, modelDirection.xy), 1e-6));
 }
 
 #	ifdef GRASS_LIGHTING
@@ -199,10 +239,14 @@ VS_OUTPUT main(VS_INPUT input)
 
 	float4 msPosition = GetMSPosition(input, world3x3);
 
+	float2 windDirection = GetModelWindDirection(Permutation::TrunkWindVector, World[eyeIndex]);
+	float2 previousWindDirection =
+		GetModelWindDirection(Permutation::TrunkWindPreviousVector, PreviousWorld[eyeIndex]);
 	float3 windDisplacement =
-		CalculateWindDisplacement(input, WindTimer, Permutation::GetCurrentWindIntensityScale());
+		CalculateWindDisplacement(input, WindTimer, Permutation::GetCurrentGrassWindIntensityScale(), windDirection);
 	float3 previousWindDisplacement =
-		CalculateWindDisplacement(input, PreviousWindTimer, Permutation::GetPreviousWindIntensityScale());
+		CalculateWindDisplacement(
+			input, PreviousWindTimer, Permutation::GetPreviousGrassWindIntensityScale(), previousWindDirection);
 
 #		ifdef GRASS_COLLISION
 	float3 displacement, previousDisplacement;
@@ -275,10 +319,14 @@ VS_OUTPUT main(VS_INPUT input)
 
 	float4 msPosition = GetMSPosition(input);
 
+	float2 windDirection = GetModelWindDirection(Permutation::TrunkWindVector, World[eyeIndex]);
+	float2 previousWindDirection =
+		GetModelWindDirection(Permutation::TrunkWindPreviousVector, PreviousWorld[eyeIndex]);
 	float3 windDisplacement =
-		CalculateWindDisplacement(input, WindTimer, Permutation::GetCurrentWindIntensityScale());
+		CalculateWindDisplacement(input, WindTimer, Permutation::GetCurrentGrassWindIntensityScale(), windDirection);
 	float3 previousWindDisplacement =
-		CalculateWindDisplacement(input, PreviousWindTimer, Permutation::GetPreviousWindIntensityScale());
+		CalculateWindDisplacement(
+			input, PreviousWindTimer, Permutation::GetPreviousGrassWindIntensityScale(), previousWindDirection);
 
 #		ifdef GRASS_COLLISION
 	float3 displacement, previousDisplacement;

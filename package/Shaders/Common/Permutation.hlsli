@@ -121,7 +121,19 @@ namespace Permutation
 		float TrunkWindBendSensitivity;
 
 		float TrunkWindLeafSensitivity;
-		float3 TrunkWindPadding;
+		uint EnableGrassWindExperiment;
+		float GrassWindDisplacementScale;
+		float GrassWindWaveSize;
+
+		float GrassWindWaveSpeed;
+		float GrassWindWaveStrength;
+		float GrassWindFlutterStrength;
+		float GrassWindFlutterSpeed;
+
+		float GrassWindVerticalBend;
+		float GrassWindMaximumDisplacement;
+		uint EnableGrassWindGusts;
+		float GrassWindPadding;
 	};
 
 	float GetWindIntensityOverrideScale()
@@ -184,6 +196,18 @@ namespace Permutation
 	float GetPreviousWindIntensityScale()
 	{
 		return GetWindIntensityOverrideScale() * GetPreviousWindVariationScale();
+	}
+
+	float GetCurrentGrassWindIntensityScale()
+	{
+		return GetWindIntensityOverrideScale() *
+		       (EnableGrassWindGusts != 0 ? GetCurrentWindVariationScale() : 1.0);
+	}
+
+	float GetPreviousGrassWindIntensityScale()
+	{
+		return GetWindIntensityOverrideScale() *
+		       (EnableGrassWindGusts != 0 ? GetPreviousWindVariationScale() : 1.0);
 	}
 
 }

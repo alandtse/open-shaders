@@ -83,6 +83,16 @@ struct CSUtility : Feature
 		float trunkWindVariationMin = 0.85f;
 		float trunkWindVariationMax = 1.1f;
 		float trunkWindVariationInterval = 2.5f;
+		bool enableGrassWindExperiment = true;
+		bool enableGrassWindGusts = true;
+		float grassWindDisplacementScale = 1.5f;
+		float grassWindMaximumDisplacement = 64.0f;
+		float grassWindWaveSize = 966.0f;
+		float grassWindWaveSpeed = 1.35f;
+		float grassWindWaveStrength = 1.5f;
+		float grassWindFlutterStrength = 0.2f;
+		float grassWindFlutterSpeed = 4.5f;
+		float grassWindVerticalBend = 0.18f;
 		float skyBrightness = 1.0f;
 		float directionalLightMult = 1.0f;
 		float pointLightMult = 1.0f;
