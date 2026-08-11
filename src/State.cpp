@@ -289,8 +289,8 @@ void State::Reset()
 			activeWindIntensity = std::clamp(sky->windSpeed, 0.0f, 1.0f);
 		const float magnitude = overrideTrunkWindIntensity ? overriddenTrunkWindIntensity : activeWindIntensity;
 		if (std::isfinite(directionLength) && directionLength > 0.0001f && std::isfinite(magnitude)) {
-			trunkWindVector.x = treeManager->windDirection.x / directionLength * magnitude;
-			trunkWindVector.y = treeManager->windDirection.y / directionLength * magnitude;
+			trunkWindVector.x = -treeManager->windDirection.x / directionLength * magnitude;
+			trunkWindVector.y = -treeManager->windDirection.y / directionLength * magnitude;
 		}
 	} else if (overrideTrunkWindIntensity) {
 		trunkWindVector.x = overriddenTrunkWindIntensity;
