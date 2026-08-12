@@ -71,6 +71,10 @@ public:
 	float trunkWindGustTransitionElapsed = 0.0f;
 	uint32_t trunkWindRandomState = 0xA341316Cu;
 	bool trunkWindGustTransitioning = false;
+	float grassWindGustTarget = 1.0f;
+	float grassWindGustResponse = 1.0f;
+	float previousGrassWindGustResponse = 1.0f;
+	float grassWindGustVelocity = 0.0f;
 	double smoothDrawCalls[RE::BSShader::Type::Total + 1];
 	int drawCalls[RE::BSShader::Type::Total + 1];
 
@@ -406,18 +410,23 @@ public:
 
 		float TrunkWindLeafSensitivity;
 		uint EnableGrassWindExperiment;
-		float GrassWindDisplacementScale;
-		float GrassWindWaveSize;
+		float GrassWindBendScale;
+		float GrassWindCoarseScale;
 
-		float GrassWindWaveSpeed;
-		float GrassWindWaveStrength;
+		float GrassWindCoarseSpeed;
+		float GrassWindCoarseStrength;
+		float GrassWindFineScale;
+		float GrassWindFineSpeed;
+
+		float GrassWindFineStrength;
+		float GrassWindMaximumBendAngle;
+		float GrassWindCurvature;
+		uint EnableGrassWindGusts;
+
+		float GrassWindGustResponse;
+		float GrassWindPreviousGustResponse;
 		float GrassWindFlutterStrength;
 		float GrassWindFlutterSpeed;
-
-		float GrassWindVerticalBend;
-		float GrassWindMaximumDisplacement;
-		uint EnableGrassWindGusts;
-		float pad1;
 
 		bool operator==(const PermutationCB& other) const
 		{
@@ -442,14 +451,20 @@ public:
 			       TrunkWindBendSensitivity == other.TrunkWindBendSensitivity &&
 			       TrunkWindLeafSensitivity == other.TrunkWindLeafSensitivity &&
 			       EnableGrassWindExperiment == other.EnableGrassWindExperiment &&
-			       GrassWindDisplacementScale == other.GrassWindDisplacementScale &&
-			       GrassWindWaveSize == other.GrassWindWaveSize && GrassWindWaveSpeed == other.GrassWindWaveSpeed &&
-			       GrassWindWaveStrength == other.GrassWindWaveStrength &&
+			       GrassWindBendScale == other.GrassWindBendScale &&
+			       GrassWindCoarseScale == other.GrassWindCoarseScale &&
+			       GrassWindCoarseSpeed == other.GrassWindCoarseSpeed &&
+			       GrassWindCoarseStrength == other.GrassWindCoarseStrength &&
+			       GrassWindFineScale == other.GrassWindFineScale &&
+			       GrassWindFineSpeed == other.GrassWindFineSpeed &&
+			       GrassWindFineStrength == other.GrassWindFineStrength &&
+			       GrassWindMaximumBendAngle == other.GrassWindMaximumBendAngle &&
+			       GrassWindCurvature == other.GrassWindCurvature &&
+			       EnableGrassWindGusts == other.EnableGrassWindGusts &&
+			       GrassWindGustResponse == other.GrassWindGustResponse &&
+			       GrassWindPreviousGustResponse == other.GrassWindPreviousGustResponse &&
 			       GrassWindFlutterStrength == other.GrassWindFlutterStrength &&
-			       GrassWindFlutterSpeed == other.GrassWindFlutterSpeed &&
-			       GrassWindVerticalBend == other.GrassWindVerticalBend &&
-			       GrassWindMaximumDisplacement == other.GrassWindMaximumDisplacement &&
-			       EnableGrassWindGusts == other.EnableGrassWindGusts;
+			       GrassWindFlutterSpeed == other.GrassWindFlutterSpeed;
 		}
 	};
 	STATIC_ASSERT_ALIGNAS_16(PermutationCB);

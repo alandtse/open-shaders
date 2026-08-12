@@ -47,6 +47,45 @@ namespace
 		a_state = a_state * 1664525u + 1013904223u;
 		return static_cast<float>(a_state >> 8) * (1.0f / 16777216.0f);
 	}
+
+	float GetSharedWindVariation(float a_timer, float a_minimum, float a_maximum, float a_interval)
+	{
+		const float samplePosition = a_timer / std::max(a_interval, 0.1f);
+		const float sampleIndex = std::floor(samplePosition);
+		float blend = samplePosition - sampleIndex;
+		blend = blend * blend * (3.0f - 2.0f * blend);
+		const auto sample = [](float a_index) {
+			const float value = std::sin(a_index * 12.9898f + 78.233f) * 43758.5453f;
+			return value - std::floor(value);
+		};
+		const float variation = std::lerp(sample(sampleIndex), sample(sampleIndex + 1.0f), blend);
+		return std::lerp(std::min(a_minimum, a_maximum), std::max(a_minimum, a_maximum), variation);
+	}
+
+	void UpdateGrassWindGustSpring(float a_target, float a_frameTime, float a_bounceStrength,
+		float a_bounceFrequency, float& a_response, float& a_velocity)
+	{
+		constexpr float kTwoPi = 6.28318530718f;
+		constexpr float kMaximumFrameTime = 0.1f;
+		constexpr float kMaximumStepTime = 1.0f / 120.0f;
+		const float angularFrequency = kTwoPi * std::max(a_bounceFrequency, 0.1f);
+		const float dampingRatio = std::lerp(1.0f, 0.18f, std::clamp(a_bounceStrength, 0.0f, 1.0f));
+		float remainingTime = std::min(a_frameTime, kMaximumFrameTime);
+		while (remainingTime > 0.0f) {
+			const float stepTime = std::min(remainingTime, kMaximumStepTime);
+			const float acceleration = angularFrequency * angularFrequency * (a_target - a_response) -
+			                           2.0f * dampingRatio * angularFrequency * a_velocity;
+			a_velocity += acceleration * stepTime;
+			a_response += a_velocity * stepTime;
+			remainingTime -= stepTime;
+		}
+
+		if (!std::isfinite(a_response) || !std::isfinite(a_velocity)) {
+			a_response = a_target;
+			a_velocity = 0.0f;
+		}
+		a_response = std::clamp(a_response, 0.0f, 4.0f);
+	}
 }
 
 void State::UpdateSkyShaderPermutation(RE::BSRenderPass* a_pass)
@@ -85,15 +124,20 @@ void State::UpdatePermutationBuffer()
 	permutationData.TrunkWindLeafSensitivity = globals::features::csUtility.settings.trunkWindLeafSensitivity;
 	permutationData.EnableGrassWindExperiment = globals::features::csUtility.loaded &&
 	                                            globals::features::csUtility.settings.enableGrassWindExperiment;
-	permutationData.GrassWindDisplacementScale = globals::features::csUtility.settings.grassWindDisplacementScale;
-	permutationData.GrassWindWaveSize = globals::features::csUtility.settings.grassWindWaveSize;
-	permutationData.GrassWindWaveSpeed = globals::features::csUtility.settings.grassWindWaveSpeed;
-	permutationData.GrassWindWaveStrength = globals::features::csUtility.settings.grassWindWaveStrength;
+	permutationData.GrassWindBendScale = globals::features::csUtility.settings.grassWindBendScale;
+	permutationData.GrassWindCoarseScale = globals::features::csUtility.settings.grassWindCoarseScale;
+	permutationData.GrassWindCoarseSpeed = globals::features::csUtility.settings.grassWindCoarseSpeed;
+	permutationData.GrassWindCoarseStrength = globals::features::csUtility.settings.grassWindCoarseStrength;
+	permutationData.GrassWindFineScale = globals::features::csUtility.settings.grassWindFineScale;
+	permutationData.GrassWindFineSpeed = globals::features::csUtility.settings.grassWindFineSpeed;
+	permutationData.GrassWindFineStrength = globals::features::csUtility.settings.grassWindFineStrength;
+	permutationData.GrassWindMaximumBendAngle = globals::features::csUtility.settings.grassWindMaximumBendAngle;
+	permutationData.GrassWindCurvature = globals::features::csUtility.settings.grassWindCurvature;
+	permutationData.EnableGrassWindGusts = globals::features::csUtility.settings.enableGrassWindGusts;
+	permutationData.GrassWindGustResponse = grassWindGustResponse;
+	permutationData.GrassWindPreviousGustResponse = previousGrassWindGustResponse;
 	permutationData.GrassWindFlutterStrength = globals::features::csUtility.settings.grassWindFlutterStrength;
 	permutationData.GrassWindFlutterSpeed = globals::features::csUtility.settings.grassWindFlutterSpeed;
-	permutationData.GrassWindVerticalBend = globals::features::csUtility.settings.grassWindVerticalBend;
-	permutationData.GrassWindMaximumDisplacement = globals::features::csUtility.settings.grassWindMaximumDisplacement;
-	permutationData.EnableGrassWindGusts = globals::features::csUtility.settings.enableGrassWindGusts;
 	if (permutationData != permutationDataPrevious) {
 		permutationCB->Update(permutationData);
 		permutationDataPrevious = permutationData;
@@ -266,6 +310,7 @@ void State::Reset()
 	previousTimer = timer;
 	previousTrunkWindVector = trunkWindVector;
 	previousTrunkWindGustStrength = trunkWindGustStrength;
+	previousGrassWindGustResponse = grassWindGustResponse;
 	if (frameTime > 0.0f) {
 		if (trunkWindGustTransitioning) {
 			trunkWindGustTransitionElapsed += frameTime;
@@ -288,6 +333,21 @@ void State::Reset()
 				trunkWindGustTransitioning = true;
 			}
 		}
+	}
+	const bool grassWindGustsEnabled = globals::features::csUtility.loaded &&
+	                                   trunkWindSettings.enableGrassWindExperiment &&
+	                                   trunkWindSettings.enableGrassWindGusts;
+	const float currentWindTimer = gamePaused ? timer : timer + frameTime;
+	grassWindGustTarget = trunkWindGustStrength * GetSharedWindVariation(currentWindTimer,
+													  trunkWindSettings.trunkWindVariationMin, trunkWindSettings.trunkWindVariationMax,
+													  trunkWindSettings.trunkWindVariationInterval);
+	if (!grassWindGustsEnabled) {
+		grassWindGustResponse = 1.0f;
+		grassWindGustVelocity = 0.0f;
+	} else if (frameTime > 0.0f) {
+		UpdateGrassWindGustSpring(grassWindGustTarget, frameTime,
+			trunkWindSettings.grassWindBounceStrength, trunkWindSettings.grassWindBounceFrequency,
+			grassWindGustResponse, grassWindGustVelocity);
 	}
 	trunkWindVector = {};
 	const bool overrideTrunkWindIntensity = globals::features::csUtility.loaded &&
