@@ -423,12 +423,11 @@ namespace
 
 	json FeatureIssueToJson(const FeatureIssues::FeatureIssueInfo& a_issue)
 	{
-		static constexpr const char* kIssueTypeNames[] = { "OBSOLETE", "VERSION_MISMATCH", "OVERRIDE_FAILED", "UNKNOWN" };
 		return json{
 			{ "shortName", a_issue.shortName },
 			{ "displayName", a_issue.displayName },
 			{ "version", a_issue.version },
-			{ "issueType", kIssueTypeNames[static_cast<size_t>(a_issue.issueType)] },
+			{ "issueType", magic_enum::enum_name(a_issue.issueType) },
 			{ "rejectionReason", a_issue.rejectionReason },
 			{ "replacementFeature", a_issue.replacementFeature },
 			{ "replacementFeatureDisplayName", a_issue.replacementFeatureDisplayName },
