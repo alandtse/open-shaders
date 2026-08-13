@@ -1860,7 +1860,11 @@ namespace SIE
 			if (FAILED(compileResult)) {
 				std::string errorText;
 				if (errorBlob != nullptr) {
-					errorText.assign(static_cast<char*>(errorBlob->GetBufferPointer()));
+					// ID3DBlob does not guarantee a NUL terminator; copy by GetBufferSize()
+					// instead of trusting GetBufferPointer() as a C string.
+					errorText.assign(static_cast<char*>(errorBlob->GetBufferPointer()), errorBlob->GetBufferSize());
+					if (!errorText.empty() && errorText.back() == '\0')
+						errorText.pop_back();
 					logger::error("Failed to compile {} shader {}::{:X}:\n{}",
 						magic_enum::enum_name(shaderClass), magic_enum::enum_name(type), descriptor, errorText);
 					errorBlob->Release();

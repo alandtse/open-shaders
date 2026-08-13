@@ -643,9 +643,11 @@ namespace SIE
 		 * entries whose status is `ShaderCompilationTask::Status::Failed`.
 		 */
 		uint64_t GetCurrentFailedCount();
-		/// One shader compile failure: `key` is GetShaderString's hash-key form (source file +
-		/// shader class + merged feature defines), so it identifies which feature's shader
-		/// broke without needing a separate descriptor->feature lookup.
+		/// One shader compile failure: `key` is GetShaderString's cache key (shader class +
+		/// merged feature defines, plus a filename that is fxpFilename even for ImageSpace
+		/// shaders), identifying the technique/permutation without a separate descriptor
+		/// lookup; `path` is the actual source file compiled (originalShaderName for
+		/// ImageSpace shaders), which can differ from the filename embedded in `key`.
 		struct CompileFailure
 		{
 			std::string key;
