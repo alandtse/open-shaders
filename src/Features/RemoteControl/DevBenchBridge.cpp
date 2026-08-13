@@ -373,11 +373,27 @@ namespace
 		return out;
 	}
 
+	json RecentFailuresToJson(const std::vector<SIE::ShaderCache::CompileFailure>& a_failures)
+	{
+		json out = json::array();
+		for (const auto& f : a_failures) {
+			out.push_back(json{
+				{ "key", f.key },
+				{ "path", f.path },
+				{ "error", f.error },
+				{ "epoch", f.epoch },
+				{ "frame", f.frame },
+			});
+		}
+		return out;
+	}
+
 	json BuildInspectShadercacheResult(const json&)
 	{
 		// Built from thread-safe ShaderCache accessors. Poll completedTasks against a
 		// pre-deploy snapshot to know a hot-reloaded shader finished; a rising
-		// failedTasks / currentFailedCount surfaces an otherwise-invisible failed compile.
+		// failedTasks / currentFailedCount surfaces an otherwise-invisible failed compile;
+		// recentFailures identifies WHICH shader (source file + feature defines) and why.
 		auto* cache = globals::shaderCache;
 		if (!cache)
 			return json{ { "error", "shader cache unavailable" } };
@@ -387,6 +403,7 @@ namespace
 			{ "totalTasks", cache->GetTotalTasks() },
 			{ "failedTasks", cache->GetFailedTasks() },
 			{ "currentFailedCount", cache->GetCurrentFailedCount() },
+			{ "recentFailures", RecentFailuresToJson(cache->GetRecentCompileFailures()) },
 			{ "diskHitTasks", cache->GetDiskHitTasks() },
 			{ "digestDecidedTasks", cache->GetDigestDecidedTasks() },
 			{ "digestComputeCount", cache->GetDigestComputeCount() },
@@ -1067,7 +1084,7 @@ namespace DevBenchBridge
 			dvb->RegisterToolExtension("inspect", "openshaders", inspectStateDesc, &InspectStateHandler, nullptr);
 
 			static constexpr const char* inspectCacheDesc =
-				R"({"description":"Open Shaders shader-cache status -> {compiling,completedTasks,totalTasks,failedTasks,currentFailedCount,diskHitTasks,digestDecidedTasks,digestComputeCount,digestComputeTimeUs,frame_count,diskCacheHeld,featureSetChanged,featureSetRevertPending,featureSetCacheBackedUp,previousDiskCacheAvailable,cacheMismatches,previousCacheMismatches}. Poll completedTasks against a pre-deploy snapshot to know a hot-reloaded shader finished; watch failedTasks/currentFailedCount for failed compiles. digestDecidedTasks counts disk-cache validity checks resolved by the content-digest manifest rather than falling back to mtime; digestComputeTimeUs is the cumulative microseconds spent computing content digests this session. diskCacheHeld true means a feature-set mismatch (see cacheMismatches, each {kind,shortName,feature,detail,nowPresent}) is holding the whole disk cache this session -- resolve with openshaders.shadercache acceptRebuild or restorePrevious. previousDiskCacheAvailable/previousCacheMismatches describe the rollback slot (the pre-change cache) a restorePrevious call would swap back in.","readOnly":true,"inputSchema":{"type":"object"}})";
+				R"({"description":"Open Shaders shader-cache status -> {compiling,completedTasks,totalTasks,failedTasks,currentFailedCount,recentFailures,diskHitTasks,digestDecidedTasks,digestComputeCount,digestComputeTimeUs,frame_count,diskCacheHeld,featureSetChanged,featureSetRevertPending,featureSetCacheBackedUp,previousDiskCacheAvailable,cacheMismatches,previousCacheMismatches}. Poll completedTasks against a pre-deploy snapshot to know a hot-reloaded shader finished; watch failedTasks/currentFailedCount for failed compiles. recentFailures is the last 32 compile failures this session, each {key,path,error,epoch,frame} -- key is the source shader file + shader class + merged feature #defines (identifies WHICH feature's shader broke without a separate lookup), path is the source file, error is the compiler's own message (truncated to 2000 chars). digestDecidedTasks counts disk-cache validity checks resolved by the content-digest manifest rather than falling back to mtime; digestComputeTimeUs is the cumulative microseconds spent computing content digests this session. diskCacheHeld true means a feature-set mismatch (see cacheMismatches, each {kind,shortName,feature,detail,nowPresent}) is holding the whole disk cache this session -- resolve with openshaders.shadercache acceptRebuild or restorePrevious. previousDiskCacheAvailable/previousCacheMismatches describe the rollback slot (the pre-change cache) a restorePrevious call would swap back in.","readOnly":true,"inputSchema":{"type":"object"}})";
 			dvb->RegisterToolExtension("inspect", "shadercache", inspectCacheDesc, &InspectShadercacheHandler, nullptr);
 
 			static constexpr const char* inspectShadowsDesc =
