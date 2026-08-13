@@ -18,6 +18,7 @@
 #ifdef DEVBENCH_BRIDGE_ENABLED
 
 #	include "Feature.h"
+#	include "FeatureIssues.h"
 #	include "Features/LightLimitFix/ShadowCasterManager.h"
 #	include "Features/RenderDoc.h"
 #	include "Features/ScreenshotFeature.h"
@@ -418,6 +419,50 @@ namespace
 			{ "cacheMismatches", MismatchesToJson(cache->GetCacheMismatches()) },
 			{ "previousCacheMismatches", MismatchesToJson(cache->GetPreviousCacheMismatches()) },
 		};
+	}
+
+	json FeatureIssueToJson(const FeatureIssues::FeatureIssueInfo& a_issue)
+	{
+		static constexpr const char* kIssueTypeNames[] = { "OBSOLETE", "VERSION_MISMATCH", "OVERRIDE_FAILED", "UNKNOWN" };
+		return json{
+			{ "shortName", a_issue.shortName },
+			{ "displayName", a_issue.displayName },
+			{ "version", a_issue.version },
+			{ "issueType", kIssueTypeNames[static_cast<size_t>(a_issue.issueType)] },
+			{ "rejectionReason", a_issue.rejectionReason },
+			{ "replacementFeature", a_issue.replacementFeature },
+			{ "replacementFeatureDisplayName", a_issue.replacementFeatureDisplayName },
+			{ "replacementFeatureInstalled", a_issue.replacementFeatureInstalled },
+			{ "replacementFeatureModLink", a_issue.replacementFeatureModLink },
+			{ "userMessage", a_issue.userMessage },
+			{ "minimumVersionRequired", a_issue.minimumVersionRequired },
+			{ "modifiedShaderDirectory", a_issue.modifiedShaderDirectory },
+			{ "iniPath", a_issue.iniPath },
+			{ "removedInVersion", a_issue.removedInVersion.string(".") },
+		};
+	}
+
+	// FeatureIssues' backing vector is main-thread-owned (populated at boot and by the
+	// in-menu refresh action) with no lock of its own -- marshal onto the main thread
+	// like every other main-thread-state read in this file, rather than racing it.
+	json BuildInspectFeatureIssuesResult(const json&)
+	{
+		return RunOnMainThread([]() -> json {
+			json issues = json::array();
+			for (const auto& issue : FeatureIssues::GetFeatureIssues())
+				issues.push_back(FeatureIssueToJson(issue));
+			return json{
+				{ "featureIssues", issues },
+				{ "hasIssues", FeatureIssues::HasFeatureIssues() },
+				{ "hasObsoleteShaderModifyingFeatures", FeatureIssues::HasObsoleteShaderModifyingFeatures() },
+				{ "hasPotentialShaderModifyingFeatures", FeatureIssues::HasPotentialShaderModifyingFeatures() },
+			};
+		});
+	}
+
+	void InspectFeatureIssuesHandler(void*, const char* a_argsJson, void* a_sink, DevBenchAPI::WriteFn a_write)
+	{
+		RunHandler(&BuildInspectFeatureIssuesResult, a_argsJson, a_sink, a_write);
 	}
 
 	// Light Limit Fix shadow-scheduler diagnostics. RequestSchedSnapshot is thread-safe
@@ -1094,6 +1139,10 @@ namespace DevBenchBridge
 			static constexpr const char* inspectProfilerDesc =
 				R"({"description":"Open Shaders GPU/CPU profiler snapshot -> {enabled,capturing,frame_count,capturedFrameCount,totalMs,cpuTotalMs,resolvedTotalMs,resolvedCpuTotalMs,acquiredSlots,peakAcquiredSlots,slotRefusals,maxTimers,timers:[{name,gpuMs,topLevelMs,avgMs,p95Ms,p99Ms,cpuMs,cpuAvgMs,cpuP95Ms,cpuP99Ms,hasGpu,hasCpu,activeGpu,activeCpu,historyHead,historyCount,cpuHistoryHead,cpuHistoryCount}]}. Calling this primes a capture (like llfshadows), so an idle first call may show stale data -- capturedFrameCount is the engine frame the returned timers were actually recorded on (both it and frame_count are read in the same call, so they're always comparable). Results lag capture by kFrameLatency (3) frames by construction, so frame_count - capturedFrameCount == 3 is a maximally fresh snapshot and it is never less than 3; larger values mean staleness (e.g. capture was off, or the game is paused/loading). totalMs/cpuTotalMs are the LIVE values shown in the menu (zeroed while idle so the overlay doesn't show a stale sum); resolvedTotalMs/resolvedCpuTotalMs pair with capturedFrameCount and the timers array instead, so they never zero on their own and are the ones to use for exact checks. topLevelMs is the portion of gpuMs from top-level (non-nested) intervals only; for a feature with nested passes, resolvedTotalMs should equal the sum of topLevelMs across its timers. historyHead advances by exactly 1 per rolling-history sample regardless of how many call sites shared a name -- CollectResults sums same-name intervals into one entry before pushing, so a pass invoked twice in one frame (e.g. by a screenshot/crop-preview path recomposing the same output) never doubles its delta; comparing historyHead's delta between two polls across every hasGpu timer PRESENT IN BOTH polls should be identical (a timer first seen between polls starts fresh and is exempt) -- a mismatched delta means a missed/skipped cycle, not a duplicate call site. acquiredSlots is the GPU timer-slot count used in the most recently completed cycle (0 for a CPU-only cycle with no GPU frame; vs maxTimers, currently 256); peakAcquiredSlots is the session high-water mark of the same, since a sparse poll would likely miss a transient spike that acquiredSlots alone would show. slotRefusals is a cumulative session count of BeginPass calls that failed for lack of a free slot -- any nonzero value means timing data was silently dropped at some point this session, not necessarily the current frame. Enable/disable capture via openshaders.profiler.","readOnly":true,"inputSchema":{"type":"object"}})";
 			dvb->RegisterToolExtension("inspect", "profiler", inspectProfilerDesc, &InspectProfilerHandler, nullptr);
+
+			static constexpr const char* inspectFeatureIssuesDesc =
+				R"({"description":"Open Shaders feature-issue tracking -> {featureIssues:[{shortName,displayName,version,issueType,rejectionReason,replacementFeature,replacementFeatureDisplayName,replacementFeatureInstalled,replacementFeatureModLink,userMessage,minimumVersionRequired,modifiedShaderDirectory,iniPath,removedInVersion}],hasIssues,hasObsoleteShaderModifyingFeatures,hasPotentialShaderModifyingFeatures}. Surfaces the same detection FeatureIssues.h already does at boot for the in-menu warning banner -- obsolete features with a known replacement, INI version mismatches, override files that failed to apply, and unrecognized/unknown feature INIs left in Data/Shaders/Features. issueType: OBSOLETE|VERSION_MISMATCH|OVERRIDE_FAILED|UNKNOWN. modifiedShaderDirectory/hasObsoleteShaderModifyingFeatures flag features whose obsolete files could still be holding stale shader source -- the more likely of the two shader-modifying flags to explain an otherwise-unexplained compile problem elsewhere.","readOnly":true,"inputSchema":{"type":"object"}})";
+			dvb->RegisterToolExtension("inspect", "featureissues", inspectFeatureIssuesDesc, &InspectFeatureIssuesHandler, nullptr);
 		} else {
 			logger::info("DevBenchBridge: devbench build {} < 10500; CS menu + inspect extensions need 1.5.0", dvb->GetBuildNumber());
 		}
