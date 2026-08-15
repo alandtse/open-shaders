@@ -453,14 +453,15 @@ namespace
 	// Vanilla material CRC omits normal texture names, so distinct water forms can collide and
 	// steal each other's Normals01/02/03. Fold texture-name hashes into CRC via this side channel —
 	// never stash them in normalTexture1 (that used to null the pointer and kill BLEND_NORMALS scroll).
+	// Keyed to the material the hash was computed for, so an unrelated ComputeCRC32 call for a
+	// different material on the same thread can't consume it.
 	thread_local uint32_t t_waterNormalTextureHash = 0;
-	thread_local bool t_hasWaterNormalTextureHash = false;
+	thread_local const RE::BSWaterShaderMaterial* t_pendingHashMaterial = nullptr;
 }
 
 void UnifiedWater::TESWaterSystem_InitializeWater_SetWaterShaderMaterialParams::thunk(RE::TESWaterForm* form, RE::BSWaterShaderMaterial* material)
 {
-	t_hasWaterNormalTextureHash = false;
-	t_waterNormalTextureHash = 0;
+	t_pendingHashMaterial = nullptr;
 
 	func(form, material);
 
@@ -477,15 +478,14 @@ void UnifiedWater::TESWaterSystem_InitializeWater_SetWaterShaderMaterialParams::
 	addStrToHash(form->noiseTextures[2].textureName.c_str());
 	addStrToHash(form->noiseTextures[3].textureName.c_str());
 	t_waterNormalTextureHash = hash;
-	t_hasWaterNormalTextureHash = true;
+	t_pendingHashMaterial = material;
 }
 
 int32_t UnifiedWater::BSWaterShaderMaterial_ComputeCRC32::thunk(RE::BSWaterShaderMaterial* material, uint32_t srcHash)
 {
-	if (t_hasWaterNormalTextureHash) {
+	if (t_pendingHashMaterial == material) {
 		srcHash ^= t_waterNormalTextureHash + (srcHash << 6) + (srcHash >> 2);
-		t_hasWaterNormalTextureHash = false;
-		t_waterNormalTextureHash = 0;
+		t_pendingHashMaterial = nullptr;
 	}
 	return func(material, srcHash);
 }
