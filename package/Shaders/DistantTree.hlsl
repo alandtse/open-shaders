@@ -1,6 +1,7 @@
 #include "Common/Color.hlsli"
 #include "Common/FrameBuffer.hlsli"
 #include "Common/GBuffer.hlsli"
+#include "Common/LightingCommon.hlsli"
 #include "Common/MotionBlur.hlsli"
 #include "Common/Permutation.hlsli"
 #include "Common/Random.hlsli"
@@ -257,6 +258,13 @@ PS_OUTPUT main(PS_INPUT input)
 	float3 ddy = ddy_coarse(input.WorldPosition.xyz);
 	float3 normal = -normalize(cross(ddx, ddy));
 
+	[branch] if (SharedData::truePBRSettings.EnableFoliageScattering != 0)
+	{
+		float3 viewDirection = normalize(FrameBuffer::CameraPosAdjust[eyeIndex].xyz - input.WorldPosition.xyz);
+		diffuseColor += GetFoliageTransmission(dot(normal, SharedData::DirLightDirection.xyz), dot(viewDirection, SharedData::DirLightDirection.xyz)) *
+			Color::DirectionalLight(SharedData::DirLightColor.xyz / max(llDirLightMult, 1e-5), SharedData::linearLightingSettings.isDirLightLinear) * dirShadow * 0.5 * llDirLightMult * Color::VanillaNormalization();
+	}
+
 	float3 directionalAmbientColor = max(0, Color::Ambient(SharedData::GetAmbient(normal)));
 #			if defined(IBL)
 	if (SharedData::iblSettings.EnableIBL) {
@@ -296,6 +304,13 @@ PS_OUTPUT main(PS_INPUT input)
 	float3 ddx = ddx_coarse(input.WorldPosition.xyz);
 	float3 ddy = ddy_coarse(input.WorldPosition.xyz);
 	float3 normal = normalize(cross(ddx, ddy));
+
+	[branch] if (SharedData::truePBRSettings.EnableFoliageScattering != 0)
+	{
+		float3 viewDirection = normalize(FrameBuffer::CameraPosAdjust[eyeIndex].xyz - input.WorldPosition.xyz);
+		diffuseColor += GetFoliageTransmission(dot(normal, SharedData::DirLightDirection.xyz), dot(viewDirection, SharedData::DirLightDirection.xyz)) *
+			Color::DirectionalLight(SharedData::DirLightColor.xyz / max(llDirLightMult, 1e-5), SharedData::linearLightingSettings.isDirLightLinear) * dirShadow * 0.5 * llDirLightMult * Color::VanillaNormalization();
+	}
 
 	float3 directionalAmbientColor = Color::Ambient(SharedData::GetAmbient(normal));
 #			if defined(IBL)

@@ -45,7 +45,8 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	TruePBR::Settings,
-	VertexAOStrength);
+	VertexAOStrength,
+	EnableFoliageScattering);
 
 #define CHECK_PBR_TEXTURE(textureName)                                                                         \
 	if (!(pbrMaterial->textureName)) {                                                                         \
@@ -115,6 +116,13 @@ void TruePBR::DrawSettings()
 {
 	if (ImGui::TreeNodeEx(T(TKEY("global_settings"), "Global Settings"), ImGuiTreeNodeFlags_DefaultOpen)) {
 		ImGui::SliderFloat(T(TKEY("vertex_ao_strength"), "Vertex AO Strength"), &settings.VertexAOStrength, 0.f, 1.f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+		bool enableFoliageScattering = settings.EnableFoliageScattering != 0;
+		if (ImGui::Checkbox(T(TKEY("enable_foliage_scattering"), "New Foliage Scattering Model"), &enableFoliageScattering)) {
+			settings.EnableFoliageScattering = enableFoliageScattering;
+		}
+		if (auto _tt = Util::HoverTooltipWrapper()) {
+			ImGui::Text("%s", T(TKEY("enable_foliage_scattering_tooltip"), "Adds wrapped, view-dependent leaf transmission. Disable to show only the existing PBR surface response."));
+		}
 		ImGui::TreePop();
 	}
 

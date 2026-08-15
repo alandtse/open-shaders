@@ -104,6 +104,21 @@ struct MaterialProperties
 #endif
 };
 
+// Cheap view-dependent foliage transmission shared by PBR and vanilla foliage paths.
+float GetFoliageTransmission(float NdotL, float VdotL)
+{
+	const float wrap = 0.5f;
+	const float wrapDenominator = (1.0f + wrap) * (1.0f + wrap);
+	float wrappedBacklight = saturate((-NdotL + wrap) / wrapDenominator);
+
+	float forwardScatter = saturate(-VdotL);
+	const float scatterAlpha2 = 0.6f * 0.6f;
+	float scatterDenominator = forwardScatter * forwardScatter * (scatterAlpha2 - 1.0f) + 1.0f;
+	float scatter = scatterAlpha2 / (3.14159265f * scatterDenominator * scatterDenominator);
+
+	return wrappedBacklight * scatter;
+}
+
 float ShininessToRoughness(float shininess)
 {
 	return pow(abs(2.0 / (shininess + 2.0)), 0.25);

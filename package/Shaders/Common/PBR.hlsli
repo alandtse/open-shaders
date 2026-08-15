@@ -143,6 +143,11 @@ namespace PBR
 		float satVdotL = saturate(VdotL);
 		float satNdotH = saturate(NdotH);
 		float satVdotH = saturate(VdotH);
+#if defined(TREE_ANIM) || defined(GRASS)
+		const bool isFoliageShader = true;
+#else
+		const bool isFoliageShader = false;
+#endif
 
 #if !defined(LANDSCAPE) && !defined(LODLANDSCAPE)
 		[branch] if ((PBRFlags & Flags::HairMarschner) != 0)
@@ -171,8 +176,19 @@ namespace PBR
 				lightingOutput.specular = lerp(lightingOutput.specular, fuzzSpecular, material.FuzzWeight);
 			}
 
-			[branch] if ((PBRFlags & Flags::Subsurface) != 0)
-#	if !defined(TREE_ANIM)
+#	if defined(TREE_ANIM) || defined(GRASS)
+			[branch] if (SharedData::truePBRSettings.EnableFoliageScattering != 0)
+			{
+				// Deliberately do not use material thickness here. Foliage geometry is
+				// commonly flagged as subsurface with a baked thickness of 1, and wind
+				// deformation invalidates any thickness assumption. Use only the current
+				// normal/light/view angles and base color.
+				float foliageTransmission = saturate(-NdotL) * BRDF::Diffuse_Lambert();
+				foliageTransmission += GetFoliageTransmission(NdotL, VdotL);
+				lightingOutput.transmission += material.BaseColor * foliageTransmission * detailedLightColor * kD;
+			}
+#	endif
+			[branch] if (!isFoliageShader && (PBRFlags & Flags::Subsurface) != 0)
 			{
 				const float subsurfacePower = 12.234;
 				float forwardScatter = exp2(saturate(-VdotL) * subsurfacePower - subsurfacePower);
@@ -180,13 +196,7 @@ namespace PBR
 				float subsurface = lerp(backScatter, 1, forwardScatter) * (1.0 - material.Thickness);
 				lightingOutput.transmission += material.SubsurfaceColor * subsurface * softLightColor * BRDF::Diffuse_Lambert() * kD;
 			}
-#	else
-			{
-				float subsurfaceFoliage = saturate(-NdotL) * (1.0 - material.Thickness);
-				lightingOutput.transmission += material.SubsurfaceColor * subsurfaceFoliage * detailedLightColor * BRDF::Diffuse_Lambert() * kD;
-			}
-#	endif
-			else if ((PBRFlags & Flags::TwoLayer) != 0)
+			else if ((PBRFlags & Flags::TwoLayer) != 0 && (PBRFlags & Flags::Subsurface) == 0)
 			{
 				float coatNdotL = satNdotL;
 				float coatNdotV = satNdotV;

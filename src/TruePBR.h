@@ -80,9 +80,12 @@ public:
 	struct alignas(16) Settings
 	{
 		float VertexAOStrength = 1.0f;
-		uint pad[3];
+		uint EnableFoliageScattering = 1;
+		uint pad[2];
 	};
 	STATIC_ASSERT_ALIGNAS_16(Settings);
+	static_assert(offsetof(Settings, EnableFoliageScattering) == sizeof(float));
+	static_assert(sizeof(Settings) == 16);
 
 	Settings settings;
 	/**

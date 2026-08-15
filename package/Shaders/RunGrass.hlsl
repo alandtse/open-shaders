@@ -1,6 +1,7 @@
 #include "Common/Color.hlsli"
 #include "Common/FrameBuffer.hlsli"
 #include "Common/GBuffer.hlsli"
+#include "Common/LightingCommon.hlsli"
 #include "Common/Math.hlsli"
 #include "Common/MotionBlur.hlsli"
 #include "Common/Permutation.hlsli"
@@ -596,8 +597,8 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	}
 
 	float3 specularColorPBR = 0;
-	float3 transmissionColor = 0;
 #			endif  // TRUE_PBR
+	float3 transmissionColor = 0;
 
 	float llDirLightMult = (SharedData::linearLightingSettings.enableLinearLighting && !SharedData::linearLightingSettings.isDirLightLinear) ? SharedData::linearLightingSettings.dirLightMult : 1.0f;
 	float3 dirLightColor = Color::DirectionalLight(SharedData::DirLightColor.xyz / max(llDirLightMult, 1e-5), SharedData::linearLightingSettings.isDirLightLinear) * llDirLightMult;
@@ -648,6 +649,8 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	}
 #			else
 	dirLightColor *= dirLightColorMultiplier;
+	[branch] if (SharedData::truePBRSettings.EnableFoliageScattering != 0)
+		transmissionColor += baseColor.xyz * GetFoliageTransmission(dirLightAngle, dot(viewDirection, DirLightDirection)) * dirLightColor * dirDetailedShadow;
 
 	float softLightRolloff = saturate(input.VertexNormal.w * 10.0) * SharedData::grassLightingSettings.SubsurfaceScatteringAmount * 2.0;
 	float wrapAmount = saturate(input.VertexNormal.w * 10.0) * 0.5 * (!complex);
@@ -757,6 +760,8 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 
 				float lightAngle = dot(normal, normalizedLightDirection);
 				float lightNoL = dot(normalizedLightDirection.xyz, viewDirection);
+				[branch] if (SharedData::truePBRSettings.EnableFoliageScattering != 0)
+					transmissionColor += baseColor.xyz * GetFoliageTransmission(lightAngle, lightNoL) * lightColor;
 				float3 lightDiffuseColor;
 
 				if (SharedData::grassLightingSettings.EnableWrappedLighting) {

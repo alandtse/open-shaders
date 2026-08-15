@@ -10,12 +10,31 @@ namespace PBR
 	{
 		static const float MinRoughness = 0.04f;
 		static const float MaxRoughness = 1.0f;
+		static const float FoliageWrap = 0.5f;
+		static const float FoliageScatterRoughness = 0.6f;
 		static const float MinGlintDensity = 1.0f;
 		static const float MaxGlintDensity = 40.0f;
 		static const float MinGlintRoughness = 0.005f;
 		static const float MaxGlintRoughness = 0.3f;
 		static const float MinGlintDensityRandomization = 0.0f;
 		static const float MaxGlintDensityRandomization = 5.0f;
+	}
+
+	/// @brief Evaluate cheap two-sided foliage transmission from angular terms.
+	/// @param NdotL Dot product of the current surface normal and light direction
+	/// @param VdotL Dot product of the view and light directions
+	/// @return Wrapped, view-dependent transmission weight
+	float GetFoliageTransmission(float NdotL, float VdotL)
+	{
+		const float wrapDenominator = (1.0f + Constants::FoliageWrap) * (1.0f + Constants::FoliageWrap);
+		float wrappedBacklight = saturate((-NdotL + Constants::FoliageWrap) / wrapDenominator);
+
+		float forwardScatter = saturate(-VdotL);
+		const float scatterAlpha2 = Constants::FoliageScatterRoughness * Constants::FoliageScatterRoughness;
+		float scatterDenominator = forwardScatter * forwardScatter * (scatterAlpha2 - 1.0f) + 1.0f;
+		float scatter = scatterAlpha2 / (Math::PI * scatterDenominator * scatterDenominator);
+
+		return wrappedBacklight * scatter;
 	}
 
 	namespace Flags

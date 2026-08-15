@@ -5,6 +5,27 @@
 #include "/Shaders/Common/PBRMath.hlsli"
 #include "/Test/STF/ShaderTestFramework.hlsli"
 
+/// @tags pbr, foliage, transmission
+[numthreads(1, 1, 1)] void TestFoliageTransmission()
+{
+	float frontLit = PBR::GetFoliageTransmission(1.0f, -1.0f);
+	float grazingBacklight = PBR::GetFoliageTransmission(0.0f, -1.0f);
+	float backLit = PBR::GetFoliageTransmission(-1.0f, -1.0f);
+
+	ASSERT(IsTrue, abs(frontLit) < 0.0001f);
+	ASSERT(IsTrue, grazingBacklight > frontLit);
+	ASSERT(IsTrue, backLit > grazingBacklight);
+
+	float forwardAligned = PBR::GetFoliageTransmission(-1.0f, -1.0f);
+	float perpendicular = PBR::GetFoliageTransmission(-1.0f, 0.0f);
+	float sameDirection = PBR::GetFoliageTransmission(-1.0f, 1.0f);
+
+	ASSERT(IsTrue, forwardAligned > perpendicular);
+	ASSERT(IsTrue, abs(perpendicular - sameDirection) < 0.0001f);
+	ASSERT(IsTrue, forwardAligned >= 0.0f && forwardAligned <= 1.0f);
+	ASSERT(IsTrue, !isnan(forwardAligned) && !isinf(forwardAligned));
+}
+
 /// @tags pbr, ior, material
 [numthreads(1, 1, 1)] void TestIORToF0() {
 	// Test 1: Air/Glass (n=1.5): F0 = ((1-1.5)/(1+1.5))^2 = 0.04
