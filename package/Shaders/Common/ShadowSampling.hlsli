@@ -17,7 +17,6 @@
 #if defined(IBL)
 #	include "IBL/IBL.hlsli"
 #elif defined(SKYLIGHTING)
-// sh2 type is needed for the ExtractLighting overload that accepts a visibility SH
 #	include "Common/Spherical Harmonics/SphericalHarmonics.hlsli"
 #endif
 
@@ -138,14 +137,14 @@ namespace ShadowSampling
 #endif
 	}
 
-	float3 GetRawAmbientLighting(float3 normal)
+	float3 GetRawAmbientLighting()
 	{
-		return max(0, SharedData::GetAmbient(normal));
+		return max(0, SharedData::GetAmbient(LightingSampleNormal));
 	}
 
-	float3 GetAmbientLighting(float3 normal)
+	float3 GetAmbientLighting()
 	{
-		float3 ambientColor = GetRawAmbientLighting(normal);
+		float3 ambientColor = GetRawAmbientLighting();
 
 #if defined(IBL)
 		if (SharedData::iblSettings.EnableIBL) {
@@ -157,9 +156,9 @@ namespace ShadowSampling
 	}
 
 #if defined(SKYLIGHTING) && !defined(INTERIOR)
-	float3 GetAmbientLighting(float3 normal, float skylightingDiffuse)
+	float3 GetAmbientLighting(float skylightingDiffuse)
 	{
-		float3 ambientColor = GetRawAmbientLighting(normal);
+		float3 ambientColor = GetRawAmbientLighting();
 
 #	if defined(IBL)
 		if (SharedData::iblSettings.EnableIBL) {
@@ -179,7 +178,7 @@ namespace ShadowSampling
 
 	float3 GetSceneLightingColor()
 	{
-		return GetAmbientLighting(LightingSampleNormal) + GetDirectionalLighting();
+		return GetAmbientLighting() + GetDirectionalLighting();
 	}
 
 #if defined(SKYLIGHTING) && !defined(INTERIOR)
@@ -189,11 +188,10 @@ namespace ShadowSampling
 #endif
 	{
 #if defined(SKYLIGHTING) && !defined(INTERIOR)
-		float3 ambientColorAmb = GetAmbientLighting(LightingSampleNormal, skylightingDiffuse);
+		float3 ambientColorAmb = GetAmbientLighting(skylightingDiffuse);
 #else
-		float3 ambientColorAmb = GetAmbientLighting(LightingSampleNormal);
+		float3 ambientColorAmb = GetAmbientLighting();
 #endif
-
 		float3 dirLightColorDir = GetDirectionalLighting();
 
 		float inputLuma = Color::RGBToLuminance(inputColor);
@@ -202,7 +200,6 @@ namespace ShadowSampling
 
 		float totalLuma = ambientLuma + dirLightLuma;
 
-		// Scale ambientColorAmb so total luma matches input luma
 		if (totalLuma > 0.0 && ambientLuma > 0.0)
 			ambientColorAmb *= inputLuma / totalLuma;
 

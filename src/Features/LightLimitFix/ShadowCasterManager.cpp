@@ -11,6 +11,7 @@
 #include "../../GpuPass.h"
 #include "../../State.h"
 #include "../../Utils/Game.h"
+#include "../../Utils/PerfUtils.h"
 #include "../../Utils/UI.h"
 #include "../Upscaling.h"
 #include "../VR.h"
@@ -64,6 +65,11 @@ namespace ShadowCasterManager
 	uint32_t s_highImportanceLightCount = 0;
 	float s_redrawnLightsSmoothed = 0.0f;
 
+	ShadowDemandSample s_shadowDemand{};
+
+	std::atomic<uint32_t> s_alphaGroupPeak{ 0 };
+	std::atomic<uint64_t> s_alphaGroupDrops{ 0 };
+
 	SchedDiagCounters s_schedDiag;
 
 	int32_t s_installedShadowLightCount;
@@ -81,8 +87,10 @@ namespace ShadowCasterManager
 	std::mutex s_shadowConvertMutex;
 
 	std::atomic<bool> s_pendingSessionReset{ false };
+	std::atomic<bool> s_pendingCellReset{ false };
 
 	std::shared_mutex s_portalGraphMutex;
+	std::shared_mutex s_lightsPoolMutex;
 
 	std::atomic<int> s_shadowFlushReaders{ 0 };
 	std::atomic<bool> s_teardownWaiting{ false };
@@ -289,6 +297,11 @@ namespace ShadowCasterManager
 	bool s_bootAtlasEnabled = false;
 	Util::Settings::BootSnapshot<Settings> s_bootSnapshot{ kRestartFields };
 
+	void SetShadowDemand(const ShadowDemandSample& sample)
+	{
+		s_shadowDemand = sample;
+	}
+
 	void Update(const Settings& settings, RE::ShadowSceneNode* /*shadowSceneNode*/,
 		RE::NiCamera* /*worldCamera*/)
 	{
@@ -316,14 +329,21 @@ namespace ShadowCasterManager
 		int newTotal = LightContainerSize(capped);
 		if (newTotal != s_lights.Size) {
 			auto* newLights = new LightEntry[newTotal]();
+			// Exclusive against ScheduleShadowCasters/RenderScheduledShadowLights'
+			// shared lock: the copy below reads live entries the scheduler can
+			// concurrently write under its shared_lock, so the lock must cover
+			// the copy, not just the pointer swap.
+			std::unique_lock poolLock(s_lightsPoolMutex);
+			auto* oldLights = s_lights.Lights;
 			int copyCount = std::min(s_lights.Size, newTotal);
 			for (int i = 0; i < copyCount; i++)
-				newLights[i] = s_lights.Lights[i];
+				newLights[i] = oldLights[i];
 			for (int i = copyCount; i < newTotal; i++)
 				newLights[i].Index = i;
-			delete[] s_lights.Lights;
 			s_lights.Lights = newLights;
 			s_lights.Size = newTotal;
+			poolLock.unlock();
+			delete[] oldLights;
 		}
 
 		// Apply settings as a pure flag flip. Conversion-related state
@@ -393,6 +413,9 @@ namespace ShadowCasterManager
 		s_pinConvert.clear();
 		s_soloLight = 0;
 		s_suppressedLights.clear();
+		// Demand is measured per pool slot; a new scene's light at the same slot
+		// index must not inherit the previous occupant's redraw deprioritization.
+		s_shadowDemand = ShadowDemandSample{};
 		// Clear pool entries but keep the array allocation; size is set by
 		// Install/Update based on the configured ShadowLightCount.
 		if (s_lights.Lights) {
@@ -463,6 +486,17 @@ namespace ShadowCasterManager
 		if (!s_lights.Lights || poolSlot < 0 || poolSlot >= s_lights.Size)
 			return 1.0f;
 		return s_lights.Lights[poolSlot].renderedScale;
+	}
+
+	float GetShadowFadeAlpha(int32_t poolSlot)
+	{
+		if (!s_lights.Lights || poolSlot < 0 || poolSlot >= s_lights.Size)
+			return 1.0f;
+		const double start = s_lights.Lights[poolSlot].FadeStartSeconds;
+		if (start < 0.0)
+			return 1.0f;
+		const float elapsedSeconds = static_cast<float>(Util::GetNowSecs() - start);
+		return std::clamp(elapsedSeconds / kShadowFadeInSeconds, 0.0f, 1.0f);
 	}
 
 	void ForEachConvertedLight(const std::function<void(RE::BSShadowLight*)>& visitor)

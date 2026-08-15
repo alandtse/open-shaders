@@ -204,6 +204,38 @@ TEST_CASE("TryPartialInvalidation: deletes exactly the referencing dirs", "[cach
 	CHECK(fs::exists(cache / "Sky/1.pso"));
 }
 
+TEST_CASE("TryPartialInvalidation: resolves remapped ImageSpace cache directories", "[cacheinvalidation]")
+{
+	TempDir t;
+	auto shaders = t.path / "Shaders";
+	auto cache = t.path / "ShaderCache";
+	Write(shaders / "ISHDR.hlsl", "#if defined(POSTPROCESS)\n#endif\n");
+	Write(shaders / "ISBasicCopy.hlsl", "float4 main() { return 0; }\n");
+	Write(shaders / "Utility.hlsl", "float4 main() { return 0; }\n");
+	Write(cache / "ISHDRTonemapBlendCinematic/37.pso", "blob");
+	Write(cache / "ISBasicCopy/68.pso", "blob");
+
+	size_t deleted = 0, kept = 0;
+	REQUIRE(TryPartialInvalidation(cache, shaders, { "POSTPROCESS" }, &deleted, &kept));
+	CHECK(deleted == 1);
+	CHECK(kept == 1);
+	CHECK_FALSE(fs::exists(cache / "ISHDRTonemapBlendCinematic"));
+	CHECK(fs::exists(cache / "ISBasicCopy/68.pso"));
+}
+
+TEST_CASE("TryPartialInvalidation: conservatively deletes unresolved ImageSpace techniques", "[cacheinvalidation]")
+{
+	TempDir t;
+	auto shaders = t.path / "Shaders";
+	auto cache = t.path / "ShaderCache";
+	Write(shaders / "ISCompositeLensFlareVolumetricLighting.hlsl", "float4 main() { return 0; }\n");
+	Write(shaders / "Utility.hlsl", "float4 main() { return 0; }\n");
+	Write(cache / "ISCompositeLensFlare/72.pso", "blob");
+
+	REQUIRE(TryPartialInvalidation(cache, shaders, { "POSTPROCESS" }));
+	CHECK_FALSE(fs::exists(cache / "ISCompositeLensFlare"));
+}
+
 TEST_CASE("TryPartialInvalidation: conservative fallbacks", "[cacheinvalidation]")
 {
 	TempDir t;
@@ -228,5 +260,327 @@ TEST_CASE("TryPartialInvalidation: conservative fallbacks", "[cacheinvalidation]
 		REQUIRE(TryPartialInvalidation(cache, shaders, {}, &deleted, &kept));
 		CHECK(deleted == 0);
 		CHECK(kept == 1);
+	}
+}
+
+TEST_CASE("TryPartialInvalidation: delete failure on the only candidate is not destructive", "[cacheinvalidation]")
+{
+	TempDir t;
+	auto shaders = t.path / "Shaders";
+	auto cache = t.path / "ShaderCache";
+	Write(shaders / "Water.hlsl", "#if defined(UNIFIED_WATER)\n#endif\n");
+	Write(cache / "Water/1.pso", "blob");
+
+	// An open (not delete-sharing) file handle blocks Windows from removing
+	// its directory, forcing remove_all() to throw. Nothing else was queued
+	// for deletion, so the cache is left exactly as it started -- not the
+	// "already partially gone" case the destructive flag exists to signal.
+	std::ofstream held(cache / "Water/1.pso", std::ios::binary | std::ios::app);
+	REQUIRE(held.is_open());
+
+	bool destructive = false;
+	CHECK_FALSE(TryPartialInvalidation(cache, shaders, { "UNIFIED_WATER" }, nullptr, nullptr, &destructive));
+	CHECK_FALSE(destructive);
+
+	held.close();
+}
+
+TEST_CASE("TryPartialInvalidation: failure after a prior deletion is destructive", "[cacheinvalidation]")
+{
+	TempDir t;
+	auto shaders = t.path / "Shaders";
+	auto cache = t.path / "ShaderCache";
+	Write(shaders / "Fog.hlsl", "#if defined(UNIFIED_WATER)\n#endif\n");
+	Write(shaders / "Water.hlsl", "#if defined(UNIFIED_WATER)\n#endif\n");
+	Write(cache / "Fog/1.pso", "blob");
+	Write(cache / "Water/1.pso", "blob");
+
+	// NTFS enumerates a directory's entries via its $I30 B-tree index, sorted
+	// by filename -- "Fog" iterates before "Water", so this deterministically
+	// exercises delete-succeeds-then-delete-fails, not delete-fails-first.
+	std::ofstream held(cache / "Water/1.pso", std::ios::binary | std::ios::app);
+	REQUIRE(held.is_open());
+
+	bool destructive = false;
+	CHECK_FALSE(TryPartialInvalidation(cache, shaders, { "UNIFIED_WATER" }, nullptr, nullptr, &destructive));
+	CHECK(destructive);
+	CHECK_FALSE(fs::exists(cache / "Fog"));  // confirms Fog really was deleted first
+
+	held.close();
+}
+
+TEST_CASE("TryPartialInvalidation: partial delete within one directory is destructive", "[cacheinvalidation]")
+{
+	// remove_all() recurses into a directory's own contents; a single toDelete
+	// entry with one locked file among several must still report destructive,
+	// since its unlocked siblings get removed before the locked one throws.
+	TempDir t;
+	auto shaders = t.path / "Shaders";
+	auto cache = t.path / "ShaderCache";
+	Write(shaders / "Water.hlsl", "#if defined(UNIFIED_WATER)\n#endif\n");
+	Write(cache / "Water/1.pso", "blob");
+	Write(cache / "Water/2.pso", "blob");
+
+	std::ofstream held(cache / "Water/2.pso", std::ios::binary | std::ios::app);
+	REQUIRE(held.is_open());
+
+	bool destructive = false;
+	CHECK_FALSE(TryPartialInvalidation(cache, shaders, { "UNIFIED_WATER" }, nullptr, nullptr, &destructive));
+	CHECK(destructive);
+	CHECK_FALSE(fs::exists(cache / "Water/1.pso"));  // the unlocked sibling is really gone
+	CHECK(fs::exists(cache / "Water/2.pso"));        // the locked file survives
+
+	held.close();
+}
+
+TEST_CASE("BackupCacheDirectory and RestoreCacheDirectory: transactional swap logic", "[cacheinvalidation]")
+{
+	TempDir t;
+	auto active = t.path / "ShaderCache";
+	auto previous = t.path / "ShaderCache.Previous";
+	auto swap = t.path / "ShaderCache.Swap";
+
+	Write(active / "Info.ini", "[Cache]\nPluginVersion=1-7-1-0\n");
+	Write(active / "blob1.pso", "blob1");
+
+	SECTION("Backup when no previous exists")
+	{
+		std::string error;
+		REQUIRE(BackupCacheDirectory(active, previous, swap, &error));
+		CHECK(fs::exists(previous / "Info.ini"));
+		CHECK(fs::exists(previous / "blob1.pso"));
+		CHECK(fs::exists(active));
+		CHECK_FALSE(fs::exists(active / "Info.ini"));
+		CHECK_FALSE(fs::exists(swap));
+	}
+
+	SECTION("Backup when previous exists")
+	{
+		Write(previous / "Info.ini", "[Cache]\nPluginVersion=1-7-0-0\n");
+		Write(previous / "blob0.pso", "blob0");
+
+		std::string error;
+		REQUIRE(BackupCacheDirectory(active, previous, swap, &error));
+		CHECK(fs::exists(previous / "Info.ini"));
+		CHECK(fs::exists(previous / "blob1.pso"));
+		CHECK_FALSE(fs::exists(previous / "blob0.pso"));
+		CHECK(fs::exists(active));
+		CHECK_FALSE(fs::exists(swap));
+	}
+
+	SECTION("Restore previous cache")
+	{
+		Write(previous / "Info.ini", "[Cache]\nPluginVersion=1-7-0-0\n");
+		Write(previous / "blob0.pso", "blob0");
+
+		std::string error, warning;
+		REQUIRE(RestoreCacheDirectory(active, previous, swap, &error, &warning));
+		CHECK(fs::exists(active / "Info.ini"));
+		CHECK(fs::exists(active / "blob0.pso"));
+		CHECK_FALSE(fs::exists(active / "blob1.pso"));
+		CHECK(fs::exists(previous / "Info.ini"));
+		CHECK(fs::exists(previous / "blob1.pso"));
+		CHECK_FALSE(fs::exists(swap));
+	}
+}
+
+TEST_CASE("BackupCacheDirectory: transactional failure paths leave state untouched", "[cacheinvalidation]")
+{
+	TempDir t;
+	auto active = t.path / "ShaderCache";
+	auto previous = t.path / "ShaderCache.Previous";
+	auto swap = t.path / "ShaderCache.Swap";
+
+	Write(active / "Info.ini", "[Cache]\nPluginVersion=1-7-1-0\n");
+	Write(active / "blob1.pso", "blob1");
+
+	SECTION("fails when the rollback destination's parent does not exist")
+	{
+		// No previous cache yet, so this hits the active->previous rename directly
+		// (the "could not move the active cache into the rollback slot" branch).
+		auto missingParentPrevious = t.path / "no-such-dir" / "Previous";
+
+		std::string error;
+		CHECK_FALSE(BackupCacheDirectory(active, missingParentPrevious, swap, &error));
+		CHECK(error.find("rollback slot") != std::string::npos);
+		// Nothing moved: active is exactly as it was, no rollback slot was created.
+		CHECK(fs::exists(active / "Info.ini"));
+		CHECK(fs::exists(active / "blob1.pso"));
+		CHECK_FALSE(fs::exists(missingParentPrevious));
+	}
+
+	SECTION("fails when stashing an existing rollback cache fails, previous is untouched")
+	{
+		Write(previous / "Info.ini", "[Cache]\nPluginVersion=1-7-0-0\n");
+		Write(previous / "blob0.pso", "blob0");
+		auto missingParentSwap = t.path / "no-such-dir" / "Swap";
+
+		std::string error;
+		CHECK_FALSE(BackupCacheDirectory(active, previous, missingParentSwap, &error));
+		CHECK(error.find("old rollback cache") != std::string::npos);
+		// The stash-previous-into-swap step failed before touching active at all.
+		CHECK(fs::exists(active / "Info.ini"));
+		CHECK(fs::exists(active / "blob1.pso"));
+		CHECK(fs::exists(previous / "Info.ini"));
+		CHECK(fs::exists(previous / "blob0.pso"));
+	}
+}
+
+TEST_CASE("RestoreCacheDirectory: transactional failure path leaves the rollback cache intact", "[cacheinvalidation]")
+{
+	TempDir t;
+	auto previous = t.path / "ShaderCache.Previous";
+	auto swap = t.path / "ShaderCache.Swap";
+	Write(previous / "Info.ini", "[Cache]\nPluginVersion=1-7-0-0\n");
+	Write(previous / "blob0.pso", "blob0");
+
+	SECTION("fails when the active slot's parent does not exist")
+	{
+		// Active doesn't exist, so this skips the stash-active-to-swap step and
+		// hits the previous->active rename directly ("could not move the
+		// rollback cache into the active slot").
+		auto missingParentActive = t.path / "no-such-dir" / "ShaderCache";
+
+		std::string error, warning;
+		CHECK_FALSE(RestoreCacheDirectory(missingParentActive, previous, swap, &error, &warning));
+		CHECK(error.find("active slot") != std::string::npos);
+		CHECK(warning.empty());
+		// Nothing moved: the rollback cache is exactly as it was.
+		CHECK(fs::exists(previous / "Info.ini"));
+		CHECK(fs::exists(previous / "blob0.pso"));
+		CHECK_FALSE(fs::exists(missingParentActive));
+	}
+}
+
+TEST_CASE("OnlyEnabledFlips / HasFailedFeature / FindMatchBlockingFeature: decision predicates", "[cacheinvalidation]")
+{
+	const auto flip = [](std::string shortName, bool nowPresent, bool nowFailed = false) {
+		return CacheMismatch{ CacheMismatch::Kind::EnabledFlip, shortName, shortName + " Name", "detail", nowPresent, nowFailed };
+	};
+	const auto versionBump = [](std::string shortName) {
+		return CacheMismatch{ CacheMismatch::Kind::FeatureVersion, shortName, shortName + " Name", "detail", true };
+	};
+
+	SECTION("OnlyEnabledFlips: true for pure flips, false once a version bump is mixed in")
+	{
+		CHECK(OnlyEnabledFlips({ flip("A", true), flip("B", false) }));
+		CHECK_FALSE(OnlyEnabledFlips({ flip("A", true), versionBump("B") }));
+		CHECK(OnlyEnabledFlips({}));  // vacuously true, matches std::ranges::all_of on empty
+	}
+
+	SECTION("HasFailedFeature: only 'cache had it, now off, and genuinely failed to load' counts")
+	{
+		// Cache had A, A is gone now, and it genuinely failed to load: broken install.
+		CHECK(HasFailedFeature({ flip("A", false, true) }));
+		// Same mismatch, but not a load failure (deliberate/default disable): not missing.
+		CHECK_FALSE(HasFailedFeature({ flip("A", false, false) }));
+		// "Added" direction (nowPresent=true) never counts, regardless of nowFailed.
+		CHECK_FALSE(HasFailedFeature({ flip("A", true, true) }));
+		// A FeatureVersion mismatch is never treated as a missing-feature case.
+		CHECK_FALSE(HasFailedFeature({ versionBump("A") }));
+	}
+
+	SECTION("FindMatchBlockingFeature: only a removed-and-failed-to-load feature blocks Match")
+	{
+		const std::vector<CacheMismatch> none;
+		CHECK(FindMatchBlockingFeature(none) == nullptr);
+
+		// Added direction never blocks, even if that feature also happens to have failed to load.
+		const std::vector<CacheMismatch> addedOnly{ flip("A", true, true) };
+		CHECK(FindMatchBlockingFeature(addedOnly) == nullptr);
+
+		// Removed direction, but the feature just isn't installed (no failedLoadedMessage): no block.
+		const std::vector<CacheMismatch> removedNotFailed{ flip("A", false, false) };
+		CHECK(FindMatchBlockingFeature(removedNotFailed) == nullptr);
+
+		// Removed direction and the feature genuinely failed to load: blocks, returns that mismatch.
+		// The mismatch vector must outlive the returned pointer, so it's a named local, not a temporary.
+		const std::vector<CacheMismatch> removedAndFailed{ flip("A", false, true) };
+		const auto* blocking = FindMatchBlockingFeature(removedAndFailed);
+		REQUIRE(blocking != nullptr);
+		CHECK(blocking->shortName == "A");
+
+		// First matching candidate wins when more than one qualifies.
+		const std::vector<CacheMismatch> twoCandidates{ flip("A", false, true), flip("B", false, true) };
+		const auto* firstOfTwo = FindMatchBlockingFeature(twoCandidates);
+		REQUIRE(firstOfTwo != nullptr);
+		CHECK(firstOfTwo->shortName == "A");
+	}
+}
+
+TEST_CASE("AreCacheMismatchesRestorable / TrySetRestoreCandidate: rollback restore eligibility", "[cacheinvalidation]")
+{
+	const auto flip = [](std::string shortName, bool nowPresent, bool nowFailed = false) {
+		return CacheMismatch{ CacheMismatch::Kind::EnabledFlip, shortName, shortName + " Name", "detail", nowPresent, nowFailed };
+	};
+	const auto versionBump = [](std::string shortName) {
+		return CacheMismatch{ CacheMismatch::Kind::FeatureVersion, shortName, shortName + " Name", "detail", true };
+	};
+
+	SECTION("AreCacheMismatchesRestorable: empty, mixed-kind, and broken-install all disqualify")
+	{
+		CHECK_FALSE(AreCacheMismatchesRestorable({}));
+
+		const std::vector<CacheMismatch> pureFlipsNotFailed{ flip("A", false, false) };
+		CHECK(AreCacheMismatchesRestorable(pureFlipsNotFailed));
+
+		// Cache had it, now missing, and it genuinely failed to load: broken install.
+		const std::vector<CacheMismatch> pureFlipsFailed{ flip("A", false, true) };
+		CHECK_FALSE(AreCacheMismatchesRestorable(pureFlipsFailed));
+
+		const std::vector<CacheMismatch> mixedKinds{ flip("A", false, false), versionBump("B") };
+		CHECK_FALSE(AreCacheMismatchesRestorable(mixedKinds));
+	}
+
+	SECTION("TrySetRestoreCandidate: on-disk check gates it even when mismatches are otherwise restorable")
+	{
+		const std::vector<CacheMismatch> restorable{ flip("A", false, false) };
+		bool available = false;
+		std::vector<CacheMismatch> recorded;
+
+		CHECK_FALSE(TrySetRestoreCandidate(restorable, /*previousCacheOnDisk=*/false, available, recorded));
+		CHECK_FALSE(available);
+		CHECK(recorded.empty());
+	}
+
+	SECTION("TrySetRestoreCandidate: succeeds and records the mismatches when both conditions hold")
+	{
+		const std::vector<CacheMismatch> restorable{ flip("A", false, false), flip("B", true) };
+		bool available = false;
+		std::vector<CacheMismatch> recorded;
+
+		CHECK(TrySetRestoreCandidate(restorable, /*previousCacheOnDisk=*/true, available, recorded));
+		CHECK(available);
+		REQUIRE(recorded.size() == 2);
+		CHECK(recorded[0].shortName == "A");
+		CHECK(recorded[1].shortName == "B");
+	}
+
+	SECTION("TrySetRestoreCandidate: not-restorable mismatches fail even with the cache on disk")
+	{
+		const std::vector<CacheMismatch> brokenInstall{ flip("A", false, true) };
+		bool available = false;
+		std::vector<CacheMismatch> recorded;
+
+		CHECK_FALSE(TrySetRestoreCandidate(brokenInstall, /*previousCacheOnDisk=*/true, available, recorded));
+		CHECK_FALSE(available);
+		CHECK(recorded.empty());
+	}
+
+	SECTION("TrySetRestoreCandidate: a failed call does not clobber a previously-set candidate")
+	{
+		// Mirrors the real call sites (CommitFeatureSetChange, RestorePreviousDiskCache),
+		// which re-call this after RefreshPreviousDiskCacheInfo already reset outAvailable
+		// to false -- a failed re-check must leave that false, not silently flip it true
+		// from stale in/out aliasing.
+		bool available = true;
+		std::vector<CacheMismatch> recorded{ flip("Stale", false) };
+
+		const std::vector<CacheMismatch> notRestorable{ versionBump("A") };
+		CHECK_FALSE(TrySetRestoreCandidate(notRestorable, /*previousCacheOnDisk=*/true, available, recorded));
+		// Untouched on failure: the function returns before writing either out-param.
+		CHECK(available);
+		REQUIRE(recorded.size() == 1);
+		CHECK(recorded[0].shortName == "Stale");
 	}
 }

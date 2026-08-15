@@ -54,6 +54,9 @@ jobs:
     release:
         needs: validate-shaders
         runs-on: ubuntu-latest
+        outputs:
+            new-release-published: ${{ steps.semantic.outputs.new_release_published }}
+            new-release-tag: ${{ steps.semantic.outputs.new_release_git_tag }}
         steps:
             - name: Checkout repository
               uses: actions/checkout@v6
@@ -157,6 +160,17 @@ jobs:
                   python tools/feature_version_audit.py \
                     --apply-bumps \
                     --output feature-audit-notes.md
+
+            # Blocking gate (PR check above is informative only): catches a
+            # misfiring bump algorithm or a gap left by skip_feature_bumps.
+            - name: Verify feature versions
+              run: |
+                  set +e
+                  python tools/feature_version_audit.py --ci --output feature-audit-verify.md
+                  EXIT_CODE=$?
+                  set -e
+                  cat feature-audit-verify.md
+                  exit $EXIT_CODE
 
             - name: Semantic Release
               id: semantic
@@ -275,3 +289,38 @@ jobs:
                     echo "- Open PRs against dev are auto-rebased by the \`Auto-rebase open PRs\` workflow."
                   } >> "$GITHUB_STEP_SUMMARY"
                   echo "::notice::Reconciled dev onto main via rebase (linear history preserved)."
+
+    # Attaches real artifacts to the draft before a human publishes it.
+    # Publishing before this finishes races release-build.yaml's own
+    # fallback build -- wait for attach-artifacts to finish first.
+    build-artifacts:
+        needs: release
+        # always()/!cancelled(): new-release-published reflects only the
+        # Semantic Release step, which can succeed even if a LATER step
+        # (dev reconciliation) fails the job's overall result.
+        if: always() && !cancelled() && needs.release.outputs.new-release-published == 'true'
+        uses: ./.github/workflows/_shared-build.yaml
+        with:
+            ref: ${{ needs.release.outputs.new-release-tag }}
+            repository: ${{ github.repository }}
+            cache-artifacts: true
+            run-full-config-validation: false
+
+    attach-artifacts:
+        needs: [release, build-artifacts]
+        # cpp-built alone, not needs.build-artifacts.result: a
+        # shader-validation leg failing must not block attaching what DID build.
+        if: >
+            always() && !cancelled() &&
+            needs.release.outputs.new-release-published == 'true' &&
+            needs.build-artifacts.outputs.cpp-built == 'true'
+        permissions:
+            contents: write
+            id-token: write
+            attestations: write
+        uses: ./.github/workflows/_attach-release-artifacts.yaml
+        with:
+            tag: ${{ needs.release.outputs.new-release-tag }}
+            draft: "true"
+        secrets:
+            token: ${{ secrets.GITHUB_TOKEN }}

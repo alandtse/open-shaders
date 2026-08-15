@@ -31,6 +31,8 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 
 void FoveatedRender::PostPostLoad()
 {
+	bootSnapshot.LatchIfNeeded(settings);
+
 	// Opt into PR-1's stereo extension so the controller tracks a separate
 	// right-eye UV (HMD nose-side overlap symmetry).
 	subrectController.SetStereoEnabled(true);
@@ -43,10 +45,10 @@ void FoveatedRender::PostPostLoad()
 	// binocular fusion is strongest, so DLSS reconstruction lands in the actual
 	// stereo overlap zone rather than diverging left/right fields.
 	subrectController.SeedDefaultPresets({
-		{ .name = "Full Eye", .uv = { 0.0f, 0.0f, 1.0f, 1.0f } },
-		{ .name = "Center 75%", .uv = { 0.125f, 0.125f, 0.75f, 0.75f } },
-		{ .name = "Center 50%", .uv = { 0.25f, 0.25f, 0.5f, 0.5f } },
-		{ .name = "Nasal Convergence 50%",
+		{ .name = kPresetFullEye, .uv = { 0.0f, 0.0f, 1.0f, 1.0f } },
+		{ .name = kPresetCenter75, .uv = { 0.125f, 0.125f, 0.75f, 0.75f } },
+		{ .name = kPresetCenter50, .uv = { 0.25f, 0.25f, 0.5f, 0.5f } },
+		{ .name = kPresetNasalConvergence50,
 			.uv = { 0.5f, 0.25f, 0.5f, 0.5f },
 			.rightUV = Util::Subrect::UVRegion{ 0.0f, 0.25f, 0.5f, 0.5f } },
 	});
@@ -227,10 +229,7 @@ void FoveatedRender::DrawEnable()
 	if (!runtimeSupported)
 		ImGui::EndDisabled();
 
-	if ((settings.enabled != 0) != enabledAtBoot) {
-		Util::Text::RestartNeeded(T(TKEY("foveated_pending_restart"), "Pending restart: FoveatedRender will %s on next launch."),
-			settings.enabled ? "enable" : "disable");
-	}
+	Util::UI::DrawSettingDiff(bootSnapshot, settings, &Settings::enabled);
 
 	if (enabledAtBoot) {
 		if (globals::features::upscaling.GetUpscaleMethod() == Upscaling::UpscaleMethod::kDLSS)
@@ -261,6 +260,20 @@ void FoveatedRender::DrawSettings()
 
 	// ── VR-only knobs ──
 	if (globals::game::isVR) {
+		ImGui::Text("%s", T(TKEY("foveated_region_preset_label"), "Region Preset"));
+		if (auto _tt = Util::HoverTooltipWrapper()) {
+			ImGui::Text("%s", T(TKEY("foveated_region_preset_tooltip"),
+								  "Shrinking this region below Full Eye is what actually reduces DLSS cost — "
+								  "the smaller the region, the greater the savings and the more visible the "
+								  "peripheral softness. Fine-tune further in Subrect Region below."));
+		}
+		for (const auto& presetName : { kPresetFullEye, kPresetCenter75, kPresetCenter50, kPresetNasalConvergence50 }) {
+			if (ImGui::Button(presetName))
+				subrectController.ApplyPresetByName(presetName);
+			ImGui::SameLine();
+		}
+		ImGui::NewLine();
+
 		ImGui::Separator();
 		ImGui::Text("%s", T(TKEY("foveated_dlss_mode_header"), "VR DLSS Mode"));
 		if (auto _tt = Util::HoverTooltipWrapper()) {

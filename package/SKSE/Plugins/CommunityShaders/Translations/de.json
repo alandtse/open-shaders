@@ -12,5 +12,22 @@
     "cs_editor.active": "Aktiv:",
     "cs_editor.active_click_pause": "Active - klicke zum pausieren",
     "cs_editor.add": "Hinzufügen",
-    "cs_editor.add_new_marker": "Neues Kennzeichen hinzufügen"
+    "cs_editor.add_new_marker": "Neues Kennzeichen hinzufügen",
+    "feature.cloud_relight.cloud_relighting": "Wolken-Neubeleuchtung",
+    "feature.cloud_relight.cloud_shadows_required": "Für Wolken-Eigenschatten muss Cloud Shadows installiert und aktiviert sein.",
+    "feature.cloud_relight.description": "Beleuchtet Vanilla-Wolkentexturen mithilfe des aktiven gerichteten Lichts, der Wolken-Eigenschatten und der Silberrand-Phasenbeleuchtung neu.",
+    "feature.cloud_relight.enabled": "Aktiviert",
+    "feature.cloud_relight.key_feature_1": "Mischung aus Vanilla-Wolkenfarbe und neu beleuchteter Wolkenfarbe",
+    "feature.cloud_relight.key_feature_2": "Phasenbeleuchtung für Silberränder und Vorwärtsstreuung",
+    "feature.cloud_relight.key_feature_3": "Gerichtete Wolken-Eigenschatten durch die aktive Sonne oder den aktiven Mond",
+    "feature.cloud_relight.name": "Cloud Relight",
+    "feature.cloud_relight.relight_mix": "Neubeleuchtungsmischung",
+    "feature.cloud_relight.relight_mix_tooltip": "Multiplikator für den gerichteten Lichtanteil, der den Wolken hinzugefügt wird.",
+    "feature.cloud_relight.silver_lining": "Silberrand",
+    "feature.cloud_relight.silver_lining_accent": "Silberrand-Akzent",
+    "feature.cloud_relight.silver_lining_accent_tooltip": "Mischt zwischen flacher isotroper Phase und scharfer Silberrand-Phasenbeleuchtung.",
+    "feature.cloud_relight.silver_lining_spread": "Silberrand-Ausdehnung",
+    "feature.cloud_relight.silver_lining_spread_tooltip": "Positiv: Der Silberrand breitet sich in dichtere Wolkenbereiche aus.\nNegativ: Der Silberrand bleibt auf dünnere Wolkenränder beschränkt.",
+    "feature.cloud_relight.vanilla_mix": "Vanilla-Mischung",
+    "feature.cloud_relight.vanilla_mix_tooltip": "Multiplikator für die ursprüngliche Vanilla-Wolkenfarbe, bevor die Neubeleuchtung angewendet wird."
 }

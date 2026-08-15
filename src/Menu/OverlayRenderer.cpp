@@ -13,9 +13,12 @@
 #include "CSEditor/EditorWindow.h"
 #include "Feature.h"
 #include "FeatureIssues.h"
+#if defined(ENABLE_EFFECTS11)
+#	include "Features/Effects11/EffectManager.h"
+#endif
 #include "Features/RenderDoc.h"
+#include "Features/SceneSelector.h"
 #include "Features/VR.h"
-#include "Features/WeatherPicker.h"
 #include "Globals.h"
 #include "I18n/I18n.h"
 #include "Menu.h"
@@ -42,14 +45,34 @@ namespace
 
 	void DrawShaderCompilationFailures(uint64_t failed, const Menu::ThemeSettings& themeSettings)
 	{
-		ImGui::TextColored(themeSettings.StatusPalette.Error,
-			T("overlay.shaders_failed", "ERROR: %llu shaders failed to compile. Check installation and CommunityShaders.log"),
-			static_cast<unsigned long long>(failed));
+		if (failed) {
+			ImGui::TextColored(themeSettings.StatusPalette.Error,
+				T("overlay.shaders_failed", "ERROR: %llu shaders failed to compile. Check installation and CommunityShaders.log"),
+				static_cast<unsigned long long>(failed));
 
-		if (FeatureIssues::HasPotentialShaderModifyingFeatures()) {
-			ImGui::TextColored(themeSettings.StatusPalette.Error, "%s", T("overlay.modified_features", "Features that may have modified shaders detected. Check Feature Issues in the Menu."));
+			if (FeatureIssues::HasPotentialShaderModifyingFeatures()) {
+				ImGui::TextColored(themeSettings.StatusPalette.Error, "%s", T("overlay.modified_features", "Features that may have modified shaders detected. Check Feature Issues in the Menu."));
+			}
 		}
 	}
+
+#if defined(ENABLE_EFFECTS11)
+	void DrawEffects11Errors(const Menu::ThemeSettings& themeSettings)
+	{
+		auto& effectManager = EffectManager::GetSingleton();
+		if (!effectManager.IsInitialized())
+			return;
+
+		uint32_t effectFailed = effectManager.GetFailedEffectCount();
+		if (effectFailed) {
+			ImGui::TextColored(themeSettings.StatusPalette.Error,
+				"ERROR: %u effect(s) failed to compile",
+				effectFailed);
+			for (const auto& err : effectManager.GetAllErrors())
+				ImGui::TextColored(themeSettings.StatusPalette.Error, "  %s", err.c_str());
+		}
+	}
+#endif
 
 	bool IsVisibleRootWindow(ImGuiWindow* win)
 	{
@@ -200,13 +223,20 @@ bool OverlayRenderer::ShouldSkipRendering()
 	auto* abTestingManager = ABTestingManager::GetSingleton();
 	auto* renderDoc = RenderDoc::GetSingleton();
 
+#if defined(ENABLE_EFFECTS11)
+	uint32_t effectFailed = EffectManager::GetSingleton().IsInitialized() ? EffectManager::GetSingleton().GetFailedEffectCount() : 0;
+#else
+	uint32_t effectFailed = 0;
+#endif
+
 	return !(shaderCache->IsCompiling() ||
 			 Menu::GetSingleton()->IsEnabled ||
 			 EditorWindow::GetSingleton()->open ||
 			 abTestingManager->IsEnabled() ||
 			 (failed && !hide) ||
+			 effectFailed ||
 			 globals::features::performanceOverlay.settings.ShowInOverlay ||
-			 globals::features::weatherPicker.IsOverlayVisible() ||
+			 globals::features::sceneSelector.IsOverlayVisible() ||
 			 renderDoc->IsAvailable() ||
 			 HomePageRenderer::ShouldShowFirstTimeSetup() ||
 			 globals::features::vr.HelperRequestsRender());
@@ -272,7 +302,7 @@ void OverlayRenderer::InitializeImGuiFrame(Menu& menu)
 		menu.resetLayout = true;
 		EditorWindow::GetSingleton()->resetLayout = true;
 		globals::features::performanceOverlay.ResetWindowLayout();
-		globals::features::weatherPicker.ResetWindowLayout();
+		globals::features::sceneSelector.ResetWindowLayout();
 	}
 	menu.lastDisplaySize = currentDisplaySize;
 
@@ -304,6 +334,12 @@ void OverlayRenderer::RenderShaderCompilationStatus(const std::function<const ch
 	auto percent = (float)compiledShaders / (float)totalShaders;
 	auto progressOverlay = fmt::format("{}/{} ({:2.1f}%)", compiledShaders, totalShaders, 100 * percent);
 
+#if defined(ENABLE_EFFECTS11)
+	uint32_t effectFailed = EffectManager::GetSingleton().IsInitialized() ? EffectManager::GetSingleton().GetFailedEffectCount() : 0;
+#else
+	uint32_t effectFailed = 0;
+#endif
+
 	if (shaderCache->IsCompiling()) {
 		// VR immersion: suppress only the routine background-compile readout; the
 		// blocking-compile path and anything exceptional still show below.
@@ -323,11 +359,28 @@ void OverlayRenderer::RenderShaderCompilationStatus(const std::function<const ch
 			ImGui::TextUnformatted(progressTitle.c_str());
 			ImGui::ProgressBar(percent, ImVec2(0.0f, 0.0f), progressOverlay.c_str());
 		}
-		if (shaderCache->IsDiskCacheHeld()) {
+		if (shaderCache->HasFeatureSetRevertPending()) {
+			ImGui::TextColored(themeSettings.StatusPalette.Warning, "%s",
+				T("overlay.revert_pending",
+					"Previous cache restored.\n"
+					"Restart to use it."));
+		} else if (shaderCache->HasFeatureSetChanges()) {
+			if (shaderCache->HasFeatureSetCacheBackup()) {
+				ImGui::TextColored(themeSettings.StatusPalette.Warning, "%s",
+					T("overlay.feature_changed_backup",
+						"Feature setup changed. Building a new shader cache for this setup.\n"
+						"Previous cache saved."));
+			} else {
+				ImGui::TextColored(themeSettings.StatusPalette.Warning, "%s",
+					T("overlay.feature_changed_no_backup",
+						"Feature setup changed. Building shaders in memory until the cache can be rebuilt.\n"
+						"Previous cache is not available for restore."));
+			}
+		} else if (shaderCache->IsDiskCacheHeld()) {
 			ImGui::TextColored(themeSettings.StatusPalette.Warning, "%s",
 				T("overlay.cache_held",
-					"Feature set changed: your previous shader cache is preserved on disk.\n"
-					"Open the Open Shaders menu home page to rebuild it or fix your setup and restart."));
+					"Saved shader cache cannot be used.\n"
+					"A required feature is missing or failed to load."));
 		}
 		// Surface bad-install feature problems during the compile itself; otherwise
 		// the user only learns from the Feature Issues tab after baking the wrong set.
@@ -365,9 +418,11 @@ void OverlayRenderer::RenderShaderCompilationStatus(const std::function<const ch
 			ImGui::TextUnformatted(skipShadersText.c_str());
 			ImGui::TextUnformatted(T("overlay.uncompiled_warning", "WARNING: Uncompiled shaders will have visual errors or cause stuttering when loading."));
 		}
-		if (failed && !hide) {
+		if (failed && !hide)
 			DrawShaderCompilationFailures(failed, themeSettings);
-		}
+#if defined(ENABLE_EFFECTS11)
+		DrawEffects11Errors(themeSettings);
+#endif
 
 		if (renderDocAvailable)
 			ImGui::TextColored(themeSettings.StatusPalette.Warning, renderDocInformation.c_str());
@@ -376,21 +431,22 @@ void OverlayRenderer::RenderShaderCompilationStatus(const std::function<const ch
 		return;
 	}
 
-	if (failed) {
-		if (!hide) {
-			ImGui::SetNextWindowPos(ImVec2(pos, pos));
-			if (!ImGui::Begin("ShaderCompilationInfo", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings)) {
-				ImGui::End();
-				return;
-			}
-
-			DrawShaderCompilationFailures(failed, themeSettings);
-
-			if (renderDocAvailable)
-				ImGui::TextColored(themeSettings.StatusPalette.Warning, renderDocInformation.c_str());
-
+	if ((failed && !hide) || effectFailed) {
+		ImGui::SetNextWindowPos(ImVec2(pos, pos));
+		if (!ImGui::Begin("ShaderCompilationInfo", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings)) {
 			ImGui::End();
+			return;
 		}
+
+		DrawShaderCompilationFailures(failed, themeSettings);
+#if defined(ENABLE_EFFECTS11)
+		DrawEffects11Errors(themeSettings);
+#endif
+
+		if (renderDocAvailable)
+			ImGui::TextColored(themeSettings.StatusPalette.Warning, renderDocInformation.c_str());
+
+		ImGui::End();
 	} else if (renderDocAvailable) {
 		ImGui::SetNextWindowPos(ImVec2(pos, pos));
 		if (!ImGui::Begin("ShaderCompilationInfo", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings)) {

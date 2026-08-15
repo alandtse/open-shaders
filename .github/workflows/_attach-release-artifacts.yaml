@@ -1,0 +1,187 @@
+name: "(Shared) Attach Release Artifacts"
+
+# Shared by release-semantic.yaml and release-build.yaml. Expects a
+# preceding job in the SAME run to have uploaded dist-artifacts (and
+# optionally ShaderCache-SE/VR) via _shared-build.yaml.
+
+on:
+    workflow_call:
+        inputs:
+            tag:
+                description: "Release tag to attach artifacts to."
+                type: string
+                required: true
+            draft:
+                description: "Create/update as a draft."
+                type: string
+                default: "true"
+        secrets:
+            token:
+                description: "Token for the release API (GITHUB_TOKEN or a PAT, per publish-release's own token guidance)."
+                required: true
+
+permissions:
+    contents: write
+
+jobs:
+    attach:
+        name: Attach artifacts to release
+        runs-on: ubuntu-latest
+        permissions:
+            contents: write
+            id-token: write
+            attestations: write
+        steps:
+            # Sparse-checkout FIRST: checkout's default clean would wipe
+            # artifacts downloaded below if it ran after them.
+            - name: Check out composite action and scripts
+              uses: actions/checkout@v6
+              with:
+                  sparse-checkout: |
+                      .github/actions
+                      .github/scripts
+                      .github/configs
+                      .github/assets/logo
+
+            - name: Set up Python for FOMOD packaging
+              uses: actions/setup-python@v6
+              with:
+                  python-version: "3.12"
+
+            - name: Download dist artifacts
+              uses: actions/download-artifact@v7
+              with:
+                  name: dist-artifacts
+                  path: dist/
+
+            # Feature Metadata Summary is already in the body; just fetch it.
+            - name: Resolve release body
+              id: notes
+              shell: bash
+              env:
+                  GH_TOKEN: ${{ secrets.token }}
+                  GH_REPO: ${{ github.repository }}
+                  RELEASE_TAG: ${{ inputs.tag }}
+              run: |
+                  set -euo pipefail
+                  # `gh release view` (not `gh api .../releases/tags/`): that
+                  # REST endpoint 404s on drafts, which is the normal case here.
+                  if gh release view "$RELEASE_TAG" --json body -q .body > auto-release-notes.md 2>/tmp/gh-err; then
+                    :
+                  else
+                    if grep -q 'release not found' /tmp/gh-err; then
+                      echo "Release $RELEASE_TAG does not exist yet; starting with empty body."
+                      : > auto-release-notes.md
+                    else
+                      echo "::error::Failed to fetch release body for $RELEASE_TAG:"
+                      cat /tmp/gh-err
+                      exit 1
+                    fi
+                  fi
+                  echo "body_file=auto-release-notes.md" >> "$GITHUB_OUTPUT"
+
+            # publish-release's removeArtifacts wipes every asset and
+            # re-attaches only dist/*.7z, so a runtime with no fresh cache
+            # this call must be re-supplied from the existing release asset.
+            - name: Download shader cache artifacts
+              continue-on-error: true
+              uses: actions/download-artifact@v7
+              with:
+                  pattern: ShaderCache-*
+                  path: shader-caches/
+
+            - name: Stage shader caches into dist
+              shell: bash
+              env:
+                  GH_TOKEN: ${{ secrets.token }}
+                  GH_REPO: ${{ github.repository }}
+                  RELEASE_TAG: ${{ inputs.tag }}
+              run: |
+                  set -euo pipefail
+                  for runtime in SE VR; do
+                    target="dist/ShaderCache-${runtime}-${RELEASE_TAG}.7z"
+                    src="shader-caches/ShaderCache-${runtime}"
+                    rm -f "$target"
+                    if [ -d "$src" ]; then
+                      if rm -rf ShaderCache && mv "$src" ShaderCache && bash .github/scripts/package-shader-cache.sh "$target" >/dev/null; then
+                        echo "Staged fresh $target"
+                      else
+                        echo "::warning::Failed to package fresh ShaderCache-${runtime}; release ships without it."
+                      fi
+                    elif gh release download "$RELEASE_TAG" --pattern "ShaderCache-${runtime}-${RELEASE_TAG}.7z" --dir dist 2>/dev/null; then
+                      echo "Preserved existing $target"
+                    else
+                      echo "::warning::No fresh or existing ShaderCache-${runtime}; release ships without it."
+                    fi
+                  done
+
+            # Reads dist/ShaderCache-{SE,VR}-<tag>.7z (already resolved fresh-or-
+            # preserved above), not the raw shader-caches/ dirs the staging step
+            # already consumed via mv. Replaces the plain AIO in place under its
+            # existing name -- stays nexus-upload.yaml's default with no changes.
+            - name: Build FOMOD-wrapped AIO package
+              shell: bash
+              env:
+                  RELEASE_TAG: ${{ inputs.tag }}
+              run: |
+                  set -euo pipefail
+                  # -print -quit (not `find | head -1`): avoids a SIGPIPE-triggered
+                  # nonzero `find` exit under pipefail if more than one match exists.
+                  aio_7z=$(find dist -maxdepth 1 -name 'CommunityShaders_AIO-*.7z' -print -quit)
+                  if [ -z "$aio_7z" ]; then
+                    echo "::warning::No AIO archive in dist/; skipping FOMOD package."
+                    exit 0
+                  fi
+
+                  mkdir -p fomod-work/core
+                  7z x -y -ofomod-work/core "$aio_7z" >/dev/null
+
+                  args=(--core fomod-work/core --version "$RELEASE_TAG" --output fomod-work/staged)
+
+                  se_7z="dist/ShaderCache-SE-${RELEASE_TAG}.7z"
+                  if [ -f "$se_7z" ]; then
+                    mkdir -p fomod-work/se
+                    7z x -y -ofomod-work/se "$se_7z" >/dev/null
+                    args+=(--se-cache fomod-work/se/ShaderCache)
+                  fi
+
+                  vr_7z="dist/ShaderCache-VR-${RELEASE_TAG}.7z"
+                  if [ -f "$vr_7z" ]; then
+                    mkdir -p fomod-work/vr
+                    7z x -y -ofomod-work/vr "$vr_7z" >/dev/null
+                    args+=(--vr-cache fomod-work/vr/ShaderCache)
+                  fi
+
+                  pip install --quiet pyfomod pyyaml
+                  python3 .github/scripts/build-fomod-package.py "${args[@]}"
+
+                  # Build into a temp name and verify it before touching the original --
+                  # never delete $aio_7z until its replacement is confirmed non-empty.
+                  tmp_7z="${aio_7z}.fomod-tmp"
+                  rm -f "$tmp_7z"
+                  (cd fomod-work/staged && 7z a -t7z -mx=7 "${GITHUB_WORKSPACE}/${tmp_7z}" . >/dev/null)
+                  if [ ! -s "$tmp_7z" ]; then
+                    echo "::error::FOMOD package build produced an empty or missing archive; leaving original $aio_7z untouched."
+                    exit 1
+                  fi
+                  mv "$tmp_7z" "$aio_7z"
+                  echo "Replaced $aio_7z with the FOMOD-wrapped package"
+
+            # A "preserved existing" shader cache re-attests unchanged bytes from a
+            # prior run -- harmless, Sigstore allows multiple attestations per digest.
+            - name: Generate artifact attestations
+              uses: actions/attest-build-provenance@v4
+              with:
+                  subject-path: "dist/*.7z"
+
+            - name: Create or update release
+              uses: ./.github/actions/publish-release
+              with:
+                  token: ${{ secrets.token }}
+                  name: "Open Shaders ${{ inputs.tag }}"
+                  tag: ${{ inputs.tag }}
+                  draft: ${{ inputs.draft }}
+                  omit-draft-during-update: "true"
+                  artifacts: "${{ github.workspace }}/dist/*.7z"
+                  body-file: ${{ steps.notes.outputs.body_file }}
+                  download-artifact: "false"

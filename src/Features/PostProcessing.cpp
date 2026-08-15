@@ -668,7 +668,9 @@ void PostProcessing::Prepass()
 		}
 	};
 	if (globals::game::isVR) {
-		updateGameISData(globals::game::imageSpaceManager->GetVRRuntimeData());
+		// Guaranteed non-null: GetVRRuntimeData() only returns null when IsVR()
+		// is false, which this branch already excludes.
+		updateGameISData(*globals::game::imageSpaceManager->GetVRRuntimeData());
 	} else {
 		updateGameISData(globals::game::imageSpaceManager->GetRuntimeData());
 	}

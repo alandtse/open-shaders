@@ -4,8 +4,12 @@
 #include "FeatureVersions.h"
 #include "Features/CSEditor.h"
 #include "Features/CSUtility.h"
+#include "Features/CloudRelight.h"
 #include "Features/CloudShadows.h"
 #include "Features/DynamicCubemaps.h"
+#if defined(ENABLE_EFFECTS11)
+#	include "Features/Effects11.h"
+#endif
 #include "Features/ExponentialHeightFog.h"
 #include "Features/ExtendedMaterials.h"
 #include "Features/ExtendedTranslucency.h"
@@ -25,6 +29,7 @@
 #include "Features/PostProcessing.h"
 #include "Features/RemoteControl.h"
 #include "Features/RenderDoc.h"
+#include "Features/SceneSelector.h"
 #include "Features/ScreenSpaceGI.h"
 #include "Features/ScreenSpaceShadows.h"
 #include "Features/ScreenshotFeature.h"
@@ -43,7 +48,6 @@
 #include "Features/VolumetricLighting.h"
 #include "Features/VolumetricShadows.h"
 #include "Features/WaterEffects.h"
-#include "Features/WeatherPicker.h"
 #include "Features/WetnessEffects.h"
 #include "I18n/I18n.h"
 #include "Menu.h"
@@ -57,6 +61,14 @@
 
 void Feature::Load(json& o_json)
 {
+	// AIO ships every feature's ini to every runtime; loaded must stay false
+	// here on VR unless dev mode's own test-all-features bypass is active.
+	if (globals::game::isVR && !SupportsVR() && !globals::state->IsDeveloperMode()) {
+		loaded = false;
+		logger::info("{} does not support VR, feature disabled", GetShortName());
+		return;
+	}
+
 	// Convert string to wstring
 	auto ini_filename = std::format("{}.ini", GetShortName());
 	std::wstring ini_filename_w;
@@ -217,62 +229,74 @@ void Feature::WriteDiskCacheInfo(CSimpleIniA& a_ini)
 	a_ini.SetValue(ini_name.c_str(), "Version", version.c_str());
 }
 
+namespace
+{
+	/** @brief Every Feature instance Open Shaders knows about, independent of VR filtering. */
+	const std::vector<Feature*>& GetAllFeatures()
+	{
+		static std::vector<Feature*> features = {
+			&globals::features::truePBR,
+			&globals::features::foliageLighting,
+			&globals::features::volumetricShadows,
+			&globals::features::grassLighting,
+			&globals::features::grassCollision,
+			&globals::features::screenSpaceShadows,
+			&globals::features::extendedMaterials,
+			&globals::features::wetnessEffects,
+			&globals::features::lightLimitFix,
+			&globals::features::dynamicCubemaps,
+			&globals::features::cloudShadows,
+			&globals::features::cloudRelight,
+			&globals::features::waterEffects,
+			&globals::features::performanceOverlay,
+			&globals::features::subsurfaceScattering,
+			&globals::features::terrainShadows,
+			&globals::features::screenSpaceGI,
+			&globals::features::skylighting,
+			&globals::features::skySync,
+			&globals::features::terrainBlending,
+			&globals::features::terrainHelper,
+			&globals::features::vanillaFresnel,
+			&globals::features::volumetricLighting,
+			&globals::features::lodBlending,
+			&globals::features::inverseSquareLighting,
+			&globals::features::hairSpecular,
+			&globals::features::interiorSun,
+			&globals::features::terrainVariation,
+			&globals::features::ibl,
+			&globals::features::extendedTranslucency,
+			&globals::features::upscaling,
+			&globals::features::renderDoc,
+			&globals::features::remoteControl,
+			&globals::features::csEditor,
+			&globals::features::sceneSelector,
+			&globals::features::csUtility,
+			&globals::features::screenshotFeature,
+			&globals::features::linearLighting,
+#if defined(ENABLE_EFFECTS11)
+			&globals::features::effects11,
+#endif
+			&globals::features::unifiedWater,
+			&globals::features::horizonFix,
+			&globals::features::exponentialHeightFog,
+			&globals::features::hdrDisplay,
+			&globals::features::skin,
+			&globals::features::postProcessing
+		};
+		return features;
+	}
+}
+
 /**
  * @brief Provides access to the registry of all known features.
  * @return A constant reference to the vector of all known feature instances.
  */
 const std::vector<Feature*>& Feature::GetFeatureList()
 {
-	static std::vector<Feature*> features = {
-		&globals::features::truePBR,
-		&globals::features::foliageLighting,
-		&globals::features::volumetricShadows,
-		&globals::features::grassLighting,
-		&globals::features::grassCollision,
-		&globals::features::screenSpaceShadows,
-		&globals::features::extendedMaterials,
-		&globals::features::wetnessEffects,
-		&globals::features::lightLimitFix,
-		&globals::features::dynamicCubemaps,
-		&globals::features::cloudShadows,
-		&globals::features::waterEffects,
-		&globals::features::performanceOverlay,
-		&globals::features::subsurfaceScattering,
-		&globals::features::terrainShadows,
-		&globals::features::screenSpaceGI,
-		&globals::features::skylighting,
-		&globals::features::skySync,
-		&globals::features::terrainBlending,
-		&globals::features::terrainHelper,
-		&globals::features::vanillaFresnel,
-		&globals::features::volumetricLighting,
-		&globals::features::lodBlending,
-		&globals::features::inverseSquareLighting,
-		&globals::features::hairSpecular,
-		&globals::features::interiorSun,
-		&globals::features::terrainVariation,
-		&globals::features::ibl,
-		&globals::features::extendedTranslucency,
-		&globals::features::upscaling,
-		&globals::features::renderDoc,
-		&globals::features::remoteControl,
-		&globals::features::csEditor,
-		&globals::features::weatherPicker,
-		&globals::features::csUtility,
-		&globals::features::screenshotFeature,
-		&globals::features::linearLighting,
-		&globals::features::unifiedWater,
-		&globals::features::horizonFix,
-		&globals::features::exponentialHeightFog,
-		&globals::features::hdrDisplay,
-		&globals::features::skin,
-		&globals::features::postProcessing
-	};
-
 	if (globals::game::isVR) {
 		// Helper function to build VR feature list
 		static auto BuildVRList = []() -> std::vector<Feature*> {
-			auto v = features;
+			auto v = GetAllFeatures();
 			v.push_back(&globals::features::vr);
 
 			// In developer mode, keep all features for testing
@@ -295,8 +319,21 @@ const std::vector<Feature*>& Feature::GetFeatureList()
 
 		return featuresVR;
 	} else {
-		return features;
+		return GetAllFeatures();
 	}
+}
+
+Feature* Feature::FindRegisteredFeatureByShortName(const std::string& shortName)
+{
+	for (auto* feature : GetAllFeatures()) {
+		if (feature->GetShortName() == shortName)
+			return feature;
+	}
+	// The VR feature is added to GetFeatureList() dynamically rather than living
+	// in the base registry, since it only exists at all when running on VR.
+	if (shortName == "VR")
+		return &globals::features::vr;
+	return nullptr;
 }
 
 void Feature::ApplyPerformanceProfileToAll(PerfProfile profile)

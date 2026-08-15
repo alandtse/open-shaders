@@ -9,6 +9,7 @@
 
 #include "Features/CSEditor.h"
 #include "Features/DynamicCubemaps.h"
+#include "Features/Effects11.h"
 #include "Features/IBL.h"
 #include "Features/LightLimitFix/ShadowCasterManager.h"
 #include "Features/ScreenSpaceGI.h"
@@ -395,7 +396,7 @@ void Deferred::DeferredPasses()
 	if (ssgi.loaded)
 		ssgi.DrawSSGI();
 	auto [ssgi_ao, ssgi_y, ssgi_cocg, ssgi_gi_spec] = ssgi.GetOutputTextures();
-	bool ssgi_hq_spec = ssgi.settings.EnableExperimentalSpecularGI;
+	bool ssgi_hq_spec = ssgi.IsSpecularGIActive();
 
 	auto dispatchCount = Util::GetScreenDispatchCount(true);
 
@@ -478,6 +479,11 @@ void Deferred::DeferredPasses()
 
 	if (dynamicCubemaps.loaded)
 		dynamicCubemaps.PostDeferred();
+
+#if defined(ENABLE_EFFECTS11)
+	if (globals::features::effects11.loaded)
+		globals::features::effects11.DrawVolumetricRays();
+#endif
 }
 
 void Deferred::EndDeferred()
@@ -708,8 +714,11 @@ ID3D11ComputeShader* Deferred::GetComputeMainComposite()
 		if (globals::features::skylighting.loaded)
 			defines.push_back({ "SKYLIGHTING", nullptr });
 
-		if (globals::features::screenSpaceGI.loaded)
+		if (globals::features::screenSpaceGI.loaded) {
 			defines.push_back({ "SSGI", nullptr });
+			if (!globals::features::screenSpaceGI.HasGIResources())
+				defines.push_back({ "SSGI_AO_ONLY", nullptr });
+		}
 
 		if (globals::features::ibl.loaded)
 			defines.push_back({ "IBL", nullptr });
@@ -738,8 +747,11 @@ ID3D11ComputeShader* Deferred::GetComputeMainCompositeInterior()
 		if (globals::features::dynamicCubemaps.loaded)
 			defines.push_back({ "DYNAMIC_CUBEMAPS", nullptr });
 
-		if (globals::features::screenSpaceGI.loaded)
+		if (globals::features::screenSpaceGI.loaded) {
 			defines.push_back({ "SSGI", nullptr });
+			if (!globals::features::screenSpaceGI.HasGIResources())
+				defines.push_back({ "SSGI_AO_ONLY", nullptr });
+		}
 
 		if (globals::features::ibl.loaded)
 			defines.push_back({ "IBL", nullptr });

@@ -1391,6 +1391,10 @@ namespace Util
 		std::string header;
 		std::string tooltip;
 		std::function<std::string(const T&)> getValue;
+		// Full value is the hover tooltip and still matches filters even when display text is cut.
+		bool truncate = false;
+		// Relative stretch weight under ImGuiTableFlags_SizingStretchProp.
+		float widthWeight = 1.0f;
 	};
 
 	/**
@@ -1570,7 +1574,7 @@ namespace Util
 		if (ImGui::BeginTable(table_id, static_cast<int>(columns.size()), flags)) {
 			// Set up columns
 			for (size_t i = 0; i < columns.size(); ++i) {
-				ImGui::TableSetupColumn(columns[i].header.c_str());
+				ImGui::TableSetupColumn(columns[i].header.c_str(), ImGuiTableColumnFlags_WidthStretch, columns[i].widthWeight);
 			}
 			ImGui::TableHeadersRow();
 
@@ -1592,113 +1596,119 @@ namespace Util
 				}
 			}
 
-			// Render rows with input event support
-			for (size_t rowIdx = 0; rowIdx < filteredRows.size(); ++rowIdx) {
-				const auto& row = filteredRows[rowIdx];
-				ImGui::TableNextRow();
+			// Sort/filter above must stay before this clipper, or only visible rows sort.
+			ImGuiListClipper clipper;
+			clipper.Begin(static_cast<int>(filteredRows.size()));
+			while (clipper.Step()) {
+				for (int rowIdxSigned = clipper.DisplayStart; rowIdxSigned < clipper.DisplayEnd; ++rowIdxSigned) {
+					size_t rowIdx = static_cast<size_t>(rowIdxSigned);
+					const auto& row = filteredRows[rowIdx];
+					ImGui::TableNextRow();
 
-				// Set custom row background color if provided (for blocked/disabled items)
-				if (getRowBgColor) {
-					ImVec4 bgColor = getRowBgColor(row);
-					if (bgColor.w > 0.0f) {  // Only set if color has alpha > 0
-						ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0, ImGui::GetColorU32(bgColor));
-					}
-				}
-
-				// Render all columns first to establish proper row layout
-				for (size_t col = 0; col < columns.size(); ++col) {
-					ImGui::TableSetColumnIndex(static_cast<int>(col));
-					const auto& column = columns[col];
-
-					// All columns are now text-only with highlighting
-					std::string value = column.getValue(row);
-					ImVec4 textColor = getRowTextColor ? getRowTextColor(row) : ImVec4(0, 0, 0, 0);
-					Util::RenderTableCell(value, filterState.filterText, column.tooltip, nullptr, ImVec4(1.0f, 1.0f, 0.0f, 1.0f), true, textColor);
-				}
-
-				// Now create the invisible button that covers the entire rendered row
-				// Get the position after all cells are rendered
-				ImVec2 rowMin = ImGui::GetItemRectMin();
-				ImVec2 rowMax = ImGui::GetItemRectMax();
-
-				// Find the actual row boundaries by checking all columns
-				float minY = FLT_MAX;
-				float maxY = -FLT_MAX;
-				float minX = FLT_MAX;
-				float maxX = -FLT_MAX;
-
-				for (size_t col = 0; col < columns.size(); ++col) {
-					ImGui::TableSetColumnIndex(static_cast<int>(col));
-					ImVec2 cellMin = ImGui::GetItemRectMin();
-					ImVec2 cellMax = ImGui::GetItemRectMax();
-
-					minX = std::min(minX, cellMin.x);
-					maxX = std::max(maxX, cellMax.x);
-					minY = std::min(minY, cellMin.y);
-					maxY = std::max(maxY, cellMax.y);
-				}
-
-				ImVec2 rowStartPos = ImVec2(minX, minY);
-				ImVec2 rowSize = ImVec2(maxX - minX, maxY - minY);
-
-				// Position the button absolutely over the rendered row
-				ImGui::SetCursorScreenPos(rowStartPos);
-				ImGui::PushID(static_cast<int>(rowIdx));
-
-				std::string buttonId = "##row_" + std::to_string(rowIdx);
-				ImGui::InvisibleButton(buttonId.c_str(), rowSize);
-
-				// Handle input events on the invisible button
-				for (const auto& event : inputEvents) {
-					if (!event.enabled)
-						continue;
-
-					bool shouldTrigger = false;
-					switch (event.type) {
-					case TableInputEventType::MouseClick:
-						shouldTrigger = ImGui::IsItemClicked() && event.mouseButton == 0;  // Left click
-						break;
-					case TableInputEventType::MouseDoubleClick:
-						shouldTrigger = ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(event.mouseButton);
-						break;
-					case TableInputEventType::KeyPress:
-						shouldTrigger = ImGui::IsItemFocused() && ImGui::IsKeyPressed(event.key);
-						break;
-					case TableInputEventType::ContextMenu:
-						if (ImGui::IsItemHovered() && ImGui::IsMouseClicked(event.mouseButton)) {
-							std::string popupId = "row_context_" + std::to_string(rowIdx);
-							ImGui::OpenPopup(popupId.c_str());
+					// Set custom row background color if provided (for blocked/disabled items)
+					if (getRowBgColor) {
+						ImVec4 bgColor = getRowBgColor(row);
+						if (bgColor.w > 0.0f) {  // Only set if color has alpha > 0
+							ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0, ImGui::GetColorU32(bgColor));
 						}
-						break;
 					}
 
-					if (shouldTrigger && event.callback) {
-						event.callback(row);
-					}
-				}
+					// Render all columns first to establish proper row layout
+					for (size_t col = 0; col < columns.size(); ++col) {
+						ImGui::TableSetColumnIndex(static_cast<int>(col));
+						const auto& column = columns[col];
 
-				// Render context menus
-				for (const auto& event : inputEvents) {
-					if (event.type == TableInputEventType::ContextMenu) {
-						std::string popupId = "row_context_" + std::to_string(rowIdx);
-						if (ImGui::BeginPopup(popupId.c_str())) {
-							if (ImGui::MenuItem(event.label.c_str()) && event.callback) {
-								event.callback(row);
+						// All columns are now text-only with highlighting
+						std::string value = column.getValue(row);
+						ImVec4 textColor = getRowTextColor ? getRowTextColor(row) : ImVec4(0, 0, 0, 0);
+						const std::string& cellTooltip = column.truncate ? value : column.tooltip;
+						Util::RenderTableCell(value, filterState.filterText, cellTooltip, nullptr, ImVec4(1.0f, 1.0f, 0.0f, 1.0f), !column.truncate, textColor);
+					}
+
+					// Now create the invisible button that covers the entire rendered row
+					// Get the position after all cells are rendered
+					ImVec2 rowMin = ImGui::GetItemRectMin();
+					ImVec2 rowMax = ImGui::GetItemRectMax();
+
+					// Find the actual row boundaries by checking all columns
+					float minY = FLT_MAX;
+					float maxY = -FLT_MAX;
+					float minX = FLT_MAX;
+					float maxX = -FLT_MAX;
+
+					for (size_t col = 0; col < columns.size(); ++col) {
+						ImGui::TableSetColumnIndex(static_cast<int>(col));
+						ImVec2 cellMin = ImGui::GetItemRectMin();
+						ImVec2 cellMax = ImGui::GetItemRectMax();
+
+						minX = std::min(minX, cellMin.x);
+						maxX = std::max(maxX, cellMax.x);
+						minY = std::min(minY, cellMin.y);
+						maxY = std::max(maxY, cellMax.y);
+					}
+
+					ImVec2 rowStartPos = ImVec2(minX, minY);
+					ImVec2 rowSize = ImVec2(maxX - minX, maxY - minY);
+
+					// Position the button absolutely over the rendered row
+					ImGui::SetCursorScreenPos(rowStartPos);
+					ImGui::PushID(static_cast<int>(rowIdx));
+
+					std::string buttonId = "##row_" + std::to_string(rowIdx);
+					ImGui::InvisibleButton(buttonId.c_str(), rowSize);
+
+					// Handle input events on the invisible button
+					for (const auto& event : inputEvents) {
+						if (!event.enabled)
+							continue;
+
+						bool shouldTrigger = false;
+						switch (event.type) {
+						case TableInputEventType::MouseClick:
+							shouldTrigger = ImGui::IsItemClicked() && event.mouseButton == 0;  // Left click
+							break;
+						case TableInputEventType::MouseDoubleClick:
+							shouldTrigger = ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(event.mouseButton);
+							break;
+						case TableInputEventType::KeyPress:
+							shouldTrigger = ImGui::IsItemFocused() && ImGui::IsKeyPressed(event.key);
+							break;
+						case TableInputEventType::ContextMenu:
+							if (ImGui::IsItemHovered() && ImGui::IsMouseClicked(event.mouseButton)) {
+								std::string popupId = "row_context_" + std::to_string(rowIdx);
+								ImGui::OpenPopup(popupId.c_str());
 							}
-							ImGui::EndPopup();
+							break;
+						}
+
+						if (shouldTrigger && event.callback) {
+							event.callback(row);
 						}
 					}
-				}
 
-				// Row tooltip
-				if (getRowTooltip && ImGui::IsItemHovered()) {
-					if (auto _tt = Util::HoverTooltipWrapper()) {
-						std::string tooltip = getRowTooltip(row);
-						ImGui::Text("%s", tooltip.c_str());
+					// Render context menus
+					for (const auto& event : inputEvents) {
+						if (event.type == TableInputEventType::ContextMenu) {
+							std::string popupId = "row_context_" + std::to_string(rowIdx);
+							if (ImGui::BeginPopup(popupId.c_str())) {
+								if (ImGui::MenuItem(event.label.c_str()) && event.callback) {
+									event.callback(row);
+								}
+								ImGui::EndPopup();
+							}
+						}
 					}
-				}
 
-				ImGui::PopID();
+					// Row tooltip
+					if (getRowTooltip && ImGui::IsItemHovered()) {
+						if (auto _tt = Util::HoverTooltipWrapper()) {
+							std::string tooltip = getRowTooltip(row);
+							ImGui::Text("%s", tooltip.c_str());
+						}
+					}
+
+					ImGui::PopID();
+				}
 			}
 			ImGui::EndTable();
 		}

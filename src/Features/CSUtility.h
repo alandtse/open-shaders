@@ -63,6 +63,18 @@ struct CSUtility : Feature
 		DepthOfFieldSettings baseline;
 	};
 
+	struct WaterSettings
+	{
+		float brightness = 1.0f;
+		float reflectionAmount = 1.0f;
+		float refractionAmount = 1.0f;
+		float sunSpecularMultiplier = 1.0f;
+		float waveAmplitude = 1.0f;
+		float fresnelMin = 0.0f;
+		float fresnelMax = 1.0f;
+		float muddiness = 1.0f;
+	};
+
 	struct Settings
 	{
 		float skyBrightness = 1.0f;
@@ -73,6 +85,7 @@ struct CSUtility : Feature
 		float linearSpotlightMult = 1.0f;
 		float omnidirectionalBulbMult = 1.0f;
 		float linearOmnidirectionalBulbMult = 1.0f;
+		WaterSettings water;
 		DepthOfFieldOverride sceneDof;
 		DepthOfFieldOverride underwaterDof;
 		Bloom::PresetSettings bloomEnhancement;
@@ -88,9 +101,17 @@ struct CSUtility : Feature
 		float linearSpotlightMult;
 		float omnidirectionalBulbMult;
 		float linearOmnidirectionalBulbMult;
+		float waterBrightness;
+		float waterReflectionAmount;
+		float waterRefractionAmount;
+		float waterSunSpecularMultiplier;
+		float waterWaveAmplitude;
+		float waterFresnelMin;
+		float waterFresnelMax;
+		float waterMuddiness;
 	};
 	STATIC_ASSERT_ALIGNAS_16(PerFrameData);
-	static_assert(sizeof(PerFrameData) == 32);
+	static_assert(sizeof(PerFrameData) == 64);
 
 	struct alignas(16) VanillaPointLightData
 	{
@@ -112,11 +133,15 @@ struct CSUtility : Feature
 	PerFrameData GetCommonBufferData() const;
 	void UpdateVanillaPointLightData(RE::BSRenderPass* a_pass, uint32_t a_lightCount);
 	void DrawDepthOfFieldSettings();
+	/** Draws water tuning controls. */
+	void DrawWaterSettings();
 	void DrawVanillaBloomSettings();
 	void InstallDepthOfFieldHooks();
 
 	static void SanitizeDepthOfFieldSettings(DepthOfFieldSettings& a_settings);
 	static void SanitizeDepthOfFieldOverride(DepthOfFieldOverride& a_override);
+	/** Clamps water controls before serialization or GPU upload. */
+	static void SanitizeWaterSettings(WaterSettings& a_settings);
 
 	struct Hooks;
 };

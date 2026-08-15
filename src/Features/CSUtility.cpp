@@ -20,6 +20,13 @@ namespace
 	constexpr float kSkyBrightnessMax = 2.0f;
 	constexpr float kMultiplierMin = 0.0f;
 	constexpr float kMultiplierMax = 5.0f;
+	constexpr float kWaterBrightnessMin = 0.0f;
+	constexpr float kWaterBrightnessMax = 2.0f;
+	constexpr float kWaterAmountMin = 0.0f;
+	constexpr float kWaterAmountMax = 2.0f;
+	constexpr float kWaterSunSpecularMax = 5.0f;
+	constexpr float kWaterFresnelMin = 0.0f;
+	constexpr float kWaterFresnelMax = 1.0f;
 	constexpr uint32_t kMaxVanillaPointLights = 7;
 	constexpr uint32_t kVanillaPointLightCBRegister = 3;
 	constexpr uint32_t kFirstPointLightSceneIndex = 1;
@@ -42,6 +49,7 @@ namespace
 		a_settings.linearSpotlightMult = ClampFiniteOrDefault(a_settings.linearSpotlightMult, kMultiplierMin, kMultiplierMax, defaults.linearSpotlightMult);
 		a_settings.omnidirectionalBulbMult = ClampFiniteOrDefault(a_settings.omnidirectionalBulbMult, kMultiplierMin, kMultiplierMax, defaults.omnidirectionalBulbMult);
 		a_settings.linearOmnidirectionalBulbMult = ClampFiniteOrDefault(a_settings.linearOmnidirectionalBulbMult, kMultiplierMin, kMultiplierMax, defaults.linearOmnidirectionalBulbMult);
+		CSUtility::SanitizeWaterSettings(a_settings.water);
 		CSUtility::SanitizeDepthOfFieldOverride(a_settings.sceneDof);
 		CSUtility::SanitizeDepthOfFieldOverride(a_settings.underwaterDof);
 		Bloom::SanitizeSettings(a_settings.bloomEnhancement);
@@ -62,6 +70,14 @@ namespace
 			if (auto _tt = Util::HoverTooltipWrapper()) {
 				ImGui::Text("%s", T(TKEY("linear_slider_disabled_tooltip"), "Enable Linear Lighting to use this multiplier."));
 			}
+		}
+	}
+
+	void DrawWaterSlider(const char* a_label, float& a_value, float a_min, float a_max, const char* a_tooltip)
+	{
+		ImGui::SliderFloat(a_label, &a_value, a_min, a_max, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+		if (auto _tt = Util::HoverTooltipWrapper()) {
+			ImGui::TextWrapped("%s", a_tooltip);
 		}
 	}
 }
@@ -94,6 +110,17 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	baseline)
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
+	CSUtility::WaterSettings,
+	brightness,
+	reflectionAmount,
+	refractionAmount,
+	sunSpecularMultiplier,
+	waveAmplitude,
+	fresnelMin,
+	fresnelMax,
+	muddiness)
+
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	CSUtility::Settings,
 	skyBrightness,
 	directionalLightMult,
@@ -103,6 +130,7 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	linearSpotlightMult,
 	omnidirectionalBulbMult,
 	linearOmnidirectionalBulbMult,
+	water,
 	sceneDof,
 	underwaterDof,
 	bloomEnhancement)
@@ -114,6 +142,8 @@ void CSUtility::DrawSettings()
 			ImGui::SliderFloat(T(TKEY("sky_brightness"), "Sky Brightness"), &settings.skyBrightness, kSkyBrightnessMin, kSkyBrightnessMax, "%.2f", ImGuiSliderFlags_AlwaysClamp);
 			ImGui::EndTabItem();
 		}
+
+		DrawWaterSettings();
 
 		if (ImGui::BeginTabItem(T(TKEY("tab_multipliers"), "Multipliers"))) {
 			if (ImGui::TreeNodeEx(T(TKEY("lighting"), "Lighting"), ImGuiTreeNodeFlags_DefaultOpen)) {
@@ -135,6 +165,48 @@ void CSUtility::DrawSettings()
 
 		ImGui::EndTabBar();
 	}
+}
+
+void CSUtility::SanitizeWaterSettings(WaterSettings& a_settings)
+{
+	const WaterSettings defaults{};
+	a_settings.brightness = ClampFiniteOrDefault(a_settings.brightness, kWaterBrightnessMin, kWaterBrightnessMax, defaults.brightness);
+	a_settings.reflectionAmount = ClampFiniteOrDefault(a_settings.reflectionAmount, kWaterAmountMin, kWaterAmountMax, defaults.reflectionAmount);
+	a_settings.refractionAmount = ClampFiniteOrDefault(a_settings.refractionAmount, kWaterAmountMin, kWaterAmountMax, defaults.refractionAmount);
+	a_settings.sunSpecularMultiplier = ClampFiniteOrDefault(a_settings.sunSpecularMultiplier, kWaterAmountMin, kWaterSunSpecularMax, defaults.sunSpecularMultiplier);
+	a_settings.waveAmplitude = ClampFiniteOrDefault(a_settings.waveAmplitude, kWaterAmountMin, kWaterAmountMax, defaults.waveAmplitude);
+	a_settings.fresnelMin = ClampFiniteOrDefault(a_settings.fresnelMin, kWaterFresnelMin, kWaterFresnelMax, defaults.fresnelMin);
+	a_settings.fresnelMax = ClampFiniteOrDefault(a_settings.fresnelMax, kWaterFresnelMin, kWaterFresnelMax, defaults.fresnelMax);
+	a_settings.fresnelMin = std::min(a_settings.fresnelMin, a_settings.fresnelMax);
+	a_settings.muddiness = ClampFiniteOrDefault(a_settings.muddiness, kWaterAmountMin, kWaterAmountMax, defaults.muddiness);
+}
+
+void CSUtility::DrawWaterSettings()
+{
+	if (!ImGui::BeginTabItem(T(TKEY("tab_water"), "Water")))
+		return;
+
+	auto& water = settings.water;
+	DrawWaterSlider(T(TKEY("water_brightness"), "Brightness"), water.brightness, kWaterBrightnessMin, kWaterBrightnessMax,
+		T(TKEY("water_brightness_tooltip"), "Scales the final water surface brightness."));
+	DrawWaterSlider(T(TKEY("water_reflection_amount"), "Reflection Amount"), water.reflectionAmount, kWaterAmountMin, kWaterAmountMax,
+		T(TKEY("water_reflection_amount_tooltip"), "Scales environment, cubemap, and screen-space reflections on water."));
+	DrawWaterSlider(T(TKEY("water_refraction_amount"), "Refraction Amount"), water.refractionAmount, kWaterAmountMin, kWaterAmountMax,
+		T(TKEY("water_refraction_amount_tooltip"), "Scales the distortion applied to the scene viewed through water."));
+	DrawWaterSlider(T(TKEY("water_sun_specular_multiplier"), "Sun Specular Multiplier"), water.sunSpecularMultiplier, kWaterAmountMin, kWaterSunSpecularMax,
+		T(TKEY("water_sun_specular_multiplier_tooltip"), "Scales the direct sun highlight reflected by the water surface."));
+	DrawWaterSlider(T(TKEY("water_wave_amplitude"), "Wave Amplitude"), water.waveAmplitude, kWaterAmountMin, kWaterAmountMax,
+		T(TKEY("water_wave_amplitude_tooltip"), "Scales water surface normals, including flowmap and rain ripple detail."));
+
+	DrawWaterSlider(T(TKEY("water_fresnel_min"), "Fresnel Min"), water.fresnelMin, kWaterFresnelMin, water.fresnelMax,
+		T(TKEY("water_fresnel_min_tooltip"), "Minimum reflection response when viewing the water surface head-on."));
+	DrawWaterSlider(T(TKEY("water_fresnel_max"), "Fresnel Max"), water.fresnelMax, water.fresnelMin, kWaterFresnelMax,
+		T(TKEY("water_fresnel_max_tooltip"), "Maximum reflection response at grazing view angles."));
+	DrawWaterSlider(T(TKEY("water_muddiness"), "Muddiness"), water.muddiness, kWaterAmountMin, kWaterAmountMax,
+		T(TKEY("water_muddiness_tooltip"), "Scales the water tint mixed over the refracted scene. Lower values make water clearer."));
+
+	SanitizeWaterSettings(water);
+	ImGui::EndTabItem();
 }
 
 void CSUtility::DrawVanillaBloomSettings()
@@ -181,6 +253,14 @@ CSUtility::PerFrameData CSUtility::GetCommonBufferData() const
 	data.linearSpotlightMult = sanitizedSettings.linearSpotlightMult;
 	data.omnidirectionalBulbMult = sanitizedSettings.omnidirectionalBulbMult;
 	data.linearOmnidirectionalBulbMult = sanitizedSettings.linearOmnidirectionalBulbMult;
+	data.waterBrightness = sanitizedSettings.water.brightness;
+	data.waterReflectionAmount = sanitizedSettings.water.reflectionAmount;
+	data.waterRefractionAmount = sanitizedSettings.water.refractionAmount;
+	data.waterSunSpecularMultiplier = sanitizedSettings.water.sunSpecularMultiplier;
+	data.waterWaveAmplitude = sanitizedSettings.water.waveAmplitude;
+	data.waterFresnelMin = sanitizedSettings.water.fresnelMin;
+	data.waterFresnelMax = sanitizedSettings.water.fresnelMax;
+	data.waterMuddiness = sanitizedSettings.water.muddiness;
 	return data;
 }
 

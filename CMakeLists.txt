@@ -15,10 +15,21 @@ if(DEVBENCH_BRIDGE)
     list(APPEND VCPKG_MANIFEST_FEATURES "devbench-bridge")
 endif()
 
+# Effects11 — same before-project() rationale as DEVBENCH_BRIDGE above. Off by
+# default for this fork: kept buildable, but excluded from shipped binaries.
+option(
+    ENABLE_EFFECTS11
+    "Enable the Effects11 feature (ENB-style post-processing framework)."
+    OFF
+)
+if(ENABLE_EFFECTS11)
+    list(APPEND VCPKG_MANIFEST_FEATURES "effects11")
+endif()
+
 project(
     # gersemi: ignore
     CommunityShaders
-    VERSION 2.2.0
+    VERSION 2.6.0
     LANGUAGES CXX
 )
 
@@ -62,12 +73,18 @@ option(
     "Include features whose .ini has autoupload != true in the AIO. Off by default — the AIO ships only release-ready features. Turn on for local dev builds that want every feature regardless of release status."
     OFF
 )
+option(
+    ENABLE_ENB_EXTENDER
+    "Enable ENBExtender reimplementation (weather blending, time-of-day, technique bindings)"
+    ON
+)
 message("\tAuto plugin deployment: ${AUTO_PLUGIN_DEPLOYMENT}")
 message("\tZip to dist: ${ZIP_TO_DIST}")
 message("\tAIO Zip to dist: ${AIO_ZIP_TO_DIST}")
 message("\tTracy profiler: ${TRACY_SUPPORT}")
 message("\tShader tests: ${BUILD_SHADER_TESTS}")
 message("\tAIO include non-autoupload features: ${AIO_INCLUDE_NON_AUTOUPLOAD}")
+message("\tEffects11: ${ENABLE_EFFECTS11}")
 
 # #######################################################################################################################
 # # Build version info from git
@@ -91,6 +108,19 @@ message("\tBuild version: ${GIT_DESCRIBE}")
 # #######################################################################################################################
 include(XSEPlugin)
 
+# add_cxx_files() globs all of src/*.cpp|.h unconditionally; when Effects11 is
+# off, drop its sources here rather than adding per-feature filtering to that
+# shared helper, so it never reaches a shipped binary.
+if(NOT ENABLE_EFFECTS11)
+    get_target_property(_cs_all_sources "${PROJECT_NAME}" SOURCES)
+    list(FILTER _cs_all_sources EXCLUDE REGEX "/src/Features/Effects11")
+    set_target_properties(
+        "${PROJECT_NAME}"
+        PROPERTIES SOURCES "${_cs_all_sources}"
+    )
+    unset(_cs_all_sources)
+endif()
+
 # #######################################################################################################################
 # # Find dependencies
 # #######################################################################################################################
@@ -111,8 +141,12 @@ find_package(xxHash CONFIG REQUIRED)
 find_path(EXPRTK_INCLUDE_DIRS "exprtk.hpp" REQUIRED)
 find_package(Tracy CONFIG REQUIRED)
 find_package(directx-headers CONFIG REQUIRED)
+
 if(DEVBENCH_BRIDGE)
     find_package(devbench-api CONFIG REQUIRED)
+endif()
+if(ENABLE_EFFECTS11)
+    find_package(effects11 CONFIG REQUIRED)
 endif()
 add_subdirectory(${CMAKE_SOURCE_DIR}/cmake/Streamline)
 
@@ -123,6 +157,7 @@ include(FidelityFX-SDK)
 target_compile_definitions(
     ${PROJECT_NAME}
     PRIVATE "$<$<BOOL:${TRACY_SUPPORT}>:TRACY_SUPPORT>"
+    PRIVATE "$<$<BOOL:${ENABLE_ENB_EXTENDER}>:ENABLE_ENB_EXTENDER>"
 )
 
 file(
@@ -204,6 +239,7 @@ target_link_libraries(
         d3d12.lib
         Microsoft::DirectX-Headers
         ${DETOURS_LIBRARY}
+        windowsapp
         windowscodecs
 )
 
@@ -212,6 +248,13 @@ target_link_libraries(
 if(DEVBENCH_BRIDGE)
     target_link_libraries(${PROJECT_NAME} PRIVATE DevBench::API)
     target_compile_definitions(${PROJECT_NAME} PRIVATE DEVBENCH_BRIDGE_ENABLED)
+endif()
+
+# Effects11: opt-in via -DENABLE_EFFECTS11=ON. When off, the port isn't linked and
+# the feature's sources are excluded below, so it never reaches a shipped binary.
+if(ENABLE_EFFECTS11)
+    target_link_libraries(${PROJECT_NAME} PRIVATE Microsoft::Effects11)
+    target_compile_definitions(${PROJECT_NAME} PRIVATE ENABLE_EFFECTS11)
 endif()
 
 if(MSVC)
@@ -256,6 +299,8 @@ file(
     "features/*/Shaders/Features/*.ini"
 )
 
+include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/FeatureStaging.cmake)
+
 foreach(FEATURE_PATH ${FEATURE_CONFIG_FILES})
     get_filename_component(FEATURE ${FEATURE_PATH} NAME_WE)
     file(READ "${FEATURE_PATH}" CONFIG_VALUE)
@@ -291,37 +336,28 @@ foreach(FEATURE_PATH ${FEATURE_CONFIG_FILES})
         )
     endif()
 
-    # Detect release stage from Alpha/Beta flags. Alpha takes precedence when
-    # both are set. A truthy value is required; absent or non-truthy means the
-    # feature is a full Release.
-    # Anchor to a line start ((^|[\r\n]); CMake regex has no multiline mode) so a
-    # settings key ending in "alpha"/"beta" (e.g. WaterAlpha = 1) is not mistaken
-    # for a stage flag. Keep in sync with the line-anchored match in
-    # tools/feature_version_audit.py.
-    # NOTE: guard on the match-result variable because CMAKE_MATCH_2 (the value)
-    # retains its prior value (the version major, above) when a REGEX MATCH misses.
-    set(_STAGE_ALPHA "")
-    set(_STAGE_BETA "")
-    string(
-        REGEX MATCH "(^|[\r\n])[ \t]*[Aa]lpha[ \t]*=[ \t]*([A-Za-z0-9]+)"
-        _STAGE_ALPHA_MATCH
-        "${CONFIG_VALUE}"
-    )
-    if(_STAGE_ALPHA_MATCH)
-        string(TOLOWER "${CMAKE_MATCH_2}" _STAGE_ALPHA)
-    endif()
-    string(
-        REGEX MATCH "(^|[\r\n])[ \t]*[Bb]eta[ \t]*=[ \t]*([A-Za-z0-9]+)"
-        _STAGE_BETA_MATCH
-        "${CONFIG_VALUE}"
-    )
-    if(_STAGE_BETA_MATCH)
-        string(TOLOWER "${CMAKE_MATCH_2}" _STAGE_BETA)
-    endif()
-    if(_STAGE_ALPHA MATCHES "^(true|1|yes|on)$")
+    # Detect release stage from Alpha/Beta flags (cmake/FeatureStaging.cmake,
+    # shared with the standalone CI emitter so there is one implementation).
+    feature_ini_stage("${CONFIG_VALUE}" _STAGE_IS_ALPHA _STAGE_IS_BETA)
+    if(_STAGE_IS_ALPHA)
         list(APPEND FEATURE_ALPHA_NAMES "\t\t\"${FEATURE}\"sv")
-    elseif(_STAGE_BETA MATCHES "^(true|1|yes|on)$")
+    elseif(_STAGE_IS_BETA)
         list(APPEND FEATURE_BETA_NAMES "\t\t\"${FEATURE}\"sv")
+    endif()
+
+    # Detect the Unreleased flag, which gates UI visibility independently of the
+    # release stage above. Same line anchoring and CMAKE_MATCH_2 guard.
+    set(_STAGE_UNRELEASED "")
+    string(
+        REGEX MATCH "(^|[\r\n])[ \t]*[Uu]nreleased[ \t]*=[ \t]*([A-Za-z0-9]+)"
+        _STAGE_UNRELEASED_MATCH
+        "${CONFIG_VALUE}"
+    )
+    if(_STAGE_UNRELEASED_MATCH)
+        string(TOLOWER "${CMAKE_MATCH_2}" _STAGE_UNRELEASED)
+    endif()
+    if(_STAGE_UNRELEASED MATCHES "^(true|1|yes|on)$")
+        list(APPEND FEATURE_UNRELEASED_NAMES "\t\t\"${FEATURE}\"sv")
     endif()
 
     # Detect core features by checking for the CORE marker file in the
@@ -346,6 +382,7 @@ string(REPLACE ";" ",\n" FEATURE_VERSIONS "${FEATURE_VERSIONS}")
 string(REPLACE ";" ",\n" FEATURE_CORE_NAMES "${FEATURE_CORE_NAMES}")
 string(REPLACE ";" ",\n" FEATURE_ALPHA_NAMES "${FEATURE_ALPHA_NAMES}")
 string(REPLACE ";" ",\n" FEATURE_BETA_NAMES "${FEATURE_BETA_NAMES}")
+string(REPLACE ";" ",\n" FEATURE_UNRELEASED_NAMES "${FEATURE_UNRELEASED_NAMES}")
 
 configure_file(
     ${CMAKE_CURRENT_SOURCE_DIR}/cmake/FeatureVersions.h.in
@@ -447,6 +484,32 @@ endif()
 # # Automatic deployment
 # #######################################################################################################################
 file(GLOB FEATURE_PATHS LIST_DIRECTORIES true ${CMAKE_SOURCE_DIR}/features/*)
+# Drop empty leftover feature dirs (e.g. after a rename) so they do not create
+# Package-* targets or get copied into AIO / install trees as empty folders.
+set(_valid_feature_paths "")
+foreach(_fpath IN LISTS FEATURE_PATHS)
+    if(IS_DIRECTORY "${_fpath}")
+        file(GLOB_RECURSE _feat_files LIST_DIRECTORIES FALSE "${_fpath}/*")
+        if(_feat_files)
+            list(APPEND _valid_feature_paths "${_fpath}")
+        else()
+            get_filename_component(_feat_name "${_fpath}" NAME)
+            message(STATUS "Skipping empty feature directory: ${_feat_name}")
+        endif()
+    endif()
+endforeach()
+set(FEATURE_PATHS ${_valid_feature_paths})
+unset(_valid_feature_paths)
+unset(_feat_files)
+
+# Effects11's sources aren't compiled in when ENABLE_EFFECTS11 is off (see the
+# source filter above), so staging its ini/shaders to a local dev deploy only
+# produces an orphaned-ini warning at runtime, never a working feature.
+set(AIO_LOCAL_FEATURE_PATHS ${FEATURE_PATHS})
+if(NOT ENABLE_EFFECTS11)
+    list(FILTER AIO_LOCAL_FEATURE_PATHS EXCLUDE REGEX "/Effects11$")
+endif()
+
 string(TIMESTAMP UTC_NOW "%Y-%m-%dT%H-%MZ" UTC)
 
 # Set AIO directory path used by multiple targets below
@@ -458,14 +521,20 @@ set(AIO_DIR "${CMAKE_CURRENT_BINARY_DIR}/aio")
 include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/AioPartition.cmake)
 
 # Partition features into AIO-included / -excluded sets.
-# AIO_INCLUDE_NON_AUTOUPLOAD=ON includes everything (local dev override).
+# AIO_INCLUDE_NON_AUTOUPLOAD=ON includes everything (local dev override) --
+# except a feature whose sources aren't even compiled into this binary (see
+# the ENABLE_EFFECTS11 source filter above): deploying its ini/shaders when
+# the DLL has no matching Feature class just produces an orphaned-ini warning
+# at runtime, not a working feature.
 set(AIO_INCLUDED_FEATURE_PATHS "")
 set(AIO_EXCLUDED_FEATURE_PATHS "")
 foreach(_fpath IN LISTS FEATURE_PATHS)
     if(NOT IS_DIRECTORY "${_fpath}")
         continue()
     endif()
-    if(AIO_INCLUDE_NON_AUTOUPLOAD)
+    if(NOT ENABLE_EFFECTS11 AND _fpath MATCHES "/Effects11$")
+        list(APPEND AIO_EXCLUDED_FEATURE_PATHS "${_fpath}")
+    elseif(AIO_INCLUDE_NON_AUTOUPLOAD)
         list(APPEND AIO_INCLUDED_FEATURE_PATHS "${_fpath}")
     else()
         feature_in_aio("${_fpath}" _ok)
@@ -584,6 +653,9 @@ install(
     COMPONENT Shaders
     PATTERN "Tests" EXCLUDE
 )
+include(FeaturePackaging)
+include(FidelityFX-Runtime)
+include(Streamline-Runtime)
 install(CODE "file(REMOVE \${CMAKE_INSTALL_PREFIX}/Core)" COMPONENT Shaders)
 
 # #######################################################################################################################
@@ -629,7 +701,7 @@ if(AUTO_PLUGIN_DEPLOYMENT OR AIO_ZIP_TO_DIST)
     )
     list(FILTER _AIO_PACKAGE_FILES EXCLUDE REGEX "/Tests/")
     list(FILTER _AIO_PACKAGE_FILES EXCLUDE REGEX "/Shaders/")
-    foreach(_fpath IN LISTS FEATURE_PATHS)
+    foreach(_fpath IN LISTS AIO_LOCAL_FEATURE_PATHS)
         file(GLOB_RECURSE _tmp LIST_DIRECTORIES FALSE "${_fpath}/*")
         list(FILTER _tmp EXCLUDE REGEX "/Shaders/")
         list(APPEND _AIO_PACKAGE_FILES ${_tmp})
@@ -644,7 +716,11 @@ if(AUTO_PLUGIN_DEPLOYMENT OR AIO_ZIP_TO_DIST)
     set(_feature_paths_list_file
         "${CMAKE_CURRENT_BINARY_DIR}/feature_paths.txt"
     )
-    string(REPLACE ";" "\n" _feature_paths_file_content "${FEATURE_PATHS}")
+    set(_aio_source_paths
+        ${AIO_LOCAL_FEATURE_PATHS}
+        "${FFX_RUNTIME_FEATURE_ROOT}"
+    )
+    string(REPLACE ";" "\n" _feature_paths_file_content "${_aio_source_paths}")
     file(WRITE "${_feature_paths_list_file}" "${_feature_paths_file_content}")
 
     # Ensure SKSE/Plugins dir exists
@@ -690,7 +766,7 @@ if(AUTO_PLUGIN_DEPLOYMENT OR AIO_ZIP_TO_DIST)
     # trailing `remove` below deletes it anyway. When MSBuild runs the copy
     # commands in parallel two features can race for the write and one
     # fails with "Permission denied", taking PREPARE_AIO down with it.
-    foreach(_fpath IN LISTS FEATURE_PATHS)
+    foreach(_fpath IN LISTS AIO_LOCAL_FEATURE_PATHS)
         if(EXISTS "${_fpath}")
             file(
                 GLOB_RECURSE _feature_files
@@ -777,16 +853,18 @@ if(AUTO_PLUGIN_DEPLOYMENT OR AIO_ZIP_TO_DIST)
     list(FILTER _package_shaders EXCLUDE REGEX "/Tests/")
     set(_shader_copy_cmds)
 
-    # All features' shaders are copied — cross-feature #includes need the
-    # full tree at compile time (e.g. DistantTree.hlsl pulls IBL/IBL.hlsli).
-    set(_feature_shader_paths)
-    foreach(_fpath IN LISTS FEATURE_PATHS)
+    # All (locally deployed) features' shaders are copied — cross-feature
+    # #includes need the full tree at compile time (e.g. DistantTree.hlsl
+    # pulls IBL/IBL.hlsli). Effects11 is excluded via AIO_LOCAL_FEATURE_PATHS
+    # when ENABLE_EFFECTS11 is off, since nothing else includes its shaders.
+    # Written to a file rather than passed as a `-D` list, same reason as
+    # FEATURE_PATHS_FILE above (Ninja mis-quotes it).
+    set(_feature_shader_paths "${FFX_RUNTIME_SHADER_ROOT}")
+    foreach(_fpath IN LISTS AIO_LOCAL_FEATURE_PATHS)
         if(EXISTS "${_fpath}/Shaders")
             list(APPEND _feature_shader_paths "${_fpath}/Shaders")
         endif()
     endforeach()
-    # Written to a file rather than passed as a `-D` list, same reason as
-    # FEATURE_PATHS_FILE above (Ninja mis-quotes it).
     set(_feature_shader_paths_list_file
         "${CMAKE_CURRENT_BINARY_DIR}/feature_shader_paths.txt"
     )
@@ -814,8 +892,12 @@ if(AUTO_PLUGIN_DEPLOYMENT OR AIO_ZIP_TO_DIST)
     )
 
     append_copy_if_different(_shader_copy_cmds _package_shaders "${CMAKE_SOURCE_DIR}/package/Shaders" "${AIO_DIR}/Shaders")
+    append_copy_if_different(_shader_copy_cmds FFX_RUNTIME_FILES "${FFX_RUNTIME_SHADER_ROOT}" "${AIO_DIR}/Shaders")
 
-    foreach(_fpath IN LISTS FEATURE_PATHS)
+    # Accumulated below and added to DEPENDS -- HLSL_FILES alone missed non-shader
+    # feature payload (e.g. bundled DLLs), silently pinning stale binaries forever.
+    set(_all_feature_shader_files)
+    foreach(_fpath IN LISTS AIO_LOCAL_FEATURE_PATHS)
         if(EXISTS "${_fpath}/Shaders")
             file(
                 GLOB_RECURSE _feat_shaders
@@ -824,6 +906,7 @@ if(AUTO_PLUGIN_DEPLOYMENT OR AIO_ZIP_TO_DIST)
             )
             list(FILTER _feat_shaders EXCLUDE REGEX "/Tests/")
             append_copy_if_different(_shader_copy_cmds _feat_shaders "${_fpath}/Shaders" "${AIO_DIR}/Shaders")
+            list(APPEND _all_feature_shader_files ${_feat_shaders})
         endif()
     endforeach()
 
@@ -835,6 +918,9 @@ if(AUTO_PLUGIN_DEPLOYMENT OR AIO_ZIP_TO_DIST)
         COMMAND ${CMAKE_COMMAND} -E touch copy_shaders.stamp
         DEPENDS
             ${HLSL_FILES}
+            ${FFX_RUNTIME_FILES}
+            ${_package_shaders}
+            ${_all_feature_shader_files}
             ${CMAKE_SOURCE_DIR}/cmake/CleanupStaleEntries.cmake
         COMMENT "Copying changed shaders into AIO/Shaders"
     )
@@ -1094,6 +1180,13 @@ if(NOT DEFINED ENV{CommunityShadersOutputDir})
     )
 endif()
 
+find_program(
+    SEVENZ_EXECUTABLE
+    NAMES 7z 7za
+    PATHS "C:/Program Files/7-Zip" "C:/Program Files (x86)/7-Zip"
+    DOC "7-Zip archiver for compressed packages"
+)
+
 # Zip base CommunityShaders and all addons as their own 7z in dist folder
 if(ZIP_TO_DIST)
     set(ZIP_DIR "${CMAKE_CURRENT_BINARY_DIR}/zip")
@@ -1154,14 +1247,21 @@ if(ZIP_TO_DIST)
         message(
             "Zipping ${FEATURE_PATH} to ${CMAKE_SOURCE_DIR}/dist/${FEATURE}-${UTC_NOW}.7z"
         )
+        set(FEATURE_ZIP_STAGE
+            "${CMAKE_CURRENT_BINARY_DIR}/feature_zip/${FEATURE}"
+        )
+        feature_package_commands(
+            FEATURE_ZIP_COMMANDS
+            "${FEATURE}"
+            "${FEATURE_PATH}"
+            "${FEATURE_ZIP_STAGE}"
+            "${CMAKE_SOURCE_DIR}/dist/${FEATURE}-${UTC_NOW}.7z"
+            cf
+        )
         add_custom_command(
             TARGET ${PROJECT_NAME}
             POST_BUILD
-            COMMAND
-                ${CMAKE_COMMAND} -E tar cf
-                ${CMAKE_SOURCE_DIR}/dist/${FEATURE}-${UTC_NOW}.7z --format=7zip
-                -- .
-            WORKING_DIRECTORY ${FEATURE_PATH}
+            ${FEATURE_ZIP_COMMANDS}
         )
     endforeach()
 endif()
@@ -1182,7 +1282,11 @@ if(AIO_ZIP_TO_DIST)
     # only rebuilds the archive when its inputs change. The archive filename
     # keeps the UTC timestamp as before, but the command writes a stable
     # stamp file that CMake can track as OUTPUT.
-    set(TARGET_AIO_ZIP "${PROJECT_NAME}_AIO-${UTC_NOW}.7z")
+    if(SEVENZ_EXECUTABLE)
+        set(TARGET_AIO_ZIP "${PROJECT_NAME}_AIO-${UTC_NOW}.7z")
+    else()
+        set(TARGET_AIO_ZIP "${PROJECT_NAME}_AIO-${UTC_NOW}.zip")
+    endif()
     set(AIO_ARCHIVE "${CMAKE_SOURCE_DIR}/dist/${TARGET_AIO_ZIP}")
     set(AIO_ZIP_STAMP "${CMAKE_CURRENT_BINARY_DIR}/aio_package.stamp")
     set(AIO_STAGE_DIR "${CMAKE_CURRENT_BINARY_DIR}/aio_stage")
@@ -1191,7 +1295,9 @@ if(AIO_ZIP_TO_DIST)
 
     # Fast path: tar AIO_DIR directly. Slow path (excluded features):
     # copy → stage, strip excluded relpaths, tar the stage. AIO_DIR stays
-    # complete so AUTO_PLUGIN_DEPLOYMENT delivers the full tree.
+    # complete so AUTO_PLUGIN_DEPLOYMENT delivers the full tree. Prefers a
+    # real 7z binary (smaller, faster archives); falls back to CMake's
+    # built-in tar-as-zip when 7z isn't installed.
     set(_aio_zip_cmds
         COMMAND
         ${CMAKE_COMMAND}
@@ -1199,6 +1305,7 @@ if(AIO_ZIP_TO_DIST)
         make_directory
         "${CMAKE_SOURCE_DIR}/dist"
     )
+    set(_aio_archive_source_dir "${AIO_DIR}")
     if(AIO_EXCLUDED_FEATURE_NAMES)
         list(
             APPEND _aio_zip_cmds
@@ -1226,36 +1333,45 @@ if(AIO_ZIP_TO_DIST)
                 "${AIO_STAGE_DIR}/${_relpath}"
             )
         endforeach()
+        set(_aio_archive_source_dir "${AIO_STAGE_DIR}")
+    endif()
+    if(SEVENZ_EXECUTABLE)
         list(
             APPEND _aio_zip_cmds
             COMMAND
             ${CMAKE_COMMAND}
             -E
-            chdir
-            "${AIO_STAGE_DIR}"
+            rm
+            -f
+            "${AIO_ARCHIVE}"
+            COMMAND
             ${CMAKE_COMMAND}
             -E
-            tar
-            cf
+            chdir
+            "${_aio_archive_source_dir}"
+            "${SEVENZ_EXECUTABLE}"
+            a
+            -t7z
+            -mx1
+            -mmt=on
             "${AIO_ARCHIVE}"
-            --format=7zip
-            --
-            .
+            *
         )
     else()
+        message(WARNING "7z not found; AIO archive will use uncompressed zip")
         list(
             APPEND _aio_zip_cmds
             COMMAND
             ${CMAKE_COMMAND}
             -E
             chdir
-            "${AIO_DIR}"
+            "${_aio_archive_source_dir}"
             ${CMAKE_COMMAND}
             -E
             tar
             cf
             "${AIO_ARCHIVE}"
-            --format=7zip
+            --format=zip
             --
             .
         )
@@ -1345,12 +1461,21 @@ foreach(FEATURE_PATH ${FEATURE_PATHS})
     get_filename_component(FEATURE ${FEATURE_PATH} NAME)
     set(FEATURE_PACKAGE "${DIST_PATH}/${FEATURE}-${UTC_NOW}.7z")
 
+    set(FEATURE_PACKAGE_STAGE
+        "${CMAKE_CURRENT_BINARY_DIR}/feature_package/${FEATURE}"
+    )
+    feature_package_commands(
+        FEATURE_PACKAGE_COMMANDS
+        "${FEATURE}"
+        "${FEATURE_PATH}"
+        "${FEATURE_PACKAGE_STAGE}"
+        "${FEATURE_PACKAGE}"
+        cfv
+    )
+    feature_payload_dependencies("${FEATURE}" FEATURE_PACKAGE_DEPENDENCIES)
     add_custom_command(
-        OUTPUT ${FEATURE_PACKAGE}
-        COMMAND
-            ${CMAKE_COMMAND} -E tar cfv ${FEATURE_PACKAGE} --format=7zip -- .
-        WORKING_DIRECTORY "${FEATURE_PATH}"
-        DEPENDS ${FEATURE_SOURCES}
+        OUTPUT ${FEATURE_PACKAGE} ${FEATURE_PACKAGE_COMMANDS}
+        DEPENDS ${FEATURE_SOURCES} ${FEATURE_PACKAGE_DEPENDENCIES}
         COMMENT "Creating ${FEATURE} zip package"
     )
 
@@ -1362,7 +1487,7 @@ endforeach()
 # AIO Folder target
 add_custom_command(
     OUTPUT ${AIO_DIR}/SKSE/Plugins/${PROJECT_NAME}.dll
-    DEPENDS ${CORE_SOURCES}
+    DEPENDS ${CORE_SOURCES} ${FFX_RUNTIME_FILES}
     COMMAND ${CMAKE_COMMAND} --install ${CMAKE_BINARY_DIR} --prefix ${AIO_DIR}
     COMMENT "Installing to AIO folder"
 )
@@ -1370,8 +1495,13 @@ add_custom_target("AIO" DEPENDS ${AIO_DIR}/SKSE/Plugins/${PROJECT_NAME}.dll)
 
 # Manual AIO package target. Strips non-autoupload features at archive
 # time (mirroring AIO_ZIP_PACKAGE) so the manual path produces the same
-# release-ready bundle as the automated path.
-set(AIO_PACKAGE "${DIST_PATH}/${PROJECT_NAME}_AIO-${UTC_NOW}.7z")
+# release-ready bundle as the automated path. Prefers a real 7z binary;
+# falls back to CMake's built-in tar-as-zip when 7z isn't installed.
+if(SEVENZ_EXECUTABLE)
+    set(AIO_PACKAGE "${DIST_PATH}/${PROJECT_NAME}_AIO-${UTC_NOW}.7z")
+else()
+    set(AIO_PACKAGE "${DIST_PATH}/${PROJECT_NAME}_AIO-${UTC_NOW}.zip")
+endif()
 set(AIO_MANUAL_STAGE_DIR "${CMAKE_CURRENT_BINARY_DIR}/aio_manual_stage")
 set(_aio_manual_cmds
     COMMAND
@@ -1386,6 +1516,7 @@ set(_aio_manual_cmds
     --prefix
     ${AIO_DIR}
 )
+set(_aio_manual_source_dir "${AIO_DIR}")
 if(AIO_EXCLUDED_FEATURE_NAMES)
     list(
         APPEND _aio_manual_cmds
@@ -1413,21 +1544,29 @@ if(AIO_EXCLUDED_FEATURE_NAMES)
             "${AIO_MANUAL_STAGE_DIR}/${_relpath}"
         )
     endforeach()
+    set(_aio_manual_source_dir "${AIO_MANUAL_STAGE_DIR}")
+endif()
+if(SEVENZ_EXECUTABLE)
     list(
         APPEND _aio_manual_cmds
         COMMAND
         ${CMAKE_COMMAND}
         -E
-        chdir
-        "${AIO_MANUAL_STAGE_DIR}"
+        rm
+        -f
+        "${AIO_PACKAGE}"
+        COMMAND
         ${CMAKE_COMMAND}
         -E
-        tar
-        cfv
-        ${AIO_PACKAGE}
-        --format=7zip
-        --
-        .
+        chdir
+        "${_aio_manual_source_dir}"
+        "${SEVENZ_EXECUTABLE}"
+        a
+        -t7z
+        -mx1
+        -mmt=on
+        "${AIO_PACKAGE}"
+        *
     )
 else()
     list(
@@ -1436,13 +1575,13 @@ else()
         ${CMAKE_COMMAND}
         -E
         chdir
-        ${AIO_DIR}
+        "${_aio_manual_source_dir}"
         ${CMAKE_COMMAND}
         -E
         tar
         cfv
         ${AIO_PACKAGE}
-        --format=7zip
+        --format=zip
         --
         .
     )
@@ -1450,7 +1589,7 @@ endif()
 
 add_custom_command(
     OUTPUT ${AIO_PACKAGE}
-    DEPENDS ${CORE_SOURCES} ${_aio_manual_cmds}
+    DEPENDS ${CORE_SOURCES} ${FFX_RUNTIME_FILES} ${_aio_manual_cmds}
     COMMENT "Creating AIO zip package (manual)"
 )
 add_custom_target("Package-AIO-Manual" DEPENDS ${AIO_PACKAGE})
@@ -1522,7 +1661,9 @@ endif()
 
 message("*************************************************************")
 message("Open Shaders configuration complete (fork of Community Shaders)")
-message("To prepare a ZIP package of AIO, Core, or Features")
+message(
+    "To prepare a package of AIO (.7z when 7-Zip is found), Core, or Features"
+)
 message("  Build cmake targets:")
 message("    - Package-Core: Core package")
 message("    - Package-AIO-Manual: AIO package (manual)")

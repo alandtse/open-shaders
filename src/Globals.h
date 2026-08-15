@@ -3,6 +3,7 @@
 #include <atomic>
 
 struct CloudShadows;
+struct CloudRelight;
 struct DynamicCubemaps;
 struct VolumetricShadows;
 struct ExtendedMaterials;
@@ -31,7 +32,7 @@ struct VanillaFresnel;
 struct VolumetricLighting;
 struct VR;
 struct WaterEffects;
-struct WeatherPicker;
+struct SceneSelector;
 struct PerformanceOverlay;
 struct WetnessEffects;
 struct ExtendedTranslucency;
@@ -39,6 +40,9 @@ struct Upscaling;
 class Profiler;
 struct CSEditor;
 struct CSUtility;
+#if defined(ENABLE_EFFECTS11)
+struct Effects11;
+#endif
 struct ExponentialHeightFog;
 struct HDRDisplay;
 struct PostProcessing;
@@ -97,6 +101,7 @@ namespace globals
 	namespace features
 	{
 		extern CloudShadows cloudShadows;
+		extern CloudRelight cloudRelight;
 		extern DynamicCubemaps dynamicCubemaps;
 		extern VolumetricShadows volumetricShadows;
 		extern ExtendedMaterials extendedMaterials;
@@ -125,12 +130,15 @@ namespace globals
 		extern VolumetricLighting volumetricLighting;
 		extern VR vr;
 		extern WaterEffects waterEffects;
-		extern WeatherPicker weatherPicker;
+		extern SceneSelector sceneSelector;
 		extern PerformanceOverlay performanceOverlay;
 		extern WetnessEffects wetnessEffects;
 		extern ExtendedTranslucency extendedTranslucency;
 		extern Upscaling upscaling;
 		extern HDRDisplay hdrDisplay;
+#if defined(ENABLE_EFFECTS11)
+		extern Effects11 effects11;
+#endif
 		extern RenderDoc renderDoc;
 		extern RemoteControl remoteControl;
 		extern ScreenshotFeature screenshotFeature;

@@ -14,5 +14,22 @@
     "cs_editor.add": "Toevoegen",
     "cs_editor.add_new_marker": "Voeg een nieuwe markering toe",
     "cs_editor.apply": "Toepassen",
-    "cs_editor.apply_changes": "Pas veranderingen toe op het spel"
+    "cs_editor.apply_changes": "Pas veranderingen toe op het spel",
+    "feature.cloud_relight.cloud_relighting": "Herbelichting van wolken",
+    "feature.cloud_relight.cloud_shadows_required": "Zelfschaduwing van wolken vereist dat Cloud Shadows is geïnstalleerd en ingeschakeld.",
+    "feature.cloud_relight.description": "Herbelicht Vanilla-wolkentexturen met het actieve gerichte licht, zelfschaduwing van wolken en faseverlichting voor zilveren randen.",
+    "feature.cloud_relight.enabled": "Ingeschakeld",
+    "feature.cloud_relight.key_feature_1": "Menging van Vanilla-wolkenkleur en herbelichte wolkenkleur",
+    "feature.cloud_relight.key_feature_2": "Faseverlichting voor zilveren randen en voorwaartse verstrooiing",
+    "feature.cloud_relight.key_feature_3": "Gerichte zelfschaduwing van wolken door de actieve zon of maan",
+    "feature.cloud_relight.name": "Cloud Relight",
+    "feature.cloud_relight.relight_mix": "Herbelichtingsmix",
+    "feature.cloud_relight.relight_mix_tooltip": "Vermenigvuldiger voor de bijdrage van gericht licht die aan wolken wordt toegevoegd.",
+    "feature.cloud_relight.silver_lining": "Zilveren rand",
+    "feature.cloud_relight.silver_lining_accent": "Accent van zilveren rand",
+    "feature.cloud_relight.silver_lining_accent_tooltip": "Mengt tussen een vlakke isotrope fase en scherpe faseverlichting van de zilveren rand.",
+    "feature.cloud_relight.silver_lining_spread": "Spreiding van zilveren rand",
+    "feature.cloud_relight.silver_lining_spread_tooltip": "Positief: de zilveren rand verspreidt zich naar dichtere delen van de wolk.\nNegatief: de zilveren rand blijft beperkt tot dunnere wolkenranden.",
+    "feature.cloud_relight.vanilla_mix": "Vanilla-mix",
+    "feature.cloud_relight.vanilla_mix_tooltip": "Vermenigvuldiger voor de oorspronkelijke Vanilla-wolkenkleur voordat herbelichting wordt toegepast."
 }

@@ -6,6 +6,12 @@
 #include "State.h"
 #include "WeatherVariableRegistry.h"
 
+#if defined(ENABLE_EFFECTS11)
+#	include "Effects11.h"
+#	include "Effects11/SettingManager.h"
+#endif
+#include "Globals.h"
+
 #include "../I18n/I18n.h"
 #include "GpuPass.h"
 #include <DDSTextureLoader.h>
@@ -35,6 +41,16 @@ namespace
 		return settings.DALCMode;
 	}
 
+#if defined(ENABLE_EFFECTS11)
+	bool IsENBIBLControlActive()
+	{
+		if (!globals::features::effects11.loaded || !globals::features::effects11.enableEffect)
+			return false;
+
+		return SettingManager::GetSingleton().GetValue<bool>("EnableImageBasedLighting", "EFFECT");
+	}
+#endif
+
 	void DrawEnableCheckbox(const char* label, bool& disableSetting)
 	{
 		bool enableSetting = !disableSetting;
@@ -62,6 +78,13 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 
 void IBL::DrawSettings()
 {
+#if defined(ENABLE_EFFECTS11)
+	if (IsENBIBLControlActive()) {
+		ImGui::TextColored(globals::menu->GetSettings().Theme.StatusPalette.Warning, "%s", T("common.settings_managed_by_enb", "Settings are currently managed by ENB."));
+		return;
+	}
+#endif
+
 	Util::WeatherUI::Checkbox(T(TKEY("enable_ibl"), "Enable IBL"), this, "EnableIBL", (bool*)&settings.EnableIBL);
 	if (auto _tt = Util::HoverTooltipWrapper()) {
 		ImGui::Text("%s", T(TKEY("enable_ibl_tooltip"), "Toggle IBL. When enabled, ambient lighting is derived from cubemap spherical harmonics instead of the vanilla system."));
@@ -182,6 +205,11 @@ void IBL::RestoreDefaultSettings()
 
 void IBL::RegisterWeatherVariables()
 {
+#if defined(ENABLE_EFFECTS11)
+	if (IsENBIBLControlActive())
+		return;
+#endif
+
 	auto* registry = WeatherVariables::GlobalWeatherRegistry::GetSingleton()
 	                     ->GetOrCreateFeatureRegistry(GetShortName());
 	// Toggle IBL for this weather (SH-based ambient replaces vanilla)
@@ -252,8 +280,9 @@ void IBL::RegisterWeatherVariables()
 
 IBL::PerFrame IBL::GetCommonBufferData() const
 {
-	return {
-		.EnableIBL = IsDisabledForCurrentScene() ? 0u : settings.EnableIBL,
+	const bool sceneDisabled = IsDisabledForCurrentScene();
+	PerFrame data = {
+		.EnableIBL = sceneDisabled ? 0u : settings.EnableIBL,
 		.PreserveFogLuminance = settings.PreserveFogLuminance,
 		.UseStaticIBL = settings.UseStaticIBL,
 		.DALCAmount = settings.DALCAmount,
@@ -264,6 +293,22 @@ IBL::PerFrame IBL::GetCommonBufferData() const
 		.FogAmount = settings.FogAmount,
 		.DALCMode = GetEffectiveDALCMode(settings)
 	};
+
+#if defined(ENABLE_EFFECTS11)
+	if (!sceneDisabled && IsENBIBLControlActive()) {
+		auto& settingManager = SettingManager::GetSingleton();
+		data.EnableIBL = Util::IsInterior() ? 0u : 1u;
+		data.EnvIBLScale = 0.0f;
+		data.SkyIBLScale = settingManager.GetInterpolatedTimeOfDayValue("MultiplicativeAmount", "IMAGEBASEDLIGHTING");
+		data.DALCAmount = 1.0f;
+		data.EnvIBLSaturation = 1.0f;
+		data.SkyIBLSaturation = 1.0f;
+		data.DALCMode = kDALCPlusSkyDirectionalMode;
+		data.FogAmount = 0.0f;
+	}
+#endif
+
+	return data;
 }
 
 bool IBL::IsDisabledForCurrentScene() const

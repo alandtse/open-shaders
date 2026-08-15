@@ -116,5 +116,22 @@
     "cs_editor.directional_z": "Direccional Z",
     "cs_editor.drag_colours_here": "Arrastre colores aquí para guardar como favoritos.",
     "cs_editor.drag_to_favourites": "Arrastre un color aquí para añadir a favoritos",
-    "cs_editor.edit_current_cell_lighting": "Editar Iluminación de Celda Actual"
+    "cs_editor.edit_current_cell_lighting": "Editar Iluminación de Celda Actual",
+    "feature.cloud_relight.cloud_relighting": "Reiluminación de nubes",
+    "feature.cloud_relight.cloud_shadows_required": "El autosombreado de las nubes requiere que Cloud Shadows esté instalado y activado.",
+    "feature.cloud_relight.description": "Reilumina las texturas de nubes de Vanilla mediante la luz direccional activa, el autosombreado de las nubes y la iluminación de fase del contorno plateado.",
+    "feature.cloud_relight.enabled": "Activado",
+    "feature.cloud_relight.key_feature_1": "Mezcla del color Vanilla de las nubes con el color reiluminado",
+    "feature.cloud_relight.key_feature_2": "Iluminación de fase del contorno plateado y de dispersión frontal",
+    "feature.cloud_relight.key_feature_3": "Autosombreado direccional de las nubes por el sol o la luna activos",
+    "feature.cloud_relight.name": "Cloud Relight",
+    "feature.cloud_relight.relight_mix": "Mezcla de reiluminación",
+    "feature.cloud_relight.relight_mix_tooltip": "Multiplicador de la contribución de luz direccional añadida a las nubes.",
+    "feature.cloud_relight.silver_lining": "Contorno plateado",
+    "feature.cloud_relight.silver_lining_accent": "Realce del contorno plateado",
+    "feature.cloud_relight.silver_lining_accent_tooltip": "Mezcla entre una fase isotrópica plana y una iluminación de fase marcada del contorno plateado.",
+    "feature.cloud_relight.silver_lining_spread": "Extensión del contorno plateado",
+    "feature.cloud_relight.silver_lining_spread_tooltip": "Positivo: el contorno plateado se extiende hacia zonas más densas de las nubes.\nNegativo: el contorno plateado queda limitado a bordes más finos.",
+    "feature.cloud_relight.vanilla_mix": "Mezcla Vanilla",
+    "feature.cloud_relight.vanilla_mix_tooltip": "Multiplicador del color Vanilla original de las nubes antes de aplicar la reiluminación."
 }

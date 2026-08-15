@@ -19,6 +19,15 @@ namespace ShadowCasterManager
 	static exprtk::symbol_table<double> s_symbolTable;
 	static bool s_formulaInited = false;
 
+	// EMA position anchor ComputeLightGeometry scores from; see ResetScoreAnchor.
+	static std::unordered_map<const RE::NiLight*, RE::NiPoint3> s_scoreAnchor;
+
+	void ResetScoreAnchor(const RE::NiLight* ni)
+	{
+		if (ni)
+			s_scoreAnchor.erase(ni);
+	}
+
 	static void InitFormulaSystem()
 	{
 		if (s_formulaInited)
@@ -100,9 +109,12 @@ namespace ShadowCasterManager
 	// CalculateLightScore: evaluates s_formulaScore if available.
 	// =========================================================================
 
-	LightGeometry ComputeLightGeometry(const RE::NiLight* ni, const RE::NiCamera* camera, float lightRadius)
+	LightGeometry ComputeLightGeometry(const RE::BSShadowLight* light, const RE::NiCamera* camera, float lightRadius)
 	{
 		LightGeometry g{};
+		if (!light)
+			return g;
+		const RE::NiLight* ni = light->light.get();
 		if (!ni)
 			return g;
 		const auto& rtd = const_cast<RE::NiLight*>(ni)->GetLightRuntimeData();
@@ -113,7 +125,6 @@ namespace ShadowCasterManager
 		// drop its score promptly, or it holds a shadow slot after it should
 		// have left and its stale shadow flickers in. Rendering keeps the live
 		// pose (shadows still dance).
-		static std::unordered_map<const RE::NiLight*, RE::NiPoint3> s_scoreAnchor;
 		PruneIfOversized(s_scoreAnchor, 1024);
 		const auto live = ni->world.translate;
 		auto [anchorIt, anchorNew] = s_scoreAnchor.try_emplace(ni, live);
@@ -129,6 +140,25 @@ namespace ShadowCasterManager
 		g.lum = (0.2126f * rtd.diffuse.red + 0.7152f * rtd.diffuse.green + 0.0722f * rtd.diffuse.blue) * rtd.fade;
 		if (lightRadius <= 0.0f)
 			return g;
+
+		// Corrects the omnidirectional-sphere assumption for spot/frustum lights
+		// via coneFraction. Magnitude-only, not direction-gated: forward-axis
+		// sign is unverified, and a wrong gate could invert rankings.
+		const RE::BSShadowFrustumLight* frustumLight = skyrim_cast<const RE::BSShadowFrustumLight*>(light);
+		float coneFraction = 1.0f;
+		if (frustumLight) {
+			// semiWidth/semiHeight are runtime-versioned (BSShadowFrustumLight::
+			// RUNTIME_DATA); direct member access reads garbage (adjacent
+			// BSTArray's heap pointer) in the multi-runtime layout.
+			const auto& frustumRtd = frustumLight->GetShadowFrustumLightRuntimeData();
+			if (frustumRtd.semiWidth > 0.0f && frustumRtd.semiHeight > 0.0f) {
+				constexpr float kPi = 3.14159265358979323846f;
+				const float w = frustumRtd.semiWidth, h = frustumRtd.semiHeight;
+				const float sinX = w / std::sqrt(1.0f + w * w);
+				const float sinY = h / std::sqrt(1.0f + h * h);
+				coneFraction = std::clamp(std::asin(std::clamp(sinX * sinY, -1.0f, 1.0f)) / kPi, 0.0f, 1.0f);
+			}
+		}
 
 		// Projected solid-angle proxy: angularRadius ~ radius/viewZ, coverage
 		// ~ angularRadius^2 (Olsson & Assarsson 2012; CryEngine shadow LOD).
@@ -146,12 +176,10 @@ namespace ShadowCasterManager
 				g.coverage = angularRadius * angularRadius;
 			}
 
-			// Screen area [0,1]: fraction of the viewport the light's influence
-			// SPHERE projects onto, clamped to the frustum. This is the correct
-			// view-impact signal -- a light behind the camera whose sphere still
-			// reaches into the view keeps a large area (its shadows fall on-screen),
-			// unlike coverage/forwardness which key on the light CENTER. Industry
-			// tiled/clustered-shadow importance (projected sphere area).
+			// Screen area [0,1]: fraction of the viewport the light's SPHERE projects
+			// onto, clamped to the frustum -- unlike coverage/forwardness (light
+			// CENTER), a light behind the camera whose sphere still reaches into
+			// view keeps a large area. Industry pattern for shadow importance.
 			const float dist = std::sqrt(rx * rx + ry * ry + rz * rz);
 			if (dist < lightRadius + cam->GetNearPlane()) {
 				g.screenArea = 1.0f;  // camera within the sphere: it fills the view
@@ -169,12 +197,16 @@ namespace ShadowCasterManager
 			}
 		}
 
+		// coverage is a solid-angle proxy, so coneFraction applies directly;
+		// screenArea is a 2D frustum-projected footprint and stays unscaled.
+		g.coverage *= coneFraction;
+
 		// Skyrim's quadratic falloff (1-(d/r)^2)^2 at camera and player: the
-		// out-of-view floor (a light around the corner still shadows what you
-		// see) and the carried-light signal.
+		// out-of-view floor and the carried-light signal, also scaled by
+		// coneFraction since falloff alone cannot distinguish beam-elsewhere
+		// from actually-lit within the sphere.
 		auto computeAtt = [&](const RE::NiPoint3& pos) -> float {
-			const float dx = pos.x - lp.x, dy = pos.y - lp.y, dz = pos.z - lp.z;
-			const float dist2 = dx * dx + dy * dy + dz * dz;
+			const float dist2 = pos.GetSquaredDistance(lp);
 			const float r2 = lightRadius * lightRadius;
 			if (dist2 >= r2)
 				return 0.0f;
@@ -182,8 +214,10 @@ namespace ShadowCasterManager
 			return a * a;
 		};
 		auto* plr = RE::PlayerCharacter::GetSingleton();
-		g.attCam = camera ? computeAtt(camera->world.translate) : 0.0f;
-		g.attPlr = plr ? computeAtt(plr->GetPosition()) : g.attCam;
+		const float rawAttCam = camera ? computeAtt(camera->world.translate) : 0.0f;
+		const float rawAttPlr = plr ? computeAtt(plr->GetPosition()) : rawAttCam;
+		g.attCam = rawAttCam * coneFraction;
+		g.attPlr = rawAttPlr * coneFraction;
 		// Third person: a light enclosing the PLAYER dominates the view around
 		// the player character even though the camera sits outside its sphere
 		// (the carried-torch case) -- same enclosure rule as camera-inside.
@@ -194,7 +228,10 @@ namespace ShadowCasterManager
 			if (px * px + py * py + pz * pz < lightRadius * lightRadius)
 				g.screenArea = 1.0f;
 		}
-		g.sizeProxy = std::max(sqrtf(g.coverage), std::max(g.attCam, g.attPlr));
+		// sizeProxy is linear: coverage's sqrt already linearizes coneFraction, so
+		// the raw (pre-coneFraction) attenuation takes the same sqrt rather than
+		// the full area fraction g.attCam/g.attPlr carry.
+		g.sizeProxy = std::max(sqrtf(g.coverage), std::max(rawAttCam, rawAttPlr) * sqrtf(coneFraction));
 		return g;
 	}
 
@@ -255,8 +292,8 @@ namespace ShadowCasterManager
 		FormulaHelper::SetParam(kFormulaParam_LightConverted, 0.0);
 		FormulaHelper::SetParam(kFormulaParam_LightIndex, index);
 		FormulaHelper::SetParam(kFormulaParam_LightDisplacement, 0.0);    // overridden per-entry in redraw interval loop
+		FormulaHelper::SetParam(kFormulaParam_LightDynamicCasters, 0.0);  // overridden per-entry in redraw interval loop
 		FormulaHelper::SetParam(kFormulaParam_PlayerLightDistance, 0.0);  // overridden below after light position is known
-		FormulaHelper::SetParam(kFormulaParam_LightImportance, 0.0);      // overridden per-entry in redraw interval loop; 0 in score formula
 
 		// Temporal stickiness signals. Both derived from the slot pool in one
 		// pass: chosenLastFrame is the boolean kept for backward-compat with
@@ -331,7 +368,7 @@ namespace ShadowCasterManager
 			if (s_settings.PromoteNormalToShadow)
 				FormulaHelper::SetParam(kFormulaParam_LightNS, IsPromotedLight(nilight) ? 1.0 : 0.0);
 
-			const auto geom = ComputeLightGeometry(nilight, camera, nilight->GetLightRuntimeData().radius.x);
+			const auto geom = ComputeLightGeometry(light, camera, nilight->GetLightRuntimeData().radius.x);
 			FormulaHelper::SetParam(kFormulaParam_LightCoverage, geom.coverage);
 			FormulaHelper::SetParam(kFormulaParam_LightScreenArea, geom.screenArea);
 			FormulaHelper::SetParam(kFormulaParam_LightLum, geom.lum);

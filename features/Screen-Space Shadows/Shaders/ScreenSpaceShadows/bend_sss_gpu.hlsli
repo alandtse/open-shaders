@@ -22,6 +22,8 @@
 // Common screen space shadow projection code (GPU):
 //--------------------------------------------------------------
 
+#include "Common/FoveatedMask.hlsli"
+
 // The main shadow generation function is WriteScreenSpaceShadow(), it will read a depth texture, and write to a shadow texture
 // This code is setup to target DX12 DXC shader compiler, but has also been tested on PS5 with appropriate API remapping.
 // It can compile to DX11, but requires some modifications (e.g., early-out's use of wave intrinsics is not supported in DX11).
@@ -57,6 +59,11 @@ struct DispatchParameters
 						  // Recommended starting value: 2 or 4. Values >= 1 are valid.
 
 	float2 DynamicRes;
+	half FoveatedCenterScale;
+	half FoveatedCenterFeather;
+	half FoveatedCenterHorizontalScale;
+	half2 FoveatedCenterOffset;
+	bool FoveatedEnabled;
 
 	bool IgnoreEdgePixels;  // If an edge is detected, the edge pixel will not contribute to the shadow.
 							// If a very flat surface is being lit and rendered at an grazing angles, the edge detect may incorrectly detect multiple 'edge' pixels along that flat surface.
@@ -98,6 +105,11 @@ struct DispatchParameters
 		DebugOutputEdgeMask = false;
 		DebugOutputThreadIndex = false;
 		DebugOutputWaveIndex = false;
+		FoveatedCenterScale = 1.0;
+		FoveatedCenterFeather = 0.0;
+		FoveatedCenterHorizontalScale = 1.0;
+		FoveatedCenterOffset = half2(0.0, 0.0);
+		FoveatedEnabled = false;
 	}
 
 	// Runtime data returned from BuildDispatchList():
@@ -219,6 +231,7 @@ void WriteScreenSpaceShadow(DispatchParameters inParameters, int3 inGroupID, int
 	int i;
 	bool is_edge = false;
 	bool skip_pixel = false;
+	float foveatedShadowWeight = 1.0;
 
 #if defined(RIGHT)
 	pixel_xy.x += 1.0 / inParameters.InvDepthTextureSize.x;
@@ -333,16 +346,33 @@ void WriteScreenSpaceShadow(DispatchParameters inParameters, int3 inGroupID, int
 	GroupMemoryBarrierWithGroupSync();
 
 #if defined(VR)
-	// Check if the pixel we're writing to is on the correct eye side
-	half writeX = write_xy.x * inParameters.InvDepthTextureSize.x;
+	// Enforce strict per-eye write bounds to prevent cross-eye seam leakage.
+	int eyeWidth = (int)round(1.0 / inParameters.InvDepthTextureSize.x);
+	int writeX = (int)write_xy.x;
 
 #	if defined(RIGHT)
-	if (writeX < 0.0)
+	if (writeX < eyeWidth || writeX >= eyeWidth * 2)
 		return;
 #	else
-	if (writeX > 1.0)
+	if (writeX < 0 || writeX >= eyeWidth)
 		return;
 #	endif
+
+	if (inParameters.FoveatedEnabled) {
+		float2 eyeWriteXY = write_xy;
+#	if defined(RIGHT)
+		eyeWriteXY.x -= eyeWidth;
+#	endif
+		const float2 eyeUV = saturate((eyeWriteXY + 0.5) * inParameters.InvDepthTextureSize);
+		foveatedShadowWeight = FoveatedComputeCenterBlendWeight(
+			eyeUV,
+			inParameters.FoveatedCenterScale,
+			inParameters.FoveatedCenterFeather,
+			inParameters.FoveatedCenterHorizontalScale,
+			inParameters.FoveatedCenterOffset);
+		if (foveatedShadowWeight <= 0.0)
+			return;
+	}
 #endif
 
 	half start_depth = sampling_depth[0];
@@ -389,6 +419,9 @@ void WriteScreenSpaceShadow(DispatchParameters inParameters, int3 inGroupID, int
 
 	// Take the average of 4 samples, this is useful to reduces aliasing noise in the source depth, especially with long shadows.
 	result = dot(shadow_value, 0.25);
+#if defined(VR)
+	result = lerp(1.0, result, foveatedShadowWeight);
+#endif
 
 	// Asking the GPU to write scattered single-byte pixels isn't great,
 	// But thankfully the latency is hidden by all the work we're doing...

@@ -249,13 +249,13 @@ void Skylighting::Prepass()
 		CS_GPU_PASS("Skylighting::ProbeUpdate");
 
 		auto renderer = globals::game::renderer;
-		auto& esramDepthStencil = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kVOLUMETRIC_LIGHTING_SHADOWMAPS_ESRAM];
+		auto& cascadeDepthStencil = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGET_DEPTHSTENCIL::kSHADOWMAPS_ESRAM];
 
 		std::array<ID3D11ShaderResourceView*, 4> srvs = {
 			texOcclusion->srv.get(),
-			shadowCascadeSRV ? shadowCascadeSRV : nullptr,
-			shadowCascadeSRV ? globals::deferred->directionalShadowLights->srv.get() : nullptr,
-			shadowCascadeSRV ? esramDepthStencil.depthSRV : nullptr
+			nullptr,
+			globals::deferred->directionalShadowLights->srv.get(),
+			cascadeDepthStencil.depthSRV
 		};
 		std::array<ID3D11UnorderedAccessView*, 4> uavs = {
 			texProbeArray->uav.get(),
@@ -653,16 +653,6 @@ void Skylighting::RenderOcclusion()
 			}
 		}
 	}
-}
-
-void Skylighting::CaptureShadowCascadeSRV()
-{
-	auto context = globals::d3d::context;
-	ID3D11ShaderResourceView* srv = nullptr;
-	context->PSGetShaderResources(4, 1, &srv);
-	if (shadowCascadeSRV)
-		shadowCascadeSRV->Release();
-	shadowCascadeSRV = srv;
 }
 
 void Skylighting::Main_Precipitation_RenderOcclusion::thunk()

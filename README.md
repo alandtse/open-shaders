@@ -238,3 +238,5 @@ See LICENSE within each directory; if none, it's [Default](#default)
 ### Icons
 
 Open Shaders does not ship the upstream Community Shaders logo. The upstream logo is non-GPL, not trademark-licensed, and may only be used in unmodified form with the Community Shaders team's permission — none of which extends to forks. Action icons and category icons are bundled as before; the upstream Discord banner has been removed since the fork has no affiliated Discord channel. The menu renders without a logo image when none is present (the load path is null-safe).
+
+Open Shaders' own logo ([.github/assets/logo](.github/assets/logo)), used in the FOMOD installer header, is non-GPL and unmodified-use only — see the LICENSE file in that directory.

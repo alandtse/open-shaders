@@ -91,15 +91,45 @@ runs:
               }
               Remove-Item "dummy.cpp" -ErrorAction SilentlyContinue
 
+        # lukka/run-vcpkg's own bootstrap-vcpkg.bat has no retry, so a transient
+        # vcpkg.exe download failure hard-fails the build. Do the clone +
+        # bootstrap here instead, wrapped in retry.
+        - name: Bootstrap vcpkg.exe (retry)
+          uses: nick-fields/retry@v4
+          with:
+              timeout_minutes: 10
+              max_attempts: 3
+              retry_wait_seconds: 30
+              shell: pwsh
+              command: |
+                  $vcpkgDir = "${{ github.workspace }}/vcpkg"
+                  $vcpkgExe = Join-Path $vcpkgDir "vcpkg.exe"
+                  $commitId = (Get-Content vcpkg.json -Raw | ConvertFrom-Json).'builtin-baseline'
+                  if (Test-Path $vcpkgExe) {
+                      Write-Host "vcpkg.exe already present, skipping bootstrap."
+                  } else {
+                      if (-not (Test-Path $vcpkgDir)) {
+                          git clone https://github.com/microsoft/vcpkg.git $vcpkgDir
+                      }
+                      Push-Location $vcpkgDir
+                      git fetch origin $commitId
+                      git checkout $commitId
+                      & .\bootstrap-vcpkg.bat -disableMetrics
+                      Pop-Location
+                      if (-not (Test-Path $vcpkgExe)) { throw "vcpkg.exe missing after bootstrap" }
+                  }
+                  # run-vcpkg's own up-to-date check reads this sentinel, not the
+                  # executable's presence -- without it, Setup vcpkg still re-runs
+                  # its un-retried bootstrap on every job.
+                  $commitId | Out-File -FilePath (Join-Path $vcpkgDir "vcpkgLastBuiltCommitId") -NoNewline -Encoding ascii
+
         - name: Setup vcpkg
           uses: lukka/run-vcpkg@v11.6
           with:
               vcpkgJsonGlob: vcpkg.json
-              # Bootstrap vcpkg only; do NOT install here. Manifest install runs
-              # later during the retry-wrapped cmake configure, so the flaky
-              # asset fetches happen inside the retry + with the downloads cache
-              # already restored. Explicit so a future default flip can't move
-              # the install (and its network I/O) back ahead of those guards.
+              # vcpkg.exe + the sentinel written above make run-vcpkg's own
+              # checks skip its un-retried clone/bootstrap. Do NOT install here
+              # either -- that runs later during the retry-wrapped cmake configure.
               runVcpkgInstall: false
 
         # vcpkg download (asset) cache. Keyed on the manifest + baseline, NOT
@@ -249,7 +279,8 @@ runs:
               }
 
         # Pre-install vcpkg deps via a CMake configure, wrapped in retry. This
-        # is the only step that hits the network for vcpkg ports/tools, so a
+        # is the step that hits the network for vcpkg ports/tools (the
+        # vcpkg.exe bootstrap itself is retried separately above), so a
         # transient GitHub-releases 504 (e.g. the PowerShell-core fetch) gets
         # retried here instead of failing the build. Subsequent run-cmake steps
         # in the calling job reuse this warm configure + the cached downloads,

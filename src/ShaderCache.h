@@ -1,6 +1,7 @@
 #pragma once
 
 #include <BS_thread_pool.hpp>
+#include <deque>
 #include <efsw/efsw.hpp>
 #include <unordered_set>
 #include <vector>
@@ -232,6 +233,8 @@ namespace SIE
 		static size_t MakeId(ShaderClass shaderClass, RE::BSShader::Type shaderType, uint32_t descriptor);
 		/** @brief Returns a human-readable string describing this task (shader file, class, defines). */
 		std::string GetString() const;
+		/** @brief Path to the actual HLSL source this task compiles from (not always fxpFilename -- see ImageSpace shaders). */
+		std::wstring GetSourcePath() const;
 
 		/**
 		 * LPT scheduling score: higher = more expensive = should be dispatched first.
@@ -244,6 +247,10 @@ namespace SIE
 		void SetEnqueuedQpc(int64_t qpc) { enqueuedQpc = qpc; }
 		/** @brief Gets the QPC timestamp when this task was enqueued. */
 		int64_t GetEnqueuedQpc() const { return enqueuedQpc; }
+		/** @brief Records the CompilationSet batch generation this task was enqueued under. */
+		void SetGeneration(uint64_t gen) { generation = gen; }
+		/** @brief Gets the batch generation this task was enqueued under, for staleness checks against a later Clear(). */
+		uint64_t GetGeneration() const { return generation; }
 
 		bool operator==(const ShaderCompilationTask& other) const;
 
@@ -256,6 +263,7 @@ namespace SIE
 		static int ComputePriority(ShaderClass shaderClass, const RE::BSShader& shader, uint32_t descriptor);
 		int cachedPriority;
 		int64_t enqueuedQpc = 0;
+		uint64_t generation = 0;
 	};
 }
 
@@ -292,6 +300,7 @@ namespace SIE
 	{
 	public:
 		LARGE_INTEGER lastReset;
+		std::atomic<int64_t> lastResetQpc{ 0 };  // Lock-free mirror of lastReset.QuadPart for GetLastResetQpc().
 		LARGE_INTEGER lastCalculation;
 		std::atomic<int64_t> completionTime;  // When compilation completed (QuadPart equivalent)
 		LARGE_INTEGER frequency;
@@ -301,6 +310,7 @@ namespace SIE
 		{
 			QueryPerformanceFrequency(&frequency);
 			QueryPerformanceCounter(&lastReset);
+			lastResetQpc.store(lastReset.QuadPart, std::memory_order_relaxed);
 			QueryPerformanceCounter(&lastCalculation);
 			completionTime.store(0, std::memory_order_relaxed);
 		}
@@ -311,6 +321,10 @@ namespace SIE
 		void Add(const ShaderCompilationTask& task);
 		/** @brief Marks a task as finished and records its timing metrics. */
 		void Complete(const ShaderCompilationTask& task);
+		/** @brief Latches the compilation-phase clock at the moment a real (non-disk-hit)
+		 *  compile begins, so ETA and the "started" log reflect the actual first compile
+		 *  rather than when it finishes. Logs once per phase. */
+		void MarkPhaseStarted();
 		/** @brief Resets all task queues and counters for a fresh compilation pass. */
 		void Clear();
 		/** @brief Drops the given task ids from the completed/in-progress bookkeeping so a
@@ -339,6 +353,7 @@ namespace SIE
 		std::atomic<uint64_t> totalPriorityWeight = 0;      // sum of (GetPriority()+1) for all queued tasks
 		std::atomic<uint64_t> completedPriorityWeight = 0;  // sum of (GetPriority()+1) for completed/failed tasks
 		std::atomic<uint32_t> heavyTasksInFlight = 0;       // number of dispatched heavy (>= kHeavyPriorityThreshold) tasks still running
+		std::atomic<uint64_t> generation = 0;               // bumped by Clear(); tags tasks so a post-Clear() Complete() can detect staleness
 		std::mutex compilationMutex;
 
 		/** Per-task timing record stored for post-mortem analysis and developer UI. */
@@ -350,6 +365,8 @@ namespace SIE
 			int priority = 0;               // estimated compile weight (see ComputePriority)
 			int defineCount = 0;            // popcount of descriptor — active define permutations
 			uintmax_t sourceSizeBytes = 0;  // HLSL source file size at compile time
+			uint32_t threadId = 0;          // worker thread id at compile time, for trace export
+			int64_t startQpc = 0;           // QueryPerformanceCounter ticks at compile start, for trace export
 		};
 
 		/** On-demand parallelism metrics derived from task timings. */
@@ -375,6 +392,16 @@ namespace SIE
 
 		/** @brief Returns a copy of the N records with the highest elapsedMs, sorted descending. */
 		std::vector<SlowTaskRecord> GetTopSlowTasks(size_t n = 3) const;
+
+		/** @brief Returns a copy of every task record collected for the current build. */
+		std::vector<SlowTaskRecord> GetAllTaskRecords() const;
+
+		/** @brief QPC tick of the last Clear(), a per-build generation marker so UI caches
+		 *  invalidate on a fresh build even if it happens to complete the same task count. */
+		int64_t GetLastResetQpc() const { return lastResetQpc.load(std::memory_order_relaxed); }
+
+		/** @brief Ticks per second for converting QPC-based timestamps (e.g. SlowTaskRecord::startQpc). */
+		int64_t GetQpcFrequency() const { return frequency.QuadPart; }
 
 		/** @brief Computes parallelism metrics on demand from collected task timings. */
 		std::optional<ParallelismStats> GetParallelismStats() const;
@@ -462,18 +489,46 @@ namespace SIE
 		bool IsDiskCache() const;
 		/** Sets whether the persistent disk cache is enabled. */
 		void SetDiskCache(bool value);
-		/** @brief Deletes the entire on-disk shader cache directory. */
+		/** @brief Deletes the on-disk shader cache directory plus the rollback and swap slots. Main-thread only: also resets UI-facing mismatch state. */
 		void DeleteDiskCache();
+		/** @brief Deletes the same on-disk directories as DeleteDiskCache(), without touching UI-facing mismatch state. Safe to call from the file-watcher thread. */
+		void DeleteDiskCacheFiles();
 		/** @brief Validates disk cache integrity against current shader sources and feature set. */
 		void ValidateDiskCache();
+		/** @brief Finalizes a boot-detected feature set change: refresh the manifest and clear the change state. */
+		void CommitFeatureSetChange();
+		/** @brief Swaps the rollback cache back into use and matches boot toggles to it. Restart required. */
+		bool RestorePreviousDiskCache();
 		/** @brief Writes cache metadata (version, feature list) to the disk cache directory. */
 		void WriteDiskCacheInfo();
 		/// One disk-cache/runtime state divergence found by ValidateDiskCache.
 		/// (Logic lives in Utils/CacheInvalidation.h so tests/cpp can exercise it.)
 		using CacheMismatch = Util::CacheInvalidation::CacheMismatch;
 
-		/// Mismatches found at boot (empty when the disk cache validated clean).
-		const std::vector<CacheMismatch>& GetCacheMismatches() const { return cacheMismatches; }
+		/// Mismatches found at boot (empty when the disk cache validated clean). Returned by
+		/// value: devbench's listener thread reads this while the main thread (via
+		/// ValidateDiskCache/rollback actions) reassigns it, so a reference would be unsafe.
+		std::vector<CacheMismatch> GetCacheMismatches() const
+		{
+			std::lock_guard lock{ mismatchesMutex };
+			return cacheMismatches;
+		}
+		/// Mismatches between the restorable rollback cache and the current setup. See
+		/// GetCacheMismatches for why this is returned by value.
+		std::vector<CacheMismatch> GetPreviousCacheMismatches() const
+		{
+			std::lock_guard lock{ mismatchesMutex };
+			return previousCacheMismatches;
+		}
+		/// True when boot detected a pure feature-toggle change and rotated the old
+		/// cache into the rollback slot; cleared once the new cache is committed.
+		bool HasFeatureSetChanges() const { return featureSetChanged; }
+		/// True after a rollback restore this session: it takes effect on restart.
+		bool HasFeatureSetRevertPending() const { return featureSetRevertPending; }
+		/// True if the previous cache backup succeeded in this session.
+		bool HasFeatureSetCacheBackup() const { return featureSetCacheBackedUp; }
+		/// True if Data/ShaderCache.Previous holds a cache restorable for the current setup.
+		bool HasPreviousDiskCache() const { return previousDiskCacheAvailable; }
 
 		/// True while an enabled-flip mismatch holds the disk cache: blobs preserved on
 		/// disk, this session compiles memory-only, and the menu offers rebuild vs
@@ -483,7 +538,8 @@ namespace SIE
 		/// Disk-cache IO gate: user setting AND not held. The hold must not flip
 		/// isDiskCache itself -- that value persists as "Enable Disk Cache" in user
 		/// settings, so a save during a held session would disable the cache forever.
-		bool IsDiskCacheActive() const { return isDiskCache && !diskCacheHeld; }
+		/// A pending rollback also gates IO so new blobs can't dirty the restored cache.
+		bool IsDiskCacheActive() const { return isDiskCache && !diskCacheHeld && !featureSetRevertPending; }
 
 		/// User accepted the new feature state: wipe the held cache and rebuild to disk.
 		void AcceptCacheRebuild();
@@ -597,12 +653,37 @@ namespace SIE
 		 * entries whose status is `ShaderCompilationTask::Status::Failed`.
 		 */
 		uint64_t GetCurrentFailedCount();
+		/// One shader compile failure: `key` is GetShaderString's cache key (shader class +
+		/// merged feature defines, plus a filename that is fxpFilename even for ImageSpace
+		/// shaders), identifying the technique/permutation without a separate descriptor
+		/// lookup; `path` is the actual source file compiled (originalShaderName for
+		/// ImageSpace shaders), which can differ from the filename embedded in `key`.
+		struct CompileFailure
+		{
+			std::string key;
+			std::string path;
+			std::string error;
+			uint64_t epoch = 0;
+			uint32_t frame = 0;
+		};
+		/// Records a compile failure (bounded ring, newest last). Thread-safe; called from
+		/// whichever thread ran the failed compile.
+		void RecordCompileFailure(std::string a_key, std::string a_path, std::string a_error);
+		/// Most recent compile failures, oldest first. Returned by value: devbench's listener
+		/// thread reads this while compiles run concurrently on other threads.
+		std::vector<CompileFailure> GetRecentCompileFailures() const
+		{
+			std::lock_guard lock{ compileFailuresMutex };
+			return { recentCompileFailures.begin(), recentCompileFailures.end() };
+		}
 		uint64_t GetTotalTasks();
 		uint64_t GetDiskHitTasks();
 		uint64_t GetDigestComputeCount();
 		int64_t GetDigestComputeTimeUs();
 		uint64_t GetDigestDecidedTasks();
 		void IncCacheHitTasks();
+		/** @brief Forwards to CompilationSet::MarkPhaseStarted(); call right before a real compile begins. */
+		void MarkCompilationPhaseStarted();
 		void RecordDigestComputeTime(int64_t a_elapsedUs);
 		void IncDigestDecidedTasks();
 		void ToggleErrorMessages();
@@ -617,7 +698,23 @@ namespace SIE
 
 		/** @brief Returns a copy of the top-N slowest task records from the last build, sorted descending. */
 		std::vector<CompilationSet::SlowTaskRecord> GetTopSlowTasks(size_t n = 3);
+		/** @brief Returns a copy of every task record collected for the current build. */
+		std::vector<CompilationSet::SlowTaskRecord> GetAllTaskRecords();
+		/** @brief QPC tick of the last build reset, a generation marker for UI caches. */
+		int64_t GetLastResetQpc();
+		/** @brief Ticks per second for converting QPC-based timestamps (e.g. SlowTaskRecord::startQpc). */
+		int64_t GetQpcFrequency();
 		std::optional<CompilationSet::ParallelismStats> GetParallelismStats();
+
+		/**
+		 * @brief Writes every collected task record for the current build to a_path as a
+		 * Chrome Trace Event Format JSON array (importable directly by ui.perfetto.dev or
+		 * chrome://tracing) for diagnosing whether a slow build is genuine shader compile
+		 * cost or external CPU contention during the build window.
+		 * @return true on success; false on an empty record set or a file-write failure
+		 *  (logged, never throws).
+		 */
+		bool ExportCompileTrace(const std::filesystem::path& a_path);
 
 		/**
 		 * @brief Clears all shaders of a specific type from the shader map.
@@ -955,6 +1052,9 @@ namespace SIE
 		ShaderCache();
 		void ManageCompilationSet(std::stop_token stoken);
 		void ProcessCompilationSet(std::stop_token stoken, SIE::ShaderCompilationTask task);
+		bool BackupActiveDiskCache();
+		void DeleteActiveDiskCache();
+		void RefreshPreviousDiskCacheInfo();
 
 		~ShaderCache();
 
@@ -970,7 +1070,21 @@ namespace SIE
 		bool isEnabled = true;
 		bool isDiskCache = true;
 		bool diskCacheHeld = false;
+		bool featureSetChanged = false;
+		bool featureSetRevertPending = false;
+		bool featureSetCacheBackedUp = false;
+		bool previousDiskCacheAvailable = false;
+		// Guards cacheMismatches/previousCacheMismatches: reassigned/cleared on the main
+		// thread (ValidateDiskCache, rollback actions), read from devbench's listener
+		// thread via GetCacheMismatches/GetPreviousCacheMismatches.
+		mutable std::mutex mismatchesMutex;
 		std::vector<CacheMismatch> cacheMismatches;
+		std::vector<CacheMismatch> previousCacheMismatches;
+		// Guards recentCompileFailures: appended from whichever thread runs a failed compile,
+		// read from devbench's listener thread via GetRecentCompileFailures.
+		static constexpr size_t kMaxRecentCompileFailures = 32;
+		mutable std::mutex compileFailuresMutex;
+		std::deque<CompileFailure> recentCompileFailures;
 		std::vector<std::string> heldMismatchDefines;
 		bool isSkipUnchangedShaders = true;  ///< when true, recompile a disk-cached shader only if its source is newer
 		bool isAsync = true;
@@ -990,6 +1104,18 @@ namespace SIE
 		std::mutex modifiedMapMutex;                                                              // guard for modifiedShaderMap
 		ankerl::unordered_dense::map<std::string, std::set<hlslRecord>> hlslToShaderMap{};        // hashmap linking specific hlsl files to shader keys in shaderMap
 		std::mutex hlslMapMutex;                                                                  // guard for hlslToShaderMap
+
+		// Evictions parked while their key was Pending; guarded by mapMutex.
+		// deferredEvictionCount is a lock-free fast path for the common empty case.
+		ankerl::unordered_dense::map<std::string, hlslRecord> deferredEvictions;
+		std::atomic<size_t> deferredEvictionCount{ 0 };
+
+		/** @brief Parks a_record's eviction if its key is Pending, returning true;
+		 *  otherwise returns false and the caller should EvictShader it immediately. */
+		bool TryDeferEviction(const hlslRecord& a_record);
+		/** @brief Applies a parked eviction for a_key, if any. Must be called with no ShaderCache
+		 *  mutex held: it calls EvictShader, which takes compilationMutex. */
+		void ApplyDeferredEviction(const std::string& a_key);
 
 		// efsw file watcher
 		efsw::FileWatcher* fileWatcher = nullptr;

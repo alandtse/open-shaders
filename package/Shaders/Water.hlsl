@@ -589,20 +589,15 @@ float GetFlowmapHeightBarycentric(PS_INPUT input, float2 flowmapDimensions, floa
 }
 
 /**
- * Computes mip level for flowmap texture sampling
+ * Computes mip level from continuous (non-flowmapped) UVs.
+ * Flow-rotated UVs have discontinuous ddx/ddy and must not be used for LOD.
  */
-float GetFlowmapMipLevel(float2 flowmapUV)
+float GetFlowmapMipLevel(float2 baseUV)
 {
 	float2 textureDims;
 	FlowMapNormalsTex.GetDimensions(textureDims.x, textureDims.y);
 
-#				if defined(VR)
-	textureDims /= 16.0;
-#				else
-	textureDims /= 8.0;
-#				endif
-
-	float2 texCoordsPerSize = flowmapUV * textureDims;
+	float2 texCoordsPerSize = baseUV * textureDims;
 	float2 dxSize = ddx(texCoordsPerSize);
 	float2 dySize = ddy(texCoordsPerSize);
 	float2 dTexCoords = dxSize * dxSize + dySize * dySize;
@@ -616,24 +611,20 @@ float GetFlowmapMipLevel(float2 flowmapUV)
  */
 
 /**
- * Generates flowmap-based normal (no parallax - flowmap normals are not parallax-shifted)
- * Uses mip clamping to preserve detail at distance and prevent over-blurring
+ * Generates flowmap-based normal (no parallax - flowmap normals are not parallax-shifted).
+ * Mip LOD uses non-flowmapped TexCoord3 derivatives — flow-rotated UVs break hardware/manual
+ * mip selection (stuck mip 0 shimmer, or excessive LOD + UV shrink that flattens normals).
  */
-float3 GetFlowmapNormal(PS_INPUT input, float2 uvShift, float multiplier, float offset)
+float3 GetFlowmapNormal(PS_INPUT input, float2 uvShift, float multiplier, float offset, float2 dx, float2 dy)
 {
 	FlowmapData flowData = GetFlowmapDataUV(input, uvShift);
 	float2 uv = offset + (flowData.flowVector - float2(multiplier * ((0.001 * ReflectionColor.w) * flowData.color.w), 0));
 
-	float2 dx = ddx(uv);
-	float2 dy = ddy(uv);
-	float mipLevel = 0.5 * log2(max(dot(dx, dx), dot(dy, dy)));
-	mipLevel = clamp(mipLevel + SharedData::MipBias, 0, 5);
+	// Match UV footprint: flowVector scales by this (see GetFlowmapDataTextureSpace)
+	float flowStrength = sqrt(1.01 - flowData.color.z);
+	float mipScale = exp2(SharedData::MipBias) * flowStrength;
 
-	float mipScale = exp2(-mipLevel);
-	float2 scaledFlowVector = flowData.flowVector * mipScale;
-	float2 scaledUv = offset + (scaledFlowVector - float2(multiplier * ((0.001 * ReflectionColor.w) * flowData.color.w), 0));
-
-	return float3(FlowMapNormalsTex.SampleLevel(FlowMapNormalsSampler, scaledUv, mipLevel).xy, flowData.color.z);
+	return float3(FlowMapNormalsTex.SampleGrad(FlowMapNormalsSampler, uv, dx * mipScale, dy * mipScale).xy, flowData.color.z);
 }
 
 /**
@@ -737,11 +728,16 @@ WaterNormalData GetWaterNormal(PS_INPUT input, float distanceFactor, float norma
 	// Calculate cell blend weights using parallaxed input
 	float2 normalMul = 0.5 + -(-0.5 + abs(frac(flowmapInput.TexCoord2.zw * (64 * flowmapDimensions)) * 2 - 1));
 
+	// Same UV scale as flowVector before rotation — shared so all 4 blend samples use matching LOD
+	float2 baseUV = 64 * flowmapInput.TexCoord3.xy;
+	float2 flowNormalDx = ddx(baseUV);
+	float2 flowNormalDy = ddy(baseUV);
+
 	// Sample flowmap normals with parallax applied
-	float3 flowmapNormal0 = GetFlowmapNormal(flowmapInput, uvShift, 9.92, 0);
-	float3 flowmapNormal1 = GetFlowmapNormal(flowmapInput, float2(0, uvShift.y), 10.64, 0.27);
-	float3 flowmapNormal2 = GetFlowmapNormal(flowmapInput, 0.0.xx, 8, 0);
-	float3 flowmapNormal3 = GetFlowmapNormal(flowmapInput, float2(uvShift.x, 0), 8.48, 0.62);
+	float3 flowmapNormal0 = GetFlowmapNormal(flowmapInput, uvShift, 9.92, 0, flowNormalDx, flowNormalDy);
+	float3 flowmapNormal1 = GetFlowmapNormal(flowmapInput, float2(0, uvShift.y), 10.64, 0.27, flowNormalDx, flowNormalDy);
+	float3 flowmapNormal2 = GetFlowmapNormal(flowmapInput, 0.0.xx, 8, 0, flowNormalDx, flowNormalDy);
+	float3 flowmapNormal3 = GetFlowmapNormal(flowmapInput, float2(uvShift.x, 0), 8.48, 0.62, flowNormalDx, flowNormalDy);
 
 	float2 flowmapNormalWeighted =
 		normalMul.y * (normalMul.x * flowmapNormal2.xy + (1 - normalMul.x) * flowmapNormal3.xy) +
@@ -863,14 +859,15 @@ WaterNormalData GetWaterNormal(PS_INPUT input, float distanceFactor, float norma
 	finalNormal = ReorientNormal(rippleNormal, finalNormal);
 #			endif
 
-	result.normal = finalNormal;
+	float waveAmplitude = SharedData::csUtilitySettings.waterWaveAmplitude;
+	result.normal = waveAmplitude == 1.0 ? finalNormal : normalize(lerp(float3(0, 0, 1), finalNormal, waveAmplitude));
 	return result;
 }
 
 float3 GetWaterSpecularColor(PS_INPUT input, float3 normal, float3 viewDirection, float distanceFactor, float skylightingSpecular)
 {
 	if (!(Permutation::PixelShaderDescriptor & Permutation::WaterFlags::Reflections))
-		return ReflectionColor.xyz * VarAmounts.y;
+		return ReflectionColor.xyz * VarAmounts.y * SharedData::csUtilitySettings.waterReflectionAmount;
 
 	float3 R = reflect(viewDirection, WaterParams.y * normal + float3(0, 0, 1 - WaterParams.y));
 	float3 reflectionColor = CubeMapTex.SampleLevel(CubeMapSampler, R, 0).xyz;
@@ -905,22 +902,20 @@ float3 GetWaterSpecularColor(PS_INPUT input, float3 normal, float3 viewDirection
 #			endif
 
 #			if !defined(LOD) && NUM_SPECULAR_LIGHTS == 0
-	float pointingDirection = dot(viewDirection, R);
-	float pointingAlignment = dot(reflect(viewDirection, float3(0, 0, 1)), R);
-	float ssrAmount = min(pointingAlignment, pointingDirection);
-	if (SSRParams.x > 0.0 && ssrAmount > 0.0) {
-		float2 ssrReflectionUv = ((FrameBuffer::DynamicResolutionParams2.xy * input.HPosition.xy) * SSRParams.zw) + 0.05 * normal.xy;
-		float2 ssrReflectionUvDR = FrameBuffer::GetDynamicResolutionAdjustedScreenPosition(ssrReflectionUv);
-		float4 ssrReflectionColorBlurred = SSRReflectionTex.Sample(SSRReflectionSampler, ssrReflectionUvDR);
-		float4 ssrReflectionColorRaw = RawSSRReflectionTex.Sample(RawSSRReflectionSampler, ssrReflectionUvDR);
-		float4 ssrReflectionColor = lerp(ssrReflectionColorBlurred, ssrReflectionColorRaw, ssrAmount * 0.7);
-		float3 finalSsrReflectionColor = max(0, ssrReflectionColor.xyz);
-		float ssrFraction = saturate(ssrReflectionColor.w * distanceFactor * ssrAmount);
-		reflectionColor = lerp(reflectionColor, finalSsrReflectionColor, ssrFraction);
-	}
+	float pointingDirection = dot(viewDirection, R) * 0.5 + 0.5;
+	float pointingAlignment = dot(reflect(viewDirection, float3(0, 0, 1)), R) * 0.5 + 0.5;
+	float ssrAmount = sqrt(min(pointingAlignment, pointingDirection));
+	float2 ssrReflectionUv = ((FrameBuffer::DynamicResolutionParams2.xy * input.HPosition.xy) * SSRParams.zw) + 0.05 * normal.xy;
+	float2 ssrReflectionUvDR = FrameBuffer::GetDynamicResolutionAdjustedScreenPosition(ssrReflectionUv);
+	float4 ssrReflectionColorBlurred = SSRReflectionTex.Sample(SSRReflectionSampler, ssrReflectionUvDR);
+	float4 ssrReflectionColorRaw = RawSSRReflectionTex.Sample(RawSSRReflectionSampler, ssrReflectionUvDR);
+	float4 ssrReflectionColor = lerp(ssrReflectionColorBlurred, ssrReflectionColorRaw, ssrAmount * 0.7);
+	float3 finalSsrReflectionColor = max(0, ssrReflectionColor.xyz);
+	float ssrFraction = saturate(ssrReflectionColor.w * distanceFactor * ssrAmount);
+	reflectionColor = lerp(reflectionColor, finalSsrReflectionColor, ssrFraction);
 #			endif
 
-	return reflectionColor;
+	return reflectionColor * SharedData::csUtilitySettings.waterReflectionAmount;
 }
 
 float GetScreenDepthWater(float2 screenPosition, uint a_useVR = 0)
@@ -952,7 +947,8 @@ float GetFresnelValue(float3 normal, float3 viewDirection)
 	float3 actualNormal = normal;
 #			endif
 	float viewAngle = 1 - saturate(dot(-viewDirection, actualNormal));
-	return (1 - FresnelRI.x) * pow(viewAngle, 5) + FresnelRI.x;
+	float vanillaFresnel = (1 - FresnelRI.x) * pow(viewAngle, 5) + FresnelRI.x;
+	return lerp(SharedData::csUtilitySettings.waterFresnelMin, SharedData::csUtilitySettings.waterFresnelMax, vanillaFresnel);
 }
 
 struct DiffuseOutput
@@ -967,7 +963,7 @@ struct DiffuseOutput
 DiffuseOutput GetWaterDiffuseColor(PS_INPUT input, float3 normal, float3 viewDirection, inout float4 distanceMul, float refractionsDepthFactor, float fresnel, uint eyeIndex, float3 viewPosition, float depth)
 {
 #			if defined(REFRACTIONS)
-	float4 refractionNormal = mul(transpose(TextureProj[eyeIndex]), float4((VarAmounts.w * refractionsDepthFactor * normal.xy) + input.MPosition.xy, input.MPosition.z, 1));
+	float4 refractionNormal = mul(transpose(TextureProj[eyeIndex]), float4((VarAmounts.w * SharedData::csUtilitySettings.waterRefractionAmount * refractionsDepthFactor * normal.xy) + input.MPosition.xy, input.MPosition.z, 1));
 
 	float2 refractionUvRaw = float2(refractionNormal.x, refractionNormal.w - refractionNormal.y) / refractionNormal.ww;
 	refractionUvRaw = Stereo::ConvertToStereoUV(refractionUvRaw, eyeIndex);  // need to convert here for VR due to refractionNormal values
@@ -1028,7 +1024,7 @@ DiffuseOutput GetWaterDiffuseColor(PS_INPUT input, float3 normal, float3 viewDir
 	output.refractionColor = refractionColor;
 	output.refractionDiffuseColor = refractionDiffuseColor;
 	output.depth = depth;
-	output.refractionMul = refractionMul;
+	output.refractionMul = saturate(refractionMul * SharedData::csUtilitySettings.waterMuddiness);
 	output.refractedViewDirection = normalize(refractionWorldPosition.xyz - input.WPosition.xyz);
 	return output;
 #			else
@@ -1060,7 +1056,7 @@ float3 GetSunColor(float3 normal, float3 viewDirection, float3 worldPosition, ui
 		sunColor *= ExponentialHeightFog::GetSunlightFogAttenuation(worldPosition.xyz, FrameBuffer::CameraPosAdjust[eyeIndex].xyz);
 	}
 #				endif
-	return reflectionMul * sunColor;
+	return reflectionMul * sunColor * SharedData::csUtilitySettings.waterSunSpecularMultiplier;
 #			endif
 }
 #		endif
@@ -1228,9 +1224,14 @@ PS_OUTPUT main(PS_INPUT input)
 	dirColor *= dirShadow;
 
 #				if defined(SKYLIGHTING)
-	ambientColor = Color::IrradianceToLinear(ambientColor);
-	ambientColor *= skylightingDiffuse;
-	ambientColor = Color::IrradianceToGamma(ambientColor);
+#					if defined(IBL) && !defined(INTERIOR)
+	if (!SharedData::iblSettings.EnableIBL)
+#					endif
+	{
+		ambientColor = Color::IrradianceToLinear(ambientColor);
+		ambientColor *= skylightingDiffuse;
+		ambientColor = Color::IrradianceToGamma(ambientColor);
+	}
 #				endif
 
 	diffuseOutput.refractionDiffuseColor = dirColor + ambientColor;
@@ -1257,6 +1258,13 @@ PS_OUTPUT main(PS_INPUT input)
 		float2x2 rotationMatrix = float2x2(rotation.x, rotation.y, -rotation.y, rotation.x);
 		float3 worldPositionWS = input.WPosition.xyz + FrameBuffer::CameraPosAdjust[eyeIndex].xyz;
 		const bool inReflection = Permutation::ExtraShaderDescriptor & Permutation::ExtraFlags::InReflection;
+
+		// Recovers occlusion for lights with no shadow-map slot; reflection passes render
+		// from another camera, so main-view depth can't be raymarched there.
+		uint contactShadowSteps = 0;
+		[branch] if (SharedData::lightLimitFixSettings.EnableContactShadows && inWorld && !inReflection)
+			contactShadowSteps = round(SharedData::lightLimitFixSettings.ContactShadowMaxSteps *
+									   (1.0 - saturate(viewPosition.z / SharedData::lightLimitFixSettings.ContactShadowMaxDistance)));
 
 		[loop] for (uint i = 0; i < lightCount; i++)
 		{
@@ -1288,6 +1296,26 @@ PS_OUTPUT main(PS_INPUT input)
 
 			float3 H = normalize(normalizedLightDirection - viewDirection);
 			float HdotN = saturate(dot(H, normal));
+
+			// Skip the raymarch where its result can't matter: already fully shadow-mapped,
+			// or the specular lobe has no contribution from this light at this pixel.
+			[branch] if (contactShadowSteps > 0 && lightShadow != 0.0 && HdotN > 0.0)
+			{
+				const bool isParticleLight = (light.lightFlags & LightLimitFix::LightFlags::Particle) != 0;
+				const bool canContactShadow = isParticleLight ?
+				                                  SharedData::lightLimitFixSettings.EnableParticleContactShadows :
+				                                  !(light.lightFlags & LightLimitFix::LightFlags::Simple);
+#					if defined(ISL)
+				float contactShadowFalloff = saturate(lightDist * light.invRadius);
+				bool passesContactIntensityGate = (1.0 - contactShadowFalloff * contactShadowFalloff) > SharedData::lightLimitFixSettings.ContactShadowMinIntensity;
+#					else
+				bool passesContactIntensityGate = intensityMultiplier > SharedData::lightLimitFixSettings.ContactShadowMinIntensity;
+#					endif
+				if (canContactShadow && passesContactIntensityGate) {
+					float3 lightPositionVS = mul(FrameBuffer::CameraView[eyeIndex], float4(light.positionWS[eyeIndex].xyz, 1)).xyz;
+					lightShadow *= LightLimitFix::ContactShadows(viewPosition, screenNoise, normalize(lightPositionVS - viewPosition), contactShadowSteps, eyeIndex);
+				}
+			}
 
 			const bool isPointLightLinear = light.lightFlags & LightLimitFix::LightFlags::Linear;
 			float3 lightColor = Color::PointLight(light.color.xyz, isPointLightLinear, light.lightFlags) * pow(HdotN, FresnelRI.z) * light.fade;
@@ -1433,7 +1461,7 @@ PS_OUTPUT main(PS_INPUT input)
 
 #				endif
 #			endif
-	psout.Lighting = float4(finalColor, isSpecular);
+	psout.Lighting = float4(finalColor * SharedData::csUtilitySettings.waterBrightness, isSpecular);
 #		endif
 
 #		if defined(STENCIL)

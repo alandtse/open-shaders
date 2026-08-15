@@ -144,9 +144,37 @@ namespace Util::Subrect
 		const UVRegion& GetUV() const { return currentUV; }
 		const UVRegion& GetRightEyeUV() const { return stereoEnabled ? currentRightUV : currentUV; }
 
+		/**
+		 * @brief Apply a seeded/named preset by exact name match (e.g. for a caller driving
+		 * this controller from outside its own DrawEditor UI, such as a performance-tier preset).
+		 *
+		 * Resolves against the live `presets` list first, then falls back to materializing
+		 * a not-yet-offered seeded default on demand (so a name added to SeedDefaultPresets
+		 * after the user already has a persisted preset list still becomes available). A
+		 * seeded default the user has already seen and explicitly deleted is not resurrected.
+		 * @param name The preset's display name.
+		 * @return true if a matching preset was found and applied; false (no-op) otherwise.
+		 */
+		bool ApplyPresetByName(const std::string& name);
+
+		/**
+		 * @brief Look up a preset's UV region by name without applying it or mutating state.
+		 *
+		 * Checks the live `presets` list first, then falls back to `seededDefaults` so a
+		 * caller (e.g. a settings-profile matcher) can compare against a not-yet-materialized
+		 * seeded default's UVs. Reuses the same name space ApplyPresetByName resolves against.
+		 * @param name The preset's display name.
+		 * @return The preset's UV region if found; std::nullopt otherwise.
+		 */
+		std::optional<UVRegion> FindPresetUV(const std::string& name) const;
+
 	private:
 		std::vector<Preset> presets;
 		std::vector<Preset> seededDefaults;
+		// Names of seeded defaults ever offered via presets/ApplyPresetByName --
+		// lets a later-added seed stay reachable while an explicitly deleted
+		// default is never silently resurrected.
+		std::vector<std::string> seenDefaultNames;
 		int selectedPresetIndex = 0;
 		char newPresetName[64] = "";
 

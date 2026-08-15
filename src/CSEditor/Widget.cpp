@@ -352,11 +352,10 @@ void Widget::DrawWidgetHeader(const char* searchId, bool showApply, bool showSav
 		}
 		if (isLocked)
 			ImGui::PopStyleColor(2);
-		if (isLocked && !EditorWindow::AreWeatherLockHooksInstalled()) {
-			Util::AddTooltip(T(TKEY("unlock_weather_hooks_unavailable"), "Unlock Weather (weather-lock hooks failed to install; weather may briefly flash before correcting)"));
-		} else {
+		if (!EditorWindow::AreWeatherLockHooksInstalled())
+			Util::AddTooltip(T(TKEY("weather_lock_hooks_unavailable"), "Weather-lock hooks failed to install; the lock still works but weather may briefly flash before correcting"));
+		else
 			Util::AddTooltip(isLocked ? T(TKEY("unlock_weather"), "Unlock Weather") : T(TKEY("force_this_weather"), "Force This Weather"));
-		}
 	};
 
 	auto drawUnsavedIndicator = [&]() {

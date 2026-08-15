@@ -439,7 +439,131 @@ void AdvancedSettingsRenderer::RenderShaderCompileStatistics()
 		}
 	}
 
+	if (ImGui::TreeNodeEx(T("menu.advanced.all_compiled_tasks", "All Compiled Tasks"), ImGuiTreeNodeFlags_DefaultOpen)) {
+		using SlowTaskRecord = SIE::CompilationSet::SlowTaskRecord;
+
+		// Keyed on lastReset's QPC tick, not record count -- two builds can compile the
+		// same task count. Also refreshed while compiling so it doesn't freeze mid-build.
+		static std::vector<SlowTaskRecord> cachedRows;
+		static int64_t cachedResetQpc = -1;
+		const int64_t resetQpc = shaderCache->GetLastResetQpc();
+		if (resetQpc != cachedResetQpc || shaderCache->IsCompiling()) {
+			cachedResetQpc = resetQpc;
+			cachedRows = shaderCache->GetAllTaskRecords();
+		}
+
+		static char taskFilterText[256] = "";
+		static int taskSearchColumn = 0;
+		static size_t taskSortColumn = 7;  // default sort by Completed, most recent first
+		static bool taskSortAscending = false;
+
+		auto queuePercent = [](const SlowTaskRecord& rec) {
+			const double total = rec.queueWaitMs + rec.elapsedMs;
+			return total > 0.0 ? 100.0 * rec.queueWaitMs / total : 0.0;
+		};
+
+		const int64_t qpcFrequency = shaderCache->GetQpcFrequency();
+		// Time from build start to when this task finished, for a completion-order sort/display.
+		auto completedSinceStartMs = [resetQpc, qpcFrequency](const SlowTaskRecord& rec) {
+			return static_cast<double>(rec.startQpc - resetQpc) * 1000.0 / static_cast<double>(qpcFrequency) + rec.elapsedMs;
+		};
+
+		std::vector<Util::TableColumnConfig<SlowTaskRecord>> columns = {
+			{ T("menu.advanced.column_task_key", "Key"), T("menu.advanced.column_task_key_tooltip", "Shader file, class, and active defines"), [](const SlowTaskRecord& rec) {
+				 return rec.key;
+			 },
+				/*truncate=*/true, /*widthWeight=*/4.0f },
+			{ T("menu.advanced.column_elapsed", "Elapsed"), T("menu.advanced.column_elapsed_tooltip", "Wall-clock compile time for this task"), [](const SlowTaskRecord& rec) {
+				 return Util::FormatDuration(rec.elapsedMs);
+			 } },
+			{ T("menu.advanced.column_queue_wait", "Queue Wait"), T("menu.advanced.column_queue_wait_tooltip", "Time spent waiting for a free worker before compilation started"), [](const SlowTaskRecord& rec) {
+				 return Util::FormatDuration(rec.queueWaitMs);
+			 } },
+			{ T("menu.advanced.column_queue_pct", "Queue %"), T("menu.advanced.column_queue_pct_tooltip", "queueWait / (queueWait + elapsed). High values mean this task waited on a busy scheduler rather than the shader itself being slow to compile."), [queuePercent](const SlowTaskRecord& rec) {
+				 return Util::FormatPercent(static_cast<float>(queuePercent(rec)));
+			 } },
+			{ T("menu.advanced.column_priority", "Weight"), T("menu.advanced.column_priority_tooltip", "Estimated compile-cost priority used for scheduling"), [](const SlowTaskRecord& rec) {
+				 return std::to_string(rec.priority);
+			 } },
+			{ T("menu.advanced.column_defines", "Defines"), T("menu.advanced.column_defines_tooltip", "Number of active define permutations for this task"), [](const SlowTaskRecord& rec) {
+				 return std::to_string(rec.defineCount);
+			 } },
+			{ T("menu.advanced.column_source_kb", "Source KB"), T("menu.advanced.column_source_kb_tooltip", "HLSL source file size at compile time"), [](const SlowTaskRecord& rec) {
+				 return std::format("{:.1f}", static_cast<double>(rec.sourceSizeBytes) / 1024.0);
+			 } },
+			{ T("menu.advanced.column_completed", "Completed"), T("menu.advanced.column_completed_tooltip", "Time from build start to when this task finished compiling"), [completedSinceStartMs](const SlowTaskRecord& rec) {
+				 return Util::FormatDuration(completedSinceStartMs(rec));
+			 } }
+		};
+
+		std::vector<std::function<bool(const SlowTaskRecord&, const SlowTaskRecord&, bool)>> sorters = {
+			[](const SlowTaskRecord& a, const SlowTaskRecord& b, bool asc) { return asc ? (a.key < b.key) : (a.key > b.key); },
+			[](const SlowTaskRecord& a, const SlowTaskRecord& b, bool asc) { return asc ? (a.elapsedMs < b.elapsedMs) : (a.elapsedMs > b.elapsedMs); },
+			[](const SlowTaskRecord& a, const SlowTaskRecord& b, bool asc) { return asc ? (a.queueWaitMs < b.queueWaitMs) : (a.queueWaitMs > b.queueWaitMs); },
+			[queuePercent](const SlowTaskRecord& a, const SlowTaskRecord& b, bool asc) {
+				const double aPct = queuePercent(a);
+				const double bPct = queuePercent(b);
+				return asc ? (aPct < bPct) : (aPct > bPct);
+			},
+			[](const SlowTaskRecord& a, const SlowTaskRecord& b, bool asc) { return asc ? (a.priority < b.priority) : (a.priority > b.priority); },
+			[](const SlowTaskRecord& a, const SlowTaskRecord& b, bool asc) { return asc ? (a.defineCount < b.defineCount) : (a.defineCount > b.defineCount); },
+			[](const SlowTaskRecord& a, const SlowTaskRecord& b, bool asc) { return asc ? (a.sourceSizeBytes < b.sourceSizeBytes) : (a.sourceSizeBytes > b.sourceSizeBytes); },
+			[completedSinceStartMs](const SlowTaskRecord& a, const SlowTaskRecord& b, bool asc) {
+				const double aVal = completedSinceStartMs(a);
+				const double bVal = completedSinceStartMs(b);
+				return asc ? (aVal < bVal) : (aVal > bVal);
+			}
+		};
+
+		auto getFilterableFields = [queuePercent, completedSinceStartMs](const SlowTaskRecord& rec) -> std::vector<std::string> {
+			return {
+				rec.key,
+				Util::FormatDuration(rec.elapsedMs),
+				Util::FormatDuration(rec.queueWaitMs),
+				Util::FormatPercent(static_cast<float>(queuePercent(rec))),
+				std::to_string(rec.priority),
+				std::to_string(rec.defineCount),
+				std::format("{:.1f}", static_cast<double>(rec.sourceSizeBytes) / 1024.0),
+				Util::FormatDuration(completedSinceStartMs(rec))
+			};
+		};
+
+		auto onRowRightClick = [](const SlowTaskRecord& rec) {
+			ImGui::SetClipboardText(rec.key.c_str());
+		};
+
+		Util::TableFilterState<SlowTaskRecord> filterState(getFilterableFields);
+		filterState.filterText = std::string(taskFilterText);
+		filterState.searchColumn = taskSearchColumn;
+
+		std::vector<Util::TableInputEvent<SlowTaskRecord>> inputEvents = {
+			{ Util::TableInputEventType::ContextMenu, onRowRightClick, T("menu.advanced.copy_key", "Copy key"), 1 }
+		};
+
+		Util::ShowInteractiveTable<SlowTaskRecord>(
+			"##AllCompiledTasksTable",
+			columns,
+			cachedRows,
+			taskSortColumn,
+			taskSortAscending,
+			sorters,
+			filterState,
+			inputEvents);
+
+		strncpy_s(taskFilterText, filterState.filterText.c_str(), sizeof(taskFilterText) - 1);
+		taskFilterText[sizeof(taskFilterText) - 1] = '\0';
+		taskSearchColumn = filterState.searchColumn;
+
+		ImGui::TreePop();
+	}
+
 	ImGui::TreePop();
+
+	ImGui::Spacing();
+	ImGui::Separator();
+	ImGui::Spacing();
+
+	RenderCompileTraceExport();
 }
 
 // -----------------------------------------------------------------------------
@@ -466,6 +590,47 @@ void AdvancedSettingsRenderer::RenderDiagnosticsSection()
 	}
 }
 
+void AdvancedSettingsRenderer::RenderCompileTraceExport()
+{
+	Util::DrawSectionHeader(T("menu.advanced.compile_trace_header", "Compile Trace Export"));
+	if (auto _tt = Util::HoverTooltipWrapper()) {
+		ImGui::Text("%s", T("menu.advanced.compile_trace_tooltip_1",
+							  "Writes every compiled task from the current build to a Chrome Trace "
+							  "Event Format JSON file, importable at ui.perfetto.dev or chrome://tracing."));
+		ImGui::Text("%s", T("menu.advanced.compile_trace_tooltip_2",
+							  "A timeline view can distinguish genuine shader compile cost from "
+							  "external CPU contention during the build (e.g. another process "
+							  "stealing cores), which aggregate stats alone cannot localize in time."));
+	}
+
+	auto shaderCache = globals::shaderCache;
+	const bool canExport = !shaderCache->IsCompiling();
+	if (!canExport && ImGui::IsItemHovered()) {
+		if (auto _tt = Util::HoverTooltipWrapper()) {
+			ImGui::Text("%s", T("menu.advanced.compile_trace_busy", "Wait for the current build to finish before exporting."));
+		}
+	}
+
+	static bool lastExportOk = false;
+	static std::string lastExportPath;
+
+	ImGui::BeginDisabled(!canExport);
+	if (ImGui::Button(T("menu.advanced.export_compile_trace", "Export Trace (Perfetto)"), { -1, 0 })) {
+		const auto path = Util::PathHelpers::GetLogPath().parent_path() / "compile-trace.json";
+		lastExportOk = shaderCache->ExportCompileTrace(path);
+		lastExportPath = path.string();
+	}
+	ImGui::EndDisabled();
+
+	if (!lastExportPath.empty()) {
+		if (lastExportOk) {
+			ImGui::TextColored({ 0.4f, 0.9f, 0.4f, 1.0f }, T("menu.advanced.compile_trace_exported", "Exported: %s"), lastExportPath.c_str());
+		} else {
+			ImGui::TextColored({ 0.9f, 0.4f, 0.4f, 1.0f }, "%s", T("menu.advanced.compile_trace_export_failed", "Export failed; check CommunityShaders.log for details."));
+		}
+	}
+}
+
 void AdvancedSettingsRenderer::RenderLoggingControls()
 {
 	Util::DrawSectionHeader(T("menu.advanced.tab_logging", "Logging"));
@@ -488,7 +653,7 @@ void AdvancedSettingsRenderer::RenderLoggingControls()
 		globals::state->SetLogLevel(static_cast<spdlog::level::level_enum>(item_current));
 	}
 	if (auto _tt = Util::HoverTooltipWrapper()) {
-		ImGui::Text("%s", T("menu.advanced.log_level_tooltip", "Log level. Trace is most verbose. Default is info."));
+		ImGui::Text("%s", T("menu.advanced.log_level_tooltip", "Log level. Trace is most verbose. Default is info. Debug and Trace also enable Developer Mode."));
 	}
 
 	ImGui::Columns(2, nullptr, false);
@@ -844,6 +1009,24 @@ void AdvancedSettingsRenderer::RenderDisableAtBootSection(const std::function<vo
 
 void AdvancedSettingsRenderer::RenderTestingSection()
 {
+	auto state = globals::state;
+
+	if (ImGui::Checkbox(T("menu.advanced.enable_developer_mode", "Enable Developer Mode"), &state->enableDeveloperMode)) {
+		logger::info("Developer Mode {}", state->enableDeveloperMode ? "enabled" : "disabled");
+	}
+	if (auto _tt = Util::HoverTooltipWrapper()) {
+		ImGui::Text("%s", T("menu.advanced.enable_developer_mode_tooltip",
+							  "Unlocks developer-only options and tooling. "
+							  "Also enabled automatically when Log Level is debug or trace. "
+							  "Use at your own risk."));
+	}
+	if (!state->enableDeveloperMode && state->GetLogLevel() <= spdlog::level::debug) {
+		ImGui::TextDisabled("%s", T("menu.advanced.developer_mode_via_log_level",
+									  "Currently active because Log Level is debug/trace."));
+	}
+
+	ImGui::Spacing();
+
 	// A/B Testing settings
 	auto* abTestingManager = ABTestingManager::GetSingleton();
 	abTestingManager->DrawSettingsUI();

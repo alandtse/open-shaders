@@ -11,9 +11,9 @@
 namespace
 {
 	constexpr float kEnhancementIntensityMax = 6.0f;
-	constexpr float kHaloRadiusMax = 32.0f;
+	constexpr float kHaloRadiusMax = 14.0f;
 	constexpr float kBloomSaturationMax = 2.0f;
-	constexpr float kCompressionCeilingMax = 8.0f;
+	constexpr float kCompressionCeilingMax = 1.5f;
 
 	void DrawTooltip(const char* a_text)
 	{

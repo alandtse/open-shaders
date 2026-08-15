@@ -8,6 +8,11 @@ The single most important automated check is the **shader-cache gate**: a build
 that compiles all shaders in-game with zero failures and loads every feature is
 the baseline bar for a release.
 
+This runbook covers full release validation, but the same devbench tools are also the
+fastest way to verify a single PR's runtime-affecting change during development —
+launch, call the relevant `openshaders.*` tool(s), and check the log — without waiting
+for a full release pass.
+
 ## Prerequisites
 
 -   **devbench** installed in the game, and the OS build's **Remote Control** feature

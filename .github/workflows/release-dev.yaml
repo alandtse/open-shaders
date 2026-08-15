@@ -82,10 +82,10 @@ jobs:
                   fi
 
             - name: Coalesce a burst of merges
-              # 30 min reset-debounce: folds a merge storm into one build and
-              # matches auto-rebase's cadence. The nightly cron is the floor.
+              # 10 min reset-debounce; not on the stable-release critical
+              # path -- release-semantic.yaml dispatches independently.
               if: github.event_name == 'push'
-              run: sleep 1800
+              run: sleep 600
 
     build:
         name: Build dev-HEAD

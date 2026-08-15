@@ -8,13 +8,16 @@
 
 #include <d3d11_4.h>
 #include <d3d12.h>
+#include <string>
 
 #include <directx/d3dx12.h>
 
 class WrappedResource
 {
 public:
-	WrappedResource(D3D11_TEXTURE2D_DESC a_texDesc, ID3D11Device5* a_d3d11Device, ID3D12Device* a_d3d12Device);
+	// a_name follows Util::SetResourceName's "Feature::Name" convention; views get " SRV"/
+	// " UAV"/" RTV" suffixes. Pass empty to leave resources unnamed.
+	WrappedResource(D3D11_TEXTURE2D_DESC a_texDesc, ID3D11Device5* a_d3d11Device, ID3D12Device* a_d3d12Device, const std::string& a_name = {});
 	~WrappedResource();
 
 	ID3D11Texture2D* resource11 = nullptr;
@@ -63,8 +66,8 @@ class DX12SwapChain
 public:
 	winrt::com_ptr<ID3D12Device> d3d12Device;
 	winrt::com_ptr<ID3D12CommandQueue> commandQueue;
-	winrt::com_ptr<ID3D12CommandAllocator> commandAllocators[2];
-	winrt::com_ptr<ID3D12GraphicsCommandList4> commandLists[2];
+	winrt::com_ptr<ID3D12CommandAllocator> commandAllocators[3];
+	winrt::com_ptr<ID3D12GraphicsCommandList4> commandLists[3];
 
 	IDXGISwapChain4* swapChain;
 
@@ -83,7 +86,7 @@ public:
 	winrt::com_ptr<ID3D11Fence> d3d11Fence;
 	winrt::com_ptr<ID3D12Fence> d3d12Fence;
 
-	winrt::com_ptr<ID3D12Resource> swapChainBuffers[2];
+	winrt::com_ptr<ID3D12Resource> swapChainBuffers[3];
 
 	UINT frameIndex = 0;
 	UINT64 fenceValue = 0;
@@ -94,19 +97,27 @@ public:
 
 	DXGISwapChainProxy* swapChainProxy = nullptr;
 
+	bool useDLSSG = false;
+
 	// Returns the current frame time (in seconds) for accurate FPS calculation when frame generation is active
 	float GetFrameTime() const;
 
 	void CreateD3D12Device(IDXGIAdapter* a_adapter);
 	void CreateSwapChain(IDXGIAdapter* adapter, DXGI_SWAP_CHAIN_DESC swapChainDesc);
+	void CreateSwapChainDirect(IDXGIAdapter* adapter, DXGI_SWAP_CHAIN_DESC swapChainDesc);
 
 	void CreateInterop();
+	/** @brief (Re)creates the D3D11/D3D12-shared swap-chain and UI buffer textures at (re)size time. */
+	void RecreateWrappedResources(const DXGI_SWAP_CHAIN_DESC1& desc);
 
 	DXGISwapChainProxy* GetSwapChainProxy();
 	void SetD3D11Device(ID3D11Device* a_d3d11Device);
 	void SetD3D11DeviceContext(ID3D11DeviceContext* a_d3d11Context);
 
-	HRESULT GetBuffer(void** ppSurface);
+	/** @brief IDXGISwapChain::GetBuffer equivalent for the wrapped D3D11 swap-chain buffer. Only buffer index 0 is supported. */
+	HRESULT GetBuffer(UINT buffer, REFIID riid, void** ppSurface);
+	/** @brief IDXGISwapChain::ResizeBuffers equivalent; rejects any bufferCount other than 2 (required by FidelityFX's replacement buffers). */
+	HRESULT ResizeBuffers(UINT bufferCount, UINT width, UINT height, DXGI_FORMAT format, UINT flags);
 	HRESULT Present(UINT SyncInterval, UINT Flags);
 	HRESULT GetDevice(_In_ REFIID riid, _COM_Outptr_ void** ppDevice);
 	HANDLE GetFrameLatencyWaitableObject();

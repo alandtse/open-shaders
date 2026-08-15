@@ -903,6 +903,16 @@ namespace FeatureIssues
 						continue;
 					}
 
+					// Skip a known feature's ini when it's simply not supported on this
+					// runtime (e.g. a VR-incompatible feature's ini, shipped in the AIO
+					// to every platform) instead of misreporting it as unrecognized.
+					if (auto* known = Feature::FindRegisteredFeatureByShortName(featureName)) {
+						if (globals::game::isVR && !known->SupportsVR()) {
+							logger::info("Ignoring {}.ini, not supported on VR", featureName);
+							continue;
+						}
+					}
+
 					// This is an orphaned INI file - check if it's a known obsolete feature
 					if (IsObsoleteFeature(featureName)) {
 						// Read version from INI file

@@ -12,7 +12,7 @@ namespace ShadowCasterManager
 {
 	float ComputeFrameTimePercentile90()
 	{
-		return FrameTimePercentile90(s_ftRing, s_ftCount);
+		return FrameTimePercentile(s_ftRing, s_ftCount);
 	}
 
 	static int64_t GetPerfCounter()

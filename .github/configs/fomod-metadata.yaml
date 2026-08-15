@@ -1,0 +1,42 @@
+# Data for .github/scripts/build-fomod-package.py. Edit this file to change
+# mod metadata or add/adjust a shader-cache variant; the script itself should
+# stay pure "read this config, build the FOMOD XML" logic.
+#
+# mod.name and the Nexus mod ID behind mod.website come from project.yaml,
+# not here, since nexus-upload.yaml also needs them -- see that file.
+
+mod:
+    author: "Open Shaders Contributors"
+    description: "Open Shaders AIO, with optional prebuilt shader caches."
+    # Repo-relative path; separately licensed, not GPL -- see the LICENSE
+    # file next to it.
+    header_image: ".github/assets/logo/open-shaders-logo.png"
+
+install_step:
+    page_name: "Shader Cache"
+    group_name: "Prebuilt Shader Cache (optional, skips first-launch compile)"
+    # Never shipped in the AIO archive, only written after first launch/save --
+    # its absence gates a variant's auto-recommend to genuinely fresh installs.
+    existing_install_marker: "SKSE/Plugins/CommunityShaders/SettingsUser.json"
+
+# Must stay ordered highest game_version first -- see build-fomod-package.py's
+# module docstring for why.
+cache_variants:
+    - name: "SE/AE"
+      description: >-
+          Prebuilt shader cache for Skyrim SE/AE. Only useful if your feature
+          settings are still at their defaults -- if you've changed any
+          feature settings, this cache won't match and you'll just compile
+          locally instead, same as skipping.
+      staging_subdir: "ShaderCache-SE-AE"
+      cli_arg: "se_cache"
+      game_version: "1.5.0"
+    - name: "VR"
+      description: >-
+          Prebuilt shader cache for Skyrim VR. Only useful if your feature
+          settings are still at their defaults -- if you've changed any
+          feature settings, this cache won't match and you'll just compile
+          locally instead, same as skipping.
+      staging_subdir: "ShaderCache-VR"
+      cli_arg: "vr_cache"
+      game_version: "1.4.0"

@@ -29,10 +29,16 @@ cbuffer PerFrame : register(b1)
 								 // The 'USE_HALF_PIXEL_OFFSET' macro might need to be defined if sampling at exact pixel coordinates isn't precise (e.g., if odd patterns appear in the shadow).
 
 	float2 DynamicRes;
+	float4 FoveatedData0;         // x=centerScale, y=centerFeather, z=centerHorizontalScale, w=enabled
+	float4 FoveatedCenterOffset;  // xy=current eye's center offset (selected per-eye at dispatch), zw=padding
 
 	float SurfaceThickness;
 	float BilinearThreshold;
 	float ShadowContrast;
+	uint Enable;
+	uint SampleCount;
+	uint EnableFoveated;
+	uint2 settingsPad0;
 };
 
 [numthreads(WAVE_SIZE, 1, 1)] void main(
@@ -55,6 +61,11 @@ cbuffer PerFrame : register(b1)
 	parameters.ShadowContrast = ShadowContrast;
 
 	parameters.DynamicRes = DynamicRes;
+	parameters.FoveatedCenterScale = FoveatedData0.x;
+	parameters.FoveatedCenterFeather = FoveatedData0.y;
+	parameters.FoveatedCenterHorizontalScale = FoveatedData0.z;
+	parameters.FoveatedCenterOffset = FoveatedCenterOffset.xy;
+	parameters.FoveatedEnabled = FoveatedData0.w > 0.5;
 
 #if defined(VR)
 	// Disabled in VR: depth bias causes subtle shadow shifting at stereo seams on camera motion.

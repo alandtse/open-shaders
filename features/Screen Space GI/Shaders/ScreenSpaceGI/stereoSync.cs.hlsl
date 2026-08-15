@@ -15,12 +15,16 @@
 
 Texture2D<float> srcDepth : register(t0);
 Texture2D<float> srcAo : register(t1);
+#	ifdef GI
 Texture2D<float4> srcIlY : register(t2);
 Texture2D<float2> srcIlCoCg : register(t3);
+#	endif
 
 RWTexture2D<float> outAo : register(u0);
+#	ifdef GI
 RWTexture2D<float4> outIlY : register(u1);
 RWTexture2D<float2> outIlCoCg : register(u2);
+#	endif
 
 static const float kDepthSigma = 0.01;          // Bilateral depth tolerance (NDC): surfaces within this range are considered the same and blended
 static const float kMaxBlend = 0.5;             // Maximum stereo blend weight; 0.5 gives equal weighting between eyes
@@ -32,8 +36,10 @@ static const int kEdgeMargin = 2;               // Neighbor offset (pixels) for 
 void Passthrough(uint2 dtid)
 {
 	outAo[dtid] = srcAo[dtid];
+#	ifdef GI
 	outIlY[dtid] = srcIlY[dtid];
 	outIlCoCg[dtid] = srcIlCoCg[dtid];
+#	endif
 }
 
 // Samples four depth neighbors in a cross pattern (±step.x, ±step.y) around centerUV,
@@ -116,8 +122,10 @@ float4 SampleCrossDepths(float2 centerUV, float2 step, float2 texScale, uint eye
 	Stereo::StereoSyncWeight(r, uv, rawDepth, otherRawDepth, otherNeighborsNDC, eyeIndex, outFrameDim, params);
 
 	outAo[dtid] = lerp(srcAo[dtid], srcAo[r.otherPx], r.blendWeight);
+#	ifdef GI
 	outIlY[dtid] = lerp(srcIlY[dtid], srcIlY[r.otherPx], r.blendWeight);
 	outIlCoCg[dtid] = lerp(srcIlCoCg[dtid], srcIlCoCg[r.otherPx], r.blendWeight);
+#	endif
 }
 
 #endif  // VR

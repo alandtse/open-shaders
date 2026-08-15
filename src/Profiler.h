@@ -26,6 +26,10 @@ public:
 	static constexpr uint32_t kMaxTimers = 256;
 	static constexpr uint32_t kFrameLatency = 3;
 	static constexpr uint32_t kHistorySize = 300;
+	/** @brief Collection-cycle gap before retiring an inactive timer.
+		Must exceed the longest legitimate gap between samples of a still-running pass;
+		the DynamicCubemaps state machine spreads its passes over 6 frames. */
+	static constexpr uint64_t kTimerRetireFrames = 60;
 
 	using PerfEventCallback = std::function<void(std::string_view)>;
 
@@ -214,6 +218,7 @@ public:
 		results.clear();
 		knownTimers.clear();
 		knownTimerIndex.clear();
+		collectedFrames = 0;
 		totalTimeMs = 0.0f;
 		cpuTotalTimeMs = 0.0f;
 		activeCpuTimers.clear();
@@ -232,9 +237,7 @@ public:
 		std::erase_if(knownTimers, [&prefix](const KnownTimer& kt) {
 			return kt.name.starts_with(prefix);
 		});
-		knownTimerIndex.clear();
-		for (size_t i = 0; i < knownTimers.size(); i++)
-			knownTimerIndex[knownTimers[i].name] = i;
+		RebuildTimerIndex();
 		std::erase_if(activeCpuTimers, [&prefix](const CpuTimer& ct) {
 			return ct.name.starts_with(prefix);
 		});
@@ -325,9 +328,11 @@ private:
 		/// CPU-only scope never has a GPU sample and vice versa.
 		bool hasGpu = false;
 		bool hasCpu = false;
+		uint64_t lastSampleFrame = 0;
 	};
 	std::vector<KnownTimer> knownTimers;
 	std::unordered_map<std::string, size_t> knownTimerIndex;
+	uint64_t collectedFrames = 0;
 	float totalTimeMs = 0.0f;
 	float cpuTotalTimeMs = 0.0f;
 	/// Set only in CollectResults; see GetResolvedTotalTimeMs().
@@ -356,6 +361,12 @@ private:
 	/// only when GPU data is still pending (retry next frame), never when
 	/// there's simply nothing to collect.
 	bool CollectResults();
+
+	/** @brief Drops timers that have not been sampled for kTimerRetireFrames, so disabled passes stop reporting stale values. */
+	void RetireStaleTimers();
+
+	/** @brief Repoints knownTimerIndex at the current knownTimers positions after an erase. */
+	void RebuildTimerIndex();
 
 	KnownTimer& GetOrCreateTimer(const std::string& name);
 

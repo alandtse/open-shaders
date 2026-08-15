@@ -2,6 +2,11 @@
 
 #include <imgui.h>
 
+bool HorizonFix::IsInMenu() const
+{
+	return loaded || companionPluginDetected;
+}
+
 void HorizonFix::DrawSettings()
 {
 	ImGui::TextWrapped(
@@ -15,9 +20,11 @@ void HorizonFix::PostPostLoad()
 	// because every SKSE plugin has loaded by now and the shader disk cache has not been
 	// validated yet, so installing or removing the plugin invalidates the cache through
 	// regular feature validation.
-	if (loaded && GetModuleHandleW(L"HorizonFix.dll") == nullptr) {
+	companionPluginDetected = GetModuleHandleW(L"HorizonFix.dll") != nullptr;
+	if (loaded && !companionPluginDetected) {
+		// No companion plugin is an expected, benign disable, not a load failure --
+		// leave failedLoadedMessage unset so the cache classifier treats it as such.
 		loaded = false;
-		failedLoadedMessage = "HorizonFix is not installed, compatibility is disabled.";
 		logger::info("[Horizon Fix] HorizonFix plugin not detected, compatibility disabled");
 	} else {
 		logger::info("[Horizon Fix] HorizonFix plugin detected, compatibility enabled");

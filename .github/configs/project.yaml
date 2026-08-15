@@ -1,0 +1,6 @@
+# Facts shared across release-tooling scripts/workflows that would otherwise
+# drift if duplicated (e.g. fomod-metadata.yaml, nexus-upload.yaml). Keep
+# this the single place these are written as literals.
+
+nexus_mod_id: 180419
+mod_display_name: "Open Shaders"

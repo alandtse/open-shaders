@@ -17,19 +17,25 @@
 
 Texture2D<float> srcDepth : register(t0);
 Texture2D<float> srcAo : register(t1);
+#	ifdef GI
 Texture2D<float4> srcIlY : register(t2);
 Texture2D<float2> srcIlCoCg : register(t3);
+#	endif
 
 RWTexture2D<float> outAo : register(u0);
+#	ifdef GI
 RWTexture2D<float4> outIlY : register(u1);
 RWTexture2D<float2> outIlCoCg : register(u2);
+#	endif
 
 // Writes all output channels from the source buffers (passthrough / no-transfer path).
 void Passthrough(uint2 dtid)
 {
 	outAo[dtid] = srcAo[dtid];
+#	ifdef GI
 	outIlY[dtid] = srcIlY[dtid];
 	outIlCoCg[dtid] = srcIlCoCg[dtid];
+#	endif
 }
 
 [numthreads(8, 8, 1)] void main(uint2 dtid : SV_DispatchThreadID) {
@@ -56,8 +62,10 @@ void Passthrough(uint2 dtid)
 	if (cleanlyReprojected) {
 		// Surfaces agree: GI is view-independent, transfer eye 0's value exactly.
 		outAo[dtid] = srcAo[otherPx];
+#	ifdef GI
 		outIlY[dtid] = srcIlY[otherPx];
 		outIlCoCg[dtid] = srcIlCoCg[otherPx];
+#	endif
 	} else {
 		// Disocclusion: gi.cs marched this pixel natively (same test), keep it.
 		Passthrough(dtid);

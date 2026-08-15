@@ -74,9 +74,14 @@ jobs:
 
             - name: Get changed files
               id: changed-files
-              uses: tj-actions/changed-files@v46
+              uses: tj-actions/changed-files@v47
               continue-on-error: true
               with:
+                  # Without this, a submodule pointer bump across non-adjacent commits
+                  # can't be diffed (no merge base in the shallow submodule history),
+                  # so the action silently reports zero changes instead of failing --
+                  # the continue-on-error fallback below never sees it.
+                  fetch_additional_submodule_history: true
                   files_yaml: |
                       cpp:
                         - '**.cpp'
@@ -128,9 +133,10 @@ jobs:
             # preserves paths with spaces (e.g. "features/Light Limit Fix/...").
             - name: Get changed files (JSON)
               id: changed-files-json
-              uses: tj-actions/changed-files@v46
+              uses: tj-actions/changed-files@v47
               continue-on-error: true
               with:
+                  fetch_additional_submodule_history: true
                   json: true
                   escape_json: false
                   base_sha: ${{ github.event.pull_request.base.sha }}
@@ -329,12 +335,10 @@ jobs:
             - name: Run feature version audit (PR check)
               id: audit
               run: |
-                  set +e
-                  python tools/feature_version_audit.py --pr-check --ci --base ${{ github.event.pull_request.base.sha }} --head refs/pr_head > pr-feature-audit.md
-                  EXIT_CODE=$?
-                  set -e
+                  # Informative only -- release-semantic.yaml's post-bump
+                  # step is the actual blocking gate.
+                  python tools/feature_version_audit.py --pr-check --base ${{ github.event.pull_request.base.sha }} --head refs/pr_head > pr-feature-audit.md
                   cat pr-feature-audit.md
-                  exit $EXIT_CODE
 
             - name: Upload feature audit markdown (PR)
               if: always()

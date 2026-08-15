@@ -10,6 +10,14 @@ struct Feature;
 
 namespace Util::Settings
 {
+	/**
+	 * @brief Builds the minimal user layer for values controlled by an override.
+	 * @param a_current Current effective settings.
+	 * @param a_override Mod-provided override settings.
+	 * @return Changed values shaped like a_override; empty when they match.
+	 */
+	json BuildUserOverride(const json& a_current, const json& a_override);
+
 	// Collects keys of a_incoming that a_known has no counterpart for, as dotted
 	// paths, recursing into nested groups. The settings serializers drop keys they
 	// don't recognize, so a mis-nested or misspelled key would otherwise apply

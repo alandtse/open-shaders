@@ -7,6 +7,42 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+TEST_CASE("BuildUserOverride ignores values outside the mod override", "[settingspatch]")
+{
+	const json current{
+		{ "Disable at Boot", { { "ScreenSpaceGI", true }, { "Skylighting", true } } }
+	};
+	const json overridden{
+		{ "Disable at Boot", { { "ScreenSpaceGI", true } } }
+	};
+
+	REQUIRE(Util::Settings::BuildUserOverride(current, overridden).empty());
+}
+
+TEST_CASE("BuildUserOverride saves only changed nested override values", "[settingspatch]")
+{
+	const json current{
+		{ "Disable at Boot", { { "ScreenSpaceGI", false }, { "Skylighting", true } } },
+		{ "General", { { "Enable Async", true } } }
+	};
+	const json overridden{
+		{ "Disable at Boot", { { "ScreenSpaceGI", true } } }
+	};
+	const json expected{
+		{ "Disable at Boot", { { "ScreenSpaceGI", false } } }
+	};
+
+	REQUIRE(Util::Settings::BuildUserOverride(current, overridden) == expected);
+}
+
+TEST_CASE("BuildUserOverride tolerates floating-point serialization noise", "[settingspatch]")
+{
+	const json current{ { "Strength", 1.000001 } };
+	const json overridden{ { "Strength", 1.0 } };
+
+	REQUIRE(Util::Settings::BuildUserOverride(current, overridden).empty());
+}
+
 TEST_CASE("CollectUnknownSettingKeys accepts an all-known flat patch", "[settingspatch]")
 {
 	const json known{ { "Enabled", true }, { "Quality", 1 } };

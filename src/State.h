@@ -56,6 +56,7 @@ public:
 	uint32_t currentVertexDescriptor = 0;
 	uint32_t currentPixelDescriptor = 0;
 	spdlog::level::level_enum logLevel = spdlog::level::info;
+	bool enableDeveloperMode = false;  ///< Explicit developer mode toggle; also enabled when log level is debug/trace.
 	std::string shaderDefinesString = "";
 	std::vector<std::pair<std::string, std::string>> shaderDefines{};  // data structure to parse string into; needed to avoid dangling pointers
 
@@ -89,6 +90,8 @@ public:
 	/** @brief One-time post-D3D setup: creates resources, probes GPU caps, initializes features. */
 	void Setup();
 
+	bool HandlePostProcessing(RE::RENDER_TARGET a_input, RE::RENDER_TARGET a_output);
+
 	/**
 	 * @brief Loads settings from disk (default, then user, then overrides).
 	 * @param a_configMode Which config file to load.
@@ -114,8 +117,6 @@ public:
 
 	/** @brief Loads the active theme preset from the menu settings. */
 	void LoadTheme();
-	/** @brief No-op kept for backward compatibility; theme is now saved with user settings. */
-	void SaveTheme();
 
 	/**
 	 * @brief Validates the disk shader cache against all loaded features.
@@ -158,8 +159,9 @@ public:
 	bool IsShaderEnabled(const RE::BSShader& a_shader);
 
 	/**
-	 * @brief Checks whether developer mode is active (log level is trace or debug).
+	 * @brief Checks whether developer mode is active.
 	 *
+	 * Active when Enable Developer Mode is on, or when log level is debug/trace.
 	 * Developer mode enables advanced options. Use at your own risk.
 	 * @return True if in developer mode.
 	 */
@@ -347,6 +349,7 @@ public:
 	bool isMainMenuOpen = false;
 	bool isLoadingMenuOpen = false;
 	bool isMapMenuOpen = false;
+	bool isStatsMenuOpen = false;
 	/** @brief Returns true if the cached main-menu or loading-menu state is open. */
 	bool IsMainOrLoadingMenuOpen() const { return isMainMenuOpen || isLoadingMenuOpen; }
 	/** @brief Returns true if main/loading menu is open, with a live fallback query via the UI pointer. */
@@ -354,6 +357,13 @@ public:
 	{
 		return IsMainOrLoadingMenuOpen() ||
 		       (ui && (ui->IsMenuOpen(RE::MainMenu::MENU_NAME) || ui->IsMenuOpen(RE::LoadingMenu::MENU_NAME)));
+	}
+	/** @brief Full-screen menus drawing their own art, which must not be graded by post-process effects. */
+	bool IsFullScreenMenuOpen() const { return IsMainOrLoadingMenuOpen() || isMapMenuOpen || isStatsMenuOpen; }
+	/** @brief Gameplay is paused or suspended behind a menu. Cached menus are kept explicit in case a mod clears kPausesGame. */
+	bool IsPausedOrMenuOpen(RE::UI* ui) const
+	{
+		return (ui && ui->GameIsPaused()) || IsMainOrLoadingMenuOpen(ui) || isMapMenuOpen;
 	}
 
 	void UpdateSharedData(bool a_inWorld, bool a_prepass);
@@ -384,7 +394,6 @@ public:
 	struct alignas(16) SharedDataCB
 	{
 		float4 WaterData[25];
-		DirectX::XMFLOAT3X4 DirectionalAmbient;
 		float4 DirLightDirection;
 		float4 DirLightColor;
 		float4 SunDirection;

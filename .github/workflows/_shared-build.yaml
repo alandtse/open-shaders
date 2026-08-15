@@ -286,7 +286,7 @@ jobs:
                     PROFILE_CONFIG="profile-config-${{ matrix.config.runtime }}.yaml"
                     python tools/build-shader-cache.py --emit-profile-config "$PLAIN_CONFIG" "$PROFILE_CONFIG"
                     python tools/validate_changed_shaders.py --changed-list-file changed_files.txt -- \
-                      hlslkit-compile --fxc "$FXC" --shader-dir build/ALL/aio/Shaders --output-dir build/ShaderCache --config "$PROFILE_CONFIG" --max-warnings 0 --suppress-warnings X1519 --strip-debug-defines --optimization-level 3
+                      hlslkit-compile --fxc "$FXC" --shader-dir build/ALL/aio/Shaders --output-dir build/ShaderCache --config "$PROFILE_CONFIG" --max-warnings 0 --suppress-warnings X1519 --strip-debug-defines --optimization-level 3 --timing-report "build/shader-compile-timing-${{ matrix.config.runtime }}.json"
                     echo "::endgroup::"
                   fi
 
@@ -325,6 +325,18 @@ jobs:
                       build/ShaderCacheFull/new_issues.log
                       build/ShaderCacheFull/*.log
                   retention-days: 7
+                  if-no-files-found: ignore
+
+            # Release-parity only: per-shader fxc /O3 compile durations, sorted
+            # slowest-first (hlslkit --timing-report), for spotting compile-time
+            # hot spots without a manual A/B bisection.
+            - name: Upload shader compile timing report
+              if: always() && matrix.pass == 'release-parity' && steps.check-hlsl.outputs.skip != 'true'
+              uses: actions/upload-artifact@v7
+              with:
+                  name: shader-compile-timing-${{ matrix.config.runtime }}
+                  path: build/shader-compile-timing-${{ matrix.config.runtime }}.json
+                  retention-days: 30
                   if-no-files-found: ignore
 
     shader-unit-tests:
