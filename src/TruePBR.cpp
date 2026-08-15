@@ -121,6 +121,8 @@ void TruePBR::DrawSettings()
 {
 	if (ImGui::TreeNodeEx(T(TKEY("global_settings"), "Global Settings"), ImGuiTreeNodeFlags_DefaultOpen)) {
 		ImGui::SliderFloat(T(TKEY("vertex_ao_strength"), "Vertex AO Strength"), &settings.VertexAOStrength, 0.f, 1.f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+		ImGui::SeparatorText(T(TKEY("foliage_settings"), "Foliage"));
+
 		bool enableFoliageScattering = settings.EnableFoliageScattering != 0;
 		if (ImGui::Checkbox(T(TKEY("enable_foliage_scattering"), "New Foliage Scattering Model"), &enableFoliageScattering)) {
 			settings.EnableFoliageScattering = enableFoliageScattering;
