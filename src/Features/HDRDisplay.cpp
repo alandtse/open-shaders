@@ -1597,8 +1597,9 @@ float4 HDRDisplay::GetSharedDataHDR() const
 		return { 0.0f, 0.0f, 0.0f, 0.0f };
 
 	auto* state = globals::state;
-	const bool isMainOrLoading = state->IsMainOrLoadingMenuOpen();
-	const bool inMenuOrPause = state->IsPausedOrMenuOpen(globals::game::ui);
+	auto* ui = globals::game::ui;
+	const bool isMainOrLoading = state->IsMainOrLoadingMenuOpen(ui);
+	const bool inMenuOrPause = state->IsPausedOrMenuOpen(ui);
 
 	float menuSceneEncoding = kHdrMenuSceneGameplay;
 	if (isMainOrLoading) {
@@ -1617,8 +1618,8 @@ float4 HDRDisplay::GetSharedDataHDR() const
 
 HDRDisplay::HDRDataCB HDRDisplay::BuildHDRData() const
 {
-	bool isMainOrLoadingMenu = globals::state->IsMainOrLoadingMenuOpen();
 	auto* ui = globals::game::ui;
+	bool isMainOrLoadingMenu = globals::state->IsMainOrLoadingMenuOpen(ui);
 	bool skipUIComposite = IsFGCompositingThisFrame();
 
 	// Linear Lighting keeps the pipeline linear throughout.
