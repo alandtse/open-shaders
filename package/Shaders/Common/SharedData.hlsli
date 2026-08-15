@@ -325,7 +325,10 @@ namespace SharedData
 	{
 		float VertexAOStrength;
 		uint EnableFoliageScattering;
-		uint2 pad;
+		uint EnableFoliageAmbientBoost;
+		uint EnableFoliageAmbientFlip;
+		float FoliageAmbientAmount;
+		uint3 pad;
 	};
 
 	struct SkinData

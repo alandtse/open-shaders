@@ -1,5 +1,7 @@
 #include "TruePBR.h"
 
+#include <algorithm>
+
 #include "TruePBR/BSLightingShaderMaterialPBR.h"
 #include "TruePBR/BSLightingShaderMaterialPBRLandscape.h"
 
@@ -46,7 +48,10 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	TruePBR::Settings,
 	VertexAOStrength,
-	EnableFoliageScattering);
+	EnableFoliageScattering,
+	EnableFoliageAmbientBoost,
+	EnableFoliageAmbientFlip,
+	FoliageAmbientAmount);
 
 #define CHECK_PBR_TEXTURE(textureName)                                                                         \
 	if (!(pbrMaterial->textureName)) {                                                                         \
@@ -122,6 +127,24 @@ void TruePBR::DrawSettings()
 		}
 		if (auto _tt = Util::HoverTooltipWrapper()) {
 			ImGui::Text("%s", T(TKEY("enable_foliage_scattering_tooltip"), "Adds wrapped, view-dependent leaf transmission. Disable to show only the existing PBR surface response."));
+		}
+		bool enableFoliageAmbientBoost = settings.EnableFoliageAmbientBoost != 0;
+		if (ImGui::Checkbox(T(TKEY("enable_foliage_ambient_boost"), "Foliage Ambient Boost"), &enableFoliageAmbientBoost)) {
+			settings.EnableFoliageAmbientBoost = enableFoliageAmbientBoost;
+		}
+		if (auto _tt = Util::HoverTooltipWrapper()) {
+			ImGui::Text("%s", T(TKEY("enable_foliage_ambient_boost_tooltip"), "Adds the legacy additive indirect ambient foliage term."));
+		}
+		bool enableFoliageAmbientFlip = settings.EnableFoliageAmbientFlip != 0;
+		if (ImGui::Checkbox(T(TKEY("enable_foliage_ambient_flip"), "Foliage Ambient Backface Flip"), &enableFoliageAmbientFlip)) {
+			settings.EnableFoliageAmbientFlip = enableFoliageAmbientFlip;
+		}
+		if (auto _tt = Util::HoverTooltipWrapper()) {
+			ImGui::Text("%s", T(TKEY("enable_foliage_ambient_flip_tooltip"), "Mirrors the ambient sampling normal for visible backside foliage cards."));
+		}
+		ImGui::SliderFloat(T(TKEY("foliage_ambient_amount"), "Foliage Ambient Amount"), &settings.FoliageAmbientAmount, 0.0f, 1.0f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+		if (auto _tt = Util::HoverTooltipWrapper()) {
+			ImGui::Text("%s", T(TKEY("foliage_ambient_amount_tooltip"), "Amount added to the foliage diffuse indirect ambient response."));
 		}
 		ImGui::TreePop();
 	}
@@ -329,6 +352,7 @@ void TruePBR::SaveSettings(json& o_json)
 void TruePBR::LoadSettings(json& o_json)
 {
 	settings = o_json;
+	settings.FoliageAmbientAmount = std::clamp(settings.FoliageAmbientAmount, 0.0f, 1.0f);
 }
 
 void TruePBR::RestoreDefaultSettings()

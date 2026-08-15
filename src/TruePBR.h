@@ -81,11 +81,17 @@ public:
 	{
 		float VertexAOStrength = 1.0f;
 		uint EnableFoliageScattering = 1;
-		uint pad[2];
+		uint EnableFoliageAmbientBoost = 0;
+		uint EnableFoliageAmbientFlip = 1;
+		float FoliageAmbientAmount = 0.35f;
+		uint pad[3];
 	};
 	STATIC_ASSERT_ALIGNAS_16(Settings);
 	static_assert(offsetof(Settings, EnableFoliageScattering) == sizeof(float));
-	static_assert(sizeof(Settings) == 16);
+	static_assert(offsetof(Settings, EnableFoliageAmbientBoost) == sizeof(float) + sizeof(uint));
+	static_assert(offsetof(Settings, EnableFoliageAmbientFlip) == sizeof(float) + sizeof(uint) * 2);
+	static_assert(offsetof(Settings, FoliageAmbientAmount) == sizeof(float) + sizeof(uint) * 3);
+	static_assert(sizeof(Settings) == 32);
 
 	Settings settings;
 	/**

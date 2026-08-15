@@ -10,10 +10,6 @@
 
 #define DEFERRED
 
-#ifdef GRASS_LIGHTING
-#	define GRASS
-#endif  // GRASS_LIGHTING
-
 #if !defined(DYNAMIC_CUBEMAPS) && defined(IBL)
 #	undef IBL
 #endif
@@ -649,9 +645,6 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	}
 #			else
 	dirLightColor *= dirLightColorMultiplier;
-	[branch] if (SharedData::truePBRSettings.EnableFoliageScattering != 0)
-		transmissionColor += baseColor.xyz * GetFoliageTransmission(dirLightAngle, dot(viewDirection, DirLightDirection)) * dirLightColor * dirDetailedShadow;
-
 	float softLightRolloff = saturate(input.VertexNormal.w * 10.0) * SharedData::grassLightingSettings.SubsurfaceScatteringAmount * 2.0;
 	float wrapAmount = saturate(input.VertexNormal.w * 10.0) * 0.5 * (!complex);
 
@@ -759,9 +752,6 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 				lightColor *= lightShadow;
 
 				float lightAngle = dot(normal, normalizedLightDirection);
-				float lightNoL = dot(normalizedLightDirection.xyz, viewDirection);
-				[branch] if (SharedData::truePBRSettings.EnableFoliageScattering != 0)
-					transmissionColor += baseColor.xyz * GetFoliageTransmission(lightAngle, lightNoL) * lightColor;
 				float3 lightDiffuseColor;
 
 				if (SharedData::grassLightingSettings.EnableWrappedLighting) {
