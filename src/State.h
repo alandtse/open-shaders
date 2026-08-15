@@ -117,8 +117,6 @@ public:
 
 	/** @brief Loads the active theme preset from the menu settings. */
 	void LoadTheme();
-	/** @brief No-op kept for backward compatibility; theme is now saved with user settings. */
-	void SaveTheme();
 
 	/**
 	 * @brief Validates the disk shader cache against all loaded features.
