@@ -198,13 +198,24 @@ HRESULT DX12SwapChain::ResizeBuffers(UINT bufferCount, UINT width, UINT height, 
 	swapChainBuffers[0] = nullptr;
 	swapChainBuffers[1] = nullptr;
 	const HRESULT result = swapChain->ResizeBuffers(effectiveBufferCount, width, height, format, flags);
-	if (FAILED(result))
+	if (FAILED(result)) {
+		// The resize didn't take effect, so the pre-resize buffers should still be
+		// valid (unless the device itself is gone, in which case this also fails
+		// and Present's null guard below is the last line of defense).
+		swapChain->GetBuffer(0, IID_PPV_ARGS(swapChainBuffers[0].put()));
+		swapChain->GetBuffer(1, IID_PPV_ARGS(swapChainBuffers[1].put()));
 		return result;
+	}
 
 	DXGI_SWAP_CHAIN_DESC1 resizedDesc{};
 	const HRESULT descResult = swapChain->GetDesc1(&resizedDesc);
-	if (FAILED(descResult))
+	if (FAILED(descResult)) {
+		// The resize itself succeeded; only the desc query failed. Re-fetch the
+		// (already resized) buffers so Present isn't left with nulls.
+		swapChain->GetBuffer(0, IID_PPV_ARGS(swapChainBuffers[0].put()));
+		swapChain->GetBuffer(1, IID_PPV_ARGS(swapChainBuffers[1].put()));
 		return descResult;
+	}
 
 	const bool wrappedResourcesChanged = resizedDesc.Width != swapChainDesc.Width ||
 	                                     resizedDesc.Height != swapChainDesc.Height ||
@@ -246,6 +257,11 @@ HRESULT DX12SwapChain::Present(UINT SyncInterval, UINT Flags)
 	{
 		auto fakeSwapChain = swapChainBufferWrapped->resource.get();
 		auto realSwapChain = swapChainBuffers[frameIndex].get();
+		// Null only after a resize failure severe enough that even the pre-resize
+		// buffers couldn't be re-fetched (e.g. device removed) -- skip this frame's
+		// copy/present rather than pass a null resource to D3D12.
+		if (!realSwapChain)
+			return DXGI_ERROR_DEVICE_REMOVED;
 		{
 			std::vector<D3D12_RESOURCE_BARRIER> barriers;
 			barriers.push_back(CD3DX12_RESOURCE_BARRIER::Transition(fakeSwapChain, D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_COPY_SOURCE));
