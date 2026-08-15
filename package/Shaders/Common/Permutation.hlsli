@@ -77,7 +77,6 @@ namespace Permutation
 		static const uint SuppressExternalEmittance = (1 << 5);
 		static const uint IsEye = (1 << 6);
 		static const uint TreeBend = (1 << 7);
-		static const uint DisableTreeAnimation = (1 << 8);
 	}
 
 	namespace ExtraFeatureFlags
@@ -140,68 +139,6 @@ namespace Permutation
 		float GrassWindFlutterStrength;
 		float GrassWindFlutterSpeed;
 	};
-
-	float GetWindIntensityOverrideScale()
-	{
-		return OverrideWindIntensity != 0 ? WindIntensityOverride : 1.0;
-	}
-
-	float GetWindVariationSample(float sampleIndex)
-	{
-		return frac(sin(sampleIndex * 12.9898 + 78.233) * 43758.5453);
-	}
-
-	float GetWindVariation(float time)
-	{
-		float variationMin = min(TrunkWindVariationMin, TrunkWindVariationMax);
-		float variationMax = max(TrunkWindVariationMin, TrunkWindVariationMax);
-		float samplePosition = time / max(TrunkWindVariationInterval, 0.1);
-		float sampleIndex = floor(samplePosition);
-		float blend = frac(samplePosition);
-		blend = blend * blend * (3.0 - 2.0 * blend);
-		float variation = lerp(GetWindVariationSample(sampleIndex), GetWindVariationSample(sampleIndex + 1.0), blend);
-		return lerp(variationMin, variationMax, variation);
-	}
-
-	float GetCurrentWindVariationScale()
-	{
-		return TrunkWindGustStrength * GetWindVariation(TrunkWindTimer);
-	}
-
-	float GetPreviousWindVariationScale()
-	{
-		return TrunkWindPreviousGustStrength * GetWindVariation(TrunkWindPreviousTimer);
-	}
-
-	float GetCurrentTrunkWindVariationScale()
-	{
-		return GetCurrentWindVariationScale() * TrunkWindBendSensitivity;
-	}
-
-	float GetPreviousTrunkWindVariationScale()
-	{
-		return GetPreviousWindVariationScale() * TrunkWindBendSensitivity;
-	}
-
-	float GetCurrentTrunkWindStrength()
-	{
-		return length(TrunkWindVector) * GetCurrentTrunkWindVariationScale();
-	}
-
-	float GetPreviousTrunkWindStrength()
-	{
-		return length(TrunkWindPreviousVector) * GetPreviousTrunkWindVariationScale();
-	}
-
-	float GetCurrentWindIntensityScale()
-	{
-		return GetWindIntensityOverrideScale() * GetCurrentWindVariationScale();
-	}
-
-	float GetPreviousWindIntensityScale()
-	{
-		return GetWindIntensityOverrideScale() * GetPreviousWindVariationScale();
-	}
 
 }
 #endif  // __PERMUTATION_DEPENDENCY_HLSL__

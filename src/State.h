@@ -336,8 +336,7 @@ public:
 		IsSun = 1 << 4,
 		SuppressExternalEmittance = 1 << 5,
 		IsEye = 1 << 6,
-		TreeBend = 1 << 7,
-		DisableTreeAnimation = 1 << 8
+		TreeBend = 1 << 7
 	};
 
 	enum class ExtraFeatureDescriptors : uint32_t

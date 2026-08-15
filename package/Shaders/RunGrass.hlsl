@@ -6,6 +6,7 @@
 #include "Common/Permutation.hlsli"
 #include "Common/Random.hlsli"
 #include "Common/SharedData.hlsli"
+#include "Common/Wind.hlsli"
 
 #define DEFERRED
 
@@ -282,11 +283,11 @@ VS_OUTPUT main(VS_INPUT input)
 	float bendAngle, previousBendAngle;
 	float3 windDisplacement =
 		CalculateWindDisplacement(
-			input, msPosition.xyz, WindTimer, Permutation::GetWindIntensityOverrideScale(), windDirection,
+			input, msPosition.xyz, WindTimer, Wind::GetWindIntensityOverrideScale(), windDirection,
 			Permutation::GrassWindGustResponse, bendAngle);
 	float3 previousWindDisplacement =
 		CalculateWindDisplacement(
-			input, msPosition.xyz, PreviousWindTimer, Permutation::GetWindIntensityOverrideScale(),
+			input, msPosition.xyz, PreviousWindTimer, Wind::GetWindIntensityOverrideScale(),
 			previousWindDirection, Permutation::GrassWindPreviousGustResponse, previousBendAngle);
 
 #		ifdef GRASS_COLLISION
@@ -368,11 +369,11 @@ VS_OUTPUT main(VS_INPUT input)
 	float bendAngle, previousBendAngle;
 	float3 windDisplacement =
 		CalculateWindDisplacement(
-			input, msPosition.xyz, WindTimer, Permutation::GetWindIntensityOverrideScale(), windDirection,
+			input, msPosition.xyz, WindTimer, Wind::GetWindIntensityOverrideScale(), windDirection,
 			Permutation::GrassWindGustResponse, bendAngle);
 	float3 previousWindDisplacement =
 		CalculateWindDisplacement(
-			input, msPosition.xyz, PreviousWindTimer, Permutation::GetWindIntensityOverrideScale(),
+			input, msPosition.xyz, PreviousWindTimer, Wind::GetWindIntensityOverrideScale(),
 			previousWindDirection, Permutation::GrassWindPreviousGustResponse, previousBendAngle);
 
 #		ifdef GRASS_COLLISION

@@ -205,7 +205,6 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	CSUtility::Settings,
 	enableTrunkBend,
-	disableVanillaTreeAnimation,
 	overrideTrunkWindIntensity,
 	trunkWindIntensityOverride,
 	trunkWindFlexibleHeight,
@@ -294,10 +293,6 @@ void CSUtility::DrawSettings()
 				kTrunkWindVariationIntervalMin, kTrunkWindVariationIntervalMax, "%.2f s", ImGuiSliderFlags_AlwaysClamp);
 			if (ImGui::Button(T(TKEY("trunk_wind_trigger_gust"), "Trigger New Gust")))
 				TriggerNewWindGust();
-			ImGui::Checkbox(T(TKEY("disable_vanilla_tree_animation"), "Disable Vanilla Tree Animation (Test)"), &settings.disableVanillaTreeAnimation);
-			if (auto _tt = Util::HoverTooltipWrapper()) {
-				ImGui::TextUnformatted(T(TKEY("disable_vanilla_tree_animation_tooltip"), "Disables TREE_ANIM only for explicitly identified tree geometry."));
-			}
 			ImGui::EndTabItem();
 		}
 

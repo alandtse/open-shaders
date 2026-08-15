@@ -124,7 +124,6 @@ namespace
 {
 	constexpr UINT kPermutationVertexRegister = 4;
 	constexpr auto kTreeBendDescriptor = static_cast<uint32_t>(State::ExtraShaderDescriptors::TreeBend);
-	constexpr auto kDisableTreeAnimationDescriptor = static_cast<uint32_t>(State::ExtraShaderDescriptors::DisableTreeAnimation);
 
 	bool IsExplicitTrunkGeometry(const RE::BSGeometry* a_geometry)
 	{
@@ -235,15 +234,6 @@ namespace
 				state->permutationData.ExtraShaderDescriptor |= kTreeBendDescriptor;
 			} else {
 				state->permutationData.ExtraShaderDescriptor &= ~kTreeBendDescriptor;
-			}
-
-			const bool disableTreeAnimation = globals::features::csUtility.loaded &&
-			                                  globals::features::csUtility.settings.disableVanillaTreeAnimation &&
-			                                  IsTreeRenderPass(a_pass);
-			if (disableTreeAnimation) {
-				state->permutationData.ExtraShaderDescriptor |= kDisableTreeAnimationDescriptor;
-			} else {
-				state->permutationData.ExtraShaderDescriptor &= ~kDisableTreeAnimationDescriptor;
 			}
 
 			state->UpdatePermutationBuffer();

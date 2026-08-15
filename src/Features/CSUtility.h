@@ -66,7 +66,6 @@ struct CSUtility : Feature
 	struct Settings
 	{
 		bool enableTrunkBend = true;
-		bool disableVanillaTreeAnimation = false;
 		bool overrideTrunkWindIntensity = false;
 		float trunkWindIntensityOverride = 1.0f;
 		float trunkWindFlexibleHeight = 16384.0f;

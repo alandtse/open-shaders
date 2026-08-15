@@ -14,7 +14,7 @@
 #include "Common/Triplanar.hlsli"
 #include "Common/VR.hlsli"
 
-#include "Common/TrunkWind.hlsli"
+#include "Common/Wind.hlsli"
 
 #if defined(FACEGEN) || defined(FACEGEN_RGB_TINT)
 #	define SKIN
@@ -180,11 +180,11 @@ float2 GetTreeShiftVector(float4 position, float4 color, float instanceResponse,
 	precise float4 tmp3 = abs(-1.0.xxxx + 2.0.xxxx * frac(0.5.xxxx + tmp2.xyzw));
 	precise float4 tmp4 = (tmp3 * tmp3) * (3.0.xxxx - 2.0.xxxx * tmp3);
 	float2 animationStrength = float2(
-								   Permutation::GetCurrentWindIntensityScale(), Permutation::GetPreviousWindIntensityScale()) *
+								   Wind::GetCurrentWindIntensityScale(), Wind::GetPreviousWindIntensityScale()) *
 	                           TreeParams.z;
 	if (treeBendEnabled) {
 		animationStrength = float2(
-								Permutation::GetCurrentTrunkWindStrength(), Permutation::GetPreviousTrunkWindStrength()) *
+								Wind::GetCurrentTrunkWindStrength(), Wind::GetPreviousTrunkWindStrength()) *
 		                    instanceResponse * Permutation::TrunkWindLeafSensitivity;
 	}
 	return (tmp4.xz + 0.1.xx * tmp4.yw) * color.w.xx * animationStrength;
@@ -208,7 +208,7 @@ VS_OUTPUT main(VS_INPUT input)
 	if (treeBendEnabled) {
 		float2 instanceOriginWS =
 			float2(World[0][0].w, World[0][1].w) + CameraPosAdjust[0].xy;
-		treeWindInstanceResponse = TrunkWind::GetInstanceResponse(instanceOriginWS);
+		treeWindInstanceResponse = Wind::GetInstanceResponse(instanceOriginWS);
 	}
 #	endif
 #	if defined(LODLANDNOISE) || defined(LODLANDSCAPE)
@@ -218,14 +218,12 @@ VS_OUTPUT main(VS_INPUT input)
 	precise float4 previousInputPosition = inputPosition;
 
 #	if defined(TREE_ANIM)
-	if ((Permutation::ExtraShaderDescriptor & Permutation::ExtraFlags::DisableTreeAnimation) == 0) {
-		precise float2 treeShiftVector =
-			GetTreeShiftVector(input.Position, input.Color, treeWindInstanceResponse, treeBendEnabled);
-		float3 normal = -1.0.xxx + 2.0.xxx * input.Normal.xyz;
+	precise float2 treeShiftVector =
+		GetTreeShiftVector(input.Position, input.Color, treeWindInstanceResponse, treeBendEnabled);
+	float3 normal = -1.0.xxx + 2.0.xxx * input.Normal.xyz;
 
-		inputPosition.xyz += normal.xyz * treeShiftVector.x;
-		previousInputPosition.xyz += normal.xyz * treeShiftVector.y;
-	}
+	inputPosition.xyz += normal.xyz * treeShiftVector.x;
+	previousInputPosition.xyz += normal.xyz * treeShiftVector.y;
 #	endif
 
 #	if defined(SKINNED)
@@ -244,11 +242,11 @@ VS_OUTPUT main(VS_INPUT input)
 #	endif  // SKINNED
 
 	if (treeBendEnabled) {
-		worldPosition.xy += TrunkWind::GetWorldDisplacement(
-			inputPosition.z, Permutation::TrunkWindVector, Permutation::GetCurrentTrunkWindVariationScale(), treeWindInstanceResponse);
-		previousWorldPosition.xy += TrunkWind::GetWorldDisplacement(
+		worldPosition.xy += Wind::GetWorldDisplacement(
+			inputPosition.z, Permutation::TrunkWindVector, Wind::GetCurrentTrunkWindVariationScale(), treeWindInstanceResponse);
+		previousWorldPosition.xy += Wind::GetWorldDisplacement(
 			previousInputPosition.z, Permutation::TrunkWindPreviousVector,
-			Permutation::GetPreviousTrunkWindVariationScale(), treeWindInstanceResponse);
+			Wind::GetPreviousTrunkWindVariationScale(), treeWindInstanceResponse);
 	}
 
 	float4 viewPos;
