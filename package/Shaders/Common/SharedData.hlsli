@@ -324,10 +324,16 @@ namespace SharedData
 	struct TruePBRSettings
 	{
 		float VertexAOStrength;
+		uint3 pad;
+	};
+
+	struct FoliageLightingSettings
+	{
 		uint EnableFoliageScattering;
 		uint EnableFoliageAmbientBoost;
 		uint EnableFoliageAmbientFlip;
 		float FoliageAmbientAmount;
+		uint EnableGrassScattering;
 		uint3 pad;
 	};
 
@@ -398,6 +404,7 @@ namespace SharedData
 		TerrainBlendingSettings terrainBlendingSettings;
 		ExponentialHeightFogSettings exponentialHeightFogSettings;
 		TruePBRSettings truePBRSettings;
+		FoliageLightingSettings foliageLightingSettings;
 		SkinData skinData;
 		VanillaFresnelSettings vanillaFresnelSettings;
 		BloomSettings bloomSettings;

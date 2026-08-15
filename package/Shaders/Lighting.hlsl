@@ -3234,7 +3234,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 
 	float3 ambientNormal = worldNormal.xyz;
 #	if defined(TREE_ANIM)
-	[branch] if (SharedData::truePBRSettings.EnableFoliageAmbientFlip != 0)
+	[branch] if (SharedData::foliageLightingSettings.EnableFoliageAmbientFlip != 0)
 		ambientNormal *= dot(ambientNormal, viewDirection) < 0 ? -1 : 1;
 #	endif
 #	if defined(HAIR) && defined(CS_HAIR)

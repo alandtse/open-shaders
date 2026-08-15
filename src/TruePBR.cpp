@@ -1,10 +1,9 @@
 #include "TruePBR.h"
 
-#include <algorithm>
-
 #include "TruePBR/BSLightingShaderMaterialPBR.h"
 #include "TruePBR/BSLightingShaderMaterialPBRLandscape.h"
 
+#include "Features/FoliageLighting.h"
 #include "Features/InteriorSun.h"
 #include "Hooks.h"
 #include "I18n/I18n.h"
@@ -47,11 +46,7 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	TruePBR::Settings,
-	VertexAOStrength,
-	EnableFoliageScattering,
-	EnableFoliageAmbientBoost,
-	EnableFoliageAmbientFlip,
-	FoliageAmbientAmount);
+	VertexAOStrength);
 
 #define CHECK_PBR_TEXTURE(textureName)                                                                         \
 	if (!(pbrMaterial->textureName)) {                                                                         \
@@ -121,33 +116,6 @@ void TruePBR::DrawSettings()
 {
 	if (ImGui::TreeNodeEx(T(TKEY("global_settings"), "Global Settings"), ImGuiTreeNodeFlags_DefaultOpen)) {
 		ImGui::SliderFloat(T(TKEY("vertex_ao_strength"), "Vertex AO Strength"), &settings.VertexAOStrength, 0.f, 1.f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
-		ImGui::SeparatorText(T(TKEY("foliage_settings"), "Foliage"));
-
-		bool enableFoliageScattering = settings.EnableFoliageScattering != 0;
-		if (ImGui::Checkbox(T(TKEY("enable_foliage_scattering"), "New Foliage Scattering Model"), &enableFoliageScattering)) {
-			settings.EnableFoliageScattering = enableFoliageScattering;
-		}
-		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::Text("%s", T(TKEY("enable_foliage_scattering_tooltip"), "Adds wrapped, view-dependent leaf transmission. Disable to show only the existing PBR surface response."));
-		}
-		bool enableFoliageAmbientBoost = settings.EnableFoliageAmbientBoost != 0;
-		if (ImGui::Checkbox(T(TKEY("enable_foliage_ambient_boost"), "Foliage Ambient Boost"), &enableFoliageAmbientBoost)) {
-			settings.EnableFoliageAmbientBoost = enableFoliageAmbientBoost;
-		}
-		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::Text("%s", T(TKEY("enable_foliage_ambient_boost_tooltip"), "Adds the legacy additive indirect ambient foliage term."));
-		}
-		bool enableFoliageAmbientFlip = settings.EnableFoliageAmbientFlip != 0;
-		if (ImGui::Checkbox(T(TKEY("enable_foliage_ambient_flip"), "Foliage Ambient Backface Flip"), &enableFoliageAmbientFlip)) {
-			settings.EnableFoliageAmbientFlip = enableFoliageAmbientFlip;
-		}
-		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::Text("%s", T(TKEY("enable_foliage_ambient_flip_tooltip"), "Mirrors the ambient sampling normal for visible backside foliage cards."));
-		}
-		ImGui::SliderFloat(T(TKEY("foliage_ambient_amount"), "Foliage Ambient Amount"), &settings.FoliageAmbientAmount, 0.0f, 1.0f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
-		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::Text("%s", T(TKEY("foliage_ambient_amount_tooltip"), "Amount added to the foliage diffuse indirect ambient response."));
-		}
 		ImGui::TreePop();
 	}
 
@@ -354,7 +322,14 @@ void TruePBR::SaveSettings(json& o_json)
 void TruePBR::LoadSettings(json& o_json)
 {
 	settings = o_json;
-	settings.FoliageAmbientAmount = std::clamp(settings.FoliageAmbientAmount, 0.0f, 1.0f);
+
+	if (o_json.contains("EnableFoliageScattering") ||
+		o_json.contains("EnableFoliageAmbientBoost") ||
+		o_json.contains("EnableFoliageAmbientFlip") ||
+		o_json.contains("FoliageAmbientAmount") ||
+		o_json.contains("EnableGrassScattering")) {
+		globals::features::foliageLighting.MigrateLegacySettings(o_json);
+	}
 }
 
 void TruePBR::RestoreDefaultSettings()
