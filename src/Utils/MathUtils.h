@@ -5,6 +5,9 @@
 
 namespace Util
 {
+	/** @brief Tolerance for near-zero/near-equal comparisons on normalized [0,1] values (e.g. a degenerate slider range). Not a universal epsilon -- other precision needs (near-zero vector length, perceptual UI thresholds) use their own tolerance. */
+	inline constexpr float kNormalizedRangeEpsilon = 1e-5f;
+
 	/**
      * @brief Mixes a 32-bit value into a running 64-bit hash. boost::hash_combine
      * constants (0x9e3779b9, golden-ratio reciprocal) chosen for bit distribution.

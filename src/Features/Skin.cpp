@@ -7,6 +7,7 @@
 #include "Menu.h"
 #include "ShaderCache.h"
 #include "State.h"
+#include "Utils/MathUtils.h"
 
 #include "I18n/I18n.h"
 
@@ -361,10 +362,10 @@ float4 Skin::GetWetness(RE::BSGeometry* geometry)
 		const float sweatStart = std::max(settings.StartSweat, settings.FullSweat);
 		const float sweatFull = std::min(settings.StartSweat, settings.FullSweat);
 		const float sweatRange = sweatStart - sweatFull;
-		wetness.x = (std::abs(sweatRange) < 1e-5f)    ? 0.0f :
-		            (staminaPercentage >= sweatStart) ? 0.0f :
-		            (staminaPercentage <= sweatFull)  ? 1.0f :
-		                                                (sweatStart - staminaPercentage) / sweatRange;
+		wetness.x = (std::abs(sweatRange) < Util::kNormalizedRangeEpsilon) ? 0.0f :
+		            (staminaPercentage >= sweatStart)                      ? 0.0f :
+		            (staminaPercentage <= sweatFull)                       ? 1.0f :
+		                                                                     (sweatStart - staminaPercentage) / sweatRange;
 		if (actor->IsInWater()) {
 			wetness.y = 2.0f;
 			const float waterHeight = GetWaterHeight(userData, actor->GetPosition());
