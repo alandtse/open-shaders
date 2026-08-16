@@ -45,11 +45,5 @@ struct FoliageLighting : Feature
 	/** @brief Restores default foliage lighting settings. */
 	virtual void RestoreDefaultSettings() override;
 
-	/** @brief Migrates foliage settings saved under the legacy True PBR section. */
-	void MigrateLegacySettings(const json& a_json);
-
 	Settings settings;
-
-private:
-	bool legacySettingsMigrated = false;
 };

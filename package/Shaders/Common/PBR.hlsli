@@ -143,12 +143,6 @@ namespace PBR
 		float satVdotL = saturate(VdotL);
 		float satNdotH = saturate(NdotH);
 		float satVdotH = saturate(VdotH);
-#if defined(TREE_ANIM)
-		const bool isFoliageShader = true;
-#else
-		const bool isFoliageShader = false;
-#endif
-
 #if !defined(LANDSCAPE) && !defined(LODLANDSCAPE)
 		[branch] if ((PBRFlags & Flags::HairMarschner) != 0)
 		{
@@ -188,7 +182,8 @@ namespace PBR
 				lightingOutput.transmission += material.BaseColor * foliageTransmission * detailedLightColor * kD;
 			}
 #	endif
-			[branch] if (!isFoliageShader && (PBRFlags & Flags::Subsurface) != 0)
+			[branch] if ((PBRFlags & Flags::Subsurface) != 0)
+#	if !defined(TREE_ANIM)
 			{
 				const float subsurfacePower = 12.234;
 				float forwardScatter = exp2(saturate(-VdotL) * subsurfacePower - subsurfacePower);
@@ -196,7 +191,13 @@ namespace PBR
 				float subsurface = lerp(backScatter, 1, forwardScatter) * (1.0 - material.Thickness);
 				lightingOutput.transmission += material.SubsurfaceColor * subsurface * softLightColor * BRDF::Diffuse_Lambert() * kD;
 			}
-			else if ((PBRFlags & Flags::TwoLayer) != 0 && (PBRFlags & Flags::Subsurface) == 0)
+#	else
+			{
+				float subsurfaceFoliage = saturate(-NdotL) * (1.0 - material.Thickness);
+				lightingOutput.transmission += material.SubsurfaceColor * subsurfaceFoliage * detailedLightColor * BRDF::Diffuse_Lambert() * kD;
+			}
+#	endif
+			else if ((PBRFlags & Flags::TwoLayer) != 0)
 			{
 				float coatNdotL = satNdotL;
 				float coatNdotV = satNdotV;

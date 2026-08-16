@@ -3,7 +3,6 @@
 #include "TruePBR/BSLightingShaderMaterialPBR.h"
 #include "TruePBR/BSLightingShaderMaterialPBRLandscape.h"
 
-#include "Features/FoliageLighting.h"
 #include "Features/InteriorSun.h"
 #include "Hooks.h"
 #include "I18n/I18n.h"
@@ -341,14 +340,6 @@ void TruePBR::SaveSettings(json& o_json)
 void TruePBR::LoadSettings(json& o_json)
 {
 	settings = o_json;
-
-	if (o_json.contains("EnableFoliageScattering") ||
-		o_json.contains("EnableFoliageAmbientBoost") ||
-		o_json.contains("EnableFoliageAmbientFlip") ||
-		o_json.contains("FoliageAmbientAmount") ||
-		o_json.contains("EnableGrassScattering")) {
-		globals::features::foliageLighting.MigrateLegacySettings(o_json);
-	}
 	enableVerboseJsonLogging = o_json.value("EnableVerboseJsonLogging", false);
 }
 

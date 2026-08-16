@@ -38,7 +38,7 @@ void FoliageLighting::DrawSettings()
 		settings.EnableFoliageAmbientBoost = enableFoliageAmbientBoost;
 	}
 	if (auto _tt = Util::HoverTooltipWrapper()) {
-		ImGui::Text("%s", T(TKEY("enable_foliage_ambient_boost_tooltip"), "Adds the legacy additive indirect ambient term to animated trees only."));
+		ImGui::Text("%s", T(TKEY("enable_foliage_ambient_boost_tooltip"), "Adds the additive indirect ambient term to animated PBR foliage only."));
 	}
 
 	bool enableFoliageAmbientFlip = settings.EnableFoliageAmbientFlip != 0;
@@ -64,26 +64,11 @@ void FoliageLighting::LoadSettings(json& o_json)
 {
 	settings = o_json;
 	settings.FoliageAmbientAmount = std::clamp(settings.FoliageAmbientAmount, 0.0f, 1.0f);
-	legacySettingsMigrated = false;
 }
 
 void FoliageLighting::RestoreDefaultSettings()
 {
-	if (legacySettingsMigrated) {
-		legacySettingsMigrated = false;
-		return;
-	}
 	settings = {};
-}
-
-void FoliageLighting::MigrateLegacySettings(const json& a_json)
-{
-	settings.EnableFoliageScattering = a_json.value("EnableFoliageScattering", settings.EnableFoliageScattering);
-	settings.EnableFoliageAmbientBoost = a_json.value("EnableFoliageAmbientBoost", settings.EnableFoliageAmbientBoost);
-	settings.EnableFoliageAmbientFlip = a_json.value("EnableFoliageAmbientFlip", settings.EnableFoliageAmbientFlip);
-	settings.FoliageAmbientAmount = std::clamp(a_json.value("FoliageAmbientAmount", settings.FoliageAmbientAmount), 0.0f, 1.0f);
-	settings.EnableGrassScattering = a_json.value("EnableGrassScattering", settings.EnableGrassScattering);
-	legacySettingsMigrated = true;
 }
 
 #undef I18N_KEY_PREFIX

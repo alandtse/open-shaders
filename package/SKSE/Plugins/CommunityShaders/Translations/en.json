@@ -693,7 +693,7 @@
     "feature.extended_translucency.transparency_increase_tooltip": "Translucent material will make the material more opaque on average, which could be different from the intent. Reduce the alpha to counter this effect and increase the dynamic range of the output.",
     "feature.foliage_lighting.description": "Adds inexpensive transmission and ambient controls for animated foliage.",
     "feature.foliage_lighting.enable_foliage_ambient_boost": "Tree Ambient Boost",
-    "feature.foliage_lighting.enable_foliage_ambient_boost_tooltip": "Adds the legacy additive indirect ambient term to animated trees only.",
+    "feature.foliage_lighting.enable_foliage_ambient_boost_tooltip": "Adds the additive indirect ambient term to animated PBR foliage only.",
     "feature.foliage_lighting.enable_foliage_ambient_flip": "Tree Ambient Backface Flip",
     "feature.foliage_lighting.enable_foliage_ambient_flip_tooltip": "Mirrors the ambient sampling normal for visible backside tree foliage cards.",
     "feature.foliage_lighting.enable_foliage_scattering": "Tree Foliage Scattering",

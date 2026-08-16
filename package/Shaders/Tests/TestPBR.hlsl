@@ -2,22 +2,23 @@
 
 // Include production PBR math code (constants, flags, and pure math functions)
 // PBRMath.hlsli contains only pure functions with no game-specific dependencies
+#include "/Shaders/Common/LightingCommon.hlsli"
 #include "/Shaders/Common/PBRMath.hlsli"
 #include "/Test/STF/ShaderTestFramework.hlsli"
 
 /// @tags pbr, foliage, transmission
 [numthreads(1, 1, 1)] void TestFoliageTransmission() {
-	float frontLit = PBR::GetFoliageTransmission(1.0f, -1.0f);
-	float grazingBacklight = PBR::GetFoliageTransmission(0.0f, -1.0f);
-	float backLit = PBR::GetFoliageTransmission(-1.0f, -1.0f);
+	float frontLit = GetFoliageTransmission(1.0f, -1.0f);
+	float grazingBacklight = GetFoliageTransmission(0.0f, -1.0f);
+	float backLit = GetFoliageTransmission(-1.0f, -1.0f);
 
 	ASSERT(IsTrue, abs(frontLit) < 0.0001f);
 	ASSERT(IsTrue, grazingBacklight > frontLit);
 	ASSERT(IsTrue, backLit > grazingBacklight);
 
-	float forwardAligned = PBR::GetFoliageTransmission(-1.0f, -1.0f);
-	float perpendicular = PBR::GetFoliageTransmission(-1.0f, 0.0f);
-	float sameDirection = PBR::GetFoliageTransmission(-1.0f, 1.0f);
+	float forwardAligned = GetFoliageTransmission(-1.0f, -1.0f);
+	float perpendicular = GetFoliageTransmission(-1.0f, 0.0f);
+	float sameDirection = GetFoliageTransmission(-1.0f, 1.0f);
 
 	ASSERT(IsTrue, forwardAligned > perpendicular);
 	ASSERT(IsTrue, abs(perpendicular - sameDirection) < 0.0001f);
