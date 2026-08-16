@@ -176,6 +176,9 @@ void BSLightingShaderMaterialPBR::OnLoadTextureSet(std::uint64_t arg1, RE::BSTex
 	const auto& stateData = globals::game::graphicsState->GetRuntimeData();
 
 	if (diffuseTexture == nullptr || diffuseTexture == stateData.defaultTextureNormalMap) {
+		if (inTextureSet != nullptr && netimmerse_cast<RE::BSShaderTextureSet*>(inTextureSet) == nullptr) {
+			inTextureSet = nullptr;
+		}
 		BSLightingShaderMaterialBase::OnLoadTextureSet(arg1, inTextureSet);
 
 		auto* lock = &unk98;

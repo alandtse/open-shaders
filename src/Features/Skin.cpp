@@ -127,12 +127,12 @@ void Skin::DrawSettings()
 	ImGui::SliderFloat(T("feature.skin.stamina_threshold_for_sweat", "Stamina Threshold for Sweat"), &settings.StartSweat, 0.0f, 1.0f, "%.2f",
 		ImGuiSliderFlags_AlwaysClamp);
 	if (auto _tt = Util::HoverTooltipWrapper()) {
-		ImGui::Text(T("feature.skin.the_character_starts_sweating_when_their_stamina_drops", "The character starts sweating when their stamina drops below this percentage. For example, 0.75 means sweat appears below 75%% stamina."));
+		ImGui::Text("%s", T("feature.skin.the_character_starts_sweating_when_their_stamina_drops", "The character starts sweating when their stamina drops below this percentage. For example, 0.75 means sweat appears below 75% stamina."));
 	}
 	ImGui::SliderFloat(T("feature.skin.full_sweat_threshold", "Full Sweat Threshold"), &settings.FullSweat, 0.0f, 1.0f, "%.2f",
 		ImGuiSliderFlags_AlwaysClamp);
 	if (auto _tt = Util::HoverTooltipWrapper()) {
-		ImGui::Text(T("feature.skin.the_character_reaches_maximum_sweat_when_stamina_drops", "The character reaches maximum sweat when stamina drops below this percentage. For example, 0.15 means full sweat below 15%% stamina."));
+		ImGui::Text("%s", T("feature.skin.the_character_reaches_maximum_sweat_when_stamina_drops", "The character reaches maximum sweat when stamina drops below this percentage. For example, 0.15 means full sweat below 15% stamina."));
 	}
 
 	ImGui::SliderFloat(T("feature.skin.wetness_perlin_noise_scale", "Wetness Perlin Noise Scale"), &settings.WetParams.x, 0.0f, 1024.0f, "%1.f");
@@ -339,7 +339,9 @@ float4 Skin::GetWetness(RE::BSGeometry* geometry)
 		const uint currentFrame = globals::state->frameCount;
 
 		if (actorWetnessMap.size() > 1024) {
-			actorWetnessMap.clear();
+			std::erase_if(actorWetnessMap, [currentFrame](const auto& entry) {
+				return currentFrame - entry.second.frameCount > 1;
+			});
 		}
 
 		auto [it, inserted] = actorWetnessMap.try_emplace(actorFormID);
@@ -356,11 +358,13 @@ float4 Skin::GetWetness(RE::BSGeometry* geometry)
 		const float temporaryStamina = actor->GetActorValueModifier(RE::ACTOR_VALUE_MODIFIER::kTemporary, RE::ActorValue::kStamina);
 		const float maxStamina = std::max(permanentStamina + temporaryStamina, 1.0f);
 		const float staminaPercentage = actor->IsDead() ? 1.0f : (stamina / maxStamina);
-		const float sweatRange = settings.StartSweat - settings.FullSweat;
-		wetness.x = (std::abs(sweatRange) < 1e-5f)             ? 0.0f :
-		            (staminaPercentage >= settings.StartSweat) ? 0.0f :
-		            (staminaPercentage <= settings.FullSweat)  ? 1.0f :
-		                                                         (settings.StartSweat - staminaPercentage) / sweatRange;
+		const float sweatStart = std::max(settings.StartSweat, settings.FullSweat);
+		const float sweatFull = std::min(settings.StartSweat, settings.FullSweat);
+		const float sweatRange = sweatStart - sweatFull;
+		wetness.x = (std::abs(sweatRange) < 1e-5f)    ? 0.0f :
+		            (staminaPercentage >= sweatStart) ? 0.0f :
+		            (staminaPercentage <= sweatFull)  ? 1.0f :
+		                                                (sweatStart - staminaPercentage) / sweatRange;
 		if (actor->IsInWater()) {
 			wetness.y = 2.0f;
 			const float waterHeight = GetWaterHeight(userData, actor->GetPosition());
@@ -382,29 +386,19 @@ float4 Skin::GetWetness(RE::BSGeometry* geometry)
 			}
 			wetness.x = cached.wetness.x;
 
+			constexpr float kWaterWetnessMagnitude = 2.0f;
 			if (cached.wetness.y < wetness.y) {
 				cached.wetness.y = wetness.y;
-				if (cached.wetness.w < wetness.w) {
-					cached.wetness.w = wetness.w;
-				} else {
-					wetness.w = cached.wetness.w;
-				}
 			} else if (cached.wetness.y > wetness.y) {
-				cached.wetness.y -= *globals::game::deltaTime / fadeTime;
+				cached.wetness.y -= kWaterWetnessMagnitude * *globals::game::deltaTime / fadeTime;
 				cached.wetness.y = std::max(cached.wetness.y, 0.0f);
 				wetness.y = cached.wetness.y;
 				if (wetness.y == 0.0f) {
 					wetness.w = 0.0f;
-					cached.wetness.w = 0.0f;
-				} else if (cached.wetness.w < wetness.w) {
-					cached.wetness.w = wetness.w;
 				} else {
+					// Hold the last known water depth while drying instead of snapping to 0 the instant water is left.
 					wetness.w = cached.wetness.w;
 				}
-			} else if (cached.wetness.w < wetness.w) {
-				cached.wetness.w = wetness.w;
-			} else {
-				wetness.w = cached.wetness.w;
 			}
 			cached.wetness = wetness;
 		}
