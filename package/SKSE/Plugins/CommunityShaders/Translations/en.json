@@ -3009,6 +3009,7 @@
     "feature.wetness_effects.enable_wetness": "Enable Wetness",
     "feature.wetness_effects.enable_wetness_override": "Enable Wetness Override",
     "feature.wetness_effects.enable_wetness_tooltip": "Enables a wetness effect near water and when it is raining.",
+    "feature.wetness_effects.grass_wet_roughness": "Grass Wet Roughness",
     "feature.wetness_effects.grid_size": "Grid Size",
     "feature.wetness_effects.grid_size_format": "Grid Size: %.2f m (%.1f units)",
     "feature.wetness_effects.grid_size_tooltip_0": "Spatial grid size for raindrop placement (smaller = more grid cells, higher GPU cost)",

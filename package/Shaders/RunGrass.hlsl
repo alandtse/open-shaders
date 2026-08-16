@@ -561,6 +561,8 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 		baseColor.xyz *= SharedData::grassLightingSettings.BasicGrassBrightness;
 #			endif  // !TRUE_PBR
 
+	float wetAmount = GrassLighting::GetRainWetness();
+
 #			if defined(VANILLA_FRESNEL)
 	const bool enableVanillaFresnel = SharedData::vanillaFresnelSettings.Enable;
 	float3 F0 = enableVanillaFresnel ? max(SharedData::vanillaFresnelSettings.MinF0, saturate(specColor.w * SharedData::grassLightingSettings.SpecularStrength * SharedData::vanillaFresnelSettings.BaseF0Multiplier / Math::PI)) : 0.0;
@@ -568,13 +570,14 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	float3 F0 = 0.0;
 #			endif
 	float roughness = saturate(1.0 - SharedData::grassLightingSettings.Glossiness * 0.01);
+	roughness = lerp(roughness, saturate(SharedData::wetnessEffectsSettings.GrassWetnessRoughness), wetAmount);
 
 #			if defined(TRUE_PBR)
 	float4 rawRMAOS = TexRMAOSSampler.SampleBias(SampRMAOSSampler, input.TexCoord.xy, SharedData::MipBias) * float4(PBRParams1.x, 1, 1, PBRParams1.y);
 
 	PBR::SurfaceProperties pbrSurfaceProperties = PBR::InitSurfaceProperties();
 
-	pbrSurfaceProperties.Roughness = saturate(rawRMAOS.x);
+	pbrSurfaceProperties.Roughness = lerp(saturate(rawRMAOS.x), saturate(SharedData::wetnessEffectsSettings.GrassWetnessRoughness), wetAmount);
 	pbrSurfaceProperties.Metallic = saturate(rawRMAOS.y);
 	pbrSurfaceProperties.AO = rawRMAOS.z;
 	pbrSurfaceProperties.F0 = lerp(saturate(rawRMAOS.w), baseColor.xyz, pbrSurfaceProperties.Metallic);

@@ -3,6 +3,15 @@
 
 namespace GrassLighting
 {
+	float GetRainWetness()
+	{
+#if defined(WETNESS_EFFECTS)
+		return saturate(SharedData::wetnessEffectsSettings.Wetness * SharedData::wetnessEffectsSettings.MaxRainWetness);
+#else
+		return 0.0;
+#endif
+	}
+
 	float3 GetLightSpecularInput(float3 L, float3 V, float3 N, float3 lightColor, float roughness, float3 F0)
 	{
 		float3 H = normalize(V + L);
