@@ -152,7 +152,10 @@ jobs:
                     args+=(--vr-cache fomod-work/vr/ShaderCache)
                   fi
 
-                  pip install --quiet pyfomod pyyaml
+                  # setuptools<80: pyfomod imports distutils, removed from the
+                  # stdlib in Python 3.12; pin an older setuptools so its
+                  # vendored distutils shim is present.
+                  pip install --quiet "setuptools<80" pyfomod pyyaml
                   python3 .github/scripts/build-fomod-package.py "${args[@]}"
 
                   # Build into a temp name and verify it before touching the original --
