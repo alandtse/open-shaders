@@ -826,8 +826,10 @@ def analyze_features(FEATURES_DIR, feature_meta_map, base_ref, only_changed=Fals
                 is_attention = True
         # Detect new ini added — use pr_prior_ver (base_ref baseline) so features added
         # earlier in the release cycle are not re-reported as new in subsequent PRs.
-        # Same reasoning as above: a valid new ini is not an action item.
-        if ini_path and pr_prior_ver is None and new_ver is not None:
+        # Same reasoning as above: a valid new ini is not an action item. elif: a
+        # brand-new feature (caught above) always has pr_prior_ver is None too --
+        # without elif this double-appends to new_features and clobbers note.
+        elif ini_path and pr_prior_ver is None and new_ver is not None:
             note = f"New ini added (v{new_ver_str})"
             new_features.append((feature_dir.name, new_ver_str, bump_commit))
         # Detect files added but ini missing
