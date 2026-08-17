@@ -152,10 +152,11 @@ jobs:
                     args+=(--vr-cache fomod-work/vr/ShaderCache)
                   fi
 
-                  # setuptools<80: pyfomod imports distutils, removed from the
-                  # stdlib in Python 3.12; pin an older setuptools so its
-                  # vendored distutils shim is present.
-                  pip install --quiet "setuptools<80" pyfomod pyyaml
+                  # pyfomod imports distutils, removed from the stdlib in
+                  # Python 3.12; setuptools>=60 vendors a distutils shim,
+                  # and <80 keeps it (60 requires an explicit lower bound
+                  # so pip upgrades an already-present older setuptools).
+                  pip install --quiet "setuptools>=60,<80" pyfomod pyyaml
                   python3 .github/scripts/build-fomod-package.py "${args[@]}"
 
                   # Build into a temp name and verify it before touching the original --
