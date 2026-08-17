@@ -97,9 +97,10 @@ float3 GetTonemapFactorHejlBurgessDawson(float3 luminance, bool isHDR = false)
 #	include "Common/DisplayMapping.hlsli"
 
 #	if defined(BLEND) && defined(CS_UTILITY)
-float3 SampleVanillaBloomEnhanced(float2 uv)
+float3 SampleVanillaBloomEnhanced(float2 uv, out float3 vanillaBloom)
 {
 	float3 center = ImageTex.Sample(ImageSampler, uv).xyz;
+	vanillaBloom = center;
 	float3 bloom = center;
 
 	if (SharedData::bloomSettings.Enabled) {
@@ -207,17 +208,21 @@ PS_OUTPUT main(PS_INPUT input)
 #		endif
 
 	float3 bloomColor = 0;
+	float3 vanillaBloomColor = 0;
+	bool bloomEnhancementEnabled = false;
 	if (Flags.x > 0.5) {
 #		if defined(CS_UTILITY)
-		bloomColor = SampleVanillaBloomEnhanced(uv);
+		bloomColor = SampleVanillaBloomEnhanced(uv, vanillaBloomColor);
 #		else
 		bloomColor = ImageTex.Sample(ImageSampler, uv).xyz;
+		vanillaBloomColor = bloomColor;
 #		endif
 	} else {
 #		if defined(CS_UTILITY)
-		bloomColor = SampleVanillaBloomEnhanced(input.TexCoord.xy);
+		bloomColor = SampleVanillaBloomEnhanced(input.TexCoord.xy, vanillaBloomColor);
 #		else
 		bloomColor = ImageTex.Sample(ImageSampler, input.TexCoord.xy).xyz;
+		vanillaBloomColor = bloomColor;
 #		endif
 	}
 
@@ -231,6 +236,7 @@ PS_OUTPUT main(PS_INPUT input)
 		float compressedBloomLuminance = glowCeiling > 0.0 ? (bloomLuminance <= glowThreshold ? bloomLuminance : glowThreshold + bloomExcess / (1.0 + bloomExcess / softRange)) : 0.0;
 		float bloomScale = compressedBloomLuminance / max(bloomLuminance, EPSILON_DIVISION);
 		bloomColor *= bloomScale;
+		bloomEnhancementEnabled = true;
 	}
 #		endif
 
@@ -246,7 +252,7 @@ PS_OUTPUT main(PS_INPUT input)
 
 	[branch] if (Param.z > 0.5)
 	{
-		blendedColor = DisplayMapping::HuePreservingHejlBurgessDawson(inputColor, bloomColor, isHDR);
+		blendedColor = DisplayMapping::HuePreservingHejlBurgessDawson(inputColor, vanillaBloomColor, bloomColor, bloomEnhancementEnabled, isHDR);
 	}
 	else
 	{
@@ -258,8 +264,7 @@ PS_OUTPUT main(PS_INPUT input)
 		// bloom intensity against this shoulder don't get blown-out highlights. HDR keeps the
 		// soft-saturation form (1 - exp2(-x)) which bleeds bloom into specular peaks intentionally.
 		float3 bloomMask = isHDR ? saturate(Param.x - (1.0 - exp2(-blendedColor))) : saturate(Param.x - blendedColor);
-		float3 bloomContribution = bloomMask * bloomColor;
-		blendedColor += bloomContribution;
+		blendedColor = DisplayMapping::ApplyBloom(compressedHuePreserving, vanillaBloomColor, bloomColor, bloomMask, bloomEnhancementEnabled);
 	}
 
 	float blendedLuminance = Color::RGBToLuminance(blendedColor);

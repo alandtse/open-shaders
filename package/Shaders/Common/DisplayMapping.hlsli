@@ -185,8 +185,35 @@ namespace DisplayMapping
 		return XYZToRGB(col);
 	}
 
+	float3 ApplyBloom(
+		float3 mappedColor,
+		float3 vanillaBloomColor,
+		float3 enhancedBloomColor,
+		float3 vanillaBloomMask,
+		bool enhancementEnabled)
+	{
+		vanillaBloomMask = saturate(vanillaBloomMask);
+		float3 vanillaContribution = vanillaBloomMask * vanillaBloomColor;
+		float3 result = mappedColor + vanillaContribution;
+
+		// Skyrim's native mask can close over bright daytime pixels. Give the
+		// opt-in enhancement normalized headroom without reducing the native mask.
+		[branch] if (enhancementEnabled)
+		{
+			float3 enhancedMask = max(vanillaBloomMask, saturate(1.0 - mappedColor));
+			result += enhancedMask * enhancedBloomColor - vanillaContribution;
+		}
+
+		return result;
+	}
+
 #if defined(PSHADER) && defined(BLEND)
-	float3 HuePreservingHejlBurgessDawson(float3 col, float3 bloomCol, bool isHDR = false)
+	float3 HuePreservingHejlBurgessDawson(
+		float3 col,
+		float3 vanillaBloomCol,
+		float3 enhancedBloomCol,
+		bool bloomEnhancementEnabled,
+		bool isHDR = false)
 	{
 		float3 ictcp = RGBToICtCp(col);
 
@@ -196,7 +223,8 @@ namespace DisplayMapping
 
 		// Non-hue preserving mapping
 		float3 perChannelCompressed = GetTonemapFactorHejlBurgessDawson(col, isHDR);
-		perChannelCompressed += saturate(Param.x - perChannelCompressed) * bloomCol;
+		float3 vanillaBloomMask = saturate(Param.x - perChannelCompressed);
+		perChannelCompressed = ApplyBloom(perChannelCompressed, vanillaBloomCol, enhancedBloomCol, vanillaBloomMask, bloomEnhancementEnabled);
 
 		col = perChannelCompressed;
 
