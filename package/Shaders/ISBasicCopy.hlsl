@@ -1,3 +1,4 @@
+// probe: throwaway touch to trigger hlsl-should-build for CI testing
 #include "Common/DummyVSTexCoord.hlsl"
 
 typedef VS_OUTPUT PS_INPUT;
