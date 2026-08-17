@@ -1,0 +1,122 @@
+name: "Check for Build/Shader Changes"
+description: "Diffs base-sha..head-sha and reports which build/shader jobs actually need to run. Caller must already have both SHAs fetched locally."
+
+inputs:
+    base-sha:
+        description: "Baseline commit SHA to diff from."
+        required: true
+    head-sha:
+        description: "Target commit SHA to diff to."
+        required: true
+
+outputs:
+    should-build:
+        description: "True if C++/build files changed (or detection failed)."
+        value: ${{ steps.changed-files.outputs.build_any_changed == 'true' || steps.changed-files.outputs.cpp_any_changed == 'true' || steps.changed-files.outputs.build_ci_any_changed == 'true' || steps.changed-files.outcome == 'failure' }}
+    hlsl-should-build:
+        description: "True if shader/cmake/build-ci files changed, or a feature ini's Version line changed (or detection failed)."
+        value: ${{ steps.changed-files.outputs.hlsl_any_changed == 'true' || steps.changed-files.outputs.cmake_any_changed == 'true' || steps.changed-files.outputs.build_ci_any_changed == 'true' || steps.ini-version-check.outputs.version_changed == 'true' || steps.changed-files.outcome == 'failure' }}
+    shader-tests-should-build:
+        description: "True if shader test files changed, in addition to the hlsl-should-build criteria."
+        value: ${{ steps.changed-files.outputs.shader_tests_any_changed == 'true' || steps.changed-files.outputs.hlsl_any_changed == 'true' || steps.changed-files.outputs.cmake_any_changed == 'true' || steps.changed-files.outputs.build_ci_any_changed == 'true' || steps.ini-version-check.outputs.version_changed == 'true' || steps.changed-files.outcome == 'failure' }}
+    cpp-tests-should-build:
+        description: "True if cpp_tests-relevant files changed (or detection failed)."
+        value: ${{ steps.changed-files.outputs.cpp_tests_any_changed == 'true' || steps.changed-files.outputs.cpp_any_changed == 'true' || steps.changed-files.outputs.cmake_any_changed == 'true' || steps.changed-files.outputs.build_ci_any_changed == 'true' || steps.changed-files.outcome == 'failure' }}
+    changed-files-json:
+        description: "JSON array of every changed path. Empty (or absent on detection failure) means callers should treat the change set as unknown and validate in full."
+        value: ${{ steps.changed-files-json.outcome == 'success' && steps.changed-files-json.outputs.all_changed_files || '' }}
+
+runs:
+    using: "composite"
+    steps:
+        - name: Get changed files
+          id: changed-files
+          uses: tj-actions/changed-files@v47
+          continue-on-error: true
+          with:
+              # Without this, a submodule pointer bump across non-adjacent commits
+              # can't be diffed (no merge base in the shallow submodule history),
+              # so the action silently reports zero changes instead of failing.
+              fetch_additional_submodule_history: true
+              files_yaml: |
+                  cpp:
+                    - '**.cpp'
+                    - '**.h'
+                    - '**.hpp'
+                    - '**.c'
+                    - 'src/**'
+                    - 'include/**'
+                    - '!**.hlsl'
+                    - '!**.hlsli'
+                    - '!tests/shaders/**'
+                  build:
+                    - 'CMakeLists.txt'
+                    - 'CMakePresets.json'
+                    - 'vcpkg.json'
+                    - 'vcpkg-configuration.json'
+                    - '.gitmodules'
+                    - 'extern/**'
+                  cmake:
+                    - 'CMakeLists.txt'
+                    - 'CMakePresets.json'
+                    - 'cmake/**'
+                  build_ci:
+                    - '.github/configs/**'
+                  hlsl:
+                    - '**.hlsl'
+                    - '**.hlsli'
+                    - 'package/Shaders/**'
+                    - 'features/**/Shaders/**'
+                    - '!features/**/Shaders/Features/*.ini'
+                  feature_ini:
+                    - 'features/**/Shaders/Features/*.ini'
+                  shader_tests:
+                    - 'tests/shaders/**'
+                  cpp_tests:
+                    - 'tests/cpp/**'
+              base_sha: ${{ inputs.base-sha }}
+              sha: ${{ inputs.head-sha }}
+
+        # Separate JSON view of the full changed set for incremental shader
+        # validation. Kept distinct so the grouped step's carefully-tuned
+        # boolean outputs are untouched. JSON encoding preserves paths with
+        # spaces (e.g. "features/Light Limit Fix/...").
+        - name: Get changed files (JSON)
+          id: changed-files-json
+          uses: tj-actions/changed-files@v47
+          continue-on-error: true
+          with:
+              fetch_additional_submodule_history: true
+              json: true
+              escape_json: false
+              base_sha: ${{ inputs.base-sha }}
+              sha: ${{ inputs.head-sha }}
+
+        # feature_ini_any_changed is too broad on its own; only treat it like an
+        # hlsl change if the diff actually touches a Version line.
+        - name: Check feature ini Version changes
+          id: ini-version-check
+          if: steps.changed-files.outputs.feature_ini_any_changed == 'true'
+          shell: bash
+          env:
+              ALL_CHANGED_JSON: ${{ steps.changed-files-json.outputs.all_changed_files }}
+              JSON_OK: ${{ steps.changed-files-json.outcome == 'success' }}
+              BASE_SHA: ${{ inputs.base-sha }}
+              HEAD_SHA: ${{ inputs.head-sha }}
+          run: |
+              set -euo pipefail
+              if [ "$JSON_OK" != "true" ]; then
+                echo "version_changed=true" >> "$GITHUB_OUTPUT"
+                exit 0
+              fi
+              version_changed=false
+              while IFS= read -r file; do
+                case "$file" in
+                  features/*/Shaders/Features/*.ini)
+                    if git diff "$BASE_SHA" "$HEAD_SHA" -- "$file" | grep -qE '^[+-][[:space:]]*Version[[:space:]]*='; then
+                      version_changed=true
+                    fi
+                    ;;
+                esac
+              done < <(jq -r '.[]' <<< "$ALL_CHANGED_JSON")
+              echo "version_changed=$version_changed" >> "$GITHUB_OUTPUT"

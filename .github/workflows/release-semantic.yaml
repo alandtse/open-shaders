@@ -40,7 +40,7 @@ jobs:
         permissions:
             contents: read
         outputs:
-            hlsl-should-build: ${{ steps.changed-files.outputs.hlsl_any_changed == 'true' || steps.changed-files.outputs.cmake_any_changed == 'true' || steps.changed-files.outputs.build_ci_any_changed == 'true' || steps.ini-version-check.outputs.version_changed == 'true' || steps.changed-files.outcome == 'failure' }}
+            hlsl-should-build: ${{ steps.check.outputs.hlsl-should-build }}
         steps:
             - uses: actions/checkout@v6
               with:
@@ -56,68 +56,12 @@ jobs:
                   echo "main_sha=$(git rev-parse origin/main)" >> "$GITHUB_OUTPUT"
                   echo "target_sha=$(git rev-parse "${TARGET_REF}")" >> "$GITHUB_OUTPUT"
 
-            - name: Get changed files
-              id: changed-files
-              uses: tj-actions/changed-files@v47
-              continue-on-error: true
+            - name: Check for build/shader changes
+              id: check
+              uses: ./.github/actions/check-build-changes
               with:
-                  # Same reasoning as pr-checks.yaml's check-changes: without this, a
-                  # submodule pointer bump across non-adjacent commits can't be diffed.
-                  fetch_additional_submodule_history: true
-                  files_yaml: |
-                      cmake:
-                        - 'CMakeLists.txt'
-                        - 'CMakePresets.json'
-                        - 'cmake/**'
-                      build_ci:
-                        - '.github/configs/**'
-                      hlsl:
-                        - '**.hlsl'
-                        - '**.hlsli'
-                        - 'package/Shaders/**'
-                        - 'features/**/Shaders/**'
-                        - '!features/**/Shaders/Features/*.ini'
-                      feature_ini:
-                        - 'features/**/Shaders/Features/*.ini'
-                  base_sha: ${{ steps.resolve.outputs.main_sha }}
-                  sha: ${{ steps.resolve.outputs.target_sha }}
-
-            - name: Get changed files (JSON)
-              id: changed-files-json
-              uses: tj-actions/changed-files@v47
-              continue-on-error: true
-              with:
-                  fetch_additional_submodule_history: true
-                  json: true
-                  escape_json: false
-                  base_sha: ${{ steps.resolve.outputs.main_sha }}
-                  sha: ${{ steps.resolve.outputs.target_sha }}
-
-            # feature_ini_any_changed is too broad on its own; only treat it like an
-            # hlsl change if the diff actually touches a Version line (see pr-checks.yaml).
-            - name: Check feature ini Version changes
-              id: ini-version-check
-              if: steps.changed-files.outputs.feature_ini_any_changed == 'true'
-              env:
-                  ALL_CHANGED_JSON: ${{ steps.changed-files-json.outputs.all_changed_files }}
-                  JSON_OK: ${{ steps.changed-files-json.outcome == 'success' }}
-              run: |
-                  set -euo pipefail
-                  if [ "$JSON_OK" != "true" ]; then
-                    echo "version_changed=true" >> "$GITHUB_OUTPUT"
-                    exit 0
-                  fi
-                  version_changed=false
-                  while IFS= read -r file; do
-                    case "$file" in
-                      features/*/Shaders/Features/*.ini)
-                        if git diff "${{ steps.resolve.outputs.main_sha }}" "${{ steps.resolve.outputs.target_sha }}" -- "$file" | grep -qE '^[+-][[:space:]]*Version[[:space:]]*='; then
-                          version_changed=true
-                        fi
-                        ;;
-                    esac
-                  done < <(jq -r '.[]' <<< "$ALL_CHANGED_JSON")
-                  echo "version_changed=$version_changed" >> "$GITHUB_OUTPUT"
+                  base-sha: ${{ steps.resolve.outputs.main_sha }}
+                  head-sha: ${{ steps.resolve.outputs.target_sha }}
 
     # Gate the version cut on the release-parity shader validation the cache build
     # enforces (/O3 + default-install profile). Shader-only (no C++ build), so it adds

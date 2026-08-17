@@ -43,25 +43,14 @@ jobs:
     check-changes:
         name: Check for changes in PRs
         runs-on: ubuntu-latest
+        # Workflow/action file changes never affect this same PR under
+        # pull_request_target (base-branch resolution) -- only take effect next PR.
         outputs:
-            # `build_ci` is CI changes that can actually be validated on a PR.
-            # Under pull_request_target, workflow definitions and composite
-            # actions resolve from the BASE branch ref — so changes to
-            # pr-checks.yaml, _shared-build.yaml, or .github/actions/** are not
-            # exercised by their own PR's runs (they only take effect on the
-            # NEXT PR after merge). Only files read from the PR's checkout
-            # (shader-validation configs) genuinely benefit from a rebuild.
-            should-build: ${{ steps.changed-files.outputs.build_any_changed == 'true' || steps.changed-files.outputs.cpp_any_changed == 'true' || steps.changed-files.outputs.build_ci_any_changed == 'true' || steps.changed-files.outcome == 'failure' }}
-            hlsl-should-build: ${{ steps.changed-files.outputs.hlsl_any_changed == 'true' || steps.changed-files.outputs.cmake_any_changed == 'true' || steps.changed-files.outputs.build_ci_any_changed == 'true' || steps.ini-version-check.outputs.version_changed == 'true' || steps.changed-files.outcome == 'failure' }}
-            shader-tests-should-build: ${{ steps.changed-files.outputs.shader_tests_any_changed == 'true' || steps.changed-files.outputs.hlsl_any_changed == 'true' || steps.changed-files.outputs.cmake_any_changed == 'true' || steps.changed-files.outputs.build_ci_any_changed == 'true' || steps.ini-version-check.outputs.version_changed == 'true' || steps.changed-files.outcome == 'failure' }}
-            # cpp_tests target compiles src/Utils/Subrect.cpp directly (see tests/cpp/CMakeLists.txt),
-            # so any cpp_any change is conservative-but-correct. cpp_tests_any catches changes to
-            # the test sources themselves. cmake/build_ci cover CMake + CI plumbing.
-            cpp-tests-should-build: ${{ steps.changed-files.outputs.cpp_tests_any_changed == 'true' || steps.changed-files.outputs.cpp_any_changed == 'true' || steps.changed-files.outputs.cmake_any_changed == 'true' || steps.changed-files.outputs.build_ci_any_changed == 'true' || steps.changed-files.outcome == 'failure' }}
-            # JSON array of every changed path, used to drive incremental shader
-            # validation. Empty (or absent on detection failure) => shader
-            # validation runs in full. JSON tolerates spaces in feature paths.
-            changed-files-json: ${{ steps.changed-files-json.outcome == 'success' && steps.changed-files-json.outputs.all_changed_files || '' }}
+            should-build: ${{ steps.check.outputs.should-build }}
+            hlsl-should-build: ${{ steps.check.outputs.hlsl-should-build }}
+            shader-tests-should-build: ${{ steps.check.outputs.shader-tests-should-build }}
+            cpp-tests-should-build: ${{ steps.check.outputs.cpp-tests-should-build }}
+            changed-files-json: ${{ steps.check.outputs.changed-files-json }}
         steps:
             - uses: actions/checkout@v6
               with:
@@ -72,101 +61,12 @@ jobs:
                   git fetch origin refs/pull/${{ github.event.pull_request.number }}/head
                   git fetch origin ${{ github.event.pull_request.base.sha }}
 
-            - name: Get changed files
-              id: changed-files
-              uses: tj-actions/changed-files@v47
-              continue-on-error: true
+            - name: Check for build/shader changes
+              id: check
+              uses: ./.github/actions/check-build-changes
               with:
-                  # Without this, a submodule pointer bump across non-adjacent commits
-                  # can't be diffed (no merge base in the shallow submodule history),
-                  # so the action silently reports zero changes instead of failing --
-                  # the continue-on-error fallback below never sees it.
-                  fetch_additional_submodule_history: true
-                  files_yaml: |
-                      cpp:
-                        - '**.cpp'
-                        - '**.h'
-                        - '**.hpp'
-                        - '**.c'
-                        - 'src/**'
-                        - 'include/**'
-                        - '!**.hlsl'
-                        - '!**.hlsli'
-                        - '!tests/shaders/**'
-                      build:
-                        - 'CMakeLists.txt'
-                        - 'CMakePresets.json'
-                        - 'vcpkg.json'
-                        - 'vcpkg-configuration.json'
-                        - '.gitmodules'
-                        - 'extern/**'
-                      cmake:
-                        - 'CMakeLists.txt'
-                        - 'CMakePresets.json'
-                        - 'cmake/**'
-                      # Only files read from the PR's checkout during the build
-                      # belong here. Workflow definitions and composite actions
-                      # are resolved from the base branch under pull_request_target,
-                      # so changes to them cannot be validated on the PR itself.
-                      build_ci:
-                        - '.github/configs/**'
-                      hlsl:
-                        - '**.hlsl'
-                        - '**.hlsli'
-                        - 'package/Shaders/**'
-                        - 'features/**/Shaders/**'
-                        - '!features/**/Shaders/Features/*.ini'
-                      # Most ini fields (Alpha, aio, autoupload) are packaging
-                      # metadata; only a Version change needs revalidation.
-                      feature_ini:
-                        - 'features/**/Shaders/Features/*.ini'
-                      shader_tests:
-                        - 'tests/shaders/**'
-                      cpp_tests:
-                        - 'tests/cpp/**'
-                  base_sha: ${{ github.event.pull_request.base.sha }}
-                  sha: ${{ github.event.pull_request.head.sha }}
-
-            # Separate JSON view of the full changed set for incremental shader
-            # validation. Kept distinct from the grouped step above so its
-            # carefully-tuned boolean outputs are untouched. JSON encoding
-            # preserves paths with spaces (e.g. "features/Light Limit Fix/...").
-            - name: Get changed files (JSON)
-              id: changed-files-json
-              uses: tj-actions/changed-files@v47
-              continue-on-error: true
-              with:
-                  fetch_additional_submodule_history: true
-                  json: true
-                  escape_json: false
-                  base_sha: ${{ github.event.pull_request.base.sha }}
-                  sha: ${{ github.event.pull_request.head.sha }}
-
-            # feature_ini_any_changed is too broad on its own; only treat it
-            # like an hlsl change if the diff actually touches a Version line.
-            - name: Check feature ini Version changes
-              id: ini-version-check
-              if: steps.changed-files.outputs.feature_ini_any_changed == 'true'
-              env:
-                  ALL_CHANGED_JSON: ${{ steps.changed-files-json.outputs.all_changed_files }}
-                  JSON_OK: ${{ steps.changed-files-json.outcome == 'success' }}
-              run: |
-                  set -euo pipefail
-                  if [ "$JSON_OK" != "true" ]; then
-                    echo "version_changed=true" >> "$GITHUB_OUTPUT"
-                    exit 0
-                  fi
-                  version_changed=false
-                  while IFS= read -r file; do
-                    case "$file" in
-                      features/*/Shaders/Features/*.ini)
-                        if git diff "${{ github.event.pull_request.base.sha }}" "${{ github.event.pull_request.head.sha }}" -- "$file" | grep -qE '^[+-][[:space:]]*Version[[:space:]]*='; then
-                          version_changed=true
-                        fi
-                        ;;
-                    esac
-                  done < <(jq -r '.[]' <<< "$ALL_CHANGED_JSON")
-                  echo "version_changed=$version_changed" >> "$GITHUB_OUTPUT"
+                  base-sha: ${{ github.event.pull_request.base.sha }}
+                  head-sha: ${{ github.event.pull_request.head.sha }}
 
     # Security: this job compiles untrusted fork code.
     # It uses _shared-build.yaml which enforces permissions: contents: read and receives NO secrets.
