@@ -32,19 +32,109 @@ concurrency:
     cancel-in-progress: false
 
 jobs:
+    # main only ever advances via this same validated-release-promotion path (the
+    # branch-lineage invariant this repo maintains), so origin/main's current tip is
+    # always a sound "last known validated state" baseline to diff the about-to-be-
+    # released ref against -- whether that diff is "everything since the last stable
+    # release" (main hasn't moved yet) or a small delta (a retry after main was
+    # already fast-forwarded by an earlier attempt on this same promotion, e.g. a
+    # release that failed a later gate after shader validation already passed).
+    check-changes:
+        name: Check for shader/build changes since main
+        runs-on: ubuntu-latest
+        outputs:
+            hlsl-should-build: ${{ steps.changed-files.outputs.hlsl_any_changed == 'true' || steps.changed-files.outputs.cmake_any_changed == 'true' || steps.changed-files.outputs.build_ci_any_changed == 'true' || steps.ini-version-check.outputs.version_changed == 'true' || steps.changed-files.outcome == 'failure' }}
+        steps:
+            - uses: actions/checkout@v6
+              with:
+                  fetch-depth: 0
+
+            - name: Resolve baseline and target SHAs
+              id: resolve
+              run: |
+                  git fetch origin main "${{ inputs.ff_target || github.sha }}"
+                  echo "main_sha=$(git rev-parse origin/main)" >> "$GITHUB_OUTPUT"
+                  echo "target_sha=$(git rev-parse ${{ inputs.ff_target || github.sha }})" >> "$GITHUB_OUTPUT"
+
+            - name: Get changed files
+              id: changed-files
+              uses: tj-actions/changed-files@v47
+              continue-on-error: true
+              with:
+                  # Same reasoning as pr-checks.yaml's check-changes: without this, a
+                  # submodule pointer bump across non-adjacent commits can't be diffed.
+                  fetch_additional_submodule_history: true
+                  files_yaml: |
+                      cmake:
+                        - 'CMakeLists.txt'
+                        - 'CMakePresets.json'
+                        - 'cmake/**'
+                      build_ci:
+                        - '.github/configs/**'
+                      hlsl:
+                        - '**.hlsl'
+                        - '**.hlsli'
+                        - 'package/Shaders/**'
+                        - 'features/**/Shaders/**'
+                        - '!features/**/Shaders/Features/*.ini'
+                      feature_ini:
+                        - 'features/**/Shaders/Features/*.ini'
+                  base_sha: ${{ steps.resolve.outputs.main_sha }}
+                  sha: ${{ steps.resolve.outputs.target_sha }}
+
+            - name: Get changed files (JSON)
+              id: changed-files-json
+              uses: tj-actions/changed-files@v47
+              continue-on-error: true
+              with:
+                  fetch_additional_submodule_history: true
+                  json: true
+                  escape_json: false
+                  base_sha: ${{ steps.resolve.outputs.main_sha }}
+                  sha: ${{ steps.resolve.outputs.target_sha }}
+
+            # feature_ini_any_changed is too broad on its own; only treat it like an
+            # hlsl change if the diff actually touches a Version line (see pr-checks.yaml).
+            - name: Check feature ini Version changes
+              id: ini-version-check
+              if: steps.changed-files.outputs.feature_ini_any_changed == 'true'
+              env:
+                  ALL_CHANGED_JSON: ${{ steps.changed-files-json.outputs.all_changed_files }}
+                  JSON_OK: ${{ steps.changed-files-json.outcome == 'success' }}
+              run: |
+                  set -euo pipefail
+                  if [ "$JSON_OK" != "true" ]; then
+                    echo "version_changed=true" >> "$GITHUB_OUTPUT"
+                    exit 0
+                  fi
+                  version_changed=false
+                  while IFS= read -r file; do
+                    case "$file" in
+                      features/*/Shaders/Features/*.ini)
+                        if git diff "${{ steps.resolve.outputs.main_sha }}" "${{ steps.resolve.outputs.target_sha }}" -- "$file" | grep -qE '^[+-][[:space:]]*Version[[:space:]]*='; then
+                          version_changed=true
+                        fi
+                        ;;
+                    esac
+                  done < <(jq -r '.[]' <<< "$ALL_CHANGED_JSON")
+                  echo "version_changed=$version_changed" >> "$GITHUB_OUTPUT"
+
     # Gate the version cut on the release-parity shader validation the cache build
     # enforces (/O3 + default-install profile). Shader-only (no C++ build), so it adds
     # zero PR-phase cost and runs once per release cut. Catches /O3-only warnings (e.g.
     # X4000 uninitialized return) before semantic-release tags a version whose caches
     # would then fail to build. Validates the about-to-be-released ref: ff_target in
-    # promotion mode, else the dispatched SHA.
+    # promotion mode, else the dispatched SHA. Skipped when nothing since main's last
+    # known validated state actually touches shader/build-relevant paths -- when it
+    # DOES run, it's always the full, non-incremental validation below (never partial).
     validate-shaders:
+        needs: check-changes
         uses: ./.github/workflows/_shared-build.yaml
         with:
             ref: ${{ inputs.ff_target || github.sha }}
             repository: ${{ github.repository }}
             run-cpp: false
-            run-shader-validation: true
+            run-shader-validation: ${{ needs.check-changes.outputs.hlsl-should-build != 'false' }}
             run-shader-tests: false
             run-cpp-tests: false
             release-parity-validation: true
