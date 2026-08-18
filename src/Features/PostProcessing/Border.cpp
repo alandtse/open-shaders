@@ -85,6 +85,7 @@ void Border::SetupResources()
 
 void Border::ClearShaderCache()
 {
+	BumpShaderGeneration();
 	const auto shaderPtrs = std::array{
 		&borderCS,
 		&borderClearMVCS

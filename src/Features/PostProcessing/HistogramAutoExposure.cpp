@@ -205,6 +205,7 @@ void HistogramAutoExposure::SetupResources()
 
 void HistogramAutoExposure::ClearShaderCache()
 {
+	BumpShaderGeneration();
 	const auto shaderPtrs = std::array{
 		&histogramCS, &histogramAvgCS
 	};

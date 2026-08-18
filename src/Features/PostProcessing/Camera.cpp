@@ -129,6 +129,7 @@ void Camera::SetupResources()
 
 void Camera::ClearShaderCache()
 {
+	BumpShaderGeneration();
 	const auto shaderPtrs = std::array{
 		&cameraCS
 	};

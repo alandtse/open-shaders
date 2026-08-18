@@ -63,6 +63,7 @@ void Composite::SetupResources()
 
 void Composite::ClearShaderCache()
 {
+	BumpShaderGeneration();
 	{
 		std::lock_guard lock(shaderMutex);
 		for (auto& shader : compositeShaders) {

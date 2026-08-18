@@ -82,6 +82,7 @@ void MotionBlur::CompileComputeShaders()
 
 void MotionBlur::ClearShaderCache()
 {
+	BumpShaderGeneration();
 	const auto shaderPtrs = std::array{
 		&horizontalPassShader,
 		&verticalPassShader,

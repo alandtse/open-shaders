@@ -293,6 +293,7 @@ void LocalExposure::SetupResources()
 
 void LocalExposure::ClearShaderCache()
 {
+	BumpShaderGeneration();
 	const auto shaderPtrs = std::array{
 		&setupCS, &downsampleCS, &blurHorizontalCS, &blurVerticalCS, &gridCS, &resolveCS
 	};

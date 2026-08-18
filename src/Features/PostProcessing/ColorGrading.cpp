@@ -1048,6 +1048,7 @@ void ColorGrading::SetupResources()
 
 void ColorGrading::ClearShaderCache()
 {
+	BumpShaderGeneration();
 	const auto shaderPtrs = std::array{
 		&colorgradingCS,
 		&lutgenCS

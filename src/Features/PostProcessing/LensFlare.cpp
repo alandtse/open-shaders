@@ -396,6 +396,7 @@ void LensFlare::CreateFFTTextures(uint resolution)
 
 void LensFlare::ClearShaderCache()
 {
+	BumpShaderGeneration();
 	const auto shaderPtrs = std::array{
 		&thresholdCS, &ghostHaloCS, &blurDownCS, &blurUpCS, &mixCS,
 		&fftRowCS, &fftColCS, &fftRowInvCS, &fftColInvCS, &fftMultiplyCS,

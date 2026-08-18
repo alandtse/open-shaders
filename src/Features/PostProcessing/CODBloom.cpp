@@ -144,6 +144,7 @@ void CODBloom::SetupResources()
 
 void CODBloom::ClearShaderCache()
 {
+	BumpShaderGeneration();
 	auto const shaderPtrs = std::array{
 		&thresholdCS, &downsampleCS, &downsampleFirstMipCS, &upsampleCS, &compositeCS
 	};

@@ -2808,7 +2808,8 @@ namespace SIE
 			[this, sourcePath = std::move(sourcePath), entryPoint = std::move(entryPoint),
 				defines = std::move(defines), onReady = std::move(onReady)]() mutable {
 				auto device = globals::d3d::device;
-				if (!device) {
+				auto* state = globals::state;
+				if (!device || !state) {
 					onReady(nullptr);
 					return;
 				}
@@ -2888,11 +2889,11 @@ namespace SIE
 					}
 					if (globals::game::isVR)
 						macros.push_back({ "VR", "" });
-					if (globals::state->IsDeveloperMode()) {
+					if (state->IsDeveloperMode()) {
 						macros.push_back({ "D3DCOMPILE_SKIP_OPTIMIZATION", "" });
 						macros.push_back({ "D3DCOMPILE_DEBUG", "" });
 					}
-					auto shaderDefines = globals::state->GetDefines();
+					auto shaderDefines = state->GetDefines();
 					if (!shaderDefines->empty()) {
 						for (unsigned int i = 0; i < shaderDefines->size(); i++)
 							macros.push_back({ shaderDefines->at(i).first.c_str(), shaderDefines->at(i).second.c_str() });
@@ -2902,10 +2903,10 @@ namespace SIE
 					macros.push_back({ "DX11", "" });
 					macros.push_back({ nullptr, nullptr });
 
-					uint32_t flags = !globals::state->IsDeveloperMode() ? (D3DCOMPILE_ENABLE_STRICTNESS | D3DCOMPILE_OPTIMIZATION_LEVEL3) : D3DCOMPILE_DEBUG;
-					if (globals::state->enablePartialPrecision.load(std::memory_order_relaxed))
+					uint32_t flags = !state->IsDeveloperMode() ? (D3DCOMPILE_ENABLE_STRICTNESS | D3DCOMPILE_OPTIMIZATION_LEVEL3) : D3DCOMPILE_DEBUG;
+					if (state->enablePartialPrecision.load(std::memory_order_relaxed))
 						flags |= D3DCOMPILE_PARTIAL_PRECISION;
-					if (globals::state->enableAvoidFlowControl.load(std::memory_order_relaxed))
+					if (state->enableAvoidFlowControl.load(std::memory_order_relaxed))
 						flags |= D3DCOMPILE_AVOID_FLOW_CONTROL;
 					if (IsDiskCache())
 						flags |= D3DCOMPILE_SKIP_VALIDATION;
@@ -2959,8 +2960,20 @@ namespace SIE
 
 	void ShaderCache::ClearStandaloneComputeCache(std::wstring_view relativeDir)
 	{
+		// Same bar as PruneOrphanedShaderCacheEntries: never delete outside Data/ShaderCache.
+		if (relativeDir.empty() || relativeDir.find(L"..") != std::wstring_view::npos ||
+			std::filesystem::path(relativeDir).is_absolute()) {
+			logger::error("Refusing to clear standalone compute cache for unsafe path {}",
+				Util::WStringToString(std::wstring(relativeDir)));
+			return;
+		}
+
 		std::error_code ec;
 		std::filesystem::remove_all(std::filesystem::path(L"Data/ShaderCache") / relativeDir, ec);
+		if (ec) {
+			logger::warn("Failed to remove standalone compute cache dir {}: {}",
+				Util::WStringToString(std::wstring(relativeDir)), ec.message());
+		}
 
 		// Trailing slash so this can't false-positive-match a differently-named
 		// sibling directory (e.g. "PostProcessing/DoF" vs "PostProcessing/DoFExtra").

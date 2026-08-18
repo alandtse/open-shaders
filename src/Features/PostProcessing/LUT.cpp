@@ -225,6 +225,7 @@ void LUT::ReadTexture(std::filesystem::path path)
 
 void LUT::ClearShaderCache()
 {
+	BumpShaderGeneration();
 	const auto shaderPtrs = std::array{
 		&lutCS
 	};

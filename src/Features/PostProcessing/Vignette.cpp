@@ -86,6 +86,7 @@ void Vignette::SetupResources()
 
 void Vignette::ClearShaderCache()
 {
+	BumpShaderGeneration();
 	const auto shaderPtrs = std::array{
 		&vignetteCS
 	};

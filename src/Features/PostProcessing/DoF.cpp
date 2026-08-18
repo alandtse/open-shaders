@@ -402,6 +402,7 @@ void DoF::SetupResources()
 
 void DoF::ClearShaderCache()
 {
+	BumpShaderGeneration();
 	const auto shaderPtrs = std::array{
 		&UpdateFocusCS,
 		&CalculateCoCCS,

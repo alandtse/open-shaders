@@ -464,6 +464,7 @@ void PhysicalGlare::SetupResources()
 
 void PhysicalGlare::ClearShaderCache()
 {
+	BumpShaderGeneration();
 	auto const shaderPtrs = std::array{
 		&thresholdCS, &apertureCS, &tearFilmCS, &psfCS, &multiplyCS, &packCS, &compositeCS
 	};
