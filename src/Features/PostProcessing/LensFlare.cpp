@@ -501,7 +501,7 @@ void LensFlare::DrawFast(TextureInfo& inout_tex, LensFlareCB& data)
 	};
 
 	// === Pass 2: Ghost + Halo — half res → half res ===
-	if (!debugsettings.disableGhosts && ghostHaloCS) {
+	if (!debugsettings.disableGhosts && AllShadersReady({ &ghostHaloCS })) {
 		data.OutputWidth = (float)halfW;
 		data.OutputHeight = (float)halfH;
 		data.InputWidth = (float)halfW;
@@ -520,7 +520,7 @@ void LensFlare::DrawFast(TextureInfo& inout_tex, LensFlareCB& data)
 	}
 
 	// === Pass 3: Kawase blur ===
-	if (!debugsettings.disableBlur && blurDownCS && blurUpCS) {
+	if (!debugsettings.disableBlur && AllShadersReady({ &blurDownCS, &blurUpCS })) {
 		for (int iter = 0; iter < debugsettings.blurIterations; iter++) {
 			data.OutputWidth = (float)quarterW;
 			data.OutputHeight = (float)quarterH;
@@ -813,7 +813,7 @@ void LensFlare::Draw(TextureInfo& inout_tex)
 	context->CSSetSamplers(0, (uint)samplers.size(), samplers.data());
 
 	// === Pass 1: Threshold — full res input → half res output ===
-	if (!debugsettings.disableThreshold && thresholdCS) {
+	if (!debugsettings.disableThreshold && AllShadersReady({ &thresholdCS })) {
 		data.OutputWidth = (float)halfW;
 		data.OutputHeight = (float)halfH;
 		data.InputWidth = (float)fullW;
@@ -832,14 +832,15 @@ void LensFlare::Draw(TextureInfo& inout_tex)
 	}
 
 	// === Ghost + Halo generation (mode-dependent) ===
-	if ((mode == GhostMode::Quality || mode == GhostMode::Ultra) && fftRowCS && fftColCS && fftMultiplyCS && fftThresholdCS && fftGhostComposeCS) {
+	if ((mode == GhostMode::Quality || mode == GhostMode::Ultra) &&
+		AllShadersReady({ &fftRowCS, &fftColCS, &fftMultiplyCS, &fftThresholdCS, &fftGhostComposeCS })) {
 		DrawQuality(inout_tex, data);
 	} else {
 		DrawFast(inout_tex, data);
 	}
 
 	// === Pass 4: Mix ghost+halo → full res output ===
-	if (mixCS) {
+	if (AllShadersReady({ &mixCS })) {
 		data.OutputWidth = (float)fullW;
 		data.OutputHeight = (float)fullH;
 		data.InputWidth = (float)halfW;

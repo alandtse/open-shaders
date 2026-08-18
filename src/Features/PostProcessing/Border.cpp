@@ -116,7 +116,7 @@ void Border::CompileComputeShaders()
 
 void Border::ClearMotionVectorsForFrameGen()
 {
-	if (!borderClearMVCS || !borderCB)
+	if (!borderCB || !AllShadersReady({ &borderClearMVCS }))
 		return;
 
 	// Only run when there's an actual border to clear

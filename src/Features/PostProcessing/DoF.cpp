@@ -619,8 +619,9 @@ void DoF::Draw(TextureInfo& inout_tex)
 	ID3D11ShaderResourceView* bokehSampleSRV = bokehMode == 1 ? customShapeSampleSRV : proceduralBokehSamples->SRV();
 	const float customShapeRadiusScale = bokehMode == 1 ? owner->bokehResources.GetShapeSampleRadiusScale(customShapeIndex) : 1.0f;
 	const float bokehMaxRadius = bokehMode == 1 ? owner->bokehResources.GetShapeSampleMaxRadius(customShapeIndex) : proceduralBokehMaxRadius;
-	const bool adaptiveGatherReady = DownsampleCS && ReduceColorCoCCS && ReduceColorCS &&
-	                                 FarGatherCS[gatherQuality] && NearGatherCS[gatherQuality] && bokehSampleSRV;
+	const bool adaptiveGatherReady = bokehSampleSRV &&
+	                                 AllShadersReady({ &DownsampleCS, &ReduceColorCoCCS, &ReduceColorCS,
+										 &FarGatherCS[gatherQuality], &NearGatherCS[gatherQuality] });
 	const bool useAdaptiveGather = settings.UseAdaptiveGather && adaptiveGatherReady;
 
 	// Tile propagation carries the near disc reach itself, so the same low-resolution dilation used

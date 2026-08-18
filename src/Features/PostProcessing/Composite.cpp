@@ -127,13 +127,12 @@ void Composite::Draw(TextureInfo& inout_tex)
 	auto state = globals::state;
 	auto context = globals::d3d::context;
 
+	if (!AllShadersReady({ &compositeShaders[flags] }))
+		return;
+
 	state->BeginPerfEvent("Composite");
 
 	ID3D11ComputeShader* shader = compositeShaders[flags].get();
-	if (!shader) {
-		state->EndPerfEvent();
-		return;
-	}
 
 	// Bind resources:
 	//   t0 = main color (inout_tex)

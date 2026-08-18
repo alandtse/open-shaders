@@ -163,6 +163,9 @@ void MotionBlur::Draw(TextureInfo& inout_tex)
 	if (!enabled)
 		return;
 
+	if (!AllShadersReady({ &horizontalPassShader, &verticalPassShader, &neighborMaxPassShader, &blurPassShader }))
+		return;
+
 	try {
 		auto renderer = globals::game::renderer;
 		if (!renderer) {
