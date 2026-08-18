@@ -3,6 +3,7 @@
 #include "Features/PostProcessing.h"
 #include "GpuPass.h"
 #include "Menu.h"
+#include "ShaderCache.h"
 #include "State.h"
 #include "Util.h"
 
@@ -423,11 +424,16 @@ void DoF::ClearShaderCache()
 		&PostSmoothing2AndFocusingCS
 	};
 
-	for (auto shader : shaderPtrs)
-		if ((*shader)) {
-			(*shader)->Release();
-			shader->detach();
-		}
+	{
+		std::lock_guard lock(shaderMutex);
+		for (auto shader : shaderPtrs)
+			if ((*shader)) {
+				(*shader)->Release();
+				shader->detach();
+			}
+	}
+
+	globals::shaderCache->ClearStandaloneComputeCache(L"PostProcessing/DoF");
 	CompileComputeShaders();
 }
 
@@ -466,8 +472,14 @@ void DoF::CompileComputeShaders()
 
 	for (auto& info : shaderInfos) {
 		auto path = std::filesystem::path("Data\\Shaders\\PostProcessing\\DoF") / info.filename;
-		if (auto rawPtr = reinterpret_cast<ID3D11ComputeShader*>(Util::CompileShader(path.c_str(), info.defines, "cs_5_0", info.entry.c_str())))
-			info.programPtr->attach(rawPtr);
+		globals::shaderCache->EnqueueComputeShaderCompile(
+			path.wstring(), info.entry, info.defines,
+			[this, ptr = info.programPtr](ID3D11ComputeShader* shader) {
+				if (shader) {
+					std::lock_guard lock(shaderMutex);
+					ptr->attach(shader);
+				}
+			});
 	}
 }
 
@@ -594,6 +606,16 @@ void DoF::Draw(TextureInfo& inout_tex)
 		}
 	}
 	debugFocusPlane = manualFocus;
+	// Hold shaderMutex for the pass: the async compile callbacks store these members
+	// on pool threads. No-op the whole frame until the core kernels are ready; a
+	// partial sequential pipeline would write garbage into the scene target.
+	std::lock_guard shaderLock(shaderMutex);
+	const bool needPostSmoothing = settings.PostBlurSmoothing >= 0.01f;
+	if (!UpdateFocusCS || !CalculateCoCCS || !CoCTileFlattenCS || !CoCTileDilateHCS ||
+		!CoCTileDilateVCS || !DownsampleLegacyCS || !FarBlurCS || !NearBlurCS ||
+		!GatherPostfilterCS || !CombinerCS ||
+		(needPostSmoothing && (!PostSmoothing1CS || !PostSmoothing2AndFocusingCS)))
+		return;
 	state->BeginPerfEvent("Depth of Field");
 
 	const uint halfResX = texPreBlurred->desc.Width;

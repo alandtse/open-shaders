@@ -7,6 +7,7 @@
 #include "PostProcessFeature.h"
 
 #include <array>
+#include <mutex>
 
 struct DoF : public PostProcessFeature
 {
@@ -109,6 +110,10 @@ struct DoF : public PostProcessFeature
 	std::array<eastl::unique_ptr<Texture2D>, 3> texGatherColor = {};
 	std::array<eastl::unique_ptr<Texture2D>, 3> texGatherCoC = {};
 	// Bokeh shapes are provided by PostProcessing::bokehResources (shared with LensFlare)
+
+	// Compile callbacks fire on the pool while Draw reads on the render thread; this
+	// serializes store vs read of every member below.
+	mutable std::mutex shaderMutex;
 
 	winrt::com_ptr<ID3D11ComputeShader> UpdateFocusCS = nullptr;
 	winrt::com_ptr<ID3D11ComputeShader> CalculateCoCCS = nullptr;
