@@ -2822,10 +2822,6 @@ namespace SIE
 					return;
 				}
 
-				// Stable, human-readable disk path (entry point + defines) -- content
-				// staleness is decided separately via the shared digest manifest, same
-				// as every RE::BSShader-backed shader, so this path never changes just
-				// because the source did.
 				std::string defineSlug;
 				for (const auto& d : defines) {
 					if (!d.first || !d.first[0])

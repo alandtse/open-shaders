@@ -26,12 +26,10 @@ namespace Util
 				return E_FAIL;
 			}
 
-			// Get filesize
 			file.seekg(0, std::ios::end);
 			UINT size = static_cast<UINT>(file.tellg());
 			file.seekg(0, std::ios::beg);
 
-			// Create buffer and read file
 			char* data = new char[size];
 			file.read(data, size);
 			*ppData = data;
