@@ -439,15 +439,7 @@ void DoF::ClearShaderCache()
 
 void DoF::CompileComputeShaders()
 {
-	struct ShaderCompileInfo
-	{
-		winrt::com_ptr<ID3D11ComputeShader>* programPtr;
-		std::string_view filename;
-		std::vector<std::pair<const char*, const char*>> defines;
-		std::string entry = "main";
-	};
-
-	std::vector<ShaderCompileInfo>
+	const std::vector<ComputeShaderCompileInfo>
 		shaderInfos = {
 			{ &UpdateFocusCS, "dof.cs.hlsl", {}, "CS_UpdateFocus" },
 			{ &CalculateCoCCS, "dof.cs.hlsl", {}, "CS_CalculateCoC" },
@@ -470,17 +462,7 @@ void DoF::CompileComputeShaders()
 			{ &PostSmoothing2AndFocusingCS, "dof.cs.hlsl", {}, "CS_PostSmoothing2AndFocusing" }
 		};
 
-	for (auto& info : shaderInfos) {
-		auto path = std::filesystem::path("Data\\Shaders\\PostProcessing\\DoF") / info.filename;
-		globals::shaderCache->EnqueueComputeShaderCompile(
-			path.wstring(), info.entry, info.defines,
-			[this, ptr = info.programPtr](ID3D11ComputeShader* shader) {
-				if (shader) {
-					std::lock_guard lock(shaderMutex);
-					ptr->attach(shader);
-				}
-			});
-	}
+	CompileComputeShadersAsync(L"Data\\Shaders\\PostProcessing\\DoF", shaderInfos);
 }
 
 // Thanks Ershin!
@@ -606,15 +588,13 @@ void DoF::Draw(TextureInfo& inout_tex)
 		}
 	}
 	debugFocusPlane = manualFocus;
-	// Hold shaderMutex for the pass: the async compile callbacks store these members
-	// on pool threads. No-op the whole frame until the core kernels are ready; a
-	// partial sequential pipeline would write garbage into the scene target.
-	std::lock_guard shaderLock(shaderMutex);
+	// No-op the whole frame until the core kernels are ready -- a partial
+	// sequential pipeline would write garbage into the scene target.
 	const bool needPostSmoothing = settings.PostBlurSmoothing >= 0.01f;
-	if (!UpdateFocusCS || !CalculateCoCCS || !CoCTileFlattenCS || !CoCTileDilateHCS ||
-		!CoCTileDilateVCS || !DownsampleLegacyCS || !FarBlurCS || !NearBlurCS ||
-		!GatherPostfilterCS || !CombinerCS ||
-		(needPostSmoothing && (!PostSmoothing1CS || !PostSmoothing2AndFocusingCS)))
+	const bool coreReady = AllShadersReady({ &UpdateFocusCS, &CalculateCoCCS, &CoCTileFlattenCS,
+		&CoCTileDilateHCS, &CoCTileDilateVCS, &DownsampleLegacyCS, &FarBlurCS, &NearBlurCS,
+		&GatherPostfilterCS, &CombinerCS });
+	if (!coreReady || (needPostSmoothing && !AllShadersReady({ &PostSmoothing1CS, &PostSmoothing2AndFocusingCS })))
 		return;
 	state->BeginPerfEvent("Depth of Field");
 

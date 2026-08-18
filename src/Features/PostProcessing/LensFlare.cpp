@@ -4,6 +4,7 @@
 #include "GpuPass.h"
 #include "I18n/I18n.h"
 #include "PostProcessingUI.h"
+#include "ShaderCache.h"
 #include "State.h"
 #include "Util.h"
 
@@ -401,26 +402,22 @@ void LensFlare::ClearShaderCache()
 		&bokehPrepareCS, &fftThresholdCS, &fftGhostComposeCS
 	};
 
-	for (auto shader : shaderPtrs)
-		if ((*shader)) {
-			(*shader)->Release();
-			shader->detach();
-		}
+	{
+		std::lock_guard lock(shaderMutex);
+		for (auto shader : shaderPtrs)
+			if ((*shader)) {
+				(*shader)->Release();
+				shader->detach();
+			}
+	}
 
+	globals::shaderCache->ClearStandaloneComputeCache(L"PostProcessing/LensFlare");
 	CompileComputeShaders();
 }
 
 void LensFlare::CompileComputeShaders()
 {
-	struct ShaderCompileInfo
-	{
-		winrt::com_ptr<ID3D11ComputeShader>* programPtr;
-		std::string_view filename;
-		std::vector<std::pair<const char*, const char*>> defines = {};
-		std::string entry = "main";
-	};
-
-	std::vector<ShaderCompileInfo> shaderInfos = {
+	const std::vector<ComputeShaderCompileInfo> shaderInfos = {
 		{ &thresholdCS, "lensflare.cs.hlsl", {}, "CSThreshold" },
 		{ &ghostHaloCS, "lensflare.cs.hlsl", {}, "CSGhostHalo" },
 		{ &blurDownCS, "lensflare.cs.hlsl", {}, "CSFlareDown" },
@@ -430,16 +427,7 @@ void LensFlare::CompileComputeShaders()
 		{ &bokehPrepareCS, "lensflare_fft.cs.hlsl", {}, "CSBokehPrepare" },
 		{ &fftThresholdCS, "lensflare_fft.cs.hlsl", {}, "CSFFTThreshold" },
 		{ &fftGhostComposeCS, "lensflare_fft.cs.hlsl", {}, "CSFFTGhostCompose" },
-	};
-
-	for (auto& info : shaderInfos) {
-		auto path = std::filesystem::path("Data\\Shaders\\PostProcessing\\LensFlare") / info.filename;
-		if (auto rawPtr = reinterpret_cast<ID3D11ComputeShader*>(Util::CompileShader(path.c_str(), info.defines, "cs_5_0", info.entry.c_str())))
-			info.programPtr->attach(rawPtr);
-	}
-
-	// FFT shaders — self-contained in lensflare_fft.cs.hlsl with LensFlareConstants CB
-	std::vector<ShaderCompileInfo> fftShaderInfos = {
+		// FFT shaders — self-contained in lensflare_fft.cs.hlsl with LensFlareConstants CB
 		{ &fftRowCS, "lensflare_fft.cs.hlsl", { { "ROW_PASS", "" }, { "FORWARD", "" } }, "CS_FFT" },
 		{ &fftColCS, "lensflare_fft.cs.hlsl", { { "COL_PASS", "" }, { "FORWARD", "" } }, "CS_FFT" },
 		{ &fftRowInvCS, "lensflare_fft.cs.hlsl", { { "ROW_PASS", "" }, { "INVERSE", "" } }, "CS_FFT" },
@@ -447,15 +435,7 @@ void LensFlare::CompileComputeShaders()
 		{ &fftMultiplyCS, "lensflare_fft.cs.hlsl", {}, "CS_Multiply" },
 	};
 
-	for (auto& info : fftShaderInfos) {
-		auto path = std::filesystem::path("Data\\Shaders\\PostProcessing\\LensFlare") / info.filename;
-		if (auto rawPtr = reinterpret_cast<ID3D11ComputeShader*>(Util::CompileShader(path.c_str(), info.defines, "cs_5_0", info.entry.c_str())))
-			info.programPtr->attach(rawPtr);
-	}
-
-	if (!thresholdCS || !ghostHaloCS || !mixCS) {
-		logger::error("Failed to compile lens flare compute shaders!");
-	}
+	CompileComputeShadersAsync(L"Data\\Shaders\\PostProcessing\\LensFlare", shaderInfos);
 }
 
 void LensFlare::DispatchFFT(ID3D11ComputeShader* shader, Texture2D* input, Texture2D* output, uint resolution)
@@ -580,6 +560,10 @@ void LensFlare::DrawQuality(TextureInfo& inout_tex, LensFlareCB& data)
 {
 	std::ignore = inout_tex;
 	auto context = globals::d3d::context;
+
+	if (!AllShadersReady({ &fftRowCS, &fftColCS, &fftRowInvCS, &fftColInvCS, &bokehPrepareCS }))
+		return;
+
 	uint N = currentFFTResolution;
 	uint halfW = texThreshold->desc.Width;
 	uint halfH = texThreshold->desc.Height;
