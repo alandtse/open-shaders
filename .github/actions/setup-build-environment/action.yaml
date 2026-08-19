@@ -176,20 +176,20 @@ runs:
           uses: actions/cache@v5
           with:
               path: ${{ inputs.build-dir }}
-              key: ${{ runner.os }}-cmake-msvc-${{ steps.msvc_version.outputs.version_mm }}-${{ inputs.cache-key-suffix }}-${{ github.event.inputs.cache-key-suffix || 'default' }}-${{ hashFiles('.gitmodules', 'extern/**', 'CMakePresets.json', 'vcpkg.json', 'vcpkg-configuration.json') }}
+              key: ${{ runner.os }}-cmake-msvc-${{ steps.msvc_version.outputs.version_mm }}-${{ inputs.cache-key-suffix }}-${{ inputs.cmake-preset }}-${{ github.event.inputs.cache-key-suffix || 'default' }}-${{ hashFiles('.gitmodules', 'extern/**', 'CMakePresets.json', 'vcpkg.json', 'vcpkg-configuration.json') }}
               restore-keys: |
-                  ${{ runner.os }}-cmake-msvc-${{ steps.msvc_version.outputs.version_mm }}-${{ inputs.cache-key-suffix }}-${{ github.event.inputs.cache-key-suffix || 'default' }}-
-                  ${{ runner.os }}-cmake-msvc-${{ steps.msvc_version.outputs.version_mm }}-${{ inputs.cache-key-suffix }}-
+                  ${{ runner.os }}-cmake-msvc-${{ steps.msvc_version.outputs.version_mm }}-${{ inputs.cache-key-suffix }}-${{ inputs.cmake-preset }}-${{ github.event.inputs.cache-key-suffix || 'default' }}-
+                  ${{ runner.os }}-cmake-msvc-${{ steps.msvc_version.outputs.version_mm }}-${{ inputs.cache-key-suffix }}-${{ inputs.cmake-preset }}-
 
         - name: Restore CMake build cache (untrusted PR, restore-only)
           if: github.event_name == 'pull_request' || github.event_name == 'pull_request_target'
           uses: actions/cache/restore@v5
           with:
               path: ${{ inputs.build-dir }}
-              key: ${{ runner.os }}-cmake-msvc-${{ steps.msvc_version.outputs.version_mm }}-${{ inputs.cache-key-suffix }}-${{ github.event.inputs.cache-key-suffix || 'default' }}-${{ hashFiles('.gitmodules', 'extern/**', 'CMakePresets.json', 'vcpkg.json', 'vcpkg-configuration.json') }}
+              key: ${{ runner.os }}-cmake-msvc-${{ steps.msvc_version.outputs.version_mm }}-${{ inputs.cache-key-suffix }}-${{ inputs.cmake-preset }}-${{ github.event.inputs.cache-key-suffix || 'default' }}-${{ hashFiles('.gitmodules', 'extern/**', 'CMakePresets.json', 'vcpkg.json', 'vcpkg-configuration.json') }}
               restore-keys: |
-                  ${{ runner.os }}-cmake-msvc-${{ steps.msvc_version.outputs.version_mm }}-${{ inputs.cache-key-suffix }}-${{ github.event.inputs.cache-key-suffix || 'default' }}-
-                  ${{ runner.os }}-cmake-msvc-${{ steps.msvc_version.outputs.version_mm }}-${{ inputs.cache-key-suffix }}-
+                  ${{ runner.os }}-cmake-msvc-${{ steps.msvc_version.outputs.version_mm }}-${{ inputs.cache-key-suffix }}-${{ inputs.cmake-preset }}-${{ github.event.inputs.cache-key-suffix || 'default' }}-
+                  ${{ runner.os }}-cmake-msvc-${{ steps.msvc_version.outputs.version_mm }}-${{ inputs.cache-key-suffix }}-${{ inputs.cmake-preset }}-
 
         - name: Remove stale CMake cache if configuration changed
           shell: pwsh

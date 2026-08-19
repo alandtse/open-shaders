@@ -207,7 +207,7 @@ jobs:
               if: steps.check-hlsl.outputs.skip != 'true'
               uses: ./.github/actions/setup-build-environment
               with:
-                  cache-key-suffix: "validation-${{ matrix.config.name }}${{ inputs.cache-key-suffix }}"
+                  cache-key-suffix: "validation${{ inputs.cache-key-suffix }}"
             - name: Prepare shaders
               if: steps.check-hlsl.outputs.skip != 'true'
               uses: ./.github/actions/prepare-shaders
