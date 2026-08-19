@@ -2855,9 +2855,12 @@ namespace SIE
 						if (const auto digest = GetShaderContentDigestTimed(srcPath, srcPath.parent_path(), *this)) {
 							const auto combined = Util::ContentHash::CombineHashes(*digest, GetGlobalDefinesDigest());
 							diskCacheOutdated = *recorded != combined.ToHex();
-							IncDigestDecidedTasks();
-							if (diskCacheOutdated)
+							if (diskCacheOutdated) {
 								logger::debug("Disk-cached standalone compute shader {}:{} outdated: content digest changed", srcPathStr, entryPoint);
+								IncDigestMissTasks();
+							} else {
+								IncDigestHitTasks();
+							}
 						}
 					}
 				}
