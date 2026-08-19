@@ -747,6 +747,35 @@ namespace Util
 		return DrawRoundedButtonHighlight(ImRect(ImGui::GetItemRectMin(), ImGui::GetItemRectMax()), ImGui::IsItemHovered(), ImGui::IsItemActive(), drawList);
 	}
 
+	void DrawDisclosureChevron(ImDrawList* drawList, const ImVec2& min, const ImVec2& max, float progress)
+	{
+		IM_ASSERT(drawList != nullptr);
+		IM_ASSERT(max.x >= min.x && max.y >= min.y);
+
+		constexpr float radiusRatio = 0.30f;
+		constexpr float horizontalRatio = 0.866f;
+		constexpr float verticalRatio = 0.75f;
+		const ImVec2 center((min.x + max.x) * 0.5f, (min.y + max.y) * 0.5f);
+		const float radius = std::min(max.x - min.x, max.y - min.y) * radiusRatio;
+		const float angle = std::numbers::pi_v<float> * std::clamp(progress, 0.0f, 1.0f);
+		const float cosine = std::cos(angle);
+		const float sine = std::sin(angle);
+
+		std::array<ImVec2, 3> points = {
+			ImVec2(0.0f, verticalRatio * radius),
+			ImVec2(-horizontalRatio * radius, -verticalRatio * radius),
+			ImVec2(horizontalRatio * radius, -verticalRatio * radius)
+		};
+		for (auto& point : points) {
+			const ImVec2 rotated(
+				point.x * cosine - point.y * sine,
+				point.x * sine + point.y * cosine);
+			point = ImVec2(center.x + rotated.x, center.y + rotated.y);
+		}
+
+		drawList->AddTriangleFilled(points[0], points[1], points[2], ImGui::GetColorU32(ImGuiCol_Text));
+	}
+
 	bool FlyoutMenuItem(const char* label, bool selected, bool enabled, float checkmarkLeftOffset)
 	{
 		IM_ASSERT(checkmarkLeftOffset >= 0.0f);
@@ -983,8 +1012,8 @@ namespace Util
 			categoryIcon = menu.characters.texture;
 		} else if (strcmp(categoryKey, "Display") == 0) {
 			categoryIcon = menu.display.texture;
-		} else if (strcmp(categoryKey, "Grass") == 0) {
-			categoryIcon = menu.grass.texture;
+		} else if (strcmp(categoryKey, "Foliage") == 0) {
+			categoryIcon = menu.foliage.texture;
 		} else if (strcmp(categoryKey, "Lighting") == 0) {
 			categoryIcon = menu.lighting.texture;
 		} else if (strcmp(categoryKey, "Sky") == 0) {

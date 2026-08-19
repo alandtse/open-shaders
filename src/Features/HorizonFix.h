@@ -22,6 +22,9 @@ struct HorizonFix : Feature
 	virtual inline std::string_view GetShaderDefineName() override { return "HORIZON_FIX"; }
 	virtual inline bool HasShaderDefine(RE::BSShader::Type t) override { return t == RE::BSShader::Type::Water; }
 	virtual std::string_view GetCategory() const override { return FeatureCategories::kWater; }
+	virtual inline bool SupportsVR() override { return true; }
+	/** @brief Shows the feature only while the HorizonFix companion plugin is present. */
+	virtual bool IsInMenu() const override;
 
 	/** @brief Returns a summary description for the UI. */
 	virtual std::pair<std::string, std::vector<std::string>> GetFeatureSummary() override
@@ -39,4 +42,8 @@ struct HorizonFix : Feature
 	virtual void PostPostLoad() override;
 
 	virtual bool IsCore() const override { return true; }
+
+private:
+	/** @brief Companion plugin presence, probed once in PostPostLoad; the module list doesn't change after SKSE plugin load. */
+	bool companionPluginDetected = false;
 };

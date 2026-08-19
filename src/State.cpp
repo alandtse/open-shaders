@@ -10,11 +10,16 @@
 #include "Features/CSUtility.h"
 #include "Features/CloudShadows.h"
 #include "Features/DynamicCubemaps.h"
+#if defined(ENABLE_EFFECTS11)
+#	include "Features/Effects11.h"
+#endif
 #include "Features/ExponentialHeightFog.h"
 #include "Features/FoveatedCommon.h"
 #include "Features/HDRDisplay.h"
 #include "Features/InteriorSun.h"
 #include "Features/PerformanceOverlay.h"
+#include "Features/PostProcessing.h"
+#include "Features/SceneSelector.h"
 #include "Features/Skin.h"
 #include "Features/SkySync.h"
 #include "Features/Skylighting.h"
@@ -24,13 +29,13 @@
 #include "Features/VR.h"
 #include "Features/VRStereoOptimizations.h"
 #include "Features/VolumetricShadows.h"
-#include "Features/WeatherPicker.h"
 #include "Menu.h"
 #include "SceneSettingsManager.h"
 #include "SettingsOverrideManager.h"
 #include "ShaderCache.h"
 #include "TruePBR.h"
 #include "Utils/FileSystem.h"
+#include "Utils/Game.h"
 #include "Utils/SphericalHarmonics.h"
 #include "VRAPI/CSpluginapi.h"
 #include "WeatherManager.h"
@@ -155,18 +160,17 @@ void State::Draw()
 	auto& terrainHelper = globals::features::terrainHelper;
 	auto& cloudShadows = globals::features::cloudShadows;
 	auto& csEditor = globals::features::csEditor;
-	auto& weatherPicker = globals::features::weatherPicker;
+	auto& sceneSelector = globals::features::sceneSelector;
 	auto& skin = globals::features::skin;
 	auto& truePBR = globals::features::truePBR;
 	auto context = globals::d3d::context;
 	auto& volumetricShadows = globals::features::volumetricShadows;
-	auto& skylighting = globals::features::skylighting;
 
 	if (shaderCache->IsEnabled()) {
 		// Process deferred cell transitions (interior detection)
 		sceneSettingsManager->Update();
 
-		if (csEditor.loaded || weatherPicker.loaded) {
+		if (csEditor.loaded || sceneSelector.loaded) {
 			ZoneScopedN("WeatherManager::UpdateFeatures");
 			weatherManager->UpdateFeatures();
 		}
@@ -180,6 +184,13 @@ void State::Draw()
 			ZoneScopedN("CloudShadows::SkyShaderHacks");
 			cloudShadows.SkyShaderHacks();
 		}
+
+#if defined(ENABLE_EFFECTS11)
+		if (globals::features::effects11.loaded) {
+			ZoneScopedN("Effects11::ParticleShaderHacks");
+			globals::features::effects11.ParticleShaderHacks();
+		}
+#endif
 
 		if (terrainHelper.loaded) {
 			ZoneScopedN("TerrainHelper::SetShaderResources");
@@ -208,8 +219,6 @@ void State::Draw()
 				if (currentPixelDescriptor & static_cast<uint32_t>(SIE::ShaderCache::UtilityShaderFlags::RenderShadowmask)) {
 					if (globals::features::exponentialHeightFog.loaded)
 						globals::features::exponentialHeightFog.CaptureDirectionalShadowMap();
-					if (skylighting.loaded)
-						skylighting.CaptureShadowCascadeSRV();
 				}
 			}
 		}
@@ -277,6 +286,59 @@ void State::Debug()
 		SetPerfMarker("Defines: {}", SIE::ShaderCache::GetDefinesString(*currentShader, permutationData.PixelShaderDescriptor));
 		EndDrawEvent();
 	}
+}
+
+State::TonemapOwner State::GetTonemapOwner()
+{
+	static Util::FrameChecker tonemapOwnerFrameChecker;
+	static TonemapOwner cachedOwner = TonemapOwner::kVanilla;
+
+	if (!tonemapOwnerFrameChecker.IsNewFrame())
+		return cachedOwner;
+
+	auto& postProcessing = globals::features::postProcessing;
+
+#if defined(ENABLE_EFFECTS11)
+	auto& effects11 = globals::features::effects11;
+	if (effects11.loaded && !IsMainOrLoadingMenuOpen() && effects11.WantsTonemapOwnership())
+		cachedOwner = TonemapOwner::kEffects11;
+	else
+#endif
+		if (postProcessing.loaded && postProcessing.WantsTonemapOwnership())
+		cachedOwner = TonemapOwner::kPostProcessing;
+	else
+		cachedOwner = TonemapOwner::kVanilla;
+
+	return cachedOwner;
+}
+
+bool State::HandlePostProcessing(RE::RENDER_TARGET a_input, RE::RENDER_TARGET a_output)
+{
+#if defined(ENABLE_EFFECTS11)
+	if (GetTonemapOwner() != TonemapOwner::kEffects11 ||
+		!globals::features::effects11.RenderTonemap(a_input, a_output))
+		return false;
+
+	auto renderer = globals::game::renderer;
+	auto& outputRT = renderer->GetRuntimeData().renderTargets[a_output];
+	globals::d3d::context->OMSetRenderTargets(1, &outputRT.RTV, nullptr);
+
+	auto shadowState = globals::game::shadowState;
+	auto& stateData = shadowState->GetRuntimeData();
+	stateData.renderTargets[0] = a_output;
+	stateData.setRenderTargetMode[0] = RE::BSGraphics::SetRenderTargetMode::SRTM_NO_CLEAR;
+	for (int i = 1; i < D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT; i++) {
+		stateData.renderTargets[i] = RE::RENDER_TARGET::kNONE;
+		stateData.setRenderTargetMode[i] = RE::BSGraphics::SetRenderTargetMode::SRTM_NO_CLEAR;
+	}
+	stateData.depthStencil = static_cast<uint32_t>(-1);
+
+	return true;
+#else
+	(void)a_input;
+	(void)a_output;
+	return false;
+#endif
 }
 
 /**
@@ -369,21 +431,24 @@ void State::Reset()
 	if (overrideTrunkWindIntensity && trunkWindVector.x == 0.0f && trunkWindVector.y == 0.0f) {
 		trunkWindVector.x = overriddenTrunkWindIntensity;
 	}
-	if (!gamePaused)
-		timer += frameTime;
 
 	worldRenderedThisFrame = false;
 
 	// Cache menu open states once per frame to avoid repeated IsMenuOpen calls
 	// (each call constructs a BSFixedString, which is expensive at scale).
 	if (auto ui = globals::game::ui) {
+		if (!ui->GameIsPaused())
+			timer += RE::GetSecondsSinceLastFrame();
+
 		isMainMenuOpen = ui->IsMenuOpen(RE::MainMenu::MENU_NAME);
 		isLoadingMenuOpen = ui->IsMenuOpen(RE::LoadingMenu::MENU_NAME);
 		isMapMenuOpen = ui->IsMenuOpen(RE::MapMenu::MENU_NAME);
+		isStatsMenuOpen = ui->IsMenuOpen(RE::StatsMenu::MENU_NAME);
 	} else {
 		isMainMenuOpen = false;
 		isLoadingMenuOpen = false;
 		isMapMenuOpen = false;
+		isStatsMenuOpen = false;
 	}
 
 	lastModifiedPixelDescriptor = 0;
@@ -398,7 +463,7 @@ void State::Reset()
 	globals::shaderCache->TickActiveShaderCapture(globals::menu->IsEnabled);
 
 	if (auto* imageSpaceManager = RE::ImageSpaceManager::GetSingleton()) {
-		GET_INSTANCE_MEMBER(BSImagespaceShaderApplyReflections, imageSpaceManager);
+		GET_INSTANCE_MEMBER_VRPTR(BSImagespaceShaderApplyReflections, imageSpaceManager);
 
 		// Disable reflections being applied to things other than water
 		if (BSImagespaceShaderApplyReflections.get()) {
@@ -421,6 +486,7 @@ void State::Setup()
 	if (moonAndStarsLoaded)
 		logger::info("Moon and Stars detected, compatibility enabled");
 
+	globals::features::truePBR.SetupResources();
 	SetupResources();
 
 	// Probe typed UAV load support before features set up their resources, so any
@@ -449,6 +515,67 @@ static std::string GetConfigPath(State::ConfigMode a_configMode)
 	case State::ConfigMode::DEFAULT:
 	default:
 		return Util::PathHelpers::GetSettingsDefaultPath().string();
+	}
+}
+
+static bool WriteConfigFile(const std::filesystem::path& a_configPath, std::string_view a_contents)
+{
+	std::ofstream output{ a_configPath, std::ios::binary | std::ios::trunc };
+	if (!output.is_open()) {
+		return false;
+	}
+
+	output.write(a_contents.data(), static_cast<std::streamsize>(a_contents.size()));
+	output.close();
+	return !output.fail();
+}
+
+static bool WriteConfigAtomically(const std::filesystem::path& a_configPath, std::string_view a_contents)
+{
+	auto temporaryPath = a_configPath;
+	temporaryPath += std::format(".{}.{}.tmp", GetCurrentProcessId(), GetCurrentThreadId());
+
+	if (!WriteConfigFile(temporaryPath, a_contents)) {
+		logger::warn("Failed to write temporary config file: {}", temporaryPath.string());
+		std::error_code cleanupError;
+		std::filesystem::remove(temporaryPath, cleanupError);
+		return false;
+	}
+
+	if (!MoveFileExW(temporaryPath.c_str(), a_configPath.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
+		const auto error = GetLastError();
+		logger::warn("Failed to replace config file {}: Windows error {}; retrying with a direct write", a_configPath.string(), error);
+		std::error_code cleanupError;
+		std::filesystem::remove(temporaryPath, cleanupError);
+
+		// Virtual filesystems can reject replacement while still allowing direct writes.
+		if (!WriteConfigFile(a_configPath, a_contents)) {
+			logger::warn("Failed to write config file directly: {}", a_configPath.string());
+			return false;
+		}
+		logger::info("Saved config directly after atomic replacement failed: {}", a_configPath.string());
+	}
+
+	return true;
+}
+
+static void SaveUserOverrides(const nlohmann::json& a_settings)
+{
+	auto* overrideManager = SettingsOverrideManager::GetSingleton();
+	for (auto* feature : Feature::GetFeatureList()) {
+		const std::string featureName = feature->GetShortName();
+		const auto featureSettings = a_settings.find(feature->GetName());
+		if (!feature->loaded || !overrideManager->HasFeatureOverrides(featureName) || featureSettings == a_settings.end()) {
+			continue;
+		}
+
+		const json overrideSettings = overrideManager->GetMergedOverrideSettings(featureName, json::object());
+		overrideManager->SaveUserOverride(featureName, *featureSettings, overrideSettings);
+	}
+
+	const json globalOverrideSettings = overrideManager->GetMergedOverrideSettings("Global", json::object());
+	if (!globalOverrideSettings.empty()) {
+		overrideManager->SaveUserOverride("Global", a_settings, globalOverrideSettings);
 	}
 }
 
@@ -569,6 +696,14 @@ void State::Load(ConfigMode a_configMode, bool a_allowReload)
 		for (auto* feature : Feature::GetFeatureList()) {
 			try {
 				const std::string featureName = feature->GetShortName();
+				// Resolved here rather than in Feature::Load so features disabled at boot,
+				// which never reach Load, still report their install state to the UI.
+				std::error_code ec;
+				const bool iniExists = std::filesystem::exists(Util::PathHelpers::GetFeatureIniPath(featureName), ec);
+				// exists() reports false on error, so treat an unreadable path as installed rather than letting a probe failure hide the feature.
+				if (ec)
+					logger::warn("Could not determine install state for feature '{}': {}", featureName, ec.message());
+				feature->installed = ec || iniExists;
 				if (!disabledFeatures.contains(featureName) && feature->IsDisabledByDefault()) {
 					disabledFeatures[featureName] = true;
 					logger::info("Feature '{}' is disabled by default", featureName);
@@ -651,6 +786,7 @@ void State::SaveToJson(nlohmann::json& settings)
 	json advanced;
 	advanced["Dump Shaders"] = shaderCache->IsDump();
 	advanced["Log Level"] = logLevel;
+	advanced["Developer Mode"] = enableDeveloperMode;
 	advanced["Shader Defines"] = shaderDefinesString;
 	advanced["Compiler Threads"] = shaderCache->compilationThreadCount;
 	advanced["Background Compiler Threads"] = shaderCache->backgroundCompilationThreadCount;
@@ -687,22 +823,11 @@ void State::SaveToJson(nlohmann::json& settings)
 
 	settings["Version"] = Plugin::VERSION.string();
 
-	// Save feature settings and user overrides
-	auto overrideManager = SettingsOverrideManager::GetSingleton();
+	// Save feature settings
 	for (auto* feature : Feature::GetFeatureList()) {
-		feature->Save(settings);
-
-		// If feature has overrides, save user modifications to .user file
-		const std::string featureName = feature->GetShortName();
-		if (overrideManager->HasFeatureOverrides(featureName) && feature->loaded) {
-			json currentSettings;
-			feature->SaveSettings(currentSettings);
-
-			// Get the merged override settings (all overrides applied to empty base)
-			json overrideSettings = overrideManager->GetMergedOverrideSettings(featureName, json::object());
-
-			// Save user override only if settings differ from override
-			overrideManager->SaveUserOverride(featureName, currentSettings, overrideSettings);
+		const std::string featureSettingsName = feature->GetName();
+		if (feature->loaded || !settings.contains(featureSettingsName) || !settings[featureSettingsName].is_object()) {
+			feature->Save(settings);
 		}
 	}
 }
@@ -721,8 +846,16 @@ void State::LoadFromJson(nlohmann::json& settings)
 		json& advanced = settings["Advanced"];
 		if (advanced.contains("Dump Shaders") && advanced["Dump Shaders"].is_boolean())
 			shaderCache->SetDump(advanced["Dump Shaders"]);
-		if (advanced.contains("Log Level") && advanced["Log Level"].is_number_integer())
-			logLevel = magic_enum::enum_cast<spdlog::level::level_enum>(advanced["Log Level"].get<int>()).value_or(spdlog::level::info);
+		if (advanced.contains("Log Level") && advanced["Log Level"].is_number_integer()) {
+			const auto rawLogLevel = advanced["Log Level"].get<int64_t>();
+			const auto newLogLevel = (rawLogLevel >= 0 && rawLogLevel <= static_cast<int64_t>(spdlog::level::off)) ?
+			                             magic_enum::enum_cast<spdlog::level::level_enum>(static_cast<int>(rawLogLevel)).value_or(spdlog::level::info) :
+			                             spdlog::level::info;
+			if (newLogLevel != logLevel)
+				SetLogLevel(newLogLevel);
+		}
+		if (advanced.contains("Developer Mode") && advanced["Developer Mode"].is_boolean())
+			enableDeveloperMode = advanced["Developer Mode"];
 		if (advanced.contains("Shader Defines") && advanced["Shader Defines"].is_string())
 			SetDefines(advanced["Shader Defines"]);
 		if (advanced.contains("Compiler Threads") && advanced["Compiler Threads"].is_number_integer())
@@ -791,7 +924,6 @@ void State::LoadFromJson(nlohmann::json& settings)
 void State::Save(ConfigMode a_configMode)
 {
 	std::string configPath = GetConfigPath(a_configMode);
-	std::ofstream o{ configPath };
 
 	try {
 		std::filesystem::create_directories(Util::PathHelpers::GetCommunityShaderPath());
@@ -800,26 +932,43 @@ void State::Save(ConfigMode a_configMode)
 		return;
 	}
 
-	// Check if the file opened successfully
-	if (!o.is_open()) {
-		logger::warn("Failed to open config file for saving: {}", configPath);
-		return;  // Exit early if file cannot be opened
+	json settings = json::object();
+	std::ifstream existingConfig{ configPath };
+	if (existingConfig.is_open()) {
+		try {
+			json existingSettings;
+			existingConfig >> existingSettings;
+			for (auto* feature : Feature::GetFeatureList()) {
+				const std::string featureSettingsName = feature->GetName();
+				if (!feature->loaded && existingSettings.contains(featureSettingsName) && existingSettings[featureSettingsName].is_object()) {
+					settings[featureSettingsName] = existingSettings[featureSettingsName];
+				}
+			}
+		} catch (const nlohmann::json::exception& e) {
+			logger::warn("Failed to preserve inactive feature settings from {}: {}", configPath, e.what());
+		}
+		existingConfig.close();
 	}
 
-	json settings;
-	SaveToJson(settings);
-
+	std::string serializedSettings;
 	try {
-		o << settings.dump(1);
-		logger::info("Saving settings to {}", configPath);
+		SaveToJson(settings);
+		serializedSettings = settings.dump(1);
 	} catch (const std::exception& e) {
-		logger::warn("Failed to write settings to file: {}. Error: {}", configPath, e.what());
+		logger::warn("Failed to serialize settings for {}: {}", configPath, e.what());
+		return;
 	}
+
+	if (!WriteConfigAtomically(configPath, serializedSettings)) {
+		return;
+	}
+	logger::info("Saving settings to {}", configPath);
 
 	// A real user save is the only signal that a Disable-at-Boot change (restart-
 	// gated) was actually intentional; record it so next boot's disk-cache mismatch
 	// can auto-resolve instead of holding for the "Rebuild Cache" menu action.
 	if (a_configMode == ConfigMode::USER) {
+		SaveUserOverrides(settings);
 		if (auto* shaderCache = globals::shaderCache)
 			shaderCache->MarkExpectedFeatureFlip();
 	}
@@ -900,7 +1049,7 @@ bool State::IsShaderEnabled(const RE::BSShader& a_shader)
 
 bool State::IsDeveloperMode()
 {
-	return GetLogLevel() <= spdlog::level::debug;
+	return enableDeveloperMode || GetLogLevel() <= spdlog::level::debug;
 }
 
 void State::ModifyRenderTarget(RE::RENDER_TARGETS::RENDER_TARGET a_target, RE::BSGraphics::RenderTargetProperties& a_properties)
@@ -1224,7 +1373,6 @@ void State::UpdateSharedData([[maybe_unused]] bool a_inWorld, [[maybe_unused]] b
 
 		const auto shaderManager = globals::game::smState;
 		const RE::NiTransform& dalcTransform = shaderManager->directionalAmbientTransform;
-		Util::StoreTransform3x4NoScale(data.DirectionalAmbient, dalcTransform);
 
 		auto shadowSceneNode = shaderManager->shadowSceneNode[0];
 		auto dirLight = skyrim_cast<RE::NiDirectionalLight*>(shadowSceneNode->GetRuntimeData().sunLight->light.get());
@@ -1233,8 +1381,9 @@ void State::UpdateSharedData([[maybe_unused]] bool a_inWorld, [[maybe_unused]] b
 		data.DirLightColor = { lightRuntimeData.diffuse.red, lightRuntimeData.diffuse.green, lightRuntimeData.diffuse.blue, 1.0f };
 		data.DirLightColor *= lightRuntimeData.fade;
 
-		auto imageSpaceManager = RE::ImageSpaceManager::GetSingleton();
-		data.DirLightColor *= !globals::game::isVR ? imageSpaceManager->GetRuntimeData().data.baseData.hdr.sunlightScale : imageSpaceManager->GetVRRuntimeData().data.baseData.hdr.sunlightScale;
+		if (auto* imageSpaceManager = RE::ImageSpaceManager::GetSingleton()) {
+			data.DirLightColor *= imageSpaceManager->GetImageSpaceData().baseData.hdr.sunlightScale;
+		}
 
 		const auto& direction = dirLight->GetWorldDirection();
 		data.DirLightDirection = { -direction.x, -direction.y, -direction.z, 0.0f };
@@ -1329,13 +1478,15 @@ void State::UpdateSharedData([[maybe_unused]] bool a_inWorld, [[maybe_unused]] b
 			if (auto masser = sky->masser) {
 				auto dir = Util::Moon::GetDirection(masser, moonAndStarsLoaded);
 				data.MasserDirection = { dir.x, dir.y, dir.z, 0.0f };
-				data.MasserColor = Util::Moon::GetBlendColor(masser, Util::Moon::MasserBaseColor, globals::features::skySync.settings.NewMoonIntensity, globals::features::skySync.settings.CrescentMoonIntensity, globals::features::skySync.settings.FullMoonIntensity);
+				if (masser->root && !masser->root->GetFlags().any(RE::NiAVObject::Flag::kHidden))
+					data.MasserColor = Util::Moon::GetBlendColor(masser, Util::Moon::MasserBaseColor, globals::features::skySync.settings.NewMoonIntensity, globals::features::skySync.settings.CrescentMoonIntensity, globals::features::skySync.settings.FullMoonIntensity);
 			}
 
 			if (auto secunda = sky->secunda) {
 				auto dir = Util::Moon::GetDirection(secunda, moonAndStarsLoaded);
 				data.SecundaDirection = { dir.x, dir.y, dir.z, 0.0f };
-				data.SecundaColor = Util::Moon::GetBlendColor(secunda, Util::Moon::SecundaBaseColor, globals::features::skySync.settings.NewMoonIntensity, globals::features::skySync.settings.CrescentMoonIntensity, globals::features::skySync.settings.FullMoonIntensity);
+				if (secunda->root && !secunda->root->GetFlags().any(RE::NiAVObject::Flag::kHidden))
+					data.SecundaColor = Util::Moon::GetBlendColor(secunda, Util::Moon::SecundaBaseColor, globals::features::skySync.settings.NewMoonIntensity, globals::features::skySync.settings.CrescentMoonIntensity, globals::features::skySync.settings.FullMoonIntensity);
 			}
 		}
 
@@ -1464,11 +1615,4 @@ void State::LoadTheme()
 bool State::HasDirectionalShadows() const
 {
 	return !Util::IsInterior() || globals::features::interiorSun.IsActiveInteriorSun();
-}
-
-void State::SaveTheme()
-{
-	// SelectedThemePreset is now persisted via SettingsUser.json (State::Save)
-	// Keep this function as a no-op for backward compatibility and to avoid writing separate theme files.
-	logger::info("SaveTheme() no longer writes SettingsTheme.json; SelectedThemePreset is saved with SettingsUser.json");
 }

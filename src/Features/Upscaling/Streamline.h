@@ -14,6 +14,7 @@
 #include <sl.h>
 #include <sl_consts.h>
 #include <sl_dlss.h>
+#include <sl_dlss_g.h>
 #include <sl_matrix_helpers.h>
 #include <sl_reflex.h>
 #include <sl_version.h>
@@ -23,17 +24,32 @@
 class Streamline
 {
 public:
-	static constexpr const wchar_t* PluginDir = L"Data\\Shaders\\Upscaling\\Streamline";
-
 	Streamline() = default;
 
 	/** @brief Returns the short identifier used for logging. */
 	inline std::string GetShortName() { return "Streamline"; }
 
+	static constexpr UINT kNvidiaVendorId = 0x10DE;
+
+	// Configure before calling LoadInterposer(). DX12 instance uses a separate plugin
+	// directory and interposer DLL so the two SDK states are fully independent per-process.
+	sl::RenderAPI renderAPI = sl::RenderAPI::eD3D11;
+	std::wstring pluginDir = L"Data\\Shaders\\Upscaling\\Streamline";
+	std::wstring interposerDllName = L"sl.interposer.dll";
+	std::string instanceTag = "DX11";
+
 	bool initialized = false;
 	bool triedInitialization = false;
 
 	bool featureDLSS = false;
+	bool featureDLSSG = false;
+	// Upper bound for DLSSGOptions::numFramesToGenerate, queried once via slDLSSGGetState
+	// after PostDevice binds the DLSS-G functions (DX12 instance only). 1 = 2x-only.
+	uint32_t dlssgMaxFramesToGenerate = 1;
+	// Last slDLSSGGetState results, cached for GetDiagnostics (querying there would
+	// steal the since-last-query frame counter from the present path).
+	sl::DLSSGStatus lastDLSSGStatus = sl::DLSSGStatus::eOk;
+	uint32_t lastDLSSGFramesPresented = 0;
 	bool featureReflex = false;
 	bool featurePCL = false;
 	bool reflexSupportedOnCurrentAdapter = false;
@@ -53,6 +69,7 @@ public:
 	PFun_slAllocateResources* slAllocateResources{};
 	PFun_slFreeResources* slFreeResources{};
 	PFun_slSetTag* slSetTag{};
+	PFun_slSetTagForFrame* slSetTagForFrame{};
 	PFun_slGetFeatureRequirements* slGetFeatureRequirements{};
 	PFun_slGetFeatureVersion* slGetFeatureVersion{};
 	PFun_slUpgradeInterface* slUpgradeInterface{};
@@ -62,12 +79,16 @@ public:
 	PFun_slGetNewFrameToken* slGetNewFrameToken{};
 	PFun_slSetD3DDevice* slSetD3DDevice{};
 
-	// DLSS specific functions
+	// DLSS specific functions (DX11 instance)
 	PFun_slDLSSGetOptimalSettings* slDLSSGetOptimalSettings{};
 	PFun_slDLSSGetState* slDLSSGetState{};
 	PFun_slDLSSSetOptions* slDLSSSetOptions{};
 
-	// Reflex specific functions
+	// DLSS-G specific functions (DX12 instance)
+	PFun_slDLSSGGetState* slDLSSGGetState{};
+	PFun_slDLSSGSetOptions* slDLSSGSetOptions{};
+
+	// Reflex specific functions (DX11 instance)
 	PFun_slReflexGetState* slReflexGetState{};
 	PFun_slReflexSleep* slReflexSleep{};
 	PFun_slReflexSetOptions* slReflexSetOptions{};
@@ -75,8 +96,6 @@ public:
 
 	Util::FrameChecker frameChecker;
 	sl::FrameToken* frameToken = nullptr;
-
-	bool isRTXBelow40series = false;
 
 	struct ReflexOptionsCache
 	{
@@ -94,7 +113,9 @@ public:
 	// subrect path must pass the actual subrect height so DLSS isn't configured for
 	// `subOutW x eyeHeightOut` while extentOut says `subOutW x subOutH` - that mismatch
 	// makes NGX return zeroed output and the subrect region renders black.
-	void EvaluateDLSS(sl::ViewportHandle vp, uint32_t eyeIndex,
+	// Returns false if CheckFrameConstants or slEvaluateFeature failed -- callers
+	// on the foveated route use this to fall back instead of reporting success.
+	bool EvaluateDLSS(sl::ViewportHandle vp, uint32_t eyeIndex,
 		ID3D11Resource* colorIn, ID3D11Resource* colorOut, ID3D11Resource* depth,
 		ID3D11Resource* mvec, ID3D11Resource* reactiveMask, ID3D11Resource* transparencyMask,
 		const sl::Extent& extentIn, const sl::Extent& extentOut, uint32_t outputWidth,
@@ -112,19 +133,41 @@ public:
 	 */
 	void CheckFeatures(IDXGIAdapter* a_adapter);
 
+	// Bind a DX12 device to this Streamline instance (DX12 instance only).
+	void SetD3DDevice12(ID3D12Device* a_device);
+
+	/**
+	 * @brief Resets the driver-profile DRS key that silently disables DLSS-G for this
+	 * executable (status stays eOk with zero interpolated frames when it is set). Must
+	 * run at plugin load: the driver latches the profile early in process life, so a
+	 * reset after device creation only takes effect on the next launch.
+	 */
+	static void EnsureDriverProfileAllowsDLSSG();
+
 	/** @brief Binds DLSS and Reflex feature functions after the D3D device is created. */
 	void PostDevice();
+
+	/** @brief Resolves one feature function pointer, logging on failure. */
+	bool BindFeatureFunction(sl::Feature a_feature, const char* a_functionName, void*& a_function);
+	/** @brief Requests a feature be marked loaded, logging on failure. */
+	void RequestFeatureLoad(sl::Feature a_feature, const char* a_featureName);
+	/** @brief Binds Reflex/PCL functions and updates their availability flags. */
+	void BindReflexAndPCL();
+
+	// DLSS-G frame generation methods (DX12 instance only)
+	void ConfigureDLSSG(bool enabled);
+	/**
+	 * @brief Emits a PCL latency marker for the current frame token. The marker's frame
+	 * index is how DLSS-G's pacer matches presents to constants -- structural for FG.
+	 */
+	void EmitPCLMarker(sl::PCLMarker a_marker);
+	void TagDX12Resources(ID3D12GraphicsCommandList* cmdList,
+		ID3D12Resource* depth, ID3D12Resource* mvec, ID3D12Resource* hudLessColor,
+		ID3D12Resource* uiColorAndAlpha, uint32_t width, uint32_t height);
 
 	/** @brief Acquires a new frame token from Streamline for the current frame. */
 	bool EnsureFrameToken();
 	bool CheckFrameConstants(sl::ViewportHandle p_viewport, uint32_t eyeIndex = 0);
-
-	/**
-	 * @brief Detects whether the GPU is an NVIDIA RTX card below the 40-series generation.
-	 * @param a_adapter The DXGI adapter to inspect.
-	 * @return True if the adapter is RTX 20xx or 30xx series.
-	 */
-	bool IsRTXAndBelow40Series(IDXGIAdapter* a_adapter);
 
 	// height = 0 -> use full per-eye DisplayRes height (default for the standard
 	// upscale path). Non-zero is the subrect height the FoveatedRender route needs.

@@ -12,18 +12,19 @@
 
 namespace FoveatedRenderImpl::Bridge
 {
-	// True when VR + DLSS available + FoveatedRender enabled-at-boot.
+	// True when VR + FoveatedRender enabled-at-boot + DLSS or FSR selected.
 	bool IsRouteActive();
 
 	// Boot-time latches. Run once during BSShaderRenderTargets::Create.
 	// Latches enable + qualityMode so settings cannot drift mid-frame.
 	void BootSequence();
 
-	// Compute motion-vector scale for Streamline constants.
-	// Returns {1,1} when route is inactive or subrect is full-eye.
-	void ComputeMvecScale(float& outX, float& outY);
+	// Compute motion-vector scale for the given eye (0=left, 1=right). Asymmetric
+	// presets (e.g. Nasal Convergence) can size the two eyes' subrects differently.
+	// Returns {1,1} when route is inactive or that eye's subrect is full-eye.
+	void ComputeMvecScale(uint32_t eyeIndex, float& outX, float& outY);
 
-	// Set/cleared by ExecuteVRDlssCore to indicate that the foveated subrect
+	// Set/cleared by ExecuteFoveatedRoute to indicate that the foveated subrect
 	// execute path is actually running this frame. SetConstants checks this so
 	// mvecScale correction is not applied to the standard full-frame DLSS path
 	// (e.g. menus, frames where foveated is skipped).

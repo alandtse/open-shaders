@@ -10,12 +10,11 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	EnableTerrain,
 	EnableHeightBlending,
 	EnableShadows,
-	ExtendShadows,
 	EnableParallaxWarpingFix)
 
 void ExtendedMaterials::DataLoaded()
 {
-	if (&settings.EnableTerrain) {
+	if (settings.EnableTerrain) {
 		if (auto bLandSpecular = globals::game::iniSettingCollection->GetSetting("bLandSpecular:Landscape"); bLandSpecular) {
 			if (!bLandSpecular->data.b) {
 				logger::info("[CPM] Changing bLandSpecular from {} to {} to support Terrain Parallax", bLandSpecular->data.b, true);
@@ -77,11 +76,6 @@ void ExtendedMaterials::DrawSettings()
 			ImGui::Text("%s", T(TKEY("enable_shadows_tooltip"),
 								  "Enables cheap soft shadows when using parallax. "
 								  "This applies to all directional and point lights. "));
-		}
-		ImGui::Checkbox(T(TKEY("extend_shadows"), "Extend Shadows"), (bool*)&settings.ExtendShadows);
-		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::Text("%s", T(TKEY("extend_shadows_tooltip"),
-								  "Extends parallax shadows beyond the range of parallax. Small performance impact."));
 		}
 
 		ImGui::Spacing();

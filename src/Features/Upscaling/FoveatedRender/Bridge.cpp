@@ -6,8 +6,8 @@
 
 bool FoveatedRenderImpl::Bridge::IsRouteActive()
 {
-	// IsActive() already checks: enabledAtBoot && isVR && featureDLSS
-	//                            && GetUpscaleMethod() == kDLSS (selected, not just available)
+	// IsActive() already checks: enabledAtBoot && isVR
+	//                            && GetUpscaleMethod() is kDLSS or kFSR (selected, not just available)
 	return globals::features::upscaling.foveatedRender.IsActive();
 }
 
@@ -18,7 +18,7 @@ void FoveatedRenderImpl::Bridge::BootSequence()
 	enhancer.LatchQualityMode();
 }
 
-void FoveatedRenderImpl::Bridge::ComputeMvecScale(float& outX, float& outY)
+void FoveatedRenderImpl::Bridge::ComputeMvecScale(uint32_t eyeIndex, float& outX, float& outY)
 {
 	// Default: identity (caller's normal Streamline path).
 	outX = 1.0f;
@@ -28,8 +28,11 @@ void FoveatedRenderImpl::Bridge::ComputeMvecScale(float& outX, float& outY)
 		return;
 
 	auto& enhancer = globals::features::upscaling.foveatedRender;
-	const auto& uv = enhancer.subrectController.GetUV();  // PR-1 stereo Subrect: GetUV() == left-eye in stereo mode
-	const bool isFullEye = (uv.w >= 0.999f && uv.h >= 0.999f);
+	// Stereo Subrect: GetUV() == left-eye, GetRightEyeUV() == right-eye. Asymmetric
+	// presets (e.g. Nasal Convergence) size the two eyes differently, so the scale must
+	// be computed per-eye rather than always reading the left eye's UV.
+	const auto& uv = (eyeIndex == 1) ? enhancer.subrectController.GetRightEyeUV() : enhancer.subrectController.GetUV();
+	const bool isFullEye = uv.IsFullEye();
 
 	if (isFullEye)
 		return;

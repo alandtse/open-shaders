@@ -94,6 +94,7 @@ void Profiler::Release()
 	results.clear();
 	knownTimers.clear();
 	knownTimerIndex.clear();
+	collectedFrames = 0;
 	totalTimeMs = 0.0f;
 	cpuTotalTimeMs = 0.0f;
 	activeCpuTimers.clear();
@@ -382,6 +383,8 @@ bool Profiler::CollectResults()
 		gpuFrameResolved = (status == Util::TimestampQueryBatch::Status::Ok);
 	}
 
+	collectedFrames++;
+
 	// CPU-only scopes queued for this cycle, independent of whether a GPU
 	// pass ran (e.g. CPU-side bookkeeping with no GPU cost of its own).
 	const bool hadCpuTimers = !frame.cpuTimers.empty();
@@ -428,7 +431,11 @@ bool Profiler::CollectResults()
 		} else if (cpuCycleResolved && known.hasCpu) {
 			known.cpu.PushSample(0.0f);
 		}
+		if (freshGpu || freshCpu)
+			known.lastSampleFrame = collectedFrames;
 	}
+
+	RetireStaleTimers();
 
 	results.clear();
 	results.reserve(knownTimers.size());
@@ -459,4 +466,20 @@ bool Profiler::CollectResults()
 		results.push_back(std::move(result));
 	}
 	return true;
+}
+void Profiler::RetireStaleTimers()
+{
+	const size_t before = knownTimers.size();
+	std::erase_if(knownTimers, [this](const KnownTimer& known) {
+		return collectedFrames - known.lastSampleFrame >= kTimerRetireFrames;
+	});
+	if (knownTimers.size() != before)
+		RebuildTimerIndex();
+}
+
+void Profiler::RebuildTimerIndex()
+{
+	knownTimerIndex.clear();
+	for (size_t i = 0; i < knownTimers.size(); i++)
+		knownTimerIndex[knownTimers[i].name] = i;
 }

@@ -106,6 +106,15 @@ namespace Stereo
 		return 0;
 	}
 
+	/** Returns the eye index for a pixel in a packed stereo texture. */
+	uint GetEyeIndexFromPixel(uint2 pixel, uint2 frameDim)
+	{
+#ifdef VR
+		return pixel.x >= (frameDim.x >> 1) ? 1 : 0;
+#endif
+		return 0;
+	}
+
 	/**
 	* @brief Returns an eye-stable pixel coordinate for seeding screen-space noise (IGN).
 	*
@@ -244,6 +253,19 @@ namespace Stereo
 #else
 		// Flat: the whole screen is one eye spanning [0,1]; clamp X to the full range.
 		uv.x = saturate(uv.x);
+#endif
+		return uv;
+	}
+
+	/** Clamps a UV to texel centers within one eye for bilinear sampling. */
+	float2 ClampToEyeUV(float2 uv, uint eyeIndex, uint2 frameDim)
+	{
+#ifdef VR
+		const uint width = max(frameDim.x, 2u);
+		const uint leftWidth = width >> 1;
+		const float minCenter = eyeIndex == 0 ? 0.5f : leftWidth + 0.5f;
+		const float maxCenter = eyeIndex == 0 ? leftWidth - 0.5f : width - 0.5f;
+		uv.x = clamp(uv.x, minCenter / width, maxCenter / width);
 #endif
 		return uv;
 	}

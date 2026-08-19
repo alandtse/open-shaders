@@ -12,6 +12,7 @@
 #include "I18n/I18n.h"
 #include "Menu.h"
 #include "State.h"
+#include "Utils/UI.h"
 
 static constexpr uint32_t kDisplayedRollingFrameCount = 60;
 static constexpr float kMaxDisplayTimingSampleMs = 1000.0f;
@@ -25,6 +26,11 @@ static constexpr float kFeatureGraphMinFrameTimeSec = 0.00001f;
 static constexpr float kTimingTableMetricColumnWidth = 55.0f;
 static constexpr float kTimingTablePercentColumnWidth = 45.0f;
 static constexpr float kStatsRefreshSeconds = 1.0f;
+static constexpr float kFeatureDisclosureChevronSpeed = 10.0f;
+static constexpr float kFeatureTimingHeightTolerance = 1.0f;
+static std::unordered_map<std::string, bool> g_featureProfilingDisclosuresOpen;
+static std::unordered_map<std::string, float> g_featureProfilingChevronProgress;
+static std::string g_currentFeatureProfilingPage;
 
 static ImU32 HslToImU32(float h, float s, float l)
 {
@@ -444,8 +450,6 @@ void ProfilingRenderer::RenderStatistics(bool showTable, bool showModeToggle)
 	RenderGraph();
 
 	if (showTable) {
-		float availHeight = ImGui::GetContentRegionAvail().y - ImGui::GetFrameHeightWithSpacing();
-
 		std::vector<std::string> passLabels;
 		passLabels.reserve(cachedGroups.size());
 		for (const auto& group : cachedGroups) {
@@ -457,9 +461,7 @@ void ProfilingRenderer::RenderStatistics(bool showTable, bool showModeToggle)
 			GetColorMarkerExtraWidth() + ImGui::GetTreeNodeToLabelSpacing() + ImGui::GetStyle().IndentSpacing);
 
 		if (ImGui::BeginTable("##Profiler", 5,
-				ImGuiTableFlags_BordersInnerV | ImGuiTableFlags_SizingFixedFit | ImGuiTableFlags_PadOuterX | ImGuiTableFlags_ScrollY,
-				ImVec2(0.0f, availHeight))) {
-			ImGui::TableSetupScrollFreeze(0, 1);
+				ImGuiTableFlags_BordersInnerV | ImGuiTableFlags_SizingFixedFit | ImGuiTableFlags_PadOuterX)) {
 			SetupTimingTableColumns(passColumnWidth, true);
 			ImGui::TableHeadersRow();
 
@@ -655,6 +657,17 @@ ProfilingRenderer::FeatureTimingData ProfilingRenderer::CollectFeatureTimingData
 	return data;
 }
 
+float ProfilingRenderer::GetFeatureTimingDataHeight(const FeatureTimingData& data)
+{
+	if (data.entries.empty())
+		return ImGui::GetTextLineHeightWithSpacing();
+
+	const auto& style = ImGui::GetStyle();
+	const float rowHeight = ImGui::GetTextLineHeight() + style.CellPadding.y * 2.0f;
+	const float tableHeight = rowHeight * static_cast<float>(data.entries.size() + 2);
+	return kFeatureGraphHeight * Util::GetUIScale() + tableHeight + style.ItemSpacing.y * 3.0f;
+}
+
 bool ProfilingRenderer::RenderFeatureTimingGraph(const FeatureTimingData& data, ImGuiUtils::ProfilerGraph& graph, float graphHeight)
 {
 	if (data.entries.empty())
@@ -691,21 +704,20 @@ bool ProfilingRenderer::RenderFeatureTimingGraph(const FeatureTimingData& data, 
 	return true;
 }
 
-bool ProfilingRenderer::RenderFeatureTimingData(const std::string& featurePrefix, FeatureTimingMode featureMode, bool showTable)
+void ProfilingRenderer::RenderFeatureTimingData(const std::string& featurePrefix, FeatureTimingMode featureMode, const FeatureTimingData& data)
 {
 	bool cpuMode = featureMode == FeatureTimingMode::CPU;
-	const auto data = CollectFeatureTimingData(featurePrefix, cpuMode);
 
 	if (data.entries.empty()) {
 		ImGui::TextDisabled("%s", T("menu.profiling.no_timing_data", "No timing data"));
-		return false;
+		return;
 	}
 
 	auto& state = featureGraphs[featurePrefix];
 	if (RenderFeatureTimingGraph(data, cpuMode ? state.cpuGraph : state.gpuGraph, kFeatureGraphHeight))
 		ImGui::Spacing();
 
-	if (showTable && ImGui::BeginTable("##FeatureTimers", 4, ImGuiTableFlags_BordersInnerV | ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_PadOuterX)) {
+	if (ImGui::BeginTable("##FeatureTimers", 4, ImGuiTableFlags_BordersInnerV | ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_PadOuterX)) {
 		std::vector<std::string> passLabels;
 		passLabels.reserve(data.entries.size() + 1);
 		for (const auto& e : data.entries)
@@ -740,8 +752,6 @@ bool ProfilingRenderer::RenderFeatureTimingData(const std::string& featurePrefix
 
 		ImGui::EndTable();
 	}
-
-	return true;
 }
 
 bool ProfilingRenderer::RenderFeatureOverview()
@@ -797,48 +807,141 @@ bool ProfilingRenderer::RenderFeatureOverview()
 	return true;
 }
 
-void ProfilingRenderer::RenderFeatureTimers(const std::string& featurePrefix)
+void ProfilingRenderer::RenderFeatureTimingModeControls(const std::string& featurePrefix, FeatureTimingMode& featureMode)
 {
-	auto& profiler = (*globals::profiler);
-	auto& featureMode = featureTimingModes[featurePrefix];
-
-	int mode = static_cast<int>(featureMode);
-	const int previousMode = mode;
 	ImGui::PushID(featurePrefix.c_str());
-	ImGui::RadioButton(T("menu.profiling.off", "Off"), &mode, static_cast<int>(FeatureTimingMode::Off));
+	int mode = static_cast<int>(featureMode);
+	ImGui::PushID("FeatureProfilingMode");
+	ImGui::RadioButton(T("menu.profiling.cpu", "CPU"), &mode, static_cast<int>(FeatureTimingMode::CPU));
 	ImGui::SameLine();
 	ImGui::RadioButton(T("menu.profiling.gpu", "GPU"), &mode, static_cast<int>(FeatureTimingMode::GPU));
 	ImGui::SameLine();
-	ImGui::RadioButton(T("menu.profiling.cpu", "CPU"), &mode, static_cast<int>(FeatureTimingMode::CPU));
+	ImGui::RadioButton(T("menu.profiling.off", "Off"), &mode, static_cast<int>(FeatureTimingMode::Off));
 	ImGui::PopID();
 
-	if (mode != previousMode) {
-		featureMode = static_cast<FeatureTimingMode>(mode);
-		// An explicit mode pick means the user wants to see this feature's
-		// timings now -- flip the master switch on too instead of making
-		// them find a second toggle.
+	const auto selectedMode = static_cast<FeatureTimingMode>(mode);
+	if (selectedMode != featureMode) {
+		featureMode = selectedMode;
 		if (featureMode != FeatureTimingMode::Off)
-			profiler.SetUserEnabled(true);
+			globals::profiler->SetUserEnabled(true);
 	}
-
-	if (featureMode == FeatureTimingMode::Off) {
-		ImGui::TextDisabled("%s", T("menu.profiling.feature_profiling_off", "Feature profiling is off"));
-		return;
-	}
-
-	if (!profiler.IsUserEnabled()) {
-		ImGui::TextDisabled("%s", T("menu.profiling.disabled", "Profiling is disabled"));
-		return;
-	}
-
-	profiler.RequestCapture();
-	RenderFeatureTimingData(featurePrefix, featureMode, true);
+	ImGui::PopID();
 }
 
-bool ProfilingRenderer::HasFeatureTimers(const std::string&)
+void ProfilingRenderer::RenderFeatureTimingButton(const std::string& featurePrefix)
 {
-	// Always show the per-feature section so its Off/GPU/CPU controls stay
-	// reachable while capture is idle (timers only exist during a capture).
+	ImGui::PushID(featurePrefix.c_str());
+	auto& disclosureOpen = g_featureProfilingDisclosuresOpen[featurePrefix];
+	auto& chevronProgress = g_featureProfilingChevronProgress.try_emplace(featurePrefix, disclosureOpen ? 0.0f : 1.0f).first->second;
+	const char* label = T("menu.features.profiling", "Profiling");
+	const auto& style = ImGui::GetStyle();
+	const float buttonHeight = ImGui::GetFrameHeight();
+	const float chevronSize = buttonHeight;
+	const float chevronSlotWidth = ImGui::GetTextLineHeight();
+	IM_ASSERT(chevronSize > 0.0f && chevronSlotWidth > 0.0f);
+	const ImVec2 labelSize = ImGui::CalcTextSize(label);
+	const float contentWidth = labelSize.x + style.ItemInnerSpacing.x + chevronSlotWidth;
+	const ImVec2 buttonSize(
+		std::ceil(contentWidth + style.FramePadding.x * 2.0f),
+		buttonHeight);
+
+	const bool pressed = ImGui::Button("##FeatureProfiling", buttonSize);
+	const ImVec2 buttonMin = ImGui::GetItemRectMin();
+	const ImVec2 buttonMax = ImGui::GetItemRectMax();
+	auto* drawList = ImGui::GetWindowDrawList();
+	if (pressed)
+		disclosureOpen = !disclosureOpen;
+
+	const float targetProgress = disclosureOpen ? 0.0f : 1.0f;
+	const float progressStep = kFeatureDisclosureChevronSpeed * ImGui::GetIO().DeltaTime;
+	if (chevronProgress < targetProgress)
+		chevronProgress = std::min(chevronProgress + progressStep, targetProgress);
+	else
+		chevronProgress = std::max(chevronProgress - progressStep, targetProgress);
+
+	const float contentX = buttonMin.x + (buttonSize.x - contentWidth) * 0.5f;
+	const float textY = buttonMin.y + (buttonHeight - labelSize.y) * 0.5f;
+	drawList->AddText(ImVec2(contentX, textY), ImGui::GetColorU32(ImGuiCol_Text), label);
+	const float chevronY = buttonMin.y + (buttonHeight - chevronSize) * 0.5f;
+	const float chevronCenterX = contentX + labelSize.x + style.ItemInnerSpacing.x + chevronSlotWidth * 0.5f;
+	const ImVec2 chevronMin(chevronCenterX - chevronSize * 0.5f, chevronY);
+	const ImVec2 chevronMax(chevronMin.x + chevronSize, chevronY + chevronSize);
+	Util::DrawDisclosureChevron(drawList, chevronMin, chevronMax, chevronProgress);
+
+	ImGui::PopID();
+}
+
+float ProfilingRenderer::PrepareFeatureTimers(const std::string& featurePrefix, bool showProfiling)
+{
+	if (g_currentFeatureProfilingPage != featurePrefix) {
+		DeactivateFeatureTimers();
+		g_currentFeatureProfilingPage = featurePrefix;
+	}
+	if (!showProfiling || globals::profiler == nullptr) {
+		featureTimingViews.erase(featurePrefix);
+		return 0.0f;
+	}
+
+	auto& profiler = (*globals::profiler);
+	auto& featureMode = featureTimingModes[featurePrefix];
+	auto& view = featureTimingViews[featurePrefix];
+	view.controlsVisible = g_featureProfilingDisclosuresOpen[featurePrefix];
+	view.mode = featureMode;
+	view.profilingDisabled = view.controlsVisible && view.mode != FeatureTimingMode::Off && !profiler.IsUserEnabled();
+	view.data = {};
+
+	float timingDataHeight = 0.0f;
+	if (view.profilingDisabled) {
+		timingDataHeight = ImGui::GetTextLineHeightWithSpacing();
+	} else if (view.controlsVisible && view.mode != FeatureTimingMode::Off) {
+		profiler.RequestCapture();
+		view.data = CollectFeatureTimingData(featurePrefix, view.mode == FeatureTimingMode::CPU);
+		timingDataHeight = GetFeatureTimingDataHeight(view.data);
+	}
+
+	view.contentHeight = timingDataHeight +
+	                     (view.controlsVisible ? ImGui::GetFrameHeightWithSpacing() : 0.0f) +
+	                     ImGui::GetFrameHeight();
+	return view.contentHeight;
+}
+
+void ProfilingRenderer::DeactivateFeatureTimers()
+{
+	if (g_currentFeatureProfilingPage.empty())
+		return;
+
+	const auto modeIt = featureTimingModes.find(g_currentFeatureProfilingPage);
+	if (modeIt != featureTimingModes.end() && modeIt->second == FeatureTimingMode::Off) {
+		g_featureProfilingDisclosuresOpen[g_currentFeatureProfilingPage] = false;
+		g_featureProfilingChevronProgress[g_currentFeatureProfilingPage] = 1.0f;
+	}
+	featureTimingViews.erase(g_currentFeatureProfilingPage);
+	g_currentFeatureProfilingPage.clear();
+}
+
+void ProfilingRenderer::RenderFeatureTimers(const std::string& featurePrefix)
+{
+	auto viewIt = featureTimingViews.find(featurePrefix);
+	IM_ASSERT(viewIt != featureTimingViews.end());
+	if (viewIt == featureTimingViews.end())
+		return;
+
+	const auto& view = viewIt->second;
+	[[maybe_unused]] const float contentStartY = ImGui::GetCursorPosY();
+	if (view.profilingDisabled)
+		ImGui::TextDisabled("%s", T("menu.profiling.disabled", "Profiling is disabled"));
+	else if (view.controlsVisible && view.mode != FeatureTimingMode::Off)
+		RenderFeatureTimingData(featurePrefix, view.mode, view.data);
+
+	if (view.controlsVisible)
+		RenderFeatureTimingModeControls(featurePrefix, featureTimingModes[featurePrefix]);
+
+	RenderFeatureTimingButton(featurePrefix);
+	IM_ASSERT(std::abs(ImGui::GetCursorPosY() - contentStartY - ImGui::GetStyle().ItemSpacing.y - view.contentHeight) <= kFeatureTimingHeightTolerance);
+}
+
+bool ProfilingRenderer::IsFeatureProfilingAvailable()
+{
 	return globals::profiler != nullptr;
 }
 

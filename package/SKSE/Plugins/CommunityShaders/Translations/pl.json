@@ -98,5 +98,22 @@
     "cs_editor.direction_z_minus": "Z- (Dół)",
     "cs_editor.direction_z_plus": "Z+ (Góra)",
     "cs_editor.drag_colours_here": "Przeciągnij kolory żeby zapisać jako ulubione.",
-    "cs_editor.drag_to_favourites": "Przeciągnij kolor tutaj aby dodać go do ulubionych"
+    "cs_editor.drag_to_favourites": "Przeciągnij kolor tutaj aby dodać go do ulubionych",
+    "feature.cloud_relight.cloud_relighting": "Ponowne oświetlenie chmur",
+    "feature.cloud_relight.cloud_shadows_required": "Samocieniowanie chmur wymaga zainstalowanego i włączonego Cloud Shadows.",
+    "feature.cloud_relight.description": "Ponownie oświetla tekstury chmur Vanilla przy użyciu aktywnego światła kierunkowego, samocieniowania chmur i oświetlenia fazowego srebrnej obwódki.",
+    "feature.cloud_relight.enabled": "Włączone",
+    "feature.cloud_relight.key_feature_1": "Mieszanie koloru chmur Vanilla z kolorem po ponownym oświetleniu",
+    "feature.cloud_relight.key_feature_2": "Oświetlenie fazowe srebrnej obwódki i rozpraszania do przodu",
+    "feature.cloud_relight.key_feature_3": "Kierunkowe samocieniowanie chmur przez aktywne słońce lub księżyc",
+    "feature.cloud_relight.name": "Cloud Relight",
+    "feature.cloud_relight.relight_mix": "Mieszanie ponownego oświetlenia",
+    "feature.cloud_relight.relight_mix_tooltip": "Mnożnik udziału światła kierunkowego dodawanego do chmur.",
+    "feature.cloud_relight.silver_lining": "Srebrna obwódka",
+    "feature.cloud_relight.silver_lining_accent": "Akcent srebrnej obwódki",
+    "feature.cloud_relight.silver_lining_accent_tooltip": "Miesza płaską fazę izotropową z ostrym oświetleniem fazowym srebrnej obwódki.",
+    "feature.cloud_relight.silver_lining_spread": "Zasięg srebrnej obwódki",
+    "feature.cloud_relight.silver_lining_spread_tooltip": "Wartość dodatnia: srebrna obwódka rozciąga się na gęstsze obszary chmur.\nWartość ujemna: srebrna obwódka pozostaje na cieńszych krawędziach chmur.",
+    "feature.cloud_relight.vanilla_mix": "Mieszanie Vanilla",
+    "feature.cloud_relight.vanilla_mix_tooltip": "Mnożnik oryginalnego koloru chmur Vanilla przed zastosowaniem ponownego oświetlenia."
 }

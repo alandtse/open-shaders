@@ -4,7 +4,9 @@
 #include "imgui_stdlib.h"
 
 #include "Globals.h"
+#include "Menu.h"
 #include "Profiler.h"
+#include "SettingsOverrideManager.h"
 #include "State.h"
 #include "Util.h"
 
@@ -17,10 +19,35 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	PostProcessing::Settings,
 	DisableVanillaTonemapping)
 
+namespace
+{
+	constexpr bool IsPipelineFeatureEnabledByDefault(PostProcessing::FeaturePipelineIndex a_index)
+	{
+		using Index = PostProcessing::FeaturePipelineIndex;
+		switch (a_index) {
+		case Index::Vignette:
+		case Index::AutoExposure:
+		case Index::CODBloom:
+		case Index::Composite:
+		case Index::ColorGrading:
+			return true;
+		case Index::DoF:
+		case Index::LocalExposure:
+		case Index::MotionBlur:
+		case Index::PhysicalGlare:
+		case Index::LensFlare:
+		case Index::LUT:
+		case Index::Camera:
+		case Index::Border:
+		case Index::COUNT:
+			return false;
+		}
+		return false;
+	}
+}
+
 void PostProcessing::DrawSettings()
 {
-	static int pipelinePageNum = 0;
-	static int pipelineFeatIdx = 0;
 	static int presetIdx = -1;
 
 	ImGui::BeginGroup();
@@ -60,14 +87,35 @@ void PostProcessing::DrawSettings()
 	ImGui::EndGroup();
 
 	ImGui::Separator();
-	ImGui::Checkbox(T("feature.post_processing.bypass", "Bypass"), &bypass);
+
+	// Effects11 replaces the whole tonemap pass, so these toggles would have no effect while
+	// it owns the frame. Disable them rather than let them silently do nothing.
+	const bool tonemapTakenByEffects11 = IsTonemapOwnedByEffects11();
+
+	ImGui::BeginDisabled(tonemapTakenByEffects11);
+
+	// A disabled checkbox never reports a click, so bypass keeps its stored value while forced on.
+	bool bypassDisplay = bypass || tonemapTakenByEffects11;
+	if (ImGui::Checkbox(T("feature.post_processing.bypass", "Bypass"), &bypassDisplay))
+		bypass = bypassDisplay;
+
 	ImGui::SameLine();
 	ImGui::Checkbox(T("feature.post_processing.disable_vanilla_tonemapping", "Disable Vanilla Tonemapping"), (bool*)&settings.DisableVanillaTonemapping);
+	ImGui::EndDisabled();
+
+	if (tonemapTakenByEffects11) {
+		ImGui::PushStyleColor(ImGuiCol_Text, Menu::GetSingleton()->GetTheme().StatusPalette.Warning);
+		const SKSE::stl::scope_exit restoreTextColor([]() noexcept { ImGui::PopStyleColor(); });
+		ImGui::TextWrapped("%s", T("feature.post_processing.tonemap_owned_by_effects11",
+									 "Tonemapping is currently handled by Effects 11, so the Post Processing pipeline is "
+									 "paused. To use Post Processing instead, disable Effects 11 or enable its "
+									 "\"UseOriginalPostProcessing\" setting."));
+	}
 
 	ImGui::Separator();
 
-	if (pipelinePageNum == 0) {
-		for (int i = 0; i < pipeline.size(); ++i) {
+	if (activeSettingsPage == SettingsPage::Pipeline) {
+		for (size_t i = 0; i < pipeline.size(); ++i) {
 			auto& feat = pipeline[i];
 			if (feat && feat->IsVisible()) {
 				auto displayName = feat->GetDisplayName();
@@ -76,8 +124,8 @@ void PostProcessing::DrawSettings()
 				ImGui::Checkbox("##Enabled", &feat->enabled);
 				ImGui::SameLine();
 				if (PostProcessingUI::IconButton(ICON_FA_BARS)) {
-					pipelineFeatIdx = i;
-					pipelinePageNum = 1;
+					activePipelineFeature = i;
+					activeSettingsPage = SettingsPage::SubFeature;
 				}
 				if (auto _tt = Util::HoverTooltipWrapper())
 					ImGui::Text("%s", T("feature.post_processing.edit_settings_for_this_feature", "Edit settings for this feature."));
@@ -88,14 +136,14 @@ void PostProcessing::DrawSettings()
 				ImGui::PopID();
 			}
 		}
-	} else if (pipelinePageNum == 1) {
+	} else if (activeSettingsPage == SettingsPage::SubFeature) {
 		auto backLabel = std::format("{} {}", ICON_FA_ARROW_LEFT, T("feature.post_processing.back_to_pipeline", "Back to Pipeline"));
 		if (PostProcessingUI::ActionButton(backLabel.c_str())) {
-			pipelinePageNum = 0;
+			activeSettingsPage = SettingsPage::Pipeline;
 		}
 		ImGui::Separator();
-		if (pipelineFeatIdx >= 0 && pipelineFeatIdx < pipeline.size()) {
-			auto& feat = pipeline[pipelineFeatIdx];
+		if (activePipelineFeature < pipeline.size()) {
+			auto& feat = pipeline[activePipelineFeature];
 			if (feat) {
 				auto displayName = feat->GetDisplayName();
 				auto description = feat->GetDesc();
@@ -125,11 +173,11 @@ void PostProcessing::DrawSettings()
 				ImGui::PopID();
 			} else {
 				ImGui::TextDisabled("%s", T("feature.post_processing.selected_feature_is_not_valid", "Selected feature is not valid."));
-				pipelinePageNum = 0;
+				activeSettingsPage = SettingsPage::Pipeline;
 			}
 		} else {
 			ImGui::TextDisabled("%s", T("feature.post_processing.invalid_feature_selected_returning_to_list", "Invalid feature selected. Returning to list."));
-			pipelinePageNum = 0;
+			activeSettingsPage = SettingsPage::Pipeline;
 		}
 	}
 
@@ -265,7 +313,7 @@ std::vector<std::string> PostProcessing::LoadPresets()
 	return o_presets;
 }
 
-void PostProcessing::LoadPresetFrom(std::string a_name)
+bool PostProcessing::LoadPresetFrom(std::string a_name)
 {
 	json a_presets = {};
 
@@ -279,10 +327,24 @@ void PostProcessing::LoadPresetFrom(std::string a_name)
 		i >> a_presets;
 	} catch (const std::exception& e) {
 		logger::warn("Failed to load preset: {}. Error: {}", a_name, e.what());
-		return;
+		return false;
 	}
 
-	ProcessSettings(a_presets);
+	pendingSettings = {};
+	json previousSettings;
+	SaveSettings(previousSettings);
+	try {
+		ProcessSettings(a_presets);
+		return true;
+	} catch (const std::exception& e) {
+		logger::warn("Failed to apply preset: {}. Error: {}", a_name, e.what());
+		try {
+			ProcessSettings(previousSettings);
+		} catch (const std::exception& rollbackError) {
+			logger::error("Failed to roll back preset: {}. Error: {}", a_name, rollbackError.what());
+		}
+		return false;
+	}
 }
 
 void PostProcessing::SavePresetTo(std::string a_name)
@@ -321,9 +383,9 @@ void PostProcessing::SavePresetTo(std::string a_name)
 
 void PostProcessing::RestoreDefaultSettings()
 {
-	// If pipeline isn't initialized yet (called during early loading before SetupResources),
-	// load default.json into pendingSettings for deferred application in SetupResources.
-	// This ensures first-startup defaults match what "Restore Defaults" produces later.
+	bypass = false;
+
+	// Defer the default preset until SetupResources creates the pipeline.
 	bool pipelineReady = pipeline[static_cast<size_t>(FeaturePipelineIndex::AutoExposure)] != nullptr;
 	if (!pipelineReady) {
 		try {
@@ -339,27 +401,179 @@ void PostProcessing::RestoreDefaultSettings()
 		return;
 	}
 
-	try {
-		LoadPresetFrom("default");
-	} catch (const std::exception& e) {
-		logger::warn("Failed to load default preset. Error: {}", e.what());
-		settings = {};
-		pipeline[static_cast<size_t>(FeaturePipelineIndex::AutoExposure)].get()->enabled = true;
-		pipeline[static_cast<size_t>(FeaturePipelineIndex::ColorGrading)].get()->enabled = true;
-		pipeline[static_cast<size_t>(FeaturePipelineIndex::LUT)].get()->enabled = false;
+	pendingSettings = {};
+	if (LoadPresetFrom("default"))
+		return;
 
-		pipeline[static_cast<size_t>(FeaturePipelineIndex::MotionBlur)].get()->enabled = false;
-		pipeline[static_cast<size_t>(FeaturePipelineIndex::DoF)].get()->enabled = false;
-		pipeline[static_cast<size_t>(FeaturePipelineIndex::CODBloom)].get()->enabled = true;
-		pipeline[static_cast<size_t>(FeaturePipelineIndex::LensFlare)].get()->enabled = false;
-		pipeline[static_cast<size_t>(FeaturePipelineIndex::Vignette)].get()->enabled = true;
-		pipeline[static_cast<size_t>(FeaturePipelineIndex::Camera)].get()->enabled = false;
+	logger::warn("Falling back to built-in Post Processing defaults");
+	settings = {};
+	RestorePipelineDefaultEnablement();
 
-		for (auto& pipe : pipeline) {
-			if (pipe) {
-				pipe->RestoreDefaultSettings();
-			}
+	for (auto& pipe : pipeline) {
+		if (pipe) {
+			pipe->RestoreDefaultSettings();
 		}
+	}
+}
+
+bool PostProcessing::HasActivePipelineFeature() const
+{
+	return activeSettingsPage == SettingsPage::SubFeature &&
+	       activePipelineFeature < pipeline.size() &&
+	       pipeline[activePipelineFeature] != nullptr;
+}
+
+bool PostProcessing::HasScopedDefaultSettings() const
+{
+	return HasActivePipelineFeature();
+}
+
+bool PostProcessing::HasScopedOverrideSettings() const
+{
+	return HasActivePipelineFeature();
+}
+
+void PostProcessing::RestoreCurrentPageDefaultSettings()
+{
+	if (!HasActivePipelineFeature()) {
+		RestoreDefaultSettings();
+		return;
+	}
+
+	auto& feature = pipeline[activePipelineFeature];
+	const auto restoreBuiltInDefaults = [&]() {
+		if (!feature->IsAutoEnabled())
+			feature->enabled = IsPipelineFeatureEnabledByDefault(static_cast<FeaturePipelineIndex>(activePipelineFeature));
+		feature->RestoreDefaultSettings();
+	};
+
+	try {
+		json defaultPreset;
+		std::ifstream input{ std::format("{}\\{}.json", ppPresetPath, "default") };
+		input >> defaultPreset;
+
+		const auto featureType = feature->GetType();
+		const auto defaults = defaultPreset.find(featureType);
+		if (defaults == defaultPreset.end()) {
+			logger::warn("Default preset has no settings for Post Processing subfeature {}", featureType);
+			restoreBuiltInDefaults();
+			return;
+		}
+
+		if (!feature->IsAutoEnabled())
+			feature->enabled = defaults->value("enabled", IsPipelineFeatureEnabledByDefault(static_cast<FeaturePipelineIndex>(activePipelineFeature)));
+		json featureSettings = defaults->value("settings", json::object());
+		feature->LoadSettings(featureSettings);
+	} catch (const std::exception& e) {
+		logger::warn("Failed to apply scoped Post Processing defaults. Error: {}", e.what());
+		restoreBuiltInDefaults();
+	}
+}
+
+bool PostProcessing::ReapplyCurrentPageOverrideSettings()
+{
+	auto* overrideManager = SettingsOverrideManager::GetSingleton();
+	const std::string featureName = GetShortName();
+	if (!overrideManager || !overrideManager->HasFeatureOverrides(featureName))
+		return false;
+
+	if (!ApplyPendingSettings())
+		return false;
+
+	json currentSettings;
+	SaveSettings(currentSettings);
+	json mergedSettings = currentSettings;
+	if (overrideManager->ReapplyFeatureOverrides(featureName, mergedSettings) == 0)
+		return false;
+	const json overrideSettings = overrideManager->GetMergedOverrideSettings(featureName, json::object());
+
+	const auto rollback = [&]() {
+		try {
+			ProcessSettings(currentSettings);
+		} catch (const std::exception& e) {
+			logger::error("Failed to roll back override settings for {}. Error: {}", featureName, e.what());
+		}
+	};
+	const auto rollbackPersistence = [&]() {
+		try {
+			if (!overrideManager->PersistUserOverride(featureName, currentSettings, overrideSettings))
+				logger::error("Failed to roll back persisted override settings for {}", featureName);
+		} catch (const std::exception& e) {
+			logger::error("Failed to roll back persisted override settings for {}. Error: {}", featureName, e.what());
+		}
+	};
+
+	if (!HasActivePipelineFeature()) {
+		try {
+			ProcessSettings(mergedSettings);
+		} catch (const std::exception& e) {
+			logger::warn("Failed to apply override settings for {}. Error: {}", featureName, e.what());
+			rollback();
+			return false;
+		}
+		if (overrideManager->DeleteUserOverride(featureName))
+			return true;
+		logger::warn("Failed to delete user override settings for {}", featureName);
+		rollback();
+		rollbackPersistence();
+		return false;
+	}
+
+	const auto featureType = pipeline[activePipelineFeature]->GetType();
+	bool hasScopedOverride = false;
+	for (const auto* featureOverride : overrideManager->GetFeatureOverrides(featureName)) {
+		if (featureOverride->enabled && featureOverride->overrideData.contains(featureType)) {
+			hasScopedOverride = true;
+			break;
+		}
+	}
+	if (!hasScopedOverride || !mergedSettings.contains(featureType))
+		return false;
+
+	json scopedSettings = json::object();
+	scopedSettings[featureType] = mergedSettings[featureType];
+	bool persistenceAttempted = false;
+	try {
+		ProcessSettings(scopedSettings);
+		json appliedSettings;
+		SaveSettings(appliedSettings);
+		persistenceAttempted = true;
+		if (overrideManager->PersistUserOverride(featureName, appliedSettings, overrideSettings))
+			return true;
+		logger::warn("Failed to persist scoped override settings for {}", featureName);
+	} catch (const std::exception& e) {
+		logger::warn("Failed to apply scoped override settings for {}. Error: {}", featureName, e.what());
+	}
+	rollback();
+	if (persistenceAttempted)
+		rollbackPersistence();
+	return false;
+}
+
+bool PostProcessing::ApplyPendingSettings()
+{
+	if (pendingSettings.empty())
+		return true;
+
+	json settingsToApply = std::move(pendingSettings);
+	pendingSettings = {};
+	try {
+		ProcessSettings(settingsToApply);
+		return true;
+	} catch (const std::exception& e) {
+		logger::warn("Failed to apply pending Post Processing settings. Error: {}", e.what());
+		RestoreDefaultSettings();
+		return false;
+	}
+}
+
+void PostProcessing::RestorePipelineDefaultEnablement()
+{
+	for (size_t i = 0; i < pipeline.size(); ++i) {
+		auto& feature = pipeline[i];
+		if (!feature || feature->IsAutoEnabled())
+			continue;
+		feature->enabled = IsPipelineFeatureEnabledByDefault(static_cast<FeaturePipelineIndex>(i));
 	}
 }
 
@@ -431,32 +645,21 @@ void PostProcessing::SetupResources()
 		copyCS.attach(rawPtr);
 
 	pipeline[static_cast<size_t>(FeaturePipelineIndex::LocalExposure)] = std::make_unique<LocalExposure>();
-	pipeline[static_cast<size_t>(FeaturePipelineIndex::LocalExposure)].get()->enabled = false;
 	pipeline[static_cast<size_t>(FeaturePipelineIndex::AutoExposure)] = std::make_unique<HistogramAutoExposure>();
-	pipeline[static_cast<size_t>(FeaturePipelineIndex::AutoExposure)].get()->enabled = true;
 	pipeline[static_cast<size_t>(FeaturePipelineIndex::ColorGrading)] = std::make_unique<ColorGrading>();
-	pipeline[static_cast<size_t>(FeaturePipelineIndex::ColorGrading)].get()->enabled = true;
 	pipeline[static_cast<size_t>(FeaturePipelineIndex::LUT)] = std::make_unique<LUT>();
-	pipeline[static_cast<size_t>(FeaturePipelineIndex::LUT)].get()->enabled = false;
 
 	pipeline[static_cast<size_t>(FeaturePipelineIndex::MotionBlur)] = std::make_unique<MotionBlur>();
-	pipeline[static_cast<size_t>(FeaturePipelineIndex::MotionBlur)].get()->enabled = false;
 	pipeline[static_cast<size_t>(FeaturePipelineIndex::DoF)] = std::make_unique<DoF>();
-	pipeline[static_cast<size_t>(FeaturePipelineIndex::DoF)].get()->enabled = false;
 	pipeline[static_cast<size_t>(FeaturePipelineIndex::PhysicalGlare)] = std::make_unique<PhysicalGlare>();
-	pipeline[static_cast<size_t>(FeaturePipelineIndex::PhysicalGlare)].get()->enabled = false;
 	pipeline[static_cast<size_t>(FeaturePipelineIndex::CODBloom)] = std::make_unique<CODBloom>();
-	pipeline[static_cast<size_t>(FeaturePipelineIndex::CODBloom)].get()->enabled = true;
 	pipeline[static_cast<size_t>(FeaturePipelineIndex::LensFlare)] = std::make_unique<LensFlare>();
-	pipeline[static_cast<size_t>(FeaturePipelineIndex::LensFlare)].get()->enabled = false;
 	pipeline[static_cast<size_t>(FeaturePipelineIndex::Composite)] = std::make_unique<Composite>();
-	pipeline[static_cast<size_t>(FeaturePipelineIndex::Composite)].get()->enabled = true;
 	pipeline[static_cast<size_t>(FeaturePipelineIndex::Vignette)] = std::make_unique<Vignette>();
-	pipeline[static_cast<size_t>(FeaturePipelineIndex::Vignette)].get()->enabled = true;
 	pipeline[static_cast<size_t>(FeaturePipelineIndex::Camera)] = std::make_unique<Camera>();
-	pipeline[static_cast<size_t>(FeaturePipelineIndex::Camera)].get()->enabled = false;
 	pipeline[static_cast<size_t>(FeaturePipelineIndex::Border)] = std::make_unique<Border>();
-	pipeline[static_cast<size_t>(FeaturePipelineIndex::Border)].get()->enabled = false;
+
+	RestorePipelineDefaultEnablement();
 
 	for (auto& pipe : pipeline) {
 		if (pipe) {
@@ -467,12 +670,14 @@ void PostProcessing::SetupResources()
 
 	bokehResources.Setup();
 
-	ProcessSettings(pendingSettings);
-	pendingSettings = {};
+	ApplyPendingSettings();
 }
 
 void PostProcessing::Reset()
 {
+	// PreProcess may not run while bypassed or owned by Effects11, so clear refraction each frame.
+	isrefraction = false;
+
 	for (auto& pipe : pipeline) {
 		if (pipe)
 			pipe->Reset();
@@ -485,6 +690,11 @@ void PostProcessing::CopyToRenderTarget(
 	ID3D11Texture2D* srcTex,
 	ID3D11ShaderResourceView* srcSRV)
 {
+	// D3D11 rejects a copy whose source and destination are the same resource, which happens
+	// whenever the pipeline left the image in the buffer we are writing back to.
+	if (targetRT.texture == srcTex)
+		return;
+
 	auto context = globals::d3d::context;
 
 	D3D11_TEXTURE2D_DESC srcDesc;
@@ -531,7 +741,7 @@ void PostProcessing::DrawFeature(PostProcessFeature& feature, PostProcessFeature
 
 void PostProcessing::DrawBeforeUpscaling()
 {
-	if (bypass)
+	if (bypass || IsTonemapOwnedByEffects11())
 		return;
 
 	auto& upscaling = globals::features::upscaling;
@@ -541,7 +751,7 @@ void PostProcessing::DrawBeforeUpscaling()
 	auto renderer = globals::game::renderer;
 	auto state = globals::state;
 
-	bool inMainLoadingMenu = globals::game::ui && (globals::game::ui->IsMenuOpen(RE::MainMenu::MENU_NAME) || globals::game::ui->IsMenuOpen(RE::LoadingMenu::MENU_NAME));
+	bool inMainLoadingMenu = state->IsMainOrLoadingMenuOpen();
 	auto gameTexMain = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMAIN];
 	PostProcessFeature::TextureInfo lastTexColor = { gameTexMain.texture, gameTexMain.SRV };
 
@@ -565,36 +775,27 @@ void PostProcessing::DrawBeforeUpscaling()
 	state->EndPerfEvent();
 }
 
-void PostProcessing::PreProcess()
+void PostProcessing::PreProcess(RE::RENDER_TARGET a_input)
 {
 	if (bypass)
 		return;
 
 	auto renderer = globals::game::renderer;
-	auto context = globals::d3d::context;
 
 	auto& upscaling = globals::features::upscaling;
 
-	bool inMainLoadingMenu = globals::game::ui && (globals::game::ui->IsMenuOpen(RE::MainMenu::MENU_NAME) || globals::game::ui->IsMenuOpen(RE::LoadingMenu::MENU_NAME));
+	// ISRefraction can leave kMAIN_COPY bound, which makes D3D11 null its SRV when sampled.
+	globals::d3d::context->OMSetRenderTargets(0, nullptr, nullptr);
+	globals::game::stateUpdateFlags->set(RE::BSGraphics::ShaderFlags::DIRTY_RENDERTARGET);
+
+	bool inMainLoadingMenu = globals::state->IsMainOrLoadingMenuOpen();
 
 	auto& gameTexMainRT = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMAIN];
 	auto& gameTexMainCopyRT = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMAIN_COPY];
 
-	bool useMainCopy = isrefraction;
-	ID3D11RenderTargetView* currentRTV = nullptr;
-	ID3D11DepthStencilView* currentDSV = nullptr;
-	context->OMGetRenderTargets(1, &currentRTV, &currentDSV);
-	if (currentRTV) {
-		if (currentRTV == gameTexMainCopyRT.RTV) {
-			useMainCopy = true;
-		} else if (currentRTV == gameTexMainRT.RTV) {
-			useMainCopy = false;
-		}
-	}
-	if (currentRTV)
-		currentRTV->Release();
-	if (currentDSV)
-		currentDSV->Release();
+	// The tonemap hook hands us the pass input directly, so no need to probe the bound RTV.
+	// Refraction still routes through kMAIN_COPY without that being reflected in a_input.
+	bool useMainCopy = isrefraction || a_input == RE::RENDER_TARGETS::kMAIN_COPY;
 
 	auto gameTexMain = useMainCopy ? gameTexMainCopyRT : gameTexMainRT;
 	PostProcessFeature::TextureInfo lastTexColor = { gameTexMain.texture, gameTexMain.SRV };
@@ -630,7 +831,8 @@ void PostProcessing::PreProcess()
 
 void PostProcessing::ClearBorderMotionVectorsForFrameGen()
 {
-	if (bypass)
+	// Effects11 skips the letterbox, so its motion vectors must remain live scene data.
+	if (bypass || IsTonemapOwnedByEffects11())
 		return;
 
 	auto borderIdx = static_cast<size_t>(FeaturePipelineIndex::Border);
@@ -641,13 +843,31 @@ void PostProcessing::ClearBorderMotionVectorsForFrameGen()
 	}
 }
 
+bool PostProcessing::WantsTonemapOwnership() const
+{
+	return !bypass && settings.DisableVanillaTonemapping != 0;
+}
+
+bool PostProcessing::IsTonemapOwnedByEffects11() const
+{
+	return globals::state->GetTonemapOwner() == State::TonemapOwner::kEffects11;
+}
+
+PostProcessing::Settings PostProcessing::GetCommonBufferData() const
+{
+	Settings data = settings;
+
+	// Only Post Processing may advertise its linear, already-tonemapped output to consumers.
+	if (globals::state->GetTonemapOwner() != State::TonemapOwner::kPostProcessing)
+		data.DisableVanillaTonemapping = 0;
+
+	return data;
+}
+
 void PostProcessing::Prepass()
 {
-	if (!pendingSettings.empty()) {
-		logger::debug("Processing pending post processing settings...");
-		ProcessSettings(pendingSettings);
-		pendingSettings = {};
-	}
+	if (!pendingSettings.empty())
+		ApplyPendingSettings();
 
 	// globals::game::imageSpaceManager isn't cached until OnDataLoaded(); skip
 	// the update rather than crash if Prepass() runs before that.
@@ -668,7 +888,9 @@ void PostProcessing::Prepass()
 		}
 	};
 	if (globals::game::isVR) {
-		updateGameISData(globals::game::imageSpaceManager->GetVRRuntimeData());
+		// Guaranteed non-null: GetVRRuntimeData() only returns null when IsVR()
+		// is false, which this branch already excludes.
+		updateGameISData(*globals::game::imageSpaceManager->GetVRRuntimeData());
 	} else {
 		updateGameISData(globals::game::imageSpaceManager->GetRuntimeData());
 	}
@@ -678,6 +900,4 @@ void PostProcessing::PostPostLoad()
 {
 	logger::info("Hooking preprocess passes");
 	stl::write_vfunc<0x2, BSImagespaceShaderRefraction_SetupTechnique>(RE::VTABLE_BSImagespaceShaderRefraction[0]);
-	stl::write_vfunc<0x2, BSImagespaceShaderHDRTonemapBlendCinematic_SetupTechnique>(RE::VTABLE_BSImagespaceShaderHDRTonemapBlendCinematic[0]);
-	stl::write_vfunc<0x2, BSImagespaceShaderHDRTonemapBlendCinematicFade_SetupTechnique>(RE::VTABLE_BSImagespaceShaderHDRTonemapBlendCinematicFade[0]);
 }

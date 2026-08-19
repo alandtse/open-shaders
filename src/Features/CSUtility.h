@@ -63,6 +63,18 @@ struct CSUtility : Feature
 		DepthOfFieldSettings baseline;
 	};
 
+	struct WaterSettings
+	{
+		float brightness = 1.0f;
+		float reflectionAmount = 1.0f;
+		float refractionAmount = 1.0f;
+		float sunSpecularMultiplier = 1.0f;
+		float waveAmplitude = 1.0f;
+		float fresnelMin = 0.0f;
+		float fresnelMax = 1.0f;
+		float muddiness = 1.0f;
+	};
+
 	struct Settings
 	{
 		bool enableTrunkBend = true;
@@ -105,10 +117,23 @@ struct CSUtility : Feature
 		float linearSpotlightMult = 1.0f;
 		float omnidirectionalBulbMult = 1.0f;
 		float linearOmnidirectionalBulbMult = 1.0f;
+		WaterSettings water;
 		DepthOfFieldOverride sceneDof;
 		DepthOfFieldOverride underwaterDof;
 		Bloom::PresetSettings bloomEnhancement;
 	} settings;
+
+	/** Identifies the OS Utility tab targeted by scoped default restoration. */
+	enum class SettingsPage
+	{
+		Atmosphere,           ///< Sky atmosphere controls.
+		Water,                ///< Water rendering controls.
+		Multipliers,          ///< Lighting multiplier controls.
+		VanillaDepthOfField,  ///< Vanilla depth-of-field controls.
+		VanillaBloom          ///< Vanilla bloom controls.
+	};
+	/** The visible tab whose settings Restore Defaults changes. */
+	SettingsPage activeSettingsPage = SettingsPage::Atmosphere;
 
 	struct alignas(16) PerFrameData
 	{
@@ -120,9 +145,17 @@ struct CSUtility : Feature
 		float linearSpotlightMult;
 		float omnidirectionalBulbMult;
 		float linearOmnidirectionalBulbMult;
+		float waterBrightness;
+		float waterReflectionAmount;
+		float waterRefractionAmount;
+		float waterSunSpecularMultiplier;
+		float waterWaveAmplitude;
+		float waterFresnelMin;
+		float waterFresnelMax;
+		float waterMuddiness;
 	};
 	STATIC_ASSERT_ALIGNAS_16(PerFrameData);
-	static_assert(sizeof(PerFrameData) == 32);
+	static_assert(sizeof(PerFrameData) == 64);
 
 	struct alignas(16) VanillaPointLightData
 	{
@@ -137,6 +170,14 @@ struct CSUtility : Feature
 	virtual void LoadSettings(json& o_json) override;
 	virtual void SaveSettings(json& o_json) override;
 	virtual void RestoreDefaultSettings() override;
+	/** @return true because OS Utility supports restoring the active tab. */
+	virtual bool HasScopedDefaultSettings() const override { return true; }
+	/** Restores default settings for the active OS Utility tab. */
+	virtual void RestoreCurrentPageDefaultSettings() override;
+	/** @return true because OS Utility reapplies overrides for the active tab. */
+	virtual bool HasScopedOverrideSettings() const override { return true; }
+	/** Reapplies override-controlled settings for the active OS Utility tab. */
+	virtual bool ReapplyCurrentPageOverrideSettings() override;
 	virtual void SetupResources() override;
 	virtual void PostPostLoad() override;
 	virtual void DataLoaded() override;
@@ -144,11 +185,15 @@ struct CSUtility : Feature
 	PerFrameData GetCommonBufferData() const;
 	void UpdateVanillaPointLightData(RE::BSRenderPass* a_pass, uint32_t a_lightCount);
 	void DrawDepthOfFieldSettings();
+	/** Draws water tuning controls. */
+	void DrawWaterSettings();
 	void DrawVanillaBloomSettings();
 	void InstallDepthOfFieldHooks();
 
 	static void SanitizeDepthOfFieldSettings(DepthOfFieldSettings& a_settings);
 	static void SanitizeDepthOfFieldOverride(DepthOfFieldOverride& a_override);
+	/** Clamps water controls before serialization or GPU upload. */
+	static void SanitizeWaterSettings(WaterSettings& a_settings);
 
 	struct Hooks;
 };

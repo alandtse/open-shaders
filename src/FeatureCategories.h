@@ -6,7 +6,7 @@ namespace FeatureCategories
 {
 	inline constexpr std::string_view kCharacters = "Characters";
 	inline constexpr std::string_view kDisplay = "Display";
-	inline constexpr std::string_view kGrass = "Grass";
+	inline constexpr std::string_view kFoliage = "Foliage";
 	inline constexpr std::string_view kLandscapeAndTextures = "Landscape & Textures";
 	inline constexpr std::string_view kLighting = "Lighting";
 	inline constexpr std::string_view kMaterials = "Materials";

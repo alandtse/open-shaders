@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Buffer.h"
+#include "Utils/BootSnapshot.h"
 
 struct ScreenSpaceGI : Feature
 {
@@ -59,6 +60,8 @@ public:
 	virtual void LoadSettings(json& o_json) override;
 	virtual void SaveSettings(json& o_json) override;
 
+	/** @brief Registers the loading screen listener that resets the temporal history. */
+	virtual void PostPostLoad() override;
 	/** @brief Creates GPU textures, samplers, constant buffers, and compiles compute shaders. */
 	virtual void SetupResources() override;
 	/** @brief Releases and recompiles all SSGI compute shaders. */
@@ -79,6 +82,21 @@ public:
 	uint outputAoIdx = 0;
 	uint outputIlIdx = 0;
 
+	// Loading screen radiance decays at only 1/MaxAccumFrames per frame, bleeding the old scene
+	// into the new one for some frames.
+	std::atomic<bool> queuedResetHistory{ true };
+
+	class MenuOpenCloseEventHandler : public RE::BSTEventSink<RE::MenuOpenCloseEvent>
+	{
+	public:
+		virtual RE::BSEventNotifyControl ProcessEvent(const RE::MenuOpenCloseEvent* a_event, RE::BSTEventSource<RE::MenuOpenCloseEvent>*) override;
+
+		static bool Register();
+	};
+
+	static constexpr int kResourceProfileFullGI = 0;
+	static constexpr int kResourceProfileAOOnly = 1;
+
 	struct Settings
 	{
 		bool Enabled = true;
@@ -89,7 +107,11 @@ public:
 		// performance/quality
 		uint NumSlices = REL::Module::IsVR() ? 3u : 4u;  // AO preset for VR
 		uint NumSteps = REL::Module::IsVR() ? 6u : 8u;
+		bool EnableAdaptiveSampling = false;
 		int ResolutionMode = 1;  // 0-full, 1-half, 2-quarter - DBF default
+		// Restart-gated: GI history/radiance textures are only allocated for the full
+		// profile. Defaults to full everywhere; LoadSettings migrates GI-off configs.
+		int ResourceProfile = kResourceProfileFullGI;
 		// visual
 		float MinScreenRadius = 0.01f;
 		float AORadius = 256.f;
@@ -113,7 +135,29 @@ public:
 		// VR: reproject eye 0's view-independent diffuse GI into eye 1 (skips the eye-1 march).
 		// Default on; ignored when specular GI is on (specular is view-dependent).
 		bool UseStereoReproject = true;
+		// Debug: VR-only unjittered projection/inverse-view reconstruction (avoids TAA jitter swim).
+		bool DebugUseUnjitteredCameraReconstruction = false;
 	} settings;
+
+	// Resource profile active since resource creation; a differing settings value is restart-pending.
+	int activeResourceProfile = kResourceProfileFullGI;
+
+	bool HasGIResources() const { return activeResourceProfile == kResourceProfileFullGI; }
+	bool IsGIActive() const { return settings.EnableGI && HasGIResources(); }
+	bool IsSpecularGIActive() const { return IsGIActive() && settings.EnableExperimentalSpecularGI; }
+
+	inline static constexpr Util::Settings::RestartTable<Settings, 1> kRestartFields{ {
+		UTIL_RESTART_FIELD(Settings, ResourceProfile, "SSGI Resource Profile"),
+	} };
+	Util::Settings::BootSnapshot<Settings> bootSnapshot{ kRestartFields };
+
+	std::span<const Util::Settings::RestartFieldInfo> GetRestartRequiredFields() const override
+	{
+		return { kRestartFields.data(), kRestartFields.size() };
+	}
+	const void* GetBootValue(std::string_view jsonKey) const override { return bootSnapshot.RawBoot(jsonKey); }
+	const void* GetSettingsBlob() const override { return &settings; }
+	size_t GetSettingsBlobSize() const override { return sizeof(settings); }
 
 	struct alignas(16) SSGICB
 	{
@@ -174,15 +218,17 @@ public:
 	eastl::unique_ptr<Texture2D> texGiSpecular[2] = { nullptr };
 
 	/** @brief Returns the current output SRVs for AO, indirect lighting Y/CoCg, and specular GI (or nullptrs if disabled). */
-	inline auto GetOutputTextures()
+	inline std::tuple<ID3D11ShaderResourceView*, ID3D11ShaderResourceView*, ID3D11ShaderResourceView*, ID3D11ShaderResourceView*> GetOutputTextures()
 	{
-		return (loaded && settings.Enabled) ?
-		           std::make_tuple(
-					   texAo[outputAoIdx]->srv.get(),
-					   texIlY[outputIlIdx]->srv.get(),
-					   texIlCoCg[outputIlIdx]->srv.get(),
-					   texGiSpecular[outputAoIdx]->srv.get()) :
-		           std::make_tuple(nullptr, nullptr, nullptr, nullptr);
+		if (!(loaded && settings.Enabled) || outputAoIdx >= 2 || outputIlIdx >= 2 || !texAo[outputAoIdx])
+			return { nullptr, nullptr, nullptr, nullptr };
+
+		return {
+			texAo[outputAoIdx]->srv.get(),
+			texIlY[outputIlIdx] ? texIlY[outputIlIdx]->srv.get() : nullptr,
+			texIlCoCg[outputIlIdx] ? texIlCoCg[outputIlIdx]->srv.get() : nullptr,
+			texGiSpecular[outputAoIdx] ? texGiSpecular[outputAoIdx]->srv.get() : nullptr
+		};
 	}
 
 	winrt::com_ptr<ID3D11SamplerState> linearClampSampler = nullptr;

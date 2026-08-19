@@ -3,6 +3,7 @@
 
 #pragma once
 
+#include <array>
 #include <atomic>
 #include <mutex>
 #include <set>
@@ -72,6 +73,50 @@ namespace ShadowCasterManager
 	extern uint32_t s_highImportanceLightCount;
 	extern float s_redrawnLightsSmoothed;
 
+	// Raw per-slot tile maxima plus the per-sample validity metadata the
+	// consecutive-sample streak needs.
+	extern ShadowDemandSample s_shadowDemand;
+
+	// Raw accumulator units (1024 == 1.0 demand) at/below which a slot counts as untouched.
+	// demandWeight = luminance*fade*atten, so this is an attenuation floor after brightness --
+	// a much higher floor would reject dim lights regardless of visibility.
+	inline constexpr uint32_t kDemandUntouchedMaxRaw = 16;
+
+	// Consecutive below-floor samples before a light counts as absent. Must dwarf the
+	// per-tile sample gap (one jittered tap per 64x64 tile) or flame-class lights flip
+	// in/out of the skip. 240 is empirically A/B-validated -- do not shrink without new evidence.
+	inline constexpr uint32_t kZeroDemandSkipStreak = 240;
+
+	// Half of kZeroDemandSkipStreak -- earns the softer occluded-ceiling stretch, not the hard skip.
+	// Derived, not independently tuned, so a devbench override of one moves both.
+	inline constexpr uint32_t kOccludedStretchStreakDivisor = 2;
+
+	// Wall-clock seconds to blend in a shadow after its caster gains a slot (new/promoted/recovered
+	// light) -- softens the pop instead of an instant shadow on an already-visible light.
+	inline constexpr float kShadowFadeInSeconds = 0.25f;
+
+	// Occluded redraw ceiling = RedrawIntervalMaxFrames * this multiplier.
+	inline constexpr float kOccludedRedrawMultiplier = 6.0f;
+
+	// Drains older than this are stale: without the gate a wedged readback would
+	// freeze the snapshot and let every light in it look permanently absent.
+	inline constexpr uint64_t kDemandStaleFrames = 8;
+
+	// Entries in the engine's global BSBatchRenderer alpha GeometryGroup array (Hook_StartGroupingAlphas'
+	// ceiling), a literal in the binary's own array constructor -- VR was built with twice the slots,
+	// a genuine runtime difference, not worth unifying away.
+	inline constexpr uint32_t kAlphaGeometryGroupCapacityFlat = 512;
+	inline constexpr uint32_t kAlphaGeometryGroupCapacityVR = 1024;
+
+	// Engine claims entries with LOCK XADD, so another worker can claim one between the guard's
+	// read and its own increment -- must exceed max concurrent threads, not just "some margin".
+	inline constexpr uint32_t kAlphaGeometryGroupReserve = 64;
+
+	// High-water alpha GeometryGroup count since load, and refused-at-ceiling count.
+	// Peak well under capacity = no scene neared the array; any drop = one reached it.
+	extern std::atomic<uint32_t> s_alphaGroupPeak;
+	extern std::atomic<uint64_t> s_alphaGroupDrops;
+
 	/// Diagnostic counters reset each scheduler frame for Tracy profiler reporting.
 	struct SchedDiagCounters
 	{
@@ -91,6 +136,27 @@ namespace ShadowCasterManager
 		int slots_in_use = 0;
 		int first_render_skips = 0;
 		int sleep_skips = 0;
+		int demand_skips = 0;
+
+		// Zero-demand-skip audit; see SchedSnapshot for the field meanings.
+		int frustum_audit_candidates = 0;
+		int frustum_audit_kept_out = 0;
+		int frustum_audit_suspects = 0;
+		int demand_slotted = 0;
+		int demand_zero = 0;
+		int demand_sub_tap = 0;
+		int demand_skip_eligible = 0;
+		int demand_swap_in = 0;
+		int demand_swap_in_above_eps = 0;
+		int demand_redraws_saved = 0;
+		bool demand_budget_saturated = false;
+
+		// Stop-motion metric (LightEntry::dirtyStallFrames): stall_max = worst pool-wide streak this frame;
+		// demand_ratio = demanded redraws/frame across `pending`, vs admission capacity -- tuning vs overload.
+		int stall_max = 0;
+		int stall_over_threshold = 0;
+		int stall_worst_slot = -1;
+		double demand_ratio = 0.0;
 	};
 	extern SchedDiagCounters s_schedDiag;
 
@@ -125,8 +191,16 @@ namespace ShadowCasterManager
 	// Set on engine bulk teardown to signal pending reset.
 	extern std::atomic<bool> s_pendingSessionReset;
 
+	// Set on ShadowSceneNode::ResetScene (cell-grid shift): a surviving light's static-bake cache
+	// is keyed on caster geometry identity, which a cell swap can silently recycle.
+	extern std::atomic<bool> s_pendingCellReset;
+
 	// Protects portalGraph reads against scene transition resets.
 	extern std::shared_mutex s_portalGraphMutex;
+
+	// Protects s_lights.Lights/Size against Update's pool resize (delete[]/new[] on a settings
+	// change) racing a live scheduler or render pass reading s_lights.Lights[slot].
+	extern std::shared_mutex s_lightsPoolMutex;
 
 	// Synchronizes engine teardown with active shadow render passes.
 	extern std::atomic<int> s_shadowFlushReaders;
@@ -175,7 +249,6 @@ namespace ShadowCasterManager
 		{ "lightconverted", "1 if light is in the converted (non-shadow) slot range", kFormulaParam_LightConverted },
 		{ "lightdisplacement", "distance this light moved since its last shadow map render (game units; 0 when not yet tracked or in score formula)", kFormulaParam_LightDisplacement },
 		{ "playerlightdistance", "distance from the player character to the light (game units; falls back to lightdistance when player unavailable)", kFormulaParam_PlayerLightDistance },
-		{ "lightimportance", "contribution score: lum(diffuse*fade) * max(att_cam,att_plr) where att=(1-(dist/radius)^2)^2; 0 in score formula", kFormulaParam_LightImportance },
 		{ "lightisspot", "1 if this is a spot/frustum shadow light (BSShadowFrustumLight); 0 for omni / hemi / sun", kFormulaParam_LightIsSpot },
 		{ "lightspotvisible", "1 if the spot's cone plausibly reaches the camera frustum, 0 otherwise. Always 1 for non-spot lights so existing omni-only formulas are unaffected", kFormulaParam_LightSpotVisible },
 		{ "lightplayerattached", "1 if the light is attached to the player's scene graph (held torch, Candlelight); its shadow sits at the viewer, where artifacts are most visible", kFormulaParam_LightPlayerAttached },
@@ -184,6 +257,7 @@ namespace ShadowCasterManager
 		{ "lightlum", "Rec.709 luminance of the diffuse color x engine fade", kFormulaParam_LightLum },
 		{ "lightattcam", "Skyrim falloff attenuation (1-(d/r)^2)^2 at the camera; 0 outside the radius", kFormulaParam_LightAttCam },
 		{ "lightattplayer", "Skyrim falloff attenuation (1-(d/r)^2)^2 at the player; 1 for a carried light", kFormulaParam_LightAttPlayer },
+		{ "lightdynamiccasters", "live dynamic-caster presence for this light: skinned (actor/creature) casters in its geometry list, +1 when the player stands inside the radius, or 1 if a recent accumulate saw a mover; 0 for purely static content", kFormulaParam_LightDynamicCasters },
 		{ "camerax", "camera world X", kFormulaParam_CameraX },
 		{ "cameray", "camera world Y", kFormulaParam_CameraY },
 		{ "cameraz", "camera world Z", kFormulaParam_CameraZ },
@@ -208,7 +282,12 @@ namespace ShadowCasterManager
 		float sizeProxy = 0.0f;   ///< Classifier input: max(sqrt(coverage), att)
 		float screenArea = 0.0f;  ///< Viewport-clamped projected sphere area [0,1]
 	};
-	LightGeometry ComputeLightGeometry(const RE::NiLight* ni, const RE::NiCamera* camera, float lightRadius);
+	LightGeometry ComputeLightGeometry(const RE::BSShadowLight* light, const RE::NiCamera* camera, float lightRadius);
+
+	/// Drops the EMA position anchor ComputeLightGeometry keeps for `ni`. Call when a pool slot
+	/// acquires a light pointer (fresh or recycled address) so a stale anchor from the previous
+	/// occupant can't poison the newcomer's score for ~25 frames.
+	void ResetScoreAnchor(const RE::NiLight* ni);
 
 	/// Sets camera/scene formula params once per scheduler frame.
 	void SetupSceneFormula(const RE::NiCamera* camera);
@@ -254,6 +333,79 @@ namespace ShadowCasterManager
 	bool TryReadShadowTextureDesc(D3D11_TEXTURE2D_DESC& out);
 
 	// ---------------------------------------------------------------------
+	// Caster classifier module (ShadowCasterClassifier.cpp)
+	// ---------------------------------------------------------------------
+
+	// Contribution-culling diagnostics, defined in ShadowCasterClassifier.cpp;
+	// exchanged/read by ScheduleShadowCasters for Tracy plots and the snapshot.
+	extern std::atomic<uint32_t> s_casterCullCount;
+	extern std::atomic<uint32_t> s_cullPoolDropCount;
+	extern std::atomic<uint64_t> s_cullPoolDropTotal;
+	extern std::atomic<uint64_t> s_casterCullTotal;
+
+	// Accumulate-scoped handoff between EnableLight (writer) and the
+	// AppendVirtual cull hooks (reader), set around each light's Accumulate call.
+	extern std::atomic<RE::BSShadowLight*> s_currentCullLight;
+	extern std::atomic<bool> s_accumRebuildAttach;
+	extern std::unordered_set<const RE::BSGeometry*> s_healAttached;
+
+	/// Arms/disarms the accumulate-scoped handoff above, latching the calling
+	/// thread as the walk owner. Pass nullptr to disarm.
+	void SetCurrentCullLight(RE::BSShadowLight* a_light);
+
+	/// The light this thread is accumulating, or null if the caller is a
+	/// foreign thread sharing our hooked vtables (see s_cullThreadId).
+	RE::BSShadowLight* CurrentCullLight();
+
+	/// Static/dynamic split-cache caster-pass selector, written by EnableLight
+	/// and read by the cull-append hooks.
+	enum class CasterPass : int
+	{
+		All = 0,         ///< keep every caster (normal / measurement)
+		StaticOnly = 1,  ///< keep only pose-stable casters (build static cache)
+		DynamicOnly = 2  ///< keep only moving casters (composite over cache)
+	};
+	extern std::atomic<int> s_cullPassMode;
+	extern std::atomic<uint32_t> s_staticCasterDraws;
+	extern std::atomic<uint32_t> s_dynamicCasterDraws;
+
+	// Per-accumulate split-cache visitation state, reset/consumed by EnableLight.
+	extern std::uint64_t s_visitStaticHash;
+	extern std::atomic<uint32_t> s_visitDynamicCount;
+	extern std::atomic<uint32_t> s_visitStaticCount;
+
+	/// Per-caster movement-history record; classification memoized once per
+	/// frame by ClassifyCaster (ShadowCasterClassifier.cpp).
+	struct CasterMobility
+	{
+		int lastEpoch = -1;
+		int lastVerifyEpoch = -1;  ///< epoch of last full quantize-and-compare (not skip-stamped)
+		int framesSinceMove = 0;
+		int promoteBackoff = 1;  ///< multiplies the promote window; grows per oscillation
+		float cx = 0.0f, cy = 0.0f, cz = 0.0f, cr = 0.0f;
+		/// Cached static-hash contribution (identity + quantized worldBound);
+		/// valid while the quantized bound is unchanged, i.e. until "moved".
+		uint64_t foldHash = 0;
+		bool foldHashValid = false;
+		bool dynamic = true;
+	};
+	// Pruned periodically by ScheduleShadowCasters (ShadowScheduler.cpp).
+	extern ankerl::unordered_dense::map<RE::BSGeometry*, CasterMobility> s_casterMobility;
+	extern int s_casterClassEpoch;
+
+	// Camera position captured at accumulate start (EnableLight, writer); the
+	// contribution-cull hooks (reader) measure caster screen size from here.
+	extern RE::NiPoint3 s_cullCameraPos;
+
+	// True only across a static-cache bake pass, written by
+	// RenderScheduledShadowLights; read via StaticPassRedirectActive() below.
+	extern std::atomic<bool> s_staticPassActive;
+
+	/// Services the multi-frame diagnostic recorder (devbench capture
+	/// kind=shadowmaps); called once per frame from RenderScheduledShadowLights.
+	void ServiceShadowFrameRecord();
+
+	// ---------------------------------------------------------------------
 	// Engine hooks module (ShadowEngineHooks.cpp)
 	// ---------------------------------------------------------------------
 
@@ -281,6 +433,7 @@ namespace ShadowCasterManager
 	uint32_t* GetAccumLightSlot();
 	uint32_t* GetMaskIndex();
 	uint32_t* GetShadowMask();
+	bool LightContainsCamera(const RE::NiLight* a_niLight, const RE::NiCamera* a_camera);
 	uint32_t* GetFrameLightCount();
 
 	// VR-only globals
@@ -341,11 +494,23 @@ namespace ShadowCasterManager
 		uint32_t tileClears = 0;
 		uint32_t tileReallocs = 0;
 		uint32_t ownerInvalidations = 0;
+		/// EnsureSlotTile calls that walked down without granting the
+		/// requested (or larger) class -- allocator-denied, not budget-capped.
+		uint32_t allocDenied = 0;
 	};
 	AtlasClearStats GetAtlasClearStats();
 
 	/// True when atlas is boot-enabled and resources exist.
 	bool AtlasActive();
+
+	/// Atlas eviction veto: true if `light` failed UpdateCamera this frame (still
+	/// holds a slot, can't redraw to repair a freed tile) OR the hold set itself is
+	/// stale because scoring bailed this frame -- a stale set can't say "not held".
+	bool IsEvictionHeld(RE::BSShadowLight* light);
+
+	/// True when the demand oracle confirms nobody currently samples this
+	/// light's shadow (fails open: unusable samples never read as absent).
+	bool DemandSkipCandidate(const LightEntry& e);
 
 	/// Creates/updates atlas resources per frame.
 	void UpdateAtlas();
@@ -373,6 +538,9 @@ namespace ShadowCasterManager
 	bool LoadSlotBakeSnapshot(int32_t poolSlot, ShadowBakeSnapshot& out);
 
 	void FreeSlotTile(int32_t poolSlot);
+	/// Moves a still-valid displaced tile record to a light-free index so its
+	/// owner can reclaim the content on re-entry; false when unparkable.
+	bool ParkOrphanSlotRecord(int32_t poolSlot);
 	void FreeAllTiles();
 
 	bool GetSlotTileTexels(int32_t poolSlot, AtlasTileTexels& out);
@@ -410,11 +578,16 @@ namespace ShadowCasterManager
 	/// Copies slot's static tile into live atlas tile.
 	void CopyStaticTileToLive(int32_t poolSlot);
 
-	/// Reads slot's static-cache bookkeeping.
-	bool GetSlotStaticState(int32_t poolSlot, uint64_t& hashOut, bool& validOut);
+	/// Reads slot's static-cache bookkeeping. emptyOut, if non-null, reports whether
+	/// the baked tile captured zero casters (a blank bake latched valid).
+	bool GetSlotStaticState(int32_t poolSlot, uint64_t& hashOut, bool& validOut, bool* emptyOut = nullptr);
 
-	/// Marks slot static tile baked with static-caster hash.
-	void MarkSlotStaticRendered(int32_t poolSlot, uint64_t staticHash);
+	/// Marks slot static tile baked with static-caster hash; a_sawCasters=false records a blank bake.
+	void MarkSlotStaticRendered(int32_t poolSlot, uint64_t staticHash, bool a_sawCasters);
+
+	/// Drops every occupied slot's static cache (not the live tile or ownership) --
+	/// cell-grid-shift response, see s_pendingCellReset.
+	void InvalidateAllStaticBakes();
 
 	// ---------------------------------------------------------------------
 	// Scheduler module entry points

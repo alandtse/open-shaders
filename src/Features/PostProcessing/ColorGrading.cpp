@@ -165,11 +165,9 @@ namespace
 	void DrawRGBAll(ColorSettings& settings, const AllRGBControl& control)
 	{
 		auto& value = settings.*control.value;
-		ImGui::PushID(control.id);
-		auto* allValue = ImGui::GetStateStorage()->GetFloatRef(ImGui::GetID("##AllState"), AverageRGB(value));
-		ImGui::PopID();
+		float allValue = AverageRGB(value);
 
-		DrawAllRGBSliders(control, *allValue, &value.x, [&](float newAll) {
+		DrawAllRGBSliders(control, allValue, &value.x, [&](float newAll) {
 			SetRGB(value, newAll);
 		});
 	}

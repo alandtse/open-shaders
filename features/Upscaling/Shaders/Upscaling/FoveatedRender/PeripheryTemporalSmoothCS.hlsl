@@ -4,6 +4,8 @@
 // ghosting during movement while keeping strong flicker reduction in the
 // non-focal periphery when stationary.
 
+#include "Common/Color.hlsli"
+
 cbuffer TemporalSmoothCB : register(b0)
 {
 	uint TexWidth;     // SBS width (render-res)
@@ -44,6 +46,32 @@ RWTexture2D<float4> OutputTex : register(u0);  // New history (ping-pong write)
 
 	// Bilinear sample history at reprojected position
 	float4 history = HistoryTex.SampleLevel(BilinearSampler, reprojUV, 0);
+
+	// ── Disocclusion rejection: clamp history into the current-frame neighborhood ──
+	// Local motion alone can't detect disocclusion: a moving NPC leaves near-zero-MV
+	// background behind it, so reprojected history can be a stale, unrelated surface.
+	// Clamp it into a 5-tap YCoCg box from the current frame before blending.
+	uint halfWpx = TexWidth / 2;
+	uint eyeMinPx = (pos.x < halfWpx) ? 0 : halfWpx;
+	uint eyeMaxPx = eyeMinPx + halfWpx - 1;
+	int2 posN = int2(pos.x, clamp((int)pos.y - 1, 0, (int)TexHeight - 1));
+	int2 posS = int2(pos.x, clamp((int)pos.y + 1, 0, (int)TexHeight - 1));
+	int2 posE = int2(clamp((int)pos.x + 1, (int)eyeMinPx, (int)eyeMaxPx), pos.y);
+	int2 posW = int2(clamp((int)pos.x - 1, (int)eyeMinPx, (int)eyeMaxPx), pos.y);
+
+	int2 taps[4] = { posN, posS, posE, posW };
+	float3 centerYCoCg = Color::RGBToYCoCg(current.rgb);
+	float3 boxMin = centerYCoCg;
+	float3 boxMax = centerYCoCg;
+	[unroll] for (int i = 0; i < 4; i++)
+	{
+		float3 tapYCoCg = Color::RGBToYCoCg(CurrentTex.Load(int3(taps[i], 0)).rgb);
+		boxMin = min(boxMin, tapYCoCg);
+		boxMax = max(boxMax, tapYCoCg);
+	}
+
+	float3 historyYCoCg = clamp(Color::RGBToYCoCg(history.rgb), boxMin, boxMax);
+	history.rgb = Color::YCoCgToRGB(historyYCoCg);
 
 	// ── Anti-ghosting: motion-adaptive alpha (squared for soft ramp) ──
 	// Increased sensitivity (*10): VR head sway still low enough to keep smoothing,

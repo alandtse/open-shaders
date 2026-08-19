@@ -1,7 +1,9 @@
 #pragma once
 
-#include "Buffer.h"
+#include <cstdint>
 #include <filesystem>
+
+#include "Buffer.h"
 
 /** @brief Adds heightmap-based terrain shadow casting that updates dynamically with sun position. */
 struct TerrainShadows : public Feature
@@ -33,8 +35,7 @@ public:
 
 	bool needPrecompute = false;
 	uint shadowUpdateIdx = 0;
-	bool hasPreviousLightDirection = false;
-	RE::NiPoint3 previousLightDirection{};
+	std::uint32_t handledTimeJumpRefreshGeneration = 0;
 
 	struct HeightMapMetadata
 	{
@@ -98,6 +99,12 @@ public:
 
 	/** @brief Loads heightmaps, precomputes shadow textures, and updates shadows in the early prepass. */
 	virtual void EarlyPrepass() override;
+	/** @brief Installs event-driven time-change hooks. */
+	virtual void PostPostLoad() override;
+	/** @brief Registers engine time-change and player-cell event handlers. */
+	virtual void DataLoaded() override;
+	/** @brief Requests celestial synchronization after loading an existing save. */
+	virtual void GameLoaded() override;
 	/** @brief Loads the heightmap DDS for the current worldspace if not already cached. */
 	void LoadHeightmap();
 	/** @brief Creates the shadow height texture after a new heightmap is loaded. */
@@ -105,8 +112,9 @@ public:
 	/**
 	 * @brief Dispatches the shadow update compute shader using the current sun direction.
 	 * @param a_refreshImmediately Whether to update the full map without temporal blending.
+	 * @return True when the compute dispatch was submitted.
 	 */
-	void UpdateShadow(bool a_refreshImmediately);
+	bool UpdateShadow(bool a_refreshImmediately);
 
 	/** @brief Binds the shadow height texture to shader resource slots for reflection rendering. */
 	virtual void ReflectionsPrepass() override;

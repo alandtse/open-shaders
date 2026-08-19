@@ -3,7 +3,6 @@
 #include "Skylighting/Skylighting.hlsli"
 
 Texture2D<unorm float> srcOcclusionDepth : register(t0);
-Texture2DArray<float4> ShadowCascadeMap : register(t1);
 Texture2DArray<float4> ESRAMShadow : register(t3);
 
 // Must stay byte-identical to the canonical mirror in ShadowSampling.hlsli --
@@ -109,7 +108,7 @@ static const float3 noise3D[32] = {
 		float shadowSample = 1.0;
 		DirectionalShadowLightData shadowData = DirectionalShadowLights[0];
 
-		uint bitIndex = SharedData::FrameCount % 32;
+		uint bitIndex = SharedData::FrameCountAlwaysActive % 32;
 		float3 jitteredMS = cellCentreMS + noise3D[bitIndex] * 128;
 
 		float ndcDepth = FrameBuffer::GetShadowDepth(jitteredMS, 0);
@@ -124,9 +123,7 @@ static const float3 noise3D[32] = {
 
 			positionLS.xy = saturate(positionLS.xy);
 
-			float cascadeShadow = ShadowCascadeMap.SampleCmpLevelZero(comparisonSampler, float3(positionLS.xy, cascadeIndex), positionLS.z);
-			float esramShadow = ESRAMShadow.SampleCmpLevelZero(comparisonSampler, float3(positionLS.xy, cascadeIndex), positionLS.z);
-			shadowSample = min(cascadeShadow, esramShadow);
+			shadowSample = ESRAMShadow.SampleCmpLevelZero(comparisonSampler, float3(positionLS.xy, cascadeIndex), positionLS.z);
 
 			float fade = saturate(linearDepth / shadowData.EndSplitDistances.y);
 			float fadeFactor = 1.0 - pow(fade * fade, 8);

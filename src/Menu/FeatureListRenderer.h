@@ -87,8 +87,16 @@ private:
 		std::string& pendingFeatureSelection;
 
 		// Helper methods for Feature rendering
-		static bool IsFeatureInstalled(const std::string& featureName);
-		void RenderFeatureHeader(Feature* feat, bool isDisabled, bool isLoaded, bool sceneControlled);
+		struct FeatureActionsLayout
+		{
+			float x{};
+			float y{};
+			float size{};
+		};
+
+		FeatureActionsLayout RenderFeatureHeader(Feature* feat, bool isLoaded);
+		void RenderFeatureActions(Feature* feat, bool isDisabled, bool isLoaded, bool sceneControlled, const FeatureActionsLayout& layout);
+		float RenderFeatureMaterial(Feature* feat, bool isDisabled, bool isLoaded, bool hasFailedMessage);
 		void RenderFeatureSettings(Feature* feat, bool isDisabled, bool isLoaded, bool hasFailedMessage, bool sceneControlled);
 		void RenderReactiveConstraintWarningDialog();
 	};

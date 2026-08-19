@@ -1,6 +1,7 @@
 #include "Preprocess.h"
 
 #include "../../../Deferred.h"
+#include "../../../GpuPass.h"
 #include "../../../State.h"
 #include "../../../Util.h"
 #include "../../Upscaling.h"
@@ -11,8 +12,20 @@ namespace
 	{
 		uint methodIndex = (uint)upscaleMethod;
 		if (!upscaling.encodeTexturesCS[methodIndex]) {
+			// This cache slot is shared with Upscaling::GetEncodeTexturesCS -- the
+			// define must match its own per-method selection or a hardcoded define
+			// compiles the wrong shader variant into the shared slot.
 			std::vector<std::pair<const char*, const char*>> defines;
-			defines.push_back({ "DLSS", "" });
+			switch (upscaleMethod) {
+			case Upscaling::UpscaleMethod::kDLSS:
+				defines.push_back({ "DLSS", "" });
+				break;
+			case Upscaling::UpscaleMethod::kFSR:
+				defines.push_back({ "FSR", "" });
+				break;
+			default:
+				break;
+			}
 
 			upscaling.encodeTexturesCS[methodIndex].attach((ID3D11ComputeShader*)Util::CompileShader(
 				L"Data/Shaders/Upscaling/EncodeTexturesCS.hlsl", defines, "cs_5_0"));
@@ -27,12 +40,11 @@ namespace FoveatedRenderImpl
 	bool Preprocess::EncodeUpscalingTextures(Upscaling& upscaling)
 	{
 		auto upscaleMethod = upscaling.GetUpscaleMethod();
-		if (upscaleMethod != Upscaling::UpscaleMethod::kDLSS) {
-			logger::error("[FOVEATED] Non-DLSS preprocess path is disabled; method={}", (int)upscaleMethod);
+		if (upscaleMethod != Upscaling::UpscaleMethod::kDLSS && upscaleMethod != Upscaling::UpscaleMethod::kFSR) {
+			logger::error("[FOVEATED] Preprocess path only supports DLSS/FSR; method={}", (int)upscaleMethod);
 			return false;
 		}
 
-		auto state = globals::state;
 		auto context = globals::d3d::context;
 		auto renderer = globals::game::renderer;
 
@@ -41,11 +53,12 @@ namespace FoveatedRenderImpl
 			return false;
 		}
 
-		// motionVectorCopyTexture is dereferenced unconditionally in the UAV
-		// array below when method == kDLSS. The above resource check did not
+		// motionVectorCopyTexture is dereferenced unconditionally in the UAV array
+		// below — the foveated route always needs a per-frame snapshot to crop
+		// per-eye from (DLSS and FSR both). The above resource check did not
 		// cover it. Fail closed rather than null-deref.
-		if (upscaleMethod == Upscaling::UpscaleMethod::kDLSS && !upscaling.motionVectorCopyTexture) {
-			logger::error("[FOVEATED] Missing motionVectorCopyTexture for DLSS preprocess");
+		if (!upscaling.motionVectorCopyTexture) {
+			logger::error("[FOVEATED] Missing motionVectorCopyTexture for preprocess");
 			return false;
 		}
 
@@ -54,7 +67,6 @@ namespace FoveatedRenderImpl
 		auto& normals = renderer->GetRuntimeData().renderTargets[globals::deferred->forwardRenderTargets[2]];
 		auto& depth = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kMAIN];
 
-		// Bail before BeginPerfEvent so the perf-event lifecycle stays balanced.
 		// CSSetShaderResources with a null view in the array doesn't crash, but
 		// the encode shader reads all four — a null among them silently corrupts
 		// the reactive/transparency masks DLSS will sample next.
@@ -65,7 +77,7 @@ namespace FoveatedRenderImpl
 
 		auto dispatchCount = Util::GetScreenDispatchCount(true);
 
-		state->BeginPerfEvent("FOVEATED Encode Upscaling Textures");
+		CS_GPU_PASS("FoveatedRender::EncodeUpscalingTextures");
 
 		auto renderSize = Util::ConvertToDynamic(globals::state->screenSize);
 		Upscaling::UpscalingDataCB upscalingData{};
@@ -81,13 +93,12 @@ namespace FoveatedRenderImpl
 		ID3D11UnorderedAccessView* uavs[3] = {
 			upscaling.reactiveMaskTexture->uav.get(),
 			upscaling.transparencyCompositionMaskTexture->uav.get(),
-			upscaleMethod == Upscaling::UpscaleMethod::kDLSS ? upscaling.motionVectorCopyTexture->uav.get() : nullptr
+			upscaling.motionVectorCopyTexture->uav.get()
 		};
 		context->CSSetUnorderedAccessViews(0, ARRAYSIZE(uavs), uavs, nullptr);
 
 		ID3D11ComputeShader* cs = GetEnhancerEncodeTexturesCS(upscaling, upscaleMethod);
 		if (!cs) {
-			state->EndPerfEvent();
 			logger::error("[FOVEATED] Failed to get encode compute shader");
 			return false;
 		}
@@ -103,7 +114,6 @@ namespace FoveatedRenderImpl
 		context->CSSetConstantBuffers(0, 1, &nullBuffer);
 		context->CSSetShader(nullptr, nullptr, 0);
 
-		state->EndPerfEvent();
 		return true;
 	}
 }

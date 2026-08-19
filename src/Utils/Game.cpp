@@ -1,10 +1,77 @@
 #include "Game.h"
 
+#include <atomic>
+
 #include "Globals.h"
 #include "State.h"
 
+namespace
+{
+	std::atomic_bool celestialTransitionHandlerAvailable{ false };
+	std::atomic_bool timeJumpTransitionRequested{ false };
+	std::atomic_bool gameLoadTransitionRequested{ false };
+	std::atomic_uint32_t completedCelestialTransitionGeneration{ 0 };
+
+	void MarkCelestialTransitionComplete()
+	{
+		completedCelestialTransitionGeneration.fetch_add(1, std::memory_order_release);
+	}
+
+	void RequestCelestialTransition(std::atomic_bool& a_request)
+	{
+		a_request.store(true, std::memory_order_release);
+		if (!celestialTransitionHandlerAvailable.load(std::memory_order_acquire) &&
+			a_request.exchange(false, std::memory_order_acq_rel)) {
+			MarkCelestialTransitionComplete();
+		}
+	}
+}
+
 namespace Util
 {
+	void SetCelestialTransitionHandlerAvailable(bool a_available)
+	{
+		celestialTransitionHandlerAvailable.store(a_available, std::memory_order_release);
+		if (a_available)
+			return;
+
+		const bool hadPendingTransition = timeJumpTransitionRequested.exchange(false, std::memory_order_acq_rel) |
+		                                  gameLoadTransitionRequested.exchange(false, std::memory_order_acq_rel);
+		if (hadPendingTransition)
+			MarkCelestialTransitionComplete();
+	}
+
+	void RequestTimeJumpTransition()
+	{
+		RequestCelestialTransition(timeJumpTransitionRequested);
+	}
+
+	void RequestGameLoadTransition()
+	{
+		RequestCelestialTransition(gameLoadTransitionRequested);
+	}
+
+	CelestialTransitionRequest ConsumeCelestialTransitionRequest()
+	{
+		if (!celestialTransitionHandlerAvailable.load(std::memory_order_acquire))
+			return {};
+
+		return {
+			.timeJump = timeJumpTransitionRequested.exchange(false, std::memory_order_acq_rel),
+			.gameLoad = gameLoadTransitionRequested.exchange(false, std::memory_order_acq_rel),
+		};
+	}
+
+	void CompleteCelestialTransition()
+	{
+		MarkCelestialTransitionComplete();
+	}
+
+	std::uint32_t GetCompletedCelestialTransitionGeneration()
+	{
+		return completedCelestialTransitionGeneration.load(std::memory_order_acquire);
+	}
+
 	void StoreTransform3x4NoScale(DirectX::XMFLOAT3X4& Dest, const RE::NiTransform& Source)
 	{
 		//
@@ -139,10 +206,8 @@ namespace Util
 		if (!imageSpaceManager)
 			return false;
 		// VR keeps its own ISTemporalAA instance at a different offset.
-		auto& taaShader = !globals::game::isVR ?
-		                      imageSpaceManager->GetRuntimeData().BSImagespaceShaderISTemporalAA :
-		                      imageSpaceManager->GetVRRuntimeData().BSImagespaceShaderISTemporalAA;
-		return taaShader && taaShader->taaEnabled;
+		GET_INSTANCE_MEMBER_VRPTR(BSImagespaceShaderISTemporalAA, imageSpaceManager);
+		return BSImagespaceShaderISTemporalAA && BSImagespaceShaderISTemporalAA->taaEnabled;
 	}
 
 	void SetTemporal(bool enabled)
@@ -150,11 +215,9 @@ namespace Util
 		auto* imageSpaceManager = globals::game::imageSpaceManager;
 		if (!imageSpaceManager)
 			return;
-		auto& taaShader = !globals::game::isVR ?
-		                      imageSpaceManager->GetRuntimeData().BSImagespaceShaderISTemporalAA :
-		                      imageSpaceManager->GetVRRuntimeData().BSImagespaceShaderISTemporalAA;
-		if (taaShader)
-			taaShader->taaEnabled = enabled;
+		GET_INSTANCE_MEMBER_VRPTR(BSImagespaceShaderISTemporalAA, imageSpaceManager);
+		if (BSImagespaceShaderISTemporalAA)
+			BSImagespaceShaderISTemporalAA->taaEnabled = enabled;
 	}
 
 	void DisableVanillaTAA()
@@ -190,8 +253,9 @@ namespace Util
 	{
 		float2 resolution = globals::state->screenSize;
 
+		// Feature passes use the scaled render area even when the vanilla dynamic-resolution lock is set.
 		if (a_dynamic)
-			ConvertToDynamic(resolution);
+			resolution = ConvertToDynamic(resolution, true);
 
 		uint dispatchX = (uint)std::ceil(resolution.x / 8.0f);
 		uint dispatchY = (uint)std::ceil(resolution.y / 8.0f);

@@ -33,8 +33,36 @@ concurrency:
     cancel-in-progress: true
 
 jobs:
+    # Fallback for anything outside release-semantic.yaml's chained build
+    # (manual draft, workflow_dispatch, direct tag push, or a failed chain):
+    # skip rebuilding when the AIO archive is already attached.
+    check-existing:
+        name: Check for already-attached artifacts
+        if: github.event_name == 'release'
+        runs-on: ubuntu-latest
+        outputs:
+            needs-build: ${{ steps.check.outputs.needs-build }}
+        steps:
+            - name: Check release assets
+              id: check
+              env:
+                  GH_TOKEN: ${{ github.token }}
+                  GH_REPO: ${{ github.repository }}
+                  RELEASE_TAG: ${{ github.event.release.tag_name }}
+              run: |
+                  set -euo pipefail
+                  if gh release view "$RELEASE_TAG" --json assets -q '.assets[].name' 2>/dev/null | grep -q '^CommunityShaders_AIO-.*\.7z$'; then
+                    echo "AIO archive already attached to $RELEASE_TAG -- skipping rebuild."
+                    echo "needs-build=false" >> "$GITHUB_OUTPUT"
+                  else
+                    echo "No AIO archive on $RELEASE_TAG yet -- building."
+                    echo "needs-build=true" >> "$GITHUB_OUTPUT"
+                  fi
+
     build:
         name: Build
+        needs: [check-existing]
+        if: always() && !cancelled() && (github.event_name != 'release' || needs.check-existing.outputs.needs-build == 'true')
         uses: ./.github/workflows/_shared-build.yaml
         with:
             ref: ${{ github.ref }}
@@ -49,31 +77,19 @@ jobs:
 
     release:
         name: Post Release for Draft, Manual Run, or Tag
-        needs: [build]
+        needs: [check-existing, build]
+        # cpp-built alone, not needs.build.result: a shader-validation leg
+        # failing must not block attaching what DID build.
         if: >
             always() && !cancelled() &&
             needs.build.outputs.cpp-built == 'true' &&
             (github.event_name == 'workflow_dispatch' ||
              startsWith(github.ref, 'refs/tags/v') ||
              (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')))
-        # No compilation here: artifact download, gh/jq notes, 7z packaging
-        # (already proven on ubuntu-latest by shader-cache.yaml's Package job),
-        # and the publish-release composite.
         runs-on: ubuntu-latest
         outputs:
-            release_tag: ${{ steps.combined_notes.outputs.release_tag }}
-        permissions:
-            contents: write
+            release_tag: ${{ steps.resolve-tag.outputs.release_tag }}
         steps:
-            # Sparse-checkout the composite action FIRST: actions/checkout's
-            # default clean would wipe the artifacts downloaded below if it ran
-            # after them. Only .github/actions is fetched; gh still resolves the
-            # repo via GH_REPO in the notes step.
-            - name: Check out composite action
-              uses: actions/checkout@v6
-              with:
-                  sparse-checkout: .github/actions
-
             - name: Ensure ref is a tag
               if: github.event_name == 'workflow_dispatch' || github.event_name == 'push'
               shell: bash
@@ -83,128 +99,48 @@ jobs:
                     exit 1
                   fi
 
-            - name: Download dist artifacts
-              uses: actions/download-artifact@v7
-              with:
-                  name: dist-artifacts
-                  path: dist/
-
-            # The Feature Metadata Summary is already in this body (appended
-            # during Semantic Release); just resolve the tag and fetch it.
-            - name: Resolve release tag and body
-              id: combined_notes
-              shell: bash
-              # GH_TOKEN: required for `gh release view`; without it the `||`
-              # fallback wrote an empty file that clobbered the release body on
-              # update (v1.5.1).
-              # GH_REPO: pinned so `gh` never infers the repo from git remotes.
-              # The checkout above is sparse (actions-only), so don't rely on its
-              # remote config -- inference once died "fatal: not a git repository"
-              # and aborted the step (v1.5.2 run 25871339509).
-              env:
-                  GH_TOKEN: ${{ github.token }}
-                  GH_REPO: ${{ github.repository }}
-              run: |
-                  set -euo pipefail
-
-                  if [ "${{ github.event_name }}" = "release" ]; then
-                    RELEASE_TAG="${{ github.event.release.tag_name }}"
-                  else
-                    RELEASE_TAG="${{ github.ref_name }}"
-                  fi
-
-                  # Fetch existing body. If the release does not exist yet
-                  # (e.g. tag-push trigger before any release was created),
-                  # treat empty as acceptable. Any other failure is fatal so
-                  # we never clobber a real body with empty content.
-                  if gh release view "$RELEASE_TAG" --json body -q .body > auto-release-notes.md 2>/tmp/gh-err; then
-                    :
-                  else
-                    if grep -q 'release not found' /tmp/gh-err; then
-                      echo "Release $RELEASE_TAG does not exist yet; starting with empty body."
-                      : > auto-release-notes.md
-                    else
-                      echo "::error::Failed to fetch release body for $RELEASE_TAG:"
-                      cat /tmp/gh-err
-                      exit 1
-                    fi
-                  fi
-                  echo "body_file=auto-release-notes.md" >> $GITHUB_OUTPUT
-                  echo "release_tag=$RELEASE_TAG" >> $GITHUB_OUTPUT
-
-            # Stage the shared build's ShaderCache-SE/VR artifacts into dist/ as
-            # ShaderCache-<runtime>-<tag>.7z so the publish-release step below
-            # attaches them via the same dist/*.7z glob as the AIO (nexus-upload
-            # globs them off the release). publish-release uses removeArtifacts,
-            # so it wipes every asset and re-attaches only dist/*.7z — meaning a
-            # runtime whose cache build failed THIS run must be re-supplied from
-            # the existing release asset, or removeArtifacts would strip it. This
-            # keeps the attach idempotent (re-runs replace cleanly) and safe when
-            # one runtime's build leg fails (the other's prior cache is preserved).
-            - name: Download shader cache artifacts
-              continue-on-error: true
-              uses: actions/download-artifact@v7
-              with:
-                  pattern: ShaderCache-*
-                  path: shader-caches/
-
-            - name: Stage shader caches into dist
+            - name: Resolve release tag
+              id: resolve-tag
               shell: bash
               env:
-                  GH_TOKEN: ${{ github.token }}
-                  GH_REPO: ${{ github.repository }}
-                  RELEASE_TAG: ${{ steps.combined_notes.outputs.release_tag }}
+                  EVENT_NAME: ${{ github.event_name }}
+                  RELEASE_TAG: ${{ github.event.release.tag_name }}
+                  REF_NAME: ${{ github.ref_name }}
               run: |
                   set -euo pipefail
-                  for runtime in SE VR; do
-                    target="dist/ShaderCache-${runtime}-${RELEASE_TAG}.7z"
-                    src="shader-caches/ShaderCache-${runtime}"
-                    rm -f "$target"
-                    if [ -d "$src" ]; then
-                      # Fresh cache from this run. ShaderCache/ root matches
-                      # shader-cache.yaml's seed layout. Guard packaging so one
-                      # runtime's failure warns instead of aborting the release
-                      # under set -e; the other runtime still ships.
-                      if rm -rf ShaderCache && mv "$src" ShaderCache && 7z a -t7z -mx=7 "$target" ./ShaderCache >/dev/null; then
-                        echo "Staged fresh $target"
-                      else
-                        echo "::warning::Failed to package fresh ShaderCache-${runtime}; release ships without it."
-                      fi
-                    elif gh release download "$RELEASE_TAG" --pattern "ShaderCache-${runtime}-${RELEASE_TAG}.7z" --dir dist 2>/dev/null; then
-                      # No fresh build this run; preserve the cache already on the
-                      # release so removeArtifacts does not drop it.
-                      echo "Preserved existing $target"
-                    else
-                      echo "::warning::No fresh or existing ShaderCache-${runtime}; release ships without it."
-                    fi
-                  done
+                  if [ "$EVENT_NAME" = "release" ]; then
+                    echo "release_tag=$RELEASE_TAG" >> "$GITHUB_OUTPUT"
+                  else
+                    echo "release_tag=$REF_NAME" >> "$GITHUB_OUTPUT"
+                  fi
 
-            - name: Create or Update Release
-              uses: ./.github/actions/publish-release
-              with:
-                  token: ${{ github.token }}
-                  name: "Open Shaders ${{ steps.combined_notes.outputs.release_tag }}"
-                  tag: ${{ steps.combined_notes.outputs.release_tag }}
-                  draft: "true"
-                  omit-draft-during-update: "true"
-                  artifacts: "${{ github.workspace }}/dist/*.7z"
-                  body-file: ${{ steps.combined_notes.outputs.body_file }}
-                  download-artifact: "false"
+    attach:
+        name: Attach artifacts to release
+        needs: [release]
+        if: always() && !cancelled() && needs.release.result == 'success'
+        permissions:
+            contents: write
+            id-token: write
+            attestations: write
+        uses: ./.github/workflows/_attach-release-artifacts.yaml
+        with:
+            tag: ${{ needs.release.outputs.release_tag }}
+            draft: "true"
+        secrets:
+            token: ${{ secrets.GITHUB_TOKEN }}
 
     nexus-upload:
-        # Chained from `release` to avoid the artifact-attachment race a
-        # parallel `release: published` trigger on a separate workflow had:
-        # the prior release-nexus-trigger.yaml fired in parallel with this
-        # build and tried to download artifacts before they existed.
-        # Stable tags only (no '-' in the tag name).
+        # Stable tags only. Proceeds whether THIS run attached artifacts or
+        # check-existing found them already attached by the chained build.
         name: Nexus Upload
-        needs: [release]
+        needs: [check-existing, attach]
         if: >
             always() && !cancelled() &&
-            needs.release.result == 'success' &&
             github.event_name == 'release' &&
             github.event.action == 'published' &&
-            !contains(github.event.release.tag_name, '-')
+            !contains(github.event.release.tag_name, '-') &&
+            (needs.attach.result == 'success' ||
+             (needs.check-existing.result == 'success' && needs.check-existing.outputs.needs-build == 'false'))
         uses: ./.github/workflows/nexus-upload.yaml
         with:
             tag: ${{ github.event.release.tag_name }}

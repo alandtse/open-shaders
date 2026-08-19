@@ -110,7 +110,7 @@ namespace Util::IconLoader
 
 			{ "Categories\\characters.png", &menu->uiIcons.characters.texture, &menu->uiIcons.characters.size },
 			{ "Categories\\display.png", &menu->uiIcons.display.texture, &menu->uiIcons.display.size },
-			{ "Categories\\grass.png", &menu->uiIcons.grass.texture, &menu->uiIcons.grass.size },
+			{ "Categories\\grass.png", &menu->uiIcons.foliage.texture, &menu->uiIcons.foliage.size },
 			{ "Categories\\lighting.png", &menu->uiIcons.lighting.texture, &menu->uiIcons.lighting.size },
 			{ "Categories\\sky.png", &menu->uiIcons.sky.texture, &menu->uiIcons.sky.size },
 			{ "Categories\\landscape.png", &menu->uiIcons.landscape.texture, &menu->uiIcons.landscape.size },

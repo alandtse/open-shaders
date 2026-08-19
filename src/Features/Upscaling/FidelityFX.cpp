@@ -12,39 +12,152 @@ ffxFunctions ffxModule;
 
 std::vector<std::pair<std::string, std::string>> FidelityFX::dllVersions = {};
 
+namespace
+{
+	DLL_DIRECTORY_COOKIE s_fidelityFxDllDirectoryCookie = nullptr;
+
+	std::string GetFidelityFxPathText(const std::filesystem::path& a_path)
+	{
+		return stl::utf16_to_utf8(a_path.wstring()).value_or("<unprintable path>");
+	}
+
+	void EnsureFidelityFxDllDirectory(const std::filesystem::path& a_pluginDir)
+	{
+		if (s_fidelityFxDllDirectoryCookie)
+			return;
+
+		auto kernel32 = GetModuleHandleW(L"kernel32.dll");
+		if (!kernel32) {
+			const auto error = GetLastError();
+			logger::warn("[FidelityFX] Failed to access kernel32 while registering '{}' (Win32 error {})",
+				GetFidelityFxPathText(a_pluginDir), error);
+			return;
+		}
+
+		using AddDllDirectoryFn = DLL_DIRECTORY_COOKIE(WINAPI*)(PCWSTR);
+		auto addDllDirectory = reinterpret_cast<AddDllDirectoryFn>(GetProcAddress(kernel32, "AddDllDirectory"));
+		if (!addDllDirectory) {
+			const auto error = GetLastError();
+			logger::warn("[FidelityFX] AddDllDirectory is unavailable for '{}' (Win32 error {})",
+				GetFidelityFxPathText(a_pluginDir), error);
+			return;
+		}
+
+		s_fidelityFxDllDirectoryCookie = addDllDirectory(a_pluginDir.c_str());
+		if (!s_fidelityFxDllDirectoryCookie) {
+			const auto error = GetLastError();
+			logger::warn("[FidelityFX] Failed to register DLL directory '{}' (Win32 error {})",
+				GetFidelityFxPathText(a_pluginDir), error);
+		}
+	}
+
+	HMODULE LoadFidelityFxDll(const std::filesystem::path& a_path, DWORD& a_error)
+	{
+		constexpr DWORD kLoadFlags =
+			LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR |
+			LOAD_LIBRARY_SEARCH_DEFAULT_DIRS |
+			LOAD_LIBRARY_SEARCH_USER_DIRS;
+
+		a_error = ERROR_SUCCESS;
+		auto loadedModule = LoadLibraryExW(a_path.c_str(), nullptr, kLoadFlags);
+		if (!loadedModule)
+			a_error = GetLastError();
+		return loadedModule;
+	}
+
+	bool FidelityFxDllExists(const std::filesystem::path& a_path, std::error_code& a_error)
+	{
+		a_error.clear();
+		return std::filesystem::is_regular_file(a_path, a_error);
+	}
+}
+
 void FidelityFX::LoadFFX()
 {
-	// Load uframe generation DLL and its function pointers
-	std::wstring framegenDllName = L"amd_fidelityfx_framegeneration_dx12.dll";
-	std::wstring framegenPath = std::wstring(FidelityFX::PluginDir) + L"\\" + framegenDllName;
-	featureFSR3FG = LoadLibrary(framegenPath.c_str());
+	featureFSR3FG = false;
+	featureRuntimeUpscaler = false;
 
-	// Load loader DLL from plugin directory
-	std::wstring loaderDllName = L"amd_fidelityfx_loader_dx12.dll";
-	std::wstring pluginLoaderPath = std::wstring(FidelityFX::PluginDir) + L"\\" + loaderDllName;
+	const auto pluginDir = (Util::PathHelpers::GetDataPath() / "Shaders" / "Upscaling" / "FidelityFX").lexically_normal();
+	if (!pluginDir.is_absolute()) {
+		logger::error("[FidelityFX] Refusing non-absolute DLL directory '{}'", GetFidelityFxPathText(pluginDir));
+		return;
+	}
 
-	module = LoadLibrary(pluginLoaderPath.c_str());
+	EnsureFidelityFxDllDirectory(pluginDir);
 
-	// Cache all DLL versions in the FidelityFX directory
-	std::filesystem::path pluginDir = std::filesystem::path(FidelityFX::PluginDir);
+	const auto loaderPath = pluginDir / "amd_fidelityfx_loader_dx12.dll";
+	const auto frameGenerationPath = pluginDir / "amd_fidelityfx_framegeneration_dx12.dll";
+	const auto runtimeUpscalerPath = pluginDir / RuntimeUpscalerDllName;
+
 	FidelityFX::dllVersions = Util::EnumerateDllVersions(pluginDir);
 	for (const auto& [name, versionStr] : FidelityFX::dllVersions)
 		logger::info("[FidelityFX] {} version: {}", name, versionStr);
 
-	if (module) {
-		logger::info("[FidelityFX] Loader DLL loaded successfully from plugin directory");
-
-		ffxLoadFunctions(&ffxModule, module);
-
-		if (featureFSR3FG) {
-			logger::info("[FidelityFX] Frame generation DLL found and available");
-		} else {
-			logger::warn("[FidelityFX] Frame generation DLL not found - FSR3 frame generation disabled");
+	const auto loadDll = [](const char* a_label, const std::filesystem::path& a_path, HMODULE& a_module) {
+		if (a_module) {
+			logger::info("[FidelityFX] {} loaded from '{}'", a_label, GetFidelityFxPathText(a_path));
+			return true;
 		}
-	} else {
-		logger::error("[FidelityFX] Failed to load {} from plugin directory",
-			stl::utf16_to_utf8(loaderDllName).value_or("loader DLL"));
+
+		std::error_code fileError;
+		if (!FidelityFxDllExists(a_path, fileError)) {
+			if (fileError) {
+				logger::error("[FidelityFX] Failed to inspect {} at '{}': {}", a_label,
+					GetFidelityFxPathText(a_path), fileError.message());
+			} else {
+				logger::warn("[FidelityFX] {} is missing at '{}'", a_label, GetFidelityFxPathText(a_path));
+			}
+			return false;
+		}
+
+		DWORD loadError = ERROR_SUCCESS;
+		a_module = LoadFidelityFxDll(a_path, loadError);
+		if (!a_module) {
+			logger::error("[FidelityFX] {} exists but failed to load from '{}' (Win32 error {})",
+				a_label, GetFidelityFxPathText(a_path), loadError);
+			return false;
+		}
+
+		logger::info("[FidelityFX] {} loaded from '{}'", a_label, GetFidelityFxPathText(a_path));
+		return true;
+	};
+
+	const bool loaderLoaded = loadDll("Loader DLL", loaderPath, module);
+	if (loaderLoaded) {
+		ffxModule = {};
+		ffxLoadFunctions(&ffxModule, module);
 	}
+
+	const bool loaderReady = loaderLoaded &&
+	                         ffxModule.CreateContext &&
+	                         ffxModule.DestroyContext &&
+	                         ffxModule.Configure &&
+	                         ffxModule.Query &&
+	                         ffxModule.Dispatch;
+	if (loaderLoaded && !loaderReady)
+		logger::error("[FidelityFX] Loader DLL is missing one or more required API exports at '{}'", GetFidelityFxPathText(loaderPath));
+
+	if (!loaderReady) {
+		const auto reportSkippedDll = [](const char* a_label, const std::filesystem::path& a_path) {
+			std::error_code fileError;
+			if (FidelityFxDllExists(a_path, fileError)) {
+				logger::warn("[FidelityFX] {} exists at '{}' but was not loaded because the loader is unavailable",
+					a_label, GetFidelityFxPathText(a_path));
+			} else if (fileError) {
+				logger::error("[FidelityFX] Failed to inspect {} at '{}': {}", a_label,
+					GetFidelityFxPathText(a_path), fileError.message());
+			} else {
+				logger::warn("[FidelityFX] {} is missing at '{}'", a_label, GetFidelityFxPathText(a_path));
+			}
+		};
+
+		reportSkippedDll("Frame generation DLL", frameGenerationPath);
+		reportSkippedDll("Runtime upscaler DLL", runtimeUpscalerPath);
+		return;
+	}
+
+	featureFSR3FG = loadDll("Frame generation DLL", frameGenerationPath, frameGenerationModule);
+	featureRuntimeUpscaler = loadDll("Runtime upscaler DLL", runtimeUpscalerPath, runtimeUpscalerModule);
 }
 
 void FidelityFX::SetupFrameGeneration()
@@ -245,6 +358,13 @@ void FidelityFX::CreateFSRResources()
 {
 	auto state = globals::state;
 
+	// Tear down any live runtime-upscaler contexts/resources so a resolution/mode change
+	// doesn't leave them sized for the previous configuration (see RuntimeUpscaler.cpp).
+	WaitForRuntimeUpscalerIdle();
+	DestroyRuntimeUpscalerContexts(false);
+	DestroyRuntimeUpscalerResources(false);
+	ResetRuntimeUpscalerTracking(true);
+
 	// Prevent multiple allocations
 	if (fsrScratchBuffer) {
 		logger::warn("[FidelityFX] FSR resources already created, skipping allocation");
@@ -319,6 +439,9 @@ void FidelityFX::CreateFSRResources()
 
 void FidelityFX::DestroyFSRResources()
 {
+	WaitForHostFsrIdle();
+	ResetFSRIdleFence();
+
 	uint32_t numContexts = globals::game::isVR ? 2 : 1;
 	for (uint32_t i = 0; i < numContexts; ++i) {
 		if (ffxFsr3ContextDestroy(&fsrContext[i]) != FFX_OK)
@@ -333,6 +456,12 @@ void FidelityFX::DestroyFSRResources()
 
 	// Reset crash logging flag when resources are destroyed
 	fsrDispatchCrashLogged = false;
+
+	WaitForRuntimeUpscalerIdle();
+	DestroyRuntimeUpscalerContexts(false);
+	DestroyRuntimeUpscalerResources(false);
+	ResetRuntimeCommandContexts();
+	ResetRuntimeUpscalerTracking(true);
 }
 
 FfxResource ffxGetResource(ID3D11Resource* dx11Resource,
@@ -353,18 +482,21 @@ FfxResource ffxGetResource(ID3D11Resource* dx11Resource,
 	return resource;
 }
 
-void FidelityFX::Upscale(ID3D11Resource* a_upscalingTexture, ID3D11Resource* a_reactiveMask, ID3D11Resource* a_transparencyCompositionMask, ID3D11Resource* a_motionVectors, float a_sharpness, ID3D11Resource* a_colorOut)
+void FidelityFX::Upscale(ID3D11Resource* a_upscalingTexture, ID3D11Resource* a_depth, ID3D11Resource* a_reactiveMask, ID3D11Resource* a_transparencyCompositionMask, ID3D11Resource* a_motionVectors, float a_sharpness, ID3D11Resource* a_colorOut)
 {
-	auto renderer = globals::game::renderer;
-	auto context = globals::d3d::context;
 	auto state = globals::state;
-	auto& depthTexture = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kMAIN];
 
 	auto screenSize = state->screenSize;
 	auto renderSize = Util::ConvertToDynamic(screenSize);
 
 	auto& upscaling = globals::features::upscaling;
 	auto jitter = upscaling.jitter;
+
+	// state->screenSize is polluted to renderRes under PerfMode's hook -- mirror
+	// CreateFSRResources' dlssperfActive check or the upscale target size is wrong.
+	auto& perfMode = upscaling.perfMode;
+	const bool dlssperfActive = perfMode.IsHookActive();
+	const auto displaySize = dlssperfActive ? perfMode.GetDisplayScreenSize() : screenSize;
 
 	// Default to in-place output when caller didn't supply a separate destination.
 	if (!a_colorOut)
@@ -383,49 +515,19 @@ void FidelityFX::Upscale(ID3D11Resource* a_upscalingTexture, ID3D11Resource* a_r
 			}
 		}
 
-		FfxFsr3DispatchUpscaleDescription dispatchParameters{};
-		dispatchParameters.commandList = ffxGetCommandListDX11(context);
-		dispatchParameters.color = ffxGetResource(r_color, L"FSR3_Input_OutputColor");
-		dispatchParameters.depth = ffxGetResource(r_depth, L"FSR3_InputDepth");
-		dispatchParameters.motionVectors = ffxGetResource(r_mvec, L"FSR3_InputMotionVectors");
-		dispatchParameters.exposure = ffxGetResource(nullptr, L"FSR3_InputExposure");
-		dispatchParameters.upscaleOutput = ffxGetResource(r_output, L"FSR3_OutputColor");
-		dispatchParameters.reactive = ffxGetResource(r_reactive, L"FSR3_InputReactiveMap");
-		dispatchParameters.transparencyAndComposition = ffxGetResource(r_trans, L"FSR3_TransparencyAndCompositionMap");
+		const uint32_t displayWidth = (uint32_t)(globals::game::isVR ? displaySize.x / 2 : displaySize.x);
+		const uint32_t displayHeight = (uint32_t)displaySize.y;
 
-		dispatchParameters.motionVectorScale.x = mv_scale_x;
-		dispatchParameters.motionVectorScale.y = renderSize.y;
-		dispatchParameters.renderSize.width = r_width;
-		dispatchParameters.renderSize.height = (uint)renderSize.y;
-
-		dispatchParameters.jitterOffset.x = -jitter.x;
-		dispatchParameters.jitterOffset.y = -jitter.y;
-
-		dispatchParameters.frameTimeDelta = *globals::game::deltaTime * 1000.f;
-		dispatchParameters.cameraFar = *globals::game::cameraFar;
-		dispatchParameters.cameraNear = *globals::game::cameraNear;
-		dispatchParameters.enableSharpening = true;
-		dispatchParameters.sharpness = a_sharpness;
-		dispatchParameters.cameraFovAngleVertical = Util::GetVerticalFOVRad();
-		dispatchParameters.viewSpaceToMetersFactor = 0.01428222656f;
-		// Menus render no motion vectors; camera-derived MVs restore valid reprojection there.
-		// Reset only when that fill couldn't run — accumulating against zero MVs ghosts.
-		dispatchParameters.reset = state->IsMainOrLoadingMenuOpen() && !upscaling.menuCameraMVsValid;
-		dispatchParameters.preExposure = 1.0f;
-		dispatchParameters.flags = 0;
-
-		__try {
-			if (ffxFsr3ContextDispatchUpscale(&fsrContext[contextIndex], &dispatchParameters) != FFX_OK)
-				logger::critical("[FidelityFX] Failed to dispatch upscaling for eye {}!", contextIndex);
-		} __except (EXCEPTION_EXECUTE_HANDLER) {
-			if (!fsrDispatchCrashLogged) {
-				logger::critical("[FidelityFX] FSR3 dispatch crashed for eye {} - this may be caused by RenderDoc capture interfering with FSR operations. Try disabling RenderDoc capture.", contextIndex);
-				fsrDispatchCrashLogged = true;
-			}
-		}
+		const bool dispatched = UpscaleRegion(contextIndex, r_color, r_depth, r_mvec, r_reactive, r_trans, r_output,
+			r_width, (uint32_t)renderSize.y, displayWidth, displayHeight,
+			mv_scale_x, renderSize.y, a_sharpness);
+		if (!dispatched)
+			logger::critical("[FidelityFX] Failed to dispatch upscaling for eye {}!", contextIndex);
 
 		if (state->frameAnnotations)
 			state->EndPerfEvent();
+
+		return dispatched;
 	};
 
 	if (globals::game::isVR) {
@@ -434,25 +536,29 @@ void FidelityFX::Upscale(ID3D11Resource* a_upscalingTexture, ID3D11Resource* a_r
 
 		uint32_t numViews = 2;
 		uint32_t eyeWidth = (uint32_t)(renderSize.x / 2);
+		bool allEvaluated = true;
 		for (uint32_t i = 0; i < numViews; ++i) {
-			DispatchFSR(i,
-				upscaling.vrIntermediateColorIn[i]->resource.get(),
-				upscaling.vrIntermediateLinearDepth[i]->resource.get(),
-				upscaling.vrIntermediateMotionVectors[i]->resource.get(),
-				upscaling.vrIntermediateReactiveMask[i]->resource.get(),
-				upscaling.vrIntermediateTransparencyMask[i]->resource.get(),
-				upscaling.vrIntermediateColorOut[i]->resource.get(),
-				eyeWidth,
-				renderSize.x / 2.0f);
+			if (!DispatchFSR(i,
+					upscaling.vrIntermediateColorIn[i]->resource.get(),
+					upscaling.vrIntermediateLinearDepth[i]->resource.get(),
+					upscaling.vrIntermediateMotionVectors[i]->resource.get(),
+					upscaling.vrIntermediateReactiveMask[i]->resource.get(),
+					upscaling.vrIntermediateTransparencyMask[i]->resource.get(),
+					upscaling.vrIntermediateColorOut[i]->resource.get(),
+					eyeWidth,
+					renderSize.x / 2.0f))
+				allEvaluated = false;
 		}
 
 		// Merge outputs into the supplied displayRes destination (kMAIN by default;
-		// perfMode.testTexture when PerfMode has shrunk the engine RTs).
-		upscaling.FinalizePerEyeOutputs(a_colorOut);
+		// perfMode.testTexture when PerfMode has shrunk the engine RTs). Skip on a failed
+		// eye -- FinalizePerEyeOutputs would otherwise merge an unwritten/stale eye texture.
+		if (allEvaluated)
+			upscaling.FinalizePerEyeOutputs(a_colorOut);
 	} else {
 		DispatchFSR(0,
 			a_upscalingTexture,
-			depthTexture.texture,
+			a_depth,
 			a_motionVectors,
 			a_reactiveMask,
 			a_transparencyCompositionMask,

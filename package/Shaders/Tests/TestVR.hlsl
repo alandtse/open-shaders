@@ -119,10 +119,18 @@ static const float kEps = 0.0001f;
 	ASSERT(AreEqual, Stereo::GetEyeIndexFromTexCoord(float2(1.0, 0.5)), 1u);
 }
 
-	/// @tags vr, stereo, uv
-	/// GetEyeIndexFromTexCoord is consistent with ConvertToStereoUV output
-	[numthreads(1, 1, 1)] void TestEyeIndexConsistentWithStereoUV()
+	/// @tags vr, stereo, pixel
+	/// GetEyeIndexFromPixel assigns the center texel of an odd width to the right eye
+	[numthreads(1, 1, 1)] void TestGetEyeIndexFromPixelOddWidth()
 {
+	uint2 frameDim = uint2(189, 64);
+	ASSERT(AreEqual, Stereo::GetEyeIndexFromPixel(uint2(93, 0), frameDim), 0u);
+	ASSERT(AreEqual, Stereo::GetEyeIndexFromPixel(uint2(94, 0), frameDim), 1u);
+}
+
+/// @tags vr, stereo, uv
+/// GetEyeIndexFromTexCoord is consistent with ConvertToStereoUV output
+[numthreads(1, 1, 1)] void TestEyeIndexConsistentWithStereoUV() {
 	float2 monoUV = float2(0.6, 0.4);
 
 	// Convert to stereo for left eye, then detect eye index
@@ -134,59 +142,60 @@ static const float kEps = 0.0001f;
 	ASSERT(AreEqual, Stereo::GetEyeIndexFromTexCoord(stereoRight), 1u);
 }
 
-/// @tags vr, stereo, depth, edge-detection
-/// MaxDepthDiff: identical neighbors -> 0
-[numthreads(1, 1, 1)] void TestMaxDepthDiffAllSame() {
+	/// @tags vr, stereo, depth, edge-detection
+	/// MaxDepthDiff: identical neighbors -> 0
+	[numthreads(1, 1, 1)] void TestMaxDepthDiffAllSame()
+{
 	float result = Stereo::MaxDepthDiff(0.5, float4(0.5, 0.5, 0.5, 0.5));
 	ASSERT(IsTrue, abs(result) < kEps);
 }
 
-	/// @tags vr, stereo, depth, edge-detection
-	/// MaxDepthDiff: returns |center - neighbor| when one neighbor differs
-	[numthreads(1, 1, 1)] void TestMaxDepthDiffOneDiffers()
-{
+/// @tags vr, stereo, depth, edge-detection
+/// MaxDepthDiff: returns |center - neighbor| when one neighbor differs
+[numthreads(1, 1, 1)] void TestMaxDepthDiffOneDiffers() {
 	// Only .z differs
 	float result = Stereo::MaxDepthDiff(0.5, float4(0.5, 0.5, 0.8, 0.5));
 	ASSERT(IsTrue, abs(result - 0.3) < kEps);
 }
 
-/// @tags vr, stereo, depth, edge-detection
-/// MaxDepthDiff: returns the largest difference across all four neighbors
-[numthreads(1, 1, 1)] void TestMaxDepthDiffPicksLargest() {
+	/// @tags vr, stereo, depth, edge-detection
+	/// MaxDepthDiff: returns the largest difference across all four neighbors
+	[numthreads(1, 1, 1)] void TestMaxDepthDiffPicksLargest()
+{
 	float result = Stereo::MaxDepthDiff(0.5, float4(0.55, 0.45, 0.9, 0.48));
 	ASSERT(IsTrue, abs(result - 0.4) < kEps);  // abs(0.5 - 0.9) = 0.4
 }
 
-	/// @tags vr, stereo, depth, edge-detection
-	/// MaxDepthDiff: arm/world case returns exact diff (arm=0.75, world=1.0 -> 0.25)
-	[numthreads(1, 1, 1)] void TestMaxDepthDiffArmWorldCase()
-{
+/// @tags vr, stereo, depth, edge-detection
+/// MaxDepthDiff: arm/world case returns exact diff (arm=0.75, world=1.0 -> 0.25)
+[numthreads(1, 1, 1)] void TestMaxDepthDiffArmWorldCase() {
 	float armDepth = 0.75;
 	float worldDepth = 1.0;
 	float result = Stereo::MaxDepthDiff(armDepth, float4(worldDepth, armDepth, armDepth, armDepth));
 	ASSERT(IsTrue, abs(result - abs(worldDepth - armDepth)) < kEps);
 }
 
-/// @tags vr, stereo, depth, edge-detection
-/// MaxDepthDiff: symmetric - diff(a,b) == diff(b,a)
-[numthreads(1, 1, 1)] void TestMaxDepthDiffSymmetry() {
+	/// @tags vr, stereo, depth, edge-detection
+	/// MaxDepthDiff: symmetric - diff(a,b) == diff(b,a)
+	[numthreads(1, 1, 1)] void TestMaxDepthDiffSymmetry()
+{
 	float a = 0.3, b = 0.7;
 	float fwd = Stereo::MaxDepthDiff(a, float4(b, a, a, a));
 	float rev = Stereo::MaxDepthDiff(b, float4(a, b, b, b));
 	ASSERT(IsTrue, abs(fwd - rev) < kEps);
 }
 
-	/// @tags vr, stereo, depth, edge-detection
-	/// MaxDepthDiff: center == 0 (mask pixel) against world neighbor
-	[numthreads(1, 1, 1)] void TestMaxDepthDiffMaskCenter()
-{
+/// @tags vr, stereo, depth, edge-detection
+/// MaxDepthDiff: center == 0 (mask pixel) against world neighbor
+[numthreads(1, 1, 1)] void TestMaxDepthDiffMaskCenter() {
 	float result = Stereo::MaxDepthDiff(0.0, float4(0.8, 0.0, 0.0, 0.0));
 	ASSERT(IsTrue, abs(result - 0.8) < kEps);
 }
 
-/// @tags vr, stereo, edge-detection
-/// ClampToEyeBounds: interior pixel is returned unchanged for both eyes
-[numthreads(1, 1, 1)] void TestClampToEyeBoundsInterior() {
+	/// @tags vr, stereo, edge-detection
+	/// ClampToEyeBounds: interior pixel is returned unchanged for both eyes
+	[numthreads(1, 1, 1)] void TestClampToEyeBoundsInterior()
+{
 	float2 frameDim = float2(2048, 1024);
 	int2 left = Stereo::ClampToEyeBounds(int2(512, 512), 0, frameDim);
 	ASSERT(AreEqual, left.x, 512);
@@ -197,29 +206,28 @@ static const float kEps = 0.0001f;
 	ASSERT(AreEqual, right.y, 512);
 }
 
-	/// @tags vr, stereo, edge-detection
-	/// ClampToEyeBounds: left eye x cannot cross the half-width seam
-	[numthreads(1, 1, 1)] void TestClampToEyeBoundsLeftEyeSeam()
-{
+/// @tags vr, stereo, edge-detection
+/// ClampToEyeBounds: left eye x cannot cross the half-width seam
+[numthreads(1, 1, 1)] void TestClampToEyeBoundsLeftEyeSeam() {
 	float2 frameDim = float2(2048, 1024);
 	// x past the seam clamps to halfWidth - 1 = 1023
 	int2 result = Stereo::ClampToEyeBounds(int2(1025, 512), 0, frameDim);
 	ASSERT(AreEqual, result.x, 1023);
 }
 
-/// @tags vr, stereo, edge-detection
-/// ClampToEyeBounds: right eye x cannot cross the half-width seam
-[numthreads(1, 1, 1)] void TestClampToEyeBoundsRightEyeSeam() {
+	/// @tags vr, stereo, edge-detection
+	/// ClampToEyeBounds: right eye x cannot cross the half-width seam
+	[numthreads(1, 1, 1)] void TestClampToEyeBoundsRightEyeSeam()
+{
 	float2 frameDim = float2(2048, 1024);
 	// x before the seam clamps to halfWidth = 1024
 	int2 result = Stereo::ClampToEyeBounds(int2(1022, 512), 1, frameDim);
 	ASSERT(AreEqual, result.x, 1024);
 }
 
-	/// @tags vr, stereo, edge-detection
-	/// ClampToEyeBounds: x clamped at outer borders (left eye left edge, right eye right edge)
-	[numthreads(1, 1, 1)] void TestClampToEyeBoundsOuterBorders()
-{
+/// @tags vr, stereo, edge-detection
+/// ClampToEyeBounds: x clamped at outer borders (left eye left edge, right eye right edge)
+[numthreads(1, 1, 1)] void TestClampToEyeBoundsOuterBorders() {
 	float2 frameDim = float2(2048, 1024);
 	int2 leftBorder = Stereo::ClampToEyeBounds(int2(-1, 512), 0, frameDim);
 	ASSERT(AreEqual, leftBorder.x, 0);
@@ -228,9 +236,10 @@ static const float kEps = 0.0001f;
 	ASSERT(AreEqual, rightBorder.x, 2047);
 }
 
-/// @tags vr, stereo, edge-detection
-/// ClampToEyeBounds: y is clamped to [0, frameDim.y - 1] independently of eye
-[numthreads(1, 1, 1)] void TestClampToEyeBoundsY() {
+	/// @tags vr, stereo, edge-detection
+	/// ClampToEyeBounds: y is clamped to [0, frameDim.y - 1] independently of eye
+	[numthreads(1, 1, 1)] void TestClampToEyeBoundsY()
+{
 	float2 frameDim = float2(2048, 1024);
 	int2 top = Stereo::ClampToEyeBounds(int2(512, -1), 0, frameDim);
 	ASSERT(AreEqual, top.y, 0);
@@ -239,10 +248,9 @@ static const float kEps = 0.0001f;
 	ASSERT(AreEqual, bottom.y, 1023);
 }
 
-	/// @tags vr, stereo, edge-detection
-	/// ClampToEyeUV: interior UV is returned unchanged for both eyes
-	[numthreads(1, 1, 1)] void TestClampToEyeUVInterior()
-{
+/// @tags vr, stereo, edge-detection
+/// ClampToEyeUV: interior UV is returned unchanged for both eyes
+[numthreads(1, 1, 1)] void TestClampToEyeUVInterior() {
 	float2 left = Stereo::ClampToEyeUV(float2(0.25, 0.5), 0);
 	ASSERT(IsTrue, abs(left.x - 0.25) < kEps);
 	ASSERT(IsTrue, abs(left.y - 0.5) < kEps);
@@ -252,31 +260,44 @@ static const float kEps = 0.0001f;
 	ASSERT(IsTrue, abs(right.y - 0.5) < kEps);
 }
 
-/// @tags vr, stereo, edge-detection
-/// ClampToEyeUV: left eye x cannot cross the x=0.5 seam
-[numthreads(1, 1, 1)] void TestClampToEyeUVLeftEyeSeam() {
+	/// @tags vr, stereo, edge-detection
+	/// ClampToEyeUV: left eye x cannot cross the x=0.5 seam
+	[numthreads(1, 1, 1)] void TestClampToEyeUVLeftEyeSeam()
+{
 	// x past the seam clamps to 0.5
 	float2 result = Stereo::ClampToEyeUV(float2(0.6, 0.5), 0);
 	ASSERT(IsTrue, abs(result.x - 0.5) < kEps);
 }
 
-	/// @tags vr, stereo, edge-detection
-	/// ClampToEyeUV: right eye x cannot cross the x=0.5 seam
-	[numthreads(1, 1, 1)] void TestClampToEyeUVRightEyeSeam()
-{
+/// @tags vr, stereo, edge-detection
+/// ClampToEyeUV: right eye x cannot cross the x=0.5 seam
+[numthreads(1, 1, 1)] void TestClampToEyeUVRightEyeSeam() {
 	// x before the seam clamps to 0.5
 	float2 result = Stereo::ClampToEyeUV(float2(0.4, 0.5), 1);
 	ASSERT(IsTrue, abs(result.x - 0.5) < kEps);
 }
 
-/// @tags vr, stereo, edge-detection
-/// ClampToEyeUV: x clamped at outer borders (left eye at 0.0, right eye at 1.0)
-[numthreads(1, 1, 1)] void TestClampToEyeUVOuterBorders() {
+	/// @tags vr, stereo, edge-detection
+	/// ClampToEyeUV: x clamped at outer borders (left eye at 0.0, right eye at 1.0)
+	[numthreads(1, 1, 1)] void TestClampToEyeUVOuterBorders()
+{
 	float2 leftBorder = Stereo::ClampToEyeUV(float2(-0.1, 0.5), 0);
 	ASSERT(IsTrue, abs(leftBorder.x - 0.0) < kEps);
 
 	float2 rightBorder = Stereo::ClampToEyeUV(float2(1.1, 0.5), 1);
 	ASSERT(IsTrue, abs(rightBorder.x - 1.0) < kEps);
+}
+
+/// @tags vr, stereo, sampling
+/// ClampToEyeUV keeps bilinear samples on texel centers for odd packed widths
+[numthreads(1, 1, 1)] void TestClampToEyeUVTexelCentersOddWidth() {
+	uint2 frameDim = uint2(189, 64);
+	float2 left = Stereo::ClampToEyeUV(float2(0.5, 0.25), 0, frameDim);
+	float2 right = Stereo::ClampToEyeUV(float2(0.49, 0.75), 1, frameDim);
+	ASSERT(IsTrue, abs(left.x - (93.5 / 189.0)) < kEps);
+	ASSERT(IsTrue, abs(right.x - (94.5 / 189.0)) < kEps);
+	ASSERT(IsTrue, abs(left.y - 0.25) < kEps);
+	ASSERT(IsTrue, abs(right.y - 0.75) < kEps);
 }
 
 	/// @tags vr, stereo, edge-detection

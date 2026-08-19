@@ -87,6 +87,7 @@ static const float kEps = 0.0001f;
 	ASSERT(AreEqual, Stereo::GetEyeIndexFromTexCoord(float2(0.5, 0.5)), 0u);
 	ASSERT(AreEqual, Stereo::GetEyeIndexFromTexCoord(float2(0.75, 0.5)), 0u);
 	ASSERT(AreEqual, Stereo::GetEyeIndexFromTexCoord(float2(1.0, 0.5)), 0u);
+	ASSERT(AreEqual, Stereo::GetEyeIndexFromPixel(uint2(188, 0), uint2(189, 64)), 0u);
 }
 
 	/// @tags vr, flat, uv
@@ -107,9 +108,19 @@ static const float kEps = 0.0001f;
 	ASSERT(IsTrue, abs(rightBorder.x - 1.0) < kEps);
 }
 
-/// @tags vr, flat, pixel
-/// ClampToEyeBounds clamps to the full buffer width (no seam) in flat mode
-[numthreads(1, 1, 1)] void TestFlatClampToEyeBoundsIsFullRange() {
+/// @tags vr, flat, sampling
+/// Texel-center overload is an identity in flat mode
+[numthreads(1, 1, 1)] void TestFlatClampToEyeUVTexelCentersIsIdentity() {
+	float2 uv = float2(1.1, -0.25);
+	float2 result = Stereo::ClampToEyeUV(uv, 0, uint2(189, 64));
+	ASSERT(IsTrue, abs(result.x - uv.x) < kEps);
+	ASSERT(IsTrue, abs(result.y - uv.y) < kEps);
+}
+
+	/// @tags vr, flat, pixel
+	/// ClampToEyeBounds clamps to the full buffer width (no seam) in flat mode
+	[numthreads(1, 1, 1)] void TestFlatClampToEyeBoundsIsFullRange()
+{
 	float2 frameDim = float2(2048, 1024);
 	int2 interior = Stereo::ClampToEyeBounds(int2(1500, 512), 0, frameDim);
 	ASSERT(AreEqual, interior.x, 1500);

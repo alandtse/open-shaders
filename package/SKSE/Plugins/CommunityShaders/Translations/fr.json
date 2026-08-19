@@ -132,5 +132,22 @@
     "cs_editor.force_this_weather": "Forcez cette météo",
     "cs_editor.force_weather": "Force Météo",
     "cs_editor.form_id": "ID du formulaire",
-    "cs_editor.form_id_label": "ID du formulaire : %08X"
+    "cs_editor.form_id_label": "ID du formulaire : %08X",
+    "feature.cloud_relight.cloud_relighting": "Rééclairage des nuages",
+    "feature.cloud_relight.cloud_shadows_required": "L’auto-ombrage des nuages nécessite que Cloud Shadows soit installé et activé.",
+    "feature.cloud_relight.description": "Rééclaire les textures de nuages Vanilla à l’aide de la lumière directionnelle active, de l’auto-ombrage des nuages et de l’éclairage de phase des contours argentés.",
+    "feature.cloud_relight.enabled": "Activé",
+    "feature.cloud_relight.key_feature_1": "Mélange de la couleur Vanilla des nuages et de leur couleur rééclairée",
+    "feature.cloud_relight.key_feature_2": "Éclairage de phase des contours argentés et de la diffusion vers l’avant",
+    "feature.cloud_relight.key_feature_3": "Auto-ombrage directionnel des nuages par le soleil ou la lune actifs",
+    "feature.cloud_relight.name": "Cloud Relight",
+    "feature.cloud_relight.relight_mix": "Dosage du rééclairage",
+    "feature.cloud_relight.relight_mix_tooltip": "Multiplicateur de la contribution de lumière directionnelle ajoutée aux nuages.",
+    "feature.cloud_relight.silver_lining": "Contour argenté",
+    "feature.cloud_relight.silver_lining_accent": "Accentuation du contour argenté",
+    "feature.cloud_relight.silver_lining_accent_tooltip": "Mélange entre une phase isotrope uniforme et un éclairage de phase marqué des contours argentés.",
+    "feature.cloud_relight.silver_lining_spread": "Étendue du contour argenté",
+    "feature.cloud_relight.silver_lining_spread_tooltip": "Positif : le contour argenté s’étend dans les zones plus denses des nuages.\nNégatif : le contour argenté reste limité aux bords plus fins.",
+    "feature.cloud_relight.vanilla_mix": "Dosage Vanilla",
+    "feature.cloud_relight.vanilla_mix_tooltip": "Multiplicateur de la couleur Vanilla d’origine des nuages avant l’application du rééclairage."
 }

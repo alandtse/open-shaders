@@ -233,11 +233,20 @@ void HomePageRenderer::RenderFAQSection()
 void HomePageRenderer::RenderCacheMismatchSection()
 {
 	auto shaderCache = globals::shaderCache;
-	if (!shaderCache || !shaderCache->IsDiskCacheHeld())
+	if (!shaderCache || (!shaderCache->IsDiskCacheHeld() &&
+							!shaderCache->HasFeatureSetChanges() &&
+							!shaderCache->HasFeatureSetRevertPending() &&
+							!shaderCache->HasPreviousDiskCache()))
 		return;
 
 	auto menu = Menu::GetSingleton();
 	ImVec4 warningColor = menu ? menu->GetTheme().StatusPalette.Warning : ImVec4(1.0f, 0.8f, 0.2f, 1.0f);
+	const bool featureSetChanged = shaderCache->HasFeatureSetChanges();
+	const bool revertPending = shaderCache->HasFeatureSetRevertPending();
+	const bool featureSetCacheBackedUp = shaderCache->HasFeatureSetCacheBackup();
+	const bool previousCacheAvailable = shaderCache->HasPreviousDiskCache();
+	const bool cacheHeld = shaderCache->IsDiskCacheHeld() && !featureSetChanged && !revertPending;
+	const bool featureChangeHeld = shaderCache->IsDiskCacheHeld() && featureSetChanged && !featureSetCacheBackedUp;
 
 	ImGui::PushStyleColor(ImGuiCol_Text, warningColor);
 	bool headerOpen = ImGui::CollapsingHeader(T("menu.home.cache_mismatch", "Shader Cache Mismatch Detected"), ImGuiTreeNodeFlags_DefaultOpen);
@@ -245,92 +254,138 @@ void HomePageRenderer::RenderCacheMismatchSection()
 	if (!headerOpen)
 		return;
 
-	ImGui::TextWrapped("%s", T("menu.home.cache_mismatch_desc",
-								 "Your installed features changed, so the saved shader cache no longer matches. Shaders "
-								 "compile in memory this session - and on every launch until you resolve this. The saved "
-								 "cache is preserved."));
-	ImGui::Spacing();
-
-	using MismatchKind = Util::CacheInvalidation::CacheMismatch::Kind;
-	for (const auto& mismatch : shaderCache->GetCacheMismatches()) {
-		const char* detail = mismatch.detail.c_str();  // English fallback (logs / non-flip kinds)
-		if (mismatch.kind == MismatchKind::EnabledFlip)
-			detail = mismatch.nowPresent ?
-			             T("menu.home.cache_mismatch_added", "in your setup now, but missing from the saved cache") :
-			             T("menu.home.cache_mismatch_removed", "in the saved cache, but missing from your setup now");
-		ImGui::BulletText("%s: %s", mismatch.feature.c_str(), detail);
-	}
-	ImGui::Spacing();
-
-	ImGui::TextWrapped("%s", T("menu.home.cache_mismatch_resolve",
-								 "Match your features to the saved cache and restart to reuse it, or rebuild for your "
-								 "current setup:"));
-
-	// Every shown mismatch is an EnabledFlip (a Disable-at-Boot difference), so matching the
-	// cache's enabled-state lets the next boot reuse it with no recompile. Disabled when a flip
-	// is for an *uninstalled* feature: settings can't load missing files (the hover explains).
-	const char* blockingFeature = nullptr;
-	for (const auto& m : shaderCache->GetCacheMismatches()) {
-		if (m.kind != MismatchKind::EnabledFlip || m.nowPresent)
-			continue;  // only "cache had it, now off" needs the feature installed
-		for (auto* f : Feature::GetFeatureList())
-			if (f->GetShortName() == m.shortName && !f->failedLoadedMessage.empty()) {
-				blockingFeature = m.feature.c_str();
-				break;
-			}
-		if (blockingFeature)
-			break;
-	}
-	const bool canMatch = blockingFeature == nullptr;
-	static bool s_matchApplied = false;
-	// Clear the "restart to reuse" confirmation if the mismatch set changes underneath us.
-	static size_t s_lastMismatchCount = 0;
-	if (const size_t mismatchCount = shaderCache->GetCacheMismatches().size(); mismatchCount != s_lastMismatchCount) {
-		s_matchApplied = false;
-		s_lastMismatchCount = mismatchCount;
-	}
-	// After Match the choice is made (reuse on restart): show only the confirmation and drop
-	// both buttons, so the resolved state doesn't leave Rebuild beside the reuse message.
-	if (s_matchApplied) {
+	if (revertPending) {
 		ImGui::TextColored(menu ? menu->GetTheme().StatusPalette.RestartNeeded : ImVec4(0.4f, 1.0f, 0.4f, 1.0f),
-			"%s", T("menu.home.cache_mismatch_matched", "Boot settings updated - restart to reuse the saved cache."));
+			"%s", T("menu.home.cache_mismatch_prev_restored", "Previous shader cache restored; restart to use it."));
 		ImGui::Spacing();
 		ImGui::Separator();
 		ImGui::Spacing();
 		return;
 	}
 
-	// Two mutually-exclusive choices, side by side: match the cache (reuse) or rebuild it.
-	if (!canMatch)
-		ImGui::BeginDisabled();
-	const bool matchClicked = ImGui::Button(T("menu.home.cache_mismatch_match", "Match Cache & Restart"));
-	if (!canMatch)
-		ImGui::EndDisabled();
-	if (auto _ttm = Util::HoverTooltipWrapper()) {
-		if (canMatch)
-			ImGui::Text("%s", T("menu.home.cache_mismatch_match_tooltip", "Sets your Disable-at-Boot toggles to match the saved cache, so a restart reuses it with no recompile."));
-		else
-			ImGui::Text(T("menu.home.cache_mismatch_match_blocked", "Unavailable: '%s' is uninstalled (not just disabled), so settings can't match the cache. Reinstall it or rebuild."), blockingFeature);
-	}
-	if (matchClicked) {
-		if (auto* state = globals::state) {
-			for (const auto& m : shaderCache->GetCacheMismatches()) {
-				if (m.kind != MismatchKind::EnabledFlip)
-					continue;  // only flips map to a Disable-at-Boot toggle; never persist other kinds
-				state->SetFeatureDisabled(m.shortName, m.nowPresent);
+	const char* descText = cacheHeld ?
+	                           T("menu.home.cache_mismatch_desc", "A feature used by the saved shader cache is missing or failed to load. CS is keeping the saved disk cache unchanged until you choose what to do.") :
+	                       featureChangeHeld ?
+	                           T("menu.home.cache_mismatch_no_rollback", "Your feature setup changed, but CS could not save a rollback copy. CS is keeping the saved disk cache unchanged until it can rebuild safely.") :
+	                       featureSetChanged ?
+	                           T("menu.home.cache_mismatch_changed_desc", "Your feature setup changed. CS saved the previous shader cache and is building a new cache for the current setup. If you do nothing, future launches will use the new cache after compilation finishes.") :
+	                           T("menu.home.cache_mismatch_prev_available", "A previous shader cache is available. Restore it if you want to go back to the earlier feature setup.");
+
+	ImGui::TextWrapped("%s", descText);
+	ImGui::Spacing();
+
+	using MismatchKind = Util::CacheInvalidation::CacheMismatch::Kind;
+	const auto& mismatches = (cacheHeld || featureChangeHeld) ? shaderCache->GetCacheMismatches() :
+	                                                            shaderCache->GetPreviousCacheMismatches();
+	for (const auto& mismatch : mismatches) {
+		const char* detail = mismatch.detail.c_str();
+		if (mismatch.kind == MismatchKind::EnabledFlip) {
+			if (cacheHeld || featureChangeHeld) {
+				detail = mismatch.nowPresent ?
+				             T("menu.home.cache_mismatch_added", "in your setup now, but missing from the saved cache") :
+				             T("menu.home.cache_mismatch_removed", "in the saved cache, but missing from your setup now");
+			} else {
+				detail = mismatch.nowPresent ?
+				             T("menu.home.cache_mismatch_added_prev", "enabled now; previous cache had it disabled") :
+				             T("menu.home.cache_mismatch_removed_prev", "disabled now; previous cache had it enabled");
 			}
-			state->Save();
-			s_matchApplied = true;
+		}
+		ImGui::BulletText("%s: %s", mismatch.feature.c_str(), detail);
+	}
+	ImGui::Spacing();
+
+	const char* resolveText = cacheHeld ?
+	                              T("menu.home.cache_mismatch_resolve", "Review the listed feature. If CS menu > Feature Issues is available, check it for details. Fix the feature install in your mod manager and restart to reuse the saved cache, or rebuild for the current setup if the feature was removed intentionally:") :
+	                          featureChangeHeld ?
+	                              T("menu.home.cache_mismatch_no_rollback_desc", "Restore is unavailable because CS could not save a rollback copy. Let compilation finish to rebuild the cache for the current setup.") :
+	                              T("menu.home.cache_mismatch_restore_desc", "To go back, restore the previous cache and boot toggles, then restart:");
+
+	ImGui::TextWrapped("%s", resolveText);
+	ImGui::Spacing();
+
+	// Every shown mismatch is an EnabledFlip (a Disable-at-Boot difference), so matching the
+	// cache's enabled-state lets the next boot reuse it with no recompile. Disabled when a flip
+	// is for a feature that failed to load: settings can't match a broken feature (the hover explains).
+	const auto* blockingMismatch = Util::CacheInvalidation::FindMatchBlockingFeature(shaderCache->GetCacheMismatches());
+	const char* blockingFeature = blockingMismatch ? blockingMismatch->feature.c_str() : nullptr;
+	const bool canMatch = blockingFeature == nullptr;
+	static bool s_matchApplied = false;
+	static bool s_restoreFailed = false;
+	// Clear the "restart to reuse" confirmation if the mismatch set changes underneath us.
+	static size_t s_lastMismatchCount = 0;
+	if (const size_t mismatchCount = shaderCache->GetCacheMismatches().size(); mismatchCount != s_lastMismatchCount) {
+		s_matchApplied = false;
+		s_restoreFailed = false;
+		s_lastMismatchCount = mismatchCount;
+	}
+
+	if (!cacheHeld && !featureChangeHeld) {
+		const bool restoreDisabled = shaderCache->IsCompiling() || !previousCacheAvailable || (featureSetChanged && !featureSetCacheBackedUp);
+		if (restoreDisabled)
+			ImGui::BeginDisabled();
+
+		const bool restoreClicked = ImGui::Button(T("menu.home.cache_mismatch_restore", "Restore Previous Cache & Restart"));
+		if (auto _tt = Util::HoverTooltipWrapper()) {
+			ImGui::Text("%s", T("menu.home.cache_mismatch_restore_tooltip", "Swaps the previous shader cache back into use and resets boot toggles to match it. Keeps a backup copy of compiled shaders; uses extra disk space. Restart required."));
+		}
+		if (restoreClicked) {
+			s_restoreFailed = !shaderCache->RestorePreviousDiskCache();
+		}
+
+		if (restoreDisabled)
+			ImGui::EndDisabled();
+
+		if (shaderCache->IsCompiling()) {
+			ImGui::TextDisabled("%s", T("menu.home.cache_mismatch_compiling_disabled", "Available after shader compilation finishes."));
+		} else if (s_restoreFailed) {
+			ImGui::TextColored(menu ? menu->GetTheme().StatusPalette.Error : ImVec4(1.0f, 0.4f, 0.4f, 1.0f),
+				"%s", T("menu.home.cache_mismatch_restore_failed", "Restore failed. Check CommunityShaders.log for details."));
 		}
 	}
-	ImGui::SameLine();
-	if (ImGui::Button(T("menu.home.cache_mismatch_rebuild", "Rebuild Cache for Current Features"))) {
-		shaderCache->AcceptCacheRebuild();
-	}
-	if (auto _tt = Util::HoverTooltipWrapper()) {
-		ImGui::Text("%s", T("menu.home.cache_mismatch_rebuild_tooltip",
-							  "Discards the saved cache and recompiles all shaders for your current features. "
-							  "Takes a while, but stops the every-launch recompile."));
+
+	if (cacheHeld) {
+		// After Match the choice is made (reuse on restart): show only the confirmation and drop
+		// both buttons, so the resolved state doesn't leave Rebuild beside the reuse message.
+		if (s_matchApplied) {
+			ImGui::TextColored(menu ? menu->GetTheme().StatusPalette.RestartNeeded : ImVec4(0.4f, 1.0f, 0.4f, 1.0f),
+				"%s", T("menu.home.cache_mismatch_matched", "Boot settings updated; restart to reuse the saved cache."));
+			ImGui::Spacing();
+			ImGui::Separator();
+			ImGui::Spacing();
+			return;
+		}
+
+		if (!canMatch)
+			ImGui::BeginDisabled();
+		const bool matchClicked = ImGui::Button(T("menu.home.cache_mismatch_match", "Match Cache & Restart"));
+		if (!canMatch)
+			ImGui::EndDisabled();
+		if (auto _ttm = Util::HoverTooltipWrapper()) {
+			if (canMatch)
+				ImGui::Text("%s", T("menu.home.cache_mismatch_match_tooltip", "Sets your Disable-at-Boot toggles to match the saved cache, so a restart reuses it with no recompile."));
+			else
+				ImGui::Text("%s", std::vformat(T("menu.home.cache_mismatch_match_blocked", "Unavailable: '{}' could not load, so settings can't match the cache. Check Feature Issues for details, fix the install, or rebuild."), std::make_format_args(blockingFeature)).c_str());
+		}
+		if (matchClicked) {
+			if (auto* state = globals::state) {
+				for (const auto& m : shaderCache->GetCacheMismatches()) {
+					if (m.kind != MismatchKind::EnabledFlip)
+						continue;
+					state->SetFeatureDisabled(m.shortName, m.nowPresent);
+				}
+				state->Save();
+				s_matchApplied = true;
+			}
+		}
+		ImGui::SameLine();
+		if (ImGui::Button(T("menu.home.cache_mismatch_rebuild", "Rebuild Cache for Current Features"))) {
+			shaderCache->AcceptCacheRebuild();
+		}
+		if (auto _tt = Util::HoverTooltipWrapper()) {
+			ImGui::Text("%s", T("menu.home.cache_mismatch_rebuild_tooltip",
+								  "Discards the saved cache and recompiles all shaders for your current features. "
+								  "Takes a while, but stops the every-launch recompile."));
+		}
 	}
 
 	ImGui::Spacing();
@@ -610,13 +665,13 @@ void HomePageRenderer::RenderFirstTimeSetupDialog()
 	{
 		auto& csEditorKey = menu->GetSettings().CSEditorToggleKey;
 		if (csEditorKey.empty()) {
-			const char* warnText = T("menu.setup.cs_editor_unbound", "CS Editor hotkey unbound - chosen key uses Shift");
+			const char* warnText = T("menu.setup.cs_editor_unbound", "OS Editor hotkey unbound - chosen key uses Shift");
 			centerText(warnText);
 			Util::Text::Warning("%s", warnText);
 		} else {
 			std::string infoStr = I18n::GetSingleton()->Format("menu.setup.cs_editor_will_be",
 				{ { "key", Util::Input::KeyIdToString(csEditorKey) } },
-				"CS Editor hotkey will be: {key}");
+				"OS Editor hotkey will be: {key}");
 			centerText(infoStr.c_str());
 			ImGui::TextDisabled("%s", infoStr.c_str());
 		}

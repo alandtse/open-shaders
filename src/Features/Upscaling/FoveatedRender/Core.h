@@ -22,8 +22,9 @@ namespace FoveatedRenderImpl
 	class Core
 	{
 	public:
-		// Stage1: dispatches across Default / Faster modes.
-		static bool ExecuteVRDlssCore(Streamline& streamline,
+		// Resolves VRDlssParams and dispatches across Default / Faster modes;
+		// dispatches DLSS or FSR depending on Upscaling::GetUpscaleMethod().
+		static bool ExecuteFoveatedRoute(Streamline& streamline,
 			ID3D11Resource* upscalingTexture,
 			ID3D11Resource* depthTexture,
 			ID3D11Resource* reactiveMask,
@@ -108,5 +109,15 @@ namespace FoveatedRenderImpl
 	private:
 		static bool ExecuteDefaultMode(Streamline& streamline, const VRDlssParams& p);
 		static bool ExecuteFasterMode(Streamline& streamline, const VRDlssParams& p);
+
+		// Per-eye dispatch (DLSS or FSR) shared by full-eye and subrect paths.
+		// inW/inH/outW/outH are already-cropped extents. fullEyeWidthIn/HeightIn are
+		// the PRE-crop dims: mvec is a straight crop copy (stays normalized against
+		// the full eye), which FSR3's pixel-extent motionVectorScale needs to interpret it.
+		static bool DispatchUpscaleRegion(Streamline& streamline, uint32_t eyeIndex,
+			ID3D11Resource* colorIn, ID3D11Resource* colorOut, ID3D11Resource* depth, ID3D11Resource* mvec,
+			ID3D11Resource* reactiveMask, ID3D11Resource* transparencyMask,
+			uint32_t inW, uint32_t inH, uint32_t outW, uint32_t outH,
+			uint32_t fullEyeWidthIn, uint32_t fullEyeHeightIn);
 	};
 }

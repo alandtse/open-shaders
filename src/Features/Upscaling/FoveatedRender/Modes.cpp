@@ -15,6 +15,7 @@
 #include "../../../Globals.h"
 #include "../../../Utils/Subrect.h"
 #include "../../Upscaling.h"
+#include "../FidelityFX.h"
 #include "../Streamline.h"
 
 namespace FoveatedRenderImpl
@@ -23,7 +24,30 @@ namespace FoveatedRenderImpl
 
 	// ── Router: resolves params via Params module, dispatches to the selected mode ──
 
-	bool Core::ExecuteVRDlssCore(Streamline& streamline,
+	bool Core::DispatchUpscaleRegion(Streamline& streamline, uint32_t eyeIndex,
+		ID3D11Resource* colorIn, ID3D11Resource* colorOut, ID3D11Resource* depth, ID3D11Resource* mvec,
+		ID3D11Resource* reactiveMask, ID3D11Resource* transparencyMask,
+		uint32_t inW, uint32_t inH, uint32_t outW, uint32_t outH,
+		uint32_t fullEyeWidthIn, uint32_t fullEyeHeightIn)
+	{
+		auto& upscaling = globals::features::upscaling;
+		if (upscaling.GetUpscaleMethod() == Upscaling::UpscaleMethod::kFSR) {
+			// FSR3's motionVectorScale is a pixel extent (not DLSS's ratio-based
+			// correction from Bridge::ComputeMvecScale) that mvec values are multiplied
+			// against. mvec is a straight crop copy staying normalized to the full eye,
+			// so passing the smaller crop extent here would make FSR3 misjudge magnitude.
+			return upscaling.fidelityFX.UpscaleRegion(eyeIndex, colorIn, depth, mvec, reactiveMask, transparencyMask,
+				colorOut, inW, inH, outW, outH, (float)fullEyeWidthIn, (float)fullEyeHeightIn, upscaling.settings.sharpnessFSR, /*a_forceHostPath=*/true);
+		}
+
+		sl::ViewportHandle vp = (eyeIndex == 1) ? streamline.viewportRight : streamline.viewport;
+		sl::Extent extentIn{ 0, 0, inW, inH };
+		sl::Extent extentOut{ 0, 0, outW, outH };
+		return streamline.EvaluateDLSS(vp, eyeIndex, colorIn, colorOut, depth, mvec, reactiveMask, transparencyMask,
+			extentIn, extentOut, outW, outH);
+	}
+
+	bool Core::ExecuteFoveatedRoute(Streamline& streamline,
 		ID3D11Resource* upscalingTexture, ID3D11Resource* depthTexture,
 		ID3D11Resource* reactiveMask, ID3D11Resource* transparencyMask, ID3D11Resource* motionVectors)
 	{
@@ -67,21 +91,32 @@ namespace FoveatedRenderImpl
 				return false;
 
 			for (uint32_t i = 0; i < 2; ++i) {
-				sl::ViewportHandle vp = (i == 1) ? streamline.viewportRight : streamline.viewport;
-				sl::Extent extentIn{ 0, 0, p.eyeWidthIn, p.eyeHeightIn };
-				sl::Extent extentOut{ 0, 0, p.eyeWidthOut, p.eyeHeightOut };
-				streamline.EvaluateDLSS(vp, i,
-					Core::vrIntermediateColorIn[i]->resource.get(), Core::vrIntermediateColorOut[i]->resource.get(),
-					Core::vrIntermediateDepth[i]->resource.get(), Core::vrIntermediateMotionVectors[i]->resource.get(),
-					p.reactiveMask ? Core::vrIntermediateReactiveMask[i]->resource.get() : nullptr,
-					p.transparencyMask ? Core::vrIntermediateTransparencyMask[i]->resource.get() : nullptr,
-					extentIn, extentOut, p.eyeWidthOut);
+				if (!DispatchUpscaleRegion(streamline, i,
+						Core::vrIntermediateColorIn[i]->resource.get(), Core::vrIntermediateColorOut[i]->resource.get(),
+						Core::vrIntermediateDepth[i]->resource.get(), Core::vrIntermediateMotionVectors[i]->resource.get(),
+						p.reactiveMask ? Core::vrIntermediateReactiveMask[i]->resource.get() : nullptr,
+						p.transparencyMask ? Core::vrIntermediateTransparencyMask[i]->resource.get() : nullptr,
+						p.eyeWidthIn, p.eyeHeightIn, p.eyeWidthOut, p.eyeHeightOut,
+						p.eyeWidthIn, p.eyeHeightIn)) {
+					logger::error("[FOVEATED] ExecuteDefaultMode full-eye dispatch failed for eye {} — falling back", i);
+					return false;
+				}
 			}
 
 			return FinalizePerEyeOutputs(p.colorDst, p.eyeWidthOut, p.eyeHeightOut);
 		}
 
 		// ── Subrect path: crop per-eye, DLSS at subrect size, stretch back ──
+
+		// EnsureVRSubrectTextures below allocates from LEFT-eye dimensions only (see its
+		// own NOTE) -- a right eye sized larger than the left would overflow that shared
+		// resource. Fail closed rather than write out of bounds; the built-in presets
+		// (Nasal Convergence included) always keep w/h equal and only vary x/y offset.
+		if (p.leftUV.w != p.rightUV.w || p.leftUV.h != p.rightUV.h) {
+			logger::error("[FOVEATED] ExecuteDefaultMode: asymmetric-size stereo subrect (left {}x{}, right {}x{}) not supported — falling back",
+				p.leftUV.w, p.leftUV.h, p.rightUV.w, p.rightUV.h);
+			return false;
+		}
 
 		const Util::Subrect::UVRegion* eyeUVs[2] = { &p.leftUV, &p.rightUV };
 
@@ -125,15 +160,16 @@ namespace FoveatedRenderImpl
 			if (p.transparencyMask)
 				context->CopySubresourceRegion(Core::vrSubrectTransparencyMask[i]->resource.get(), 0, 0, 0, 0, p.transparencyMask, 0, &sbsCrop);
 
-			sl::ViewportHandle vp = (i == 1) ? streamline.viewportRight : streamline.viewport;
-			sl::Extent extentIn{ 0, 0, subInW, subInH };
-			sl::Extent extentOut{ 0, 0, subOutW, subOutH };
-			streamline.EvaluateDLSS(vp, i,
-				Core::vrSubrectColorIn[i]->resource.get(), Core::vrSubrectColorOut[i]->resource.get(),
-				Core::vrSubrectDepth[i]->resource.get(), Core::vrSubrectMotionVectors[i]->resource.get(),
-				p.reactiveMask ? Core::vrSubrectReactiveMask[i]->resource.get() : nullptr,
-				p.transparencyMask ? Core::vrSubrectTransparencyMask[i]->resource.get() : nullptr,
-				extentIn, extentOut, subOutW, subOutH);
+			if (!DispatchUpscaleRegion(streamline, i,
+					Core::vrSubrectColorIn[i]->resource.get(), Core::vrSubrectColorOut[i]->resource.get(),
+					Core::vrSubrectDepth[i]->resource.get(), Core::vrSubrectMotionVectors[i]->resource.get(),
+					p.reactiveMask ? Core::vrSubrectReactiveMask[i]->resource.get() : nullptr,
+					p.transparencyMask ? Core::vrSubrectTransparencyMask[i]->resource.get() : nullptr,
+					subInW, subInH, subOutW, subOutH,
+					p.eyeWidthIn, p.eyeHeightIn)) {
+				logger::error("[FOVEATED] ExecuteDefaultMode subrect dispatch failed for eye {} — falling back", i);
+				return false;
+			}
 		}
 
 		// Write DLSS output back at subrect position (with optional blend)
@@ -208,11 +244,14 @@ namespace FoveatedRenderImpl
 			sl::Extent extentIn{ inOffsetY, inOffsetX, subInW, subInH };
 			sl::Extent extentOut{ 0, 0, subOutW, subOutH };
 
-			streamline.EvaluateDLSS(vp, i,
-				dlssColorSrc, Core::vrFasterColorOut[i]->resource.get(),
-				p.depthTexture, p.motionVectors,
-				p.reactiveMask, p.transparencyMask,
-				extentIn, extentOut, subOutW, subOutH);
+			if (!streamline.EvaluateDLSS(vp, i,
+					dlssColorSrc, Core::vrFasterColorOut[i]->resource.get(),
+					p.depthTexture, p.motionVectors,
+					p.reactiveMask, p.transparencyMask,
+					extentIn, extentOut, subOutW, subOutH)) {
+				logger::error("[FOVEATED] ExecuteFasterMode dispatch failed for eye {} — falling back", i);
+				return false;
+			}
 		}
 
 		// Step 3: Stretch DRS → kMAIN (subrect only) — snapshot reused from Step 2a.

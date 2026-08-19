@@ -14,11 +14,17 @@
 // inline member, not a peer Feature. Settings that overlap with Upscaling's
 // (quality mode, sharpness, DLSS preset, Streamline log level) read directly
 // from `globals::features::upscaling.settings` rather than being duplicated.
-// VR + DLSS only at present; non-VR / FSR extension is left to future work.
+// VR only -- flat has no lens-driven periphery quality cliff to exploit, so
+// the perf/quality tradeoff doesn't carry over. Supports both DLSS and FSR3
+// (host path); under FSR, only DlssMode::kDefault is available -- kFaster
+// relies on Streamline's SBS-subrect read, which has no FSR equivalent.
 //
 // ============================================================================
 
+#include "../../Utils/BootSnapshot.h"
 #include "../../Utils/Subrect.h"
+
+#include <chrono>
 
 struct FoveatedRender
 {
@@ -52,6 +58,13 @@ struct FoveatedRender
 		kGaussianBlur = 2,  // 3x3 Gaussian blur (soft periphery)
 	};
 
+	/** @brief Translated display names for the enums above -- single source shared by
+	 *  DrawSettings' dropdowns and Upscaling::GetProfilePreviewText. */
+	static const char* DlssModeName(DlssMode mode);
+	static const char* StretchModeName(StretchMode mode);
+	static const char* PeripheryAAModeName(PeripheryAAMode mode);
+	static const char* SubrectBlendModeName(SubrectBlendMode mode);
+
 	// FoveatedRender-specific settings. Quality mode / sharpness / DLSS preset /
 	// Streamline log level live on Upscaling::Settings and are read through
 	// the accessors below — do not duplicate them here. Sharpening on/off is
@@ -76,6 +89,18 @@ struct FoveatedRender
 		float subrectDitherStrength = 1.0f;
 	};
 
+	inline static constexpr Util::Settings::RestartTable<Settings, 1> kRestartFields{ {
+		UTIL_RESTART_FIELD(Settings, enabled, "Foveated DLSS"),
+	} };
+	Util::Settings::BootSnapshot<Settings> bootSnapshot{ kRestartFields };
+
+	/** @brief Region-preset display names, shared by PostPostLoad's seed list, the
+	 *  top-level preset buttons, and Upscaling::ApplyPerformanceProfile. */
+	static constexpr const char* kPresetFullEye = "Full Eye";                          ///< No crop; full-eye DLSS coverage.
+	static constexpr const char* kPresetCenter75 = "Center 75%";                       ///< Centered crop covering 75% of the eye.
+	static constexpr const char* kPresetCenter50 = "Center 50%";                       ///< Centered crop covering 50% of the eye.
+	static constexpr const char* kPresetNasalConvergence50 = "Nasal Convergence 50%";  ///< 50% crop biased toward nasal convergence.
+
 	Settings settings;
 	Util::Subrect::Controller subrectController;
 
@@ -96,6 +121,10 @@ struct FoveatedRender
 	bool IsRuntimeSupported() const;
 	bool IsActive() const;
 	bool IsLoaded() const { return enabledAtBoot; }
+
+	/** @brief True while drag-resizing the crop region, and for a few seconds after.
+	 *  Read by the stretch pass alongside settings.debugVisualize. */
+	bool ShouldForceVisualize() const;
 
 	// Foveation region for per-pixel foveated effects (e.g. SSR): the rectangular DLSS subrect mapped
 	// to centered-superellipse params. available is false when foveation is inactive or full-eye.
@@ -120,7 +149,9 @@ struct FoveatedRender
 	/// (1=Quality .. 4=UltraPerformance). Delegates to the FFX SDK ratio table.
 	static float GetRenderScaleForQuality(uint qualityMode);
 
-	DlssMode GetDlssMode() const { return (DlssMode)std::min(settings.dlssMode, 1u); }
+	// Faster mode relies on Streamline's SBS-subrect read, which has no FSR
+	// equivalent -- forced to kDefault whenever FSR is the selected method.
+	DlssMode GetDlssMode() const;
 	StretchMode GetStretchMode() const { return (StretchMode)std::min(settings.stretchMode, 2u); }
 	PeripheryAAMode GetPeripheryAAMode() const { return static_cast<PeripheryAAMode>(std::min(settings.peripheryAAMode, 1u)); }
 	SubrectBlendMode GetSubrectBlendMode() const { return static_cast<SubrectBlendMode>(std::min(settings.subrectBlendMode, 2u)); }
@@ -135,8 +166,9 @@ struct FoveatedRender
 	void ClampSettings();
 
 private:
-	bool enabledAtBoot = false;  // latched from settings.enabled at boot
-	uint qualityModeAtBoot = 4;  // latched from Upscaling::Settings::qualityMode at boot
+	bool enabledAtBoot = false;                            // latched from settings.enabled at boot
+	uint qualityModeAtBoot = 4;                            // latched from Upscaling::Settings::qualityMode at boot
+	std::chrono::steady_clock::time_point lastDragTime{};  // epoch -- no force-visualize at boot
 
 	bool IsPresetCompatibleWithMode(uint presetIndex) const;
 	void ClampPresetToMode();

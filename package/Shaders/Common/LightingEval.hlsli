@@ -153,6 +153,12 @@ void EvaluateLighting(DirectContext context, MaterialProperties material, float3
 	float3 diffuseLightColor = context.lightColor * context.detailedShadow;
 	float3 softLightColor = context.lightColor * context.softShadow;
 	lightingOutput.diffuse = saturate(NdotL) * diffuseLightColor * Color::VanillaNormalization();
+#	if defined(TREE_ANIM)
+	[branch] if (SharedData::foliageLightingSettings.EnableFoliageScattering != 0)
+	{
+		lightingOutput.transmission += material.BaseColor * GetFoliageTransmission(NdotL, dot(context.viewDir, context.lightDir)) * diffuseLightColor * Color::VanillaNormalization();
+	}
+#	endif
 #	if defined(SOFT_LIGHTING)
 	lightingOutput.diffuse += softLightColor * GetSoftLightMultiplier(NdotL) * material.rimSoftLightColor * Color::VanillaNormalization();
 #	endif

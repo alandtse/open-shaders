@@ -7,12 +7,22 @@
 #include <vector>
 
 #include "Feature.h"
+#include "Features/PerformanceOverlay.h"
+#include "Fonts.h"
 #include "Globals.h"
 #include "I18n/I18n.h"
 #include "Menu.h"
 #include "Utils/UI.h"
 
 #define I18N_KEY_PREFIX "menu.performance."
+
+namespace
+{
+	constexpr float kProfileCardMinimumWidth = 240.0f;
+	constexpr float kProfileCardHeight = 144.0f;
+	constexpr float kProfileCardAccentHeight = 3.0f;
+	constexpr float kProfileCardBorderThickness = 2.0f;
+}
 
 // Shared by DrawSectionHeader and DrawSubsectionLink for a consistent link + tooltip.
 static void DrawFeatureLink(const char* label, Feature* feature, const char* sectionAnchor = "")
@@ -51,8 +61,7 @@ void PerformanceRenderer::DrawSubsectionLink(const char* label, Feature* feature
 	DrawFeatureLink(label, feature, sectionAnchor);
 }
 
-// Draws a Performance/Balanced/Quality button row, highlighting the active index
-// (-1 = Custom). Shared by the global and per-feature rows so both stay identical.
+// Draws a compact Performance/Balanced/Quality override row for one feature.
 static void DrawProfileButtonRow(const Feature::PerfProfile (&profiles)[3], const char* const (&labels)[3],
 	const char* const (&tooltips)[3], int activeIdx, const std::function<void(Feature::PerfProfile)>& apply)
 {
@@ -75,8 +84,99 @@ static void DrawProfileButtonRow(const Feature::PerfProfile (&profiles)[3], cons
 	}
 }
 
-void PerformanceRenderer::Render(Feature* host)
+static bool DrawProfileCard(const char* title, const char* description, bool selected, const ImVec4& accentColor)
 {
+	const float scale = Util::GetUIScale();
+	const float padding = ThemeManager::Constants::BUTTON_PADDING * scale;
+	const ImVec2 cardMin = ImGui::GetCursorScreenPos();
+	const ImVec2 cardSize(ImGui::GetContentRegionAvail().x, kProfileCardHeight * scale);
+	const bool pressed = ImGui::InvisibleButton("##ProfileCard", cardSize);
+	const bool hovered = ImGui::IsItemHovered();
+	const bool held = ImGui::IsItemActive();
+	const ImVec2 cardMax = ImGui::GetItemRectMax();
+
+	ImVec4 backgroundColor = ImGui::GetStyleColorVec4(selected ? ImGuiCol_Button : ImGuiCol_FrameBg);
+	if (hovered)
+		backgroundColor = ImGui::GetStyleColorVec4(ImGuiCol_ButtonHovered);
+	if (held)
+		backgroundColor = ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive);
+
+	auto* drawList = ImGui::GetWindowDrawList();
+	const float rounding = ImGui::GetStyle().FrameRounding;
+	drawList->AddRectFilled(cardMin, cardMax, ImGui::GetColorU32(backgroundColor), rounding);
+	drawList->AddRect(cardMin, cardMax,
+		ImGui::GetColorU32(selected ? accentColor : ImGui::GetStyleColorVec4(ImGuiCol_Border)),
+		rounding, 0, selected ? kProfileCardBorderThickness * scale : 1.0f);
+	if (selected) {
+		drawList->AddRectFilled(cardMin, ImVec2(cardMax.x, cardMin.y + kProfileCardAccentHeight * scale),
+			ImGui::GetColorU32(accentColor), rounding, ImDrawFlags_RoundCornersTop);
+	}
+
+	drawList->PushClipRect(cardMin, cardMax, true);
+	float titleFontSize = ImGui::GetFontSize();
+	{
+		MenuFonts::FontRoleGuard titleFont(Menu::FontRole::Subheading);
+		titleFontSize = ImGui::GetFontSize();
+		drawList->AddText(ImGui::GetFont(), titleFontSize, ImVec2(cardMin.x + padding, cardMin.y + padding),
+			ImGui::GetColorU32(ImGuiCol_Text), title);
+	}
+	{
+		MenuFonts::FontRoleGuard descriptionFont(Menu::FontRole::Subtext);
+		const ImVec2 descriptionPosition(
+			cardMin.x + padding,
+			cardMin.y + padding + titleFontSize + ThemeManager::Constants::BUTTON_SPACING * scale);
+		drawList->AddText(ImGui::GetFont(), ImGui::GetFontSize(), descriptionPosition,
+			ImGui::GetColorU32(ImGuiCol_TextDisabled), description, nullptr, cardSize.x - padding * 2.0f);
+	}
+
+	if (selected) {
+		MenuFonts::FontRoleGuard statusFont(Menu::FontRole::Subtext);
+		drawList->AddText(ImGui::GetFont(), ImGui::GetFontSize(),
+			ImVec2(cardMin.x + padding, cardMax.y - padding - ImGui::GetFontSize()),
+			ImGui::GetColorU32(accentColor), T(TKEY("profile_selected"), "Selected"));
+	}
+	drawList->PopClipRect();
+
+	if (hovered)
+		ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+	return pressed;
+}
+
+static void DrawGlobalProfileChooser(const Feature::PerfProfile (&profiles)[3], const char* const (&labels)[3],
+	const char* const (&descriptions)[3], int activeIdx)
+{
+	const auto& theme = Menu::GetSingleton()->GetTheme();
+	const float minimumCardWidth = kProfileCardMinimumWidth * Util::GetUIScale();
+	const float minimumColumnWidth = minimumCardWidth + ImGui::GetStyle().CellPadding.x * 2.0f;
+	const int columnCount = std::clamp(
+		static_cast<int>(ImGui::GetContentRegionAvail().x / minimumColumnWidth),
+		1,
+		IM_ARRAYSIZE(profiles));
+	if (ImGui::BeginTable("##GlobalPerformanceProfiles", columnCount,
+			ImGuiTableFlags_SizingStretchSame | ImGuiTableFlags_PadOuterX | ImGuiTableFlags_NoSavedSettings)) {
+		for (int i = 0; i < IM_ARRAYSIZE(profiles); ++i) {
+			ImGui::TableNextColumn();
+			ImGui::PushID(i);
+			if (DrawProfileCard(labels[i], descriptions[i], i == activeIdx, theme.StatusPalette.InfoColor))
+				Feature::ApplyPerformanceProfileToAll(profiles[i]);
+			ImGui::PopID();
+		}
+		ImGui::EndTable();
+	}
+
+	if (activeIdx < 0) {
+		ImGui::TextColored(theme.StatusPalette.Warning, "%s %s",
+			T(TKEY("profiles_label"), "Profile:"), T(TKEY("profile_custom"), "(Custom)"));
+	}
+}
+
+static void RenderPresets(Feature* host)
+{
+	{
+		MenuFonts::FontRoleGuard headingFont(Menu::FontRole::Heading);
+		ImGui::TextUnformatted(T(TKEY("choose_preset"), "Choose a Performance Preset"));
+	}
+	ImGui::Spacing();
 	ImGui::TextWrapped("%s", T(TKEY("intro"),
 								 "Performance settings from across all features, gathered in one place. "
 								 "Each section is the same control shown in that feature's own panel; "
@@ -123,10 +223,7 @@ void PerformanceRenderer::Render(Feature* host)
 		globals::game::isVR ? T(TKEY("profile_balanced_tooltip"), "Mid render resolution; reprojection on. Some changes apply on restart.") : T(TKEY("profile_balanced_tooltip_flat"), "Mid render resolution. Some changes apply on restart."),
 		globals::game::isVR ? T(TKEY("profile_quality_tooltip"), "Higher render resolution; reprojection off for max fidelity. Some changes apply on restart.") : T(TKEY("profile_quality_tooltip_flat"), "Higher render resolution for max fidelity. Some changes apply on restart.")
 	};
-	ImGui::TextUnformatted(T(TKEY("profiles_label"), "Profile:"));
-	ImGui::SameLine();
-	DrawProfileButtonRow(profiles, labels, tooltips, activeIdx,
-		[](Feature::PerfProfile p) { Feature::ApplyPerformanceProfileToAll(p); });
+	DrawGlobalProfileChooser(profiles, labels, tooltips, activeIdx);
 
 	// Generic per-section tooltips: unlike the global row above, a section's row can't
 	// claim specifics (render resolution, foveation) that only apply to SOME features.
@@ -150,6 +247,13 @@ void PerformanceRenderer::Render(Feature* host)
 	ImGui::Spacing();
 	ImGui::Separator();
 	ImGui::Spacing();
+	{
+		MenuFonts::FontRoleGuard headingFont(Menu::FontRole::Heading);
+		ImGui::TextUnformatted(T(TKEY("fine_tune_features"), "Fine-Tune Individual Features"));
+	}
+	ImGui::TextWrapped("%s", T(TKEY("fine_tune_features_description"),
+								 "Override the selected preset for one feature without changing the others."));
+	ImGui::Spacing();
 
 	// Drawn in perf-impact order (GetPerformanceOrder), set up in `ordered` above.
 	for (Feature* feature : ordered) {
@@ -161,10 +265,18 @@ void PerformanceRenderer::Render(Feature* host)
 		for (int i = 0; i < IM_ARRAYSIZE(profiles) && featureActiveIdx < 0; ++i)
 			if (feature->MatchesPerformanceProfile(profiles[i]))
 				featureActiveIdx = i;
-		DrawProfileButtonRow(profiles, labels, sectionTooltips, featureActiveIdx,
+		// A feature can override GetProfilePreviewText to show what its click would actually
+		// change (e.g. multiple interacting foveation levers); falls back to the generic text.
+		std::string previewText[3];
+		const char* featureTooltips[3];
+		for (int i = 0; i < IM_ARRAYSIZE(profiles); ++i) {
+			previewText[i] = feature->GetProfilePreviewText(profiles[i]);
+			featureTooltips[i] = previewText[i].empty() ? sectionTooltips[i] : previewText[i].c_str();
+		}
+		DrawProfileButtonRow(profiles, labels, featureTooltips, featureActiveIdx,
 			[feature](Feature::PerfProfile p) { feature->ApplyPerformanceProfile(p); });
-		// Presets stay visible: they're the primary surface, same as the global
-		// buttons above. Only raw sliders/knobs collapse into Advanced below.
+		// Feature overrides stay visible beneath the global chooser.
+		// Only raw sliders/knobs collapse into Advanced below.
 		try {
 			feature->DrawPerformancePresets();
 		} catch (const std::exception& e) {
@@ -194,6 +306,27 @@ void PerformanceRenderer::Render(Feature* host)
 		// meaning consistent ("end of a section") no matter how much content it drew.
 		ImGui::Separator();
 		ImGui::Spacing();
+	}
+}
+
+void PerformanceRenderer::Render(Feature* host)
+{
+	if (ImGui::BeginTabBar("##PerformanceTabs", ImGuiTabBarFlags_None)) {
+		if (MenuFonts::BeginTabItemWithFont(T(TKEY("tab_presets"), "Presets"), Menu::FontRole::Subheading)) {
+			if (ImGui::BeginChild("##PerformancePresetsContent", ImVec2(0, 0), false))
+				RenderPresets(host);
+			ImGui::EndChild();
+			ImGui::EndTabItem();
+		}
+
+		if (MenuFonts::BeginTabItemWithFont(T(TKEY("tab_overlay"), "Overlay"), Menu::FontRole::Subheading)) {
+			if (ImGui::BeginChild("##PerformanceOverlayContent", ImVec2(0, 0), false))
+				globals::features::performanceOverlay.DrawSettings();
+			ImGui::EndChild();
+			ImGui::EndTabItem();
+		}
+
+		ImGui::EndTabBar();
 	}
 }
 

@@ -125,7 +125,8 @@ struct PerformanceOverlay : OverlayFeature
 	std::string GetShortName() override { return "PerformanceOverlay"; }
 	virtual bool SupportsVR() override { return true; }
 	virtual bool IsCore() const override { return true; }
-	virtual bool IsInMenu() const override { return true; }
+	/** @brief Keeps these settings on the Performance page's Overlay tab. */
+	virtual bool IsInMenu() const override { return false; }
 	bool IsOverlayVisible() const override { return settings.ShowInOverlay; }
 	virtual std::pair<std::string, std::vector<std::string>> GetFeatureSummary() override
 	{
@@ -267,7 +268,6 @@ struct PerformanceOverlay : OverlayFeature
 		static constexpr float kGraphSpreadMultiplier = 2.0f;        // Standard deviation multiplier for graph range
 		static constexpr float kGraphMinSpread = 2.0f;               // ms - Minimum graph spread
 		static constexpr float kGraphMaxSpread = 20.0f;              // ms - Maximum graph spread
-		static constexpr float kFrameGenerationMultiplier = 2.0f;    // Frame generation doubles frame rate
 		static constexpr float kMaxUpdateInterval = 2.0f;            // seconds - Maximum update interval
 		static constexpr float kDefaultWindowPadding = 10.0f;        // pixels - Default window padding
 		static constexpr float kLabelPadding = 100.0f;               // pixels - Padding for labels

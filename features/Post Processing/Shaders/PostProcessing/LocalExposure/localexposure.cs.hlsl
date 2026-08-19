@@ -1,201 +1,222 @@
-/// Local Exposure Compute Shader
-/// Exposure-fusion local adaptation adapted to output a raw-HDR multiplier
-/// consumed later by Composite.
-///
-/// Raw scene color is normalized with global exposure when available so the
-/// exposure-fusion weights operate in a stable perceptual luminance range.
-///
-/// Reference:
-///   https://bartwronski.com/2022/02/28/exposure-fusion-local-tonemapping-for-real-time-rendering/
+/// Local Exposure luminance analysis
+/// Builds an edge-aware base in log-luminance space. The tonal remapping is
+/// evaluated later by Composite so it uses the same global exposure as the
+/// final scene color.
 
 #include "Common/Color.hlsli"
+#include "Common/VR.hlsli"
+
+#define GRID_DEPTH 32
+#define GRID_TILE_SIZE 64
+#define GRID_THREAD_SIZE 8
+#define GRID_SAMPLE_STRIDE 8
+#define GRID_QUANTIZATION 4096
+#define MAX_BLUR_RADIUS 64
 
 cbuffer LocalExposureCB : register(b1)
 {
 	float ManualExposure;
-	float HighlightExposure;
-	float ShadowExposure;
-	float ExposurePreferenceSigmaSq;
+	float Strength;
+	float HighlightContrast;
+	float ShadowContrast;
+
+	float DetailStrength;
+	float BaseBlend;
+	float BlurRadius;
+	float MiddleGreyBias;
+
+	float HighlightThreshold;
+	float ShadowThreshold;
+	float HighlightThresholdStrength;
+	float ShadowThresholdStrength;
 
 	uint InputWidth;
 	uint InputHeight;
-	uint MipLevel;
-	uint DisplayMip;
+	uint BlurredWidth;
+	uint BlurredHeight;
 
-	uint CurrentMip;
-	uint HasCoarserMip;
-	uint BoostLocalContrast;
-	uint UseGlobalExposure;
-
-	float ExposureCompensation;
-	float AdaptationMin;
-	float AdaptationMax;
-	float DarkThreshold;
+	float LogLuminanceMin;
+	float LogLuminanceMax;
+	float2 Padding1;
 };
 
-Texture2D<float4> TexInput0 : register(t0);
-Texture2D<float4> TexInput1 : register(t1);
-Texture2D<float4> TexInput2 : register(t2);
-Texture2D<float> TexInput3 : register(t3);
-StructuredBuffer<float> TexAdaptation : register(t4);
+Texture2D<float4> TexColor : register(t0);
+Texture2D<float> TexLogLuminance : register(t1);
+Texture3D<float2> TexLuminanceGrid : register(t2);
+Texture2D<float> TexBlurredLuminance : register(t3);
 SamplerState LinearSampler : register(s0);
+SamplerState MirrorSampler : register(s1);
 
-RWTexture2D<float4> RWTexOutput0 : register(u0);
-RWTexture2D<float4> RWTexOutput1 : register(u1);
-RWTexture2D<float> RWTexOutputFloat : register(u2);
+RWTexture2D<float> RWTexOutput : register(u0);
+RWTexture3D<float2> RWTexLuminanceGrid : register(u1);
 
-float GetPreExposure()
+float SceneLogLuminance(float3 color)
 {
-	if (UseGlobalExposure != 0) {
-		float adaptedLum = clamp(max(TexAdaptation[0], 1e-5), AdaptationMin, AdaptationMax);
-		return 0.18 * ExposureCompensation / adaptedLum;
-	}
-
-	return ManualExposure;
+	float luminance = Color::RGBToLuminance(max(color, 0.0));
+	return clamp(log2(max(luminance, exp2(LogLuminanceMin))), LogLuminanceMin, LogLuminanceMax);
 }
 
-float LinearLuminance(float3 preExposedColor)
-{
-	return max(Color::RGBToLuminance(max(preExposedColor, 0.0)), 1e-5);
-}
-
-float ExposureFusionTonemap(float linearLum)
-{
-	linearLum = max(linearLum, 0.0);
-	return sqrt(linearLum / (1.0 + linearLum));
-}
-
-float ExposureFusionInverseTonemap(float tonemappedLum)
-{
-	float value = saturate(tonemappedLum);
-	value *= value;
-	return value / max(1.0 - value, 1e-4);
-}
-
-float ExposureFusionLuminance(float3 preExposedColor, float exposureScale)
-{
-	return ExposureFusionTonemap(LinearLuminance(preExposedColor) * exposureScale);
-}
-
-float3 NormalizeWeights(float3 weights)
-{
-	return weights / (weights.x + weights.y + weights.z + 0.00001);
-}
-
-[numthreads(8, 8, 1)] void CSSetup(uint2 tid : SV_DispatchThreadID) {
+[numthreads(8, 8, 1)] void CSSetupLogLuminance(uint2 tid : SV_DispatchThreadID) {
 	if (tid.x >= InputWidth || tid.y >= InputHeight)
 		return;
 
-	float3 preExposedColor = TexInput0[tid].rgb * GetPreExposure();
-
-	float highlightLum = ExposureFusionLuminance(preExposedColor, HighlightExposure);
-	float midLum = ExposureFusionLuminance(preExposedColor, 1.0);
-	float shadowLum = ExposureFusionLuminance(preExposedColor, ShadowExposure);
-	float3 lums = float3(highlightLum, midLum, shadowLum);
-
-	float3 diff = lums - 0.5;
-	float3 weights = exp(-0.5 * diff * diff * ExposurePreferenceSigmaSq);
-
-	RWTexOutput0[tid] = float4(lums, 1.0);
-	RWTexOutput1[tid] = float4(NormalizeWeights(weights), 1.0);
+	RWTexOutput[tid] = SceneLogLuminance(TexColor[tid].rgb);
 }
 
-	[numthreads(8, 8, 1)] void CSDownsample(uint2 tid : SV_DispatchThreadID)
+	[numthreads(8, 8, 1)] void CSDownsampleLogLuminance(uint2 tid : SV_DispatchThreadID)
 {
-	uint2 outDims;
-	RWTexOutput0.GetDimensions(outDims.x, outDims.y);
-
-	if (any(tid >= outDims))
+	uint2 outputSize;
+	RWTexOutput.GetDimensions(outputSize.x, outputSize.y);
+	if (any(tid >= outputSize))
 		return;
 
-	float2 uv = (float2(tid) + 0.5) / float2(outDims);
-	RWTexOutput0[tid] = TexInput0.SampleLevel(LinearSampler, uv, 0);
-	RWTexOutput1[tid] = TexInput1.SampleLevel(LinearSampler, uv, 0);
+	uint2 inputSize;
+	TexLogLuminance.GetDimensions(inputSize.x, inputSize.y);
+
+	float2 uv = (float2(tid) + 0.5) / float2(outputSize);
+	float2 radius = 0.5 / float2(inputSize);
+	uint eyeIndex = Stereo::GetEyeIndexFromTexCoord(uv);
+	float result = 0.0;
+	result += TexLogLuminance.SampleLevel(LinearSampler, Stereo::ClampToEyeUV(uv + float2(-radius.x, -radius.y), eyeIndex, inputSize), 0);
+	result += TexLogLuminance.SampleLevel(LinearSampler, Stereo::ClampToEyeUV(uv + float2(radius.x, -radius.y), eyeIndex, inputSize), 0);
+	result += TexLogLuminance.SampleLevel(LinearSampler, Stereo::ClampToEyeUV(uv + float2(-radius.x, radius.y), eyeIndex, inputSize), 0);
+	result += TexLogLuminance.SampleLevel(LinearSampler, Stereo::ClampToEyeUV(uv + float2(radius.x, radius.y), eyeIndex, inputSize), 0);
+	RWTexOutput[tid] = result * 0.25;
 }
 
-[numthreads(8, 8, 1)] void CSBlend(uint2 tid : SV_DispatchThreadID) {
-	uint2 outDims;
-	RWTexOutputFloat.GetDimensions(outDims.x, outDims.y);
-
-	if (any(tid >= outDims))
-		return;
-
-	float3 exposures = TexInput0[tid].rgb;
-	float3 weights = TexInput1[tid].rgb;
-	float prevResult = 0.0;
-
-	if (HasCoarserMip != 0) {
-		float2 uv = (float2(tid) + 0.5) / float2(outDims);
-		float3 coarserExposures = TexInput2.SampleLevel(LinearSampler, uv, 0).rgb;
-		exposures -= coarserExposures;
-		prevResult = TexInput3.SampleLevel(LinearSampler, uv, 0).r;
-
-		if (BoostLocalContrast != 0)
-			weights *= abs(exposures) + 0.00001;
-	}
-
-	weights = NormalizeWeights(weights);
-	RWTexOutputFloat[tid] = prevResult + dot(exposures, weights);
-}
-
-	[numthreads(8, 8, 1)] void CSComputeExposure(uint2 tid : SV_DispatchThreadID)
+float BlurLogLuminance(uint2 tid, float2 direction)
 {
-	if (tid.x >= InputWidth || tid.y >= InputHeight)
-		return;
+	uint2 outputSize;
+	RWTexOutput.GetDimensions(outputSize.x, outputSize.y);
+	float2 uv = (float2(tid) + 0.5) / float2(outputSize);
+	uint eyeIndex = Stereo::GetEyeIndexFromTexCoord(uv);
+	float2 texelSize = rcp(float2(outputSize));
+	float sigma = max(BlurRadius * 0.173, 0.5);
+	float result = 0.0;
+	float weightSum = 0.0;
+	int kernelRadius = min((int)ceil(BlurRadius), MAX_BLUR_RADIUS);
 
-	float2 uv = (float2(tid) + 0.5) / float2(InputWidth, InputHeight);
-
-	uint2 displayDims;
-	TexInput2.GetDimensions(displayDims.x, displayDims.y);
-	float2 displayPixelSize = 1.0 / float2(displayDims);
-
-	float momentX = 0.0;
-	float momentY = 0.0;
-	float momentX2 = 0.0;
-	float momentXY = 0.0;
-	float ws = 0.0;
-
-	[unroll] for (int dy = -1; dy <= 1; dy++)
+	[loop] for (int offset = -kernelRadius; offset <= kernelRadius; offset++)
 	{
-		[unroll] for (int dx = -1; dx <= 1; dx++)
+		float weight = exp2(-0.72134752 * offset * offset / (sigma * sigma));
+		float2 sampleUV = Stereo::ClampToEyeUV(uv + direction * texelSize * offset, eyeIndex, outputSize);
+		result += TexLogLuminance.SampleLevel(MirrorSampler, sampleUV, 0) * weight;
+		weightSum += weight;
+	}
+
+	return result / max(weightSum, 1e-5);
+}
+
+[numthreads(8, 8, 1)] void CSBlurHorizontal(uint2 tid : SV_DispatchThreadID) {
+	if (tid.x >= BlurredWidth || tid.y >= BlurredHeight)
+		return;
+
+	RWTexOutput[tid] = BlurLogLuminance(tid, float2(1.0, 0.0));
+}
+
+	[numthreads(8, 8, 1)] void CSBlurVertical(uint2 tid : SV_DispatchThreadID)
+{
+	if (tid.x >= BlurredWidth || tid.y >= BlurredHeight)
+		return;
+
+	RWTexOutput[tid] = BlurLogLuminance(tid, float2(0.0, 1.0));
+}
+
+groupshared uint ThreadGridWeights[GRID_DEPTH][GRID_THREAD_SIZE * GRID_THREAD_SIZE];
+groupshared uint ThreadGridLogSums[GRID_DEPTH][GRID_THREAD_SIZE * GRID_THREAD_SIZE];
+
+[numthreads(GRID_THREAD_SIZE, GRID_THREAD_SIZE, 1)] void CSBuildLuminanceGrid(
+	uint3 groupID : SV_GroupID,
+	uint3 groupThreadID : SV_GroupThreadID,
+	uint groupIndex : SV_GroupIndex) {
+	[unroll] for (uint bin = 0; bin < GRID_DEPTH; bin++)
+	{
+		ThreadGridWeights[bin][groupIndex] = 0;
+		ThreadGridLogSums[bin][groupIndex] = 0;
+	}
+
+	const float inverseLogRange = rcp(LogLuminanceMax - LogLuminanceMin);
+	uint2 tileOrigin = groupID.xy * GRID_TILE_SIZE;
+	uint tileEndX = InputWidth;
+#if defined(VR)
+	uint gridWidth;
+	uint gridHeight;
+	uint gridDepth;
+	RWTexLuminanceGrid.GetDimensions(gridWidth, gridHeight, gridDepth);
+	const uint gridEyeWidth = gridWidth / 2;
+	const uint eyeWidth = InputWidth / 2;
+	const uint eyeIndex = groupID.x >= gridEyeWidth ? 1 : 0;
+	tileOrigin.x = eyeIndex * eyeWidth + (groupID.x - eyeIndex * gridEyeWidth) * GRID_TILE_SIZE;
+	tileEndX = (eyeIndex + 1) * eyeWidth;
+#endif
+
+	[unroll] for (uint y = 0; y < GRID_SAMPLE_STRIDE; y++)
+	{
+		[unroll] for (uint x = 0; x < GRID_SAMPLE_STRIDE; x++)
 		{
-			float2 sampleUV = uv + float2(dx, dy) * displayPixelSize;
-			sampleUV = clamp(sampleUV, displayPixelSize * 0.5, 1.0 - displayPixelSize * 0.5);
+			uint2 pixel = tileOrigin + groupThreadID.xy + uint2(x, y) * GRID_THREAD_SIZE;
+			if (pixel.x < tileEndX && pixel.y < InputHeight) {
+				float normalizedLog = saturate((TexLogLuminance[pixel] - LogLuminanceMin) * inverseLogRange);
+				float binPosition = normalizedLog * (GRID_DEPTH - 1);
+				uint lowerBin = min((uint)binPosition, GRID_DEPTH - 1);
+				uint upperBin = min(lowerBin + 1, GRID_DEPTH - 1);
+				uint upperWeight = (uint)(frac(binPosition) * GRID_QUANTIZATION + 0.5);
+				uint lowerWeight = GRID_QUANTIZATION - upperWeight;
 
-			float x = TexInput1.SampleLevel(LinearSampler, sampleUV, 0).g;
-			float y = TexInput2.SampleLevel(LinearSampler, sampleUV, 0).r;
-			float w = exp(-0.5 * float(dx * dx + dy * dy) / (0.7 * 0.7));
-
-			momentX += x * w;
-			momentY += y * w;
-			momentX2 += x * x * w;
-			momentXY += x * y * w;
-			ws += w;
+				ThreadGridWeights[lowerBin][groupIndex] += lowerWeight;
+				ThreadGridLogSums[lowerBin][groupIndex] += (uint)(normalizedLog * lowerWeight + 0.5);
+				ThreadGridWeights[upperBin][groupIndex] += upperWeight;
+				ThreadGridLogSums[upperBin][groupIndex] += (uint)(normalizedLog * upperWeight + 0.5);
+			}
 		}
 	}
 
-	momentX /= ws;
-	momentY /= ws;
-	momentX2 /= ws;
-	momentXY /= ws;
+	GroupMemoryBarrierWithGroupSync();
+	if (groupIndex < GRID_DEPTH) {
+		uint gridWeight = 0;
+		uint gridLogSum = 0;
+		[unroll] for (uint threadIndex = 0; threadIndex < GRID_THREAD_SIZE * GRID_THREAD_SIZE; threadIndex++)
+		{
+			gridWeight += ThreadGridWeights[groupIndex][threadIndex];
+			gridLogSum += ThreadGridLogSums[groupIndex][threadIndex];
+		}
 
-	float A = (momentXY - momentX * momentY) / (max(momentX2 - momentX * momentX, 0.0) + 0.00001);
-	float B = momentY - A * momentX;
+		const float decodeScale = rcp((float)GRID_QUANTIZATION);
+		RWTexLuminanceGrid[uint3(groupID.xy, groupIndex)] = float2(gridLogSum, gridWeight) * decodeScale;
+	}
+}
 
-	float3 preExposedColor = TexInput0[tid].rgb * GetPreExposure();
-	float linearLuminance = LinearLuminance(preExposedColor);
-	float guideLuminance = ExposureFusionTonemap(linearLuminance);
-	float fusedLuminance = max(A * guideLuminance + B, 0.0);
-	float localExposure = ExposureFusionInverseTonemap(fusedLuminance) / linearLuminance;
+	[numthreads(8, 8, 1)] void CSResolveBaseLuminance(uint2 tid : SV_DispatchThreadID)
+{
+	if (tid.x >= InputWidth || tid.y >= InputHeight)
+		return;
 
-	float shadowProtection = 1.0 - smoothstep(0.045, 0.18, linearLuminance);
-	localExposure = lerp(localExposure, max(localExposure, 1.0), shadowProtection);
+	float logLuminance = TexLogLuminance.Load(int3(tid, 0));
+	float normalizedLog = saturate((logLuminance - LogLuminanceMin) / (LogLuminanceMax - LogLuminanceMin));
+	float2 uv = (float2(tid) + 0.5) / float2(InputWidth, InputHeight);
+	uint eyeIndex = Stereo::GetEyeIndexFromTexCoord(uv);
 
-	localExposure = guideLuminance > DarkThreshold ? localExposure :
-	                                                 lerp(1.0, localExposure, (guideLuminance / DarkThreshold) * (guideLuminance / DarkThreshold));
+	uint gridWidth, gridHeight, gridDepth;
+	TexLuminanceGrid.GetDimensions(gridWidth, gridHeight, gridDepth);
+	float3 gridUV;
+	gridUV.xy = (float2(tid) + 0.5) / (GRID_TILE_SIZE * float2(gridWidth, gridHeight));
+#if defined(VR)
+	const uint eyeWidth = InputWidth / 2;
+	const uint gridEyeWidth = gridWidth / 2;
+	const float eyeLocalX = tid.x - eyeIndex * eyeWidth + 0.5;
+	gridUV.x = (eyeIndex * gridEyeWidth + eyeLocalX / GRID_TILE_SIZE) / gridWidth;
+	gridUV.xy = Stereo::ClampToEyeUV(gridUV.xy, eyeIndex, uint2(gridWidth, gridHeight));
+#endif
+	gridUV.z = (normalizedLog * (gridDepth - 1) + 0.5) / gridDepth;
 
-	if (UseGlobalExposure == 0)
-		localExposure *= ManualExposure;
+	float2 gridMoments = TexLuminanceGrid.SampleLevel(LinearSampler, gridUV, 0);
+	uint blurredWidth;
+	uint blurredHeight;
+	TexBlurredLuminance.GetDimensions(blurredWidth, blurredHeight);
+	float broadBase = TexBlurredLuminance.SampleLevel(LinearSampler, Stereo::ClampToEyeUV(uv, eyeIndex, uint2(blurredWidth, blurredHeight)), 0);
+	float bilateralBase = broadBase;
+	if (gridMoments.y >= 0.001)
+		bilateralBase = lerp(LogLuminanceMin, LogLuminanceMax, gridMoments.x / gridMoments.y);
 
-	RWTexOutputFloat[tid] = localExposure;
+	RWTexOutput[tid] = lerp(bilateralBase, broadBase, BaseBlend);
 }

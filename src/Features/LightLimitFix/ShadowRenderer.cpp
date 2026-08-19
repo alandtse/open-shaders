@@ -10,16 +10,8 @@
 #include "State.h"
 #include "Util.h"
 
-// Fills a ShadowLightData entry from a light's shadowmap descriptor transform.
-// Returns true on success, false when the light has no usable descriptors --
-// the caller must treat false as "do not advertise a valid shadow for this
-// slot", because ShadowProj remains at its default zero matrix and the
-// shader's depth-comparison sampling against that matrix collapses to
-// "fully shadowed" (the worst possible visual outcome -- e.g. grass goes
-// pitch black under any shadow-flagged point light). Pair this with a
-// ShadowParam.y = 0 fallback in the caller so the shader's safe sentinel
-// (`if (ShadowLightParam.y == 0) return 1.0;`) keeps the slot fully lit
-// instead of fully dark.
+// False means no usable descriptors; see the ShadowParam.y sentinel contract
+// below (CopyShadowLightData) for what the caller must do with that.
 template <typename T>
 static bool SetShadowParameters(T& lightData, Deferred::ShadowLightData& sd)
 {
@@ -49,49 +41,33 @@ void LightLimitFix::CopyShadowLightData()
 	ZoneScoped;
 	CS_GPU_PASS("LightLimitFix::CopyShadowLightData");
 
-	// While an engine shadow teardown is pending (ClearLightArrays), the engine
-	// frees shadow lights and their GPU resources. Iterating shadowLightsAccum or
-	// binding shadow SRVs in this window can reference a freed object -- the async
-	// driver deref of a freed shadow resource is the cell-transition CTD. Degrade
-	// to the same unbound/cleared state the slots==0 path uses until the scheduler
-	// drains the reset next frame. (The render gate in RenderScheduledShadowLights
-	// covers the shadow *render*; this covers the per-frame upload/bind.)
-	if (ShadowCasterManager::IsSessionResetPending()) {
+	// Shared by every early-out below: clears slot state and unbinds t102 so
+	// overlay/shaders degrade to unshadowed instead of stale prior-frame data.
+	auto degradeToUnshadowed = [this]() {
 		ShadowCasterManager::BeginSlotFrame(0);
 		shadowLightCount = 0;
 		shadowUnshadowedLightCount = 0;
 		ID3D11ShaderResourceView* nullSRVs[2]{ nullptr, nullptr };
 		globals::d3d::context->PSSetShaderResources(102, ARRAYSIZE(nullSRVs), nullSRVs);
+	};
+
+	// A pending teardown (ClearLightArrays) frees shadow lights/GPU resources;
+	// iterating shadowLightsAccum or binding SRVs here can deref freed memory
+	// (the cell-transition CTD). Degrade to unshadowed until the reset drains.
+	if (ShadowCasterManager::IsSessionResetPending()) {
+		degradeToUnshadowed();
 		return;
 	}
 
 	uint32_t slots = ShadowCasterManager::GetInstalledSlotCount();
 	if (slots == 0) {
-		// Clean degradation when SCM hasn't published a usable slot count yet
-		// (e.g. before SetupResources finishes, or after a transient
-		// reallocation failure). Without this clear, the previous frame's
-		// slot metadata, counters, and PS bindings at t102/t103 stay live --
-		// the overlay shows stale shadow rows and shaders keep sampling
-		// stale shadow records instead of degrading cleanly to unshadowed.
-		ShadowCasterManager::BeginSlotFrame(0);
-		shadowLightCount = 0;
-		shadowUnshadowedLightCount = 0;
-		ID3D11ShaderResourceView* nullSRVs[2]{ nullptr, nullptr };
-		globals::d3d::context->PSSetShaderResources(102, ARRAYSIZE(nullSRVs), nullSRVs);
+		degradeToUnshadowed();
 		return;
 	}
 
 	auto* shadowSceneNode = globals::game::smState->shadowSceneNode[0];
 	if (!shadowSceneNode) {
-		// Same cleanup contract as the slots==0 path above: clear slot
-		// metadata + counters and unbind t102/t103 so the overlay doesn't
-		// show stale rows and shaders degrade to unshadowed instead of
-		// sampling a previous frame's records.
-		ShadowCasterManager::BeginSlotFrame(0);
-		shadowLightCount = 0;
-		shadowUnshadowedLightCount = 0;
-		ID3D11ShaderResourceView* nullSRVs[2]{ nullptr, nullptr };
-		globals::d3d::context->PSSetShaderResources(102, ARRAYSIZE(nullSRVs), nullSRVs);
+		degradeToUnshadowed();
 		return;
 	}
 
@@ -119,12 +95,8 @@ void LightLimitFix::CopyShadowLightData()
 		shadowLightsCapacity = slots;
 	}
 
-	// Static reusable buffer for per-frame shadow light data. The previous
-	// `std::vector(slots)` ctor heap-allocated every frame in this render
-	// hot path -- avoidable churn given the slot count only changes on
-	// resolution / settings reconfigures (matched by the shadowLights
-	// buffer reallocation block above). assign(slots, {}) reuses the
-	// backing storage when slot count is stable and zero-fills entries.
+	// Static + assign(), not a fresh vector(slots) each call: avoids a
+	// heap-alloc every frame in this render hot path when slot count is stable.
 	static std::vector<Deferred::ShadowLightData> sd;
 	sd.assign(slots, {});
 	uint32_t prevSlotUsage = ShadowCasterManager::GetSlotUsage();
@@ -136,133 +108,128 @@ void LightLimitFix::CopyShadowLightData()
 
 	uint32_t plCount = 0;
 	uint32_t unshadowedLights = 0;
-	ShadowCasterManager::ForEachShadowLight(shadowSceneNode->GetRuntimeData().shadowLightsAccum,
-		[&](RE::BSShadowLight* light) {
-			// Use the stable container-slot index from s_lights rather than
-			// reading shadowmapDescriptors[0].shadowmapIndex, which can drift
-			// relative to our scheduler-assigned slot when ReturnShadowmaps
-			// fires between ScheduleShadowCasters and this function.
-			int32_t stableSlot = ShadowCasterManager::GetShadowSlot(light);
-			if (stableSlot < 0) {
-				// Sun (BSShadowDirectionalLight) — no kSHADOWMAPS slice. Its
-				// shadow lives in kSHADOWMAPS_ESRAM and is sampled through a
-				// separate path (DirectionalShadowCascades at t99). Skip
-				// silently so we don't count it as an "unshadowed point
-				// light" or scribble garbage into sd[0].
-				return;
-			}
-			if (static_cast<uint32_t>(stableSlot) >= slots) {
-				unshadowedLights++;
-				plCount++;
-				return;
-			}
-			uint32_t depthSlot = static_cast<uint32_t>(stableSlot);
-
-			{
-				float shadowTypeF = light->GetIsParabolicLight() ? float(light->shadowMapCount == 2 ? 2 : 1) : 0.f;
-				sd[depthSlot].ShadowParam.x = shadowTypeF;
-
-				const bool projValid = globals::game::isVR ?
-			                               SetShadowParameters(light->GetVRRuntimeData(), sd[depthSlot]) :
-			                               SetShadowParameters(light->GetRuntimeData(), sd[depthSlot]);
-
-				float range = light->light->GetLightRuntimeData().radius.x;
-				// ShadowParam.y semantics in the shader:
-				//   > 0  → valid radius; sample kSHADOWMAPS via ShadowProj at the slot.
-				//   == 0 → safe sentinel; shader returns 1.0 (fully lit, no shadow).
-				//   < 0  → suppression sentinel; shader returns 0.0 (fully dark).
-				// If SetShadowParameters skipped (empty descriptors -> ShadowProj
-				// stays default zero matrix), we MUST leave ShadowParam.y at 0 so
-				// the safe sentinel fires. Otherwise the shader samples a zero
-				// projection -> depth comparison says fully shadowed -> any
-				// shadow-flagged light with stale descriptors makes grass go
-				// pitch black under that light.
-				uintptr_t lightKey = reinterpret_cast<uintptr_t>(light);
-				const bool suppressed = ShadowCasterManager::IsSuppressed(lightKey);
-				sd[depthSlot].ShadowParam.y = suppressed ? -1.0f : (projValid ? range : 0.0f);
-				// ShadowParam.w: rasterized tile scale.
-				// Shader treats <= 0 as full slice, so zero-filled slots and
-				// mismatched DLL/shader builds degrade to vanilla sampling.
-				sd[depthSlot].ShadowParam.w = ShadowCasterManager::GetRenderedTileScale(stableSlot);
-				// AtlasRect: advertise the tile only once it holds rendered
-				// content; zero keeps the shader on the array-slice path.
-				if (ShadowCasterManager::AtlasActive()) {
-					ShadowCasterManager::AtlasRectUV rect{};
-					if (ShadowCasterManager::GetSlotAtlasRectUV(stableSlot, rect)) {
-						sd[depthSlot].AtlasRect = { rect.scaleX, rect.scaleY, rect.biasX, rect.biasY };
-						// Bias class scale must come from the SAME tile as the
-						// rect: per-light renderedScale can go stale across
-						// reallocs, and full-class bias on a small tile is
-						// 16-64x too little -- self-shadow acne over the
-						// light's whole footprint (a fluctuating dark halo).
-						sd[depthSlot].ShadowParam.w = rect.classScale;
-						// Between redraws, advertise the radius/bias the tile was
-						// rastered with, not the live light's: flame flicker
-						// animates the radius every frame and the drift against
-						// stale baked depth reads as pulsing false occlusion.
-						// ShadowProj stays live so shadows track light pose.
-						if (sd[depthSlot].ShadowParam.y > 0.0f) {
-							ShadowCasterManager::ShadowBakeSnapshot snap{};
-							if (ShadowCasterManager::SlotBakeSnapshotPending(stableSlot)) {
-								snap.radius = sd[depthSlot].ShadowParam.y;
-								snap.bias = sd[depthSlot].ShadowParam.z;
-								ShadowCasterManager::StoreSlotBakeSnapshot(stableSlot, snap);
-							} else if (ShadowCasterManager::LoadSlotBakeSnapshot(stableSlot, snap)) {
-								sd[depthSlot].ShadowParam.y = snap.radius;
-								sd[depthSlot].ShadowParam.z = snap.bias;
-							}
-						}
-					} else if (sd[depthSlot].ShadowParam.y > 0.0f) {
-						// No rendered tile behind this slot; atlas mode never
-						// writes the engine slices, so force the safe sentinel
-						// instead of sampling stale array depth (suppressed
-						// lights keep their -1 sentinel).
-						sd[depthSlot].ShadowParam.y = 0.0f;
-					}
-				}
-				// paramY records the FINAL sentinel state (after the atlas
-				// no-tile override above) so diagnostics see what shaders see.
-				// Name resolved once per NiLight (owner ref display name, then
-				// scenegraph node name, then form ID) so the table can identify
-				// which world light each row is.
-				static std::unordered_map<const RE::NiLight*, std::string> s_lightNames;
-				ShadowCasterManager::PruneIfOversized(s_lightNames, 1024);
-				std::string lightName;
-				if (auto* ni = light->light.get()) {
-					auto [nameIt, nameNew] = s_lightNames.try_emplace(ni);
-					if (nameNew) {
-						if (auto* ref = ni->GetUserData()) {
-							if (auto* base = ref->GetObjectReference()) {
-								const char* n = base->GetName();
-								nameIt->second = (n && n[0]) ? n : std::format("{:08X}", ref->GetFormID());
-							}
-						}
-						if (nameIt->second.empty() && !ni->name.empty())
-							nameIt->second = ni->name.c_str();
-					}
-					lightName = nameIt->second;
-				}
-				ShadowCasterManager::RecordSlot(depthSlot,
-					{ static_cast<uint32_t>(shadowTypeF), range, true, lightKey, sd[depthSlot].ShadowParam.y, std::move(lightName) });
-			}
-
+	// The sun's accumulate doesn't advance shadowLightsAccum's stride like a
+	// point light's, so ForEachShadowLight can silently drop slot(s) after it;
+	// the backstop below re-sources any pool-occupied slot the walk missed.
+	static std::vector<bool> visited;
+	visited.assign(slots, false);
+	auto visitLight = [&](RE::BSShadowLight* light) {
+		// Stable container-slot index, not shadowmapDescriptors[0].shadowmapIndex,
+		// which can drift if ReturnShadowmaps fires between scheduling and here.
+		int32_t stableSlot = ShadowCasterManager::GetShadowSlot(light);
+		if (stableSlot < 0) {
+			// Sun (BSShadowDirectionalLight): sampled via a separate path
+			// (DirectionalShadowCascades), no kSHADOWMAPS slice here.
+			return;
+		}
+		if (static_cast<uint32_t>(stableSlot) >= slots) {
+			unshadowedLights++;
 			plCount++;
-		});
+			return;
+		}
+		uint32_t depthSlot = static_cast<uint32_t>(stableSlot);
+		visited[depthSlot] = true;
+
+		auto* ni = light->light.get();
+
+		{
+			float shadowTypeF = light->GetIsParabolicLight() ? float(light->shadowMapCount == 2 ? 2 : 1) : 0.f;
+			sd[depthSlot].ShadowParam.x = shadowTypeF;
+
+			const bool projValid = globals::game::isVR ?
+			                           SetShadowParameters(light->GetVRRuntimeData(), sd[depthSlot]) :
+			                           SetShadowParameters(light->GetRuntimeData(), sd[depthSlot]);
+
+			// No NiLight means no radius; range 0 drives the safe sentinel below.
+			float range = ni ? ni->GetLightRuntimeData().radius.x : 0.0f;
+			// ShadowParam.y: >0 valid radius (sample kSHADOWMAPS), ==0 safe-lit
+			// sentinel, <0 suppression sentinel (fully dark). Must stay 0 when
+			// projValid is false, or the shader samples a stale zero projection as shadowed.
+			uintptr_t lightKey = reinterpret_cast<uintptr_t>(light);
+			const bool suppressed = ShadowCasterManager::IsSuppressed(lightKey);
+			sd[depthSlot].ShadowParam.y = suppressed ? -1.0f : (projValid ? range : 0.0f);
+			// ShadowParam.w: rasterized tile scale; shader treats <=0 as full slice,
+			// so zero-filled slots or a mismatched DLL/shader build fall back to vanilla sampling.
+			sd[depthSlot].ShadowParam.w = ShadowCasterManager::GetRenderedTileScale(stableSlot);
+			// FadeParam.x: 0 = just gained a shadow, 1 = fade complete; only read
+			// past the ShadowParam.y sentinel checks, so harmless here for suppressed slots.
+			sd[depthSlot].FadeParam.x = ShadowCasterManager::GetShadowFadeAlpha(stableSlot);
+			// AtlasRect: advertise the tile only once it holds rendered
+			// content; zero keeps the shader on the array-slice path.
+			if (ShadowCasterManager::AtlasActive()) {
+				ShadowCasterManager::AtlasRectUV rect{};
+				if (ShadowCasterManager::GetSlotAtlasRectUV(stableSlot, rect)) {
+					sd[depthSlot].AtlasRect = { rect.scaleX, rect.scaleY, rect.biasX, rect.biasY };
+					// Must come from the SAME tile as the rect -- per-light renderedScale
+					// can go stale across reallocs, and a mismatched class bias on a small tile causes acne.
+					sd[depthSlot].ShadowParam.w = rect.classScale;
+					// Between redraws, advertise the tile's baked radius/bias, not the
+					// live light's -- otherwise flame flicker drifts against stale depth as pulsing false occlusion.
+					if (sd[depthSlot].ShadowParam.y > 0.0f) {
+						ShadowCasterManager::ShadowBakeSnapshot snap{};
+						if (ShadowCasterManager::SlotBakeSnapshotPending(stableSlot)) {
+							snap.radius = sd[depthSlot].ShadowParam.y;
+							snap.bias = sd[depthSlot].ShadowParam.z;
+							ShadowCasterManager::StoreSlotBakeSnapshot(stableSlot, snap);
+						} else if (ShadowCasterManager::LoadSlotBakeSnapshot(stableSlot, snap)) {
+							sd[depthSlot].ShadowParam.y = snap.radius;
+							sd[depthSlot].ShadowParam.z = snap.bias;
+						}
+					}
+				} else if (sd[depthSlot].ShadowParam.y > 0.0f) {
+					// No rendered tile behind this slot; atlas mode never writes the
+					// engine slices, so force the safe sentinel instead of sampling
+					// stale array depth (suppressed lights keep their -1 sentinel).
+					sd[depthSlot].ShadowParam.y = 0.0f;
+				}
+			}
+			// Name resolved once per NiLight (owner ref, then scenegraph node,
+			// then form ID) to identify the light for the diagnostics table.
+			static std::unordered_map<const RE::NiLight*, std::string> s_lightNames;
+			ShadowCasterManager::PruneIfOversized(s_lightNames, 1024);
+			std::string lightName;
+			if (ni) {
+				auto [nameIt, nameNew] = s_lightNames.try_emplace(ni);
+				if (nameNew) {
+					if (auto* ref = ni->GetUserData()) {
+						if (auto* base = ref->GetObjectReference()) {
+							const char* n = base->GetName();
+							nameIt->second = (n && n[0]) ? n : std::format("{:08X}", ref->GetFormID());
+						}
+					}
+					if (nameIt->second.empty() && !ni->name.empty())
+						nameIt->second = ni->name.c_str();
+				}
+				lightName = nameIt->second;
+			}
+			ShadowCasterManager::RecordSlot(depthSlot,
+				{ static_cast<uint32_t>(shadowTypeF), range, true, lightKey, sd[depthSlot].ShadowParam.y, std::move(lightName) });
+		}
+
+		plCount++;
+	};
+	ShadowCasterManager::ForEachShadowLight(shadowSceneNode->GetRuntimeData().shadowLightsAccum, visitLight);
+
+	// Backstop for the silent-drop bug above: sources any pool slot SCM believes
+	// occupied but the walk missed, from the pool's own light pointer. Registers
+	// no engine pass and frees nothing, so none of EnableLight's freed-pass-group risk.
+	{
+		const auto& pool = ShadowCasterManager::GetLights();
+		const int32_t first = pool.PointLightFirst();
+		const int32_t end = std::min(static_cast<int32_t>(slots), pool.Size);
+		for (int32_t i = first; i < end; i++) {
+			if (visited[i] || !pool.Lights[i].Light)
+				continue;
+			visitLight(pool.Lights[i].Light);
+		}
+	}
 
 	if (plCount != shadowLightCount || ShadowCasterManager::GetSlotUsage() != prevSlotUsage || unshadowedLights != shadowUnshadowedLightCount) {
 		shadowLightCount = plCount;
 		shadowUnshadowedLightCount = unshadowedLights;
 
-		// Throttle the count-change log: this fires every time plCount or
-		// slot usage moves by even 1, which in busy outdoor scenes is
-		// effectively every frame. Earlier logs averaged ~10 entries/sec
-		// (25k lines over a 39-minute session, dwarfing every other
-		// signal). Two filters:
-		//   - Significance: only log when the count moves by >= 4 from
-		//     the last logged value, OR when the unshadowed-lights count
-		//     changes at all (rarer, more interesting).
-		//   - Rate: floor at 1 line/sec via QueryPerformanceCounter
-		//     (project convention; State.h uses QPC, std::chrono is disfavored).
+		// Throttled: logs only on a significant count move (>= 4, or any
+		// unshadowed-count change) and at most once per second.
 		static int s_lastLoggedShadowCount = -1;
 		static uint32_t s_lastLoggedUnshadowed = 0;
 		static LARGE_INTEGER s_lastLogQpc = { .QuadPart = 0 };
@@ -334,14 +301,8 @@ std::string LightLimitFix::BuildShadowSlotColorLegend() const
 
 void LightLimitFix::DrawOverlay()
 {
-	// Overlay shows when:
-	//   - visualisation modes are active (debug heatmaps), OR
-	//   - any light is suppressed (so the suppression list stays accessible), OR
-	//   - any debug override is in effect (pin shadow / pin convert / solo) so
-	//     users can find what they pinned without remembering to toggle anything, OR
-	//   - the user explicitly opted in via Show Shadow Overlay (lets the table's
-	//     debug controls — cycle button, solo, hover-pulse — be reachable in
-	//     the default state without first triggering a side-effect).
+	// Auto-shown for viz modes, suppressed lights, or debug overrides (so users
+	// can find what they pinned); Show Shadow Overlay lets the user opt in directly.
 	bool vizOn = EnableLightsVisualisation;
 	bool hasSuppressed = ShadowCasterManager::HasSuppressedLights();
 	bool hasOverrides = ShadowCasterManager::HasAnyOverrides();
@@ -349,18 +310,14 @@ void LightLimitFix::DrawOverlay()
 	if (!vizOn && !hasSuppressed && !hasOverrides && !showOverlay)
 		return;
 
-	// When the CS menu is open, show a draggable/resizable window so the user can
-	// move it out of the way and expand the table.  When the menu is closed, keep
-	// it as a compact pinned overlay (no title bar, no chrome).
+	// Menu open: draggable/resizable window so the user can reposition/expand it.
+	// Menu closed: compact pinned overlay with no title bar/chrome.
 	bool menuOpen = globals::menu->IsEnabled;
 	const float pos = ThemeManager::Constants::OVERLAY_WINDOW_POSITION * Util::GetUIScale();
 
-	// Single unified window: same ImGui ID across menu open/closed so the
-	// user's resize persists. Title bar and Move are toggled via flags --
-	// hidden when the menu is closed (pinned debug overlay) and shown when
-	// the menu is open (so the user can drag/resize via the title bar).
-	// We deliberately don't pass NoSavedSettings so ImGui retains the size
-	// the user picked across sessions.
+	// Same ImGui ID across menu open/closed so the user's resize persists;
+	// title bar/move are toggled via flags instead. No NoSavedSettings, so
+	// ImGui retains the picked size across sessions.
 	ImGuiWindowFlags flags = ImGuiWindowFlags_None;
 	if (!menuOpen)
 		flags |= ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoMove;
@@ -387,8 +344,8 @@ void LightLimitFix::DrawOverlay()
 	uint32_t mode = vizOn ? LightsVisualisationMode : UINT32_MAX;
 
 	// ── All stats grouped above the table (same order as menu) ─────────
-	// Summary always visible. Scheduler stats only when not in a viz mode
-	// that has its own legend competing for the same space.
+	// Summary always visible; scheduler stats only when not in a viz mode
+	// that already draws its own legend in the same space.
 	ShadowCasterManager::DrawShadowSummary(lightCount, MAX_LIGHTS, shadowUnshadowedLightCount);
 	if (!vizOn)
 		ShadowCasterManager::DrawShadowSchedulerStats();
@@ -405,26 +362,17 @@ void LightLimitFix::DrawOverlay()
 	}
 
 	// ── Shadow slot toggle table ─────────────────────────────────────
-	// Show when in a shadow-related viz mode, or when lights are suppressed.
-	// readOnly=true when the menu is closed -- the overlay isn't interactive
-	// then, so the per-row Mode/Solo buttons would be dead pixels. readOnly
-	// also bounds the table height so the stats above stay visible even
-	// when many lights are present (the table scrolls internally instead
-	// of pushing the window past its max-height constraint).
+	// Shown for shadow-related viz modes or suppressed lights. readOnly when
+	// the menu is closed avoids dead-pixel buttons and bounds table height
+	// so the stats above stay visible (table scrolls internally instead).
 	bool shadowRelatedMode = !vizOn || (mode >= 4);
-	// Also show the table when the user explicitly opened the overlay
-	// (Show Shadow Overlay toggle) or has any per-light overrides -- the
-	// tooltip promises the table's debug controls are reachable any time
-	// once the overlay is open, but viz modes 0-3 leave shadowRelatedMode
-	// false so without these extra terms the user gets an empty window.
+	// Also shown for Show Shadow Overlay / overrides -- the tooltip promises
+	// debug controls stay reachable, but viz modes 0-3 leave shadowRelatedMode false.
 	if (showOverlay || hasOverrides || hasSuppressed || shadowRelatedMode) {
 		ImGui::Separator();
-		// compact=false in the overlay: the table fills the remaining
-		// content region of the user-sized window and scrolls internally
-		// (ScrollY in Util::ShowSortedStringTableCustom). Stats above stay
-		// visible regardless of how many lights exist or how the user has
-		// resized the window. readOnly is still true when the menu is
-		// closed -- buttons would be dead pixels.
+		// compact=false: table fills the remaining region and scrolls internally
+		// (ScrollY in ShowSortedStringTableCustom), keeping stats above visible
+		// regardless of light count or window size; readOnly stays true when menu closed.
 		ShadowCasterManager::DrawShadowLightTable(false, vizOn && (mode == 8), true, !menuOpen);
 	}
 

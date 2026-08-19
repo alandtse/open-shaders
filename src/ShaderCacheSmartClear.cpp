@@ -80,6 +80,42 @@ namespace SIE
 		logger::debug("Marking recompile for shader: {}", a_key);
 	}
 
+	bool ShaderCache::TryDeferEviction(const hlslRecord& a_record)
+	{
+		std::unique_lock lockM{ mapMutex };
+		auto it = shaderMap.find(a_record.key);
+		// Absent is not Pending: nothing holds a claim, so the caller should evict now.
+		if (it == shaderMap.end() || it->second.status != ShaderCompilationTask::Status::Pending)
+			return false;
+		// A compile is mid check-then-read against this exact blob; deleting it now
+		// would fail that read into a needless recompile, so park it instead.
+		deferredEvictions.insert_or_assign(a_record.key, a_record);
+		deferredEvictionCount.store(deferredEvictions.size(), std::memory_order_relaxed);
+		return true;
+	}
+
+	void ShaderCache::ApplyDeferredEviction(const std::string& a_key)
+	{
+		if (deferredEvictionCount.load(std::memory_order_relaxed) == 0)
+			return;  // free fast path: no eviction was ever parked this session
+		hlslRecord record;
+		{
+			std::unique_lock lockM{ mapMutex };
+			auto it = deferredEvictions.find(a_key);
+			if (it == deferredEvictions.end())
+				return;
+			record = it->second;
+			deferredEvictions.erase(it);
+			deferredEvictionCount.store(deferredEvictions.size(), std::memory_order_relaxed);
+		}
+		// mapMutex released before EvictShader: lock order is compilationMutex then
+		// mapMutex, never the reverse.
+		EvictShader(record.key, record.type, record.descriptor, record.shaderClass, record.diskPath, IsDiskCache());
+		// Without this, Add() would refuse to re-enqueue the already-processed task
+		// and the evicted shader would never recompile.
+		compilationSet.Forget({ ShaderCompilationTask::MakeId(record.shaderClass, record.type, record.descriptor) });
+	}
+
 	bool ShaderCache::IsTrackingActiveShaders() const
 	{
 		return globals::state->IsDeveloperMode() ||

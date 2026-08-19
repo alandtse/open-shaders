@@ -171,6 +171,15 @@ public:
 	bool SaveUserOverride(const std::string& featureName, const json& currentSettings, const json& overrideSettings);
 
 	/**
+	 * @brief Persists the required user override state, including deletion when no differences remain.
+	 * @param featureName The short name of the feature (or "Global").
+	 * @param currentSettings Current effective settings.
+	 * @param overrideSettings Merged mod-provided override settings.
+	 * @return True when the user override file matches the requested state.
+	 */
+	bool PersistUserOverride(const std::string& featureName, const json& currentSettings, const json& overrideSettings);
+
+	/**
 	 * @brief Checks if a feature has user modifications on top of overrides
 	 * @param featureName The short name of the feature (or "Global")
 	 * @return True if a .user file exists for this feature
@@ -187,7 +196,7 @@ public:
 	/**
 	 * @brief Computes combined hash of all override files for a feature
 	 * Used to detect when overrides have changed (mod update/reinstall)
-	 * @param featureName The short name of the feature
+	 * @param featureName The short name of the feature, or "Global"
 	 * @return Combined hash string, empty if no overrides
 	 */
 	std::string GetCombinedOverrideHash(const std::string& featureName) const;
@@ -200,7 +209,7 @@ public:
 
 	/**
 	 * @brief Gets the merged override settings for a feature (all overrides applied, no user modifications)
-	 * @param featureName The short name of the feature
+	 * @param featureName The short name of the feature, or "Global"
 	 * @param baseSettings The base settings to start with
 	 * @return Settings with all overrides applied
 	 */

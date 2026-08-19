@@ -201,12 +201,10 @@ TEST_CASE("GetStereoPixelRegions in mono mode returns identical eyes", "[subrect
 
 TEST_CASE("Stereo SaveSettings emits right_uv for every preset", "[subrect][stereo][regression]")
 {
-	// Regression for CodeRabbit Major @ scs#2356: the Save Preset button used
-	// to drop currentRightUV, so re-applying a saved preset would zero out the
-	// right eye. We can't drive the ImGui Save Preset button from a test, but
-	// we can stage the same end state (a Controller with stereo enabled and an
-	// in-memory preset whose rightUV differs from a mirror of left) and verify
-	// it round-trips both eyes through SaveSettings → LoadSettings.
+	// The Save Preset button used to drop currentRightUV, so re-applying a
+	// saved preset would zero the right eye. Can't drive the ImGui button
+	// from a test, so stage the same end state directly and verify it
+	// round-trips both eyes through SaveSettings -> LoadSettings.
 	Controller src;
 	src.SetStereoEnabled(true);
 
@@ -390,6 +388,33 @@ TEST_CASE("Partial CropRight* keys still allow auto-mirror", "[subrect][stereo][
 	// Mirror of {0.20, 0, 0.60, 1.0} is {0.20, 0, 0.60, 1.0} — confirms the
 	// mirror ran rather than landing the half-loaded right UV.
 	REQUIRE(UVApprox(c.GetRightEyeUV(), { 0.20f, 0.0f, 0.60f, 1.0f }));
+}
+
+TEST_CASE("ApplyPresetByName resolves a seeded default despite a non-empty persisted list", "[subrect][regression]")
+{
+	// EnsureDefaultPreset only seeds when `presets` starts empty; a user with
+	// any persisted preset must still reach a later-added default by name.
+	Controller c;
+	json in = {
+		{ "CropPresets", json::array({
+							 {
+								 { "name", "Leftover" },
+								 { "uv", { 0.0f, 0.0f, 1.0f, 1.0f } },
+							 },
+						 }) },
+		{ "SelectedPresetIndex", 0 },
+	};
+	c.LoadSettings(in);
+
+	c.SeedDefaultPresets({
+		Preset{ .name = "Center 75%", .uv = { 0.125f, 0.125f, 0.75f, 0.75f } },
+	});
+
+	REQUIRE(c.ApplyPresetByName("Center 75%"));
+	REQUIRE(UVApprox(c.GetUV(), { 0.125f, 0.125f, 0.75f, 0.75f }));
+
+	// A second, unrelated name that was never seeded must still fail cleanly.
+	REQUIRE_FALSE(c.ApplyPresetByName("Nonexistent Preset"));
 }
 
 TEST_CASE("Malformed preset right_uv falls back to auto-mirror", "[subrect][stereo][regression]")

@@ -31,14 +31,6 @@ struct PostProcessing : Feature
 		uint pad[3];
 	} settings;
 
-	Settings GetCommonBufferData() const
-	{
-		auto data = settings;
-		if (!loaded)
-			data.DisableVanillaTonemapping = 0;
-		return data;
-	}
-
 	const std::string ppPresetPath = "Data\\SKSE\\Plugins\\CommunityShaders\\PostProcessing";
 
 	virtual inline std::string GetName() override { return "Post Processing"; }
@@ -66,6 +58,40 @@ struct PostProcessing : Feature
 	virtual void LoadSettings(json& o_json) override;
 	virtual void SaveSettings(json& o_json) override;
 	virtual void RestoreDefaultSettings() override;
+	/** @return true while viewing a pipeline subfeature. */
+	virtual bool HasScopedDefaultSettings() const override;
+	/** Restores defaults for the entire feature or selected subfeature. */
+	virtual void RestoreCurrentPageDefaultSettings() override;
+	/** @return true while viewing a pipeline subfeature. */
+	virtual bool HasScopedOverrideSettings() const override;
+	/** Reapplies overrides for the entire feature or selected subfeature. */
+	virtual bool ReapplyCurrentPageOverrideSettings() override;
+
+	/**
+	 * @brief Whether Post Processing wants to replace the vanilla tonemap this frame.
+	 *
+	 * Queried by State::GetTonemapOwner() to arbitrate against Effects11. Note this is
+	 * narrower than "is the pipeline active": with DisableVanillaTonemapping off the
+	 * pipeline still runs its effects and then hands off to the vanilla tonemap.
+	 */
+	bool WantsTonemapOwnership() const;
+
+	/**
+	 * @brief Whether Effects11 replaced the tonemap this frame.
+	 *
+	 * The pipeline's output is discarded in that case, so every entry point that would
+	 * write to a game render target must bail out rather than perform unused work.
+	 */
+	bool IsTonemapOwnedByEffects11() const;
+
+	/**
+	 * @brief Builds the shared-buffer payload, masking flags the arbiter has revoked.
+	 *
+	 * DisableVanillaTonemapping is forced to 0 unless Post Processing actually owns the
+	 * tonemap, so ISHDR and HDROutputCS do not assume a linear, already-tonemapped scene
+	 * when another feature produced the image.
+	 */
+	Settings GetCommonBufferData() const;
 
 	json pendingSettings = {};
 
@@ -74,7 +100,8 @@ struct PostProcessing : Feature
 	std::vector<std::string> presets = {};
 	std::vector<std::string> LoadPresets();
 	void SavePresetTo(std::string a_name);
-	void LoadPresetFrom(std::string a_name);
+	/** Loads a named preset. @return true when parsing and application succeed. */
+	bool LoadPresetFrom(std::string a_name);
 
 	enum class FeaturePipelineIndex : size_t
 	{
@@ -96,6 +123,17 @@ struct PostProcessing : Feature
 
 	std::array<std::unique_ptr<PostProcessFeature>, static_cast<size_t>(FeaturePipelineIndex::COUNT)> pipeline;
 
+	/** Identifies the Post Processing page targeted by scoped restoration. */
+	enum class SettingsPage
+	{
+		Pipeline,   ///< Top-level pipeline controls.
+		SubFeature  ///< Settings for the selected pipeline feature.
+	};
+	/** The visible page whose settings Restore Defaults changes. */
+	SettingsPage activeSettingsPage = SettingsPage::Pipeline;
+	/** Index of the pipeline feature shown on the subfeature page. */
+	size_t activePipelineFeature = 0;
+
 	BokehResources bokehResources;
 
 	template <typename T>
@@ -112,7 +150,7 @@ struct PostProcessing : Feature
 	virtual void PostPostLoad() override;
 	virtual void Prepass() override;
 
-	void PreProcess();
+	void PreProcess(RE::RENDER_TARGET a_input);
 	void DrawBeforeUpscaling();
 	void ClearBorderMotionVectorsForFrameGen();
 	void DrawFeature(PostProcessFeature& feature, PostProcessFeature::TextureInfo& lastTexColor);
@@ -143,27 +181,7 @@ struct PostProcessing : Feature
 
 	/////////////////////////////////////////////////////////////////////////////////
 
-	struct BSImagespaceShaderHDRTonemapBlendCinematic_SetupTechnique
-	{
-		static void thunk(RE::BSShader* a_shader, RE::BSShaderMaterial* a_material)
-		{
-			if (globals::features::postProcessing.loaded)
-				globals::features::postProcessing.PreProcess();
-			func(a_shader, a_material);
-		}
-		static inline REL::Relocation<decltype(thunk)> func;
-	};
-
-	struct BSImagespaceShaderHDRTonemapBlendCinematicFade_SetupTechnique
-	{
-		static void thunk(RE::BSShader* a_shader, RE::BSShaderMaterial* a_material)
-		{
-			if (globals::features::postProcessing.loaded)
-				globals::features::postProcessing.PreProcess();
-			func(a_shader, a_material);
-		}
-		static inline REL::Relocation<decltype(thunk)> func;
-	};
+	// The shared tonemap hook arbitrates between this feature and Effects11.
 
 	struct BSImagespaceShaderRefraction_SetupTechnique
 	{
@@ -174,4 +192,9 @@ struct PostProcessing : Feature
 		}
 		static inline REL::Relocation<decltype(thunk)> func;
 	};
+
+private:
+	bool ApplyPendingSettings();
+	bool HasActivePipelineFeature() const;
+	void RestorePipelineDefaultEnablement();
 };

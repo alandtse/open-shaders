@@ -70,6 +70,9 @@ struct Feature
 	// Nexus Mods base URL for Skyrim Special Edition
 	static constexpr std::string_view NEXUS_BASE_URL = "https://www.nexusmods.com/skyrimspecialedition/mods/";
 	bool loaded = false;
+	// Whether the feature .ini is present on disk. Unlike `loaded` this stays true for
+	// features disabled at boot, so they remain reachable in the UI.
+	bool installed = false;
 	std::string version;
 	std::string failedLoadedMessage;
 
@@ -145,6 +148,20 @@ public:
 
 	bool IsAlpha() const { return GetReleaseStage() == ReleaseStage::Alpha; }
 	bool IsBeta() const { return GetReleaseStage() == ReleaseStage::Beta; }
+
+	/**
+	 * Whether the feature has yet to ship, declared via `Unreleased = True` in the
+	 * feature .ini and baked into FeatureVersions.h at build time. Orthogonal to
+	 * ReleaseStage: it gates UI visibility only, and carries no marker of its own.
+	 */
+	bool IsUnreleased() const { return FeatureVersions::FEATURE_UNRELEASED_NAMES.contains(const_cast<Feature*>(this)->GetShortName()); }
+
+	/**
+	 * Whether an unreleased feature must stay out of the UI entirely. Unreleased
+	 * features only surface once their .ini is installed, so a shipped build never
+	 * advertises work in progress; once installed they render like any other feature.
+	 */
+	bool IsHiddenUnreleased() const { return !installed && IsUnreleased(); }
 
 	/**
 	 * Localized stage marker shown after the feature name ("[ALPHA]", "[BETA]"),
@@ -256,6 +273,13 @@ public:
 	 *         Default true so features without perf profiles don't veto the match. */
 	virtual bool MatchesPerformanceProfile(PerfProfile /*profile*/) const { return true; }
 
+	/** @brief One-line preview of what ApplyPerformanceProfile(profile) would change, shown
+	 *         in the per-section profile button's tooltip. Default empty falls back to the
+	 *         hub's generic "Apply this section's X-tier settings only." text. Override when
+	 *         a profile drives more than one interacting lever, so a click isn't a silent
+	 *         multi-setting mutation the user can't see coming. */
+	virtual std::string GetProfilePreviewText(PerfProfile /*profile*/) const { return ""; }
+
 	/** @brief Broadcasts a profile to every loaded feature. The hub button and the devbench
 	 *         handler share this so the loaded-guard rule lives in exactly one place. */
 	static void ApplyPerformanceProfileToAll(PerfProfile profile);
@@ -290,6 +314,9 @@ public:
 	/** @brief Called after all game data files have been loaded. */
 	virtual void DataLoaded() {}
 
+	/** @brief Called after loading an existing save. */
+	virtual void GameLoaded() {}
+
 	/** @brief Called after all SKSE plugins have finished PostLoad. */
 	virtual void PostPostLoad() {}
 
@@ -306,6 +333,12 @@ public:
 	virtual void SaveSettings(json&) {}
 	virtual void LoadSettings(json&) {}
 	virtual void RestoreDefaultSettings() {}
+
+	/** @brief Whether Restore Defaults targets the current settings page instead of the entire feature. */
+	virtual bool HasScopedDefaultSettings() const { return false; }
+
+	/** @brief Restores defaults for the currently visible settings page or subfeature. */
+	virtual void RestoreCurrentPageDefaultSettings() { RestoreDefaultSettings(); }
 
 	/**
 	 * @brief Live runtime diagnostics (counters, gauges), distinct from persisted
@@ -333,6 +366,16 @@ public:
 	virtual bool SetRuntimeFlag(std::string_view /*name*/, bool /*value*/) { return false; }
 
 	/**
+	 * @brief Registers this feature's one-shot ImGui commands (buttons that call a method,
+	 * not a settings write) and derived read-only queries with Util::DevBenchUx::Registry,
+	 * via the FEATURE_COMMAND/FEATURE_QUERY macros -- see Utils/DevBenchUx.h. Called once
+	 * per feature at boot from DevBenchBridge::Install(), so devbench exposure follows
+	 * automatically with no DevBenchBridge changes, the same way a new Settings field is
+	 * automatically get/set-able. Default empty: most features have nothing beyond settings.
+	 */
+	virtual void RegisterUxActions() {}
+
+	/**
 	 * @brief Toggles the "disabled at boot" state for this feature.
 	 * @return The new disabled state (true = disabled at boot).
 	 */
@@ -343,6 +386,12 @@ public:
 	 * @return True if overrides were found and applied, false otherwise
 	 */
 	virtual bool ReapplyOverrideSettings();
+
+	/** @brief Whether Apply Override targets the current settings page instead of the entire feature. */
+	virtual bool HasScopedOverrideSettings() const { return false; }
+
+	/** @brief Reapplies overrides for the current page or the entire feature. */
+	virtual bool ReapplyCurrentPageOverrideSettings() { return ReapplyOverrideSettings(); }
 
 	/**
 	 * Weather analysis configuration for features that want to provide weather analysis.
@@ -429,6 +478,14 @@ public:
 	static Feature* FindFeatureByShortName(const std::string& shortName);
 
 	/**
+	 * @brief Finds any registered feature by short name, ignoring VR filtering and loaded state.
+	 *
+	 * @param shortName The short name to search for.
+	 * @return Pointer to the feature if registered, nullptr otherwise.
+	 */
+	static Feature* FindRegisteredFeatureByShortName(const std::string& shortName);
+
+	/**
 	 * @brief Gets sorted short names of all loaded features that appear in the menu.
 	 *
 	 * @return Sorted vector of short name strings.
@@ -488,4 +545,8 @@ public:
 			}
 		}
 	}
+
+protected:
+	/** Reapplies override-controlled values for the selected top-level setting keys. */
+	bool ReapplyOverrideSettingsForKeys(std::span<const std::string_view> a_settingKeys);
 };

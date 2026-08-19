@@ -394,8 +394,14 @@ namespace FoveatedRenderImpl::Ops
 			cb.data[6] = srcEyeWidth;
 			cb.data[7] = srcEyeHeight;
 			cb.stretchMode = enhSettings.stretchMode;
-			cb.blurRadius = enhSettings.peripheryBlurRadius;
-			cb.debugVisualize = enhSettings.debugVisualize;
+			// BlurRadius is in SOURCE-texel units, scaled onto screen pixels by
+			// r = dstWidth/srcEyeWidth. Floor r at kMinPeripheryBlurRatio so the
+			// periphery is never blurred less on-screen than at that reference
+			// scale -- only boosts the radius near-native, never reduces real DRS blur.
+			constexpr float kMinPeripheryBlurRatio = 2.0f;  // reference: never softer than a 50%-render-scale stretch
+			const float r = srcEyeWidth > 0 ? (float)dstWidth / (float)srcEyeWidth : 1.0f;
+			cb.blurRadius = enhSettings.peripheryBlurRadius * (std::max(r, kMinPeripheryBlurRatio) / r);
+			cb.debugVisualize = (enhSettings.debugVisualize != 0 || globals::features::upscaling.foveatedRender.ShouldForceVisualize()) ? 1u : 0u;
 			std::memcpy(mapped.pData, &cb, sizeof(cb));
 			context->Unmap(Core::vrSubrectStretchCB.get(), 0);
 		}

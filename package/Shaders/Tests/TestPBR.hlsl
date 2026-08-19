@@ -2,11 +2,33 @@
 
 // Include production PBR math code (constants, flags, and pure math functions)
 // PBRMath.hlsli contains only pure functions with no game-specific dependencies
+#include "/Shaders/Common/LightingCommon.hlsli"
 #include "/Shaders/Common/PBRMath.hlsli"
 #include "/Test/STF/ShaderTestFramework.hlsli"
 
-/// @tags pbr, ior, material
-[numthreads(1, 1, 1)] void TestIORToF0() {
+/// @tags pbr, foliage, transmission
+[numthreads(1, 1, 1)] void TestFoliageTransmission() {
+	float frontLit = GetFoliageTransmission(1.0f, -1.0f);
+	float grazingBacklight = GetFoliageTransmission(0.0f, -1.0f);
+	float backLit = GetFoliageTransmission(-1.0f, -1.0f);
+
+	ASSERT(IsTrue, abs(frontLit) < 0.0001f);
+	ASSERT(IsTrue, grazingBacklight > frontLit);
+	ASSERT(IsTrue, backLit > grazingBacklight);
+
+	float forwardAligned = GetFoliageTransmission(-1.0f, -1.0f);
+	float perpendicular = GetFoliageTransmission(-1.0f, 0.0f);
+	float sameDirection = GetFoliageTransmission(-1.0f, 1.0f);
+
+	ASSERT(IsTrue, forwardAligned > perpendicular);
+	ASSERT(IsTrue, abs(perpendicular - sameDirection) < 0.0001f);
+	ASSERT(IsTrue, forwardAligned >= 0.0f && forwardAligned <= 1.0f);
+	ASSERT(IsTrue, !isnan(forwardAligned) && !isinf(forwardAligned));
+}
+
+	/// @tags pbr, ior, material
+	[numthreads(1, 1, 1)] void TestIORToF0()
+{
 	// Test 1: Air/Glass (n=1.5): F0 = ((1-1.5)/(1+1.5))^2 = 0.04
 	float f0_glass = PBR::IORToF0(1.5f);
 	ASSERT(IsTrue, abs(f0_glass - 0.04f) < 0.01f);
@@ -37,9 +59,8 @@
 	ASSERT(IsTrue, abs(f0_identity) < 0.001f);
 }
 
-	/// @tags pbr, hair, ior
-	[numthreads(1, 1, 1)] void TestHairIOR()
-{
+/// @tags pbr, hair, ior
+[numthreads(1, 1, 1)] void TestHairIOR() {
 	float hairIOR = PBR::HairIOR();
 
 	// Test 1: Hair IOR should be in reasonable range (1.0 - 2.0)
@@ -59,8 +80,9 @@
 	ASSERT(IsTrue, f0 >= 0.0f && f0 <= 1.0f);
 }
 
-/// @tags pbr, hair, distribution
-[numthreads(1, 1, 1)] void TestHairGaussian() {
+	/// @tags pbr, hair, distribution
+	[numthreads(1, 1, 1)] void TestHairGaussian()
+{
 	// Test 1: Basic Gaussian properties
 	float B = 0.3f;      // Standard deviation
 	float theta = 0.0f;  // Peak at theta=0
@@ -93,9 +115,8 @@
 	}
 }
 
-	/// @tags pbr, specular, microfacet, ggx
-	[numthreads(1, 1, 1)] void TestGetSpecularMicrofacet()
-{
+/// @tags pbr, specular, microfacet, ggx
+[numthreads(1, 1, 1)] void TestGetSpecularMicrofacet() {
 	// Test 1: Basic calculation with typical values
 	float roughness = 0.5f;
 	float3 F0 = float3(0.04, 0.04, 0.04);  // Dielectric F0
@@ -155,8 +176,9 @@
 	ASSERT(IsTrue, F_metal.x >= metalF0.x);
 }
 
-/// @tags pbr, sheen, microflakes, charlie
-[numthreads(1, 1, 1)] void TestGetSpecularMicroflakes() {
+	/// @tags pbr, sheen, microflakes, charlie
+	[numthreads(1, 1, 1)] void TestGetSpecularMicroflakes()
+{
 	// Test 1: Basic calculation (for fabric/sheen materials)
 	float roughness = 0.3f;
 	float3 F0 = float3(0.04, 0.04, 0.04);
@@ -208,9 +230,8 @@
 	ASSERT(IsTrue, result_colored.z >= 0.0f);
 }
 
-	/// @tags pbr, constants
-	[numthreads(1, 1, 1)] void TestPBRConstants()
-{
+/// @tags pbr, constants
+[numthreads(1, 1, 1)] void TestPBRConstants() {
 	// Test 1: Roughness range is valid
 	ASSERT(IsTrue, PBR::Constants::MinRoughness >= 0.0f);
 	ASSERT(IsTrue, PBR::Constants::MaxRoughness <= 1.0f);
@@ -237,8 +258,9 @@
 	ASSERT(IsTrue, PBR::Constants::MaxGlintDensityRandomization >= PBR::Constants::MinGlintDensityRandomization);
 }
 
-/// @tags pbr, flags
-[numthreads(1, 1, 1)] void TestPBRFlags() {
+	/// @tags pbr, flags
+	[numthreads(1, 1, 1)] void TestPBRFlags()
+{
 	// Test 1: Flags are unique powers of 2 (single bits set)
 	uint flags[] = {
 		PBR::Flags::HasEmissive,
@@ -276,9 +298,8 @@
 	ASSERT(IsTrue, (combined & PBR::Flags::TwoLayer) == 0);
 }
 
-	/// @tags pbr, terrain, flags
-	[numthreads(1, 1, 1)] void TestTerrainFlags()
-{
+/// @tags pbr, terrain, flags
+[numthreads(1, 1, 1)] void TestTerrainFlags() {
 	// Test 1: Basic PBR flags for terrain tiles
 	uint pbrFlags[] = {
 		PBR::TerrainFlags::LandTile0PBR,
@@ -336,8 +357,9 @@
 	ASSERT(IsTrue, (tile0Combined & PBR::TerrainFlags::LandTile0HasGlint) != 0);
 }
 
-/// @tags pbr, ior, edge-cases
-[numthreads(1, 1, 1)] void TestIORToF0EdgeCases() {
+	/// @tags pbr, ior, edge-cases
+	[numthreads(1, 1, 1)] void TestIORToF0EdgeCases()
+{
 	// Test with IOR = 0 (invalid, but should not crash)
 	float f0_zero = PBR::IORToF0(0.0f);
 	ASSERT(IsTrue, !isnan(f0_zero) && !isinf(f0_zero));
@@ -357,9 +379,8 @@
 	ASSERT(IsTrue, !isnan(f0_neg) && !isinf(f0_neg));
 }
 
-	/// @tags pbr, hair, edge-cases
-	[numthreads(1, 1, 1)] void TestHairGaussianEdgeCases()
-{
+/// @tags pbr, hair, edge-cases
+[numthreads(1, 1, 1)] void TestHairGaussianEdgeCases() {
 	// Test with very small B (narrow distribution)
 	float veryNarrow = PBR::HairGaussian(0.001f, 0.0f);
 	ASSERT(IsTrue, !isnan(veryNarrow) && !isinf(veryNarrow));
@@ -382,8 +403,9 @@
 	ASSERT(IsTrue, !isnan(deltaFunc) && !isinf(deltaFunc));
 }
 
-/// @tags pbr, specular, edge-cases
-[numthreads(1, 1, 1)] void TestSpecularMicrofacetEdgeCases() {
+	/// @tags pbr, specular, edge-cases
+	[numthreads(1, 1, 1)] void TestSpecularMicrofacetEdgeCases()
+{
 	float3 F;
 
 	// Test with typical dielectric material (production-safe ranges)
@@ -394,9 +416,8 @@
 	ASSERT(IsTrue, all(result >= 0.0f));
 }
 
-	/// @tags pbr, sheen, basic
-	[numthreads(1, 1, 1)] void TestSpecularMicroflakesEdgeCases()
-{
+/// @tags pbr, sheen, basic
+[numthreads(1, 1, 1)] void TestSpecularMicroflakesEdgeCases() {
 	// Test with typical parameters
 	float3 result = PBR::SpecularMicroflakes(
 		0.5f, float3(0.04, 0.04, 0.04), 0.8f, 0.7f, 0.9f, 0.85f);
@@ -423,8 +444,9 @@
 	ASSERT(IsTrue, all(result_grazing >= 0.0f));
 }
 
-/// @tags pbr, wetness, direct-lighting
-[numthreads(1, 1, 1)] void TestWetnessDirectLight() {
+	/// @tags pbr, wetness, direct-lighting
+	[numthreads(1, 1, 1)] void TestWetnessDirectLight()
+{
 	float3 N = float3(0, 0, 1);
 	float3 V = float3(0.577, 0.577, 0.577);
 	float3 L = float3(-0.707, 0, 0.707);
@@ -454,9 +476,8 @@
 	ASSERT(IsTrue, all(abs(result_black) < 0.001f));
 }
 
-	/// @tags pbr, wetness, indirect-lighting
-	[numthreads(1, 1, 1)] void TestWetnessIndirectLight()
-{
+/// @tags pbr, wetness, indirect-lighting
+[numthreads(1, 1, 1)] void TestWetnessIndirectLight() {
 	float3 N = float3(0, 0, 1);
 	float3 V = float3(0.577, 0.577, 0.577);
 	float roughness = 0.5f;
@@ -486,8 +507,9 @@
 	ASSERT(IsTrue, lobe_grazing.x >= lobeWeight.x);
 }
 
-/// @tags pbr, wetness, edge-cases
-[numthreads(1, 1, 1)] void TestWetnessEdgeCases() {
+	/// @tags pbr, wetness, edge-cases
+	[numthreads(1, 1, 1)] void TestWetnessEdgeCases()
+{
 	float3 N = float3(0, 0, 1);
 	float3 V = float3(0.577, 0.577, 0.577);
 	float3 L = float3(-0.707, 0, 0.707);
@@ -518,9 +540,8 @@
 	ASSERT(IsTrue, all(!isinf(lobe_max)));
 }
 
-	/// @tags pbr, wetness, properties
-	[numthreads(1, 1, 1)] void TestWetnessProperties()
-{
+/// @tags pbr, wetness, properties
+[numthreads(1, 1, 1)] void TestWetnessProperties() {
 	float3 N = float3(0, 0, 1);
 	float3 V = float3(0.577, 0.577, 0.577);
 	float3 L = float3(-0.707, 0, 0.707);

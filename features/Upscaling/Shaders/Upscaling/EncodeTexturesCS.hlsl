@@ -70,11 +70,14 @@ RWTexture2D<float> DepthOutput : register(u3);
 	}
 
 	MotionVectorOutput[dispatchID.xy] = lerp(longestMotionVector, motionVector, nearFactor);
+#else
+	// FSR has no disocclusion-dilation step of its own -- still needs a write here
+	// or callers (e.g. the foveated crop) copy stale/uninitialized UAV contents.
+	MotionVectorOutput[dispatchID.xy] = MotionVectorMask[srcCoord];
 #endif
 
 #if defined(DEPTH_OUTPUT)
-	// Copy depth as R32_FLOAT so FSR DX11 backend receives a typed format.
-	// The raw depth resource is R24G8_TYPELESS in VR which maps to FFX_SURFACE_FORMAT_UNKNOWN.
+	// FSR and the D3D11/D3D12 runtime bridge require a typed depth format.
 	DepthOutput[dispatchID.xy] = DepthMask[srcCoord];
 #endif
 

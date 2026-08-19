@@ -47,25 +47,38 @@ public:
 	static void RenderStatistics(bool showTable = true, bool showModeToggle = true);
 
 	/**
-	 * @brief Renders the per-feature profiling section with Off/GPU/CPU controls.
+	 * @brief Renders per-feature profiling through a bottom-aligned disclosure.
 	 *
-	 * Selecting GPU or CPU requests a profiler capture and displays the
-	 * feature's timers as an inline graph and table. Off requests no
-	 * capture from this panel; capture is global, so overhead stops only
-	 * once no other visible view is requesting it either.
+	 * A compact Profiling button uses the bottom of the window on short pages
+	 * and follows the end of the feature material on long pages. Active timing
+	 * data appears above the CPU, GPU, and Off controls, with the button beneath
+	 * both. A small gap separates profiling from feature settings.
 	 *
 	 * @param featurePrefix The profiler timer name prefix identifying the feature
 	 *        (e.g. "ScreenSpaceGI").
+	 * @pre PrepareFeatureTimers was called for the same feature this frame.
 	 */
 	static void RenderFeatureTimers(const std::string& featurePrefix);
 
 	/**
-	 * @brief Checks whether the per-feature profiling section should be shown.
+	 * @brief Prepares per-feature timing data and returns its rendered height.
 	 *
-	 * Always true while the profiler exists, so the Off/GPU/CPU controls stay
+	 * @param featurePrefix The profiler timer name prefix identifying the feature.
+	 * @param showProfiling Whether profiling controls are available on the active page.
+	 * @return Height of the prepared profiling content.
+	 */
+	static float PrepareFeatureTimers(const std::string& featurePrefix, bool showProfiling);
+
+	/** @brief Clears prepared timing data when leaving a feature page. */
+	static void DeactivateFeatureTimers();
+
+	/**
+	 * @brief Checks whether per-feature profiling can be shown.
+	 *
+	 * Always true while the profiler exists, so the CPU/GPU/Off controls stay
 	 * reachable even before any capture has produced timer results.
 	 */
-	static bool HasFeatureTimers(const std::string& featurePrefix);
+	static bool IsFeatureProfilingAvailable();
 
 private:
 	static inline TimingMode timingMode = TimingMode::GPU;
@@ -126,6 +139,15 @@ private:
 		float maxP95 = 0.0f;
 		float maxP99 = 0.0f;
 	};
+	struct FeatureTimingViewState
+	{
+		bool controlsVisible = false;
+		bool profilingDisabled = false;
+		FeatureTimingMode mode = FeatureTimingMode::Off;
+		FeatureTimingData data;
+		float contentHeight = 0.0f;
+	};
+	static inline std::unordered_map<std::string, FeatureTimingViewState> featureTimingViews;
 
 	static ImU32 GetGroupColor(std::string_view groupName);
 	static uint32_t ToLegitColor(ImU32 imColor);
@@ -138,8 +160,11 @@ private:
 	static bool IsFeatureTimerResult(const Profiler::TimerResult& result, std::string_view prefix);
 
 	static FeatureTimingData CollectFeatureTimingData(const std::string& featurePrefix, bool cpuMode);
+	static float GetFeatureTimingDataHeight(const FeatureTimingData& data);
 	static int ComputeFeatureGraphLegendWidth(const FeatureTimingData& data, int totalWidth);
 	static bool RenderFeatureTimingGraph(const FeatureTimingData& data, ImGuiUtils::ProfilerGraph& graph, float graphHeight);
-	static bool RenderFeatureTimingData(const std::string& featurePrefix, FeatureTimingMode featureMode, bool showTable);
+	static void RenderFeatureTimingData(const std::string& featurePrefix, FeatureTimingMode featureMode, const FeatureTimingData& data);
+	static void RenderFeatureTimingModeControls(const std::string& featurePrefix, FeatureTimingMode& featureMode);
+	static void RenderFeatureTimingButton(const std::string& featurePrefix);
 	static bool RenderFeatureOverview();
 };

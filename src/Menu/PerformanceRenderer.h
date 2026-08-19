@@ -1,13 +1,12 @@
 #pragma once
 
 /**
- * @brief Renders the "Performance" page: a central place that aggregates every
- * feature's performance controls (upscaling, shadow budgets, foveation, stereo
- * reprojection, and culling) so users can manage performance in one place.
+ * @brief Renders the "Performance" page with Presets and Overlay tabs. Presets
+ * aggregates feature performance controls, while Overlay embeds the performance
+ * overlay's settings.
  *
- * The page owns no settings state. It iterates loaded features and calls
- * Feature::DrawPerformanceSettings() on each; controls bind directly to feature settings.
- * Intelligently includes VR-specific sections when running in VR mode.
+ * The page owns no settings state. Controls bind directly to their owning feature,
+ * and VR-specific preset sections are included only when running in VR mode.
  */
 struct Feature;
 

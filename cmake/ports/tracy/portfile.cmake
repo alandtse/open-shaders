@@ -15,12 +15,7 @@ vcpkg_check_features(OUT_FEATURE_OPTIONS FEATURE_OPTIONS
         crash-handler TRACY_NO_CRASH_HANDLER
 )
 
-vcpkg_check_features(OUT_FEATURE_OPTIONS TOOLS_OPTIONS
-    FEATURES
-        cli-tools VCPKG_CLI_TOOLS
-        gui-tools VCPKG_GUI_TOOLS
-)
-
+set(TOOLS_OPTIONS "")
 if("cli-tools" IN_LIST FEATURES OR "gui-tools" IN_LIST FEATURES)
     vcpkg_find_acquire_program(PKGCONFIG)
     list(APPEND TOOLS_OPTIONS "-DPKG_CONFIG_EXECUTABLE=${PKGCONFIG}")

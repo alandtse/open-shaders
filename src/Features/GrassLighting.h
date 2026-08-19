@@ -11,7 +11,7 @@ public:
 	virtual inline std::string_view GetShaderDefineName() override { return "GRASS_LIGHTING"; }
 	/** @brief Returns true only for Grass shader type. */
 	virtual bool HasShaderDefine(RE::BSShader::Type shaderType) override { return shaderType == RE::BSShader::Type::Grass; };
-	virtual std::string_view GetCategory() const override { return FeatureCategories::kGrass; }
+	virtual std::string_view GetCategory() const override { return FeatureCategories::kFoliage; }
 
 	virtual std::pair<std::string, std::vector<std::string>> GetFeatureSummary() override
 	{
@@ -28,8 +28,8 @@ public:
 		float Glossiness = 20.0f;
 		float SpecularStrength = 0.5f;
 		float SubsurfaceScatteringAmount = 1.0f;
-		uint OverrideComplexGrassSettings = false;
-		float BasicGrassBrightness = 1.0f;
+		uint OverrideComplexGrassSettings = true;
+		float BasicGrassBrightness = 0.8f;
 		uint EnableWrappedLighting = false;
 		float ComplexGrassThreshold = 0.03f;
 		uint pad1;

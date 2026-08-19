@@ -143,7 +143,6 @@ namespace PBR
 		float satVdotL = saturate(VdotL);
 		float satNdotH = saturate(NdotH);
 		float satVdotH = saturate(VdotH);
-
 #if !defined(LANDSCAPE) && !defined(LODLANDSCAPE)
 		[branch] if ((PBRFlags & Flags::HairMarschner) != 0)
 		{
@@ -171,6 +170,18 @@ namespace PBR
 				lightingOutput.specular = lerp(lightingOutput.specular, fuzzSpecular, material.FuzzWeight);
 			}
 
+#	if defined(TREE_ANIM)
+			[branch] if (SharedData::foliageLightingSettings.EnableFoliageScattering != 0)
+			{
+				// Deliberately do not use material thickness here. Foliage geometry is
+				// commonly flagged as subsurface with a baked thickness of 1, and wind
+				// deformation invalidates any thickness assumption. Use only the current
+				// normal/light/view angles and base color.
+				float foliageTransmission = saturate(-NdotL) * BRDF::Diffuse_Lambert();
+				foliageTransmission += GetFoliageTransmission(NdotL, VdotL);
+				lightingOutput.transmission += material.BaseColor * foliageTransmission * detailedLightColor * kD;
+			}
+#	endif
 			[branch] if ((PBRFlags & Flags::Subsurface) != 0)
 #	if !defined(TREE_ANIM)
 			{
@@ -274,6 +285,12 @@ namespace PBR
 
 		// Apply ambient occlusion with multi-bounce approximation
 		lobeWeights.diffuse *= MultiBounceAO(material.BaseColor, material.AO);
+#if defined(TREE_ANIM)
+		// This is intentionally additive and AO-independent: it restores a small
+		// amount of indirect ambient response for foliage after the AO adjustment.
+		[branch] if (SharedData::foliageLightingSettings.EnableFoliageAmbientBoost != 0)
+			lobeWeights.diffuse += material.BaseColor * SharedData::foliageLightingSettings.FoliageAmbientAmount;
+#endif
 		float alpha = material.Roughness * material.Roughness;
 		lobeWeights.specular *= SpecularOcclusion(NdotV, alpha, material.AO);
 	}

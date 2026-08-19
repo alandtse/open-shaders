@@ -1,6 +1,7 @@
 #include "Common/Color.hlsli"
 #include "Common/FrameBuffer.hlsli"
 #include "Common/GBuffer.hlsli"
+#include "Common/LightingCommon.hlsli"
 #include "Common/Math.hlsli"
 #include "Common/MotionBlur.hlsli"
 #include "Common/Permutation.hlsli"
@@ -9,10 +10,6 @@
 #include "Common/Wind.hlsli"
 
 #define DEFERRED
-
-#ifdef GRASS_LIGHTING
-#	define GRASS
-#endif  // GRASS_LIGHTING
 
 #if !defined(DYNAMIC_CUBEMAPS) && defined(IBL)
 #	undef IBL
@@ -696,8 +693,8 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	}
 
 	float3 specularColorPBR = 0;
-	float3 transmissionColor = 0;
 #			endif  // TRUE_PBR
+	float3 transmissionColor = 0;
 
 	float llDirLightMult = (SharedData::linearLightingSettings.enableLinearLighting && !SharedData::linearLightingSettings.isDirLightLinear) ? SharedData::linearLightingSettings.dirLightMult : 1.0f;
 	float3 dirLightColor = Color::DirectionalLight(SharedData::DirLightColor.xyz / max(llDirLightMult, 1e-5), SharedData::linearLightingSettings.isDirLightLinear) * llDirLightMult;
@@ -748,7 +745,6 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	}
 #			else
 	dirLightColor *= dirLightColorMultiplier;
-
 	float softLightRolloff = saturate(input.VertexNormal.w * 10.0) * SharedData::grassLightingSettings.SubsurfaceScatteringAmount * 2.0;
 	float wrapAmount = saturate(input.VertexNormal.w * 10.0) * 0.5 * (!complex);
 
@@ -760,10 +756,11 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 		// Original Standard Model
 		lightsDiffuseColor += dirLightColor * dirDetailedShadow * saturate(dirLightAngle) * Color::VanillaNormalization();
 	}
+	[branch] if (SharedData::foliageLightingSettings.EnableGrassScattering != 0)
+		lightsDiffuseColor += dirLightColor * dirDetailedShadow * GetFoliageTransmission(dirLightAngle, dot(viewDirection, SharedData::DirLightDirection.xyz)) * Color::VanillaNormalization();
 
 	float3 vertexColor = Color::ColorToLinear(input.Color.xyz);
 	float vertexAO = max(max(vertexColor.r, vertexColor.g), vertexColor.b);
-	vertexColor /= max(vertexAO, EPSILON_DIVISION);
 
 #				if defined(SKYLIGHTING)
 #					if defined(VR)
@@ -856,7 +853,6 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 				lightColor *= lightShadow;
 
 				float lightAngle = dot(normal, normalizedLightDirection);
-				float lightNoL = dot(normalizedLightDirection.xyz, viewDirection);
 				float3 lightDiffuseColor;
 
 				if (SharedData::grassLightingSettings.EnableWrappedLighting) {
@@ -865,6 +861,8 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 				} else {
 					lightDiffuseColor = lightColor * saturate(lightAngle);
 				}
+				[branch] if (SharedData::foliageLightingSettings.EnableGrassScattering != 0)
+					lightDiffuseColor += lightColor * GetFoliageTransmission(lightAngle, dot(viewDirection, normalizedLightDirection));
 
 				subsurfaceColor += lightColor * GetSoftLightMultiplier(lightAngle, softLightRolloff) * Color::VanillaNormalization();
 
@@ -894,7 +892,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 
 #				if defined(IBL)
 	if (SharedData::iblSettings.EnableIBL) {
-#					if defined(SKYLIGHTING)
+#					if defined(SKYLIGHTING) && !defined(INTERIOR)
 		directionalAmbientColor = ImageBasedLighting::GetDiffuseIBLOccluded(directionalAmbientColor, -normal, skylightingDiffuse);
 #					else
 		directionalAmbientColor = ImageBasedLighting::GetDiffuseIBL(directionalAmbientColor, -normal);
@@ -909,7 +907,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	directionalAmbientColor *= albedo;
 
 #				if defined(SKYLIGHTING)
-#					if defined(IBL)
+#					if defined(IBL) && !defined(INTERIOR)
 	if (!SharedData::iblSettings.EnableIBL)
 #					endif
 	{
@@ -1088,7 +1086,6 @@ PS_OUTPUT main(PS_INPUT input)
 
 	float3 vertexColor = Color::ColorToLinear(input.Color.xyz);
 	float vertexAO = max(max(vertexColor.r, vertexColor.g), vertexColor.b);
-	vertexColor /= max(vertexAO, EPSILON_DIVISION);
 
 #			if defined(SKYLIGHTING)
 #				if defined(VR)
@@ -1109,7 +1106,7 @@ PS_OUTPUT main(PS_INPUT input)
 
 #			if defined(IBL)
 	if (SharedData::iblSettings.EnableIBL) {
-#				if defined(SKYLIGHTING)
+#				if defined(SKYLIGHTING) && !defined(INTERIOR)
 		directionalAmbientColor = ImageBasedLighting::GetDiffuseIBLOccluded(directionalAmbientColor, -normal, skylightingDiffuse);
 #				else
 		directionalAmbientColor = ImageBasedLighting::GetDiffuseIBL(directionalAmbientColor, -normal);
@@ -1117,15 +1114,15 @@ PS_OUTPUT main(PS_INPUT input)
 	}
 #			endif
 
-	diffuseColor += directionalAmbientColor;
-
 	float3 albedo = baseColor.xyz * vertexColor;
+
+	diffuseColor += directionalAmbientColor;
 
 	diffuseColor *= albedo;
 	directionalAmbientColor *= albedo;
 
 #			if defined(SKYLIGHTING)
-#				if defined(IBL)
+#				if defined(IBL) && !defined(INTERIOR)
 	if (!SharedData::iblSettings.EnableIBL)
 #				endif
 	{

@@ -1,6 +1,8 @@
 // ShadowEngineHooks.cpp
 // Every game-engine touchpoint of the shadow caster scheduler: hook thunks, engine accessors, and Install().
 
+#include <atomic>
+
 #include "../../Deferred.h"
 #include "../../Globals.h"
 #include "../../GpuPass.h"
@@ -286,6 +288,36 @@ namespace ShadowCasterManager
 		static inline REL::Relocation<decltype(thunk)> func;
 	};
 
+	// BSBatchRenderer::StartGroupingAlphas bump-allocates a global array with no
+	// capacity check; an extended shadow pool's demand can exceed it, AV'ing on
+	// adjacent .rdata read as bogus `this`. Return null: callers already handle it.
+	static std::uint32_t* s_alphaGroupCount = nullptr;
+	static std::uint32_t s_alphaGroupLimit = 0;
+
+	struct Hook_StartGroupingAlphas
+	{
+		static void* thunk(RE::BSBatchRenderer* a_this, void* a_bound, RE::NiCamera* a_camera,
+			bool a_sortByClosestPoint)
+		{
+			if (s_alphaGroupCount && a_camera) {
+				const std::uint32_t live = *s_alphaGroupCount;
+				// High-water mark; CAS so a concurrent worker cannot lose a higher peak.
+				std::uint32_t seen = s_alphaGroupPeak.load(std::memory_order_relaxed);
+				while (live > seen && !s_alphaGroupPeak.compare_exchange_weak(
+										  seen, live, std::memory_order_relaxed)) {
+				}
+				if (live >= s_alphaGroupLimit) {
+					const uint64_t n = s_alphaGroupDrops.fetch_add(1, std::memory_order_relaxed) + 1;
+					if (n == 1u || (n % 10000u) == 0u)
+						logger::warn("[SCM] Alpha GeometryGroup ceiling reached ({} live, {} refused)", live, n);
+					return nullptr;
+				}
+			}
+			return func(a_this, a_bound, a_camera, a_sortByClosestPoint);
+		}
+		static inline REL::Relocation<decltype(thunk)> func;
+	};
+
 	// =========================================================================
 	// Game accessor helpers
 	//
@@ -429,6 +461,20 @@ namespace ShadowCasterManager
 	{
 		static REL::RelocationID uid(528093, 415038);
 		return reinterpret_cast<uint32_t*>(uid.address());
+	}
+
+	// Same test EnableLight uses to admit a light to firstPersonShadowMask:
+	// does the camera sit inside the light's sphere of influence. Shared so
+	// the redraw path (EnableLight), the demand-skip reinsert path, and the
+	// extended-pool surface admission below can't drift out of sync.
+	bool LightContainsCamera(const RE::NiLight* a_niLight, const RE::NiCamera* a_camera)
+	{
+		if (!a_niLight || !a_camera)
+			return false;
+		auto delta = a_niLight->world.translate - a_camera->world.translate;
+		float dist = std::sqrt(delta.x * delta.x + delta.y * delta.y + delta.z * delta.z);
+		float radius = a_niLight->GetLightRuntimeData().radius.x;
+		return dist < radius + a_camera->GetNearPlane();
 	}
 	// Written back to the game at the end of scheduling.
 	uint32_t* GetFrameLightCount()
@@ -762,7 +808,13 @@ namespace ShadowCasterManager
 				if (alreadyAdded)
 					continue;
 
-				if (GameIsLightAffectingSurface(shaderProp, reinterpret_cast<RE::BSLight*>(e.Light))) {
+				// GameIsLightAffectingSurface has no distance test, so use the
+				// vanilla mask's own camera-inside-light-radius test instead --
+				// lets lights past kShadowMaskBits (32) still reach first person.
+				bool admits = firstPerson ?
+				                  LightContainsCamera(e.Light->light.get(), GetWorldCamera()) :
+				                  GameIsLightAffectingSurface(shaderProp, reinterpret_cast<RE::BSLight*>(e.Light));
+				if (admits) {
 					lights[added++] = reinterpret_cast<RE::BSLight*>(e.Light);
 					(*shadowCount)++;
 				}
@@ -887,6 +939,10 @@ namespace ShadowCasterManager
 		{
 			std::unique_lock lock(s_portalGraphMutex);
 			func(a_ssn, a_graph);
+			// Cell-grid shift: freed caster geometry can have its address recycled
+			// by the new cell, aliasing s_casterMobility's stale identity onto it.
+			// Deferred to the render thread (both are render-thread-only).
+			s_pendingCellReset.store(true, std::memory_order_release);
 		}
 		static inline REL::Relocation<decltype(thunk)> func;
 	};
@@ -1267,6 +1323,53 @@ namespace ShadowCasterManager
 		// nothing. One detour for all runtimes -- don't re-split for VR (a since-corrected mismap).
 		stl::detour_thunk<Hook_RenderShadowLightsWithUtilityShader>(
 			REL::RelocationID(100423, 107141));
+
+		// Alpha GeometryGroup ceiling (100874/107670, see Hook_StartGroupingAlphas).
+		// The counter has no address-library id of its own; it's decoded out of
+		// ClearAlphaGeometryGroups (100856/107646), an 11-byte `mov dword
+		// [counter], 0; ret` whose RIP-relative operand IS the counter -- the
+		// opcode check below is what makes that safe rather than a guess.
+		{
+			// `mov dword ptr [rip+disp32], imm32` (C7 /0, RIP-relative ModRM), then
+			// `ret`; the operand is relative to the end of the 10-byte store.
+			constexpr std::uint8_t kMovDwordImmOpcode = 0xC7;
+			constexpr std::uint8_t kRipRelativeModRM = 0x05;
+			constexpr std::uint8_t kRetOpcode = 0xC3;
+			constexpr std::size_t kMovDwordImmSize = 10;
+
+			const auto clearFn = REL::RelocationID(100856, 107646).address();
+			const auto* code = reinterpret_cast<const std::uint8_t*>(clearFn);
+			std::uint32_t immediate = 1;
+			std::int32_t displacement = 0;
+			if (clearFn) {
+				std::memcpy(&displacement, code + 2, sizeof(displacement));
+				std::memcpy(&immediate, code + 6, sizeof(immediate));
+			}
+			// The immediate must be the zero this function exists to store: a
+			// patched sentinel would mean the counter no longer means what the
+			// ceiling check assumes.
+			const bool shapeOk = clearFn && code[0] == kMovDwordImmOpcode &&
+			                     code[1] == kRipRelativeModRM && immediate == 0u &&
+			                     code[kMovDwordImmSize] == kRetOpcode;
+			const auto counter = shapeOk ? clearFn + kMovDwordImmSize + displacement : 0;
+			// Containment check: a decode this guard trusts enough to dereference
+			// every frame must land in the module's own data, not wherever a
+			// displacement happened to point.
+			const auto data = REL::Module::get().segment(REL::Segment::data);
+			if (counter >= data.address() && counter < data.address() + data.size()) {
+				s_alphaGroupCount = reinterpret_cast<std::uint32_t*>(counter);
+				s_alphaGroupLimit = (globals::game::isVR ? kAlphaGeometryGroupCapacityVR :
+														   kAlphaGeometryGroupCapacityFlat) -
+				                    kAlphaGeometryGroupReserve;
+				if (long rc = stl::detour_thunk<Hook_StartGroupingAlphas>(REL::RelocationID(100874, 107670)))
+					logger::error("[SCM] Failed to install Hook_StartGroupingAlphas ({})", rc);
+			} else {
+				s_alphaGroupCount = nullptr;
+				logger::error(
+					"[SCM] Alpha GeometryGroup guard not installed: "
+					"ClearAlphaGeometryGroups did not decode to a counter in .data");
+			}
+		}
 
 		// ---- Shadow caster selection -----------------------------------------
 

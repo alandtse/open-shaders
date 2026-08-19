@@ -813,22 +813,25 @@ def analyze_features(FEATURES_DIR, feature_meta_map, base_ref, only_changed=Fals
         note = ""
         is_attention = False
 
-        # Detect new feature (all files added, ini present)
+        # Detect new feature (all files added, ini present). A complete, valid
+        # ini needs no human action -- report it for visibility but don't
+        # block the release on it (only a genuinely missing ini, below, does).
         if changes and all(s == "A" for s, _ in changes):
             if ini_path:
                 note = f"New feature (with ini v{new_ver_str})"
                 new_features.append((feature_dir.name, new_ver_str, bump_commit))
-                is_attention = True
             else:
                 note = "New feature (missing ini!)"
                 new_features.append((feature_dir.name, "-", bump_commit))
                 is_attention = True
         # Detect new ini added — use pr_prior_ver (base_ref baseline) so features added
         # earlier in the release cycle are not re-reported as new in subsequent PRs.
-        if ini_path and pr_prior_ver is None and new_ver is not None:
+        # Same reasoning as above: a valid new ini is not an action item. elif: a
+        # brand-new feature (caught above) always has pr_prior_ver is None too --
+        # without elif this double-appends to new_features and clobbers note.
+        elif ini_path and pr_prior_ver is None and new_ver is not None:
             note = f"New ini added (v{new_ver_str})"
             new_features.append((feature_dir.name, new_ver_str, bump_commit))
-            is_attention = True
         # Detect files added but ini missing
         if not ini_path and any(s == "A" for s, _ in changes):
             note = "Files added, ini missing!"
