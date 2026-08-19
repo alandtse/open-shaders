@@ -68,6 +68,32 @@ jobs:
                   base-sha: ${{ github.event.pull_request.base.sha }}
                   head-sha: ${{ github.event.pull_request.head.sha }}
 
+    # TEMPORARY: one-off diagnostic for the actions/cache reliability
+    # investigation (actions/cache#1194). Restores a known-existing,
+    # default-branch-scoped cache key at the TOP LEVEL -- no workflow_call
+    # hop, unlike `build` below which restores the same class of key one
+    # level deeper via _shared-build.yaml -> setup-build-environment. A hit
+    # here vs. a miss in `build` isolates whether the workflow_call nesting
+    # is the cause. Delete this job once the investigation concludes.
+    diagnostic-cache-probe:
+        name: "Diagnostic: top-level cache probe (temporary)"
+        runs-on: windows-2025-vs2026
+        permissions:
+            contents: read
+        steps:
+            - name: Restore known build-cache key (no workflow_call nesting)
+              id: probe
+              uses: actions/cache/restore@v5
+              with:
+                  path: build/PR
+                  key: Windows-cmake-msvc-19.51-cpp-vs2026-default-65e38873a29a611a7893f925f326375cf1d5351f893a86f3398972aad5eeca28
+
+            - name: Report
+              shell: pwsh
+              run: |
+                  Write-Host "event: ${{ github.event_name }} | ref: ${{ github.ref }}"
+                  Write-Host "Top-level (no workflow_call) cache-hit: ${{ steps.probe.outputs.cache-hit }}"
+
     # Security: this job compiles untrusted fork code.
     # It uses _shared-build.yaml which enforces permissions: contents: read and receives NO secrets.
     # The absence of a `secrets:` block here is intentional — passing secrets to a reusable
