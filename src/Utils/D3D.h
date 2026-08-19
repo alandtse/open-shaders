@@ -31,7 +31,12 @@ namespace Util
 			file.seekg(0, std::ios::beg);
 
 			char* data = new char[size];
-			file.read(data, size);
+			if (!file.read(data, size)) {
+				delete[] data;
+				*ppData = NULL;
+				*pBytes = 0;
+				return E_FAIL;
+			}
 			*ppData = data;
 			*pBytes = size;
 			return S_OK;
@@ -39,8 +44,7 @@ namespace Util
 
 		HRESULT Close(LPCVOID pData) override
 		{
-			if (pData)
-				delete[] pData;
+			delete[] static_cast<const char*>(pData);
 			return S_OK;
 		}
 	};

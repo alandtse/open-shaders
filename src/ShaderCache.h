@@ -640,6 +640,8 @@ namespace SIE
 		/// Callback fired once a standalone compute shader finishes compiling or
 		/// loads from disk. Runs on a compilation-pool worker thread; the pointer
 		/// is null on failure (never throws). The caller owns thread-safe storage.
+		/// A non-null pointer is one owned reference: the callback must either
+		/// take ownership (e.g. winrt::com_ptr::attach) or Release() it.
 		using ComputeShaderReadyCallback = std::function<void(ID3D11ComputeShader*)>;
 
 		/// @brief Compile (or load from the disk cache) a standalone compute shader

@@ -891,10 +891,6 @@ void DoF::Draw(TextureInfo& inout_tex)
 		resetViews();
 	}
 
-	// Post Smoothing only touches out of focus highlights; when it's disabled the combiner can write
-	// straight into the output and we save two full res passes.
-	const bool doPostSmoothing = settings.PostBlurSmoothing >= 0.01f;
-
 	// Combiner
 	{
 		CS_GPU_PASS("PostProcessing::DoF::Combiner");
@@ -902,7 +898,7 @@ void DoF::Draw(TextureInfo& inout_tex)
 		srvs.at(3) = texCoC->srv.get();
 		srvs.at(5) = texBlurredFiltered->srv.get();
 		srvs.at(6) = texPreBlurred->srv.get();
-		uavs.at(0) = doPostSmoothing ? texPostSmooth->uav.get() : texOutput->uav.get();
+		uavs.at(0) = needPostSmoothing ? texPostSmooth->uav.get() : texOutput->uav.get();
 
 		context->CSSetShaderResources(0, (uint)srvs.size(), srvs.data());
 		context->CSSetUnorderedAccessViews(0, (uint)uavs.size(), uavs.data(), nullptr);
@@ -913,8 +909,9 @@ void DoF::Draw(TextureInfo& inout_tex)
 		resetViews();
 	}
 
-	// Post Smooth
-	if (doPostSmoothing) {
+	// Post Smoothing only touches out of focus highlights; when it's disabled the combiner
+	// already wrote straight into the output above, saving two full res passes.
+	if (needPostSmoothing) {
 		CS_GPU_PASS("PostProcessing::DoF::PostSmooth");
 		srvs.at(0) = texPostSmooth->srv.get();
 		srvs.at(3) = texCoC->srv.get();

@@ -562,7 +562,8 @@ void LensFlare::DrawQuality(TextureInfo& inout_tex, LensFlareCB& data)
 	std::ignore = inout_tex;
 	auto context = globals::d3d::context;
 
-	if (!AllShadersReady({ &fftRowCS, &fftColCS, &fftRowInvCS, &fftColInvCS, &bokehPrepareCS }))
+	if (!AllShadersReady({ &fftRowCS, &fftColCS, &fftRowInvCS, &fftColInvCS, &bokehPrepareCS,
+			&fftMultiplyCS, &fftThresholdCS, &fftGhostComposeCS }))
 		return;
 
 	uint N = currentFFTResolution;
@@ -833,7 +834,8 @@ void LensFlare::Draw(TextureInfo& inout_tex)
 
 	// === Ghost + Halo generation (mode-dependent) ===
 	if ((mode == GhostMode::Quality || mode == GhostMode::Ultra) &&
-		AllShadersReady({ &fftRowCS, &fftColCS, &fftMultiplyCS, &fftThresholdCS, &fftGhostComposeCS })) {
+		AllShadersReady({ &fftRowCS, &fftColCS, &fftRowInvCS, &fftColInvCS, &bokehPrepareCS,
+			&fftMultiplyCS, &fftThresholdCS, &fftGhostComposeCS })) {
 		DrawQuality(inout_tex, data);
 	} else {
 		DrawFast(inout_tex, data);
