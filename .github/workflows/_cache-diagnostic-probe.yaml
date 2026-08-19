@@ -1,0 +1,58 @@
+name: "(Shared) Cache Diagnostic Probe"
+
+# Reusable restore-only probe, called via workflow_call so the restore happens
+# across the same job-boundary implicated in actions/cache#1194 ("Cache not
+# found between jobs while being in the same run" -- a commenter there traced
+# it to workflow_call specifically). Always exits 0; purely diagnostic.
+
+on:
+    workflow_call:
+        inputs:
+            key:
+                description: "Cache key to restore"
+                type: string
+                required: true
+
+jobs:
+    probe:
+        name: Probe cache restore
+        runs-on: windows-2025-vs2026
+        permissions:
+            contents: read
+        steps:
+            - name: Restore attempt 1
+              id: attempt1
+              uses: actions/cache/restore@v5
+              with:
+                  path: cache-diagnostic-restored
+                  key: ${{ inputs.key }}
+
+            - name: Wait 15s before retry
+              if: steps.attempt1.outputs.cache-hit != 'true'
+              shell: pwsh
+              run: Start-Sleep -Seconds 15
+
+            - name: Restore attempt 2
+              if: steps.attempt1.outputs.cache-hit != 'true'
+              id: attempt2
+              uses: actions/cache/restore@v5
+              with:
+                  path: cache-diagnostic-restored
+                  key: ${{ inputs.key }}
+
+            - name: Summary
+              if: always()
+              shell: pwsh
+              run: |
+                  $a1 = "${{ steps.attempt1.outputs.cache-hit }}"
+                  $a2 = "${{ steps.attempt2.outputs.cache-hit }}"
+                  Write-Host "event: ${{ github.event_name }} | ref: ${{ github.ref }}"
+                  Write-Host "attempt1 hit: $a1"
+                  Write-Host "attempt2 hit: $a2"
+                  if ($a1 -eq 'true') {
+                      Write-Host "RESULT: hit on first try."
+                  } elseif ($a2 -eq 'true') {
+                      Write-Host "RESULT: missed first, hit on retry -- confirms propagation-race behavior."
+                  } else {
+                      Write-Host "RESULT: missed both attempts."
+                  }

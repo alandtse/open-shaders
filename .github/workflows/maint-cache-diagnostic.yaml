@@ -1,0 +1,249 @@
+name: "Maint: Cache Diagnostic"
+
+# One-off diagnostic for the actions/cache reliability investigation
+# (actions/cache#1194). Reuses the ci_test/** harness (see ci-test.yaml)
+# rather than inventing a new trigger surface: push a branch to ci_test/** to
+# run this. Delete both workflow files once the investigation concludes; this
+# is not meant to be permanent.
+#
+# Real pr-checks.yaml data (7/7 sampled PR runs, spanning ~13h across
+# multiple branches) shows the build cache missing every single time while
+# vcpkg-downloads -- same job, same trust context, same workflow_call depth,
+# smaller payload -- hits every single time. That rules out generic
+# pull_request_target/workflow_call flakiness (which would affect both
+# sometimes) and leaves two untested variables: a genuine pull_request_target
+# trigger (everything below ran under trusted push/workflow_dispatch so far)
+# and payload size (~1.4GB real build cache vs a few bytes in tests 1-3).
+#
+# Four tests, each isolating a different variable:
+#
+# 1. probe-known-existing: restores a FIXED key (cache-diagnostic-fixed-v1)
+#    that was saved by an earlier, separate run of this workflow -- not
+#    seeded in this run.
+#
+# 2. same-job-dummy: saves a fresh per-run-unique key, then restores it in
+#    the very next step of the SAME job. No workflow_call boundary at all --
+#    a control to confirm the basic save/restore mechanism itself works.
+#
+# 3. seed-nested / probe-nested: saves a fresh per-run-unique key in one job,
+#    then restores it from a SEPARATE reusable workflow (workflow_call) --
+#    mirrors pr-checks.yaml -> _shared-build.yaml's one-hop nesting.
+#
+# 4. seed-large / probe-pull-request-target: seeds a ~1GB payload (trusted),
+#    then restores it -- and the small fixed-v1 key -- from a REAL
+#    pull_request_target event, gated on touching
+#    .github/cache-diagnostic-trigger so it never fires on a real PR. To run
+#    it: open a throwaway PR against dev that touches that file.
+
+on:
+    push:
+        branches: [ci_test/**]
+    workflow_dispatch:
+    pull_request_target:
+        paths:
+            - ".github/cache-diagnostic-trigger"
+
+permissions:
+    contents: read
+
+jobs:
+    probe-known-existing:
+        name: "Test 1: probe a cache from an earlier run"
+        if: github.repository == 'alandtse/open-shaders' && github.event_name != 'pull_request_target'
+        runs-on: windows-2025-vs2026
+        permissions:
+            contents: read
+        steps:
+            - name: Restore attempt 1
+              id: attempt1
+              uses: actions/cache/restore@v5
+              with:
+                  path: cache-diagnostic-restored
+                  key: cache-diagnostic-fixed-v1
+
+            - name: Wait 15s before retry
+              if: steps.attempt1.outputs.cache-hit != 'true'
+              shell: pwsh
+              run: Start-Sleep -Seconds 15
+
+            - name: Restore attempt 2
+              if: steps.attempt1.outputs.cache-hit != 'true'
+              id: attempt2
+              uses: actions/cache/restore@v5
+              with:
+                  path: cache-diagnostic-restored
+                  key: cache-diagnostic-fixed-v1
+
+            - name: Ensure the key exists for next time
+              if: steps.attempt1.outputs.cache-hit != 'true' && steps.attempt2.outputs.cache-hit != 'true'
+              shell: pwsh
+              run: |
+                  New-Item -ItemType Directory -Force -Path cache-diagnostic-restored | Out-Null
+                  Get-Date -Format o | Out-File -FilePath cache-diagnostic-restored/seeded-at.txt -Encoding utf8
+
+            - name: Save (only runs if the key never existed)
+              if: steps.attempt1.outputs.cache-hit != 'true' && steps.attempt2.outputs.cache-hit != 'true'
+              uses: actions/cache/save@v5
+              with:
+                  path: cache-diagnostic-restored
+                  key: cache-diagnostic-fixed-v1
+
+            - name: Summary
+              if: always()
+              shell: pwsh
+              run: |
+                  $a1 = "${{ steps.attempt1.outputs.cache-hit }}"
+                  $a2 = "${{ steps.attempt2.outputs.cache-hit }}"
+                  Write-Host "Test 1 (known-existing key) -- attempt1: $a1 | attempt2: $a2"
+                  if ($a1 -eq 'true') { Write-Host "RESULT: hit on first try." }
+                  elseif ($a2 -eq 'true') { Write-Host "RESULT: missed first, hit on retry -- confirms propagation-race behavior." }
+                  else { Write-Host "RESULT: missed both attempts (or this was the first-ever run and the key didn't exist yet)." }
+
+    same-job-dummy:
+        name: "Test 2: same-job save then immediate restore"
+        if: github.repository == 'alandtse/open-shaders' && github.event_name != 'pull_request_target'
+        runs-on: windows-2025-vs2026
+        permissions:
+            contents: read
+        steps:
+            - name: Write dummy file
+              shell: pwsh
+              run: |
+                  New-Item -ItemType Directory -Force -Path cache-diagnostic-dummy | Out-Null
+                  Get-Date -Format o | Out-File -FilePath cache-diagnostic-dummy/marker.txt -Encoding utf8
+
+            - name: Save dummy cache
+              uses: actions/cache/save@v5
+              with:
+                  path: cache-diagnostic-dummy
+                  key: cache-diagnostic-dummy-${{ github.run_id }}
+
+            - name: Restore dummy cache (immediate next step, same job)
+              id: restore
+              uses: actions/cache/restore@v5
+              with:
+                  path: cache-diagnostic-dummy
+                  key: cache-diagnostic-dummy-${{ github.run_id }}
+
+            - name: Summary
+              shell: pwsh
+              run: |
+                  Write-Host "Test 2 (same-job, no workflow_call) -- cache-hit: ${{ steps.restore.outputs.cache-hit }}"
+
+    seed-nested:
+        name: "Test 3a: seed a fresh per-run key"
+        if: github.repository == 'alandtse/open-shaders' && github.event_name != 'pull_request_target'
+        runs-on: windows-2025-vs2026
+        permissions:
+            contents: read
+        outputs:
+            key: cache-diagnostic-nested-${{ github.run_id }}
+        steps:
+            - name: Write marker file
+              shell: pwsh
+              run: |
+                  New-Item -ItemType Directory -Force -Path cache-diagnostic-restored | Out-Null
+                  Get-Date -Format o | Out-File -FilePath cache-diagnostic-restored/seeded-at.txt -Encoding utf8
+
+            - name: Save fresh per-run key
+              uses: actions/cache/save@v5
+              with:
+                  path: cache-diagnostic-restored
+                  key: cache-diagnostic-nested-${{ github.run_id }}
+
+    probe-nested:
+        name: "Test 3b: restore across workflow_call boundary"
+        needs: seed-nested
+        if: github.repository == 'alandtse/open-shaders' && github.event_name != 'pull_request_target'
+        uses: ./.github/workflows/_cache-diagnostic-probe.yaml
+        with:
+            key: ${{ needs.seed-nested.outputs.key }}
+
+    seed-large:
+        name: "Test 4a: seed a ~1GB payload (trusted)"
+        if: github.repository == 'alandtse/open-shaders' && github.event_name != 'pull_request_target'
+        runs-on: windows-2025-vs2026
+        permissions:
+            contents: read
+        steps:
+            - name: Write ~1GB dummy payload
+              shell: pwsh
+              run: |
+                  New-Item -ItemType Directory -Force -Path cache-diagnostic-large | Out-Null
+                  $bytes = New-Object byte[] (1GB)
+                  (New-Object Random).NextBytes($bytes)
+                  [System.IO.File]::WriteAllBytes("cache-diagnostic-large/payload.bin", $bytes)
+
+            - name: Save (only if the key doesn't already exist)
+              id: check
+              uses: actions/cache/restore@v5
+              with:
+                  path: cache-diagnostic-large
+                  key: cache-diagnostic-large-v1
+                  lookup-only: true
+
+            - name: Save large payload
+              if: steps.check.outputs.cache-hit != 'true'
+              uses: actions/cache/save@v5
+              with:
+                  path: cache-diagnostic-large
+                  key: cache-diagnostic-large-v1
+
+    probe-pull-request-target:
+        name: "Test 4b: restore under a REAL pull_request_target event"
+        if: github.repository == 'alandtse/open-shaders' && github.event_name == 'pull_request_target'
+        runs-on: windows-2025-vs2026
+        permissions:
+            contents: read
+        steps:
+            - name: Restore small known-existing key (fixed-v1)
+              id: small
+              uses: actions/cache/restore@v5
+              with:
+                  path: cache-diagnostic-restored
+                  key: cache-diagnostic-fixed-v1
+
+            - name: Restore ~1GB known-existing key (large-v1)
+              id: large
+              uses: actions/cache/restore@v5
+              with:
+                  path: cache-diagnostic-large
+                  key: cache-diagnostic-large-v1
+
+            - name: Summary
+              if: always()
+              shell: pwsh
+              run: |
+                  Write-Host "=== Test 4: REAL pull_request_target restore ==="
+                  Write-Host "event: ${{ github.event_name }} | ref: ${{ github.ref }}"
+                  Write-Host "small (fixed-v1) cache-hit: ${{ steps.small.outputs.cache-hit }}"
+                  Write-Host "large (large-v1, ~1GB) cache-hit: ${{ steps.large.outputs.cache-hit }}"
+
+    probe-real-production-key:
+        # Restores the ACTUAL production build-cache key/path
+        # (Windows-cmake-msvc-19.51-cpp-vs2026-default-1615132f...), not a
+        # synthetic diagnostic key -- confirms this diagnostic harness can
+        # itself see the exact cache that pr-checks.yaml consistently misses
+        # (12/12 sampled runs). Hardcoded literal: computing it dynamically
+        # would need the same MSVC-version-detection + hashFiles steps as
+        # setup-build-environment/action.yaml, and the key is stable as long
+        # as extern/**, CMakePresets.json, and vcpkg.json are unchanged.
+        name: "Test 5: restore the REAL production build-cache key"
+        if: github.repository == 'alandtse/open-shaders' && github.event_name != 'pull_request_target'
+        runs-on: windows-2025-vs2026
+        permissions:
+            contents: read
+        steps:
+            - name: Restore the real cpp-vs2026 build cache
+              id: real
+              uses: actions/cache/restore@v5
+              with:
+                  path: build/PR
+                  key: Windows-cmake-msvc-19.51-cpp-vs2026-default-1615132f7dfe7dd6efb50ea5c19dc564bfe680d1b3628cee9b93240814490551
+
+            - name: Summary
+              shell: pwsh
+              run: |
+                  Write-Host "=== Test 5: real production key, trusted context ==="
+                  Write-Host "event: ${{ github.event_name }} | ref: ${{ github.ref }}"
+                  Write-Host "cache-hit: ${{ steps.real.outputs.cache-hit }}"
