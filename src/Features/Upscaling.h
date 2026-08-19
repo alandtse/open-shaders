@@ -169,9 +169,9 @@ public:
 		float4x4 prevViewProjUnjittered[2];
 	};
 
-	ConstantBuffer* jitterCB = nullptr;
-	ConstantBuffer* upscalingDataCB = nullptr;
-	ConstantBuffer* cameraMotionVectorsCB = nullptr;
+	eastl::unique_ptr<ConstantBuffer> jitterCB;
+	eastl::unique_ptr<ConstantBuffer> upscalingDataCB;
+	eastl::unique_ptr<ConstantBuffer> cameraMotionVectorsCB;
 
 	// True while the current menu frame's MV buffer holds camera-derived motion
 	// (written by FillMenuCameraMotionVectors); gates the upscalers' menu reset.

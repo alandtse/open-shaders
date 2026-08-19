@@ -2171,13 +2171,13 @@ void Upscaling::SetupResources()
 	DX::ThrowIfFailed(globals::d3d::device->CreateDepthStencilState(&depthStencilDesc, upscaleDepthStencilState.put()));
 
 	// Create jitter offset constant buffer for depth upscaling
-	jitterCB = new ConstantBuffer(ConstantBufferDesc<JitterCB>());
+	jitterCB = eastl::make_unique<ConstantBuffer>(ConstantBufferDesc<JitterCB>());
 
 	// Create upscaling data constant buffer for encode textures compute shader
-	upscalingDataCB = new ConstantBuffer(ConstantBufferDesc<UpscalingDataCB>());
+	upscalingDataCB = eastl::make_unique<ConstantBuffer>(ConstantBufferDesc<UpscalingDataCB>());
 
 	// Create camera reprojection matrices constant buffer for menu motion vectors
-	cameraMotionVectorsCB = new ConstantBuffer(ConstantBufferDesc<CameraMotionVectorsCB>(), "Upscaling::CameraMotionVectorsCB");
+	cameraMotionVectorsCB = eastl::make_unique<ConstantBuffer>(ConstantBufferDesc<CameraMotionVectorsCB>(), "Upscaling::CameraMotionVectorsCB");
 
 	// Create blend state for depth upscaling
 	D3D11_BLEND_DESC blendDesc = {};

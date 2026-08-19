@@ -504,6 +504,19 @@ struct BSShaderRenderTargets_Create
 		func();
 		perfMode.EndCreateRTEnlarge();
 
+		// The engine invokes this hook twice on a normal boot, ~11-20s apart,
+		// with kMAIN unchanged both times -- skip the redundant setup cascade
+		// below rather than re-running every feature's SetupResources().
+		static D3D11_TEXTURE2D_DESC lastMainDesc{};
+		static bool everSetup = false;
+		D3D11_TEXTURE2D_DESC mainDesc{};
+		globals::game::renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMAIN].texture->GetDesc(&mainDesc);
+		if (everSetup && mainDesc.Width == lastMainDesc.Width && mainDesc.Height == lastMainDesc.Height &&
+			mainDesc.Format == lastMainDesc.Format && mainDesc.SampleDesc.Count == lastMainDesc.SampleDesc.Count)
+			return;
+		lastMainDesc = mainDesc;
+		everSetup = true;
+
 		globals::ReInit();
 
 		// Must precede Setup()'s SetupResources dispatch -- Upscaling::SetupResources()
