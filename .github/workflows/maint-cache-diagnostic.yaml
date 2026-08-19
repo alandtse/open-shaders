@@ -34,6 +34,23 @@ name: "Maint: Cache Diagnostic"
 #    pull_request_target event, gated on touching
 #    .github/cache-diagnostic-trigger so it never fires on a real PR. To run
 #    it: open a throwaway PR against dev that touches that file.
+#
+#    Found (2026-08-19): pull_request_target workflows are only discovered
+#    from files present on the repo's DEFAULT branch (dev) -- a file that
+#    exists only on a ci_test/** branch never fires, even for a PR whose
+#    BASE is that branch. push/workflow_dispatch don't have this
+#    restriction, which is why tests 1-3/5 worked from ci_test/** directly.
+#
+# 6. probe-pull-request: same real-production-key restore as Test 5, but
+#    under a genuine pull_request event (NOT _target) targeting a
+#    ci_test/** branch. Unlike pull_request_target, plain pull_request reads
+#    the workflow definition from the PR's own head/merge ref, so this DOES
+#    fire without ever touching dev. pull_request differs from
+#    pull_request_target in trust/secrets, not in cache-scope rules per
+#    GitHub's docs -- a hit here is evidence the cache-scope mechanism
+#    itself works for PR-type events in general, narrowing the real miss
+#    toward something pull_request_target-specific (or the workflow_call
+#    nesting, tested separately by the top-level probe in pr-checks.yaml).
 
 on:
     push:
@@ -42,6 +59,8 @@ on:
     pull_request_target:
         paths:
             - ".github/cache-diagnostic-trigger"
+    pull_request:
+        branches: [ci_test/**]
 
 permissions:
     contents: read
@@ -49,7 +68,7 @@ permissions:
 jobs:
     probe-known-existing:
         name: "Test 1: probe a cache from an earlier run"
-        if: github.repository == 'alandtse/open-shaders' && github.event_name != 'pull_request_target'
+        if: github.repository == 'alandtse/open-shaders' && !contains(fromJSON('["pull_request_target","pull_request"]'), github.event_name)
         runs-on: windows-2025-vs2026
         permissions:
             contents: read
@@ -101,7 +120,7 @@ jobs:
 
     same-job-dummy:
         name: "Test 2: same-job save then immediate restore"
-        if: github.repository == 'alandtse/open-shaders' && github.event_name != 'pull_request_target'
+        if: github.repository == 'alandtse/open-shaders' && !contains(fromJSON('["pull_request_target","pull_request"]'), github.event_name)
         runs-on: windows-2025-vs2026
         permissions:
             contents: read
@@ -132,7 +151,7 @@ jobs:
 
     seed-nested:
         name: "Test 3a: seed a fresh per-run key"
-        if: github.repository == 'alandtse/open-shaders' && github.event_name != 'pull_request_target'
+        if: github.repository == 'alandtse/open-shaders' && !contains(fromJSON('["pull_request_target","pull_request"]'), github.event_name)
         runs-on: windows-2025-vs2026
         permissions:
             contents: read
@@ -154,14 +173,14 @@ jobs:
     probe-nested:
         name: "Test 3b: restore across workflow_call boundary"
         needs: seed-nested
-        if: github.repository == 'alandtse/open-shaders' && github.event_name != 'pull_request_target'
+        if: github.repository == 'alandtse/open-shaders' && !contains(fromJSON('["pull_request_target","pull_request"]'), github.event_name)
         uses: ./.github/workflows/_cache-diagnostic-probe.yaml
         with:
             key: ${{ needs.seed-nested.outputs.key }}
 
     seed-large:
         name: "Test 4a: seed a ~1GB payload (trusted)"
-        if: github.repository == 'alandtse/open-shaders' && github.event_name != 'pull_request_target'
+        if: github.repository == 'alandtse/open-shaders' && !contains(fromJSON('["pull_request_target","pull_request"]'), github.event_name)
         runs-on: windows-2025-vs2026
         permissions:
             contents: read
@@ -220,16 +239,17 @@ jobs:
                   Write-Host "large (large-v1, ~1GB) cache-hit: ${{ steps.large.outputs.cache-hit }}"
 
     probe-real-production-key:
-        # Restores the ACTUAL production build-cache key/path
-        # (Windows-cmake-msvc-19.51-cpp-vs2026-default-1615132f...), not a
+        # Restores the ACTUAL production build-cache key/path, not a
         # synthetic diagnostic key -- confirms this diagnostic harness can
-        # itself see the exact cache that pr-checks.yaml consistently misses
-        # (12/12 sampled runs). Hardcoded literal: computing it dynamically
-        # would need the same MSVC-version-detection + hashFiles steps as
+        # itself see the exact cache that pr-checks.yaml consistently misses.
+        # Hardcoded literal: computing it dynamically would need the same
+        # MSVC-version-detection + hashFiles steps as
         # setup-build-environment/action.yaml, and the key is stable as long
-        # as extern/**, CMakePresets.json, and vcpkg.json are unchanged.
-        name: "Test 5: restore the REAL production build-cache key"
-        if: github.repository == 'alandtse/open-shaders' && github.event_name != 'pull_request_target'
+        # as extern/**, CMakePresets.json, and vcpkg.json are unchanged --
+        # re-check `gh api repos/alandtse/open-shaders/actions/caches` if
+        # this stops hitting.
+        name: "Test 5: restore the REAL production build-cache key (push/dispatch)"
+        if: github.repository == 'alandtse/open-shaders' && !contains(fromJSON('["pull_request_target","pull_request"]'), github.event_name)
         runs-on: windows-2025-vs2026
         permissions:
             contents: read
@@ -239,11 +259,35 @@ jobs:
               uses: actions/cache/restore@v5
               with:
                   path: build/PR
-                  key: Windows-cmake-msvc-19.51-cpp-vs2026-default-1615132f7dfe7dd6efb50ea5c19dc564bfe680d1b3628cee9b93240814490551
+                  key: Windows-cmake-msvc-19.51-cpp-vs2026-default-65e38873a29a611a7893f925f326375cf1d5351f893a86f3398972aad5eeca28
 
             - name: Summary
               shell: pwsh
               run: |
                   Write-Host "=== Test 5: real production key, trusted context ==="
                   Write-Host "event: ${{ github.event_name }} | ref: ${{ github.ref }}"
+                  Write-Host "cache-hit: ${{ steps.real.outputs.cache-hit }}"
+
+    probe-pull-request:
+        # Same real production key as Test 5, but under a genuine
+        # pull_request event targeting a ci_test/** branch -- see the
+        # module-header note above for why this needs no dev merge.
+        name: "Test 6: restore the REAL production build-cache key (pull_request)"
+        if: github.repository == 'alandtse/open-shaders' && github.event_name == 'pull_request'
+        runs-on: windows-2025-vs2026
+        permissions:
+            contents: read
+        steps:
+            - name: Restore the real cpp-vs2026 build cache
+              id: real
+              uses: actions/cache/restore@v5
+              with:
+                  path: build/PR
+                  key: Windows-cmake-msvc-19.51-cpp-vs2026-default-65e38873a29a611a7893f925f326375cf1d5351f893a86f3398972aad5eeca28
+
+            - name: Summary
+              shell: pwsh
+              run: |
+                  Write-Host "=== Test 6: real production key, pull_request event ==="
+                  Write-Host "event: ${{ github.event_name }} | base: ${{ github.base_ref }} | head: ${{ github.head_ref }}"
                   Write-Host "cache-hit: ${{ steps.real.outputs.cache-hit }}"
