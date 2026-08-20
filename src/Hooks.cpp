@@ -509,8 +509,12 @@ struct BSShaderRenderTargets_Create
 		// skip the redundant setup cascade below (single-threaded entry point, no sync needed).
 		static D3D11_TEXTURE2D_DESC lastMainDesc{};
 		static bool everSetup = false;
+		auto* renderer = globals::game::renderer;
+		auto* mainTexture = renderer ? renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMAIN].texture : nullptr;
+		if (!mainTexture)
+			return;
 		D3D11_TEXTURE2D_DESC mainDesc{};
-		globals::game::renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMAIN].texture->GetDesc(&mainDesc);
+		mainTexture->GetDesc(&mainDesc);
 		if (everSetup && Util::SameTextureDesc(mainDesc, lastMainDesc))
 			return;
 		lastMainDesc = mainDesc;
