@@ -15,6 +15,7 @@
 
 #include "../../../GpuPass.h"
 #include "../../../State.h"
+#include "../../../Utils/D3D.h"
 #include "../../Upscaling.h"
 #include "../DX12SwapChain.h"
 
@@ -390,21 +391,6 @@ namespace
 		desc.BindFlags = a_bindFlags;
 		desc.MiscFlags = 0;
 		return desc;
-	}
-
-	bool SameTextureDesc(const D3D11_TEXTURE2D_DESC& a_left, const D3D11_TEXTURE2D_DESC& a_right)
-	{
-		return a_left.Width == a_right.Width &&
-		       a_left.Height == a_right.Height &&
-		       a_left.MipLevels == a_right.MipLevels &&
-		       a_left.ArraySize == a_right.ArraySize &&
-		       a_left.Format == a_right.Format &&
-		       a_left.SampleDesc.Count == a_right.SampleDesc.Count &&
-		       a_left.SampleDesc.Quality == a_right.SampleDesc.Quality &&
-		       a_left.Usage == a_right.Usage &&
-		       a_left.BindFlags == a_right.BindFlags &&
-		       a_left.CPUAccessFlags == a_right.CPUAccessFlags &&
-		       a_left.MiscFlags == a_right.MiscFlags;
 	}
 
 	template <size_t N>
@@ -1331,12 +1317,12 @@ bool FidelityFX::EnsureRuntimeUpscalerSharedResources(uint32_t a_contextCount, u
 
 	const bool needsRecreate =
 		missingRequiredResource ||
-		!SameTextureDesc(runtimeColorSharedDesc, desiredColorDesc) ||
-		!SameTextureDesc(runtimeDepthSharedDesc, desiredDepthDesc) ||
-		!SameTextureDesc(runtimeMotionSharedDesc, desiredMotionDesc) ||
-		!SameTextureDesc(runtimeReactiveSharedDesc, desiredReactiveDesc) ||
-		!SameTextureDesc(runtimeTransparencySharedDesc, desiredTransparencyDesc) ||
-		!SameTextureDesc(runtimeOutputSharedDesc, desiredOutputDesc);
+		!Util::SameTextureDesc(runtimeColorSharedDesc, desiredColorDesc) ||
+		!Util::SameTextureDesc(runtimeDepthSharedDesc, desiredDepthDesc) ||
+		!Util::SameTextureDesc(runtimeMotionSharedDesc, desiredMotionDesc) ||
+		!Util::SameTextureDesc(runtimeReactiveSharedDesc, desiredReactiveDesc) ||
+		!Util::SameTextureDesc(runtimeTransparencySharedDesc, desiredTransparencyDesc) ||
+		!Util::SameTextureDesc(runtimeOutputSharedDesc, desiredOutputDesc);
 
 	if (!needsRecreate) {
 		for (uint32_t i = a_contextCount; i < std::size(runtimeColorShared); ++i) {

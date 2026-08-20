@@ -106,6 +106,21 @@ namespace Util
 		Resource->SetPrivateData(WKPDID_D3DDebugObjectNameT, len, buffer);
 	}
 
+	bool SameTextureDesc(const D3D11_TEXTURE2D_DESC& a_left, const D3D11_TEXTURE2D_DESC& a_right)
+	{
+		return a_left.Width == a_right.Width &&
+		       a_left.Height == a_right.Height &&
+		       a_left.MipLevels == a_right.MipLevels &&
+		       a_left.ArraySize == a_right.ArraySize &&
+		       a_left.Format == a_right.Format &&
+		       a_left.SampleDesc.Count == a_right.SampleDesc.Count &&
+		       a_left.SampleDesc.Quality == a_right.SampleDesc.Quality &&
+		       a_left.Usage == a_right.Usage &&
+		       a_left.BindFlags == a_right.BindFlags &&
+		       a_left.CPUAccessFlags == a_right.CPUAccessFlags &&
+		       a_left.MiscFlags == a_right.MiscFlags;
+	}
+
 	ID3D11DeviceChild* CompileShader(const wchar_t* FilePath, const std::vector<std::pair<const char*, const char*>>& Defines, const char* ProgramType, const char* Program)
 	{
 		auto device = globals::d3d::device;
