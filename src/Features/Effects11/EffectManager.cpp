@@ -522,6 +522,7 @@ void EffectManager::CreateQuadGeometry()
 		}
 		return;
 	}
+	Util::LogShaderCompileWarnings(errorBlob.get(), "EFFECTS11 input layout vertex shader");
 
 	hr = globals::d3d::device->CreateInputLayout(inputElementDescs, ARRAYSIZE(inputElementDescs),
 		vertexShaderBlob->GetBufferPointer(),
@@ -561,45 +562,17 @@ void EffectManager::CreateRenderStates()
 
 void EffectManager::CreateCopyShaders()
 {
-	auto vertexShaderSource = LoadShaderFile("Data\\Shaders\\Effects11\\QuadVS.hlsl");
-	if (vertexShaderSource.empty())
-		return;
-
-	winrt::com_ptr<ID3DBlob> vsBlob, errorBlob;
-	HRESULT hr = D3DCompile(vertexShaderSource.data(), vertexShaderSource.size(), "QuadVS.hlsl", nullptr, nullptr,
-		"main", "vs_4_0", 0, 0, vsBlob.put(), errorBlob.put());
-
-	if (FAILED(hr)) {
-		if (errorBlob) {
-			logger::error("[EFFECTS11] Failed to compile copy vertex shader: {}", static_cast<char*>(errorBlob->GetBufferPointer()));
-		}
+	copyVertexShader.attach(static_cast<ID3D11VertexShader*>(
+		Util::CompileShader(L"Data\\Shaders\\Effects11\\QuadVS.hlsl", {}, "vs_5_0")));
+	if (!copyVertexShader) {
+		logger::error("[EFFECTS11] Failed to compile copy vertex shader");
 		return;
 	}
 
-	hr = globals::d3d::device->CreateVertexShader(vsBlob->GetBufferPointer(), vsBlob->GetBufferSize(), nullptr, copyVertexShader.put());
-	if (FAILED(hr)) {
-		logger::error("[EFFECTS11] Failed to create copy vertex shader");
-		return;
-	}
-
-	auto pixelShaderSource = LoadShaderFile("Data\\Shaders\\Effects11\\CopyPS.hlsl");
-	if (pixelShaderSource.empty())
-		return;
-
-	winrt::com_ptr<ID3DBlob> psBlob;
-	hr = D3DCompile(pixelShaderSource.data(), pixelShaderSource.size(), "CopyPS.hlsl", nullptr, nullptr,
-		"main", "ps_5_0", 0, 0, psBlob.put(), errorBlob.put());
-
-	if (FAILED(hr)) {
-		if (errorBlob) {
-			logger::error("[EFFECTS11] Failed to compile copy pixel shader: {}", static_cast<char*>(errorBlob->GetBufferPointer()));
-		}
-		return;
-	}
-
-	hr = globals::d3d::device->CreatePixelShader(psBlob->GetBufferPointer(), psBlob->GetBufferSize(), nullptr, copyPixelShader.put());
-	if (FAILED(hr)) {
-		logger::error("[EFFECTS11] Failed to create copy pixel shader");
+	copyPixelShader.attach(static_cast<ID3D11PixelShader*>(
+		Util::CompileShader(L"Data\\Shaders\\Effects11\\CopyPS.hlsl", {}, "ps_5_0")));
+	if (!copyPixelShader) {
+		logger::error("[EFFECTS11] Failed to compile copy pixel shader");
 		return;
 	}
 
@@ -615,24 +588,10 @@ void EffectManager::CreateCopyShaders()
 
 void EffectManager::CreateColorCorrectionShader()
 {
-	auto computeShaderSource = LoadShaderFile("Data\\Shaders\\Effects11\\ColorCorrectionCS.hlsl");
-	if (computeShaderSource.empty())
-		return;
-
-	winrt::com_ptr<ID3DBlob> csBlob, errorBlob;
-	HRESULT hr = D3DCompile(computeShaderSource.data(), computeShaderSource.size(), "ColorCorrectionCS.hlsl", nullptr, nullptr,
-		"main", "cs_5_0", 0, 0, csBlob.put(), errorBlob.put());
-
-	if (FAILED(hr)) {
-		if (errorBlob) {
-			logger::error("[EFFECTS11] Failed to compile color correction compute shader: {}", static_cast<char*>(errorBlob->GetBufferPointer()));
-		}
-		return;
-	}
-
-	hr = globals::d3d::device->CreateComputeShader(csBlob->GetBufferPointer(), csBlob->GetBufferSize(), nullptr, colorCorrectionComputeShader.put());
-	if (FAILED(hr)) {
-		logger::error("[EFFECTS11] Failed to create color correction compute shader");
+	colorCorrectionComputeShader.attach(static_cast<ID3D11ComputeShader*>(
+		Util::CompileShader(L"Data\\Shaders\\Effects11\\ColorCorrectionCS.hlsl", {}, "cs_5_0")));
+	if (!colorCorrectionComputeShader) {
+		logger::error("[EFFECTS11] Failed to compile color correction compute shader");
 		return;
 	}
 
@@ -643,7 +602,7 @@ void EffectManager::CreateColorCorrectionShader()
 	cbDesc.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
 	cbDesc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
 
-	hr = globals::d3d::device->CreateBuffer(&cbDesc, nullptr, colorCorrectionConstantBuffer.put());
+	HRESULT hr = globals::d3d::device->CreateBuffer(&cbDesc, nullptr, colorCorrectionConstantBuffer.put());
 	if (FAILED(hr)) {
 		logger::error("[EFFECTS11] Failed to create color correction constant buffer");
 		return;

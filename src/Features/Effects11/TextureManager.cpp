@@ -1,10 +1,8 @@
 #include "TextureManager.h"
 
-#include <d3dcompiler.h>
-
-#include "EffectManager.h"
 #include "Globals.h"
 #include "State.h"
+#include "Utils/D3D.h"
 
 TextureManager& TextureManager::GetSingleton()
 {
@@ -155,74 +153,20 @@ void TextureManager::CreateDownsampleResources()
 	DX::ThrowIfFailed(device->CreateSamplerState(&samplerDesc, linearSampler.put()));
 
 	// Create downsample vertex shader
-	auto vertexShaderSource = EffectManager::LoadShaderFile("Data\\Shaders\\Effects11\\QuadVS.hlsl");
-	if (vertexShaderSource.empty())
-		return;
-
-	winrt::com_ptr<ID3DBlob> vertexShaderBlob;
-	winrt::com_ptr<ID3DBlob> vertexErrorBlob;
-
-	HRESULT vsResult = D3DCompile(
-		vertexShaderSource.data(),
-		vertexShaderSource.size(),
-		"QuadVS.hlsl",
-		nullptr,
-		nullptr,
-		"main",
-		"vs_5_0",
-		0,
-		0,
-		vertexShaderBlob.put(),
-		vertexErrorBlob.put());
-
-	if (FAILED(vsResult)) {
-		if (vertexErrorBlob) {
-			logger::error("[TextureManager] Downsample vertex shader compilation failed: {}",
-				static_cast<const char*>(vertexErrorBlob->GetBufferPointer()));
-		}
+	downsampleVS.attach(static_cast<ID3D11VertexShader*>(
+		Util::CompileShader(L"Data\\Shaders\\Effects11\\QuadVS.hlsl", {}, "vs_5_0")));
+	if (!downsampleVS) {
+		logger::error("[TextureManager] Downsample vertex shader compilation failed");
 		return;
 	}
-
-	DX::ThrowIfFailed(device->CreateVertexShader(
-		vertexShaderBlob->GetBufferPointer(),
-		vertexShaderBlob->GetBufferSize(),
-		nullptr,
-		downsampleVS.put()));
 
 	// Create downsample pixel shader
-	auto pixelShaderSource = EffectManager::LoadShaderFile("Data\\Shaders\\Effects11\\DownsamplePS.hlsl");
-	if (pixelShaderSource.empty())
-		return;
-
-	winrt::com_ptr<ID3DBlob> pixelShaderBlob;
-	winrt::com_ptr<ID3DBlob> errorBlob;
-
-	HRESULT result = D3DCompile(
-		pixelShaderSource.data(),
-		pixelShaderSource.size(),
-		"DownsamplePS.hlsl",
-		nullptr,
-		nullptr,
-		"main",
-		"ps_5_0",
-		0,
-		0,
-		pixelShaderBlob.put(),
-		errorBlob.put());
-
-	if (FAILED(result)) {
-		if (errorBlob) {
-			logger::error("[TextureManager] Downsample shader compilation failed: {}",
-				static_cast<const char*>(errorBlob->GetBufferPointer()));
-		}
+	downsamplePS.attach(static_cast<ID3D11PixelShader*>(
+		Util::CompileShader(L"Data\\Shaders\\Effects11\\DownsamplePS.hlsl", {}, "ps_5_0")));
+	if (!downsamplePS) {
+		logger::error("[TextureManager] Downsample pixel shader compilation failed");
 		return;
 	}
-
-	DX::ThrowIfFailed(device->CreatePixelShader(
-		pixelShaderBlob->GetBufferPointer(),
-		pixelShaderBlob->GetBufferSize(),
-		nullptr,
-		downsamplePS.put()));
 
 	// Create shared downsample texture
 	sharedDownsampleTexture = CreateDownsampleTexture(DXGI_FORMAT_R11G11B10_FLOAT);

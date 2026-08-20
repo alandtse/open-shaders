@@ -95,6 +95,9 @@ jobs:
             # warnings (e.g. X4000) that would break the release cache are caught pre-merge.
             # run-full-config-validation stays on, so PRs cover both sets.
             release-parity-validation: true
+            # Mild optimization (no LTCG) for faster CI; releases keep ALL.
+            # Non-fork PRs now save their own PR-preset cache generation.
+            cmake-preset: PR
 
     # Security: this job has GITHUB_TOKEN write permissions but executes no fork
     # code. It sparse-checks-out the BASE branch (trusted) for the

@@ -275,6 +275,65 @@ hlslkit-generate-defines --log CommunityShaders.log
 hlslkit-buffer-scan --features-dir features/
 ```
 
+### Regenerating shader-validation.yaml / shader-validation-vr.yaml
+
+Clear the disk cache, set Log Level to Debug/Trace, launch, and wait for the
+boot-time compile queue to finish -- **main menu only, no save needed.** A
+2026-08-19 bounded debate confirmed this: the offline `hlslkit-compile` pass
+validates every entry-point/define combination declared by the selected
+config during a full validation run; ordinary PRs use incremental validation
+for only the affected entry points and their permutations (see
+`tools/validate_changed_shaders.py`). Either way, structural correctness is
+re-checked deterministically regardless of how the config was populated --
+so a live capture's only job is seeding that structure and a warnings
+baseline, not exhaustive runtime enumeration. Visiting real gameplay to widen
+coverage doesn't actually close the gap below (see caveat).
+
+A cold-compile burst (clearing the disk cache) used to be a reliable
+reproducer for a UAF in `PostProcessFeature::CompileComputeShadersAsync()`'s
+completion callback (fixed 2026-08-19, see PR #500 -- the callback captured
+`this` by raw pointer with only a generation counter guarding it, not
+lifetime). Verified fixed via a genuinely cold full VR capture
+(3343 variants) completing cleanly post-fix where the same scenario had
+crashed twice before.
+
+**Known gap:** `hlslkit-generate` only recognizes the `ShaderCache`
+`ShaderClass:Type:descriptor` log format. Shaders compiled ad hoc outside that
+system (e.g. Effects11's `CopyPS`/`ColorCorrectionCS`/`RaymarchVolumetricRaysPS`,
+each compiled via a raw `D3DCompile`/`Util::CompileShader` call in
+`EffectManager.cpp`/`Effects11.cpp`) never appear in a generated config no
+matter how the capture is driven -- this is a parser limitation in `hlslkit`
+itself, not something a longer or more thorough play session fixes. Closing it
+needs either a `hlslkit` change to recognize these log lines, or a manually
+maintained config entry for each such shader.
+
+**Second known gap, confirmed 2026-08-19:** even within the `ShaderClass`
+system, a handful of shaders only compile when live scene/weather state
+happens to need them, not just when their feature is loaded -- e.g.
+`ISVolumetricLightingBlurHCS`/`BlurVCS`/`GenerateCS`/`RaymarchCS` (require a
+real exterior/lit-interior scene with Dynamic Resolution active) and VR's
+`ISFullScreenVR` (a native engine full-screen image-space effect, not yet
+root-caused which runtime state gates it) never fired during a static
+main-menu boot on either platform and silently drop out of a from-scratch
+regen. **Diff the new config's `file:` list against the previous version's
+before committing a regen**:
+
+```bash
+for config in .github/configs/shader-validation.yaml \
+              .github/configs/shader-validation-vr.yaml; do
+  echo "== $config =="
+  diff -u \
+    <(git show origin/dev:"$config" | grep -oP '(?<=- file: )\S+' | sort -u) \
+    <(grep -oP '(?<=- file: )\S+' "$config" | sort -u) || true
+done
+```
+
+to catch these -- but do NOT manually splice the missing entries back into
+the generated YAML (anchor/reference IDs are regen-specific and hand-editing
+them has caused real breakage before). Treat a diff match against this known
+list as an accepted, documented gap and commit the clean regen as-is; only
+chase it with a real gameplay capture if a _new_, unexplained file drops out.
+
 ## Custom CMake Targets
 
 In addition to `COPY_SHADERS` and `DEPLOY_ALL`, the project provides several other specialized build and utility targets:

@@ -13,6 +13,7 @@
 #include "Features/Effects11/ShaderPatches.h"
 #include "Globals.h"
 #include "State.h"
+#include "Utils/D3D.h"
 
 std::filesystem::path Effect::GetFilePath() const
 {
@@ -320,6 +321,7 @@ bool Effect::LoadFXFile()
 			}
 			return false;
 		}
+		Util::LogShaderCompileWarnings(err.get(), filePathStr);
 		return SUCCEEDED(D3DX11CreateEffectFromMemory(compiled->GetBufferPointer(),
 			compiled->GetBufferSize(), 0, globals::d3d::device, effect.put()));
 	};
@@ -399,6 +401,7 @@ bool Effect::LoadFXFile()
 			errors.push_back("Failed to create effect from compiled shader");
 			return false;
 		}
+		Util::LogShaderCompileWarnings(errorBlob.get(), filePathStr);
 	}
 
 	EnumerateAllVariables();

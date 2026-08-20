@@ -99,6 +99,17 @@ namespace Util
 	ID3D11DeviceChild* CompileShader(const wchar_t* FilePath, const std::vector<std::pair<const char*, const char*>>& Defines, const char* ProgramType, const char* Program = "main");
 
 	/**
+	 * @brief Log a D3DCompile error/warning blob verbatim, if present.
+	 *
+	 * Every call site that invokes D3DCompile/D3DCompileFromFile directly (i.e. cannot
+	 * go through CompileShader) should route its errorBlob here instead of hand-rolling
+	 * its own filter, so shader-validation log capture sees the full, unfiltered text.
+	 * @param ErrorBlob The blob returned by D3DCompile in its error-output parameter.
+	 * @param Context A short identifier (e.g. file name) prefixed to the log line.
+	 */
+	void LogShaderCompileWarnings(ID3DBlob* ErrorBlob, const std::string& Context);
+
+	/**
 	 * @brief Apply an alpha-blended highlight tint to a texture via CPU staging copy.
 	 * @param texture The texture to tint.
 	 * @param isHighlighted When false the function is a no-op.
