@@ -1,0 +1,21 @@
+// Shared CPU/GPU conformance samples. Define WIND_FIELD_PARITY_SAMPLE before inclusion.
+
+WIND_FIELD_PARITY_SAMPLE(
+	0.0f, 0.0f, 0.0f, 0.0f,
+	1.0f, 0.0f, 0.0f, 1.0f,
+	0.5f, 1.0f, 0.0f, 0.0f)
+
+WIND_FIELD_PARITY_SAMPLE(
+	1234.5f, -678.25f, 42.0f, 12.75f,
+	0.6f, 0.8f, 0.0f, 1.0f,
+	0.536149263f, 0.615182757f, 0.820243657f, 0.0f)
+
+WIND_FIELD_PARITY_SAMPLE(
+	-4096.25f, 8192.5f, -120.0f, 72.84375f,
+	-0.35f, 0.2f, 0.4f, 0.75f,
+	0.303578526f, -0.398681492f, 0.227817982f, 0.455635965f)
+
+WIND_FIELD_PARITY_SAMPLE(
+	250.0f, 750.0f, 3.0f, 0.0f,
+	0.0f, 0.0f, 0.0f, 0.0f,
+	0.411020666f, 0.0f, 0.0f, 0.0f)

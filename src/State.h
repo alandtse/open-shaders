@@ -15,6 +15,7 @@ using json = nlohmann::json;
 
 #include <FeatureBuffer.h>
 
+#include "Utils/WindField.h"
 #include <Hooks.h>
 #include <mutex>
 
@@ -62,6 +63,14 @@ public:
 
 	float timer = 0;
 	float previousTimer = 0;
+	float windFieldGustTravelDistance = 0.0f;
+	float windFieldFrameTime = 0.0f;
+	float windFieldAmbientSpeed = 0.0f;
+	float windFieldTravelDelta = 0.0f;
+	float3 ambientWindVelocity = {};
+	float3 windFieldSelectedVelocity = {};
+	float windFieldSelectedSpeed = 0.0f;
+	WindField::WindTuning windFieldTuning{};
 	float2 trunkWindVector = {};
 	float2 previousTrunkWindVector = {};
 	float sharedWindGustScale = 1.0f;
@@ -103,6 +112,11 @@ public:
 	void Debug();
 	/** @brief Per-frame reset: advances timer, caches menu state, resets descriptors and frame counters. */
 	void Reset();
+	/** @brief Samples the current ambient weather wind at an absolute world position. */
+	[[nodiscard]] WindField::WindSample SampleAmbientWind(const float3& a_worldPosition) const noexcept;
+	/** @brief Samples ambient weather with explicit direction and speed inputs. */
+	[[nodiscard]] WindField::WindSample SampleAmbientWind(const float3& a_worldPosition,
+		const float3& a_windDirection, float a_windSpeed) const noexcept;
 	/** @brief One-time post-D3D setup: creates resources, probes GPU caps, initializes features. */
 	void Setup();
 
@@ -527,6 +541,10 @@ public:
 		float4 HDRData;                   // xyz + menu scene encoding in w — see HDRDisplay::GetSharedDataHDR
 		float RefractionScale;            // ISRefraction.hlsl heat-shimmer multiplier; 1.0 = unmodified vanilla strength
 		float3 pad1;
+		float4 WindFieldDebug;         // xy: base weather velocity, z: visualization enabled
+		float4 WindFieldDebugOptions;  // y: real speed, z: real direction, w: accumulated gust travel distance
+		WindField::WindTuning WindFieldTuning;
+		float4 WindFieldAmbient;  // xyz: instantaneous base weather velocity, w: accumulated gust travel distance
 	};
 	STATIC_ASSERT_ALIGNAS_16(SharedDataCB);
 	// Each float4 cbuffer field must start on a 16-byte boundary to match the HLSL SharedData
@@ -534,6 +552,10 @@ public:
 	static_assert(offsetof(SharedDataCB, VRFoveationData0) % 16 == 0);
 	static_assert(offsetof(SharedDataCB, VRFoveationCenterOffsets) % 16 == 0);
 	static_assert(offsetof(SharedDataCB, HDRData) % 16 == 0);
+	static_assert(offsetof(SharedDataCB, WindFieldDebug) % 16 == 0);
+	static_assert(offsetof(SharedDataCB, WindFieldDebugOptions) % 16 == 0);
+	static_assert(offsetof(SharedDataCB, WindFieldTuning) % 16 == 0);
+	static_assert(offsetof(SharedDataCB, WindFieldAmbient) % 16 == 0);
 
 	ConstantBuffer* sharedDataCB = nullptr;
 	ConstantBuffer* featureDataCB = nullptr;

@@ -327,6 +327,16 @@ void SampleSSGISpecular(uint2 pixCoord, sh2 lobe, inout float ao, out float3 il,
 
 #endif
 
+	[branch] if (SharedData::WindFieldDebug.z > 0.0f && depth < 1.0f)
+	{
+		// Keep this diagnostic independent from the game's grass/wind animation.
+		// The CPU owns the integrated travel phase so changing wind speed cannot
+		// reduce the offset and make the field move backward.
+		float3 worldPosition = positionWS.xyz + FrameBuffer::CameraPosAdjust[eyeIndex].xyz;
+		WindField::WindSample windSample = SharedData::SampleAmbientWind(worldPosition);
+		color = Color::TurboColormap(windSample.ambientGust);
+	}
+
 	MainRW[dispatchID.xy] = float4(color, 1.0);
 	NormalTAAMaskSpecularMaskRW[dispatchID.xy] = float4(GBuffer::EncodeNormalVanilla(normalVS), 0.0, 0.0);
 }

@@ -369,6 +369,7 @@ void State::Reset()
 	const float gustTransitionDuration = std::max(trunkWindSettings.trunkWindGustTransitionDuration, 0.01f);
 	const bool gamePaused = globals::game::ui->GameIsPaused();
 	const float frameTime = gamePaused ? 0.0f : std::max(RE::GetSecondsSinceLastFrame(), 0.0f);
+	windFieldFrameTime = frameTime;
 	previousTimer = timer;
 	previousTrunkWindVector = trunkWindVector;
 	previousSharedWindGustScale = sharedWindGustScale;
@@ -412,6 +413,7 @@ void State::Reset()
 			trunkWindSettings.grassWindBounceStrength, trunkWindSettings.grassWindBounceFrequency,
 			grassWindGustResponse, grassWindGustVelocity);
 	}
+	ambientWindVelocity = {};
 	trunkWindVector = {};
 	const bool overrideTrunkWindIntensity = globals::features::csUtility.loaded &&
 	                                        globals::features::csUtility.settings.overrideTrunkWindIntensity;
@@ -421,16 +423,50 @@ void State::Reset()
 		float activeWindIntensity = std::clamp(treeManager->windMagnitude, 0.0f, 1.0f);
 		if (const auto* sky = globals::game::sky; sky && std::isfinite(sky->windSpeed))
 			activeWindIntensity = std::clamp(sky->windSpeed, 0.0f, 1.0f);
-		const float magnitude = overrideTrunkWindIntensity ? overriddenTrunkWindIntensity : activeWindIntensity;
-		if (std::isfinite(directionLength) && directionLength > 0.0001f && std::isfinite(magnitude)) {
-			trunkWindVector.x = -treeManager->windDirection.x / directionLength * magnitude;
-			trunkWindVector.y = -treeManager->windDirection.y / directionLength * magnitude;
+		if (std::isfinite(directionLength) && directionLength > 0.0001f && std::isfinite(activeWindIntensity)) {
+			const float2 weatherDirection{
+				-treeManager->windDirection.x / directionLength,
+				-treeManager->windDirection.y / directionLength
+			};
+			ambientWindVelocity = { weatherDirection.x * activeWindIntensity, weatherDirection.y * activeWindIntensity, 0.0f };
+			const float magnitude = overrideTrunkWindIntensity ? overriddenTrunkWindIntensity : activeWindIntensity;
+			if (std::isfinite(magnitude)) {
+				trunkWindVector.x = weatherDirection.x * magnitude;
+				trunkWindVector.y = weatherDirection.y * magnitude;
+			}
 		}
 	} else if (overrideTrunkWindIntensity) {
 		trunkWindVector.x = overriddenTrunkWindIntensity;
 	}
 	if (overrideTrunkWindIntensity && trunkWindVector.x == 0.0f && trunkWindVector.y == 0.0f) {
 		trunkWindVector.x = overriddenTrunkWindIntensity;
+	}
+	const float ambientWindSpeed = std::sqrt(
+		ambientWindVelocity.x * ambientWindVelocity.x +
+		ambientWindVelocity.y * ambientWindVelocity.y +
+		ambientWindVelocity.z * ambientWindVelocity.z);
+	const bool useRealWindSpeed = !globals::features::csUtility.loaded ||
+	                              globals::features::csUtility.windFieldUseRealSpeed;
+	const bool useRealWindDirection = !globals::features::csUtility.loaded ||
+	                                  globals::features::csUtility.windFieldUseRealDirection;
+	const float selectedWindSpeed = useRealWindSpeed ?
+	                                    (std::isfinite(ambientWindSpeed) ? std::max(ambientWindSpeed, 0.0f) : 0.0f) :
+	                                    std::max(globals::features::csUtility.windFieldOverrideSpeed, 0.0f);
+	const float ambientDirectionLength = std::hypot(ambientWindVelocity.x, ambientWindVelocity.y);
+	float3 selectedWindDirection{ 1.0f, 0.0f, 0.0f };
+	if (useRealWindDirection && std::isfinite(ambientDirectionLength) && ambientDirectionLength > 0.0001f) {
+		selectedWindDirection = {
+			ambientWindVelocity.x / ambientDirectionLength,
+			ambientWindVelocity.y / ambientDirectionLength,
+			0.0f
+		};
+	}
+	windFieldSelectedSpeed = selectedWindSpeed;
+	windFieldSelectedVelocity = selectedWindDirection * selectedWindSpeed;
+	windFieldAmbientSpeed = selectedWindSpeed;
+	windFieldTravelDelta = std::isfinite(frameTime) ? selectedWindSpeed * std::max(frameTime, 0.0f) : 0.0f;
+	if (std::isfinite(selectedWindSpeed) && std::isfinite(frameTime)) {
+		windFieldGustTravelDistance += windFieldTravelDelta;
 	}
 
 	worldRenderedThisFrame = false;
@@ -478,6 +514,19 @@ void State::Reset()
 	}
 
 	activeReflections = false;
+}
+
+WindField::WindSample State::SampleAmbientWind(const float3& a_worldPosition) const noexcept
+{
+	return WindField::SampleWind(
+		a_worldPosition, windFieldGustTravelDistance, windFieldSelectedVelocity, windFieldSelectedSpeed, windFieldTuning);
+}
+
+WindField::WindSample State::SampleAmbientWind(const float3& a_worldPosition,
+	const float3& a_windDirection, float a_windSpeed) const noexcept
+{
+	return WindField::SampleWind(
+		a_worldPosition, windFieldGustTravelDistance, a_windDirection, a_windSpeed, windFieldTuning);
 }
 
 void State::Setup()
@@ -1393,6 +1442,22 @@ void State::UpdateSharedData([[maybe_unused]] bool a_inWorld, [[maybe_unused]] b
 		data.CameraData = Util::GetCameraData();
 		data.BufferDim = { screenSize.x, screenSize.y, 1.0f / screenSize.x, 1.0f / screenSize.y };
 		data.Timer = timer;
+		data.WindFieldDebug = {
+			ambientWindVelocity.x, ambientWindVelocity.y,
+			globals::features::csUtility.visualizeWindField ? 1.0f : 0.0f,
+			0.0f
+		};
+		data.WindFieldDebugOptions = {
+			1.0f,
+			globals::features::csUtility.windFieldUseRealSpeed ? 1.0f : 0.0f,
+			globals::features::csUtility.windFieldUseRealDirection ? 1.0f : 0.0f,
+			windFieldGustTravelDistance
+		};
+		data.WindFieldTuning = windFieldTuning;
+		data.WindFieldAmbient = {
+			windFieldSelectedVelocity.x, windFieldSelectedVelocity.y, windFieldSelectedVelocity.z,
+			windFieldGustTravelDistance
+		};
 
 		auto temporal = Util::GetTemporal();
 

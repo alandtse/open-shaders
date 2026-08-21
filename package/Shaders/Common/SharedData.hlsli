@@ -4,6 +4,7 @@
 #include "Common/FrameBuffer.hlsli"
 #include "Common/Spherical Harmonics/SphericalHarmonics.hlsli"
 #include "Common/VR.hlsli"
+#include "Common/WindField.hlsli"
 
 namespace SharedData
 {
@@ -38,7 +39,20 @@ namespace SharedData
 		float4 HDRData;
 		float RefractionScale;
 		float3 pad1;
+		float4 WindFieldDebug;         // xy: base weather velocity, z: visualization enabled
+		float4 WindFieldDebugOptions;  // y: real speed, z: real direction, w: accumulated gust travel distance
+		WindField::WindTuning WindFieldTuning;
+		float4 WindFieldAmbient;  // xyz: selected ambient velocity, w: accumulated gust travel distance
 	};
+
+	/** @brief Samples the shared ambient weather field at an absolute world position. */
+	WindField::WindSample SampleAmbientWind(float3 worldPosition)
+	{
+		float3 baseVelocity = WindFieldAmbient.xyz;
+		float windSpeed = length(baseVelocity);
+		return WindField::SampleWind(
+			worldPosition, WindFieldAmbient.w, baseVelocity, windSpeed, WindFieldTuning);
+	}
 
 	struct GrassLightingSettings
 	{

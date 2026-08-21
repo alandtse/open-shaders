@@ -134,6 +134,10 @@ struct CSUtility : Feature
 	};
 	/** The visible tab whose settings Restore Defaults changes. */
 	SettingsPage activeSettingsPage = SettingsPage::Atmosphere;
+	bool visualizeWindField = false;        ///< Runtime-only GPU wind-field visualization toggle.
+	bool windFieldUseRealSpeed = true;      ///< Runtime-only debug input toggle.
+	bool windFieldUseRealDirection = true;  ///< Runtime-only debug input toggle.
+	float windFieldOverrideSpeed = 1.0f;    ///< Runtime-only speed used when real speed is disabled.
 
 	struct alignas(16) PerFrameData
 	{
@@ -167,6 +171,9 @@ struct CSUtility : Feature
 	ConstantBuffer* vanillaPointLightCB = nullptr;
 
 	virtual void DrawSettings() override;
+	/** @brief Exposes the runtime-only wind visualization toggle to devbench. */
+	virtual json GetRuntimeFlags() override;
+	virtual bool SetRuntimeFlag(std::string_view a_name, bool a_value) override;
 	virtual void LoadSettings(json& o_json) override;
 	virtual void SaveSettings(json& o_json) override;
 	virtual void RestoreDefaultSettings() override;

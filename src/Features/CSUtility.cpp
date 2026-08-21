@@ -7,6 +7,7 @@
 #include "LinearLighting.h"
 #include "State.h"
 #include "UnderwaterDepthOfField.h"
+#include "Utils/Game.h"
 #include "Utils/PointLightFlags.h"
 #include "Utils/UI.h"
 
@@ -279,7 +280,97 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 
 void CSUtility::DrawSettings()
 {
+	const auto drawWindField = [&] {
+		ImGui::Checkbox(T(TKEY("visualize_wind_field"), "Visualize Wind Field"), &visualizeWindField);
+		ImGui::TextWrapped("%s", T(TKEY("visualize_wind_field_tooltip"),
+									 "Colors visible world geometry by GPU-sampled ambient gust pressure."));
+		ImGui::Checkbox(T(TKEY("wind_field_use_real_speed"), "Wind Debug: Use Real Wind Speed"), &windFieldUseRealSpeed);
+		if (auto _tt = Util::HoverTooltipWrapper()) {
+			ImGui::TextUnformatted(T(TKEY("wind_field_use_real_speed_tooltip"),
+				"Use the current weather wind magnitude for velocity and gust-front travel; otherwise use the override below."));
+		}
+		ImGui::SliderFloat(T(TKEY("wind_field_override_speed"), "Wind Debug: Override Speed"), &windFieldOverrideSpeed,
+			0.0f, 2.0f, "%.3f");
+		ImGui::Checkbox(T(TKEY("wind_field_use_real_direction"), "Wind Debug: Use Real Wind Direction"), &windFieldUseRealDirection);
+		if (auto _tt = Util::HoverTooltipWrapper()) {
+			ImGui::TextUnformatted(T(TKEY("wind_field_use_real_direction_tooltip"),
+				"Use the current weather wind direction for the displayed field; otherwise use hardcoded world-space +X."));
+		}
+		ImGui::SeparatorText(T(TKEY("wind_field_live_values"), "Wind Field Live Values"));
+		const auto* state = globals::state;
+		const auto* treeManager = RE::BSTreeManager::GetSingleton();
+		const auto* sky = globals::game::sky;
+		const auto* weather = sky ? sky->currentWeather : nullptr;
+		const float ambientDirectionLength = std::hypot(state->ambientWindVelocity.x, state->ambientWindVelocity.y);
+		const float ambientDirectionDegrees = ambientDirectionLength > 0.0001f ?
+		                                          std::atan2(state->ambientWindVelocity.y, state->ambientWindVelocity.x) * (180.0f / 3.14159265358979323846f) :
+		                                          0.0f;
+		ImGui::Text("%s: (%.5f, %.5f, %.5f)", T(TKEY("wind_field_ambient_velocity"), "Ambient velocity"),
+			state->ambientWindVelocity.x, state->ambientWindVelocity.y, state->ambientWindVelocity.z);
+		ImGui::Text("%s: %.5f", T(TKEY("wind_field_ambient_speed"), "Selected ambient speed"), state->windFieldAmbientSpeed);
+		ImGui::Text("%s: %.2f deg", T(TKEY("wind_field_ambient_direction"), "Ambient direction"), ambientDirectionDegrees);
+		ImGui::Text("%s: %.6f s", T(TKEY("wind_field_frame_time"), "Frame delta"), state->windFieldFrameTime);
+		ImGui::Text("%s: %.6f", T(TKEY("wind_field_travel_delta"), "Travel delta"), state->windFieldTravelDelta);
+		ImGui::Text("%s: %.5f", T(TKEY("wind_field_travel_distance"), "Accumulated travel distance"), state->windFieldGustTravelDistance);
+		ImGui::Text("%s: %.5f", T(TKEY("wind_field_global_time"), "Global timer"), state->timer);
+		if (treeManager) {
+			ImGui::Text("%s: (%.5f, %.5f), magnitude %.5f", T(TKEY("wind_field_tree_input"), "Tree wind input"),
+				treeManager->windDirection.x, treeManager->windDirection.y, treeManager->windMagnitude);
+		}
+		if (sky)
+			ImGui::Text("%s: %.5f", T(TKEY("wind_field_sky_speed"), "Sky wind speed"), sky->windSpeed);
+		if (weather)
+			ImGui::Text("%s: %.3f (raw %u), direction raw %u", T(TKEY("wind_field_weather_input"), "Weather input"),
+				static_cast<unsigned>(weather->data.windSpeed) / 255.0f, static_cast<unsigned>(weather->data.windSpeed),
+				static_cast<unsigned>(weather->data.windDirection));
+		const float selectedSpeed = state->windFieldSelectedSpeed;
+		const float selectedDirectionX = windFieldUseRealDirection && ambientDirectionLength > 0.0001f ?
+		                                     state->ambientWindVelocity.x / ambientDirectionLength :
+		                                     1.0f;
+		const float selectedDirectionY = windFieldUseRealDirection && ambientDirectionLength > 0.0001f ?
+		                                     state->ambientWindVelocity.y / ambientDirectionLength :
+		                                     0.0f;
+		ImGui::Text("%s: speed %.5f, direction (%.5f, %.5f, 0.00000)",
+			T(TKEY("wind_field_selected_input"), "Selected sampler input"), selectedSpeed, selectedDirectionX, selectedDirectionY);
+		ImGui::TextWrapped("%s", T(TKEY("wind_field_color_note"),
+									 "The debug color represents ambient gust pressure. The selected speed also controls its accumulated travel rate."));
+		if (globals::game::shadowState) {
+			const auto eyePosition = Util::GetAverageEyePosition();
+			const float3 samplePosition{ eyePosition.x, eyePosition.y, eyePosition.z };
+			const float rawAmbientSpeed = std::sqrt(
+				state->ambientWindVelocity.x * state->ambientWindVelocity.x +
+				state->ambientWindVelocity.y * state->ambientWindVelocity.y +
+				state->ambientWindVelocity.z * state->ambientWindVelocity.z);
+			const auto eyeSample = state->SampleAmbientWind(samplePosition, state->ambientWindVelocity, rawAmbientSpeed);
+			const auto selectedSample = state->SampleAmbientWind(samplePosition);
+			ImGui::Text("%s: (%.5f, %.5f, %.5f), gust %.5f",
+				T(TKEY("wind_field_cpu_sample"), "CPU sample at camera"), eyeSample.velocity.x, eyeSample.velocity.y,
+				eyeSample.velocity.z, eyeSample.ambientGust);
+			ImGui::Text("%s: (%.5f, %.5f, %.5f), gust %.5f",
+				T(TKEY("wind_field_selected_sample"), "Selected sample at camera"), selectedSample.velocity.x,
+				selectedSample.velocity.y, selectedSample.velocity.z, selectedSample.ambientGust);
+		}
+		if (ImGui::TreeNode(T(TKEY("wind_field_tuning"), "Sampler tuning"))) {
+			const auto& tuning = state->windFieldTuning;
+			ImGui::Text("Scale %.2f, front aspect %.2f, advection %.2f", tuning.gustScale, tuning.frontAspectRatio, tuning.advectionUnitsPerSecond);
+			ImGui::Text("Detail ratios %.3f / %.3f, turbulence %.3f, skew %.3f", tuning.detailScaleRatio,
+				tuning.detailCrosswindScaleRatio, tuning.turbulenceStrength, tuning.turbulenceSkew);
+			ImGui::Text("Contrast %.3f - %.3f, gust %.3f - %.3f", tuning.contrastLow, tuning.contrastHigh,
+				tuning.gustMinimum, tuning.gustMaximum);
+			ImGui::Text("Seeds: broad 0x%08X, detail 0x%08X, mix 0x%08X", tuning.broadGustSeed,
+				tuning.turbulentGustSeed, tuning.gradientSeedMix);
+			ImGui::Text("PCG: multiplier %u, increment %u", tuning.pcgMultiplier, tuning.pcgIncrement);
+			ImGui::TreePop();
+		}
+		ImGui::Separator();
+	};
+
 	if (ImGui::BeginTabBar("##CSUtilityTabs", ImGuiTabBarFlags_None)) {
+		if (ImGui::BeginTabItem(T(TKEY("tab_wind_field"), "Wind Field"))) {
+			drawWindField();
+			ImGui::EndTabItem();
+		}
+
 		if (ImGui::BeginTabItem(T(TKEY("tab_trees"), "Trees"))) {
 			ImGui::Checkbox(T(TKEY("enable_trunk_bend"), "Enable Trunk Bend"), &settings.enableTrunkBend);
 			ImGui::Checkbox(T(TKEY("override_trunk_wind_intensity"), "Override Wind Intensity"), &settings.overrideTrunkWindIntensity);
@@ -399,6 +490,32 @@ void CSUtility::DrawSettings()
 
 		ImGui::EndTabBar();
 	}
+}
+
+json CSUtility::GetRuntimeFlags()
+{
+	return json{
+		{ "VisualizeWindField", visualizeWindField },
+		{ "WindFieldUseRealSpeed", windFieldUseRealSpeed },
+		{ "WindFieldUseRealDirection", windFieldUseRealDirection },
+	};
+}
+
+bool CSUtility::SetRuntimeFlag(std::string_view a_name, bool a_value)
+{
+	if (a_name == "VisualizeWindField") {
+		visualizeWindField = a_value;
+		return true;
+	}
+	if (a_name == "WindFieldUseRealSpeed") {
+		windFieldUseRealSpeed = a_value;
+		return true;
+	}
+	if (a_name == "WindFieldUseRealDirection") {
+		windFieldUseRealDirection = a_value;
+		return true;
+	}
+	return false;
 }
 
 void CSUtility::SanitizeWaterSettings(WaterSettings& a_settings)
