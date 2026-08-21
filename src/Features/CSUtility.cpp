@@ -44,32 +44,12 @@ namespace
 	constexpr float kTrunkWindVariationScaleMax = 3.0f;
 	constexpr float kTrunkWindVariationIntervalMin = 0.1f;
 	constexpr float kTrunkWindVariationIntervalMax = 20.0f;
-	constexpr float kGrassWindBendScaleMin = 0.0f;
-	constexpr float kGrassWindBendScaleMax = 10.0f;
-	constexpr float kGrassWindMaximumBendAngleMin = 0.0f;
-	constexpr float kGrassWindMaximumBendAngleMax = 89.0f;
-	constexpr float kGrassWindCurvatureMin = 0.0f;
-	constexpr float kGrassWindCurvatureMax = 1.0f;
-	constexpr float kGrassWindBounceStrengthMin = 0.0f;
-	constexpr float kGrassWindBounceStrengthMax = 1.0f;
-	constexpr float kGrassWindBounceFrequencyMin = 0.1f;
-	constexpr float kGrassWindBounceFrequencyMax = 4.0f;
-	constexpr float kGrassWindCoarseScaleMin = 256.0f;
-	constexpr float kGrassWindCoarseScaleMax = 8192.0f;
-	constexpr float kGrassWindCoarseSpeedMin = 0.0f;
-	constexpr float kGrassWindCoarseSpeedMax = 10.0f;
-	constexpr float kGrassWindCoarseStrengthMin = 0.0f;
-	constexpr float kGrassWindCoarseStrengthMax = 1.5f;
-	constexpr float kGrassWindFineScaleMin = 32.0f;
-	constexpr float kGrassWindFineScaleMax = 2048.0f;
-	constexpr float kGrassWindFineSpeedMin = 0.0f;
-	constexpr float kGrassWindFineSpeedMax = 20.0f;
-	constexpr float kGrassWindFineStrengthMin = 0.0f;
-	constexpr float kGrassWindFineStrengthMax = 1.0f;
-	constexpr float kGrassWindFlutterStrengthMin = 0.0f;
-	constexpr float kGrassWindFlutterStrengthMax = 2.0f;
-	constexpr float kGrassWindFlutterSpeedMin = 0.0f;
-	constexpr float kGrassWindFlutterSpeedMax = 20.0f;
+	constexpr float kGrassWindResponseMin = 0.0f;
+	constexpr float kGrassWindResponseMax = 180.0f;
+	constexpr float kGrassWindMaximumTiltMin = 0.0f;
+	constexpr float kGrassWindMaximumTiltMax = 89.0f;
+	constexpr float kGrassWindBendProfileMin = 0.0f;
+	constexpr float kGrassWindBendProfileMax = 1.0f;
 	constexpr float kWaterBrightnessMin = 0.0f;
 	constexpr float kWaterBrightnessMax = 2.0f;
 	constexpr float kWaterAmountMin = 0.0f;
@@ -105,19 +85,9 @@ namespace
 		a_settings.trunkWindVariationMin = ClampFiniteOrDefault(a_settings.trunkWindVariationMin, kTrunkWindVariationScaleMin, kTrunkWindVariationScaleMax, defaults.trunkWindVariationMin);
 		a_settings.trunkWindVariationMax = ClampFiniteOrDefault(a_settings.trunkWindVariationMax, kTrunkWindVariationScaleMin, kTrunkWindVariationScaleMax, defaults.trunkWindVariationMax);
 		a_settings.trunkWindVariationInterval = ClampFiniteOrDefault(a_settings.trunkWindVariationInterval, kTrunkWindVariationIntervalMin, kTrunkWindVariationIntervalMax, defaults.trunkWindVariationInterval);
-		a_settings.grassWindBendScale = ClampFiniteOrDefault(a_settings.grassWindBendScale, kGrassWindBendScaleMin, kGrassWindBendScaleMax, defaults.grassWindBendScale);
-		a_settings.grassWindMaximumBendAngle = ClampFiniteOrDefault(a_settings.grassWindMaximumBendAngle, kGrassWindMaximumBendAngleMin, kGrassWindMaximumBendAngleMax, defaults.grassWindMaximumBendAngle);
-		a_settings.grassWindCurvature = ClampFiniteOrDefault(a_settings.grassWindCurvature, kGrassWindCurvatureMin, kGrassWindCurvatureMax, defaults.grassWindCurvature);
-		a_settings.grassWindBounceStrength = ClampFiniteOrDefault(a_settings.grassWindBounceStrength, kGrassWindBounceStrengthMin, kGrassWindBounceStrengthMax, defaults.grassWindBounceStrength);
-		a_settings.grassWindBounceFrequency = ClampFiniteOrDefault(a_settings.grassWindBounceFrequency, kGrassWindBounceFrequencyMin, kGrassWindBounceFrequencyMax, defaults.grassWindBounceFrequency);
-		a_settings.grassWindCoarseScale = ClampFiniteOrDefault(a_settings.grassWindCoarseScale, kGrassWindCoarseScaleMin, kGrassWindCoarseScaleMax, defaults.grassWindCoarseScale);
-		a_settings.grassWindCoarseSpeed = ClampFiniteOrDefault(a_settings.grassWindCoarseSpeed, kGrassWindCoarseSpeedMin, kGrassWindCoarseSpeedMax, defaults.grassWindCoarseSpeed);
-		a_settings.grassWindCoarseStrength = ClampFiniteOrDefault(a_settings.grassWindCoarseStrength, kGrassWindCoarseStrengthMin, kGrassWindCoarseStrengthMax, defaults.grassWindCoarseStrength);
-		a_settings.grassWindFineScale = ClampFiniteOrDefault(a_settings.grassWindFineScale, kGrassWindFineScaleMin, kGrassWindFineScaleMax, defaults.grassWindFineScale);
-		a_settings.grassWindFineSpeed = ClampFiniteOrDefault(a_settings.grassWindFineSpeed, kGrassWindFineSpeedMin, kGrassWindFineSpeedMax, defaults.grassWindFineSpeed);
-		a_settings.grassWindFineStrength = ClampFiniteOrDefault(a_settings.grassWindFineStrength, kGrassWindFineStrengthMin, kGrassWindFineStrengthMax, defaults.grassWindFineStrength);
-		a_settings.grassWindFlutterStrength = ClampFiniteOrDefault(a_settings.grassWindFlutterStrength, kGrassWindFlutterStrengthMin, kGrassWindFlutterStrengthMax, defaults.grassWindFlutterStrength);
-		a_settings.grassWindFlutterSpeed = ClampFiniteOrDefault(a_settings.grassWindFlutterSpeed, kGrassWindFlutterSpeedMin, kGrassWindFlutterSpeedMax, defaults.grassWindFlutterSpeed);
+		a_settings.grassWindResponse = ClampFiniteOrDefault(a_settings.grassWindResponse, kGrassWindResponseMin, kGrassWindResponseMax, defaults.grassWindResponse);
+		a_settings.grassWindMaximumTilt = ClampFiniteOrDefault(a_settings.grassWindMaximumTilt, kGrassWindMaximumTiltMin, kGrassWindMaximumTiltMax, defaults.grassWindMaximumTilt);
+		a_settings.grassWindBendProfile = ClampFiniteOrDefault(a_settings.grassWindBendProfile, kGrassWindBendProfileMin, kGrassWindBendProfileMax, defaults.grassWindBendProfile);
 		if (a_settings.trunkWindInstanceResponseMin > a_settings.trunkWindInstanceResponseMax)
 			std::swap(a_settings.trunkWindInstanceResponseMin, a_settings.trunkWindInstanceResponseMax);
 		if (a_settings.trunkWindGustStrengthMin > a_settings.trunkWindGustStrengthMax)
@@ -143,21 +113,10 @@ namespace
 	void ResetGrassWindSettings(CSUtility::Settings& a_settings)
 	{
 		const CSUtility::Settings defaults{};
-		a_settings.enableGrassWindExperiment = defaults.enableGrassWindExperiment;
-		a_settings.enableGrassWindGusts = defaults.enableGrassWindGusts;
-		a_settings.grassWindBendScale = defaults.grassWindBendScale;
-		a_settings.grassWindMaximumBendAngle = defaults.grassWindMaximumBendAngle;
-		a_settings.grassWindCurvature = defaults.grassWindCurvature;
-		a_settings.grassWindBounceStrength = defaults.grassWindBounceStrength;
-		a_settings.grassWindBounceFrequency = defaults.grassWindBounceFrequency;
-		a_settings.grassWindCoarseScale = defaults.grassWindCoarseScale;
-		a_settings.grassWindCoarseSpeed = defaults.grassWindCoarseSpeed;
-		a_settings.grassWindCoarseStrength = defaults.grassWindCoarseStrength;
-		a_settings.grassWindFineScale = defaults.grassWindFineScale;
-		a_settings.grassWindFineSpeed = defaults.grassWindFineSpeed;
-		a_settings.grassWindFineStrength = defaults.grassWindFineStrength;
-		a_settings.grassWindFlutterStrength = defaults.grassWindFlutterStrength;
-		a_settings.grassWindFlutterSpeed = defaults.grassWindFlutterSpeed;
+		a_settings.enableAmbientGrassWind = defaults.enableAmbientGrassWind;
+		a_settings.grassWindResponse = defaults.grassWindResponse;
+		a_settings.grassWindMaximumTilt = defaults.grassWindMaximumTilt;
+		a_settings.grassWindBendProfile = defaults.grassWindBendProfile;
 	}
 
 	void TriggerNewWindGust()
@@ -250,21 +209,10 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	trunkWindVariationMin,
 	trunkWindVariationMax,
 	trunkWindVariationInterval,
-	enableGrassWindExperiment,
-	enableGrassWindGusts,
-	grassWindBendScale,
-	grassWindMaximumBendAngle,
-	grassWindCurvature,
-	grassWindBounceStrength,
-	grassWindBounceFrequency,
-	grassWindCoarseScale,
-	grassWindCoarseSpeed,
-	grassWindCoarseStrength,
-	grassWindFineScale,
-	grassWindFineSpeed,
-	grassWindFineStrength,
-	grassWindFlutterStrength,
-	grassWindFlutterSpeed,
+	enableAmbientGrassWind,
+	grassWindResponse,
+	grassWindMaximumTilt,
+	grassWindBendProfile,
 	skyBrightness,
 	directionalLightMult,
 	pointLightMult,
@@ -417,46 +365,22 @@ void CSUtility::DrawSettings()
 		}
 
 		if (ImGui::BeginTabItem(T(TKEY("tab_grass"), "Grass"))) {
-			ImGui::Checkbox(T(TKEY("enable_grass_wind_experiment"), "Enable Grass Wind Experiment"), &settings.enableGrassWindExperiment);
+			ImGui::Checkbox(T(TKEY("enable_ambient_grass_wind"), "Enable Ambient Grass Wind"), &settings.enableAmbientGrassWind);
 			if (ImGui::Button(T(TKEY("reset_grass_wind_settings"), "Reset Grass Settings")))
 				ResetGrassWindSettings(settings);
-			ImGui::BeginDisabled(!settings.enableGrassWindExperiment);
-			ImGui::Checkbox(T(TKEY("enable_grass_wind_gusts"), "Apply Shared Gusts"), &settings.enableGrassWindGusts);
-			ImGui::Text("%s: %.3f", T(TKEY("grass_wind_gust_target"), "Shared Gust Target"), globals::state->sharedWindGustTarget);
-			ImGui::Text("%s: %.3f", T(TKEY("grass_wind_gust_response_current"), "Current Gust Intensity"), globals::state->grassWindGustResponse);
-			if (ImGui::Button(T(TKEY("grass_wind_trigger_gust"), "Trigger New Gust")))
-				TriggerNewWindGust();
-			ImGui::SliderFloat(T(TKEY("grass_wind_bend_scale"), "Overall Bend"), &settings.grassWindBendScale,
-				kGrassWindBendScaleMin, kGrassWindBendScaleMax, "%.2f", ImGuiSliderFlags_AlwaysClamp);
-			ImGui::SliderFloat(T(TKEY("grass_wind_maximum_bend_angle"), "Maximum Bend Angle"), &settings.grassWindMaximumBendAngle,
-				kGrassWindMaximumBendAngleMin, kGrassWindMaximumBendAngleMax, "%.0f deg", ImGuiSliderFlags_AlwaysClamp);
-			ImGui::SliderFloat(T(TKEY("grass_wind_curvature"), "Curvature"), &settings.grassWindCurvature,
-				kGrassWindCurvatureMin, kGrassWindCurvatureMax, "%.2f", ImGuiSliderFlags_AlwaysClamp);
-			ImGui::SeparatorText(T(TKEY("grass_wind_gust_response"), "Gust Response"));
-			ImGui::BeginDisabled(!settings.enableGrassWindGusts);
-			ImGui::SliderFloat(T(TKEY("grass_wind_bounce_strength"), "Bounce Strength"), &settings.grassWindBounceStrength,
-				kGrassWindBounceStrengthMin, kGrassWindBounceStrengthMax, "%.2f", ImGuiSliderFlags_AlwaysClamp);
-			ImGui::SliderFloat(T(TKEY("grass_wind_bounce_frequency"), "Bounce Frequency"), &settings.grassWindBounceFrequency,
-				kGrassWindBounceFrequencyMin, kGrassWindBounceFrequencyMax, "%.2f Hz", ImGuiSliderFlags_AlwaysClamp);
-			ImGui::EndDisabled();
-			ImGui::SeparatorText(T(TKEY("grass_wind_pressure_fields"), "Pressure Fields"));
-			ImGui::SliderFloat(T(TKEY("grass_wind_coarse_scale"), "Coarse Wave Scale"), &settings.grassWindCoarseScale,
-				kGrassWindCoarseScaleMin, kGrassWindCoarseScaleMax, "%.0f", ImGuiSliderFlags_AlwaysClamp);
-			ImGui::SliderFloat(T(TKEY("grass_wind_coarse_speed"), "Coarse Drift Speed"), &settings.grassWindCoarseSpeed,
-				kGrassWindCoarseSpeedMin, kGrassWindCoarseSpeedMax, "%.2f", ImGuiSliderFlags_AlwaysClamp);
-			ImGui::SliderFloat(T(TKEY("grass_wind_coarse_strength"), "Coarse Wave Strength"), &settings.grassWindCoarseStrength,
-				kGrassWindCoarseStrengthMin, kGrassWindCoarseStrengthMax, "%.2f", ImGuiSliderFlags_AlwaysClamp);
-			ImGui::SliderFloat(T(TKEY("grass_wind_fine_scale"), "Fine Turbulence Scale"), &settings.grassWindFineScale,
-				kGrassWindFineScaleMin, kGrassWindFineScaleMax, "%.0f", ImGuiSliderFlags_AlwaysClamp);
-			ImGui::SliderFloat(T(TKEY("grass_wind_fine_speed"), "Fine Turbulence Speed"), &settings.grassWindFineSpeed,
-				kGrassWindFineSpeedMin, kGrassWindFineSpeedMax, "%.2f", ImGuiSliderFlags_AlwaysClamp);
-			ImGui::SliderFloat(T(TKEY("grass_wind_fine_strength"), "Fine Turbulence Strength"), &settings.grassWindFineStrength,
-				kGrassWindFineStrengthMin, kGrassWindFineStrengthMax, "%.2f", ImGuiSliderFlags_AlwaysClamp);
-			ImGui::SeparatorText(T(TKEY("grass_wind_flutter"), "Flutter"));
-			ImGui::SliderFloat(T(TKEY("grass_wind_flutter_strength"), "Flutter Strength"), &settings.grassWindFlutterStrength,
-				kGrassWindFlutterStrengthMin, kGrassWindFlutterStrengthMax, "%.2f", ImGuiSliderFlags_AlwaysClamp);
-			ImGui::SliderFloat(T(TKEY("grass_wind_flutter_speed"), "Flutter Speed"), &settings.grassWindFlutterSpeed,
-				kGrassWindFlutterSpeedMin, kGrassWindFlutterSpeedMax, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+			ImGui::BeginDisabled(!settings.enableAmbientGrassWind);
+			ImGui::SliderFloat(T(TKEY("grass_wind_response"), "Bend Strength"), &settings.grassWindResponse,
+				kGrassWindResponseMin, kGrassWindResponseMax, "%.0f deg/unit", ImGuiSliderFlags_AlwaysClamp);
+			if (auto _tt = Util::HoverTooltipWrapper())
+				ImGui::TextUnformatted(T(TKEY("grass_wind_response_tooltip"), "Controls how strongly sampled ambient wind velocity bends the grass."));
+			ImGui::SliderFloat(T(TKEY("grass_wind_maximum_tilt"), "Maximum Bend Angle"), &settings.grassWindMaximumTilt,
+				kGrassWindMaximumTiltMin, kGrassWindMaximumTiltMax, "%.0f deg", ImGuiSliderFlags_AlwaysClamp);
+			if (auto _tt = Util::HoverTooltipWrapper())
+				ImGui::TextUnformatted(T(TKEY("grass_wind_maximum_tilt_tooltip"), "Limits how far a grass blade can lean from upright."));
+			ImGui::SliderFloat(T(TKEY("grass_wind_bend_profile"), "Tip Flexibility"), &settings.grassWindBendProfile,
+				kGrassWindBendProfileMin, kGrassWindBendProfileMax, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+			if (auto _tt = Util::HoverTooltipWrapper())
+				ImGui::TextUnformatted(T(TKEY("grass_wind_bend_profile_tooltip"), "Zero leans the whole blade uniformly; one concentrates bending toward the tip."));
 			ImGui::EndDisabled();
 			ImGui::EndTabItem();
 		}

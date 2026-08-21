@@ -67,30 +67,6 @@ namespace
 		return std::lerp(std::min(a_minimum, a_maximum), std::max(a_minimum, a_maximum), variation);
 	}
 
-	void UpdateGrassWindGustSpring(float a_target, float a_frameTime, float a_bounceStrength,
-		float a_bounceFrequency, float& a_response, float& a_velocity)
-	{
-		constexpr float kTwoPi = 6.28318530718f;
-		constexpr float kMaximumFrameTime = 0.1f;
-		constexpr float kMaximumStepTime = 1.0f / 120.0f;
-		const float angularFrequency = kTwoPi * std::max(a_bounceFrequency, 0.1f);
-		const float dampingRatio = std::lerp(1.0f, 0.18f, std::clamp(a_bounceStrength, 0.0f, 1.0f));
-		float remainingTime = std::min(a_frameTime, kMaximumFrameTime);
-		while (remainingTime > 0.0f) {
-			const float stepTime = std::min(remainingTime, kMaximumStepTime);
-			const float acceleration = angularFrequency * angularFrequency * (a_target - a_response) -
-			                           2.0f * dampingRatio * angularFrequency * a_velocity;
-			a_velocity += acceleration * stepTime;
-			a_response += a_velocity * stepTime;
-			remainingTime -= stepTime;
-		}
-
-		if (!std::isfinite(a_response) || !std::isfinite(a_velocity)) {
-			a_response = a_target;
-			a_velocity = 0.0f;
-		}
-		a_response = std::clamp(a_response, 0.0f, 4.0f);
-	}
 }
 
 void State::UpdateSkyShaderPermutation(RE::BSRenderPass* a_pass)
@@ -127,22 +103,11 @@ void State::UpdatePermutationBuffer()
 	permutationData.TrunkWindVariationInterval = globals::features::csUtility.settings.trunkWindVariationInterval;
 	permutationData.TrunkWindBendSensitivity = globals::features::csUtility.settings.trunkWindBendSensitivity;
 	permutationData.TrunkWindLeafSensitivity = globals::features::csUtility.settings.trunkWindLeafSensitivity;
-	permutationData.EnableGrassWindExperiment = globals::features::csUtility.loaded &&
-	                                            globals::features::csUtility.settings.enableGrassWindExperiment;
-	permutationData.GrassWindBendScale = globals::features::csUtility.settings.grassWindBendScale;
-	permutationData.GrassWindCoarseScale = globals::features::csUtility.settings.grassWindCoarseScale;
-	permutationData.GrassWindCoarseSpeed = globals::features::csUtility.settings.grassWindCoarseSpeed;
-	permutationData.GrassWindCoarseStrength = globals::features::csUtility.settings.grassWindCoarseStrength;
-	permutationData.GrassWindFineScale = globals::features::csUtility.settings.grassWindFineScale;
-	permutationData.GrassWindFineSpeed = globals::features::csUtility.settings.grassWindFineSpeed;
-	permutationData.GrassWindFineStrength = globals::features::csUtility.settings.grassWindFineStrength;
-	permutationData.GrassWindMaximumBendAngle = globals::features::csUtility.settings.grassWindMaximumBendAngle;
-	permutationData.GrassWindCurvature = globals::features::csUtility.settings.grassWindCurvature;
-	permutationData.EnableGrassWindGusts = globals::features::csUtility.settings.enableGrassWindGusts;
-	permutationData.GrassWindGustResponse = grassWindGustResponse;
-	permutationData.GrassWindPreviousGustResponse = previousGrassWindGustResponse;
-	permutationData.GrassWindFlutterStrength = globals::features::csUtility.settings.grassWindFlutterStrength;
-	permutationData.GrassWindFlutterSpeed = globals::features::csUtility.settings.grassWindFlutterSpeed;
+	permutationData.EnableAmbientGrassWind = globals::features::csUtility.loaded &&
+	                                         globals::features::csUtility.settings.enableAmbientGrassWind;
+	permutationData.GrassWindResponse = globals::features::csUtility.settings.grassWindResponse;
+	permutationData.GrassWindMaximumTilt = globals::features::csUtility.settings.grassWindMaximumTilt;
+	permutationData.GrassWindBendProfile = globals::features::csUtility.settings.grassWindBendProfile;
 	if (permutationData != permutationDataPrevious) {
 		permutationCB->Update(permutationData);
 		permutationDataPrevious = permutationData;
@@ -373,7 +338,8 @@ void State::Reset()
 	previousTimer = timer;
 	previousTrunkWindVector = trunkWindVector;
 	previousSharedWindGustScale = sharedWindGustScale;
-	previousGrassWindGustResponse = grassWindGustResponse;
+	previousWindFieldSelectedVelocity = windFieldSelectedVelocity;
+	previousWindFieldGustTravelDistance = windFieldGustTravelDistance;
 	if (frameTime > 0.0f) {
 		if (windGustTransitioning) {
 			windGustTransitionElapsed += frameTime;
@@ -397,22 +363,10 @@ void State::Reset()
 			}
 		}
 	}
-	const bool grassWindGustsEnabled = globals::features::csUtility.loaded &&
-	                                   trunkWindSettings.enableGrassWindExperiment &&
-	                                   trunkWindSettings.enableGrassWindGusts;
 	const float currentWindTimer = gamePaused ? timer : timer + frameTime;
 	sharedWindGustScale = windGustBaseStrength * GetSharedWindVariation(currentWindTimer,
 													 trunkWindSettings.trunkWindVariationMin, trunkWindSettings.trunkWindVariationMax,
 													 trunkWindSettings.trunkWindVariationInterval);
-	sharedWindGustTarget = sharedWindGustScale;
-	if (!grassWindGustsEnabled) {
-		grassWindGustResponse = 1.0f;
-		grassWindGustVelocity = 0.0f;
-	} else if (frameTime > 0.0f) {
-		UpdateGrassWindGustSpring(sharedWindGustTarget, frameTime,
-			trunkWindSettings.grassWindBounceStrength, trunkWindSettings.grassWindBounceFrequency,
-			grassWindGustResponse, grassWindGustVelocity);
-	}
 	ambientWindVelocity = {};
 	trunkWindVector = {};
 	const bool overrideTrunkWindIntensity = globals::features::csUtility.loaded &&
@@ -467,6 +421,11 @@ void State::Reset()
 	windFieldTravelDelta = std::isfinite(frameTime) ? selectedWindSpeed * std::max(frameTime, 0.0f) : 0.0f;
 	if (std::isfinite(selectedWindSpeed) && std::isfinite(frameTime)) {
 		windFieldGustTravelDistance += windFieldTravelDelta;
+	}
+	if (!windFieldHasPreviousSample) {
+		previousWindFieldSelectedVelocity = windFieldSelectedVelocity;
+		previousWindFieldGustTravelDistance = windFieldGustTravelDistance;
+		windFieldHasPreviousSample = true;
 	}
 
 	worldRenderedThisFrame = false;
@@ -1457,6 +1416,10 @@ void State::UpdateSharedData([[maybe_unused]] bool a_inWorld, [[maybe_unused]] b
 		data.WindFieldAmbient = {
 			windFieldSelectedVelocity.x, windFieldSelectedVelocity.y, windFieldSelectedVelocity.z,
 			windFieldGustTravelDistance
+		};
+		data.WindFieldPreviousAmbient = {
+			previousWindFieldSelectedVelocity.x, previousWindFieldSelectedVelocity.y, previousWindFieldSelectedVelocity.z,
+			previousWindFieldGustTravelDistance
 		};
 
 		auto temporal = Util::GetTemporal();

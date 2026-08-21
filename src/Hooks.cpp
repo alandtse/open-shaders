@@ -217,8 +217,12 @@ namespace
 			shaderType != RE::BSShader::Type::Grass)
 			return;
 
-		auto* permutationBuffer = state->permutationCB->CB();
-		globals::d3d::context->VSSetConstantBuffers(kPermutationVertexRegister, 1, &permutationBuffer);
+		ID3D11Buffer* buffers[] = {
+			state->permutationCB->CB(),
+			state->sharedDataCB->CB(),
+			state->featureDataCB->CB(),
+		};
+		globals::d3d::context->VSSetConstantBuffers(kPermutationVertexRegister, ARRAYSIZE(buffers), buffers);
 	}
 
 	class TreeBendPassScope

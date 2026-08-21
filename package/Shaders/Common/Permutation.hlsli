@@ -121,24 +121,12 @@ namespace Permutation
 		float TrunkWindBendSensitivity;
 
 		float TrunkWindLeafSensitivity;
-		uint EnableGrassWindExperiment;
-		float GrassWindBendScale;
-		float GrassWindCoarseScale;
+		uint EnableAmbientGrassWind;
+		float GrassWindResponse;
+		float GrassWindMaximumTilt;
 
-		float GrassWindCoarseSpeed;
-		float GrassWindCoarseStrength;
-		float GrassWindFineScale;
-		float GrassWindFineSpeed;
-
-		float GrassWindFineStrength;
-		float GrassWindMaximumBendAngle;
-		float GrassWindCurvature;
-		uint EnableGrassWindGusts;
-
-		float GrassWindGustResponse;
-		float GrassWindPreviousGustResponse;
-		float GrassWindFlutterStrength;
-		float GrassWindFlutterSpeed;
+		float GrassWindBendProfile;
+		float3 GrassWindPadding;
 	};
 
 }

@@ -3,7 +3,6 @@
 
 #include "Common/Math.hlsli"
 #include "Common/Permutation.hlsli"
-#include "Common/Random.hlsli"
 
 namespace Wind
 {
@@ -101,73 +100,31 @@ namespace Wind
 			return float3(windVector.xy, 0) * windPower;
 		}
 
-		// Two spatial scales keep neighboring clumps coherent without making the entire field repeat in lockstep.
-		float3 CalculateDisplacement(
-			float2 instanceCoordinates, float tipWeight, float modelHeight, float instanceBaseHeight, float3 windVector,
-			float windTimer, float windIntensityScale, float2 windDirection, float gustResponse, out float bendAngle)
+		/** @brief Maps sampled ambient velocity to planted grass-blade deformation. */
+		float3 CalculateAmbientDisplacement(
+			float tipWeight, float modelHeight, float instanceBaseHeight, float3 worldWindVelocity,
+			float4x4 worldMatrix, out float3 bendAxis, out float bendAngle)
 		{
-			if (Permutation::EnableGrassWindExperiment == 0) {
-				bendAngle = 0.0;
-				return CalculateVanillaDisplacement(instanceCoordinates, tipWeight, windVector, windTimer, windIntensityScale);
-			}
+			float3 modelWindVelocity = mul(transpose((float3x3)worldMatrix), worldWindVelocity);
+			float3 lateralWindVelocity = float3(modelWindVelocity.xy, 0.0);
+			float lateralWindSpeed = length(lateralWindVelocity);
+			float3 bendDirection = lateralWindSpeed > 1e-5 ?
+			                           lateralWindVelocity / lateralWindSpeed :
+			                           float3(1.0, 0.0, 0.0);
+			bendAxis = cross(float3(0.0, 0.0, 1.0), bendDirection);
 
-			float2 crossWindDirection = float2(-windDirection.y, windDirection.x);
-			float alongWind = dot(instanceCoordinates, windDirection);
-			float acrossWind = dot(instanceCoordinates, crossWindDirection);
+			float maximumTilt = radians(max(Permutation::GrassWindMaximumTilt, 0.0));
+			float requestedTilt = lateralWindSpeed * radians(max(Permutation::GrassWindResponse, 0.0));
+			float rigidBendAngle = maximumTilt > 1e-5 ?
+			                           maximumTilt * tanh(requestedTilt / maximumTilt) :
+			                           0.0;
+			float squaredTipWeight = saturate(tipWeight);
+			squaredTipWeight *= squaredTipWeight;
+			bendAngle = rigidBendAngle * lerp(
+											 1.0, squaredTipWeight, saturate(Permutation::GrassWindBendProfile));
 
-			float coarseFrequency = Math::TAU / max(Permutation::GrassWindCoarseScale, 1.0);
-			float coarseWarp = sin(
-				acrossWind * coarseFrequency * 0.53 + windTimer * Permutation::GrassWindCoarseSpeed * 0.17);
-			float coarsePhase = alongWind * coarseFrequency - windTimer * Permutation::GrassWindCoarseSpeed +
-			                    coarseWarp * 0.65;
-			float coarseSecondaryPhase =
-				(alongWind * 0.61 + acrossWind * 0.79) * coarseFrequency * 0.73 -
-				windTimer * Permutation::GrassWindCoarseSpeed * 0.63 + 1.7;
-			float coarseNoise = sin(coarsePhase) * 0.68 + sin(coarseSecondaryPhase) * 0.32;
-			float coarsePressure = smoothstep(0.15, 0.85, coarseNoise * 0.5 + 0.5);
-
-			float fineFrequency = Math::TAU / max(Permutation::GrassWindFineScale, 1.0);
-			float finePhase = alongWind * fineFrequency - windTimer * Permutation::GrassWindFineSpeed +
-			                  acrossWind * fineFrequency * 0.21;
-			float fineSecondaryPhase =
-				(alongWind * 0.41 - acrossWind * 0.91) * fineFrequency * 1.37 -
-				windTimer * Permutation::GrassWindFineSpeed * 1.31 + 2.4;
-			float finePressure = sin(finePhase) * 0.6 + sin(fineSecondaryPhase) * 0.4;
-			float flutterPressure = 0.5 + 0.5 * sin(
-													windTimer * Permutation::GrassWindFlutterSpeed + alongWind * 0.017 + acrossWind * 0.011);
-
-			uint2 instanceHash = Random::pcg2d(asuint(instanceCoordinates));
-			float instanceResponse = lerp(0.92, 1.08, float(instanceHash.x) * (1.0 / 4294967296.0));
-			float macroPressure = Permutation::EnableGrassWindGusts != 0 ? max(gustResponse, 0.0) : 1.0;
-			float fieldEnergy = lerp(0.65, 1.45, saturate((macroPressure - 0.7) / 0.7));
-			float spatialPressure = max(
-				1.0 + fieldEnergy * (coarsePressure * Permutation::GrassWindCoarseStrength + finePressure * Permutation::GrassWindFineStrength) +
-					flutterPressure * Permutation::GrassWindFlutterStrength,
-				0.0);
-
-			tipWeight = saturate(tipWeight);
-			tipWeight *= tipWeight;
-			float windResponse =
-				windVector.z * windIntensityScale * macroPressure * spatialPressure * instanceResponse *
-				Permutation::GrassWindBendScale;
-			float maximumBendAngle = radians(max(Permutation::GrassWindMaximumBendAngle, 0.0));
-			float bendLimit = max(maximumBendAngle, 1e-4);
-			float bendRadians = windResponse * 0.007;
-			float rigidBendAngle = maximumBendAngle * tanh(bendRadians / bendLimit);
-			bendAngle = rigidBendAngle * lerp(1.0, tipWeight, saturate(Permutation::GrassWindCurvature));
-
-			// A clump contains multiple blades, so each vertical vertex column must remain planted independently.
 			float3 relativePosition = float3(0.0, 0.0, max(modelHeight - instanceBaseHeight, 0.0));
-			float3 bendAxis = float3(-windDirection.y, windDirection.x, 0.0);
 			return Common::RotateVector(relativePosition, bendAxis, bendAngle) - relativePosition;
-		}
-
-		float2 GetModelWindDirection(float2 worldWindVector, float2 vanillaWindDirection, float4x4 worldMatrix)
-		{
-			float useSharedDirection = dot(worldWindVector, worldWindVector) > 1e-6;
-			float2 sourceDirection = lerp(vanillaWindDirection, worldWindVector, useSharedDirection);
-			float3 modelDirection = mul(transpose((float3x3)worldMatrix), float3(sourceDirection, 0.0));
-			return modelDirection.xy * rsqrt(max(dot(modelDirection.xy, modelDirection.xy), 1e-6));
 		}
 	}
 }

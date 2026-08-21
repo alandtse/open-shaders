@@ -167,6 +167,39 @@ float4 GetMSPosition(VS_INPUT input)
 	return msPosition;
 }
 
+void GetGrassWindDisplacements(
+	VS_INPUT input, uint eyeIndex, float modelHeight, out float3 windDisplacement,
+	out float3 previousWindDisplacement, out float3 bendAxis, out float bendAngle)
+{
+	if (Permutation::EnableAmbientGrassWind != 0) {
+		float3 rootWorldPosition =
+			mul(World[eyeIndex], float4(input.InstanceData1.xyz, 1.0)).xyz + FrameBuffer::CameraPosAdjust[eyeIndex].xyz;
+		float3 previousRootWorldPosition =
+			mul(PreviousWorld[eyeIndex], float4(input.InstanceData1.xyz, 1.0)).xyz +
+			FrameBuffer::CameraPreviousPosAdjust[eyeIndex].xyz;
+		WindField::WindSample windSample = SharedData::SampleAmbientWind(rootWorldPosition);
+		WindField::WindSample previousWindSample = SharedData::SamplePreviousAmbientWind(previousRootWorldPosition);
+		float3 previousBendAxis;
+		float previousBendAngle;
+		windDisplacement = Wind::Grass::CalculateAmbientDisplacement(
+			input.Color.w, modelHeight, input.InstanceData1.z, windSample.velocity,
+			World[eyeIndex], bendAxis, bendAngle);
+		previousWindDisplacement = Wind::Grass::CalculateAmbientDisplacement(
+			input.Color.w, modelHeight, input.InstanceData1.z, previousWindSample.velocity,
+			PreviousWorld[eyeIndex], previousBendAxis, previousBendAngle);
+		return;
+	}
+
+	bendAxis = float3(0.0, 1.0, 0.0);
+	bendAngle = 0.0;
+	windDisplacement = Wind::Grass::CalculateVanillaDisplacement(
+		input.InstanceData1.xy, input.Color.w, WindVector, WindTimer,
+		Wind::Common::GetWindIntensityOverrideScale());
+	previousWindDisplacement = Wind::Grass::CalculateVanillaDisplacement(
+		input.InstanceData1.xy, input.Color.w, WindVector, PreviousWindTimer,
+		Wind::Common::GetWindIntensityOverrideScale());
+}
+
 #	ifdef GRASS_LIGHTING
 VS_OUTPUT main(VS_INPUT input)
 {
@@ -181,22 +214,10 @@ VS_OUTPUT main(VS_INPUT input)
 
 	float4 msPosition = GetMSPosition(input, world3x3);
 
-	float2 windDirection = Wind::Grass::GetModelWindDirection(
-		Permutation::TrunkWindVector, WindVector.xy, World[eyeIndex]);
-	float2 previousWindDirection =
-		Wind::Grass::GetModelWindDirection(
-			Permutation::TrunkWindPreviousVector, WindVector.xy, PreviousWorld[eyeIndex]);
-	float bendAngle, previousBendAngle;
-	float3 windDisplacement =
-		Wind::Grass::CalculateDisplacement(
-			input.InstanceData1.xy, input.Color.w, msPosition.z, input.InstanceData1.z, WindVector, WindTimer,
-			Wind::Common::GetWindIntensityOverrideScale(), windDirection,
-			Permutation::GrassWindGustResponse, bendAngle);
-	float3 previousWindDisplacement =
-		Wind::Grass::CalculateDisplacement(
-			input.InstanceData1.xy, input.Color.w, msPosition.z, input.InstanceData1.z, WindVector, PreviousWindTimer,
-			Wind::Common::GetWindIntensityOverrideScale(),
-			previousWindDirection, Permutation::GrassWindPreviousGustResponse, previousBendAngle);
+	float3 windDisplacement, previousWindDisplacement, bendAxis;
+	float bendAngle;
+	GetGrassWindDisplacements(
+		input, eyeIndex, msPosition.z, windDisplacement, previousWindDisplacement, bendAxis, bendAngle);
 
 #		ifdef GRASS_COLLISION
 	float3 displacement, previousDisplacement;
@@ -252,7 +273,6 @@ VS_OUTPUT main(VS_INPUT input)
 
 	// Keep lighting attached to the blade as the angular deformation changes its orientation.
 	float3 modelNormal = mul(world3x3, input.Normal.xyz * 2.0 - 1.0);
-	float3 bendAxis = float3(-windDirection.y, windDirection.x, 0.0);
 	vsout.VertexNormal.xyz = Wind::Common::RotateVector(modelNormal, bendAxis, bendAngle);
 	vsout.VertexNormal.w = input.Color.w;
 
@@ -271,22 +291,10 @@ VS_OUTPUT main(VS_INPUT input)
 
 	float4 msPosition = GetMSPosition(input);
 
-	float2 windDirection = Wind::Grass::GetModelWindDirection(
-		Permutation::TrunkWindVector, WindVector.xy, World[eyeIndex]);
-	float2 previousWindDirection =
-		Wind::Grass::GetModelWindDirection(
-			Permutation::TrunkWindPreviousVector, WindVector.xy, PreviousWorld[eyeIndex]);
-	float bendAngle, previousBendAngle;
-	float3 windDisplacement =
-		Wind::Grass::CalculateDisplacement(
-			input.InstanceData1.xy, input.Color.w, msPosition.z, input.InstanceData1.z, WindVector, WindTimer,
-			Wind::Common::GetWindIntensityOverrideScale(), windDirection,
-			Permutation::GrassWindGustResponse, bendAngle);
-	float3 previousWindDisplacement =
-		Wind::Grass::CalculateDisplacement(
-			input.InstanceData1.xy, input.Color.w, msPosition.z, input.InstanceData1.z, WindVector, PreviousWindTimer,
-			Wind::Common::GetWindIntensityOverrideScale(),
-			previousWindDirection, Permutation::GrassWindPreviousGustResponse, previousBendAngle);
+	float3 windDisplacement, previousWindDisplacement, bendAxis;
+	float bendAngle;
+	GetGrassWindDisplacements(
+		input, eyeIndex, msPosition.z, windDisplacement, previousWindDisplacement, bendAxis, bendAngle);
 
 #		ifdef GRASS_COLLISION
 	float3 displacement, previousDisplacement;

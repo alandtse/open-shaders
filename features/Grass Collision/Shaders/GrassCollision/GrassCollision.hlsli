@@ -2,18 +2,6 @@ namespace GrassCollision
 {
 	Texture2D<float4> Collision : register(t100);
 
-	cbuffer GrassCollisionPerFrame : register(b5)
-	{
-		float2 PosOffset;   // cell origin in camera space
-		uint2 ArrayOrigin;  // xy: array origin (clipmap wrapping)
-
-		int2 ValidMargin;
-		float TimeDelta;
-		uint BoundingBoxCount;
-
-		float CameraHeightDelta;
-	}
-
 	const static uint TEXTURE_SIZE = 512;
 	const static float WORLD_SIZE = 4096;
 	const static float CELL_SIZE = WORLD_SIZE / TEXTURE_SIZE;
@@ -31,7 +19,7 @@ namespace GrassCollision
 
 	void GetCollision(float3 worldPosition, float maximumDepth, float distanceFromCenter, out float collisionHeights, out float collisionAmount, out float previousCollisionHeights, out float previousCollisionAmount)
 	{
-		float2 positionMSAdjusted = worldPosition.xy - PosOffset.xy;
+		float2 positionMSAdjusted = worldPosition.xy - SharedData::grassCollisionData.PosOffset;
 		float2 uv = positionMSAdjusted / WORLD_SIZE + .5;
 
 		float2 cellVxCoord = uv * TEXTURE_SIZE;
@@ -62,7 +50,7 @@ namespace GrassCollision
 				float2 bilinearWeights = 1 - abs(offset - bilinearPos);
 				float w = bilinearWeights.x * bilinearWeights.y;
 
-				uint2 cellTexID = (cellID + ArrayOrigin.xy) % TEXTURE_SIZE;
+				uint2 cellTexID = (cellID + SharedData::grassCollisionData.ArrayOrigin) % TEXTURE_SIZE;
 
 				float4 collisionSample = Collision[cellTexID];
 				collisionSample = lerp(ZRANGE.x, ZRANGE.y, collisionSample);

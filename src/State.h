@@ -64,12 +64,15 @@ public:
 	float timer = 0;
 	float previousTimer = 0;
 	float windFieldGustTravelDistance = 0.0f;
+	float previousWindFieldGustTravelDistance = 0.0f;
 	float windFieldFrameTime = 0.0f;
 	float windFieldAmbientSpeed = 0.0f;
 	float windFieldTravelDelta = 0.0f;
 	float3 ambientWindVelocity = {};
 	float3 windFieldSelectedVelocity = {};
+	float3 previousWindFieldSelectedVelocity = {};
 	float windFieldSelectedSpeed = 0.0f;
+	bool windFieldHasPreviousSample = false;
 	WindField::WindTuning windFieldTuning{};
 	float2 trunkWindVector = {};
 	float2 previousTrunkWindVector = {};
@@ -82,10 +85,6 @@ public:
 	float windGustTransitionElapsed = 0.0f;
 	uint32_t windRandomState = 0xA341316Cu;
 	bool windGustTransitioning = false;
-	float sharedWindGustTarget = 1.0f;
-	float grassWindGustResponse = 1.0f;
-	float previousGrassWindGustResponse = 1.0f;
-	float grassWindGustVelocity = 0.0f;
 	double smoothDrawCalls[RE::BSShader::Type::Total + 1];
 	int drawCalls[RE::BSShader::Type::Total + 1];
 
@@ -448,24 +447,12 @@ public:
 		float TrunkWindBendSensitivity;
 
 		float TrunkWindLeafSensitivity;
-		uint EnableGrassWindExperiment;
-		float GrassWindBendScale;
-		float GrassWindCoarseScale;
+		uint EnableAmbientGrassWind;
+		float GrassWindResponse;
+		float GrassWindMaximumTilt;
 
-		float GrassWindCoarseSpeed;
-		float GrassWindCoarseStrength;
-		float GrassWindFineScale;
-		float GrassWindFineSpeed;
-
-		float GrassWindFineStrength;
-		float GrassWindMaximumBendAngle;
-		float GrassWindCurvature;
-		uint EnableGrassWindGusts;
-
-		float GrassWindGustResponse;
-		float GrassWindPreviousGustResponse;
-		float GrassWindFlutterStrength;
-		float GrassWindFlutterSpeed;
+		float GrassWindBendProfile;
+		float3 GrassWindPadding;
 
 		bool operator==(const PermutationCB& other) const
 		{
@@ -489,21 +476,10 @@ public:
 			       TrunkWindVariationInterval == other.TrunkWindVariationInterval &&
 			       TrunkWindBendSensitivity == other.TrunkWindBendSensitivity &&
 			       TrunkWindLeafSensitivity == other.TrunkWindLeafSensitivity &&
-			       EnableGrassWindExperiment == other.EnableGrassWindExperiment &&
-			       GrassWindBendScale == other.GrassWindBendScale &&
-			       GrassWindCoarseScale == other.GrassWindCoarseScale &&
-			       GrassWindCoarseSpeed == other.GrassWindCoarseSpeed &&
-			       GrassWindCoarseStrength == other.GrassWindCoarseStrength &&
-			       GrassWindFineScale == other.GrassWindFineScale &&
-			       GrassWindFineSpeed == other.GrassWindFineSpeed &&
-			       GrassWindFineStrength == other.GrassWindFineStrength &&
-			       GrassWindMaximumBendAngle == other.GrassWindMaximumBendAngle &&
-			       GrassWindCurvature == other.GrassWindCurvature &&
-			       EnableGrassWindGusts == other.EnableGrassWindGusts &&
-			       GrassWindGustResponse == other.GrassWindGustResponse &&
-			       GrassWindPreviousGustResponse == other.GrassWindPreviousGustResponse &&
-			       GrassWindFlutterStrength == other.GrassWindFlutterStrength &&
-			       GrassWindFlutterSpeed == other.GrassWindFlutterSpeed;
+			       EnableAmbientGrassWind == other.EnableAmbientGrassWind &&
+			       GrassWindResponse == other.GrassWindResponse &&
+			       GrassWindMaximumTilt == other.GrassWindMaximumTilt &&
+			       GrassWindBendProfile == other.GrassWindBendProfile;
 		}
 	};
 	STATIC_ASSERT_ALIGNAS_16(PermutationCB);
@@ -545,6 +521,7 @@ public:
 		float4 WindFieldDebugOptions;  // y: real speed, z: real direction, w: accumulated gust travel distance
 		WindField::WindTuning WindFieldTuning;
 		float4 WindFieldAmbient;  // xyz: instantaneous base weather velocity, w: accumulated gust travel distance
+		float4 WindFieldPreviousAmbient;
 	};
 	STATIC_ASSERT_ALIGNAS_16(SharedDataCB);
 	// Each float4 cbuffer field must start on a 16-byte boundary to match the HLSL SharedData
@@ -556,6 +533,7 @@ public:
 	static_assert(offsetof(SharedDataCB, WindFieldDebugOptions) % 16 == 0);
 	static_assert(offsetof(SharedDataCB, WindFieldTuning) % 16 == 0);
 	static_assert(offsetof(SharedDataCB, WindFieldAmbient) % 16 == 0);
+	static_assert(offsetof(SharedDataCB, WindFieldPreviousAmbient) % 16 == 0);
 
 	ConstantBuffer* sharedDataCB = nullptr;
 	ConstantBuffer* featureDataCB = nullptr;

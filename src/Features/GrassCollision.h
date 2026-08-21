@@ -58,7 +58,19 @@ public:
 	};
 	STATIC_ASSERT_ALIGNAS_16(PerFrame);
 
+	struct alignas(16) ShaderData
+	{
+		float2 PosOffset;
+		DirectX::XMUINT2 ArrayOrigin;
+	};
+	STATIC_ASSERT_ALIGNAS_16(ShaderData);
+
+	/** @brief Returns the grass-collision values packed into the shared feature buffer. */
+	[[nodiscard]] ShaderData GetCommonBufferData() const noexcept { return { shaderPosOffset, shaderArrayOrigin }; }
+
 	Settings settings;
+	float2 shaderPosOffset{};
+	DirectX::XMUINT2 shaderArrayOrigin{};
 
 	ConstantBuffer* perFrame = nullptr;
 

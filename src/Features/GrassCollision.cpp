@@ -1,8 +1,10 @@
 #include "GrassCollision.h"
 
+#include "FeatureBuffer.h"
 #include "Globals.h"
 #include "GpuPass.h"
 #include "I18n/I18n.h"
+#include "State.h"
 #include "Utils/ActorUtils.h"
 #include "Utils/D3D.h"
 
@@ -183,6 +185,8 @@ void GrassCollision::Update()
 			((int)cellID.x - textureArrayDims / 2) % textureArrayDims,
 			((int)cellID.y - textureArrayDims / 2) % textureArrayDims
 		};
+		shaderPosOffset = perFrameData.PosOffset;
+		shaderArrayOrigin = perFrameData.ArrayOrigin;
 
 		perFrameData.ValidMargin = { (int)cellIDDiff.x, (int)cellIDDiff.y };
 
@@ -216,13 +220,11 @@ void GrassCollision::Update()
 		perFrame->Update(perFrameData);
 
 		UpdateCollisionTexture();
+		auto [featureData, featureDataSize] = GetFeatureBufferData(globals::state->inWorld);
+		globals::state->featureDataCB->Update(featureData, featureDataSize);
 
 		prevCellID = cellID;
 		prevEyePosNI = eyePosNI;
-
-		ID3D11Buffer* buffers[1];
-		buffers[0] = perFrame->CB();
-		context->VSSetConstantBuffers(5, ARRAYSIZE(buffers), buffers);
 
 		ID3D11ShaderResourceView* srvs[] = { collisionTexture->srv.get() };
 		context->VSSetShaderResources(100, ARRAYSIZE(srvs), srvs);

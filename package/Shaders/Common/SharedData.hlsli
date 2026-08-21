@@ -43,6 +43,7 @@ namespace SharedData
 		float4 WindFieldDebugOptions;  // y: real speed, z: real direction, w: accumulated gust travel distance
 		WindField::WindTuning WindFieldTuning;
 		float4 WindFieldAmbient;  // xyz: selected ambient velocity, w: accumulated gust travel distance
+		float4 WindFieldPreviousAmbient;
 	};
 
 	/** @brief Samples the shared ambient weather field at an absolute world position. */
@@ -52,6 +53,15 @@ namespace SharedData
 		float windSpeed = length(baseVelocity);
 		return WindField::SampleWind(
 			worldPosition, WindFieldAmbient.w, baseVelocity, windSpeed, WindFieldTuning);
+	}
+
+	/** @brief Samples the previous frame's shared ambient field for temporal rendering. */
+	WindField::WindSample SamplePreviousAmbientWind(float3 worldPosition)
+	{
+		float3 baseVelocity = WindFieldPreviousAmbient.xyz;
+		float windSpeed = length(baseVelocity);
+		return WindField::SampleWind(
+			worldPosition, WindFieldPreviousAmbient.w, baseVelocity, windSpeed, WindFieldTuning);
 	}
 
 	struct GrassLightingSettings
@@ -453,6 +463,12 @@ namespace SharedData
 		uint3 pad0;
 	};
 
+	struct GrassCollisionData
+	{
+		float2 PosOffset;
+		uint2 ArrayOrigin;
+	};
+
 	cbuffer FeatureData : register(b6)
 	{
 		GrassLightingSettings grassLightingSettings;
@@ -480,6 +496,7 @@ namespace SharedData
 		VanillaFresnelSettings vanillaFresnelSettings;
 		BloomSettings bloomSettings;
 		PostProcessingSettings postProcessingSettings;
+		GrassCollisionData grassCollisionData;
 	};
 
 	Texture2D<float4> DepthTexture : register(t17);
