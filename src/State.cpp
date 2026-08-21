@@ -47,7 +47,7 @@ static thread_local std::vector<TracyCZoneCtx> s_tracyPerfZones;
 
 namespace
 {
-	float NextTrunkWindRandom(uint32_t& a_state)
+	float NextWindRandom(uint32_t& a_state)
 	{
 		a_state = a_state * 1664525u + 1013904223u;
 		return static_cast<float>(a_state >> 8) * (1.0f / 16777216.0f);
@@ -116,8 +116,8 @@ void State::UpdatePermutationBuffer()
 	permutationData.WindIntensityOverride = globals::features::csUtility.settings.trunkWindIntensityOverride;
 	permutationData.OverrideWindIntensity = globals::features::csUtility.loaded &&
 	                                        globals::features::csUtility.settings.overrideTrunkWindIntensity;
-	permutationData.TrunkWindGustStrength = trunkWindGustStrength;
-	permutationData.TrunkWindPreviousGustStrength = previousTrunkWindGustStrength;
+	permutationData.WindGustScale = sharedWindGustScale;
+	permutationData.WindPreviousGustScale = previousSharedWindGustScale;
 	permutationData.TrunkWindFlexibleHeight = globals::features::csUtility.settings.trunkWindFlexibleHeight;
 	permutationData.TrunkWindMaximumDisplacement = globals::features::csUtility.settings.trunkWindMaximumDisplacement;
 	permutationData.TrunkWindInstanceResponseMin = globals::features::csUtility.settings.trunkWindInstanceResponseMin;
@@ -371,28 +371,28 @@ void State::Reset()
 	const float frameTime = gamePaused ? 0.0f : std::max(RE::GetSecondsSinceLastFrame(), 0.0f);
 	previousTimer = timer;
 	previousTrunkWindVector = trunkWindVector;
-	previousTrunkWindGustStrength = trunkWindGustStrength;
+	previousSharedWindGustScale = sharedWindGustScale;
 	previousGrassWindGustResponse = grassWindGustResponse;
 	if (frameTime > 0.0f) {
-		if (trunkWindGustTransitioning) {
-			trunkWindGustTransitionElapsed += frameTime;
-			const float transition = std::clamp(trunkWindGustTransitionElapsed / gustTransitionDuration, 0.0f, 1.0f);
+		if (windGustTransitioning) {
+			windGustTransitionElapsed += frameTime;
+			const float transition = std::clamp(windGustTransitionElapsed / gustTransitionDuration, 0.0f, 1.0f);
 			const float smoothTransition = transition * transition * (3.0f - 2.0f * transition);
-			trunkWindGustStrength = std::lerp(trunkWindGustStartStrength, trunkWindGustTargetStrength, smoothTransition);
+			windGustBaseStrength = std::lerp(windGustStartStrength, windGustTargetStrength, smoothTransition);
 			if (transition >= 1.0f) {
-				trunkWindGustStrength = trunkWindGustTargetStrength;
-				trunkWindGustTransitioning = false;
+				windGustBaseStrength = windGustTargetStrength;
+				windGustTransitioning = false;
 			}
 		} else {
-			trunkWindGustHoldRemaining -= frameTime;
-			if (trunkWindGustHoldRemaining <= 0.0f) {
-				trunkWindGustStartStrength = trunkWindGustStrength;
-				trunkWindGustTargetStrength = std::lerp(gustStrengthMin, gustStrengthMax,
-					NextTrunkWindRandom(trunkWindRandomState));
-				trunkWindGustHoldRemaining = std::lerp(gustHoldMin, gustHoldMax,
-					NextTrunkWindRandom(trunkWindRandomState));
-				trunkWindGustTransitionElapsed = 0.0f;
-				trunkWindGustTransitioning = true;
+			windGustHoldRemaining -= frameTime;
+			if (windGustHoldRemaining <= 0.0f) {
+				windGustStartStrength = windGustBaseStrength;
+				windGustTargetStrength = std::lerp(gustStrengthMin, gustStrengthMax,
+					NextWindRandom(windRandomState));
+				windGustHoldRemaining = std::lerp(gustHoldMin, gustHoldMax,
+					NextWindRandom(windRandomState));
+				windGustTransitionElapsed = 0.0f;
+				windGustTransitioning = true;
 			}
 		}
 	}
@@ -400,14 +400,15 @@ void State::Reset()
 	                                   trunkWindSettings.enableGrassWindExperiment &&
 	                                   trunkWindSettings.enableGrassWindGusts;
 	const float currentWindTimer = gamePaused ? timer : timer + frameTime;
-	grassWindGustTarget = trunkWindGustStrength * GetSharedWindVariation(currentWindTimer,
-													  trunkWindSettings.trunkWindVariationMin, trunkWindSettings.trunkWindVariationMax,
-													  trunkWindSettings.trunkWindVariationInterval);
+	sharedWindGustScale = windGustBaseStrength * GetSharedWindVariation(currentWindTimer,
+													 trunkWindSettings.trunkWindVariationMin, trunkWindSettings.trunkWindVariationMax,
+													 trunkWindSettings.trunkWindVariationInterval);
+	sharedWindGustTarget = sharedWindGustScale;
 	if (!grassWindGustsEnabled) {
 		grassWindGustResponse = 1.0f;
 		grassWindGustVelocity = 0.0f;
 	} else if (frameTime > 0.0f) {
-		UpdateGrassWindGustSpring(grassWindGustTarget, frameTime,
+		UpdateGrassWindGustSpring(sharedWindGustTarget, frameTime,
 			trunkWindSettings.grassWindBounceStrength, trunkWindSettings.grassWindBounceFrequency,
 			grassWindGustResponse, grassWindGustVelocity);
 	}

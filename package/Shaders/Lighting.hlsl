@@ -180,11 +180,11 @@ float2 GetTreeShiftVector(float4 position, float4 color, float instanceResponse,
 	precise float4 tmp3 = abs(-1.0.xxxx + 2.0.xxxx * frac(0.5.xxxx + tmp2.xyzw));
 	precise float4 tmp4 = (tmp3 * tmp3) * (3.0.xxxx - 2.0.xxxx * tmp3);
 	float2 animationStrength = float2(
-								   Wind::GetCurrentWindIntensityScale(), Wind::GetPreviousWindIntensityScale()) *
+								   Wind::Tree::GetCurrentTreeWindIntensityScale(), Wind::Tree::GetPreviousTreeWindIntensityScale()) *
 	                           TreeParams.z;
 	if (treeBendEnabled) {
 		animationStrength = float2(
-								Wind::GetCurrentTrunkWindStrength(), Wind::GetPreviousTrunkWindStrength()) *
+								Wind::Tree::GetCurrentTreeWindStrength(), Wind::Tree::GetPreviousTreeWindStrength()) *
 		                    instanceResponse * Permutation::TrunkWindLeafSensitivity;
 	}
 	return (tmp4.xz + 0.1.xx * tmp4.yw) * color.w.xx * animationStrength;
@@ -208,7 +208,7 @@ VS_OUTPUT main(VS_INPUT input)
 	if (treeBendEnabled) {
 		float2 instanceOriginWS =
 			float2(World[0][0].w, World[0][1].w) + CameraPosAdjust[0].xy;
-		treeWindInstanceResponse = Wind::GetInstanceResponse(instanceOriginWS);
+		treeWindInstanceResponse = Wind::Tree::GetTreeWindInstanceResponse(instanceOriginWS);
 	}
 #	endif
 #	if defined(LODLANDNOISE) || defined(LODLANDSCAPE)
@@ -242,11 +242,11 @@ VS_OUTPUT main(VS_INPUT input)
 #	endif  // SKINNED
 
 	if (treeBendEnabled) {
-		worldPosition.xy += Wind::GetWorldDisplacement(
-			inputPosition.z, Permutation::TrunkWindVector, Wind::GetCurrentTrunkWindVariationScale(), treeWindInstanceResponse);
-		previousWorldPosition.xy += Wind::GetWorldDisplacement(
+		worldPosition.xy += Wind::Tree::GetTreeWorldDisplacement(
+			inputPosition.z, Permutation::TrunkWindVector, Wind::Tree::GetCurrentTreeBendScale(), treeWindInstanceResponse);
+		previousWorldPosition.xy += Wind::Tree::GetTreeWorldDisplacement(
 			previousInputPosition.z, Permutation::TrunkWindPreviousVector,
-			Wind::GetPreviousTrunkWindVariationScale(), treeWindInstanceResponse);
+			Wind::Tree::GetPreviousTreeBendScale(), treeWindInstanceResponse);
 	}
 
 	float4 viewPos;

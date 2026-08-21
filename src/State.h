@@ -64,15 +64,16 @@ public:
 	float previousTimer = 0;
 	float2 trunkWindVector = {};
 	float2 previousTrunkWindVector = {};
-	float trunkWindGustStrength = 1.0f;
-	float previousTrunkWindGustStrength = 1.0f;
-	float trunkWindGustStartStrength = 1.0f;
-	float trunkWindGustTargetStrength = 1.0f;
-	float trunkWindGustHoldRemaining = 0.0f;
-	float trunkWindGustTransitionElapsed = 0.0f;
-	uint32_t trunkWindRandomState = 0xA341316Cu;
-	bool trunkWindGustTransitioning = false;
-	float grassWindGustTarget = 1.0f;
+	float sharedWindGustScale = 1.0f;
+	float previousSharedWindGustScale = 1.0f;
+	float windGustBaseStrength = 1.0f;
+	float windGustStartStrength = 1.0f;
+	float windGustTargetStrength = 1.0f;
+	float windGustHoldRemaining = 0.0f;
+	float windGustTransitionElapsed = 0.0f;
+	uint32_t windRandomState = 0xA341316Cu;
+	bool windGustTransitioning = false;
+	float sharedWindGustTarget = 1.0f;
 	float grassWindGustResponse = 1.0f;
 	float previousGrassWindGustResponse = 1.0f;
 	float grassWindGustVelocity = 0.0f;
@@ -419,8 +420,8 @@ public:
 
 		float WindIntensityOverride;
 		uint OverrideWindIntensity;
-		float TrunkWindGustStrength;
-		float TrunkWindPreviousGustStrength;
+		float WindGustScale;
+		float WindPreviousGustScale;
 
 		float TrunkWindFlexibleHeight;
 		float TrunkWindMaximumDisplacement;
@@ -463,8 +464,8 @@ public:
 			       TrunkWindPreviousVector.y == other.TrunkWindPreviousVector.y &&
 			       WindIntensityOverride == other.WindIntensityOverride &&
 			       OverrideWindIntensity == other.OverrideWindIntensity &&
-			       TrunkWindGustStrength == other.TrunkWindGustStrength &&
-			       TrunkWindPreviousGustStrength == other.TrunkWindPreviousGustStrength &&
+			       WindGustScale == other.WindGustScale &&
+			       WindPreviousGustScale == other.WindPreviousGustScale &&
 			       TrunkWindFlexibleHeight == other.TrunkWindFlexibleHeight &&
 			       TrunkWindMaximumDisplacement == other.TrunkWindMaximumDisplacement &&
 			       TrunkWindInstanceResponseMin == other.TrunkWindInstanceResponseMin &&

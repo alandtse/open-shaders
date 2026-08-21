@@ -107,8 +107,8 @@ namespace Permutation
 
 		float WindIntensityOverride;
 		uint OverrideWindIntensity;
-		float TrunkWindGustStrength;
-		float TrunkWindPreviousGustStrength;
+		float WindGustScale;
+		float WindPreviousGustScale;
 
 		float TrunkWindFlexibleHeight;
 		float TrunkWindMaximumDisplacement;

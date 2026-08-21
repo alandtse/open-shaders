@@ -161,8 +161,8 @@ namespace
 
 	void TriggerNewWindGust()
 	{
-		globals::state->trunkWindGustHoldRemaining = 0.0f;
-		globals::state->trunkWindGustTransitioning = false;
+		globals::state->windGustHoldRemaining = 0.0f;
+		globals::state->windGustTransitioning = false;
 	}
 
 	void DrawMultiplierSlider(const char* a_label, float& a_value, float a_max = kMultiplierMax)
@@ -331,7 +331,7 @@ void CSUtility::DrawSettings()
 				ResetGrassWindSettings(settings);
 			ImGui::BeginDisabled(!settings.enableGrassWindExperiment);
 			ImGui::Checkbox(T(TKEY("enable_grass_wind_gusts"), "Apply Shared Gusts"), &settings.enableGrassWindGusts);
-			ImGui::Text("%s: %.3f", T(TKEY("grass_wind_gust_target"), "Shared Gust Target"), globals::state->grassWindGustTarget);
+			ImGui::Text("%s: %.3f", T(TKEY("grass_wind_gust_target"), "Shared Gust Target"), globals::state->sharedWindGustTarget);
 			ImGui::Text("%s: %.3f", T(TKEY("grass_wind_gust_response_current"), "Current Gust Intensity"), globals::state->grassWindGustResponse);
 			if (ImGui::Button(T(TKEY("grass_wind_trigger_gust"), "Trigger New Gust")))
 				TriggerNewWindGust();
