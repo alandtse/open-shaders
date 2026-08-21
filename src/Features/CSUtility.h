@@ -94,6 +94,9 @@ struct CSUtility : Feature
 		float trunkWindVariationMin = 0.85f;
 		float trunkWindVariationMax = 1.14f;
 		float trunkWindVariationInterval = 2.36f;
+		float windFieldGustScale = 2048.0f;
+		float windFieldGustAmplitude = 0.35f;
+		float windFieldGustAdvectionMultiplier = 1.0f;
 		bool enableAmbientGrassWind = true;
 		float grassWindResponse = 45.0f;
 		float grassWindMaximumTilt = 75.0f;
@@ -115,6 +118,7 @@ struct CSUtility : Feature
 	/** Identifies the OS Utility tab targeted by scoped default restoration. */
 	enum class SettingsPage
 	{
+		WindField,            ///< Ambient wind-field controls.
 		Atmosphere,           ///< Sky atmosphere controls.
 		Water,                ///< Water rendering controls.
 		Multipliers,          ///< Lighting multiplier controls.

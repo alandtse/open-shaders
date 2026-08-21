@@ -327,6 +327,9 @@ void State::Reset()
 
 	Feature::ForEachLoadedFeature("Reset", [](Feature* feature) { feature->Reset(); });
 	const auto& trunkWindSettings = globals::features::csUtility.settings;
+	windFieldTuning.gustScale = trunkWindSettings.windFieldGustScale;
+	windFieldTuning.gustAmplitude = trunkWindSettings.windFieldGustAmplitude;
+	windFieldTuning.gustAdvectionMultiplier = trunkWindSettings.windFieldGustAdvectionMultiplier;
 	const auto [gustStrengthMin, gustStrengthMax] = std::minmax(
 		trunkWindSettings.trunkWindGustStrengthMin, trunkWindSettings.trunkWindGustStrengthMax);
 	const auto [gustHoldMin, gustHoldMax] = std::minmax(
@@ -418,8 +421,11 @@ void State::Reset()
 	windFieldSelectedSpeed = selectedWindSpeed;
 	windFieldSelectedVelocity = selectedWindDirection * selectedWindSpeed;
 	windFieldAmbientSpeed = selectedWindSpeed;
-	windFieldTravelDelta = std::isfinite(frameTime) ? selectedWindSpeed * std::max(frameTime, 0.0f) : 0.0f;
-	if (std::isfinite(selectedWindSpeed) && std::isfinite(frameTime)) {
+	const float gustAdvectionSpeed = selectedWindSpeed * windFieldTuning.gustAdvectionBaseSpeed *
+	                                 windFieldTuning.gustAdvectionMultiplier;
+	windFieldAdvectionSpeed = std::isfinite(gustAdvectionSpeed) ? std::max(gustAdvectionSpeed, 0.0f) : 0.0f;
+	windFieldTravelDelta = std::isfinite(frameTime) ? windFieldAdvectionSpeed * std::max(frameTime, 0.0f) : 0.0f;
+	if (std::isfinite(windFieldTravelDelta)) {
 		windFieldGustTravelDistance += windFieldTravelDelta;
 	}
 	if (!windFieldHasPreviousSample) {

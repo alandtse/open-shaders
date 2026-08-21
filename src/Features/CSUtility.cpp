@@ -44,6 +44,12 @@ namespace
 	constexpr float kTrunkWindVariationScaleMax = 3.0f;
 	constexpr float kTrunkWindVariationIntervalMin = 0.1f;
 	constexpr float kTrunkWindVariationIntervalMax = 20.0f;
+	constexpr float kWindFieldGustScaleMin = 128.0f;
+	constexpr float kWindFieldGustScaleMax = 16384.0f;
+	constexpr float kWindFieldGustAmplitudeMin = 0.0f;
+	constexpr float kWindFieldGustAmplitudeMax = 1.0f;
+	constexpr float kWindFieldGustAdvectionMultiplierMin = 0.0f;
+	constexpr float kWindFieldGustAdvectionMultiplierMax = 8.0f;
 	constexpr float kGrassWindResponseMin = 0.0f;
 	constexpr float kGrassWindResponseMax = 180.0f;
 	constexpr float kGrassWindMaximumTiltMin = 0.0f;
@@ -85,6 +91,9 @@ namespace
 		a_settings.trunkWindVariationMin = ClampFiniteOrDefault(a_settings.trunkWindVariationMin, kTrunkWindVariationScaleMin, kTrunkWindVariationScaleMax, defaults.trunkWindVariationMin);
 		a_settings.trunkWindVariationMax = ClampFiniteOrDefault(a_settings.trunkWindVariationMax, kTrunkWindVariationScaleMin, kTrunkWindVariationScaleMax, defaults.trunkWindVariationMax);
 		a_settings.trunkWindVariationInterval = ClampFiniteOrDefault(a_settings.trunkWindVariationInterval, kTrunkWindVariationIntervalMin, kTrunkWindVariationIntervalMax, defaults.trunkWindVariationInterval);
+		a_settings.windFieldGustScale = ClampFiniteOrDefault(a_settings.windFieldGustScale, kWindFieldGustScaleMin, kWindFieldGustScaleMax, defaults.windFieldGustScale);
+		a_settings.windFieldGustAmplitude = ClampFiniteOrDefault(a_settings.windFieldGustAmplitude, kWindFieldGustAmplitudeMin, kWindFieldGustAmplitudeMax, defaults.windFieldGustAmplitude);
+		a_settings.windFieldGustAdvectionMultiplier = ClampFiniteOrDefault(a_settings.windFieldGustAdvectionMultiplier, kWindFieldGustAdvectionMultiplierMin, kWindFieldGustAdvectionMultiplierMax, defaults.windFieldGustAdvectionMultiplier);
 		a_settings.grassWindResponse = ClampFiniteOrDefault(a_settings.grassWindResponse, kGrassWindResponseMin, kGrassWindResponseMax, defaults.grassWindResponse);
 		a_settings.grassWindMaximumTilt = ClampFiniteOrDefault(a_settings.grassWindMaximumTilt, kGrassWindMaximumTiltMin, kGrassWindMaximumTiltMax, defaults.grassWindMaximumTilt);
 		a_settings.grassWindBendProfile = ClampFiniteOrDefault(a_settings.grassWindBendProfile, kGrassWindBendProfileMin, kGrassWindBendProfileMax, defaults.grassWindBendProfile);
@@ -209,6 +218,9 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	trunkWindVariationMin,
 	trunkWindVariationMax,
 	trunkWindVariationInterval,
+	windFieldGustScale,
+	windFieldGustAmplitude,
+	windFieldGustAdvectionMultiplier,
 	enableAmbientGrassWind,
 	grassWindResponse,
 	grassWindMaximumTilt,
@@ -235,7 +247,7 @@ void CSUtility::DrawSettings()
 		ImGui::Checkbox(T(TKEY("wind_field_use_real_speed"), "Wind Debug: Use Real Wind Speed"), &windFieldUseRealSpeed);
 		if (auto _tt = Util::HoverTooltipWrapper()) {
 			ImGui::TextUnformatted(T(TKEY("wind_field_use_real_speed_tooltip"),
-				"Use the current weather wind magnitude for velocity and gust-front travel; otherwise use the override below."));
+				"Use the current weather wind magnitude for air velocity and the base gust-front travel rate; otherwise use the override below."));
 		}
 		ImGui::SliderFloat(T(TKEY("wind_field_override_speed"), "Wind Debug: Override Speed"), &windFieldOverrideSpeed,
 			0.0f, 2.0f, "%.3f");
@@ -260,6 +272,7 @@ void CSUtility::DrawSettings()
 		ImGui::Text("%s: %.6f s", T(TKEY("wind_field_frame_time"), "Frame delta"), state->windFieldFrameTime);
 		ImGui::Text("%s: %.6f", T(TKEY("wind_field_travel_delta"), "Travel delta"), state->windFieldTravelDelta);
 		ImGui::Text("%s: %.5f", T(TKEY("wind_field_travel_distance"), "Accumulated travel distance"), state->windFieldGustTravelDistance);
+		ImGui::Text("%s: %.3f units/s", T(TKEY("wind_field_advection_speed"), "Gust advection speed"), state->windFieldAdvectionSpeed);
 		ImGui::Text("%s: %.5f", T(TKEY("wind_field_global_time"), "Global timer"), state->timer);
 		if (treeManager) {
 			ImGui::Text("%s: (%.5f, %.5f), magnitude %.5f", T(TKEY("wind_field_tree_input"), "Tree wind input"),
@@ -281,7 +294,7 @@ void CSUtility::DrawSettings()
 		ImGui::Text("%s: speed %.5f, direction (%.5f, %.5f, 0.00000)",
 			T(TKEY("wind_field_selected_input"), "Selected sampler input"), selectedSpeed, selectedDirectionX, selectedDirectionY);
 		ImGui::TextWrapped("%s", T(TKEY("wind_field_color_note"),
-									 "The debug color represents ambient gust pressure. The selected speed also controls its accumulated travel rate."));
+									 "The debug color represents normalized ambient gust pressure. Advection controls transport independently from gust amplitude."));
 		if (globals::game::shadowState) {
 			const auto eyePosition = Util::GetAverageEyePosition();
 			const float3 samplePosition{ eyePosition.x, eyePosition.y, eyePosition.z };
@@ -298,13 +311,30 @@ void CSUtility::DrawSettings()
 				T(TKEY("wind_field_selected_sample"), "Selected sample at camera"), selectedSample.velocity.x,
 				selectedSample.velocity.y, selectedSample.velocity.z, selectedSample.ambientGust);
 		}
-		if (ImGui::TreeNode(T(TKEY("wind_field_tuning"), "Sampler tuning"))) {
+		if (ImGui::TreeNodeEx(T(TKEY("wind_field_tuning"), "Sampler tuning"), ImGuiTreeNodeFlags_DefaultOpen)) {
+			ImGui::SliderFloat(T(TKEY("wind_field_gust_advection_multiplier"), "Gust Advection Multiplier"),
+				&settings.windFieldGustAdvectionMultiplier, kWindFieldGustAdvectionMultiplierMin,
+				kWindFieldGustAdvectionMultiplierMax, "%.2fx", ImGuiSliderFlags_AlwaysClamp);
+			if (auto _tt = Util::HoverTooltipWrapper())
+				ImGui::TextUnformatted(T(TKEY("wind_field_gust_advection_multiplier_tooltip"),
+					"Changes only how quickly gust structures move through world space; it does not increase local air velocity."));
+			ImGui::SliderFloat(T(TKEY("wind_field_gust_scale"), "Gust Spatial Scale"), &settings.windFieldGustScale,
+				kWindFieldGustScaleMin, kWindFieldGustScaleMax, "%.0f units",
+				ImGuiSliderFlags_AlwaysClamp | ImGuiSliderFlags_Logarithmic);
+			if (auto _tt = Util::HoverTooltipWrapper())
+				ImGui::TextUnformatted(T(TKEY("wind_field_gust_scale_tooltip"),
+					"Controls the along-wind size of the broad gust structures; the existing detail ratios scale with it."));
+			ImGui::SliderFloat(T(TKEY("wind_field_gust_amplitude"), "Gust Amplitude"), &settings.windFieldGustAmplitude,
+				kWindFieldGustAmplitudeMin, kWindFieldGustAmplitudeMax, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+			if (auto _tt = Util::HoverTooltipWrapper())
+				ImGui::TextUnformatted(T(TKEY("wind_field_gust_amplitude_tooltip"),
+					"Fractional velocity deviation around the mean; 0.35 produces a 0.65x to 1.35x range."));
 			const auto& tuning = state->windFieldTuning;
-			ImGui::Text("Scale %.2f, front aspect %.2f, advection %.2f", tuning.gustScale, tuning.frontAspectRatio, tuning.advectionUnitsPerSecond);
+			ImGui::Text("Base advection %.2f units/s at wind speed 1.0, front aspect %.2f",
+				tuning.gustAdvectionBaseSpeed, tuning.frontAspectRatio);
 			ImGui::Text("Detail ratios %.3f / %.3f, turbulence %.3f, skew %.3f", tuning.detailScaleRatio,
 				tuning.detailCrosswindScaleRatio, tuning.turbulenceStrength, tuning.turbulenceSkew);
-			ImGui::Text("Contrast %.3f - %.3f, gust %.3f - %.3f", tuning.contrastLow, tuning.contrastHigh,
-				tuning.gustMinimum, tuning.gustMaximum);
+			ImGui::Text("Contrast %.3f - %.3f", tuning.contrastLow, tuning.contrastHigh);
 			ImGui::Text("Seeds: broad 0x%08X, detail 0x%08X, mix 0x%08X", tuning.broadGustSeed,
 				tuning.turbulentGustSeed, tuning.gradientSeedMix);
 			ImGui::Text("PCG: multiplier %u, increment %u", tuning.pcgMultiplier, tuning.pcgIncrement);
@@ -315,6 +345,7 @@ void CSUtility::DrawSettings()
 
 	if (ImGui::BeginTabBar("##CSUtilityTabs", ImGuiTabBarFlags_None)) {
 		if (ImGui::BeginTabItem(T(TKEY("tab_wind_field"), "Wind Field"))) {
+			activeSettingsPage = SettingsPage::WindField;
 			drawWindField();
 			ImGui::EndTabItem();
 		}
@@ -515,6 +546,11 @@ void CSUtility::RestoreCurrentPageDefaultSettings()
 {
 	const Settings defaults{};
 	switch (activeSettingsPage) {
+	case SettingsPage::WindField:
+		settings.windFieldGustScale = defaults.windFieldGustScale;
+		settings.windFieldGustAmplitude = defaults.windFieldGustAmplitude;
+		settings.windFieldGustAdvectionMultiplier = defaults.windFieldGustAdvectionMultiplier;
+		break;
 	case SettingsPage::Atmosphere:
 		settings.skyBrightness = defaults.skyBrightness;
 		break;
@@ -543,6 +579,11 @@ void CSUtility::RestoreCurrentPageDefaultSettings()
 bool CSUtility::ReapplyCurrentPageOverrideSettings()
 {
 	static constexpr std::array<std::string_view, 1> atmosphereKeys{ "skyBrightness" };
+	static constexpr std::array<std::string_view, 3> windFieldKeys{
+		"windFieldGustScale",
+		"windFieldGustAmplitude",
+		"windFieldGustAdvectionMultiplier"
+	};
 	static constexpr std::array<std::string_view, 1> waterKeys{ "water" };
 	static constexpr std::array<std::string_view, 7> multiplierKeys{
 		"directionalLightMult",
@@ -557,6 +598,8 @@ bool CSUtility::ReapplyCurrentPageOverrideSettings()
 	static constexpr std::array<std::string_view, 1> bloomKeys{ "bloomEnhancement" };
 
 	switch (activeSettingsPage) {
+	case SettingsPage::WindField:
+		return ReapplyOverrideSettingsForKeys(windFieldKeys);
 	case SettingsPage::Atmosphere:
 		return ReapplyOverrideSettingsForKeys(atmosphereKeys);
 	case SettingsPage::Water:

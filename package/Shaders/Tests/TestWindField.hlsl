@@ -6,15 +6,15 @@ WindField::WindTuning GetDefaultWindTuning()
 	WindField::WindTuning tuning;
 	tuning.gustScale = 2048.0f;
 	tuning.frontAspectRatio = 4.0f;
-	tuning.advectionUnitsPerSecond = 384.0f;
+	tuning.gustAdvectionBaseSpeed = 384.0f;
+	tuning.gustAdvectionMultiplier = 1.0f;
 	tuning.detailScaleRatio = 0.38f;
 	tuning.detailCrosswindScaleRatio = 0.55f;
 	tuning.turbulenceStrength = 0.24f;
 	tuning.turbulenceSkew = 0.35f;
 	tuning.contrastLow = 0.30f;
 	tuning.contrastHigh = 0.70f;
-	tuning.gustMinimum = 0.65f;
-	tuning.gustMaximum = 1.35f;
+	tuning.gustAmplitude = 0.35f;
 	tuning.broadGustSeed = 0x2341316Cu;
 	tuning.turbulentGustSeed = 0x48013EA4u;
 	tuning.gradientSeedMix = 0x1E3779B9u;

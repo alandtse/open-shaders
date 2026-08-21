@@ -40,9 +40,9 @@ namespace SharedData
 		float RefractionScale;
 		float3 pad1;
 		float4 WindFieldDebug;         // xy: base weather velocity, z: visualization enabled
-		float4 WindFieldDebugOptions;  // y: real speed, z: real direction, w: accumulated gust travel distance
+		float4 WindFieldDebugOptions;  // y: real speed, z: real direction, w: accumulated world-space gust travel
 		WindField::WindTuning WindFieldTuning;
-		float4 WindFieldAmbient;  // xyz: selected ambient velocity, w: accumulated gust travel distance
+		float4 WindFieldAmbient;  // xyz: selected mean velocity, w: accumulated world-space gust travel
 		float4 WindFieldPreviousAmbient;
 	};
 

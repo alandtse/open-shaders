@@ -67,6 +67,7 @@ public:
 	float previousWindFieldGustTravelDistance = 0.0f;
 	float windFieldFrameTime = 0.0f;
 	float windFieldAmbientSpeed = 0.0f;
+	float windFieldAdvectionSpeed = 0.0f;
 	float windFieldTravelDelta = 0.0f;
 	float3 ambientWindVelocity = {};
 	float3 windFieldSelectedVelocity = {};
@@ -518,9 +519,9 @@ public:
 		float RefractionScale;            // ISRefraction.hlsl heat-shimmer multiplier; 1.0 = unmodified vanilla strength
 		float3 pad1;
 		float4 WindFieldDebug;         // xy: base weather velocity, z: visualization enabled
-		float4 WindFieldDebugOptions;  // y: real speed, z: real direction, w: accumulated gust travel distance
+		float4 WindFieldDebugOptions;  // y: real speed, z: real direction, w: accumulated world-space gust travel
 		WindField::WindTuning WindFieldTuning;
-		float4 WindFieldAmbient;  // xyz: instantaneous base weather velocity, w: accumulated gust travel distance
+		float4 WindFieldAmbient;  // xyz: instantaneous mean weather velocity, w: accumulated world-space gust travel
 		float4 WindFieldPreviousAmbient;
 	};
 	STATIC_ASSERT_ALIGNAS_16(SharedDataCB);

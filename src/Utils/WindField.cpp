@@ -119,11 +119,10 @@ namespace WindField
 		const float alongWind = Dot(worldPosition, direction);
 		const float acrossWind = Dot(worldPosition, crosswindDirection);
 		const float gustTravelDistance = std::max(a_gustTravelDistance, 0.0f);
-		const float advection = gustTravelDistance * a_tuning.advectionUnitsPerSecond;
 		const float gustScale = std::max(std::abs(a_tuning.gustScale), kMinimumDivisor);
 		const float frontAspectRatio = std::max(std::abs(a_tuning.frontAspectRatio), kMinimumDivisor);
 		const Scalar2 frontCoordinate{
-			(alongWind - advection) / gustScale,
+			(alongWind - gustTravelDistance) / gustScale,
 			acrossWind / (gustScale * frontAspectRatio)
 		};
 
@@ -155,8 +154,9 @@ namespace WindField
 	{
 		const float ambientGust =
 			SampleAmbientGust(a_worldPosition, a_gustTravelDistance, a_windDirection, a_tuning);
-		const auto [gustMinimum, gustMaximum] = std::minmax(a_tuning.gustMinimum, a_tuning.gustMaximum);
-		const float gustMultiplier = Lerp(gustMinimum, gustMaximum, ambientGust);
+		const float gustDeviation = ambientGust * 2.0f - 1.0f;
+		const float gustAmplitude = std::max(a_tuning.gustAmplitude, 0.0f);
+		const float gustMultiplier = std::max(1.0f + gustDeviation * gustAmplitude, 0.0f);
 		const float3 ambientWeatherWind =
 			NormalizeDirection(a_windDirection) * (std::max(a_windSpeed, 0.0f) * gustMultiplier);
 		return { ambientWeatherWind, ambientGust };

@@ -8,15 +8,15 @@ namespace WindField
 		// Supplied by the canonical C++ WindTuning; the GPU implementation defines no defaults.
 		float gustScale;
 		float frontAspectRatio;
-		float advectionUnitsPerSecond;
+		float gustAdvectionBaseSpeed;
+		float gustAdvectionMultiplier;
 		float detailScaleRatio;
 		float detailCrosswindScaleRatio;
 		float turbulenceStrength;
 		float turbulenceSkew;
 		float contrastLow;
 		float contrastHigh;
-		float gustMinimum;
-		float gustMaximum;
+		float gustAmplitude;
 		uint broadGustSeed;
 		uint turbulentGustSeed;
 		uint gradientSeedMix;
@@ -97,11 +97,10 @@ namespace WindField
 		float alongWind = dot(worldPosition.xy, direction);
 		float acrossWind = dot(worldPosition.xy, crosswindDirection);
 		gustTravelDistance = max(gustTravelDistance, 0.0f);
-		float advection = gustTravelDistance * tuning.advectionUnitsPerSecond;
 		float gustScale = max(abs(tuning.gustScale), Detail::MinimumDivisor);
 		float frontAspectRatio = max(abs(tuning.frontAspectRatio), Detail::MinimumDivisor);
 		float2 frontCoordinate = float2(
-			(alongWind - advection) / gustScale,
+			(alongWind - gustTravelDistance) / gustScale,
 			acrossWind / (gustScale * frontAspectRatio));
 
 		float broadGust = Detail::GradientNoise(frontCoordinate, tuning.broadGustSeed, tuning);
@@ -126,9 +125,8 @@ namespace WindField
 	{
 		WindSample sample;
 		sample.ambientGust = SampleAmbientGust(worldPosition, gustTravelDistance, windDirection, tuning);
-		float gustMinimum = min(tuning.gustMinimum, tuning.gustMaximum);
-		float gustMaximum = max(tuning.gustMinimum, tuning.gustMaximum);
-		float gustMultiplier = lerp(gustMinimum, gustMaximum, sample.ambientGust);
+		float gustDeviation = sample.ambientGust * 2.0f - 1.0f;
+		float gustMultiplier = max(1.0f + gustDeviation * max(tuning.gustAmplitude, 0.0f), 0.0f);
 		sample.velocity =
 			Detail::NormalizeDirection(windDirection) * (max(windSpeed, 0.0f) * gustMultiplier);
 		return sample;
