@@ -101,6 +101,7 @@ struct CSUtility : Feature
 		float grassWindResponse = 45.0f;
 		float grassWindMaximumTilt = 75.0f;
 		float grassWindBendProfile = 0.35f;
+		bool grassWindUseBendTargetSpring = true;
 		float grassWindSpringLag = 0.12f;
 		float grassWindSpringStrength = 0.65f;
 		float grassWindSpringRecovery = 0.15f;

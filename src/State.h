@@ -459,7 +459,8 @@ public:
 
 		float GrassWindFlutterStrength;
 		float GrassWindFlutterFrequency;
-		float2 GrassWindPadding;
+		uint GrassWindUseBendTargetSpring;
+		float GrassWindPadding;
 
 		bool operator==(const PermutationCB& other) const
 		{
@@ -491,7 +492,8 @@ public:
 			       GrassWindSpringStrength == other.GrassWindSpringStrength &&
 			       GrassWindSpringRecovery == other.GrassWindSpringRecovery &&
 			       GrassWindFlutterStrength == other.GrassWindFlutterStrength &&
-			       GrassWindFlutterFrequency == other.GrassWindFlutterFrequency;
+			       GrassWindFlutterFrequency == other.GrassWindFlutterFrequency &&
+			       GrassWindUseBendTargetSpring == other.GrassWindUseBendTargetSpring;
 		}
 	};
 	STATIC_ASSERT_ALIGNAS_16(PermutationCB);

@@ -84,7 +84,7 @@ namespace Wind
 
 	namespace Grass
 	{
-		/** @brief Derives stateless lag and recovery from consecutive ambient samples. */
+		/** @brief Applies stateless lag and recovery to consecutive ambient velocities. */
 		void CalculateSpringVelocities(
 			float3 currentVelocity, float currentGust, float3 previousVelocity, float previousGust,
 			float lagFrameCount, out float3 springVelocity, out float3 previousSpringVelocity)
@@ -111,6 +111,27 @@ namespace Wind
 			                             previousSpringVelocity;
 		}
 
+		/** @brief Applies stateless lag and recovery to consecutive rigid-bend targets. */
+		void CalculateSpringAngles(
+			float currentTargetAngle, float previousTargetAngle, float lagFrameCount,
+			out float springAngle, out float previousSpringAngle)
+		{
+			float inertia = saturate(Permutation::GrassWindSpringStrength);
+			float recovery = max(Permutation::GrassWindSpringRecovery, 0.0);
+			float targetDelta = currentTargetAngle - previousTargetAngle;
+			float recovering = targetDelta < 0.0 ? 1.0 : 0.0;
+			float springOffset = targetDelta * lagFrameCount * (inertia + recovery * recovering);
+			springAngle = currentTargetAngle - springOffset;
+			previousSpringAngle = previousTargetAngle - springOffset;
+
+			float maximumBendAngle = radians(max(Permutation::GrassWindMaximumTilt, 0.0));
+			float maximumResponseAngle = min(
+				max(abs(currentTargetAngle), abs(previousTargetAngle)) * (1.0 + recovery),
+				maximumBendAngle);
+			springAngle = clamp(springAngle, -maximumResponseAngle, maximumResponseAngle);
+			previousSpringAngle = clamp(previousSpringAngle, -maximumResponseAngle, maximumResponseAngle);
+		}
+
 		float3 CalculateVanillaDisplacement(
 			float2 instanceCoordinates, float tipWeight, float3 windVector, float windTimer, float windIntensityScale)
 		{
@@ -127,10 +148,10 @@ namespace Wind
 			return float3(windVector.xy, 0) * windPower;
 		}
 
-		/** @brief Maps sampled ambient velocity to planted grass-blade deformation. */
-		float3 CalculateAmbientDisplacement(
-			float tipWeight, float modelHeight, float instanceBaseHeight, float3 worldWindVelocity,
-			float4x4 worldMatrix, out float3 bendAxis, out float bendAngle)
+		/** @brief Maps sampled ambient velocity to a desired rigid-bend target. */
+		void CalculateAmbientBendTarget(
+			float3 worldWindVelocity, float responseScale, float4x4 worldMatrix,
+			out float3 bendAxis, out float bendAngle)
 		{
 			float3 modelWindVelocity = mul(transpose((float3x3)worldMatrix), worldWindVelocity);
 			float3 lateralWindVelocity = float3(modelWindVelocity.xy, 0.0);
@@ -141,10 +162,16 @@ namespace Wind
 			bendAxis = cross(float3(0.0, 0.0, 1.0), bendDirection);
 
 			float maximumTilt = radians(max(Permutation::GrassWindMaximumTilt, 0.0));
-			float requestedTilt = lateralWindSpeed * radians(max(Permutation::GrassWindResponse, 0.0));
-			float rigidBendAngle = maximumTilt > 1e-5 ?
-			                           maximumTilt * tanh(requestedTilt / maximumTilt) :
-			                           0.0;
+			float requestedTilt =
+				lateralWindSpeed * responseScale * radians(max(Permutation::GrassWindResponse, 0.0));
+			bendAngle = maximumTilt > 1e-5 ? maximumTilt * tanh(requestedTilt / maximumTilt) : 0.0;
+		}
+
+		/** @brief Deforms a grass vertex from an already-resolved rigid bend. */
+		float3 CalculateAmbientDisplacement(
+			float tipWeight, float modelHeight, float instanceBaseHeight, float3 bendAxis,
+			float rigidBendAngle, out float bendAngle)
+		{
 			float squaredTipWeight = saturate(tipWeight);
 			squaredTipWeight *= squaredTipWeight;
 			bendAngle = rigidBendAngle * lerp(

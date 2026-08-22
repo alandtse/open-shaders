@@ -113,6 +113,7 @@ void State::UpdatePermutationBuffer()
 	permutationData.GrassWindSpringRecovery = globals::features::csUtility.settings.grassWindSpringRecovery;
 	permutationData.GrassWindFlutterStrength = globals::features::csUtility.settings.grassWindFlutterStrength;
 	permutationData.GrassWindFlutterFrequency = globals::features::csUtility.settings.grassWindFlutterFrequency;
+	permutationData.GrassWindUseBendTargetSpring = globals::features::csUtility.settings.grassWindUseBendTargetSpring;
 	if (permutationData != permutationDataPrevious) {
 		permutationCB->Update(permutationData);
 		permutationDataPrevious = permutationData;

@@ -196,19 +196,40 @@ void GetGrassWindDisplacements(
 		float lagFrameCount = travelDelta > 1e-4 ?
 		                          min(advectionSpeed * max(Permutation::GrassWindSpringLag, 0.0) / travelDelta, 64.0) :
 		                          0.0;
-		float3 springWindVelocity;
-		float3 previousSpringWindVelocity;
-		Wind::Grass::CalculateSpringVelocities(
-			windSample.velocity, windSample.ambientGust, previousWindSample.velocity,
-			previousWindSample.ambientGust, lagFrameCount, springWindVelocity, previousSpringWindVelocity);
+		float responseVariation = Random::InterleavedGradientNoise(input.InstanceData1.xy);
+		float responseScale = lerp(0.9, 1.1, responseVariation);
 		float3 previousBendAxis;
+		float springBendAngle;
+		float previousSpringBendAngle;
+		if (Permutation::GrassWindUseBendTargetSpring != 0) {
+			float targetBendAngle;
+			float previousTargetBendAngle;
+			Wind::Grass::CalculateAmbientBendTarget(
+				windSample.velocity, responseScale, World[eyeIndex], bendAxis, targetBendAngle);
+			Wind::Grass::CalculateAmbientBendTarget(
+				previousWindSample.velocity, responseScale, PreviousWorld[eyeIndex],
+				previousBendAxis, previousTargetBendAngle);
+			Wind::Grass::CalculateSpringAngles(
+				targetBendAngle, previousTargetBendAngle, lagFrameCount,
+				springBendAngle, previousSpringBendAngle);
+		} else {
+			float3 springWindVelocity;
+			float3 previousSpringWindVelocity;
+			Wind::Grass::CalculateSpringVelocities(
+				windSample.velocity, windSample.ambientGust, previousWindSample.velocity,
+				previousWindSample.ambientGust, lagFrameCount, springWindVelocity, previousSpringWindVelocity);
+			Wind::Grass::CalculateAmbientBendTarget(
+				springWindVelocity, responseScale, World[eyeIndex], bendAxis, springBendAngle);
+			Wind::Grass::CalculateAmbientBendTarget(
+				previousSpringWindVelocity, responseScale, PreviousWorld[eyeIndex],
+				previousBendAxis, previousSpringBendAngle);
+		}
 		float previousBendAngle;
 		windDisplacement = Wind::Grass::CalculateAmbientDisplacement(
-			input.Color.w, modelHeight, input.InstanceData1.z, springWindVelocity,
-			World[eyeIndex], bendAxis, bendAngle);
+			input.Color.w, modelHeight, input.InstanceData1.z, bendAxis, springBendAngle, bendAngle);
 		previousWindDisplacement = Wind::Grass::CalculateAmbientDisplacement(
-			input.Color.w, modelHeight, input.InstanceData1.z, previousSpringWindVelocity,
-			PreviousWorld[eyeIndex], previousBendAxis, previousBendAngle);
+			input.Color.w, modelHeight, input.InstanceData1.z, previousBendAxis,
+			previousSpringBendAngle, previousBendAngle);
 		windDisplacement += Wind::Common::RotateVector(vanillaDisplacement, bendAxis, bendAngle);
 		previousWindDisplacement +=
 			Wind::Common::RotateVector(previousVanillaDisplacement, previousBendAxis, previousBendAngle);

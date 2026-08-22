@@ -132,7 +132,8 @@ namespace Permutation
 
 		float GrassWindFlutterStrength;
 		float GrassWindFlutterFrequency;
-		float2 GrassWindPadding;
+		uint GrassWindUseBendTargetSpring;
+		float GrassWindPadding;
 	};
 
 }

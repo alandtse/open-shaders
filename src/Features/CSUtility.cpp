@@ -141,6 +141,7 @@ namespace
 		a_settings.grassWindResponse = defaults.grassWindResponse;
 		a_settings.grassWindMaximumTilt = defaults.grassWindMaximumTilt;
 		a_settings.grassWindBendProfile = defaults.grassWindBendProfile;
+		a_settings.grassWindUseBendTargetSpring = defaults.grassWindUseBendTargetSpring;
 		a_settings.grassWindSpringLag = defaults.grassWindSpringLag;
 		a_settings.grassWindSpringStrength = defaults.grassWindSpringStrength;
 		a_settings.grassWindSpringRecovery = defaults.grassWindSpringRecovery;
@@ -245,6 +246,7 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	grassWindResponse,
 	grassWindMaximumTilt,
 	grassWindBendProfile,
+	grassWindUseBendTargetSpring,
 	grassWindSpringLag,
 	grassWindSpringStrength,
 	grassWindSpringRecovery,
@@ -462,6 +464,9 @@ void CSUtility::DrawSettings()
 			if (auto _tt = Util::HoverTooltipWrapper())
 				ImGui::TextUnformatted(T(TKEY("grass_wind_bend_profile_tooltip"), "Zero leans the whole blade uniformly; one concentrates bending toward the tip."));
 			ImGui::SeparatorText(T(TKEY("grass_wind_spring"), "Spring / Recovery"));
+			ImGui::Checkbox(T(TKEY("grass_wind_bend_target_spring"), "Spring Bend Target"), &settings.grassWindUseBendTargetSpring);
+			if (auto _tt = Util::HoverTooltipWrapper())
+				ImGui::TextUnformatted(T(TKEY("grass_wind_bend_target_spring_tooltip"), "Enabled applies spring response to the desired bend angle; disabled applies it to sampled wind velocity."));
 			ImGui::SliderFloat(T(TKEY("grass_wind_spring_lag"), "Response Lag"), &settings.grassWindSpringLag,
 				kGrassWindSpringLagMin, kGrassWindSpringLagMax, "%.2f s", ImGuiSliderFlags_AlwaysClamp);
 			if (auto _tt = Util::HoverTooltipWrapper())
