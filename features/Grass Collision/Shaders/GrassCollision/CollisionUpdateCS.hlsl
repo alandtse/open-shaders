@@ -25,7 +25,13 @@ struct BoundingBoxPacked
 
 StructuredBuffer<BoundingBoxPacked> CollisionBoundingBoxes : register(t0);
 
-StructuredBuffer<float4> CollisionInstances : register(t1);
+struct CollisionShapePacked
+{
+	float4 PointAAndRadius;
+	float4 PointB;
+};
+
+StructuredBuffer<CollisionShapePacked> CollisionInstances : register(t1);
 
 RWTexture2D<float4> Collision : register(u0);
 
@@ -74,24 +80,36 @@ groupshared BoundingBoxPacked SharedBoundingBoxes[64];
 		if (all(cellCentreMS >= boundingBox.MinExtent && cellCentreMS <= boundingBox.MaxExtent)) {
 			// Process collision data
 			for (uint j = boundingBox.IndexStart; j < boundingBox.IndexEnd; j++) {
-				float4 collisionInstance = CollisionInstances[j];
-				float radius = collisionInstance.w;
+				CollisionShapePacked collisionInstance = CollisionInstances[j];
+				float3 pointA = collisionInstance.PointAAndRadius.xyz;
+				float3 pointB = collisionInstance.PointB.xyz;
+				float radius = collisionInstance.PointAAndRadius.w;
+				float2 capsuleAxis = pointB.xy - pointA.xy;
+				float capsuleAxisLengthSquared = dot(capsuleAxis, capsuleAxis);
+				float capsulePosition = capsuleAxisLengthSquared > 1e-5 ?
+				                            saturate(dot(cellCentreMS - pointA.xy, capsuleAxis) / capsuleAxisLengthSquared) :
+				                            0.0;
+				float3 closestPoint = lerp(pointA, pointB, capsulePosition);
+				float lowestHeight = ZRANGE.x;
+				bool intersectsShape = false;
+
+				float lowerCapDistance = distance(pointA.xy, cellCentreMS);
+				if (lowerCapDistance < radius) {
+					lowestHeight = pointA.z - sqrt(radius * radius - lowerCapDistance * lowerCapDistance);
+					intersectsShape = true;
+				}
+
+				float segmentDistance = distance(closestPoint.xy, cellCentreMS);
+				if (segmentDistance < radius) {
+					float segmentHeight = closestPoint.z - sqrt(radius * radius - segmentDistance * segmentDistance);
+					lowestHeight = min(lowestHeight, segmentHeight);
+					intersectsShape = true;
+				}
+
 				// Check if collision can lower the height
-				if (collisionInstance.z - radius < collision.y) {
-					// Get the lowest point of the sphere at this cell position
-					float dist = distance(collisionInstance.xy, cellCentreMS);
-					// Check if we're within the sphere's radius
-					if (dist < radius) {
-						// Get sphere geometry
-						float heightFromCenter = sqrt(radius * radius - dist * dist);
-						float height = collisionInstance.z - heightFromCenter;
-
-						collision.x = min(collision.x, height);
-
-						if (height < collision.y) {
-							collision.y = height;
-						}
-					}
+				if (intersectsShape && lowestHeight < collision.y) {
+					collision.x = min(collision.x, lowestHeight);
+					collision.y = lowestHeight;
 				}
 			}
 		}

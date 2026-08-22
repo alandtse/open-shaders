@@ -44,6 +44,14 @@ public:
 	};
 	STATIC_ASSERT_ALIGNAS_16(BoundingBoxPacked);
 
+	/** @brief GPU representation of a capsule, or a sphere when both endpoints coincide. */
+	struct alignas(16) CollisionShapePacked
+	{
+		float4 PointAAndRadius;
+		float4 PointB;
+	};
+	STATIC_ASSERT_ALIGNAS_16(CollisionShapePacked);
+
 	struct alignas(16) PerFrame
 	{
 		float2 PosOffset;              // cell origin in camera model space
@@ -78,7 +86,7 @@ public:
 	eastl::unique_ptr<Buffer> collisionInstances = nullptr;
 
 	eastl::vector<BoundingBoxPacked> queuedBoundingBoxes;
-	eastl::vector<float4> queuedCollisions;
+	eastl::vector<CollisionShapePacked> queuedCollisions;
 
 	/** @brief Releases the cached collision update compute shader so it can be recompiled. */
 	virtual void ClearShaderCache() override;

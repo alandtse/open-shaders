@@ -72,7 +72,7 @@ void GrassCollision::QueueCollisions()
 	eastl::vector<BoundingBoxPacked> boundingBoxData{};
 	boundingBoxData.reserve(MAX_BOUNDING_BOXES);
 
-	eastl::vector<float4> collisionsData{};
+	eastl::vector<CollisionShapePacked> collisionsData{};
 	collisionsData.reserve(MAX_COLLISIONS);
 
 	uint collisionIndexExtent = 0;
@@ -86,30 +86,25 @@ void GrassCollision::QueueCollisions()
 
 			float distance = std::sqrt(actorCandidate.sqDistance);
 
-			eastl::vector<float4> collisionShapes{};
+			eastl::vector<CollisionShapePacked> collisionShapes{};
 
 			RE::BSVisit::TraverseScenegraphCollision(root, [&](RE::bhkNiCollisionObject* a_object) -> RE::BSVisit::BSVisitControl {
-				RE::NiPoint3 centerPos;
-				float radius;
-				if (Util::GetShapeBound(a_object, centerPos, radius)) {
-					if (radius < distance * MIN_COLLISION_RADIUS_DISTANCE_SCALE)
+				Util::ShapeCollisionCapsule capsule;
+				if (Util::GetShapeCollisionCapsule(a_object, capsule)) {
+					if (capsule.radius < distance * MIN_COLLISION_RADIUS_DISTANCE_SCALE)
 						return RE::BSVisit::BSVisitControl::kContinue;
 
-					centerPos -= cameraPosition;
+					capsule.pointA -= cameraPosition;
+					capsule.pointB -= cameraPosition;
 
-					float4 data{};
-					data.x = centerPos.x;
-					data.y = centerPos.y;
-					data.z = centerPos.z;
-					data.w = radius;
-
-					collisionShapes.push_back(data);
+					collisionShapes.push_back({ { capsule.pointA.x, capsule.pointA.y, capsule.pointA.z, capsule.radius },
+						{ capsule.pointB.x, capsule.pointB.y, capsule.pointB.z, 0.0f } });
 				}
 				return RE::BSVisit::BSVisitControl::kContinue;
 			});
 
-			std::sort(collisionShapes.begin(), collisionShapes.end(), [](const float4& a, const float4& b) {
-				return a.w > b.w;
+			std::sort(collisionShapes.begin(), collisionShapes.end(), [](const CollisionShapePacked& a, const CollisionShapePacked& b) {
+				return a.PointAAndRadius.w > b.PointAAndRadius.w;
 			});
 
 			BoundingBoxPacked boundingBox;
@@ -122,8 +117,13 @@ void GrassCollision::QueueCollisions()
 			for (const auto& data : collisionShapes) {
 				collisionsData.push_back(data);
 
-				float2 pointMin(data.x - data.w, data.y - data.w);
-				float2 pointMax(data.x + data.w, data.y + data.w);
+				const float radius = data.PointAAndRadius.w;
+				float2 pointMin(
+					std::min(data.PointAAndRadius.x, data.PointB.x) - radius,
+					std::min(data.PointAAndRadius.y, data.PointB.y) - radius);
+				float2 pointMax(
+					std::max(data.PointAAndRadius.x, data.PointB.x) + radius,
+					std::max(data.PointAAndRadius.y, data.PointB.y) + radius);
 
 				boundingBox.MinExtent.x = std::min(boundingBox.MinExtent.x, pointMin.x);
 				boundingBox.MinExtent.y = std::min(boundingBox.MinExtent.y, pointMin.y);
@@ -201,7 +201,7 @@ void GrassCollision::Update()
 		if (!queuedCollisions.empty()) {
 			D3D11_MAPPED_SUBRESOURCE mapped;
 			DX::ThrowIfFailed(context->Map(collisionInstances->resource.get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped));
-			size_t bytes = sizeof(float4) * queuedCollisions.size();
+			size_t bytes = sizeof(CollisionShapePacked) * queuedCollisions.size();
 			memcpy_s(mapped.pData, bytes, queuedCollisions.data(), bytes);
 			context->Unmap(collisionInstances->resource.get(), 0);
 		}
@@ -310,8 +310,8 @@ void GrassCollision::SetupResources()
 		sbDesc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
 		sbDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
 		sbDesc.MiscFlags = D3D11_RESOURCE_MISC_BUFFER_STRUCTURED;
-		sbDesc.StructureByteStride = sizeof(float4);
-		sbDesc.ByteWidth = sizeof(float4) * MAX_COLLISIONS;
+		sbDesc.StructureByteStride = sizeof(CollisionShapePacked);
+		sbDesc.ByteWidth = sizeof(CollisionShapePacked) * MAX_COLLISIONS;
 		collisionInstances = eastl::make_unique<Buffer>(sbDesc, nullptr, "GrassCollision::Instances");
 
 		D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc;
