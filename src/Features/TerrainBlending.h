@@ -1,5 +1,7 @@
 #pragma once
 
+#include "Utils/LazyShader.h"
+
 /** @brief Provides seamless depth-based blending between terrain and objects to eliminate harsh transitions. */
 struct TerrainBlending : Feature
 {
@@ -45,15 +47,12 @@ public:
 	/** @brief Creates GPU resources including depth textures, blended depth buffers, and stencil states. */
 	virtual void SetupResources() override;
 
-	/** @brief Returns the terrain depth vertex shader, compiling on first use. */
-	ID3D11VertexShader* GetTerrainVertexShader();
-	/** @brief Returns the terrain depth-offset vertex shader, compiling on first use. */
+	/** @brief Returns the terrain depth-offset vertex shader, compiling on first use, or nullptr if compilation failed. */
 	ID3D11VertexShader* GetTerrainOffsetVertexShader();
 
-	ID3D11VertexShader* terrainVertexShader = nullptr;
-	ID3D11VertexShader* terrainOffsetVertexShader = nullptr;
+	Util::LazyShader<ID3D11VertexShader> terrainOffsetVertexShader;
 
-	/** @brief Returns the depth blend compute shader, compiling on first use. */
+	/** @brief Returns the depth blend compute shader, compiling on first use, or nullptr if compilation failed. */
 	ID3D11ComputeShader* GetDepthBlendShader();
 
 	/** @brief Installs rendering hooks for depth and batch rendering after plugin load. */
@@ -106,7 +105,7 @@ public:
 	ID3D11ShaderResourceView* depthSRVBackup = nullptr;
 	ID3D11ShaderResourceView* prepassSRVBackup = nullptr;
 
-	ID3D11ComputeShader* depthBlendShader = nullptr;
+	Util::LazyShader<ID3D11ComputeShader> depthBlendShader;
 
 	/** @brief Releases all cached vertex and compute shaders for recompilation. */
 	virtual void ClearShaderCache() override;

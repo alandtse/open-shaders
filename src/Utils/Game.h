@@ -47,6 +47,28 @@
 	/* Keep raw runtime check: this macro can be used before globals::ReInit(). */ \
 	auto& a_value = !REL::Module::IsVR() ? a_source->GetRuntimeData().a_value : a_source->GetVRRuntimeData()->a_value;
 
+/**
+ @def CALL_WITH_RUNTIME_DATA
+ @brief Invoke a_fn with a_source's VR-or-flat RuntimeData, picking by IsVR(). Use when
+ GetRuntimeData()/GetVRRuntimeData() return differently-laid-out struct types (so a single
+ ternary can't unify them) but the same logic still applies to either -- a_fn must be a
+ generic callable (e.g. a lambda taking `auto&`).
+
+ @warning The class must have both a GetRuntimeData() and GetVRRuntimeData() function.
+
+ @param a_source The instance of the class (e.g., shadowState).
+ @param a_fn A generic callable invoked with the resolved runtime data.
+ */
+#define CALL_WITH_RUNTIME_DATA(a_source, a_fn)                                                \
+	/* do/while(0): makes this act like one statement, safe inside a caller's own if/else. */ \
+	do {                                                                                      \
+		/* Keep raw runtime check: this macro can be used before globals::ReInit(). */        \
+		if (!REL::Module::IsVR())                                                             \
+			(a_fn)((a_source)->GetRuntimeData());                                             \
+		else                                                                                  \
+			(a_fn)((a_source)->GetVRRuntimeData());                                           \
+	} while (0)
+
 namespace Util
 {
 	/** @brief Pending celestial synchronization requests consumed by the sky update hook. */

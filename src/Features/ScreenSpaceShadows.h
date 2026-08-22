@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Buffer.h"
+#include "Utils/LazyShader.h"
 
 struct ScreenSpaceShadows : Feature
 {
@@ -80,21 +81,17 @@ public:
 	ID3D11SamplerState* pointBorderSampler = nullptr;
 
 	ConstantBuffer* raymarchCB = nullptr;
-	ID3D11ComputeShader* raymarchCS = nullptr;
-	ID3D11ComputeShader* raymarchRightCS = nullptr;
+	Util::LazyShader<ID3D11ComputeShader> raymarchCS;
+	Util::LazyShader<ID3D11ComputeShader> raymarchRightCS;
 
 	Texture2D* screenSpaceShadowsTexture = nullptr;
 
 	// VR stereo sync resources
 	Texture2D* stereoSyncCopyTex = nullptr;
 	ConstantBuffer* stereoSyncCB = nullptr;
-	ID3D11ComputeShader* stereoSyncCS = nullptr;
-	ID3D11ComputeShader* stereoReprojectCS = nullptr;
-	ID3D11ComputeShader* stereoReprojectDebugCS = nullptr;
-	// Per-variant latches: a dev-only debug-variant compile failure must not disable the
-	// production reproject path.
-	bool stereoReprojectCompileFailed = false;
-	bool stereoReprojectDebugCompileFailed = false;
+	Util::LazyShader<ID3D11ComputeShader> stereoSyncCS;
+	Util::LazyShader<ID3D11ComputeShader> stereoReprojectCS;
+	Util::LazyShader<ID3D11ComputeShader> stereoReprojectDebugCS;
 
 	/** @brief Lazily compiles and returns the active reproject variant; null (latched) on compile failure. */
 	ID3D11ComputeShader* GetStereoReprojectCS();

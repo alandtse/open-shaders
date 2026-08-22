@@ -5,6 +5,7 @@
 #define VR
 #define COMPUTESHADER
 #include "/Shaders/Common/VR.hlsli"
+#include "/Shaders/Common/VRReproject.hlsli"
 #include "/Test/STF/ShaderTestFramework.hlsli"
 
 static const float kEps = 0.0001f;

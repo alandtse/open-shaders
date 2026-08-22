@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Buffer.h"
+#include "Utils/LazyShader.h"
 
 /** @brief Provides downsampled VSM shadow maps for use by effects like particles and decals. */
 struct VolumetricShadows : Feature
@@ -31,10 +32,10 @@ public:
 	bool HasShaderDefine(RE::BSShader::Type shaderType) override;
 
 	// Compute shaders
-	ID3D11ComputeShader* downsampleShadowMip0CS = nullptr;
-	ID3D11ComputeShader* downsampleShadowMip1CS = nullptr;
-	ID3D11ComputeShader* blurShadowHorizontalCS = nullptr;
-	ID3D11ComputeShader* blurShadowVerticalCS = nullptr;
+	Util::LazyShader<ID3D11ComputeShader> downsampleShadowMip0CS;
+	Util::LazyShader<ID3D11ComputeShader> downsampleShadowMip1CS;
+	Util::LazyShader<ID3D11ComputeShader> blurShadowHorizontalCS;
+	Util::LazyShader<ID3D11ComputeShader> blurShadowVerticalCS;
 
 	// Downsampled shadow texture with 2 mip levels
 	ID3D11Texture2D* shadowCopyTexture = nullptr;
@@ -62,6 +63,8 @@ public:
 	virtual void SetupResources() override;
 	/** @brief Releases and recompiles all compute shaders. */
 	virtual void ClearShaderCache() override;
+	/** @brief Compiles (or re-lazily-compiles) the downsample and blur compute shaders. */
+	void CompileComputeShaders();
 	/** @brief Builds the shared VSM copy after directional shadow maps are rendered. */
 	virtual void EarlyPrepass() override;
 

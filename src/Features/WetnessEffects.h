@@ -36,6 +36,7 @@ public:
 		float MaxRainWetness = 1.0f;
 		float MaxPuddleWetness = 1.5f;
 		float MaxShoreWetness = 1.0f;
+		float GrassWetnessRoughness = 0.12f;
 		uint ShoreRange = 32;
 		float PuddleRadius = 1.0f;
 		float PuddleMaxAngle = 0.95f;
@@ -71,7 +72,6 @@ public:
 		float Wetness;
 		float PuddleWetness;
 		Settings settings;
-		uint pad0;
 	};
 	STATIC_ASSERT_ALIGNAS_16(PerFrame);
 

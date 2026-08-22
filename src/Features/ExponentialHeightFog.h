@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Buffer.h"
+#include "Utils/LazyShader.h"
 
 struct ExponentialHeightFog : Feature
 {
@@ -120,10 +121,10 @@ private:
 	winrt::com_ptr<ID3D11SamplerState> linearSampler;
 	winrt::com_ptr<ID3D11SamplerState> shadowSampler;
 	winrt::com_ptr<ID3D11ShaderResourceView> directionalShadowMap;
-	ID3D11ComputeShader* materialSetupCS = nullptr;
-	ID3D11ComputeShader* conservativeDepthCS = nullptr;
-	ID3D11ComputeShader* lightScatteringCS = nullptr;
-	ID3D11ComputeShader* integrationCS = nullptr;
+	Util::LazyShader<ID3D11ComputeShader> materialSetupCS;
+	Util::LazyShader<ID3D11ComputeShader> conservativeDepthCS;
+	Util::LazyShader<ID3D11ComputeShader> lightScatteringCS;
+	Util::LazyShader<ID3D11ComputeShader> integrationCS;
 	DirectX::XMUINT4 currentGridSize = {};
 	bool hasLightScatteringHistory = false;
 	bool hasConservativeDepthHistory = false;

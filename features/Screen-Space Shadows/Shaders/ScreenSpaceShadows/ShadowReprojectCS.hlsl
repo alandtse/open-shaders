@@ -5,6 +5,7 @@
 #include "Common/FrameBuffer.hlsli"
 #include "Common/SharedData.hlsli"
 #include "Common/VR.hlsli"
+#include "Common/VRReproject.hlsli"
 
 #ifdef VR
 

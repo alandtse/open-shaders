@@ -126,7 +126,9 @@ float3 OklchAdjustments(float3 val)
 	int leftHue = floor(lerpFactor);
 	lerpFactor = lerpFactor - leftHue;
 	leftHue += (leftHue < 0) * 7;
-	int rightHue = (leftHue + 1) % 7;
+	// leftHue is non-negative here, so leftHue+1 is too -- uint modulus is
+	// equivalent and avoids the slower signed-integer modulus instruction.
+	int rightHue = int((uint)(leftHue + 1) % 7u);
 	float effect = saturate(c / 0.37);
 
 	// Per-hue hue shift

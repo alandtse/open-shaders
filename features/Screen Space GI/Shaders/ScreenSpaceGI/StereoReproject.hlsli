@@ -9,6 +9,7 @@
 // file (SharedData/FP_Z/RES_MIP/samplers) and breaks the FRAMEBUFFER permutation.
 // All three are include-guarded, so this is a no-op where already included.
 #include "Common/VR.hlsli"
+#include "Common/VRReproject.hlsli"
 #include "ScreenSpaceGI/common.hlsli"
 
 // Inverse of ScreenToViewDepth: linear view-space Z back to raw NDC depth.

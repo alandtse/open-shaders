@@ -446,10 +446,10 @@ void Deferred::DeferredPasses()
 		ID3D11UnorderedAccessView* uavs[3]{ main.UAV, normals.UAV, motionVectors.UAV };
 		context->CSSetUnorderedAccessViews(0, ARRAYSIZE(uavs), uavs, nullptr);
 
-		auto shader = interior ? GetComputeMainCompositeInterior() : GetComputeMainComposite();
-		context->CSSetShader(shader, nullptr, 0);
-
-		context->Dispatch(dispatchCount.x, dispatchCount.y, 1);
+		if (auto* shader = interior ? GetComputeMainCompositeInterior() : GetComputeMainComposite()) {
+			context->CSSetShader(shader, nullptr, 0);
+			context->Dispatch(dispatchCount.x, dispatchCount.y, 1);
+		}
 
 		// Unbind mode texture SRV
 		ID3D11ShaderResourceView* nullSRV = nullptr;
@@ -691,82 +691,66 @@ void Deferred::CopyShadowLightData()
 
 void Deferred::ClearShaderCache()
 {
-	if (mainCompositeCS) {
-		mainCompositeCS->Release();
-		mainCompositeCS = nullptr;
-	}
-	if (mainCompositeInteriorCS) {
-		mainCompositeInteriorCS->Release();
-		mainCompositeInteriorCS = nullptr;
-	}
+	mainCompositeCS.Reset();
+	mainCompositeInteriorCS.Reset();
 }
 
 ID3D11ComputeShader* Deferred::GetComputeMainComposite()
 {
-	if (!mainCompositeCS) {
-		logger::debug("Compiling DeferredCompositeCS");
+	std::vector<std::pair<const char*, const char*>> defines;
 
-		std::vector<std::pair<const char*, const char*>> defines;
+	if (globals::features::dynamicCubemaps.loaded)
+		defines.push_back({ "DYNAMIC_CUBEMAPS", nullptr });
 
-		if (globals::features::dynamicCubemaps.loaded)
-			defines.push_back({ "DYNAMIC_CUBEMAPS", nullptr });
+	if (globals::features::skylighting.loaded)
+		defines.push_back({ "SKYLIGHTING", nullptr });
 
-		if (globals::features::skylighting.loaded)
-			defines.push_back({ "SKYLIGHTING", nullptr });
-
-		if (globals::features::screenSpaceGI.loaded) {
-			defines.push_back({ "SSGI", nullptr });
-			if (!globals::features::screenSpaceGI.HasGIResources())
-				defines.push_back({ "SSGI_AO_ONLY", nullptr });
-		}
-
-		if (globals::features::ibl.loaded)
-			defines.push_back({ "IBL", nullptr });
-
-		if (globals::game::isVR)
-			defines.push_back({ "FRAMEBUFFER", nullptr });
-
-		// TERRAIN_BLENDING flips DepthTexture's HLSL type from `Texture2D<unorm float>`
-		// (R24_UNORM_X8_TYPELESS game depth) to `Texture2D<float>` (R32_FLOAT blendedDepth).
-		if (globals::features::terrainBlending.loaded)
-			defines.push_back({ "TERRAIN_BLENDING", nullptr });
-
-		mainCompositeCS = static_cast<ID3D11ComputeShader*>(Util::CompileShader(L"Data\\Shaders\\DeferredCompositeCS.hlsl", defines, "cs_5_0"));
+	if (globals::features::screenSpaceGI.loaded) {
+		defines.push_back({ "SSGI", nullptr });
+		if (!globals::features::screenSpaceGI.HasGIResources())
+			defines.push_back({ "SSGI_AO_ONLY", nullptr });
 	}
-	return mainCompositeCS;
+
+	if (globals::features::ibl.loaded)
+		defines.push_back({ "IBL", nullptr });
+
+	if (globals::game::isVR)
+		defines.push_back({ "FRAMEBUFFER", nullptr });
+
+	// TERRAIN_BLENDING flips DepthTexture's HLSL type from `Texture2D<unorm float>`
+	// (R24_UNORM_X8_TYPELESS game depth) to `Texture2D<float>` (R32_FLOAT blendedDepth).
+	if (globals::features::terrainBlending.loaded)
+		defines.push_back({ "TERRAIN_BLENDING", nullptr });
+
+	return mainCompositeCS.Get(L"Data\\Shaders\\DeferredCompositeCS.hlsl", defines, "cs_5_0");
 }
 
 ID3D11ComputeShader* Deferred::GetComputeMainCompositeInterior()
 {
-	if (!mainCompositeInteriorCS) {
-		logger::debug("Compiling DeferredCompositeCS INTERIOR");
+	std::vector<std::pair<const char*, const char*>> defines;
+	defines.push_back({ "INTERIOR", nullptr });
 
-		std::vector<std::pair<const char*, const char*>> defines;
-		defines.push_back({ "INTERIOR", nullptr });
+	if (globals::features::dynamicCubemaps.loaded)
+		defines.push_back({ "DYNAMIC_CUBEMAPS", nullptr });
 
-		if (globals::features::dynamicCubemaps.loaded)
-			defines.push_back({ "DYNAMIC_CUBEMAPS", nullptr });
-
-		if (globals::features::screenSpaceGI.loaded) {
-			defines.push_back({ "SSGI", nullptr });
-			if (!globals::features::screenSpaceGI.HasGIResources())
-				defines.push_back({ "SSGI_AO_ONLY", nullptr });
-		}
-
-		if (globals::features::ibl.loaded)
-			defines.push_back({ "IBL", nullptr });
-
-		if (globals::game::isVR)
-			defines.push_back({ "FRAMEBUFFER", nullptr });
-
-		// TERRAIN_BLENDING flips DepthTexture's HLSL type from `Texture2D<unorm float>`
-		// (R24_UNORM_X8_TYPELESS game depth) to `Texture2D<float>` (R32_FLOAT blendedDepth).
-		if (globals::features::terrainBlending.loaded)
-			defines.push_back({ "TERRAIN_BLENDING", nullptr });
-
-		mainCompositeInteriorCS = static_cast<ID3D11ComputeShader*>(Util::CompileShader(L"Data\\Shaders\\DeferredCompositeCS.hlsl", defines, "cs_5_0"));
+	if (globals::features::screenSpaceGI.loaded) {
+		defines.push_back({ "SSGI", nullptr });
+		if (!globals::features::screenSpaceGI.HasGIResources())
+			defines.push_back({ "SSGI_AO_ONLY", nullptr });
 	}
-	return mainCompositeInteriorCS;
+
+	if (globals::features::ibl.loaded)
+		defines.push_back({ "IBL", nullptr });
+
+	if (globals::game::isVR)
+		defines.push_back({ "FRAMEBUFFER", nullptr });
+
+	// TERRAIN_BLENDING flips DepthTexture's HLSL type from `Texture2D<unorm float>`
+	// (R24_UNORM_X8_TYPELESS game depth) to `Texture2D<float>` (R32_FLOAT blendedDepth).
+	if (globals::features::terrainBlending.loaded)
+		defines.push_back({ "TERRAIN_BLENDING", nullptr });
+
+	return mainCompositeInteriorCS.Get(L"Data\\Shaders\\DeferredCompositeCS.hlsl", defines, "cs_5_0");
 }
 
 void Deferred::Hooks::Main_RenderShadowMaps::thunk()

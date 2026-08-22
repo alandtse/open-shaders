@@ -11,6 +11,7 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	MaxRainWetness,
 	MaxPuddleWetness,
 	MaxShoreWetness,
+	GrassWetnessRoughness,
 	ShoreRange,
 	PuddleRadius,
 	PuddleMaxAngle,
@@ -458,6 +459,7 @@ void WetnessEffects::DrawSettings()
 		ImGui::SliderFloat(T(TKEY("rain_wetness"), "Rain Wetness"), &settings.MaxRainWetness, 0.0f, 2.5f);
 		if (ImGui::IsItemDeactivatedAfterEdit())
 			DetectCurrentPreset();
+		ImGui::SliderFloat(T(TKEY("grass_wet_roughness"), "Grass Wet Roughness"), &settings.GrassWetnessRoughness, 0.05f, 0.5f, "%.2f");
 
 		ImGui::SliderFloat(T(TKEY("puddle_wetness"), "Puddle Wetness"), &settings.MaxPuddleWetness, 0.0f, 6.0f);
 		if (ImGui::IsItemDeactivatedAfterEdit())

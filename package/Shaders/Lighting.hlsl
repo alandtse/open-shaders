@@ -1964,7 +1964,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 #	endif      // TRUE_PBR
 
 #	if defined(SKIN) && defined(CS_SKIN)
-	const float ExtraRoughness = BRDF::F_Schlick(0.04, saturate(dot(worldNormal.xyz, viewDirection))) * SharedData::skinData.fuzzParams.w;
+	const float ExtraRoughness = BRDF::F_Schlick(0.04, saturate(dot(worldNormal.xyz, viewDirection))).x * SharedData::skinData.fuzzParams.w;
 	material.Roughness = SharedData::skinData.skinParams.x;
 	material.Roughness = saturate(SharedData::skinData.skinParams.x - SharedData::skinData.skinParams.z * material.Glossiness);
 	material.RoughnessSecondary = SharedData::skinData.skinParams.y;

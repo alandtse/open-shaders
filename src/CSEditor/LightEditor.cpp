@@ -4,6 +4,7 @@
 #include "../Globals.h"
 #include "../I18n/I18n.h"
 #include "../Menu.h"
+#include "../Utils/Game.h"
 #include "../Utils/UI.h"
 #include "EditorWindow.h"
 #include "RE/B/BSLight.h"
@@ -1999,8 +2000,10 @@ void LightEditor::ResetOverrides()
 
 void LightEditor::ApplyShadowDepthBias()
 {
-	if (auto* shadowLight = AsShadowLight(activeBsLight.get()))
-		shadowLight->GetRuntimeData().shadowBiasScale = shadowDepthBias;
+	if (auto* shadowLight = AsShadowLight(activeBsLight.get())) {
+		GET_INSTANCE_MEMBER(shadowBiasScale, shadowLight);
+		shadowBiasScale = shadowDepthBias;
+	}
 }
 
 void LightEditor::UpdateSelectedLight(RE::TESObjectREFR* refr, RE::TESObjectLIGH* ligh, RE::NiLight* niLight, RE::BSLight* bsLight)
@@ -2024,7 +2027,11 @@ void LightEditor::UpdateSelectedLight(RE::TESObjectREFR* refr, RE::TESObjectLIGH
 		current = original;
 
 		auto* originalShadowLight = AsShadowLight(bsLight);
-		originalShadowDepthBias = originalShadowLight ? originalShadowLight->GetRuntimeData().shadowBiasScale : 0.0f;
+		originalShadowDepthBias = 0.0f;
+		if (originalShadowLight) {
+			GET_INSTANCE_MEMBER(shadowBiasScale, originalShadowLight);
+			originalShadowDepthBias = shadowBiasScale;
+		}
 		shadowDepthBias = originalShadowDepthBias;
 		cachedFadeBeforeToggle = 0.0f;
 
@@ -2198,8 +2205,10 @@ void LightEditor::RestoreOriginal()
 		RequestRefRefresh(activeRefr);
 	}
 
-	if (auto* shadowLight = AsShadowLight(activeBsLight.get()))
-		shadowLight->GetRuntimeData().shadowBiasScale = originalShadowDepthBias;
+	if (auto* shadowLight = AsShadowLight(activeBsLight.get())) {
+		GET_INSTANCE_MEMBER(shadowBiasScale, shadowLight);
+		shadowBiasScale = originalShadowDepthBias;
+	}
 
 	activeNiLight.reset();
 	activeBsLight.reset();

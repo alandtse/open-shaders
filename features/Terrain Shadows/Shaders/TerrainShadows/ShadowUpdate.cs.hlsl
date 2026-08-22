@@ -64,7 +64,11 @@ groupshared float2 g_shadowHeight[NTHREADS];
 
 uint GetWrappedCoord(int coord, uint dimension)
 {
+	// Signed modulus is required here: coord can be negative (wrapping
+	// coordinates off either edge), and that's the case being handled below.
+#pragma warning(disable: 3556)
 	int wrappedCoord = coord % int(dimension);
+#pragma warning(default: 3556)
 	return uint(wrappedCoord < 0 ? wrappedCoord + int(dimension) : wrappedCoord);
 }
 

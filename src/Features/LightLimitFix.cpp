@@ -528,13 +528,7 @@ void LightLimitFix::SetupResources()
 	uint clusterCount = clusterSize[0] * clusterSize[1] * clusterSize[2];
 
 	{
-		std::vector<std::pair<const char*, const char*>> clusterDefines;
-		if (globals::game::isVR)
-			clusterDefines = { { "VR", "" } };
-		clusterBuildingCS = (ID3D11ComputeShader*)Util::CompileShader(L"Data\\Shaders\\LightLimitFix\\ClusterBuildingCS.hlsl", clusterDefines, "cs_5_0");
-		clusterCullingCS = (ID3D11ComputeShader*)Util::CompileShader(L"Data\\Shaders\\LightLimitFix\\ClusterCullingCS.hlsl", clusterDefines, "cs_5_0");
-		shadowDemandCS = (ID3D11ComputeShader*)Util::CompileShader(L"Data\\Shaders\\LightLimitFix\\ShadowDemandCS.hlsl", clusterDefines, "cs_5_0");
-		shadowDepthPyramidCS = (ID3D11ComputeShader*)Util::CompileShader(L"Data\\Shaders\\LightLimitFix\\ShadowDepthPyramidCS.hlsl", clusterDefines, "cs_5_0");
+		CompileComputeShaders();
 
 		lightBuildingCB = new ConstantBuffer(ConstantBufferDesc<LightBuildingCB>());
 		lightCullingCB = new ConstantBuffer(ConstantBufferDesc<LightCullingCB>());
@@ -1091,29 +1085,23 @@ void LightLimitFix::DataLoaded()
 
 void LightLimitFix::ClearShaderCache()
 {
-	if (clusterBuildingCS) {
-		clusterBuildingCS->Release();
-		clusterBuildingCS = nullptr;
-	}
-	if (clusterCullingCS) {
-		clusterCullingCS->Release();
-		clusterCullingCS = nullptr;
-	}
-	if (shadowDemandCS) {
-		shadowDemandCS->Release();
-		shadowDemandCS = nullptr;
-	}
-	if (shadowDepthPyramidCS) {
-		shadowDepthPyramidCS->Release();
-		shadowDepthPyramidCS = nullptr;
-	}
+	clusterBuildingCS.Reset();
+	clusterCullingCS.Reset();
+	shadowDemandCS.Reset();
+	shadowDepthPyramidCS.Reset();
+
+	CompileComputeShaders();
+}
+
+void LightLimitFix::CompileComputeShaders()
+{
 	std::vector<std::pair<const char*, const char*>> clusterDefines;
 	if (globals::game::isVR)
 		clusterDefines = { { "VR", "" } };
-	clusterBuildingCS = (ID3D11ComputeShader*)Util::CompileShader(L"Data\\Shaders\\LightLimitFix\\ClusterBuildingCS.hlsl", clusterDefines, "cs_5_0");
-	clusterCullingCS = (ID3D11ComputeShader*)Util::CompileShader(L"Data\\Shaders\\LightLimitFix\\ClusterCullingCS.hlsl", clusterDefines, "cs_5_0");
-	shadowDemandCS = (ID3D11ComputeShader*)Util::CompileShader(L"Data\\Shaders\\LightLimitFix\\ShadowDemandCS.hlsl", clusterDefines, "cs_5_0");
-	shadowDepthPyramidCS = (ID3D11ComputeShader*)Util::CompileShader(L"Data\\Shaders\\LightLimitFix\\ShadowDepthPyramidCS.hlsl", clusterDefines, "cs_5_0");
+	clusterBuildingCS.Get(L"Data\\Shaders\\LightLimitFix\\ClusterBuildingCS.hlsl", clusterDefines, "cs_5_0");
+	clusterCullingCS.Get(L"Data\\Shaders\\LightLimitFix\\ClusterCullingCS.hlsl", clusterDefines, "cs_5_0");
+	shadowDemandCS.Get(L"Data\\Shaders\\LightLimitFix\\ShadowDemandCS.hlsl", clusterDefines, "cs_5_0");
+	shadowDepthPyramidCS.Get(L"Data\\Shaders\\LightLimitFix\\ShadowDepthPyramidCS.hlsl", clusterDefines, "cs_5_0");
 }
 
 void LightLimitFix::UpdateLights()
@@ -1378,6 +1366,21 @@ void LightLimitFix::UpdateLights()
 
 void LightLimitFix::UpdateStructure()
 {
+	std::vector<std::pair<const char*, const char*>> clusterDefines;
+	if (globals::game::isVR)
+		clusterDefines = { { "VR", "" } };
+	auto* clusterBuilding = clusterBuildingCS.Get(L"Data\\Shaders\\LightLimitFix\\ClusterBuildingCS.hlsl", clusterDefines, "cs_5_0");
+	auto* clusterCulling = clusterCullingCS.Get(L"Data\\Shaders\\LightLimitFix\\ClusterCullingCS.hlsl", clusterDefines, "cs_5_0");
+	if (!clusterBuilding || !clusterCulling) {
+		// The shading shader reads lightGrid every frame regardless of whether this
+		// dispatch ran -- zero its light counts so a skipped build/cull doesn't leave
+		// stale per-cluster light indices from a prior camera position bound as valid.
+		const UINT zero[4]{ 0, 0, 0, 0 };
+		globals::d3d::context->ClearUnorderedAccessViewUint(lightGrid->uav.get(), zero);
+		UpdateShadowDemand();
+		return;
+	}
+
 	auto context = globals::d3d::context;
 
 	lightsNear = *globals::game::cameraNear;
@@ -1405,7 +1408,7 @@ void LightLimitFix::UpdateStructure()
 		ID3D11UnorderedAccessView* clusters_uav = clusters->uav.get();
 		context->CSSetUnorderedAccessViews(0, 1, &clusters_uav, nullptr);
 
-		context->CSSetShader(clusterBuildingCS, nullptr, 0);
+		context->CSSetShader(clusterBuilding, nullptr, 0);
 		context->Dispatch((clusterSize[0] + 15) / 16, (clusterSize[1] + 15) / 16, (clusterSize[2] + 3) / 4);
 
 		ID3D11UnorderedAccessView* null_uav = nullptr;
@@ -1432,7 +1435,7 @@ void LightLimitFix::UpdateStructure()
 		ID3D11UnorderedAccessView* uavs[] = { lightIndexCounter->uav.get(), lightIndexList->uav.get(), lightGrid->uav.get() };
 		context->CSSetUnorderedAccessViews(0, ARRAYSIZE(uavs), uavs, nullptr);
 
-		context->CSSetShader(clusterCullingCS, nullptr, 0);
+		context->CSSetShader(clusterCulling, nullptr, 0);
 		context->Dispatch((clusterSize[0] + 15) / 16, (clusterSize[1] + 15) / 16, (clusterSize[2] + 3) / 4);
 	}
 
@@ -1456,9 +1459,20 @@ static_assert(LightLimitFix::MAX_SHADOW_DEMAND_SLOTS == ShadowCasterManager::kMa
 
 void LightLimitFix::UpdateShadowDemand()
 {
-	// No-op if either compute shader failed to build.
-	if (!shadowDemandCS || !shadowDepthPyramidCS)
+	// No-op if either compute shader failed to build. Clear the demand sample so
+	// SetShadowDemand's consumer can't reuse a stale reading from before the
+	// cluster layout changed or the shader cache failed.
+	if (!shadowDemandCS || !shadowDepthPyramidCS) {
+		shadowDemandEMA.fill(0.0f);
+		shadowDemandEMAInitialized = false;
+		shadowDemandMaxLatest.fill(0);
+		shadowDemandClusterSaturated = false;
+		// A Pending slot's GPU readback may still land after shaders recover;
+		// drop it too, or its pre-failure sample would drain straight back in.
+		for (uint32_t i = 0; i < kShadowDemandRingSize; i++)
+			shadowDemandRingState[i] = ShadowDemandRingState::Idle;
 		return;
+	}
 
 	auto context = globals::d3d::context;
 	auto renderer = globals::game::renderer;
@@ -1493,7 +1507,7 @@ void LightLimitFix::UpdateShadowDemand()
 		ID3D11UnorderedAccessView* uavs[] = { tileDepthRange->uav.get() };
 		context->CSSetUnorderedAccessViews(0, ARRAYSIZE(uavs), uavs, nullptr);
 
-		context->CSSetShader(shadowDepthPyramidCS, nullptr, 0);
+		context->CSSetShader(shadowDepthPyramidCS.get(), nullptr, 0);
 		context->Dispatch(clusterSize[0], clusterSize[1], globals::game::isVR ? 2 : 1);
 
 		context->CSSetShader(nullptr, nullptr, 0);
@@ -1541,7 +1555,7 @@ void LightLimitFix::UpdateShadowDemand()
 			shadowDemandMax->uav.get() };
 		context->CSSetUnorderedAccessViews(0, ARRAYSIZE(uavs), uavs, nullptr);
 
-		context->CSSetShader(shadowDemandCS, nullptr, 0);
+		context->CSSetShader(shadowDemandCS.get(), nullptr, 0);
 		context->Dispatch((clusterSize[0] + 15) / 16, (clusterSize[1] + 15) / 16, 1);
 
 		context->CSSetShader(nullptr, nullptr, 0);

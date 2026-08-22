@@ -140,6 +140,28 @@ public:
 	// Texture copy using pixel shader
 	void CopyTexture(ID3D11ShaderResourceView* source, ID3D11RenderTargetView* destination);
 
+	// -1 outside VR, else the eye ExecuteEffects's per-eye loop is rendering. Read by
+	// GetTextureOriginal() and Effect::RenderPasses (viewport crop).
+	int currentEyeIndex = -1;
+	// This frame's eye-source width/height, cached once per ExecuteEffects call; lets
+	// RenderPasses distinguish a full-width destination (crop it) from a fixed-size canvas.
+	uint32_t currentMainWidth = 0;
+	uint32_t currentMainHeight = 0;
+
+	/** @brief Returns the "TextureOriginal" source: kMAIN outside VR, or the private
+		per-eye crop refreshed by RefreshEyeSourceTexture() in VR, so eye-unaware .fx
+		content samples the correct eye. */
+	RE::BSGraphics::RenderTargetData& GetTextureOriginal();
+	/** @brief Crop-copies kMAIN's a_eyeIndex half into GetTextureOriginal()'s backing texture.
+		@param a_eyeIndex Eye to copy: 0 for left, 1 for right.
+		@return false if the source texture/SRV was unavailable this frame (nothing copied). */
+	bool RefreshEyeSourceTexture(int a_eyeIndex);
+
+	/** @brief Same eye-crop as GetTextureOriginal(), for Effect::ExecuteTechniqueSequence's
+		ping-pong read-back of a full-width intermediate a prior technique in the same
+		sequence just wrote under a cropped viewport. No-op outside VR / non-full-width. */
+	ID3D11ShaderResourceView* GetEyeCroppedSRV(TextureManager::Texture& a_source);
+
 	// Color correction using compute shader
 	void ApplyColorCorrection(ID3D11UnorderedAccessView* textureUAV);
 
@@ -154,4 +176,27 @@ private:
 	void LogPresetStatus() const;
 
 	bool initialized = false;
+
+	// GetTextureOriginal()'s VR backing texture; eyeSourceData mirrors these raw
+	// pointers into the RenderTargetData shape kMAIN itself uses.
+	winrt::com_ptr<ID3D11Texture2D> eyeSourceTexture;
+	winrt::com_ptr<ID3D11RenderTargetView> eyeSourceRTV;
+	winrt::com_ptr<ID3D11ShaderResourceView> eyeSourceSRV;
+	winrt::com_ptr<ID3D11UnorderedAccessView> eyeSourceUAV;
+	RE::BSGraphics::RenderTargetData eyeSourceData{};
+	winrt::com_ptr<ID3D11PixelShader> eyeCropCopyPS;
+	bool eyeCropCopyPSCompileAttempted = false;
+	winrt::com_ptr<ID3D11Buffer> eyeCropCB;
+
+	// GetEyeCroppedSRV's backing texture -- separate from eyeSourceTexture since both
+	// can be in use at once within the same technique sequence.
+	winrt::com_ptr<ID3D11Texture2D> inputCropTexture;
+	winrt::com_ptr<ID3D11RenderTargetView> inputCropRTV;
+	winrt::com_ptr<ID3D11ShaderResourceView> inputCropSRV;
+
+	// Shared draw dispatch for RefreshEyeSourceTexture and GetEyeCroppedSRV. a_destRTV
+	// must already be sized a_srcWidth/2 x a_srcHeight.
+	void CropCopyEyeHalf(ID3D11ShaderResourceView* a_source, uint32_t a_srcWidth, uint32_t a_srcHeight, ID3D11RenderTargetView* a_destRTV, int a_eyeIndex);
+
+	void EnsureCropTarget(winrt::com_ptr<ID3D11Texture2D>& a_texture, winrt::com_ptr<ID3D11RenderTargetView>& a_rtv, winrt::com_ptr<ID3D11ShaderResourceView>& a_srv, winrt::com_ptr<ID3D11UnorderedAccessView>* a_uav, const D3D11_TEXTURE2D_DESC& a_srcDesc, const char* a_debugName);
 };

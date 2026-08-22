@@ -1,9 +1,18 @@
 #include "Common/FrameBuffer.hlsli"
 #include "Common/Random.hlsli"
 #include "Common/SharedData.hlsli"
+#include "Common/VR.hlsli"
 
 #define LinearSampler defaultSampler
 SamplerState defaultSampler : register(s0);
+
+// Half-res target dimensions; same layout ApplyVolumetricRaysPS.hlsl's VLData
+// uses (and the same buffer, populated once in Effects11::DrawVolumetricRays).
+cbuffer VLData : register(b1)
+{
+	int2 ScreenSize;
+	int2 ScreenSizeMin1;
+}
 
 #include "Common/ShadowSampling.hlsli"
 
@@ -22,11 +31,13 @@ struct PS_OUTPUT
 
 PS_OUTPUT main(VS_OUTPUT_POST input)
 {
-	float2 uv = input.txcoord0;
+	// uv is packed SBS stereo space in VR; GetDepth/CameraViewProjInverse need the
+	// per-eye mono UV + eye index instead (Common/VR.hlsli Stereo::UnpackEyeUV).
+	Stereo::EyeUV eye = Stereo::UnpackEyeUV(input.txcoord0);
 
-	float depth = SharedData::GetDepth(uv);
-	float4 positionCS = float4(2 * float2(uv.x, -uv.y + 1) - 1, depth, 1);
-	float4 positionMS = mul(FrameBuffer::CameraViewProjInverse, positionCS);
+	float depth = SharedData::GetDepth(eye.uv, eye.index);
+	float4 positionCS = float4(2 * float2(eye.uv.x, -eye.uv.y + 1) - 1, depth, 1);
+	float4 positionMS = mul(FrameBuffer::CameraViewProjInverse[eye.index], positionCS);
 	positionMS.xyz /= positionMS.w;
 
 	float extinction = SharedData::enbSettings.VolumetricRaysExtinction;
@@ -34,8 +45,8 @@ PS_OUTPUT main(VS_OUTPUT_POST input)
 
 	const uint sampleCount = 16;
 	const float rcpSampleCount = 1.0 / float(sampleCount);
-	float noise = Random::InterleavedGradientNoise(input.pos.xy, SharedData::FrameCount);
-	float3 cameraOffset = FrameBuffer::CameraPosAdjust.xyz;
+	float noise = Random::InterleavedGradientNoise(Stereo::EyeStableNoiseCoord(input.pos.xy, float2(ScreenSize)), SharedData::FrameCount);
+	float3 cameraOffset = FrameBuffer::CameraPosAdjust[eye.index].xyz;
 	float negExtTimesRayLen = -extinction * totalRayLength;
 
 	float scattering = 0.0;

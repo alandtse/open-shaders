@@ -79,11 +79,12 @@ static const float PI = 3.14159265358979323846;
 // ---------------------------------------------------------------------------
 float3 WavelengthToXYZ(float lambda)
 {
-	// Use intermediate variables to prevent fxc from constant-folding
-	// the entire expression in double precision (X4122 warnings).
+	// Intermediate vars stop fxc double-folding these sums; the pragma
+	// below suppresses its now-harmless X4122 (DXBC has no double type here).
 	float dx1 = (lambda - 599.8f) / 37.9f;
 	float dx2 = (lambda - 442.0f) / 16.0f;
 	float dx3 = (lambda - 501.1f) / 20.4f;
+#pragma warning(disable: 4122)
 	float x =
 		1.056f * exp(-0.5f * dx1 * dx1) +
 		0.362f * exp(-0.5f * dx2 * dx2) -
@@ -100,6 +101,7 @@ float3 WavelengthToXYZ(float lambda)
 	float z =
 		1.217f * exp(-0.5f * dz1 * dz1) +
 		0.681f * exp(-0.5f * dz2 * dz2);
+#pragma warning(default: 4122)
 
 	return float3(x, y, z);
 }
@@ -107,20 +109,28 @@ float3 WavelengthToXYZ(float lambda)
 // XYZ → linear sRGB (D65 white point, Rec. 709 primaries)
 float3 XYZToLinearSRGB(float3 xyz)
 {
+	// See WavelengthToXYZ: X4122 here is fxc's literal-folding diagnostic on
+	// this matrix's literal coefficients, not an actual runtime precision loss.
+#pragma warning(disable: 4122)
 	return float3(
 		3.2406f * xyz.x - 1.5372f * xyz.y - 0.4986f * xyz.z,
 		-0.9689f * xyz.x + 1.8758f * xyz.y + 0.0415f * xyz.z,
 		0.0557f * xyz.x - 0.2040f * xyz.y + 1.0570f * xyz.z);
+#pragma warning(default: 4122)
 }
 
 // XYZ → ACEScg / AP1 (ACES D60 white point, AP1 primaries)
 // Matrix from colour-science.org via ColourSpace.h
 float3 XYZToAP1(float3 xyz)
 {
+	// See WavelengthToXYZ: X4122 here is fxc's literal-folding diagnostic on
+	// this matrix's literal coefficients, not an actual runtime precision loss.
+#pragma warning(disable: 4122)
 	return float3(
 		1.64102338f * xyz.x - 0.32480329f * xyz.y - 0.2364247f * xyz.z,
 		-0.66366286f * xyz.x + 1.61533159f * xyz.y + 0.01675635f * xyz.z,
 		0.01172189f * xyz.x - 0.00828444f * xyz.y + 0.98839486f * xyz.z);
+#pragma warning(default: 4122)
 }
 
 // ---------------------------------------------------------------------------

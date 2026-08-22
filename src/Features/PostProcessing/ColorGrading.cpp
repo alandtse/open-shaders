@@ -1,6 +1,7 @@
 #include "ColorGrading.h"
 
 #include "GpuPass.h"
+#include "ShaderCache.h"
 #include "State.h"
 #include "Util.h"
 
@@ -1047,17 +1048,22 @@ void ColorGrading::SetupResources()
 
 void ColorGrading::ClearShaderCache()
 {
+	BumpShaderGeneration();
 	const auto shaderPtrs = std::array{
 		&colorgradingCS,
 		&lutgenCS
 	};
 
-	for (auto shader : shaderPtrs)
-		if ((*shader)) {
-			(*shader)->Release();
-			shader->detach();
-		}
+	{
+		std::lock_guard lock(shaderMutex);
+		for (auto shader : shaderPtrs)
+			if ((*shader)) {
+				(*shader)->Release();
+				shader->detach();
+			}
+	}
 
+	globals::shaderCache->ClearStandaloneComputeCache(L"PostProcessing/ColorGrading");
 	CompileComputeShaders();
 }
 
@@ -1065,27 +1071,14 @@ void ColorGrading::CompileComputeShaders()
 {
 	const auto& tonemappers = TonemapperInfo::GetTonemappers();
 
-	struct ShaderCompileInfo
-	{
-		winrt::com_ptr<ID3D11ComputeShader>* programPtr;
-		std::string_view filename;
-		std::vector<std::pair<const char*, const char*>> defines;
-		std::string entry = "main";
-	};
-
 	auto tonemapFuncName = settings.useOpenDrt ? "OpenDRTTransform" : tonemappers[tonemapperType].func_name.data();
 
-	std::vector<ShaderCompileInfo>
-		shaderInfos = {
-			{ &colorgradingCS, "colorgrading.cs.hlsl", { { "TONEMAP_FUNC", tonemapFuncName } }, "CSColorGrading" },
-			{ &lutgenCS, "colorgrading.cs.hlsl", { { "TONEMAP_FUNC", tonemapFuncName } }, "CSLUTGen" }
-		};
+	const std::vector<ComputeShaderCompileInfo> shaderInfos = {
+		{ &colorgradingCS, "colorgrading.cs.hlsl", { { "TONEMAP_FUNC", tonemapFuncName } }, "CSColorGrading" },
+		{ &lutgenCS, "colorgrading.cs.hlsl", { { "TONEMAP_FUNC", tonemapFuncName } }, "CSLUTGen" },
+	};
 
-	for (auto& info : shaderInfos) {
-		auto path = std::filesystem::path("Data\\Shaders\\PostProcessing\\ColorGrading") / info.filename;
-		if (auto rawPtr = reinterpret_cast<ID3D11ComputeShader*>(Util::CompileShader(path.c_str(), info.defines, "cs_5_0", info.entry.c_str())))
-			info.programPtr->attach(rawPtr);
-	}
+	CompileComputeShadersAsync(L"Data\\Shaders\\PostProcessing\\ColorGrading", shaderInfos);
 
 	recompileFlag = false;
 	curveNeedsUpdate = true;  // shader changed, curve must update
@@ -1119,6 +1112,9 @@ void ColorGrading::Draw(TextureInfo& inout_tex)
 
 	if (recompileFlag)
 		ClearShaderCache();
+
+	if (!AllShadersReady({ &colorgradingCS, &lutgenCS }))
+		return;
 
 	state->BeginPerfEvent("Color Grading and Tonemapping");
 	{

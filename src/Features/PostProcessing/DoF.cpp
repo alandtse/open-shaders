@@ -3,6 +3,7 @@
 #include "Features/PostProcessing.h"
 #include "GpuPass.h"
 #include "Menu.h"
+#include "ShaderCache.h"
 #include "State.h"
 #include "Util.h"
 
@@ -401,6 +402,7 @@ void DoF::SetupResources()
 
 void DoF::ClearShaderCache()
 {
+	BumpShaderGeneration();
 	const auto shaderPtrs = std::array{
 		&UpdateFocusCS,
 		&CalculateCoCCS,
@@ -423,25 +425,22 @@ void DoF::ClearShaderCache()
 		&PostSmoothing2AndFocusingCS
 	};
 
-	for (auto shader : shaderPtrs)
-		if ((*shader)) {
-			(*shader)->Release();
-			shader->detach();
-		}
+	{
+		std::lock_guard lock(shaderMutex);
+		for (auto shader : shaderPtrs)
+			if ((*shader)) {
+				(*shader)->Release();
+				shader->detach();
+			}
+	}
+
+	globals::shaderCache->ClearStandaloneComputeCache(L"PostProcessing/DoF");
 	CompileComputeShaders();
 }
 
 void DoF::CompileComputeShaders()
 {
-	struct ShaderCompileInfo
-	{
-		winrt::com_ptr<ID3D11ComputeShader>* programPtr;
-		std::string_view filename;
-		std::vector<std::pair<const char*, const char*>> defines;
-		std::string entry = "main";
-	};
-
-	std::vector<ShaderCompileInfo>
+	const std::vector<ComputeShaderCompileInfo>
 		shaderInfos = {
 			{ &UpdateFocusCS, "dof.cs.hlsl", {}, "CS_UpdateFocus" },
 			{ &CalculateCoCCS, "dof.cs.hlsl", {}, "CS_CalculateCoC" },
@@ -464,11 +463,7 @@ void DoF::CompileComputeShaders()
 			{ &PostSmoothing2AndFocusingCS, "dof.cs.hlsl", {}, "CS_PostSmoothing2AndFocusing" }
 		};
 
-	for (auto& info : shaderInfos) {
-		auto path = std::filesystem::path("Data\\Shaders\\PostProcessing\\DoF") / info.filename;
-		if (auto rawPtr = reinterpret_cast<ID3D11ComputeShader*>(Util::CompileShader(path.c_str(), info.defines, "cs_5_0", info.entry.c_str())))
-			info.programPtr->attach(rawPtr);
-	}
+	CompileComputeShadersAsync(L"Data\\Shaders\\PostProcessing\\DoF", shaderInfos);
 }
 
 // Thanks Ershin!
@@ -594,6 +589,14 @@ void DoF::Draw(TextureInfo& inout_tex)
 		}
 	}
 	debugFocusPlane = manualFocus;
+	// No-op the whole frame until the core kernels are ready -- a partial
+	// sequential pipeline would write garbage into the scene target.
+	const bool needPostSmoothing = settings.PostBlurSmoothing >= 0.01f;
+	const bool coreReady = AllShadersReady({ &UpdateFocusCS, &CalculateCoCCS, &CoCTileFlattenCS,
+		&CoCTileDilateHCS, &CoCTileDilateVCS, &DownsampleLegacyCS, &FarBlurCS, &NearBlurCS,
+		&GatherPostfilterCS, &CombinerCS });
+	if (!coreReady || (needPostSmoothing && !AllShadersReady({ &PostSmoothing1CS, &PostSmoothing2AndFocusingCS })))
+		return;
 	state->BeginPerfEvent("Depth of Field");
 
 	const uint halfResX = texPreBlurred->desc.Width;
@@ -616,8 +619,9 @@ void DoF::Draw(TextureInfo& inout_tex)
 	ID3D11ShaderResourceView* bokehSampleSRV = bokehMode == 1 ? customShapeSampleSRV : proceduralBokehSamples->SRV();
 	const float customShapeRadiusScale = bokehMode == 1 ? owner->bokehResources.GetShapeSampleRadiusScale(customShapeIndex) : 1.0f;
 	const float bokehMaxRadius = bokehMode == 1 ? owner->bokehResources.GetShapeSampleMaxRadius(customShapeIndex) : proceduralBokehMaxRadius;
-	const bool adaptiveGatherReady = DownsampleCS && ReduceColorCoCCS && ReduceColorCS &&
-	                                 FarGatherCS[gatherQuality] && NearGatherCS[gatherQuality] && bokehSampleSRV;
+	const bool adaptiveGatherReady = bokehSampleSRV &&
+	                                 AllShadersReady({ &DownsampleCS, &ReduceColorCoCCS, &ReduceColorCS,
+										 &FarGatherCS[gatherQuality], &NearGatherCS[gatherQuality] });
 	const bool useAdaptiveGather = settings.UseAdaptiveGather && adaptiveGatherReady;
 
 	// Tile propagation carries the near disc reach itself, so the same low-resolution dilation used
@@ -887,10 +891,6 @@ void DoF::Draw(TextureInfo& inout_tex)
 		resetViews();
 	}
 
-	// Post Smoothing only touches out of focus highlights; when it's disabled the combiner can write
-	// straight into the output and we save two full res passes.
-	const bool doPostSmoothing = settings.PostBlurSmoothing >= 0.01f;
-
 	// Combiner
 	{
 		CS_GPU_PASS("PostProcessing::DoF::Combiner");
@@ -898,7 +898,7 @@ void DoF::Draw(TextureInfo& inout_tex)
 		srvs.at(3) = texCoC->srv.get();
 		srvs.at(5) = texBlurredFiltered->srv.get();
 		srvs.at(6) = texPreBlurred->srv.get();
-		uavs.at(0) = doPostSmoothing ? texPostSmooth->uav.get() : texOutput->uav.get();
+		uavs.at(0) = needPostSmoothing ? texPostSmooth->uav.get() : texOutput->uav.get();
 
 		context->CSSetShaderResources(0, (uint)srvs.size(), srvs.data());
 		context->CSSetUnorderedAccessViews(0, (uint)uavs.size(), uavs.data(), nullptr);
@@ -909,8 +909,9 @@ void DoF::Draw(TextureInfo& inout_tex)
 		resetViews();
 	}
 
-	// Post Smooth
-	if (doPostSmoothing) {
+	// Post Smoothing only touches out of focus highlights; when it's disabled the combiner
+	// already wrote straight into the output above, saving two full res passes.
+	if (needPostSmoothing) {
 		CS_GPU_PASS("PostProcessing::DoF::PostSmooth");
 		srvs.at(0) = texPostSmooth->srv.get();
 		srvs.at(3) = texCoC->srv.get();

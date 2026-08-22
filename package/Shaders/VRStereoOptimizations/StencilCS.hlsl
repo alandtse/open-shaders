@@ -10,6 +10,7 @@
 
 #include "Common/SharedData.hlsli"
 #include "Common/VR.hlsli"
+#include "Common/VRReproject.hlsli"
 #include "VRStereoOptimizations/cbuffers.hlsli"
 
 Texture2D<float> DepthTexture : register(t0);

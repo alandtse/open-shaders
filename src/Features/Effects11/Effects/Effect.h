@@ -278,7 +278,15 @@ private:
 
 	std::unordered_map<std::string, ID3DX11EffectVariable*> variableCache;
 	std::unordered_map<std::string, TextureManager::Texture*> commonTexturePointerCache;
-	std::unordered_map<ID3D11RenderTargetView*, std::pair<uint32_t, uint32_t>> rtvDimensionCache;
+	struct RTVDimensionEntry
+	{
+		winrt::com_ptr<ID3D11Resource> resource;
+		uint32_t width;
+		uint32_t height;
+	};
+	// resource lets a lookup detect a released RTV's address reused for a new view (routine
+	// with EffectManager::EnsureCropTarget's per-eye targets) instead of trusting a stale size.
+	std::unordered_map<ID3D11RenderTargetView*, RTVDimensionEntry> rtvDimensionCache;
 
 	void EnumerateAllVariables();
 

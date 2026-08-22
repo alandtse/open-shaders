@@ -2,12 +2,15 @@
 
 #include "D3D11StateBackup.h"
 #include "Features/Effects11.h"
+#include "Features/Upscaling.h"
 #include "Globals.h"
+#include "GpuPass.h"
 #include "State.h"
 
 #include "PresetManager.h"
 #include "SettingManager.h"
 #include "TextureManager.h"
+#include "Utils/D3D.h"
 #include "WeatherManager.h"
 
 #include <d3dcompiler.h>
@@ -350,52 +353,93 @@ bool EffectManager::ExecuteEffects(RE::BSGraphics::RenderTargetData& a_input, RE
 	if (!IsPresetLoaded())
 		return false;
 
+	CS_GPU_PASS("Effects11::ExecuteEffects");
+
 	D3D11FullStateBackup stateBackup;
 	stateBackup.Save(context);
 
-	// Effects sample kMAIN as TextureOriginal, so mirror any other input into it
-	auto& textureOriginal = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMAIN];
-	if (&a_input != &textureOriginal && a_input.SRV && textureOriginal.RTV) {
+	// Mirror into kMAIN once; skip under PerfMode or it discards the DLSS/FSR+RCAS output.
+	const bool perfModeDrivingThisFrame = globals::features::upscaling.perfMode.IsHookActive();
+	auto& kMain = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMAIN];
+	if (!perfModeDrivingThisFrame && &a_input != &kMain && a_input.SRV && kMain.RTV) {
 		D3D11_TEXTURE2D_DESC srcDesc{}, dstDesc{};
-		if (a_input.texture && textureOriginal.texture) {
+		if (a_input.texture && kMain.texture) {
 			a_input.texture->GetDesc(&srcDesc);
-			textureOriginal.texture->GetDesc(&dstDesc);
+			kMain.texture->GetDesc(&dstDesc);
 		}
-		if (a_input.texture && textureOriginal.texture && srcDesc.Format == dstDesc.Format && srcDesc.Width == dstDesc.Width && srcDesc.Height == dstDesc.Height && srcDesc.SampleDesc.Count == dstDesc.SampleDesc.Count) {
-			context->CopyResource(textureOriginal.texture, a_input.texture);
+		if (a_input.texture && kMain.texture && srcDesc.Format == dstDesc.Format && srcDesc.Width == dstDesc.Width && srcDesc.Height == dstDesc.Height && srcDesc.SampleDesc.Count == dstDesc.SampleDesc.Count) {
+			context->CopyResource(kMain.texture, a_input.texture);
 		} else {
-			CopyTexture(a_input.SRV, textureOriginal.RTV);
+			CopyTexture(a_input.SRV, kMain.RTV);
 			ID3D11RenderTargetView* nullRTV = nullptr;
 			context->OMSetRenderTargets(1, &nullRTV, nullptr);
 		}
 	}
 
-	// Set our render state
-	context->RSSetState(rasterizerState.get());
-	context->OMSetBlendState(blendState.get(), nullptr, 0xFFFFFFFF);
-	context->OMSetDepthStencilState(nullptr, 0);
-
-	UINT stride = sizeof(float) * 5;
-	UINT offset = 0;
-	ID3D11Buffer* vertexBuffers[] = { quadVertexBuffer.get() };
-	context->IASetVertexBuffers(0, 1, vertexBuffers, &stride, &offset);
-	context->IASetInputLayout(inputLayout.get());
-	context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP);
-
-	globals::profiler->BeginPass("Effects11::ColorCorrection");
-	ApplyColorCorrection(textureOriginal.UAV);
-	globals::profiler->EndPass();
-
 	auto& textureManager = TextureManager::GetSingleton();
 
-	textureManager.UpdateDownsampledTexture(textureOriginal.SRV);
+	// Guards against RefreshEyeSourceTexture throwing (DX::ThrowIfFailed) and leaving
+	// currentEyeIndex stuck >= 0 for every later call this session.
+	struct EyeIndexResetGuard
+	{
+		int& index;
+		~EyeIndexResetGuard() { index = -1; }
+	} eyeIndexResetGuard{ currentEyeIndex };
 
-	ExecuteEffect(enbBloom, ids.useBloom);
-	ExecuteEffect(enbLens, ids.useLens);
+	// Returns false on a missing source texture so the caller aborts instead of compositing
+	// a partially-populated output.
+	auto runEffectsPass = [&]() -> bool {
+		auto& textureOriginal = GetTextureOriginal();
+		if (currentEyeIndex >= 0) {
+			if (!RefreshEyeSourceTexture(currentEyeIndex))
+				return false;
+			// No-op unless the source resolution actually changed (e.g. PerfMode's DisplayRes
+			// testTexture vs. kMAIN's renderRes, or a quality-mode change mid-session).
+			textureManager.EnsureSize(currentMainWidth, currentMainHeight);
+		}
+
+		// Set our render state
+		context->RSSetState(rasterizerState.get());
+		context->OMSetBlendState(blendState.get(), nullptr, 0xFFFFFFFF);
+		context->OMSetDepthStencilState(nullptr, 0);
+
+		UINT stride = sizeof(float) * 5;
+		UINT offset = 0;
+		ID3D11Buffer* vertexBuffers[] = { quadVertexBuffer.get() };
+		context->IASetVertexBuffers(0, 1, vertexBuffers, &stride, &offset);
+		context->IASetInputLayout(inputLayout.get());
+		context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP);
+
+		globals::profiler->BeginPass("Effects11::ColorCorrection");
+		ApplyColorCorrection(textureOriginal.UAV);
+		globals::profiler->EndPass();
+
+		textureManager.UpdateDownsampledTexture(textureOriginal.SRV);
+
+		ExecuteEffect(enbBloom, ids.useBloom);
+		ExecuteEffect(enbLens, ids.useLens);
+		ExecuteEffect(enbEffect);
+		ExecuteEffect(enbEffectPostPass, ids.usePostPass);
+
+		return true;
+	};
+
+	const int eyeCount = globals::game::isVR ? 2 : 1;
+	bool allEyesSucceeded = true;
+	for (int eye = 0; eye < eyeCount && allEyesSucceeded; ++eye) {
+		currentEyeIndex = globals::game::isVR ? eye : -1;
+		allEyesSucceeded = runEffectsPass();
+	}
+
+	if (!allEyesSucceeded) {
+		stateBackup.Restore(context);
+		stateBackup.Release();
+		return false;
+	}
+
+	// Once per frame, not per eye: doubling this per eye corrupts the temporal filter (eye 1
+	// would read eye 0's just-written output as "previous").
 	ExecuteEffect(enbAdaptation, ids.useAdaptation);
-	ExecuteEffect(enbEffect);
-	ExecuteEffect(enbEffectPostPass, ids.usePostPass);
-
 	textureManager.IncrementTextureSwap();
 
 	auto* textureSDRTemp = textureManager.GetCommonTexture("TextureSDRTemp");
@@ -478,6 +522,7 @@ void EffectManager::CreateQuadGeometry()
 		}
 		return;
 	}
+	Util::LogShaderCompileWarnings(errorBlob.get(), "EFFECTS11 input layout vertex shader");
 
 	hr = globals::d3d::device->CreateInputLayout(inputElementDescs, ARRAYSIZE(inputElementDescs),
 		vertexShaderBlob->GetBufferPointer(),
@@ -517,45 +562,17 @@ void EffectManager::CreateRenderStates()
 
 void EffectManager::CreateCopyShaders()
 {
-	auto vertexShaderSource = LoadShaderFile("Data\\Shaders\\Effects11\\QuadVS.hlsl");
-	if (vertexShaderSource.empty())
-		return;
-
-	winrt::com_ptr<ID3DBlob> vsBlob, errorBlob;
-	HRESULT hr = D3DCompile(vertexShaderSource.data(), vertexShaderSource.size(), "QuadVS.hlsl", nullptr, nullptr,
-		"main", "vs_4_0", 0, 0, vsBlob.put(), errorBlob.put());
-
-	if (FAILED(hr)) {
-		if (errorBlob) {
-			logger::error("[EFFECTS11] Failed to compile copy vertex shader: {}", static_cast<char*>(errorBlob->GetBufferPointer()));
-		}
+	copyVertexShader.attach(static_cast<ID3D11VertexShader*>(
+		Util::CompileShader(L"Data\\Shaders\\Effects11\\QuadVS.hlsl", {}, "vs_5_0")));
+	if (!copyVertexShader) {
+		logger::error("[EFFECTS11] Failed to compile copy vertex shader");
 		return;
 	}
 
-	hr = globals::d3d::device->CreateVertexShader(vsBlob->GetBufferPointer(), vsBlob->GetBufferSize(), nullptr, copyVertexShader.put());
-	if (FAILED(hr)) {
-		logger::error("[EFFECTS11] Failed to create copy vertex shader");
-		return;
-	}
-
-	auto pixelShaderSource = LoadShaderFile("Data\\Shaders\\Effects11\\CopyPS.hlsl");
-	if (pixelShaderSource.empty())
-		return;
-
-	winrt::com_ptr<ID3DBlob> psBlob;
-	hr = D3DCompile(pixelShaderSource.data(), pixelShaderSource.size(), "CopyPS.hlsl", nullptr, nullptr,
-		"main", "ps_5_0", 0, 0, psBlob.put(), errorBlob.put());
-
-	if (FAILED(hr)) {
-		if (errorBlob) {
-			logger::error("[EFFECTS11] Failed to compile copy pixel shader: {}", static_cast<char*>(errorBlob->GetBufferPointer()));
-		}
-		return;
-	}
-
-	hr = globals::d3d::device->CreatePixelShader(psBlob->GetBufferPointer(), psBlob->GetBufferSize(), nullptr, copyPixelShader.put());
-	if (FAILED(hr)) {
-		logger::error("[EFFECTS11] Failed to create copy pixel shader");
+	copyPixelShader.attach(static_cast<ID3D11PixelShader*>(
+		Util::CompileShader(L"Data\\Shaders\\Effects11\\CopyPS.hlsl", {}, "ps_5_0")));
+	if (!copyPixelShader) {
+		logger::error("[EFFECTS11] Failed to compile copy pixel shader");
 		return;
 	}
 
@@ -571,24 +588,10 @@ void EffectManager::CreateCopyShaders()
 
 void EffectManager::CreateColorCorrectionShader()
 {
-	auto computeShaderSource = LoadShaderFile("Data\\Shaders\\Effects11\\ColorCorrectionCS.hlsl");
-	if (computeShaderSource.empty())
-		return;
-
-	winrt::com_ptr<ID3DBlob> csBlob, errorBlob;
-	HRESULT hr = D3DCompile(computeShaderSource.data(), computeShaderSource.size(), "ColorCorrectionCS.hlsl", nullptr, nullptr,
-		"main", "cs_5_0", 0, 0, csBlob.put(), errorBlob.put());
-
-	if (FAILED(hr)) {
-		if (errorBlob) {
-			logger::error("[EFFECTS11] Failed to compile color correction compute shader: {}", static_cast<char*>(errorBlob->GetBufferPointer()));
-		}
-		return;
-	}
-
-	hr = globals::d3d::device->CreateComputeShader(csBlob->GetBufferPointer(), csBlob->GetBufferSize(), nullptr, colorCorrectionComputeShader.put());
-	if (FAILED(hr)) {
-		logger::error("[EFFECTS11] Failed to create color correction compute shader");
+	colorCorrectionComputeShader.attach(static_cast<ID3D11ComputeShader*>(
+		Util::CompileShader(L"Data\\Shaders\\Effects11\\ColorCorrectionCS.hlsl", {}, "cs_5_0")));
+	if (!colorCorrectionComputeShader) {
+		logger::error("[EFFECTS11] Failed to compile color correction compute shader");
 		return;
 	}
 
@@ -599,7 +602,7 @@ void EffectManager::CreateColorCorrectionShader()
 	cbDesc.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
 	cbDesc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
 
-	hr = globals::d3d::device->CreateBuffer(&cbDesc, nullptr, colorCorrectionConstantBuffer.put());
+	HRESULT hr = globals::d3d::device->CreateBuffer(&cbDesc, nullptr, colorCorrectionConstantBuffer.put());
 	if (FAILED(hr)) {
 		logger::error("[EFFECTS11] Failed to create color correction constant buffer");
 		return;
@@ -887,6 +890,8 @@ void EffectManager::CopyTexture(ID3D11ShaderResourceView* a_source, ID3D11Render
 
 	// Set source texture
 	context->PSSetShaderResources(0, 1, &a_source);
+	ID3D11SamplerState* samplers[] = { TextureManager::GetSingleton().GetLinearSampler() };
+	context->PSSetSamplers(0, 1, samplers);
 
 	// Draw fullscreen quad
 	context->Draw(4, 0);
@@ -894,6 +899,168 @@ void EffectManager::CopyTexture(ID3D11ShaderResourceView* a_source, ID3D11Render
 	// Clean up SRV binding
 	ID3D11ShaderResourceView* nullSRV = nullptr;
 	context->PSSetShaderResources(0, 1, &nullSRV);
+}
+
+RE::BSGraphics::RenderTargetData& EffectManager::GetTextureOriginal()
+{
+	if (currentEyeIndex < 0)
+		return globals::game::renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMAIN];
+	return eyeSourceData;
+}
+
+// Shared by RefreshEyeSourceTexture/GetEyeCroppedSRV: (re)creates a half-width crop target
+// matching a_srcDesc when missing/stale. a_uav may be null (GetEyeCroppedSRV has no UAV use).
+void EffectManager::EnsureCropTarget(winrt::com_ptr<ID3D11Texture2D>& a_texture, winrt::com_ptr<ID3D11RenderTargetView>& a_rtv, winrt::com_ptr<ID3D11ShaderResourceView>& a_srv, winrt::com_ptr<ID3D11UnorderedAccessView>* a_uav, const D3D11_TEXTURE2D_DESC& a_srcDesc, const char* a_debugName)
+{
+	auto device = globals::d3d::device;
+	const uint32_t halfWidth = a_srcDesc.Width / 2;
+
+	if (a_texture) {
+		D3D11_TEXTURE2D_DESC existingDesc{};
+		a_texture->GetDesc(&existingDesc);
+		if (existingDesc.Width == halfWidth && existingDesc.Height == a_srcDesc.Height && existingDesc.Format == a_srcDesc.Format)
+			return;
+		a_texture = nullptr;
+		a_rtv = nullptr;
+		a_srv = nullptr;
+		if (a_uav)
+			*a_uav = nullptr;
+	}
+
+	D3D11_TEXTURE2D_DESC desc = a_srcDesc;
+	desc.Width = halfWidth;
+	desc.BindFlags = D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE | (a_uav ? D3D11_BIND_UNORDERED_ACCESS : 0);
+	desc.MiscFlags = 0;
+	DX::ThrowIfFailed(device->CreateTexture2D(&desc, nullptr, a_texture.put()));
+	DX::ThrowIfFailed(device->CreateRenderTargetView(a_texture.get(), nullptr, a_rtv.put()));
+	DX::ThrowIfFailed(device->CreateShaderResourceView(a_texture.get(), nullptr, a_srv.put()));
+	if (a_uav)
+		DX::ThrowIfFailed(device->CreateUnorderedAccessView(a_texture.get(), nullptr, a_uav->put()));
+	Util::SetResourceName(a_texture.get(), a_debugName);
+	Util::SetResourceName(a_rtv.get(), "%s::RTV", a_debugName);
+	Util::SetResourceName(a_srv.get(), "%s::SRV", a_debugName);
+	if (a_uav)
+		Util::SetResourceName(a_uav->get(), "%s::UAV", a_debugName);
+}
+
+bool EffectManager::RefreshEyeSourceTexture(int a_eyeIndex)
+{
+	// PerfMode's real DLSS/FSR+RCAS output lives only in its testTexture, not kMAIN.
+	auto& perfMode = globals::features::upscaling.perfMode;
+	const bool usePerfModeSource = perfMode.IsHookActive() && perfMode.GetTestTexture() && perfMode.GetTestTextureSRV();
+
+	ID3D11Texture2D* sourceTexture;
+	ID3D11ShaderResourceView* sourceSRV;
+	if (usePerfModeSource) {
+		sourceTexture = perfMode.GetTestTexture();
+		sourceSRV = perfMode.GetTestTextureSRV();
+	} else {
+		auto& kMain = globals::game::renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMAIN];
+		if (!kMain.texture || !kMain.SRV)
+			return false;
+		sourceTexture = kMain.texture;
+		sourceSRV = kMain.SRV;
+	}
+
+	D3D11_TEXTURE2D_DESC mainDesc{};
+	sourceTexture->GetDesc(&mainDesc);
+	currentMainWidth = mainDesc.Width;
+	currentMainHeight = mainDesc.Height;
+
+	EnsureCropTarget(eyeSourceTexture, eyeSourceRTV, eyeSourceSRV, &eyeSourceUAV, mainDesc, "Effects11::EyeSource");
+	eyeSourceData.texture = eyeSourceTexture.get();
+	eyeSourceData.textureCopy = nullptr;
+	eyeSourceData.RTV = eyeSourceRTV.get();
+	eyeSourceData.SRV = eyeSourceSRV.get();
+	eyeSourceData.SRVCopy = nullptr;
+	eyeSourceData.UAV = eyeSourceUAV.get();
+
+	CropCopyEyeHalf(sourceSRV, mainDesc.Width, mainDesc.Height, eyeSourceRTV.get(), a_eyeIndex);
+	return true;
+}
+
+ID3D11ShaderResourceView* EffectManager::GetEyeCroppedSRV(TextureManager::Texture& a_source)
+{
+	if (currentEyeIndex < 0 || !a_source.texture || !a_source.srv)
+		return a_source.srv.get();
+
+	D3D11_TEXTURE2D_DESC srcDesc{};
+	a_source.texture->GetDesc(&srcDesc);
+	if (srcDesc.Width != currentMainWidth)
+		return a_source.srv.get();  // not full-width -- self-contained canvas, not subject to the crop mismatch
+
+	EnsureCropTarget(inputCropTexture, inputCropRTV, inputCropSRV, nullptr, srcDesc, "Effects11::InputCrop");
+	CropCopyEyeHalf(a_source.srv.get(), srcDesc.Width, srcDesc.Height, inputCropRTV.get(), currentEyeIndex);
+	return inputCropSRV.get();
+}
+
+void EffectManager::CropCopyEyeHalf(ID3D11ShaderResourceView* a_source, uint32_t a_srcWidth, uint32_t a_srcHeight, ID3D11RenderTargetView* a_destRTV, int a_eyeIndex)
+{
+	auto device = globals::d3d::device;
+	auto context = globals::d3d::context;
+	const uint32_t halfWidth = a_srcWidth / 2;
+
+	if (!eyeCropCopyPS) {
+		if (eyeCropCopyPSCompileAttempted)
+			return;
+		eyeCropCopyPSCompileAttempted = true;
+		eyeCropCopyPS.attach(static_cast<ID3D11PixelShader*>(
+			Util::CompileShader(L"Data\\Shaders\\Effects11\\EyeCropCopyPS.hlsl", {}, "ps_5_0")));
+		if (!eyeCropCopyPS)
+			return;
+	}
+	if (!eyeCropCB) {
+		D3D11_BUFFER_DESC cbDesc{};
+		cbDesc.ByteWidth = 16;
+		cbDesc.Usage = D3D11_USAGE_DYNAMIC;
+		cbDesc.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
+		cbDesc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
+		DX::ThrowIfFailed(device->CreateBuffer(&cbDesc, nullptr, eyeCropCB.put()));
+		Util::SetResourceName(eyeCropCB.get(), "Effects11::EyeCropCB");
+	}
+
+	D3D11_MAPPED_SUBRESOURCE mapped;
+	if (FAILED(context->Map(eyeCropCB.get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped))) {
+		logger::error("[EFFECTS11] Failed to map eyeCropCB for eye index {}", a_eyeIndex);
+		return;
+	}
+	*static_cast<uint32_t*>(mapped.pData) = static_cast<uint32_t>(a_eyeIndex) * halfWidth;
+	context->Unmap(eyeCropCB.get(), 0);
+
+	// Nothing re-establishes state after a mid-sequence GetEyeCroppedSRV() call, so this needs
+	// its own full save/restore.
+	D3D11FullStateBackup stateBackup;
+	stateBackup.Save(context);
+
+	D3D11_VIEWPORT viewport{ 0, 0, static_cast<float>(halfWidth), static_cast<float>(a_srcHeight), 0, 1 };
+	context->RSSetViewports(1, &viewport);
+	context->OMSetRenderTargets(1, &a_destRTV, nullptr);
+	context->OMSetDepthStencilState(nullptr, 0);
+	context->RSSetState(rasterizerState.get());
+	context->OMSetBlendState(blendState.get(), nullptr, 0xFFFFFFFF);
+
+	UINT stride = sizeof(float) * 5;
+	UINT offset = 0;
+	ID3D11Buffer* vbs[] = { quadVertexBuffer.get() };
+	context->IASetVertexBuffers(0, 1, vbs, &stride, &offset);
+	context->IASetInputLayout(inputLayout.get());
+	context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP);
+
+	context->VSSetShader(copyVertexShader.get(), nullptr, 0);
+	context->PSSetShader(eyeCropCopyPS.get(), nullptr, 0);
+	ID3D11Buffer* cb = eyeCropCB.get();
+	context->PSSetConstantBuffers(0, 1, &cb);
+	context->PSSetShaderResources(0, 1, &a_source);
+
+	context->Draw(4, 0);
+
+	ID3D11ShaderResourceView* nullSourceSRV = nullptr;
+	context->PSSetShaderResources(0, 1, &nullSourceSRV);
+	ID3D11RenderTargetView* nullRTV = nullptr;
+	context->OMSetRenderTargets(1, &nullRTV, nullptr);
+
+	stateBackup.Restore(context);
+	stateBackup.Release();
 }
 
 void EffectManager::ApplyColorCorrection(ID3D11UnorderedAccessView* textureUAV)

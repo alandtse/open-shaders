@@ -34,6 +34,13 @@ namespace Math
 	{
 		return (2.0f * a_nearPlane * a_farPlane) / ((a_farPlane + a_nearPlane) - (a_depth * 2.0f - 1.0f) * (a_farPlane - a_nearPlane));
 	}
+
+	// pow() NaNs on a negative base; use when base is non-negative by construction
+	// except for FP rounding noise.
+	float SafePow(float base, float exponent)
+	{
+		return pow(abs(base), exponent);
+	}
 }
 
 #endif  //__MATH_DEPENDENCY_HLSL__

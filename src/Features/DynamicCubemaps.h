@@ -2,6 +2,7 @@
 
 #include "Buffer.h"
 #include "Utils/BootSnapshot.h"
+#include "Utils/LazyShader.h"
 
 /**
  * Handles menu open and close events.
@@ -46,7 +47,7 @@ public:
 	};
 	STATIC_ASSERT_ALIGNAS_16(SpecularMapFilterSettingsCB);
 
-	ID3D11ComputeShader* specularIrradianceCS = nullptr;
+	Util::LazyShader<ID3D11ComputeShader> specularIrradianceCS;
 	ConstantBuffer* spmapCB = nullptr;
 	Texture2D* envTexture = nullptr;
 	Texture2D* envReflectionsTexture = nullptr;
@@ -62,15 +63,15 @@ public:
 	};
 	STATIC_ASSERT_ALIGNAS_16(UpdateCubemapCB);
 
-	ID3D11ComputeShader* updateCubemapCS = nullptr;
-	ID3D11ComputeShader* updateCubemapReflectionsCS = nullptr;
-	ID3D11ComputeShader* updateCubemapFakeReflectionsCS = nullptr;
+	Util::LazyShader<ID3D11ComputeShader> updateCubemapCS;
+	Util::LazyShader<ID3D11ComputeShader> updateCubemapReflectionsCS;
+	Util::LazyShader<ID3D11ComputeShader> updateCubemapFakeReflectionsCS;
 
 	ConstantBuffer* updateCubemapCB = nullptr;
 
-	ID3D11ComputeShader* inferCubemapCS = nullptr;
-	ID3D11ComputeShader* inferCubemapReflectionsCS = nullptr;
-	ID3D11ComputeShader* inferCubemapFakeReflectionsCS = nullptr;
+	Util::LazyShader<ID3D11ComputeShader> inferCubemapCS;
+	Util::LazyShader<ID3D11ComputeShader> inferCubemapReflectionsCS;
+	Util::LazyShader<ID3D11ComputeShader> inferCubemapFakeReflectionsCS;
 
 	Texture2D* envCaptureTexture = nullptr;
 	Texture2D* envCaptureRawTexture = nullptr;
@@ -113,7 +114,7 @@ public:
 	};
 	STATIC_ASSERT_ALIGNAS_16(BC6HEncodeCB);
 
-	ID3D11ComputeShader* bc6hEncodeCS = nullptr;
+	Util::LazyShader<ID3D11ComputeShader> bc6hEncodeCS;
 	ConstantBuffer* bc6hEncodeCB = nullptr;
 
 	ID3D11ShaderResourceView* envTextureArraySRV = nullptr;
@@ -219,13 +220,17 @@ public:
 
 	ID3D11ComputeShader* GetComputeShaderSpecularIrradiance();
 
-	void UpdateCubemapCapture(bool a_reflections);
+	/** @brief Captures the environment cubemap. Returns false (no-op) if the capture shader is unavailable. */
+	bool UpdateCubemapCapture(bool a_reflections);
 
-	void Inferrence(bool a_reflections);
+	/** @brief Infers local reflection information from the capture. Returns false (no-op) if the inference shader is unavailable. */
+	bool Inferrence(bool a_reflections);
 
-	void Irradiance(bool a_reflections, uint32_t a_startLevel, uint32_t a_endLevel, bool a_doSetup);
+	/** @brief Filters the specular irradiance mip range. Returns false (no-op) if the filter shader is unavailable. */
+	bool Irradiance(bool a_reflections, uint32_t a_startLevel, uint32_t a_endLevel, bool a_doSetup);
 
-	void CompressToBC6H(bool a_reflections);
+	/** @brief Compresses the filtered cubemap to BC6H. Returns false (no-op) if the encode shader is unavailable. */
+	bool CompressToBC6H(bool a_reflections);
 
 	ID3D11ComputeShader* GetComputeShaderBC6HEncode();
 

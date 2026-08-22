@@ -1,5 +1,6 @@
 #include "ENBEffectPostPass.h"
 
+#include "../EffectManager.h"
 #include "../TextureManager.h"
 
 void ENBEffectPostPass::Execute()
@@ -13,7 +14,10 @@ void ENBEffectPostPass::Execute()
 		return;
 	}
 
-	auto [executed, inOutput] = ExecuteTechniqueSequence(GetSelectedTechnique(), textureSDRTemp->srv.get(), *textureSDRTemp2, *textureSDRTemp);
+	// Crop explicitly here: this first pass skips ExecuteTechniqueSequence's own crop step,
+	// so without this the eye's pass would sample both eyes.
+	auto* inputSRV = EffectManager::GetSingleton().GetEyeCroppedSRV(*textureSDRTemp);
+	auto [executed, inOutput] = ExecuteTechniqueSequence(GetSelectedTechnique(), inputSRV, *textureSDRTemp2, *textureSDRTemp);
 
 	if (executed && inOutput) {
 		textureManager.SwapTextures("TextureSDRTemp", "TextureSDRTemp2");
@@ -23,5 +27,5 @@ void ENBEffectPostPass::Execute()
 void ENBEffectPostPass::UpdateEffectVariables()
 {
 	auto* textureSDRTemp = GetCachedCommonTexture("TextureSDRTemp");
-	SetShaderResourceVariable("TextureOriginal", textureSDRTemp ? textureSDRTemp->srv.get() : nullptr);
+	SetShaderResourceVariable("TextureOriginal", textureSDRTemp ? EffectManager::GetSingleton().GetEyeCroppedSRV(*textureSDRTemp) : nullptr);
 }

@@ -12,6 +12,7 @@
 #include "Common/Random.hlsli"
 #include "Common/SharedData.hlsli"
 #include "Common/VR.hlsli"
+#include "Common/VRReproject.hlsli"
 
 #ifdef VR
 

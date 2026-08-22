@@ -34,7 +34,7 @@ namespace TestConstants
 	ASSERT(IsTrue, abs(length(s01) - 1.0) < TestConstants::FLOAT16_EPSILON);
 	ASSERT(IsTrue, abs(length(s10) - 1.0) < TestConstants::FLOAT16_EPSILON);
 
-	// Verify samples are valid (removed strict similarity test due to numerical precision)
+	// Only a NaN check: numerical precision makes an exact similarity bound between samples unreliable.
 
 	// Center sample should be in a reasonable location
 	ASSERT(IsTrue, !isnan(s55.x) && !isnan(s55.y) && !isnan(s55.z));

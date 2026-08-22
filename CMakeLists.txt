@@ -15,8 +15,7 @@ if(DEVBENCH_BRIDGE)
     list(APPEND VCPKG_MANIFEST_FEATURES "devbench-bridge")
 endif()
 
-# Effects11 — on by default; the vcpkg port is an unconditional dependency
-# (see vcpkg.json), not a manifest feature like DEVBENCH_BRIDGE above.
+# Unlike DEVBENCH_BRIDGE above, the vcpkg `effects11` port is unconditional (vcpkg.json), not a manifest feature.
 option(
     ENABLE_EFFECTS11
     "Enable the Effects11 feature (ENB-style post-processing framework)."
@@ -26,7 +25,7 @@ option(
 project(
     # gersemi: ignore
     CommunityShaders
-    VERSION 2.7.0
+    VERSION 2.8.2
     LANGUAGES CXX
 )
 

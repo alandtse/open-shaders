@@ -644,20 +644,20 @@ void PostProcessing::SetupResources()
 	if (auto rawPtr = reinterpret_cast<ID3D11ComputeShader*>(Util::CompileShader(L"Data\\Shaders\\PostProcessing\\copy.cs.hlsl", {}, "cs_5_0")))
 		copyCS.attach(rawPtr);
 
-	pipeline[static_cast<size_t>(FeaturePipelineIndex::LocalExposure)] = std::make_unique<LocalExposure>();
-	pipeline[static_cast<size_t>(FeaturePipelineIndex::AutoExposure)] = std::make_unique<HistogramAutoExposure>();
-	pipeline[static_cast<size_t>(FeaturePipelineIndex::ColorGrading)] = std::make_unique<ColorGrading>();
-	pipeline[static_cast<size_t>(FeaturePipelineIndex::LUT)] = std::make_unique<LUT>();
+	pipeline[static_cast<size_t>(FeaturePipelineIndex::LocalExposure)] = std::make_shared<LocalExposure>();
+	pipeline[static_cast<size_t>(FeaturePipelineIndex::AutoExposure)] = std::make_shared<HistogramAutoExposure>();
+	pipeline[static_cast<size_t>(FeaturePipelineIndex::ColorGrading)] = std::make_shared<ColorGrading>();
+	pipeline[static_cast<size_t>(FeaturePipelineIndex::LUT)] = std::make_shared<LUT>();
 
-	pipeline[static_cast<size_t>(FeaturePipelineIndex::MotionBlur)] = std::make_unique<MotionBlur>();
-	pipeline[static_cast<size_t>(FeaturePipelineIndex::DoF)] = std::make_unique<DoF>();
-	pipeline[static_cast<size_t>(FeaturePipelineIndex::PhysicalGlare)] = std::make_unique<PhysicalGlare>();
-	pipeline[static_cast<size_t>(FeaturePipelineIndex::CODBloom)] = std::make_unique<CODBloom>();
-	pipeline[static_cast<size_t>(FeaturePipelineIndex::LensFlare)] = std::make_unique<LensFlare>();
-	pipeline[static_cast<size_t>(FeaturePipelineIndex::Composite)] = std::make_unique<Composite>();
-	pipeline[static_cast<size_t>(FeaturePipelineIndex::Vignette)] = std::make_unique<Vignette>();
-	pipeline[static_cast<size_t>(FeaturePipelineIndex::Camera)] = std::make_unique<Camera>();
-	pipeline[static_cast<size_t>(FeaturePipelineIndex::Border)] = std::make_unique<Border>();
+	pipeline[static_cast<size_t>(FeaturePipelineIndex::MotionBlur)] = std::make_shared<MotionBlur>();
+	pipeline[static_cast<size_t>(FeaturePipelineIndex::DoF)] = std::make_shared<DoF>();
+	pipeline[static_cast<size_t>(FeaturePipelineIndex::PhysicalGlare)] = std::make_shared<PhysicalGlare>();
+	pipeline[static_cast<size_t>(FeaturePipelineIndex::CODBloom)] = std::make_shared<CODBloom>();
+	pipeline[static_cast<size_t>(FeaturePipelineIndex::LensFlare)] = std::make_shared<LensFlare>();
+	pipeline[static_cast<size_t>(FeaturePipelineIndex::Composite)] = std::make_shared<Composite>();
+	pipeline[static_cast<size_t>(FeaturePipelineIndex::Vignette)] = std::make_shared<Vignette>();
+	pipeline[static_cast<size_t>(FeaturePipelineIndex::Camera)] = std::make_shared<Camera>();
+	pipeline[static_cast<size_t>(FeaturePipelineIndex::Border)] = std::make_shared<Border>();
 
 	RestorePipelineDefaultEnablement();
 
@@ -775,7 +775,7 @@ void PostProcessing::DrawBeforeUpscaling()
 	state->EndPerfEvent();
 }
 
-void PostProcessing::PreProcess(RE::RENDER_TARGET a_input)
+void PostProcessing::PreProcess(RE::RENDER_TARGET a_input, RE::RENDER_TARGET a_output)
 {
 	if (bypass)
 		return;
@@ -827,6 +827,8 @@ void PostProcessing::PreProcess(RE::RENDER_TARGET a_input)
 	CopyToRenderTarget(gameTexMainAlt, useMainCopy ? mainConvertTex : mainCopyConvertTex, lastTexColor.tex, lastTexColor.srv);
 
 	isrefraction = false;
+
+	globals::state->SetOutputRenderTarget(a_output);
 }
 
 void PostProcessing::ClearBorderMotionVectorsForFrameGen()

@@ -109,9 +109,8 @@ public:
 		uint NumSteps = REL::Module::IsVR() ? 6u : 8u;
 		bool EnableAdaptiveSampling = false;
 		int ResolutionMode = 1;  // 0-full, 1-half, 2-quarter - DBF default
-		// Restart-gated: GI history/radiance textures are only allocated for the full
-		// profile. Defaults to full everywhere; LoadSettings migrates GI-off configs.
-		int ResourceProfile = kResourceProfileFullGI;
+		// Restart-gated: default resource allocation follows the platform's default effect mode.
+		int ResourceProfile = EnableGI ? kResourceProfileFullGI : kResourceProfileAOOnly;
 		// visual
 		float MinScreenRadius = 0.01f;
 		float AORadius = 256.f;

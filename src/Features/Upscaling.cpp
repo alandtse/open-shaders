@@ -1622,85 +1622,55 @@ ID3D11ComputeShader* Upscaling::GetEncodeTexturesCS()
 
 	// Runtime FSR and VR require typed R32_FLOAT depth instead of the game's R24G8 resource.
 	if (upscaleMethod == UpscaleMethod::kFSR && (globals::game::isVR || runtimeFsrDepthTexture)) {
-		if (!encodeTexturesCSDepthOutput) {
-			logger::debug("Compiling EncodeTexturesCS.hlsl for FSR typed depth output");
-			std::vector<std::pair<const char*, const char*>> defines = {
-				{ "FSR", "" },
-				{ "DEPTH_OUTPUT", "" }
-			};
-			encodeTexturesCSDepthOutput.attach((ID3D11ComputeShader*)Util::CompileShader(L"Data/Shaders/Upscaling/EncodeTexturesCS.hlsl", defines, "cs_5_0"));
-		}
-		return encodeTexturesCSDepthOutput.get();
+		std::vector<std::pair<const char*, const char*>> defines = {
+			{ "FSR", "" },
+			{ "DEPTH_OUTPUT", "" }
+		};
+		return encodeTexturesCSDepthOutput.Get(L"Data/Shaders/Upscaling/EncodeTexturesCS.hlsl", defines, "cs_5_0");
 	}
 
-	if (!encodeTexturesCS[methodIndex]) {
-		logger::debug("Compiling EncodeTexturesCS.hlsl for upscale method {}", methodIndex);
+	std::vector<std::pair<const char*, const char*>> defines;
 
-		std::vector<std::pair<const char*, const char*>> defines;
-
-		// Add upscale method define
-		switch (upscaleMethod) {
-		case UpscaleMethod::kDLSS:
-			defines.push_back({ "DLSS", "" });
-			break;
-		case UpscaleMethod::kFSR:
-			defines.push_back({ "FSR", "" });
-			break;
-		default:
-			// No define for NONE or TAA
-			break;
-		}
-
-		encodeTexturesCS[methodIndex].attach((ID3D11ComputeShader*)Util::CompileShader(L"Data/Shaders/Upscaling/EncodeTexturesCS.hlsl", defines, "cs_5_0"));
+	// Add upscale method define
+	switch (upscaleMethod) {
+	case UpscaleMethod::kDLSS:
+		defines.push_back({ "DLSS", "" });
+		break;
+	case UpscaleMethod::kFSR:
+		defines.push_back({ "FSR", "" });
+		break;
+	default:
+		// No define for NONE or TAA
+		break;
 	}
-	return encodeTexturesCS[methodIndex].get();
+
+	return encodeTexturesCS[methodIndex].Get(L"Data/Shaders/Upscaling/EncodeTexturesCS.hlsl", defines, "cs_5_0");
 }
 
 ID3D11PixelShader* Upscaling::GetDepthRefractionUpscalePS()
 {
-	if (!depthRefractionUpscalePS) {
-		logger::debug("Compiling DepthRefractionUpscalePS.hlsl");
-		std::vector<std::pair<const char*, const char*>> defines = { { "PSHADER", "" } };
-		depthRefractionUpscalePS.attach((ID3D11PixelShader*)Util::CompileShader(L"Data/Shaders/Upscaling/DepthRefractionUpscalePS.hlsl", defines, "ps_5_0"));
-	}
-
-	return depthRefractionUpscalePS.get();
+	return depthRefractionUpscalePS.Get(L"Data/Shaders/Upscaling/DepthRefractionUpscalePS.hlsl", { { "PSHADER", "" } }, "ps_5_0");
 }
 
 ID3D11PixelShader* Upscaling::GetUnderwaterMaskUpscalePS()
 {
-	if (!underwaterMaskUpscalePS) {
-		logger::debug("Compiling UnderwaterMaskPS.hlsl");
-		std::vector<std::pair<const char*, const char*>> defines = { { "PSHADER", "" } };
-		if (globals::game::isVR)
-			defines.push_back({ "VR", "" });
-		underwaterMaskUpscalePS.attach((ID3D11PixelShader*)Util::CompileShader(L"Data/Shaders/Upscaling/UnderwaterMaskUpscalePS.hlsl", defines, "ps_5_0"));
-	}
-
-	return underwaterMaskUpscalePS.get();
+	std::vector<std::pair<const char*, const char*>> defines = { { "PSHADER", "" } };
+	if (globals::game::isVR)
+		defines.push_back({ "VR", "" });
+	return underwaterMaskUpscalePS.Get(L"Data/Shaders/Upscaling/UnderwaterMaskUpscalePS.hlsl", defines, "ps_5_0");
 }
 
 ID3D11PixelShader* Upscaling::GetCameraMotionVectorsPS()
 {
-	if (!cameraMotionVectorsPS) {
-		logger::debug("Compiling CameraMotionVectorsPS.hlsl");
-		std::vector<std::pair<const char*, const char*>> defines = { { "PSHADER", "" } };
-		if (globals::game::isVR)
-			defines.push_back({ "VR", "" });
-		cameraMotionVectorsPS.attach((ID3D11PixelShader*)Util::CompileShader(L"Data/Shaders/Upscaling/CameraMotionVectorsPS.hlsl", defines, "ps_5_0"));
-	}
-
-	return cameraMotionVectorsPS.get();
+	std::vector<std::pair<const char*, const char*>> defines = { { "PSHADER", "" } };
+	if (globals::game::isVR)
+		defines.push_back({ "VR", "" });
+	return cameraMotionVectorsPS.Get(L"Data/Shaders/Upscaling/CameraMotionVectorsPS.hlsl", defines, "ps_5_0");
 }
 
 ID3D11VertexShader* Upscaling::GetUpscaleVS()
 {
-	if (!upscaleVS) {
-		logger::debug("Compiling UpscaleVS.hlsl");
-		upscaleVS.attach((ID3D11VertexShader*)Util::CompileShader(L"Data/Shaders/Upscaling/UpscaleVS.hlsl", { { "VSHADER", "" } }, "vs_5_0"));
-	}
-
-	return upscaleVS.get();
+	return upscaleVS.Get(L"Data/Shaders/Upscaling/UpscaleVS.hlsl", { { "VSHADER", "" } }, "vs_5_0");
 }
 
 eastl::unique_ptr<Texture2D> Upscaling::CreateTextureFromSource(ID3D11Resource* src, uint32_t width, uint32_t height,
@@ -2207,22 +2177,21 @@ void Upscaling::SetupResources()
 
 	if (d3d12SwapChainActive)
 		dx12SwapChain.CreateSharedResources();
-
-	copyDepthToSharedBufferPS.attach((ID3D11PixelShader*)Util::CompileShader(L"Data\\Shaders\\Upscaling\\CopyDepthToSharedBufferPS.hlsl", { { "PSHADER", "" } }, "ps_5_0"));
 }
 
 void Upscaling::ClearShaderCache()
 {
 	foveatedRender.ClearShaderCache();
 	for (int i = 0; i < 5; ++i) {
-		encodeTexturesCS[i] = nullptr;  // com_ptr automatically releases
+		encodeTexturesCS[i].Reset();
 	}
-	encodeTexturesCSDepthOutput = nullptr;
+	encodeTexturesCSDepthOutput.Reset();
+	copyDepthToSharedBufferPS.Reset();
 
-	depthRefractionUpscalePS = nullptr;  // com_ptr automatically releases
-	underwaterMaskUpscalePS = nullptr;   // com_ptr automatically releases
-	cameraMotionVectorsPS = nullptr;     // com_ptr automatically releases
-	upscaleVS = nullptr;                 // com_ptr automatically releases
+	depthRefractionUpscalePS.Reset();
+	underwaterMaskUpscalePS.Reset();
+	cameraMotionVectorsPS.Reset();
+	upscaleVS.Reset();
 }
 
 void Upscaling::CopySharedD3D12Resources()
@@ -2236,6 +2205,10 @@ void Upscaling::CopySharedD3D12Resources()
 	context->CopyResource(dx12SwapChain.motionVectorBufferShared12->resource11, motionVector.texture);
 
 	auto& depth = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kMAIN];
+
+	auto* vs = GetUpscaleVS();
+	if (!vs)
+		return;
 
 	{
 		// Set up viewport for fullscreen rendering
@@ -2257,7 +2230,7 @@ void Upscaling::CopySharedD3D12Resources()
 		context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 
 		// Set up vertex shader
-		context->VSSetShader(GetUpscaleVS(), nullptr, 0);
+		context->VSSetShader(vs, nullptr, 0);
 
 		// Set up rasterizer and blend states
 		context->RSSetState(upscaleRasterizerState.get());
@@ -2271,9 +2244,10 @@ void Upscaling::CopySharedD3D12Resources()
 		ID3D11RenderTargetView* rtvs[1] = { dx12SwapChain.depthBufferShared12->rtv };
 		context->OMSetRenderTargets(ARRAYSIZE(rtvs), rtvs, nullptr);
 
-		context->PSSetShader(copyDepthToSharedBufferPS.get(), nullptr, 0);
-
-		context->Draw(3, 0);
+		if (auto* ps = copyDepthToSharedBufferPS.Get(L"Data\\Shaders\\Upscaling\\CopyDepthToSharedBufferPS.hlsl", { { "PSHADER", "" } }, "ps_5_0")) {
+			context->PSSetShader(ps, nullptr, 0);
+			context->Draw(3, 0);
+		}
 	}
 
 	// Clean up
@@ -2720,33 +2694,36 @@ void Upscaling::Upscale()
 		// The shader applies EyeOffsetX to sample the correct half.
 		ID3D11ShaderResourceView* views[4] = { temporalAAMask.SRV, normals.SRV, motionVector.SRV, depth.depthSRV };
 		context->CSSetShaderResources(0, ARRAYSIZE(views), views);
-		context->CSSetShader(GetEncodeTexturesCS(), nullptr, 0);
 
-		for (uint32_t i = 0; i < numEyes; ++i) {
-			uint32_t offsetX = i * eyeRenderWidth;
+		if (auto* encodeCS = GetEncodeTexturesCS()) {
+			context->CSSetShader(encodeCS, nullptr, 0);
 
-			UpscalingDataCB upscalingData;
-			upscalingData.trueSamplingDim = float2((float)eyeRenderWidth, (float)eyeRenderHeight);
-			upscalingData.eyeOffsetX = offsetX;
-			upscalingDataCB->Update(upscalingData);
-			auto upscalingBuffer = upscalingDataCB->CB();
-			context->CSSetConstantBuffers(0, 1, &upscalingBuffer);
+			for (uint32_t i = 0; i < numEyes; ++i) {
+				uint32_t offsetX = i * eyeRenderWidth;
 
-			// u2 is DLSS-only; u3 provides typed depth for VR FSR and flat runtime FSR.
-			ID3D11UnorderedAccessView* depthOutput = nullptr;
-			if (upscaleMethod == UpscaleMethod::kFSR) {
-				depthOutput = globals::game::isVR ? vrIntermediateLinearDepth[i]->uav.get() :
-				                                    (runtimeFsrDepthTexture ? runtimeFsrDepthTexture->uav.get() : nullptr);
+				UpscalingDataCB upscalingData;
+				upscalingData.trueSamplingDim = float2((float)eyeRenderWidth, (float)eyeRenderHeight);
+				upscalingData.eyeOffsetX = offsetX;
+				upscalingDataCB->Update(upscalingData);
+				auto upscalingBuffer = upscalingDataCB->CB();
+				context->CSSetConstantBuffers(0, 1, &upscalingBuffer);
+
+				// u2 is DLSS-only; u3 provides typed depth for VR FSR and flat runtime FSR.
+				ID3D11UnorderedAccessView* depthOutput = nullptr;
+				if (upscaleMethod == UpscaleMethod::kFSR) {
+					depthOutput = globals::game::isVR ? vrIntermediateLinearDepth[i]->uav.get() :
+					                                    (runtimeFsrDepthTexture ? runtimeFsrDepthTexture->uav.get() : nullptr);
+				}
+				ID3D11UnorderedAccessView* uavs[4] = {
+					globals::game::isVR ? vrIntermediateReactiveMask[i]->uav.get() : reactiveMaskTexture->uav.get(),
+					globals::game::isVR ? vrIntermediateTransparencyMask[i]->uav.get() : transparencyCompositionMaskTexture->uav.get(),
+					(upscaleMethod == UpscaleMethod::kDLSS) ? (globals::game::isVR ? vrIntermediateMotionVectors[i]->uav.get() : motionVectorCopyTexture->uav.get()) : nullptr,
+					depthOutput
+				};
+				context->CSSetUnorderedAccessViews(0, ARRAYSIZE(uavs), uavs, nullptr);
+
+				context->Dispatch((eyeRenderWidth + 7) / 8, (eyeRenderHeight + 7) / 8, 1);
 			}
-			ID3D11UnorderedAccessView* uavs[4] = {
-				globals::game::isVR ? vrIntermediateReactiveMask[i]->uav.get() : reactiveMaskTexture->uav.get(),
-				globals::game::isVR ? vrIntermediateTransparencyMask[i]->uav.get() : transparencyCompositionMaskTexture->uav.get(),
-				(upscaleMethod == UpscaleMethod::kDLSS) ? (globals::game::isVR ? vrIntermediateMotionVectors[i]->uav.get() : motionVectorCopyTexture->uav.get()) : nullptr,
-				depthOutput
-			};
-			context->CSSetUnorderedAccessViews(0, ARRAYSIZE(uavs), uavs, nullptr);
-
-			context->Dispatch((eyeRenderWidth + 7) / 8, (eyeRenderHeight + 7) / 8, 1);
 		}
 
 		ID3D11ShaderResourceView* nullViews[4] = { nullptr, nullptr, nullptr, nullptr };

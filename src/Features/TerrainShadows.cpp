@@ -272,10 +272,7 @@ void TerrainShadows::DrawSettings()
 
 void TerrainShadows::ClearShaderCache()
 {
-	if (shadowUpdateProgram) {
-		shadowUpdateProgram->Release();
-		shadowUpdateProgram = nullptr;
-	}
+	shadowUpdateProgram.Reset();
 
 	CompileComputeShaders();
 }
@@ -369,12 +366,12 @@ void TerrainShadows::SetupResources()
 
 void TerrainShadows::CompileComputeShaders()
 {
-	logger::debug("Compiling shaders...");
-	{
-		auto program_ptr = reinterpret_cast<ID3D11ComputeShader*>(Util::CompileShader(L"Data\\Shaders\\TerrainShadows\\ShadowUpdate.cs.hlsl", {}, "cs_5_0"));
-		if (program_ptr)
-			shadowUpdateProgram.attach(program_ptr);
-	}
+	GetShadowUpdateProgram();
+}
+
+ID3D11ComputeShader* TerrainShadows::GetShadowUpdateProgram()
+{
+	return shadowUpdateProgram.Get(L"Data\\Shaders\\TerrainShadows\\ShadowUpdate.cs.hlsl", {}, "cs_5_0", "main", "TerrainShadows::ShadowUpdateProgram");
 }
 
 bool TerrainShadows::IsHeightMapReady()
@@ -484,6 +481,7 @@ void TerrainShadows::Precompute()
 			context->CSSetShaderResources(60, (uint)srvs.size(), srvs.data());
 		}
 
+		shadowHeightValid = false;
 		texShadowHeight.release();
 
 		D3D11_TEXTURE2D_DESC texDesc = {
@@ -523,6 +521,9 @@ bool TerrainShadows::UpdateShadow(bool a_refreshImmediately)
 	ZoneScoped;
 
 	if (!IsHeightMapReady())
+		return false;
+
+	if (!GetShadowUpdateProgram())
 		return false;
 
 	// don't forget to change NTHREADS in shader!
@@ -619,7 +620,7 @@ bool TerrainShadows::UpdateShadow(bool a_refreshImmediately)
 	context->CSSetShaderResources(0, ARRAYSIZE(newer.srvs), newer.srvs);
 	context->CSSetUnorderedAccessViews(0, ARRAYSIZE(newer.uavs), newer.uavs, nullptr);
 	context->CSSetConstantBuffers(0, 1, &newer.buffer);
-	context->CSSetShader(shadowUpdateProgram.get(), nullptr, 0);
+	context->CSSetShader(GetShadowUpdateProgram(), nullptr, 0);
 	{
 		CS_GPU_PASS("TerrainShadows::ShadowUpdate");
 		const uint updateCount = a_refreshImmediately ? maxUpdates : 1u;
@@ -631,6 +632,8 @@ bool TerrainShadows::UpdateShadow(bool a_refreshImmediately)
 		}
 	}
 
+	shadowHeightValid = true;
+
 	/* ---- RESTORE ---- */
 	context->CSSetShaderResources(0, ARRAYSIZE(old.srvs), old.srvs);
 	context->CSSetShader(old.shader, nullptr, 0);
@@ -641,7 +644,7 @@ bool TerrainShadows::UpdateShadow(bool a_refreshImmediately)
 
 void TerrainShadows::ReflectionsPrepass()
 {
-	if (texShadowHeight) {
+	if (texShadowHeight && shadowHeightValid) {
 		auto context = globals::d3d::context;
 
 		std::array<ID3D11ShaderResourceView*, 1> srvs = { texShadowHeight->srv.get() };
@@ -666,7 +669,7 @@ void TerrainShadows::EarlyPrepass()
 	if (UpdateShadow(refreshImmediately) && timeJumpRefresh)
 		handledTimeJumpRefreshGeneration = requestedRefreshGeneration;
 
-	if (texShadowHeight) {
+	if (texShadowHeight && shadowHeightValid) {
 		auto context = globals::d3d::context;
 
 		std::array<ID3D11ShaderResourceView*, 1> srvs = { texShadowHeight->srv.get() };

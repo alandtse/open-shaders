@@ -459,7 +459,11 @@ float2 ParticlePosition(uint index, float diskRadius)
 
 		for (int di = -1; di <= 1; di++) {
 			int idx = int(floor(sectorIdx + 0.5)) + di;
+			// Signed modulus is required here to wrap a possibly-negative idx
+			// into [0, spikeCount) -- an unsigned cast would corrupt that.
+#pragma warning(disable: 3556)
 			uint wrappedIdx = uint((idx % int(spikeCount) + int(spikeCount)) % int(spikeCount));
+#pragma warning(default: 3556)
 
 			// Per-fiber angular jitter: shifts each line off the regular grid
 			float jitter = (HashToFloat(wrappedIdx * 2u + 5000u) - 0.5) * StarburstIrregularity;

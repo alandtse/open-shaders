@@ -134,6 +134,9 @@ public:
 	TonemapOwner GetTonemapOwner();
 	/** Dispatches the HDR tonemap pass when a feature replaces vanilla rendering. */
 	bool HandlePostProcessing(RE::RENDER_TARGET a_input, RE::RENDER_TARGET a_output);
+	/** Binds a_output as the sole render target (no depth-stencil) and syncs shadowState's
+	    cached bookkeeping to match, so the engine's lazy DIRTY_RENDERTARGET rebind agrees. */
+	void SetOutputRenderTarget(RE::RENDER_TARGET a_output);
 
 	/**
 	 * @brief Loads settings from disk (default, then user, then overrides).

@@ -4,6 +4,7 @@
 #include <filesystem>
 
 #include "Buffer.h"
+#include "Utils/LazyShader.h"
 
 /** @brief Adds heightmap-based terrain shadow casting that updates dynamically with sun position. */
 struct TerrainShadows : public Feature
@@ -73,10 +74,14 @@ public:
 	/** @brief Builds the per-frame constant buffer data with terrain shadow scale, offset, and z-range. */
 	PerFrame GetCommonBufferData();
 
-	winrt::com_ptr<ID3D11ComputeShader> shadowUpdateProgram = nullptr;
+	Util::LazyShader<ID3D11ComputeShader> shadowUpdateProgram;
 
 	std::unique_ptr<Texture2D> texHeightMap = nullptr;
 	std::unique_ptr<Texture2D> texShadowHeight = nullptr;
+	// True once UpdateShadow() has actually written texShadowHeight at least once;
+	// gates binding it downstream so a failed/never-run shadow update compute
+	// shader doesn't get sampled as if it held valid data.
+	bool shadowHeightValid = false;
 
 	/** @brief Checks whether a valid heightmap is loaded for the current worldspace. */
 	bool IsHeightMapReady();
@@ -93,6 +98,8 @@ public:
 
 	/** @brief Compiles the shadow update compute shader from HLSL source. */
 	void CompileComputeShaders();
+	/** @brief Returns the shadow update compute shader, compiling on first use, or nullptr if compilation failed. */
+	ID3D11ComputeShader* GetShadowUpdateProgram();
 
 	/** @brief Draws the ImGui settings panel for Terrain Shadows configuration. */
 	virtual void DrawSettings() override;

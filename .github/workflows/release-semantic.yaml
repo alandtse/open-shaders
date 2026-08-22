@@ -89,7 +89,11 @@ jobs:
             run-full-config-validation: false
 
     release:
-        needs: validate-shaders
+        needs: [validate-shaders, check-changes]
+        # An all-skipped validate-shaders (no shader/cmake/build-ci changes) reports
+        # "skipped", same as a failed check-changes blocking it -- check-changes must
+        # be checked directly here, not inferred from validate-shaders alone.
+        if: always() && !cancelled() && needs.check-changes.result == 'success' && needs.validate-shaders.result != 'failure'
         runs-on: ubuntu-latest
         outputs:
             new-release-published: ${{ steps.semantic.outputs.new_release_published }}

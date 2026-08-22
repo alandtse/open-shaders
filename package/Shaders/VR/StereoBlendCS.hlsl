@@ -13,6 +13,7 @@
 #include "Common/FrameBuffer.hlsli"
 #include "Common/SharedData.hlsli"
 #include "Common/VR.hlsli"
+#include "Common/VRReproject.hlsli"
 
 Texture2D<float4> ColorTexture : register(t0);
 Texture2D<float> DepthTexture : register(t1);

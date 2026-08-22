@@ -54,6 +54,7 @@ Claude Code loads it via the `@../AGENTS.md` import in `.claude/CLAUDE.md`.
     -   `Util::SetResourceName` for resource naming.
     -   `Util::GetGameSettingValue` for reading game settings.
     -   The cached `globals::game::*` pointers (`Globals.h`) over calling the equivalent `RE::*::GetSingleton()` directly — e.g. `globals::game::player` instead of `RE::PlayerCharacter::GetSingleton()`, `globals::game::isVR` instead of `REL::Module::IsVR()`.
+-   **New shared HLSL concerns get their own file (Include What You Use):** When adding a genuinely new fork-specific shared concern to `package/Shaders/Common/`, give it its own new `.hlsli` sibling rather than appending to an existing shared header (matches the existing convention: `ColorSpaces.hlsli`, `FoveatedMask.hlsli`, `BlurDither.hlsli`, `DirectionalShadow.hlsli` are all standalone). A broad `#include`d header that mixes unrelated concerns forces every consumer's CI shader-validation to re-run on any edit to any concern it bundles, and a header shared with upstream additionally risks a merge conflict on every future sync. This does not mandate retroactively splitting existing shared headers — only that new additions default to a new file, not growing an existing one.
 -   **ImGui Integration:**
     -   Pair `ImGui::BeginTable()` with `ImGui::EndTable()` (orphaned `TableNextColumn()` calls cause layout bugs and crashes).
     -   Use the RAII pattern for ImGui style changes; avoid manual save/restore states.

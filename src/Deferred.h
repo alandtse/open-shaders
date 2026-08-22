@@ -5,6 +5,7 @@
 #include "Buffer.h"
 #include "RE/B/BSShadowDirectionalLight.h"
 #include "RE/B/BSShadowLight.h"
+#include "Utils/LazyShader.h"
 
 #define ALBEDO RE::RENDER_TARGETS::kINDIRECT
 #define SPECULAR RE::RENDER_TARGETS::kINDIRECT_DOWNSCALED
@@ -109,13 +110,13 @@ public:
 
 	/**
 	 * @brief Gets or compiles the exterior deferred composite compute shader.
-	 * @return Cached or freshly compiled compute shader with feature-dependent defines.
+	 * @return Cached or freshly compiled compute shader with feature-dependent defines, or nullptr if compilation failed.
 	 */
 	ID3D11ComputeShader* GetComputeMainComposite();
 
 	/**
 	 * @brief Gets or compiles the interior deferred composite compute shader.
-	 * @return Cached or freshly compiled compute shader with INTERIOR and feature-dependent defines.
+	 * @return Cached or freshly compiled compute shader with INTERIOR and feature-dependent defines, or nullptr if compilation failed.
 	 */
 	ID3D11ComputeShader* GetComputeMainCompositeInterior();
 
@@ -132,8 +133,8 @@ public:
 
 	RE::RENDER_TARGET forwardRenderTargets[4];
 
-	ID3D11ComputeShader* mainCompositeCS = nullptr;
-	ID3D11ComputeShader* mainCompositeInteriorCS = nullptr;
+	Util::LazyShader<ID3D11ComputeShader> mainCompositeCS;
+	Util::LazyShader<ID3D11ComputeShader> mainCompositeInteriorCS;
 
 	// Directional shadow structured buffer (t98): cascade splits and projections.
 	Buffer* directionalShadowLights = nullptr;

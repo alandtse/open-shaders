@@ -101,6 +101,13 @@ void MenuManager::RenderSettingsPanel()
 	}
 	ImGui::EndDisabled();
 
+	// Static caveat, not a preset check: third-party .fx content still assumes a single flat eye.
+	if (globals::game::isVR) {
+		ImGui::PushStyleColor(ImGuiCol_Text, globals::menu->GetSettings().Theme.StatusPalette.Warning);
+		ImGui::TextWrapped("%s", T("feature.effects11.vr_flat_screen_warning", "VR: arbitrary flat-screen ENB presets are not guaranteed correct here -- screen-centered effects (vignette, lens flare, radial blur) may appear off-center or seam-darkened. Prefer a preset built or tested for VR."));
+		ImGui::PopStyleColor();
+	}
+
 	ImGui::Separator();
 
 	if (globals::state->GetTonemapOwner() == State::TonemapOwner::kEffects11 &&

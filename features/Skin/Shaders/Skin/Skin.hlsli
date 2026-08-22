@@ -215,7 +215,7 @@ namespace Skin
 		if (strength > 0.8f) {
 			sweat_intensity = sweat_intensity * saturate(0.99f - (strength - 0.8f) * 5.0f) + (strength - 0.8f) * 5.0f;
 		}
-		return pow(sweat_intensity, 0.1f);
+		return Math::SafePow(sweat_intensity, 0.1f);
 	}
 #endif
 

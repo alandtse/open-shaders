@@ -11,27 +11,23 @@ namespace
 	ID3D11ComputeShader* GetEnhancerEncodeTexturesCS(Upscaling& upscaling, Upscaling::UpscaleMethod upscaleMethod)
 	{
 		uint methodIndex = (uint)upscaleMethod;
-		if (!upscaling.encodeTexturesCS[methodIndex]) {
-			// This cache slot is shared with Upscaling::GetEncodeTexturesCS -- the
-			// define must match its own per-method selection or a hardcoded define
-			// compiles the wrong shader variant into the shared slot.
-			std::vector<std::pair<const char*, const char*>> defines;
-			switch (upscaleMethod) {
-			case Upscaling::UpscaleMethod::kDLSS:
-				defines.push_back({ "DLSS", "" });
-				break;
-			case Upscaling::UpscaleMethod::kFSR:
-				defines.push_back({ "FSR", "" });
-				break;
-			default:
-				break;
-			}
-
-			upscaling.encodeTexturesCS[methodIndex].attach((ID3D11ComputeShader*)Util::CompileShader(
-				L"Data/Shaders/Upscaling/EncodeTexturesCS.hlsl", defines, "cs_5_0"));
+		// This cache slot is shared with Upscaling::GetEncodeTexturesCS -- the
+		// define must match its own per-method selection or a hardcoded define
+		// compiles the wrong shader variant into the shared slot.
+		std::vector<std::pair<const char*, const char*>> defines;
+		switch (upscaleMethod) {
+		case Upscaling::UpscaleMethod::kDLSS:
+			defines.push_back({ "DLSS", "" });
+			break;
+		case Upscaling::UpscaleMethod::kFSR:
+			defines.push_back({ "FSR", "" });
+			break;
+		default:
+			break;
 		}
 
-		return upscaling.encodeTexturesCS[methodIndex].get();
+		return upscaling.encodeTexturesCS[methodIndex].Get(
+			L"Data/Shaders/Upscaling/EncodeTexturesCS.hlsl", defines, "cs_5_0");
 	}
 }
 
@@ -75,6 +71,15 @@ namespace FoveatedRenderImpl
 			return false;
 		}
 
+		// Resolve the shader before binding any resources -- a failed fetch must
+		// leave the compute stage untouched so the DLSS/FSR fallback below doesn't
+		// inherit stale SRV/UAV/CB bindings from this aborted pass.
+		ID3D11ComputeShader* cs = GetEnhancerEncodeTexturesCS(upscaling, upscaleMethod);
+		if (!cs) {
+			logger::error("[FOVEATED] Failed to get encode compute shader");
+			return false;
+		}
+
 		auto dispatchCount = Util::GetScreenDispatchCount(true);
 
 		CS_GPU_PASS("FoveatedRender::EncodeUpscalingTextures");
@@ -96,12 +101,6 @@ namespace FoveatedRenderImpl
 			upscaling.motionVectorCopyTexture->uav.get()
 		};
 		context->CSSetUnorderedAccessViews(0, ARRAYSIZE(uavs), uavs, nullptr);
-
-		ID3D11ComputeShader* cs = GetEnhancerEncodeTexturesCS(upscaling, upscaleMethod);
-		if (!cs) {
-			logger::error("[FOVEATED] Failed to get encode compute shader");
-			return false;
-		}
 
 		context->CSSetShader(cs, nullptr, 0);
 		context->Dispatch(dispatchCount.x, dispatchCount.y, 1);

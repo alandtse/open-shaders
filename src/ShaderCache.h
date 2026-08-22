@@ -3,11 +3,15 @@
 #include <BS_thread_pool.hpp>
 #include <deque>
 #include <efsw/efsw.hpp>
+#include <functional>
 #include <unordered_set>
+#include <variant>
 #include <vector>
 
 #include "Utils/CacheInvalidation.h"
 #include "Utils/WinApi.h"
+
+struct ID3D11ComputeShader;
 
 using namespace std::chrono;
 
@@ -315,12 +319,23 @@ namespace SIE
 			completionTime.store(0, std::memory_order_relaxed);
 		}
 
-		/** @brief Blocks until a task is available or the stop token is signalled. */
-		std::optional<ShaderCompilationTask> WaitTake(std::stop_token stoken);
+		/** @brief Blocks until a dispatch slot and some work (a queued permutation-matrix
+		 *  task, or -- only once the matrix is empty -- a queued aux closure) are both
+		 *  available, or the stop token is signalled. The matrix always wins admission
+		 *  over aux when both are ready, preserving LPT priority ordering. */
+		std::optional<std::variant<ShaderCompilationTask, std::function<void()>>> TryTakeNext(std::stop_token stoken);
 		/** @brief Enqueues a task for compilation. */
 		void Add(const ShaderCompilationTask& task);
 		/** @brief Marks a task as finished and records its timing metrics. */
 		void Complete(const ShaderCompilationTask& task);
+		/** @brief Frees a dispatch slot and wakes TryTakeNext(). Call even on a stale-generation
+		 *  task -- it still held a real slot, and nothing else wakes a waiter blocked on it. */
+		void ReleaseDispatchSlot();
+		/** @brief Queues a compile closure that isn't a ShaderCompilationTask (currently:
+		 *  standalone compute-shader compiles from PostProcessFeature::CompileComputeShadersAsync)
+		 *  to share the same dispatchedTasksInFlight budget as the main permutation matrix,
+		 *  instead of being submitted to compilationPool independently of it. Wakes TryTakeNext(). */
+		void EnqueueAux(std::function<void()> work);
 		/** @brief Latches the compilation-phase clock at the moment a real (non-disk-hit)
 		 *  compile begins, so ETA and the "started" log reflect the actual first compile
 		 *  rather than when it finishes. Logs once per phase. */
@@ -340,6 +355,7 @@ namespace SIE
 		std::atomic<uint64_t> completedTasks = 0;
 		std::atomic<uint64_t> totalTasks = 0;
 		std::atomic<uint64_t> failedTasks = 0;
+		std::atomic<uint32_t> dispatchedTasksInFlight = 0;  // Admission budget enforced by TryTakeNext()
 		std::atomic<uint64_t> cacheHitTasks = 0;            // number of compiles of a previously seen shader combo
 		std::atomic<uint64_t> diskHitTasks = 0;             // tasks resolved from disk cache rather than compiled
 		std::atomic<uint64_t> diskHitPriorityWeight = 0;    // cumulative priority weight of disk-hit tasks
@@ -412,6 +428,7 @@ namespace SIE
 		std::set<ShaderCompilationTask, TaskPriorityLess> availableTasks;
 		std::set<ShaderCompilationTask, TaskPriorityLess> tasksInProgress;
 		std::set<ShaderCompilationTask, TaskPriorityLess> processedTasks;  // completed or failed
+		std::deque<std::function<void()>> pendingAuxTasks;                 // see EnqueueAux/TryTakeNext
 		std::condition_variable_any conditionVariable;
 	};
 
@@ -591,6 +608,18 @@ namespace SIE
 		void Clear();
 		void Clear(RE::BSShader::Type a_type);
 		/**
+		 * @brief Requests a full Clear() on the render thread instead of running it inline.
+		 *
+		 * Clear() resets every feature's LazyShader instances, which release their cached
+		 * shader without synchronizing with concurrent use of the raw pointer a feature
+		 * may still be dispatching from this frame. The file-watcher thread cannot safely
+		 * call Clear() directly for this reason; it calls this instead, and the request is
+		 * drained by ProcessPendingClear() from the render thread once per frame.
+		 */
+		void RequestClear();
+		/** @brief Drains a pending RequestClear() by running Clear() on the calling (render) thread. Must be called once per frame from the render thread. */
+		void ProcessPendingClear();
+		/**
    		* @brief Clears and marks shaders for recompilation based on the given path.
  		*
  		* This function looks up the provided `a_path` in the `hlslToShaderMap`.
@@ -634,6 +663,33 @@ namespace SIE
 			uint32_t descriptor);
 		RE::BSGraphics::ComputeShader* GetComputeShader(const RE::BSShader& shader,
 			uint32_t descriptor);
+
+		/// Callback fired once a standalone compute shader finishes compiling or
+		/// loads from disk. Runs on a compilation-pool worker thread; the pointer
+		/// is null on failure (never throws). The caller owns thread-safe storage.
+		/// A non-null pointer is one owned reference: the callback must either
+		/// take ownership (e.g. winrt::com_ptr::attach) or Release() it.
+		using ComputeShaderReadyCallback = std::function<void(ID3D11ComputeShader*)>;
+
+		/// @brief Compile (or load from the disk cache) a standalone compute shader
+		///        on the shared compilation pool, off the calling thread.
+		/// @param sourcePath  HLSL source path under Data/Shaders (e.g.
+		///                    Data\\Shaders\\PostProcessing\\DoF\\dof.cs.hlsl).
+		/// @param entryPoint  HLSL entry function name.
+		/// @param defines     Preprocessor macro name/value pairs; the caller must
+		///                    keep each string alive until the callback fires
+		///                    (string literals satisfy this).
+		/// @param onReady     Invoked exactly once when the shader is ready.
+		void EnqueueComputeShaderCompile(
+			std::wstring sourcePath,
+			std::string entryPoint,
+			std::vector<std::pair<const char*, const char*>> defines,
+			ComputeShaderReadyCallback onReady);
+
+		/// @brief Deletes a standalone compute-shader feature's own disk-cache
+		///        subtree and manifest entries (e.g. L"PostProcessing/DoF"),
+		///        without touching any other feature's cache.
+		void ClearStandaloneComputeCache(std::wstring_view relativeDir);
 
 		RE::BSGraphics::VertexShader* MakeAndAddVertexShader(const RE::BSShader& shader,
 			uint32_t descriptor);
@@ -1094,6 +1150,8 @@ namespace SIE
 		bool isDump = false;
 		bool hideError = false;
 		bool useFileWatcher = false;
+		// Set by RequestClear() (file-watcher thread), drained by ProcessPendingClear() (render thread).
+		std::atomic<bool> pendingClear{ false };
 
 		std::stop_source ssource;
 		std::mutex vertexShadersMutex;

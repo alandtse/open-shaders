@@ -6,6 +6,7 @@
 #include "GpuPass.h"
 #include "Utils/D3D.h"
 #include "Utils/Game.h"
+#include "Utils/LazyShader.h"
 
 #include "RE/I/ImageSpaceEffectDepthOfField.h"
 #include "RE/I/ImageSpaceShaderParam.h"
@@ -64,8 +65,8 @@ namespace
 	UnderwaterFogConstants currentFog;
 	DepthOfFieldShaderOptions currentOptions;
 	std::unique_ptr<ConstantBuffer> depthOfFieldInputCB;
-	winrt::com_ptr<ID3D11VertexShader> depthOfFieldInputVS;
-	winrt::com_ptr<ID3D11PixelShader> depthOfFieldInputPS;
+	Util::LazyShader<ID3D11VertexShader> depthOfFieldInputVS;
+	Util::LazyShader<ID3D11PixelShader> depthOfFieldInputPS;
 	winrt::com_ptr<ID3D11RasterizerState> rasterizerState;
 	winrt::com_ptr<ID3D11SamplerState> linearSampler;
 	winrt::com_ptr<ID3D11SamplerState> pointSampler;
@@ -171,26 +172,20 @@ namespace
 
 	ID3D11VertexShader* GetDepthOfFieldInputVS()
 	{
-		if (!depthOfFieldInputVS) {
-			depthOfFieldInputVS.attach(static_cast<ID3D11VertexShader*>(Util::CompileShader(
-				L"Data/Shaders/UnderwaterFogToDepthOfField.hlsl",
-				{ { "VSHADER", "" } },
-				"vs_5_0")));
-			Util::SetResourceName(depthOfFieldInputVS.get(), "UnderwaterDepthOfField::InputFogVS");
-		}
-		return depthOfFieldInputVS.get();
+		bool wasCached = static_cast<bool>(depthOfFieldInputVS);
+		auto* vs = depthOfFieldInputVS.Get(L"Data/Shaders/UnderwaterFogToDepthOfField.hlsl", { { "VSHADER", "" } }, "vs_5_0");
+		if (vs && !wasCached)
+			Util::SetResourceName(vs, "UnderwaterDepthOfField::InputFogVS");
+		return vs;
 	}
 
 	ID3D11PixelShader* GetDepthOfFieldInputPS()
 	{
-		if (!depthOfFieldInputPS) {
-			depthOfFieldInputPS.attach(static_cast<ID3D11PixelShader*>(Util::CompileShader(
-				L"Data/Shaders/UnderwaterFogToDepthOfField.hlsl",
-				{ { "PSHADER", "" } },
-				"ps_5_0")));
-			Util::SetResourceName(depthOfFieldInputPS.get(), "UnderwaterDepthOfField::InputFogPS");
-		}
-		return depthOfFieldInputPS.get();
+		bool wasCached = static_cast<bool>(depthOfFieldInputPS);
+		auto* ps = depthOfFieldInputPS.Get(L"Data/Shaders/UnderwaterFogToDepthOfField.hlsl", { { "PSHADER", "" } }, "ps_5_0");
+		if (ps && !wasCached)
+			Util::SetResourceName(ps, "UnderwaterDepthOfField::InputFogPS");
+		return ps;
 	}
 
 	ID3D11RasterizerState* GetRasterizerState()
@@ -405,8 +400,13 @@ namespace
 		D3D11_PRIMITIVE_TOPOLOGY savedTopology = D3D11_PRIMITIVE_TOPOLOGY_UNDEFINED;
 	};
 
-	void DrawDepthOfFieldInputPass(RE::BSGraphics::RenderTargetData& a_target, ScratchTarget& a_scratch, ID3D11ShaderResourceView* a_maskSRV)
+	bool DrawDepthOfFieldInputPass(RE::BSGraphics::RenderTargetData& a_target, ScratchTarget& a_scratch, ID3D11ShaderResourceView* a_maskSRV)
 	{
+		auto* vs = GetDepthOfFieldInputVS();
+		auto* ps = GetDepthOfFieldInputPS();
+		if (!vs || !ps)
+			return false;
+
 		auto* context = globals::d3d::context;
 		context->OMSetRenderTargets(0, nullptr, nullptr);
 		context->CopyResource(a_scratch.texture->resource.get(), a_target.texture);
@@ -445,8 +445,8 @@ namespace
 
 		ID3D11RenderTargetView* rtvs[] = { a_target.RTV };
 		context->OMSetRenderTargets(1, rtvs, nullptr);
-		context->VSSetShader(GetDepthOfFieldInputVS(), nullptr, 0);
-		context->PSSetShader(GetDepthOfFieldInputPS(), nullptr, 0);
+		context->VSSetShader(vs, nullptr, 0);
+		context->PSSetShader(ps, nullptr, 0);
 		insideDepthOfFieldInputPass = true;
 		{
 			const SKSE::stl::scope_exit resetInputPass([]() noexcept {
@@ -457,6 +457,8 @@ namespace
 
 		ID3D11ShaderResourceView* nullSRV[3]{};
 		context->PSSetShaderResources(0, ARRAYSIZE(nullSRV), nullSRV);
+
+		return true;
 	}
 
 	RE::BSGraphics::RenderTargetData* FindDepthOfFieldInputTarget(ID3D11ShaderResourceView* a_sourceSRV)
@@ -531,8 +533,10 @@ namespace
 
 		CS_GPU_PASS("UnderwaterDepthOfField::InputFog");
 		GraphicsStateScope graphicsScope(context);
-		DrawDepthOfFieldInputPass(*inputTarget, sharpScratch, maskSRV);
-		appliedFogToDepthOfFieldInput = true;
+		// Only bypass the original underwater fog (FinalUnderwaterFogBypassScope,
+		// gated on this flag) once the replacement has actually been drawn -- a
+		// failed compile must leave the vanilla fog in place, not remove both.
+		appliedFogToDepthOfFieldInput = DrawDepthOfFieldInputPass(*inputTarget, sharpScratch, maskSRV);
 	}
 
 	void RunPendingDepthOfFieldInputPass()

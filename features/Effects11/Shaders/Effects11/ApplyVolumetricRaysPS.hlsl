@@ -1,4 +1,5 @@
 #include "Common/SharedData.hlsli"
+#include "Common/VR.hlsli"
 
 #if defined(IBL)
 #	define IBL_DEFERRED
@@ -54,13 +55,15 @@ float UpsampleScattering(float2 fullResPixel, float fullResDepth)
 
 float4 main(VS_OUTPUT_POST input) : SV_Target0
 {
-	float2 uv = input.txcoord0;
+	// GetDepth/CameraViewProjInverse need per-eye mono UV, not packed SBS -- UpsampleScattering
+	// stays on raw SBS pixel space above since it only taps local neighbors.
+	Stereo::EyeUV eye = Stereo::UnpackEyeUV(input.txcoord0);
 
-	float depth = SharedData::GetDepth(uv);
+	float depth = SharedData::GetDepth(eye.uv, eye.index);
 	float volumetricShadow = UpsampleScattering(input.pos.xy, depth);
 
-	float4 positionCS = float4(2 * float2(uv.x, -uv.y + 1) - 1, depth, 1);
-	float4 positionMS = mul(FrameBuffer::CameraViewProjInverse, positionCS);
+	float4 positionCS = float4(2 * float2(eye.uv.x, -eye.uv.y + 1) - 1, depth, 1);
+	float4 positionMS = mul(FrameBuffer::CameraViewProjInverse[eye.index], positionCS);
 	positionMS.xyz /= positionMS.w;
 
 	float3 viewDirection = normalize(positionMS.xyz);

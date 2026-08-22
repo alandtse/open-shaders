@@ -411,7 +411,6 @@ HRESULT DX12SwapChain::Present(UINT SyncInterval, UINT Flags)
 	frameIndex = swapChain->GetCurrentBackBufferIndex();
 
 	float clearColor[4]{ 0, 0, 0, 0 };
-	d3d11Context->ClearRenderTargetView(swapChainBufferWrapped->rtv, clearColor);
 	d3d11Context->ClearRenderTargetView(uiBufferWrapped->rtv, clearColor);
 
 	// If VSync is disabled, use frame limiter to prevent tearing and optimise pacing

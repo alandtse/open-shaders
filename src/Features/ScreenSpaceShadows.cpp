@@ -226,33 +226,16 @@ void ScreenSpaceShadows::DrawSettings()
 
 void ScreenSpaceShadows::InvalidateRaymarchShaders()
 {
-	if (raymarchCS) {
-		raymarchCS->Release();
-		raymarchCS = nullptr;
-	}
-	if (raymarchRightCS) {
-		raymarchRightCS->Release();
-		raymarchRightCS = nullptr;
-	}
+	raymarchCS.Reset();
+	raymarchRightCS.Reset();
 }
 
 void ScreenSpaceShadows::ClearShaderCache()
 {
 	InvalidateRaymarchShaders();
-	if (stereoSyncCS) {
-		stereoSyncCS->Release();
-		stereoSyncCS = nullptr;
-	}
-	if (stereoReprojectCS) {
-		stereoReprojectCS->Release();
-		stereoReprojectCS = nullptr;
-	}
-	if (stereoReprojectDebugCS) {
-		stereoReprojectDebugCS->Release();
-		stereoReprojectDebugCS = nullptr;
-	}
-	stereoReprojectCompileFailed = false;
-	stereoReprojectDebugCompileFailed = false;
+	stereoSyncCS.Reset();
+	stereoReprojectCS.Reset();
+	stereoReprojectDebugCS.Reset();
 }
 
 uint ScreenSpaceShadows::GetScaledSampleCount()
@@ -289,29 +272,23 @@ ID3D11ComputeShader* ScreenSpaceShadows::GetComputeRaymarch()
 		InvalidateRaymarchShaders();
 	}
 
-	if (!raymarchCS) {
-		auto sampleCount = std::format("{}", scaledSampleCount);
-		std::vector<std::pair<const char*, const char*>> defines{ { "SAMPLE_COUNT", sampleCount.c_str() } };
-		// TERRAIN_BLENDING flips DepthTexture's HLSL type from `Texture2D<unorm float>`
-		// (R24_UNORM_X8_TYPELESS game depth) to `Texture2D<float>` (R32_FLOAT blendedDepth).
-		if (globals::features::terrainBlending.loaded)
-			defines.push_back({ "TERRAIN_BLENDING", "" });
-		raymarchCS = (ID3D11ComputeShader*)Util::CompileShader(L"Data\\Shaders\\ScreenSpaceShadows\\RaymarchCS.hlsl", defines, "cs_5_0");
-	}
-	return raymarchCS;
+	auto sampleCount = std::format("{}", scaledSampleCount);
+	std::vector<std::pair<const char*, const char*>> defines{ { "SAMPLE_COUNT", sampleCount.c_str() } };
+	// TERRAIN_BLENDING flips DepthTexture's HLSL type from `Texture2D<unorm float>`
+	// (R24_UNORM_X8_TYPELESS game depth) to `Texture2D<float>` (R32_FLOAT blendedDepth).
+	if (globals::features::terrainBlending.loaded)
+		defines.push_back({ "TERRAIN_BLENDING", "" });
+	return raymarchCS.Get(L"Data\\Shaders\\ScreenSpaceShadows\\RaymarchCS.hlsl", defines, "cs_5_0");
 }
 
 ID3D11ComputeShader* ScreenSpaceShadows::GetComputeRaymarchRight()
 {
-	if (!raymarchRightCS) {
-		uint scaledSampleCount = GetScaledSampleCount();
-		auto sampleCount = std::format("{}", scaledSampleCount);
-		std::vector<std::pair<const char*, const char*>> defines{ { "SAMPLE_COUNT", sampleCount.c_str() }, { "RIGHT", "" } };
-		if (globals::features::terrainBlending.loaded)
-			defines.push_back({ "TERRAIN_BLENDING", "" });
-		raymarchRightCS = (ID3D11ComputeShader*)Util::CompileShader(L"Data\\Shaders\\ScreenSpaceShadows\\RaymarchCS.hlsl", defines, "cs_5_0");
-	}
-	return raymarchRightCS;
+	uint scaledSampleCount = GetScaledSampleCount();
+	auto sampleCount = std::format("{}", scaledSampleCount);
+	std::vector<std::pair<const char*, const char*>> defines{ { "SAMPLE_COUNT", sampleCount.c_str() }, { "RIGHT", "" } };
+	if (globals::features::terrainBlending.loaded)
+		defines.push_back({ "TERRAIN_BLENDING", "" });
+	return raymarchRightCS.Get(L"Data\\Shaders\\ScreenSpaceShadows\\RaymarchCS.hlsl", defines, "cs_5_0");
 }
 
 void ScreenSpaceShadows::DrawShadows()
@@ -370,8 +347,11 @@ void ScreenSpaceShadows::DrawShadows()
 	// Shared dispatch logic for both VR and non-VR
 	auto DispatchEye = [&](const char* eyeName, ID3D11ComputeShader* shader, uint32_t eyeIndex, const float* lightProj,
 						   float invTexSizeX, float invTexSizeY) {
+		if (!shader)
+			return;
+
 		std::string timerName = eyeName ? std::format("ScreenSpaceShadows::RayMarch({})", eyeName) : "ScreenSpaceShadows::RayMarch";
-		CS_GPU_PASS(timerName);
+		CS_GPU_PASS_DYNAMIC(timerName);
 
 		context->CSSetShader(shader, nullptr, 0);
 
@@ -479,24 +459,14 @@ ID3D11ComputeShader* ScreenSpaceShadows::GetStereoReprojectCS()
 	// not keep painting the debug view into gameplay after dev mode is turned off.
 	const bool useDebug = globals::features::vr.settings.ReprojectDebugMode == 1 && globals::state->IsDeveloperMode();
 
-	// Per-variant failure latch: don't retry a broken shader every frame, and never let a
-	// dev-only debug-variant failure disable the production reproject (null = callers fall back).
-	bool& compileFailed = useDebug ? stereoReprojectDebugCompileFailed : stereoReprojectCompileFailed;
-	if (compileFailed)
-		return nullptr;
-
+	// Never let a dev-only debug-variant compile failure disable the production reproject.
 	auto& shader = useDebug ? stereoReprojectDebugCS : stereoReprojectCS;
-	if (!shader) {
-		std::vector<std::pair<const char*, const char*>> defines{ { "VR", "" }, { "FRAMEBUFFER", "" } };
-		if (globals::features::terrainBlending.loaded)
-			defines.push_back({ "TERRAIN_BLENDING", "" });
-		if (useDebug)
-			defines.push_back({ "DEBUG_DISOCCLUSION", "" });
-		shader = reinterpret_cast<ID3D11ComputeShader*>(Util::CompileShader(L"Data\\Shaders\\ScreenSpaceShadows\\ShadowReprojectCS.hlsl", defines, "cs_5_0"));
-		if (!shader)
-			compileFailed = true;
-	}
-	return shader;
+	std::vector<std::pair<const char*, const char*>> defines{ { "VR", "" }, { "FRAMEBUFFER", "" } };
+	if (globals::features::terrainBlending.loaded)
+		defines.push_back({ "TERRAIN_BLENDING", "" });
+	if (useDebug)
+		defines.push_back({ "DEBUG_DISOCCLUSION", "" });
+	return shader.Get(L"Data\\Shaders\\ScreenSpaceShadows\\ShadowReprojectCS.hlsl", defines, "cs_5_0");
 }
 
 void ScreenSpaceShadows::DrawStereoSync()
@@ -507,14 +477,12 @@ void ScreenSpaceShadows::DrawStereoSync()
 	// Prefer the reproject variant; compile the bilateral sync lazily only when it is the
 	// actual fallback, so the default reproject path never builds an unused shader.
 	ID3D11ComputeShader* stereoCS = useStereoReproject ? GetStereoReprojectCS() : nullptr;
-	if (!stereoCS) {
-		if (!stereoSyncCS) {
-			std::vector<std::pair<const char*, const char*>> defines{ { "VR", "" }, { "FRAMEBUFFER", "" } };
-			if (globals::features::terrainBlending.loaded)
-				defines.push_back({ "TERRAIN_BLENDING", "" });
-			stereoSyncCS = reinterpret_cast<ID3D11ComputeShader*>(Util::CompileShader(L"Data\\Shaders\\ScreenSpaceShadows\\StereoSyncCS.hlsl", defines, "cs_5_0"));
-		}
-		stereoCS = stereoSyncCS;
+	bool usingSync = !stereoCS;
+	if (usingSync) {
+		std::vector<std::pair<const char*, const char*>> defines{ { "VR", "" }, { "FRAMEBUFFER", "" } };
+		if (globals::features::terrainBlending.loaded)
+			defines.push_back({ "TERRAIN_BLENDING", "" });
+		stereoCS = stereoSyncCS.Get(L"Data\\Shaders\\ScreenSpaceShadows\\StereoSyncCS.hlsl", defines, "cs_5_0");
 	}
 	if (!stereoCS)
 		return;
@@ -522,7 +490,7 @@ void ScreenSpaceShadows::DrawStereoSync()
 	ZoneScoped;
 	// Label the pass by the path actually dispatched so profiler captures aren't
 	// mislabeled as the bilateral sync when the reproject variant runs.
-	CS_GPU_PASS(stereoCS == stereoSyncCS ? "ScreenSpaceShadows::StereoSync" : "ScreenSpaceShadows::StereoReproject");
+	CS_GPU_PASS_SELECT(usingSync, "ScreenSpaceShadows::StereoSync", "ScreenSpaceShadows::StereoReproject");
 
 	auto context = globals::d3d::context;
 

@@ -4,6 +4,7 @@
 #include "Features/LightLimitFix/ParticleLights.h"
 #include "LightLimitFix/ShadowCasterManager.h"
 #include "OverlayFeature.h"
+#include "Utils/LazyShader.h"
 #include "Utils/PointLightFlags.h"
 
 #include <array>
@@ -229,10 +230,10 @@ public:
 	bool previousEnableLightsVisualisation = false;
 	bool currentEnableLightsVisualisation = false;
 
-	ID3D11ComputeShader* clusterBuildingCS = nullptr;
-	ID3D11ComputeShader* clusterCullingCS = nullptr;
-	ID3D11ComputeShader* shadowDemandCS = nullptr;
-	ID3D11ComputeShader* shadowDepthPyramidCS = nullptr;
+	Util::LazyShader<ID3D11ComputeShader> clusterBuildingCS;
+	Util::LazyShader<ID3D11ComputeShader> clusterCullingCS;
+	Util::LazyShader<ID3D11ComputeShader> shadowDemandCS;
+	Util::LazyShader<ID3D11ComputeShader> shadowDepthPyramidCS;
 
 	ConstantBuffer* lightBuildingCB = nullptr;
 	ConstantBuffer* lightCullingCB = nullptr;
@@ -334,6 +335,8 @@ public:
 
 	/** @brief Creates GPU buffers, compute shaders, and constant buffers for clustered lighting. */
 	virtual void SetupResources() override;
+	/** @brief Compiles (or re-lazily-compiles) the clustering and shadow-demand compute shaders. */
+	void CompileComputeShaders();
 	virtual void Reset() override;
 	virtual void OnSceneTransitionReset(bool opening) override;
 

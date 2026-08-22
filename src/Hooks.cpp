@@ -478,7 +478,9 @@ namespace PostProcessingExtensions
 {
 	struct Main_HDRTonemapBlendCinematic_Render
 	{
-		static void thunk(RE::ImageSpaceManager* a1, RE::ImageSpaceEffect* a2, uint32_t a3, uint32_t a4, RE::ImageSpaceShaderParam* a5)
+		// a2 is a pointer on SE/VR but an array index on AE; keep it opaque, never reinterpret_cast.
+		// a6 picks VR's render-target bind mode; drop it and VR reads garbage stack.
+		static void thunk(RE::ImageSpaceManager* a1, uintptr_t a2, uint32_t a3, uint32_t a4, RE::ImageSpaceShaderParam* a5, bool a6)
 		{
 			auto* state = globals::state;
 			const auto input = static_cast<RE::RENDER_TARGET>(a3);
@@ -489,9 +491,9 @@ namespace PostProcessingExtensions
 
 			auto& postProcessing = globals::features::postProcessing;
 			if (postProcessing.loaded)
-				postProcessing.PreProcess(input);
+				postProcessing.PreProcess(input, output);
 
-			func(a1, a2, a3, a4, a5);
+			func(a1, a2, a3, a4, a5, a6);
 		}
 		static inline REL::Relocation<decltype(thunk)> func;
 	};
@@ -1344,10 +1346,12 @@ namespace Hooks
 		stl::write_vfunc<0x6, GrassExtensions::BSGrassShader_SetupGeometry>(RE::VTABLE_BSGrassShader[0]);
 		stl::write_vfunc<0x6, PostProcessingExtensions::BSParticleShader_SetupGeometry>(RE::VTABLE_BSParticleShader[0]);
 
+		// Only serves Effects11's tonemap takeover (HandlePostProcessing is a no-op
+		// without it), so it's installed on VR too.
 		logger::info("Installing post-processing hooks");
-		// AE passes an effects-array index here; the thunk only forwards the opaque argument.
+		// AE's a2 slot here is an effects-array index, not a pointer.
 		stl::write_thunk_call<PostProcessingExtensions::Main_HDRTonemapBlendCinematic_Render>(REL::RelocationID(99023, 105674, 99023).address() + REL::Relocate(0x1EA, 0x178, 0x20E));
-		// SE and VR have a second matching call; AE's equivalent remains unidentified.
+		// SE and VR both have a second matching call site; AE's equivalent isn't identified.
 		if (REL::Module::IsSE() || REL::Module::IsVR())
 			stl::write_thunk_call<PostProcessingExtensions::Main_HDRTonemapBlendCinematic_Render>(REL::RelocationID(99023, 105674, 99023).address() + REL::Relocate(0x230, 0x178, 0x254));
 

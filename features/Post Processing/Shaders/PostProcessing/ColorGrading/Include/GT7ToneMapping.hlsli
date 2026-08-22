@@ -26,6 +26,8 @@
 #ifndef GT7_TONE_MAPPING_HLSLI
 #define GT7_TONE_MAPPING_HLSLI
 
+#include "Common/Math.hlsli"
+
 // -----------------------------------------------------------------------------
 // Configuration
 // -----------------------------------------------------------------------------
@@ -109,7 +111,7 @@ float evaluateCurve(GTToneMappingCurveV2 curve, float x)
 	float shoulder = curve.kA + curve.kB * exp(x * curve.kC);
 
 	if (x < curve.linearSection * curve.peakIntensity) {
-		float toeMapped = curve.midPoint * pow(x / curve.midPoint, curve.toeStrength);
+		float toeMapped = curve.midPoint * Math::SafePow(x / curve.midPoint, curve.toeStrength);
 		return weightToe * toeMapped + weightLinear * x;
 	} else {
 		return shoulder;
@@ -150,7 +152,9 @@ float inverseEotfSt2084(float v, float exponentScaleFactor = 1.0f)
 	float physical = frameBufferValueToPhysicalValue(v);
 	float y = physical / pqC;
 
-	float ym = pow(y, m1);
+	// max(), not SafePow's abs(): y can be genuinely negative here (real
+	// out-of-gamut color, not FP noise) and should clamp to black, not mirror.
+	float ym = Math::SafePow(max(y, 0.0f), m1);
 	return exp2(m2 * (log2(c1 + c2 * ym) - log2(1.0f + c3 * ym)));
 }
 

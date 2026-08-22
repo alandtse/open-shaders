@@ -19,6 +19,7 @@
 
 #include "Common/SharedData.hlsli"
 #include "Common/VR.hlsli"
+#include "Common/VRReproject.hlsli"
 #include "VRStereoOptimizations/cbuffers.hlsli"
 #include "VRStereoOptimizations/modes.hlsli"
 

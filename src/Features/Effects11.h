@@ -14,6 +14,7 @@ public:
 	virtual std::string_view GetCategory() const override { return "Post-Processing"; }
 	virtual inline std::string_view GetShaderDefineName() override { return "EFFECTS11"; }
 	virtual inline bool HasShaderDefine(RE::BSShader::Type) override { return true; }
+	virtual bool SupportsVR() override { return true; }
 
 	virtual std::pair<std::string, std::vector<std::string>> GetFeatureSummary() override
 	{

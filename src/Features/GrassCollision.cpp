@@ -465,18 +465,12 @@ void GrassCollision::Hooks::BSGrassShader_SetupGeometry::thunk(RE::BSShader* Thi
 
 void GrassCollision::ClearShaderCache()
 {
-	if (collisionUpdateCS)
-		collisionUpdateCS->Release();
-	collisionUpdateCS = nullptr;
+	collisionUpdateCS.Reset();
 }
 
 ID3D11ComputeShader* GrassCollision::GetCollisionUpdateCS()
 {
-	if (!collisionUpdateCS) {
-		logger::debug("Compiling CollisionUpdateCS");
-		collisionUpdateCS = static_cast<ID3D11ComputeShader*>(Util::CompileShader(L"Data\\Shaders\\GrassCollision\\CollisionUpdateCS.hlsl", {}, "cs_5_0"));
-	}
-	return collisionUpdateCS;
+	return collisionUpdateCS.Get(L"Data\\Shaders\\GrassCollision\\CollisionUpdateCS.hlsl", {}, "cs_5_0");
 }
 
 void GrassCollision::UpdateCollisionTexture()
@@ -514,10 +508,16 @@ void GrassCollision::UpdateCollisionTexture()
 		};
 		context->CSSetUnorderedAccessViews(0, ARRAYSIZE(uavs), uavs, nullptr);
 
-		context->CSSetShader(GetCollisionUpdateCS(), nullptr, 0);
-		CS_GPU_PASS("GrassCollision::CollisionUpdate");
-		context->Dispatch(512 / 8, 512 / 8, 1);
-		currentTextureIndex = outputTextureIndex;
+		if (auto* shader = GetCollisionUpdateCS()) {
+			context->CSSetShader(shader, nullptr, 0);
+			CS_GPU_PASS("GrassCollision::CollisionUpdate");
+			context->Dispatch(512 / 8, 512 / 8, 1);
+			currentTextureIndex = outputTextureIndex;
+		} else {
+			const float clearColor[4] = {};
+			context->ClearUnorderedAccessViewFloat(uavs[0], clearColor);
+			context->ClearUnorderedAccessViewFloat(uavs[1], clearColor);
+		}
 	}
 
 	context->CSSetShader(nullptr, nullptr, 0);

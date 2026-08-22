@@ -1,5 +1,6 @@
 #include "ENBLens.h"
 
+#include "../EffectManager.h"
 #include "../TextureManager.h"
 
 void ENBLens::Execute()
@@ -37,5 +38,5 @@ void ENBLens::UpdateEffectVariables()
 	SetShaderResourceVariable("TextureDownsampled", TextureManager::GetSingleton().GetDownsampleTexture());
 
 	// Set original texture, not typically used due to aliasing
-	SetShaderResourceVariable("TextureOriginal", globals::game::renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMAIN].SRV);
+	SetShaderResourceVariable("TextureOriginal", EffectManager::GetSingleton().GetTextureOriginal().SRV);
 }

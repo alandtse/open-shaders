@@ -3,6 +3,7 @@
 #include "Common/MotionBlur.hlsli"
 #include "Common/SharedData.hlsli"
 #include "Common/VR.hlsli"
+#include "Common/VRReproject.hlsli"
 
 typedef VS_OUTPUT PS_INPUT;
 

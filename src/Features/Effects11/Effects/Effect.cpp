@@ -6,12 +6,14 @@
 #include <DirectXTex.h>
 
 #include "../ENBExtender.h"
+#include "../EffectManager.h"
 #include "../PresetManager.h"
 #include "../TextureManager.h"
 #include "Features/Effects11/SettingsPatches.h"
 #include "Features/Effects11/ShaderPatches.h"
 #include "Globals.h"
 #include "State.h"
+#include "Utils/D3D.h"
 
 std::filesystem::path Effect::GetFilePath() const
 {
@@ -319,6 +321,7 @@ bool Effect::LoadFXFile()
 			}
 			return false;
 		}
+		Util::LogShaderCompileWarnings(err.get(), filePathStr);
 		return SUCCEEDED(D3DX11CreateEffectFromMemory(compiled->GetBufferPointer(),
 			compiled->GetBufferSize(), 0, globals::d3d::device, effect.put()));
 	};
@@ -398,6 +401,7 @@ bool Effect::LoadFXFile()
 			errors.push_back("Failed to create effect from compiled shader");
 			return false;
 		}
+		Util::LogShaderCompileWarnings(errorBlob.get(), filePathStr);
 	}
 
 	EnumerateAllVariables();
@@ -450,12 +454,14 @@ Effect::TechniqueSequenceResult Effect::ExecuteTechniqueSequence(const std::stri
 			inputSRV = a_input;
 			outputRTV = a_output.rtv.get();
 		} else {
+			// GetEyeCroppedSRV: a prior technique in this sequence wrote a_output/a_temp
+			// under a per-eye viewport crop, so this read-back needs the same crop.
 			bool useTemp = (swapCounter & 1) == 0;
 			if (useTemp) {
-				inputSRV = a_temp.srv.get();
+				inputSRV = EffectManager::GetSingleton().GetEyeCroppedSRV(a_temp);
 				outputRTV = a_output.rtv.get();
 			} else {
-				inputSRV = a_output.srv.get();
+				inputSRV = EffectManager::GetSingleton().GetEyeCroppedSRV(a_output);
 				outputRTV = a_temp.rtv.get();
 			}
 		}
@@ -1124,13 +1130,14 @@ void Effect::RenderPasses(ID3DX11EffectTechnique* technique, ID3D11RenderTargetV
 
 	uint32_t outputWidth = 0, outputHeight = 0;
 
+	winrt::com_ptr<ID3D11Resource> outputResource;
+	outputRTV->GetResource(outputResource.put());
+
 	auto cacheIt = rtvDimensionCache.find(outputRTV);
-	if (cacheIt != rtvDimensionCache.end()) {
-		outputWidth = cacheIt->second.first;
-		outputHeight = cacheIt->second.second;
+	if (cacheIt != rtvDimensionCache.end() && cacheIt->second.resource == outputResource) {
+		outputWidth = cacheIt->second.width;
+		outputHeight = cacheIt->second.height;
 	} else {
-		winrt::com_ptr<ID3D11Resource> outputResource;
-		outputRTV->GetResource(outputResource.put());
 		winrt::com_ptr<ID3D11Texture2D> outputTexture;
 		if (outputResource) {
 			outputResource.try_as(outputTexture);
@@ -1141,18 +1148,25 @@ void Effect::RenderPasses(ID3DX11EffectTechnique* technique, ID3D11RenderTargetV
 				outputHeight = outputDesc.Height;
 			}
 		}
-		rtvDimensionCache[outputRTV] = { outputWidth, outputHeight };
+		rtvDimensionCache[outputRTV] = { outputResource, outputWidth, outputHeight };
 	}
 
 	if (outputWidth == 0 || outputHeight == 0)
 		return;
 
-	float aspect = static_cast<float>(outputWidth) / static_cast<float>(outputHeight);
-	float screenSize[4] = { static_cast<float>(outputWidth), 1.0f / outputWidth, aspect, 1.0f / aspect };
+	// Crop only a full-SBS-width destination, not a fixed-size canvas (e.g. TextureBloom).
+	auto& effectManager = EffectManager::GetSingleton();
+	const bool cropToEye = effectManager.currentEyeIndex >= 0 && outputWidth == effectManager.currentMainWidth;
+	const uint32_t viewportWidth = cropToEye ? outputWidth / 2 : outputWidth;
+	const uint32_t viewportOffsetX = cropToEye ? static_cast<uint32_t>(effectManager.currentEyeIndex) * viewportWidth : 0;
+
+	float aspect = static_cast<float>(viewportWidth) / static_cast<float>(outputHeight);
+	float screenSize[4] = { static_cast<float>(viewportWidth), 1.0f / viewportWidth, aspect, 1.0f / aspect };
 	SetVectorVariable("ScreenSize", screenSize, sizeof(screenSize));
 
 	D3D11_VIEWPORT viewport = {};
-	viewport.Width = static_cast<float>(outputWidth);
+	viewport.TopLeftX = static_cast<float>(viewportOffsetX);
+	viewport.Width = static_cast<float>(viewportWidth);
 	viewport.Height = static_cast<float>(outputHeight);
 	viewport.MaxDepth = 1.0f;
 	context->RSSetViewports(1, &viewport);

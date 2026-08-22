@@ -39,7 +39,7 @@ namespace TestConstants
 
 	// Test 1: Normal incidence (VdotH = 1) should return F0
 	float3 fresnel_normal = BRDF::F_Schlick(F0, 1.0f);
-	// Note: Strict tolerance test removed due to floating-point precision issues
+	// Only a non-negativity check: FP precision at normal incidence makes an exact numeric bound unreliable.
 	ASSERT(IsTrue, all(fresnel_normal >= 0.0f));
 
 	// Test 2: Grazing angle (VdotH = 0) should approach 1.0 (Fc = 1)

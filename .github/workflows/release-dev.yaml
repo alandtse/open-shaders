@@ -105,6 +105,43 @@ jobs:
             run-shader-tests: true
             run-cpp-tests: true
 
+    prune-stale-cache:
+        name: Prune superseded CMake build-dir cache generations
+        needs: build
+        if: needs.build.outputs.cpp-built == 'true'
+        # Trusted-only (this workflow never triggers on pull_request or
+        # pull_request_target -- see the `on:` block above): deletes every
+        # generation of a Windows-cmake-msvc-* cache prefix except the
+        # newest, so a CMakePresets.json/extern/vcpkg.json change doesn't
+        # leave a stale multi-GB generation sitting around until GitHub's
+        # per-repo cache cap evicts something else instead.
+        runs-on: ubuntu-latest
+        permissions:
+            actions: write
+        steps:
+            - name: Delete superseded cache generations
+              env:
+                  GH_TOKEN: ${{ github.token }}
+              shell: bash
+              run: |
+                  set -euo pipefail
+                  declare -A newest_id newest_time
+                  while IFS=$'\t' read -r id created key; do
+                      [ -z "$id" ] && continue
+                      prefix=$(echo "$key" | sed -E 's/-[0-9a-f]{64}$//')
+                      if [ -z "${newest_time[$prefix]:-}" ] || [[ "$created" > "${newest_time[$prefix]}" ]]; then
+                          if [ -n "${newest_id[$prefix]:-}" ]; then
+                              echo "Deleting superseded cache ${newest_id[$prefix]} ($prefix)"
+                              gh api -X DELETE "repos/${{ github.repository }}/actions/caches/${newest_id[$prefix]}" || true
+                          fi
+                          newest_time[$prefix]="$created"
+                          newest_id[$prefix]="$id"
+                      else
+                          echo "Deleting superseded cache $id ($prefix)"
+                          gh api -X DELETE "repos/${{ github.repository }}/actions/caches/$id" || true
+                      fi
+                  done < <(gh api "repos/${{ github.repository }}/actions/caches" --paginate --jq '.actions_caches[] | select(.key | test("^Windows-cmake-msvc-")) | "\(.id)\t\(.created_at)\t\(.key)"')
+
     prerelease:
         name: Publish rolling dev-latest prerelease
         needs: build

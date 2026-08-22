@@ -78,12 +78,15 @@ cbuffer LensFlareConstants : register(b1)
 
 float GetGhostScale(int i)
 {
-	return GhostScalesPacked[i / 4][i % 4];
+	// i is always non-negative; uint div/mod avoids fxc's slower signed instructions.
+	uint ui = (uint)i;
+	return GhostScalesPacked[ui / 4][ui % 4];
 }
 
 float GetGhostKernelScale(int i)
 {
-	return GhostKernelScalesPacked[i / 4][i % 4];
+	uint ui = (uint)i;
+	return GhostKernelScalesPacked[ui / 4][ui % 4];
 }
 
 // Convert screen UV to FFT UV (aspect-corrected + zero-padding)
