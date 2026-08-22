@@ -32,6 +32,9 @@ public:
 		bool EnableGrassCollision = 1;
 		bool TrackRagdolls = 1;
 		bool EnableBlur = 1;
+		float CollisionRadiusScale = 1.0f;
+		float GrassInteractionRadius = 16.0f;
+		float CollisionImpactStrength = 1.0f;
 	};
 
 	struct alignas(16) BoundingBoxPacked
@@ -62,7 +65,8 @@ public:
 		uint BoundingBoxCount;
 
 		float CameraHeightDelta;
-		float3 pad0;
+		float GrassInteractionRadius;
+		float2 pad0;
 	};
 	STATIC_ASSERT_ALIGNAS_16(PerFrame);
 
@@ -70,11 +74,13 @@ public:
 	{
 		float2 PosOffset;
 		DirectX::XMUINT2 ArrayOrigin;
+		float CollisionImpactStrength;
+		float3 pad0;
 	};
 	STATIC_ASSERT_ALIGNAS_16(ShaderData);
 
 	/** @brief Returns the grass-collision values packed into the shared feature buffer. */
-	[[nodiscard]] ShaderData GetCommonBufferData() const noexcept { return { shaderPosOffset, shaderArrayOrigin }; }
+	[[nodiscard]] ShaderData GetCommonBufferData() const noexcept;
 
 	Settings settings;
 	float2 shaderPosOffset{};

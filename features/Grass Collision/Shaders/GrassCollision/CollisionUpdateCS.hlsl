@@ -12,6 +12,7 @@ cbuffer PerFrameCB : register(b0)
 	uint BoundingBoxCount;
 
 	float CameraHeightDelta;
+	float GrassInteractionRadius;
 }
 
 struct BoundingBoxPacked
@@ -46,7 +47,11 @@ groupshared BoundingBoxPacked SharedBoundingBoxes[64];
 
 	const uint TEXTURE_SIZE = 512;
 	const float WORLD_SIZE = 4096;
-	float2 ZRANGE = float2(2048.0, -2048.0);
+	const float2 ZRANGE = float2(2048.0, -2048.0);
+	const float CONTACT_STIFFNESS = 16.0;
+	const float CONTACT_DAMPING = 8.0;
+	const float RECOVERY_STIFFNESS = 0.35;
+	const float RECOVERY_DAMPING = 1.2;
 
 	const int2 textureSize = int2(TEXTURE_SIZE, TEXTURE_SIZE);
 	int2 cellID = int2(dispatchThreadId.xy) - int2(ArrayOrigin);
@@ -61,21 +66,7 @@ groupshared BoundingBoxPacked SharedBoundingBoxes[64];
 	int2 validMax = int2(TEXTURE_SIZE - 1, TEXTURE_SIZE - 1) + min(int2(0, 0), ValidMargin);
 	bool isValid = all(cellID >= validMin) && all(cellID <= validMax);
 
-	float2 collision = max(ZRANGE.x, ZRANGE.y);
-	float2 previousCollision = collision;
-
-	float2 fadeRate = TimeDelta * 100 * float2(0.01, 1.0);
-
-	if (isValid) {
-		previousCollision = Collision[dispatchThreadId.xy].xy;
-		previousCollision = lerp(ZRANGE.x, ZRANGE.y, previousCollision);
-
-		// Apply camera height change
-		previousCollision += CameraHeightDelta;
-
-		// Temporal decay
-		collision = previousCollision + fadeRate;
-	}
+	float targetHeight = ZRANGE.x;
 
 	for (uint i = 0; i < BoundingBoxCount; i++) {
 		BoundingBoxPacked boundingBox = SharedBoundingBoxes[i];
@@ -87,6 +78,8 @@ groupshared BoundingBoxPacked SharedBoundingBoxes[64];
 				float3 pointA = collisionInstance.PointAAndRadius.xyz;
 				float3 pointB = collisionInstance.PointB.xyz;
 				float radius = collisionInstance.PointAAndRadius.w;
+				float footprintRadius = radius + max(GrassInteractionRadius, 0.0);
+				float profileScale = radius / footprintRadius;
 				float2 capsuleAxis = pointB.xy - pointA.xy;
 				float capsuleAxisLengthSquared = dot(capsuleAxis, capsuleAxis);
 				float capsulePosition = capsuleAxisLengthSquared > 1e-5 ?
@@ -97,29 +90,56 @@ groupshared BoundingBoxPacked SharedBoundingBoxes[64];
 				bool intersectsShape = false;
 
 				float lowerCapDistance = distance(pointA.xy, cellCentreMS);
-				if (lowerCapDistance < radius) {
-					lowestHeight = pointA.z - sqrt(radius * radius - lowerCapDistance * lowerCapDistance);
+				if (lowerCapDistance < footprintRadius) {
+					float profileDistance = lowerCapDistance * profileScale;
+					lowestHeight = pointA.z - sqrt(max(radius * radius - profileDistance * profileDistance, 0.0));
 					intersectsShape = true;
 				}
 
 				float segmentDistance = distance(closestPoint.xy, cellCentreMS);
-				if (segmentDistance < radius) {
-					float segmentHeight = closestPoint.z - sqrt(radius * radius - segmentDistance * segmentDistance);
+				if (segmentDistance < footprintRadius) {
+					float profileDistance = segmentDistance * profileScale;
+					float segmentHeight = closestPoint.z - sqrt(max(radius * radius - profileDistance * profileDistance, 0.0));
 					lowestHeight = min(lowestHeight, segmentHeight);
 					intersectsShape = true;
 				}
 
-				// Check if collision can lower the height
-				if (intersectsShape && lowestHeight < collision.y) {
-					collision.x = min(collision.x, lowestHeight);
-					collision.y = lowestHeight;
-				}
+				if (intersectsShape)
+					targetHeight = min(targetHeight, lowestHeight);
 			}
 		}
 	}
 
-	collision = (collision - ZRANGE.x) / (ZRANGE.y - ZRANGE.x);
-	previousCollision = (previousCollision - ZRANGE.x) / (ZRANGE.y - ZRANGE.x);
+	targetHeight = clamp(targetHeight, ZRANGE.y, ZRANGE.x);
 
-	Collision[dispatchThreadId.xy] = float4(collision, previousCollision);
+	float collisionHeight = ZRANGE.x;
+	float recoveryVelocity = 0.0;
+	if (isValid) {
+		float4 previousState = Collision[dispatchThreadId.xy];
+		collisionHeight = lerp(ZRANGE.x, ZRANGE.y, previousState.x) + CameraHeightDelta;
+		recoveryVelocity = previousState.y;
+	}
+
+	float previousCollisionHeight = collisionHeight;
+	float deltaTime = max(TimeDelta, 0.0);
+	float targetDelta = targetHeight - collisionHeight;
+	float stiffness = targetDelta < 0.0 ? CONTACT_STIFFNESS : RECOVERY_STIFFNESS;
+	float damping = targetDelta < 0.0 ? CONTACT_DAMPING : RECOVERY_DAMPING;
+	float denominator = 1.0 + damping * deltaTime + stiffness * deltaTime * deltaTime;
+	recoveryVelocity = (recoveryVelocity + stiffness * targetDelta * deltaTime) / denominator;
+	collisionHeight += recoveryVelocity * deltaTime;
+
+	float remainingDelta = targetHeight - collisionHeight;
+	if (targetDelta * remainingDelta <= 0.0) {
+		collisionHeight = targetHeight;
+		recoveryVelocity = 0.0;
+	}
+
+	collisionHeight = clamp(collisionHeight, ZRANGE.y, ZRANGE.x);
+	previousCollisionHeight = clamp(previousCollisionHeight, ZRANGE.y, ZRANGE.x);
+	float encodedCollisionHeight = (collisionHeight - ZRANGE.x) / (ZRANGE.y - ZRANGE.x);
+	float encodedPreviousCollisionHeight = (previousCollisionHeight - ZRANGE.x) / (ZRANGE.y - ZRANGE.x);
+
+	Collision[dispatchThreadId.xy] =
+		float4(encodedCollisionHeight, recoveryVelocity, encodedPreviousCollisionHeight, 0.0);
 }

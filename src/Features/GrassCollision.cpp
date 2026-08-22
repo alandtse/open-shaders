@@ -16,6 +16,12 @@ static constexpr uint MAX_COLLISIONS = MAX_BOUNDING_BOXES * MAX_COLLISIONS_PER_B
 static constexpr float MAX_ACTOR_DISTANCE = 2048.0f;
 static constexpr float MAX_ACTOR_SQ_DISTANCE = MAX_ACTOR_DISTANCE * MAX_ACTOR_DISTANCE;
 static constexpr float MIN_COLLISION_RADIUS_DISTANCE_SCALE = 0.001f;
+static constexpr float MIN_COLLISION_RADIUS_SCALE = 1.0f;
+static constexpr float MAX_COLLISION_RADIUS_SCALE = 10.0f;
+static constexpr float MIN_GRASS_INTERACTION_RADIUS = 0.0f;
+static constexpr float MAX_GRASS_INTERACTION_RADIUS = 128.0f;
+static constexpr float MIN_COLLISION_IMPACT_STRENGTH = 0.0f;
+static constexpr float MAX_COLLISION_IMPACT_STRENGTH = 2.0f;
 
 struct GrassCollisionActorCandidate
 {
@@ -26,20 +32,45 @@ struct GrassCollisionActorCandidate
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	GrassCollision::Settings,
 	EnableGrassCollision,
-	TrackRagdolls)
+	TrackRagdolls,
+	CollisionRadiusScale,
+	GrassInteractionRadius,
+	CollisionImpactStrength)
 
 void GrassCollision::DrawSettings()
 {
 	if (ImGui::TreeNodeEx(T(TKEY("grass_collision"), "Grass Collision"), ImGuiTreeNodeFlags_DefaultOpen)) {
 		ImGui::Checkbox(T(TKEY("enable"), "Enable Grass Collision"), (bool*)&settings.EnableGrassCollision);
+		ImGui::SliderFloat(T(TKEY("radius_scale"), "Collision Radius Scale"), &settings.CollisionRadiusScale,
+			MIN_COLLISION_RADIUS_SCALE, MAX_COLLISION_RADIUS_SCALE, "%.2fx", ImGuiSliderFlags_AlwaysClamp);
+		ImGui::SliderFloat(T(TKEY("grass_interaction_radius"), "Grass Interaction Radius"),
+			&settings.GrassInteractionRadius, MIN_GRASS_INTERACTION_RADIUS, MAX_GRASS_INTERACTION_RADIUS,
+			"%.0f units", ImGuiSliderFlags_AlwaysClamp);
+		ImGui::SliderFloat(T(TKEY("impact_strength"), "Collision Impact"), &settings.CollisionImpactStrength,
+			MIN_COLLISION_IMPACT_STRENGTH, MAX_COLLISION_IMPACT_STRENGTH, "%.2fx", ImGuiSliderFlags_AlwaysClamp);
 		ImGui::TreePop();
 	}
+}
+
+GrassCollision::ShaderData GrassCollision::GetCommonBufferData() const noexcept
+{
+	return {
+		shaderPosOffset,
+		shaderArrayOrigin,
+		std::clamp(settings.CollisionImpactStrength,
+			MIN_COLLISION_IMPACT_STRENGTH, MAX_COLLISION_IMPACT_STRENGTH),
+		{}
+	};
 }
 
 void GrassCollision::QueueCollisions()
 {
 	if (!settings.EnableGrassCollision)
 		return;
+	const float collisionRadiusScale = std::clamp(settings.CollisionRadiusScale,
+		MIN_COLLISION_RADIUS_SCALE, MAX_COLLISION_RADIUS_SCALE);
+	const float grassInteractionRadius = std::clamp(settings.GrassInteractionRadius,
+		MIN_GRASS_INTERACTION_RADIUS, MAX_GRASS_INTERACTION_RADIUS);
 
 	eastl::vector<GrassCollisionActorCandidate> actorCandidates{};
 	RE::NiPoint3 cameraPosition = Util::GetEyePosition(0);
@@ -91,6 +122,7 @@ void GrassCollision::QueueCollisions()
 			RE::BSVisit::TraverseScenegraphCollision(root, [&](RE::bhkNiCollisionObject* a_object) -> RE::BSVisit::BSVisitControl {
 				Util::ShapeCollisionCapsule capsule;
 				if (Util::GetShapeCollisionCapsule(a_object, capsule)) {
+					capsule.radius *= collisionRadiusScale;
 					if (capsule.radius < distance * MIN_COLLISION_RADIUS_DISTANCE_SCALE)
 						return RE::BSVisit::BSVisitControl::kContinue;
 
@@ -117,7 +149,7 @@ void GrassCollision::QueueCollisions()
 			for (const auto& data : collisionShapes) {
 				collisionsData.push_back(data);
 
-				const float radius = data.PointAAndRadius.w;
+				const float radius = data.PointAAndRadius.w + grassInteractionRadius;
 				float2 pointMin(
 					std::min(data.PointAAndRadius.x, data.PointB.x) - radius,
 					std::min(data.PointAAndRadius.y, data.PointB.y) - radius);
@@ -193,6 +225,8 @@ void GrassCollision::Update()
 		perFrameData.TimeDelta = *globals::game::deltaTime * !globals::game::ui->GameIsPaused();
 
 		perFrameData.CameraHeightDelta = prevEyePosNI.z - eyePosNI.z;
+		perFrameData.GrassInteractionRadius = std::clamp(settings.GrassInteractionRadius,
+			MIN_GRASS_INTERACTION_RADIUS, MAX_GRASS_INTERACTION_RADIUS);
 
 		perFrameData.BoundingBoxCount = std::min((uint)queuedBoundingBoxes.size(), MAX_BOUNDING_BOXES);
 
