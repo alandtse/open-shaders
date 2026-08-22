@@ -3,6 +3,7 @@
 #include "Globals.h"
 #include "State.h"
 
+#ifdef TRACY_ENABLE
 ScopedGpuPass::ScopedGpuPass(const tracy::SourceLocationData* srcloc, std::string_view name)
 {
 	auto* profiler = globals::profiler;
@@ -13,13 +14,11 @@ ScopedGpuPass::ScopedGpuPass(const tracy::SourceLocationData* srcloc, std::strin
 	if (profiler)
 		profilerActive = profiler->BeginPass(name, false);
 
-#ifdef TRACY_ENABLE
 	cpuZone.emplace(srcloc, -1, true);
 
 	if (state && state->tracyCtx) {
 		gpuZone.emplace(state->tracyCtx, srcloc, true);
 	}
-#endif
 
 	// BeginAnnotation, not BeginPerfEvent: the latter also opens a Tracy CPU
 	// zone, duplicating the one above.
@@ -28,6 +27,7 @@ ScopedGpuPass::ScopedGpuPass(const tracy::SourceLocationData* srcloc, std::strin
 		annotationOpen = true;
 	}
 }
+#endif
 
 ScopedGpuPass::ScopedGpuPass(std::string_view name)
 {
