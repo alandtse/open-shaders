@@ -20,7 +20,9 @@
 ///   CS_GPU_PASS_DYNAMIC(runtimeName);                     // runtime name, allocates
 struct ScopedGpuPass
 {
+	/** @brief Opens a pass using Tracy's dynamic source-location path. name is copied, not retained. */
 	explicit ScopedGpuPass(std::string_view name);
+	/** @brief Opens a pass using a caller-supplied static source location (zero allocation). name is copied, not retained. */
 	ScopedGpuPass(const tracy::SourceLocationData* srcloc, std::string_view name);
 	~ScopedGpuPass();
 
