@@ -19,6 +19,12 @@ outputs:
 runs:
     using: "composite"
     steps:
+        # Windows Defender real-time scanning otherwise touches every file the vcpkg
+        # clone, CMake configure, and compiler write for the rest of this job.
+        - name: Exclude workspace from Windows Defender scanning
+          shell: pwsh
+          run: Add-MpPreference -ExclusionPath "${{ github.workspace }}"
+
         # Single source of truth for the cache trust split below. head.repo.fork
         # is unusable here (this repo is itself an upstream fork); compare full_name.
         - name: Determine cache-write trust
