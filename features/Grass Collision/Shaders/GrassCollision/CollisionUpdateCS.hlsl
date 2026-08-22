@@ -48,14 +48,17 @@ groupshared BoundingBoxPacked SharedBoundingBoxes[64];
 	const float WORLD_SIZE = 4096;
 	float2 ZRANGE = float2(2048.0, -2048.0);
 
-	uint2 cellID = uint2(max(int2(dispatchThreadId.xy) - ArrayOrigin, 0) % TEXTURE_SIZE);
+	const int2 textureSize = int2(TEXTURE_SIZE, TEXTURE_SIZE);
+	int2 cellID = int2(dispatchThreadId.xy) - int2(ArrayOrigin);
+	cellID = cellID % textureSize;
+	cellID += int2(cellID < 0) * textureSize;
 
-	float2 cellCentreMS = cellID + 0.5 - TEXTURE_SIZE / 2;
+	float2 cellCentreMS = float2(cellID) + 0.5 - TEXTURE_SIZE / 2;
 	cellCentreMS = cellCentreMS / TEXTURE_SIZE * WORLD_SIZE + PosOffset.xy;
 
 	// Check if the cell is newly added
-	uint2 validMin = (uint2)max(0, ValidMargin.xy);
-	uint2 validMax = TEXTURE_SIZE - 1 + (uint2)min(0, ValidMargin.xy);
+	int2 validMin = max(int2(0, 0), ValidMargin);
+	int2 validMax = int2(TEXTURE_SIZE - 1, TEXTURE_SIZE - 1) + min(int2(0, 0), ValidMargin);
 	bool isValid = all(cellID >= validMin) && all(cellID <= validMax);
 
 	float2 collision = max(ZRANGE.x, ZRANGE.y);

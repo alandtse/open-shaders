@@ -50,7 +50,7 @@ namespace GrassCollision
 				float2 bilinearWeights = 1 - abs(offset - bilinearPos);
 				float w = bilinearWeights.x * bilinearWeights.y;
 
-				uint2 cellTexID = (cellID + SharedData::grassCollisionData.ArrayOrigin) % TEXTURE_SIZE;
+				uint2 cellTexID = ((uint2)cellID + SharedData::grassCollisionData.ArrayOrigin) % TEXTURE_SIZE;
 
 				float4 collisionSample = Collision[cellTexID];
 				collisionSample = lerp(ZRANGE.x, ZRANGE.y, collisionSample);
