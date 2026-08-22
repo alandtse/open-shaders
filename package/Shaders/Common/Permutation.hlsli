@@ -126,7 +126,13 @@ namespace Permutation
 		float GrassWindMaximumTilt;
 
 		float GrassWindBendProfile;
-		float3 GrassWindPadding;
+		float GrassWindSpringLag;
+		float GrassWindSpringStrength;
+		float GrassWindSpringRecovery;
+
+		float GrassWindFlutterStrength;
+		float GrassWindFlutterFrequency;
+		float2 GrassWindPadding;
 	};
 
 }

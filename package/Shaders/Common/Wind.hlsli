@@ -84,6 +84,33 @@ namespace Wind
 
 	namespace Grass
 	{
+		/** @brief Derives stateless lag and recovery from consecutive ambient samples. */
+		void CalculateSpringVelocities(
+			float3 currentVelocity, float currentGust, float3 previousVelocity, float previousGust,
+			float lagFrameCount, out float3 springVelocity, out float3 previousSpringVelocity)
+		{
+			float inertia = saturate(Permutation::GrassWindSpringStrength);
+			float recovery = max(Permutation::GrassWindSpringRecovery, 0.0);
+			float gustDelta = currentGust - previousGust;
+			float gustDeviation = currentGust - 0.5;
+			float recovering = gustDeviation * gustDelta < 0.0 ? 1.0 : 0.0;
+			float3 springOffset =
+				(currentVelocity - previousVelocity) * lagFrameCount * (inertia + recovery * recovering);
+			springVelocity = currentVelocity - springOffset;
+			previousSpringVelocity = previousVelocity - springOffset;
+
+			float maximumResponseSpeed =
+				max(length(currentVelocity), length(previousVelocity)) * (1.0 + recovery);
+			float springSpeed = length(springVelocity);
+			float previousSpringSpeed = length(previousSpringVelocity);
+			springVelocity = springSpeed > maximumResponseSpeed && springSpeed > 1e-5 ?
+			                     springVelocity * (maximumResponseSpeed / springSpeed) :
+			                     springVelocity;
+			previousSpringVelocity = previousSpringSpeed > maximumResponseSpeed && previousSpringSpeed > 1e-5 ?
+			                             previousSpringVelocity * (maximumResponseSpeed / previousSpringSpeed) :
+			                             previousSpringVelocity;
+		}
+
 		float3 CalculateVanillaDisplacement(
 			float2 instanceCoordinates, float tipWeight, float3 windVector, float windTimer, float windIntensityScale)
 		{

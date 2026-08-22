@@ -453,7 +453,13 @@ public:
 		float GrassWindMaximumTilt;
 
 		float GrassWindBendProfile;
-		float3 GrassWindPadding;
+		float GrassWindSpringLag;
+		float GrassWindSpringStrength;
+		float GrassWindSpringRecovery;
+
+		float GrassWindFlutterStrength;
+		float GrassWindFlutterFrequency;
+		float2 GrassWindPadding;
 
 		bool operator==(const PermutationCB& other) const
 		{
@@ -480,7 +486,12 @@ public:
 			       EnableAmbientGrassWind == other.EnableAmbientGrassWind &&
 			       GrassWindResponse == other.GrassWindResponse &&
 			       GrassWindMaximumTilt == other.GrassWindMaximumTilt &&
-			       GrassWindBendProfile == other.GrassWindBendProfile;
+			       GrassWindBendProfile == other.GrassWindBendProfile &&
+			       GrassWindSpringLag == other.GrassWindSpringLag &&
+			       GrassWindSpringStrength == other.GrassWindSpringStrength &&
+			       GrassWindSpringRecovery == other.GrassWindSpringRecovery &&
+			       GrassWindFlutterStrength == other.GrassWindFlutterStrength &&
+			       GrassWindFlutterFrequency == other.GrassWindFlutterFrequency;
 		}
 	};
 	STATIC_ASSERT_ALIGNAS_16(PermutationCB);

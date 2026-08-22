@@ -56,6 +56,16 @@ namespace
 	constexpr float kGrassWindMaximumTiltMax = 89.0f;
 	constexpr float kGrassWindBendProfileMin = 0.0f;
 	constexpr float kGrassWindBendProfileMax = 1.0f;
+	constexpr float kGrassWindSpringLagMin = 0.0f;
+	constexpr float kGrassWindSpringLagMax = 0.5f;
+	constexpr float kGrassWindSpringStrengthMin = 0.0f;
+	constexpr float kGrassWindSpringStrengthMax = 1.0f;
+	constexpr float kGrassWindSpringRecoveryMin = 0.0f;
+	constexpr float kGrassWindSpringRecoveryMax = 0.5f;
+	constexpr float kGrassWindFlutterStrengthMin = 0.0f;
+	constexpr float kGrassWindFlutterStrengthMax = 2.0f;
+	constexpr float kGrassWindFlutterFrequencyMin = 1.0f;
+	constexpr float kGrassWindFlutterFrequencyMax = 4.0f;
 	constexpr float kWaterBrightnessMin = 0.0f;
 	constexpr float kWaterBrightnessMax = 2.0f;
 	constexpr float kWaterAmountMin = 0.0f;
@@ -97,6 +107,11 @@ namespace
 		a_settings.grassWindResponse = ClampFiniteOrDefault(a_settings.grassWindResponse, kGrassWindResponseMin, kGrassWindResponseMax, defaults.grassWindResponse);
 		a_settings.grassWindMaximumTilt = ClampFiniteOrDefault(a_settings.grassWindMaximumTilt, kGrassWindMaximumTiltMin, kGrassWindMaximumTiltMax, defaults.grassWindMaximumTilt);
 		a_settings.grassWindBendProfile = ClampFiniteOrDefault(a_settings.grassWindBendProfile, kGrassWindBendProfileMin, kGrassWindBendProfileMax, defaults.grassWindBendProfile);
+		a_settings.grassWindSpringLag = ClampFiniteOrDefault(a_settings.grassWindSpringLag, kGrassWindSpringLagMin, kGrassWindSpringLagMax, defaults.grassWindSpringLag);
+		a_settings.grassWindSpringStrength = ClampFiniteOrDefault(a_settings.grassWindSpringStrength, kGrassWindSpringStrengthMin, kGrassWindSpringStrengthMax, defaults.grassWindSpringStrength);
+		a_settings.grassWindSpringRecovery = ClampFiniteOrDefault(a_settings.grassWindSpringRecovery, kGrassWindSpringRecoveryMin, kGrassWindSpringRecoveryMax, defaults.grassWindSpringRecovery);
+		a_settings.grassWindFlutterStrength = ClampFiniteOrDefault(a_settings.grassWindFlutterStrength, kGrassWindFlutterStrengthMin, kGrassWindFlutterStrengthMax, defaults.grassWindFlutterStrength);
+		a_settings.grassWindFlutterFrequency = ClampFiniteOrDefault(a_settings.grassWindFlutterFrequency, kGrassWindFlutterFrequencyMin, kGrassWindFlutterFrequencyMax, defaults.grassWindFlutterFrequency);
 		if (a_settings.trunkWindInstanceResponseMin > a_settings.trunkWindInstanceResponseMax)
 			std::swap(a_settings.trunkWindInstanceResponseMin, a_settings.trunkWindInstanceResponseMax);
 		if (a_settings.trunkWindGustStrengthMin > a_settings.trunkWindGustStrengthMax)
@@ -126,6 +141,11 @@ namespace
 		a_settings.grassWindResponse = defaults.grassWindResponse;
 		a_settings.grassWindMaximumTilt = defaults.grassWindMaximumTilt;
 		a_settings.grassWindBendProfile = defaults.grassWindBendProfile;
+		a_settings.grassWindSpringLag = defaults.grassWindSpringLag;
+		a_settings.grassWindSpringStrength = defaults.grassWindSpringStrength;
+		a_settings.grassWindSpringRecovery = defaults.grassWindSpringRecovery;
+		a_settings.grassWindFlutterStrength = defaults.grassWindFlutterStrength;
+		a_settings.grassWindFlutterFrequency = defaults.grassWindFlutterFrequency;
 	}
 
 	void TriggerNewWindGust()
@@ -225,6 +245,11 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	grassWindResponse,
 	grassWindMaximumTilt,
 	grassWindBendProfile,
+	grassWindSpringLag,
+	grassWindSpringStrength,
+	grassWindSpringRecovery,
+	grassWindFlutterStrength,
+	grassWindFlutterFrequency,
 	skyBrightness,
 	directionalLightMult,
 	pointLightMult,
@@ -291,6 +316,12 @@ void CSUtility::DrawSettings()
 		const float selectedDirectionY = windFieldUseRealDirection && ambientDirectionLength > 0.0001f ?
 		                                     state->ambientWindVelocity.y / ambientDirectionLength :
 		                                     0.0f;
+		const float weatherWindSpeed = std::sqrt(
+			state->ambientWindVelocity.x * state->ambientWindVelocity.x +
+			state->ambientWindVelocity.y * state->ambientWindVelocity.y +
+			state->ambientWindVelocity.z * state->ambientWindVelocity.z);
+		float localWindSpeed = state->windFieldSelectedSpeed;
+		float ambientGust = 0.0f;
 		ImGui::Text("%s: speed %.5f, direction (%.5f, %.5f, 0.00000)",
 			T(TKEY("wind_field_selected_input"), "Selected sampler input"), selectedSpeed, selectedDirectionX, selectedDirectionY);
 		ImGui::TextWrapped("%s", T(TKEY("wind_field_color_note"),
@@ -304,6 +335,11 @@ void CSUtility::DrawSettings()
 				state->ambientWindVelocity.z * state->ambientWindVelocity.z);
 			const auto eyeSample = state->SampleAmbientWind(samplePosition, state->ambientWindVelocity, rawAmbientSpeed);
 			const auto selectedSample = state->SampleAmbientWind(samplePosition);
+			localWindSpeed = std::sqrt(
+				selectedSample.velocity.x * selectedSample.velocity.x +
+				selectedSample.velocity.y * selectedSample.velocity.y +
+				selectedSample.velocity.z * selectedSample.velocity.z);
+			ambientGust = selectedSample.ambientGust;
 			ImGui::Text("%s: (%.5f, %.5f, %.5f), gust %.5f",
 				T(TKEY("wind_field_cpu_sample"), "CPU sample at camera"), eyeSample.velocity.x, eyeSample.velocity.y,
 				eyeSample.velocity.z, eyeSample.ambientGust);
@@ -311,6 +347,19 @@ void CSUtility::DrawSettings()
 				T(TKEY("wind_field_selected_sample"), "Selected sample at camera"), selectedSample.velocity.x,
 				selectedSample.velocity.y, selectedSample.velocity.z, selectedSample.ambientGust);
 		}
+		ImGui::SeparatorText(T(TKEY("wind_field_readout"), "Field Readout"));
+		ImGui::Text("%s: %.2f", T(TKEY("wind_field_weather_wind"), "Weather Wind"), weatherWindSpeed);
+		ImGui::Text("%s: %.2f", T(TKEY("wind_field_local_wind"), "Local Wind"), localWindSpeed);
+		ImGui::Text("%s: %+.2f", T(TKEY("wind_field_ambient_gust"), "Ambient Gust"), ambientGust);
+		ImGui::Text("%s: %.2f units/s", T(TKEY("wind_field_advection_speed_readout"), "Advection Speed"),
+			state->windFieldAdvectionSpeed);
+		if (auto _tt = Util::HoverTooltipWrapper())
+			ImGui::TextUnformatted(T(TKEY("wind_field_readout_tooltip"),
+				"Weather Wind is the raw ambient input. Local Wind is the canonical sampled velocity magnitude at the camera. Ambient Gust is the normalized field value used to modulate it."));
+		ImGui::SeparatorText(T(TKEY("wind_field_profile"), "Profile"));
+		ImGui::Text("%s: %.2f", T(TKEY("wind_field_profile_amplitude"), "Amplitude"), settings.windFieldGustAmplitude);
+		ImGui::Text("%s: %.0f", T(TKEY("wind_field_profile_scale"), "Scale"), settings.windFieldGustScale);
+		ImGui::Text("%s: %.2fx", T(TKEY("wind_field_profile_advection"), "Advection"), settings.windFieldGustAdvectionMultiplier);
 		if (ImGui::TreeNodeEx(T(TKEY("wind_field_tuning"), "Sampler tuning"), ImGuiTreeNodeFlags_DefaultOpen)) {
 			ImGui::SliderFloat(T(TKEY("wind_field_gust_advection_multiplier"), "Gust Advection Multiplier"),
 				&settings.windFieldGustAdvectionMultiplier, kWindFieldGustAdvectionMultiplierMin,
@@ -412,6 +461,28 @@ void CSUtility::DrawSettings()
 				kGrassWindBendProfileMin, kGrassWindBendProfileMax, "%.2f", ImGuiSliderFlags_AlwaysClamp);
 			if (auto _tt = Util::HoverTooltipWrapper())
 				ImGui::TextUnformatted(T(TKEY("grass_wind_bend_profile_tooltip"), "Zero leans the whole blade uniformly; one concentrates bending toward the tip."));
+			ImGui::SeparatorText(T(TKEY("grass_wind_spring"), "Spring / Recovery"));
+			ImGui::SliderFloat(T(TKEY("grass_wind_spring_lag"), "Response Lag"), &settings.grassWindSpringLag,
+				kGrassWindSpringLagMin, kGrassWindSpringLagMax, "%.2f s", ImGuiSliderFlags_AlwaysClamp);
+			if (auto _tt = Util::HoverTooltipWrapper())
+				ImGui::TextUnformatted(T(TKEY("grass_wind_spring_lag_tooltip"), "Delays the grass response behind the traveling ambient gust field."));
+			ImGui::SliderFloat(T(TKEY("grass_wind_spring_strength"), "Inertia"), &settings.grassWindSpringStrength,
+				kGrassWindSpringStrengthMin, kGrassWindSpringStrengthMax, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+			if (auto _tt = Util::HoverTooltipWrapper())
+				ImGui::TextUnformatted(T(TKEY("grass_wind_spring_strength_tooltip"), "Controls how strongly grass follows the delayed gust response."));
+			ImGui::SliderFloat(T(TKEY("grass_wind_spring_recovery"), "Recovery Overshoot"), &settings.grassWindSpringRecovery,
+				kGrassWindSpringRecoveryMin, kGrassWindSpringRecoveryMax, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+			if (auto _tt = Util::HoverTooltipWrapper())
+				ImGui::TextUnformatted(T(TKEY("grass_wind_spring_recovery_tooltip"), "Adds a small opposite bend as grass recovers after a gust passes."));
+			ImGui::SeparatorText(T(TKEY("grass_wind_flutter"), "Flutter"));
+			ImGui::SliderFloat(T(TKEY("grass_wind_flutter_strength"), "Flutter Strength"), &settings.grassWindFlutterStrength,
+				kGrassWindFlutterStrengthMin, kGrassWindFlutterStrengthMax, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+			if (auto _tt = Util::HoverTooltipWrapper())
+				ImGui::TextUnformatted(T(TKEY("grass_wind_flutter_strength_tooltip"), "Scales Skyrim's vanilla grass motion before the ambient bend is applied; one matches vanilla intensity."));
+			ImGui::SliderFloat(T(TKEY("grass_wind_flutter_frequency"), "Maximum Flutter Frequency"), &settings.grassWindFlutterFrequency,
+				kGrassWindFlutterFrequencyMin, kGrassWindFlutterFrequencyMax, "%.2fx", ImGuiSliderFlags_AlwaysClamp);
+			if (auto _tt = Util::HoverTooltipWrapper())
+				ImGui::TextUnformatted(T(TKEY("grass_wind_flutter_frequency_tooltip"), "Caps automatic flutter frequency: it rises from 1x at zero wind to this value at maximum wind."));
 			ImGui::EndDisabled();
 			ImGui::EndTabItem();
 		}
