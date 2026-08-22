@@ -38,24 +38,16 @@ private:
 	bool profilerActive = false;
 };
 
-/// Drop a single-line GPU pass scope with a compile-time literal name.
-/// Builds a static tracy::SourceLocationData at the call site and uses Tracy's
-/// zero-allocation static-source-location path.
 #define CS_GPU_PASS(name)                                                                                                                              \
 	static constexpr tracy::SourceLocationData CS_DETAIL_CONCAT(cs_gpu_pass_srcloc_, __LINE__){ name, __FUNCTION__, __FILE__, (uint32_t)__LINE__, 0 }; \
 	ScopedGpuPass CS_DETAIL_CONCAT(cs_gpu_pass_, __LINE__) { &CS_DETAIL_CONCAT(cs_gpu_pass_srcloc_, __LINE__), name }
 
-/// Drop a single-line GPU pass scope whose name is one of two compile-time literals.
-/// Builds two static tracy::SourceLocationData structs at the call site and selects
-/// the pointer at runtime, avoiding the "latch the first branch" bug of a single
-/// shared static srcloc.
+/// Two static srclocs, not one: a shared static would latch onto whichever branch
+/// evaluated first and never reflect the other one again.
 #define CS_GPU_PASS_SELECT(cond, name1, name2)                                                                                                           \
 	static constexpr tracy::SourceLocationData CS_DETAIL_CONCAT(cs_gpu_pass_srcloc1_, __LINE__){ name1, __FUNCTION__, __FILE__, (uint32_t)__LINE__, 0 }; \
 	static constexpr tracy::SourceLocationData CS_DETAIL_CONCAT(cs_gpu_pass_srcloc2_, __LINE__){ name2, __FUNCTION__, __FILE__, (uint32_t)__LINE__, 0 }; \
 	ScopedGpuPass CS_DETAIL_CONCAT(cs_gpu_pass_, __LINE__) { (cond) ? &CS_DETAIL_CONCAT(cs_gpu_pass_srcloc1_, __LINE__) : &CS_DETAIL_CONCAT(cs_gpu_pass_srcloc2_, __LINE__), (cond) ? std::string_view(name1) : std::string_view(name2) }
 
-/// Drop a single-line GPU pass scope with a runtime-computed name.
-/// Uses Tracy's dynamic-source-location allocation path (heap malloc+memcpy).
-/// Use only when the name cannot be a compile-time literal.
 #define CS_GPU_PASS_DYNAMIC(name) \
 	ScopedGpuPass CS_DETAIL_CONCAT(cs_gpu_pass_, __LINE__) { name }
