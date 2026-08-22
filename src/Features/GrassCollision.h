@@ -15,7 +15,7 @@ public:
 	{
 		return { T("feature.grass_collision.description", "Enables dynamic grass interactions where grass bends and moves in response to actors walking through it, creating more immersive environmental reactions."),
 			{ T("feature.grass_collision.key_feature_1", "Real-time grass deformation from actor movement"),
-				T("feature.grass_collision.key_feature_2", "Collision detection for up to 256 simultaneous interactions"),
+				T("feature.grass_collision.key_feature_2", "Bounded collision processing for nearby actors"),
 				T("feature.grass_collision.key_feature_3", "Dynamic tracking of actor positions for grass response"),
 				T("feature.grass_collision.key_feature_4", "Performance-optimized collision calculation"),
 				T("feature.grass_collision.key_feature_5", "Seamless integration with existing grass rendering") } };
@@ -32,9 +32,13 @@ public:
 		bool EnableGrassCollision = 1;
 		bool TrackRagdolls = 1;
 		bool EnableBlur = 1;
-		float CollisionRadiusScale = 1.0f;
-		float GrassInteractionRadius = 16.0f;
-		float CollisionImpactStrength = 1.0f;
+		float CollisionRadiusScale = 3.75f;
+		float GrassInteractionRadius = 69.0f;
+		float CollisionImpactStrength = 4.0f;
+		float SpringStrength = 5.0f;
+		float Damping = 8.5f;
+		float MaximumBend = 89.0f;
+		float MaximumCompression = 0.77f;
 	};
 
 	struct alignas(16) BoundingBoxPacked
@@ -47,11 +51,13 @@ public:
 	};
 	STATIC_ASSERT_ALIGNAS_16(BoundingBoxPacked);
 
-	/** @brief GPU representation of a capsule, or a sphere when both endpoints coincide. */
+	/** @brief GPU representation of the previous and current endpoints of a swept capsule. */
 	struct alignas(16) CollisionShapePacked
 	{
-		float4 PointAAndRadius;
-		float4 PointB;
+		float4 CurrentPointAAndRadius;
+		float4 CurrentPointB;
+		float4 PreviousPointA;
+		float4 PreviousPointB;
 	};
 	STATIC_ASSERT_ALIGNAS_16(CollisionShapePacked);
 
@@ -64,9 +70,15 @@ public:
 		float TimeDelta;
 		uint BoundingBoxCount;
 
-		float CameraHeightDelta;
 		float GrassInteractionRadius;
-		float2 pad0;
+		float CollisionStrength;
+		float SpringStrength;
+		float Damping;
+
+		float MaximumBend;
+		float MaximumCompression;
+		float CompressionRecovery;
+		float pad0;
 	};
 	STATIC_ASSERT_ALIGNAS_16(PerFrame);
 
@@ -74,8 +86,8 @@ public:
 	{
 		float2 PosOffset;
 		DirectX::XMUINT2 ArrayOrigin;
-		float CollisionImpactStrength;
-		float3 pad0;
+		float2 PreviousPosOffset;
+		DirectX::XMUINT2 PreviousArrayOrigin;
 	};
 	STATIC_ASSERT_ALIGNAS_16(ShaderData);
 
@@ -85,6 +97,8 @@ public:
 	Settings settings;
 	float2 shaderPosOffset{};
 	DirectX::XMUINT2 shaderArrayOrigin{};
+	float2 previousShaderPosOffset{};
+	DirectX::XMUINT2 previousShaderArrayOrigin{};
 
 	ConstantBuffer* perFrame = nullptr;
 
@@ -99,9 +113,19 @@ public:
 
 	/** @brief Returns the collision update compute shader, compiling it on first use. */
 	ID3D11ComputeShader* GetCollisionUpdateCS();
-	ID3D11ComputeShader* collisionUpdateCS;
+	ID3D11ComputeShader* collisionUpdateCS = nullptr;
 
-	Texture2D* collisionTexture = nullptr;
+	Texture2D* deformationTextures[2] = {};
+	Texture2D* velocityTextures[2] = {};
+	uint currentTextureIndex = 0;
+	winrt::com_ptr<ID3D11SamplerState> deformationSampler;
+
+	struct CapsuleHistory
+	{
+		float3 pointA;
+		float3 pointB;
+	};
+	std::unordered_map<uint32_t, std::vector<CapsuleHistory>> actorCollisionHistory;
 
 	/** @brief Creates the collision texture, structured buffers for bounding boxes and collision instances. */
 	virtual void SetupResources() override;

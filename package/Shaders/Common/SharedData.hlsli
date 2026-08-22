@@ -477,8 +477,8 @@ namespace SharedData
 	{
 		float2 PosOffset;
 		uint2 ArrayOrigin;
-		float CollisionImpactStrength;
-		float3 pad0;
+		float2 PreviousPosOffset;
+		uint2 PreviousArrayOrigin;
 	};
 
 	cbuffer FeatureData : register(b6)

@@ -286,14 +286,19 @@ VS_OUTPUT main(VS_INPUT input)
 	float bendAngle;
 	GetGrassWindDisplacements(
 		input, eyeIndex, msPosition.z, windDisplacement, previousWindDisplacement, bendAxis, bendAngle);
+	float4 previousMsPosition = GetMSPosition(input, world3x3);
+	msPosition.xyz += windDisplacement;
+	previousMsPosition.xyz += previousWindDisplacement;
 
 #		ifdef GRASS_COLLISION
-	float3 displacement, previousDisplacement;
-	GrassCollision::GetDisplacedPosition(input, msPosition.xyz, displacement, previousDisplacement);
-	msPosition.xyz += displacement;
+	float3 collisionDisplacement, previousCollisionDisplacement, collisionBendAxis;
+	float collisionBendAngle;
+	GrassCollision::ApplyDeformation(
+		input, msPosition.xyz, previousMsPosition.xyz,
+		collisionDisplacement, previousCollisionDisplacement, collisionBendAxis, collisionBendAngle);
+	msPosition.xyz += collisionDisplacement;
+	previousMsPosition.xyz += previousCollisionDisplacement;
 #		endif  // GRASS_COLLISION
-
-	msPosition.xyz += windDisplacement;
 
 	float4 projSpacePosition = mul(WorldViewProj[eyeIndex], msPosition);
 #		if !defined(VR)
@@ -323,14 +328,6 @@ VS_OUTPUT main(VS_INPUT input)
 	vsout.ViewSpacePosition = mul(WorldView[eyeIndex], msPosition).xyz;
 	vsout.WorldPosition = mul(World[eyeIndex], msPosition);
 
-	float4 previousMsPosition = GetMSPosition(input, world3x3);
-
-#		ifdef GRASS_COLLISION
-	previousMsPosition.xyz += previousDisplacement;
-#		endif  // GRASS_COLLISION
-
-	previousMsPosition.xyz += previousWindDisplacement;
-
 	vsout.PreviousWorldPosition = mul(PreviousWorld[eyeIndex], previousMsPosition);
 #		if defined(VR)
 	Stereo::VR_OUTPUT VRout = Stereo::GetVRVSOutput(projSpacePosition, eyeIndex);
@@ -342,6 +339,10 @@ VS_OUTPUT main(VS_INPUT input)
 	// Keep lighting attached to the blade as the angular deformation changes its orientation.
 	float3 modelNormal = mul(world3x3, input.Normal.xyz * 2.0 - 1.0);
 	vsout.VertexNormal.xyz = Wind::Common::RotateVector(modelNormal, bendAxis, bendAngle);
+#		ifdef GRASS_COLLISION
+	vsout.VertexNormal.xyz = Wind::Common::RotateVector(
+		vsout.VertexNormal.xyz, collisionBendAxis, collisionBendAngle);
+#		endif  // GRASS_COLLISION
 	vsout.VertexNormal.w = input.Color.w;
 
 	return vsout;
@@ -363,14 +364,19 @@ VS_OUTPUT main(VS_INPUT input)
 	float bendAngle;
 	GetGrassWindDisplacements(
 		input, eyeIndex, msPosition.z, windDisplacement, previousWindDisplacement, bendAxis, bendAngle);
+	float4 previousMsPosition = GetMSPosition(input);
+	msPosition.xyz += windDisplacement;
+	previousMsPosition.xyz += previousWindDisplacement;
 
 #		ifdef GRASS_COLLISION
-	float3 displacement, previousDisplacement;
-	GrassCollision::GetDisplacedPosition(input, msPosition.xyz, displacement, previousDisplacement);
-	msPosition.xyz += displacement;
+	float3 collisionDisplacement, previousCollisionDisplacement, collisionBendAxis;
+	float collisionBendAngle;
+	GrassCollision::ApplyDeformation(
+		input, msPosition.xyz, previousMsPosition.xyz,
+		collisionDisplacement, previousCollisionDisplacement, collisionBendAxis, collisionBendAngle);
+	msPosition.xyz += collisionDisplacement;
+	previousMsPosition.xyz += previousCollisionDisplacement;
 #		endif  // GRASS_COLLISION
-
-	msPosition.xyz += windDisplacement;
 
 	float4 projSpacePosition = mul(WorldViewProj[eyeIndex], msPosition);
 #		if !defined(VR)
@@ -406,19 +412,12 @@ VS_OUTPUT main(VS_INPUT input)
 	vsout.ViewSpacePosition = mul(WorldView[eyeIndex], msPosition).xyz;
 	vsout.WorldPosition = mul(World[eyeIndex], msPosition);
 
-	float4 previousMsPosition = GetMSPosition(input);
 #		if defined(VR)
 	Stereo::VR_OUTPUT VRout = Stereo::GetVRVSOutput(projSpacePosition, eyeIndex);
 	vsout.HPosition = VRout.VRPosition;
 	vsout.ClipDistance.x = VRout.ClipDistance;
 	vsout.CullDistance.x = VRout.CullDistance;
 #		endif  // !VR
-
-#		ifdef GRASS_COLLISION
-	previousMsPosition.xyz += previousDisplacement;
-#		endif  // GRASS_COLLISION
-
-	previousMsPosition.xyz += previousWindDisplacement;
 
 	vsout.PreviousWorldPosition = mul(PreviousWorld[eyeIndex], previousMsPosition);
 

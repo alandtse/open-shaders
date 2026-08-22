@@ -1,18 +1,18 @@
-
-#include "Common/FrameBuffer.hlsli"
-#include "Common/SharedData.hlsli"
-
 cbuffer PerFrameCB : register(b0)
 {
-	float2 PosOffset;   // cell origin in camera space
-	uint2 ArrayOrigin;  // xy: array origin (clipmap wrapping)
-
+	float2 PosOffset;
+	uint2 ArrayOrigin;
 	int2 ValidMargin;
 	float TimeDelta;
 	uint BoundingBoxCount;
-
-	float CameraHeightDelta;
 	float GrassInteractionRadius;
+	float CollisionStrength;
+	float SpringStrength;
+	float Damping;
+	float MaximumBend;
+	float MaximumCompression;
+	float CompressionRecovery;
+	float pad0;
 }
 
 struct BoundingBoxPacked
@@ -28,118 +28,113 @@ StructuredBuffer<BoundingBoxPacked> CollisionBoundingBoxes : register(t0);
 
 struct CollisionShapePacked
 {
-	float4 PointAAndRadius;
-	float4 PointB;
+	float4 CurrentPointAAndRadius;
+	float4 CurrentPointB;
+	float4 PreviousPointA;
+	float4 PreviousPointB;
 };
 
 StructuredBuffer<CollisionShapePacked> CollisionInstances : register(t1);
-
-RWTexture2D<float4> Collision : register(u0);
+Texture2D<float4> PreviousDeformation : register(t2);
+Texture2D<float2> PreviousVelocity : register(t3);
+RWTexture2D<float4> Deformation : register(u0);
+RWTexture2D<float2> Velocity : register(u1);
 
 groupshared BoundingBoxPacked SharedBoundingBoxes[64];
 
+float2 ClosestPointOnSegment(float2 position, float2 pointA, float2 pointB)
+{
+	float2 segment = pointB - pointA;
+	float segmentLengthSquared = dot(segment, segment);
+	float segmentPosition = segmentLengthSquared > 1e-5 ?
+	                            saturate(dot(position - pointA, segment) / segmentLengthSquared) :
+	                            0.0;
+	return pointA + segment * segmentPosition;
+}
+
 [numthreads(8, 8, 1)] void main(
-	uint3 groupId : SV_GroupID, uint3 dispatchThreadId : SV_DispatchThreadID, uint3 groupThreadId : SV_GroupThreadID, uint groupIndex : SV_GroupIndex) {
+	uint3 groupId : SV_GroupID, uint3 dispatchThreadId : SV_DispatchThreadID,
+	uint3 groupThreadId : SV_GroupThreadID, uint groupIndex : SV_GroupIndex) {
 	if (groupIndex < BoundingBoxCount)
 		SharedBoundingBoxes[groupIndex] = CollisionBoundingBoxes[groupIndex];
-
 	GroupMemoryBarrierWithGroupSync();
 
 	const uint TEXTURE_SIZE = 512;
-	const float WORLD_SIZE = 4096;
-	const float2 ZRANGE = float2(2048.0, -2048.0);
-	const float CONTACT_STIFFNESS = 16.0;
-	const float CONTACT_DAMPING = 8.0;
-	const float RECOVERY_STIFFNESS = 0.35;
-	const float RECOVERY_DAMPING = 1.2;
-
+	const float WORLD_SIZE = 4096.0;
+	const float COLLISION_ACCELERATION = 50.0;
 	const int2 textureSize = int2(TEXTURE_SIZE, TEXTURE_SIZE);
+
 	int2 cellID = int2(dispatchThreadId.xy) - int2(ArrayOrigin);
-	cellID = cellID % textureSize;
+	cellID %= textureSize;
 	cellID += int2(cellID < 0) * textureSize;
+	float2 cellCentreMS = float2(cellID) + 0.5 - TEXTURE_SIZE * 0.5;
+	cellCentreMS = cellCentreMS / TEXTURE_SIZE * WORLD_SIZE + PosOffset;
 
-	float2 cellCentreMS = float2(cellID) + 0.5 - TEXTURE_SIZE / 2;
-	cellCentreMS = cellCentreMS / TEXTURE_SIZE * WORLD_SIZE + PosOffset.xy;
-
-	// Check if the cell is newly added
 	int2 validMin = max(int2(0, 0), ValidMargin);
 	int2 validMax = int2(TEXTURE_SIZE - 1, TEXTURE_SIZE - 1) + min(int2(0, 0), ValidMargin);
 	bool isValid = all(cellID >= validMin) && all(cellID <= validMax);
 
-	float targetHeight = ZRANGE.x;
+	float2 bend = 0.0;
+	float2 velocity = 0.0;
+	float compression = 0.0;
+	if (isValid) {
+		float4 previousState = PreviousDeformation.Load(int3(dispatchThreadId.xy, 0));
+		bend = previousState.xy;
+		compression = previousState.z;
+		velocity = PreviousVelocity.Load(int3(dispatchThreadId.xy, 0));
+	}
 
-	for (uint i = 0; i < BoundingBoxCount; i++) {
+	float2 collisionAcceleration = 0.0;
+	float collisionCompression = 0.0;
+	for (uint i = 0; i < BoundingBoxCount; ++i) {
 		BoundingBoxPacked boundingBox = SharedBoundingBoxes[i];
-		// Test high level collision
 		if (all(cellCentreMS >= boundingBox.MinExtent && cellCentreMS <= boundingBox.MaxExtent)) {
-			// Process collision data
-			for (uint j = boundingBox.IndexStart; j < boundingBox.IndexEnd; j++) {
-				CollisionShapePacked collisionInstance = CollisionInstances[j];
-				float3 pointA = collisionInstance.PointAAndRadius.xyz;
-				float3 pointB = collisionInstance.PointB.xyz;
-				float radius = collisionInstance.PointAAndRadius.w;
-				float footprintRadius = radius + max(GrassInteractionRadius, 0.0);
-				float profileScale = radius / footprintRadius;
-				float2 capsuleAxis = pointB.xy - pointA.xy;
-				float capsuleAxisLengthSquared = dot(capsuleAxis, capsuleAxis);
-				float capsulePosition = capsuleAxisLengthSquared > 1e-5 ?
-				                            saturate(dot(cellCentreMS - pointA.xy, capsuleAxis) / capsuleAxisLengthSquared) :
-				                            0.0;
-				float3 closestPoint = lerp(pointA, pointB, capsulePosition);
-				float lowestHeight = ZRANGE.x;
-				bool intersectsShape = false;
-
-				float lowerCapDistance = distance(pointA.xy, cellCentreMS);
-				if (lowerCapDistance < footprintRadius) {
-					float profileDistance = lowerCapDistance * profileScale;
-					lowestHeight = pointA.z - sqrt(max(radius * radius - profileDistance * profileDistance, 0.0));
-					intersectsShape = true;
+			for (uint j = boundingBox.IndexStart; j < boundingBox.IndexEnd; ++j) {
+				CollisionShapePacked collider = CollisionInstances[j];
+				float2 currentA = collider.CurrentPointAAndRadius.xy;
+				float2 currentB = collider.CurrentPointB.xy;
+				float2 previousA = collider.PreviousPointA.xy;
+				float2 previousB = collider.PreviousPointB.xy;
+				float2 currentCentre = (currentA + currentB) * 0.5;
+				float2 previousCentre = (previousA + previousB) * 0.5;
+				float projectedHalfLength = 0.5 * max(length(currentB - currentA), length(previousB - previousA));
+				float radius = collider.CurrentPointAAndRadius.w + projectedHalfLength + max(GrassInteractionRadius, 0.0);
+				float2 closestPoint = ClosestPointOnSegment(cellCentreMS, previousCentre, currentCentre);
+				float2 delta = cellCentreMS - closestPoint;
+				float distanceToSweep = length(delta);
+				float penetration = radius - distanceToSweep;
+				if (penetration > 0.0) {
+					float2 movement = currentCentre - previousCentre;
+					float2 fallbackDirection = dot(movement, movement) > 1e-5 ?
+					                               normalize(float2(-movement.y, movement.x)) :
+					                               float2(1.0, 0.0);
+					float2 outwardDirection = distanceToSweep > 1e-4 ? delta / distanceToSweep : fallbackDirection;
+					float penetrationRatio = saturate(penetration / max(radius, 1e-4));
+					collisionAcceleration += outwardDirection * penetrationRatio;
+					collisionCompression = max(collisionCompression, penetrationRatio);
 				}
-
-				float segmentDistance = distance(closestPoint.xy, cellCentreMS);
-				if (segmentDistance < footprintRadius) {
-					float profileDistance = segmentDistance * profileScale;
-					float segmentHeight = closestPoint.z - sqrt(max(radius * radius - profileDistance * profileDistance, 0.0));
-					lowestHeight = min(lowestHeight, segmentHeight);
-					intersectsShape = true;
-				}
-
-				if (intersectsShape)
-					targetHeight = min(targetHeight, lowestHeight);
 			}
 		}
 	}
 
-	targetHeight = clamp(targetHeight, ZRANGE.y, ZRANGE.x);
+	float deltaTime = clamp(TimeDelta, 0.0, 1.0 / 15.0);
+	collisionAcceleration *= max(CollisionStrength, 0.0) * COLLISION_ACCELERATION;
+	float springStrength = max(SpringStrength, 0.0);
+	float springDenominator = 1.0 + max(Damping, 0.0) * deltaTime + springStrength * deltaTime * deltaTime;
+	velocity = (velocity + collisionAcceleration * deltaTime - bend * springStrength * deltaTime) / springDenominator;
+	bend += velocity * deltaTime;
 
-	float collisionHeight = ZRANGE.x;
-	float recoveryVelocity = 0.0;
-	if (isValid) {
-		float4 previousState = Collision[dispatchThreadId.xy];
-		collisionHeight = lerp(ZRANGE.x, ZRANGE.y, previousState.x) + CameraHeightDelta;
-		recoveryVelocity = previousState.y;
+	float maximumBend = max(MaximumBend, 0.0);
+	float bendMagnitude = length(bend);
+	if (bendMagnitude > maximumBend && bendMagnitude > 1e-5) {
+		float2 bendDirection = bend / bendMagnitude;
+		bend = bendDirection * maximumBend;
+		velocity -= bendDirection * max(dot(velocity, bendDirection), 0.0);
 	}
 
-	float previousCollisionHeight = collisionHeight;
-	float deltaTime = max(TimeDelta, 0.0);
-	float targetDelta = targetHeight - collisionHeight;
-	float stiffness = targetDelta < 0.0 ? CONTACT_STIFFNESS : RECOVERY_STIFFNESS;
-	float damping = targetDelta < 0.0 ? CONTACT_DAMPING : RECOVERY_DAMPING;
-	float denominator = 1.0 + damping * deltaTime + stiffness * deltaTime * deltaTime;
-	recoveryVelocity = (recoveryVelocity + stiffness * targetDelta * deltaTime) / denominator;
-	collisionHeight += recoveryVelocity * deltaTime;
-
-	float remainingDelta = targetHeight - collisionHeight;
-	if (targetDelta * remainingDelta <= 0.0) {
-		collisionHeight = targetHeight;
-		recoveryVelocity = 0.0;
-	}
-
-	collisionHeight = clamp(collisionHeight, ZRANGE.y, ZRANGE.x);
-	previousCollisionHeight = clamp(previousCollisionHeight, ZRANGE.y, ZRANGE.x);
-	float encodedCollisionHeight = (collisionHeight - ZRANGE.x) / (ZRANGE.y - ZRANGE.x);
-	float encodedPreviousCollisionHeight = (previousCollisionHeight - ZRANGE.x) / (ZRANGE.y - ZRANGE.x);
-
-	Collision[dispatchThreadId.xy] =
-		float4(encodedCollisionHeight, recoveryVelocity, encodedPreviousCollisionHeight, 0.0);
+	compression *= exp(-max(CompressionRecovery, 0.0) * deltaTime);
+	compression = max(compression, collisionCompression * max(MaximumCompression, 0.0));
+	compression = clamp(compression, 0.0, max(MaximumCompression, 0.0));
+	Deformation[dispatchThreadId.xy] = float4(bend, compression, 0.0);
+	Velocity[dispatchThreadId.xy] = velocity;
 }
