@@ -1462,7 +1462,7 @@ bool FidelityFX::DispatchRuntimeUpscalerSingle(uint32_t a_contextIndex, ID3D11Re
 		return false;
 
 	const std::string dispatchPassName = globals::game::isVR ? std::format("Upscaling::RuntimeUpscalerDispatch Eye {}", a_contextIndex) : "Upscaling::RuntimeUpscalerDispatch";
-	CS_GPU_PASS(dispatchPassName);
+	CS_GPU_PASS_DYNAMIC(dispatchPassName);
 
 	bool dispatchOk = false;
 	bool commandListSubmitted = false;
@@ -1758,7 +1758,7 @@ bool FidelityFX::UpscaleRegion(uint32_t a_contextIndex, ID3D11Resource* a_color,
 	RecordRuntimeUpscalerFramePath(fallbackFramePath);
 
 	const std::string dispatchPassName = globals::game::isVR ? std::format("Upscaling::HostFsr3Dispatch Eye {}", a_contextIndex) : "Upscaling::HostFsr3Dispatch";
-	CS_GPU_PASS(dispatchPassName);
+	CS_GPU_PASS_DYNAMIC(dispatchPassName);
 
 	FfxFsr3DispatchUpscaleDescription dispatchParameters{};
 	dispatchParameters.commandList = ffxGetCommandListDX11(context);

@@ -3,7 +3,7 @@
 #include "Globals.h"
 #include "State.h"
 
-ScopedGpuPass::ScopedGpuPass(std::string_view name)
+ScopedGpuPass::ScopedGpuPass(const tracy::SourceLocationData* srcloc, std::string_view name)
 {
 	auto* profiler = globals::profiler;
 	auto* state = globals::state;
@@ -17,17 +17,42 @@ ScopedGpuPass::ScopedGpuPass(std::string_view name)
 		profilerActive = profiler->BeginPass(name, false);
 
 #ifdef TRACY_ENABLE
-	// 2. Tracy CPU zone — unconditional; not gated on frameAnnotations so
-	//    CPU profiles are available in any TRACY_SUPPORT build.
-	{
-		const auto srcloc = ___tracy_alloc_srcloc_name(
-			0,
-			"GpuPass", sizeof("GpuPass") - 1,
-			"ScopedGpuPass", sizeof("ScopedGpuPass") - 1,
-			name.data(), name.size(),
-			0);
-		cpuZoneCtx = ___tracy_emit_zone_begin_alloc(srcloc, true);
+	// 2. Tracy CPU zone — static srcloc built by the caller's macro, zero allocation.
+	cpuZone.emplace(srcloc, -1, true);
+
+	// 3. Tracy GPU zone — requires a D3D11 context from State. Static srcloc path.
+	if (state && state->tracyCtx) {
+		gpuZone.emplace(state->tracyCtx, srcloc, true);
 	}
+#endif
+
+	// 4. RenderDoc/PIX annotation — gated on frameAnnotations.
+	//    Calls BeginAnnotation (pPerf-only, no Tracy) to avoid double-emitting
+	//    the Tracy CPU zone that BeginPerfEvent would add.
+	if (state && state->frameAnnotations) {
+		state->BeginAnnotation(name);
+		annotationOpen = true;
+	}
+}
+
+ScopedGpuPass::ScopedGpuPass(std::string_view name)
+{
+	auto* profiler = globals::profiler;
+	auto* state = globals::state;
+
+	// 1. Internal profiler: GPU timestamp query start + always-on CPU QPC.
+	if (profiler)
+		profilerActive = profiler->BeginPass(name, false);
+
+#ifdef TRACY_ENABLE
+	// 2. Tracy CPU zone — dynamic (transient) name path, kept for runtime-computed
+	//    names. Allocates a srcloc buffer per call; freed by Tracy after serialization.
+	cpuZone.emplace(
+		uint32_t(0),
+		"GpuPass", sizeof("GpuPass") - 1,
+		"ScopedGpuPass", sizeof("ScopedGpuPass") - 1,
+		name.data(), name.size(),
+		uint32_t(0), -1, true);
 
 	// 3. Tracy GPU zone — requires a D3D11 context from State. Use the raw
 	//    source-location overload for a dynamic (transient) zone name; the bundled
@@ -60,7 +85,7 @@ ScopedGpuPass::~ScopedGpuPass()
 
 #ifdef TRACY_ENABLE
 	gpuZone.reset();
-	TracyCZoneEnd(cpuZoneCtx);
+	cpuZone.reset();
 #endif
 
 	if (profilerActive)

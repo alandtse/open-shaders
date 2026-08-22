@@ -351,7 +351,7 @@ void ScreenSpaceShadows::DrawShadows()
 			return;
 
 		std::string timerName = eyeName ? std::format("ScreenSpaceShadows::RayMarch({})", eyeName) : "ScreenSpaceShadows::RayMarch";
-		CS_GPU_PASS(timerName);
+		CS_GPU_PASS_DYNAMIC(timerName);
 
 		context->CSSetShader(shader, nullptr, 0);
 
@@ -490,7 +490,7 @@ void ScreenSpaceShadows::DrawStereoSync()
 	ZoneScoped;
 	// Label the pass by the path actually dispatched so profiler captures aren't
 	// mislabeled as the bilateral sync when the reproject variant runs.
-	CS_GPU_PASS(usingSync ? "ScreenSpaceShadows::StereoSync" : "ScreenSpaceShadows::StereoReproject");
+	CS_GPU_PASS_SELECT(usingSync, "ScreenSpaceShadows::StereoSync", "ScreenSpaceShadows::StereoReproject");
 
 	auto context = globals::d3d::context;
 

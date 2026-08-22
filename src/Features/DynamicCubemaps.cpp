@@ -300,7 +300,7 @@ bool DynamicCubemaps::UpdateCubemapCapture(bool a_reflections)
 		context->CSSetShader(shader, nullptr, 0);
 
 		{
-			CS_GPU_PASS(a_reflections ? "DynamicCubemaps::CaptureReflections" : "DynamicCubemaps::Capture");
+			CS_GPU_PASS_SELECT(a_reflections, "DynamicCubemaps::CaptureReflections", "DynamicCubemaps::Capture");
 			context->Dispatch((uint32_t)std::ceil(envCaptureTexture->desc.Width / 8.0f), (uint32_t)std::ceil(envCaptureTexture->desc.Height / 8.0f), 6);
 		}
 	}
@@ -354,7 +354,7 @@ bool DynamicCubemaps::Inferrence(bool a_reflections)
 		context->CSSetShader(shader, nullptr, 0);
 
 		{
-			CS_GPU_PASS(a_reflections ? "DynamicCubemaps::InferReflections" : "DynamicCubemaps::Infer");
+			CS_GPU_PASS_SELECT(a_reflections, "DynamicCubemaps::InferReflections", "DynamicCubemaps::Infer");
 			context->Dispatch((uint32_t)std::ceil(envCaptureTexture->desc.Width / 8.0f), (uint32_t)std::ceil(envCaptureTexture->desc.Height / 8.0f), 6);
 		}
 	}
@@ -425,7 +425,7 @@ bool DynamicCubemaps::Irradiance(bool a_reflections, uint32_t a_startLevel, uint
 			const char* suffix = (a_startLevel == 1) ? "A" : (a_endLevel == MIPLEVELS) ? "BB" :
 			                                                                             "BA";
 			const auto passName = a_reflections ? std::format("DynamicCubemaps::IrradianceReflections{}", suffix) : std::format("DynamicCubemaps::Irradiance{}", suffix);
-			CS_GPU_PASS(passName);
+			CS_GPU_PASS_DYNAMIC(passName);
 			for (std::uint32_t level = a_startLevel; level < a_endLevel; level++, size /= 2) {
 				const UINT numGroups = (UINT)std::max(1u, (size + 7u) / 8u);
 
@@ -475,7 +475,7 @@ bool DynamicCubemaps::CompressToBC6H(bool a_reflections)
 	std::uint32_t mipDim = std::max(envTexture->desc.Width, envTexture->desc.Height);
 
 	{
-		CS_GPU_PASS(a_reflections ? "DynamicCubemaps::BC6HReflections" : "DynamicCubemaps::BC6H");
+		CS_GPU_PASS_SELECT(a_reflections, "DynamicCubemaps::BC6HReflections", "DynamicCubemaps::BC6H");
 		for (std::uint32_t level = 0; level < bc6hMipLevels; ++level) {
 			std::uint32_t srcWidth = std::max(1u, mipDim >> level);
 			std::uint32_t srcHeight = std::max(1u, mipDim >> level);

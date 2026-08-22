@@ -1,6 +1,6 @@
 #pragma once
 
-#include <Tracy/TracyC.h>
+#include <Tracy/Tracy.hpp>
 #include <Tracy/TracyD3D11.hpp>
 
 #include <optional>
@@ -14,11 +14,14 @@
 ///   3. Tracy GPU zone (always-on when TRACY_ENABLE and a D3D11 context exists)
 ///   4. RenderDoc/PIX ID3DUserDefinedAnnotation (when frameAnnotations is true)
 ///
-/// Use via the convenience macro at render-pass entry points:
-///   CS_GPU_PASS("Feature::PassName");
+/// Use via the convenience macros at render-pass entry points:
+///   CS_GPU_PASS("Feature::PassName");                     // literal name, zero allocation
+///   CS_GPU_PASS_SELECT(cond, "A", "B");                   // literal ternary, zero allocation
+///   CS_GPU_PASS_DYNAMIC(runtimeName);                     // runtime name, allocates
 struct ScopedGpuPass
 {
 	explicit ScopedGpuPass(std::string_view name);
+	ScopedGpuPass(const tracy::SourceLocationData* srcloc, std::string_view name);
 	~ScopedGpuPass();
 
 	ScopedGpuPass(const ScopedGpuPass&) = delete;
@@ -28,15 +31,31 @@ struct ScopedGpuPass
 
 private:
 #ifdef TRACY_ENABLE
-	TracyCZoneCtx cpuZoneCtx{};
+	std::optional<tracy::ScopedZone> cpuZone;
 	std::optional<tracy::D3D11ZoneScope> gpuZone;
 #endif
 	bool annotationOpen = false;
 	bool profilerActive = false;
 };
 
-/// Drop a single-line GPU pass scope at render-pass entry.
-/// The variable name is mangled with __LINE__ so two CS_GPU_PASS calls in the
-/// same function cannot collide.
-#define CS_GPU_PASS(name) \
+/// Drop a single-line GPU pass scope with a compile-time literal name.
+/// Builds a static tracy::SourceLocationData at the call site and uses Tracy's
+/// zero-allocation static-source-location path.
+#define CS_GPU_PASS(name)                                                                                                                              \
+	static constexpr tracy::SourceLocationData CS_DETAIL_CONCAT(cs_gpu_pass_srcloc_, __LINE__){ name, __FUNCTION__, __FILE__, (uint32_t)__LINE__, 0 }; \
+	ScopedGpuPass CS_DETAIL_CONCAT(cs_gpu_pass_, __LINE__) { &CS_DETAIL_CONCAT(cs_gpu_pass_srcloc_, __LINE__), name }
+
+/// Drop a single-line GPU pass scope whose name is one of two compile-time literals.
+/// Builds two static tracy::SourceLocationData structs at the call site and selects
+/// the pointer at runtime, avoiding the "latch the first branch" bug of a single
+/// shared static srcloc.
+#define CS_GPU_PASS_SELECT(cond, name1, name2)                                                                                                           \
+	static constexpr tracy::SourceLocationData CS_DETAIL_CONCAT(cs_gpu_pass_srcloc1_, __LINE__){ name1, __FUNCTION__, __FILE__, (uint32_t)__LINE__, 0 }; \
+	static constexpr tracy::SourceLocationData CS_DETAIL_CONCAT(cs_gpu_pass_srcloc2_, __LINE__){ name2, __FUNCTION__, __FILE__, (uint32_t)__LINE__, 0 }; \
+	ScopedGpuPass CS_DETAIL_CONCAT(cs_gpu_pass_, __LINE__) { (cond) ? &CS_DETAIL_CONCAT(cs_gpu_pass_srcloc1_, __LINE__) : &CS_DETAIL_CONCAT(cs_gpu_pass_srcloc2_, __LINE__), (cond) ? std::string_view(name1) : std::string_view(name2) }
+
+/// Drop a single-line GPU pass scope with a runtime-computed name.
+/// Uses Tracy's dynamic-source-location allocation path (heap malloc+memcpy).
+/// Use only when the name cannot be a compile-time literal.
+#define CS_GPU_PASS_DYNAMIC(name) \
 	ScopedGpuPass CS_DETAIL_CONCAT(cs_gpu_pass_, __LINE__) { name }
