@@ -1,9 +1,9 @@
 vcpkg_from_github(
     OUT_SOURCE_PATH SOURCE_PATH
-    REPO wolfpld/tracy
-    REF ef099b0555abce9534e92429503b2606493116d9
-    SHA512 8b25c2a60b94ccfd5c462b15077947bb83f20fc63f1d10713234b4fa222c9c0f821752e1153e3a89f5d4dbcd3293c84f4fa1560ce7efe09d9ebb0f870b0ad9ff
-    HEAD_REF master
+    REPO alandtse/tracy
+    REF e670bd18f7c6a9d2b8ca181d7c0bc4601e263e96
+    SHA512 0bb368a8c64e6ad88c78ec7fcd0c4621ed83151d89c1d3c96c6742e244c8d4fef78a168aab4245d564646261e232b6d0f7c9329880e28750fca0442c35c70716
+    HEAD_REF feat/mcp-sdk-v2
 )
 
 vcpkg_check_features(OUT_FEATURE_OPTIONS FEATURE_OPTIONS
@@ -40,7 +40,7 @@ vcpkg_cmake_install()
 # though the client headers (e.g. TracyProfiler.hpp) include them; copy them
 # so downstream code compiles.
 file(INSTALL
-    "${SOURCE_PATH}/public/common/TracyFormat.hpp"
+    "${SOURCE_PATH}/public/common/TracyFormat.h"
     "${SOURCE_PATH}/public/common/TracyVersion.hpp"
     DESTINATION "${CURRENT_PACKAGES_DIR}/include/tracy/common")
 
