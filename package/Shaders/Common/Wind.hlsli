@@ -85,9 +85,9 @@ namespace Wind
 	namespace Grass
 	{
 		/** @brief Applies stateless lag and recovery to consecutive ambient velocities. */
-		void CalculateSpringVelocities(
+		float3 CalculateSpringVelocity(
 			float3 currentVelocity, float currentGust, float3 previousVelocity, float previousGust,
-			float lagFrameCount, out float3 springVelocity, out float3 previousSpringVelocity)
+			float lagFrameCount)
 		{
 			float inertia = saturate(Permutation::GrassWindSpringStrength);
 			float recovery = max(Permutation::GrassWindSpringRecovery, 0.0);
@@ -96,40 +96,32 @@ namespace Wind
 			float recovering = gustDeviation * gustDelta < 0.0 ? 1.0 : 0.0;
 			float3 springOffset =
 				(currentVelocity - previousVelocity) * lagFrameCount * (inertia + recovery * recovering);
-			springVelocity = currentVelocity - springOffset;
-			previousSpringVelocity = previousVelocity - springOffset;
+			float3 springVelocity = currentVelocity - springOffset;
 
 			float maximumResponseSpeed =
 				max(length(currentVelocity), length(previousVelocity)) * (1.0 + recovery);
 			float springSpeed = length(springVelocity);
-			float previousSpringSpeed = length(previousSpringVelocity);
-			springVelocity = springSpeed > maximumResponseSpeed && springSpeed > 1e-5 ?
-			                     springVelocity * (maximumResponseSpeed / springSpeed) :
-			                     springVelocity;
-			previousSpringVelocity = previousSpringSpeed > maximumResponseSpeed && previousSpringSpeed > 1e-5 ?
-			                             previousSpringVelocity * (maximumResponseSpeed / previousSpringSpeed) :
-			                             previousSpringVelocity;
+			return springSpeed > maximumResponseSpeed && springSpeed > 1e-5 ?
+			           springVelocity * (maximumResponseSpeed / springSpeed) :
+			           springVelocity;
 		}
 
 		/** @brief Applies stateless lag and recovery to consecutive rigid-bend targets. */
-		void CalculateSpringAngles(
-			float currentTargetAngle, float previousTargetAngle, float lagFrameCount,
-			out float springAngle, out float previousSpringAngle)
+		float CalculateSpringAngle(
+			float currentTargetAngle, float previousTargetAngle, float lagFrameCount)
 		{
 			float inertia = saturate(Permutation::GrassWindSpringStrength);
 			float recovery = max(Permutation::GrassWindSpringRecovery, 0.0);
 			float targetDelta = currentTargetAngle - previousTargetAngle;
 			float recovering = targetDelta < 0.0 ? 1.0 : 0.0;
 			float springOffset = targetDelta * lagFrameCount * (inertia + recovery * recovering);
-			springAngle = currentTargetAngle - springOffset;
-			previousSpringAngle = previousTargetAngle - springOffset;
+			float springAngle = currentTargetAngle - springOffset;
 
 			float maximumBendAngle = radians(max(Permutation::GrassWindMaximumTilt, 0.0));
 			float maximumResponseAngle = min(
 				max(abs(currentTargetAngle), abs(previousTargetAngle)) * (1.0 + recovery),
 				maximumBendAngle);
-			springAngle = clamp(springAngle, -maximumResponseAngle, maximumResponseAngle);
-			previousSpringAngle = clamp(previousSpringAngle, -maximumResponseAngle, maximumResponseAngle);
+			return clamp(springAngle, -maximumResponseAngle, maximumResponseAngle);
 		}
 
 		float3 CalculateVanillaDisplacement(

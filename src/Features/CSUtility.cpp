@@ -64,8 +64,8 @@ namespace
 	constexpr float kGrassWindSpringRecoveryMax = 0.5f;
 	constexpr float kGrassWindFlutterStrengthMin = 0.0f;
 	constexpr float kGrassWindFlutterStrengthMax = 2.0f;
-	constexpr float kGrassWindFlutterFrequencyMin = 1.0f;
-	constexpr float kGrassWindFlutterFrequencyMax = 4.0f;
+	constexpr float kGrassWindFlutterFrequencyMin = 0.0f;
+	constexpr float kGrassWindFlutterFrequencyMax = 2.0f;
 	constexpr float kWaterBrightnessMin = 0.0f;
 	constexpr float kWaterBrightnessMax = 2.0f;
 	constexpr float kWaterAmountMin = 0.0f;

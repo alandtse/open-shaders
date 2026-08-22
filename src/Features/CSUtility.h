@@ -106,7 +106,7 @@ struct CSUtility : Feature
 		float grassWindSpringStrength = 0.65f;
 		float grassWindSpringRecovery = 0.15f;
 		float grassWindFlutterStrength = 1.0f;
-		float grassWindFlutterFrequency = 4.0f;
+		float grassWindFlutterFrequency = 1.0f;
 		float skyBrightness = 1.0f;
 		float directionalLightMult = 1.0f;
 		float pointLightMult = 1.0f;

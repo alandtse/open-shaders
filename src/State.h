@@ -65,6 +65,7 @@ public:
 	float previousTimer = 0;
 	float windFieldGustTravelDistance = 0.0f;
 	float previousWindFieldGustTravelDistance = 0.0f;
+	float twoFramesAgoWindFieldGustTravelDistance = 0.0f;
 	float windFieldFrameTime = 0.0f;
 	float windFieldAmbientSpeed = 0.0f;
 	float windFieldAdvectionSpeed = 0.0f;
@@ -72,6 +73,7 @@ public:
 	float3 ambientWindVelocity = {};
 	float3 windFieldSelectedVelocity = {};
 	float3 previousWindFieldSelectedVelocity = {};
+	float3 twoFramesAgoWindFieldSelectedVelocity = {};
 	float windFieldSelectedSpeed = 0.0f;
 	bool windFieldHasPreviousSample = false;
 	WindField::WindTuning windFieldTuning{};
@@ -536,6 +538,7 @@ public:
 		WindField::WindTuning WindFieldTuning;
 		float4 WindFieldAmbient;  // xyz: instantaneous mean weather velocity, w: accumulated world-space gust travel
 		float4 WindFieldPreviousAmbient;
+		float4 WindFieldTwoFramesAgoAmbient;
 	};
 	STATIC_ASSERT_ALIGNAS_16(SharedDataCB);
 	// Each float4 cbuffer field must start on a 16-byte boundary to match the HLSL SharedData
@@ -548,6 +551,7 @@ public:
 	static_assert(offsetof(SharedDataCB, WindFieldTuning) % 16 == 0);
 	static_assert(offsetof(SharedDataCB, WindFieldAmbient) % 16 == 0);
 	static_assert(offsetof(SharedDataCB, WindFieldPreviousAmbient) % 16 == 0);
+	static_assert(offsetof(SharedDataCB, WindFieldTwoFramesAgoAmbient) % 16 == 0);
 
 	ConstantBuffer* sharedDataCB = nullptr;
 	ConstantBuffer* featureDataCB = nullptr;

@@ -44,6 +44,7 @@ namespace SharedData
 		WindField::WindTuning WindFieldTuning;
 		float4 WindFieldAmbient;  // xyz: selected mean velocity, w: accumulated world-space gust travel
 		float4 WindFieldPreviousAmbient;
+		float4 WindFieldTwoFramesAgoAmbient;
 	};
 
 	/** @brief Samples the shared ambient weather field at an absolute world position. */
@@ -62,6 +63,15 @@ namespace SharedData
 		float windSpeed = length(baseVelocity);
 		return WindField::SampleWind(
 			worldPosition, WindFieldPreviousAmbient.w, baseVelocity, windSpeed, WindFieldTuning);
+	}
+
+	/** @brief Samples the two-frames-ago ambient field for temporal reconstruction. */
+	WindField::WindSample SampleTwoFramesAgoAmbientWind(float3 worldPosition)
+	{
+		float3 baseVelocity = WindFieldTwoFramesAgoAmbient.xyz;
+		float windSpeed = length(baseVelocity);
+		return WindField::SampleWind(
+			worldPosition, WindFieldTwoFramesAgoAmbient.w, baseVelocity, windSpeed, WindFieldTuning);
 	}
 
 	struct GrassLightingSettings

@@ -347,6 +347,8 @@ void State::Reset()
 	previousTimer = timer;
 	previousTrunkWindVector = trunkWindVector;
 	previousSharedWindGustScale = sharedWindGustScale;
+	twoFramesAgoWindFieldSelectedVelocity = previousWindFieldSelectedVelocity;
+	twoFramesAgoWindFieldGustTravelDistance = previousWindFieldGustTravelDistance;
 	previousWindFieldSelectedVelocity = windFieldSelectedVelocity;
 	previousWindFieldGustTravelDistance = windFieldGustTravelDistance;
 	if (frameTime > 0.0f) {
@@ -437,6 +439,8 @@ void State::Reset()
 	if (!windFieldHasPreviousSample) {
 		previousWindFieldSelectedVelocity = windFieldSelectedVelocity;
 		previousWindFieldGustTravelDistance = windFieldGustTravelDistance;
+		twoFramesAgoWindFieldSelectedVelocity = windFieldSelectedVelocity;
+		twoFramesAgoWindFieldGustTravelDistance = windFieldGustTravelDistance;
 		windFieldHasPreviousSample = true;
 	}
 
@@ -1432,6 +1436,10 @@ void State::UpdateSharedData([[maybe_unused]] bool a_inWorld, [[maybe_unused]] b
 		data.WindFieldPreviousAmbient = {
 			previousWindFieldSelectedVelocity.x, previousWindFieldSelectedVelocity.y, previousWindFieldSelectedVelocity.z,
 			previousWindFieldGustTravelDistance
+		};
+		data.WindFieldTwoFramesAgoAmbient = {
+			twoFramesAgoWindFieldSelectedVelocity.x, twoFramesAgoWindFieldSelectedVelocity.y,
+			twoFramesAgoWindFieldSelectedVelocity.z, twoFramesAgoWindFieldGustTravelDistance
 		};
 
 		auto temporal = Util::GetTemporal();
