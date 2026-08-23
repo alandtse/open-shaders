@@ -59,8 +59,8 @@ float2 ClosestPointOnSegment(float2 position, float2 pointA, float2 pointB)
 		SharedBoundingBoxes[groupIndex] = CollisionBoundingBoxes[groupIndex];
 	GroupMemoryBarrierWithGroupSync();
 
-	const uint TEXTURE_SIZE = 512;
-	const float WORLD_SIZE = 4096.0;
+	const uint TEXTURE_SIZE = 1024;
+	const float WORLD_SIZE = 8192.0;
 	const float COLLISION_ACCELERATION = 50.0;
 	const int2 textureSize = int2(TEXTURE_SIZE, TEXTURE_SIZE);
 

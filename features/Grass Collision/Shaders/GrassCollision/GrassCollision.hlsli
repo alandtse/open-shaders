@@ -4,8 +4,8 @@ namespace GrassCollision
 	Texture2D<float4> PreviousDeformation : register(t101);
 	SamplerState DeformationSampler : register(s15);
 
-	const static uint TEXTURE_SIZE = 512;
-	const static float WORLD_SIZE = 4096.0;
+	const static uint TEXTURE_SIZE = 1024;
+	const static float WORLD_SIZE = 8192.0;
 
 	float2 GetFieldUV(float2 worldPosition, float2 positionOffset, uint2 arrayOrigin, out bool isValid)
 	{
@@ -66,8 +66,8 @@ namespace GrassCollision
 	{
 		float3 currentRootWorld = mul(World[0], float4(input.InstanceData1.xyz, 1.0)).xyz;
 		float3 previousRootWorld = mul(PreviousWorld[0], float4(input.InstanceData1.xyz, 1.0)).xyz;
-		float currentNearFactor = smoothstep(2048.0, 0.0, length(currentRootWorld));
-		float previousNearFactor = smoothstep(2048.0, 0.0, length(previousRootWorld));
+		float currentNearFactor = smoothstep(4096.0, 0.0, length(currentRootWorld));
+		float previousNearFactor = smoothstep(4096.0, 0.0, length(previousRootWorld));
 		float normalizedHeight = saturate(input.Color.w);
 		float heightWeight = normalizedHeight * normalizedHeight;
 

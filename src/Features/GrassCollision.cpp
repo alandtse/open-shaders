@@ -13,7 +13,7 @@
 static constexpr uint MAX_BOUNDING_BOXES = 64;
 static constexpr uint MAX_COLLISIONS_PER_BOUNDING_BOX = 3;
 static constexpr uint MAX_COLLISIONS = MAX_BOUNDING_BOXES * MAX_COLLISIONS_PER_BOUNDING_BOX;
-static constexpr float MAX_ACTOR_DISTANCE = 2048.0f;
+static constexpr float MAX_ACTOR_DISTANCE = 4096.0f;
 static constexpr float MAX_ACTOR_SQ_DISTANCE = MAX_ACTOR_DISTANCE * MAX_ACTOR_DISTANCE;
 static constexpr float MIN_COLLISION_RADIUS_DISTANCE_SCALE = 0.001f;
 static constexpr float MIN_COLLISION_RADIUS_SCALE = 1.0f;
@@ -244,8 +244,8 @@ void GrassCollision::Update()
 		auto eyePosNI = Util::GetEyePosition(0);
 		auto eyePos = float2{ eyePosNI.x, eyePosNI.y };
 
-		float worldSize = 4096.0f;
-		uint textureArrayDims = 512;
+		float worldSize = 8192.0f;
+		uint textureArrayDims = 1024;
 
 		float cellSize = worldSize / textureArrayDims;
 
@@ -353,8 +353,8 @@ void GrassCollision::SetupResources()
 
 	for (uint textureIndex = 0; textureIndex < 2; ++textureIndex) {
 		D3D11_TEXTURE2D_DESC texDesc = {
-			.Width = 512,
-			.Height = 512,
+			.Width = 1024,
+			.Height = 1024,
 			.MipLevels = 1,
 			.ArraySize = 1,
 			.Format = DXGI_FORMAT_R16G16B16A16_FLOAT,
@@ -511,7 +511,7 @@ void GrassCollision::UpdateCollisionTexture()
 		if (auto* shader = GetCollisionUpdateCS()) {
 			context->CSSetShader(shader, nullptr, 0);
 			CS_GPU_PASS("GrassCollision::CollisionUpdate");
-			context->Dispatch(512 / 8, 512 / 8, 1);
+			context->Dispatch(1024 / 8, 1024 / 8, 1);
 			currentTextureIndex = outputTextureIndex;
 		} else {
 			const float clearColor[4] = {};
