@@ -19,6 +19,7 @@
 #include "Features/ScreenshotFeature.h"
 #include "Features/Skin.h"
 #include "Features/SkySync.h"
+#include "Features/TreeWindPatcher.h"
 #include "Features/Upscaling.h"
 #include "Features/Upscaling/FoveatedRender/Bridge.h"
 #include "Features/VR.h"
@@ -218,11 +219,18 @@ namespace
 				return;
 
 			previousExtraShaderDescriptor = state->permutationData.ExtraShaderDescriptor;
+			previousTreeBendModelSensitivity = state->permutationData.TreeBendModelSensitivity;
+			previousTreeLeafModelSensitivity = state->permutationData.TreeLeafModelSensitivity;
 			treeBendSelected = IsTreeBendRenderPass(a_pass);
 			if (treeBendSelected) {
+				const auto sensitivities = TreeWindPatcher::GetSensitivities(a_pass->geometry);
 				state->permutationData.ExtraShaderDescriptor |= kTreeBendDescriptor;
+				state->permutationData.TreeBendModelSensitivity = sensitivities.bend;
+				state->permutationData.TreeLeafModelSensitivity = sensitivities.leafAmbient;
 			} else {
 				state->permutationData.ExtraShaderDescriptor &= ~kTreeBendDescriptor;
+				state->permutationData.TreeBendModelSensitivity = 1.0f;
+				state->permutationData.TreeLeafModelSensitivity = 1.0f;
 			}
 
 			state->UpdatePermutationBuffer();
@@ -231,13 +239,18 @@ namespace
 
 		~TreeBendPassScope()
 		{
-			if (state)
+			if (state) {
 				state->permutationData.ExtraShaderDescriptor = previousExtraShaderDescriptor;
+				state->permutationData.TreeBendModelSensitivity = previousTreeBendModelSensitivity;
+				state->permutationData.TreeLeafModelSensitivity = previousTreeLeafModelSensitivity;
+			}
 		}
 
 	private:
 		State* state = nullptr;
 		uint32_t previousExtraShaderDescriptor = 0;
+		float previousTreeBendModelSensitivity = 1.0f;
+		float previousTreeLeafModelSensitivity = 1.0f;
 		bool treeBendSelected = false;
 	};
 

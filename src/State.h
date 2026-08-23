@@ -434,7 +434,8 @@ public:
 
 		float TrunkWindFlexibleHeight;
 		float TrunkWindMaximumDisplacement;
-		float2 TreeWindPadding0;
+		float TreeBendModelSensitivity;
+		float TreeLeafModelSensitivity;
 
 		float3 TreeWindPadding1;
 		float TrunkWindBendSensitivity;
@@ -467,6 +468,8 @@ public:
 			       OverrideWindIntensity == other.OverrideWindIntensity &&
 			       TrunkWindFlexibleHeight == other.TrunkWindFlexibleHeight &&
 			       TrunkWindMaximumDisplacement == other.TrunkWindMaximumDisplacement &&
+			       TreeBendModelSensitivity == other.TreeBendModelSensitivity &&
+			       TreeLeafModelSensitivity == other.TreeLeafModelSensitivity &&
 			       TrunkWindBendSensitivity == other.TrunkWindBendSensitivity &&
 			       TreeLeafAmbientSensitivity == other.TreeLeafAmbientSensitivity &&
 			       EnableAmbientGrassWind == other.EnableAmbientGrassWind &&

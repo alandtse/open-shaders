@@ -5,7 +5,11 @@
 #include "Feature.h"
 #include "I18n/I18n.h"
 
+#include <array>
+#include <cstddef>
 #include <cstdint>
+#include <string>
+#include <vector>
 
 struct CSUtility : Feature
 {
@@ -115,6 +119,7 @@ struct CSUtility : Feature
 	enum class SettingsPage
 	{
 		WindField,            ///< Ambient wind-field controls.
+		TreeMeshes,           ///< Live per-mesh tree wind tuning.
 		Atmosphere,           ///< Sky atmosphere controls.
 		Water,                ///< Water rendering controls.
 		Multipliers,          ///< Lighting multiplier controls.
@@ -127,6 +132,21 @@ struct CSUtility : Feature
 	bool windFieldUseRealSpeed = true;      ///< Runtime-only debug input toggle.
 	bool windFieldUseRealDirection = true;  ///< Runtime-only debug input toggle.
 	float windFieldOverrideSpeed = 1.0f;    ///< Runtime-only speed used when real speed is disabled.
+	struct RuntimeWindTest
+	{
+		bool enabled = false;
+		float speed = 1.0f;
+		float gustScale = 2048.0f;
+		float gustAmplitude = 0.35f;
+		float gustAdvectionMultiplier = 1.0f;
+	} treeWindTest;
+	/** Search and feedback state for the live tree mesh editor. */
+	std::array<char, 256> treeMeshSearch{};
+	std::vector<std::size_t> filteredTreeRuleIndices;
+	std::string appliedTreeMeshSearch;
+	std::string treeWindSaveStatus;
+	std::size_t filteredTreeRuleCount = static_cast<std::size_t>(-1);
+	bool treeWindSaveSucceeded = false;
 
 	struct alignas(16) PerFrameData
 	{
@@ -160,9 +180,13 @@ struct CSUtility : Feature
 	ConstantBuffer* vanillaPointLightCB = nullptr;
 
 	virtual void DrawSettings() override;
+	/** @brief Exposes live tree tuning counts to devbench. */
+	virtual json GetDiagnostics() override;
 	/** @brief Exposes the runtime-only wind visualization toggle to devbench. */
 	virtual json GetRuntimeFlags() override;
 	virtual bool SetRuntimeFlag(std::string_view a_name, bool a_value) override;
+	/** @copydoc Feature::RegisterUxActions */
+	virtual void RegisterUxActions() override;
 	virtual void LoadSettings(json& o_json) override;
 	virtual void SaveSettings(json& o_json) override;
 	virtual void RestoreDefaultSettings() override;
@@ -179,11 +203,25 @@ struct CSUtility : Feature
 	virtual void DataLoaded() override;
 
 	PerFrameData GetCommonBufferData() const;
+	/** @brief Enables or releases the runtime-only wind conditions used for tree tuning. */
+	void SetTreeWindTestEnabled(bool a_enabled);
+	/** @return Whether weather speed or the persistent debug-speed controls drive the shared field. */
+	[[nodiscard]] bool ShouldUseRealWindSpeed() const { return !treeWindTest.enabled && windFieldUseRealSpeed; }
+	/** @return Runtime test speed while testing, otherwise the existing debug-speed override. */
+	[[nodiscard]] float GetEffectiveWindOverrideSpeed() const { return treeWindTest.enabled ? treeWindTest.speed : windFieldOverrideSpeed; }
+	/** @return Runtime test gust scale while testing, otherwise the persistent Wind Field value. */
+	[[nodiscard]] float GetEffectiveWindGustScale() const { return treeWindTest.enabled ? treeWindTest.gustScale : settings.windFieldGustScale; }
+	/** @return Runtime test gust amplitude while testing, otherwise the persistent Wind Field value. */
+	[[nodiscard]] float GetEffectiveWindGustAmplitude() const { return treeWindTest.enabled ? treeWindTest.gustAmplitude : settings.windFieldGustAmplitude; }
+	/** @return Runtime test gust advection while testing, otherwise the persistent Wind Field value. */
+	[[nodiscard]] float GetEffectiveWindGustAdvectionMultiplier() const { return treeWindTest.enabled ? treeWindTest.gustAdvectionMultiplier : settings.windFieldGustAdvectionMultiplier; }
 	void UpdateVanillaPointLightData(RE::BSRenderPass* a_pass, uint32_t a_lightCount);
 	void DrawDepthOfFieldSettings();
 	/** Draws water tuning controls. */
 	void DrawWaterSettings();
 	void DrawVanillaBloomSettings();
+	void DrawTreeWindTestSettings();
+	void DrawTreeMeshSettings();
 	void InstallDepthOfFieldHooks();
 
 	static void SanitizeDepthOfFieldSettings(DepthOfFieldSettings& a_settings);

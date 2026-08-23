@@ -163,7 +163,7 @@ VS_OUTPUT main(VS_INPUT input)
 
 #		if defined(VC) && defined(NORMALS) && defined(TREE_ANIM)
 	float2 treeTmp1 = SmoothSaturate(abs(2 * frac(float2(0.1, 0.25) * (TreeParams.w * TreeParams.y * TreeParams.x) + dot(input.PositionMS.xyz, 1.0.xxx) + 0.5) - 1));
-	float leafAnimationScale = treeBendEnabled ? Wind::Tree::GetLeafAnimationScale(treeWindSample.ambientGust) : 1.0;
+	float leafAnimationScale = treeBendEnabled ? Wind::Tree::GetLeafAnimationScale(treeWindSample.ambientGust, length(SharedData::WindFieldAmbient.xyz)) : 1.0;
 	float normalMult = (treeTmp1.x + 0.1 * treeTmp1.y) * (input.Color.w * TreeParams.z * leafAnimationScale);
 	positionMS.xyz += normalMS.xyz * normalMult;
 #		endif

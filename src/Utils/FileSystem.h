@@ -134,6 +134,12 @@ namespace Util
 		std::filesystem::path GetUnifiedWaterCachePath();
 
 		/**
+		 * Gets the TreeWindPatches directory path
+		 * @return CommunityShaderPath / "TreeWindPatches"
+		 */
+		std::filesystem::path GetTreeWindPatchesPath();
+
+		/**
 		 * Gets the main Shaders directory path
 		 * @return Data / "Shaders"
 		 */

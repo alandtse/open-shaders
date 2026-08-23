@@ -1,0 +1,482 @@
+#include "TreeWindPatcher.h"
+
+#include "Utils/FileSystem.h"
+#include "Utils/Format.h"
+
+#include <algorithm>
+#include <atomic>
+#include <cmath>
+#include <filesystem>
+#include <fstream>
+#include <memory>
+#include <mutex>
+#include <optional>
+#include <unordered_map>
+#include <vector>
+
+#include <nlohmann/json.hpp>
+
+namespace TreeWindPatcher
+{
+	namespace
+	{
+		constexpr std::size_t kMaximumPatchFileSize = 1024 * 1024;
+		constexpr std::size_t kMaximumRulesPerFile = 4096;
+		constexpr std::size_t kMaximumModelPathLength = 260;
+		constexpr float kMinimumSensitivity = 0.0f;
+		constexpr float kMaximumSensitivity = 4.0f;
+		constexpr std::string_view kPatchFileName = "NatureOfTheWildLands.json";
+		constexpr std::string_view kBackupFileName = "NatureOfTheWildLands_backup.json";
+		const RE::BSFixedString kRuleIdName = "OS_TreeWindRule";
+		const RE::BSFixedString kBendSensitivityName = "OS_TreeBendSensitivity";
+		const RE::BSFixedString kLeafAmbientSensitivityName = "OS_TreeLeafAmbientSensitivity";
+
+		struct LoadedRule
+		{
+			float bend = 1.0f;
+			float leafAmbient = 1.0f;
+		};
+
+		struct RuntimeRule
+		{
+			std::string mesh;
+			std::atomic<float> bend{ 1.0f };
+			std::atomic<float> leafAmbient{ 1.0f };
+			std::atomic<float> persistedBend{ 1.0f };
+			std::atomic<float> persistedLeafAmbient{ 1.0f };
+		};
+
+		std::vector<std::unique_ptr<RuntimeRule>> runtimeRules;
+		std::unordered_map<std::string, std::uint32_t> ruleIds;
+		std::mutex saveMutex;
+
+		float ClampSensitivity(float a_value)
+		{
+			return std::isfinite(a_value) ? std::clamp(a_value, kMinimumSensitivity, kMaximumSensitivity) : 1.0f;
+		}
+
+		bool ValuesDiffer(float a_lhs, float a_rhs)
+		{
+			return std::abs(a_lhs - a_rhs) > 0.0001f;
+		}
+
+		std::string NormalizeModelPath(std::string a_path)
+		{
+			a_path = Util::FixFilePath(a_path);
+			while (a_path.starts_with("./"))
+				a_path.erase(0, 2);
+			if (const auto meshesPosition = a_path.find("meshes/"); meshesPosition != std::string::npos)
+				a_path.erase(0, meshesPosition);
+			else
+				a_path.insert(0, "meshes/");
+			return a_path;
+		}
+
+		bool IsSafeModelPath(const std::string& a_path)
+		{
+			return a_path.size() <= kMaximumModelPathLength && a_path.starts_with("meshes/") && a_path.ends_with(".nif") &&
+			       a_path.find("../") == std::string::npos && a_path.find(':') == std::string::npos;
+		}
+
+		std::optional<float> ReadSensitivity(
+			const nlohmann::json& a_entry,
+			std::string_view a_key,
+			const std::filesystem::path& a_filePath,
+			std::size_t a_ruleIndex)
+		{
+			const auto valueIt = a_entry.find(a_key);
+			if (valueIt == a_entry.end())
+				return std::nullopt;
+			if (!valueIt->is_number()) {
+				logger::warn("[TreeWindPatcher] Ignoring non-numeric '{}' in {} rule {}", a_key, a_filePath.string(), a_ruleIndex);
+				return std::nullopt;
+			}
+
+			const double value = valueIt->get<double>();
+			if (!std::isfinite(value)) {
+				logger::warn("[TreeWindPatcher] Ignoring non-finite '{}' in {} rule {}", a_key, a_filePath.string(), a_ruleIndex);
+				return std::nullopt;
+			}
+
+			return std::clamp(static_cast<float>(value), kMinimumSensitivity, kMaximumSensitivity);
+		}
+
+		bool LoadPatchFile(const std::filesystem::path& a_filePath, std::unordered_map<std::string, LoadedRule>& a_rules)
+		{
+			std::error_code error;
+			const auto fileSize = std::filesystem::file_size(a_filePath, error);
+			if (error || fileSize > kMaximumPatchFileSize) {
+				logger::warn("[TreeWindPatcher] Skipping unreadable or oversized patch file: {}", a_filePath.string());
+				return false;
+			}
+
+			std::ifstream stream(a_filePath, std::ios::binary);
+			if (!stream) {
+				logger::warn("[TreeWindPatcher] Failed to open patch file: {}", a_filePath.string());
+				return false;
+			}
+
+			try {
+				const auto root = nlohmann::json::parse(stream);
+				if (!root.is_object() || root.value("version", 0) != 1 || !root.contains("trees") || !root["trees"].is_array()) {
+					logger::warn("[TreeWindPatcher] Invalid version or trees array in {}", a_filePath.string());
+					return false;
+				}
+
+				const auto& treeEntries = root["trees"];
+				if (treeEntries.size() > kMaximumRulesPerFile) {
+					logger::warn("[TreeWindPatcher] Too many rules in {}; maximum is {}", a_filePath.string(), kMaximumRulesPerFile);
+					return false;
+				}
+
+				for (std::size_t ruleIndex = 0; ruleIndex < treeEntries.size(); ++ruleIndex) {
+					const auto& entry = treeEntries[ruleIndex];
+					if (!entry.is_object() || !entry.contains("mesh") || !entry["mesh"].is_string()) {
+						logger::warn("[TreeWindPatcher] Ignoring malformed rule {} in {}", ruleIndex, a_filePath.string());
+						continue;
+					}
+
+					const auto modelPath = NormalizeModelPath(entry["mesh"].get<std::string>());
+					if (!IsSafeModelPath(modelPath)) {
+						logger::warn("[TreeWindPatcher] Ignoring unsafe model path in {} rule {}", a_filePath.string(), ruleIndex);
+						continue;
+					}
+
+					const auto bendSensitivity = ReadSensitivity(entry, "bendSensitivity", a_filePath, ruleIndex);
+					const auto leafAmbientSensitivity = ReadSensitivity(entry, "leafAmbientSensitivity", a_filePath, ruleIndex);
+					if (!bendSensitivity && !leafAmbientSensitivity) {
+						logger::warn("[TreeWindPatcher] Rule {} in {} has no valid sensitivity values", ruleIndex, a_filePath.string());
+						continue;
+					}
+
+					auto& rule = a_rules[modelPath];
+					if (bendSensitivity)
+						rule.bend = *bendSensitivity;
+					if (leafAmbientSensitivity)
+						rule.leafAmbient = *leafAmbientSensitivity;
+				}
+				return true;
+			} catch (const nlohmann::json::exception& exception) {
+				logger::error("[TreeWindPatcher] Failed to parse {}: {}", a_filePath.string(), exception.what());
+				return false;
+			}
+		}
+
+		void EnsureEditablePatch(const std::filesystem::path& a_patchPath, const std::filesystem::path& a_backupPath)
+		{
+			std::error_code error;
+			const bool patchExists = std::filesystem::is_regular_file(a_patchPath, error);
+			error.clear();
+			const bool backupExists = std::filesystem::is_regular_file(a_backupPath, error);
+			if (patchExists && !backupExists) {
+				std::filesystem::copy_file(a_patchPath, a_backupPath, std::filesystem::copy_options::none, error);
+				if (error)
+					logger::warn("[TreeWindPatcher] Failed to create startup backup {}: {}", a_backupPath.string(), error.message());
+				else
+					logger::info("[TreeWindPatcher] Created startup backup {}", a_backupPath.string());
+			} else if (!patchExists && backupExists) {
+				std::filesystem::copy_file(a_backupPath, a_patchPath, std::filesystem::copy_options::none, error);
+				if (error)
+					logger::warn("[TreeWindPatcher] Failed to restore missing patch {}: {}", a_patchPath.string(), error.message());
+				else
+					logger::info("[TreeWindPatcher] Restored missing patch from {}", a_backupPath.string());
+			}
+		}
+
+		void LoadRules()
+		{
+			runtimeRules.clear();
+			ruleIds.clear();
+			const auto patchDirectory = Util::PathHelpers::GetTreeWindPatchesPath();
+			std::error_code error;
+			if (!std::filesystem::is_directory(patchDirectory, error))
+				return;
+
+			const auto patchPath = patchDirectory / kPatchFileName;
+			const auto backupPath = patchDirectory / kBackupFileName;
+			EnsureEditablePatch(patchPath, backupPath);
+			if (!std::filesystem::is_regular_file(patchPath, error))
+				return;
+
+			std::unordered_map<std::string, LoadedRule> mergedRules;
+			LoadPatchFile(patchPath, mergedRules);
+
+			std::vector<std::string> modelPaths;
+			modelPaths.reserve(mergedRules.size());
+			for (const auto& [modelPath, rule] : mergedRules)
+				modelPaths.push_back(modelPath);
+			std::ranges::sort(modelPaths);
+
+			runtimeRules.reserve(modelPaths.size());
+			ruleIds.reserve(modelPaths.size());
+			for (const auto& modelPath : modelPaths) {
+				const auto& merged = mergedRules.at(modelPath);
+				auto rule = std::make_unique<RuntimeRule>();
+				rule->mesh = modelPath;
+				rule->bend.store(merged.bend, std::memory_order_relaxed);
+				rule->leafAmbient.store(merged.leafAmbient, std::memory_order_relaxed);
+				rule->persistedBend.store(merged.bend, std::memory_order_relaxed);
+				rule->persistedLeafAmbient.store(merged.leafAmbient, std::memory_order_relaxed);
+				const auto id = static_cast<std::uint32_t>(runtimeRules.size() + 1);
+				ruleIds.emplace(rule->mesh, id);
+				runtimeRules.push_back(std::move(rule));
+			}
+
+			if (!runtimeRules.empty())
+				logger::info("[TreeWindPatcher] Loaded {} model rules from {}", runtimeRules.size(), patchPath.string());
+		}
+
+		void SetIntegerExtraData(RE::NiObjectNET& a_object, const RE::BSFixedString& a_name, std::int32_t a_value)
+		{
+			if (auto* existing = a_object.GetExtraData(a_name)) {
+				static REL::Relocation<const RE::NiRTTI*> integerExtraDataRTTI{ RE::NiIntegerExtraData::Ni_RTTI };
+				if (existing->GetRTTI() == integerExtraDataRTTI.get())
+					static_cast<RE::NiIntegerExtraData*>(existing)->value = a_value;
+				else
+					logger::warn("[TreeWindPatcher] Extra data '{}' exists with an incompatible type", a_name.c_str());
+				return;
+			}
+
+			if (auto* extraData = RE::NiIntegerExtraData::Create(a_name, a_value))
+				a_object.AddExtraData(extraData);
+		}
+
+		void ApplyRule(const char* a_modelName, RE::NiNode* a_root)
+		{
+			if (!a_modelName || !a_root)
+				return;
+
+			const auto ruleIt = ruleIds.find(NormalizeModelPath(a_modelName));
+			if (ruleIt == ruleIds.end())
+				return;
+
+			std::size_t patchedParentCount = 0;
+			RE::BSVisit::TraverseScenegraphObjects(a_root, [&](RE::NiAVObject* a_object) {
+				if (auto* leafParent = netimmerse_cast<RE::BSLeafAnimNode*>(a_object)) {
+					SetIntegerExtraData(*leafParent, kRuleIdName, static_cast<std::int32_t>(ruleIt->second));
+					++patchedParentCount;
+				}
+				return RE::BSVisit::BSVisitControl::kContinue;
+			});
+
+			if (patchedParentCount == 0)
+				logger::debug("[TreeWindPatcher] Matched {} but found no BSLeafAnimNode", a_modelName);
+			else
+				logger::debug("[TreeWindPatcher] Applied rule {} to {} leaf parents", ruleIt->second, patchedParentCount);
+		}
+
+		void ReadFloatExtraData(const RE::BSLeafAnimNode& a_leafParent, const RE::BSFixedString& a_name, float& a_value)
+		{
+			static REL::Relocation<const RE::NiRTTI*> floatExtraDataRTTI{ RE::NiFloatExtraData::Ni_RTTI };
+			if (const auto* data = a_leafParent.GetExtraData(a_name); data && data->GetRTTI() == floatExtraDataRTTI.get()) {
+				const float value = static_cast<const RE::NiFloatExtraData*>(data)->value;
+				if (std::isfinite(value))
+					a_value = std::clamp(value, kMinimumSensitivity, kMaximumSensitivity);
+			}
+		}
+
+		struct TESProcessorPostCreate
+		{
+			static void thunk(
+				RE::TESModelDB::TESProcessor* a_this,
+				const RE::BSModelDB::DBTraits::ArgsType& a_args,
+				const char* a_modelName,
+				RE::NiPointer<RE::NiNode>& a_root,
+				std::uint32_t& a_typeOut)
+			{
+				func(a_this, a_args, a_modelName, a_root, a_typeOut);
+				ApplyRule(a_modelName, a_root.get());
+			}
+
+			static inline REL::Relocation<decltype(thunk)> func;
+		};
+	}
+
+	void LoadAndInstall()
+	{
+		LoadRules();
+		if (runtimeRules.empty())
+			return;
+
+		stl::write_vfunc<0x1, TESProcessorPostCreate>(RE::VTABLE_TESModelDB____TESProcessor[0]);
+		logger::info("[TreeWindPatcher] Installed model creation hook");
+	}
+
+	Sensitivities GetSensitivities(const RE::BSGeometry* a_geometry)
+	{
+		Sensitivities sensitivities;
+		if (!a_geometry)
+			return sensitivities;
+
+		const auto* leafParent = netimmerse_cast<RE::BSLeafAnimNode*>(a_geometry->parent);
+		if (!leafParent)
+			return sensitivities;
+
+		static REL::Relocation<const RE::NiRTTI*> integerExtraDataRTTI{ RE::NiIntegerExtraData::Ni_RTTI };
+		if (const auto* data = leafParent->GetExtraData(kRuleIdName);
+			data && data->GetRTTI() == integerExtraDataRTTI.get()) {
+			const auto id = static_cast<const RE::NiIntegerExtraData*>(data)->value;
+			if (id > 0 && static_cast<std::size_t>(id) <= runtimeRules.size()) {
+				const auto& rule = *runtimeRules[static_cast<std::size_t>(id) - 1];
+				sensitivities.bend = rule.bend.load(std::memory_order_relaxed);
+				sensitivities.leafAmbient = rule.leafAmbient.load(std::memory_order_relaxed);
+				return sensitivities;
+			}
+		}
+
+		ReadFloatExtraData(*leafParent, kBendSensitivityName, sensitivities.bend);
+		ReadFloatExtraData(*leafParent, kLeafAmbientSensitivityName, sensitivities.leafAmbient);
+		return sensitivities;
+	}
+
+	std::size_t GetRuleCount()
+	{
+		return runtimeRules.size();
+	}
+
+	RuleSnapshot GetRule(std::size_t a_index)
+	{
+		if (a_index >= runtimeRules.size())
+			return {};
+
+		const auto& rule = *runtimeRules[a_index];
+		const float bend = rule.bend.load(std::memory_order_relaxed);
+		const float leafAmbient = rule.leafAmbient.load(std::memory_order_relaxed);
+		return {
+			static_cast<std::uint32_t>(a_index + 1),
+			rule.mesh,
+			bend,
+			leafAmbient,
+			ValuesDiffer(bend, rule.persistedBend.load(std::memory_order_relaxed)) ||
+				ValuesDiffer(leafAmbient, rule.persistedLeafAmbient.load(std::memory_order_relaxed))
+		};
+	}
+
+	bool SetRule(std::size_t a_index, float a_bend, float a_leafAmbient)
+	{
+		if (a_index >= runtimeRules.size())
+			return false;
+		a_bend = ClampSensitivity(a_bend);
+		a_leafAmbient = ClampSensitivity(a_leafAmbient);
+		runtimeRules[a_index]->bend.store(a_bend, std::memory_order_relaxed);
+		runtimeRules[a_index]->leafAmbient.store(a_leafAmbient, std::memory_order_relaxed);
+		return true;
+	}
+
+	bool SetRule(std::string_view a_mesh, float a_bend, float a_leafAmbient)
+	{
+		const auto normalized = NormalizeModelPath(std::string(a_mesh));
+		const auto ruleIt = ruleIds.find(normalized);
+		return ruleIt != ruleIds.end() && SetRule(static_cast<std::size_t>(ruleIt->second) - 1, a_bend, a_leafAmbient);
+	}
+
+	void RevertUnsavedChanges()
+	{
+		for (auto& rule : runtimeRules) {
+			rule->bend.store(rule->persistedBend.load(std::memory_order_relaxed), std::memory_order_relaxed);
+			rule->leafAmbient.store(rule->persistedLeafAmbient.load(std::memory_order_relaxed), std::memory_order_relaxed);
+		}
+	}
+
+	SaveResult SaveRules()
+	{
+		std::scoped_lock lock(saveMutex);
+		SaveResult result;
+		const auto outputPath = Util::PathHelpers::GetTreeWindPatchesPath() / kPatchFileName;
+		result.path = outputPath.string();
+
+		nlohmann::json treeEntries = nlohmann::json::array();
+		for (const auto& rule : runtimeRules) {
+			const float bend = rule->bend.load(std::memory_order_relaxed);
+			const float leafAmbient = rule->leafAmbient.load(std::memory_order_relaxed);
+			treeEntries.push_back({
+				{ "mesh", rule->mesh },
+				{ "bendSensitivity", bend },
+				{ "leafAmbientSensitivity", leafAmbient },
+			});
+		}
+
+		const nlohmann::json root{
+			{ "$schema", "TreeWindPatches.schema.json" },
+			{ "version", 1 },
+			{ "trees", std::move(treeEntries) },
+		};
+
+		std::error_code error;
+		std::filesystem::create_directories(outputPath.parent_path(), error);
+		if (error) {
+			result.error = std::format("Failed to create patch directory: {}", error.message());
+			return result;
+		}
+
+		std::ofstream stream(outputPath, std::ios::binary | std::ios::trunc);
+		if (!stream) {
+			result.error = "Failed to open the tree wind patch for writing";
+			return result;
+		}
+		stream << root.dump(4) << '\n';
+		stream.close();
+		if (!stream) {
+			result.error = "Failed while writing the tree wind patch";
+			return result;
+		}
+
+		for (auto& rule : runtimeRules) {
+			rule->persistedBend.store(rule->bend.load(std::memory_order_relaxed), std::memory_order_relaxed);
+			rule->persistedLeafAmbient.store(rule->leafAmbient.load(std::memory_order_relaxed), std::memory_order_relaxed);
+		}
+		result.success = true;
+		result.savedRuleCount = root["trees"].size();
+		logger::info("[TreeWindPatcher] Saved {} model rules to {}", result.savedRuleCount, result.path);
+		return result;
+	}
+
+	SaveResult RestoreBackup()
+	{
+		std::scoped_lock lock(saveMutex);
+		SaveResult result;
+		const auto patchDirectory = Util::PathHelpers::GetTreeWindPatchesPath();
+		const auto outputPath = patchDirectory / kPatchFileName;
+		const auto backupPath = patchDirectory / kBackupFileName;
+		result.path = outputPath.string();
+
+		std::error_code error;
+		if (!std::filesystem::is_regular_file(backupPath, error)) {
+			result.error = "Tree wind backup file is missing";
+			return result;
+		}
+
+		std::unordered_map<std::string, LoadedRule> backupRules;
+		if (!LoadPatchFile(backupPath, backupRules)) {
+			result.error = "Tree wind backup is invalid";
+			return result;
+		}
+		std::filesystem::copy_file(backupPath, outputPath, std::filesystem::copy_options::overwrite_existing, error);
+		if (error) {
+			result.error = std::format("Failed to restore backup: {}", error.message());
+			return result;
+		}
+
+		for (auto& rule : runtimeRules) {
+			const auto backupIt = backupRules.find(rule->mesh);
+			const LoadedRule restored = backupIt != backupRules.end() ? backupIt->second : LoadedRule{};
+			rule->bend.store(restored.bend, std::memory_order_relaxed);
+			rule->leafAmbient.store(restored.leafAmbient, std::memory_order_relaxed);
+			rule->persistedBend.store(restored.bend, std::memory_order_relaxed);
+			rule->persistedLeafAmbient.store(restored.leafAmbient, std::memory_order_relaxed);
+		}
+
+		result.success = true;
+		result.savedRuleCount = backupRules.size();
+		logger::info("[TreeWindPatcher] Restored {} model rules from {}", result.savedRuleCount, backupPath.string());
+		return result;
+	}
+
+	std::size_t GetUnsavedRuleCount()
+	{
+		return static_cast<std::size_t>(std::ranges::count_if(runtimeRules, [](const auto& a_rule) {
+			return ValuesDiffer(a_rule->bend.load(std::memory_order_relaxed), a_rule->persistedBend.load(std::memory_order_relaxed)) ||
+			       ValuesDiffer(a_rule->leafAmbient.load(std::memory_order_relaxed), a_rule->persistedLeafAmbient.load(std::memory_order_relaxed));
+		}));
+	}
+}

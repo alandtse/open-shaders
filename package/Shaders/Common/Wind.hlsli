@@ -24,11 +24,13 @@ namespace Wind
 
 	namespace Tree
 	{
-		/** @brief Scales existing leaf motion from the root-sampled ambient gust pressure. */
-		float GetLeafAnimationScale(float ambientGust)
+		/** @brief Scales existing leaf motion primarily from mean wind speed, with a positive gust-pressure boost. */
+		float GetLeafAnimationScale(float ambientGust, float windSpeed)
 		{
-			float centeredGust = saturate(ambientGust) * 2.0 - 1.0;
-			return max(1.0 + centeredGust * max(Permutation::TreeLeafAmbientSensitivity, 0.0), 0.0);
+			float sensitivity = max(Permutation::TreeLeafAmbientSensitivity, 0.0) *
+			                    max(Permutation::TreeLeafModelSensitivity, 0.0);
+			float gustWeight = lerp(0.75, 1.0, saturate(ambientGust));
+			return 1.0 + max(windSpeed, 0.0) * gustWeight * sensitivity;
 		}
 
 		/** @brief Converts sampled ambient wind into the established height-weighted trunk shift. */
@@ -38,7 +40,8 @@ namespace Wind
 			float flexibility = height * height;
 			return windVelocity *
 			       (max(Permutation::TrunkWindMaximumDisplacement, 0.0) * flexibility *
-					   max(Permutation::TrunkWindBendSensitivity, 0.0));
+					   max(Permutation::TrunkWindBendSensitivity, 0.0) *
+					   max(Permutation::TreeBendModelSensitivity, 0.0));
 		}
 	}
 

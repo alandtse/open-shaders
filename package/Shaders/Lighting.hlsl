@@ -232,8 +232,9 @@ VS_OUTPUT main(VS_INPUT input)
 	float2 leafAnimationScale = 1.0.xx;
 	if (treeBendEnabled) {
 		leafAnimationScale = float2(
-			Wind::Tree::GetLeafAnimationScale(treeWindSample.ambientGust),
-			Wind::Tree::GetLeafAnimationScale(previousTreeWindSample.ambientGust));
+			Wind::Tree::GetLeafAnimationScale(treeWindSample.ambientGust, length(SharedData::WindFieldAmbient.xyz)),
+			Wind::Tree::GetLeafAnimationScale(
+				previousTreeWindSample.ambientGust, length(SharedData::WindFieldPreviousAmbient.xyz)));
 	}
 	precise float2 treeShiftVector = GetTreeShiftVector(input.Position, input.Color) * leafAnimationScale;
 	float3 normal = -1.0.xxx + 2.0.xxx * input.Normal.xyz;

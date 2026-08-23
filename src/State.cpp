@@ -310,10 +310,10 @@ void State::Reset()
 	globals::profiler->EndFrame(frameCount);
 
 	Feature::ForEachLoadedFeature("Reset", [](Feature* feature) { feature->Reset(); });
-	const auto& trunkWindSettings = globals::features::csUtility.settings;
-	windFieldTuning.gustScale = trunkWindSettings.windFieldGustScale;
-	windFieldTuning.gustAmplitude = trunkWindSettings.windFieldGustAmplitude;
-	windFieldTuning.gustAdvectionMultiplier = trunkWindSettings.windFieldGustAdvectionMultiplier;
+	const auto& csUtility = globals::features::csUtility;
+	windFieldTuning.gustScale = csUtility.GetEffectiveWindGustScale();
+	windFieldTuning.gustAmplitude = csUtility.GetEffectiveWindGustAmplitude();
+	windFieldTuning.gustAdvectionMultiplier = csUtility.GetEffectiveWindGustAdvectionMultiplier();
 	const bool gamePaused = globals::game::ui->GameIsPaused();
 	const float frameTime = gamePaused ? 0.0f : std::max(RE::GetSecondsSinceLastFrame(), 0.0f);
 	windFieldFrameTime = frameTime;
@@ -355,13 +355,11 @@ void State::Reset()
 		ambientWindVelocity.x * ambientWindVelocity.x +
 		ambientWindVelocity.y * ambientWindVelocity.y +
 		ambientWindVelocity.z * ambientWindVelocity.z);
-	const bool useRealWindSpeed = !globals::features::csUtility.loaded ||
-	                              globals::features::csUtility.windFieldUseRealSpeed;
-	const bool useRealWindDirection = !globals::features::csUtility.loaded ||
-	                                  globals::features::csUtility.windFieldUseRealDirection;
+	const bool useRealWindSpeed = !csUtility.loaded || csUtility.ShouldUseRealWindSpeed();
+	const bool useRealWindDirection = !csUtility.loaded || csUtility.windFieldUseRealDirection;
 	const float selectedWindSpeed = useRealWindSpeed ?
 	                                    (std::isfinite(ambientWindSpeed) ? std::max(ambientWindSpeed, 0.0f) : 0.0f) :
-	                                    std::max(globals::features::csUtility.windFieldOverrideSpeed, 0.0f);
+	                                    std::max(csUtility.GetEffectiveWindOverrideSpeed(), 0.0f);
 	const float ambientDirectionLength = std::hypot(ambientWindVelocity.x, ambientWindVelocity.y);
 	float3 selectedWindDirection{ 1.0f, 0.0f, 0.0f };
 	if (useRealWindDirection && std::isfinite(ambientDirectionLength) && ambientDirectionLength > 0.0001f) {
@@ -1370,7 +1368,7 @@ void State::UpdateSharedData([[maybe_unused]] bool a_inWorld, [[maybe_unused]] b
 		};
 		data.WindFieldDebugOptions = {
 			1.0f,
-			globals::features::csUtility.windFieldUseRealSpeed ? 1.0f : 0.0f,
+			globals::features::csUtility.ShouldUseRealWindSpeed() ? 1.0f : 0.0f,
 			globals::features::csUtility.windFieldUseRealDirection ? 1.0f : 0.0f,
 			windFieldGustTravelDistance
 		};

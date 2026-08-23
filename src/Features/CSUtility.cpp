@@ -6,7 +6,10 @@
 #include "LightLimitFix.h"
 #include "LinearLighting.h"
 #include "State.h"
+#include "TreeWindPatcher.h"
 #include "UnderwaterDepthOfField.h"
+#include "Utils/DevBenchUx.h"
+#include "Utils/Format.h"
 #include "Utils/Game.h"
 #include "Utils/PointLightFlags.h"
 #include "Utils/UI.h"
@@ -14,6 +17,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <format>
 #include <string_view>
 
 #define I18N_KEY_PREFIX "feature.cs_utility."
@@ -148,6 +152,35 @@ namespace
 			ImGui::TextWrapped("%s", a_tooltip);
 		}
 	}
+
+	std::string CompactMeshPath(std::string_view a_path, float a_availableWidth)
+	{
+		const std::string fullPath(a_path);
+		if (ImGui::CalcTextSize(fullPath.c_str()).x <= a_availableWidth)
+			return fullPath;
+
+		const auto fileSeparator = a_path.rfind('/');
+		if (fileSeparator == std::string_view::npos)
+			return fullPath;
+
+		const std::string fileName(a_path.substr(fileSeparator + 1));
+		if (ImGui::CalcTextSize(fileName.c_str()).x > a_availableWidth)
+			return fileName;
+
+		std::string compactPath = ".../" + fileName;
+		auto suffixStart = fileSeparator;
+		while (suffixStart > 0) {
+			const auto previousSeparator = a_path.rfind('/', suffixStart - 1);
+			if (previousSeparator == std::string_view::npos)
+				break;
+			const std::string candidate = "..." + std::string(a_path.substr(previousSeparator));
+			if (ImGui::CalcTextSize(candidate.c_str()).x > a_availableWidth)
+				break;
+			compactPath = candidate;
+			suffixStart = previousSeparator;
+		}
+		return compactPath;
+	}
 }
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
@@ -236,6 +269,10 @@ void CSUtility::DrawSettings()
 		}
 		ImGui::SliderFloat(T(TKEY("wind_field_override_speed"), "Wind Debug: Override Speed"), &windFieldOverrideSpeed,
 			0.0f, 2.0f, "%.3f");
+		if (treeWindTest.enabled) {
+			ImGui::TextColored(ImVec4(1.0f, 0.75f, 0.25f, 1.0f), "%s",
+				T(TKEY("tree_wind_test_active_notice"), "Tree Meshes runtime test conditions currently override wind speed and gust tuning."));
+		}
 		ImGui::Checkbox(T(TKEY("wind_field_use_real_direction"), "Wind Debug: Use Real Wind Direction"), &windFieldUseRealDirection);
 		if (auto _tt = Util::HoverTooltipWrapper()) {
 			ImGui::TextUnformatted(T(TKEY("wind_field_use_real_direction_tooltip"),
@@ -368,13 +405,15 @@ void CSUtility::DrawSettings()
 				kTrunkWindMaximumDisplacementMin, kTrunkWindMaximumDisplacementMax, "%.0f", ImGuiSliderFlags_AlwaysClamp);
 			ImGui::SliderFloat(T(TKEY("trunk_wind_bend_sensitivity"), "Trunk Wind Sensitivity"), &settings.trunkWindBendSensitivity,
 				kTrunkWindSensitivityMin, kTrunkWindSensitivityMax, "%.2f", ImGuiSliderFlags_AlwaysClamp);
-			ImGui::SliderFloat(T(TKEY("tree_leaf_ambient_sensitivity"), "Leaf Ambient Sensitivity"), &settings.treeLeafAmbientSensitivity,
+			ImGui::SliderFloat(T(TKEY("tree_leaf_ambient_sensitivity"), "Leaf Flutter Sensitivity"), &settings.treeLeafAmbientSensitivity,
 				kTreeLeafAmbientSensitivityMin, kTreeLeafAmbientSensitivityMax, "%.2f", ImGuiSliderFlags_AlwaysClamp);
 			if (auto _tt = Util::HoverTooltipWrapper()) {
-				ImGui::TextUnformatted(T(TKEY("tree_leaf_ambient_sensitivity_tooltip"), "Controls how strongly ambient gust pressure modulates Skyrim's existing leaf animation. Zero preserves vanilla motion."));
+				ImGui::TextUnformatted(T(TKEY("tree_leaf_ambient_sensitivity_tooltip"), "Controls how strongly mean wind speed and ambient gust pressure increase Skyrim's existing leaf animation. Zero preserves vanilla motion."));
 			}
 			ImGui::EndTabItem();
 		}
+
+		DrawTreeMeshSettings();
 
 		if (ImGui::BeginTabItem(T(TKEY("tab_grass"), "Grass"))) {
 			ImGui::Checkbox(T(TKEY("enable_ambient_grass_wind"), "Enable Ambient Grass Wind"), &settings.enableAmbientGrassWind);
@@ -461,12 +500,281 @@ void CSUtility::DrawSettings()
 	}
 }
 
+void CSUtility::SetTreeWindTestEnabled(bool a_enabled)
+{
+	if (treeWindTest.enabled == a_enabled)
+		return;
+
+	if (a_enabled) {
+		const auto* state = globals::state;
+		treeWindTest.speed = ClampFiniteOrDefault(state ? state->windFieldSelectedSpeed : windFieldOverrideSpeed, 0.0f, 2.0f, 1.0f);
+		treeWindTest.gustScale = ClampFiniteOrDefault(state ? state->windFieldTuning.gustScale : settings.windFieldGustScale,
+			kWindFieldGustScaleMin, kWindFieldGustScaleMax, settings.windFieldGustScale);
+		treeWindTest.gustAmplitude = ClampFiniteOrDefault(state ? state->windFieldTuning.gustAmplitude : settings.windFieldGustAmplitude,
+			kWindFieldGustAmplitudeMin, kWindFieldGustAmplitudeMax, settings.windFieldGustAmplitude);
+		treeWindTest.gustAdvectionMultiplier = ClampFiniteOrDefault(
+			state ? state->windFieldTuning.gustAdvectionMultiplier : settings.windFieldGustAdvectionMultiplier,
+			kWindFieldGustAdvectionMultiplierMin, kWindFieldGustAdvectionMultiplierMax, settings.windFieldGustAdvectionMultiplier);
+	}
+	treeWindTest.enabled = a_enabled;
+}
+
+void CSUtility::DrawTreeWindTestSettings()
+{
+	if (!treeWindTest.enabled) {
+		if (const auto* state = globals::state)
+			treeWindTest.speed = ClampFiniteOrDefault(state->windFieldSelectedSpeed, 0.0f, 2.0f, 1.0f);
+		treeWindTest.gustScale = settings.windFieldGustScale;
+		treeWindTest.gustAmplitude = settings.windFieldGustAmplitude;
+		treeWindTest.gustAdvectionMultiplier = settings.windFieldGustAdvectionMultiplier;
+	}
+
+	if (!ImGui::TreeNodeEx(T(TKEY("tree_wind_test_conditions"), "Test Wind Conditions"), ImGuiTreeNodeFlags_DefaultOpen))
+		return;
+
+	bool testEnabled = treeWindTest.enabled;
+	if (ImGui::Checkbox(T(TKEY("tree_wind_test_enable"), "Override Wind for Testing"), &testEnabled))
+		SetTreeWindTestEnabled(testEnabled);
+	ImGui::TextWrapped("%s", T(TKEY("tree_wind_test_runtime_note"),
+								 "Runtime only. Disable this override to immediately return control to weather and the Wind Field settings."));
+
+	ImGui::BeginDisabled(!treeWindTest.enabled);
+	ImGui::SliderFloat(T(TKEY("tree_wind_test_speed"), "Wind Speed"), &treeWindTest.speed, 0.0f, 2.0f, "%.3f",
+		ImGuiSliderFlags_AlwaysClamp);
+	ImGui::SliderFloat(T(TKEY("tree_wind_test_advection"), "Gust Advection Multiplier"),
+		&treeWindTest.gustAdvectionMultiplier, kWindFieldGustAdvectionMultiplierMin,
+		kWindFieldGustAdvectionMultiplierMax, "%.2fx", ImGuiSliderFlags_AlwaysClamp);
+	ImGui::SliderFloat(T(TKEY("tree_wind_test_scale"), "Gust Spatial Scale"), &treeWindTest.gustScale,
+		kWindFieldGustScaleMin, kWindFieldGustScaleMax, "%.0f units",
+		ImGuiSliderFlags_AlwaysClamp | ImGuiSliderFlags_Logarithmic);
+	ImGui::SliderFloat(T(TKEY("tree_wind_test_amplitude"), "Gust Amplitude"), &treeWindTest.gustAmplitude,
+		kWindFieldGustAmplitudeMin, kWindFieldGustAmplitudeMax, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+	ImGui::EndDisabled();
+	ImGui::TreePop();
+}
+
+void CSUtility::DrawTreeMeshSettings()
+{
+	if (!ImGui::BeginTabItem(T(TKEY("tab_tree_meshes"), "Tree Meshes")))
+		return;
+
+	activeSettingsPage = SettingsPage::TreeMeshes;
+	DrawTreeWindTestSettings();
+	const std::size_t ruleCount = TreeWindPatcher::GetRuleCount();
+	const std::size_t unsavedCount = TreeWindPatcher::GetUnsavedRuleCount();
+	ImGui::TextWrapped("%s", T(TKEY("tree_mesh_live_note"),
+								 "Changes apply immediately to every loaded instance of the selected mesh. Save rewrites NatureOfTheWildLands.json."));
+	ImGui::Text("%s: %zu    %s: %zu", T(TKEY("tree_mesh_rule_count"), "Meshes"), ruleCount,
+		T(TKEY("tree_mesh_unsaved_count"), "Unsaved"), unsavedCount);
+
+	ImGui::SetNextItemWidth(-1.0f);
+	const bool searchChanged = ImGui::InputTextWithHint("##TreeMeshSearch",
+		T(TKEY("tree_mesh_search_hint"), "Search mesh paths..."), treeMeshSearch.data(), treeMeshSearch.size());
+	const std::string normalizedSearch = Util::FixFilePath(std::string(treeMeshSearch.data()));
+	if (searchChanged || filteredTreeRuleCount != ruleCount || appliedTreeMeshSearch != normalizedSearch) {
+		filteredTreeRuleIndices.clear();
+		filteredTreeRuleIndices.reserve(ruleCount);
+		for (std::size_t index = 0; index < ruleCount; ++index) {
+			const auto rule = TreeWindPatcher::GetRule(index);
+			if (normalizedSearch.empty() || rule.mesh.find(normalizedSearch) != std::string_view::npos)
+				filteredTreeRuleIndices.push_back(index);
+		}
+		filteredTreeRuleCount = ruleCount;
+		appliedTreeMeshSearch = normalizedSearch;
+	}
+
+	ImGui::BeginDisabled(unsavedCount == 0);
+	if (ImGui::Button(T(TKEY("tree_mesh_save"), "Save JSON"))) {
+		const auto result = TreeWindPatcher::SaveRules();
+		treeWindSaveSucceeded = result.success;
+		treeWindSaveStatus = result.success ?
+		                         std::format("Saved {} meshes to {}", result.savedRuleCount, result.path) :
+		                         std::format("Save failed: {}", result.error);
+	}
+	ImGui::SameLine();
+	if (ImGui::Button(T(TKEY("tree_mesh_revert"), "Revert Unsaved"))) {
+		TreeWindPatcher::RevertUnsavedChanges();
+		treeWindSaveStatus.clear();
+	}
+	ImGui::EndDisabled();
+	ImGui::SameLine();
+	if (ImGui::Button(T(TKEY("tree_mesh_restore_backup"), "Restore Backup")))
+		ImGui::OpenPopup("##RestoreTreeWindBackup");
+
+	if (ImGui::BeginPopupModal("##RestoreTreeWindBackup", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+		ImGui::TextWrapped("%s", T(TKEY("tree_mesh_restore_backup_warning"),
+									 "Replace the editable tree wind JSON and all live values with the startup backup?"));
+		if (ImGui::Button(T(TKEY("tree_mesh_restore_confirm"), "Restore"))) {
+			const auto result = TreeWindPatcher::RestoreBackup();
+			treeWindSaveSucceeded = result.success;
+			treeWindSaveStatus = result.success ?
+			                         std::format("Restored {} meshes from backup", result.savedRuleCount) :
+			                         std::format("Restore failed: {}", result.error);
+			ImGui::CloseCurrentPopup();
+		}
+		ImGui::SameLine();
+		if (ImGui::Button(T(TKEY("cancel"), "Cancel")))
+			ImGui::CloseCurrentPopup();
+		ImGui::EndPopup();
+	}
+
+	if (!treeWindSaveStatus.empty()) {
+		const ImVec4 statusColor = treeWindSaveSucceeded ? ImVec4(0.45f, 0.85f, 0.45f, 1.0f) : ImVec4(1.0f, 0.45f, 0.45f, 1.0f);
+		ImGui::TextColored(statusColor, "%s", treeWindSaveStatus.c_str());
+	}
+
+	ImGui::Text("%s: %zu", T(TKEY("tree_mesh_search_results"), "Matches"), filteredTreeRuleIndices.size());
+	const auto& style = ImGui::GetStyle();
+	const float tableBottom = ImGui::GetWindowPos().y + ImGui::GetWindowHeight() - style.WindowPadding.y - style.ItemSpacing.y;
+	const float visibleTableHeight = tableBottom - ImGui::GetCursorScreenPos().y;
+	const float minimumTableHeight = ImGui::GetTextLineHeightWithSpacing() * 5.0f;
+	const float tableHeight = std::max(visibleTableHeight, minimumTableHeight);
+	const ImGuiTableFlags tableFlags = ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_Resizable |
+	                                   ImGuiTableFlags_ScrollY | ImGuiTableFlags_SizingStretchProp;
+	if (ImGui::BeginTable("##TreeMeshRules", 3, tableFlags, ImVec2(0.0f, tableHeight))) {
+		ImGui::TableSetupScrollFreeze(0, 1);
+		ImGui::TableSetupColumn(T(TKEY("tree_mesh_path"), "Mesh"), ImGuiTableColumnFlags_WidthStretch);
+		ImGui::TableSetupColumn(T(TKEY("tree_mesh_bend"), "Bend"), ImGuiTableColumnFlags_WidthFixed, ImGui::GetFontSize() * 8.0f);
+		ImGui::TableSetupColumn(T(TKEY("tree_mesh_leaf"), "Leaf Flutter"), ImGuiTableColumnFlags_WidthFixed, ImGui::GetFontSize() * 8.0f);
+		ImGui::TableHeadersRow();
+
+		ImGuiListClipper clipper;
+		clipper.Begin(static_cast<int>(filteredTreeRuleIndices.size()));
+		while (clipper.Step()) {
+			for (int visibleIndex = clipper.DisplayStart; visibleIndex < clipper.DisplayEnd; ++visibleIndex) {
+				const auto ruleIndex = filteredTreeRuleIndices[static_cast<std::size_t>(visibleIndex)];
+				const auto rule = TreeWindPatcher::GetRule(ruleIndex);
+				float bend = rule.bend;
+				float leafAmbient = rule.leafAmbient;
+				bool changed = false;
+
+				ImGui::PushID(static_cast<int>(rule.id));
+				ImGui::TableNextRow();
+				ImGui::TableSetColumnIndex(0);
+				const std::string compactPath = CompactMeshPath(rule.mesh, ImGui::GetContentRegionAvail().x);
+				ImGui::TextUnformatted(compactPath.c_str());
+				if (compactPath != rule.mesh && ImGui::IsItemHovered())
+					ImGui::SetTooltip("%.*s", static_cast<int>(rule.mesh.size()), rule.mesh.data());
+				ImGui::TableSetColumnIndex(1);
+				ImGui::SetNextItemWidth(-1.0f);
+				changed |= ImGui::SliderFloat("##Bend", &bend, 0.0f, 4.0f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+				ImGui::TableSetColumnIndex(2);
+				ImGui::SetNextItemWidth(-1.0f);
+				changed |= ImGui::SliderFloat("##Leaf", &leafAmbient, 0.0f, 4.0f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+				if (changed) {
+					(void)TreeWindPatcher::SetRule(ruleIndex, bend, leafAmbient);
+					treeWindSaveStatus.clear();
+				}
+				ImGui::PopID();
+			}
+		}
+		ImGui::EndTable();
+	}
+
+	ImGui::EndTabItem();
+}
+
+json CSUtility::GetDiagnostics()
+{
+	return json{
+		{ "treeWindRuleCount", TreeWindPatcher::GetRuleCount() },
+		{ "treeWindUnsavedRuleCount", TreeWindPatcher::GetUnsavedRuleCount() },
+		{ "treeWindTestEnabled", treeWindTest.enabled },
+		{ "treeWindTestSpeed", treeWindTest.speed },
+		{ "treeWindTestGustScale", treeWindTest.gustScale },
+		{ "treeWindTestGustAmplitude", treeWindTest.gustAmplitude },
+		{ "treeWindTestGustAdvectionMultiplier", treeWindTest.gustAdvectionMultiplier },
+	};
+}
+
+void CSUtility::RegisterUxActions()
+{
+	FEATURE_COMMAND("setTreeWindRule",
+		"Apply live per-model tree wind tuning. Params: mesh (string), bendSensitivity (number, 0-4), leafAmbientSensitivity (number, 0-4).",
+		[](Feature*, const json& args) {
+			if (!args.contains("mesh") || !args["mesh"].is_string() ||
+				!args.contains("bendSensitivity") || !args["bendSensitivity"].is_number() ||
+				!args.contains("leafAmbientSensitivity") || !args["leafAmbientSensitivity"].is_number()) {
+				logger::warn("[TreeWindPatcher] Devbench setTreeWindRule received invalid arguments");
+				return;
+			}
+			if (!TreeWindPatcher::SetRule(args["mesh"].get<std::string>(), args["bendSensitivity"].get<float>(),
+					args["leafAmbientSensitivity"].get<float>())) {
+				logger::warn("[TreeWindPatcher] Devbench setTreeWindRule did not match mesh {}", args["mesh"].get<std::string>());
+			}
+		});
+	FEATURE_COMMAND("saveTreeWindRules", "Write all current live tree wind values to NatureOfTheWildLands.json.",
+		[](Feature*, const json&) {
+			const auto result = TreeWindPatcher::SaveRules();
+			if (!result.success)
+				logger::error("[TreeWindPatcher] Devbench save failed: {}", result.error);
+		});
+	FEATURE_COMMAND("revertTreeWindRules", "Revert live tree wind edits made since the JSON was loaded or saved.",
+		[](Feature*, const json&) { TreeWindPatcher::RevertUnsavedChanges(); });
+	FEATURE_COMMAND("restoreTreeWindBackup", "Replace NatureOfTheWildLands.json and live values with its startup backup.",
+		[](Feature*, const json&) {
+			const auto result = TreeWindPatcher::RestoreBackup();
+			if (!result.success)
+				logger::error("[TreeWindPatcher] Devbench backup restore failed: {}", result.error);
+		});
+	FEATURE_COMMAND("setTreeWindTestConditions",
+		"Set runtime-only tree wind test conditions. Optional params: enabled (boolean), speed (0-2), gustScale (128-16384), gustAmplitude (0-1), gustAdvectionMultiplier (0-8).",
+		[](Feature* feature, const json& args) {
+			auto* utility = static_cast<CSUtility*>(feature);
+			if (args.contains("enabled") && args["enabled"].is_boolean())
+				utility->SetTreeWindTestEnabled(args["enabled"].get<bool>());
+			if (args.contains("speed") && args["speed"].is_number())
+				utility->treeWindTest.speed = ClampFiniteOrDefault(args["speed"].get<float>(), 0.0f, 2.0f, utility->treeWindTest.speed);
+			if (args.contains("gustScale") && args["gustScale"].is_number())
+				utility->treeWindTest.gustScale = ClampFiniteOrDefault(args["gustScale"].get<float>(),
+					kWindFieldGustScaleMin, kWindFieldGustScaleMax, utility->treeWindTest.gustScale);
+			if (args.contains("gustAmplitude") && args["gustAmplitude"].is_number())
+				utility->treeWindTest.gustAmplitude = ClampFiniteOrDefault(args["gustAmplitude"].get<float>(),
+					kWindFieldGustAmplitudeMin, kWindFieldGustAmplitudeMax, utility->treeWindTest.gustAmplitude);
+			if (args.contains("gustAdvectionMultiplier") && args["gustAdvectionMultiplier"].is_number())
+				utility->treeWindTest.gustAdvectionMultiplier = ClampFiniteOrDefault(args["gustAdvectionMultiplier"].get<float>(),
+					kWindFieldGustAdvectionMultiplierMin, kWindFieldGustAdvectionMultiplierMax,
+					utility->treeWindTest.gustAdvectionMultiplier);
+		});
+	FEATURE_QUERY("treeWindRules",
+		"Search live tree wind rules. Params: search (string, optional), offset (integer, default 0), limit (integer, 1-500, default 100).",
+		([](const Feature*, const json& args) -> json {
+			const std::string search = Util::FixFilePath(args.value("search", std::string{}));
+			const std::size_t offset = static_cast<std::size_t>(std::max(args.value("offset", 0), 0));
+			const std::size_t limit = static_cast<std::size_t>(std::clamp(args.value("limit", 100), 1, 500));
+			json matches = json::array();
+			std::size_t matchIndex = 0;
+			std::size_t totalMatches = 0;
+			for (std::size_t index = 0; index < TreeWindPatcher::GetRuleCount(); ++index) {
+				const auto rule = TreeWindPatcher::GetRule(index);
+				if (!search.empty() && rule.mesh.find(search) == std::string_view::npos)
+					continue;
+				if (matchIndex++ >= offset && matches.size() < limit) {
+					matches.push_back({
+						{ "mesh", rule.mesh },
+						{ "bendSensitivity", rule.bend },
+						{ "leafAmbientSensitivity", rule.leafAmbient },
+						{ "unsaved", rule.unsaved },
+					});
+				}
+				++totalMatches;
+			}
+			return json{
+				{ "totalRules", TreeWindPatcher::GetRuleCount() },
+				{ "totalMatches", totalMatches },
+				{ "unsavedRules", TreeWindPatcher::GetUnsavedRuleCount() },
+				{ "rules", std::move(matches) },
+			};
+		}));
+}
+
 json CSUtility::GetRuntimeFlags()
 {
 	return json{
 		{ "VisualizeWindField", visualizeWindField },
 		{ "WindFieldUseRealSpeed", windFieldUseRealSpeed },
 		{ "WindFieldUseRealDirection", windFieldUseRealDirection },
+		{ "TreeWindTestOverride", treeWindTest.enabled },
 	};
 }
 
@@ -482,6 +790,10 @@ bool CSUtility::SetRuntimeFlag(std::string_view a_name, bool a_value)
 	}
 	if (a_name == "WindFieldUseRealDirection") {
 		windFieldUseRealDirection = a_value;
+		return true;
+	}
+	if (a_name == "TreeWindTestOverride") {
+		SetTreeWindTestEnabled(a_value);
 		return true;
 	}
 	return false;
@@ -565,6 +877,9 @@ void CSUtility::RestoreCurrentPageDefaultSettings()
 		settings.windFieldGustAmplitude = defaults.windFieldGustAmplitude;
 		settings.windFieldGustAdvectionMultiplier = defaults.windFieldGustAdvectionMultiplier;
 		break;
+	case SettingsPage::TreeMeshes:
+		TreeWindPatcher::RevertUnsavedChanges();
+		break;
 	case SettingsPage::Atmosphere:
 		settings.skyBrightness = defaults.skyBrightness;
 		break;
@@ -614,6 +929,9 @@ bool CSUtility::ReapplyCurrentPageOverrideSettings()
 	switch (activeSettingsPage) {
 	case SettingsPage::WindField:
 		return ReapplyOverrideSettingsForKeys(windFieldKeys);
+	case SettingsPage::TreeMeshes:
+		TreeWindPatcher::RevertUnsavedChanges();
+		return true;
 	case SettingsPage::Atmosphere:
 		return ReapplyOverrideSettingsForKeys(atmosphereKeys);
 	case SettingsPage::Water:
@@ -711,6 +1029,7 @@ struct CSUtility::Hooks
 
 void CSUtility::PostPostLoad()
 {
+	TreeWindPatcher::LoadAndInstall();
 	Hooks::Install();
 	InstallDepthOfFieldHooks();
 }
