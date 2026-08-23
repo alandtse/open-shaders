@@ -13,16 +13,6 @@ namespace Wind
 			return Permutation::OverrideWindIntensity != 0 ? Permutation::WindIntensityOverride : 1.0;
 		}
 
-		float GetCurrentWindGustScale()
-		{
-			return Permutation::WindGustScale;
-		}
-
-		float GetPreviousWindGustScale()
-		{
-			return Permutation::WindPreviousGustScale;
-		}
-
 		float3 RotateVector(float3 inputVector, float3 axis, float angle)
 		{
 			float angleSin, angleCos;
@@ -34,51 +24,21 @@ namespace Wind
 
 	namespace Tree
 	{
-		float GetCurrentTreeBendScale()
+		/** @brief Scales existing leaf motion from the root-sampled ambient gust pressure. */
+		float GetLeafAnimationScale(float ambientGust)
 		{
-			return Common::GetCurrentWindGustScale() * Permutation::TrunkWindBendSensitivity;
+			float centeredGust = saturate(ambientGust) * 2.0 - 1.0;
+			return max(1.0 + centeredGust * max(Permutation::TreeLeafAmbientSensitivity, 0.0), 0.0);
 		}
 
-		float GetPreviousTreeBendScale()
-		{
-			return Common::GetPreviousWindGustScale() * Permutation::TrunkWindBendSensitivity;
-		}
-
-		float GetCurrentTreeWindStrength()
-		{
-			return length(Permutation::TrunkWindVector) * GetCurrentTreeBendScale();
-		}
-
-		float GetPreviousTreeWindStrength()
-		{
-			return length(Permutation::TrunkWindPreviousVector) * GetPreviousTreeBendScale();
-		}
-
-		float GetCurrentTreeWindIntensityScale()
-		{
-			return Common::GetWindIntensityOverrideScale() * Common::GetCurrentWindGustScale();
-		}
-
-		float GetPreviousTreeWindIntensityScale()
-		{
-			return Common::GetWindIntensityOverrideScale() * Common::GetPreviousWindGustScale();
-		}
-
-		float GetTreeWindInstanceResponse(float2 instanceOriginWS)
-		{
-			float2 hash = frac(instanceOriginWS * float2(0.1031, 0.1030));
-			hash += dot(hash, hash.yx + 33.33);
-			float responseMin = min(Permutation::TrunkWindInstanceResponseMin, Permutation::TrunkWindInstanceResponseMax);
-			float responseMax = max(Permutation::TrunkWindInstanceResponseMin, Permutation::TrunkWindInstanceResponseMax);
-			return lerp(responseMin, responseMax, frac((hash.x + hash.y) * hash.x));
-		}
-
-		float2 GetTreeWorldDisplacement(float localHeight, float2 windVector, float gustStrength, float instanceResponse)
+		/** @brief Converts sampled ambient wind into the established height-weighted trunk shift. */
+		float2 GetTreeWorldDisplacement(float localHeight, float2 windVelocity)
 		{
 			float height = saturate(max(localHeight, 0.0) / max(Permutation::TrunkWindFlexibleHeight, 1.0));
 			float flexibility = height * height;
-			return windVector *
-			       (max(Permutation::TrunkWindMaximumDisplacement, 0.0) * flexibility * gustStrength * instanceResponse);
+			return windVelocity *
+			       (max(Permutation::TrunkWindMaximumDisplacement, 0.0) * flexibility *
+					   max(Permutation::TrunkWindBendSensitivity, 0.0));
 		}
 	}
 

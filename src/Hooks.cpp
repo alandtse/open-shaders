@@ -136,35 +136,18 @@ namespace
 		return geometryName && (std::strcmp(geometryName, "trunk") == 0 || std::strncmp(geometryName, "OS_TRUNK", 8) == 0);
 	}
 
-	bool ContainsExplicitTrunkGeometry(RE::NiAVObject* a_object)
+	bool IsExplicitTreeLeavesGeometry(const RE::BSGeometry* a_geometry)
 	{
-		if (!a_object)
+		if (!a_geometry || !netimmerse_cast<RE::BSLeafAnimNode*>(a_geometry->parent))
 			return false;
 
-		if (auto* geometry = a_object->AsGeometry())
-			return IsExplicitTrunkGeometry(geometry);
-
-		if (auto* node = a_object->AsNode()) {
-			for (const auto& child : node->GetChildren()) {
-				if (ContainsExplicitTrunkGeometry(child.get()))
-					return true;
-			}
-		}
-
-		return false;
+		const char* geometryName = a_geometry->name.c_str();
+		return geometryName && std::strcmp(geometryName, "leaves") == 0;
 	}
 
 	bool IsTreeGeometry(const RE::BSGeometry* a_geometry)
 	{
-		if (IsExplicitTrunkGeometry(a_geometry))
-			return true;
-
-		for (auto* parent = a_geometry ? a_geometry->parent : nullptr; parent; parent = parent->parent) {
-			if (auto* leafNode = netimmerse_cast<RE::BSLeafAnimNode*>(parent))
-				return ContainsExplicitTrunkGeometry(leafNode);
-		}
-
-		return false;
+		return IsExplicitTrunkGeometry(a_geometry) || IsExplicitTreeLeavesGeometry(a_geometry);
 	}
 
 	bool SupportsTreeBend(const RE::BSShader& a_shader, uint32_t a_vertexDescriptor)
@@ -228,8 +211,8 @@ namespace
 	class TreeBendPassScope
 	{
 	public:
-		TreeBendPassScope(RE::BSRenderPass* a_pass, uint32_t a_vertexDescriptor) :
-			state(globals::state), pass(a_pass)
+		explicit TreeBendPassScope(RE::BSRenderPass* a_pass) :
+			state(globals::state)
 		{
 			if (!state)
 				return;
@@ -244,42 +227,16 @@ namespace
 
 			state->UpdatePermutationBuffer();
 			BindVertexPermutationData(a_pass ? a_pass->shader : nullptr);
-
-			if (treeBendSelected) {
-				static std::atomic_uint32_t diagnosticCount = 0;
-				if (diagnosticCount.fetch_add(1, std::memory_order_relaxed) < 64) {
-					logger::info("[TreeBend] uploaded geometry='{}' pass={:08X} descriptor={:08X} batch={:08X} wind=({:.3f},{:.3f})",
-						a_pass->geometry->name, a_pass->passEnum, GetRenderPassVertexDescriptor(*a_pass), a_vertexDescriptor,
-						state->permutationData.TrunkWindVector.x, state->permutationData.TrunkWindVector.y);
-				}
-			}
 		}
 
 		~TreeBendPassScope()
 		{
-			if (state && treeBendSelected && pass && pass->geometry && pass->geometry->name == "leaves") {
-				static std::atomic_uint32_t leafDiagnosticCount = 0;
-				if (leafDiagnosticCount.fetch_add(1, std::memory_order_relaxed) < 64) {
-					ID3D11Buffer* boundBuffer = nullptr;
-					globals::d3d::context->VSGetConstantBuffers(kPermutationVertexRegister, 1, &boundBuffer);
-					const bool permutationBufferBound = boundBuffer && state->permutationCB && boundBuffer == state->permutationCB->CB();
-					if (boundBuffer)
-						boundBuffer->Release();
-					logger::info("[TreeBendLeaf] pass={:08X} batchVS={:08X} currentVS={:08X} modifiedVS={:08X} currentPS={:08X} modifiedPS={:08X} b4={} uploaded={}",
-						pass->passEnum, GetRenderPassVertexDescriptor(*pass), state->currentVertexDescriptor,
-						state->modifiedVertexDescriptor, state->currentPixelDescriptor, state->modifiedPixelDescriptor,
-						static_cast<uint32_t>(permutationBufferBound),
-						static_cast<uint32_t>((state->permutationDataPrevious.ExtraShaderDescriptor & kTreeBendDescriptor) != 0));
-				}
-			}
-
 			if (state)
 				state->permutationData.ExtraShaderDescriptor = previousExtraShaderDescriptor;
 		}
 
 	private:
 		State* state = nullptr;
-		RE::BSRenderPass* pass = nullptr;
 		uint32_t previousExtraShaderDescriptor = 0;
 		bool treeBendSelected = false;
 	};
@@ -1225,7 +1182,7 @@ namespace Hooks
 		if (ShouldSkipRenderPassForParticleLights(a_pass, a_technique))
 			return;
 
-		TreeBendPassScope treeBendPassScope(a_pass, a_technique);
+		TreeBendPassScope treeBendPassScope(a_pass);
 		func(a_pass, a_technique, a_alphaTest, a_renderFlags);
 	}
 
@@ -1238,7 +1195,7 @@ namespace Hooks
 		if (ShouldSkipRenderPassForParticleLights(a_pass, a_technique))
 			return;
 
-		TreeBendPassScope treeBendPassScope(a_pass, a_technique);
+		TreeBendPassScope treeBendPassScope(a_pass);
 		func(a_pass, a_technique, a_alphaTest, a_renderFlags);
 	}
 
@@ -1251,7 +1208,7 @@ namespace Hooks
 		if (ShouldSkipRenderPassForParticleLights(a_pass, a_technique))
 			return;
 
-		TreeBendPassScope treeBendPassScope(a_pass, a_technique);
+		TreeBendPassScope treeBendPassScope(a_pass);
 		func(a_pass, a_technique, a_alphaTest, a_renderFlags);
 	}
 

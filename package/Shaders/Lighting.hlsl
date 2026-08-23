@@ -173,21 +173,13 @@ cbuffer VS_PerFrame : register(b12)
 };
 
 #	if defined(TREE_ANIM)
-float2 GetTreeShiftVector(float4 position, float4 color, float instanceResponse, bool treeBendEnabled)
+float2 GetTreeShiftVector(float4 position, float4 color)
 {
 	precise float4 tmp1 = (TreeParams.w * TreeParams.y).xxxx * WindTimers.xxyy;
 	precise float4 tmp2 = float4(0.1, 0.25, 0.1, 0.25) * tmp1 + dot(position.xyz, 1.0.xxx).xxxx;
 	precise float4 tmp3 = abs(-1.0.xxxx + 2.0.xxxx * frac(0.5.xxxx + tmp2.xyzw));
 	precise float4 tmp4 = (tmp3 * tmp3) * (3.0.xxxx - 2.0.xxxx * tmp3);
-	float2 animationStrength = float2(
-								   Wind::Tree::GetCurrentTreeWindIntensityScale(), Wind::Tree::GetPreviousTreeWindIntensityScale()) *
-	                           TreeParams.z;
-	if (treeBendEnabled) {
-		animationStrength = float2(
-								Wind::Tree::GetCurrentTreeWindStrength(), Wind::Tree::GetPreviousTreeWindStrength()) *
-		                    instanceResponse * Permutation::TrunkWindLeafSensitivity;
-	}
-	return (tmp4.xz + 0.1.xx * tmp4.yw) * color.w.xx * animationStrength;
+	return (tmp4.xz + 0.1.xx * tmp4.yw) * (TreeParams.z * color.w).xx;
 }
 #	endif  // TREE_ANIM
 
@@ -203,14 +195,33 @@ VS_OUTPUT main(VS_INPUT input)
 #	endif
 	);
 	const bool treeBendEnabled = (Permutation::ExtraShaderDescriptor & Permutation::ExtraFlags::TreeBend) != 0;
-	float treeWindInstanceResponse = 1.0;
-#	if !defined(SKINNED)
+	WindField::WindSample treeWindSample;
+	treeWindSample.velocity = 0.0.xxx;
+	treeWindSample.ambientGust = 0.5;
+	WindField::WindSample previousTreeWindSample;
+	previousTreeWindSample.velocity = 0.0.xxx;
+	previousTreeWindSample.ambientGust = 0.5;
 	if (treeBendEnabled) {
-		float2 instanceOriginWS =
-			float2(World[0][0].w, World[0][1].w) + CameraPosAdjust[0].xy;
-		treeWindInstanceResponse = Wind::Tree::GetTreeWindInstanceResponse(instanceOriginWS);
-	}
+		float3 treeRootWS = float3(World[eyeIndex][0].w, World[eyeIndex][1].w, World[eyeIndex][2].w);
+		float3 previousTreeRootWS =
+			float3(PreviousWorld[eyeIndex][0].w, PreviousWorld[eyeIndex][1].w, PreviousWorld[eyeIndex][2].w);
+#	if defined(SKINNED)
+		float3 absoluteTreeRootWS = treeRootWS;
+		float3 previousAbsoluteTreeRootWS = previousTreeRootWS;
+#	else
+		float3 absoluteTreeRootWS = treeRootWS + CameraPosAdjust[eyeIndex].xyz;
+		float3 previousAbsoluteTreeRootWS = previousTreeRootWS + CameraPosAdjust[eyeIndex].xyz;
 #	endif
+		float3 ambientVelocity = SharedData::WindFieldAmbient.xyz;
+		float ambientSpeed = length(ambientVelocity);
+		treeWindSample = WindField::SampleWind(
+			absoluteTreeRootWS, SharedData::WindFieldAmbient.w, ambientVelocity, ambientSpeed, SharedData::WindFieldTuning);
+		float3 previousAmbientVelocity = SharedData::WindFieldPreviousAmbient.xyz;
+		float previousAmbientSpeed = length(previousAmbientVelocity);
+		previousTreeWindSample = WindField::SampleWind(
+			previousAbsoluteTreeRootWS, SharedData::WindFieldPreviousAmbient.w, previousAmbientVelocity,
+			previousAmbientSpeed, SharedData::WindFieldTuning);
+	}
 #	if defined(LODLANDNOISE) || defined(LODLANDSCAPE)
 	inputPosition = LodLandscape::AdjustLodLandscapeVertexPositionMS(inputPosition, float4x4(World[eyeIndex], float4(0, 0, 0, 1)), HighDetailRange[eyeIndex]);
 #	endif  // defined(LODLANDNOISE) || defined(LODLANDSCAPE)                                                                   \
@@ -218,8 +229,13 @@ VS_OUTPUT main(VS_INPUT input)
 	precise float4 previousInputPosition = inputPosition;
 
 #	if defined(TREE_ANIM)
-	precise float2 treeShiftVector =
-		GetTreeShiftVector(input.Position, input.Color, treeWindInstanceResponse, treeBendEnabled);
+	float2 leafAnimationScale = 1.0.xx;
+	if (treeBendEnabled) {
+		leafAnimationScale = float2(
+			Wind::Tree::GetLeafAnimationScale(treeWindSample.ambientGust),
+			Wind::Tree::GetLeafAnimationScale(previousTreeWindSample.ambientGust));
+	}
+	precise float2 treeShiftVector = GetTreeShiftVector(input.Position, input.Color) * leafAnimationScale;
 	float3 normal = -1.0.xxx + 2.0.xxx * input.Normal.xyz;
 
 	inputPosition.xyz += normal.xyz * treeShiftVector.x;
@@ -242,11 +258,9 @@ VS_OUTPUT main(VS_INPUT input)
 #	endif  // SKINNED
 
 	if (treeBendEnabled) {
-		worldPosition.xy += Wind::Tree::GetTreeWorldDisplacement(
-			inputPosition.z, Permutation::TrunkWindVector, Wind::Tree::GetCurrentTreeBendScale(), treeWindInstanceResponse);
-		previousWorldPosition.xy += Wind::Tree::GetTreeWorldDisplacement(
-			previousInputPosition.z, Permutation::TrunkWindPreviousVector,
-			Wind::Tree::GetPreviousTreeBendScale(), treeWindInstanceResponse);
+		worldPosition.xy += Wind::Tree::GetTreeWorldDisplacement(input.Position.z, treeWindSample.velocity.xy);
+		previousWorldPosition.xy +=
+			Wind::Tree::GetTreeWorldDisplacement(input.Position.z, previousTreeWindSample.velocity.xy);
 	}
 
 	float4 viewPos;

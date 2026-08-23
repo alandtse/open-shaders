@@ -32,18 +32,8 @@ namespace
 	constexpr float kTrunkWindMaximumDisplacementMax = 4096.0f;
 	constexpr float kTrunkWindSensitivityMin = 0.0f;
 	constexpr float kTrunkWindSensitivityMax = 20.0f;
-	constexpr float kTrunkWindResponseMin = 0.0f;
-	constexpr float kTrunkWindResponseMax = 3.0f;
-	constexpr float kTrunkWindGustStrengthMin = 0.0f;
-	constexpr float kTrunkWindGustStrengthMax = 3.0f;
-	constexpr float kTrunkWindGustHoldMin = 0.25f;
-	constexpr float kTrunkWindGustHoldMax = 60.0f;
-	constexpr float kTrunkWindGustTransitionMin = 0.01f;
-	constexpr float kTrunkWindGustTransitionMax = 5.0f;
-	constexpr float kTrunkWindVariationScaleMin = 0.0f;
-	constexpr float kTrunkWindVariationScaleMax = 3.0f;
-	constexpr float kTrunkWindVariationIntervalMin = 0.1f;
-	constexpr float kTrunkWindVariationIntervalMax = 20.0f;
+	constexpr float kTreeLeafAmbientSensitivityMin = 0.0f;
+	constexpr float kTreeLeafAmbientSensitivityMax = 4.0f;
 	constexpr float kWindFieldGustScaleMin = 128.0f;
 	constexpr float kWindFieldGustScaleMax = 16384.0f;
 	constexpr float kWindFieldGustAmplitudeMin = 0.0f;
@@ -90,17 +80,7 @@ namespace
 		a_settings.trunkWindFlexibleHeight = ClampFiniteOrDefault(a_settings.trunkWindFlexibleHeight, kTrunkWindFlexibleHeightMin, kTrunkWindFlexibleHeightMax, defaults.trunkWindFlexibleHeight);
 		a_settings.trunkWindMaximumDisplacement = ClampFiniteOrDefault(a_settings.trunkWindMaximumDisplacement, kTrunkWindMaximumDisplacementMin, kTrunkWindMaximumDisplacementMax, defaults.trunkWindMaximumDisplacement);
 		a_settings.trunkWindBendSensitivity = ClampFiniteOrDefault(a_settings.trunkWindBendSensitivity, kTrunkWindSensitivityMin, kTrunkWindSensitivityMax, defaults.trunkWindBendSensitivity);
-		a_settings.trunkWindLeafSensitivity = ClampFiniteOrDefault(a_settings.trunkWindLeafSensitivity, kTrunkWindSensitivityMin, kTrunkWindSensitivityMax, defaults.trunkWindLeafSensitivity);
-		a_settings.trunkWindInstanceResponseMin = ClampFiniteOrDefault(a_settings.trunkWindInstanceResponseMin, kTrunkWindResponseMin, kTrunkWindResponseMax, defaults.trunkWindInstanceResponseMin);
-		a_settings.trunkWindInstanceResponseMax = ClampFiniteOrDefault(a_settings.trunkWindInstanceResponseMax, kTrunkWindResponseMin, kTrunkWindResponseMax, defaults.trunkWindInstanceResponseMax);
-		a_settings.trunkWindGustStrengthMin = ClampFiniteOrDefault(a_settings.trunkWindGustStrengthMin, kTrunkWindGustStrengthMin, kTrunkWindGustStrengthMax, defaults.trunkWindGustStrengthMin);
-		a_settings.trunkWindGustStrengthMax = ClampFiniteOrDefault(a_settings.trunkWindGustStrengthMax, kTrunkWindGustStrengthMin, kTrunkWindGustStrengthMax, defaults.trunkWindGustStrengthMax);
-		a_settings.trunkWindGustHoldMin = ClampFiniteOrDefault(a_settings.trunkWindGustHoldMin, kTrunkWindGustHoldMin, kTrunkWindGustHoldMax, defaults.trunkWindGustHoldMin);
-		a_settings.trunkWindGustHoldMax = ClampFiniteOrDefault(a_settings.trunkWindGustHoldMax, kTrunkWindGustHoldMin, kTrunkWindGustHoldMax, defaults.trunkWindGustHoldMax);
-		a_settings.trunkWindGustTransitionDuration = ClampFiniteOrDefault(a_settings.trunkWindGustTransitionDuration, kTrunkWindGustTransitionMin, kTrunkWindGustTransitionMax, defaults.trunkWindGustTransitionDuration);
-		a_settings.trunkWindVariationMin = ClampFiniteOrDefault(a_settings.trunkWindVariationMin, kTrunkWindVariationScaleMin, kTrunkWindVariationScaleMax, defaults.trunkWindVariationMin);
-		a_settings.trunkWindVariationMax = ClampFiniteOrDefault(a_settings.trunkWindVariationMax, kTrunkWindVariationScaleMin, kTrunkWindVariationScaleMax, defaults.trunkWindVariationMax);
-		a_settings.trunkWindVariationInterval = ClampFiniteOrDefault(a_settings.trunkWindVariationInterval, kTrunkWindVariationIntervalMin, kTrunkWindVariationIntervalMax, defaults.trunkWindVariationInterval);
+		a_settings.treeLeafAmbientSensitivity = ClampFiniteOrDefault(a_settings.treeLeafAmbientSensitivity, kTreeLeafAmbientSensitivityMin, kTreeLeafAmbientSensitivityMax, defaults.treeLeafAmbientSensitivity);
 		a_settings.windFieldGustScale = ClampFiniteOrDefault(a_settings.windFieldGustScale, kWindFieldGustScaleMin, kWindFieldGustScaleMax, defaults.windFieldGustScale);
 		a_settings.windFieldGustAmplitude = ClampFiniteOrDefault(a_settings.windFieldGustAmplitude, kWindFieldGustAmplitudeMin, kWindFieldGustAmplitudeMax, defaults.windFieldGustAmplitude);
 		a_settings.windFieldGustAdvectionMultiplier = ClampFiniteOrDefault(a_settings.windFieldGustAdvectionMultiplier, kWindFieldGustAdvectionMultiplierMin, kWindFieldGustAdvectionMultiplierMax, defaults.windFieldGustAdvectionMultiplier);
@@ -112,14 +92,6 @@ namespace
 		a_settings.grassWindSpringRecovery = ClampFiniteOrDefault(a_settings.grassWindSpringRecovery, kGrassWindSpringRecoveryMin, kGrassWindSpringRecoveryMax, defaults.grassWindSpringRecovery);
 		a_settings.grassWindFlutterStrength = ClampFiniteOrDefault(a_settings.grassWindFlutterStrength, kGrassWindFlutterStrengthMin, kGrassWindFlutterStrengthMax, defaults.grassWindFlutterStrength);
 		a_settings.grassWindFlutterFrequency = ClampFiniteOrDefault(a_settings.grassWindFlutterFrequency, kGrassWindFlutterFrequencyMin, kGrassWindFlutterFrequencyMax, defaults.grassWindFlutterFrequency);
-		if (a_settings.trunkWindInstanceResponseMin > a_settings.trunkWindInstanceResponseMax)
-			std::swap(a_settings.trunkWindInstanceResponseMin, a_settings.trunkWindInstanceResponseMax);
-		if (a_settings.trunkWindGustStrengthMin > a_settings.trunkWindGustStrengthMax)
-			std::swap(a_settings.trunkWindGustStrengthMin, a_settings.trunkWindGustStrengthMax);
-		if (a_settings.trunkWindGustHoldMin > a_settings.trunkWindGustHoldMax)
-			std::swap(a_settings.trunkWindGustHoldMin, a_settings.trunkWindGustHoldMax);
-		if (a_settings.trunkWindVariationMin > a_settings.trunkWindVariationMax)
-			std::swap(a_settings.trunkWindVariationMin, a_settings.trunkWindVariationMax);
 		a_settings.skyBrightness = ClampFiniteOrDefault(a_settings.skyBrightness, kSkyBrightnessMin, kSkyBrightnessMax, defaults.skyBrightness);
 		a_settings.directionalLightMult = ClampFiniteOrDefault(a_settings.directionalLightMult, kMultiplierMin, kMultiplierMax, defaults.directionalLightMult);
 		a_settings.pointLightMult = ClampFiniteOrDefault(a_settings.pointLightMult, kMultiplierMin, kMultiplierMax, defaults.pointLightMult);
@@ -137,6 +109,8 @@ namespace
 	void ResetGrassWindSettings(CSUtility::Settings& a_settings)
 	{
 		const CSUtility::Settings defaults{};
+		a_settings.overrideTrunkWindIntensity = defaults.overrideTrunkWindIntensity;
+		a_settings.trunkWindIntensityOverride = defaults.trunkWindIntensityOverride;
 		a_settings.enableAmbientGrassWind = defaults.enableAmbientGrassWind;
 		a_settings.grassWindResponse = defaults.grassWindResponse;
 		a_settings.grassWindMaximumTilt = defaults.grassWindMaximumTilt;
@@ -147,12 +121,6 @@ namespace
 		a_settings.grassWindSpringRecovery = defaults.grassWindSpringRecovery;
 		a_settings.grassWindFlutterStrength = defaults.grassWindFlutterStrength;
 		a_settings.grassWindFlutterFrequency = defaults.grassWindFlutterFrequency;
-	}
-
-	void TriggerNewWindGust()
-	{
-		globals::state->windGustHoldRemaining = 0.0f;
-		globals::state->windGustTransitioning = false;
 	}
 
 	void DrawMultiplierSlider(const char* a_label, float& a_value, float a_max = kMultiplierMax)
@@ -228,17 +196,7 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	trunkWindFlexibleHeight,
 	trunkWindMaximumDisplacement,
 	trunkWindBendSensitivity,
-	trunkWindLeafSensitivity,
-	trunkWindInstanceResponseMin,
-	trunkWindInstanceResponseMax,
-	trunkWindGustStrengthMin,
-	trunkWindGustStrengthMax,
-	trunkWindGustHoldMin,
-	trunkWindGustHoldMax,
-	trunkWindGustTransitionDuration,
-	trunkWindVariationMin,
-	trunkWindVariationMax,
-	trunkWindVariationInterval,
+	treeLeafAmbientSensitivity,
 	windFieldGustScale,
 	windFieldGustAmplitude,
 	windFieldGustAdvectionMultiplier,
@@ -403,14 +361,6 @@ void CSUtility::DrawSettings()
 
 		if (ImGui::BeginTabItem(T(TKEY("tab_trees"), "Trees"))) {
 			ImGui::Checkbox(T(TKEY("enable_trunk_bend"), "Enable Trunk Bend"), &settings.enableTrunkBend);
-			ImGui::Checkbox(T(TKEY("override_trunk_wind_intensity"), "Override Wind Intensity"), &settings.overrideTrunkWindIntensity);
-			ImGui::BeginDisabled(!settings.overrideTrunkWindIntensity);
-			ImGui::SliderFloat(T(TKEY("trunk_wind_intensity"), "Wind Intensity"), &settings.trunkWindIntensityOverride,
-				kTrunkWindIntensityMin, kTrunkWindIntensityMax, "%.2f", ImGuiSliderFlags_AlwaysClamp);
-			ImGui::EndDisabled();
-			if (auto _tt = Util::HoverTooltipWrapper()) {
-				ImGui::TextUnformatted(T(TKEY("trunk_wind_intensity_tooltip"), "0 is calm, 1 is full normal-scale wind, and values above 1 are exaggerated."));
-			}
 			ImGui::SeparatorText(T(TKEY("trunk_wind_response"), "Tree Response"));
 			ImGui::SliderFloat(T(TKEY("trunk_wind_flexible_height"), "Flexible Height"), &settings.trunkWindFlexibleHeight,
 				kTrunkWindFlexibleHeightMin, kTrunkWindFlexibleHeightMax, "%.0f", ImGuiSliderFlags_AlwaysClamp);
@@ -418,36 +368,24 @@ void CSUtility::DrawSettings()
 				kTrunkWindMaximumDisplacementMin, kTrunkWindMaximumDisplacementMax, "%.0f", ImGuiSliderFlags_AlwaysClamp);
 			ImGui::SliderFloat(T(TKEY("trunk_wind_bend_sensitivity"), "Trunk Wind Sensitivity"), &settings.trunkWindBendSensitivity,
 				kTrunkWindSensitivityMin, kTrunkWindSensitivityMax, "%.2f", ImGuiSliderFlags_AlwaysClamp);
-			ImGui::SliderFloat(T(TKEY("trunk_wind_leaf_sensitivity"), "Leaf Wind Sensitivity"), &settings.trunkWindLeafSensitivity,
-				kTrunkWindSensitivityMin, kTrunkWindSensitivityMax, "%.2f", ImGuiSliderFlags_AlwaysClamp);
-			ImGui::SliderFloat(T(TKEY("trunk_wind_response_min"), "Per-Tree Response Minimum"), &settings.trunkWindInstanceResponseMin,
-				kTrunkWindResponseMin, kTrunkWindResponseMax, "%.2f", ImGuiSliderFlags_AlwaysClamp);
-			ImGui::SliderFloat(T(TKEY("trunk_wind_response_max"), "Per-Tree Response Maximum"), &settings.trunkWindInstanceResponseMax,
-				kTrunkWindResponseMin, kTrunkWindResponseMax, "%.2f", ImGuiSliderFlags_AlwaysClamp);
-			ImGui::SeparatorText(T(TKEY("trunk_wind_gusts"), "Gusts"));
-			ImGui::SliderFloat(T(TKEY("trunk_wind_gust_strength_min"), "Gust Strength Minimum"), &settings.trunkWindGustStrengthMin,
-				kTrunkWindGustStrengthMin, kTrunkWindGustStrengthMax, "%.2f", ImGuiSliderFlags_AlwaysClamp);
-			ImGui::SliderFloat(T(TKEY("trunk_wind_gust_strength_max"), "Gust Strength Maximum"), &settings.trunkWindGustStrengthMax,
-				kTrunkWindGustStrengthMin, kTrunkWindGustStrengthMax, "%.2f", ImGuiSliderFlags_AlwaysClamp);
-			ImGui::SliderFloat(T(TKEY("trunk_wind_gust_hold_min"), "Gust Hold Minimum"), &settings.trunkWindGustHoldMin,
-				kTrunkWindGustHoldMin, kTrunkWindGustHoldMax, "%.2f s", ImGuiSliderFlags_AlwaysClamp);
-			ImGui::SliderFloat(T(TKEY("trunk_wind_gust_hold_max"), "Gust Hold Maximum"), &settings.trunkWindGustHoldMax,
-				kTrunkWindGustHoldMin, kTrunkWindGustHoldMax, "%.2f s", ImGuiSliderFlags_AlwaysClamp);
-			ImGui::SliderFloat(T(TKEY("trunk_wind_gust_transition"), "Gust Transition Duration"), &settings.trunkWindGustTransitionDuration,
-				kTrunkWindGustTransitionMin, kTrunkWindGustTransitionMax, "%.2f s", ImGuiSliderFlags_AlwaysClamp);
-			ImGui::SliderFloat(T(TKEY("trunk_wind_variation_min"), "Gust Variation Minimum"), &settings.trunkWindVariationMin,
-				kTrunkWindVariationScaleMin, kTrunkWindVariationScaleMax, "%.2f", ImGuiSliderFlags_AlwaysClamp);
-			ImGui::SliderFloat(T(TKEY("trunk_wind_variation_max"), "Gust Variation Maximum"), &settings.trunkWindVariationMax,
-				kTrunkWindVariationScaleMin, kTrunkWindVariationScaleMax, "%.2f", ImGuiSliderFlags_AlwaysClamp);
-			ImGui::SliderFloat(T(TKEY("trunk_wind_variation_interval"), "Gust Variation Interval"), &settings.trunkWindVariationInterval,
-				kTrunkWindVariationIntervalMin, kTrunkWindVariationIntervalMax, "%.2f s", ImGuiSliderFlags_AlwaysClamp);
-			if (ImGui::Button(T(TKEY("trunk_wind_trigger_gust"), "Trigger New Gust")))
-				TriggerNewWindGust();
+			ImGui::SliderFloat(T(TKEY("tree_leaf_ambient_sensitivity"), "Leaf Ambient Sensitivity"), &settings.treeLeafAmbientSensitivity,
+				kTreeLeafAmbientSensitivityMin, kTreeLeafAmbientSensitivityMax, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+			if (auto _tt = Util::HoverTooltipWrapper()) {
+				ImGui::TextUnformatted(T(TKEY("tree_leaf_ambient_sensitivity_tooltip"), "Controls how strongly ambient gust pressure modulates Skyrim's existing leaf animation. Zero preserves vanilla motion."));
+			}
 			ImGui::EndTabItem();
 		}
 
 		if (ImGui::BeginTabItem(T(TKEY("tab_grass"), "Grass"))) {
 			ImGui::Checkbox(T(TKEY("enable_ambient_grass_wind"), "Enable Ambient Grass Wind"), &settings.enableAmbientGrassWind);
+			ImGui::Checkbox(T(TKEY("override_trunk_wind_intensity"), "Override Vanilla Wind Intensity"), &settings.overrideTrunkWindIntensity);
+			ImGui::BeginDisabled(!settings.overrideTrunkWindIntensity);
+			ImGui::SliderFloat(T(TKEY("trunk_wind_intensity"), "Vanilla Wind Intensity"), &settings.trunkWindIntensityOverride,
+				kTrunkWindIntensityMin, kTrunkWindIntensityMax, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+			ImGui::EndDisabled();
+			if (auto _tt = Util::HoverTooltipWrapper()) {
+				ImGui::TextUnformatted(T(TKEY("trunk_wind_intensity_tooltip"), "Scales Skyrim's vanilla grass motion; ambient tree bending always uses the shared wind field."));
+			}
 			if (ImGui::Button(T(TKEY("reset_grass_wind_settings"), "Reset Grass Settings")))
 				ResetGrassWindSettings(settings);
 			ImGui::BeginDisabled(!settings.enableAmbientGrassWind);

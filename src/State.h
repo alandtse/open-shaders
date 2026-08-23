@@ -79,15 +79,6 @@ public:
 	WindField::WindTuning windFieldTuning{};
 	float2 trunkWindVector = {};
 	float2 previousTrunkWindVector = {};
-	float sharedWindGustScale = 1.0f;
-	float previousSharedWindGustScale = 1.0f;
-	float windGustBaseStrength = 1.0f;
-	float windGustStartStrength = 1.0f;
-	float windGustTargetStrength = 1.0f;
-	float windGustHoldRemaining = 0.0f;
-	float windGustTransitionElapsed = 0.0f;
-	uint32_t windRandomState = 0xA341316Cu;
-	bool windGustTransitioning = false;
 	double smoothDrawCalls[RE::BSShader::Type::Total + 1];
 	int drawCalls[RE::BSShader::Type::Total + 1];
 
@@ -439,20 +430,16 @@ public:
 
 		float WindIntensityOverride;
 		uint OverrideWindIntensity;
-		float WindGustScale;
-		float WindPreviousGustScale;
+		float2 WindPadding0;
 
 		float TrunkWindFlexibleHeight;
 		float TrunkWindMaximumDisplacement;
-		float TrunkWindInstanceResponseMin;
-		float TrunkWindInstanceResponseMax;
+		float2 TreeWindPadding0;
 
-		float TrunkWindVariationMin;
-		float TrunkWindVariationMax;
-		float TrunkWindVariationInterval;
+		float3 TreeWindPadding1;
 		float TrunkWindBendSensitivity;
 
-		float TrunkWindLeafSensitivity;
+		float TreeLeafAmbientSensitivity;
 		uint EnableAmbientGrassWind;
 		float GrassWindResponse;
 		float GrassWindMaximumTilt;
@@ -478,17 +465,10 @@ public:
 			       TrunkWindPreviousVector.y == other.TrunkWindPreviousVector.y &&
 			       WindIntensityOverride == other.WindIntensityOverride &&
 			       OverrideWindIntensity == other.OverrideWindIntensity &&
-			       WindGustScale == other.WindGustScale &&
-			       WindPreviousGustScale == other.WindPreviousGustScale &&
 			       TrunkWindFlexibleHeight == other.TrunkWindFlexibleHeight &&
 			       TrunkWindMaximumDisplacement == other.TrunkWindMaximumDisplacement &&
-			       TrunkWindInstanceResponseMin == other.TrunkWindInstanceResponseMin &&
-			       TrunkWindInstanceResponseMax == other.TrunkWindInstanceResponseMax &&
-			       TrunkWindVariationMin == other.TrunkWindVariationMin &&
-			       TrunkWindVariationMax == other.TrunkWindVariationMax &&
-			       TrunkWindVariationInterval == other.TrunkWindVariationInterval &&
 			       TrunkWindBendSensitivity == other.TrunkWindBendSensitivity &&
-			       TrunkWindLeafSensitivity == other.TrunkWindLeafSensitivity &&
+			       TreeLeafAmbientSensitivity == other.TreeLeafAmbientSensitivity &&
 			       EnableAmbientGrassWind == other.EnableAmbientGrassWind &&
 			       GrassWindResponse == other.GrassWindResponse &&
 			       GrassWindMaximumTilt == other.GrassWindMaximumTilt &&
@@ -501,6 +481,8 @@ public:
 			       GrassWindUseBendTargetSpring == other.GrassWindUseBendTargetSpring;
 		}
 	};
+	static_assert(offsetof(PermutationCB, EnableAmbientGrassWind) == 100);
+	static_assert(offsetof(PermutationCB, GrassWindFlutterStrength) == 128);
 	STATIC_ASSERT_ALIGNAS_16(PermutationCB);
 
 	ConstantBuffer* permutationCB = nullptr;

@@ -107,20 +107,16 @@ namespace Permutation
 
 		float WindIntensityOverride;
 		uint OverrideWindIntensity;
-		float WindGustScale;
-		float WindPreviousGustScale;
+		float2 WindPadding0;
 
 		float TrunkWindFlexibleHeight;
 		float TrunkWindMaximumDisplacement;
-		float TrunkWindInstanceResponseMin;
-		float TrunkWindInstanceResponseMax;
+		float2 TreeWindPadding0;
 
-		float TrunkWindVariationMin;
-		float TrunkWindVariationMax;
-		float TrunkWindVariationInterval;
+		float3 TreeWindPadding1;
 		float TrunkWindBendSensitivity;
 
-		float TrunkWindLeafSensitivity;
+		float TreeLeafAmbientSensitivity;
 		uint EnableAmbientGrassWind;
 		float GrassWindResponse;
 		float GrassWindMaximumTilt;

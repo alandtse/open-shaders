@@ -45,30 +45,6 @@
 static thread_local std::vector<TracyCZoneCtx> s_tracyPerfZones;
 #endif
 
-namespace
-{
-	float NextWindRandom(uint32_t& a_state)
-	{
-		a_state = a_state * 1664525u + 1013904223u;
-		return static_cast<float>(a_state >> 8) * (1.0f / 16777216.0f);
-	}
-
-	float GetSharedWindVariation(float a_timer, float a_minimum, float a_maximum, float a_interval)
-	{
-		const float samplePosition = a_timer / std::max(a_interval, 0.1f);
-		const float sampleIndex = std::floor(samplePosition);
-		float blend = samplePosition - sampleIndex;
-		blend = blend * blend * (3.0f - 2.0f * blend);
-		const auto sample = [](float a_index) {
-			const float value = std::sin(a_index * 12.9898f + 78.233f) * 43758.5453f;
-			return value - std::floor(value);
-		};
-		const float variation = std::lerp(sample(sampleIndex), sample(sampleIndex + 1.0f), blend);
-		return std::lerp(std::min(a_minimum, a_maximum), std::max(a_minimum, a_maximum), variation);
-	}
-
-}
-
 void State::UpdateSkyShaderPermutation(RE::BSRenderPass* a_pass)
 {
 	permutationData.ExtraShaderDescriptor &= ~static_cast<uint32_t>(State::ExtraShaderDescriptors::IsSun);
@@ -92,17 +68,10 @@ void State::UpdatePermutationBuffer()
 	permutationData.WindIntensityOverride = globals::features::csUtility.settings.trunkWindIntensityOverride;
 	permutationData.OverrideWindIntensity = globals::features::csUtility.loaded &&
 	                                        globals::features::csUtility.settings.overrideTrunkWindIntensity;
-	permutationData.WindGustScale = sharedWindGustScale;
-	permutationData.WindPreviousGustScale = previousSharedWindGustScale;
 	permutationData.TrunkWindFlexibleHeight = globals::features::csUtility.settings.trunkWindFlexibleHeight;
 	permutationData.TrunkWindMaximumDisplacement = globals::features::csUtility.settings.trunkWindMaximumDisplacement;
-	permutationData.TrunkWindInstanceResponseMin = globals::features::csUtility.settings.trunkWindInstanceResponseMin;
-	permutationData.TrunkWindInstanceResponseMax = globals::features::csUtility.settings.trunkWindInstanceResponseMax;
-	permutationData.TrunkWindVariationMin = globals::features::csUtility.settings.trunkWindVariationMin;
-	permutationData.TrunkWindVariationMax = globals::features::csUtility.settings.trunkWindVariationMax;
-	permutationData.TrunkWindVariationInterval = globals::features::csUtility.settings.trunkWindVariationInterval;
 	permutationData.TrunkWindBendSensitivity = globals::features::csUtility.settings.trunkWindBendSensitivity;
-	permutationData.TrunkWindLeafSensitivity = globals::features::csUtility.settings.trunkWindLeafSensitivity;
+	permutationData.TreeLeafAmbientSensitivity = globals::features::csUtility.settings.treeLeafAmbientSensitivity;
 	permutationData.EnableAmbientGrassWind = globals::features::csUtility.loaded &&
 	                                         globals::features::csUtility.settings.enableAmbientGrassWind;
 	permutationData.GrassWindResponse = globals::features::csUtility.settings.grassWindResponse;
@@ -345,48 +314,15 @@ void State::Reset()
 	windFieldTuning.gustScale = trunkWindSettings.windFieldGustScale;
 	windFieldTuning.gustAmplitude = trunkWindSettings.windFieldGustAmplitude;
 	windFieldTuning.gustAdvectionMultiplier = trunkWindSettings.windFieldGustAdvectionMultiplier;
-	const auto [gustStrengthMin, gustStrengthMax] = std::minmax(
-		trunkWindSettings.trunkWindGustStrengthMin, trunkWindSettings.trunkWindGustStrengthMax);
-	const auto [gustHoldMin, gustHoldMax] = std::minmax(
-		trunkWindSettings.trunkWindGustHoldMin, trunkWindSettings.trunkWindGustHoldMax);
-	const float gustTransitionDuration = std::max(trunkWindSettings.trunkWindGustTransitionDuration, 0.01f);
 	const bool gamePaused = globals::game::ui->GameIsPaused();
 	const float frameTime = gamePaused ? 0.0f : std::max(RE::GetSecondsSinceLastFrame(), 0.0f);
 	windFieldFrameTime = frameTime;
 	previousTimer = timer;
 	previousTrunkWindVector = trunkWindVector;
-	previousSharedWindGustScale = sharedWindGustScale;
 	twoFramesAgoWindFieldSelectedVelocity = previousWindFieldSelectedVelocity;
 	twoFramesAgoWindFieldGustTravelDistance = previousWindFieldGustTravelDistance;
 	previousWindFieldSelectedVelocity = windFieldSelectedVelocity;
 	previousWindFieldGustTravelDistance = windFieldGustTravelDistance;
-	if (frameTime > 0.0f) {
-		if (windGustTransitioning) {
-			windGustTransitionElapsed += frameTime;
-			const float transition = std::clamp(windGustTransitionElapsed / gustTransitionDuration, 0.0f, 1.0f);
-			const float smoothTransition = transition * transition * (3.0f - 2.0f * transition);
-			windGustBaseStrength = std::lerp(windGustStartStrength, windGustTargetStrength, smoothTransition);
-			if (transition >= 1.0f) {
-				windGustBaseStrength = windGustTargetStrength;
-				windGustTransitioning = false;
-			}
-		} else {
-			windGustHoldRemaining -= frameTime;
-			if (windGustHoldRemaining <= 0.0f) {
-				windGustStartStrength = windGustBaseStrength;
-				windGustTargetStrength = std::lerp(gustStrengthMin, gustStrengthMax,
-					NextWindRandom(windRandomState));
-				windGustHoldRemaining = std::lerp(gustHoldMin, gustHoldMax,
-					NextWindRandom(windRandomState));
-				windGustTransitionElapsed = 0.0f;
-				windGustTransitioning = true;
-			}
-		}
-	}
-	const float currentWindTimer = gamePaused ? timer : timer + frameTime;
-	sharedWindGustScale = windGustBaseStrength * GetSharedWindVariation(currentWindTimer,
-													 trunkWindSettings.trunkWindVariationMin, trunkWindSettings.trunkWindVariationMax,
-													 trunkWindSettings.trunkWindVariationInterval);
 	ambientWindVelocity = {};
 	trunkWindVector = {};
 	const bool overrideTrunkWindIntensity = globals::features::csUtility.loaded &&
