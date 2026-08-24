@@ -10,11 +10,11 @@
 #include "UnderwaterDepthOfField.h"
 #include "Utils/DevBenchUx.h"
 #include "Utils/Format.h"
-#include "Utils/FusRoDahWind.h"
 #include "Utils/Game.h"
 #include "Utils/PointLightFlags.h"
 #include "Utils/TransientWindImpulse.h"
 #include "Utils/UI.h"
+#include "Utils/WindEffects/FusRoDahWind.h"
 
 #include <algorithm>
 #include <array>
