@@ -29,8 +29,8 @@ StructuredBuffer<BoundingBoxPacked> CollisionBoundingBoxes : register(t0);
 struct CollisionShapePacked
 {
 	float4 CurrentPointAAndRadius;
-	float4 CurrentPointB;
-	float4 PreviousPointA;
+	float4 CurrentPointB;   // w: actor-root movement x
+	float4 PreviousPointA;  // w: actor-root movement y
 	float4 PreviousPointB;
 };
 
@@ -62,6 +62,9 @@ float2 ClosestPointOnSegment(float2 position, float2 pointA, float2 pointB)
 	const uint TEXTURE_SIZE = 1024;
 	const float WORLD_SIZE = 8192.0;
 	const float COLLISION_ACCELERATION = 50.0;
+	const float STATIONARY_SPEED = 20.0;
+	const float WALKING_SPEED = 80.0;
+	const float DIRECTION_EPSILON = 1.0;
 	const int2 textureSize = int2(TEXTURE_SIZE, TEXTURE_SIZE);
 
 	int2 cellID = int2(dispatchThreadId.xy) - int2(ArrayOrigin);
@@ -84,8 +87,11 @@ float2 ClosestPointOnSegment(float2 position, float2 pointA, float2 pointB)
 		velocity = PreviousVelocity.Load(int3(dispatchThreadId.xy, 0));
 	}
 
+	float deltaTime = clamp(TimeDelta, 0.0, 1.0 / 15.0);
 	float2 collisionAcceleration = 0.0;
 	float collisionCompression = 0.0;
+	float stationaryContactWeight = 0.0;
+	float movingContactWeight = 0.0;
 	for (uint i = 0; i < BoundingBoxCount; ++i) {
 		BoundingBoxPacked boundingBox = SharedBoundingBoxes[i];
 		if (all(cellCentreMS >= boundingBox.MinExtent && cellCentreMS <= boundingBox.MaxExtent)) {
@@ -104,25 +110,41 @@ float2 ClosestPointOnSegment(float2 position, float2 pointA, float2 pointB)
 				float distanceToSweep = length(delta);
 				float penetration = radius - distanceToSweep;
 				if (penetration > 0.0) {
-					float2 movement = currentCentre - previousCentre;
-					float2 fallbackDirection = dot(movement, movement) > 1e-5 ?
-					                               normalize(float2(-movement.y, movement.x)) :
-					                               float2(1.0, 0.0);
-					float2 outwardDirection = distanceToSweep > 1e-4 ? delta / distanceToSweep : fallbackDirection;
+					float2 actorMovement = float2(collider.CurrentPointB.w, collider.PreviousPointA.w);
+					float movementDistance = length(actorMovement);
+					float movementSpeed = movementDistance / max(deltaTime, 1e-4);
+					float movementResponse = smoothstep(STATIONARY_SPEED, WALKING_SPEED, movementSpeed);
+					float bendMagnitude = length(bend);
+					float2 fallbackDirection = bendMagnitude > 1e-4 ?
+					                               bend / bendMagnitude :
+					                               (movementDistance > 1e-4 ? actorMovement / movementDistance : float2(1.0, 0.0));
+					float2 radialDirection = distanceToSweep > 1e-4 ? delta / distanceToSweep : fallbackDirection;
+					float directionBlend = smoothstep(0.0, DIRECTION_EPSILON, distanceToSweep);
+					float2 blendedDirection = lerp(fallbackDirection, radialDirection, directionBlend);
+					float blendedDirectionLength = length(blendedDirection);
+					float2 outwardDirection = blendedDirectionLength > 1e-4 ?
+					                              blendedDirection / blendedDirectionLength :
+					                              fallbackDirection;
 					float penetrationRatio = saturate(penetration / max(radius, 1e-4));
-					collisionAcceleration += outwardDirection * penetrationRatio;
-					collisionCompression = max(collisionCompression, penetrationRatio);
+					float contactWeight = smoothstep(0.0, 1.0, penetrationRatio);
+					float movingWeight = contactWeight * movementResponse;
+					collisionAcceleration += outwardDirection * movingWeight;
+					collisionCompression = max(collisionCompression, movingWeight);
+					movingContactWeight = max(movingContactWeight, movingWeight);
+					stationaryContactWeight = max(stationaryContactWeight, contactWeight * (1.0 - movementResponse));
 				}
 			}
 		}
 	}
 
-	float deltaTime = clamp(TimeDelta, 0.0, 1.0 / 15.0);
 	collisionAcceleration *= max(CollisionStrength, 0.0) * COLLISION_ACCELERATION;
 	float springStrength = max(SpringStrength, 0.0);
 	float springDenominator = 1.0 + max(Damping, 0.0) * deltaTime + springStrength * deltaTime * deltaTime;
-	velocity = (velocity + collisionAcceleration * deltaTime - bend * springStrength * deltaTime) / springDenominator;
-	bend += velocity * deltaTime;
+	float2 updatedVelocity = (velocity + collisionAcceleration * deltaTime - bend * springStrength * deltaTime) / springDenominator;
+	float2 updatedBend = bend + updatedVelocity * deltaTime;
+	float stationaryHoldWeight = saturate(stationaryContactWeight * (1.0 - movingContactWeight));
+	velocity = lerp(updatedVelocity, 0.0, stationaryHoldWeight);
+	bend = lerp(updatedBend, bend, stationaryHoldWeight);
 
 	float maximumBend = max(MaximumBend, 0.0);
 	float bendMagnitude = length(bend);
@@ -132,8 +154,9 @@ float2 ClosestPointOnSegment(float2 position, float2 pointA, float2 pointB)
 		velocity -= bendDirection * max(dot(velocity, bendDirection), 0.0);
 	}
 
-	compression *= exp(-max(CompressionRecovery, 0.0) * deltaTime);
-	compression = max(compression, collisionCompression * max(MaximumCompression, 0.0));
+	float updatedCompression = compression * exp(-max(CompressionRecovery, 0.0) * deltaTime);
+	updatedCompression = max(updatedCompression, collisionCompression * max(MaximumCompression, 0.0));
+	compression = lerp(updatedCompression, compression, stationaryHoldWeight);
 	compression = clamp(compression, 0.0, max(MaximumCompression, 0.0));
 	Deformation[dispatchThreadId.xy] = float4(bend, compression, 0.0);
 	Velocity[dispatchThreadId.xy] = velocity;

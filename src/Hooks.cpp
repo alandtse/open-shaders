@@ -221,12 +221,21 @@ namespace
 			previousExtraShaderDescriptor = state->permutationData.ExtraShaderDescriptor;
 			previousTreeBendModelSensitivity = state->permutationData.TreeBendModelSensitivity;
 			previousTreeLeafModelSensitivity = state->permutationData.TreeLeafModelSensitivity;
+			previousTreeWindBoundsBase = state->permutationData.TreeWindBoundsBase;
+			previousTreeWindBoundsHeight = state->permutationData.TreeWindBoundsHeight;
 			treeBendSelected = IsTreeBendRenderPass(a_pass);
 			if (treeBendSelected) {
 				const auto sensitivities = TreeWindPatcher::GetSensitivities(a_pass->geometry);
 				state->permutationData.ExtraShaderDescriptor |= kTreeBendDescriptor;
 				state->permutationData.TreeBendModelSensitivity = sensitivities.bend;
 				state->permutationData.TreeLeafModelSensitivity = sensitivities.leafAmbient;
+				if (sensitivities.hasBounds) {
+					state->permutationData.TreeWindBoundsBase = sensitivities.boundMinimumZ;
+					state->permutationData.TreeWindBoundsHeight = sensitivities.boundHeight;
+				} else {
+					state->permutationData.TreeWindBoundsBase = 0.0f;
+					state->permutationData.TreeWindBoundsHeight = 0.0f;
+				}
 			} else {
 				state->permutationData.ExtraShaderDescriptor &= ~kTreeBendDescriptor;
 				state->permutationData.TreeBendModelSensitivity = 1.0f;
@@ -243,6 +252,8 @@ namespace
 				state->permutationData.ExtraShaderDescriptor = previousExtraShaderDescriptor;
 				state->permutationData.TreeBendModelSensitivity = previousTreeBendModelSensitivity;
 				state->permutationData.TreeLeafModelSensitivity = previousTreeLeafModelSensitivity;
+				state->permutationData.TreeWindBoundsBase = previousTreeWindBoundsBase;
+				state->permutationData.TreeWindBoundsHeight = previousTreeWindBoundsHeight;
 			}
 		}
 
@@ -251,6 +262,8 @@ namespace
 		uint32_t previousExtraShaderDescriptor = 0;
 		float previousTreeBendModelSensitivity = 1.0f;
 		float previousTreeLeafModelSensitivity = 1.0f;
+		float previousTreeWindBoundsBase = 0.0f;
+		float previousTreeWindBoundsHeight = 1.0f;
 		bool treeBendSelected = false;
 	};
 

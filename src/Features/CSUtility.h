@@ -84,15 +84,20 @@ struct CSUtility : Feature
 		bool enableTrunkBend = true;
 		bool overrideTrunkWindIntensity = false;
 		float trunkWindIntensityOverride = 1.0f;
-		float trunkWindFlexibleHeight = 16384.0f;
-		float trunkWindMaximumDisplacement = 4096.0f;
+		float treeWindUpperBendRange = 50.0f;
+		float treeWindMaximumDisplacementPercent = 3.0f;
 		float trunkWindBendSensitivity = 1.04f;
-		float treeLeafAmbientSensitivity = 1.0f;
+		float treeWindSpringStrength = 1.0f;
+		float treeWindSpringDamping = 0.7f;
+		float treeWindTrunkGustInfluence = 0.1f;
+		float treeLeafBaseWindFlutterGain = 3.0f;
+		float treeLeafGustInfluence = 0.2f;
 		float windFieldGustScale = 2048.0f;
 		float windFieldGustAmplitude = 0.35f;
 		float windFieldGustAdvectionMultiplier = 1.0f;
 		bool enableAmbientGrassWind = true;
 		float grassWindResponse = 45.0f;
+		float grassWindSensitivity = 1.0f;
 		float grassWindMaximumTilt = 75.0f;
 		float grassWindBendProfile = 0.35f;
 		bool grassWindUseBendTargetSpring = true;
@@ -119,6 +124,7 @@ struct CSUtility : Feature
 	enum class SettingsPage
 	{
 		WindField,            ///< Ambient wind-field controls.
+		Trees,                ///< Shared tree response controls.
 		TreeMeshes,           ///< Live per-mesh tree wind tuning.
 		Atmosphere,           ///< Sky atmosphere controls.
 		Water,                ///< Water rendering controls.

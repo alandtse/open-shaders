@@ -33,7 +33,8 @@ namespace GrassCollision
 	}
 
 	float3 CalculateDisplacement(
-		float3 modelPosition, float3 instanceRoot, float4 fieldSample, float heightWeight,
+		float3 modelPosition, float3 instanceRoot, float4 fieldSample, float bendWeight,
+		float compressionWeight,
 		float nearFactor, float4x4 worldMatrix, out float3 bendAxis, out float bendAngle)
 	{
 		float2 worldBend = fieldSample.xy;
@@ -42,7 +43,7 @@ namespace GrassCollision
 		float3 deformedPosition = relativePosition;
 		bendAxis = float3(0.0, 1.0, 0.0);
 		bendAngle = 0.0;
-		if (worldBendMagnitude > 1e-5 && heightWeight > 1e-5 && nearFactor > 1e-5) {
+		if (worldBendMagnitude > 1e-5 && bendWeight > 1e-5 && nearFactor > 1e-5) {
 			float3 worldBendDirection = float3(worldBend / worldBendMagnitude, 0.0);
 			float3 modelBendDirection = mul(transpose((float3x3)worldMatrix), worldBendDirection);
 			modelBendDirection.z = 0.0;
@@ -50,11 +51,11 @@ namespace GrassCollision
 			if (modelDirectionLength > 1e-5) {
 				modelBendDirection /= modelDirectionLength;
 				bendAxis = cross(float3(0.0, 0.0, 1.0), modelBendDirection);
-				bendAngle = worldBendMagnitude * heightWeight * nearFactor;
+				bendAngle = worldBendMagnitude * bendWeight * nearFactor;
 				deformedPosition = Wind::Common::RotateVector(relativePosition, bendAxis, bendAngle);
 			}
 		}
-		float compression = saturate(fieldSample.z) * heightWeight * nearFactor;
+		float compression = saturate(fieldSample.z) * compressionWeight * nearFactor;
 		deformedPosition.z *= 1.0 - compression;
 		return deformedPosition - relativePosition;
 	}
@@ -69,17 +70,19 @@ namespace GrassCollision
 		float currentNearFactor = smoothstep(4096.0, 0.0, length(currentRootWorld));
 		float previousNearFactor = smoothstep(4096.0, 0.0, length(previousRootWorld));
 		float normalizedHeight = saturate(input.Color.w);
-		float heightWeight = normalizedHeight * normalizedHeight;
+		float bendWeight = normalizedHeight * normalizedHeight;
+		float compressionReach = max(SharedData::grassCollisionData.CompressionHeight, 0.1);
+		float compressionWeight = smoothstep(0.0, compressionReach, normalizedHeight);
 
 		float4 currentField = SampleCurrentDeformation(currentRootWorld.xy);
 		float4 previousField = SamplePreviousDeformation(previousRootWorld.xy);
 		displacement = CalculateDisplacement(
-			currentPosition, input.InstanceData1.xyz, currentField, heightWeight,
+			currentPosition, input.InstanceData1.xyz, currentField, bendWeight, compressionWeight,
 			currentNearFactor, World[0], bendAxis, bendAngle);
 		float3 previousBendAxis;
 		float previousBendAngle;
 		previousDisplacement = CalculateDisplacement(
-			previousPosition, input.InstanceData1.xyz, previousField, heightWeight,
+			previousPosition, input.InstanceData1.xyz, previousField, bendWeight, compressionWeight,
 			previousNearFactor, PreviousWorld[0], previousBendAxis, previousBendAngle);
 	}
 }

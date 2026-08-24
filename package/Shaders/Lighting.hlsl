@@ -173,13 +173,13 @@ cbuffer VS_PerFrame : register(b12)
 };
 
 #	if defined(TREE_ANIM)
-float2 GetTreeShiftVector(float4 position, float4 color)
+float2 GetTreeShiftVector(float4 position, float4 color, float2 animationStrength)
 {
 	precise float4 tmp1 = (TreeParams.w * TreeParams.y).xxxx * WindTimers.xxyy;
 	precise float4 tmp2 = float4(0.1, 0.25, 0.1, 0.25) * tmp1 + dot(position.xyz, 1.0.xxx).xxxx;
 	precise float4 tmp3 = abs(-1.0.xxxx + 2.0.xxxx * frac(0.5.xxxx + tmp2.xyzw));
 	precise float4 tmp4 = (tmp3 * tmp3) * (3.0.xxxx - 2.0.xxxx * tmp3);
-	return (tmp4.xz + 0.1.xx * tmp4.yw) * (TreeParams.z * color.w).xx;
+	return (tmp4.xz + 0.1.xx * tmp4.yw) * color.w.xx * animationStrength;
 }
 #	endif  // TREE_ANIM
 
@@ -229,14 +229,14 @@ VS_OUTPUT main(VS_INPUT input)
 	precise float4 previousInputPosition = inputPosition;
 
 #	if defined(TREE_ANIM)
-	float2 leafAnimationScale = 1.0.xx;
+	float2 leafAnimationStrength = TreeParams.z.xx;
 	if (treeBendEnabled) {
-		leafAnimationScale = float2(
-			Wind::Tree::GetLeafAnimationScale(treeWindSample.ambientGust, length(SharedData::WindFieldAmbient.xyz)),
-			Wind::Tree::GetLeafAnimationScale(
-				previousTreeWindSample.ambientGust, length(SharedData::WindFieldPreviousAmbient.xyz)));
+		leafAnimationStrength = float2(
+			Wind::Tree::GetLeafWindResponse(SharedData::WindFieldAmbient.xy, treeWindSample.velocity.xy),
+			Wind::Tree::GetLeafWindResponse(
+				SharedData::WindFieldPreviousAmbient.xy, previousTreeWindSample.velocity.xy));
 	}
-	precise float2 treeShiftVector = GetTreeShiftVector(input.Position, input.Color) * leafAnimationScale;
+	precise float2 treeShiftVector = GetTreeShiftVector(input.Position, input.Color, leafAnimationStrength);
 	float3 normal = -1.0.xxx + 2.0.xxx * input.Normal.xyz;
 
 	inputPosition.xyz += normal.xyz * treeShiftVector.x;
@@ -259,9 +259,19 @@ VS_OUTPUT main(VS_INPUT input)
 #	endif  // SKINNED
 
 	if (treeBendEnabled) {
-		worldPosition.xy += Wind::Tree::GetTreeWorldDisplacement(input.Position.z, treeWindSample.velocity.xy);
+		float2 baseTreeResponse = Wind::Tree::CalculateHeavyResponse(
+			SharedData::WindFieldAmbient.xy, SharedData::WindFieldPreviousAmbient.xy,
+			SharedData::WindFieldDebugOptions.x);
+		float2 previousBaseTreeResponse = Wind::Tree::CalculateHeavyResponse(
+			SharedData::WindFieldPreviousAmbient.xy, SharedData::WindFieldTwoFramesAgoAmbient.xy,
+			SharedData::WindFieldDebug.w);
+		float2 treeResponse = Wind::Tree::AddTrunkGustResponse(
+			SharedData::WindFieldAmbient.xy, treeWindSample.velocity.xy, baseTreeResponse);
+		float2 previousTreeResponse = Wind::Tree::AddTrunkGustResponse(
+			SharedData::WindFieldPreviousAmbient.xy, previousTreeWindSample.velocity.xy, previousBaseTreeResponse);
+		worldPosition.xy += Wind::Tree::GetTreeWorldDisplacement(input.Position.z, treeResponse);
 		previousWorldPosition.xy +=
-			Wind::Tree::GetTreeWorldDisplacement(input.Position.z, previousTreeWindSample.velocity.xy);
+			Wind::Tree::GetTreeWorldDisplacement(input.Position.z, previousTreeResponse);
 	}
 
 	float4 viewPos;

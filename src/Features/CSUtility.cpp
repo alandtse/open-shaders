@@ -30,14 +30,20 @@ namespace
 	constexpr float kMultiplierMax = 5.0f;
 	constexpr float kTrunkWindIntensityMin = 0.0f;
 	constexpr float kTrunkWindIntensityMax = 10.0f;
-	constexpr float kTrunkWindFlexibleHeightMin = 1.0f;
-	constexpr float kTrunkWindFlexibleHeightMax = 16384.0f;
-	constexpr float kTrunkWindMaximumDisplacementMin = 0.0f;
-	constexpr float kTrunkWindMaximumDisplacementMax = 4096.0f;
+	constexpr float kTreeWindUpperBendRangeMin = 5.0f;
+	constexpr float kTreeWindUpperBendRangeMax = 100.0f;
+	constexpr float kTreeWindMaximumDisplacementPercentMin = 0.0f;
+	constexpr float kTreeWindMaximumDisplacementPercentMax = 10.0f;
 	constexpr float kTrunkWindSensitivityMin = 0.0f;
 	constexpr float kTrunkWindSensitivityMax = 20.0f;
-	constexpr float kTreeLeafAmbientSensitivityMin = 0.0f;
-	constexpr float kTreeLeafAmbientSensitivityMax = 4.0f;
+	constexpr float kTreeWindSpringStrengthMin = 0.05f;
+	constexpr float kTreeWindSpringStrengthMax = 4.0f;
+	constexpr float kTreeWindSpringDampingMin = 0.0f;
+	constexpr float kTreeWindSpringDampingMax = 1.0f;
+	constexpr float kTreeWindGustInfluenceMin = 0.0f;
+	constexpr float kTreeWindGustInfluenceMax = 2.0f;
+	constexpr float kTreeLeafBaseWindFlutterGainMin = 0.0f;
+	constexpr float kTreeLeafBaseWindFlutterGainMax = 8.0f;
 	constexpr float kWindFieldGustScaleMin = 128.0f;
 	constexpr float kWindFieldGustScaleMax = 16384.0f;
 	constexpr float kWindFieldGustAmplitudeMin = 0.0f;
@@ -46,6 +52,8 @@ namespace
 	constexpr float kWindFieldGustAdvectionMultiplierMax = 8.0f;
 	constexpr float kGrassWindResponseMin = 0.0f;
 	constexpr float kGrassWindResponseMax = 180.0f;
+	constexpr float kGrassWindSensitivityMin = 0.0f;
+	constexpr float kGrassWindSensitivityMax = 5.0f;
 	constexpr float kGrassWindMaximumTiltMin = 0.0f;
 	constexpr float kGrassWindMaximumTiltMax = 89.0f;
 	constexpr float kGrassWindBendProfileMin = 0.0f;
@@ -81,14 +89,19 @@ namespace
 	{
 		const CSUtility::Settings defaults{};
 		a_settings.trunkWindIntensityOverride = ClampFiniteOrDefault(a_settings.trunkWindIntensityOverride, kTrunkWindIntensityMin, kTrunkWindIntensityMax, defaults.trunkWindIntensityOverride);
-		a_settings.trunkWindFlexibleHeight = ClampFiniteOrDefault(a_settings.trunkWindFlexibleHeight, kTrunkWindFlexibleHeightMin, kTrunkWindFlexibleHeightMax, defaults.trunkWindFlexibleHeight);
-		a_settings.trunkWindMaximumDisplacement = ClampFiniteOrDefault(a_settings.trunkWindMaximumDisplacement, kTrunkWindMaximumDisplacementMin, kTrunkWindMaximumDisplacementMax, defaults.trunkWindMaximumDisplacement);
+		a_settings.treeWindUpperBendRange = ClampFiniteOrDefault(a_settings.treeWindUpperBendRange, kTreeWindUpperBendRangeMin, kTreeWindUpperBendRangeMax, defaults.treeWindUpperBendRange);
+		a_settings.treeWindMaximumDisplacementPercent = ClampFiniteOrDefault(a_settings.treeWindMaximumDisplacementPercent, kTreeWindMaximumDisplacementPercentMin, kTreeWindMaximumDisplacementPercentMax, defaults.treeWindMaximumDisplacementPercent);
 		a_settings.trunkWindBendSensitivity = ClampFiniteOrDefault(a_settings.trunkWindBendSensitivity, kTrunkWindSensitivityMin, kTrunkWindSensitivityMax, defaults.trunkWindBendSensitivity);
-		a_settings.treeLeafAmbientSensitivity = ClampFiniteOrDefault(a_settings.treeLeafAmbientSensitivity, kTreeLeafAmbientSensitivityMin, kTreeLeafAmbientSensitivityMax, defaults.treeLeafAmbientSensitivity);
+		a_settings.treeWindSpringStrength = ClampFiniteOrDefault(a_settings.treeWindSpringStrength, kTreeWindSpringStrengthMin, kTreeWindSpringStrengthMax, defaults.treeWindSpringStrength);
+		a_settings.treeWindSpringDamping = ClampFiniteOrDefault(a_settings.treeWindSpringDamping, kTreeWindSpringDampingMin, kTreeWindSpringDampingMax, defaults.treeWindSpringDamping);
+		a_settings.treeWindTrunkGustInfluence = ClampFiniteOrDefault(a_settings.treeWindTrunkGustInfluence, kTreeWindGustInfluenceMin, kTreeWindGustInfluenceMax, defaults.treeWindTrunkGustInfluence);
+		a_settings.treeLeafBaseWindFlutterGain = ClampFiniteOrDefault(a_settings.treeLeafBaseWindFlutterGain, kTreeLeafBaseWindFlutterGainMin, kTreeLeafBaseWindFlutterGainMax, defaults.treeLeafBaseWindFlutterGain);
+		a_settings.treeLeafGustInfluence = ClampFiniteOrDefault(a_settings.treeLeafGustInfluence, kTreeWindGustInfluenceMin, kTreeWindGustInfluenceMax, defaults.treeLeafGustInfluence);
 		a_settings.windFieldGustScale = ClampFiniteOrDefault(a_settings.windFieldGustScale, kWindFieldGustScaleMin, kWindFieldGustScaleMax, defaults.windFieldGustScale);
 		a_settings.windFieldGustAmplitude = ClampFiniteOrDefault(a_settings.windFieldGustAmplitude, kWindFieldGustAmplitudeMin, kWindFieldGustAmplitudeMax, defaults.windFieldGustAmplitude);
 		a_settings.windFieldGustAdvectionMultiplier = ClampFiniteOrDefault(a_settings.windFieldGustAdvectionMultiplier, kWindFieldGustAdvectionMultiplierMin, kWindFieldGustAdvectionMultiplierMax, defaults.windFieldGustAdvectionMultiplier);
 		a_settings.grassWindResponse = ClampFiniteOrDefault(a_settings.grassWindResponse, kGrassWindResponseMin, kGrassWindResponseMax, defaults.grassWindResponse);
+		a_settings.grassWindSensitivity = ClampFiniteOrDefault(a_settings.grassWindSensitivity, kGrassWindSensitivityMin, kGrassWindSensitivityMax, defaults.grassWindSensitivity);
 		a_settings.grassWindMaximumTilt = ClampFiniteOrDefault(a_settings.grassWindMaximumTilt, kGrassWindMaximumTiltMin, kGrassWindMaximumTiltMax, defaults.grassWindMaximumTilt);
 		a_settings.grassWindBendProfile = ClampFiniteOrDefault(a_settings.grassWindBendProfile, kGrassWindBendProfileMin, kGrassWindBendProfileMax, defaults.grassWindBendProfile);
 		a_settings.grassWindSpringLag = ClampFiniteOrDefault(a_settings.grassWindSpringLag, kGrassWindSpringLagMin, kGrassWindSpringLagMax, defaults.grassWindSpringLag);
@@ -117,6 +130,7 @@ namespace
 		a_settings.trunkWindIntensityOverride = defaults.trunkWindIntensityOverride;
 		a_settings.enableAmbientGrassWind = defaults.enableAmbientGrassWind;
 		a_settings.grassWindResponse = defaults.grassWindResponse;
+		a_settings.grassWindSensitivity = defaults.grassWindSensitivity;
 		a_settings.grassWindMaximumTilt = defaults.grassWindMaximumTilt;
 		a_settings.grassWindBendProfile = defaults.grassWindBendProfile;
 		a_settings.grassWindUseBendTargetSpring = defaults.grassWindUseBendTargetSpring;
@@ -226,15 +240,20 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	enableTrunkBend,
 	overrideTrunkWindIntensity,
 	trunkWindIntensityOverride,
-	trunkWindFlexibleHeight,
-	trunkWindMaximumDisplacement,
+	treeWindUpperBendRange,
+	treeWindMaximumDisplacementPercent,
 	trunkWindBendSensitivity,
-	treeLeafAmbientSensitivity,
+	treeWindSpringStrength,
+	treeWindSpringDamping,
+	treeWindTrunkGustInfluence,
+	treeLeafBaseWindFlutterGain,
+	treeLeafGustInfluence,
 	windFieldGustScale,
 	windFieldGustAmplitude,
 	windFieldGustAdvectionMultiplier,
 	enableAmbientGrassWind,
 	grassWindResponse,
+	grassWindSensitivity,
 	grassWindMaximumTilt,
 	grassWindBendProfile,
 	grassWindUseBendTargetSpring,
@@ -280,7 +299,6 @@ void CSUtility::DrawSettings()
 		}
 		ImGui::SeparatorText(T(TKEY("wind_field_live_values"), "Wind Field Live Values"));
 		const auto* state = globals::state;
-		const auto* treeManager = RE::BSTreeManager::GetSingleton();
 		const auto* sky = globals::game::sky;
 		const auto* weather = sky ? sky->currentWeather : nullptr;
 		const float ambientDirectionLength = std::hypot(state->ambientWindVelocity.x, state->ambientWindVelocity.y);
@@ -296,12 +314,8 @@ void CSUtility::DrawSettings()
 		ImGui::Text("%s: %.5f", T(TKEY("wind_field_travel_distance"), "Accumulated travel distance"), state->windFieldGustTravelDistance);
 		ImGui::Text("%s: %.3f units/s", T(TKEY("wind_field_advection_speed"), "Gust advection speed"), state->windFieldAdvectionSpeed);
 		ImGui::Text("%s: %.5f", T(TKEY("wind_field_global_time"), "Global timer"), state->timer);
-		if (treeManager) {
-			ImGui::Text("%s: (%.5f, %.5f), magnitude %.5f", T(TKEY("wind_field_tree_input"), "Tree wind input"),
-				treeManager->windDirection.x, treeManager->windDirection.y, treeManager->windMagnitude);
-		}
 		if (sky)
-			ImGui::Text("%s: %.5f", T(TKEY("wind_field_sky_speed"), "Sky wind speed"), sky->windSpeed);
+			ImGui::Text("%s: speed %.5f, angle %.5f", T(TKEY("wind_field_sky_input"), "Sky wind input"), sky->windSpeed, sky->windAngle);
 		if (weather)
 			ImGui::Text("%s: %.3f (raw %u), direction raw %u", T(TKEY("wind_field_weather_input"), "Weather input"),
 				static_cast<unsigned>(weather->data.windSpeed) / 255.0f, static_cast<unsigned>(weather->data.windSpeed),
@@ -397,18 +411,50 @@ void CSUtility::DrawSettings()
 		}
 
 		if (ImGui::BeginTabItem(T(TKEY("tab_trees"), "Trees"))) {
+			activeSettingsPage = SettingsPage::Trees;
 			ImGui::Checkbox(T(TKEY("enable_trunk_bend"), "Enable Trunk Bend"), &settings.enableTrunkBend);
 			ImGui::SeparatorText(T(TKEY("trunk_wind_response"), "Tree Response"));
-			ImGui::SliderFloat(T(TKEY("trunk_wind_flexible_height"), "Flexible Height"), &settings.trunkWindFlexibleHeight,
-				kTrunkWindFlexibleHeightMin, kTrunkWindFlexibleHeightMax, "%.0f", ImGuiSliderFlags_AlwaysClamp);
-			ImGui::SliderFloat(T(TKEY("trunk_wind_maximum_displacement"), "Maximum Displacement"), &settings.trunkWindMaximumDisplacement,
-				kTrunkWindMaximumDisplacementMin, kTrunkWindMaximumDisplacementMax, "%.0f", ImGuiSliderFlags_AlwaysClamp);
+			ImGui::SliderFloat(T(TKEY("tree_wind_upper_bend_range"), "Upper Bend Range"), &settings.treeWindUpperBendRange,
+				kTreeWindUpperBendRangeMin, kTreeWindUpperBendRangeMax, "%.0f%%", ImGuiSliderFlags_AlwaysClamp);
+			if (auto _tt = Util::HoverTooltipWrapper())
+				ImGui::TextUnformatted(T(TKEY("tree_wind_upper_bend_range_tooltip"),
+					"Upper portion of the measured tree height that can bend. At 5%, only the treetop moves; at 100%, bend increases smoothly from the base to the top."));
+			ImGui::SliderFloat(T(TKEY("tree_wind_maximum_displacement_percent"), "Maximum Top Displacement"),
+				&settings.treeWindMaximumDisplacementPercent, kTreeWindMaximumDisplacementPercentMin,
+				kTreeWindMaximumDisplacementPercentMax, "%.2f%%", ImGuiSliderFlags_AlwaysClamp);
+			if (auto _tt = Util::HoverTooltipWrapper())
+				ImGui::TextUnformatted(T(TKEY("tree_wind_maximum_displacement_percent_tooltip"),
+					"Maximum treetop movement as a percentage of the measured tree height."));
 			ImGui::SliderFloat(T(TKEY("trunk_wind_bend_sensitivity"), "Trunk Wind Sensitivity"), &settings.trunkWindBendSensitivity,
 				kTrunkWindSensitivityMin, kTrunkWindSensitivityMax, "%.2f", ImGuiSliderFlags_AlwaysClamp);
-			ImGui::SliderFloat(T(TKEY("tree_leaf_ambient_sensitivity"), "Leaf Flutter Sensitivity"), &settings.treeLeafAmbientSensitivity,
-				kTreeLeafAmbientSensitivityMin, kTreeLeafAmbientSensitivityMax, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+			ImGui::SliderFloat(T(TKEY("tree_wind_spring_strength"), "Spring Strength"), &settings.treeWindSpringStrength,
+				kTreeWindSpringStrengthMin, kTreeWindSpringStrengthMax, "%.2f", ImGuiSliderFlags_AlwaysClamp | ImGuiSliderFlags_Logarithmic);
+			if (auto _tt = Util::HoverTooltipWrapper())
+				ImGui::TextUnformatted(T(TKEY("tree_wind_spring_strength_tooltip"), "Controls how quickly the spring pulls trees toward the raw ambient wind target. Lower values feel heavier and lag longer."));
+			ImGui::SliderFloat(T(TKEY("tree_wind_spring_damping"), "Spring Damping"), &settings.treeWindSpringDamping,
+				kTreeWindSpringDampingMin, kTreeWindSpringDampingMax, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+			if (auto _tt = Util::HoverTooltipWrapper())
+				ImGui::TextUnformatted(T(TKEY("tree_wind_spring_damping_tooltip"), "Reduces overshoot while preserving gradual recovery after the wind weakens."));
+			ImGui::SeparatorText(T(TKEY("tree_wind_gust_response"), "Gust Response"));
+			ImGui::SliderFloat(T(TKEY("tree_wind_trunk_gust_influence"), "Trunk Gust Influence"),
+				&settings.treeWindTrunkGustInfluence, kTreeWindGustInfluenceMin, kTreeWindGustInfluenceMax, "%.2f",
+				ImGuiSliderFlags_AlwaysClamp);
+			if (auto _tt = Util::HoverTooltipWrapper())
+				ImGui::TextUnformatted(T(TKEY("tree_wind_trunk_gust_influence_tooltip"),
+					"Scales only the gust variation added to the heavy trunk response. Zero makes the trunk follow raw wind only; one uses the full sampled gust."));
+			ImGui::SliderFloat(T(TKEY("tree_leaf_gust_influence"), "Leaf Gust Influence"),
+				&settings.treeLeafGustInfluence, kTreeWindGustInfluenceMin, kTreeWindGustInfluenceMax, "%.2f",
+				ImGuiSliderFlags_AlwaysClamp);
+			if (auto _tt = Util::HoverTooltipWrapper())
+				ImGui::TextUnformatted(T(TKEY("tree_leaf_gust_influence_tooltip"),
+					"Scales gust variation around the raw-wind baseline. The default 0.20 turns the shared field's 35% gust range into about 7% leaf variation."));
+			ImGui::SeparatorText(T(TKEY("tree_leaf_flutter"), "Leaf Flutter"));
+			ImGui::SliderFloat(T(TKEY("tree_leaf_base_wind_flutter_gain"), "Base Wind Flutter Gain"),
+				&settings.treeLeafBaseWindFlutterGain, kTreeLeafBaseWindFlutterGainMin,
+				kTreeLeafBaseWindFlutterGainMax, "%.2fx", ImGuiSliderFlags_AlwaysClamp);
 			if (auto _tt = Util::HoverTooltipWrapper()) {
-				ImGui::TextUnformatted(T(TKEY("tree_leaf_ambient_sensitivity_tooltip"), "Controls how strongly mean wind speed and ambient gust pressure increase Skyrim's existing leaf animation. Zero preserves vanilla motion."));
+				ImGui::TextUnformatted(T(TKEY("tree_leaf_base_wind_flutter_gain_tooltip"),
+					"Controls the direct leaf animation strength driven by shared base wind. Gust influence adds only local amplitude variation."));
 			}
 			ImGui::EndTabItem();
 		}
@@ -432,6 +478,10 @@ void CSUtility::DrawSettings()
 				kGrassWindResponseMin, kGrassWindResponseMax, "%.0f deg/unit", ImGuiSliderFlags_AlwaysClamp);
 			if (auto _tt = Util::HoverTooltipWrapper())
 				ImGui::TextUnformatted(T(TKEY("grass_wind_response_tooltip"), "Controls how strongly sampled ambient wind velocity bends the grass."));
+			ImGui::SliderFloat(T(TKEY("grass_wind_sensitivity"), "Wind Sensitivity"), &settings.grassWindSensitivity,
+				kGrassWindSensitivityMin, kGrassWindSensitivityMax, "%.2fx", ImGuiSliderFlags_AlwaysClamp);
+			if (auto _tt = Util::HoverTooltipWrapper())
+				ImGui::TextUnformatted(T(TKEY("grass_wind_sensitivity_tooltip"), "Scales grass-only wind speed. At 2x, wind at speed 1 is treated as speed 2 for grass bending and flutter."));
 			ImGui::SliderFloat(T(TKEY("grass_wind_maximum_tilt"), "Maximum Bend Angle"), &settings.grassWindMaximumTilt,
 				kGrassWindMaximumTiltMin, kGrassWindMaximumTiltMax, "%.0f deg", ImGuiSliderFlags_AlwaysClamp);
 			if (auto _tt = Util::HoverTooltipWrapper())
@@ -684,11 +734,46 @@ json CSUtility::GetDiagnostics()
 		{ "treeWindTestGustScale", treeWindTest.gustScale },
 		{ "treeWindTestGustAmplitude", treeWindTest.gustAmplitude },
 		{ "treeWindTestGustAdvectionMultiplier", treeWindTest.gustAdvectionMultiplier },
+		{ "treeWindSpringStrength", settings.treeWindSpringStrength },
+		{ "treeWindSpringDamping", settings.treeWindSpringDamping },
+		{ "treeWindUpperBendRange", settings.treeWindUpperBendRange },
+		{ "treeWindMaximumDisplacementPercent", settings.treeWindMaximumDisplacementPercent },
+		{ "treeWindTrunkGustInfluence", settings.treeWindTrunkGustInfluence },
+		{ "treeLeafBaseWindFlutterGain", settings.treeLeafBaseWindFlutterGain },
+		{ "treeLeafGustInfluence", settings.treeLeafGustInfluence },
 	};
 }
 
 void CSUtility::RegisterUxActions()
 {
+	FEATURE_COMMAND("setTreeResponseDynamics",
+		"Tune shared heavy tree response. Optional params: springStrength (0.05-4), damping (0-1).",
+		[](Feature* feature, const json& args) {
+			auto* utility = static_cast<CSUtility*>(feature);
+			if (args.contains("springStrength") && args["springStrength"].is_number()) {
+				utility->settings.treeWindSpringStrength = ClampFiniteOrDefault(args["springStrength"].get<float>(),
+					kTreeWindSpringStrengthMin, kTreeWindSpringStrengthMax, utility->settings.treeWindSpringStrength);
+			}
+			if (args.contains("damping") && args["damping"].is_number()) {
+				utility->settings.treeWindSpringDamping = ClampFiniteOrDefault(args["damping"].get<float>(),
+					kTreeWindSpringDampingMin, kTreeWindSpringDampingMax, utility->settings.treeWindSpringDamping);
+			}
+		});
+	FEATURE_COMMAND("setTreeGustInfluence",
+		"Tune shared gust response. Optional params: trunkInfluence (0-2), leafInfluence (0-2).",
+		[](Feature* feature, const json& args) {
+			auto* utility = static_cast<CSUtility*>(feature);
+			if (args.contains("trunkInfluence") && args["trunkInfluence"].is_number()) {
+				utility->settings.treeWindTrunkGustInfluence =
+					ClampFiniteOrDefault(args["trunkInfluence"].get<float>(), kTreeWindGustInfluenceMin,
+						kTreeWindGustInfluenceMax, utility->settings.treeWindTrunkGustInfluence);
+			}
+			if (args.contains("leafInfluence") && args["leafInfluence"].is_number()) {
+				utility->settings.treeLeafGustInfluence =
+					ClampFiniteOrDefault(args["leafInfluence"].get<float>(), kTreeWindGustInfluenceMin,
+						kTreeWindGustInfluenceMax, utility->settings.treeLeafGustInfluence);
+			}
+		});
 	FEATURE_COMMAND("setTreeWindRule",
 		"Apply live per-model tree wind tuning. Params: mesh (string), bendSensitivity (number, 0-4), leafAmbientSensitivity (number, 0-4).",
 		[](Feature*, const json& args) {
@@ -853,7 +938,19 @@ void CSUtility::DrawVanillaBloomSettings()
 
 void CSUtility::LoadSettings(json& o_json)
 {
+	const Settings defaults{};
 	settings = o_json;
+	if (!o_json.contains("treeWindUpperBendRange") && o_json.contains("treeWindFullBendHeight") &&
+		o_json["treeWindFullBendHeight"].is_number())
+		settings.treeWindUpperBendRange = o_json["treeWindFullBendHeight"].get<float>();
+	if (!o_json.contains("treeLeafBaseWindFlutterGain")) {
+		if (o_json.contains("treeLeafWindSensitivity") && o_json["treeLeafWindSensitivity"].is_number())
+			settings.treeLeafBaseWindFlutterGain =
+				o_json["treeLeafWindSensitivity"].get<float>() * defaults.treeLeafBaseWindFlutterGain;
+		else if (o_json.contains("treeLeafAmbientSensitivity") && o_json["treeLeafAmbientSensitivity"].is_number())
+			settings.treeLeafBaseWindFlutterGain =
+				o_json["treeLeafAmbientSensitivity"].get<float>() * defaults.treeLeafBaseWindFlutterGain;
+	}
 	SanitizeSettings(settings);
 }
 
@@ -876,6 +973,17 @@ void CSUtility::RestoreCurrentPageDefaultSettings()
 		settings.windFieldGustScale = defaults.windFieldGustScale;
 		settings.windFieldGustAmplitude = defaults.windFieldGustAmplitude;
 		settings.windFieldGustAdvectionMultiplier = defaults.windFieldGustAdvectionMultiplier;
+		break;
+	case SettingsPage::Trees:
+		settings.enableTrunkBend = defaults.enableTrunkBend;
+		settings.treeWindUpperBendRange = defaults.treeWindUpperBendRange;
+		settings.treeWindMaximumDisplacementPercent = defaults.treeWindMaximumDisplacementPercent;
+		settings.trunkWindBendSensitivity = defaults.trunkWindBendSensitivity;
+		settings.treeWindSpringStrength = defaults.treeWindSpringStrength;
+		settings.treeWindSpringDamping = defaults.treeWindSpringDamping;
+		settings.treeWindTrunkGustInfluence = defaults.treeWindTrunkGustInfluence;
+		settings.treeLeafBaseWindFlutterGain = defaults.treeLeafBaseWindFlutterGain;
+		settings.treeLeafGustInfluence = defaults.treeLeafGustInfluence;
 		break;
 	case SettingsPage::TreeMeshes:
 		TreeWindPatcher::RevertUnsavedChanges();
@@ -913,6 +1021,17 @@ bool CSUtility::ReapplyCurrentPageOverrideSettings()
 		"windFieldGustAmplitude",
 		"windFieldGustAdvectionMultiplier"
 	};
+	static constexpr std::array<std::string_view, 9> treeKeys{
+		"enableTrunkBend",
+		"treeWindUpperBendRange",
+		"treeWindMaximumDisplacementPercent",
+		"trunkWindBendSensitivity",
+		"treeWindSpringStrength",
+		"treeWindSpringDamping",
+		"treeWindTrunkGustInfluence",
+		"treeLeafBaseWindFlutterGain",
+		"treeLeafGustInfluence"
+	};
 	static constexpr std::array<std::string_view, 1> waterKeys{ "water" };
 	static constexpr std::array<std::string_view, 7> multiplierKeys{
 		"directionalLightMult",
@@ -929,6 +1048,8 @@ bool CSUtility::ReapplyCurrentPageOverrideSettings()
 	switch (activeSettingsPage) {
 	case SettingsPage::WindField:
 		return ReapplyOverrideSettingsForKeys(windFieldKeys);
+	case SettingsPage::Trees:
+		return ReapplyOverrideSettingsForKeys(treeKeys);
 	case SettingsPage::TreeMeshes:
 		TreeWindPatcher::RevertUnsavedChanges();
 		return true;

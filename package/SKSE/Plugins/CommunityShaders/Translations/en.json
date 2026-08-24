@@ -546,6 +546,8 @@
     "feature.cs_utility.dof_unlock_unavailable_tooltip": "No live image space values are available.",
     "feature.cs_utility.global_point_lighting": "Global Point Lighting",
     "feature.cs_utility.global_point_lighting_linear": "Global Point Lighting (Linear)",
+    "feature.cs_utility.grass_wind_sensitivity": "Wind Sensitivity",
+    "feature.cs_utility.grass_wind_sensitivity_tooltip": "Scales grass-only wind speed. At 2x, wind at speed 1 is treated as speed 2 for grass bending and flutter.",
     "feature.cs_utility.key_feature_1": "Atmosphere brightness control",
     "feature.cs_utility.key_feature_2": "Shared lighting multiplier controls",
     "feature.cs_utility.key_feature_3": "Separate controls for linear point lights",

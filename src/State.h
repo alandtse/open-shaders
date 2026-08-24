@@ -67,6 +67,7 @@ public:
 	float previousWindFieldGustTravelDistance = 0.0f;
 	float twoFramesAgoWindFieldGustTravelDistance = 0.0f;
 	float windFieldFrameTime = 0.0f;
+	float previousWindFieldFrameTime = 0.0f;
 	float windFieldAmbientSpeed = 0.0f;
 	float windFieldAdvectionSpeed = 0.0f;
 	float windFieldTravelDelta = 0.0f;
@@ -432,15 +433,17 @@ public:
 		uint OverrideWindIntensity;
 		float2 WindPadding0;
 
-		float TrunkWindFlexibleHeight;
-		float TrunkWindMaximumDisplacement;
+		float TreeWindUpperBendRange;
+		float TreeWindMaximumDisplacementPercent;
 		float TreeBendModelSensitivity;
 		float TreeLeafModelSensitivity;
 
-		float3 TreeWindPadding1;
+		float TreeWindSpringStrength;
+		float TreeWindSpringDamping;
+		float TreeWindPadding1;
 		float TrunkWindBendSensitivity;
 
-		float TreeLeafAmbientSensitivity;
+		float TreeLeafBaseWindFlutterGain;
 		uint EnableAmbientGrassWind;
 		float GrassWindResponse;
 		float GrassWindMaximumTilt;
@@ -453,7 +456,12 @@ public:
 		float GrassWindFlutterStrength;
 		float GrassWindFlutterFrequency;
 		uint GrassWindUseBendTargetSpring;
-		float GrassWindPadding;
+		float GrassWindSensitivity;
+
+		float TreeWindBoundsBase;
+		float TreeWindBoundsHeight;
+		float TreeWindTrunkGustInfluence;
+		float TreeLeafGustInfluence;
 
 		bool operator==(const PermutationCB& other) const
 		{
@@ -466,14 +474,17 @@ public:
 			       TrunkWindPreviousVector.y == other.TrunkWindPreviousVector.y &&
 			       WindIntensityOverride == other.WindIntensityOverride &&
 			       OverrideWindIntensity == other.OverrideWindIntensity &&
-			       TrunkWindFlexibleHeight == other.TrunkWindFlexibleHeight &&
-			       TrunkWindMaximumDisplacement == other.TrunkWindMaximumDisplacement &&
+			       TreeWindUpperBendRange == other.TreeWindUpperBendRange &&
+			       TreeWindMaximumDisplacementPercent == other.TreeWindMaximumDisplacementPercent &&
 			       TreeBendModelSensitivity == other.TreeBendModelSensitivity &&
 			       TreeLeafModelSensitivity == other.TreeLeafModelSensitivity &&
+			       TreeWindSpringStrength == other.TreeWindSpringStrength &&
+			       TreeWindSpringDamping == other.TreeWindSpringDamping &&
 			       TrunkWindBendSensitivity == other.TrunkWindBendSensitivity &&
-			       TreeLeafAmbientSensitivity == other.TreeLeafAmbientSensitivity &&
+			       TreeLeafBaseWindFlutterGain == other.TreeLeafBaseWindFlutterGain &&
 			       EnableAmbientGrassWind == other.EnableAmbientGrassWind &&
 			       GrassWindResponse == other.GrassWindResponse &&
+			       GrassWindSensitivity == other.GrassWindSensitivity &&
 			       GrassWindMaximumTilt == other.GrassWindMaximumTilt &&
 			       GrassWindBendProfile == other.GrassWindBendProfile &&
 			       GrassWindSpringLag == other.GrassWindSpringLag &&
@@ -481,7 +492,11 @@ public:
 			       GrassWindSpringRecovery == other.GrassWindSpringRecovery &&
 			       GrassWindFlutterStrength == other.GrassWindFlutterStrength &&
 			       GrassWindFlutterFrequency == other.GrassWindFlutterFrequency &&
-			       GrassWindUseBendTargetSpring == other.GrassWindUseBendTargetSpring;
+			       GrassWindUseBendTargetSpring == other.GrassWindUseBendTargetSpring &&
+			       TreeWindBoundsBase == other.TreeWindBoundsBase &&
+			       TreeWindBoundsHeight == other.TreeWindBoundsHeight &&
+			       TreeWindTrunkGustInfluence == other.TreeWindTrunkGustInfluence &&
+			       TreeLeafGustInfluence == other.TreeLeafGustInfluence;
 		}
 	};
 	static_assert(offsetof(PermutationCB, EnableAmbientGrassWind) == 100);
@@ -521,8 +536,8 @@ public:
 		float4 HDRData;                   // xyz + menu scene encoding in w — see HDRDisplay::GetSharedDataHDR
 		float RefractionScale;            // ISRefraction.hlsl heat-shimmer multiplier; 1.0 = unmodified vanilla strength
 		float3 pad1;
-		float4 WindFieldDebug;         // xy: base weather velocity, z: visualization enabled
-		float4 WindFieldDebugOptions;  // y: real speed, z: real direction, w: accumulated world-space gust travel
+		float4 WindFieldDebug;         // xy: base weather velocity, z: visualization enabled, w: previous frame time
+		float4 WindFieldDebugOptions;  // x: frame time, y: real speed, z: real direction, w: gust travel
 		WindField::WindTuning WindFieldTuning;
 		float4 WindFieldAmbient;  // xyz: instantaneous mean weather velocity, w: accumulated world-space gust travel
 		float4 WindFieldPreviousAmbient;

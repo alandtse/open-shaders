@@ -150,10 +150,14 @@ VS_OUTPUT main(VS_INPUT input)
 	WindField::WindSample treeWindSample;
 	treeWindSample.velocity = 0.0.xxx;
 	treeWindSample.ambientGust = 0.5;
+	WindField::WindSample previousTreeWindSample;
+	previousTreeWindSample.velocity = 0.0.xxx;
+	previousTreeWindSample.ambientGust = 0.5;
 	if (treeBendEnabled) {
 		float3 treeRootWS = float3(World[eyeIndex][0].w, World[eyeIndex][1].w, World[eyeIndex][2].w);
 		float3 absoluteTreeRootWS = treeRootWS + FrameBuffer::CameraPosAdjust[eyeIndex].xyz;
 		treeWindSample = SharedData::SampleAmbientWind(absoluteTreeRootWS);
+		previousTreeWindSample = SharedData::SamplePreviousAmbientWind(absoluteTreeRootWS);
 	}
 
 	float3 normalMS = float3(1, 1, 1);
@@ -162,9 +166,14 @@ VS_OUTPUT main(VS_INPUT input)
 #		endif
 
 #		if defined(VC) && defined(NORMALS) && defined(TREE_ANIM)
-	float2 treeTmp1 = SmoothSaturate(abs(2 * frac(float2(0.1, 0.25) * (TreeParams.w * TreeParams.y * TreeParams.x) + dot(input.PositionMS.xyz, 1.0.xxx) + 0.5) - 1));
-	float leafAnimationScale = treeBendEnabled ? Wind::Tree::GetLeafAnimationScale(treeWindSample.ambientGust, length(SharedData::WindFieldAmbient.xyz)) : 1.0;
-	float normalMult = (treeTmp1.x + 0.1 * treeTmp1.y) * (input.Color.w * TreeParams.z * leafAnimationScale);
+	float leafAnimationStrength = treeBendEnabled ?
+	                                  Wind::Tree::GetLeafWindResponse(
+										  SharedData::WindFieldAmbient.xy, treeWindSample.velocity.xy) :
+	                                  TreeParams.z;
+	float2 leafPhase = float2(0.1, 0.25) * (TreeParams.w * TreeParams.y * TreeParams.x) +
+	                   dot(input.PositionMS.xyz, 1.0.xxx) + 0.5;
+	float2 treeTmp1 = SmoothSaturate(abs(2 * frac(leafPhase) - 1));
+	float normalMult = (treeTmp1.x + 0.1 * treeTmp1.y) * input.Color.w * leafAnimationStrength;
 	positionMS.xyz += normalMS.xyz * normalMult;
 #		endif
 
@@ -178,14 +187,24 @@ VS_OUTPUT main(VS_INPUT input)
 	float3x4 worldMatrix = Skinned::GetBoneTransformMatrix(Bones, boneIndices, FrameBuffer::CameraPosAdjust[eyeIndex].xyz, input.BoneWeights);
 	precise float4 positionWS = float4(mul(positionMS, transpose(worldMatrix)), 1);
 	if (treeBendEnabled) {
-		positionWS.xy += Wind::Tree::GetTreeWorldDisplacement(input.PositionMS.z, treeWindSample.velocity.xy);
+		float2 baseTreeResponse = Wind::Tree::CalculateHeavyResponse(
+			SharedData::WindFieldAmbient.xy, SharedData::WindFieldPreviousAmbient.xy,
+			SharedData::WindFieldDebugOptions.x);
+		float2 treeResponse = Wind::Tree::AddTrunkGustResponse(
+			SharedData::WindFieldAmbient.xy, treeWindSample.velocity.xy, baseTreeResponse);
+		positionWS.xy += Wind::Tree::GetTreeWorldDisplacement(input.PositionMS.z, treeResponse);
 	}
 
 	positionCS = mul(FrameBuffer::CameraViewProj[eyeIndex], positionWS);
 #		else
 	if (treeBendEnabled) {
 		precise float4 positionWS = mul(World[eyeIndex], positionMS);
-		positionWS.xy += Wind::Tree::GetTreeWorldDisplacement(input.PositionMS.z, treeWindSample.velocity.xy);
+		float2 baseTreeResponse = Wind::Tree::CalculateHeavyResponse(
+			SharedData::WindFieldAmbient.xy, SharedData::WindFieldPreviousAmbient.xy,
+			SharedData::WindFieldDebugOptions.x);
+		float2 treeResponse = Wind::Tree::AddTrunkGustResponse(
+			SharedData::WindFieldAmbient.xy, treeWindSample.velocity.xy, baseTreeResponse);
+		positionWS.xy += Wind::Tree::GetTreeWorldDisplacement(input.PositionMS.z, treeResponse);
 		positionCS = mul(FrameBuffer::CameraViewProj[eyeIndex], positionWS);
 	} else {
 		precise float4x4 modelViewProj = mul(FrameBuffer::CameraViewProj[eyeIndex], World[eyeIndex]);

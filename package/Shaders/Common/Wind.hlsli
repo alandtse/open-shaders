@@ -24,22 +24,67 @@ namespace Wind
 
 	namespace Tree
 	{
-		/** @brief Scales existing leaf motion primarily from mean wind speed, with a positive gust-pressure boost. */
-		float GetLeafAnimationScale(float ambientGust, float windSpeed)
+		static const float RESPONSE_LAG_SECONDS = 0.45;
+		/** @brief Derives leaf motion energy from raw wind speed plus independently scaled gust variation. */
+		float GetLeafWindResponse(float2 baseWind, float2 sampledWind)
 		{
-			float sensitivity = max(Permutation::TreeLeafAmbientSensitivity, 0.0) *
+			float flutterGain = max(Permutation::TreeLeafBaseWindFlutterGain, 0.0) *
 			                    max(Permutation::TreeLeafModelSensitivity, 0.0);
-			float gustWeight = lerp(0.75, 1.0, saturate(ambientGust));
-			return 1.0 + max(windSpeed, 0.0) * gustWeight * sensitivity;
+			float baseSpeed = length(baseWind);
+			float gustSpeed = length(sampledWind) - baseSpeed;
+			float effectiveWindSpeed =
+				max(baseSpeed + gustSpeed * max(Permutation::TreeLeafGustInfluence, 0.0), 0.0);
+			return effectiveWindSpeed * flutterGain;
 		}
 
-		/** @brief Converts sampled ambient wind into the established height-weighted trunk shift. */
+		/** @brief Applies stateless inertial lag and damping to consecutive raw ambient wind targets. */
+		float2 CalculateHeavyResponse(float2 currentTarget, float2 previousTarget, float frameTime)
+		{
+			float springStrength = max(Permutation::TreeWindSpringStrength, 0.05);
+			float damping = saturate(Permutation::TreeWindSpringDamping);
+			float responseLag = clamp(RESPONSE_LAG_SECONDS * rsqrt(springStrength), 0.2, 1.0);
+			float lagFrameCount = frameTime > 1e-4 ? min(responseLag / frameTime, 64.0) : 0.0;
+			float2 targetDelta = currentTarget - previousTarget;
+			float recovering = length(currentTarget) < length(previousTarget) ? 1.0 : 0.0;
+			float recoveryCarry = lerp(1.0, 0.35, damping);
+			float2 response =
+				currentTarget - targetDelta * lagFrameCount * lerp(1.0, recoveryCarry, recovering);
+
+			if (dot(currentTarget, previousTarget) >= 0.0 && dot(response, currentTarget) < 0.0)
+				response = 0.0.xx;
+
+			float maximumTargetSpeed = max(length(currentTarget), length(previousTarget));
+			float maximumResponseSpeed = maximumTargetSpeed * (1.0 + 0.2 * (1.0 - damping));
+			float responseSpeed = length(response);
+			return responseSpeed > maximumResponseSpeed && responseSpeed > 1e-5 ?
+			           response * (maximumResponseSpeed / responseSpeed) :
+			           response;
+		}
+
+		/** @brief Adds independently scaled sampled gust variation to the heavy trunk response. */
+		float2 AddTrunkGustResponse(float2 baseWind, float2 sampledWind, float2 baseResponse)
+		{
+			return baseResponse +
+			       (sampledWind - baseWind) * max(Permutation::TreeWindTrunkGustInfluence, 0.0);
+		}
+
+		/** @brief Converts the combined tree response into a measured-height-weighted trunk shift. */
 		float2 GetTreeWorldDisplacement(float localHeight, float2 windVelocity)
 		{
-			float height = saturate(max(localHeight, 0.0) / max(Permutation::TrunkWindFlexibleHeight, 1.0));
-			float flexibility = height * height;
+			float treeHeight = Permutation::TreeWindBoundsHeight;
+			if (treeHeight <= 1e-3)
+				return 0.0.xx;
+
+			float normalizedHeight = saturate(
+				(localHeight - Permutation::TreeWindBoundsBase) / treeHeight);
+			float upperBendRange = max(Permutation::TreeWindUpperBendRange * 0.01, 0.05);
+			float bendStartHeight = 1.0 - upperBendRange;
+			float bendProgress = saturate((normalizedHeight - bendStartHeight) / upperBendRange);
+			float flexibility = bendProgress * bendProgress;
+			float maximumDisplacement =
+				treeHeight * max(Permutation::TreeWindMaximumDisplacementPercent, 0.0) * 0.01;
 			return windVelocity *
-			       (max(Permutation::TrunkWindMaximumDisplacement, 0.0) * flexibility *
+			       (maximumDisplacement * flexibility *
 					   max(Permutation::TrunkWindBendSensitivity, 0.0) *
 					   max(Permutation::TreeBendModelSensitivity, 0.0));
 		}

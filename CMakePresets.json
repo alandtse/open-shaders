@@ -123,6 +123,7 @@
                 "AIO_ZIP_TO_DIST": "OFF",
                 "VCPKG_APPLOCAL_DEPS": "OFF",
                 "COMMONLIB_PREBUILT_MULTICONFIG": "ON",
+                "BUILD_SHADER_TESTS": "OFF",
                 "CMAKE_INTERPROCEDURAL_OPTIMIZATION": "OFF",
                 "SC_DEVFAST_OPTS": "ON",
                 "CMAKE_CXX_FLAGS_RELEASE": "/Od /Ob1 /DNDEBUG",

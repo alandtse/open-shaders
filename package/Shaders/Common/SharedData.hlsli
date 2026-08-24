@@ -39,8 +39,8 @@ namespace SharedData
 		float4 HDRData;
 		float RefractionScale;
 		float3 pad1;
-		float4 WindFieldDebug;         // xy: base weather velocity, z: visualization enabled
-		float4 WindFieldDebugOptions;  // y: real speed, z: real direction, w: accumulated world-space gust travel
+		float4 WindFieldDebug;         // xy: base weather velocity, z: visualization enabled, w: previous frame time
+		float4 WindFieldDebugOptions;  // x: frame time, y: real speed, z: real direction, w: gust travel
 		WindField::WindTuning WindFieldTuning;
 		float4 WindFieldAmbient;  // xyz: selected mean velocity, w: accumulated world-space gust travel
 		float4 WindFieldPreviousAmbient;
@@ -479,6 +479,8 @@ namespace SharedData
 		uint2 ArrayOrigin;
 		float2 PreviousPosOffset;
 		uint2 PreviousArrayOrigin;
+		float CompressionHeight;
+		float3 pad0;
 	};
 
 	cbuffer FeatureData : register(b6)

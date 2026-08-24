@@ -109,15 +109,17 @@ namespace Permutation
 		uint OverrideWindIntensity;
 		float2 WindPadding0;
 
-		float TrunkWindFlexibleHeight;
-		float TrunkWindMaximumDisplacement;
+		float TreeWindUpperBendRange;
+		float TreeWindMaximumDisplacementPercent;
 		float TreeBendModelSensitivity;
 		float TreeLeafModelSensitivity;
 
-		float3 TreeWindPadding1;
+		float TreeWindSpringStrength;
+		float TreeWindSpringDamping;
+		float TreeWindPadding1;
 		float TrunkWindBendSensitivity;
 
-		float TreeLeafAmbientSensitivity;
+		float TreeLeafBaseWindFlutterGain;
 		uint EnableAmbientGrassWind;
 		float GrassWindResponse;
 		float GrassWindMaximumTilt;
@@ -130,7 +132,12 @@ namespace Permutation
 		float GrassWindFlutterStrength;
 		float GrassWindFlutterFrequency;
 		uint GrassWindUseBendTargetSpring;
-		float GrassWindPadding;
+		float GrassWindSensitivity;
+
+		float TreeWindBoundsBase;
+		float TreeWindBoundsHeight;
+		float TreeWindTrunkGustInfluence;
+		float TreeLeafGustInfluence;
 	};
 
 }

@@ -7,6 +7,7 @@
 #include "State.h"
 #include "Utils/ActorUtils.h"
 #include "Utils/D3D.h"
+#include "Utils/UI.h"
 
 #define I18N_KEY_PREFIX "feature.grass_collision."
 
@@ -22,15 +23,18 @@ static constexpr float MIN_GRASS_INTERACTION_RADIUS = 0.0f;
 static constexpr float MAX_GRASS_INTERACTION_RADIUS = 128.0f;
 static constexpr float MIN_COLLISION_IMPACT_STRENGTH = 0.0f;
 static constexpr float MAX_COLLISION_IMPACT_STRENGTH = 4.0f;
-static constexpr float MIN_SPRING_STRENGTH = 1.0f;
+static constexpr float MIN_SPRING_STRENGTH = 0.05f;
 static constexpr float MAX_SPRING_STRENGTH = 40.0f;
 static constexpr float MIN_DAMPING = 0.0f;
 static constexpr float MAX_DAMPING = 20.0f;
 static constexpr float MIN_MAXIMUM_BEND = 5.0f;
 static constexpr float MAX_MAXIMUM_BEND = 89.0f;
 static constexpr float MIN_MAXIMUM_COMPRESSION = 0.0f;
-static constexpr float MAX_MAXIMUM_COMPRESSION = 0.95f;
-static constexpr float COMPRESSION_RECOVERY = 5.0f;
+static constexpr float MAX_MAXIMUM_COMPRESSION = 1.0f;
+static constexpr float MIN_COMPRESSION_HEIGHT = 10.0f;
+static constexpr float MAX_COMPRESSION_HEIGHT = 100.0f;
+static constexpr float MIN_COMPRESSION_RECOVERY = 0.1f;
+static constexpr float MAX_COMPRESSION_RECOVERY = 10.0f;
 
 struct GrassCollisionActorCandidate
 {
@@ -48,7 +52,9 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	SpringStrength,
 	Damping,
 	MaximumBend,
-	MaximumCompression)
+	MaximumCompression,
+	CompressionHeight,
+	CompressionRecovery)
 
 void GrassCollision::DrawSettings()
 {
@@ -62,13 +68,19 @@ void GrassCollision::DrawSettings()
 		ImGui::SliderFloat(T(TKEY("impact_strength"), "Collision Impact"), &settings.CollisionImpactStrength,
 			MIN_COLLISION_IMPACT_STRENGTH, MAX_COLLISION_IMPACT_STRENGTH, "%.2fx", ImGuiSliderFlags_AlwaysClamp);
 		ImGui::SliderFloat(T(TKEY("spring_strength"), "Spring Strength"), &settings.SpringStrength,
-			MIN_SPRING_STRENGTH, MAX_SPRING_STRENGTH, "%.1f", ImGuiSliderFlags_AlwaysClamp);
+			MIN_SPRING_STRENGTH, MAX_SPRING_STRENGTH, "%.2f", ImGuiSliderFlags_AlwaysClamp | ImGuiSliderFlags_Logarithmic);
 		ImGui::SliderFloat(T(TKEY("damping"), "Damping"), &settings.Damping,
 			MIN_DAMPING, MAX_DAMPING, "%.1f", ImGuiSliderFlags_AlwaysClamp);
 		ImGui::SliderFloat(T(TKEY("maximum_bend"), "Maximum Bend"), &settings.MaximumBend,
 			MIN_MAXIMUM_BEND, MAX_MAXIMUM_BEND, "%.0f degrees", ImGuiSliderFlags_AlwaysClamp);
 		ImGui::SliderFloat(T(TKEY("maximum_compression"), "Maximum Compression"), &settings.MaximumCompression,
 			MIN_MAXIMUM_COMPRESSION, MAX_MAXIMUM_COMPRESSION, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+		ImGui::SliderFloat(T(TKEY("compression_height"), "Compression Reach"), &settings.CompressionHeight,
+			MIN_COMPRESSION_HEIGHT, MAX_COMPRESSION_HEIGHT, "%.0f%% of blade", ImGuiSliderFlags_AlwaysClamp);
+		ImGui::SliderFloat(T(TKEY("compression_recovery"), "Compression Recovery"), &settings.CompressionRecovery,
+			MIN_COMPRESSION_RECOVERY, MAX_COMPRESSION_RECOVERY, "%.2f", ImGuiSliderFlags_AlwaysClamp | ImGuiSliderFlags_Logarithmic);
+		if (auto _tt = Util::HoverTooltipWrapper())
+			ImGui::TextUnformatted(T(TKEY("compression_recovery_tooltip"), "Lower values keep grass compressed longer after an actor moves away."));
 		ImGui::TreePop();
 	}
 }
@@ -79,7 +91,9 @@ GrassCollision::ShaderData GrassCollision::GetCommonBufferData() const noexcept
 		shaderPosOffset,
 		shaderArrayOrigin,
 		previousShaderPosOffset,
-		previousShaderArrayOrigin
+		previousShaderArrayOrigin,
+		std::clamp(settings.CompressionHeight, MIN_COMPRESSION_HEIGHT, MAX_COMPRESSION_HEIGHT) * 0.01f,
+		{}
 	};
 }
 
@@ -160,6 +174,12 @@ void GrassCollision::QueueCollisions()
 			const uint32_t actorID = actor->GetFormID();
 			auto historyIt = actorCollisionHistory.find(actorID);
 			const bool hasHistory = historyIt != actorCollisionHistory.end();
+			const auto actorPosition3D = actor->GetPosition();
+			const float2 actorPosition{ actorPosition3D.x, actorPosition3D.y };
+			const auto actorPositionIt = actorPositionHistory.find(actorID);
+			const float2 actorMovement = actorPositionIt != actorPositionHistory.end() ?
+			                                 actorPosition - actorPositionIt->second :
+			                                 float2{};
 			std::vector<CapsuleHistory> newHistory;
 			newHistory.reserve(collisionShapes.size());
 
@@ -189,8 +209,8 @@ void GrassCollision::QueueCollisions()
 				const float3 previousB = toCameraRelative(previousShape.pointB);
 				CollisionShapePacked data{
 					{ currentA.x, currentA.y, currentA.z, shape.radius },
-					{ currentB.x, currentB.y, currentB.z, 0.0f },
-					{ previousA.x, previousA.y, previousA.z, 0.0f },
+					{ currentB.x, currentB.y, currentB.z, actorMovement.x },
+					{ previousA.x, previousA.y, previousA.z, actorMovement.y },
 					{ previousB.x, previousB.y, previousB.z, 0.0f }
 				};
 				collisionsData.push_back(data);
@@ -218,6 +238,7 @@ void GrassCollision::QueueCollisions()
 			if (boundingBox.IndexStart != boundingBox.IndexEnd) {
 				activeActors.insert(actorID);
 				actorCollisionHistory[actorID] = std::move(newHistory);
+				actorPositionHistory[actorID] = actorPosition;
 				boundingBoxData.push_back(boundingBox);
 				collisionIndexExtent = boundingBox.IndexEnd;
 				if (boundingBoxData.size() == MAX_BOUNDING_BOXES)
@@ -227,6 +248,9 @@ void GrassCollision::QueueCollisions()
 	}
 
 	std::erase_if(actorCollisionHistory, [&](const auto& entry) {
+		return !activeActors.contains(entry.first);
+	});
+	std::erase_if(actorPositionHistory, [&](const auto& entry) {
 		return !activeActors.contains(entry.first);
 	});
 
@@ -282,7 +306,8 @@ void GrassCollision::Update()
 			MIN_MAXIMUM_BEND, MAX_MAXIMUM_BEND));
 		perFrameData.MaximumCompression = std::clamp(settings.MaximumCompression,
 			MIN_MAXIMUM_COMPRESSION, MAX_MAXIMUM_COMPRESSION);
-		perFrameData.CompressionRecovery = COMPRESSION_RECOVERY;
+		perFrameData.CompressionRecovery = std::clamp(settings.CompressionRecovery,
+			MIN_COMPRESSION_RECOVERY, MAX_COMPRESSION_RECOVERY);
 
 		perFrameData.BoundingBoxCount = std::min((uint)queuedBoundingBoxes.size(), MAX_BOUNDING_BOXES);
 
@@ -330,6 +355,17 @@ void GrassCollision::Update()
 void GrassCollision::LoadSettings(json& o_json)
 {
 	settings = o_json;
+	const Settings defaults{};
+	if (!std::isfinite(settings.CompressionHeight))
+		settings.CompressionHeight = defaults.CompressionHeight;
+	else if (settings.CompressionHeight <= 1.0f)
+		settings.CompressionHeight *= 100.0f;
+	settings.CompressionHeight = std::clamp(settings.CompressionHeight,
+		MIN_COMPRESSION_HEIGHT, MAX_COMPRESSION_HEIGHT);
+	if (!std::isfinite(settings.CompressionRecovery))
+		settings.CompressionRecovery = defaults.CompressionRecovery;
+	settings.CompressionRecovery = std::clamp(settings.CompressionRecovery,
+		MIN_COMPRESSION_RECOVERY, MAX_COMPRESSION_RECOVERY);
 }
 
 void GrassCollision::SaveSettings(json& o_json)

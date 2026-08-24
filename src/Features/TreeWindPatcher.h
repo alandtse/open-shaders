@@ -16,6 +16,9 @@ namespace TreeWindPatcher
 	{
 		float bend = 1.0f;
 		float leafAmbient = 1.0f;
+		float boundMinimumZ = 0.0f;
+		float boundHeight = 0.0f;
+		bool hasBounds = false;
 	};
 
 	struct RuleSnapshot
@@ -35,10 +38,10 @@ namespace TreeWindPatcher
 		std::string error;
 	};
 
-	/** @brief Loads tree wind patch files and installs the model-creation hook when rules exist. */
+	/** @brief Loads tree wind patch files and installs model metadata during NIF creation. */
 	void LoadAndInstall();
 
-	/** @brief Reads live model-specific tree wind sensitivity metadata for a geometry. */
+	/** @brief Reads live sensitivities and startup-cached model bounds for a tree geometry. */
 	[[nodiscard]] Sensitivities GetSensitivities(const RE::BSGeometry* a_geometry);
 
 	/** @return Number of mesh rules currently available for live tuning. */

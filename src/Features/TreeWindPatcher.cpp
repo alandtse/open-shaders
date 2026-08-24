@@ -6,8 +6,10 @@
 #include <algorithm>
 #include <atomic>
 #include <cmath>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <limits>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -30,6 +32,24 @@ namespace TreeWindPatcher
 		const RE::BSFixedString kRuleIdName = "OS_TreeWindRule";
 		const RE::BSFixedString kBendSensitivityName = "OS_TreeBendSensitivity";
 		const RE::BSFixedString kLeafAmbientSensitivityName = "OS_TreeLeafAmbientSensitivity";
+		const RE::BSFixedString kTreeBoundsName = "OS_TreeWindBounds";
+		constexpr std::size_t kTreeBoundsValueCount = 2;
+		constexpr float kMinimumBoundExtent = 1e-3f;
+
+		struct ModelAabb
+		{
+			RE::NiPoint3 minimum{
+				(std::numeric_limits<float>::max)(),
+				(std::numeric_limits<float>::max)(),
+				(std::numeric_limits<float>::max)()
+			};
+			RE::NiPoint3 maximum{
+				(std::numeric_limits<float>::lowest)(),
+				(std::numeric_limits<float>::lowest)(),
+				(std::numeric_limits<float>::lowest)()
+			};
+			bool valid = false;
+		};
 
 		struct LoadedRule
 		{
@@ -226,6 +246,177 @@ namespace TreeWindPatcher
 				logger::info("[TreeWindPatcher] Loaded {} model rules from {}", runtimeRules.size(), patchPath.string());
 		}
 
+		void IncludePoint(ModelAabb& a_bounds, const RE::NiPoint3& a_point)
+		{
+			if (!std::isfinite(a_point.x) || !std::isfinite(a_point.y) || !std::isfinite(a_point.z))
+				return;
+
+			a_bounds.minimum.x = std::min(a_bounds.minimum.x, a_point.x);
+			a_bounds.minimum.y = std::min(a_bounds.minimum.y, a_point.y);
+			a_bounds.minimum.z = std::min(a_bounds.minimum.z, a_point.z);
+			a_bounds.maximum.x = std::max(a_bounds.maximum.x, a_point.x);
+			a_bounds.maximum.y = std::max(a_bounds.maximum.y, a_point.y);
+			a_bounds.maximum.z = std::max(a_bounds.maximum.z, a_point.z);
+			a_bounds.valid = true;
+		}
+
+		void IncludeTransformedBox(ModelAabb& a_bounds, const RE::NiPoint3& a_center,
+			const RE::NiPoint3& a_extents, const RE::NiTransform& a_transform)
+		{
+			for (int x = -1; x <= 1; x += 2) {
+				for (int y = -1; y <= 1; y += 2) {
+					for (int z = -1; z <= 1; z += 2) {
+						IncludePoint(a_bounds, a_transform * RE::NiPoint3{
+																 a_center.x + a_extents.x * static_cast<float>(x),
+																 a_center.y + a_extents.y * static_cast<float>(y),
+																 a_center.z + a_extents.z * static_cast<float>(z) });
+					}
+				}
+			}
+		}
+
+		std::optional<RE::NiTransform> GetTransformToAncestor(
+			const RE::NiAVObject* a_object, const RE::NiAVObject* a_ancestor)
+		{
+			RE::NiTransform transform;
+			const auto* current = a_object;
+			while (current && current != a_ancestor) {
+				transform = current->local * transform;
+				current = current->parent;
+			}
+			return current == a_ancestor ? std::optional{ transform } : std::nullopt;
+		}
+
+		const RE::BSBound* FindAuthoredBound(
+			const RE::NiAVObject* a_object, const RE::NiAVObject*& a_owner)
+		{
+			static REL::Relocation<const RE::NiRTTI*> boundRTTI{ RE::BSBound::Ni_RTTI };
+			for (const auto* current = a_object; current; current = current->parent) {
+				for (std::uint16_t index = 0; index < current->GetExtraDataSize(); ++index) {
+					const auto* extraData = current->GetExtraDataAt(index);
+					if (extraData && extraData->GetRTTI() == boundRTTI.get()) {
+						a_owner = current;
+						return static_cast<const RE::BSBound*>(extraData);
+					}
+				}
+			}
+			return nullptr;
+		}
+
+		bool IncludeGeometryVertices(
+			ModelAabb& a_bounds, RE::BSGeometry& a_geometry, const RE::NiTransform& a_geometryToLeaf)
+		{
+			auto* rendererData = a_geometry.GetGeometryRuntimeData().rendererData;
+			auto* triShape = a_geometry.AsTriShape();
+			if (!rendererData || !triShape || !rendererData->rawVertexData ||
+				!rendererData->vertexDesc.HasFlag(RE::BSGraphics::Vertex::Flags::VF_VERTEX))
+				return false;
+
+			const std::uint32_t vertexSize = rendererData->vertexDesc.GetSize();
+			const std::uint32_t vertexCount = triShape->GetTrishapeRuntimeData().vertexCount;
+			if (vertexSize < sizeof(RE::NiPoint3) || vertexCount == 0)
+				return false;
+
+			bool foundVertex = false;
+#if defined(_MSC_VER)
+			__try
+#endif
+			{
+				for (std::uint32_t index = 0; index < vertexCount; ++index) {
+					RE::NiPoint3 position;
+					std::memcpy(&position,
+						rendererData->rawVertexData + static_cast<std::size_t>(vertexSize) * index,
+						sizeof(position));
+					IncludePoint(a_bounds, a_geometryToLeaf * position);
+					foundVertex = true;
+				}
+			}
+#if defined(_MSC_VER)
+			__except (1) {
+				return false;
+			}
+#endif
+			return foundVertex;
+		}
+
+		ModelAabb CalculateTreeBounds(RE::BSLeafAnimNode& a_leafParent)
+		{
+			ModelAabb bounds;
+			bool usedNonVertexFallback = false;
+			RE::BSVisit::TraverseScenegraphObjects(&a_leafParent, [&](RE::NiAVObject* a_object) {
+				if (auto* geometry = a_object->AsGeometry()) {
+					const auto geometryToLeaf = GetTransformToAncestor(geometry, &a_leafParent);
+					const auto& modelBound = geometry->GetModelData().modelBound;
+					const bool hasVertexBounds =
+						geometryToLeaf && IncludeGeometryVertices(bounds, *geometry, *geometryToLeaf);
+					if (!hasVertexBounds)
+						usedNonVertexFallback = true;
+					if (geometryToLeaf && !hasVertexBounds && std::isfinite(modelBound.radius) && modelBound.radius > 0.0f) {
+						const auto center = *geometryToLeaf * modelBound.center;
+						const float radius = std::abs(geometryToLeaf->scale) * modelBound.radius;
+						IncludeTransformedBox(bounds, center, { radius, radius, radius }, RE::NiTransform{});
+					}
+				}
+				return RE::BSVisit::BSVisitControl::kContinue;
+			});
+			if (bounds.valid && !usedNonVertexFallback)
+				return bounds;
+
+			const RE::NiAVObject* boundOwner = nullptr;
+			if (const auto* authoredBound = FindAuthoredBound(&a_leafParent, boundOwner)) {
+				if (const auto leafToOwner = GetTransformToAncestor(&a_leafParent, boundOwner)) {
+					ModelAabb authoredBounds;
+					IncludeTransformedBox(
+						authoredBounds, authoredBound->center, authoredBound->extents, leafToOwner->Invert());
+					if (authoredBounds.valid)
+						return authoredBounds;
+				}
+			}
+			return bounds;
+		}
+
+		void SetTreeBoundsExtraData(RE::BSGeometry& a_geometry, const ModelAabb& a_leafBounds,
+			const RE::NiTransform& a_geometryToLeaf)
+		{
+			ModelAabb geometryBounds;
+			const RE::NiPoint3 center{
+				(a_leafBounds.minimum.x + a_leafBounds.maximum.x) * 0.5f,
+				(a_leafBounds.minimum.y + a_leafBounds.maximum.y) * 0.5f,
+				(a_leafBounds.minimum.z + a_leafBounds.maximum.z) * 0.5f
+			};
+			const RE::NiPoint3 extents{
+				(a_leafBounds.maximum.x - a_leafBounds.minimum.x) * 0.5f,
+				(a_leafBounds.maximum.y - a_leafBounds.minimum.y) * 0.5f,
+				(a_leafBounds.maximum.z - a_leafBounds.minimum.z) * 0.5f
+			};
+			IncludeTransformedBox(geometryBounds, center, extents, a_geometryToLeaf.Invert());
+			if (!geometryBounds.valid)
+				return;
+
+			const float height = geometryBounds.maximum.z - geometryBounds.minimum.z;
+			if (height <= kMinimumBoundExtent)
+				return;
+
+			const std::vector values{
+				geometryBounds.minimum.z,
+				height
+			};
+			if (auto* existing = a_geometry.GetExtraData(kTreeBoundsName)) {
+				static REL::Relocation<const RE::NiRTTI*> floatsExtraDataRTTI{ RE::NiFloatsExtraData::Ni_RTTI };
+				if (existing->GetRTTI() == floatsExtraDataRTTI.get()) {
+					auto* boundsData = static_cast<RE::NiFloatsExtraData*>(existing);
+					if (boundsData->size == kTreeBoundsValueCount && boundsData->value)
+						std::ranges::copy(values, boundsData->value);
+				} else {
+					logger::warn("[TreeWindPatcher] Extra data '{}' exists with an incompatible type", kTreeBoundsName.c_str());
+				}
+				return;
+			}
+
+			if (auto* extraData = RE::NiFloatsExtraData::Create(kTreeBoundsName, values))
+				a_geometry.AddExtraData(extraData);
+		}
+
 		void SetIntegerExtraData(RE::NiObjectNET& a_object, const RE::BSFixedString& a_name, std::int32_t a_value)
 		{
 			if (auto* existing = a_object.GetExtraData(a_name)) {
@@ -241,27 +432,41 @@ namespace TreeWindPatcher
 				a_object.AddExtraData(extraData);
 		}
 
-		void ApplyRule(const char* a_modelName, RE::NiNode* a_root)
+		void ApplyModelData(const char* a_modelName, RE::NiNode* a_root)
 		{
 			if (!a_modelName || !a_root)
 				return;
 
-			const auto ruleIt = ruleIds.find(NormalizeModelPath(a_modelName));
-			if (ruleIt == ruleIds.end())
+			const auto modelPath = NormalizeModelPath(a_modelName);
+			const auto ruleIt = ruleIds.find(modelPath);
+			const bool hasRule = ruleIt != ruleIds.end();
+			if (!hasRule && modelPath.find("/trees/") == std::string::npos)
 				return;
 
 			std::size_t patchedParentCount = 0;
 			RE::BSVisit::TraverseScenegraphObjects(a_root, [&](RE::NiAVObject* a_object) {
 				if (auto* leafParent = netimmerse_cast<RE::BSLeafAnimNode*>(a_object)) {
-					SetIntegerExtraData(*leafParent, kRuleIdName, static_cast<std::int32_t>(ruleIt->second));
+					if (hasRule)
+						SetIntegerExtraData(*leafParent, kRuleIdName, static_cast<std::int32_t>(ruleIt->second));
+
+					const auto bounds = CalculateTreeBounds(*leafParent);
+					if (bounds.valid) {
+						RE::BSVisit::TraverseScenegraphObjects(leafParent, [&](RE::NiAVObject* a_child) {
+							if (auto* geometry = a_child->AsGeometry()) {
+								if (const auto geometryToLeaf = GetTransformToAncestor(geometry, leafParent))
+									SetTreeBoundsExtraData(*geometry, bounds, *geometryToLeaf);
+							}
+							return RE::BSVisit::BSVisitControl::kContinue;
+						});
+					}
 					++patchedParentCount;
 				}
 				return RE::BSVisit::BSVisitControl::kContinue;
 			});
 
-			if (patchedParentCount == 0)
+			if (hasRule && patchedParentCount == 0)
 				logger::debug("[TreeWindPatcher] Matched {} but found no BSLeafAnimNode", a_modelName);
-			else
+			else if (hasRule)
 				logger::debug("[TreeWindPatcher] Applied rule {} to {} leaf parents", ruleIt->second, patchedParentCount);
 		}
 
@@ -275,6 +480,27 @@ namespace TreeWindPatcher
 			}
 		}
 
+		void ReadTreeBoundsExtraData(const RE::BSGeometry& a_geometry, Sensitivities& a_values)
+		{
+			static REL::Relocation<const RE::NiRTTI*> floatsExtraDataRTTI{ RE::NiFloatsExtraData::Ni_RTTI };
+			const auto* data = a_geometry.GetExtraData(kTreeBoundsName);
+			if (!data || data->GetRTTI() != floatsExtraDataRTTI.get())
+				return;
+
+			const auto* boundsData = static_cast<const RE::NiFloatsExtraData*>(data);
+			if (boundsData->size != kTreeBoundsValueCount || !boundsData->value)
+				return;
+
+			const float minimumZ = boundsData->value[0];
+			const float height = boundsData->value[1];
+			if (!std::isfinite(minimumZ) || !std::isfinite(height) || height <= kMinimumBoundExtent)
+				return;
+
+			a_values.boundMinimumZ = minimumZ;
+			a_values.boundHeight = height;
+			a_values.hasBounds = true;
+		}
+
 		struct TESProcessorPostCreate
 		{
 			static void thunk(
@@ -285,7 +511,7 @@ namespace TreeWindPatcher
 				std::uint32_t& a_typeOut)
 			{
 				func(a_this, a_args, a_modelName, a_root, a_typeOut);
-				ApplyRule(a_modelName, a_root.get());
+				ApplyModelData(a_modelName, a_root.get());
 			}
 
 			static inline REL::Relocation<decltype(thunk)> func;
@@ -295,9 +521,6 @@ namespace TreeWindPatcher
 	void LoadAndInstall()
 	{
 		LoadRules();
-		if (runtimeRules.empty())
-			return;
-
 		stl::write_vfunc<0x1, TESProcessorPostCreate>(RE::VTABLE_TESModelDB____TESProcessor[0]);
 		logger::info("[TreeWindPatcher] Installed model creation hook");
 	}
@@ -307,6 +530,7 @@ namespace TreeWindPatcher
 		Sensitivities sensitivities;
 		if (!a_geometry)
 			return sensitivities;
+		ReadTreeBoundsExtraData(*a_geometry, sensitivities);
 
 		const auto* leafParent = netimmerse_cast<RE::BSLeafAnimNode*>(a_geometry->parent);
 		if (!leafParent)

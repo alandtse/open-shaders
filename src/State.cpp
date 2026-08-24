@@ -68,13 +68,18 @@ void State::UpdatePermutationBuffer()
 	permutationData.WindIntensityOverride = globals::features::csUtility.settings.trunkWindIntensityOverride;
 	permutationData.OverrideWindIntensity = globals::features::csUtility.loaded &&
 	                                        globals::features::csUtility.settings.overrideTrunkWindIntensity;
-	permutationData.TrunkWindFlexibleHeight = globals::features::csUtility.settings.trunkWindFlexibleHeight;
-	permutationData.TrunkWindMaximumDisplacement = globals::features::csUtility.settings.trunkWindMaximumDisplacement;
+	permutationData.TreeWindUpperBendRange = globals::features::csUtility.settings.treeWindUpperBendRange;
+	permutationData.TreeWindMaximumDisplacementPercent = globals::features::csUtility.settings.treeWindMaximumDisplacementPercent;
+	permutationData.TreeWindSpringStrength = globals::features::csUtility.settings.treeWindSpringStrength;
+	permutationData.TreeWindSpringDamping = globals::features::csUtility.settings.treeWindSpringDamping;
+	permutationData.TreeWindTrunkGustInfluence = globals::features::csUtility.settings.treeWindTrunkGustInfluence;
 	permutationData.TrunkWindBendSensitivity = globals::features::csUtility.settings.trunkWindBendSensitivity;
-	permutationData.TreeLeafAmbientSensitivity = globals::features::csUtility.settings.treeLeafAmbientSensitivity;
+	permutationData.TreeLeafBaseWindFlutterGain = globals::features::csUtility.settings.treeLeafBaseWindFlutterGain;
+	permutationData.TreeLeafGustInfluence = globals::features::csUtility.settings.treeLeafGustInfluence;
 	permutationData.EnableAmbientGrassWind = globals::features::csUtility.loaded &&
 	                                         globals::features::csUtility.settings.enableAmbientGrassWind;
 	permutationData.GrassWindResponse = globals::features::csUtility.settings.grassWindResponse;
+	permutationData.GrassWindSensitivity = globals::features::csUtility.settings.grassWindSensitivity;
 	permutationData.GrassWindMaximumTilt = globals::features::csUtility.settings.grassWindMaximumTilt;
 	permutationData.GrassWindBendProfile = globals::features::csUtility.settings.grassWindBendProfile;
 	permutationData.GrassWindSpringLag = globals::features::csUtility.settings.grassWindSpringLag;
@@ -316,6 +321,7 @@ void State::Reset()
 	windFieldTuning.gustAdvectionMultiplier = csUtility.GetEffectiveWindGustAdvectionMultiplier();
 	const bool gamePaused = globals::game::ui->GameIsPaused();
 	const float frameTime = gamePaused ? 0.0f : std::max(RE::GetSecondsSinceLastFrame(), 0.0f);
+	previousWindFieldFrameTime = windFieldHasPreviousSample ? windFieldFrameTime : frameTime;
 	windFieldFrameTime = frameTime;
 	previousTimer = timer;
 	previousTrunkWindVector = trunkWindVector;
@@ -328,22 +334,23 @@ void State::Reset()
 	const bool overrideTrunkWindIntensity = globals::features::csUtility.loaded &&
 	                                        globals::features::csUtility.settings.overrideTrunkWindIntensity;
 	const float overriddenTrunkWindIntensity = globals::features::csUtility.settings.trunkWindIntensityOverride;
-	if (const auto* treeManager = RE::BSTreeManager::GetSingleton()) {
-		const float directionLength = std::hypot(treeManager->windDirection.x, treeManager->windDirection.y);
-		float activeWindIntensity = std::clamp(treeManager->windMagnitude, 0.0f, 1.0f);
-		if (const auto* sky = globals::game::sky; sky && std::isfinite(sky->windSpeed))
-			activeWindIntensity = std::clamp(sky->windSpeed, 0.0f, 1.0f);
-		if (std::isfinite(directionLength) && directionLength > 0.0001f && std::isfinite(activeWindIntensity)) {
-			const float2 weatherDirection{
-				-treeManager->windDirection.x / directionLength,
-				-treeManager->windDirection.y / directionLength
-			};
-			ambientWindVelocity = { weatherDirection.x * activeWindIntensity, weatherDirection.y * activeWindIntensity, 0.0f };
-			const float magnitude = overrideTrunkWindIntensity ? overriddenTrunkWindIntensity : activeWindIntensity;
-			if (std::isfinite(magnitude)) {
-				trunkWindVector.x = weatherDirection.x * magnitude;
-				trunkWindVector.y = weatherDirection.y * magnitude;
-			}
+	const auto* sky = globals::game::sky;
+	const float activeWindIntensity = sky && std::isfinite(sky->windSpeed) ?
+	                                      std::clamp(sky->windSpeed, 0.0f, 1.0f) :
+	                                      0.0f;
+	float2 weatherDirection{};
+	if (sky && std::isfinite(sky->windAngle)) {
+		weatherDirection = { std::cos(sky->windAngle), std::sin(sky->windAngle) };
+	}
+	const float directionLength = std::hypot(weatherDirection.x, weatherDirection.y);
+	if (std::isfinite(directionLength) && directionLength > 0.0001f && std::isfinite(activeWindIntensity)) {
+		weatherDirection.x /= directionLength;
+		weatherDirection.y /= directionLength;
+		ambientWindVelocity = { weatherDirection.x * activeWindIntensity, weatherDirection.y * activeWindIntensity, 0.0f };
+		const float magnitude = overrideTrunkWindIntensity ? overriddenTrunkWindIntensity : activeWindIntensity;
+		if (std::isfinite(magnitude)) {
+			trunkWindVector.x = weatherDirection.x * magnitude;
+			trunkWindVector.y = weatherDirection.y * magnitude;
 		}
 	} else if (overrideTrunkWindIntensity) {
 		trunkWindVector.x = overriddenTrunkWindIntensity;
@@ -1364,10 +1371,10 @@ void State::UpdateSharedData([[maybe_unused]] bool a_inWorld, [[maybe_unused]] b
 		data.WindFieldDebug = {
 			ambientWindVelocity.x, ambientWindVelocity.y,
 			globals::features::csUtility.visualizeWindField ? 1.0f : 0.0f,
-			0.0f
+			previousWindFieldFrameTime
 		};
 		data.WindFieldDebugOptions = {
-			1.0f,
+			windFieldFrameTime,
 			globals::features::csUtility.ShouldUseRealWindSpeed() ? 1.0f : 0.0f,
 			globals::features::csUtility.windFieldUseRealDirection ? 1.0f : 0.0f,
 			windFieldGustTravelDistance
