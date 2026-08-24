@@ -334,7 +334,7 @@ void SampleSSGISpecular(uint2 pixCoord, sh2 lobe, inout float ao, out float3 il,
 		// reduce the offset and make the field move backward.
 		float3 worldPosition = positionWS.xyz + FrameBuffer::CameraPosAdjust[eyeIndex].xyz;
 		WindField::WindSample windSample = SharedData::SampleAmbientWind(worldPosition);
-		color = Color::TurboColormap(windSample.ambientGust);
+		color = Color::TurboColormap(max(windSample.ambientGust, saturate(windSample.transientImpulse)));
 	}
 
 	MainRW[dispatchID.xy] = float4(color, 1.0);

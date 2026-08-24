@@ -150,9 +150,11 @@ VS_OUTPUT main(VS_INPUT input)
 	WindField::WindSample treeWindSample;
 	treeWindSample.velocity = 0.0.xxx;
 	treeWindSample.ambientGust = 0.5;
+	treeWindSample.transientImpulse = 0.0;
 	WindField::WindSample previousTreeWindSample;
 	previousTreeWindSample.velocity = 0.0.xxx;
 	previousTreeWindSample.ambientGust = 0.5;
+	previousTreeWindSample.transientImpulse = 0.0;
 	if (treeBendEnabled) {
 		float3 treeRootWS = float3(World[eyeIndex][0].w, World[eyeIndex][1].w, World[eyeIndex][2].w);
 		float3 absoluteTreeRootWS = treeRootWS + FrameBuffer::CameraPosAdjust[eyeIndex].xyz;

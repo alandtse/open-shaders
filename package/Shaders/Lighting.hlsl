@@ -198,9 +198,11 @@ VS_OUTPUT main(VS_INPUT input)
 	WindField::WindSample treeWindSample;
 	treeWindSample.velocity = 0.0.xxx;
 	treeWindSample.ambientGust = 0.5;
+	treeWindSample.transientImpulse = 0.0;
 	WindField::WindSample previousTreeWindSample;
 	previousTreeWindSample.velocity = 0.0.xxx;
 	previousTreeWindSample.ambientGust = 0.5;
+	previousTreeWindSample.transientImpulse = 0.0;
 	if (treeBendEnabled) {
 		float3 treeRootWS = float3(World[eyeIndex][0].w, World[eyeIndex][1].w, World[eyeIndex][2].w);
 		float3 previousTreeRootWS =
@@ -212,15 +214,8 @@ VS_OUTPUT main(VS_INPUT input)
 		float3 absoluteTreeRootWS = treeRootWS + CameraPosAdjust[eyeIndex].xyz;
 		float3 previousAbsoluteTreeRootWS = previousTreeRootWS + CameraPosAdjust[eyeIndex].xyz;
 #	endif
-		float3 ambientVelocity = SharedData::WindFieldAmbient.xyz;
-		float ambientSpeed = length(ambientVelocity);
-		treeWindSample = WindField::SampleWind(
-			absoluteTreeRootWS, SharedData::WindFieldAmbient.w, ambientVelocity, ambientSpeed, SharedData::WindFieldTuning);
-		float3 previousAmbientVelocity = SharedData::WindFieldPreviousAmbient.xyz;
-		float previousAmbientSpeed = length(previousAmbientVelocity);
-		previousTreeWindSample = WindField::SampleWind(
-			previousAbsoluteTreeRootWS, SharedData::WindFieldPreviousAmbient.w, previousAmbientVelocity,
-			previousAmbientSpeed, SharedData::WindFieldTuning);
+		treeWindSample = SharedData::SampleAmbientWind(absoluteTreeRootWS);
+		previousTreeWindSample = SharedData::SamplePreviousAmbientWind(previousAbsoluteTreeRootWS);
 	}
 #	if defined(LODLANDNOISE) || defined(LODLANDSCAPE)
 	inputPosition = LodLandscape::AdjustLodLandscapeVertexPositionMS(inputPosition, float4x4(World[eyeIndex], float4(0, 0, 0, 1)), HighDetailRange[eyeIndex]);

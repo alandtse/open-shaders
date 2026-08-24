@@ -33,6 +33,7 @@ namespace WindField
 	{
 		float3 velocity{};
 		float ambientGust{};
+		float transientImpulse{};
 	};
 
 	/**

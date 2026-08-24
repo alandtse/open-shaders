@@ -95,6 +95,13 @@ struct CSUtility : Feature
 		float windFieldGustScale = 2048.0f;
 		float windFieldGustAmplitude = 0.35f;
 		float windFieldGustAdvectionMultiplier = 1.0f;
+		bool enableFusRoDahWind = true;
+		float fusRoDahIntensity = 1.0f;
+		float fusRoDahDecayTime = 1.5f;
+		float fusRoDahDistanceMultiplier = 1.0f;
+		float fusRoDahWidthMultiplier = 1.0f;
+		float fusRoDahSpeedMultiplier = 1.0f;
+		float fusRoDahConeHalfAngle = 41.4f;
 		bool enableAmbientGrassWind = true;
 		float grassWindResponse = 45.0f;
 		float grassWindSensitivity = 1.0f;
@@ -102,6 +109,7 @@ struct CSUtility : Feature
 		float grassWindBendProfile = 0.35f;
 		bool grassWindUseBendTargetSpring = true;
 		float grassWindSpringLag = 0.12f;
+		float grassWindSpringRecoveryLag = 1.0f;
 		float grassWindSpringStrength = 0.65f;
 		float grassWindSpringRecovery = 0.15f;
 		float grassWindFlutterStrength = 1.0f;
@@ -124,6 +132,7 @@ struct CSUtility : Feature
 	enum class SettingsPage
 	{
 		WindField,            ///< Ambient wind-field controls.
+		FusRoDah,             ///< Unrelenting Force wind impulse controls.
 		Trees,                ///< Shared tree response controls.
 		TreeMeshes,           ///< Live per-mesh tree wind tuning.
 		Atmosphere,           ///< Sky atmosphere controls.

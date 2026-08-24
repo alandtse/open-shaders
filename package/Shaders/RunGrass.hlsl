@@ -199,63 +199,73 @@ void GetGrassWindDisplacements(
 		float3 grassWindVelocity = windSample.velocity * grassWindSensitivity;
 		float3 previousGrassWindVelocity = previousWindSample.velocity * grassWindSensitivity;
 		float3 twoFramesAgoGrassWindVelocity = twoFramesAgoWindSample.velocity * grassWindSensitivity;
-		float advectionScale = max(SharedData::WindFieldTuning.gustAdvectionBaseSpeed, 0.0) *
-		                       max(SharedData::WindFieldTuning.gustAdvectionMultiplier, 0.0);
-		float advectionSpeed = length(SharedData::WindFieldAmbient.xyz) * advectionScale;
-		float previousAdvectionSpeed = length(SharedData::WindFieldPreviousAmbient.xyz) * advectionScale;
-		float travelDelta = max(SharedData::WindFieldAmbient.w - SharedData::WindFieldPreviousAmbient.w, 0.0);
-		float previousTravelDelta =
-			max(SharedData::WindFieldPreviousAmbient.w - SharedData::WindFieldTwoFramesAgoAmbient.w, 0.0);
-		float lagFrameCount = travelDelta > 1e-4 ?
-		                          min(advectionSpeed * max(Permutation::GrassWindSpringLag, 0.0) / travelDelta, 64.0) :
-		                          0.0;
-		float previousLagFrameCount = previousTravelDelta > 1e-4 ?
-		                                  min(previousAdvectionSpeed * max(Permutation::GrassWindSpringLag, 0.0) /
-												  previousTravelDelta,
-											  64.0) :
-		                                  0.0;
+		float frameTime = max(SharedData::WindFieldDebugOptions.x, 0.0);
+		float previousFrameTime = max(SharedData::WindFieldDebug.w, 0.0);
+		float responseLag = max(Permutation::GrassWindSpringLag, 0.0);
+		float lagFrameCount = frameTime > 1e-4 ? min(responseLag / frameTime, 64.0) : 0.0;
+		float previousLagFrameCount =
+			previousFrameTime > 1e-4 ? min(responseLag / previousFrameTime, 64.0) : 0.0;
+		float recoveryLag = max(Permutation::GrassWindSpringRecoveryLag, 0.0);
+		float recoveryLagFrameCount = frameTime > 1e-4 ? min(recoveryLag / frameTime, 512.0) : 0.0;
+		float previousRecoveryLagFrameCount =
+			previousFrameTime > 1e-4 ? min(recoveryLag / previousFrameTime, 512.0) : 0.0;
 		float responseVariation = Random::InterleavedGradientNoise(input.InstanceData1.xy);
 		float responseScale = lerp(0.9, 1.1, responseVariation);
 		float3 previousBendAxis;
 		float springBendAngle;
 		float previousSpringBendAngle;
+		float springCompression;
+		float previousSpringCompression;
 		if (Permutation::GrassWindUseBendTargetSpring != 0) {
 			float targetBendAngle;
 			float previousTargetBendAngle;
+			float targetCompression;
+			float previousTargetCompression;
 			float3 twoFramesAgoBendAxis;
 			float twoFramesAgoTargetBendAngle;
+			float twoFramesAgoTargetCompression;
 			Wind::Grass::CalculateAmbientBendTarget(
-				grassWindVelocity, responseScale, World[eyeIndex], bendAxis, targetBendAngle);
+				grassWindVelocity, responseScale, World[eyeIndex], bendAxis, targetBendAngle,
+				targetCompression);
 			Wind::Grass::CalculateAmbientBendTarget(
 				previousGrassWindVelocity, responseScale, PreviousWorld[eyeIndex],
-				previousBendAxis, previousTargetBendAngle);
+				previousBendAxis, previousTargetBendAngle, previousTargetCompression);
 			Wind::Grass::CalculateAmbientBendTarget(
 				twoFramesAgoGrassWindVelocity, responseScale, PreviousWorld[eyeIndex],
-				twoFramesAgoBendAxis, twoFramesAgoTargetBendAngle);
+				twoFramesAgoBendAxis, twoFramesAgoTargetBendAngle, twoFramesAgoTargetCompression);
 			springBendAngle =
-				Wind::Grass::CalculateSpringAngle(targetBendAngle, previousTargetBendAngle, lagFrameCount);
+				Wind::Grass::CalculateSpringAngle(
+					targetBendAngle, previousTargetBendAngle, lagFrameCount, recoveryLagFrameCount);
 			previousSpringBendAngle = Wind::Grass::CalculateSpringAngle(
-				previousTargetBendAngle, twoFramesAgoTargetBendAngle, previousLagFrameCount);
+				previousTargetBendAngle, twoFramesAgoTargetBendAngle, previousLagFrameCount,
+				previousRecoveryLagFrameCount);
+			springCompression = Wind::Grass::CalculateSpringCompression(
+				targetCompression, previousTargetCompression, lagFrameCount, recoveryLagFrameCount);
+			previousSpringCompression = Wind::Grass::CalculateSpringCompression(
+				previousTargetCompression, twoFramesAgoTargetCompression, previousLagFrameCount,
+				previousRecoveryLagFrameCount);
 		} else {
 			float3 springWindVelocity = Wind::Grass::CalculateSpringVelocity(
 				grassWindVelocity, windSample.ambientGust, previousGrassWindVelocity,
-				previousWindSample.ambientGust, lagFrameCount);
+				previousWindSample.ambientGust, lagFrameCount, recoveryLagFrameCount);
 			float3 previousSpringWindVelocity = Wind::Grass::CalculateSpringVelocity(
 				previousGrassWindVelocity, previousWindSample.ambientGust,
 				twoFramesAgoGrassWindVelocity, twoFramesAgoWindSample.ambientGust,
-				previousLagFrameCount);
+				previousLagFrameCount, previousRecoveryLagFrameCount);
 			Wind::Grass::CalculateAmbientBendTarget(
-				springWindVelocity, responseScale, World[eyeIndex], bendAxis, springBendAngle);
+				springWindVelocity, responseScale, World[eyeIndex], bendAxis, springBendAngle,
+				springCompression);
 			Wind::Grass::CalculateAmbientBendTarget(
 				previousSpringWindVelocity, responseScale, PreviousWorld[eyeIndex],
-				previousBendAxis, previousSpringBendAngle);
+				previousBendAxis, previousSpringBendAngle, previousSpringCompression);
 		}
 		float previousBendAngle;
 		windDisplacement = Wind::Grass::CalculateAmbientDisplacement(
-			input.Color.w, modelHeight, input.InstanceData1.z, bendAxis, springBendAngle, bendAngle);
+			input.Color.w, modelHeight, input.InstanceData1.z, bendAxis, springBendAngle,
+			springCompression, bendAngle);
 		previousWindDisplacement = Wind::Grass::CalculateAmbientDisplacement(
 			input.Color.w, modelHeight, input.InstanceData1.z, previousBendAxis,
-			previousSpringBendAngle, previousBendAngle);
+			previousSpringBendAngle, previousSpringCompression, previousBendAngle);
 		windDisplacement += Wind::Common::RotateVector(vanillaDisplacement, bendAxis, bendAngle);
 		previousWindDisplacement +=
 			Wind::Common::RotateVector(previousVanillaDisplacement, previousBendAxis, previousBendAngle);

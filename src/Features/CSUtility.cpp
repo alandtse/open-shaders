@@ -10,8 +10,10 @@
 #include "UnderwaterDepthOfField.h"
 #include "Utils/DevBenchUx.h"
 #include "Utils/Format.h"
+#include "Utils/FusRoDahWind.h"
 #include "Utils/Game.h"
 #include "Utils/PointLightFlags.h"
+#include "Utils/TransientWindImpulse.h"
 #include "Utils/UI.h"
 
 #include <algorithm>
@@ -50,6 +52,18 @@ namespace
 	constexpr float kWindFieldGustAmplitudeMax = 1.0f;
 	constexpr float kWindFieldGustAdvectionMultiplierMin = 0.0f;
 	constexpr float kWindFieldGustAdvectionMultiplierMax = 8.0f;
+	constexpr float kFusRoDahIntensityMin = 0.0f;
+	constexpr float kFusRoDahIntensityMax = 5.0f;
+	constexpr float kFusRoDahDecayTimeMin = 0.0f;
+	constexpr float kFusRoDahDecayTimeMax = WindField::kTransientImpulseMaximumDecayTime;
+	constexpr float kFusRoDahDistanceMultiplierMin = 0.25f;
+	constexpr float kFusRoDahDistanceMultiplierMax = 3.0f;
+	constexpr float kFusRoDahWidthMultiplierMin = 0.25f;
+	constexpr float kFusRoDahWidthMultiplierMax = 3.0f;
+	constexpr float kFusRoDahSpeedMultiplierMin = 0.25f;
+	constexpr float kFusRoDahSpeedMultiplierMax = 3.0f;
+	constexpr float kFusRoDahConeHalfAngleMin = 5.0f;
+	constexpr float kFusRoDahConeHalfAngleMax = 90.0f;
 	constexpr float kGrassWindResponseMin = 0.0f;
 	constexpr float kGrassWindResponseMax = 180.0f;
 	constexpr float kGrassWindSensitivityMin = 0.0f;
@@ -60,6 +74,8 @@ namespace
 	constexpr float kGrassWindBendProfileMax = 1.0f;
 	constexpr float kGrassWindSpringLagMin = 0.0f;
 	constexpr float kGrassWindSpringLagMax = 0.5f;
+	constexpr float kGrassWindSpringRecoveryLagMin = 0.0f;
+	constexpr float kGrassWindSpringRecoveryLagMax = 5.0f;
 	constexpr float kGrassWindSpringStrengthMin = 0.0f;
 	constexpr float kGrassWindSpringStrengthMax = 1.0f;
 	constexpr float kGrassWindSpringRecoveryMin = 0.0f;
@@ -100,11 +116,18 @@ namespace
 		a_settings.windFieldGustScale = ClampFiniteOrDefault(a_settings.windFieldGustScale, kWindFieldGustScaleMin, kWindFieldGustScaleMax, defaults.windFieldGustScale);
 		a_settings.windFieldGustAmplitude = ClampFiniteOrDefault(a_settings.windFieldGustAmplitude, kWindFieldGustAmplitudeMin, kWindFieldGustAmplitudeMax, defaults.windFieldGustAmplitude);
 		a_settings.windFieldGustAdvectionMultiplier = ClampFiniteOrDefault(a_settings.windFieldGustAdvectionMultiplier, kWindFieldGustAdvectionMultiplierMin, kWindFieldGustAdvectionMultiplierMax, defaults.windFieldGustAdvectionMultiplier);
+		a_settings.fusRoDahIntensity = ClampFiniteOrDefault(a_settings.fusRoDahIntensity, kFusRoDahIntensityMin, kFusRoDahIntensityMax, defaults.fusRoDahIntensity);
+		a_settings.fusRoDahDecayTime = ClampFiniteOrDefault(a_settings.fusRoDahDecayTime, kFusRoDahDecayTimeMin, kFusRoDahDecayTimeMax, defaults.fusRoDahDecayTime);
+		a_settings.fusRoDahDistanceMultiplier = ClampFiniteOrDefault(a_settings.fusRoDahDistanceMultiplier, kFusRoDahDistanceMultiplierMin, kFusRoDahDistanceMultiplierMax, defaults.fusRoDahDistanceMultiplier);
+		a_settings.fusRoDahWidthMultiplier = ClampFiniteOrDefault(a_settings.fusRoDahWidthMultiplier, kFusRoDahWidthMultiplierMin, kFusRoDahWidthMultiplierMax, defaults.fusRoDahWidthMultiplier);
+		a_settings.fusRoDahSpeedMultiplier = ClampFiniteOrDefault(a_settings.fusRoDahSpeedMultiplier, kFusRoDahSpeedMultiplierMin, kFusRoDahSpeedMultiplierMax, defaults.fusRoDahSpeedMultiplier);
+		a_settings.fusRoDahConeHalfAngle = ClampFiniteOrDefault(a_settings.fusRoDahConeHalfAngle, kFusRoDahConeHalfAngleMin, kFusRoDahConeHalfAngleMax, defaults.fusRoDahConeHalfAngle);
 		a_settings.grassWindResponse = ClampFiniteOrDefault(a_settings.grassWindResponse, kGrassWindResponseMin, kGrassWindResponseMax, defaults.grassWindResponse);
 		a_settings.grassWindSensitivity = ClampFiniteOrDefault(a_settings.grassWindSensitivity, kGrassWindSensitivityMin, kGrassWindSensitivityMax, defaults.grassWindSensitivity);
 		a_settings.grassWindMaximumTilt = ClampFiniteOrDefault(a_settings.grassWindMaximumTilt, kGrassWindMaximumTiltMin, kGrassWindMaximumTiltMax, defaults.grassWindMaximumTilt);
 		a_settings.grassWindBendProfile = ClampFiniteOrDefault(a_settings.grassWindBendProfile, kGrassWindBendProfileMin, kGrassWindBendProfileMax, defaults.grassWindBendProfile);
 		a_settings.grassWindSpringLag = ClampFiniteOrDefault(a_settings.grassWindSpringLag, kGrassWindSpringLagMin, kGrassWindSpringLagMax, defaults.grassWindSpringLag);
+		a_settings.grassWindSpringRecoveryLag = ClampFiniteOrDefault(a_settings.grassWindSpringRecoveryLag, kGrassWindSpringRecoveryLagMin, kGrassWindSpringRecoveryLagMax, defaults.grassWindSpringRecoveryLag);
 		a_settings.grassWindSpringStrength = ClampFiniteOrDefault(a_settings.grassWindSpringStrength, kGrassWindSpringStrengthMin, kGrassWindSpringStrengthMax, defaults.grassWindSpringStrength);
 		a_settings.grassWindSpringRecovery = ClampFiniteOrDefault(a_settings.grassWindSpringRecovery, kGrassWindSpringRecoveryMin, kGrassWindSpringRecoveryMax, defaults.grassWindSpringRecovery);
 		a_settings.grassWindFlutterStrength = ClampFiniteOrDefault(a_settings.grassWindFlutterStrength, kGrassWindFlutterStrengthMin, kGrassWindFlutterStrengthMax, defaults.grassWindFlutterStrength);
@@ -135,6 +158,7 @@ namespace
 		a_settings.grassWindBendProfile = defaults.grassWindBendProfile;
 		a_settings.grassWindUseBendTargetSpring = defaults.grassWindUseBendTargetSpring;
 		a_settings.grassWindSpringLag = defaults.grassWindSpringLag;
+		a_settings.grassWindSpringRecoveryLag = defaults.grassWindSpringRecoveryLag;
 		a_settings.grassWindSpringStrength = defaults.grassWindSpringStrength;
 		a_settings.grassWindSpringRecovery = defaults.grassWindSpringRecovery;
 		a_settings.grassWindFlutterStrength = defaults.grassWindFlutterStrength;
@@ -251,6 +275,13 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	windFieldGustScale,
 	windFieldGustAmplitude,
 	windFieldGustAdvectionMultiplier,
+	enableFusRoDahWind,
+	fusRoDahIntensity,
+	fusRoDahDecayTime,
+	fusRoDahDistanceMultiplier,
+	fusRoDahWidthMultiplier,
+	fusRoDahSpeedMultiplier,
+	fusRoDahConeHalfAngle,
 	enableAmbientGrassWind,
 	grassWindResponse,
 	grassWindSensitivity,
@@ -258,6 +289,7 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	grassWindBendProfile,
 	grassWindUseBendTargetSpring,
 	grassWindSpringLag,
+	grassWindSpringRecoveryLag,
 	grassWindSpringStrength,
 	grassWindSpringRecovery,
 	grassWindFlutterStrength,
@@ -410,6 +442,55 @@ void CSUtility::DrawSettings()
 			ImGui::EndTabItem();
 		}
 
+		if (ImGui::BeginTabItem(T(TKEY("tab_fus_ro_dah"), "Fus Ro Dah"))) {
+			activeSettingsPage = SettingsPage::FusRoDah;
+			if (ImGui::Checkbox(T(TKEY("enable_fus_ro_dah_wind"), "Enable Wind Impulse"),
+					&settings.enableFusRoDahWind) &&
+				!settings.enableFusRoDahWind)
+				globals::state->ClearTransientWindImpulses();
+			if (auto _tt = Util::HoverTooltipWrapper())
+				ImGui::TextUnformatted(T(TKEY("enable_fus_ro_dah_wind_tooltip"),
+					"Adds Unrelenting Force as a directional wave traveling through the shared wind field."));
+			ImGui::BeginDisabled(!settings.enableFusRoDahWind);
+			ImGui::SliderFloat(T(TKEY("fus_ro_dah_intensity"), "Intensity"), &settings.fusRoDahIntensity,
+				kFusRoDahIntensityMin, kFusRoDahIntensityMax, "%.2fx", ImGuiSliderFlags_AlwaysClamp);
+			if (auto _tt = Util::HoverTooltipWrapper())
+				ImGui::TextUnformatted(T(TKEY("fus_ro_dah_intensity_tooltip"),
+					"Scales the rank-specific wind velocity added at the moving pressure wave."));
+			ImGui::SliderFloat(T(TKEY("fus_ro_dah_decay_time"), "Decay Time"),
+				&settings.fusRoDahDecayTime, kFusRoDahDecayTimeMin,
+				kFusRoDahDecayTimeMax, "%.2f s", ImGuiSliderFlags_AlwaysClamp);
+			if (auto _tt = Util::HoverTooltipWrapper())
+				ImGui::TextUnformatted(T(TKEY("fus_ro_dah_decay_time_tooltip"),
+					"Leaves a weakening pressure wake behind the wavefront so windfield consumers settle gradually after it passes."));
+			ImGui::SliderFloat(T(TKEY("fus_ro_dah_distance_multiplier"), "Propagation Distance"),
+				&settings.fusRoDahDistanceMultiplier, kFusRoDahDistanceMultiplierMin,
+				kFusRoDahDistanceMultiplierMax, "%.2fx", ImGuiSliderFlags_AlwaysClamp);
+			if (auto _tt = Util::HoverTooltipWrapper())
+				ImGui::TextUnformatted(T(TKEY("fus_ro_dah_distance_multiplier_tooltip"),
+					"Scales the rank-specific distance the pressure wave can travel."));
+			ImGui::SliderFloat(T(TKEY("fus_ro_dah_width_multiplier"), "Wave Width"),
+				&settings.fusRoDahWidthMultiplier, kFusRoDahWidthMultiplierMin,
+				kFusRoDahWidthMultiplierMax, "%.2fx", ImGuiSliderFlags_AlwaysClamp);
+			if (auto _tt = Util::HoverTooltipWrapper())
+				ImGui::TextUnformatted(T(TKEY("fus_ro_dah_width_multiplier_tooltip"),
+					"Scales the thickness of the moving pressure front and its trailing wake."));
+			ImGui::SliderFloat(T(TKEY("fus_ro_dah_speed_multiplier"), "Propagation Speed"),
+				&settings.fusRoDahSpeedMultiplier, kFusRoDahSpeedMultiplierMin,
+				kFusRoDahSpeedMultiplierMax, "%.2fx", ImGuiSliderFlags_AlwaysClamp);
+			if (auto _tt = Util::HoverTooltipWrapper())
+				ImGui::TextUnformatted(T(TKEY("fus_ro_dah_speed_multiplier_tooltip"),
+					"Scales how quickly the wavefront travels through the shared wind field."));
+			ImGui::SliderFloat(T(TKEY("fus_ro_dah_cone_half_angle"), "Cone Half-Angle"),
+				&settings.fusRoDahConeHalfAngle, kFusRoDahConeHalfAngleMin,
+				kFusRoDahConeHalfAngleMax, "%.1f deg", ImGuiSliderFlags_AlwaysClamp);
+			if (auto _tt = Util::HoverTooltipWrapper())
+				ImGui::TextUnformatted(T(TKEY("fus_ro_dah_cone_half_angle_tooltip"),
+					"Controls the forward cone width. Smaller angles make the impulse more directional."));
+			ImGui::EndDisabled();
+			ImGui::EndTabItem();
+		}
+
 		if (ImGui::BeginTabItem(T(TKEY("tab_trees"), "Trees"))) {
 			activeSettingsPage = SettingsPage::Trees;
 			ImGui::Checkbox(T(TKEY("enable_trunk_bend"), "Enable Trunk Bend"), &settings.enableTrunkBend);
@@ -497,7 +578,14 @@ void CSUtility::DrawSettings()
 			ImGui::SliderFloat(T(TKEY("grass_wind_spring_lag"), "Response Lag"), &settings.grassWindSpringLag,
 				kGrassWindSpringLagMin, kGrassWindSpringLagMax, "%.2f s", ImGuiSliderFlags_AlwaysClamp);
 			if (auto _tt = Util::HoverTooltipWrapper())
-				ImGui::TextUnformatted(T(TKEY("grass_wind_spring_lag_tooltip"), "Delays the grass response behind the traveling ambient gust field."));
+				ImGui::TextUnformatted(T(TKEY("grass_wind_spring_lag_tooltip"),
+					"Delays grass response to changes in the shared wind field."));
+			ImGui::SliderFloat(T(TKEY("grass_wind_spring_recovery_lag"), "Recovery Lag"),
+				&settings.grassWindSpringRecoveryLag, kGrassWindSpringRecoveryLagMin,
+				kGrassWindSpringRecoveryLagMax, "%.2f s", ImGuiSliderFlags_AlwaysClamp);
+			if (auto _tt = Util::HoverTooltipWrapper())
+				ImGui::TextUnformatted(T(TKEY("grass_wind_spring_recovery_lag_tooltip"),
+					"Adds extra lag only while the sampled bend is weakening. Higher values make grass settle more slowly."));
 			ImGui::SliderFloat(T(TKEY("grass_wind_spring_strength"), "Inertia"), &settings.grassWindSpringStrength,
 				kGrassWindSpringStrengthMin, kGrassWindSpringStrengthMax, "%.2f", ImGuiSliderFlags_AlwaysClamp);
 			if (auto _tt = Util::HoverTooltipWrapper())
@@ -974,6 +1062,15 @@ void CSUtility::RestoreCurrentPageDefaultSettings()
 		settings.windFieldGustAmplitude = defaults.windFieldGustAmplitude;
 		settings.windFieldGustAdvectionMultiplier = defaults.windFieldGustAdvectionMultiplier;
 		break;
+	case SettingsPage::FusRoDah:
+		settings.enableFusRoDahWind = defaults.enableFusRoDahWind;
+		settings.fusRoDahIntensity = defaults.fusRoDahIntensity;
+		settings.fusRoDahDecayTime = defaults.fusRoDahDecayTime;
+		settings.fusRoDahDistanceMultiplier = defaults.fusRoDahDistanceMultiplier;
+		settings.fusRoDahWidthMultiplier = defaults.fusRoDahWidthMultiplier;
+		settings.fusRoDahSpeedMultiplier = defaults.fusRoDahSpeedMultiplier;
+		settings.fusRoDahConeHalfAngle = defaults.fusRoDahConeHalfAngle;
+		break;
 	case SettingsPage::Trees:
 		settings.enableTrunkBend = defaults.enableTrunkBend;
 		settings.treeWindUpperBendRange = defaults.treeWindUpperBendRange;
@@ -1021,6 +1118,15 @@ bool CSUtility::ReapplyCurrentPageOverrideSettings()
 		"windFieldGustAmplitude",
 		"windFieldGustAdvectionMultiplier"
 	};
+	static constexpr std::array<std::string_view, 7> fusRoDahKeys{
+		"enableFusRoDahWind",
+		"fusRoDahIntensity",
+		"fusRoDahDecayTime",
+		"fusRoDahDistanceMultiplier",
+		"fusRoDahWidthMultiplier",
+		"fusRoDahSpeedMultiplier",
+		"fusRoDahConeHalfAngle"
+	};
 	static constexpr std::array<std::string_view, 9> treeKeys{
 		"enableTrunkBend",
 		"treeWindUpperBendRange",
@@ -1048,6 +1154,8 @@ bool CSUtility::ReapplyCurrentPageOverrideSettings()
 	switch (activeSettingsPage) {
 	case SettingsPage::WindField:
 		return ReapplyOverrideSettingsForKeys(windFieldKeys);
+	case SettingsPage::FusRoDah:
+		return ReapplyOverrideSettingsForKeys(fusRoDahKeys);
 	case SettingsPage::Trees:
 		return ReapplyOverrideSettingsForKeys(treeKeys);
 	case SettingsPage::TreeMeshes:
@@ -1158,6 +1266,7 @@ void CSUtility::PostPostLoad()
 void CSUtility::DataLoaded()
 {
 	UnderwaterDepthOfField::InstallHooks();
+	FusRoDahWind::Register();
 }
 
 #undef I18N_KEY_PREFIX

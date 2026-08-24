@@ -159,6 +159,6 @@ namespace WindField
 		const float gustMultiplier = std::max(1.0f + gustDeviation * gustAmplitude, 0.0f);
 		const float3 ambientWeatherWind =
 			NormalizeDirection(a_windDirection) * (std::max(a_windSpeed, 0.0f) * gustMultiplier);
-		return { ambientWeatherWind, ambientGust };
+		return { ambientWeatherWind, ambientGust, 0.0f };
 	}
 }

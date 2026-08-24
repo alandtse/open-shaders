@@ -5,6 +5,7 @@
 #include <Tracy/TracyD3D11.hpp>
 
 #include <Buffer.h>
+#include <array>
 #include <atomic>
 #include <format>
 #include <iterator>
@@ -15,6 +16,7 @@ using json = nlohmann::json;
 
 #include <FeatureBuffer.h>
 
+#include "Utils/TransientWindImpulse.h"
 #include "Utils/WindField.h"
 #include <Hooks.h>
 #include <mutex>
@@ -106,11 +108,15 @@ public:
 	void Debug();
 	/** @brief Per-frame reset: advances timer, caches menu state, resets descriptors and frame counters. */
 	void Reset();
-	/** @brief Samples the current ambient weather wind at an absolute world position. */
+	/** @brief Samples the current shared wind field at an absolute world position. */
 	[[nodiscard]] WindField::WindSample SampleAmbientWind(const float3& a_worldPosition) const noexcept;
-	/** @brief Samples ambient weather with explicit direction and speed inputs. */
+	/** @brief Samples the shared field with explicit ambient direction and speed inputs. */
 	[[nodiscard]] WindField::WindSample SampleAmbientWind(const float3& a_worldPosition,
 		const float3& a_windDirection, float a_windSpeed) const noexcept;
+	/** @brief Queues a transient XYZ pressure impulse for insertion into the shared wind field. */
+	void QueueTransientWindImpulse(const WindField::TransientImpulse& a_impulse);
+	/** @brief Removes all active and pending transient wind impulses. */
+	void ClearTransientWindImpulses();
 	/** @brief One-time post-D3D setup: creates resources, probes GPU caps, initializes features. */
 	void Setup();
 
@@ -463,6 +469,9 @@ public:
 		float TreeWindTrunkGustInfluence;
 		float TreeLeafGustInfluence;
 
+		float GrassWindSpringRecoveryLag;
+		float3 GrassWindPadding1;
+
 		bool operator==(const PermutationCB& other) const
 		{
 			return PixelShaderDescriptor == other.PixelShaderDescriptor &&
@@ -496,11 +505,13 @@ public:
 			       TreeWindBoundsBase == other.TreeWindBoundsBase &&
 			       TreeWindBoundsHeight == other.TreeWindBoundsHeight &&
 			       TreeWindTrunkGustInfluence == other.TreeWindTrunkGustInfluence &&
-			       TreeLeafGustInfluence == other.TreeLeafGustInfluence;
+			       TreeLeafGustInfluence == other.TreeLeafGustInfluence &&
+			       GrassWindSpringRecoveryLag == other.GrassWindSpringRecoveryLag;
 		}
 	};
 	static_assert(offsetof(PermutationCB, EnableAmbientGrassWind) == 100);
 	static_assert(offsetof(PermutationCB, GrassWindFlutterStrength) == 128);
+	static_assert(offsetof(PermutationCB, GrassWindSpringRecoveryLag) == 160);
 	STATIC_ASSERT_ALIGNAS_16(PermutationCB);
 
 	ConstantBuffer* permutationCB = nullptr;
@@ -542,6 +553,9 @@ public:
 		float4 WindFieldAmbient;  // xyz: instantaneous mean weather velocity, w: accumulated world-space gust travel
 		float4 WindFieldPreviousAmbient;
 		float4 WindFieldTwoFramesAgoAmbient;
+		std::array<WindField::TransientImpulse, WindField::kTransientImpulseCapacity> WindFieldTransientImpulses;
+		std::array<WindField::TransientImpulse, WindField::kTransientImpulseCapacity> WindFieldPreviousTransientImpulses;
+		std::array<WindField::TransientImpulse, WindField::kTransientImpulseCapacity> WindFieldTwoFramesAgoTransientImpulses;
 	};
 	STATIC_ASSERT_ALIGNAS_16(SharedDataCB);
 	// Each float4 cbuffer field must start on a 16-byte boundary to match the HLSL SharedData
@@ -555,6 +569,9 @@ public:
 	static_assert(offsetof(SharedDataCB, WindFieldAmbient) % 16 == 0);
 	static_assert(offsetof(SharedDataCB, WindFieldPreviousAmbient) % 16 == 0);
 	static_assert(offsetof(SharedDataCB, WindFieldTwoFramesAgoAmbient) % 16 == 0);
+	static_assert(offsetof(SharedDataCB, WindFieldTransientImpulses) % 16 == 0);
+	static_assert(offsetof(SharedDataCB, WindFieldPreviousTransientImpulses) % 16 == 0);
+	static_assert(offsetof(SharedDataCB, WindFieldTwoFramesAgoTransientImpulses) % 16 == 0);
 
 	ConstantBuffer* sharedDataCB = nullptr;
 	ConstantBuffer* featureDataCB = nullptr;
@@ -650,6 +667,12 @@ public:
 	}
 
 private:
+	void UpdateTransientWindImpulses(float a_frameTime);
+	std::array<WindField::TransientImpulse, WindField::kTransientImpulseCapacity> transientWindImpulses{};
+	std::array<WindField::TransientImpulse, WindField::kTransientImpulseCapacity> previousTransientWindImpulses{};
+	std::array<WindField::TransientImpulse, WindField::kTransientImpulseCapacity> twoFramesAgoTransientWindImpulses{};
+	std::vector<WindField::TransientImpulse> pendingTransientWindImpulses;
+	std::mutex transientWindImpulseMutex;
 	std::shared_ptr<REX::W32::ID3DUserDefinedAnnotation> pPerf;
 	std::mutex statsMutex;
 };

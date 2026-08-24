@@ -37,6 +37,7 @@
 #include "Utils/FileSystem.h"
 #include "Utils/Game.h"
 #include "Utils/SphericalHarmonics.h"
+#include "Utils/TransientWindImpulse.h"
 #include "VRAPI/CSpluginapi.h"
 #include "WeatherManager.h"
 #include "WeatherVariableRegistry.h"
@@ -83,6 +84,8 @@ void State::UpdatePermutationBuffer()
 	permutationData.GrassWindMaximumTilt = globals::features::csUtility.settings.grassWindMaximumTilt;
 	permutationData.GrassWindBendProfile = globals::features::csUtility.settings.grassWindBendProfile;
 	permutationData.GrassWindSpringLag = globals::features::csUtility.settings.grassWindSpringLag;
+	permutationData.GrassWindSpringRecoveryLag =
+		globals::features::csUtility.settings.grassWindSpringRecoveryLag;
 	permutationData.GrassWindSpringStrength = globals::features::csUtility.settings.grassWindSpringStrength;
 	permutationData.GrassWindSpringRecovery = globals::features::csUtility.settings.grassWindSpringRecovery;
 	permutationData.GrassWindFlutterStrength = globals::features::csUtility.settings.grassWindFlutterStrength;
@@ -323,6 +326,7 @@ void State::Reset()
 	const float frameTime = gamePaused ? 0.0f : std::max(RE::GetSecondsSinceLastFrame(), 0.0f);
 	previousWindFieldFrameTime = windFieldHasPreviousSample ? windFieldFrameTime : frameTime;
 	windFieldFrameTime = frameTime;
+	UpdateTransientWindImpulses(frameTime);
 	previousTimer = timer;
 	previousTrunkWindVector = trunkWindVector;
 	twoFramesAgoWindFieldSelectedVelocity = previousWindFieldSelectedVelocity;
@@ -444,15 +448,80 @@ void State::Reset()
 
 WindField::WindSample State::SampleAmbientWind(const float3& a_worldPosition) const noexcept
 {
-	return WindField::SampleWind(
-		a_worldPosition, windFieldGustTravelDistance, windFieldSelectedVelocity, windFieldSelectedSpeed, windFieldTuning);
+	return SampleAmbientWind(a_worldPosition, windFieldSelectedVelocity, windFieldSelectedSpeed);
 }
 
 WindField::WindSample State::SampleAmbientWind(const float3& a_worldPosition,
 	const float3& a_windDirection, float a_windSpeed) const noexcept
 {
-	return WindField::SampleWind(
+	auto sample = WindField::SampleWind(
 		a_worldPosition, windFieldGustTravelDistance, a_windDirection, a_windSpeed, windFieldTuning);
+	for (const auto& impulse : transientWindImpulses) {
+		const auto impulseSample = WindField::SampleTransientImpulse(a_worldPosition, impulse);
+		sample.velocity += impulseSample.velocity;
+		sample.transientImpulse = std::max(sample.transientImpulse, impulseSample.intensity);
+	}
+	return sample;
+}
+
+void State::QueueTransientWindImpulse(const WindField::TransientImpulse& a_impulse)
+{
+	std::lock_guard lock(transientWindImpulseMutex);
+	if (pendingTransientWindImpulses.size() >= WindField::kTransientImpulseCapacity) {
+		pendingTransientWindImpulses.erase(pendingTransientWindImpulses.begin());
+	}
+	pendingTransientWindImpulses.push_back(a_impulse);
+}
+
+void State::ClearTransientWindImpulses()
+{
+	std::lock_guard lock(transientWindImpulseMutex);
+	transientWindImpulses = {};
+	previousTransientWindImpulses = {};
+	twoFramesAgoTransientWindImpulses = {};
+	pendingTransientWindImpulses.clear();
+}
+
+void State::UpdateTransientWindImpulses(float a_frameTime)
+{
+	twoFramesAgoTransientWindImpulses = previousTransientWindImpulses;
+	previousTransientWindImpulses = transientWindImpulses;
+
+	const float frameTime = std::isfinite(a_frameTime) ? std::max(a_frameTime, 0.0f) : 0.0f;
+	for (auto& impulse : transientWindImpulses) {
+		if (impulse.strength <= 0.0f) {
+			continue;
+		}
+		const float travelDelta = std::isfinite(impulse.propagationSpeed) ?
+		                              std::max(impulse.propagationSpeed, 0.0f) * frameTime :
+		                              0.0f;
+		impulse.wavefrontDistance += travelDelta;
+		const float decayTime = std::clamp(
+			std::isfinite(impulse.decayTime) ? impulse.decayTime : 0.0f, 0.0f,
+			WindField::kTransientImpulseMaximumDecayTime);
+		const float retentionDistance = impulse.maxDistance + std::abs(impulse.waveHalfWidth) +
+		                                std::max(impulse.propagationSpeed, 0.0f) * decayTime;
+		if (!std::isfinite(impulse.wavefrontDistance) || impulse.wavefrontDistance >= retentionDistance) {
+			impulse = {};
+		}
+	}
+
+	std::vector<WindField::TransientImpulse> pendingImpulses;
+	{
+		std::lock_guard lock(transientWindImpulseMutex);
+		pendingImpulses.swap(pendingTransientWindImpulses);
+	}
+	for (auto& pendingImpulse : pendingImpulses) {
+		auto slot = std::ranges::find_if(
+			transientWindImpulses, [](const auto& impulse) { return impulse.strength <= 0.0f; });
+		if (slot == transientWindImpulses.end()) {
+			slot = std::ranges::max_element(transientWindImpulses, {}, [](const auto& impulse) {
+				return impulse.maxDistance > 0.0f ? impulse.wavefrontDistance / impulse.maxDistance : 1.0f;
+			});
+		}
+		pendingImpulse.wavefrontDistance = 0.0f;
+		*slot = pendingImpulse;
+	}
 }
 
 void State::Setup()
@@ -1392,6 +1461,9 @@ void State::UpdateSharedData([[maybe_unused]] bool a_inWorld, [[maybe_unused]] b
 			twoFramesAgoWindFieldSelectedVelocity.x, twoFramesAgoWindFieldSelectedVelocity.y,
 			twoFramesAgoWindFieldSelectedVelocity.z, twoFramesAgoWindFieldGustTravelDistance
 		};
+		data.WindFieldTransientImpulses = transientWindImpulses;
+		data.WindFieldPreviousTransientImpulses = previousTransientWindImpulses;
+		data.WindFieldTwoFramesAgoTransientImpulses = twoFramesAgoTransientWindImpulses;
 
 		auto temporal = Util::GetTemporal();
 

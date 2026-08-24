@@ -3,6 +3,7 @@
 
 #include "Common/FrameBuffer.hlsli"
 #include "Common/Spherical Harmonics/SphericalHarmonics.hlsli"
+#include "Common/TransientWindImpulse.hlsli"
 #include "Common/VR.hlsli"
 #include "Common/WindField.hlsli"
 
@@ -45,33 +46,60 @@ namespace SharedData
 		float4 WindFieldAmbient;  // xyz: selected mean velocity, w: accumulated world-space gust travel
 		float4 WindFieldPreviousAmbient;
 		float4 WindFieldTwoFramesAgoAmbient;
+		WindField::TransientImpulse WindFieldTransientImpulses[WindField::TransientImpulseCapacity];
+		WindField::TransientImpulse WindFieldPreviousTransientImpulses[WindField::TransientImpulseCapacity];
+		WindField::TransientImpulse WindFieldTwoFramesAgoTransientImpulses[WindField::TransientImpulseCapacity];
 	};
 
-	/** @brief Samples the shared ambient weather field at an absolute world position. */
+	/** @brief Samples the current shared wind field at an absolute world position. */
 	WindField::WindSample SampleAmbientWind(float3 worldPosition)
 	{
 		float3 baseVelocity = WindFieldAmbient.xyz;
 		float windSpeed = length(baseVelocity);
-		return WindField::SampleWind(
+		WindField::WindSample sample = WindField::SampleWind(
 			worldPosition, WindFieldAmbient.w, baseVelocity, windSpeed, WindFieldTuning);
+		[unroll] for (uint index = 0u; index < WindField::TransientImpulseCapacity; ++index)
+		{
+			WindField::TransientImpulseSample impulseSample =
+				WindField::SampleTransientImpulse(worldPosition, WindFieldTransientImpulses[index]);
+			sample.velocity += impulseSample.velocity;
+			sample.transientImpulse = max(sample.transientImpulse, impulseSample.intensity);
+		}
+		return sample;
 	}
 
-	/** @brief Samples the previous frame's shared ambient field for temporal rendering. */
+	/** @brief Samples the previous frame's shared wind field for temporal rendering. */
 	WindField::WindSample SamplePreviousAmbientWind(float3 worldPosition)
 	{
 		float3 baseVelocity = WindFieldPreviousAmbient.xyz;
 		float windSpeed = length(baseVelocity);
-		return WindField::SampleWind(
+		WindField::WindSample sample = WindField::SampleWind(
 			worldPosition, WindFieldPreviousAmbient.w, baseVelocity, windSpeed, WindFieldTuning);
+		[unroll] for (uint index = 0u; index < WindField::TransientImpulseCapacity; ++index)
+		{
+			WindField::TransientImpulseSample impulseSample =
+				WindField::SampleTransientImpulse(worldPosition, WindFieldPreviousTransientImpulses[index]);
+			sample.velocity += impulseSample.velocity;
+			sample.transientImpulse = max(sample.transientImpulse, impulseSample.intensity);
+		}
+		return sample;
 	}
 
-	/** @brief Samples the two-frames-ago ambient field for temporal reconstruction. */
+	/** @brief Samples the two-frames-ago shared wind field for temporal reconstruction. */
 	WindField::WindSample SampleTwoFramesAgoAmbientWind(float3 worldPosition)
 	{
 		float3 baseVelocity = WindFieldTwoFramesAgoAmbient.xyz;
 		float windSpeed = length(baseVelocity);
-		return WindField::SampleWind(
+		WindField::WindSample sample = WindField::SampleWind(
 			worldPosition, WindFieldTwoFramesAgoAmbient.w, baseVelocity, windSpeed, WindFieldTuning);
+		[unroll] for (uint index = 0u; index < WindField::TransientImpulseCapacity; ++index)
+		{
+			WindField::TransientImpulseSample impulseSample =
+				WindField::SampleTransientImpulse(worldPosition, WindFieldTwoFramesAgoTransientImpulses[index]);
+			sample.velocity += impulseSample.velocity;
+			sample.transientImpulse = max(sample.transientImpulse, impulseSample.intensity);
+		}
+		return sample;
 	}
 
 	struct GrassLightingSettings

@@ -138,6 +138,9 @@ namespace Permutation
 		float TreeWindBoundsHeight;
 		float TreeWindTrunkGustInfluence;
 		float TreeLeafGustInfluence;
+
+		float GrassWindSpringRecoveryLag;
+		float3 GrassWindPadding1;
 	};
 
 }

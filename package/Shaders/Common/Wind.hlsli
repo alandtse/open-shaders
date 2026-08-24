@@ -92,18 +92,21 @@ namespace Wind
 
 	namespace Grass
 	{
-		/** @brief Applies stateless lag and recovery to consecutive ambient velocities. */
+		/** @brief Applies stateless lag and recovery to consecutive shared wind velocities. */
 		float3 CalculateSpringVelocity(
 			float3 currentVelocity, float currentGust, float3 previousVelocity, float previousGust,
-			float lagFrameCount)
+			float lagFrameCount, float recoveryLagFrameCount)
 		{
 			float inertia = saturate(Permutation::GrassWindSpringStrength);
 			float recovery = max(Permutation::GrassWindSpringRecovery, 0.0);
 			float gustDelta = currentGust - previousGust;
 			float gustDeviation = currentGust - 0.5;
-			float recovering = gustDeviation * gustDelta < 0.0 ? 1.0 : 0.0;
+			float recovering =
+				(length(currentVelocity) < length(previousVelocity) || gustDeviation * gustDelta < 0.0) ? 1.0 : 0.0;
+			float effectiveLagFrameCount = lagFrameCount + recoveryLagFrameCount * recovering;
 			float3 springOffset =
-				(currentVelocity - previousVelocity) * lagFrameCount * (inertia + recovery * recovering);
+				(currentVelocity - previousVelocity) * effectiveLagFrameCount *
+				(inertia + recovery * recovering);
 			float3 springVelocity = currentVelocity - springOffset;
 
 			float maximumResponseSpeed =
@@ -116,13 +119,16 @@ namespace Wind
 
 		/** @brief Applies stateless lag and recovery to consecutive rigid-bend targets. */
 		float CalculateSpringAngle(
-			float currentTargetAngle, float previousTargetAngle, float lagFrameCount)
+			float currentTargetAngle, float previousTargetAngle, float lagFrameCount,
+			float recoveryLagFrameCount)
 		{
 			float inertia = saturate(Permutation::GrassWindSpringStrength);
 			float recovery = max(Permutation::GrassWindSpringRecovery, 0.0);
 			float targetDelta = currentTargetAngle - previousTargetAngle;
-			float recovering = targetDelta < 0.0 ? 1.0 : 0.0;
-			float springOffset = targetDelta * lagFrameCount * (inertia + recovery * recovering);
+			float recovering = abs(currentTargetAngle) < abs(previousTargetAngle) ? 1.0 : 0.0;
+			float effectiveLagFrameCount = lagFrameCount + recoveryLagFrameCount * recovering;
+			float springOffset =
+				targetDelta * effectiveLagFrameCount * (inertia + recovery * recovering);
 			float springAngle = currentTargetAngle - springOffset;
 
 			float maximumBendAngle = radians(max(Permutation::GrassWindMaximumTilt, 0.0));
@@ -130,6 +136,25 @@ namespace Wind
 				max(abs(currentTargetAngle), abs(previousTargetAngle)) * (1.0 + recovery),
 				maximumBendAngle);
 			return clamp(springAngle, -maximumResponseAngle, maximumResponseAngle);
+		}
+
+		/** @brief Applies stateless lag and recovery to consecutive vertical compression targets. */
+		float CalculateSpringCompression(
+			float currentTargetCompression, float previousTargetCompression, float lagFrameCount,
+			float recoveryLagFrameCount)
+		{
+			float inertia = saturate(Permutation::GrassWindSpringStrength);
+			float recovery = max(Permutation::GrassWindSpringRecovery, 0.0);
+			float targetDelta = currentTargetCompression - previousTargetCompression;
+			float recovering = currentTargetCompression < previousTargetCompression ? 1.0 : 0.0;
+			float effectiveLagFrameCount = lagFrameCount + recoveryLagFrameCount * recovering;
+			float springCompression =
+				currentTargetCompression -
+				targetDelta * effectiveLagFrameCount * (inertia + recovery * recovering);
+
+			float maximumResponseCompression = saturate(
+				max(currentTargetCompression, previousTargetCompression) * (1.0 + recovery));
+			return clamp(springCompression, 0.0, maximumResponseCompression);
 		}
 
 		float3 CalculateVanillaDisplacement(
@@ -148,14 +173,15 @@ namespace Wind
 			return float3(windVector.xy, 0) * windPower;
 		}
 
-		/** @brief Maps sampled ambient velocity to a desired rigid-bend target. */
+		/** @brief Maps sampled wind velocity to desired rigid-bend and downward-compression targets. */
 		void CalculateAmbientBendTarget(
 			float3 worldWindVelocity, float responseScale, float4x4 worldMatrix,
-			out float3 bendAxis, out float bendAngle)
+			out float3 bendAxis, out float bendAngle, out float compression)
 		{
 			float3 modelWindVelocity = mul(transpose((float3x3)worldMatrix), worldWindVelocity);
 			float3 lateralWindVelocity = float3(modelWindVelocity.xy, 0.0);
 			float lateralWindSpeed = length(lateralWindVelocity);
+			float downwardWindSpeed = max(-modelWindVelocity.z, 0.0);
 			float3 bendDirection = lateralWindSpeed > 1e-5 ?
 			                           lateralWindVelocity / lateralWindSpeed :
 			                           float3(1.0, 0.0, 0.0);
@@ -165,20 +191,27 @@ namespace Wind
 			float requestedTilt =
 				lateralWindSpeed * responseScale * radians(max(Permutation::GrassWindResponse, 0.0));
 			bendAngle = maximumTilt > 1e-5 ? maximumTilt * tanh(requestedTilt / maximumTilt) : 0.0;
+			float requestedCompression =
+				downwardWindSpeed * responseScale * radians(max(Permutation::GrassWindResponse, 0.0));
+			compression = maximumTilt > 1e-5 ? saturate(tanh(requestedCompression / maximumTilt)) : 0.0;
 		}
 
 		/** @brief Deforms a grass vertex from an already-resolved rigid bend. */
 		float3 CalculateAmbientDisplacement(
 			float tipWeight, float modelHeight, float instanceBaseHeight, float3 bendAxis,
-			float rigidBendAngle, out float bendAngle)
+			float rigidBendAngle, float rigidCompression, out float bendAngle)
 		{
 			float squaredTipWeight = saturate(tipWeight);
 			squaredTipWeight *= squaredTipWeight;
-			bendAngle = rigidBendAngle * lerp(
-											 1.0, squaredTipWeight, saturate(Permutation::GrassWindBendProfile));
+			float deformationWeight = lerp(
+				1.0, squaredTipWeight, saturate(Permutation::GrassWindBendProfile));
+			bendAngle = rigidBendAngle * deformationWeight;
+			float compression = saturate(rigidCompression * deformationWeight);
 
 			float3 relativePosition = float3(0.0, 0.0, max(modelHeight - instanceBaseHeight, 0.0));
-			return Common::RotateVector(relativePosition, bendAxis, bendAngle) - relativePosition;
+			float3 deformedPosition = Common::RotateVector(relativePosition, bendAxis, bendAngle);
+			deformedPosition.z *= 1.0 - compression;
+			return deformedPosition - relativePosition;
 		}
 	}
 }

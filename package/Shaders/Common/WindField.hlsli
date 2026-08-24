@@ -28,6 +28,7 @@ namespace WindField
 	{
 		float3 velocity;
 		float ambientGust;
+		float transientImpulse;
 	};
 
 	namespace Detail
@@ -125,6 +126,7 @@ namespace WindField
 	{
 		WindSample sample;
 		sample.ambientGust = SampleAmbientGust(worldPosition, gustTravelDistance, windDirection, tuning);
+		sample.transientImpulse = 0.0f;
 		float gustDeviation = sample.ambientGust * 2.0f - 1.0f;
 		float gustMultiplier = max(1.0f + gustDeviation * max(tuning.gustAmplitude, 0.0f), 0.0f);
 		sample.velocity =
