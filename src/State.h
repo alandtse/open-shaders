@@ -65,14 +65,10 @@ public:
 
 	float timer = 0;
 	float previousTimer = 0;
-	float windFieldGustTravelDistance = 0.0f;
-	float previousWindFieldGustTravelDistance = 0.0f;
-	float twoFramesAgoWindFieldGustTravelDistance = 0.0f;
 	float windFieldFrameTime = 0.0f;
 	float previousWindFieldFrameTime = 0.0f;
 	float windFieldAmbientSpeed = 0.0f;
 	float windFieldAdvectionSpeed = 0.0f;
-	float windFieldTravelDelta = 0.0f;
 	float3 ambientWindVelocity = {};
 	float3 windFieldSelectedVelocity = {};
 	float3 previousWindFieldSelectedVelocity = {};
@@ -80,6 +76,12 @@ public:
 	float windFieldSelectedSpeed = 0.0f;
 	bool windFieldHasPreviousSample = false;
 	WindField::WindTuning windFieldTuning{};
+	std::array<WindField::AmbientGust, WindField::kAmbientGustCapacity> ambientGusts{};
+	std::array<WindField::AmbientGust, WindField::kAmbientGustCapacity> previousAmbientGusts{};
+	std::array<WindField::AmbientGust, WindField::kAmbientGustCapacity> twoFramesAgoAmbientGusts{};
+	uint32_t activeAmbientGustCount = 0;
+	uint32_t previousActiveAmbientGustCount = 0;
+	uint32_t twoFramesAgoActiveAmbientGustCount = 0;
 	float2 trunkWindVector = {};
 	float2 previousTrunkWindVector = {};
 	double smoothDrawCalls[RE::BSShader::Type::Total + 1];
@@ -548,11 +550,15 @@ public:
 		float RefractionScale;            // ISRefraction.hlsl heat-shimmer multiplier; 1.0 = unmodified vanilla strength
 		float3 pad1;
 		float4 WindFieldDebug;         // xy: base weather velocity, z: visualization enabled, w: previous frame time
-		float4 WindFieldDebugOptions;  // x: frame time, y: real speed, z: real direction, w: gust travel
+		float4 WindFieldDebugOptions;  // x: frame time, y: real speed, z: real direction, w: active gust count
 		WindField::WindTuning WindFieldTuning;
-		float4 WindFieldAmbient;  // xyz: instantaneous mean weather velocity, w: accumulated world-space gust travel
+		float4 WindFieldAmbient;  // xyz: instantaneous mean weather velocity
 		float4 WindFieldPreviousAmbient;
 		float4 WindFieldTwoFramesAgoAmbient;
+		std::array<uint32_t, 4> WindFieldAmbientGustCounts;
+		std::array<WindField::AmbientGust, WindField::kAmbientGustCapacity> WindFieldAmbientGusts;
+		std::array<WindField::AmbientGust, WindField::kAmbientGustCapacity> WindFieldPreviousAmbientGusts;
+		std::array<WindField::AmbientGust, WindField::kAmbientGustCapacity> WindFieldTwoFramesAgoAmbientGusts;
 		std::array<WindField::TransientImpulse, WindField::kTransientImpulseCapacity> WindFieldTransientImpulses;
 		std::array<WindField::TransientImpulse, WindField::kTransientImpulseCapacity> WindFieldPreviousTransientImpulses;
 		std::array<WindField::TransientImpulse, WindField::kTransientImpulseCapacity> WindFieldTwoFramesAgoTransientImpulses;
@@ -569,6 +575,10 @@ public:
 	static_assert(offsetof(SharedDataCB, WindFieldAmbient) % 16 == 0);
 	static_assert(offsetof(SharedDataCB, WindFieldPreviousAmbient) % 16 == 0);
 	static_assert(offsetof(SharedDataCB, WindFieldTwoFramesAgoAmbient) % 16 == 0);
+	static_assert(offsetof(SharedDataCB, WindFieldAmbientGustCounts) % 16 == 0);
+	static_assert(offsetof(SharedDataCB, WindFieldAmbientGusts) % 16 == 0);
+	static_assert(offsetof(SharedDataCB, WindFieldPreviousAmbientGusts) % 16 == 0);
+	static_assert(offsetof(SharedDataCB, WindFieldTwoFramesAgoAmbientGusts) % 16 == 0);
 	static_assert(offsetof(SharedDataCB, WindFieldTransientImpulses) % 16 == 0);
 	static_assert(offsetof(SharedDataCB, WindFieldPreviousTransientImpulses) % 16 == 0);
 	static_assert(offsetof(SharedDataCB, WindFieldTwoFramesAgoTransientImpulses) % 16 == 0);
@@ -667,7 +677,13 @@ public:
 	}
 
 private:
+	void UpdateAmbientGusts(float a_frameTime, const float2& a_simulationCenter, const float2& a_windDirection);
+	void SpawnAmbientGust(const float2& a_simulationCenter, const float2& a_windDirection);
+	[[nodiscard]] float NextAmbientGustRandom() noexcept;
+	[[nodiscard]] float NextAmbientGustRange(float a_minimum, float a_maximum) noexcept;
 	void UpdateTransientWindImpulses(float a_frameTime);
+	float ambientGustSpawnTimer = 0.0f;
+	uint32_t ambientGustRandomState = 0xA341316Cu;
 	std::array<WindField::TransientImpulse, WindField::kTransientImpulseCapacity> transientWindImpulses{};
 	std::array<WindField::TransientImpulse, WindField::kTransientImpulseCapacity> previousTransientWindImpulses{};
 	std::array<WindField::TransientImpulse, WindField::kTransientImpulseCapacity> twoFramesAgoTransientWindImpulses{};

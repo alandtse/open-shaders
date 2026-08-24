@@ -52,6 +52,24 @@ namespace
 	constexpr float kWindFieldGustAmplitudeMax = 1.0f;
 	constexpr float kWindFieldGustAdvectionMultiplierMin = 0.0f;
 	constexpr float kWindFieldGustAdvectionMultiplierMax = 8.0f;
+	constexpr uint32_t kWindFieldMaxActiveGustsMin = 0;
+	constexpr uint32_t kWindFieldMaxActiveGustsMax = WindField::kAmbientGustCapacity;
+	constexpr float kWindFieldGustSpawnIntervalMin = 0.25f;
+	constexpr float kWindFieldGustSpawnIntervalMax = 60.0f;
+	constexpr float kWindFieldGustLengthMin = 1000.0f;
+	constexpr float kWindFieldGustLengthMax = 100000.0f;
+	constexpr float kWindFieldGustWidthMin = 256.0f;
+	constexpr float kWindFieldGustWidthMax = 25000.0f;
+	constexpr float kWindFieldGustSpeedMin = 0.0f;
+	constexpr float kWindFieldGustSpeedMax = 4096.0f;
+	constexpr float kWindFieldGustStrengthMin = 0.0f;
+	constexpr float kWindFieldGustStrengthMax = 2.0f;
+	constexpr float kWindFieldGustLifetimeMin = 1.0f;
+	constexpr float kWindFieldGustLifetimeMax = 300.0f;
+	constexpr float kWindFieldGustEdgeSoftnessMin = 0.05f;
+	constexpr float kWindFieldGustEdgeSoftnessMax = 1.0f;
+	constexpr float kWindFieldGustNoiseAmountMin = 0.0f;
+	constexpr float kWindFieldGustNoiseAmountMax = 1.0f;
 	constexpr float kFusRoDahIntensityMin = 0.0f;
 	constexpr float kFusRoDahIntensityMax = 5.0f;
 	constexpr float kFusRoDahDecayTimeMin = 0.0f;
@@ -116,6 +134,22 @@ namespace
 		a_settings.windFieldGustScale = ClampFiniteOrDefault(a_settings.windFieldGustScale, kWindFieldGustScaleMin, kWindFieldGustScaleMax, defaults.windFieldGustScale);
 		a_settings.windFieldGustAmplitude = ClampFiniteOrDefault(a_settings.windFieldGustAmplitude, kWindFieldGustAmplitudeMin, kWindFieldGustAmplitudeMax, defaults.windFieldGustAmplitude);
 		a_settings.windFieldGustAdvectionMultiplier = ClampFiniteOrDefault(a_settings.windFieldGustAdvectionMultiplier, kWindFieldGustAdvectionMultiplierMin, kWindFieldGustAdvectionMultiplierMax, defaults.windFieldGustAdvectionMultiplier);
+		a_settings.windFieldMaxActiveGusts = std::clamp(
+			a_settings.windFieldMaxActiveGusts, kWindFieldMaxActiveGustsMin, kWindFieldMaxActiveGustsMax);
+		a_settings.windFieldGustSpawnIntervalMin = ClampFiniteOrDefault(a_settings.windFieldGustSpawnIntervalMin, kWindFieldGustSpawnIntervalMin, kWindFieldGustSpawnIntervalMax, defaults.windFieldGustSpawnIntervalMin);
+		a_settings.windFieldGustSpawnIntervalMax = ClampFiniteOrDefault(a_settings.windFieldGustSpawnIntervalMax, kWindFieldGustSpawnIntervalMin, kWindFieldGustSpawnIntervalMax, defaults.windFieldGustSpawnIntervalMax);
+		a_settings.windFieldGustLengthMin = ClampFiniteOrDefault(a_settings.windFieldGustLengthMin, kWindFieldGustLengthMin, kWindFieldGustLengthMax, defaults.windFieldGustLengthMin);
+		a_settings.windFieldGustLengthMax = ClampFiniteOrDefault(a_settings.windFieldGustLengthMax, kWindFieldGustLengthMin, kWindFieldGustLengthMax, defaults.windFieldGustLengthMax);
+		a_settings.windFieldGustWidthMin = ClampFiniteOrDefault(a_settings.windFieldGustWidthMin, kWindFieldGustWidthMin, kWindFieldGustWidthMax, defaults.windFieldGustWidthMin);
+		a_settings.windFieldGustWidthMax = ClampFiniteOrDefault(a_settings.windFieldGustWidthMax, kWindFieldGustWidthMin, kWindFieldGustWidthMax, defaults.windFieldGustWidthMax);
+		a_settings.windFieldGustSpeedMin = ClampFiniteOrDefault(a_settings.windFieldGustSpeedMin, kWindFieldGustSpeedMin, kWindFieldGustSpeedMax, defaults.windFieldGustSpeedMin);
+		a_settings.windFieldGustSpeedMax = ClampFiniteOrDefault(a_settings.windFieldGustSpeedMax, kWindFieldGustSpeedMin, kWindFieldGustSpeedMax, defaults.windFieldGustSpeedMax);
+		a_settings.windFieldGustStrengthMin = ClampFiniteOrDefault(a_settings.windFieldGustStrengthMin, kWindFieldGustStrengthMin, kWindFieldGustStrengthMax, defaults.windFieldGustStrengthMin);
+		a_settings.windFieldGustStrengthMax = ClampFiniteOrDefault(a_settings.windFieldGustStrengthMax, kWindFieldGustStrengthMin, kWindFieldGustStrengthMax, defaults.windFieldGustStrengthMax);
+		a_settings.windFieldGustLifetimeMin = ClampFiniteOrDefault(a_settings.windFieldGustLifetimeMin, kWindFieldGustLifetimeMin, kWindFieldGustLifetimeMax, defaults.windFieldGustLifetimeMin);
+		a_settings.windFieldGustLifetimeMax = ClampFiniteOrDefault(a_settings.windFieldGustLifetimeMax, kWindFieldGustLifetimeMin, kWindFieldGustLifetimeMax, defaults.windFieldGustLifetimeMax);
+		a_settings.windFieldGustEdgeSoftness = ClampFiniteOrDefault(a_settings.windFieldGustEdgeSoftness, kWindFieldGustEdgeSoftnessMin, kWindFieldGustEdgeSoftnessMax, defaults.windFieldGustEdgeSoftness);
+		a_settings.windFieldGustNoiseAmount = ClampFiniteOrDefault(a_settings.windFieldGustNoiseAmount, kWindFieldGustNoiseAmountMin, kWindFieldGustNoiseAmountMax, defaults.windFieldGustNoiseAmount);
 		a_settings.fusRoDahIntensity = ClampFiniteOrDefault(a_settings.fusRoDahIntensity, kFusRoDahIntensityMin, kFusRoDahIntensityMax, defaults.fusRoDahIntensity);
 		a_settings.fusRoDahDecayTime = ClampFiniteOrDefault(a_settings.fusRoDahDecayTime, kFusRoDahDecayTimeMin, kFusRoDahDecayTimeMax, defaults.fusRoDahDecayTime);
 		a_settings.fusRoDahDistanceMultiplier = ClampFiniteOrDefault(a_settings.fusRoDahDistanceMultiplier, kFusRoDahDistanceMultiplierMin, kFusRoDahDistanceMultiplierMax, defaults.fusRoDahDistanceMultiplier);
@@ -275,6 +309,21 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	windFieldGustScale,
 	windFieldGustAmplitude,
 	windFieldGustAdvectionMultiplier,
+	windFieldMaxActiveGusts,
+	windFieldGustSpawnIntervalMin,
+	windFieldGustSpawnIntervalMax,
+	windFieldGustLengthMin,
+	windFieldGustLengthMax,
+	windFieldGustWidthMin,
+	windFieldGustWidthMax,
+	windFieldGustSpeedMin,
+	windFieldGustSpeedMax,
+	windFieldGustStrengthMin,
+	windFieldGustStrengthMax,
+	windFieldGustLifetimeMin,
+	windFieldGustLifetimeMax,
+	windFieldGustEdgeSoftness,
+	windFieldGustNoiseAmount,
 	enableFusRoDahWind,
 	fusRoDahIntensity,
 	fusRoDahDecayTime,
@@ -342,9 +391,9 @@ void CSUtility::DrawSettings()
 		ImGui::Text("%s: %.5f", T(TKEY("wind_field_ambient_speed"), "Selected ambient speed"), state->windFieldAmbientSpeed);
 		ImGui::Text("%s: %.2f deg", T(TKEY("wind_field_ambient_direction"), "Ambient direction"), ambientDirectionDegrees);
 		ImGui::Text("%s: %.6f s", T(TKEY("wind_field_frame_time"), "Frame delta"), state->windFieldFrameTime);
-		ImGui::Text("%s: %.6f", T(TKEY("wind_field_travel_delta"), "Travel delta"), state->windFieldTravelDelta);
-		ImGui::Text("%s: %.5f", T(TKEY("wind_field_travel_distance"), "Accumulated travel distance"), state->windFieldGustTravelDistance);
-		ImGui::Text("%s: %.3f units/s", T(TKEY("wind_field_advection_speed"), "Gust advection speed"), state->windFieldAdvectionSpeed);
+		ImGui::Text("%s: %u / %u", T(TKEY("wind_field_active_gusts"), "Active gust bands"),
+			state->activeAmbientGustCount, state->windFieldTuning.maxActiveGusts);
+		ImGui::Text("%s: %.3f units/s", T(TKEY("wind_field_advection_speed"), "Average gust speed"), state->windFieldAdvectionSpeed);
 		ImGui::Text("%s: %.5f", T(TKEY("wind_field_global_time"), "Global timer"), state->timer);
 		if (sky)
 			ImGui::Text("%s: speed %.5f, angle %.5f", T(TKEY("wind_field_sky_input"), "Sky wind input"), sky->windSpeed, sky->windAngle);
@@ -401,29 +450,79 @@ void CSUtility::DrawSettings()
 				"Weather Wind is the raw ambient input. Local Wind is the canonical sampled velocity magnitude at the camera. Ambient Gust is the normalized field value used to modulate it."));
 		ImGui::SeparatorText(T(TKEY("wind_field_profile"), "Profile"));
 		ImGui::Text("%s: %.2f", T(TKEY("wind_field_profile_amplitude"), "Amplitude"), settings.windFieldGustAmplitude);
-		ImGui::Text("%s: %.0f", T(TKEY("wind_field_profile_scale"), "Scale"), settings.windFieldGustScale);
+		ImGui::Text("%s: %.0f", T(TKEY("wind_field_profile_scale"), "Noise scale"), settings.windFieldGustScale);
 		ImGui::Text("%s: %.2fx", T(TKEY("wind_field_profile_advection"), "Advection"), settings.windFieldGustAdvectionMultiplier);
 		if (ImGui::TreeNodeEx(T(TKEY("wind_field_tuning"), "Sampler tuning"), ImGuiTreeNodeFlags_DefaultOpen)) {
+			int maxActiveGusts = static_cast<int>(settings.windFieldMaxActiveGusts);
+			if (ImGui::SliderInt(T(TKEY("wind_field_max_active_gusts"), "Max Active Gusts"), &maxActiveGusts,
+					static_cast<int>(kWindFieldMaxActiveGustsMin), static_cast<int>(kWindFieldMaxActiveGustsMax)))
+				settings.windFieldMaxActiveGusts = static_cast<uint32_t>(maxActiveGusts);
+			ImGui::SliderFloat(T(TKEY("wind_field_spawn_interval_min"), "Spawn Interval Min"),
+				&settings.windFieldGustSpawnIntervalMin, kWindFieldGustSpawnIntervalMin,
+				kWindFieldGustSpawnIntervalMax, "%.2f s", ImGuiSliderFlags_AlwaysClamp);
+			ImGui::SliderFloat(T(TKEY("wind_field_spawn_interval_max"), "Spawn Interval Max"),
+				&settings.windFieldGustSpawnIntervalMax, kWindFieldGustSpawnIntervalMin,
+				kWindFieldGustSpawnIntervalMax, "%.2f s", ImGuiSliderFlags_AlwaysClamp);
+			ImGui::SliderFloat(T(TKEY("wind_field_gust_length_min"), "Gust Length Min"),
+				&settings.windFieldGustLengthMin, kWindFieldGustLengthMin, kWindFieldGustLengthMax, "%.0f units",
+				ImGuiSliderFlags_AlwaysClamp | ImGuiSliderFlags_Logarithmic);
+			ImGui::SliderFloat(T(TKEY("wind_field_gust_length_max"), "Gust Length Max"),
+				&settings.windFieldGustLengthMax, kWindFieldGustLengthMin, kWindFieldGustLengthMax, "%.0f units",
+				ImGuiSliderFlags_AlwaysClamp | ImGuiSliderFlags_Logarithmic);
+			ImGui::SliderFloat(T(TKEY("wind_field_gust_width_min"), "Gust Width Min"),
+				&settings.windFieldGustWidthMin, kWindFieldGustWidthMin, kWindFieldGustWidthMax, "%.0f units",
+				ImGuiSliderFlags_AlwaysClamp | ImGuiSliderFlags_Logarithmic);
+			ImGui::SliderFloat(T(TKEY("wind_field_gust_width_max"), "Gust Width Max"),
+				&settings.windFieldGustWidthMax, kWindFieldGustWidthMin, kWindFieldGustWidthMax, "%.0f units",
+				ImGuiSliderFlags_AlwaysClamp | ImGuiSliderFlags_Logarithmic);
+			ImGui::SliderFloat(T(TKEY("wind_field_gust_speed_min"), "Gust Speed Min"),
+				&settings.windFieldGustSpeedMin, kWindFieldGustSpeedMin, kWindFieldGustSpeedMax, "%.0f units/s",
+				ImGuiSliderFlags_AlwaysClamp);
+			ImGui::SliderFloat(T(TKEY("wind_field_gust_speed_max"), "Gust Speed Max"),
+				&settings.windFieldGustSpeedMax, kWindFieldGustSpeedMin, kWindFieldGustSpeedMax, "%.0f units/s",
+				ImGuiSliderFlags_AlwaysClamp);
+			if (auto _tt = Util::HoverTooltipWrapper())
+				ImGui::TextUnformatted(T(TKEY("wind_field_gust_speed_tooltip"),
+					"Controls only band translation through world space; it does not change vegetation bend strength."));
+			ImGui::SliderFloat(T(TKEY("wind_field_gust_strength_min"), "Gust Strength Min"),
+				&settings.windFieldGustStrengthMin, kWindFieldGustStrengthMin, kWindFieldGustStrengthMax, "%.2f",
+				ImGuiSliderFlags_AlwaysClamp);
+			ImGui::SliderFloat(T(TKEY("wind_field_gust_strength_max"), "Gust Strength Max"),
+				&settings.windFieldGustStrengthMax, kWindFieldGustStrengthMin, kWindFieldGustStrengthMax, "%.2f",
+				ImGuiSliderFlags_AlwaysClamp);
+			if (auto _tt = Util::HoverTooltipWrapper())
+				ImGui::TextUnformatted(T(TKEY("wind_field_gust_strength_tooltip"),
+					"Controls band pressure and vegetation response without changing travel speed."));
+			ImGui::SliderFloat(T(TKEY("wind_field_gust_lifetime_min"), "Gust Lifetime Min"),
+				&settings.windFieldGustLifetimeMin, kWindFieldGustLifetimeMin, kWindFieldGustLifetimeMax, "%.1f s",
+				ImGuiSliderFlags_AlwaysClamp);
+			ImGui::SliderFloat(T(TKEY("wind_field_gust_lifetime_max"), "Gust Lifetime Max"),
+				&settings.windFieldGustLifetimeMax, kWindFieldGustLifetimeMin, kWindFieldGustLifetimeMax, "%.1f s",
+				ImGuiSliderFlags_AlwaysClamp);
+			ImGui::SliderFloat(T(TKEY("wind_field_gust_edge_softness"), "Gust Edge Softness"),
+				&settings.windFieldGustEdgeSoftness, kWindFieldGustEdgeSoftnessMin, kWindFieldGustEdgeSoftnessMax,
+				"%.2f", ImGuiSliderFlags_AlwaysClamp);
+			ImGui::SliderFloat(T(TKEY("wind_field_gust_noise_amount"), "Gust Noise Amount"),
+				&settings.windFieldGustNoiseAmount, kWindFieldGustNoiseAmountMin, kWindFieldGustNoiseAmountMax,
+				"%.2f", ImGuiSliderFlags_AlwaysClamp);
 			ImGui::SliderFloat(T(TKEY("wind_field_gust_advection_multiplier"), "Gust Advection Multiplier"),
 				&settings.windFieldGustAdvectionMultiplier, kWindFieldGustAdvectionMultiplierMin,
 				kWindFieldGustAdvectionMultiplierMax, "%.2fx", ImGuiSliderFlags_AlwaysClamp);
 			if (auto _tt = Util::HoverTooltipWrapper())
 				ImGui::TextUnformatted(T(TKEY("wind_field_gust_advection_multiplier_tooltip"),
 					"Changes only how quickly gust structures move through world space; it does not increase local air velocity."));
-			ImGui::SliderFloat(T(TKEY("wind_field_gust_scale"), "Gust Spatial Scale"), &settings.windFieldGustScale,
+			ImGui::SliderFloat(T(TKEY("wind_field_gust_scale"), "Gust Noise Scale"), &settings.windFieldGustScale,
 				kWindFieldGustScaleMin, kWindFieldGustScaleMax, "%.0f units",
 				ImGuiSliderFlags_AlwaysClamp | ImGuiSliderFlags_Logarithmic);
 			if (auto _tt = Util::HoverTooltipWrapper())
 				ImGui::TextUnformatted(T(TKEY("wind_field_gust_scale_tooltip"),
-					"Controls the along-wind size of the broad gust structures; the existing detail ratios scale with it."));
+					"Controls the world-space scale of internal streaks and gaps without changing band dimensions."));
 			ImGui::SliderFloat(T(TKEY("wind_field_gust_amplitude"), "Gust Amplitude"), &settings.windFieldGustAmplitude,
 				kWindFieldGustAmplitudeMin, kWindFieldGustAmplitudeMax, "%.2f", ImGuiSliderFlags_AlwaysClamp);
 			if (auto _tt = Util::HoverTooltipWrapper())
 				ImGui::TextUnformatted(T(TKEY("wind_field_gust_amplitude_tooltip"),
-					"Fractional velocity deviation around the mean; 0.35 produces a 0.65x to 1.35x range."));
+					"Scales the velocity added by band pressure; 0.35 produces up to a 1.35x local response."));
 			const auto& tuning = state->windFieldTuning;
-			ImGui::Text("Base advection %.2f units/s at wind speed 1.0, front aspect %.2f",
-				tuning.gustAdvectionBaseSpeed, tuning.frontAspectRatio);
 			ImGui::Text("Detail ratios %.3f / %.3f, turbulence %.3f, skew %.3f", tuning.detailScaleRatio,
 				tuning.detailCrosswindScaleRatio, tuning.turbulenceStrength, tuning.turbulenceSkew);
 			ImGui::Text("Contrast %.3f - %.3f", tuning.contrastLow, tuning.contrastHigh);
@@ -646,7 +745,7 @@ void CSUtility::SetTreeWindTestEnabled(bool a_enabled)
 	if (a_enabled) {
 		const auto* state = globals::state;
 		treeWindTest.speed = ClampFiniteOrDefault(state ? state->windFieldSelectedSpeed : windFieldOverrideSpeed, 0.0f, 2.0f, 1.0f);
-		treeWindTest.gustScale = ClampFiniteOrDefault(state ? state->windFieldTuning.gustScale : settings.windFieldGustScale,
+		treeWindTest.gustScale = ClampFiniteOrDefault(state ? state->windFieldTuning.gustNoiseScale : settings.windFieldGustScale,
 			kWindFieldGustScaleMin, kWindFieldGustScaleMax, settings.windFieldGustScale);
 		treeWindTest.gustAmplitude = ClampFiniteOrDefault(state ? state->windFieldTuning.gustAmplitude : settings.windFieldGustAmplitude,
 			kWindFieldGustAmplitudeMin, kWindFieldGustAmplitudeMax, settings.windFieldGustAmplitude);
@@ -682,7 +781,7 @@ void CSUtility::DrawTreeWindTestSettings()
 	ImGui::SliderFloat(T(TKEY("tree_wind_test_advection"), "Gust Advection Multiplier"),
 		&treeWindTest.gustAdvectionMultiplier, kWindFieldGustAdvectionMultiplierMin,
 		kWindFieldGustAdvectionMultiplierMax, "%.2fx", ImGuiSliderFlags_AlwaysClamp);
-	ImGui::SliderFloat(T(TKEY("tree_wind_test_scale"), "Gust Spatial Scale"), &treeWindTest.gustScale,
+	ImGui::SliderFloat(T(TKEY("tree_wind_test_scale"), "Gust Noise Scale"), &treeWindTest.gustScale,
 		kWindFieldGustScaleMin, kWindFieldGustScaleMax, "%.0f units",
 		ImGuiSliderFlags_AlwaysClamp | ImGuiSliderFlags_Logarithmic);
 	ImGui::SliderFloat(T(TKEY("tree_wind_test_amplitude"), "Gust Amplitude"), &treeWindTest.gustAmplitude,
@@ -1061,6 +1160,21 @@ void CSUtility::RestoreCurrentPageDefaultSettings()
 		settings.windFieldGustScale = defaults.windFieldGustScale;
 		settings.windFieldGustAmplitude = defaults.windFieldGustAmplitude;
 		settings.windFieldGustAdvectionMultiplier = defaults.windFieldGustAdvectionMultiplier;
+		settings.windFieldMaxActiveGusts = defaults.windFieldMaxActiveGusts;
+		settings.windFieldGustSpawnIntervalMin = defaults.windFieldGustSpawnIntervalMin;
+		settings.windFieldGustSpawnIntervalMax = defaults.windFieldGustSpawnIntervalMax;
+		settings.windFieldGustLengthMin = defaults.windFieldGustLengthMin;
+		settings.windFieldGustLengthMax = defaults.windFieldGustLengthMax;
+		settings.windFieldGustWidthMin = defaults.windFieldGustWidthMin;
+		settings.windFieldGustWidthMax = defaults.windFieldGustWidthMax;
+		settings.windFieldGustSpeedMin = defaults.windFieldGustSpeedMin;
+		settings.windFieldGustSpeedMax = defaults.windFieldGustSpeedMax;
+		settings.windFieldGustStrengthMin = defaults.windFieldGustStrengthMin;
+		settings.windFieldGustStrengthMax = defaults.windFieldGustStrengthMax;
+		settings.windFieldGustLifetimeMin = defaults.windFieldGustLifetimeMin;
+		settings.windFieldGustLifetimeMax = defaults.windFieldGustLifetimeMax;
+		settings.windFieldGustEdgeSoftness = defaults.windFieldGustEdgeSoftness;
+		settings.windFieldGustNoiseAmount = defaults.windFieldGustNoiseAmount;
 		break;
 	case SettingsPage::FusRoDah:
 		settings.enableFusRoDahWind = defaults.enableFusRoDahWind;
@@ -1113,10 +1227,25 @@ void CSUtility::RestoreCurrentPageDefaultSettings()
 bool CSUtility::ReapplyCurrentPageOverrideSettings()
 {
 	static constexpr std::array<std::string_view, 1> atmosphereKeys{ "skyBrightness" };
-	static constexpr std::array<std::string_view, 3> windFieldKeys{
+	static constexpr std::array<std::string_view, 18> windFieldKeys{
 		"windFieldGustScale",
 		"windFieldGustAmplitude",
-		"windFieldGustAdvectionMultiplier"
+		"windFieldGustAdvectionMultiplier",
+		"windFieldMaxActiveGusts",
+		"windFieldGustSpawnIntervalMin",
+		"windFieldGustSpawnIntervalMax",
+		"windFieldGustLengthMin",
+		"windFieldGustLengthMax",
+		"windFieldGustWidthMin",
+		"windFieldGustWidthMax",
+		"windFieldGustSpeedMin",
+		"windFieldGustSpeedMax",
+		"windFieldGustStrengthMin",
+		"windFieldGustStrengthMax",
+		"windFieldGustLifetimeMin",
+		"windFieldGustLifetimeMax",
+		"windFieldGustEdgeSoftness",
+		"windFieldGustNoiseAmount"
 	};
 	static constexpr std::array<std::string_view, 7> fusRoDahKeys{
 		"enableFusRoDahWind",

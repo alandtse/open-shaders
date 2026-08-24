@@ -2,136 +2,104 @@
 
 ## Scope
 
-The wind field is a deterministic, stateless mathematical sampler. It is
-currently an ambient weather field only; vegetation deformation and local 3D
-wind sources are not part of this contract.
+The shared wind field combines Skyrim's weather wind, CPU-authored ambient
+gust bands, procedural breakup noise, and separate transient impulses. Tree,
+grass, and leaf response remain consumers of this field rather than part of
+its generation contract.
 
-The canonical CPU implementation is in `src/Utils/WindField.h` and
+The canonical CPU sampling implementation is in `src/Utils/WindField.h` and
 `src/Utils/WindField.cpp`. The equivalent GPU implementation is
 `package/Shaders/Common/WindField.hlsli`.
 
 ## Sampling API
 
-The canonical point query is:
+The canonical point query receives the base direction and speed plus the same
+fixed gust pool that is uploaded to the GPU:
 
 ```cpp
 WindField::WindSample SampleWind(
     float3 worldPosition,
-    float gustTravelDistance,
     float3 windDirection,
     float windSpeed,
-    const WindTuning& tuning);
+    const WindTuning& tuning,
+    const std::array<AmbientGust, 8>& gusts,
+    uint32_t activeGustCount);
 ```
 
-`WindSample` contains:
+`WindSample::velocity` is local ambient air velocity and
+`WindSample::ambientGust` is normalized pressure in `[0, 1]`. Sampling is pure:
+identical explicit inputs produce identical CPU and GPU results.
 
--   `velocity`: the actual local 3D ambient air velocity in engine wind units.
--   `ambientGust`: normalized gust pressure in `[0, 1]`.
+## Gust lifecycle
 
-The sampler has no frame history, persistent state, texture dependency, GPU
-readback, or simulation step. Identical explicit inputs produce identical
-outputs on CPU and GPU.
+`State` owns a fixed eight-slot pool. It advances each active entry once per
+frame using the gust's stored direction and speed, increments age, and recycles
+expired slots without allocation:
 
-`SampleAmbientGust` is the scalar gust query. `SampleAmbientWind` returns the
-velocity portion of the same canonical sample.
+```text
+position += direction * speed * deltaTime
+age += deltaTime
+```
 
-## Gust field
+A varied spawn timer creates new bands upwind of the player. Length, width,
+speed, strength, lifetime, lateral offset, and seed are randomized within the
+configured ranges. Existing gusts retain their world-space direction when the
+weather direction changes; newly spawned gusts use the latest direction with
+only a small deviation.
 
-The gust field uses coherent XY world-space gradient noise. It projects the
-world position into along-wind and cross-wind coordinates, combines a broad
-front with a turbulent detail layer, then applies the configured contrast.
+Current, previous, and two-frames-ago pool snapshots are uploaded for temporal
+vegetation sampling. The CPU and GPU never spawn independent gusts.
 
-The normalized pressure is converted into a centered fractional deviation from
-the mean wind speed:
+## Band envelope and noise breakup
+
+Each gust is a soft ellipse in its own world-space direction basis. Length is
+the along-wind radius and width is the crosswind radius. The default ranges
+keep length approximately five times width.
+
+`SampleAmbientGustBands` sums strength-weighted envelopes and saturates the
+result so overlaps remain bounded. The existing broad/detail gradient-noise
+stack is then evaluated once in unrotated world XY and multiplied into the
+summed macro envelope. Per-gust seeds offset that breakup domain, giving each
+band distinct internal streaks and gaps without sampling noise inside the
+eight-entry loop.
+
+No world coordinate is rotated by the current weather direction, and there is
+no accumulated origin-relative travel coordinate.
+
+## Speed and strength
+
+Gust speed affects only CPU translation. Gust strength affects only the band
+pressure entering the existing amplitude response. Outside all bands,
+`ambientGust` is `0.5`, which preserves the base weather velocity:
 
 ```text
 gustDeviation = ambientGust * 2 - 1
 localSpeed = windSpeed * max(1 + gustDeviation * gustAmplitude, 0)
 ```
 
-`windSpeed` therefore remains the mean air velocity. `gustAmplitude` changes
-only the local deviation around that mean; the default `0.35` produces the
-same `0.65x` to `1.35x` range as the original formulation.
+With the default amplitude of `0.35`, a fully active band reaches `1.35x` base
+velocity without imposing the old continuous `0.65x` procedural lull.
 
-The along-wind coordinate is advected by the accumulated travel distance:
+## Transient impulses
 
-```text
-alongCoordinate = (alongWind - gustTravelDistance) / gustScale
-```
-
-The direction, seeds, PCG constants, scales, and interpolation math are kept
-equivalent between `WindField.cpp` and `WindField.hlsli`. `WindTuning` is the
-authoritative set of shared constants and seeds.
-
-## Travel phase ownership
-
-`SampleWind` remains pure. The frame-level owner is `State`, which calculates
-an explicit world-space advection speed and integrates a single non-negative
-travel distance once per frame:
-
-```cpp
-gustAdvectionSpeed =
-    selectedWindSpeed * gustAdvectionBaseSpeed * gustAdvectionMultiplier;
-gustTravelDistance += max(gustAdvectionSpeed, 0.0f) * deltaTime;
-```
-
-`gustAdvectionBaseSpeed` converts Skyrim's normalized wind magnitude into world
-units per second. `gustAdvectionMultiplier` is an independent artistic control
-for transport speed. Neither value changes the local air velocity returned by
-the sampler. A decrease in speed can reduce the next frame's advance, but
-cannot move the field backward because the accumulated distance never
-decreases.
-
-The selected speed and direction are formed outside the sampler:
-
--   Real speed/direction use the current ambient weather input.
--   The debug override speed slider supplies the speed when real speed is off.
--   The debug direction toggle selects either the weather direction or world
-    `+X`.
-
-The raw engine velocity remains available for diagnostics. The selected
-ambient velocity and accumulated travel distance are published to the GPU in
-the shared-data constant buffer.
-
-## CPU/GPU path
-
-On the CPU, `State::SampleAmbientWind(worldPosition)` queries the selected
-ambient source through the canonical C++ sampler.
-
-On the GPU, `SharedData::SampleAmbientWind(worldPosition)` reads the selected
-ambient velocity, shared tuning, and accumulated travel distance, then calls
-the HLSL counterpart.
-
-The Wind Field debug view in `DeferredCompositeCS.hlsl` displays only
-`ambientGust` using the Turbo colormap. It does not alter or encode the sample
-to make velocity visible. The Wind Field utility tab separately reports raw
-inputs, selected inputs, travel delta, accumulated distance, and CPU samples.
+Fus Ro Dah and other event impulses remain a separate additive layer.
+`State::SampleAmbientWind` and the matching shared-data HLSL helpers call the
+ambient sampler first and then add transient impulse velocity exactly as
+before. Ambient gust tuning never changes impulse lifecycle or configuration.
 
 ## Verification contract
 
-The current verification surface is the Wind Field utility tab and GPU debug
-view:
+The Wind Field utility tab reports the active band count, average band speed,
+base weather input, and CPU sample at the camera. The GPU debug view displays
+the matching normalized ambient pressure.
 
-1. Override speed `0` must produce zero travel delta and a stationary field.
-2. Higher advection multiplier must advance gust fronts faster without changing
-   sampled local velocity at a fixed gust value.
-3. Accumulated travel distance must be monotonically increasing.
-4. Disabling real direction must advect fronts along world `+X`.
-5. CPU samples and GPU samples at identical inputs must agree within the
-   configured parity tolerance.
+Required invariants are:
 
-The existing CPU parity samples in `tests/cpp/test_windfield.cpp` and
-`package/Shaders/Tests/WindFieldParitySamples.hlsli` provide fixed conformance
-inputs for the shared algorithm.
-
-## Future extension
-
-Future local sources contribute XYZ velocity after the ambient sample:
-
-```text
-finalWind = ambientWeatherWind + localWindSources
-```
-
-The ambient sampler and its `float3` velocity result must remain independent
-of vegetation-specific response logic so dragon downwash, explosions, wakes,
-and similar sources can be added without changing this contract.
+1. A band's displacement depends on elapsed time and its speed, not distance
+   from the world origin.
+2. Increasing speed does not increase pressure or vegetation response.
+3. Increasing strength does not change band translation.
+4. A weather-direction change never rotates existing world-space bands.
+5. CPU and GPU sampling use equivalent envelopes, breakup noise, and pool
+   snapshots.
+6. Transient impulses remain additive and independent.
