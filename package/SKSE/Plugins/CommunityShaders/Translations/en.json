@@ -2387,6 +2387,8 @@
     "feature.sky_sync.description": "Synchronizes volumetric lighting and shadows with the actual sun and moon positions in the sky.",
     "feature.sky_sync.dim_sunlight_under_horizon": "Dim Sunlight Under Horizon",
     "feature.sky_sync.dim_sunlight_under_horizon_tooltip": "Fade directional light to zero as the sun goes below the horizon.",
+    "feature.sky_sync.enable_sun_lens_flare": "Enable weather lens flare",
+    "feature.sky_sync.enable_sun_lens_flare_tooltip": "Show lens-flare sprites supplied by the active weather. Some weathers do not provide a lens flare, so the setting has no visible effect in those weathers.",
     "feature.sky_sync.enabled": "Enabled",
     "feature.sky_sync.enabled_tooltip": "Enable or disable Sky Sync features.",
     "feature.sky_sync.fade_volumetric_lighting": "Fade Volumetric Lighting",

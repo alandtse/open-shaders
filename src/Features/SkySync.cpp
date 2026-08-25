@@ -10,6 +10,7 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	SkySync::Settings,
 	Enabled,
 	UseAlternateSunPath,
+	EnableSunLensFlare,
 	MoonLightSource,
 	SunPath,
 	CustomAngle,
@@ -44,6 +45,11 @@ void SkySync::DrawSettings()
 	ImGui::Checkbox(T(TKEY("use_alternate_sun_path"), "Use alternate sun path"), &settings.UseAlternateSunPath);
 	if (auto _tt = Util::HoverTooltipWrapper()) {
 		ImGui::TextUnformatted(T(TKEY("use_alternate_sun_path_tooltip"), "Calculate sun position based on time of day and season instead of vanilla movement."));
+	}
+
+	ImGui::Checkbox(T(TKEY("enable_sun_lens_flare"), "Enable weather lens flare"), &settings.EnableSunLensFlare);
+	if (auto _tt = Util::HoverTooltipWrapper()) {
+		ImGui::TextUnformatted(T(TKEY("enable_sun_lens_flare_tooltip"), "Show lens-flare sprites supplied by the active weather. Some weathers do not provide a lens flare, so the setting has no visible effect in those weathers."));
 	}
 
 	if (settings.UseAlternateSunPath) {
@@ -148,6 +154,8 @@ void SkySync::DrawSettings()
 void SkySync::LoadSettings(json& o_json)
 {
 	settings = o_json;
+	if (!settings.Enabled || settings.EnableSunLensFlare)
+		RestoreWeatherLensFlares();
 	settings.MoonLightSource = std::clamp(settings.MoonLightSource, static_cast<int32_t>(MoonLightSource::Brightest), static_cast<int32_t>(MoonLightSource::Secunda));
 	settings.SunPath = std::clamp(settings.SunPath, static_cast<int32_t>(SunPath::Southern), static_cast<int32_t>(SunPath::Custom));
 	settings.CustomAngle = std::clamp(settings.CustomAngle, -90.0f, 90.0f);
@@ -164,6 +172,7 @@ void SkySync::SaveSettings(json& o_json)
 void SkySync::RestoreDefaultSettings()
 {
 	settings = {};
+	RestoreWeatherLensFlares();
 	SetSunAngle();
 }
 
@@ -207,6 +216,7 @@ void SkySync::DisableOnConflict(std::string_view conflictName)
 	// leave failedLoadedMessage unset so the cache classifier treats it as such.
 	loaded = false;
 	settings.Enabled = false;
+	RestoreWeatherLensFlares();
 	Util::SetCelestialTransitionHandlerAvailable(false);
 	logger::warn("[Sky Sync] Disabled as {} has been detected, both cannot be used together", conflictName);
 }
@@ -233,11 +243,44 @@ void SkySync::OnSkyUpdateColors(RE::Sky* sky)
 
 void SkySync::Sky_Update::thunk(RE::Sky* sky)
 {
-	func(sky);
 	auto& skySync = globals::features::skySync;
+	skySync.ApplyWeatherLensFlareSetting(sky);
+	func(sky);
 	skySync.PreparePendingTransitions();
 	if (skySync.Update(sky))
 		Util::CompleteCelestialTransition();
+}
+
+void SkySync::ApplyWeatherLensFlareSetting(const RE::Sky* sky)
+{
+	if (!sky || !loaded || !settings.Enabled || settings.EnableSunLensFlare) {
+		RestoreWeatherLensFlares();
+		return;
+	}
+
+	auto suppress = [this](RE::TESWeather* weather) {
+		if (!weather || !weather->sunGlareLensFlare)
+			return;
+
+		auto [entry, inserted] = suppressedWeatherLensFlares.try_emplace(weather, weather->sunGlareLensFlare);
+		// Preserve a replacement made by another system while this toggle is active.
+		if (!inserted)
+			entry->second = weather->sunGlareLensFlare;
+		weather->sunGlareLensFlare = nullptr;
+	};
+
+	suppress(sky->currentWeather);
+	suppress(sky->lastWeather);
+}
+
+void SkySync::RestoreWeatherLensFlares()
+{
+	for (const auto& [weather, lensFlare] : suppressedWeatherLensFlares) {
+		// Never overwrite a flare another system already restored or replaced.
+		if (weather && !weather->sunGlareLensFlare)
+			weather->sunGlareLensFlare = lensFlare;
+	}
+	suppressedWeatherLensFlares.clear();
 }
 
 void SkySync::PreparePendingTransitions()
