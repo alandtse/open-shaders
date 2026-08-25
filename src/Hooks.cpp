@@ -381,6 +381,8 @@ namespace GrassExtensions
 		static void thunk(RE::BSShader* shader, RE::BSRenderPass* pass, uint32_t renderFlags)
 		{
 			func(shader, pass, renderFlags);
+			if (globals::features::csUtility.loaded)
+				globals::features::csUtility.UpdateGrassWindSpring();
 
 			auto state = globals::state;
 

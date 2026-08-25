@@ -2,6 +2,7 @@
 
 #include "Bloom.h"
 #include "Globals.h"
+#include "GpuPass.h"
 #include "I18n/I18n.h"
 #include "LightLimitFix.h"
 #include "LinearLighting.h"
@@ -56,6 +57,8 @@ namespace
 	constexpr uint32_t kWindFieldMaxActiveGustsMax = WindField::kAmbientGustCapacity;
 	constexpr float kWindFieldGustSpawnIntervalMin = 0.25f;
 	constexpr float kWindFieldGustSpawnIntervalMax = 60.0f;
+	constexpr float kWindFieldGustSpawnDistanceMin = 0.0f;
+	constexpr float kWindFieldGustSpawnDistanceMax = 100000.0f;
 	constexpr float kWindFieldGustLengthMin = 1000.0f;
 	constexpr float kWindFieldGustLengthMax = 100000.0f;
 	constexpr float kWindFieldGustWidthMin = 256.0f;
@@ -90,14 +93,10 @@ namespace
 	constexpr float kGrassWindMaximumTiltMax = 89.0f;
 	constexpr float kGrassWindBendProfileMin = 0.0f;
 	constexpr float kGrassWindBendProfileMax = 1.0f;
-	constexpr float kGrassWindSpringLagMin = 0.0f;
-	constexpr float kGrassWindSpringLagMax = 0.5f;
-	constexpr float kGrassWindSpringRecoveryLagMin = 0.0f;
-	constexpr float kGrassWindSpringRecoveryLagMax = 5.0f;
-	constexpr float kGrassWindSpringStrengthMin = 0.0f;
-	constexpr float kGrassWindSpringStrengthMax = 1.0f;
-	constexpr float kGrassWindSpringRecoveryMin = 0.0f;
-	constexpr float kGrassWindSpringRecoveryMax = 0.5f;
+	constexpr float kGrassWindSpringFrequencyMin = 0.25f;
+	constexpr float kGrassWindSpringFrequencyMax = 8.0f;
+	constexpr float kGrassWindSpringDampingMin = 0.5f;
+	constexpr float kGrassWindSpringDampingMax = 1.5f;
 	constexpr float kGrassWindFlutterStrengthMin = 0.0f;
 	constexpr float kGrassWindFlutterStrengthMax = 2.0f;
 	constexpr float kGrassWindFlutterFrequencyMin = 0.0f;
@@ -138,6 +137,7 @@ namespace
 			a_settings.windFieldMaxActiveGusts, kWindFieldMaxActiveGustsMin, kWindFieldMaxActiveGustsMax);
 		a_settings.windFieldGustSpawnIntervalMin = ClampFiniteOrDefault(a_settings.windFieldGustSpawnIntervalMin, kWindFieldGustSpawnIntervalMin, kWindFieldGustSpawnIntervalMax, defaults.windFieldGustSpawnIntervalMin);
 		a_settings.windFieldGustSpawnIntervalMax = ClampFiniteOrDefault(a_settings.windFieldGustSpawnIntervalMax, kWindFieldGustSpawnIntervalMin, kWindFieldGustSpawnIntervalMax, defaults.windFieldGustSpawnIntervalMax);
+		a_settings.windFieldGustSpawnDistance = ClampFiniteOrDefault(a_settings.windFieldGustSpawnDistance, kWindFieldGustSpawnDistanceMin, kWindFieldGustSpawnDistanceMax, defaults.windFieldGustSpawnDistance);
 		a_settings.windFieldGustLengthMin = ClampFiniteOrDefault(a_settings.windFieldGustLengthMin, kWindFieldGustLengthMin, kWindFieldGustLengthMax, defaults.windFieldGustLengthMin);
 		a_settings.windFieldGustLengthMax = ClampFiniteOrDefault(a_settings.windFieldGustLengthMax, kWindFieldGustLengthMin, kWindFieldGustLengthMax, defaults.windFieldGustLengthMax);
 		a_settings.windFieldGustWidthMin = ClampFiniteOrDefault(a_settings.windFieldGustWidthMin, kWindFieldGustWidthMin, kWindFieldGustWidthMax, defaults.windFieldGustWidthMin);
@@ -160,10 +160,8 @@ namespace
 		a_settings.grassWindSensitivity = ClampFiniteOrDefault(a_settings.grassWindSensitivity, kGrassWindSensitivityMin, kGrassWindSensitivityMax, defaults.grassWindSensitivity);
 		a_settings.grassWindMaximumTilt = ClampFiniteOrDefault(a_settings.grassWindMaximumTilt, kGrassWindMaximumTiltMin, kGrassWindMaximumTiltMax, defaults.grassWindMaximumTilt);
 		a_settings.grassWindBendProfile = ClampFiniteOrDefault(a_settings.grassWindBendProfile, kGrassWindBendProfileMin, kGrassWindBendProfileMax, defaults.grassWindBendProfile);
-		a_settings.grassWindSpringLag = ClampFiniteOrDefault(a_settings.grassWindSpringLag, kGrassWindSpringLagMin, kGrassWindSpringLagMax, defaults.grassWindSpringLag);
-		a_settings.grassWindSpringRecoveryLag = ClampFiniteOrDefault(a_settings.grassWindSpringRecoveryLag, kGrassWindSpringRecoveryLagMin, kGrassWindSpringRecoveryLagMax, defaults.grassWindSpringRecoveryLag);
-		a_settings.grassWindSpringStrength = ClampFiniteOrDefault(a_settings.grassWindSpringStrength, kGrassWindSpringStrengthMin, kGrassWindSpringStrengthMax, defaults.grassWindSpringStrength);
-		a_settings.grassWindSpringRecovery = ClampFiniteOrDefault(a_settings.grassWindSpringRecovery, kGrassWindSpringRecoveryMin, kGrassWindSpringRecoveryMax, defaults.grassWindSpringRecovery);
+		a_settings.grassWindSpringFrequency = ClampFiniteOrDefault(a_settings.grassWindSpringFrequency, kGrassWindSpringFrequencyMin, kGrassWindSpringFrequencyMax, defaults.grassWindSpringFrequency);
+		a_settings.grassWindSpringDamping = ClampFiniteOrDefault(a_settings.grassWindSpringDamping, kGrassWindSpringDampingMin, kGrassWindSpringDampingMax, defaults.grassWindSpringDamping);
 		a_settings.grassWindFlutterStrength = ClampFiniteOrDefault(a_settings.grassWindFlutterStrength, kGrassWindFlutterStrengthMin, kGrassWindFlutterStrengthMax, defaults.grassWindFlutterStrength);
 		a_settings.grassWindFlutterFrequency = ClampFiniteOrDefault(a_settings.grassWindFlutterFrequency, kGrassWindFlutterFrequencyMin, kGrassWindFlutterFrequencyMax, defaults.grassWindFlutterFrequency);
 		a_settings.skyBrightness = ClampFiniteOrDefault(a_settings.skyBrightness, kSkyBrightnessMin, kSkyBrightnessMax, defaults.skyBrightness);
@@ -190,11 +188,8 @@ namespace
 		a_settings.grassWindSensitivity = defaults.grassWindSensitivity;
 		a_settings.grassWindMaximumTilt = defaults.grassWindMaximumTilt;
 		a_settings.grassWindBendProfile = defaults.grassWindBendProfile;
-		a_settings.grassWindUseBendTargetSpring = defaults.grassWindUseBendTargetSpring;
-		a_settings.grassWindSpringLag = defaults.grassWindSpringLag;
-		a_settings.grassWindSpringRecoveryLag = defaults.grassWindSpringRecoveryLag;
-		a_settings.grassWindSpringStrength = defaults.grassWindSpringStrength;
-		a_settings.grassWindSpringRecovery = defaults.grassWindSpringRecovery;
+		a_settings.grassWindSpringFrequency = defaults.grassWindSpringFrequency;
+		a_settings.grassWindSpringDamping = defaults.grassWindSpringDamping;
 		a_settings.grassWindFlutterStrength = defaults.grassWindFlutterStrength;
 		a_settings.grassWindFlutterFrequency = defaults.grassWindFlutterFrequency;
 	}
@@ -312,6 +307,7 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	windFieldMaxActiveGusts,
 	windFieldGustSpawnIntervalMin,
 	windFieldGustSpawnIntervalMax,
+	windFieldGustSpawnDistance,
 	windFieldGustLengthMin,
 	windFieldGustLengthMax,
 	windFieldGustWidthMin,
@@ -336,11 +332,8 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	grassWindSensitivity,
 	grassWindMaximumTilt,
 	grassWindBendProfile,
-	grassWindUseBendTargetSpring,
-	grassWindSpringLag,
-	grassWindSpringRecoveryLag,
-	grassWindSpringStrength,
-	grassWindSpringRecovery,
+	grassWindSpringFrequency,
+	grassWindSpringDamping,
 	grassWindFlutterStrength,
 	grassWindFlutterFrequency,
 	skyBrightness,
@@ -379,7 +372,7 @@ void CSUtility::DrawSettings()
 				"Use the current weather wind direction for the displayed field; otherwise use hardcoded world-space +X."));
 		}
 		ImGui::SeparatorText(T(TKEY("wind_field_live_values"), "Wind Field Live Values"));
-		const auto* state = globals::state;
+		auto* const state = globals::state;
 		const auto* sky = globals::game::sky;
 		const auto* weather = sky ? sky->currentWeather : nullptr;
 		const float ambientDirectionLength = std::hypot(state->ambientWindVelocity.x, state->ambientWindVelocity.y);
@@ -463,6 +456,12 @@ void CSUtility::DrawSettings()
 			ImGui::SliderFloat(T(TKEY("wind_field_spawn_interval_max"), "Spawn Interval Max"),
 				&settings.windFieldGustSpawnIntervalMax, kWindFieldGustSpawnIntervalMin,
 				kWindFieldGustSpawnIntervalMax, "%.2f s", ImGuiSliderFlags_AlwaysClamp);
+			ImGui::SliderFloat(T(TKEY("wind_field_gust_spawn_distance"), "Gust Spawn Distance"),
+				&settings.windFieldGustSpawnDistance, kWindFieldGustSpawnDistanceMin,
+				kWindFieldGustSpawnDistanceMax, "%.0f units", ImGuiSliderFlags_AlwaysClamp);
+			if (auto _tt = Util::HoverTooltipWrapper())
+				ImGui::TextUnformatted(T(TKEY("wind_field_gust_spawn_distance_tooltip"),
+					"Sets the upwind distance from the player to the center of each newly spawned gust."));
 			ImGui::SliderFloat(T(TKEY("wind_field_gust_length_min"), "Gust Length Min"),
 				&settings.windFieldGustLengthMin, kWindFieldGustLengthMin, kWindFieldGustLengthMax, "%.0f units",
 				ImGuiSliderFlags_AlwaysClamp | ImGuiSliderFlags_Logarithmic);
@@ -670,38 +669,28 @@ void CSUtility::DrawSettings()
 				kGrassWindBendProfileMin, kGrassWindBendProfileMax, "%.2f", ImGuiSliderFlags_AlwaysClamp);
 			if (auto _tt = Util::HoverTooltipWrapper())
 				ImGui::TextUnformatted(T(TKEY("grass_wind_bend_profile_tooltip"), "Zero leans the whole blade uniformly; one concentrates bending toward the tip."));
-			ImGui::SeparatorText(T(TKEY("grass_wind_spring"), "Spring / Recovery"));
-			ImGui::Checkbox(T(TKEY("grass_wind_bend_target_spring"), "Spring Bend Target"), &settings.grassWindUseBendTargetSpring);
+			ImGui::SeparatorText(T(TKEY("grass_wind_spring"), "Physical Spring"));
+			ImGui::SliderFloat(T(TKEY("grass_wind_spring_frequency"), "Natural Frequency"),
+				&settings.grassWindSpringFrequency, kGrassWindSpringFrequencyMin,
+				kGrassWindSpringFrequencyMax, "%.2f Hz", ImGuiSliderFlags_AlwaysClamp);
 			if (auto _tt = Util::HoverTooltipWrapper())
-				ImGui::TextUnformatted(T(TKEY("grass_wind_bend_target_spring_tooltip"), "Enabled applies spring response to the desired bend angle; disabled applies it to sampled wind velocity."));
-			ImGui::SliderFloat(T(TKEY("grass_wind_spring_lag"), "Response Lag"), &settings.grassWindSpringLag,
-				kGrassWindSpringLagMin, kGrassWindSpringLagMax, "%.2f s", ImGuiSliderFlags_AlwaysClamp);
+				ImGui::TextUnformatted(T(TKEY("grass_wind_spring_frequency_tooltip"),
+					"Controls how quickly blades react and rebound. Lower values feel heavier; higher values feel stiffer."));
+			ImGui::SliderFloat(T(TKEY("grass_wind_spring_damping"), "Damping Ratio"),
+				&settings.grassWindSpringDamping, kGrassWindSpringDampingMin,
+				kGrassWindSpringDampingMax, "%.2f", ImGuiSliderFlags_AlwaysClamp);
 			if (auto _tt = Util::HoverTooltipWrapper())
-				ImGui::TextUnformatted(T(TKEY("grass_wind_spring_lag_tooltip"),
-					"Delays grass response to changes in the shared wind field."));
-			ImGui::SliderFloat(T(TKEY("grass_wind_spring_recovery_lag"), "Recovery Lag"),
-				&settings.grassWindSpringRecoveryLag, kGrassWindSpringRecoveryLagMin,
-				kGrassWindSpringRecoveryLagMax, "%.2f s", ImGuiSliderFlags_AlwaysClamp);
-			if (auto _tt = Util::HoverTooltipWrapper())
-				ImGui::TextUnformatted(T(TKEY("grass_wind_spring_recovery_lag_tooltip"),
-					"Adds extra lag only while the sampled bend is weakening. Higher values make grass settle more slowly."));
-			ImGui::SliderFloat(T(TKEY("grass_wind_spring_strength"), "Inertia"), &settings.grassWindSpringStrength,
-				kGrassWindSpringStrengthMin, kGrassWindSpringStrengthMax, "%.2f", ImGuiSliderFlags_AlwaysClamp);
-			if (auto _tt = Util::HoverTooltipWrapper())
-				ImGui::TextUnformatted(T(TKEY("grass_wind_spring_strength_tooltip"), "Controls how strongly grass follows the delayed gust response."));
-			ImGui::SliderFloat(T(TKEY("grass_wind_spring_recovery"), "Recovery Overshoot"), &settings.grassWindSpringRecovery,
-				kGrassWindSpringRecoveryMin, kGrassWindSpringRecoveryMax, "%.2f", ImGuiSliderFlags_AlwaysClamp);
-			if (auto _tt = Util::HoverTooltipWrapper())
-				ImGui::TextUnformatted(T(TKEY("grass_wind_spring_recovery_tooltip"), "Adds a small opposite bend as grass recovers after a gust passes."));
+				ImGui::TextUnformatted(T(TKEY("grass_wind_spring_damping_tooltip"),
+					"Below one allows a natural rebound; one is critically damped; above one settles without overshoot."));
 			ImGui::SeparatorText(T(TKEY("grass_wind_flutter"), "Flutter"));
 			ImGui::SliderFloat(T(TKEY("grass_wind_flutter_strength"), "Flutter Strength"), &settings.grassWindFlutterStrength,
 				kGrassWindFlutterStrengthMin, kGrassWindFlutterStrengthMax, "%.2f", ImGuiSliderFlags_AlwaysClamp);
 			if (auto _tt = Util::HoverTooltipWrapper())
-				ImGui::TextUnformatted(T(TKEY("grass_wind_flutter_strength_tooltip"), "Scales Skyrim's vanilla grass motion before the ambient bend is applied; one matches vanilla intensity."));
-			ImGui::SliderFloat(T(TKEY("grass_wind_flutter_frequency"), "Maximum Flutter Frequency"), &settings.grassWindFlutterFrequency,
+				ImGui::TextUnformatted(T(TKEY("grass_wind_flutter_strength_tooltip"), "Scales the inexpensive per-blade modulation applied to the ambient bend."));
+			ImGui::SliderFloat(T(TKEY("grass_wind_flutter_frequency"), "Flutter Frequency"), &settings.grassWindFlutterFrequency,
 				kGrassWindFlutterFrequencyMin, kGrassWindFlutterFrequencyMax, "%.2fx", ImGuiSliderFlags_AlwaysClamp);
 			if (auto _tt = Util::HoverTooltipWrapper())
-				ImGui::TextUnformatted(T(TKEY("grass_wind_flutter_frequency_tooltip"), "Caps automatic flutter frequency: it rises from 1x at zero wind to this value at maximum wind."));
+				ImGui::TextUnformatted(T(TKEY("grass_wind_flutter_frequency_tooltip"), "Controls how quickly the ambient bend oscillates independently for each grass blade."));
 			ImGui::EndDisabled();
 			ImGui::EndTabItem();
 		}
@@ -1127,6 +1116,14 @@ void CSUtility::LoadSettings(json& o_json)
 {
 	const Settings defaults{};
 	settings = o_json;
+	if (!o_json.contains("grassWindSpringFrequency") && o_json.contains("grassWindSpringLag") &&
+		o_json["grassWindSpringLag"].is_number()) {
+		const float legacyLag = std::max(o_json["grassWindSpringLag"].get<float>(), 0.01f);
+		settings.grassWindSpringFrequency = std::clamp(
+			0.25f / legacyLag, kGrassWindSpringFrequencyMin, kGrassWindSpringFrequencyMax);
+	}
+	if (!o_json.contains("grassWindSpringDamping"))
+		settings.grassWindSpringDamping = defaults.grassWindSpringDamping;
 	if (!o_json.contains("treeWindUpperBendRange") && o_json.contains("treeWindFullBendHeight") &&
 		o_json["treeWindFullBendHeight"].is_number())
 		settings.treeWindUpperBendRange = o_json["treeWindFullBendHeight"].get<float>();
@@ -1163,6 +1160,7 @@ void CSUtility::RestoreCurrentPageDefaultSettings()
 		settings.windFieldMaxActiveGusts = defaults.windFieldMaxActiveGusts;
 		settings.windFieldGustSpawnIntervalMin = defaults.windFieldGustSpawnIntervalMin;
 		settings.windFieldGustSpawnIntervalMax = defaults.windFieldGustSpawnIntervalMax;
+		settings.windFieldGustSpawnDistance = defaults.windFieldGustSpawnDistance;
 		settings.windFieldGustLengthMin = defaults.windFieldGustLengthMin;
 		settings.windFieldGustLengthMax = defaults.windFieldGustLengthMax;
 		settings.windFieldGustWidthMin = defaults.windFieldGustWidthMin;
@@ -1227,13 +1225,14 @@ void CSUtility::RestoreCurrentPageDefaultSettings()
 bool CSUtility::ReapplyCurrentPageOverrideSettings()
 {
 	static constexpr std::array<std::string_view, 1> atmosphereKeys{ "skyBrightness" };
-	static constexpr std::array<std::string_view, 18> windFieldKeys{
+	static constexpr std::array<std::string_view, 19> windFieldKeys{
 		"windFieldGustScale",
 		"windFieldGustAmplitude",
 		"windFieldGustAdvectionMultiplier",
 		"windFieldMaxActiveGusts",
 		"windFieldGustSpawnIntervalMin",
 		"windFieldGustSpawnIntervalMax",
+		"windFieldGustSpawnDistance",
 		"windFieldGustLengthMin",
 		"windFieldGustLengthMax",
 		"windFieldGustWidthMin",
@@ -1307,6 +1306,174 @@ bool CSUtility::ReapplyCurrentPageOverrideSettings()
 void CSUtility::SetupResources()
 {
 	vanillaPointLightCB = new ConstantBuffer(ConstantBufferDesc<VanillaPointLightData>(), "OSUtility::VanillaPointLightData");
+	grassWindSpringCB = new ConstantBuffer(
+		ConstantBufferDesc<GrassWindSpringData>(), "OSUtility::GrassWindSpringData");
+
+	D3D11_TEXTURE2D_DESC textureDesc{
+		.Width = kGrassWindSpringTextureSize,
+		.Height = kGrassWindSpringTextureSize,
+		.MipLevels = 1,
+		.ArraySize = 1,
+		.Format = DXGI_FORMAT_R16G16B16A16_FLOAT,
+		.SampleDesc = { .Count = 1 },
+		.Usage = D3D11_USAGE_DEFAULT,
+		.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS
+	};
+	D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc{
+		.Format = textureDesc.Format,
+		.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D,
+		.Texture2D = { .MostDetailedMip = 0, .MipLevels = 1 }
+	};
+	D3D11_UNORDERED_ACCESS_VIEW_DESC uavDesc{
+		.Format = textureDesc.Format,
+		.ViewDimension = D3D11_UAV_DIMENSION_TEXTURE2D,
+		.Texture2D = { .MipSlice = 0 }
+	};
+	const float clearValue[4]{};
+	for (uint32_t textureIndex = 0; textureIndex < 2; ++textureIndex) {
+		const std::string responseName = std::format("OSUtility::GrassWindSpringResponse{}", textureIndex);
+		grassWindSpringResponseTextures[textureIndex] = new Texture2D(textureDesc, responseName.c_str());
+		grassWindSpringResponseTextures[textureIndex]->CreateSRV(srvDesc);
+		grassWindSpringResponseTextures[textureIndex]->CreateUAV(uavDesc);
+		globals::d3d::context->ClearUnorderedAccessViewFloat(
+			grassWindSpringResponseTextures[textureIndex]->uav.get(), clearValue);
+
+		const std::string velocityName = std::format("OSUtility::GrassWindSpringVelocity{}", textureIndex);
+		grassWindSpringVelocityTextures[textureIndex] = new Texture2D(textureDesc, velocityName.c_str());
+		grassWindSpringVelocityTextures[textureIndex]->CreateSRV(srvDesc);
+		grassWindSpringVelocityTextures[textureIndex]->CreateUAV(uavDesc);
+		globals::d3d::context->ClearUnorderedAccessViewFloat(
+			grassWindSpringVelocityTextures[textureIndex]->uav.get(), clearValue);
+	}
+
+	D3D11_SAMPLER_DESC samplerDesc{};
+	samplerDesc.Filter = D3D11_FILTER_MIN_MAG_MIP_LINEAR;
+	samplerDesc.AddressU = D3D11_TEXTURE_ADDRESS_CLAMP;
+	samplerDesc.AddressV = D3D11_TEXTURE_ADDRESS_CLAMP;
+	samplerDesc.AddressW = D3D11_TEXTURE_ADDRESS_CLAMP;
+	samplerDesc.MaxLOD = D3D11_FLOAT32_MAX;
+	DX::ThrowIfFailed(globals::d3d::device->CreateSamplerState(&samplerDesc, grassWindSpringSampler.put()));
+	Util::SetResourceName(grassWindSpringSampler.get(), "OSUtility::GrassWindSpringSampler");
+}
+
+void CSUtility::ClearShaderCache()
+{
+	grassWindSpringCS.Reset();
+}
+
+void CSUtility::UpdateGrassWindSpring()
+{
+	if (!grassWindSpringCB || !grassWindSpringResponseTextures[0] || !grassWindSpringResponseTextures[1] ||
+		!grassWindSpringVelocityTextures[0] || !grassWindSpringVelocityTextures[1])
+		return;
+
+	static Util::FrameChecker frameChecker;
+	auto* context = globals::d3d::context;
+	if (frameChecker.IsNewFrame()) {
+		Settings sanitizedSettings = settings;
+		SanitizeSettings(sanitizedSettings);
+		const float cellSize = kGrassWindSpringWorldSize / static_cast<float>(kGrassWindSpringTextureSize);
+		RE::NiPoint3 center{};
+		if (globals::game::player)
+			center = globals::game::player->GetPosition();
+		const float2 snappedCenter{
+			std::floor(center.x / cellSize) * cellSize,
+			std::floor(center.y / cellSize) * cellSize
+		};
+		const float fieldHalfSize = kGrassWindSpringWorldSize * 0.5f;
+		const float2 nextFieldMinimum{
+			snappedCenter.x - fieldHalfSize,
+			snappedCenter.y - fieldHalfSize
+		};
+		previousGrassWindSpringFieldMinimum = grassWindSpringInitialized ?
+		                                          grassWindSpringFieldMinimum :
+		                                          nextFieldMinimum;
+		grassWindSpringFieldMinimum = nextFieldMinimum;
+
+		GrassWindSpringData data{};
+		data.fieldMinimum = grassWindSpringFieldMinimum;
+		data.previousFieldMinimum = previousGrassWindSpringFieldMinimum;
+		data.fieldHeight = center.z;
+		data.frameTime = std::clamp(globals::state->windFieldFrameTime, 0.0f, 0.25f);
+		data.responseRadians = DirectX::XMConvertToRadians(sanitizedSettings.grassWindResponse);
+		data.maximumTiltRadians = DirectX::XMConvertToRadians(sanitizedSettings.grassWindMaximumTilt);
+		data.sensitivity = sanitizedSettings.grassWindSensitivity;
+		data.springFrequency = sanitizedSettings.grassWindSpringFrequency;
+		data.springDamping = sanitizedSettings.grassWindSpringDamping;
+		data.initialize = grassWindSpringInitialized ? 0u : 1u;
+		grassWindSpringCB->Update(data);
+
+		ID3D11ShaderResourceView* nullVertexSrvs[2]{};
+		context->VSSetShaderResources(105, ARRAYSIZE(nullVertexSrvs), nullVertexSrvs);
+		const uint32_t outputTextureIndex = grassWindSpringTextureIndex ^ 1u;
+		ID3D11Buffer* constantBuffers[]{ grassWindSpringCB->CB(), globals::state->sharedDataCB->CB() };
+		context->CSSetConstantBuffers(0, 1, constantBuffers);
+		context->CSSetConstantBuffers(5, 1, constantBuffers + 1);
+		ID3D11ShaderResourceView* srvs[]{
+			grassWindSpringResponseTextures[grassWindSpringTextureIndex]->srv.get(),
+			grassWindSpringVelocityTextures[grassWindSpringTextureIndex]->srv.get()
+		};
+		context->CSSetShaderResources(0, ARRAYSIZE(srvs), srvs);
+		ID3D11UnorderedAccessView* uavs[]{
+			grassWindSpringResponseTextures[outputTextureIndex]->uav.get(),
+			grassWindSpringVelocityTextures[outputTextureIndex]->uav.get()
+		};
+		context->CSSetUnorderedAccessViews(0, ARRAYSIZE(uavs), uavs, nullptr);
+
+		grassWindSpringFieldAvailable = false;
+		if (sanitizedSettings.enableAmbientGrassWind) {
+			auto* shader = grassWindSpringCS.Get(
+				L"Data\\Shaders\\GrassWindSpringCS.hlsl", {}, "cs_5_0", "main",
+				"OSUtility::GrassWindSpringCS");
+			if (shader) {
+				context->CSSetShader(shader, nullptr, 0);
+				CS_GPU_PASS("OSUtility::GrassWindSpringUpdate");
+				context->Dispatch(kGrassWindSpringTextureSize / 8, kGrassWindSpringTextureSize / 8, 1);
+				grassWindSpringTextureIndex = outputTextureIndex;
+				grassWindSpringFieldAvailable = true;
+				if (!grassWindSpringInitialized) {
+					ID3D11ShaderResourceView* nullSrvs[2]{};
+					context->CSSetShaderResources(0, ARRAYSIZE(nullSrvs), nullSrvs);
+					ID3D11UnorderedAccessView* nullUavs[2]{};
+					context->CSSetUnorderedAccessViews(0, ARRAYSIZE(nullUavs), nullUavs, nullptr);
+					const uint32_t previousTextureIndex = grassWindSpringTextureIndex ^ 1u;
+					context->CopyResource(
+						grassWindSpringResponseTextures[previousTextureIndex]->resource.get(),
+						grassWindSpringResponseTextures[grassWindSpringTextureIndex]->resource.get());
+					context->CopyResource(
+						grassWindSpringVelocityTextures[previousTextureIndex]->resource.get(),
+						grassWindSpringVelocityTextures[grassWindSpringTextureIndex]->resource.get());
+				}
+				grassWindSpringInitialized = true;
+			}
+		}
+		if (!grassWindSpringFieldAvailable)
+			grassWindSpringInitialized = false;
+
+		context->CSSetShader(nullptr, nullptr, 0);
+		ID3D11Buffer* nullBuffer = nullptr;
+		context->CSSetConstantBuffers(0, 1, &nullBuffer);
+		context->CSSetConstantBuffers(5, 1, &nullBuffer);
+		ID3D11ShaderResourceView* nullSrvs[2]{};
+		context->CSSetShaderResources(0, ARRAYSIZE(nullSrvs), nullSrvs);
+		ID3D11UnorderedAccessView* nullUavs[2]{};
+		context->CSSetUnorderedAccessViews(0, ARRAYSIZE(nullUavs), nullUavs, nullptr);
+
+		data.initialize = 0u;
+		data.fieldAvailable = grassWindSpringFieldAvailable ? 1u : 0u;
+		grassWindSpringCB->Update(data);
+	}
+
+	ID3D11Buffer* springBuffer = grassWindSpringCB->CB();
+	context->VSSetConstantBuffers(9, 1, &springBuffer);
+	const uint32_t previousTextureIndex = grassWindSpringTextureIndex ^ 1u;
+	ID3D11ShaderResourceView* springSrvs[]{
+		grassWindSpringResponseTextures[grassWindSpringTextureIndex]->srv.get(),
+		grassWindSpringResponseTextures[previousTextureIndex]->srv.get()
+	};
+	context->VSSetShaderResources(105, ARRAYSIZE(springSrvs), springSrvs);
+	ID3D11SamplerState* samplers[]{ grassWindSpringSampler.get() };
+	context->VSSetSamplers(14, ARRAYSIZE(samplers), samplers);
 }
 
 CSUtility::PerFrameData CSUtility::GetCommonBufferData() const

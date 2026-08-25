@@ -11,9 +11,11 @@
 #include <iterator>
 #include <mutex>
 #include <nlohmann/json.hpp>
+#include <optional>
 
 using json = nlohmann::json;
 
+#include "GpuPass.h"
 #include <FeatureBuffer.h>
 
 #include "Utils/TransientWindImpulse.h"
@@ -78,10 +80,8 @@ public:
 	WindField::WindTuning windFieldTuning{};
 	std::array<WindField::AmbientGust, WindField::kAmbientGustCapacity> ambientGusts{};
 	std::array<WindField::AmbientGust, WindField::kAmbientGustCapacity> previousAmbientGusts{};
-	std::array<WindField::AmbientGust, WindField::kAmbientGustCapacity> twoFramesAgoAmbientGusts{};
 	uint32_t activeAmbientGustCount = 0;
 	uint32_t previousActiveAmbientGustCount = 0;
-	uint32_t twoFramesAgoActiveAmbientGustCount = 0;
 	float2 trunkWindVector = {};
 	float2 previousTrunkWindVector = {};
 	double smoothDrawCalls[RE::BSShader::Type::Total + 1];
@@ -95,6 +95,7 @@ public:
 	LARGE_INTEGER frameTimingFrequency;
 	LARGE_INTEGER frameStartTime;
 	bool frameTimingActive = false;
+	std::optional<ScopedGpuPass> grassGpuPass;
 
 	enum ConfigMode
 	{
@@ -106,6 +107,8 @@ public:
 
 	/** @brief Per-draw-call hook: updates feature state, constant buffers, and overlay. */
 	void Draw();
+	/** @brief Keeps one GPU timer open across each contiguous batch of Grass draw calls. */
+	void UpdateGrassGpuPass();
 	/** @brief Accumulates per-shader-type draw call counts and frame timing for the performance overlay. */
 	void Debug();
 	/** @brief Per-frame reset: advances timer, caches menu state, resets descriptors and frame counters. */
@@ -457,13 +460,11 @@ public:
 		float GrassWindMaximumTilt;
 
 		float GrassWindBendProfile;
-		float GrassWindSpringLag;
-		float GrassWindSpringStrength;
-		float GrassWindSpringRecovery;
+		float3 GrassWindPadding0;
 
 		float GrassWindFlutterStrength;
 		float GrassWindFlutterFrequency;
-		uint GrassWindUseBendTargetSpring;
+		uint GrassWindPadding2;
 		float GrassWindSensitivity;
 
 		float TreeWindBoundsBase;
@@ -471,8 +472,7 @@ public:
 		float TreeWindTrunkGustInfluence;
 		float TreeLeafGustInfluence;
 
-		float GrassWindSpringRecoveryLag;
-		float3 GrassWindPadding1;
+		float4 GrassWindPadding1;
 
 		bool operator==(const PermutationCB& other) const
 		{
@@ -498,22 +498,17 @@ public:
 			       GrassWindSensitivity == other.GrassWindSensitivity &&
 			       GrassWindMaximumTilt == other.GrassWindMaximumTilt &&
 			       GrassWindBendProfile == other.GrassWindBendProfile &&
-			       GrassWindSpringLag == other.GrassWindSpringLag &&
-			       GrassWindSpringStrength == other.GrassWindSpringStrength &&
-			       GrassWindSpringRecovery == other.GrassWindSpringRecovery &&
 			       GrassWindFlutterStrength == other.GrassWindFlutterStrength &&
 			       GrassWindFlutterFrequency == other.GrassWindFlutterFrequency &&
-			       GrassWindUseBendTargetSpring == other.GrassWindUseBendTargetSpring &&
 			       TreeWindBoundsBase == other.TreeWindBoundsBase &&
 			       TreeWindBoundsHeight == other.TreeWindBoundsHeight &&
 			       TreeWindTrunkGustInfluence == other.TreeWindTrunkGustInfluence &&
-			       TreeLeafGustInfluence == other.TreeLeafGustInfluence &&
-			       GrassWindSpringRecoveryLag == other.GrassWindSpringRecoveryLag;
+			       TreeLeafGustInfluence == other.TreeLeafGustInfluence;
 		}
 	};
 	static_assert(offsetof(PermutationCB, EnableAmbientGrassWind) == 100);
 	static_assert(offsetof(PermutationCB, GrassWindFlutterStrength) == 128);
-	static_assert(offsetof(PermutationCB, GrassWindSpringRecoveryLag) == 160);
+	static_assert(offsetof(PermutationCB, GrassWindPadding1) == 160);
 	STATIC_ASSERT_ALIGNAS_16(PermutationCB);
 
 	ConstantBuffer* permutationCB = nullptr;
@@ -555,13 +550,11 @@ public:
 		float4 WindFieldAmbient;  // xyz: instantaneous mean weather velocity
 		float4 WindFieldPreviousAmbient;
 		float4 WindFieldTwoFramesAgoAmbient;
-		std::array<uint32_t, 4> WindFieldAmbientGustCounts;
+		std::array<uint32_t, 4> WindFieldActiveCounts;
 		std::array<WindField::AmbientGust, WindField::kAmbientGustCapacity> WindFieldAmbientGusts;
 		std::array<WindField::AmbientGust, WindField::kAmbientGustCapacity> WindFieldPreviousAmbientGusts;
-		std::array<WindField::AmbientGust, WindField::kAmbientGustCapacity> WindFieldTwoFramesAgoAmbientGusts;
 		std::array<WindField::TransientImpulse, WindField::kTransientImpulseCapacity> WindFieldTransientImpulses;
 		std::array<WindField::TransientImpulse, WindField::kTransientImpulseCapacity> WindFieldPreviousTransientImpulses;
-		std::array<WindField::TransientImpulse, WindField::kTransientImpulseCapacity> WindFieldTwoFramesAgoTransientImpulses;
 	};
 	STATIC_ASSERT_ALIGNAS_16(SharedDataCB);
 	// Each float4 cbuffer field must start on a 16-byte boundary to match the HLSL SharedData
@@ -575,13 +568,11 @@ public:
 	static_assert(offsetof(SharedDataCB, WindFieldAmbient) % 16 == 0);
 	static_assert(offsetof(SharedDataCB, WindFieldPreviousAmbient) % 16 == 0);
 	static_assert(offsetof(SharedDataCB, WindFieldTwoFramesAgoAmbient) % 16 == 0);
-	static_assert(offsetof(SharedDataCB, WindFieldAmbientGustCounts) % 16 == 0);
+	static_assert(offsetof(SharedDataCB, WindFieldActiveCounts) % 16 == 0);
 	static_assert(offsetof(SharedDataCB, WindFieldAmbientGusts) % 16 == 0);
 	static_assert(offsetof(SharedDataCB, WindFieldPreviousAmbientGusts) % 16 == 0);
-	static_assert(offsetof(SharedDataCB, WindFieldTwoFramesAgoAmbientGusts) % 16 == 0);
 	static_assert(offsetof(SharedDataCB, WindFieldTransientImpulses) % 16 == 0);
 	static_assert(offsetof(SharedDataCB, WindFieldPreviousTransientImpulses) % 16 == 0);
-	static_assert(offsetof(SharedDataCB, WindFieldTwoFramesAgoTransientImpulses) % 16 == 0);
 
 	ConstantBuffer* sharedDataCB = nullptr;
 	ConstantBuffer* featureDataCB = nullptr;
@@ -686,7 +677,8 @@ private:
 	uint32_t ambientGustRandomState = 0xA341316Cu;
 	std::array<WindField::TransientImpulse, WindField::kTransientImpulseCapacity> transientWindImpulses{};
 	std::array<WindField::TransientImpulse, WindField::kTransientImpulseCapacity> previousTransientWindImpulses{};
-	std::array<WindField::TransientImpulse, WindField::kTransientImpulseCapacity> twoFramesAgoTransientWindImpulses{};
+	uint32_t activeTransientWindImpulseCount = 0;
+	uint32_t previousActiveTransientWindImpulseCount = 0;
 	std::vector<WindField::TransientImpulse> pendingTransientWindImpulses;
 	std::mutex transientWindImpulseMutex;
 	std::shared_ptr<REX::W32::ID3DUserDefinedAnnotation> pPerf;

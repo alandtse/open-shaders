@@ -45,6 +45,7 @@ struct GrassCollisionActorCandidate
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	GrassCollision::Settings,
 	EnableGrassCollision,
+	EnableActorMovementGate,
 	TrackRagdolls,
 	CollisionRadiusScale,
 	GrassInteractionRadius,
@@ -60,6 +61,11 @@ void GrassCollision::DrawSettings()
 {
 	if (ImGui::TreeNodeEx(T(TKEY("grass_collision"), "Grass Collision"), ImGuiTreeNodeFlags_DefaultOpen)) {
 		ImGui::Checkbox(T(TKEY("enable"), "Enable Grass Collision"), (bool*)&settings.EnableGrassCollision);
+		ImGui::Checkbox(T(TKEY("actor_movement_gate"), "Actor Movement Response Gate"),
+			(bool*)&settings.EnableActorMovementGate);
+		if (auto _tt = Util::HoverTooltipWrapper())
+			ImGui::TextUnformatted(T(TKEY("actor_movement_gate_tooltip"),
+				"A/B test: scales collision response from actor-root movement. Disable for capsule/contact-only response."));
 		ImGui::SliderFloat(T(TKEY("radius_scale"), "Collision Radius Scale"), &settings.CollisionRadiusScale,
 			MIN_COLLISION_RADIUS_SCALE, MAX_COLLISION_RADIUS_SCALE, "%.2fx", ImGuiSliderFlags_AlwaysClamp);
 		ImGui::SliderFloat(T(TKEY("grass_interaction_radius"), "Grass Interaction Radius"),
@@ -101,6 +107,8 @@ void GrassCollision::QueueCollisions()
 {
 	if (!settings.EnableGrassCollision)
 		return;
+	if (!settings.EnableActorMovementGate)
+		actorPositionHistory.clear();
 	const float collisionRadiusScale = std::clamp(settings.CollisionRadiusScale,
 		MIN_COLLISION_RADIUS_SCALE, MAX_COLLISION_RADIUS_SCALE);
 	const float grassInteractionRadius = std::clamp(settings.GrassInteractionRadius,
@@ -177,7 +185,7 @@ void GrassCollision::QueueCollisions()
 			const auto actorPosition3D = actor->GetPosition();
 			const float2 actorPosition{ actorPosition3D.x, actorPosition3D.y };
 			const auto actorPositionIt = actorPositionHistory.find(actorID);
-			const float2 actorMovement = actorPositionIt != actorPositionHistory.end() ?
+			const float2 actorMovement = settings.EnableActorMovementGate && actorPositionIt != actorPositionHistory.end() ?
 			                                 actorPosition - actorPositionIt->second :
 			                                 float2{};
 			std::vector<CapsuleHistory> newHistory;
@@ -238,7 +246,8 @@ void GrassCollision::QueueCollisions()
 			if (boundingBox.IndexStart != boundingBox.IndexEnd) {
 				activeActors.insert(actorID);
 				actorCollisionHistory[actorID] = std::move(newHistory);
-				actorPositionHistory[actorID] = actorPosition;
+				if (settings.EnableActorMovementGate)
+					actorPositionHistory[actorID] = actorPosition;
 				boundingBoxData.push_back(boundingBox);
 				collisionIndexExtent = boundingBox.IndexEnd;
 				if (boundingBoxData.size() == MAX_BOUNDING_BOXES)
@@ -308,6 +317,7 @@ void GrassCollision::Update()
 			MIN_MAXIMUM_COMPRESSION, MAX_MAXIMUM_COMPRESSION);
 		perFrameData.CompressionRecovery = std::clamp(settings.CompressionRecovery,
 			MIN_COMPRESSION_RECOVERY, MAX_COMPRESSION_RECOVERY);
+		perFrameData.ActorMovementGate = settings.EnableActorMovementGate;
 
 		perFrameData.BoundingBoxCount = std::min((uint)queuedBoundingBoxes.size(), MAX_BOUNDING_BOXES);
 

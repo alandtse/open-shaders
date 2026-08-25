@@ -713,6 +713,8 @@
     "feature.foliage_lighting.key_feature_3": "Independent grass scattering toggle",
     "feature.foliage_lighting.name": "Foliage Lighting",
     "feature.grass_collision.description": "Enables dynamic grass interactions where grass bends and moves in response to actors walking through it, creating more immersive environmental reactions.",
+    "feature.grass_collision.actor_movement_gate": "Actor Movement Response Gate",
+    "feature.grass_collision.actor_movement_gate_tooltip": "A/B test: scales collision response from actor-root movement. Disable for capsule/contact-only response.",
     "feature.grass_collision.enable": "Enable Grass Collision",
     "feature.grass_collision.grass_collision": "Grass Collision",
     "feature.grass_collision.key_feature_1": "Real-time grass deformation from actor movement",

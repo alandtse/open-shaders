@@ -3,7 +3,9 @@
 
 namespace WindField
 {
-	static const uint TransientImpulseCapacity = 4u;
+	// Keep this mirrored with WindField::kTransientImpulseCapacity; use spatial indexing or
+	// a rasterized shared field if source counts make per-sample scans expensive.
+	static const uint TransientImpulseCapacity = 24u;
 
 	struct TransientImpulse
 	{

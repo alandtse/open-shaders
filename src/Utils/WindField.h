@@ -57,7 +57,7 @@ namespace WindField
 		float gustLifetimeMin{ 90.0f };
 		float gustLifetimeMax{ 140.0f };
 		float gustAdvectionMultiplier{ 1.0f };
-		float gustDirectionVariation{ 0.08f };
+		float gustSpawnDistance{ 24000.0f };
 		float padding[2]{};
 	};
 	static_assert(sizeof(WindTuning) == 128);

@@ -5,7 +5,9 @@
 
 namespace WindField
 {
-	inline constexpr std::size_t kTransientImpulseCapacity = 4;
+	// Future optimization: if CPU or GPU wind consumers grow beyond this bounded source scan,
+	// add spatial indexing or rasterize the shared sources into a wind field before sampling.
+	inline constexpr std::size_t kTransientImpulseCapacity = 24;
 	inline constexpr float kTransientImpulseMaximumDecayTime = 5.0f;
 
 	/** @brief A directional pressure wave traveling through the shared 3D wind field. */

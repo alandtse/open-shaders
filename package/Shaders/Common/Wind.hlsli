@@ -92,69 +92,15 @@ namespace Wind
 
 	namespace Grass
 	{
-		/** @brief Applies stateless lag and recovery to consecutive shared wind velocities. */
-		float3 CalculateSpringVelocity(
-			float3 currentVelocity, float currentGust, float3 previousVelocity, float previousGust,
-			float lagFrameCount, float recoveryLagFrameCount)
+		static const float FLUTTER_BEND_FRACTION = 0.12f;
+
+		/** @brief Returns a cheap oscillating scale for an already-resolved ambient bend. */
+		float CalculateFlutterBendScale(float phase, float windResponse)
 		{
-			float inertia = saturate(Permutation::GrassWindSpringStrength);
-			float recovery = max(Permutation::GrassWindSpringRecovery, 0.0);
-			float gustDelta = currentGust - previousGust;
-			float gustDeviation = currentGust - 0.5;
-			float recovering =
-				(length(currentVelocity) < length(previousVelocity) || gustDeviation * gustDelta < 0.0) ? 1.0 : 0.0;
-			float effectiveLagFrameCount = lagFrameCount + recoveryLagFrameCount * recovering;
-			float3 springOffset =
-				(currentVelocity - previousVelocity) * effectiveLagFrameCount *
-				(inertia + recovery * recovering);
-			float3 springVelocity = currentVelocity - springOffset;
-
-			float maximumResponseSpeed =
-				max(length(currentVelocity), length(previousVelocity)) * (1.0 + recovery);
-			float springSpeed = length(springVelocity);
-			return springSpeed > maximumResponseSpeed && springSpeed > 1e-5 ?
-			           springVelocity * (maximumResponseSpeed / springSpeed) :
-			           springVelocity;
-		}
-
-		/** @brief Applies stateless lag and recovery to consecutive rigid-bend targets. */
-		float CalculateSpringAngle(
-			float currentTargetAngle, float previousTargetAngle, float lagFrameCount,
-			float recoveryLagFrameCount)
-		{
-			float inertia = saturate(Permutation::GrassWindSpringStrength);
-			float recovery = max(Permutation::GrassWindSpringRecovery, 0.0);
-			float targetDelta = currentTargetAngle - previousTargetAngle;
-			float recovering = abs(currentTargetAngle) < abs(previousTargetAngle) ? 1.0 : 0.0;
-			float effectiveLagFrameCount = lagFrameCount + recoveryLagFrameCount * recovering;
-			float springOffset =
-				targetDelta * effectiveLagFrameCount * (inertia + recovery * recovering);
-			float springAngle = currentTargetAngle - springOffset;
-
-			float maximumBendAngle = radians(max(Permutation::GrassWindMaximumTilt, 0.0));
-			float maximumResponseAngle = min(
-				max(abs(currentTargetAngle), abs(previousTargetAngle)) * (1.0 + recovery),
-				maximumBendAngle);
-			return clamp(springAngle, -maximumResponseAngle, maximumResponseAngle);
-		}
-
-		/** @brief Applies stateless lag and recovery to consecutive vertical compression targets. */
-		float CalculateSpringCompression(
-			float currentTargetCompression, float previousTargetCompression, float lagFrameCount,
-			float recoveryLagFrameCount)
-		{
-			float inertia = saturate(Permutation::GrassWindSpringStrength);
-			float recovery = max(Permutation::GrassWindSpringRecovery, 0.0);
-			float targetDelta = currentTargetCompression - previousTargetCompression;
-			float recovering = currentTargetCompression < previousTargetCompression ? 1.0 : 0.0;
-			float effectiveLagFrameCount = lagFrameCount + recoveryLagFrameCount * recovering;
-			float springCompression =
-				currentTargetCompression -
-				targetDelta * effectiveLagFrameCount * (inertia + recovery * recovering);
-
-			float maximumResponseCompression = saturate(
-				max(currentTargetCompression, previousTargetCompression) * (1.0 + recovery));
-			return clamp(springCompression, 0.0, maximumResponseCompression);
+			float amplitude = FLUTTER_BEND_FRACTION *
+			                  max(Permutation::GrassWindFlutterStrength, 0.0f) *
+			                  saturate(windResponse);
+			return 1.0f + sin(phase) * amplitude;
 		}
 
 		float3 CalculateVanillaDisplacement(

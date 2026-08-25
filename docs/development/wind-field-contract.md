@@ -33,22 +33,35 @@ identical explicit inputs produce identical CPU and GPU results.
 ## Gust lifecycle
 
 `State` owns a fixed eight-slot pool. It advances each active entry once per
-frame using the gust's stored direction and speed, increments age, and recycles
-expired slots without allocation:
+frame using the current selected wind direction and the gust's stored speed,
+increments age, and recycles expired slots without allocation:
 
 ```text
 position += direction * speed * deltaTime
 age += deltaTime
 ```
 
-A varied spawn timer creates new bands upwind of the player. Length, width,
-speed, strength, lifetime, lateral offset, and seed are randomized within the
-configured ranges. Existing gusts retain their world-space direction when the
-weather direction changes; newly spawned gusts use the latest direction with
-only a small deviation.
+A varied spawn timer creates new bands at the configured upwind distance from
+the player. Length, width, speed, strength, lifetime, lateral offset, and seed
+are randomized within the configured ranges. Active and newly spawned gusts
+use the current selected wind direction without random directional drift.
 
-Current, previous, and two-frames-ago pool snapshots are uploaded for temporal
-vegetation sampling. The CPU and GPU never spawn independent gusts.
+Current and previous pool snapshots are uploaded for temporal vegetation
+sampling. The CPU and GPU never spawn independent gusts.
+
+## Grass spring response
+
+Grass resolves the sampled field into a persistent 128 by 128 bend-response
+field covering 32768 world units around the player. Each cell stores bend and
+compression together with their velocities. The update uses the closed-form
+solution of a damped second-order oscillator, with natural frequency and
+damping ratio exposed as the two artist controls.
+
+The current and prior resolved response textures are sampled independently by
+the grass vertex shader. Motion vectors therefore use the actual spring state
+from each frame instead of subtracting two raw wind targets or reusing one
+spring offset for both frames. A missing compute shader falls back to direct
+current/previous wind targets so grass remains renderable.
 
 ## Band envelope and noise breakup
 
@@ -90,8 +103,9 @@ before. Ambient gust tuning never changes impulse lifecycle or configuration.
 ## Verification contract
 
 The Wind Field utility tab reports the active band count, average band speed,
-base weather input, and CPU sample at the camera. The GPU debug view displays
-the matching normalized ambient pressure.
+base weather input, and CPU sample at the camera. The GPU debug view removes
+the neutral `0.5` baseline and displays normalized positive pressure, so calm
+air occupies the low end of the heatmap and burst strength uses its full range.
 
 Required invariants are:
 
@@ -103,3 +117,5 @@ Required invariants are:
 5. CPU and GPU sampling use equivalent envelopes, breakup noise, and pool
    snapshots.
 6. Transient impulses remain additive and independent.
+7. Grass motion vectors use separate current and previous resolved spring
+   states.

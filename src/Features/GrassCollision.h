@@ -31,6 +31,7 @@ public:
 	struct Settings
 	{
 		bool EnableGrassCollision = 1;
+		bool EnableActorMovementGate = 0;
 		bool TrackRagdolls = 1;
 		bool EnableBlur = 1;
 		float CollisionRadiusScale = 1.0f;
@@ -54,7 +55,7 @@ public:
 	};
 	STATIC_ASSERT_ALIGNAS_16(BoundingBoxPacked);
 
-	/** @brief GPU representation of swept capsule endpoints and actor-root XY movement. */
+	/** @brief GPU representation of swept capsule endpoints and optional actor-root movement. */
 	struct alignas(16) CollisionShapePacked
 	{
 		float4 CurrentPointAAndRadius;
@@ -81,7 +82,7 @@ public:
 		float MaximumBend;
 		float MaximumCompression;
 		float CompressionRecovery;
-		float pad0;
+		uint ActorMovementGate;
 	};
 	STATIC_ASSERT_ALIGNAS_16(PerFrame);
 
@@ -131,7 +132,6 @@ public:
 		float3 pointB;
 	};
 	std::unordered_map<uint32_t, std::vector<CapsuleHistory>> actorCollisionHistory;
-	/** @brief Last accepted actor-root positions used to reject idle-animation collision motion. */
 	std::unordered_map<uint32_t, float2> actorPositionHistory;
 
 	/** @brief Creates the collision texture, structured buffers for bounding boxes and collision instances. */

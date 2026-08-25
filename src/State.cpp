@@ -83,14 +83,8 @@ void State::UpdatePermutationBuffer()
 	permutationData.GrassWindSensitivity = globals::features::csUtility.settings.grassWindSensitivity;
 	permutationData.GrassWindMaximumTilt = globals::features::csUtility.settings.grassWindMaximumTilt;
 	permutationData.GrassWindBendProfile = globals::features::csUtility.settings.grassWindBendProfile;
-	permutationData.GrassWindSpringLag = globals::features::csUtility.settings.grassWindSpringLag;
-	permutationData.GrassWindSpringRecoveryLag =
-		globals::features::csUtility.settings.grassWindSpringRecoveryLag;
-	permutationData.GrassWindSpringStrength = globals::features::csUtility.settings.grassWindSpringStrength;
-	permutationData.GrassWindSpringRecovery = globals::features::csUtility.settings.grassWindSpringRecovery;
 	permutationData.GrassWindFlutterStrength = globals::features::csUtility.settings.grassWindFlutterStrength;
 	permutationData.GrassWindFlutterFrequency = globals::features::csUtility.settings.grassWindFlutterFrequency;
-	permutationData.GrassWindUseBendTargetSpring = globals::features::csUtility.settings.grassWindUseBendTargetSpring;
 	if (permutationData != permutationDataPrevious) {
 		permutationCB->Update(permutationData);
 		permutationDataPrevious = permutationData;
@@ -100,6 +94,7 @@ void State::UpdatePermutationBuffer()
 void State::Draw()
 {
 	ZoneScoped;
+	UpdateGrassGpuPass();
 
 	auto shaderCache = globals::shaderCache;
 	auto weatherManager = globals::weatherManager;
@@ -175,6 +170,17 @@ void State::Draw()
 			Debug();
 
 		updateShader = false;
+	}
+}
+
+void State::UpdateGrassGpuPass()
+{
+	const bool isGrassDraw = currentShader && currentShader->shaderType.get() == RE::BSShader::Type::Grass;
+	if (isGrassDraw) {
+		if (!grassGpuPass)
+			grassGpuPass.emplace("Grass::Draw");
+	} else {
+		grassGpuPass.reset();
 	}
 }
 
@@ -308,6 +314,8 @@ void State::SetOutputRenderTarget(RE::RENDER_TARGET a_output)
  */
 void State::Reset()
 {
+	grassGpuPass.reset();
+
 	// Land staged SKSE API setter writes before features consume settings this frame.
 	CSPluginAPI::ProcessStagedSettings();
 
@@ -327,6 +335,7 @@ void State::Reset()
 	windFieldTuning.maxActiveGusts = csUtility.settings.windFieldMaxActiveGusts;
 	windFieldTuning.spawnIntervalMin = csUtility.settings.windFieldGustSpawnIntervalMin;
 	windFieldTuning.spawnIntervalMax = csUtility.settings.windFieldGustSpawnIntervalMax;
+	windFieldTuning.gustSpawnDistance = csUtility.settings.windFieldGustSpawnDistance;
 	windFieldTuning.gustLengthMin = csUtility.settings.windFieldGustLengthMin;
 	windFieldTuning.gustLengthMax = csUtility.settings.windFieldGustLengthMax;
 	windFieldTuning.gustWidthMin = csUtility.settings.windFieldGustWidthMin;
@@ -405,9 +414,7 @@ void State::Reset()
 		previousWindFieldSelectedVelocity = windFieldSelectedVelocity;
 		twoFramesAgoWindFieldSelectedVelocity = windFieldSelectedVelocity;
 		previousAmbientGusts = ambientGusts;
-		twoFramesAgoAmbientGusts = ambientGusts;
 		previousActiveAmbientGustCount = activeAmbientGustCount;
-		twoFramesAgoActiveAmbientGustCount = activeAmbientGustCount;
 		windFieldHasPreviousSample = true;
 	}
 
@@ -469,7 +476,8 @@ WindField::WindSample State::SampleAmbientWind(const float3& a_worldPosition,
 {
 	auto sample = WindField::SampleWind(
 		a_worldPosition, a_windDirection, a_windSpeed, windFieldTuning, ambientGusts, activeAmbientGustCount);
-	for (const auto& impulse : transientWindImpulses) {
+	for (uint32_t index = 0; index < activeTransientWindImpulseCount; ++index) {
+		const auto& impulse = transientWindImpulses[index];
 		const auto impulseSample = WindField::SampleTransientImpulse(a_worldPosition, impulse);
 		sample.velocity += impulseSample.velocity;
 		sample.transientImpulse = std::max(sample.transientImpulse, impulseSample.intensity);
@@ -480,10 +488,14 @@ WindField::WindSample State::SampleAmbientWind(const float3& a_worldPosition,
 void State::UpdateAmbientGusts(float a_frameTime, const float2& a_simulationCenter,
 	const float2& a_windDirection)
 {
-	twoFramesAgoAmbientGusts = previousAmbientGusts;
 	previousAmbientGusts = ambientGusts;
-	twoFramesAgoActiveAmbientGustCount = previousActiveAmbientGustCount;
 	previousActiveAmbientGustCount = activeAmbientGustCount;
+	float2 currentWindDirection = a_windDirection;
+	const float currentWindDirectionLength = currentWindDirection.Length();
+	if (!std::isfinite(currentWindDirectionLength) || currentWindDirectionLength <= 0.0001f)
+		currentWindDirection = { 1.0f, 0.0f };
+	else
+		currentWindDirection /= currentWindDirectionLength;
 
 	const uint32_t maxActiveGusts = std::min(windFieldTuning.maxActiveGusts, WindField::kAmbientGustCapacity);
 	while (activeAmbientGustCount > maxActiveGusts)
@@ -492,6 +504,7 @@ void State::UpdateAmbientGusts(float a_frameTime, const float2& a_simulationCent
 	const float frameTime = std::isfinite(a_frameTime) ? std::max(a_frameTime, 0.0f) : 0.0f;
 	for (uint32_t index = 0; index < activeAmbientGustCount;) {
 		auto& gust = ambientGusts[index];
+		gust.direction = currentWindDirection;
 		gust.position += gust.direction * (gust.speed * frameTime);
 		gust.age += frameTime;
 		if (gust.age >= gust.lifetime) {
@@ -529,11 +542,6 @@ void State::SpawnAmbientGust(const float2& a_simulationCenter, const float2& a_w
 		direction = { 1.0f, 0.0f };
 	else
 		direction /= directionLength;
-	const float2 side{ -direction.y, direction.x };
-	direction += side * NextAmbientGustRange(
-							-windFieldTuning.gustDirectionVariation, windFieldTuning.gustDirectionVariation);
-	direction.Normalize();
-
 	WindField::AmbientGust gust{};
 	gust.direction = direction;
 	gust.length = NextAmbientGustRange(windFieldTuning.gustLengthMin, windFieldTuning.gustLengthMax);
@@ -544,7 +552,8 @@ void State::SpawnAmbientGust(const float2& a_simulationCenter, const float2& a_w
 	gust.lifetime = NextAmbientGustRange(windFieldTuning.gustLifetimeMin, windFieldTuning.gustLifetimeMax);
 	const float2 gustSide{ -direction.y, direction.x };
 	const float lateralOffset = NextAmbientGustRange(-gust.width * 0.65f, gust.width * 0.65f);
-	gust.position = a_simulationCenter - direction * (gust.length + gust.width) + gustSide * lateralOffset;
+	gust.position = a_simulationCenter - direction * std::max(windFieldTuning.gustSpawnDistance, 0.0f) +
+	                gustSide * lateralOffset;
 	static_cast<void>(NextAmbientGustRandom());
 	gust.seed = ambientGustRandomState;
 	ambientGusts[activeAmbientGustCount++] = gust;
@@ -577,20 +586,19 @@ void State::ClearTransientWindImpulses()
 	std::lock_guard lock(transientWindImpulseMutex);
 	transientWindImpulses = {};
 	previousTransientWindImpulses = {};
-	twoFramesAgoTransientWindImpulses = {};
+	activeTransientWindImpulseCount = 0;
+	previousActiveTransientWindImpulseCount = 0;
 	pendingTransientWindImpulses.clear();
 }
 
 void State::UpdateTransientWindImpulses(float a_frameTime)
 {
-	twoFramesAgoTransientWindImpulses = previousTransientWindImpulses;
 	previousTransientWindImpulses = transientWindImpulses;
+	previousActiveTransientWindImpulseCount = activeTransientWindImpulseCount;
 
 	const float frameTime = std::isfinite(a_frameTime) ? std::max(a_frameTime, 0.0f) : 0.0f;
-	for (auto& impulse : transientWindImpulses) {
-		if (impulse.strength <= 0.0f) {
-			continue;
-		}
+	for (uint32_t index = 0; index < activeTransientWindImpulseCount;) {
+		auto& impulse = transientWindImpulses[index];
 		const float travelDelta = std::isfinite(impulse.propagationSpeed) ?
 		                              std::max(impulse.propagationSpeed, 0.0f) * frameTime :
 		                              0.0f;
@@ -601,7 +609,11 @@ void State::UpdateTransientWindImpulses(float a_frameTime)
 		const float retentionDistance = impulse.maxDistance + std::abs(impulse.waveHalfWidth) +
 		                                std::max(impulse.propagationSpeed, 0.0f) * decayTime;
 		if (!std::isfinite(impulse.wavefrontDistance) || impulse.wavefrontDistance >= retentionDistance) {
-			impulse = {};
+			--activeTransientWindImpulseCount;
+			impulse = transientWindImpulses[activeTransientWindImpulseCount];
+			transientWindImpulses[activeTransientWindImpulseCount] = {};
+		} else {
+			++index;
 		}
 	}
 
@@ -611,9 +623,10 @@ void State::UpdateTransientWindImpulses(float a_frameTime)
 		pendingImpulses.swap(pendingTransientWindImpulses);
 	}
 	for (auto& pendingImpulse : pendingImpulses) {
-		auto slot = std::ranges::find_if(
-			transientWindImpulses, [](const auto& impulse) { return impulse.strength <= 0.0f; });
-		if (slot == transientWindImpulses.end()) {
+		auto slot = transientWindImpulses.begin() + activeTransientWindImpulseCount;
+		if (activeTransientWindImpulseCount < WindField::kTransientImpulseCapacity) {
+			++activeTransientWindImpulseCount;
+		} else {
 			slot = std::ranges::max_element(transientWindImpulses, {}, [](const auto& impulse) {
 				return impulse.maxDistance > 0.0f ? impulse.wavefrontDistance / impulse.maxDistance : 1.0f;
 			});
@@ -1560,15 +1573,14 @@ void State::UpdateSharedData([[maybe_unused]] bool a_inWorld, [[maybe_unused]] b
 			twoFramesAgoWindFieldSelectedVelocity.x, twoFramesAgoWindFieldSelectedVelocity.y,
 			twoFramesAgoWindFieldSelectedVelocity.z, 0.0f
 		};
-		data.WindFieldAmbientGustCounts = {
-			activeAmbientGustCount, previousActiveAmbientGustCount, twoFramesAgoActiveAmbientGustCount, 0u
+		data.WindFieldActiveCounts = {
+			activeAmbientGustCount, previousActiveAmbientGustCount,
+			activeTransientWindImpulseCount, previousActiveTransientWindImpulseCount
 		};
 		data.WindFieldAmbientGusts = ambientGusts;
 		data.WindFieldPreviousAmbientGusts = previousAmbientGusts;
-		data.WindFieldTwoFramesAgoAmbientGusts = twoFramesAgoAmbientGusts;
 		data.WindFieldTransientImpulses = transientWindImpulses;
 		data.WindFieldPreviousTransientImpulses = previousTransientWindImpulses;
-		data.WindFieldTwoFramesAgoTransientImpulses = twoFramesAgoTransientWindImpulses;
 
 		auto temporal = Util::GetTemporal();
 

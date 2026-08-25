@@ -330,11 +330,11 @@ void SampleSSGISpecular(uint2 pixCoord, sh2 lobe, inout float ao, out float3 il,
 	[branch] if (SharedData::WindFieldDebug.z > 0.0f && depth < 1.0f)
 	{
 		// Keep this diagnostic independent from the game's grass/wind animation.
-		// The CPU owns the integrated travel phase so changing wind speed cannot
-		// reduce the offset and make the field move backward.
+		// CPU-owned world-space bands provide the canonical pressure positions.
 		float3 worldPosition = positionWS.xyz + FrameBuffer::CameraPosAdjust[eyeIndex].xyz;
 		WindField::WindSample windSample = SharedData::SampleAmbientWind(worldPosition);
-		color = Color::TurboColormap(max(windSample.ambientGust, saturate(windSample.transientImpulse)));
+		float ambientPressure = saturate((windSample.ambientGust - 0.5f) * 2.0f);
+		color = Color::TurboColormap(max(ambientPressure, saturate(windSample.transientImpulse)));
 	}
 
 	MainRW[dispatchID.xy] = float4(color, 1.0);

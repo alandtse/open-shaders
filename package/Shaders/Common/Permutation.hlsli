@@ -125,13 +125,11 @@ namespace Permutation
 		float GrassWindMaximumTilt;
 
 		float GrassWindBendProfile;
-		float GrassWindSpringLag;
-		float GrassWindSpringStrength;
-		float GrassWindSpringRecovery;
+		float3 GrassWindPadding0;
 
 		float GrassWindFlutterStrength;
 		float GrassWindFlutterFrequency;
-		uint GrassWindUseBendTargetSpring;
+		uint GrassWindPadding2;
 		float GrassWindSensitivity;
 
 		float TreeWindBoundsBase;
@@ -139,8 +137,7 @@ namespace Permutation
 		float TreeWindTrunkGustInfluence;
 		float TreeLeafGustInfluence;
 
-		float GrassWindSpringRecoveryLag;
-		float3 GrassWindPadding1;
+		float4 GrassWindPadding1;
 	};
 
 }

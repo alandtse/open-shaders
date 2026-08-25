@@ -51,7 +51,7 @@ namespace WindField
 		float gustLifetimeMin;
 		float gustLifetimeMax;
 		float gustAdvectionMultiplier;
-		float gustDirectionVariation;
+		float gustSpawnDistance;
 		float2 padding;
 	};
 
@@ -190,8 +190,8 @@ namespace WindField
 		return 0.5f + saturate(bandSample.envelope * breakup) * 0.5f;
 	}
 
-	/** @brief GPU equivalent of the canonical CPU SampleWind implementation. */
-	WindSample SampleWind(float3 worldPosition, float3 windDirection, float windSpeed, WindTuning tuning,
+	/** @brief Samples wind when the base direction and speed are already combined as velocity. */
+	WindSample SampleWindVelocity(float3 worldPosition, float3 baseVelocity, WindTuning tuning,
 		AmbientGust gusts[AmbientGustCapacity], uint activeGustCount)
 	{
 		WindSample sample;
@@ -199,8 +199,16 @@ namespace WindField
 		sample.transientImpulse = 0.0f;
 		float gustDeviation = sample.ambientGust * 2.0f - 1.0f;
 		float gustMultiplier = max(1.0f + gustDeviation * max(tuning.gustAmplitude, 0.0f), 0.0f);
-		sample.velocity = Detail::NormalizeDirection(windDirection) * (max(windSpeed, 0.0f) * gustMultiplier);
+		sample.velocity = baseVelocity * gustMultiplier;
 		return sample;
+	}
+
+	/** @brief GPU equivalent of the canonical CPU SampleWind implementation. */
+	WindSample SampleWind(float3 worldPosition, float3 windDirection, float windSpeed, WindTuning tuning,
+		AmbientGust gusts[AmbientGustCapacity], uint activeGustCount)
+	{
+		float3 baseVelocity = Detail::NormalizeDirection(windDirection) * max(windSpeed, 0.0f);
+		return SampleWindVelocity(worldPosition, baseVelocity, tuning, gusts, activeGustCount);
 	}
 
 	/** @brief GPU equivalent of the canonical CPU SampleAmbientWind implementation. */
