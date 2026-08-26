@@ -96,22 +96,6 @@ struct CSUtility : Feature
 		float windFieldGustScale = 2048.0f;
 		float windFieldGustAmplitude = 0.35f;
 		float windFieldGustAdvectionMultiplier = 1.0f;
-		uint32_t windFieldMaxActiveGusts = 6;
-		float windFieldGustSpawnIntervalMin = 6.0f;
-		float windFieldGustSpawnIntervalMax = 10.0f;
-		float windFieldGustSpawnDistance = 24000.0f;
-		float windFieldGustLengthMin = 16000.0f;
-		float windFieldGustLengthMax = 26000.0f;
-		float windFieldGustWidthMin = 3000.0f;
-		float windFieldGustWidthMax = 5000.0f;
-		float windFieldGustSpeedMin = 384.0f;
-		float windFieldGustSpeedMax = 640.0f;
-		float windFieldGustStrengthMin = 0.65f;
-		float windFieldGustStrengthMax = 1.0f;
-		float windFieldGustLifetimeMin = 90.0f;
-		float windFieldGustLifetimeMax = 140.0f;
-		float windFieldGustEdgeSoftness = 0.75f;
-		float windFieldGustNoiseAmount = 0.85f;
 		bool enableFusRoDahWind = true;
 		float fusRoDahIntensity = 1.0f;
 		float fusRoDahDecayTime = 1.5f;
@@ -120,12 +104,20 @@ struct CSUtility : Feature
 		float fusRoDahSpeedMultiplier = 1.0f;
 		float fusRoDahConeHalfAngle = 41.4f;
 		bool enableAmbientGrassWind = true;
+		bool grassWindUseSpringField = true;
 		float grassWindResponse = 45.0f;
 		float grassWindSensitivity = 1.0f;
 		float grassWindMaximumTilt = 75.0f;
 		float grassWindBendProfile = 0.35f;
 		float grassWindSpringFrequency = 2.0f;
 		float grassWindSpringDamping = 0.82f;
+		uint32_t grassWindSpringTextureSize = 128;
+		float grassWindSpringWorldSize = 32768.0f;
+		float grassWindSpringLag = 0.12f;
+		float grassWindSpringRecoveryLag = 1.0f;
+		float grassWindSpringStrength = 0.65f;
+		float grassWindSpringRecovery = 0.15f;
+		bool grassWindUseBendTargetSpring = true;
 		float grassWindFlutterStrength = 1.0f;
 		float grassWindFlutterFrequency = 1.0f;
 		float skyBrightness = 1.0f;
@@ -208,10 +200,6 @@ struct CSUtility : Feature
 
 	ConstantBuffer* vanillaPointLightCB = nullptr;
 
-	// Keep these mirrored with GrassWindSpring::TEXTURE_SIZE and WORLD_SIZE.
-	static constexpr uint32_t kGrassWindSpringTextureSize = 128;
-	static constexpr float kGrassWindSpringWorldSize = 32768.0f;
-
 	struct alignas(16) GrassWindSpringData
 	{
 		float2 fieldMinimum;
@@ -225,7 +213,9 @@ struct CSUtility : Feature
 		float springDamping;
 		uint32_t initialize;
 		uint32_t fieldAvailable;
-		float3 padding;
+		float fieldSize;
+		uint32_t textureSize;
+		float padding;
 	};
 	STATIC_ASSERT_ALIGNAS_16(GrassWindSpringData);
 
@@ -234,6 +224,8 @@ struct CSUtility : Feature
 	Texture2D* grassWindSpringVelocityTextures[2] = {};
 	winrt::com_ptr<ID3D11SamplerState> grassWindSpringSampler;
 	uint32_t grassWindSpringTextureIndex = 0;
+	uint32_t grassWindSpringTextureSize = 0;
+	float grassWindSpringWorldSize = 0.0f;
 	float2 grassWindSpringFieldMinimum{};
 	float2 previousGrassWindSpringFieldMinimum{};
 	bool grassWindSpringInitialized = false;
@@ -262,6 +254,8 @@ struct CSUtility : Feature
 	virtual void SetupResources() override;
 	/** @brief Advances and binds the persistent grass wind spring field once per frame. */
 	void UpdateGrassWindSpring();
+	/** @brief Recreates the ping-pong field textures at a new square resolution. */
+	void RecreateGrassWindSpringTextures(uint32_t a_textureSize);
 	/** @brief Releases the cached spring compute shader for file-watcher recompilation. */
 	virtual void ClearShaderCache() override;
 	virtual void PostPostLoad() override;

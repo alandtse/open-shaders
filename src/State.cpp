@@ -83,8 +83,13 @@ void State::UpdatePermutationBuffer()
 	permutationData.GrassWindSensitivity = globals::features::csUtility.settings.grassWindSensitivity;
 	permutationData.GrassWindMaximumTilt = globals::features::csUtility.settings.grassWindMaximumTilt;
 	permutationData.GrassWindBendProfile = globals::features::csUtility.settings.grassWindBendProfile;
+	permutationData.GrassWindSpringLag = globals::features::csUtility.settings.grassWindSpringLag;
+	permutationData.GrassWindSpringStrength = globals::features::csUtility.settings.grassWindSpringStrength;
+	permutationData.GrassWindSpringRecovery = globals::features::csUtility.settings.grassWindSpringRecovery;
 	permutationData.GrassWindFlutterStrength = globals::features::csUtility.settings.grassWindFlutterStrength;
 	permutationData.GrassWindFlutterFrequency = globals::features::csUtility.settings.grassWindFlutterFrequency;
+	permutationData.GrassWindUseBendTargetSpring = globals::features::csUtility.settings.grassWindUseBendTargetSpring;
+	permutationData.GrassWindSpringRecoveryLag = globals::features::csUtility.settings.grassWindSpringRecoveryLag;
 	if (permutationData != permutationDataPrevious) {
 		permutationCB->Update(permutationData);
 		permutationDataPrevious = permutationData;
@@ -328,24 +333,8 @@ void State::Reset()
 	Feature::ForEachLoadedFeature("Reset", [](Feature* feature) { feature->Reset(); });
 	const auto& csUtility = globals::features::csUtility;
 	windFieldTuning.gustAmplitude = csUtility.GetEffectiveWindGustAmplitude();
-	windFieldTuning.gustNoiseScale = csUtility.GetEffectiveWindGustScale();
+	windFieldTuning.gustScale = csUtility.GetEffectiveWindGustScale();
 	windFieldTuning.gustAdvectionMultiplier = csUtility.GetEffectiveWindGustAdvectionMultiplier();
-	windFieldTuning.gustEdgeSoftness = csUtility.settings.windFieldGustEdgeSoftness;
-	windFieldTuning.gustNoiseAmount = csUtility.settings.windFieldGustNoiseAmount;
-	windFieldTuning.maxActiveGusts = csUtility.settings.windFieldMaxActiveGusts;
-	windFieldTuning.spawnIntervalMin = csUtility.settings.windFieldGustSpawnIntervalMin;
-	windFieldTuning.spawnIntervalMax = csUtility.settings.windFieldGustSpawnIntervalMax;
-	windFieldTuning.gustSpawnDistance = csUtility.settings.windFieldGustSpawnDistance;
-	windFieldTuning.gustLengthMin = csUtility.settings.windFieldGustLengthMin;
-	windFieldTuning.gustLengthMax = csUtility.settings.windFieldGustLengthMax;
-	windFieldTuning.gustWidthMin = csUtility.settings.windFieldGustWidthMin;
-	windFieldTuning.gustWidthMax = csUtility.settings.windFieldGustWidthMax;
-	windFieldTuning.gustSpeedMin = csUtility.settings.windFieldGustSpeedMin;
-	windFieldTuning.gustSpeedMax = csUtility.settings.windFieldGustSpeedMax;
-	windFieldTuning.gustStrengthMin = csUtility.settings.windFieldGustStrengthMin;
-	windFieldTuning.gustStrengthMax = csUtility.settings.windFieldGustStrengthMax;
-	windFieldTuning.gustLifetimeMin = csUtility.settings.windFieldGustLifetimeMin;
-	windFieldTuning.gustLifetimeMax = csUtility.settings.windFieldGustLifetimeMax;
 	const bool gamePaused = globals::game::ui->GameIsPaused();
 	const float frameTime = gamePaused ? 0.0f : std::max(RE::GetSecondsSinceLastFrame(), 0.0f);
 	previousWindFieldFrameTime = windFieldHasPreviousSample ? windFieldFrameTime : frameTime;
@@ -355,6 +344,8 @@ void State::Reset()
 	previousTrunkWindVector = trunkWindVector;
 	twoFramesAgoWindFieldSelectedVelocity = previousWindFieldSelectedVelocity;
 	previousWindFieldSelectedVelocity = windFieldSelectedVelocity;
+	twoFramesAgoWindFieldGustTravelDistance = previousWindFieldGustTravelDistance;
+	previousWindFieldGustTravelDistance = windFieldGustTravelDistance;
 	ambientWindVelocity = {};
 	trunkWindVector = {};
 	const bool overrideTrunkWindIntensity = globals::features::csUtility.loaded &&
@@ -405,16 +396,17 @@ void State::Reset()
 	windFieldSelectedSpeed = selectedWindSpeed;
 	windFieldSelectedVelocity = selectedWindDirection * selectedWindSpeed;
 	windFieldAmbientSpeed = selectedWindSpeed;
-	RE::NiPoint3 simulationCenter{};
-	if (globals::game::player)
-		simulationCenter = globals::game::player->GetPosition();
-	UpdateAmbientGusts(frameTime, { simulationCenter.x, simulationCenter.y },
-		{ selectedWindDirection.x, selectedWindDirection.y });
+	const float gustAdvectionSpeed = selectedWindSpeed * windFieldTuning.gustAdvectionBaseSpeed *
+	                                 windFieldTuning.gustAdvectionMultiplier;
+	windFieldAdvectionSpeed = std::isfinite(gustAdvectionSpeed) ? std::max(gustAdvectionSpeed, 0.0f) : 0.0f;
+	windFieldTravelDelta = std::isfinite(frameTime) ? windFieldAdvectionSpeed * std::max(frameTime, 0.0f) : 0.0f;
+	if (std::isfinite(windFieldTravelDelta))
+		windFieldGustTravelDistance += windFieldTravelDelta;
 	if (!windFieldHasPreviousSample) {
 		previousWindFieldSelectedVelocity = windFieldSelectedVelocity;
 		twoFramesAgoWindFieldSelectedVelocity = windFieldSelectedVelocity;
-		previousAmbientGusts = ambientGusts;
-		previousActiveAmbientGustCount = activeAmbientGustCount;
+		previousWindFieldGustTravelDistance = windFieldGustTravelDistance;
+		twoFramesAgoWindFieldGustTravelDistance = windFieldGustTravelDistance;
 		windFieldHasPreviousSample = true;
 	}
 
@@ -475,7 +467,7 @@ WindField::WindSample State::SampleAmbientWind(const float3& a_worldPosition,
 	const float3& a_windDirection, float a_windSpeed) const noexcept
 {
 	auto sample = WindField::SampleWind(
-		a_worldPosition, a_windDirection, a_windSpeed, windFieldTuning, ambientGusts, activeAmbientGustCount);
+		a_worldPosition, windFieldGustTravelDistance, a_windDirection, a_windSpeed, windFieldTuning);
 	for (uint32_t index = 0; index < activeTransientWindImpulseCount; ++index) {
 		const auto& impulse = transientWindImpulses[index];
 		const auto impulseSample = WindField::SampleTransientImpulse(a_worldPosition, impulse);
@@ -483,93 +475,6 @@ WindField::WindSample State::SampleAmbientWind(const float3& a_worldPosition,
 		sample.transientImpulse = std::max(sample.transientImpulse, impulseSample.intensity);
 	}
 	return sample;
-}
-
-void State::UpdateAmbientGusts(float a_frameTime, const float2& a_simulationCenter,
-	const float2& a_windDirection)
-{
-	previousAmbientGusts = ambientGusts;
-	previousActiveAmbientGustCount = activeAmbientGustCount;
-	float2 currentWindDirection = a_windDirection;
-	const float currentWindDirectionLength = currentWindDirection.Length();
-	if (!std::isfinite(currentWindDirectionLength) || currentWindDirectionLength <= 0.0001f)
-		currentWindDirection = { 1.0f, 0.0f };
-	else
-		currentWindDirection /= currentWindDirectionLength;
-
-	const uint32_t maxActiveGusts = std::min(windFieldTuning.maxActiveGusts, WindField::kAmbientGustCapacity);
-	while (activeAmbientGustCount > maxActiveGusts)
-		ambientGusts[--activeAmbientGustCount] = {};
-
-	const float frameTime = std::isfinite(a_frameTime) ? std::max(a_frameTime, 0.0f) : 0.0f;
-	for (uint32_t index = 0; index < activeAmbientGustCount;) {
-		auto& gust = ambientGusts[index];
-		gust.direction = currentWindDirection;
-		gust.position += gust.direction * (gust.speed * frameTime);
-		gust.age += frameTime;
-		if (gust.age >= gust.lifetime) {
-			--activeAmbientGustCount;
-			gust = ambientGusts[activeAmbientGustCount];
-			ambientGusts[activeAmbientGustCount] = {};
-		} else {
-			++index;
-		}
-	}
-
-	ambientGustSpawnTimer -= frameTime;
-	if (ambientGustSpawnTimer <= 0.0f) {
-		if (activeAmbientGustCount < maxActiveGusts)
-			SpawnAmbientGust(a_simulationCenter, a_windDirection);
-		ambientGustSpawnTimer = NextAmbientGustRange(
-			windFieldTuning.spawnIntervalMin, windFieldTuning.spawnIntervalMax);
-	}
-
-	windFieldAdvectionSpeed = 0.0f;
-	for (uint32_t index = 0; index < activeAmbientGustCount; ++index)
-		windFieldAdvectionSpeed += ambientGusts[index].speed;
-	if (activeAmbientGustCount > 0)
-		windFieldAdvectionSpeed /= static_cast<float>(activeAmbientGustCount);
-}
-
-void State::SpawnAmbientGust(const float2& a_simulationCenter, const float2& a_windDirection)
-{
-	if (activeAmbientGustCount >= WindField::kAmbientGustCapacity)
-		return;
-
-	float2 direction = a_windDirection;
-	const float directionLength = direction.Length();
-	if (!std::isfinite(directionLength) || directionLength <= 0.0001f)
-		direction = { 1.0f, 0.0f };
-	else
-		direction /= directionLength;
-	WindField::AmbientGust gust{};
-	gust.direction = direction;
-	gust.length = NextAmbientGustRange(windFieldTuning.gustLengthMin, windFieldTuning.gustLengthMax);
-	gust.width = NextAmbientGustRange(windFieldTuning.gustWidthMin, windFieldTuning.gustWidthMax);
-	gust.speed = NextAmbientGustRange(windFieldTuning.gustSpeedMin, windFieldTuning.gustSpeedMax) *
-	             std::max(windFieldTuning.gustAdvectionMultiplier, 0.0f);
-	gust.strength = NextAmbientGustRange(windFieldTuning.gustStrengthMin, windFieldTuning.gustStrengthMax);
-	gust.lifetime = NextAmbientGustRange(windFieldTuning.gustLifetimeMin, windFieldTuning.gustLifetimeMax);
-	const float2 gustSide{ -direction.y, direction.x };
-	const float lateralOffset = NextAmbientGustRange(-gust.width * 0.65f, gust.width * 0.65f);
-	gust.position = a_simulationCenter - direction * std::max(windFieldTuning.gustSpawnDistance, 0.0f) +
-	                gustSide * lateralOffset;
-	static_cast<void>(NextAmbientGustRandom());
-	gust.seed = ambientGustRandomState;
-	ambientGusts[activeAmbientGustCount++] = gust;
-}
-
-float State::NextAmbientGustRandom() noexcept
-{
-	ambientGustRandomState = ambientGustRandomState * windFieldTuning.pcgMultiplier + windFieldTuning.pcgIncrement;
-	ambientGustRandomState ^= ambientGustRandomState >> 16u;
-	return static_cast<float>(ambientGustRandomState >> 8u) * (1.0f / 16777216.0f);
-}
-
-float State::NextAmbientGustRange(float a_minimum, float a_maximum) noexcept
-{
-	const auto [minimum, maximum] = std::minmax(a_minimum, a_maximum);
-	return minimum + (maximum - minimum) * NextAmbientGustRandom();
 }
 
 void State::QueueTransientWindImpulse(const WindField::TransientImpulse& a_impulse)
@@ -1558,27 +1463,25 @@ void State::UpdateSharedData([[maybe_unused]] bool a_inWorld, [[maybe_unused]] b
 			windFieldFrameTime,
 			globals::features::csUtility.ShouldUseRealWindSpeed() ? 1.0f : 0.0f,
 			globals::features::csUtility.windFieldUseRealDirection ? 1.0f : 0.0f,
-			static_cast<float>(activeAmbientGustCount)
+			windFieldGustTravelDistance
 		};
 		data.WindFieldTuning = windFieldTuning;
 		data.WindFieldAmbient = {
 			windFieldSelectedVelocity.x, windFieldSelectedVelocity.y, windFieldSelectedVelocity.z,
-			0.0f
+			windFieldGustTravelDistance
 		};
 		data.WindFieldPreviousAmbient = {
 			previousWindFieldSelectedVelocity.x, previousWindFieldSelectedVelocity.y, previousWindFieldSelectedVelocity.z,
-			0.0f
+			previousWindFieldGustTravelDistance
 		};
 		data.WindFieldTwoFramesAgoAmbient = {
 			twoFramesAgoWindFieldSelectedVelocity.x, twoFramesAgoWindFieldSelectedVelocity.y,
-			twoFramesAgoWindFieldSelectedVelocity.z, 0.0f
+			twoFramesAgoWindFieldSelectedVelocity.z, twoFramesAgoWindFieldGustTravelDistance
 		};
 		data.WindFieldActiveCounts = {
-			activeAmbientGustCount, previousActiveAmbientGustCount,
+			0u, 0u,
 			activeTransientWindImpulseCount, previousActiveTransientWindImpulseCount
 		};
-		data.WindFieldAmbientGusts = ambientGusts;
-		data.WindFieldPreviousAmbientGusts = previousAmbientGusts;
 		data.WindFieldTransientImpulses = transientWindImpulses;
 		data.WindFieldPreviousTransientImpulses = previousTransientWindImpulses;
 

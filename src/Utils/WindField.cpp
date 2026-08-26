@@ -24,12 +24,6 @@ namespace WindField
 			float y;
 		};
 
-		struct AmbientBandSample
-		{
-			float envelope{};
-			Scalar2 noiseOffset{};
-		};
-
 		Uint2 Pcg2D(Uint2 a_value, const WindTuning& a_tuning) noexcept
 		{
 			a_value.x = a_value.x * a_tuning.pcgMultiplier + a_tuning.pcgIncrement;
@@ -109,100 +103,60 @@ namespace WindField
 			                            a_direction.z * a_direction.z;
 			return lengthSquared > 1e-6f ? a_direction / std::sqrt(lengthSquared) : float3{};
 		}
-
-		float SampleAmbientGustEnvelope(const float2& a_worldPosition, const AmbientGust& a_gust,
-			const WindTuning& a_tuning) noexcept
-		{
-			const float2 delta = a_worldPosition - a_gust.position;
-			const float2 side{ -a_gust.direction.y, a_gust.direction.x };
-			const float along = delta.Dot(a_gust.direction);
-			const float across = delta.Dot(side);
-			const float x = along / std::max(std::abs(a_gust.length), kMinimumDivisor);
-			const float y = across / std::max(std::abs(a_gust.width), kMinimumDivisor);
-			const float edge = std::clamp(
-				(1.0f - (x * x + y * y)) / std::max(a_tuning.gustEdgeSoftness, kMinimumDivisor), 0.0f, 1.0f);
-			return edge * edge * (3.0f - 2.0f * edge);
-		}
-
-		AmbientBandSample SampleAmbientBands(const float2& a_worldPosition,
-			const std::array<AmbientGust, kAmbientGustCapacity>& a_gusts, uint32_t a_activeGustCount,
-			const WindTuning& a_tuning) noexcept
-		{
-			AmbientBandSample sample{};
-			const uint32_t gustCount = std::min(a_activeGustCount, kAmbientGustCapacity);
-			for (uint32_t index = 0; index < gustCount; ++index) {
-				const auto& gust = a_gusts[index];
-				const float contribution = SampleAmbientGustEnvelope(a_worldPosition, gust, a_tuning) *
-				                           std::max(gust.strength, 0.0f);
-				sample.envelope += contribution;
-				sample.noiseOffset.x +=
-					static_cast<float>(gust.seed & 0xFFFFu) * (64.0f / 65535.0f) * contribution;
-				sample.noiseOffset.y +=
-					static_cast<float>(gust.seed >> 16u) * (64.0f / 65535.0f) * contribution;
-			}
-			if (sample.envelope > kMinimumDivisor) {
-				sample.noiseOffset.x /= sample.envelope;
-				sample.noiseOffset.y /= sample.envelope;
-			}
-			sample.envelope = std::clamp(sample.envelope, 0.0f, 1.0f);
-			return sample;
-		}
 	}
 
-	float SampleAmbientGustBands(const float2& a_worldPosition,
-		const std::array<AmbientGust, kAmbientGustCapacity>& a_gusts, uint32_t a_activeGustCount,
-		const WindTuning& a_tuning) noexcept
+	float SampleAmbientGust(const float3& a_worldPosition, float a_gustTravelDistance,
+		const float3& a_windDirection, const WindTuning& a_tuning) noexcept
 	{
-		return SampleAmbientBands(a_worldPosition, a_gusts, a_activeGustCount, a_tuning).envelope;
-	}
-
-	float SampleAmbientGust(const float3& a_worldPosition,
-		const std::array<AmbientGust, kAmbientGustCapacity>& a_gusts, uint32_t a_activeGustCount,
-		const WindTuning& a_tuning) noexcept
-	{
-		const AmbientBandSample bandSample =
-			SampleAmbientBands({ a_worldPosition.x, a_worldPosition.y }, a_gusts, a_activeGustCount, a_tuning);
-		if (bandSample.envelope <= 0.0f)
-			return 0.5f;
-
-		const float noiseScale = std::max(std::abs(a_tuning.gustNoiseScale), kMinimumDivisor);
-		const Scalar2 broadCoordinate{
-			a_worldPosition.x / noiseScale + bandSample.noiseOffset.x,
-			a_worldPosition.y / noiseScale + bandSample.noiseOffset.y
+		const float horizontalLengthSquared =
+			a_windDirection.x * a_windDirection.x + a_windDirection.y * a_windDirection.y;
+		const float horizontalLength = std::sqrt(horizontalLengthSquared);
+		const Scalar2 direction = horizontalLengthSquared > 1e-6f ?
+		                              Scalar2{ a_windDirection.x / horizontalLength, a_windDirection.y / horizontalLength } :
+		                              Scalar2{ 1.0f, 0.0f };
+		const Scalar2 crosswindDirection{ -direction.y, direction.x };
+		const Scalar2 worldPosition{ a_worldPosition.x, a_worldPosition.y };
+		const float alongWind = Dot(worldPosition, direction);
+		const float acrossWind = Dot(worldPosition, crosswindDirection);
+		const float gustTravelDistance = std::max(a_gustTravelDistance, 0.0f);
+		const float gustScale = std::max(std::abs(a_tuning.gustScale), kMinimumDivisor);
+		const float frontAspectRatio = std::max(std::abs(a_tuning.frontAspectRatio), kMinimumDivisor);
+		const Scalar2 frontCoordinate{
+			(alongWind - gustTravelDistance) / gustScale,
+			acrossWind / (gustScale * frontAspectRatio)
 		};
-		const float broadGust = GradientNoise(broadCoordinate, a_tuning.broadGustSeed, a_tuning);
+
+		const float broadGust = GradientNoise(frontCoordinate, a_tuning.broadGustSeed, a_tuning);
 		const float detailScaleRatio = std::max(std::abs(a_tuning.detailScaleRatio), kMinimumDivisor);
 		const float detailCrosswindScaleRatio =
 			std::max(std::abs(a_tuning.detailCrosswindScaleRatio), kMinimumDivisor);
 		const Scalar2 detailCoordinate{
-			broadCoordinate.x / detailScaleRatio + broadCoordinate.y * a_tuning.turbulenceSkew,
-			broadCoordinate.y / detailCrosswindScaleRatio
+			frontCoordinate.x / detailScaleRatio + frontCoordinate.y * a_tuning.turbulenceSkew,
+			frontCoordinate.y / detailCrosswindScaleRatio
 		};
 		const float turbulentGust = GradientNoise(detailCoordinate, a_tuning.turbulentGustSeed, a_tuning);
 		const float turbulenceStrength = std::max(a_tuning.turbulenceStrength, 0.0f);
 		const float gustNoise =
 			(broadGust + turbulentGust * turbulenceStrength) / (1.0f + turbulenceStrength);
-		const float normalizedNoise = std::clamp(gustNoise * 0.5f + 0.5f, 0.0f, 1.0f);
+		const float normalizedGust = std::clamp(gustNoise * 0.5f + 0.5f, 0.0f, 1.0f);
 		const auto [contrastLow, contrastHigh] = std::minmax(a_tuning.contrastLow, a_tuning.contrastHigh);
-		const float shapedNoise = Smoothstep(contrastLow, contrastHigh, normalizedNoise);
-		const float breakup = Lerp(1.0f, shapedNoise, std::clamp(a_tuning.gustNoiseAmount, 0.0f, 1.0f));
-		return 0.5f + std::clamp(bandSample.envelope * breakup, 0.0f, 1.0f) * 0.5f;
+		return Smoothstep(contrastLow, contrastHigh, normalizedGust);
 	}
 
-	float3 SampleAmbientWind(const float3& a_worldPosition, const float3& a_windDirection,
-		float a_windSpeed, const WindTuning& a_tuning,
-		const std::array<AmbientGust, kAmbientGustCapacity>& a_gusts, uint32_t a_activeGustCount) noexcept
+	float3 SampleAmbientWind(const float3& a_worldPosition, float a_gustTravelDistance,
+		const float3& a_windDirection, float a_windSpeed, const WindTuning& a_tuning) noexcept
 	{
-		return SampleWind(a_worldPosition, a_windDirection, a_windSpeed, a_tuning, a_gusts, a_activeGustCount).velocity;
+		return SampleWind(a_worldPosition, a_gustTravelDistance, a_windDirection, a_windSpeed, a_tuning).velocity;
 	}
 
-	WindSample SampleWind(const float3& a_worldPosition, const float3& a_windDirection,
-		float a_windSpeed, const WindTuning& a_tuning,
-		const std::array<AmbientGust, kAmbientGustCapacity>& a_gusts, uint32_t a_activeGustCount) noexcept
+	WindSample SampleWind(const float3& a_worldPosition, float a_gustTravelDistance,
+		const float3& a_windDirection, float a_windSpeed, const WindTuning& a_tuning) noexcept
 	{
-		const float ambientGust = SampleAmbientGust(a_worldPosition, a_gusts, a_activeGustCount, a_tuning);
+		const float ambientGust =
+			SampleAmbientGust(a_worldPosition, a_gustTravelDistance, a_windDirection, a_tuning);
 		const float gustDeviation = ambientGust * 2.0f - 1.0f;
-		const float gustMultiplier = std::max(1.0f + gustDeviation * std::max(a_tuning.gustAmplitude, 0.0f), 0.0f);
+		const float gustAmplitude = std::max(a_tuning.gustAmplitude, 0.0f);
+		const float gustMultiplier = std::max(1.0f + gustDeviation * gustAmplitude, 0.0f);
 		const float3 ambientWeatherWind =
 			NormalizeDirection(a_windDirection) * (std::max(a_windSpeed, 0.0f) * gustMultiplier);
 		return { ambientWeatherWind, ambientGust, 0.0f };

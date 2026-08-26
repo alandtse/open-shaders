@@ -71,6 +71,10 @@ public:
 	float previousWindFieldFrameTime = 0.0f;
 	float windFieldAmbientSpeed = 0.0f;
 	float windFieldAdvectionSpeed = 0.0f;
+	float windFieldGustTravelDistance = 0.0f;
+	float previousWindFieldGustTravelDistance = 0.0f;
+	float twoFramesAgoWindFieldGustTravelDistance = 0.0f;
+	float windFieldTravelDelta = 0.0f;
 	float3 ambientWindVelocity = {};
 	float3 windFieldSelectedVelocity = {};
 	float3 previousWindFieldSelectedVelocity = {};
@@ -78,10 +82,6 @@ public:
 	float windFieldSelectedSpeed = 0.0f;
 	bool windFieldHasPreviousSample = false;
 	WindField::WindTuning windFieldTuning{};
-	std::array<WindField::AmbientGust, WindField::kAmbientGustCapacity> ambientGusts{};
-	std::array<WindField::AmbientGust, WindField::kAmbientGustCapacity> previousAmbientGusts{};
-	uint32_t activeAmbientGustCount = 0;
-	uint32_t previousActiveAmbientGustCount = 0;
 	float2 trunkWindVector = {};
 	float2 previousTrunkWindVector = {};
 	double smoothDrawCalls[RE::BSShader::Type::Total + 1];
@@ -460,11 +460,13 @@ public:
 		float GrassWindMaximumTilt;
 
 		float GrassWindBendProfile;
-		float3 GrassWindPadding0;
+		float GrassWindSpringLag;
+		float GrassWindSpringStrength;
+		float GrassWindSpringRecovery;
 
 		float GrassWindFlutterStrength;
 		float GrassWindFlutterFrequency;
-		uint GrassWindPadding2;
+		uint GrassWindUseBendTargetSpring;
 		float GrassWindSensitivity;
 
 		float TreeWindBoundsBase;
@@ -472,7 +474,8 @@ public:
 		float TreeWindTrunkGustInfluence;
 		float TreeLeafGustInfluence;
 
-		float4 GrassWindPadding1;
+		float GrassWindSpringRecoveryLag;
+		float3 GrassWindPadding1;
 
 		bool operator==(const PermutationCB& other) const
 		{
@@ -498,8 +501,13 @@ public:
 			       GrassWindSensitivity == other.GrassWindSensitivity &&
 			       GrassWindMaximumTilt == other.GrassWindMaximumTilt &&
 			       GrassWindBendProfile == other.GrassWindBendProfile &&
+			       GrassWindSpringLag == other.GrassWindSpringLag &&
+			       GrassWindSpringStrength == other.GrassWindSpringStrength &&
+			       GrassWindSpringRecovery == other.GrassWindSpringRecovery &&
 			       GrassWindFlutterStrength == other.GrassWindFlutterStrength &&
 			       GrassWindFlutterFrequency == other.GrassWindFlutterFrequency &&
+			       GrassWindUseBendTargetSpring == other.GrassWindUseBendTargetSpring &&
+			       GrassWindSpringRecoveryLag == other.GrassWindSpringRecoveryLag &&
 			       TreeWindBoundsBase == other.TreeWindBoundsBase &&
 			       TreeWindBoundsHeight == other.TreeWindBoundsHeight &&
 			       TreeWindTrunkGustInfluence == other.TreeWindTrunkGustInfluence &&
@@ -508,7 +516,7 @@ public:
 	};
 	static_assert(offsetof(PermutationCB, EnableAmbientGrassWind) == 100);
 	static_assert(offsetof(PermutationCB, GrassWindFlutterStrength) == 128);
-	static_assert(offsetof(PermutationCB, GrassWindPadding1) == 160);
+	static_assert(offsetof(PermutationCB, GrassWindSpringRecoveryLag) == 160);
 	STATIC_ASSERT_ALIGNAS_16(PermutationCB);
 
 	ConstantBuffer* permutationCB = nullptr;
@@ -545,14 +553,12 @@ public:
 		float RefractionScale;            // ISRefraction.hlsl heat-shimmer multiplier; 1.0 = unmodified vanilla strength
 		float3 pad1;
 		float4 WindFieldDebug;         // xy: base weather velocity, z: visualization enabled, w: previous frame time
-		float4 WindFieldDebugOptions;  // x: frame time, y: real speed, z: real direction, w: active gust count
+		float4 WindFieldDebugOptions;  // x: frame time, y: real speed, z: real direction, w: accumulated gust travel
 		WindField::WindTuning WindFieldTuning;
-		float4 WindFieldAmbient;  // xyz: instantaneous mean weather velocity
+		float4 WindFieldAmbient;  // xyz: selected mean weather velocity, w: accumulated gust travel
 		float4 WindFieldPreviousAmbient;
 		float4 WindFieldTwoFramesAgoAmbient;
 		std::array<uint32_t, 4> WindFieldActiveCounts;
-		std::array<WindField::AmbientGust, WindField::kAmbientGustCapacity> WindFieldAmbientGusts;
-		std::array<WindField::AmbientGust, WindField::kAmbientGustCapacity> WindFieldPreviousAmbientGusts;
 		std::array<WindField::TransientImpulse, WindField::kTransientImpulseCapacity> WindFieldTransientImpulses;
 		std::array<WindField::TransientImpulse, WindField::kTransientImpulseCapacity> WindFieldPreviousTransientImpulses;
 	};
@@ -569,8 +575,6 @@ public:
 	static_assert(offsetof(SharedDataCB, WindFieldPreviousAmbient) % 16 == 0);
 	static_assert(offsetof(SharedDataCB, WindFieldTwoFramesAgoAmbient) % 16 == 0);
 	static_assert(offsetof(SharedDataCB, WindFieldActiveCounts) % 16 == 0);
-	static_assert(offsetof(SharedDataCB, WindFieldAmbientGusts) % 16 == 0);
-	static_assert(offsetof(SharedDataCB, WindFieldPreviousAmbientGusts) % 16 == 0);
 	static_assert(offsetof(SharedDataCB, WindFieldTransientImpulses) % 16 == 0);
 	static_assert(offsetof(SharedDataCB, WindFieldPreviousTransientImpulses) % 16 == 0);
 
@@ -668,13 +672,7 @@ public:
 	}
 
 private:
-	void UpdateAmbientGusts(float a_frameTime, const float2& a_simulationCenter, const float2& a_windDirection);
-	void SpawnAmbientGust(const float2& a_simulationCenter, const float2& a_windDirection);
-	[[nodiscard]] float NextAmbientGustRandom() noexcept;
-	[[nodiscard]] float NextAmbientGustRange(float a_minimum, float a_maximum) noexcept;
 	void UpdateTransientWindImpulses(float a_frameTime);
-	float ambientGustSpawnTimer = 0.0f;
-	uint32_t ambientGustRandomState = 0xA341316Cu;
 	std::array<WindField::TransientImpulse, WindField::kTransientImpulseCapacity> transientWindImpulses{};
 	std::array<WindField::TransientImpulse, WindField::kTransientImpulseCapacity> previousTransientWindImpulses{};
 	uint32_t activeTransientWindImpulseCount = 0;

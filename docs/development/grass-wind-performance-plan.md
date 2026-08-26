@@ -15,7 +15,7 @@ The ambient grass path evaluates the wind field in the vertex shader for both
 the current and previous positions. Each grass vertex therefore repeats work
 that is identical for every vertex belonging to the same grass instance:
 
--   current and previous ambient-band evaluation;
+-   current and previous ambient wind-field evaluation;
 -   current and previous procedural-noise evaluation;
 -   current and previous transient-source evaluation;
 -   spring target reconstruction;
@@ -80,7 +80,7 @@ missing frame time.
 
 Evaluate ambient wind once per field texel per frame, then let grass sample
 current and previous field textures with `SampleLevel`. A player-centered 2D XY
-field is the smallest useful first stage because ambient gust bands are
+field is the smallest useful first stage because ambient gust variation is
 horizontal. Counted transient impulses can remain analytic initially; a 3D
 field remains an option if vertical transient behavior or additional consumers
 justify it.

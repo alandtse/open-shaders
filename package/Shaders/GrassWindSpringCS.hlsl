@@ -8,7 +8,10 @@ RWTexture2D<float4> Response : register(u0);
 RWTexture2D<float4> Velocity : register(u1);
 
 [numthreads(8, 8, 1)] void main(uint3 dispatchThreadId : SV_DispatchThreadID) {
-	float cellSize = GrassWindSpring::WORLD_SIZE / GrassWindSpring::TEXTURE_SIZE;
+	uint2 fieldDimensions = uint2(GrassWindSpring::TextureSize, GrassWindSpring::TextureSize);
+	if (any(dispatchThreadId.xy >= fieldDimensions))
+		return;
+	float cellSize = GrassWindSpring::FieldSize / GrassWindSpring::TextureSize;
 	float2 worldPosition = GrassWindSpring::FieldMinimum +
 	                       (float2(dispatchThreadId.xy) + 0.5f) * cellSize;
 	float3 target = GrassWindSpring::CalculateTarget(
@@ -20,7 +23,7 @@ RWTexture2D<float4> Velocity : register(u1);
 		(worldPosition - GrassWindSpring::PreviousFieldMinimum) / cellSize;
 	int2 previousCell = int2(floor(previousCoordinate));
 	bool historyValid = GrassWindSpring::Initialize == 0u &&
-	                    all(previousCell >= 0) && all(previousCell < int2(GrassWindSpring::TEXTURE_SIZE, GrassWindSpring::TEXTURE_SIZE));
+	                    all(previousCell >= 0) && all(previousCell < int2(GrassWindSpring::TextureSize, GrassWindSpring::TextureSize));
 	if (historyValid) {
 		response = PreviousResponse.Load(int3(previousCell, 0)).xyz;
 		velocity = PreviousVelocity.Load(int3(previousCell, 0)).xyz;

@@ -200,34 +200,110 @@ void GetGrassWindDisplacements(
 			float inverseMaximumTilt = rcp(max(GrassWindSpring::MaximumTiltRadians, 1e-4f));
 			currentWindResponse = saturate(max(length(currentField.xy) * inverseMaximumTilt, currentField.z));
 			previousWindResponse = saturate(max(length(previousField.xy) * inverseMaximumTilt, previousField.z));
+			float flutterFrequency = max(Permutation::GrassWindFlutterFrequency, 0.0);
+			float flutterPhaseOffset = Math::TAU * responseVariation;
+			springBendAngle *= Wind::Grass::CalculateFlutterBendScale(
+				flutterPhaseOffset + WindTimer * flutterFrequency,
+				currentWindResponse);
+			previousSpringBendAngle *= Wind::Grass::CalculateFlutterBendScale(
+				flutterPhaseOffset + PreviousWindTimer * flutterFrequency,
+				previousWindResponse);
+			float previousBendAngle;
+			windDisplacement = Wind::Grass::CalculateAmbientDisplacement(
+				input.Color.w, modelHeight, input.InstanceData1.z, bendAxis, springBendAngle,
+				springCompression, bendAngle);
+			previousWindDisplacement = Wind::Grass::CalculateAmbientDisplacement(
+				input.Color.w, modelHeight, input.InstanceData1.z, previousBendAxis,
+				previousSpringBendAngle, previousSpringCompression, previousBendAngle);
+			return;
 		} else {
 			float grassWindSensitivity = max(Permutation::GrassWindSensitivity, 0.0f);
 			WindField::WindSample windSample = SharedData::SampleAmbientWind(rootWorldPosition);
 			WindField::WindSample previousWindSample = SharedData::SamplePreviousAmbientWind(previousRootWorldPosition);
-			Wind::Grass::CalculateAmbientBendTarget(
-				windSample.velocity * grassWindSensitivity, responseScale, World[eyeIndex], bendAxis, springBendAngle,
-				springCompression);
-			Wind::Grass::CalculateAmbientBendTarget(
-				previousWindSample.velocity * grassWindSensitivity, responseScale, PreviousWorld[eyeIndex],
-				previousBendAxis, previousSpringBendAngle, previousSpringCompression);
-			currentWindResponse = max(windSample.ambientGust, windSample.transientImpulse);
-			previousWindResponse = max(previousWindSample.ambientGust, previousWindSample.transientImpulse);
+			WindField::WindSample twoFramesAgoWindSample = SharedData::SampleTwoFramesAgoAmbientWind(previousRootWorldPosition);
+			float3 grassWindVelocity = windSample.velocity * grassWindSensitivity;
+			float3 previousGrassWindVelocity = previousWindSample.velocity * grassWindSensitivity;
+			float3 twoFramesAgoGrassWindVelocity = twoFramesAgoWindSample.velocity * grassWindSensitivity;
+			float frameTime = max(SharedData::WindFieldDebugOptions.x, 0.0);
+			float previousFrameTime = max(SharedData::WindFieldDebug.w, 0.0);
+			float responseLag = max(Permutation::GrassWindSpringLag, 0.0);
+			float lagFrameCount = frameTime > 1e-4 ? min(responseLag / frameTime, 64.0) : 0.0;
+			float previousLagFrameCount =
+				previousFrameTime > 1e-4 ? min(responseLag / previousFrameTime, 64.0) : 0.0;
+			float recoveryLag = max(Permutation::GrassWindSpringRecoveryLag, 0.0);
+			float recoveryLagFrameCount = frameTime > 1e-4 ? min(recoveryLag / frameTime, 512.0) : 0.0;
+			float previousRecoveryLagFrameCount =
+				previousFrameTime > 1e-4 ? min(recoveryLag / previousFrameTime, 512.0) : 0.0;
+			float3 vanillaDisplacement = 0.0.xxx;
+			float3 previousVanillaDisplacement = 0.0.xxx;
+			float ambientWindIntensity = saturate(length(grassWindVelocity));
+			float previousAmbientWindIntensity = saturate(length(previousGrassWindVelocity));
+			float flutterFrequency = lerp(
+				1.0, max(Permutation::GrassWindFlutterFrequency, 1.0), ambientWindIntensity);
+			float previousFlutterFrequency = lerp(
+				1.0, max(Permutation::GrassWindFlutterFrequency, 1.0), previousAmbientWindIntensity);
+			float flutterStrength = max(Permutation::GrassWindFlutterStrength, 0.0);
+			vanillaDisplacement = Wind::Grass::CalculateVanillaDisplacement(
+				input.InstanceData1.xy, input.Color.w, WindVector, WindTimer * flutterFrequency,
+				Wind::Common::GetWindIntensityOverrideScale() * flutterStrength * grassWindSensitivity);
+			previousVanillaDisplacement = Wind::Grass::CalculateVanillaDisplacement(
+				input.InstanceData1.xy, input.Color.w, WindVector, PreviousWindTimer * previousFlutterFrequency,
+				Wind::Common::GetWindIntensityOverrideScale() * flutterStrength * grassWindSensitivity);
+
+			if (Permutation::GrassWindUseBendTargetSpring != 0) {
+				float targetBendAngle;
+				float previousTargetBendAngle;
+				float targetCompression;
+				float previousTargetCompression;
+				float3 twoFramesAgoBendAxis;
+				float twoFramesAgoTargetBendAngle;
+				float twoFramesAgoTargetCompression;
+				Wind::Grass::CalculateAmbientBendTarget(
+					grassWindVelocity, responseScale, World[eyeIndex], bendAxis, targetBendAngle,
+					targetCompression);
+				Wind::Grass::CalculateAmbientBendTarget(
+					previousGrassWindVelocity, responseScale, PreviousWorld[eyeIndex],
+					previousBendAxis, previousTargetBendAngle, previousTargetCompression);
+				Wind::Grass::CalculateAmbientBendTarget(
+					twoFramesAgoGrassWindVelocity, responseScale, PreviousWorld[eyeIndex],
+					twoFramesAgoBendAxis, twoFramesAgoTargetBendAngle, twoFramesAgoTargetCompression);
+				springBendAngle = Wind::Grass::CalculateSpringAngle(
+					targetBendAngle, previousTargetBendAngle, lagFrameCount, recoveryLagFrameCount);
+				previousSpringBendAngle = Wind::Grass::CalculateSpringAngle(
+					previousTargetBendAngle, twoFramesAgoTargetBendAngle,
+					previousLagFrameCount, previousRecoveryLagFrameCount);
+				springCompression = Wind::Grass::CalculateSpringCompression(
+					targetCompression, previousTargetCompression, lagFrameCount, recoveryLagFrameCount);
+				previousSpringCompression = Wind::Grass::CalculateSpringCompression(
+					previousTargetCompression, twoFramesAgoTargetCompression,
+					previousLagFrameCount, previousRecoveryLagFrameCount);
+			} else {
+				float3 springWindVelocity = Wind::Grass::CalculateSpringVelocity(
+					grassWindVelocity, windSample.ambientGust, previousGrassWindVelocity,
+					previousWindSample.ambientGust, lagFrameCount, recoveryLagFrameCount);
+				float3 previousSpringWindVelocity = Wind::Grass::CalculateSpringVelocity(
+					previousGrassWindVelocity, previousWindSample.ambientGust,
+					twoFramesAgoGrassWindVelocity, twoFramesAgoWindSample.ambientGust,
+					previousLagFrameCount, previousRecoveryLagFrameCount);
+				Wind::Grass::CalculateAmbientBendTarget(
+					springWindVelocity, responseScale, World[eyeIndex], bendAxis, springBendAngle,
+					springCompression);
+				Wind::Grass::CalculateAmbientBendTarget(
+					previousSpringWindVelocity, responseScale, PreviousWorld[eyeIndex],
+					previousBendAxis, previousSpringBendAngle, previousSpringCompression);
+			}
+
+			float previousBendAngle;
+			windDisplacement = Wind::Grass::CalculateAmbientDisplacement(
+				input.Color.w, modelHeight, input.InstanceData1.z, bendAxis, springBendAngle,
+				springCompression, bendAngle);
+			previousWindDisplacement = Wind::Grass::CalculateAmbientDisplacement(
+				input.Color.w, modelHeight, input.InstanceData1.z, previousBendAxis,
+				previousSpringBendAngle, previousSpringCompression, previousBendAngle);
+			windDisplacement += Wind::Common::RotateVector(vanillaDisplacement, bendAxis, bendAngle);
+			previousWindDisplacement +=
+				Wind::Common::RotateVector(previousVanillaDisplacement, previousBendAxis, previousBendAngle);
 		}
-		float flutterFrequency = max(Permutation::GrassWindFlutterFrequency, 0.0);
-		float flutterPhaseOffset = Math::TAU * responseVariation;
-		springBendAngle *= Wind::Grass::CalculateFlutterBendScale(
-			flutterPhaseOffset + WindTimer * flutterFrequency,
-			currentWindResponse);
-		previousSpringBendAngle *= Wind::Grass::CalculateFlutterBendScale(
-			flutterPhaseOffset + PreviousWindTimer * flutterFrequency,
-			previousWindResponse);
-		float previousBendAngle;
-		windDisplacement = Wind::Grass::CalculateAmbientDisplacement(
-			input.Color.w, modelHeight, input.InstanceData1.z, bendAxis, springBendAngle,
-			springCompression, bendAngle);
-		previousWindDisplacement = Wind::Grass::CalculateAmbientDisplacement(
-			input.Color.w, modelHeight, input.InstanceData1.z, previousBendAxis,
-			previousSpringBendAngle, previousSpringCompression, previousBendAngle);
 		return;
 	}
 

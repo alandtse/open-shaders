@@ -3,9 +3,6 @@
 
 namespace GrassWindSpring
 {
-	// Keep these mirrored with CSUtility's grass spring field constants.
-	static const uint TEXTURE_SIZE = 128u;
-	static const float WORLD_SIZE = 32768.0f;
 	static const float TAU = 6.28318530717958647692f;
 
 #if defined(GRASS_WIND_SPRING_COMPUTE)
@@ -25,7 +22,9 @@ namespace GrassWindSpring
 		float SpringDamping;
 		uint Initialize;
 		uint FieldAvailable;
-		float3 SpringPadding;
+		float FieldSize;
+		uint TextureSize;
+		float SpringPadding;
 	};
 
 #if !defined(GRASS_WIND_SPRING_COMPUTE)
@@ -95,13 +94,13 @@ namespace GrassWindSpring
 #if !defined(GRASS_WIND_SPRING_COMPUTE)
 	bool Contains(float2 worldPosition, float2 fieldMinimum)
 	{
-		float2 uv = (worldPosition - fieldMinimum) / WORLD_SIZE;
+		float2 uv = (worldPosition - fieldMinimum) / FieldSize;
 		return all(uv >= 0.0f) && all(uv <= 1.0f);
 	}
 
 	float4 SampleField(Texture2D<float4> field, float2 worldPosition, float2 fieldMinimum)
 	{
-		float2 uv = (worldPosition - fieldMinimum) / WORLD_SIZE;
+		float2 uv = (worldPosition - fieldMinimum) / FieldSize;
 		return Contains(worldPosition, fieldMinimum) ?
 		           field.SampleLevel(ResponseSampler, saturate(uv), 0.0f) :
 		           0.0f.xxxx;
