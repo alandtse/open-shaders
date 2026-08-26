@@ -534,7 +534,6 @@ bool TerrainShadows::UpdateShadow(bool a_refreshImmediately)
 
 	const auto worldDirection = sunLight->GetWorldDirection();
 	const float3 currentSunDirection = { worldDirection.x, worldDirection.y, worldDirection.z };
-	TracyD3D11Zone(globals::state->tracyCtx, "Terrain Occlusion - Update Shadows");
 
 	/* ---- UPDATE CB ---- */
 	uint width = texHeightMap->desc.Width;
