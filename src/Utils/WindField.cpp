@@ -105,6 +105,32 @@ namespace WindField
 		}
 	}
 
+	Field CreateField(const float3& a_direction, float a_speed, float a_travelDistance) noexcept
+	{
+		const float horizontalLengthSquared = a_direction.x * a_direction.x + a_direction.y * a_direction.y;
+		const float inverseLength = horizontalLengthSquared > 1e-6f ? 1.0f / std::sqrt(horizontalLengthSquared) : 1.0f;
+		const float3 direction = horizontalLengthSquared > 1e-6f ?
+		                             float3{ a_direction.x * inverseLength, a_direction.y * inverseLength, 0.0f } :
+		                             float3{ 1.0f, 0.0f, 0.0f };
+		return {
+			direction,
+			std::isfinite(a_travelDistance) ? std::max(a_travelDistance, 0.0f) : 0.0f,
+			{ -direction.y, direction.x, 0.0f },
+			std::isfinite(a_speed) ? std::max(a_speed, 0.0f) : 0.0f
+		};
+	}
+
+	void SetFieldSpeed(Field& a_field, float a_speed) noexcept
+	{
+		a_field.speed = std::isfinite(a_speed) ? std::max(a_speed, 0.0f) : 0.0f;
+	}
+
+	void AdvanceField(Field& a_field, float a_distance) noexcept
+	{
+		if (std::isfinite(a_distance))
+			a_field.travelDistance = std::max(a_field.travelDistance + a_distance, 0.0f);
+	}
+
 	float SampleAmbientGust(const float3& a_worldPosition, float a_gustTravelDistance,
 		const float3& a_windDirection, const WindTuning& a_tuning) noexcept
 	{
@@ -160,5 +186,35 @@ namespace WindField
 		const float3 ambientWeatherWind =
 			NormalizeDirection(a_windDirection) * (std::max(a_windSpeed, 0.0f) * gustMultiplier);
 		return { ambientWeatherWind, ambientGust, 0.0f };
+	}
+
+	WindSample SampleWind(const float3& a_worldPosition, const Field& a_field,
+		const WindTuning& a_tuning) noexcept
+	{
+		const Scalar2 worldPosition{ a_worldPosition.x, a_worldPosition.y };
+		const Scalar2 direction{ a_field.direction.x, a_field.direction.y };
+		const Scalar2 crosswind{ a_field.crosswind.x, a_field.crosswind.y };
+		const float gustScale = std::max(std::abs(a_tuning.gustScale), kMinimumDivisor);
+		const float frontAspectRatio = std::max(std::abs(a_tuning.frontAspectRatio), kMinimumDivisor);
+		const Scalar2 frontCoordinate{
+			(Dot(worldPosition, direction) - std::max(a_field.travelDistance, 0.0f)) / gustScale,
+			Dot(worldPosition, crosswind) / (gustScale * frontAspectRatio)
+		};
+		const float broadGust = GradientNoise(frontCoordinate, a_tuning.broadGustSeed, a_tuning);
+		const float detailScaleRatio = std::max(std::abs(a_tuning.detailScaleRatio), kMinimumDivisor);
+		const float detailCrosswindScaleRatio = std::max(std::abs(a_tuning.detailCrosswindScaleRatio), kMinimumDivisor);
+		const Scalar2 detailCoordinate{
+			frontCoordinate.x / detailScaleRatio + frontCoordinate.y * a_tuning.turbulenceSkew,
+			frontCoordinate.y / detailCrosswindScaleRatio
+		};
+		const float turbulentGust = GradientNoise(detailCoordinate, a_tuning.turbulentGustSeed, a_tuning);
+		const float turbulenceStrength = std::max(a_tuning.turbulenceStrength, 0.0f);
+		const float gustNoise = (broadGust + turbulentGust * turbulenceStrength) / (1.0f + turbulenceStrength);
+		const float normalizedGust = std::clamp(gustNoise * 0.5f + 0.5f, 0.0f, 1.0f);
+		const auto [contrastLow, contrastHigh] = std::minmax(a_tuning.contrastLow, a_tuning.contrastHigh);
+		const float ambientGust = Smoothstep(contrastLow, contrastHigh, normalizedGust);
+		const float gustMultiplier = std::max(
+			1.0f + (ambientGust * 2.0f - 1.0f) * std::max(a_tuning.gustAmplitude, 0.0f), 0.0f);
+		return { a_field.direction * (a_field.speed * gustMultiplier), ambientGust, 0.0f };
 	}
 }

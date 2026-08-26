@@ -14,6 +14,7 @@ Texture2D<unorm float3> AlbedoTexture : register(t1);
 Texture2D<unorm float3> NormalRoughnessTexture : register(t2);
 Texture2D<float3> MasksTexture : register(t3);
 Texture2D<unorm float> Masks2Texture : register(t9);
+Texture2D<float4> GrassWindSpringDebug : register(t18);
 
 RWTexture2D<float4> MainRW : register(u0);
 RWTexture2D<float4> NormalTAAMaskSpecularMaskRW : register(u1);
@@ -329,12 +330,46 @@ void SampleSSGISpecular(uint2 pixCoord, sh2 lobe, inout float ao, out float3 il,
 
 	[branch] if (SharedData::WindFieldDebug.z > 0.0f && depth < 1.0f)
 	{
-		// Keep this diagnostic independent from the game's grass/wind animation.
-		// The shared procedural wind field provides the canonical pressure sample.
 		float3 worldPosition = positionWS.xyz + FrameBuffer::CameraPosAdjust[eyeIndex].xyz;
-		WindField::WindSample windSample = SharedData::SampleAmbientWind(worldPosition);
-		float ambientPressure = saturate((windSample.ambientGust - 0.5f) * 2.0f);
-		color = Color::TurboColormap(max(ambientPressure, saturate(windSample.transientImpulse)));
+		float debugView = SharedData::WindFieldTransitionData.w;
+		if (debugView == 5.0f) {
+			color = 0.0f;
+			if (SharedData::WindFieldSpringDebug.z > 0.0f) {
+				float2 springUV = (worldPosition.xy - SharedData::WindFieldSpringDebug.xy) /
+				                  SharedData::WindFieldSpringDebug.z;
+				if (all(springUV >= 0.0f) && all(springUV <= 1.0f)) {
+					uint springWidth, springHeight;
+					GrassWindSpringDebug.GetDimensions(springWidth, springHeight);
+					uint2 springCell = min(uint2(springUV * float2(springWidth, springHeight)),
+						uint2(springWidth - 1u, springHeight - 1u));
+					float3 springResponse = GrassWindSpringDebug.Load(int3(springCell, 0)).xyz;
+					float springMagnitude = saturate(length(springResponse.xy) /
+													 max(SharedData::WindFieldSpringDebug.w, 1e-4f));
+					color = lerp(Color::TurboColormap(springMagnitude), float3(1.0f, 1.0f, 1.0f), springResponse.z * 0.25f);
+				}
+			}
+		} else {
+			WindField::WindSample currentSample = WindField::SampleWind(
+				worldPosition, SharedData::WindFieldCurrent, SharedData::WindFieldTuning);
+			WindField::WindSample previousSample = currentSample;
+			if (debugView >= 2.0f && SharedData::WindFieldTransitionData.x < 1.0f)
+				previousSample = WindField::SampleWind(
+					worldPosition, SharedData::WindFieldTransition, SharedData::WindFieldTuning);
+			WindField::WindSample displayedSample = SharedData::SampleAmbientWind(worldPosition);
+			if (debugView == 1.0f)
+				displayedSample = currentSample;
+			else if (debugView == 2.0f)
+				displayedSample = previousSample;
+			else if (debugView == 3.0f) {
+				if (((dispatchID.x / 16u + dispatchID.y / 16u) & 1u) != 0u)
+					displayedSample = previousSample;
+			} else if (debugView == 4.0f) {
+				if (dispatchID.x * 2u < uint(SharedData::BufferDim.x))
+					displayedSample = previousSample;
+			}
+			float ambientPressure = saturate((displayedSample.ambientGust - 0.5f) * 2.0f);
+			color = Color::TurboColormap(max(ambientPressure, saturate(displayedSample.transientImpulse)));
+		}
 	}
 
 	MainRW[dispatchID.xy] = float4(color, 1.0);

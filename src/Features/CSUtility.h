@@ -96,6 +96,7 @@ struct CSUtility : Feature
 		float windFieldGustScale = 2048.0f;
 		float windFieldGustAmplitude = 0.35f;
 		float windFieldGustAdvectionMultiplier = 1.0f;
+		float windFieldDirectionTransitionDuration = 1.0f;
 		bool enableFusRoDahWind = true;
 		float fusRoDahIntensity = 1.0f;
 		float fusRoDahDecayTime = 1.5f;
@@ -149,10 +150,22 @@ struct CSUtility : Feature
 	};
 	/** The visible tab whose settings Restore Defaults changes. */
 	SettingsPage activeSettingsPage = SettingsPage::Atmosphere;
-	bool visualizeWindField = false;        ///< Runtime-only GPU wind-field visualization toggle.
-	bool windFieldUseRealSpeed = true;      ///< Runtime-only debug input toggle.
-	bool windFieldUseRealDirection = true;  ///< Runtime-only debug input toggle.
-	float windFieldOverrideSpeed = 1.0f;    ///< Runtime-only speed used when real speed is disabled.
+	bool visualizeWindField = false;                ///< Runtime-only GPU wind-field visualization toggle.
+	bool windFieldUseRealSpeed = true;              ///< Runtime-only debug input toggle.
+	bool windFieldUseRealDirection = true;          ///< Runtime-only debug input toggle.
+	float windFieldOverrideSpeed = 1.0f;            ///< Runtime-only speed used when real speed is disabled.
+	float windFieldPendingDirectionDegrees = 0.0f;  ///< UI value; does not affect a field until applied.
+	float windFieldAppliedDirectionDegrees = 0.0f;  ///< Direction used when weather direction is disabled.
+	enum class WindFieldDebugView : uint32_t
+	{
+		Blended,
+		Current,
+		Previous,
+		Both,
+		Comparison,
+		Spring
+	};
+	WindFieldDebugView windFieldDebugView = WindFieldDebugView::Blended;
 	struct RuntimeWindTest
 	{
 		bool enabled = false;
@@ -281,6 +294,8 @@ struct CSUtility : Feature
 	void DrawVanillaBloomSettings();
 	void DrawTreeWindTestSettings();
 	void DrawTreeMeshSettings();
+	/** @brief Returns the current spring response field for the deferred diagnostic view. */
+	[[nodiscard]] ID3D11ShaderResourceView* GetGrassWindSpringDebugSRV() const;
 	void InstallDepthOfFieldHooks();
 
 	static void SanitizeDepthOfFieldSettings(DepthOfFieldSettings& a_settings);

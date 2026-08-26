@@ -8,6 +8,7 @@
 #include "Utils/D3D.h"
 
 #include "Features/CSEditor.h"
+#include "Features/CSUtility.h"
 #include "Features/DynamicCubemaps.h"
 #include "Features/Effects11.h"
 #include "Features/IBL.h"
@@ -442,6 +443,8 @@ void Deferred::DeferredPasses()
 		// lights Eye 1 natively — no mode-texture skip (null SRV reads 0 = MODE_DISOCCLUDED).
 		ID3D11ShaderResourceView* modeSRV = nullptr;
 		context->CSSetShaderResources(16, 1, &modeSRV);
+		ID3D11ShaderResourceView* springDebugSRV = globals::features::csUtility.GetGrassWindSpringDebugSRV();
+		context->CSSetShaderResources(18, 1, &springDebugSRV);
 
 		ID3D11UnorderedAccessView* uavs[3]{ main.UAV, normals.UAV, motionVectors.UAV };
 		context->CSSetUnorderedAccessViews(0, ARRAYSIZE(uavs), uavs, nullptr);
@@ -454,6 +457,7 @@ void Deferred::DeferredPasses()
 		// Unbind mode texture SRV
 		ID3D11ShaderResourceView* nullSRV = nullptr;
 		context->CSSetShaderResources(16, 1, &nullSRV);
+		context->CSSetShaderResources(18, 1, &nullSRV);
 	}
 
 	// VR: Bilateral stereo blend (the reprojection color-overwrite path is gone —

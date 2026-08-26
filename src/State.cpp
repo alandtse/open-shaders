@@ -346,6 +346,12 @@ void State::Reset()
 	previousWindFieldSelectedVelocity = windFieldSelectedVelocity;
 	twoFramesAgoWindFieldGustTravelDistance = previousWindFieldGustTravelDistance;
 	previousWindFieldGustTravelDistance = windFieldGustTravelDistance;
+	twoFramesAgoWindFieldCurrent = previousWindFieldCurrent;
+	previousWindFieldCurrent = windFieldCurrent;
+	twoFramesAgoWindFieldTransition = previousWindFieldTransition;
+	previousWindFieldTransition = windFieldTransition;
+	twoFramesAgoWindFieldTransitionBlend = previousWindFieldTransitionBlend;
+	previousWindFieldTransitionBlend = windFieldTransitionBlend;
 	ambientWindVelocity = {};
 	trunkWindVector = {};
 	const bool overrideTrunkWindIntensity = globals::features::csUtility.loaded &&
@@ -385,30 +391,74 @@ void State::Reset()
 	                                    (std::isfinite(ambientWindSpeed) ? std::max(ambientWindSpeed, 0.0f) : 0.0f) :
 	                                    std::max(csUtility.GetEffectiveWindOverrideSpeed(), 0.0f);
 	const float ambientDirectionLength = std::hypot(ambientWindVelocity.x, ambientWindVelocity.y);
-	float3 selectedWindDirection{ 1.0f, 0.0f, 0.0f };
+	float3 selectedWindDirection = windFieldHasPreviousSample ? windFieldCurrent.direction : float3{ 1.0f, 0.0f, 0.0f };
 	if (useRealWindDirection && std::isfinite(ambientDirectionLength) && ambientDirectionLength > 0.0001f) {
 		selectedWindDirection = {
 			ambientWindVelocity.x / ambientDirectionLength,
 			ambientWindVelocity.y / ambientDirectionLength,
 			0.0f
 		};
+	} else if (!useRealWindDirection) {
+		const float directionRadians = DirectX::XMConvertToRadians(csUtility.windFieldAppliedDirectionDegrees);
+		selectedWindDirection = { std::cos(directionRadians), std::sin(directionRadians), 0.0f };
 	}
-	windFieldSelectedSpeed = selectedWindSpeed;
-	windFieldSelectedVelocity = selectedWindDirection * selectedWindSpeed;
-	windFieldAmbientSpeed = selectedWindSpeed;
 	const float gustAdvectionSpeed = selectedWindSpeed * windFieldTuning.gustAdvectionBaseSpeed *
 	                                 windFieldTuning.gustAdvectionMultiplier;
 	windFieldAdvectionSpeed = std::isfinite(gustAdvectionSpeed) ? std::max(gustAdvectionSpeed, 0.0f) : 0.0f;
 	windFieldTravelDelta = std::isfinite(frameTime) ? windFieldAdvectionSpeed * std::max(frameTime, 0.0f) : 0.0f;
-	if (std::isfinite(windFieldTravelDelta))
-		windFieldGustTravelDistance += windFieldTravelDelta;
 	if (!windFieldHasPreviousSample) {
-		previousWindFieldSelectedVelocity = windFieldSelectedVelocity;
-		twoFramesAgoWindFieldSelectedVelocity = windFieldSelectedVelocity;
-		previousWindFieldGustTravelDistance = windFieldGustTravelDistance;
-		twoFramesAgoWindFieldGustTravelDistance = windFieldGustTravelDistance;
+		windFieldCurrent = WindField::CreateField(selectedWindDirection, selectedWindSpeed);
+		previousWindFieldCurrent = windFieldCurrent;
+		twoFramesAgoWindFieldCurrent = windFieldCurrent;
+		windFieldTransition = windFieldCurrent;
+		previousWindFieldTransition = windFieldCurrent;
+		twoFramesAgoWindFieldTransition = windFieldCurrent;
+		windFieldTransitionBlend = 1.0f;
+		previousWindFieldTransitionBlend = 1.0f;
+		twoFramesAgoWindFieldTransitionBlend = 1.0f;
 		windFieldHasPreviousSample = true;
+	} else {
+		constexpr float kDirectionChangeCosine = 0.9998477f;  // one degree
+		const float directionDot = windFieldCurrent.direction.x * selectedWindDirection.x +
+		                           windFieldCurrent.direction.y * selectedWindDirection.y;
+		if (!windFieldTransitionActive && directionDot < kDirectionChangeCosine) {
+			windFieldTransition = windFieldCurrent;
+			previousWindFieldTransition = previousWindFieldCurrent;
+			twoFramesAgoWindFieldTransition = twoFramesAgoWindFieldCurrent;
+			windFieldCurrent = WindField::CreateField(selectedWindDirection, selectedWindSpeed);
+			windFieldTransitionElapsed = 0.0f;
+			windFieldTransitionBlend = 0.0f;
+			windFieldTransitionActive = true;
+		} else {
+			WindField::SetFieldSpeed(windFieldCurrent, selectedWindSpeed);
+		}
 	}
+	WindField::SetFieldSpeed(windFieldCurrent, selectedWindSpeed);
+	WindField::AdvanceField(windFieldCurrent, windFieldTravelDelta);
+	if (windFieldTransitionActive) {
+		WindField::SetFieldSpeed(windFieldTransition, selectedWindSpeed);
+		WindField::AdvanceField(windFieldTransition, windFieldTravelDelta);
+		windFieldTransitionElapsed += frameTime;
+		const float configuredTransitionDuration = globals::features::csUtility.settings.windFieldDirectionTransitionDuration;
+		const float transitionDuration = std::isfinite(configuredTransitionDuration) ?
+		                                     std::clamp(configuredTransitionDuration, 0.0f, 30.0f) :
+		                                     1.0f;
+		windFieldTransitionBlend = transitionDuration > 0.0f ?
+		                               std::clamp(windFieldTransitionElapsed / transitionDuration, 0.0f, 1.0f) :
+		                               1.0f;
+		if (windFieldTransitionBlend >= 1.0f)
+			windFieldTransitionActive = false;
+	} else {
+		windFieldTransitionBlend = 1.0f;
+	}
+	windFieldSelectedSpeed = windFieldCurrent.speed;
+	windFieldSelectedVelocity = windFieldCurrent.direction * windFieldCurrent.speed;
+	windFieldAmbientSpeed = windFieldCurrent.speed;
+	windFieldGustTravelDistance = windFieldCurrent.travelDistance;
+	previousWindFieldSelectedVelocity = previousWindFieldCurrent.direction * previousWindFieldCurrent.speed;
+	twoFramesAgoWindFieldSelectedVelocity = twoFramesAgoWindFieldCurrent.direction * twoFramesAgoWindFieldCurrent.speed;
+	previousWindFieldGustTravelDistance = previousWindFieldCurrent.travelDistance;
+	twoFramesAgoWindFieldGustTravelDistance = twoFramesAgoWindFieldCurrent.travelDistance;
 
 	worldRenderedThisFrame = false;
 
@@ -460,7 +510,19 @@ void State::Reset()
 
 WindField::WindSample State::SampleAmbientWind(const float3& a_worldPosition) const noexcept
 {
-	return SampleAmbientWind(a_worldPosition, windFieldSelectedVelocity, windFieldSelectedSpeed);
+	auto sample = WindField::SampleWind(a_worldPosition, windFieldCurrent, windFieldTuning);
+	if (windFieldTransitionBlend < 1.0f) {
+		const auto previousSample = WindField::SampleWind(a_worldPosition, windFieldTransition, windFieldTuning);
+		sample.velocity = previousSample.velocity + (sample.velocity - previousSample.velocity) * windFieldTransitionBlend;
+		sample.ambientGust = previousSample.ambientGust +
+		                     (sample.ambientGust - previousSample.ambientGust) * windFieldTransitionBlend;
+	}
+	for (uint32_t index = 0; index < activeTransientWindImpulseCount; ++index) {
+		const auto impulseSample = WindField::SampleTransientImpulse(a_worldPosition, transientWindImpulses[index]);
+		sample.velocity += impulseSample.velocity;
+		sample.transientImpulse = std::max(sample.transientImpulse, impulseSample.intensity);
+	}
+	return sample;
 }
 
 WindField::WindSample State::SampleAmbientWind(const float3& a_worldPosition,
@@ -1466,17 +1528,41 @@ void State::UpdateSharedData([[maybe_unused]] bool a_inWorld, [[maybe_unused]] b
 			windFieldGustTravelDistance
 		};
 		data.WindFieldTuning = windFieldTuning;
-		data.WindFieldAmbient = {
-			windFieldSelectedVelocity.x, windFieldSelectedVelocity.y, windFieldSelectedVelocity.z,
-			windFieldGustTravelDistance
-		};
+		const float3 transitionVelocity = windFieldTransition.direction * windFieldTransition.speed;
+		const float3 previousTransitionVelocity = previousWindFieldTransition.direction * previousWindFieldTransition.speed;
+		const float3 twoFramesAgoTransitionVelocity = twoFramesAgoWindFieldTransition.direction * twoFramesAgoWindFieldTransition.speed;
+		const float3 blendedVelocity = transitionVelocity +
+		                               (windFieldSelectedVelocity - transitionVelocity) * windFieldTransitionBlend;
+		const float3 previousBlendedVelocity = previousTransitionVelocity +
+		                                       (previousWindFieldSelectedVelocity - previousTransitionVelocity) * previousWindFieldTransitionBlend;
+		const float3 twoFramesAgoBlendedVelocity = twoFramesAgoTransitionVelocity +
+		                                           (twoFramesAgoWindFieldSelectedVelocity - twoFramesAgoTransitionVelocity) * twoFramesAgoWindFieldTransitionBlend;
+		data.WindFieldAmbient = { blendedVelocity.x, blendedVelocity.y, blendedVelocity.z, windFieldGustTravelDistance };
 		data.WindFieldPreviousAmbient = {
-			previousWindFieldSelectedVelocity.x, previousWindFieldSelectedVelocity.y, previousWindFieldSelectedVelocity.z,
+			previousBlendedVelocity.x, previousBlendedVelocity.y, previousBlendedVelocity.z,
 			previousWindFieldGustTravelDistance
 		};
 		data.WindFieldTwoFramesAgoAmbient = {
-			twoFramesAgoWindFieldSelectedVelocity.x, twoFramesAgoWindFieldSelectedVelocity.y,
-			twoFramesAgoWindFieldSelectedVelocity.z, twoFramesAgoWindFieldGustTravelDistance
+			twoFramesAgoBlendedVelocity.x, twoFramesAgoBlendedVelocity.y, twoFramesAgoBlendedVelocity.z,
+			twoFramesAgoWindFieldGustTravelDistance
+		};
+		data.WindFieldCurrent = windFieldCurrent;
+		data.WindFieldPrevious = previousWindFieldCurrent;
+		data.WindFieldTwoFramesAgo = twoFramesAgoWindFieldCurrent;
+		data.WindFieldTransition = windFieldTransition;
+		data.WindFieldPreviousTransition = previousWindFieldTransition;
+		data.WindFieldTwoFramesAgoTransition = twoFramesAgoWindFieldTransition;
+		data.WindFieldTransitionData = {
+			windFieldTransitionBlend,
+			previousWindFieldTransitionBlend,
+			twoFramesAgoWindFieldTransitionBlend,
+			static_cast<float>(static_cast<uint32_t>(globals::features::csUtility.windFieldDebugView))
+		};
+		data.WindFieldSpringDebug = {
+			globals::features::csUtility.grassWindSpringFieldMinimum.x,
+			globals::features::csUtility.grassWindSpringFieldMinimum.y,
+			globals::features::csUtility.grassWindSpringFieldAvailable ? globals::features::csUtility.grassWindSpringWorldSize : 0.0f,
+			DirectX::XMConvertToRadians(globals::features::csUtility.settings.grassWindMaximumTilt)
 		};
 		data.WindFieldActiveCounts = {
 			0u, 0u,

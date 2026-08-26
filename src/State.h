@@ -79,6 +79,17 @@ public:
 	float3 windFieldSelectedVelocity = {};
 	float3 previousWindFieldSelectedVelocity = {};
 	float3 twoFramesAgoWindFieldSelectedVelocity = {};
+	WindField::Field windFieldCurrent{};
+	WindField::Field previousWindFieldCurrent{};
+	WindField::Field twoFramesAgoWindFieldCurrent{};
+	WindField::Field windFieldTransition{};
+	WindField::Field previousWindFieldTransition{};
+	WindField::Field twoFramesAgoWindFieldTransition{};
+	float windFieldTransitionElapsed = 0.0f;
+	float windFieldTransitionBlend = 1.0f;
+	float previousWindFieldTransitionBlend = 1.0f;
+	float twoFramesAgoWindFieldTransitionBlend = 1.0f;
+	bool windFieldTransitionActive = false;
 	float windFieldSelectedSpeed = 0.0f;
 	bool windFieldHasPreviousSample = false;
 	WindField::WindTuning windFieldTuning{};
@@ -558,6 +569,14 @@ public:
 		float4 WindFieldAmbient;  // xyz: selected mean weather velocity, w: accumulated gust travel
 		float4 WindFieldPreviousAmbient;
 		float4 WindFieldTwoFramesAgoAmbient;
+		WindField::Field WindFieldCurrent;
+		WindField::Field WindFieldPrevious;
+		WindField::Field WindFieldTwoFramesAgo;
+		WindField::Field WindFieldTransition;
+		WindField::Field WindFieldPreviousTransition;
+		WindField::Field WindFieldTwoFramesAgoTransition;
+		float4 WindFieldTransitionData;  // x/y/z: current/previous/two-frame blend, w: debug view
+		float4 WindFieldSpringDebug;     // xy: field minimum, z: field size, w: maximum tilt radians
 		std::array<uint32_t, 4> WindFieldActiveCounts;
 		std::array<WindField::TransientImpulse, WindField::kTransientImpulseCapacity> WindFieldTransientImpulses;
 		std::array<WindField::TransientImpulse, WindField::kTransientImpulseCapacity> WindFieldPreviousTransientImpulses;
@@ -574,6 +593,14 @@ public:
 	static_assert(offsetof(SharedDataCB, WindFieldAmbient) % 16 == 0);
 	static_assert(offsetof(SharedDataCB, WindFieldPreviousAmbient) % 16 == 0);
 	static_assert(offsetof(SharedDataCB, WindFieldTwoFramesAgoAmbient) % 16 == 0);
+	static_assert(offsetof(SharedDataCB, WindFieldCurrent) % 16 == 0);
+	static_assert(offsetof(SharedDataCB, WindFieldPrevious) % 16 == 0);
+	static_assert(offsetof(SharedDataCB, WindFieldTwoFramesAgo) % 16 == 0);
+	static_assert(offsetof(SharedDataCB, WindFieldTransition) % 16 == 0);
+	static_assert(offsetof(SharedDataCB, WindFieldPreviousTransition) % 16 == 0);
+	static_assert(offsetof(SharedDataCB, WindFieldTwoFramesAgoTransition) % 16 == 0);
+	static_assert(offsetof(SharedDataCB, WindFieldTransitionData) % 16 == 0);
+	static_assert(offsetof(SharedDataCB, WindFieldSpringDebug) % 16 == 0);
 	static_assert(offsetof(SharedDataCB, WindFieldActiveCounts) % 16 == 0);
 	static_assert(offsetof(SharedDataCB, WindFieldTransientImpulses) % 16 == 0);
 	static_assert(offsetof(SharedDataCB, WindFieldPreviousTransientImpulses) % 16 == 0);

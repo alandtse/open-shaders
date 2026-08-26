@@ -21,6 +21,7 @@
 #include <array>
 #include <cmath>
 #include <format>
+#include <random>
 #include <string_view>
 
 #define I18N_KEY_PREFIX "feature.cs_utility."
@@ -53,6 +54,8 @@ namespace
 	constexpr float kWindFieldGustAmplitudeMax = 1.0f;
 	constexpr float kWindFieldGustAdvectionMultiplierMin = 0.0f;
 	constexpr float kWindFieldGustAdvectionMultiplierMax = 8.0f;
+	constexpr float kWindFieldDirectionTransitionDurationMin = 0.0f;
+	constexpr float kWindFieldDirectionTransitionDurationMax = 30.0f;
 	constexpr float kFusRoDahIntensityMin = 0.0f;
 	constexpr float kFusRoDahIntensityMax = 5.0f;
 	constexpr float kFusRoDahDecayTimeMin = 0.0f;
@@ -133,6 +136,7 @@ namespace
 		a_settings.windFieldGustScale = ClampFiniteOrDefault(a_settings.windFieldGustScale, kWindFieldGustScaleMin, kWindFieldGustScaleMax, defaults.windFieldGustScale);
 		a_settings.windFieldGustAmplitude = ClampFiniteOrDefault(a_settings.windFieldGustAmplitude, kWindFieldGustAmplitudeMin, kWindFieldGustAmplitudeMax, defaults.windFieldGustAmplitude);
 		a_settings.windFieldGustAdvectionMultiplier = ClampFiniteOrDefault(a_settings.windFieldGustAdvectionMultiplier, kWindFieldGustAdvectionMultiplierMin, kWindFieldGustAdvectionMultiplierMax, defaults.windFieldGustAdvectionMultiplier);
+		a_settings.windFieldDirectionTransitionDuration = ClampFiniteOrDefault(a_settings.windFieldDirectionTransitionDuration, kWindFieldDirectionTransitionDurationMin, kWindFieldDirectionTransitionDurationMax, defaults.windFieldDirectionTransitionDuration);
 		a_settings.fusRoDahIntensity = ClampFiniteOrDefault(a_settings.fusRoDahIntensity, kFusRoDahIntensityMin, kFusRoDahIntensityMax, defaults.fusRoDahIntensity);
 		a_settings.fusRoDahDecayTime = ClampFiniteOrDefault(a_settings.fusRoDahDecayTime, kFusRoDahDecayTimeMin, kFusRoDahDecayTimeMax, defaults.fusRoDahDecayTime);
 		a_settings.fusRoDahDistanceMultiplier = ClampFiniteOrDefault(a_settings.fusRoDahDistanceMultiplier, kFusRoDahDistanceMultiplierMin, kFusRoDahDistanceMultiplierMax, defaults.fusRoDahDistanceMultiplier);
@@ -301,6 +305,7 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	windFieldGustScale,
 	windFieldGustAmplitude,
 	windFieldGustAdvectionMultiplier,
+	windFieldDirectionTransitionDuration,
 	enableFusRoDahWind,
 	fusRoDahIntensity,
 	fusRoDahDecayTime,
@@ -349,16 +354,57 @@ void CSUtility::DrawSettings()
 			ImGui::TextUnformatted(T(TKEY("wind_field_use_real_speed_tooltip"),
 				"Use the current weather wind magnitude for air velocity and the base gust-front travel rate; otherwise use the override below."));
 		}
-		ImGui::SliderFloat(T(TKEY("wind_field_override_speed"), "Wind Debug: Override Speed"), &windFieldOverrideSpeed,
-			0.0f, 2.0f, "%.3f");
+		if (ImGui::SliderFloat(T(TKEY("wind_field_override_speed"), "Wind Debug: Override Speed"), &windFieldOverrideSpeed,
+				0.0f, 2.0f, "%.3f"))
+			windFieldUseRealSpeed = false;
 		if (treeWindTest.enabled) {
 			ImGui::TextColored(ImVec4(1.0f, 0.75f, 0.25f, 1.0f), "%s",
 				T(TKEY("tree_wind_test_active_notice"), "Tree Meshes runtime test conditions currently override wind speed and gust tuning."));
 		}
-		ImGui::Checkbox(T(TKEY("wind_field_use_real_direction"), "Wind Debug: Use Real Wind Direction"), &windFieldUseRealDirection);
+		if (ImGui::Checkbox(T(TKEY("wind_field_use_real_direction"), "Wind Debug: Use Real Wind Direction"),
+				&windFieldUseRealDirection) &&
+			!windFieldUseRealDirection) {
+			const auto* state = globals::state;
+			const float currentDirectionDegrees = state ?
+			                                          std::atan2(state->windFieldCurrent.direction.y, state->windFieldCurrent.direction.x) *
+			                                              (180.0f / 3.14159265358979323846f) :
+			                                          0.0f;
+			windFieldPendingDirectionDegrees = currentDirectionDegrees;
+			windFieldAppliedDirectionDegrees = currentDirectionDegrees;
+		}
 		if (auto _tt = Util::HoverTooltipWrapper()) {
 			ImGui::TextUnformatted(T(TKEY("wind_field_use_real_direction_tooltip"),
-				"Use the current weather wind direction for the displayed field; otherwise use hardcoded world-space +X."));
+				"Use the current weather wind direction. Disable this to stage and apply a manual field direction."));
+		}
+		ImGui::SliderFloat(T(TKEY("wind_field_target_direction"), "Target Direction"),
+			&windFieldPendingDirectionDegrees, -180.0f, 180.0f, "%.1f deg", ImGuiSliderFlags_AlwaysClamp);
+		if (ImGui::Button(T(TKEY("wind_field_apply_direction"), "Apply Direction"))) {
+			windFieldAppliedDirectionDegrees = windFieldPendingDirectionDegrees;
+			windFieldUseRealDirection = false;
+		}
+		ImGui::SameLine();
+		if (ImGui::Button(T(TKEY("wind_field_random_direction"), "New Random Wind Direction"))) {
+			static std::mt19937 randomGenerator{ std::random_device{}() };
+			static std::uniform_real_distribution<float> randomDirectionDegrees(-180.0f, 180.0f);
+			windFieldPendingDirectionDegrees = randomDirectionDegrees(randomGenerator);
+			windFieldAppliedDirectionDegrees = windFieldPendingDirectionDegrees;
+			windFieldUseRealDirection = false;
+		}
+		if (auto _tt = Util::HoverTooltipWrapper())
+			ImGui::TextUnformatted(T(TKEY("wind_field_random_direction_tooltip"),
+				"Choose and apply a new random fixed direction immediately."));
+		ImGui::SliderFloat(T(TKEY("wind_field_transition_duration"), "Direction Blend Period"),
+			&settings.windFieldDirectionTransitionDuration, kWindFieldDirectionTransitionDurationMin,
+			kWindFieldDirectionTransitionDurationMax, "%.2f s", ImGuiSliderFlags_AlwaysClamp);
+		if (auto _tt = Util::HoverTooltipWrapper())
+			ImGui::TextUnformatted(T(TKEY("wind_field_transition_duration_tooltip"),
+				"A direction change creates a new, fixed-orientation noise field and lerps the old field into it over this period."));
+		static constexpr const char* debugViewLabels[]{ "Blended Output", "Current Field", "Previous Field", "Both Fields", "Comparison", "Spring Field" };
+		int debugView = static_cast<int>(windFieldDebugView);
+		if (ImGui::Combo(T(TKEY("wind_field_debug_view"), "Wind Debug View"), &debugView, debugViewLabels,
+				static_cast<int>(std::size(debugViewLabels)))) {
+			windFieldDebugView = static_cast<WindFieldDebugView>(debugView);
+			visualizeWindField = true;
 		}
 		ImGui::SeparatorText(T(TKEY("wind_field_live_values"), "Wind Field Live Values"));
 		auto* const state = globals::state;
@@ -377,6 +423,13 @@ void CSUtility::DrawSettings()
 		ImGui::Text("%s: %.5f", T(TKEY("wind_field_travel_distance"), "Accumulated travel distance"), state->windFieldGustTravelDistance);
 		ImGui::Text("%s: %.3f units/s", T(TKEY("wind_field_advection_speed"), "Gust advection speed"), state->windFieldAdvectionSpeed);
 		ImGui::Text("%s: %.5f", T(TKEY("wind_field_global_time"), "Global timer"), state->timer);
+		ImGui::Text("Current field: direction (%.3f, %.3f), travel %.1f", state->windFieldCurrent.direction.x,
+			state->windFieldCurrent.direction.y, state->windFieldCurrent.travelDistance);
+		if (state->windFieldTransitionActive) {
+			ImGui::Text("Previous field: direction (%.3f, %.3f), travel %.1f", state->windFieldTransition.direction.x,
+				state->windFieldTransition.direction.y, state->windFieldTransition.travelDistance);
+			ImGui::Text("Transition: %.0f%%", state->windFieldTransitionBlend * 100.0f);
+		}
 		if (sky)
 			ImGui::Text("%s: speed %.5f, angle %.5f", T(TKEY("wind_field_sky_input"), "Sky wind input"), sky->windSpeed, sky->windAngle);
 		if (weather)
@@ -384,12 +437,13 @@ void CSUtility::DrawSettings()
 				static_cast<unsigned>(weather->data.windSpeed) / 255.0f, static_cast<unsigned>(weather->data.windSpeed),
 				static_cast<unsigned>(weather->data.windDirection));
 		const float selectedSpeed = state->windFieldSelectedSpeed;
+		const float appliedDirectionRadians = DirectX::XMConvertToRadians(windFieldAppliedDirectionDegrees);
 		const float selectedDirectionX = windFieldUseRealDirection && ambientDirectionLength > 0.0001f ?
 		                                     state->ambientWindVelocity.x / ambientDirectionLength :
-		                                     1.0f;
+		                                     std::cos(appliedDirectionRadians);
 		const float selectedDirectionY = windFieldUseRealDirection && ambientDirectionLength > 0.0001f ?
 		                                     state->ambientWindVelocity.y / ambientDirectionLength :
-		                                     0.0f;
+		                                     std::sin(appliedDirectionRadians);
 		const float weatherWindSpeed = std::sqrt(
 			state->ambientWindVelocity.x * state->ambientWindVelocity.x +
 			state->ambientWindVelocity.y * state->ambientWindVelocity.y +
@@ -1114,6 +1168,7 @@ void CSUtility::RestoreCurrentPageDefaultSettings()
 		settings.windFieldGustScale = defaults.windFieldGustScale;
 		settings.windFieldGustAmplitude = defaults.windFieldGustAmplitude;
 		settings.windFieldGustAdvectionMultiplier = defaults.windFieldGustAdvectionMultiplier;
+		settings.windFieldDirectionTransitionDuration = defaults.windFieldDirectionTransitionDuration;
 		break;
 	case SettingsPage::FusRoDah:
 		settings.enableFusRoDahWind = defaults.enableFusRoDahWind;
@@ -1166,10 +1221,11 @@ void CSUtility::RestoreCurrentPageDefaultSettings()
 bool CSUtility::ReapplyCurrentPageOverrideSettings()
 {
 	static constexpr std::array<std::string_view, 1> atmosphereKeys{ "skyBrightness" };
-	static constexpr std::array<std::string_view, 3> windFieldKeys{
+	static constexpr std::array<std::string_view, 4> windFieldKeys{
 		"windFieldGustScale",
 		"windFieldGustAmplitude",
-		"windFieldGustAdvectionMultiplier"
+		"windFieldGustAdvectionMultiplier",
+		"windFieldDirectionTransitionDuration"
 	};
 	static constexpr std::array<std::string_view, 7> fusRoDahKeys{
 		"enableFusRoDahWind",
@@ -1434,6 +1490,13 @@ void CSUtility::UpdateGrassWindSpring()
 	context->VSSetShaderResources(105, ARRAYSIZE(springSrvs), springSrvs);
 	ID3D11SamplerState* samplers[]{ grassWindSpringSampler.get() };
 	context->VSSetSamplers(14, ARRAYSIZE(samplers), samplers);
+}
+
+ID3D11ShaderResourceView* CSUtility::GetGrassWindSpringDebugSRV() const
+{
+	return grassWindSpringFieldAvailable && grassWindSpringResponseTextures[grassWindSpringTextureIndex] ?
+	           grassWindSpringResponseTextures[grassWindSpringTextureIndex]->srv.get() :
+	           nullptr;
 }
 
 CSUtility::PerFrameData CSUtility::GetCommonBufferData() const

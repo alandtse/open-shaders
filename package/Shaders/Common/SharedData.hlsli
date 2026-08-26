@@ -46,18 +46,39 @@ namespace SharedData
 		float4 WindFieldAmbient;
 		float4 WindFieldPreviousAmbient;
 		float4 WindFieldTwoFramesAgoAmbient;
-		uint4 WindFieldActiveCounts;  // reserved ambient counts, current/previous transient impulses
+		WindField::Field WindFieldCurrent;
+		WindField::Field WindFieldPrevious;
+		WindField::Field WindFieldTwoFramesAgo;
+		WindField::Field WindFieldTransition;
+		WindField::Field WindFieldPreviousTransition;
+		WindField::Field WindFieldTwoFramesAgoTransition;
+		float4 WindFieldTransitionData;  // x/y/z: current/previous/two-frame blend, w: debug view
+		float4 WindFieldSpringDebug;     // xy: field minimum, z: field size, w: maximum tilt radians
+		uint4 WindFieldActiveCounts;     // reserved ambient counts, current/previous transient impulses
 		WindField::TransientImpulse WindFieldTransientImpulses[WindField::TransientImpulseCapacity];
 		WindField::TransientImpulse WindFieldPreviousTransientImpulses[WindField::TransientImpulseCapacity];
 	};
 
-	/** @brief Samples the current shared wind field at an absolute world position. */
+	/** @brief Lerp old into present without ever adding their two ambient contributions. */
+	WindField::WindSample SampleBlendedAmbientWind(float3 worldPosition,
+		WindField::Field currentField, WindField::Field previousField, float blend)
+	{
+		WindField::WindSample currentSample = WindField::SampleWind(worldPosition, currentField, WindFieldTuning);
+		if (blend >= 1.0f)
+			return currentSample;
+		WindField::WindSample previousSample = WindField::SampleWind(worldPosition, previousField, WindFieldTuning);
+		WindField::WindSample sample;
+		sample.velocity = lerp(previousSample.velocity, currentSample.velocity, saturate(blend));
+		sample.ambientGust = lerp(previousSample.ambientGust, currentSample.ambientGust, saturate(blend));
+		sample.transientImpulse = 0.0f;
+		return sample;
+	}
+
+	/** @brief Samples the current blended shared wind field at an absolute world position. */
 	WindField::WindSample SampleAmbientWind(float3 worldPosition)
 	{
-		float3 baseVelocity = WindFieldAmbient.xyz;
-		float windSpeed = length(baseVelocity);
-		WindField::WindSample sample = WindField::SampleWind(
-			worldPosition, WindFieldAmbient.w, baseVelocity, windSpeed, WindFieldTuning);
+		WindField::WindSample sample = SampleBlendedAmbientWind(
+			worldPosition, WindFieldCurrent, WindFieldTransition, WindFieldTransitionData.x);
 		[loop] for (uint index = 0u; index < WindFieldActiveCounts.z; ++index)
 		{
 			WindField::TransientImpulseSample impulseSample =
@@ -71,10 +92,8 @@ namespace SharedData
 	/** @brief Samples the previous frame's shared wind field for temporal rendering. */
 	WindField::WindSample SamplePreviousAmbientWind(float3 worldPosition)
 	{
-		float3 baseVelocity = WindFieldPreviousAmbient.xyz;
-		float windSpeed = length(baseVelocity);
-		WindField::WindSample sample = WindField::SampleWind(
-			worldPosition, WindFieldPreviousAmbient.w, baseVelocity, windSpeed, WindFieldTuning);
+		WindField::WindSample sample = SampleBlendedAmbientWind(
+			worldPosition, WindFieldPrevious, WindFieldPreviousTransition, WindFieldTransitionData.y);
 		[loop] for (uint index = 0u; index < WindFieldActiveCounts.w; ++index)
 		{
 			WindField::TransientImpulseSample impulseSample =
@@ -88,10 +107,8 @@ namespace SharedData
 	/** @brief Samples the two-frames-ago shared ambient wind for legacy grass spring reconstruction. */
 	WindField::WindSample SampleTwoFramesAgoAmbientWind(float3 worldPosition)
 	{
-		float3 baseVelocity = WindFieldTwoFramesAgoAmbient.xyz;
-		float windSpeed = length(baseVelocity);
-		return WindField::SampleWind(
-			worldPosition, WindFieldTwoFramesAgoAmbient.w, baseVelocity, windSpeed, WindFieldTuning);
+		return SampleBlendedAmbientWind(
+			worldPosition, WindFieldTwoFramesAgo, WindFieldTwoFramesAgoTransition, WindFieldTransitionData.z);
 	}
 
 	struct GrassLightingSettings

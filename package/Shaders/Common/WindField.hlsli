@@ -31,6 +31,14 @@ namespace WindField
 		float transientImpulse;
 	};
 
+	struct Field
+	{
+		float3 direction;
+		float travelDistance;
+		float3 crosswind;
+		float speed;
+	};
+
 	namespace Detail
 	{
 		static const float MinimumDivisor = 1e-4f;
@@ -131,6 +139,33 @@ namespace WindField
 		float gustMultiplier = max(1.0f + gustDeviation * max(tuning.gustAmplitude, 0.0f), 0.0f);
 		sample.velocity =
 			Detail::NormalizeDirection(windDirection) * (max(windSpeed, 0.0f) * gustMultiplier);
+		return sample;
+	}
+
+	/** @brief Samples the original scalar noise using a field's fixed basis and independent scroll phase. */
+	WindSample SampleWind(float3 worldPosition, Field field, WindTuning tuning)
+	{
+		float gustScale = max(abs(tuning.gustScale), Detail::MinimumDivisor);
+		float frontAspectRatio = max(abs(tuning.frontAspectRatio), Detail::MinimumDivisor);
+		float2 frontCoordinate = float2(
+			(dot(worldPosition.xy, field.direction.xy) - max(field.travelDistance, 0.0f)) / gustScale,
+			dot(worldPosition.xy, field.crosswind.xy) / (gustScale * frontAspectRatio));
+		float broadGust = Detail::GradientNoise(frontCoordinate, tuning.broadGustSeed, tuning);
+		float detailScaleRatio = max(abs(tuning.detailScaleRatio), Detail::MinimumDivisor);
+		float detailCrosswindScaleRatio = max(abs(tuning.detailCrosswindScaleRatio), Detail::MinimumDivisor);
+		float2 detailCoordinate = float2(
+			frontCoordinate.x / detailScaleRatio + frontCoordinate.y * tuning.turbulenceSkew,
+			frontCoordinate.y / detailCrosswindScaleRatio);
+		float turbulentGust = Detail::GradientNoise(detailCoordinate, tuning.turbulentGustSeed, tuning);
+		float turbulenceStrength = max(tuning.turbulenceStrength, 0.0f);
+		float normalizedGust = saturate(
+			(broadGust + turbulentGust * turbulenceStrength) / (1.0f + turbulenceStrength) * 0.5f + 0.5f);
+		WindSample sample;
+		sample.ambientGust = Detail::Smoothstep(min(tuning.contrastLow, tuning.contrastHigh),
+			max(tuning.contrastLow, tuning.contrastHigh), normalizedGust);
+		sample.transientImpulse = 0.0f;
+		float gustMultiplier = max(1.0f + (sample.ambientGust * 2.0f - 1.0f) * max(tuning.gustAmplitude, 0.0f), 0.0f);
+		sample.velocity = field.direction * (max(field.speed, 0.0f) * gustMultiplier);
 		return sample;
 	}
 
