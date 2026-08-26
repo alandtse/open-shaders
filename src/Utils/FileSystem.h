@@ -214,6 +214,36 @@ namespace Util
 		 */
 		std::filesystem::path GetLogPath();
 
+		/**
+		 * Resolves a path to absolute without throwing. std::filesystem::absolute() can throw
+		 * filesystem_error if the underlying OS call fails.
+		 * @param path The path to resolve
+		 * @return Absolute path, or the original (unresolved) path if resolution fails
+		 */
+		std::filesystem::path SafeAbsolute(const std::filesystem::path& path);
+
+		/**
+		 * Checks whether a path exists without throwing (see SafeAbsolute).
+		 * @param path The path to check
+		 * @return true if the path exists, false if it doesn't or the check fails
+		 */
+		bool SafeExists(const std::filesystem::path& path);
+
+		/**
+		 * Checks whether a path is a directory without throwing (see SafeAbsolute).
+		 * @param path The path to check
+		 * @return true if the path is a directory, false if it isn't or the check fails
+		 */
+		bool SafeIsDirectory(const std::filesystem::path& path);
+
+		/**
+		 * Resolves a path relative to a base without throwing (see SafeAbsolute).
+		 * @param path The path to make relative
+		 * @param base The base to resolve against
+		 * @return Relative path, or the original (unresolved) path if resolution fails
+		 */
+		std::filesystem::path SafeRelative(const std::filesystem::path& path, const std::filesystem::path& base);
+
 	}
 
 	/**

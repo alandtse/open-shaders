@@ -208,6 +208,50 @@ namespace Util
 			*path /= std::format("{}.log", std::string(Plugin::NAME));
 			return *path;
 		}
+
+		std::filesystem::path SafeAbsolute(const std::filesystem::path& path)
+		{
+			std::error_code ec;
+			auto result = std::filesystem::absolute(path, ec);
+			if (ec) {
+				logger::warn("Failed to resolve absolute path for '{}': {}", path.string(), ec.message());
+				return path;
+			}
+			return result;
+		}
+
+		bool SafeExists(const std::filesystem::path& path)
+		{
+			std::error_code ec;
+			bool result = std::filesystem::exists(path, ec);
+			if (ec) {
+				logger::warn("Failed to check existence of '{}': {}", path.string(), ec.message());
+				return false;
+			}
+			return result;
+		}
+
+		bool SafeIsDirectory(const std::filesystem::path& path)
+		{
+			std::error_code ec;
+			bool result = std::filesystem::is_directory(path, ec);
+			if (ec) {
+				logger::warn("Failed to check directory status of '{}': {}", path.string(), ec.message());
+				return false;
+			}
+			return result;
+		}
+
+		std::filesystem::path SafeRelative(const std::filesystem::path& path, const std::filesystem::path& base)
+		{
+			std::error_code ec;
+			auto result = std::filesystem::relative(path, base, ec);
+			if (ec) {
+				logger::warn("Failed to resolve '{}' relative to '{}': {}", path.string(), base.string(), ec.message());
+				return path;
+			}
+			return result;
+		}
 	}
 
 	// File system utilities implementation

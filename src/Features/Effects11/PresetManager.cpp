@@ -99,7 +99,7 @@ namespace
 		for (const auto& known : kKnownEffects) {
 			a_location.effectStatus.push_back({ known.flagName,
 				ReadIniBool(iniPathStr, known.flagName),
-				std::filesystem::exists(enbseriesDir / known.fileName) });
+				Util::PathHelpers::SafeExists(enbseriesDir / known.fileName) });
 		}
 
 		a_location.headerComment = ScrapeHeaderComment(enbseriesDir / "enbeffect.fx");
@@ -120,12 +120,12 @@ void PresetManager::Rescan()
 	// if that fails), unlike a bare absolute("Data") which trusts CWD outright -- those
 	// can differ depending on how the game was launched.
 	const auto dataRoot = Util::PathHelpers::GetDataPath();
-	if (std::filesystem::exists(dataRoot / "enbseries.ini") && std::filesystem::is_directory(dataRoot / "enbseries")) {
+	if (Util::PathHelpers::SafeExists(dataRoot / "enbseries.ini") && Util::PathHelpers::SafeIsDirectory(dataRoot / "enbseries")) {
 		discoveredLocations.push_back({ PresetLocationKind::DataRoot, dataRoot, "Data", true });
 	}
 
 	const auto gameRoot = dataRoot.parent_path();
-	if (std::filesystem::exists(gameRoot / "enbseries.ini") && std::filesystem::is_directory(gameRoot / "enbseries")) {
+	if (Util::PathHelpers::SafeExists(gameRoot / "enbseries.ini") && Util::PathHelpers::SafeIsDirectory(gameRoot / "enbseries")) {
 		discoveredLocations.push_back({ PresetLocationKind::GameRoot, gameRoot, "Game root", true });
 	}
 
@@ -137,8 +137,8 @@ void PresetManager::Rescan()
 		if (!it->is_directory(ec))
 			continue;
 
-		const auto childRoot = std::filesystem::absolute(it->path());
-		if (std::filesystem::exists(childRoot / "enbseries.ini") && std::filesystem::is_directory(childRoot / "enbseries")) {
+		const auto childRoot = Util::PathHelpers::SafeAbsolute(it->path());
+		if (Util::PathHelpers::SafeExists(childRoot / "enbseries.ini") && Util::PathHelpers::SafeIsDirectory(childRoot / "enbseries")) {
 			discoveredLocations.push_back({ PresetLocationKind::DataSubfolder,
 				childRoot,
 				"Data\\" + childRoot.filename().string(),
@@ -179,7 +179,7 @@ const PresetLocation* PresetManager::GetActiveLocation() const
 
 std::string PresetManager::ToRelativeKey(const std::filesystem::path& a_root) const
 {
-	return std::filesystem::relative(a_root, Util::PathHelpers::GetDataPath().parent_path()).string();
+	return Util::PathHelpers::SafeRelative(a_root, Util::PathHelpers::GetDataPath().parent_path()).string();
 }
 
 const PresetLocation* PresetManager::FindByRelativeKey(const std::string& a_relativeKey) const

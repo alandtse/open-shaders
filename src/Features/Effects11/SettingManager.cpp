@@ -1,6 +1,7 @@
 #include "SettingManager.h"
 
 #include "PresetManager.h"
+#include "Utils/FileSystem.h"
 #include "WeatherManager.h"
 #include <Windows.h>
 #include <algorithm>
@@ -539,7 +540,7 @@ void SettingManager::SaveWeatherSettings(const std::string& weatherKey, const st
 		return;
 	}
 
-	std::filesystem::path absPath = std::filesystem::absolute(filePath);
+	std::filesystem::path absPath = Util::PathHelpers::SafeAbsolute(filePath);
 	std::string absPathStr = absPath.string();
 
 	std::vector<std::tuple<std::string, std::string, Setting>> settingsToWrite;
@@ -625,7 +626,7 @@ void SettingManager::SetTimeOfDayData(const float newTimeOfDay1[4], const float 
 
 void SettingManager::LoadFromFile(const std::string& filePath)
 {
-	std::filesystem::path absPath = std::filesystem::absolute(filePath);
+	std::filesystem::path absPath = Util::PathHelpers::SafeAbsolute(filePath);
 
 	if (!std::filesystem::exists(absPath)) {
 		logger::warn("[SettingManager] Settings file not found: {}, using defaults", absPath.string());
@@ -708,7 +709,7 @@ void SettingManager::LoadFromFile(const std::string& filePath)
 
 void SettingManager::SaveToFile(const std::string& filePath)
 {
-	std::filesystem::path absPath = std::filesystem::absolute(filePath);
+	std::filesystem::path absPath = Util::PathHelpers::SafeAbsolute(filePath);
 	std::string absPathStr = absPath.string();
 
 	std::vector<std::tuple<std::string, std::string, Setting>> settingsToWrite;
