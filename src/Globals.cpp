@@ -264,6 +264,7 @@ namespace globals
 		player = RE::PlayerCharacter::GetSingleton();
 		playerCamera = RE::PlayerCamera::GetSingleton();
 		sky = RE::Sky::GetSingleton();
+		calendar = RE::Calendar::GetSingleton();
 		utilityShader = RE::BSUtilityShader::GetSingleton();
 		imageSpaceManager = RE::ImageSpaceManager::GetSingleton();
 		bEnableVolumetricLighting = reinterpret_cast<bool*>(REL::RelocationID(527940, 414913).address());
