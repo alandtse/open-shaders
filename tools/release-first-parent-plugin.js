@@ -8,37 +8,10 @@ const { execFileSync } = require('child_process');
 const FIELD_SEP = '\x1f'; // ASCII unit separator
 const RECORD_SEP = '\x1e'; // ASCII record separator
 
-// Upstream sync PRs land as real 2-parent merge commits so future syncs stay
-// possible via a plain `git merge upstream/dev` (see AGENTS.md's Upstream
-// Sync Rules). But semantic-release's own getCommits() is a plain
-// `git log <lastTag>..HEAD` with no --first-parent option, and that isn't
-// something .releaserc.js can configure -- it's hardcoded in semantic-release
-// core, not the plugins. Normally that's harmless (a sync merge only adds a
-// handful of genuinely new upstream commits as the second parent). It stops
-// being harmless the one time upstream rewrites its own history (as
-// community-shaders did to purge proprietary ENB SDK headers, PR #537):
-// every rewritten commit becomes a "new" second-parent ancestor, so a plain
-// git log range picks up thousands of already-shipped commits as if they
-// were new, corrupting both the changelog and the version-bump calculation
-// (a stale `feat:` can force a minor bump when only a patch is warranted).
-//
-// This is a self-contained analyzeCommits/generateNotes pair (no
-// @semantic-release/commit-analyzer or @semantic-release/release-notes-generator
-// dependency) that works only from the first-parent commit list. A first
-// attempt delegated to those two packages via dynamic import() and worked
-// in local testing, but failed in real CI: cycjimmy/semantic-release-action
-// installs extra_plugins into the ACTION's own directory
-// (path.resolve(__dirname, '..') in its preInstall.task.js), not the repo
-// checkout, so nothing under @semantic-release/* is resolvable as a bare
-// specifier from a file living inside the checkout -- ERR_MODULE_NOT_FOUND.
-// Reimplementing the (small) subset of Angular-preset behavior we actually
-// need avoids depending on where any package manager happens to install
-// things.
-//
-// On a branch with no merge commits in range (every hotfix/X.Y.x line, and
-// dev releases between syncs) --first-parent and the full graph are
-// identical, so nothing here changes anything -- it only matters right
-// after a sync merge landed non-first-parent ancestry.
+// semantic-release's getCommits() has no --first-parent option, so a merge's
+// non-first-parent history can corrupt the changelog/version-bump; recomputed
+// here instead of via @semantic-release/commit-analyzer or
+// release-notes-generator, which aren't resolvable from this checkout in CI.
 
 function getFirstParentCommits(cwd, from, to) {
   const range = from ? `${from}..${to}` : to;
@@ -99,11 +72,8 @@ function parseCommit(commit) {
 
 const RELEASE_ORDER = ['patch', 'minor', 'major'];
 
-// Mirrors what .releaserc.js actually passes: an array of
-// { breaking?: bool, type?: string, release: string } rules, checked in
-// order before falling back to the default feat/fix/perf/breaking mapping --
-// same semantics as @semantic-release/commit-analyzer's releaseRules option,
-// restricted to the two matcher shapes this repo's config uses.
+// Only the two matcher shapes .releaserc.js actually passes: { breaking, release }
+// and { type, release }.
 function matchCustomRule(rules, commit) {
   if (!rules) return undefined;
   for (const rule of rules) {
