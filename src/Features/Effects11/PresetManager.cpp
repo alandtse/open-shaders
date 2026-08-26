@@ -179,7 +179,13 @@ const PresetLocation* PresetManager::GetActiveLocation() const
 
 std::string PresetManager::ToRelativeKey(const std::filesystem::path& a_root) const
 {
-	return Util::PathHelpers::SafeRelative(a_root, Util::PathHelpers::GetDataPath().parent_path()).string();
+	// SafeRelative falls back to returning a_root unchanged on failure; a_root is always
+	// absolute here, so an absolute result means resolution failed -- treat that as no key
+	// rather than persisting/matching against a path that was never actually relative.
+	auto relative = Util::PathHelpers::SafeRelative(a_root, Util::PathHelpers::GetDataPath().parent_path());
+	if (relative.is_absolute())
+		return {};
+	return relative.string();
 }
 
 const PresetLocation* PresetManager::FindByRelativeKey(const std::string& a_relativeKey) const

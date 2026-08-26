@@ -494,7 +494,7 @@ void SettingManager::SetWeatherBlendFactors(uint32_t newCurrentWeatherID, uint32
 
 void SettingManager::LoadWeatherSettings(const std::vector<uint32_t>& weatherIDs, const std::string& filePath)
 {
-	if (!std::filesystem::exists(filePath)) {
+	if (!Util::PathHelpers::SafeExists(filePath)) {
 		logger::warn("[SettingManager] Weather file not found: {}", filePath);
 		return;
 	}
@@ -628,7 +628,7 @@ void SettingManager::LoadFromFile(const std::string& filePath)
 {
 	std::filesystem::path absPath = Util::PathHelpers::SafeAbsolute(filePath);
 
-	if (!std::filesystem::exists(absPath)) {
+	if (!Util::PathHelpers::SafeExists(absPath)) {
 		logger::warn("[SettingManager] Settings file not found: {}, using defaults", absPath.string());
 		return;
 	}
