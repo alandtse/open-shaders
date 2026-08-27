@@ -12,10 +12,16 @@ On first load, Open Shaders copies the editable catalog to `NatureOfTheWildLands
         {
             "mesh": "meshes/landscape/trees/treepineforest01.nif",
             "bendSensitivity": 0.7,
-            "leafAmbientSensitivity": 0.9
+            "leafAmbientSensitivity": 0.9,
+            "upperBendRange": 100,
+            "maximumDisplacementPercent": 3,
+            "trunkGustInfluence": 0.1,
+            "leafGustInfluence": 0.2
         }
     ]
 }
 ```
 
-Both sensitivities are multipliers from `0.0` through `4.0`. Omitted fields retain the default multiplier of `1.0`. Matching is case-insensitive and accepts either slash style.
+`bendSensitivity` and `leafAmbientSensitivity` are multipliers from `0.0` through `4.0`. `upperBendRange` is `5` through `100` percent of the measured tree height, `maximumDisplacementPercent` is `0` through `10` percent, and both gust influences are `0.0` through `2.0`.
+
+Omitted sensitivities retain the default multiplier of `1.0`. Omitted local bend and gust controls retain defaults of `100`, `3`, `0.1`, and `0.2`. Matching is case-insensitive and accepts either slash style.

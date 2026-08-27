@@ -221,14 +221,22 @@ namespace
 			previousExtraShaderDescriptor = state->permutationData.ExtraShaderDescriptor;
 			previousTreeBendModelSensitivity = state->permutationData.TreeBendModelSensitivity;
 			previousTreeLeafModelSensitivity = state->permutationData.TreeLeafModelSensitivity;
+			previousTreeWindUpperBendRange = state->permutationData.TreeWindUpperBendRange;
+			previousTreeWindMaximumDisplacementPercent = state->permutationData.TreeWindMaximumDisplacementPercent;
 			previousTreeWindBoundsBase = state->permutationData.TreeWindBoundsBase;
 			previousTreeWindBoundsHeight = state->permutationData.TreeWindBoundsHeight;
+			previousTreeWindTrunkGustInfluence = state->permutationData.TreeWindTrunkGustInfluence;
+			previousTreeLeafGustInfluence = state->permutationData.TreeLeafGustInfluence;
 			treeBendSelected = IsTreeBendRenderPass(a_pass);
 			if (treeBendSelected) {
 				const auto sensitivities = TreeWindPatcher::GetSensitivities(a_pass->geometry);
 				state->permutationData.ExtraShaderDescriptor |= kTreeBendDescriptor;
 				state->permutationData.TreeBendModelSensitivity = sensitivities.bend;
 				state->permutationData.TreeLeafModelSensitivity = sensitivities.leafAmbient;
+				state->permutationData.TreeWindUpperBendRange = sensitivities.upperBendRange;
+				state->permutationData.TreeWindMaximumDisplacementPercent = sensitivities.maximumDisplacementPercent;
+				state->permutationData.TreeWindTrunkGustInfluence = sensitivities.trunkGustInfluence;
+				state->permutationData.TreeLeafGustInfluence = sensitivities.leafGustInfluence;
 				if (sensitivities.hasBounds) {
 					state->permutationData.TreeWindBoundsBase = sensitivities.boundMinimumZ;
 					state->permutationData.TreeWindBoundsHeight = sensitivities.boundHeight;
@@ -252,8 +260,12 @@ namespace
 				state->permutationData.ExtraShaderDescriptor = previousExtraShaderDescriptor;
 				state->permutationData.TreeBendModelSensitivity = previousTreeBendModelSensitivity;
 				state->permutationData.TreeLeafModelSensitivity = previousTreeLeafModelSensitivity;
+				state->permutationData.TreeWindUpperBendRange = previousTreeWindUpperBendRange;
+				state->permutationData.TreeWindMaximumDisplacementPercent = previousTreeWindMaximumDisplacementPercent;
 				state->permutationData.TreeWindBoundsBase = previousTreeWindBoundsBase;
 				state->permutationData.TreeWindBoundsHeight = previousTreeWindBoundsHeight;
+				state->permutationData.TreeWindTrunkGustInfluence = previousTreeWindTrunkGustInfluence;
+				state->permutationData.TreeLeafGustInfluence = previousTreeLeafGustInfluence;
 			}
 		}
 
@@ -262,8 +274,12 @@ namespace
 		uint32_t previousExtraShaderDescriptor = 0;
 		float previousTreeBendModelSensitivity = 1.0f;
 		float previousTreeLeafModelSensitivity = 1.0f;
+		float previousTreeWindUpperBendRange = 100.0f;
+		float previousTreeWindMaximumDisplacementPercent = 3.0f;
 		float previousTreeWindBoundsBase = 0.0f;
 		float previousTreeWindBoundsHeight = 1.0f;
+		float previousTreeWindTrunkGustInfluence = 0.1f;
+		float previousTreeLeafGustInfluence = 0.2f;
 		bool treeBendSelected = false;
 	};
 

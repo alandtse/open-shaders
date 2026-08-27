@@ -16,6 +16,10 @@ namespace TreeWindPatcher
 	{
 		float bend = 1.0f;
 		float leafAmbient = 1.0f;
+		float upperBendRange = 100.0f;
+		float maximumDisplacementPercent = 3.0f;
+		float trunkGustInfluence = 0.1f;
+		float leafGustInfluence = 0.2f;
 		float boundMinimumZ = 0.0f;
 		float boundHeight = 0.0f;
 		bool hasBounds = false;
@@ -27,6 +31,10 @@ namespace TreeWindPatcher
 		std::string_view mesh;
 		float bend = 1.0f;
 		float leafAmbient = 1.0f;
+		float upperBendRange = 100.0f;
+		float maximumDisplacementPercent = 3.0f;
+		float trunkGustInfluence = 0.1f;
+		float leafGustInfluence = 0.2f;
 		bool unsaved = false;
 	};
 
@@ -51,10 +59,14 @@ namespace TreeWindPatcher
 	[[nodiscard]] RuleSnapshot GetRule(std::size_t a_index);
 
 	/** @brief Applies live sensitivity values to a rule. */
-	[[nodiscard]] bool SetRule(std::size_t a_index, float a_bend, float a_leafAmbient);
+	[[nodiscard]] bool SetRule(std::size_t a_index, float a_bend, float a_leafAmbient,
+		float a_upperBendRange, float a_maximumDisplacementPercent,
+		float a_trunkGustInfluence, float a_leafGustInfluence);
 
 	/** @brief Applies live sensitivity values to an exact normalized mesh path. */
-	[[nodiscard]] bool SetRule(std::string_view a_mesh, float a_bend, float a_leafAmbient);
+	[[nodiscard]] bool SetRule(std::string_view a_mesh, float a_bend, float a_leafAmbient,
+		float a_upperBendRange, float a_maximumDisplacementPercent,
+		float a_trunkGustInfluence, float a_leafGustInfluence);
 
 	/** @brief Restores all live values to their last saved values. */
 	void RevertUnsavedChanges();

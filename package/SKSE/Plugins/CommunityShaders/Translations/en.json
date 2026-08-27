@@ -3479,6 +3479,7 @@
     "menu.performance.tab_presets": "Presets",
     "menu.profiling.all_timings": "All Timings",
     "menu.profiling.avg": "Avg",
+    "menu.profiling.clear_timers": "Clear Timers",
     "menu.profiling.cpu": "CPU",
     "menu.profiling.disabled": "Profiling is disabled",
     "menu.profiling.enable_profiling": "Enable Profiling",

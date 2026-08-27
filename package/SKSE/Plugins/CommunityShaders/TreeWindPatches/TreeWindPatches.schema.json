@@ -42,6 +42,26 @@
                         "type": "number",
                         "minimum": 0.0,
                         "maximum": 4.0
+                    },
+                    "upperBendRange": {
+                        "type": "number",
+                        "minimum": 5.0,
+                        "maximum": 100.0
+                    },
+                    "maximumDisplacementPercent": {
+                        "type": "number",
+                        "minimum": 0.0,
+                        "maximum": 10.0
+                    },
+                    "trunkGustInfluence": {
+                        "type": "number",
+                        "minimum": 0.0,
+                        "maximum": 2.0
+                    },
+                    "leafGustInfluence": {
+                        "type": "number",
+                        "minimum": 0.0,
+                        "maximum": 2.0
                     }
                 }
             }

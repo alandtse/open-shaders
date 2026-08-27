@@ -85,14 +85,10 @@ struct CSUtility : Feature
 		bool enableTrunkBend = true;
 		bool overrideTrunkWindIntensity = false;
 		float trunkWindIntensityOverride = 1.0f;
-		float treeWindUpperBendRange = 50.0f;
-		float treeWindMaximumDisplacementPercent = 3.0f;
 		float trunkWindBendSensitivity = 1.04f;
 		float treeWindSpringStrength = 1.0f;
 		float treeWindSpringDamping = 0.7f;
-		float treeWindTrunkGustInfluence = 0.1f;
 		float treeLeafBaseWindFlutterGain = 3.0f;
-		float treeLeafGustInfluence = 0.2f;
 		float windFieldGustScale = 2048.0f;
 		float windFieldGustAmplitude = 0.35f;
 		float windFieldGustAdvectionMultiplier = 1.0f;

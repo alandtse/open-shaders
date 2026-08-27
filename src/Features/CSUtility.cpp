@@ -125,14 +125,10 @@ namespace
 	{
 		const CSUtility::Settings defaults{};
 		a_settings.trunkWindIntensityOverride = ClampFiniteOrDefault(a_settings.trunkWindIntensityOverride, kTrunkWindIntensityMin, kTrunkWindIntensityMax, defaults.trunkWindIntensityOverride);
-		a_settings.treeWindUpperBendRange = ClampFiniteOrDefault(a_settings.treeWindUpperBendRange, kTreeWindUpperBendRangeMin, kTreeWindUpperBendRangeMax, defaults.treeWindUpperBendRange);
-		a_settings.treeWindMaximumDisplacementPercent = ClampFiniteOrDefault(a_settings.treeWindMaximumDisplacementPercent, kTreeWindMaximumDisplacementPercentMin, kTreeWindMaximumDisplacementPercentMax, defaults.treeWindMaximumDisplacementPercent);
 		a_settings.trunkWindBendSensitivity = ClampFiniteOrDefault(a_settings.trunkWindBendSensitivity, kTrunkWindSensitivityMin, kTrunkWindSensitivityMax, defaults.trunkWindBendSensitivity);
 		a_settings.treeWindSpringStrength = ClampFiniteOrDefault(a_settings.treeWindSpringStrength, kTreeWindSpringStrengthMin, kTreeWindSpringStrengthMax, defaults.treeWindSpringStrength);
 		a_settings.treeWindSpringDamping = ClampFiniteOrDefault(a_settings.treeWindSpringDamping, kTreeWindSpringDampingMin, kTreeWindSpringDampingMax, defaults.treeWindSpringDamping);
-		a_settings.treeWindTrunkGustInfluence = ClampFiniteOrDefault(a_settings.treeWindTrunkGustInfluence, kTreeWindGustInfluenceMin, kTreeWindGustInfluenceMax, defaults.treeWindTrunkGustInfluence);
 		a_settings.treeLeafBaseWindFlutterGain = ClampFiniteOrDefault(a_settings.treeLeafBaseWindFlutterGain, kTreeLeafBaseWindFlutterGainMin, kTreeLeafBaseWindFlutterGainMax, defaults.treeLeafBaseWindFlutterGain);
-		a_settings.treeLeafGustInfluence = ClampFiniteOrDefault(a_settings.treeLeafGustInfluence, kTreeWindGustInfluenceMin, kTreeWindGustInfluenceMax, defaults.treeLeafGustInfluence);
 		a_settings.windFieldGustScale = ClampFiniteOrDefault(a_settings.windFieldGustScale, kWindFieldGustScaleMin, kWindFieldGustScaleMax, defaults.windFieldGustScale);
 		a_settings.windFieldGustAmplitude = ClampFiniteOrDefault(a_settings.windFieldGustAmplitude, kWindFieldGustAmplitudeMin, kWindFieldGustAmplitudeMax, defaults.windFieldGustAmplitude);
 		a_settings.windFieldGustAdvectionMultiplier = ClampFiniteOrDefault(a_settings.windFieldGustAdvectionMultiplier, kWindFieldGustAdvectionMultiplierMin, kWindFieldGustAdvectionMultiplierMax, defaults.windFieldGustAdvectionMultiplier);
@@ -294,14 +290,10 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	enableTrunkBend,
 	overrideTrunkWindIntensity,
 	trunkWindIntensityOverride,
-	treeWindUpperBendRange,
-	treeWindMaximumDisplacementPercent,
 	trunkWindBendSensitivity,
 	treeWindSpringStrength,
 	treeWindSpringDamping,
-	treeWindTrunkGustInfluence,
 	treeLeafBaseWindFlutterGain,
-	treeLeafGustInfluence,
 	windFieldGustScale,
 	windFieldGustAmplitude,
 	windFieldGustAdvectionMultiplier,
@@ -580,17 +572,6 @@ void CSUtility::DrawSettings()
 			activeSettingsPage = SettingsPage::Trees;
 			ImGui::Checkbox(T(TKEY("enable_trunk_bend"), "Enable Trunk Bend"), &settings.enableTrunkBend);
 			ImGui::SeparatorText(T(TKEY("trunk_wind_response"), "Tree Response"));
-			ImGui::SliderFloat(T(TKEY("tree_wind_upper_bend_range"), "Upper Bend Range"), &settings.treeWindUpperBendRange,
-				kTreeWindUpperBendRangeMin, kTreeWindUpperBendRangeMax, "%.0f%%", ImGuiSliderFlags_AlwaysClamp);
-			if (auto _tt = Util::HoverTooltipWrapper())
-				ImGui::TextUnformatted(T(TKEY("tree_wind_upper_bend_range_tooltip"),
-					"Upper portion of the measured tree height that can bend. At 5%, only the treetop moves; at 100%, bend increases smoothly from the base to the top."));
-			ImGui::SliderFloat(T(TKEY("tree_wind_maximum_displacement_percent"), "Maximum Top Displacement"),
-				&settings.treeWindMaximumDisplacementPercent, kTreeWindMaximumDisplacementPercentMin,
-				kTreeWindMaximumDisplacementPercentMax, "%.2f%%", ImGuiSliderFlags_AlwaysClamp);
-			if (auto _tt = Util::HoverTooltipWrapper())
-				ImGui::TextUnformatted(T(TKEY("tree_wind_maximum_displacement_percent_tooltip"),
-					"Maximum treetop movement as a percentage of the measured tree height."));
 			ImGui::SliderFloat(T(TKEY("trunk_wind_bend_sensitivity"), "Trunk Wind Sensitivity"), &settings.trunkWindBendSensitivity,
 				kTrunkWindSensitivityMin, kTrunkWindSensitivityMax, "%.2f", ImGuiSliderFlags_AlwaysClamp);
 			ImGui::SliderFloat(T(TKEY("tree_wind_spring_strength"), "Spring Strength"), &settings.treeWindSpringStrength,
@@ -601,19 +582,6 @@ void CSUtility::DrawSettings()
 				kTreeWindSpringDampingMin, kTreeWindSpringDampingMax, "%.2f", ImGuiSliderFlags_AlwaysClamp);
 			if (auto _tt = Util::HoverTooltipWrapper())
 				ImGui::TextUnformatted(T(TKEY("tree_wind_spring_damping_tooltip"), "Reduces overshoot while preserving gradual recovery after the wind weakens."));
-			ImGui::SeparatorText(T(TKEY("tree_wind_gust_response"), "Gust Response"));
-			ImGui::SliderFloat(T(TKEY("tree_wind_trunk_gust_influence"), "Trunk Gust Influence"),
-				&settings.treeWindTrunkGustInfluence, kTreeWindGustInfluenceMin, kTreeWindGustInfluenceMax, "%.2f",
-				ImGuiSliderFlags_AlwaysClamp);
-			if (auto _tt = Util::HoverTooltipWrapper())
-				ImGui::TextUnformatted(T(TKEY("tree_wind_trunk_gust_influence_tooltip"),
-					"Scales only the gust variation added to the heavy trunk response. Zero makes the trunk follow raw wind only; one uses the full sampled gust."));
-			ImGui::SliderFloat(T(TKEY("tree_leaf_gust_influence"), "Leaf Gust Influence"),
-				&settings.treeLeafGustInfluence, kTreeWindGustInfluenceMin, kTreeWindGustInfluenceMax, "%.2f",
-				ImGuiSliderFlags_AlwaysClamp);
-			if (auto _tt = Util::HoverTooltipWrapper())
-				ImGui::TextUnformatted(T(TKEY("tree_leaf_gust_influence_tooltip"),
-					"Scales gust variation around the raw-wind baseline. The default 0.20 turns the shared field's 35% gust range into about 7% leaf variation."));
 			ImGui::SeparatorText(T(TKEY("tree_leaf_flutter"), "Leaf Flutter"));
 			ImGui::SliderFloat(T(TKEY("tree_leaf_base_wind_flutter_gain"), "Base Wind Flutter Gain"),
 				&settings.treeLeafBaseWindFlutterGain, kTreeLeafBaseWindFlutterGainMin,
@@ -868,11 +836,15 @@ void CSUtility::DrawTreeMeshSettings()
 	const float tableHeight = std::max(visibleTableHeight, minimumTableHeight);
 	const ImGuiTableFlags tableFlags = ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_Resizable |
 	                                   ImGuiTableFlags_ScrollY | ImGuiTableFlags_SizingStretchProp;
-	if (ImGui::BeginTable("##TreeMeshRules", 3, tableFlags, ImVec2(0.0f, tableHeight))) {
+	if (ImGui::BeginTable("##TreeMeshRules", 7, tableFlags, ImVec2(0.0f, tableHeight))) {
 		ImGui::TableSetupScrollFreeze(0, 1);
 		ImGui::TableSetupColumn(T(TKEY("tree_mesh_path"), "Mesh"), ImGuiTableColumnFlags_WidthStretch);
 		ImGui::TableSetupColumn(T(TKEY("tree_mesh_bend"), "Bend"), ImGuiTableColumnFlags_WidthFixed, ImGui::GetFontSize() * 8.0f);
 		ImGui::TableSetupColumn(T(TKEY("tree_mesh_leaf"), "Leaf Flutter"), ImGuiTableColumnFlags_WidthFixed, ImGui::GetFontSize() * 8.0f);
+		ImGui::TableSetupColumn(T(TKEY("tree_mesh_upper_bend_range"), "Upper Bend"), ImGuiTableColumnFlags_WidthFixed, ImGui::GetFontSize() * 8.0f);
+		ImGui::TableSetupColumn(T(TKEY("tree_mesh_maximum_displacement"), "Top Displacement"), ImGuiTableColumnFlags_WidthFixed, ImGui::GetFontSize() * 8.0f);
+		ImGui::TableSetupColumn(T(TKEY("tree_mesh_trunk_gust"), "Trunk Gust"), ImGuiTableColumnFlags_WidthFixed, ImGui::GetFontSize() * 8.0f);
+		ImGui::TableSetupColumn(T(TKEY("tree_mesh_leaf_gust"), "Leaf Gust"), ImGuiTableColumnFlags_WidthFixed, ImGui::GetFontSize() * 8.0f);
 		ImGui::TableHeadersRow();
 
 		ImGuiListClipper clipper;
@@ -883,6 +855,10 @@ void CSUtility::DrawTreeMeshSettings()
 				const auto rule = TreeWindPatcher::GetRule(ruleIndex);
 				float bend = rule.bend;
 				float leafAmbient = rule.leafAmbient;
+				float upperBendRange = rule.upperBendRange;
+				float maximumDisplacementPercent = rule.maximumDisplacementPercent;
+				float trunkGustInfluence = rule.trunkGustInfluence;
+				float leafGustInfluence = rule.leafGustInfluence;
 				bool changed = false;
 
 				ImGui::PushID(static_cast<int>(rule.id));
@@ -898,8 +874,26 @@ void CSUtility::DrawTreeMeshSettings()
 				ImGui::TableSetColumnIndex(2);
 				ImGui::SetNextItemWidth(-1.0f);
 				changed |= ImGui::SliderFloat("##Leaf", &leafAmbient, 0.0f, 4.0f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+				ImGui::TableSetColumnIndex(3);
+				ImGui::SetNextItemWidth(-1.0f);
+				changed |= ImGui::SliderFloat("##UpperBend", &upperBendRange, kTreeWindUpperBendRangeMin,
+					kTreeWindUpperBendRangeMax, "%.0f%%", ImGuiSliderFlags_AlwaysClamp);
+				ImGui::TableSetColumnIndex(4);
+				ImGui::SetNextItemWidth(-1.0f);
+				changed |= ImGui::SliderFloat("##MaximumDisplacement", &maximumDisplacementPercent,
+					kTreeWindMaximumDisplacementPercentMin, kTreeWindMaximumDisplacementPercentMax, "%.2f%%",
+					ImGuiSliderFlags_AlwaysClamp);
+				ImGui::TableSetColumnIndex(5);
+				ImGui::SetNextItemWidth(-1.0f);
+				changed |= ImGui::SliderFloat("##TrunkGust", &trunkGustInfluence, kTreeWindGustInfluenceMin,
+					kTreeWindGustInfluenceMax, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+				ImGui::TableSetColumnIndex(6);
+				ImGui::SetNextItemWidth(-1.0f);
+				changed |= ImGui::SliderFloat("##LeafGust", &leafGustInfluence, kTreeWindGustInfluenceMin,
+					kTreeWindGustInfluenceMax, "%.2f", ImGuiSliderFlags_AlwaysClamp);
 				if (changed) {
-					(void)TreeWindPatcher::SetRule(ruleIndex, bend, leafAmbient);
+					(void)TreeWindPatcher::SetRule(ruleIndex, bend, leafAmbient, upperBendRange,
+						maximumDisplacementPercent, trunkGustInfluence, leafGustInfluence);
 					treeWindSaveStatus.clear();
 				}
 				ImGui::PopID();
@@ -923,11 +917,7 @@ json CSUtility::GetDiagnostics()
 		{ "treeWindTestGustAdvectionMultiplier", treeWindTest.gustAdvectionMultiplier },
 		{ "treeWindSpringStrength", settings.treeWindSpringStrength },
 		{ "treeWindSpringDamping", settings.treeWindSpringDamping },
-		{ "treeWindUpperBendRange", settings.treeWindUpperBendRange },
-		{ "treeWindMaximumDisplacementPercent", settings.treeWindMaximumDisplacementPercent },
-		{ "treeWindTrunkGustInfluence", settings.treeWindTrunkGustInfluence },
 		{ "treeLeafBaseWindFlutterGain", settings.treeLeafBaseWindFlutterGain },
-		{ "treeLeafGustInfluence", settings.treeLeafGustInfluence },
 	};
 }
 
@@ -946,32 +936,24 @@ void CSUtility::RegisterUxActions()
 					kTreeWindSpringDampingMin, kTreeWindSpringDampingMax, utility->settings.treeWindSpringDamping);
 			}
 		});
-	FEATURE_COMMAND("setTreeGustInfluence",
-		"Tune shared gust response. Optional params: trunkInfluence (0-2), leafInfluence (0-2).",
-		[](Feature* feature, const json& args) {
-			auto* utility = static_cast<CSUtility*>(feature);
-			if (args.contains("trunkInfluence") && args["trunkInfluence"].is_number()) {
-				utility->settings.treeWindTrunkGustInfluence =
-					ClampFiniteOrDefault(args["trunkInfluence"].get<float>(), kTreeWindGustInfluenceMin,
-						kTreeWindGustInfluenceMax, utility->settings.treeWindTrunkGustInfluence);
-			}
-			if (args.contains("leafInfluence") && args["leafInfluence"].is_number()) {
-				utility->settings.treeLeafGustInfluence =
-					ClampFiniteOrDefault(args["leafInfluence"].get<float>(), kTreeWindGustInfluenceMin,
-						kTreeWindGustInfluenceMax, utility->settings.treeLeafGustInfluence);
-			}
-		});
 	FEATURE_COMMAND("setTreeWindRule",
-		"Apply live per-model tree wind tuning. Params: mesh (string), bendSensitivity (number, 0-4), leafAmbientSensitivity (number, 0-4).",
+		"Apply live per-model tree wind tuning. Params: mesh (string), bendSensitivity and leafAmbientSensitivity (0-4), "
+		"upperBendRange (5-100), maximumDisplacementPercent (0-10), trunkGustInfluence and leafGustInfluence (0-2).",
 		[](Feature*, const json& args) {
 			if (!args.contains("mesh") || !args["mesh"].is_string() ||
 				!args.contains("bendSensitivity") || !args["bendSensitivity"].is_number() ||
-				!args.contains("leafAmbientSensitivity") || !args["leafAmbientSensitivity"].is_number()) {
+				!args.contains("leafAmbientSensitivity") || !args["leafAmbientSensitivity"].is_number() ||
+				!args.contains("upperBendRange") || !args["upperBendRange"].is_number() ||
+				!args.contains("maximumDisplacementPercent") || !args["maximumDisplacementPercent"].is_number() ||
+				!args.contains("trunkGustInfluence") || !args["trunkGustInfluence"].is_number() ||
+				!args.contains("leafGustInfluence") || !args["leafGustInfluence"].is_number()) {
 				logger::warn("[TreeWindPatcher] Devbench setTreeWindRule received invalid arguments");
 				return;
 			}
 			if (!TreeWindPatcher::SetRule(args["mesh"].get<std::string>(), args["bendSensitivity"].get<float>(),
-					args["leafAmbientSensitivity"].get<float>())) {
+					args["leafAmbientSensitivity"].get<float>(), args["upperBendRange"].get<float>(),
+					args["maximumDisplacementPercent"].get<float>(), args["trunkGustInfluence"].get<float>(),
+					args["leafGustInfluence"].get<float>())) {
 				logger::warn("[TreeWindPatcher] Devbench setTreeWindRule did not match mesh {}", args["mesh"].get<std::string>());
 			}
 		});
@@ -1135,9 +1117,6 @@ void CSUtility::LoadSettings(json& o_json)
 	}
 	if (!o_json.contains("grassWindSpringDamping"))
 		settings.grassWindSpringDamping = defaults.grassWindSpringDamping;
-	if (!o_json.contains("treeWindUpperBendRange") && o_json.contains("treeWindFullBendHeight") &&
-		o_json["treeWindFullBendHeight"].is_number())
-		settings.treeWindUpperBendRange = o_json["treeWindFullBendHeight"].get<float>();
 	if (!o_json.contains("treeLeafBaseWindFlutterGain")) {
 		if (o_json.contains("treeLeafWindSensitivity") && o_json["treeLeafWindSensitivity"].is_number())
 			settings.treeLeafBaseWindFlutterGain =
@@ -1181,14 +1160,10 @@ void CSUtility::RestoreCurrentPageDefaultSettings()
 		break;
 	case SettingsPage::Trees:
 		settings.enableTrunkBend = defaults.enableTrunkBend;
-		settings.treeWindUpperBendRange = defaults.treeWindUpperBendRange;
-		settings.treeWindMaximumDisplacementPercent = defaults.treeWindMaximumDisplacementPercent;
 		settings.trunkWindBendSensitivity = defaults.trunkWindBendSensitivity;
 		settings.treeWindSpringStrength = defaults.treeWindSpringStrength;
 		settings.treeWindSpringDamping = defaults.treeWindSpringDamping;
-		settings.treeWindTrunkGustInfluence = defaults.treeWindTrunkGustInfluence;
 		settings.treeLeafBaseWindFlutterGain = defaults.treeLeafBaseWindFlutterGain;
-		settings.treeLeafGustInfluence = defaults.treeLeafGustInfluence;
 		break;
 	case SettingsPage::TreeMeshes:
 		TreeWindPatcher::RevertUnsavedChanges();
@@ -1236,16 +1211,12 @@ bool CSUtility::ReapplyCurrentPageOverrideSettings()
 		"fusRoDahSpeedMultiplier",
 		"fusRoDahConeHalfAngle"
 	};
-	static constexpr std::array<std::string_view, 9> treeKeys{
+	static constexpr std::array<std::string_view, 5> treeKeys{
 		"enableTrunkBend",
-		"treeWindUpperBendRange",
-		"treeWindMaximumDisplacementPercent",
 		"trunkWindBendSensitivity",
 		"treeWindSpringStrength",
 		"treeWindSpringDamping",
-		"treeWindTrunkGustInfluence",
-		"treeLeafBaseWindFlutterGain",
-		"treeLeafGustInfluence"
+		"treeLeafBaseWindFlutterGain"
 	};
 	static constexpr std::array<std::string_view, 1> waterKeys{ "water" };
 	static constexpr std::array<std::string_view, 7> multiplierKeys{
