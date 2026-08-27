@@ -11,6 +11,8 @@
 #include "Features/DynamicCubemaps.h"
 #if defined(ENABLE_EFFECTS11)
 #	include "Features/Effects11.h"
+#	include "Features/Effects11/EffectManager.h"
+#	include "Features/Effects11/SettingManager.h"
 #endif
 #include "Features/ExponentialHeightFog.h"
 #include "Features/FoveatedCommon.h"
@@ -624,19 +626,28 @@ void State::Load(ConfigMode a_configMode, bool a_allowReload)
 
 		if (settings["Version"].is_string() && settings["Version"].get<std::string>() != Plugin::VERSION.string()) {
 			logger::info("Found older config for version {}; upgrading to {}", (std::string)settings["Version"], Plugin::VERSION.string());
-			Save(a_configMode);  // Use original config mode
+			Save(a_configMode, false);  // Use original config mode
 		}
 
 		FeatureIssues::ScanForOrphanedFeatureINIs();
 
+#if defined(ENABLE_EFFECTS11)
+		// Effects11's ENB state lives in enbseries.ini, not the Settings JSON -- refresh
+		// it here too so a genuine reload picks up on-disk changes.
+		if (a_configMode == ConfigMode::USER && EffectManager::GetSingleton().IsPresetLoaded()) {
+			SettingManager::GetSingleton().Load();
+			EffectManager::GetSingleton().Load();
+		}
+#endif
+
 		logger::info("Loading Settings Complete");
 	} catch (const json::exception& e) {
 		logger::info("General JSON error accessing settings: {}; recreating config", e.what());
-		Save(a_configMode);
+		Save(a_configMode, false);
 		errorDetected = true;
 	} catch (const std::exception& e) {
 		logger::info("General error accessing settings: {}; recreating config", e.what());
-		Save(a_configMode);
+		Save(a_configMode, false);
 		errorDetected = true;
 	}
 	if (errorDetected && a_allowReload)
@@ -788,7 +799,7 @@ void State::LoadFromJson(nlohmann::json& settings)
 	}
 }
 
-void State::Save(ConfigMode a_configMode)
+void State::Save(ConfigMode a_configMode, bool a_isExplicitUserSave)
 {
 	std::string configPath = GetConfigPath(a_configMode);
 
@@ -838,6 +849,15 @@ void State::Save(ConfigMode a_configMode)
 		SaveUserOverrides(settings);
 		if (auto* shaderCache = globals::shaderCache)
 			shaderCache->MarkExpectedFeatureFlip();
+
+#if defined(ENABLE_EFFECTS11)
+		// Effects11's ENB state lives in enbseries.ini, not the Settings JSON -- persist
+		// it here too, not just via MenuManager's own "Save"/"Save & Apply" buttons.
+		if (a_isExplicitUserSave && EffectManager::GetSingleton().IsPresetLoaded()) {
+			SettingManager::GetSingleton().Save();
+			EffectManager::GetSingleton().Save();
+		}
+#endif
 	}
 }
 

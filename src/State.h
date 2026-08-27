@@ -115,8 +115,10 @@ public:
 	/**
 	 * @brief Persists current settings to the config file for the given mode.
 	 * @param a_configMode Which config file to write.
+	 * @param a_isExplicitUserSave False for Load()'s own internal migration/recovery
+	 *  re-saves, which must not also persist Effects11's separate ENB-side state.
 	 */
-	void Save(ConfigMode a_configMode = ConfigMode::USER);
+	void Save(ConfigMode a_configMode = ConfigMode::USER, bool a_isExplicitUserSave = true);
 
 	/**
 	 * @brief Serializes all settings to a JSON object (in-memory, no disk I/O).
