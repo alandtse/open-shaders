@@ -80,9 +80,14 @@ namespace
 	constexpr float kGrassWindSpringFrequencyMax = 8.0f;
 	constexpr float kGrassWindSpringDampingMin = 0.5f;
 	constexpr float kGrassWindSpringDampingMax = 1.5f;
-	constexpr std::array<uint32_t, 4> kGrassWindSpringTextureSizes{ 32, 64, 128, 256 };
-	constexpr float kGrassWindSpringWorldSizeMin = 4096.0f;
-	constexpr float kGrassWindSpringWorldSizeMax = 65536.0f;
+	constexpr uint32_t kGrassWindSpringQualityRangeCount = 3;
+	constexpr std::array<std::string_view, kGrassWindSpringQualityRangeCount> kGrassWindSpringQualityRangeNames{ "Near", "Mid", "Far" };
+	constexpr std::array<uint32_t, 6> kGrassWindSpringTextureSizes{ 32, 64, 128, 256, 512, 1024 };
+	constexpr uint32_t kGrassWindSpringTextureCount = 4;
+	constexpr uint32_t kGrassWindSpringBytesPerPixel = 8;
+	constexpr double kBytesPerMiB = 1024.0 * 1024.0;
+	constexpr float kGrassWindSpringDistanceMin = 1000.0f;
+	constexpr float kGrassWindSpringDistanceMax = 32768.0f;
 	constexpr float kGrassWindSpringLagMin = 0.0f;
 	constexpr float kGrassWindSpringLagMax = 0.5f;
 	constexpr float kGrassWindSpringRecoveryLagMin = 0.0f;
@@ -145,8 +150,19 @@ namespace
 		a_settings.grassWindBendProfile = ClampFiniteOrDefault(a_settings.grassWindBendProfile, kGrassWindBendProfileMin, kGrassWindBendProfileMax, defaults.grassWindBendProfile);
 		a_settings.grassWindSpringFrequency = ClampFiniteOrDefault(a_settings.grassWindSpringFrequency, kGrassWindSpringFrequencyMin, kGrassWindSpringFrequencyMax, defaults.grassWindSpringFrequency);
 		a_settings.grassWindSpringDamping = ClampFiniteOrDefault(a_settings.grassWindSpringDamping, kGrassWindSpringDampingMin, kGrassWindSpringDampingMax, defaults.grassWindSpringDamping);
-		a_settings.grassWindSpringTextureSize = SanitizeGrassWindSpringTextureSize(a_settings.grassWindSpringTextureSize);
-		a_settings.grassWindSpringWorldSize = ClampFiniteOrDefault(a_settings.grassWindSpringWorldSize, kGrassWindSpringWorldSizeMin, kGrassWindSpringWorldSizeMax, defaults.grassWindSpringWorldSize);
+		for (uint32_t index = 0; index < kGrassWindSpringQualityRangeCount; ++index) {
+			a_settings.grassWindSpringQuality[index].textureSize =
+				SanitizeGrassWindSpringTextureSize(a_settings.grassWindSpringQuality[index].textureSize);
+			a_settings.grassWindSpringQuality[index].maxDistance = ClampFiniteOrDefault(
+				a_settings.grassWindSpringQuality[index].maxDistance,
+				kGrassWindSpringDistanceMin,
+				kGrassWindSpringDistanceMax,
+				defaults.grassWindSpringQuality[index].maxDistance);
+			if (index > 0)
+				a_settings.grassWindSpringQuality[index].maxDistance =
+					std::max(a_settings.grassWindSpringQuality[index].maxDistance,
+						a_settings.grassWindSpringQuality[index - 1].maxDistance);
+		}
 		a_settings.grassWindSpringLag = ClampFiniteOrDefault(a_settings.grassWindSpringLag, kGrassWindSpringLagMin, kGrassWindSpringLagMax, defaults.grassWindSpringLag);
 		a_settings.grassWindSpringRecoveryLag = ClampFiniteOrDefault(a_settings.grassWindSpringRecoveryLag, kGrassWindSpringRecoveryLagMin, kGrassWindSpringRecoveryLagMax, defaults.grassWindSpringRecoveryLag);
 		a_settings.grassWindSpringStrength = ClampFiniteOrDefault(a_settings.grassWindSpringStrength, kGrassWindSpringStrengthMin, kGrassWindSpringStrengthMax, defaults.grassWindSpringStrength);
@@ -180,8 +196,7 @@ namespace
 		a_settings.grassWindBendProfile = defaults.grassWindBendProfile;
 		a_settings.grassWindSpringFrequency = defaults.grassWindSpringFrequency;
 		a_settings.grassWindSpringDamping = defaults.grassWindSpringDamping;
-		a_settings.grassWindSpringTextureSize = defaults.grassWindSpringTextureSize;
-		a_settings.grassWindSpringWorldSize = defaults.grassWindSpringWorldSize;
+		a_settings.grassWindSpringQuality = defaults.grassWindSpringQuality;
 		a_settings.grassWindSpringLag = defaults.grassWindSpringLag;
 		a_settings.grassWindSpringRecoveryLag = defaults.grassWindSpringRecoveryLag;
 		a_settings.grassWindSpringStrength = defaults.grassWindSpringStrength;
@@ -286,6 +301,11 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	muddiness)
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
+	CSUtility::Settings::GrassWindSpringQualityRange,
+	textureSize,
+	maxDistance)
+
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	CSUtility::Settings,
 	enableTrunkBend,
 	overrideTrunkWindIntensity,
@@ -313,8 +333,7 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	grassWindBendProfile,
 	grassWindSpringFrequency,
 	grassWindSpringDamping,
-	grassWindSpringTextureSize,
-	grassWindSpringWorldSize,
+	grassWindSpringQuality,
 	grassWindSpringLag,
 	grassWindSpringRecoveryLag,
 	grassWindSpringStrength,
@@ -391,7 +410,7 @@ void CSUtility::DrawSettings()
 		if (auto _tt = Util::HoverTooltipWrapper())
 			ImGui::TextUnformatted(T(TKEY("wind_field_transition_duration_tooltip"),
 				"A direction change creates a new, fixed-orientation noise field and lerps the old field into it over this period."));
-		static constexpr const char* debugViewLabels[]{ "Blended Output", "Current Field", "Previous Field", "Both Fields", "Comparison", "Spring Field" };
+		static constexpr const char* debugViewLabels[]{ "Blended Output", "Current Field", "Previous Field", "Both Fields", "Comparison", "Spring Field", "Transient Impulses" };
 		int debugView = static_cast<int>(windFieldDebugView);
 		if (ImGui::Combo(T(TKEY("wind_field_debug_view"), "Wind Debug View"), &debugView, debugViewLabels,
 				static_cast<int>(std::size(debugViewLabels)))) {
@@ -641,26 +660,51 @@ void CSUtility::DrawSettings()
 			if (auto _tt = Util::HoverTooltipWrapper())
 				ImGui::TextUnformatted(T(TKEY("grass_wind_spring_damping_tooltip"),
 					"Below one allows a natural rebound; one is critically damped; above one settles without overshoot."));
-			int textureSizeIndex = 0;
-			for (std::size_t index = 0; index < kGrassWindSpringTextureSizes.size(); ++index) {
-				if (settings.grassWindSpringTextureSize == kGrassWindSpringTextureSizes[index]) {
-					textureSizeIndex = static_cast<int>(index);
-					break;
+			static constexpr const char* qualityNames[] = { "Near", "Mid", "Far" };
+			static constexpr const char* textureSizeLabels[] = { "32", "64", "128", "256", "512", "1024" };
+			static constexpr const char* textureSizeKeys[] = {
+				"grass_wind_spring_near_texture_size",
+				"grass_wind_spring_mid_texture_size",
+				"grass_wind_spring_far_texture_size"
+			};
+			static constexpr const char* textureSizeDefaults[] = {
+				"Near Field Texture Size",
+				"Mid Field Texture Size",
+				"Far Field Texture Size"
+			};
+			static constexpr const char* distanceKeys[] = {
+				"grass_wind_spring_near_distance",
+				"grass_wind_spring_mid_distance",
+				"grass_wind_spring_far_distance"
+			};
+			static constexpr const char* distanceDefaults[] = {
+				"Near Range End",
+				"Mid Range End",
+				"Far Range End"
+			};
+			for (uint32_t index = 0; index < kGrassWindSpringQualityRangeCount; ++index) {
+				ImGui::SeparatorText(qualityNames[index]);
+				int textureSizeIndex = 0;
+				for (std::size_t option = 0; option < kGrassWindSpringTextureSizes.size(); ++option) {
+					if (settings.grassWindSpringQuality[index].textureSize == kGrassWindSpringTextureSizes[option]) {
+						textureSizeIndex = static_cast<int>(option);
+						break;
+					}
 				}
+				if (ImGui::Combo(T(textureSizeKeys[index], textureSizeDefaults[index]), &textureSizeIndex,
+						textureSizeLabels, static_cast<int>(std::size(textureSizeLabels))))
+					settings.grassWindSpringQuality[index].textureSize = kGrassWindSpringTextureSizes[textureSizeIndex];
+				ImGui::SliderFloat(T(distanceKeys[index], distanceDefaults[index]),
+					&settings.grassWindSpringQuality[index].maxDistance, kGrassWindSpringDistanceMin,
+					kGrassWindSpringDistanceMax, "%.0f units", ImGuiSliderFlags_AlwaysClamp);
 			}
-			static constexpr const char* textureSizeLabels[] = { "32", "64", "128", "256" };
-			if (ImGui::Combo(T(TKEY("grass_wind_spring_texture_size"), "Field Texture Size"), &textureSizeIndex,
-					textureSizeLabels, static_cast<int>(std::size(textureSizeLabels))))
-				settings.grassWindSpringTextureSize = kGrassWindSpringTextureSizes[textureSizeIndex];
+			for (uint32_t index = 1; index < kGrassWindSpringQualityRangeCount; ++index)
+				settings.grassWindSpringQuality[index].maxDistance =
+					std::max(settings.grassWindSpringQuality[index].maxDistance,
+						settings.grassWindSpringQuality[index - 1].maxDistance);
 			if (auto _tt = Util::HoverTooltipWrapper())
-				ImGui::TextUnformatted(T(TKEY("grass_wind_spring_texture_size_tooltip"),
-					"Higher resolution preserves finer wave detail but increases compute work and field memory."));
-			ImGui::SliderFloat(T(TKEY("grass_wind_spring_world_size"), "Field Sampling Area"),
-				&settings.grassWindSpringWorldSize, kGrassWindSpringWorldSizeMin,
-				kGrassWindSpringWorldSizeMax, "%.0f units", ImGuiSliderFlags_AlwaysClamp);
-			if (auto _tt = Util::HoverTooltipWrapper())
-				ImGui::TextUnformatted(T(TKEY("grass_wind_spring_world_size_tooltip"),
-					"Controls the square world area covered by the spring field. Smaller areas increase spatial detail at the same texture size."));
+				ImGui::TextUnformatted(T(TKEY("grass_wind_spring_quality_tooltip"),
+					"Each field covers a radial quality range. The next range begins where the previous range ends; grass beyond the far range uses the fallback path."));
 			ImGui::SeparatorText(T(TKEY("grass_wind_flutter"), "Flutter"));
 			ImGui::SliderFloat(T(TKEY("grass_wind_flutter_strength"), "Flutter Strength"), &settings.grassWindFlutterStrength,
 				kGrassWindFlutterStrengthMin, kGrassWindFlutterStrengthMax, "%.2f", ImGuiSliderFlags_AlwaysClamp);
@@ -670,6 +714,22 @@ void CSUtility::DrawSettings()
 				kGrassWindFlutterFrequencyMin, kGrassWindFlutterFrequencyMax, "%.2fx", ImGuiSliderFlags_AlwaysClamp);
 			if (auto _tt = Util::HoverTooltipWrapper())
 				ImGui::TextUnformatted(T(TKEY("grass_wind_flutter_frequency_tooltip"), "Controls how quickly the ambient bend oscillates independently for each grass blade."));
+			std::array<double, kGrassWindSpringQualityRangeCount> springMemoryMiB{};
+			double totalSpringMemoryMiB = 0.0;
+			for (uint32_t index = 0; index < kGrassWindSpringQualityRangeCount; ++index) {
+				const uint32_t textureSize = SanitizeGrassWindSpringTextureSize(
+					settings.grassWindSpringQuality[index].textureSize);
+				springMemoryMiB[index] = static_cast<double>(textureSize) * textureSize *
+				                         kGrassWindSpringTextureCount * kGrassWindSpringBytesPerPixel / kBytesPerMiB;
+				totalSpringMemoryMiB += springMemoryMiB[index];
+			}
+			ImGui::SeparatorText(T(TKEY("grass_wind_spring_memory"), "Spring Memory"));
+			ImGui::Text("%s: %.2f MiB", T(TKEY("grass_wind_spring_memory_total"), "Estimated GPU memory reserved"), totalSpringMemoryMiB);
+			ImGui::Text("%s: %.2f MiB | %s: %.2f MiB | %s: %.2f MiB",
+				qualityNames[0], springMemoryMiB[0], qualityNames[1], springMemoryMiB[1], qualityNames[2], springMemoryMiB[2]);
+			if (auto _tt = Util::HoverTooltipWrapper())
+				ImGui::TextUnformatted(T(TKEY("grass_wind_spring_memory_tooltip"),
+					"Estimate for four RGBA16F textures per field: two response textures and two velocity textures."));
 			ImGui::EndDisabled();
 			ImGui::EndTabItem();
 		}
@@ -1109,6 +1169,18 @@ void CSUtility::LoadSettings(json& o_json)
 {
 	const Settings defaults{};
 	settings = o_json;
+	if (!o_json.contains("grassWindSpringQuality")) {
+		if (o_json.contains("grassWindSpringTextureSize") && o_json["grassWindSpringTextureSize"].is_number_unsigned()) {
+			const auto legacyTextureSize = o_json["grassWindSpringTextureSize"].get<uint32_t>();
+			for (auto& range : settings.grassWindSpringQuality)
+				range.textureSize = legacyTextureSize;
+		}
+		if (o_json.contains("grassWindSpringWorldSize") && o_json["grassWindSpringWorldSize"].is_number()) {
+			const float legacyWorldSize = o_json["grassWindSpringWorldSize"].get<float>();
+			if (std::isfinite(legacyWorldSize))
+				settings.grassWindSpringQuality.back().maxDistance = legacyWorldSize * 0.5f;
+		}
+	}
 	if (!o_json.contains("grassWindSpringFrequency") && o_json.contains("grassWindSpringLag") &&
 		o_json["grassWindSpringLag"].is_number()) {
 		const float legacyLag = std::max(o_json["grassWindSpringLag"].get<float>(), 0.01f);
@@ -1255,20 +1327,24 @@ bool CSUtility::ReapplyCurrentPageOverrideSettings()
 	return false;
 }
 
-void CSUtility::RecreateGrassWindSpringTextures(uint32_t a_textureSize)
+void CSUtility::RecreateGrassWindSpringTextures(uint32_t a_qualityIndex, uint32_t a_textureSize)
 {
+	if (a_qualityIndex >= kGrassWindSpringQualityRangeCount)
+		return;
+
 	ID3D11ShaderResourceView* nullSrvs[2]{};
-	globals::d3d::context->VSSetShaderResources(105, ARRAYSIZE(nullSrvs), nullSrvs);
+	globals::d3d::context->VSSetShaderResources(105 + a_qualityIndex, 1, nullSrvs);
+	globals::d3d::context->VSSetShaderResources(108 + a_qualityIndex, 1, nullSrvs);
 	globals::d3d::context->CSSetShaderResources(0, ARRAYSIZE(nullSrvs), nullSrvs);
 	ID3D11UnorderedAccessView* nullUavs[2]{};
 	globals::d3d::context->CSSetUnorderedAccessViews(0, ARRAYSIZE(nullUavs), nullUavs, nullptr);
 	globals::d3d::context->CSSetShader(nullptr, nullptr, 0);
 
 	for (uint32_t textureIndex = 0; textureIndex < 2; ++textureIndex) {
-		delete grassWindSpringResponseTextures[textureIndex];
-		grassWindSpringResponseTextures[textureIndex] = nullptr;
-		delete grassWindSpringVelocityTextures[textureIndex];
-		grassWindSpringVelocityTextures[textureIndex] = nullptr;
+		delete grassWindSpringResponseTextures[a_qualityIndex][textureIndex];
+		grassWindSpringResponseTextures[a_qualityIndex][textureIndex] = nullptr;
+		delete grassWindSpringVelocityTextures[a_qualityIndex][textureIndex];
+		grassWindSpringVelocityTextures[a_qualityIndex][textureIndex] = nullptr;
 	}
 
 	D3D11_TEXTURE2D_DESC textureDesc{
@@ -1293,24 +1369,26 @@ void CSUtility::RecreateGrassWindSpringTextures(uint32_t a_textureSize)
 	};
 	const float clearValue[4]{};
 	for (uint32_t textureIndex = 0; textureIndex < 2; ++textureIndex) {
-		const std::string responseName = std::format("OSUtility::GrassWindSpringResponse{}", textureIndex);
-		grassWindSpringResponseTextures[textureIndex] = new Texture2D(textureDesc, responseName.c_str());
-		grassWindSpringResponseTextures[textureIndex]->CreateSRV(srvDesc);
-		grassWindSpringResponseTextures[textureIndex]->CreateUAV(uavDesc);
+		const std::string responseName = std::format(
+			"OSUtility::GrassWindSpring{}Response{}", kGrassWindSpringQualityRangeNames[a_qualityIndex], textureIndex);
+		grassWindSpringResponseTextures[a_qualityIndex][textureIndex] = new Texture2D(textureDesc, responseName.c_str());
+		grassWindSpringResponseTextures[a_qualityIndex][textureIndex]->CreateSRV(srvDesc);
+		grassWindSpringResponseTextures[a_qualityIndex][textureIndex]->CreateUAV(uavDesc);
 		globals::d3d::context->ClearUnorderedAccessViewFloat(
-			grassWindSpringResponseTextures[textureIndex]->uav.get(), clearValue);
+			grassWindSpringResponseTextures[a_qualityIndex][textureIndex]->uav.get(), clearValue);
 
-		const std::string velocityName = std::format("OSUtility::GrassWindSpringVelocity{}", textureIndex);
-		grassWindSpringVelocityTextures[textureIndex] = new Texture2D(textureDesc, velocityName.c_str());
-		grassWindSpringVelocityTextures[textureIndex]->CreateSRV(srvDesc);
-		grassWindSpringVelocityTextures[textureIndex]->CreateUAV(uavDesc);
+		const std::string velocityName = std::format(
+			"OSUtility::GrassWindSpring{}Velocity{}", kGrassWindSpringQualityRangeNames[a_qualityIndex], textureIndex);
+		grassWindSpringVelocityTextures[a_qualityIndex][textureIndex] = new Texture2D(textureDesc, velocityName.c_str());
+		grassWindSpringVelocityTextures[a_qualityIndex][textureIndex]->CreateSRV(srvDesc);
+		grassWindSpringVelocityTextures[a_qualityIndex][textureIndex]->CreateUAV(uavDesc);
 		globals::d3d::context->ClearUnorderedAccessViewFloat(
-			grassWindSpringVelocityTextures[textureIndex]->uav.get(), clearValue);
+			grassWindSpringVelocityTextures[a_qualityIndex][textureIndex]->uav.get(), clearValue);
 	}
-	grassWindSpringTextureSize = a_textureSize;
-	grassWindSpringTextureIndex = 0;
-	grassWindSpringInitialized = false;
-	grassWindSpringFieldAvailable = false;
+	grassWindSpringTextureSizes[a_qualityIndex] = a_textureSize;
+	grassWindSpringTextureIndices[a_qualityIndex] = 0;
+	grassWindSpringInitialized[a_qualityIndex] = false;
+	grassWindSpringFieldAvailable[a_qualityIndex] = false;
 }
 
 void CSUtility::SetupResources()
@@ -1320,7 +1398,8 @@ void CSUtility::SetupResources()
 		ConstantBufferDesc<GrassWindSpringData>(), "OSUtility::GrassWindSpringData");
 	Settings sanitizedSettings = settings;
 	SanitizeSettings(sanitizedSettings);
-	RecreateGrassWindSpringTextures(sanitizedSettings.grassWindSpringTextureSize);
+	for (uint32_t qualityIndex = 0; qualityIndex < kGrassWindSpringQualityRangeCount; ++qualityIndex)
+		RecreateGrassWindSpringTextures(qualityIndex, sanitizedSettings.grassWindSpringQuality[qualityIndex].textureSize);
 
 	D3D11_SAMPLER_DESC samplerDesc{};
 	samplerDesc.Filter = D3D11_FILTER_MIN_MAG_MIP_LINEAR;
@@ -1339,134 +1418,160 @@ void CSUtility::ClearShaderCache()
 
 void CSUtility::UpdateGrassWindSpring()
 {
-	if (!grassWindSpringCB || !grassWindSpringResponseTextures[0] || !grassWindSpringResponseTextures[1] ||
-		!grassWindSpringVelocityTextures[0] || !grassWindSpringVelocityTextures[1])
+	if (!grassWindSpringCB)
 		return;
+	for (uint32_t qualityIndex = 0; qualityIndex < kGrassWindSpringQualityRangeCount; ++qualityIndex) {
+		if (!grassWindSpringResponseTextures[qualityIndex][0] || !grassWindSpringResponseTextures[qualityIndex][1] ||
+			!grassWindSpringVelocityTextures[qualityIndex][0] || !grassWindSpringVelocityTextures[qualityIndex][1])
+			return;
+	}
 
 	static Util::FrameChecker frameChecker;
 	auto* context = globals::d3d::context;
 	if (frameChecker.IsNewFrame()) {
 		Settings sanitizedSettings = settings;
 		SanitizeSettings(sanitizedSettings);
-		if (sanitizedSettings.grassWindSpringTextureSize != grassWindSpringTextureSize)
-			RecreateGrassWindSpringTextures(sanitizedSettings.grassWindSpringTextureSize);
-		if (sanitizedSettings.grassWindSpringWorldSize != grassWindSpringWorldSize) {
-			grassWindSpringWorldSize = sanitizedSettings.grassWindSpringWorldSize;
-			grassWindSpringInitialized = false;
-			grassWindSpringFieldAvailable = false;
-		}
-		const float cellSize = sanitizedSettings.grassWindSpringWorldSize /
-		                       static_cast<float>(sanitizedSettings.grassWindSpringTextureSize);
 		RE::NiPoint3 center{};
 		if (globals::game::player)
 			center = globals::game::player->GetPosition();
+		const float anchorCellSize = sanitizedSettings.grassWindSpringQuality[0].maxDistance * 2.0f /
+		                             static_cast<float>(sanitizedSettings.grassWindSpringQuality[0].textureSize);
 		const float2 snappedCenter{
-			std::floor(center.x / cellSize) * cellSize,
-			std::floor(center.y / cellSize) * cellSize
+			std::floor(center.x / anchorCellSize) * anchorCellSize,
+			std::floor(center.y / anchorCellSize) * anchorCellSize
 		};
-		const float fieldHalfSize = sanitizedSettings.grassWindSpringWorldSize * 0.5f;
-		const float2 nextFieldMinimum{
-			snappedCenter.x - fieldHalfSize,
-			snappedCenter.y - fieldHalfSize
-		};
-		previousGrassWindSpringFieldMinimum = grassWindSpringInitialized ?
-		                                          grassWindSpringFieldMinimum :
-		                                          nextFieldMinimum;
-		grassWindSpringFieldMinimum = nextFieldMinimum;
 
 		GrassWindSpringData data{};
-		data.fieldMinimum = grassWindSpringFieldMinimum;
-		data.previousFieldMinimum = previousGrassWindSpringFieldMinimum;
-		data.fieldHeight = center.z;
-		data.frameTime = std::clamp(globals::state->windFieldFrameTime, 0.0f, 0.25f);
-		data.responseRadians = DirectX::XMConvertToRadians(sanitizedSettings.grassWindResponse);
-		data.maximumTiltRadians = DirectX::XMConvertToRadians(sanitizedSettings.grassWindMaximumTilt);
-		data.sensitivity = sanitizedSettings.grassWindSensitivity;
-		data.springFrequency = sanitizedSettings.grassWindSpringFrequency;
-		data.springDamping = sanitizedSettings.grassWindSpringDamping;
-		data.fieldSize = sanitizedSettings.grassWindSpringWorldSize;
-		data.textureSize = sanitizedSettings.grassWindSpringTextureSize;
-		data.initialize = grassWindSpringInitialized ? 0u : 1u;
-		grassWindSpringCB->Update(data);
+		const float fieldHeight = center.z;
+		const float frameTime = std::clamp(globals::state->windFieldFrameTime, 0.0f, 0.25f);
+		const float responseRadians = DirectX::XMConvertToRadians(sanitizedSettings.grassWindResponse);
+		const float maximumTiltRadians = DirectX::XMConvertToRadians(sanitizedSettings.grassWindMaximumTilt);
+		const float sensitivity = sanitizedSettings.grassWindSensitivity;
+		const float springFrequency = sanitizedSettings.grassWindSpringFrequency;
+		const float springDamping = sanitizedSettings.grassWindSpringDamping;
+		ID3D11ShaderResourceView* nullSrvs[2]{};
+		ID3D11UnorderedAccessView* nullUavs[2]{};
+		for (uint32_t qualityIndex = 0; qualityIndex < kGrassWindSpringQualityRangeCount; ++qualityIndex) {
+			const auto& quality = sanitizedSettings.grassWindSpringQuality[qualityIndex];
+			const float fieldSize = quality.maxDistance * 2.0f;
+			if (quality.textureSize != grassWindSpringTextureSizes[qualityIndex])
+				RecreateGrassWindSpringTextures(qualityIndex, quality.textureSize);
+			if (fieldSize != grassWindSpringWorldSizes[qualityIndex]) {
+				grassWindSpringWorldSizes[qualityIndex] = fieldSize;
+				grassWindSpringInitialized[qualityIndex] = false;
+				grassWindSpringFieldAvailable[qualityIndex] = false;
+			}
+			const float fieldHalfSize = fieldSize * 0.5f;
+			const float2 nextFieldMinimum{
+				snappedCenter.x - fieldHalfSize,
+				snappedCenter.y - fieldHalfSize
+			};
+			previousGrassWindSpringFieldMinimum[qualityIndex] = grassWindSpringInitialized[qualityIndex] ?
+			                                                        grassWindSpringFieldMinimum[qualityIndex] :
+			                                                        nextFieldMinimum;
+			grassWindSpringFieldMinimum[qualityIndex] = nextFieldMinimum;
+			data.fields[qualityIndex] = {
+				grassWindSpringFieldMinimum[qualityIndex],
+				previousGrassWindSpringFieldMinimum[qualityIndex],
+				fieldHeight,
+				frameTime,
+				responseRadians,
+				maximumTiltRadians,
+				sensitivity,
+				springFrequency,
+				springDamping,
+				grassWindSpringInitialized[qualityIndex] ? 0u : 1u,
+				0u,
+				fieldSize,
+				quality.textureSize,
+				quality.maxDistance
+			};
+		}
 
-		ID3D11ShaderResourceView* nullVertexSrvs[2]{};
-		context->VSSetShaderResources(105, ARRAYSIZE(nullVertexSrvs), nullVertexSrvs);
-		const uint32_t outputTextureIndex = grassWindSpringTextureIndex ^ 1u;
 		ID3D11Buffer* constantBuffers[]{ grassWindSpringCB->CB(), globals::state->sharedDataCB->CB() };
 		context->CSSetConstantBuffers(0, 1, constantBuffers);
 		context->CSSetConstantBuffers(5, 1, constantBuffers + 1);
-		ID3D11ShaderResourceView* srvs[]{
-			grassWindSpringResponseTextures[grassWindSpringTextureIndex]->srv.get(),
-			grassWindSpringVelocityTextures[grassWindSpringTextureIndex]->srv.get()
-		};
-		context->CSSetShaderResources(0, ARRAYSIZE(srvs), srvs);
-		ID3D11UnorderedAccessView* uavs[]{
-			grassWindSpringResponseTextures[outputTextureIndex]->uav.get(),
-			grassWindSpringVelocityTextures[outputTextureIndex]->uav.get()
-		};
-		context->CSSetUnorderedAccessViews(0, ARRAYSIZE(uavs), uavs, nullptr);
+		auto* shader = sanitizedSettings.enableAmbientGrassWind && sanitizedSettings.grassWindUseSpringField ?
+		                   grassWindSpringCS.Get(
+							   L"Data\\Shaders\\GrassWindSpringCS.hlsl", {}, "cs_5_0", "main",
+							   "OSUtility::GrassWindSpringCS") :
+		                   nullptr;
+		for (uint32_t qualityIndex = 0; qualityIndex < kGrassWindSpringQualityRangeCount; ++qualityIndex) {
+			data.activeField = qualityIndex;
+			data.fields[qualityIndex].fieldAvailable = 0u;
+			grassWindSpringCB->Update(data);
+			const uint32_t currentTextureIndex = grassWindSpringTextureIndices[qualityIndex];
+			const uint32_t outputTextureIndex = currentTextureIndex ^ 1u;
+			ID3D11ShaderResourceView* srvs[]{
+				grassWindSpringResponseTextures[qualityIndex][currentTextureIndex]->srv.get(),
+				grassWindSpringVelocityTextures[qualityIndex][currentTextureIndex]->srv.get()
+			};
+			context->CSSetShaderResources(0, ARRAYSIZE(srvs), srvs);
+			ID3D11UnorderedAccessView* uavs[]{
+				grassWindSpringResponseTextures[qualityIndex][outputTextureIndex]->uav.get(),
+				grassWindSpringVelocityTextures[qualityIndex][outputTextureIndex]->uav.get()
+			};
+			context->CSSetUnorderedAccessViews(0, ARRAYSIZE(uavs), uavs, nullptr);
 
-		grassWindSpringFieldAvailable = false;
-		if (sanitizedSettings.enableAmbientGrassWind && sanitizedSettings.grassWindUseSpringField) {
-			auto* shader = grassWindSpringCS.Get(
-				L"Data\\Shaders\\GrassWindSpringCS.hlsl", {}, "cs_5_0", "main",
-				"OSUtility::GrassWindSpringCS");
+			grassWindSpringFieldAvailable[qualityIndex] = false;
 			if (shader) {
 				context->CSSetShader(shader, nullptr, 0);
 				CS_GPU_PASS("OSUtility::GrassWindSpringUpdate");
-				context->Dispatch((sanitizedSettings.grassWindSpringTextureSize + 7) / 8,
-					(sanitizedSettings.grassWindSpringTextureSize + 7) / 8, 1);
-				grassWindSpringTextureIndex = outputTextureIndex;
-				grassWindSpringFieldAvailable = true;
-				if (!grassWindSpringInitialized) {
-					ID3D11ShaderResourceView* nullSrvs[2]{};
-					context->CSSetShaderResources(0, ARRAYSIZE(nullSrvs), nullSrvs);
-					ID3D11UnorderedAccessView* nullUavs[2]{};
-					context->CSSetUnorderedAccessViews(0, ARRAYSIZE(nullUavs), nullUavs, nullptr);
-					const uint32_t previousTextureIndex = grassWindSpringTextureIndex ^ 1u;
+				context->Dispatch((data.fields[qualityIndex].textureSize + 7) / 8,
+					(data.fields[qualityIndex].textureSize + 7) / 8, 1);
+				grassWindSpringTextureIndices[qualityIndex] = outputTextureIndex;
+				grassWindSpringFieldAvailable[qualityIndex] = true;
+				if (!grassWindSpringInitialized[qualityIndex]) {
+					context->CSSetShaderResources(0, ARRAYSIZE(srvs), nullSrvs);
+					context->CSSetUnorderedAccessViews(0, ARRAYSIZE(uavs), nullUavs, nullptr);
+					const uint32_t previousTextureIndex = grassWindSpringTextureIndices[qualityIndex] ^ 1u;
 					context->CopyResource(
-						grassWindSpringResponseTextures[previousTextureIndex]->resource.get(),
-						grassWindSpringResponseTextures[grassWindSpringTextureIndex]->resource.get());
+						grassWindSpringResponseTextures[qualityIndex][previousTextureIndex]->resource.get(),
+						grassWindSpringResponseTextures[qualityIndex][grassWindSpringTextureIndices[qualityIndex]]->resource.get());
 					context->CopyResource(
-						grassWindSpringVelocityTextures[previousTextureIndex]->resource.get(),
-						grassWindSpringVelocityTextures[grassWindSpringTextureIndex]->resource.get());
+						grassWindSpringVelocityTextures[qualityIndex][previousTextureIndex]->resource.get(),
+						grassWindSpringVelocityTextures[qualityIndex][grassWindSpringTextureIndices[qualityIndex]]->resource.get());
 				}
-				grassWindSpringInitialized = true;
+				grassWindSpringInitialized[qualityIndex] = true;
 			}
+			if (!grassWindSpringFieldAvailable[qualityIndex])
+				grassWindSpringInitialized[qualityIndex] = false;
 		}
-		if (!grassWindSpringFieldAvailable)
-			grassWindSpringInitialized = false;
 
 		context->CSSetShader(nullptr, nullptr, 0);
 		ID3D11Buffer* nullBuffer = nullptr;
 		context->CSSetConstantBuffers(0, 1, &nullBuffer);
 		context->CSSetConstantBuffers(5, 1, &nullBuffer);
-		ID3D11ShaderResourceView* nullSrvs[2]{};
 		context->CSSetShaderResources(0, ARRAYSIZE(nullSrvs), nullSrvs);
-		ID3D11UnorderedAccessView* nullUavs[2]{};
 		context->CSSetUnorderedAccessViews(0, ARRAYSIZE(nullUavs), nullUavs, nullptr);
 
-		data.initialize = 0u;
-		data.fieldAvailable = grassWindSpringFieldAvailable ? 1u : 0u;
+		data.activeField = 0u;
+		for (uint32_t qualityIndex = 0; qualityIndex < kGrassWindSpringQualityRangeCount; ++qualityIndex) {
+			data.fields[qualityIndex].initialize = 0u;
+			data.fields[qualityIndex].fieldAvailable = grassWindSpringFieldAvailable[qualityIndex] ? 1u : 0u;
+		}
 		grassWindSpringCB->Update(data);
 	}
 
 	ID3D11Buffer* springBuffer = grassWindSpringCB->CB();
 	context->VSSetConstantBuffers(9, 1, &springBuffer);
-	const uint32_t previousTextureIndex = grassWindSpringTextureIndex ^ 1u;
-	ID3D11ShaderResourceView* springSrvs[]{
-		grassWindSpringResponseTextures[grassWindSpringTextureIndex]->srv.get(),
-		grassWindSpringResponseTextures[previousTextureIndex]->srv.get()
-	};
-	context->VSSetShaderResources(105, ARRAYSIZE(springSrvs), springSrvs);
+	std::array<ID3D11ShaderResourceView*, kGrassWindSpringQualityRangeCount> currentSpringSrvs{};
+	std::array<ID3D11ShaderResourceView*, kGrassWindSpringQualityRangeCount> previousSpringSrvs{};
+	for (uint32_t qualityIndex = 0; qualityIndex < kGrassWindSpringQualityRangeCount; ++qualityIndex) {
+		const uint32_t currentTextureIndex = grassWindSpringTextureIndices[qualityIndex];
+		currentSpringSrvs[qualityIndex] = grassWindSpringResponseTextures[qualityIndex][currentTextureIndex]->srv.get();
+		previousSpringSrvs[qualityIndex] = grassWindSpringResponseTextures[qualityIndex][currentTextureIndex ^ 1u]->srv.get();
+	}
+	context->VSSetShaderResources(105, currentSpringSrvs.size(), currentSpringSrvs.data());
+	context->VSSetShaderResources(108, previousSpringSrvs.size(), previousSpringSrvs.data());
 	ID3D11SamplerState* samplers[]{ grassWindSpringSampler.get() };
 	context->VSSetSamplers(14, ARRAYSIZE(samplers), samplers);
 }
 
 ID3D11ShaderResourceView* CSUtility::GetGrassWindSpringDebugSRV() const
 {
-	return grassWindSpringFieldAvailable && grassWindSpringResponseTextures[grassWindSpringTextureIndex] ?
-	           grassWindSpringResponseTextures[grassWindSpringTextureIndex]->srv.get() :
+	return grassWindSpringFieldAvailable[0] && grassWindSpringResponseTextures[0][grassWindSpringTextureIndices[0]] ?
+	           grassWindSpringResponseTextures[0][grassWindSpringTextureIndices[0]]->srv.get() :
 	           nullptr;
 }
 
@@ -1492,6 +1597,8 @@ CSUtility::PerFrameData CSUtility::GetCommonBufferData() const
 	data.waterFresnelMin = sanitizedSettings.water.fresnelMin;
 	data.waterFresnelMax = sanitizedSettings.water.fresnelMax;
 	data.waterMuddiness = sanitizedSettings.water.muddiness;
+	data.windFieldDebugEnabled = visualizeWindField ? 1u : 0u;
+	data.windFieldDebugView = static_cast<uint32_t>(windFieldDebugView);
 	return data;
 }
 

@@ -335,6 +335,8 @@ void State::Reset()
 	const float frameTime = gamePaused ? 0.0f : std::max(RE::GetSecondsSinceLastFrame(), 0.0f);
 	previousWindFieldFrameTime = windFieldHasPreviousSample ? windFieldFrameTime : frameTime;
 	windFieldFrameTime = frameTime;
+	twoFramesAgoTransientWindImpulses = previousTransientWindImpulses;
+	twoFramesAgoActiveTransientWindImpulseCount = previousActiveTransientWindImpulseCount;
 	UpdateTransientWindImpulses(frameTime);
 	previousTimer = timer;
 	previousTrunkWindVector = trunkWindVector;
@@ -549,8 +551,10 @@ void State::ClearTransientWindImpulses()
 	std::lock_guard lock(transientWindImpulseMutex);
 	transientWindImpulses = {};
 	previousTransientWindImpulses = {};
+	twoFramesAgoTransientWindImpulses = {};
 	activeTransientWindImpulseCount = 0;
 	previousActiveTransientWindImpulseCount = 0;
+	twoFramesAgoActiveTransientWindImpulseCount = 0;
 	pendingTransientWindImpulses.clear();
 }
 
@@ -1514,7 +1518,7 @@ void State::UpdateSharedData([[maybe_unused]] bool a_inWorld, [[maybe_unused]] b
 		data.Timer = timer;
 		data.WindFieldDebug = {
 			ambientWindVelocity.x, ambientWindVelocity.y,
-			globals::features::csUtility.visualizeWindField ? 1.0f : 0.0f,
+			0.0f,
 			previousWindFieldFrameTime
 		};
 		data.WindFieldDebugOptions = {
@@ -1552,20 +1556,23 @@ void State::UpdateSharedData([[maybe_unused]] bool a_inWorld, [[maybe_unused]] b
 			windFieldTransitionBlend,
 			previousWindFieldTransitionBlend,
 			twoFramesAgoWindFieldTransitionBlend,
-			static_cast<float>(static_cast<uint32_t>(globals::features::csUtility.windFieldDebugView))
+			0.0f
 		};
 		data.WindFieldSpringDebug = {
-			globals::features::csUtility.grassWindSpringFieldMinimum.x,
-			globals::features::csUtility.grassWindSpringFieldMinimum.y,
-			globals::features::csUtility.grassWindSpringFieldAvailable ? globals::features::csUtility.grassWindSpringWorldSize : 0.0f,
+			globals::features::csUtility.grassWindSpringFieldMinimum[0].x,
+			globals::features::csUtility.grassWindSpringFieldMinimum[0].y,
+			globals::features::csUtility.grassWindSpringFieldAvailable[0] ? globals::features::csUtility.grassWindSpringWorldSizes[0] : 0.0f,
 			DirectX::XMConvertToRadians(globals::features::csUtility.settings.grassWindMaximumTilt)
 		};
 		data.WindFieldActiveCounts = {
-			0u, 0u,
-			activeTransientWindImpulseCount, previousActiveTransientWindImpulseCount
+			0u,
+			twoFramesAgoActiveTransientWindImpulseCount,
+			activeTransientWindImpulseCount,
+			previousActiveTransientWindImpulseCount
 		};
 		data.WindFieldTransientImpulses = transientWindImpulses;
 		data.WindFieldPreviousTransientImpulses = previousTransientWindImpulses;
+		data.WindFieldTwoFramesAgoTransientImpulses = twoFramesAgoTransientWindImpulses;
 
 		auto temporal = Util::GetTemporal();
 

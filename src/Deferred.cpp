@@ -448,6 +448,8 @@ void Deferred::DeferredPasses()
 
 		ID3D11UnorderedAccessView* uavs[3]{ main.UAV, normals.UAV, motionVectors.UAV };
 		context->CSSetUnorderedAccessViews(0, ARRAYSIZE(uavs), uavs, nullptr);
+		ID3D11Buffer* sharedBuffers[]{ globals::state->sharedDataCB->CB(), globals::state->featureDataCB->CB() };
+		context->CSSetConstantBuffers(5, ARRAYSIZE(sharedBuffers), sharedBuffers);
 
 		if (auto* shader = interior ? GetComputeMainCompositeInterior() : GetComputeMainComposite()) {
 			context->CSSetShader(shader, nullptr, 0);

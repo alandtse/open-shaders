@@ -40,7 +40,7 @@ namespace SharedData
 		float4 HDRData;
 		float RefractionScale;
 		float3 pad1;
-		float4 WindFieldDebug;         // xy: base weather velocity, z: visualization enabled, w: previous frame time
+		float4 WindFieldDebug;         // xy: base weather velocity, z: reserved, w: previous frame time
 		float4 WindFieldDebugOptions;  // x: frame time, y: real speed, z: real direction, w: gust travel
 		WindField::WindTuning WindFieldTuning;
 		float4 WindFieldAmbient;
@@ -52,11 +52,12 @@ namespace SharedData
 		WindField::Field WindFieldTransition;
 		WindField::Field WindFieldPreviousTransition;
 		WindField::Field WindFieldTwoFramesAgoTransition;
-		float4 WindFieldTransitionData;  // x/y/z: current/previous/two-frame blend, w: debug view
+		float4 WindFieldTransitionData;  // x/y/z: current/previous/two-frame blend, w: reserved
 		float4 WindFieldSpringDebug;     // xy: field minimum, z: field size, w: maximum tilt radians
-		uint4 WindFieldActiveCounts;     // reserved ambient counts, current/previous transient impulses
+		uint4 WindFieldActiveCounts;     // reserved, two-frames-ago, current, and previous transient impulse counts
 		WindField::TransientImpulse WindFieldTransientImpulses[WindField::TransientImpulseCapacity];
 		WindField::TransientImpulse WindFieldPreviousTransientImpulses[WindField::TransientImpulseCapacity];
+		WindField::TransientImpulse WindFieldTwoFramesAgoTransientImpulses[WindField::TransientImpulseCapacity];
 	};
 
 	/** @brief Lerp old into present without ever adding their two ambient contributions. */
@@ -74,18 +75,30 @@ namespace SharedData
 		return sample;
 	}
 
-	/** @brief Samples the current blended shared wind field at an absolute world position. */
-	WindField::WindSample SampleAmbientWind(float3 worldPosition)
+	/** @brief Accumulates active transient wind impulses at an absolute world position. */
+	WindField::TransientImpulseSample SampleCurrentTransientWindImpulses(float3 worldPosition)
 	{
-		WindField::WindSample sample = SampleBlendedAmbientWind(
-			worldPosition, WindFieldCurrent, WindFieldTransition, WindFieldTransitionData.x);
+		WindField::TransientImpulseSample sample;
+		sample.velocity = 0.0f;
+		sample.intensity = 0.0f;
 		[loop] for (uint index = 0u; index < WindFieldActiveCounts.z; ++index)
 		{
 			WindField::TransientImpulseSample impulseSample =
 				WindField::SampleTransientImpulse(worldPosition, WindFieldTransientImpulses[index]);
 			sample.velocity += impulseSample.velocity;
-			sample.transientImpulse = max(sample.transientImpulse, impulseSample.intensity);
+			sample.intensity = max(sample.intensity, impulseSample.intensity);
 		}
+		return sample;
+	}
+
+	/** @brief Samples the current blended shared wind field at an absolute world position. */
+	WindField::WindSample SampleAmbientWind(float3 worldPosition)
+	{
+		WindField::WindSample sample = SampleBlendedAmbientWind(
+			worldPosition, WindFieldCurrent, WindFieldTransition, WindFieldTransitionData.x);
+		WindField::TransientImpulseSample impulseSample = SampleCurrentTransientWindImpulses(worldPosition);
+		sample.velocity += impulseSample.velocity;
+		sample.transientImpulse = impulseSample.intensity;
 		return sample;
 	}
 
@@ -107,8 +120,16 @@ namespace SharedData
 	/** @brief Samples the two-frames-ago shared ambient wind for legacy grass spring reconstruction. */
 	WindField::WindSample SampleTwoFramesAgoAmbientWind(float3 worldPosition)
 	{
-		return SampleBlendedAmbientWind(
+		WindField::WindSample sample = SampleBlendedAmbientWind(
 			worldPosition, WindFieldTwoFramesAgo, WindFieldTwoFramesAgoTransition, WindFieldTransitionData.z);
+		[loop] for (uint index = 0u; index < WindFieldActiveCounts.y; ++index)
+		{
+			WindField::TransientImpulseSample impulseSample =
+				WindField::SampleTransientImpulse(worldPosition, WindFieldTwoFramesAgoTransientImpulses[index]);
+			sample.velocity += impulseSample.velocity;
+			sample.transientImpulse = max(sample.transientImpulse, impulseSample.intensity);
+		}
+		return sample;
 	}
 
 	struct GrassLightingSettings
@@ -329,6 +350,9 @@ namespace SharedData
 		float waterFresnelMin;
 		float waterFresnelMax;
 		float waterMuddiness;
+		uint windFieldDebugEnabled;
+		uint windFieldDebugView;
+		float2 windFieldDebugPadding;
 	};
 
 	struct LinearLightingSettings

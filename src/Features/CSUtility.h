@@ -82,6 +82,12 @@ struct CSUtility : Feature
 
 	struct Settings
 	{
+		struct GrassWindSpringQualityRange
+		{
+			uint32_t textureSize;
+			float maxDistance;
+		};
+
 		bool enableTrunkBend = true;
 		bool overrideTrunkWindIntensity = false;
 		float trunkWindIntensityOverride = 1.0f;
@@ -108,8 +114,9 @@ struct CSUtility : Feature
 		float grassWindBendProfile = 0.35f;
 		float grassWindSpringFrequency = 2.0f;
 		float grassWindSpringDamping = 0.82f;
-		uint32_t grassWindSpringTextureSize = 128;
-		float grassWindSpringWorldSize = 32768.0f;
+		std::array<GrassWindSpringQualityRange, 3> grassWindSpringQuality{ { { 1024, 5000.0f },
+			{ 512, 8000.0f },
+			{ 256, 12000.0f } } };
 		float grassWindSpringLag = 0.12f;
 		float grassWindSpringRecoveryLag = 1.0f;
 		float grassWindSpringStrength = 0.65f;
@@ -159,7 +166,8 @@ struct CSUtility : Feature
 		Previous,
 		Both,
 		Comparison,
-		Spring
+		Spring,
+		TransientImpulses
 	};
 	WindFieldDebugView windFieldDebugView = WindFieldDebugView::Blended;
 	struct RuntimeWindTest
@@ -196,9 +204,12 @@ struct CSUtility : Feature
 		float waterFresnelMin;
 		float waterFresnelMax;
 		float waterMuddiness;
+		uint32_t windFieldDebugEnabled;
+		uint32_t windFieldDebugView;
+		float2 windFieldDebugPadding;
 	};
 	STATIC_ASSERT_ALIGNAS_16(PerFrameData);
-	static_assert(sizeof(PerFrameData) == 64);
+	static_assert(sizeof(PerFrameData) == 80);
 
 	struct alignas(16) VanillaPointLightData
 	{
@@ -209,7 +220,7 @@ struct CSUtility : Feature
 
 	ConstantBuffer* vanillaPointLightCB = nullptr;
 
-	struct alignas(16) GrassWindSpringData
+	struct alignas(16) GrassWindSpringFieldData
 	{
 		float2 fieldMinimum;
 		float2 previousFieldMinimum;
@@ -224,21 +235,31 @@ struct CSUtility : Feature
 		uint32_t fieldAvailable;
 		float fieldSize;
 		uint32_t textureSize;
-		float padding;
+		float maxDistance;
+	};
+	STATIC_ASSERT_ALIGNAS_16(GrassWindSpringFieldData);
+	static_assert(sizeof(GrassWindSpringFieldData) == 64);
+
+	struct alignas(16) GrassWindSpringData
+	{
+		std::array<GrassWindSpringFieldData, 3> fields;
+		uint32_t activeField;
+		uint32_t padding[3];
 	};
 	STATIC_ASSERT_ALIGNAS_16(GrassWindSpringData);
+	static_assert(sizeof(GrassWindSpringData) == 208);
 
 	ConstantBuffer* grassWindSpringCB = nullptr;
-	Texture2D* grassWindSpringResponseTextures[2] = {};
-	Texture2D* grassWindSpringVelocityTextures[2] = {};
+	std::array<std::array<Texture2D*, 2>, 3> grassWindSpringResponseTextures{};
+	std::array<std::array<Texture2D*, 2>, 3> grassWindSpringVelocityTextures{};
 	winrt::com_ptr<ID3D11SamplerState> grassWindSpringSampler;
-	uint32_t grassWindSpringTextureIndex = 0;
-	uint32_t grassWindSpringTextureSize = 0;
-	float grassWindSpringWorldSize = 0.0f;
-	float2 grassWindSpringFieldMinimum{};
-	float2 previousGrassWindSpringFieldMinimum{};
-	bool grassWindSpringInitialized = false;
-	bool grassWindSpringFieldAvailable = false;
+	std::array<uint32_t, 3> grassWindSpringTextureIndices{};
+	std::array<uint32_t, 3> grassWindSpringTextureSizes{};
+	std::array<float, 3> grassWindSpringWorldSizes{};
+	std::array<float2, 3> grassWindSpringFieldMinimum{};
+	std::array<float2, 3> previousGrassWindSpringFieldMinimum{};
+	std::array<bool, 3> grassWindSpringInitialized{};
+	std::array<bool, 3> grassWindSpringFieldAvailable{};
 	Util::LazyShader<ID3D11ComputeShader> grassWindSpringCS;
 
 	virtual void DrawSettings() override;
@@ -264,7 +285,7 @@ struct CSUtility : Feature
 	/** @brief Advances and binds the persistent grass wind spring field once per frame. */
 	void UpdateGrassWindSpring();
 	/** @brief Recreates the ping-pong field textures at a new square resolution. */
-	void RecreateGrassWindSpringTextures(uint32_t a_textureSize);
+	void RecreateGrassWindSpringTextures(uint32_t a_qualityIndex, uint32_t a_textureSize);
 	/** @brief Releases the cached spring compute shader for file-watcher recompilation. */
 	virtual void ClearShaderCache() override;
 	virtual void PostPostLoad() override;

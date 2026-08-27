@@ -179,6 +179,9 @@ void GetGrassWindDisplacements(
 		float3 previousRootWorldPosition =
 			mul(PreviousWorld[eyeIndex], float4(input.InstanceData1.xyz, 1.0)).xyz +
 			FrameBuffer::CameraPreviousPosAdjust[eyeIndex].xyz;
+		// Estimate the two-frame-old root from the observed one-frame motion for temporal continuity.
+		float3 twoFramesAgoRootWorldPosition =
+			previousRootWorldPosition + (previousRootWorldPosition - rootWorldPosition);
 		float responseVariation = Random::InterleavedGradientNoise(input.InstanceData1.xy);
 		float responseScale = lerp(0.9, 1.1, responseVariation);
 		float3 previousBendAxis;
@@ -188,16 +191,23 @@ void GetGrassWindDisplacements(
 		float previousSpringCompression;
 		float currentWindResponse;
 		float previousWindResponse;
-		if (GrassWindSpring::HasTemporalCoverage(rootWorldPosition.xy, previousRootWorldPosition.xy)) {
-			float4 currentField = GrassWindSpring::SampleCurrent(rootWorldPosition.xy);
-			float4 previousField = GrassWindSpring::SamplePrevious(previousRootWorldPosition.xy);
+		uint currentSpringField = GrassWindSpring::SelectField(rootWorldPosition.xy);
+		uint previousSpringField = GrassWindSpring::SelectField(previousRootWorldPosition.xy);
+		if (currentSpringField == previousSpringField &&
+			GrassWindSpring::HasTemporalCoverage(
+				currentSpringField, previousSpringField, rootWorldPosition.xy, previousRootWorldPosition.xy)) {
+			float4 currentField = GrassWindSpring::SampleCurrent(currentSpringField, rootWorldPosition.xy);
+			float4 previousField = GrassWindSpring::SamplePrevious(previousSpringField, previousRootWorldPosition.xy);
 			GrassWindSpring::ResolveModelBend(
-				currentField, responseScale, World[eyeIndex], bendAxis, springBendAngle,
+				currentField, responseScale, World[eyeIndex],
+				GrassWindSpring::Fields[currentSpringField].MaximumTiltRadians, bendAxis, springBendAngle,
 				springCompression);
 			GrassWindSpring::ResolveModelBend(
-				previousField, responseScale, PreviousWorld[eyeIndex], previousBendAxis,
+				previousField, responseScale, PreviousWorld[eyeIndex],
+				GrassWindSpring::Fields[previousSpringField].MaximumTiltRadians, previousBendAxis,
 				previousSpringBendAngle, previousSpringCompression);
-			float inverseMaximumTilt = rcp(max(GrassWindSpring::MaximumTiltRadians, 1e-4f));
+			float inverseMaximumTilt = rcp(max(
+				GrassWindSpring::Fields[currentSpringField].MaximumTiltRadians, 1e-4f));
 			currentWindResponse = saturate(max(length(currentField.xy) * inverseMaximumTilt, currentField.z));
 			previousWindResponse = saturate(max(length(previousField.xy) * inverseMaximumTilt, previousField.z));
 			float flutterFrequency = max(Permutation::GrassWindFlutterFrequency, 0.0);
@@ -220,7 +230,7 @@ void GetGrassWindDisplacements(
 			float grassWindSensitivity = max(Permutation::GrassWindSensitivity, 0.0f);
 			WindField::WindSample windSample = SharedData::SampleAmbientWind(rootWorldPosition);
 			WindField::WindSample previousWindSample = SharedData::SamplePreviousAmbientWind(previousRootWorldPosition);
-			WindField::WindSample twoFramesAgoWindSample = SharedData::SampleTwoFramesAgoAmbientWind(previousRootWorldPosition);
+			WindField::WindSample twoFramesAgoWindSample = SharedData::SampleTwoFramesAgoAmbientWind(twoFramesAgoRootWorldPosition);
 			float3 grassWindVelocity = windSample.velocity * grassWindSensitivity;
 			float3 previousGrassWindVelocity = previousWindSample.velocity * grassWindSensitivity;
 			float3 twoFramesAgoGrassWindVelocity = twoFramesAgoWindSample.velocity * grassWindSensitivity;

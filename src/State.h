@@ -563,7 +563,7 @@ public:
 		float4 HDRData;                   // xyz + menu scene encoding in w — see HDRDisplay::GetSharedDataHDR
 		float RefractionScale;            // ISRefraction.hlsl heat-shimmer multiplier; 1.0 = unmodified vanilla strength
 		float3 pad1;
-		float4 WindFieldDebug;         // xy: base weather velocity, z: visualization enabled, w: previous frame time
+		float4 WindFieldDebug;         // xy: base weather velocity, z: reserved, w: previous frame time
 		float4 WindFieldDebugOptions;  // x: frame time, y: real speed, z: real direction, w: accumulated gust travel
 		WindField::WindTuning WindFieldTuning;
 		float4 WindFieldAmbient;  // xyz: selected mean weather velocity, w: accumulated gust travel
@@ -575,11 +575,12 @@ public:
 		WindField::Field WindFieldTransition;
 		WindField::Field WindFieldPreviousTransition;
 		WindField::Field WindFieldTwoFramesAgoTransition;
-		float4 WindFieldTransitionData;  // x/y/z: current/previous/two-frame blend, w: debug view
+		float4 WindFieldTransitionData;  // x/y/z: current/previous/two-frame blend, w: reserved
 		float4 WindFieldSpringDebug;     // xy: field minimum, z: field size, w: maximum tilt radians
 		std::array<uint32_t, 4> WindFieldActiveCounts;
 		std::array<WindField::TransientImpulse, WindField::kTransientImpulseCapacity> WindFieldTransientImpulses;
 		std::array<WindField::TransientImpulse, WindField::kTransientImpulseCapacity> WindFieldPreviousTransientImpulses;
+		std::array<WindField::TransientImpulse, WindField::kTransientImpulseCapacity> WindFieldTwoFramesAgoTransientImpulses;
 	};
 	STATIC_ASSERT_ALIGNAS_16(SharedDataCB);
 	// Each float4 cbuffer field must start on a 16-byte boundary to match the HLSL SharedData
@@ -702,8 +703,10 @@ private:
 	void UpdateTransientWindImpulses(float a_frameTime);
 	std::array<WindField::TransientImpulse, WindField::kTransientImpulseCapacity> transientWindImpulses{};
 	std::array<WindField::TransientImpulse, WindField::kTransientImpulseCapacity> previousTransientWindImpulses{};
+	std::array<WindField::TransientImpulse, WindField::kTransientImpulseCapacity> twoFramesAgoTransientWindImpulses{};
 	uint32_t activeTransientWindImpulseCount = 0;
 	uint32_t previousActiveTransientWindImpulseCount = 0;
+	uint32_t twoFramesAgoActiveTransientWindImpulseCount = 0;
 	std::vector<WindField::TransientImpulse> pendingTransientWindImpulses;
 	std::mutex transientWindImpulseMutex;
 	std::shared_ptr<REX::W32::ID3DUserDefinedAnnotation> pPerf;

@@ -328,11 +328,11 @@ void SampleSSGISpecular(uint2 pixCoord, sh2 lobe, inout float ao, out float3 il,
 
 #endif
 
-	[branch] if (SharedData::WindFieldDebug.z > 0.0f && depth < 1.0f)
+	[branch] if (SharedData::csUtilitySettings.windFieldDebugEnabled != 0u && depth < 1.0f)
 	{
 		float3 worldPosition = positionWS.xyz + FrameBuffer::CameraPosAdjust[eyeIndex].xyz;
-		float debugView = SharedData::WindFieldTransitionData.w;
-		if (debugView == 5.0f) {
+		uint debugView = SharedData::csUtilitySettings.windFieldDebugView;
+		if (debugView == 5u) {
 			color = 0.0f;
 			if (SharedData::WindFieldSpringDebug.z > 0.0f) {
 				float2 springUV = (worldPosition.xy - SharedData::WindFieldSpringDebug.xy) /
@@ -348,22 +348,26 @@ void SampleSSGISpecular(uint2 pixCoord, sh2 lobe, inout float ao, out float3 il,
 					color = lerp(Color::TurboColormap(springMagnitude), float3(1.0f, 1.0f, 1.0f), springResponse.z * 0.25f);
 				}
 			}
+		} else if (debugView == 6u) {
+			WindField::TransientImpulseSample impulseSample = SharedData::SampleCurrentTransientWindImpulses(worldPosition);
+			float intensity = saturate(impulseSample.intensity);
+			color = Color::TurboColormap(intensity) * intensity;
 		} else {
 			WindField::WindSample currentSample = WindField::SampleWind(
 				worldPosition, SharedData::WindFieldCurrent, SharedData::WindFieldTuning);
 			WindField::WindSample previousSample = currentSample;
-			if (debugView >= 2.0f && SharedData::WindFieldTransitionData.x < 1.0f)
+			if (debugView >= 2u && SharedData::WindFieldTransitionData.x < 1.0f)
 				previousSample = WindField::SampleWind(
 					worldPosition, SharedData::WindFieldTransition, SharedData::WindFieldTuning);
 			WindField::WindSample displayedSample = SharedData::SampleAmbientWind(worldPosition);
-			if (debugView == 1.0f)
+			if (debugView == 1u)
 				displayedSample = currentSample;
-			else if (debugView == 2.0f)
+			else if (debugView == 2u)
 				displayedSample = previousSample;
-			else if (debugView == 3.0f) {
+			else if (debugView == 3u) {
 				if (((dispatchID.x / 16u + dispatchID.y / 16u) & 1u) != 0u)
 					displayedSample = previousSample;
-			} else if (debugView == 4.0f) {
+			} else if (debugView == 4u) {
 				if (dispatchID.x * 2u < uint(SharedData::BufferDim.x))
 					displayedSample = previousSample;
 			}

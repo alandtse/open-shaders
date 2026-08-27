@@ -4,12 +4,9 @@
 namespace GrassWindSpring
 {
 	static const float TAU = 6.28318530717958647692f;
+	static const uint QualityRangeCount = 3u;
 
-#if defined(GRASS_WIND_SPRING_COMPUTE)
-	cbuffer SpringField : register(b0)
-#else
-	cbuffer SpringField : register(b9)
-#endif
+	struct FieldData
 	{
 		float2 FieldMinimum;
 		float2 PreviousFieldMinimum;
@@ -24,12 +21,26 @@ namespace GrassWindSpring
 		uint FieldAvailable;
 		float FieldSize;
 		uint TextureSize;
-		float SpringPadding;
+		float MaxDistance;
 	};
 
-#if !defined(GRASS_WIND_SPRING_COMPUTE)
-	Texture2D<float4> ResponseField : register(t105);
-	Texture2D<float4> PreviousResponseField : register(t106);
+#if defined(GRASS_WIND_SPRING_COMPUTE)
+	cbuffer SpringField : register(b0)
+#else
+	cbuffer SpringField : register(b9)
+#endif
+	{
+		FieldData Fields[QualityRangeCount];
+		uint ActiveField;
+		float3 SpringPadding;
+	};
+
+#if defined(GRASS_WIND_SPRING_COMPUTE)
+	Texture2D<float4> PreviousResponse : register(t0);
+	Texture2D<float4> PreviousVelocity : register(t1);
+#else
+	Texture2D<float4> ResponseFields[QualityRangeCount] : register(t105);
+	Texture2D<float4> PreviousResponseFields[QualityRangeCount] : register(t108);
 	SamplerState ResponseSampler : register(s14);
 #endif
 
@@ -92,40 +103,74 @@ namespace GrassWindSpring
 	}
 
 #if !defined(GRASS_WIND_SPRING_COMPUTE)
-	bool Contains(float2 worldPosition, float2 fieldMinimum)
+	uint SelectField(float2 worldPosition)
 	{
-		float2 uv = (worldPosition - fieldMinimum) / FieldSize;
+		float2 fieldCenter = Fields[0].FieldMinimum + Fields[0].FieldSize * 0.5f;
+		float distance = length(worldPosition - fieldCenter);
+		if (distance < Fields[0].MaxDistance)
+			return 0u;
+		if (distance < Fields[1].MaxDistance)
+			return 1u;
+		return 2u;
+	}
+
+	bool IsInQualityRange(uint fieldIndex, float2 worldPosition)
+	{
+		float2 fieldCenter = Fields[0].FieldMinimum + Fields[0].FieldSize * 0.5f;
+		float distance = length(worldPosition - fieldCenter);
+		float minimumDistance = fieldIndex == 0u ? 0.0f : Fields[fieldIndex - 1u].MaxDistance;
+		return distance >= minimumDistance && distance < Fields[fieldIndex].MaxDistance;
+	}
+
+	bool Contains(float2 worldPosition, float2 fieldMinimum, float fieldSize)
+	{
+		float2 uv = (worldPosition - fieldMinimum) / fieldSize;
 		return all(uv >= 0.0f) && all(uv <= 1.0f);
 	}
 
-	float4 SampleField(Texture2D<float4> field, float2 worldPosition, float2 fieldMinimum)
+	bool Contains(float2 worldPosition, FieldData field)
 	{
-		float2 uv = (worldPosition - fieldMinimum) / FieldSize;
-		return Contains(worldPosition, fieldMinimum) ?
+		return Contains(worldPosition, field.FieldMinimum, field.FieldSize);
+	}
+
+	float4 SampleField(Texture2D<float4> field, float2 worldPosition, float2 fieldMinimum, float fieldSize)
+	{
+		float2 uv = (worldPosition - fieldMinimum) / fieldSize;
+		return Contains(worldPosition, fieldMinimum, fieldSize) ?
 		           field.SampleLevel(ResponseSampler, saturate(uv), 0.0f) :
 		           0.0f.xxxx;
 	}
 
-	float4 SampleCurrent(float2 worldPosition)
+	float4 SampleCurrent(uint fieldIndex, float2 worldPosition)
 	{
-		return FieldAvailable != 0u ? SampleField(ResponseField, worldPosition, FieldMinimum) : 0.0f.xxxx;
-	}
-
-	float4 SamplePrevious(float2 worldPosition)
-	{
-		return FieldAvailable != 0u ?
-		           SampleField(PreviousResponseField, worldPosition, PreviousFieldMinimum) :
+		return Fields[fieldIndex].FieldAvailable != 0u ?
+		           SampleField(ResponseFields[fieldIndex], worldPosition,
+					   Fields[fieldIndex].FieldMinimum, Fields[fieldIndex].FieldSize) :
 		           0.0f.xxxx;
 	}
 
-	bool HasTemporalCoverage(float2 worldPosition, float2 previousWorldPosition)
+	float4 SamplePrevious(uint fieldIndex, float2 worldPosition)
 	{
-		return FieldAvailable != 0u && Contains(worldPosition, FieldMinimum) &&
-		       Contains(previousWorldPosition, PreviousFieldMinimum);
+		return Fields[fieldIndex].FieldAvailable != 0u ?
+		           SampleField(PreviousResponseFields[fieldIndex], worldPosition,
+					   Fields[fieldIndex].PreviousFieldMinimum, Fields[fieldIndex].FieldSize) :
+		           0.0f.xxxx;
+	}
+
+	bool HasTemporalCoverage(uint currentFieldIndex, uint previousFieldIndex,
+		float2 worldPosition, float2 previousWorldPosition)
+	{
+		return Fields[currentFieldIndex].FieldAvailable != 0u &&
+		       Fields[previousFieldIndex].FieldAvailable != 0u &&
+		       IsInQualityRange(currentFieldIndex, worldPosition) &&
+		       IsInQualityRange(previousFieldIndex, previousWorldPosition) &&
+		       Contains(worldPosition, Fields[currentFieldIndex]) &&
+		       Contains(previousWorldPosition, Fields[previousFieldIndex].PreviousFieldMinimum,
+				   Fields[previousFieldIndex].FieldSize);
 	}
 
 	void ResolveModelBend(float4 fieldSample, float responseScale, float4x4 worldMatrix,
-		out float3 bendAxis, out float bendAngle, out float compression)
+		float maximumTiltRadians, out float3 bendAxis, out float bendAngle, out float compression)
 	{
 		float3 modelBend = mul(transpose((float3x3)worldMatrix), float3(fieldSample.xy, 0.0f));
 		modelBend.z = 0.0f;
@@ -134,7 +179,7 @@ namespace GrassWindSpring
 		                           modelBend / modelBendMagnitude :
 		                           float3(1.0f, 0.0f, 0.0f);
 		bendAxis = cross(float3(0.0f, 0.0f, 1.0f), bendDirection);
-		bendAngle = min(modelBendMagnitude * responseScale, max(MaximumTiltRadians, 0.0f));
+		bendAngle = min(modelBendMagnitude * responseScale, max(maximumTiltRadians, 0.0f));
 		compression = saturate(fieldSample.z * responseScale);
 	}
 #endif
