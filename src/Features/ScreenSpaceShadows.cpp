@@ -9,7 +9,10 @@
 #include "Upscaling.h"
 #include "Util.h"
 #include "Utils/D3D.h"
+#include "Utils/VRUtils.h"
+#include <algorithm>
 #include <array>
+#include <cmath>
 
 #define I18N_KEY_PREFIX "feature.screen_space_shadows."
 
@@ -101,6 +104,91 @@ namespace
 			offset.y,
 			FoveatedCommon::kCenterFeather,
 			a_state.centerHorizontalScale);
+	}
+
+	// Delta-driven band: collapses to the margin when the head is still (recovering the
+	// eye-1 skip's perf), grows with movement. Pure CPU, mirrors BuildFoveatedBounds.
+	FoveatedCommon::DispatchBounds BuildDisocclusionBounds(
+		uint32_t a_eyeWidth,
+		uint32_t a_eyeHeight,
+		uint32_t a_eyeIndex)
+	{
+		using namespace DirectX::SimpleMath;
+		FoveatedCommon::DispatchBounds bounds{};
+		const int eyeW = static_cast<int>(a_eyeWidth);
+		const int eyeH = static_cast<int>(a_eyeHeight);
+		if (eyeW <= 0 || eyeH <= 0)
+			return bounds;
+
+		const float ipd = Util::GetIPDFromHMD();
+		const float nearClip = (globals::game::cameraNear && *globals::game::cameraNear > 0.0f) ? *globals::game::cameraNear : 0.05f;
+		const float stereoScale = ipd / nearClip;
+
+		const auto currPos = globals::game::frameBufferCached.GetCameraPosAdjust(a_eyeIndex);
+		const auto prevPos = globals::game::frameBufferCached.GetCameraPreviousPosAdjust(a_eyeIndex);
+		const Vector3 posDeltaV(currPos.x - prevPos.x, currPos.y - prevPos.y, currPos.z - prevPos.z);
+		const float posDelta = std::max(posDeltaV.Length(), 0.0f);
+
+		auto forwardOf = [](const Matrix& vpInv) -> Vector3 {
+			Vector4 n = Vector4::Transform(Vector4(0.0f, 0.0f, 0.0f, 1.0f), vpInv);
+			Vector4 f = Vector4::Transform(Vector4(0.0f, 0.0f, 1.0f, 1.0f), vpInv);
+			if (std::abs(n.w) < 1e-6f || std::abs(f.w) < 1e-6f)
+				return Vector3(0.0f, 0.0f, 1.0f);
+			n /= n.w;
+			f /= f.w;
+			Vector3 d(f.x - n.x, f.y - n.y, f.z - n.z);
+			d.Normalize();
+			if (!std::isfinite(d.x) || !std::isfinite(d.y) || !std::isfinite(d.z))
+				return Vector3(0.0f, 0.0f, 1.0f);
+			return d;
+		};
+		const Matrix currVPInv = globals::game::frameBufferCached.GetCameraViewProjInverse(a_eyeIndex);
+		const Matrix prevVPInv = globals::game::frameBufferCached.GetCameraPreviousViewProjUnjittered(a_eyeIndex).Invert();
+		const Vector3 currFwd = forwardOf(currVPInv);
+		const Vector3 prevFwd = forwardOf(prevVPInv);
+		float angDelta = std::acos(std::clamp(currFwd.Dot(prevFwd), -1.0f, 1.0f));
+		if (!std::isfinite(angDelta))
+			angDelta = 0.0f;
+
+		constexpr float kMargin = 12.0f;
+		constexpr float kPosGain = 0.3f;
+		constexpr float kAngGain = 0.05f;
+		const float posTermPx = static_cast<float>(eyeW) * (posDelta / nearClip) * kPosGain;
+		const float angTermPx = static_cast<float>(eyeW) * stereoScale * kAngGain * angDelta;
+		const float maxDisparityPx = std::clamp(posTermPx + angTermPx, 0.0f, static_cast<float>(eyeW));
+		float bandWidth = std::clamp(maxDisparityPx + kMargin, 0.0f, static_cast<float>(eyeW));
+
+		// Disocclusion accumulates on the side eye 1 is displaced toward (IPD parallax side).
+		const Matrix vi = globals::game::frameBufferCached.GetCameraViewInverse(a_eyeIndex).Transpose();
+		const Vector3 headRight(vi._11, vi._12, vi._13);
+		const auto e0 = globals::game::frameBufferCached.GetCameraPosAdjust(0);
+		const auto e1 = globals::game::frameBufferCached.GetCameraPosAdjust(1);
+		const Vector3 eyeOffset(e1.x - e0.x, e1.y - e0.y, e1.z - e0.z);
+		const bool parallaxRight = eyeOffset.Dot(headRight) >= 0.0f;
+
+		int minX, maxX;
+		const int bandW = static_cast<int>(bandWidth);
+		if (parallaxRight) {
+			minX = std::max(eyeW - bandW, 0);
+			maxX = eyeW;
+		} else {
+			minX = 0;
+			maxX = std::min(bandW, eyeW);
+		}
+		int minY = 0;
+		int maxY = eyeH;
+
+		minX = FoveatedCommon::AlignDownToThreadGroup(minX);
+		maxX = std::min(FoveatedCommon::AlignUpToThreadGroup(maxX), eyeW);
+		maxY = std::min(FoveatedCommon::AlignUpToThreadGroup(maxY), eyeH);
+		if (maxX <= minX || maxY <= minY)
+			return bounds;
+
+		bounds.minX = minX;
+		bounds.minY = minY;
+		bounds.maxX = maxX;
+		bounds.maxY = maxY;
+		return bounds;
 	}
 }
 
@@ -322,6 +410,7 @@ void ScreenSpaceShadows::DrawShadows()
 		viewportSize[0] /= 2;
 
 	const FoveatedShadowState foveatedState = ResolveFoveatedShadowState(bendSettings);
+	const bool stereoReprojectActive = useStereoReproject && enableStereoSync && GetStereoReprojectCS();
 
 	// Setup common render state.
 	// SSS always uses 24/32-bit depth, never the R16_UNORM half-precision path.
@@ -357,7 +446,18 @@ void ScreenSpaceShadows::DrawShadows()
 
 		int minRenderBounds[2] = { 0, 0 };
 		int maxRenderBounds[2] = { viewportSize[0], viewportSize[1] };
-		if (foveatedState.active) {
+		if (stereoReprojectActive && eyeIndex == 1 && !foveatedState.active) {
+			// Reproject fallback needs a real eye-1 shadow only in the disocclusion band;
+			// the rest is filled by the eye-0 reproject. An empty band falls through to a
+			// full march so eye 1 is never left at Prepass's lit clear.
+			const auto bounds = BuildDisocclusionBounds(static_cast<uint32_t>(viewportSize[0]), static_cast<uint32_t>(viewportSize[1]), eyeIndex);
+			if (bounds.maxX > bounds.minX && bounds.maxY > bounds.minY) {
+				minRenderBounds[0] = bounds.minX;
+				minRenderBounds[1] = bounds.minY;
+				maxRenderBounds[0] = bounds.maxX;
+				maxRenderBounds[1] = bounds.maxY;
+			}
+		} else if (foveatedState.active) {
 			const auto bounds = BuildFoveatedBounds(foveatedState, eyeIndex, 0u, static_cast<uint32_t>(viewportSize[0]), static_cast<uint32_t>(viewportSize[1]));
 			if (bounds.maxX <= bounds.minX || bounds.maxY <= bounds.minY) {
 				return;
@@ -426,15 +526,12 @@ void ScreenSpaceShadows::DrawShadows()
 			DispatchEye("Left Eye", GetComputeRaymarch(), 0, lightProjectionF.data(), InvTexSizeX, InvTexSizeY);
 		}
 
-		// Skip the eye-1 march only when DrawStereoSync's reproject will fill it; a failed
-		// reproject compile keeps the march so eye 1 isn't left at the lit clear.
-		if (!(useStereoReproject && enableStereoSync && GetStereoReprojectCS())) {
-			// Calculate light projection for right eye
-			auto lightProjectionRightF = CalculateLightProjection(1);
-			{
-				CS_GPU_PASS("SSS::RightEye");
-				DispatchEye("Right Eye", GetComputeRaymarchRight(), 1, lightProjectionRightF.data(), InvTexSizeX, InvTexSizeY);
-			}
+		// Eye 1 is always marched so the reproject's disocclusion fallback reads a real
+		// shadow, not Prepass's lit clear; DispatchEye narrows it when reproject is active.
+		auto lightProjectionRightF = CalculateLightProjection(1);
+		{
+			CS_GPU_PASS("SSS::RightEye");
+			DispatchEye("Right Eye", GetComputeRaymarchRight(), 1, lightProjectionRightF.data(), InvTexSizeX, InvTexSizeY);
 		}
 	}
 
