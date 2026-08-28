@@ -211,7 +211,7 @@ Skylighting::SkylightingCB Skylighting::GetCommonBufferData(bool a_inWorld)
 		occlusionDistance * .5f / probeArrayDims[2]
 	};
 	auto cellID = eyePos / cellSize;
-	cellID = { round(cellID.x), round(cellID.y), round(cellID.z) };
+	cellID = float3{ round(cellID.x), round(cellID.y), round(cellID.z) };
 	auto cellOrigin = cellID * cellSize;
 	float3 cellIDDiff = prevCellID - cellID;
 	prevCellID = cellID;
@@ -612,7 +612,7 @@ void Skylighting::RenderOcclusion()
 					vPoint.x = sqrt(vPoint.x * sin(settings.MaxZenith));
 					vPoint.y *= 6.28318530718f;
 
-					vPoint = { vPoint.x * cos(vPoint.y), vPoint.x * sin(vPoint.y) };
+					vPoint = float2{ vPoint.x * cos(vPoint.y), vPoint.x * sin(vPoint.y) };
 				}
 
 				float3 PrecipitationShaderDirectionF = -float3{ vPoint.x, vPoint.y, sqrt(1 - vPoint.LengthSquared()) };

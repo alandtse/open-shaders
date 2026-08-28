@@ -668,8 +668,8 @@ void Deferred::CopyShadowLightData()
 	auto context = globals::d3d::context;
 
 	auto& dirData = sunShadowLight->GetShadowDirectionalLightRuntimeData();
-	dd.EndSplitDistances = { dirData.endSplitDistances[0], dirData.endSplitDistances[1] };
-	dd.StartSplitDistances = { dirData.startSplitDistances[0], dirData.startSplitDistances[1] };
+	dd.EndSplitDistances = float2{ dirData.endSplitDistances[0], dirData.endSplitDistances[1] };
+	dd.StartSplitDistances = float2{ dirData.startSplitDistances[0], dirData.startSplitDistances[1] };
 
 	if (globals::game::isVR)
 		SetShadowCascadeParameters(sunShadowLight->GetVRRuntimeData(), dd);

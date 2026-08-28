@@ -817,7 +817,7 @@ void ScreenSpaceGI::UpdateSB()
 	                 float2{ (float)texRadiance->desc.Width, (float)texRadiance->desc.Height } :
 	                 float2{ (float)texWorkingDepth->desc.Width, (float)texWorkingDepth->desc.Height };
 	float2 dynres = Util::ConvertToDynamic(res);
-	dynres = { floor(dynres.x), floor(dynres.y) };
+	dynres = float2{ floor(dynres.x), floor(dynres.y) };
 
 	static float4x4 prevInvView[2] = {};
 
@@ -840,8 +840,8 @@ void ScreenSpaceGI::UpdateSB()
 			}
 
 			data.PrevInvViewMat[eyeIndex] = prevInvView[eyeIndex];
-			data.NDCToViewMul[eyeIndex] = { 2.0f / proj11, -2.0f / proj22 };
-			data.NDCToViewAdd[eyeIndex] = { -1.0f / proj11, 1.0f / proj22 };
+			data.NDCToViewMul[eyeIndex] = float2{ 2.0f / proj11, -2.0f / proj22 };
+			data.NDCToViewAdd[eyeIndex] = float2{ -1.0f / proj11, 1.0f / proj22 };
 			if (globals::game::isVR)
 				data.NDCToViewMul[eyeIndex].x *= 2;
 

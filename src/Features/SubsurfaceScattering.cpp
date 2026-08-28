@@ -245,8 +245,8 @@ void SubsurfaceScattering::DrawSSS()
 
 		blurCBData.SSSS_FOVY = atan(1.0f / cameraData.projMat.m[0][0]) * 2.0f * (180.0f / 3.14159265359f);
 
-		blurCBData.BaseProfile = { settings.BaseProfile.BlurRadius, settings.BaseProfile.Thickness, 0, 0 };
-		blurCBData.HumanProfile = { settings.HumanProfile.BlurRadius, settings.HumanProfile.Thickness, 0, 0 };
+		blurCBData.BaseProfile = float4{ settings.BaseProfile.BlurRadius, settings.BaseProfile.Thickness, 0, 0 };
+		blurCBData.HumanProfile = float4{ settings.HumanProfile.BlurRadius, settings.HumanProfile.Thickness, 0, 0 };
 
 		blurCBData.BurleySamples = settings.BurleySamples;
 		// Burley always does full albedo removal/reapply; scatter mode only applies to Separable SSS.
