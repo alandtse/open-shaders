@@ -72,6 +72,7 @@ void State::UpdatePermutationBuffer()
 	permutationData.TreeWindSpringStrength = globals::features::csUtility.settings.treeWindSpringStrength;
 	permutationData.TreeWindSpringDamping = globals::features::csUtility.settings.treeWindSpringDamping;
 	permutationData.TreeTransientWindInfluence = globals::features::csUtility.settings.treeTransientWindInfluence;
+	permutationData.TreeTransientMaximumBendMultiplier = globals::features::csUtility.settings.treeTransientMaximumBendMultiplier;
 	permutationData.TrunkWindBendSensitivity = globals::features::csUtility.settings.trunkWindBendSensitivity;
 	permutationData.TreeLeafBaseWindFlutterGain = globals::features::csUtility.settings.treeLeafBaseWindFlutterGain;
 	permutationData.EnableAmbientGrassWind = globals::features::csUtility.loaded &&
@@ -87,6 +88,7 @@ void State::UpdatePermutationBuffer()
 	permutationData.GrassWindFlutterFrequency = globals::features::csUtility.settings.grassWindFlutterFrequency;
 	permutationData.GrassWindUseBendTargetSpring = globals::features::csUtility.settings.grassWindUseBendTargetSpring;
 	permutationData.GrassWindSpringRecoveryLag = globals::features::csUtility.settings.grassWindSpringRecoveryLag;
+	permutationData.GrassWindUseVanillaFlutter = globals::features::csUtility.settings.grassWindUseVanillaFlutter;
 	if (permutationData != permutationDataPrevious) {
 		permutationCB->Update(permutationData);
 		permutationDataPrevious = permutationData;

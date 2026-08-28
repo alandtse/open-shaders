@@ -210,14 +210,31 @@ void GetGrassWindDisplacements(
 				GrassWindSpring::Fields[currentSpringField].MaximumTiltRadians, 1e-4f));
 			currentWindResponse = saturate(max(length(currentField.xy) * inverseMaximumTilt, currentField.z));
 			previousWindResponse = saturate(max(length(previousField.xy) * inverseMaximumTilt, previousField.z));
-			float flutterFrequency = max(Permutation::GrassWindFlutterFrequency, 0.0);
-			float flutterPhaseOffset = Math::TAU * responseVariation;
-			springBendAngle *= Wind::Grass::CalculateFlutterBendScale(
-				flutterPhaseOffset + WindTimer * flutterFrequency,
-				currentWindResponse);
-			previousSpringBendAngle *= Wind::Grass::CalculateFlutterBendScale(
-				flutterPhaseOffset + PreviousWindTimer * flutterFrequency,
-				previousWindResponse);
+			float3 vanillaDisplacement = 0.0.xxx;
+			float3 previousVanillaDisplacement = 0.0.xxx;
+			if (Permutation::GrassWindUseVanillaFlutter != 0u) {
+				float flutterFrequency = lerp(
+					1.0, max(Permutation::GrassWindFlutterFrequency, 1.0), currentWindResponse);
+				float previousFlutterFrequency = lerp(
+					1.0, max(Permutation::GrassWindFlutterFrequency, 1.0), previousWindResponse);
+				float flutterStrength = max(Permutation::GrassWindFlutterStrength, 0.0);
+				float grassWindSensitivity = max(Permutation::GrassWindSensitivity, 0.0f);
+				vanillaDisplacement = Wind::Grass::CalculateVanillaDisplacement(
+					input.InstanceData1.xy, input.Color.w, WindVector, WindTimer * flutterFrequency,
+					Wind::Common::GetWindIntensityOverrideScale() * flutterStrength * grassWindSensitivity);
+				previousVanillaDisplacement = Wind::Grass::CalculateVanillaDisplacement(
+					input.InstanceData1.xy, input.Color.w, WindVector, PreviousWindTimer * previousFlutterFrequency,
+					Wind::Common::GetWindIntensityOverrideScale() * flutterStrength * grassWindSensitivity);
+			} else {
+				float flutterFrequency = max(Permutation::GrassWindFlutterFrequency, 0.0);
+				float flutterPhaseOffset = Math::TAU * responseVariation;
+				springBendAngle *= Wind::Grass::CalculateFlutterBendScale(
+					flutterPhaseOffset + WindTimer * flutterFrequency,
+					currentWindResponse);
+				previousSpringBendAngle *= Wind::Grass::CalculateFlutterBendScale(
+					flutterPhaseOffset + PreviousWindTimer * flutterFrequency,
+					previousWindResponse);
+			}
 			float previousBendAngle;
 			windDisplacement = Wind::Grass::CalculateAmbientDisplacement(
 				input.Color.w, modelHeight, input.InstanceData1.z, bendAxis, springBendAngle,
@@ -225,6 +242,9 @@ void GetGrassWindDisplacements(
 			previousWindDisplacement = Wind::Grass::CalculateAmbientDisplacement(
 				input.Color.w, modelHeight, input.InstanceData1.z, previousBendAxis,
 				previousSpringBendAngle, previousSpringCompression, previousBendAngle);
+			windDisplacement += Wind::Common::RotateVector(vanillaDisplacement, bendAxis, bendAngle);
+			previousWindDisplacement +=
+				Wind::Common::RotateVector(previousVanillaDisplacement, previousBendAxis, previousBendAngle);
 			return;
 		} else {
 			float grassWindSensitivity = max(Permutation::GrassWindSensitivity, 0.0f);

@@ -46,6 +46,8 @@ namespace
 	constexpr float kTreeWindSpringDampingMax = 1.0f;
 	constexpr float kTreeTransientWindInfluenceMin = 0.0f;
 	constexpr float kTreeTransientWindInfluenceMax = 5.0f;
+	constexpr float kTreeTransientMaximumBendMultiplierMin = 0.0f;
+	constexpr float kTreeTransientMaximumBendMultiplierMax = 5.0f;
 	constexpr float kTreeWindGustInfluenceMin = 0.0f;
 	constexpr float kTreeWindGustInfluenceMax = 2.0f;
 	constexpr float kTreeLeafBaseWindFlutterGainMin = 0.0f;
@@ -136,6 +138,7 @@ namespace
 		a_settings.treeWindSpringStrength = ClampFiniteOrDefault(a_settings.treeWindSpringStrength, kTreeWindSpringStrengthMin, kTreeWindSpringStrengthMax, defaults.treeWindSpringStrength);
 		a_settings.treeWindSpringDamping = ClampFiniteOrDefault(a_settings.treeWindSpringDamping, kTreeWindSpringDampingMin, kTreeWindSpringDampingMax, defaults.treeWindSpringDamping);
 		a_settings.treeTransientWindInfluence = ClampFiniteOrDefault(a_settings.treeTransientWindInfluence, kTreeTransientWindInfluenceMin, kTreeTransientWindInfluenceMax, defaults.treeTransientWindInfluence);
+		a_settings.treeTransientMaximumBendMultiplier = ClampFiniteOrDefault(a_settings.treeTransientMaximumBendMultiplier, kTreeTransientMaximumBendMultiplierMin, kTreeTransientMaximumBendMultiplierMax, defaults.treeTransientMaximumBendMultiplier);
 		a_settings.treeLeafBaseWindFlutterGain = ClampFiniteOrDefault(a_settings.treeLeafBaseWindFlutterGain, kTreeLeafBaseWindFlutterGainMin, kTreeLeafBaseWindFlutterGainMax, defaults.treeLeafBaseWindFlutterGain);
 		a_settings.windFieldGustScale = ClampFiniteOrDefault(a_settings.windFieldGustScale, kWindFieldGustScaleMin, kWindFieldGustScaleMax, defaults.windFieldGustScale);
 		a_settings.windFieldGustAmplitude = ClampFiniteOrDefault(a_settings.windFieldGustAmplitude, kWindFieldGustAmplitudeMin, kWindFieldGustAmplitudeMax, defaults.windFieldGustAmplitude);
@@ -207,6 +210,7 @@ namespace
 		a_settings.grassWindUseBendTargetSpring = defaults.grassWindUseBendTargetSpring;
 		a_settings.grassWindFlutterStrength = defaults.grassWindFlutterStrength;
 		a_settings.grassWindFlutterFrequency = defaults.grassWindFlutterFrequency;
+		a_settings.grassWindUseVanillaFlutter = defaults.grassWindUseVanillaFlutter;
 	}
 
 	void DrawMultiplierSlider(const char* a_label, float& a_value, float a_max = kMultiplierMax)
@@ -317,6 +321,7 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	treeWindSpringStrength,
 	treeWindSpringDamping,
 	treeTransientWindInfluence,
+	treeTransientMaximumBendMultiplier,
 	treeLeafBaseWindFlutterGain,
 	windFieldGustScale,
 	windFieldGustAmplitude,
@@ -345,6 +350,7 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	grassWindUseBendTargetSpring,
 	grassWindFlutterStrength,
 	grassWindFlutterFrequency,
+	grassWindUseVanillaFlutter,
 	skyBrightness,
 	directionalLightMult,
 	pointLightMult,
@@ -358,7 +364,7 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	underwaterDof,
 	bloomEnhancement)
 
-void CSUtility::DrawSettings()
+void CSUtility::DrawWindSettings()
 {
 	const auto drawWindField = [&] {
 		ImGui::Checkbox(T(TKEY("visualize_wind_field"), "Visualize Wind Field"), &visualizeWindField);
@@ -535,7 +541,7 @@ void CSUtility::DrawSettings()
 		ImGui::Separator();
 	};
 
-	if (ImGui::BeginTabBar("##CSUtilityTabs", ImGuiTabBarFlags_None)) {
+	if (ImGui::BeginTabBar("##WindTabs", ImGuiTabBarFlags_None)) {
 		if (ImGui::BeginTabItem(T(TKEY("tab_wind_field"), "Wind Field"))) {
 			activeSettingsPage = SettingsPage::WindField;
 			drawWindField();
@@ -602,6 +608,12 @@ void CSUtility::DrawSettings()
 			if (auto _tt = Util::HoverTooltipWrapper())
 				ImGui::TextUnformatted(T(TKEY("tree_transient_wind_influence_tooltip"),
 					"Scales transient wind impulses applied to tree trunks and leaves without changing ambient wind or grass."));
+			ImGui::SliderFloat(T(TKEY("tree_transient_maximum_bend_multiplier"), "Transient Maximum Bend"),
+				&settings.treeTransientMaximumBendMultiplier, kTreeTransientMaximumBendMultiplierMin,
+				kTreeTransientMaximumBendMultiplierMax, "%.2fx", ImGuiSliderFlags_AlwaysClamp);
+			if (auto _tt = Util::HoverTooltipWrapper())
+				ImGui::TextUnformatted(T(TKEY("tree_transient_maximum_bend_multiplier_tooltip"),
+					"Sets the transient bend limit relative to the normal tree maximum displacement."));
 			ImGui::SliderFloat(T(TKEY("tree_wind_spring_strength"), "Spring Strength"), &settings.treeWindSpringStrength,
 				kTreeWindSpringStrengthMin, kTreeWindSpringStrengthMax, "%.2f", ImGuiSliderFlags_AlwaysClamp | ImGuiSliderFlags_Logarithmic);
 			if (auto _tt = Util::HoverTooltipWrapper())
@@ -715,10 +727,15 @@ void CSUtility::DrawSettings()
 				ImGui::TextUnformatted(T(TKEY("grass_wind_spring_quality_tooltip"),
 					"Each field covers a radial quality range. The next range begins where the previous range ends; grass beyond the far range uses the fallback path."));
 			ImGui::SeparatorText(T(TKEY("grass_wind_flutter"), "Flutter"));
+			ImGui::Checkbox(T(TKEY("grass_wind_use_vanilla_flutter"), "A/B: Use Vanilla-Style Flutter"),
+				&settings.grassWindUseVanillaFlutter);
+			if (auto _tt = Util::HoverTooltipWrapper())
+				ImGui::TextUnformatted(T(TKEY("grass_wind_use_vanilla_flutter_tooltip"),
+					"Enabled adds Skyrim-style per-blade displacement to the compute spring result; disabled uses inexpensive bend modulation."));
 			ImGui::SliderFloat(T(TKEY("grass_wind_flutter_strength"), "Flutter Strength"), &settings.grassWindFlutterStrength,
 				kGrassWindFlutterStrengthMin, kGrassWindFlutterStrengthMax, "%.2f", ImGuiSliderFlags_AlwaysClamp);
 			if (auto _tt = Util::HoverTooltipWrapper())
-				ImGui::TextUnformatted(T(TKEY("grass_wind_flutter_strength_tooltip"), "Scales the inexpensive per-blade modulation applied to the ambient bend."));
+				ImGui::TextUnformatted(T(TKEY("grass_wind_flutter_strength_tooltip"), "Scales the selected per-blade flutter style."));
 			ImGui::SliderFloat(T(TKEY("grass_wind_flutter_frequency"), "Flutter Frequency"), &settings.grassWindFlutterFrequency,
 				kGrassWindFlutterFrequencyMin, kGrassWindFlutterFrequencyMax, "%.2fx", ImGuiSliderFlags_AlwaysClamp);
 			if (auto _tt = Util::HoverTooltipWrapper())
@@ -743,6 +760,13 @@ void CSUtility::DrawSettings()
 			ImGui::EndTabItem();
 		}
 
+		ImGui::EndTabBar();
+	}
+}
+
+void CSUtility::DrawSettings()
+{
+	if (ImGui::BeginTabBar("##CSUtilityTabs", ImGuiTabBarFlags_None)) {
 		if (ImGui::BeginTabItem(T(TKEY("tab_atmosphere"), "Atmosphere"))) {
 			activeSettingsPage = SettingsPage::Atmosphere;
 			ImGui::SliderFloat(T(TKEY("sky_brightness"), "Sky Brightness"), &settings.skyBrightness, kSkyBrightnessMin, kSkyBrightnessMax, "%.2f", ImGuiSliderFlags_AlwaysClamp);
@@ -987,6 +1011,7 @@ json CSUtility::GetDiagnostics()
 		{ "treeWindSpringStrength", settings.treeWindSpringStrength },
 		{ "treeWindSpringDamping", settings.treeWindSpringDamping },
 		{ "treeTransientWindInfluence", settings.treeTransientWindInfluence },
+		{ "treeTransientMaximumBendMultiplier", settings.treeTransientMaximumBendMultiplier },
 		{ "treeLeafBaseWindFlutterGain", settings.treeLeafBaseWindFlutterGain },
 	};
 }
@@ -1246,6 +1271,7 @@ void CSUtility::RestoreCurrentPageDefaultSettings()
 		settings.treeWindSpringStrength = defaults.treeWindSpringStrength;
 		settings.treeWindSpringDamping = defaults.treeWindSpringDamping;
 		settings.treeTransientWindInfluence = defaults.treeTransientWindInfluence;
+		settings.treeTransientMaximumBendMultiplier = defaults.treeTransientMaximumBendMultiplier;
 		settings.treeLeafBaseWindFlutterGain = defaults.treeLeafBaseWindFlutterGain;
 		break;
 	case SettingsPage::TreeMeshes:
@@ -1294,12 +1320,13 @@ bool CSUtility::ReapplyCurrentPageOverrideSettings()
 		"fusRoDahSpeedMultiplier",
 		"fusRoDahConeHalfAngle"
 	};
-	static constexpr std::array<std::string_view, 6> treeKeys{
+	static constexpr std::array<std::string_view, 7> treeKeys{
 		"enableTrunkBend",
 		"trunkWindBendSensitivity",
 		"treeWindSpringStrength",
 		"treeWindSpringDamping",
 		"treeTransientWindInfluence",
+		"treeTransientMaximumBendMultiplier",
 		"treeLeafBaseWindFlutterGain"
 	};
 	static constexpr std::array<std::string_view, 1> waterKeys{ "water" };

@@ -98,7 +98,12 @@ namespace FusRoDahWind
 					std::cos(coneHalfAngleRadians),
 					settings.fusRoDahDecayTime,
 					{} });
-				logger::debug("Queued Unrelenting Force wind impulse at rank {}", rank + 1);
+				logger::info(
+					"Queued Unrelenting Force wind impulse: rank {}, strength {:.3f}, origin ({:.1f}, {:.1f}, {:.1f}), "
+					"direction ({:.3f}, {:.3f}, {:.3f}), tree influence {:.2f}, transient bend limit {:.2f}",
+					rank + 1, profile.strength * settings.fusRoDahIntensity,
+					origin.x, origin.y, origin.z, forward.x, forward.y, forward.z,
+					settings.treeTransientWindInfluence, settings.treeTransientMaximumBendMultiplier);
 				return RE::BSEventNotifyControl::kContinue;
 			}
 

@@ -25,7 +25,8 @@ namespace Wind
 	namespace Tree
 	{
 		static const float RESPONSE_LAG_SECONDS = 0.45;
-		/** @brief Returns model-adjusted leaf flutter gain shared by ambient and transient wind. */
+		static const float TRANSIENT_LEAF_FLUTTER_GAIN = 3.0;
+		/** @brief Returns model-adjusted ambient leaf flutter gain. */
 		float GetLeafFlutterGain()
 		{
 			return max(Permutation::TreeLeafBaseWindFlutterGain, 0.0) *
@@ -42,10 +43,10 @@ namespace Wind
 			return effectiveWindSpeed * GetLeafFlutterGain();
 		}
 
-		/** @brief Derives leaf motion energy from transient wind without ambient gust scaling. */
+		/** @brief Derives bounded leaf motion from transient wind independently of ambient flutter controls. */
 		float GetLeafTransientWindResponse(float2 transientWind)
 		{
-			return length(transientWind) * GetLeafFlutterGain() *
+			return saturate(length(transientWind)) * TRANSIENT_LEAF_FLUTTER_GAIN *
 			       max(Permutation::TreeTransientWindInfluence, 0.0);
 		}
 
@@ -130,6 +131,21 @@ namespace Wind
 			return currentImpact.intensity > 1e-4 ? currentImpact.impactHeight : fallbackImpact.impactHeight;
 		}
 
+		/** @brief Returns the configured root-anchored quadratic trunk flexibility. */
+		float GetTreeBendFlexibility(float localHeight)
+		{
+			float treeHeight = Permutation::TreeWindBoundsHeight;
+			if (treeHeight <= 1e-3)
+				return 0.0;
+
+			float normalizedHeight = saturate(
+				(localHeight - Permutation::TreeWindBoundsBase) / treeHeight);
+			float upperBendRange = max(Permutation::TreeWindUpperBendRange * 0.01, 0.05);
+			float bendStartHeight = 1.0 - upperBendRange;
+			float bendProgress = saturate((normalizedHeight - bendStartHeight) / upperBendRange);
+			return bendProgress * bendProgress;
+		}
+
 		/** @brief Returns a smooth, root-anchored transfer profile for a point impact. */
 		float GetTransientImpactProfile(float localHeight, float impactHeight)
 		{
@@ -176,10 +192,16 @@ namespace Wind
 
 			float maximumDisplacement =
 				treeHeight * max(Permutation::TreeWindMaximumDisplacementPercent, 0.0) * 0.01;
-			return impactVelocity * (maximumDisplacement * GetTransientImpactProfile(localHeight, impactHeight) *
-										max(Permutation::TreeTransientWindInfluence, 0.0) *
-										max(Permutation::TrunkWindBendSensitivity, 0.0) *
-										max(Permutation::TreeBendModelSensitivity, 0.0));
+			float2 bendResponse = impactVelocity *
+			                      (GetTransientImpactProfile(localHeight, impactHeight) *
+									  max(Permutation::TreeTransientWindInfluence, 0.0) *
+									  max(Permutation::TrunkWindBendSensitivity, 0.0) *
+									  max(Permutation::TreeBendModelSensitivity, 0.0));
+			float bendResponseSpeed = length(bendResponse);
+			float maximumTransientBendResponse = max(Permutation::TreeTransientMaximumBendMultiplier, 0.0);
+			if (bendResponseSpeed > maximumTransientBendResponse)
+				bendResponse *= maximumTransientBendResponse / bendResponseSpeed;
+			return bendResponse * (maximumDisplacement * GetTreeBendFlexibility(localHeight));
 		}
 
 		/** @brief Converts the combined tree response into a measured-height-weighted trunk shift. */
@@ -189,16 +211,10 @@ namespace Wind
 			if (treeHeight <= 1e-3)
 				return 0.0.xx;
 
-			float normalizedHeight = saturate(
-				(localHeight - Permutation::TreeWindBoundsBase) / treeHeight);
-			float upperBendRange = max(Permutation::TreeWindUpperBendRange * 0.01, 0.05);
-			float bendStartHeight = 1.0 - upperBendRange;
-			float bendProgress = saturate((normalizedHeight - bendStartHeight) / upperBendRange);
-			float flexibility = bendProgress * bendProgress;
 			float maximumDisplacement =
 				treeHeight * max(Permutation::TreeWindMaximumDisplacementPercent, 0.0) * 0.01;
 			return windVelocity *
-			       (maximumDisplacement * flexibility *
+			       (maximumDisplacement * GetTreeBendFlexibility(localHeight) *
 					   max(Permutation::TrunkWindBendSensitivity, 0.0) *
 					   max(Permutation::TreeBendModelSensitivity, 0.0));
 		}

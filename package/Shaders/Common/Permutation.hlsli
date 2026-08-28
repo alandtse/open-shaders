@@ -140,7 +140,9 @@ namespace Permutation
 		float TreeLeafGustInfluence;
 
 		float GrassWindSpringRecoveryLag;
-		float3 GrassWindPadding1;
+		uint GrassWindUseVanillaFlutter;
+		float TreeTransientMaximumBendMultiplier;
+		float GrassWindPadding1;
 	};
 
 }

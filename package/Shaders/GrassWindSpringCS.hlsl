@@ -24,8 +24,8 @@ RWTexture2D<float4> Velocity : register(u1);
 	bool historyValid = field.Initialize == 0u &&
 	                    all(previousCell >= 0) && all(previousCell < int2(field.TextureSize, field.TextureSize));
 	if (historyValid) {
-		response = PreviousResponse.Load(int3(previousCell, 0)).xyz;
-		velocity = PreviousVelocity.Load(int3(previousCell, 0)).xyz;
+		response = GrassWindSpring::PreviousResponse.Load(int3(previousCell, 0)).xyz;
+		velocity = GrassWindSpring::PreviousVelocity.Load(int3(previousCell, 0)).xyz;
 		float3 nextResponse;
 		float3 nextVelocity;
 		GrassWindSpring::Advance(response, velocity, target, field.FrameTime,

@@ -95,6 +95,7 @@ struct CSUtility : Feature
 		float treeWindSpringStrength = 1.0f;
 		float treeWindSpringDamping = 0.7f;
 		float treeTransientWindInfluence = 1.0f;
+		float treeTransientMaximumBendMultiplier = 2.0f;
 		float treeLeafBaseWindFlutterGain = 3.0f;
 		float windFieldGustScale = 2048.0f;
 		float windFieldGustAmplitude = 0.35f;
@@ -125,6 +126,7 @@ struct CSUtility : Feature
 		bool grassWindUseBendTargetSpring = true;
 		float grassWindFlutterStrength = 1.0f;
 		float grassWindFlutterFrequency = 1.0f;
+		bool grassWindUseVanillaFlutter = false;
 		float skyBrightness = 1.0f;
 		float directionalLightMult = 1.0f;
 		float pointLightMult = 1.0f;
@@ -139,7 +141,7 @@ struct CSUtility : Feature
 		Bloom::PresetSettings bloomEnhancement;
 	} settings;
 
-	/** Identifies the OS Utility tab targeted by scoped default restoration. */
+	/** Identifies the utility or Wind tab targeted by scoped default restoration. */
 	enum class SettingsPage
 	{
 		WindField,            ///< Ambient wind-field controls.
@@ -152,7 +154,7 @@ struct CSUtility : Feature
 		VanillaDepthOfField,  ///< Vanilla depth-of-field controls.
 		VanillaBloom          ///< Vanilla bloom controls.
 	};
-	/** The visible tab whose settings Restore Defaults changes. */
+	/** The visible utility or Wind tab whose settings Restore Defaults changes. */
 	SettingsPage activeSettingsPage = SettingsPage::Atmosphere;
 	bool visualizeWindField = false;                ///< Runtime-only GPU wind-field visualization toggle.
 	bool windFieldUseRealSpeed = true;              ///< Runtime-only debug input toggle.
@@ -264,6 +266,8 @@ struct CSUtility : Feature
 	Util::LazyShader<ID3D11ComputeShader> grassWindSpringCS;
 
 	virtual void DrawSettings() override;
+	/** Draws the wind controls hosted by the dedicated Wind feature page. */
+	void DrawWindSettings();
 	/** @brief Exposes live tree tuning counts to devbench. */
 	virtual json GetDiagnostics() override;
 	/** @brief Exposes the runtime-only wind visualization toggle to devbench. */

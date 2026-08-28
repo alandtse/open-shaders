@@ -211,12 +211,7 @@ VS_OUTPUT main(VS_INPUT input)
 	previousTreeImpact.velocity = 0.0.xx;
 	previousTreeImpact.impactHeight = Permutation::TreeWindBoundsBase;
 	previousTreeImpact.intensity = 0.0;
-	Wind::Tree::TransientImpact twoFramesAgoTreeImpact;
-	twoFramesAgoTreeImpact.velocity = 0.0.xx;
-	twoFramesAgoTreeImpact.impactHeight = Permutation::TreeWindBoundsBase;
-	twoFramesAgoTreeImpact.intensity = 0.0;
 	float2 transientTreeResponse = 0.0.xx;
-	float2 previousTransientTreeResponse = 0.0.xx;
 	if (treeBendEnabled) {
 		float3 treeRootWS = float3(World[eyeIndex][0].w, World[eyeIndex][1].w, World[eyeIndex][2].w);
 		float3 previousTreeRootWS =
@@ -234,12 +229,20 @@ VS_OUTPUT main(VS_INPUT input)
 			previousAbsoluteTreeRootWS, SharedData::WindFieldPrevious, SharedData::WindFieldPreviousTransition, SharedData::WindFieldTransitionData.y);
 		float treeBaseHeight = Permutation::TreeWindBoundsBase;
 		float treeHeight = Permutation::TreeWindBoundsHeight;
-		float3 currentTreeBaseWS = absoluteTreeRootWS + float3(0.0, 0.0, treeBaseHeight);
-		float3 currentTreeMiddleWS = currentTreeBaseWS + float3(0.0, 0.0, treeHeight * 0.5);
-		float3 currentTreeTopWS = currentTreeBaseWS + float3(0.0, 0.0, treeHeight);
-		float3 previousTreeBaseWS = previousAbsoluteTreeRootWS + float3(0.0, 0.0, treeBaseHeight);
-		float3 previousTreeMiddleWS = previousTreeBaseWS + float3(0.0, 0.0, treeHeight * 0.5);
-		float3 previousTreeTopWS = previousTreeBaseWS + float3(0.0, 0.0, treeHeight);
+		float3 currentTreeBaseWS = mul(World[eyeIndex], float4(0.0, 0.0, treeBaseHeight, 1.0)).xyz;
+		float3 currentTreeMiddleWS = mul(World[eyeIndex], float4(0.0, 0.0, treeBaseHeight + treeHeight * 0.5, 1.0)).xyz;
+		float3 currentTreeTopWS = mul(World[eyeIndex], float4(0.0, 0.0, treeBaseHeight + treeHeight, 1.0)).xyz;
+		float3 previousTreeBaseWS = mul(PreviousWorld[eyeIndex], float4(0.0, 0.0, treeBaseHeight, 1.0)).xyz;
+		float3 previousTreeMiddleWS = mul(PreviousWorld[eyeIndex], float4(0.0, 0.0, treeBaseHeight + treeHeight * 0.5, 1.0)).xyz;
+		float3 previousTreeTopWS = mul(PreviousWorld[eyeIndex], float4(0.0, 0.0, treeBaseHeight + treeHeight, 1.0)).xyz;
+#	if !defined(SKINNED)
+		currentTreeBaseWS += CameraPosAdjust[eyeIndex].xyz;
+		currentTreeMiddleWS += CameraPosAdjust[eyeIndex].xyz;
+		currentTreeTopWS += CameraPosAdjust[eyeIndex].xyz;
+		previousTreeBaseWS += CameraPosAdjust[eyeIndex].xyz;
+		previousTreeMiddleWS += CameraPosAdjust[eyeIndex].xyz;
+		previousTreeTopWS += CameraPosAdjust[eyeIndex].xyz;
+#	endif
 		currentTreeImpact = Wind::Tree::ResolveTransientImpact(
 			treeBaseHeight, treeHeight,
 			SharedData::SampleCurrentTransientWindImpulses(currentTreeBaseWS),
@@ -250,20 +253,11 @@ VS_OUTPUT main(VS_INPUT input)
 			SharedData::SamplePreviousTransientWindImpulses(previousTreeBaseWS),
 			SharedData::SamplePreviousTransientWindImpulses(previousTreeMiddleWS),
 			SharedData::SamplePreviousTransientWindImpulses(previousTreeTopWS));
-		twoFramesAgoTreeImpact = Wind::Tree::ResolveTransientImpact(
-			treeBaseHeight, treeHeight,
-			SharedData::SampleTwoFramesAgoTransientWindImpulses(previousTreeBaseWS),
-			SharedData::SampleTwoFramesAgoTransientWindImpulses(previousTreeMiddleWS),
-			SharedData::SampleTwoFramesAgoTransientWindImpulses(previousTreeTopWS));
 		transientTreeResponse = Wind::Tree::CalculateTransientResponse(
 			currentTreeImpact.velocity, previousTreeImpact.velocity, SharedData::WindFieldDebugOptions.x);
-		previousTransientTreeResponse = Wind::Tree::CalculateTransientResponse(
-			previousTreeImpact.velocity, twoFramesAgoTreeImpact.velocity, SharedData::WindFieldDebug.w);
 	}
 	float currentTransientImpactHeight = Wind::Tree::SelectTransientImpactHeight(
 		currentTreeImpact, previousTreeImpact);
-	float previousTransientImpactHeight = Wind::Tree::SelectTransientImpactHeight(
-		previousTreeImpact, twoFramesAgoTreeImpact);
 #	if defined(LODLANDNOISE) || defined(LODLANDSCAPE)
 	inputPosition = LodLandscape::AdjustLodLandscapeVertexPositionMS(inputPosition, float4x4(World[eyeIndex], float4(0, 0, 0, 1)), HighDetailRange[eyeIndex]);
 #	endif  // defined(LODLANDNOISE) || defined(LODLANDSCAPE)                                                                   \
@@ -272,20 +266,25 @@ VS_OUTPUT main(VS_INPUT input)
 
 #	if defined(TREE_ANIM)
 	float2 leafAnimationStrength = TreeParams.z.xx;
+	float transientLeafAnimationStrength = 0.0;
 	if (treeBendEnabled) {
 		float currentImpactProfile = Wind::Tree::GetTransientLeafImpactProfile(
 			input.Position.z, currentTransientImpactHeight);
-		float previousImpactProfile = Wind::Tree::GetTransientLeafImpactProfile(
-			input.Position.z, previousTransientImpactHeight);
 		leafAnimationStrength = float2(
 			Wind::Tree::GetLeafWindResponse(
-				SharedData::WindFieldAmbient.xy, treeWindSample.velocity.xy) +
-				Wind::Tree::GetLeafTransientWindResponse(transientTreeResponse * currentImpactProfile),
+				SharedData::WindFieldAmbient.xy, treeWindSample.velocity.xy),
 			Wind::Tree::GetLeafWindResponse(
-				SharedData::WindFieldPreviousAmbient.xy, previousTreeWindSample.velocity.xy) +
-				Wind::Tree::GetLeafTransientWindResponse(previousTransientTreeResponse * previousImpactProfile));
+				SharedData::WindFieldPreviousAmbient.xy, previousTreeWindSample.velocity.xy));
+		transientLeafAnimationStrength =
+			Wind::Tree::GetLeafTransientWindResponse(transientTreeResponse * currentImpactProfile);
 	}
 	precise float2 treeShiftVector = GetTreeShiftVector(input.Position, input.Color, leafAnimationStrength);
+	if (treeBendEnabled) {
+		float transientTreeShift = GetTreeShiftVector(
+			input.Position, input.Color, transientLeafAnimationStrength.xx)
+		                               .x;
+		treeShiftVector += transientTreeShift.xx;
+	}
 	float3 normal = -1.0.xxx + 2.0.xxx * input.Normal.xyz;
 
 	inputPosition.xyz += normal.xyz * treeShiftVector.x;
@@ -319,12 +318,12 @@ VS_OUTPUT main(VS_INPUT input)
 		float2 previousTreeResponse = Wind::Tree::AddTrunkGustResponse(
 			SharedData::WindFieldPreviousAmbient.xy, previousTreeWindSample.velocity.xy, previousBaseTreeResponse);
 		worldPosition.xy += Wind::Tree::GetTreeWorldDisplacement(input.Position.z, treeResponse);
-		worldPosition.xy += Wind::Tree::GetTreeImpactDisplacement(
+		float2 transientTreeDisplacement = Wind::Tree::GetTreeImpactDisplacement(
 			input.Position.z, transientTreeResponse, currentTransientImpactHeight);
+		worldPosition.xy += transientTreeDisplacement;
 		previousWorldPosition.xy +=
 			Wind::Tree::GetTreeWorldDisplacement(input.Position.z, previousTreeResponse);
-		previousWorldPosition.xy += Wind::Tree::GetTreeImpactDisplacement(
-			input.Position.z, previousTransientTreeResponse, previousTransientImpactHeight);
+		previousWorldPosition.xy += transientTreeDisplacement;
 	}
 
 	float4 viewPos;

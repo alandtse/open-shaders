@@ -143,17 +143,31 @@ namespace GrassWindSpring
 
 	float4 SampleCurrent(uint fieldIndex, float2 worldPosition)
 	{
-		return Fields[fieldIndex].FieldAvailable != 0u ?
-		           SampleField(ResponseFields[fieldIndex], worldPosition,
-					   Fields[fieldIndex].FieldMinimum, Fields[fieldIndex].FieldSize) :
+		if (fieldIndex == 0u)
+			return Fields[0].FieldAvailable != 0u ?
+			           SampleField(ResponseFields[0], worldPosition, Fields[0].FieldMinimum, Fields[0].FieldSize) :
+			           0.0f.xxxx;
+		if (fieldIndex == 1u)
+			return Fields[1].FieldAvailable != 0u ?
+			           SampleField(ResponseFields[1], worldPosition, Fields[1].FieldMinimum, Fields[1].FieldSize) :
+			           0.0f.xxxx;
+		return Fields[2].FieldAvailable != 0u ?
+		           SampleField(ResponseFields[2], worldPosition, Fields[2].FieldMinimum, Fields[2].FieldSize) :
 		           0.0f.xxxx;
 	}
 
 	float4 SamplePrevious(uint fieldIndex, float2 worldPosition)
 	{
-		return Fields[fieldIndex].FieldAvailable != 0u ?
-		           SampleField(PreviousResponseFields[fieldIndex], worldPosition,
-					   Fields[fieldIndex].PreviousFieldMinimum, Fields[fieldIndex].FieldSize) :
+		if (fieldIndex == 0u)
+			return Fields[0].FieldAvailable != 0u ?
+			           SampleField(PreviousResponseFields[0], worldPosition, Fields[0].PreviousFieldMinimum, Fields[0].FieldSize) :
+			           0.0f.xxxx;
+		if (fieldIndex == 1u)
+			return Fields[1].FieldAvailable != 0u ?
+			           SampleField(PreviousResponseFields[1], worldPosition, Fields[1].PreviousFieldMinimum, Fields[1].FieldSize) :
+			           0.0f.xxxx;
+		return Fields[2].FieldAvailable != 0u ?
+		           SampleField(PreviousResponseFields[2], worldPosition, Fields[2].PreviousFieldMinimum, Fields[2].FieldSize) :
 		           0.0f.xxxx;
 	}
 

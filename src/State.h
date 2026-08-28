@@ -486,7 +486,9 @@ public:
 		float TreeLeafGustInfluence;
 
 		float GrassWindSpringRecoveryLag;
-		float3 GrassWindPadding1;
+		uint GrassWindUseVanillaFlutter;
+		float TreeTransientMaximumBendMultiplier;
+		float GrassWindPadding1;
 
 		bool operator==(const PermutationCB& other) const
 		{
@@ -506,6 +508,7 @@ public:
 			       TreeWindSpringStrength == other.TreeWindSpringStrength &&
 			       TreeWindSpringDamping == other.TreeWindSpringDamping &&
 			       TreeTransientWindInfluence == other.TreeTransientWindInfluence &&
+			       TreeTransientMaximumBendMultiplier == other.TreeTransientMaximumBendMultiplier &&
 			       TrunkWindBendSensitivity == other.TrunkWindBendSensitivity &&
 			       TreeLeafBaseWindFlutterGain == other.TreeLeafBaseWindFlutterGain &&
 			       EnableAmbientGrassWind == other.EnableAmbientGrassWind &&
@@ -520,6 +523,7 @@ public:
 			       GrassWindFlutterFrequency == other.GrassWindFlutterFrequency &&
 			       GrassWindUseBendTargetSpring == other.GrassWindUseBendTargetSpring &&
 			       GrassWindSpringRecoveryLag == other.GrassWindSpringRecoveryLag &&
+			       GrassWindUseVanillaFlutter == other.GrassWindUseVanillaFlutter &&
 			       TreeWindBoundsBase == other.TreeWindBoundsBase &&
 			       TreeWindBoundsHeight == other.TreeWindBoundsHeight &&
 			       TreeWindTrunkGustInfluence == other.TreeWindTrunkGustInfluence &&
@@ -529,6 +533,8 @@ public:
 	static_assert(offsetof(PermutationCB, EnableAmbientGrassWind) == 100);
 	static_assert(offsetof(PermutationCB, GrassWindFlutterStrength) == 128);
 	static_assert(offsetof(PermutationCB, GrassWindSpringRecoveryLag) == 160);
+	static_assert(offsetof(PermutationCB, GrassWindUseVanillaFlutter) == 164);
+	static_assert(offsetof(PermutationCB, TreeTransientMaximumBendMultiplier) == 168);
 	STATIC_ASSERT_ALIGNAS_16(PermutationCB);
 
 	ConstantBuffer* permutationCB = nullptr;

@@ -173,9 +173,12 @@ VS_OUTPUT main(VS_INPUT input)
 			absoluteTreeRootWS, SharedData::WindFieldPrevious, SharedData::WindFieldPreviousTransition, SharedData::WindFieldTransitionData.y);
 		float treeBaseHeight = Permutation::TreeWindBoundsBase;
 		float treeHeight = Permutation::TreeWindBoundsHeight;
-		float3 treeBaseWS = absoluteTreeRootWS + float3(0.0, 0.0, treeBaseHeight);
-		float3 treeMiddleWS = treeBaseWS + float3(0.0, 0.0, treeHeight * 0.5);
-		float3 treeTopWS = treeBaseWS + float3(0.0, 0.0, treeHeight);
+		float3 treeBaseWS = mul(World[eyeIndex], float4(0.0, 0.0, treeBaseHeight, 1.0)).xyz;
+		float3 treeMiddleWS = mul(World[eyeIndex], float4(0.0, 0.0, treeBaseHeight + treeHeight * 0.5, 1.0)).xyz;
+		float3 treeTopWS = mul(World[eyeIndex], float4(0.0, 0.0, treeBaseHeight + treeHeight, 1.0)).xyz;
+		treeBaseWS += FrameBuffer::CameraPosAdjust[eyeIndex].xyz;
+		treeMiddleWS += FrameBuffer::CameraPosAdjust[eyeIndex].xyz;
+		treeTopWS += FrameBuffer::CameraPosAdjust[eyeIndex].xyz;
 		currentTreeImpact = Wind::Tree::ResolveTransientImpact(
 			treeBaseHeight, treeHeight,
 			SharedData::SampleCurrentTransientWindImpulses(treeBaseWS),
