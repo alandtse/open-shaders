@@ -140,6 +140,7 @@ Claude Code loads it via the `@../AGENTS.md` import in `.claude/CLAUDE.md`.
 
 -   **WSL/Linux Note:** For Windows SDK compilation, run via PowerShell:
     `powershell.exe -Command "./BuildRelease.bat [PRESET_NAME]"`
+-   **Linux/macOS-host cross-compile (build-only, no VS/Windows tooling):** `cmake --preset Linux-ClangCL && cmake --build --preset Linux-ClangCL`. Cross-compiles to the same Windows PE/MSVC-ABI output as the native presets via `clang-cl`+`lld-link` against an `xwin`-generated Windows SDK/CRT sysroot (the toolchain and DirectXTK's Wine-based shader-compile workaround both come from the `extern/CommonLibSSE-NG` submodule; see `extern/CommonLibSSE-NG/examples/linux-cross-compile/README.md` for one-time host setup — xwin, wine, llvm-mingw, vcpkg). Proves the toolchain compiles clean; does not produce a runnable-in-game package, and struct-layout/vtable mismatches between clang-cl and real MSVC only surface as an in-game crash, not a build failure.
 -   **Primary Build Command:** `./BuildRelease.bat [PRESET_NAME]`
     -   _Presets:_ `ALL` (default), `SE`, `AE`, `VR`, `PRE-AE`, `FLATRIM`.
 -   **clangd setup:** Generate compilation database after configuring `ALL`:
