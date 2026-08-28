@@ -91,6 +91,38 @@ namespace SharedData
 		return sample;
 	}
 
+	/** @brief Accumulates previous-frame transient wind impulses at an absolute world position. */
+	WindField::TransientImpulseSample SamplePreviousTransientWindImpulses(float3 worldPosition)
+	{
+		WindField::TransientImpulseSample sample;
+		sample.velocity = 0.0f;
+		sample.intensity = 0.0f;
+		[loop] for (uint index = 0u; index < WindFieldActiveCounts.w; ++index)
+		{
+			WindField::TransientImpulseSample impulseSample =
+				WindField::SampleTransientImpulse(worldPosition, WindFieldPreviousTransientImpulses[index]);
+			sample.velocity += impulseSample.velocity;
+			sample.intensity = max(sample.intensity, impulseSample.intensity);
+		}
+		return sample;
+	}
+
+	/** @brief Accumulates two-frames-ago transient wind impulses at an absolute world position. */
+	WindField::TransientImpulseSample SampleTwoFramesAgoTransientWindImpulses(float3 worldPosition)
+	{
+		WindField::TransientImpulseSample sample;
+		sample.velocity = 0.0f;
+		sample.intensity = 0.0f;
+		[loop] for (uint index = 0u; index < WindFieldActiveCounts.y; ++index)
+		{
+			WindField::TransientImpulseSample impulseSample =
+				WindField::SampleTransientImpulse(worldPosition, WindFieldTwoFramesAgoTransientImpulses[index]);
+			sample.velocity += impulseSample.velocity;
+			sample.intensity = max(sample.intensity, impulseSample.intensity);
+		}
+		return sample;
+	}
+
 	/** @brief Samples the current blended shared wind field at an absolute world position. */
 	WindField::WindSample SampleAmbientWind(float3 worldPosition)
 	{
@@ -107,13 +139,9 @@ namespace SharedData
 	{
 		WindField::WindSample sample = SampleBlendedAmbientWind(
 			worldPosition, WindFieldPrevious, WindFieldPreviousTransition, WindFieldTransitionData.y);
-		[loop] for (uint index = 0u; index < WindFieldActiveCounts.w; ++index)
-		{
-			WindField::TransientImpulseSample impulseSample =
-				WindField::SampleTransientImpulse(worldPosition, WindFieldPreviousTransientImpulses[index]);
-			sample.velocity += impulseSample.velocity;
-			sample.transientImpulse = max(sample.transientImpulse, impulseSample.intensity);
-		}
+		WindField::TransientImpulseSample impulseSample = SamplePreviousTransientWindImpulses(worldPosition);
+		sample.velocity += impulseSample.velocity;
+		sample.transientImpulse = impulseSample.intensity;
 		return sample;
 	}
 
@@ -122,13 +150,9 @@ namespace SharedData
 	{
 		WindField::WindSample sample = SampleBlendedAmbientWind(
 			worldPosition, WindFieldTwoFramesAgo, WindFieldTwoFramesAgoTransition, WindFieldTransitionData.z);
-		[loop] for (uint index = 0u; index < WindFieldActiveCounts.y; ++index)
-		{
-			WindField::TransientImpulseSample impulseSample =
-				WindField::SampleTransientImpulse(worldPosition, WindFieldTwoFramesAgoTransientImpulses[index]);
-			sample.velocity += impulseSample.velocity;
-			sample.transientImpulse = max(sample.transientImpulse, impulseSample.intensity);
-		}
+		WindField::TransientImpulseSample impulseSample = SampleTwoFramesAgoTransientWindImpulses(worldPosition);
+		sample.velocity += impulseSample.velocity;
+		sample.transientImpulse = impulseSample.intensity;
 		return sample;
 	}
 

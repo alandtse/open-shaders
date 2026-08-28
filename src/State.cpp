@@ -71,6 +71,7 @@ void State::UpdatePermutationBuffer()
 	                                        globals::features::csUtility.settings.overrideTrunkWindIntensity;
 	permutationData.TreeWindSpringStrength = globals::features::csUtility.settings.treeWindSpringStrength;
 	permutationData.TreeWindSpringDamping = globals::features::csUtility.settings.treeWindSpringDamping;
+	permutationData.TreeTransientWindInfluence = globals::features::csUtility.settings.treeTransientWindInfluence;
 	permutationData.TrunkWindBendSensitivity = globals::features::csUtility.settings.trunkWindBendSensitivity;
 	permutationData.TreeLeafBaseWindFlutterGain = globals::features::csUtility.settings.treeLeafBaseWindFlutterGain;
 	permutationData.EnableAmbientGrassWind = globals::features::csUtility.loaded &&

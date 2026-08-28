@@ -462,7 +462,7 @@ public:
 
 		float TreeWindSpringStrength;
 		float TreeWindSpringDamping;
-		float TreeWindPadding1;
+		float TreeTransientWindInfluence;
 		float TrunkWindBendSensitivity;
 
 		float TreeLeafBaseWindFlutterGain;
@@ -505,6 +505,7 @@ public:
 			       TreeLeafModelSensitivity == other.TreeLeafModelSensitivity &&
 			       TreeWindSpringStrength == other.TreeWindSpringStrength &&
 			       TreeWindSpringDamping == other.TreeWindSpringDamping &&
+			       TreeTransientWindInfluence == other.TreeTransientWindInfluence &&
 			       TrunkWindBendSensitivity == other.TrunkWindBendSensitivity &&
 			       TreeLeafBaseWindFlutterGain == other.TreeLeafBaseWindFlutterGain &&
 			       EnableAmbientGrassWind == other.EnableAmbientGrassWind &&

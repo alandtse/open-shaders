@@ -25,16 +25,28 @@ namespace Wind
 	namespace Tree
 	{
 		static const float RESPONSE_LAG_SECONDS = 0.45;
+		/** @brief Returns model-adjusted leaf flutter gain shared by ambient and transient wind. */
+		float GetLeafFlutterGain()
+		{
+			return max(Permutation::TreeLeafBaseWindFlutterGain, 0.0) *
+			       max(Permutation::TreeLeafModelSensitivity, 0.0);
+		}
+
 		/** @brief Derives leaf motion energy from raw wind speed plus independently scaled gust variation. */
 		float GetLeafWindResponse(float2 baseWind, float2 sampledWind)
 		{
-			float flutterGain = max(Permutation::TreeLeafBaseWindFlutterGain, 0.0) *
-			                    max(Permutation::TreeLeafModelSensitivity, 0.0);
 			float baseSpeed = length(baseWind);
 			float gustSpeed = length(sampledWind) - baseSpeed;
 			float effectiveWindSpeed =
 				max(baseSpeed + gustSpeed * max(Permutation::TreeLeafGustInfluence, 0.0), 0.0);
-			return effectiveWindSpeed * flutterGain;
+			return effectiveWindSpeed * GetLeafFlutterGain();
+		}
+
+		/** @brief Derives leaf motion energy from transient wind without ambient gust scaling. */
+		float GetLeafTransientWindResponse(float2 transientWind)
+		{
+			return length(transientWind) * GetLeafFlutterGain() *
+			       max(Permutation::TreeTransientWindInfluence, 0.0);
 		}
 
 		/** @brief Applies stateless inertial lag and damping to consecutive raw ambient wind targets. */
@@ -61,11 +73,113 @@ namespace Wind
 			           response;
 		}
 
+		/** @brief Preserves the initial force of a transient impact while retaining spring recovery. */
+		float2 CalculateTransientResponse(float2 currentTarget, float2 previousTarget, float frameTime)
+		{
+			float2 response = CalculateHeavyResponse(currentTarget, previousTarget, frameTime);
+			return length(currentTarget) > 1e-5 && dot(response, currentTarget) <= 0.0 ? currentTarget : response;
+		}
+
 		/** @brief Adds independently scaled sampled gust variation to the heavy trunk response. */
 		float2 AddTrunkGustResponse(float2 baseWind, float2 sampledWind, float2 baseResponse)
 		{
 			return baseResponse +
 			       (sampledWind - baseWind) * max(Permutation::TreeWindTrunkGustInfluence, 0.0);
+		}
+
+		struct TransientImpact
+		{
+			float2 velocity;
+			float impactHeight;
+			float intensity;
+		};
+
+		/** @brief Resolves a coupled tree impact from base, middle, and top samples. */
+		TransientImpact ResolveTransientImpact(
+			float treeBaseHeight, float treeHeight,
+			WindField::TransientImpulseSample baseSample,
+			WindField::TransientImpulseSample middleSample,
+			WindField::TransientImpulseSample topSample)
+		{
+			TransientImpact impact;
+			impact.velocity = 0.0.xx;
+			impact.impactHeight = treeBaseHeight;
+			impact.intensity = max(baseSample.intensity,
+				max(middleSample.intensity, topSample.intensity));
+			if (treeHeight <= 1e-3 || impact.intensity <= 1e-4)
+				return impact;
+
+			float intensityTotal = baseSample.intensity + middleSample.intensity + topSample.intensity;
+			float safeIntensityTotal = max(intensityTotal, 1e-4);
+			impact.impactHeight = (treeBaseHeight * baseSample.intensity +
+									  (treeBaseHeight + treeHeight * 0.5) * middleSample.intensity +
+									  (treeBaseHeight + treeHeight) * topSample.intensity) /
+			                      safeIntensityTotal;
+
+			float2 combinedVelocity = baseSample.velocity.xy + middleSample.velocity.xy + topSample.velocity.xy;
+			float combinedSpeed = length(combinedVelocity);
+			float strongestSpeed = max(length(baseSample.velocity.xy),
+				max(length(middleSample.velocity.xy), length(topSample.velocity.xy)));
+			impact.velocity = combinedSpeed > 1e-5 ? combinedVelocity * (strongestSpeed / combinedSpeed) : 0.0.xx;
+			return impact;
+		}
+
+		/** @brief Keeps the last known impact location while a transient response recovers. */
+		float SelectTransientImpactHeight(TransientImpact currentImpact, TransientImpact fallbackImpact)
+		{
+			return currentImpact.intensity > 1e-4 ? currentImpact.impactHeight : fallbackImpact.impactHeight;
+		}
+
+		/** @brief Returns a smooth, root-anchored transfer profile for a point impact. */
+		float GetTransientImpactProfile(float localHeight, float impactHeight)
+		{
+			float treeHeight = Permutation::TreeWindBoundsHeight;
+			if (treeHeight <= 1e-3)
+				return 0.0;
+
+			float normalizedHeight = saturate(
+				(localHeight - Permutation::TreeWindBoundsBase) / treeHeight);
+			float normalizedImpactHeight = saturate(
+				(impactHeight - Permutation::TreeWindBoundsBase) / treeHeight);
+			if (normalizedHeight <= normalizedImpactHeight)
+				return smoothstep(0.0, max(normalizedImpactHeight, 1e-3), normalizedHeight);
+
+			float upperProgress = saturate((normalizedHeight - normalizedImpactHeight) /
+										   max(1.0 - normalizedImpactHeight, 1e-3));
+			float upperCarry = 0.35 + 0.35 * (1.0 - normalizedImpactHeight);
+			return 1.0 + smoothstep(0.0, 1.0, upperProgress) * upperCarry;
+		}
+
+		/** @brief Concentrates leaf flutter near the impact while retaining trunk transfer. */
+		float GetTransientLeafImpactProfile(float localHeight, float impactHeight)
+		{
+			float treeHeight = Permutation::TreeWindBoundsHeight;
+			if (treeHeight <= 1e-3)
+				return 0.0;
+
+			float normalizedHeight = saturate(
+				(localHeight - Permutation::TreeWindBoundsBase) / treeHeight);
+			float normalizedImpactHeight = saturate(
+				(impactHeight - Permutation::TreeWindBoundsBase) / treeHeight);
+			float localDistance = abs(normalizedHeight - normalizedImpactHeight);
+			float localFlutter = 1.0 - smoothstep(0.0, 0.3, localDistance);
+			return max(localFlutter, GetTransientImpactProfile(localHeight, impactHeight) * 0.35);
+		}
+
+		/** @brief Converts a coupled transient tree response into a height-weighted displacement. */
+		float2 GetTreeImpactDisplacement(
+			float localHeight, float2 impactVelocity, float impactHeight)
+		{
+			float treeHeight = Permutation::TreeWindBoundsHeight;
+			if (treeHeight <= 1e-3)
+				return 0.0.xx;
+
+			float maximumDisplacement =
+				treeHeight * max(Permutation::TreeWindMaximumDisplacementPercent, 0.0) * 0.01;
+			return impactVelocity * (maximumDisplacement * GetTransientImpactProfile(localHeight, impactHeight) *
+										max(Permutation::TreeTransientWindInfluence, 0.0) *
+										max(Permutation::TrunkWindBendSensitivity, 0.0) *
+										max(Permutation::TreeBendModelSensitivity, 0.0));
 		}
 
 		/** @brief Converts the combined tree response into a measured-height-weighted trunk shift. */

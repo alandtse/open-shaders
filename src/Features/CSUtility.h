@@ -94,6 +94,7 @@ struct CSUtility : Feature
 		float trunkWindBendSensitivity = 1.04f;
 		float treeWindSpringStrength = 1.0f;
 		float treeWindSpringDamping = 0.7f;
+		float treeTransientWindInfluence = 1.0f;
 		float treeLeafBaseWindFlutterGain = 3.0f;
 		float windFieldGustScale = 2048.0f;
 		float windFieldGustAmplitude = 0.35f;

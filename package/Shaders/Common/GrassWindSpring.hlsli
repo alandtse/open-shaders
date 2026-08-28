@@ -44,17 +44,17 @@ namespace GrassWindSpring
 	SamplerState ResponseSampler : register(s14);
 #endif
 
-	float3 CalculateTarget(float3 windVelocity)
+	float3 CalculateTarget(float3 windVelocity, FieldData field)
 	{
-		windVelocity *= max(Sensitivity, 0.0f);
+		windVelocity *= max(field.Sensitivity, 0.0f);
 		float lateralSpeed = length(windVelocity.xy);
-		float targetAngle = MaximumTiltRadians > 1e-5f ?
-		                        MaximumTiltRadians * tanh(lateralSpeed * max(ResponseRadians, 0.0f) / MaximumTiltRadians) :
+		float targetAngle = field.MaximumTiltRadians > 1e-5f ?
+		                        field.MaximumTiltRadians * tanh(lateralSpeed * max(field.ResponseRadians, 0.0f) / field.MaximumTiltRadians) :
 		                        0.0f;
 		float2 targetBend = lateralSpeed > 1e-5f ? windVelocity.xy * (targetAngle / lateralSpeed) : 0.0f.xx;
 		float downwardSpeed = max(-windVelocity.z, 0.0f);
-		float targetCompression = MaximumTiltRadians > 1e-5f ?
-		                              saturate(tanh(downwardSpeed * max(ResponseRadians, 0.0f) / MaximumTiltRadians)) :
+		float targetCompression = field.MaximumTiltRadians > 1e-5f ?
+		                              saturate(tanh(downwardSpeed * max(field.ResponseRadians, 0.0f) / field.MaximumTiltRadians)) :
 		                              0.0f;
 		return float3(targetBend, targetCompression);
 	}

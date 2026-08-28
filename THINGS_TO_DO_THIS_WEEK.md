@@ -4,3 +4,5 @@
 -   [ ] Perform RenderDoc analysis of grass draw and shader workload for ambient-wind versus vanilla-flutter A/B captures.
 -   [ ] Figure out a good spring algorithm for the non-compute grass-wind path.
 -   [ ] Before the tree-wind PR, replace the hard-coded `NatureOfTheWildLands.json` loader with generic tree-wind patch discovery and merging.
+-   [ ] Refactor tree-specific response logic out of the shared wind code.
+-   [ ] One day: add world-position spatial lookup for transient wind sources so samples evaluate only nearby active impulses.

@@ -116,7 +116,7 @@ namespace Permutation
 
 		float TreeWindSpringStrength;
 		float TreeWindSpringDamping;
-		float TreeWindPadding1;
+		float TreeTransientWindInfluence;
 		float TrunkWindBendSensitivity;
 
 		float TreeLeafBaseWindFlutterGain;

@@ -15,6 +15,7 @@ Claude Code loads it via the `@../AGENTS.md` import in `.claude/CLAUDE.md`.
 -   **Perf Instrumentation:** Use `CS_GPU_PASS("Feature::Pass")` (RAII `ScopedGpuPass`, `src/GpuPass.h`) at every render-pass entry point, new or ported — see Performance & Profiling Rules for what it wires up. Never hand-roll `state->BeginPerfEvent`/`EndPerfEvent` pairs or raw `TracyD3D11Zone` at a pass entry. **Code transplanted from another fork is a common violation source** — swap raw annotations for `CS_GPU_PASS` during the port, don't carry them over.
 -   **VR Maintenance:** Keep VR divergence to the absolute minimum necessary. Resolve merge conflicts in favor of keeping VR.
 -   **Devbench:** Do not launch, call, or use devbench unless the user specifically requests it. If explicitly requested, follow `docs/development/release-validation.md`; any changed devbench tool must keep its self-documented `RegisterTool` description/`inputSchema` in sync with its handler.
+-   **Debugger:** Never launch or attach a debugger unless the user explicitly requests debugger use.
 -   **Git Safety:** Never force-push/rebase shared branches (`main`, `dev`, `hotfix/*`). Never manually create `v*` tags, hand-modify `CMakeLists.txt` version, or run release workflow on `hotfix/X.Y.x` for the current line.
 -   **Upstream Sync:** Merge, never cherry-pick. Land sync PRs as merge commits, never squash. Verify ancestry after merging.
 

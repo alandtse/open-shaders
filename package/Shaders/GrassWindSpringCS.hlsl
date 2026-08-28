@@ -14,7 +14,7 @@ RWTexture2D<float4> Velocity : register(u1);
 	float2 worldPosition = field.FieldMinimum +
 	                       (float2(dispatchThreadId.xy) + 0.5f) * cellSize;
 	float3 target = GrassWindSpring::CalculateTarget(
-		SharedData::SampleAmbientWind(float3(worldPosition, field.FieldHeight)).velocity);
+		SharedData::SampleAmbientWind(float3(worldPosition, field.FieldHeight)).velocity, field);
 
 	float3 response = target;
 	float3 velocity = 0.0f.xxx;

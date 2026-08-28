@@ -79,7 +79,12 @@ namespace FusRoDahWind
 				if (!std::isfinite(aimHeading)) {
 					aimHeading = actor->GetAngleZ();
 				}
-				const RE::NiPoint3 forward = RE::NiMatrix3{ aimAngle, 0.0f, aimHeading }.GetVectorY();
+				const float horizontalScale = std::cos(aimAngle);
+				const RE::NiPoint3 forward{
+					horizontalScale * std::sin(aimHeading),
+					horizontalScale * std::cos(aimHeading),
+					-std::sin(aimAngle)
+				};
 				const auto& profile = kRankProfiles[rank];
 				const float coneHalfAngleRadians =
 					settings.fusRoDahConeHalfAngle * (std::numbers::pi_v<float> / 180.0f);

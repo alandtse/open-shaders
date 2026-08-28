@@ -44,6 +44,8 @@ namespace
 	constexpr float kTreeWindSpringStrengthMax = 4.0f;
 	constexpr float kTreeWindSpringDampingMin = 0.0f;
 	constexpr float kTreeWindSpringDampingMax = 1.0f;
+	constexpr float kTreeTransientWindInfluenceMin = 0.0f;
+	constexpr float kTreeTransientWindInfluenceMax = 5.0f;
 	constexpr float kTreeWindGustInfluenceMin = 0.0f;
 	constexpr float kTreeWindGustInfluenceMax = 2.0f;
 	constexpr float kTreeLeafBaseWindFlutterGainMin = 0.0f;
@@ -133,6 +135,7 @@ namespace
 		a_settings.trunkWindBendSensitivity = ClampFiniteOrDefault(a_settings.trunkWindBendSensitivity, kTrunkWindSensitivityMin, kTrunkWindSensitivityMax, defaults.trunkWindBendSensitivity);
 		a_settings.treeWindSpringStrength = ClampFiniteOrDefault(a_settings.treeWindSpringStrength, kTreeWindSpringStrengthMin, kTreeWindSpringStrengthMax, defaults.treeWindSpringStrength);
 		a_settings.treeWindSpringDamping = ClampFiniteOrDefault(a_settings.treeWindSpringDamping, kTreeWindSpringDampingMin, kTreeWindSpringDampingMax, defaults.treeWindSpringDamping);
+		a_settings.treeTransientWindInfluence = ClampFiniteOrDefault(a_settings.treeTransientWindInfluence, kTreeTransientWindInfluenceMin, kTreeTransientWindInfluenceMax, defaults.treeTransientWindInfluence);
 		a_settings.treeLeafBaseWindFlutterGain = ClampFiniteOrDefault(a_settings.treeLeafBaseWindFlutterGain, kTreeLeafBaseWindFlutterGainMin, kTreeLeafBaseWindFlutterGainMax, defaults.treeLeafBaseWindFlutterGain);
 		a_settings.windFieldGustScale = ClampFiniteOrDefault(a_settings.windFieldGustScale, kWindFieldGustScaleMin, kWindFieldGustScaleMax, defaults.windFieldGustScale);
 		a_settings.windFieldGustAmplitude = ClampFiniteOrDefault(a_settings.windFieldGustAmplitude, kWindFieldGustAmplitudeMin, kWindFieldGustAmplitudeMax, defaults.windFieldGustAmplitude);
@@ -313,6 +316,7 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	trunkWindBendSensitivity,
 	treeWindSpringStrength,
 	treeWindSpringDamping,
+	treeTransientWindInfluence,
 	treeLeafBaseWindFlutterGain,
 	windFieldGustScale,
 	windFieldGustAmplitude,
@@ -593,6 +597,11 @@ void CSUtility::DrawSettings()
 			ImGui::SeparatorText(T(TKEY("trunk_wind_response"), "Tree Response"));
 			ImGui::SliderFloat(T(TKEY("trunk_wind_bend_sensitivity"), "Trunk Wind Sensitivity"), &settings.trunkWindBendSensitivity,
 				kTrunkWindSensitivityMin, kTrunkWindSensitivityMax, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+			ImGui::SliderFloat(T(TKEY("tree_transient_wind_influence"), "Transient Wind Influence"), &settings.treeTransientWindInfluence,
+				kTreeTransientWindInfluenceMin, kTreeTransientWindInfluenceMax, "%.2fx", ImGuiSliderFlags_AlwaysClamp);
+			if (auto _tt = Util::HoverTooltipWrapper())
+				ImGui::TextUnformatted(T(TKEY("tree_transient_wind_influence_tooltip"),
+					"Scales transient wind impulses applied to tree trunks and leaves without changing ambient wind or grass."));
 			ImGui::SliderFloat(T(TKEY("tree_wind_spring_strength"), "Spring Strength"), &settings.treeWindSpringStrength,
 				kTreeWindSpringStrengthMin, kTreeWindSpringStrengthMax, "%.2f", ImGuiSliderFlags_AlwaysClamp | ImGuiSliderFlags_Logarithmic);
 			if (auto _tt = Util::HoverTooltipWrapper())
@@ -977,6 +986,7 @@ json CSUtility::GetDiagnostics()
 		{ "treeWindTestGustAdvectionMultiplier", treeWindTest.gustAdvectionMultiplier },
 		{ "treeWindSpringStrength", settings.treeWindSpringStrength },
 		{ "treeWindSpringDamping", settings.treeWindSpringDamping },
+		{ "treeTransientWindInfluence", settings.treeTransientWindInfluence },
 		{ "treeLeafBaseWindFlutterGain", settings.treeLeafBaseWindFlutterGain },
 	};
 }
@@ -1235,6 +1245,7 @@ void CSUtility::RestoreCurrentPageDefaultSettings()
 		settings.trunkWindBendSensitivity = defaults.trunkWindBendSensitivity;
 		settings.treeWindSpringStrength = defaults.treeWindSpringStrength;
 		settings.treeWindSpringDamping = defaults.treeWindSpringDamping;
+		settings.treeTransientWindInfluence = defaults.treeTransientWindInfluence;
 		settings.treeLeafBaseWindFlutterGain = defaults.treeLeafBaseWindFlutterGain;
 		break;
 	case SettingsPage::TreeMeshes:
@@ -1283,11 +1294,12 @@ bool CSUtility::ReapplyCurrentPageOverrideSettings()
 		"fusRoDahSpeedMultiplier",
 		"fusRoDahConeHalfAngle"
 	};
-	static constexpr std::array<std::string_view, 5> treeKeys{
+	static constexpr std::array<std::string_view, 6> treeKeys{
 		"enableTrunkBend",
 		"trunkWindBendSensitivity",
 		"treeWindSpringStrength",
 		"treeWindSpringDamping",
+		"treeTransientWindInfluence",
 		"treeLeafBaseWindFlutterGain"
 	};
 	static constexpr std::array<std::string_view, 1> waterKeys{ "water" };
@@ -1562,8 +1574,8 @@ void CSUtility::UpdateGrassWindSpring()
 		currentSpringSrvs[qualityIndex] = grassWindSpringResponseTextures[qualityIndex][currentTextureIndex]->srv.get();
 		previousSpringSrvs[qualityIndex] = grassWindSpringResponseTextures[qualityIndex][currentTextureIndex ^ 1u]->srv.get();
 	}
-	context->VSSetShaderResources(105, currentSpringSrvs.size(), currentSpringSrvs.data());
-	context->VSSetShaderResources(108, previousSpringSrvs.size(), previousSpringSrvs.data());
+	context->VSSetShaderResources(105, static_cast<UINT>(currentSpringSrvs.size()), currentSpringSrvs.data());
+	context->VSSetShaderResources(108, static_cast<UINT>(previousSpringSrvs.size()), previousSpringSrvs.data());
 	ID3D11SamplerState* samplers[]{ grassWindSpringSampler.get() };
 	context->VSSetSamplers(14, ARRAYSIZE(samplers), samplers);
 }
