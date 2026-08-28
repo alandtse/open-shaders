@@ -24,17 +24,39 @@ set(CPPWINRT_TOOL "${src}/bin/cppwinrt.exe")
 # `xwin` sysroot provides (xwin stages headers/import libs only, not SDK
 # metadata). This codebase only consumes winrt::com_ptr (a header-only COM
 # smart pointer from the base library, no OS projections), so generate with
-# cppwinrt.exe's `-input local` mode instead: it emits winrt/base.h and the
-# winrt/impl/* support headers with no Windows Metadata input at all.
+# cppwinrt.exe's `-base` flag instead: it emits a self-contained winrt/base.h
+# (including com_ptr) with no Windows Metadata input at all. (`-input local`
+# looks like the more obvious choice, but it reads from %WinDir%\System32\
+# WinMetadata, which is empty in a fresh Wine prefix and fails with "Invalid
+# row index" -- verified against cppwinrt.exe 2.0.250303.1 itself, since the
+# official port's own -help text doesn't spell out that distinction.)
 find_program(WINE_EXECUTABLE NAMES wine)
 if(NOT WINE_EXECUTABLE)
     message(FATAL_ERROR "${PORT}: cross-compiling from a Linux/macOS host needs `wine` on PATH to run cppwinrt.exe (base-headers-only generation, no Windows SDK required).")
 endif()
 
 file(MAKE_DIRECTORY "${CURRENT_PACKAGES_DIR}/include")
-message(STATUS "Generating C++/WinRT base headers (-input local, no Windows SDK)")
+
+# cppwinrt.exe's own argument parser treats a leading "/" as a Windows-style
+# option switch, so a raw Unix path (e.g. "/Users/.../include") is rejected
+# as an unrecognized option rather than read as a positional path -- Wine
+# only translates paths inside Win32 file APIs, never in argv strings.
+# `winepath -w` converts it to the "Z:\..." form the tool actually accepts.
+find_program(WINEPATH_EXECUTABLE NAMES winepath)
+if(NOT WINEPATH_EXECUTABLE)
+    message(FATAL_ERROR "${PORT}: `winepath` (ships alongside `wine`) not found on PATH.")
+endif()
 vcpkg_execute_required_process(
-    COMMAND "${WINE_EXECUTABLE}" "${CPPWINRT_TOOL}" -input local -output "${CURRENT_PACKAGES_DIR}/include" -verbose
+    COMMAND "${WINEPATH_EXECUTABLE}" -w "${CURRENT_PACKAGES_DIR}/include"
+    OUTPUT_VARIABLE CPPWINRT_OUTPUT_WINPATH_RAW
+    WORKING_DIRECTORY "${CURRENT_PACKAGES_DIR}"
+    LOGNAME "cppwinrt-winepath-${TARGET_TRIPLET}"
+)
+string(STRIP "${CPPWINRT_OUTPUT_WINPATH_RAW}" CPPWINRT_OUTPUT_WINPATH)
+
+message(STATUS "Generating C++/WinRT base headers (-base, no Windows SDK)")
+vcpkg_execute_required_process(
+    COMMAND "${WINE_EXECUTABLE}" "${CPPWINRT_TOOL}" -base -output "${CPPWINRT_OUTPUT_WINPATH}" -verbose
     WORKING_DIRECTORY "${CURRENT_PACKAGES_DIR}"
     LOGNAME "cppwinrt-generate-${TARGET_TRIPLET}"
 )

@@ -76,7 +76,8 @@
                 "VCPKG_OVERLAY_PORTS": "${sourceDir}/cmake/ports/;${sourceDir}/cmake/ports-linux-clangcl/;${sourceDir}/extern/CommonLibSSE-NG/examples/linux-cross-compile/custom-ports",
                 "VCPKG_OVERLAY_TRIPLETS": "${sourceDir}/cmake/triplets/",
                 "VCPKG_TARGET_TRIPLET": "x64-windows-clangcl",
-                "VCPKG_BUILD_TYPE": "release"
+                "VCPKG_BUILD_TYPE": "release",
+                "VCPKG_CHAINLOAD_TOOLCHAIN_FILE": "${sourceDir}/extern/CommonLibSSE-NG/cmake/toolchain-linux-clangcl.cmake"
             }
         },
         {
@@ -173,7 +174,7 @@
         },
         {
             "name": "Linux-ClangCL",
-            "description": "Linux/macOS-host cross-compile (clang-cl+lld-link+xwin) targeting the same Windows PE/MSVC-ABI output. Build-only: proves the toolchain compiles clean, does not produce a runnable-in-game package. See extern/CommonLibSSE-NG/examples/linux-cross-compile/README.md for one-time host setup (xwin, wine, vcpkg).",
+            "description": "Linux/macOS-host cross-compile (clang-cl+lld-link+xwin) targeting the same Windows PE/MSVC-ABI output. Build-only: proves the toolchain compiles clean, does not produce a runnable-in-game package. See extern/CommonLibSSE-NG/examples/linux-cross-compile/README.md for one-time host setup (xwin, wine, vcpkg). FFX_FI/FFX_OF are off to avoid frame-interpolation/optical-flow shaders unused by this codebase. KNOWN GAP (see AGENTS.md): FidelityFX-SDK's bundled shader compiler (FidelityFX_SC.exe) has genuine, deterministic parser bugs under Wine that also affect FSR1/FSR2/FSR3 Upscaler shaders, which this codebase does use -- the build currently fails at that step; everything up through C++ compilation of our own code is verified working.",
             "cacheVariables": {
                 "ENABLE_SKYRIM_AE": "ON",
                 "ENABLE_SKYRIM_SE": "ON",
@@ -184,7 +185,9 @@
                 "BUILD_SHADER_TESTS": "OFF",
                 "VCPKG_APPLOCAL_DEPS": "OFF",
                 "COMMONLIB_PREBUILT_MULTICONFIG": "ON",
-                "CMAKE_INTERPROCEDURAL_OPTIMIZATION": "OFF"
+                "CMAKE_INTERPROCEDURAL_OPTIMIZATION": "OFF",
+                "FFX_FI": "OFF",
+                "FFX_OF": "OFF"
             },
             "inherits": "skyrim-linux-clangcl"
         }
