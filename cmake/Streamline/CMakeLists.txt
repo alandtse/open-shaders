@@ -24,6 +24,11 @@ if(CMAKE_HOST_UNIX)
     _sl_pcl_h_content
     "${_sl_pcl_h_content}"
   )
+  # string(REPLACE) is a silent no-op if the search text isn't found;
+  # fail loud rather than silently ship the unpatched, broken form.
+  if(NOT _sl_pcl_h_content MATCHES "Portable to_underlying fallback")
+    message(FATAL_ERROR "${_sl_pcl_h}: expected to_underlying patch text not found; Streamline-DX12 may have changed upstream.")
+  endif()
   string(REPLACE "\n" "\r\n" _sl_pcl_h_content "${_sl_pcl_h_content}")
   file(WRITE "${_sl_pcl_h}" "${_sl_pcl_h_content}")
 endif()

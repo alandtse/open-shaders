@@ -197,7 +197,7 @@ cmake --preset Linux-ClangCL
 cmake --build --preset Linux-ClangCL
 ```
 
-This proves the toolchain compiles clean; it does not produce a package runnable in-game (struct-layout or vtable mismatches between clang-cl and real MSVC compile fine and only surface as an in-game crash). One-time host setup (xwin, wine, vcpkg) is documented in `extern/CommonLibSSE-NG/examples/linux-cross-compile/README.md`.
+This proves the toolchain compiles clean; it does not produce a package runnable in-game (struct-layout or vtable mismatches between clang-cl and real MSVC compile fine and only surface as an in-game crash). One-time host setup (xwin, wine, llvm-mingw, vcpkg) is documented in `extern/CommonLibSSE-NG/examples/linux-cross-compile/README.md`.
 
 ## Debugging
 

@@ -242,7 +242,11 @@ jobs:
             - name: Verify output exists
               run: |
                   test -f main/build/Linux-ClangCL/CommunityShaders.dll
-                  file main/build/Linux-ClangCL/CommunityShaders.dll | grep -q "PE32+ executable"
+                  test -f main/build/Linux-ClangCL/CommunityShaders.lib
+                  test -f main/build/Linux-ClangCL/CommunityShaders.pdb
+                  file_type="$(file --brief main/build/Linux-ClangCL/CommunityShaders.dll)"
+                  printf '%s\n' "$file_type"
+                  grep -Eq '^PE32\+ executable \(DLL\).*x86-64, for MS Windows' <<<"$file_type"
 
             # These logs don't match run-vcpkg's collection patterns, so they are
             # invisible on failure unless surfaced here.

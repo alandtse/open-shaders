@@ -175,7 +175,7 @@
         },
         {
             "name": "Linux-ClangCL",
-            "description": "Linux/macOS-host cross-compile (clang-cl+lld-link+xwin) targeting the same Windows PE/MSVC-ABI output. Build-only: proves the toolchain compiles clean, does not produce a runnable-in-game package. See extern/CommonLibSSE-NG/examples/linux-cross-compile/README.md for one-time host setup (xwin, wine, vcpkg). FFX_FI/FFX_OF are off to avoid frame-interpolation/optical-flow shaders unused by this codebase. KNOWN GAP (see AGENTS.md): FidelityFX-SDK's bundled shader compiler (FidelityFX_SC.exe) has genuine, deterministic parser bugs under Wine that also affect FSR1/FSR2/FSR3 Upscaler shaders, which this codebase does use -- the build currently fails at that step; everything up through C++ compilation of our own code is verified working.",
+            "description": "Linux/macOS-host cross-compile (clang-cl+lld-link+xwin) targeting the same Windows PE/MSVC-ABI output. Build-only: proves the toolchain compiles clean and produces a working CommunityShaders.dll; does not produce a runnable-in-game package. See extern/CommonLibSSE-NG/examples/linux-cross-compile/README.md for one-time host setup (xwin, wine, llvm-mingw, vcpkg). FFX_FI/FFX_OF are off to avoid frame-interpolation/optical-flow shaders unused by this codebase. See docs/development/linux-macos-cross-compile.md for the FidelityFX_SC.exe/Wine fix and overlay-port details.",
             "cacheVariables": {
                 "ENABLE_SKYRIM_AE": "ON",
                 "ENABLE_SKYRIM_SE": "ON",
