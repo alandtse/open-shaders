@@ -69,12 +69,18 @@ option(
     "Include features whose .ini has autoupload != true in the AIO. Off by default — the AIO ships only release-ready features. Turn on for local dev builds that want every feature regardless of release status."
     OFF
 )
+option(
+    SKIP_RUNTIME_DOWNLOADS
+    "Skip redistributable runtime downloads for DLL-only development builds."
+    OFF
+)
 message("\tAuto plugin deployment: ${AUTO_PLUGIN_DEPLOYMENT}")
 message("\tZip to dist: ${ZIP_TO_DIST}")
 message("\tAIO Zip to dist: ${AIO_ZIP_TO_DIST}")
 message("\tTracy profiler: ${TRACY_SUPPORT}")
 message("\tShader tests: ${BUILD_SHADER_TESTS}")
 message("\tAIO include non-autoupload features: ${AIO_INCLUDE_NON_AUTOUPLOAD}")
+message("\tSkip runtime downloads: ${SKIP_RUNTIME_DOWNLOADS}")
 message("\tEffects11: ${ENABLE_EFFECTS11}")
 
 # #######################################################################################################################
@@ -660,8 +666,10 @@ install(
     PATTERN "Tests" EXCLUDE
 )
 include(FeaturePackaging)
-include(FidelityFX-Runtime)
-include(Streamline-Runtime)
+if(NOT SKIP_RUNTIME_DOWNLOADS)
+    include(FidelityFX-Runtime)
+    include(Streamline-Runtime)
+endif()
 install(CODE "file(REMOVE \${CMAKE_INSTALL_PREFIX}/Core)" COMPONENT Shaders)
 
 # #######################################################################################################################
