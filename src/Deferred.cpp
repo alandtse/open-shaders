@@ -331,8 +331,7 @@ void Deferred::StartDeferred()
 
 	OverrideBlendStates();
 
-	// VR: classify Eye 1 pixels (for SSGI/Shadows too) and, when culling is also ready,
-	// write hardware stencil marks before geometry rendering.
+	// Classifies Eye 1 for SSGI/Shadows reuse too, not just VR's own stereo optimization.
 	if (globals::game::isVR && globals::features::vr.IsStereoOptimizationDispatchReady()) {
 		globals::features::vr.stereoOpt.DispatchStencil();
 	}

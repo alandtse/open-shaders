@@ -324,8 +324,6 @@ void VRStereoOptimizations::UpdateConstantBuffer()
 
 void VRStereoOptimizations::DispatchStencil()
 {
-	// Culling Eye 1 additionally requires the repair pipeline ready, else Eye 1 is left
-	// corrupt -- CanDispatchStencil gates that below.
 	if (!globals::game::isVR || !CanClassify())
 		return;
 
