@@ -34,13 +34,16 @@ If you've already run an upstream merge without this config, git would have rais
 # A stale local dev would produce a PR based on an out-of-date branch
 # or have you re-resolving conflicts already resolved by a prior run.
 git fetch origin dev upstream/dev
-git switch -c sync/upstream-dev-$(date +%Y%m%d) origin/dev
+BRANCH="sync/upstream-dev-$(date +%Y%m%d)"
+git switch -c "$BRANCH" origin/dev
 
 git merge --no-ff --no-edit \
     -m "chore(sync): merge upstream/dev as of $(git rev-parse --short upstream/dev)" \
     upstream/dev
 # resolve conflicts (only in non-fork-owned paths), then:
-git push origin sync/upstream-dev-$(date +%Y%m%d)
+git add <resolved-files>
+git commit --no-edit
+git push origin "$BRANCH"
 gh pr create --base dev \
     --title "chore(sync): merge upstream/dev as of $(git rev-parse --short upstream/dev)" \
     --body "Merges upstream community-shaders/skyrim-community-shaders dev as of $(git rev-parse --short upstream/dev)."

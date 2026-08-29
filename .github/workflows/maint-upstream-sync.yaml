@@ -132,7 +132,7 @@ jobs:
               if: steps.fetch.outputs.already_synced != 'true' && steps.existing_pr.outputs.exists != 'true'
               id: branch
               run: |
-                  BRANCH="sync/upstream-dev-$(date -u +%Y%m%d)"
+                  BRANCH="sync/upstream-dev-$(date -u +%Y%m%d)-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
                   git switch -c "$BRANCH"
                   echo "name=${BRANCH}" >> "$GITHUB_OUTPUT"
 
