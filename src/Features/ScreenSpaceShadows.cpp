@@ -104,7 +104,6 @@ namespace
 			FoveatedCommon::kCenterFeather,
 			a_state.centerHorizontalScale);
 	}
-
 }
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
@@ -412,8 +411,6 @@ void ScreenSpaceShadows::DrawShadows()
 			DispatchEye("Left Eye", GetComputeRaymarch(), 0, lightProjectionF.data(), InvTexSizeX, InvTexSizeY);
 		}
 
-		// Eye 1 is always fully marched so the reproject's disocclusion fallback reads a
-		// real shadow, not Prepass's lit clear.
 		auto lightProjectionRightF = CalculateLightProjection(1);
 		{
 			CS_GPU_PASS("SSS::RightEye");
