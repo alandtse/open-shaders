@@ -60,6 +60,11 @@ void VRStereoOptimizations::LoadSettings(json& o_json)
 	loadClampedFloat("FoveatedRegionCenterX", settings.foveatedRegionCenterX, 0.0f, 1.0f);
 	loadClampedFloat("FoveatedRegionCenterY", settings.foveatedRegionCenterY, 0.0f, 1.0f);
 	loadClampedFloat("FullBlendDistance", settings.fullBlendDistance, 0.0f, 50000.0f);
+	// ForwardOcclusionScale (shipped v2.4.0+) tuned an inverted, effectively-broken formula (see
+	// af5aadb45); its saved values carry no valid meaning under the corrected formula, so we
+	// intentionally reset to the new default instead of migrating a stale number.
+	if (!o_json.contains("DirectionalOcclusionRatio") && o_json.contains("ForwardOcclusionScale"))
+		logger::info("[VR] ForwardOcclusionScale is obsolete; resetting DirectionalOcclusionRatio to default {}", settings.directionalOcclusionRatio);
 	loadClampedFloat("DirectionalOcclusionRatio", settings.directionalOcclusionRatio, 0.0f, 1.0f);
 
 	loadBool("UseEyeTracking", settings.useEyeTracking);
@@ -324,6 +329,8 @@ void VRStereoOptimizations::UpdateConstantBuffer()
 
 void VRStereoOptimizations::DispatchStencil()
 {
+	classifiedThisFrame = false;
+
 	if (!globals::game::isVR || !CanClassify())
 		return;
 
@@ -377,6 +384,8 @@ void VRStereoOptimizations::DispatchStencil()
 		context->CSSetConstantBuffers(1, 1, &nullCB);
 		context->CSSetShader(nullptr, nullptr, 0);
 	}
+
+	classifiedThisFrame = true;
 
 	// Only stereoMode being on culls Eye 1; other consumers just read the mode texture above.
 	if (CanDispatchStencil()) {

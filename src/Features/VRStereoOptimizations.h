@@ -150,9 +150,11 @@ struct VRStereoOptimizations
 
 	/// @brief True when the mode texture holds real classification values, not debugDepthMap's
 	/// unrelated visualization overload -- the gate external consumers (SSGI, Shadows) must use.
+	/// Also requires this frame's classify dispatch to have actually written the texture: a null
+	/// depth SRV (see DispatchStencil) skips the write and leaves stale/previous-frame data.
 	bool CanExternallyConsumeClassification() const
 	{
-		return CanClassify() && !settings.debugDepthMap;
+		return CanClassify() && !settings.debugDepthMap && classifiedThisFrame;
 	}
 
 	/**
@@ -264,6 +266,8 @@ private:
 
 	bool stencilActive = false;
 	uint32_t stencilSwapCount = 0;
+	/// True once DispatchStencil() has written texPerPixelMode for the current frame.
+	bool classifiedThisFrame = false;
 
 	// GBufferFillCS does typed UAV loads on the G-buffer formats (R10G10B10A2,
 	// R11G11B10, R16_UNORM, fp16); without TypedUAVLoadAdditionalFormats those reads
