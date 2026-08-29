@@ -134,44 +134,20 @@ if(MSVC)
 	)
 
 	if(CMAKE_HOST_UNIX)
-		# The clang-cl shipped by this Linux/macOS host's LLVM doesn't
-		# recognize a few of the /Zc: flags above (e.g. externC,
-		# externConstexpr, hiddenFriend), which /WX would otherwise turn
-		# into a hard error ("argument unused during compilation").
-		# Harmless to ignore: native Windows presets are unaffected by
-		# this CMAKE_HOST_UNIX guard.
+		# This LLVM's clang-cl rejects some /Zc: flags above; /WX would
+		# otherwise hard-error on them. Native Windows presets are unaffected.
 		target_compile_options("${PROJECT_NAME}" PRIVATE -Wno-unused-command-line-argument)
 
-		# target_compile_features(cxx_std_23) resolves to a raw
-		# `-clang:-std=c++23` passthrough on this LLVM version rather than
-		# clang-cl's own `/std:` flag or a real __cplusplus/_MSVC_LANG bump
-		# -- MSVC STL derives _STL_LANG from _MSVC_LANG (falling back to
-		# __cplusplus only if _MSVC_LANG is undefined), and neither ends up
-		# past C++14 here, so every _HAS_CXX17/20/23 gate in the STL stays
-		# false (e.g. std::to_underlying, gated on _HAS_CXX23, is invisible)
-		# even though the language standard itself is correctly C++23.
-		# Fix the actual root: define _MSVC_LANG directly, which
-		# vcruntime.h's _STL_LANG derivation already treats as authoritative
-		# over __cplusplus.
+		# cxx_std_23 doesn't reach _MSVC_LANG under this clang-cl, so MSVC
+		# STL's C++23 gates (e.g. std::to_underlying) stay closed without it.
 		target_compile_definitions("${PROJECT_NAME}" PRIVATE _MSVC_LANG=202302L)
 
-		# stb_image.h's SSE2 runtime-detection path calls the MSVC __cpuid
-		# intrinsic (via <intrin.h>) under `#ifdef _MSC_VER`, which clang-cl
-		# also defines for compatibility. This LLVM/xwin combination's
-		# __cpuid doesn't accept that call form ("builtin functions must be
-		# directly called"). STBI_NO_SIMD is stb_image.h's own documented
-		# escape hatch for exactly this class of platform-detection issue
-		# (see its header comment); it only disables the SSE2 fast path,
-		# falling back to the scalar decoder, so no functional change.
+		# This LLVM's __cpuid rejects stb_image.h's SSE2 call form.
+		# STBI_NO_SIMD (stb_image.h's own escape hatch) falls back to scalar.
 		target_compile_definitions("${PROJECT_NAME}" PRIVATE STBI_NO_SIMD)
 
-		# This preset's whole purpose (see CMakePresets.json) is proving
-		# the toolchain compiles clean, not matching every warning this
-		# LLVM version happens to emit differently from whatever compiler
-		# native CI uses -- /WX here would fail the build on warnings that
-		# are cosmetic differences between compiler versions, not defects
-		# introduced by cross-compiling. /W4 stays on so warnings are still
-		# visible in build output.
+		# /WX off: this preset proves the toolchain compiles, not that every
+		# warning matches native CI's compiler. /W4 keeps warnings visible.
 		target_compile_options("${PROJECT_NAME}" PRIVATE /WX-)
 	endif()
 
