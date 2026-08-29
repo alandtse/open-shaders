@@ -92,8 +92,7 @@ public:
 	// Stereo bilateral blend pass - called from Deferred::DeferredPasses after composite
 	void DrawStereoBlend();
 	void CompileStereoBlendShaders();
-	/// Gates whether DispatchStencil() should even be called this frame. DispatchStencil()
-	/// internally decides classify-only vs. classify-and-cull via CanClassify()/CanDispatchStencil().
+	/// Gates whether DispatchStencil() should even be called this frame.
 	bool IsStereoOptimizationDispatchReady() const
 	{
 		return globals::game::isVR && stereoOpt.CanClassify();

@@ -87,9 +87,7 @@ static const uint kEdgeDistNone = 0xFFFFFFFFu;
 			isDisoccluded = (rawRelDiff > DisocclusionThreshold);
 
 			// Directional disocclusion: catches silhouette edges the symmetric rawRelDiff check
-			// above misses -- Eye 0 sees a real occluder meaningfully closer than what Eye 1
-			// sees at the reprojected point. Fires only when Eye 0's depth is under this
-			// fraction of Eye 1's; 0 = disabled.
+			// above misses -- Eye 0 sees a real occluder meaningfully closer than Eye 1's.
 			if (!isDisoccluded && eyeIndex == 1 && DirectionalOcclusionRatio > 0.0) {
 				bool otherIsSky = (otherDepth < EPSILON_DEPTH_SKY) || (otherDepth >= 1.0);
 				if (!otherIsSky) {

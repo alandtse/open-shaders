@@ -83,9 +83,8 @@ static const float kDepthAgreeThreshold = 0.05;  // NDC diff above which eye 0 s
 		return;
 	}
 
-	// Fall back to eye 1's own value (unshadowed clear or native march) on disocclusion.
-	// UseModeTexture additionally requires VRStereoOptimizations' classification to agree,
-	// catching silhouette boundaries the depth-only agreement test below can miss.
+	// Fall back to eye 1's own value on disocclusion; UseModeTexture also requires
+	// VRStereoOptimizations' classification to agree, catching boundaries depth alone misses.
 	float result = sourceShadow;
 	Stereo::StereoBilateralResult r = (Stereo::StereoBilateralResult)0;
 	if (!UseModeTexture || IsModeMain(SrcModeTexture, dtid)) {
