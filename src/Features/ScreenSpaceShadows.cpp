@@ -76,7 +76,6 @@ namespace
 
 	struct SssPreset
 	{
-		bool reproject;
 		bool foveated;
 	};
 
@@ -84,7 +83,7 @@ namespace
 	// foveation subrect, which Upscaling's own tiers only enable at Performance.
 	constexpr SssPreset GetSssPreset(Feature::PerfProfile profile)
 	{
-		return { Feature::ProfileEnablesReproject(profile), profile == Feature::PerfProfile::Performance };
+		return { profile == Feature::PerfProfile::Performance };
 	}
 
 	FoveatedCommon::DispatchBounds BuildFoveatedBounds(
@@ -106,90 +105,6 @@ namespace
 			a_state.centerHorizontalScale);
 	}
 
-	// Delta-driven band: collapses to the margin when the head is still (recovering the
-	// eye-1 skip's perf), grows with movement. Pure CPU, mirrors BuildFoveatedBounds.
-	FoveatedCommon::DispatchBounds BuildDisocclusionBounds(
-		uint32_t a_eyeWidth,
-		uint32_t a_eyeHeight,
-		uint32_t a_eyeIndex)
-	{
-		using namespace DirectX::SimpleMath;
-		FoveatedCommon::DispatchBounds bounds{};
-		const int eyeW = static_cast<int>(a_eyeWidth);
-		const int eyeH = static_cast<int>(a_eyeHeight);
-		if (eyeW <= 0 || eyeH <= 0)
-			return bounds;
-
-		const float ipd = Util::GetIPDFromHMD();
-		const float nearClip = (globals::game::cameraNear && *globals::game::cameraNear > 0.0f) ? *globals::game::cameraNear : 0.05f;
-		const float stereoScale = ipd / nearClip;
-
-		const auto currPos = globals::game::frameBufferCached.GetCameraPosAdjust(a_eyeIndex);
-		const auto prevPos = globals::game::frameBufferCached.GetCameraPreviousPosAdjust(a_eyeIndex);
-		const Vector3 posDeltaV(currPos.x - prevPos.x, currPos.y - prevPos.y, currPos.z - prevPos.z);
-		const float posDelta = std::max(posDeltaV.Length(), 0.0f);
-
-		auto forwardOf = [](const Matrix& vpInv) -> Vector3 {
-			Vector4 n = Vector4::Transform(Vector4(0.0f, 0.0f, 0.0f, 1.0f), vpInv);
-			Vector4 f = Vector4::Transform(Vector4(0.0f, 0.0f, 1.0f, 1.0f), vpInv);
-			if (std::abs(n.w) < 1e-6f || std::abs(f.w) < 1e-6f)
-				return Vector3(0.0f, 0.0f, 1.0f);
-			n /= n.w;
-			f /= f.w;
-			Vector3 d(f.x - n.x, f.y - n.y, f.z - n.z);
-			d.Normalize();
-			if (!std::isfinite(d.x) || !std::isfinite(d.y) || !std::isfinite(d.z))
-				return Vector3(0.0f, 0.0f, 1.0f);
-			return d;
-		};
-		const Matrix currVPInv = globals::game::frameBufferCached.GetCameraViewProjInverse(a_eyeIndex);
-		const Matrix prevVPInv = globals::game::frameBufferCached.GetCameraPreviousViewProjUnjittered(a_eyeIndex).Invert();
-		const Vector3 currFwd = forwardOf(currVPInv);
-		const Vector3 prevFwd = forwardOf(prevVPInv);
-		float angDelta = std::acos(std::clamp(currFwd.Dot(prevFwd), -1.0f, 1.0f));
-		if (!std::isfinite(angDelta))
-			angDelta = 0.0f;
-
-		constexpr float kMargin = 12.0f;
-		constexpr float kPosGain = 0.3f;
-		constexpr float kAngGain = 0.05f;
-		const float posTermPx = static_cast<float>(eyeW) * (posDelta / nearClip) * kPosGain;
-		const float angTermPx = static_cast<float>(eyeW) * stereoScale * kAngGain * angDelta;
-		const float maxDisparityPx = std::clamp(posTermPx + angTermPx, 0.0f, static_cast<float>(eyeW));
-		float bandWidth = std::clamp(maxDisparityPx + kMargin, 0.0f, static_cast<float>(eyeW));
-
-		// Disocclusion accumulates on the side eye 1 is displaced toward (IPD parallax side).
-		const Matrix vi = globals::game::frameBufferCached.GetCameraViewInverse(a_eyeIndex).Transpose();
-		const Vector3 headRight(vi._11, vi._12, vi._13);
-		const auto e0 = globals::game::frameBufferCached.GetCameraPosAdjust(0);
-		const auto e1 = globals::game::frameBufferCached.GetCameraPosAdjust(1);
-		const Vector3 eyeOffset(e1.x - e0.x, e1.y - e0.y, e1.z - e0.z);
-		const bool parallaxRight = eyeOffset.Dot(headRight) >= 0.0f;
-
-		int minX, maxX;
-		const int bandW = static_cast<int>(bandWidth);
-		if (parallaxRight) {
-			minX = std::max(eyeW - bandW, 0);
-			maxX = eyeW;
-		} else {
-			minX = 0;
-			maxX = std::min(bandW, eyeW);
-		}
-		int minY = 0;
-		int maxY = eyeH;
-
-		minX = FoveatedCommon::AlignDownToThreadGroup(minX);
-		maxX = std::min(FoveatedCommon::AlignUpToThreadGroup(maxX), eyeW);
-		maxY = std::min(FoveatedCommon::AlignUpToThreadGroup(maxY), eyeH);
-		if (maxX <= minX || maxY <= minY)
-			return bounds;
-
-		bounds.minX = minX;
-		bounds.minY = minY;
-		bounds.maxX = maxX;
-		bounds.maxY = maxY;
-		return bounds;
-	}
 }
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
@@ -203,24 +118,11 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 
 void ScreenSpaceShadows::DrawStereoToggles()
 {
-	// Backing state is two bools (enableStereoSync umbrella + useStereoReproject method);
-	// surface them as one 3-state selector so the modes don't read as rival toggles.
-	int mode = !enableStereoSync ? 0 : (useStereoReproject ? 2 : 1);
-	const char* modes[] = {
-		T(TKEY("vr_stereo_mode_off"), "Off"),
-		T(TKEY("vr_stereo_mode_sync"), "Bilateral Sync"),
-		T(TKEY("vr_stereo_mode_reproject"), "Reprojection")
-	};
-	if (ImGui::Combo(T(TKEY("vr_stereo_mode"), "Stereo Consistency"), &mode, modes, IM_ARRAYSIZE(modes))) {
-		enableStereoSync = mode != 0;
-		useStereoReproject = mode == 2;
-	}
+	ImGui::Checkbox(T(TKEY("vr_stereo_sync"), "Stereo Consistency"), &enableStereoSync);
 	if (auto _tt = Util::HoverTooltipWrapper())
-		ImGui::Text("%s", T(TKEY("vr_stereo_mode_tooltip"),
+		ImGui::Text("%s", T(TKEY("vr_stereo_sync_tooltip"),
 							  "Off: each eye computes shadows independently (may mismatch between eyes).\n"
-							  "Bilateral Sync: both eyes compute, then reconcile (highest quality, highest cost).\n"
-							  "Reprojection: compute Eye 0 and transfer to Eye 1, skipping its raymarch. "
-							  "Fastest; disoccluded pixels fall back to unshadowed."));
+							  "On: both eyes compute, then reconcile (matches between eyes, highest cost)."));
 }
 
 void ScreenSpaceShadows::DrawFoveatedToggle()
@@ -266,7 +168,6 @@ void ScreenSpaceShadows::ApplyPerformanceProfile(PerfProfile profile)
 {
 	const auto preset = GetSssPreset(profile);
 	enableStereoSync = true;
-	useStereoReproject = preset.reproject;
 	bendSettings.EnableFoveated = preset.foveated ? 1u : 0u;
 }
 
@@ -274,7 +175,6 @@ bool ScreenSpaceShadows::MatchesPerformanceProfile(PerfProfile profile) const
 {
 	const auto preset = GetSssPreset(profile);
 	return enableStereoSync &&
-	       useStereoReproject == preset.reproject &&
 	       (bendSettings.EnableFoveated != 0) == preset.foveated;
 }
 
@@ -322,8 +222,6 @@ void ScreenSpaceShadows::ClearShaderCache()
 {
 	InvalidateRaymarchShaders();
 	stereoSyncCS.Reset();
-	stereoReprojectCS.Reset();
-	stereoReprojectDebugCS.Reset();
 }
 
 uint ScreenSpaceShadows::GetScaledSampleCount()
@@ -410,7 +308,6 @@ void ScreenSpaceShadows::DrawShadows()
 		viewportSize[0] /= 2;
 
 	const FoveatedShadowState foveatedState = ResolveFoveatedShadowState(bendSettings);
-	const bool stereoReprojectActive = useStereoReproject && enableStereoSync && GetStereoReprojectCS();
 
 	// Setup common render state.
 	// SSS always uses 24/32-bit depth, never the R16_UNORM half-precision path.
@@ -446,18 +343,7 @@ void ScreenSpaceShadows::DrawShadows()
 
 		int minRenderBounds[2] = { 0, 0 };
 		int maxRenderBounds[2] = { viewportSize[0], viewportSize[1] };
-		if (stereoReprojectActive && eyeIndex == 1 && !foveatedState.active) {
-			// Reproject fallback needs a real eye-1 shadow only in the disocclusion band;
-			// the rest is filled by the eye-0 reproject. An empty band falls through to a
-			// full march so eye 1 is never left at Prepass's lit clear.
-			const auto bounds = BuildDisocclusionBounds(static_cast<uint32_t>(viewportSize[0]), static_cast<uint32_t>(viewportSize[1]), eyeIndex);
-			if (bounds.maxX > bounds.minX && bounds.maxY > bounds.minY) {
-				minRenderBounds[0] = bounds.minX;
-				minRenderBounds[1] = bounds.minY;
-				maxRenderBounds[0] = bounds.maxX;
-				maxRenderBounds[1] = bounds.maxY;
-			}
-		} else if (foveatedState.active) {
+		if (foveatedState.active) {
 			const auto bounds = BuildFoveatedBounds(foveatedState, eyeIndex, 0u, static_cast<uint32_t>(viewportSize[0]), static_cast<uint32_t>(viewportSize[1]));
 			if (bounds.maxX <= bounds.minX || bounds.maxY <= bounds.minY) {
 				return;
@@ -526,8 +412,8 @@ void ScreenSpaceShadows::DrawShadows()
 			DispatchEye("Left Eye", GetComputeRaymarch(), 0, lightProjectionF.data(), InvTexSizeX, InvTexSizeY);
 		}
 
-		// Eye 1 is always marched so the reproject's disocclusion fallback reads a real
-		// shadow, not Prepass's lit clear; DispatchEye narrows it when reproject is active.
+		// Eye 1 is always fully marched so the reproject's disocclusion fallback reads a
+		// real shadow, not Prepass's lit clear.
 		auto lightProjectionRightF = CalculateLightProjection(1);
 		{
 			CS_GPU_PASS("SSS::RightEye");
@@ -550,44 +436,20 @@ void ScreenSpaceShadows::DrawShadows()
 	context->CSSetConstantBuffers(1, 1, &buffer);
 }
 
-ID3D11ComputeShader* ScreenSpaceShadows::GetStereoReprojectCS()
-{
-	// Clamp to Developer Mode at use-time: the shared debug mode persists, so it must
-	// not keep painting the debug view into gameplay after dev mode is turned off.
-	const bool useDebug = globals::features::vr.settings.ReprojectDebugMode == 1 && globals::state->IsDeveloperMode();
-
-	// Never let a dev-only debug-variant compile failure disable the production reproject.
-	auto& shader = useDebug ? stereoReprojectDebugCS : stereoReprojectCS;
-	std::vector<std::pair<const char*, const char*>> defines{ { "VR", "" }, { "FRAMEBUFFER", "" } };
-	if (globals::features::terrainBlending.loaded)
-		defines.push_back({ "TERRAIN_BLENDING", "" });
-	if (useDebug)
-		defines.push_back({ "DEBUG_DISOCCLUSION", "" });
-	return shader.Get(L"Data\\Shaders\\ScreenSpaceShadows\\ShadowReprojectCS.hlsl", defines, "cs_5_0");
-}
-
 void ScreenSpaceShadows::DrawStereoSync()
 {
 	if (!globals::game::isVR || !enableStereoSync || !stereoSyncCopyTex || !stereoSyncCB)
 		return;
 
-	// Prefer the reproject variant; compile the bilateral sync lazily only when it is the
-	// actual fallback, so the default reproject path never builds an unused shader.
-	ID3D11ComputeShader* stereoCS = useStereoReproject ? GetStereoReprojectCS() : nullptr;
-	bool usingSync = !stereoCS;
-	if (usingSync) {
-		std::vector<std::pair<const char*, const char*>> defines{ { "VR", "" }, { "FRAMEBUFFER", "" } };
-		if (globals::features::terrainBlending.loaded)
-			defines.push_back({ "TERRAIN_BLENDING", "" });
-		stereoCS = stereoSyncCS.Get(L"Data\\Shaders\\ScreenSpaceShadows\\StereoSyncCS.hlsl", defines, "cs_5_0");
-	}
+	std::vector<std::pair<const char*, const char*>> defines{ { "VR", "" }, { "FRAMEBUFFER", "" } };
+	if (globals::features::terrainBlending.loaded)
+		defines.push_back({ "TERRAIN_BLENDING", "" });
+	ID3D11ComputeShader* stereoCS = stereoSyncCS.Get(L"Data\\Shaders\\ScreenSpaceShadows\\StereoSyncCS.hlsl", defines, "cs_5_0");
 	if (!stereoCS)
 		return;
 
 	ZoneScoped;
-	// Label the pass by the path actually dispatched so profiler captures aren't
-	// mislabeled as the bilateral sync when the reproject variant runs.
-	CS_GPU_PASS_SELECT(usingSync, "ScreenSpaceShadows::StereoSync", "ScreenSpaceShadows::StereoReproject");
+	CS_GPU_PASS("ScreenSpaceShadows::StereoSync");
 
 	auto context = globals::d3d::context;
 
@@ -734,21 +596,18 @@ void ScreenSpaceShadows::LoadSettings(json& o_json)
 	bendSettings = o_json;
 	// Absent key resets to the default, so an older blob can't pin a stale state.
 	enableStereoSync = o_json.value("EnableStereoSync", true);
-	useStereoReproject = o_json.value("UseStereoReproject", true);
 }
 
 void ScreenSpaceShadows::SaveSettings(json& o_json)
 {
 	o_json = bendSettings;
 	o_json["EnableStereoSync"] = enableStereoSync;
-	o_json["UseStereoReproject"] = useStereoReproject;
 }
 
 void ScreenSpaceShadows::RestoreDefaultSettings()
 {
 	bendSettings = {};
 	enableStereoSync = true;
-	useStereoReproject = true;
 }
 
 bool ScreenSpaceShadows::HasShaderDefine(RE::BSShader::Type)
