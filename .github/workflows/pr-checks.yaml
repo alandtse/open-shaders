@@ -99,16 +99,8 @@ jobs:
             # Non-fork PRs now save their own PR-preset cache generation.
             cmake-preset: PR
 
-    # Security: this job compiles untrusted fork code, same as `build` above.
-    # Inline (not via a reusable workflow), so no secrets are in scope by
-    # construction; permissions are explicitly read-only.
-    #
-    # Build-only and unmatrixed on purpose: proves the Linux/macOS-host
-    # cross-compile toolchain (clang-cl+lld-link+xwin, see
-    # extern/CommonLibSSE-NG/examples/linux-cross-compile/) still compiles
-    # this repo's own vcpkg dependency set clean. The output is a Windows PE
-    # DLL a Linux runner can't execute, so this never replaces the real
-    # windows-2025-vs2026 `build` job above.
+    # Inline (no secrets in scope, read-only permissions) and build-only/unmatrixed: proves the
+    # cross-compile toolchain works, but a Linux runner can't run the resulting Windows PE DLL.
     build-linux-cross-compile:
         name: Build (Linux cross-compile, build-only)
         needs: [check-changes]
@@ -148,21 +140,17 @@ jobs:
                   baseline=$(python3 -c "import json; print(json.load(open('main/vcpkg.json'))['builtin-baseline'])")
                   echo "baseline=$baseline" >> "$GITHUB_OUTPUT"
 
-            # MSVC STL headers require Clang 19+, and mixing versions across
-            # clang-cl/lld-link/llvm-rc/llvm-mt crashes lld, so take the whole
-            # suite from apt.llvm.org rather than Ubuntu's default.
-            #
-            # Keep wine64 named explicitly: with i386 multiarch on, apt otherwise
-            # satisfies `wine` with wine32:i386 alone and leaves no 64-bit loader,
-            # so every x86-64 PE fails with "Bad EXE format".
             - name: Install cross-compile toolchain
               run: |
                   sudo dpkg --add-architecture i386
                   sudo apt-get update
+                  # wine64 named explicitly: with i386 multiarch on, apt can satisfy `wine` from
+                  # wine32:i386 alone, leaving no 64-bit loader (x86-64 PEs fail "Bad EXE format").
                   sudo apt-get install -y ninja-build wine wine64 wine32:i386 g++ lsb-release wget gnupg software-properties-common
                   curl -fsSL --retry 3 --retry-all-errors -o /tmp/llvm.sh https://raw.githubusercontent.com/opencollab/llvm-jenkins.debian.net/cf853fefa308484749df8a87004c580a6c0fe830/llvm.sh
                   echo "03878e08f47b66cc95bc4b544b0db3c6d9ce8d60e6cf2492ae357984330a9eae  /tmp/llvm.sh" | sha256sum -c -
                   chmod +x /tmp/llvm.sh
+                  # Clang 19+ required for MSVC STL; mixed clang-cl/lld-link/llvm-rc/llvm-mt versions crash lld.
                   sudo /tmp/llvm.sh 19
 
             # Create the prefix here: left implicit, its first-run setup races the
@@ -177,9 +165,8 @@ jobs:
                   path: ${{ env.XWIN_SYSROOT }}
                   key: xwin-sysroot-${{ env.XWIN_VERSION }}-manifest${{ env.XWIN_MANIFEST_VERSION }}-sdk${{ env.XWIN_SDK_VERSION }}-crt${{ env.XWIN_CRT_VERSION }}
 
-            # Both archives below are checksummed before extraction. xwin publishes
-            # its hash; llvm-mingw doesn't, so that one is pinned from a real
-            # download.
+            # Both archives are checksummed before extraction; llvm-mingw ships no official
+            # hash (unlike xwin), so its checksum is pinned from a real download.
             - name: Generate xwin sysroot
               if: steps.cache-xwin.outputs.cache-hit != 'true'
               env:
@@ -196,10 +183,8 @@ jobs:
                       --output "$XWIN_SYSROOT_DIR" --include-debug-libs \
                       --use-winsysroot-style --preserve-ms-arch-notation
 
-            # Do not put this on PATH: its bundled clang-cl/lld-link shadow the
-            # real toolchain's and break the link step. The directxtk overlay
-            # port's portfile reads LLVM_MINGW_BIN directly to build the fxc2
-            # shader-compiler stand-in.
+            # Do not put this on PATH: its bundled clang-cl/lld-link shadow the real toolchain's
+            # and break linking. directxtk's portfile reads LLVM_MINGW_BIN directly instead.
             - name: Install llvm-mingw (for the fxc2 shader-compiler stand-in, see extern/CommonLibSSE-NG/examples/linux-cross-compile)
               run: |
                   curl -fsSL --retry 3 --retry-all-errors -o llvm-mingw.tar.xz https://github.com/mstorsjo/llvm-mingw/releases/download/20250910/llvm-mingw-20250910-ucrt-ubuntu-22.04-x86_64.tar.xz

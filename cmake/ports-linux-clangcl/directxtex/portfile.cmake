@@ -17,11 +17,8 @@ vcpkg_from_github(
     ${DIRECTXTEX_PATCHES}
 )
 
-# DirectXTex bundles its own BC6H-encode compute shaders, compiled at build
-# time the same way DirectXTK does -- reuse the identical fxc2-under-Wine
-# stand-in (see the CommonLibSSE-NG submodule's directxtk overlay port for
-# the fuller rationale; duplicated here since vcpkg ports cannot share build
-# logic across separate port installations).
+# DirectXTex compiles its own BC6H-encode shaders at build time; reuse the same fxc2-under-Wine
+# stand-in as the directxtk port (duplicated -- vcpkg ports can't share build logic).
 if(CMAKE_HOST_UNIX)
     file(WRITE "${SOURCE_PATH}/DirectXTex/Shaders/wine-compile-shaders.sh" "#!/bin/sh
 set -u

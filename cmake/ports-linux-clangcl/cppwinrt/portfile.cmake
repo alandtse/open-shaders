@@ -18,18 +18,8 @@ endif()
 
 set(CPPWINRT_TOOL "${src}/bin/cppwinrt.exe")
 
-# The upstream vcpkg port requires a real Windows SDK (WindowsSDKDir /
-# WindowsSDKVersion env vars + References/*.winmd) to generate OS-namespace
-# projection headers (winrt/Windows.Foundation.h etc.) -- none of which an
-# `xwin` sysroot provides (xwin stages headers/import libs only, not SDK
-# metadata). This codebase only consumes winrt::com_ptr (a header-only COM
-# smart pointer from the base library, no OS projections), so generate with
-# cppwinrt.exe's `-base` flag instead: it emits a self-contained winrt/base.h
-# (including com_ptr) with no Windows Metadata input at all. (`-input local`
-# looks like the more obvious choice, but it reads from %WinDir%\System32\
-# WinMetadata, which is empty in a fresh Wine prefix and fails with "Invalid
-# row index" -- verified against cppwinrt.exe 2.0.250303.1 itself, since the
-# official port's own -help text doesn't spell out that distinction.)
+# `-base` needs no Windows SDK .winmd metadata (xwin stages none); this repo only uses the
+# header-only winrt::com_ptr it provides. `-input local` needs %WinDir%\System32\WinMetadata.
 find_program(WINE_EXECUTABLE NAMES wine)
 if(NOT WINE_EXECUTABLE)
     message(FATAL_ERROR "${PORT}: cross-compiling from a Linux/macOS host needs `wine` on PATH to run cppwinrt.exe (base-headers-only generation, no Windows SDK required).")
@@ -37,11 +27,8 @@ endif()
 
 file(MAKE_DIRECTORY "${CURRENT_PACKAGES_DIR}/include")
 
-# cppwinrt.exe's own argument parser treats a leading "/" as a Windows-style
-# option switch, so a raw Unix path (e.g. "/Users/.../include") is rejected
-# as an unrecognized option rather than read as a positional path -- Wine
-# only translates paths inside Win32 file APIs, never in argv strings.
-# `winepath -w` converts it to the "Z:\..." form the tool actually accepts.
+# cppwinrt.exe treats a leading "/" as a Windows option switch, rejecting a raw Unix path;
+# `winepath -w` converts it to the "Z:\..." form the tool accepts (Wine never translates argv).
 find_program(WINEPATH_EXECUTABLE NAMES winepath)
 if(NOT WINEPATH_EXECUTABLE)
     message(FATAL_ERROR "${PORT}: `winepath` (ships alongside `wine`) not found on PATH.")

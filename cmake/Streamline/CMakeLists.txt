@@ -10,12 +10,11 @@ if(MSVC)
 endif()
 
 if(CMAKE_HOST_UNIX)
-  # NVIDIA's own repo, not our fork -- patch here instead of upstream.
-  # sl_pcl.h's __cplusplus==202302L check for std::to_underlying is
-  # unreliable under this toolchain; use the portable fallback always.
-  # CRLF-preserving replace so only these lines show in the diff.
+  # sl_pcl.h's __cplusplus==202302L check for std::to_underlying is unreliable under this
+  # toolchain; patched here (NVIDIA's repo, not our fork) to always use the portable fallback.
   set(_sl_pcl_h "${CMAKE_SOURCE_DIR}/extern/Streamline-DX12/include/sl_pcl.h")
   file(READ "${_sl_pcl_h}" _sl_pcl_h_content)
+  # Normalize to LF first so the REPLACE below matches regardless of the file's checked-out line endings.
   string(REPLACE "\r\n" "\n" _sl_pcl_h_content "${_sl_pcl_h_content}")
   string(
     REPLACE

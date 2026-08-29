@@ -8,12 +8,8 @@ vcpkg_from_github(
     HEAD_REF master
 )
 
-# Upstream ships only an NMake makefile (src/Makefile), which needs a real
-# nmake.exe -- unavailable in an xwin sysroot (xwin stages SDK headers and
-# import libs only, not the MSVC compiler/build-tools package). The library
-# itself is plain portable C/C++, so build it via a small CMakeLists.txt
-# instead (vendored alongside this portfile), compiling the exact same
-# source-file set the upstream makefile does.
+# Upstream's NMake makefile needs nmake.exe, absent from an xwin sysroot; build the plain
+# portable C/C++ sources via a vendored CMakeLists.txt (same source-file set) instead.
 file(COPY "${CMAKE_CURRENT_LIST_DIR}/CMakeLists.txt" DESTINATION "${SOURCE_PATH}")
 
 vcpkg_cmake_configure(
