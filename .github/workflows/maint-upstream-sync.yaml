@@ -13,13 +13,8 @@ name: "Maint: Sync upstream/dev"
 # at every path and lets the `merge=ours` driver fire for fork-owned files,
 # eliminating that whole class of bug.
 #
-# Why a PR and not a direct push: a textually-clean 3-way merge is not proof
-# the result builds — upstream can rename a symbol or change semantics with
-# zero textual conflict. This workflow used to push straight to `dev` via a
-# ruleset-bypass PAT; that path had run cleanly exactly once (2026-07-06) with
-# no CI validation at all before landing. Opening a PR instead gets every sync
-# the same build/test/shader-validation gate as any other change, and removes
-# the standing exposure of a bypass-capable PAT in an unattended weekly job.
+# A textually-clean merge isn't proof it builds -- the PR gate gives every sync the same
+# build/test/shader-validation checks as any other change, without a standing bypass-capable PAT.
 #
 # Versioning: we deliberately do NOT skip the merge commit in semantic-
 # release's commit analysis. The DAG walk picks up upstream's `feat:`/`fix:`
@@ -64,12 +59,8 @@ jobs:
               with:
                   fetch-depth: 0
                   ref: dev
-                  # RELEASE_PAT (not the default GITHUB_TOKEN) so the PR this
-                  # workflow opens triggers downstream PR-checks workflows —
-                  # PRs authored by the default token don't trigger further
-                  # Actions runs. No branch-protection bypass is exercised
-                  # here: the sync branch itself is unprotected, and landing
-                  # on `dev` always goes through the PR, never a direct push.
+                  # RELEASE_PAT (not GITHUB_TOKEN, whose PRs don't trigger downstream PR-checks)
+                  # -- no branch-protection bypass, since landing on `dev` still goes through the PR.
                   token: ${{ secrets.RELEASE_PAT }}
 
             - name: Configure git identity + merge driver
