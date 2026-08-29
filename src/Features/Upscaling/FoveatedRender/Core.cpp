@@ -5,6 +5,7 @@
 #include "../../../Util.h"
 #include "../../Upscaling.h"
 #include "../FoveatedRender.h"
+#include "../NeuralRendering/Integration.h"
 
 #include <cstring>
 
@@ -836,6 +837,7 @@ namespace FoveatedRenderImpl
 
 	void Core::ClearResources()
 	{
+		NeuralRendering::Reset();
 		for (int i = 0; i < 2; ++i) {
 			vrIntermediateColorIn[i].reset();
 			vrIntermediateColorOut[i].reset();
@@ -871,6 +873,7 @@ namespace FoveatedRenderImpl
 		vrBlendSrcSRVOwner = nullptr;
 
 		activeSubrectUVHash = 0;
+		neuralGuidesFrame = UINT32_MAX;
 	}
 
 	void Core::ClearShaderCache()

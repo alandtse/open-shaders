@@ -171,6 +171,7 @@ namespace FoveatedRenderImpl
 				return false;
 			}
 		}
+		Core::neuralGuidesFrame = globals::state ? globals::state->frameCount : UINT32_MAX;
 
 		// Write DLSS output back at subrect position (with optional blend)
 		for (uint32_t i = 0; i < 2; ++i) {

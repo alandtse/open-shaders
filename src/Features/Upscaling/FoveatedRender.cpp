@@ -7,6 +7,8 @@
 #include "../FoveatedCommon.h"
 #include "../Upscaling.h"
 #include "FoveatedRender/Core.h"
+#include "NeuralRendering/Integration.h"
+#include "NeuralRendering/Renderer.h"
 
 #include <algorithm>
 
@@ -23,7 +25,16 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	peripheryTemporalAlpha,
 	subrectBlendMode,
 	subrectFeatherWidth,
-	subrectDitherStrength);
+	subrectDitherStrength,
+	neuralRenderingEnabled,
+	neuralRenderingPreset,
+	neuralRenderingIntensity,
+	neuralRenderingLocalTone,
+	neuralRenderingLocalStructure,
+	neuralRenderingSkinStructure,
+	neuralRenderingStyle,
+	neuralRenderingAutoMask,
+	neuralRenderingUICorrection);
 
 // ============================================================================
 // Lifecycle
@@ -57,11 +68,19 @@ void FoveatedRender::PostPostLoad()
 	// current preset in the DrawEditor dropdown, not just whichever ones they
 	// happened to click as buttons.
 	subrectController.MaterializeNewDefaults();
+	stl::write_vfunc<0x1, UICompositeRenderHook>(RE::VTABLE_BSImagespaceShaderCopyDynamicFetchDisabled[3]);
+}
+
+void FoveatedRender::UICompositeRenderHook::thunk(void* imageSpaceShader, RE::BSTriShape* shape, RE::ImageSpaceEffectParam* param)
+{
+	NeuralRendering::ApplyFoveatedLdr();
+	func(imageSpaceShader, shape, param);
 }
 
 void FoveatedRender::ClearShaderCache()
 {
 	FoveatedRenderImpl::Core::ClearShaderCache();
+	FoveatedRenderImpl::Core::ClearResources();
 }
 
 // ============================================================================
@@ -102,6 +121,12 @@ void FoveatedRender::ClampSettings()
 	settings.peripheryTemporalAlpha = std::clamp(settings.peripheryTemporalAlpha, 0.05f, 0.5f);
 	settings.subrectFeatherWidth = std::clamp(settings.subrectFeatherWidth, 2.0f, 128.0f);
 	settings.subrectDitherStrength = std::clamp(settings.subrectDitherStrength, 0.0f, 2.0f);
+	settings.neuralRenderingPreset = std::min(settings.neuralRenderingPreset, 4u);
+	settings.neuralRenderingIntensity = std::clamp(settings.neuralRenderingIntensity, 0.0f, 2.0f);
+	settings.neuralRenderingLocalTone = std::clamp(settings.neuralRenderingLocalTone, 0.0f, 2.0f);
+	settings.neuralRenderingLocalStructure = std::clamp(settings.neuralRenderingLocalStructure, 0.0f, 2.0f);
+	settings.neuralRenderingSkinStructure = std::clamp(settings.neuralRenderingSkinStructure, 0.0f, 2.0f);
+	settings.neuralRenderingStyle = std::min(settings.neuralRenderingStyle, 3u);
 	// Preset clamping reads from Upscaling::Settings now.
 	auto& sharedPreset = globals::features::upscaling.settings.presetDLSS;
 	sharedPreset = std::min(sharedPreset, 5u);
@@ -324,7 +349,65 @@ void FoveatedRender::DrawSettings()
 {
 	ClampSettings();
 
-	Util::Text::WrappedInfo(T(TKEY("foveated_shared_panel_note"), "Quality and Sharpness are on the main Upscaling panel — changes there apply to foveated rendering too. DLSS Preset also applies there when DLSS is the selected upscaler."));
+	if (globals::game::isVR)
+		Util::Text::WrappedInfo(T(TKEY("foveated_shared_panel_note"), "Quality and Sharpness are on the main Upscaling panel — changes there apply to foveated rendering too. DLSS Preset also applies there when DLSS is the selected upscaler."));
+
+	if (ImGui::CollapsingHeader(T(TKEY("neural_rendering_header"), "DLSS Neural Rendering"), ImGuiTreeNodeFlags_DefaultOpen)) {
+		const bool supportedRoute = globals::features::upscaling.GetUpscaleMethod() == Upscaling::UpscaleMethod::kDLSS &&
+			!globals::features::upscaling.IsFrameGenerationActive() &&
+			(!globals::game::isVR || (GetDlssMode() == DlssMode::kDefault &&
+				globals::features::upscaling.perfMode.IsHookActive()));
+		if (!supportedRoute) {
+			Util::Text::Warning(T(TKEY("neural_rendering_unavailable"),
+				"Requires DLSS with frame generation disabled. VR additionally requires Foveated Default mode and active PerfMode."));
+			ImGui::BeginDisabled();
+		}
+		ImGui::Checkbox(T(TKEY("neural_rendering_enable"), "Enable DLSS Neural Rendering"), &settings.neuralRenderingEnabled);
+
+		if (settings.neuralRenderingEnabled) {
+			static const char* presets[] = { "Custom", "Balanced", "Fabric Detail", "Natural", "Strong" };
+			int preset = static_cast<int>(settings.neuralRenderingPreset);
+			if (ImGui::Combo(T(TKEY("neural_rendering_preset"), "Tuning Preset"), &preset, presets, IM_ARRAYSIZE(presets))) {
+				settings.neuralRenderingPreset = static_cast<uint>(preset);
+				switch (settings.neuralRenderingPreset) {
+				case 1: settings.neuralRenderingIntensity = 1.0f; settings.neuralRenderingLocalTone = 1.0f; settings.neuralRenderingLocalStructure = 1.0f; settings.neuralRenderingSkinStructure = 1.0f; break;
+				case 2: settings.neuralRenderingIntensity = 1.35f; settings.neuralRenderingLocalTone = 0.9f; settings.neuralRenderingLocalStructure = 1.6f; settings.neuralRenderingSkinStructure = 1.15f; break;
+				case 3: settings.neuralRenderingIntensity = 0.8f; settings.neuralRenderingLocalTone = 0.75f; settings.neuralRenderingLocalStructure = 0.9f; settings.neuralRenderingSkinStructure = 0.9f; break;
+				case 4: settings.neuralRenderingIntensity = 1.75f; settings.neuralRenderingLocalTone = 1.25f; settings.neuralRenderingLocalStructure = 1.5f; settings.neuralRenderingSkinStructure = 1.3f; break;
+				default: break;
+				}
+			}
+			bool custom = false;
+			custom |= ImGui::SliderFloat(T(TKEY("neural_rendering_intensity"), "Intensity"), &settings.neuralRenderingIntensity, 0.0f, 2.0f, "%.2f");
+			custom |= ImGui::SliderFloat(T(TKEY("neural_rendering_local_tone"), "Local Tone"), &settings.neuralRenderingLocalTone, 0.0f, 2.0f, "%.2f");
+			custom |= ImGui::SliderFloat(T(TKEY("neural_rendering_local_structure"), "Local Structure"), &settings.neuralRenderingLocalStructure, 0.0f, 2.0f, "%.2f");
+			custom |= ImGui::SliderFloat(T(TKEY("neural_rendering_skin_structure"), "Skin Structure"), &settings.neuralRenderingSkinStructure, 0.0f, 2.0f, "%.2f");
+			static const char* styles[] = { "Style 0", "Style 1", "Style 2", "Style 3" };
+			int style = static_cast<int>(settings.neuralRenderingStyle);
+			if (ImGui::Combo(T(TKEY("neural_rendering_style"), "Style"), &style, styles, IM_ARRAYSIZE(styles))) {
+				settings.neuralRenderingStyle = static_cast<uint>(style);
+				custom = true;
+			}
+			custom |= ImGui::Checkbox(T(TKEY("neural_rendering_auto_mask"), "Automatic Mask"), &settings.neuralRenderingAutoMask);
+			custom |= ImGui::Checkbox(T(TKEY("neural_rendering_ui_correction"), "UI Correction"), &settings.neuralRenderingUICorrection);
+			if (custom)
+				settings.neuralRenderingPreset = 0;
+
+			auto& neuralRenderer = NeuralRendering::Renderer::Instance();
+			if (neuralRenderer.IsFailureLatched()) {
+				Util::Text::Warning("DLSS Neural Rendering failed and is disabled for this session. Check CommunityShaders.log.");
+				if (ImGui::Button("Reset Neural Rendering Failure"))
+					neuralRenderer.Reset();
+			}
+			if (globals::state && globals::state->IsDeveloperMode()) {
+				ImGui::TextDisabled("Status: %s | NGX: 0x%08X | Evaluations: %llu",
+					neuralRenderer.StatusText(), neuralRenderer.NgxResult(),
+					static_cast<unsigned long long>(neuralRenderer.SuccessfulFrames()));
+			}
+		}
+		if (!supportedRoute)
+			ImGui::EndDisabled();
+	}
 
 	// ── VR-only knobs ──
 	if (globals::game::isVR) {

@@ -899,6 +899,8 @@ void Upscaling::DrawSettings()
 	// one settings panel; also mirrored in the Performance hub.
 	if (globals::game::isVR)
 		DrawFoveationControls();
+	else if (upscaleMethod == UpscaleMethod::kDLSS)
+		foveatedRender.DrawSettings();
 
 	if (ImGui::TreeNodeEx(T(TKEY("backend_diagnostics"), "Backend Diagnostics"))) {
 		// Streamline log level selection

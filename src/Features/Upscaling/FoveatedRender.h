@@ -87,6 +87,15 @@ struct FoveatedRender
 		uint subrectBlendMode = static_cast<uint>(SubrectBlendMode::kHardCopy);
 		float subrectFeatherWidth = 64.0f;
 		float subrectDitherStrength = 1.0f;
+		bool neuralRenderingEnabled = false;
+		uint neuralRenderingPreset = 3;
+		float neuralRenderingIntensity = 0.8f;
+		float neuralRenderingLocalTone = 0.75f;
+		float neuralRenderingLocalStructure = 0.9f;
+		float neuralRenderingSkinStructure = 0.9f;
+		uint neuralRenderingStyle = 3;
+		bool neuralRenderingAutoMask = true;
+		bool neuralRenderingUICorrection = false;
 	};
 
 	inline static constexpr Util::Settings::RestartTable<Settings, 1> kRestartFields{ {
@@ -117,6 +126,12 @@ struct FoveatedRender
 	void ClearShaderCache();
 	// Called from Upscaling::PostPostLoad to seed subrect presets.
 	void PostPostLoad();
+
+	struct UICompositeRenderHook
+	{
+		static void thunk(void* imageSpaceShader, RE::BSTriShape* shape, RE::ImageSpaceEffectParam* param);
+		static inline REL::Relocation<decltype(thunk)> func;
+	};
 
 	bool IsRuntimeSupported() const;
 	bool IsActive() const;
