@@ -187,8 +187,7 @@ jobs:
                   XWIN_SYSROOT_DIR: ${{ env.XWIN_SYSROOT }}
               run: |
                   curl -fsSL --retry 3 --retry-all-errors -o xwin.tar.gz https://github.com/Jake-Shadle/xwin/releases/download/0.10.0/xwin-0.10.0-x86_64-unknown-linux-musl.tar.gz
-                  expected=$(curl -fsSL --retry 3 --retry-all-errors https://github.com/Jake-Shadle/xwin/releases/download/0.10.0/xwin-0.10.0-x86_64-unknown-linux-musl.tar.gz.sha256)
-                  echo "$expected  xwin.tar.gz" | sha256sum -c -
+                  echo "d870eb4b2f390878af6da1ccd3cf321d22fcb72720984853b4be732ae597fc88  xwin.tar.gz" | sha256sum -c -
                   tar xzf xwin.tar.gz
                   install -Dm755 xwin-0.10.0-x86_64-unknown-linux-musl/xwin "$RUNNER_TEMP_DIR/bin/xwin"
                   "$RUNNER_TEMP_DIR/bin/xwin" --accept-license --cache-dir "$RUNNER_TEMP_DIR/xwin-cache" \
@@ -243,7 +242,7 @@ jobs:
             - name: Verify output exists
               run: |
                   test -f main/build/Linux-ClangCL/CommunityShaders.dll
-                  file main/build/Linux-ClangCL/CommunityShaders.dll
+                  file main/build/Linux-ClangCL/CommunityShaders.dll | grep -q "PE32+ executable"
 
             # These logs don't match run-vcpkg's collection patterns, so they are
             # invisible on failure unless surfaced here.
