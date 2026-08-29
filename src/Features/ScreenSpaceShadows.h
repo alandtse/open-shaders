@@ -75,8 +75,6 @@ public:
 		float DispatchExtent[2];
 		float FoveatedData0[4];  // x=centerScale, y=centerFeather, z=centerHorizontalScale, w=enabled
 		float FoveatedCenterOffset[4];
-		uint UseModeTexture;  // VRStereoOptimizations' classification available this boot (ShadowReprojectCS only)
-		float pad[3];
 	};
 	STATIC_ASSERT_ALIGNAS_16(StereoSyncCB);
 

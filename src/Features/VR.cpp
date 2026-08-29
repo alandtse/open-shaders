@@ -3,7 +3,6 @@
 #include "RE/B/BSOpenVR.h"
 #include "RE/P/PlayerCharacter.h"
 #include "ScreenSpaceGI.h"
-#include "ScreenSpaceShadows.h"
 #include "Upscaling.h"
 #include "VR/OpenVRDetection.h"
 
@@ -83,8 +82,7 @@ void VR::SetupResources()
 	// stereoMode is restart-gated, so a consumer enabled after boot falls back to its own
 	// check until the next restart.
 	bool needsClassification = stereoOpt.settings.stereoMode != VRStereoOptimizations::StereoMode::Off ||
-	                           (globals::features::screenSpaceGI.settings.Enabled && globals::features::screenSpaceGI.settings.UseStereoReproject) ||
-	                           (globals::features::screenSpaceShadows.bendSettings.Enable && globals::features::screenSpaceShadows.useStereoReproject);
+	                           (globals::features::screenSpaceGI.settings.Enabled && globals::features::screenSpaceGI.settings.UseStereoReproject);
 	if (globals::game::isVR && needsClassification) {
 		stereoOpt.SetupResources();
 		stereoOpt.loaded = stereoOpt.GetModeTextureSRV() != nullptr;

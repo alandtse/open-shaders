@@ -557,13 +557,12 @@ void ScreenSpaceShadows::DrawStereoSync()
 	// Same 24/32-bit depth path as the raymarch — SrcDepthTexture's HLSL type is
 	// conditional on TERRAIN_BLENDING via the define passed at compile time below.
 	auto* depthSRV = Util::GetCurrentSceneDepthSRV(false);
-	const bool useModeTexture = globals::features::vr.stereoOpt.CanExternallyConsumeClassification();
-	ID3D11ShaderResourceView* srvs[3]{ depthSRV, stereoSyncCopyTex->srv.get(), useModeTexture ? globals::features::vr.stereoOpt.GetModeTextureSRV() : nullptr };
+	ID3D11ShaderResourceView* srvs[2]{ depthSRV, stereoSyncCopyTex->srv.get() };
 	ID3D11UnorderedAccessView* uavs[1]{ screenSpaceShadowsTexture->uav.get() };
 
 	auto* sharedDataBuf = globals::state->sharedDataCB->CB();
 	context->CSSetConstantBuffers(5, 1, &sharedDataBuf);
-	context->CSSetShaderResources(0, 3, srvs);
+	context->CSSetShaderResources(0, 2, srvs);
 	context->CSSetUnorderedAccessViews(0, 1, uavs, nullptr);
 	context->CSSetShader(stereoCS, nullptr, 0);
 
@@ -594,7 +593,6 @@ void ScreenSpaceShadows::DrawStereoSync()
 		cbData.FoveatedCenterOffset[1] = centerOffset.y;
 		cbData.FoveatedCenterOffset[2] = 0.0f;
 		cbData.FoveatedCenterOffset[3] = 0.0f;
-		cbData.UseModeTexture = useModeTexture;
 
 		stereoSyncCB->Update(cbData);
 		auto cbPtr = stereoSyncCB->CB();
@@ -609,10 +607,9 @@ void ScreenSpaceShadows::DrawStereoSync()
 
 	srvs[0] = nullptr;
 	srvs[1] = nullptr;
-	srvs[2] = nullptr;
 	uavs[0] = nullptr;
 	ID3D11Buffer* nullBuffer = nullptr;
-	context->CSSetShaderResources(0, 3, srvs);
+	context->CSSetShaderResources(0, 2, srvs);
 	context->CSSetUnorderedAccessViews(0, 1, uavs, nullptr);
 	context->CSSetConstantBuffers(1, 1, &nullBuffer);
 	context->CSSetShader(nullptr, nullptr, 0);
