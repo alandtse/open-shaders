@@ -192,6 +192,13 @@ jobs:
                   tar xJf llvm-mingw.tar.xz
                   echo "LLVM_MINGW_BIN=$PWD/llvm-mingw-20250910-ucrt-ubuntu-22.04-x86_64/bin" >> "$GITHUB_ENV"
 
+            # ubuntu-latest's apt cmake predates CMakeLists.txt's cmake_minimum_required(VERSION
+            # 4.2); pin to match so preset parsing doesn't fail on the major-version field.
+            - name: Install CMake
+              uses: lukka/get-cmake@latest
+              with:
+                  cmakeVersion: "4.2.0"
+
             - name: Setup vcpkg
               uses: lukka/run-vcpkg@v11
               with:
