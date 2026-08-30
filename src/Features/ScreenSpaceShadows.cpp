@@ -9,7 +9,6 @@
 #include "Upscaling.h"
 #include "Util.h"
 #include "Utils/D3D.h"
-#include "Utils/VRUtils.h"
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -144,7 +143,7 @@ void ScreenSpaceShadows::DrawFoveatedToggle()
 		ImGui::TextDisabled("%s", FoveatedUnavailableReason(bendSettings));
 }
 
-// Hub view: the SSS stereo sync/reprojection toggles, bound to the same settings the SSS panel shows.
+// Hub view: the SSS stereo sync toggle, bound to the same setting the SSS panel shows.
 void ScreenSpaceShadows::DrawPerformanceSettings()
 {
 	DrawStereoToggles();
@@ -159,10 +158,8 @@ void ScreenSpaceShadows::DrawPerformancePresets()
 	ImGui::Unindent();
 }
 
-// A profile drives the whole stereo mode, so enable the umbrella (else it can't engage from
-// Off): Performance/Balanced reproject (fast), Quality uses bilateral sync (both eyes, max
-// fidelity). PerformanceSectionRequiresVR() keeps both functions off flatrim, so neither
-// needs its own isVR check.
+// A profile drives the umbrella toggle, so enable it here (else it can't engage from Off).
+// PerformanceSectionRequiresVR() keeps both functions off flatrim, so neither needs its own isVR check.
 void ScreenSpaceShadows::ApplyPerformanceProfile(PerfProfile profile)
 {
 	const auto preset = GetSssPreset(profile);

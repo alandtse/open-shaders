@@ -93,7 +93,7 @@ public:
 	/** @brief Draws the ImGui settings UI for screen-space shadow configuration. */
 	virtual void DrawSettings() override;
 	virtual void DrawPerformanceSettings() override;
-	/// @brief DrawPerformanceSettings() only draws the stereo sync/reprojection toggles.
+	/// @brief DrawPerformanceSettings() only draws the stereo sync toggle.
 	bool PerformanceSectionRequiresVR() const override { return true; }
 	std::string GetPerformanceSectionLabel() override { return GetDisplayName(); }
 	int GetPerformanceOrder() const override { return 30; }
@@ -102,7 +102,7 @@ public:
 	/// @brief Surfaces the FOV Screen Space Shadows toggle in the Performance hub, mirroring
 	/// the SSS panel's own control.
 	void DrawPerformancePresets() override;
-	/// @brief Renders the VR stereo sync/reprojection toggles. Shared by the SSS panel and
+	/// @brief Renders the VR stereo sync toggle. Shared by the SSS panel and
 	/// the Performance hub. VR-only; caller guards on isVR.
 	void DrawStereoToggles();
 	/// @brief Renders the FOV Screen Space Shadows checkbox + tooltip + unavailable-reason
