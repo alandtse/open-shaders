@@ -1938,6 +1938,13 @@ namespace SIE
 				strippedShaderBlob->Release();
 			}
 
+			// Skip the write for a cancelled/stale task -- AddCompletedShader's own generation
+			// check runs after the write, too late to stop it racing a directory swap.
+			if (cache.IsGenerationStale(a_taskGeneration)) {
+				shaderBlob->Release();
+				return nullptr;
+			}
+
 			// save shader to disk
 			if (useDiskCache) {
 				auto directoryPath = std::format("Data/ShaderCache/{}", shader.fxpFilename);
@@ -2799,6 +2806,11 @@ namespace SIE
 		return compilationSet.totalTasks && compilationSet.completedTasks + compilationSet.failedTasks < compilationSet.totalTasks;
 	}
 
+	bool ShaderCache::IsGenerationStale(std::optional<uint64_t> a_taskGeneration) const
+	{
+		return a_taskGeneration && *a_taskGeneration != compilationSet.generation.load(std::memory_order_acquire);
+	}
+
 	void ShaderCache::StopCompilation()
 	{
 		if (IsCompiling()) {
@@ -2806,6 +2818,18 @@ namespace SIE
 		}
 		ssource.request_stop();            // signals any legacy stop_token users
 		managementJthread.request_stop();  // stops management thread + in-flight compilations
+		compilationSet.Clear();
+	}
+
+	void ShaderCache::CancelCompilation()
+	{
+		if (!IsCompiling())
+			return;
+		const auto remaining = compilationSet.totalTasks - compilationSet.completedTasks - compilationSet.failedTasks;
+		logger::info("Cancelling {} remaining shader compilation tasks (user-requested restore)", remaining);
+		// Doesn't wait for tasks already mid-D3DCompileFromFile (some take minutes) -- they run
+		// to completion but skip their disk write once IsGenerationStale() sees this bump.
+		compilationPool.purge();
 		compilationSet.Clear();
 	}
 
@@ -3523,6 +3547,8 @@ namespace SIE
 			logger::warn("Cannot restore previous shader cache: previous cache info could not be read");
 			return false;
 		}
+
+		CancelCompilation();
 
 		{
 			// Re-check IsCompiling() under the same lock the writers hold, closing

@@ -497,6 +497,9 @@ namespace SIE
 
 		/** @brief Returns true if any shader compilation tasks are in progress. */
 		bool IsCompiling();
+		/** @brief True if a_taskGeneration is set and predates the live generation -- mirrors
+		 * Util::GenerationClaim::TryPublish's own staleness rule (see AddCompletedShader). */
+		bool IsGenerationStale(std::optional<uint64_t> a_taskGeneration) const;
 		/** Gets whether the shader cache is enabled. */
 		bool IsEnabled() const;
 		/** Sets whether the shader cache is enabled. */
@@ -511,6 +514,9 @@ namespace SIE
 		void SetDump(bool value);
 		/** @brief Signals all compilation threads to stop and clears pending tasks. */
 		void StopCompilation();
+		/** @brief Drops queued/in-flight compilation work without stopping the management
+		 * thread (unlike StopCompilation(), which is terminal). Returns immediately. */
+		void CancelCompilation();
 
 		/** Gets whether the persistent disk cache is enabled. */
 		bool IsDiskCache() const;
