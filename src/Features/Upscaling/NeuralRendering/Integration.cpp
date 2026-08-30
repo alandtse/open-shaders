@@ -1,6 +1,7 @@
 #include "Integration.h"
 
 #include "Renderer.h"
+#include "Features/HDRDisplay.h"
 #include "Features/Upscaling.h"
 #include "Features/Upscaling/FoveatedRender/Bridge.h"
 #include "Features/Upscaling/FoveatedRender/Core.h"
@@ -21,6 +22,27 @@ namespace NeuralRendering
 		bool writebackLogged = false;
 		bool flatRouteWasActive = false;
 		bool flatFrameGenerationBlockLogged = false;
+		bool flatHdrBlockLogged = false;
+
+		ID3D11Texture2D* ResolveRenderTargetTexture(
+			const RE::BSGraphics::RenderTargetData& target,
+			winrt::com_ptr<ID3D11Texture2D>& holder)
+		{
+			if (target.texture)
+				return target.texture;
+			auto resolveView = [&](ID3D11View* view) -> ID3D11Texture2D* {
+				if (!view)
+					return nullptr;
+				winrt::com_ptr<ID3D11Resource> resource;
+				view->GetResource(resource.put());
+				if (!resource || FAILED(resource->QueryInterface(holder.put())))
+					return nullptr;
+				return holder.get();
+			};
+			if (auto* texture = resolveView(target.SRV))
+				return texture;
+			return resolveView(target.RTV);
+		}
 
 		bool EnsureColorResources(ID3D11Resource* source, std::uint32_t width, std::uint32_t height)
 		{
@@ -62,12 +84,25 @@ namespace NeuralRendering
 		bool ApplyFlatLdr(Upscaling& upscaling, FoveatedRender& foveated)
 		{
 			const bool frameGenerationConfigured = upscaling.IsFrameGenerationConfiguredForSession();
+			const bool hdrConfigured = globals::features::hdrDisplay.loaded &&
+				globals::features::hdrDisplay.settings.enableHDR;
+			auto* renderer = globals::game::renderer;
+			winrt::com_ptr<ID3D11Texture2D> framebufferHolder;
+			ID3D11Texture2D* framebuffer = nullptr;
+			if (renderer) {
+				auto& target = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kFRAMEBUFFER];
+				framebuffer = ResolveRenderTargetTexture(target, framebufferHolder);
+			}
 			const bool routeActive = upscaling.GetUpscaleMethod() == Upscaling::UpscaleMethod::kDLSS &&
-				foveated.settings.neuralRenderingEnabled && !frameGenerationConfigured;
+				foveated.settings.neuralRenderingEnabled && !frameGenerationConfigured && !hdrConfigured;
 			if (!routeActive) {
 				if (foveated.settings.neuralRenderingEnabled && frameGenerationConfigured && !flatFrameGenerationBlockLogged) {
 					logger::warn("[DLSSNR] Flat route blocked: disable Frame Generation and restart the game");
 					flatFrameGenerationBlockLogged = true;
+				}
+				if (foveated.settings.neuralRenderingEnabled && hdrConfigured && !flatHdrBlockLogged) {
+					logger::warn("[DLSSNR] Flat route blocked: HDR Display is not supported by the LDR integration");
+					flatHdrBlockLogged = true;
 				}
 				if (flatRouteWasActive)
 					Reset();
@@ -78,21 +113,19 @@ namespace NeuralRendering
 			const std::uint32_t frame = globals::state ? globals::state->frameCount : 0;
 			if (lastAppliedFrame == frame)
 				return true;
-			auto* renderer = globals::game::renderer;
 			auto* context = globals::d3d::context;
 			if (!renderer || !context || !globals::d3d::device || !upscaling.motionVectorCopyTexture)
 				return false;
 
-			auto& total = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kTOTAL];
 			auto& depth = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kMAIN];
-			if (!total.texture || !depth.texture || !depth.depthSRV || !upscaling.motionVectorCopyTexture->resource)
+			if (!framebuffer || !depth.texture || !depth.depthSRV || !upscaling.motionVectorCopyTexture->resource)
 				return false;
 
 			D3D11_TEXTURE2D_DESC totalDesc{};
 			D3D11_TEXTURE2D_DESC motionDesc{};
-			total.texture->GetDesc(&totalDesc);
+			framebuffer->GetDesc(&totalDesc);
 			upscaling.motionVectorCopyTexture->resource->GetDesc(&motionDesc);
-			if (!EnsureColorResources(total.texture, totalDesc.Width, totalDesc.Height))
+			if (!EnsureColorResources(framebuffer, totalDesc.Width, totalDesc.Height))
 				return false;
 
 			CS_GPU_PASS("NeuralRendering::FlatLdrBeforeUI");
@@ -100,7 +133,7 @@ namespace NeuralRendering
 			ID3D11DepthStencilView* savedDSV = nullptr;
 			context->OMGetRenderTargets(D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT, savedRTVs, &savedDSV);
 			context->OMSetRenderTargets(0, nullptr, nullptr);
-			context->CopyResource(color[0]->resource.get(), total.texture);
+			context->CopyResource(color[0]->resource.get(), framebuffer);
 
 			const bool succeeded = Renderer::Instance().Apply(globals::d3d::device, context, 0,
 				color[0]->resource.get(), depth.texture, depth.depthSRV,
@@ -108,10 +141,10 @@ namespace NeuralRendering
 				totalDesc.Width, totalDesc.Height, static_cast<float>(motionDesc.Width),
 				static_cast<float>(motionDesc.Height), GetTuning(foveated.settings));
 			if (succeeded) {
-				context->CopyResource(total.texture, color[0]->resource.get());
+				context->CopyResource(framebuffer, color[0]->resource.get());
 				lastAppliedFrame = frame;
 				if (!writebackLogged) {
-					logger::info("[DLSSNR] Flat LDR output written before UI composite guides={}x{} color={}x{}",
+					logger::info("[DLSSNR] Flat LDR kFRAMEBUFFER output written before UI guides={}x{} color={}x{}",
 						motionDesc.Width, motionDesc.Height, totalDesc.Width, totalDesc.Height);
 					writebackLogged = true;
 				}
@@ -216,5 +249,6 @@ namespace NeuralRendering
 		writebackLogged = false;
 		flatRouteWasActive = false;
 		flatFrameGenerationBlockLogged = false;
+		flatHdrBlockLogged = false;
 	}
 }
