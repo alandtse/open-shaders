@@ -20,6 +20,7 @@ namespace NeuralRendering
 		std::uint32_t lastAppliedFrame = UINT32_MAX;
 		bool writebackLogged = false;
 		bool flatRouteWasActive = false;
+		bool flatFrameGenerationBlockLogged = false;
 
 		bool EnsureColorResources(ID3D11Resource* source, std::uint32_t width, std::uint32_t height)
 		{
@@ -60,9 +61,14 @@ namespace NeuralRendering
 
 		bool ApplyFlatLdr(Upscaling& upscaling, FoveatedRender& foveated)
 		{
+			const bool frameGenerationConfigured = upscaling.IsFrameGenerationConfiguredForSession();
 			const bool routeActive = upscaling.GetUpscaleMethod() == Upscaling::UpscaleMethod::kDLSS &&
-				foveated.settings.neuralRenderingEnabled && !upscaling.IsFrameGenerationActive();
+				foveated.settings.neuralRenderingEnabled && !frameGenerationConfigured;
 			if (!routeActive) {
+				if (foveated.settings.neuralRenderingEnabled && frameGenerationConfigured && !flatFrameGenerationBlockLogged) {
+					logger::warn("[DLSSNR] Flat route blocked: disable Frame Generation and restart the game");
+					flatFrameGenerationBlockLogged = true;
+				}
 				if (flatRouteWasActive)
 					Reset();
 				return false;
@@ -209,5 +215,6 @@ namespace NeuralRendering
 		lastAppliedFrame = UINT32_MAX;
 		writebackLogged = false;
 		flatRouteWasActive = false;
+		flatFrameGenerationBlockLogged = false;
 	}
 }

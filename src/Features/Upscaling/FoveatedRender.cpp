@@ -354,12 +354,15 @@ void FoveatedRender::DrawSettings()
 
 	if (ImGui::CollapsingHeader(T(TKEY("neural_rendering_header"), "DLSS Neural Rendering"), ImGuiTreeNodeFlags_DefaultOpen)) {
 		const bool supportedRoute = globals::features::upscaling.GetUpscaleMethod() == Upscaling::UpscaleMethod::kDLSS &&
-			!globals::features::upscaling.IsFrameGenerationActive() &&
+			!globals::features::upscaling.IsFrameGenerationConfiguredForSession() &&
 			(!globals::game::isVR || (GetDlssMode() == DlssMode::kDefault &&
 				globals::features::upscaling.perfMode.IsHookActive()));
 		if (!supportedRoute) {
-			Util::Text::Warning(T(TKEY("neural_rendering_unavailable"),
-				"Requires DLSS with frame generation disabled. VR additionally requires Foveated Default mode and active PerfMode."));
+			if (globals::features::upscaling.IsFrameGenerationConfiguredForSession())
+				Util::Text::Warning("Disable Frame Generation and restart the game before enabling DLSS Neural Rendering.");
+			else
+				Util::Text::Warning(T(TKEY("neural_rendering_unavailable"),
+					"Requires DLSS. VR additionally requires Foveated Default mode and active PerfMode."));
 			ImGui::BeginDisabled();
 		}
 		ImGui::Checkbox(T(TKEY("neural_rendering_enable"), "Enable DLSS Neural Rendering"), &settings.neuralRenderingEnabled);
