@@ -118,8 +118,95 @@ namespace NeuralRendering
 			return true;
 		}
 
+		bool ApplyStereo(ID3D11Device* device, ID3D11DeviceContext* context, ID3D11Resource* color,
+			const std::array<StereoEyeInput, 2>& inputs,
+			std::uint32_t guideWidth, std::uint32_t guideHeight,
+			std::uint32_t colorWidth, std::uint32_t colorHeight, const Tuning& tuning)
+		{
+			if (failureLatched || !device || !context || !color)
+				return false;
+			CS_GPU_PASS("NeuralRendering::EvaluateStereo");
+
+			if (!interop.IsInitialized() && !InitializeInterop(device, context))
+				return false;
+			if (Runtime::Instance().Status() != RuntimeStatus::Initialized && !InitializeRuntime())
+				return false;
+
+			D3D11_TEXTURE2D_DESC colorDesc{};
+			if (!GetTextureDesc(color, colorDesc))
+				return false;
+			for (std::uint32_t eyeIndex = 0; eyeIndex < inputs.size(); ++eyeIndex) {
+				const auto& input = inputs[eyeIndex];
+				if (!input.depth || !input.depthSRV || !input.motionVectors)
+					return false;
+				if (!EnsureResources(eyeIndex, color, input.depth, input.motionVectors,
+						guideWidth, guideHeight, colorWidth, colorHeight))
+					return LatchFailure("shared resource creation", interop.LastError());
+
+				D3D11_BOX sourceBox{
+					input.sourceX, input.sourceY, 0,
+					input.sourceX + colorWidth, input.sourceY + colorHeight, 1
+				};
+				auto& eye = eyes[eyeIndex];
+				context->CopySubresourceRegion(eye.color.resource11.Get(), 0, 0, 0, 0, color, 0, &sourceBox);
+				if (!CopyDepthGuide(context, input.depthSRV, eye.depth.uav11.Get(), guideWidth, guideHeight))
+					return LatchFailure("depth guide conversion", E_FAIL);
+				context->CopyResource(eye.motionVectors.resource11.Get(), input.motionVectors);
+			}
+
+			ID3D12GraphicsCommandList* commandList = nullptr;
+			if (!interop.BeginD3D12(&commandList))
+				return LatchFailure("BeginD3D12 stereo", interop.LastError());
+
+			bool succeeded = true;
+			for (std::uint32_t eyeIndex = 0; eyeIndex < inputs.size(); ++eyeIndex) {
+				auto& eye = eyes[eyeIndex];
+				D3D12_RESOURCE_BARRIER barriers[4]{};
+				ID3D12Resource* resources[4]{
+					eye.color.resource12.Get(), eye.depth.resource12.Get(),
+					eye.motionVectors.resource12.Get(), eye.output.resource12.Get()
+				};
+				for (std::size_t index = 0; index < std::size(barriers); ++index) {
+					barriers[index].Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+					barriers[index].Transition.pResource = resources[index];
+					barriers[index].Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+					barriers[index].Transition.StateBefore = D3D12_RESOURCE_STATE_COMMON;
+					barriers[index].Transition.StateAfter = index == 3 ? D3D12_RESOURCE_STATE_UNORDERED_ACCESS :
+					                                                   D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
+				}
+				commandList->ResourceBarrier(static_cast<UINT>(std::size(barriers)), barriers);
+				const auto& input = inputs[eyeIndex];
+				const bool eyeSucceeded = Runtime::Instance().Execute(commandList, eyeIndex,
+					eye.color.resource12.Get(), eye.depth.resource12.Get(), eye.motionVectors.resource12.Get(),
+					eye.output.resource12.Get(), guideWidth, guideHeight, colorWidth, colorHeight,
+					input.motionVectorScaleX, input.motionVectorScaleY, tuning, resetPending[eyeIndex]);
+				for (auto& barrier : barriers)
+					std::swap(barrier.Transition.StateBefore, barrier.Transition.StateAfter);
+				commandList->ResourceBarrier(static_cast<UINT>(std::size(barriers)), barriers);
+				if (!eyeSucceeded) {
+					succeeded = false;
+					break;
+				}
+			}
+
+			if (!interop.EndD3D12())
+				return LatchFailure("EndD3D12 stereo", interop.LastError());
+			if (!succeeded)
+				return LatchFailure("Feature 18 stereo", static_cast<HRESULT>(Runtime::Instance().NgxResult()));
+
+			D3D11_BOX outputBox{ 0, 0, 0, colorWidth, colorHeight, 1 };
+			for (std::uint32_t eyeIndex = 0; eyeIndex < inputs.size(); ++eyeIndex) {
+				const auto& input = inputs[eyeIndex];
+				context->CopySubresourceRegion(color, 0, input.sourceX, input.sourceY, 0,
+					eyes[eyeIndex].output.resource11.Get(), 0, &outputBox);
+				resetPending[eyeIndex] = false;
+			}
+			return true;
+		}
+
 		void Reset()
 		{
+			interop.WaitForIdle();
 			Runtime::Instance().Shutdown();
 			interop.Shutdown();
 			eyes = {};
@@ -130,6 +217,7 @@ namespace NeuralRendering
 
 		void ResetHistory()
 		{
+			interop.WaitForIdle();
 			Runtime::Instance().ResetFeatures();
 			resetPending = { true, true };
 		}
@@ -197,6 +285,8 @@ namespace NeuralRendering
 				Matches(eye.depth, depthDesc) && Matches(eye.motionVectors, motionDesc))
 				return true;
 
+			if (!interop.WaitForIdle())
+				return false;
 			Runtime::Instance().ResetFeature(eyeIndex);
 			eye = {};
 			const std::string suffix = eyeIndex == 0 ? "Left" : "Right";
@@ -237,6 +327,15 @@ namespace NeuralRendering
 	{
 		return state_->Apply(device, context, eyeIndex, color, depth, depthSRV, motionVectors,
 			guideWidth, guideHeight, colorWidth, colorHeight, motionVectorScaleX, motionVectorScaleY, tuning);
+	}
+
+	bool Renderer::ApplyStereo(ID3D11Device* device, ID3D11DeviceContext* context, ID3D11Resource* color,
+		const std::array<StereoEyeInput, 2>& eyes,
+		std::uint32_t guideWidth, std::uint32_t guideHeight,
+		std::uint32_t colorWidth, std::uint32_t colorHeight, const Tuning& tuning)
+	{
+		return state_->ApplyStereo(device, context, color, eyes,
+			guideWidth, guideHeight, colorWidth, colorHeight, tuning);
 	}
 
 	void Renderer::Reset() { state_->Reset(); }

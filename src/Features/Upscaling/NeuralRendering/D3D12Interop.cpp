@@ -33,13 +33,16 @@ namespace NeuralRendering
 		queueDesc.Type = D3D12_COMMAND_LIST_TYPE_DIRECT;
 		result = device12_->CreateCommandQueue(&queueDesc, IID_PPV_ARGS(&queue12_));
 		if (FAILED(result)) return RecordFailure(result);
-		result = device12_->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&allocator12_));
-		if (FAILED(result)) return RecordFailure(result);
-		result = device12_->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, allocator12_.Get(), nullptr,
-			IID_PPV_ARGS(&commandList12_));
-		if (FAILED(result)) return RecordFailure(result);
-		result = commandList12_->Close();
-		if (FAILED(result)) return RecordFailure(result);
+		for (auto& commandContext : commandContexts_) {
+			result = device12_->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT,
+				IID_PPV_ARGS(&commandContext.allocator));
+			if (FAILED(result)) return RecordFailure(result);
+			result = device12_->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT,
+				commandContext.allocator.Get(), nullptr, IID_PPV_ARGS(&commandContext.commandList));
+			if (FAILED(result)) return RecordFailure(result);
+			result = commandContext.commandList->Close();
+			if (FAILED(result)) return RecordFailure(result);
+		}
 
 		result = device12_->CreateFence(0, D3D12_FENCE_FLAG_SHARED, IID_PPV_ARGS(&fence12_));
 		if (FAILED(result)) return RecordFailure(result);
@@ -54,6 +57,8 @@ namespace NeuralRendering
 		if (!fenceEvent_) return RecordFailure(HRESULT_FROM_WIN32(GetLastError()));
 		initialized_ = true;
 		lastError_ = S_OK;
+		logger::info("[DLSSNR] D3D12 interop initialized commandContexts={} cpuFenceWait=backpressure-only",
+			kCommandContextCount);
 		return true;
 	}
 
@@ -62,12 +67,14 @@ namespace NeuralRendering
 		if (fenceEvent_) CloseHandle(fenceEvent_);
 		fenceEvent_ = nullptr;
 		recording_ = false;
+		recordingContext_ = kCommandContextCount;
+		commandContextCursor_ = 0;
+		backpressureLogged_ = false;
 		initialized_ = false;
 		fenceValue_ = 0;
 		fence11_.Reset();
 		fence12_.Reset();
-		commandList12_.Reset();
-		allocator12_.Reset();
+		commandContexts_ = {};
 		queue12_.Reset();
 		device12_.Reset();
 		context11_.Reset();
@@ -126,39 +133,90 @@ namespace NeuralRendering
 	bool D3D12Interop::BeginD3D12(ID3D12GraphicsCommandList** commandList)
 	{
 		if (!initialized_ || recording_ || !commandList) return RecordFailure(E_UNEXPECTED);
+
+		const std::uint64_t completedValue = fence12_->GetCompletedValue();
+		std::size_t contextIndex = kCommandContextCount;
+		for (std::size_t offset = 0; offset < kCommandContextCount; ++offset) {
+			const std::size_t candidate = (commandContextCursor_ + offset) % kCommandContextCount;
+			const auto pendingValue = commandContexts_[candidate].fenceValue;
+			if (pendingValue == 0 || completedValue >= pendingValue) {
+				contextIndex = candidate;
+				break;
+			}
+		}
+		if (contextIndex == kCommandContextCount) {
+			contextIndex = commandContextCursor_;
+			if (!backpressureLogged_) {
+				logger::warn("[DLSSNR] D3D12 command contexts saturated; applying CPU backpressure");
+				backpressureLogged_ = true;
+			}
+			if (!WaitForFence(commandContexts_[contextIndex].fenceValue))
+				return false;
+		}
+
+		auto& commandContext = commandContexts_[contextIndex];
+		commandContext.fenceValue = 0;
 		const std::uint64_t readyValue = ++fenceValue_;
 		HRESULT result = context11_->Signal(fence11_.Get(), readyValue);
 		if (FAILED(result)) return RecordFailure(result);
 		result = queue12_->Wait(fence12_.Get(), readyValue);
 		if (FAILED(result)) return RecordFailure(result);
-		result = allocator12_->Reset();
+		result = commandContext.allocator->Reset();
 		if (FAILED(result)) return RecordFailure(result);
-		result = commandList12_->Reset(allocator12_.Get(), nullptr);
+		result = commandContext.commandList->Reset(commandContext.allocator.Get(), nullptr);
 		if (FAILED(result)) return RecordFailure(result);
 		recording_ = true;
-		*commandList = commandList12_.Get();
+		recordingContext_ = contextIndex;
+		commandContextCursor_ = (contextIndex + 1) % kCommandContextCount;
+		*commandList = commandContext.commandList.Get();
 		return true;
 	}
 
 	bool D3D12Interop::EndD3D12()
 	{
-		if (!initialized_ || !recording_) return RecordFailure(E_UNEXPECTED);
+		if (!initialized_ || !recording_ || recordingContext_ >= kCommandContextCount)
+			return RecordFailure(E_UNEXPECTED);
 		recording_ = false;
-		HRESULT result = commandList12_->Close();
+		auto& commandContext = commandContexts_[recordingContext_];
+		recordingContext_ = kCommandContextCount;
+		HRESULT result = commandContext.commandList->Close();
 		if (FAILED(result)) return RecordFailure(result);
-		ID3D12CommandList* lists[] = { commandList12_.Get() };
+		ID3D12CommandList* lists[] = { commandContext.commandList.Get() };
 		queue12_->ExecuteCommandLists(1, lists);
 		const std::uint64_t completeValue = ++fenceValue_;
 		result = queue12_->Signal(fence12_.Get(), completeValue);
 		if (FAILED(result)) return RecordFailure(result);
+		commandContext.fenceValue = completeValue;
+
+		// This queues a GPU-side dependency. Subsequent D3D11 output copies wait
+		// for Feature 18 without stalling the render thread on the CPU.
 		result = context11_->Wait(fence11_.Get(), completeValue);
 		if (FAILED(result)) return RecordFailure(result);
-		result = fence12_->SetEventOnCompletion(completeValue, fenceEvent_);
-		if (FAILED(result)) return RecordFailure(result);
-		const DWORD waitResult = WaitForSingleObject(fenceEvent_, INFINITE);
-		if (waitResult != WAIT_OBJECT_0)
-			return RecordFailure(HRESULT_FROM_WIN32(GetLastError()));
 		lastError_ = S_OK;
 		return true;
+	}
+
+	bool D3D12Interop::WaitForFence(std::uint64_t value)
+	{
+		if (!value || fence12_->GetCompletedValue() >= value)
+			return true;
+		const HRESULT result = fence12_->SetEventOnCompletion(value, fenceEvent_);
+		if (FAILED(result)) return RecordFailure(result);
+		const DWORD waitResult = WaitForSingleObject(fenceEvent_, 250);
+		if (waitResult != WAIT_OBJECT_0)
+			return RecordFailure(waitResult == WAIT_TIMEOUT ? HRESULT_FROM_WIN32(ERROR_TIMEOUT) :
+			                                                        HRESULT_FROM_WIN32(GetLastError()));
+		lastError_ = S_OK;
+		return true;
+	}
+
+	bool D3D12Interop::WaitForIdle()
+	{
+		if (!initialized_)
+			return true;
+		std::uint64_t lastSubmittedValue = 0;
+		for (const auto& commandContext : commandContexts_)
+			lastSubmittedValue = std::max(lastSubmittedValue, commandContext.fenceValue);
+		return WaitForFence(lastSubmittedValue);
 	}
 }

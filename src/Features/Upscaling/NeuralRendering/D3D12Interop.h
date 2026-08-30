@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include <cstdint>
 
 #include <d3d11_4.h>
@@ -30,6 +31,7 @@ namespace NeuralRendering
 		bool CreateSharedTexture(const D3D11_TEXTURE2D_DESC& desc, SharedTexture& texture, const char* name);
 		bool BeginD3D12(ID3D12GraphicsCommandList** commandList);
 		bool EndD3D12();
+		bool WaitForIdle();
 
 		[[nodiscard]] bool IsInitialized() const { return initialized_; }
 		[[nodiscard]] HRESULT LastError() const { return lastError_; }
@@ -38,23 +40,35 @@ namespace NeuralRendering
 		[[nodiscard]] ID3D12Device* Device() const { return device12_.Get(); }
 
 	private:
+		static constexpr std::size_t kCommandContextCount = 3;
+
+		struct CommandContext
+		{
+			Microsoft::WRL::ComPtr<ID3D12CommandAllocator> allocator;
+			Microsoft::WRL::ComPtr<ID3D12GraphicsCommandList> commandList;
+			std::uint64_t fenceValue = 0;
+		};
+
 		D3D12Interop() = default;
 		friend class Renderer;
 		bool RecordFailure(HRESULT result);
+		bool WaitForFence(std::uint64_t value);
 
 		Microsoft::WRL::ComPtr<ID3D11Device5> device11_;
 		Microsoft::WRL::ComPtr<ID3D11DeviceContext4> context11_;
 		Microsoft::WRL::ComPtr<ID3D11Fence> fence11_;
 		Microsoft::WRL::ComPtr<ID3D12Device> device12_;
 		Microsoft::WRL::ComPtr<ID3D12CommandQueue> queue12_;
-		Microsoft::WRL::ComPtr<ID3D12CommandAllocator> allocator12_;
-		Microsoft::WRL::ComPtr<ID3D12GraphicsCommandList> commandList12_;
+		std::array<CommandContext, kCommandContextCount> commandContexts_;
 		Microsoft::WRL::ComPtr<ID3D12Fence> fence12_;
 		HANDLE fenceEvent_ = nullptr;
 		std::uint64_t fenceValue_ = 0;
 		HRESULT lastError_ = S_OK;
 		const char* lastOperation_ = "none";
 		std::uint32_t lastResourceFlags_ = 0;
+		std::size_t commandContextCursor_ = 0;
+		std::size_t recordingContext_ = kCommandContextCount;
+		bool backpressureLogged_ = false;
 		bool initialized_ = false;
 		bool recording_ = false;
 	};

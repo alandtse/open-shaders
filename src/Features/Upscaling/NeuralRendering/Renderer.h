@@ -2,6 +2,7 @@
 
 #include "Runtime.h"
 
+#include <array>
 #include <cstdint>
 
 struct ID3D11Device;
@@ -14,6 +15,17 @@ namespace NeuralRendering
 	class Renderer
 	{
 	public:
+		struct StereoEyeInput
+		{
+			ID3D11Resource* depth = nullptr;
+			ID3D11ShaderResourceView* depthSRV = nullptr;
+			ID3D11Resource* motionVectors = nullptr;
+			std::uint32_t sourceX = 0;
+			std::uint32_t sourceY = 0;
+			float motionVectorScaleX = 1.0f;
+			float motionVectorScaleY = 1.0f;
+		};
+
 		static Renderer& Instance();
 		~Renderer();
 
@@ -26,6 +38,10 @@ namespace NeuralRendering
 			std::uint32_t guideWidth, std::uint32_t guideHeight,
 			std::uint32_t colorWidth, std::uint32_t colorHeight,
 			float motionVectorScaleX, float motionVectorScaleY, const Tuning& tuning);
+		bool ApplyStereo(ID3D11Device* device, ID3D11DeviceContext* context, ID3D11Resource* color,
+			const std::array<StereoEyeInput, 2>& eyes,
+			std::uint32_t guideWidth, std::uint32_t guideHeight,
+			std::uint32_t colorWidth, std::uint32_t colorHeight, const Tuning& tuning);
 		void Reset();
 		void ResetHistory();
 

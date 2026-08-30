@@ -155,8 +155,6 @@ namespace NeuralRendering
 		const std::uint32_t eyeWidth = totalDesc.Width / 2;
 		const std::uint32_t outWidth = std::max<std::uint32_t>(1, static_cast<std::uint32_t>(eyeWidth * leftUV.w));
 		const std::uint32_t outHeight = std::max<std::uint32_t>(1, static_cast<std::uint32_t>(totalDesc.Height * leftUV.h));
-		if (!EnsureColorResources(total.texture, outWidth, outHeight))
-			return false;
 
 		CS_GPU_PASS("NeuralRendering::FoveatedLdrBeforeUI");
 		ID3D11RenderTargetView* savedRTVs[D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT]{};
@@ -165,38 +163,31 @@ namespace NeuralRendering
 		context->OMSetRenderTargets(0, nullptr, nullptr);
 
 		const Util::Subrect::UVRegion* eyeUVs[2]{ &leftUV, &rightUV };
-		std::array<D3D11_BOX, 2> boxes{};
-		bool succeeded = true;
+		std::array<Renderer::StereoEyeInput, 2> inputs{};
 		for (std::uint32_t eye = 0; eye < 2; ++eye) {
 			const auto& uv = *eyeUVs[eye];
 			const std::uint32_t x = (eye ? eyeWidth : 0) + static_cast<std::uint32_t>(eyeWidth * uv.x);
 			const std::uint32_t y = static_cast<std::uint32_t>(totalDesc.Height * uv.y);
-			boxes[eye] = { x, y, 0, x + outWidth, y + outHeight, 1 };
-			context->CopySubresourceRegion(color[eye]->resource.get(), 0, 0, 0, 0, total.texture, 0, &boxes[eye]);
-
 			float motionScaleX = 1.0f;
 			float motionScaleY = 1.0f;
 			FoveatedRenderImpl::Bridge::ComputeMvecScale(eye, motionScaleX, motionScaleY);
-			if (!Renderer::Instance().Apply(globals::d3d::device, context, eye,
-				color[eye]->resource.get(), FoveatedRenderImpl::Core::vrSubrectDepth[eye]->resource.get(),
-				FoveatedRenderImpl::Core::vrSubrectDepth[eye]->srv.get(),
-				FoveatedRenderImpl::Core::vrSubrectMotionVectors[eye]->resource.get(),
-				FoveatedRenderImpl::Core::vrSubrectInW, FoveatedRenderImpl::Core::vrSubrectInH,
-				outWidth, outHeight, motionScaleX * FoveatedRenderImpl::Core::vrSubrectInW,
-				motionScaleY * FoveatedRenderImpl::Core::vrSubrectInH, GetTuning(foveated.settings))) {
-				succeeded = false;
-				break;
-			}
+			inputs[eye] = {
+				.depth = FoveatedRenderImpl::Core::vrSubrectDepth[eye]->resource.get(),
+				.depthSRV = FoveatedRenderImpl::Core::vrSubrectDepth[eye]->srv.get(),
+				.motionVectors = FoveatedRenderImpl::Core::vrSubrectMotionVectors[eye]->resource.get(),
+				.sourceX = x,
+				.sourceY = y,
+				.motionVectorScaleX = motionScaleX * FoveatedRenderImpl::Core::vrSubrectInW,
+				.motionVectorScaleY = motionScaleY * FoveatedRenderImpl::Core::vrSubrectInH,
+			};
 		}
+		const bool succeeded = Renderer::Instance().ApplyStereo(globals::d3d::device, context,
+			total.texture, inputs, FoveatedRenderImpl::Core::vrSubrectInW, FoveatedRenderImpl::Core::vrSubrectInH,
+			outWidth, outHeight, GetTuning(foveated.settings));
 		if (succeeded) {
-			D3D11_BOX outputBox{ 0, 0, 0, outWidth, outHeight, 1 };
-			for (std::uint32_t eye = 0; eye < 2; ++eye) {
-				context->CopySubresourceRegion(total.texture, 0, boxes[eye].left, boxes[eye].top, 0,
-					color[eye]->resource.get(), 0, &outputBox);
-			}
 			lastAppliedFrame = frame;
 			if (!writebackLogged) {
-				logger::info("[DLSSNR] LDR output written before UI composite size={}x{}", outWidth, outHeight);
+				logger::info("[DLSSNR] LDR output written before UI composite size={}x{} batchedAsync=true", outWidth, outHeight);
 				writebackLogged = true;
 			}
 		}
