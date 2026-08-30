@@ -204,7 +204,7 @@ Effects11::PerFrame Effects11::GetCommonBufferData()
 
 	data.VolumetricRaysDesaturation = settingManager.GetInterpolatedTimeOfDayValue("Desaturation", "GAMEVOLUMETRICRAYS");
 	auto colorFilter = settingManager.GetInterpolatedColorTimeOfDayValue("ColorFilter", "GAMEVOLUMETRICRAYS");
-	data.VolumetricRaysColorFilter = { colorFilter.x, colorFilter.y, colorFilter.z };
+	data.VolumetricRaysColorFilter = float3{ colorFilter.x, colorFilter.y, colorFilter.z };
 
 	data.UseProceduralGradientWeights = enableEffect && settingManager.GetValue<bool>("UseProceduralGradientWeights", "SKY");
 	data.ProceduralGradientWeightCurve = settingManager.GetInterpolatedTimeOfDayValue("ProceduralGradientWeightCurve", "SKY");

@@ -140,6 +140,7 @@ Claude Code loads it via the `@../AGENTS.md` import in `.claude/CLAUDE.md`.
 
 -   **WSL/Linux Note:** For Windows SDK compilation, run via PowerShell:
     `powershell.exe -Command "./BuildRelease.bat [PRESET_NAME]"`
+-   **Linux/macOS-host cross-compile (build-only, no VS/Windows tooling):** `cmake --preset Linux-ClangCL && cmake --build --preset Linux-ClangCL`. Proves the toolchain compiles clean and produces a working `CommunityShaders.dll`; does not produce a runnable-in-game package. See [Linux/macOS Cross-Compile](docs/development/linux-macos-cross-compile.md) for setup, overlay ports, and validation boundary.
 -   **Primary Build Command:** `./BuildRelease.bat [PRESET_NAME]`
     -   _Presets:_ `ALL` (default), `SE`, `AE`, `VR`, `PRE-AE`, `FLATRIM`.
 -   **clangd setup:** Generate compilation database after configuring `ALL`:

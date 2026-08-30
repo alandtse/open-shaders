@@ -711,7 +711,7 @@ void Menu::Init()
 	handler.ReadLineFn = [](ImGuiContext*, ImGuiSettingsHandler* h, void*, const char* line) {
 		float w, ht;
 		if (sscanf(line, "DisplaySize=%f,%f", &w, &ht) == 2)
-			*static_cast<float2*>(h->UserData) = { w, ht };
+			*static_cast<float2*>(h->UserData) = float2{ w, ht };
 	};
 	handler.WriteAllFn = [](ImGuiContext*, ImGuiSettingsHandler* h, ImGuiTextBuffer* buf) {
 		auto& ds = ImGui::GetIO().DisplaySize;
