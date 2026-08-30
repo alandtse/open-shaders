@@ -114,11 +114,14 @@ jobs:
                   echo "LLVM_MINGW_BIN=$PWD/llvm-mingw-20250910-ucrt-ubuntu-22.04-x86_64/bin" >> "$GITHUB_ENV"
 
             # ubuntu-latest's apt cmake predates CMakeLists.txt's cmake_minimum_required(VERSION
-            # 4.2); pin to match so preset parsing doesn't fail on the major-version field.
+            # 4.2); pin to match so preset parsing doesn't fail on the major-version field. Also
+            # pin ninja here (not just apt's ninja-build) -- vcpkg's manifest-mode sub-builds use
+            # whichever ninja get-cmake wires up, and an apt-only ninja isn't on that path.
             - name: Install CMake
               uses: lukka/get-cmake@latest
               with:
                   cmakeVersion: "4.2.0"
+                  ninjaVersion: "latest"
 
             - name: Setup vcpkg
               uses: lukka/run-vcpkg@v11
