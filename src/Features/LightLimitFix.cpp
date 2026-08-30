@@ -17,7 +17,7 @@
 
 #include "Deferred.h"
 #include "Menu/ThemeManager.h"
-#include "Shadercache.h"
+#include "ShaderCache.h"
 #include "State.h"
 #include "Utils/D3D.h"
 #include "Utils/ExternalEmittance.h"
