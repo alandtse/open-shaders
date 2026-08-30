@@ -113,9 +113,9 @@ jobs:
             # apt's cmake predates cmake_minimum_required(VERSION 4.2)'s major-version field; pin
             # ninja here too -- vcpkg's manifest-mode sub-builds use whichever ninja get-cmake wires up.
             - name: Install CMake
-              uses: lukka/get-cmake@latest
+              uses: lukka/get-cmake@v4.3.3
               with:
-                  cmakeVersion: "4.2.0"
+                  cmakeVersion: "~4.2.0"
                   ninjaVersion: "latest"
 
             - name: Setup vcpkg
