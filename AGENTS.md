@@ -7,8 +7,8 @@ Claude Code loads it via the `@../AGENTS.md` import in `.claude/CLAUDE.md`.
 
 -   **PR Title & Commits:** Use Conventional Commits (`type(scope): description`), title <= 50 chars, body wrapped to 72 chars/line. Target branch must be `dev` (never PR directly to `main`).
 -   **PR Title Correction:** If a PR title becomes stale before merging, fix it with: `gh pr edit <num> --title "..."` (PR title becomes the release commit message).
--   **Comments:** Max 1-2 lines inline. Explain _why_, not _what_. Describe present code only (never absent/removed code, except for regression-risk warnings). No mid-function tutorials.
--   **Comment Invariants:** Do not add "see commit/PR" pointers or name one-off incidents/tools (e.g. "the RenderDoc CTD"). State the invariant and stop.
+-   **Comments:** 0 is the expected line count for most changes — well-named code states what it does, so leave it out if it doesn't add anything. Only write one when the WHY is genuinely non-obvious, and cap it at 2 lines (3-4 only as a rare absolute ceiling for a second clause, never a budget to spend). Describe present code only (never absent/removed code, except for regression-risk warnings). No mid-function tutorials.
+-   **Comment Invariants:** The exception is narrow: a fact that, if a future editor doesn't know it, they will silently reintroduce a bug or corrupt state — not why a design was chosen, what alternative was rejected, or how a calculation works (those go in the commit/PR body). Before writing one, name the concrete bug a future edit would cause without it; if you can't, cut it. Never add a "see commit/PR" pointer or name a one-off incident/tool (e.g. "the RenderDoc CTD"). State the invariant and stop.
 -   **Minimal Churn:** Do not reformat unrelated code or rename adjacent variables outside the PR scope.
 -   **DRY Review:** Check new code against existing shared utilities codebase-wide (e.g. `SetResourceName`, `GetGameSettingValue`, cached `globals::game::*` pointers over raw `GetSingleton()`, serialize/format/filesystem helpers).
 -   **DirectX Naming:** Name every D3D11 resource using `Util::SetResourceName`. Canonical implementation is in `Utils/D3D.cpp`; never duplicate the GUID or re-implement inline.
@@ -40,6 +40,7 @@ Claude Code loads it via the `@../AGENTS.md` import in `.claude/CLAUDE.md`.
 
 -   **Doxygen:** Use Doxygen-style comments for all public declarations and API methods (especially graphics-related functions).
 -   **Present Code Only:** Comments must describe the present file's code, never absent or deleted code — except a regression-risk warning naming removed code so a future maintainer doesn't restore it (see Fork Identity & Logo Policy's `cs-logo.png` note for the canonical example of this exception).
+-   **Length & default:** See the Quick Checklist's Comments/Comment Invariants entries — 0 lines by default, 2 as the cap when one is genuinely warranted, and the narrow invariant test before reaching for the exception.
 
 ---
 
