@@ -27,7 +27,13 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	StereoBlendColorThreshold,
 	ReprojectDebugMode,
 	EnableSSRFoveation,
-	EnableSSRFoveationHardCutoff)
+	EnableSSRFoveationHardCutoff,
+	EnableLightingFoveation,
+	EnableLightingFoveationHardCutoff,
+	EnableWaterParallaxFoveation,
+	EnableWaterParallaxFoveationHardCutoff,
+	EnableDynamicCubemapFoveation,
+	EnableDynamicCubemapVisibilityThrottle)
 
 //=============================================================================
 // FEATURE BASE CLASS OVERRIDES
