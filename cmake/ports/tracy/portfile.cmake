@@ -39,10 +39,8 @@ vcpkg_cmake_install()
 vcpkg_copy_pdbs()
 vcpkg_cmake_config_fixup(PACKAGE_NAME Tracy CONFIG_PATH lib/cmake/Tracy)
 
-# Public headers install at include/tracy/tracy/*.hpp and pull siblings (../common,
-# ../client) by relative path; this codebase includes them as <Tracy/Tracy.hpp>. A
-# case-insensitive filesystem (Windows, macOS) tolerates the mismatch, Linux does not.
-# Forward instead of copying so the originals' "../common"/"../client" includes still resolve.
+# Public headers reach ../common and ../client by relative path; forward via thin
+# <Tracy/*.hpp> wrappers instead of copying so those relative includes keep resolving.
 file(MAKE_DIRECTORY "${CURRENT_PACKAGES_DIR}/include/Tracy")
 foreach(header IN ITEMS Tracy.hpp TracyC.h TracyD3D11.hpp)
     file(WRITE "${CURRENT_PACKAGES_DIR}/include/Tracy/${header}" "#pragma once\n#include \"../tracy/tracy/${header}\"\n")

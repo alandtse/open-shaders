@@ -1,8 +1,7 @@
 vcpkg_check_linkage(ONLY_STATIC_LIBRARY)
 
-# Upstream's pchfx.h includes <D3DCompiler.h> and "INITGUID.h"; xwin's
-# splatted Windows SDK exposes both lowercase, which only a case-insensitive
-# filesystem (Windows, macOS) tolerates.
+# pchfx.h includes <D3DCompiler.h>/"INITGUID.h"; xwin's splatted SDK exposes both
+# lowercase, which only a case-insensitive filesystem tolerates.
 vcpkg_from_github(
     OUT_SOURCE_PATH SOURCE_PATH
     REPO microsoft/FX11
