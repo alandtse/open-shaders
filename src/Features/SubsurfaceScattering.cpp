@@ -462,7 +462,8 @@ ID3D11ComputeShader* SubsurfaceScattering::GetComputeShaderBurley()
 
 void SubsurfaceScattering::DataLoaded()
 {
-	isBeastRaceKeyword = RE::TESForm::LookupByEditorID("IsBeastRace")->As<RE::BGSKeyword>();
+	if (auto* form = RE::TESForm::LookupByEditorID("IsBeastRace"))
+		isBeastRaceKeyword = form->As<RE::BGSKeyword>();
 }
 
 void SubsurfaceScattering::PostPostLoad()
