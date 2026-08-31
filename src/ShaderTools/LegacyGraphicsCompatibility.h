@@ -16,6 +16,10 @@ namespace LegacyGraphicsCompatibility
 
 	[[nodiscard]] bool IsLegacyVersion() noexcept;
 
+	// IsLegacyVersion() alone is true on VR too; the legacy compatibility hooks are
+	// flat-runtime-only, so callers gating on that scope must use this instead.
+	[[nodiscard]] bool IsLegacyFlatRuntime() noexcept;
+
 	[[nodiscard]] constexpr std::uint32_t NormalizeLegacyUtilityDescriptor(std::uint32_t a_descriptor) noexcept
 	{
 		constexpr std::uint32_t shadowMaskTechniques = 0x01E00000;

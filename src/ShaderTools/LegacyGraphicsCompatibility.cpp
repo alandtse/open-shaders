@@ -27,11 +27,6 @@ namespace LegacyGraphicsCompatibility
 
 		thread_local CameraProjectionSnapshot cameraProjectionSnapshot;
 
-		[[nodiscard]] bool IsLegacyFlatRuntime() noexcept
-		{
-			return !REL::Module::IsVR() && IsLegacyVersion();
-		}
-
 		[[nodiscard]] std::uintptr_t ReadRelativeCallTarget(std::uintptr_t a_callSite) noexcept
 		{
 			std::int32_t displacement{};
@@ -606,6 +601,11 @@ namespace LegacyGraphicsCompatibility
 			stl::detour_thunk<ShadowSceneNode_ctor>(constructor);
 			logger::info("Installed legacy ShadowSceneNode 1.7 tail initialization");
 		}
+	}
+
+	bool IsLegacyFlatRuntime() noexcept
+	{
+		return !REL::Module::IsVR() && IsLegacyVersion();
 	}
 
 	void Install()

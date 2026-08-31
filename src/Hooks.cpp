@@ -38,7 +38,7 @@ namespace
 	void NormalizeLegacyUtilityDescriptors(const RE::BSShader& a_shader, uint& a_vertexDescriptor, uint& a_pixelDescriptor)
 	{
 		if (a_shader.shaderType.get() != RE::BSShader::Type::Utility ||
-			!LegacyGraphicsCompatibility::IsLegacyVersion()) {
+			!LegacyGraphicsCompatibility::IsLegacyFlatRuntime()) {
 			return;
 		}
 		a_vertexDescriptor = LegacyGraphicsCompatibility::NormalizeLegacyUtilityDescriptor(a_vertexDescriptor);
