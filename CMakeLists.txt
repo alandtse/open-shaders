@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 4.2)
+cmake_minimum_required(VERSION 3.31)
 cmake_policy(SET CMP0116 NEW)
 set(CMAKE_POLICY_WARNING_CMP0116 OFF)
 
@@ -150,6 +150,12 @@ add_subdirectory(${CMAKE_SOURCE_DIR}/cmake/Streamline)
 find_path(DETOURS_INCLUDE_DIRS "detours/detours.h")
 find_library(DETOURS_LIBRARY detours REQUIRED)
 include(FidelityFX-SDK)
+
+# The SDK's component targets are emitted as plain library names (for example
+# ffx_fsr3upscaler_x64.lib) rather than imported targets on the VS generator.
+# Keep the SDK output directory on the link search path so multi-config builds
+# resolve those libraries without relying on a machine-specific CMake cache.
+target_link_directories(${PROJECT_NAME} PRIVATE "${CMAKE_SOURCE_DIR}/bin/ffx_sdk")
 
 target_compile_definitions(
     ${PROJECT_NAME}

@@ -2670,10 +2670,10 @@ void Upscaling::Upscale()
 	auto& main = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMAIN];
 	auto& motionVector = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMOTION_VECTOR];
 
-	// Camera-only synthesized MVs are only valid for a static flat menu background.
-	// Loading screens and any real scene rendered behind a menu (VR Playroom) have
-	// their own motion the camera-derived MVs can't represent, so keep the reset.
-	if (globals::state->isMainMenuOpen && !globals::state->isLoadingMenuOpen && !globals::state->worldRenderedThisFrame)
+	// Static menu backdrops (including map/stats) have no reliable engine motion
+	// vector stream. Synthesize camera-derived MVs so DLSS can reproject while the
+	// headset moves. A live VR Playroom/world backdrop keeps its real vectors.
+	if (globals::state->IsStaticMenuBackdropOpen(globals::game::ui))
 		FillMenuCameraMotionVectors();
 	else
 		menuCameraMVsValid = false;
