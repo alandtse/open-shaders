@@ -610,11 +610,14 @@ namespace LegacyGraphicsCompatibility
 
 	void Install()
 	{
+		// VTable-based and internally IsLegacyVersion()-gated, so this is safe and
+		// needed on VR too, unlike the raw SE/AE-binary byte-pattern adapters below.
+		detail::InstallShaderAdapters();
+
 		if (!IsLegacyFlatRuntime()) {
 			return;
 		}
 
-		detail::InstallShaderAdapters();
 		InstallAlphaBlendExtentsAdapter();
 		InstallStateCameraProjectionAdapter();
 		(void)InstallFullScreenBlurAdapters();
