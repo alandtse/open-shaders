@@ -91,7 +91,7 @@ public:
 	UINT frameIndex = 0;
 	UINT64 fenceValue = 0;
 
-	UINT64 frameFenceValues[2] = { 0, 0 };
+	UINT64 frameFenceValues[3] = { 0, 0, 0 };
 
 	LARGE_INTEGER qpf;
 
