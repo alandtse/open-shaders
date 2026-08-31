@@ -22,10 +22,10 @@
 
 -   `ALL` - Universal binary supporting SE/AE/VR runtime detection (default, standard build without auto-deployment)
 -   `Dev` / `Dev-Fast` - Fast iteration presets (recommended for development)
--   `ALL-VS2022`, `ALL-DEBUG`, `Debug`, `PR` - see `CMakePresets.json` for what each configures.
+-   `ALL-VS2022`, `ALL-DEBUG`, `Debug`, `PR`, `Linux-ClangCL` - see `CMakePresets.json` for what each configures.
 -   `ALL-WITH-AUTO-DEPLOYMENT` - **not tracked** — copy `CMakeUserPresets.json.template` to `CMakeUserPresets.json` (gitignored, per-clone) to define it. Extends `ALL` with `AUTO_PLUGIN_DEPLOYMENT=ON` to deploy built plugins and assets directly to your local SE/VR `Data` directories; the preferred preset for a local test-deploy once configured.
 
-`CMakePresets.json` lists every tracked preset. A local `CMakeUserPresets.json` can define more (check for one before assuming a preset name doesn't exist — many devs keep deploy-enabled variants there that won't show up in a repo-wide grep).
+`CMakePresets.json` lists every tracked preset. A local `CMakeUserPresets.json` can define more (check for one before assuming a preset name doesn't exist — many devs keep deploy-enabled variants there that won't show up in a `git grep`).
 
 ### Build and Development Configuration
 
