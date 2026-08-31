@@ -1074,8 +1074,8 @@ namespace Hooks
 			void* a6,
 			void* a7)
 		{
-			auto* enableIBLF = reinterpret_cast<bool*>(REL::RelocationID(513510, 391362).address());
-			*enableIBLF = false;
+			auto* enableIBLF = reinterpret_cast<float*>(REL::RelocationID(513510, 391362).address());
+			*enableIBLF = 0.0f;
 
 			func(a1, a2, a3, a4, a5, a6, a7);
 		}
