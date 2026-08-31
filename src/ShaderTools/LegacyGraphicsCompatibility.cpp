@@ -1,5 +1,7 @@
 #include "LegacyGraphicsCompatibility.h"
 
+#include "Globals.h"
+
 #include <bit>
 #include <mutex>
 
@@ -357,7 +359,10 @@ namespace LegacyGraphicsCompatibility
 			{
 				auto* result = func(a_this, a_arg2, a_arg3, a_arg4, a_arg5, a_arg6, a_arg7);
 				if (result) {
-					std::memset(reinterpret_cast<std::byte*>(result) + 0x2CC, 0, 0x18);
+					// VR's RUNTIME_DATA sits +0x28 from SE/AE (see ShadowSceneNode.h);
+					// this field is inside the uniformly-shifted region.
+					const auto offset = globals::game::isVR ? 0x2CC + 0x28 : 0x2CC;
+					std::memset(reinterpret_cast<std::byte*>(result) + offset, 0, 0x18);
 				}
 				return result;
 			}
@@ -453,13 +458,25 @@ namespace LegacyGraphicsCompatibility
 
 		void InstallStateCameraProjectionAdapter()
 		{
+			if (!IsLegacyVersion()) {
+				return;
+			}
+
 			const auto updateJitter = REL::RelocationID(75709, 77518).address();
 			const auto setCameraData = REL::RelocationID(75694, 77503).address();
+			// VR's compiled bytes genuinely differ from SE's here (unlike
+			// ShadowSceneNode's shared pattern below); reusing SE's pattern
+			// for VR would fail verification and skip installing on VR.
 			const bool updateJitterVerified = REL::Module::IsSE() ?
 			                                      REL::verify_code(
 													  updateJitter,
 													  REL::make_pattern<
 														  "48 8B 05 ?? ?? ?? ?? 48 8B 90 F0 01 00 00 80 7A 18 00 74 7A 8B 81 B8 00 00 00">()) :
+			                                  globals::game::isVR ?
+			                                      REL::verify_code(
+													  updateJitter,
+													  REL::make_pattern<
+														  "40 53 48 83 EC 20 48 8B 05 53 23 65 02 48 8B D9 48 8B 90 18 02 00 00">()) :
 			                                      REL::verify_code(
 													  updateJitter,
 													  REL::make_pattern<
@@ -469,12 +486,17 @@ namespace LegacyGraphicsCompatibility
 													   setCameraData,
 													   REL::make_pattern<
 														   "48 89 5C 24 08 48 89 6C 24 10 48 89 74 24 18 48 89 7C 24 20 41 56 48 83 EC 20">()) :
+			                                   globals::game::isVR ?
+			                                       REL::verify_code(
+													   setCameraData,
+													   REL::make_pattern<
+														   "40 57 48 83 EC 30 48 C7 44 24 20 FE FF FF FF 48 89 5C 24 40 48 89 6C 24">()) :
 			                                       REL::verify_code(
 													   setCameraData,
 													   REL::make_pattern<
 														   "48 89 5C 24 08 48 89 6C 24 10 48 89 74 24 18 57 48 83 EC 20">());
 			if (!updateJitterVerified || !setCameraDataVerified) {
-				logger::error("Legacy jitter/SetCameraData functions do not match the verified 1.5.97/1.6.1170 binaries; camera-projection adapters not installed");
+				logger::error("Legacy jitter/SetCameraData functions do not match the verified 1.5.97/1.6.1170/1.4.15 binaries; camera-projection adapters not installed");
 				return;
 			}
 
@@ -584,8 +606,14 @@ namespace LegacyGraphicsCompatibility
 
 		void InstallShadowSceneNodeInitialization()
 		{
+			if (!IsLegacyVersion()) {
+				return;
+			}
+
 			const auto constructor = REL::RelocationID(99686, 106320).address();
-			const bool verified = REL::Module::IsSE() ?
+			// VR shares SE's id space and its constructor's verified prologue is
+			// byte-identical to SE's (confirmed via decompile at RVA 0x12f5f80).
+			const bool verified = (REL::Module::IsSE() || globals::game::isVR) ?
 			                          REL::verify_code(
 										  constructor,
 										  REL::make_pattern<"48 8B C4 48 89 48 08 57 41 54 41 55 41 56 41 57 48 83 EC 50">()) :
@@ -593,7 +621,7 @@ namespace LegacyGraphicsCompatibility
 										  constructor,
 										  REL::make_pattern<"48 8B C4 48 89 48 08 57 41 54 41 55 41 56 41 57 48 83 EC 60">());
 			if (!verified) {
-				logger::error("Legacy ShadowSceneNode constructor does not match the verified 1.5.97/1.6.1170 binary; initialization fix not installed");
+				logger::error("Legacy ShadowSceneNode constructor does not match the verified 1.5.97/1.6.1170/1.4.15 binary; initialization fix not installed");
 				return;
 			}
 
@@ -610,17 +638,20 @@ namespace LegacyGraphicsCompatibility
 
 	void Install()
 	{
-		// VTable-based and internally IsLegacyVersion()-gated, so this is safe and
-		// needed on VR too, unlike the raw SE/AE-binary byte-pattern adapters below.
+		// All three below self-gate on IsLegacyVersion() internally (matching
+		// InstallShaderAdapters' own pattern), so calling them unconditionally
+		// here is safe -- they no-op on AE 1.7.99+. Each is verified needed on
+		// VR too, per its own comment. AlphaBlend/FullScreenBlur below stay
+		// flat-only: no VR pattern verified yet.
 		detail::InstallShaderAdapters();
+		InstallShadowSceneNodeInitialization();
+		InstallStateCameraProjectionAdapter();
 
 		if (!IsLegacyFlatRuntime()) {
 			return;
 		}
 
 		InstallAlphaBlendExtentsAdapter();
-		InstallStateCameraProjectionAdapter();
 		(void)InstallFullScreenBlurAdapters();
-		InstallShadowSceneNodeInitialization();
 	}
 }

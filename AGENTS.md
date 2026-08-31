@@ -127,6 +127,7 @@ Claude Code loads it via the `@../AGENTS.md` import in `.claude/CLAUDE.md`.
     -   Land sync PRs as merge commits, never squash.
     -   Resolve conflicts in favor of keeping VR. Revert upstream VR removals.
     -   Verify ancestry after landing: `git merge-base --is-ancestor <upstream-sha> HEAD` must pass.
+    -   **Upstream never tests VR, so a clean (non-conflicting) sync can still silently break it.** After landing, scan the sync's own diff for new runtime-version gating (`REL::Module::IsAE()`/`IsAtLeast(...)`, new `RelocationID`/byte-pattern-verified patches, new "legacy compatibility" layers) and ask explicitly for each one: does VR need this too, and is a VR address/pattern actually known or findable — not just "does it compile without a VR branch." A raw 2-arg `RelocationID(se, ae)` with no VR path is a strong signal nobody asked that question yet. Don't assume gating something out of VR (or reusing an existing VR-excluding helper) is automatically correct just because VR's binary differs — check whether VR conceptually needs the same behavior first (see PR #586 for a case where it did, twice, in the same sync).
 -   _For conventional commit mappings, staging/RC workflows, release stages (Alpha/Beta ini flags), and manual packaging targets, see [Release Process](docs/development/release-process.md) and [Upstream Sync Guide](docs/development/upstream-sync.md)._
 
 ---
