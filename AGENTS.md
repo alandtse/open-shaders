@@ -143,7 +143,8 @@ Claude Code loads it via the `@../AGENTS.md` import in `.claude/CLAUDE.md`.
     `powershell.exe -Command "./BuildRelease.bat [PRESET_NAME]"`
 -   **Linux/macOS-host cross-compile (build-only, no VS/Windows tooling):** `cmake --preset Linux-ClangCL && cmake --build --preset Linux-ClangCL`. Proves the toolchain compiles clean and produces a working `CommunityShaders.dll`; does not produce a runnable-in-game package. See [Linux/macOS Cross-Compile](docs/development/linux-macos-cross-compile.md) for setup, overlay ports, and validation boundary.
 -   **Primary Build Command:** `./BuildRelease.bat [PRESET_NAME]`
-    -   _Presets:_ `ALL` (default), `SE`, `AE`, `VR`, `PRE-AE`, `FLATRIM`.
+    -   _Tracked presets (`CMakePresets.json`):_ `ALL` (default, universal SE/AE/VR binary), `ALL-VS2022`, `ALL-DEBUG`, `Dev-Fast`, `Debug`, `PR`.
+    -   _Local presets:_ many devs keep a gitignored `CMakeUserPresets.json` (start from `CMakeUserPresets.json.template`) defining deploy-enabled variants such as `ALL-WITH-AUTO-DEPLOYMENT` — sets `AUTO_PLUGIN_DEPLOYMENT=ON` and deploys straight to the local SE/VR `Data` dirs via `CommunityShadersOutputDir`; the preferred preset for a local test-deploy. Check for this file (`Test-Path CMakeUserPresets.json`) before assuming a preset name doesn't exist — it's per-clone and not committed, so its presets won't show up in `CMakePresets.json` or a repo-wide grep.
 -   **clangd setup:** Generate compilation database after configuring `ALL`:
     `pwsh tools/gen-clangd-db.ps1`
 -   **Shader Refactor Verification:**
