@@ -1310,10 +1310,8 @@ namespace ShadowCasterManager
 			// copy, so this patches that one instruction directly instead of a function entry.
 			const uint8_t xorRax[6] = { 0x48, 0x31, 0xC0, 0x90, 0x90, 0x90 };
 			if (REL::Module::get().version() == REL::Version(1, 7, 104, 0)) {
-				// Raw offset (unstable across 1.7.x point releases -- confirmed drifted from
-				// 1.7.99's 0x14ea854 to 0x14eaab4, a +0x260 shift, via direct byte comparison
-				// against both binaries). Verify the bytes before writing so a version that
-				// moved this instruction fails safe instead of scribbling over the wrong code.
+				// Raw offset (unstable across 1.7.x point releases) -- verify the bytes
+				// before writing so a version that moved this instruction fails safe.
 				const uint8_t expected[6] = { 0x8B, 0x05, 0xAE, 0xE5, 0xBE, 0x00 };
 				const uint8_t xorEax[6] = { 0x31, 0xC0, 0x90, 0x90, 0x90, 0x90 };
 				const auto target = REL::Offset(0x14eaab4).address();
