@@ -464,8 +464,6 @@ namespace LegacyGraphicsCompatibility
 
 			const auto updateJitter = REL::RelocationID(75709, 77518).address();
 			const auto setCameraData = REL::RelocationID(75694, 77503).address();
-			// VR's compiled bytes differ from SE's here; reusing SE's pattern
-			// would fail verification and skip installing on VR.
 			const bool updateJitterVerified = REL::Module::IsSE() ?
 			                                      REL::verify_code(
 													  updateJitter,
@@ -610,8 +608,8 @@ namespace LegacyGraphicsCompatibility
 			}
 
 			const auto constructor = REL::RelocationID(99686, 106320).address();
-			// VR shares SE's id space and its constructor's verified prologue is
-			// byte-identical to SE's (confirmed via decompile at RVA 0x12f5f80).
+			// Unlike the jitter/SetCameraData patterns above, VR's prologue here is
+			// byte-identical to SE's, so it deliberately shares SE's branch, not its own.
 			const bool verified = (REL::Module::IsSE() || globals::game::isVR) ?
 			                          REL::verify_code(
 										  constructor,
