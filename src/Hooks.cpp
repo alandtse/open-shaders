@@ -38,8 +38,9 @@ namespace
 	void NormalizeLegacyUtilityDescriptors(const RE::BSShader& a_shader, uint& a_vertexDescriptor, uint& a_pixelDescriptor)
 	{
 		// The Utility shadow-filter descriptor's legacy technique numbering predates
-		// the 1.7.99 AE renumbering on every runtime, VR included (unlike the other
-		// IsLegacyFlatRuntime()-gated hooks in this file, which are flat-only).
+		// the 1.7.99 AE renumbering on every runtime, VR included (unlike the
+		// AlphaBlend/FullScreenBlur adapters in LegacyGraphicsCompatibility.cpp,
+		// which stay flat-only).
 		if (a_shader.shaderType.get() != RE::BSShader::Type::Utility ||
 			!LegacyGraphicsCompatibility::IsLegacyVersion()) {
 			return;

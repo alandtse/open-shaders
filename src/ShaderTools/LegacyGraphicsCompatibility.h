@@ -16,8 +16,9 @@ namespace LegacyGraphicsCompatibility
 
 	[[nodiscard]] bool IsLegacyVersion() noexcept;
 
-	// IsLegacyVersion() alone is true on VR too; the legacy compatibility hooks are
-	// flat-runtime-only, so callers gating on that scope must use this instead.
+	// IsLegacyVersion() alone is true on VR too; most legacy compatibility hooks now
+	// cover VR as well. Use this instead only for adapters with no verified VR
+	// support yet (currently AlphaBlend and FullScreenBlur).
 	[[nodiscard]] bool IsLegacyFlatRuntime() noexcept;
 
 	[[nodiscard]] constexpr std::uint32_t NormalizeLegacyUtilityDescriptor(std::uint32_t a_descriptor) noexcept

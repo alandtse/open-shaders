@@ -638,11 +638,13 @@ namespace LegacyGraphicsCompatibility
 
 	void Install()
 	{
-		// All three below self-gate on IsLegacyVersion() internally (matching
-		// InstallShaderAdapters' own pattern), so calling them unconditionally
-		// here is safe -- they no-op on AE 1.7.99+. Each is verified needed on
-		// VR too, per its own comment. AlphaBlend/FullScreenBlur below stay
-		// flat-only: no VR pattern verified yet.
+		// All three below self-gate on IsLegacyVersion() internally, so calling
+		// them unconditionally here is safe -- they no-op on AE 1.7.99+.
+		// ShadowSceneNodeInitialization and StateCameraProjectionAdapter are
+		// VR-verified per their own comments below; InstallShaderAdapters is
+		// vtable-based (CommonLib's VR-safe VTABLE_* symbols), needing no
+		// separate VR byte-pattern verification. AlphaBlend/FullScreenBlur
+		// below stay flat-only: no VR pattern verified yet.
 		detail::InstallShaderAdapters();
 		InstallShadowSceneNodeInitialization();
 		InstallStateCameraProjectionAdapter();
