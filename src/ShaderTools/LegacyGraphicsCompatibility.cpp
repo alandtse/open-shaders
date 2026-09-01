@@ -464,9 +464,8 @@ namespace LegacyGraphicsCompatibility
 
 			const auto updateJitter = REL::RelocationID(75709, 77518).address();
 			const auto setCameraData = REL::RelocationID(75694, 77503).address();
-			// VR's compiled bytes genuinely differ from SE's here (unlike
-			// ShadowSceneNode's shared pattern below); reusing SE's pattern
-			// for VR would fail verification and skip installing on VR.
+			// VR's compiled bytes differ from SE's here; reusing SE's pattern
+			// would fail verification and skip installing on VR.
 			const bool updateJitterVerified = REL::Module::IsSE() ?
 			                                      REL::verify_code(
 													  updateJitter,
@@ -638,13 +637,8 @@ namespace LegacyGraphicsCompatibility
 
 	void Install()
 	{
-		// All three below self-gate on IsLegacyVersion() internally, so calling
-		// them unconditionally here is safe -- they no-op on AE 1.7.99+.
-		// ShadowSceneNodeInitialization and StateCameraProjectionAdapter are
-		// VR-verified per their own comments below; InstallShaderAdapters is
-		// vtable-based (CommonLib's VR-safe VTABLE_* symbols), needing no
-		// separate VR byte-pattern verification. AlphaBlend/FullScreenBlur
-		// below stay flat-only: no VR pattern verified yet.
+		// AlphaBlend/FullScreenBlur have no verified VR byte pattern yet; an
+		// unconditional call would hard-crash VR on the missing address-library id.
 		detail::InstallShaderAdapters();
 		InstallShadowSceneNodeInitialization();
 		InstallStateCameraProjectionAdapter();
