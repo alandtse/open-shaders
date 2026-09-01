@@ -18,7 +18,6 @@ namespace LegacyGraphicsCompatibility
 		constexpr std::size_t fractionalCopySlot = 9;
 		constexpr std::size_t dynamicFetchDisabledCopySlot = 10;
 		constexpr std::uint32_t usePreservedCameraProjectionScale = 1U << 9;
-		constexpr std::ptrdiff_t vrRuntimeDataShift = 0x28;
 
 		struct CameraProjectionSnapshot
 		{
@@ -360,7 +359,7 @@ namespace LegacyGraphicsCompatibility
 			{
 				auto* result = func(a_this, a_arg2, a_arg3, a_arg4, a_arg5, a_arg6, a_arg7);
 				if (result) {
-					const auto offset = globals::game::isVR ? 0x2CC + vrRuntimeDataShift : 0x2CC;
+					const auto offset = globals::game::isVR ? 0x2F4 : 0x2CC;
 					std::memset(reinterpret_cast<std::byte*>(result) + offset, 0, 0x18);
 				}
 				return result;
@@ -442,14 +441,6 @@ namespace LegacyGraphicsCompatibility
 
 		void InstallAlphaBlendExtentsAdapter()
 		{
-			if (!IsLegacyVersion()) {
-				return;
-			}
-			if (globals::game::isVR && !REL::IDDB::get().IsVRAddressLibraryAtLeastVersion("0.256.0")) {
-				logger::info("VR address library too old for the legacy AlphaBlend adapter (need 0.256.0+); adapter not installed");
-				return;
-			}
-
 			const auto callSite = REL::RelocationID(100950, 107732).address() + REL::Relocate(0x151, 0x148, 0x16B);
 			const auto expectedTarget = REL::RelocationID(75564, 77365).address();
 			constexpr auto callPattern = REL::make_pattern<"E8 ?? ?? ?? ??">();
@@ -465,10 +456,6 @@ namespace LegacyGraphicsCompatibility
 
 		void InstallStateCameraProjectionAdapter()
 		{
-			if (!IsLegacyVersion()) {
-				return;
-			}
-
 			const auto updateJitter = REL::RelocationID(75709, 77518).address();
 			const auto setCameraData = REL::RelocationID(75694, 77503).address();
 			const bool updateJitterVerified = REL::Module::IsSE() ?
@@ -515,16 +502,20 @@ namespace LegacyGraphicsCompatibility
 		{
 			const auto setupAddress = REL::RelocationID(101564, 108562).address();
 			const auto shutdownAddress = REL::RelocationID(101562, 108560).address();
-			const auto destructorAddress = REL::RelocationID(101570, 108568).address();
+			// SE/VR fold the destructor's stage-loop body into shutdown()'s; only AE
+			// keeps a distinct body, hence reusing shutdown's id (101562) here for SE/VR.
+			const auto destructorAddress = REL::RelocationID(101562, 108568).address();
 			constexpr auto setupContext = REL::make_pattern<
 				"48 8B EA 48 8B D9 BA 0A 00 00 00 E8 ?? ?? ?? ??">();
 			constexpr auto shutdownContext = REL::make_pattern<
 				"48 89 2C 06 FF C7 83 FF 0A 7C AF">();
 			constexpr auto destructorContext = REL::make_pattern<
 				"4C 89 34 06 FF C7 83 FF 0A 7C AF">();
+			const bool destructorSharesShutdownBody = destructorAddress == shutdownAddress;
 			if (!REL::verify_code(setupAddress + 0x24, setupContext) ||
 				!REL::verify_code(shutdownAddress + 0x86, shutdownContext) ||
-				!REL::verify_code(destructorAddress + 0x86, destructorContext)) {
+				(!destructorSharesShutdownBody &&
+					!REL::verify_code(destructorAddress + 0x86, destructorContext))) {
 				logger::error("Legacy FullScreenBlur stage-count opcode contexts do not match the verified 1.5.97/1.6.1170 sequences; no blur adapters installed");
 				return false;
 			}
@@ -576,6 +567,11 @@ namespace LegacyGraphicsCompatibility
 				return restored;
 			};
 			for (std::size_t i = 0; i < countAddresses.size(); ++i) {
+				if (i > 0 && countAddresses[i] == countAddresses[i - 1]) {
+					// Already patched by the prior entry; re-writing would fail
+					// safe_write's expected-old-value precondition.
+					continue;
+				}
 				if (REL::safe_write(countAddresses[i], latestCount, std::array{ legacyCount })) {
 					countWritten[i] = true;
 					continue;
@@ -610,10 +606,6 @@ namespace LegacyGraphicsCompatibility
 
 		void InstallShadowSceneNodeInitialization()
 		{
-			if (!IsLegacyVersion()) {
-				return;
-			}
-
 			const auto constructor = REL::RelocationID(99686, 106320).address();
 			const bool verified = (REL::Module::IsSE() || globals::game::isVR) ?
 			                          REL::verify_code(
@@ -633,22 +625,16 @@ namespace LegacyGraphicsCompatibility
 		}
 	}
 
-	bool IsLegacyFlatRuntime() noexcept
-	{
-		return !REL::Module::IsVR() && IsLegacyVersion();
-	}
-
 	void Install()
 	{
-		detail::InstallShaderAdapters();
-		InstallAlphaBlendExtentsAdapter();
-		InstallStateCameraProjectionAdapter();
-		InstallShadowSceneNodeInitialization();
-
-		if (!IsLegacyFlatRuntime()) {
+		if (!IsLegacyVersion()) {
 			return;
 		}
 
+		detail::InstallShaderAdapters();
+		InstallAlphaBlendExtentsAdapter();
+		InstallStateCameraProjectionAdapter();
 		(void)InstallFullScreenBlurAdapters();
+		InstallShadowSceneNodeInitialization();
 	}
 }

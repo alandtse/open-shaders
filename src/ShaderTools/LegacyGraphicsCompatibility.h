@@ -16,8 +16,6 @@ namespace LegacyGraphicsCompatibility
 
 	[[nodiscard]] bool IsLegacyVersion() noexcept;
 
-	[[nodiscard]] bool IsLegacyFlatRuntime() noexcept;
-
 	[[nodiscard]] constexpr std::uint32_t NormalizeLegacyUtilityDescriptor(std::uint32_t a_descriptor) noexcept
 	{
 		constexpr std::uint32_t shadowMaskTechniques = 0x01E00000;
