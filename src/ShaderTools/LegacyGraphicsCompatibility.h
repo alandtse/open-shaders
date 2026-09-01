@@ -17,7 +17,7 @@ namespace LegacyGraphicsCompatibility
 	[[nodiscard]] bool IsLegacyVersion() noexcept;
 
 	// IsLegacyVersion() alone is true on VR too; use this only for adapters with
-	// no verified VR byte pattern yet (currently AlphaBlend, FullScreenBlur).
+	// no verified VR byte pattern yet (currently FullScreenBlur).
 	[[nodiscard]] bool IsLegacyFlatRuntime() noexcept;
 
 	[[nodiscard]] constexpr std::uint32_t NormalizeLegacyUtilityDescriptor(std::uint32_t a_descriptor) noexcept
