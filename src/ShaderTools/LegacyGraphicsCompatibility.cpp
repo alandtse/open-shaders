@@ -443,11 +443,22 @@ namespace LegacyGraphicsCompatibility
 
 		void InstallAlphaBlendExtentsAdapter()
 		{
-			const auto callSite = REL::RelocationID(100950, 107732).address() + REL::Relocate(0x151, 0x148);
+			if (!IsLegacyVersion()) {
+				return;
+			}
+			// id 100950's VR address isn't published yet; a non-fatal version query
+			// here (unlike XSEPlugin.cpp's hard floor) lets everyone else's plugin
+			// load while older-address-library VR users just skip this adapter.
+			if (globals::game::isVR && !REL::IDDB::get().IsVRAddressLibraryAtLeastVersion("0.256.0")) {
+				logger::info("VR address library too old for the legacy AlphaBlend adapter (need 0.256.0+); adapter not installed");
+				return;
+			}
+
+			const auto callSite = REL::RelocationID(100950, 107732).address() + REL::Relocate(0x151, 0x148, 0x16B);
 			const auto expectedTarget = REL::RelocationID(75564, 77365).address();
 			constexpr auto callPattern = REL::make_pattern<"E8 ?? ?? ?? ??">();
 			if (!REL::verify_code(callSite, callPattern) || ReadRelativeCallTarget(callSite) != expectedTarget) {
-				logger::error("Legacy AlphaBlend viewport call does not match the verified 1.5.97/1.6.1170 binary; adapter not installed");
+				logger::error("Legacy AlphaBlend viewport call does not match the verified 1.5.97/1.6.1170/1.4.15 binary; adapter not installed");
 				return;
 			}
 
@@ -635,17 +646,17 @@ namespace LegacyGraphicsCompatibility
 
 	void Install()
 	{
-		// AlphaBlend/FullScreenBlur have no verified VR byte pattern yet; an
-		// unconditional call would hard-crash VR on the missing address-library id.
+		// FullScreenBlur has no verified VR byte pattern yet; an unconditional
+		// call would hard-crash VR on the missing address-library id.
 		detail::InstallShaderAdapters();
 		InstallShadowSceneNodeInitialization();
 		InstallStateCameraProjectionAdapter();
+		InstallAlphaBlendExtentsAdapter();
 
 		if (!IsLegacyFlatRuntime()) {
 			return;
 		}
 
-		InstallAlphaBlendExtentsAdapter();
 		(void)InstallFullScreenBlurAdapters();
 	}
 }
