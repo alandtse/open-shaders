@@ -37,8 +37,6 @@ namespace
 
 	void NormalizeLegacyUtilityDescriptors(const RE::BSShader& a_shader, uint& a_vertexDescriptor, uint& a_pixelDescriptor)
 	{
-		// This descriptor's legacy numbering predates the 1.7.99 AE renumbering on
-		// every runtime, VR included (unlike LegacyGraphicsCompatibility's flat-only FullScreenBlur).
 		if (a_shader.shaderType.get() != RE::BSShader::Type::Utility ||
 			!LegacyGraphicsCompatibility::IsLegacyVersion()) {
 			return;

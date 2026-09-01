@@ -446,9 +446,9 @@ namespace LegacyGraphicsCompatibility
 			if (!IsLegacyVersion()) {
 				return;
 			}
-			// id 100950's VR address isn't published yet; a non-fatal version query
-			// here (unlike XSEPlugin.cpp's hard floor) lets everyone else's plugin
-			// load while older-address-library VR users just skip this adapter.
+			// This adapter's VR address isn't published yet; a non-fatal version
+			// query here (unlike XSEPlugin.cpp's hard floor) lets everyone else's
+			// plugin load while older-address-library VR users just skip it.
 			if (globals::game::isVR && !REL::IDDB::get().IsVRAddressLibraryAtLeastVersion("0.256.0")) {
 				logger::info("VR address library too old for the legacy AlphaBlend adapter (need 0.256.0+); adapter not installed");
 				return;
@@ -646,8 +646,8 @@ namespace LegacyGraphicsCompatibility
 
 	void Install()
 	{
-		// FullScreenBlur has no verified VR byte pattern yet; an unconditional
-		// call would hard-crash VR on the missing address-library id.
+		// FullScreenBlur stays behind IsLegacyFlatRuntime() below: an unconditional
+		// call here would hard-crash VR on its missing address-library ids.
 		detail::InstallShaderAdapters();
 		InstallShadowSceneNodeInitialization();
 		InstallStateCameraProjectionAdapter();
