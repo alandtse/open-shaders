@@ -641,9 +641,9 @@ namespace LegacyGraphicsCompatibility
 	void Install()
 	{
 		detail::InstallShaderAdapters();
-		InstallShadowSceneNodeInitialization();
-		InstallStateCameraProjectionAdapter();
 		InstallAlphaBlendExtentsAdapter();
+		InstallStateCameraProjectionAdapter();
+		InstallShadowSceneNodeInitialization();
 
 		if (!IsLegacyFlatRuntime()) {
 			return;
