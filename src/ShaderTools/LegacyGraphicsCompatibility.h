@@ -14,12 +14,8 @@ namespace LegacyGraphicsCompatibility
 		ImageSpaceSelectorSource source;
 	};
 
-	// True on SE, VR, and legacy AE (<1.7.99) -- i.e. every runtime carrying the
-	// pre-1.7.99 technique numbering, VR included.
 	[[nodiscard]] bool IsLegacyVersion() noexcept;
 
-	// IsLegacyVersion() narrowed to exclude VR; use only for adapters with no
-	// verified VR byte pattern yet (currently FullScreenBlur).
 	[[nodiscard]] bool IsLegacyFlatRuntime() noexcept;
 
 	[[nodiscard]] constexpr std::uint32_t NormalizeLegacyUtilityDescriptor(std::uint32_t a_descriptor) noexcept

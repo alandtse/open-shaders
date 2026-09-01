@@ -18,6 +18,7 @@ namespace LegacyGraphicsCompatibility
 		constexpr std::size_t fractionalCopySlot = 9;
 		constexpr std::size_t dynamicFetchDisabledCopySlot = 10;
 		constexpr std::uint32_t usePreservedCameraProjectionScale = 1U << 9;
+		constexpr std::ptrdiff_t vrRuntimeDataShift = 0x28;
 
 		struct CameraProjectionSnapshot
 		{
@@ -359,9 +360,7 @@ namespace LegacyGraphicsCompatibility
 			{
 				auto* result = func(a_this, a_arg2, a_arg3, a_arg4, a_arg5, a_arg6, a_arg7);
 				if (result) {
-					// VR's RUNTIME_DATA sits +0x28 from SE/AE (see ShadowSceneNode.h);
-					// this field is inside the uniformly-shifted region.
-					const auto offset = globals::game::isVR ? 0x2CC + 0x28 : 0x2CC;
+					const auto offset = globals::game::isVR ? 0x2CC + vrRuntimeDataShift : 0x2CC;
 					std::memset(reinterpret_cast<std::byte*>(result) + offset, 0, 0x18);
 				}
 				return result;
@@ -446,9 +445,6 @@ namespace LegacyGraphicsCompatibility
 			if (!IsLegacyVersion()) {
 				return;
 			}
-			// This adapter's VR address isn't published yet; a non-fatal version
-			// query here (unlike XSEPlugin.cpp's hard floor) lets everyone else's
-			// plugin load while older-address-library VR users just skip it.
 			if (globals::game::isVR && !REL::IDDB::get().IsVRAddressLibraryAtLeastVersion("0.256.0")) {
 				logger::info("VR address library too old for the legacy AlphaBlend adapter (need 0.256.0+); adapter not installed");
 				return;
@@ -619,8 +615,6 @@ namespace LegacyGraphicsCompatibility
 			}
 
 			const auto constructor = REL::RelocationID(99686, 106320).address();
-			// Unlike the jitter/SetCameraData patterns above, VR's prologue here is
-			// byte-identical to SE's, so it deliberately shares SE's branch, not its own.
 			const bool verified = (REL::Module::IsSE() || globals::game::isVR) ?
 			                          REL::verify_code(
 										  constructor,
@@ -646,8 +640,6 @@ namespace LegacyGraphicsCompatibility
 
 	void Install()
 	{
-		// FullScreenBlur stays behind IsLegacyFlatRuntime() below: an unconditional
-		// call here would hard-crash VR on its missing address-library ids.
 		detail::InstallShaderAdapters();
 		InstallShadowSceneNodeInitialization();
 		InstallStateCameraProjectionAdapter();
