@@ -229,7 +229,7 @@ State::TonemapOwner State::GetTonemapOwner()
 
 #if defined(ENABLE_EFFECTS11)
 	auto& effects11 = globals::features::effects11;
-	if (effects11.loaded && !IsMainOrLoadingMenuOpen() && effects11.WantsTonemapOwnership())
+	if (effects11.loaded && !IsFullScreenMenuOpen() && effects11.WantsTonemapOwnership())
 		cachedOwner = TonemapOwner::kEffects11;
 	else
 #endif
@@ -312,11 +312,13 @@ void State::Reset()
 		isLoadingMenuOpen = ui->IsMenuOpen(RE::LoadingMenu::MENU_NAME);
 		isMapMenuOpen = ui->IsMenuOpen(RE::MapMenu::MENU_NAME);
 		isStatsMenuOpen = ui->IsMenuOpen(RE::StatsMenu::MENU_NAME);
+		isRaceSexMenuOpen = ui->IsMenuOpen(RE::RaceSexMenu::MENU_NAME);
 	} else {
 		isMainMenuOpen = false;
 		isLoadingMenuOpen = false;
 		isMapMenuOpen = false;
 		isStatsMenuOpen = false;
+		isRaceSexMenuOpen = false;
 	}
 
 	lastModifiedPixelDescriptor = 0;
