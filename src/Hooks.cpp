@@ -364,10 +364,13 @@ namespace WeatherExtensions
 		static inline REL::Relocation<decltype(thunk)> func;
 	};
 
-	// The renderMode==24 UI pass (compass, projected menu) renders outside Effects11's
-	// tonemap chain and reads ambient via SharedData::AmbientSH*, which only refreshes
-	// during the early world passes -- swapping ambient alone won't reach it without
-	// also forcing that refresh.
+	// VR-only: renderMode==24 is BSShaderAccumulator::FinishAccumulatingMode24, which does
+	// exactly one thing -- RenderBatches(technique=0x5c006075, bucket=0x10), the world-space
+	// UI/HUD batch (compass, subtitles, world-projected menus). It renders via BSEffectShader,
+	// the same material class as real particle effects, so it also inherits enbSettings.Enable's
+	// particle-relighting branch (ParticleIntensity etc.), which SharedData only refreshes
+	// during the early world passes. renderMode 24 is NOT this on SE/AE (RenderFirstPersonView_End
+	// / a queued-shadow-pass-list reset, respectively) -- do not reuse this check outside VR.
 	struct VRUIPassAmbientFix_Hook
 	{
 		static void thunk(RE::BSGraphics::BSShaderAccumulator* shaderAccumulator, uint32_t renderFlags)
@@ -375,9 +378,12 @@ namespace WeatherExtensions
 #if defined(ENABLE_EFFECTS11)
 			auto& effects11 = globals::features::effects11;
 			if (shaderAccumulator->GetRuntimeData().renderMode == 24 && effects11.loaded && effects11.ambientGradeCacheValid) {
+				const bool savedEnableEffect = effects11.enableEffect;
+				effects11.enableEffect = false;
 				Sky_SetDirectionalAmbientColors::func(effects11.vanillaAmbientCache, &effects11.ambientSpecularTintCache, effects11.ambientSpecularFresnelCache);
 				globals::state->UpdateSharedData(false, false);
 				func(shaderAccumulator, renderFlags);
+				effects11.enableEffect = savedEnableEffect;
 				Sky_SetDirectionalAmbientColors::func(effects11.gradedAmbientCache, &effects11.ambientSpecularTintCache, effects11.ambientSpecularFresnelCache);
 				globals::state->UpdateSharedData(false, false);
 				return;
