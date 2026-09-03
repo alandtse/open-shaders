@@ -377,7 +377,7 @@ namespace WeatherExtensions
 		{
 #if defined(ENABLE_EFFECTS11)
 			auto& effects11 = globals::features::effects11;
-			if (shaderAccumulator->GetRuntimeData().renderMode == 24 && effects11.loaded && effects11.ambientGradeCacheValid) {
+			if (shaderAccumulator->GetRuntimeData().renderMode == 24 && effects11.loaded && effects11.enableEffect && effects11.ambientGradeCacheValid) {
 				const bool savedEnableEffect = effects11.enableEffect;
 				effects11.enableEffect = false;
 				Sky_SetDirectionalAmbientColors::func(effects11.vanillaAmbientCache, &effects11.ambientSpecularTintCache, effects11.ambientSpecularFresnelCache);
