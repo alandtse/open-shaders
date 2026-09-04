@@ -370,11 +370,8 @@ jobs:
         secrets:
             token: ${{ secrets.GITHUB_TOKEN }}
 
-    # Fires release-build.yaml's Nexus Upload (gated to stable tags there).
-    # Depends on attach-artifacts, not build-artifacts, so this can't race it.
     # RELEASE_PAT, not GITHUB_TOKEN: a GITHUB_TOKEN-authored release event
-    # does not trigger downstream workflow runs (see the Semantic Release
-    # step above for the same restriction).
+    # won't trigger release-build.yaml's downstream Nexus Upload run.
     publish:
         name: Publish release draft
         needs: [release, attach-artifacts]
