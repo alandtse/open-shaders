@@ -308,7 +308,7 @@ namespace WaterBlendHistory
 			const float clearColor[4] = { 0.f, 0.f, 0.f, 0.f };
 			const auto target = renderTargets[1];
 			globals::d3d::context->ClearRenderTargetView(
-				globals::game::renderer->GetRuntimeData().renderTargets[target].RTV,
+				Util::AsReal<ID3D11RenderTargetView>(globals::game::renderer->GetRuntimeData().renderTargets[target].RTV),
 				clearColor);
 
 			func(imageSpaceShader, shape, param);

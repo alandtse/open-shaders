@@ -262,7 +262,7 @@ void State::SetOutputRenderTarget(RE::RENDER_TARGET a_output)
 {
 	auto renderer = globals::game::renderer;
 	auto& outputRT = renderer->GetRuntimeData().renderTargets[a_output];
-	globals::d3d::context->OMSetRenderTargets(1, &outputRT.RTV, nullptr);
+	globals::d3d::context->OMSetRenderTargets(1, Util::AsReal<ID3D11RenderTargetView*>(&outputRT.RTV), nullptr);
 
 	auto shadowState = globals::game::shadowState;
 	auto applyStateData = [a_output](auto& stateData) {
@@ -1042,7 +1042,7 @@ void State::SetupResources()
 	// Grab main texture to get resolution
 	// VR cannot use viewport->screenWidth/Height as it's the desktop preview window's resolution and not HMD
 	D3D11_TEXTURE2D_DESC texDesc{};
-	renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMAIN].texture->GetDesc(&texDesc);
+	renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMAIN].texture->GetDesc(Util::AsReal<REX::W32::D3D11_TEXTURE2D_DESC>(&texDesc));
 
 	screenSize = float2{ (float)texDesc.Width, (float)texDesc.Height };
 	globals::d3d::context->QueryInterface(__uuidof(pPerf), reinterpret_cast<void**>(&pPerf));
