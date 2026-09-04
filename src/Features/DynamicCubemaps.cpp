@@ -254,7 +254,7 @@ bool DynamicCubemaps::UpdateCubemapCapture(bool a_reflections)
 	auto& depth = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kPOST_ZPREPASS_COPY];
 	auto& main = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMAIN];
 
-	ID3D11ShaderResourceView* srvs[2] = { depth.depthSRV, main.SRV };
+	ID3D11ShaderResourceView* srvs[2] = { Util::AsReal<ID3D11ShaderResourceView>(depth.depthSRV), Util::AsReal<ID3D11ShaderResourceView>(main.SRV) };
 	context->CSSetShaderResources(0, 2, srvs);
 
 	uint index = a_reflections ? 1 : 0;
@@ -345,7 +345,7 @@ bool DynamicCubemaps::Inferrence(bool a_reflections)
 
 	auto& cubemap = renderer->GetRendererData().cubemapRenderTargets[RE::RENDER_TARGETS_CUBEMAP::kREFLECTIONS];
 
-	ID3D11ShaderResourceView* srvs[3] = { (a_reflections ? envCaptureReflectionsTexture : envCaptureTexture)->srv.get(), cubemap.SRV, defaultCubemap };
+	ID3D11ShaderResourceView* srvs[3] = { (a_reflections ? envCaptureReflectionsTexture : envCaptureTexture)->srv.get(), Util::AsReal<ID3D11ShaderResourceView>(cubemap.SRV), defaultCubemap };
 	context->CSSetShaderResources(0, 3, srvs);
 
 	context->CSSetSamplers(0, 1, &computeSampler);
@@ -634,11 +634,11 @@ void DynamicCubemaps::SetupResources()
 
 	{
 		D3D11_TEXTURE2D_DESC texDesc;
-		cubemap.texture->GetDesc(&texDesc);
+		cubemap.texture->GetDesc(Util::AsReal<REX::W32::D3D11_TEXTURE2D_DESC>(&texDesc));
 		assert(texDesc.Width == (1u << (MIPLEVELS - 1)));
 
 		D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc;
-		cubemap.SRV->GetDesc(&srvDesc);
+		cubemap.SRV->GetDesc(Util::AsReal<REX::W32::D3D11_SHADER_RESOURCE_VIEW_DESC>(&srvDesc));
 
 		texDesc.BindFlags |= D3D11_BIND_UNORDERED_ACCESS;
 

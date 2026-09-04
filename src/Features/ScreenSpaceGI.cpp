@@ -531,7 +531,7 @@ void ScreenSpaceGI::SetupResources()
 		};
 
 		auto mainTex = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMAIN];
-		mainTex.texture->GetDesc(&texDesc);
+		mainTex.texture->GetDesc(Util::AsReal<REX::W32::D3D11_TEXTURE2D_DESC>(&texDesc));
 		texDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS;
 
 		if (allocateGIResources) {
@@ -996,11 +996,11 @@ void ScreenSpaceGI::DrawSSGI()
 		CS_GPU_PASS("ScreenSpaceGI::RadianceDisocc");
 
 		resetViews();
-		srvs.at(0) = runILPath ? rts[deferred->forwardRenderTargets[0]].SRV : nullptr;
+		srvs.at(0) = runILPath ? Util::AsReal<ID3D11ShaderResourceView>(rts[deferred->forwardRenderTargets[0]].SRV) : nullptr;
 		srvs.at(1) = texWorkingDepth->srv.get();
-		srvs.at(2) = rts[NORMALROUGHNESS].SRV;
+		srvs.at(2) = Util::AsReal<ID3D11ShaderResourceView>(rts[NORMALROUGHNESS].SRV);
 		srvs.at(3) = texPrevGeo->srv.get();
-		srvs.at(4) = rts[RE::RENDER_TARGET::kMOTION_VECTOR].SRV;
+		srvs.at(4) = Util::AsReal<ID3D11ShaderResourceView>(rts[RE::RENDER_TARGET::kMOTION_VECTOR].SRV);
 		srvs.at(5) = texAccumFrames[lastFrameAccumTexIdx]->srv.get();
 		srvs.at(6) = texAo[inputAoTexIdx]->srv.get();
 		if (runILPath) {
@@ -1054,7 +1054,7 @@ void ScreenSpaceGI::DrawSSGI()
 		CS_GPU_PASS("ScreenSpaceGI::PrefilterNormals");
 
 		resetViews();
-		srvs.at(0) = rts[NORMALROUGHNESS].SRV;
+		srvs.at(0) = Util::AsReal<ID3D11ShaderResourceView>(rts[NORMALROUGHNESS].SRV);
 		uavs.at(0) = uavNormal[0].get();
 		uavs.at(1) = uavNormal[1].get();
 		uavs.at(2) = uavNormal[2].get();
@@ -1078,7 +1078,7 @@ void ScreenSpaceGI::DrawSSGI()
 
 		resetViews();
 		srvs.at(0) = texWorkingDepth->srv.get();
-		srvs.at(1) = rts[NORMALROUGHNESS].SRV;
+		srvs.at(1) = Util::AsReal<ID3D11ShaderResourceView>(rts[NORMALROUGHNESS].SRV);
 		srvs.at(2) = runILPath ? texRadiance->srv.get() : nullptr;
 		srvs.at(3) = texNoise->srv.get();
 		srvs.at(4) = texAccumFrames[lastFrameAccumTexIdx]->srv.get();
@@ -1149,7 +1149,7 @@ void ScreenSpaceGI::DrawSSGI()
 
 		resetViews();
 		srvs.at(0) = texWorkingDepth->srv.get();
-		srvs.at(1) = rts[NORMALROUGHNESS].SRV;
+		srvs.at(1) = Util::AsReal<ID3D11ShaderResourceView>(rts[NORMALROUGHNESS].SRV);
 		srvs.at(2) = texAccumFrames[lastFrameAccumTexIdx]->srv.get();
 		srvs.at(3) = texIlY[inputGITexIdx]->srv.get();
 		srvs.at(4) = texIlCoCg[inputGITexIdx]->srv.get();
