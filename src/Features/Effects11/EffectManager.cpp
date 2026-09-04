@@ -350,13 +350,13 @@ bool EffectManager::ExecuteEffects(RE::BSGraphics::RenderTargetData& a_input, RE
 	if (!perfModeDrivingThisFrame && &a_input != &kMain && a_input.SRV && kMain.RTV) {
 		D3D11_TEXTURE2D_DESC srcDesc{}, dstDesc{};
 		if (a_input.texture && kMain.texture) {
-			a_input.texture->GetDesc(&srcDesc);
-			kMain.texture->GetDesc(&dstDesc);
+			a_input.texture->GetDesc(Util::AsReal<REX::W32::D3D11_TEXTURE2D_DESC>(&srcDesc));
+			kMain.texture->GetDesc(Util::AsReal<REX::W32::D3D11_TEXTURE2D_DESC>(&dstDesc));
 		}
 		if (a_input.texture && kMain.texture && srcDesc.Format == dstDesc.Format && srcDesc.Width == dstDesc.Width && srcDesc.Height == dstDesc.Height && srcDesc.SampleDesc.Count == dstDesc.SampleDesc.Count) {
-			context->CopyResource(kMain.texture, a_input.texture);
+			context->CopyResource(Util::AsReal<ID3D11Resource>(kMain.texture), Util::AsReal<ID3D11Resource>(a_input.texture));
 		} else {
-			CopyTexture(a_input.SRV, kMain.RTV);
+			CopyTexture(Util::AsReal<ID3D11ShaderResourceView>(a_input.SRV), Util::AsReal<ID3D11RenderTargetView>(kMain.RTV));
 			ID3D11RenderTargetView* nullRTV = nullptr;
 			context->OMSetRenderTargets(1, &nullRTV, nullptr);
 		}
@@ -402,10 +402,10 @@ bool EffectManager::ExecuteEffects(RE::BSGraphics::RenderTargetData& a_input, RE
 		context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP);
 
 		globals::profiler->BeginPass("Effects11::ColorCorrection");
-		ApplyColorCorrection(textureOriginal.UAV);
+		ApplyColorCorrection(Util::AsReal<ID3D11UnorderedAccessView>(textureOriginal.UAV));
 		globals::profiler->EndPass();
 
-		textureManager.UpdateDownsampledTexture(textureOriginal.SRV);
+		textureManager.UpdateDownsampledTexture(Util::AsReal<ID3D11ShaderResourceView>(textureOriginal.SRV));
 
 		ExecuteEffect(enbBloom, ids.useBloom);
 		ExecuteEffect(enbLens, ids.useLens);
@@ -437,7 +437,7 @@ bool EffectManager::ExecuteEffects(RE::BSGraphics::RenderTargetData& a_input, RE
 	const bool wroteOutput = textureSDRTemp && a_output.RTV;
 	if (wroteOutput) {
 		globals::profiler->BeginPass("Effects11::CopyToOutput");
-		CopyTexture(textureSDRTemp->srv.get(), a_output.RTV);
+		CopyTexture(textureSDRTemp->srv.get(), Util::AsReal<ID3D11RenderTargetView>(a_output.RTV));
 		globals::profiler->EndPass();
 	}
 
@@ -783,7 +783,7 @@ void EffectManager::UpdateCommonVariablesForEffect(Effect& effect)
 	auto renderer = globals::game::renderer;
 
 	auto& depthData = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kMAIN];
-	effect.SetShaderResourceVariable("TextureDepth", GetEyeCroppedDepthSRV(depthData.texture, depthData.depthSRV));
+	effect.SetShaderResourceVariable("TextureDepth", GetEyeCroppedDepthSRV(Util::AsReal<ID3D11Texture2D>(depthData.texture), Util::AsReal<ID3D11ShaderResourceView>(depthData.depthSRV)));
 
 	static const char* const formatTargets[] = {
 		"RenderTargetRGBA32", "RenderTargetRGBA64", "RenderTargetRGBA64F",
@@ -955,8 +955,8 @@ bool EffectManager::RefreshEyeSourceTexture(int a_eyeIndex)
 		auto& kMain = globals::game::renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMAIN];
 		if (!kMain.texture || !kMain.SRV)
 			return false;
-		sourceTexture = kMain.texture;
-		sourceSRV = kMain.SRV;
+		sourceTexture = Util::AsReal<ID3D11Texture2D>(kMain.texture);
+		sourceSRV = Util::AsReal<ID3D11ShaderResourceView>(kMain.SRV);
 	}
 
 	D3D11_TEXTURE2D_DESC mainDesc{};
@@ -966,12 +966,12 @@ bool EffectManager::RefreshEyeSourceTexture(int a_eyeIndex)
 
 	if (!EnsureCropTarget(eyeSourceTexture, eyeSourceRTV, eyeSourceSRV, &eyeSourceUAV, mainDesc, "Effects11::EyeSource"))
 		return false;
-	eyeSourceData.texture = eyeSourceTexture.get();
+	eyeSourceData.texture = Util::AsReal<REX::W32::ID3D11Texture2D>(eyeSourceTexture.get());
 	eyeSourceData.textureCopy = nullptr;
-	eyeSourceData.RTV = eyeSourceRTV.get();
-	eyeSourceData.SRV = eyeSourceSRV.get();
+	eyeSourceData.RTV = Util::AsReal<REX::W32::ID3D11RenderTargetView>(eyeSourceRTV.get());
+	eyeSourceData.SRV = Util::AsReal<REX::W32::ID3D11ShaderResourceView>(eyeSourceSRV.get());
 	eyeSourceData.SRVCopy = nullptr;
-	eyeSourceData.UAV = eyeSourceUAV.get();
+	eyeSourceData.UAV = Util::AsReal<REX::W32::ID3D11UnorderedAccessView>(eyeSourceUAV.get());
 
 	return CropCopyEyeHalf(sourceSRV, mainDesc.Width, mainDesc.Height, eyeSourceRTV.get(), a_eyeIndex, eyeCropCopyPS, eyeCropCopyPSCompileAttempted, L"Data\\Shaders\\Effects11\\EyeCropCopyPS.hlsl");
 }
