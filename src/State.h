@@ -436,7 +436,7 @@ public:
 		float4 VRFoveationCenterOffsets;  // xy=left eye center offset, zw=right eye center offset
 		float4 HDRData;                   // xyz + menu scene encoding in w — see HDRDisplay::GetSharedDataHDR
 		float RefractionScale;            // ISRefraction.hlsl heat-shimmer multiplier; 1.0 = unmodified vanilla strength
-		float3 pad1;
+		float3 VRStereoEffectData;        // x=per-eye SSR sampling, y=per-eye volumetric lighting, z=reserved
 	};
 	STATIC_ASSERT_ALIGNAS_16(SharedDataCB);
 	// Each float4 cbuffer field must start on a 16-byte boundary to match the HLSL SharedData

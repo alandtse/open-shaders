@@ -22,6 +22,12 @@ cbuffer VLData : register(b1)
 {
 	int2 screenSize;
 	int2 screenSizeMin1;
+#if defined(VR)
+	int eyeWidth;
+	int horizontalGroupsPerEye;
+	uint stereoFixEnabled;
+	uint pad;
+#endif
 }
 
 groupshared float vl[TG_DIM];

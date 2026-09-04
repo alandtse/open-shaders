@@ -18,7 +18,8 @@ constexpr auto MIPLEVELS = 9;
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	DynamicCubemaps::Settings,
 	EnabledSSR,
-	EnabledCreator);
+	EnabledCreator,
+	EnableVRStereoFix);
 
 std::vector<std::pair<std::string_view, std::string_view>> DynamicCubemaps::GetShaderDefineOptions()
 {
@@ -39,6 +40,17 @@ void DynamicCubemaps::DrawSettings()
 		}
 		if (globals::game::isVR)
 			Util::UI::DrawSettingDiff(bootSnapshot, settings, &Settings::EnabledSSR);
+		if (globals::game::isVR) {
+			ImGui::Checkbox(T(TKEY("vr_stereo_fix"), "Stereo-Safe SSR Sampling (Experimental)"), reinterpret_cast<bool*>(&settings.EnableVRStereoFix));
+			if (auto _tt = Util::HoverTooltipWrapper()) {
+				ImGui::TextUnformatted(T(TKEY("vr_stereo_fix_tooltip"),
+					"Uses the current cross-eye ray marcher while keeping depth, color, and\n"
+					"temporal samples inside the eye that owns each resolved hit."));
+			}
+			ImGui::TextDisabled("%s", settings.EnableVRStereoFix ?
+										  T(TKEY("vr_stereo_fix_active"), "Stereo sampling: eye-safe") :
+										  T(TKEY("vr_stereo_fix_legacy"), "Stereo sampling: default"));
+		}
 		ImGui::TreePop();
 	}
 

@@ -2,6 +2,8 @@
 #include "Common/DummyVSTexCoord.hlsl"
 #include "Common/FrameBuffer.hlsli"
 #include "Common/SharedData.hlsli"
+#include "Common/VR.hlsli"
+#include "Common/VRStereoEffects.hlsli"
 
 typedef VS_OUTPUT PS_INPUT;
 
@@ -30,6 +32,17 @@ PS_OUTPUT main(PS_INPUT input)
 
 #	if defined(VOLUMETRIC_LIGHTING)
 	float2 screenPosition = FrameBuffer::GetDynamicResolutionAdjustedScreenPosition(input.TexCoord);
+#		if defined(VR)
+	[branch] if (SharedData::VRStereoEffectData.y > 0.5)
+	{
+		uint eyeIndex = Stereo::GetEyeIndexFromTexCoord(input.TexCoord);
+		uint sourceWidth;
+		uint sourceHeight;
+		VLSourceTex.GetDimensions(sourceWidth, sourceHeight);
+		screenPosition = VRStereoEffects::ClampDynamicStereoUVToEyeTexel(
+			screenPosition, eyeIndex, float2(sourceWidth, sourceHeight), FrameBuffer::DynamicResolutionParams1.xy);
+	}
+#		endif
 	float volumetricLightingPower = VLSourceTex.Sample(VLSourceSampler, screenPosition).x;
 	float3 volumetricLightingColor = VolumetricLightingColor.xyz;
 #		if defined(EFFECTS11)

@@ -4,6 +4,7 @@
 #include "Common/SharedData.hlsli"
 #include "Common/VR.hlsli"
 #include "Common/VRReproject.hlsli"
+#include "Common/VRStereoEffects.hlsli"
 
 typedef VS_OUTPUT PS_INPUT;
 
@@ -70,12 +71,36 @@ int GetSSRBinaryIterations(int raymarchIterations)
 
 float2 ConvertRaySample(float2 raySample, uint eyeIndex)
 {
-	return FrameBuffer::GetDynamicResolutionAdjustedScreenPosition(Stereo::ConvertToStereoUV(raySample, eyeIndex));
+	float2 stereoUV = Stereo::ConvertToStereoUV(raySample, eyeIndex);
+	float2 screenPosition = FrameBuffer::GetDynamicResolutionAdjustedScreenPosition(stereoUV);
+#	if defined(VR)
+	[branch] if (SharedData::VRStereoEffectData.x > 0.5)
+	{
+		uint width;
+		uint height;
+		DepthTex.GetDimensions(width, height);
+		screenPosition = VRStereoEffects::ClampDynamicStereoUVToEyeTexel(
+			screenPosition, eyeIndex, float2(width, height), FrameBuffer::DynamicResolutionParams1.xy);
+	}
+#	endif
+	return screenPosition;
 }
 
 float2 ConvertRaySamplePrevious(float2 raySample, uint eyeIndex)
 {
-	return FrameBuffer::GetPreviousDynamicResolutionAdjustedScreenPosition(Stereo::ConvertToStereoUV(raySample, eyeIndex));
+	float2 stereoUV = Stereo::ConvertToStereoUV(raySample, eyeIndex);
+	float2 screenPosition = FrameBuffer::GetPreviousDynamicResolutionAdjustedScreenPosition(stereoUV);
+#	if defined(VR)
+	[branch] if (SharedData::VRStereoEffectData.x > 0.5)
+	{
+		uint width;
+		uint height;
+		AlphaTex.GetDimensions(width, height);
+		screenPosition = VRStereoEffects::ClampDynamicStereoUVToEyeTexel(
+			screenPosition, eyeIndex, float2(width, height), FrameBuffer::DynamicResolutionParams1.zw);
+	}
+#	endif
+	return screenPosition;
 }
 
 float4 GetReflectionColor(
@@ -221,6 +246,15 @@ PS_OUTPUT main(PS_INPUT input)
 	uv = Stereo::ConvertFromStereoUV(uv, eyeIndex);
 
 #	if defined(VR)
+	[branch] if (SharedData::VRStereoEffectData.x > 0.5)
+	{
+		uint depthWidth;
+		uint depthHeight;
+		DepthTex.GetDimensions(depthWidth, depthHeight);
+		screenPosition = VRStereoEffects::ClampDynamicStereoUVToEyeTexel(
+			screenPosition, eyeIndex, float2(depthWidth, depthHeight), FrameBuffer::DynamicResolutionParams1.xy);
+	}
+
 	float ssrFoveationWeight = 1.0;
 	float ssrFoveationMode = SharedData::VRFoveationData0.w;
 	[branch] if (ssrFoveationMode >= FOVEATED_SHADER_DETAIL_MODE_FEATHERED)
