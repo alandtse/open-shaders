@@ -247,8 +247,9 @@ void VolumetricLighting::EarlyPrepass()
 	vlData.screenXMin1 = width - 1;
 	vlData.screenYMin1 = height - 1;
 	vlData.eyeWidth = globals::game::isVR ? width / 2 : width;
+	const int32_t maximumEyeWidth = globals::game::isVR ? width - vlData.eyeWidth : width;
 	vlData.horizontalGroupsPerEye =
-		(vlData.eyeWidth + BlurThreadGroupSizeX - BlurWindow * 2u - 1u) / (BlurThreadGroupSizeX - BlurWindow * 2u);
+		(maximumEyeWidth + BlurThreadGroupSizeX - BlurWindow * 2u - 1u) / (BlurThreadGroupSizeX - BlurWindow * 2u);
 	vlData.stereoFixEnabled = globals::game::isVR && settings.EnableVRStereoFix;
 	vlDataCB->Update(vlData);
 

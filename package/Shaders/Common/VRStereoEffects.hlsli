@@ -6,12 +6,14 @@
 #if defined(VR)
 namespace VRStereoEffects
 {
+	/** Returns the selected eye origin in camera-relative world space. */
 	float3 GetEyeOriginWorld(uint eyeIndex)
 	{
 		float4 eyeOrigin = mul(FrameBuffer::CameraViewInverse[eyeIndex], float4(0.0, 0.0, 0.0, 1.0));
 		return eyeOrigin.xyz * rcp(eyeOrigin.w);
 	}
 
+	/** Clamps packed normalized SBS UVs to texel centers within the selected eye. */
 	float2 ClampStereoUVToEyeTexel(float2 stereoUV, uint eyeIndex, float2 textureDimensions)
 	{
 		float2 halfTexel = 0.5 * rcp(textureDimensions);
@@ -20,6 +22,7 @@ namespace VRStereoEffects
 		return clamp(stereoUV, minimumUV, maximumUV);
 	}
 
+	/** Clamps dynamic-resolution-adjusted SBS UVs using the full packed target dimensions. */
 	float2 ClampDynamicStereoUVToEyeTexel(float2 dynamicStereoUV, uint eyeIndex, float2 textureDimensions, float2 resolutionScale)
 	{
 		float2 halfTexel = 0.5 * rcp(textureDimensions);

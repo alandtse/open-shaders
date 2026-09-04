@@ -69,23 +69,22 @@ int GetSSRBinaryIterations(int raymarchIterations)
 }
 #	endif
 
-float2 ConvertRaySample(float2 raySample, uint eyeIndex)
+/** Maps an eye-local ray sample to current-frame dynamic-resolution SBS coordinates. */
+float2 ConvertRaySample(float2 raySample, uint eyeIndex, float2 textureDimensions)
 {
 	float2 stereoUV = Stereo::ConvertToStereoUV(raySample, eyeIndex);
 	float2 screenPosition = FrameBuffer::GetDynamicResolutionAdjustedScreenPosition(stereoUV);
 #	if defined(VR)
 	[branch] if (SharedData::VRStereoEffectData.x > 0.5)
 	{
-		uint width;
-		uint height;
-		DepthTex.GetDimensions(width, height);
 		screenPosition = VRStereoEffects::ClampDynamicStereoUVToEyeTexel(
-			screenPosition, eyeIndex, float2(width, height), FrameBuffer::DynamicResolutionParams1.xy);
+			screenPosition, eyeIndex, textureDimensions, FrameBuffer::DynamicResolutionParams1.xy);
 	}
 #	endif
 	return screenPosition;
 }
 
+/** Maps an eye-local ray sample to previous-frame dynamic-resolution SBS coordinates. */
 float2 ConvertRaySamplePrevious(float2 raySample, uint eyeIndex)
 {
 	float2 stereoUV = Stereo::ConvertToStereoUV(raySample, eyeIndex);
@@ -106,7 +105,8 @@ float2 ConvertRaySamplePrevious(float2 raySample, uint eyeIndex)
 float4 GetReflectionColor(
 	float3 projReflectionDirection,
 	float3 projPosition,
-	uint eyeIndex
+	uint eyeIndex,
+	float2 depthTextureDimensions
 #	if defined(VR)
 	,
 	int raymarchIterations,
@@ -142,7 +142,7 @@ float4 GetReflectionColor(
 		if (FrameBuffer::IsOutsideFrame(sampleUV))
 			return 0.0;
 
-		float iterationDepth = DepthTex.SampleLevel(DepthSampler, ConvertRaySample(sampleUV, sampleEyeIndex), 0).x;
+		float iterationDepth = DepthTex.SampleLevel(DepthSampler, ConvertRaySample(sampleUV, sampleEyeIndex, depthTextureDimensions), 0).x;
 
 		if (saturate((raySample.z - iterationDepth) / SSRParams.y) > 0.0) {
 			float3 binaryMinRaySample = prevRaySample;
@@ -160,7 +160,7 @@ float4 GetReflectionColor(
 				binaryRaySample = lerp(binaryMinRaySample, binaryMaxRaySample, 0.5);
 
 				Stereo::ResolveMonoUVForEye(binaryRaySample, eyeIndex, sampleUV, hitEyeIndex);
-				iterationDepth = DepthTex.SampleLevel(DepthSampler, ConvertRaySample(sampleUV, hitEyeIndex), 0).x;
+				iterationDepth = DepthTex.SampleLevel(DepthSampler, ConvertRaySample(sampleUV, hitEyeIndex, depthTextureDimensions), 0).x;
 
 				// Compute expected depth vs actual depth
 				depthThicknessFactor = 1.0 - saturate(abs(binaryRaySample.z - iterationDepth) / SSRParams.y);
@@ -199,7 +199,18 @@ float4 GetReflectionColor(
 				uint finalEyeIndex;
 				Stereo::ResolveMonoUVForEye(float3(binaryRaySample.xy, iterationDepth), eyeIndex, finalSampleUV, finalEyeIndex);
 
-				float3 color = ColorTex.SampleLevel(ColorSampler, ConvertRaySample(finalSampleUV, finalEyeIndex), 0).xyz;
+				float2 colorTextureDimensions = float2(1.0, 1.0);
+#	if defined(VR)
+				[branch] if (SharedData::VRStereoEffectData.x > 0.5)
+				{
+					uint colorWidth;
+					uint colorHeight;
+					ColorTex.GetDimensions(colorWidth, colorHeight);
+					colorTextureDimensions = float2(colorWidth, colorHeight);
+				}
+#	endif
+				float2 colorScreenPosition = ConvertRaySample(finalSampleUV, finalEyeIndex, colorTextureDimensions);
+				float3 color = ColorTex.SampleLevel(ColorSampler, colorScreenPosition, 0).xyz;
 
 				// Final sample to world-space
 				float4 positionWS = float4(float2(finalSampleUV.x, 1.0 - finalSampleUV.y) * 2.0 - 1.0, iterationDepth, 1.0);
@@ -242,17 +253,24 @@ PS_OUTPUT main(PS_INPUT input)
 	uint eyeIndex = Stereo::GetEyeIndexFromTexCoord(input.TexCoord);
 	float2 uv = input.TexCoord;
 	float2 screenPosition = FrameBuffer::GetDynamicResolutionAdjustedScreenPosition(uv);
+	float2 normalScreenPosition = screenPosition;
+	float2 depthScreenPosition = screenPosition;
 
 	uv = Stereo::ConvertFromStereoUV(uv, eyeIndex);
 
 #	if defined(VR)
+	float2 depthTextureDimensions = float2(1.0, 1.0);
 	[branch] if (SharedData::VRStereoEffectData.x > 0.5)
 	{
-		uint depthWidth;
-		uint depthHeight;
-		DepthTex.GetDimensions(depthWidth, depthHeight);
-		screenPosition = VRStereoEffects::ClampDynamicStereoUVToEyeTexel(
-			screenPosition, eyeIndex, float2(depthWidth, depthHeight), FrameBuffer::DynamicResolutionParams1.xy);
+		uint width;
+		uint height;
+		NormalTex.GetDimensions(width, height);
+		normalScreenPosition = VRStereoEffects::ClampDynamicStereoUVToEyeTexel(
+			screenPosition, eyeIndex, float2(width, height), FrameBuffer::DynamicResolutionParams1.xy);
+		DepthTex.GetDimensions(width, height);
+		depthTextureDimensions = float2(width, height);
+		depthScreenPosition = VRStereoEffects::ClampDynamicStereoUVToEyeTexel(
+			screenPosition, eyeIndex, depthTextureDimensions, FrameBuffer::DynamicResolutionParams1.xy);
 	}
 
 	float ssrFoveationWeight = 1.0;
@@ -266,14 +284,14 @@ PS_OUTPUT main(PS_INPUT input)
 	}
 #	endif
 
-	[branch] if (NormalTex.Sample(NormalSampler, screenPosition).z <= 0)
+	[branch] if (NormalTex.Sample(NormalSampler, normalScreenPosition).z <= 0)
 	{
 		return psout;
 	}
 
 	float3 viewNormal = DefaultNormal;
 
-	float depth = DepthTex.SampleLevel(DepthSampler, screenPosition, 0).x;
+	float depth = DepthTex.SampleLevel(DepthSampler, depthScreenPosition, 0).x;
 
 	float4 positionVS = float4(float2(uv.x, 1.0 - uv.y) * 2.0 - 1.0, depth, 1.0);
 	positionVS = mul(FrameBuffer::CameraProjInverse[eyeIndex], positionVS);
@@ -305,9 +323,11 @@ PS_OUTPUT main(PS_INPUT input)
 		raymarchIterations = GetSSRRaymarchIterations(ssrFoveationWeight);
 		binaryIterationsCount = GetSSRBinaryIterations(raymarchIterations);
 	}
-	psout.Color = GetReflectionColor(projReflectionDirection, projPosition, eyeIndex, raymarchIterations, binaryIterationsCount, ssrFoveationWeight);
+	psout.Color = GetReflectionColor(
+		projReflectionDirection, projPosition, eyeIndex, depthTextureDimensions,
+		raymarchIterations, binaryIterationsCount, ssrFoveationWeight);
 #	else
-	psout.Color = GetReflectionColor(projReflectionDirection, projPosition, eyeIndex);
+	psout.Color = GetReflectionColor(projReflectionDirection, projPosition, eyeIndex, float2(1.0, 1.0));
 #	endif
 
 	return psout;
