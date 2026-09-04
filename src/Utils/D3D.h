@@ -9,6 +9,19 @@
 namespace Util
 {
 	/**
+	 * @brief Bridges CommonLibVR's REX::W32 D3D11 reimplementation (ABI-identical to the
+	 *        real Windows SDK COM interfaces, but a distinct C++ type) with the real types
+	 *        used throughout this codebase. Use at the boundary where an RE:: struct field
+	 *        (now REX::W32-typed) meets code expecting the real type, e.g.
+	 *        `Util::AsReal<ID3D11Texture2D>(rtData.texture)`.
+	 */
+	template <class Real, class W32>
+	[[nodiscard]] Real* AsReal(W32* a_ptr) noexcept
+	{
+		return reinterpret_cast<Real*>(a_ptr);
+	}
+
+	/**
 	 * @brief ID3DInclude handler resolving #include paths under Data\Shaders,
 	 *        shared by every HLSL compile call site in this codebase.
 	 */
