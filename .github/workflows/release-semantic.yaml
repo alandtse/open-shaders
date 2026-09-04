@@ -370,10 +370,8 @@ jobs:
         secrets:
             token: ${{ secrets.GITHUB_TOKEN }}
 
-    # Publishing fires release-build.yaml's 'release: published' event, which
-    # runs Nexus Upload for stable tags (release-build.yaml's own gate
-    # excludes prerelease tags). Gated on attach-artifacts, not just
-    # build-artifacts, so publish never races the artifact attach above.
+    # Fires release-build.yaml's Nexus Upload (gated to stable tags there).
+    # Depends on attach-artifacts, not build-artifacts, so this can't race it.
     publish:
         name: Publish release draft
         needs: [release, attach-artifacts]
