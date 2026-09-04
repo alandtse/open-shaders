@@ -595,8 +595,8 @@ void PostProcessing::SetupResources()
 		D3D11_TEXTURE2D_DESC texDesc;
 		D3D11_TEXTURE2D_DESC texMainDesc;
 		D3D11_TEXTURE2D_DESC texMainCopyDesc;
-		gameTexMain.texture->GetDesc(&texMainDesc);
-		gameTexMainCopy.texture->GetDesc(&texMainCopyDesc);
+		gameTexMain.texture->GetDesc(Util::AsReal<REX::W32::D3D11_TEXTURE2D_DESC>(&texMainDesc));
+		gameTexMainCopy.texture->GetDesc(Util::AsReal<REX::W32::D3D11_TEXTURE2D_DESC>(&texMainCopyDesc));
 		texDesc = texMainDesc;
 
 		D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc = {
@@ -692,7 +692,7 @@ void PostProcessing::CopyToRenderTarget(
 {
 	// D3D11 rejects a copy whose source and destination are the same resource, which happens
 	// whenever the pipeline left the image in the buffer we are writing back to.
-	if (targetRT.texture == srcTex)
+	if (Util::AsReal<ID3D11Texture2D>(targetRT.texture) == srcTex)
 		return;
 
 	auto context = globals::d3d::context;
@@ -701,10 +701,10 @@ void PostProcessing::CopyToRenderTarget(
 	srcTex->GetDesc(&srcDesc);
 
 	D3D11_TEXTURE2D_DESC targetDesc;
-	targetRT.texture->GetDesc(&targetDesc);
+	targetRT.texture->GetDesc(Util::AsReal<REX::W32::D3D11_TEXTURE2D_DESC>(&targetDesc));
 
 	if (srcDesc.Format == targetDesc.Format) {
-		context->CopySubresourceRegion(targetRT.texture, 0, 0, 0, 0, srcTex, 0, nullptr);
+		context->CopySubresourceRegion(Util::AsReal<ID3D11Resource>(targetRT.texture), 0, 0, 0, 0, srcTex, 0, nullptr);
 		return;
 	}
 
@@ -726,7 +726,7 @@ void PostProcessing::CopyToRenderTarget(
 	context->CSSetShaderResources(0, 1, &srv);
 	context->CSSetShader(nullptr, nullptr, 0);
 
-	context->CopySubresourceRegion(targetRT.texture, 0, 0, 0, 0, convertTex->resource.get(), 0, nullptr);
+	context->CopySubresourceRegion(Util::AsReal<ID3D11Resource>(targetRT.texture), 0, 0, 0, 0, convertTex->resource.get(), 0, nullptr);
 }
 
 void PostProcessing::DrawFeature(PostProcessFeature& feature, PostProcessFeature::TextureInfo& lastTexColor)
@@ -753,7 +753,7 @@ void PostProcessing::DrawBeforeUpscaling()
 
 	bool inMainLoadingMenu = state->IsMainOrLoadingMenuOpen();
 	auto gameTexMain = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMAIN];
-	PostProcessFeature::TextureInfo lastTexColor = { gameTexMain.texture, gameTexMain.SRV };
+	PostProcessFeature::TextureInfo lastTexColor = { Util::AsReal<ID3D11Texture2D>(gameTexMain.texture), Util::AsReal<ID3D11ShaderResourceView>(gameTexMain.SRV) };
 
 	state->BeginPerfEvent("[Post Processing] Pre-Upscale");
 
@@ -798,7 +798,7 @@ void PostProcessing::PreProcess(RE::RENDER_TARGET a_input, RE::RENDER_TARGET a_o
 	bool useMainCopy = isrefraction || a_input == RE::RENDER_TARGETS::kMAIN_COPY;
 
 	auto gameTexMain = useMainCopy ? gameTexMainCopyRT : gameTexMainRT;
-	PostProcessFeature::TextureInfo lastTexColor = { gameTexMain.texture, gameTexMain.SRV };
+	PostProcessFeature::TextureInfo lastTexColor = { Util::AsReal<ID3D11Texture2D>(gameTexMain.texture), Util::AsReal<ID3D11ShaderResourceView>(gameTexMain.SRV) };
 	auto gameTexMainAlt = useMainCopy ? gameTexMainRT : gameTexMainCopyRT;
 
 	// update auto-enabled features
