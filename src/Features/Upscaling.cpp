@@ -566,9 +566,12 @@ void Upscaling::RegisterUxActions()
 	FEATURE_COMMAND("gazeOverride",
 		"[Beta] Inject a synthetic eye-tracked-foveation gaze sample through the same state the real OpenVR query writes, for pipeline testing without eye-tracking hardware -- requires settings.eyeTrackedFoveation != Off. Params: u, v (float, UV 0..1, default 0.5 each), eye (int, 0=left/1=right, omit for both), ttlMs (int, 0=until gazeClear, default 0).",
 		[](Feature*, const json& args) {
-			const float u = args.value("u", 0.5f);
-			const float v = args.value("v", 0.5f);
-			const int eye = args.value("eye", -1);
+			const float rawU = args.value("u", 0.5f);
+			const float rawV = args.value("v", 0.5f);
+			const float u = std::isfinite(rawU) ? std::clamp(rawU, 0.0f, 1.0f) : 0.5f;
+			const float v = std::isfinite(rawV) ? std::clamp(rawV, 0.0f, 1.0f) : 0.5f;
+			const int rawEye = args.value("eye", -1);
+			const int eye = (rawEye == 0 || rawEye == 1) ? rawEye : -1;
 			const uint32_t ttlMs = args.value("ttlMs", 0u);
 			Util::VR::GazeTracker::GetSingleton().SetSyntheticOverride(float2{ u, v }, eye, ttlMs);
 		});

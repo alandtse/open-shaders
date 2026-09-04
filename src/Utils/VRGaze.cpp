@@ -3,7 +3,6 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
-#include <cstddef>
 #include <windows.h>
 
 namespace
@@ -69,8 +68,11 @@ namespace Util::VR
 		// a fault anywhere permanently disables the tracker instead of crashing.
 		bool ok = false;
 		__try {
-			auto* fn = *reinterpret_cast<GetEyeTrackedFoveationCenterFn*>(
-				static_cast<std::byte*>(fnTable) + kGetEyeTrackedFoveationCenterSlot * sizeof(void*));
+			// fnTable is the FnTable ABI's own array of function pointers (see the
+			// namespace-level comment) -- index it directly rather than computing a
+			// byte offset by hand.
+			auto* const table = static_cast<void* const*>(fnTable);
+			auto fn = reinterpret_cast<GetEyeTrackedFoveationCenterFn>(table[kGetEyeTrackedFoveationCenterSlot]);
 			HmdVector2Raw left{}, right{};
 			ok = fn && fn(&left, &right);
 			if (ok) {
@@ -122,10 +124,12 @@ namespace Util::VR
 
 		float2 probe[2]{};
 		if (!QueryHardwareSample(probe)) {
-			// Either the headset has no eye tracker (a normal, expected outcome --
-			// GetEyeTrackedFoveationCenter simply returns false) or the guarded call
-			// faulted (QueryHardwareSample already cleared fnTable in that case). Either
-			// way, stay unavailable; do not retry against a possibly-faulting table.
+			// A cleared fnTable means the guarded call faulted -- never retry a
+			// faulting table. A still-valid fnTable with a false result just means no
+			// eye tracker is reporting yet (cold boot, calibration); retry like the
+			// interface-resolution step above before giving up.
+			if (fnTable && ++initRetryCount < kMaxInitRetries)
+				return;
 			fnTable = nullptr;
 			initGaveUp = true;
 			logger::info("[VRGaze] No eye-tracked foveation data available from SteamVR (no eye tracker, or hardware not ready yet).");
@@ -188,6 +192,11 @@ namespace Util::VR
 			// devbench override arrives or hardware becomes available.
 			sampleOk = false;
 			eyeTouched[0] = eyeTouched[1] = false;
+			// eyeTouched skips the per-eye update below, so a switch away from a live
+			// Auto/hardware session into an empty Synthetic mode would otherwise leave
+			// eyeLive stuck true forever on its last hardware value.
+			if (forceSyntheticOnly)
+				eyeLive[0] = eyeLive[1] = false;
 		} else {
 			sampleOk = QueryHardwareSample(sample) && IsFiniteAndInRange(sample[0]) && IsFiniteAndInRange(sample[1]);
 			countsAsFailure = !sampleOk;
