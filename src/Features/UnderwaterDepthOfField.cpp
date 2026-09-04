@@ -243,7 +243,7 @@ namespace
 			return false;
 
 		D3D11_TEXTURE2D_DESC desc{};
-		a_target.texture->GetDesc(&desc);
+		a_target.texture->GetDesc(Util::AsReal<REX::W32::D3D11_TEXTURE2D_DESC>(&desc));
 		if (a_scratch.texture &&
 			a_scratch.width == desc.Width &&
 			a_scratch.height == desc.Height &&
@@ -409,7 +409,7 @@ namespace
 
 		auto* context = globals::d3d::context;
 		context->OMSetRenderTargets(0, nullptr, nullptr);
-		context->CopyResource(a_scratch.texture->resource.get(), a_target.texture);
+		context->CopyResource(a_scratch.texture->resource.get(), Util::AsReal<ID3D11Resource>(a_target.texture));
 
 		D3D11_VIEWPORT viewport{};
 		viewport.Width = static_cast<float>(a_scratch.width);
@@ -431,7 +431,7 @@ namespace
 
 		ID3D11ShaderResourceView* srvs[] = {
 			a_scratch.texture->srv.get(),
-			globals::game::renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kMAIN].depthSRV,
+			Util::AsReal<ID3D11ShaderResourceView>(globals::game::renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kMAIN].depthSRV),
 			a_maskSRV
 		};
 		context->PSSetShaderResources(0, ARRAYSIZE(srvs), srvs);
@@ -443,7 +443,7 @@ namespace
 			context->PSSetConstantBuffers(12, ARRAYSIZE(frameBuffers), frameBuffers);
 		}
 
-		ID3D11RenderTargetView* rtvs[] = { a_target.RTV };
+		ID3D11RenderTargetView* rtvs[] = { Util::AsReal<ID3D11RenderTargetView>(a_target.RTV) };
 		context->OMSetRenderTargets(1, rtvs, nullptr);
 		context->VSSetShader(vs, nullptr, 0);
 		context->PSSetShader(ps, nullptr, 0);
@@ -475,7 +475,7 @@ namespace
 		RE::BSGraphics::RenderTargetData* result = nullptr;
 		for (auto targetIndex : kDepthOfFieldInputTargets) {
 			auto& target = renderTargets[targetIndex];
-			if (target.SRV == a_sourceSRV || target.texture == sourceResource) {
+			if (Util::AsReal<ID3D11ShaderResourceView>(target.SRV) == a_sourceSRV || Util::AsReal<ID3D11Resource>(target.texture) == sourceResource) {
 				result = &target;
 				break;
 			}
@@ -517,7 +517,7 @@ namespace
 		if (!inputTarget || !inputTarget->RTV || !depth.depthSRV || !EnsureScratchTarget(*inputTarget, sharpScratch, "UnderwaterDepthOfField::SharpScratch"))
 			return;
 
-		auto* maskSRV = currentOptions.masked ? underwaterMask.SRV : nullptr;
+		auto* maskSRV = currentOptions.masked ? Util::AsReal<ID3D11ShaderResourceView>(underwaterMask.SRV) : nullptr;
 		DepthOfFieldInputConstants constants{};
 		if (currentFog.valid) {
 			constants = currentFog.values;

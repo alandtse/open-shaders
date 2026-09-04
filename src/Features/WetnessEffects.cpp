@@ -943,7 +943,7 @@ void WetnessEffects::Prepass()
 
 	auto context = globals::d3d::context;
 
-	context->PSSetShaderResources(70, 1, &precipOcclusionTexture.depthSRV);
+	context->PSSetShaderResources(70, 1, Util::AsReal<ID3D11ShaderResourceView*>(&precipOcclusionTexture.depthSRV));
 }
 
 void WetnessEffects::LoadSettings(json& o_json)

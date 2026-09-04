@@ -81,9 +81,9 @@ void Skylighting::SetupResources()
 		D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
 		D3D11_DEPTH_STENCIL_VIEW_DESC dsvDesc = {};
 
-		precipitationOcclusion.texture->GetDesc(&texDesc);
-		precipitationOcclusion.depthSRV->GetDesc(&srvDesc);
-		precipitationOcclusion.views[0]->GetDesc(&dsvDesc);
+		precipitationOcclusion.texture->GetDesc(Util::AsReal<REX::W32::D3D11_TEXTURE2D_DESC>(&texDesc));
+		precipitationOcclusion.depthSRV->GetDesc(Util::AsReal<REX::W32::D3D11_SHADER_RESOURCE_VIEW_DESC>(&srvDesc));
+		precipitationOcclusion.views[0]->GetDesc(Util::AsReal<REX::W32::D3D11_DEPTH_STENCIL_VIEW_DESC>(&dsvDesc));
 
 		texOcclusion = new Texture2D(texDesc, "Skylighting::Occlusion");
 		texOcclusion->CreateSRV(srvDesc);
@@ -255,7 +255,7 @@ void Skylighting::Prepass()
 			texOcclusion->srv.get(),
 			nullptr,
 			globals::deferred->directionalShadowLights->srv.get(),
-			cascadeDepthStencil.depthSRV
+			Util::AsReal<ID3D11ShaderResourceView>(cascadeDepthStencil.depthSRV)
 		};
 		std::array<ID3D11UnorderedAccessView*, 4> uavs = {
 			texProbeArray->uav.get(),
@@ -575,9 +575,9 @@ void Skylighting::RenderOcclusion()
 				auto& precipitation = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kPRECIPITATION_OCCLUSION_MAP];
 				RE::BSGraphics::DepthStencilData precipitationCopy = precipitation;
 
-				precipitation.depthSRV = texOcclusion->srv.get();
-				precipitation.texture = texOcclusion->resource.get();
-				precipitation.views[0] = texOcclusion->dsv.get();
+				precipitation.depthSRV = Util::AsReal<REX::W32::ID3D11ShaderResourceView>(texOcclusion->srv.get());
+				precipitation.texture = Util::AsReal<REX::W32::ID3D11Texture2D>(texOcclusion->resource.get());
+				precipitation.views[0] = Util::AsReal<REX::W32::ID3D11DepthStencilView>(texOcclusion->dsv.get());
 
 				static float& PrecipitationShaderCubeSize = (*(float*)REL::RelocationID(515451, 401590).address());
 				float originalPrecipitationShaderCubeSize = PrecipitationShaderCubeSize;
