@@ -301,7 +301,7 @@ namespace
 		winrt::com_ptr<ID3D11Texture2D>& holder)
 	{
 		if (slot.texture) {
-			return slot.texture;
+			return Util::AsReal<ID3D11Texture2D>(slot.texture);
 		}
 		auto resolveFromView = [&](ID3D11View* view) -> ID3D11Texture2D* {
 			if (!view) {
@@ -317,10 +317,10 @@ namespace
 			}
 			return holder.get();
 		};
-		if (auto* tex = resolveFromView(slot.SRV)) {
+		if (auto* tex = resolveFromView(Util::AsReal<ID3D11View>(slot.SRV))) {
 			return tex;
 		}
-		return resolveFromView(slot.RTV);
+		return resolveFromView(Util::AsReal<ID3D11View>(slot.RTV));
 	}
 
 	// Returns the texture that was presented to the display (post-ApplyHDR).
@@ -369,7 +369,7 @@ namespace
 		if (globals::game::isVR) {
 			auto& slot = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kTOTAL];
 			src.texture = ResolveSlotTexture(slot, holder);
-			src.srv = slot.SRV;
+			src.srv = Util::AsReal<ID3D11ShaderResourceView>(slot.SRV);
 			src.description = "kTOTAL (VR final composite)";
 			return src;
 		}
@@ -400,7 +400,7 @@ namespace
 
 		auto& slot = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kFRAMEBUFFER];
 		src.texture = ResolveSlotTexture(slot, holder);
-		src.srv = slot.SRV;
+		src.srv = Util::AsReal<ID3D11ShaderResourceView>(slot.SRV);
 		src.needsPreviewCache = true;
 		src.description = "kFRAMEBUFFER";
 		return src;
