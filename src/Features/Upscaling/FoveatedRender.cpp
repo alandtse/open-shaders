@@ -189,7 +189,7 @@ FoveatedRender::FoveationProfile FoveatedRender::GetFoveationProfile() const
 	profile.centerOffsets[0] = float2{ (leftUV.x + leftUV.w * 0.5f) - 0.5f, (leftUV.y + leftUV.h * 0.5f) - 0.5f };
 	profile.centerOffsets[1] = float2{ (rightUV.x + rightUV.w * 0.5f) - 0.5f, (rightUV.y + rightUV.h * 0.5f) - 0.5f };
 
-	// [Beta] Overrides centerOffsets in place, so the existing VRFoveationCenterOffsets
+	// Overrides centerOffsets in place, so the existing VRFoveationCenterOffsets
 	// plumbing (State.cpp) needs no changes; the subrect-derived value above becomes
 	// GazeTracker's fallback.
 	auto& gaze = Util::VR::GazeTracker::GetSingleton();
@@ -464,15 +464,19 @@ void FoveatedRender::DrawSettings()
 
 		ImGui::Separator();
 		{
+			// Synthetic (kSynthetic=2) is deliberately not selectable here -- it has no
+			// effect without devbench actively driving it (gazeOverride/gazeSweep), which
+			// end users never have. A devbench session can still set it directly via the
+			// feature's settings blob; the value persists and this combo just won't show
+			// it as a distinct choice while active.
 			std::vector<const char*> gazeModeLabels = {
 				T(TKEY("foveated_eyetracked_off"), "Off"),
-				T(TKEY("foveated_eyetracked_auto"), "Auto [Beta]"),
-				T(TKEY("foveated_eyetracked_synthetic"), "Synthetic (devbench test) [Beta]"),
+				T(TKEY("foveated_eyetracked_auto"), "Auto"),
 			};
 			ImGui::Combo(T(TKEY("foveated_eyetracked_label"), "Eye-Tracked Foveation"),
 				reinterpret_cast<int*>(&settings.eyeTrackedFoveation), gazeModeLabels.data(), (int)gazeModeLabels.size());
 			if (auto _tt = Util::HoverTooltipWrapper())
-				ImGui::TextUnformatted(T(TKEY("foveated_eyetracked_tooltip"), "Uses eye tracking if your headset supports it. Beta: untested on real eye-tracking hardware."));
+				ImGui::TextUnformatted(T(TKEY("foveated_eyetracked_tooltip"), "Uses eye tracking if your headset supports it. Untested on real eye-tracking hardware."));
 		}
 
 		// Preview off kVR_FRAMEBUFFER (the final composed SBS image the headset

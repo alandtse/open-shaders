@@ -58,9 +58,9 @@ struct FoveatedRender
 		kGaussianBlur = 2,  // 3x3 Gaussian blur (soft periphery)
 	};
 
-	// [Beta] Sources the foveation center from Util::VR::GazeTracker instead of the
+	// Sources the foveation center from Util::VR::GazeTracker instead of the
 	// static subrect-derived center, when available. kSynthetic drives a devbench test
-	// signal instead of the real OpenVR query, for validating the pipeline blind.
+	// signal instead of the real OpenVR query, for validating the pipeline without hardware.
 	enum class EyeTrackedFoveationMode : uint
 	{
 		kOff = 0,
@@ -97,8 +97,8 @@ struct FoveatedRender
 		uint subrectBlendMode = static_cast<uint>(SubrectBlendMode::kHardCopy);
 		float subrectFeatherWidth = 64.0f;
 		float subrectDitherStrength = 1.0f;
-		// [Beta] Not restart-gated: resolving the OpenVR interface runs regardless of
-		// this toggle's value, so hot-toggling is safe.
+		// Not restart-gated: resolving the OpenVR interface runs regardless of this
+		// toggle's value, so hot-toggling is safe.
 		uint eyeTrackedFoveation = static_cast<uint>(EyeTrackedFoveationMode::kOff);
 	};
 
