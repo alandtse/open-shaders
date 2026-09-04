@@ -215,6 +215,7 @@ namespace Util::VR
 			++consecutiveFailures;
 			if (consecutiveFailures >= kMaxConsecutiveFailures) {
 				available = false;
+				initGaveUp = true;
 				eyeLive[0] = eyeLive[1] = false;
 				logger::warn("[VRGaze] {} consecutive failed eye-tracking queries; disabling for this session.", consecutiveFailures);
 				return;
