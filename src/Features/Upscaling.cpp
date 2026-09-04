@@ -570,8 +570,8 @@ void Upscaling::RegisterUxActions()
 			const float rawV = args.value("v", 0.5f);
 			const float u = std::isfinite(rawU) ? std::clamp(rawU, 0.0f, 1.0f) : 0.5f;
 			const float v = std::isfinite(rawV) ? std::clamp(rawV, 0.0f, 1.0f) : 0.5f;
-			const int rawEye = args.value("eye", -1);
-			const int eye = (rawEye == 0 || rawEye == 1) ? rawEye : -1;
+			const int rawEye = args.value("eye", Util::VR::GazeTracker::kBothEyes);
+			const int eye = (rawEye == 0 || rawEye == 1) ? rawEye : Util::VR::GazeTracker::kBothEyes;
 			const uint32_t ttlMs = args.value("ttlMs", 0u);
 			Util::VR::GazeTracker::GetSingleton().SetSyntheticOverride(float2{ u, v }, eye, ttlMs);
 		});

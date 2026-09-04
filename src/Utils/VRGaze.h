@@ -20,6 +20,8 @@ namespace Util::VR
 	class GazeTracker
 	{
 	public:
+		static constexpr int kBothEyes = -1;
+
 		static GazeTracker& GetSingleton();
 
 		/// Resolve the eye-tracking interface. Safe to call every frame -- retries on a
@@ -90,8 +92,6 @@ namespace Util::VR
 	private:
 		GazeTracker() = default;
 
-		/// Isolated so the SEH guard around the first live call has no C++ objects
-		/// with destructors in its own frame (MSVC requirement for __try/__except).
 		bool QueryHardwareSample(float2 outCenters[2]);
 
 		bool initGaveUp = false;
@@ -112,7 +112,7 @@ namespace Util::VR
 		bool wasStale = true;
 
 		bool syntheticActive = false;
-		int syntheticEye = -1;  // -1 == both eyes
+		int syntheticEye = kBothEyes;
 		float2 syntheticUV{ 0.5f, 0.5f };
 		uint64_t syntheticExpiryTickMs = 0;  // 0 == no expiry
 

@@ -464,11 +464,8 @@ void FoveatedRender::DrawSettings()
 
 		ImGui::Separator();
 		{
-			// Synthetic (kSynthetic=2) is deliberately not selectable here -- it has no
-			// effect without devbench actively driving it (gazeOverride/gazeSweep), which
-			// end users never have. A devbench session can still set it directly via the
-			// feature's settings blob; the value persists and this combo just won't show
-			// it as a distinct choice while active.
+			// kSynthetic (2) is deliberately omitted -- devbench can still set it via the
+			// settings blob; don't re-add it, it does nothing without gazeOverride/gazeSweep.
 			std::vector<const char*> gazeModeLabels = {
 				T(TKEY("foveated_eyetracked_off"), "Off"),
 				T(TKEY("foveated_eyetracked_auto"), "Auto"),

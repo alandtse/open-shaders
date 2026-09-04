@@ -160,9 +160,6 @@ namespace Util::VR
 		const uint64_t dtMs = lastUpdateTickMs == 0 ? 17 : std::clamp<uint64_t>(now - lastUpdateTickMs, 1, 250);
 		lastUpdateTickMs = now;
 
-		// Synthetic override takes precedence over hardware for testing, but flows
-		// through the exact same smoothing/lerp state below -- the test path is the
-		// production path.
 		if (syntheticActive && syntheticExpiryTickMs != 0 && now >= syntheticExpiryTickMs)
 			ClearSyntheticOverride();
 		if (sweepActive)
@@ -177,11 +174,10 @@ namespace Util::VR
 		bool eyeTouched[2] = { true, true };
 		if (syntheticActive) {
 			const float2 syntheticOffset{ syntheticUV.x - 0.5f, syntheticUV.y - 0.5f };
-			// syntheticEye < 0 means both eyes; otherwise leave the other eye tracking
-			// its last real/hardware-fallback target so a single-eye override is visibly
-			// distinguishable from a both-eyes one.
-			eyeTouched[0] = (syntheticEye < 0 || syntheticEye == 0);
-			eyeTouched[1] = (syntheticEye < 0 || syntheticEye == 1);
+			// Leaves the other eye tracking its last real/hardware-fallback target, so a
+			// single-eye override is visibly distinguishable from a both-eyes one.
+			eyeTouched[0] = (syntheticEye == kBothEyes || syntheticEye == 0);
+			eyeTouched[1] = (syntheticEye == kBothEyes || syntheticEye == 1);
 			sample[0] = eyeTouched[0] ? syntheticOffset : targetOffset[0];
 			sample[1] = eyeTouched[1] ? syntheticOffset : targetOffset[1];
 			sampleOk = true;
@@ -311,7 +307,7 @@ namespace Util::VR
 		sweepStartTickMs = NowMs();
 		sweepNextSaccadeTickMs = sweepStartTickMs;
 		syntheticActive = true;
-		syntheticEye = -1;
+		syntheticEye = kBothEyes;
 		syntheticExpiryTickMs = 0;
 	}
 
@@ -334,8 +330,7 @@ namespace Util::VR
 		case SweepPattern::kSaccade:
 			{
 				if (nowMs >= sweepNextSaccadeTickMs) {
-					// Deterministic pseudo-random jump target -- no <random> engine state to
-					// carry, and reproducible across sessions for bug-report comparison.
+					// Deterministic: reproducible across sessions for bug-report comparison.
 					const float seed = static_cast<float>(nowMs % 100000) * 12.9898f;
 					const float rx = std::fmod(std::abs(std::sin(seed)) * 43758.5453f, 1.0f);
 					const float ry = std::fmod(std::abs(std::sin(seed * 1.7f)) * 43758.5453f, 1.0f);

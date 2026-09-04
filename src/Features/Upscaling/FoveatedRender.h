@@ -97,8 +97,6 @@ struct FoveatedRender
 		uint subrectBlendMode = static_cast<uint>(SubrectBlendMode::kHardCopy);
 		float subrectFeatherWidth = 64.0f;
 		float subrectDitherStrength = 1.0f;
-		// Not restart-gated: resolving the OpenVR interface runs regardless of this
-		// toggle's value, so hot-toggling is safe.
 		uint eyeTrackedFoveation = static_cast<uint>(EyeTrackedFoveationMode::kOff);
 	};
 
