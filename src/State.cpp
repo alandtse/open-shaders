@@ -1401,7 +1401,7 @@ void State::UpdateSharedData([[maybe_unused]] bool a_inWorld, [[maybe_unused]] b
 
 		data.HDRData = globals::features::hdrDisplay.GetSharedDataHDR();
 		data.RefractionScale = refractionScale;
-		data.VRStereoEffectData = { 0.0f, 0.0f, 0.0f };
+		data.VRStereoEffectData = float3{ 0.0f, 0.0f, 0.0f };
 
 		// VR foveated shader detail (consumed by foveated SSR). Default to off; populate from the
 		// active foveation region only when SSR foveation is enabled and SSR is actually running.
@@ -1412,7 +1412,7 @@ void State::UpdateSharedData([[maybe_unused]] bool a_inWorld, [[maybe_unused]] b
 			const auto& vr = globals::features::vr;
 			const auto& dynamicCubemaps = globals::features::dynamicCubemaps;
 			const auto& volumetricLighting = globals::features::volumetricLighting;
-			data.VRStereoEffectData = {
+			data.VRStereoEffectData = float3{
 				dynamicCubemaps.loaded && dynamicCubemaps.settings.EnableVRStereoFix ? 1.0f : 0.0f,
 				volumetricLighting.loaded && volumetricLighting.settings.EnableVRStereoFix ? 1.0f : 0.0f,
 				0.0f
