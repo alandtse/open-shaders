@@ -12,7 +12,7 @@
 #include <FidelityFX/host/ffx_fsr3.h>
 
 // ============================================================================
-// UIPassDispatch_Hook: swap KMAIN DS → fakeDS for UI pass (renderMode==24)
+// UIPassDispatch_Hook: swap KMAIN DS → fakeDS for the VR world-space UI pass
 // ============================================================================
 // UI pass draws VR HUD to kMENUBG (now 3k). Engine binds KMAIN(DS) as DS,
 // which is still 1k → size mismatch. Swap to fakeDS (3k) before, restore after.
@@ -21,9 +21,12 @@ void PerfMode::UIPassDispatch_Hook::thunk(RE::BSGraphics::BSShaderAccumulator* s
 {
 	auto& perfMode = globals::features::upscaling.perfMode;
 
-	// Only intercept renderMode==24 (UI pass) when hook is active
+	// Only intercept the VR world-space UI pass when hook is active. renderMode here is a
+	// raw uint32_t (this class is a legacy duplicate BSShaderAccumulator declaration), so
+	// the enum needs an explicit cast rather than comparing types directly.
 	auto& rtData = shaderAccumulator->GetRuntimeData();
-	if (!perfMode.hookActive || !perfMode.fakeDSV || rtData.renderMode != 24) {
+	if (!perfMode.hookActive || !perfMode.fakeDSV ||
+		rtData.renderMode != static_cast<uint32_t>(RE::BSShaderAccumulator::RENDER_MODE::kVRWorldSpaceUIPass)) {
 		func(shaderAccumulator, renderFlags);
 		return;
 	}
