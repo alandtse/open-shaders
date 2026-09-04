@@ -32,6 +32,8 @@ namespace
 	constexpr int kVRInitError_Init_NotInitialized = 109;
 	constexpr uint32_t kMaxInitRetries = 300;  // a few seconds' worth of per-frame retries
 
+	constexpr uint32_t kMaxConsecutiveFailures = 30;  // ~1/3 second at 90Hz
+
 	uint64_t NowMs()
 	{
 		using namespace std::chrono;
@@ -134,26 +136,23 @@ namespace Util::VR
 		currentOffset[0] = targetOffset[0] = probe[0];
 		currentOffset[1] = targetOffset[1] = probe[1];
 		lastValidTickMs = NowMs();
-		live = true;
+		eyeLive[0] = eyeLive[1] = true;
 		logger::info("[VRGaze] Eye-tracked foveation available via {}.", apiVersion);
 	}
 
 	void GazeTracker::Update(bool forceSyntheticOnly)
 	{
-		if (!available)
+		if (!available && !syntheticActive)
 			return;
-
-		using namespace std::chrono;
-		const uint64_t nowUs = static_cast<uint64_t>(duration_cast<microseconds>(steady_clock::now().time_since_epoch()).count());
 
 		// Called from more than one per-frame site (State::UpdateSharedData has several
-		// call sites); a sub-millisecond gap means the same frame calling in again, not
-		// a new frame, so skip re-running the smoothing/failure-counting math for it.
-		if (lastUpdateTickUs != 0 && nowUs - lastUpdateTickUs < 1000)
+		// call sites, plus ScreenSpaceShadows.cpp); without this, the two sites could
+		// sample gaze at different sub-frame instants, making the SSS and SSR/upscaling
+		// foveation masks disagree within the same frame.
+		if (!updateFrameChecker.IsNewFrame())
 			return;
-		lastUpdateTickUs = nowUs;
 
-		const uint64_t now = nowUs / 1000;
+		const uint64_t now = NowMs();
 		const uint64_t dtMs = lastUpdateTickMs == 0 ? 17 : std::clamp<uint64_t>(now - lastUpdateTickMs, 1, 250);
 		lastUpdateTickMs = now;
 
@@ -168,19 +167,27 @@ namespace Util::VR
 		float2 sample[2];
 		bool sampleOk;
 		bool countsAsFailure = false;
+		// Which eye(s) this call actually has fresh data for -- an untouched eye's
+		// eyeLive must not be forced by this call, so a single-eye override doesn't
+		// also mark the other eye's stale/fallback state as live.
+		bool eyeTouched[2] = { true, true };
 		if (syntheticActive) {
 			const float2 syntheticOffset{ syntheticUV.x - 0.5f, syntheticUV.y - 0.5f };
 			// syntheticEye < 0 means both eyes; otherwise leave the other eye tracking
 			// its last real/hardware-fallback target so a single-eye override is visibly
 			// distinguishable from a both-eyes one.
-			sample[0] = (syntheticEye < 0 || syntheticEye == 0) ? syntheticOffset : targetOffset[0];
-			sample[1] = (syntheticEye < 0 || syntheticEye == 1) ? syntheticOffset : targetOffset[1];
+			eyeTouched[0] = (syntheticEye < 0 || syntheticEye == 0);
+			eyeTouched[1] = (syntheticEye < 0 || syntheticEye == 1);
+			sample[0] = eyeTouched[0] ? syntheticOffset : targetOffset[0];
+			sample[1] = eyeTouched[1] ? syntheticOffset : targetOffset[1];
 			sampleOk = true;
-		} else if (forceSyntheticOnly) {
-			// kSynthetic mode with no override issued yet: intentionally inert (not a
-			// hardware failure -- must never count toward the consecutive-failure latch),
-			// so the caller's fallback center applies until a devbench override arrives.
+		} else if (forceSyntheticOnly || !available) {
+			// kSynthetic mode with no override issued yet, or hardware never resolved:
+			// intentionally inert (not a hardware failure -- must never count toward the
+			// consecutive-failure latch), so the caller's fallback center applies until a
+			// devbench override arrives or hardware becomes available.
 			sampleOk = false;
+			eyeTouched[0] = eyeTouched[1] = false;
 		} else {
 			sampleOk = QueryHardwareSample(sample) && IsFiniteAndInRange(sample[0]) && IsFiniteAndInRange(sample[1]);
 			countsAsFailure = !sampleOk;
@@ -201,9 +208,9 @@ namespace Util::VR
 			targetOffset[1] = sample[1];
 		} else if (countsAsFailure) {
 			++consecutiveFailures;
-			if (consecutiveFailures >= 30) {
+			if (consecutiveFailures >= kMaxConsecutiveFailures) {
 				available = false;
-				live = false;
+				eyeLive[0] = eyeLive[1] = false;
 				logger::warn("[VRGaze] {} consecutive failed eye-tracking queries; disabling for this session.", consecutiveFailures);
 				return;
 			}
@@ -261,14 +268,18 @@ namespace Util::VR
 			currentOffset[eye] = float2{ currentOffset[eye].x + delta.x, currentOffset[eye].y + delta.y };
 		}
 
-		live = !stale || syntheticActive;
+		for (int eye = 0; eye < 2; ++eye) {
+			if (eyeTouched[eye])
+				eyeLive[eye] = !stale || syntheticActive;
+		}
 	}
 
 	float2 GazeTracker::GetCenterOffset(uint32_t eyeIndex, float2 fallback) const
 	{
-		if (!available || !live)
+		const uint32_t idx = std::min<uint32_t>(eyeIndex, 1);
+		if (!eyeLive[idx])
 			return fallback;
-		return currentOffset[std::min<uint32_t>(eyeIndex, 1)];
+		return currentOffset[idx];
 	}
 
 	void GazeTracker::SetSyntheticOverride(float2 uv, int eyeIndex, uint32_t ttlMs)
@@ -277,10 +288,9 @@ namespace Util::VR
 		syntheticEye = eyeIndex;
 		syntheticUV = uv;
 		syntheticExpiryTickMs = ttlMs == 0 ? 0 : NowMs() + ttlMs;
-		// Synthetic mode implies "available" for pipeline testing even without a real
-		// eye-tracking interface resolved -- Init() may never have succeeded on hardware
-		// with no eye tracker, but the devbench override must still exercise the mask.
-		available = true;
+		// Deliberately doesn't touch `available` (hardware-confirmed only) -- Update()'s
+		// own syntheticActive check already lets this run without hardware ever
+		// resolving, so gazeStatus.available stays truthful.
 	}
 
 	void GazeTracker::StartSweep(SweepPattern pattern, float hz, float amplitude)
@@ -294,7 +304,6 @@ namespace Util::VR
 		syntheticActive = true;
 		syntheticEye = -1;
 		syntheticExpiryTickMs = 0;
-		available = true;
 	}
 
 	void GazeTracker::AdvanceSweep(uint64_t nowMs)
@@ -341,7 +350,7 @@ namespace Util::VR
 	{
 		StatusSnapshot s;
 		s.available = available;
-		s.live = live;
+		s.live = eyeLive[0] || eyeLive[1];
 		s.synthetic = syntheticActive;
 		s.centerOffset[0] = currentOffset[0];
 		s.centerOffset[1] = currentOffset[1];

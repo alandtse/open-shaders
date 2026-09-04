@@ -1,5 +1,7 @@
 #pragma once
 
+#include "Utils/Game.h"
+
 /**
  * @brief Shared eye-tracked gaze service for VR foveation consumers.
  *
@@ -43,9 +45,10 @@ namespace Util::VR
 		/// headset with an eye tracker is actually connected -- see IsLive()).
 		bool IsAvailable() const { return available; }
 
-		/// True when the most recent sample was accepted (not stale/invalid). False
-		/// under IsAvailable()==true just means no valid sample has arrived yet/lately.
-		bool IsLive() const { return live; }
+		/// True when the most recent sample was accepted (not stale/invalid) for either
+		/// eye. False under IsAvailable()==true just means no valid sample has arrived
+		/// yet/lately.
+		bool IsLive() const { return eyeLive[0] || eyeLive[1]; }
 
 		//=============================================================================
 		// DevBench test surface (Upscaling::RegisterUxActions) -- synthetic gaze
@@ -93,8 +96,8 @@ namespace Util::VR
 
 		bool initGaveUp = false;
 		uint32_t initRetryCount = 0;
-		bool available = false;
-		bool live = false;
+		bool available = false;  // hardware-confirmed only; synthetic mode never sets this
+		bool eyeLive[2] = { false, false };
 		uint32_t consecutiveFailures = 0;
 		void* fnTable = nullptr;  // VR_IVRSystem_FnTable*, opaque here to keep openvr.h out of this header
 		const char* apiVersion = "";
@@ -104,8 +107,8 @@ namespace Util::VR
 		float2 lerpFromOffset[2] = {};  // snapshot at the moment staleness/recovery lerp starts
 		uint64_t lastValidTickMs = 0;
 		uint64_t staleSinceTickMs = 0;
-		uint64_t lastUpdateTickMs = 0;  ///< real elapsed-time base for smoothing/velocity clamp
-		uint64_t lastUpdateTickUs = 0;  ///< same-frame dedup guard; see Update()
+		uint64_t lastUpdateTickMs = 0;          ///< real elapsed-time base for smoothing/velocity clamp
+		Util::FrameChecker updateFrameChecker;  ///< Update() runs at most once per real frame
 		bool wasStale = true;
 
 		bool syntheticActive = false;
