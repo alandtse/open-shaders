@@ -229,7 +229,7 @@ State::TonemapOwner State::GetTonemapOwner()
 
 #if defined(ENABLE_EFFECTS11)
 	auto& effects11 = globals::features::effects11;
-	if (effects11.loaded && !IsMainOrLoadingMenuOpen() && effects11.WantsTonemapOwnership())
+	if (effects11.loaded && !IsFullScreenMenuOpen() && effects11.WantsTonemapOwnership())
 		cachedOwner = TonemapOwner::kEffects11;
 	else
 #endif
@@ -244,6 +244,11 @@ State::TonemapOwner State::GetTonemapOwner()
 bool State::HandlePostProcessing(RE::RENDER_TARGET a_input, RE::RENDER_TARGET a_output)
 {
 #if defined(ENABLE_EFFECTS11)
+	// Vanilla's blend does a compositor handoff for this target that Effects11's own
+	// tonemap replacement doesn't replicate -- must stay on the native path.
+	if (a_output == RE::RENDER_TARGETS::kMENUBG)
+		return false;
+
 	if (GetTonemapOwner() != TonemapOwner::kEffects11 ||
 		!globals::features::effects11.RenderTonemap(a_input, a_output))
 		return false;

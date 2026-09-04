@@ -339,19 +339,51 @@ namespace WeatherExtensions
 		static void thunk(Effects11::DirectionalAmbientColors& DirectionalAmbientColors, RE::NiColor* AmbientSpecularTint, float AmbientSpecularFresnel)
 		{
 #if defined(ENABLE_EFFECTS11)
-			if (globals::features::effects11.loaded) {
-				globals::features::effects11.CheckCommonData();
-				if (globals::features::effects11.enableEffect) {
+			auto& effects11 = globals::features::effects11;
+			if (effects11.loaded) {
+				effects11.CheckCommonData();
+				if (effects11.enableEffect) {
 					// The engine passes Sky's own cube by reference, so overriding in place would
 					// compound on every call Sky has not recomputed colors for.
 					Effects11::DirectionalAmbientColors overridden = DirectionalAmbientColors;
-					globals::features::effects11.OverrideAmbientLighting(overridden);
+					effects11.OverrideAmbientLighting(overridden);
+					effects11.vanillaAmbientCache = DirectionalAmbientColors;
+					effects11.gradedAmbientCache = overridden;
+					if (AmbientSpecularTint)
+						effects11.ambientSpecularTintCache = *AmbientSpecularTint;
+					effects11.ambientSpecularFresnelCache = AmbientSpecularFresnel;
+					effects11.ambientGradeCacheValid = true;
 					func(overridden, AmbientSpecularTint, AmbientSpecularFresnel);
 					return;
 				}
+				effects11.ambientGradeCacheValid = false;
 			}
 #endif
 			func(DirectionalAmbientColors, AmbientSpecularTint, AmbientSpecularFresnel);
+		}
+		static inline REL::Relocation<decltype(thunk)> func;
+	};
+
+	// renderMode 24 means something unrelated on SE/AE -- do not reuse this check outside VR.
+	struct VRUIPassAmbientFix_Hook
+	{
+		static void thunk(RE::BSGraphics::BSShaderAccumulator* shaderAccumulator, uint32_t renderFlags)
+		{
+#if defined(ENABLE_EFFECTS11)
+			auto& effects11 = globals::features::effects11;
+			if (shaderAccumulator->GetRuntimeData().renderMode == 24 && effects11.loaded && effects11.enableEffect && effects11.ambientGradeCacheValid) {
+				const bool savedEnableEffect = effects11.enableEffect;
+				effects11.enableEffect = false;
+				Sky_SetDirectionalAmbientColors::func(effects11.vanillaAmbientCache, &effects11.ambientSpecularTintCache, effects11.ambientSpecularFresnelCache);
+				globals::state->UpdateSharedData(false, false);
+				func(shaderAccumulator, renderFlags);
+				effects11.enableEffect = savedEnableEffect;
+				Sky_SetDirectionalAmbientColors::func(effects11.gradedAmbientCache, &effects11.ambientSpecularTintCache, effects11.ambientSpecularFresnelCache);
+				globals::state->UpdateSharedData(false, false);
+				return;
+			}
+#endif
+			func(shaderAccumulator, renderFlags);
 		}
 		static inline REL::Relocation<decltype(thunk)> func;
 	};
@@ -1219,6 +1251,8 @@ namespace Hooks
 		logger::info("Hooking weather extensions");
 		stl::detour_thunk<WeatherExtensions::Sky_UpdateColors>(REL::RelocationID(25686, 26233));
 		stl::detour_thunk<WeatherExtensions::Sky_SetDirectionalAmbientColors>(REL::RelocationID(98989, 105643));
+		if (globals::game::isVR)
+			stl::write_vfunc<0x2A, WeatherExtensions::VRUIPassAmbientFix_Hook>(RE::VTABLE_BSShaderAccumulator[0]);
 
 		logger::info("Hooking MenuManager::DrawInterfaceStart for menu TAA");
 		stl::detour_thunk<MenuManagerDrawInterfaceStart>(REL::RelocationID(79947, 82084));
