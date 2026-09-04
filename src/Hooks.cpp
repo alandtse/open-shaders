@@ -364,14 +364,17 @@ namespace WeatherExtensions
 		static inline REL::Relocation<decltype(thunk)> func;
 	};
 
-	// renderMode 24 means something unrelated on SE/AE -- do not reuse this check outside VR.
+	// kVRWorldSpaceUIPass means something unrelated on SE/AE -- do not reuse this check outside VR.
+	// The static_cast is load-bearing: this hook's BSGraphics::BSShaderAccumulator is a
+	// separate, legacy CommonLibVR declaration of the same engine struct, whose renderMode
+	// field is still a raw uint32_t at the same offset, not the RE::BSShaderAccumulator enum.
 	struct VRUIPassAmbientFix_Hook
 	{
 		static void thunk(RE::BSGraphics::BSShaderAccumulator* shaderAccumulator, uint32_t renderFlags)
 		{
 #if defined(ENABLE_EFFECTS11)
 			auto& effects11 = globals::features::effects11;
-			if (shaderAccumulator->GetRuntimeData().renderMode == 24 && effects11.loaded && effects11.enableEffect && effects11.ambientGradeCacheValid) {
+			if (shaderAccumulator->GetRuntimeData().renderMode == static_cast<uint32_t>(RE::BSShaderAccumulator::RENDER_MODE::kVRWorldSpaceUIPass) && effects11.loaded && effects11.enableEffect && effects11.ambientGradeCacheValid) {
 				const bool savedEnableEffect = effects11.enableEffect;
 				effects11.enableEffect = false;
 				Sky_SetDirectionalAmbientColors::func(effects11.vanillaAmbientCache, &effects11.ambientSpecularTintCache, effects11.ambientSpecularFresnelCache);
