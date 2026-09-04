@@ -155,7 +155,7 @@ void VolumetricShadows::CopyShadowLightData()
 
 			// Get input dimensions for dispatch sizing
 			ID3D11Resource* shadowResource = nullptr;
-			shadowView->GetResource(&shadowResource);
+			shadowView->GetResource(Util::AsReal<REX::W32::ID3D11Resource*>(&shadowResource));
 
 			if (shadowResource) {
 				ID3D11Texture2D* shadowTexture = nullptr;
@@ -175,7 +175,7 @@ void VolumetricShadows::CopyShadowLightData()
 						auto renderer = globals::game::renderer;
 						auto& esramDepthStencil = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kVOLUMETRIC_LIGHTING_SHADOWMAPS_ESRAM];
 
-						ID3D11ShaderResourceView* csSrvs[2]{ shadowView, esramDepthStencil.depthSRV };
+						ID3D11ShaderResourceView* csSrvs[2]{ Util::AsReal<ID3D11ShaderResourceView>(shadowView), Util::AsReal<ID3D11ShaderResourceView>(esramDepthStencil.depthSRV) };
 						context->CSSetShaderResources(0, 2, csSrvs);
 
 						context->CSSetSamplers(0, 1, &linearSampler);
@@ -302,7 +302,7 @@ void VolumetricShadows::CopyShadowLightData()
 			}
 		}
 
-		auto* srv = shadowView ? (shadowCopyUpdated && shadowCopySRV ? shadowCopySRV : shadowView) : nullptr;
+		auto* srv = shadowView ? (shadowCopyUpdated && shadowCopySRV ? shadowCopySRV : Util::AsReal<ID3D11ShaderResourceView>(shadowView)) : nullptr;
 		SetSharedShadowMapSRV(context, srv);
 	}
 }
