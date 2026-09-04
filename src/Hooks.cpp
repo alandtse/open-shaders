@@ -364,13 +364,7 @@ namespace WeatherExtensions
 		static inline REL::Relocation<decltype(thunk)> func;
 	};
 
-	// VR-only: renderMode==24 is BSShaderAccumulator::FinishAccumulatingMode24, which does
-	// exactly one thing -- RenderBatches(technique=0x5c006075, bucket=0x10), the world-space
-	// UI/HUD batch (compass, subtitles, world-projected menus). It renders via BSEffectShader,
-	// the same material class as real particle effects, so it also inherits enbSettings.Enable's
-	// particle-relighting branch (ParticleIntensity etc.), which SharedData only refreshes
-	// during the early world passes. renderMode 24 is NOT this on SE/AE (RenderFirstPersonView_End
-	// / a queued-shadow-pass-list reset, respectively) -- do not reuse this check outside VR.
+	// renderMode 24 means something unrelated on SE/AE -- do not reuse this check outside VR.
 	struct VRUIPassAmbientFix_Hook
 	{
 		static void thunk(RE::BSGraphics::BSShaderAccumulator* shaderAccumulator, uint32_t renderFlags)

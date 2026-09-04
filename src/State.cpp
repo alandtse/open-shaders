@@ -244,11 +244,8 @@ State::TonemapOwner State::GetTonemapOwner()
 bool State::HandlePostProcessing(RE::RENDER_TARGET a_input, RE::RENDER_TARGET a_output)
 {
 #if defined(ENABLE_EFFECTS11)
-	// World-space menu quads (VR) and the RaceSex preview backdrop (all platforms) are
-	// composited from this specific target; the vanilla blend does a handoff here that
-	// Effects11's replacement doesn't replicate, leaving it stale. Scoping the fallback to
-	// just this render target -- instead of vanilla-izing the whole frame while any such
-	// menu is open -- keeps Effects11 grading everything else normally.
+	// Vanilla's blend does a compositor handoff for this target that Effects11's own
+	// tonemap replacement doesn't replicate -- must stay on the native path.
 	if (a_output == RE::RENDER_TARGETS::kMENUBG)
 		return false;
 
