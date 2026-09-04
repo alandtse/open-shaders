@@ -57,7 +57,7 @@ void Border::SetupResources()
 		auto gameTexMainCopy = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMAIN_COPY];
 
 		D3D11_TEXTURE2D_DESC texDesc;
-		gameTexMainCopy.texture->GetDesc(&texDesc);
+		gameTexMainCopy.texture->GetDesc(Util::AsReal<REX::W32::D3D11_TEXTURE2D_DESC>(&texDesc));
 
 		D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc = {
 			.Format = texDesc.Format,
@@ -151,7 +151,7 @@ void Border::ClearMotionVectorsForFrameGen()
 
 	ID3D11ShaderResourceView* srvs[1] = { depthSRV };
 	context->CSSetShaderResources(0, 1, srvs);
-	ID3D11UnorderedAccessView* uavs[1] = { motion.UAV };
+	ID3D11UnorderedAccessView* uavs[1] = { Util::AsReal<ID3D11UnorderedAccessView>(motion.UAV) };
 	context->CSSetUnorderedAccessViews(0, 1, uavs, nullptr);
 	ID3D11Buffer* cb = borderCB->CB();
 	context->CSSetConstantBuffers(1, 1, &cb);
@@ -191,9 +191,9 @@ void Border::Draw(TextureInfo& inout_tex)
 		return;
 	}
 	auto motion = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMOTION_VECTOR];
-	ID3D11ShaderResourceView* srvs[2] = { inout_tex.srv, depthSRV };
+	ID3D11ShaderResourceView* srvs[2] = { inout_tex.srv, Util::AsReal<ID3D11ShaderResourceView>(depthSRV) };
 	context->CSSetShaderResources(0, 2, srvs);
-	ID3D11UnorderedAccessView* uavs[2] = { texOutput->uav.get(), motion.UAV };
+	ID3D11UnorderedAccessView* uavs[2] = { texOutput->uav.get(), Util::AsReal<ID3D11UnorderedAccessView>(motion.UAV) };
 	context->CSSetUnorderedAccessViews(0, 2, uavs, nullptr);
 	ID3D11Buffer* cb = borderCB->CB();
 	context->CSSetConstantBuffers(1, 1, &cb);
