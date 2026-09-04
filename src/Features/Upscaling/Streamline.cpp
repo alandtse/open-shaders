@@ -590,7 +590,7 @@ void Streamline::SetDLSSOptions(sl::ViewportHandle p_viewport, uint32_t width, u
 		auto renderer = globals::game::renderer;
 		auto& main = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMAIN];
 		D3D11_TEXTURE2D_DESC mainDesc;
-		static_cast<ID3D11Texture2D*>(main.texture)->GetDesc(&mainDesc);
+		Util::AsReal<ID3D11Texture2D>(main.texture)->GetDesc(&mainDesc);
 		bool isHDR = mainDesc.Format != DXGI_FORMAT_R8G8B8A8_UNORM;
 		dlssOptions.colorBuffersHDR = isHDR ? sl::Boolean::eTrue : sl::Boolean::eFalse;
 	}
@@ -785,8 +785,8 @@ void Streamline::Upscale(ID3D11Resource* a_upscalingTexture, ID3D11Resource* a_r
 		if (eye1Ready) {
 			D3D11_BOX rightIn = { eyeWidthIn, 0, 0, eyeWidthIn * 2, eyeHeightIn, 1 };
 			context->CopySubresourceRegion(upscaling.vrIntermediateColorIn[1]->resource.get(), 0, 0, 0, 0, a_upscalingTexture, 0, &rightIn);
-			context->CopySubresourceRegion(upscaling.vrIntermediateDepth->resource.get(), 0, 0, 0, 0, depthTexture.texture, 0, &rightIn);
-			upscaling.ClearHMDMask(upscaling.vrIntermediateColorIn[1]->uav.get(), depthTexture.depthSRV,
+			context->CopySubresourceRegion(upscaling.vrIntermediateDepth->resource.get(), 0, 0, 0, 0, Util::AsReal<ID3D11Resource>(depthTexture.texture), 0, &rightIn);
+			upscaling.ClearHMDMask(upscaling.vrIntermediateColorIn[1]->uav.get(), Util::AsReal<ID3D11ShaderResourceView>(depthTexture.depthSRV),
 				eyeWidthIn, eyeHeightIn, eyeWidthIn, 0);
 		}
 
@@ -794,12 +794,12 @@ void Streamline::Upscale(ID3D11Resource* a_upscalingTexture, ID3D11Resource* a_r
 		if (eye0Ready) {
 			D3D11_BOX leftIn = { 0, 0, 0, eyeWidthIn, eyeHeightIn, 1 };
 			context->CopySubresourceRegion(upscaling.vrIntermediateColorIn[0]->resource.get(), 0, 0, 0, 0, a_upscalingTexture, 0, &leftIn);
-			upscaling.ClearHMDMask(upscaling.vrIntermediateColorIn[0]->uav.get(), depthTexture.depthSRV,
+			upscaling.ClearHMDMask(upscaling.vrIntermediateColorIn[0]->uav.get(), Util::AsReal<ID3D11ShaderResourceView>(depthTexture.depthSRV),
 				eyeWidthIn, eyeHeightIn, 0, 0);
 
 			EvaluateDLSS(viewport, 0,
 				upscaling.vrIntermediateColorIn[0]->resource.get(), colorOut,
-				depthTexture.texture,
+				Util::AsReal<ID3D11Resource>(depthTexture.texture),
 				upscaling.vrIntermediateMotionVectors[0]->resource.get(),
 				upscaling.vrIntermediateReactiveMask[0]->resource.get(),
 				upscaling.vrIntermediateTransparencyMask[0]->resource.get(),
@@ -827,7 +827,7 @@ void Streamline::Upscale(ID3D11Resource* a_upscalingTexture, ID3D11Resource* a_r
 
 		EvaluateDLSS(viewport, 0,
 			a_upscalingTexture, colorOut,
-			depthTexture.texture, a_motionVectors, a_reactiveMask, a_transparencyCompositionMask,
+			Util::AsReal<ID3D11Resource>(depthTexture.texture), a_motionVectors, a_reactiveMask, a_transparencyCompositionMask,
 			extentIn, extentOut, (uint)displaySize.x);
 	}
 }
