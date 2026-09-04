@@ -43,14 +43,14 @@ namespace FoveatedRenderImpl
 
 		// In-place RCAS on kMAIN through sharpenerTexture.
 		ID3D11Resource* mainResource = nullptr;
-		main.SRV->GetResource(&mainResource);
+		main.SRV->GetResource(Util::AsReal<REX::W32::ID3D11Resource*>(&mainResource));
 		if (!mainResource) {
 			logger::error("[FOVEATED] Failed to acquire main resource for sharpening");
 			return false;
 		}
 
 		context->OMSetRenderTargets(0, nullptr, nullptr);
-		upscaling.rcas.ApplySharpen(main.SRV, upscaling.sharpenerTexture->uav.get(), currentSharpness);
+		upscaling.rcas.ApplySharpen(Util::AsReal<ID3D11ShaderResourceView>(main.SRV), upscaling.sharpenerTexture->uav.get(), currentSharpness);
 		context->CopyResource(mainResource, upscaling.sharpenerTexture->resource.get());
 		mainResource->Release();
 

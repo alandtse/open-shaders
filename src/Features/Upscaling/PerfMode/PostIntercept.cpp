@@ -47,43 +47,43 @@ void PerfMode::RenderTonemapWithSwap(void* imageSpaceShader, RE::BSTriShape* sha
 
 	// --- Swap kMAIN SRV → testTextureSRV (so tonemap reads 3k upscaled color) ---
 	auto& kmainRT = rtData.renderTargets[RE::RENDER_TARGETS::kMAIN];
-	perfMode.savedKMainSRV = kmainRT.SRV;
-	kmainRT.SRV = perfMode.testTextureSRV.get();
+	perfMode.savedKMainSRV = Util::AsReal<ID3D11ShaderResourceView>(kmainRT.SRV);
+	kmainRT.SRV = Util::AsReal<REX::W32::ID3D11ShaderResourceView>(perfMode.testTextureSRV.get());
 
 	// --- Also swap kMAIN_COPY SRV (refraction path reads this instead of kMAIN) ---
 	auto& kmainCopyRT = rtData.renderTargets[RE::RENDER_TARGETS::kMAIN_COPY];
-	perfMode.savedKMainCopySRV = kmainCopyRT.SRV;
-	kmainCopyRT.SRV = perfMode.testTextureSRV.get();
+	perfMode.savedKMainCopySRV = Util::AsReal<ID3D11ShaderResourceView>(kmainCopyRT.SRV);
+	kmainCopyRT.SRV = Util::AsReal<REX::W32::ID3D11ShaderResourceView>(perfMode.testTextureSRV.get());
 
 	// --- Swap kMAIN DS views → fakeDS (so 3k RT doesn't mismatch 1k DS) ---
 	auto& kmainDS = dsData.depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kMAIN];
 	for (int i = 0; i < 8; i++) {
-		perfMode.savedKMainViews[i] = kmainDS.views[i];
+		perfMode.savedKMainViews[i] = Util::AsReal<ID3D11DepthStencilView>(kmainDS.views[i]);
 		if (kmainDS.views[i])
-			kmainDS.views[i] = perfMode.fakeDSV.get();
+			kmainDS.views[i] = Util::AsReal<REX::W32::ID3D11DepthStencilView>(perfMode.fakeDSV.get());
 	}
 	for (int i = 0; i < 8; i++) {
-		perfMode.savedKMainReadOnlyViews[i] = kmainDS.readOnlyViews[i];
+		perfMode.savedKMainReadOnlyViews[i] = Util::AsReal<ID3D11DepthStencilView>(kmainDS.readOnlyViews[i]);
 		if (kmainDS.readOnlyViews[i])
-			kmainDS.readOnlyViews[i] = perfMode.fakeDSV.get();
+			kmainDS.readOnlyViews[i] = Util::AsReal<REX::W32::ID3D11DepthStencilView>(perfMode.fakeDSV.get());
 	}
 
 	// --- Call original (or FrameAnnotations chain) ---
 	Hook::func(imageSpaceShader, shape, param);
 
 	// --- Restore kMAIN SRV ---
-	kmainRT.SRV = perfMode.savedKMainSRV;
+	kmainRT.SRV = Util::AsReal<REX::W32::ID3D11ShaderResourceView>(perfMode.savedKMainSRV);
 	perfMode.savedKMainSRV = nullptr;
 
 	// --- Restore kMAIN_COPY SRV ---
-	kmainCopyRT.SRV = perfMode.savedKMainCopySRV;
+	kmainCopyRT.SRV = Util::AsReal<REX::W32::ID3D11ShaderResourceView>(perfMode.savedKMainCopySRV);
 	perfMode.savedKMainCopySRV = nullptr;
 
 	// --- Restore kMAIN DS views ---
 	for (int i = 0; i < 8; i++)
-		kmainDS.views[i] = perfMode.savedKMainViews[i];
+		kmainDS.views[i] = Util::AsReal<REX::W32::ID3D11DepthStencilView>(perfMode.savedKMainViews[i]);
 	for (int i = 0; i < 8; i++)
-		kmainDS.readOnlyViews[i] = perfMode.savedKMainReadOnlyViews[i];
+		kmainDS.readOnlyViews[i] = Util::AsReal<REX::W32::ID3D11DepthStencilView>(perfMode.savedKMainReadOnlyViews[i]);
 }
 
 void PerfMode::TonemapRender_Hook::thunk(void* imageSpaceShader, RE::BSTriShape* shape, RE::ImageSpaceEffectParam* param)
@@ -306,14 +306,14 @@ void PerfMode::BeginPostIntercept()
 
 	// Swap kMAIN_COPY DS views → fakeDS
 	for (int i = 0; i < 8; i++) {
-		savedKMainCopyViews[i] = kmainCopyDS.views[i];
+		savedKMainCopyViews[i] = Util::AsReal<ID3D11DepthStencilView>(kmainCopyDS.views[i]);
 		if (kmainCopyDS.views[i])
-			kmainCopyDS.views[i] = fakeDSV.get();
+			kmainCopyDS.views[i] = Util::AsReal<REX::W32::ID3D11DepthStencilView>(fakeDSV.get());
 	}
 	for (int i = 0; i < 8; i++) {
-		savedKMainCopyReadOnlyViews[i] = kmainCopyDS.readOnlyViews[i];
+		savedKMainCopyReadOnlyViews[i] = Util::AsReal<ID3D11DepthStencilView>(kmainCopyDS.readOnlyViews[i]);
 		if (kmainCopyDS.readOnlyViews[i])
-			kmainCopyDS.readOnlyViews[i] = fakeDSV.get();
+			kmainCopyDS.readOnlyViews[i] = Util::AsReal<REX::W32::ID3D11DepthStencilView>(fakeDSV.get());
 	}
 
 	state->EndPerfEvent();
@@ -337,9 +337,9 @@ void PerfMode::EndPostIntercept()
 
 	// Restore kMAIN_COPY DS views
 	for (int i = 0; i < 8; i++)
-		kmainCopyDS.views[i] = savedKMainCopyViews[i];
+		kmainCopyDS.views[i] = Util::AsReal<REX::W32::ID3D11DepthStencilView>(savedKMainCopyViews[i]);
 	for (int i = 0; i < 8; i++)
-		kmainCopyDS.readOnlyViews[i] = savedKMainCopyReadOnlyViews[i];
+		kmainCopyDS.readOnlyViews[i] = Util::AsReal<REX::W32::ID3D11DepthStencilView>(savedKMainCopyReadOnlyViews[i]);
 
 	state->EndPerfEvent();
 }
@@ -404,7 +404,7 @@ void PerfMode::DownscaleToKMain()
 		vp.MaxDepth = 1.0f;
 		context->RSSetViewports(1, &vp);
 
-		ID3D11RenderTargetView* rtv = kmain.RTV;
+		ID3D11RenderTargetView* rtv = Util::AsReal<ID3D11RenderTargetView>(kmain.RTV);
 		context->OMSetRenderTargets(1, &rtv, nullptr);
 		context->Draw(3, 0);
 	}

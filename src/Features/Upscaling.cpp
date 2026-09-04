@@ -969,7 +969,7 @@ void Upscaling::DrawSettings()
 
 				DisplayRT("kMAIN (Color Input)", (ID3D11Texture2D*)main.texture, (ID3D11ShaderResourceView*)main.SRV);
 				DisplayRT("Motion Vectors", (ID3D11Texture2D*)mvec.texture, (ID3D11ShaderResourceView*)mvec.SRV);
-				DisplayRT("Depth", depth.texture, depth.depthSRV);
+				DisplayRT("Depth", Util::AsReal<ID3D11Texture2D>(depth.texture), Util::AsReal<ID3D11ShaderResourceView>(depth.depthSRV));
 
 				if (reactiveMaskTexture)
 					BUFFER_VIEWER_NODE_TITLE(reactiveMaskTexture, "Reactive Mask", debugRescale)
@@ -1031,7 +1031,7 @@ void Upscaling::DrawSettings()
 
 				DisplayRT("kMAIN (Color Input)", (ID3D11Texture2D*)main.texture, (ID3D11ShaderResourceView*)main.SRV);
 				DisplayRT("Motion Vectors", (ID3D11Texture2D*)mvec.texture, (ID3D11ShaderResourceView*)mvec.SRV);
-				DisplayRT("Depth", depth.texture, depth.depthSRV);
+				DisplayRT("Depth", Util::AsReal<ID3D11Texture2D>(depth.texture), Util::AsReal<ID3D11ShaderResourceView>(depth.depthSRV));
 
 				if (reactiveMaskTexture)
 					BUFFER_VIEWER_NODE_TITLE(reactiveMaskTexture, "Reactive Mask", debugRescale)
@@ -1405,9 +1405,9 @@ void Upscaling::CreateUpscalingTextureResources(UpscaleMethod a_upscalemethod)
 	D3D11_TEXTURE2D_DESC texDesc{};
 	D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
 	D3D11_UNORDERED_ACCESS_VIEW_DESC uavDesc = {};
-	main.texture->GetDesc(&texDesc);
-	main.SRV->GetDesc(&srvDesc);
-	main.UAV->GetDesc(&uavDesc);
+	main.texture->GetDesc(Util::AsReal<REX::W32::D3D11_TEXTURE2D_DESC>(&texDesc));
+	main.SRV->GetDesc(Util::AsReal<REX::W32::D3D11_SHADER_RESOURCE_VIEW_DESC>(&srvDesc));
+	main.UAV->GetDesc(Util::AsReal<REX::W32::D3D11_UNORDERED_ACCESS_VIEW_DESC>(&uavDesc));
 
 	texDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS;
 
@@ -1464,7 +1464,7 @@ void Upscaling::CreateUpscalingTextureResources(UpscaleMethod a_upscalemethod)
 			auto& motionVector = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMOTION_VECTOR];
 
 			D3D11_TEXTURE2D_DESC motionTexDesc{};
-			motionVector.texture->GetDesc(&motionTexDesc);
+			motionVector.texture->GetDesc(Util::AsReal<REX::W32::D3D11_TEXTURE2D_DESC>(&motionTexDesc));
 
 			texDesc.Format = motionTexDesc.Format;
 			srvDesc.Format = texDesc.Format;
@@ -1479,8 +1479,8 @@ void Upscaling::CreateUpscalingTextureResources(UpscaleMethod a_upscalemethod)
 	if (a_upscalemethod == UpscaleMethod::kDLSS) {
 		// RCAS sharpener texture - matches kMAIN format for HDR sharpening
 		if (!sharpenerTexture) {
-			main.texture->GetDesc(&texDesc);
-			main.SRV->GetDesc(&srvDesc);
+			main.texture->GetDesc(Util::AsReal<REX::W32::D3D11_TEXTURE2D_DESC>(&texDesc));
+			main.SRV->GetDesc(Util::AsReal<REX::W32::D3D11_SHADER_RESOURCE_VIEW_DESC>(&srvDesc));
 
 			texDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS;
 
@@ -1822,7 +1822,7 @@ void Upscaling::EnsureVRIntermediateTextures()
 		logger::info("[Upscaling] (Re)creating VR intermediates: per-eye in {}x{}, out {}x{}",
 			eyeWidthIn, eyeHeightIn, eyeWidthOut, eyeHeightOut);
 		CreateVRIntermediateTextures(eyeWidthIn, eyeHeightIn, eyeWidthOut, eyeHeightOut,
-			main.texture, motionVectorRT.texture,
+			Util::AsReal<ID3D11Resource>(main.texture), Util::AsReal<ID3D11Resource>(motionVectorRT.texture),
 			reactiveMaskTexture->resource.get(), transparencyCompositionMaskTexture->resource.get());
 	}
 }
@@ -1852,10 +1852,10 @@ void Upscaling::PreparePerEyeInputs(ID3D11Resource* colorSrc)
 		D3D11_BOX srcBox = { offsetXIn, 0, 0, offsetXIn + eyeWidthIn, eyeHeightIn, 1 };
 
 		context->CopySubresourceRegion(vrIntermediateColorIn[i]->resource.get(), 0, 0, 0, 0, colorSrc, 0, &srcBox);
-		context->CopySubresourceRegion(vrIntermediateMotionVectors[i]->resource.get(), 0, 0, 0, 0, motionVectorRT.texture, 0, &srcBox);
+		context->CopySubresourceRegion(vrIntermediateMotionVectors[i]->resource.get(), 0, 0, 0, 0, Util::AsReal<ID3D11Resource>(motionVectorRT.texture), 0, &srcBox);
 
 		uint32_t depthOffset = (i == 1) ? eyeWidthIn : 0;
-		ClearHMDMask(vrIntermediateColorIn[i]->uav.get(), depthTexture.depthSRV,
+		ClearHMDMask(vrIntermediateColorIn[i]->uav.get(), Util::AsReal<ID3D11ShaderResourceView>(depthTexture.depthSRV),
 			eyeWidthIn, eyeHeightIn, depthOffset, 0);
 	}
 }
@@ -2104,9 +2104,9 @@ void Upscaling::SetupResources()
 	D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
 	D3D11_UNORDERED_ACCESS_VIEW_DESC uavDesc = {};
 
-	main.texture->GetDesc(&texDesc);
-	main.SRV->GetDesc(&srvDesc);
-	main.UAV->GetDesc(&uavDesc);
+	main.texture->GetDesc(Util::AsReal<REX::W32::D3D11_TEXTURE2D_DESC>(&texDesc));
+	main.SRV->GetDesc(Util::AsReal<REX::W32::D3D11_SHADER_RESOURCE_VIEW_DESC>(&srvDesc));
+	main.UAV->GetDesc(Util::AsReal<REX::W32::D3D11_UNORDERED_ACCESS_VIEW_DESC>(&uavDesc));
 
 	texDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS;
 
@@ -2203,7 +2203,7 @@ void Upscaling::CopySharedD3D12Resources()
 	auto context = globals::d3d::context;
 
 	auto& motionVector = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMOTION_VECTOR];
-	context->CopyResource(dx12SwapChain.motionVectorBufferShared12->resource11, motionVector.texture);
+	context->CopyResource(dx12SwapChain.motionVectorBufferShared12->resource11, Util::AsReal<ID3D11Resource>(motionVector.texture));
 
 	auto& depth = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kMAIN];
 
@@ -2238,7 +2238,7 @@ void Upscaling::CopySharedD3D12Resources()
 		context->OMSetBlendState(upscaleBlendState.get(), nullptr, 0xffffffff);
 
 		// Set up pixel shader resources
-		ID3D11ShaderResourceView* views[1] = { depth.depthSRV };
+		ID3D11ShaderResourceView* views[1] = { Util::AsReal<ID3D11ShaderResourceView>(depth.depthSRV) };
 		context->PSSetShaderResources(0, ARRAYSIZE(views), views);
 
 		// Set render target view for pixel shader output
@@ -2628,7 +2628,7 @@ void Upscaling::FillMenuCameraMotionVectors()
 		context->HSSetShader(nullptr, nullptr, 0);
 		context->DSSetShader(nullptr, nullptr, 0);
 
-		ID3D11ShaderResourceView* srvs[] = { depth.depthSRV };
+		ID3D11ShaderResourceView* srvs[] = { Util::AsReal<ID3D11ShaderResourceView>(depth.depthSRV) };
 		context->PSSetShaderResources(0, 1, srvs);
 		// b1: the slot FullscreenPassScope saves and restores.
 		auto* constantBuffer = cameraMotionVectorsCB->CB();
@@ -2639,14 +2639,14 @@ void Upscaling::FillMenuCameraMotionVectors()
 		context->RSSetState(nullptr);
 
 		D3D11_TEXTURE2D_DESC mvDesc{};
-		static_cast<ID3D11Texture2D*>(motionVector.texture)->GetDesc(&mvDesc);
+		Util::AsReal<ID3D11Texture2D>(motionVector.texture)->GetDesc(&mvDesc);
 		D3D11_VIEWPORT viewport = {};
 		viewport.Width = static_cast<float>(mvDesc.Width);
 		viewport.Height = static_cast<float>(mvDesc.Height);
 		viewport.MaxDepth = 1.0f;
 		context->RSSetViewports(1, &viewport);
 
-		ID3D11RenderTargetView* rtv = motionVector.RTV;
+		ID3D11RenderTargetView* rtv = Util::AsReal<ID3D11RenderTargetView>(motionVector.RTV);
 		context->OMSetRenderTargets(1, &rtv, nullptr);
 		context->Draw(3, 0);
 	}
@@ -2693,7 +2693,7 @@ void Upscaling::Upscale()
 
 		// Sources are the same combined stereo buffers for both VR and non-VR.
 		// The shader applies EyeOffsetX to sample the correct half.
-		ID3D11ShaderResourceView* views[4] = { temporalAAMask.SRV, normals.SRV, motionVector.SRV, depth.depthSRV };
+		ID3D11ShaderResourceView* views[4] = { Util::AsReal<ID3D11ShaderResourceView>(temporalAAMask.SRV), Util::AsReal<ID3D11ShaderResourceView>(normals.SRV), Util::AsReal<ID3D11ShaderResourceView>(motionVector.SRV), Util::AsReal<ID3D11ShaderResourceView>(depth.depthSRV) };
 		context->CSSetShaderResources(0, ARRAYSIZE(views), views);
 
 		if (auto* encodeCS = GetEncodeTexturesCS()) {
@@ -2756,7 +2756,7 @@ void Upscaling::Upscale()
 			if (!FoveatedRenderImpl::Preprocess::EncodeUpscalingTextures(*this))
 				return false;
 			const bool routeHandled = FoveatedRenderImpl::Core::ExecuteFoveatedRoute(streamline,
-				main.texture, a_depth,
+				Util::AsReal<ID3D11Resource>(main.texture), a_depth,
 				reactiveMaskTexture->resource.get(),
 				transparencyCompositionMaskTexture->resource.get(),
 				motionVectorCopyTexture->resource.get());
@@ -2777,9 +2777,9 @@ void Upscaling::Upscale()
 			}
 
 			const bool routeHandled = tryFoveatedRoute(
-				globals::game::renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kMAIN].texture, "DLSS");
+				Util::AsReal<ID3D11Resource>(globals::game::renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kMAIN].texture), "DLSS");
 			if (!routeHandled) {
-				streamline.Upscale(main.texture, reactiveMaskTexture->resource.get(), transparencyCompositionMaskTexture->resource.get(), motionVectorCopyTexture->resource.get());
+				streamline.Upscale(Util::AsReal<ID3D11Resource>(main.texture), reactiveMaskTexture->resource.get(), transparencyCompositionMaskTexture->resource.get(), motionVectorCopyTexture->resource.get());
 			}
 		} else if (upscaleMethod == UpscaleMethod::kFSR) {
 			// PerfMode bridge: when the engine RTs are shrunk to renderRes, FSR's displayRes
@@ -2787,14 +2787,14 @@ void Upscaling::Upscale()
 			// OpenVR submit), not back in the now-small kMAIN. Mirrors Streamline's colorOut
 			// routing for DLSS.
 			auto& depth = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kMAIN];
-			ID3D11Resource* fsrDepth = runtimeFsrDepthTexture ? runtimeFsrDepthTexture->resource.get() : depth.texture;
+			ID3D11Resource* fsrDepth = runtimeFsrDepthTexture ? runtimeFsrDepthTexture->resource.get() : Util::AsReal<ID3D11Resource>(depth.texture);
 			ID3D11Resource* fsrColorOut = (perfMode.IsHookActive() && perfMode.GetTestTexture()) ?
 			                                  static_cast<ID3D11Resource*>(perfMode.GetTestTexture()) :
 			                                  nullptr;
 
 			const bool routeHandled = tryFoveatedRoute(fsrDepth, "FSR");
 			if (!routeHandled) {
-				fidelityFX.Upscale(main.texture, fsrDepth, reactiveMaskTexture->resource.get(), transparencyCompositionMaskTexture->resource.get(), motionVector.texture, settings.sharpnessFSR, fsrColorOut);
+				fidelityFX.Upscale(Util::AsReal<ID3D11Resource>(main.texture), fsrDepth, reactiveMaskTexture->resource.get(), transparencyCompositionMaskTexture->resource.get(), Util::AsReal<ID3D11Resource>(motionVector.texture), settings.sharpnessFSR, fsrColorOut);
 			}
 		}
 	}
@@ -2957,26 +2957,26 @@ void Upscaling::UpscaleDepth()
 
 		// Sometimes this is not already copied e.g. map menu.
 		// Skip alias copies to reduce unnecessary copy churn.
-		copyIfNonAliased(depthCopy.texture, depth.texture);
+		copyIfNonAliased(Util::AsReal<ID3D11Resource>(depthCopy.texture), Util::AsReal<ID3D11Resource>(depth.texture));
 
 		// Clear stencil to be 0xFF
 		if (isVR) {
-			context->ClearDepthStencilView(depthCopy.views[0], D3D11_CLEAR_STENCIL, 1.0f, 0xFF);
+			context->ClearDepthStencilView(Util::AsReal<ID3D11DepthStencilView>(depthCopy.views[0]), D3D11_CLEAR_STENCIL, 1.0f, 0xFF);
 		}
 
 		// Set depth stencil state to write 0x00
 		context->OMSetDepthStencilState(upscaleDepthStencilState.get(), 0x00);
 
-		copyIfNonAliased(refractionNormals.textureCopy, refractionNormals.texture);
+		copyIfNonAliased(Util::AsReal<ID3D11Resource>(refractionNormals.textureCopy), Util::AsReal<ID3D11Resource>(refractionNormals.texture));
 
-		ID3D11ShaderResourceView* srvs[] = { refractionNormals.SRVCopy, depthCopy.depthSRV, depthCopy.stencilSRV };
+		ID3D11ShaderResourceView* srvs[] = { Util::AsReal<ID3D11ShaderResourceView>(refractionNormals.SRVCopy), Util::AsReal<ID3D11ShaderResourceView>(depthCopy.depthSRV), Util::AsReal<ID3D11ShaderResourceView>(depthCopy.stencilSRV) };
 		context->PSSetShaderResources(0, ARRAYSIZE(srvs), srvs);
 
 		// kSAO_CAMERAZ is at quarter-stereo resolution in VR; the full-stereo viewport would
 		// corrupt only the top-left quarter. The engine's ISSAOCameraZ pass populates it correctly.
-		ID3D11RenderTargetView* rtvs[] = { refractionNormals.RTV,
-			isVR ? nullptr : saoCameraZ.RTV };
-		context->OMSetRenderTargets(2, rtvs, depth.views[0]);
+		ID3D11RenderTargetView* rtvs[] = { Util::AsReal<ID3D11RenderTargetView>(refractionNormals.RTV),
+			isVR ? nullptr : Util::AsReal<ID3D11RenderTargetView>(saoCameraZ.RTV) };
+		context->OMSetRenderTargets(2, rtvs, Util::AsReal<ID3D11DepthStencilView>(depth.views[0]));
 
 		context->PSSetShader(depthUpscalePS, nullptr, 0);
 		context->Draw(3, 0);
@@ -2984,7 +2984,7 @@ void Upscaling::UpscaleDepth()
 		CS_GPU_PASS("Upscaling::FullResolutionUnderwaterMaskDepthCopy");
 
 		// Full-resolution paths only need to refresh the underwater mask depth source.
-		copyIfNonAliased(depthCopy.texture, depth.texture);
+		copyIfNonAliased(Util::AsReal<ID3D11Resource>(depthCopy.texture), Util::AsReal<ID3D11Resource>(depth.texture));
 	}
 
 	{
@@ -2994,16 +2994,16 @@ void Upscaling::UpscaleDepth()
 		viewport.Height = screenSize.y * 0.5f;
 		context->RSSetViewports(1, &viewport);
 
-		copyIfNonAliased(underwaterMask.textureCopy, underwaterMask.texture);
+		copyIfNonAliased(Util::AsReal<ID3D11Resource>(underwaterMask.textureCopy), Util::AsReal<ID3D11Resource>(underwaterMask.texture));
 
 		context->OMSetDepthStencilState(nullptr, 0x00);
 
 		// t0: vanilla mask copy, t1: original depth (for VR per-eye analytical mask).
 		// depthCopy still holds the original pre-upscale depth here (VR re-copy deferred).
-		ID3D11ShaderResourceView* srvs[] = { underwaterMask.SRVCopy, depthCopy.depthSRV };
+		ID3D11ShaderResourceView* srvs[] = { Util::AsReal<ID3D11ShaderResourceView>(underwaterMask.SRVCopy), Util::AsReal<ID3D11ShaderResourceView>(depthCopy.depthSRV) };
 		context->PSSetShaderResources(0, ARRAYSIZE(srvs), srvs);
 
-		ID3D11RenderTargetView* rtvs[] = { underwaterMask.RTV };
+		ID3D11RenderTargetView* rtvs[] = { Util::AsReal<ID3D11RenderTargetView>(underwaterMask.RTV) };
 		context->OMSetRenderTargets(ARRAYSIZE(rtvs), rtvs, nullptr);
 
 		context->PSSetShader(underwaterMaskPS, nullptr, 0);
@@ -3015,7 +3015,7 @@ void Upscaling::UpscaleDepth()
 	// already refreshed depthCopy from depth and nothing has touched it since.
 	if (isVR && depthUpscaleActive) {
 		CS_GPU_PASS("Upscaling::DepthVRPropagate");
-		copyIfNonAliased(depthCopy.texture, depth.texture);
+		copyIfNonAliased(Util::AsReal<ID3D11Resource>(depthCopy.texture), Util::AsReal<ID3D11Resource>(depth.texture));
 	}
 
 	ID3D11ShaderResourceView* nullPSResources[3] = { nullptr, nullptr, nullptr };
@@ -3091,9 +3091,9 @@ void Upscaling::RunUnderwaterMaskRepair()
 
 	// Refresh depthCopy + underwater mask copy before sampling.
 	if (depthCopy.texture != depth.texture)
-		context->CopyResource(depthCopy.texture, depth.texture);
+		context->CopyResource(Util::AsReal<ID3D11Resource>(depthCopy.texture), Util::AsReal<ID3D11Resource>(depth.texture));
 	if (underwaterMask.textureCopy != underwaterMask.texture)
-		context->CopyResource(underwaterMask.textureCopy, underwaterMask.texture);
+		context->CopyResource(Util::AsReal<ID3D11Resource>(underwaterMask.textureCopy), Util::AsReal<ID3D11Resource>(underwaterMask.texture));
 
 	D3D11_VIEWPORT viewport = {};
 	viewport.Width = screenSize.x * 0.5f;
@@ -3101,9 +3101,9 @@ void Upscaling::RunUnderwaterMaskRepair()
 	viewport.MaxDepth = 1.0f;
 	context->RSSetViewports(1, &viewport);
 
-	ID3D11ShaderResourceView* srvs[] = { underwaterMask.SRVCopy, depthCopy.depthSRV };
+	ID3D11ShaderResourceView* srvs[] = { Util::AsReal<ID3D11ShaderResourceView>(underwaterMask.SRVCopy), Util::AsReal<ID3D11ShaderResourceView>(depthCopy.depthSRV) };
 	context->PSSetShaderResources(0, ARRAYSIZE(srvs), srvs);
-	ID3D11RenderTargetView* rtvs[] = { underwaterMask.RTV };
+	ID3D11RenderTargetView* rtvs[] = { Util::AsReal<ID3D11RenderTargetView>(underwaterMask.RTV) };
 	context->OMSetRenderTargets(ARRAYSIZE(rtvs), rtvs, nullptr);
 	context->PSSetShader(underwaterMaskPS, nullptr, 0);
 	context->Draw(3, 0);
@@ -3154,10 +3154,10 @@ void Upscaling::ApplySharpening()
 		currentSharpness = exp2(-currentSharpness);
 
 		// DLSS has already written to sharpenerTexture; sharpen directly into kMAIN.UAV.
-		rcas.ApplySharpen(sharpenerTexture->srv.get(), main.UAV, currentSharpness);
+		rcas.ApplySharpen(sharpenerTexture->srv.get(), Util::AsReal<ID3D11UnorderedAccessView>(main.UAV), currentSharpness);
 	} else {
 		// Sharpening is disabled: resolve the DLSS output without altering it.
-		context->CopyResource(main.texture, sharpenerTexture->resource.get());
+		context->CopyResource(Util::AsReal<ID3D11Resource>(main.texture), sharpenerTexture->resource.get());
 	}
 
 	globals::game::stateUpdateFlags->set(RE::BSGraphics::ShaderFlags::DIRTY_RENDERTARGET);
