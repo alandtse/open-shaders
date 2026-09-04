@@ -1501,7 +1501,7 @@ void LightLimitFix::UpdateShadowDemand()
 		ID3D11Buffer* cb = shadowDepthPyramidCB->CB();
 		context->CSSetConstantBuffers(0, 1, &cb);
 
-		ID3D11ShaderResourceView* srvs[] = { depth.depthSRV };
+		ID3D11ShaderResourceView* srvs[] = { Util::AsReal<ID3D11ShaderResourceView>(depth.depthSRV) };
 		context->CSSetShaderResources(0, ARRAYSIZE(srvs), srvs);
 
 		ID3D11UnorderedAccessView* uavs[] = { tileDepthRange->uav.get() };
@@ -1547,7 +1547,7 @@ void LightLimitFix::UpdateShadowDemand()
 		ID3D11Buffer* cb = shadowDemandCB->CB();
 		context->CSSetConstantBuffers(0, 1, &cb);
 
-		ID3D11ShaderResourceView* srvs[] = { depth.depthSRV, lightGrid->srv.get(), lightIndexList->srv.get(), lights->srv.get(),
+		ID3D11ShaderResourceView* srvs[] = { Util::AsReal<ID3D11ShaderResourceView>(depth.depthSRV), lightGrid->srv.get(), lightIndexList->srv.get(), lights->srv.get(),
 			tileDepthRange->srv.get() };
 		context->CSSetShaderResources(0, ARRAYSIZE(srvs), srvs);
 

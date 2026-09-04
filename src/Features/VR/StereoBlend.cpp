@@ -78,7 +78,7 @@ void VR::DrawStereoBlend()
 	auto* depthSRV = Util::GetCurrentSceneDepthSRV();
 
 	// Copy main color to read-only texture to avoid read/write race between eyes
-	context->CopyResource(stereoBlendCopyTex->resource.get(), main.texture);
+	context->CopyResource(stereoBlendCopyTex->resource.get(), Util::AsReal<ID3D11Resource>(main.texture));
 
 	auto dispatchCount = Util::GetScreenDispatchCount(true);
 	float2 resolution = Util::ConvertToDynamic(globals::state->screenSize);
@@ -117,7 +117,7 @@ void VR::DrawStereoBlend()
 	context->CSSetConstantBuffers(1, 1, &cbPtr);
 	context->CSSetShaderResources(0, 2, srvs);
 
-	ID3D11UnorderedAccessView* uavs[1]{ main.UAV };
+	ID3D11UnorderedAccessView* uavs[1]{ Util::AsReal<ID3D11UnorderedAccessView>(main.UAV) };
 	context->CSSetUnorderedAccessViews(0, 1, uavs, nullptr);
 
 	context->CSSetShader(activeCS, nullptr, 0);
