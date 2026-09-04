@@ -28,7 +28,7 @@ namespace Util
 			if (srv)
 				return srv;
 		}
-		return zPrepassCopy.depthSRV;
+		return Util::AsReal<ID3D11ShaderResourceView>(zPrepassCopy.depthSRV);
 	}
 
 	ID3D11ShaderResourceView* GetSRVFromRTV(const ID3D11RenderTargetView* a_rtv)
@@ -37,8 +37,8 @@ namespace Util
 			if (auto r = globals::game::renderer) {
 				for (int i = 0; i < GetRenderTargetCount(); i++) {
 					auto rt = r->GetRuntimeData().renderTargets[i];
-					if (a_rtv == rt.RTV) {
-						return rt.SRV;
+					if (a_rtv == Util::AsReal<ID3D11RenderTargetView>(rt.RTV)) {
+						return Util::AsReal<ID3D11ShaderResourceView>(rt.SRV);
 					}
 				}
 			}
@@ -52,8 +52,8 @@ namespace Util
 			if (auto r = globals::game::renderer) {
 				for (int i = 0; i < GetRenderTargetCount(); i++) {
 					auto rt = r->GetRuntimeData().renderTargets[i];
-					if (a_srv == rt.SRV || a_srv == rt.SRVCopy) {
-						return rt.RTV;
+					if (a_srv == Util::AsReal<ID3D11ShaderResourceView>(rt.SRV) || a_srv == Util::AsReal<ID3D11ShaderResourceView>(rt.SRVCopy)) {
+						return Util::AsReal<ID3D11RenderTargetView>(rt.RTV);
 					}
 				}
 			}
@@ -69,7 +69,7 @@ namespace Util
 			if (auto r = globals::game::renderer) {
 				for (int i = 0; i < GetRenderTargetCount(); i++) {
 					auto rt = r->GetRuntimeData().renderTargets[i];
-					if (a_srv == rt.SRV || a_srv == rt.SRVCopy) {
+					if (a_srv == Util::AsReal<ID3D11ShaderResourceView>(rt.SRV) || a_srv == Util::AsReal<ID3D11ShaderResourceView>(rt.SRVCopy)) {
 						return std::string(magic_enum::enum_name(static_cast<RENDER_TARGET>(i)));
 					}
 				}
@@ -85,7 +85,7 @@ namespace Util
 			if (auto r = globals::game::renderer) {
 				for (int i = 0; i < GetRenderTargetCount(); i++) {
 					auto rt = r->GetRuntimeData().renderTargets[i];
-					if (a_rtv == rt.RTV) {
+					if (a_rtv == Util::AsReal<ID3D11RenderTargetView>(rt.RTV)) {
 						return std::string(magic_enum::enum_name(static_cast<RENDER_TARGET>(i)));
 					}
 				}
