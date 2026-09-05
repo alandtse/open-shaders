@@ -135,9 +135,8 @@ void MenuManager::RenderSettingsPanel()
 				if (ImGui::Selectable(loc.label.c_str(), isSelected)) {
 					presetManager.SetActiveLocation(loc.root);
 					effects11.settings.presetLocation = presetManager.ToRelativeKey(loc.root);
-					// Save() piggybacks an ENB ini save for the *previously* loaded preset
-					// if called before Load()/Apply() -- reorder after, or switching
-					// presets corrupts the new one with the old one's in-memory values.
+					// After Load()/Apply(), not before: Save() piggybacks an ENB save for
+					// whatever preset is currently loaded, which would still be the old one.
 					settingManager.Load();
 					effectManager.Apply();
 					globals::state->Save();

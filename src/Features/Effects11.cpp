@@ -83,9 +83,8 @@ void Effects11::ResolveActivePresetLocation()
 	else if (dataSubfolders.size() == 1)
 		resolved = dataSubfolders.front();
 
-	// Persist even an unambiguous auto-pick, or every future launch re-guesses instead
-	// of remembering what was active -- silently switching enbseries.ini the moment a
-	// second location appears.
+	// Persist even an unambiguous auto-pick, or every launch re-guesses from scratch
+	// and can silently switch enbseries.ini once a second location appears.
 	if (resolved) {
 		presetManager.SetActiveLocation(resolved->root);
 		settings.presetLocation = presetManager.ToRelativeKey(resolved->root);
@@ -141,9 +140,8 @@ namespace
 			if (loc.root.string() == root) {
 				presetManager.SetActiveLocation(loc.root);
 				globals::features::effects11.settings.presetLocation = presetManager.ToRelativeKey(loc.root);
-				// Save() piggybacks an ENB ini save for the *previously* loaded preset
-				// if called before Load()/Apply() -- reorder after, or switching
-				// presets corrupts the new one with the old one's in-memory values.
+				// After Load()/Apply(), not before: Save() piggybacks an ENB save for
+				// whatever preset is currently loaded, which would still be the old one.
 				SettingManager::GetSingleton().Load();
 				EffectManager::GetSingleton().Apply();
 				globals::state->Save();
