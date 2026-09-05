@@ -622,7 +622,7 @@ void Skylighting::RenderOcclusion()
 	}
 	diskPoint.x = std::sqrt(diskPoint.x * std::sin(settings.MaxZenith));
 	diskPoint.y *= 2.0f * std::numbers::pi_v<float>;
-	diskPoint = { diskPoint.x * std::cos(diskPoint.y), diskPoint.x * std::sin(diskPoint.y) };
+	diskPoint = float2{ diskPoint.x * std::cos(diskPoint.y), diskPoint.x * std::sin(diskPoint.y) };
 
 	float3 direction = -float3{ diskPoint.x, diskPoint.y, std::sqrt(std::max(0.0f, 1.0f - diskPoint.LengthSquared())) };
 	direction.Normalize();
