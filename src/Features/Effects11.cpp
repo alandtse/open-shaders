@@ -89,6 +89,7 @@ void Effects11::ResolveActivePresetLocation()
 	if (resolved) {
 		presetManager.SetActiveLocation(resolved->root);
 		settings.presetLocation = presetManager.ToRelativeKey(resolved->root);
+		globals::state->Save();
 	} else {
 		presetManager.SetActiveLocation({});
 	}
@@ -140,6 +141,7 @@ namespace
 			if (loc.root.string() == root) {
 				presetManager.SetActiveLocation(loc.root);
 				globals::features::effects11.settings.presetLocation = presetManager.ToRelativeKey(loc.root);
+				globals::state->Save();
 				SettingManager::GetSingleton().Load();
 				EffectManager::GetSingleton().Apply();
 				return;
