@@ -75,12 +75,20 @@ void Effects11::ResolveActivePresetLocation()
 		}
 	}
 
-	if (dataRoot) {
-		presetManager.SetActiveLocation(dataRoot->root);
-	} else if (gameRoot) {
-		presetManager.SetActiveLocation(gameRoot->root);
-	} else if (dataSubfolders.size() == 1) {
-		presetManager.SetActiveLocation(dataSubfolders.front()->root);
+	const PresetLocation* resolved = nullptr;
+	if (dataRoot)
+		resolved = dataRoot;
+	else if (gameRoot)
+		resolved = gameRoot;
+	else if (dataSubfolders.size() == 1)
+		resolved = dataSubfolders.front();
+
+	// Persist even an unambiguous auto-pick, or every future launch re-guesses instead
+	// of remembering what was active -- silently switching enbseries.ini the moment a
+	// second location appears.
+	if (resolved) {
+		presetManager.SetActiveLocation(resolved->root);
+		settings.presetLocation = presetManager.ToRelativeKey(resolved->root);
 	} else {
 		presetManager.SetActiveLocation({});
 	}
