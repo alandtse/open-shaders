@@ -244,9 +244,8 @@ State::TonemapOwner State::GetTonemapOwner()
 bool State::HandlePostProcessing(RE::RENDER_TARGET a_input, RE::RENDER_TARGET a_output)
 {
 #if defined(ENABLE_EFFECTS11)
-	// VR's world-space-projected menus (RaceSex preview, Tween/Wait/Item) rely on a
-	// compositor handoff for this target that Effects11's tonemap doesn't replicate.
-	// Flatrim's 2D menu background blur has no such handoff and should keep grading.
+	// VR-only: world-space menus need vanilla's kMENUBG compositor handoff, which
+	// Effects11's tonemap doesn't replicate; flatrim's blur should keep grading.
 	if (globals::game::isVR && a_output == RE::RENDER_TARGETS::kMENUBG)
 		return false;
 
