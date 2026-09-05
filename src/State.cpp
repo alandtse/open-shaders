@@ -244,9 +244,10 @@ State::TonemapOwner State::GetTonemapOwner()
 bool State::HandlePostProcessing(RE::RENDER_TARGET a_input, RE::RENDER_TARGET a_output)
 {
 #if defined(ENABLE_EFFECTS11)
-	// Vanilla's blend does a compositor handoff for this target that Effects11's own
-	// tonemap replacement doesn't replicate -- must stay on the native path.
-	if (a_output == RE::RENDER_TARGETS::kMENUBG)
+	// VR's world-space-projected menus (RaceSex preview, Tween/Wait/Item) rely on a
+	// compositor handoff for this target that Effects11's tonemap doesn't replicate.
+	// Flatrim's 2D menu background blur has no such handoff and should keep grading.
+	if (globals::game::isVR && a_output == RE::RENDER_TARGETS::kMENUBG)
 		return false;
 
 	if (GetTonemapOwner() != TonemapOwner::kEffects11 ||
