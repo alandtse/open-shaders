@@ -141,9 +141,12 @@ namespace
 			if (loc.root.string() == root) {
 				presetManager.SetActiveLocation(loc.root);
 				globals::features::effects11.settings.presetLocation = presetManager.ToRelativeKey(loc.root);
-				globals::state->Save();
+				// Save() piggybacks an ENB ini save for the *previously* loaded preset
+				// if called before Load()/Apply() -- reorder after, or switching
+				// presets corrupts the new one with the old one's in-memory values.
 				SettingManager::GetSingleton().Load();
 				EffectManager::GetSingleton().Apply();
+				globals::state->Save();
 				return;
 			}
 		}
