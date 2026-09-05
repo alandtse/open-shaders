@@ -142,10 +142,10 @@ struct VRStereoOptimizations
 	 */
 	void DispatchStencil();
 
-	/// @brief True when the classification (mode texture) pass is ready, independent of stereoMode.
 	/// @brief Live sizes and per-frame flags for devbench diagnostics.
 	json GetDiagnostics() const;
 
+	/// @brief True when the classification (mode texture) pass is ready, independent of stereoMode.
 	bool CanClassify() const
 	{
 		return loaded && stencilCS && texPerPixelMode && paramsCB;
