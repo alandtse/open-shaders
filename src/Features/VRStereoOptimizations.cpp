@@ -28,6 +28,7 @@ void VRStereoOptimizations::SaveSettings(json& o_json)
 	o_json["StereoMode"] = settings.stereoMode;
 	o_json["DisocclusionDepthThreshold"] = settings.disocclusionDepthThreshold;
 	o_json["EdgeDepthThreshold"] = settings.edgeDepthThreshold;
+	o_json["GrazingDepthGradientThreshold"] = settings.grazingDepthGradientThreshold;
 	o_json["MinEdgeDistance"] = settings.minEdgeDistance;
 	o_json["FullBlendDistance"] = settings.fullBlendDistance;
 	o_json["FoveatedRegionRadius"] = settings.foveatedRegionRadius;
@@ -55,6 +56,7 @@ void VRStereoOptimizations::LoadSettings(json& o_json)
 
 	loadClampedFloat("DisocclusionDepthThreshold", settings.disocclusionDepthThreshold, 0.001f, 0.1f);
 	loadClampedFloat("EdgeDepthThreshold", settings.edgeDepthThreshold, 0.0f, 1.0f);
+	loadClampedFloat("GrazingDepthGradientThreshold", settings.grazingDepthGradientThreshold, 0.0f, 1.0f);
 	loadClampedFloat("MinEdgeDistance", settings.minEdgeDistance, 0.0f, 50000.0f);
 	loadClampedFloat("FoveatedRegionRadius", settings.foveatedRegionRadius, 0.0f, 1.0f);
 	loadClampedFloat("FoveatedRegionCenterX", settings.foveatedRegionCenterX, 0.0f, 1.0f);
@@ -285,6 +287,9 @@ void VRStereoOptimizations::DrawSettings()
 	ImGui::SliderFloat(T("feature.vr_stereo.directional_occlusion_ratio", "Directional Occlusion Ratio"), &settings.directionalOcclusionRatio, 0.0f, 1.0f, "%.2f");
 	Util::AddTooltip(T("feature.vr_stereo.directional_occlusion_ratio_tooltip", "Catches silhouette edges a plain depth-match check misses.\nFires when Eye 0 depth is less than this fraction of Eye 1 depth (e.g. 0.9 = Eye 0 more than 10% closer).\nHigher = more aggressive. 0 = disabled."));
 
+	ImGui::SliderFloat(T("feature.vr_stereo.grazing_depth_gradient_threshold", "Grazing Depth Gradient Threshold"), &settings.grazingDepthGradientThreshold, 0.0f, 0.2f, "%.3f");
+	Util::AddTooltip(T("feature.vr_stereo.grazing_depth_gradient_threshold_tooltip", "Forces full shading on surfaces receding at a shallow angle (e.g. a road near the horizon),\nwhere depth similarity between eyes no longer guarantees the same surface point.\nLower = more aggressive. 0 = disabled."));
+
 	if (globals::state->IsDeveloperMode()) {
 		if (ImGui::TreeNode(T("feature.vr_stereo.debug", "Debug"))) {
 			ImGui::SliderFloat(T("feature.vr_stereo.full_blend_distance", "Full Blend Distance"), &settings.fullBlendDistance, 0.0f, 10000.0f, "%.0f");
@@ -313,6 +318,7 @@ void VRStereoOptimizations::UpdateConstantBuffer()
 	params.StereoModeValue = static_cast<uint32_t>(settings.stereoMode);
 	params.DisocclusionThreshold = settings.disocclusionDepthThreshold;
 	params.EdgeDepthThreshold = settings.edgeDepthThreshold;
+	params.GrazingDepthGradientThreshold = settings.grazingDepthGradientThreshold;
 	params.FoveatedRadius = settings.foveatedRegionRadius;
 	params.FoveatedCenter[0] = settings.foveatedRegionCenterX;
 	params.FoveatedCenter[1] = settings.foveatedRegionCenterY;

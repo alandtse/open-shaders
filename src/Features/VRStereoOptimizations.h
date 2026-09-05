@@ -78,6 +78,9 @@ struct VRStereoOptimizations
 		StereoMode stereoMode = StereoMode::Off;
 		float disocclusionDepthThreshold = 0.01f;
 		float edgeDepthThreshold = 0.05f;
+		/// Forces MODE_EDGE on grazing/foreshortened surfaces, where depth similarity between
+		/// eyes no longer implies the same world surface point.
+		float grazingDepthGradientThreshold = 0.02f;
 		float minEdgeDistance = 5000.0f;  ///< Minimum linearized depth for edge AA (game units)
 		float fullBlendDistance = 0.0f;   ///< Linearized depth below which near-camera geometry is excluded from culling (game units)
 		/// Eye 0 must be within this fraction of Eye 1's depth to count as a genuine occluding
@@ -117,7 +120,7 @@ struct VRStereoOptimizations
 		uint32_t StereoModeValue;  // Cast of StereoMode enum (0=Off, 1=Enable)
 		float DisocclusionThreshold;
 		float EdgeDepthThreshold;
-		uint32_t _pad0;
+		float GrazingDepthGradientThreshold;  // Relative depth-gradient gate for grazing-angle surfaces
 
 		float _pad1[2];
 		float FoveatedRadius;  // reserved for foveated reprojection — see alandtse/open-shaders#143

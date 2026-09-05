@@ -118,6 +118,7 @@ static const uint kEdgeDistNone = 0xFFFFFFFFu;
 
 	uint nearestEdgeDist = kEdgeDistNone;  // nearest distance at which a discontinuity was found
 	bool nearestWeAreOuter = false;        // whether we are on the background side at that nearest hit
+	float maxRelGrad = 0.0;                // largest immediate-neighbor relative depth gradient (d=1 only)
 
 	// Use the larger of inner/outer widths for the search
 	uint maxWidth = kInnerWidth;
@@ -140,6 +141,9 @@ static const uint kEdgeDistNone = 0xFFFFFFFFu;
 					nearestEdgeDist = d;
 					nearestWeAreOuter = (linNeighbor < linCenter);  // neighbor closer to camera = we are background
 				}
+
+				if (d == 1 && !neighborIsSky)
+					maxRelGrad = max(maxRelGrad, relDepthDiff);
 			}
 		}
 
@@ -156,6 +160,13 @@ static const uint kEdgeDistNone = 0xFFFFFFFFu;
 			ModeTextureRW[dtid] = MODE_EDGE;
 			return;
 		}
+	}
+
+	// Grazing/foreshortened surfaces can pass the depth-only tests above yet still reproject to
+	// the wrong world point (a shading boundary can land on a different row per eye there).
+	if (!isSky && maxRelGrad > GrazingDepthGradientThreshold) {
+		ModeTextureRW[dtid] = MODE_EDGE;
+		return;
 	}
 
 	// Sky pixels that aren't near edges -> disoccluded (reprojection is meaningless for sky)

@@ -9,10 +9,10 @@ cbuffer VRStereoOptParams : register(b1)
 	float2 FrameDim;     // Full stereo buffer dimensions (both eyes)
 	float2 RcpFrameDim;  // 1.0 / FrameDim
 
-	uint StereoModeValue;         // 0=Off, 1=Enable
-	float DisocclusionThreshold;  // Depth difference threshold for disocclusion detection
-	float EdgeDepthThreshold;     // Relative depth difference threshold for edge detection
-	uint _pad0;
+	uint StereoModeValue;                 // 0=Off, 1=Enable
+	float DisocclusionThreshold;          // Depth difference threshold for disocclusion detection
+	float EdgeDepthThreshold;             // Relative depth difference threshold for edge detection
+	float GrazingDepthGradientThreshold;  // Same-eye relative depth-gradient gate (grazing angles)
 
 	float2 _pad1;
 	float FoveatedRadius;             // reserved for foveated reprojection — see alandtse/open-shaders#143
