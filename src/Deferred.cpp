@@ -12,6 +12,7 @@
 #include "Features/Effects11.h"
 #include "Features/IBL.h"
 #include "Features/LightLimitFix/ShadowCasterManager.h"
+#include "Features/RainRendering.h"
 #include "Features/ScreenSpaceGI.h"
 #include "Features/Skylighting.h"
 #include "Features/SubsurfaceScattering.h"
@@ -483,6 +484,9 @@ void Deferred::DeferredPasses()
 	if (globals::features::effects11.loaded)
 		globals::features::effects11.DrawVolumetricRays();
 #endif
+
+	if (globals::features::rainRendering.loaded)
+		globals::features::rainRendering.DrawRain();
 }
 
 void Deferred::EndDeferred()
