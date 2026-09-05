@@ -539,13 +539,16 @@ void Skylighting::SetViewFrustumVR::thunk(RE::NiCamera* a_camera, RE::NiFrustum*
 void Skylighting::RenderOcclusion()
 {
 	ZoneScopedS(8);
-	auto* shaderCache = globals::shaderCache;
-	auto* renderer = globals::game::renderer;
-	auto* sky = globals::game::sky;
+	auto shaderCache = globals::shaderCache;
+	auto renderer = globals::game::renderer;
+	auto sky = globals::game::sky;
+	const bool interior = Util::IsInterior();
 
 	if (!shaderCache->IsEnabled()) {
-		CS_GPU_PASS("Skylighting::PrecipitationMask");
-		Main_Precipitation_RenderOcclusion::func();
+		if (!interior) {
+			CS_GPU_PASS("Skylighting::PrecipitationMask");
+			Main_Precipitation_RenderOcclusion::func();
+		}
 		return;
 	}
 
@@ -553,7 +556,6 @@ void Skylighting::RenderOcclusion()
 		return;
 
 	auto* precipitation = sky->precip;
-	const bool interior = Util::IsInterior();
 	if (!interior) {
 		CS_GPU_PASS("Skylighting::PrecipitationMask");
 		auto precipitationObject = precipitation->currentPrecip ? precipitation->currentPrecip : precipitation->lastPrecip;
