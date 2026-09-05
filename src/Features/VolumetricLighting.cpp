@@ -21,8 +21,7 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	ExteriorCustomSize,
 	InteriorEnabled,
 	InteriorQuality,
-	InteriorCustomSize,
-	EnableVRStereoFix);
+	InteriorCustomSize);
 
 void VolumetricLighting::DrawSettings()
 {
@@ -45,19 +44,6 @@ void VolumetricLighting::DrawSettings()
 
 	if (settings.InteriorEnabled)
 		DrawVolumetricLightingSettings(settings.InteriorQuality, settings.InteriorCustomSize, true, inInterior);
-
-	if (globals::game::isVR) {
-		ImGui::Separator();
-		ImGui::Checkbox(T(TKEY("vr_stereo_fix"), "Physical-Eye Stereo Lighting (Experimental)"), &settings.EnableVRStereoFix);
-		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::TextUnformatted(T(TKEY("vr_stereo_fix_tooltip"),
-				"Uses the physical eye for phase direction and isolates blur, composite,\n"
-				"and temporal history at the side-by-side eye seam. Disable for legacy A/B."));
-		}
-		ImGui::TextDisabled("%s", settings.EnableVRStereoFix ?
-									  T(TKEY("vr_stereo_fix_active"), "Stereo path: per-eye world space") :
-									  T(TKEY("vr_stereo_fix_legacy"), "Stereo path: legacy shared origin"));
-	}
 }
 
 void VolumetricLighting::DrawVolumetricLightingSettings(int32_t& quality, TextureSize& customSize, const bool isInterior, const bool inLocationType)
@@ -250,7 +236,6 @@ void VolumetricLighting::EarlyPrepass()
 	const int32_t maximumEyeWidth = globals::game::isVR ? width - vlData.eyeWidth : width;
 	vlData.horizontalGroupsPerEye =
 		(maximumEyeWidth + BlurThreadGroupSizeX - BlurWindow * 2u - 1u) / (BlurThreadGroupSizeX - BlurWindow * 2u);
-	vlData.stereoFixEnabled = globals::game::isVR && settings.EnableVRStereoFix;
 	vlDataCB->Update(vlData);
 
 	const auto interiorCell = RE::TES::GetSingleton()->interiorCell;
@@ -360,8 +345,8 @@ void VolumetricLighting::SetDimensionsCB() const
 
 void VolumetricLighting::SetGroupCountsHCS(uint32_t& threadGroupCountX) const
 {
-	threadGroupCountX = vlData.stereoFixEnabled ? 2u * vlData.horizontalGroupsPerEye :
-	                                              (vlData.screenX + BlurThreadGroupSizeX - BlurWindow * 2u - 1u) / (BlurThreadGroupSizeX - BlurWindow * 2u);
+	threadGroupCountX = globals::game::isVR ? 2u * vlData.horizontalGroupsPerEye :
+	                                          (vlData.screenX + BlurThreadGroupSizeX - BlurWindow * 2u - 1u) / (BlurThreadGroupSizeX - BlurWindow * 2u);
 }
 
 void VolumetricLighting::SetGroupCountsVCS(uint32_t& threadGroupCountY) const

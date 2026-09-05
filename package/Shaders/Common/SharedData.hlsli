@@ -37,7 +37,7 @@ namespace SharedData
 		float4 VRFoveationCenterOffsets;  // xy=left eye center offset, zw=right eye center offset
 		float4 HDRData;
 		float RefractionScale;
-		float3 VRStereoEffectData;  // x=per-eye SSR sampling, y=per-eye volumetric lighting, z=reserved
+		float3 pad1;
 	};
 
 	struct GrassLightingSettings

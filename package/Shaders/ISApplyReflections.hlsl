@@ -1,6 +1,5 @@
 #include "Common/DummyVSTexCoord.hlsl"
 #include "Common/FrameBuffer.hlsli"
-#include "Common/SharedData.hlsli"
 #include "Common/VR.hlsli"
 #include "Common/VRStereoEffects.hlsli"
 
@@ -34,21 +33,13 @@ PS_OUTPUT main(PS_INPUT input)
 	float2 waterMaskScreenPosition = adjustedScreenPosition;
 	float2 mainBufferScreenPosition = adjustedScreenPosition;
 #	if defined(VR)
-	[branch] if (SharedData::VRStereoEffectData.x > 0.5)
-	{
-		uint eyeIndex = Stereo::GetEyeIndexFromTexCoord(input.TexCoord);
-		uint width;
-		uint height;
-		SSRSourceTex.GetDimensions(width, height);
-		ssrSourceScreenPosition = VRStereoEffects::ClampDynamicStereoUVToEyeTexel(
-			adjustedScreenPosition, eyeIndex, float2(width, height), FrameBuffer::DynamicResolutionParams1.xy);
-		WaterMaskTex.GetDimensions(width, height);
-		waterMaskScreenPosition = VRStereoEffects::ClampDynamicStereoUVToEyeTexel(
-			adjustedScreenPosition, eyeIndex, float2(width, height), FrameBuffer::DynamicResolutionParams1.xy);
-		MainBufferTex.GetDimensions(width, height);
-		mainBufferScreenPosition = VRStereoEffects::ClampDynamicStereoUVToEyeTexel(
-			adjustedScreenPosition, eyeIndex, float2(width, height), FrameBuffer::DynamicResolutionParams1.xy);
-	}
+	uint eyeIndex = Stereo::GetEyeIndexFromTexCoord(input.TexCoord);
+	ssrSourceScreenPosition = VRStereoEffects::ClampDynamicStereoUVToEyeTexel(
+		adjustedScreenPosition, eyeIndex, SSRSourceTex, FrameBuffer::DynamicResolutionParams1.xy);
+	waterMaskScreenPosition = VRStereoEffects::ClampDynamicStereoUVToEyeTexel(
+		adjustedScreenPosition, eyeIndex, WaterMaskTex, FrameBuffer::DynamicResolutionParams1.xy);
+	mainBufferScreenPosition = VRStereoEffects::ClampDynamicStereoUVToEyeTexel(
+		adjustedScreenPosition, eyeIndex, MainBufferTex, FrameBuffer::DynamicResolutionParams1.xy);
 #	endif
 
 	float2 waterMask = WaterMaskTex.SampleLevel(WaterMaskSampler, waterMaskScreenPosition, 0).zw;

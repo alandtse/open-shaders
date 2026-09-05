@@ -1,7 +1,6 @@
 #include "Common/Math.hlsli"
 #include "Common/Random.hlsli"
 #include "Common/VR.hlsli"
-#include "Common/VRStereoEffects.hlsli"
 
 #if defined(CSHADER)
 SamplerState ShadowmapSampler : register(s0);
@@ -109,10 +108,10 @@ cbuffer PerTechnique : register(b0)
 	float densityFactor = noise * (1 - 0.75 * smoothstep(0, 1, saturate(2 * positionWS.z / 300)));
 	float densityContribution = lerp(1, densityFactor, DensityContribution);
 
-	float3 viewDirection = normalize(-positionWS.xyz);
 #	if defined(VR)
-	[branch] if (SharedData::VRStereoEffectData.y > 0.5)
-		viewDirection = normalize(VRStereoEffects::GetEyeOriginWorld(eyeIndex) - positionWS.xyz);
+	float3 viewDirection = normalize(FrameBuffer::ViewToWorld(float3(0.0, 0.0, 0.0), true, eyeIndex) - positionWS.xyz);
+#	else
+	float3 viewDirection = normalize(-positionWS.xyz);
 #	endif
 	float LdotN = dot(viewDirection, DirLightDirection);
 	float phaseFactor = (1 - PhaseScattering * PhaseScattering) * rcp(4 * Math::PI * (1 - LdotN * PhaseScattering));

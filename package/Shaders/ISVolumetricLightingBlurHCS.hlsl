@@ -25,8 +25,7 @@ cbuffer VLData : register(b1)
 #if defined(VR)
 	int eyeWidth;
 	int horizontalGroupsPerEye;
-	uint stereoFixEnabled;
-	uint pad;
+	uint2 pad;
 #endif
 }
 
@@ -40,18 +39,12 @@ groupshared float depth[TG_DIM];
 	int y = groupId.y;
 
 #if defined(VR)
-	int eyeStart = 0;
-	int eyeEnd = screenSize.x;
-	if (stereoFixEnabled != 0) {
-		int eyeIndex = min(int(groupId.x) / horizontalGroupsPerEye, 1);
-		int eyeGroup = int(groupId.x) - eyeIndex * horizontalGroupsPerEye;
-		eyeStart = eyeIndex * eyeWidth;
-		eyeEnd = eyeIndex == 0 ? eyeWidth : screenSize.x;
-		x = eyeStart + eyeGroup * (TG_DIM - WINDOW * 2) + base;
-	}
-	int2 pix = stereoFixEnabled != 0 ?
-	               int2(clamp(x, eyeStart, eyeEnd - 1), clamp(y, 0, screenSizeMin1.y)) :
-	               min(int2(x, y), screenSizeMin1.xy);
+	int eyeIndex = min(int(groupId.x) / horizontalGroupsPerEye, 1);
+	int eyeGroup = int(groupId.x) - eyeIndex * horizontalGroupsPerEye;
+	int eyeStart = eyeIndex * eyeWidth;
+	int eyeEnd = eyeIndex == 0 ? eyeWidth : screenSize.x;
+	x = eyeStart + eyeGroup * (TG_DIM - WINDOW * 2) + base;
+	int2 pix = int2(clamp(x, eyeStart, eyeEnd - 1), clamp(y, 0, screenSizeMin1.y));
 #else
 	int2 pix = min(int2(x, y), screenSizeMin1.xy);
 #endif
@@ -63,7 +56,7 @@ groupshared float depth[TG_DIM];
 	GroupMemoryBarrierWithGroupSync();
 
 #if defined(VR)
-	if (base >= 0 && base < TG_DIM - WINDOW * 2 && (stereoFixEnabled == 0 || x < eyeEnd)) {
+	if (base >= 0 && base < TG_DIM - WINDOW * 2 && x < eyeEnd) {
 #else
 	if (base >= 0 && base < TG_DIM - WINDOW * 2) {
 #endif

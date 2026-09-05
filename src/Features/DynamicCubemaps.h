@@ -134,8 +134,7 @@ public:
 	{
 		uint EnabledCreator = false;
 		uint EnabledSSR = true;
-		uint EnableVRStereoFix = true;  ///< Keep VR reflection samples inside their resolved eye.
-		uint pad0;
+		uint pad0[2];
 		float4 CubemapColor{ 1.0f, 1.0f, 1.0f, 0.0f };
 	};
 
