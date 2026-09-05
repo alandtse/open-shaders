@@ -143,6 +143,9 @@ struct VRStereoOptimizations
 	void DispatchStencil();
 
 	/// @brief True when the classification (mode texture) pass is ready, independent of stereoMode.
+	/// @brief Live sizes and per-frame flags for devbench diagnostics.
+	json GetDiagnostics() const;
+
 	bool CanClassify() const
 	{
 		return loaded && stencilCS && texPerPixelMode && paramsCB;
@@ -234,7 +237,7 @@ private:
 	/// light Eye 1 natively (RepairCulledEye1 step 3).
 	void DispatchGBufferFill();
 
-	/// Sets the rasterizer viewport to the Eye 1 (right) half of the SBS buffer.
+	/// Sets the rasterizer viewport to the Eye 1 (right) half of the classified SBS area (frameDim).
 	void SetEye1Viewport();
 
 	/// Compiles all shaders used by this feature
@@ -266,6 +269,8 @@ private:
 
 	bool stencilActive = false;
 	uint32_t stencilSwapCount = 0;
+	/// Classified SBS size this frame (dynamic-resolution scaled).
+	float2 frameDim{};
 	/// True once DispatchStencil() has written texPerPixelMode for the current frame.
 	bool classifiedThisFrame = false;
 
