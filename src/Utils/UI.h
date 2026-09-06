@@ -2,11 +2,13 @@
 #include <algorithm>
 #include <cfloat>  // For FLT_MAX
 #include <concepts>
+#include <cstdint>
 #include <cstdio>
 #include <functional>
 #include <imgui.h>
 #include <span>
 #include <string>
+#include <string_view>
 #include <type_traits>
 #include <vector>
 #include <windows.h>  // For WPARAM and virtual key constants
@@ -453,6 +455,9 @@ namespace Util
 			return ImGui::SliderFloat4(label, v, v_min, v_max, format, flags);
 	}
 
+	bool InvertedCheckbox(const char* label, bool* storedValue);
+	bool RadioButton(const char* label, unsigned int* storedValue, unsigned int buttonValue);
+	const void* GetActiveControlStorageAddress();
 	ImVec2 GetNativeViewportSizeScaled(float scale);
 
 	// Icon loading functions
@@ -480,46 +485,6 @@ namespace Util
 	 * @return The offset to add to cursor X position to center the content
 	 */
 	float GetCenterOffsetForContent(float contentWidth);
-
-	/**
-	 * Weather-controlled UI helpers
-	 * These functions automatically check if a setting has a weather-specific override
-	 * and disable the control if it's being controlled by the current weather
-	 */
-	namespace WeatherUI
-	{
-		/**
-		 * Check if a specific setting is currently controlled by weather
-		 * @param feature The feature to check
-		 * @param settingName The name of the setting (must match registered weather variable name)
-		 * @return True if weather is overriding this setting
-		 */
-		bool IsWeatherControlled(Feature* feature, const char* settingName);
-
-		/**
-		 * Weather-aware slider float that greys out when controlled by weather
-		 * @param label The label for the slider
-		 * @param feature The feature this setting belongs to
-		 * @param settingName The name of the setting (must match registered weather variable name)
-		 * @param value Pointer to the value
-		 * @param min Minimum value
-		 * @param max Maximum value
-		 * @param format Display format
-		 * @return True if value was changed (only possible when not weather-controlled)
-		 */
-		bool SliderFloat(const char* label, Feature* feature, const char* settingName, float* value, float min, float max, const char* format = "%.3f");
-
-		/**
-		 * Weather-aware checkbox that greys out when controlled by weather
-		 */
-		bool Checkbox(const char* label, Feature* feature, const char* settingName, bool* value);
-
-		/**
-		 * Weather-aware color edit that greys out when controlled by weather
-		 */
-		bool ColorEdit3(const char* label, Feature* feature, const char* settingName, float col[3]);
-		bool ColorEdit4(const char* label, Feature* feature, const char* settingName, float col[4]);
-	}
 
 	/**
 	 * Constraint-aware UI helpers
@@ -934,6 +899,65 @@ namespace Util
 	 */
 	bool StringMatchesSearch(const std::string& text, const std::string& searchQuery);
 
+	/** @brief Allocation-free label accessor for indexed searchable combos. */
+	using SearchableComboLabelGetter = const char* (*)(const void* userData, int index);
+
+	/** @brief Begins a constrained combo with a focused search field. Call EndSearchableCombo when true. */
+	bool BeginSearchableCombo(const char* label, const char* previewValue,
+		ImGuiComboFlags flags = ImGuiComboFlags_None, const void* storageAddress = nullptr,
+		int maxVisibleItems = 0);
+
+	/** @brief Ends a combo opened by BeginSearchableCombo. */
+	void EndSearchableCombo();
+
+	/** @brief Returns the active searchable combo's filter, or an empty view outside one. */
+	std::string_view GetSearchableComboFilter();
+
+	/** @brief Tests text against the active filter with allocation-free ASCII case folding. */
+	bool SearchableComboMatches(std::string_view text);
+
+	/** @brief Maps ImGuiListClipper ranges back to source indices after combo filtering. */
+	class SearchableComboClipper
+	{
+	public:
+		SearchableComboClipper() = default;
+		SearchableComboClipper(const SearchableComboClipper&) = delete;
+		SearchableComboClipper& operator=(const SearchableComboClipper&) = delete;
+		SearchableComboClipper(SearchableComboClipper&&) = delete;
+		SearchableComboClipper& operator=(SearchableComboClipper&&) = delete;
+
+		/** @brief Begins a clipped list, rebuilding matches only when its source or filter changes. */
+		void Begin(int itemCount, SearchableComboLabelGetter getter, const void* userData,
+			std::uint64_t itemsRevision = 0, float itemHeight = -1.0f);
+
+		/** @brief Includes a source item even when it would otherwise be clipped. */
+		void IncludeItemByIndex(int itemIndex);
+
+		/** @brief Advances the underlying ImGui clipper. */
+		bool Step();
+
+		/** @brief Returns the first filtered display index for the current step. */
+		int GetDisplayStart() const noexcept;
+
+		/** @brief Returns the exclusive filtered display index for the current step. */
+		int GetDisplayEnd() const noexcept;
+
+		/** @brief Maps a filtered display index to its source item index. */
+		int GetItemIndex(int displayIndex) const noexcept;
+
+	private:
+		ImGuiListClipper clipper;
+		const std::vector<int>* filteredIndices = nullptr;
+	};
+
+	/**
+	 * @brief Draws an indexed searchable combo with cached filtering and list clipping.
+	 * @return True when currentItem changes.
+	 */
+	bool SearchableCombo(const char* label, int* currentItem, int itemCount,
+		SearchableComboLabelGetter getter, const void* userData,
+		ImGuiComboFlags flags = ImGuiComboFlags_None, std::uint64_t itemsRevision = 0);
+
 	/**
 	 * @brief Draws a search icon (magnifying glass) at the specified position.
 	 * @param position The screen position where the icon should be drawn
@@ -1315,23 +1339,21 @@ namespace Util
 	{
 		bool valueChanged = false;
 
-		if (ImGui::BeginCombo(label, selectedName.c_str())) {
-			auto searchText = DrawComboSearchInput(label);
-
+		if (BeginSearchableCombo(label, selectedName.c_str())) {
 			for (auto& [itemName, item] : itemMap) {
-				if (searchText.empty() || StringMatchesSearch(itemName, searchText)) {
-					if (ImGui::Selectable(itemName.c_str(), itemName == selectedName)) {
+				if (!SearchableComboMatches(itemName))
+					continue;
+				const bool selected = itemName == selectedName;
+				if (ImGui::Selectable(itemName.c_str(), selected)) {
+					valueChanged = !selected;
+					if (valueChanged)
 						selectedName = itemName;
-						valueChanged = true;
-						ClearComboSearch(label);
-						break;
-					}
+					break;
 				}
+				if (selected)
+					ImGui::SetItemDefaultFocus();
 			}
-
-			ImGui::EndCombo();
-		} else {
-			ClearComboSearch(label);
+			EndSearchableCombo();
 		}
 
 		return valueChanged;
@@ -1761,10 +1783,37 @@ namespace Util
 		std::string windowName;
 	};
 
+	struct FlyoutStyle
+	{
+		ImVec2 windowPadding;
+		float windowRounding;
+		float windowBackgroundAlpha;
+		float contentAlpha;
+		float verticalGap = 2.0f;
+		bool centerOnSource = false;
+		bool keepOpenOnSourcePress = false;
+	};
+
+	enum class ColorChannel : std::uint8_t
+	{
+		Red,
+		Green,
+		Blue
+	};
+
+	/// Returns the standard marker color for an RGB channel.
+	ImU32 GetColorChannelMarker(ColorChannel channel);
+
+	/// Applies the standard colored marker to the next RGB channel slider.
+	void SetNextItemColorMarker(ColorChannel channel);
+
 	class FlyoutScope
 	{
 	public:
-		FlyoutScope(FlyoutState& state, ImGuiID itemId, bool sourcePressed);
+		FlyoutScope(FlyoutState& state, ImGuiID itemId, bool sourcePressed, const FlyoutStyle& style);
+		/// Opens a flyout anchored to an explicit source rectangle.
+		FlyoutScope(FlyoutState& state, ImGuiID itemId, bool sourcePressed,
+			const ImVec2& sourceMin, const ImVec2& sourceMax, const FlyoutStyle& style);
 		~FlyoutScope();
 
 		FlyoutScope(const FlyoutScope&) = delete;

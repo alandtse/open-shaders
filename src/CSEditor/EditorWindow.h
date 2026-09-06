@@ -353,14 +353,6 @@ public:
 	 */
 	bool IsFavorite(const std::string& widgetId) const;
 
-	/**
-	 * @brief Navigate to and highlight a specific feature setting within a weather widget.
-	 * @param weather     The weather form to open.
-	 * @param featureName The feature tab name to select.
-	 * @param settingName The setting ID to scroll to and highlight.
-	 */
-	void OpenWeatherFeatureSetting(RE::TESWeather* weather, const std::string& featureName, const std::string& settingName);
-
 	/** @brief Destructor. Releases owned textures and widget resources. */
 	~EditorWindow();
 
@@ -375,6 +367,7 @@ private:
 	json j;
 	std::string settingsFilename = "EditorSettings";
 	bool showSettingsWindow = false;
+	bool viewportWindowVisible = true;
 	std::string settingsSelectedCategory = "Flags";
 
 	// Widget focus tracking for Ctrl+W

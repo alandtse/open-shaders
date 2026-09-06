@@ -29,6 +29,7 @@
 #include "Features/PostProcessing.h"
 #include "Features/RemoteControl.h"
 #include "Features/RenderDoc.h"
+#include "Features/SceneManager.h"
 #include "Features/SceneSelector.h"
 #include "Features/ScreenSpaceGI.h"
 #include "Features/ScreenSpaceShadows.h"
@@ -52,12 +53,9 @@
 #include "I18n/I18n.h"
 #include "Menu.h"
 #include "SettingsOverrideManager.h"
-#include "Utils/Format.h"
-#include "WeatherManager.h"
-#include "WeatherVariableRegistry.h"
-
 #include "State.h"
 #include "TruePBR.h"
+#include "Utils/Format.h"
 
 void Feature::Load(json& o_json)
 {
@@ -170,6 +168,9 @@ void Feature::Load(json& o_json)
 			logger::error("Feature has empty short name, cannot add to feature issues list");
 		}
 	} else {
+		if (!UsesMainSettings())
+			return;
+
 		// No errors, load settings now
 		if (o_json[GetName()].is_structured()) {
 			logger::info("Loading {} settings", GetName());
@@ -188,7 +189,8 @@ void Feature::Load(json& o_json)
 
 void Feature::Save(json& o_json)
 {
-	SaveSettings(o_json[GetName()]);
+	if (UsesMainSettings())
+		SaveSettings(o_json[GetName()]);
 }
 
 bool Feature::ValidateCache(CSimpleIniA& a_ini)
@@ -271,6 +273,7 @@ namespace
 			&globals::features::csEditor,
 			&globals::features::sceneSelector,
 			&globals::features::csUtility,
+			&globals::features::sceneManager,
 			&globals::features::screenshotFeature,
 			&globals::features::linearLighting,
 #if defined(ENABLE_EFFECTS11)
@@ -425,6 +428,8 @@ std::vector<std::string> Feature::GetLoadedFeatureNames()
 
 bool Feature::ToggleAtBootSetting()
 {
+	if (IsAlwaysEnabled())
+		return false;
 	auto state = globals::state;
 	const std::string featureName = GetShortName();
 	auto disabled = state->IsFeatureDisabled(featureName);

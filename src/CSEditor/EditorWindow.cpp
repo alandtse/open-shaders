@@ -5,7 +5,6 @@
 #include "Features/HDRDisplay.h"
 #include "Features/Upscaling.h"
 #include "Globals.h"
-#include "InteriorOnlyPanel.h"
 #include "Menu.h"
 #include "Menu/BackgroundBlur.h"
 #include "PaletteWindow.h"
@@ -216,7 +215,10 @@ std::string EditorWindow::ResolveEditorId(RE::TESForm* form, const WidgetVec& wi
 
 void EditorWindow::ShowObjectsWindow()
 {
-	Util::BeginWithRoundedClose(T(TKEY("weather_lighting_browser"), "OS Editor Browser"), nullptr);
+	if (!Util::BeginWithRoundedClose(T(TKEY("weather_lighting_browser"), "OS Editor Browser"), nullptr)) {
+		ImGui::End();
+		return;
+	}
 
 	// Reset filter state when the user switches categories so stale column
 	// selections (e.g. Status) don't hide all items in the new category.
@@ -262,7 +264,6 @@ void EditorWindow::ShowObjectsWindow()
 				{ "Shader Particle Geometry", T(TKEY("category_shader_particle"), "Shader Particle Geometry") },
 				{ "Lens Flare", T(TKEY("category_lens_flare"), "Lens Flare") },
 				{ "Visual Effect", T(TKEY("category_visual_effect"), "Visual Effect") },
-				{ "Interior Only", T(TKEY("category_interior_only"), "Interior Only") },
 				{ "Light Editor", T(TKEY("category_lighting_editor"), "Light Editor") }
 			};
 			for (int i = 0; i < IM_ARRAYSIZE(categories); ++i) {
@@ -280,15 +281,6 @@ void EditorWindow::ShowObjectsWindow()
 		ImGui::TableSetColumnIndex(1);
 
 		if (ImGui::BeginChild("##ObjectsContent", { 0, 0 }, ImGuiChildFlags_Borders, kStickyHeaderFlags)) {
-			// Interior Only category has its own panel
-			if (m_selectedCategory == "Interior Only") {
-				InteriorOnlyPanel::Draw();
-				ImGui::EndChild();
-				ImGui::EndTable();
-				ImGui::End();
-				return;
-			}
-
 			if (m_selectedCategory == "Light Editor") {
 				BeginScrollableContent("##LightEditorScroll");
 				lightEditor.DrawSettings();
@@ -912,7 +904,12 @@ void EditorWindow::ShowObjectsWindow()
 
 void EditorWindow::ShowViewportWindow()
 {
-	Util::BeginWithRoundedClose(T(TKEY("viewport"), "Viewport"), nullptr, ImGuiWindowFlags_NoFocusOnAppearing);
+	viewportWindowVisible = Util::BeginWithRoundedClose(
+		T(TKEY("viewport"), "Viewport"), nullptr, ImGuiWindowFlags_NoFocusOnAppearing);
+	if (!viewportWindowVisible) {
+		ImGui::End();
+		return;
+	}
 
 	// The size of the image in ImGui																														   // Get the available space in the current window
 	ImVec2 availableSpace = ImGui::GetContentRegionAvail();
@@ -1422,36 +1419,6 @@ void EditorWindow::RenderUI()
 	ImGui::GetStyle().FontScaleMain = previousScale;
 }
 
-void EditorWindow::OpenWeatherFeatureSetting(RE::TESWeather* weather, const std::string& featureName, const std::string& settingName)
-{
-	if (!weather) {
-		return;
-	}
-
-	// Open the editor if it's not already open
-	if (!open) {
-		open = true;
-	}
-
-	// Find the weather widget
-	for (auto& widget : weatherWidgets) {
-		auto* weatherWidget = dynamic_cast<WeatherWidget*>(widget.get());
-		if (weatherWidget && weatherWidget->weather == weather) {
-			// Open the widget if it's not already open
-			if (!weatherWidget->open) {
-				weatherWidget->open = true;
-			}
-
-			// Set up navigation to the specific feature/setting
-			weatherWidget->NavigateToFeatureSetting(featureName, settingName);
-
-			// Focus the widget window
-			weatherWidget->RequestFocus();
-			break;
-		}
-	}
-}
-
 EditorWindow::~EditorWindow()
 {
 	ShowGameMenus();
@@ -1525,7 +1492,7 @@ void EditorWindow::Draw()
 	if (!IsViewportActive()) {
 		delete tempTexture;
 		tempTexture = nullptr;
-	} else {
+	} else if (viewportWindowVisible) {
 		auto renderer = globals::game::renderer;
 		if (renderer) {
 			auto& framebuffer = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kFRAMEBUFFER];
@@ -1601,12 +1568,19 @@ void EditorWindow::LoadSettings()
 		}
 	}
 	m_selectedCategory = settings.selectedCategory;
+	if (m_selectedCategory == "Interior Only") {
+		m_selectedCategory = "Weather";
+		settings.selectedCategory = m_selectedCategory;
+	}
 	SetWidgetTypeSizesFromJson(settings.widgetTypeSizes);
 }
 
 void EditorWindow::ShowSettingsWindow()
 {
-	Util::BeginWithRoundedClose(T(TKEY("settings"), "Settings"), &showSettingsWindow);
+	if (!Util::BeginWithRoundedClose(T(TKEY("settings"), "Settings"), &showSettingsWindow)) {
+		ImGui::End();
+		return;
+	}
 
 	if (ImGui::BeginTable("SettingsTable", 2, ImGuiTableFlags_Resizable | ImGuiTableFlags_BordersInner | ImGuiTableFlags_NoHostExtendX)) {
 		ImGui::TableSetupColumn(T(TKEY("options"), "Options"), ImGuiTableColumnFlags_WidthStretch, 0.3f);
