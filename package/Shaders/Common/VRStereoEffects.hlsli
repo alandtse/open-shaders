@@ -15,30 +15,30 @@ namespace VRStereoEffects
 	}
 
 	/** Clamps a dynamic-resolution SBS UV using the sampled texture's dimensions. */
-	float2 ClampDynamicStereoUVToEyeTexel(float2 dynamicStereoUV, uint eyeIndex, Texture2D<float4> texture, float2 resolutionScale)
+	float2 ClampDynamicStereoUVToEyeTexel(float2 dynamicStereoUV, uint eyeIndex, Texture2D<float4> sourceTexture, float2 resolutionScale)
 	{
 		uint width;
 		uint height;
-		texture.GetDimensions(width, height);
+		sourceTexture.GetDimensions(width, height);
 		return ClampDynamicStereoUVToEyeTexel(dynamicStereoUV, eyeIndex, uint2(width, height), resolutionScale);
 	}
 
 	/** Clamps a packed SBS UV using the sampled 2D texture's dimensions. */
-	float2 ClampStereoUVToEyeTexel(float2 stereoUV, uint eyeIndex, Texture2D<float4> texture)
+	float2 ClampStereoUVToEyeTexel(float2 stereoUV, uint eyeIndex, Texture2D<float4> sourceTexture)
 	{
 		uint width;
 		uint height;
-		texture.GetDimensions(width, height);
+		sourceTexture.GetDimensions(width, height);
 		return Stereo::ClampToEyeUV(stereoUV, eyeIndex, uint2(width, height));
 	}
 
 	/** Clamps a packed SBS UV using the sampled 3D texture's dimensions. */
-	float2 ClampStereoUVToEyeTexel(float2 stereoUV, uint eyeIndex, Texture3D<float4> texture)
+	float2 ClampStereoUVToEyeTexel(float2 stereoUV, uint eyeIndex, Texture3D<float4> sourceTexture)
 	{
 		uint width;
 		uint height;
 		uint depth;
-		texture.GetDimensions(width, height, depth);
+		sourceTexture.GetDimensions(width, height, depth);
 		return Stereo::ClampToEyeUV(stereoUV, eyeIndex, uint2(width, height));
 	}
 }
