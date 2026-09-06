@@ -52,6 +52,9 @@ struct VRStereoOptimizations
 	// CONSTANTS
 	//=============================================================================
 
+	/// ScatterDepth clear value; must match SCATTER_DEPTH_EMPTY in cbuffers.hlsli.
+	static constexpr uint32_t kScatterDepthEmpty = 0xFFFFFFFFu;
+
 	//=============================================================================
 	// PUBLIC METHODS
 	//=============================================================================
@@ -101,9 +104,6 @@ struct VRStereoOptimizations
 	// stereoMode is restart-gated: the stencil/CS resources are only set up
 	// when `loaded` is true at boot, and toggling mid-session can't install
 	// them. Latched from VR::PostPostLoad.
-	/// ScatterDepth clear value; must match SCATTER_DEPTH_EMPTY in cbuffers.hlsli.
-	static constexpr uint32_t kScatterDepthEmpty = 0xFFFFFFFFu;
-
 	inline static constexpr Util::Settings::RestartTable<Settings, 1> kRestartFields{ {
 		UTIL_RESTART_FIELD(Settings, stereoMode, "VR Stereo Reprojection"),
 	} };
