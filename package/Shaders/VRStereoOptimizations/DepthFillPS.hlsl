@@ -37,5 +37,8 @@ float main(PS_INPUT input) : SV_Depth
 	if (bits == 0xFFFFFFFFu)
 		return depth;
 
-	return min(asfloat(bits), depth);
+	// Below the classifier's own threshold the difference is the scatter's texel sampling, not
+	// missing geometry; taking it would put a per-texel sawtooth on surfaces the prepass has right.
+	float warped = asfloat(bits);
+	return (depth - warped) > DisocclusionThreshold * depth ? warped : depth;
 }
