@@ -5,6 +5,7 @@
 
 #include <array>
 #include <memory>
+#include <optional>
 #include <winrt/base.h>
 
 /** @brief GPU-driven, world-space airborne rain rendering. */
@@ -16,26 +17,27 @@ struct RainRendering : Feature
 		uint EnableRainRendering = 1;
 		uint ForceRainRendering = 0;
 		uint EnableRainRoofOcclusion = 1;
-		uint RainDropCount = 16384;
+		uint EnableRainCanopyResponse = 1;
+		uint RainDropCount = 17352;
 		uint RainOverheadDropCount = 8;
 		float RainDensity = 1.0f;
 		float RainFallSpeed = 2600.0f;
 
 		float RainStreakLength = 72.0f;
 		float RainVelocityStretch = 0.045f;
-		float RainStreakWidth = 7.25f;
+		float RainStreakWidth = 5.18f;
 
 		float RainOpacity = 0.52f;
 		float RainBrightness = 0.85f;
-		float RainLightingResponse = 0.65f;
-		float RainMinimumVisibility = 0.20f;
+		float RainLightingResponse = 0.50f;
+		float RainMinimumVisibility = 0.01f;
 		float RainNearCutoffDistance = 4.0f;
 		float RainFarDistance = 6000.0f;
-		float RainNearLayerDistance = 200.0f;
-		float RainMidLayerDistance = 3000.0f;
-		float RainNearBudgetWeight = 4.0f;
-		float RainMidBudgetWeight = 0.34f;
-		float RainFarBudgetWeight = 0.06f;
+		float RainNearLayerDistance = 422.0f;
+		float RainMidLayerDistance = 2371.0f;
+		float RainNearBudgetWeight = 1.02f;
+		float RainMidBudgetWeight = 1.11f;
+		float RainFarBudgetWeight = 0.25f;
 		uint EnableDistantRain = 1;
 		uint RainDistantDropCount = 4096;
 		float RainDistantDensity = 1.0f;
@@ -59,12 +61,12 @@ struct RainRendering : Feature
 		uint EnableRainRefraction = 1;
 		float RainCoreDarkening = 0.08f;
 		float RainEdgeHighlight = 1.0f;
-		float RainRefractionStrength = 4.0f;
+		float RainRefractionStrength = 2.68f;
 		float RainRefractionDistance = 4800.0f;
 		float RainStreakVariation = 0.45f;
 		float RainLocalLightResponse = 0.6f;
 		uint EnableTexturedRain = 1;
-		float RainTextureNormalStrength = 1.0f;
+		float RainTextureNormalStrength = 2.0f;
 		float RainTextureReflectionStrength = 1.0f;
 		float RainTextureUVWidth = 0.5f;
 		float RainEnvironmentTransmission = 0.8f;
@@ -73,6 +75,8 @@ struct RainRendering : Feature
 		float RainLightScattering = 0.25f;
 		float RainRoofOcclusionFadeStart = 0.20f;
 		float RainRoofOcclusionFadeEnd = 0.75f;
+		float RainCanopyDensityScale = 0.35f;
+		float RainCanopySpeedScale = 0.85f;
 	};
 
 	/** @brief Per-draw constants mirrored by RainRendering.hlsl. */
@@ -101,9 +105,10 @@ struct RainRendering : Feature
 		float4 MaterialLighting;
 		float4 RoofOcclusion;
 		float4 DistantRain;
+		float4 Canopy;
 	};
 	STATIC_ASSERT_ALIGNAS_16(PerFrame);
-	static_assert(sizeof(PerFrame) == 368, "RainRendering::PerFrame must match the rain shaders");
+	static_assert(sizeof(PerFrame) == 384, "RainRendering::PerFrame must match the rain shaders");
 
 	/** @brief GPU render record produced once per drop and consumed by both eyes. */
 	struct alignas(16) DropData
@@ -149,16 +154,35 @@ struct RainRendering : Feature
 	/** @brief Releases runtime-compiled shaders so they can be rebuilt on demand. */
 	void ClearShaderCache() override;
 
-	/** @brief Renders the shared world-space rain volume into the main scene target. */
-	void DrawRain();
-	/** @brief Returns whether this feature replaces vanilla precipitation for the supplied rainy weather. */
+	/** @brief Draws rain before water when no water composite was observed recently. */
+	void DrawBeforeWater();
+	/** @brief Draws rain after the water composite and records the water-active frame. */
+	void DrawAfterWater();
+	/** @brief Returns whether this feature replaces the supplied weather's vanilla rain particles. */
 	bool ReplacesVanillaRain(const RE::TESWeather* a_weather) const;
+	/** @brief Returns the rain-owned depth target used for the solid-cover occlusion pass. */
+	Texture2D* GetSolidCoverOcclusionTarget() const
+	{
+		const bool rainActive = settings.ForceRainRendering || GetWeatherIntensity() > 0.0f;
+		return settings.EnableRainRoofOcclusion && settings.EnableRainCanopyResponse && rainActive &&
+		               canopyOcclusionCS ?
+		           solidCoverOcclusion.get() :
+		           nullptr;
+	}
 
 private:
+	struct WeatherRainState
+	{
+		float intensity = 0.0f;
+		float fallSpeedScale = 1.0f;
+	};
+
+	void DrawRain();
 	void ApplyGlassyReferenceSettings();
 	void NormalizeSettings();
 	std::array<uint32_t, 4> GetLayerDropCounts() const;
 	float4 GetLayerRadii(float a_farDistance) const;
+	WeatherRainState GetWeatherRainState() const;
 	float GetWeatherIntensity() const;
 	float3 GetRainLightColor() const;
 	bool EnsureShaders();
@@ -166,6 +190,10 @@ private:
 	bool EnsureRainSampler();
 	bool EnsureRainTexture();
 	bool EnsureSceneColorShaders();
+	bool EnsureCanopyOcclusionResources();
+	bool EnsureCanopyOcclusionShader();
+	void ResetCanopyOcclusion();
+	void UpdateCanopyOcclusion(ID3D11DeviceContext* a_context, ID3D11Buffer* a_sharedBuffer, ID3D11Buffer* a_frameBuffer);
 	ID3D11ShaderResourceView* GetRainEnvironment() const;
 	bool EnsureSceneColorCopy(ID3D11Texture2D* a_source, ID3D11RenderTargetView* a_view);
 	void DownsampleSceneColor(ID3D11ShaderResourceView* a_color, ID3D11ShaderResourceView* a_depth, const float2& a_size);
@@ -188,6 +216,7 @@ private:
 	winrt::com_ptr<ID3D11PixelShader> distantRainPS;
 	winrt::com_ptr<ID3D11VertexShader> sceneColorDownsampleVS;
 	winrt::com_ptr<ID3D11PixelShader> sceneColorDownsamplePS;
+	winrt::com_ptr<ID3D11ComputeShader> canopyOcclusionCS;
 	winrt::com_ptr<ID3D11BlendState> blendState;
 	winrt::com_ptr<ID3D11RasterizerState> rasterizerState;
 	winrt::com_ptr<ID3D11DepthStencilState> depthStencilState;
@@ -204,7 +233,14 @@ private:
 	D3D11_TEXTURE2D_DESC sceneColorDescription{};
 	DXGI_FORMAT sceneColorViewFormat = DXGI_FORMAT_UNKNOWN;
 	bool sceneColorCopyFailed = false;
+	std::unique_ptr<Texture2D> solidCoverOcclusion;
+	std::unique_ptr<Texture3D> canopyClassification;
+	std::unique_ptr<Texture3D> canopyAccumulation;
+	std::optional<bool> previousCanopyInteriorState;
 	bool shaderCompileAttempted = false;
+	bool canopyOcclusionShaderCompileAttempted = false;
 	bool distantRainShaderCompileAttempted = false;
 	bool renderPathReady = false;
+	uint32_t lastWaterBlendFrame = UINT32_MAX;
+	uint32_t lastDrawFrame = UINT32_MAX;
 };

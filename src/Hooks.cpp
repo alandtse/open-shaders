@@ -17,6 +17,7 @@
 #include "Features/InteriorSun.h"
 #include "Features/LightLimitFix.h"
 #include "Features/PostProcessing.h"
+#include "Features/RainRendering.h"
 #include "Features/ScreenshotFeature.h"
 #include "Features/Skin.h"
 #include "Features/SkySync.h"
@@ -312,6 +313,9 @@ namespace WaterBlendHistory
 				clearColor);
 
 			func(imageSpaceShader, shape, param);
+
+			if (globals::features::rainRendering.loaded)
+				globals::features::rainRendering.DrawAfterWater();
 		}
 
 		static inline REL::Relocation<decltype(thunk)> func;

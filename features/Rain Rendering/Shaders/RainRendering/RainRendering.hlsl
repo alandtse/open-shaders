@@ -214,7 +214,31 @@ void RejectDrop(uint dropIndex, float3 position)
 	else
 		dropPosition.z = (float(worldCell.z) + 1.0f - lifeFraction) * cellSize.z;
 
-	float3 velocity = float3(0.0f, 0.0f, -fallSpeed);
+	float roofVisibility = 1.0f;
+	float canopyAmount = 0.0f;
+#if defined(RAIN_SKYLIGHTING_OCCLUSION) && defined(COMPUTESHADER)
+	[branch] if (RoofOcclusion.x > 0.5f)
+	{
+		RainRoofOcclusion::Cover cover = RainRoofOcclusion::Sample(
+			dropPosition, RoofOcclusion.y, RoofOcclusion.z);
+		[branch] if (Canopy.x > 0.5f && cover.CanopyAmount > 0.0f)
+		{
+			float speedReduction = cover.CanopyAmount * (1.0f - Canopy.z);
+			float phaseWarp = speedReduction * sin(Math::PI * lifeFraction) / Math::PI;
+			dropPosition.z -= phaseWarp * fallCycleHeight;
+			cover = RainRoofOcclusion::Sample(dropPosition, RoofOcclusion.y, RoofOcclusion.z);
+		}
+		roofVisibility = cover.RoofVisibility;
+		canopyAmount = Canopy.x > 0.5f ? cover.CanopyAmount : 0.0f;
+		if (roofVisibility <= 0.001f) {
+			RejectDrop(dropIndex, dropPosition);
+			return;
+		}
+	}
+#endif
+
+	float canopySpeed = lerp(1.0f, Canopy.z, canopyAmount);
+	float3 velocity = float3(0.0f, 0.0f, -fallSpeed * canopySpeed);
 
 	float distanceFromHead = length(dropPosition - HeadPositionAndTime.xyz);
 	float farDistance = max(LayerRadii.z, 1.0f);
@@ -262,26 +286,14 @@ void RejectDrop(uint dropIndex, float3 position)
 	float curtainFactor = lerp(1.0f, curtainDensity, saturate(Curtain.y));
 
 	float lodDensity = lerp(0.42f, 1.38f, sqrt(distanceRatio));
-	float density = VolumeSizeAndDensity.w * WeatherFallDepth.x * spatialDensity * curtainFactor * lodDensity;
+	float canopyDensity = lerp(1.0f, Canopy.y, canopyAmount);
+	float density = VolumeSizeAndDensity.w * WeatherFallDepth.x * spatialDensity * curtainFactor * lodDensity * canopyDensity;
 	float acceptance = Hash01(lifeSeed ^ 0xC2B2AE35u);
-	float acceptedDensity = isOverheadDrop ? saturate(VolumeSizeAndDensity.w) : saturate(density);
+	float acceptedDensity = isOverheadDrop ? saturate(VolumeSizeAndDensity.w * canopyDensity) : saturate(density);
 	if ((GridAndDebug.w == 0u || GridAndDebug.w >= 6u) && acceptance > acceptedDensity) {
 		RejectDrop(dropIndex, dropPosition);
 		return;
 	}
-	float roofVisibility = 1.0f;
-#if defined(RAIN_SKYLIGHTING_OCCLUSION) && defined(COMPUTESHADER)
-	[branch] if (RoofOcclusion.x > 0.5f)
-	{
-		roofVisibility = RainRoofOcclusion::SampleVisibility(
-			dropPosition, RoofOcclusion.y, RoofOcclusion.z);
-		if (roofVisibility <= 0.001f) {
-			RejectDrop(dropIndex, dropPosition);
-			return;
-		}
-	}
-#endif
-
 	float speed = length(velocity);
 	float lodLength = lerp(1.35f, 0.48f, smoothstep(0.15f, 1.0f, distanceRatio));
 	float lodWidth = lerp(1.30f, 0.52f, smoothstep(0.08f, 1.0f, distanceRatio));
@@ -417,11 +429,12 @@ struct RainVertexOutput
 	nointerpolation uint EyeIndex: TEXCOORD3;
 	nointerpolation float3 ScreenSideAndWidth: TEXCOORD4;
 	nointerpolation float DetailFade: TEXCOORD5;
-	nointerpolation float3 ScreenAlongAndLength: TEXCOORD6;
-	nointerpolation float3 StreakAxisWorld: TEXCOORD7;
-	nointerpolation float3 StreakSideWorld: TEXCOORD8;
-	nointerpolation float3 HeadViewDirection: TEXCOORD9;
-	nointerpolation float4 LightDirection: TEXCOORD10;
+	nointerpolation float SpawnReveal: TEXCOORD6;
+	nointerpolation float3 ScreenAlongAndLength: TEXCOORD7;
+	nointerpolation float3 StreakAxisWorld: TEXCOORD8;
+	nointerpolation float3 StreakSideWorld: TEXCOORD9;
+	nointerpolation float3 HeadViewDirection: TEXCOORD10;
+	nointerpolation float4 LightDirection: TEXCOORD11;
 	float2 EyeClip: SV_ClipDistance0;
 };
 
@@ -437,6 +450,23 @@ RainVertexOutput RainVS(uint vertexID : SV_VertexID, uint instanceID : SV_Instan
 #endif
 	uint dropIndex = RainCompactionData[visibleDropIndex];
 	RainDrop drop = RainDrops[dropIndex];
+	uint layerIndex = dropIndex < LayerCounts.x ? 0u : (dropIndex < LayerCounts.x + LayerCounts.y ? 1u : 2u);
+	uint overheadDropCount = min(uint(max(RoofOcclusion.w, 0.0f) + 0.5f), LayerCounts.x);
+	bool isOverheadDrop = layerIndex == 0u && dropIndex < overheadDropCount;
+	float fallCycleHeight;
+	float lifeFraction;
+	if (isOverheadDrop) {
+		fallCycleHeight = 900.0f;
+		float overheadTop = HeadPositionAndTime.z + 100.0f + fallCycleHeight;
+		lifeFraction = saturate((overheadTop - drop.PositionLength.z) / fallCycleHeight);
+	} else {
+		float layerRadius = LayerRadii[layerIndex];
+		float volumeHeight = max(VolumeSizeAndDensity.z * (layerRadius / max(LayerRadii.z, 1.0f)), 1.0f);
+		fallCycleHeight = volumeHeight / max(float(GridAndDebug.z) - 1.0f, 1.0f);
+		lifeFraction = frac(-drop.PositionLength.z / fallCycleHeight);
+	}
+	// Reveal recycled streaks from their leading edge instead of materializing the full drop silhouette.
+	output.SpawnReveal = saturate(lifeFraction * fallCycleHeight / max(drop.PositionLength.w, 1.0f));
 
 	static const float2 corners[6] = {
 		float2(-1.0f, -1.0f), float2(-1.0f, 1.0f), float2(1.0f, 1.0f),
@@ -529,12 +559,14 @@ float4 RainPS(RainVertexOutput input) : SV_Target0
 	float widthFade = saturate(1.0f - abs(input.StreakCoordinate.y));
 	float endFade = smoothstep(0.0f, 0.10f, input.StreakCoordinate.x) *
 	                smoothstep(0.0f, 0.10f, 1.0f - input.StreakCoordinate.x);
-	float alpha = input.ColorOpacity.a * widthFade * endFade * intersectionFade * 0.55f;
+	float revealStart = saturate(1.0f - input.SpawnReveal);
+	float spawnReveal = smoothstep(revealStart, revealStart + 0.08f, input.StreakCoordinate.x);
+	float alpha = input.ColorOpacity.a * widthFade * endFade * spawnReveal * intersectionFade * 0.55f;
 	float3 color = input.ColorOpacity.rgb;
 	[branch] if (Glassy.x > 0.5f)
 	{
 		float resolvedWidth = smoothstep(0.35f, 1.25f, input.ScreenSideAndWidth.z);
-		RainMaterial::Surface water = RainMaterial::Evaluate(input, widthFade * endFade, resolvedWidth);
+		RainMaterial::Surface water = RainMaterial::Evaluate(input, widthFade * endFade * spawnReveal, resolvedWidth);
 		float coverage = input.ColorOpacity.a * water.Opacity * intersectionFade;
 		if (coverage <= 1e-4f)
 			discard;

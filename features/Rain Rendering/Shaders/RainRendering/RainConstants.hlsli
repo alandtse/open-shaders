@@ -26,6 +26,7 @@ cbuffer RainConstants : register(b0)
 	float4 MaterialLighting;
 	float4 RoofOcclusion;
 	float4 DistantRain;
+	float4 Canopy;
 }
 
 #endif

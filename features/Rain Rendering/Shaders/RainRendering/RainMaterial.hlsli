@@ -71,7 +71,7 @@ namespace RainMaterial
 			float4 normalOpacity = RainNormalOpacity.SampleLevel(RefractionSampler, textureUV, mip);
 			float3 textureNormal = normalize(float3((normalOpacity.xy * 2.0f - 1.0f) * TexturedRain.y, max(normalOpacity.z * 2.0f - 1.0f, 0.05f)));
 			normalTS = normalize(lerp(normalTS, textureNormal, detailWeight));
-			water.Opacity = saturate(normalOpacity.a);
+			water.Opacity = saturate(normalOpacity.a) * proceduralCoverage;
 		}
 		float3 planeNormal = cross(input.StreakSideWorld, input.StreakAxisWorld);
 		planeNormal *= dot(planeNormal, input.HeadViewDirection) < 0.0f ? -1.0f : 1.0f;

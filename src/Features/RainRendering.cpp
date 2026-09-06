@@ -25,6 +25,7 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	EnableRainRendering,
 	ForceRainRendering,
 	EnableRainRoofOcclusion,
+	EnableRainCanopyResponse,
 	RainDropCount,
 	RainOverheadDropCount,
 	RainDensity,
@@ -75,7 +76,9 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	RainHighlightRoughness,
 	RainLightScattering,
 	RainRoofOcclusionFadeStart,
-	RainRoofOcclusionFadeEnd)
+	RainRoofOcclusionFadeEnd,
+	RainCanopyDensityScale,
+	RainCanopySpeedScale)
 
 namespace
 {
@@ -83,10 +86,14 @@ namespace
 	constexpr uint32_t kRainComputeGroupSize = 64;
 	constexpr uint32_t kMaximumCompactionGroupCount = kMaximumDropCount / kRainComputeGroupSize;
 	constexpr uint32_t kMaximumDistantDropCount = 16384;
+	constexpr uint32_t kCanopyProbeWidth = 256;
+	constexpr uint32_t kCanopyProbeHeight = 256;
+	constexpr uint32_t kCanopyProbeDepth = 128;
 	constexpr uint32_t kGridWidth = 96;
 	constexpr uint32_t kGridDepth = 96;
 	constexpr uint32_t kGridHeight = 4;
 	constexpr float kMaximumRainParticleDensity = 3.0f;
+	constexpr float kReferenceRainGravity = 675.0f;
 	constexpr float kMaximumRefractionPixels = 12.0f;
 	constexpr float kMaximumVRRefractionPixels = 4.0f;
 	constexpr const char* kRainTexturePath = "Data\\Textures\\CommunityShaders\\RainRendering\\RainDrop.png";
@@ -270,9 +277,12 @@ namespace
 			context->CSGetConstantBuffers(0, 1, &rainConstantBuffer);
 			context->CSGetConstantBuffers(5, static_cast<UINT>(sharedConstantBuffers.size()), sharedConstantBuffers.data());
 			context->CSGetConstantBuffers(12, 1, &frameConstantBuffer);
+			context->CSGetShaderResources(0, 1, &occlusionDepthResource);
 			context->CSGetShaderResources(1, 1, &dropResource);
 			context->CSGetShaderResources(39, static_cast<UINT>(compactionResources.size()), compactionResources.data());
 			context->CSGetShaderResources(35, static_cast<UINT>(computeResources.size()), computeResources.data());
+			context->CSGetShaderResources(41, static_cast<UINT>(canopyResources.size()), canopyResources.data());
+			context->CSGetSamplers(0, 1, &computeSampler);
 			context->CSGetUnorderedAccessViews(0, static_cast<UINT>(computeUAVs.size()), computeUAVs.data());
 		}
 
@@ -281,19 +291,26 @@ namespace
 
 		~RainComputeState()
 		{
+			ID3D11ShaderResourceView* nullOcclusionDepth = nullptr;
+			context->CSSetShaderResources(0, 1, &nullOcclusionDepth);
 			ID3D11ShaderResourceView* nullDropResource = nullptr;
 			context->CSSetShaderResources(1, 1, &nullDropResource);
 			std::array<ID3D11ShaderResourceView*, 2> nullResources{};
 			context->CSSetShaderResources(39, static_cast<UINT>(nullResources.size()), nullResources.data());
+			std::array<ID3D11ShaderResourceView*, 2> nullCanopyResources{};
+			context->CSSetShaderResources(41, static_cast<UINT>(nullCanopyResources.size()), nullCanopyResources.data());
 			std::array<ID3D11UnorderedAccessView*, 5> nullUAVs{};
 			context->CSSetUnorderedAccessViews(0, static_cast<UINT>(nullUAVs.size()), nullUAVs.data(), nullptr);
 			context->CSSetShader(shader, nullptr, 0);
 			context->CSSetConstantBuffers(0, 1, &rainConstantBuffer);
 			context->CSSetConstantBuffers(5, static_cast<UINT>(sharedConstantBuffers.size()), sharedConstantBuffers.data());
 			context->CSSetConstantBuffers(12, 1, &frameConstantBuffer);
+			context->CSSetShaderResources(0, 1, &occlusionDepthResource);
 			context->CSSetShaderResources(1, 1, &dropResource);
 			context->CSSetShaderResources(39, static_cast<UINT>(compactionResources.size()), compactionResources.data());
 			context->CSSetShaderResources(35, static_cast<UINT>(computeResources.size()), computeResources.data());
+			context->CSSetShaderResources(41, static_cast<UINT>(canopyResources.size()), canopyResources.data());
+			context->CSSetSamplers(0, 1, &computeSampler);
 			context->CSSetUnorderedAccessViews(0, static_cast<UINT>(computeUAVs.size()), computeUAVs.data(), nullptr);
 
 			ReleasePointer(shader);
@@ -301,11 +318,15 @@ namespace
 			for (auto*& buffer : sharedConstantBuffers)
 				ReleasePointer(buffer);
 			ReleasePointer(frameConstantBuffer);
+			ReleasePointer(occlusionDepthResource);
 			ReleasePointer(dropResource);
 			for (auto*& resource : compactionResources)
 				ReleasePointer(resource);
 			for (auto*& resource : computeResources)
 				ReleasePointer(resource);
+			for (auto*& resource : canopyResources)
+				ReleasePointer(resource);
+			ReleasePointer(computeSampler);
 			for (auto*& uav : computeUAVs)
 				ReleasePointer(uav);
 		}
@@ -316,9 +337,12 @@ namespace
 		ID3D11Buffer* rainConstantBuffer = nullptr;
 		std::array<ID3D11Buffer*, 2> sharedConstantBuffers{};
 		ID3D11Buffer* frameConstantBuffer = nullptr;
+		ID3D11ShaderResourceView* occlusionDepthResource = nullptr;
 		ID3D11ShaderResourceView* dropResource = nullptr;
 		std::array<ID3D11ShaderResourceView*, 2> compactionResources{};
 		std::array<ID3D11ShaderResourceView*, 4> computeResources{};
+		std::array<ID3D11ShaderResourceView*, 2> canopyResources{};
+		ID3D11SamplerState* computeSampler = nullptr;
 		std::array<ID3D11UnorderedAccessView*, 5> computeUAVs{};
 	};
 }
@@ -422,8 +446,148 @@ void RainRendering::SetupResources()
 		Util::SetResourceName(depthStencilState.get(), "RainRendering::DepthDisabled");
 	}
 
+	if (settings.EnableRainCanopyResponse && EnsureCanopyOcclusionResources())
+		EnsureCanopyOcclusionShader();
+
 	renderPathReady = perFrameCB && dropBuffer && dropLocalOffsetBuffer && dropGroupOffsetBuffer &&
 	                  visibleDropIndexBuffer && indirectDrawArgsBuffer && EnsureShaders();
+}
+
+bool RainRendering::EnsureCanopyOcclusionResources()
+{
+	if (solidCoverOcclusion && canopyClassification && canopyAccumulation)
+		return true;
+	if (!globals::features::skylighting.loaded)
+		return false;
+
+	auto* renderer = globals::game::renderer;
+	if (!renderer)
+		return false;
+
+	auto& precipitationOcclusion = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kPRECIPITATION_OCCLUSION_MAP];
+	if (!precipitationOcclusion.texture || !precipitationOcclusion.depthSRV || !precipitationOcclusion.views[0])
+		return false;
+
+	D3D11_TEXTURE2D_DESC depthDescription{};
+	D3D11_SHADER_RESOURCE_VIEW_DESC depthResourceDescription{};
+	D3D11_DEPTH_STENCIL_VIEW_DESC depthViewDescription{};
+	precipitationOcclusion.texture->GetDesc(&depthDescription);
+	precipitationOcclusion.depthSRV->GetDesc(&depthResourceDescription);
+	precipitationOcclusion.views[0]->GetDesc(&depthViewDescription);
+
+	solidCoverOcclusion = std::make_unique<Texture2D>(depthDescription, "RainRendering::SolidCoverOcclusion");
+	solidCoverOcclusion->CreateSRV(depthResourceDescription);
+	solidCoverOcclusion->CreateDSV(depthViewDescription);
+	globals::d3d::context->ClearDepthStencilView(
+		solidCoverOcclusion->dsv.get(), D3D11_CLEAR_DEPTH, 1.0f, 0);
+
+	D3D11_TEXTURE3D_DESC fieldDescription{
+		.Width = kCanopyProbeWidth,
+		.Height = kCanopyProbeHeight,
+		.Depth = kCanopyProbeDepth,
+		.MipLevels = 1,
+		.Format = DXGI_FORMAT_R8_UNORM,
+		.Usage = D3D11_USAGE_DEFAULT,
+		.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS,
+		.CPUAccessFlags = 0,
+		.MiscFlags = 0
+	};
+	D3D11_SHADER_RESOURCE_VIEW_DESC fieldResourceDescription{
+		.Format = fieldDescription.Format,
+		.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE3D,
+		.Texture3D = { .MostDetailedMip = 0, .MipLevels = 1 }
+	};
+	D3D11_UNORDERED_ACCESS_VIEW_DESC fieldViewDescription{
+		.Format = fieldDescription.Format,
+		.ViewDimension = D3D11_UAV_DIMENSION_TEXTURE3D,
+		.Texture3D = { .MipSlice = 0, .FirstWSlice = 0, .WSize = fieldDescription.Depth }
+	};
+
+	canopyClassification = std::make_unique<Texture3D>(fieldDescription, "RainRendering::CanopyClassification");
+	canopyClassification->CreateSRV(fieldResourceDescription);
+	canopyClassification->CreateUAV(fieldViewDescription);
+
+	fieldDescription.Format = fieldResourceDescription.Format = fieldViewDescription.Format = DXGI_FORMAT_R8_UINT;
+	canopyAccumulation = std::make_unique<Texture3D>(fieldDescription, "RainRendering::CanopyAccumulation");
+	canopyAccumulation->CreateSRV(fieldResourceDescription);
+	canopyAccumulation->CreateUAV(fieldViewDescription);
+
+	ResetCanopyOcclusion();
+	return true;
+}
+
+bool RainRendering::EnsureCanopyOcclusionShader()
+{
+	if (canopyOcclusionCS)
+		return true;
+	if (canopyOcclusionShaderCompileAttempted)
+		return false;
+	canopyOcclusionShaderCompileAttempted = true;
+
+	auto* shader = static_cast<ID3D11ComputeShader*>(Util::CompileShader(
+		L"Data\\Shaders\\RainRendering\\RainCanopyOcclusion.hlsl", {}, "cs_5_0", "RainCanopyUpdateCS"));
+	if (!shader) {
+		logger::warn("[RainRendering] Canopy classification shader unavailable; using conservative roof occlusion");
+		return false;
+	}
+
+	canopyOcclusionCS.attach(shader);
+	Util::SetResourceName(canopyOcclusionCS.get(), "RainRendering::CanopyOcclusionCS");
+	return true;
+}
+
+void RainRendering::ResetCanopyOcclusion()
+{
+	if (!canopyClassification || !canopyAccumulation)
+		return;
+
+	auto* context = globals::d3d::context;
+	const float noCanopy[4]{};
+	context->ClearUnorderedAccessViewFloat(canopyClassification->uav.get(), noCanopy);
+	const UINT noSamples[4] = { 0, 0, 0, 0 };
+	context->ClearUnorderedAccessViewUint(canopyAccumulation->uav.get(), noSamples);
+}
+
+void RainRendering::UpdateCanopyOcclusion(
+	ID3D11DeviceContext* a_context,
+	ID3D11Buffer* a_sharedBuffer,
+	ID3D11Buffer* a_frameBuffer)
+{
+	if (!settings.EnableRainRoofOcclusion || !settings.EnableRainCanopyResponse || !canopyOcclusionCS ||
+		!solidCoverOcclusion || !canopyClassification || !canopyAccumulation ||
+		!globals::features::skylighting.texOcclusion || !globals::features::skylighting.texOcclusion->srv.get())
+		return;
+
+	const bool interior = Util::IsInterior();
+	if (!previousCanopyInteriorState || *previousCanopyInteriorState != interior) {
+		ResetCanopyOcclusion();
+		previousCanopyInteriorState = interior;
+	}
+
+	CS_GPU_PASS("RainRendering::CanopyOcclusion");
+	a_context->CSSetShader(canopyOcclusionCS.get(), nullptr, 0);
+	a_context->CSSetConstantBuffers(5, 1, &a_sharedBuffer);
+	a_context->CSSetConstantBuffers(12, 1, &a_frameBuffer);
+	ID3D11ShaderResourceView* depthResources[] = {
+		globals::features::skylighting.texOcclusion->srv.get(),
+		solidCoverOcclusion->srv.get()
+	};
+	a_context->CSSetShaderResources(0, static_cast<UINT>(std::size(depthResources)), depthResources);
+	ID3D11SamplerState* sampler = globals::features::skylighting.comparisonSampler.get();
+	a_context->CSSetSamplers(0, 1, &sampler);
+	ID3D11UnorderedAccessView* fieldViews[] = {
+		canopyClassification->uav.get(),
+		canopyAccumulation->uav.get()
+	};
+	a_context->CSSetUnorderedAccessViews(0, static_cast<UINT>(std::size(fieldViews)), fieldViews, nullptr);
+	a_context->Dispatch(
+		(kCanopyProbeWidth + 7u) >> 3,
+		(kCanopyProbeHeight + 7u) >> 3,
+		kCanopyProbeDepth);
+	ID3D11ShaderResourceView* nullDepthResources[2]{};
+	a_context->CSSetShaderResources(0, static_cast<UINT>(std::size(nullDepthResources)), nullDepthResources);
+	ID3D11UnorderedAccessView* nullFieldViews[2]{};
+	a_context->CSSetUnorderedAccessViews(0, static_cast<UINT>(std::size(nullFieldViews)), nullFieldViews, nullptr);
 }
 
 bool RainRendering::EnsureShaders()
@@ -532,8 +696,10 @@ void RainRendering::ClearShaderCache()
 	distantRainPS = nullptr;
 	sceneColorDownsampleVS = nullptr;
 	sceneColorDownsamplePS = nullptr;
+	canopyOcclusionCS = nullptr;
 	shaderCompileAttempted = false;
 	distantRainShaderCompileAttempted = false;
+	canopyOcclusionShaderCompileAttempted = false;
 	renderPathReady = false;
 	rainTextureSRV = nullptr;
 	rainTextureLoadAttempted = false;
@@ -571,6 +737,7 @@ void RainRendering::NormalizeSettings()
 	settings.EnableRainRendering = settings.EnableRainRendering ? 1u : 0u;
 	settings.ForceRainRendering = settings.ForceRainRendering ? 1u : 0u;
 	settings.EnableRainRoofOcclusion = settings.EnableRainRoofOcclusion ? 1u : 0u;
+	settings.EnableRainCanopyResponse = settings.EnableRainCanopyResponse ? 1u : 0u;
 	settings.EnableDistantRain = settings.EnableDistantRain ? 1u : 0u;
 	settings.EnableGlassyRain = settings.EnableGlassyRain ? 1u : 0u;
 	settings.EnableRainRefraction = settings.EnableRainRefraction ? 1u : 0u;
@@ -584,17 +751,18 @@ void RainRendering::NormalizeSettings()
 	settings.RainDistantOpacity = ClampFinite(settings.RainDistantOpacity, 0.0f, 1.0f, 0.55f);
 	settings.RainDistantStreakLength = ClampFinite(settings.RainDistantStreakLength, 4.0f, 256.0f, 64.0f);
 	settings.RainDistantStreakWidth = ClampFinite(settings.RainDistantStreakWidth, 0.2f, 8.0f, 3.0f);
-	settings.RainMinimumVisibility = ClampFinite(settings.RainMinimumVisibility, 0.0f, 1.0f, 0.20f);
+	settings.RainMinimumVisibility = ClampFinite(settings.RainMinimumVisibility, 0.0f, 1.0f, 0.01f);
+	settings.RainNearCutoffDistance = ClampFinite(settings.RainNearCutoffDistance, 0.0f, 64.0f, 4.0f);
 	settings.RainFarDistance = ClampFinite(settings.RainFarDistance, 2000.0f, 30000.0f, 6000.0f);
 
 	const float nearLayerMaximum = std::min(4000.0f, settings.RainFarDistance * 0.45f);
-	settings.RainNearLayerDistance = ClampFinite(settings.RainNearLayerDistance, 200.0f, nearLayerMaximum, 1800.0f);
+	settings.RainNearLayerDistance = ClampFinite(settings.RainNearLayerDistance, 200.0f, nearLayerMaximum, 422.0f);
 	const float midLayerMinimum = std::max(500.0f, settings.RainNearLayerDistance * 1.25f);
 	const float midLayerMaximum = std::min(12000.0f, settings.RainFarDistance * 0.85f);
-	settings.RainMidLayerDistance = ClampFinite(settings.RainMidLayerDistance, midLayerMinimum, midLayerMaximum, midLayerMinimum);
+	settings.RainMidLayerDistance = ClampFinite(settings.RainMidLayerDistance, midLayerMinimum, midLayerMaximum, 2371.0f);
 
 	settings.RainRefractionStrength = ClampFinite(settings.RainRefractionStrength, 0.0f,
-		globals::game::isVR ? kMaximumVRRefractionPixels : kMaximumRefractionPixels, 3.0f);
+		globals::game::isVR ? kMaximumVRRefractionPixels : kMaximumRefractionPixels, 2.68f);
 
 	settings.RainCurtainMinDensity = ClampFinite(settings.RainCurtainMinDensity, 0.0f, 2.0f, 0.28f);
 	settings.RainCurtainMaxDensity = ClampFinite(settings.RainCurtainMaxDensity,
@@ -602,6 +770,8 @@ void RainRendering::NormalizeSettings()
 	settings.RainRoofOcclusionFadeStart = ClampFinite(settings.RainRoofOcclusionFadeStart, 0.0f, 0.99f, 0.20f);
 	settings.RainRoofOcclusionFadeEnd = ClampFinite(settings.RainRoofOcclusionFadeEnd,
 		settings.RainRoofOcclusionFadeStart + 0.01f, 1.0f, 0.75f);
+	settings.RainCanopyDensityScale = ClampFinite(settings.RainCanopyDensityScale, 0.0f, 1.0f, 0.35f);
+	settings.RainCanopySpeedScale = ClampFinite(settings.RainCanopySpeedScale, 0.5f, 1.0f, 0.85f);
 	settings.RainDebugMode = std::min(settings.RainDebugMode, 8u);
 }
 
@@ -669,10 +839,10 @@ void RainRendering::DrawPerformanceSettings()
 std::array<uint32_t, 4> RainRendering::GetLayerDropCounts() const
 {
 	const uint32_t count = std::clamp(settings.RainDropCount, 1u, kMaximumDropCount);
-	float nearWeight = ClampFinite(settings.RainNearBudgetWeight, 0.0f, 4.0f, 1.0f);
-	float midWeight = ClampFinite(settings.RainMidBudgetWeight, 0.0f, 4.0f, 2.0f);
+	float nearWeight = ClampFinite(settings.RainNearBudgetWeight, 0.0f, 4.0f, 1.02f);
+	float midWeight = ClampFinite(settings.RainMidBudgetWeight, 0.0f, 4.0f, 1.11f);
 	const bool distantFieldReady = settings.EnableDistantRain && settings.RainDebugMode == 0 && distantRainVS && distantRainPS;
-	float farWeight = distantFieldReady ? 0.0f : ClampFinite(settings.RainFarBudgetWeight, 0.0f, 4.0f, 1.0f);
+	float farWeight = distantFieldReady ? 0.0f : ClampFinite(settings.RainFarBudgetWeight, 0.0f, 4.0f, 0.25f);
 	if (nearWeight + midWeight + farWeight < 1e-4f) {
 		nearWeight = 1.0f;
 		midWeight = 2.0f;
@@ -687,8 +857,8 @@ std::array<uint32_t, 4> RainRendering::GetLayerDropCounts() const
 
 float4 RainRendering::GetLayerRadii(float a_farDistance) const
 {
-	const float nearDistance = ClampFinite(settings.RainNearLayerDistance, 200.0f, a_farDistance * 0.45f, 1800.0f);
-	const float midDistance = ClampFinite(settings.RainMidLayerDistance, nearDistance * 1.25f, a_farDistance * 0.85f, 4800.0f);
+	const float nearDistance = ClampFinite(settings.RainNearLayerDistance, 200.0f, a_farDistance * 0.45f, 422.0f);
+	const float midDistance = ClampFinite(settings.RainMidLayerDistance, nearDistance * 1.25f, a_farDistance * 0.85f, 2371.0f);
 	return { nearDistance, midDistance, a_farDistance, 0.2f };
 }
 
@@ -737,6 +907,8 @@ void RainRendering::DrawSettings()
 	if (ImGui::TreeNodeEx(T(TKEY("volume_density"), "Volume & Density"), ImGuiTreeNodeFlags_DefaultOpen)) {
 		DrawPerformanceSettings();
 		ImGui::SliderFloat(T(TKEY("fall_speed"), "Fall Speed"), &settings.RainFallSpeed, 500.0f, 6000.0f, "%.0f");
+		if (auto _tt = Util::HoverTooltipWrapper())
+			ImGui::TextUnformatted(T(TKEY("fall_speed_tooltip"), "Fall speed for standard Skyrim rain. The active weather's gravity scales this value; Force Rain uses it directly."));
 		ImGui::SliderFloat(T(TKEY("near_cutoff_distance"), "Near Cutoff Distance"), &settings.RainNearCutoffDistance, 0.0f, 64.0f, "%.1f units");
 		if (auto _tt = Util::HoverTooltipWrapper())
 			ImGui::TextUnformatted(T(TKEY("near_cutoff_distance_tooltip"), "Hard-discards rain streaks that come within this distance of the head. There is no opacity fade; zero disables the cutoff."));
@@ -862,7 +1034,7 @@ void RainRendering::DrawSettings()
 	if (ImGui::TreeNodeEx(T(TKEY("advanced_developer"), "Advanced & Developer"))) {
 		DrawFlagCheckbox(T(TKEY("roof_occlusion"), "Skylighting Roof Occlusion"), settings.EnableRainRoofOcclusion);
 		if (auto _tt = Util::HoverTooltipWrapper())
-			ImGui::TextUnformatted(T(TKEY("roof_occlusion_tooltip"), "Uses Skylighting's existing world-space probe field to fade rain beneath enclosing geometry. Toggle for GPU A/B profiling."));
+			ImGui::TextUnformatted(T(TKEY("roof_occlusion_tooltip"), "Uses a rain-specific solid-cover field to block rain beneath enclosing geometry without treating animated tree canopies as roofs. Toggle for GPU A/B profiling."));
 		if (!globals::features::skylighting.loaded)
 			ImGui::TextDisabled("%s", T(TKEY("roof_occlusion_unavailable"), "Skylighting is unavailable; roof occlusion falls back to scene depth only."));
 		ImGui::BeginDisabled(!settings.EnableRainRoofOcclusion);
@@ -870,6 +1042,13 @@ void RainRendering::DrawSettings()
 			NormalizeSettings();
 		ImGui::SliderFloat(T(TKEY("roof_occlusion_fade_end"), "Roof Fade End"), &settings.RainRoofOcclusionFadeEnd,
 			settings.RainRoofOcclusionFadeStart + 0.01f, 1.0f, "%.2f");
+		DrawFlagCheckbox(T(TKEY("canopy_response"), "Tree Canopy Response"), settings.EnableRainCanopyResponse);
+		if (auto _tt = Util::HoverTooltipWrapper())
+			ImGui::TextUnformatted(T(TKEY("canopy_response_tooltip"), "Classifies animated tree cover separately from solid roofs. Canopies thin and shorten rain while buildings continue to block it."));
+		ImGui::BeginDisabled(!settings.EnableRainCanopyResponse);
+		ImGui::SliderFloat(T(TKEY("canopy_density"), "Canopy Rain Density"), &settings.RainCanopyDensityScale, 0.0f, 1.0f, "%.2f");
+		ImGui::SliderFloat(T(TKEY("canopy_speed"), "Canopy Fall Speed"), &settings.RainCanopySpeedScale, 0.5f, 1.0f, "%.2f");
+		ImGui::EndDisabled();
 		ImGui::EndDisabled();
 
 		const char* debugModes[] = {
@@ -893,50 +1072,82 @@ void RainRendering::DrawSettings()
 	NormalizeSettings();
 }
 
-float RainRendering::GetWeatherIntensity() const
+RainRendering::WeatherRainState RainRendering::GetWeatherRainState() const
 {
+	WeatherRainState state{};
 	const auto* sky = globals::game::sky;
 	if (!sky || sky->mode.get() != RE::Sky::Mode::kFull || Util::IsInterior() ||
 		sky->flags.any(RE::Sky::Flags::kHideSky) || !sky->precip)
-		return 0.0f;
+		return state;
 
-	const auto getWeatherIntensity = [](const RE::TESWeather* a_weather) {
-		if (!a_weather || !a_weather->precipitationData ||
-			!a_weather->data.flags.any(RE::TESWeather::WeatherDataFlag::kRainy))
-			return 0.0f;
+	struct WeatherSample
+	{
+		float intensity = 0.0f;
+		float gravity = kReferenceRainGravity;
+	};
+	const auto getWeatherSample = [](const RE::TESWeather* a_weather) {
+		WeatherSample sample{};
+		if (!a_weather || !a_weather->precipitationData)
+			return sample;
+		const auto particleType = a_weather->precipitationData->GetSettingValue(
+																  RE::BGSShaderParticleGeometryData::DataID::kParticleType)
+		                              .i;
+		if (particleType != static_cast<uint32_t>(RE::BGSShaderParticleGeometryData::ParticleType::kRain))
+			return sample;
 
 		const float density = a_weather->precipitationData->GetSettingValue(
 															  RE::BGSShaderParticleGeometryData::DataID::kParticleDensity)
 		                          .f;
-		return std::isfinite(density) && density > 0.0f ?
-		           std::min(1.0f, density / kMaximumRainParticleDensity) :
-		           0.0f;
+		if (std::isfinite(density) && density > 0.0f)
+			sample.intensity = std::min(1.0f, density / kMaximumRainParticleDensity);
+		const float gravity = a_weather->precipitationData->GetSettingValue(
+															  RE::BGSShaderParticleGeometryData::DataID::kGravityVelocity)
+		                          .f;
+		if (std::isfinite(gravity) && gravity > 0.0f)
+			sample.gravity = gravity;
+		return sample;
 	};
 
+	const WeatherSample currentSample = getWeatherSample(sky->currentWeather);
 	float currentIntensity = 0.0f;
-	if (sky->currentWeather &&
-		sky->currentWeather->data.flags.any(RE::TESWeather::WeatherDataFlag::kRainy)) {
+	if (sky->currentWeather && currentSample.intensity > 0.0f) {
 		const float fadeStart = sky->currentWeather->data.precipitationBeginFadeIn * (1.0f / 255.0f);
-		currentIntensity = getWeatherIntensity(sky->currentWeather) *
+		currentIntensity = currentSample.intensity *
 		                   LinearStep(fadeStart, 1.0f, sky->currentWeatherPct);
 	}
 
+	const WeatherSample previousSample = getWeatherSample(sky->lastWeather);
 	float previousIntensity = 0.0f;
-	if (sky->lastWeather &&
-		sky->lastWeather->data.flags.any(RE::TESWeather::WeatherDataFlag::kRainy)) {
+	if (sky->lastWeather && previousSample.intensity > 0.0f) {
 		const float fadeEnd = sky->lastWeather->data.precipitationEndFadeOut * (1.0f / 255.0f);
-		previousIntensity = getWeatherIntensity(sky->lastWeather) *
+		previousIntensity = previousSample.intensity *
 		                    (1.0f - LinearStep(0.0f, fadeEnd, sky->currentWeatherPct));
 	}
 
-	const float intensity = currentIntensity + previousIntensity;
-	return std::isfinite(intensity) ? std::clamp(intensity, 0.0f, 1.0f) : 0.0f;
+	const float combinedIntensity = currentIntensity + previousIntensity;
+	if (!std::isfinite(combinedIntensity) || combinedIntensity <= 0.0f)
+		return state;
+	state.intensity = std::clamp(combinedIntensity, 0.0f, 1.0f);
+	const float blendedGravity =
+		(currentSample.gravity * currentIntensity + previousSample.gravity * previousIntensity) /
+		combinedIntensity;
+	state.fallSpeedScale = std::clamp(blendedGravity / kReferenceRainGravity, 0.25f, 4.0f);
+	return state;
+}
+
+float RainRendering::GetWeatherIntensity() const
+{
+	return GetWeatherRainState().intensity;
 }
 
 bool RainRendering::ReplacesVanillaRain(const RE::TESWeather* a_weather) const
 {
-	return loaded && renderPathReady && settings.EnableRainRendering && a_weather &&
-	       a_weather->data.flags.any(RE::TESWeather::WeatherDataFlag::kRainy);
+	if (!loaded || !settings.EnableRainRendering || !a_weather || !a_weather->precipitationData)
+		return false;
+	const auto particleType = a_weather->precipitationData->GetSettingValue(
+															  RE::BGSShaderParticleGeometryData::DataID::kParticleType)
+	                              .i;
+	return particleType == static_cast<uint32_t>(RE::BGSShaderParticleGeometryData::ParticleType::kRain);
 }
 
 float3 RainRendering::GetRainLightColor() const
@@ -1146,14 +1357,14 @@ void RainRendering::UpdateGlassyConstants(PerFrame& a_data, const D3D11_TEXTURE2
 	a_data.Glassy = { glassy ? 1.0f : 0.0f,
 		ClampFinite(settings.RainCoreDarkening, 0.0f, 0.8f, 0.35f),
 		ClampFinite(settings.RainEdgeHighlight, 0.0f, 4.0f, 1.5f),
-		ClampFinite(settings.RainRefractionStrength, 0.0f, globals::game::isVR ? kMaximumVRRefractionPixels : kMaximumRefractionPixels, 3.0f) };
+		ClampFinite(settings.RainRefractionStrength, 0.0f, globals::game::isVR ? kMaximumVRRefractionPixels : kMaximumRefractionPixels, 2.68f) };
 	a_data.Refraction = { ClampFinite(settings.RainRefractionDistance, 256.0f, 6000.0f, 2400.0f),
 		a_hasSceneColor ? 1.0f : 0.0f,
 		glassy ? ClampFinite(settings.RainStreakVariation, 0.0f, 1.0f, 0.45f) : 0.0f,
 		ClampFinite(settings.RainEnvironmentTransmission, 0.0f, 1.0f, 0.8f) };
 	a_data.ScreenSize = { a_size.x, a_size.y, 1.0f / a_description.Width, 1.0f / a_description.Height };
 	a_data.TexturedRain = { glassy && settings.EnableTexturedRain && rainTextureSRV ? 1.0f : 0.0f,
-		ClampFinite(settings.RainTextureNormalStrength, 0.0f, 2.0f, 1.0f),
+		ClampFinite(settings.RainTextureNormalStrength, 0.0f, 2.0f, 2.0f),
 		ClampFinite(settings.RainTextureReflectionStrength, 0.0f, 2.0f, 1.0f), refractionSampler && GetRainEnvironment() ? 1.0f : 0.0f };
 	a_data.RainTextureShape = { rainTextureSize.x, rainTextureSize.y,
 		ClampFinite(settings.RainTextureUVWidth, 0.1f, 1.0f, 1.0f), 0.0f };
@@ -1168,13 +1379,32 @@ void RainRendering::UpdateGlassyConstants(PerFrame& a_data, const D3D11_TEXTURE2
 	}
 }
 
+void RainRendering::DrawBeforeWater()
+{
+	const uint32_t frame = globals::state->frameCount;
+	const bool waterWasRecentlyBlended =
+		lastWaterBlendFrame != UINT32_MAX && frame - lastWaterBlendFrame <= 1u;
+	if (!waterWasRecentlyBlended)
+		DrawRain();
+}
+
+void RainRendering::DrawAfterWater()
+{
+	lastWaterBlendFrame = globals::state->frameCount;
+	DrawRain();
+}
+
 void RainRendering::DrawRain()
 {
+	const uint32_t frame = globals::state->frameCount;
+	if (lastDrawFrame == frame)
+		return;
+
 	if (!settings.EnableRainRendering || globals::state->IsFullScreenMenuOpen())
 		return;
 
-	const float weatherIntensity = settings.ForceRainRendering ? 1.0f : GetWeatherIntensity();
-	if (weatherIntensity <= 0.0f)
+	const WeatherRainState weather = settings.ForceRainRendering ? WeatherRainState{ 1.0f, 1.0f } : GetWeatherRainState();
+	if (weather.intensity <= 0.0f)
 		return;
 
 	auto* renderer = globals::game::renderer;
@@ -1184,7 +1414,9 @@ void RainRendering::DrawRain()
 		return;
 	auto& mainTarget = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMAIN];
 	auto& mainDepth = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kMAIN];
-	auto* depthResource = mainDepth.depthSRV;
+	auto& stableWorldDepth =
+		renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kPOST_ZPREPASS_COPY];
+	auto* depthResource = stableWorldDepth.depthSRV ? stableWorldDepth.depthSRV : mainDepth.depthSRV;
 	if (!mainTarget.texture || !mainTarget.RTV || !depthResource)
 		return;
 	D3D11_TEXTURE2D_DESC mainDescription{};
@@ -1200,6 +1432,7 @@ void RainRendering::DrawRain()
 		return;
 	}
 	renderPathReady = true;
+	lastDrawFrame = frame;
 	const bool drawDistantRain = settings.EnableDistantRain && settings.RainDebugMode == 0 &&
 	                             EnsureDistantRainShaders();
 
@@ -1226,21 +1459,21 @@ void RainRendering::DrawRain()
 		ClampFinite(settings.RainDensity, 0.0f, 2.0f, 0.72f)
 	};
 	data.WeatherFallDepth = {
-		weatherIntensity,
-		ClampFinite(settings.RainFallSpeed, 100.0f, 10000.0f, 2600.0f),
+		weather.intensity,
+		ClampFinite(settings.RainFallSpeed, 100.0f, 10000.0f, 2600.0f) * weather.fallSpeedScale,
 		0.0f,
 		ClampFinite(settings.RainIntersectionFadeDistance, 1.0f, 1000.0f, 96.0f)
 	};
 	data.Streak = {
 		ClampFinite(settings.RainStreakLength, 1.0f, 1000.0f, 80.0f),
 		ClampFinite(settings.RainVelocityStretch, 0.0f, 1.0f, 0.075f),
-		ClampFinite(settings.RainStreakWidth, 0.05f, 20.0f, 1.6f),
+		ClampFinite(settings.RainStreakWidth, 0.05f, 20.0f, 5.18f),
 		ClampFinite(settings.RainOpacity, 0.0f, 1.0f, 0.48f)
 	};
 	data.Appearance = {
 		ClampFinite(settings.RainBrightness, 0.0f, 8.0f, 1.15f),
-		ClampFinite(settings.RainLightingResponse, 0.0f, 1.0f, 0.65f),
-		ClampFinite(settings.RainMinimumVisibility, 0.0f, 1.0f, 0.20f),
+		ClampFinite(settings.RainLightingResponse, 0.0f, 1.0f, 0.50f),
+		ClampFinite(settings.RainMinimumVisibility, 0.0f, 1.0f, 0.01f),
 		ClampFinite(settings.RainNearCutoffDistance, 0.0f, 64.0f, 4.0f)
 	};
 	data.DistanceNoise = {
@@ -1274,6 +1507,10 @@ void RainRendering::DrawRain()
 	const auto& skylighting = globals::features::skylighting;
 	const bool hasRoofOcclusion = settings.EnableRainRoofOcclusion && skylighting.loaded &&
 	                              skylighting.texProbeArray && skylighting.texProbeArray->srv.get();
+	const bool hasCanopyClassification = settings.EnableRainCanopyResponse && hasRoofOcclusion &&
+	                                     skylighting.texOcclusion && skylighting.texOcclusion->srv.get() &&
+	                                     skylighting.comparisonSampler && canopyOcclusionCS && solidCoverOcclusion &&
+	                                     canopyClassification && canopyAccumulation;
 	const float roofFadeStart = ClampFinite(settings.RainRoofOcclusionFadeStart, 0.0f, 0.99f, 0.20f);
 	const float roofFadeEnd = std::max(
 		ClampFinite(settings.RainRoofOcclusionFadeEnd, 0.0f, 1.0f, 0.75f), roofFadeStart + 0.01f);
@@ -1285,6 +1522,12 @@ void RainRendering::DrawRain()
 		ClampFinite(settings.RainDistantStreakLength, 4.0f, 256.0f, 64.0f),
 		ClampFinite(settings.RainDistantStreakWidth, 0.2f, 8.0f, 3.0f)
 	};
+	data.Canopy = {
+		hasCanopyClassification ? 1.0f : 0.0f,
+		ClampFinite(settings.RainCanopyDensityScale, 0.0f, 1.0f, 0.35f),
+		ClampFinite(settings.RainCanopySpeedScale, 0.5f, 1.0f, 0.85f),
+		0.0f
+	};
 	UpdateGlassyConstants(data, mainDescription, dynamicSize, hasSceneColor);
 	perFrameCB->Update(data);
 
@@ -1295,6 +1538,8 @@ void RainRendering::DrawRain()
 	{
 		CS_GPU_PASS("RainRendering::UpdateDrops");
 		RainComputeState savedComputeState(context);
+		if (hasCanopyClassification)
+			UpdateCanopyOcclusion(context, sharedBuffer, frameBuffer);
 		context->CSSetShader(rainUpdateCS.get(), nullptr, 0);
 		context->CSSetConstantBuffers(0, 1, &rainBuffer);
 		context->CSSetConstantBuffers(5, 1, &sharedBuffer);
@@ -1311,6 +1556,11 @@ void RainRendering::DrawRain()
 		if (hasRoofOcclusion)
 			computeResources[3] = skylighting.texProbeArray->srv.get();
 		context->CSSetShaderResources(35, static_cast<UINT>(computeResources.size()), computeResources.data());
+		ID3D11ShaderResourceView* canopyResources[] = {
+			hasCanopyClassification ? canopyClassification->srv.get() : nullptr,
+			hasCanopyClassification ? canopyAccumulation->srv.get() : nullptr
+		};
+		context->CSSetShaderResources(41, static_cast<UINT>(std::size(canopyResources)), canopyResources);
 
 		std::array<ID3D11UnorderedAccessView*, 5> computeUAVs{};
 		computeUAVs[0] = dropBuffer->UAV();

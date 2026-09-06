@@ -178,6 +178,7 @@ private:
 	uint lastOcclusionRenderFrame = static_cast<uint>(-1);
 	std::optional<bool> previousInteriorState;
 	bool forceInteriorOcclusionTwoSided = false;
+	bool rainSolidCoverPass = false;
 	uint32_t savedRasterCullMode = 0;
 	uint32_t rasterCullOverrideDepth = 0;
 };

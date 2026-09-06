@@ -486,7 +486,7 @@ void Deferred::DeferredPasses()
 #endif
 
 	if (globals::features::rainRendering.loaded)
-		globals::features::rainRendering.DrawRain();
+		globals::features::rainRendering.DrawBeforeWater();
 }
 
 void Deferred::EndDeferred()
