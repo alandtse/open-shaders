@@ -6,10 +6,12 @@
 #include "GpuPass.h"
 #include "I18n/I18n.h"
 #include "Menu.h"
+#include "ScreenSpaceGI.h"
 #include "State.h"
 #include "Utils/D3D.h"
 #include "Utils/Game.h"
 #include "Utils/UI.h"
+#include "VR.h"
 
 #include <imgui.h>
 
@@ -68,6 +70,7 @@ void VRStereoOptimizations::SaveSettings(json& o_json)
 	o_json["DebugDepthMap"] = settings.debugDepthMap;
 	o_json["DirectionalOcclusionRatio"] = settings.directionalOcclusionRatio;
 	o_json["RepairFromEye0Depth"] = settings.repairFromEye0Depth;
+	o_json["ReclassifyAfterRepair"] = settings.reclassifyAfterRepair;
 }
 
 void VRStereoOptimizations::LoadSettings(json& o_json)
@@ -98,6 +101,7 @@ void VRStereoOptimizations::LoadSettings(json& o_json)
 		logger::info("[VR] ForwardOcclusionScale is obsolete; resetting DirectionalOcclusionRatio to default {}", settings.directionalOcclusionRatio);
 	loadClampedFloat("DirectionalOcclusionRatio", settings.directionalOcclusionRatio, 0.0f, 1.0f);
 	loadBool("RepairFromEye0Depth", settings.repairFromEye0Depth);
+	loadBool("ReclassifyAfterRepair", settings.reclassifyAfterRepair);
 
 	loadBool("UseEyeTracking", settings.useEyeTracking);
 	loadBool("DebugSkipMerge", settings.debugSkipMerge);
@@ -351,6 +355,9 @@ void VRStereoOptimizations::DrawSettings()
 	ImGui::Checkbox(T("feature.vr_stereo.repair_from_eye0_depth", "Repair From Left Eye Depth"), &settings.repairFromEye0Depth);
 	Util::AddTooltip(T("feature.vr_stereo.repair_from_eye0_depth_tooltip", "Restores objects the depth pre-pass skips, such as alpha-tested rocks and road edges, in the right eye from the left eye's final depth.\nLeave on; turn off only to compare."));
 
+	ImGui::Checkbox(T("feature.vr_stereo.reclassify_after_repair", "Reclassify After Repair"), &settings.reclassifyAfterRepair);
+	Util::AddTooltip(T("feature.vr_stereo.reclassify_after_repair_tooltip", "Re-runs the pixel classification on the finished depth so Screen Space GI reprojection and Stereo Blend see the restored objects.\nOnly runs when one of those is on."));
+
 	if (globals::state->IsDeveloperMode()) {
 		if (ImGui::TreeNode(T("feature.vr_stereo.debug", "Debug"))) {
 			ImGui::SliderFloat(T("feature.vr_stereo.full_blend_distance", "Full Blend Distance"), &settings.fullBlendDistance, 0.0f, 10000.0f, "%.0f");
@@ -416,10 +423,7 @@ void VRStereoOptimizations::DispatchStencil()
 	ZoneScoped;
 	CS_GPU_PASS("VRStereoOpt::Stencil");
 
-	auto context = globals::d3d::context;
-
 	UpdateConstantBuffer();
-	auto cbPtr = paramsCB->CB();
 	// Use the same depth source as the rest of the deferred pipeline.
 	// kMAIN.depthSRV is unpopulated at StartDeferred time (z-prepass has not written to it yet).
 	// GetCurrentSceneDepthSRV() returns TerrainBlending's blended depth when active, or
@@ -430,40 +434,7 @@ void VRStereoOptimizations::DispatchStencil()
 		return;
 	}
 
-	{
-		CS_GPU_PASS("StereoOpt::ModeClassify");
-
-		{
-			CS_GPU_PASS("StereoOpt::ModeClassifyBind");
-
-			ID3D11ShaderResourceView* srvs[1]{ depthSRV };
-			ID3D11UnorderedAccessView* uavs[1]{ texPerPixelMode->uav.get() };
-
-			context->CSSetConstantBuffers(1, 1, &cbPtr);
-			context->CSSetShaderResources(0, 1, srvs);
-			context->CSSetUnorderedAccessViews(0, 1, uavs, nullptr);
-			auto* activeStencilCS = (settings.debugDepthMap && stencilDebugDepthMapCS) ? stencilDebugDepthMapCS.get() : stencilCS.get();
-			context->CSSetShader(activeStencilCS, nullptr, 0);
-		}
-
-		{
-			CS_GPU_PASS("StereoOpt::ModeClassifyDispatch");
-
-			uint32_t fullWidth = texPerPixelMode->desc.Width;
-			uint32_t fullHeight = texPerPixelMode->desc.Height;
-			context->Dispatch((fullWidth + 7) / 8, (fullHeight + 7) / 8, 1);
-		}
-
-		// Cleanup CS bindings
-		ID3D11ShaderResourceView* nullSRV = nullptr;
-		ID3D11UnorderedAccessView* nullUAV = nullptr;
-		ID3D11Buffer* nullCB = nullptr;
-		context->CSSetShaderResources(0, 1, &nullSRV);
-		context->CSSetUnorderedAccessViews(0, 1, &nullUAV, nullptr);
-		context->CSSetConstantBuffers(1, 1, &nullCB);
-		context->CSSetShader(nullptr, nullptr, 0);
-	}
-
+	DispatchClassify(depthSRV);
 	classifiedThisFrame = true;
 
 	// Only stereoMode being on culls Eye 1; other consumers just read the mode texture above.
@@ -475,6 +446,62 @@ void VRStereoOptimizations::DispatchStencil()
 	} else {
 		stencilActive = false;
 	}
+}
+
+void VRStereoOptimizations::DispatchClassify(ID3D11ShaderResourceView* depthSRV)
+{
+	CS_GPU_PASS("StereoOpt::ModeClassify");
+
+	auto context = globals::d3d::context;
+	auto cbPtr = paramsCB->CB();
+
+	{
+		CS_GPU_PASS("StereoOpt::ModeClassifyBind");
+
+		ID3D11ShaderResourceView* srvs[1]{ depthSRV };
+		ID3D11UnorderedAccessView* uavs[1]{ texPerPixelMode->uav.get() };
+
+		context->CSSetConstantBuffers(1, 1, &cbPtr);
+		context->CSSetShaderResources(0, 1, srvs);
+		context->CSSetUnorderedAccessViews(0, 1, uavs, nullptr);
+		auto* activeStencilCS = (settings.debugDepthMap && stencilDebugDepthMapCS) ? stencilDebugDepthMapCS.get() : stencilCS.get();
+		context->CSSetShader(activeStencilCS, nullptr, 0);
+	}
+
+	{
+		CS_GPU_PASS("StereoOpt::ModeClassifyDispatch");
+
+		uint32_t fullWidth = texPerPixelMode->desc.Width;
+		uint32_t fullHeight = texPerPixelMode->desc.Height;
+		context->Dispatch((fullWidth + 7) / 8, (fullHeight + 7) / 8, 1);
+	}
+
+	// Cleanup CS bindings
+	ID3D11ShaderResourceView* nullSRV = nullptr;
+	ID3D11UnorderedAccessView* nullUAV = nullptr;
+	ID3D11Buffer* nullCB = nullptr;
+	context->CSSetShaderResources(0, 1, &nullSRV);
+	context->CSSetUnorderedAccessViews(0, 1, &nullUAV, nullptr);
+	context->CSSetConstantBuffers(1, 1, &nullCB);
+	context->CSSetShader(nullptr, nullptr, 0);
+}
+
+void VRStereoOptimizations::ReclassifyFromFinalDepth()
+{
+	if (!settings.reclassifyAfterRepair || !mainDepthSRV || settings.debugDepthMap)
+		return;
+
+	const auto& ssgi = globals::features::screenSpaceGI;
+	const bool lateConsumerActive = globals::features::vr.settings.EnableStereoBlend ||
+	                                (ssgi.loaded && ssgi.settings.UseStereoReproject);
+	if (!lateConsumerActive)
+		return;
+
+	ZoneScoped;
+	CS_GPU_PASS("VRStereoOpt::Reclassify");
+
+	RenderTargetUnbindScope rtScope(globals::d3d::context);
+	DispatchClassify(mainDepthSRV.get());
 }
 
 void VRStereoOptimizations::SetEye1Viewport()
@@ -617,6 +644,7 @@ void VRStereoOptimizations::RepairCulledEye1()
 	DispatchDepthScatter();
 	ExecuteDepthFillPass();
 	DispatchGBufferFill();
+	ReclassifyFromFinalDepth();
 }
 
 void VRStereoOptimizations::ExecuteDepthFillPass()
