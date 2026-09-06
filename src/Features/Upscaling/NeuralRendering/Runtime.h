@@ -12,13 +12,21 @@ namespace NeuralRendering
 {
 	struct Tuning
 	{
-		float intensity = 0.8f;
-		float localToneStrength = 0.75f;
-		float localStructureStrength = 0.9f;
-		float skinStructureStrength = 0.9f;
-		std::uint32_t style = 3;
+		float intensity = 1.70f;
+		float localToneStrength = 1.70f;
+		float localStructureStrength = 1.70f;
+		float skinStructureStrength = -1.0f;
+		std::uint32_t style = 0;
 		bool useAutoMask = true;
 		bool uiCorrection = false;
+		std::uint32_t modelResolutionPercent = 100;
+		// 0 = current bounded full-resolution resolve; 1 = exact-area input plus
+		// conservative matched-residual composition for reduced model resolutions.
+		std::uint32_t modelResolveMode = 0;
+		// Experimental screenshot/benchmark cascade: 0 = single pass, 1 = 2x,
+		// 2 = 3x sequential Feature 18 evaluations. Each stage has separate
+		// resources/history; the renderer gates this away from cropped VR paths.
+		std::uint32_t multiPass = 0;
 	};
 
 	enum class RuntimeStatus
@@ -40,6 +48,7 @@ namespace NeuralRendering
 		bool Execute(ID3D12GraphicsCommandList* commandList, std::uint32_t slot,
 			ID3D12Resource* color, ID3D12Resource* depth, ID3D12Resource* motionVectors, ID3D12Resource* output,
 			std::uint32_t inputWidth, std::uint32_t inputHeight, std::uint32_t outputWidth, std::uint32_t outputHeight,
+			std::uint32_t guideWidth, std::uint32_t guideHeight,
 			float motionVectorScaleX, float motionVectorScaleY, const Tuning& tuning, bool reset);
 		void ResetFeature(std::uint32_t slot);
 		void ResetFeatures();
@@ -54,14 +63,15 @@ namespace NeuralRendering
 		[[nodiscard]] std::uint64_t SuccessfulFrames() const { return successfulFrames_; }
 
 	private:
+		static constexpr std::uint32_t kFeatureSlotCount = 6;  // two eyes x three cascade stages
 		Runtime() = default;
 		void* module_ = nullptr;
 		void* parameters_ = nullptr;
-		void* featureHandles_[2]{};
-		std::uint32_t featureInputWidth_[2]{};
-		std::uint32_t featureInputHeight_[2]{};
-		std::uint32_t featureOutputWidth_[2]{};
-		std::uint32_t featureOutputHeight_[2]{};
+		void* featureHandles_[kFeatureSlotCount]{};
+		std::uint32_t featureInputWidth_[kFeatureSlotCount]{};
+		std::uint32_t featureInputHeight_[kFeatureSlotCount]{};
+		std::uint32_t featureOutputWidth_[kFeatureSlotCount]{};
+		std::uint32_t featureOutputHeight_[kFeatureSlotCount]{};
 		ID3D12Device* device_ = nullptr;
 		RuntimeStatus status_ = RuntimeStatus::NotProbed;
 		std::filesystem::path path_;

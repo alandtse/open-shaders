@@ -286,9 +286,10 @@ namespace NeuralRendering
 	bool Runtime::Execute(ID3D12GraphicsCommandList* commandList, std::uint32_t slot,
 		ID3D12Resource* color, ID3D12Resource* depth, ID3D12Resource* motionVectors, ID3D12Resource* output,
 		std::uint32_t inputWidth, std::uint32_t inputHeight, std::uint32_t outputWidth, std::uint32_t outputHeight,
+		std::uint32_t guideWidth, std::uint32_t guideHeight,
 		float motionVectorScaleX, float motionVectorScaleY, const Tuning& tuning, bool reset)
 	{
-		if (status_ != RuntimeStatus::Initialized || !commandList || slot >= 2 || !color || !depth || !motionVectors || !output)
+		if (status_ != RuntimeStatus::Initialized || !commandList || slot >= kFeatureSlotCount || !color || !depth || !motionVectors || !output)
 			return false;
 		auto* parameters = static_cast<NVSDK_NGX_Parameter*>(parameters_);
 		auto create = reinterpret_cast<CreateFeature>(GetProcAddress(static_cast<HMODULE>(module_), "NVSDK_NGX_D3D12_CreateFeature"));
@@ -348,12 +349,12 @@ namespace NeuralRendering
 		parameters->Set("DLSSNR.ColorSubrectHeight", outputHeight);
 		parameters->Set("DLSSNR.DepthSubrectBaseX", 0u);
 		parameters->Set("DLSSNR.DepthSubrectBaseY", 0u);
-		parameters->Set("DLSSNR.DepthSubrectWidth", inputWidth);
-		parameters->Set("DLSSNR.DepthSubrectHeight", inputHeight);
+		parameters->Set("DLSSNR.DepthSubrectWidth", guideWidth);
+		parameters->Set("DLSSNR.DepthSubrectHeight", guideHeight);
 		parameters->Set("DLSSNR.MVecSubrectBaseX", 0u);
 		parameters->Set("DLSSNR.MVecSubrectBaseY", 0u);
-		parameters->Set("DLSSNR.MVecSubrectWidth", inputWidth);
-		parameters->Set("DLSSNR.MVecSubrectHeight", inputHeight);
+		parameters->Set("DLSSNR.MVecSubrectWidth", guideWidth);
+		parameters->Set("DLSSNR.MVecSubrectHeight", guideHeight);
 		parameters->Set("DLSSNR.OutputSubrectBaseX", 0u);
 		parameters->Set("DLSSNR.OutputSubrectBaseY", 0u);
 		parameters->Set("DLSSNR.OutputSubrectWidth", outputWidth);
@@ -382,7 +383,7 @@ namespace NeuralRendering
 
 	void Runtime::ResetFeature(std::uint32_t slot)
 	{
-		if (!module_ || slot >= 2)
+		if (!module_ || slot >= kFeatureSlotCount)
 			return;
 		SignedRuntimePathScope scope(static_cast<HMODULE>(module_), path_.parent_path() / L"nvngx.dll");
 		auto release = reinterpret_cast<ReleaseFeature>(GetProcAddress(static_cast<HMODULE>(module_), "NVSDK_NGX_D3D12_ReleaseFeature"));
@@ -399,7 +400,7 @@ namespace NeuralRendering
 
 	void Runtime::ResetFeatures()
 	{
-		for (std::uint32_t slot = 0; slot < 2; ++slot)
+		for (std::uint32_t slot = 0; slot < kFeatureSlotCount; ++slot)
 			ResetFeature(slot);
 		successfulFrames_ = 0;
 	}

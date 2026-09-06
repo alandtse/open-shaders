@@ -9,6 +9,7 @@ struct ID3D11Device;
 struct ID3D11DeviceContext;
 struct ID3D11Resource;
 struct ID3D11ShaderResourceView;
+struct ID3D11UnorderedAccessView;
 
 namespace NeuralRendering
 {
@@ -41,7 +42,14 @@ namespace NeuralRendering
 		bool ApplyStereo(ID3D11Device* device, ID3D11DeviceContext* context, ID3D11Resource* color,
 			const std::array<StereoEyeInput, 2>& eyes,
 			std::uint32_t guideWidth, std::uint32_t guideHeight,
-			std::uint32_t colorWidth, std::uint32_t colorHeight, const Tuning& tuning);
+			std::uint32_t colorWidth, std::uint32_t colorHeight, const Tuning& tuning,
+			// Optional separate writeback target. The input remains `color`; this is
+			// needed when a cropped NR result must be feathered over its background.
+			ID3D11Resource* destination = nullptr,
+			ID3D11UnorderedAccessView* destinationUAV = nullptr,
+			bool blendSubrect = false);
+		/** @brief Drops cached standalone neural-rendering shaders so they recompile on the next frame. */
+		void ClearShaderCache();
 		void Reset();
 		void ResetHistory();
 

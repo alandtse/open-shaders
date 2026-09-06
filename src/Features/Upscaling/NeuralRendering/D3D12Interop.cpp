@@ -104,6 +104,12 @@ namespace NeuralRendering
 			return RecordFailure(result);
 		}
 		Util::SetResourceName(replacement.resource11.Get(), name);
+		result = device11_->CreateShaderResourceView(replacement.resource11.Get(), nullptr, &replacement.srv11);
+		if (FAILED(result)) {
+			lastOperation_ = "D3D11CreateShaderResourceView";
+			return RecordFailure(result);
+		}
+		Util::SetResourceName(replacement.srv11.Get(), "%s SRV", name);
 		result = device11_->CreateUnorderedAccessView(replacement.resource11.Get(), nullptr, &replacement.uav11);
 		if (FAILED(result)) {
 			lastOperation_ = "D3D11CreateUnorderedAccessView";

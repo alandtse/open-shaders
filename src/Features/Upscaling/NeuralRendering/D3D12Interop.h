@@ -13,6 +13,7 @@ namespace NeuralRendering
 	struct SharedTexture
 	{
 		Microsoft::WRL::ComPtr<ID3D11Texture2D> resource11;
+		Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> srv11;
 		Microsoft::WRL::ComPtr<ID3D11UnorderedAccessView> uav11;
 		Microsoft::WRL::ComPtr<ID3D12Resource> resource12;
 		D3D11_TEXTURE2D_DESC desc{};

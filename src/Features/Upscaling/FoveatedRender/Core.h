@@ -50,6 +50,10 @@ namespace FoveatedRenderImpl
 
 		// Release all GPU resources owned by Core.
 		static void ClearResources();
+		// Drop crop-sensitive temporal state even when the replacement resources
+		// keep the same dimensions. A moved subrect must not inherit old guides
+		// or DLSSNR history from the previous eye region.
+		static void InvalidateTemporalState();
 		static void ClearShaderCache();
 
 		// ── Own VR resources (independent from Upscaling) ──
@@ -83,6 +87,10 @@ namespace FoveatedRenderImpl
 		static inline winrt::com_ptr<ID3D11ComputeShader> vrSubrectStretchCS;
 		static inline winrt::com_ptr<ID3D11Buffer> vrSubrectStretchCB;
 		static inline winrt::com_ptr<ID3D11SamplerState> vrSubrectStretchSampler;
+
+		// Native depth-stencil -> typed per-eye R32_FLOAT conversion
+		static inline winrt::com_ptr<ID3D11ComputeShader> vrDepthCopyCS;
+		static inline winrt::com_ptr<ID3D11Buffer> vrDepthCopyCB;
 
 		// Periphery temporal smooth (ping-pong history at render-res SBS)
 		static inline eastl::unique_ptr<Texture2D> vrTemporalHistory[2];   // SRV+UAV ping-pong
