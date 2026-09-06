@@ -52,6 +52,8 @@ struct VRStereoOptimizations
 	// CONSTANTS
 	//=============================================================================
 
+	static constexpr uint32_t kMaxRepairSearchRadius = 256;
+
 	//=============================================================================
 	// PUBLIC METHODS
 	//=============================================================================
@@ -83,6 +85,9 @@ struct VRStereoOptimizations
 		/// Eye 0 must be within this fraction of Eye 1's depth to count as a genuine occluding
 		/// edge (isDisoccluded when eye0Depth < eye1Depth * ratio); 0 = disabled.
 		float directionalOcclusionRatio = 0.9f;
+		/// Eye 0 row half-width (px) searched for the surface a culled Eye 1 pixel really sees when
+		/// Eye 0's final depth disagrees with the classification depth; 0 = off.
+		uint32_t repairSearchRadius = 64;
 		// reserved for foveated reprojection — see alandtse/open-shaders#143
 		float foveatedRegionRadius = 0.3f;
 		float foveatedRegionCenterX = 0.5f;
@@ -117,7 +122,7 @@ struct VRStereoOptimizations
 		uint32_t StereoModeValue;  // Cast of StereoMode enum (0=Off, 1=Enable)
 		float DisocclusionThreshold;
 		float EdgeDepthThreshold;
-		uint32_t _pad0;
+		uint32_t RepairSearchRadius;
 
 		float _pad1[2];
 		float FoveatedRadius;  // reserved for foveated reprojection — see alandtse/open-shaders#143
@@ -179,8 +184,11 @@ struct VRStereoOptimizations
 		       stencilWriteVS &&
 		       stencilWritePS &&
 		       depthFillPS &&
+		       eye0DepthCopyPS &&
 		       gBufferFillCS &&
 		       texPerPixelMode &&
+		       texEye0Depth &&
+		       mainDepthSRV &&
 		       paramsCB &&
 		       stencilWriteDSS &&
 		       stencilWriteRS &&
@@ -230,15 +238,16 @@ private:
 	void DeactivateStencil();
 
 	/// Fullscreen pass (stencil EQUAL ref=1) writing SV_Depth from the classification depth
-	/// source, restoring depth for culled Eye 1 pixels (RepairCulledEye1 step 2).
+	/// source, or from the Eye 0 surface found when Eye 0's final depth disagrees with it,
+	/// restoring depth for culled Eye 1 pixels (RepairCulledEye1 step 2).
 	void ExecuteDepthFillPass();
 
 	/// Reproject the G-buffer from Eye 0 into the culled Eye 1 pixels so downstream passes
 	/// light Eye 1 natively (RepairCulledEye1 step 3).
 	void DispatchGBufferFill();
 
-	/// Sets the rasterizer viewport to the Eye 1 (right) half of the classified SBS area (frameDim).
-	void SetEye1Viewport();
+	/// Sets the rasterizer viewport to one eye's half of the classified SBS area (frameDim).
+	void SetEyeViewport(uint32_t eyeIndex);
 
 	/// Compiles all shaders used by this feature
 	void CompileShaders();
@@ -251,7 +260,9 @@ private:
 	//=============================================================================
 
 	eastl::unique_ptr<ConstantBuffer> paramsCB;
-	eastl::unique_ptr<Texture2D> texPerPixelMode;  ///< R8_UINT classification texture (full SBS resolution)
+	eastl::unique_ptr<Texture2D> texPerPixelMode;           ///< R8_UINT classification texture (full SBS resolution)
+	eastl::unique_ptr<Texture2D> texEye0Depth;              ///< R32 copy of Eye 0's final depth (Eye 0 half width) read by the depth-fill search
+	winrt::com_ptr<ID3D11ShaderResourceView> mainDepthSRV;  ///< kMAIN depth SRV of our own (the engine's pointer is swapped by TerrainBlending)
 
 	winrt::com_ptr<ID3D11DepthStencilState> stencilWriteDSS;
 	winrt::com_ptr<ID3D11DepthStencilState> depthFillDSS;
@@ -263,6 +274,7 @@ private:
 	winrt::com_ptr<ID3D11VertexShader> stencilWriteVS;
 	winrt::com_ptr<ID3D11PixelShader> stencilWritePS;
 	winrt::com_ptr<ID3D11PixelShader> depthFillPS;
+	winrt::com_ptr<ID3D11PixelShader> eye0DepthCopyPS;
 
 	/// Cache of original DSS -> modified DSS with stencil NOT_EQUAL enforcement
 	std::unordered_map<ID3D11DepthStencilState*, winrt::com_ptr<ID3D11DepthStencilState>> dssCache;
