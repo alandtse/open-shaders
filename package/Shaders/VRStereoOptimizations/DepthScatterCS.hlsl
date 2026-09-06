@@ -18,7 +18,7 @@ RWTexture2D<uint> ScatterRW : register(u0);    // asuint(nearest Eye 1 depth) pe
 		return;
 
 	float depth = DepthTexture[dtid];
-	if (depth < EPSILON_DEPTH_SKY || depth >= 1.0)
+	if (depth < EPSILON_DEPTH_SKY || depth >= DEPTH_UNRENDERED)
 		return;
 
 	float2 monoUV = Stereo::ConvertFromStereoUV((float2(dtid) + 0.5) / FrameDim, 0);
@@ -28,11 +28,12 @@ RWTexture2D<uint> ScatterRW : register(u0);    // asuint(nearest Eye 1 depth) pe
 
 	// Raw depth grows with distance, so the uint min of the float bits keeps the nearest surface.
 	// Both columns around the sub-texel landing point are written so foreshortening leaves no holes.
+	static const int kSplatColumns = 2;
 	float x = otherEyeUV.x * eyeWidth;
 	int x0 = int(floor(x - 0.5));
 	uint y = clamp(uint(otherEyeUV.y * FrameDim.y), 0u, uint(FrameDim.y) - 1);
 	uint bits = asuint(saturate(otherEyeUV.z));
-	[unroll] for (int i = 0; i < 2; i++)
+	[unroll] for (int i = 0; i < kSplatColumns; i++)
 	{
 		int xi = x0 + i;
 		if (xi >= 0 && xi < (int)eyeWidth)

@@ -34,7 +34,7 @@ float main(PS_INPUT input) : SV_Depth
 
 	const uint eyeWidth = uint(FrameDim.x) / 2;
 	uint bits = ScatterTexture[uint2(px.x - eyeWidth, px.y)];
-	if (bits == 0xFFFFFFFFu)
+	if (bits == SCATTER_DEPTH_EMPTY)
 		return depth;
 
 	// Below the classifier's own threshold the difference is the scatter's texel sampling, not

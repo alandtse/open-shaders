@@ -677,7 +677,7 @@ void VRStereoOptimizations::DispatchDepthScatter()
 	auto context = globals::d3d::context;
 	RenderTargetUnbindScope rtScope(context);
 
-	const UINT farthest[4] = { 0xFFFFFFFFu, 0xFFFFFFFFu, 0xFFFFFFFFu, 0xFFFFFFFFu };
+	const UINT farthest[4] = { kScatterDepthEmpty, kScatterDepthEmpty, kScatterDepthEmpty, kScatterDepthEmpty };
 	context->ClearUnorderedAccessViewUint(texScatterDepth->uav.get(), farthest);
 
 	auto cbPtr = paramsCB->CB();
