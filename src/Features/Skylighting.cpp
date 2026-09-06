@@ -161,13 +161,7 @@ void Skylighting::SetupResources()
 
 void Skylighting::ClearShaderCache()
 {
-	static const std::vector<winrt::com_ptr<ID3D11ComputeShader>*> shaderPtrs = {
-		&probeUpdateCompute,
-		&occlusionOnlyProbeUpdateCompute
-	};
-
-	for (auto shader : shaderPtrs)
-		*shader = nullptr;
+	Util::ClearShaders<ID3D11ComputeShader>({ probeUpdateCompute, occlusionOnlyProbeUpdateCompute });
 
 	CompileComputeShaders();
 }
