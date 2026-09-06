@@ -12,7 +12,7 @@ cbuffer VRStereoOptParams : register(b1)
 	uint StereoModeValue;         // 0=Off, 1=Enable
 	float DisocclusionThreshold;  // Depth difference threshold for disocclusion detection
 	float EdgeDepthThreshold;     // Relative depth difference threshold for edge detection
-	uint RepairSearchRadius;      // Eye 0 row half-width (px) searched when the prepass depth disagrees with Eye 0's final depth; 0 = off
+	uint RepairFromEye0Depth;     // 1 = culled Eye 1 pixels take Eye 0's warped final depth when nearer than the prepass depth
 
 	float2 _pad1;
 	float FoveatedRadius;             // reserved for foveated reprojection — see alandtse/open-shaders#143
