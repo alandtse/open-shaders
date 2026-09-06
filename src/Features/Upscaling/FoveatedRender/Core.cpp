@@ -1,10 +1,10 @@
 #include "Core.h"
 #include "Ops.h"
 
+#include "../../../GpuPass.h"
 #include "../../../State.h"
 #include "../../../Util.h"
 #include "../../../Utils/D3D.h"
-#include "../../../GpuPass.h"
 #include "../../Upscaling.h"
 #include "../FoveatedRender.h"
 #include "../NeuralRendering/Integration.h"
@@ -38,7 +38,7 @@ namespace FoveatedRenderImpl::Ops
 			// resource. Reuse it instead of guessing the view format.
 			if (auto* renderer = globals::game::renderer) {
 				auto& depth = renderer->GetDepthStencilData()
-					.depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kMAIN];
+				                  .depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kMAIN];
 				if (depth.texture == source && depth.depthSRV)
 					return depth.depthSRV;
 			}
@@ -428,7 +428,7 @@ namespace FoveatedRenderImpl::Ops
 
 			context->CopySubresourceRegion(Core::vrIntermediateColorIn[i]->resource.get(), 0, 0, 0, 0, colorSrc, 0, &srcBox);
 			if (!CopyDepthRegionToTexture(depthSrc, nullptr, Core::vrIntermediateDepth[i]->uav.get(),
-				offsetXIn, 0, eyeWidthIn, eyeHeightIn)) {
+					offsetXIn, 0, eyeWidthIn, eyeHeightIn)) {
 				logger::error("[FOVEATED] Failed to convert native depth for eye {}", i);
 				return false;
 			}

@@ -1,6 +1,5 @@
 #include "Integration.h"
 
-#include "Renderer.h"
 #include "Features/HDRDisplay.h"
 #include "Features/Upscaling.h"
 #include "Features/Upscaling/FoveatedRender/Bridge.h"
@@ -8,13 +7,14 @@
 #include "Features/Upscaling/PerfMode.h"
 #include "Globals.h"
 #include "GpuPass.h"
+#include "Renderer.h"
 #include "State.h"
 
 #include "RE/C/Console.h"
 
+#include <algorithm>
 #include <array>
 #include <atomic>
-#include <algorithm>
 
 namespace NeuralRendering
 {
@@ -148,7 +148,7 @@ namespace NeuralRendering
 		bool IsFullEyeStereo(const FoveatedRender& foveated)
 		{
 			return foveated.subrectController.GetUV().IsFullEye() &&
-				foveated.subrectController.GetRightEyeUV().IsFullEye();
+			       foveated.subrectController.GetRightEyeUV().IsFullEye();
 		}
 
 		void RestoreRenderTargets(ID3D11DeviceContext* context,
@@ -167,7 +167,7 @@ namespace NeuralRendering
 		{
 			const bool frameGenerationConfigured = upscaling.IsFrameGenerationConfiguredForSession();
 			const bool hdrConfigured = globals::features::hdrDisplay.loaded &&
-				globals::features::hdrDisplay.settings.enableHDR;
+			                           globals::features::hdrDisplay.settings.enableHDR;
 			auto* renderer = globals::game::renderer;
 			winrt::com_ptr<ID3D11Texture2D> framebufferHolder;
 			ID3D11Texture2D* framebuffer = nullptr;
@@ -176,7 +176,7 @@ namespace NeuralRendering
 				framebuffer = ResolveRenderTargetTexture(target, framebufferHolder);
 			}
 			const bool routeActive = upscaling.GetUpscaleMethod() == Upscaling::UpscaleMethod::kDLSS &&
-				foveated.settings.neuralRenderingEnabled && !frameGenerationConfigured && !hdrConfigured;
+			                         foveated.settings.neuralRenderingEnabled && !frameGenerationConfigured && !hdrConfigured;
 			if (!routeActive) {
 				if (foveated.settings.neuralRenderingEnabled && frameGenerationConfigured && !flatFrameGenerationBlockLogged) {
 					logger::warn("[DLSSNR] Flat route blocked: disable Frame Generation and restart the game");
@@ -236,8 +236,10 @@ namespace NeuralRendering
 
 			context->OMSetRenderTargets(D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT, savedRTVs, savedDSV);
 			for (auto*& rtv : savedRTVs)
-				if (rtv) rtv->Release();
-			if (savedDSV) savedDSV->Release();
+				if (rtv)
+					rtv->Release();
+			if (savedDSV)
+				savedDSV->Release();
 			return succeeded;
 		}
 	}
@@ -301,7 +303,7 @@ namespace NeuralRendering
 
 		const bool frameGenerationConfigured = upscaling.IsFrameGenerationConfiguredForSession();
 		const bool hdrConfigured = globals::features::hdrDisplay.loaded &&
-			globals::features::hdrDisplay.settings.enableHDR;
+		                           globals::features::hdrDisplay.settings.enableHDR;
 		if (upscaling.GetUpscaleMethod() != Upscaling::UpscaleMethod::kDLSS) {
 			LogPreUpscaleBlocked("DLSS is not the selected upscaler");
 			return false;
@@ -388,8 +390,8 @@ namespace NeuralRendering
 				if (outputEyeWidth == 0 || outputEyeHeight == 0) {
 					LogPreUpscaleBlocked("display-resolution stereo dimensions are invalid");
 				} else if (!FoveatedRenderImpl::Core::PrepareVRPerEyeInputs(
-						main.texture, depth.texture, motionVector.texture, nullptr, nullptr,
-						eyeWidth, eyeHeight, outputEyeWidth, outputEyeHeight)) {
+							   main.texture, depth.texture, motionVector.texture, nullptr, nullptr,
+							   eyeWidth, eyeHeight, outputEyeWidth, outputEyeHeight)) {
 					LogPreUpscaleBlocked("per-eye pre-NR guide preparation failed");
 				} else {
 					std::array<Renderer::StereoEyeInput, 2> inputs{};
@@ -557,7 +559,7 @@ namespace NeuralRendering
 			lastAppliedFrame = frame;
 			if (!writebackLogged) {
 				const char* path = stagedBlendTarget ? "staged-uav" :
-					(destinationUAV ? "direct-uav" : "direct-copy");
+				                                       (destinationUAV ? "direct-uav" : "direct-copy");
 				logger::info("[DLSSNR] LDR output written before UI composite size={}x{} edgeBlend={} mode={} path={} batchedAsync=true",
 					outWidth, outHeight, wantsEdgeBlend && destinationUAV != nullptr,
 					FoveatedRender::SubrectBlendModeName(blendMode), path);
@@ -567,8 +569,10 @@ namespace NeuralRendering
 
 		context->OMSetRenderTargets(D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT, savedRTVs, savedDSV);
 		for (auto*& rtv : savedRTVs)
-			if (rtv) rtv->Release();
-		if (savedDSV) savedDSV->Release();
+			if (rtv)
+				rtv->Release();
+		if (savedDSV)
+			savedDSV->Release();
 		return succeeded;
 	}
 

@@ -5,6 +5,7 @@
 #include "Deferred.h"
 #include "HDRDisplay.h"
 #include "Hooks.h"
+#include "RE/C/Console.h"
 #include "State.h"
 #include "Upscaling/DX12SwapChain.h"
 #include "Upscaling/FidelityFX.h"
@@ -19,7 +20,6 @@
 #include "Utils/DevBenchUx.h"
 #include "Utils/Game.h"
 #include "Utils/UI.h"
-#include "RE/C/Console.h"
 #include <Windows.h>
 #include <algorithm>
 #include <cfloat>
@@ -460,27 +460,27 @@ void Upscaling::DrawDLSSNRPage()
 	ImGui::PushID("DLSS5NRPage");
 	ImGui::TextUnformatted(T("menu.dlssnr.title", "DLSS 5 NR"));
 	ImGui::TextWrapped("%s", T("menu.dlssnr.description",
-		"Dedicated controls for DLSS 5 Neural Rendering, foveated coverage, and the oval edge blend. Shared Upscaling values below write to the same settings used by the Upscaling page."));
+								 "Dedicated controls for DLSS 5 Neural Rendering, foveated coverage, and the oval edge blend. Shared Upscaling values below write to the same settings used by the Upscaling page."));
 	Util::Text::WrappedInfo(T("menu.dlssnr.route_info",
 		"Recommended VR route: NVIDIA DLSS + PerfMode active + Foveated Default mode. Foveated Rendering is the primary VR control: enable it first, choose your coverage preset, then tune DLSS 5 NR below. Settings that show a restart marker are staged until the next game launch."));
 	if (globals::game::isVR) {
 		ImGui::TextUnformatted(T("menu.dlssnr.foveation_header", "Foveated Rendering"));
 		ImGui::TextWrapped("%s", T("menu.dlssnr.foveation_description",
-			"Start here for VR. Enable the foveated route, then choose the Nasal Convergence 70% oval preset or adjust the region, periphery fill, edge blend, and falloff. The full panel is opened by default so the primary coverage controls are visible."));
+									 "Start here for VR. Enable the foveated route, then choose the Nasal Convergence 70% oval preset or adjust the region, periphery fill, edge blend, and falloff. The full panel is opened by default so the primary coverage controls are visible."));
 		Util::Text::WrappedInfo(T("menu.dlssnr.foveation_recommended",
 			"Recommended first install: Enable Foveated Rendering, use Nasal Convergence 70%, keep Edge Shape on Oval, and start with Feather blending. DLSS 5 NR controls and shared upscaler settings are below."));
 		DrawFoveationControls(true, false, true);
 		ImGui::Separator();
 		ImGui::TextUnformatted(T("menu.dlssnr.shared_header", "DLSS and Upscaling"));
 		ImGui::TextWrapped("%s", T("menu.dlssnr.shared_description",
-			"These shared controls are also available on the Upscaling page. They affect the same active runtime settings."));
+									 "These shared controls are also available on the Upscaling page. They affect the same active runtime settings."));
 		DrawDLSSNRSharedControls();
 	} else {
 		DrawDLSSNRSharedControls();
 		ImGui::Separator();
 		ImGui::TextUnformatted(T("menu.dlssnr.neural_header", "DLSS Neural Rendering"));
 		ImGui::TextWrapped("%s", T("menu.dlssnr.flat_description",
-			"Flat mode exposes the same Feature 18 tuning without the VR-only crop and periphery controls."));
+									 "Flat mode exposes the same Feature 18 tuning without the VR-only crop and periphery controls."));
 		foveatedRender.DrawSettings(false);
 	}
 	ImGui::PopID();

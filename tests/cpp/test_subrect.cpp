@@ -43,9 +43,10 @@ TEST_CASE("SeedDefaultPresets selects the named first-run preset", "[subrect][de
 	Controller c;
 	c.LoadSettings(json::object());
 	c.SeedDefaultPresets({
-		Preset{ .name = "Full Eye", .uv = { 0.0f, 0.0f, 1.0f, 1.0f } },
-		Preset{ .name = "Center 75%", .uv = { 0.125f, 0.125f, 0.75f, 0.75f } },
-	}, "Center 75%");
+							 Preset{ .name = "Full Eye", .uv = { 0.0f, 0.0f, 1.0f, 1.0f } },
+							 Preset{ .name = "Center 75%", .uv = { 0.125f, 0.125f, 0.75f, 0.75f } },
+						 },
+		"Center 75%");
 	c.MaterializeNewDefaults();
 
 	REQUIRE(UVApprox(c.GetUV(), { 0.125f, 0.125f, 0.75f, 0.75f }));

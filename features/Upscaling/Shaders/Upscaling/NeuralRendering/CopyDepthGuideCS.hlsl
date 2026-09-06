@@ -1,9 +1,7 @@
 Texture2D<float> SourceDepth : register(t0);
 RWTexture2D<float> DestinationDepth : register(u0);
 
-[numthreads(8, 8, 1)]
-void main(uint3 dispatchThreadID : SV_DispatchThreadID)
-{
+[numthreads(8, 8, 1)] void main(uint3 dispatchThreadID : SV_DispatchThreadID) {
 	uint width;
 	uint height;
 	uint sourceWidth;

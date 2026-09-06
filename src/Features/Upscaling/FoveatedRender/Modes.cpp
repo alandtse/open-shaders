@@ -159,7 +159,7 @@ namespace FoveatedRenderImpl
 
 			context->CopySubresourceRegion(Core::vrSubrectColorIn[i]->resource.get(), 0, 0, 0, 0, Core::vrRenderSBS->resource.get(), 0, &sbsCrop);
 			if (!CopyDepthRegionToTexture(p.depthTexture, nullptr, Core::vrSubrectDepth[i]->uav.get(),
-				sbsX, cropY, subInW, subInH)) {
+					sbsX, cropY, subInW, subInH)) {
 				logger::error("[FOVEATED] Failed to convert native depth for subrect eye {}", i);
 				return false;
 			}

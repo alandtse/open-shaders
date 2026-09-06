@@ -23,38 +23,49 @@ namespace NeuralRendering
 			return RecordFailure(E_INVALIDARG);
 
 		HRESULT result = device->QueryInterface(IID_PPV_ARGS(&device11_));
-		if (FAILED(result)) return RecordFailure(result);
+		if (FAILED(result))
+			return RecordFailure(result);
 		result = context->QueryInterface(IID_PPV_ARGS(&context11_));
-		if (FAILED(result)) return RecordFailure(result);
+		if (FAILED(result))
+			return RecordFailure(result);
 		result = D3D12CreateDevice(adapter, D3D_FEATURE_LEVEL_12_0, IID_PPV_ARGS(&device12_));
-		if (FAILED(result)) return RecordFailure(result);
+		if (FAILED(result))
+			return RecordFailure(result);
 
 		D3D12_COMMAND_QUEUE_DESC queueDesc{};
 		queueDesc.Type = D3D12_COMMAND_LIST_TYPE_DIRECT;
 		result = device12_->CreateCommandQueue(&queueDesc, IID_PPV_ARGS(&queue12_));
-		if (FAILED(result)) return RecordFailure(result);
+		if (FAILED(result))
+			return RecordFailure(result);
 		for (auto& commandContext : commandContexts_) {
 			result = device12_->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT,
 				IID_PPV_ARGS(&commandContext.allocator));
-			if (FAILED(result)) return RecordFailure(result);
+			if (FAILED(result))
+				return RecordFailure(result);
 			result = device12_->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT,
 				commandContext.allocator.Get(), nullptr, IID_PPV_ARGS(&commandContext.commandList));
-			if (FAILED(result)) return RecordFailure(result);
+			if (FAILED(result))
+				return RecordFailure(result);
 			result = commandContext.commandList->Close();
-			if (FAILED(result)) return RecordFailure(result);
+			if (FAILED(result))
+				return RecordFailure(result);
 		}
 
 		result = device12_->CreateFence(0, D3D12_FENCE_FLAG_SHARED, IID_PPV_ARGS(&fence12_));
-		if (FAILED(result)) return RecordFailure(result);
+		if (FAILED(result))
+			return RecordFailure(result);
 		HANDLE sharedFence = nullptr;
 		result = device12_->CreateSharedHandle(fence12_.Get(), nullptr, GENERIC_ALL, nullptr, &sharedFence);
-		if (FAILED(result)) return RecordFailure(result);
+		if (FAILED(result))
+			return RecordFailure(result);
 		result = device11_->OpenSharedFence(sharedFence, IID_PPV_ARGS(&fence11_));
 		CloseHandle(sharedFence);
-		if (FAILED(result)) return RecordFailure(result);
+		if (FAILED(result))
+			return RecordFailure(result);
 
 		fenceEvent_ = CreateEventW(nullptr, FALSE, FALSE, nullptr);
-		if (!fenceEvent_) return RecordFailure(HRESULT_FROM_WIN32(GetLastError()));
+		if (!fenceEvent_)
+			return RecordFailure(HRESULT_FROM_WIN32(GetLastError()));
 		initialized_ = true;
 		lastError_ = S_OK;
 		logger::info("[DLSSNR] D3D12 interop initialized commandContexts={} cpuFenceWait=backpressure-only",
@@ -64,7 +75,8 @@ namespace NeuralRendering
 
 	void D3D12Interop::Shutdown()
 	{
-		if (fenceEvent_) CloseHandle(fenceEvent_);
+		if (fenceEvent_)
+			CloseHandle(fenceEvent_);
 		fenceEvent_ = nullptr;
 		recording_ = false;
 		recordingContext_ = kCommandContextCount;
@@ -119,14 +131,17 @@ namespace NeuralRendering
 
 		Microsoft::WRL::ComPtr<IDXGIResource1> dxgiResource;
 		result = replacement.resource11.As(&dxgiResource);
-		if (FAILED(result)) return RecordFailure(result);
+		if (FAILED(result))
+			return RecordFailure(result);
 		HANDLE sharedTexture = nullptr;
 		result = dxgiResource->CreateSharedHandle(nullptr,
 			DXGI_SHARED_RESOURCE_READ | DXGI_SHARED_RESOURCE_WRITE, nullptr, &sharedTexture);
-		if (FAILED(result)) return RecordFailure(result);
+		if (FAILED(result))
+			return RecordFailure(result);
 		result = device12_->OpenSharedHandle(sharedTexture, IID_PPV_ARGS(&replacement.resource12));
 		CloseHandle(sharedTexture);
-		if (FAILED(result)) return RecordFailure(result);
+		if (FAILED(result))
+			return RecordFailure(result);
 
 		lastResourceFlags_ = static_cast<std::uint32_t>(replacement.resource12->GetDesc().Flags);
 		replacement.desc = desc;
@@ -138,7 +153,8 @@ namespace NeuralRendering
 
 	bool D3D12Interop::BeginD3D12(ID3D12GraphicsCommandList** commandList)
 	{
-		if (!initialized_ || recording_ || !commandList) return RecordFailure(E_UNEXPECTED);
+		if (!initialized_ || recording_ || !commandList)
+			return RecordFailure(E_UNEXPECTED);
 
 		const std::uint64_t completedValue = fence12_->GetCompletedValue();
 		std::size_t contextIndex = kCommandContextCount;
@@ -164,13 +180,17 @@ namespace NeuralRendering
 		commandContext.fenceValue = 0;
 		const std::uint64_t readyValue = ++fenceValue_;
 		HRESULT result = context11_->Signal(fence11_.Get(), readyValue);
-		if (FAILED(result)) return RecordFailure(result);
+		if (FAILED(result))
+			return RecordFailure(result);
 		result = queue12_->Wait(fence12_.Get(), readyValue);
-		if (FAILED(result)) return RecordFailure(result);
+		if (FAILED(result))
+			return RecordFailure(result);
 		result = commandContext.allocator->Reset();
-		if (FAILED(result)) return RecordFailure(result);
+		if (FAILED(result))
+			return RecordFailure(result);
 		result = commandContext.commandList->Reset(commandContext.allocator.Get(), nullptr);
-		if (FAILED(result)) return RecordFailure(result);
+		if (FAILED(result))
+			return RecordFailure(result);
 		recording_ = true;
 		recordingContext_ = contextIndex;
 		commandContextCursor_ = (contextIndex + 1) % kCommandContextCount;
@@ -186,18 +206,21 @@ namespace NeuralRendering
 		auto& commandContext = commandContexts_[recordingContext_];
 		recordingContext_ = kCommandContextCount;
 		HRESULT result = commandContext.commandList->Close();
-		if (FAILED(result)) return RecordFailure(result);
+		if (FAILED(result))
+			return RecordFailure(result);
 		ID3D12CommandList* lists[] = { commandContext.commandList.Get() };
 		queue12_->ExecuteCommandLists(1, lists);
 		const std::uint64_t completeValue = ++fenceValue_;
 		result = queue12_->Signal(fence12_.Get(), completeValue);
-		if (FAILED(result)) return RecordFailure(result);
+		if (FAILED(result))
+			return RecordFailure(result);
 		commandContext.fenceValue = completeValue;
 
 		// This queues a GPU-side dependency. Subsequent D3D11 output copies wait
 		// for Feature 18 without stalling the render thread on the CPU.
 		result = context11_->Wait(fence11_.Get(), completeValue);
-		if (FAILED(result)) return RecordFailure(result);
+		if (FAILED(result))
+			return RecordFailure(result);
 		lastError_ = S_OK;
 		return true;
 	}
@@ -207,11 +230,12 @@ namespace NeuralRendering
 		if (!value || fence12_->GetCompletedValue() >= value)
 			return true;
 		const HRESULT result = fence12_->SetEventOnCompletion(value, fenceEvent_);
-		if (FAILED(result)) return RecordFailure(result);
+		if (FAILED(result))
+			return RecordFailure(result);
 		const DWORD waitResult = WaitForSingleObject(fenceEvent_, 250);
 		if (waitResult != WAIT_OBJECT_0)
 			return RecordFailure(waitResult == WAIT_TIMEOUT ? HRESULT_FROM_WIN32(ERROR_TIMEOUT) :
-			                                                        HRESULT_FROM_WIN32(GetLastError()));
+															  HRESULT_FROM_WIN32(GetLastError()));
 		lastError_ = S_OK;
 		return true;
 	}

@@ -9,9 +9,7 @@ cbuffer DepthCopyConstants : register(b0)
 	uint Height;
 };
 
-[numthreads(8, 8, 1)]
-void main(uint3 dispatchThreadID : SV_DispatchThreadID)
-{
+[numthreads(8, 8, 1)] void main(uint3 dispatchThreadID : SV_DispatchThreadID) {
 	uint destinationWidth;
 	uint destinationHeight;
 	DestinationDepth.GetDimensions(destinationWidth, destinationHeight);

@@ -21,7 +21,7 @@ cbuffer BlendCB : register(b0)
 	float FalloffCurve;    // 0.5 = earlier neural handoff, 1 = balanced, 2 = later handoff
 	float MaskCenterX;     // Subrect-local oval center, in pixels
 	float MaskCenterY;
-	float MaskRadiusX;     // Subrect-local oval radii, in pixels
+	float MaskRadiusX;  // Subrect-local oval radii, in pixels
 	float MaskRadiusY;
 	float _pad0;
 };

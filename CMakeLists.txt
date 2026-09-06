@@ -155,7 +155,10 @@ include(FidelityFX-SDK)
 # ffx_fsr3upscaler_x64.lib) rather than imported targets on the VS generator.
 # Keep the SDK output directory on the link search path so multi-config builds
 # resolve those libraries without relying on a machine-specific CMake cache.
-target_link_directories(${PROJECT_NAME} PRIVATE "${CMAKE_SOURCE_DIR}/bin/ffx_sdk")
+target_link_directories(
+    ${PROJECT_NAME}
+    PRIVATE "${CMAKE_SOURCE_DIR}/bin/ffx_sdk"
+)
 
 target_compile_definitions(
     ${PROJECT_NAME}

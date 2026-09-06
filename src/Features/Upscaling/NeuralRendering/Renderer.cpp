@@ -44,10 +44,10 @@ namespace NeuralRendering
 				barriers[index].Transition.pResource = resources[index];
 				barriers[index].Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
 				barriers[index].Transition.StateBefore = entering ? D3D12_RESOURCE_STATE_COMMON :
-					(index == 3 ? D3D12_RESOURCE_STATE_UNORDERED_ACCESS : D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+				                                                    (index == 3 ? D3D12_RESOURCE_STATE_UNORDERED_ACCESS : D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
 				barriers[index].Transition.StateAfter = entering ?
-					(index == 3 ? D3D12_RESOURCE_STATE_UNORDERED_ACCESS : D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE) :
-					D3D12_RESOURCE_STATE_COMMON;
+				                                            (index == 3 ? D3D12_RESOURCE_STATE_UNORDERED_ACCESS : D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE) :
+				                                            D3D12_RESOURCE_STATE_COMMON;
 			}
 			commandList->ResourceBarrier(static_cast<UINT>(std::size(barriers)), barriers);
 		}
@@ -76,8 +76,8 @@ namespace NeuralRendering
 			D3D11_TEXTURE2D_DESC actual{};
 			texture->GetDesc(&actual);
 			return actual.Width == desc.Width && actual.Height == desc.Height &&
-				actual.Format == desc.Format && actual.ArraySize == desc.ArraySize &&
-				actual.MipLevels == desc.MipLevels && actual.SampleDesc.Count == desc.SampleDesc.Count;
+			       actual.Format == desc.Format && actual.ArraySize == desc.ArraySize &&
+			       actual.MipLevels == desc.MipLevels && actual.SampleDesc.Count == desc.SampleDesc.Count;
 		}
 
 		std::uint32_t NormalizeModelResolution(std::uint32_t percent)
@@ -120,7 +120,7 @@ namespace NeuralRendering
 		std::uint32_t ScaleDimension(std::uint32_t dimension, std::uint32_t percent)
 		{
 			return std::max<std::uint32_t>(1, static_cast<std::uint32_t>(
-				(static_cast<std::uint64_t>(dimension) * percent + 50) / 100));
+												  (static_cast<std::uint64_t>(dimension) * percent + 50) / 100));
 		}
 
 		D3D11_TEXTURE2D_DESC MakeSharedDesc(const D3D11_TEXTURE2D_DESC& source, std::uint32_t width,
@@ -180,13 +180,13 @@ namespace NeuralRendering
 			const std::uint32_t passCount = GetPassCount(tuning);
 			const auto resolveSettings = GetModelResolveSettings(modelResolution);
 			if (!EnsureResources(device, eyeIndex, color, depth, motionVectors, guideWidth, guideHeight,
-				colorWidth, colorHeight, modelWidth, modelHeight, passCount, modelResolution))
+					colorWidth, colorHeight, modelWidth, modelHeight, passCount, modelResolution))
 				return LatchFailure("shared resource creation", interop.LastError());
 
 			auto& eye = eyes[eyeIndex];
 			context->CopyResource(eye.color.resource11.Get(), color);
 			if (eye.reducedResolution && !DispatchModelInput(device, context, eye, colorWidth, colorHeight, modelWidth, modelHeight,
-				 tuning.modelResolveMode == 1))
+											 tuning.modelResolveMode == 1))
 				return LatchFailure("model input downsample", E_FAIL);
 			if (!CopyDepthGuide(context, depthSRV, eye.depth.uav11.Get(), guideWidth, guideHeight))
 				return LatchFailure("depth guide conversion", E_FAIL);
@@ -214,7 +214,7 @@ namespace NeuralRendering
 			}
 
 			if (eye.reducedResolution && !DispatchModelResolve(device, context, eye, colorWidth, colorHeight, resolveSettings,
-					tuning.modelResolveMode == 1)) {
+											 tuning.modelResolveMode == 1)) {
 				return LatchFailure("model output resolve", E_FAIL);
 			}
 			context->CopyResource(color, eye.reducedResolution ? eye.resolved.Get() : eye.output.resource11.Get());
@@ -264,7 +264,7 @@ namespace NeuralRendering
 				auto& eye = eyes[eyeIndex];
 				context->CopySubresourceRegion(eye.color.resource11.Get(), 0, 0, 0, 0, color, 0, &sourceBox);
 				if (eye.reducedResolution && !DispatchModelInput(device, context, eye, colorWidth, colorHeight, modelWidth, modelHeight,
-					 tuning.modelResolveMode == 1))
+												 tuning.modelResolveMode == 1))
 					return LatchFailure("model input downsample stereo", E_FAIL);
 				if (!CopyDepthGuide(context, input.depthSRV, eye.depth.uav11.Get(), guideWidth, guideHeight))
 					return LatchFailure("depth guide conversion", E_FAIL);
@@ -308,7 +308,7 @@ namespace NeuralRendering
 				const auto& input = inputs[eyeIndex];
 				auto& eye = eyes[eyeIndex];
 				if (eye.reducedResolution && !DispatchModelResolve(device, context, eye, colorWidth, colorHeight, resolveSettings,
-						tuning.modelResolveMode == 1)) {
+												 tuning.modelResolveMode == 1)) {
 					return LatchFailure("model output resolve stereo", E_FAIL);
 				}
 				ID3D11Resource* neuralOutput = eye.reducedResolution ? eye.resolved.Get() : eye.output.resource11.Get();
@@ -420,8 +420,8 @@ namespace NeuralRendering
 			if (!device)
 				return false;
 			if (!modelResolutionCS.Get(
-				L"Data\\Shaders\\Upscaling\\NeuralRendering\\ModelResolutionCS.hlsl", {}, "cs_5_0",
-				"main", "NeuralRendering::ModelResolutionCS"))
+					L"Data\\Shaders\\Upscaling\\NeuralRendering\\ModelResolutionCS.hlsl", {}, "cs_5_0",
+					"main", "NeuralRendering::ModelResolutionCS"))
 				return false;
 
 			if (!modelResolutionCB) {
@@ -552,7 +552,8 @@ namespace NeuralRendering
 			Microsoft::WRL::ComPtr<IDXGIDevice> dxgiDevice;
 			Microsoft::WRL::ComPtr<IDXGIAdapter> adapter;
 			HRESULT result = device->QueryInterface(IID_PPV_ARGS(&dxgiDevice));
-			if (SUCCEEDED(result)) result = dxgiDevice->GetAdapter(&adapter);
+			if (SUCCEEDED(result))
+				result = dxgiDevice->GetAdapter(&adapter);
 			if (FAILED(result) || !interop.Initialize(adapter.Get(), device, context))
 				return LatchFailure("D3D12 interop initialization", FAILED(result) ? result : interop.LastError());
 			return true;
@@ -593,8 +594,8 @@ namespace NeuralRendering
 			auto& eye = eyes[eyeIndex];
 			const bool multiPass = passCount > 1;
 			const bool intermediatesMatch = passCount <= 1 ||
-				(Matches(eye.cascadeIntermediates[0], outputDesc) &&
-				 (passCount < 3 || Matches(eye.cascadeIntermediates[1], outputDesc)));
+			                                (Matches(eye.cascadeIntermediates[0], outputDesc) &&
+												(passCount < 3 || Matches(eye.cascadeIntermediates[1], outputDesc)));
 			if (eye.passCount == passCount && eye.reducedResolution == reducedResolution && Matches(eye.color, colorDesc) &&
 				(!reducedResolution || Matches(eye.modelInput, modelInputDesc)) && Matches(eye.output, outputDesc) &&
 				Matches(eye.depth, depthDesc) && Matches(eye.motionVectors, motionDesc) &&
@@ -629,8 +630,8 @@ namespace NeuralRendering
 			eye.passCount = passCount;
 			resetPending = { true, true };
 			const float modelAreaPercent = 100.0f *
-				(static_cast<float>(modelWidth) / static_cast<float>(colorWidth)) *
-				(static_cast<float>(modelHeight) / static_cast<float>(colorHeight));
+			                               (static_cast<float>(modelWidth) / static_cast<float>(colorWidth)) *
+			                               (static_cast<float>(modelHeight) / static_cast<float>(colorHeight));
 			const auto resolveSettings = GetModelResolveSettings(modelResolution);
 			logger::info("[DLSSNR] resources eye={} guides={}x{} color={}x{} model={}x{} modelPercent={}% modelArea={:.1f}% passes={} resolve=transfer:{:.2f},colour:{:.2f},maxRatio:{:.2f},residual:{:.2f}",
 				eyeIndex, guideWidth, guideHeight, colorWidth, colorHeight, modelWidth, modelHeight,
@@ -659,7 +660,11 @@ namespace NeuralRendering
 
 	Renderer::Renderer() : state_(new State()) {}
 	Renderer::~Renderer() { delete state_; }
-	Renderer& Renderer::Instance() { static Renderer instance; return instance; }
+	Renderer& Renderer::Instance()
+	{
+		static Renderer instance;
+		return instance;
+	}
 
 	bool Renderer::Apply(ID3D11Device* device, ID3D11DeviceContext* context, std::uint32_t eyeIndex,
 		ID3D11Resource* color, ID3D11Resource* depth, ID3D11ShaderResourceView* depthSRV,

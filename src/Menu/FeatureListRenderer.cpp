@@ -420,8 +420,7 @@ std::vector<FeatureListRenderer::MenuFuncInfo> FeatureListRenderer::BuildMenuLis
 		menuList.push_back(BuiltInMenu{
 			T("menu.features.dlssnr", "DLSS 5 NR"),
 			"DLSSNR",
-			[]() { globals::features::upscaling.DrawDLSSNRPage(); }
-		});
+			[]() { globals::features::upscaling.DrawDLSSNRPage(); } });
 	};
 	bool dlssNrPageAdded = false;
 	for (const std::string& category : categoryOrder) {

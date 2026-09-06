@@ -86,11 +86,11 @@ float4 SampleExactArea(uint2 targetPixel)
 	const uint2 last = min(uint2(max(ceil(end) - 1.0, 0.0)), sourceLast);
 
 	float4 sum = 0.0;
-	[loop]
-	for (uint y = first.y; y <= last.y; ++y) {
+	[loop] for (uint y = first.y; y <= last.y; ++y)
+	{
 		const float yWeight = max(0.0, min(end.y, float(y + 1u)) - max(begin.y, float(y)));
-		[loop]
-		for (uint x = first.x; x <= last.x; ++x) {
+		[loop] for (uint x = first.x; x <= last.x; ++x)
+		{
 			const float xWeight = max(0.0, min(end.x, float(x + 1u)) - max(begin.x, float(x)));
 			sum += gProxy.Load(int3(x, y, 0)) * (xWeight * yWeight);
 		}
@@ -99,20 +99,16 @@ float4 SampleExactArea(uint2 targetPixel)
 	return sum / max((end.x - begin.x) * (end.y - begin.y), 1e-6);
 }
 
-[numthreads(8, 8, 1)]
-void main(uint3 id : SV_DispatchThreadID)
-{
+[numthreads(8, 8, 1)] void main(uint3 id : SV_DispatchThreadID) {
 	if (id.x >= gWidth || id.y >= gHeight)
 		return;
 
 	const float2 uv = (float2(id.xy) + 0.5) / float2(gWidth, gHeight);
-	if (gMode == 0)
-	{
+	if (gMode == 0) {
 		gTarget[id.xy] = gProxy.SampleLevel(gLinear, uv, 0);
 		return;
 	}
-	if (gMode == 2)
-	{
+	if (gMode == 2) {
 		gTarget[id.xy] = SampleExactArea(id.xy);
 		return;
 	}
@@ -121,8 +117,7 @@ void main(uint3 id : SV_DispatchThreadID)
 	const float3 model = gModel.SampleLevel(gLinear, uv, 0).rgb;
 	const float4 originalSample = gOriginal.Load(int3(id.xy, 0));
 	const float3 original = max(originalSample.rgb, float3(0.0, 0.0, 0.0));
-	if (gMode == 3)
-	{
+	if (gMode == 3) {
 		// Matched residual: keep the source's full-resolution texture and add
 		// only the model-vs-input difference. The luminance bound limits halo and
 		// dark-scene excursions without throwing away the model's local detail.
@@ -141,8 +136,7 @@ void main(uint3 id : SV_DispatchThreadID)
 	const float proxyLuma = dot(proxy, kLuma);
 	const float modelLuma = dot(model, kLuma);
 
-	if (modelLuma <= 1e-5)
-	{
+	if (modelLuma <= 1e-5) {
 		gTarget[id.xy] = float4(original, originalSample.a);
 		return;
 	}
@@ -158,8 +152,7 @@ void main(uint3 id : SV_DispatchThreadID)
 	const float upgradedLuma = dot(upgraded, kLuma);
 	const float maxRatio = max(gMaxRatio, 1.0);
 	float3 boundedUpgraded = upgraded;
-	if (originalLuma > 1e-6 && upgradedLuma > 1e-6)
-	{
+	if (originalLuma > 1e-6 && upgradedLuma > 1e-6) {
 		// Bound the candidate itself. The old code computed this clamp but then
 		// discarded it when gColourStrength was 1, allowing unstable dark-scene
 		// model output to replace the original pixel wholesale.

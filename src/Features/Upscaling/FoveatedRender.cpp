@@ -62,19 +62,20 @@ void FoveatedRender::PostPostLoad()
 	// binocular fusion is strongest, so DLSS reconstruction lands in the actual
 	// stereo overlap zone rather than diverging left/right fields.
 	subrectController.SeedDefaultPresets({
-		{ .name = kPresetFullEye, .uv = { 0.0f, 0.0f, 1.0f, 1.0f } },
-		{ .name = kPresetCenter75, .uv = { 0.125f, 0.125f, 0.75f, 0.75f } },
-		{ .name = kPresetCenter50, .uv = { 0.25f, 0.25f, 0.5f, 0.5f } },
-		{ .name = kPresetNasalConvergence50,
-			.uv = { 0.5f, 0.25f, 0.5f, 0.5f },
-			.rightUV = Util::Subrect::UVRegion{ 0.0f, 0.25f, 0.5f, 0.5f } },
-		{ .name = kPresetNasalConvergence60,
-			.uv = { 0.4f, 0.2f, 0.6f, 0.6f },
-			.rightUV = Util::Subrect::UVRegion{ 0.0f, 0.2f, 0.6f, 0.6f } },
-		{ .name = kPresetNasalConvergence70,
-			.uv = { 0.3f, 0.15f, 0.7f, 0.7f },
-			.rightUV = Util::Subrect::UVRegion{ 0.0f, 0.15f, 0.7f, 0.7f } },
-	}, kPresetNasalConvergence70);
+											 { .name = kPresetFullEye, .uv = { 0.0f, 0.0f, 1.0f, 1.0f } },
+											 { .name = kPresetCenter75, .uv = { 0.125f, 0.125f, 0.75f, 0.75f } },
+											 { .name = kPresetCenter50, .uv = { 0.25f, 0.25f, 0.5f, 0.5f } },
+											 { .name = kPresetNasalConvergence50,
+												 .uv = { 0.5f, 0.25f, 0.5f, 0.5f },
+												 .rightUV = Util::Subrect::UVRegion{ 0.0f, 0.25f, 0.5f, 0.5f } },
+											 { .name = kPresetNasalConvergence60,
+												 .uv = { 0.4f, 0.2f, 0.6f, 0.6f },
+												 .rightUV = Util::Subrect::UVRegion{ 0.0f, 0.2f, 0.6f, 0.6f } },
+											 { .name = kPresetNasalConvergence70,
+												 .uv = { 0.3f, 0.15f, 0.7f, 0.7f },
+												 .rightUV = Util::Subrect::UVRegion{ 0.0f, 0.15f, 0.7f, 0.7f } },
+										 },
+		kPresetNasalConvergence70);
 	// PostPostLoad runs after settings load, so a user with an older, shorter
 	// persisted preset list (from before these names existed) still sees every
 	// current preset in the DrawEditor dropdown, not just whichever ones they
@@ -439,160 +440,160 @@ void FoveatedRender::DrawSettings(bool showSharedPanelNote, bool vrControlsFirst
 {
 	ClampSettings();
 	const auto drawVrControls = [&]() {
-	// ── VR-only knobs ──
-	if (globals::game::isVR) {
-		ImGui::Separator();
-		ImGui::Text("%s", T(TKEY("foveated_dlss_mode_header"), "VR DLSS Mode"));
-		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::Text("%s", T(TKEY("foveated_dlss_mode_tooltip"),
-								  "Default — highest quality. Each eye gets its own isolated copy of color/depth/motion\n"
-								  "vectors so DLSS can't sample across the stereo midline. 5 copies per eye per frame.\n"
-								  "All DLSS presets supported. Best for screenshots or when Faster shows edge artifacts.\n"
-								  "\n"
-								  "Faster — lower overhead. DLSS reads directly from the frame buffer using a viewport\n"
-								  "offset instead of isolating each eye. 1 snapshot + 2 mask clears per frame.\n"
-								  "DLSS may sample 1-2 pixels from the neighboring eye near the stereo center — usually\n"
-								  "invisible in motion. Presets J and K are incompatible and auto-clamp to L."));
-		}
-
-		const bool isFSR = globals::features::upscaling.GetUpscaleMethod() == Upscaling::UpscaleMethod::kFSR;
-		if (isFSR)
-			ImGui::BeginDisabled();
-		uint prevMode = settings.dlssMode;
-		ImGui::SliderInt(T(TKEY("foveated_dlss_mode_label"), "DLSS Mode"), reinterpret_cast<int*>(&settings.dlssMode), 0, 1, DlssModeName((DlssMode)std::min(settings.dlssMode, 1u)));
-		if (settings.dlssMode != prevMode) {
-			const uint prevPreset = globals::features::upscaling.settings.presetDLSS;
-			ClampPresetToMode();
-			if (globals::features::upscaling.settings.presetDLSS != prevPreset) {
-				logger::info("[FOVEATED] DLSS preset clamped from {} to {} after mode switch (J/K incompatible with Faster)",
-					prevPreset, globals::features::upscaling.settings.presetDLSS);
-			}
-		}
-		if (isFSR) {
-			ImGui::EndDisabled();
-			ImGui::TextWrapped(T(TKEY("foveated_dlss_mode_fsr_desc"), "Not used by FSR -- applies only when DLSS is the selected upscaler."));
-		} else {
-			switch (GetDlssMode()) {
-			case DlssMode::kDefault:
-				ImGui::TextWrapped(T(TKEY("foveated_dlss_mode_default_desc"), "Per-eye isolation: 5 copies per frame, 2 DLSS evaluates. All presets."));
-				break;
-			case DlssMode::kFaster:
-				ImGui::TextWrapped(T(TKEY("foveated_dlss_mode_faster_desc"), "Viewport offset: 1 snapshot, 2 mask clears, 2 DLSS evaluates. Presets J/K unavailable."));
-				break;
-			default:
-				break;
-			}
-		}
-
-		ImGui::Separator();
-		ImGui::Text("%s", T(TKEY("foveated_periphery_header"), "Periphery Rendering"));
-		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::Text("%s", T(TKEY("foveated_periphery_tooltip"),
-								  "The area outside your selected subrect is filled cheaply rather than running\n"
-								  "the selected upscaler. These settings control how that cheap fill looks and\n"
-								  "whether it flickers.\n"
-								  "\n"
-								  "Stretch method: how pixels outside the subrect are reconstructed from the lower-res\n"
-								  "render buffer. Does not affect the upscaled subrect region at all.\n"
-								  "\n"
-								  "Periphery AA: reduces temporal flicker in the stretched area using motion-compensated\n"
-								  "history blending. Independent of the upscaled subrect.\n"
-								  "\n"
-								  "Edge Blend: controls how the upscaled subrect edge meets the stretched periphery.\n"
-								  "Hard Copy leaves a sharp seam; Feather/Dither soften it. Edge Shape selects a\n"
-								  "rectangle or oval composite. The Feature 18 subrect remains rectangular internally."));
-		}
-
-		ImGui::SliderInt(T(TKEY("foveated_stretch_label"), "Stretch"), reinterpret_cast<int*>(&settings.stretchMode), 0, 2, StretchModeName((StretchMode)settings.stretchMode));
-		switch (GetStretchMode()) {
-		case StretchMode::kBilinear:
-			ImGui::TextWrapped(T(TKEY("foveated_stretch_bilinear_desc"), "Bilinear: smooth upscale of the render buffer. Looks soft but clean."));
-			break;
-		case StretchMode::kPoint:
-			ImGui::TextWrapped(T(TKEY("foveated_stretch_point_desc"), "Point: cheapest, visibly pixelated. Good for benchmarking foveated savings."));
-			break;
-		case StretchMode::kGaussianBlur:
-			ImGui::TextWrapped(T(TKEY("foveated_stretch_gaussian_desc"), "Gaussian: blurs the periphery further into soft focus. Good default for foveated use."));
-			ImGui::SliderFloat(T(TKEY("foveated_blur_radius"), "Blur Radius"), &settings.peripheryBlurRadius, 0.5f, 4.0f, "%.1f px");
-			break;
-		}
-
-		ImGui::SliderInt(T(TKEY("foveated_periphery_aa_label"), "Periphery AA"), reinterpret_cast<int*>(&settings.peripheryAAMode), 0, 1, PeripheryAAModeName((PeripheryAAMode)settings.peripheryAAMode));
-		if (GetPeripheryAAMode() == PeripheryAAMode::kTemporalSmooth) {
-			ImGui::TextWrapped(T(TKEY("foveated_periphery_aa_temporal_desc"), "Blends the stretched periphery with motion-reprojected history to reduce flicker."));
-			ImGui::SliderFloat(T(TKEY("foveated_smoothing"), "Smoothing"), &settings.peripheryTemporalAlpha, 0.05f, 0.5f, "%.2f");
+		// ── VR-only knobs ──
+		if (globals::game::isVR) {
+			ImGui::Separator();
+			ImGui::Text("%s", T(TKEY("foveated_dlss_mode_header"), "VR DLSS Mode"));
 			if (auto _tt = Util::HoverTooltipWrapper()) {
-				ImGui::Text("%s", T(TKEY("foveated_smoothing_tooltip"), "Lower = more temporal history (smoother but may ghost). Higher = more responsive."));
+				ImGui::Text("%s", T(TKEY("foveated_dlss_mode_tooltip"),
+									  "Default — highest quality. Each eye gets its own isolated copy of color/depth/motion\n"
+									  "vectors so DLSS can't sample across the stereo midline. 5 copies per eye per frame.\n"
+									  "All DLSS presets supported. Best for screenshots or when Faster shows edge artifacts.\n"
+									  "\n"
+									  "Faster — lower overhead. DLSS reads directly from the frame buffer using a viewport\n"
+									  "offset instead of isolating each eye. 1 snapshot + 2 mask clears per frame.\n"
+									  "DLSS may sample 1-2 pixels from the neighboring eye near the stereo center — usually\n"
+									  "invisible in motion. Presets J and K are incompatible and auto-clamp to L."));
 			}
+
+			const bool isFSR = globals::features::upscaling.GetUpscaleMethod() == Upscaling::UpscaleMethod::kFSR;
+			if (isFSR)
+				ImGui::BeginDisabled();
+			uint prevMode = settings.dlssMode;
+			ImGui::SliderInt(T(TKEY("foveated_dlss_mode_label"), "DLSS Mode"), reinterpret_cast<int*>(&settings.dlssMode), 0, 1, DlssModeName((DlssMode)std::min(settings.dlssMode, 1u)));
+			if (settings.dlssMode != prevMode) {
+				const uint prevPreset = globals::features::upscaling.settings.presetDLSS;
+				ClampPresetToMode();
+				if (globals::features::upscaling.settings.presetDLSS != prevPreset) {
+					logger::info("[FOVEATED] DLSS preset clamped from {} to {} after mode switch (J/K incompatible with Faster)",
+						prevPreset, globals::features::upscaling.settings.presetDLSS);
+				}
+			}
+			if (isFSR) {
+				ImGui::EndDisabled();
+				ImGui::TextWrapped(T(TKEY("foveated_dlss_mode_fsr_desc"), "Not used by FSR -- applies only when DLSS is the selected upscaler."));
+			} else {
+				switch (GetDlssMode()) {
+				case DlssMode::kDefault:
+					ImGui::TextWrapped(T(TKEY("foveated_dlss_mode_default_desc"), "Per-eye isolation: 5 copies per frame, 2 DLSS evaluates. All presets."));
+					break;
+				case DlssMode::kFaster:
+					ImGui::TextWrapped(T(TKEY("foveated_dlss_mode_faster_desc"), "Viewport offset: 1 snapshot, 2 mask clears, 2 DLSS evaluates. Presets J/K unavailable."));
+					break;
+				default:
+					break;
+				}
+			}
+
+			ImGui::Separator();
+			ImGui::Text("%s", T(TKEY("foveated_periphery_header"), "Periphery Rendering"));
+			if (auto _tt = Util::HoverTooltipWrapper()) {
+				ImGui::Text("%s", T(TKEY("foveated_periphery_tooltip"),
+									  "The area outside your selected subrect is filled cheaply rather than running\n"
+									  "the selected upscaler. These settings control how that cheap fill looks and\n"
+									  "whether it flickers.\n"
+									  "\n"
+									  "Stretch method: how pixels outside the subrect are reconstructed from the lower-res\n"
+									  "render buffer. Does not affect the upscaled subrect region at all.\n"
+									  "\n"
+									  "Periphery AA: reduces temporal flicker in the stretched area using motion-compensated\n"
+									  "history blending. Independent of the upscaled subrect.\n"
+									  "\n"
+									  "Edge Blend: controls how the upscaled subrect edge meets the stretched periphery.\n"
+									  "Hard Copy leaves a sharp seam; Feather/Dither soften it. Edge Shape selects a\n"
+									  "rectangle or oval composite. The Feature 18 subrect remains rectangular internally."));
+			}
+
+			ImGui::SliderInt(T(TKEY("foveated_stretch_label"), "Stretch"), reinterpret_cast<int*>(&settings.stretchMode), 0, 2, StretchModeName((StretchMode)settings.stretchMode));
+			switch (GetStretchMode()) {
+			case StretchMode::kBilinear:
+				ImGui::TextWrapped(T(TKEY("foveated_stretch_bilinear_desc"), "Bilinear: smooth upscale of the render buffer. Looks soft but clean."));
+				break;
+			case StretchMode::kPoint:
+				ImGui::TextWrapped(T(TKEY("foveated_stretch_point_desc"), "Point: cheapest, visibly pixelated. Good for benchmarking foveated savings."));
+				break;
+			case StretchMode::kGaussianBlur:
+				ImGui::TextWrapped(T(TKEY("foveated_stretch_gaussian_desc"), "Gaussian: blurs the periphery further into soft focus. Good default for foveated use."));
+				ImGui::SliderFloat(T(TKEY("foveated_blur_radius"), "Blur Radius"), &settings.peripheryBlurRadius, 0.5f, 4.0f, "%.1f px");
+				break;
+			}
+
+			ImGui::SliderInt(T(TKEY("foveated_periphery_aa_label"), "Periphery AA"), reinterpret_cast<int*>(&settings.peripheryAAMode), 0, 1, PeripheryAAModeName((PeripheryAAMode)settings.peripheryAAMode));
+			if (GetPeripheryAAMode() == PeripheryAAMode::kTemporalSmooth) {
+				ImGui::TextWrapped(T(TKEY("foveated_periphery_aa_temporal_desc"), "Blends the stretched periphery with motion-reprojected history to reduce flicker."));
+				ImGui::SliderFloat(T(TKEY("foveated_smoothing"), "Smoothing"), &settings.peripheryTemporalAlpha, 0.05f, 0.5f, "%.2f");
+				if (auto _tt = Util::HoverTooltipWrapper()) {
+					ImGui::Text("%s", T(TKEY("foveated_smoothing_tooltip"), "Lower = more temporal history (smoother but may ghost). Higher = more responsive."));
+				}
+			}
+
+			ImGui::SliderInt(T(TKEY("foveated_edge_blend_label"), "Edge Blend"), reinterpret_cast<int*>(&settings.subrectBlendMode), 0, 2, SubrectBlendModeName((SubrectBlendMode)std::min(settings.subrectBlendMode, 2u)));
+			switch (GetSubrectBlendMode()) {
+			case SubrectBlendMode::kHardCopy:
+				ImGui::TextWrapped(T(TKEY("foveated_blend_hard_copy_desc"), "Sharp seam at the subrect boundary. Lowest cost."));
+				break;
+			case SubrectBlendMode::kFeather:
+				ImGui::TextWrapped(T(TKEY("foveated_blend_feather_desc"), "Smoothstep fade over N pixels at the boundary. Hides the seam."));
+				ImGui::SliderFloat(T(TKEY("foveated_feather_width"), "Feather Width"), &settings.subrectFeatherWidth, 2.0f, 128.0f, "%.0f px");
+				ImGui::SliderFloat(T(TKEY("foveated_falloff_curve"), "Falloff Curve"), &settings.subrectFalloffCurve, 0.5f, 2.0f, "%.2f");
+				if (auto _tt = Util::HoverTooltipWrapper())
+					ImGui::Text("%s", T(TKEY("foveated_falloff_curve_tooltip"), "Controls how the oval transition distributes the fade. 1.00 is balanced; lower values carry the neural result farther into the band, higher values hold the periphery longer."));
+				break;
+			case SubrectBlendMode::kDither:
+				ImGui::TextWrapped(T(TKEY("foveated_blend_dither_desc"), "Noise-dithered fade — more natural-looking than feather at large subrects."));
+				ImGui::SliderFloat(T(TKEY("foveated_band_width"), "Band Width"), &settings.subrectFeatherWidth, 2.0f, 128.0f, "%.0f px");
+				ImGui::SliderFloat(T(TKEY("foveated_falloff_curve"), "Falloff Curve"), &settings.subrectFalloffCurve, 0.5f, 2.0f, "%.2f");
+				ImGui::SliderFloat(T(TKEY("foveated_noise_amount"), "Noise Amount"), &settings.subrectDitherStrength, 0.0f, 2.0f, "%.2f");
+				break;
+			}
+
+			ImGui::SliderInt(T(TKEY("foveated_mask_shape_label"), "Edge Shape"), reinterpret_cast<int*>(&settings.subrectMaskMode), 0, 1,
+				SubrectMaskModeName(GetSubrectMaskMode()));
+			if (GetSubrectMaskMode() == SubrectMaskMode::kOval)
+				ImGui::TextWrapped(T(TKEY("foveated_mask_oval_desc"),
+					"Oval: a distance-corrected elliptical feather/dither mask that removes the box corners. The DLSS/Feature 18 work is still evaluated over the rectangular bounding region; this changes only the composite edge."));
+			else
+				ImGui::TextWrapped(T(TKEY("foveated_mask_rectangle_desc"),
+					"Rectangle: keep the original rectangular feather/dither mask. Use this fallback if the oval edge is not preferred."));
+
+			ImGui::Separator();
+			ImGui::Text("%s", T(TKEY("foveated_subrect_region_header"), "Subrect Region"));
+			ImGui::TextWrapped(T(TKEY("foveated_subrect_region_desc"),
+				"Drag in the preview below to select the region that gets full upscaling. "
+				"The rest is cheaply stretched — saves significant upscaling cost."));
+			Util::Text::WrappedInfo(T(TKEY("foveated_screenshot_subrect_note"), "Screenshot has its own subrect; align them only if you want pixel-matched captures."));
+
+			bool debugBool = settings.debugVisualize != 0;
+			if (ImGui::Checkbox(T(TKEY("foveated_visualize_regions"), "Visualize regions"), &debugBool))
+				settings.debugVisualize = debugBool ? 1u : 0u;
+			if (auto _tt = Util::HoverTooltipWrapper()) {
+				ImGui::Text("%s", T(TKEY("foveated_visualize_regions_tooltip"),
+									  "Diagnostic: tint the cheap-stretched periphery red so the upscaled\n"
+									  "subrect (un-tinted) pops visually in-game. Lets you confirm at a glance where\n"
+									  "the selected upscaler is actually running vs where the cheap stretch is filling.\n"
+									  "No perf impact; runtime toggle, no restart needed. Also shows briefly whenever\n"
+									  "you drag-resize the region below, even with this off."));
+			}
+
+			// Preview off kVR_FRAMEBUFFER (the final composed SBS image the headset
+			// sees) rather than kMAIN. kMAIN is mid-pipeline and carries non-1
+			// alpha where Skyrim composited UI plates, so even with the opaque
+			// blend callback you see the menu mask outline instead of the rendered
+			// world. ScreenshotFeature picks the same RT for the same reason
+			// (ScreenshotFeature.cpp:243). Foveated is VR-only so kVR_FRAMEBUFFER
+			// is always populated when we get here.
+			auto renderer = globals::game::renderer;
+			if (renderer) {
+				auto& fb = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kVR_FRAMEBUFFER];
+				auto* tex = static_cast<ID3D11Texture2D*>(fb.texture);
+				subrectController.DrawEditor(fb.SRV, tex, 0.5f, 0.0f, Util::Subrect::OpaquePreviewBlendCallback);
+			} else {
+				subrectController.DrawEditor(nullptr, nullptr, 0.5f);
+			}
+
+			if (subrectController.IsDragging())
+				lastDragTime = std::chrono::steady_clock::now();
 		}
-
-		ImGui::SliderInt(T(TKEY("foveated_edge_blend_label"), "Edge Blend"), reinterpret_cast<int*>(&settings.subrectBlendMode), 0, 2, SubrectBlendModeName((SubrectBlendMode)std::min(settings.subrectBlendMode, 2u)));
-		switch (GetSubrectBlendMode()) {
-		case SubrectBlendMode::kHardCopy:
-			ImGui::TextWrapped(T(TKEY("foveated_blend_hard_copy_desc"), "Sharp seam at the subrect boundary. Lowest cost."));
-			break;
-	case SubrectBlendMode::kFeather:
-			ImGui::TextWrapped(T(TKEY("foveated_blend_feather_desc"), "Smoothstep fade over N pixels at the boundary. Hides the seam."));
-			ImGui::SliderFloat(T(TKEY("foveated_feather_width"), "Feather Width"), &settings.subrectFeatherWidth, 2.0f, 128.0f, "%.0f px");
-			ImGui::SliderFloat(T(TKEY("foveated_falloff_curve"), "Falloff Curve"), &settings.subrectFalloffCurve, 0.5f, 2.0f, "%.2f");
-			if (auto _tt = Util::HoverTooltipWrapper())
-				ImGui::Text("%s", T(TKEY("foveated_falloff_curve_tooltip"), "Controls how the oval transition distributes the fade. 1.00 is balanced; lower values carry the neural result farther into the band, higher values hold the periphery longer."));
-			break;
-	case SubrectBlendMode::kDither:
-			ImGui::TextWrapped(T(TKEY("foveated_blend_dither_desc"), "Noise-dithered fade — more natural-looking than feather at large subrects."));
-			ImGui::SliderFloat(T(TKEY("foveated_band_width"), "Band Width"), &settings.subrectFeatherWidth, 2.0f, 128.0f, "%.0f px");
-			ImGui::SliderFloat(T(TKEY("foveated_falloff_curve"), "Falloff Curve"), &settings.subrectFalloffCurve, 0.5f, 2.0f, "%.2f");
-			ImGui::SliderFloat(T(TKEY("foveated_noise_amount"), "Noise Amount"), &settings.subrectDitherStrength, 0.0f, 2.0f, "%.2f");
-			break;
-		}
-
-		ImGui::SliderInt(T(TKEY("foveated_mask_shape_label"), "Edge Shape"), reinterpret_cast<int*>(&settings.subrectMaskMode), 0, 1,
-			SubrectMaskModeName(GetSubrectMaskMode()));
-		if (GetSubrectMaskMode() == SubrectMaskMode::kOval)
-			ImGui::TextWrapped(T(TKEY("foveated_mask_oval_desc"),
-				"Oval: a distance-corrected elliptical feather/dither mask that removes the box corners. The DLSS/Feature 18 work is still evaluated over the rectangular bounding region; this changes only the composite edge."));
-		else
-			ImGui::TextWrapped(T(TKEY("foveated_mask_rectangle_desc"),
-				"Rectangle: keep the original rectangular feather/dither mask. Use this fallback if the oval edge is not preferred."));
-
-		ImGui::Separator();
-		ImGui::Text("%s", T(TKEY("foveated_subrect_region_header"), "Subrect Region"));
-		ImGui::TextWrapped(T(TKEY("foveated_subrect_region_desc"),
-			"Drag in the preview below to select the region that gets full upscaling. "
-			"The rest is cheaply stretched — saves significant upscaling cost."));
-		Util::Text::WrappedInfo(T(TKEY("foveated_screenshot_subrect_note"), "Screenshot has its own subrect; align them only if you want pixel-matched captures."));
-
-		bool debugBool = settings.debugVisualize != 0;
-		if (ImGui::Checkbox(T(TKEY("foveated_visualize_regions"), "Visualize regions"), &debugBool))
-			settings.debugVisualize = debugBool ? 1u : 0u;
-		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::Text("%s", T(TKEY("foveated_visualize_regions_tooltip"),
-								  "Diagnostic: tint the cheap-stretched periphery red so the upscaled\n"
-								  "subrect (un-tinted) pops visually in-game. Lets you confirm at a glance where\n"
-								  "the selected upscaler is actually running vs where the cheap stretch is filling.\n"
-								  "No perf impact; runtime toggle, no restart needed. Also shows briefly whenever\n"
-								  "you drag-resize the region below, even with this off."));
-		}
-
-		// Preview off kVR_FRAMEBUFFER (the final composed SBS image the headset
-		// sees) rather than kMAIN. kMAIN is mid-pipeline and carries non-1
-		// alpha where Skyrim composited UI plates, so even with the opaque
-		// blend callback you see the menu mask outline instead of the rendered
-		// world. ScreenshotFeature picks the same RT for the same reason
-		// (ScreenshotFeature.cpp:243). Foveated is VR-only so kVR_FRAMEBUFFER
-		// is always populated when we get here.
-		auto renderer = globals::game::renderer;
-		if (renderer) {
-			auto& fb = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kVR_FRAMEBUFFER];
-			auto* tex = static_cast<ID3D11Texture2D*>(fb.texture);
-			subrectController.DrawEditor(fb.SRV, tex, 0.5f, 0.0f, Util::Subrect::OpaquePreviewBlendCallback);
-		} else {
-			subrectController.DrawEditor(nullptr, nullptr, 0.5f);
-		}
-
-		if (subrectController.IsDragging())
-			lastDragTime = std::chrono::steady_clock::now();
-	}
 	};
 
 	if (globals::game::isVR && showSharedPanelNote)
@@ -602,9 +603,9 @@ void FoveatedRender::DrawSettings(bool showSharedPanelNote, bool vrControlsFirst
 		drawVrControls();
 	if (ImGui::CollapsingHeader(T(TKEY("neural_rendering_header"), "DLSS Neural Rendering"), ImGuiTreeNodeFlags_DefaultOpen)) {
 		const bool supportedRoute = globals::features::upscaling.GetUpscaleMethod() == Upscaling::UpscaleMethod::kDLSS &&
-			!globals::features::upscaling.IsFrameGenerationConfiguredForSession() &&
-			(!globals::game::isVR || (GetDlssMode() == DlssMode::kDefault &&
-				globals::features::upscaling.perfMode.IsHookActive()));
+		                            !globals::features::upscaling.IsFrameGenerationConfiguredForSession() &&
+		                            (!globals::game::isVR || (GetDlssMode() == DlssMode::kDefault &&
+																 globals::features::upscaling.perfMode.IsHookActive()));
 		if (!supportedRoute) {
 			if (globals::features::upscaling.IsFrameGenerationConfiguredForSession())
 				Util::Text::Warning("Disable Frame Generation and restart the game before enabling DLSS Neural Rendering.");
@@ -647,7 +648,7 @@ void FoveatedRender::DrawSettings(bool showSharedPanelNote, bool vrControlsFirst
 				1,
 				IM_ARRAYSIZE(styleLabels));
 			if (ImGui::BeginTable("##neural_rendering_visual_styles", styleColumnCount,
-				ImGuiTableFlags_SizingStretchSame | ImGuiTableFlags_PadOuterX | ImGuiTableFlags_NoSavedSettings)) {
+					ImGuiTableFlags_SizingStretchSame | ImGuiTableFlags_PadOuterX | ImGuiTableFlags_NoSavedSettings)) {
 				for (int styleIndex = 0; styleIndex < IM_ARRAYSIZE(styleLabels); ++styleIndex) {
 					ImGui::TableNextColumn();
 					ImGui::PushID(styleIndex);
@@ -683,7 +684,7 @@ void FoveatedRender::DrawSettings(bool showSharedPanelNote, bool vrControlsFirst
 				}
 			}
 			if (ImGui::Combo(T(TKEY("neural_rendering_model_resolution"), "Model Resolution (Cost)"),
-				&modelResolution, modelResolutions, IM_ARRAYSIZE(modelResolutions))) {
+					&modelResolution, modelResolutions, IM_ARRAYSIZE(modelResolutions))) {
 				settings.neuralRenderingModelResolution = modelResolutionValues[modelResolution];
 			}
 			if (auto _tt = Util::HoverTooltipWrapper())
@@ -693,7 +694,7 @@ void FoveatedRender::DrawSettings(bool showSharedPanelNote, bool vrControlsFirst
 			static const char* resolveModes[] = { "Classic (bounded source)", "Matched Residual (experimental)" };
 			int resolveMode = static_cast<int>(std::min(settings.neuralRenderingResolveMode, 1u));
 			if (ImGui::Combo(T(TKEY("neural_rendering_resolve_mode"), "Reduced NR Resolve"), &resolveMode,
-				resolveModes, IM_ARRAYSIZE(resolveModes))) {
+					resolveModes, IM_ARRAYSIZE(resolveModes))) {
 				settings.neuralRenderingResolveMode = static_cast<uint>(resolveMode);
 			}
 			if (auto _tt = Util::HoverTooltipWrapper())
@@ -713,7 +714,7 @@ void FoveatedRender::DrawSettings(bool showSharedPanelNote, bool vrControlsFirst
 			static const char* multiPassModes[] = { "Off", "2x sequential NR", "3x sequential NR" };
 			int multiPass = static_cast<int>(std::min(settings.neuralRenderingMultiPass, 2u));
 			if (ImGui::Combo(T(TKEY("neural_rendering_multi_pass"), "Experimental sequential NR (screenshot/benchmark)"),
-				&multiPass, multiPassModes, IM_ARRAYSIZE(multiPassModes)))
+					&multiPass, multiPassModes, IM_ARRAYSIZE(multiPassModes)))
 				settings.neuralRenderingMultiPass = static_cast<uint>(multiPass);
 			if (auto _tt = Util::HoverTooltipWrapper())
 				ImGui::TextUnformatted(T(TKEY("neural_rendering_multi_pass_tooltip"),
@@ -763,7 +764,6 @@ void FoveatedRender::DrawSettings(bool showSharedPanelNote, bool vrControlsFirst
 		if (!supportedRoute)
 			ImGui::EndDisabled();
 	}
-
 
 	if (!vrControlsFirst)
 		drawVrControls();

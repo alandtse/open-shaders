@@ -2,8 +2,8 @@
 
 #include "Util.h"
 
-#include <Windows.h>
 #include <Psapi.h>
+#include <Windows.h>
 #include <d3d12.h>
 #include <nvsdk_ngx.h>
 
@@ -300,7 +300,7 @@ namespace NeuralRendering
 			return false;
 
 		const bool dimensionsChanged = featureInputWidth_[slot] != inputWidth || featureInputHeight_[slot] != inputHeight ||
-			featureOutputWidth_[slot] != outputWidth || featureOutputHeight_[slot] != outputHeight;
+		                               featureOutputWidth_[slot] != outputWidth || featureOutputHeight_[slot] != outputHeight;
 		if (featureHandles_[slot] && dimensionsChanged) {
 			release(static_cast<NVSDK_NGX_Handle*>(featureHandles_[slot]));
 			featureHandles_[slot] = nullptr;
@@ -412,7 +412,8 @@ namespace NeuralRendering
 			HMODULE core = FindNgxCoreModule();
 			if (parameters_ && core) {
 				auto destroy = reinterpret_cast<DestroyParameters>(GetProcAddress(core, "NVSDK_NGX_D3D12_DestroyParameters"));
-				if (destroy) destroy(static_cast<NVSDK_NGX_Parameter*>(parameters_));
+				if (destroy)
+					destroy(static_cast<NVSDK_NGX_Parameter*>(parameters_));
 			}
 			parameters_ = nullptr;
 			auto shutdown = reinterpret_cast<ShutdownD3D12>(GetProcAddress(static_cast<HMODULE>(module_), "NVSDK_NGX_D3D12_Shutdown1"));
@@ -426,7 +427,8 @@ namespace NeuralRendering
 			device_->Release();
 			device_ = nullptr;
 		}
-		if (module_) FreeLibrary(static_cast<HMODULE>(module_));
+		if (module_)
+			FreeLibrary(static_cast<HMODULE>(module_));
 		module_ = nullptr;
 		status_ = RuntimeStatus::NotProbed;
 		path_.clear();
@@ -439,17 +441,28 @@ namespace NeuralRendering
 	const char* ToString(RuntimeStatus status)
 	{
 		switch (status) {
-		case RuntimeStatus::NotProbed: return "not-probed";
-		case RuntimeStatus::NotFound: return "not-found";
-		case RuntimeStatus::VersionUnavailable: return "version-unavailable";
-		case RuntimeStatus::UnsupportedVersion: return "unsupported-version";
-		case RuntimeStatus::LoadFailed: return "load-failed";
-		case RuntimeStatus::MissingExport: return "missing-export";
-		case RuntimeStatus::Ready: return "ready";
-		case RuntimeStatus::InitializationFailed: return "initialization-failed";
-		case RuntimeStatus::CoreUnavailable: return "core-unavailable";
-		case RuntimeStatus::ParameterAllocationFailed: return "parameter-allocation-failed";
-		case RuntimeStatus::Initialized: return "initialized";
+		case RuntimeStatus::NotProbed:
+			return "not-probed";
+		case RuntimeStatus::NotFound:
+			return "not-found";
+		case RuntimeStatus::VersionUnavailable:
+			return "version-unavailable";
+		case RuntimeStatus::UnsupportedVersion:
+			return "unsupported-version";
+		case RuntimeStatus::LoadFailed:
+			return "load-failed";
+		case RuntimeStatus::MissingExport:
+			return "missing-export";
+		case RuntimeStatus::Ready:
+			return "ready";
+		case RuntimeStatus::InitializationFailed:
+			return "initialization-failed";
+		case RuntimeStatus::CoreUnavailable:
+			return "core-unavailable";
+		case RuntimeStatus::ParameterAllocationFailed:
+			return "parameter-allocation-failed";
+		case RuntimeStatus::Initialized:
+			return "initialized";
 		}
 		return "unknown";
 	}
