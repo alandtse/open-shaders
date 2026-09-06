@@ -235,6 +235,8 @@ void Deferred::EarlyPrepasses()
 {
 	CS_GPU_PASS("Deferred::EarlyPrepass");
 
+	sceneDepthFinal = false;
+
 	auto shaderCache = globals::shaderCache;
 
 	if (!shaderCache->IsEnabled())
