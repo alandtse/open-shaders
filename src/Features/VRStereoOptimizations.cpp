@@ -23,6 +23,36 @@ NLOHMANN_JSON_SERIALIZE_ENUM(VRStereoOptimizations::StereoMode, {
 // SETTINGS MANAGEMENT
 //=============================================================================
 
+namespace
+{
+	// D3D11 silently drops an SRV/UAV bind of a texture that is still bound as a render target.
+	struct RenderTargetUnbindScope
+	{
+		explicit RenderTargetUnbindScope(ID3D11DeviceContext* a_context) :
+			context(a_context)
+		{
+			context->OMGetRenderTargets(D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT, rtvs, &dsv);
+			context->OMSetRenderTargets(0, nullptr, nullptr);
+		}
+		~RenderTargetUnbindScope()
+		{
+			context->OMSetRenderTargets(D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT, rtvs, dsv);
+			for (auto* rtv : rtvs) {
+				if (rtv)
+					rtv->Release();
+			}
+			if (dsv)
+				dsv->Release();
+		}
+		RenderTargetUnbindScope(const RenderTargetUnbindScope&) = delete;
+		RenderTargetUnbindScope& operator=(const RenderTargetUnbindScope&) = delete;
+
+		ID3D11DeviceContext* context;
+		ID3D11RenderTargetView* rtvs[D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT] = {};
+		ID3D11DepthStencilView* dsv = nullptr;
+	};
+}
+
 void VRStereoOptimizations::SaveSettings(json& o_json)
 {
 	o_json["StereoMode"] = settings.stereoMode;
@@ -37,7 +67,7 @@ void VRStereoOptimizations::SaveSettings(json& o_json)
 	o_json["DebugSkipMerge"] = settings.debugSkipMerge;
 	o_json["DebugDepthMap"] = settings.debugDepthMap;
 	o_json["DirectionalOcclusionRatio"] = settings.directionalOcclusionRatio;
-	o_json["RepairSearchRadius"] = settings.repairSearchRadius;
+	o_json["RepairFromEye0Depth"] = settings.repairFromEye0Depth;
 }
 
 void VRStereoOptimizations::LoadSettings(json& o_json)
@@ -67,8 +97,7 @@ void VRStereoOptimizations::LoadSettings(json& o_json)
 	if (!o_json.contains("DirectionalOcclusionRatio") && o_json.contains("ForwardOcclusionScale"))
 		logger::info("[VR] ForwardOcclusionScale is obsolete; resetting DirectionalOcclusionRatio to default {}", settings.directionalOcclusionRatio);
 	loadClampedFloat("DirectionalOcclusionRatio", settings.directionalOcclusionRatio, 0.0f, 1.0f);
-	if (auto it = o_json.find("RepairSearchRadius"); it != o_json.end() && it->is_number_unsigned())
-		settings.repairSearchRadius = std::min(it->get<uint32_t>(), kMaxRepairSearchRadius);
+	loadBool("RepairFromEye0Depth", settings.repairFromEye0Depth);
 
 	loadBool("UseEyeTracking", settings.useEyeTracking);
 	loadBool("DebugSkipMerge", settings.debugSkipMerge);
@@ -135,8 +164,6 @@ void VRStereoOptimizations::SetupResources()
 			.Texture2D = { .MipSlice = 0 } });
 	}
 
-	// Depth views for the repair passes: DepthFill searches Eye 0's final depth while kMAIN is its
-	// DSV, so that half is copied out first; GBufferFill reads the filled kMAIN depth directly.
 	{
 		auto& mainDepth = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kMAIN];
 		D3D11_TEXTURE2D_DESC depthDesc;
@@ -145,17 +172,17 @@ void VRStereoOptimizations::SetupResources()
 		mainDepth.depthSRV->GetDesc(&depthSRVDesc);
 
 		depthDesc.Width /= 2;
-		depthDesc.Format = DXGI_FORMAT_R32_FLOAT;
-		depthDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_RENDER_TARGET;
+		depthDesc.Format = DXGI_FORMAT_R32_UINT;
+		depthDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS;
 		depthDesc.MiscFlags = 0;
-		texEye0Depth = eastl::make_unique<Texture2D>(depthDesc, "VRStereoOpt::Eye0Depth");
-		texEye0Depth->CreateSRV(D3D11_SHADER_RESOURCE_VIEW_DESC{
-			.Format = DXGI_FORMAT_R32_FLOAT,
+		texScatterDepth = eastl::make_unique<Texture2D>(depthDesc, "VRStereoOpt::ScatterDepth");
+		texScatterDepth->CreateSRV(D3D11_SHADER_RESOURCE_VIEW_DESC{
+			.Format = DXGI_FORMAT_R32_UINT,
 			.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D,
 			.Texture2D = { .MostDetailedMip = 0, .MipLevels = 1 } });
-		texEye0Depth->CreateRTV(D3D11_RENDER_TARGET_VIEW_DESC{
-			.Format = DXGI_FORMAT_R32_FLOAT,
-			.ViewDimension = D3D11_RTV_DIMENSION_TEXTURE2D,
+		texScatterDepth->CreateUAV(D3D11_UNORDERED_ACCESS_VIEW_DESC{
+			.Format = DXGI_FORMAT_R32_UINT,
+			.ViewDimension = D3D11_UAV_DIMENSION_TEXTURE2D,
 			.Texture2D = { .MipSlice = 0 } });
 
 		DX::ThrowIfFailed(device->CreateShaderResourceView(mainDepth.texture, &depthSRVDesc, mainDepthSRV.put()));
@@ -265,10 +292,10 @@ void VRStereoOptimizations::CompileShaders()
 	else
 		logger::error("[VRStereoOptimizations] Failed to compile DepthFillPS");
 
-	if (auto* ptr = Util::CompileShader(L"Data\\Shaders\\VRStereoOptimizations\\Eye0DepthCopyPS.hlsl", vspsDefines, "ps_5_0"))
-		eye0DepthCopyPS.attach(reinterpret_cast<ID3D11PixelShader*>(ptr));
+	if (auto* ptr = Util::CompileShader(L"Data\\Shaders\\VRStereoOptimizations\\DepthScatterCS.hlsl", csDefines, "cs_5_0"))
+		depthScatterCS.attach(reinterpret_cast<ID3D11ComputeShader*>(ptr));
 	else
-		logger::error("[VRStereoOptimizations] Failed to compile Eye0DepthCopyPS");
+		logger::error("[VRStereoOptimizations] Failed to compile DepthScatterCS");
 
 	if (auto* ptr = Util::CompileShader(L"Data\\Shaders\\VRStereoOptimizations\\GBufferFillCS.hlsl", csDefines, "cs_5_0"))
 		gBufferFillCS.attach(reinterpret_cast<ID3D11ComputeShader*>(ptr));
@@ -284,7 +311,7 @@ void VRStereoOptimizations::ClearShaderCache()
 	stencilWriteVS = nullptr;
 	stencilWritePS = nullptr;
 	depthFillPS = nullptr;
-	eye0DepthCopyPS = nullptr;
+	depthScatterCS = nullptr;
 	dssCache.clear();
 
 	// Framework clears caches without a follow-up SetupResources; without an immediate
@@ -321,10 +348,8 @@ void VRStereoOptimizations::DrawSettings()
 	ImGui::SliderFloat(T("feature.vr_stereo.directional_occlusion_ratio", "Directional Occlusion Ratio"), &settings.directionalOcclusionRatio, 0.0f, 1.0f, "%.2f");
 	Util::AddTooltip(T("feature.vr_stereo.directional_occlusion_ratio_tooltip", "Catches silhouette edges a plain depth-match check misses.\nFires when Eye 0 depth is less than this fraction of Eye 1 depth (e.g. 0.9 = Eye 0 more than 10% closer).\nHigher = more aggressive. 0 = disabled."));
 
-	int repairSearchRadius = static_cast<int>(settings.repairSearchRadius);
-	if (ImGui::SliderInt(T("feature.vr_stereo.repair_search_radius", "Repair Search Radius"), &repairSearchRadius, 0, static_cast<int>(kMaxRepairSearchRadius)))
-		settings.repairSearchRadius = static_cast<uint32_t>(repairSearchRadius);
-	Util::AddTooltip(T("feature.vr_stereo.repair_search_radius_tooltip", "How far (pixels) to look along the left eye for objects the depth pre-pass skipped, such as alpha-tested rocks and road edges.\nStops those objects from vanishing or shifting in the right eye. 0 = off."));
+	ImGui::Checkbox(T("feature.vr_stereo.repair_from_eye0_depth", "Repair From Left Eye Depth"), &settings.repairFromEye0Depth);
+	Util::AddTooltip(T("feature.vr_stereo.repair_from_eye0_depth_tooltip", "Restores objects the depth pre-pass skips, such as alpha-tested rocks and road edges, in the right eye from the left eye's final depth.\nLeave on; turn off only to compare."));
 
 	if (globals::state->IsDeveloperMode()) {
 		if (ImGui::TreeNode(T("feature.vr_stereo.debug", "Debug"))) {
@@ -372,7 +397,7 @@ void VRStereoOptimizations::UpdateConstantBuffer()
 	params.MinEdgeDistance = settings.minEdgeDistance;
 	params.FullBlendDistance = settings.fullBlendDistance;
 	params.DirectionalOcclusionRatio = settings.directionalOcclusionRatio;
-	params.RepairSearchRadius = settings.repairSearchRadius;
+	params.RepairFromEye0Depth = settings.repairFromEye0Depth ? 1u : 0u;
 
 	paramsCB->Update(params);
 }
@@ -452,12 +477,12 @@ void VRStereoOptimizations::DispatchStencil()
 	}
 }
 
-void VRStereoOptimizations::SetEyeViewport(uint32_t eyeIndex)
+void VRStereoOptimizations::SetEye1Viewport()
 {
 	const auto eyeWidth = static_cast<uint32_t>(frameDim.x) / 2;
 
 	D3D11_VIEWPORT vp{};
-	vp.TopLeftX = static_cast<float>(eyeWidth * eyeIndex);
+	vp.TopLeftX = static_cast<float>(eyeWidth);
 	vp.TopLeftY = 0.0f;
 	vp.Width = static_cast<float>(eyeWidth);
 	vp.Height = static_cast<float>(static_cast<uint32_t>(frameDim.y));
@@ -494,7 +519,7 @@ void VRStereoOptimizations::ExecuteStencilWritePass()
 	context->OMSetDepthStencilState(stencilWriteDSS.get(), 1);
 	context->RSSetState(stencilWriteRS.get());
 
-	SetEyeViewport(1);
+	SetEye1Viewport();
 
 	// Bind shaders and mode texture
 	context->VSSetShader(stencilWriteVS.get(), nullptr, 0);
@@ -589,6 +614,7 @@ void VRStereoOptimizations::RepairCulledEye1()
 	// own EQUAL-ref=1 DSS survives. No engine draw or stencil clear may run between
 	// these steps, or the stencil mask is lost — hence they live in one method.
 	DeactivateStencil();
+	DispatchDepthScatter();
 	ExecuteDepthFillPass();
 	DispatchGBufferFill();
 }
@@ -611,57 +637,68 @@ void VRStereoOptimizations::ExecuteDepthFillPass()
 	// Snapshot + restore the full pipeline state this fullscreen pass clobbers.
 	Util::FullscreenPassScope scope(context);
 
-	auto& depthData = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kMAIN];
-
-	context->RSSetState(stencilWriteRS.get());
-	context->VSSetShader(stencilWriteVS.get(), nullptr, 0);
-	context->GSSetShader(nullptr, nullptr, 0);
-	context->IASetInputLayout(nullptr);
-	context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-
-	// ===== EYE 0 DEPTH COPY =====
-
-	{
-		ID3D11RenderTargetView* rtv = texEye0Depth->rtv.get();
-		context->OMSetRenderTargets(1, &rtv, nullptr);
-		context->OMSetBlendState(nullptr, nullptr, 0xFFFFFFFF);
-		context->OMSetDepthStencilState(nullptr, 0);
-		SetEyeViewport(0);
-		context->PSSetShader(eye0DepthCopyPS.get(), nullptr, 0);
-		ID3D11ShaderResourceView* mainDepth = mainDepthSRV.get();
-		context->PSSetShaderResources(0, 1, &mainDepth);
-		context->Draw(3, 0);
-		ID3D11ShaderResourceView* nullSRV = nullptr;
-		context->PSSetShaderResources(0, 1, &nullSRV);
-	}
-
 	// ===== DEPTH FILL PASS =====
 
+	auto& depthData = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kMAIN];
 	context->OMSetRenderTargets(0, nullptr, depthData.views[0]);
 	context->OMSetDepthStencilState(depthFillDSS.get(), 1);
+	context->RSSetState(stencilWriteRS.get());
 
-	SetEyeViewport(1);
+	SetEye1Viewport();
 
+	context->VSSetShader(stencilWriteVS.get(), nullptr, 0);
 	context->PSSetShader(depthFillPS.get(), nullptr, 0);
-	ID3D11ShaderResourceView* srvs[2]{ depthSRV, texEye0Depth->srv.get() };
+	context->GSSetShader(nullptr, nullptr, 0);
+	ID3D11ShaderResourceView* srvs[2]{ depthSRV, texScatterDepth->srv.get() };
 	context->PSSetShaderResources(0, 2, srvs);
 
 	auto cbPtr = paramsCB->CB();
 	context->PSSetConstantBuffers(1, 1, &cbPtr);
-	ID3D11Buffer* savedPerFrame = nullptr;
-	context->PSGetConstantBuffers(12, 1, &savedPerFrame);
-	ID3D11Buffer* perFrame = *globals::game::perFrame;
-	context->PSSetConstantBuffers(12, 1, &perFrame);
+
+	context->IASetInputLayout(nullptr);
+	context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 
 	context->Draw(3, 0);
 
-	context->PSSetConstantBuffers(12, 1, &savedPerFrame);
-	if (savedPerFrame)
-		savedPerFrame->Release();
 	ID3D11ShaderResourceView* nullSRV = nullptr;
 	context->PSSetShaderResources(1, 1, &nullSRV);
 
 	// Remaining pipeline state restored by `scope` dtor.
+}
+
+void VRStereoOptimizations::DispatchDepthScatter()
+{
+	if (!depthScatterCS || !texScatterDepth || !mainDepthSRV || !paramsCB)
+		return;
+
+	ZoneScoped;
+	CS_GPU_PASS("VRStereoOpt::DepthScatter");
+
+	auto context = globals::d3d::context;
+	RenderTargetUnbindScope rtScope(context);
+
+	const UINT farthest[4] = { 0xFFFFFFFFu, 0xFFFFFFFFu, 0xFFFFFFFFu, 0xFFFFFFFFu };
+	context->ClearUnorderedAccessViewUint(texScatterDepth->uav.get(), farthest);
+
+	auto cbPtr = paramsCB->CB();
+	ID3D11ShaderResourceView* srv = mainDepthSRV.get();
+	ID3D11UnorderedAccessView* uav = texScatterDepth->uav.get();
+	context->CSSetConstantBuffers(1, 1, &cbPtr);
+	context->CSSetShaderResources(0, 1, &srv);
+	context->CSSetUnorderedAccessViews(0, 1, &uav, nullptr);
+	context->CSSetShader(depthScatterCS.get(), nullptr, 0);
+
+	const uint32_t eyeWidth = static_cast<uint32_t>(frameDim.x) / 2;
+	const uint32_t height = static_cast<uint32_t>(frameDim.y);
+	context->Dispatch((eyeWidth + 7) / 8, (height + 7) / 8, 1);
+
+	ID3D11ShaderResourceView* nullSRV = nullptr;
+	ID3D11UnorderedAccessView* nullUAV = nullptr;
+	ID3D11Buffer* nullCB = nullptr;
+	context->CSSetShaderResources(0, 1, &nullSRV);
+	context->CSSetUnorderedAccessViews(0, 1, &nullUAV, nullptr);
+	context->CSSetConstantBuffers(1, 1, &nullCB);
+	context->CSSetShader(nullptr, nullptr, 0);
 }
 
 void VRStereoOptimizations::DispatchGBufferFill()
@@ -676,19 +713,12 @@ void VRStereoOptimizations::DispatchGBufferFill()
 	auto renderer = globals::game::renderer;
 	auto& rt = renderer->GetRuntimeData().renderTargets;
 
-	// The deferred MRT set is bound as RTVs at this point; UAV binds on the same
-	// textures would be dropped by the runtime. Unbind render targets first.
-	ID3D11RenderTargetView* savedRTVs[D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT] = {};
-	ID3D11DepthStencilView* savedDSV = nullptr;
-	context->OMGetRenderTargets(D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT, savedRTVs, &savedDSV);
-	context->OMSetRenderTargets(0, nullptr, nullptr);
+	RenderTargetUnbindScope rtScope(context);
 
 	// paramsCB already uploaded this frame by DispatchStencil (settings/resolution are
 	// frame-constant); no re-upload needed.
 	auto cbPtr = paramsCB->CB();
 
-	// Depth just restored by DepthFill: for the affected pixels it is the Eye 0 surface found
-	// by the search, so the reprojection below lands on that surface, not the prepass one.
 	ID3D11ShaderResourceView* srvs[2]{ mainDepthSRV.get(), texPerPixelMode->srv.get() };
 	ID3D11UnorderedAccessView* uavs[8]{
 		rt[RE::RENDER_TARGETS::kMAIN].UAV,
@@ -717,12 +747,4 @@ void VRStereoOptimizations::DispatchGBufferFill()
 	context->CSSetUnorderedAccessViews(0, 8, nullUAVs, nullptr);
 	context->CSSetConstantBuffers(1, 1, &nullCB);
 	context->CSSetShader(nullptr, nullptr, 0);
-
-	context->OMSetRenderTargets(D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT, savedRTVs, savedDSV);
-	for (auto& rtv : savedRTVs) {
-		if (rtv)
-			rtv->Release();
-	}
-	if (savedDSV)
-		savedDSV->Release();
 }
