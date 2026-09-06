@@ -38,5 +38,5 @@ void ENBLens::UpdateEffectVariables()
 	SetShaderResourceVariable("TextureDownsampled", TextureManager::GetSingleton().GetDownsampleTexture());
 
 	// Set original texture, not typically used due to aliasing
-	SetShaderResourceVariable("TextureOriginal", EffectManager::GetSingleton().GetTextureOriginal().SRV);
+	SetShaderResourceVariable("TextureOriginal", Util::AsReal<ID3D11ShaderResourceView>(EffectManager::GetSingleton().GetTextureOriginal().SRV));
 }

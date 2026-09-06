@@ -24,7 +24,7 @@ void ENBEffect::Execute()
 	}
 
 	// Execute with: input (16bit HDR), output (10bit SDR), temp (10bit SDR)
-	auto [executed, inOutput] = ExecuteTechniqueSequence(GetSelectedTechnique(), textureOriginal.SRV, *textureSDRTemp, *textureSDRTemp2);
+	auto [executed, inOutput] = ExecuteTechniqueSequence(GetSelectedTechnique(), Util::AsReal<ID3D11ShaderResourceView>(textureOriginal.SRV), *textureSDRTemp, *textureSDRTemp2);
 
 	if (executed && !inOutput) {
 		textureManager.SwapTextures("TextureSDRTemp", "TextureSDRTemp2");

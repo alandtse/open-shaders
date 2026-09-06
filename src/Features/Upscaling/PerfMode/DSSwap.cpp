@@ -71,10 +71,10 @@ void PerfMode::BSGraphics_Renderer_UpdateViewPort_Hook::thunk(RE::BSGraphics::Re
 	// The fade Draw(30) bypasses this path entirely (direct D3D RSSet-
 	// Viewports) and is handled by the Draw vfunc hook in Globals.cpp.
 	if (perfMode.IsPostChainDone()) {
-		if (static_cast<uint32_t>(vp.Width) == renderW &&
-			static_cast<uint32_t>(vp.Height) == renderH) {
-			vp.Width = static_cast<float>(displayW);
-			vp.Height = static_cast<float>(displayH);
+		if (static_cast<uint32_t>(vp.width) == renderW &&
+			static_cast<uint32_t>(vp.height) == renderH) {
+			vp.width = static_cast<float>(displayW);
+			vp.height = static_cast<float>(displayH);
 		}
 		return;
 	}
@@ -97,10 +97,10 @@ void PerfMode::BSGraphics_Renderer_UpdateViewPort_Hook::thunk(RE::BSGraphics::Re
 
 	// Normal world/depth path: compress displayRes → renderRes so draws
 	// stay inside the renderRes-sized kMAIN family.
-	if (static_cast<uint32_t>(vp.Width) == displayW &&
-		static_cast<uint32_t>(vp.Height) == displayH) {
-		vp.Width = static_cast<float>(renderW);
-		vp.Height = static_cast<float>(renderH);
+	if (static_cast<uint32_t>(vp.width) == displayW &&
+		static_cast<uint32_t>(vp.height) == displayH) {
+		vp.width = static_cast<float>(renderW);
+		vp.height = static_cast<float>(renderH);
 	}
 }
 
@@ -141,12 +141,12 @@ bool PerfMode::MaybeSwapDSForEnlargedRT()
 	// sidesteps the stencil-content mismatch. Swap pattern matches UIPass-
 	// Dispatch_Hook (all 8 view slots).
 	for (int i = 0; i < 8; ++i) {
-		autoSwapSavedViews[i] = bound.views[i];
+		autoSwapSavedViews[i] = Util::AsReal<ID3D11DepthStencilView>(bound.views[i]);
 		if (bound.views[i])
 			bound.views[i] = nullptr;
 	}
 	for (int i = 0; i < 8; ++i) {
-		autoSwapSavedReadOnlyViews[i] = bound.readOnlyViews[i];
+		autoSwapSavedReadOnlyViews[i] = Util::AsReal<ID3D11DepthStencilView>(bound.readOnlyViews[i]);
 		if (bound.readOnlyViews[i])
 			bound.readOnlyViews[i] = nullptr;
 	}
@@ -162,9 +162,9 @@ void PerfMode::RestoreSwappedDS()
 	auto& dsData = renderer->GetDepthStencilData();
 	auto& bound = dsData.depthStencils[autoSwapDSIdx];
 	for (int i = 0; i < 8; ++i)
-		bound.views[i] = autoSwapSavedViews[i];
+		bound.views[i] = Util::AsReal<REX::W32::ID3D11DepthStencilView>(autoSwapSavedViews[i]);
 	for (int i = 0; i < 8; ++i)
-		bound.readOnlyViews[i] = autoSwapSavedReadOnlyViews[i];
+		bound.readOnlyViews[i] = Util::AsReal<REX::W32::ID3D11DepthStencilView>(autoSwapSavedReadOnlyViews[i]);
 	autoSwapDSIdx = UINT32_MAX;
 }
 

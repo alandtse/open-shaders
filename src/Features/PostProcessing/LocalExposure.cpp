@@ -105,7 +105,7 @@ void LocalExposure::SetupResources()
 	// Get screen dimensions from game render target
 	auto gameTexMainCopy = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMAIN_COPY];
 	D3D11_TEXTURE2D_DESC mainDesc;
-	gameTexMainCopy.texture->GetDesc(&mainDesc);
+	gameTexMainCopy.texture->GetDesc(Util::AsReal<REX::W32::D3D11_TEXTURE2D_DESC>(&mainDesc));
 
 	uint fullW = mainDesc.Width;
 	uint fullH = mainDesc.Height;

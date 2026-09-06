@@ -44,7 +44,7 @@ namespace FoveatedRenderImpl
 		p.colorSrc = upscalingTexture;
 		p.colorDst = dlssperfActive ? static_cast<ID3D11Resource*>(perfMode.GetTestTexture()) : upscalingTexture;
 		p.colorDstUAV = dlssperfActive ? perfMode.GetTestTextureUAV() :
-		                                 globals::game::renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMAIN].UAV;
+		                                 Util::AsReal<ID3D11UnorderedAccessView>(globals::game::renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMAIN].UAV);
 
 		p.depthTexture = depth;
 		p.reactiveMask = reactive;

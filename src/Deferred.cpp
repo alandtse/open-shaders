@@ -86,16 +86,16 @@ void SetupRenderTarget(RE::RENDER_TARGET target, D3D11_TEXTURE2D_DESC texDesc, D
 		data.texture = nullptr;
 	}
 
-	DX::ThrowIfFailed(device->CreateTexture2D(&texDesc, nullptr, &data.texture));
+	DX::ThrowIfFailed(device->CreateTexture2D(&texDesc, nullptr, Util::AsReal<ID3D11Texture2D*>(&data.texture)));
 
 	if (texDesc.BindFlags & D3D11_BIND_SHADER_RESOURCE)
-		DX::ThrowIfFailed(device->CreateShaderResourceView(data.texture, &srvDesc, &data.SRV));
+		DX::ThrowIfFailed(device->CreateShaderResourceView(Util::AsReal<ID3D11Resource>(data.texture), &srvDesc, Util::AsReal<ID3D11ShaderResourceView*>(&data.SRV)));
 
 	if (texDesc.BindFlags & D3D11_BIND_RENDER_TARGET)
-		DX::ThrowIfFailed(device->CreateRenderTargetView(data.texture, &rtvDesc, &data.RTV));
+		DX::ThrowIfFailed(device->CreateRenderTargetView(Util::AsReal<ID3D11Resource>(data.texture), &rtvDesc, Util::AsReal<ID3D11RenderTargetView*>(&data.RTV)));
 
 	if (texDesc.BindFlags & D3D11_BIND_UNORDERED_ACCESS)
-		DX::ThrowIfFailed(device->CreateUnorderedAccessView(data.texture, &uavDesc, &data.UAV));
+		DX::ThrowIfFailed(device->CreateUnorderedAccessView(Util::AsReal<ID3D11Resource>(data.texture), &uavDesc, Util::AsReal<ID3D11UnorderedAccessView*>(&data.UAV)));
 }
 
 void Deferred::SetupResources()
@@ -110,10 +110,10 @@ void Deferred::SetupResources()
 		D3D11_RENDER_TARGET_VIEW_DESC rtvDesc = {};
 		D3D11_UNORDERED_ACCESS_VIEW_DESC uavDesc = {};
 
-		main.texture->GetDesc(&texDesc);
-		main.SRV->GetDesc(&srvDesc);
-		main.RTV->GetDesc(&rtvDesc);
-		main.UAV->GetDesc(&uavDesc);
+		main.texture->GetDesc(Util::AsReal<REX::W32::D3D11_TEXTURE2D_DESC>(&texDesc));
+		main.SRV->GetDesc(Util::AsReal<REX::W32::D3D11_SHADER_RESOURCE_VIEW_DESC>(&srvDesc));
+		main.RTV->GetDesc(Util::AsReal<REX::W32::D3D11_RENDER_TARGET_VIEW_DESC>(&rtvDesc));
+		main.UAV->GetDesc(Util::AsReal<REX::W32::D3D11_UNORDERED_ACCESS_VIEW_DESC>(&uavDesc));
 
 		// Available targets:
 		// MAIN ONLY ALPHA
@@ -414,16 +414,16 @@ void Deferred::DeferredPasses()
 		CS_GPU_PASS("Deferred::DeferredComposite");
 
 		ID3D11ShaderResourceView* srvs[16]{
-			specular.SRV,                                                                                    // t0  SpecularTexture
-			albedo.SRV,                                                                                      // t1  AlbedoTexture
-			normalRoughness.SRV,                                                                             // t2  NormalRoughnessTexture
-			masks.SRV,                                                                                       // t3  MasksTexture
+			Util::AsReal<ID3D11ShaderResourceView>(specular.SRV),                                            // t0  SpecularTexture
+			Util::AsReal<ID3D11ShaderResourceView>(albedo.SRV),                                              // t1  AlbedoTexture
+			Util::AsReal<ID3D11ShaderResourceView>(normalRoughness.SRV),                                     // t2  NormalRoughnessTexture
+			Util::AsReal<ID3D11ShaderResourceView>(masks.SRV),                                               // t3  MasksTexture
 			dynamicCubemaps.loaded || globals::game::isVR ? Util::GetCurrentSceneDepthSRV(false) : nullptr,  // t4  DepthTexture (24/32-bit; HLSL type baked at compile via TERRAIN_BLENDING)
-			dynamicCubemaps.loaded ? reflectance.SRV : nullptr,                                              // t5  ReflectanceTexture
+			dynamicCubemaps.loaded ? Util::AsReal<ID3D11ShaderResourceView>(reflectance.SRV) : nullptr,      // t5  ReflectanceTexture
 			dynamicCubemaps.loaded ? dynamicCubemaps.envTexture->srv.get() : nullptr,                        // t6  EnvTexture
 			dynamicCubemaps.loaded ? dynamicCubemaps.envReflectionsTexture->srv.get() : nullptr,             // t7  EnvReflectionsTexture
 			dynamicCubemaps.loaded && skylighting.loaded ? skylighting.texProbeArray->srv.get() : nullptr,   // t8  SkylightingProbeArray
-			masks2.SRV,                                                                                      // t9  Masks2Texture (vertexAO in .x)
+			Util::AsReal<ID3D11ShaderResourceView>(masks2.SRV),                                              // t9  Masks2Texture (vertexAO in .x)
 			ssgi_ao,                                                                                         // t10 SsgiAoTexture
 			ssgi_hq_spec ? nullptr : ssgi_y,                                                                 // t11 SsgiYTexture
 			ssgi_hq_spec ? nullptr : ssgi_cocg,                                                              // t12 SsgiCoCgTexture
@@ -442,7 +442,7 @@ void Deferred::DeferredPasses()
 		ID3D11ShaderResourceView* modeSRV = nullptr;
 		context->CSSetShaderResources(16, 1, &modeSRV);
 
-		ID3D11UnorderedAccessView* uavs[3]{ main.UAV, normals.UAV, motionVectors.UAV };
+		ID3D11UnorderedAccessView* uavs[3]{ Util::AsReal<ID3D11UnorderedAccessView>(main.UAV), Util::AsReal<ID3D11UnorderedAccessView>(normals.UAV), Util::AsReal<ID3D11UnorderedAccessView>(motionVectors.UAV) };
 		context->CSSetUnorderedAccessViews(0, ARRAYSIZE(uavs), uavs, nullptr);
 
 		if (auto* shader = interior ? GetComputeMainCompositeInterior() : GetComputeMainComposite()) {
@@ -684,7 +684,7 @@ void Deferred::CopyShadowLightData()
 	context->PSSetShaderResources(98, 1, &srv);
 
 	// t99: cascade depth array used by LightLimitFix::GetDirectionalShadow for PCF sampling.
-	ID3D11ShaderResourceView* cascadeSRV = globals::game::renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGET_DEPTHSTENCIL::kSHADOWMAPS_ESRAM].depthSRV;
+	ID3D11ShaderResourceView* cascadeSRV = Util::AsReal<ID3D11ShaderResourceView>(globals::game::renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGET_DEPTHSTENCIL::kSHADOWMAPS_ESRAM].depthSRV);
 	context->PSSetShaderResources(99, 1, &cascadeSRV);
 }
 
@@ -805,7 +805,7 @@ void Deferred::Hooks::Main_RenderWorld_BlendedDecals::thunk(RE::BSShaderAccumula
 	auto depth = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kMAIN];
 	auto depthCopy = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kPOST_ZPREPASS_COPY];
 
-	context->CopyResource(depthCopy.texture, depth.texture);
+	context->CopyResource(Util::AsReal<ID3D11Resource>(depthCopy.texture), Util::AsReal<ID3D11Resource>(depth.texture));
 
 	// After this point, water starts rendering
 };

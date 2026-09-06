@@ -159,7 +159,7 @@ namespace ShadowCasterManager
 		if (!srv)
 			return false;
 		D3D11_TEXTURE2D_DESC desc{};
-		if (!Util::GetTexture2DDesc(srv, desc))
+		if (!Util::GetTexture2DDesc(Util::AsReal<ID3D11View>(srv), desc))
 			return false;
 		if (desc.ArraySize == 0)
 			return false;

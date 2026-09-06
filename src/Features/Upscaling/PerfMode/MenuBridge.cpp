@@ -12,7 +12,7 @@
 #include <FidelityFX/host/ffx_fsr3.h>
 
 // ============================================================================
-// UIPassDispatch_Hook: swap KMAIN DS → fakeDS for UI pass (renderMode==24)
+// UIPassDispatch_Hook: swap KMAIN DS → fakeDS for the VR world-space UI pass
 // ============================================================================
 // UI pass draws VR HUD to kMENUBG (now 3k). Engine binds KMAIN(DS) as DS,
 // which is still 1k → size mismatch. Swap to fakeDS (3k) before, restore after.
@@ -21,9 +21,12 @@ void PerfMode::UIPassDispatch_Hook::thunk(RE::BSGraphics::BSShaderAccumulator* s
 {
 	auto& perfMode = globals::features::upscaling.perfMode;
 
-	// Only intercept renderMode==24 (UI pass) when hook is active
+	// Only intercept the VR world-space UI pass when hook is active. renderMode here is a
+	// raw uint32_t (this class is a legacy duplicate BSShaderAccumulator declaration), so
+	// the enum needs an explicit cast rather than comparing types directly.
 	auto& rtData = shaderAccumulator->GetRuntimeData();
-	if (!perfMode.hookActive || !perfMode.fakeDSV || rtData.renderMode != 24) {
+	if (!perfMode.hookActive || !perfMode.fakeDSV ||
+		rtData.renderMode != static_cast<uint32_t>(RE::BSShaderAccumulator::RENDER_MODE::kVRWorldSpaceUIPass)) {
 		func(shaderAccumulator, renderFlags);
 		return;
 	}
@@ -36,14 +39,14 @@ void PerfMode::UIPassDispatch_Hook::thunk(RE::BSGraphics::BSShaderAccumulator* s
 	ID3D11DepthStencilView* savedViews[8] = {};
 	ID3D11DepthStencilView* savedReadOnlyViews[8] = {};
 	for (int i = 0; i < 8; i++) {
-		savedViews[i] = kmainDS.views[i];
+		savedViews[i] = Util::AsReal<ID3D11DepthStencilView>(kmainDS.views[i]);
 		if (kmainDS.views[i])
-			kmainDS.views[i] = perfMode.fakeDSV.get();
+			kmainDS.views[i] = Util::AsReal<REX::W32::ID3D11DepthStencilView>(perfMode.fakeDSV.get());
 	}
 	for (int i = 0; i < 8; i++) {
-		savedReadOnlyViews[i] = kmainDS.readOnlyViews[i];
+		savedReadOnlyViews[i] = Util::AsReal<ID3D11DepthStencilView>(kmainDS.readOnlyViews[i]);
 		if (kmainDS.readOnlyViews[i])
-			kmainDS.readOnlyViews[i] = perfMode.fakeDSV.get();
+			kmainDS.readOnlyViews[i] = Util::AsReal<REX::W32::ID3D11DepthStencilView>(perfMode.fakeDSV.get());
 	}
 
 	// Force engine to re-bind DS from struct
@@ -52,16 +55,16 @@ void PerfMode::UIPassDispatch_Hook::thunk(RE::BSGraphics::BSShaderAccumulator* s
 	// Force 3k VP: engine may not call UpdateViewPort during UI pass,
 	// so we directly set shadowState viewport to DisplayRes and mark dirty.
 	auto* ss = globals::game::shadowState;
-	D3D11_VIEWPORT savedVP = {};
+	REX::W32::D3D11_VIEWPORT savedVP = {};
 	if (ss) {
 		auto& vp = ss->GetVRRuntimeData().viewPort;
 		savedVP = vp;
-		vp.TopLeftX = 0.0f;
-		vp.TopLeftY = 0.0f;
-		vp.Width = static_cast<float>(perfMode.displayEyeWidth * 2);
-		vp.Height = static_cast<float>(perfMode.displayEyeHeight);
-		vp.MinDepth = 0.0f;
-		vp.MaxDepth = 1.0f;
+		vp.topLeftX = 0.0f;
+		vp.topLeftY = 0.0f;
+		vp.width = static_cast<float>(perfMode.displayEyeWidth * 2);
+		vp.height = static_cast<float>(perfMode.displayEyeHeight);
+		vp.minDepth = 0.0f;
+		vp.maxDepth = 1.0f;
 		globals::game::stateUpdateFlags->set(RE::BSGraphics::ShaderFlags::DIRTY_VIEWPORT);
 	}
 
@@ -88,9 +91,9 @@ void PerfMode::UIPassDispatch_Hook::thunk(RE::BSGraphics::BSShaderAccumulator* s
 
 	// Restore original KMAIN DS views
 	for (int i = 0; i < 8; i++)
-		kmainDS.views[i] = savedViews[i];
+		kmainDS.views[i] = Util::AsReal<REX::W32::ID3D11DepthStencilView>(savedViews[i]);
 	for (int i = 0; i < 8; i++)
-		kmainDS.readOnlyViews[i] = savedReadOnlyViews[i];
+		kmainDS.readOnlyViews[i] = Util::AsReal<REX::W32::ID3D11DepthStencilView>(savedReadOnlyViews[i]);
 
 	// Re-dirty so subsequent passes get correct DS
 	globals::game::stateUpdateFlags->set(RE::BSGraphics::ShaderFlags::DIRTY_RENDERTARGET);
@@ -159,14 +162,14 @@ void PerfMode::MaybeBlitMenuBG(uint32_t boundRTIdx)
 		context->RSSetState(nullptr);
 
 		D3D11_TEXTURE2D_DESC destDesc{};
-		static_cast<ID3D11Texture2D*>(dest.texture)->GetDesc(&destDesc);
+		Util::AsReal<ID3D11Texture2D>(dest.texture)->GetDesc(&destDesc);
 		D3D11_VIEWPORT vp = {};
 		vp.Width = static_cast<float>(destDesc.Width);
 		vp.Height = static_cast<float>(destDesc.Height);
 		vp.MaxDepth = 1.0f;
 		context->RSSetViewports(1, &vp);
 
-		ID3D11RenderTargetView* rtv = dest.RTV;
+		ID3D11RenderTargetView* rtv = Util::AsReal<ID3D11RenderTargetView>(dest.RTV);
 		context->OMSetRenderTargets(1, &rtv, nullptr);
 		context->Draw(3, 0);
 	}

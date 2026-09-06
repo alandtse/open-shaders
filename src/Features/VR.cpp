@@ -67,7 +67,7 @@ void VR::SetupResources()
 	auto renderer = globals::game::renderer;
 	auto mainTex = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMAIN];
 	D3D11_TEXTURE2D_DESC mainDesc;
-	mainTex.texture->GetDesc(&mainDesc);
+	mainTex.texture->GetDesc(Util::AsReal<REX::W32::D3D11_TEXTURE2D_DESC>(&mainDesc));
 	mainDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
 	mainDesc.MiscFlags = 0;
 	stereoBlendCopyTex = eastl::make_unique<Texture2D>(mainDesc, "VR::StereoBlendCopyTex");

@@ -104,7 +104,7 @@ void VRStereoOptimizations::SetupResources()
 	// Get main RT dimensions for per-eye calculations
 	auto& main = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMAIN];
 	D3D11_TEXTURE2D_DESC mainDesc;
-	main.texture->GetDesc(&mainDesc);
+	main.texture->GetDesc(Util::AsReal<REX::W32::D3D11_TEXTURE2D_DESC>(&mainDesc));
 
 	// Per-pixel mode texture (R8_UINT, full SBS resolution = both eyes)
 	{
@@ -401,7 +401,7 @@ void VRStereoOptimizations::DispatchStencil()
 void VRStereoOptimizations::SetEye1Viewport()
 {
 	D3D11_TEXTURE2D_DESC mainDesc;
-	globals::game::renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMAIN].texture->GetDesc(&mainDesc);
+	globals::game::renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMAIN].texture->GetDesc(Util::AsReal<REX::W32::D3D11_TEXTURE2D_DESC>(&mainDesc));
 
 	D3D11_VIEWPORT vp{};
 	vp.TopLeftX = static_cast<float>(mainDesc.Width / 2);
@@ -431,13 +431,13 @@ void VRStereoOptimizations::ExecuteStencilWritePass()
 	// StencilWritePS no longer binds a depth SRV, so we can use the normal writable DSV here.
 	{
 		auto& depthData = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kMAIN];
-		context->ClearDepthStencilView(depthData.views[0], D3D11_CLEAR_STENCIL, 1.0f, 0);
+		context->ClearDepthStencilView(Util::AsReal<ID3D11DepthStencilView>(depthData.views[0]), D3D11_CLEAR_STENCIL, 1.0f, 0);
 	}
 
 	// Use the normal DSV for stencil writes — no depth SRV is bound simultaneously,
 	// so there is no D3D11 resource hazard and stencil writes are not suppressed.
 	auto& depthData = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kMAIN];
-	context->OMSetRenderTargets(0, nullptr, depthData.views[0]);
+	context->OMSetRenderTargets(0, nullptr, Util::AsReal<ID3D11DepthStencilView>(depthData.views[0]));
 	context->OMSetDepthStencilState(stencilWriteDSS.get(), 1);
 	context->RSSetState(stencilWriteRS.get());
 
@@ -561,7 +561,7 @@ void VRStereoOptimizations::ExecuteDepthFillPass()
 	// ===== DEPTH FILL PASS =====
 
 	auto& depthData = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kMAIN];
-	context->OMSetRenderTargets(0, nullptr, depthData.views[0]);
+	context->OMSetRenderTargets(0, nullptr, Util::AsReal<ID3D11DepthStencilView>(depthData.views[0]));
 	context->OMSetDepthStencilState(depthFillDSS.get(), 1);
 	context->RSSetState(stencilWriteRS.get());
 
@@ -609,14 +609,14 @@ void VRStereoOptimizations::DispatchGBufferFill()
 
 	ID3D11ShaderResourceView* srvs[2]{ depthSRV, texPerPixelMode->srv.get() };
 	ID3D11UnorderedAccessView* uavs[8]{
-		rt[RE::RENDER_TARGETS::kMAIN].UAV,
-		rt[RE::RENDER_TARGETS::kMOTION_VECTOR].UAV,
-		rt[NORMALROUGHNESS].UAV,
-		rt[ALBEDO].UAV,
-		rt[SPECULAR].UAV,
-		rt[REFLECTANCE].UAV,
-		rt[MASKS].UAV,
-		rt[MASKS2].UAV,
+		Util::AsReal<ID3D11UnorderedAccessView>(rt[RE::RENDER_TARGETS::kMAIN].UAV),
+		Util::AsReal<ID3D11UnorderedAccessView>(rt[RE::RENDER_TARGETS::kMOTION_VECTOR].UAV),
+		Util::AsReal<ID3D11UnorderedAccessView>(rt[NORMALROUGHNESS].UAV),
+		Util::AsReal<ID3D11UnorderedAccessView>(rt[ALBEDO].UAV),
+		Util::AsReal<ID3D11UnorderedAccessView>(rt[SPECULAR].UAV),
+		Util::AsReal<ID3D11UnorderedAccessView>(rt[REFLECTANCE].UAV),
+		Util::AsReal<ID3D11UnorderedAccessView>(rt[MASKS].UAV),
+		Util::AsReal<ID3D11UnorderedAccessView>(rt[MASKS2].UAV),
 	};
 
 	context->CSSetConstantBuffers(1, 1, &cbPtr);

@@ -881,7 +881,7 @@ void Effects11::DrawVolumetricRays()
 	auto& main = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMAIN];
 
 	D3D11_TEXTURE2D_DESC mainTexDesc{};
-	main.texture->GetDesc(&mainTexDesc);
+	main.texture->GetDesc(Util::AsReal<REX::W32::D3D11_TEXTURE2D_DESC>(&mainTexDesc));
 	float2 resolution = { static_cast<float>(mainTexDesc.Width), static_cast<float>(mainTexDesc.Height) };
 	resolution = Util::ConvertToDynamic(resolution);
 	uint32_t dynWidth = static_cast<uint32_t>(resolution.x);
@@ -1047,7 +1047,7 @@ void Effects11::DrawVolumetricRays()
 	// Pass 4: Apply blurred shadow with color → main RT (additive)
 	{
 		profiler->BeginPass("Effects11::VolumetricRays Pass 3");
-		ID3D11RenderTargetView* rtv = main.RTV;
+		ID3D11RenderTargetView* rtv = Util::AsReal<ID3D11RenderTargetView>(main.RTV);
 		context->OMSetRenderTargets(1, &rtv, nullptr);
 		context->RSSetViewports(1, &viewport);
 
