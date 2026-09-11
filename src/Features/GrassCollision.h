@@ -34,15 +34,15 @@ public:
 		bool TrackRagdolls = 1;
 		bool EnableBlur = 1;
 		float CollisionRadiusScale = 1.0f;
-		float GrassInteractionRadius = 50.0f;
-		float CollisionImpactStrength = 1.79f;
-		float SpringStrength = 40.0f;
-		float Damping = 15.5f;
+		float GrassInteractionRadius = 25.0f;
+		float CollisionImpactStrength = 3.0f;
+		float SpringStrength = 5.0f;
+		float Damping = 7.5f;
 		float MaximumBend = 89.0f;
-		float MaximumCompression = 0.75f;
-		float CompressionHeight = 76.0f;
-		float MaximumCompressibleGrassHeight = 128.0f;
-		float CompressionRecovery = 1.03f;
+		float MaximumCompression = 0.20f;
+		float CompressionHeight = 10.0f;
+		float MaximumCompressibleGrassHeight = 40.0f;
+		float CompressionRecovery = 0.25f;
 	};
 
 	struct alignas(16) BoundingBoxPacked

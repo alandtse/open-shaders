@@ -30,6 +30,7 @@ namespace
 	constexpr float kMinimumDistance = 50.0f;
 	constexpr float kMaximumDistance = 30000.0f;
 	constexpr float kMaximumStrength = 10.0f;
+	constexpr float kMinimumPropagationSpeed = 1e-5f;
 	constexpr float kMaximumSpeed = 10000.0f;
 	constexpr float kMaximumTime = WindField::kTransientImpulseMaximumDecayTime;
 	constexpr float kMaximumContactOffset = 500.0f;
@@ -752,9 +753,10 @@ void HeavyImpactWindRouter::SanitizeSettings()
 		a_profile.waveHalfWidth = std::isfinite(a_profile.waveHalfWidth) ?
 		                              std::clamp(a_profile.waveHalfWidth, kMinimumDistance, kMaximumDistance) :
 		                              a_defaults.waveHalfWidth;
-		a_profile.propagationSpeed = std::isfinite(a_profile.propagationSpeed) ?
-		                                 std::clamp(a_profile.propagationSpeed, 0.0f, kMaximumSpeed) :
-		                                 a_defaults.propagationSpeed;
+		a_profile.propagationSpeed =
+			std::isfinite(a_profile.propagationSpeed) && a_profile.propagationSpeed > kMinimumPropagationSpeed ?
+				std::min(a_profile.propagationSpeed, kMaximumSpeed) :
+				a_defaults.propagationSpeed;
 		a_profile.decayTime = std::isfinite(a_profile.decayTime) ?
 		                          std::clamp(a_profile.decayTime, 0.0f, kMaximumTime) :
 		                          a_defaults.decayTime;
@@ -769,9 +771,10 @@ void HeavyImpactWindRouter::SanitizeSettings()
 		a_profile.waveHalfWidth = std::isfinite(a_profile.waveHalfWidth) ?
 		                              std::clamp(a_profile.waveHalfWidth, kMinimumDistance, kMaximumDistance) :
 		                              a_defaults.waveHalfWidth;
-		a_profile.propagationSpeed = std::isfinite(a_profile.propagationSpeed) ?
-		                                 std::clamp(a_profile.propagationSpeed, 0.0f, kMaximumSpeed) :
-		                                 a_defaults.propagationSpeed;
+		a_profile.propagationSpeed =
+			std::isfinite(a_profile.propagationSpeed) && a_profile.propagationSpeed > kMinimumPropagationSpeed ?
+				std::min(a_profile.propagationSpeed, kMaximumSpeed) :
+				a_defaults.propagationSpeed;
 		a_profile.coneHalfAngle = std::isfinite(a_profile.coneHalfAngle) ?
 		                              std::clamp(a_profile.coneHalfAngle, 5.0f, 90.0f) :
 		                              a_defaults.coneHalfAngle;

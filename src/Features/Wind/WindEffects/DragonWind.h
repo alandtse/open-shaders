@@ -25,7 +25,7 @@ public:
 		bool shoutsEnabled = true;
 		float strength = 1.0f;
 		float trackingDistance = 12000.0f;
-		float wingbeatStrength = 0.73f;
+		float wingbeatStrength = 1.6f;
 		float wingbeatDistance = 2392.0f;
 		float wingbeatWaveHalfWidth = 238.0f;
 		float wingbeatPropagationSpeed = 2200.0f;

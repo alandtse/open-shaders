@@ -42,7 +42,7 @@ struct WindSettings
 	std::array<GrassWindSpringQualityRange, 3> grassWindSpringQuality{ { { 512, 3000.0f },
 		{ 512, 6262.0f },
 		{ 256, 12000.0f } } };
-	float grassWindFlutterStrength = 2.0f;
+	float grassWindFlutterStrength = 1.0f;
 	float grassWindFlutterFrequency = 1.0f;
 };
 
