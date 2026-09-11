@@ -115,8 +115,9 @@ namespace ExponentialHeightFog
 	{
 		float normalizedRange = saturate((distance - SharedData::exponentialHeightFogSettings.vanillaFogNear) /
 										 max(SharedData::exponentialHeightFogSettings.vanillaFogFar - SharedData::exponentialHeightFogSettings.vanillaFogNear, 1.0f));
+		float maxOpacity = saturate(SharedData::exponentialHeightFogSettings.vanillaFogMaxOpacity);
 		float colorBlend = min(pow(normalizedRange, SharedData::exponentialHeightFogSettings.vanillaFogPower),
-			pow(SharedData::exponentialHeightFogSettings.vanillaFogMaxOpacity, rcp(SharedData::exponentialHeightFogSettings.fogAlphaGamma)));
+			pow(maxOpacity, rcp(SharedData::exponentialHeightFogSettings.fogAlphaGamma)));
 		float3 color = Color::Fog(lerp(SharedData::exponentialHeightFogSettings.vanillaFogNearColor.rgb,
 			SharedData::exponentialHeightFogSettings.vanillaFogFarColor.rgb, colorBlend));
 		return color;
