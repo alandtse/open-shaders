@@ -9,7 +9,11 @@
 
 cbuffer CullParams : register(b0)
 {
-	float4 FrustumPlanes[6];
+	// [0..5] = eye 0's planes; [6..11] = eye 1's (VR only -- duplicated from eye 0 otherwise).
+	float4 FrustumPlanes[12];
+
+	uint EyeCount;
+	float3 _padEye;
 
 	float MinPixelSize;
 	float FullDetailPixelSize;
@@ -60,7 +64,8 @@ cbuffer CullBucket : register(b1)
 	uint SliceTableOffset;
 	uint SliceCount;
 	float FarLODEnabled;
-	float _pad2;
+	// Per-eye slot capacity of the output buffers below; eye 1's survivors land at this offset.
+	uint OutputCapacityPerEye;
 };
 
 ByteAddressBuffer Instances : register(t0);
@@ -95,8 +100,9 @@ float RandFloat(uint bits)
 }
 
 [numthreads(64, 1, 1)] void main(uint3 tid : SV_DispatchThreadID) {
+	const uint eyeIndex = tid.z;
 	const uint compactIdx = tid.x;
-	if (compactIdx >= InstanceCount || SliceCount == 0)
+	if (eyeIndex >= EyeCount || compactIdx >= InstanceCount || SliceCount == 0)
 		return;
 
 	// Map the compacted index back to a real instance, searching on the running total in .y.
@@ -128,7 +134,7 @@ float RandFloat(uint bits)
 	const float4 og = Origins[idx];
 	const float3 world = float3(localXY, localZ) + og.xyz;
 
-	const float3 dv = world - FrameBuffer::CameraPosAdjust[0].xyz;
+	const float3 dv = world - FrameBuffer::CameraPosAdjust[eyeIndex].xyz;
 	const float distSq = dot(dv, dv);
 
 	const float dist = sqrt(distSq);
@@ -144,7 +150,8 @@ float RandFloat(uint bits)
 
 	[unroll] for (uint p = 0; p < 6; ++p)
 	{
-		if (dot(FrustumPlanes[p].xyz, world) - FrustumPlanes[p].w < 0.0)
+		const float4 plane = FrustumPlanes[eyeIndex * 6 + p];
+		if (dot(plane.xyz, world) - plane.w < 0.0)
 			return;
 	}
 
@@ -172,9 +179,12 @@ float RandFloat(uint bits)
 		const float distC = max(length(dvC), 1e-4);
 		const float projPxOcc = (occRadius / distC) * ProjScale;
 
-		const float4 clipC = mul(FrameBuffer::CameraViewProj[0], float4(dvC, 1.0));
+		const float4 clipC = mul(FrameBuffer::CameraViewProj[eyeIndex], float4(dvC, 1.0));
 		if (clipC.w > 0.0) {
-			const float2 uv = (clipC.xy / clipC.w) * float2(0.5, -0.5) + 0.5;
+			float2 uv = (clipC.xy / clipC.w) * float2(0.5, -0.5) + 0.5;
+			// Same UV split as Stereo::ConvertToStereoUV -- keep in sync if that changes.
+			if (EyeCount > 1)
+				uv.x = (uv.x + (float)eyeIndex) * 0.5;
 			const float2 tc = uv * HiZSize;
 			const float rT = projPxOcc / HiZTexelPixels;  // occlusion radius expressed in level-0 texels
 
@@ -189,6 +199,10 @@ float RandFloat(uint bits)
 				const float2 tcL = tc / scale;
 				const float rTL = rT / scale;
 				const int2 dimL = max(int2(ceil(HiZSize / scale)), int2(1, 1));
+				// Clamp the footprint to the active eye's half so taps near the stereo seam don't sample the other eye.
+				const int eyeHalf = dimL.x / 2;
+				const int xMin = (EyeCount > 1 && eyeHalf > 0) ? (int(eyeIndex) * eyeHalf) : 0;
+				const int xMax = (EyeCount > 1 && eyeHalf > 0) ? (xMin + eyeHalf - 1) : (dimL.x - 1);
 
 				const int2 t0 = int2(floor(tcL - rTL));
 				const int2 t1 = int2(floor(tcL + rTL));
@@ -196,7 +210,7 @@ float RandFloat(uint bits)
 				// An instance hides only once even its nearest point is behind the occluder. A camera inside
 				// the sphere collapses dvC, putting nearZ below any tile depth so the test never fires.
 				const float3 dvNear = dvC * (max(distC - occRadius, 0.0) / distC);
-				const float4 clipN = mul(FrameBuffer::CameraViewProj[0], float4(dvNear, 1.0));
+				const float4 clipN = mul(FrameBuffer::CameraViewProj[eyeIndex], float4(dvNear, 1.0));
 				const float nearZ = clipN.z / max(clipN.w, 1e-4);
 
 				float tileMax = 0.0;
@@ -205,7 +219,7 @@ float RandFloat(uint bits)
 					[unroll] for (int x = 0; x < 3; ++x)
 					{
 						if (t0.x + x <= t1.x && t0.y + y <= t1.y) {
-							const int2 t = clamp(t0 + int2(x, y), int2(0, 0), dimL - 1);
+							const int2 t = clamp(t0 + int2(x, y), int2(xMin, 0), int2(xMax, dimL.y - 1));
 							tileMax = max(tileMax, HiZ.Load(int3(t, level)));
 						}
 					}
@@ -234,7 +248,7 @@ float RandFloat(uint bits)
 	const float edgeStart = maxDist * EdgeFadeStart;
 	const float edgeFade = saturate((maxDist - dist) / max(maxDist - edgeStart, 1e-4));
 
-	const float4 clip = mul(FrameBuffer::CameraViewProj[0], float4(dv, 1.0));
+	const float4 clip = mul(FrameBuffer::CameraViewProj[eyeIndex], float4(dv, 1.0));
 	const float distFade = 1.0 - saturate((length(clip.xyz) - AlphaParam1) / AlphaParam2);
 	const float spawnFade = saturate((FadeNow - og.w) * FadeInTimeRcp);
 
@@ -254,10 +268,11 @@ float RandFloat(uint bits)
 	float4 currentCollision = 0.0;
 	float4 previousCollision = 0.0;
 #ifdef GRASS_COLLISION
+	const float3 currentCollisionRoot = world - FrameBuffer::CameraPosAdjust[0].xyz;
 	const float3 previousRoot = world - FrameBuffer::CameraPreviousPosAdjust[0].xyz;
-	currentCollision = GrassCollision::SampleCurrentDeformation(dv.xy);
+	currentCollision = GrassCollision::SampleCurrentDeformation(currentCollisionRoot.xy);
 	previousCollision = GrassCollision::SamplePreviousDeformation(previousRoot.xy);
-	currentCollision.w = smoothstep(4096.0, 0.0, dist);
+	currentCollision.w = smoothstep(4096.0, 0.0, length(currentCollisionRoot));
 	previousCollision.w = smoothstep(4096.0, 0.0, length(previousRoot));
 #endif
 
@@ -277,9 +292,16 @@ float RandFloat(uint bits)
 	// Scaled by 4 so it clears the far-shading flag already packed into e1.w.
 	const float4 e1Tier = float4(e1.xyz, e1.w + 4.0 * (float)tier);
 
+	// eyeSlotBase must match the StartInstanceLocation baked into eye 1's args block: SV_InstanceID
+	// excludes it, so the SRV index needs it added explicitly.
+	static const uint kArgsBlockStride = 32;
+	const uint eyeByteOffset = eyeIndex * kArgsBlockStride;
+	const uint eyeSlotBase = eyeIndex * OutputCapacityPerEye;
+
 	uint slot;
 	if (tier == 2) {
-		FarLODCounter.InterlockedAdd(0, 1, slot);
+		FarLODCounter.InterlockedAdd(eyeByteOffset, 1, slot);
+		slot += eyeSlotBase;
 		FarLODCompacted.Store4(slot * 32, raw0);
 		FarLODCompacted.Store4(slot * 32 + 16, raw1);
 		FarLODExtras[slot * 6 + 0] = e0;
@@ -289,7 +311,8 @@ float RandFloat(uint bits)
 		FarLODExtras[slot * 6 + 4] = currentCollision;
 		FarLODExtras[slot * 6 + 5] = previousCollision;
 	} else if (tier == 1) {
-		MidLODCounter.InterlockedAdd(0, 1, slot);
+		MidLODCounter.InterlockedAdd(eyeByteOffset, 1, slot);
+		slot += eyeSlotBase;
 		MidLODCompacted.Store4(slot * 32, raw0);
 		MidLODCompacted.Store4(slot * 32 + 16, raw1);
 		MidLODExtras[slot * 6 + 0] = e0;
@@ -299,7 +322,8 @@ float RandFloat(uint bits)
 		MidLODExtras[slot * 6 + 4] = currentCollision;
 		MidLODExtras[slot * 6 + 5] = previousCollision;
 	} else {
-		Counter.InterlockedAdd(0, 1, slot);
+		Counter.InterlockedAdd(eyeByteOffset, 1, slot);
+		slot += eyeSlotBase;
 		Compacted.Store4(slot * 32, raw0);
 		Compacted.Store4(slot * 32 + 16, raw1);
 		Extras[slot * 6 + 0] = e0;

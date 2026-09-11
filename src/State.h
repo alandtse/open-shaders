@@ -404,8 +404,10 @@ public:
 		SuppressExternalEmittance = 1 << 5,
 		AdditiveLighting = 1 << 6,
 		// --- Open Shaders fork-only flags below: reserved high end, not upstream's sequence. ---
-		TreeBend = 1u << 29,
-		IsEye = 1u << 31
+		IsEye = 1u << 31,
+		IsCharacterRainSurface = 1u << 30,
+		IsHeldWeapon = 1u << 29,
+		TreeBend = 1u << 28
 	};
 
 	/** @brief Bitflags describing extra feature-specific properties related to terrain displacement and material models. */

@@ -93,6 +93,16 @@ namespace Util
 	bool GetTexture2DDesc(ID3D11View* View, D3D11_TEXTURE2D_DESC& OutDesc);
 
 	/**
+	 * @brief Compile an HLSL shader from file and return the compiled bytecode blob.
+	 * @param FilePath Path to the HLSL source file.
+	 * @param Defines Preprocessor macro name/value pairs to pass to the compiler.
+	 * @param ProgramType Shader model target (e.g. "ps_5_0", "vs_5_0", "cs_5_0").
+	 * @param Program Entry point function name (defaults to "main").
+	 * @return The compiled shader bytecode blob, or nullptr on failure.
+	 */
+	winrt::com_ptr<ID3DBlob> CompileShaderBlob(const wchar_t* FilePath, const std::vector<std::pair<const char*, const char*>>& Defines, const char* ProgramType, const char* Program = "main");
+
+	/**
 	 * @brief Compile an HLSL shader from file and create the appropriate D3D11 shader object.
 	 * @param FilePath Path to the HLSL source file.
 	 * @param Defines Preprocessor macro name/value pairs to pass to the compiler.
@@ -146,6 +156,24 @@ namespace Util
 	{
 		for (auto& shader : shaders)
 			shader.get() = nullptr;
+	}
+
+	/** @brief Release a raw D3D11 COM pointer if non-null, then null it. */
+	template <typename T>
+	inline void SafeRelease(T*& ptr)
+	{
+		if (ptr) {
+			ptr->Release();
+			ptr = nullptr;
+		}
+	}
+
+	/** @brief SafeRelease every element of a fixed-size array of raw D3D11 COM pointers. */
+	template <typename T, size_t N>
+	inline void SafeReleaseArray(T* (&arr)[N])
+	{
+		for (size_t i = 0; i < N; ++i)
+			SafeRelease(arr[i]);
 	}
 
 	// VR-aware counts for render targets
