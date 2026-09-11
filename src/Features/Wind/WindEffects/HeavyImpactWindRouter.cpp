@@ -11,7 +11,6 @@
 #include <cctype>
 #include <cmath>
 #include <cstdint>
-#include <limits>
 #include <mutex>
 #include <nlohmann/json.hpp>
 #include <numbers>
@@ -25,6 +24,7 @@ namespace
 {
 	constexpr std::size_t kMaximumQueuedEvents = 64;
 	constexpr std::size_t kMaximumNpcPowerAttackSources = 5;
+	constexpr double kMaximumNpcPowerAttackLifetime = 5.0;
 	constexpr float kActorDiscoveryInterval = 2.0f;
 	constexpr double kDeduplicationRetention = 10.0;
 	constexpr float kMinimumDistance = 50.0f;
@@ -593,7 +593,7 @@ private:
 			                            (std::max(source.maxDistance, 0.0f) + std::abs(source.waveHalfWidth) +
 											propagationSpeed * std::max(source.decayTime, 0.0f)) /
 			                                propagationSpeed :
-			                            std::numeric_limits<double>::infinity();
+			                            kMaximumNpcPowerAttackLifetime;
 			activeNpcPowerAttackExpirations.insert_or_assign(actorFormID, elapsedTime + lifetime);
 		}
 		State::GetSingleton()->QueueTransientWindSource(source, State::TransientWindSourceOwner::HeavyImpact,

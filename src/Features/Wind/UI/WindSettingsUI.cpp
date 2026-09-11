@@ -407,7 +407,7 @@ void Wind::SpawnDebugWindEffects()
 		for (int index = 0; index < spawnCount; ++index) {
 			float3 offset;
 			do {
-				offset = { unitDistribution(randomGenerator), unitDistribution(randomGenerator),
+				offset = float3{ unitDistribution(randomGenerator), unitDistribution(randomGenerator),
 					unitDistribution(randomGenerator) };
 			} while (offset.x * offset.x + offset.y * offset.y + offset.z * offset.z > 1.0f);
 			offset *= kDebugWindSpawnRadius;

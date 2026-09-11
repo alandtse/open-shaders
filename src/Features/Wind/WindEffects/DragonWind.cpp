@@ -524,7 +524,7 @@ namespace DragonWindRuntime
 						if (IsFinite(positionVelocity) && Length(positionVelocity) <= kMaximumTrackedVelocity)
 							sampledVelocity = positionVelocity;
 					} else {
-						a_state.filteredVelocity = {};
+						a_state.filteredVelocity = float3{};
 					}
 				}
 				if (a_frameTime > 0.0f) {
