@@ -5,6 +5,7 @@
 #include "I18n/I18n.h"
 #include "Utils/ActorUtils.h"
 #include "Utils/D3D.h"
+#include "Utils/UI.h"
 
 #define I18N_KEY_PREFIX "feature.grass_collision."
 
@@ -29,7 +30,7 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 void GrassCollision::DrawSettings()
 {
 	if (ImGui::TreeNodeEx(T(TKEY("grass_collision"), "Grass Collision"), ImGuiTreeNodeFlags_DefaultOpen)) {
-		ImGui::Checkbox(T(TKEY("enable"), "Enable Grass Collision"), (bool*)&settings.EnableGrassCollision);
+		Util::CheckboxFlag(T(TKEY("enable"), "Enable Grass Collision"), settings.EnableGrassCollision);
 		ImGui::TreePop();
 	}
 }
@@ -51,17 +52,9 @@ void GrassCollision::QueueCollisions()
 		}
 	};
 
-	// Actor query code from po3 under MIT
-	// https://github.com/powerof3/PapyrusExtenderSSE/blob/7a73b47bc87331bec4e16f5f42f2dbc98b66c3a7/include/Papyrus/Functions/Faction.h#L24C7-L46
-	if (const auto processLists = RE::ProcessLists::GetSingleton(); processLists) {
-		for (auto& actorHandle : processLists->highActorHandles) {
-			addActorCandidate(actorHandle);
-		}
-	}
-
-	if (auto player = RE::PlayerCharacter::GetSingleton()) {
-		addActorCandidate(player->GetHandle());
-	}
+	Util::ForEachLoadedActor([&](RE::Actor* a_actor) {
+		addActorCandidate(a_actor->GetHandle());
+	});
 
 	std::sort(actorCandidates.begin(), actorCandidates.end(), [](const GrassCollisionActorCandidate& a, const GrassCollisionActorCandidate& b) {
 		return a.sqDistance < b.sqDistance;

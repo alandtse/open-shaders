@@ -177,7 +177,7 @@ bool ScreenSpaceShadows::MatchesPerformanceProfile(PerfProfile profile) const
 void ScreenSpaceShadows::DrawSettings()
 {
 	if (ImGui::TreeNodeEx(T(TKEY("general"), "General"), ImGuiTreeNodeFlags_DefaultOpen)) {
-		ImGui::Checkbox(T(TKEY("enable"), "Enable"), (bool*)&bendSettings.Enable);
+		Util::CheckboxFlag(T(TKEY("enable"), "Enable"), bendSettings.Enable);
 		if (auto _tt = Util::HoverTooltipWrapper())
 			ImGui::Text("%s", T(TKEY("enable_tooltip"), "Enable screen-space contact shadows from the sun/moon direction."));
 

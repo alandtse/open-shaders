@@ -183,6 +183,9 @@ void LightLimitFix::CopyShadowLightData()
 					sd[depthSlot].ShadowParam.y = 0.0f;
 				}
 			}
+			// Spotlights require a valid shadow footprint before they can illuminate the scene.
+			if (shadowTypeF == 0.0f && sd[depthSlot].ShadowParam.y == 0.0f)
+				sd[depthSlot].ShadowParam.y = -1.0f;
 			// Name resolved once per NiLight (owner ref, then scenegraph node,
 			// then form ID) to identify the light for the diagnostics table.
 			static std::unordered_map<const RE::NiLight*, std::string> s_lightNames;
