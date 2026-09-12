@@ -322,7 +322,7 @@ void IBL::Prepass()
 	{
 		auto renderer = globals::game::renderer;
 		auto& reflections = renderer->GetRendererData().cubemapRenderTargets[RE::RENDER_TARGETS_CUBEMAP::kREFLECTIONS];
-		srvs.at(0) = Util::AsReal<ID3D11ShaderResourceView>(reflections.SRV);
+		srvs.at(0) = Util::AsReal(reflections.SRV);
 		uavs.at(0) = skyIBLTexture->uav.get();
 
 		context->CSSetShaderResources(0, (uint)srvs.size(), srvs.data());

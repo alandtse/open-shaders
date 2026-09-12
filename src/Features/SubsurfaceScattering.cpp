@@ -273,11 +273,11 @@ void SubsurfaceScattering::DrawSSS()
 		auto normal = renderer->GetRuntimeData().renderTargets[NORMALROUGHNESS];
 
 		ID3D11ShaderResourceView* views[5];
-		views[0] = Util::AsReal<ID3D11ShaderResourceView>(main.SRV);
+		views[0] = Util::AsReal(main.SRV);
 		views[1] = Util::GetCurrentSceneDepthSRV(true);
-		views[2] = Util::AsReal<ID3D11ShaderResourceView>(mask.SRV);
-		views[3] = Util::AsReal<ID3D11ShaderResourceView>(albedo.SRV);
-		views[4] = Util::AsReal<ID3D11ShaderResourceView>(normal.SRV);
+		views[2] = Util::AsReal(mask.SRV);
+		views[3] = Util::AsReal(albedo.SRV);
+		views[4] = Util::AsReal(normal.SRV);
 
 		context->CSSetShaderResources(0, ARRAYSIZE(views), views);
 
@@ -325,7 +325,7 @@ void SubsurfaceScattering::DrawSSS()
 				views[0] = blurHorizontalTemp->srv.get();
 				context->CSSetShaderResources(0, 1, views);
 
-				ID3D11UnorderedAccessView* uavs[1] = { Util::AsReal<ID3D11UnorderedAccessView>(main.UAV) };
+				ID3D11UnorderedAccessView* uavs[1] = { Util::AsReal(main.UAV) };
 				context->CSSetUnorderedAccessViews(0, 1, uavs, nullptr);
 
 				auto shader = GetComputeShaderVerticalBlur();
@@ -338,7 +338,7 @@ void SubsurfaceScattering::DrawSSS()
 			{
 				CS_GPU_PASS("SubsurfaceScattering::Burley");
 
-				ID3D11UnorderedAccessView* uavs[1] = { Util::AsReal<ID3D11UnorderedAccessView>(main.UAV) };
+				ID3D11UnorderedAccessView* uavs[1] = { Util::AsReal(main.UAV) };
 				context->CSSetUnorderedAccessViews(0, 1, uavs, nullptr);
 
 				auto shader = GetComputeShaderBurley();
@@ -377,15 +377,15 @@ void SubsurfaceScattering::SetupResources()
 		auto main = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMAIN];
 
 		D3D11_TEXTURE2D_DESC texDesc{};
-		main.texture->GetDesc(Util::AsReal<REX::W32::D3D11_TEXTURE2D_DESC>(&texDesc));
+		main.texture->GetDesc(Util::AsW32(&texDesc));
 
 		texDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS;
 
 		D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
-		main.SRV->GetDesc(Util::AsReal<REX::W32::D3D11_SHADER_RESOURCE_VIEW_DESC>(&srvDesc));
+		main.SRV->GetDesc(Util::AsW32(&srvDesc));
 
 		D3D11_UNORDERED_ACCESS_VIEW_DESC uavDesc = {};
-		main.UAV->GetDesc(Util::AsReal<REX::W32::D3D11_UNORDERED_ACCESS_VIEW_DESC>(&uavDesc));
+		main.UAV->GetDesc(Util::AsW32(&uavDesc));
 
 		blurHorizontalTemp = new Texture2D(texDesc);
 		blurHorizontalTemp->CreateSRV(srvDesc);

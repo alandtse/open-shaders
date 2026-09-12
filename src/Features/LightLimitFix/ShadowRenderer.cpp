@@ -103,7 +103,7 @@ void LightLimitFix::CopyShadowLightData()
 	ShadowCasterManager::BeginSlotFrame(slots);
 	auto context = globals::d3d::context;
 
-	ID3D11ShaderResourceView* shadowMapsSRV = Util::AsReal<ID3D11ShaderResourceView>(
+	ID3D11ShaderResourceView* shadowMapsSRV = Util::AsReal(
 		globals::game::renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGET_DEPTHSTENCIL::kSHADOWMAPS].depthSRV);
 
 	uint32_t plCount = 0;

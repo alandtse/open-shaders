@@ -141,12 +141,12 @@ bool PerfMode::MaybeSwapDSForEnlargedRT()
 	// sidesteps the stencil-content mismatch. Swap pattern matches UIPass-
 	// Dispatch_Hook (all 8 view slots).
 	for (int i = 0; i < 8; ++i) {
-		autoSwapSavedViews[i] = Util::AsReal<ID3D11DepthStencilView>(bound.views[i]);
+		autoSwapSavedViews[i] = Util::AsReal(bound.views[i]);
 		if (bound.views[i])
 			bound.views[i] = nullptr;
 	}
 	for (int i = 0; i < 8; ++i) {
-		autoSwapSavedReadOnlyViews[i] = Util::AsReal<ID3D11DepthStencilView>(bound.readOnlyViews[i]);
+		autoSwapSavedReadOnlyViews[i] = Util::AsReal(bound.readOnlyViews[i]);
 		if (bound.readOnlyViews[i])
 			bound.readOnlyViews[i] = nullptr;
 	}
@@ -162,9 +162,9 @@ void PerfMode::RestoreSwappedDS()
 	auto& dsData = renderer->GetDepthStencilData();
 	auto& bound = dsData.depthStencils[autoSwapDSIdx];
 	for (int i = 0; i < 8; ++i)
-		bound.views[i] = Util::AsReal<REX::W32::ID3D11DepthStencilView>(autoSwapSavedViews[i]);
+		bound.views[i] = Util::AsW32(autoSwapSavedViews[i]);
 	for (int i = 0; i < 8; ++i)
-		bound.readOnlyViews[i] = Util::AsReal<REX::W32::ID3D11DepthStencilView>(autoSwapSavedReadOnlyViews[i]);
+		bound.readOnlyViews[i] = Util::AsW32(autoSwapSavedReadOnlyViews[i]);
 	autoSwapDSIdx = UINT32_MAX;
 }
 

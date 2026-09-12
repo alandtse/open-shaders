@@ -420,8 +420,8 @@ struct SkinExtendedRendererState
 	{
 		{
 			PSTexture = {
-				newTexture ? Util::AsReal<ID3D11ShaderResourceView>(newTexture->resourceView) : nullptr,
-				newTexture2 ? Util::AsReal<ID3D11ShaderResourceView>(newTexture2->resourceView) : nullptr
+				newTexture ? Util::AsReal(newTexture->resourceView) : nullptr,
+				newTexture2 ? Util::AsReal(newTexture2->resourceView) : nullptr
 			};
 			PSResourceModifiedBits = 1;
 		}

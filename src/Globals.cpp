@@ -392,7 +392,7 @@ namespace globals
 						ID3D11Resource* clearRes = nullptr;
 						ID3D11Resource* mainRes = nullptr;
 						pDepthStencilView->GetResource(&clearRes);
-						mainDepth.views[0]->GetResource(Util::AsReal<REX::W32::ID3D11Resource*>(&mainRes));
+						mainDepth.views[0]->GetResource(Util::AsW32(&mainRes));
 						bool isMainDSV = (clearRes == mainRes);
 						if (clearRes)
 							clearRes->Release();

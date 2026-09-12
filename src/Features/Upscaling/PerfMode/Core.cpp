@@ -44,7 +44,7 @@ void PerfMode::SetupResources()
 	}
 
 	D3D11_TEXTURE2D_DESC mainDesc{};
-	Util::AsReal<ID3D11Texture2D>(mainRT.texture)->GetDesc(&mainDesc);
+	Util::AsReal(mainRT.texture)->GetDesc(&mainDesc);
 
 	D3D11_TEXTURE2D_DESC desc{};
 	if (hookActive) {
@@ -149,7 +149,7 @@ void PerfMode::SetupResources()
 		auto* mainDSTex = dsData.depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kMAIN].texture;
 		if (mainDSTex) {
 			D3D11_TEXTURE2D_DESC dsDesc{};
-			mainDSTex->GetDesc(Util::AsReal<REX::W32::D3D11_TEXTURE2D_DESC>(&dsDesc));
+			mainDSTex->GetDesc(Util::AsW32(&dsDesc));
 
 			D3D11_TEXTURE2D_DESC fakeDesc = dsDesc;
 			fakeDesc.Width = displayEyeWidth * 2;

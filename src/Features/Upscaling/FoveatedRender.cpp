@@ -457,8 +457,8 @@ void FoveatedRender::DrawSettings()
 		auto renderer = globals::game::renderer;
 		if (renderer) {
 			auto& fb = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kVR_FRAMEBUFFER];
-			auto* tex = Util::AsReal<ID3D11Texture2D>(fb.texture);
-			subrectController.DrawEditor(Util::AsReal<ID3D11ShaderResourceView>(fb.SRV), tex, 0.5f, 0.0f, Util::Subrect::OpaquePreviewBlendCallback);
+			auto* tex = Util::AsReal(fb.texture);
+			subrectController.DrawEditor(Util::AsReal(fb.SRV), tex, 0.5f, 0.0f, Util::Subrect::OpaquePreviewBlendCallback);
 		} else {
 			subrectController.DrawEditor(nullptr, nullptr, 0.5f);
 		}

@@ -86,16 +86,16 @@ void SetupRenderTarget(RE::RENDER_TARGET target, D3D11_TEXTURE2D_DESC texDesc, D
 		data.texture = nullptr;
 	}
 
-	DX::ThrowIfFailed(device->CreateTexture2D(&texDesc, nullptr, Util::AsReal<ID3D11Texture2D*>(&data.texture)));
+	DX::ThrowIfFailed(device->CreateTexture2D(&texDesc, nullptr, Util::AsReal(&data.texture)));
 
 	if (texDesc.BindFlags & D3D11_BIND_SHADER_RESOURCE)
-		DX::ThrowIfFailed(device->CreateShaderResourceView(Util::AsReal<ID3D11Resource>(data.texture), &srvDesc, Util::AsReal<ID3D11ShaderResourceView*>(&data.SRV)));
+		DX::ThrowIfFailed(device->CreateShaderResourceView(Util::AsReal(data.texture), &srvDesc, Util::AsReal(&data.SRV)));
 
 	if (texDesc.BindFlags & D3D11_BIND_RENDER_TARGET)
-		DX::ThrowIfFailed(device->CreateRenderTargetView(Util::AsReal<ID3D11Resource>(data.texture), &rtvDesc, Util::AsReal<ID3D11RenderTargetView*>(&data.RTV)));
+		DX::ThrowIfFailed(device->CreateRenderTargetView(Util::AsReal(data.texture), &rtvDesc, Util::AsReal(&data.RTV)));
 
 	if (texDesc.BindFlags & D3D11_BIND_UNORDERED_ACCESS)
-		DX::ThrowIfFailed(device->CreateUnorderedAccessView(Util::AsReal<ID3D11Resource>(data.texture), &uavDesc, Util::AsReal<ID3D11UnorderedAccessView*>(&data.UAV)));
+		DX::ThrowIfFailed(device->CreateUnorderedAccessView(Util::AsReal(data.texture), &uavDesc, Util::AsReal(&data.UAV)));
 }
 
 void Deferred::SetupResources()
@@ -110,10 +110,10 @@ void Deferred::SetupResources()
 		D3D11_RENDER_TARGET_VIEW_DESC rtvDesc = {};
 		D3D11_UNORDERED_ACCESS_VIEW_DESC uavDesc = {};
 
-		main.texture->GetDesc(Util::AsReal<REX::W32::D3D11_TEXTURE2D_DESC>(&texDesc));
-		main.SRV->GetDesc(Util::AsReal<REX::W32::D3D11_SHADER_RESOURCE_VIEW_DESC>(&srvDesc));
-		main.RTV->GetDesc(Util::AsReal<REX::W32::D3D11_RENDER_TARGET_VIEW_DESC>(&rtvDesc));
-		main.UAV->GetDesc(Util::AsReal<REX::W32::D3D11_UNORDERED_ACCESS_VIEW_DESC>(&uavDesc));
+		main.texture->GetDesc(Util::AsW32(&texDesc));
+		main.SRV->GetDesc(Util::AsW32(&srvDesc));
+		main.RTV->GetDesc(Util::AsW32(&rtvDesc));
+		main.UAV->GetDesc(Util::AsW32(&uavDesc));
 
 		// Available targets:
 		// MAIN ONLY ALPHA
@@ -392,7 +392,7 @@ void Deferred::DeferredPasses()
 	auto finalDepthCopy = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kPOST_ZPREPASS_COPY];
 	// Water samples this texture for edge fade and refraction; a partial or
 	// dynamic-resolution-sized copy here left it stale and caused hard water intersections.
-	context->CopyResource(Util::AsReal<ID3D11Resource>(finalDepthCopy.texture), Util::AsReal<ID3D11Resource>(depth.texture));
+	context->CopyResource(Util::AsReal(finalDepthCopy.texture), Util::AsReal(depth.texture));
 	sceneDepthFinal = true;
 	auto reflectance = renderer->GetRuntimeData().renderTargets[REFLECTANCE];
 
@@ -425,16 +425,16 @@ void Deferred::DeferredPasses()
 		CS_GPU_PASS("Deferred::DeferredComposite");
 
 		ID3D11ShaderResourceView* srvs[16]{
-			Util::AsReal<ID3D11ShaderResourceView>(specular.SRV),                                            // t0  SpecularTexture
-			Util::AsReal<ID3D11ShaderResourceView>(albedo.SRV),                                              // t1  AlbedoTexture
-			Util::AsReal<ID3D11ShaderResourceView>(normalRoughness.SRV),                                     // t2  NormalRoughnessTexture
-			Util::AsReal<ID3D11ShaderResourceView>(masks.SRV),                                               // t3  MasksTexture
+			Util::AsReal(specular.SRV),                                                                      // t0  SpecularTexture
+			Util::AsReal(albedo.SRV),                                                                        // t1  AlbedoTexture
+			Util::AsReal(normalRoughness.SRV),                                                               // t2  NormalRoughnessTexture
+			Util::AsReal(masks.SRV),                                                                         // t3  MasksTexture
 			dynamicCubemaps.loaded || globals::game::isVR ? Util::GetCurrentSceneDepthSRV(false) : nullptr,  // t4  DepthTexture (24/32-bit; HLSL type baked at compile via TERRAIN_BLENDING)
-			dynamicCubemaps.loaded ? Util::AsReal<ID3D11ShaderResourceView>(reflectance.SRV) : nullptr,      // t5  ReflectanceTexture
+			dynamicCubemaps.loaded ? Util::AsReal(reflectance.SRV) : nullptr,                                // t5  ReflectanceTexture
 			dynamicCubemaps.loaded ? dynamicCubemaps.envTexture->srv.get() : nullptr,                        // t6  EnvTexture
 			dynamicCubemaps.loaded ? dynamicCubemaps.envReflectionsTexture->srv.get() : nullptr,             // t7  EnvReflectionsTexture
 			dynamicCubemaps.loaded && skylighting.loaded ? skylighting.texProbeArray->srv.get() : nullptr,   // t8  SkylightingProbeArray
-			Util::AsReal<ID3D11ShaderResourceView>(masks2.SRV),                                              // t9  Masks2Texture (vertexAO in .x)
+			Util::AsReal(masks2.SRV),                                                                        // t9  Masks2Texture (vertexAO in .x)
 			ssgi_ao,                                                                                         // t10 SsgiAoTexture
 			ssgi_hq_spec ? nullptr : ssgi_y,                                                                 // t11 SsgiYTexture
 			ssgi_hq_spec ? nullptr : ssgi_cocg,                                                              // t12 SsgiCoCgTexture
@@ -453,7 +453,7 @@ void Deferred::DeferredPasses()
 		ID3D11ShaderResourceView* modeSRV = nullptr;
 		context->CSSetShaderResources(16, 1, &modeSRV);
 
-		ID3D11UnorderedAccessView* uavs[3]{ Util::AsReal<ID3D11UnorderedAccessView>(main.UAV), Util::AsReal<ID3D11UnorderedAccessView>(normals.UAV), Util::AsReal<ID3D11UnorderedAccessView>(motionVectors.UAV) };
+		ID3D11UnorderedAccessView* uavs[3]{ Util::AsReal(main.UAV), Util::AsReal(normals.UAV), Util::AsReal(motionVectors.UAV) };
 		context->CSSetUnorderedAccessViews(0, ARRAYSIZE(uavs), uavs, nullptr);
 
 		if (auto* shader = interior ? GetComputeMainCompositeInterior() : GetComputeMainComposite()) {
@@ -695,7 +695,7 @@ void Deferred::CopyShadowLightData()
 	context->PSSetShaderResources(98, 1, &srv);
 
 	// t99: cascade depth array used by LightLimitFix::GetDirectionalShadow for PCF sampling.
-	ID3D11ShaderResourceView* cascadeSRV = Util::AsReal<ID3D11ShaderResourceView>(globals::game::renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGET_DEPTHSTENCIL::kSHADOWMAPS_ESRAM].depthSRV);
+	ID3D11ShaderResourceView* cascadeSRV = Util::AsReal(globals::game::renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGET_DEPTHSTENCIL::kSHADOWMAPS_ESRAM].depthSRV);
 	context->PSSetShaderResources(99, 1, &cascadeSRV);
 }
 

@@ -96,8 +96,8 @@ namespace ShadowCasterManager
 			return;
 		auto* renderer = reinterpret_cast<RE::BSGraphics::Renderer*>(ctx.R15);
 		for (int i = 0; i < 8; i++) {
-			renderer->GetDepthStencilData().depthStencils[4].views[i] = Util::AsReal<REX::W32::ID3D11DepthStencilView>(globals::features::llf::normalDepthBuffer[i]);
-			renderer->GetDepthStencilData().depthStencils[4].readOnlyViews[i] = Util::AsReal<REX::W32::ID3D11DepthStencilView>(globals::features::llf::readOnlyDepthBuffer[i]);
+			renderer->GetDepthStencilData().depthStencils[4].views[i] = Util::CastTo<REX::W32::ID3D11DepthStencilView>(globals::features::llf::normalDepthBuffer[i]);
+			renderer->GetDepthStencilData().depthStencils[4].readOnlyViews[i] = Util::CastTo<REX::W32::ID3D11DepthStencilView>(globals::features::llf::readOnlyDepthBuffer[i]);
 		}
 	}
 

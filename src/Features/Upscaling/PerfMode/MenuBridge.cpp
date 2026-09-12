@@ -37,14 +37,14 @@ void PerfMode::UIPassDispatch_Hook::thunk(RE::BSGraphics::BSShaderAccumulator* s
 	ID3D11DepthStencilView* savedViews[8] = {};
 	ID3D11DepthStencilView* savedReadOnlyViews[8] = {};
 	for (int i = 0; i < 8; i++) {
-		savedViews[i] = Util::AsReal<ID3D11DepthStencilView>(kmainDS.views[i]);
+		savedViews[i] = Util::AsReal(kmainDS.views[i]);
 		if (kmainDS.views[i])
-			kmainDS.views[i] = Util::AsReal<REX::W32::ID3D11DepthStencilView>(perfMode.fakeDSV.get());
+			kmainDS.views[i] = Util::AsW32(perfMode.fakeDSV.get());
 	}
 	for (int i = 0; i < 8; i++) {
-		savedReadOnlyViews[i] = Util::AsReal<ID3D11DepthStencilView>(kmainDS.readOnlyViews[i]);
+		savedReadOnlyViews[i] = Util::AsReal(kmainDS.readOnlyViews[i]);
 		if (kmainDS.readOnlyViews[i])
-			kmainDS.readOnlyViews[i] = Util::AsReal<REX::W32::ID3D11DepthStencilView>(perfMode.fakeDSV.get());
+			kmainDS.readOnlyViews[i] = Util::AsW32(perfMode.fakeDSV.get());
 	}
 
 	// Force engine to re-bind DS from struct
@@ -89,9 +89,9 @@ void PerfMode::UIPassDispatch_Hook::thunk(RE::BSGraphics::BSShaderAccumulator* s
 
 	// Restore original KMAIN DS views
 	for (int i = 0; i < 8; i++)
-		kmainDS.views[i] = Util::AsReal<REX::W32::ID3D11DepthStencilView>(savedViews[i]);
+		kmainDS.views[i] = Util::AsW32(savedViews[i]);
 	for (int i = 0; i < 8; i++)
-		kmainDS.readOnlyViews[i] = Util::AsReal<REX::W32::ID3D11DepthStencilView>(savedReadOnlyViews[i]);
+		kmainDS.readOnlyViews[i] = Util::AsW32(savedReadOnlyViews[i]);
 
 	// Re-dirty so subsequent passes get correct DS
 	globals::game::stateUpdateFlags->set(RE::BSGraphics::ShaderFlags::DIRTY_RENDERTARGET);
@@ -160,14 +160,14 @@ void PerfMode::MaybeBlitMenuBG(uint32_t boundRTIdx)
 		context->RSSetState(nullptr);
 
 		D3D11_TEXTURE2D_DESC destDesc{};
-		Util::AsReal<ID3D11Texture2D>(dest.texture)->GetDesc(&destDesc);
+		Util::AsReal(dest.texture)->GetDesc(&destDesc);
 		D3D11_VIEWPORT vp = {};
 		vp.Width = static_cast<float>(destDesc.Width);
 		vp.Height = static_cast<float>(destDesc.Height);
 		vp.MaxDepth = 1.0f;
 		context->RSSetViewports(1, &vp);
 
-		ID3D11RenderTargetView* rtv = Util::AsReal<ID3D11RenderTargetView>(dest.RTV);
+		ID3D11RenderTargetView* rtv = Util::AsReal(dest.RTV);
 		context->OMSetRenderTargets(1, &rtv, nullptr);
 		context->Draw(3, 0);
 	}

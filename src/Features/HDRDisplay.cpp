@@ -242,7 +242,7 @@ namespace
 				hdr->hdrTexture && hdr->hdrTexture->resource) {
 				auto& fb = globals::game::renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kFRAMEBUFFER];
 				if (fb.texture)
-					globals::d3d::context->CopyResource(Util::AsReal<ID3D11Resource>(fb.texture), hdr->hdrTexture->resource.get());
+					globals::d3d::context->CopyResource(Util::AsReal(fb.texture), hdr->hdrTexture->resource.get());
 			}
 		}
 		static inline REL::Relocation<decltype(thunk)> func;
@@ -648,9 +648,9 @@ void HDRDisplay::SetupResources()
 	D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
 	D3D11_UNORDERED_ACCESS_VIEW_DESC uavDesc = {};
 
-	main.texture->GetDesc(Util::AsReal<REX::W32::D3D11_TEXTURE2D_DESC>(&texDesc));
-	main.SRV->GetDesc(Util::AsReal<REX::W32::D3D11_SHADER_RESOURCE_VIEW_DESC>(&srvDesc));
-	main.UAV->GetDesc(Util::AsReal<REX::W32::D3D11_UNORDERED_ACCESS_VIEW_DESC>(&uavDesc));
+	main.texture->GetDesc(Util::AsW32(&texDesc));
+	main.SRV->GetDesc(Util::AsW32(&srvDesc));
+	main.UAV->GetDesc(Util::AsW32(&uavDesc));
 
 	// Get the actual swap chain format for output texture
 	DXGI_FORMAT swapChainFormat = DXGI_FORMAT_R10G10B10A2_UNORM;  // HDR format
@@ -793,14 +793,14 @@ void HDRDisplay::RedirectFramebuffer()
 
 	auto& fb = globals::game::renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGET::kFRAMEBUFFER];
 
-	savedFramebufferTexture = Util::AsReal<ID3D11Texture2D>(fb.texture);
-	savedFramebufferSRV = Util::AsReal<ID3D11ShaderResourceView>(fb.SRV);
-	savedFramebufferRTV = Util::AsReal<ID3D11RenderTargetView>(fb.RTV);
+	savedFramebufferTexture = Util::AsReal(fb.texture);
+	savedFramebufferSRV = Util::AsReal(fb.SRV);
+	savedFramebufferRTV = Util::AsReal(fb.RTV);
 
 	// Redirect to hdrTexture (R16G16B16A16_FLOAT) so ISHDR can write values >1.0
-	fb.texture = Util::AsReal<REX::W32::ID3D11Texture2D>(hdrTexture->resource.get());
-	fb.SRV = Util::AsReal<REX::W32::ID3D11ShaderResourceView>(hdrTexture->srv.get());
-	fb.RTV = Util::AsReal<REX::W32::ID3D11RenderTargetView>(hdrTexture->rtv.get());
+	fb.texture = Util::AsW32(hdrTexture->resource.get());
+	fb.SRV = Util::AsW32(hdrTexture->srv.get());
+	fb.RTV = Util::AsW32(hdrTexture->rtv.get());
 
 	framebufferRedirected = true;
 }
@@ -813,9 +813,9 @@ void HDRDisplay::RestoreFramebuffer()
 	++sceneGeneration;
 	auto& fb = globals::game::renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGET::kFRAMEBUFFER];
 
-	fb.texture = Util::AsReal<REX::W32::ID3D11Texture2D>(savedFramebufferTexture);
-	fb.SRV = Util::AsReal<REX::W32::ID3D11ShaderResourceView>(savedFramebufferSRV);
-	fb.RTV = Util::AsReal<REX::W32::ID3D11RenderTargetView>(savedFramebufferRTV);
+	fb.texture = Util::AsW32(savedFramebufferTexture);
+	fb.SRV = Util::AsW32(savedFramebufferSRV);
+	fb.RTV = Util::AsW32(savedFramebufferRTV);
 
 	savedFramebufferTexture = nullptr;
 	savedFramebufferSRV = nullptr;
@@ -879,7 +879,7 @@ void HDRDisplay::SetUIBuffer()
 
 		ID3D11RenderTargetView* targetRTV = uiBufferMode.useUIBuffer ?
 		                                        upscaling.dx12SwapChain.uiBufferWrapped->rtv :
-		                                    uiBufferMode.useFallbackCopy ? Util::AsReal<ID3D11RenderTargetView>(fb.RTV) :
+		                                    uiBufferMode.useFallbackCopy ? Util::AsReal(fb.RTV) :
 		                                                                   upscaling.dx12SwapChain.swapChainBufferWrapped->rtv;
 
 		if (uiBufferMode.useUIBuffer) {
@@ -888,7 +888,7 @@ void HDRDisplay::SetUIBuffer()
 			++uiGeneration;
 		}
 
-		fb.RTV = Util::AsReal<REX::W32::ID3D11RenderTargetView>(targetRTV);
+		fb.RTV = Util::AsW32(targetRTV);
 		globals::d3d::context->OMSetRenderTargets(1, &targetRTV, nullptr);
 		return;
 	}
@@ -905,14 +905,14 @@ void HDRDisplay::SetUIBuffer()
 		return;
 
 	if (!savedFramebufferRTV) {
-		savedFramebufferRTV = Util::AsReal<ID3D11RenderTargetView>(fb.RTV);
+		savedFramebufferRTV = Util::AsReal(fb.RTV);
 	}
 
 	float clearColor[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
 	globals::d3d::context->ClearRenderTargetView(uiTexture->rtv.get(), clearColor);
 	++uiGeneration;
 
-	fb.RTV = Util::AsReal<REX::W32::ID3D11RenderTargetView>(uiTexture->rtv.get());
+	fb.RTV = Util::AsW32(uiTexture->rtv.get());
 	auto* uiRTV = uiTexture->rtv.get();
 	globals::d3d::context->OMSetRenderTargets(1, &uiRTV, nullptr);
 }
@@ -930,7 +930,7 @@ void HDRDisplay::SyncFramebufferUIRedirect()
 
 	auto& fb = globals::game::renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGET::kFRAMEBUFFER];
 	auto* uiRTV = uiTexture->rtv.get();
-	fb.RTV = Util::AsReal<REX::W32::ID3D11RenderTargetView>(uiRTV);
+	fb.RTV = Util::AsW32(uiRTV);
 	globals::d3d::context->OMSetRenderTargets(1, &uiRTV, nullptr);
 }
 
@@ -1040,7 +1040,7 @@ void HDRDisplay::DrawImGuiForPresent(bool frameGenActive, bool hdrReady)
 {
 	if (frameGenActive) {
 		auto& data = globals::game::renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGET::kFRAMEBUFFER];
-		auto* dataRTV = Util::AsReal<ID3D11RenderTargetView>(data.RTV);
+		auto* dataRTV = Util::AsReal(data.RTV);
 		globals::d3d::context->OMSetRenderTargets(1, &dataRTV, nullptr);
 	} else if (hdrReady && !globals::game::isVR && uiTexture && uiTexture->rtv && uiTexture->resource) {
 		ID3D11RenderTargetView* uiRTV = uiTexture->rtv.get();
@@ -1059,7 +1059,7 @@ void HDRDisplay::DrawImGuiForPresent(bool frameGenActive, bool hdrReady)
 		}
 	} else {
 		auto& data = globals::game::renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGET::kFRAMEBUFFER];
-		auto* dataRTV = Util::AsReal<ID3D11RenderTargetView>(data.RTV);
+		auto* dataRTV = Util::AsReal(data.RTV);
 		globals::d3d::context->OMSetRenderTargets(1, &dataRTV, nullptr);
 	}
 }
@@ -1106,7 +1106,7 @@ HRESULT HDRDisplay::RunPresentChainWithHDR(
 			ClearUIBuffer();
 		}
 		auto& data = globals::game::renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGET::kFRAMEBUFFER];
-		auto* dataRTV = Util::AsReal<ID3D11RenderTargetView>(data.RTV);
+		auto* dataRTV = Util::AsReal(data.RTV);
 		globals::d3d::context->OMSetRenderTargets(1, &dataRTV, nullptr);
 	}
 
@@ -1146,7 +1146,7 @@ void HDRDisplay::ClearUIBuffer()
 
 	if (savedFramebufferRTV) {
 		auto& data = globals::game::renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGET::kFRAMEBUFFER];
-		data.RTV = Util::AsReal<REX::W32::ID3D11RenderTargetView>(savedFramebufferRTV);
+		data.RTV = Util::AsW32(savedFramebufferRTV);
 		savedFramebufferRTV = nullptr;
 	}
 }
@@ -1180,9 +1180,9 @@ void HDRDisplay::ApplyHDR()
 		// - Non-VR HDR: hdrTexture has float16 scene values >1.0 preserved from ISHDR.
 		// - Non-VR SDR: kFRAMEBUFFER has the tonemapped 0-1 ISHDR output.
 		ID3D11ShaderResourceView* sceneSRV =
-			globals::game::isVR                                   ? Util::AsReal<ID3D11ShaderResourceView>(framebufferRT.SRV) :
+			globals::game::isVR                                   ? Util::AsReal(framebufferRT.SRV) :
 			(settings.enableHDR && hdrTexture && hdrTexture->srv) ? hdrTexture->srv.get() :
-																	Util::AsReal<ID3D11ShaderResourceView>(framebufferRT.SRV);
+																	Util::AsReal(framebufferRT.SRV);
 
 		// Choose the correct UI buffer based on which path is active.
 		// VR uses the framebuffer directly, which already contains vanilla UI/ImGui.
@@ -1201,12 +1201,12 @@ void HDRDisplay::ApplyHDR()
 			if (upscaling.d3d12SwapChainActive) {
 				// SetUIBuffer keeps non-FG fallback UI in kFRAMEBUFFER; FG keeps using
 				// uiBufferWrapped for FidelityFX UI composition.
-				context->CopyResource(upscaling.dx12SwapChain.swapChainBufferWrapped->resource11, Util::AsReal<ID3D11Resource>(framebufferRT.texture));
+				context->CopyResource(upscaling.dx12SwapChain.swapChainBufferWrapped->resource11, Util::AsReal(framebufferRT.texture));
 			} else {
 				ID3D11Texture2D* backBuffer = nullptr;
 				HRESULT hr = globals::d3d::swapChain->GetBuffer(0, IID_PPV_ARGS(&backBuffer));
 				if (SUCCEEDED(hr) && backBuffer) {
-					context->CopyResource(backBuffer, Util::AsReal<ID3D11Resource>(framebufferRT.texture));
+					context->CopyResource(backBuffer, Util::AsReal(framebufferRT.texture));
 					backBuffer->Release();
 				}
 			}
@@ -1418,16 +1418,16 @@ void HDRDisplay::UpgradeLDRRenderTargets()
 			continue;
 
 		D3D11_TEXTURE2D_DESC origDesc{};
-		rt.texture->GetDesc(Util::AsReal<REX::W32::D3D11_TEXTURE2D_DESC>(&origDesc));
+		rt.texture->GetDesc(Util::AsW32(&origDesc));
 
 		if (origDesc.Format == DXGI_FORMAT_R16G16B16A16_FLOAT)
 			continue;
 
 		SavedRenderTarget saved;
-		saved.texture = Util::AsReal<ID3D11Texture2D>(rt.texture);
-		saved.RTV = Util::AsReal<ID3D11RenderTargetView>(rt.RTV);
-		saved.SRV = Util::AsReal<ID3D11ShaderResourceView>(rt.SRV);
-		saved.UAV = Util::AsReal<ID3D11UnorderedAccessView>(rt.UAV);
+		saved.texture = Util::AsReal(rt.texture);
+		saved.RTV = Util::AsReal(rt.RTV);
+		saved.SRV = Util::AsReal(rt.SRV);
+		saved.UAV = Util::AsReal(rt.UAV);
 
 		D3D11_TEXTURE2D_DESC newDesc = origDesc;
 		newDesc.Format = DXGI_FORMAT_R16G16B16A16_FLOAT;
@@ -1461,7 +1461,7 @@ void HDRDisplay::UpgradeLDRRenderTargets()
 		ID3D11UnorderedAccessView* newUAV = nullptr;
 		if (rt.UAV) {
 			D3D11_UNORDERED_ACCESS_VIEW_DESC uavDesc{};
-			Util::AsReal<ID3D11UnorderedAccessView>(rt.UAV)->GetDesc(&uavDesc);
+			Util::AsReal(rt.UAV)->GetDesc(&uavDesc);
 			uavDesc.Format = DXGI_FORMAT_R16G16B16A16_FLOAT;
 
 			if (FAILED(device->CreateUnorderedAccessView(newTexture, &uavDesc, &newUAV))) {
@@ -1472,10 +1472,10 @@ void HDRDisplay::UpgradeLDRRenderTargets()
 			}
 		}
 
-		rt.texture = Util::AsReal<REX::W32::ID3D11Texture2D>(newTexture);
-		rt.RTV = Util::AsReal<REX::W32::ID3D11RenderTargetView>(newRTV);
-		rt.SRV = Util::AsReal<REX::W32::ID3D11ShaderResourceView>(newSRV);
-		rt.UAV = Util::AsReal<REX::W32::ID3D11UnorderedAccessView>(newUAV);
+		rt.texture = Util::AsW32(newTexture);
+		rt.RTV = Util::AsW32(newRTV);
+		rt.SRV = Util::AsW32(newSRV);
+		rt.UAV = Util::AsW32(newUAV);
 
 		savedLDRTargets.push_back({ targetId, saved });
 		logger::info("[HDR] Upgraded render target {} to R16G16B16A16_FLOAT (was format {})", static_cast<int>(targetId), static_cast<int>(origDesc.Format));
@@ -1498,10 +1498,10 @@ void HDRDisplay::RestoreLDRRenderTargets()
 		if (rt.UAV)
 			rt.UAV->Release();
 
-		rt.texture = Util::AsReal<REX::W32::ID3D11Texture2D>(saved.texture);
-		rt.RTV = Util::AsReal<REX::W32::ID3D11RenderTargetView>(saved.RTV);
-		rt.SRV = Util::AsReal<REX::W32::ID3D11ShaderResourceView>(saved.SRV);
-		rt.UAV = Util::AsReal<REX::W32::ID3D11UnorderedAccessView>(saved.UAV);
+		rt.texture = Util::AsW32(saved.texture);
+		rt.RTV = Util::AsW32(saved.RTV);
+		rt.SRV = Util::AsW32(saved.SRV);
+		rt.UAV = Util::AsW32(saved.UAV);
 	}
 	savedLDRTargets.clear();
 }
