@@ -1,16 +1,14 @@
 #include "ExponentialHeightFog.h"
 
 #include "Deferred.h"
-#if defined(ENABLE_EFFECTS11)
-#	include "Effects11.h"
-#	include "Effects11/SettingManager.h"
-#endif
 #include "Features/CloudShadows.h"
 #include "Features/IBL.h"
 #include "Features/LightLimitFix.h"
+#include "Features/LinearLighting.h"
 #include "Features/Skylighting.h"
 #include "Features/TerrainShadows.h"
 #include "Globals.h"
+#include "GpuPass.h"
 #include "I18n/I18n.h"
 #include "State.h"
 #include "Utils/D3D.h"
@@ -54,7 +52,17 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	volumetricHistoryMissSampleCount,
 	volumetricSampleJitterMultiplier,
 	volumetricUpsampleJitterMultiplier,
-	volumetricLocalLightScatteringIntensity)
+	volumetricLocalLightScatteringIntensity,
+	useVanillaFogSettings,
+	vanillaFogStrength,
+	fogLightingInfluence,
+	mistsEnabled,
+	mistStrength,
+	mistRange,
+	mistSize,
+	mistDriftSpeed,
+	mistFollowWind,
+	mistWindMultiplier)
 
 namespace
 {
@@ -80,6 +88,8 @@ void ExponentialHeightFog::RestoreDefaultSettings()
 void ExponentialHeightFog::LoadSettings(json& o_json)
 {
 	settings = o_json;
+	settings.vanillaFogStrength = std::clamp(std::isfinite(settings.vanillaFogStrength) ? settings.vanillaFogStrength : Settings{}.vanillaFogStrength, 0.0f, 4.0f);
+	settings.fogLightingInfluence = std::clamp(std::isfinite(settings.fogLightingInfluence) ? settings.fogLightingInfluence : Settings{}.fogLightingInfluence, 0.0f, 1.0f);
 }
 
 void ExponentialHeightFog::SaveSettings(json& o_json)
@@ -90,38 +100,79 @@ void ExponentialHeightFog::SaveSettings(json& o_json)
 ExponentialHeightFog::Settings ExponentialHeightFog::GetCommonBufferData() const
 {
 	Settings data = settings;
+	const Settings defaults{};
+	data.mistStrength = std::clamp(std::isfinite(data.mistStrength) ? data.mistStrength : defaults.mistStrength, 0.0f, 4.0f);
+	data.mistRange = std::clamp(std::isfinite(data.mistRange) ? data.mistRange : defaults.mistRange, 512.0f, 16384.0f);
+	data.mistSize = std::clamp(std::isfinite(data.mistSize) ? data.mistSize : defaults.mistSize, 128.0f, 4096.0f);
+	data.mistDriftSpeed = std::clamp(std::isfinite(data.mistDriftSpeed) ? data.mistDriftSpeed : defaults.mistDriftSpeed, 0.0f, kMaxMistDriftSpeed);
+	data.mistWindMultiplier = std::clamp(std::isfinite(data.mistWindMultiplier) ? data.mistWindMultiplier : defaults.mistWindMultiplier, 0.0f, 10.0f);
+	data.vanillaFogMaxOpacity = 1.0f;
+	data.vanillaFogDensity = 0.0f;
+	const auto* sky = globals::game::sky;
+	const float fogNear = sky ? std::max(std::isfinite(sky->fogNear) ? sky->fogNear : 0.0f, 0.0f) : 0.0f;
+	const float fogFar = sky ? std::max(std::isfinite(sky->fogFar) ? sky->fogFar : fogNear + 1.0f, fogNear + 1.0f) : 40960.0f;
+	const float fogPower = sky ? std::clamp(std::isfinite(sky->fogPower) ? sky->fogPower : 1.0f, 0.01f, 10.0f) : 1.0f;
+	const float fogClamp = sky ? std::clamp(std::isfinite(sky->fogClamp) ? sky->fogClamp : 0.0f, 0.0f, 0.9999f) : 0.0f;
 
-#if defined(ENABLE_EFFECTS11)
-	if (globals::features::effects11.loaded) {
-		auto& enb = globals::features::effects11;
-		if (enb.enableEffect) {
-			data.enabled = 0;
-		}
+	const auto lighting = globals::features::linearLighting.GetCommonBufferData();
+	data.fogAlphaGamma = lighting.enableLinearLighting ?
+	                         std::clamp(std::isfinite(lighting.fogAlphaGamma) ? lighting.fogAlphaGamma : 1.0f, 0.01f, 8.0f) :
+	                         1.0f;
+	data.vanillaFogNear = fogNear;
+	data.vanillaFogFar = fogFar;
+	data.vanillaFogMaxOpacity = std::pow(fogClamp, data.fogAlphaGamma);
+	data.vanillaFogPower = fogPower;
+	const float4 fallbackFogColor{ 0.85f, 0.88f, 0.92f, 1.0f };
+	data.vanillaFogNearColor = fallbackFogColor;
+	data.vanillaFogFarColor = fallbackFogColor;
+	if (sky) {
+		auto sanitizeColor = [](const RE::NiColor& color, const float4& fallback) {
+			return float4{
+				std::max(std::isfinite(color.red) ? color.red : fallback.x, 0.0f),
+				std::max(std::isfinite(color.green) ? color.green : fallback.y, 0.0f),
+				std::max(std::isfinite(color.blue) ? color.blue : fallback.z, 0.0f), 1.0f
+			};
+		};
+		data.vanillaFogFarColor = sanitizeColor(sky->skyColor[static_cast<uint32_t>(RE::TESWeather::ColorTypes::kFogFar)], fallbackFogColor);
+		data.vanillaFogNearColor = sanitizeColor(sky->skyColor[static_cast<uint32_t>(RE::TESWeather::ColorTypes::kFogNear)], fallbackFogColor);
 	}
-#endif
 
+	if (data.useVanillaFogSettings) {
+		data.disableVanillaFog = 1;
+		data.respectVanillaFogFade = 0;
+		data.originalFogColorAmount = 1.0f;
+		data.startDistance = fogNear;
+		const float targetOpacity = data.vanillaFogMaxOpacity * 0.5f;
+		const float normalizedReference = std::pow(targetOpacity, 1.0f / (fogPower * data.fogAlphaGamma));
+		const float referenceDistance = std::max((fogFar - fogNear) * normalizedReference, 1.0f);
+		constexpr float kAnalyticalExtinctionScale = 0.001f * 0.69314718056f * 0.69314718056f;
+		data.vanillaFogDensity = -std::log(std::max(1.0f - targetOpacity, 0.0001f)) / (referenceDistance * kAnalyticalExtinctionScale);
+	}
 	return data;
 }
 
 void ExponentialHeightFog::DrawSettings()
 {
-#if defined(ENABLE_EFFECTS11)
-	if (globals::features::effects11.loaded) {
-		auto& enb = globals::features::effects11;
-		if (enb.enableEffect) {
-			ImGui::TextColored(globals::menu->GetSettings().Theme.StatusPalette.Warning, "%s", T("common.settings_managed_by_enb", "Settings are currently managed by ENB."));
-			return;
-		}
-	}
-#endif
-
 	ImGui::Checkbox(T(TKEY("enable_exp_height_fog"), "Enable Exponential Height Fog"), (bool*)&settings.enabled);
+	ImGui::Checkbox(T(TKEY("use_vanilla_fog_settings"), "Follow vanilla fog"), (bool*)&settings.useVanillaFogSettings);
+	if (auto _tt = Util::HoverTooltipWrapper()) {
+		ImGui::Text("%s", T(TKEY("use_vanilla_fog_settings_tooltip"), "Derives volumetric and distant fog from the active weather, including opacity gamma. Strength 1.0 preserves the optical-depth baseline; 1.25 is the tuned default. Replaces vanilla distance fog."));
+	}
+	ImGui::BeginDisabled(settings.useVanillaFogSettings == 0);
+	ImGui::SliderFloat(T(TKEY("vanilla_strength"), "Weather Fog Strength"), &settings.vanillaFogStrength, 0.0f, 4.0f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+	ImGui::EndDisabled();
+	ImGui::BeginDisabled(settings.useVanillaFogSettings != 0);
 	Util::WeatherUI::SliderFloat(T(TKEY("start_distance"), "Start Distance"), this, "startDistance", &settings.startDistance, 0.0f, 100000.0f, "%.1f");
+	ImGui::EndDisabled();
 	Util::WeatherUI::SliderFloat(T(TKEY("fog_height"), "Fog Height"), this, "fogHeight", &settings.fogHeight, -22000.0f, 22000.0f, "%.1f");
 	Util::WeatherUI::SliderFloat(T(TKEY("fog_height_falloff"), "Fog Height Falloff"), this, "fogHeightFalloff", &settings.fogHeightFalloff, 0.001f, 2.0f, "%.3f");
 	Util::WeatherUI::ColorEdit4(T(TKEY("fog_inscattering_color"), "Fog Inscattering Color"), this, "fogInscatteringColor", (float*)&settings.fogInscatteringColor);
+	ImGui::BeginDisabled(settings.useVanillaFogSettings != 0);
 	Util::WeatherUI::SliderFloat(T(TKEY("original_fog_color_amount"), "Original Fog Color Amount"), this, "originalFogColorAmount", &settings.originalFogColorAmount, 0.0f, 1.0f, "%.2f");
+	ImGui::EndDisabled();
+	ImGui::BeginDisabled(settings.useVanillaFogSettings != 0);
 	Util::WeatherUI::SliderFloat(T(TKEY("fog_density"), "Fog Density"), this, "fogDensity", &settings.fogDensity, 0.0f, 1.0f, "%.3f");
+	ImGui::EndDisabled();
 	Util::WeatherUI::SliderFloat(T(TKEY("dir_inscattering_mul"), "Directional Light Inscattering Multiplier"), this, "directionalInscatteringMultiplier", &settings.directionalInscatteringMultiplier, 0.0f, 10.0f, "%.2f");
 	Util::WeatherUI::SliderFloat(T(TKEY("sunlight_attenuation"), "Sunlight Attenuation Amount"), this, "sunlightAttenuationAmount", &settings.sunlightAttenuationAmount, 0.0f, 1.0f, "%.2f");
 	Util::WeatherUI::SliderFloat(T(TKEY("dir_inscattering_anisotropy"), "Directional Light Inscattering Anisotropy"), this, "directionalInscatteringAnisotropy", &settings.directionalInscatteringAnisotropy, -0.99f, 0.99f, "%.3f");
@@ -131,10 +182,12 @@ void ExponentialHeightFog::DrawSettings()
 							  "Positive values produce forward scattering (glow around sun).\n"
 							  "Zero is isotropic. Negative values produce back scattering."));
 	}
+	ImGui::BeginDisabled(settings.useVanillaFogSettings != 0);
 	ImGui::Checkbox(T(TKEY("disable_vanilla_fog"), "Disable Vanilla Fog"), (bool*)&settings.disableVanillaFog);
 	if (auto _tt = Util::HoverTooltipWrapper()) {
 		ImGui::Text("%s", T(TKEY("disable_vanilla_fog_tooltip"), "Disables the vanilla fog entirely. Only exponential height fog will be applied."));
 	}
+	ImGui::EndDisabled();
 	Util::WeatherUI::Checkbox(T(TKEY("apply_vanilla_fade"), "Apply Vanilla Fade"), this, "respectVanillaFogFade", (bool*)&settings.respectVanillaFogFade);
 	if (auto _tt = Util::HoverTooltipWrapper()) {
 		ImGui::Text("%s", T(TKEY("apply_vanilla_fade_tooltip"), "Applies vanilla fade brightness to exponential height fog."));
@@ -143,47 +196,86 @@ void ExponentialHeightFog::DrawSettings()
 	Util::WeatherUI::ColorEdit4(T(TKEY("inscattering_cubemap_tint"), "Inscattering Cubemap Tint"), this, "inscatteringTint", (float*)&settings.inscatteringTint);
 	ImGui::SliderFloat(T(TKEY("cubemap_mip_level"), "Cubemap Mip Level"), &settings.cubemapMipLevel, 1.0f, 8.0f, "%.1f");
 
-	ImGui::SeparatorText(T(TKEY("volumetric_fog"), "Volumetric Fog"));
-	Util::WeatherUI::Checkbox(T(TKEY("enable_volumetric_fog"), "Enable Volumetric Fog"), this, "volumetricFogEnabled", (bool*)&settings.volumetricFogEnabled);
-	if (settings.volumetricFogEnabled) {
-		Util::WeatherUI::SliderFloat(T(TKEY("volumetric_view_distance"), "Volumetric View Distance"), this, "volumetricFogDistance", &settings.volumetricFogDistance, 1000.0f, 200000.0f, "%.0f");
-		Util::WeatherUI::SliderFloat(T(TKEY("volumetric_start_distance"), "Volumetric Start Distance"), this, "volumetricFogStartDistance", &settings.volumetricFogStartDistance, 0.0f, 20000.0f, "%.0f");
-		Util::WeatherUI::SliderFloat(T(TKEY("near_fade_in_distance"), "Near Fade In Distance"), this, "volumetricFogNearFadeInDistance", &settings.volumetricFogNearFadeInDistance, 0.0f, 20000.0f, "%.0f");
-		Util::WeatherUI::SliderFloat(T(TKEY("volumetric_extinction_scale"), "Volumetric Extinction Scale"), this, "volumetricFogExtinctionScale", &settings.volumetricFogExtinctionScale, 0.0f, 10.0f, "%.2f");
-		Util::WeatherUI::SliderFloat(T(TKEY("volumetric_scattering_distribution"), "Volumetric Scattering Distribution"), this, "volumetricFogScatteringDistribution", &settings.volumetricFogScatteringDistribution, -0.9f, 0.9f, "%.2f");
-		Util::WeatherUI::ColorEdit4(T(TKEY("volumetric_albedo"), "Volumetric Albedo"), this, "volumetricFogAlbedo", (float*)&settings.volumetricFogAlbedo);
-		Util::WeatherUI::ColorEdit4(T(TKEY("volumetric_emissive"), "Volumetric Emissive"), this, "volumetricFogEmissive", (float*)&settings.volumetricFogEmissive);
-		Util::WeatherUI::SliderFloat(T(TKEY("directional_scattering_intensity"), "Directional Scattering Intensity"), this, "volumetricDirectionalScatteringIntensity", &settings.volumetricDirectionalScatteringIntensity, 0.0f, 10.0f, "%.2f");
-		Util::WeatherUI::SliderFloat(T(TKEY("sky_lighting_scattering_intensity"), "Sky Lighting Scattering Intensity"), this, "volumetricSkyLightingIntensity", &settings.volumetricSkyLightingIntensity, 0.0f, 10.0f, "%.2f");
-		Util::WeatherUI::SliderFloat(T(TKEY("local_light_scattering_intensity"), "Local Light Scattering Intensity"), this, "volumetricLocalLightScatteringIntensity", &settings.volumetricLocalLightScatteringIntensity, 0.0f, 10.0f, "%.2f");
-		if (ImGui::TreeNode(T(TKEY("debug"), "Debug"))) {
-			uint32_t minGridPixelSize = 4;
-			uint32_t maxGridPixelSize = 64;
-			uint32_t minGridSizeZ = 16;
-			uint32_t maxGridSizeZ = 160;
-			ImGui::SliderScalar(T(TKEY("grid_pixel_size"), "Grid Pixel Size"), ImGuiDataType_U32, &settings.volumetricGridPixelSize, &minGridPixelSize, &maxGridPixelSize, "%u", ImGuiSliderFlags_AlwaysClamp);
-			ImGui::SliderScalar(T(TKEY("grid_depth_slices"), "Grid Depth Slices"), ImGuiDataType_U32, &settings.volumetricGridSizeZ, &minGridSizeZ, &maxGridSizeZ, "%u", ImGuiSliderFlags_AlwaysClamp);
-			ImGui::SliderFloat(T(TKEY("directional_shadow_bias"), "Directional Shadow Bias"), &settings.volumetricShadowBias, 0.0f, 0.05f, "%.4f", ImGuiSliderFlags_AlwaysClamp);
-			ImGui::SliderFloat(T(TKEY("depth_distribution_scale"), "Depth Distribution Scale"), &settings.volumetricDepthDistributionScale, 1.0f, 128.0f, "%.1f", ImGuiSliderFlags_AlwaysClamp);
-			ImGui::SliderFloat(T(TKEY("temporal_history_weight"), "Temporal History Weight"), &settings.volumetricHistoryWeight, 0.0f, 0.99f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
-			uint32_t minHistoryMissSampleCount = 1;
-			uint32_t maxHistoryMissSampleCount = 16;
-			ImGui::SliderScalar(T(TKEY("history_miss_samples"), "History Miss Samples"), ImGuiDataType_U32, &settings.volumetricHistoryMissSampleCount, &minHistoryMissSampleCount, &maxHistoryMissSampleCount, "%u", ImGuiSliderFlags_AlwaysClamp);
-			ImGui::SliderFloat(T(TKEY("sample_jitter_multiplier"), "Sample Jitter Multiplier"), &settings.volumetricSampleJitterMultiplier, 0.0f, 1.0f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
-			if (auto _tt = Util::HoverTooltipWrapper()) {
-				ImGui::Text("%s", T(TKEY("sample_jitter_multiplier_tooltip"),
-									  "Matches UE's r.VolumetricFog.LightScatteringSampleJitterMultiplier.\n"
-									  "Adds per-voxel random offset on top of the Halton sequence.\n"
-									  "0 = UE default; nonzero values need stronger temporal filtering."));
+	if (ImGui::BeginTabBar("##ExponentialHeightFogVolumetricTabs")) {
+		if (ImGui::BeginTabItem(T(TKEY("volumetric_fog"), "Volumetric Fog"))) {
+			Util::WeatherUI::Checkbox(T(TKEY("enable_volumetric_fog"), "Enable Volumetric Fog"), this, "volumetricFogEnabled", (bool*)&settings.volumetricFogEnabled);
+			if (settings.volumetricFogEnabled) {
+				Util::WeatherUI::SliderFloat(T(TKEY("volumetric_view_distance"), "Volumetric View Distance"), this, "volumetricFogDistance", &settings.volumetricFogDistance, 1000.0f, 200000.0f, "%.0f");
+				ImGui::BeginDisabled(settings.useVanillaFogSettings != 0);
+				Util::WeatherUI::SliderFloat(T(TKEY("volumetric_start_distance"), "Volumetric Start Distance"), this, "volumetricFogStartDistance", &settings.volumetricFogStartDistance, 0.0f, 20000.0f, "%.0f");
+				Util::WeatherUI::SliderFloat(T(TKEY("near_fade_in_distance"), "Near Fade In Distance"), this, "volumetricFogNearFadeInDistance", &settings.volumetricFogNearFadeInDistance, 0.0f, 20000.0f, "%.0f");
+				ImGui::EndDisabled();
+				ImGui::SliderFloat(T(TKEY("lighting_influence"), "Weather Lighting Influence"), &settings.fogLightingInfluence, 0.0f, 1.0f, "%.2f");
+				Util::WeatherUI::SliderFloat(T(TKEY("volumetric_extinction_scale"), "Volumetric Extinction Scale"), this, "volumetricFogExtinctionScale", &settings.volumetricFogExtinctionScale, 0.0f, 10.0f, "%.2f");
+				Util::WeatherUI::SliderFloat(T(TKEY("volumetric_scattering_distribution"), "Volumetric Scattering Distribution"), this, "volumetricFogScatteringDistribution", &settings.volumetricFogScatteringDistribution, -0.9f, 0.9f, "%.2f");
+				Util::WeatherUI::ColorEdit4(T(TKEY("volumetric_albedo"), "Volumetric Albedo"), this, "volumetricFogAlbedo", (float*)&settings.volumetricFogAlbedo);
+				Util::WeatherUI::ColorEdit4(T(TKEY("volumetric_emissive"), "Volumetric Emissive"), this, "volumetricFogEmissive", (float*)&settings.volumetricFogEmissive);
+				Util::WeatherUI::SliderFloat(T(TKEY("directional_scattering_intensity"), "Directional Scattering Intensity"), this, "volumetricDirectionalScatteringIntensity", &settings.volumetricDirectionalScatteringIntensity, 0.0f, 10.0f, "%.2f");
+				Util::WeatherUI::SliderFloat(T(TKEY("sky_lighting_scattering_intensity"), "Sky Lighting Scattering Intensity"), this, "volumetricSkyLightingIntensity", &settings.volumetricSkyLightingIntensity, 0.0f, 10.0f, "%.2f");
+				Util::WeatherUI::SliderFloat(T(TKEY("local_light_scattering_intensity"), "Local Light Scattering Intensity"), this, "volumetricLocalLightScatteringIntensity", &settings.volumetricLocalLightScatteringIntensity, 0.0f, 10.0f, "%.2f");
+				if (ImGui::TreeNode(T(TKEY("debug"), "Debug"))) {
+					uint32_t minGridPixelSize = 4;
+					uint32_t maxGridPixelSize = 64;
+					uint32_t minGridSizeZ = 16;
+					uint32_t maxGridSizeZ = 160;
+					ImGui::SliderScalar(T(TKEY("grid_pixel_size"), "Grid Pixel Size"), ImGuiDataType_U32, &settings.volumetricGridPixelSize, &minGridPixelSize, &maxGridPixelSize, "%u", ImGuiSliderFlags_AlwaysClamp);
+					ImGui::SliderScalar(T(TKEY("grid_depth_slices"), "Grid Depth Slices"), ImGuiDataType_U32, &settings.volumetricGridSizeZ, &minGridSizeZ, &maxGridSizeZ, "%u", ImGuiSliderFlags_AlwaysClamp);
+					ImGui::SliderFloat(T(TKEY("directional_shadow_bias"), "Directional Shadow Bias"), &settings.volumetricShadowBias, 0.0f, 0.05f, "%.4f", ImGuiSliderFlags_AlwaysClamp);
+					ImGui::SliderFloat(T(TKEY("depth_distribution_scale"), "Depth Distribution Scale"), &settings.volumetricDepthDistributionScale, 1.0f, 128.0f, "%.1f", ImGuiSliderFlags_AlwaysClamp);
+					ImGui::SliderFloat(T(TKEY("temporal_history_weight"), "Temporal History Weight"), &settings.volumetricHistoryWeight, 0.0f, 0.99f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+					uint32_t minHistoryMissSampleCount = 1;
+					uint32_t maxHistoryMissSampleCount = 16;
+					ImGui::SliderScalar(T(TKEY("history_miss_samples"), "History Miss Samples"), ImGuiDataType_U32, &settings.volumetricHistoryMissSampleCount, &minHistoryMissSampleCount, &maxHistoryMissSampleCount, "%u", ImGuiSliderFlags_AlwaysClamp);
+					ImGui::SliderFloat(T(TKEY("sample_jitter_multiplier"), "Sample Jitter Multiplier"), &settings.volumetricSampleJitterMultiplier, 0.0f, 1.0f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+					if (auto _tt = Util::HoverTooltipWrapper()) {
+						ImGui::Text("%s", T(TKEY("sample_jitter_multiplier_tooltip"),
+											  "Matches UE's r.VolumetricFog.LightScatteringSampleJitterMultiplier.\n"
+											  "Adds per-voxel random offset on top of the Halton sequence.\n"
+											  "0 = UE default; nonzero values need stronger temporal filtering."));
+					}
+					ImGui::SliderFloat(T(TKEY("upsample_jitter_multiplier"), "Upsample Jitter Multiplier"), &settings.volumetricUpsampleJitterMultiplier, 0.0f, 1.0f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+					if (auto _tt = Util::HoverTooltipWrapper()) {
+						ImGui::Text("%s", T(TKEY("upsample_jitter_multiplier_tooltip"),
+											  "Matches UE's r.VolumetricFog.UpsampleJitterMultiplier.\n"
+											  "Jitters the final 3D fog lookup in screen space to hide\n"
+											  "low-resolution froxel pixelization. 0 = UE default."));
+					}
+					ImGui::TreePop();
+				}
+				ImGui::EndTabItem();
 			}
-			ImGui::SliderFloat(T(TKEY("upsample_jitter_multiplier"), "Upsample Jitter Multiplier"), &settings.volumetricUpsampleJitterMultiplier, 0.0f, 1.0f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
-			if (auto _tt = Util::HoverTooltipWrapper()) {
-				ImGui::Text("%s", T(TKEY("upsample_jitter_multiplier_tooltip"),
-									  "Matches UE's r.VolumetricFog.UpsampleJitterMultiplier.\n"
-									  "Jitters the final 3D fog lookup in screen space to hide\n"
-									  "low-resolution froxel pixelization. 0 = UE default."));
+			if (ImGui::BeginTabItem(T(TKEY("tab_mists"), "Mists"))) {
+				ImGui::Checkbox(T(TKEY("enable_mists"), "Enable Nearby Mists"), (bool*)&settings.mistsEnabled);
+				ImGui::TextWrapped("%s", T(TKEY("mists_description"), "Adds drifting 3D mist pockets nearby, using the existing volumetric grid and lighting. Strength follows the active fog: clear weather stays restrained. This is an artistic addition to the vanilla match, not an exact match."));
+				if (!settings.enabled || !settings.volumetricFogEnabled) {
+					ImGui::TextWrapped("%s", T(TKEY("mists_requires_volume"), "Enable Exponential Height Fog and Volumetric Fog to render mists."));
+				}
+				ImGui::BeginDisabled(!settings.mistsEnabled);
+				ImGui::SliderFloat(T(TKEY("mist_strength"), "Mist Strength"), &settings.mistStrength, 0.0f, 4.0f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+				if (auto _tt = Util::HoverTooltipWrapper()) {
+					ImGui::TextWrapped("%s", T(TKEY("mist_strength_tooltip"), "Scales weather-driven opacity across one mist pocket, independently of Mist Range. Higher values make pockets thicker when you enter them. Zero removes the added mists."));
+				}
+				ImGui::SliderFloat(T(TKEY("mist_range"), "Mist Range"), &settings.mistRange, 512.0f, 16384.0f, "%.0f", ImGuiSliderFlags_AlwaysClamp);
+				ImGui::SliderFloat(T(TKEY("mist_size"), "Mist Pocket Size"), &settings.mistSize, 128.0f, 4096.0f, "%.0f", ImGuiSliderFlags_AlwaysClamp);
+				ImGui::SliderFloat(T(TKEY("mist_drift_speed"), "Mist Movement Speed"), &settings.mistDriftSpeed, 0.0f, kMaxMistDriftSpeed, "%.1f", ImGuiSliderFlags_AlwaysClamp | ImGuiSliderFlags_Logarithmic);
+				if (auto _tt = Util::HoverTooltipWrapper()) {
+					ImGui::Text("%s", T(TKEY("mist_drift_speed_tooltip"), "Game units per second for manual drift, or at full outdoor wind strength. Changing speed only affects future movement. Zero freezes the pattern; pausing also pauses animation."));
+				}
+				bool followWind = settings.mistFollowWind != 0;
+				if (ImGui::Checkbox(T(TKEY("mist_follow_wind"), "Follow Outdoor Wind"), &followWind))
+					settings.mistFollowWind = followWind;
+				if (auto _tt = Util::HoverTooltipWrapper()) {
+					ImGui::TextWrapped("%s", T(TKEY("mist_follow_wind_tooltip"), "Uses the current outdoor wind direction and strength, smoothing changes over one second. Calm wind stops drift. Interiors retain manual drift. Wind changes movement, not density."));
+				}
+				ImGui::BeginDisabled(!settings.mistFollowWind);
+				ImGui::SliderFloat(T(TKEY("mist_wind_multiplier"), "Mist Wind Multiplier"), &settings.mistWindMultiplier, 0.0f, 10.0f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+				ImGui::EndDisabled();
+				ImGui::Text(T(TKEY("mist_movement_offset"), "Movement offset: %.1f game units"), mistDriftDistance);
+				ImGui::TextWrapped("%s", T(TKEY("mists_range_help"), "Distances are in game units. Range controls coverage and the outer fade, not pocket density; it cannot extend the volumetric grid. Pocket Size sets the pattern scale, with density adjusted to retain its optical thickness. Small pockets fade where the grid is too coarse to resolve them. Speed 0 freezes the pattern in the world."));
+				ImGui::EndDisabled();
+				ImGui::EndTabItem();
 			}
-			ImGui::TreePop();
+			ImGui::EndTabBar();
 		}
 	}
 }
@@ -215,6 +307,7 @@ void ExponentialHeightFog::ClearShaderCache()
 	conservativeDepthCS.Reset();
 	lightScatteringCS.Reset();
 	integrationCS.Reset();
+	hasLightScatteringHistory = false;
 }
 
 void ExponentialHeightFog::CaptureDirectionalShadowMap()
@@ -233,12 +326,15 @@ void ExponentialHeightFog::EnsureVolumetricResources()
 	auto renderSize = Util::ConvertToDynamic(globals::state->screenSize);
 
 	auto getGridSize = [&renderSize, gridZ](uint32_t a_pixelSize) {
-		return DirectX::XMUINT4{
+		auto gridSize = DirectX::XMUINT4{
 			std::max(1u, static_cast<uint32_t>(std::ceil(renderSize.x / static_cast<float>(a_pixelSize)))),
 			std::max(1u, static_cast<uint32_t>(std::ceil(renderSize.y / static_cast<float>(a_pixelSize)))),
 			gridZ,
 			0u
 		};
+		if (globals::game::isVR)
+			gridSize.x = (gridSize.x + 1u) & ~1u;
+		return gridSize;
 	};
 	DirectX::XMUINT4 gridSize = getGridSize(pixelSize);
 
@@ -373,22 +469,96 @@ ID3D11ComputeShader* ExponentialHeightFog::GetIntegrationCS()
 	return integrationCS.Get(L"Data\\Shaders\\ExponentialHeightFog\\VolumetricFogIntegrationCS.hlsl", {}, "cs_5_0");
 }
 
+void ExponentialHeightFog::UpdateMistAnimation(const Settings& frameSettings)
+{
+	const uint32_t frame = globals::state->frameCount;
+	if (lastMistAnimationFrame == frame)
+		return;
+
+	const auto now = std::chrono::steady_clock::now();
+	const bool consecutiveFrame = lastMistAnimationFrame != UINT32_MAX && frame == lastMistAnimationFrame + 1u;
+	const bool paused = globals::state->IsPausedOrMenuOpen(globals::game::ui);
+	if (consecutiveFrame && !paused && frameSettings.enabled && frameSettings.volumetricFogEnabled && frameSettings.mistsEnabled) {
+		const double elapsed = std::chrono::duration<double>(now - previousMistTick).count();
+		constexpr double kMaximumAnimationFrameSeconds = 0.25;
+		if (elapsed <= kMaximumAnimationFrameSeconds) {
+			std::array<double, 2> targetVelocity = { 0.8 * frameSettings.mistDriftSpeed, 0.6 * frameSettings.mistDriftSpeed };
+			const auto* cell = globals::game::player ? globals::game::player->GetParentCell() : nullptr;
+			const auto* sky = globals::game::sky;
+			if (frameSettings.mistFollowWind && cell && !cell->IsInteriorCell() && sky &&
+				std::isfinite(sky->windAngle) && std::isfinite(sky->windSpeed)) {
+				const double speed = std::min<double>(kMaxMistDriftSpeed,
+					frameSettings.mistDriftSpeed * std::clamp(sky->windSpeed, 0.0f, 1.0f) * frameSettings.mistWindMultiplier);
+				targetVelocity = { std::sin(sky->windAngle) * speed, std::cos(sky->windAngle) * speed };
+			}
+			constexpr double kWindResponseSeconds = 1.0;
+			const double response = 1.0 - std::exp(-elapsed / kWindResponseSeconds);
+			for (size_t axis = 0; axis < mistDriftOffset.size(); ++axis) {
+				mistDriftVelocity[axis] += (targetVelocity[axis] - mistDriftVelocity[axis]) * response;
+				if (frameSettings.mistDriftSpeed == 0.0f)
+					mistDriftVelocity[axis] = 0.0;
+				mistDriftOffset[axis] += elapsed * mistDriftVelocity[axis];
+			}
+			mistDriftDistance += elapsed * std::hypot(mistDriftVelocity[0], mistDriftVelocity[1]);
+			if (frameSettings.mistDriftSpeed > 0.0f) {
+				constexpr double kMistShapeResponseSeconds = 10.0;
+				constexpr double kMistShapeEvolutionRate = 0.015;
+				if (std::hypot(mistDriftVelocity[0], mistDriftVelocity[1]) > 0.1) {
+					const double targetAngle = std::atan2(mistDriftVelocity[1], mistDriftVelocity[0]);
+					const double delta = targetAngle - mistShapeAnimation[0];
+					const double rotation = std::atan2(std::sin(delta), std::cos(delta)) * (1.0 - std::exp(-elapsed / kMistShapeResponseSeconds));
+					if (globals::game::player) {
+						const auto anchor = globals::game::player->GetPosition();
+						const double relativeX = anchor.x - mistDriftOffset[0];
+						const double relativeY = anchor.y - mistDriftOffset[1];
+						// Keep the nearby pattern anchored when the wind turns, rather than orbiting the world origin.
+						mistDriftOffset[0] = anchor.x - (std::cos(rotation) * relativeX - std::sin(rotation) * relativeY);
+						mistDriftOffset[1] = anchor.y - (std::sin(rotation) * relativeX + std::cos(rotation) * relativeY);
+					}
+					mistShapeAnimation[0] += rotation;
+				}
+				mistShapeAnimation[1] += elapsed * kMistShapeEvolutionRate;
+			}
+		}
+	}
+	previousMistTick = now;
+	lastMistAnimationFrame = frame;
+}
+
 void ExponentialHeightFog::Prepass()
 {
+	CS_GPU_PASS("ExponentialHeightFog::Prepass");
+	const Settings frameSettings = GetCommonBufferData();
+	UpdateMistAnimation(frameSettings);
 	if (!settings.enabled || !settings.volumetricFogEnabled || settings.volumetricFogExtinctionScale <= 0.0f) {
 		ReleaseVolumetricResources();
 		return;
 	}
 
-	EnsureVolumetricResources();
-
-	if (settings.fogDensity <= 0.0f) {
-		hasLightScatteringHistory = false;
-		hasConservativeDepthHistory = false;
-		lastPrepassFrame = UINT32_MAX;
-		BindIntegratedLightScattering();
+	const auto cameraData = Util::GetCameraData();
+	const float volumeStart = settings.useVanillaFogSettings ? 0.0f : std::max(settings.volumetricFogStartDistance, 0.0f);
+	if (settings.volumetricFogDistance <= std::max(cameraData.y, volumeStart) + 10.0f) {
+		ReleaseVolumetricResources();
 		return;
 	}
+	EnsureVolumetricResources();
+	bool historySettingsMatch = lastPrepassFrame != UINT32_MAX;
+	for (const auto field : {
+			 &Settings::vanillaFogNear, &Settings::vanillaFogFar, &Settings::fogAlphaGamma,
+			 &Settings::vanillaFogMaxOpacity, &Settings::vanillaFogStrength, &Settings::fogLightingInfluence,
+			 &Settings::fogDensity, &Settings::fogHeight, &Settings::fogHeightFalloff,
+			 &Settings::volumetricFogDistance, &Settings::volumetricFogStartDistance,
+			 &Settings::volumetricFogNearFadeInDistance, &Settings::volumetricFogExtinctionScale,
+			 &Settings::volumetricDepthDistributionScale, &Settings::vanillaFogPower,
+			 &Settings::mistStrength, &Settings::mistRange, &Settings::mistSize, &Settings::mistDriftSpeed }) {
+		historySettingsMatch &= frameSettings.*field == previousFogSettings.*field;
+	}
+	historySettingsMatch &= frameSettings.useVanillaFogSettings == previousFogSettings.useVanillaFogSettings;
+	historySettingsMatch &= frameSettings.mistsEnabled == previousFogSettings.mistsEnabled;
+	if (!historySettingsMatch) {
+		hasLightScatteringHistory = false;
+	}
+	previousFogSettings = frameSettings;
 
 	ID3D11ShaderResourceView* directionalShadowLightData = globals::deferred && globals::deferred->directionalShadowLights ? globals::deferred->directionalShadowLights->srv.get() : nullptr;
 	auto& lightLimitFix = globals::features::lightLimitFix;
@@ -430,12 +600,11 @@ void ExponentialHeightFog::Prepass()
 		1.0f / static_cast<float>(currentGridSize.x),
 		1.0f / static_cast<float>(currentGridSize.y),
 		1.0f / static_cast<float>(currentGridSize.z),
-		settings.volumetricFogNearFadeInDistance > 0.0f ? 1.0f / settings.volumetricFogNearFadeInDistance : 100000000.0f
+		!settings.useVanillaFogSettings && settings.volumetricFogNearFadeInDistance > 0.0f ? 1.0f / settings.volumetricFogNearFadeInDistance : 100000000.0f
 	};
 
-	const auto cameraData = Util::GetCameraData();
-	const double nearPlane = std::max(static_cast<double>(cameraData.y), static_cast<double>(std::max(settings.volumetricFogStartDistance, 0.0f)));
-	const double farPlane = std::max(nearPlane + 1.0, static_cast<double>(std::max(settings.volumetricFogDistance, settings.volumetricFogStartDistance + 1.0f)));
+	const double nearPlane = std::max(static_cast<double>(cameraData.y), static_cast<double>(settings.useVanillaFogSettings ? 0.0f : std::max(settings.volumetricFogStartDistance, 0.0f)));
+	const double farPlane = std::max(nearPlane + 1.0, static_cast<double>(settings.volumetricFogDistance));
 	const double nearWithOffset = nearPlane + 0.095 * 100.0;
 	const double depthDistributionScale = std::max(
 		static_cast<double>(settings.volumetricDepthDistributionScale),
@@ -476,7 +645,13 @@ void ExponentialHeightFog::Prepass()
 	cb.jitterParameters = float4{
 		temporalReprojection ? std::max(settings.volumetricSampleJitterMultiplier, 0.0f) : 0.0f,
 		static_cast<float>(globals::state->frameCount % 8u),
-		0.0f,
+		static_cast<float>(mistDriftOffset[0]),
+		static_cast<float>(mistDriftOffset[1])
+	};
+	cb.mistShapeParameters = float4{
+		static_cast<float>(std::cos(mistShapeAnimation[0])),
+		static_cast<float>(std::sin(mistShapeAnimation[0])),
+		static_cast<float>(mistShapeAnimation[1]),
 		0.0f
 	};
 	volumetricFogCB->Update(cb);
@@ -622,15 +797,6 @@ void ExponentialHeightFog::Prepass()
 
 void ExponentialHeightFog::RegisterWeatherVariables()
 {
-#if defined(ENABLE_EFFECTS11)
-	if (globals::features::effects11.loaded) {
-		auto& enb = globals::features::effects11;
-		if (enb.enableEffect) {
-			return;
-		}
-	}
-#endif
-
 	auto* registry = WeatherVariables::GlobalWeatherRegistry::GetSingleton()->GetOrCreateFeatureRegistry(GetShortName());
 	registry->RegisterVariable(std::make_shared<WeatherVariables::FloatVariable>(
 		"Start Distance",

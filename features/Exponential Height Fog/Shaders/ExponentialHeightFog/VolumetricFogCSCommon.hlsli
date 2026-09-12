@@ -13,6 +13,7 @@ cbuffer VolumetricFogCB : register(b0)
 	float4 VolumetricFogFrameJitterOffsets[16];
 	float4 VolumetricFogHistoryParameters;
 	float4 VolumetricFogJitterParameters;
+	float4 VolumetricFogMistShapeParameters;
 };
 
 #define VolumetricFogGridSize VolumetricFogGridSizeAndFlags.xyz
@@ -28,6 +29,7 @@ cbuffer VolumetricFogCB : register(b0)
 #define VolumetricFogHistoryMissSampleCount max(1u, min(16u, (uint)(VolumetricFogHistoryParameters.y + 0.5f)))
 #define VolumetricFogSampleJitterMultiplier VolumetricFogJitterParameters.x
 #define VolumetricFogStateFrameIndexMod8 ((uint)(VolumetricFogJitterParameters.y + 0.5f))
+#define VolumetricFogMistDriftOffset VolumetricFogJitterParameters.zw
 
 #define EXP_HEIGHT_FOG_GRID_SIZE_Z VolumetricFogGridSizeAndFlags.z
 #define EXP_HEIGHT_FOG_GRID_Z_PARAMS VolumetricFogGridZParams.xyz
@@ -43,7 +45,7 @@ namespace ExponentialHeightFog
 	float3 ComputeCellWorldPosition(uint3 coord, float3 cellOffset, out uint eyeIndex, out float viewDepth)
 	{
 		float2 volumeUV = (float2(coord.xy) + cellOffset.xy) * VolumetricFogInvGridSize.xy;
-		eyeIndex = Stereo::GetEyeIndexFromTexCoord(volumeUV);
+		eyeIndex = Stereo::GetEyeIndexFromTexCoord((float2(coord.xy) + 0.5f) * VolumetricFogInvGridSize.xy);
 		float2 eyeUV = Stereo::ConvertFromStereoUV(volumeUV, eyeIndex);
 
 		viewDepth = ComputeVolumetricSliceDepth(max(float(coord.z) + cellOffset.z, 0.0f));
