@@ -739,11 +739,11 @@ void TerrainBlending::TerrainShaderHacks()
 			auto dsv = Util::AsReal(renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kMAIN].views[0]);
 			context->OMSetRenderTargets(0, nullptr, dsv);
 			auto* offsetVS = GetTerrainOffsetVertexShader();
-			context->VSSetShader(offsetVS ? offsetVS : (ID3D11VertexShader*)currentVertexShader->shader, NULL, NULL);
+			context->VSSetShader(offsetVS ? offsetVS : Util::AsReal(currentVertexShader->shader), NULL, NULL);
 		} else {
 			auto dsv = Util::AsReal(terrainDepth.views[0]);
 			context->OMSetRenderTargets(0, nullptr, dsv);
-			context->VSSetShader((ID3D11VertexShader*)currentVertexShader->shader, NULL, NULL);
+			context->VSSetShader(Util::AsReal(currentVertexShader->shader), NULL, NULL);
 		}
 		renderAltTerrain = !renderAltTerrain;
 	}
@@ -768,7 +768,7 @@ void TerrainBlending::ResetTerrainDepth()
 	stateUpdateFlags->set(RE::BSGraphics::ShaderFlags::DIRTY_RENDERTARGET);
 
 	auto currentVertexShader = *globals::game::currentVertexShader;
-	context->VSSetShader((ID3D11VertexShader*)currentVertexShader->shader, NULL, NULL);
+	context->VSSetShader(Util::AsReal(currentVertexShader->shader), NULL, NULL);
 }
 
 void TerrainBlending::BlendPrepassDepths()
