@@ -1,5 +1,7 @@
 #include "GrassBucketStore.h"
 
+#include "Utils/D3D.h"
+
 void GrassBucketStore::SetupResources()
 {
 	{
@@ -833,7 +835,7 @@ void GrassBucketStore::UpdateCoarseBounds(GrassBucket& b)
 bool GrassBucketStore::DetectComplexGrass(RE::NiSourceTexture* tex, ID3D11DeviceContext* ctx)
 {
 	auto* rt = tex ? tex->rendererTexture : nullptr;
-	auto* resourceView = rt ? rt->resourceView : nullptr;
+	auto* resourceView = rt ? Util::AsReal<ID3D11ShaderResourceView>(rt->resourceView) : nullptr;
 	if (auto it = complexCache.find(tex); it != complexCache.end() && it->second.resourceView == resourceView) {
 		it->second.complex = std::abs(it->second.normalLength - 1.0f) < cachedComplexThreshold;
 		return it->second.complex;

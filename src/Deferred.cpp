@@ -392,7 +392,7 @@ void Deferred::DeferredPasses()
 	auto finalDepthCopy = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kPOST_ZPREPASS_COPY];
 	// Water samples this texture for edge fade and refraction; a partial or
 	// dynamic-resolution-sized copy here left it stale and caused hard water intersections.
-	context->CopyResource(finalDepthCopy.texture, depth.texture);
+	context->CopyResource(Util::AsReal<ID3D11Resource>(finalDepthCopy.texture), Util::AsReal<ID3D11Resource>(depth.texture));
 	sceneDepthFinal = true;
 	auto reflectance = renderer->GetRuntimeData().renderTargets[REFLECTANCE];
 

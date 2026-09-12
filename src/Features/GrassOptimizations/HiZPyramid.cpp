@@ -49,7 +49,7 @@ ID3D11ShaderResourceView* HiZPyramid::GetSourceDepthSRV()
 	if (tb.loaded && tb.settings.Enabled && tb.prepassSRVBackup)
 		return tb.prepassSRVBackup;
 	if (auto* renderer = globals::game::renderer)
-		return renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kPOST_ZPREPASS_COPY].depthSRV;
+		return Util::AsReal<ID3D11ShaderResourceView>(renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kPOST_ZPREPASS_COPY].depthSRV);
 	return nullptr;
 }
 
@@ -58,7 +58,7 @@ ID3D11ShaderResourceView* HiZPyramid::GetLiveDepthSRV()
 	auto* renderer = globals::game::renderer;
 	if (!renderer)
 		return nullptr;
-	return renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kMAIN].depthSRV;
+	return Util::AsReal<ID3D11ShaderResourceView>(renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kMAIN].depthSRV);
 }
 
 bool HiZPyramid::CreateTexture(ID3D11Device* device, uint32_t dstW, uint32_t dstH)

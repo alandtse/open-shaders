@@ -172,9 +172,9 @@ void VRStereoOptimizations::SetupResources()
 	{
 		auto& mainDepth = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kMAIN];
 		D3D11_TEXTURE2D_DESC depthDesc;
-		mainDepth.texture->GetDesc(&depthDesc);
+		mainDepth.texture->GetDesc(Util::AsReal<REX::W32::D3D11_TEXTURE2D_DESC>(&depthDesc));
 		D3D11_SHADER_RESOURCE_VIEW_DESC depthSRVDesc;
-		mainDepth.depthSRV->GetDesc(&depthSRVDesc);
+		mainDepth.depthSRV->GetDesc(Util::AsReal<REX::W32::D3D11_SHADER_RESOURCE_VIEW_DESC>(&depthSRVDesc));
 
 		depthDesc.Width /= 2;
 		depthDesc.Format = DXGI_FORMAT_R32_UINT;
@@ -190,7 +190,7 @@ void VRStereoOptimizations::SetupResources()
 			.ViewDimension = D3D11_UAV_DIMENSION_TEXTURE2D,
 			.Texture2D = { .MipSlice = 0 } });
 
-		DX::ThrowIfFailed(device->CreateShaderResourceView(mainDepth.texture, &depthSRVDesc, mainDepthSRV.put()));
+		DX::ThrowIfFailed(device->CreateShaderResourceView(Util::AsReal<ID3D11Resource>(mainDepth.texture), &depthSRVDesc, mainDepthSRV.put()));
 		Util::SetResourceName(mainDepthSRV.get(), "VRStereoOpt::MainDepth SRV");
 	}
 
@@ -199,9 +199,9 @@ void VRStereoOptimizations::SetupResources()
 	{
 		auto& zPrepassCopy = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kPOST_ZPREPASS_COPY];
 		D3D11_TEXTURE2D_DESC historyDesc;
-		zPrepassCopy.texture->GetDesc(&historyDesc);
+		zPrepassCopy.texture->GetDesc(Util::AsReal<REX::W32::D3D11_TEXTURE2D_DESC>(&historyDesc));
 		D3D11_SHADER_RESOURCE_VIEW_DESC historySRVDesc;
-		zPrepassCopy.depthSRV->GetDesc(&historySRVDesc);
+		zPrepassCopy.depthSRV->GetDesc(Util::AsReal<REX::W32::D3D11_SHADER_RESOURCE_VIEW_DESC>(&historySRVDesc));
 
 		historyDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
 		historyDesc.MiscFlags = 0;
@@ -521,7 +521,7 @@ void VRStereoOptimizations::SnapshotFinalDepthHistory(bool a_previousFrameHadFin
 
 	auto context = globals::d3d::context;
 	auto& depthCopy = globals::game::renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kPOST_ZPREPASS_COPY];
-	context->CopyResource(texFinalDepthHistory->resource.get(), depthCopy.texture);
+	context->CopyResource(texFinalDepthHistory->resource.get(), Util::AsReal<ID3D11Resource>(depthCopy.texture));
 	depthHistoryValid = true;
 }
 

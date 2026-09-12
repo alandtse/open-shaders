@@ -851,7 +851,7 @@ void GrassOptimizations::Hooks::BSMultiStreamInstanceTriShape_OnVisible::thunk(R
 		ZoneScopedN("GrassOptimizations::OnVisible");
 
 		// Only queue one representative shape per frame for each bucket to skip redundant setup.
-		if (!self.bucketStore.ClaimQueueSlot(This, globals::game::graphicsState->frameCount))
+		if (!self.bucketStore.ClaimQueueSlot(This, globals::game::graphicsState->GetFrameCount()))
 			return;
 
 		// Skips redundant and costly frustum checks since they are now handled by the coarse slice cull and CS.
@@ -884,7 +884,7 @@ void GrassOptimizations::Hooks::BSGrassShader_SetupGeometry::thunk(RE::BSShader*
 {
 	auto& self = globals::features::grassOptimizations;
 
-	const auto frame = globals::game::graphicsState->frameCount;
+	const auto frame = globals::game::graphicsState->GetFrameCount();
 	if (self.lastFrame != frame) {
 		self.UpdateGrass();
 		self.lastFrame = frame;
@@ -1056,7 +1056,7 @@ void GrassOptimizations::Hooks::DrawInstanceTriShape::thunk(RE::BSRenderPass* pa
 	}
 
 	const uint64_t descVal = *reinterpret_cast<uint64_t*>(&geometry->GetGeometryRuntimeData().vertexDesc);
-	const uint32_t frame = globals::game::graphicsState->frameCount;
+	const uint32_t frame = globals::game::graphicsState->GetFrameCount();
 
 	GrassBucket* b = nullptr;
 	{
@@ -1110,8 +1110,8 @@ void GrassOptimizations::Hooks::DrawInstanceTriShape::thunk(RE::BSRenderPass* pa
 		shadowState.vertexDesc = descVal;
 		shadowState.stateUpdateFlags.set(RE::BSGraphics::ShaderFlags::DIRTY_VERTEX_DESC);
 	}
-	if (shadowState.topology != D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST) {
-		shadowState.topology = D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
+	if (shadowState.topology != REX::W32::D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST) {
+		shadowState.topology = REX::W32::D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
 		shadowState.stateUpdateFlags.set(RE::BSGraphics::ShaderFlags::DIRTY_PRIMITIVE_TOPO);
 	}
 	static REL::Relocation<void (*)(uint32_t)> SetDirtyStates{ RELOCATION_ID(75580, 77386) };

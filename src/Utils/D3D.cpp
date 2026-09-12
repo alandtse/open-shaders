@@ -20,7 +20,7 @@ namespace Util
 			return nullptr;
 		auto& zPrepassCopy = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kPOST_ZPREPASS_COPY];
 		if (globals::deferred && globals::deferred->sceneDepthFinal)
-			return zPrepassCopy.depthSRV;
+			return Util::AsReal<ID3D11ShaderResourceView>(zPrepassCopy.depthSRV);
 
 		auto& tb = globals::features::terrainBlending;
 		if (tb.loaded && tb.settings.Enabled) {

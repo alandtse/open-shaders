@@ -599,9 +599,9 @@ void Skylighting::RenderOcclusion()
 		}
 	});
 
-	precipitationTarget.depthSRV = texOcclusion->srv.get();
-	precipitationTarget.texture = texOcclusion->resource.get();
-	precipitationTarget.views[0] = texOcclusion->dsv.get();
+	precipitationTarget.depthSRV = Util::AsReal<REX::W32::ID3D11ShaderResourceView>(texOcclusion->srv.get());
+	precipitationTarget.texture = Util::AsReal<REX::W32::ID3D11Texture2D>(texOcclusion->resource.get());
+	precipitationTarget.views[0] = Util::AsReal<REX::W32::ID3D11DepthStencilView>(texOcclusion->dsv.get());
 	inOcclusion = true;
 	forceInteriorOcclusionTwoSided = interior;
 	precipitationCubeSize = occlusionDistance;
