@@ -12,6 +12,7 @@
 #include "LinearLighting.h"
 #include "Menu/PerformanceRenderer.h"
 #include "Profiler.h"
+#include "Utils/MathUtils.h"
 #include "Utils/UI.h"
 #include <bit>
 
@@ -48,32 +49,25 @@ namespace
 	constexpr float kJsonPlacedLightIntensityMin = 0.0f;
 	constexpr float kJsonPlacedLightIntensityMax = 8.0f;
 
-	float ClampFiniteOrDefault(float a_value, float a_min, float a_max, float a_default)
-	{
-		if (!std::isfinite(a_value))
-			return a_default;
-		return std::clamp(a_value, a_min, a_max);
-	}
-
 	void SanitizeSettings(LightLimitFix::Settings& a_settings)
 	{
 		a_settings.ParticleLightsSaturation =
-			ClampFiniteOrDefault(a_settings.ParticleLightsSaturation, kParticleLightsSaturationMin, kParticleLightsSaturationMax, 1.0f);
+			Util::ClampFiniteOrDefault(a_settings.ParticleLightsSaturation, kParticleLightsSaturationMin, kParticleLightsSaturationMax, 1.0f);
 		a_settings.ParticleBrightness =
-			ClampFiniteOrDefault(a_settings.ParticleBrightness, kParticleBrightnessMin, kParticleBrightnessMax, 1.0f);
+			Util::ClampFiniteOrDefault(a_settings.ParticleBrightness, kParticleBrightnessMin, kParticleBrightnessMax, 1.0f);
 		a_settings.ParticleRadius =
-			ClampFiniteOrDefault(a_settings.ParticleRadius, kParticleRadiusMin, kParticleRadiusMax, 1.0f);
+			Util::ClampFiniteOrDefault(a_settings.ParticleRadius, kParticleRadiusMin, kParticleRadiusMax, 1.0f);
 		a_settings.BillboardBrightness =
-			ClampFiniteOrDefault(a_settings.BillboardBrightness, kBillboardBrightnessMin, kBillboardBrightnessMax, 1.0f);
+			Util::ClampFiniteOrDefault(a_settings.BillboardBrightness, kBillboardBrightnessMin, kBillboardBrightnessMax, 1.0f);
 		a_settings.BillboardRadius =
-			ClampFiniteOrDefault(a_settings.BillboardRadius, kBillboardRadiusMin, kBillboardRadiusMax, 1.0f);
+			Util::ClampFiniteOrDefault(a_settings.BillboardRadius, kBillboardRadiusMin, kBillboardRadiusMax, 1.0f);
 		a_settings.ParticleClusterThreshold =
-			ClampFiniteOrDefault(a_settings.ParticleClusterThreshold, kParticleClusterThresholdMin, kParticleClusterThresholdMax, 32.0f);
+			Util::ClampFiniteOrDefault(a_settings.ParticleClusterThreshold, kParticleClusterThresholdMin, kParticleClusterThresholdMax, 32.0f);
 		a_settings.MaxParticlesPerEmitter = std::clamp(a_settings.MaxParticlesPerEmitter, kMaxParticlesPerEmitterMin, kMaxParticlesPerEmitterMax);
 		a_settings.MaxParticleDistance =
-			ClampFiniteOrDefault(a_settings.MaxParticleDistance, kMaxParticleDistanceMin, kMaxParticleDistanceMax, 6000.0f);
+			Util::ClampFiniteOrDefault(a_settings.MaxParticleDistance, kMaxParticleDistanceMin, kMaxParticleDistanceMax, 6000.0f);
 		a_settings.JsonPlacedLightIntensity =
-			ClampFiniteOrDefault(a_settings.JsonPlacedLightIntensity, kJsonPlacedLightIntensityMin, kJsonPlacedLightIntensityMax, 1.0f);
+			Util::ClampFiniteOrDefault(a_settings.JsonPlacedLightIntensity, kJsonPlacedLightIntensityMin, kJsonPlacedLightIntensityMax, 1.0f);
 	}
 
 	void ClearStrictLightData(LightLimitFix::StrictLightDataCB& a_data, bool a_resetRoomIndex) noexcept

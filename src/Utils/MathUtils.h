@@ -1,6 +1,8 @@
 #pragma once
+#include <algorithm>
 #include <bit>
 #include <cmath>
+#include <concepts>
 #include <cstdint>
 
 namespace Util
@@ -41,5 +43,23 @@ namespace Util
 	inline float QuantizeFloat(float f, float step) noexcept
 	{
 		return std::round(f / step) * step;
+	}
+
+	/**
+	 * @brief Clamps a floating-point value to [min, max] if finite, otherwise returns fallback default.
+	 */
+	template <std::floating_point T>
+	[[nodiscard]] constexpr T ClampFinite(T a_value, T a_min, T a_max, T a_default) noexcept
+	{
+		return std::isfinite(a_value) ? std::clamp(a_value, a_min, a_max) : a_default;
+	}
+
+	/**
+	 * @brief Alias for ClampFinite.
+	 */
+	template <std::floating_point T>
+	[[nodiscard]] constexpr T ClampFiniteOrDefault(T a_value, T a_min, T a_max, T a_default) noexcept
+	{
+		return ClampFinite(a_value, a_min, a_max, a_default);
 	}
 }

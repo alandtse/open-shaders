@@ -100,7 +100,7 @@ void PostProcessing::DrawSettings()
 		bypass = bypassDisplay;
 
 	ImGui::SameLine();
-	ImGui::Checkbox(T("feature.post_processing.disable_vanilla_tonemapping", "Disable Vanilla Tonemapping"), (bool*)&settings.DisableVanillaTonemapping);
+	Util::CheckboxFlag(T("feature.post_processing.disable_vanilla_tonemapping", "Disable Vanilla Tonemapping"), settings.DisableVanillaTonemapping);
 	ImGui::EndDisabled();
 
 	if (tonemapTakenByEffects11) {
