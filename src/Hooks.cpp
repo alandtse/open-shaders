@@ -190,7 +190,7 @@ bool Hooks::BSShader_BeginTechnique::thunk(RE::BSShader* shader, uint32_t vertex
 			shaderFound = false;
 		} else {
 			state->settingCustomShader = true;
-			globals::d3d::context->VSSetShader(reinterpret_cast<ID3D11VertexShader*>(vertexShader->shader), NULL, NULL);
+			globals::d3d::context->VSSetShader(Util::AsReal(vertexShader->shader), NULL, NULL);
 			*globals::game::currentVertexShader = vertexShader;
 			globals::game::stateUpdateFlags->set(RE::BSGraphics::DIRTY_VERTEX_DESC);
 			if (skipPixelShader) {
@@ -198,7 +198,7 @@ bool Hooks::BSShader_BeginTechnique::thunk(RE::BSShader* shader, uint32_t vertex
 			}
 			*globals::game::currentPixelShader = pixelShader;
 			if (pixelShader)
-				globals::d3d::context->PSSetShader(reinterpret_cast<ID3D11PixelShader*>(pixelShader->shader), NULL, NULL);
+				globals::d3d::context->PSSetShader(Util::AsReal(pixelShader->shader), NULL, NULL);
 			state->settingCustomShader = false;
 			shaderFound = true;
 		}
@@ -878,7 +878,7 @@ namespace Hooks
 						if (state->enabledClasses[type - 1]) {
 							RE::BSGraphics::VertexShader* vertexShader = shaderCache->GetVertexShader(*currentShader, state->modifiedVertexDescriptor);
 							if (vertexShader) {
-								globals::d3d::context->VSSetShader(reinterpret_cast<ID3D11VertexShader*>(vertexShader->shader), NULL, NULL);
+								globals::d3d::context->VSSetShader(Util::AsReal(vertexShader->shader), NULL, NULL);
 								*globals::game::currentVertexShader = a_vertexShader;
 								globals::game::stateUpdateFlags->set(RE::BSGraphics::DIRTY_VERTEX_DESC);
 								return;
@@ -891,7 +891,7 @@ namespace Hooks
 			globals::game::stateUpdateFlags->set(RE::BSGraphics::DIRTY_VERTEX_DESC);
 
 			*globals::game::currentVertexShader = a_vertexShader;
-			globals::d3d::context->VSSetShader(reinterpret_cast<ID3D11VertexShader*>(a_vertexShader->shader), NULL, NULL);
+			globals::d3d::context->VSSetShader(Util::AsReal(a_vertexShader->shader), NULL, NULL);
 		}
 		static inline REL::Relocation<decltype(thunk)> func;
 	};
@@ -911,7 +911,7 @@ namespace Hooks
 						if (state->enabledClasses[type - 1]) {
 							RE::BSGraphics::PixelShader* pixelShader = shaderCache->GetPixelShader(*currentShader, state->modifiedPixelDescriptor);
 							if (pixelShader) {
-								globals::d3d::context->PSSetShader(reinterpret_cast<ID3D11PixelShader*>(pixelShader->shader), NULL, NULL);
+								globals::d3d::context->PSSetShader(Util::AsReal(pixelShader->shader), NULL, NULL);
 								*globals::game::currentPixelShader = a_pixelShader;
 								return;
 							}
@@ -923,7 +923,7 @@ namespace Hooks
 			*globals::game::currentPixelShader = a_pixelShader;
 
 			if (a_pixelShader)
-				globals::d3d::context->PSSetShader(reinterpret_cast<ID3D11PixelShader*>(a_pixelShader->shader), NULL, NULL);
+				globals::d3d::context->PSSetShader(Util::AsReal(a_pixelShader->shader), NULL, NULL);
 		}
 		static inline REL::Relocation<decltype(thunk)> func;
 	};

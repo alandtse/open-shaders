@@ -161,11 +161,11 @@ namespace ShadowCasterManager
 	{
 		for (int i = 8; i < shadowCount; i++) {
 			if (globals::features::llf::normalDepthBuffer[i]) {
-				reinterpret_cast<ID3D11DepthStencilView*>(globals::features::llf::normalDepthBuffer[i])->Release();
+				Util::CastTo<ID3D11DepthStencilView>(globals::features::llf::normalDepthBuffer[i])->Release();
 				globals::features::llf::normalDepthBuffer[i] = nullptr;
 			}
 			if (globals::features::llf::readOnlyDepthBuffer[i]) {
-				reinterpret_cast<ID3D11DepthStencilView*>(globals::features::llf::readOnlyDepthBuffer[i])->Release();
+				Util::CastTo<ID3D11DepthStencilView>(globals::features::llf::readOnlyDepthBuffer[i])->Release();
 				globals::features::llf::readOnlyDepthBuffer[i] = nullptr;
 			}
 		}

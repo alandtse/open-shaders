@@ -627,7 +627,7 @@ void Deferred::SetShadowCascadeParameters(T& lightData, DirectionalShadowLightDa
 {
 	const auto count = std::min(lightData.shadowmapDescriptors.size(), static_cast<uint32_t>(std::size(dd.ShadowProj)));
 	for (uint32_t i = 0; i < count; i++) {
-		auto proj = DirectX::XMLoadFloat4x4(reinterpret_cast<const DirectX::XMFLOAT4X4*>(&lightData.shadowmapDescriptors[i].lightTransform));
+		auto proj = DirectX::XMLoadFloat4x4(Util::AsReal(&lightData.shadowmapDescriptors[i].lightTransform));
 		DirectX::XMStoreFloat4x4(&dd.ShadowProj[i], proj);
 
 		DirectX::XMMATRIX invProj = DirectX::XMMatrixInverse(nullptr, proj);
@@ -656,7 +656,7 @@ void Deferred::SetShadowCascadeParameters(T& lightData, DirectionalShadowLightDa
 		const auto& desc = lightData.focusShadowmapDescriptors[i];
 		if (!desc.isEnabled)
 			continue;  // descriptor unused this frame -- leave FocusShadowProj[i] at zero
-		auto proj = DirectX::XMLoadFloat4x4(reinterpret_cast<const DirectX::XMFLOAT4X4*>(&desc.lightTransform));
+		auto proj = DirectX::XMLoadFloat4x4(Util::AsReal(&desc.lightTransform));
 		DirectX::XMStoreFloat4x4(&dd.FocusShadowProj[i], proj);
 		dd.FocusShadowCount = i + 1;
 	}

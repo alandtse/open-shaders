@@ -1,5 +1,7 @@
 #include "BSShaderHooks.h"
 
+#include "Utils/D3D.h"
+
 namespace BSShaderHooks
 {
 	void hk_LoadShaders(RE::BSShader* bsShader, std::uintptr_t)
@@ -35,7 +37,7 @@ namespace BSShaderHooks
 						if (const auto shader = ShaderCompiler::CompileAndRegisterPixelShader(tFileIt->second)) {
 							logger::info("shader compiled successfully, replacing old shader");
 							successCount++;
-							entry->shader = reinterpret_cast<REX::W32::ID3D11PixelShader*>(shader);
+							entry->shader = Util::AsW32(shader);
 						} else {
 							failedCount++;
 						}
@@ -85,7 +87,7 @@ namespace BSShaderHooks
 					if (const auto shader = compile ? ShaderCompiler::CompileAndRegisterPixelShader(tFileIt->second) : ShaderCompiler::RegisterPixelShader(tFileIt->second)) {
 						logger::info("shader compiled successfully, replacing old shader");
 						successCount++;
-						entry->shader = reinterpret_cast<REX::W32::ID3D11PixelShader*>(shader);
+						entry->shader = Util::AsW32(shader);
 					} else {
 						failedCount++;
 					}

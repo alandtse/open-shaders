@@ -9,6 +9,7 @@
 #include "ShadowCasterInternal.h"
 #include "State.h"
 #include "Util.h"
+#include "Utils/D3D.h"
 
 // False means no usable descriptors; see the ShadowParam.y sentinel contract
 // below (CopyShadowLightData) for what the caller must do with that.
@@ -19,7 +20,7 @@ static bool SetShadowParameters(T& lightData, Deferred::ShadowLightData& sd)
 		return false;
 
 	auto& desc = lightData.shadowmapDescriptors[0];
-	DirectX::XMMATRIX proj = DirectX::XMLoadFloat4x4(reinterpret_cast<const DirectX::XMFLOAT4X4*>(&desc.lightTransform));
+	DirectX::XMMATRIX proj = DirectX::XMLoadFloat4x4(Util::AsReal(&desc.lightTransform));
 	DirectX::XMStoreFloat4x4(&sd.ShadowProj, proj);
 
 	DirectX::XMMATRIX invProj = DirectX::XMMatrixInverse(nullptr, proj);

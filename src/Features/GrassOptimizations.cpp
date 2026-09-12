@@ -3,6 +3,7 @@
 #include "GrassLighting.h"
 #include "State.h"
 #include "TerrainBlending.h"  // loaded state selects the scene depth SRV's format
+#include "Utils/D3D.h"
 #include "Utils/Game.h"
 
 #define I18N_KEY_PREFIX "feature.grass_optimizations."
@@ -1093,8 +1094,8 @@ void GrassOptimizations::Hooks::DrawInstanceTriShape::thunk(RE::BSRenderPass* pa
 	auto* rendererData = geometry->GetGeometryRuntimeData().rendererData;
 	if (!rendererData)
 		return;
-	auto* meshVB = reinterpret_cast<ID3D11Buffer*>(rendererData->vertexBuffer);
-	auto* indexB = reinterpret_cast<ID3D11Buffer*>(rendererData->indexBuffer);
+	auto* meshVB = Util::AsReal(rendererData->vertexBuffer);
+	auto* indexB = Util::AsReal(rendererData->indexBuffer);
 	if (!meshVB || !indexB)
 		return;
 
