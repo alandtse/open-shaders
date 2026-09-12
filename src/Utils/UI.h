@@ -85,6 +85,37 @@ namespace Util
 	inline float GetSearchUIScale() { return GetUIScaleForBaseline(ThemeManager::Constants::SEARCH_BASELINE_SCREEN_HEIGHT * ThemeManager::Constants::DEFAULT_FONT_RATIO); }
 
 	/**
+	 * @brief Safe ImGui checkbox adapter for integral boolean flags (e.g. uint32_t / int / uint).
+	 * Prevents undefined behavior from casting multi-byte integer pointers to bool*.
+	 * @return True if the value changed.
+	 */
+	template <std::integral T>
+	inline bool CheckboxFlag(const char* a_label, T& a_value)
+	{
+		bool enabled = a_value != 0;
+		if (ImGui::Checkbox(a_label, &enabled)) {
+			a_value = enabled ? static_cast<T>(1) : static_cast<T>(0);
+			return true;
+		}
+		return false;
+	}
+
+	/**
+	 * @brief Alias for CheckboxFlag.
+	 */
+	template <std::integral T>
+	inline bool CheckboxUint(const char* a_label, T& a_value)
+	{
+		return CheckboxFlag(a_label, a_value);
+	}
+
+	namespace UI
+	{
+		using Util::CheckboxFlag;
+		using Util::CheckboxUint;
+	}
+
+	/**
 	 * Usage:
 	 * if (auto _tt = Util::HoverTooltipWrapper()){
 	 *     ImGui::Text("What the tooltip says.");
