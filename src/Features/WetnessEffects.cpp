@@ -3,6 +3,7 @@
 #include "Globals.h"
 #include "I18n/I18n.h"
 #include "Menu.h"
+#include "Precipitation.h"
 #include "SceneSelector.h"
 #include "State.h"
 
@@ -901,23 +902,11 @@ float WetnessEffects::GetRainIntensity(RE::NiPointer<RE::BSGeometry> precipObjec
 		return 0.0f;
 	}
 
-	auto& effect = precipObject->GetGeometryRuntimeData().shaderProperty;
-	auto shaderProp = effect.get();
-	auto particleShaderProperty = netimmerse_cast<RE::BSParticleShaderProperty*>(shaderProp);
-
-	if (!particleShaderProperty || !particleShaderProperty->particleEmitter) {
+	if (!Precipitation::GetRainEmitter(precipObject.get())) {
 		return 0.0f;
 	}
 
-	auto rain = (RE::BSParticleShaderRainEmitter*)(particleShaderProperty->particleEmitter);
-	if (!rain->emitterType.any(RE::BSParticleShaderEmitter::EMITTER_TYPE::kRain)) {
-		return 0.0f;
-	}
-
-	auto maxDensity = weather->precipitationData->GetSettingValue(RE::BGSShaderParticleGeometryData::DataID::kParticleDensity).f;  // Use weather particle density as authoritative source for rain intensity
-	// This provides consistent intensity scaling based on weather type (1-3 scale)
-	// Note: rain->density equals maxDensity when fully active
-	return (maxDensity > 0.0f) ? std::min(1.0f, maxDensity / MAX_RAIN_PARTICLE_DENSITY) : 0.0f;
+	return Precipitation::GetWeatherRainIntensity(weather);
 }
 
 WetnessEffects::WeatherWetnessResult WetnessEffects::CalculateWeatherWetness(RE::TESWeather* weather, float weatherPct, bool isCurrentWeather) const
@@ -1037,11 +1026,7 @@ WetnessEffects::PerFrame WetnessEffects::GetCommonBufferData(bool a_advanceFrame
 						if (!precipObject) {
 							precipObject = precip->lastPrecip;
 						}
-						if (precipObject) {
-							auto& effect = precipObject->GetGeometryRuntimeData().shaderProperty;
-							auto shaderProp = effect.get();
-							auto particleShaderProperty = netimmerse_cast<RE::BSParticleShaderProperty*>(shaderProp);
-							auto rain = (RE::BSParticleShaderRainEmitter*)(particleShaderProperty->particleEmitter);
+						if (auto* rain = Precipitation::GetRainEmitter(precipObject.get())) {
 							data.OcclusionViewProj = rain->occlusionProjection;
 						}
 					}
