@@ -1461,7 +1461,7 @@ void HDRDisplay::UpgradeLDRRenderTargets()
 		ID3D11UnorderedAccessView* newUAV = nullptr;
 		if (rt.UAV) {
 			D3D11_UNORDERED_ACCESS_VIEW_DESC uavDesc{};
-			Util::AsReal(rt.UAV)->GetDesc(&uavDesc);
+			rt.UAV->GetDesc(Util::AsW32(&uavDesc));
 			uavDesc.Format = DXGI_FORMAT_R16G16B16A16_FLOAT;
 
 			if (FAILED(device->CreateUnorderedAccessView(newTexture, &uavDesc, &newUAV))) {

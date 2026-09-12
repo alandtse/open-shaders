@@ -967,8 +967,8 @@ void Upscaling::DrawSettings()
 					}
 				};
 
-				DisplayRT("kMAIN (Color Input)", (ID3D11Texture2D*)main.texture, (ID3D11ShaderResourceView*)main.SRV);
-				DisplayRT("Motion Vectors", (ID3D11Texture2D*)mvec.texture, (ID3D11ShaderResourceView*)mvec.SRV);
+				DisplayRT("kMAIN (Color Input)", Util::AsReal(main.texture), Util::AsReal(main.SRV));
+				DisplayRT("Motion Vectors", Util::AsReal(mvec.texture), Util::AsReal(mvec.SRV));
 				DisplayRT("Depth", Util::AsReal(depth.texture), Util::AsReal(depth.depthSRV));
 
 				if (reactiveMaskTexture)
@@ -1029,8 +1029,8 @@ void Upscaling::DrawSettings()
 					}
 				};
 
-				DisplayRT("kMAIN (Color Input)", (ID3D11Texture2D*)main.texture, (ID3D11ShaderResourceView*)main.SRV);
-				DisplayRT("Motion Vectors", (ID3D11Texture2D*)mvec.texture, (ID3D11ShaderResourceView*)mvec.SRV);
+				DisplayRT("kMAIN (Color Input)", Util::AsReal(main.texture), Util::AsReal(main.SRV));
+				DisplayRT("Motion Vectors", Util::AsReal(mvec.texture), Util::AsReal(mvec.SRV));
 				DisplayRT("Depth", Util::AsReal(depth.texture), Util::AsReal(depth.depthSRV));
 
 				if (reactiveMaskTexture)
