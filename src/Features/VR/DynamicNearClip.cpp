@@ -112,10 +112,10 @@ void VRDynamicNearClip::RestoreCamera()
 		}
 		if (ApproximatelyEqual(camera.viewFrustumBuffer->fNear, appliedNear))
 			camera.viewFrustumBuffer->fNear = savedBufferNear;
-		auto& projection = controlledCamera->GetRuntimeData2();
-		projection.minNearPlaneDist = savedMinimum;
-		projection.maxFarNearRatio = savedRatio;
 	}
+	auto& projection = controlledCamera->GetRuntimeData2();
+	projection.minNearPlaneDist = savedMinimum;
+	projection.maxFarNearRatio = savedRatio;
 	controlledCamera.reset();
 	appliedNear = 0.0f;
 	for (auto& readback : readbacks)
@@ -256,8 +256,9 @@ void VRDynamicNearClip::BeforeCameraUpdate()
 		updateFrame = globals::state->frameCount;
 		status = fresh ? "Active" : "Waiting for depth (holding near plane)";
 	}
-	// Preserve changes from other camera controllers for when this experiment is disabled.
 	for (uint32_t eye = 0; eye < 2; ++eye) {
+		// If another controller already moved fNear off our applied value, capture it here
+		// so RestoreCamera() does not overwrite that change with a stale saved value.
 		if (appliedNear > 0.0f && !ApproximatelyEqual(cameraData.viewFrustumArray[eye].fNear, appliedNear))
 			savedNear[eye] = cameraData.viewFrustumArray[eye].fNear;
 		cameraData.viewFrustumArray[eye].fNear = controller.current;

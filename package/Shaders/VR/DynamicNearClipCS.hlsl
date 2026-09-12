@@ -3,6 +3,8 @@ Texture2D<float> TerrainDepth : register(t1);
 RWStructuredBuffer<uint4> EyeResults : register(u0);
 
 static const float MaximumDistance = 3.402823466e+38;
+static const float ProbeCoverageStart = 0.35;
+static const float ProbeCoverageWidth = 0.3;
 
 cbuffer ProbeConstants : register(b0)
 {
@@ -38,8 +40,8 @@ void InsertClosest(inout float4 values, float candidate)
 }
 
 [numthreads(16, 16, 1)] void main(uint3 group : SV_GroupID, uint3 thread : SV_GroupThreadID, uint index : SV_GroupIndex) {
-	// Cover the central 30% of each eye; each grid point also inspects its adjacent texels.
-	float2 eyeUV = 0.35 + (float2(thread.xy) + 0.5) * (0.3 / 16.0);
+	// Each grid point also inspects its adjacent texels.
+	float2 eyeUV = ProbeCoverageStart + (float2(thread.xy) + 0.5) * (ProbeCoverageWidth / 16.0);
 	uint2 eyeSize = uint2(RenderSize.x / 2, RenderSize.y);
 	uint2 pixel = min(uint2(eyeUV * eyeSize), eyeSize - 2);
 	pixel.x += group.x * eyeSize.x;
