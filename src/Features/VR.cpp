@@ -16,12 +16,6 @@
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	VR::Settings,
-	DynamicNearClip,
-	NormalNearClip,
-	MinimumNearClip,
-	NearDistanceScale,
-	RestoreSpeed,
-	DynamicNearClipReadout,
 	EnableDepthBufferCullingInterior,
 	EnableDepthBufferCullingExterior,
 	MinOccludeeBoxExtent,
@@ -44,6 +38,14 @@ void VR::LoadSettings(json& o_json)
 {
 	settings = o_json.get<Settings>();
 	settings.ClampToValidRanges();
+	auto& nearClip = dynamicNearClip.settings;
+	nearClip.DynamicNearClip = o_json.value("DynamicNearClip", nearClip.DynamicNearClip);
+	nearClip.NormalNearClip = o_json.value("NormalNearClip", nearClip.NormalNearClip);
+	nearClip.MinimumNearClip = o_json.value("MinimumNearClip", nearClip.MinimumNearClip);
+	nearClip.NearDistanceScale = o_json.value("NearDistanceScale", nearClip.NearDistanceScale);
+	nearClip.RestoreSpeed = o_json.value("RestoreSpeed", nearClip.RestoreSpeed);
+	nearClip.DynamicNearClipReadout = o_json.value("DynamicNearClipReadout", nearClip.DynamicNearClipReadout);
+	nearClip.ClampNearClipSettings();
 	if (o_json.contains("StereoOptimizations")) {
 		json stereoOptJson = o_json["StereoOptimizations"];
 		stereoOpt.LoadSettings(stereoOptJson);
@@ -53,6 +55,13 @@ void VR::LoadSettings(json& o_json)
 void VR::SaveSettings(json& o_json)
 {
 	o_json = settings;
+	const auto& nearClip = dynamicNearClip.settings;
+	o_json["DynamicNearClip"] = nearClip.DynamicNearClip;
+	o_json["NormalNearClip"] = nearClip.NormalNearClip;
+	o_json["MinimumNearClip"] = nearClip.MinimumNearClip;
+	o_json["NearDistanceScale"] = nearClip.NearDistanceScale;
+	o_json["RestoreSpeed"] = nearClip.RestoreSpeed;
+	o_json["DynamicNearClipReadout"] = nearClip.DynamicNearClipReadout;
 	{
 		json stereoOptJson;
 		stereoOpt.SaveSettings(stereoOptJson);
@@ -68,6 +77,7 @@ json VR::GetDiagnostics()
 void VR::RestoreDefaultSettings()
 {
 	settings = {};
+	dynamicNearClip.settings = {};
 	stereoOpt.RestoreDefaultSettings();
 }
 

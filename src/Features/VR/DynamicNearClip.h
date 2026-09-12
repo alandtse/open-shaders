@@ -3,14 +3,17 @@
 #include "Buffer.h"
 #include "NearClipController.h"
 #include <array>
-#include <chrono>
 #include <limits>
 #include <memory>
+#include <optional>
 
 /** @brief VR world-camera near-plane controller and asynchronous two-eye depth probe. */
 class VRDynamicNearClip
 {
 public:
+	/** @brief User-configurable adaptive near-clip settings. */
+	VRNearClipSettings settings;
+
 	/** @brief Install the verified Skyrim VR 1.4.15 camera preparation call hook. */
 	void Install();
 	/** @brief Allocate the tiny probe/readback resources; failure leaves the engine camera intact. */
@@ -33,7 +36,6 @@ public:
 	void DrawReadout();
 
 private:
-	using Clock = std::chrono::steady_clock;
 	struct EyeDepth
 	{
 		float absoluteNearest;
@@ -44,7 +46,7 @@ private:
 	struct Readback
 	{
 		winrt::com_ptr<ID3D11Buffer> buffer;
-		Clock::time_point captured{};
+		double captured = 0.0;
 		uint64_t serial = 0;
 		bool pending = false;
 	};
@@ -60,11 +62,12 @@ private:
 	static_assert(sizeof(EyeDepth) == 16);
 
 	void RestoreCamera();
-	void ReadDepth(Clock::time_point now);
+	void ReadDepth(double now);
 	bool CheckProjection(const float4& cameraData);
 	void Fail(const char* reason);
 	void WaitForCamera(const char* reason);
 	void DrawValues();
+	void UpdateVanillaFogOverride();
 
 	VRNearClipController controller;
 	RE::NiPointer<RE::NiCamera> controlledCamera;
@@ -87,14 +90,15 @@ private:
 	uint64_t acceptedSerial = 0;
 	uint32_t updateFrame = UINT32_MAX;
 	uint32_t captureFrame = UINT32_MAX;
-	Clock::time_point lastUpdate{};
-	Clock::time_point lastSample{};
-	Clock::time_point lastLog{};
-	Clock::time_point lastProjectionLog{};
+	double lastUpdate = 0.0;
+	double lastSample = 0.0;
+	double lastLog = 0.0;
+	double lastProjectionLog = 0.0;
 	bool hookReady = false;
 	bool resourcesReady = false;
 	bool failed = false;
 	bool ssgiReleaseResetPending = false;
+	std::optional<bool> vanillaFogBeforeOverride;
 	const char* status = "Waiting for camera";
 	winrt::com_ptr<ID3D11ComputeShader> probeShader;
 	winrt::com_ptr<ID3D11Buffer> probeResult;

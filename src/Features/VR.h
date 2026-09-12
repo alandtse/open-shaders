@@ -137,7 +137,7 @@ public:
 	 * visual customization options. Settings are automatically validated and clamped
 	 * to valid ranges when loaded or modified.
 	 */
-	struct Settings : VRNearClipSettings
+	struct Settings
 	{
 		// Performance optimization settings
 		bool EnableDepthBufferCullingExterior = true;  ///< Enable depth buffer culling for VR performance
@@ -179,7 +179,6 @@ public:
 		 */
 		void ClampToValidRanges()
 		{
-			ClampNearClipSettings();
 			mouseDeadzone = std::clamp(mouseDeadzone, 0.0f, 1.0f);
 			StereoBlendDepthSigma = std::clamp(StereoBlendDepthSigma, 0.001f, 0.1f);
 			StereoBlendMaxFactor = std::clamp(StereoBlendMaxFactor, 0.0f, 0.5f);

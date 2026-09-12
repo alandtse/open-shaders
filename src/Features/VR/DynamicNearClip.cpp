@@ -1,32 +1,20 @@
 #include "DynamicNearClip.h"
 
 #include "Features/ScreenSpaceGI.h"
-#include "Features/TerrainBlending.h"
 #include "Features/VR.h"
 #include "GpuPass.h"
 #include "I18n/I18n.h"
 #include "NearClipProjection.h"
-#include "ShaderCache.h"
 #include "State.h"
 #include "Utils/D3D.h"
 #include "Utils/Game.h"
+#include "Utils/PerfUtils.h"
 
 namespace
 {
 	constexpr float kMaximumSampleAge = 0.2f;
 	constexpr float kCameraGap = 0.5f;
 	constexpr float kLogInterval = 2.0f;
-
-	// Skyrim VR 1.4.15's frustum setter reads these at +1E8/+1EC; see dynamic-near-clip.md.
-	struct ProjectionLimits
-	{
-		float minimumNear;
-		float maximumFarNearRatio;
-	};
-	ProjectionLimits& GetProjectionLimits(RE::NiCamera& camera)
-	{
-		return *reinterpret_cast<ProjectionLimits*>(reinterpret_cast<std::byte*>(&camera) + 0x1E8);
-	}
 
 	struct PrepareWorldCamera
 	{
@@ -71,8 +59,7 @@ void VRDynamicNearClip::Install()
 	if (!globals::game::isVR || REL::Module::get().version() != SKSE::RUNTIME_VR_1_4_15)
 		return;
 	const auto call = REL::Offset(0x5B9F38).address();
-	constexpr std::array<uint8_t, 5> expected{ 0xE8, 0x93, 0x78, 0xD6, 0x00 };
-	if (std::memcmp(reinterpret_cast<const void*>(call), expected.data(), expected.size()) != 0) {
+	if (!REL::verify_code(call, REL::make_pattern<"E8 93 78 D6 00">())) {
 		Fail("Camera preparation call changed; dynamic near clip was not installed");
 		return;
 	}
@@ -80,18 +67,16 @@ void VRDynamicNearClip::Install()
 	hookReady = true;
 	logger::info("VR dynamic near clip: installed before eye frustum construction and world culling");
 	const auto depthCopy = REL::Offset(0x13235BD).address();
-	constexpr std::array<uint8_t, 7> expectedCopy{ 0x41, 0xFF, 0x91, 0x78, 0x01, 0x00, 0x00 };
-	constexpr std::array<uint8_t, 23> expectedClear{
-		0x33, 0xC0, 0x48, 0x89, 0x05, 0xDF, 0xCA, 0x18, 0x02,
-		0x89, 0x05, 0xD5, 0xCA, 0x18, 0x02, 0x48, 0x89, 0x05, 0xDA, 0x9A, 0x39, 0x02, 0xC3
-	};
-	if (std::memcmp(reinterpret_cast<const void*>(depthCopy), expectedCopy.data(), expectedCopy.size()) != 0 ||
-		std::memcmp(reinterpret_cast<const void*>(REL::Offset(0x1349770).address()), expectedClear.data(), expectedClear.size()) != 0) {
+	if (!REL::verify_code(depthCopy, REL::make_pattern<"41 FF 91 78 01 00 00">()) ||
+		!REL::verify_code(REL::Offset(0x1349770).address(), REL::make_pattern<"33 C0 48 89 05 DF CA 18 02 89 05 D5 CA 18 02 48 89 05 DA 9A 39 02 C3">())) {
 		logger::warn("VR dynamic near clip: world depth signatures changed; prepass capture unavailable");
 		return;
 	}
+	if (!REL::safe_fill(depthCopy + 5, REL::NOP, 2, REL::make_pattern<"00 00">())) {
+		logger::warn("VR dynamic near clip: world depth patch changed; prepass capture unavailable");
+		return;
+	}
 	SKSE::GetTrampoline().write_call<5>(depthCopy, CopyWorldDepth::thunk);
-	REL::safe_fill(depthCopy + 5, REL::NOP, 2);
 	stl::write_thunk_call<RenderWorldDepth>(REL::Offset(0x5B961E).address());
 }
 
@@ -107,8 +92,8 @@ void VRDynamicNearClip::WaitForCamera(const char* reason)
 {
 	RestoreCamera();
 	status = reason;
-	const auto now = Clock::now();
-	if (std::chrono::duration<float>(now - lastLog).count() >= kLogInterval) {
+	const auto now = Util::GetNowSecs();
+	if (now - lastLog >= kLogInterval) {
 		logger::info("VR dynamic near clip: {}; source near L/R={:.6g}/{:.6g}, far L/R={:.6g}/{:.6g}, minimum={:.6g}, ratio={:.6g}",
 			reason, inputNear[0], inputNear[1], inputFar[0], inputFar[1], inputMinimumNear, inputFarNearRatio);
 		lastLog = now;
@@ -127,7 +112,9 @@ void VRDynamicNearClip::RestoreCamera()
 		}
 		if (ApproximatelyEqual(camera.viewFrustumBuffer->fNear, appliedNear))
 			camera.viewFrustumBuffer->fNear = savedBufferNear;
-		GetProjectionLimits(*controlledCamera) = { savedMinimum, savedRatio };
+		auto& projection = controlledCamera->GetRuntimeData2();
+		projection.minNearPlaneDist = savedMinimum;
+		projection.maxFarNearRatio = savedRatio;
 	}
 	controlledCamera.reset();
 	appliedNear = 0.0f;
@@ -138,7 +125,7 @@ void VRDynamicNearClip::RestoreCamera()
 	updateFrame = UINT32_MAX;
 }
 
-void VRDynamicNearClip::ReadDepth(Clock::time_point now)
+void VRDynamicNearClip::ReadDepth(double now)
 {
 	for (auto& readback : readbacks) {
 		if (!readback.pending)
@@ -155,7 +142,7 @@ void VRDynamicNearClip::ReadDepth(Clock::time_point now)
 		std::array<EyeDepth, 2> sample;
 		std::memcpy(sample.data(), mapped.pData, sizeof(sample));
 		globals::d3d::context->Unmap(readback.buffer.get(), 0);
-		if (readback.serial <= acceptedSerial || std::chrono::duration<float>(now - readback.captured).count() > kMaximumSampleAge)
+		if (readback.serial <= acceptedSerial || now - readback.captured > kMaximumSampleAge)
 			continue;
 		acceptedSerial = readback.serial;
 		for (uint32_t eye = 0; eye < 2; ++eye) {
@@ -168,8 +155,8 @@ void VRDynamicNearClip::ReadDepth(Clock::time_point now)
 
 void VRDynamicNearClip::BeforeCameraUpdate()
 {
-	auto settings = static_cast<VRNearClipSettings>(globals::features::vr.settings);
 	settings.ClampNearClipSettings();
+	UpdateVanillaFogOverride();
 	const bool menuScene = globals::state->IsFullScreenMenuOpen() || globals::state->IsMainOrLoadingMenuOpen(globals::game::ui);
 	if (!hookReady || !resourcesReady || failed || !globals::features::vr.loaded || !settings.DynamicNearClip || menuScene) {
 		RestoreCamera();
@@ -191,16 +178,16 @@ void VRDynamicNearClip::BeforeCameraUpdate()
 		WaitForCamera("Waiting for both eye frustums");
 		return;
 	}
-	const auto limits = GetProjectionLimits(*camera);
-	inputMinimumNear = limits.minimumNear;
-	inputFarNearRatio = limits.maximumFarNearRatio;
+	const auto& projection = camera->GetRuntimeData2();
+	inputMinimumNear = projection.minNearPlaneDist;
+	inputFarNearRatio = projection.maxFarNearRatio;
 	for (uint32_t eye = 0; eye < 2; ++eye) {
 		inputNear[eye] = cameraData.viewFrustumArray[eye].fNear;
 		inputFar[eye] = cameraData.viewFrustumArray[eye].fFar;
 	}
 	// Camera preparation also runs while scene/menu cameras are being initialized.
-	if (!std::isfinite(limits.minimumNear) || limits.minimumNear < 0.0f ||
-		!std::isfinite(limits.maximumFarNearRatio) || limits.maximumFarNearRatio <= 0.0f) {
+	if (!std::isfinite(projection.minNearPlaneDist) || projection.minNearPlaneDist < 0.0f ||
+		!std::isfinite(projection.maxFarNearRatio) || projection.maxFarNearRatio <= 0.0f) {
 		WaitForCamera("Waiting for valid camera projection limits");
 		return;
 	}
@@ -220,15 +207,15 @@ void VRDynamicNearClip::BeforeCameraUpdate()
 		status = "Requested near matches engine: no override";
 		return;
 	}
-	const auto now = Clock::now();
+	const auto now = Util::GetNowSecs();
 	if (controlledCamera.get() != camera) {
 		RestoreCamera();
 		controlledCamera.reset(camera);
 		for (uint32_t eye = 0; eye < 2; ++eye)
 			savedNear[eye] = cameraData.viewFrustumArray[eye].fNear;
 		savedBufferNear = cameraData.viewFrustumBuffer->fNear;
-		savedMinimum = limits.minimumNear;
-		savedRatio = limits.maximumFarNearRatio;
+		savedMinimum = projection.minNearPlaneDist;
+		savedRatio = projection.maxFarNearRatio;
 		controller.Reset(settings);
 		lastUpdate = now;
 		appliedNear = 0.0f;
@@ -236,7 +223,7 @@ void VRDynamicNearClip::BeforeCameraUpdate()
 			inputNear[0], inputNear[1], inputFar[0], inputFar[1], controller.current);
 	}
 	if (updateFrame != globals::state->frameCount) {
-		float elapsed = std::chrono::duration<float>(now - lastUpdate).count();
+		float elapsed = static_cast<float>(now - lastUpdate);
 		if (elapsed > kCameraGap) {
 			controller.Reset(settings);
 			ssgiReleaseResetPending = false;
@@ -250,8 +237,8 @@ void VRDynamicNearClip::BeforeCameraUpdate()
 			return;
 		}
 		bool resetSSGIHistory = false;
-		const float age = std::chrono::duration<float>(now - lastSample).count();
-		const bool fresh = lastSample != Clock::time_point{} && age <= kMaximumSampleAge;
+		const float age = static_cast<float>(now - lastSample);
+		const bool fresh = lastSample > 0.0 && age <= kMaximumSampleAge;
 		const float distance = std::min(nearest[0], nearest[1]);
 		targetNear = std::isfinite(distance) ? std::clamp(distance * settings.NearDistanceScale, settings.MinimumNearClip, settings.NormalNearClip) : settings.NormalNearClip;
 		const float previousNear = controller.current;
@@ -275,12 +262,27 @@ void VRDynamicNearClip::BeforeCameraUpdate()
 			savedNear[eye] = cameraData.viewFrustumArray[eye].fNear;
 		cameraData.viewFrustumArray[eye].fNear = controller.current;
 	}
-	GetProjectionLimits(*camera).minimumNear = std::min(savedMinimum, settings.MinimumNearClip);
+	camera->GetRuntimeData2().minNearPlaneDist = std::min(savedMinimum, settings.MinimumNearClip);
 	appliedNear = controller.current;
-	if (globals::state && globals::state->IsDeveloperMode() && std::chrono::duration<float>(now - lastLog).count() >= kLogInterval) {
+	if (globals::state && globals::state->IsDeveloperMode() && now - lastLog >= kLogInterval) {
 		logger::debug("VR dynamic near clip: near={:.4f}, target={:.4f}, relevant L/R={:.3f}/{:.3f}, absolute L/R={:.3f}/{:.3f}, {}",
 			appliedNear, targetNear, nearest[0], nearest[1], absoluteNearest[0], absoluteNearest[1], status);
 		lastLog = now;
+	}
+}
+
+void VRDynamicNearClip::UpdateVanillaFogOverride()
+{
+	auto* fogEnabled = RE::GetINISetting("bFogEnabled:Weather");
+	if (!fogEnabled)
+		return;
+	if (settings.DynamicNearClip) {
+		if (!vanillaFogBeforeOverride)
+			vanillaFogBeforeOverride = fogEnabled->GetBool();
+		fogEnabled->SetBool(false);
+	} else if (vanillaFogBeforeOverride) {
+		fogEnabled->SetBool(*vanillaFogBeforeOverride);
+		vanillaFogBeforeOverride.reset();
 	}
 }
 
@@ -313,8 +315,8 @@ bool VRDynamicNearClip::CheckProjection(const float4& cameraData)
 		status = !depthConsistent ? "Waiting for matching eye depth parameters (retrying)" :
 		         !requestMatches  ? "Engine near differs; adapting from rendered depth" :
 		                            "Active (cached frame projection differs)";
-		const auto now = Clock::now();
-		if (globals::state && globals::state->IsDeveloperMode() && std::chrono::duration<float>(now - lastProjectionLog).count() >= kLogInterval) {
+		const auto now = Util::GetNowSecs();
+		if (globals::state && globals::state->IsDeveloperMode() && now - lastProjectionLog >= kLogInterval) {
 			logger::warn("VR dynamic near clip: {}; requested={:.6g}, engine={:.6g}, far={:.6g}, frustum L/R={:.6g}/{:.6g}, projection L/R={:.6g}/{:.6g}, jittered L/R={:.6g}/{:.6g}, cached L/R={:.6g}/{:.6g}; native Z/W L=[{:.6g},{:.6g},{:.6g},{:.6g}], R=[{:.6g},{:.6g},{:.6g},{:.6g}]",
 				status, appliedNear, observedEngineNear, cameraData.x, camera.viewFrustumArray[0].fNear, camera.viewFrustumArray[1].fNear,
 				observedNear[0], observedNear[1], jitteredNear[0], jitteredNear[1], cachedNear[0], cachedNear[1],
@@ -333,7 +335,7 @@ void VRDynamicNearClip::SetupResources()
 		return;
 	try {
 		probeShader = nullptr;
-		probeShader.attach(reinterpret_cast<ID3D11ComputeShader*>(Util::CompileShader(L"Data\\Shaders\\DynamicNearClipCS.hlsl", {}, "cs_5_0")));
+		probeShader.attach(reinterpret_cast<ID3D11ComputeShader*>(Util::CompileShader(L"Data\\Shaders\\VR\\DynamicNearClipCS.hlsl", {}, "cs_5_0")));
 		if (!probeShader) {
 			Fail("Depth probe shader unavailable; using the engine near plane");
 			return;
@@ -379,7 +381,7 @@ void VRDynamicNearClip::ClearShaderCache()
 void VRDynamicNearClip::BeginWorldDepth()
 {
 	if (collectingWorldDepth || !controlledCamera || !resourcesReady || failed ||
-		!globals::features::vr.settings.DynamicNearClip || controlledCamera.get() != RE::Main::WorldRootCamera())
+		!settings.DynamicNearClip || controlledCamera.get() != RE::Main::WorldRootCamera())
 		return;
 	collectingWorldDepth = true;
 }
@@ -388,13 +390,9 @@ void VRDynamicNearClip::FinishWorldDepth()
 {
 	if (!collectingWorldDepth)
 		return;
-	auto& terrain = globals::features::terrainBlending;
-	auto* depth = globals::game::renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kMAIN].depthSRV;
-	if (terrain.loaded && terrain.depthSRVBackup)
-		depth = terrain.depthSRVBackup;
-	auto* terrainDepth = terrain.loaded && terrain.settings.Enabled && globals::shaderCache->IsEnabled() ? terrain.terrainDepth.depthSRV : nullptr;
+	auto* depth = Util::GetCurrentSceneDepthSRV(false);
 	if (depth)
-		CaptureDepth(controlledCamera.get(), depth, terrainDepth);
+		CaptureDepth(controlledCamera.get(), depth);
 	collectingWorldDepth = false;
 }
 
@@ -419,7 +417,7 @@ void VRDynamicNearClip::CaptureDepth(const RE::NiCamera* camera, ID3D11ShaderRes
 		return;
 	D3D11_TEXTURE2D_DESC desc{};
 	texture->GetDesc(&desc);
-	const auto resolution = Util::ConvertToDynamic({ static_cast<float>(desc.Width), static_cast<float>(desc.Height) }, true);
+	const auto resolution = Util::ConvertToDynamic(globals::state->screenSize, true);
 	if (!std::isfinite(resolution.x) || !std::isfinite(resolution.y) || desc.SampleDesc.Count != 1 ||
 		resolution.x < 4 || resolution.y < 2 || resolution.x > desc.Width || resolution.y > desc.Height)
 		return;
@@ -477,7 +475,7 @@ void VRDynamicNearClip::CaptureDepth(const RE::NiCamera* camera, ID3D11ShaderRes
 		}
 	}
 	slot->pending = true;
-	slot->captured = Clock::now();
+	slot->captured = Util::GetNowSecs();
 	slot->serial = ++nextSerial;
 	captureFrame = globals::state->frameCount;
 }
@@ -502,15 +500,16 @@ void VRDynamicNearClip::DrawValues()
 		else
 			ImGui::Text("Nearest %s: no valid geometry", eye == 0 ? "L" : "R");
 	}
-	if (lastSample != Clock::time_point{})
-		ImGui::Text("Depth age: %.0f ms", std::chrono::duration<float, std::milli>(Clock::now() - lastSample).count());
+	if (lastSample > 0.0)
+		ImGui::Text("Depth age: %.0f ms", (Util::GetNowSecs() - lastSample) * 1000.0);
 }
 
 void VRDynamicNearClip::DrawSettings()
 {
-	auto& settings = globals::features::vr.settings;
 	if (ImGui::CollapsingHeader(T("feature.vr.near_clip.header", "Dynamic Near Clip (Experimental)"))) {
-		ImGui::Checkbox(T("feature.vr.near_clip.enable", "Dynamic near clip"), &settings.DynamicNearClip);
+		if (ImGui::Checkbox(T("feature.vr.near_clip.enable", "Dynamic near clip"), &settings.DynamicNearClip))
+			UpdateVanillaFogOverride();
+		ImGui::TextWrapped("%s", T("feature.vr.near_clip.fog_warning", "Enabling this option disables vanilla fog. Please enable Exponential Height Fog instead."));
 		ImGui::SliderFloat(T("feature.vr.near_clip.normal", "Normal near clip"), &settings.NormalNearClip, 0.1f, 30.0f, "%.2f");
 		ImGui::SliderFloat(T("feature.vr.near_clip.minimum", "Minimum near clip"), &settings.MinimumNearClip, 0.01f, settings.NormalNearClip, "%.3f", ImGuiSliderFlags_Logarithmic);
 		ImGui::SliderFloat(T("feature.vr.near_clip.scale", "Near distance scale"), &settings.NearDistanceScale, 0.05f, 1.0f, "%.2f");
@@ -521,12 +520,12 @@ void VRDynamicNearClip::DrawSettings()
 			DrawValues();
 		}
 	}
-	settings.ClampToValidRanges();
+	settings.ClampNearClipSettings();
 }
 
 void VRDynamicNearClip::DrawReadout()
 {
-	if (!globals::state || !globals::state->IsDeveloperMode() || !globals::features::vr.settings.DynamicNearClipReadout)
+	if (!globals::state || !globals::state->IsDeveloperMode() || !settings.DynamicNearClipReadout)
 		return;
 	const float margin = ImGui::GetFontSize();
 	ImGui::SetNextWindowPos({ ImGui::GetIO().DisplaySize.x - margin, margin }, ImGuiCond_Always, { 1.0f, 0.0f });

@@ -2856,6 +2856,7 @@
     "feature.vr.min_occludee_box_extent_tooltip": "Minimum bounding box dimensions for object occlusion culling. Lower values improve performance but may result in visual artifacts.",
     "feature.vr.name": "VR",
     "feature.vr.near_clip.enable": "Dynamic near clip",
+    "feature.vr.near_clip.fog_warning": "Enabling this option disables vanilla fog. Please enable Exponential Height Fog instead.",
     "feature.vr.near_clip.header": "Dynamic Near Clip (Experimental)",
     "feature.vr.near_clip.help": "Distances use Skyrim units. Both eyes share the smaller required near distance. The central depth probe cannot see transparent surfaces or geometry already clipped between samples.",
     "feature.vr.near_clip.minimum": "Minimum near clip",

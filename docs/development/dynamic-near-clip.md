@@ -15,6 +15,10 @@ The VR settings expose an adaptive near plane for both eyes:
 
 `DynamicNearClipReadout` is active only when developer mode is enabled.
 
+Enabling dynamic near clip disables Skyrim's vanilla fog for as long as the
+feature remains active. Enable Exponential Height Fog as its replacement. The
+previous vanilla fog setting is restored when dynamic near clip is disabled.
+
 Distances are Skyrim world units. The depth probe samples the existing world
 prepass with a small central grid for each eye, rejects sky and invalid depth,
 and uses the smaller relevant distance for both eyes. The target is
