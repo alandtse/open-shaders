@@ -349,6 +349,7 @@ namespace WeatherExtensions
 					effects11.OverrideAmbientLighting(overridden);
 					effects11.vanillaAmbientCache = DirectionalAmbientColors;
 					effects11.gradedAmbientCache = overridden;
+					effects11.ambientSpecularTintCacheValid = AmbientSpecularTint != nullptr;
 					if (AmbientSpecularTint)
 						effects11.ambientSpecularTintCache = *AmbientSpecularTint;
 					effects11.ambientSpecularFresnelCache = AmbientSpecularFresnel;
@@ -373,12 +374,13 @@ namespace WeatherExtensions
 			auto& effects11 = globals::features::effects11;
 			if (shaderAccumulator->GetRuntimeData().renderMode == 24 && effects11.loaded && effects11.enableEffect && effects11.ambientGradeCacheValid) {
 				const bool savedEnableEffect = effects11.enableEffect;
+				RE::NiColor* const specularTint = effects11.ambientSpecularTintCacheValid ? &effects11.ambientSpecularTintCache : nullptr;
 				effects11.enableEffect = false;
-				Sky_SetDirectionalAmbientColors::func(effects11.vanillaAmbientCache, &effects11.ambientSpecularTintCache, effects11.ambientSpecularFresnelCache);
+				Sky_SetDirectionalAmbientColors::func(effects11.vanillaAmbientCache, specularTint, effects11.ambientSpecularFresnelCache);
 				globals::state->UpdateSharedData(false, false);
 				func(shaderAccumulator, renderFlags);
 				effects11.enableEffect = savedEnableEffect;
-				Sky_SetDirectionalAmbientColors::func(effects11.gradedAmbientCache, &effects11.ambientSpecularTintCache, effects11.ambientSpecularFresnelCache);
+				Sky_SetDirectionalAmbientColors::func(effects11.gradedAmbientCache, specularTint, effects11.ambientSpecularFresnelCache);
 				globals::state->UpdateSharedData(false, false);
 				return;
 			}
