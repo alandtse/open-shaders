@@ -162,12 +162,16 @@ namespace
 		const std::string category = args.value("category", std::string{});
 		const bool value = args.value("value", false);
 		auto& settingManager = SettingManager::GetSingleton();
-		const uint32_t id = settingManager.GetSettingID(key, category);
-		if (id == 0xFFFFFFFF) {
+		const auto* info = settingManager.GetSettingInfo(key, category);
+		if (!info) {
 			logger::warn("[Effects11] setBoolSetting: no setting matches {}.{}", category, key);
 			return;
 		}
-		settingManager.SetValue<bool>(id, value);
+		if (info->type != SettingType::Bool) {
+			logger::warn("[Effects11] setBoolSetting: {}.{} is not a bool setting", category, key);
+			return;
+		}
+		settingManager.SetValue<bool>(info->id, value);
 	}
 
 	void CommandSaveAndApply(Feature*, const json&)
