@@ -21,12 +21,10 @@ void PerfMode::UIPassDispatch_Hook::thunk(RE::BSGraphics::BSShaderAccumulator* s
 {
 	auto& perfMode = globals::features::upscaling.perfMode;
 
-	// Only intercept the VR world-space UI pass when hook is active. renderMode here is a
-	// raw uint32_t (this class is a legacy duplicate BSShaderAccumulator declaration), so
-	// the enum needs an explicit cast rather than comparing types directly.
+	// Only intercept the VR world-space UI pass when hook is active.
 	auto& rtData = shaderAccumulator->GetRuntimeData();
 	if (!perfMode.hookActive || !perfMode.fakeDSV ||
-		rtData.renderMode != static_cast<uint32_t>(RE::BSShaderAccumulator::RENDER_MODE::kVRWorldSpaceUIPass)) {
+		rtData.renderMode != RE::BSShaderAccumulator::RENDER_MODE::kVRWorldSpaceUIPass) {
 		func(shaderAccumulator, renderFlags);
 		return;
 	}
