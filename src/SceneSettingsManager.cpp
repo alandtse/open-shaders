@@ -9,6 +9,7 @@
 #include "Utils/FileSystem.h"
 #include "Utils/Format.h"
 #include "Utils/Game.h"
+#include "Utils/MathUtils.h"
 #include "Utils/SettingsCatalog.h"
 
 #include <algorithm>
@@ -2764,7 +2765,7 @@ bool SceneSettingsManager::HasCurrentSceneSettingsForFeature(const std::string& 
 		if (hasResumableEntry(GetEntries(SceneType::TimeOfDay), SceneType::TimeOfDay))
 			return true;
 		if (const auto* sky = globals::game::sky) {
-			const auto weatherLerp = std::isfinite(sky->currentWeatherPct) ? std::clamp(sky->currentWeatherPct, 0.0f, 1.0f) : 0.0f;
+			const auto weatherLerp = Util::ClampFinite(sky->currentWeatherPct, 0.0f, 1.0f, 0.0f);
 			for (const auto weatherId : { sky->currentWeather ? sky->currentWeather->GetFormID() : 0, GetEffectivePreviousWeatherId(sky, weatherLerp) }) {
 				const auto config = weatherSceneConfigs.find(weatherId);
 				if (config != weatherSceneConfigs.end() && hasResumableEntry(config->second.entries, SceneType::TimeOfDay, &config->second))
@@ -2966,7 +2967,7 @@ void SceneSettingsManager::ResolveAndApply(bool force, bool allowLocationTransit
 		TryEnsureWeatherDataLoaded();
 		if (auto* sky = globals::game::sky) {
 			currentWeatherId = sky->currentWeather ? sky->currentWeather->GetFormID() : 0;
-			weatherLerp = std::isfinite(sky->currentWeatherPct) ? std::clamp(sky->currentWeatherPct, 0.0f, 1.0f) : 0.0f;
+			weatherLerp = Util::ClampFinite(sky->currentWeatherPct, 0.0f, 1.0f, 0.0f);
 			previousWeatherId = GetEffectivePreviousWeatherId(sky, weatherLerp);
 		}
 	}
@@ -3419,9 +3420,7 @@ SceneSettingsManager::ResolvedSettingMap& SceneSettingsManager::BuildResolvedSet
 		collectGroupedBaselines(*userTimeOfDayValues);
 		collectGroupedBaselines(*overwriteTimeOfDayValues);
 		if (auto* sky = globals::game::sky) {
-			const auto weatherLerp = std::isfinite(sky->currentWeatherPct) ?
-			                             std::clamp(sky->currentWeatherPct, 0.0f, 1.0f) :
-			                             0.0f;
+			const auto weatherLerp = Util::ClampFinite(sky->currentWeatherPct, 0.0f, 1.0f, 0.0f);
 			const auto previousWeatherId = GetEffectivePreviousWeatherId(sky, weatherLerp);
 			for (auto weatherId : { sky->currentWeather ? sky->currentWeather->GetFormID() : 0,
 					 previousWeatherId })
@@ -3759,9 +3758,7 @@ void SceneSettingsManager::ResolveExteriorSettings(ResolvedSettingMap& resolved,
 	const PeriodSettingMap* previousOverwriteWeather = nullptr;
 	float weatherLerp = 0.0f;
 	if (auto* sky = globals::game::sky; sky && sky->currentWeather) {
-		weatherLerp = std::isfinite(sky->currentWeatherPct) ?
-		                  std::clamp(sky->currentWeatherPct, 0.0f, 1.0f) :
-		                  0.0f;
+		weatherLerp = Util::ClampFinite(sky->currentWeatherPct, 0.0f, 1.0f, 0.0f);
 		const auto currentWeatherId = sky->currentWeather->GetFormID();
 		const auto previousWeatherId = GetEffectivePreviousWeatherId(sky, weatherLerp);
 		currentUserWeather = &BuildWeatherValueGroups(currentWeatherId, EntrySource::User);
@@ -3919,9 +3916,7 @@ void SceneSettingsManager::ResolveWeatherSettings(ResolvedSettingMap& resolved,
 	auto* sky = globals::game::sky;
 	if (!sky || !sky->currentWeather)
 		return;
-	const auto weatherLerp = std::isfinite(sky->currentWeatherPct) ?
-	                             std::clamp(sky->currentWeatherPct, 0.0f, 1.0f) :
-	                             0.0f;
+	const auto weatherLerp = Util::ClampFinite(sky->currentWeatherPct, 0.0f, 1.0f, 0.0f);
 	const auto previousWeatherId = GetEffectivePreviousWeatherId(sky, weatherLerp);
 	const auto currentWeatherId = sky->currentWeather->GetFormID();
 	const auto& currentValues = BuildWeatherValueGroups(currentWeatherId, valueSource);

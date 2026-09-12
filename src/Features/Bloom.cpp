@@ -4,6 +4,7 @@
 #include <cmath>
 
 #include "../I18n/I18n.h"
+#include "../Utils/MathUtils.h"
 #include "../Utils/UI.h"
 
 #define I18N_KEY_PREFIX "feature.bloom."
@@ -111,20 +112,17 @@ Bloom::Settings Bloom::GetCommonBufferData(const PresetSettings& settings)
 void Bloom::SanitizeSettings(PresetSettings& settings)
 {
 	const PresetSettings defaults{};
-	auto clampFiniteOrDefault = [](float value, float min, float max, float defaultValue) {
-		return std::isfinite(value) ? std::clamp(value, min, max) : defaultValue;
-	};
 	auto sanitizeProfile = [&](Profile& profile, const Profile& defaultProfile) {
-		profile.EnhancementIntensity = clampFiniteOrDefault(profile.EnhancementIntensity, 0.0f, kEnhancementIntensityMax, defaultProfile.EnhancementIntensity);
-		profile.HaloRadius = clampFiniteOrDefault(profile.HaloRadius, 0.0f, kHaloRadiusMax, defaultProfile.HaloRadius);
-		profile.HaloSpread = clampFiniteOrDefault(profile.HaloSpread, 0.0f, 1.0f, defaultProfile.HaloSpread);
-		profile.BloomSaturation = clampFiniteOrDefault(profile.BloomSaturation, 0.0f, kBloomSaturationMax, defaultProfile.BloomSaturation);
-		profile.BloomTint.x = clampFiniteOrDefault(profile.BloomTint.x, 0.0f, 1.0f, defaultProfile.BloomTint.x);
-		profile.BloomTint.y = clampFiniteOrDefault(profile.BloomTint.y, 0.0f, 1.0f, defaultProfile.BloomTint.y);
-		profile.BloomTint.z = clampFiniteOrDefault(profile.BloomTint.z, 0.0f, 1.0f, defaultProfile.BloomTint.z);
-		profile.CompressionCeiling = clampFiniteOrDefault(profile.CompressionCeiling, 0.0f, kCompressionCeilingMax, defaultProfile.CompressionCeiling);
+		profile.EnhancementIntensity = Util::ClampFinite(profile.EnhancementIntensity, 0.0f, kEnhancementIntensityMax, defaultProfile.EnhancementIntensity);
+		profile.HaloRadius = Util::ClampFinite(profile.HaloRadius, 0.0f, kHaloRadiusMax, defaultProfile.HaloRadius);
+		profile.HaloSpread = Util::ClampFinite(profile.HaloSpread, 0.0f, 1.0f, defaultProfile.HaloSpread);
+		profile.BloomSaturation = Util::ClampFinite(profile.BloomSaturation, 0.0f, kBloomSaturationMax, defaultProfile.BloomSaturation);
+		profile.BloomTint.x = Util::ClampFinite(profile.BloomTint.x, 0.0f, 1.0f, defaultProfile.BloomTint.x);
+		profile.BloomTint.y = Util::ClampFinite(profile.BloomTint.y, 0.0f, 1.0f, defaultProfile.BloomTint.y);
+		profile.BloomTint.z = Util::ClampFinite(profile.BloomTint.z, 0.0f, 1.0f, defaultProfile.BloomTint.z);
+		profile.CompressionCeiling = Util::ClampFinite(profile.CompressionCeiling, 0.0f, kCompressionCeilingMax, defaultProfile.CompressionCeiling);
 		const float thresholdDefault = std::min(defaultProfile.CompressionThreshold, profile.CompressionCeiling);
-		profile.CompressionThreshold = clampFiniteOrDefault(profile.CompressionThreshold, 0.0f, profile.CompressionCeiling, thresholdDefault);
+		profile.CompressionThreshold = Util::ClampFinite(profile.CompressionThreshold, 0.0f, profile.CompressionCeiling, thresholdDefault);
 	};
 
 	settings.Enabled = settings.Enabled != 0;
