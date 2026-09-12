@@ -105,17 +105,19 @@ void VRDynamicNearClip::RestoreCamera()
 	if (!controlledCamera)
 		return;
 	auto& camera = controlledCamera->GetVRRuntimeData();
-	if (camera.viewFrustumArray && camera.viewFrustumBuffer) {
+	if (camera.viewFrustumArray) {
 		for (uint32_t eye = 0; eye < std::min(camera.unk1C8, 2u); ++eye) {
 			if (ApproximatelyEqual(camera.viewFrustumArray[eye].fNear, appliedNear))
 				camera.viewFrustumArray[eye].fNear = savedNear[eye];
 		}
+	}
+	if (camera.viewFrustumBuffer) {
 		if (ApproximatelyEqual(camera.viewFrustumBuffer->fNear, appliedNear))
 			camera.viewFrustumBuffer->fNear = savedBufferNear;
-		auto& projection = controlledCamera->GetRuntimeData2();
-		projection.minNearPlaneDist = savedMinimum;
-		projection.maxFarNearRatio = savedRatio;
 	}
+	auto& projection = controlledCamera->GetRuntimeData2();
+	projection.minNearPlaneDist = savedMinimum;
+	projection.maxFarNearRatio = savedRatio;
 	controlledCamera.reset();
 	appliedNear = 0.0f;
 	for (auto& readback : readbacks)
