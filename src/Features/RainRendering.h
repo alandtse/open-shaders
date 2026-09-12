@@ -320,12 +320,8 @@ private:
 	winrt::com_ptr<ID3D11ShaderResourceView> rainTextureSRV;
 	float2 rainTextureSize{};
 	bool rainTextureLoadAttempted = false;
-	winrt::com_ptr<ID3D11Texture2D> sceneColorCopy;
-	winrt::com_ptr<ID3D11RenderTargetView> sceneColorRTV;
-	winrt::com_ptr<ID3D11ShaderResourceView> sceneColorSRV;
-	winrt::com_ptr<ID3D11Texture2D> sceneDepthCopy;
-	winrt::com_ptr<ID3D11RenderTargetView> sceneDepthRTV;
-	winrt::com_ptr<ID3D11ShaderResourceView> sceneDepthSRV;
+	std::unique_ptr<Texture2D> sceneColorCopy;
+	std::unique_ptr<Texture2D> sceneDepthCopy;
 	D3D11_TEXTURE2D_DESC sceneColorDescription{};
 	DXGI_FORMAT sceneColorViewFormat = DXGI_FORMAT_UNKNOWN;
 	bool sceneColorCopyFailed = false;

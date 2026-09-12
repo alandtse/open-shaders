@@ -499,11 +499,7 @@ void RainRendering::ClearShaderCache()
 	rainTextureSRV = nullptr;
 	rainTextureLoadAttempted = false;
 	sceneColorCopy = nullptr;
-	sceneColorRTV = nullptr;
-	sceneColorSRV = nullptr;
 	sceneDepthCopy = nullptr;
-	sceneDepthRTV = nullptr;
-	sceneDepthSRV = nullptr;
 	sceneColorDescription = {};
 	sceneColorViewFormat = DXGI_FORMAT_UNKNOWN;
 	sceneColorCopyFailed = false;
@@ -647,8 +643,8 @@ std::array<uint32_t, 4> RainRendering::GetLayerDropCounts() const
 float4 RainRendering::GetLayerRadii(float a_farDistance) const
 {
 	const auto& defaults = GetDefaultSettings();
-	const float nearDistance = ClampFinite(settings.RainNearLayerDistance, kMinimumNearLayerDistance, a_farDistance * kNearLayerFarDistanceRatio, defaults.RainNearLayerDistance);
-	const float midDistance = ClampFinite(settings.RainMidLayerDistance, nearDistance * kMidLayerNearDistanceRatio, a_farDistance * kMidLayerFarDistanceRatio, defaults.RainMidLayerDistance);
+	const float nearDistance = ClampFinite(settings.RainNearLayerDistance, kMinimumNearLayerDistance, GetNearLayerMaximum(a_farDistance), defaults.RainNearLayerDistance);
+	const float midDistance = ClampFinite(settings.RainMidLayerDistance, GetMidLayerMinimum(nearDistance), GetMidLayerMaximum(a_farDistance), defaults.RainMidLayerDistance);
 	return { nearDistance, midDistance, a_farDistance, 0.2f };
 }
 
@@ -868,15 +864,11 @@ bool RainRendering::EnsureSceneColorCopy(ID3D11Texture2D* a_source, ID3D11Render
 	const bool changed = sourceDescription.Width != sceneColorDescription.Width ||
 	                     sourceDescription.Height != sceneColorDescription.Height ||
 	                     sourceDescription.Format != sceneColorDescription.Format || viewDescription.Format != sceneColorViewFormat;
-	if (!changed && (sceneColorSRV || sceneColorCopyFailed))
-		return sceneColorSRV && sceneDepthSRV;
+	if (!changed && (sceneColorCopy || sceneColorCopyFailed))
+		return sceneColorCopy && sceneDepthCopy;
 
 	sceneColorCopy = nullptr;
-	sceneColorRTV = nullptr;
-	sceneColorSRV = nullptr;
 	sceneDepthCopy = nullptr;
-	sceneDepthRTV = nullptr;
-	sceneDepthSRV = nullptr;
 	sceneColorDescription = sourceDescription;
 	sceneColorViewFormat = viewDescription.Format;
 	sceneColorCopyFailed = false;
@@ -894,49 +886,45 @@ bool RainRendering::EnsureSceneColorCopy(ID3D11Texture2D* a_source, ID3D11Render
 	copyDescription.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_RENDER_TARGET;
 	copyDescription.CPUAccessFlags = 0;
 	copyDescription.MiscFlags = 0;
-	auto* device = globals::d3d::device;
-	HRESULT result = device->CreateTexture2D(&copyDescription, nullptr, sceneColorCopy.put());
-	if (SUCCEEDED(result)) {
-		Util::SetResourceName(sceneColorCopy.get(), "RainRendering::HalfResolutionSceneColor");
+
+	try {
+		sceneColorCopy = std::make_unique<Texture2D>(copyDescription, "RainRendering::HalfResolutionSceneColor");
 		D3D11_RENDER_TARGET_VIEW_DESC rtvDescription{};
 		rtvDescription.Format = viewDescription.Format;
 		rtvDescription.ViewDimension = D3D11_RTV_DIMENSION_TEXTURE2D;
-		result = device->CreateRenderTargetView(sceneColorCopy.get(), &rtvDescription, sceneColorRTV.put());
-	}
-	if (SUCCEEDED(result)) {
+		sceneColorCopy->CreateRTV(rtvDescription);
+
 		D3D11_SHADER_RESOURCE_VIEW_DESC srvDescription{};
 		srvDescription.Format = viewDescription.Format;
 		srvDescription.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
 		srvDescription.Texture2D.MipLevels = 1;
-		result = device->CreateShaderResourceView(sceneColorCopy.get(), &srvDescription, sceneColorSRV.put());
-	}
-	D3D11_TEXTURE2D_DESC depthDescription = copyDescription;
-	depthDescription.Format = DXGI_FORMAT_R32_FLOAT;
-	if (SUCCEEDED(result))
-		result = device->CreateTexture2D(&depthDescription, nullptr, sceneDepthCopy.put());
-	if (SUCCEEDED(result)) {
-		Util::SetResourceName(sceneDepthCopy.get(), "RainRendering::HalfResolutionSceneDepth");
-		result = device->CreateRenderTargetView(sceneDepthCopy.get(), nullptr, sceneDepthRTV.put());
-	}
-	if (SUCCEEDED(result))
-		result = device->CreateShaderResourceView(sceneDepthCopy.get(), nullptr, sceneDepthSRV.put());
-	if (SUCCEEDED(result) && !EnsureRainSampler())
-		result = E_FAIL;
-	if (FAILED(result)) {
+		sceneColorCopy->CreateSRV(srvDescription);
+
+		D3D11_TEXTURE2D_DESC depthDescription = copyDescription;
+		depthDescription.Format = DXGI_FORMAT_R32_FLOAT;
+		sceneDepthCopy = std::make_unique<Texture2D>(depthDescription, "RainRendering::HalfResolutionSceneDepth");
+
+		D3D11_RENDER_TARGET_VIEW_DESC depthRtvDescription{};
+		depthRtvDescription.Format = DXGI_FORMAT_R32_FLOAT;
+		depthRtvDescription.ViewDimension = D3D11_RTV_DIMENSION_TEXTURE2D;
+		sceneDepthCopy->CreateRTV(depthRtvDescription);
+
+		D3D11_SHADER_RESOURCE_VIEW_DESC depthSrvDescription{};
+		depthSrvDescription.Format = DXGI_FORMAT_R32_FLOAT;
+		depthSrvDescription.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
+		depthSrvDescription.Texture2D.MipLevels = 1;
+		sceneDepthCopy->CreateSRV(depthSrvDescription);
+
+		if (!EnsureRainSampler()) {
+			throw std::runtime_error("Failed to create rain sampler");
+		}
+	} catch (const std::exception& e) {
 		sceneColorCopy = nullptr;
-		sceneColorRTV = nullptr;
-		sceneColorSRV = nullptr;
 		sceneDepthCopy = nullptr;
-		sceneDepthRTV = nullptr;
-		sceneDepthSRV = nullptr;
 		sceneColorCopyFailed = true;
-		logger::warn("[RainRendering] Refraction unavailable (HRESULT {:#x}); using shading-only rain", static_cast<uint32_t>(result));
+		logger::warn("[RainRendering] Refraction unavailable ({}); using shading-only rain", e.what());
 		return false;
 	}
-	Util::SetResourceName(sceneColorRTV.get(), "RainRendering::HalfResolutionSceneColor RTV");
-	Util::SetResourceName(sceneColorSRV.get(), "RainRendering::HalfResolutionSceneColor SRV");
-	Util::SetResourceName(sceneDepthRTV.get(), "RainRendering::HalfResolutionSceneDepth RTV");
-	Util::SetResourceName(sceneDepthSRV.get(), "RainRendering::HalfResolutionSceneDepth SRV");
 	return true;
 }
 
@@ -945,7 +933,7 @@ void RainRendering::DownsampleSceneColor(
 {
 	CS_GPU_PASS("RainRendering::SceneColorDownsample");
 	auto* context = globals::d3d::context;
-	std::array<ID3D11RenderTargetView*, 2> renderTargets{ sceneColorRTV.get(), sceneDepthRTV.get() };
+	std::array<ID3D11RenderTargetView*, 2> renderTargets{ sceneColorCopy->rtv.get(), sceneDepthCopy->rtv.get() };
 	context->OMSetRenderTargets(static_cast<UINT>(renderTargets.size()), renderTargets.data(), nullptr);
 	context->OMSetBlendState(nullptr, nullptr, UINT_MAX);
 	context->OMSetDepthStencilState(depthStencilState.get(), 0);
@@ -1338,11 +1326,11 @@ void RainRendering::DrawRain()
 	ID3D11Buffer* pixelSharedBuffers[]{ sharedBuffer, featureBuffer };
 	context->PSSetConstantBuffers(5, 2, pixelSharedBuffers);
 	context->PSSetShaderResources(0, 1, &depthResource);
-	ID3D11ShaderResourceView* colorResource = hasSceneColor ? sceneColorSRV.get() : nullptr;
+	ID3D11ShaderResourceView* colorResource = hasSceneColor && sceneColorCopy ? sceneColorCopy->srv.get() : nullptr;
 	context->PSSetShaderResources(2, 1, &colorResource);
 	ID3D11ShaderResourceView* waterResources[]{ rainTextureSRV.get(), GetRainEnvironment() };
 	context->PSSetShaderResources(3, 2, waterResources);
-	ID3D11ShaderResourceView* refractionDepthResource = hasSceneColor ? sceneDepthSRV.get() : nullptr;
+	ID3D11ShaderResourceView* refractionDepthResource = hasSceneColor && sceneDepthCopy ? sceneDepthCopy->srv.get() : nullptr;
 	context->PSSetShaderResources(5, 1, &refractionDepthResource);
 	ID3D11SamplerState* sampler = refractionSampler.get();
 	context->PSSetSamplers(0, 1, &sampler);
