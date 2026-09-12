@@ -1,5 +1,7 @@
 #pragma once
 
+#include <chrono>
+
 #include "Buffer.h"
 #include "Utils/LazyShader.h"
 
@@ -7,6 +9,7 @@ struct ExponentialHeightFog : Feature
 {
 private:
 	static constexpr std::string_view MOD_ID = "180146";
+	static constexpr float kMaxMistDriftSpeed = 2000.0f;
 
 public:
 	virtual bool SupportsVR() override { return true; };
@@ -96,18 +99,32 @@ public:
 		float4 vanillaFogNearColor = {};
 		float4 vanillaFogFarColor = {};
 		float fogLightingInfluence = 0.35f;
-		float3 pad1 = {};
+		uint mistsEnabled = 0;
+		float mistStrength = 0.1f;
+		float mistRange = 8192.0f;
+		float mistSize = 4096.0f;
+		float mistDriftSpeed = 1000.0f;
+		uint mistFollowWind = 1;
+		float mistWindMultiplier = 1.0f;
 	} settings;
 	STATIC_ASSERT_ALIGNAS_16(Settings);
 	static_assert(offsetof(Settings, vanillaFogNearColor) == 224);
 	static_assert(offsetof(Settings, fogLightingInfluence) == 256);
-	static_assert(sizeof(Settings) == 272);
+	static_assert(offsetof(Settings, mistsEnabled) == 260);
+	static_assert(offsetof(Settings, mistSize) == 272);
+	static_assert(sizeof(Settings) == 288);
 
 	/** @brief Builds the shared visibility curve from the effective weather and lighting settings. */
 	Settings GetCommonBufferData() const;
 
 private:
 	Settings previousFogSettings = {};
+	std::chrono::steady_clock::time_point previousMistTick{};
+	double mistDriftDistance = 0.0;
+	std::array<double, 2> mistDriftOffset = {};
+	std::array<double, 2> mistDriftVelocity = {};
+	std::array<double, 2> mistShapeAnimation = { 0.6435011088, 0.0 };
+	uint32_t lastMistAnimationFrame = UINT32_MAX;
 
 	struct VolumetricFogCB
 	{
@@ -117,10 +134,15 @@ private:
 		float4x4 clipToWorld[2] = {};
 		float4 frameJitterOffsets[16] = {};
 		float4 historyParameters = {};
-		float4 jitterParameters = {};  // x = LightScatteringSampleJitterMultiplier, y = StateFrameIndexMod8, zw = unused
+		float4 jitterParameters = {};  // x = sample jitter, y = frame index mod 8, zw = mist world-space drift
+		float4 mistShapeParameters = {};
 	};
 	STATIC_ASSERT_ALIGNAS_16(VolumetricFogCB);
+	static_assert(offsetof(VolumetricFogCB, jitterParameters) == 448);
+	static_assert(offsetof(VolumetricFogCB, mistShapeParameters) == 464);
+	static_assert(sizeof(VolumetricFogCB) == 480);
 
+	void UpdateMistAnimation(const Settings& frameSettings);
 	void EnsureVolumetricResources();
 	void ReleaseVolumetricResources();
 	void BindIntegratedLightScattering();

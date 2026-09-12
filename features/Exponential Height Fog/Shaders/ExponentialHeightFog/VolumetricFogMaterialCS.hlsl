@@ -1,4 +1,5 @@
 #include "ExponentialHeightFog/VolumetricFogCSCommon.hlsli"
+#include "ExponentialHeightFog/VolumetricMists.hlsli"
 
 RWTexture3D<float4> VBufferA : register(u0);
 
@@ -17,6 +18,7 @@ RWTexture3D<float4> VBufferA : register(u0);
 	float nearDistance = dispatchID.z == 0u && ExponentialHeightFog::GetVolumetricStartDistance() == 0.0f ? 0.0f : length(frontPositionWS);
 	float extinction = ExponentialHeightFog::EvaluateFogExtinctionSegment(
 		nearDistance, length(backPositionWS), positionWS, FrameBuffer::CameraPosAdjust[eyeIndex].xyz);
+	extinction += ExponentialHeightFog::EvaluateNearbyMistExtinction(dispatchID, positionWS, eyeIndex);
 	float3 scattering = extinction * saturate(SharedData::exponentialHeightFogSettings.volumetricFogAlbedo.rgb) *
 	                    SharedData::exponentialHeightFogSettings.volumetricFogAlbedo.a;
 

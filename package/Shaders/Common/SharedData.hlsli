@@ -388,7 +388,13 @@ namespace SharedData
 		float4 vanillaFogNearColor;
 		float4 vanillaFogFarColor;
 		float fogLightingInfluence;
-		float3 pad1;
+		uint mistsEnabled;
+		float mistStrength;
+		float mistRange;
+		float mistSize;
+		float mistDriftSpeed;
+		uint mistFollowWind;
+		float mistWindMultiplier;
 	};
 
 	struct TruePBRSettings
